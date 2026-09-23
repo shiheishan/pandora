@@ -1,3 +1,8 @@
+// [INPUT]: 依赖标准库 sort/strings，无内部依赖
+// [OUTPUT]: 对外提供 Capability、NativeCapabilities、NativeCapabilityFor、NativeProtocolNames、NativeCapabilityReport 与 NativeCapabilityReportFor
+// [POS]: kernel 的能力矩阵唯一事实源：--capabilities 打印、selfcheck.go 校验、面板编排前协商、CI capability smoke grep 其中的 reality-h3-experimental 与 external-reality-xhttp-h3-unverified
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (

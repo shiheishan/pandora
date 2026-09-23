@@ -15,7 +15,7 @@ panel/: 与面板通信层。client.go 基础客户端、enrollment.go 节点注
 outbound/: 出站层。outbound.go 抽象与选择，direct.go 直连，shadowsocks.go 出站加密，relay_socks.go SOCKS 中继，tls.go/utls.go TLS 与指纹
 route/: rule.go 分流引擎
 release/: build.sh 双架构发布与 manifest、check_native_panel_parity.py 对齐检查、check_native_stdout.sh、runtime-acceptance.sh 与 staging-acceptance.sh 验收、verify.sh、pandora-native.service systemd 单元、README
-cmd/pandora-h3-probe/: 独立进程的 REALITY-over-HTTP/3 探针
+cmd/pandora-h3-probe/: 独立进程的 REALITY-over-HTTP/3 探针；见 cmd/pandora-h3-probe/CLAUDE.md
 tools/: vlesscheck / mierucheck / naivecheck / shadowtlscheck 最小客户端，验证入站真的在转发
 *_test.go: main_test.go 与 runtime_*_test.go 覆盖 flag 解析和运行时选择
 go.mod / go.sum: Go 1.26.5 module

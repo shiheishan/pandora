@@ -28,7 +28,7 @@ it("creates a gift template with exact yuan conversion and a usable form",async(
  const balance=screen.getByLabelText("余额（人民币元）");await userEvent.clear(balance);await userEvent.type(balance,"9.99");
  await userEvent.click(screen.getByRole("button",{name:"保存模板"}));
  await waitFor(()=>expect(writes).toHaveLength(1));expect(writes[0]?.body).toMatchObject({type:"general",status:"active",rewards:{balance:999,traffic_bytes:0,expire_days:0}});
-},15000);
+});
 it("uses paused for coupon disabling and hides private redemption details from coupon-only admins",async()=>{
  const writes=setup(<CouponsPage/>,["marketing.coupon.write"]);
  const stop = await screen.findByRole("button",{name:"停用"});
@@ -36,11 +36,11 @@ it("uses paused for coupon disabling and hides private redemption details from c
  expect(screen.queryByRole("button",{name:"使用明细"})).not.toBeInTheDocument();
  await userEvent.click(await screen.findByRole("button",{name:/保\s*存/}));
  await waitFor(()=>expect(writes).toHaveLength(1));expect(writes[0]).toMatchObject({path:"/v1/coupons/coupon/status",body:{status:"paused"}});expect(writes[0]?.key).toBeTruthy();
-},15000);
+});
 it("opens plugin configuration with the server-provided event catalogue",async()=>{
  setup(<PluginsPage/>,["platform.plugin.read","platform.plugin.write"]);
  await userEvent.click(await screen.findByRole("button",{name:"添加插件"}));
  await waitFor(()=>expect(screen.getByLabelText("接收地址")).toBeVisible());
  await userEvent.click(screen.getByLabelText("订阅事件"));
  await waitFor(()=>expect(screen.getByText("订单支付成功")).toBeVisible());
-},15000);
+});

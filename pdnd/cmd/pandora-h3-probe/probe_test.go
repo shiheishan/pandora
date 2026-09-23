@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 kernel 的 ParseXHTTPConfig / XHTTPServer.ServeH3Reality 起服务端，go 工具链编译 main.go 为独立进程
+// [OUTPUT]: 对外提供 TestVLESSTCPHeader 与 TestProcessProbeRoundTrip（真实 OS 进程经 REALITY-over-HTTP/3 往返）
+// [POS]: pandora-h3-probe 的验收缝：先 go build（3 分钟上限）再以 20s 上限运行产物，CI 专用步骤 -count=3 复用构建缓存
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (
@@ -101,12 +106,22 @@ func TestProcessProbeRoundTrip(t *testing.T) {
 	}
 	defer h3Server.Close()
 
+	// 编译与运行分开计时：冷缓存下编译 reality/quic 栈在 2 核 runner 上
+	// 可超过 20s，原先 `go run` 把两者塞进同一个 context，CI 两架构都超时。
+	// 编译给宽松上限，探针本身仍受 20s 约束。
 	_, file, _, _ := runtime.Caller(0)
 	commandDir := filepath.Dir(file)
+	probeBinary := filepath.Join(t.TempDir(), "pandora-h3-probe")
+	buildCtx, cancelBuild := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancelBuild()
+	build := exec.CommandContext(buildCtx, goBinary, "build", "-o", probeBinary, ".")
+	build.Dir = commandDir
+	if output, buildErr := build.CombinedOutput(); buildErr != nil {
+		t.Fatalf("build process probe: %v output=%s", buildErr, output)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, goBinary, "run", ".", "-addr", packet.LocalAddr().String(), "-server-name", "localhost", "-public-key", base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), "-short-id", hex.EncodeToString(shortID[:]), "-path", "/xhttp/process-probe/1/", "-payload", "process-probe")
-	cmd.Dir = commandDir
+	cmd := exec.CommandContext(ctx, probeBinary, "-addr", packet.LocalAddr().String(), "-server-name", "localhost", "-public-key", base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), "-short-id", hex.EncodeToString(shortID[:]), "-path", "/xhttp/process-probe/1/", "-payload", "process-probe")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("process probe failed: %v output=%s", err, output)

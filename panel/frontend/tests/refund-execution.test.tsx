@@ -162,7 +162,7 @@ it("hashes evidence locally, requires actual-payment confirmation, and preserves
   expect(
     screen.getByRole("button", { name: "原凭据重试本地结算" }),
   ).toBeEnabled();
-}, 15000);
+});
 
 it("recovers a lost queue acknowledgment by querying approved then replaying the same action, and blocks channel-unknown execution", async () => {
   localStorage.setItem("aegis_admin_token", "test-token");

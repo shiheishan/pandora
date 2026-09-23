@@ -47,7 +47,7 @@ it("edits a server directly from the list with the fresh version, then reopens p
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   await userEvent.click(screen.getByRole("button", { name: /编\s*辑/ }));
   expect(await screen.findByLabelText("备注")).toHaveValue("新的运维备注");
-}, 15000);
+});
 
 it("opens server details in place and closing retains the list route", async () => {
   const { router, writes } = setup("servers");

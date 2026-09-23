@@ -5,7 +5,7 @@
 
 成员清单
 package.json / package-lock.json: 依赖精确锁定；scripts：dev:admin(5173)、dev:portal(5174)、typecheck、build（typecheck + 双 mode 构建）、test（vitest）、check
-vite.config.ts / vitest.config.ts / tsconfig.json: 双 mode 的 root/outDir 与测试配置
+vite.config.ts / vitest.config.ts / tsconfig.json: 双 mode 的 root/outDir 与测试配置；vitest 全局 testTimeout 30s、maxWorkers 2（2 核 CI runner 上 antd+jsdom 单例可超 10s）；testing-library 的 asyncUtilTimeout 在 tests/setup.ts 全局设为 10s，findBy/waitFor 与用例都不再各自传超时
 apps/admin/index.html、apps/portal/index.html: 两个入口页
 src/main.tsx: 启动：ConfigProvider(zhCN)、QueryClientProvider、createHashRouter、lazy + Suspense 路由装载
 src/styles.css: 全局样式
@@ -13,7 +13,7 @@ src/app/: 壳层：Frame 布局、Gateway 入口守卫、Login、SettingsLayout�
 src/components/: 通用组件：common、UnsavedChangesGuard 未保存离开拦截
 src/core/: 无 UI 语义的核心：api.ts HTTP 封装、auth、realtime(SSE)、cachePolicy、data、drafts/formDraft 草稿、dialogs/FormDialog、operations、protocol/protocolInputs 节点协议表单、refunds、numbers、runtime（域/API 基址/legacyEntry 原版入口/hasContract 契约开关）、contracts（待接后端契约登记表）、appearance
 src/features/: 业务页面：Overview/Orders/Plans/Tickets 共用页，admin/ 与 portal/ 各自的功能页
-tests/: vitest 单测 *.test.ts(x)，覆盖 gateway、cache policy、contracts、表单编辑与导出；api-surface.test.ts 扫描 src/ 的 v1 路径与权限码对照 Go 路由与迁移权限字典，并解析旧单页的字符串拼接调用、按域对照 React 调用与迁移清单；legacy-parity.ts 旧页独有操作迁移清单（放 tests/ 是因为 src/ 里的 v1/ 字面量都会被当成 React 调用）
+tests/: vitest 单测 *.test.ts(x)，覆盖 gateway、cache policy、contracts、表单编辑与导出；api-surface.test.ts 扫描 src/ 的 v1 路径与权限码对照 Go 路由与迁移权限字典，并解析旧单页的字符串拼接调用、按域对照 React 调用与迁移清单；legacy-parity.ts 旧页独有操作迁移清单（放 tests/ 是因为 src/ 里的 v1/ 字面量都会被当成 React 调用）；setup.ts 是 vitest setupFiles 唯一入口：jsdom 环境补丁（matchMedia、ResizeObserver、scrollTo）、每用例清理、全局 asyncUtilTimeout 10s
 README.md / VALIDATION.md: 第一轮可集成候选说明与验收记录
 BUILD-SHA256SUMS.txt: 构建产物校验和
 
