@@ -308,41 +308,44 @@ bash panel/deploy/test-install.sh <发布目录>
 - 2026-08-11：在远端旧快照上完成隔离 WebDAV + PostgreSQL 18 备份恢复演练（HTTPS 上传、签名 manifest、SHA-256、Age 加解密、全新实例恢复），RTO 约 2 秒。这是旧快照证据，不等于当前工作树的生产验收。
 - 历史 Debian x86_64 完整 race 与 13 协议逐项测试曾通过；同样是早期快照，不等于当前工作树。
 - 未提交的 SSE / Node 集成曾在 Debian 做过受影响包的 compile-only 验证。
+- 2026-09-23：GitHub Actions 首跑 `35827175294`（推送 `f1390b3` 触发）失败。逐步日志：`Native capability smoke` 仍 grep 旧名 `"reality-h3"`（能力矩阵发布的是 `reality-h3-experimental`），其后 self-check、H3 探针、依赖边界、compat 编译、外部 Xray 五步从未执行；React candidate 有 10 个用例超 vitest 默认 5s。看板上显示为绿的 amd64 / arm64 两条 race 步骤实际也失败：`cmd/pandora-h3-probe` 的 `TestProcessProbeRoundTrip` 两架构都在 20.1s 超时，arm64 另有 `kernel` 的 `TestAnyTLSNativeClientTCPAndUOTUDP` 报 `DATA RACE`；当时 workflow 用默认 shell（无 `pipefail`），`go test … | tee` 的失败被 `tee` 吞掉。**因此在 workflow 加上 `shell: bash`（`-eo pipefail`）之前的 race 绿灯不能当证据。**
+- 同日修复（`fix/ci-green`，本机 macOS arm64、Go 1.27.1 验证，CI 以推送后的运行为准）：workflow 默认 `shell: bash`；capability smoke 改 grep `reality-h3-experimental`，并加 grep `external-reality-xhttp-h3-unverified` 守住 H3 未独立验证的边界；H3 探针测试先 `go build`（3 分钟上限）再以 20s 上限运行产物；AnyTLS 客户端往返测试的竞争位于 `sing-anytls` 客户端内部（`session/stream.go` 的 `closeLocally` 与 `Write`，v0.0.11 本机 3/3 复现、升到 v0.0.13 后 10 次仍有 1 次），不升级依赖，改为 `-tags interop` 的非 race 选跑门（`kernel/anytls_client_interop_test.go`），与外部 Xray 客户端同一先例；vitest 全局 `testTimeout: 30_000`；`tests/node-pools.test.tsx` 的删除失败提示用例根因是断言时 antd Modal 仍在 zoom 入场阶段（`opacity: 0`），测试改为先等弹窗可见、再以 `waitFor` 断言提示，组件不动。
 
 ### 未关闭的门禁（UNKNOWN）
 
 - REALITY+XHTTP/H3 的独立公网第三方客户端端点验证；amd64 外部 Xray 测试不能替代。
 - 13 个协议的全部传输组合与独立客户端协议矩阵。
-- ARM64 真机运行验证；交叉编译或静态 ELF 检查不能替代。
-- 当前工作树的真实安装式 TLS + PostgreSQL 18 + systemd + NativeCore 端到端。
+- ARM64：GitHub `ubuntu-24.04-arm` 上的原生 race / vet / self-check / capabilities 步骤已存在，但唯一一次 race 结果是被 `tee` 吞掉的假绿，结果待 `fix/ci-green` 推送后的运行；安装式或生产 ARM64 运行仍 UNKNOWN，交叉编译或静态 ELF 检查不能替代。
+- 当前 `main` 的真实安装式 TLS + PostgreSQL 18 + systemd + NativeCore 端到端。
 - 跨进程 SSE：租户 / 节点隔离、Redis 重连、重复信号、watcher 生命周期、慢消费者不阻塞。当时快照的完整 race 曾超过 4 分钟被停止，不是通过。
 - 真实支付、退款、通知外发的独立验收。
-- WebDAV 在当前工作树上的真实远端恢复演练。
+- WebDAV 在当前 `main` 上的真实远端恢复演练。
 - CLIENT-AUTH：正式路由未接通，外部 manifest 仍为 `PLACEHOLDER_NO_GO`；历史 CA42 / CA43 辅助门缺少当前 handoff，不得误报通过。
 - 生产冷启动与回滚；G0 release intent 尚未授权。
-- 2026-09-21 新增的四条契约测试（前端 api-surface、web 嵌入页之外的表登记簿与权限字典两条 Go 测试，以及前端 typecheck / 构建）在开发机上未执行，只有 Python 复现扫描算法的静态结果；以 CI 或 Linux 隔离目录的首次运行为准。
-- 2026-09-22 新增项：同日晚在开发机（macOS arm64，Go 1.27.1、Node 22.23.2；CI 仍是 Go 1.26）以 `GOMAXPROCS=1 -p 1` 实跑。PASS：`internal/platform/webapp`、`internal/platform/db`（含 Up 段重放的表登记簿）、`internal/api/admin|node|public`（含两条 `/app` 路由契约；PG18 夹具测试因未设环境变量跳过）、`web/app_test.go` 占位与真实产物两种形态、`make frontend-embed` 双 mode 构建、`tests/api-surface.test.ts` 8 项（含旧页迁移清单；此前该文件在 jsdom 环境下因 `new URL` 抛错整体未加载，已改为向 `fileURLToPath` 传字符串）。早于本轮的三处红：`web/embed_test.go` 断言的 `rtState.rowVersion` 属于 admin 页里无调用方的旧分流编辑器（在用的是带 `row_version` 的 `initRouting`），已删掉该编辑器 194 行及其专属 CSS 与这条断言；`tests/manual-order.test.tsx` 的“旧页写入方恢复”用例要求旧页有 `manualOrderCanonical` 等三个函数，旧页人工开单从不写恢复记录，该用例已删（React 自身的回执丢失恢复仍由同文件首个用例覆盖）；修后两处 PASS。仍 FAIL：`tests/node-pools.test.tsx` 删除失败提示 `toBeVisible` 首次全量运行通过、之后连续失败，src 未变，根因 UNKNOWN。NOT RUN：`deploy/build-release.sh` 全流程、00067 的 `make check-migrations`（本机无 docker，需 Linux 隔离目录）；00067 未在任何数据库执行。
+- 2026-09-21 新增的四条契约测试：表登记簿与权限字典两条 Go 测试已在 CI 首跑中通过；前端 api-surface、typecheck 与构建在本机 2026-09-22 实跑通过，CI 上以修复后的 React candidate job 为准。
+- 2026-09-22 本机实跑（macOS arm64，Go 1.27.1、Node 22.23.2；CI 仍是 Go 1.26，`GOMAXPROCS=1 -p 1`）：PASS `internal/platform/webapp`、`internal/platform/db`（含 Up 段重放的表登记簿）、`internal/api/admin|node|public`（PG18 夹具测试因未设环境变量跳过）、`web/app_test.go` 占位与真实产物两种形态、`make frontend-embed`、`tests/api-surface.test.ts` 8 项。同日修掉三处早于本轮的红：删除 admin 页无调用方的旧分流编辑器（194 行，`embed_test.go` 的 `rtState.rowVersion` 断言随之删除）；删除 `tests/manual-order.test.tsx` 中要求旧页写恢复记录的用例（旧页从不写）；`tests/node-pools.test.tsx` 见上文 FACT。NOT RUN：`deploy/build-release.sh` 全流程、00067 的迁移演练（需 Linux + Docker）；00067 未在任何数据库执行。
 
 ## 当前进度
 
-截至 2026-09-21：
+截至 2026-09-23：
 
 | 项 | 状态 |
 |---|---|
 | 当前版本 | r54 管理端已发布（2026-09-09）；后端、迁移、NativeCore 沿用 r53 |
-| r55 | 进行中：工作树 119 个文件、+742 / −231 未提交 |
-| 最新提交 | `23b0ed8 fix(public): secure webhook and money retries` |
+| 仓库基线 | GitHub `main` 三个提交：`f1390b3` 导入 → `3283da8` → `64c0b21`，工作树干净 |
+| r55 | 已随 `f1390b3` 入库，未部署 |
+| CI | 首跑 `35827175294` 失败，原因与修复见上文 FACT；以修复后的运行为准 |
 | Xboard 功能验收 | PARTIAL，未 RELEASED |
 | 生产运行 | 台湾生产机：aegis-public / admin / node + pandora-native + pandora-rust 均 active |
 
 未收口的历史工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成）当时状态为 PARTIAL at INTEGRATED，目标是把快照推到 VERIFIED。之后的交接记录没有它完成的证据，相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
 
-r55 未提交工作树包含：
+r55 随 `f1390b3` 入库的内容：
 
 - 结算与安全：secure webhook、money retries、checkout、commission、coupon、topup、giftcard redeem；
 - 节点编排：nodefabric（enrollment、node/server admin、service）、plan_wizard_update；
 - 平台层：config 重构、geoip、quicklogin、invite；
-- 新增迁移：00064 nodes server delete silence、00065 gift cards tenant FK、00066 invite owner active unique。
+- 新增迁移：00064 nodes server delete silence、00065 gift cards tenant FK、00066 invite owner active unique、00067 drop orphan tables（21 张孤儿表，未在任何数据库执行）。
 
 既定路线：按固定 Xboard commit `4f48e61a2cbc6db5338872b6bdb45ef954ec1256` 与差异矩阵逐页验收，优先节点列表 / 创建 / 编辑 / 权限组，逐项证明保存及实际生效。保持 Go / PostgreSQL / NativeCore 不变。
 
@@ -359,7 +362,7 @@ r55 未提交工作树包含：
 4. Android / Desktop 专属客户端及公共 SDK。
 5. 全后台四视口浏览器矩阵。
 6. WebDAV 真实备份恢复演练。
-7. ARM64 真机、独立客户端协议矩阵、冷启动 / 回滚与最终发布。
+7. ARM64：CI 原生 race / vet / self-check 以 `fix/ci-green` 推送后的运行通过为准，之后是安装式 ARM64；独立客户端协议矩阵、冷启动 / 回滚与最终发布。
 
 工单 eligible assignee 接口与分配 UI 已存在（`GET /v1/tickets/assignees`、`POST /v1/tickets/{id}/assign`），2026-09-21 从路线图移除。
 
