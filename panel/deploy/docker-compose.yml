@@ -1,0 +1,137 @@
+# AegisPanel 数据基座。
+#
+# 该 compose 与宿主机上已有的 suwan-life-os / shared-browser 完全隔离：
+#   - 独立项目名 aegis（COMPOSE_PROJECT_NAME）
+#   - 独立 bridge 网络 aegis_data
+#   - 独立命名卷 aegis_pgdata / aegis_valkeydata
+#   - 宿主端口只绑 127.0.0.1，满足 ARC-003「数据面私有化」：外部扫描不可达
+#
+# 内存预算：宿主仅 1.9G 且已被占用，故两个服务都做了低内存调参。
+name: aegis
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: aegis-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-aegis}
+      # scram-sha-256 而非 md5：避免弱口令哈希被离线破解
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      TZ: UTC
+      PGTZ: UTC
+    command:
+      - postgres
+      # --- 低内存调参（宿主 1.9G）---
+      - -c
+      - max_connections=60
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=384MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=48MB
+      # --- 可靠性 / NFR-003 时间点恢复的前提 ---
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_size=512MB
+      - -c
+      - min_wal_size=96MB
+      - -c
+      - checkpoint_completion_target=0.9
+      # --- 可观测性 NFR-005：慢查询与自动 EXPLAIN 线索 ---
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_checkpoints=off
+      # --- 强制 UTC，账期换算全部在应用层按租户时区做（SUB-010）---
+      - -c
+      - timezone=UTC
+    ports:
+      # 只绑回环地址：不产生公网监听
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # PG 18+ 镜像改用 pg_ctlcluster 布局（主版本号子目录），挂载点必须是
+      # /var/lib/postgresql 而非旧版的 /var/lib/postgresql/data，
+      # 否则启动时报「unused mount/volume」并循环重启。
+      - pgdata:/var/lib/postgresql
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegis}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  valkey:
+    # Valkey 8 = Redis 协议兼容的 BSD 许可分支（Redis 7.4+ 已改 RSALv2/SSPL）
+    image: valkey/valkey:8-alpine
+    container_name: aegis-valkey
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --requirepass
+      - ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}
+      - --maxmemory
+      - 96mb
+      # 限流计数器、幂等键、会话缓存都允许被淘汰；持久化状态一律落 PG
+      - --maxmemory-policy
+      - allkeys-lru
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      # 危险命令改名，降低横向移动价值
+      - --rename-command
+      - FLUSHALL
+      - ""
+      - --rename-command
+      - FLUSHDB
+      - ""
+    ports:
+      - "127.0.0.1:${VALKEY_PORT:-6380}:6379"
+    volumes:
+      - valkeydata:/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    deploy:
+      resources:
+        limits:
+          memory: 160M
+
+networks:
+  data:
+    name: aegis_data
+    driver: bridge
+
+volumes:
+  pgdata:
+    name: aegis_pgdata
+  valkeydata:
+    name: aegis_valkeydata

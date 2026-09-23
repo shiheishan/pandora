@@ -1,0 +1,40 @@
+[Unit]
+Description=Pandora NativeCore node agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=pandora
+Group=pandora
+ExecStart=/usr/local/bin/pandora-native -c /etc/pandora-native/config.json
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+NoNewPrivileges=true
+UMask=0077
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/var/lib/pandora-native /var/log/pandora-native
+StateDirectory=pandora-native
+LogsDirectory=pandora-native
+LimitNOFILE=1048576
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,222 @@
+[
+  {
+    "node_no": 105,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 2,
+      "utls": "chrome",
+      "network": "tcp",
+      "reality_settings": {
+        "dest": "www.apple.com:443",
+        "short_id": "b5301d06",
+        "public_key": "g6JP7noZPAfVjuXKL2xmTnKG-2xRwlt65iUksUaGGio",
+        "private_key": "sHZ-Gh_Ua_QIytpLJZnHtGoCZAwmNhH_-zha9wro_Vc",
+        "server_name": "www.apple.com"
+      }
+    },
+    "expect_kernel": {
+      "dest": "www.apple.com:443",
+      "network": "tcp",
+      "security": "reality",
+      "short_ids": [
+        "b5301d06"
+      ],
+      "public_key": "g6JP7noZPAfVjuXKL2xmTnKG-2xRwlt65iUksUaGGio",
+      "fingerprint": "chrome",
+      "private_key": "sHZ-Gh_Ua_QIytpLJZnHtGoCZAwmNhH_-zha9wro_Vc",
+      "server_names": [
+        "www.apple.com"
+      ]
+    }
+  },
+  {
+    "node_no": 106,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 1,
+      "network": "tcp"
+    },
+    "expect_kernel": {
+      "tls": 1,
+      "network": "tcp"
+    }
+  },
+  {
+    "node_no": 107,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 1,
+      "network": "tcp"
+    },
+    "expect_kernel": {
+      "tls": 1,
+      "network": "tcp"
+    }
+  },
+  {
+    "node_no": 108,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 1,
+      "network": "tcp"
+    },
+    "expect_kernel": {
+      "tls": 1,
+      "network": "tcp"
+    }
+  },
+  {
+    "node_no": 110,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 1,
+      "network": "tcp"
+    },
+    "expect_kernel": {
+      "tls": 1,
+      "network": "tcp"
+    }
+  },
+  {
+    "node_no": 113,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 1,
+      "network": "tcp"
+    },
+    "expect_kernel": {
+      "tls": 1,
+      "network": "tcp"
+    }
+  },
+  {
+    "node_no": 133,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": false,
+      "network": "tcp"
+    },
+    "expect_kernel": {
+      "tls": false,
+      "network": "tcp"
+    }
+  },
+  {
+    "node_no": 134,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": false,
+      "network": "tcp"
+    },
+    "expect_kernel": {
+      "tls": false,
+      "network": "tcp"
+    }
+  },
+  {
+    "node_no": 135,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 2,
+      "utls": "chrome",
+      "network": "tcp",
+      "reality_settings": {
+        "dest": "www.apple.com:443",
+        "short_id": "62382912",
+        "public_key": "yeIslh6o9RlckEQVOxFt5Lb9lvZElDnnVS2PeCdB110",
+        "private_key": "ABnp42eJh4ZDjk8-YclImht-AFocwODs_H12ACge3FE",
+        "server_name": "www.apple.com"
+      }
+    },
+    "expect_kernel": {
+      "dest": "www.apple.com:443",
+      "network": "tcp",
+      "security": "reality",
+      "short_ids": [
+        "62382912"
+      ],
+      "public_key": "yeIslh6o9RlckEQVOxFt5Lb9lvZElDnnVS2PeCdB110",
+      "fingerprint": "chrome",
+      "private_key": "ABnp42eJh4ZDjk8-YclImht-AFocwODs_H12ACge3FE",
+      "server_names": [
+        "www.apple.com"
+      ]
+    }
+  },
+  {
+    "node_no": 136,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 2,
+      "utls": "chrome",
+      "network": "tcp",
+      "reality_settings": {
+        "dest": "www.apple.com:443",
+        "short_id": "70de7932",
+        "public_key": "NjKnQqniM60YWRGti3vsVBRqtVYGZXk06HKM_E23Ujc",
+        "private_key": "aKUnoey86LT70k-EJwEkIIwOjv74sBbMtm0MWeK-EEo",
+        "server_name": "www.apple.com"
+      }
+    },
+    "expect_kernel": {
+      "dest": "www.apple.com:443",
+      "network": "tcp",
+      "security": "reality",
+      "short_ids": [
+        "70de7932"
+      ],
+      "public_key": "NjKnQqniM60YWRGti3vsVBRqtVYGZXk06HKM_E23Ujc",
+      "fingerprint": "chrome",
+      "private_key": "aKUnoey86LT70k-EJwEkIIwOjv74sBbMtm0MWeK-EEo",
+      "server_names": [
+        "www.apple.com"
+      ]
+    }
+  },
+  {
+    "node_no": 138,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 0,
+      "network": "tcp"
+    },
+    "expect_kernel": {
+      "network": "tcp",
+      "security": "none"
+    }
+  },
+  {
+    "node_no": 139,
+    "node_type": "vless",
+    "stored_xboard": {
+      "mtu": 1350,
+      "tls": 0,
+      "tti": 50,
+      "network": "mkcp",
+      "congestion": true,
+      "uplink_capacity": 50,
+      "downlink_capacity": 100
+    },
+    "expect_kernel": {
+      "mtu": 1350,
+      "tti": 50,
+      "network": "mkcp",
+      "security": "none",
+      "congestion": true,
+      "uplink_capacity": 50,
+      "downlink_capacity": 100
+    }
+  },
+  {
+    "node_no": 140,
+    "node_type": "vless",
+    "stored_xboard": {
+      "tls": 0,
+      "network": "tcp"
+    },
+    "expect_kernel": {
+      "network": "tcp",
+      "security": "none"
+    }
+  }
+]

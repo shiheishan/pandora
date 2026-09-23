@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+POSTGRES_IMAGE="${PANDORA_TEST_POSTGRES_IMAGE:?set PANDORA_TEST_POSTGRES_IMAGE to a locally present postgres@sha256 digest}"
+GO_IMAGE="${PANDORA_TEST_GO_IMAGE:?set PANDORA_TEST_GO_IMAGE to a locally present golang@sha256 digest}"
+[[ "$POSTGRES_IMAGE" =~ ^.+@sha256:[0-9a-f]{64}$ ]] || { echo 'content_pg18_refused_mutable_postgres_image' >&2; exit 2; }
+[[ "$GO_IMAGE" =~ ^.+@sha256:[0-9a-f]{64}$ ]] || { echo 'content_pg18_refused_mutable_go_image' >&2; exit 2; }
+
+for command_name in docker awk grep seq tr; do
+  command -v "$command_name" >/dev/null 2>&1 || { printf 'content_pg18_blocked_command=%s\n' "$command_name" >&2; exit 2; }
+done
+docker info >/dev/null 2>&1 || { echo 'content_pg18_blocked_docker_daemon' >&2; exit 2; }
+
+RUN_ID="$(tr -d '-' </proc/sys/kernel/random/uuid)"
+[[ "$RUN_ID" =~ ^[0-9a-f]{32}$ ]] || { echo 'content_pg18_random_identity_failed' >&2; exit 2; }
+PG_CONTAINER="pandora-content-pg18-${RUN_ID}"
+GO_CONTAINER="pandora-content-go-${RUN_ID}"
+NETWORK="pandora-content-net-${RUN_ID}"
+DB_NAME="pandora_content_${RUN_ID}"
+POSTGRES_PASSWORD="content-pg18-test-only"
+APP_PASSWORD="content-aegis-app-test-only-2026"
+APP_DSN="postgres://aegis_app:${APP_PASSWORD}@pg18:5432/${DB_NAME}?sslmode=disable"
+ADMIN_DSN="postgres://postgres:${POSTGRES_PASSWORD}@pg18:5432/${DB_NAME}?sslmode=disable"
+PG_CONTAINER_ID=""
+GO_CONTAINER_ID=""
+NETWORK_ID=""
+BUSINESS_OK=0
+
+inspect_absent() {
+  local kind="$1" name="$2"
+  if docker "$kind" inspect "$name" >/dev/null 2>&1; then
+    printf 'content_pg18_refused_preexisting_%s=%s\n' "$kind" "$name" >&2
+    return 1
+  fi
+  docker info >/dev/null 2>&1 || return 1
+  ! docker "$kind" inspect "$name" >/dev/null 2>&1
+}
+
+for name in "$PG_CONTAINER" "$GO_CONTAINER"; do inspect_absent container "$name"; done
+inspect_absent network "$NETWORK"
+
+remove_owned_container() {
+  local id="$1" expected="$2" actual
+  [[ -n "$id" ]] || return 0
+  if ! actual="$(docker container inspect -f '{{.Id}}|{{.Name}}|{{index .Config.Labels "pandora.test"}}|{{index .Config.Labels "pandora.run"}}' "$id" 2>/dev/null)"; then
+    docker info >/dev/null 2>&1 || return 1
+    return 0
+  fi
+  [[ "$actual" == "$id|/$expected|content-pages-pg18|$RUN_ID" ]] || {
+    printf 'content_pg18_refused_unowned_container=%s actual=%s\n' "$expected" "$actual" >&2
+    return 1
+  }
+  docker rm -fv "$id" >/dev/null
+}
+
+remove_owned_network() {
+  local id="$1" actual
+  [[ -n "$id" ]] || return 0
+  if ! actual="$(docker network inspect -f '{{.Id}}|{{.Name}}|{{index .Labels "pandora.test"}}|{{index .Labels "pandora.run"}}' "$id" 2>/dev/null)"; then
+    docker info >/dev/null 2>&1 || return 1
+    return 0
+  fi
+  [[ "$actual" == "$id|$NETWORK|content-pages-pg18|$RUN_ID" ]] || {
+    printf 'content_pg18_refused_unowned_network=%s actual=%s\n' "$NETWORK" "$actual" >&2
+    return 1
+  }
+  docker network rm "$id" >/dev/null
+}
+
+emit_final_markers() {
+  local rc="$1" cleanup_rc="$2"
+  printf 'content_pg18_cleanup=%s\n' "$([[ "$cleanup_rc" -eq 0 ]] && echo ok || echo failed)"
+  if [[ "$rc" -eq 0 && "$cleanup_rc" -eq 0 && "$BUSINESS_OK" -eq 1 ]]; then
+    echo 'content_pg18_full_suite=ok cleanup=ok business=ok schema=40'
+  fi
+}
+
+cleanup() {
+  local rc="$1" cleanup_rc=0
+  trap - EXIT INT TERM
+  set +e
+  remove_owned_container "$GO_CONTAINER_ID" "$GO_CONTAINER" || cleanup_rc=1
+  remove_owned_container "$PG_CONTAINER_ID" "$PG_CONTAINER" || cleanup_rc=1
+  remove_owned_network "$NETWORK_ID" || cleanup_rc=1
+  for name in "$PG_CONTAINER" "$GO_CONTAINER"; do inspect_absent container "$name" || cleanup_rc=1; done
+  inspect_absent network "$NETWORK" || cleanup_rc=1
+  [[ "$cleanup_rc" -eq 0 ]] || rc=1
+  emit_final_markers "$rc" "$cleanup_rc"
+  exit "$rc"
+}
+trap 'cleanup "$?"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+up_sql() { awk '/^-- \+goose Down/{exit} /^-- \+goose Up/{up=1; next} up' "$1"; }
+MIGRATION_PGOPTIONS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes'
+psql_admin() {
+  docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" -e PGOPTIONS="$MIGRATION_PGOPTIONS" "$PG_CONTAINER_ID" \
+    psql -X -v ON_ERROR_STOP=1 -U postgres -d "$DB_NAME" "$@"
+}
+
+PG_IMAGE_ID="$(docker image inspect -f '{{.Id}}' "$POSTGRES_IMAGE")" || { echo 'content_pg18_postgres_image_not_local' >&2; exit 2; }
+GO_IMAGE_ID="$(docker image inspect -f '{{.Id}}' "$GO_IMAGE")" || { echo 'content_pg18_go_image_not_local' >&2; exit 2; }
+[[ "$PG_IMAGE_ID" == sha256:* && "$GO_IMAGE_ID" == sha256:* ]]
+
+NETWORK_ID="$(docker network create --label pandora.test=content-pages-pg18 --label "pandora.run=$RUN_ID" "$NETWORK")"
+PG_CONTAINER_ID="$(docker create --name "$PG_CONTAINER" --label pandora.test=content-pages-pg18 --label "pandora.run=$RUN_ID" \
+  --network "$NETWORK_ID" --network-alias pg18 --cpus 0.75 --memory 768m \
+  -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" -e POSTGRES_DB="$DB_NAME" "$PG_IMAGE_ID")"
+docker start "$PG_CONTAINER_ID" >/dev/null
+for _ in $(seq 1 90); do
+  docker exec "$PG_CONTAINER_ID" pg_isready -U postgres -d "$DB_NAME" >/dev/null 2>&1 && break
+  sleep 1
+done
+docker exec "$PG_CONTAINER_ID" pg_isready -U postgres -d "$DB_NAME" >/dev/null
+[[ "$(docker inspect -f '{{json .HostConfig.PortBindings}}' "$PG_CONTAINER_ID")" =~ ^(\{\}|null)$ ]]
+[[ "$(docker exec "$PG_CONTAINER_ID" psql -XAt -U postgres -d "$DB_NAME" -c 'SHOW server_version_num')" == 18* ]]
+
+psql_admin >/dev/null <<'SQL'
+CREATE TABLE public.goose_db_version (
+  id serial PRIMARY KEY,
+  version_id bigint NOT NULL,
+  is_applied boolean NOT NULL,
+  tstamp timestamp NOT NULL DEFAULT now()
+);
+INSERT INTO public.goose_db_version(version_id,is_applied) VALUES (0,true);
+SQL
+
+migration_count=0
+last_migration=""
+for n in $(seq 1 40); do
+  number="$(printf '%05d' "$n")"
+  shopt -s nullglob
+  matches=("$ROOT"/migrations/"$number"_*.sql)
+  shopt -u nullglob
+  [[ "${#matches[@]}" -eq 1 ]] || { printf 'content_pg18_migration_match_%s=%d\n' "$number" "${#matches[@]}" >&2; exit 1; }
+  migration="${matches[0]}"
+  {
+    echo 'BEGIN;'
+    up_sql "$migration"
+    printf 'INSERT INTO public.goose_db_version(version_id,is_applied) VALUES (%d,true);\n' "$n"
+    echo 'COMMIT;'
+  } | psql_admin >/dev/null
+  migration_count=$((migration_count + 1))
+  last_migration="$(basename "$migration")"
+done
+[[ "$migration_count" -eq 40 && "$last_migration" == 00040_* ]]
+[[ "$(psql_admin -Atc "SELECT count(*) FILTER (WHERE is_applied AND version_id BETWEEN 1 AND 40), max(version_id), count(*) FILTER (WHERE version_id > 40) FROM goose_db_version")" == '40|40|0' ]]
+
+docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" -e AEGIS_DB_APP_PASSWORD="$APP_PASSWORD" \
+  "$PG_CONTAINER_ID" psql -X -v ON_ERROR_STOP=1 -U postgres -d "$DB_NAME" \
+  < "$ROOT/deploy/configure-app-role.sql" >/dev/null
+
+psql_admin -v run_id="$RUN_ID" -v db_comment="pandora-content-pg18:$RUN_ID" >/dev/null <<'SQL'
+CREATE TABLE public.pandora_content_test_marker (
+  run_id text PRIMARY KEY,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+REVOKE ALL ON public.pandora_content_test_marker FROM PUBLIC, aegis_app;
+INSERT INTO public.pandora_content_test_marker(run_id) VALUES(:'run_id');
+GRANT SELECT ON public.pandora_content_test_marker TO aegis_app;
+SELECT format('COMMENT ON DATABASE %I IS %L', current_database(), :'db_comment') \gexec
+SQL
+
+GO_CONTAINER_ID="$(docker create --name "$GO_CONTAINER" --label pandora.test=content-pages-pg18 --label "pandora.run=$RUN_ID" \
+  --network "$NETWORK_ID" --cpus 1 --memory 1536m -v "$ROOT:/src:ro" -w /src \
+  -e AEGIS_CONTENT_PG18_FIXTURE=disposable-v1 \
+  -e "AEGIS_CONTENT_PG18_DSN=$APP_DSN" -e "AEGIS_CONTENT_PG18_ADMIN_DSN=$ADMIN_DSN" \
+  -e "AEGIS_CONTENT_PG18_DATABASE=$DB_NAME" -e "AEGIS_CONTENT_PG18_RUN_ID=$RUN_ID" \
+  "$GO_IMAGE_ID" sh -ec 'go test -mod=readonly -buildvcs=false -v -count=1 -timeout=120s -run "^TestContentPagesPG18$" ./internal/domain/content')"
+set +e
+GO_OUTPUT="$(docker start -a "$GO_CONTAINER_ID" 2>&1)"
+GO_RC=$?
+set -e
+printf '%s\n' "$GO_OUTPUT"
+[[ "$GO_RC" -eq 0 ]]
+grep -Fq 'content_pg18_business=ok role=aegis_app rls=on schema=40' <<<"$GO_OUTPUT"
+BUSINESS_OK=1
+
+printf 'content_pg18_images=%s,%s\n' "$PG_IMAGE_ID" "$GO_IMAGE_ID"
+printf 'content_pg18_real_migrations=%d last=%s\n' "$migration_count" "$last_migration"

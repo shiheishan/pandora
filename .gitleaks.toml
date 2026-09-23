@@ -1,0 +1,62 @@
+# [INPUT]: 由 .githooks/pre-commit 以 gitleaks git --pre-commit --staged 加载
+# [OUTPUT]: 提交前密钥扫描的公开规则：gitleaks 内置规则 + 本项目专属格式
+# [POS]: 仓库的第一道泄露闸门；只写“格式”，不写任何真实值——具体的服务器 IP、
+#        域名这类私有特征放在被忽略的 ops-local/gitleaks-private.toml，由同一个钩子加载
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
+title = "pandora"
+
+[extend]
+useDefault = true
+
+# Komari 监控的 admin API 密钥：带 admin:exec，拿到即可在被管机器上执行命令
+[[rules]]
+id = "komari-api-key"
+description = "Komari admin API key"
+regex = '''komari-[A-Za-z0-9]{20,}'''
+keywords = ["komari-"]
+
+# 管理后台隐藏路径前缀：install.sh 生成的 ops_ + 十六进制，靠不可猜测挡扫描
+[[rules]]
+id = "pandora-admin-path-prefix"
+description = "Pandora admin console hidden path prefix"
+regex = '''ops_[0-9a-f]{20,}'''
+keywords = ["ops_"]
+
+  # render-nginx_test.sh 用的是显然虚构的递增串
+  [[rules.allowlists]]
+  regexes = ['''ops_0123456789abcdef0123456789abcdef''']
+
+# ---------------------------------------------------------------------------
+# 已逐条核实的误报，按完整值放行（不放行整个文件：同一文件里将来出现的真密钥照样拦）。
+# 冻结迁移的 SHA-256、幂等标签、接口路径、协议常量名、CLIENT-AUTH 测试向量
+# （0x00..0x3f 递增字节的 base64、签发方为 client.example.com 的 JWT）。
+# 新增一条前先确认它不是机密。nodefabric/testdata 夹具曾带着生产节点的真实 REALITY 私钥，
+# 2026-09-22 已换成新生成的假密钥对（见 xboard_field_names_test.go 注释），下面只放行这几个假值；
+# 以后夹具里出现任何别的私钥都会被拦。
+# ---------------------------------------------------------------------------
+[[allowlists]]
+description = "verified non-secret literals"
+regexTarget = "secret"
+regexes = [
+  '''^ffaf84b6e73eb0eef6794f5ca72859607b0c4c5bf313d9f7548dae120848dff5$''',
+  '''^pandora\.idempotency\-00038\.run$''',
+  '''^pandora\.idempotency\-00037\.run$''',
+  '''^v1/me/withdrawals$''',
+  '''^eyJhbGciOiJIUzI1NiJ9\.eyJqdGkiOiJ0ZXN0In0\.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA$''',
+  '''^eyJhbGciOiJIUzI1NiIsImtpZCI6ImNsand0XzAwMDAwMDAxIiwidHlwIjoiSldUIn0\.eyJpc3MiOiJodHRwczovL2NsaWVudC5leGFtcGxlLmNvbSIsInN1YiI6IjAwMTEyMjMzLTQ0NTUtNjY3Ny04ODk5LWFhYmJjY2RkZWVmZiIsImF1ZCI6ImNsaWVudCIsImlhdCI6MTc4NTM5ODQwMCwiZXhwIjoxNzg1Mzk5MDAwfQ\.VPI2EkLkKzIYZlXbPPHPyA6nIOP41LCHwCrqUgBHM34$''',
+  '''^rt_test_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''',
+  '''^ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8$''',
+  '''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''',
+  '''^opaque\-bytes\-v1$''',
+  '''^00042_wrong\.sql$''',
+  '''^vector\.ATHB64U$''',
+  '''^X25519MLKEM768$''',
+  '''^hkdfLabelKeyV1$''',
+  '''^hkdfLabelKeyV2$''',
+  # nodefabric 夹具的虚构 REALITY 私钥 ×3 与虚构 ShadowTLS server_key（base64 of fake-server-key-019）
+  '''^sHZ\-Gh_Ua_QIytpLJZnHtGoCZAwmNhH_\-zha9wro_Vc$''',
+  '''^ZmFrZS1zZXJ2ZXIta2V5LTAxOQ==$''',
+  '''^ABnp42eJh4ZDjk8\-YclImht\-AFocwODs_H12ACge3FE$''',
+  '''^aKUnoey86LT70k\-EJwEkIIwOjv74sBbMtm0MWeK\-EEo$''',
+]

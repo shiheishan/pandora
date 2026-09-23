@@ -1,0 +1,15 @@
+{
+  "contract_sha256": "9fa97c184a9fc93eb0b07f9ebedba3d948a94c7d61a9e0aabfb8cc5635d56939",
+  "hmac_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "tenant_uuid_hex": "00112233445566778899aabbccddeeff",
+  "row_uuid_hex": "102132435465768798a9babbdcddedef",
+  "timestamp_microseconds": -123456789,
+  "numeric": "12.34",
+  "bpchar_raw": "U ",
+  "ipv4": {"family": 4, "prefix": 25, "address_hex": "c0000281"},
+  "ipv6": {"family": 6, "prefix": 65, "address_hex": "20010db8000000008000000000000001"},
+  "text_array": {
+    "dimensions": [{"length": 2, "lower_bound": -2}],
+    "elements": [{"null": false, "text": "alpha"}, {"null": true, "text": ""}]
+  }
+}

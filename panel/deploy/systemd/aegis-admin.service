@@ -1,0 +1,42 @@
+[Unit]
+Description=Pandora Panel Admin Gateway
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aegispanel
+EnvironmentFile=/opt/aegispanel/deploy/.env
+ExecStart=/opt/aegispanel/bin/aegis-admin
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
+MemoryMax=384M
+CPUQuota=80%
+StandardOutput=append:/var/log/aegis/admin.log
+StandardError=append:/var/log/aegis/admin.log
+
+[Install]
+WantedBy=multi-user.target
+

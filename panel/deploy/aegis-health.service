@@ -1,0 +1,11 @@
+[Unit]
+Description=潘多拉面板健康巡检
+After=aegis-public.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/aegispanel/deploy/healthcheck.sh
+WorkingDirectory=/opt/aegispanel
+# 巡检自己卡住就没意义了：数据库连接挂起、curl 卡在 TLS 握手
+# 都可能让它永远不返回，然后下一次触发被 systemd 跳过。
+TimeoutStartSec=120

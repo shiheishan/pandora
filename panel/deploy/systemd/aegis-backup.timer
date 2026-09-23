@@ -1,0 +1,12 @@
+[Unit]
+Description=Run AegisPanel encrypted PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+RandomizedDelaySec=45m
+Persistent=true
+AccuracySec=1m
+Unit=aegis-backup.service
+
+[Install]
+WantedBy=timers.target

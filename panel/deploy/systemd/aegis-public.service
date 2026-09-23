@@ -1,0 +1,51 @@
+[Unit]
+Description=AegisPanel Public API Gateway
+Documentation=https://github.com/aegispanel/aegis
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aegispanel
+EnvironmentFile=/opt/aegispanel/deploy/.env
+ExecStart=/opt/aegispanel/bin/aegis-public
+
+# NFR-001：优雅退出，让在途的支付回调与下单事务跑完再退
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+# --- 沙箱化。ARC-002/SEC-014 的运行时对应物：
+#     网关只需要监听回环端口和连数据库，不需要任何写盘或提权能力。---
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# 只允许 IPv4/IPv6/Unix 套接字族
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
+
+# 1 vCPU / 2G 宿主上还跑着其他业务，给网关设硬上限避免互相挤占
+MemoryMax=256M
+CPUQuota=60%
+
+StandardOutput=append:/var/log/aegis/public.log
+StandardError=append:/var/log/aegis/public.log
+
+[Install]
+WantedBy=multi-user.target

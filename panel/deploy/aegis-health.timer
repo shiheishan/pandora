@@ -1,0 +1,13 @@
+[Unit]
+Description=每 10 分钟跑一次面板健康巡检
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+# 错开整点：备份、certbot 这些都爱挑整点跑，
+# 挤在一起会让巡检把它们造成的瞬时抖动当成故障。
+RandomizedDelaySec=90
+Persistent=true
+
+[Install]
+WantedBy=timers.target

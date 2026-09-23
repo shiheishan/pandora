@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# [INPUT]: 依赖 gitleaks、仓库根的 .gitleaks.toml、可选的 ops-local/gitleaks-private.toml
+# [OUTPUT]: 暂存区含密钥或私有基础设施特征时拒绝提交
+# [POS]: 仓库唯一的提交前闸门，经 git config core.hooksPath .githooks 启用；fail-closed——没装 gitleaks 也拒绝
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: 未安装 gitleaks（brew install gitleaks），拒绝提交" >&2
+  exit 1
+fi
+
+root="$(git rev-parse --show-toplevel)"
+scan() { gitleaks git --pre-commit --staged --redact --no-banner --config "$1" "$root"; }
+
+# 公开规则：内置密钥格式 + 本项目专属格式
+scan "$root/.gitleaks.toml"
+# 私有规则：真实服务器 IP、监控域名等，只存在于维护者本机
+if [[ -f "$root/ops-local/gitleaks-private.toml" ]]; then
+  scan "$root/ops-local/gitleaks-private.toml"
+fi

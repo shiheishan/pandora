@@ -1,0 +1,139 @@
+{
+  "schema_version": "aegis-device-pop-v1-vectors-1",
+  "vectors": [
+    {
+      "ath_b64u": "L6VoES3PKjH6XxqQXxRcHbKrdUJWMWserESwHoy2V08",
+      "body_sha256_b64u": "juuyy3R-1MzM12fkCAwimsZGELRhsrRs37SM062Q_2g",
+      "canonical_sha256_b64u": "enFUTCTzK2Ukojk0Bi6saGwd3n3Hhg-Tz0s4nf3jH1A",
+      "canonical_utf8": "AEGIS-DEVICE-POP-V1\norigin:https://client.example.com\nmethod:POST\ntarget:/v1/device/token\ntimestamp:1785398400\nnonce:AAECAwQFBgcICQoLDA0ODw\nbody-sha256:juuyy3R-1MzM12fkCAwimsZGELRhsrRs37SM062Q_2g\ncredential-kind:device_code\nath:L6VoES3PKjH6XxqQXxRcHbKrdUJWMWserESwHoy2V08\n",
+      "nonce_request_hash_b64u": "AKyL-EmlDrl-bVouj2CGGkakozEDfQni9uSNdsJaSHI",
+      "request": {
+        "body_utf8": "{\"device_code\":\"dc_test_7Zx\",\"grant_type\":\"urn:ietf:params:oauth:grant-type:device_code\"}",
+        "credential_ascii": "dc_test_7Zx",
+        "credential_kind": "device_code",
+        "method": "POST",
+        "nonce_b64u": "AAECAwQFBgcICQoLDA0ODw",
+        "origin": "https://client.example.com",
+        "target": "/v1/device/token",
+        "timestamp": "1785398400"
+      },
+      "signatures": [
+        {
+          "algorithm": "p256-es256",
+          "public_key_spki_b64u": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q",
+          "signature_b64u": "fPJ7GI0DT36KUjgDBLUaw8CJaeJ38hs1pgtI_EdmmXh7seeyWPs9cdd6OJuFceOWFlOkMB-8FWS6q0DNIqTcZA"
+        },
+        {
+          "algorithm": "ed25519",
+          "public_key_spki_b64u": "MCowBQYDK2VwAyEAO2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik",
+          "signature_b64u": "P8LNxXtC8qqr1h8eSwt2IpkmWhMc0hgqBah4-UPDOTBQYOedgEfDRwJHgGRiV97LCGHFmdNqmO2cAL6couqvAQ"
+        }
+      ],
+      "vector_id": "device-pop-v1-01"
+    }
+  ],
+  "authorization": {
+    "vector_id": "authorization-ath-v1-01",
+    "valid_field_lines": [
+      "Aegis-PoP eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    ],
+    "token_ascii": "eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "ath_b64u": "rMZwtCN7i0t0D7XndL0AT3C3S4AqlUyPi5C_mpS5FGU",
+    "negative_cases": [
+      {
+        "vector_id": "authorization-missing-v1",
+        "mode": "required",
+        "field_lines": []
+      },
+      {
+        "vector_id": "authorization-duplicate-v1",
+        "mode": "required",
+        "field_lines": [
+          "Aegis-PoP eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "Aegis-PoP eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ]
+      },
+      {
+        "vector_id": "authorization-comma-joined-v1",
+        "mode": "required",
+        "field_lines": [
+          "Aegis-PoP eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,Aegis-PoP eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ]
+      },
+      {
+        "vector_id": "authorization-bearer-v1",
+        "mode": "required",
+        "field_lines": [
+          "Bearer eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ]
+      },
+      {
+        "vector_id": "authorization-double-space-v1",
+        "mode": "required",
+        "field_lines": [
+          "Aegis-PoP  eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ]
+      },
+      {
+        "vector_id": "authorization-wrong-case-v1",
+        "mode": "required",
+        "field_lines": [
+          "aegis-pop eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ]
+      },
+      {
+        "vector_id": "authorization-forbidden-present-v1",
+        "mode": "forbidden",
+        "field_lines": [
+          "Aegis-PoP eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJ0ZXN0In0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ]
+      }
+    ]
+  },
+  "negative_vectors": [
+    {
+      "vector_id": "canonical-crlf-v1",
+      "kind": "canonical-bytes",
+      "mutation": "lf-to-crlf"
+    },
+    {
+      "vector_id": "canonical-missing-final-lf-v1",
+      "kind": "canonical-bytes",
+      "mutation": "remove-final-lf"
+    },
+    {
+      "vector_id": "canonical-body-whitespace-v1",
+      "kind": "request",
+      "mutation": "prepend-body-space"
+    },
+    {
+      "vector_id": "canonical-query-reorder-v1",
+      "kind": "request-pair",
+      "first_target": "/v1/example?a=1&b=2",
+      "second_target": "/v1/example?b=2&a=1"
+    },
+    {
+      "vector_id": "p256-der-v1",
+      "kind": "signature",
+      "algorithm": "p256-es256",
+      "signature_b64u": "MEQCIHzyexiNA09-ilI4AwS1GsPAiWnid_IbNaYLSPxHZpl4AiB7seeyWPs9cdd6OJuFceOWFlOkMB-8FWS6q0DNIqTcZA"
+    },
+    {
+      "vector_id": "p256-high-s-v1",
+      "kind": "signature",
+      "algorithm": "p256-es256",
+      "signature_b64u": "fPJ7GI0DT36KUjgDBLUaw8CJaeJ38hs1pgtI_EdmmXiEThhMpwTCjyiFx2R6jhxpppNWfYdbiSA5Don12b5I7Q"
+    },
+    {
+      "vector_id": "ed25519-prehash-v1",
+      "kind": "signature-message",
+      "algorithm": "ed25519",
+      "mutation": "sha256-message"
+    },
+    {
+      "vector_id": "nonce-domain-separation-v1",
+      "kind": "domain-separation",
+      "mutation": "omit-domain-and-nul"
+    }
+  ]
+}

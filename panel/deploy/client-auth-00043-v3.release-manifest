@@ -1,0 +1,4 @@
+format=client-auth-00043-v3-release-manifest
+status=PLACEHOLDER_NO_GO
+v3_contract_sha256=E8C323762014B5F97D04CF861287026F0D3784D56B2324E1E6B0BC14D833DAC7
+reason=trusted_amd64_arm64_goose_psql_and_install_root_not_frozen

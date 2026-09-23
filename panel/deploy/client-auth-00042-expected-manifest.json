@@ -1,0 +1,11 @@
+{
+  "format": "client-auth-00042-external-manifest-v1",
+  "status": "PLACEHOLDER_NO_GO",
+  "frozen_migration_sha256": "ffaf84b6e73eb0eef6794f5ca72859607b0c4c5bf313d9f7548dae120848dff5",
+  "postgresql_major": 18,
+  "barrier": "exclusive-shared-and-local-catalog-lock-v1",
+  "exact_object_manifest_sha256": null,
+  "source": null,
+  "object_manifest": null,
+  "reason": "No trusted disposable PostgreSQL 18 generation run has been completed. This file is not releasable evidence."
+}

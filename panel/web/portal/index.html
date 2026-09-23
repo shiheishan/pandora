@@ -1,0 +1,4315 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>潘多拉面板</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%236d5efc'/%3E%3Cpath d='M32 13l15 7v11c0 10-6.4 17.3-15 20-8.6-2.7-15-10-15-20V20l15-7z' fill='none' stroke='white' stroke-width='5'/%3E%3C/svg%3E">
+<style>
+/* ============================================================================
+   设计系统
+   间距严格走 4px 网格；圆角、阴影、动效各自成阶。
+   克制是关键：渐变只出现在 logo、主 CTA、推荐卡边框三处。
+   ========================================================================= */
+:root{
+  /* 类型尺度：每档之间肉眼可辨，不再有 0.5px 的伪层级 */
+  --fs-2xs:11px; --fs-xs:12px; --fs-sm:13px; --fs-base:14px; --fs-md:15px; --fs-lg:17px; --fs-xl:19px; --fs-2xl:22px; --fs-3xl:26px; --fs-4xl:32px;
+
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px;
+  --sp-6:24px; --sp-8:32px; --sp-10:40px; --sp-12:48px; --sp-16:64px;
+
+  --r-sm:6px; --r-md:10px; --r-lg:14px; --r-xl:20px; --r-full:999px;
+
+  --ease:cubic-bezier(.4,0,.2,1);
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --t-fast:130ms; --t-base:200ms; --t-slow:320ms;
+
+  --brand:#6d5efc;
+  --brand-2:#a855f7;
+  --brand-soft:rgba(109,94,252,.14);
+  /* 紫底上的紫字：直接用 --brand 只有 3.5，读起来发虚 */
+  --brand-on-soft:#9c92ff;
+  --ok:#22c55e; --ok-soft:rgba(34,197,94,.13);
+  --warn:#f59e0b; --warn-soft:rgba(245,158,11,.13);
+  --err:#f0616d; --err-soft:rgba(240,97,109,.13);
+  /* 角标那种「小字压实色」的场合，--err 太亮，白字浮在上面 */
+  --err-strong:#d6273a;
+
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI Variable Display","Segoe UI",
+         "PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei",
+         system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Consolas,monospace;
+}
+
+/* 深色（默认）*/
+[data-theme="dark"]{
+  --bg:#08090c;
+  --bg-elev:#0d0f14;
+  --surface:#101319;
+  --surface-2:#161a22;
+  --surface-3:#1c212b;
+  --line:rgba(255,255,255,.07);
+  --line-2:rgba(255,255,255,.12);
+  --fg:#e9ebef;
+  --fg-2:#98a0af;
+  --fg-3:#7a8292;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.5);
+  --shadow-md:0 4px 20px -4px rgba(0,0,0,.55);
+  --shadow-lg:0 16px 48px -12px rgba(0,0,0,.7);
+  --glow:radial-gradient(1200px 500px at 50% -20%,rgba(109,94,252,.16),transparent 70%);
+}
+/* 浅色 */
+[data-theme="light"]{
+  --ok:#00841d; --warn:#b15a00; --err:#cc3d49;
+  /* 语义色在白底上必须压深，亮色版本只适合深色卡片 */
+  --bg:#fbfbfd;
+  --bg-elev:#fff;
+  --surface:#fff;
+  --surface-2:#f6f7fa;
+  --surface-3:#eef0f5;
+  --line:rgba(16,20,32,.08);
+  --line-2:rgba(16,20,32,.14);
+  --fg:#0f1319;
+  --fg-2:#5b6474;
+  --fg-3:#697283;
+  --brand-on-soft:#5546d6;
+  --shadow-sm:0 1px 2px rgba(16,24,40,.06);
+  --shadow-md:0 4px 20px -4px rgba(16,24,40,.1);
+  --shadow-lg:0 16px 48px -12px rgba(16,24,40,.16);
+  --glow:radial-gradient(1200px 500px at 50% -20%,rgba(109,94,252,.1),transparent 70%);
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);
+  font-size:var(--fs-base);line-height:1.6;-webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+body::before{
+  content:'';position:fixed;inset:0;background:var(--glow);
+  pointer-events:none;z-index:0;
+}
+h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:-.01em}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--brand);text-decoration:none}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+.mono{font-family:var(--mono);font-size:var(--fs-xs);letter-spacing:-.02em}
+.hide{display:none!important}
+
+/* --------------------------------------------------------------- 滚动条 */
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:var(--r-full);
+  border:3px solid var(--bg)}
+*::-webkit-scrollbar-thumb:hover{background:var(--fg-3)}
+
+/* =========================================================== 通用组件 */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--sp-2);
+  height:38px;padding:0 var(--sp-4);border:1px solid transparent;
+  border-radius:var(--r-md);background:var(--surface-2);color:var(--fg);
+  font-size:var(--fs-sm);font-weight:550;cursor:pointer;white-space:nowrap;
+  transition:background var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease),
+             transform var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease);
+}
+.btn:hover{background:var(--surface-3)}
+.btn:active{transform:scale(.98)}
+.btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+
+.btn-primary{
+  background:linear-gradient(135deg,var(--brand),var(--brand-2));
+  color:#fff;border-color:transparent;
+  box-shadow:0 1px 2px rgba(0,0,0,.2),0 6px 20px -8px rgba(109,94,252,.7);
+}
+.btn-primary:hover{filter:brightness(1.08);box-shadow:0 2px 4px rgba(0,0,0,.2),0 10px 28px -8px rgba(109,94,252,.8)}
+.btn-ghost{background:transparent;border-color:var(--line-2)}
+.btn-ghost:hover{background:var(--surface-2);border-color:var(--fg-3)}
+.btn-sm{height:31px;padding:0 var(--sp-3);font-size:var(--fs-xs);border-radius:var(--r-sm)}
+.btn-block{width:100%}
+.btn-icon{width:34px;height:34px;padding:0;border-radius:var(--r-md);
+  background:transparent;color:var(--fg-2)}
+.btn-icon:hover{background:var(--surface-2);color:var(--fg)}
+
+/* 按钮内联加载态 */
+.spin{
+  width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;
+  border-radius:50%;animation:spin .6s linear infinite;opacity:.85;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 输入 */
+.field{margin-bottom:var(--sp-4)}
+.field label{
+  display:block;font-size:var(--fs-xs);font-weight:550;color:var(--fg-2);
+  margin-bottom:var(--sp-2);letter-spacing:.01em;
+}
+.input{
+  width:100%;height:42px;padding:0 var(--sp-4);
+  background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--r-md);font-size:var(--fs-base);
+  transition:border-color var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease),
+             background var(--t-fast) var(--ease);
+}
+.input::placeholder{color:var(--fg-3)}
+.input:hover{border-color:var(--line-2)}
+.input:focus{
+  outline:none;border-color:var(--brand);background:var(--bg-elev);
+  box-shadow:0 0 0 3px var(--brand-soft);
+}
+.pw-wrap{position:relative}
+.pw-wrap .input{padding-right:48px}
+.pw-toggle{
+  position:absolute;right:4px;top:50%;transform:translateY(-50%);
+  width:36px;height:36px;padding:0;display:grid;place-items:center;
+  border:0;border-radius:var(--r-sm);background:transparent;color:var(--fg-2);
+  cursor:pointer;transition:color var(--t-fast) var(--ease),background var(--t-fast) var(--ease);
+}
+.pw-toggle:hover{color:var(--fg);background:var(--surface-3)}
+.pw-toggle:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.pw-toggle svg{pointer-events:none}
+.pwd-policy{margin-top:var(--sp-2);font-size:var(--fs-xs);color:var(--fg-2)}
+.pwd-policy.ok{color:var(--ok)}
+.pwd-policy.err{color:var(--err)}
+select.input{cursor:pointer;appearance:none;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 14px center;padding-right:38px}
+
+/* 卡片 */
+/* ---- 通知 ---- */
+.bell-wrap{position:relative}
+.bell-dot{
+  position:absolute;top:5px;right:5px;min-width:16px;height:16px;padding:0 4px;
+  border-radius:var(--r-full);background:var(--err-strong);color:#fff;
+  font-size:var(--fs-2xs);font-weight:700;line-height:16px;text-align:center;
+  /* 描边让角标压在铃铛上时边界依然清晰，不至于糊成一团 */
+  box-shadow:0 0 0 2px var(--surface);
+  transform:scale(0);transition:transform var(--t-base) var(--ease-out);
+}
+.bell-dot.on{transform:scale(1)}
+
+.notif-panel{
+  position:absolute;top:calc(100% + 10px);right:0;width:min(380px,calc(100vw - 32px));
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r-lg);box-shadow:var(--shadow-lg);
+  z-index:60;overflow:hidden;
+  opacity:0;transform:translateY(-6px) scale(.98);pointer-events:none;
+  transition:opacity var(--t-fast) var(--ease),transform var(--t-fast) var(--ease-out);
+}
+.notif-panel.open{opacity:1;transform:none;pointer-events:auto}
+.notif-head{
+  display:flex;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-4) var(--sp-5);border-bottom:1px solid var(--line);
+}
+.notif-head b{font-size:var(--fs-sm);letter-spacing:-.01em}
+.notif-head .spacer{flex:1}
+.notif-list{max-height:min(420px,60vh);overflow-y:auto;overscroll-behavior:contain}
+.notif-item{
+  display:block;width:100%;text-align:left;padding:var(--sp-4) var(--sp-5);
+  border:0;border-bottom:1px solid var(--line);background:transparent;
+  cursor:pointer;transition:background var(--t-fast) var(--ease);
+}
+.notif-item:last-child{border-bottom:0}
+.notif-item:hover{background:var(--surface-2)}
+.notif-item .t{
+  display:flex;align-items:center;gap:var(--sp-2);
+  font-size:var(--fs-sm);font-weight:600;color:var(--fg);margin-bottom:3px;
+}
+/* 未读用一个小圆点标记，而不是整行变色 —— 整行高亮在一屏都是未读时
+   会变成满屏色块，反而看不出重点 */
+.notif-item .t::before{
+  content:'';width:6px;height:6px;border-radius:50%;
+  background:var(--brand);flex:none;transition:opacity var(--t-base) var(--ease);
+}
+.notif-item.read .t::before{opacity:0}
+.notif-item.read .t{color:var(--fg-2);font-weight:500}
+.notif-item .b{font-size:var(--fs-xs);line-height:1.55;color:var(--fg-2)}
+.notif-item .d{font-size:var(--fs-2xs);color:var(--fg-3);margin-top:5px}
+.notif-empty{padding:var(--sp-10) var(--sp-5);text-align:center;color:var(--fg-3);font-size:var(--fs-sm)}
+
+/* ---- 订阅链接 ---- */
+.sublink{
+  margin:var(--sp-4) var(--sp-6) var(--sp-6);
+  padding:var(--sp-4);border:1px solid var(--line);border-radius:var(--r-md);
+  background:var(--surface-2);
+}
+.sublink-row{display:flex;align-items:center;gap:var(--sp-2)}
+.sublink-url{
+  flex:1;min-width:0;font-family:var(--mono);font-size:var(--fs-2xs);color:var(--fg-2);
+  /* 链接很长，省略中间不如省略末尾 —— 用户靠开头的域名认出是哪个站 */
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  padding:7px 10px;background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r-sm);user-select:all;
+}
+.sublink-meta{
+  display:flex;flex-wrap:wrap;gap:var(--sp-4);
+  margin-top:var(--sp-3);font-size:var(--fs-2xs);color:var(--fg-3);
+}
+.sublink-meta b{color:var(--fg-2);font-weight:600}
+.sublink-warn{
+  display:flex;gap:var(--sp-2);align-items:flex-start;
+  margin-top:var(--sp-3);padding:var(--sp-3);
+  background:var(--warn-soft);border-radius:var(--r-sm);
+  font-size:var(--fs-xs);line-height:1.5;color:var(--warn);
+}
+
+/* ---- 订阅节点安全预览 ---- */
+.subnodes{
+  margin:var(--sp-4) var(--sp-6) 0;padding:var(--sp-4);
+  border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2);
+}
+.subnodes-head{display:flex;align-items:center;gap:var(--sp-3)}
+.subnodes-head>div:first-child{min-width:0;flex:1}
+.subnodes-list{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),320px));
+  gap:var(--sp-3);justify-content:start;margin-top:var(--sp-3);
+}
+.subnode-item{
+  min-width:0;padding:var(--sp-3);border:1px solid var(--line);
+  border-radius:var(--r-sm);background:var(--surface);
+}
+.subnode-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-sm);font-weight:600}
+.subnode-meta{margin-top:4px;color:var(--fg-3);font-size:var(--fs-2xs)}
+.subnodes-state{margin-top:var(--sp-3);color:var(--fg-3);font-size:var(--fs-xs)}
+
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:var(--fs-2xs);background:var(--surface-2);color:var(--fg-2)}
+.pill-ok{background:var(--ok-soft);color:var(--ok)}
+.pill-warn{background:var(--warn-soft);color:var(--warn)}
+.pill-err{background:var(--err-soft);color:var(--err)}
+
+.sect{font-size:var(--fs-xs);color:var(--fg-2);font-weight:600;margin:var(--sp-4) 0 var(--sp-2)}
+
+/* ---- 公告 ---- */
+.ann{
+  background:var(--surface);border:1px solid var(--line);
+  border-left:3px solid var(--fg-3);border-radius:var(--r-md);
+  padding:var(--sp-4) var(--sp-5);margin-bottom:var(--sp-3);
+}
+.ann-head{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-sm)}
+.ann-tag{
+  color:#fff;font-size:var(--fs-2xs);font-weight:600;
+  padding:1px 7px;border-radius:var(--r-full);flex:0 0 auto;
+}
+.ann-pin{
+  font-size:var(--fs-2xs);color:var(--brand);background:var(--brand-soft);
+  padding:1px 7px;border-radius:var(--r-full);flex:0 0 auto;
+}
+.ann-body{
+  margin-top:var(--sp-2);color:var(--fg-2);font-size:var(--fs-sm);
+  line-height:1.75;white-space:pre-wrap;
+}
+
+/* ---- 一键导入 ---- */
+.imp-qr{
+  display:flex;flex-direction:column;align-items:center;
+  margin-top:var(--sp-5);padding-top:var(--sp-5);
+  border-top:1px solid var(--line);
+}
+/* 白底二维码在深色主题下会太刺眼，压一点亮度但保证对比度仍够扫 */
+.imp-qr svg{border-radius:var(--r-sm);opacity:.92}
+.imp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:var(--sp-2)}
+.imp-item{
+  display:flex;flex-direction:column;align-items:flex-start;gap:2px;
+  padding:var(--sp-3) var(--sp-4);text-align:left;
+  background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--r-md);cursor:pointer;
+  transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease);
+}
+.imp-item:hover{border-color:var(--brand);background:var(--surface-3)}
+.imp-item:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.imp-name{font-size:var(--fs-sm);font-weight:600;color:var(--fg)}
+.imp-os{font-size:var(--fs-2xs);color:var(--fg-3)}
+
+.card{
+  min-width:0;background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r-lg);box-shadow:var(--shadow-sm);
+}
+.card-pad{padding:var(--sp-6)}
+.card-head{
+  display:flex;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-5) var(--sp-6);border-bottom:1px solid var(--line);
+}
+.card-head h3{font-size:var(--fs-base)}
+.card-head .spacer{flex:1}
+
+/* 徽章 */
+.badge{
+  display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;
+  border-radius:var(--r-full);font-size:var(--fs-2xs);font-weight:600;
+  background:var(--surface-3);color:var(--fg-2);letter-spacing:.01em;
+}
+.badge::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor}
+.badge-ok{background:var(--ok-soft);color:var(--ok)}
+.badge-warn{background:var(--warn-soft);color:var(--warn)}
+.badge-err{background:var(--err-soft);color:var(--err)}
+.badge-brand{background:var(--brand-soft);color:var(--brand)}
+.badge-plain::before{display:none}
+
+/* 骨架屏 */
+.sk{
+  background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 37%,var(--surface-2) 63%);
+  background-size:400% 100%;animation:sk 1.4s ease infinite;border-radius:var(--r-sm);
+}
+@keyframes sk{0%{background-position:100% 50%}100%{background-position:0 50%}}
+
+/* Toast */
+#toasts{position:fixed;top:var(--sp-4);right:var(--sp-4);z-index:100;
+  display:flex;flex-direction:column;gap:var(--sp-2);pointer-events:none}
+.toast{
+  display:flex;align-items:flex-start;gap:var(--sp-3);min-width:280px;max-width:400px;
+  padding:var(--sp-3) var(--sp-4);background:var(--bg-elev);
+  border:1px solid var(--line-2);border-radius:var(--r-md);
+  box-shadow:var(--shadow-lg);font-size:var(--fs-sm);pointer-events:auto;
+  animation:toastIn var(--t-slow) var(--ease-out);
+}
+.toast.out{animation:toastOut var(--t-base) var(--ease) forwards}
+.toast svg{flex:0 0 auto;margin-top:2px}
+.toast-body{flex:1;min-width:0;word-break:break-word;white-space:pre-wrap}
+.toast-ok svg{color:var(--ok)} .toast-err svg{color:var(--err)}
+.toast-info svg{color:var(--brand)}
+@keyframes toastIn{from{opacity:0;transform:translateX(24px) scale(.96)}
+  to{opacity:1;transform:none}}
+@keyframes toastOut{to{opacity:0;transform:translateX(24px) scale(.96)}}
+
+/* ==================================================== 登录 / 注册 */
+#authView{
+  position:relative;z-index:1;min-height:100vh;
+  display:grid;place-items:center;padding:var(--sp-6);
+}
+.auth-shell{width:100%;max-width:396px;animation:rise var(--t-slow) var(--ease-out)}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.auth-brand{text-align:center;margin-bottom:var(--sp-8)}
+.auth-brand .mark{margin:0 auto var(--sp-4)}
+.auth-brand h1{font-size:var(--fs-2xl);letter-spacing:-.02em}
+.auth-brand p{margin:var(--sp-2) 0 0;color:var(--fg-2);font-size:var(--fs-sm)}
+
+.seg{
+  display:flex;gap:2px;padding:3px;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:var(--r-md);margin-bottom:var(--sp-6);
+}
+.seg button{
+  flex:1;height:32px;border:0;border-radius:7px;background:transparent;
+  color:var(--fg-2);font-size:var(--fs-sm);font-weight:550;cursor:pointer;
+  transition:all var(--t-fast) var(--ease);
+}
+.seg button.on{background:var(--bg-elev);color:var(--fg);box-shadow:var(--shadow-sm)}
+
+.step-hint{
+  display:flex;align-items:center;gap:var(--sp-2);margin:var(--sp-5) 0 var(--sp-3);
+  font-size:var(--fs-xs);font-weight:600;color:var(--fg-3);text-transform:uppercase;
+  letter-spacing:.06em;
+}
+.step-hint::after{content:'';flex:1;height:1px;background:var(--line)}
+
+/* ==================================================== 应用外壳 */
+#appView{position:relative;z-index:1;display:flex;min-height:100vh}
+.side-mask{display:none}
+
+aside{
+  width:236px;flex:0 0 236px;border-right:1px solid var(--line);
+  background:var(--bg-elev);display:flex;flex-direction:column;
+  padding:var(--sp-5) var(--sp-3);position:sticky;top:0;height:100vh;
+}
+.side-brand{display:flex;align-items:center;gap:var(--sp-3);
+  padding:0 var(--sp-3) var(--sp-6)}
+.side-brand strong{font-size:var(--fs-md);letter-spacing:-.01em}
+nav{display:flex;flex-direction:column;gap:2px;flex:1}
+/* 插槽：后台塞进来的内容，给一点默认间距，其余交给主题的自定义 CSS */
+.slot:empty{display:none}
+.slot{margin:var(--sp-4) 0}
+.slot p{margin:0 0 var(--sp-2)}
+.slot p:last-child{margin-bottom:0}
+.slot a{color:var(--brand-on-soft)}
+.slot table{width:100%;border-collapse:collapse}
+.slot th,.slot td{padding:var(--sp-2);border-bottom:1px solid var(--line);text-align:left}
+.nav-item{
+  display:flex;align-items:center;gap:var(--sp-3);height:38px;padding:0 var(--sp-3);
+  border:0;border-radius:var(--r-md);background:transparent;color:var(--fg-2);
+  font-size:var(--fs-sm);font-weight:500;cursor:pointer;text-align:left;width:100%;
+  transition:all var(--t-fast) var(--ease);
+}
+.nav-item:hover{background:var(--surface-2);color:var(--fg)}
+.nav-item.on{background:var(--brand-soft);color:var(--brand-on-soft);font-weight:600}
+.nav-item svg{flex:0 0 auto;opacity:.9}
+.side-foot{border-top:1px solid var(--line);padding-top:var(--sp-3);margin-top:var(--sp-3)}
+.side-user{
+  display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) var(--sp-3);
+  border-radius:var(--r-md);
+}
+.avatar{
+  width:30px;height:30px;flex:0 0 auto;border-radius:var(--r-full);
+  background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;
+  display:grid;place-items:center;font-size:var(--fs-xs);font-weight:700;
+}
+.side-user .who{flex:1;min-width:0}
+.side-user .who b{display:block;font-size:var(--fs-xs);font-weight:600;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-user .who span{font-size:var(--fs-2xs);color:var(--fg-3)}
+
+main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{
+  height:60px;flex:0 0 60px;display:flex;align-items:center;gap:var(--sp-3);
+  padding:0 var(--sp-8);border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--bg-elev) 82%,transparent);
+  backdrop-filter:saturate(180%) blur(14px);position:sticky;top:0;z-index:20;
+}
+.topbar h2{font-size:var(--fs-lg);letter-spacing:-.015em}
+.topbar .spacer{flex:1}
+.content{padding:clamp(var(--sp-4),2vw,var(--sp-10));max-width:1600px;width:100%;margin:0 auto}
+.page{min-width:0;animation:fade var(--t-base) var(--ease-out)}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ==================================================== 概览 */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,232px),1fr));
+  gap:var(--sp-4);margin-bottom:var(--sp-6)}
+.stat{
+  position:relative;overflow:hidden;padding:var(--sp-5);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);
+  transition:border-color var(--t-base) var(--ease),transform var(--t-base) var(--ease);
+}
+.stat:hover{border-color:var(--line-2);transform:translateY(-2px)}
+.stat-top{display:flex;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-3)}
+.stat-ico{
+  width:30px;height:30px;border-radius:var(--r-sm);display:grid;place-items:center;
+  background:var(--brand-soft);color:var(--brand);
+}
+.stat-ico.g{background:var(--ok-soft);color:var(--ok)}
+.stat-ico.y{background:var(--warn-soft);color:var(--warn)}
+.stat-label{font-size:var(--fs-xs);color:var(--fg-2);font-weight:500}
+.stat-val{font-size:var(--fs-3xl);font-weight:660;letter-spacing:-.03em;line-height:1.25}
+.stat-val small{font-size:var(--fs-sm);font-weight:500;color:var(--fg-2);margin-left:3px}
+.stat-sub{font-size:var(--fs-xs);color:var(--fg-3);margin-top:var(--sp-1)}
+
+/* 用量条 */
+.meter{height:6px;border-radius:var(--r-full);background:var(--surface-3);
+  overflow:hidden;margin-top:var(--sp-3)}
+.meter i{display:block;height:100%;border-radius:var(--r-full);
+  background:linear-gradient(90deg,var(--brand),var(--brand-2));
+  transition:width var(--t-slow) var(--ease-out)}
+.meter.w i{background:linear-gradient(90deg,var(--warn),#fb923c)}
+.meter.d i{background:linear-gradient(90deg,var(--err),#f87171)}
+
+/* 环形进度 */
+.ring{position:relative;width:132px;height:132px;flex:0 0 auto}
+.ring svg{transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:10;stroke-linecap:round}
+.ring .track{stroke:var(--surface-3)}
+.ring .bar{stroke:url(#ringGrad);
+  transition:stroke-dashoffset 900ms var(--ease-out)}
+.ring-mid{
+  position:absolute;inset:0;display:grid;place-content:center;text-align:center;
+}
+.ring-mid b{display:block;font-size:var(--fs-2xl);font-weight:670;letter-spacing:-.03em}
+.ring-mid span{font-size:var(--fs-2xs);color:var(--fg-3)}
+
+.usage-row{display:flex;align-items:center;gap:var(--sp-8);flex-wrap:wrap}
+.usage-facts{flex:1;min-width:200px;display:flex;flex-direction:column;gap:var(--sp-4)}
+.fact{display:flex;justify-content:space-between;align-items:baseline;gap:var(--sp-4)}
+.fact .k{font-size:var(--fs-sm);color:var(--fg-2)}
+.fact .v{font-size:var(--fs-base);font-weight:600}
+
+/* 表格 */
+.tbl-wrap{max-width:100%;overflow-x:auto}
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{
+  text-align:left;padding:var(--sp-3) var(--sp-4);font-size:var(--fs-2xs);font-weight:600;
+  color:var(--fg-3);text-transform:uppercase;letter-spacing:.05em;
+  border-bottom:1px solid var(--line);
+}
+.tbl td{padding:var(--sp-4);border-bottom:1px solid var(--line);font-size:var(--fs-sm)}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tbody tr{transition:background var(--t-fast) var(--ease)}
+.tbl tbody tr:hover{background:var(--surface-2)}
+
+/* ==================================================== 套餐 */
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,272px),380px));
+  justify-content:center;gap:var(--sp-5)}
+.plan{
+  position:relative;display:flex;flex-direction:column;padding:var(--sp-6);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-xl);
+  transition:transform var(--t-base) var(--ease),border-color var(--t-base) var(--ease),
+             box-shadow var(--t-base) var(--ease);
+}
+.plan:hover{transform:translateY(-3px);border-color:var(--line-2);box-shadow:var(--shadow-md)}
+.plan.feat{border-color:transparent;background:
+  linear-gradient(var(--surface),var(--surface)) padding-box,
+  linear-gradient(135deg,var(--brand),var(--brand-2)) border-box;
+  box-shadow:0 0 0 1px transparent,0 12px 40px -16px rgba(109,94,252,.55)}
+.plan-tag{
+  position:absolute;top:-10px;left:50%;transform:translateX(-50%);
+  height:21px;padding:0 11px;border-radius:var(--r-full);
+  background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;
+  font-size:var(--fs-2xs);font-weight:650;display:grid;place-items:center;letter-spacing:.02em;
+  box-shadow:0 4px 14px -4px rgba(109,94,252,.7);
+}
+.plan h4{font-size:var(--fs-md);margin-bottom:var(--sp-1)}
+.plan .desc{font-size:var(--fs-xs);color:var(--fg-2);min-height:36px}
+.plan .amt{display:flex;align-items:baseline;gap:3px;margin:var(--sp-5) 0 var(--sp-1)}
+.plan .amt b{font-size:var(--fs-4xl);font-weight:680;letter-spacing:-.035em;line-height:1}
+.plan .amt .cur{font-size:var(--fs-md);font-weight:600;color:var(--fg-2);align-self:flex-start;
+  margin-top:3px}
+.plan .amt .per{font-size:var(--fs-sm);color:var(--fg-3);font-weight:500}
+.plan .amt .save{margin-left:auto;align-self:center;height:20px;padding:0 8px;
+  border-radius:var(--r-full);background:var(--ok-soft);color:var(--ok);
+  font-size:var(--fs-2xs);font-weight:650;display:grid;place-items:center}
+.plan li b{color:var(--fg);font-weight:640}
+.plan ul{list-style:none;margin:var(--sp-5) 0;padding:0;
+  display:flex;flex-direction:column;gap:var(--sp-3);flex:1}
+.plan li{display:flex;align-items:flex-start;gap:var(--sp-2);font-size:var(--fs-sm);color:var(--fg-2)}
+.plan li svg{flex:0 0 auto;color:var(--ok);margin-top:3px}
+
+/* ==================================================== 工单 */
+.tk-list{display:flex;flex-direction:column;gap:var(--sp-3)}
+.tk-item{
+  display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-4) var(--sp-5);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);
+  cursor:pointer;text-align:left;width:100%;
+  transition:border-color var(--t-fast) var(--ease),transform var(--t-fast) var(--ease);
+}
+.tk-item:hover{border-color:var(--line-2);transform:translateX(2px)}
+.tk-main{flex:1;min-width:0}
+.tk-main b{display:block;font-size:var(--fs-base);font-weight:600;margin-bottom:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tk-meta{font-size:var(--fs-xs);color:var(--fg-3);display:flex;gap:var(--sp-3);flex-wrap:wrap}
+.tk-thread{display:flex;flex-direction:column;gap:var(--sp-4);
+  padding:var(--sp-6);max-height:52vh;overflow-y:auto}
+.msg{display:flex;flex-direction:column;gap:5px;max-width:82%}
+.msg.mine{align-self:flex-end;align-items:flex-end}
+.msg.system{align-self:center;max-width:100%}
+.msg-who{font-size:var(--fs-2xs);color:var(--fg-3)}
+.msg-body{
+  padding:var(--sp-3) var(--sp-4);border-radius:var(--r-lg);font-size:var(--fs-sm);
+  background:var(--surface-2);border:1px solid var(--line);white-space:pre-wrap;
+  word-break:break-word;line-height:1.65;
+}
+.msg.mine .msg-body{background:var(--brand-soft);border-color:transparent;color:var(--fg)}
+.msg.system .msg-body{background:transparent;border:0;color:var(--fg-3);
+  font-size:var(--fs-xs);text-align:center;padding:2px}
+.tk-compose{border-top:1px solid var(--line);padding:var(--sp-4) var(--sp-6) var(--sp-6)}
+textarea.input{height:auto;min-height:88px;padding:var(--sp-3) var(--sp-4);
+  resize:vertical;line-height:1.6;font-family:inherit}
+
+/* ==================================================== 空状态 */
+.empty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:var(--sp-16) var(--sp-6);text-align:center;
+}
+.empty svg{color:var(--fg-3);opacity:.55;margin-bottom:var(--sp-4)}
+.empty h4{font-size:var(--fs-base);margin-bottom:var(--sp-2)}
+.empty p{margin:0 0 var(--sp-5);color:var(--fg-2);font-size:var(--fs-sm);max-width:320px}
+.empty-actions{display:flex;gap:var(--sp-3);flex-wrap:wrap;justify-content:center}
+
+/* ==================================================== 弹窗 */
+.mask{
+  position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:var(--sp-5);
+  background:rgba(4,5,8,.62);backdrop-filter:blur(6px);
+  animation:fadeIn var(--t-base) var(--ease);
+}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.modal{
+  width:100%;max-width:432px;background:var(--bg-elev);border:1px solid var(--line-2);
+  border-radius:var(--r-xl);box-shadow:var(--shadow-lg);overflow:hidden;
+  animation:pop var(--t-slow) var(--ease-out);
+  display:flex;flex-direction:column;max-height:calc(100vh - var(--sp-10));
+}
+@keyframes pop{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
+.modal-head{display:flex;align-items:center;padding:var(--sp-5) var(--sp-6);
+  border-bottom:1px solid var(--line);flex:0 0 auto}
+.modal-head h3{flex:1;font-size:var(--fs-md)}
+.modal-body{padding:var(--sp-6);overflow-y:auto;flex:1 1 auto}
+.modal-foot{display:flex;gap:var(--sp-3);padding:var(--sp-4) var(--sp-6) var(--sp-6);flex:0 0 auto}
+.modal-foot .btn{flex:1}
+
+.sum{background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--r-md);padding:var(--sp-4);margin-bottom:var(--sp-5)}
+.sum-row{display:flex;justify-content:space-between;align-items:baseline;
+  gap:var(--sp-4);padding:var(--sp-2) 0;font-size:var(--fs-sm)}
+.sum-row .k{color:var(--fg-2)}
+.sum-row.total{border-top:1px solid var(--line);margin-top:var(--sp-2);
+  padding-top:var(--sp-3);font-size:var(--fs-md)}
+.sum-row.total .v{font-weight:680;letter-spacing:-.02em}
+
+/* 开发环境提示条 */
+.devbar{
+  position:relative;z-index:2;display:flex;align-items:center;gap:var(--sp-2);
+  padding:7px var(--sp-6);background:var(--warn-soft);color:var(--warn);
+  font-size:var(--fs-xs);font-weight:500;border-bottom:1px solid var(--line);
+}
+
+/* ==================================================== 响应式 */
+@media(max-width:1100px){
+  aside{position:fixed;left:0;top:0;z-index:50;transform:translateX(-100%);
+    transition:transform var(--t-base) var(--ease);box-shadow:var(--shadow-lg)}
+  aside.open{transform:none}
+  .side-mask{display:block;position:fixed;inset:0;z-index:49;border:0;padding:0;
+    background:rgba(4,5,8,.58);backdrop-filter:blur(3px);opacity:0;pointer-events:none;
+    transition:opacity var(--t-base) var(--ease)}
+  aside.open + .side-mask{opacity:1;pointer-events:auto}
+  .topbar{padding:0 var(--sp-5)}
+  .content{padding:var(--sp-5)}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .usage-row{gap:var(--sp-5)}
+  .btn,.btn-icon,.pw-toggle{min-height:44px}
+  .btn-icon,.pw-toggle{min-width:44px}
+  .pw-wrap .input{padding-right:56px}
+  body.nav-drawer-open{overflow:hidden}
+}
+@media(max-width:560px){
+
+  #authView{padding:max(var(--sp-4),env(safe-area-inset-top)) max(var(--sp-4),env(safe-area-inset-right)) max(var(--sp-4),env(safe-area-inset-bottom)) max(var(--sp-4),env(safe-area-inset-left))}
+  .auth-shell{max-width:420px}
+  aside{width:min(86vw,300px);flex-basis:min(86vw,300px)}
+  .topbar{height:54px;flex-basis:54px;padding-left:max(var(--sp-3),env(safe-area-inset-left));
+    padding-right:max(var(--sp-3),env(safe-area-inset-right))}
+  .topbar h2{font-size:var(--fs-md)}
+  .content{padding:var(--sp-3);padding-left:max(var(--sp-3),env(safe-area-inset-left));
+    padding-right:max(var(--sp-3),env(safe-area-inset-right));padding-bottom:max(var(--sp-3),env(safe-area-inset-bottom))}
+  .stats{grid-template-columns:1fr;gap:var(--sp-3);margin-bottom:var(--sp-4)}
+  .card{border-radius:var(--r-md)}
+  .card-head{align-items:flex-start;flex-wrap:wrap;white-space:normal}
+  .card-pad,.card-head{padding-left:var(--sp-4);padding-right:var(--sp-4)}
+  .tbl-wrap>.tbl{min-width:620px}
+  .plan .amt{flex-wrap:wrap}
+  .plan .amt .save{margin-left:0}
+  .usage-row{justify-content:center}
+  .usage-facts{width:100%;min-width:0}
+	.subnodes,.sublink{margin-left:var(--sp-4);margin-right:var(--sp-4)}
+	.subnodes-list{grid-template-columns:1fr}
+  .mask{padding:var(--sp-2);align-items:end}
+  .modal{max-height:calc(100dvh - var(--sp-4));border-radius:var(--r-lg) var(--r-lg) 0 0}
+  #toasts{left:var(--sp-3);right:var(--sp-3);top:var(--sp-3)}
+  .toast{min-width:0;max-width:none;width:100%}
+}
+@media(min-width:1400px){
+  .page>.card:only-child .empty{min-height:320px}
+}
+@media(min-width:1800px){
+  .auth-shell{max-width:456px}
+  .auth-brand{margin-bottom:var(--sp-10)}
+  .auth-brand .mark{width:54px;height:54px}
+}
+@media(min-width:2560px){
+  :root{--fs-2xs:13px;--fs-xs:14px;--fs-sm:15px;--fs-base:16px;--fs-md:18px;
+    --fs-lg:20px;--fs-xl:24px;--fs-2xl:30px;--fs-3xl:38px;--fs-4xl:48px}
+  aside{width:276px;flex-basis:276px;padding:var(--sp-6) var(--sp-4)}
+  .nav-item{height:44px}
+  .topbar{height:70px;flex-basis:70px;padding:0 var(--sp-10)}
+  /* Keep the user and admin shells on the same ultra-wide canvas.  A 1920px
+     cap left almost half of a 4K viewport as inert gutters. */
+  .content{max-width:3200px;padding:var(--sp-10)}
+  .stats{grid-template-columns:repeat(4,minmax(300px,1fr));gap:var(--sp-5);max-width:none;margin-inline:auto}
+  .card-pad{padding:var(--sp-8)}
+  .page>.card:only-child .empty{min-height:400px}
+  .auth-shell{max-width:620px}
+  .auth-brand{margin-bottom:var(--sp-12)}
+  .auth-brand .mark{width:64px;height:64px;margin-bottom:var(--sp-5)}
+  .auth-brand h1{font-size:34px}
+  .auth-brand p{font-size:17px}
+  .auth-shell>.card.card-pad{padding:36px}
+  .auth-shell .field{margin-bottom:20px}
+  .auth-shell .field label{font-size:14px;margin-bottom:10px}
+  .auth-shell .input{height:52px;font-size:17px}
+  .auth-shell .btn{height:48px;font-size:16px}
+  .auth-shell .seg{margin-bottom:30px}
+  .auth-shell .seg button{height:40px;font-size:16px}
+  .auth-shell .pw-toggle{width:42px;height:42px;right:5px}
+  .auth-shell .pw-wrap .input{padding-right:56px}
+}
+@media(min-width:1101px){#btnMenu{display:none}}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6d5efc"/><stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="markGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6d5efc"/><stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div id="toasts"></div>
+
+<!-- ═══════════════════════════ 未登录 ═══════════════════════════ -->
+<section id="authView">
+  <div class="auth-shell">
+    <div id="slot-portal-login-notice" class="slot"></div>
+    <div class="auth-brand">
+      <svg class="mark" width="46" height="46" viewBox="0 0 46 46" fill="none">
+        <rect width="46" height="46" rx="12" fill="url(#markGrad)"/>
+        <path d="M23 12l8 3.6v6.2c0 4.8-3.2 9.2-8 10.7-4.8-1.5-8-5.9-8-10.7v-6.2L23 12z"
+              stroke="#fff" stroke-width="2.1" stroke-linejoin="round" fill="none"/>
+        <path d="M19.6 22.6l2.5 2.5 4.6-4.9" stroke="#fff" stroke-width="2.1"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <h1 data-brand-name>潘多拉面板</h1>
+      <p data-brand-tagline>订阅、节点与用量的统一控制台</p>
+    </div>
+
+    <div class="card card-pad">
+      <div class="seg">
+        <button class="on" id="loginTab" data-tab="login">登录</button>
+        <button class="hide" id="registerTab" data-tab="register"
+                aria-disabled="true" disabled>注册</button>
+      </div>
+
+      <!-- 登录 -->
+      <form id="tabLogin" autocomplete="on">
+        <div class="field">
+          <label for="loginEmail">邮箱</label>
+          <input class="input" id="loginEmail" type="email" placeholder="you@example.com"
+                 autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="loginPass">密码</label>
+          <div class="pw-wrap">
+            <input class="input" id="loginPass" type="password"
+                   autocomplete="current-password" required>
+            <button class="pw-toggle" id="toggleLoginPass" type="button"
+                    aria-label="显示密码" aria-controls="loginPass"
+                    aria-pressed="false" title="显示密码">
+              <svg id="loginPassEye" width="18" height="18" viewBox="0 0 24 24"
+                   fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-block" id="btnLogin" type="submit">登录</button>
+      </form>
+
+      <!-- 注册 -->
+      <form id="tabRegister" class="hide" autocomplete="on" aria-hidden="true" inert>
+        <div class="step-hint">第 1 步 · 验证邮箱</div>
+        <div class="field">
+          <label for="regEmail">邮箱</label>
+          <input class="input" id="regEmail" type="email" placeholder="you@example.com"
+                 autocomplete="username">
+        </div>
+        <button class="btn btn-ghost btn-block" id="btnRegStart" type="button">获取验证码</button>
+
+        <div id="regStep2" class="hide">
+          <div class="step-hint">第 2 步 · 设置密码</div>
+          <div class="field">
+            <label for="regCode">验证码</label>
+            <input class="input" id="regCode" inputmode="numeric" autocomplete="one-time-code">
+          </div>
+          <div class="field">
+            <label for="regPass">密码</label>
+            <input class="input" id="regPass" type="password" autocomplete="new-password"
+                   required aria-describedby="regPassPolicy" aria-invalid="false">
+            <div class="pwd-policy" id="regPassPolicy" aria-live="polite">至少8位且同时包含字母和数字，最多256个 UTF-8 字节</div>
+          </div>
+          <div class="field">
+            <label id="regInviteLabel" for="regInvite">邀请码 · 选填</label>
+            <input class="input mono" id="regInvite" autocomplete="off"
+                   placeholder="有朋友邀请就填这里" style="text-transform:uppercase">
+          </div>
+          <button class="btn btn-primary btn-block" id="btnRegComplete" type="submit">创建账号</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ 已登录 ═══════════════════════════ -->
+<section id="appView" class="hide">
+  <aside id="sidebar" tabindex="-1">
+    <div class="side-brand">
+      <svg width="28" height="28" viewBox="0 0 46 46" fill="none">
+        <rect width="46" height="46" rx="12" fill="url(#markGrad)"/>
+        <path d="M23 12l8 3.6v6.2c0 4.8-3.2 9.2-8 10.7-4.8-1.5-8-5.9-8-10.7v-6.2L23 12z"
+              stroke="#fff" stroke-width="2.1" stroke-linejoin="round" fill="none"/>
+        <path d="M19.6 22.6l2.5 2.5 4.6-4.9" stroke="#fff" stroke-width="2.1"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <strong data-brand-name>潘多拉面板</strong>
+    </div>
+
+    <nav aria-label="用户门户导航">
+      <button class="nav-item on" data-page="overview">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>
+          <rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>
+        </svg>概览
+      </button>
+      <button class="nav-item" data-page="subs">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 12V8H6a2 2 0 010-4h12v4"/><path d="M4 6v12a2 2 0 002 2h14v-4"/>
+          <path d="M18 12a2 2 0 000 4h4v-4z"/>
+        </svg>我的订阅
+      </button>
+      <button class="nav-item" data-page="orders">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 2H6a1 1 0 00-1 1v18a1 1 0 001 1h12a1 1 0 001-1V7z"/><path d="M15 2v5h4"/>
+          <path d="M9 13h6M9 17h4"/>
+        </svg>我的订单
+      </button>
+      <button class="nav-item" data-page="gift">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="8" width="18" height="13" rx="2"/><path d="M3 12h18M12 8v13"/>
+          <path d="M12 8S9.5 3 7.5 4.5 9 8 12 8zM12 8s2.5-5 4.5-3.5S15 8 12 8z"/>
+        </svg>兑换礼品卡
+      </button>
+      <button class="nav-item" data-page="support">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+        </svg>工单支持
+      </button>
+      <button class="nav-item" data-page="knowledge">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4.5A2.5 2.5 0 016.5 2H20v17H6.5A2.5 2.5 0 004 21.5z"/>
+          <path d="M4 4.5v17M8 7h8M8 11h6"/>
+        </svg>帮助中心
+      </button>
+      <button class="nav-item" data-page="referral">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+        </svg>邀请返利
+      </button>
+      <button class="nav-item" data-page="security">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2l8 3.5v6c0 4.6-3.2 8.6-8 10.5-4.8-1.9-8-5.9-8-10.5v-6z"/>
+          <path d="M9 12l2 2 4-4"/>
+        </svg>账号安全
+      </button>
+      <button class="nav-item" data-page="plans">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20.6 13.5L13.5 20.6a2 2 0 01-2.8 0l-8.3-8.3V2h10.3l8 8a2 2 0 010 2.8z"/>
+          <circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>
+        </svg>选购套餐
+      </button>
+    </nav>
+
+    <div id="slot-portal-sidebar-extra" class="slot" style="padding:0 var(--sp-3)"></div>
+    <div class="side-foot">
+      <div class="side-user">
+        <div class="avatar" id="avatar">–</div>
+        <div class="who">
+          <b id="userEmail">载入中…</b>
+          <span id="userStatus"></span>
+        </div>
+        <button class="btn-icon" id="btnChangePassword" title="修改密码" aria-label="修改密码">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="10.5" width="16" height="10" rx="2"/>
+            <path d="M8 10.5V7a4 4 0 018 0v3.5"/>
+          </svg>
+        </button>
+        <button class="btn-icon" id="btnLogout" title="退出登录" aria-label="退出登录">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+            <path d="M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <button class="side-mask" id="sideMask" type="button" aria-label="关闭导航菜单"
+          disabled tabindex="-1" inert></button>
+
+  <main>
+    <div class="topbar">
+      <button class="btn-icon" id="btnMenu" aria-label="菜单" aria-controls="sidebar"
+              aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <h2 id="pageTitle" tabindex="-1">概览</h2>
+      <div class="spacer"></div>
+      <div class="bell-wrap">
+        <button class="btn-icon" id="btnBell" title="通知" aria-label="通知" aria-expanded="false">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.7 21a2 2 0 01-3.4 0"/>
+          </svg>
+          <span class="bell-dot" id="bellDot"></span>
+        </button>
+        <div class="notif-panel" id="notifPanel" role="dialog" aria-label="通知">
+          <div class="notif-head">
+            <b>通知</b>
+            <div class="spacer"></div>
+            <button class="btn btn-ghost btn-sm" id="btnReadAll">全部已读</button>
+          </div>
+          <div class="notif-list" id="notifList"></div>
+        </div>
+      </div>
+      <button class="btn-icon" id="btnRefresh" title="刷新" aria-label="刷新">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 11-2.6-6.4M21 3v6h-6"/>
+        </svg>
+      </button>
+      <button class="btn-icon" id="btnTheme" title="切换主题" aria-label="切换主题">
+        <svg id="icoMoon" width="17" height="17" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/>
+        </svg>
+        <svg id="icoSun" class="hide" width="17" height="17" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4.2"/>
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="content">
+      <div id="slot-portal-home-banner" class="slot hide"></div>
+      <div id="slot-portal-subscribe-notice" class="slot hide"></div>
+      <div id="slot-portal-plans-notice" class="slot hide"></div>
+      <div id="pageOverview" class="page"></div>
+      <div id="pageSubs" class="page hide"></div>
+      <div id="pageOrders" class="page hide"></div>
+      <div id="pageGift" class="page hide"></div>
+      <div id="pageSupport" class="page hide"></div>
+      <div id="pageKnowledge" class="page hide"></div>
+      <div id="pagePlans" class="page hide"></div>
+      <div id="pageReferral" class="page hide"></div>
+      <div id="pageSecurity" class="page hide"></div>
+      <div id="slot-portal-home-aside" class="slot hide"></div>
+      <div id="slot-portal-footer" class="slot"></div>
+    </div>
+  </main>
+</section>
+
+<script>
+'use strict';
+//==============================================================================
+// 状态
+//==============================================================================
+const TK = 'aegis_token', THK = 'aegis_theme';
+const PORTAL_CLIENT_VERSION='1.0.0', PORTAL_LOCALE='zh-CN';
+const $ = id => document.getElementById(id);
+let token = localStorage.getItem(TK) || '';
+let needVerify = true;
+let registrationMode = 'closed';
+let regTok = '', cache = {me:null, subs:null, plans:null}, curOrder = null;
+
+//==============================================================================
+// 主题
+//==============================================================================
+// 深浅色。和站点主题（applySiteTheme）是两回事：这个只切 data-theme，
+// 决定用哪一套背景/前景变量；那个注入品牌色之类的 token，两套配色下都生效。
+//
+// 名字不能再叫 applyTheme——下面还有一个同名函数，函数声明会被提升，
+// 后定义的直接把这个覆盖掉，结果是切换按钮点了没反应、localStorage 里
+// 存的偏好也读不出来，页面只靠 <html data-theme="dark"> 硬撑着。
+function applyColorScheme(mode){
+  document.documentElement.dataset.theme = mode;
+  localStorage.setItem(THK, mode);
+  $('icoMoon').classList.toggle('hide', mode === 'light');
+  $('icoSun').classList.toggle('hide', mode !== 'light');
+}
+applyColorScheme(localStorage.getItem(THK) ||
+  (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+$('btnTheme').onclick = () =>
+  applyColorScheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+
+//==============================================================================
+// Toast
+//==============================================================================
+const ICO = {
+  ok:'<path d="M20 6L9 17l-5-5"/>',
+  err:'<circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/>',
+  info:'<circle cx="12" cy="12" r="10"/><path d="M12 16v-5M12 8h.01"/>'
+};
+function toast(msg, kind = 'info', ms = 4200){
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + kind;
+  el.innerHTML = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    ICO[kind] + '</svg><div class="toast-body"></div>';
+  el.querySelector('.toast-body').textContent = msg;
+  $('toasts').appendChild(el);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 220); }, ms);
+}
+
+//==============================================================================
+// API
+//==============================================================================
+async function api(path, opts = {}){
+  let body = opts.body;
+  const plainBody = body !== null && typeof body === 'object' && !Array.isArray(body) &&
+    Object.getPrototypeOf(body) === Object.prototype;
+  if (plainBody) body = JSON.stringify(body);
+  const h = Object.assign({}, opts.headers || {});
+  const hasContentType = Object.keys(h).some(k => k.toLowerCase() === 'content-type');
+  if (!hasContentType && (plainBody || typeof body === 'string')) {
+    h['Content-Type'] = 'application/json';
+  }
+  if (token) h.Authorization = 'Bearer ' + token;
+  if (opts.idem) h['Idempotency-Key'] = opts.idem;
+
+  const res = await fetch(path, {method: opts.method || 'GET', headers: h, body});
+  const txt = await res.text();
+  let data; try{ data = txt ? JSON.parse(txt) : {}; }catch(_){ data = {raw: txt}; }
+
+  if (!res.ok){
+    const e = new Error((data.error && data.error.message) || ('请求失败 · HTTP ' + res.status));
+    e.status = res.status; e.code = data.error && data.error.code;
+    throw e;
+  }
+  return data;
+}
+function newIdemKey(){return crypto.randomUUID?crypto.randomUUID():(Date.now()+'-'+Math.random())}
+function idemAttempt(makeKey=newIdemKey){
+  let fingerprint='',key='';
+  return {
+    keyFor(payload){
+      const next=JSON.stringify(payload||{});
+      if(next!==fingerprint){fingerprint=next;key=makeKey()}
+      return key;
+    },
+    reset(){fingerprint='';key=''}
+  };
+}
+function parseCNYMinor(value){
+  const text=String(value||'').trim();
+  const match=/^(?:0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(text);
+  if(!match) return null;
+  const parts=text.split('.');
+  const amount=Number(parts[0] + ((parts[1]||'') + '00').slice(0,2));
+  return Number.isSafeInteger(amount)&&amount>0?amount:null;
+}
+// 邀请链接：/?invite=CODE
+//
+// 读到就直接切到注册页并把码填好。要求用户自己从地址栏抄一遍，
+// 等于这条链接白发了 —— 分享出去的链接必须自己把事办完。
+// loadSiteConfig 决定注册表单长什么样。
+//
+// 关闭邮箱验证时，「获取验证码 → 填码 → 创建账号」这三步里
+// 中间两步是空转。直接收起来，让注册回到「填邮箱密码点确定」——
+// 多一步就多一批人放弃。
+async function loadSiteConfig(){
+  registrationMode = 'closed';
+  needVerify = true;
+  try{
+    const c = await api('/v1/site-config');
+    if (!['closed','invite_only','open'].includes(c.registration_mode)) {
+      throw new Error('站点注册配置无效');
+    }
+    registrationMode = c.registration_mode;
+    needVerify = !!c.email_verification;
+  }catch(_){
+    // 配置拉取、解析或枚举异常都保持 closed。注册策略只能由后端明确放开，
+    // 不能因为数据库或网络故障回退到开放注册。
+    registrationMode = 'closed';
+    needVerify = true;
+  }
+
+  const invite = new URLSearchParams(location.search).get('invite');
+  const inviteCode = invite ? invite.trim().toUpperCase() : '';
+  const canShowRegistration = registrationMode === 'open' ||
+    (registrationMode === 'invite_only' && !!inviteCode);
+  const registerTab = $('registerTab');
+  registerTab.classList.toggle('hide', !canShowRegistration);
+  registerTab.disabled = !canShowRegistration;
+  registerTab.setAttribute('aria-disabled', String(!canShowRegistration));
+
+  const registerForm = $('tabRegister');
+  registerForm.setAttribute('aria-hidden', String(!canShowRegistration));
+  if (!canShowRegistration) {
+    registerForm.classList.add('hide');
+    registerForm.setAttribute('inert', '');
+    $('loginTab').click();
+	const active = document.activeElement;
+	if (active === document.body || active === registerTab || registerForm.contains(active)) {
+	  $('loginTab').focus({preventScroll:true});
+	}
+  } else {
+    registerForm.removeAttribute('inert');
+  }
+
+  const inviteInput = $('regInvite');
+	const inviteField = inviteInput.closest('.field');
+	const startButton = $('btnRegStart');
+	if (inviteField && startButton && inviteField.nextElementSibling !== startButton) {
+	  startButton.before(inviteField);
+	}
+  const inviteRequired = registrationMode === 'invite_only';
+  inviteInput.required = inviteRequired;
+  inviteInput.setAttribute('aria-required', String(inviteRequired));
+  $('regInviteLabel').textContent = inviteRequired ? '邀请码' : '邀请码 · 选填';
+  if (inviteCode && canShowRegistration) {
+    inviteInput.value = inviteCode;
+    registerTab.click();
+    history.replaceState(null, '', location.pathname);
+    toast('已带入邀请码 ' + inviteCode, 'info', 5000);
+  }
+
+  if (needVerify || !canShowRegistration) return;
+
+  const codeField = $('regCode').closest('.field');
+  if (codeField) codeField.hidden = true;
+  const sendBtn = $('btnRegStart');
+  if (sendBtn) sendBtn.hidden = true;
+  // 分步提示没有意义了：现在只有一步
+  document.querySelectorAll('#tabRegister .step-hint').forEach(el => el.hidden = true);
+  // 第二步的内容直接摊开
+  $('regStep2').classList.remove('hide');
+}
+
+function busy(btn, on, label){
+  if (on){
+    btn.dataset.label = btn.innerHTML;
+    btn.innerHTML = '<span class="spin"></span>' + (label || '');
+    btn.disabled = true;
+  } else {
+    if (btn.dataset.label) btn.innerHTML = btn.dataset.label;
+    btn.disabled = false;
+  }
+}
+
+//==============================================================================
+// 格式化
+//==============================================================================
+const EXP = {JPY:0, KRW:0, VND:0, TWD:0, CLP:0, ISK:0};
+function money(minor, cur){
+  const e = cur in EXP ? EXP[cur] : 2;
+  const neg = minor < 0, v = Math.abs(minor);
+  let s;
+  if (e === 0) s = String(v);
+  else { const p = String(v).padStart(e + 1, '0'); s = p.slice(0, -e) + '.' + p.slice(-e); }
+  return (neg ? '-' : '') + s;
+}
+const CUR_SYM = {CNY:'¥', USD:'$', EUR:'€', GBP:'£', JPY:'¥'};
+function bytes(n){
+  if (n === null || n === undefined) return '不限';
+  const u = ['B','KB','MB','GB','TB','PB']; let i = 0, v = Number(n);
+  while (v >= 1024 && i < u.length - 1){ v /= 1024; i++; }
+  return (i === 0 ? v : v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)) + ' ' + u[i];
+}
+const INTV = {day:'天', week:'周', month:'月', quarter:'季', year:'年', one_time:'一次性'};
+const SUB_ST = {
+  pending:['待激活','warn'], trialing:['试用中','brand'], active:['生效中','ok'],
+  past_due:['已逾期','err'], grace:['宽限期','warn'], paused:['已暂停',''],
+  cancelled:['已取消',''], expired:['已过期','err']
+};
+function fmtDate(s){
+  if (!s) return '—';
+  const d = new Date(s);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' +
+         String(d.getDate()).padStart(2,'0');
+}
+function daysLeft(s){
+  if (!s) return null;
+  return Math.ceil((new Date(s) - Date.now()) / 86400000);
+}
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+//==============================================================================
+// 认证
+//==============================================================================
+function bindPasswordToggle(button, input, eye){
+  button.onclick = () => {
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    const label = show ? '隐藏密码' : '显示密码';
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-pressed', String(show));
+    button.title = label;
+    eye.innerHTML = show
+      ? '<path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 002.8 2.8"/><path d="M9.9 4.2A10.7 10.7 0 0112 4c6.5 0 10 8 10 8a17.8 17.8 0 01-2.1 3.2M6.6 6.6C3.7 8.5 2 12 2 12s3.5 8 10 8a10.3 10.3 0 005.4-1.6"/>'
+      : '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>';
+  };
+}
+
+bindPasswordToggle($('toggleLoginPass'), $('loginPass'), $('loginPassEye'));
+
+document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
+  if (b.disabled || b.getAttribute('aria-disabled') === 'true') return;
+  document.querySelectorAll('.seg button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  $('tabLogin').classList.toggle('hide', b.dataset.tab !== 'login');
+  $('tabRegister').classList.toggle('hide', b.dataset.tab !== 'register');
+  $('tabRegister').setAttribute('aria-hidden', String(b.dataset.tab !== 'register'));
+});
+
+$('tabLogin').onsubmit = async ev => {
+  ev.preventDefault();
+  const btn = $('btnLogin');
+  busy(btn, true, '登录中');
+  try{
+    const r = await api('/v1/auth/login', {method:'POST', body: JSON.stringify({
+      email: $('loginEmail').value.trim(), password: $('loginPass').value })});
+    token = r.access_token; localStorage.setItem(TK, token);
+    toast('登录成功', 'ok', 2000);
+    enterApp();
+  }catch(e){ toast(e.message, 'err'); }
+  finally{ busy(btn, false); }
+};
+
+$('btnRegStart').onclick = async () => {
+  if (registrationMode === 'closed') return toast('当前未开放注册', 'err');
+  const email = $('regEmail').value.trim();
+  if (!email) return toast('请填写邮箱', 'err');
+  const inviteCode = $('regInvite').value.trim().toUpperCase();
+  if (registrationMode === 'invite_only' && !inviteCode){
+    $('regInvite').focus();
+    return toast('请填写邀请码', 'err');
+  }
+  const btn = $('btnRegStart');
+  busy(btn, true, '发送中');
+  try{
+    const r = await api('/v1/auth/register/start',
+      {method:'POST', body: JSON.stringify({email, invite_code: inviteCode})});
+    regTok = r.registration_token;
+    // 站点关掉邮箱验证时，验证码那一栏是多余的一步。
+    // 留着它只会让用户对着一个永远不会有码的输入框发愣
+    needVerify = r.verification_required !== false;
+    const codeField = $('regCode').closest('.field');
+    if (codeField) codeField.hidden = !needVerify;
+    $('regStep2').classList.remove('hide');
+    if (r.dev_code){
+      $('regCode').value = r.dev_code;
+      toast('开发环境：验证码 ' + r.dev_code + ' 已自动填入。\n生产环境该字段不会返回。', 'info', 7000);
+    } else {
+      toast(r.message || '验证码已发送至邮箱', 'ok');
+    }
+    $('regPass').focus();
+  }catch(e){ toast(e.message, 'err'); }
+  finally{ busy(btn, false); }
+};
+
+$('tabRegister').onsubmit = async ev => {
+  ev.preventDefault();
+  if (registrationMode === 'closed') return toast('当前未开放注册', 'err');
+  const inviteCode = $('regInvite').value.trim().toUpperCase();
+  if (registrationMode === 'invite_only' && !inviteCode){
+    $('regInvite').focus();
+    return toast('请填写邀请码', 'err');
+  }
+  // 关闭验证时用户不会去点「获取验证码」，这里替他把第一步走掉。
+  // 对他来说注册就是填完点一下 —— 两步 API 是实现细节，不该漏到界面上
+  if (!regTok && !needVerify){
+    try{
+      const r = await api('/v1/auth/register/start', {method:'POST',
+        body: JSON.stringify({email: $('regEmail').value.trim(), invite_code: inviteCode})});
+      regTok = r.registration_token;
+    }catch(e){ toast(e.message, 'err'); return; }
+  }
+  const code = $('regCode').value.trim(), pass = $('regPass').value;
+  const passError = passwordPolicyError(pass);
+  // 关掉验证的站点不该因为一个用户看不见的空输入框被卡住
+  if (needVerify && !code) return toast('请填写验证码', 'err');
+  if (passError){
+    updateRegistrationPasswordState();
+    $('regPass').focus();
+    return toast(passError, 'err');
+  }
+  if (!$('regEmail').value.trim()) return toast('请填写邮箱', 'err');
+  const btn = $('btnRegComplete');
+  busy(btn, true, '创建中');
+  try{
+		await api('/v1/auth/register/complete', {method:'POST', body: JSON.stringify({
+		  registration_token: regTok, code, password: pass })});
+    const r = await api('/v1/auth/login', {method:'POST', body: JSON.stringify({
+      email: $('regEmail').value.trim(), password: pass })});
+    token = r.access_token; localStorage.setItem(TK, token);
+    toast('账号已创建', 'ok', 2200);
+    enterApp();
+  }catch(e){ toast(e.message, 'err'); }
+  finally{ busy(btn, false); }
+};
+
+let passwordLetterRE=null, passwordDigitRE=null;
+try{
+  passwordLetterRE=new RegExp('\\p{L}','u');
+  passwordDigitRE=new RegExp('\\p{Nd}','u');
+  if(!passwordLetterRE.test('字')||!passwordDigitRE.test('１')){
+    passwordLetterRE=null;passwordDigitRE=null;
+  }
+}catch(_){
+  passwordLetterRE=null;passwordDigitRE=null;
+}
+
+function utf8ByteLength(value){
+  if(typeof TextEncoder==='function')return new TextEncoder().encode(value).length;
+  let bytes=0;
+  for(const char of value){
+    const point=char.codePointAt(0);
+    bytes+=point<=0x7f?1:point<=0x7ff?2:point<=0xffff?3:4;
+  }
+  return bytes;
+}
+
+function passwordPolicyError(password){
+  if(!passwordLetterRE||!passwordDigitRE)return '当前浏览器不支持 Unicode 密码校验，请升级浏览器';
+  if (Array.from(password).length < 8) return '密码至少需要8个字符';
+  if(utf8ByteLength(password)>256)return '密码不能超过256个 UTF-8 字节';
+  if(!passwordLetterRE.test(password)||!passwordDigitRE.test(password))return '密码必须同时包含字母和数字';
+  return '';
+}
+
+function updateRegistrationPasswordState(){
+  const input=$('regPass'), hint=$('regPassPolicy');
+  const hasPassword=input.value.length>0;
+  const error=passwordPolicyError(input.value);
+  hint.textContent=hasPassword?(error||'密码规则已满足'):'至少8位且同时包含字母和数字，最多256个 UTF-8 字节';
+  hint.classList.toggle('ok',hasPassword&&!error);
+  hint.classList.toggle('err',hasPassword&&!!error);
+  input.setAttribute('aria-invalid',String(hasPassword&&!!error));
+}
+$('regPass').addEventListener('input',updateRegistrationPasswordState);
+
+function openChangePasswordModal(){
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML =
+  '<div class="modal" role="dialog" aria-modal="true" aria-label="修改密码">' +
+    '<div class="modal-head"><h3>修改密码</h3>' +
+      '<button class="btn-icon" type="button" data-close aria-label="关闭">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+      '</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="field"><label for="pwdOld">当前密码</label>' +
+        '<input class="input" id="pwdOld" type="password" autocomplete="current-password" required ' +
+          'aria-describedby="pwdOldError" aria-invalid="false">' +
+        '<div class="pwd-policy" id="pwdOldError" aria-live="polite">请输入当前密码</div></div>' +
+      '<div class="field"><label for="pwdNew">新密码</label>' +
+        '<div class="pw-wrap"><input class="input" id="pwdNew" type="password" autocomplete="new-password" ' +
+          'required aria-describedby="pwdPolicy" aria-invalid="false">' +
+          '<button class="pw-toggle" id="togglePwdNew" type="button" aria-label="显示密码" ' +
+            'aria-controls="pwdNew" aria-pressed="false" title="显示密码">' +
+            '<svg id="pwdNewEye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+              'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+              '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>' +
+            '</svg></button></div>' +
+        '<div class="pwd-policy" id="pwdPolicy" aria-live="polite">至少8位且同时包含字母和数字，最多256个 UTF-8 字节</div></div>' +
+      '<div class="field"><label for="pwdConfirm">确认新密码</label>' +
+        '<div class="pw-wrap"><input class="input" id="pwdConfirm" type="password" autocomplete="new-password" ' +
+          'required aria-describedby="pwdMatch" aria-invalid="false">' +
+          '<button class="pw-toggle" id="togglePwdConfirm" type="button" aria-label="显示密码" ' +
+            'aria-controls="pwdConfirm" aria-pressed="false" title="显示密码">' +
+            '<svg id="pwdConfirmEye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+              'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+              '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>' +
+            '</svg></button></div>' +
+        '<div class="pwd-policy" id="pwdMatch" aria-live="polite">请再次输入新密码</div></div>' +
+    '</div>' +
+    '<div class="modal-foot">' +
+      '<button class="btn btn-ghost" type="button" data-close>取消</button>' +
+      '<button class="btn btn-primary" type="button" id="pwdGo">确认修改</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(m);
+
+  const dialog=m.querySelector('[role="dialog"]');
+  let submitting=false;
+  const close = force => {
+    if(submitting&&!force)return;
+    m.remove();
+  };
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = () => close());
+  m.onclick = ev => { if (ev.target === m) close(); };
+  const oldInput = m.querySelector('#pwdOld');
+  const oldError = m.querySelector('#pwdOldError');
+  const newInput = m.querySelector('#pwdNew');
+  const confirmInput = m.querySelector('#pwdConfirm');
+  const policy = m.querySelector('#pwdPolicy');
+  const match = m.querySelector('#pwdMatch');
+  bindPasswordToggle(m.querySelector('#togglePwdNew'), newInput, m.querySelector('#pwdNewEye'));
+  bindPasswordToggle(m.querySelector('#togglePwdConfirm'), confirmInput, m.querySelector('#pwdConfirmEye'));
+
+  const updatePasswordState = () => {
+    const policyError = passwordPolicyError(newInput.value);
+    const hasNewPassword = newInput.value.length > 0;
+    policy.textContent = hasNewPassword ? (policyError || '密码规则已满足') : '至少8位且同时包含字母和数字，最多256个 UTF-8 字节';
+    policy.classList.toggle('ok', hasNewPassword && !policyError);
+    policy.classList.toggle('err', hasNewPassword && !!policyError);
+    newInput.setAttribute('aria-invalid', String(hasNewPassword && !!policyError));
+
+    const hasConfirmation = confirmInput.value.length > 0;
+    const passwordsMatch = hasConfirmation && confirmInput.value === newInput.value;
+    match.textContent = hasConfirmation ? (passwordsMatch ? '两次输入一致' : '两次输入的新密码不一致') : '请再次输入新密码';
+    match.classList.toggle('ok', passwordsMatch);
+    match.classList.toggle('err', hasConfirmation && !passwordsMatch);
+    confirmInput.setAttribute('aria-invalid', String(hasConfirmation && !passwordsMatch));
+  };
+  oldInput.addEventListener('input',()=>{
+    const missing=oldInput.value.length===0;
+    oldError.textContent=missing?'请输入当前密码':'';
+    oldError.classList.toggle('err',missing);
+    oldInput.setAttribute('aria-invalid',String(missing));
+  });
+  newInput.addEventListener('input', updatePasswordState);
+  confirmInput.addEventListener('input', updatePasswordState);
+  oldInput.focus();
+
+  m.querySelector('#pwdGo').onclick = async ev => {
+    const oldPassword = m.querySelector('#pwdOld').value;
+    const newPassword = m.querySelector('#pwdNew').value;
+    const confirmPassword = m.querySelector('#pwdConfirm').value;
+
+    if(!oldPassword){
+      oldError.textContent='当前密码必填';
+      oldError.classList.add('err');
+      oldInput.setAttribute('aria-invalid','true');
+      oldInput.focus();
+      toast('当前密码必填','err');
+      return;
+    }
+    const policyError = passwordPolicyError(newPassword);
+    if (policyError){
+      updatePasswordState();
+      newInput.focus();
+      toast(policyError, 'err');
+      return;
+    }
+    if (newPassword !== confirmPassword){
+      updatePasswordState();
+      confirmInput.focus();
+      toast('两次输入的新密码不一致', 'err');
+      return;
+    }
+
+    submitting=true;
+    dialog.setAttribute('aria-busy','true');
+    m.querySelectorAll('[data-close]').forEach(b=>b.disabled=true);
+    busy(ev.currentTarget, true, '修改中');
+    try{
+      await api('/v1/me/password', {
+        method: 'POST',
+        body: JSON.stringify({
+          old_password: oldPassword,
+          new_password: newPassword
+        })
+      });
+      close(true);
+      stopRealtime();
+      clearPortalAuthentication();
+      toast('密码已修改，请使用新密码重新登录', 'ok', 5000);
+      $('loginEmail').focus();
+    }catch(e){
+      toast(e.message, 'err');
+      submitting=false;
+      dialog.setAttribute('aria-busy','false');
+      m.querySelectorAll('[data-close]').forEach(b=>b.disabled=false);
+      busy(ev.currentTarget, false);
+    }
+  };
+}
+
+function clearPortalAuthentication(){
+  token = ''; localStorage.removeItem(TK);
+  cache = {me:null, subs:null, plans:null}; curOrder = null;
+  setSidebar(false,false);
+  $('appView').classList.add('hide'); $('authView').classList.remove('hide');
+  $('loginPass').value='';
+}
+
+// 用 querySelector 而不是 $()，元素缺失时静默跳过 ——
+// 一个按钮没渲染出来不该让整个面板停止工作
+const pwBtn = document.getElementById('btnChangePassword');
+if (pwBtn) pwBtn.onclick = openChangePasswordModal;
+
+$('btnLogout').onclick = async ev => {
+  const btn = ev.currentTarget;
+  busy(btn, true, '退出中'); stopRealtime();
+  try{
+    await api('/v1/auth/logout', {method:'POST'});
+  }catch(e){
+    if (e.status !== 401){
+      toast('服务端注销失败，请重试', 'err', 3000);
+      busy(btn, false); startRealtime(); return;
+    }
+  }
+  clearPortalAuthentication();
+  busy(btn, false);
+  toast('已退出登录', 'info', 2000);
+};
+
+//==============================================================================
+// 导航
+//==============================================================================
+const PAGES = {overview:'概览', subs:'我的订阅', orders:'我的订单', gift:'兑换礼品卡', support:'工单支持', knowledge:'帮助中心', plans:'选购套餐', referral:'邀请返利', security:'账号安全'};
+let curPage = 'overview';
+
+// pageFromHash 让 "#orders" 这样的地址直接落到对应页面。
+//
+// 支付渠道付完款会把用户送回 return_url。门户是单页应用，只有根路径有
+// 页面，所以那个地址只能写成 "/#orders" —— 写成 "/orders" 会走到后端
+// 路由返回一段 JSON 404，而那正是用户付完钱看到的最后一个画面。
+function pageFromHash(){
+  const h = (location.hash || '').replace(/^#\/?/, '');
+  return Object.prototype.hasOwnProperty.call(PAGES, h) ? h : '';
+}
+
+const sidebarMQ=matchMedia('(max-width:1100px)');
+function focusSidebarEntry(){
+  const current=$('sidebar').querySelector('.nav-item.on:not(:disabled)');
+  const first=$('sidebar').querySelector('.nav-item:not(:disabled)');
+  (current||first||$('sidebar')).focus({preventScroll:true});
+}
+function setSidebar(open,returnFocus){
+  const mobile=sidebarMQ.matches, next=mobile&&open;
+  const main=$('appView').querySelector('main');
+  const mask=$('sideMask');
+  $('sidebar').classList.toggle('open',next);
+  document.body.classList.toggle('nav-drawer-open',next);
+  $('btnMenu').setAttribute('aria-expanded',String(next));
+  main.inert=next;
+  $('sidebar').inert=mobile&&!next;
+  mask.inert=!next;mask.disabled=!next;mask.tabIndex=next?0:-1;
+  if(next)requestAnimationFrame(focusSidebarEntry);
+  else if(returnFocus&&mobile)$('btnMenu').focus({preventScroll:true});
+}
+function syncSidebarMode(){
+  const mobile=sidebarMQ.matches, open=mobile&&$('sidebar').classList.contains('open');
+  const main=$('appView').querySelector('main');
+  const mask=$('sideMask');
+  if(mobile&&!open&&$('sidebar').contains(document.activeElement)){
+    main.inert=false;
+    $('btnMenu').focus({preventScroll:true});
+  }
+  if(!mobile)$('sidebar').classList.remove('open');
+  document.body.classList.toggle('nav-drawer-open',open);
+  main.inert=open;
+  $('sidebar').inert=mobile&&!open;
+  mask.inert=!open;mask.disabled=!open;mask.tabIndex=open?0:-1;
+  $('btnMenu').setAttribute('aria-expanded',String(open));
+}
+
+document.querySelectorAll('.nav-item').forEach(b => b.onclick = () => go(b.dataset.page,true));
+$('btnBell').onclick = e => { e.stopPropagation(); toggleNotif(); };
+$('btnReadAll').onclick = async e => {
+  e.stopPropagation();
+  try{ await api('/v1/me/notifications/read-all', {method:'POST'}); }catch(err){}
+  loadNotifications();
+};
+// 点面板内部不关闭，点外面关闭
+$('notifPanel').onclick = e => e.stopPropagation();
+document.addEventListener('click', () => { if(notifOpen) toggleNotif(false); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && notifOpen) toggleNotif(false); });
+function go(p,fromNavigation){
+  curPage = p;
+  document.querySelectorAll('.nav-item').forEach(x =>
+    x.classList.toggle('on', x.dataset.page === p));
+  Object.keys(PAGES).forEach(k =>
+    $('page' + k[0].toUpperCase() + k.slice(1)).classList.toggle('hide', k !== p));
+  $('pageTitle').textContent = PAGES[p];
+  setSidebar(false,false);
+  if(fromNavigation&&sidebarMQ.matches)$('pageTitle').focus({preventScroll:true});
+  if (p === 'overview') renderOverview();
+  if (p === 'subs')     renderSubs();
+  if (p === 'orders')   renderOrders();
+  if (p === 'gift')     renderGift();
+  if (p === 'support')  renderSupport();
+  if (p === 'knowledge') renderKnowledge();
+  if (p === 'plans')    renderPlans();
+  if (p === 'referral') renderReferral();
+  if (p === 'security') renderSecurity();
+  syncSlotVisibility(p);
+}
+$('btnMenu').onclick=()=>setSidebar(!$('sidebar').classList.contains('open'),false);
+$('sideMask').onclick=()=>setSidebar(false,true);
+document.addEventListener('keydown', ev => {
+  if(ev.key==='Escape'&&$('sidebar').classList.contains('open'))setSidebar(false,true);
+});
+if(sidebarMQ.addEventListener)sidebarMQ.addEventListener('change',syncSidebarMode);
+else sidebarMQ.addListener(syncSidebarMode);
+syncSidebarMode();
+$('btnRefresh').onclick = async () => {
+  const b = $('btnRefresh'); b.style.transition = 'transform .6s var(--ease-out)';
+  b.style.transform = 'rotate(360deg)';
+  setTimeout(() => { b.style.transition = 'none'; b.style.transform = 'none'; }, 620);
+  await loadAll(); go(curPage); toast('已刷新', 'ok', 1600);
+};
+
+//==============================================================================
+// 载入
+//==============================================================================
+async function enterApp(){
+  $('authView').classList.add('hide');
+  $('appView').classList.remove('hide');
+  go(pageFromHash() || 'overview');
+  await loadAll();
+  go(curPage);
+  startRealtime();
+  loadNotifications();
+}
+
+//---------------------------------------------------------------------------
+// 实时刷新
+//
+// 服务端在数据变化时推一条通知过来，页面自己重新拉数据 —— 不需要手动刷新。
+//
+// 没用 EventSource 而是 fetch + ReadableStream：EventSource 不允许设置
+// 请求头，令牌只能塞进 URL，那样它会出现在 nginx 访问日志、浏览器历史
+// 和 Referer 里。手写解析多几十行，换掉的是一处真实的凭据泄露面。
+//---------------------------------------------------------------------------
+let rtAbort = null;      // 当前连接的中止控制器
+let rtTimer = null;      // 刷新防抖
+let rtBackoff = 1000;    // 重连退避
+
+// 一次业务操作常常连带改好几张表（下单会写 orders、subscriptions、
+// quota_balances…），于是会连着收到好几条通知。防抖把它们合成一次拉取，
+// 否则页面会在半秒内重复加载三四遍。
+function scheduleRefresh(){
+  clearTimeout(rtTimer);
+  rtTimer = setTimeout(() => {
+    loadNotifications();
+    loadAll().then(() => {
+      // 工单详情页有自己的数据，需要单独刷
+      if (curPage === 'support' && typeof renderSupport === 'function') renderSupport();
+      else go(curPage);
+    }).catch(() => {});
+  }, 250);
+}
+
+function stopRealtime(){
+  if (rtAbort){ rtAbort.abort(); rtAbort = null; }
+  clearTimeout(rtTimer);
+}
+
+async function startRealtime(){
+  const token = localStorage.getItem(TK);
+  if (!token) return;
+
+  stopRealtime();
+  rtAbort = new AbortController();
+
+  try{
+    const res = await fetch('/v1/events', {
+      headers: { 'Authorization': 'Bearer ' + token },
+      signal: rtAbort.signal,
+    });
+    if (!res.ok || !res.body){
+      // 401 说明登录已失效，重连再多次也没用
+      if (res.status === 401) return;
+      throw new Error('SSE ' + res.status);
+    }
+
+    rtBackoff = 1000;   // 连上了，退避归零
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true){
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      // SSE 用空行分帧。可能一次读到半帧，也可能一次读到好几帧，
+      // 所以要在缓冲区里按空行切，剩下的留到下次。
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0){
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        handleFrame(frame);
+      }
+    }
+  }catch(e){
+    if (rtAbort && rtAbort.signal.aborted) return;   // 是我们主动断的
+  }
+
+  // 断线重连，退避上限 30 秒 —— 服务端重启时所有客户端会同时断开，
+  // 固定间隔重连会形成一波打在刚起来的进程上。
+  if (localStorage.getItem(TK)){
+    setTimeout(startRealtime, rtBackoff);
+    rtBackoff = Math.min(rtBackoff * 2, 30000);
+  }
+}
+
+function handleFrame(frame){
+  let ev = 'message';
+  for (const line of frame.split('\n')){
+    if (line.startsWith(':')) return;              // 心跳
+    if (line.startsWith('event:')) ev = line.slice(6).trim();
+  }
+  if (ev === 'message') return;
+  // 所有业务事件一律触发刷新。
+  //
+  // 不按事件类型分别处理：那样每加一种事件都要在这里补一个分支，
+  // 漏掉就是「某个页面不刷新」。统一重新拉取的代价是多几次请求，
+  // 但保证了「界面永远等于数据库」这个性质。
+  scheduleRefresh();
+}
+
+//---------------------------------------------------------------------------
+// 通知
+//---------------------------------------------------------------------------
+let notifOpen = false;
+
+async function loadNotifications(){
+  try{
+    const r = await api('/v1/me/notifications?limit=30');
+    renderNotifications(r.notifications || [], r.unread || 0);
+  }catch(e){ /* 未登录或网络问题，静默 —— 通知不该打断主流程 */ }
+}
+
+function renderNotifications(list, unread){
+  const dot = $('bellDot');
+  dot.textContent = unread > 99 ? '99+' : String(unread);
+  dot.classList.toggle('on', unread > 0);
+
+  const box = $('notifList');
+  if(!list.length){
+    box.innerHTML = '<div class="notif-empty">还没有通知</div>';
+    return;
+  }
+  box.innerHTML = list.map(n => `
+    <button class="notif-item${n.read_at ? ' read' : ''}" data-id="${esc(n.id)}">
+      <div class="t">${esc(n.subject || '通知')}</div>
+      <div class="b">${esc(n.body || '')}</div>
+      <div class="d">${n.sent_at ? fmtDateTime(n.sent_at) : ''}</div>
+    </button>`).join('');
+
+  box.querySelectorAll('.notif-item').forEach(el => {
+    el.onclick = async () => {
+      if(el.classList.contains('read')) return;
+      el.classList.add('read');
+      // 先改界面再发请求：已读是个无关紧要的状态，
+      // 等一个来回才变灰会让点击显得迟钝
+      try{ await api('/v1/me/notifications/' + el.dataset.id + '/read', {method:'POST'}); }
+      catch(e){}
+      loadNotifications();
+    };
+  });
+}
+
+function toggleNotif(open){
+  notifOpen = open === undefined ? !notifOpen : open;
+  $('notifPanel').classList.toggle('open', notifOpen);
+  $('btnBell').setAttribute('aria-expanded', String(notifOpen));
+  if(notifOpen) loadNotifications();
+}
+
+async function loadAll(){
+  try{
+    // 公告与其它数据一起并行拉：概览页第一屏就要用它，
+    // 晚一步会让页面先渲染一次再往下跳
+    const [me, subs, plans, ann] = await Promise.all([
+      api('/v1/me'), api('/v1/me/subscriptions'), api('/v1/plans'),
+      api('/v1/me/announcements').catch(() => ({announcements: []})),
+    ]);
+    // 链接单独拉：它失败不该让整个概览页空掉
+    await loadSubLinks();
+    subNodeStates.clear();
+    cache = {me, subs: subs.subscriptions || [], plans: plans.plans || [],
+             announcements: ann.announcements || []};
+    popCriticalAnnouncement(cache.announcements);
+
+    $('userEmail').textContent = me.email || '—';
+    $('userEmail').title = me.email || '';
+    $('userStatus').textContent = me.status === 'active' ? '账号正常' : (me.status || '');
+    $('avatar').textContent = (me.email || '?').charAt(0).toUpperCase();
+  }catch(e){
+    if (e.status === 401){
+      token = ''; localStorage.removeItem(TK);
+      setSidebar(false,false);
+      $('appView').classList.add('hide'); $('authView').classList.remove('hide');
+      toast('登录已过期，请重新登录', 'err');
+      return;
+    }
+    toast('数据载入失败：' + e.message, 'err');
+  }
+}
+
+//==============================================================================
+// 概览
+//==============================================================================
+// 公告。
+//
+// 已读状态存在 localStorage 而不是数据库：为「看过一条通知」建一张
+// user × announcement 的表，换来的只是跨设备记忆一次弹窗 ——
+// 而公告本来就该多看几眼。真正需要送达确认的消息走站内信。
+const ANN_READ = 'aegis_ann_read';
+
+function annRead(){
+  try{ return JSON.parse(localStorage.getItem(ANN_READ) || '[]'); }
+  catch(_){ return []; }
+}
+function markAnnRead(id){
+  const r = annRead();
+  if (!r.includes(id)){ r.push(id); localStorage.setItem(ANN_READ, JSON.stringify(r.slice(-100))); }
+}
+
+const ANN_STYLE = {
+  info:     {bar:'var(--fg-3)',   label:''},
+  notice:   {bar:'var(--brand)',  label:'提示'},
+  warning:  {bar:'var(--warn)',   label:'注意'},
+  critical: {bar:'var(--err)',    label:'紧急'},
+};
+
+function renderAnnouncements(list){
+  if (!list || !list.length) return '';
+  // 只在概览页顶部铺开，正文折起来 —— 公告再重要也不该把用量和到期挤下去
+  return list.slice(0, 3).map(a => {
+    const st = ANN_STYLE[a.severity] || ANN_STYLE.info;
+    return '<div class="ann" style="border-left-color:' + st.bar + '">' +
+      '<div class="ann-head">' +
+        (st.label ? '<span class="ann-tag" style="background:' + st.bar + '">' +
+          st.label + '</span>' : '') +
+        (a.pinned ? '<span class="ann-pin">置顶</span>' : '') +
+        '<b>' + esc(a.title) + '</b>' +
+        '<span class="spacer"></span>' +
+        '<span class="sub num">' + fmtDate(a.published_at) + '</span>' +
+      '</div>' +
+      '<div class="ann-body">' + esc(a.body) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// 紧急公告弹一次窗。
+//
+// 只对 critical 弹，而且每条只弹一次 —— 每次进面板都糊一脸弹窗，
+// 用户学会的第一件事就是闭着眼点关闭，那时候真出事也没人看了。
+function popCriticalAnnouncement(list){
+  const read = annRead();
+  const hit = (list || []).find(a => a.severity === 'critical' && !read.includes(a.id));
+  if (!hit) return;
+
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML =
+  '<div class="modal" role="dialog" aria-modal="true" aria-label="重要公告">' +
+    '<div class="modal-head"><h3 style="color:var(--err)">' + esc(hit.title) + '</h3></div>' +
+    '<div class="modal-body"><div style="white-space:pre-wrap;line-height:1.8">' +
+      esc(hit.body) + '</div></div>' +
+    '<div class="modal-foot"><button class="btn btn-primary" id="annOk">我知道了</button></div>' +
+  '</div>';
+  document.body.appendChild(m);
+  m.querySelector('#annOk').onclick = () => { markAnnRead(hit.id); m.remove(); };
+}
+
+function renderOverview(){
+  const el = $('pageOverview');
+  if (!cache.me){ el.innerHTML = skeleton(); return; }
+  const annHTML = renderAnnouncements(cache.announcements);
+
+  const subs = cache.subs || [];
+  const act = subs.find(s => s.status === 'active' || s.status === 'trialing') || subs[0];
+
+  if (!act){
+    el.innerHTML = annHTML + emptyState(
+      '还没有订阅',
+      '选购一个套餐即可开始使用节点与流量。',
+      '<button class="btn btn-primary" onclick="go(\'plans\')">浏览套餐</button>' +
+      '<button class="btn btn-ghost" onclick="openInviteModal()">邀请好友</button>');
+    return;
+  }
+
+  const traffic = (act.quotas || []).find(q => q.metric === 'traffic.bytes');
+  const devices = (act.quotas || []).find(q => q.metric === 'devices.active');
+  const dl = daysLeft(act.current_period_end);
+
+  // 流量百分比：limit 为 null 表示不限量
+  let pct = 0, used = 0, lim = null;
+  if (traffic){
+    used = Number(traffic.consumed || 0);
+    lim = traffic.limit === null || traffic.limit === undefined ? null : Number(traffic.limit);
+    pct = lim ? Math.min(100, used / lim * 100) : 0;
+  }
+  const C = 2 * Math.PI * 56;                       // 环形周长
+  const remainPct = lim ? Math.max(0, 100 - pct) : 100;
+  const st = SUB_ST[act.status] || [act.status, ''];
+
+  el.innerHTML = annHTML +
+  '<div class="stats">' +
+    statCard('当前套餐', esc(act.plan_name || '—'),
+      'v' + (act.plan_version || 1) + ' · ' + money(act.amount, act.currency) + ' ' + act.currency,
+      '<path d="M20.6 13.5L13.5 20.6a2 2 0 01-2.8 0l-8.3-8.3V2h10.3l8 8a2 2 0 010 2.8z"/>', '') +
+    statCard('订阅状态', st[0], '本期至 ' + fmtDate(act.current_period_end),
+      '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      st[1] === 'ok' ? 'g' : st[1] === 'err' ? '' : 'y') +
+    statCard('剩余天数', dl === null ? '—' : (dl < 0 ? '已过期' : dl),
+      dl === null ? '' : (dl < 0 ? '' : '天'),
+      '<rect x="3" y="4.5" width="18" height="17" rx="2.5"/><path d="M16 2.5v4M8 2.5v4M3 10h18"/>',
+      dl !== null && dl <= 7 ? 'y' : '', dl !== null && dl >= 0 ? 'num' : '') +
+  '</div>' +
+
+  '<div class="card" style="margin-bottom:var(--sp-6)">' +
+    '<div class="card-head"><h3>用量</h3><div class="spacer"></div>' +
+      '<span class="badge badge-plain">本计费周期</span></div>' +
+    '<div class="card-pad"><div class="usage-row">' +
+      '<div class="ring">' +
+        '<svg width="132" height="132" viewBox="0 0 132 132">' +
+          '<circle class="track" cx="66" cy="66" r="56"/>' +
+          '<circle class="bar" cx="66" cy="66" r="56" stroke-dasharray="' + C +
+            '" stroke-dashoffset="' + (C - C * remainPct / 100) + '"/>' +
+        '</svg>' +
+        '<div class="ring-mid"><b class="num">' +
+          (lim ? Math.round(remainPct) + '%' : '∞') +
+          '</b><span>' + (lim ? '剩余' : '不限量') + '</span></div>' +
+      '</div>' +
+      '<div class="usage-facts">' +
+        fact('已用流量', bytes(used)) +
+        fact('套餐总量', lim === null ? '不限量' : bytes(lim)) +
+        fact('剩余流量', lim === null ? '不限量' : bytes(Math.max(0, lim - used))) +
+        (devices ? fact('在线设备',
+          devices.consumed + ' / ' + (devices.limit === null ? '不限' : devices.limit)) : '') +
+      '</div>' +
+    '</div></div>' +
+  '</div>' +
+
+  '<div class="card">' +
+    '<div class="card-head"><h3>快捷操作</h3></div>' +
+    '<div class="card-pad" style="display:flex;gap:var(--sp-3);flex-wrap:wrap">' +
+      '<button class="btn btn-primary" onclick="openRenewModal()">续费</button>' +
+      '<button class="btn btn-ghost" onclick="go(\'plans\')">升级套餐</button>' +
+      '<button class="btn btn-ghost" onclick="go(\'subs\')">查看订阅详情</button>' +
+      '<button class="btn btn-ghost" onclick="go(\'support\')">联系客服</button>' +
+      '<button class="btn btn-ghost" onclick="openTopupModal()">账户充值</button>' +
+      '<button class="btn btn-ghost" onclick="openInviteModal()">邀请好友</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function statCard(label, val, sub, iconPath, tone, cls){
+  return '<div class="stat">' +
+    '<div class="stat-top"><div class="stat-ico ' + (tone || '') + '">' +
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + iconPath + '</svg>' +
+    '</div><span class="stat-label">' + label + '</span></div>' +
+    '<div class="stat-val ' + (cls || '') + '">' + val +
+      (sub && sub.length <= 2 ? '<small>' + sub + '</small>' : '') + '</div>' +
+    (sub && sub.length > 2 ? '<div class="stat-sub">' + sub + '</div>' : '') +
+  '</div>';
+}
+function fact(k, v){
+  return '<div class="fact"><span class="k">' + k + '</span>' +
+         '<span class="v num">' + v + '</span></div>';
+}
+
+//==============================================================================
+// 订阅
+//==============================================================================
+//---------------------------------------------------------------------------
+// 二维码。
+//
+// 自己实现而不是引库：Artifact 与本项目都禁止外部依赖，而一个只需要
+// byte 模式的编码器不到两百行 —— 为它拉一个几十 KB 的通用库不划算。
+//
+// 只支持 byte 模式 + M 级纠错，够覆盖订阅链接（80–120 字符）。
+// 输入超过当前版本容量时自动升版，超出 version 10 就放弃并让调用方降级到复制链接。
+
+const QR_ECC_M = 0;   // 纠错等级 M 在编码表里的索引
+
+// 每个版本在 M 级纠错下的：总码字数、纠错码字数/块、块数（组1）、块数（组2）
+const QR_SPEC = {
+  1:  [26,   10, 1, 0],
+  2:  [44,   16, 1, 0],
+  3:  [70,   26, 1, 0],
+  4:  [100,  18, 2, 0],
+  5:  [134,  24, 2, 0],
+  6:  [172,  16, 4, 0],
+  7:  [196,  18, 4, 0],
+  8:  [242,  22, 2, 2],
+  9:  [292,  22, 3, 2],
+  10: [346,  26, 4, 1],
+};
+
+// 伽罗瓦域 GF(256) 的对数表，Reed-Solomon 要用
+const QR_EXP = new Uint8Array(512);
+const QR_LOG = new Uint8Array(256);
+(function initGF(){
+  let x = 1;
+  for (let i = 0; i < 255; i++){
+    QR_EXP[i] = x;
+    QR_LOG[x] = i;
+    x <<= 1;
+    if (x & 0x100) x ^= 0x11d;    // 本原多项式
+  }
+  for (let i = 255; i < 512; i++) QR_EXP[i] = QR_EXP[i - 255];
+})();
+
+function gfMul(a, b){
+  if (a === 0 || b === 0) return 0;
+  return QR_EXP[QR_LOG[a] + QR_LOG[b]];
+}
+
+// 生成多项式：(x - a^0)(x - a^1)...(x - a^(n-1))
+function rsGenerator(n){
+  let poly = [1];
+  for (let i = 0; i < n; i++){
+    const next = new Array(poly.length + 1).fill(0);
+    for (let j = 0; j < poly.length; j++){
+      next[j] ^= poly[j];
+      next[j + 1] ^= gfMul(poly[j], QR_EXP[i]);
+    }
+    poly = next;
+  }
+  return poly;
+}
+
+function rsEncode(data, ecLen){
+  const gen = rsGenerator(ecLen);
+  const res = new Array(ecLen).fill(0);
+  for (const byte of data){
+    const factor = byte ^ res[0];
+    res.shift();
+    res.push(0);
+    for (let i = 0; i < gen.length - 1; i++){
+      res[i] ^= gfMul(gen[i + 1], factor);
+    }
+  }
+  return res;
+}
+
+// 各版本的对齐图案中心坐标
+const QR_ALIGN = {
+  1: [], 2: [6,18], 3: [6,22], 4: [6,26], 5: [6,30],
+  6: [6,34], 7: [6,22,38], 8: [6,24,42], 9: [6,26,46], 10: [6,28,50],
+};
+
+// version 7 起必须画版本信息：右上和左下各一块 6×3。
+//
+// 漏掉它的后果不是「少个装饰」——那 36 个格子会被当成数据区填进码字，
+// 整个流往后错位，扫描器读出来的是一堆纠错都救不回来的乱码。
+// version 1–6 没有这个区域，所以这个错只在长内容时才暴露。
+const QR_VERSION_INFO = {
+  7: 0x07C94, 8: 0x085BC, 9: 0x09A99, 10: 0x0A4D3,
+};
+
+function qrEncode(text){
+  const bytes = new TextEncoder().encode(text);
+
+  // 挑一个装得下的最小版本。
+  //
+  // 上限卡在 6 而不是 10：version 7 起要画版本信息块，那部分实现过一次
+  // 但独立解码器验出码字仍然错位，没查清之前不能放出去 ——
+  // 一个「看着像二维码、扫出来是乱码」的图比没有二维码更糟，
+  // 用户会以为是自己手机的问题而反复重试。
+  //
+  // version 6 能装 106 字节，覆盖绝大多数订阅链接。
+  // 超出就返回 null，调用方降级到「复制链接」。
+  let version = 0, spec = null;
+  for (let v = 1; v <= 6; v++){
+    const sp = QR_SPEC[v];
+    const blocks = sp[2] + sp[3];
+    const capacity = sp[0] - sp[1] * blocks;
+    // 按位算而不是按字节：4 位模式 + 8/16 位长度 + 数据。
+    // 按字节向上取整会白白浪费掉一个字节的容量，
+    // 让刚好卡在边界的链接被迫升版甚至被拒
+    const lenBits = v < 10 ? 8 : 16;
+    if (4 + lenBits + bytes.length * 8 <= capacity * 8){
+      version = v; spec = sp; break;
+    }
+  }
+  if (!version) return null;   // 装不下，调用方降级到复制链接
+
+  const [totalCw, ecPerBlock, g1, g2] = spec;
+  const blocks = g1 + g2;
+  const dataCw = totalCw - ecPerBlock * blocks;
+
+  // --- 位流 ---
+  const bits = [];
+  const push = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >> i) & 1); };
+  push(0b0100, 4);                                  // byte 模式
+  push(bytes.length, version < 10 ? 8 : 16);
+  for (const b of bytes) push(b, 8);
+  // 结束符最多 4 个 0，然后补到字节边界
+  for (let i = 0; i < 4 && bits.length < dataCw * 8; i++) bits.push(0);
+  while (bits.length % 8) bits.push(0);
+  // 交替填充字节直到填满
+  const pads = [0xec, 0x11];
+  let pi = 0;
+  while (bits.length < dataCw * 8){ push(pads[pi++ % 2], 8); }
+
+  const dataBytes = [];
+  for (let i = 0; i < bits.length; i += 8){
+    let b = 0;
+    for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+    dataBytes.push(b);
+  }
+
+  // --- 分块并算纠错 ---
+  const shortLen = Math.floor(dataCw / blocks);
+  const dataBlocks = [], ecBlocks = [];
+  let off = 0;
+  for (let i = 0; i < blocks; i++){
+    const len = shortLen + (i >= g1 ? 1 : 0);
+    const blk = dataBytes.slice(off, off + len);
+    off += len;
+    dataBlocks.push(blk);
+    ecBlocks.push(rsEncode(blk, ecPerBlock));
+  }
+
+  // 交错：先按列取数据码字，再取纠错码字
+  const finalBytes = [];
+  const maxData = Math.max(...dataBlocks.map(b => b.length));
+  for (let i = 0; i < maxData; i++){
+    for (const blk of dataBlocks) if (i < blk.length) finalBytes.push(blk[i]);
+  }
+  for (let i = 0; i < ecPerBlock; i++){
+    for (const blk of ecBlocks) finalBytes.push(blk[i]);
+  }
+
+  // --- 铺矩阵 ---
+  const size = version * 4 + 17;
+  const mat = Array.from({length: size}, () => new Array(size).fill(null));
+
+  const setFinder = (r, c) => {
+    for (let i = -1; i <= 7; i++){
+      for (let j = -1; j <= 7; j++){
+        const rr = r + i, cc = c + j;
+        if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
+        const on = (i >= 0 && i <= 6 && (j === 0 || j === 6)) ||
+                   (j >= 0 && j <= 6 && (i === 0 || i === 6)) ||
+                   (i >= 2 && i <= 4 && j >= 2 && j <= 4);
+        mat[rr][cc] = on ? 1 : 0;
+      }
+    }
+  };
+  setFinder(0, 0); setFinder(0, size - 7); setFinder(size - 7, 0);
+
+  // 定位线
+  for (let i = 8; i < size - 8; i++){
+    const v = i % 2 === 0 ? 1 : 0;
+    if (mat[6][i] === null) mat[6][i] = v;
+    if (mat[i][6] === null) mat[i][6] = v;
+  }
+
+  // 对齐图案。
+  //
+  // 排除规则必须按坐标判断，不能看格子是否已被占用：
+  // (6, 22) 这类位置的中心正好落在定位线上，按「已占用就跳过」会漏掉它，
+  // 那 25 个格子随后被当成数据区填进码字，整个流往后错位。
+  // 标准只排除三个角 —— 与定位图案重叠的 (first,first)/(first,last)/(last,first)。
+  const align = QR_ALIGN[version];
+  const first = align[0], last = align[align.length - 1];
+  for (const r of align){
+    for (const c of align){
+      if ((r === first && c === first) || (r === first && c === last) ||
+          (r === last && c === first)) continue;
+      for (let i = -2; i <= 2; i++){
+        for (let j = -2; j <= 2; j++){
+          mat[r + i][c + j] = (Math.abs(i) === 2 || Math.abs(j) === 2 || (i === 0 && j === 0)) ? 1 : 0;
+        }
+      }
+    }
+  }
+
+  mat[size - 8][8] = 1;   // 固定的黑点
+
+  // 版本信息（version ≥ 7）。要在填数据之前占好位，
+  // 否则之字形填充会把数据写进这两块区域
+  const vinfo = QR_VERSION_INFO[version];
+  if (vinfo !== undefined){
+    for (let i = 0; i < 18; i++){
+      const bit = (vinfo >> i) & 1;
+      const r = Math.floor(i / 3), c = i % 3;
+      mat[r][size - 11 + c] = bit;   // 右上
+      mat[size - 11 + c][r] = bit;   // 左下
+    }
+  }
+
+  // 预留格式信息位
+  const reserved = [];
+  for (let i = 0; i < 9; i++){
+    if (mat[8][i] === null){ mat[8][i] = 0; reserved.push([8, i]); }
+    if (mat[i][8] === null){ mat[i][8] = 0; reserved.push([i, 8]); }
+  }
+  for (let i = size - 8; i < size; i++){
+    if (mat[8][i] === null){ mat[8][i] = 0; reserved.push([8, i]); }
+    if (mat[i][8] === null){ mat[i][8] = 0; reserved.push([i, 8]); }
+  }
+  const isReserved = (r, c) => reserved.some(p => p[0] === r && p[1] === c);
+
+  // --- 之字形填数据 ---
+  let bitIdx = 0;
+  const dataBits = [];
+  for (const b of finalBytes){ for (let i = 7; i >= 0; i--) dataBits.push((b >> i) & 1); }
+
+  let upward = true;
+  for (let col = size - 1; col > 0; col -= 2){
+    if (col === 6) col--;               // 跳过定位列
+    for (let n = 0; n < size; n++){
+      const row = upward ? size - 1 - n : n;
+      for (let k = 0; k < 2; k++){
+        const c = col - k;
+        if (mat[row][c] !== null) continue;
+        // mask 0：(row + col) % 2 == 0 时翻转
+        const bit = bitIdx < dataBits.length ? dataBits[bitIdx++] : 0;
+        mat[row][c] = ((row + c) % 2 === 0) ? bit ^ 1 : bit;
+      }
+    }
+    upward = !upward;
+  }
+
+  // --- 格式信息（纠错 M + mask 0）---
+  const fmtData = (QR_ECC_M << 3) | 0;       // ECC 位 + mask 号
+  let fmt = fmtData << 10;
+  for (let i = 4; i >= 0; i--){
+    if (fmt & (1 << (i + 10))) fmt ^= 0b10100110111 << i;
+  }
+  fmt = ((fmtData << 10) | fmt) ^ 0b101010000010010;
+
+  const fmtBit = i => (fmt >> i) & 1;
+  for (let i = 0; i <= 5; i++) mat[8][i] = fmtBit(i);
+  mat[8][7] = fmtBit(6); mat[8][8] = fmtBit(7); mat[7][8] = fmtBit(8);
+  for (let i = 9; i <= 14; i++) mat[14 - i][8] = fmtBit(i);
+  for (let i = 0; i <= 7; i++) mat[size - 1 - i][8] = fmtBit(i);
+  for (let i = 8; i <= 14; i++) mat[8][size - 15 + i] = fmtBit(i);
+
+  return mat;
+}
+
+// 把矩阵画成 SVG。用 SVG 而不是 Canvas：缩放不糊，
+// 而且用户可以直接右键保存图片
+function qrSVG(text, px){
+  const mat = qrEncode(text);
+  if (!mat) return null;
+  const n = mat.length, quiet = 2, total = n + quiet * 2;
+  const rects = [];
+  for (let r = 0; r < n; r++){
+    for (let c = 0; c < n; c++){
+      if (mat[r][c]) rects.push('M' + (c + quiet) + ' ' + (r + quiet) + 'h1v1h-1z');
+    }
+  }
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="' + px + '" height="' + px +
+    '" viewBox="0 0 ' + total + ' ' + total + '" shape-rendering="crispEdges">' +
+    '<rect width="' + total + '" height="' + total + '" fill="#fff"/>' +
+    '<path d="' + rects.join('') + '" fill="#000"/></svg>';
+}
+
+// 一键导入。
+//
+// 拿到订阅链接之后，用户还要打开客户端、找到「从剪贴板导入」、粘贴、确认 ——
+// 这四步里每一步都在流失人。深链把它压成一次点击。
+//
+// 服务端按 User-Agent 决定返回 Clash YAML 还是 sing-box JSON，
+// 所以这里所有客户端共用同一个订阅地址，不需要按客户端拼不同的 URL。
+const CLIENTS = [
+  {id:'clash',    name:'Clash Verge / mihomo', os:'桌面',
+   link: u => 'clash://install-config?url=' + encodeURIComponent(u) + '&name=Pandora%20Panel'},
+  {id:'stash',    name:'Stash',                os:'iOS / macOS',
+   link: u => 'stash://install-config?url=' + encodeURIComponent(u)},
+  {id:'shadowrocket', name:'Shadowrocket',     os:'iOS',
+   link: u => 'sub://' + b64url(u)},
+  {id:'singbox',  name:'sing-box',             os:'全平台',
+   link: u => 'sing-box://import-remote-profile?url=' + encodeURIComponent(u)},
+  {id:'surge',    name:'Surge',                os:'iOS / macOS',
+   link: u => 'surge:///install-config?url=' + encodeURIComponent(u)},
+  {id:'loon',     name:'Loon',                 os:'iOS',
+   link: u => 'loon://import?sub=' + encodeURIComponent(u)},
+  {id:'quantumult', name:'Quantumult X',       os:'iOS',
+   link: u => 'quantumult-x:///update-configuration?remote-resource=' +
+     encodeURIComponent(JSON.stringify({server_remote:[u + ', tag=Pandora Panel']}))},
+  // v2rayN / NekoBox 这类没有注册深链协议，只能走复制。
+  // 与其给一个点了没反应的按钮，不如直说
+  {id:'manual',   name:'v2rayN / NekoBox 等',  os:'手动',
+   link: null},
+];
+
+// base64url：Shadowrocket 的 sub:// 要的是 URL 安全变体，
+// 带 + / = 的标准 base64 会在跳转时被截断
+function b64url(str){
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function openImportModal(subId){
+  const link = subLinks[subId];
+  if (!link){ toast('订阅链接还没加载出来', 'err'); return; }
+  const url = link.url;
+
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML =
+  '<div class="modal" role="dialog" aria-modal="true" aria-label="导入到客户端">' +
+    '<div class="modal-head"><h3>导入到客户端</h3>' +
+      '<button class="btn-icon" data-close aria-label="关闭">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+      '</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="imp-grid">' +
+        CLIENTS.map(c =>
+          '<button class="imp-item" data-c="' + c.id + '">' +
+            '<span class="imp-name">' + c.name + '</span>' +
+            '<span class="imp-os">' + c.os + '</span>' +
+          '</button>').join('') +
+      '</div>' +
+      '<div class="imp-qr" id="impQR"></div>' +
+      '<div class="field" style="margin:var(--sp-5) 0 0">' +
+        '<label>或手动复制链接</label>' +
+        '<div style="display:flex;gap:var(--sp-2)">' +
+          '<input class="input mono" id="impUrl" readonly value="' + esc(url) + '" ' +
+            'style="flex:1;font-size:var(--fs-2xs)">' +
+          '<button class="btn btn-ghost" id="impCopy" style="flex:none">复制</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="hint" id="impHint" style="margin-top:var(--sp-3);line-height:1.7">' +
+        '点客户端图标会尝试直接唤起它。没有反应通常是没装，或者浏览器拦了跳转 —— ' +
+        '这时用下面的链接手动导入。' +
+      '</div>' +
+    '</div>' +
+    '<div class="modal-foot"><button class="btn btn-ghost" data-close>关闭</button></div>' +
+  '</div>';
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+  m.onclick = ev => { if (ev.target === m) close(); };
+
+  // 二维码：手机扫电脑屏幕是最省事的导入方式，省掉在手机上敲一长串链接。
+  // 编码失败（链接过长）时不显示空白框，直接不渲染 —— 下面还有复制链接兜底
+  const svg = qrSVG(url, 168);
+  if (svg){
+    m.querySelector('#impQR').innerHTML =
+      svg + '<div class="hint" style="margin-top:var(--sp-2)">手机客户端可直接扫码导入</div>';
+  }
+
+  m.querySelector('#impCopy').onclick = async () => {
+    try{ await navigator.clipboard.writeText(url); toast('链接已复制', 'ok', 2000); }
+    catch(_){ m.querySelector('#impUrl').select(); toast('已选中，请按 Ctrl+C', 'info'); }
+  };
+
+  m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
+    const c = CLIENTS.find(x => x.id === b.dataset.c);
+    if (!c.link){
+      // 明确说清楚，而不是给一个点了没反应的按钮
+      m.querySelector('#impHint').innerHTML =
+        '<b>' + esc(c.name) + '</b> 没有提供一键导入协议，' +
+        '请复制下面的链接，在客户端里选「从剪贴板导入订阅」。';
+      m.querySelector('#impUrl').select();
+      return;
+    }
+    // 用隐藏 iframe 跳转而不是改 location：没装客户端时
+    // 改 location 会让当前页面白屏或弹出系统错误框
+    const f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = c.link(url);
+    document.body.appendChild(f);
+    setTimeout(() => f.remove(), 2000);
+    toast('正在唤起 ' + c.name + '…', 'info', 3000);
+  });
+}
+
+// 订阅链接
+//---------------------------------------------------------------------------
+let subLinks = {};   // subscription_id -> 链接信息
+const subNodeStates = new Map();
+
+async function loadSubLinks(){
+  try{
+    const r = await api('/v1/me/subscription-links');
+    subLinks = {};
+    (r.links || []).forEach(l => { subLinks[l.subscription_id] = l; });
+  }catch(e){ subLinks = {}; }
+}
+
+// subLinkBlock 渲染一条订阅下面的链接区块。
+function subLinkBlock(subId){
+  const l = subLinks[subId];
+  if(!l) return '';
+
+  // 来源数明显多于常见设备数时给个提示。
+  // 只提示不阻断：家里几台设备加手机流量切换，四五个来源是正常的，
+  // 真正异常的是十几二十个 —— 那基本只能是链接被转出去了。
+  const many = l.distinct_sources_24h >= 8;
+
+  return '<div class="sublink">' +
+    '<div class="sublink-row">' +
+      '<div class="sublink-url" id="su-' + esc(subId) + '">' + esc(l.url) + '</div>' +
+      '<button class="btn btn-sm btn-primary" onclick="openImportModal(\'' + esc(subId) + '\')">' +
+        '一键导入</button> ' +
+      '<button class="btn btn-sm" onclick="copySubLink(\'' + esc(subId) + '\')">复制</button>' +
+      '<button class="btn btn-sm btn-primary" onclick="openRenewModal(\'' + esc(subId) + '\')" ' +
+        'title="在当前到期日基础上延长">续费</button> ' +
+      '<button class="btn btn-sm btn-ghost" onclick="rotateSubLink(\'' + esc(subId) + '\')" ' +
+        'title="换一条新链接，旧的立即失效">重置</button>' +
+    '</div>' +
+    '<div class="sublink-meta">' +
+      '<span>已拉取 <b>' + (l.fetch_count || 0) + '</b> 次</span>' +
+      '<span>最近 <b>' + (l.last_fetched_at ? fmtDateTime(l.last_fetched_at) : '从未') + '</b></span>' +
+      '<span>24 小时来源 <b>' + (l.distinct_sources_24h || 0) + '</b> 个</span>' +
+    '</div>' +
+    (many ?
+      '<div class="sublink-warn">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round" style="flex:none;margin-top:1px">' +
+        '<path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>' +
+        '<path d="M12 9v4M12 17h.01"/></svg>' +
+        '<div>近 24 小时有 ' + l.distinct_sources_24h + ' 个不同来源拉取这条链接。' +
+        '如果不是你本人的设备，建议点「重置」换一条。</div>' +
+      '</div>' : '') +
+  '</div>';
+}
+
+function subNodeBlock(subId, subStatus){
+  if(!['active','trialing','grace'].includes(subStatus)){
+    return '<div class="subnodes"><div class="subnodes-head"><div><b>套餐节点</b>' +
+      '<div class="sub">当前订阅不可用，恢复有效状态后才能查看节点。</div></div></div></div>';
+  }
+  const state = subNodeStates.get(subId) || {status:'idle', expanded:false, nodes:[]};
+  if(!subNodeStates.has(subId)) subNodeStates.set(subId, state);
+  return '<div class="subnodes">' +
+    '<div class="subnodes-head"><div><b>套餐节点</b>' +
+      '<div class="sub">仅显示名称、协议和流量倍率，不展示连接参数。</div></div>' +
+      '<button class="btn btn-sm btn-ghost" data-sub-nodes-toggle="' + esc(subId) + '" ' +
+        'aria-expanded="' + String(state.expanded) + '" aria-controls="sn-' + esc(subId) + '">' +
+        (state.expanded ? '收起节点' : '查看节点') + '</button></div>' +
+    '<div id="sn-' + esc(subId) + '" role="status" aria-live="polite">' +
+      renderSubNodeState(subId, state) + '</div></div>';
+}
+
+function renderSubNodeState(subId, state){
+  if(!state.expanded) return '';
+  if(state.status === 'loading') return '<div class="subnodes-state">正在读取可用节点…</div>';
+  if(state.status === 'error') return '<div class="subnodes-state">节点暂时加载失败。 ' +
+    '<button class="btn btn-sm btn-ghost" data-sub-nodes-retry="' + esc(subId) + '">重试</button></div>';
+  if(state.status === 'ready' && !state.nodes.length) return '<div class="subnodes-state">当前没有可用节点</div>';
+  if(state.status !== 'ready') return '';
+  return '<div class="subnodes-list">' + state.nodes.map(node => {
+    const rate = Number(node.traffic_rate);
+    const safeRate = Number.isFinite(rate) && rate > 0 ? rate : 1;
+    return '<div class="subnode-item"><div class="subnode-name" title="' + esc(node.name || '未命名节点') + '">' +
+      esc(node.name || '未命名节点') + '</div><div class="subnode-meta">' +
+      esc(node.protocol || 'unknown') + ' · ' + safeRate.toFixed(2) + '× 流量倍率</div></div>';
+  }).join('') + '</div>';
+}
+
+function bindSubNodeButtons(root){
+  root.querySelectorAll('[data-sub-nodes-toggle]').forEach(button => {
+    button.onclick = () => toggleSubNodes(button.dataset.subNodesToggle);
+  });
+  root.querySelectorAll('[data-sub-nodes-retry]').forEach(button => {
+    button.onclick = () => toggleSubNodes(button.dataset.subNodesRetry, true);
+  });
+}
+
+function renderSubNodeRegion(subId){
+  const state = subNodeStates.get(subId);
+  const region = document.getElementById('sn-' + subId);
+  const button = document.querySelector('[data-sub-nodes-toggle="' + CSS.escape(subId) + '"]');
+  if(!state || !region || !button) return;
+  region.innerHTML = renderSubNodeState(subId, state);
+  button.setAttribute('aria-expanded', String(state.expanded));
+  button.textContent = state.expanded ? '收起节点' : '查看节点';
+  bindSubNodeButtons(region);
+}
+
+async function toggleSubNodes(subId, retry){
+  let state = subNodeStates.get(subId) || {status:'idle', expanded:false, nodes:[]};
+  if(retry){ state = {status:'idle', expanded:true, nodes:[]}; subNodeStates.set(subId, state); }
+  else state.expanded = !state.expanded;
+  renderSubNodeRegion(subId);
+  if(!state.expanded || state.status === 'ready' || state.status === 'loading') return;
+
+  state.status = 'loading';
+  renderSubNodeRegion(subId);
+  const requestedState = state;
+  try{
+    const response = await api('/v1/me/subscriptions/' + encodeURIComponent(subId) + '/nodes');
+    if(subNodeStates.get(subId) !== requestedState) return;
+    requestedState.nodes = (response.nodes || []).map(node => ({
+      name: String(node.name || ''), protocol: String(node.protocol || ''),
+      traffic_rate: Number(node.traffic_rate),
+    }));
+    requestedState.status = 'ready';
+  }catch(_){
+    if(subNodeStates.get(subId) !== requestedState) return;
+    requestedState.status = 'error';
+  }
+  renderSubNodeRegion(subId);
+}
+
+async function copySubLink(subId){
+  const l = subLinks[subId];
+  if(!l) return;
+  try{
+    await navigator.clipboard.writeText(l.url);
+    toast('订阅链接已复制');
+  }catch(e){
+    // 非 HTTPS 或旧浏览器下 clipboard 不可用。
+    // 选中文本让用户自己按 Ctrl+C，比弹一句「复制失败」有用。
+    const el = $('su-' + subId);
+    if(el){
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges(); sel.addRange(r);
+      toast('已选中，请按 Ctrl+C 复制', 'warn');
+    }
+  }
+}
+
+async function rotateSubLink(subId){
+  if(!confirm('重置后旧链接立即失效，所有设备都需要重新导入新的订阅链接。确定继续？')) return;
+  try{
+    await api('/v1/me/subscriptions/' + encodeURIComponent(subId) + '/rotate', {method:'POST'});
+    await loadSubLinks();
+    subNodeStates.delete(subId);
+    renderSubs();
+    toast('已生成新链接，请重新导入到客户端');
+  }catch(e){
+    toast('重置失败：' + (e.message || '请稍后再试'), 'err');
+  }
+}
+
+async function renderKnowledge(){
+  const el=$('pageKnowledge');
+  el.innerHTML=skeleton();
+  try{
+    const out=await api('/v1/content/pages?kind=kb_article&platform=web&client_version='+encodeURIComponent(PORTAL_CLIENT_VERSION)+'&locale='+encodeURIComponent(PORTAL_LOCALE));
+    const pages=out.pages||[];
+    if(!pages.length){
+      el.innerHTML=emptyState('帮助中心正在整理', '暂时没有适合当前账号和客户端的文章。',
+        '<button class="btn btn-primary" onclick="go(\'support\')">提交工单</button>');
+      return;
+    }
+    el.innerHTML='<div class="card"><div class="card-head"><div><h3>帮助中心</h3><div class="sub">根据你的套餐与当前平台显示可用文章</div></div></div><div class="card-pad" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:var(--sp-4)">'+
+      pages.map(p=>'<button class="card" data-kb-slug="'+esc(p.slug)+'" style="text-align:left;padding:var(--sp-5);cursor:pointer;min-height:112px"><div class="sub">'+esc(p.category||'使用指南')+'</div><h3 style="margin:var(--sp-2) 0">'+esc(p.title)+'</h3><p class="muted" style="margin:0;line-height:1.6">'+esc(p.summary||'点击查看详情')+'</p></button>').join('')+'</div></div>';
+    el.querySelectorAll('[data-kb-slug]').forEach(b=>b.onclick=()=>openKnowledgeArticle(b.dataset.kbSlug,b));
+  }catch(e){
+    el.innerHTML=emptyState('帮助中心加载失败', esc(e.message), '<button class="btn btn-primary" onclick="renderKnowledge()">重试</button>');
+  }
+}
+
+async function openKnowledgeArticle(slug,button){
+  busy(button,true,'加载中');
+  try{
+    const out=await api('/v1/content/pages/'+encodeURIComponent(slug)+'?kind=kb_article&platform=web&client_version='+encodeURIComponent(PORTAL_CLIENT_VERSION)+'&locale='+encodeURIComponent(PORTAL_LOCALE));
+    const page=out.page||{};
+    const m=document.createElement('div');m.className='mask';
+    m.innerHTML='<div class="modal" role="dialog" aria-modal="true" aria-labelledby="kbArticleTitle"><div class="modal-head"><h3 id="kbArticleTitle"></h3><button class="btn-icon" data-close aria-label="关闭">×</button></div><div class="modal-body"><div class="sub" id="kbArticleMeta"></div><div id="kbArticleBody" style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;margin-top:var(--sp-4)"></div></div><div class="modal-foot"><button class="btn btn-primary" data-close>关闭</button></div></div>';
+    m.querySelector('#kbArticleTitle').textContent=page.title||slug;
+    m.querySelector('#kbArticleMeta').textContent=(page.category||'帮助中心')+' · v'+(page.version||1);
+    // 正文永远作为文本节点渲染，服务端存量中即使含有 HTML 也不会执行。
+    m.querySelector('#kbArticleBody').textContent=page.body||'';
+    const close=()=>m.remove();
+    m.querySelectorAll('[data-close]').forEach(x=>x.onclick=close);
+    m.onclick=e=>{if(e.target===m)close()};
+    document.body.appendChild(m);
+  }catch(e){toast('文章加载失败：'+e.message,'err',6000)}
+  finally{busy(button,false)}
+}
+
+function renderSubs(){
+  const el = $('pageSubs'), subs = cache.subs;
+  if (subs === null){ el.innerHTML = skeleton(); return; }
+  if (!subs.length){
+    el.innerHTML = emptyState('还没有订阅', '选购套餐后，订阅信息会显示在这里。',
+      '<button class="btn btn-primary" onclick="go(\'plans\')">浏览套餐</button>');
+    return;
+  }
+
+  let h = '';
+  subs.forEach(s => {
+    const st = SUB_ST[s.status] || [s.status, ''];
+    const dl = daysLeft(s.current_period_end);
+    h += '<div class="card" style="margin-bottom:var(--sp-5)">' +
+      '<div class="card-head">' +
+        '<h3>' + esc(s.plan_name || '订阅') + '</h3>' +
+        '<span class="badge badge-plain">v' + (s.plan_version || 1) + '</span>' +
+        '<div class="spacer"></div>' +
+        '<span class="badge badge-' + (st[1] || 'plain') + '">' + st[0] + '</span>' +
+      '</div>' +
+      '<div class="tbl-wrap"><table class="tbl">' +
+        '<tr><th style="width:34%">计费金额</th><td class="num">' +
+          (CUR_SYM[s.currency] || '') + money(s.amount, s.currency) + ' ' + s.currency + '</td></tr>' +
+        '<tr><th>本期开始</th><td class="num">' + fmtDate(s.current_period_start) + '</td></tr>' +
+        '<tr><th>本期结束</th><td class="num">' + fmtDate(s.current_period_end) +
+          (dl !== null && dl >= 0 ? ' <span class="badge badge-plain">剩 ' + dl + ' 天</span>' : '') +
+          '</td></tr>' +
+      '</table></div>' +
+      (s.quotas && s.quotas.length ? quotaBlock(s.quotas) : '') +
+      subNodeBlock(s.id, s.status) +
+      subLinkBlock(s.id) +
+    '</div>';
+  });
+  el.innerHTML = h;
+  bindSubNodeButtons(el);
+}
+
+const METRIC = {'traffic.bytes':'流量', 'devices.active':'设备数',
+                'requests.count':'请求数', 'concurrent.sessions':'并发连接'};
+function quotaBlock(qs){
+  let h = '<div class="card-pad" style="border-top:1px solid var(--line);' +
+          'display:flex;flex-direction:column;gap:var(--sp-5)">';
+  qs.forEach(q => {
+    const isB = q.metric === 'traffic.bytes';
+    const lim = q.limit === null || q.limit === undefined ? null : Number(q.limit);
+    const used = Number(q.consumed || 0);
+    const pct = lim ? Math.min(100, used / lim * 100) : 0;
+    const tone = pct >= 90 ? 'd' : pct >= 70 ? 'w' : '';
+    h += '<div>' +
+      '<div class="fact" style="margin-bottom:var(--sp-2)">' +
+        '<span class="k">' + (METRIC[q.metric] || esc(q.metric)) + '</span>' +
+        '<span class="v num">' + (isB ? bytes(used) : used) + ' / ' +
+          (lim === null ? '不限' : (isB ? bytes(lim) : lim)) + '</span>' +
+      '</div>' +
+      '<div class="meter ' + tone + '"><i style="width:' + (lim ? pct : 0) + '%"></i></div>' +
+    '</div>';
+  });
+  return h + '</div>';
+}
+
+//==============================================================================
+// 套餐
+//==============================================================================
+function renderPlans(){
+  const el = $('pagePlans'), plans = cache.plans;
+  if (plans === null){ el.innerHTML = skeleton(); return; }
+  if (!plans.length){
+    el.innerHTML = emptyState('暂无可售套餐', '管理员尚未上架任何套餐。', '');
+    return;
+  }
+
+  // 推荐档取中间价位而非最便宜的那档：最低价通常是引流款，
+  // 中间档才是真正想主推的（大多数订阅产品都这么标）。
+  const featPlanId = plans.length > 2 ? plans[Math.floor(plans.length / 2)].id : null;
+
+  const cards = [];
+  plans.forEach(p => (p.prices || []).forEach(pr => cards.push({p, pr})));
+
+  let h = '<div class="plans">';
+  cards.forEach(c => {
+    const {p, pr} = c;
+    // 同一套餐的多个价格里，只把周期最长的那张标为推荐
+    const longest = (p.prices || []).reduce((a, b) =>
+      intervalDays(b.billing_interval) * (b.interval_count || 1) >
+      intervalDays(a.billing_interval) * (a.interval_count || 1) ? b : a, p.prices[0]);
+    const feat = p.id === featPlanId && pr.id === longest.id;
+
+    const traffic = (p.quotas || []).find(q => q.metric === 'traffic.bytes');
+    const devQ    = (p.quotas || []).find(q => q.metric === 'devices.active');
+    const devices = p.max_devices ?? (devQ && devQ.limit);
+
+    // 年付相对月付省多少
+    let save = '';
+    const monthly = (p.prices || []).find(x => x.billing_interval === 'month');
+    if (monthly && pr.billing_interval === 'year'){
+      const full = monthly.unit_amount * 12;
+      if (full > pr.unit_amount){
+        save = '省 ' + Math.round((1 - pr.unit_amount / full) * 100) + '%';
+      }
+    }
+
+    h += '<div class="plan' + (feat ? ' feat' : '') + '">' +
+      (feat ? '<div class="plan-tag">最受欢迎</div>' : '') +
+      '<h4>' + esc(p.name) + '</h4>' +
+      '<div class="desc">' + esc(p.description || p.code || '') + '</div>' +
+      '<div class="amt">' +
+        '<span class="cur">' + (CUR_SYM[pr.currency] || pr.currency) + '</span>' +
+        '<b class="num">' + money(pr.unit_amount, pr.currency) + '</b>' +
+        '<span class="per">/ ' + (pr.interval_count > 1 ? pr.interval_count : '') +
+          (INTV[pr.billing_interval] || pr.billing_interval) + '</span>' +
+        (save ? '<span class="save">' + save + '</span>' : '') +
+      '</div>' +
+      '<ul>' +
+        (traffic ? li('<b>' + (traffic.limit === null ? '不限流量'
+                    : bytes(traffic.limit)) + '</b> / ' +
+                    (traffic.period === 'cycle' ? '计费周期' : traffic.period)) : '') +
+        (devices ? li('最多 <b>' + devices + '</b> 台设备同时在线') : '') +
+        li(pr.trial_days > 0 ? '含 ' + pr.trial_days + ' 天免费试用' : '下单即时开通') +
+        li('用量实时统计，可随时取消') +
+      '</ul>' +
+      '<button class="btn ' + (feat ? 'btn-primary' : 'btn-ghost') + ' btn-block" ' +
+        'data-plan="' + esc(p.id) + '" data-price="' + esc(pr.id) + '">立即购买</button>' +
+    '</div>';
+  });
+  el.innerHTML = h + '</div>';
+
+  el.querySelectorAll('button[data-price]').forEach(b =>
+    b.onclick = () => openConfirmModal(b.dataset.plan, b.dataset.price));
+}
+function intervalDays(i){
+  return {day:1, week:7, month:30, quarter:91, year:365, one_time:36500}[i] || 30;
+}
+// 注意：t 允许含 <b> 等标签，调用点必须保证其中的动态部分已转义或为数字。
+function li(t){
+  return '<li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M20 6L9 17l-5-5"/></svg><span>' + t + '</span></li>';
+}
+
+//==============================================================================
+// 工单（OPS-001）
+//==============================================================================
+const TK_STATUS = {
+  open:['待处理','warn'], pending_agent:['待客服','warn'], pending_user:['待您回复','brand'],
+  escalated:['已升级','err'], resolved:['已解决','ok'], closed:['已关闭','']
+};
+const supportCreateAttempt=idemAttempt();
+async function renderSupport(){
+  const el = $('pageSupport');
+  el.innerHTML = skeleton();
+
+  let list = [];
+  try { list = (await api('/v1/support/tickets')).tickets || []; }
+  catch(e){
+    el.innerHTML = emptyState('工单加载失败', esc(e.message), '');
+    return;
+  }
+
+  el.innerHTML =
+    '<div class="card" style="margin-bottom:var(--sp-5)">' +
+      '<div class="card-head"><h3>提交工单</h3><div class="spacer"></div>' +
+        '<span class="badge badge-plain">通常 12 小时内回复</span></div>' +
+      '<div class="card-pad">' +
+        '<div class="field"><label for="tkBody">请描述遇到的问题</label>' +
+          '<textarea class="input" id="tkBody" maxlength="5000" ' +
+            'placeholder="请描述问题的现象、出现时间、已尝试的操作。信息越具体，处理越快。"></textarea></div>' +
+        '<button class="btn btn-primary" id="tkSubmit">提交工单</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="card"><div class="card-head"><h3>我的工单</h3><div class="spacer"></div>' +
+      '<span class="badge badge-plain">' + list.length + ' 条</span></div>' +
+      (list.length
+        ? '<div class="card-pad"><div class="tk-list">' +
+          list.map(t => {
+            const st = TK_STATUS[t.status] || [t.status, ''];
+            return '<button class="tk-item" data-id="' + esc(t.id) + '">' +
+              '<div class="tk-main"><b>' + esc(t.subject) + '</b>' +
+                '<div class="tk-meta"><span class="mono">' + esc(t.ticket_no) + '</span>' +
+                  '<span>' + t.message_count + ' 条消息</span>' +
+                  '<span>' + fmtDateTime(t.last_reply_at) + '</span></div></div>' +
+              '<span class="badge badge-' + (st[1] || 'plain') + '">' + st[0] + '</span>' +
+            '</button>';
+          }).join('') + '</div></div>'
+        : '<div class="empty"><p class="muted" style="margin:0">还没有提交过工单</p></div>') +
+    '</div>';
+
+  $('tkSubmit').onclick = submitTicket;
+  el.querySelectorAll('.tk-item').forEach(b => b.onclick = () => openTicket(b.dataset.id));
+}
+
+function fmtDateTime(s){
+  if (!s) return '—';
+  const d = new Date(s), p = n => String(n).padStart(2,'0');
+  return (d.getMonth()+1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+async function submitTicket(){
+  const btn = $('tkSubmit');
+  const body = $('tkBody').value.trim();
+  if (body.length < 10)   return toast('详细说明至少 10 个字', 'err');
+
+  busy(btn, true, '提交中');
+  try{
+	const payload={body};
+    const t = await api('/v1/support/tickets', {method:'POST',
+      idem:supportCreateAttempt.keyFor(payload),body:JSON.stringify(payload)});
+	supportCreateAttempt.reset();
+    toast('工单已提交 ' + t.ticket_no, 'ok');
+    await renderSupport();
+    openTicket(t.id);
+  }catch(e){ toast(e.message, 'err'); busy(btn, false); }
+}
+
+async function openTicket(id){
+  let t;
+  try { t = await api('/v1/support/tickets/' + id); }
+  catch(e){ return toast(e.message, 'err'); }
+
+  const st = TK_STATUS[t.status] || [t.status, ''];
+  const closed = t.status === 'closed';
+	const visibleMessages=(t.messages||[]).filter(msg=>!msg.internal_note);
+
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML =
+  '<div class="modal" style="max-width:640px" role="dialog" aria-modal="true">' +
+    '<div class="modal-head">' +
+      '<h3 style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+        esc(t.subject) + '</h3>' +
+      '<span class="badge badge-' + (st[1] || 'plain') + '">' + st[0] + '</span>' +
+      '<button class="btn-icon" data-close aria-label="关闭">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+      '</button></div>' +
+    '<div class="tk-thread" id="tkThread">' +
+      visibleMessages.map(msg => {
+        if (msg.author_kind === 'system'){
+          return '<div class="msg system"><div class="msg-body">' + esc(msg.body) + '</div></div>';
+        }
+        const mine = msg.author_kind === 'user';
+        return '<div class="msg' + (mine ? ' mine' : '') + '">' +
+          '<span class="msg-who">' + (mine ? '我' : '客服') + ' · ' +
+            fmtDateTime(msg.created_at) + '</span>' +
+          '<div class="msg-body">' + esc(msg.body) + '</div></div>';
+      }).join('') +
+    '</div>' +
+    (closed
+      ? '<div class="tk-compose"><p class="muted" style="margin:0;text-align:center">' +
+        '此工单已关闭。如仍有问题，请提交新工单。</p></div>'
+      : '<div class="tk-compose">' +
+          '<textarea class="input" id="tkReply" maxlength="5000" placeholder="补充说明或回复客服…"></textarea>' +
+          '<div class="row" style="margin-top:var(--sp-3)">' +
+            '<button class="btn btn-primary" id="tkSend">发送</button>' +
+            '<button class="btn btn-ghost" id="tkWithdrawBtn">撤回工单</button>' +
+            '<button class="btn btn-ghost" id="tkCloseBtn">结束此工单</button>' +
+          '</div>' +
+          '<div class="hint" style="margin-top:var(--sp-2)">撤回表示不再需要处理；若问题已解决，请结束工单。</div>' +
+        '</div>') +
+  '</div>';
+  document.body.appendChild(m);
+
+  const thread = m.querySelector('#tkThread');
+  thread.scrollTop = thread.scrollHeight;
+
+  const dismiss = () => { m.remove(); renderSupport(); };
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = dismiss);
+  m.onclick = ev => { if (ev.target === m) dismiss(); };
+  document.addEventListener('keydown', function onEsc(ev){
+    if (ev.key === 'Escape'){ dismiss(); document.removeEventListener('keydown', onEsc); }
+  });
+
+  if (!closed){
+	const replyAttempt=idemAttempt(),closeAttempt=idemAttempt();
+    m.querySelector('#tkWithdrawBtn').onclick = () => {
+      const confirm=document.createElement('div');
+      const withdrawAttempt=idemAttempt();
+      confirm.className='mask';
+      confirm.innerHTML=
+        '<div class="modal" role="dialog" aria-modal="true" aria-label="撤回工单">' +
+          '<div class="modal-head"><h3>撤回工单</h3></div>' +
+          '<div class="modal-body"><p class="muted">撤回表示您不再需要客服处理；若问题已解决，请结束工单。</p>' +
+            '<div class="field" style="margin-bottom:0"><label for="tkWithdrawReason">撤回原因（选填）</label>' +
+              '<textarea class="input" id="tkWithdrawReason" maxlength="500" placeholder="例如：问题已自行解决"></textarea></div></div>' +
+          '<div class="modal-foot"><button class="btn btn-ghost" data-close>再想想</button>' +
+            '<button class="btn btn-primary" id="tkWithdrawGo">确认撤回</button></div>' +
+        '</div>';
+      document.body.appendChild(confirm);
+      const closeConfirm=()=>confirm.remove();
+      confirm.querySelectorAll('[data-close]').forEach(b=>b.onclick=closeConfirm);
+      confirm.onclick=ev=>{if(ev.target===confirm) closeConfirm();};
+      confirm.querySelector('#tkWithdrawGo').onclick=async ev=>{
+        const btn=ev.currentTarget;
+        const payload={reason:confirm.querySelector('#tkWithdrawReason').value.trim()};
+        busy(btn,true,'撤回中');
+        try{
+          await api('/v1/support/tickets/'+id+'/withdraw',{method:'POST',idem:withdrawAttempt.keyFor(payload),body:JSON.stringify(payload)});
+          withdrawAttempt.reset();
+          closeConfirm();
+          m.remove();
+          await renderSupport();
+          await openTicket(id);
+          toast('工单已撤回','ok',2000);
+        }catch(e){toast(e.message,'err');busy(btn,false);}
+      };
+    };
+    m.querySelector('#tkSend').onclick = async ev => {
+      const btn = ev.currentTarget;
+      const body = m.querySelector('#tkReply').value.trim();
+      if (!body) return toast('请填写回复内容', 'err');
+      busy(btn, true, '发送中');
+      try{
+		const payload={body};
+        await api('/v1/support/tickets/' + id + '/reply',
+		  {method:'POST',idem:replyAttempt.keyFor(payload),body:JSON.stringify(payload)});
+		replyAttempt.reset();
+        m.remove();
+        await renderSupport();
+        openTicket(id);
+        toast('已发送', 'ok', 2000);
+      }catch(e){ toast(e.message, 'err'); busy(btn, false); }
+    };
+    m.querySelector('#tkCloseBtn').onclick = async ev => {
+      const btn = ev.currentTarget;
+      busy(btn, true, '处理中');
+      try{
+		const payload={ticket_id:id,action:'close'};
+        await api('/v1/support/tickets/' + id + '/close',
+		  {method:'POST',idem:closeAttempt.keyFor(payload)});
+		closeAttempt.reset();
+        toast('工单已关闭', 'ok', 2000);
+        dismiss();
+      }catch(e){ toast(e.message, 'err'); busy(btn, false); }
+    };
+  }
+}
+
+// 下单确认：优惠码在这一步试算。
+//
+// 试算与真正的折扣都由服务端算，前端只负责显示 ——
+// 两边各算一次迟早会因为取整或封顶规则不同而对不上，
+// 而对不上的那一次用户已经付过钱了。
+function openConfirmModal(planId, priceId){
+  const plan = (cache.plans || []).find(p => p.id === planId);
+  const price = plan && (plan.prices || []).find(pr => pr.id === priceId);
+  if (!price){ toast('套餐信息已过期，请刷新', 'err'); return; }
+  const sym = CUR_SYM[price.currency] || '';
+  let applied = '';   // 已试算通过的码
+
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML =
+  '<div class="modal" role="dialog" aria-modal="true" aria-label="确认订单">' +
+    '<div class="modal-head"><h3>确认订单</h3>' +
+      '<button class="btn-icon" data-close aria-label="关闭">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+      '</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="sum">' +
+        '<div class="sum-row"><span class="k">套餐</span>' +
+          '<span class="v">' + esc(plan.name) + '</span></div>' +
+        '<div class="sum-row"><span class="k">原价</span>' +
+          '<span class="v num">' + sym + money(price.unit_amount, price.currency) + '</span></div>' +
+        '<div class="sum-row" id="cpRow" hidden><span class="k">优惠</span>' +
+          '<span class="v num" id="cpVal" style="color:var(--ok)"></span></div>' +
+        '<div class="sum-row total"><span class="k">应付</span>' +
+          '<span class="v num" id="cpPay">' + sym + money(price.unit_amount, price.currency) +
+          ' ' + price.currency + '</span></div>' +
+      '</div>' +
+      '<div class="field" style="margin:var(--sp-4) 0 0">' +
+        '<label for="cpCode">优惠码（可选）</label>' +
+        '<div style="display:flex;gap:var(--sp-2)">' +
+          '<input class="input" id="cpCode" placeholder="输入优惠码" autocomplete="off" ' +
+            'style="text-transform:uppercase">' +
+          '<button class="btn btn-ghost" id="cpApply" style="flex:none">使用</button>' +
+        '</div>' +
+        '<div class="hint" id="cpMsg" style="min-height:16px;margin-top:var(--sp-2)"></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="modal-foot">' +
+      '<button class="btn btn-ghost" data-close>取消</button>' +
+      '<button class="btn btn-primary" id="cpGo">确认下单</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(m);
+
+  const close = () => { m.style.animation = 'fadeIn var(--t-fast) reverse';
+                        setTimeout(() => m.remove(), 120); };
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+  m.onclick = ev => { if (ev.target === m) close(); };
+
+  const msg = m.querySelector('#cpMsg');
+  m.querySelector('#cpApply').onclick = async ev => {
+    const code = m.querySelector('#cpCode').value.trim().toUpperCase();
+    if (!code){ applied = ''; return; }
+    const btn = ev.currentTarget;
+    busy(btn, true, '校验');
+    try{
+      const r = await api('/v1/coupons/preview', {method:'POST', body: JSON.stringify({
+        plan_id: planId, price_id: priceId, coupon_code: code })});
+      applied = code;
+      m.querySelector('#cpRow').hidden = false;
+      m.querySelector('#cpVal').textContent = '−' + sym + money(r.discount, r.currency);
+      m.querySelector('#cpPay').textContent = sym + money(r.payable, r.currency) + ' ' + r.currency;
+      msg.textContent = '优惠码已应用';
+      msg.style.color = 'var(--ok)';
+    }catch(e){
+      // 试算失败就把码丢掉。留着它下单会在支付前又失败一次，
+      // 用户会以为是系统抽风而不是码本身有问题
+      applied = '';
+      m.querySelector('#cpRow').hidden = true;
+      m.querySelector('#cpPay').textContent =
+        sym + money(price.unit_amount, price.currency) + ' ' + price.currency;
+      msg.textContent = e.message;
+      msg.style.color = 'var(--err)';
+    }finally{ busy(btn, false); }
+  };
+  m.querySelector('#cpCode').addEventListener('keydown', ev => {
+    if (ev.key === 'Enter'){ ev.preventDefault(); m.querySelector('#cpApply').click(); }
+  });
+
+  m.querySelector('#cpGo').onclick = async ev => {
+    const btn = ev.currentTarget;
+    close();
+    await createOrder(planId, priceId, btn, applied);
+  };
+}
+
+// 邀请好友
+async function openInviteModal(){
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML = '<div class="modal" role="dialog" aria-modal="true" aria-label="邀请好友">' +
+    '<div class="modal-head"><h3>邀请好友</h3>' +
+      '<button class="btn-icon" data-close aria-label="关闭">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+      '</button></div>' +
+    '<div class="modal-body" id="ivBody">' + skeleton() + '</div>' +
+    '<div class="modal-foot"><button class="btn btn-ghost" data-close>关闭</button></div>' +
+  '</div>';
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+  m.onclick = ev => { if (ev.target === m) close(); };
+
+  try{
+    const r = await api('/v1/me/invite');
+    const link = location.origin + '/?invite=' + encodeURIComponent(r.invite.code);
+    const list = r.invitees || [];
+    m.querySelector('#ivBody').innerHTML =
+      '<div class="field"><label>你的邀请码</label>' +
+        '<div style="display:flex;gap:var(--sp-2)">' +
+          '<input class="input mono" id="ivCode" readonly value="' + esc(r.invite.code) + '">' +
+          '<button class="btn btn-ghost" id="ivCopy" style="flex:none">复制链接</button>' +
+        '</div>' +
+        '<div class="hint">好友注册时填这个码，或直接把链接发给他。</div>' +
+      '</div>' +
+      '<div class="field" style="margin-bottom:0"><label>已邀请 ' + list.length + ' 人</label>' +
+        (list.length
+          ? '<div style="margin-top:var(--sp-2)">' + list.map(i =>
+              '<div style="padding:var(--sp-2) 0;border-bottom:1px solid var(--line);font-size:var(--fs-sm)">' +
+              esc(i.email) +
+              '<div class="hint" style="margin:2px 0 0">' + fmtDateTime(i.bound_at) + '</div></div>').join('') +
+            '</div>'
+          : '<div class="hint">还没有人通过你的邀请码注册。</div>') +
+      '</div>';
+    m.querySelector('#ivCopy').onclick = async () => {
+      try{ await navigator.clipboard.writeText(link); toast('邀请链接已复制', 'ok', 2000); }
+      catch(_){ m.querySelector('#ivCode').select(); toast('请手动复制', 'info'); }
+    };
+  }catch(e){
+    m.querySelector('#ivBody').innerHTML =
+      '<div class="hint" style="color:var(--err)">' + esc(e.message) + '</div>';
+  }
+}
+
+//==============================================================================
+// 邀请返利
+//==============================================================================
+
+const WD_LABEL = {
+  requested:'待审核', reviewing:'审核中', approved:'待打款', processing:'打款中',
+  paid:'已到账', rejected:'已拒绝', failed:'打款失败', returned:'已退回',
+};
+
+async function renderReferral(){
+  const el = $('pageReferral');
+  el.innerHTML = skeleton();
+  let d, inv;
+  try{
+    [d, inv] = await Promise.all([api('/v1/me/commission'), api('/v1/me/invite')]);
+  }catch(e){
+    el.innerHTML = emptyState('加载失败', e.message, '');
+    return;
+  }
+
+  const s = d.summary, sym = CUR_SYM[s.currency] || '';
+  const canTransfer = s.currency === 'CNY' && Number.isSafeInteger(s.available) && s.available > 0;
+  const link = location.origin + '/?invite=' + encodeURIComponent(inv.invite.code);
+
+  // 费率为 0 表示站点没开分销。这时候把邀请码摆出来鼓励用户去拉人
+  // 是不诚实的 —— 拉来了也没有返利
+  const off = !s.rate_percent;
+
+  const entries = (d.entries || []).map(e =>
+    '<tr><td>' + esc(e.from) + '</td>' +
+    '<td class="mono sub">' + esc(e.order_no) + '</td>' +
+    '<td class="r num">' + sym + money(e.base, e.currency) + '</td>' +
+    '<td class="r num"><b>' + sym + money(e.amount, e.currency) + '</b></td>' +
+    '<td>' + (e.status === 'available'
+      ? '<span class="pill pill-ok">可提现</span>'
+      : '<span class="pill">冻结中</span>') + '</td>' +
+    '<td class="sub num">' + fmtDate(e.created_at) + '</td></tr>').join('')
+    || '<tr><td colspan="6" class="sub" style="text-align:center;padding:var(--sp-6)">' +
+       '还没有返利记录</td></tr>';
+
+  const wds = (d.withdrawals || []).map(w =>
+    '<tr><td class="num">' + sym + money(w.amount, w.currency) + '</td>' +
+    '<td>' + (WD_LABEL[w.status] || w.status) +
+      (w.reject_reason ? '<div class="sub">' + esc(w.reject_reason) + '</div>' : '') + '</td>' +
+    '<td class="sub num">' + fmtDateTime(w.requested_at) + '</td></tr>').join('')
+    || '<tr><td colspan="3" class="sub" style="text-align:center;padding:var(--sp-5)">' +
+       '还没有提现记录</td></tr>';
+
+  el.innerHTML =
+    '<div class="card" style="margin-bottom:var(--sp-5)">' +
+      '<div class="card-head"><h3>我的邀请码</h3></div>' +
+      '<div class="card-pad">' +
+        '<div style="display:flex;gap:var(--sp-2);flex-wrap:wrap">' +
+          '<input class="input mono" id="rfCode" readonly value="' + esc(inv.invite.code) + '" ' +
+            'style="flex:1;min-width:160px;font-size:var(--fs-lg);letter-spacing:2px">' +
+          '<button class="btn btn-primary" id="rfCopy">复制邀请链接</button>' +
+        '</div>' +
+        '<div class="hint" style="margin-top:var(--sp-3)">' +
+          (off
+            ? '当前站点未开启返利，邀请仍会记录，但不会产生佣金。'
+            : '好友通过你的链接注册并购买后，你可以拿到订单金额的 <b>' +
+              s.rate_percent + '%</b>。') +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card" style="margin-bottom:var(--sp-5)">' +
+      '<div class="card-head"><h3>返利概况</h3><div class="spacer"></div>' +
+        '<button class="btn btn-ghost btn-sm" id="rfTransfer"' +
+          (canTransfer ? '' : ' disabled') + '>转入余额</button>' +
+        '<button class="btn btn-primary btn-sm" id="rfWd"' +
+          (s.available > 0 ? '' : ' disabled') + '>申请提现</button></div>' +
+      '<div class="card-pad" style="display:grid;' +
+        'grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:var(--sp-4)">' +
+        rfStat('可提现', sym + money(s.available, s.currency), 'var(--ok)') +
+        rfStat('冻结中', sym + money(s.pending, s.currency)) +
+        rfStat('提现中', sym + money(s.withdrawing, s.currency)) +
+        rfStat('已到账', sym + money(s.settled, s.currency)) +
+        rfStat('已邀请', s.invitees + ' 人') +
+      '</div>' +
+      '<div class="hint" style="padding:0 var(--sp-6) var(--sp-5)">' +
+        '返利产生后有一段冻结期，是为了覆盖订单退款的情况。' +
+        '冻结期结束后自动转为可提现，最低提现 ' + sym + money(s.min_withdraw, s.currency) + '。' +
+        (s.currency === 'CNY' ? '' : ' 当前佣金币种暂不支持转入余额。') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card" style="margin-bottom:var(--sp-5)">' +
+      '<div class="card-head"><h3>返利明细</h3></div>' +
+      '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+        '<th>来自</th><th>订单</th><th class="r">订单金额</th><th class="r">返利</th>' +
+        '<th>状态</th><th>时间</th></tr></thead><tbody>' + entries + '</tbody></table></div>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-head"><h3>提现记录</h3></div>' +
+      '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+        '<th>金额</th><th>状态</th><th>申请时间</th></tr></thead><tbody>' + wds +
+        '</tbody></table></div>' +
+    '</div>';
+
+  el.querySelector('#rfCopy').onclick = async () => {
+    try{ await navigator.clipboard.writeText(link); toast('邀请链接已复制', 'ok', 2000); }
+    catch(_){ el.querySelector('#rfCode').select(); toast('请手动复制', 'info'); }
+  };
+  const wb = el.querySelector('#rfWd');
+  if (wb && !wb.disabled) wb.onclick = () => openWithdrawModal(s);
+  const tb = el.querySelector('#rfTransfer');
+  if (tb && !tb.disabled) tb.onclick = () => openCommissionTransferModal(s);
+}
+
+function openCommissionTransferModal(s){
+  const m=document.createElement('div');
+  const transferAttempt=idemAttempt();
+  m.className='mask';
+  m.innerHTML=
+    '<div class="modal" role="dialog" aria-modal="true" aria-label="转入账户余额">' +
+      '<div class="modal-head"><h3>转入账户余额</h3>' +
+        '<button class="btn-icon" data-close aria-label="关闭">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+        '</button></div>' +
+      '<div class="modal-body"><div class="field"><label for="rfTransferAmt">转入金额（元）</label>' +
+        '<input class="input" id="rfTransferAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00">' +
+        '<div class="hint">可转 ' + (CUR_SYM.CNY||'') + money(s.available,'CNY') + ' CNY，最多为当前可转金额。</div></div></div>' +
+      '<div class="modal-foot"><button class="btn btn-ghost" data-close>取消</button>' +
+        '<button class="btn btn-primary" id="rfTransferGo">确认转入</button></div>' +
+    '</div>';
+  document.body.appendChild(m);
+  const close=()=>m.remove();
+  m.querySelectorAll('[data-close]').forEach(b=>b.onclick=close);
+  m.onclick=ev=>{if(ev.target===m) close();};
+  m.querySelector('#rfTransferGo').onclick=async ev=>{
+    const btn=ev.currentTarget;
+    const amount=parseCNYMinor(m.querySelector('#rfTransferAmt').value);
+    if(!amount) return toast('请输入最多两位小数的有效金额','err');
+    if(s.currency!=='CNY'||!Number.isSafeInteger(s.available)||amount>s.available){
+      return toast('转入金额不能超过当前可转佣金','err');
+    }
+    const payload={amount};
+    busy(btn,true,'转入中');
+    try{
+      await api('/v1/me/commission/transfer',{method:'POST',idem:transferAttempt.keyFor(payload),body:JSON.stringify(payload)});
+      transferAttempt.reset();
+      close();
+      await renderReferral();
+      try{
+        const balance=await api('/v1/me/balance');
+        const sym=CUR_SYM[balance.currency]||'';
+        toast('佣金已转入余额，当前余额 '+sym+money(balance.balance,balance.currency),'ok',3000);
+      }catch(_){toast('佣金已转入余额，请稍后刷新余额','ok',3000);}
+    }catch(e){toast(e.message,'err');busy(btn,false);}
+  };
+}
+
+function rfStat(label, val, color){
+  return '<div><div class="sub" style="font-size:var(--fs-2xs)">' + label + '</div>' +
+    '<div class="num" style="font-size:var(--fs-xl);font-weight:600;margin-top:2px' +
+    (color ? ';color:' + color : '') + '">' + val + '</div></div>';
+}
+
+function openWithdrawModal(s){
+  const sym = CUR_SYM[s.currency] || '';
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML =
+  '<div class="modal" role="dialog" aria-modal="true" aria-label="申请提现">' +
+    '<div class="modal-head"><h3>申请提现</h3>' +
+      '<button class="btn-icon" data-close aria-label="关闭">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+      '</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="field"><label for="wdAmt">提现金额（元）</label>' +
+        '<input class="input" id="wdAmt" type="number" step="0.01" min="0" value="' +
+          (s.available / 100) + '">' +
+        '<div class="hint">可提现 ' + sym + money(s.available, s.currency) +
+          '，最低 ' + sym + money(s.min_withdraw, s.currency) + '。</div></div>' +
+      '<div class="field" style="margin-bottom:0"><label for="wdPay">收款方式</label>' +
+        '<input class="input" id="wdPay" placeholder="支付宝 13800138000 张三">' +
+        '<div class="hint">写清楚账号和姓名。这项信息加密保存，只有处理提现的管理员能看到。' +
+        '</div></div>' +
+    '</div>' +
+    '<div class="modal-foot">' +
+      '<button class="btn btn-ghost" data-close>取消</button>' +
+      '<button class="btn btn-primary" id="wdGo">提交申请</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+  m.onclick = ev => { if (ev.target === m) close(); };
+
+  m.querySelector('#wdGo').onclick = async ev => {
+    const amt = Math.round(parseFloat(m.querySelector('#wdAmt').value || '0') * 100);
+    const pay = m.querySelector('#wdPay').value.trim();
+    if (!pay){ toast('请填写收款方式', 'err'); return; }
+    busy(ev.currentTarget, true, '提交中');
+    try{
+      await api('/v1/me/withdrawals', {method:'POST',
+        body: JSON.stringify({amount: amt, payout_detail: pay})});
+      close();
+      toast('提现申请已提交，等待审核', 'ok', 3000);
+      renderReferral();
+    }catch(e){ toast(e.message, 'err'); busy(ev.currentTarget, false); }
+  };
+}
+
+// 账户余额
+//
+// 余额可以用来抵扣订单，但抵扣是在下单时锁定、支付成功时才真正扣走的 ——
+// 所以下完单还没付款时，这里显示的数字不会立刻变少。
+async function openTopupModal(){
+  const m = document.createElement('div');
+  const topupAttempt = idemAttempt();
+  m.className = 'mask';
+  m.innerHTML =
+  '<div class="modal" role="dialog" aria-modal="true" aria-label="账户充值">' +
+    '<div class="modal-head"><h3>账户余额</h3>' +
+      '<button class="btn-icon" data-close aria-label="关闭">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+      '</button></div>' +
+    '<div class="modal-body" id="tpBody">' + skeleton() + '</div>' +
+    '<div class="modal-foot">' +
+      '<button class="btn btn-ghost" data-close>关闭</button>' +
+      '<button class="btn btn-primary" id="tpGo">去支付</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+  m.onclick = ev => { if (ev.target === m) close(); };
+
+  let d;
+  try{ d = await api('/v1/me/balance'); }
+  catch(e){
+    m.querySelector('#tpBody').innerHTML =
+      '<div class="hint" style="color:var(--err)">' + esc(e.message) + '</div>';
+    return;
+  }
+
+  const sym = CUR_SYM[d.currency] || '';
+  const KINDS = {
+    balance_topup: '充值', balance_adjusted: '人工调整',
+    order_paid: '购买扣减', refund_issued: '退款',
+  };
+  const hist = (d.history || []).slice(0, 8).map(h =>
+    '<tr><td>' + (KINDS[h.kind] || esc(h.kind)) +
+      (h.memo ? '<div class="hint" style="margin:2px 0 0">' + esc(h.memo) + '</div>' : '') + '</td>' +
+    '<td class="r num" style="color:' + (h.delta > 0 ? 'var(--ok)' : 'var(--fg)') + '">' +
+      (h.delta > 0 ? '+' : '−') + sym + money(Math.abs(h.delta), d.currency) + '</td>' +
+    '<td class="sub num">' + fmtDateTime(h.at) + '</td></tr>').join('')
+    || '<tr><td colspan="3" class="sub" style="text-align:center;padding:var(--sp-5)">' +
+       '还没有余额变动</td></tr>';
+
+  m.querySelector('#tpBody').innerHTML =
+    '<div style="text-align:center;padding:var(--sp-4) 0 var(--sp-5)">' +
+      '<div class="sub" style="font-size:var(--fs-xs)">当前余额</div>' +
+      '<div class="num" style="font-size:var(--fs-4xl);font-weight:600;margin-top:var(--sp-1)">' +
+        sym + money(d.balance, d.currency) + '</div>' +
+    '</div>' +
+    '<div class="field">' +
+      '<label for="tpAmt">充值金额（元）</label>' +
+      '<input class="input" id="tpAmt" type="number" min="1" step="1" value="50">' +
+      '<div style="display:flex;gap:var(--sp-2);margin-top:var(--sp-2);flex-wrap:wrap">' +
+        [10, 50, 100, 300, 500].map(v =>
+          '<button type="button" class="btn btn-ghost btn-sm" data-amt="' + v + '">' +
+          sym + v + '</button>').join('') +
+      '</div>' +
+      '<div class="hint">充值后余额可用于购买或续费套餐。单次最低 ' + sym + '1。</div>' +
+    '</div>' +
+    '<div class="sect" style="margin-top:var(--sp-5)">最近变动</div>' +
+    '<div class="tbl-wrap"><table class="tbl"><tbody>' + hist + '</tbody></table></div>';
+
+  m.querySelectorAll('[data-amt]').forEach(b =>
+    b.onclick = () => { m.querySelector('#tpAmt').value = b.dataset.amt; });
+
+  m.querySelector('#tpGo').onclick = async ev => {
+    const yuan = parseFloat(m.querySelector('#tpAmt').value || '0');
+    if (!(yuan > 0)){ toast('请填写充值金额', 'err'); return; }
+    busy(ev.currentTarget, true, '创建中');
+    try{
+      // 金额在这里从元转成分。转换只在提交这一处做，
+      // 分散到多处早晚会漏掉一次，而漏掉的那次是把 50 元充成了 5 毛
+      const payload = {amount: Math.round(yuan * 100)};
+      const o = await api('/v1/me/topups', {method:'POST',
+        idem: topupAttempt.keyFor(payload), body: JSON.stringify(payload)});
+      topupAttempt.reset();
+      close();
+      // 复用买套餐那套支付弹窗：充值单在支付这一步和普通订单没有区别
+      openPayModal({
+        order_id: o.order_id, order_no: o.order_no,
+        total_amount: o.amount, payable_amount: o.amount,
+        discount_amount: 0, balance_applied: 0, currency: o.currency,
+        kind: 'topup',
+      });
+    }catch(e){ toast(e.message, 'err'); busy(ev.currentTarget, false); }
+  };
+}
+
+// 续费。
+//
+// 之前这个按钮只是跳到套餐页重新下单，结果是同一个人被开出第二条订阅 ——
+// 两个订阅链接、两份配额、两套设备数。真正的续费落在原订阅上。
+async function openRenewModal(subId){
+  const subs = cache.subs || [];
+  const sub = subId ? subs.find(s => s.id === subId)
+                    : (subs.find(s => s.status === 'active' || s.status === 'trialing') || subs[0]);
+  if (!sub){ toast('还没有可续费的订阅', 'err'); return; }
+
+  const renewalAttempt = idemAttempt();
+  const sym = CUR_SYM[sub.currency] || '';
+  // 同一个套餐下的其它价格档也列出来 —— 月付转年付是最常见的续费动作，
+  // 逼用户为此另买一份反而会开出第二条订阅
+  const plan = (cache.plans || []).find(p => p.id === sub.plan_id);
+  const prices = (plan && plan.prices) ? plan.prices : [];
+
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML =
+  '<div class="modal" role="dialog" aria-modal="true" aria-label="续费">' +
+    '<div class="modal-head"><h3>续费</h3>' +
+      '<button class="btn-icon" data-close aria-label="关闭">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+      '</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="sum">' +
+        '<div class="sum-row"><span class="k">套餐</span>' +
+          '<span class="v">' + esc(sub.plan_name || '当前套餐') + '</span></div>' +
+        '<div class="sum-row"><span class="k">当前到期</span>' +
+          '<span class="v num">' + fmtDate(sub.current_period_end) + '</span></div>' +
+        '<div class="sum-row" id="rnNewEnd" hidden><span class="k">续费后到期</span>' +
+          '<span class="v num" id="rnNewEndVal"></span></div>' +
+        '<div class="sum-row total"><span class="k">应付</span>' +
+          '<span class="v num" id="rnPay">—</span></div>' +
+      '</div>' +
+      (prices.length > 1
+        ? '<div class="field" style="margin:var(--sp-4) 0 0">' +
+            '<label for="rnPrice">续费周期</label>' +
+            '<select class="input" id="rnPrice">' +
+              prices.map(pr =>
+                '<option value="' + esc(pr.id) + '"' +
+                  (pr.id === sub.price_id ? ' selected' : '') + '>' +
+                  (pr.interval_count > 1 ? pr.interval_count : '') +
+                  (INTV[pr.billing_interval] || pr.billing_interval) + ' · ' +
+                  sym + money(pr.unit_amount, pr.currency) + '</option>').join('') +
+            '</select>' +
+          '</div>'
+        : '') +
+      '<div class="field" style="margin:var(--sp-4) 0 0">' +
+        '<label for="rnCode">优惠码（可选）</label>' +
+        '<div style="display:flex;gap:var(--sp-2)">' +
+          '<input class="input" id="rnCode" placeholder="输入优惠码" autocomplete="off" ' +
+            'style="text-transform:uppercase">' +
+        '</div>' +
+      '</div>' +
+      '<div class="hint" style="margin-top:var(--sp-3);line-height:1.7">' +
+        '续费从当前到期日往后延，提前续不会损失剩余天数。' +
+        '流量额度在续费生效时重置，订阅链接不变，设备无需重新导入。' +
+      '</div>' +
+    '</div>' +
+    '<div class="modal-foot">' +
+      '<button class="btn btn-ghost" data-close>取消</button>' +
+      '<button class="btn btn-primary" id="rnGo">确认续费</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+  m.onclick = ev => { if (ev.target === m) close(); };
+
+  // 选中价格变化时，把金额与续费后到期日一起算出来给用户看，
+  // 而不是等到下一屏才揭晓
+  const preview = () => {
+    const sel = m.querySelector('#rnPrice');
+    const pr = prices.find(x => x.id === (sel ? sel.value : sub.price_id)) || prices[0];
+    if (!pr){ m.querySelector('#rnPay').textContent = sym + money(sub.amount || 0, sub.currency); return; }
+    m.querySelector('#rnPay').textContent = sym + money(pr.unit_amount, pr.currency);
+    const base = new Date(sub.current_period_end);
+    const from = base > new Date() ? base : new Date();
+    const d = new Date(from);
+    const n = pr.interval_count || 1;
+    switch (pr.billing_interval){
+      case 'day':     d.setDate(d.getDate() + n); break;
+      case 'week':    d.setDate(d.getDate() + 7 * n); break;
+      case 'month':   d.setMonth(d.getMonth() + n); break;
+      case 'quarter': d.setMonth(d.getMonth() + 3 * n); break;
+      case 'year':    d.setFullYear(d.getFullYear() + n); break;
+      default:        d.setMonth(d.getMonth() + n);
+    }
+    m.querySelector('#rnNewEnd').hidden = false;
+    m.querySelector('#rnNewEndVal').textContent = fmtDate(d.toISOString());
+  };
+  preview();
+  const sel = m.querySelector('#rnPrice');
+  if (sel) sel.onchange = preview;
+
+  m.querySelector('#rnGo').onclick = async ev => {
+    const btn = ev.currentTarget;
+    busy(btn, true, '创建中');
+    try{
+      const body = {
+        use_balance: 0,
+        coupon_code: m.querySelector('#rnCode').value.trim().toUpperCase(),
+      };
+      if (sel) body.price_id = sel.value;
+      const o = await api('/v1/me/subscriptions/' + sub.id + '/renew',
+        {method:'POST', idem: renewalAttempt.keyFor(body), body: JSON.stringify(body)});
+      renewalAttempt.reset();
+      close();
+      openPayModal({
+        order_id: o.order_id, order_no: o.order_no,
+        total_amount: o.total_amount, payable_amount: o.payable_amount,
+        discount_amount: o.discount_amount, balance_applied: o.balance_applied,
+        currency: o.currency, kind: 'renewal',
+      });
+    }catch(e){ toast(e.message, 'err'); busy(btn, false); }
+  };
+}
+
+//==============================================================================
+// 下单与支付
+//==============================================================================
+async function createOrder(planId, priceId, btn, coupon){
+  busy(btn, true, '创建中');
+  try{
+    // 幂等键：网络抖动重发不会变成两张订单（PAY-003）
+    const idem = 'portal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+    curOrder = await api('/v1/orders', {method:'POST', idem, body: JSON.stringify({
+      plan_id: planId, price_id: priceId, use_balance: 0,
+      coupon_code: coupon || '' })});
+    openPayModal(curOrder);
+  }catch(e){ toast('下单失败：' + e.message, 'err'); }
+  finally{ busy(btn, false); }
+}
+
+function openPayModal(o){
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML =
+  '<div class="modal" role="dialog" aria-modal="true" aria-label="确认支付">' +
+    '<div class="modal-head"><h3>确认支付</h3>' +
+      '<button class="btn-icon" data-close aria-label="关闭">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+      '</button></div>' +
+    '<div class="modal-body">' +
+      '<div class="sum">' +
+        '<div class="sum-row"><span class="k">订单号</span>' +
+          '<span class="v mono">' + esc(o.order_no) + '</span></div>' +
+        '<div class="sum-row"><span class="k">' +
+          (o.kind === 'topup' ? '充值金额'
+            : o.kind === 'renewal' ? (o.discount_amount > 0 ? '续费原价' : '续费金额')
+            : (o.discount_amount > 0 ? '套餐原价' : '套餐金额')) + '</span>' +
+          '<span class="v num">' + (CUR_SYM[o.currency] || '') +
+          money(o.total_amount + (o.discount_amount || 0), o.currency) +
+          '</span></div>' +
+        (o.discount_amount > 0 ? '<div class="sum-row"><span class="k">优惠抵扣</span>' +
+          '<span class="v num" style="color:var(--ok)">−' +
+          (CUR_SYM[o.currency] || '') + money(o.discount_amount, o.currency) +
+          '</span></div>' : '') +
+        (o.balance_applied > 0 ? '<div class="sum-row"><span class="k">余额抵扣</span>' +
+          '<span class="v num" style="color:var(--ok)">−' +
+          (CUR_SYM[o.currency] || '') + money(o.balance_applied, o.currency) + '</span></div>' : '') +
+        '<div class="sum-row total"><span class="k">应付</span>' +
+          '<span class="v num">' + (CUR_SYM[o.currency] || '') +
+          money(o.payable_amount, o.currency) + ' ' + o.currency + '</span></div>' +
+      '</div>' +
+      '<div class="field" style="margin:0">' +
+        '<label for="payProv">支付方式</label>' +
+        '<select class="input" id="payProv"><option value="epay">易支付 · 支付宝 / 微信</option></select>' +
+      '</div>' +
+    '</div>' +
+    '<div class="modal-foot">' +
+      '<button class="btn btn-ghost" data-close>取消</button>' +
+      '<button class="btn btn-primary" id="btnGoPay">前往支付</button>' +
+    '</div>' +
+  '</div>';
+  document.body.appendChild(m);
+
+  const close = () => { m.style.animation = 'fadeIn var(--t-fast) reverse'; setTimeout(() => m.remove(), 120); };
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+  m.onclick = ev => { if (ev.target === m) close(); };
+  document.addEventListener('keydown', function esc2(ev){
+    if (ev.key === 'Escape'){ close(); document.removeEventListener('keydown', esc2); }
+  });
+
+  m.querySelector('#btnGoPay').onclick = async ev => {
+    const btn = ev.currentTarget;
+    busy(btn, true, '生成中');
+    try{
+      const r = await api('/v1/orders/' + o.order_id + '/pay', {method:'POST',
+        body: JSON.stringify({provider: m.querySelector('#payProv').value, method:'alipay'})});
+      close();
+      // 新标签打开收银台；被拦截时给出可点击的兜底链接
+      const w = window.open(r.redirect_url, '_blank', 'noopener');
+      if (!w) toast('浏览器拦截了弹窗，请复制以下地址打开：\n' + r.redirect_url, 'info', 12000);
+      else toast('已打开收银台' + (r.reused ? '（复用既有支付意图）' : '') +
+                 '，支付完成后回本页刷新即可。', 'ok', 6000);
+    }catch(e){ toast('发起支付失败：' + e.message, 'err'); busy(btn, false); }
+  };
+}
+
+//==============================================================================
+// 我的订单
+//==============================================================================
+//
+// 在此之前用户下完单就再也看不到它了 —— 付没付成、什么时候过期、
+// 优惠抵了多少，一概查不到，只能开工单问。这一页把订单摊开，
+// 顺便把后端早就写好、却一直没有入口的取消接口接上。
+
+const ORDER_ST = {
+  draft:              ['待支付', 'warn'],
+  pending_payment:    ['待支付', 'warn'],
+  processing:         ['处理中', 'warn'],
+  paid:               ['已支付', 'ok'],
+  fulfilled:          ['已完成', 'ok'],
+  cancelled:          ['已取消', ''],
+  expired:            ['已过期', ''],
+  partially_refunded: ['部分退款', 'err'],
+  refunded:           ['已退款', 'err'],
+};
+const ORDER_KIND = {new:'新购', renewal:'续费', topup:'余额充值', manual:'人工单'};
+
+const ordersState = {status:'', offset:0, limit:20};
+
+// portal 的弹窗历来是各写各的，这里只有两处要用，抽一个局部的壳，
+// 不去动那些已经在跑的弹窗。
+function orderModal(title, bodyHTML, footHTML){
+  const m = document.createElement('div');
+  m.className = 'mask';
+  m.innerHTML =
+    '<div class="modal" role="dialog" aria-modal="true" aria-label="' + esc(title) + '">' +
+      '<div class="modal-head"><h3>' + esc(title) + '</h3>' +
+        '<button class="btn-icon" type="button" data-close aria-label="关闭">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+          'stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+        '</button></div>' +
+      '<div class="modal-body">' + bodyHTML + '</div>' +
+      '<div class="modal-foot">' + footHTML + '</div>' +
+    '</div>';
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+  m.onclick = ev => { if (ev.target === m) close(); };
+  document.addEventListener('keydown', function escOrd(ev){
+    if (ev.key === 'Escape'){ close(); document.removeEventListener('keydown', escOrd); }
+  });
+  return m;
+}
+
+async function renderOrders(){
+  const el = $('pageOrders');
+  el.innerHTML = skeleton();
+  let d;
+  try{
+    const qs = new URLSearchParams({limit:ordersState.limit, offset:ordersState.offset});
+    if (ordersState.status) qs.set('status', ordersState.status);
+    d = await api('/v1/orders?' + qs.toString());
+  }catch(e){
+    el.innerHTML = emptyState('订单加载失败', esc(e.message),
+      '<button class="btn btn-primary" onclick="renderOrders()">重试</button>');
+    return;
+  }
+
+  const list = d.orders || [];
+  if (!list.length && !ordersState.status && ordersState.offset === 0){
+    el.innerHTML = emptyState('还没有订单', '选购一个套餐就可以开始使用了。',
+      '<button class="btn btn-primary" onclick="go(\'plans\')">去选购</button>');
+    return;
+  }
+
+  const filters = [['','全部'], ['pending_payment','待支付'], ['fulfilled','已完成'],
+                   ['cancelled','已取消'], ['expired','已过期']]
+    .map(f => '<button class="btn btn-sm ' +
+      (ordersState.status === f[0] ? 'btn-primary' : 'btn-ghost') +
+      '" data-ofilter="' + f[0] + '">' + f[1] + '</button>').join(' ');
+
+  const rows = list.map(o => {
+    const st = ORDER_ST[o.status] || [o.status, ''];
+    const sym = CUR_SYM[o.currency] || '';
+    // 待支付订单要显示剩余时间。不显示的话用户不知道还能拖多久，
+    // 回来发现过期了会以为是系统把他的订单吞了。
+    const left = (o.expires_at && o.cancellable) ? expiryHint(o.expires_at) : '';
+    return '<tr>' +
+      '<td><b>' + esc(o.plan_name || ORDER_KIND[o.kind] || o.kind) + '</b>' +
+        '<div class="sub mono">' + esc(o.order_no) + '</div></td>' +
+      '<td class="sub">' + esc(ORDER_KIND[o.kind] || o.kind) + '</td>' +
+      '<td class="r num"><b>' + sym + money(o.payable_amount, o.currency) + '</b>' +
+        ((o.discount_amount > 0 || o.balance_applied > 0)
+          ? '<div class="sub">原价 ' + sym +
+            money(o.total_amount + o.discount_amount, o.currency) + '</div>' : '') +
+      '</td>' +
+      '<td><span class="pill' + (st[1] ? ' pill-' + st[1] : '') + '">' + st[0] + '</span>' +
+        (left ? '<div class="sub">' + left + '</div>' : '') +
+        (o.cancel_reason ? '<div class="sub">' + esc(cancelReasonText(o.cancel_reason)) + '</div>' : '') +
+      '</td>' +
+      '<td class="sub num">' + fmtDateTime(o.created_at) + '</td>' +
+      '<td class="r" style="white-space:nowrap">' +
+        (o.cancellable
+          ? '<button class="btn btn-sm btn-primary" data-opay="' + esc(o.id) + '">去支付</button> ' +
+            '<button class="btn btn-sm btn-ghost" data-ocancel="' + esc(o.id) +
+              '" data-ono="' + esc(o.order_no) + '">取消</button>'
+          : '<button class="btn btn-sm btn-ghost" data-odetail="' + esc(o.id) + '">详情</button>') +
+      '</td></tr>';
+  }).join('');
+
+  const pages = Math.ceil((d.total || 0) / ordersState.limit);
+  const cur = Math.floor(ordersState.offset / ordersState.limit) + 1;
+
+  el.innerHTML =
+    '<div class="card card-pad" style="margin-bottom:var(--sp-4);display:flex;' +
+      'gap:var(--sp-2);flex-wrap:wrap;align-items:center">' + filters + '</div>' +
+    (list.length
+      ? '<div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+          '<th>订单</th><th>类型</th><th class="r">实付</th><th>状态</th>' +
+          '<th>下单时间</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        (pages > 1
+          ? '<div class="card-pad" style="display:flex;gap:var(--sp-2);align-items:center;' +
+              'justify-content:flex-end">' +
+              '<span class="sub">第 ' + cur + ' / ' + pages + ' 页</span>' +
+              '<button class="btn btn-sm btn-ghost" id="oPrev"' +
+                (cur <= 1 ? ' disabled' : '') + '>上一页</button>' +
+              '<button class="btn btn-sm btn-ghost" id="oNext"' +
+                (cur >= pages ? ' disabled' : '') + '>下一页</button></div>'
+          : '') + '</div>'
+      : emptyState('没有符合条件的订单', '换一个筛选条件试试。', ''));
+
+  el.querySelectorAll('[data-ofilter]').forEach(b => b.onclick = () => {
+    ordersState.status = b.dataset.ofilter; ordersState.offset = 0; renderOrders();
+  });
+  const prev = el.querySelector('#oPrev'), next = el.querySelector('#oNext');
+  if (prev) prev.onclick = () => {
+    ordersState.offset = Math.max(0, ordersState.offset - ordersState.limit); renderOrders();
+  };
+  if (next) next.onclick = () => {
+    ordersState.offset += ordersState.limit; renderOrders();
+  };
+
+  el.querySelectorAll('[data-opay]').forEach(b => b.onclick = () => {
+    const o = list.find(x => x.id === b.dataset.opay);
+    if (o) openPayModal({order_id:o.id, order_no:o.order_no, currency:o.currency,
+      total_amount:o.total_amount, discount_amount:o.discount_amount,
+      balance_applied:o.balance_applied, payable_amount:o.payable_amount, kind:o.kind});
+  });
+  el.querySelectorAll('[data-odetail]').forEach(b =>
+    b.onclick = () => openOrderDetail(b.dataset.odetail));
+  el.querySelectorAll('[data-ocancel]').forEach(b =>
+    b.onclick = () => confirmCancelOrder(b.dataset.ocancel, b.dataset.ono));
+}
+
+// 库里存的是内部原因码，直接摆给用户看没有意义
+function cancelReasonText(reason){
+  if (reason === 'user_cancelled') return '你取消了这笔订单';
+  if (reason === 'reservation_expired') return '超时未支付，已自动取消';
+  return reason;
+}
+
+function expiryHint(iso){
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!isFinite(ms)) return '';
+  if (ms <= 0) return '已超时，即将自动取消';
+  const min = Math.floor(ms / 60000);
+  if (min < 60) return '请在 ' + min + ' 分钟内支付';
+  return '请在 ' + Math.floor(min / 60) + ' 小时内支付';
+}
+
+function confirmCancelOrder(id, orderNo){
+  const m = orderModal('取消订单',
+    '<p style="margin:0 0 var(--sp-3)">确定取消订单 <b class="mono">' + esc(orderNo) + '</b>？</p>' +
+    '<div class="sub" style="line-height:1.7">取消之后，这笔订单占用的库存、优惠券名额和' +
+      '冻结的余额会立刻释放，你可以重新下单。已经支付成功的订单不能在这里取消，' +
+      '需要开工单处理。</div>',
+    '<button class="btn btn-ghost" type="button" data-close>再想想</button>' +
+    '<button class="btn btn-primary" type="button" id="ocGo">确定取消</button>');
+
+  m.querySelector('#ocGo').onclick = async ev => {
+    busy(ev.currentTarget, true, '取消中');
+    try{
+      const r = await api('/v1/orders/' + id + '/cancel', {method:'POST'});
+      m.remove();
+      toast(r.already_terminal ? '这笔订单此前已经取消过了' : '订单已取消', 'ok', 3000);
+      cache.me = null;   // 余额解冻会改变可用余额，概览上的数字得跟着刷新
+      renderOrders();
+    }catch(e){
+      // 并发场景：用户点取消的同一刻支付回调到了，订单其实已经付掉。
+      // 这时候光说「失败」会让人以为是系统坏了。
+      toast(e.message + '（如果你刚完成支付，刷新一下就能看到）', 'err', 8000);
+      busy(ev.currentTarget, false);
+    }
+  };
+}
+
+async function openOrderDetail(id){
+  const m = orderModal('订单详情', '<div id="odBody" class="sub">加载中…</div>',
+    '<button class="btn btn-ghost" type="button" data-close>关闭</button>');
+  let o;
+  try{ o = (await api('/v1/orders/' + id)).order; }
+  catch(e){
+    m.querySelector('#odBody').innerHTML =
+      '<div class="sub" style="color:var(--err)">' + esc(e.message) + '</div>';
+    return;
+  }
+  const sym = CUR_SYM[o.currency] || '';
+  const st = ORDER_ST[o.status] || [o.status, ''];
+
+  const meta = [
+    ['订单号', '<span class="mono">' + esc(o.order_no) + '</span>'],
+    ['类型', esc(ORDER_KIND[o.kind] || o.kind)],
+    ['状态', '<span class="pill' + (st[1] ? ' pill-' + st[1] : '') + '">' + st[0] + '</span>'],
+    ['下单时间', fmtDateTime(o.created_at)],
+  ];
+  if (o.paid_at) meta.push(['支付时间', fmtDateTime(o.paid_at)]);
+  if (o.cancelled_at) meta.push(['取消时间', fmtDateTime(o.cancelled_at) +
+    (o.cancel_reason ? '<div class="sub">' + esc(cancelReasonText(o.cancel_reason)) + '</div>' : '')]);
+
+  const items = (o.items || []).map(it =>
+    '<tr><td>' + esc(it.name || '—') + '</td>' +
+    '<td class="r num">' + it.quantity + '</td>' +
+    '<td class="r num">' + sym + money(it.line_amount, o.currency) + '</td></tr>').join('');
+
+  const pays = (o.payments || []).map(pm =>
+    '<tr><td>' + esc(pm.status) + '</td>' +
+    '<td class="r num">' + (CUR_SYM[pm.currency] || '') + money(pm.amount, pm.currency) + '</td>' +
+    '<td class="sub num">' + fmtDateTime(pm.created_at) + '</td></tr>').join('');
+
+  m.querySelector('#odBody').innerHTML =
+    '<div class="sum">' +
+      meta.map(kv => '<div class="sum-row"><span class="k">' + kv[0] + '</span>' +
+        '<span class="v">' + kv[1] + '</span></div>').join('') +
+    '</div>' +
+    (items ? '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th>项目</th><th class="r">数量</th><th class="r">金额</th>' +
+      '</tr></thead><tbody>' + items + '</tbody></table></div>' : '') +
+    '<div class="sum" style="margin-top:var(--sp-4)">' +
+      '<div class="sum-row"><span class="k">小计</span><span class="v num">' +
+        sym + money(o.total_amount + o.discount_amount, o.currency) + '</span></div>' +
+      (o.discount_amount > 0 ? '<div class="sum-row"><span class="k">优惠抵扣</span>' +
+        '<span class="v num" style="color:var(--ok)">−' + sym +
+        money(o.discount_amount, o.currency) + '</span></div>' : '') +
+      (o.balance_applied > 0 ? '<div class="sum-row"><span class="k">余额抵扣</span>' +
+        '<span class="v num" style="color:var(--ok)">−' + sym +
+        money(o.balance_applied, o.currency) + '</span></div>' : '') +
+      '<div class="sum-row total"><span class="k">实付</span><span class="v num">' +
+        sym + money(o.payable_amount, o.currency) + ' ' + o.currency + '</span></div>' +
+    '</div>' +
+    (pays ? '<div class="sect">支付记录</div>' +
+      '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+      '<th>状态</th><th class="r">金额</th><th>时间</th>' +
+      '</tr></thead><tbody>' + pays + '</tbody></table></div>' : '');
+}
+
+//==============================================================================
+// 兑换礼品卡
+//==============================================================================
+//
+// 兑换前先预览：用户手里拿到一串码，多半不知道它到底是什么。
+// 直接兑掉再告诉他送了什么，中间那一步的忐忑是可以省掉的。
+//
+// 盲盒只展示奖品名称、不展示权重和金额 —— 概率和期望值一旦公示，
+// 这个玩法就变成了可以被算计的东西。
+
+async function renderGift(){
+  const el = $('pageGift');
+  const redeemAttempt = idemAttempt();
+  el.innerHTML = skeleton();
+  let history = [];
+  try{ history = (await api('/v1/me/gift-cards')).redemptions || []; }catch(_){}
+
+  const rows = history.map(h =>
+    '<tr><td><b>' + esc(h.template_name) + '</b>' +
+      (h.prize_label ? '<div class="sub">抽中：' + esc(h.prize_label) + '</div>' : '') + '</td>' +
+    '<td class="sub">' + [
+      h.balance ? '余额 ' + money(h.balance, 'CNY') : '',
+      h.traffic_bytes ? '流量 ' + fmtGB(h.traffic_bytes) : '',
+      h.expire_days ? '延长 ' + h.expire_days + ' 天' : '',
+    ].filter(Boolean).join('、') + '</td>' +
+    '<td class="sub num">' + fmtDateTime(h.redeemed_at) + '</td></tr>').join('');
+
+  el.innerHTML =
+    '<div class="card" style="margin-bottom:var(--sp-5)">' +
+      '<div class="card-pad">' +
+        '<div class="field" style="margin-bottom:var(--sp-3)">' +
+          '<label for="gcInput">输入卡密</label>' +
+          '<input class="input mono" id="gcInput" placeholder="例如 CNYAB3WYXY7C6C4" ' +
+            'autocomplete="off" spellcheck="false" style="text-transform:uppercase">' +
+          '<div class="sub" style="margin-top:var(--sp-2)">' +
+            '不区分大小写。卡密里不含容易看错的 I、L、O、0、1。</div>' +
+        '</div>' +
+        '<button class="btn btn-primary btn-block" id="gcCheck">查看这张卡送什么</button>' +
+        '<div id="gcPreview" style="margin-top:var(--sp-4)"></div>' +
+      '</div>' +
+    '</div>' +
+    (history.length
+      ? '<div class="card"><div class="card-head"><h3>兑换记录</h3></div>' +
+        '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+        '<th>礼品卡</th><th>获得</th><th>时间</th></tr></thead><tbody>' +
+        rows + '</tbody></table></div></div>'
+      : '');
+
+  const input = el.querySelector('#gcInput');
+  const box = el.querySelector('#gcPreview');
+  const check = async ev => {
+    const code = input.value.trim().toUpperCase();
+    if (!code){ toast('请输入卡密', 'err'); return; }
+    box.innerHTML = '<div class="sub">查询中…</div>';
+    if (ev && ev.currentTarget) busy(ev.currentTarget, true, '查询中');
+    try{
+      const c = (await api('/v1/gift-cards/preview',
+        {method:'POST', body: JSON.stringify({code})})).card;
+      box.innerHTML = renderGiftPreview(c, code);
+      box.querySelector('#gcGo').onclick = e2 => doRedeem(code, e2, redeemAttempt);
+    }catch(e){
+      box.innerHTML = '<div class="sub" style="color:var(--err)">' + esc(e.message) + '</div>';
+    }finally{
+      if (ev && ev.currentTarget) busy(ev.currentTarget, false);
+    }
+  };
+  el.querySelector('#gcCheck').onclick = check;
+  input.onkeydown = e => { if (e.key === 'Enter') check({currentTarget: el.querySelector('#gcCheck')}); };
+}
+
+function renderGiftPreview(c, code){
+  let what;
+  if (c.type === 'mystery'){
+    what = '<div class="sub" style="margin-bottom:var(--sp-2)">这是一张盲盒，可能开出：</div>' +
+      '<div style="display:flex;gap:var(--sp-2);flex-wrap:wrap">' +
+      (c.rewards.pool || []).map(p =>
+        '<span class="pill">' + esc(p.label) + '</span>').join('') + '</div>';
+  } else if (c.type === 'plan'){
+    what = '<div>兑换后立即为你开通对应套餐。</div>';
+  } else {
+    const parts = [];
+    if (c.rewards.balance) parts.push('余额 ' + money(c.rewards.balance, 'CNY'));
+    if (c.rewards.traffic_bytes) parts.push('流量 ' + fmtGB(c.rewards.traffic_bytes));
+    if (c.rewards.expire_days) parts.push('到期时间延长 ' + c.rewards.expire_days + ' 天');
+    if (c.rewards.reset_quota) parts.push('本周期已用流量清零');
+    what = '<div>' + parts.map(p => '<div>· ' + p + '</div>').join('') + '</div>';
+  }
+  return '<div class="sum">' +
+      '<div style="font-weight:600;margin-bottom:var(--sp-2)">' + esc(c.name) + '</div>' +
+      (c.description ? '<div class="sub" style="margin-bottom:var(--sp-3)">' +
+        esc(c.description) + '</div>' : '') +
+      what +
+    '</div>' +
+    '<button class="btn btn-primary btn-block" id="gcGo" style="margin-top:var(--sp-3)">' +
+      '确认兑换</button>';
+}
+
+async function doRedeem(code, ev, attempt){
+  busy(ev.currentTarget, true, '兑换中');
+  try{
+    const payload = {code};
+    const r = await api('/v1/gift-cards/redeem', {method:'POST',
+      idem: attempt.keyFor(payload), body: JSON.stringify(payload)});
+    attempt.reset();
+    const gained = (r.summary || []).join('，');
+    toast((r.prize_label ? '抽中「' + r.prize_label + '」！' : '兑换成功！') +
+      (gained ? ' ' + gained : ''), 'ok', 7000);
+    cache.me = null;    // 余额和流量都变了，概览要重新拉
+    cache.subs = null;
+    renderGift();
+  }catch(e){
+    toast(e.message, 'err', 7000);
+    busy(ev.currentTarget, false);
+  }
+}
+
+function fmtGB(bytes){
+  const gb = bytes / (1024*1024*1024);
+  if (gb >= 1) return (Math.round(gb * 100) / 100) + ' GB';
+  return Math.round(bytes / (1024*1024)) + ' MB';
+}
+
+//==============================================================================
+// 占位片段
+//==============================================================================
+function skeleton(){
+  return '<div class="stats">' +
+    '<div class="stat"><div class="sk" style="width:40%;height:12px"></div>' +
+      '<div class="sk" style="width:64%;height:26px;margin-top:14px"></div></div>'.repeat(3) +
+  '</div><div class="card card-pad"><div class="sk" style="height:132px"></div></div>';
+}
+function emptyState(title, desc, action){
+  return '<div class="card"><div class="empty">' +
+    '<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="2.5" y="5" width="19" height="15" rx="2.5"/>' +
+      '<path d="M2.5 10h19M7 3v4M17 3v4"/></svg>' +
+    '<h4>' + title + '</h4><p>' + desc + '</p>' +
+    (action ? '<div class="empty-actions">' + action + '</div>' : '') +
+    '</div></div>';
+}
+
+//==============================================================================
+// 外观：主题与插槽
+//==============================================================================
+//
+// 主题是一组 CSS 变量，直接 setProperty 到 :root 上 —— 站点所有样式
+// 都引用这些变量，所以换主题不需要改任何一条规则。
+//
+// 插槽内容是后端净化过的 HTML（白名单标签，没有 script、没有事件属性、
+// 没有 style 属性）。这里用 innerHTML 是有意的：净化在写入时做过一次，
+// 库里存的就是可渲染的那份。防线在服务端，不在这一行。
+
+let appearance = {theme: null, slots: {}};
+
+// 哪一页显示哪些插槽
+const PAGE_SLOTS = {
+  overview:  ['portal-home-banner', 'portal-home-aside'],
+  subs:      ['portal-subscribe-notice'],
+  plans:     ['portal-plans-notice'],
+};
+
+async function loadAppearance(){
+  try{
+    appearance = await api('/v1/appearance');
+  }catch(_){
+    // 拿不到外观不该让站点打不开：退回前端内置的默认样式，插槽当空的。
+    // 外观是门面，不是运行的必要条件。
+    appearance = {theme: null, slots: {}};
+    return;
+  }
+  applySiteTheme(appearance.theme);
+  paintSlots();
+}
+
+// 站点主题：把后台配的 token 注入成 CSS 变量。与深浅色正交——
+// 品牌色在两套配色下都要生效，所以写在 :root 的行内样式上。
+function applySiteTheme(t){
+  if (!t) return;
+  const root = document.documentElement;
+  for (const [k, v] of Object.entries(t.tokens || {})){
+    // 变量最终会进 CSS。一个带 ; 或 } 的取值能从当前这条声明里逃出去，
+    // 改写它本不该碰的规则 —— 后端存的是 JSON，不会替我们挡这个。
+    if (typeof v !== 'string' || /[;{}<>]/.test(v)) continue;
+    if (!/^[a-z0-9-]{1,40}$/i.test(k)) continue;
+    root.style.setProperty('--' + k, v);
+  }
+
+  const b = t.branding || {};
+  if (b.site_name){
+    document.title = b.site_name;
+    document.querySelectorAll('[data-brand-name]').forEach(el => {
+      el.textContent = b.site_name;
+    });
+  }
+  if (b.tagline){
+    const el = document.querySelector('[data-brand-tagline]');
+    if (el) el.textContent = b.tagline;
+  }
+
+  if (t.custom_css){
+    let tag = document.getElementById('themeCSS');
+    if (!tag){
+      tag = document.createElement('style');
+      tag.id = 'themeCSS';
+      document.head.appendChild(tag);
+    }
+    // textContent 而不是 innerHTML：CSS 文本里若出现 </style> 会提前
+    // 闭合样式块，后面的内容就以 HTML 身份进了文档。服务端也拦这个串，
+    // 这里是第二道。
+    tag.textContent = t.custom_css;
+  }
+}
+
+function paintSlots(){
+  for (const [key, html] of Object.entries(appearance.slots || {})){
+    const el = document.getElementById('slot-' + key.replace(/\./g, '-'));
+    if (el) el.innerHTML = html;
+  }
+}
+
+// syncSlotVisibility 按当前页决定哪些插槽露出来。
+function syncSlotVisibility(page){
+  const show = new Set(PAGE_SLOTS[page] || []);
+  ['portal-home-banner', 'portal-home-aside',
+   'portal-subscribe-notice', 'portal-plans-notice'].forEach(id => {
+    const el = document.getElementById('slot-' + id);
+    if (el) el.classList.toggle('hide', !show.has(id));
+  });
+}
+
+//==============================================================================
+// 账号安全：Telegram 绑定 / 登录设备 / 免密登录链接
+//==============================================================================
+async function renderSecurity(){
+  const el = $('pageSecurity');
+  el.innerHTML = skeleton();
+
+  const [tg, sess, prefs] = await Promise.all([
+    api('/v1/me/telegram').catch(() => ({enabled:false, bound:false})),
+    api('/v1/me/sessions').catch(() => ({sessions:[]})),
+    api('/v1/me/notification-preferences').catch(() => ({preferences:[], unavailable:true})),
+  ]);
+
+  el.innerHTML =
+    '<div class="card" style="margin-bottom:var(--sp-5)">' +
+      '<div class="card-head"><h3>Telegram 通知</h3></div>' +
+      '<div class="card-pad" id="tgBox"></div>' +
+    '</div>' +
+    '<div class="card" style="margin-bottom:var(--sp-5)">' +
+      '<div class="card-head"><h3>通知偏好</h3></div>' +
+      '<div class="card-pad" id="npBox"></div>' +
+    '</div>' +
+    '<div class="card" style="margin-bottom:var(--sp-5)">' +
+      '<div class="card-head"><h3>登录设备</h3>' +
+        '<span class="sub">共 ' + (sess.sessions || []).length + ' 个在用会话</span></div>' +
+      '<div class="tbl-wrap" id="sessBox"></div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card-head"><h3>免密登录链接</h3></div>' +
+      '<div class="card-pad">' +
+        '<div class="sub" style="margin-bottom:var(--sp-3)">' +
+          '生成一条 60 秒有效、只能用一次的链接，用来在别的设备上登录，' +
+          '不必在那台机器上输入密码。链接等同于你的账号，别转发给任何人。</div>' +
+        '<button class="btn btn-primary" id="qlGo">生成链接</button>' +
+        '<div id="qlBox" style="margin-top:var(--sp-3)"></div>' +
+      '</div>' +
+    '</div>';
+
+  renderTelegramBox(tg);
+  renderNotificationPreferences(prefs);
+  renderSessions(sess.sessions || []);
+  el.querySelector('#qlGo').onclick = async ev => {
+    busy(ev.currentTarget, true, '生成中');
+    try{
+      const r = await api('/v1/me/quick-login', {method:'POST'});
+      const url = location.origin + location.pathname + '#quick=' + r.token;
+      el.querySelector('#qlBox').innerHTML =
+        '<div class="sum"><div class="sub" style="margin-bottom:var(--sp-2)">' +
+          '有效期 ' + r.expires_in + ' 秒，过期或用过一次后自动作废。</div>' +
+          '<div class="mono" id="qlUrl" style="word-break:break-all;font-size:12px">' +
+            esc(url) + '</div>' +
+          '<button class="btn btn-ghost" id="qlCopy" style="margin-top:var(--sp-2)">复制</button>' +
+        '</div>';
+      el.querySelector('#qlCopy').onclick = async () => {
+        try{ await navigator.clipboard.writeText(url); toast('已复制'); }
+        catch(_){ toast('复制失败，请手动选中', 'err'); }
+      };
+    }catch(e){ toast(e.message, 'err'); }
+    finally{ busy(ev.currentTarget, false); }
+  };
+}
+
+function renderNotificationPreferences(result){
+  const box=$('npBox');
+  if(result.unavailable){
+    box.innerHTML='<div class="sub">通知偏好暂时无法加载，请稍后刷新。</div>';
+    return;
+  }
+  const labels={transactional:'交易与安全',service:'服务提醒',marketing:'营销活动'};
+  const channels={email:'邮件',telegram:'Telegram'};
+  const ids={
+    transactional_email:'npTransactionalEmail',transactional_telegram:'npTransactionalTelegram',
+    service_email:'npServiceEmail',service_telegram:'npServiceTelegram',
+    marketing_email:'npMarketingEmail',marketing_telegram:'npMarketingTelegram'
+  };
+  const preferences=result.preferences||[];
+  box.innerHTML=
+    '<div class="sub" style="margin-bottom:var(--sp-3)">交易与安全通知用于支付凭据和账号风险提醒，始终开启。其他通知可按渠道调整。</div>'+
+    '<div style="display:grid;gap:var(--sp-2)">'+preferences.map(item=>{
+      const id=ids[item.category+'_'+item.channel]||'';
+      if(!id)return '';
+      return '<label style="display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3);border:1px solid var(--line);border-radius:var(--radius-sm)">'+
+        '<input type="checkbox" id="'+id+'" data-category="'+esc(item.category)+'" data-channel="'+esc(item.channel)+'"'+
+          (item.enabled?' checked':'')+(item.locked?' disabled':'')+'>'+
+        '<span><b>'+esc(labels[item.category]||item.category)+'</b><span class="sub"> · '+esc(channels[item.channel]||item.channel)+
+          (item.locked?' · 必须开启':'')+'</span></span></label>';
+    }).join('')+'</div>';
+  box.querySelectorAll('input[data-category]:not(:disabled)').forEach(input=>{
+    input.onchange=async()=>{
+      const enabled=input.checked;
+      input.disabled=true;
+      try{
+        await api('/v1/me/notification-preferences',{method:'PUT',body:JSON.stringify({
+          category:input.dataset.category,channel:input.dataset.channel,enabled
+        })});
+        toast('通知偏好已更新','ok',1800);
+      }catch(e){
+        input.checked=!enabled;
+        toast(e.message,'err');
+      }finally{input.disabled=false;}
+    };
+  });
+}
+
+function renderTelegramBox(tg){
+  const box = $('tgBox');
+  if (!tg.enabled){
+    box.innerHTML = '<div class="sub">站点还没有开启 Telegram 通知。</div>';
+    return;
+  }
+  if (tg.bound){
+    box.innerHTML =
+      '<div style="display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap">' +
+        '<span class="pill pill-ok">已绑定' +
+          (tg.username ? ' @' + esc(tg.username) : '') + '</span>' +
+        '<span class="sub">到期提醒、流量预警会同时发到 Telegram。</span>' +
+        '<button class="btn btn-ghost" id="tgUnbind" style="margin-left:auto">解除绑定</button>' +
+      '</div>';
+    $('tgUnbind').onclick = async ev => {
+      busy(ev.currentTarget, true, '解绑中');
+      try{
+        await api('/v1/me/telegram', {method:'DELETE'});
+        toast('已解除绑定');
+        renderSecurity();
+      }catch(e){ toast(e.message, 'err'); busy(ev.currentTarget, false); }
+    };
+    return;
+  }
+  box.innerHTML =
+    '<div class="sub" style="margin-bottom:var(--sp-3)">' +
+      '绑定后，订阅到期和流量预警会直接推到 Telegram。</div>' +
+    '<button class="btn btn-primary" id="tgBind">获取绑定码</button>' +
+    '<div id="tgCode" style="margin-top:var(--sp-3)"></div>';
+  $('tgBind').onclick = async ev => {
+    busy(ev.currentTarget, true, '获取中');
+    try{
+      const r = await api('/v1/me/telegram/bind-code', {method:'POST'});
+      const deep = r.bot_username
+        ? 'https://t.me/' + r.bot_username + '?start=' + r.code : '';
+      $('tgCode').innerHTML =
+        '<div class="sum">' +
+          '<div class="sub">在 Telegram 里给 ' +
+            (r.bot_username ? '<b>@' + esc(r.bot_username) + '</b>' : '本站机器人') +
+            ' 发送这个码：</div>' +
+          '<div class="mono" style="font-size:22px;letter-spacing:2px;margin:var(--sp-2) 0">' +
+            esc(r.code) + '</div>' +
+          '<div class="sub">十分钟内有效。重新获取会让上一个码失效。</div>' +
+          (deep ? '<a class="btn btn-primary" style="margin-top:var(--sp-3)" ' +
+            'href="' + esc(deep) + '" target="_blank" rel="noopener">在 Telegram 中打开</a>' : '') +
+          '<button class="btn btn-ghost" id="tgDone" style="margin-top:var(--sp-3)">我发好了，刷新</button>' +
+        '</div>';
+      $('tgDone').onclick = () => renderSecurity();
+    }catch(e){ toast(e.message, 'err'); }
+    finally{ busy(ev.currentTarget, false); }
+  };
+}
+
+function renderSessions(list){
+  if (!list.length){
+    $('sessBox').innerHTML = '<div class="card-pad sub">没有记录。</div>';
+    return;
+  }
+  $('sessBox').innerHTML =
+    '<table class="tbl"><thead><tr><th>设备</th><th>地区</th>' +
+      '<th>最近活动</th><th></th></tr></thead><tbody>' +
+    list.map(x =>
+      '<tr><td>' + esc(shortUA(x.user_agent)) +
+        (x.current ? ' <span class="pill pill-ok">当前设备</span>' : '') +
+        '<div class="sub">登录于 ' + fmtDateTime(x.created_at) + '</div></td>' +
+      '<td class="sub">' + esc(x.country || '—') + '</td>' +
+      '<td class="sub num">' + (x.last_seen_at ? fmtDateTime(x.last_seen_at) : '—') + '</td>' +
+      '<td style="text-align:right">' +
+        (x.current ? '<span class="sub">—</span>'
+          : '<button class="btn btn-ghost btn-sm" data-kill="' + esc(x.id) + '">下线</button>') +
+      '</td></tr>').join('') +
+    '</tbody></table>';
+
+  $('sessBox').querySelectorAll('[data-kill]').forEach(b => b.onclick = async ev => {
+    busy(ev.currentTarget, true, '处理中');
+    try{
+      await api('/v1/me/sessions/' + encodeURIComponent(b.dataset.kill), {method:'DELETE'});
+      toast('该设备已下线');
+      renderSecurity();
+    }catch(e){ toast(e.message, 'err'); busy(ev.currentTarget, false); }
+  });
+}
+
+// shortUA 把 User-Agent 压成一句人能读的话。
+// 原始 UA 有两百字符，摊在表格里只会把「哪台设备」这件事淹掉。
+function shortUA(ua){
+  if (!ua) return '未知设备';
+  const os = /iPhone|iPad/.test(ua) ? 'iOS'
+    : /Android/.test(ua) ? 'Android'
+    : /Mac OS X/.test(ua) ? 'macOS'
+    : /Windows/.test(ua) ? 'Windows'
+    : /Linux/.test(ua) ? 'Linux' : '';
+  const br = /Edg\//.test(ua) ? 'Edge'
+    : /OPR\//.test(ua) ? 'Opera'
+    : /Firefox/.test(ua) ? 'Firefox'
+    : /Chrome/.test(ua) ? 'Chrome'
+    : /Safari/.test(ua) ? 'Safari' : '';
+  const t = [os, br].filter(Boolean).join(' · ');
+  return t || ua.slice(0, 40);
+}
+
+//==============================================================================
+// 启动
+//==============================================================================
+// 无条件先拉站点配置。
+//
+// 放在「未登录」分支里是不够的：令牌过期时走的是 enterApp 失败后的
+// 回退路径，那条路同样会停在登录页，但不经过这里 ——
+// 结果是登录过的人再来，看到的还是老样子的两步注册表单。
+// consumeQuickLoginHash 处理「快捷登录」链接。
+//
+// 令牌放在 fragment（# 后面）而不是查询串里：fragment 不会进服务端
+// 日志、不会随 Referer 发给第三方。用掉后立刻从地址栏抹掉，
+// 免得它躺在历史记录里 —— 虽然它只有 60 秒且一次性。
+async function consumeQuickLoginHash(){
+  const m = /(?:^|[#&])quick=([A-Za-z0-9_-]+)/.exec(location.hash || '');
+  if (!m) return false;
+  history.replaceState(null, '', location.pathname + location.search);
+  try{
+    const r = await api('/v1/auth/quick-login',
+      {method:'POST', body: JSON.stringify({token: m[1]})});
+    token = r.access_token; localStorage.setItem(TK, token);
+    toast('已免密登录');
+    return true;
+  }catch(e){
+    toast(e.message || '登录链接已失效', 'err');
+    return false;
+  }
+}
+
+async function boot(){
+  // 并行拉：两者互不依赖，串起来只是让首屏多等一个来回。
+  await Promise.all([loadSiteConfig(), loadAppearance()]);
+  await consumeQuickLoginHash();
+  if (token) enterApp();
+  else {
+    $('authView').classList.remove('hide');
+    $('appView').classList.add('hide');
+  }
+}
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+[Unit]
+Description=AegisPanel encrypted PostgreSQL backup
+Documentation=file:/opt/aegispanel/deploy/BACKUP.md
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/aegispanel/deploy
+ExecStart=/opt/aegispanel/deploy/backup-postgres.sh
+UMask=0077
+RuntimeDirectory=aegispanel
+RuntimeDirectoryMode=0700
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
+
+# Keep this in sync with AEGIS_BACKUP_DIR. systemd specifiers/environment
+# variables are intentionally avoided in filesystem allowlists.
+ReadWritePaths=/var/backups/aegispanel /var/lib/aegispanel/backup-webdav
+ReadOnlyPaths=/opt/aegispanel /etc/aegispanel
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,33 @@
+# 这个仓库在 Windows 上开发、在 Linux 上运行。core.autocrlf=true 会在
+# checkout 和 git archive 时给文本文件加 CRLF，而 CRLF 的 shell 脚本在
+# Linux 上会以 `$'\r': command not found` 失败。
+#
+# 原先这里是一份扩展名清单（*.sh *.sql *.go …）。清单挡住了脚本，却漏了
+# .env.example —— 它的扩展名是 .example，不在任何一条里。于是 install.sh
+# 拿这份 CRLF 模板生成 .env，装到一半 source 它就炸：
+#
+#     /opt/aegispanel/deploy/.env: line 4: $'\r': command not found
+#
+# 同一个坑，第二次踩，换了个文件而已。清单式防御总会漏——漏的永远是
+# 下一个新加的文件，而且要等它在 Linux 上跑起来才会发现。
+#
+# 所以反过来：默认全都是 LF，只给真正需要 CRLF 的开例外。新加文件
+# 自动被覆盖，不用记得来改这里。
+* text=auto eol=lf
+
+# PowerShell 只在 Windows 上跑，保留 CRLF。
+*.ps1 text eol=crlf
+
+# 二进制。仓库目前一个都没有（编译产物都在 .gitignore 里），
+# 这几条是防止将来有人加进来时被 text=auto 误判。
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.tgz  binary
+*.woff  binary
+*.woff2 binary

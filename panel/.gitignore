@@ -1,0 +1,27 @@
+# 密钥与本地配置 —— 绝不进版本库
+deploy/.env
+*.pem
+*.key
+!*.pub
+
+# 构建产物
+/bin/
+*.exe
+
+# Go
+vendor/
+
+# 前端
+node_modules/
+web/*/dist/
+
+# 编辑器与系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# 临时
+/tmp/
+*.log
+.playwright-cli/

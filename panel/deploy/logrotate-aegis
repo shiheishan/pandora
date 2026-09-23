@@ -1,0 +1,21 @@
+# 面板三个服务的日志轮转。
+#
+# 用 copytruncate 而不是默认的 rename+新建：systemd 的
+# StandardOutput=append: 在服务启动时就把文件描述符拿在手里了，
+# 把文件改名它照样往同一个 inode 写 —— 结果是轮转之后新日志
+# 全进了那个已经被改名的文件，看起来像「服务不写日志了」。
+# copytruncate 是复制内容再就地清空，fd 不受影响。
+#
+# 代价是复制和清空之间那一瞬写入的几行可能丢。对运行日志可以接受；
+# 审计不靠这些文件，审计在数据库的 audit_log 里。
+/opt/aegispanel/logs/*.log {
+    daily
+    rotate 14
+    size 64M
+    copytruncate
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}

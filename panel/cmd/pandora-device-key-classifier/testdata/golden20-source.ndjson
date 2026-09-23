@@ -1,0 +1,4 @@
+{"tenant_id":"10000000-0000-4000-8000-000000000001","id":"30000000-0000-4000-8000-000000000001","join_provenance":"provable","key_algorithm":"ed25519","public_key":"hex:302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"}
+{"tenant_id":"10000000-0000-4000-8000-000000000001","id":"30000000-0000-4000-8000-000000000002","join_provenance":"orphan","key_algorithm":"ed25519","public_key":"hex:00"}
+{"tenant_id":"20000000-0000-4000-8000-000000000002","id":"30000000-0000-4000-8000-000000000003","join_provenance":"cross_tenant","key_algorithm":"ed25519","public_key":"hex:00"}
+{"tenant_id":"20000000-0000-4000-8000-000000000002","id":"30000000-0000-4000-8000-000000000004","join_provenance":"provable","key_algorithm":"ed25519","public_key":"hex:00"}

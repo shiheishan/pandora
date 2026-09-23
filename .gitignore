@@ -1,0 +1,49 @@
+# 构建产物与缓存 —— 源码仓库里不该有这些，
+# 它们是 22G 里的 21.99G
+/panel/output/
+/panel/dist/
+/panel/bin/
+/panel/logs/
+# React 候选前端的嵌入产物由 make frontend-embed 生成；仓库只留占位入口，
+# 保证没有 npm 的机器上 go build 照常通过
+/panel/web/*/app/*
+!/panel/web/*/app/index.html
+/pdnd/bin/
+/pdnd/.tmp/
+/pdnd/release/dist/
+/pdnd/release/test-release/
+# 交叉编译出来的内核二进制，一个 40MB。留在工作树里方便本地测，
+# 但进了 git 就是每次改动都多一份 80MB 的历史。
+/pdnd/pandora-native-linux-*
+/pdnd/pandora-compat-linux-*
+/pdnd/cmd/*/pandora-*-linux-*
+.tmp*/
+*.tar.gz
+*.tgz
+
+# 凭据。这几条是硬性的：
+# .env 装着主密钥和数据库口令，私钥不言自明，
+# .ai-company 里有 VPS 的 SSH 私钥
+.env
+.env.local
+*.key
+*.pem
+id_rsa*
+id_ed25519*
+.ai-company/
+
+# 编辑器与系统
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code 的本地会话与配置目录。里面是每次对话的完整记录，
+# 十几 MB 起，而且带着这台机器的本地路径——既不属于源码，
+# 也不该在别人 clone 下来时出现。
+/.claude/
+
+# 本地运维目录：测试机一次性脚本、安装验证日志、ops_secrets.py（密钥取自 1Password）、
+# gitleaks 私有规则。里面有服务器 IP、源站 IP、后台隐藏前缀和 Komari client ID，
+# 仓库是公开的，这些永远只留在本机
+/ops-local/
+__pycache__/

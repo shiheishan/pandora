@@ -1,0 +1,12 @@
+# Pandora 项目铁律（来自 AGENTS.md / 交接文档）
+
+1. 不部署、不提交、不推送、不迁移、不重启（除非明确授权）
+2. 不使用聊天记录里的 SSH 密码 / API Key / 任何凭据
+3. 不在 Windows 反复运行 Go；测试放 Linux 隔离目录
+4. 低负载验证：GOMAXPROCS=1、-p 1、有界 timeout
+5. 正式路径 NativeCore fail closed，禁止第三方内核静默回退
+6. REALITY+XHTTP+H3 未独立第三方验证前，门禁保持"未验证"
+7. 远端验证后清理临时目录和测试二进制
+8. 最终发布前必须独立审查
+9. 工作树保护：不覆盖既有未提交改动（当时 ~48 文件）
+10. 每次报告用 FACT / INFERENCE / UNKNOWN 标记

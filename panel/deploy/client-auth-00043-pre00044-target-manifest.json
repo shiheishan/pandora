@@ -1,0 +1,10 @@
+{
+  "format": "client-auth-00043-pre00044-target-catalog-v1",
+  "status": "PLACEHOLDER_NO_GO",
+  "postgresql_major": 18,
+  "source": null,
+  "proof_bindings": null,
+  "exact_catalog_sha256": null,
+  "exact_catalog": null,
+  "reason": "No trusted disposable PostgreSQL 18 Goose 43 export has been completed. This placeholder contains no invented catalog baseline and is not release evidence."
+}

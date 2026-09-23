@@ -1,0 +1,254 @@
+name: Pandora NativeCore
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "pdnd/**"
+      - "panel/internal/domain/nodefabric/**"
+      - "panel/internal/api/**"
+      - "panel/internal/platform/db/**"
+      - "panel/migrations/**"
+      - "panel/web/**"
+      - "panel/frontend/**"
+      - "panel/internal/platform/webapp/**"
+      - "panel/Makefile"
+      - ".github/workflows/pandora-native.yml"
+  pull_request:
+    paths:
+      - "pdnd/**"
+      - "panel/internal/domain/nodefabric/**"
+      - "panel/internal/api/**"
+      - "panel/internal/platform/db/**"
+      - "panel/migrations/**"
+      - "panel/web/**"
+      - "panel/frontend/**"
+      - "panel/internal/platform/webapp/**"
+      - "panel/Makefile"
+      - ".github/workflows/pandora-native.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  panel-native-parity:
+    name: NativeCore and panel protocol parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check capability/schema/serving parity
+        run: python3 pdnd/release/check_native_panel_parity.py
+
+  panel-contract:
+    name: Panel NativeCore contract tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Node protocol contract tests
+        run: go test -mod=readonly ./internal/domain/nodefabric
+      - name: Node protocol contract vet
+        run: go vet -mod=readonly ./internal/domain/nodefabric
+
+  panel-web-contract:
+    name: Panel embedded UI, schema and permission contracts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Embedded page contracts (placeholder React entry)
+        run: go test -mod=readonly ./web/ ./internal/platform/webapp/
+      - name: Schema table registry
+        run: go test -mod=readonly -run TestSchemaTablesAreReferencedOrRegistered ./internal/platform/db/
+      - name: Route permission catalog
+        run: go test -mod=readonly -run TestRoutePermissionsExistInCatalog ./internal/api/admin/
+
+  panel-frontend:
+    name: React candidate typecheck, tests, build and embed
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panel/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: panel/frontend/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Typecheck, vitest (includes the API surface and legacy parity contracts) and build
+        run: npm run check
+      - name: Sync the real build into web/*/app for go:embed
+        working-directory: panel
+        run: make frontend-embed
+      - name: Real build is embeddable and served under /app/
+        working-directory: panel
+        run: go test -mod=readonly ./web/ ./internal/platform/webapp/ ./internal/api/...
+
+  linux-race:
+    name: Linux race and vet
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pdnd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pdnd/go.mod
+          cache-dependency-path: pdnd/go.sum
+      - name: Race tests
+        run: go test -mod=readonly -p 1 -race -count=1 ./... | tee amd64-race.log
+      - name: Vet
+        run: go vet -mod=readonly -p 1 ./... | tee amd64-vet.log
+      - name: Native REALITY stdout gate
+        run: bash release/check_native_stdout.sh | tee native-stdout-gate.log
+      - name: Native capability smoke
+        run: |
+          report="$(go run . --capabilities)"
+          printf '%s\n' "${report}" | tee native-capabilities.json
+          grep -q '"kernel": "pandora-native"' <<<"${report}"
+          grep -q '"native_only": true' <<<"${report}"
+          grep -q '"reality-h3"' <<<"${report}"
+      - name: Native adapter self-check
+        run: |
+          report="$(go run . --self-check)"
+          printf '%s\n' "${report}" | tee native-self-check.json
+          grep -q '"status": "ok"' <<<"${report}"
+          grep -q '"capability_count": 13' <<<"${report}"
+      - name: Process REALITY H3 probe
+        run: go test -mod=readonly -p 1 -run TestProcessProbeRoundTrip -count=3 ./cmd/pandora-h3-probe
+      - name: Default dependency boundary
+        run: |
+          ! go list -mod=readonly -deps . | grep -q 'github.com/aegispanel/nodeagent/core/multi'
+          ! go list -mod=readonly -deps . | grep -q 'github.com/aegispanel/nodeagent/core/sing'
+          ! go list -mod=readonly -deps . | grep -q 'github.com/aegispanel/nodeagent/core/xray'
+          ! go list -mod=readonly -deps . | grep -q 'github.com/sagernet/sing-box'
+      - name: Compatibility migration compile
+        run: go test -mod=readonly -tags compat -p 1 ./...
+      - name: External Xray TLS XHTTP H3 interoperability
+        # This is intentionally a non-race opt-in gate: the external Xray
+        # client currently contains a known WaitReadCloser race of its own.
+        run: go test -mod=mod -tags interop -run 'TestExternalXray(VLESSXHTTPRealityH2Interop|VLESSXHTTPH3Interop|XHTTPH3Transport)$' -count=1 ./kernel
+      - name: Upload x64 acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pandora-native-linux-evidence
+          path: |
+            pdnd/amd64-race.log
+            pdnd/amd64-vet.log
+            pdnd/native-stdout-gate.log
+            pdnd/native-capabilities.json
+            pdnd/native-self-check.json
+          if-no-files-found: warn
+
+  linux-arm64-runtime:
+    name: Native ARM64 runtime and race gate
+    # GitHub documents ubuntu-24.04-arm as a public-preview ARM64 hosted VM.
+    # This job is intentionally native execution, not a cross-compile check.
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: pdnd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pdnd/go.mod
+          cache-dependency-path: pdnd/go.sum
+      - name: Confirm runner architecture
+        run: test "$(uname -m)" = aarch64
+      - name: Native ARM64 race tests
+        run: go test -mod=readonly -p 1 -race -count=1 ./... | tee arm64-race.log
+      - name: Native ARM64 vet
+        run: go vet -mod=readonly -p 1 ./... | tee arm64-vet.log
+      - name: Build and execute NativeCore binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: arm64
+        run: |
+          go build -mod=readonly -trimpath -ldflags "-s -w" -o pandora-native-linux-arm64 .
+          file pandora-native-linux-arm64
+          ./pandora-native-linux-arm64 --self-check | tee arm64-self-check.json
+          ./pandora-native-linux-arm64 --capabilities | tee arm64-capabilities.json
+      - name: Upload ARM64 acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pandora-native-arm64-evidence
+          path: |
+            pdnd/arm64-race.log
+            pdnd/arm64-vet.log
+            pdnd/arm64-self-check.json
+            pdnd/arm64-capabilities.json
+            pdnd/pandora-native-linux-arm64
+          if-no-files-found: warn
+
+  linux-release:
+    name: Linux ${{ matrix.arch }} release build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    defaults:
+      run:
+        working-directory: pdnd
+    # GOARCH 放在 job 级：产物名带着它，Verify 步骤也要用。原先只写在
+    # Build 步骤的 env 里，Verify 拿到的是空串，于是去找一个叫
+    # "pandora-native-linux-" 的文件，报 No such file or directory。
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pdnd/go.mod
+          cache-dependency-path: pdnd/go.sum
+      - name: Build
+        run: go build -mod=readonly -trimpath -ldflags "-s -w" -o "pandora-native-linux-${GOARCH}" .
+      - name: Build REALITY H3 probe
+        run: go build -mod=readonly -trimpath -ldflags "-s -w" -o "pandora-h3-probe-linux-${GOARCH}" ./cmd/pandora-h3-probe
+      - name: Verify artifact
+        run: sha256sum "pandora-native-linux-${GOARCH}" "pandora-h3-probe-linux-${GOARCH}"
+
+  release-manifest:
+    name: Release manifest and hashes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pdnd/go.mod
+          cache-dependency-path: pdnd/go.sum
+      - name: Build and verify release directory
+        run: |
+          bash pdnd/release/build.sh "$RUNNER_TEMP/pandora-release" ci
+          bash pdnd/release/verify.sh "$RUNNER_TEMP/pandora-release" ci
+      - name: Isolated staging acceptance
+        run: |
+          bash pdnd/release/staging-acceptance.sh \
+            "$RUNNER_TEMP/pandora-release" \
+            "$RUNNER_TEMP/pandora-native-staging" ci
