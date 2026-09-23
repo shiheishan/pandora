@@ -7,7 +7,7 @@ NativeCore：协议无关的数据面运行时。每个入站拥有一个 route 
 runtime.go: 包文档所在。协议无关运行时，持有每入站的 route engine 与 outbound 代
 nativecore.go: NativeCore 与 nativeInbound：按 InboundSpec 启动入站，routedDataPlane 把 DialTCP/ListenUDP 接到路由与出站，swap 支持不重启的热更新
 adapter.go: 协议适配器契约：InboundSpec、DataPlane、AdapterHooks、ConnError、Adapter/AdapterFactory/AdapterRegistry
-capabilities.go: 能力矩阵：Capability、NativeCapabilities、NativeProtocolNames、NativeCapabilityReport
+capabilities.go: 能力矩阵：Capability、NativeCapabilities、NativeCapabilityFor、NativeProtocolNames、NativeCapabilityReport(For)；CI capability smoke 按字面量守 reality-h3-experimental 与 external-reality-xhttp-h3-unverified
 selfcheck.go: 启动自检：ValidateNativeCapabilityMatrix 对照默认注册表，不开监听
 proxy.go: socks 与 http 入站共用的 proxyAdapter：SOCKS4/4a/5 CONNECT 与 UDP ASSOCIATE、HTTP CONNECT 与正向 GET，认证绑定面板下发的用户 UUID
 vless.go: VLESS 入站主体：请求头解析、TCP 转发、传输分派
@@ -42,7 +42,7 @@ httpupgrade_netconn.go: HTTP Upgrade 承载的 net.Conn
 native_transport_server.go: WebSocket 与 HTTP Upgrade 的服务端分派
 mkcp_transport.go: mKCP 传输：配置与掩码解析、监听、MTU 校验、socket 缓冲调优
 uot_bridge.go: UDP-over-TCP 桥：把 uot 数据报接到路由后的 PacketConn
-*_test.go: 各协议单测，nativecore_test.go 跨协议契约测试，-tags interop 的外部 Xray 互操作测试
+*_test.go: 各协议单测，nativecore_test.go 跨协议契约测试，-tags interop 的非 race 互操作门：外部 Xray/mihomo 客户端，以及 anytls_client_interop_test.go（sing-anytls v0.0.11/v0.0.13 客户端内部自带 closeLocally/Write 数据竞争，移出默认 race 套件）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
