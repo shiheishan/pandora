@@ -5,7 +5,7 @@ Go 1.26 + PostgreSQL 18 + Valkey 8 + 手写单页前端（生产入口 /，panel
 <directory>
 panel/ - 面板：public/admin/node 三个 HTTP 网关 + agent 节点代理，计费账本、节点编排、审计、安装发布链 (8子目录: cmd, internal, migrations, deploy, frontend, web, docs, tests)
 pdnd/ - Pandora node：NativeCore 数据面，一个二进制承载 13 个协议，兼容内核仅在 compat 构建下按需链接 (10子目录: kernel, core, internal, node, panel, outbound, route, release, cmd, tools)
-nodeagent/ - aegis-nodeagent：pdnd 的陈旧祖先，go.mod 与 pdnd 同为 github.com/aegispanel/nodeagent，无构建或安装脚本引用；测试机在跑的 aegis-nodeagent 来源查清前保留 (4子目录: core, node, panel, tools)
+nodeagent/ - aegis-nodeagent：pdnd 的陈旧祖先，go.mod 与 pdnd 同为 github.com/aegispanel/nodeagent，panel/deploy/systemd 留有其单元与 override，但 build-release.sh 不打包、安装脚本不安装不启用；测试机在跑的 aegis-nodeagent 来源查清前保留 (4子目录: core, node, panel, tools)
 docs/ - 全仓库级文档：AI 铁律、密钥轮换、发布物绑定、验证交接 (0子目录)
 .githooks/ - 提交前闸门 pre-commit：gitleaks 按 .gitleaks.toml 与本机 ops-local/gitleaks-private.toml 扫暂存区，未装 gitleaks 也拒绝提交；clone 后执行 git config core.hooksPath .githooks 启用 (0子目录)
 ops-local/ - 被 git 忽略、只在维护者本机存在：测试机一次性运维脚本、安装验证日志、ops_secrets.py（Komari 密钥经 1Password 读取）、gitleaks 私有规则（真实服务器 IP、监控域名、Komari client ID）。仓库公开，这些永不入库

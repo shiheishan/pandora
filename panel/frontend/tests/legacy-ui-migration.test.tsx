@@ -73,7 +73,7 @@ it("saves commission form through existing API and verifies authoritative readba
   await waitFor(() => expect(amount).toHaveValue("100.00"));
   fireEvent.change(amount, { target: { value: "120.01" } });
   // Xboard-style debounced auto-save, without an extra edit dialog or save click.
-  await screen.findByText("佣金设置已保存", {}, { timeout: 5000 });
+  await screen.findByText("佣金设置已保存");
   expect(writes).toEqual([{ rate_percent: 20, freeze_days: 3, min_withdraw: 12001 }]);
 });
 it("keeps the routing draft on version conflict and does not publish while editing a rule", async () => {

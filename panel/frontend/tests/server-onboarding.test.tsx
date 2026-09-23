@@ -24,7 +24,7 @@ it("shows the one-time token required by the installer, and clears it on close",
  expect(screen.queryByText("已确认 · #2")).not.toBeInTheDocument();
  await userEvent.click(await screen.findByRole("button",{name:"取得接入命令"}));
  // The shared dialog is lazy-loaded; allow its cold module import to finish.
- await userEvent.click(await screen.findByRole("button",{name:"签发命令"},{timeout:5000}));
+ await userEvent.click(await screen.findByRole("button",{name:"签发命令"}));
  await waitFor(()=>expect(screen.getByText("one-time-fixture-secret")).toBeVisible());
  expect(screen.getByText(/不是管理员密码/)).toBeVisible();
  await userEvent.click(screen.getByRole("button",{name:"已保存并关闭"}));
