@@ -30,6 +30,13 @@ on:
 permissions:
   contents: read
 
+# 显式 shell: bash 让 GitHub 用 `bash --noprofile --norc -eo pipefail {0}`，
+# 于是 `go test ... | tee x.log` 按 go test 的状态退出。缺省 shell 没有
+# pipefail，tee 永远成功，首跑时 race 测试的 FAIL 与 DATA RACE 被它吞成绿灯。
+defaults:
+  run:
+    shell: bash
+
 jobs:
   panel-native-parity:
     name: NativeCore and panel protocol parity
@@ -127,7 +134,8 @@ jobs:
           printf '%s\n' "${report}" | tee native-capabilities.json
           grep -q '"kernel": "pandora-native"' <<<"${report}"
           grep -q '"native_only": true' <<<"${report}"
-          grep -q '"reality-h3"' <<<"${report}"
+          grep -q '"reality-h3-experimental"' <<<"${report}"
+          grep -q '"external-reality-xhttp-h3-unverified"' <<<"${report}"
       - name: Native adapter self-check
         run: |
           report="$(go run . --self-check)"
@@ -148,6 +156,10 @@ jobs:
         # This is intentionally a non-race opt-in gate: the external Xray
         # client currently contains a known WaitReadCloser race of its own.
         run: go test -mod=mod -tags interop -run 'TestExternalXray(VLESSXHTTPRealityH2Interop|VLESSXHTTPH3Interop|XHTTPH3Transport)$' -count=1 ./kernel
+      - name: External AnyTLS client interoperability
+        # Non-race for the same reason: sing-anytls (v0.0.11 and v0.0.13)
+        # races between Stream.closeLocally and Stream.Write inside the client.
+        run: go test -mod=readonly -tags interop -run 'TestAnyTLSNativeClientTCPAndUOTUDP$' -count=3 ./kernel
       - name: Upload x64 acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
