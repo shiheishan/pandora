@@ -9,7 +9,10 @@ log() { echo "isolated migration preflight: $*" >&2; }
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="${AEGIS_ENV_FILE:-$DEPLOY_DIR/.env}"
-MIGRATIONS_DIR="${AEGIS_MIGRATIONS_DIR:-/opt/aegispanel/migrations}"
+# 迁移文件默认取与 deploy/ 并排的 migrations/：install.sh（/opt/aegispanel）、install-native.sh
+# （/opt/pandora）和源码树（make check-migrations）都是这个布局。不写死安装路径——
+# 曾写死 /opt/pandora，install.sh 装的机器上会找不到，或者读到另一套安装留下的旧迁移。
+MIGRATIONS_DIR="${AEGIS_MIGRATIONS_DIR:-$(dirname -- "$DEPLOY_DIR")/migrations}"
 GOOSE="${GOOSE_BIN:-/root/go/bin/goose}"
 SOURCE_CONTAINER="${PANDORA_SOURCE_POSTGRES_CONTAINER:-aegis-postgres}"
 EXPECTED_SOURCE_CONTAINER_ID="${PANDORA_EXPECTED_SOURCE_CONTAINER_ID:-}"

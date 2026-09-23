@@ -1,4 +1,8 @@
 async (page) => {
+  // [INPUT]: 由 test-vps-public-ui-playwright.sh 渲染：目标地址占位符替换为 PANDORA_VPS_UI_TARGET
+  // [OUTPUT]: 公开门户多宽度渲染、密码可见切换、无 console / page 错误，返回 {gate:"pass"}
+  // [POS]: playwright run-code 的页面脚本；头部写在函数体内，因为文件整体是一个表达式
+  // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
   const target = '__PANDORA_VPS_UI_TARGET__';
 
   const assert = (condition, message) => {

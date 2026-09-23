@@ -14,6 +14,7 @@ ops-local/ - 被 git 忽略、只在维护者本机存在：测试机一次性�
 
 <config>
 README.md - 项目全貌：架构、功能、部署、验证状态、进度、路线图，给人看的唯一入口
+PANDORA_PROJECT_DOSSIER_20260831.md - 2026-08-31 的完整项目册，功能清单比 README 更细，README 相关文档一节链接它
 docs/CONSTRAINTS.md - AI 操作铁律：不部署/不提交/不推送/不迁移，NativeCore fail closed，FACT/INFERENCE/UNKNOWN 报告，仓库只放产品不放部署专属值
 panel/go.mod、pdnd/go.mod、nodeagent/go.mod - 三个独立 Go module，面板为 github.com/aegispanel/aegis
 panel/Makefile - 本地开发入口：up/migrate/check-migrations/invariants/build/test/e2e/verify，CGO_ENABLED=0
@@ -260,7 +261,7 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 
 # 本项目适配说明
 
-- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api/domain/platform、panel/internal/platform/webapp、panel/web、pdnd、pdnd/kernel、pdnd/core、nodeagent、panel/frontend。其余目录按逆向流在进入时补建。
+- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api/domain/platform、panel/internal/platform/webapp、panel/web、panel/deploy、pdnd、pdnd/kernel、pdnd/core、nodeagent、panel/frontend。其余目录按逆向流在进入时补建。
 - L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]；TS/TSX 用模板里的 `/** */`。现有 219 个 Go 文件已有中文设计注释，L3 加在其上方，不改写原注释。
 - L3 按逆向流渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性播种（810 个源文件）。
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。

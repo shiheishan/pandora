@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖 playwright CLI、同目录 test-vps-public-ui-playwright.js、环境变量 PANDORA_VPS_UI_TARGET（http(s)://host:port/）
+# [OUTPUT]: 对一台已部署实例的公开门户做真实浏览器验收，gate=pass 才算通过
+# [POS]: deploy 测试里唯一面向远端实例的 UI 门禁；目标地址运行时给出、渲染进临时副本，仓库里只有占位符
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

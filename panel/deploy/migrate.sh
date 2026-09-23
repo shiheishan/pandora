@@ -6,7 +6,10 @@ umask 077
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="${AEGIS_ENV_FILE:-$DEPLOY_DIR/.env}"
 GOOSE="${GOOSE_BIN:-/root/go/bin/goose}"
-MIGRATIONS_DIR="${AEGIS_MIGRATIONS_DIR:-/opt/pandora/migrations}"
+# 迁移文件默认取与 deploy/ 并排的 migrations/：install.sh（/opt/aegispanel）、install-native.sh
+# （/opt/pandora）和源码树（make check-migrations）都是这个布局。不写死安装路径——
+# 曾写死 /opt/pandora，install.sh 装的机器上会找不到，或者读到另一套安装留下的旧迁移。
+MIGRATIONS_DIR="${AEGIS_MIGRATIONS_DIR:-$(dirname -- "$DEPLOY_DIR")/migrations}"
 COMMAND="${1:-up}"
 if [ "$#" -gt 0 ]; then shift; fi
 

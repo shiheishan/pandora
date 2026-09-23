@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖 /opt/aegis-migrate 下的 Age 密文备份与代码包、新主机的 deploy/.env（须含 AEGIS_PUBLIC_BASE_URL）
+# [OUTPUT]: 在新主机恢复数据、重建 aegis_app、校验账本、编译启动并渲染 nginx
+# [POS]: deploy 的整机迁移编排，复用 restore-postgres.sh / bootstrap.sh / render-nginx.sh，不接收未校验的额外模板
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 在**新服务器**上执行的一键迁移脚本。
 #
 # 前提：/opt/aegis-migrate/ 下已放好从旧机器带来的四件套

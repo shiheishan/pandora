@@ -6,7 +6,9 @@ name=pandora-pg18-enrollment-20260810
 port=55459
 password=pandora_test_only
 database=pandora_enrollment
-migrations=${PANDORA_MIGRATIONS_DIR:-/root/pandora-fullgate-20260810-1240/panel/migrations}
+# 迁移与被测包都取自本源码树（panel/），而不是某次临时验证目录
+PANEL_DIR="$(cd -- "$(dirname -- "$0")/.." && pwd)"
+migrations=${PANDORA_MIGRATIONS_DIR:-$PANEL_DIR/migrations}
 goose=${GOOSE_BIN:-/root/go/bin/goose}
 
 cleanup() {
@@ -66,12 +68,12 @@ SQL
 
 docker exec "$name" psql -v ON_ERROR_STOP=1 -U postgres -d "$database" \
   -c "ALTER ROLE aegis_app LOGIN PASSWORD 'pandora_app_test_only'; ALTER ROLE aegis_app SET search_path=pg_catalog,public,pg_temp; REVOKE TEMPORARY ON DATABASE ${database} FROM PUBLIC, aegis_app" >/dev/null
-cd /root/pandora-fullgate-20260810-1240/panel
+cd "$PANEL_DIR"
 AEGIS_ENROLLMENT_PG18_FIXTURE=disposable-v1 \
 AEGIS_ENROLLMENT_PG18_DATABASE="$database" \
 AEGIS_ENROLLMENT_PG18_ADMIN_DSN="$dsn" \
 AEGIS_ENROLLMENT_PG18_DSN="postgres://aegis_app:pandora_app_test_only@127.0.0.1:${port}/${database}?sslmode=disable" \
-GOTMPDIR=/root/pandora-go-tmp GOMAXPROCS=1 \
+GOTMPDIR="${GOTMPDIR:-${TMPDIR:-/tmp}}" GOMAXPROCS=1 \
   go test -mod=readonly -race -p 1 -count=1 -run '^TestNodeEnrollmentPG18$' ./internal/domain/nodefabric
 
 printf 'PANDORA_NODE_ENROLLMENT_PG18_PASS major=%s database_oid=%s system_identifier=%s\n' \
