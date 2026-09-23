@@ -335,7 +335,7 @@ bash panel/deploy/test-install.sh <发布目录>
 | 当前版本 | r54 管理端已发布（2026-09-09）；后端、迁移、NativeCore 沿用 r53 |
 | 仓库基线 | GitHub `main` 三个提交：`f1390b3` 导入 → `3283da8` → `64c0b21`，工作树干净 |
 | r55 | 已随 `f1390b3` 入库，未部署 |
-| CI | 首跑 `35827175294` 失败；修复后 `35833526284`（`e7c9737`）八绿一红，唯一红为 React candidate 1/156 的 `findBy` 超时，已改全局 `asyncUtilTimeout`；原因与修复见上文 FACT |
+| CI | 首跑 `35827175294` 失败；`35833526284`（`e7c9737`）八绿一红，唯一红为 React candidate 1/156 的 `findBy` 超时；改全局 `asyncUtilTimeout` 后 `35835685398`（`05a2aa3`）九个 job 全绿，React candidate 156/156，race 日志无 `DATA RACE`；原因与修复见上文 FACT |
 | Xboard 功能验收 | PARTIAL，未 RELEASED |
 | 生产运行 | 台湾生产机：aegis-public / admin / node + pandora-native + pandora-rust 均 active |
 
