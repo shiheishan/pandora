@@ -14,7 +14,7 @@ ops-local/ - 被 git 忽略、只在维护者本机存在：测试机一次性�
 
 <config>
 README.md - 项目全貌：架构、功能、部署、验证状态、进度、路线图，给人看的唯一入口
-docs/CONSTRAINTS.md - AI 操作铁律：不部署/不提交/不推送/不迁移，NativeCore fail closed，FACT/INFERENCE/UNKNOWN 报告
+docs/CONSTRAINTS.md - AI 操作铁律：不部署/不提交/不推送/不迁移，NativeCore fail closed，FACT/INFERENCE/UNKNOWN 报告，仓库只放产品不放部署专属值
 panel/go.mod、pdnd/go.mod、nodeagent/go.mod - 三个独立 Go module，面板为 github.com/aegispanel/aegis
 panel/Makefile - 本地开发入口：up/migrate/check-migrations/invariants/build/test/e2e/verify，CGO_ENABLED=0
 panel/deploy/.env.example - 运行配置模板，敏感项 CHANGE_ME 由 install.sh 首装生成
@@ -266,4 +266,4 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。
 - 单文件 ≤800 行：仓库现有 35 个 Go 文件超限。发现时在报告中记录，重构需用户授权，服从 docs/CONSTRAINTS.md 的"只修测试直接证明的问题"。
 - entropy 段的范式映射到本仓库：日志用 platform/logging（log/slog），响应与错误用 platform/httpx，配置只经 platform/config，前端 HTTP 只经 src/core/api.ts。
-- docs/CONSTRAINTS.md 的十条铁律与本协议同时生效；冲突时铁律优先。
+- docs/CONSTRAINTS.md 的十一条铁律与本协议同时生效；冲突时铁律优先。
