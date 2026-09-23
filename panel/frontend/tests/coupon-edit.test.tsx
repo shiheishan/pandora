@@ -42,4 +42,4 @@ it("keeps an uncertain coupon edit open and retries the same body and idempotenc
  expect((second.headers as Record<string,string>)["Idempotency-Key"]).toBe((first.headers as Record<string,string>)["Idempotency-Key"]);
  expect(JSON.parse(String(second.body))).toMatchObject({name:"新活动",code:"WELCOME",discount_value:999,max_redemptions:5,expected_updated_at:coupon.updated_at});
  await waitFor(()=>expect(screen.queryByRole("button",{name:"保存修改"})).not.toBeInTheDocument());
-}, 15000);
+});

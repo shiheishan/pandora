@@ -5,7 +5,7 @@
 
 成员清单
 package.json / package-lock.json: 依赖精确锁定；scripts：dev:admin(5173)、dev:portal(5174)、typecheck、build（typecheck + 双 mode 构建）、test（vitest）、check
-vite.config.ts / vitest.config.ts / tsconfig.json: 双 mode 的 root/outDir 与测试配置
+vite.config.ts / vitest.config.ts / tsconfig.json: 双 mode 的 root/outDir 与测试配置；vitest 全局 testTimeout 30s、maxWorkers 2（2 核 CI runner 上 antd+jsdom 单例可超 10s），用例不再各自传超时
 apps/admin/index.html、apps/portal/index.html: 两个入口页
 src/main.tsx: 启动：ConfigProvider(zhCN)、QueryClientProvider、createHashRouter、lazy + Suspense 路由装载
 src/styles.css: 全局样式

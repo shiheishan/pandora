@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 依赖 src/features/admin/Nodes 的 PoolsPage、src/core/dialogs 的 DialogHost、src/core/api 的 ApiFailure，auth 以 vi.mock 替身
+ * [OUTPUT]: 对外提供权限组（节点池）页 vitest 用例：本地搜索与筛选、新建、编辑不可改代码、被引用禁删与后端 409 保留行、只读无操作入口
+ * [POS]: tests 下节点池管理页的回归守卫；弹窗断言先等 antd Modal 入场动画结束，组件 FormDialog 不为测试让步
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConfigProvider } from "antd";
@@ -69,8 +75,10 @@ it("guards referenced pool deletion and retains the row when the backend reports
   await userEvent.click(within(empty).getByRole("button", { name: /删\s*除/ }));
   expect(fixture.api.write).not.toHaveBeenCalled();
   fixture.api.write.mockRejectedValueOnce(new ApiFailure("还有节点模板使用这个默认分组", "conflict", 409));
+  // antd Modal 的 zoom 入场动画期间 opacity 为 0，先等弹窗真正可见再操作和断言。
+  await waitFor(() => expect(screen.getByRole("dialog")).toBeVisible());
   await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /删\s*除/ }));
-  expect(await screen.findByText("还有节点模板使用这个默认分组")).toBeVisible();
+  await waitFor(() => expect(screen.getByText("还有节点模板使用这个默认分组")).toBeVisible());
   expect(screen.getByText("日本备用")).toBeVisible();
   expect(fixture.api.write.mock.calls[0]?.[0]).toBe("v1/node-pools/jp");
   expect(fixture.api.write.mock.calls[0]?.[2].method).toBe("DELETE");
