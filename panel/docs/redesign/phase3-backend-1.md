@@ -57,3 +57,4 @@
 - 时区已由用户定案（契约 R49、R50）：站点时区默认 Asia/Shanghai、后台可改，用户时区为默认 'UTC' 时跟随站点。**由后端二第 ⑤ 步实现，包括改 `nodefabric/usage_daily.go` 的 `UsageLocation`**，你 ⑥ 不要碰这个函数。`subscription_usage_daily` 没有清理策略，暂不处理。
 - 本分支推送后，Panel PostgreSQL 18 gates 里会多一个 panel-unit 任务（panel 全量 build/vet/go test，排除两个既有 Linux 失败包），它和 panel-pg18 都要绿。
 - 后端二 ⑤ 改过你的 `nodefabric/usage_daily.go`（只改 `UsageLocation`：用户时区为 'UTC' 时跟随站点时区，R50）和门户 `listSubscriptions`（移到独立文件并补字段），改相关代码前先读主线最新版。
+- `subscription_usage_daily` 不做清理（用户 2026-09-24：先留着，记录在案）。
