@@ -46,7 +46,12 @@
 - **第 ⑤ 步追加（后端一建议）**：`notify/scan.go` 的流量预警把用户的流量包剩余（`traffic_pack_grants` 的 remaining）算进可用量，有流量包余量的用户不该收到「流量即将用尽」；`deploy/configure-app-role.sql` 末尾的 REVOKE UPDATE/DELETE 名单补上 `traffic_pack_grants`、`gift_card_batches`（两表已靠触发器守住，这是纵深防御）。
 - **第 ⑤ 步第一个提交：机械拆分 `api/admin/router.go`**（现 799 行，⑤ 一加路由就超 800）。按模块把路由段移到同包的 `router_<模块>.go`（函数接收同一个路由器与依赖），不改任何路径、中间件、顺序与行为，路由契约测试与权限字典测试原样通过；这个提交单独推送、在报告里单列，后端一第 ⑥ 步会在它合入后再往后台路由里加流量包管理。
 - **第 ⑤ 步顺手修 `run-pg18-gates.sh` 的就绪检查**（第 ④ 步 CI 偶发失败的原因）：`docker exec … pg_isready` 走 unix socket，会连上 postgres 镜像初始化时的临时实例；改为 `pg_isready -h 127.0.0.1`（临时实例不监听 TCP），或等到连续两次成功。
-- **待用户定，不要动**：`audit.VerifyChain` 用从 jsonb 读回的摘要复算哈希，jsonb 会重排键、改空白，与写入时 `json.Marshal` 的字节不同，任何带摘要的审计行都验不过（第 ④ 步 PG18 实测复现，既有缺陷）。修它要改审计链哈希口径，协调会话已报用户。
+- **第 ⑤ 步追加：修 `audit.VerifyChain`（2026-09-24 用户授权）**。现状：复算哈希用的是从 jsonb 读回的摘要，jsonb 会重排键、改空白，与写入时 `json.Marshal` 的字节不同，任何带摘要的审计行都验不过。修法由你定，但必须满足：
+  - 写入与校验对同一条记录得到同一串字节，不依赖 jsonb 的存储形态（例如：哈希前把摘要规范化成确定的形式，或把参与哈希的原始字节另存一列）；
+  - `audit_events` 是追加写 + 哈希链，**不得改写已有行**；迁移前的存量行怎么处理（如按版本区分口径、从某个切换点起按新口径校验）要明确，并写进 `platform/audit` 的 L3 与报告；
+  - 与第 ④ 步的 `auth_context` 入链规则兼容；
+  - PG18 测试覆盖：带摘要的多行链校验通过；改动任一行的摘要、auth_context 或删掉中间一行，校验能指出断点；存量口径的行按你定的规则处理；
+  - 单独一个提交，报告里写清修法、存量行的处理和迁移号。
 - 后台按文章统计「有帮助 / 没帮助」的接口契约未定，⑤ 不做。
 - 第 ④ 步新建了 `api/admin`、`api/public`、`domain/plugin`、`domain/content` 四个 L2；`api/public/CLAUDE.md` 合并时协调会话补上了后端一的 `traffic_packs.go`、`plan_change.go` 两行。`nodefabric/node_admin.go` 1007 行、`adminops/service.go` 959 行，既有超限，不重构。
 - 推送前对**最后一个提交**跑本机全量（见公共规则第 5 节新增条），CI 不跑 panel 单元测试。
