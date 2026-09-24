@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成
 // [OUTPUT]: 对外提供 Service、NewService，工单创建、用户侧读写与关闭、客服侧队列 / 回复 / 指派 / 改状态 / 升级，各写操作的 *Atomic 版本
-// [POS]: domain/support 的主服务：工单全生命周期；队列 status 接受逗号分隔并回 last_message_author_kind，详情回 user_active_plan，人工升级把优先级提到至少 high；closed_reason 在每条关闭路径上写对（user_closed / withdrawn / agent_closed），重新打开时清空
+// [POS]: domain/support 的主服务：工单全生命周期；队列 status 接受逗号分隔并回 last_message_author_kind，详情回 user_active_plan，人工升级把优先级提到至少 high；用户与客服两侧都回 closed_reason，用户详情回 related_order；closed_reason 在每条关闭路径上写对（user_closed / withdrawn / agent_closed），重新打开时清空
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package support 实现工单（OPS-001）。
@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/plugin"
@@ -154,6 +155,15 @@ type Ticket struct {
 	MessageCount int       `json:"message_count"`
 	LastReplyAt  time.Time `json:"last_reply_at"`
 	Messages     []Message `json:"messages,omitempty"`
+	// ClosedReason 分辨「已撤回」与「已关闭」：user_closed / withdrawn / agent_closed，未关闭为 null
+	ClosedReason *string `json:"closed_reason"`
+	// RelatedOrder 只在详情里填（门户详情头「关联订单」）
+	RelatedOrder *TicketOrderRef `json:"related_order"`
+}
+
+type TicketOrderRef struct {
+	ID      string `json:"id"`
+	OrderNo string `json:"order_no"`
 }
 
 //------------------------------------------------------------------------------
@@ -382,7 +392,7 @@ func (s *Service) ListForUser(ctx context.Context, tenantID, userID string) ([]T
 			SELECT t.id, t.ticket_no, t.subject, t.category, t.priority, t.status,
 			       t.created_at, t.updated_at, t.resolved_at,
 			       count(m.id)::int,
-			       coalesce(max(m.created_at), t.created_at)
+			       coalesce(max(m.created_at), t.created_at), t.closed_reason
 			  FROM tickets t
 			  LEFT JOIN ticket_messages m
 			         ON m.ticket_id = t.id AND m.internal_note = false
@@ -398,7 +408,7 @@ func (s *Service) ListForUser(ctx context.Context, tenantID, userID string) ([]T
 			var t Ticket
 			if err := rows.Scan(&t.ID, &t.TicketNo, &t.Subject, &t.Category,
 				&t.Priority, &t.Status, &t.CreatedAt, &t.UpdatedAt, &t.ResolvedAt,
-				&t.MessageCount, &t.LastReplyAt); err != nil {
+				&t.MessageCount, &t.LastReplyAt, &t.ClosedReason); err != nil {
 				return err
 			}
 			out = append(out, t)
@@ -410,16 +420,27 @@ func (s *Service) ListForUser(ctx context.Context, tenantID, userID string) ([]T
 
 // GetForUser 返回工单详情。内部备注在 SQL 层就被排除。
 func (s *Service) GetForUser(ctx context.Context, tenantID, userID, ticketID string) (*Ticket, error) {
+	// 非 uuid 与不存在同样 404：交给 SQL 会变成 500
+	if _, err := uuid.Parse(ticketID); err != nil {
+		return nil, httpx.NotFoundOrForbidden()
+	}
 	var t Ticket
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
+		var orderID, orderNo *string
 		err := tx.QueryRow(ctx, `
-			SELECT id, ticket_no, subject, category, priority, status,
-			       created_at, updated_at, resolved_at
-			  FROM tickets
-			 WHERE tenant_id = $1 AND id = $2 AND user_id = $3`,
+			SELECT t.id, t.ticket_no, t.subject, t.category, t.priority, t.status,
+			       t.created_at, t.updated_at, t.resolved_at, t.closed_reason,
+			       o.id::text, o.order_no
+			  FROM tickets t
+			  LEFT JOIN orders o ON o.tenant_id = t.tenant_id AND o.id = t.related_order_id
+			 WHERE t.tenant_id = $1 AND t.id = $2 AND t.user_id = $3`,
 			tenantID, ticketID, userID,
 		).Scan(&t.ID, &t.TicketNo, &t.Subject, &t.Category, &t.Priority,
-			&t.Status, &t.CreatedAt, &t.UpdatedAt, &t.ResolvedAt)
+			&t.Status, &t.CreatedAt, &t.UpdatedAt, &t.ResolvedAt, &t.ClosedReason,
+			&orderID, &orderNo)
+		if orderID != nil {
+			t.RelatedOrder = &TicketOrderRef{ID: *orderID, OrderNo: *orderNo}
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			// 不存在与不属于本人返回同一种错误，避免用工单 ID 探测他人工单
 			return httpx.NotFoundOrForbidden()
@@ -731,7 +752,8 @@ func (s *Service) ListForAgent(ctx context.Context, tenantID string, f ListFilte
 			          FROM ticket_messages m WHERE m.ticket_id = t.id),
 			       coalesce((SELECT m.author_kind FROM ticket_messages m
 			                  WHERE m.ticket_id = t.id AND NOT m.internal_note
-			                  ORDER BY m.created_at DESC, m.id DESC LIMIT 1), '')
+			                  ORDER BY m.created_at DESC, m.id DESC LIMIT 1), ''),
+			       t.closed_reason
 			  FROM tickets t
 			  JOIN users u ON u.id = t.user_id
 			  LEFT JOIN users a ON a.id = t.assigned_to
@@ -754,7 +776,7 @@ func (s *Service) ListForAgent(ctx context.Context, tenantID string, f ListFilte
 				&t.UserID, &t.UserEmail, &t.AssignedTo, &t.AssigneeEmail,
 				&t.SLAFirstDue, &t.SLAResolutionDue, &t.FirstRespondedAt,
 				&t.EscalatedAt, &t.SLABreached, &t.MessageCount, &t.LastReplyAt,
-				&t.LastMessageAuthorKind); err != nil {
+				&t.LastMessageAuthorKind, &t.ClosedReason); err != nil {
 				return err
 			}
 			out = append(out, t)
@@ -781,7 +803,8 @@ func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*
 			          JOIN plans pl ON pl.id = s.plan_id
 			         WHERE s.tenant_id = t.tenant_id AND s.user_id = t.user_id
 			           AND s.status IN ('active','trialing')
-			         ORDER BY s.created_at DESC LIMIT 1)
+			         ORDER BY s.created_at DESC LIMIT 1),
+			       t.closed_reason
 			  FROM tickets t
 			  JOIN users u ON u.id = t.user_id
 			  LEFT JOIN users a ON a.id = t.assigned_to
@@ -790,7 +813,7 @@ func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*
 		).Scan(&t.ID, &t.TicketNo, &t.Subject, &t.Category, &t.Priority, &t.Status,
 			&t.CreatedAt, &t.UpdatedAt, &t.ResolvedAt, &t.UserID, &t.UserEmail,
 			&t.AssignedTo, &t.AssigneeEmail, &t.SLAFirstDue, &t.SLAResolutionDue,
-			&t.FirstRespondedAt, &t.EscalatedAt, &t.SLABreached, &t.UserActivePlan)
+			&t.FirstRespondedAt, &t.EscalatedAt, &t.SLABreached, &t.UserActivePlan, &t.ClosedReason)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.New(httpx.CodeNotFound, "工单不存在")
 		}

@@ -162,6 +162,8 @@ func NewRouter(d Deps) http.Handler {
 
 			r.Post("/auth/logout", h.logout)
 			r.Get("/me", h.me)
+			// 结账页与充值的支付方式（只读）
+			r.Get("/payment-methods", h.listPaymentMethods)
 			r.Get("/me/subscriptions", h.listSubscriptions)
 			r.Get("/me/subscriptions/{id}/nodes", h.meSubscriptionNodes)
 			// 按日用量（门户-02 柱状图）：只读，数据由节点流量上报同事务累加（迁移 00072）
