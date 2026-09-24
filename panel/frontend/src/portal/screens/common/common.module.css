@@ -1,0 +1,152 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Blocks.tsx 与 UsageCard.tsx 用到的类名
+ * [POS]: portal/screens/common 的样式：外观插槽、本期用量卡（设计稿门户-01：柱高 120、间距 3、今天朱砂、未到灰色矮柱）；断点只用规范的 640
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+/* 插槽：服务端净化过的 HTML，样式与登录页公告条一致 */
+.slot {
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  font-size: 13px;
+}
+
+.slot > * {
+  margin: 0;
+}
+
+/* ===========================================================================
+ * 本期用量
+ * ========================================================================= */
+.usage {
+  gap: var(--space-16);
+}
+
+.usageHead {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-16);
+}
+
+.usageTitle {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usageTitleRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+}
+
+.usageName {
+  font-weight: var(--fw-semibold);
+}
+
+.usageRange {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.projection,
+.projectionShort {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.projectionShort {
+  color: var(--warn);
+}
+
+.inlineLink {
+  padding-left: 6px;
+  font-weight: var(--fw-medium);
+}
+
+.usageStats {
+  display: flex;
+  gap: var(--space-24);
+  margin: 0;
+}
+
+.usageStats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usageStats dt {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.usageStats dd {
+  margin: 0;
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.usageStats dd span {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bars,
+.barsDense {
+  height: 120px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.barsDense {
+  gap: 1px;
+}
+
+.bar,
+.barToday,
+.barFuture {
+  flex: 1;
+  min-width: 0;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--border-hover);
+}
+
+.barToday {
+  background: var(--brand);
+}
+
+.barFuture {
+  height: 4px;
+  background: var(--surface-3);
+}
+
+.axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 639px) {
+  .bars {
+    gap: 2px;
+  }
+}

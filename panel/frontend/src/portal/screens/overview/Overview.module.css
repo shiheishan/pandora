@@ -1,0 +1,424 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 overview/index.tsx 用到的类名
+ * [POS]: portal/screens/overview 的样式，逐项取自设计稿门户-01：主卡与右栏按 minmax(min(100%,420px),1fr) 自动折行（< 640 自然成单列），剩余流量 36 号数字、8px 进度条、三格统计 1px 分隔
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.caption {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+/* ===========================================================================
+ * 顶部横幅：critical 公告、待支付
+ * ========================================================================= */
+.critical,
+.pending {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  text-align: left;
+}
+
+.critical {
+  width: 100%;
+  border: 1px solid var(--danger-line);
+  cursor: pointer;
+}
+
+.critical:hover {
+  background: var(--danger-tint);
+}
+
+.criticalTitle {
+  flex: 1;
+  min-width: 0;
+  font-weight: var(--fw-medium);
+}
+
+.criticalMore {
+  font-size: 13px;
+  color: var(--link);
+}
+
+.pending {
+  border: 1px solid var(--warn-line);
+}
+
+.pendingWhat {
+  font-weight: var(--fw-medium);
+}
+
+.pendingAmount {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.pendingNote {
+  /* basis 取内容宽，窄屏放不下时整句换到下一行，而不是被挤成竖排 */
+  flex: 1 1 auto;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.pendingGo {
+  font-size: 13px;
+  font-weight: var(--fw-medium);
+}
+
+/* ===========================================================================
+ * 主卡 + 右栏
+ * ========================================================================= */
+.top {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: var(--space-16);
+}
+
+.plan {
+  justify-content: space-between;
+  gap: var(--space-24);
+}
+
+.planHead {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+}
+
+.planName {
+  flex: 1;
+  min-width: 0;
+}
+
+.planTitle {
+  margin-top: 2px;
+  font-size: 22px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+
+.planBadges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.textLink {
+  font-size: 13px;
+}
+
+.traffic {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trafficRow {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+}
+
+.trafficLeft {
+  flex: 1;
+  min-width: 0;
+}
+
+.bigNumber {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-top: 2px;
+  font-size: var(--fs-display);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.bigNumber[data-level='warn'] {
+  color: var(--warn);
+}
+
+.bigNumber[data-level='danger'] {
+  color: var(--danger);
+}
+
+.unit {
+  font-size: 15px;
+  font-weight: var(--fw-regular);
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+.trafficUsed {
+  flex: none;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.meter {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--brand-soft);
+  overflow: hidden;
+}
+
+.meterFill {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--brand);
+}
+
+.meterFill[data-level='warn'] {
+  background: var(--warn);
+}
+
+.meterFill[data-level='danger'] {
+  background: var(--danger);
+}
+
+.trafficNotes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.usedNote[data-level='warn'] {
+  color: var(--warn);
+}
+
+.usedNote[data-level='danger'] {
+  color: var(--danger);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.planActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
+/* 链接做成按钮外观：导航用 <a>，与 ui/Button 同尺寸 */
+.primaryAction,
+.renewAction,
+.emptyAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--h-control);
+  padding: 0 18px;
+  border-radius: var(--radius-control);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.primaryAction {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.primaryAction:hover {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+  text-decoration: none;
+}
+
+.renewAction {
+  padding: 0 16px;
+  border: 1px solid var(--brand);
+  color: var(--brand);
+}
+
+.renewAction:hover {
+  background: var(--brand-soft);
+  color: var(--brand);
+  text-decoration: none;
+}
+
+.emptyAction {
+  height: var(--h-control-sm);
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: var(--fw-regular);
+}
+
+.emptyAction:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.side {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--space-16);
+  min-width: 0;
+}
+
+/* ===========================================================================
+ * 三格统计
+ * ========================================================================= */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: 14px 16px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.stat:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.statValue {
+  min-height: 30px;
+  font-size: 20px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statUnit {
+  font-size: 13px;
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+
+/* ===========================================================================
+ * 公告卡
+ * ========================================================================= */
+.announcements > header a {
+  font-size: 13px;
+}
+
+.announcementSkeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: 0 var(--pad-card) var(--pad-card);
+}
+
+.announcementList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.announcement {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.announcement:hover {
+  background: var(--surface-2);
+}
+
+.pinned {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.severity {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.severity[data-severity='notice'] {
+  background: var(--info);
+}
+
+.severity[data-severity='warning'] {
+  background: var(--warn);
+}
+
+.severity[data-severity='critical'] {
+  background: var(--danger);
+}
+
+.announcementTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--fw-medium);
+}
+
+.announcementAt {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.announcementBody {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--text-2);
+}
+
+@media (max-width: 639px) {
+  .stat {
+    padding: 12px;
+  }
+
+  .statValue {
+    font-size: 17px;
+  }
+}
