@@ -1,4 +1,4 @@
-// [INPUT]: 依赖本包 router.go 源码的 AST（r.With(...).Method(path, handler) 链）
+// [INPUT]: 依赖本包路由源码（router.go 与 router_<模块>.go，经 router_source_test.go 的 inspectRouterFiles）的 AST（r.With(...).Method(path, handler) 链）
 // [OUTPUT]: 对外提供 TestFinanceRouteProtectionContracts 契约测试
 // [POS]: admin 网关营销（礼品卡批次与导出、优惠券批量）与分销路由的保护契约：权限码、近期重认证与幂等域逐条钉死，旧的明文导出路由不得复活，与 coupon/catalog 两份路由契约测试互补
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -7,9 +7,6 @@ package admin
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,19 +19,11 @@ type routeProtection struct {
 	idempotency  string
 }
 
-// loadRouteProtections 读出 router.go 里每条 r.With(...).Method(path, handler) 的保护链。
+// loadRouteProtections 读出全部路由源文件里每条 r.With(...).Method(path, handler) 的保护链。
 func loadRouteProtections(t *testing.T) map[string]routeProtection {
 	t.Helper()
-	source, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	file, err := parser.ParseFile(token.NewFileSet(), "router.go", source, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
 	out := map[string]routeProtection{}
-	ast.Inspect(file, func(node ast.Node) bool {
+	inspectRouterFiles(t, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) < 2 {
 			return true

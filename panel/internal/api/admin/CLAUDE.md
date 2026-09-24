@@ -1,10 +1,11 @@
 # panel/internal/api/admin/
 > L2 | 父级: /panel/internal/api/CLAUDE.md
 
-管理控制台 API：只做路由、鉴权链与 DTO，业务编排在 domain。每条路由的门槛全部声明在 router.go：RequirePermission（缺权限回 404，不暴露接口存在）→ RequireRecentReauth（高危写 15 分钟内输过密码）→ Idempotency（重试不重做），reauth 失败不消耗幂等键。来源 IP 在审计里只存密文，这一层用 Deps.Envelope 解开、用 Deps.GeoIP 翻成归属地——解密集中在 profile.go 的 decryptWith，按表区分 AAD。
+管理控制台 API：只做路由、鉴权链与 DTO，业务编排在 domain。每条路由的门槛逐条声明在 router_<模块>.go 里：RequirePermission（缺权限回 404，不暴露接口存在）→ RequireRecentReauth（高危写 15 分钟内输过密码）→ Idempotency（重试不重做），reauth 失败不消耗幂等键。来源 IP 在审计里只存密文，这一层用 Deps.Envelope 解开、用 Deps.GeoIP 翻成归属地——解密集中在 profile.go 的 decryptWith，按表区分 AAD。
 
 成员清单
-router.go: Deps 与 NewRouter，全部 /v1 路由与逐路由权限、重认证、幂等 scope；根 / 与 /assets/* 经 webapp 下发后台前端
+router.go: Deps 与 NewRouter：全局中间件链，根 / 与 /assets/* 经 webapp 下发后台前端，/v1 登录分组与已登录分组；已登录分组按拆分前的原顺序调用各 router_<模块>.go 的 register*Routes，顺序不要重排
+router_<模块>.go: 按模块分段的路由表，每个 register*Routes(r, d, h) 声明一段路由的权限、重认证与幂等 scope。dashboard 仪表盘与收入；appearance 主题、插槽、插件钩子；notify Telegram、邮件设置、通知模板；users 批量运营、流量重置、用户状态、用户组、设备数；marketing 礼品卡、优惠券、分销；billing 挂账、订单、支付渠道、余额调账；catalog 套餐（含 registerCatalogPlanUpdate，套餐类新路由加这里）；security 审计、系统状态、风控、降级开关；nodes 节点分组、节点、服务器（含 nodeBatchStatusIdempotencyScope）；content 公告与知识库；support 工单与快捷回复
 handlers.go: handlers 结构与核心处理器：登录、me、用户、订阅换链接、订单、节点列表（含 country_code）、工单队列与处理、降级开关
 helpers.go: 包内共用小工具：域常量、请求级超时
 access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两路归并，分类规则展示与筛选共用
@@ -23,7 +24,7 @@ appearance.go: 主题、插槽、Webhook 钩子与投递记录（含 duration_ms
 mail.go / mail_template.go / telegram.go: 邮件与注册设置、通知模板、Telegram 配置，三个测试发送挂 ops.notification.write
 ticket_macros.go: 工单快捷回复的列表与增改删
 events.go: 管理端 SSE
-*_test.go: 路由契约与守卫（router_contract、security_guards、step4_test 与三份 AST 契约）、权限字典契约、处理器单测；*_pg18_test.go 为 PG18 集成测试，announcement 与 node_config 两个域同包，run-pg18-gates.sh 用精确 -run 过滤分开
+*_test.go: 路由契约与守卫（router_contract、security_guards、step4_test 与三份 AST 契约；源码级契约经 router_source_test.go 读全部 router*.go）、权限字典契约、处理器单测；*_pg18_test.go 为 PG18 集成测试，announcement 与 node_config 两个域同包，run-pg18-gates.sh 用精确 -run 过滤分开
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

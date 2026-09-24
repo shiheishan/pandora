@@ -7,7 +7,7 @@ import (
 )
 
 func TestAdminSupportAssigneeCatalogIsReadProtectedAndPrecedesIDRoute(t *testing.T) {
-	raw, err := os.ReadFile("router.go")
+	raw, err := routerSource()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestAdminSupportAssigneeCatalogUsesDedicatedDomainQuery(t *testing.T) {
 	}
 }
 func TestAdminSupportWritesRequirePermissionThenIdempotency(t *testing.T) {
-	raw, err := os.ReadFile("router.go")
+	raw, err := routerSource()
 	if err != nil {
 		t.Fatal(err)
 	}

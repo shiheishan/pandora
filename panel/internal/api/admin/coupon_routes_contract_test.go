@@ -2,9 +2,7 @@ package admin
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
-	"os"
 	"reflect"
 	"sort"
 	"strconv"
@@ -44,16 +42,8 @@ func couponString(expr ast.Expr) (string, bool) {
 
 func loadCouponRouteContracts(t *testing.T) map[string]couponRouteContract {
 	t.Helper()
-	source, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	file, err := parser.ParseFile(token.NewFileSet(), "router.go", source, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
 	out := map[string]couponRouteContract{}
-	ast.Inspect(file, func(node ast.Node) bool {
+	inspectRouterFiles(t, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) < 2 {
 			return true
