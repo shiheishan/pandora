@@ -24,6 +24,8 @@ printf 'AEGIS_ADMIN_PATH=%s\n%s\n' "$path" "$base" >"$TEST_DIR/valid.env"
 "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$TEST_DIR/aegis.conf" >/dev/null
 
 grep -Fq "location = /$path" "$TEST_DIR/aegis.conf"
+# 不带尾斜杠只能重定向：入口页的相对路径要以 /$path/ 为基准，直接下发会把请求打到公开网关
+grep -Fq "return 301 /$path/;" "$TEST_DIR/aegis.conf"
 grep -Fq "location ^~ /$path/" "$TEST_DIR/aegis.conf"
 grep -Fq "rewrite ^/$path(/.*)\$ \$1 break;" "$TEST_DIR/aegis.conf"
 refute -Fq '__AEGIS_ADMIN_PATH__' "$TEST_DIR/aegis.conf"
