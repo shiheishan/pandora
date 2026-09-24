@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 commission_available.go 的 withdrawableCommission 口径，依赖 reservations.go 的 prepareAndLockLedgerAccounts、ledger.go 的 Post，依赖 platform/audit 与 platform/httpx
-// [OUTPUT]: 对外提供 TransferCommissionToBalance、CommissionTransferIdempotencyScope、ErrCommissionTransferInsufficient
+// [OUTPUT]: 对外提供 TransferCommissionToBalance、CommissionTransferIdempotencyScope、ErrCommissionTransferInsufficient、CommissionTransfer 与 ListMyCommissionTransfers（门户佣金记录的转出行）
 // [POS]: billing 佣金的「转入余额」出口，与 commission.go 的 RequestWithdrawal 共用同一把科目锁和同一「可用佣金」口径
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -8,6 +8,7 @@ package billing
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -107,4 +108,47 @@ func (s *Service) TransferCommissionToBalance(ctx context.Context,
 		return "", err
 	}
 	return txnID, nil
+}
+
+// CommissionTransfer 是一笔「佣金转入余额」，门户佣金记录里显示为出账。
+type CommissionTransfer struct {
+	LedgerTxnID string    `json:"ledger_txn_id"`
+	Amount      int64     `json:"amount"`
+	Currency    string    `json:"currency"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// ListMyCommissionTransfers 返回本人最近 50 笔佣金转余额。只有本人能发起
+// 转出（actor 即本人），金额取这笔交易的借方合计（配平的交易借贷相等）。
+func (s *Service) ListMyCommissionTransfers(ctx context.Context, tenantID, userID string) ([]CommissionTransfer, error) {
+	out := []CommissionTransfer{}
+	err := s.pool.InTx(ctx, dbScope(tenantID, userID), func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT t.id::text,
+			       (SELECT sum(e.amount) FROM ledger_entries e
+			         WHERE e.tenant_id = t.tenant_id AND e.transaction_id = t.id
+			           AND e.direction = 'debit'),
+			       t.currency::text, t.occurred_at
+			  FROM ledger_transactions t
+			 WHERE t.tenant_id = $1 AND t.kind = 'commission_to_balance'
+			   AND t.actor_kind = 'user' AND t.actor_id = $2::uuid
+			 ORDER BY t.occurred_at DESC, t.id DESC
+			 LIMIT 50`, tenantID, userID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c CommissionTransfer
+			if err := rows.Scan(&c.LedgerTxnID, &c.Amount, &c.Currency, &c.CreatedAt); err != nil {
+				return err
+			}
+			out = append(out, c)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

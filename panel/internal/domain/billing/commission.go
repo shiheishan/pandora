@@ -456,14 +456,18 @@ func (s *Service) settleMaturedCommission(ctx context.Context, tenantID,
 // CommissionSummary 是用户看到的佣金概况。
 type CommissionSummary struct {
 	Currency    string `json:"currency"`
-	Pending     int64  `json:"pending"`      // 冻结中
-	Available   int64  `json:"available"`    // 可提现
-	Withdrawing int64  `json:"withdrawing"`  // 提现处理中
-	Settled     int64  `json:"settled"`      // 已提现
-	Invitees    int    `json:"invitees"`     // 邀请人数
-	Orders      int    `json:"orders"`       // 产生佣金的订单数
-	RatePercent int    `json:"rate_percent"` // 当前费率
-	MinWithdraw int64  `json:"min_withdraw"`
+	Pending     int64  `json:"pending"`     // 冻结中
+	Available   int64  `json:"available"`   // 可提现
+	Withdrawing int64  `json:"withdrawing"` // 提现处理中
+	Settled     int64  `json:"settled"`     // 已提现
+	Invitees    int    `json:"invitees"`    // 邀请人数
+	Orders      int    `json:"orders"`      // 产生佣金的订单数
+	// PaidInvitees 是产生过（未冲销）佣金的被邀请人数（「付费好友」），
+	// TotalEarned 是未冲销佣金的累计（「累计佣金」，含冻结中）。
+	PaidInvitees int   `json:"paid_invitees"`
+	TotalEarned  int64 `json:"total_earned"`
+	RatePercent  int   `json:"rate_percent"` // 当前费率
+	MinWithdraw  int64 `json:"min_withdraw"`
 }
 
 func (s *Service) CommissionSummary(ctx context.Context, tenantID, userID string) (*CommissionSummary, error) {
@@ -479,10 +483,13 @@ func (s *Service) CommissionSummary(ctx context.Context, tenantID, userID string
 		if err := tx.QueryRow(ctx, `
 			SELECT COALESCE(sum(commission_amount) FILTER (WHERE status = 'pending'), 0),
 			       count(*) FILTER (WHERE status <> 'reversed'),
-			       COALESCE(max(currency::text), 'CNY')
+			       COALESCE(max(currency::text), 'CNY'),
+			       count(DISTINCT referee_user_id) FILTER (WHERE status <> 'reversed'),
+			       COALESCE(sum(commission_amount) FILTER (WHERE status <> 'reversed'), 0)
 			  FROM commission_entries
 			 WHERE tenant_id = $1 AND referrer_user_id = $2::uuid`,
-			tenantID, userID).Scan(&out.Pending, &out.Orders, &out.Currency); err != nil {
+			tenantID, userID).Scan(&out.Pending, &out.Orders, &out.Currency,
+			&out.PaidInvitees, &out.TotalEarned); err != nil {
 			return err
 		}
 

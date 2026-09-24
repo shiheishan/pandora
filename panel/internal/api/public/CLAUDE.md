@@ -5,11 +5,12 @@
 
 成员清单
 router.go: Deps 与 NewRouter：匿名组（登录注册、站点配置、外观、回调）与需登录组，限流与幂等挂在各自路由上
-handlers.go: handlers 结构与核心处理器：探针、注册登录登出、me、改密、站点配置、套餐目录、订阅列表与续费、下单支付与支付回调、工单、钱包充值、邀请与佣金提现、我的公告
+handlers.go: handlers 结构与核心处理器：探针、注册登录登出、me、改密、站点配置、套餐目录（带重置策略与续费、变更开关）、订阅列表与续费、优惠码试算（套餐 / 流量包二选一，回券面）、下单支付与支付回调、工单、钱包充值、邀请与佣金（概况带付费好友、累计佣金与转出记录）、提现、我的公告
 helpers.go: 包内共用小工具（签名十六进制解析等）
 selfservice.go: 自助小接口：佣金转余额、会话列表与踢下线（只作用于门户会话）、工单撤回、快捷登录签发与消费
 subscribe.go: 订阅分发端点 /{prefix}/{token}
-my_orders.go / order_cancel.go: 我的订单列表与详情、取消待支付订单
+subscription_usage.go: 本期按日用量（门户-02 柱状图），只读、?days 1–93，订阅不属于本人与不存在同一个 404
+my_orders.go / order_cancel.go: 我的订单列表（多值状态、筛选段计数 counts）与详情、取消待支付订单
 giftcard.go: 礼品卡预览与兑换、我的兑换记录
 traffic_packs.go: 流量包目录、下单（kind=addon，无订阅也能买）与我的流量包余额（D-E-1）
 plan_change.go: 变更套餐试算与下单（D-E-2，kind=upgrade，升降级同一接口），下单走独立幂等域 subscription_change_plan_create
@@ -18,7 +19,7 @@ content.go: 帮助文章列表、正文与「有帮助」反馈（反馈与详�
 telegram.go: Telegram 绑定状态、绑定码与解绑
 pdnd_install.go: NativeCore 一键安装脚本与二进制分发
 events.go: 门户 SSE，只推本人与全租户事件
-*_test.go: 路由契约（含反馈路由在需登录组）、安全契约与处理器单测；notifications_pg18_test.go 为 PG18 集成测试（public_api 域）
+*_test.go: 路由契约（含反馈路由在需登录组）、安全契约与处理器单测；notifications_pg18_test.go 与 commerce_reads_pg18_test.go 为 PG18 集成测试（public_api 域，后者经处理器驱动目录、试算、订单与佣金读模型）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
