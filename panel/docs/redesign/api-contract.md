@@ -77,6 +77,7 @@
 - 前端流程：先发请求 → 收到 reauth_required → 弹「重新验证身份」框 → `POST v1/auth/reauth {password}` → **用返回的新 access_token 替换本地令牌** → 用原 Idempotency-Key 重放原请求。设计稿是「先弹框后执行」，实现改为「先请求、按需弹框」；`reauthed=true` 时不弹框。
 
 ### 1.7 实时事件（SSE）
+- **修订 R33（2026-09-24，后端一 f944089）**：流量包目录变化推 `plans.changed`；流量包余额新增（购买、礼品卡）推 `subscriptions.changed`。扣量时的余额更新不推（与 R24 同理，后端一第 ④ 步把触发器收窄为只在 INSERT 时通知）。
 - **修订 R24（2026-09-24，后端二 107de25）**：流量上报不再触发 `subscriptions.changed`（迁移 00076 摘掉 quota_balances 的变更通知触发器）；「对该事件 2 秒节流」一条作废，用量数字靠页面主动拉取刷新。
 
 - admin `GET v1/events`（要 `ops.notification.read`，没有则 404，前端隐藏事件胶囊）与 public `GET v1/events`（登录即可）。Bearer 认证，**只能用 fetch 流读取，不能用 EventSource**。路径以 events 结尾，豁免 25 秒请求超时。
@@ -857,6 +858,7 @@
 - 设计 mock 里的渠道（支付宝当面付 / 微信 Native / USDT / Stripe）后端都没有。后端适配器只有 `epay`（聚合收银台）和 `demo`，外加系统内置的 `offline`（线下收款，`accepting_new=false`，结账页选不到）。不做 USDT。
 
 #### GET v1/orders — 订单列表
+- **修订 R32（2026-09-24，后端一 f944089）**：流量包订单 `kind` 为 `addon`，`plan_name` 显示流量包名。
 - 状态：现有 `panel/internal/api/admin/handlers.go:342 listOrders`；待补·后端（扩展）
 - 权限：`billing.order.read`｜reauth：否｜幂等：否
 - 请求（现有 query 参数，逐条写清，供分段 B 引用）：
@@ -2007,6 +2009,7 @@
 - 设计：门户外壳「支付弹窗」。映射：**无二维码**——弹窗等待态改为「正在前往收银台…」+ 金额 + 订单号 + 「订单 30 分钟内有效」（设计写 15 分钟），拿到响应后 `window.location.assign(redirect_url)`（顶层 GET 导航不受 CSP `form-action 'self'` 约束）；`http_method=="POST"` 目前无适配器产出，前端视为错误提示「该支付方式暂不可用」，**不**渲染自动提交表单（会被 form-action 'self' 拦截）。return_url 传 `new URL('./#/orders/' + order_id + '?paid=1', location.href)`。回跳后订单详情页轮询 `GET v1/orders/{id}`（3 秒一次，最多 2 分钟）或等 orders.changed，status∈{paid,fulfilled} 时弹「支付成功」态（文案按 kind：topup「余额 +¥X」、new/renewal「已开通，有效期至 …」、addon「流量包已到账」）；超时显示「支付结果确认中，可稍后在订单中查看」。「模拟：支付完成」按钮删除；「稍后支付」= 关弹窗跳订单页，不调接口。
 
 #### GET v1/traffic-packs — 流量包目录
+- **修订 R30（2026-09-24，后端一 f944089）**：已实现（迁移 00070）；响应去掉 `standalone_allowed`。
 - 状态：待补·后端
 - 权限：匿名（与 plans 同在公开目录）｜reauth：否｜幂等：否
 - 请求：无
@@ -2016,6 +2019,7 @@
 - 设计：选购页「流量包」tab 卡片（容量、价格、约 ¥/GB、「最划算」= recommended）、结账页流量包容量单选。
 
 #### POST v1/me/traffic-pack-orders — 购买流量包
+- **修订 R30（2026-09-24，后端一 f944089）**：已实现；幂等 scope 为 `order_create`（与新购共用）；请求去掉 `subscription_id`（流量包挂用户）；没有生效订阅也能买，删去 409「没有可用订阅」；支持优惠券与余额抵扣，全额余额支付当场履约。
 - 状态：待补·后端
 - 权限：登录用户｜reauth：否｜幂等：是 `traffic_pack_order_create`
 - 请求：`{ pack_id: uuid, subscription_id?: uuid(不传=当前可用订阅中 current_period_end 最晚的一条), use_balance?: int, coupon_code?: string }`
@@ -2025,6 +2029,7 @@
 - 设计：结账页（流量包模式）「提交订单并支付」；订单列表「流量包 · 200 GB」。
 
 #### GET v1/me/traffic-packs — 我的流量包余量
+- **修订 R30（2026-09-24，后端一 f944089）**：每笔为 `{ id, source: order|gift_card|migration, order_id|null, granted_bytes, consumed_bytes, remaining_bytes, created_at }`，无 `subscription_id`。
 - 状态：待补·后端
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无
@@ -2054,6 +2059,7 @@
 ### 门户-04 订单
 
 #### GET v1/orders — 我的订单列表
+- **修订 R32（2026-09-24，后端一 f944089）**：流量包订单 `kind` 为 `addon`，`plan_name` 显示流量包名。
 - 状态：现有 `panel/internal/api/public/my_orders.go:13 listMyOrders`（domain `billing/my_orders.go:58`）；扩展为待补·后端（无迁移）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求（现有）：query `status?: "draft"|"pending_payment"|"processing"|"paid"|"fulfilled"|"cancelled"|"expired"|"partially_refunded"|"refunded"`、`limit?: 1–100(默认 20，非法值也回 20)`、`offset?: int`；（待补·后端）`status` 接受逗号分隔多值
@@ -2108,6 +2114,7 @@
 - 设计：钱包「兑换礼品卡」查询结果卡。映射：face = balance →「¥X 余额」；traffic_bytes →「流量 +N GB」；expire_days →「延长 N 天」；plan →「<plan_name> <周期>」；mystery →「盲盒：可能抽到 a / b / c」；note 用 description，缺省按类型给固定文案。删除设计里的演示提示行「试试 GC-0923…」。
 
 #### POST v1/gift-cards/redeem — 兑换礼品卡
+- **修订 R31（2026-09-24，后端一 f944089）**：流量奖励改为发一笔流量包余额，不再要求有生效订阅（「当前订阅没有流量配额，无法追加」不再出现）；延长到期、重置流量两类奖励仍要求有订阅。
 - 状态：现有 `panel/internal/api/public/giftcard.go:28 redeemGiftCard`（domain `giftcard/redeem.go:48 Redeem`）
 - 权限：登录用户｜reauth：否｜幂等：是 `gift_card_redeem`
 - 请求：`{ code: string }`
@@ -3018,3 +3025,7 @@
 | R27 | 2026-09-24 | 后端二 107de25 | 节点列表分页与真实 total（缺陷 21） |
 | R28 | 2026-09-24 | 后端二 107de25 | 通知偏好保存修复（缺陷 7） |
 | R29 | 2026-09-24 | 第 2 阶段 d5fa092 | RequireRecentReauth 拒绝时回 403 `reauth_required`；前端 api.ts 据此弹框并以原幂等键重放 |
+| R30 | 2026-09-24 | 后端一 f944089 | 流量包目录、购买、我的流量包已实现（迁移 00070），无订阅也能买，幂等 scope `order_create` |
+| R31 | 2026-09-24 | 后端一 f944089 | 礼品卡流量奖励发流量包余额，不再要求有订阅 |
+| R32 | 2026-09-24 | 后端一 f944089 | 订单列表中流量包订单 kind=addon，品名为流量包名 |
+| R33 | 2026-09-24 | 后端一 f944089 | 流量包的实时事件主题；扣量不推送 |

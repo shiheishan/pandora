@@ -43,3 +43,4 @@
 - node_preview 的「从没心跳过的节点不下发」是有意规则，不是 bug。
 - 契约修订已到 R28。新 PG18 测试一律用 `platform/pg18test` 辅助包；在已有域的包里加 PG18 用例时，把该域的测试名单写精确（默认过滤 `PG18` 会把别的域的用例拉进来、跳过、被判失败）。
 - 本会话改过、还没有 L2 的目录（api/admin、api/public、platform/realtime）：按 GEB 逆向流，下次改到时再补，不用专门补。
+- **第 ⑤ 步追加（后端一建议）**：`notify/scan.go` 的流量预警把用户的流量包剩余（`traffic_pack_grants` 的 remaining）算进可用量，有流量包余量的用户不该收到「流量即将用尽」；`deploy/configure-app-role.sql` 末尾的 REVOKE UPDATE/DELETE 名单补上 `traffic_pack_grants`、`gift_card_batches`（两表已靠触发器守住，这是纵深防御）。

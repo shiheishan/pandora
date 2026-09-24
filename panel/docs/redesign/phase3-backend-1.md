@@ -34,7 +34,7 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：① 权限与财务不变量 `0651cb2`、② 礼品卡批次 `0f83ca4` 已验收并合入 `feat/panel-redesign`（PG18 全绿）。迁移已用 00068、00069。**③ 流量包进行中。**
+**进度**：① 权限与财务不变量 `0651cb2`、② 礼品卡批次 `0f83ca4`、③ 流量包 `f944089`（含 `b6d8e85`、`7f97f3d`）已验收并合入 `feat/panel-redesign`（PG18 全绿）。迁移已用 00068–00070，剩 00071–00073。**下一步 ④ 变更套餐，然后 ⑤、⑥。**
 
 补充事项（与上文冲突时以这里为准）：
 - 每步做完：推送本分支，看 **Panel PostgreSQL 18 gates** 与 Pandora NativeCore 两个 workflow；PG18 红了先修再报告。做事前先 `git merge feat/panel-redesign` 同步。
@@ -44,3 +44,6 @@
 - 不做：D-C-3（人工开单从余额扣）、D-C-5 / 缺陷 11（限速语义），未决。
 - 幂等表暂存一次性导出的明文 CSV、1 MiB 缓存上限：用户侧已接受，不用再改。
 - 后端二已建 `domain/adminops/CLAUDE.md`（L2）且 `ListOrders` 改用了与用户详情共用的订单行查询（行为不变）：你改 adminops 时在这份 L2 里补上套餐目录「事务外校验 + *Tx 事务体」的说明，不要另建。adminops 包的 PG18 域测试名单要写精确，`catalog_sales` 域的默认过滤会把后端二的 `TestAdminUsersPG18` 拉进来。
+- **第 ④ 步先做的一处修正**：00070 的 `zz_notify_traffic_pack_grants` 是 `AFTER INSERT OR UPDATE OR DELETE`，每次扣量都会给用户推一次 `subscriptions.changed`，与后端二刚修掉的缺陷 15（00076）同类。改成只在 INSERT 时通知（00070 还没发布，直接改原迁移），补一条 PG18 断言扣量不产生通知。合并时 `realtime/listener.go` 已保留 00076 摘掉 quota_balances 的改动并加上 traffic_pack_grants，`adminops/service.go` 用后端二抽出的共用 `orderRowSelectSQL`，你的「流量包订单取商品名」已并进这个共用查询。
+- **第 ⑥ 步追加：后台流量包管理**（按「后端有、设计稿没有就补进前端」的规则，后台-04 套餐页加流量包 tab）：列表、新建、修改、上下架接口，写操作挂 `catalog.publish` + reauth + 幂等（与 D-C-2 同门槛，因为改的是在售商品和价格），变更写审计。契约形状在报告里给出。
+- 契约修订已到 R33。
