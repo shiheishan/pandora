@@ -1537,6 +1537,7 @@
 ### 后台-08 内容与外观 · 主题与插槽
 
 #### GET v1/themes — 主题列表
+- **修订 R19（2026-09-24，后端二 e05fd9e）**：迁移 00075 后只剩内置主题 `paper`「默认 · 纸白」且生效；`tokens` 形状为 `{ light: {"--bg": …}, dark: {…} }`，键为 `panel/frontend/src/styles/design-tokens.ts` 的 43 个变量名；`branding` 为 `{ site_name: "Pandora" }`；`custom_css` 恒为 `""`。前端按 5.A 只展示这一张卡片。
 - 状态：现有 `panel/internal/api/admin/appearance.go:20 listThemes` → `domain/appearance/service.go:122 ListThemes`
 - 权限：`platform.appearance.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1545,6 +1546,7 @@
 - 设计：后台-08 主题卡片。映射：`t.name` → `name`；`t.active` → `is_active`；色块 `t.bg/t.fg/t.accent` → `tokens.bg / tokens.fg(或 text) / tokens.brand`（缺省回退到前端默认 token）。**待补·前端**：`is_builtin` 卡片显示「内置」标签、隐藏「删除」、把「编辑」换成「另存为」；自定义主题卡片补「编辑」。token 键名问题见待决 D-D-4。
 
 #### POST v1/themes — 保存主题（新建或覆盖同 code 的自定义主题）
+- **修订 R19（2026-09-24，后端二 e05fd9e）**：tokens 必须是 light/dark 两组、白名单内的键，否则 422 `fields.tokens`；code / name 不合规 422 `fields.code|name`；branding 非对象 422 `fields.branding`；custom_css 非空 422 `fields.custom_css`；`dropped` 恒为 `[]`；内置主题仍不可原地改。
 - 状态：现有 `panel/internal/api/admin/appearance.go:37 saveTheme` → `service.go:159 SaveTheme`
 - 权限：`platform.appearance.write`｜reauth：是｜幂等：是 `appearance_theme_save`
 - 请求：`{ code: string(^[a-z][a-z0-9_-]{1,38}$，同 code 即覆盖), name: string(1–60), tokens?: object, branding?: object({ site_name?, tagline?, logo?: data URI 或 URL, … }), custom_css?: string(净化后 ≤64KB) }`
@@ -1612,6 +1614,7 @@
 - 设计：Telegram 卡底部测试输入框「留空发送到管理员群组」+「发送测试」。映射：测试用的是**已保存**的配置，前端在有未保存修改时先提示保存
 
 #### GET v1/settings/mail — 读取邮件与注册设置
+- **修订 R21（2026-09-24，后端二 e05fd9e）**：`from_name` 未单独设置时返回站点名（生效主题的 branding.site_name，缺省 Pandora），不再是写死的 AegisPanel。
 - 状态：现有 `panel/internal/api/admin/mail.go:23 getMailSettings`
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1670,6 +1673,7 @@
 - 设计：「恢复默认」+ 危险确认框。待补·前端：`is_default` 为 true 或该模板无内置默认时禁用按钮（后者前端靠调用失败判断，或由后端在列表加 `has_default: bool`——建议随 preview 一起补，需迁移：否）
 
 #### POST v1/mail/templates/test — 用模板实发一封测试信
+- **修订 R20（2026-09-24，后端二 e05fd9e）**：reauth 改为「是」。
 - **修订 R14（2026-09-24，后端二 62f7283）**：权限改为 `ops.notification.write`（注释说要 reauth、代码仍未挂，待后续处理）。
 - 状态：现有 `mail_template.go:93 testMailTemplate`；**草稿发送 待补·后端**
 - 权限：`billing.provider.write`｜reauth：否（router 注释写「要求近期重认证」但实际没挂，见核对笔记）｜幂等：否
@@ -1871,6 +1875,7 @@
 - 待补·前端（→ 补进 登录页注册步骤 2）：`email_verification=false` 时预先隐藏验证码框（以 register/start 返回的 verification_required 为最终准）。
 
 #### GET v1/appearance — 主题与插槽
+- **修订 R19（2026-09-24，后端二 e05fd9e）**：`theme.tokens` 为 light/dark 两组、只含白名单内的键；`custom_css` 恒为 `""`。门户按 `setProperty(键, 值)` 应用当前明暗对应的一组。
 - 状态：现有 `panel/internal/api/public/telegram.go:147 appearance`（domain `appearance/service.go:75 Public`）
 - 权限：匿名｜reauth：否｜幂等：否
 - 请求：无
@@ -2993,3 +2998,6 @@
 | R16 | 2026-09-24 | 后端二 62f7283 | 注册验证码经 notify 按地址投递（迁移 00074 模板种子），注册事务提交后立即派发（缺陷 1） |
 | R17 | 2026-09-24 | 后端一 0f83ca4 | 礼品卡批次与一次性导出（迁移 00069），码全面掩码，旧导出下线，生码只回样例；优惠券兑换记录改读权限 |
 | R18 | 2026-09-24 | 后端一 0f83ca4 | 充值单结算后同事务 paid→fulfilled 是既有有意行为，两个 PG18 测试的过时断言已更正 |
+| R19 | 2026-09-24 | 后端二 e05fd9e | 主题只剩「默认 · 纸白」（迁移 00075），tokens 改 light/dark 两组 43 键白名单，custom_css 停用，主题保存校验不再 500 |
+| R20 | 2026-09-24 | 后端二 e05fd9e | 模板测试发送加 reauth |
+| R21 | 2026-09-24 | 后端二 e05fd9e | 邮件 {{site}} 与发件人名默认取生效主题的站点名，缺省 Pandora |
