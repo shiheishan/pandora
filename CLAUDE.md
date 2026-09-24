@@ -9,7 +9,7 @@ nodeagent/ - aegis-nodeagent：pdnd 的陈旧祖先，go.mod 与 pdnd 同为 git
 docs/ - 全仓库级文档：AI 铁律、密钥轮换、发布物绑定、验证交接 (0子目录)
 .githooks/ - 提交前闸门 pre-commit：gitleaks 按 .gitleaks.toml 与本机 ops-local/gitleaks-private.toml 扫暂存区，未装 gitleaks 也拒绝提交；clone 后执行 git config core.hooksPath .githooks 启用 (0子目录)
 ops-local/ - 被 git 忽略、只在维护者本机存在：测试机一次性运维脚本、安装验证日志、ops_secrets.py（Komari 密钥经 1Password 读取）、gitleaks 私有规则（真实服务器 IP、监控域名、Komari client ID）。仓库公开，这些永不入库
-.github/workflows/ - CI：默认 shell: bash（-eo pipefail，`| tee` 不再吞掉失败）；pdnd 的 Ubuntu race/vet、原生 ubuntu-24.04-arm 的 ARM64 race 门、-tags interop 的非 race 外部客户端门与 amd64/arm64 双架构构建门禁；panel 的 nodefabric 契约、前端嵌入与根下发契约（占位入口）、表登记簿、权限字典；panel-frontend 任务对新前端跑 lint/typecheck/vitest/双入口构建，再 make frontend-embed 用真实产物跑 web、webapp、api 的 Go 契约，占位页未被替换即失败 (0子目录)
+.github/workflows/ - CI：默认 shell: bash（-eo pipefail，`| tee` 不再吞掉失败）；pdnd 的 Ubuntu race/vet、原生 ubuntu-24.04-arm 的 ARM64 race 门、-tags interop 的非 race 外部客户端门与 amd64/arm64 双架构构建门禁；panel 的 nodefabric 契约、前端嵌入与根下发契约（占位入口）、表登记簿、权限字典；panel-frontend 任务对新前端跑 lint/typecheck/vitest/双入口构建，再 make frontend-embed 用真实产物跑 web、webapp、api 的 Go 契约，占位页未被替换即失败；PG18 集成门禁单独在 panel-pg18.yml（触发面是整棵 panel/internal，不拖 pdnd 的重任务），runner 自带 Docker 跑 run-pg18-gates.sh，goose 版本跟 build-release.sh (0子目录)
 </directory>
 
 <config>
@@ -260,7 +260,7 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 
 # 本项目适配说明
 
-- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api/domain/platform、panel/internal/platform/webapp、panel/web、panel/deploy、panel/frontend、pdnd、pdnd/kernel、pdnd/core、nodeagent。其余目录按逆向流在进入时补建。
+- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric、panel/web、panel/deploy、panel/frontend、pdnd、pdnd/kernel、pdnd/core、nodeagent。其余目录按逆向流在进入时补建。
 - L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]；TS/TSX 用模板里的 `/** */`。Go 文件多已带中文设计注释，L3 加在其上方（中间空一行，不成为包文档），不改写原注释；带 `//go:build` 的文件，L3 放在构建约束与空行之后。
 - L3 按逆向流渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性播种（2026-09-23 实测：Go 1038 个、TS/TSX 102 个；已有 L3 头的 Go 19 个、TS/TSX 16 个）。
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。

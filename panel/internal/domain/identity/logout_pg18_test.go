@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 middleware、platform/db、platform/token，依赖一次性 PG18 库（run-pg18-gates.sh 的 logout 域）
+// [OUTPUT]: 对外提供 TestLogoutCurrentSessionPG18ConcurrentSingleTransition 与 openLogoutPG18Fixture（库护栏，同包其它 PG18 用例共用）
+// [POS]: domain/identity 的 PG18 集成测试：并发退出只发生一次状态跃迁
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package identity
 
 import (
@@ -25,7 +30,11 @@ import (
 
 const logoutPG18Fixture = "disposable-v1"
 
-func TestLogoutCurrentSessionPG18ConcurrentSingleTransition(t *testing.T) {
+// openLogoutPG18Fixture 校验并打开 logout 域的一次性 PG18 库：admin 与 app 两条连接
+// 都必须指向同一个带 run ID 标记的库，任何一处对不上就拒绝，未配置则跳过。
+// 同包的其它 PG18 用例（会话 audience 隔离）共用这道护栏，各用各的租户。
+func openLogoutPG18Fixture(t *testing.T) (context.Context, *pgxpool.Pool, *platformdb.Pool) {
+	t.Helper()
 	fixture := strings.TrimSpace(os.Getenv("AEGIS_LOGOUT_PG18_FIXTURE"))
 	appDSN := strings.TrimSpace(os.Getenv("AEGIS_LOGOUT_PG18_DSN"))
 	adminDSN := strings.TrimSpace(os.Getenv("AEGIS_LOGOUT_PG18_ADMIN_DSN"))
@@ -44,17 +53,17 @@ func TestLogoutCurrentSessionPG18ConcurrentSingleTransition(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	admin, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
 		t.Fatalf("open fixture administrator pool: %v", err)
 	}
-	defer admin.Close()
+	t.Cleanup(admin.Close)
 	app, err := platformdb.Open(ctx, appDSN)
 	if err != nil {
 		t.Fatalf("open real aegis_app pool: %v", err)
 	}
-	defer app.Close()
+	t.Cleanup(app.Close)
 
 	var database, marker, systemIdentifier, databaseOID, databaseComment string
 	var version int
@@ -97,6 +106,11 @@ func TestLogoutCurrentSessionPG18ConcurrentSingleTransition(t *testing.T) {
 		t.Fatalf("refusing mismatched application fixture database=%q version=%d marker=%q system=%q oid=%q comment=%q",
 			appDatabase, appVersion, appMarker, appSystemIdentifier, appDatabaseOID, appDatabaseComment)
 	}
+	return ctx, admin, app
+}
+
+func TestLogoutCurrentSessionPG18ConcurrentSingleTransition(t *testing.T) {
+	ctx, admin, app := openLogoutPG18Fixture(t)
 
 	const (
 		tenantID  = "71000000-0000-7000-8000-000000000001"
@@ -175,8 +189,8 @@ func TestLogoutCurrentSessionPG18ConcurrentSingleTransition(t *testing.T) {
 		var waiters int
 		if err := admin.QueryRow(ctx, `
 			SELECT count(*) FROM pg_stat_activity
-			 WHERE datname=$1 AND usename='aegis_app'
-			   AND wait_event_type='Lock' AND query LIKE '%UPDATE sessions%'`, expectedDatabase).Scan(&waiters); err != nil {
+			 WHERE datname=current_database() AND usename='aegis_app'
+			   AND wait_event_type='Lock' AND query LIKE '%UPDATE sessions%'`).Scan(&waiters); err != nil {
 			t.Fatalf("observe logout lock waiters: %v", err)
 		}
 		if waiters > peakWaiters {

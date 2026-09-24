@@ -67,9 +67,15 @@ APPPW=app-gate-password
 # 绕过闸门跑出来的绿灯证明不了生产能升上去。
 MIGRATE_OPTS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes -c app.order_release_writers_stopped=yes'
 
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
+cleanup() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  [[ -n "${LOG_DIR:-}" ]] && rm -rf "$LOG_DIR"
+  return 0
+}
 trap cleanup EXIT INT TERM
 cleanup
+# 每个域的 go test -v 输出留一份，跑完后用来查「有没有被跳过」。
+LOG_DIR="$(mktemp -d)"
 
 # 域定义：名字|库名|测试包|额外变量|标记表|数据库注释前缀|准备动作|测试过滤
 #
@@ -84,11 +90,17 @@ cleanup
 #   - announcement 和 support 都要求 pandora_node_preview_ 库名前缀
 #   - 这两个域的注释前缀也都是 pandora-node-preview-pg18
 # 要理顺就得连测试一起改，那是另一件事。
+#
+# 测试过滤缺省是 PG18。两个包里各住着两个域（nodefabric：effective 与
+# enrollment；api/admin：announcement 与 node_config），缺省过滤会把另一个
+# 域的测试也拉进来，它们因为拿不到自己的环境变量而 t.Skip。跳过在下面算
+# 失败（见结果判定），所以这四个域必须把过滤写精确。过滤是最后一个字段，
+# 里面的 | 会被 read 原样留给它。
 DOMAINS=(
-  "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||"
-  "enrollment|pandora_enrollment_pg18|./internal/domain/nodefabric|||||"
-  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||"
-  "node_config|pandora_nodecfg_gate|./internal/api/admin|run_id,oid,system_id||pandora-nodecfg-disposable||"
+  "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18)$"
+  "enrollment|pandora_enrollment_pg18|./internal/domain/nodefabric|||||^(TestNodeEnrollmentPG18|TestIssueServerTokenPG18)$"
+  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||^(TestAnnouncementPG18|TestDeviceLimitWritesPG18)$"
+  "node_config|pandora_nodecfg_gate|./internal/api/admin|run_id,oid,system_id||pandora-nodecfg-disposable||^(TestNodeConfigLegacyPG18|TestNodeConfigPG18LockSchedule)$"
   "catalog_sales|pandora_catalog_sales_gate|./internal/domain/adminops|run_id|pandora_catalog_sales_test_marker|pandora-catalog-sales-pg18||"
   "giftcard|pandora_giftcard_gate|./internal/domain/giftcard|run_id|pandora_giftcard_test_marker|pandora-giftcard-pg18||"
   "content|pandora_content_gate|./internal/domain/content|run_id|pandora_content_test_marker|pandora-content-pg18||"
@@ -291,10 +303,25 @@ for entry in "${DOMAINS[@]}"; do
     ) ;;
   esac
 
+  # 结果判定：go test 退出 0 还不够。
+  #
+  # 这些测试缺环境变量时一律 t.Skip，而 go test 对跳过照样报 ok——环境
+  # 接错一处，整个域就在绿灯下什么也没验。-run 一个都没匹配上同样是 ok。
+  # 所以额外要求：没有任何 --- SKIP，且至少一个顶层 --- PASS。
+  LOG="$LOG_DIR/$NAME.log"
   if env "${ENVS[@]}" GOMAXPROCS="${GOMAXPROCS:-1}" \
        timeout "${PANDORA_PG18_GATE_TIMEOUT:-600}" \
-       go test -mod=readonly -p 1 -count=1 -run "${RUNFILTER:-PG18}" $PKGS 2>&1 | sed 's/^/    /'; then
-    PASSED+=("$NAME")
+       go test -mod=readonly -p 1 -count=1 -v -run "${RUNFILTER:-PG18}" $PKGS 2>&1 \
+       | tee "$LOG" | sed 's/^/    /'; then
+    if grep -q -- '--- SKIP:' "$LOG"; then
+      echo "    $NAME: 有用例被跳过，fixture 没接上" >&2
+      SKIPPED+=("$NAME")
+    elif ! grep -q '^--- PASS:' "$LOG"; then
+      echo "    $NAME: 没有任何用例执行（测试过滤没匹配上）" >&2
+      SKIPPED+=("$NAME")
+    else
+      PASSED+=("$NAME")
+    fi
   else
     FAILED+=("$NAME")
   fi
@@ -304,8 +331,9 @@ echo
 echo "================ 结果 ================"
 [[ ${#PASSED[@]} -gt 0 ]] && printf '通过: %s\n' "${PASSED[*]}"
 [[ ${#SKIPPED[@]} -gt 0 ]] && printf '跳过: %s\n' "${SKIPPED[*]}"
-if [[ ${#FAILED[@]} -gt 0 ]]; then
-  printf '失败: %s\n' "${FAILED[*]}"
+[[ ${#FAILED[@]} -gt 0 ]] && printf '失败: %s\n' "${FAILED[*]}"
+# 跳过也是失败：门禁存在的意义就是真的连上库跑一遍。
+if [[ ${#FAILED[@]} -gt 0 || ${#SKIPPED[@]} -gt 0 ]]; then
   exit 1
 fi
 echo "全部通过"

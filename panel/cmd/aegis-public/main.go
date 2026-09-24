@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/public 的 NewRouter
+// [OUTPUT]: 对外提供 可执行入口 aegis-public：装配用户门户网关并启动通知扫描、插件投递、预留过期等后台循环
+// [POS]: panel/cmd 的 public 网关进程；identity 的注册验证码经这里接上 notify（SetVerificationMailer）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Command aegis-public 是用户门户 API 网关（Public 域）。
 package main
 
@@ -134,6 +139,8 @@ func run() error {
 	// 只认 template_code，多一个渠道不用改它们一行代码。
 	tgSender := notify.NewDynamicTelegramSender(pool, envelope, middleware.DefaultTenantID)
 	notifySvc := notify.New(pool, log, subSalt, mailSender, tgSender)
+	// 注册验证码经 notify 投递：注册第 1 步在同一事务里排队，提交后催派发
+	identitySvc.SetVerificationMailer(notifySvc)
 	appearanceSvc := appearance.New(pool)
 	// 扫描间隔 5 分钟：到期提醒按天计，流量预警的阈值也不会分钟级跨越，
 	// 扫太密只是白白压库。

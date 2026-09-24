@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db 的租户事务、platform/audit 的审计写入、platform/httpx 的响应与错误
+// [OUTPUT]: 对外提供 handlers 的 listOnlineDevices / setDeviceLimit / setDeviceMode 三个处理器
+// [POS]: api/admin 的设备数限制接口：在线概览、单订阅覆盖、全局判定模式；两条写接口都写审计，订阅不存在回 404
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 设备数限制的管理接口。
@@ -5,11 +10,14 @@ package admin
 // 三件事：看谁超了、调某条订阅的额度、切换判定模式。
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -99,20 +107,44 @@ func (h *handlers) setDeviceLimit(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeValidationFailed, "设备数需在 0 到 1000 之间"))
 		return
 	}
+	if _, err := uuid.Parse(subID); err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+		return
+	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{
-		TenantID: tenantID,
-		ActorID:  httpx.PrincipalFrom(r.Context()).UserID,
-	}, func(tx pgx.Tx) error {
-		// 传 nil 就把覆盖清掉，回到套餐规定。
-		// 用一个单独的「恢复默认」语义而不是让管理员手填套餐值：
-		// 套餐额度日后调整时，手填的那些不会跟着变，会悄悄变成过期配置。
-		_, err := tx.Exec(r.Context(), `
-			UPDATE subscriptions SET device_limit = $3
-			 WHERE tenant_id = $1 AND id = $2::uuid`,
-			tenantID, subID, req.Limit)
-		return err
-	})
+	actor := httpx.PrincipalFrom(r.Context()).UserID
+	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID, ActorID: actor},
+		func(tx pgx.Tx) error {
+			// 先锁住读出旧值：订阅不存在要回 404（原先 UPDATE 影响 0 行也回 200），
+			// 审计也要记下改之前是多少。
+			var before *int
+			if err := tx.QueryRow(r.Context(), `
+				SELECT device_limit FROM subscriptions
+				 WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE`,
+				tenantID, subID).Scan(&before); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return httpx.NotFoundOrForbidden()
+				}
+				return err
+			}
+			// 传 nil 就把覆盖清掉，回到套餐规定。
+			// 用一个单独的「恢复默认」语义而不是让管理员手填套餐值：
+			// 套餐额度日后调整时，手填的那些不会跟着变，会悄悄变成过期配置。
+			if _, err := tx.Exec(r.Context(), `
+				UPDATE subscriptions SET device_limit = $3
+				 WHERE tenant_id = $1 AND id = $2::uuid`,
+				tenantID, subID, req.Limit); err != nil {
+				return err
+			}
+			return audit.Write(r.Context(), tx, tenantID, audit.Entry{
+				ActorKind: "admin", ActorID: &actor,
+				Action: "subscription.device_limit_changed", ResourceType: "subscription",
+				ResourceID: &subID, APIDomain: "admin", Outcome: "success",
+				RequestID:    httpx.RequestIDFrom(r.Context()),
+				BeforeDigest: map[string]any{"device_limit": before},
+				AfterDigest:  map[string]any{"device_limit": req.Limit},
+			})
+		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -166,7 +198,14 @@ func (h *handlers) setDeviceMode(w http.ResponseWriter, r *http.Request) {
 					return err
 				}
 			}
-			return nil
+			// 模式切换影响全租户能否连上，必须留下是谁在什么时候切的
+			return audit.Write(r.Context(), tx, tenantID, audit.Entry{
+				ActorKind: "admin", ActorID: &actor,
+				Action: "device_limit.mode_changed", ResourceType: "system_settings",
+				APIDomain: "admin", Outcome: "success",
+				RequestID:   httpx.RequestIDFrom(r.Context()),
+				AfterDigest: map[string]any{"mode": req.Mode, "grace": req.Grace},
+			})
 		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)

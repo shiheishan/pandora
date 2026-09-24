@@ -61,6 +61,7 @@
 - 若干接口对非法 UUID 的路径参数回 500 而不是 404（各分段核对笔记列出）；前端在调用前不必自行校验，把 500 当普通失败处理即可，后端在补接口时顺手修。
 
 ### 1.5 幂等
+- **修订 R10（2026-09-24，后端二 62f7283）**：`POST v1/nodes/status:batch` 与 `POST v1/nodes/batch/status` 共用幂等 scope `node_status_batch`；同一个 key 换条路径重放回 409 `idempotency_key_reuse`。
 
 - 挂了 `middleware.Idempotency` 的路由（条目里「幂等：是 `scope`」）必须带请求头 `Idempotency-Key`（1–255 字节可见字符），缺失或非法回 400。
 - 同一次用户意图的所有重试（网络重试、reauth 后重放）必须复用同一个 key；key 在用户发起动作时生成（UUID v4），动作结束（成功或用户放弃）后丢弃。
@@ -68,6 +69,7 @@
 - admin 路由的中间件顺序是 RequirePermission → RequireRecentReauth → Idempotency（`reset-password` 与 `rotate` 两条例外，先 reauth 后权限，见 B 段核对笔记），所以 reauth 失败**不消耗**幂等键。
 
 ### 1.6 重新验证身份（reauth，仅 admin）
+- **修订 R9（2026-09-24，后端二 62f7283）**：挂 reauth 的路由由 40 条增至 45 条（新增用户批量导出 / 生成 / 群发、改用户状态、全局设备模式）；`reset-password`、`rotate` 改为先查权限、后 reauth，原先的例外取消。
 
 - 40 条 admin 路由挂 `RequireRecentReauth`（`router.go` 中 40 处，含 `registerCatalogPlanUpdate` 注册的 `PUT v1/plans/{id}`）；开工说明与 `handlers.go:63` 注释里的「53 条」与代码不符。条目里「reauth：是」即这 40 条，另有若干条标了「待补·后端改为是」。
 - 令牌里的 rat 在 15 分钟内即通过。登录时 rat=登录时刻。`GET v1/me` 的 `reauthed` 反映当前状态。
@@ -464,6 +466,7 @@
   - 按保留规则 2，删除订阅地址整块（见上文）
 
 #### POST v1/users/{id}/status — 启用 / 停用 / 封禁
+- **修订 R9（2026-09-24，后端二 62f7283）**：reauth 改为「是」。
 - 状态：现有 `handlers.go:322 setUserStatus` → `service.go:450 SetUserStatus`
 - 权限：`iam.user.write`｜reauth：否（router 注释说要 reauth，代码没挂，设计稿也不要求，契约以代码为准）｜幂等：否
 - 请求：`{ status: "active"|"suspended"|"banned", reason: string }`。status 不是 active 时 reason 必填
@@ -477,6 +480,7 @@
 - 设计：后台-03 抽屉的「禁用账号 / 启用账号」按钮。映射：禁用 → `suspended`，启用 → `active`。待补·前端：禁用确认框加必填的「原因」输入框；另加一个次级的「封禁」选项（`banned`）
 
 #### POST v1/users/{id}/reset-password — 管理员替用户设新密码
+- **修订 R9（2026-09-24，后端二 62f7283）**：先查权限、后 reauth（无权限直接 404，不再先要求输密码）。
 - 状态：现有 `handlers.go:293 resetUserPassword`
 - 权限：`iam.user.write`｜reauth：是（中间件顺序是先检查 reauth、再检查权限）｜幂等：否
 - 请求：`{ new_password: string, reason: string(≥5 字) }`
@@ -489,6 +493,7 @@
 - 设计：后台-03 抽屉的「重置密码」。设计稿要的是「发一次性重置链接邮件」，与后端现状冲突，见 D-B-2。在 D-B-2 定下来之前，前端的重认证确认框里需要增加「新密码」和「原因」两个输入框
 
 #### POST v1/subscriptions/{id}/rotate — 管理员换发订阅链接
+- **修订 R11（2026-09-24，后端二 62f7283）**：响应改为 `{ user_email, old_revoked: true }`，不再含 `token`（D-B-1）；先查权限、后 reauth。
 - 状态：现有 `handlers.go:250 rotateSubscriptionLink` → `subscription/admin_rotate.go:44 AdminRotate`
 - 权限：`iam.user.write`｜reauth：是（先检查 reauth、再检查权限）｜幂等：否
 - 请求：path `id`，是**订阅** id，不是用户 id；body `{ reason: string(≥5 字) }`
@@ -581,6 +586,7 @@
   - 命中数取 `total`，预览列表取 `sample_rows`
 
 #### GET v1/users/bulk/export — 导出 CSV
+- **修订 R9（2026-09-24，后端二 62f7283）**：权限改为 `iam.user.write`，reauth 改为「是」。
 - 状态：现有 `bulk_users.go:54 exportUsers`
 - 权限：`iam.user.read`｜reauth：否（router 注释说要写权限 + 重认证，代码是读权限、不要 reauth，契约以代码为准）｜幂等：否
 - 请求：query `status?`、`group_id?`、`query?`、`has_active_sub?: "true"|"false"`、`limit?: int`（默认 10000，最大 50000，超出会被静默截断），外加待补的 `plan_id`、`expires_within_days`、`sub_state`
@@ -589,6 +595,7 @@
 - 设计：后台-03「导出 CSV」。映射：没有 cookie，不能用 `<a href>` 直接下载。前端要用 fetch 带 Bearer 头取回 blob，再触发下载。请求前先用 preview 的 `total` 提示「将导出 N 人（上限 10000）」
 
 #### POST v1/users/bulk/generate — 批量生成账号
+- **修订 R9（2026-09-24，后端二 62f7283）**：reauth 改为「是」。
 - 状态：现有 `bulk_users.go:106 generateUsers` → `adminops/bulk_users.go GenerateUsers`
 - 权限：`iam.user.write`｜reauth：否（注释说要，代码没挂，以代码为准）｜幂等：是 `user_bulk_generate`
 - 请求：`{ count: int(1–500), email_prefix: string（1–20 位，只能用小写字母、数字、-）, email_domain: string, group_id?: uuid, reason: string(5–500 字) }`
@@ -597,6 +604,7 @@
 - 设计：后台-03「批量生成用户」。映射：数量 → count（设计稿写的上限是 200，按后端改为 500）；邮箱后缀 → email_domain；用户组 → group_id。待补·前端：增加必填的「邮箱前缀」和「生成原因」。「开通套餐」这一项后端没有，见 D-B-7，在它定下来之前隐藏。「下载」按钮由前端把 `users` 拼成 CSV 在本地下载，不再请求服务器
 
 #### POST v1/users/bulk/mail — 群发邮件
+- **修订 R9（2026-09-24，后端二 62f7283）**：reauth 改为「是」。
 - 状态：现有 `bulk_users.go:135 sendBulkMail` → `adminops/bulk_mail.go SendBulkMail`；待补·后端（变量替换）
 - 权限：`ops.notification.write`｜reauth：否（注释说要，代码没挂，以代码为准）｜幂等：是 `user_bulk_mail`
 - 请求：`{ status?, group_id?, query?, has_active_sub?,（外加待补的 plan_id?, expires_within_days?, sub_state?）, subject: string(1–200), body: string(1–20000) }`。筛选字段直接放在 body 顶层，不嵌套在子对象里
@@ -623,6 +631,7 @@
   - 「默认同时在线设备」滑块和「设备识别窗口」下拉见 D-B-5、D-B-4
 
 #### POST v1/subscriptions/{id}/device-limit — 单个订阅的设备数覆盖
+- **修订 R12（2026-09-24，后端二 62f7283）**：写审计；订阅不存在或 id 非法回 404（原为 200）。
 - 状态：现有 `devices.go:89 setDeviceLimit`
 - 权限：`iam.user.write`｜reauth：否｜幂等：否
 - 请求：path `id`，是**订阅** id；body `{ limit: int(0–1000) | null }`。null 表示恢复套餐规定，0 表示不限
@@ -631,6 +640,7 @@
 - 设计：后台-03 抽屉「订阅」tab 的「本订阅设备上限」− / + 控件。设计稿的范围是 1–20，后端允许 0–1000，前端按 1–1000 放开。待补·前端：增加「恢复套餐默认」（传 null）和「不限」（传 0）两个快捷按钮
 
 #### POST v1/settings/device-limit — 全局设备判定模式
+- **修订 R9 / R12（2026-09-24，后端二 62f7283）**：reauth 改为「是」；写审计。
 - 状态：现有 `devices.go:130 setDeviceMode`
 - 权限：`iam.user.write`｜reauth：否（注释说「要求近期重认证」，代码没挂，以代码为准）｜幂等：否
 - 请求：`{ mode: "loose"|"strict", grace?: int(0–5) }`
@@ -718,6 +728,7 @@
 - 设计：无。前端不需要单独入口。
 
 #### POST v1/plans/complete — 向导一次建成套餐（资料 + 额度 + 价格 + 线路 + 可选发布）
+- **修订 R1（2026-09-24，后端一 0651cb2）**：权限改为 `catalog.publish`，reauth 改为「是」（D-C-2）。以下原文中的权限行作废。
 - 状态：现有 `panel/internal/api/admin/catalog.go:41 createPlanComplete`
 - 权限：`catalog.write`｜reauth：否（见 D-C-2）｜幂等：是 `catalog_plan_create_complete`
 - 请求：`{ code, name, description?:string|null, visibility?:string, sort_order?:int, allow_new_purchase?:bool, allow_renewal?:bool, allow_upgrade?:bool, visible_group_ids?:uuid[], purchase_limit_per_user?:int|null, stock_total?:int|null, traffic_gb?:int64|null(null 或 0 = 不限), max_devices?:int|null(null = 不限), throttle_kbps?:int|null, quota_reset_strategy?:"never"|"natural_month"|"billing_cycle"(默认)|"fixed_day", quota_reset_day?:1..28, pool_ids?:uuid[], prices?:[{ billing_interval, interval_count:int>0, unit_amount:int64>0, currency:"CNY"|"USD", trial_days?:int }], publish:bool }`
@@ -726,6 +737,7 @@
 - 设计：后台-04「新建套餐」向导 5 步。映射：第 1 步 name / code / description；第 2 步 traffic_gb / max_devices（留空 = 不限）；第 3 步 prices（设计只让填「价格（元）」+ 周期，前端固定 `currency:"CNY"` 并 ×100；想卖 USD 需要补币种选择，见下文「后端有、设计缺」）；第 4 步 pool_ids（chip 的名称和数量来自 GET v1/plans/{id}/pools 或节点池列表）；第 5 步开关「保存后立即发布上架」→ `publish`。
 
 #### PUT v1/plans/{id}/complete — 向导一次改完套餐
+- **修订 R1（2026-09-24，后端一 0651cb2）**：权限 `catalog.publish`、reauth「是」；整个编辑在一个事务里完成，发布失败时资料、价格、新草稿版本全部回滚；`prices` 只同步本次清单里出现的币种的公开价，用户组价与其他币种不动，`[]` 等同 `null`。原文「`[]` = 全部归档」「不是原子操作」作废。
 - 状态：现有 `panel/internal/api/admin/catalog.go:64 updatePlanComplete`
 - 权限：`catalog.write`｜reauth：否（见 D-C-2）｜幂等：是 `catalog_plan_update_complete`
 - 请求：`{ expected_row_version:int64, code, name, description?:string|null, visibility:string(必须传当前值，空串会 422), sort_order:int, allow_new_purchase?:bool|null(null = 不动), allow_renewal?:bool|null, allow_upgrade?:bool|null, visible_group_ids?:uuid[], purchase_limit_per_user?:int|null, stock_total?:int|null, traffic_gb?:int64|null(null = 不动), max_devices?:int|null(null = 不动), throttle_kbps?:int|null(null = 不动), prices?:[PlanPriceInput]|null(null = 不动；[] = 全部归档), pool_ids?:uuid[]|null(null = 不动) }`。注意基本资料字段（code / name / description / visibility / visible_group_ids / purchase_limit_per_user / stock_total / sort_order）**没有**「不动」语义，每次都整体覆盖，所以必须回填当前值
@@ -888,6 +900,7 @@
 - 设计：后台-05「人工开单」弹窗。映射：用户邮箱 → 要先用用户搜索（GET v1/users?q=，分段 B）解析出 `user_id`，前端改成可搜索选择器；「套餐与周期」→ `plan_id` + `price_id`（选项来自 GET v1/plans 的在售价格）；「备注」→ `reason`（改成必填，5 字起，文案改为「开单原因（写入审计）」）；「结算方式」→ `settlement`：「赠送（0 元）」= grant，「待用户支付」= pending，「线下已收款」= offline（待补·前端：选这项时出现「凭证号」输入），「从余额扣除」= balance（取决于 D-C-3）。
 
 #### POST v1/orders/{id}/mark-paid — 手工标记已支付（线下收款）
+- **修订 R2（2026-09-24）**：响应已改为 snake_case `{ processed, already_handled, payment_id, subscription_id, ledger_txn_id }`，不再返回 `signature_failed`。
 - 状态：现有 `panel/internal/api/admin/manual_order.go:62 markOrderPaid`
 - 权限：`billing.order.write`｜reauth：是｜幂等：是 `admin_order_mark_paid`
 - 请求：`{ reason:string(5..500 字), reference:string(1..128 字，线下凭证号) }`；金额由服务端从订单读取，不接受传入
@@ -896,6 +909,7 @@
 - 设计：后台-05 抽屉「手工标记已支付」。输入框「渠道流水号 / 转账凭证」→ `reference`；待补·前端：补必填的「收款说明」→ `reason`。
 
 #### GET v1/late-payments — 挂账列表（设计里的「欠费单」）
+- **修订 R3（2026-09-24）**：响应新增 `pending_amounts`（按币种分开的待处理合计）；旧的 `pending_amount` 保留一个版本后删除，前端只用 `pending_amounts`。
 - 状态：现有 `panel/internal/api/admin/late_payment.go:14 listLatePayments`；待补·后端（扩展）
 - 权限：`billing.ledger.read`｜reauth：否｜幂等：否
 - 请求：`status?: ""|"suspense"|"applied"|"refunded"|"manual_review"|"refund_pending"`（空 = 全部，排序时 suspense 排最前），`limit?:1..100`（默认 25），`offset?:int>=0`
@@ -956,6 +970,7 @@
 ### 后台-06 营销（tab：优惠券 / 礼品卡 / 佣金与提现）
 
 #### GET v1/coupons — 优惠券列表
+- **修订 R6（2026-09-24）**：权限改为 `marketing.coupon.read`（迁移 00068 新增，授给所有持有 `marketing.coupon.write` 的角色）。
 - 状态：现有 `panel/internal/api/admin/coupon.go:49 listCoupons`
 - 权限：`marketing.coupon.write`（没有只读权限）｜reauth：否｜幂等：否
 - 请求：`q?:string`（对 code、name 小写子串匹配），`status?:string`（LIKE 模式：`active`/`paused`/`expired`/`exhausted`），`limit?:1..200`（默认 25），`offset?:int>=0`
@@ -964,6 +979,7 @@
 - 设计：后台-06「优惠券」tab。分段「全部 / 启用中 / 已停用」→ 不传 / `active` / `paused`；`expired`、`exhausted` 在「全部」里显示为「已过期」「已用完」标签（设计缺，待补·前端）。列：优惠码 `code`，批次标签在 `name != code` 时显示 `name`（后端没有 batch 概念，靠同名归批；「· N 张」需要按 name 再查一次 total，建议去掉），优惠（percent：`discount_value/100` %，fixed：`discount_value/100` 元），适用套餐（`applicable_plan_ids` 为空 →「全部套餐」，否则映射成套餐名），使用 `redeemed_count / max_redemptions`（null →「不限」），有效期至 `valid_until`（null →「长期」），启用开关 `status=active`。
 
 #### GET v1/coupons/{id}/redemptions — 单张券的兑换记录
+- **修订 R6（2026-09-24，后端一 0f83ca4）**：权限改为 `marketing.coupon.read`。
 - 状态：现有 `panel/internal/api/admin/coupon.go:315 couponRedemptions`
 - 权限：`marketing.coupon.write` + `billing.order.read`｜reauth：否｜幂等：否
 - 请求：路径 `id: uuid`（最近 200 条）
@@ -980,6 +996,7 @@
 - 设计：后台-06「新建优惠券」内联表单：优惠码 → `code`；类型 pct / off → `percent` / `fixed`；数值：pct 填 15 → `discount_value: 1500`，off 填 ¥10 → `1000`；「每码可用次数」→ `max_redemptions`。待补·前端：补「有效期至」（列表有这一列，表单没有）、「适用套餐」多选、「每人限用」、「门槛金额」、「封顶优惠」（percent 时）。
 
 #### POST v1/coupons/batch — 批量生成优惠券
+- **修订 R5（2026-09-24）**：幂等改为「是」，scope `coupon_batch_generate`。
 - 状态：现有 `panel/internal/api/admin/coupon_batch.go:76 generateCoupons`
 - 权限：`marketing.coupon.write`｜reauth：是｜幂等：否（批量写操作按惯例应该幂等，见核对笔记）
 - 请求：`{ count:1..1000, prefix?:string(大写字母数字，≤8 位), name:string(必填，同批共用), 以及 POST v1/coupons 除 code 以外的全部字段 }`；`max_redemptions` 默认 1（每码一次）
@@ -1014,6 +1031,7 @@
 - 设计：后台-06 礼品卡四个统计：已发行 `codes_total`、已兑换 `codes_used`、兑换率 = used ÷ total（前端算）、面额合计 `balance_issued`（扩展前可以先用 `balance_out`，同时把标签改成「已兑出余额」）。
 
 #### GET v1/gift-cards/codes — 卡码列表
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：只返回 `code_masked`（前缀 + 随机段前 4 位，其余为 •），不再返回明文码。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:92 listGiftCodes`；待补·后端（改：掩码）
 - 权限：`marketing.giftcard.read`｜reauth：否｜幂等：否
 - 请求：`template_id?:uuid, status?:""|"unused"|"used"|"disabled"|"expired", batch_id?:uuid, limit?:1..5000(默认 50), offset?:int`
@@ -1023,6 +1041,7 @@
 - 设计：后台-06「批次与卡码」右侧码列表：码 `code_masked`、状态（unused「可用」/ used「已兑换」/ disabled「已停用」/ expired「已过期」，最后一项设计缺，待补·前端）、兑换人 `used_email`、行内启停。
 
 #### GET v1/gift-cards/codes/export — 导出卡码 CSV（现状：可反复导出明文）
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：**已下线**，路由与处理器删除，由 `POST v1/gift-cards/batches/{id}/export` 取代。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:113 exportGiftCodes`；待补·后端（下线，由 POST v1/gift-cards/batches/{batch_id}/export 取代）
 - 权限：`marketing.giftcard.read`｜reauth：否｜幂等：否
 - 请求：`template_id?, status?, batch_id?`（最多 5000 行）
@@ -1031,6 +1050,7 @@
 - 设计：现有行为是任何有只读权限的管理员都能无限次导出全部明文码，没有重认证，也不写审计。这与设计「一次性导出、导出后只能看掩码」直接冲突。按设计改：新接口上线后这条路由删除（或固定回 404），前端不再调用。
 
 #### GET v1/gift-cards/batches — 批次列表
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：已实现（迁移 00069），只读权限。
 - 状态：待补·后端
 - 权限：`marketing.giftcard.read`｜reauth：否｜幂等：否
 - 请求：`template_id?:uuid, limit?:1..200(默认 50), offset?:int>=0`
@@ -1040,6 +1060,7 @@
 - 需迁移：新表 `gift_card_batches(id uuid PK, tenant_id, template_id FK, prefix text, count int, expires_at, created_by uuid, created_at, exported_at timestamptz NULL, exported_by uuid NULL)`，开启租户 RLS；按 `gift_card_codes.batch_id` 分组回填存量批次（存量批次的 `exported_at` 怎么填见 D-C-4）；GenerateCodes 同一事务里写批次行；gift_card_codes.batch_id 补指向新表的外键。
 
 #### POST v1/gift-cards/batches/{id}/export — 一次性导出批次明文卡码
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：已实现。请求体必须是 `{}`（空体 400）；第二次导出回 409；审计只记数量不记码。同一幂等键重试时只重放 `Content-Type` 与 `Cache-Control`，**不带 `Content-Disposition`**，前端自行把文件名拼成 `gift-codes-<批次号前 8 位>.csv`；幂等层缓存上限 1 MiB，超大批次重试可能拿不回文件。存量批次按 D-C-4 已全部记为已导出。
 - 状态：待补·后端
 - 权限：`marketing.giftcard.write`｜reauth：是｜幂等：是 `giftcard_batch_export`（同 key 重放必须返回同一份 CSV，也就是在幂等窗口内允许重新下载同一次导出的结果）
 - 请求：`{}`
@@ -1049,6 +1070,7 @@
 - 需迁移：用上一条的 `gift_card_batches.exported_at` / `exported_by`（不另外计数）。
 
 #### GET v1/gift-cards/usages — 兑换记录
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：只返回 `code_masked`。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:172 listGiftUsages`；待补·后端（改：掩码）
 - 权限：`marketing.giftcard.read`｜reauth：否｜幂等：否
 - 请求：`template_id?:uuid`（最近 200 条）
@@ -1057,6 +1079,7 @@
 - 设计：后台-06「使用记录」：码 / 用户 / 获得内容（由 granted 拼：「余额 +¥100」「流量 +100 GB」「+30 天」；plan 卡 granted 里没有套餐信息，用 template_name 代替；mystery 显示 `prize_label`）/ 时间。
 
 #### POST v1/gift-cards — 新建或保存礼品卡模板
+- **修订 R4（2026-09-24）**：reauth 改为「是」。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:36 saveGiftTemplate`
 - 权限：`marketing.giftcard.write`｜reauth：否｜幂等：否
 - 请求：`{ id?:uuid(留空 = 新建，有值 = 更新), name:string(1..120), description?:string, type:"general"|"plan"|"mystery"(更新时不能改), status?:"active"(默认)|"paused"|"archived", rewards:{…同上}, conditions:{…}, limits:{…}, theme_color?:string }`
@@ -1065,6 +1088,7 @@
 - 设计：后台-06「＋ 新建模板」。设计点一下就建出一个固定内容的占位模板，这样不行（后端必须有真实奖励才能保存）。待补·前端：补一个模板编辑抽屉，包含类型、名称、说明、奖励（general：余额 / 流量 / 延长天数 / 重置流量；plan：套餐 + 价格；mystery：奖池的名称、权重、奖励）、领取条件（仅新用户 / 仅付费用户 / 限定套餐 / 必须被邀请）、限制（每人次数 / 冷却小时）、主题色、状态（暂停 / 归档）。卡片上的「编辑」也打开这个抽屉。
 
 #### POST v1/gift-cards/{id}/codes — 为模板生成一批卡码
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：响应改为 `{ batch_id, count, sample, batch }`，`sample` 只含前 4 张明文，完整明文只能通过一次性导出获取。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:63 generateGiftCodes`；待补·后端（改响应）
 - 权限：`marketing.giftcard.write`｜reauth：是｜幂等：是 `giftcard_codes_generate`
 - 请求：`{ count:1..5000, prefix?:string(大写字母数字，≤8 位), expires_at?:RFC3339(不能早于现在) }`
@@ -1074,6 +1098,7 @@
 - 设计：后台-06 模板卡「生成一批码」。待补·前端：补数量、前缀、有效期三个输入（设计固定写死 100 张）。生成后弹出「仅此一次可见」：显示 `sample` 加「…」；「导出 CSV」调 POST v1/gift-cards/batches/{batch_id}/export；「已保存，关闭」只是关闭弹窗，批次保持未导出，之后在批次列表里还能导出一次。
 
 #### POST v1/gift-cards/codes/{id}/toggle — 停用 / 恢复单个卡码
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：审计里的卡码改记掩码。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:148 toggleGiftCode`
 - 权限：`marketing.giftcard.write`｜reauth：否（有意设计：发现异常时要能立刻止血）｜幂等：否
 - 请求：`{ disabled:bool }`
@@ -1082,6 +1107,7 @@
 - 设计：后台-06 码行「停用 / 启用」；已兑换的码禁用按钮（与设计一致）。
 
 #### GET v1/commission/overview — 分销总览与当前配置
+- **修订 R6（2026-09-24）**：权限改为 `marketing.commission.read`。
 - 状态：现有 `panel/internal/api/admin/commission.go:251 commissionOverview`；待补·后端（扩展）
 - 权限：`billing.order.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1091,6 +1117,7 @@
 - 设计：后台-06「佣金与提现」四个统计：累计佣金 `total_earned`、冻结中 `pending`、已提现 `paid_out`、邀请注册 `invited_users`；设置表单的初值：`rate_percent`、`scope`、`freeze_days`、`min_withdraw ÷ 100`。
 
 #### GET v1/withdrawals — 提现申请列表
+- **修订 R6（2026-09-24）**：权限改为 `marketing.commission.read`。
 - 状态：现有 `panel/internal/api/admin/commission.go:28 listWithdrawals`
 - 权限：`billing.order.read`｜reauth：否｜幂等：否
 - 请求：`status?: "requested"|"reviewing"|"approved"|"rejected"|"processing"|"paid"|"failed"|"returned"`（精确匹配，不分页，最近 200 条）
@@ -1099,6 +1126,7 @@
 - 设计：后台-06 提现列表。状态映射：`requested`/`reviewing` →「待审核」，`approved`/`processing` →「待打款」，`paid` →「已打款」，`rejected` →「已拒绝」，`failed`/`returned` →「打款失败 / 已退回」（设计缺，待补·前端）。收款信息 `payout_detail`；建议在金额旁显示 `earned_total`（后端专门留出来核对提现是否合理的字段，设计缺，待补·前端）。
 
 #### POST v1/withdrawals/{id}/review — 审批提现
+- **修订 R6（2026-09-24）**：权限改为 `marketing.withdrawal.approve`。
 - 状态：现有 `panel/internal/api/admin/commission.go:89 reviewWithdrawal`
 - 权限：`billing.provider.write`｜reauth：是｜幂等：否
 - 请求：`{ action:"approve"|"reject", reason?:string(reject 时必填；approve 时必须为空) }`
@@ -1107,6 +1135,7 @@
 - 设计：后台-06「通过 / 拒绝」。设计里「通过」没有确认框，后端要求 reauth，前端要走重认证；「拒绝」确认框补必填的拒绝理由（待补·前端）。设计写的「金额退回用户佣金余额」：拒绝时只改状态、不动账（钱在打款之前一直没离开账本），文案可以保留。
 
 #### POST v1/withdrawals/{id}/paid — 记录已打款（动账）
+- **修订 R6（2026-09-24）**：权限改为 `marketing.withdrawal.approve`。
 - 状态：现有 `panel/internal/api/admin/commission.go:165 markWithdrawalPaid`
 - 权限：`billing.provider.write`｜reauth：是｜幂等：是 `commission_withdrawal_mark_paid`
 - 请求：`{ payout_reference:string(必填，转账流水号) }`
@@ -1115,6 +1144,7 @@
 - 设计：后台-06「打款」确认框。待补·前端：补必填的「转账流水号」。
 
 #### POST v1/commission/config — 修改分销参数
+- **修订 R4 / R6（2026-09-24）**：reauth 改为「是」；权限改为 `marketing.commission.write`（迁移 00068 新增，授给当前持有 `billing.provider.write` 的角色）。
 - 状态：现有 `panel/internal/api/admin/commission.go:312 setCommissionConfig`；待补·后端（扩展：计佣范围）
 - 权限：`billing.provider.write`｜reauth：否｜幂等：否
 - 请求（现有）：`{ rate_percent?:0..50, freeze_days?:0..90, min_withdraw?:int64>=0(分) }`（字段可省，省略的不改）
@@ -1180,6 +1210,7 @@
 - 设计：后台-07「调整排序 / 完成排序」。点「完成排序」时一次提交整页顺序（sort_order 用 10、20、30…）。
 
 #### POST v1/nodes/status:batch — 批量改服务状态（启用/停用/退役）
+- **修订 R10（2026-09-24，后端二 62f7283）**：幂等 scope 改为 `node_status_batch`（与别名路由共用）。
 - 状态：现有 `panel/internal/api/admin/node_admin.go:109 batchAdminNodeStatus` → `nodefabric/node_admin.go:737 BatchAdminNodeLifecycle`
 - 权限：`node.lifecycle`｜reauth：否｜幂等：是 `node_status_batch`
 - 请求：`{ items: [{ id: uuid, row_version: int64 }](1–100), serving_status: "draft"|"active"|"draining"|"disabled"|"retired", reason?: string(≤500) }`
@@ -1188,6 +1219,7 @@
 - 设计：后台-07 批量条「启用 / 停用」、抽屉「操作 › 启用节点 / 停用节点」（单节点也走本接口，items 只放一个）。映射：设计「启用」→ `active`；「停用」→ `disabled`。**前端统一用本路径**，不用下面的别名。
 
 #### POST v1/nodes/batch/status — 同上（别名）
+- **修订 R10（2026-09-24，后端二 62f7283）**：幂等 scope 改为 `node_status_batch`（与 `status:batch` 共用）。
 - 状态：现有，与 status:batch **同一处理器** `node_admin.go:109 batchAdminNodeStatus`，路由 router.go:664
 - 权限：`node.lifecycle`｜reauth：否｜幂等：是 `node_batch_status`（与 status:batch 的 scope **不同**，同一 Idempotency-Key 跨两条路径不会去重）
 - 请求/响应/错误：与 `POST v1/nodes/status:batch` 完全相同。
@@ -1293,6 +1325,7 @@
 - 设计：设计无单节点编辑界面（后端有、设计缺）。
 
 #### POST v1/nodes/{id}/server-token — 重签服务端（UniProxy）令牌
+- **修订 R13（2026-09-24，后端二 62f7283）**：id 非法或节点不存在回 404；已退役 / 已销毁（含 serving_status=retired）回 409；签发写审计（不记令牌）。签发时间与签发人仍按 M8 在后端二第 ④ 步补。
 - 状态：现有 `panel/internal/api/admin/handlers.go:1433 nodeIssueServerToken` → `nodefabric/uniproxy.go:148 IssueServerToken`
 - 权限：`node.provision`｜reauth：是｜幂等：是 `node_server_token_issue`
 - 请求：无请求体
@@ -1570,6 +1603,7 @@
 - 设计：Telegram 卡字段 Bot Token、管理员群组 Chat ID、Bot 用户名、保存。待补·前端：卡片标题栏加「启用」开关（`enabled`，设计缺）。「管理员群组」除测试默认目标外还用来做什么见待决 D-A-4
 
 #### POST v1/settings/telegram/test — 发送 Telegram 测试消息
+- **修订 R14（2026-09-24，后端二 62f7283）**：权限改为 `ops.notification.write`。
 - 状态：现有 `telegram.go:117 testTelegram`；**chat_id 可选 待补·后端**
 - 权限：`billing.provider.write`（与保存用的权限不同，见核对笔记）｜reauth：否｜幂等：否
 - 请求（现有）：`{ chat_id: int }`（必填非 0；JSON 数字，负数群 ID 在 JS 安全整数内）；待补·后端：`chat_id?` 可省略，省略时发往 `admin_chat_id`，两者都没有回 422 `fields.chat_id`
@@ -1594,6 +1628,7 @@
 - 设计：SMTP 卡「保存」、新增的「注册与验证」卡「保存」（同一接口）
 
 #### POST v1/settings/mail/test — 发送 SMTP 测试邮件
+- **修订 R14（2026-09-24，后端二 62f7283）**：权限改为 `ops.notification.write`。
 - 状态：现有 `mail.go:220 testMailSettings`
 - 权限：`billing.provider.write`｜reauth：否｜幂等：否
 - 请求：`{ to: string }`
@@ -1635,6 +1670,7 @@
 - 设计：「恢复默认」+ 危险确认框。待补·前端：`is_default` 为 true 或该模板无内置默认时禁用按钮（后者前端靠调用失败判断，或由后端在列表加 `has_default: bool`——建议随 preview 一起补，需迁移：否）
 
 #### POST v1/mail/templates/test — 用模板实发一封测试信
+- **修订 R14（2026-09-24，后端二 62f7283）**：权限改为 `ops.notification.write`（注释说要 reauth、代码仍未挂，待后续处理）。
 - 状态：现有 `mail_template.go:93 testMailTemplate`；**草稿发送 待补·后端**
 - 权限：`billing.provider.write`｜reauth：否（router 注释写「要求近期重认证」但实际没挂，见核对笔记）｜幂等：否
 - 请求（现有）：`{ code: string, channel: "email", to: string }`，发送的是**已保存**的模板；待补·后端追加 `subject?: string, body?: string`：提供时按草稿渲染发送（先做同样的长度与变量白名单校验），省略时行为不变。需迁移：否
@@ -1950,6 +1986,7 @@
 - 设计：结账页「提交订单并支付」。映射：设计把「余额」当成四选一支付方式，后端是**抵扣金额**——结账页改为「使用余额抵扣（可用 ¥X）」开关 + 外部支付方式单选；开关打开时 `use_balance = min(余额, 优惠后应付)`；抵扣后 payable=0 时隐藏支付方式、按钮文案「确认支付」；订单预览「余额抵扣」行显示 balance_applied。「剩余天数折算：差价已计入」只在变更套餐（change-plan）时出现，新购无此行。用户已有可用订阅且选了其他套餐时走 `POST v1/me/subscriptions/{id}/change-plan`，选了同套餐走 renew，没有订阅走本接口。
 
 #### POST v1/orders/{id}/pay — 发起支付，取收银台跳转
+- **修订 R8（2026-09-24）**：支付渠道已停用时回 503「该支付渠道已停用」（原为 500）。
 - 状态：现有 `panel/internal/api/public/handlers.go:562 payOrder`（domain `billing/payments.go:157 CreatePaymentIntent`，epay 适配 `domain/payment/epay/epay.go:123`）
 - 权限：登录用户｜reauth：否｜幂等：否（服务层行锁复用在途意图：同渠道重复点击回同一收银台，reused=true；换渠道作废旧意图重建）
 - 请求：`{ provider: string(payment-methods 的 provider), method?: string(payment-methods 的 method), return_url?: string(必须以 PublicBaseURL + "/" 开头，否则回落 PublicBaseURL + "/#orders") }`
@@ -2106,6 +2143,7 @@
   - 横幅文案「好友首单，您得 20% 佣金」：数字取 `summary.rate_percent`。「首单」二字只在营销分段补出「仅首单返佣」配置后才成立；在那之前前端写「好友每笔订单」。
 
 #### POST v1/me/withdrawals — 申请佣金提现
+- **修订 R5（2026-09-24）**：幂等改为「是」，scope `commission_withdrawal_request`；可提现金额按 D-F-1 统一口径（账本余额 − 在途提现）。
 - 状态：现有 `panel/internal/api/public/handlers.go:886 requestWithdrawal`
 - 权限：登录用户｜reauth：否｜幂等：否（后端限制同一时间只能有一笔在途提现，重复提交会回 409；按「动钱写操作」惯例建议补幂等，但本段不强制）
 - 请求：`{ amount: int64(分), payout_detail: string(收款方式，非空；信封加密落库) }`
@@ -2118,6 +2156,7 @@
   - 映射：最低额取 `summary.min_withdraw`，不写死 ¥100。设计输入框占位是「支付宝账号 / USDT 地址」，改为「支付宝账号 / 银行卡号」，不做 USDT。成功后 invalidate `v1/me/commission`。
 
 #### POST v1/me/commission/transfer — 佣金转入余额
+- **修订 R7（2026-09-24）**：可用金额按 D-F-1 统一口径；409 文案改为「可提现佣金不足……提现处理中的金额也不能再转」。
 - 状态：现有 `panel/internal/api/public/selfservice.go:26 transferCommission`
 - 权限：登录用户｜reauth：否｜幂等：是 `commission_transfer_to_balance`
 - 请求：`{ amount: int64(分，>0) }`
@@ -2306,6 +2345,7 @@
   - 映射：设计只提示「至少 8 位」，要补上「需包含字母和数字」。
 
 #### GET v1/me/sessions — 登录会话列表
+- **修订 R15（2026-09-24，后端二 62f7283）**：只列出 `audience=public` 的会话，后台会话不可见（缺陷 6 已修）。
 - 状态：现有 `panel/internal/api/public/selfservice.go:42 listMySessions`；另有待补·后端（改行为）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无
@@ -2319,6 +2359,7 @@
   - 映射：设备名由前端解析 user_agent，得到「浏览器/客户端 · 系统」。活跃时间取 last_seen_at。current=true 的显示「当前」且不显示「下线」。城市和 IP 见 D-F-3，在此之前 meta 只显示「登录于 {created_at} · 最近活跃 {last_seen_at}」。
 
 #### DELETE v1/me/sessions/{id} — 踢下线某个会话
+- **修订 R15（2026-09-24，后端二 62f7283）**：只能吊销 `audience=public` 的会话；指向后台会话回 404 且不做任何修改。
 - 状态：现有 `panel/internal/api/public/selfservice.go:53 revokeMySession`
 - 权限：登录用户｜reauth：否｜幂等：否（天然幂等，第二次回 404）
 - 请求：path `id: uuid`
@@ -2927,3 +2968,28 @@
 - `router.go` 的 L3 头部 [POS] 还写着「/ 手写门户、/app/ React 候选」，与第 1 阶段之后的 `webapp.Mount` 现状不符。这是 SEVERE-001 L3 过时，由协调会话在合并 router.go 时一并修正。
 - 新站内信没有 SSE 事件，只有工单有 `ticket.updated`。铃铛角标需要前端轮询。
 - `commission_entries.status` 的 CHECK 允许 frozen/settled/rejected，但 Go 只会写入 pending、available，冲销时由 SQL（00040）写入 reversed。「冻结」在语义上是 pending 且 frozen_until 在未来。
+
+## 9. 修订记录
+
+> 契约发布后按实现回写的修改。条目里以「修订 Rn」开头的行优先于该条目原文。
+
+| 编号 | 日期 | 来源 | 内容 |
+|---|---|---|---|
+| R1 | 2026-09-24 | 后端一 0651cb2 | 套餐向导两条路由改 `catalog.publish` + reauth；编辑单事务、价格同步只动提交的币种 |
+| R2 | 2026-09-24 | 后端一 0651cb2 | mark-paid 响应改 snake_case |
+| R3 | 2026-09-24 | 后端一 0651cb2 | 挂账列表新增按币种的 `pending_amounts` |
+| R4 | 2026-09-24 | 后端一 0651cb2 | 礼品卡模板保存、分销参数修改加 reauth |
+| R5 | 2026-09-24 | 后端一 0651cb2 | 批量生成优惠券、门户申请提现加幂等 |
+| R6 | 2026-09-24 | 后端一 0651cb2 | 优惠券与分销路由改用营销域权限码（迁移 00068） |
+| R7 | 2026-09-24 | 后端一 0651cb2 | 佣金可用额统一口径，转余额 409 文案 |
+| R8 | 2026-09-24 | 后端一 0651cb2 | 支付渠道停用时发起支付回 503 |
+| R9 | 2026-09-24 | 后端二 62f7283 | reauth 路由增至 45 条（批量导出/生成/群发、改用户状态、全局设备模式）；reset-password / rotate 先权限后 reauth；批量导出权限改 `iam.user.write` |
+| R10 | 2026-09-24 | 后端二 62f7283 | 两条批量改节点状态路由共用幂等 scope `node_status_batch` |
+| R11 | 2026-09-24 | 后端二 62f7283 | 换发订阅链接不再回传令牌（D-B-1） |
+| R12 | 2026-09-24 | 后端二 62f7283 | 设备上限两条写接口写审计，单订阅不存在回 404 |
+| R13 | 2026-09-24 | 后端二 62f7283 | server-token：非法 id 404、退役/销毁 409、写审计 |
+| R14 | 2026-09-24 | 后端二 62f7283 | 三个测试发送接口权限改 `ops.notification.write` |
+| R15 | 2026-09-24 | 后端二 62f7283 | 门户会话列表与吊销只作用于 public 会话（缺陷 6） |
+| R16 | 2026-09-24 | 后端二 62f7283 | 注册验证码经 notify 按地址投递（迁移 00074 模板种子），注册事务提交后立即派发（缺陷 1） |
+| R17 | 2026-09-24 | 后端一 0f83ca4 | 礼品卡批次与一次性导出（迁移 00069），码全面掩码，旧导出下线，生码只回样例；优惠券兑换记录改读权限 |
+| R18 | 2026-09-24 | 后端一 0f83ca4 | 充值单结算后同事务 paid→fulfilled 是既有有意行为，两个 PG18 测试的过时断言已更正 |

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/audit/httpx，依赖同包 service.go 的 Rotate
+// [OUTPUT]: 对外提供 AdminRotateInput、AdminRotateOutput（不含令牌）、AdminRotate
+// [POS]: domain/subscription 的管理员代换订阅链接：旧链接立即失效、写审计，新令牌明文不交给管理员
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package subscription
 
 import (
@@ -22,6 +27,10 @@ import (
 //
 // 换完之后旧链接立刻失效，用户的客户端要重新导入。这个后果必须在界面上
 // 说清楚，否则客服会以为只是「刷新一下」。
+//
+// 新令牌明文不交给管理员（保留规则 2：后台看不到用户的订阅地址）。
+// 用户到门户重新复制即可；明文在这里就丢弃，不经过处理器，
+// 这样任何一个 admin 响应都不可能把它带出去。
 
 type AdminRotateInput struct {
 	SubscriptionID string
@@ -34,9 +43,8 @@ type AdminRotateInput struct {
 }
 
 type AdminRotateOutput struct {
-	// Token 是新的订阅令牌明文。只在这一次返回 —— 库里只存哈希与信封密文。
-	Token string
 	// UserEmail 方便界面直接显示「已为 xxx 换好」。
+	// 刻意没有令牌字段，见文件头注释。
 	UserEmail string
 }
 
@@ -65,8 +73,7 @@ func (s *Service) AdminRotate(ctx context.Context, tenantID string,
 		return nil, httpx.NotFoundOrForbidden()
 	}
 
-	token, err := s.Rotate(ctx, tenantID, ownerID, in.SubscriptionID)
-	if err != nil {
+	if _, err := s.Rotate(ctx, tenantID, ownerID, in.SubscriptionID); err != nil {
 		if err == ErrNotFound {
 			return nil, httpx.NotFoundOrForbidden()
 		}
@@ -102,5 +109,5 @@ func (s *Service) AdminRotate(ctx context.Context, tenantID string,
 			"订阅链接已换发，但审计写入失败，请联系运维核对："+err.Error())
 	}
 
-	return &AdminRotateOutput{Token: token, UserEmail: email}, nil
+	return &AdminRotateOutput{UserEmail: email}, nil
 }
