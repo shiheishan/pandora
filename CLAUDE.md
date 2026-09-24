@@ -260,7 +260,7 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 
 # 本项目适配说明
 
-- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api（含 admin、public）/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric/billing/appearance/support/adminops/plugin/content、panel/internal/platform/pg18test、panel/web、panel/deploy、panel/frontend 及其 dev 与 src 下的 admin/portal/shell/core/ui/styles/showcase、pdnd、pdnd/kernel、pdnd/core、nodeagent。其余目录按逆向流在进入时补建。
+- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api（含 admin、public）/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric/billing/appearance/support/adminops/plugin/content、panel/internal/platform/pg18test、panel/web、panel/deploy、panel/frontend 及其 dev（含 dev/mock、dev/mock/admin、dev/mock/portal）与 src 下的 admin（含 admin/screens）/portal（含 portal/screens）/shell/core/ui/styles/showcase、pdnd、pdnd/kernel、pdnd/core、nodeagent。其余目录按逆向流在进入时补建。
 - L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]；TS/TSX 用模板里的 `/** */`。Go 文件多已带中文设计注释，L3 加在其上方（中间空一行，不成为包文档），不改写原注释；带 `//go:build` 的文件，L3 放在构建约束与空行之后。
 - L3 按逆向流渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性播种（2026-09-23 实测：Go 1038 个、TS/TSX 102 个；已有 L3 头的 Go 19 个、TS/TSX 16 个）。
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。
