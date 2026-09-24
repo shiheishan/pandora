@@ -318,11 +318,13 @@ func (s *Service) LoadRouting(ctx context.Context, tenantID, nodeID string) ([]N
 			return err
 		}
 
+		// 节点私有规则在前、全局规则在后：节点规则覆盖全局，私有兜底规则会遮住
+		// 全局规则（后台编辑器提示）。与 loadEffectiveRoutingTx 同一口径
 		rrows, err := tx.Query(ctx, `
 			SELECT matcher, outbound_tag
 			  FROM node_routes
-			 WHERE tenant_id = $1 AND node_id = $2::uuid AND enabled
-			 ORDER BY priority, created_at`, tenantID, nodeID)
+			 WHERE tenant_id = $1 AND (node_id = $2::uuid OR node_id IS NULL) AND enabled
+			 ORDER BY (node_id IS NULL), priority, created_at`, tenantID, nodeID)
 		if err != nil {
 			return err
 		}

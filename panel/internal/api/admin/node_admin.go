@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/nodefabric 的后台节点编排与 NodeCredentials，依赖 platform/httpx
-// [OUTPUT]: 对外提供节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态与身份令牌状态（nodeIdentity）处理器
+// [OUTPUT]: 对外提供节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步退役（nodeRetire）与身份令牌状态（nodeIdentity）处理器
 // [POS]: api/admin 的节点编排处理器（后台-07 节点 tab 与抽屉），路径 id 先做 UUID 校验回 404
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -133,5 +133,34 @@ func (h *handlers) nodeIdentity(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	httpx.OK(w, out)
+}
+
+// nodeRetire 一步退役（契约后台-07）：生命周期、服务状态、身份与在途任务在一个事务里
+// 收尾，之后 DELETE 可以直接销毁。提交后通知节点端：它的配置已不再下发
+func (h *handlers) nodeRetire(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := validateAdminNodeID(id); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	var req struct {
+		RowVersion int64  `json:"row_version"`
+		Reason     string `json:"reason"`
+	}
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	tenantID := httpx.TenantIDFrom(r.Context())
+	out, err := h.d.Node.RetireNode(r.Context(), tenantID, nodefabric.RetireNodeInput{
+		ID: id, RowVersion: req.RowVersion, Reason: req.Reason,
+		ActorID: httpx.PrincipalFrom(r.Context()).UserID,
+	})
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	h.d.Node.NotifyNodeChanged(r.Context(), tenantID, id)
 	httpx.OK(w, out)
 }

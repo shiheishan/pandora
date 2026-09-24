@@ -122,6 +122,12 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 	// （身份、指标、任务、流量上报、有效令牌…），也就是只有从没用过的
 	// 草稿节点能移。批量化一个「几乎总是被拒绝」的操作没有意义，
 	// 而复制那套守卫必然和单节点路径分叉。
+	// 一步退役：不可逆，要重认证；幂等防重试把已退役节点再退一次拿到 409
+	r.With(
+		middleware.RequirePermission("node.lifecycle", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "node_retire", d.Log),
+	).Post("/nodes/{id}/retire", h.nodeRetire)
 	r.With(
 		middleware.RequirePermission("node.identity.revoke", d.Log),
 		middleware.RequireRecentReauth(d.Log),
@@ -141,6 +147,15 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		Get("/nodes/{id}/routing", h.nodeGetRouting)
 	r.With(middleware.RequirePermission("node.config.publish", d.Log)).
 		Put("/nodes/{id}/routing", h.nodeSetRouting)
+	// 全局出站与分流：静态段 routing 优先于 /nodes/{id}；发布影响全部节点，
+	// 与单节点发布同级要重认证，幂等防网络重试把全部节点的 generation 推两次
+	r.With(middleware.RequirePermission("node.read", d.Log)).
+		Get("/nodes/routing", h.nodeGetGlobalRouting)
+	r.With(
+		middleware.RequirePermission("node.config.publish", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "node_routing_global_publish", d.Log),
+	).Put("/nodes/routing", h.nodeSetGlobalRouting)
 	r.With(
 		middleware.RequirePermission("node.provision", d.Log),
 		middleware.RequireRecentReauth(d.Log),

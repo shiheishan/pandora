@@ -1,12 +1,13 @@
 // [INPUT]: 依赖 announcement 域的一次性库（openAnnouncementPG18）、step3/step4 的造数与请求辅助，依赖第 ⑤ 步的处理器
-// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18、TestUserProfileRegisteredIPPG18、TestDashboardReadModelsPG18
-// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色，风控画像的注册 IP，经营总览 / 收入上一区间 / 系统状态组件 / 日活；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
+// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18、TestUserProfileRegisteredIPPG18、TestDashboardReadModelsPG18、TestNodesStep5PG18
+// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色，风控画像的注册 IP，经营总览 / 收入上一区间 / 系统状态组件 / 日活，节点列表字段与排序、节点池成员、一步退役、全局路由；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -488,5 +489,150 @@ func TestDashboardReadModelsPG18(t *testing.T) {
 	getJSON("/v1/stats/timeseries?days=3", &stats)
 	if len(stats.Points) != 3 || stats.Points[2].ActiveUsers != 2 || stats.Points[0].ActiveUsers != 0 {
 		t.Fatalf("stats points=%+v", stats.Points)
+	}
+}
+
+func TestNodesStep5PG18(t *testing.T) {
+	ctx, admin, app := openAnnouncementPG18(t)
+	const (
+		tenant = "87000000-0000-4000-8000-000000000601"
+		actor  = "87000000-0000-4000-8000-000000000611"
+		prefix = "87000006-0000-4000-8000-"
+	)
+	step3Seed(t, ctx, admin,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','nodes5-pg18','Nodes5','CNY')`,
+		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+actor+`','`+tenant+`','ops@nodes5.invalid','Ops','active')`)
+	nodes := step3Nodes(t, ctx, admin, tenant, prefix, 3)
+	server := prefix + "0000000000a2"
+	step3Seed(t, ctx, admin,
+		// 排序：sort_order 优先、node_no 其次
+		`UPDATE nodes SET sort_order = 20 WHERE id='`+nodes[0]+`'`,
+		`UPDATE nodes SET sort_order = 10 WHERE id IN ('`+nodes[1]+`','`+nodes[2]+`')`,
+		// 服务器的控制节点是 nodes[0]，它的最近一条探针给同服务器的全部节点
+		`UPDATE servers SET control_node_id='`+nodes[0]+`' WHERE id='`+server+`'`,
+		`INSERT INTO node_metrics(tenant_id,node_id,recorded_at,cpu_bp,mem_used_mb,mem_total_mb) VALUES
+		   ('`+tenant+`','`+nodes[0]+`',now()-interval '1 minute',1234,512,2048),
+		   ('`+tenant+`','`+nodes[0]+`',now()-interval '1 hour',9000,2000,2048)`,
+		`INSERT INTO node_tasks(tenant_id,node_id,task_type,expires_at) VALUES('`+tenant+`','`+nodes[1]+`','health.check',now()+interval '1 hour')`)
+
+	h := step4Handlers(t, app)
+	r := step5Router(tenant, actor, nil, func(r chi.Router) {
+		r.Get("/v1/nodes", h.nodeList)
+		r.Get("/v1/node-pools", h.listNodePools)
+		r.Post("/v1/nodes/{id}/retire", h.nodeRetire)
+		r.Get("/v1/nodes/routing", h.nodeGetGlobalRouting)
+		r.Put("/v1/nodes/routing", h.nodeSetGlobalRouting)
+	})
+	do := func(method, path, body string, code int, dst any) string {
+		t.Helper()
+		w := step3Do(t, ctx, r, method, path, body)
+		if w.Code != code {
+			t.Fatalf("%s %s: status=%d body=%s, want %d", method, path, w.Code, w.Body.String(), code)
+		}
+		if dst != nil {
+			if err := json.Unmarshal(w.Body.Bytes(), dst); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return w.Body.String()
+	}
+
+	var list struct {
+		Nodes []struct {
+			ID              string   `json:"id"`
+			RowVersion      int64    `json:"row_version"`
+			TrafficBytes24h *int64   `json:"traffic_bytes_24h"`
+			CPUPercent      *float64 `json:"cpu_percent"`
+			MemPercent      *float64 `json:"mem_percent"`
+			MetricsAt       *string  `json:"metrics_at"`
+		} `json:"nodes"`
+	}
+	do(http.MethodGet, "/v1/nodes", "", http.StatusOK, &list)
+	if len(list.Nodes) != 3 || list.Nodes[0].ID != nodes[1] || list.Nodes[1].ID != nodes[2] || list.Nodes[2].ID != nodes[0] {
+		t.Fatalf("node order=%+v, want sort_order then node_no", list.Nodes)
+	}
+	for _, n := range list.Nodes {
+		if n.TrafficBytes24h == nil || *n.TrafficBytes24h != 0 || n.CPUPercent == nil || *n.CPUPercent != 12.34 ||
+			n.MemPercent == nil || *n.MemPercent != 25 || n.MetricsAt == nil {
+			t.Fatalf("node metrics=%+v", n)
+		}
+	}
+
+	var pools struct {
+		Pools []struct {
+			Members   []map[string]any `json:"members"`
+			PlanNames []string         `json:"plan_names"`
+		} `json:"pools"`
+	}
+	do(http.MethodGet, "/v1/node-pools", "", http.StatusOK, &pools)
+	if len(pools.Pools) != 1 || len(pools.Pools[0].Members) != 3 || pools.Pools[0].PlanNames == nil ||
+		pools.Pools[0].Members[0]["id"] != nodes[1] {
+		t.Fatalf("pools=%+v", pools)
+	}
+
+	// 一步退役：active → draining → retired，服务状态 retired，在途任务失败
+	version := map[string]int64{}
+	for _, n := range list.Nodes {
+		version[n.ID] = n.RowVersion
+	}
+	do(http.MethodPost, "/v1/nodes/"+nodes[1]+"/retire", `{"row_version":999,"reason":"x"}`, http.StatusConflict, nil)
+	do(http.MethodPost, "/v1/nodes/"+nodes[0]+"/retire", fmt.Sprintf(`{"row_version":%d}`, version[nodes[0]]), http.StatusConflict, nil)
+	do(http.MethodPost, "/v1/nodes/not-a-uuid/retire", `{"row_version":1}`, http.StatusNotFound, nil)
+	body := do(http.MethodPost, "/v1/nodes/"+nodes[1]+"/retire", fmt.Sprintf(`{"row_version":%d,"reason":"机房到期"}`, version[nodes[1]]), http.StatusOK, nil)
+	if !strings.Contains(body, `"serving_status":"retired"`) {
+		t.Fatalf("retire body=%s", body)
+	}
+	var status, serving, task string
+	var desired *int
+	if err := admin.QueryRow(ctx, `SELECT n.status, n.serving_status, n.desired_config_version,
+		(SELECT status FROM node_tasks WHERE node_id=n.id) FROM nodes n WHERE n.id=$1`, nodes[1]).
+		Scan(&status, &serving, &desired, &task); err != nil || status != "retired" || serving != "retired" || desired != nil || task != "failed" {
+		t.Fatalf("retired node status=%s serving=%s desired=%v task=%s err=%v", status, serving, desired, task, err)
+	}
+	var retireAudits int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE tenant_id=$1 AND action='node.retire'`, tenant).Scan(&retireAudits); err != nil || retireAudits != 1 {
+		t.Fatalf("node.retire audits=%d err=%v", retireAudits, err)
+	}
+	do(http.MethodPost, "/v1/nodes/"+nodes[1]+"/retire", fmt.Sprintf(`{"row_version":%d}`, version[nodes[1]]+1), http.StatusConflict, nil)
+
+	// 全局路由：空集也有 revision；发布推进全部未退役节点；旧 revision 409
+	var g struct {
+		Revision string `json:"revision"`
+		Routes   []any  `json:"routes"`
+	}
+	do(http.MethodGet, "/v1/nodes/routing", "", http.StatusOK, &g)
+	if len(g.Revision) != 64 {
+		t.Fatalf("empty revision=%q", g.Revision)
+	}
+	r0 := g.Revision
+	var put struct {
+		Revision      string `json:"revision"`
+		AffectedNodes int    `json:"affected_nodes"`
+	}
+	do(http.MethodPut, "/v1/nodes/routing", `{"expected_revision":"`+r0+`",
+		"outbounds":[{"tag":"US-LAX","type":"trojan","settings":{"server":"lax.invalid"}}],
+		"routes":[{"matcher":{"domain_suffix":"example.com"},"outbound_tag":"US-LAX","enabled":true}]}`, http.StatusOK, &put)
+	if put.AffectedNodes != 2 || put.Revision == r0 {
+		t.Fatalf("publish=%+v", put)
+	}
+	do(http.MethodGet, "/v1/nodes/routing", "", http.StatusOK, &g)
+	if g.Revision != put.Revision || len(g.Routes) != 1 {
+		t.Fatalf("after publish revision=%s routes=%d", g.Revision, len(g.Routes))
+	}
+	do(http.MethodPut, "/v1/nodes/routing", `{"expected_revision":"`+r0+`","outbounds":[],"routes":[]}`, http.StatusConflict, nil)
+	do(http.MethodPut, "/v1/nodes/routing", `{"expected_revision":"`+put.Revision+`","outbounds":[],
+		"routes":[{"matcher":{"domain_suffix":"a.test"},"outbound_tag":"nowhere","enabled":true}]}`, http.StatusUnprocessableEntity, nil)
+
+	// 节点私有规则引用了全局出站：删它 409，并点名节点
+	step3Seed(t, ctx, admin, `INSERT INTO node_routes(tenant_id,node_id,priority,matcher,outbound_tag,enabled)
+		VALUES('`+tenant+`','`+nodes[2]+`',10,'{"domain_suffix":"private.test"}','us-lax',true)`)
+	if b := do(http.MethodPut, "/v1/nodes/routing", `{"expected_revision":"`+put.Revision+`","outbounds":[],"routes":[]}`, http.StatusConflict, nil); !strings.Contains(b, "step3-node-3") {
+		t.Fatalf("referenced outbound delete body=%s", b)
+	}
+	// 生效规则：节点私有在前、全局在后
+	_, routes, err := h.d.Node.LoadRouting(ctx, tenant, nodes[2])
+	if err != nil || len(routes) != 2 || !strings.Contains(string(routes[0].Matcher), "private.test") ||
+		!strings.Contains(string(routes[1].Matcher), "example.com") {
+		t.Fatalf("effective routes=%+v err=%v", routes, err)
 	}
 }
