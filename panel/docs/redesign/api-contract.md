@@ -718,6 +718,7 @@
 - 设计：无。前端不需要单独入口。
 
 #### POST v1/plans/complete — 向导一次建成套餐（资料 + 额度 + 价格 + 线路 + 可选发布）
+- **修订 R1（2026-09-24，后端一 0651cb2）**：权限改为 `catalog.publish`，reauth 改为「是」（D-C-2）。以下原文中的权限行作废。
 - 状态：现有 `panel/internal/api/admin/catalog.go:41 createPlanComplete`
 - 权限：`catalog.write`｜reauth：否（见 D-C-2）｜幂等：是 `catalog_plan_create_complete`
 - 请求：`{ code, name, description?:string|null, visibility?:string, sort_order?:int, allow_new_purchase?:bool, allow_renewal?:bool, allow_upgrade?:bool, visible_group_ids?:uuid[], purchase_limit_per_user?:int|null, stock_total?:int|null, traffic_gb?:int64|null(null 或 0 = 不限), max_devices?:int|null(null = 不限), throttle_kbps?:int|null, quota_reset_strategy?:"never"|"natural_month"|"billing_cycle"(默认)|"fixed_day", quota_reset_day?:1..28, pool_ids?:uuid[], prices?:[{ billing_interval, interval_count:int>0, unit_amount:int64>0, currency:"CNY"|"USD", trial_days?:int }], publish:bool }`
@@ -726,6 +727,7 @@
 - 设计：后台-04「新建套餐」向导 5 步。映射：第 1 步 name / code / description；第 2 步 traffic_gb / max_devices（留空 = 不限）；第 3 步 prices（设计只让填「价格（元）」+ 周期，前端固定 `currency:"CNY"` 并 ×100；想卖 USD 需要补币种选择，见下文「后端有、设计缺」）；第 4 步 pool_ids（chip 的名称和数量来自 GET v1/plans/{id}/pools 或节点池列表）；第 5 步开关「保存后立即发布上架」→ `publish`。
 
 #### PUT v1/plans/{id}/complete — 向导一次改完套餐
+- **修订 R1（2026-09-24，后端一 0651cb2）**：权限 `catalog.publish`、reauth「是」；整个编辑在一个事务里完成，发布失败时资料、价格、新草稿版本全部回滚；`prices` 只同步本次清单里出现的币种的公开价，用户组价与其他币种不动，`[]` 等同 `null`。原文「`[]` = 全部归档」「不是原子操作」作废。
 - 状态：现有 `panel/internal/api/admin/catalog.go:64 updatePlanComplete`
 - 权限：`catalog.write`｜reauth：否（见 D-C-2）｜幂等：是 `catalog_plan_update_complete`
 - 请求：`{ expected_row_version:int64, code, name, description?:string|null, visibility:string(必须传当前值，空串会 422), sort_order:int, allow_new_purchase?:bool|null(null = 不动), allow_renewal?:bool|null, allow_upgrade?:bool|null, visible_group_ids?:uuid[], purchase_limit_per_user?:int|null, stock_total?:int|null, traffic_gb?:int64|null(null = 不动), max_devices?:int|null(null = 不动), throttle_kbps?:int|null(null = 不动), prices?:[PlanPriceInput]|null(null = 不动；[] = 全部归档), pool_ids?:uuid[]|null(null = 不动) }`。注意基本资料字段（code / name / description / visibility / visible_group_ids / purchase_limit_per_user / stock_total / sort_order）**没有**「不动」语义，每次都整体覆盖，所以必须回填当前值
@@ -888,6 +890,7 @@
 - 设计：后台-05「人工开单」弹窗。映射：用户邮箱 → 要先用用户搜索（GET v1/users?q=，分段 B）解析出 `user_id`，前端改成可搜索选择器；「套餐与周期」→ `plan_id` + `price_id`（选项来自 GET v1/plans 的在售价格）；「备注」→ `reason`（改成必填，5 字起，文案改为「开单原因（写入审计）」）；「结算方式」→ `settlement`：「赠送（0 元）」= grant，「待用户支付」= pending，「线下已收款」= offline（待补·前端：选这项时出现「凭证号」输入），「从余额扣除」= balance（取决于 D-C-3）。
 
 #### POST v1/orders/{id}/mark-paid — 手工标记已支付（线下收款）
+- **修订 R2（2026-09-24）**：响应已改为 snake_case `{ processed, already_handled, payment_id, subscription_id, ledger_txn_id }`，不再返回 `signature_failed`。
 - 状态：现有 `panel/internal/api/admin/manual_order.go:62 markOrderPaid`
 - 权限：`billing.order.write`｜reauth：是｜幂等：是 `admin_order_mark_paid`
 - 请求：`{ reason:string(5..500 字), reference:string(1..128 字，线下凭证号) }`；金额由服务端从订单读取，不接受传入
@@ -896,6 +899,7 @@
 - 设计：后台-05 抽屉「手工标记已支付」。输入框「渠道流水号 / 转账凭证」→ `reference`；待补·前端：补必填的「收款说明」→ `reason`。
 
 #### GET v1/late-payments — 挂账列表（设计里的「欠费单」）
+- **修订 R3（2026-09-24）**：响应新增 `pending_amounts`（按币种分开的待处理合计）；旧的 `pending_amount` 保留一个版本后删除，前端只用 `pending_amounts`。
 - 状态：现有 `panel/internal/api/admin/late_payment.go:14 listLatePayments`；待补·后端（扩展）
 - 权限：`billing.ledger.read`｜reauth：否｜幂等：否
 - 请求：`status?: ""|"suspense"|"applied"|"refunded"|"manual_review"|"refund_pending"`（空 = 全部，排序时 suspense 排最前），`limit?:1..100`（默认 25），`offset?:int>=0`
@@ -956,6 +960,7 @@
 ### 后台-06 营销（tab：优惠券 / 礼品卡 / 佣金与提现）
 
 #### GET v1/coupons — 优惠券列表
+- **修订 R6（2026-09-24）**：权限改为 `marketing.coupon.read`（迁移 00068 新增，授给所有持有 `marketing.coupon.write` 的角色）。
 - 状态：现有 `panel/internal/api/admin/coupon.go:49 listCoupons`
 - 权限：`marketing.coupon.write`（没有只读权限）｜reauth：否｜幂等：否
 - 请求：`q?:string`（对 code、name 小写子串匹配），`status?:string`（LIKE 模式：`active`/`paused`/`expired`/`exhausted`），`limit?:1..200`（默认 25），`offset?:int>=0`
@@ -980,6 +985,7 @@
 - 设计：后台-06「新建优惠券」内联表单：优惠码 → `code`；类型 pct / off → `percent` / `fixed`；数值：pct 填 15 → `discount_value: 1500`，off 填 ¥10 → `1000`；「每码可用次数」→ `max_redemptions`。待补·前端：补「有效期至」（列表有这一列，表单没有）、「适用套餐」多选、「每人限用」、「门槛金额」、「封顶优惠」（percent 时）。
 
 #### POST v1/coupons/batch — 批量生成优惠券
+- **修订 R5（2026-09-24）**：幂等改为「是」，scope `coupon_batch_generate`。
 - 状态：现有 `panel/internal/api/admin/coupon_batch.go:76 generateCoupons`
 - 权限：`marketing.coupon.write`｜reauth：是｜幂等：否（批量写操作按惯例应该幂等，见核对笔记）
 - 请求：`{ count:1..1000, prefix?:string(大写字母数字，≤8 位), name:string(必填，同批共用), 以及 POST v1/coupons 除 code 以外的全部字段 }`；`max_redemptions` 默认 1（每码一次）
@@ -1057,6 +1063,7 @@
 - 设计：后台-06「使用记录」：码 / 用户 / 获得内容（由 granted 拼：「余额 +¥100」「流量 +100 GB」「+30 天」；plan 卡 granted 里没有套餐信息，用 template_name 代替；mystery 显示 `prize_label`）/ 时间。
 
 #### POST v1/gift-cards — 新建或保存礼品卡模板
+- **修订 R4（2026-09-24）**：reauth 改为「是」。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:36 saveGiftTemplate`
 - 权限：`marketing.giftcard.write`｜reauth：否｜幂等：否
 - 请求：`{ id?:uuid(留空 = 新建，有值 = 更新), name:string(1..120), description?:string, type:"general"|"plan"|"mystery"(更新时不能改), status?:"active"(默认)|"paused"|"archived", rewards:{…同上}, conditions:{…}, limits:{…}, theme_color?:string }`
@@ -1082,6 +1089,7 @@
 - 设计：后台-06 码行「停用 / 启用」；已兑换的码禁用按钮（与设计一致）。
 
 #### GET v1/commission/overview — 分销总览与当前配置
+- **修订 R6（2026-09-24）**：权限改为 `marketing.commission.read`。
 - 状态：现有 `panel/internal/api/admin/commission.go:251 commissionOverview`；待补·后端（扩展）
 - 权限：`billing.order.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1091,6 +1099,7 @@
 - 设计：后台-06「佣金与提现」四个统计：累计佣金 `total_earned`、冻结中 `pending`、已提现 `paid_out`、邀请注册 `invited_users`；设置表单的初值：`rate_percent`、`scope`、`freeze_days`、`min_withdraw ÷ 100`。
 
 #### GET v1/withdrawals — 提现申请列表
+- **修订 R6（2026-09-24）**：权限改为 `marketing.commission.read`。
 - 状态：现有 `panel/internal/api/admin/commission.go:28 listWithdrawals`
 - 权限：`billing.order.read`｜reauth：否｜幂等：否
 - 请求：`status?: "requested"|"reviewing"|"approved"|"rejected"|"processing"|"paid"|"failed"|"returned"`（精确匹配，不分页，最近 200 条）
@@ -1099,6 +1108,7 @@
 - 设计：后台-06 提现列表。状态映射：`requested`/`reviewing` →「待审核」，`approved`/`processing` →「待打款」，`paid` →「已打款」，`rejected` →「已拒绝」，`failed`/`returned` →「打款失败 / 已退回」（设计缺，待补·前端）。收款信息 `payout_detail`；建议在金额旁显示 `earned_total`（后端专门留出来核对提现是否合理的字段，设计缺，待补·前端）。
 
 #### POST v1/withdrawals/{id}/review — 审批提现
+- **修订 R6（2026-09-24）**：权限改为 `marketing.withdrawal.approve`。
 - 状态：现有 `panel/internal/api/admin/commission.go:89 reviewWithdrawal`
 - 权限：`billing.provider.write`｜reauth：是｜幂等：否
 - 请求：`{ action:"approve"|"reject", reason?:string(reject 时必填；approve 时必须为空) }`
@@ -1107,6 +1117,7 @@
 - 设计：后台-06「通过 / 拒绝」。设计里「通过」没有确认框，后端要求 reauth，前端要走重认证；「拒绝」确认框补必填的拒绝理由（待补·前端）。设计写的「金额退回用户佣金余额」：拒绝时只改状态、不动账（钱在打款之前一直没离开账本），文案可以保留。
 
 #### POST v1/withdrawals/{id}/paid — 记录已打款（动账）
+- **修订 R6（2026-09-24）**：权限改为 `marketing.withdrawal.approve`。
 - 状态：现有 `panel/internal/api/admin/commission.go:165 markWithdrawalPaid`
 - 权限：`billing.provider.write`｜reauth：是｜幂等：是 `commission_withdrawal_mark_paid`
 - 请求：`{ payout_reference:string(必填，转账流水号) }`
@@ -1115,6 +1126,7 @@
 - 设计：后台-06「打款」确认框。待补·前端：补必填的「转账流水号」。
 
 #### POST v1/commission/config — 修改分销参数
+- **修订 R4 / R6（2026-09-24）**：reauth 改为「是」；权限改为 `marketing.commission.write`（迁移 00068 新增，授给当前持有 `billing.provider.write` 的角色）。
 - 状态：现有 `panel/internal/api/admin/commission.go:312 setCommissionConfig`；待补·后端（扩展：计佣范围）
 - 权限：`billing.provider.write`｜reauth：否｜幂等：否
 - 请求（现有）：`{ rate_percent?:0..50, freeze_days?:0..90, min_withdraw?:int64>=0(分) }`（字段可省，省略的不改）
@@ -1950,6 +1962,7 @@
 - 设计：结账页「提交订单并支付」。映射：设计把「余额」当成四选一支付方式，后端是**抵扣金额**——结账页改为「使用余额抵扣（可用 ¥X）」开关 + 外部支付方式单选；开关打开时 `use_balance = min(余额, 优惠后应付)`；抵扣后 payable=0 时隐藏支付方式、按钮文案「确认支付」；订单预览「余额抵扣」行显示 balance_applied。「剩余天数折算：差价已计入」只在变更套餐（change-plan）时出现，新购无此行。用户已有可用订阅且选了其他套餐时走 `POST v1/me/subscriptions/{id}/change-plan`，选了同套餐走 renew，没有订阅走本接口。
 
 #### POST v1/orders/{id}/pay — 发起支付，取收银台跳转
+- **修订 R8（2026-09-24）**：支付渠道已停用时回 503「该支付渠道已停用」（原为 500）。
 - 状态：现有 `panel/internal/api/public/handlers.go:562 payOrder`（domain `billing/payments.go:157 CreatePaymentIntent`，epay 适配 `domain/payment/epay/epay.go:123`）
 - 权限：登录用户｜reauth：否｜幂等：否（服务层行锁复用在途意图：同渠道重复点击回同一收银台，reused=true；换渠道作废旧意图重建）
 - 请求：`{ provider: string(payment-methods 的 provider), method?: string(payment-methods 的 method), return_url?: string(必须以 PublicBaseURL + "/" 开头，否则回落 PublicBaseURL + "/#orders") }`
@@ -2106,6 +2119,7 @@
   - 横幅文案「好友首单，您得 20% 佣金」：数字取 `summary.rate_percent`。「首单」二字只在营销分段补出「仅首单返佣」配置后才成立；在那之前前端写「好友每笔订单」。
 
 #### POST v1/me/withdrawals — 申请佣金提现
+- **修订 R5（2026-09-24）**：幂等改为「是」，scope `commission_withdrawal_request`；可提现金额按 D-F-1 统一口径（账本余额 − 在途提现）。
 - 状态：现有 `panel/internal/api/public/handlers.go:886 requestWithdrawal`
 - 权限：登录用户｜reauth：否｜幂等：否（后端限制同一时间只能有一笔在途提现，重复提交会回 409；按「动钱写操作」惯例建议补幂等，但本段不强制）
 - 请求：`{ amount: int64(分), payout_detail: string(收款方式，非空；信封加密落库) }`
@@ -2118,6 +2132,7 @@
   - 映射：最低额取 `summary.min_withdraw`，不写死 ¥100。设计输入框占位是「支付宝账号 / USDT 地址」，改为「支付宝账号 / 银行卡号」，不做 USDT。成功后 invalidate `v1/me/commission`。
 
 #### POST v1/me/commission/transfer — 佣金转入余额
+- **修订 R7（2026-09-24）**：可用金额按 D-F-1 统一口径；409 文案改为「可提现佣金不足……提现处理中的金额也不能再转」。
 - 状态：现有 `panel/internal/api/public/selfservice.go:26 transferCommission`
 - 权限：登录用户｜reauth：否｜幂等：是 `commission_transfer_to_balance`
 - 请求：`{ amount: int64(分，>0) }`
@@ -2927,3 +2942,18 @@
 - `router.go` 的 L3 头部 [POS] 还写着「/ 手写门户、/app/ React 候选」，与第 1 阶段之后的 `webapp.Mount` 现状不符。这是 SEVERE-001 L3 过时，由协调会话在合并 router.go 时一并修正。
 - 新站内信没有 SSE 事件，只有工单有 `ticket.updated`。铃铛角标需要前端轮询。
 - `commission_entries.status` 的 CHECK 允许 frozen/settled/rejected，但 Go 只会写入 pending、available，冲销时由 SQL（00040）写入 reversed。「冻结」在语义上是 pending 且 frozen_until 在未来。
+
+## 9. 修订记录
+
+> 契约发布后按实现回写的修改。条目里以「修订 Rn」开头的行优先于该条目原文。
+
+| 编号 | 日期 | 来源 | 内容 |
+|---|---|---|---|
+| R1 | 2026-09-24 | 后端一 0651cb2 | 套餐向导两条路由改 `catalog.publish` + reauth；编辑单事务、价格同步只动提交的币种 |
+| R2 | 2026-09-24 | 后端一 0651cb2 | mark-paid 响应改 snake_case |
+| R3 | 2026-09-24 | 后端一 0651cb2 | 挂账列表新增按币种的 `pending_amounts` |
+| R4 | 2026-09-24 | 后端一 0651cb2 | 礼品卡模板保存、分销参数修改加 reauth |
+| R5 | 2026-09-24 | 后端一 0651cb2 | 批量生成优惠券、门户申请提现加幂等 |
+| R6 | 2026-09-24 | 后端一 0651cb2 | 优惠券与分销路由改用营销域权限码（迁移 00068） |
+| R7 | 2026-09-24 | 后端一 0651cb2 | 佣金可用额统一口径，转余额 409 文案 |
+| R8 | 2026-09-24 | 后端一 0651cb2 | 支付渠道停用时发起支付回 503 |
