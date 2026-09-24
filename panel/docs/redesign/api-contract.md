@@ -979,6 +979,7 @@
 - 设计：后台-06「优惠券」tab。分段「全部 / 启用中 / 已停用」→ 不传 / `active` / `paused`；`expired`、`exhausted` 在「全部」里显示为「已过期」「已用完」标签（设计缺，待补·前端）。列：优惠码 `code`，批次标签在 `name != code` 时显示 `name`（后端没有 batch 概念，靠同名归批；「· N 张」需要按 name 再查一次 total，建议去掉），优惠（percent：`discount_value/100` %，fixed：`discount_value/100` 元），适用套餐（`applicable_plan_ids` 为空 →「全部套餐」，否则映射成套餐名），使用 `redeemed_count / max_redemptions`（null →「不限」），有效期至 `valid_until`（null →「长期」），启用开关 `status=active`。
 
 #### GET v1/coupons/{id}/redemptions — 单张券的兑换记录
+- **修订 R6（2026-09-24，后端一 0f83ca4）**：权限改为 `marketing.coupon.read`。
 - 状态：现有 `panel/internal/api/admin/coupon.go:315 couponRedemptions`
 - 权限：`marketing.coupon.write` + `billing.order.read`｜reauth：否｜幂等：否
 - 请求：路径 `id: uuid`（最近 200 条）
@@ -1030,6 +1031,7 @@
 - 设计：后台-06 礼品卡四个统计：已发行 `codes_total`、已兑换 `codes_used`、兑换率 = used ÷ total（前端算）、面额合计 `balance_issued`（扩展前可以先用 `balance_out`，同时把标签改成「已兑出余额」）。
 
 #### GET v1/gift-cards/codes — 卡码列表
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：只返回 `code_masked`（前缀 + 随机段前 4 位，其余为 •），不再返回明文码。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:92 listGiftCodes`；待补·后端（改：掩码）
 - 权限：`marketing.giftcard.read`｜reauth：否｜幂等：否
 - 请求：`template_id?:uuid, status?:""|"unused"|"used"|"disabled"|"expired", batch_id?:uuid, limit?:1..5000(默认 50), offset?:int`
@@ -1039,6 +1041,7 @@
 - 设计：后台-06「批次与卡码」右侧码列表：码 `code_masked`、状态（unused「可用」/ used「已兑换」/ disabled「已停用」/ expired「已过期」，最后一项设计缺，待补·前端）、兑换人 `used_email`、行内启停。
 
 #### GET v1/gift-cards/codes/export — 导出卡码 CSV（现状：可反复导出明文）
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：**已下线**，路由与处理器删除，由 `POST v1/gift-cards/batches/{id}/export` 取代。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:113 exportGiftCodes`；待补·后端（下线，由 POST v1/gift-cards/batches/{batch_id}/export 取代）
 - 权限：`marketing.giftcard.read`｜reauth：否｜幂等：否
 - 请求：`template_id?, status?, batch_id?`（最多 5000 行）
@@ -1047,6 +1050,7 @@
 - 设计：现有行为是任何有只读权限的管理员都能无限次导出全部明文码，没有重认证，也不写审计。这与设计「一次性导出、导出后只能看掩码」直接冲突。按设计改：新接口上线后这条路由删除（或固定回 404），前端不再调用。
 
 #### GET v1/gift-cards/batches — 批次列表
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：已实现（迁移 00069），只读权限。
 - 状态：待补·后端
 - 权限：`marketing.giftcard.read`｜reauth：否｜幂等：否
 - 请求：`template_id?:uuid, limit?:1..200(默认 50), offset?:int>=0`
@@ -1056,6 +1060,7 @@
 - 需迁移：新表 `gift_card_batches(id uuid PK, tenant_id, template_id FK, prefix text, count int, expires_at, created_by uuid, created_at, exported_at timestamptz NULL, exported_by uuid NULL)`，开启租户 RLS；按 `gift_card_codes.batch_id` 分组回填存量批次（存量批次的 `exported_at` 怎么填见 D-C-4）；GenerateCodes 同一事务里写批次行；gift_card_codes.batch_id 补指向新表的外键。
 
 #### POST v1/gift-cards/batches/{id}/export — 一次性导出批次明文卡码
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：已实现。请求体必须是 `{}`（空体 400）；第二次导出回 409；审计只记数量不记码。同一幂等键重试时只重放 `Content-Type` 与 `Cache-Control`，**不带 `Content-Disposition`**，前端自行把文件名拼成 `gift-codes-<批次号前 8 位>.csv`；幂等层缓存上限 1 MiB，超大批次重试可能拿不回文件。存量批次按 D-C-4 已全部记为已导出。
 - 状态：待补·后端
 - 权限：`marketing.giftcard.write`｜reauth：是｜幂等：是 `giftcard_batch_export`（同 key 重放必须返回同一份 CSV，也就是在幂等窗口内允许重新下载同一次导出的结果）
 - 请求：`{}`
@@ -1065,6 +1070,7 @@
 - 需迁移：用上一条的 `gift_card_batches.exported_at` / `exported_by`（不另外计数）。
 
 #### GET v1/gift-cards/usages — 兑换记录
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：只返回 `code_masked`。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:172 listGiftUsages`；待补·后端（改：掩码）
 - 权限：`marketing.giftcard.read`｜reauth：否｜幂等：否
 - 请求：`template_id?:uuid`（最近 200 条）
@@ -1082,6 +1088,7 @@
 - 设计：后台-06「＋ 新建模板」。设计点一下就建出一个固定内容的占位模板，这样不行（后端必须有真实奖励才能保存）。待补·前端：补一个模板编辑抽屉，包含类型、名称、说明、奖励（general：余额 / 流量 / 延长天数 / 重置流量；plan：套餐 + 价格；mystery：奖池的名称、权重、奖励）、领取条件（仅新用户 / 仅付费用户 / 限定套餐 / 必须被邀请）、限制（每人次数 / 冷却小时）、主题色、状态（暂停 / 归档）。卡片上的「编辑」也打开这个抽屉。
 
 #### POST v1/gift-cards/{id}/codes — 为模板生成一批卡码
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：响应改为 `{ batch_id, count, sample, batch }`，`sample` 只含前 4 张明文，完整明文只能通过一次性导出获取。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:63 generateGiftCodes`；待补·后端（改响应）
 - 权限：`marketing.giftcard.write`｜reauth：是｜幂等：是 `giftcard_codes_generate`
 - 请求：`{ count:1..5000, prefix?:string(大写字母数字，≤8 位), expires_at?:RFC3339(不能早于现在) }`
@@ -1091,6 +1098,7 @@
 - 设计：后台-06 模板卡「生成一批码」。待补·前端：补数量、前缀、有效期三个输入（设计固定写死 100 张）。生成后弹出「仅此一次可见」：显示 `sample` 加「…」；「导出 CSV」调 POST v1/gift-cards/batches/{batch_id}/export；「已保存，关闭」只是关闭弹窗，批次保持未导出，之后在批次列表里还能导出一次。
 
 #### POST v1/gift-cards/codes/{id}/toggle — 停用 / 恢复单个卡码
+- **修订 R17（2026-09-24，后端一 0f83ca4）**：审计里的卡码改记掩码。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:148 toggleGiftCode`
 - 权限：`marketing.giftcard.write`｜reauth：否（有意设计：发现异常时要能立刻止血）｜幂等：否
 - 请求：`{ disabled:bool }`
@@ -2983,3 +2991,5 @@
 | R14 | 2026-09-24 | 后端二 62f7283 | 三个测试发送接口权限改 `ops.notification.write` |
 | R15 | 2026-09-24 | 后端二 62f7283 | 门户会话列表与吊销只作用于 public 会话（缺陷 6） |
 | R16 | 2026-09-24 | 后端二 62f7283 | 注册验证码经 notify 按地址投递（迁移 00074 模板种子），注册事务提交后立即派发（缺陷 1） |
+| R17 | 2026-09-24 | 后端一 0f83ca4 | 礼品卡批次与一次性导出（迁移 00069），码全面掩码，旧导出下线，生码只回样例；优惠券兑换记录改读权限 |
+| R18 | 2026-09-24 | 后端一 0f83ca4 | 充值单结算后同事务 paid→fulfilled 是既有有意行为，两个 PG18 测试的过时断言已更正 |
