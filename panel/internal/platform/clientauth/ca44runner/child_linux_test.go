@@ -53,8 +53,11 @@ func TestRunProtectedChildHasExactDeclaredDescriptorSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.exitCode != 0 || result.signal != 0 || result.timedOut {
+		// helper 里 t.Fatal 的输出走的是子进程 stdout，只打印 stderr 会丢掉失败原因。
+		stdout, _, _ := result.stdout.Snapshot()
 		stderr, _, _ := result.stderr.Snapshot()
-		t.Fatalf("unexpected helper result: %+v stderr=%q", result, stderr)
+		t.Fatalf("unexpected helper result: exit=%d signal=%d timedOut=%v stdout=%q stderr=%q",
+			result.exitCode, result.signal, result.timedOut, stdout, stderr)
 	}
 	if err := result.stdout.MatchExact([]byte("fd-layout=OK\n")); err != nil {
 		stdout, _, _ := result.stdout.Snapshot()
@@ -147,8 +150,12 @@ func TestCA44ProcessGroupHelper(t *testing.T) {
 				continue
 			}
 			if flags&unix.FD_CLOEXEC == 0 {
-				t.Fatalf("undeclared inherited descriptor: %d", fd)
+				target, _ := os.Readlink("/proc/self/fd/" + entry.Name())
+				t.Errorf("undeclared inherited descriptor: %d -> %s", fd, target)
 			}
+		}
+		if t.Failed() {
+			t.FailNow()
 		}
 		for fd := 0; fd <= 5; fd++ {
 			if !seen[fd] {
