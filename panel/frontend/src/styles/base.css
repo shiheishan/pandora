@@ -1,0 +1,88 @@
+/**
+ * [INPUT]: 依赖 tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供元素默认样式（盒模型、页面底色与正文、表单继承字体、链接、选区、键盘焦点）与两个工具类 .mono / .num
+ * [POS]: styles 的基础层，被 index.css 在令牌之后引入；组件样式（CSS Modules）叠在它上面
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--body-size);
+  line-height: var(--body-leading);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-size-adjust: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--link);
+  text-decoration: var(--link-decoration);
+  text-decoration-color: var(--link-underline);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  color: var(--link-hover);
+  text-decoration: underline;
+}
+
+::selection {
+  background: var(--brand-soft);
+}
+
+/* 键盘焦点只在 :focus-visible 出现，鼠标点击不显示 */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* 后台是长表格密集界面，滚动条收窄并跟随边框色 */
+:root[data-app='admin'] *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:root[data-app='admin'] *::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Mono 只用于要逐字核对的内容 */
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* 金额与流量用 Geist 加等宽数字，不用 Mono */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
