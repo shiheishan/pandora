@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerDashboardRoutes
-// [POS]: api/admin 路由表的「仪表盘概览、收入趋势与调账、流量排行、通知积压」段，由 NewRouter 按原注册顺序调用；处理器在 dashboard.go / revenue.go
+// [POS]: api/admin 路由表的「仪表盘概览、收入趋势与调账、流量排行、通知积压、需要处理」段，由 NewRouter 按原注册顺序调用；处理器在 dashboard.go / revenue.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -29,6 +29,9 @@ func registerDashboardRoutes(r chi.Router, d Deps, h *handlers) {
 	).Get("/dashboard/traffic/users", h.dashboardUserTraffic)
 	r.With(middleware.RequirePermission("ops.notification.read", d.Log)).
 		Get("/dashboard/backlog/notifications", h.dashboardNotificationBacklog)
+	// 「需要处理」：路由权限只放行汇总卡本身，每一项由处理器按原读权限过滤
+	r.With(middleware.RequirePermission("ops.dashboard.read", d.Log)).
+		Get("/dashboard/tasks", h.dashboardTasks)
 	r.With(
 		middleware.RequirePermission("billing.adjustment.write", d.Log),
 		middleware.RequireRecentReauth(d.Log),

@@ -89,6 +89,8 @@ func TestDashboardRoutePermissionContracts(t *testing.T) {
 		"/dashboard/traffic/nodes":         {handler: "h.dashboardNodeTraffic", permissions: []string{"metering.read", "node.read"}},
 		"/dashboard/traffic/users":         {handler: "h.dashboardUserTraffic", permissions: []string{"iam.user.read", "metering.read"}},
 		"/dashboard/backlog/notifications": {handler: "h.dashboardNotificationBacklog", permissions: []string{"ops.notification.read"}},
+		// 「需要处理」只挂 M9 的汇总权限，各项在处理器里按原读权限过滤
+		"/dashboard/tasks": {handler: "h.dashboardTasks", permissions: []string{"ops.dashboard.read"}},
 	}
 	got := loadDashboardRoutes(t)
 	if !reflect.DeepEqual(got, want) {

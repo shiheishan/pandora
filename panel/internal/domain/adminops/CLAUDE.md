@@ -11,7 +11,8 @@ catalog.go: 套餐目录读写与上下架
 plan_wizard.go / plan_wizard_update.go: 一次建成 / 一次改完一个可售套餐
 order_detail.go: 订单详情与商品快照
 revenue.go: 收入读模型
-dashboard.go: 仪表盘读模型与流量排行
+dashboard.go: 仪表盘读模型与流量排行、通知投递积压（scanNotificationBacklog 为唯一口径）
+dashboard_tasks.go: 「需要处理」汇总 DashboardTasks：六项各挂原读权限（提现挂 marketing.commission.read），调用方没权限的项不查也不出现；工单等待从用户最后一次发言算，离线节点口径同 GET v1/nodes 的 stale
 bulk_users.go / bulk_mail.go: 用户批量筛选、导出、生成与群发
 *_test.go: 单元与契约测试；catalog_sales_pg18_test.go 与 users_pg18_test.go 为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域）
 

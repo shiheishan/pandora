@@ -12,7 +12,7 @@ access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两�
 audit_log.go: 审计日志列表与 CSV 导出（security.audit.read + ops.export + reauth），导出日期区间格式错回 422，自由文本列做公式防护
 risk.go: 风控共享 IP 聚类：列表补明文 IP、归属地与 high/mid/low 分级，标记为正常，批量停用聚类内账号
 profile.go: IP 解密助手、用户风控画像、注册与活跃时序
-dashboard.go / revenue.go / system_status.go: 仪表盘流量排行、收入趋势与调整、系统状态（备份、数据库、后台作业）
+dashboard.go / revenue.go / system_status.go: 仪表盘流量排行、通知积压、「需要处理」汇总（路由挂 ops.dashboard.read，逐项按主体权限过滤）、收入趋势与调整、系统状态（备份、数据库、后台作业）
 bulk_users.go / usergroup.go / devices.go / traffic_reset.go: 用户批量筛选导出生成群发、用户组、设备数限制、流量重置日志
 catalog.go: 套餐目录、向导一次建成 / 改完、版本与价格
 manual_order.go / late_payment.go: 人工开单与线下收款、挂账转余额

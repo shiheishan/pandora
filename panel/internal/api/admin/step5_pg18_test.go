@@ -1,11 +1,12 @@
 // [INPUT]: 依赖 announcement 域的一次性库（openAnnouncementPG18）、step3/step4 的造数与请求辅助，依赖第 ⑤ 步的处理器
-// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18
-// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
+// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18
+// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -17,14 +18,14 @@ import (
 
 // step5Router 把被测处理器挂在一个带租户与主体的路由上；主体带会话且刚重认证过。
 // 权限与重认证中间件不在这里验，由 TestStep5RouteProtections 钉住路由声明。
-func step5Router(tenant, actor string, mount func(chi.Router)) http.Handler {
+func step5Router(tenant, actor string, perms []string, mount func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			c := httpx.WithTenantID(req.Context(), tenant)
 			c = httpx.WithPrincipal(c, &httpx.Principal{Kind: "admin", Audience: "admin",
 				UserID: actor, TenantID: tenant, SessionID: "0190a000-0000-7000-8000-00000000c0de",
-				ReauthedRecently: true})
+				ReauthedRecently: true, Permissions: perms})
 			next.ServeHTTP(w, req.WithContext(c))
 		})
 	})
@@ -51,7 +52,7 @@ func TestSiteSettingsPG18(t *testing.T) {
 	}
 
 	h := step4Handlers(t, app)
-	r := step5Router(tenant, actor, func(r chi.Router) {
+	r := step5Router(tenant, actor, nil, func(r chi.Router) {
 		r.Get("/v1/settings/site", h.getSiteSettings)
 		r.Post("/v1/settings/site", h.setSiteSettings)
 	})
@@ -79,5 +80,123 @@ func TestSiteSettingsPG18(t *testing.T) {
 	}
 	if w := step3Do(t, ctx, r, http.MethodGet, "/v1/settings/site", ""); !strings.Contains(w.Body.String(), `"timezone":"America/New_York"`) {
 		t.Fatalf("get after set: %s", w.Body.String())
+	}
+}
+
+func TestDashboardTasksPG18(t *testing.T) {
+	ctx, admin, app := openAnnouncementPG18(t)
+	const (
+		tenant = "87000000-0000-4000-8000-000000000101"
+		actor  = "87000000-0000-4000-8000-000000000111"
+		pre    = "87000000-0000-4000-8000-"
+	)
+	step3Seed(t, ctx, admin,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','tasks-pg18','Tasks','CNY')`,
+		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+actor+`','`+tenant+`','ops@tasks.invalid','Ops','active')`)
+	nodes := step3Nodes(t, ctx, admin, tenant, pre, 4)
+	step3Seed(t, ctx, admin,
+		// 在线、离线 10 分钟、从没心跳（也算离线）、已退役（不算）
+		`UPDATE nodes SET last_heartbeat_at = now() WHERE id='`+nodes[0]+`'`,
+		`UPDATE nodes SET last_heartbeat_at = now() - interval '10 minutes' WHERE id='`+nodes[1]+`'`,
+		`UPDATE nodes SET serving_status='retired', last_heartbeat_at = now() - interval '1 day' WHERE id='`+nodes[3]+`'`)
+
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`SET LOCAL session_replication_role = replica`,
+		// 工单：两张待处理（一张高优先级、用户 2 小时前追问过），一张已解决不算
+		`INSERT INTO tickets(id,tenant_id,ticket_no,user_id,subject,priority,status,created_at) VALUES
+		   ('` + pre + `0000000000c1','` + tenant + `','T-1','` + actor + `','a','urgent','pending_agent',now()-interval '5 hours'),
+		   ('` + pre + `0000000000c2','` + tenant + `','T-2','` + actor + `','b','normal','open',now()-interval '1 hour'),
+		   ('` + pre + `0000000000c3','` + tenant + `','T-3','` + actor + `','c','high','resolved',now()-interval '9 hours')`,
+		`INSERT INTO ticket_messages(tenant_id,ticket_id,author_kind,body,created_at) VALUES
+		   ('` + tenant + `','` + pre + `0000000000c1','user','again',now()-interval '2 hours')`,
+		// 提现：两笔待审（两个币种），一笔已打款不算
+		`INSERT INTO withdrawals(tenant_id,user_id,currency,amount,status) VALUES
+		   ('` + tenant + `','` + actor + `','CNY',12800,'requested'),
+		   ('` + tenant + `','` + actor + `','USD',500,'reviewing'),
+		   ('` + tenant + `','` + actor + `','CNY',999,'paid')`,
+		// 订单：一张超过 30 分钟仍待支付，一张刚下
+		`INSERT INTO orders(tenant_id,order_no,user_id,kind,status,currency,subtotal_amount,discount_amount,
+		    tax_amount,total_amount,balance_applied,payable_amount,expires_at,business_request_id,created_at) VALUES
+		   ('` + tenant + `','TASKS-1','` + actor + `','new','pending_payment','CNY',100,0,0,100,0,100,now(),gen_random_uuid(),now()-interval '1 hour'),
+		   ('` + tenant + `','TASKS-2','` + actor + `','new','pending_payment','CNY',100,0,0,100,0,100,now()+interval '30 minutes',gen_random_uuid(),now())`,
+	} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("seed: %v\nSQL: %s", err, sql)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	h := step4Handlers(t, app)
+	get := func(perms []string) map[string]map[string]any {
+		t.Helper()
+		r := step5Router(tenant, actor, perms, func(r chi.Router) { r.Get("/v1/dashboard/tasks", h.dashboardTasks) })
+		w := step3Do(t, ctx, r, http.MethodGet, "/v1/dashboard/tasks", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("tasks: status=%d body=%s", w.Code, w.Body.String())
+		}
+		var body struct {
+			AsOf  string           `json:"as_of"`
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.AsOf == "" {
+			t.Fatalf("decode %s: %v", w.Body.String(), err)
+		}
+		out := map[string]map[string]any{}
+		for _, it := range body.Items {
+			out[it["kind"].(string)] = it
+		}
+		return out
+	}
+
+	all := get([]string{"ops.dashboard.read", "ops.ticket.read", "marketing.commission.read", "node.read",
+		"billing.order.read", "ops.notification.read", "billing.ledger.read"})
+	if len(all) != 6 {
+		t.Fatalf("items=%v, want all six kinds", all)
+	}
+	num := func(kind, field string) float64 { return all[kind][field].(float64) }
+	if num("tickets_open", "count") != 2 || num("tickets_open", "high_priority") != 1 {
+		t.Fatalf("tickets_open=%v", all["tickets_open"])
+	}
+	// 最久等待按用户最后一次发言算：5 小时前建的单、2 小时前追问 → 约 2 小时，1 小时前的新单更短
+	if wait := num("tickets_open", "oldest_wait_seconds"); wait < 7100 || wait > 7400 {
+		t.Fatalf("oldest_wait_seconds=%v, want about 7200", wait)
+	}
+	w := all["withdrawals_pending"]
+	amounts, _ := json.Marshal(w["amounts"])
+	if w["count"].(float64) != 2 || string(amounts) != `[{"amount":12800,"currency":"CNY"},{"amount":500,"currency":"USD"}]` {
+		t.Fatalf("withdrawals_pending=%v amounts=%s", w, amounts)
+	}
+	n := all["nodes_offline"]
+	sample, _ := n["sample"].([]any)
+	if n["count"].(float64) != 2 || len(sample) != 2 || sample[0].(map[string]any)["id"] != nodes[1] {
+		t.Fatalf("nodes_offline=%v", n)
+	}
+	if off := n["longest_offline_seconds"].(float64); off < 590 || off > 700 {
+		t.Fatalf("longest_offline_seconds=%v, want about 600", off)
+	}
+	if num("orders_pending_stale", "count") != 1 || num("orders_pending_stale", "threshold_seconds") != 1800 {
+		t.Fatalf("orders_pending_stale=%v", all["orders_pending_stale"])
+	}
+	if nb := all["notifications_backlog"]; nb["queued"].(float64) != 0 || nb["backlog_state"] != "clear" {
+		t.Fatalf("notifications_backlog=%v", nb)
+	}
+	if num("ledger_drift", "count") != 0 {
+		t.Fatalf("ledger_drift=%v", all["ledger_drift"])
+	}
+
+	// 只有工单读权限：只出现工单一项，其余不查也不出现
+	only := get([]string{"ops.dashboard.read", "ops.ticket.read"})
+	if len(only) != 1 || only["tickets_open"] == nil {
+		t.Fatalf("filtered items=%v, want only tickets_open", only)
+	}
+	if none := get([]string{"ops.dashboard.read"}); len(none) != 0 {
+		t.Fatalf("no item permissions, items=%v", none)
 	}
 }
