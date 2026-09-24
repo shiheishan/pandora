@@ -14,8 +14,8 @@ profile.go: IP 解密助手、用户风控画像、注册与活跃时序
 dashboard.go / revenue.go / system_status.go: 仪表盘流量排行、收入趋势与调整、系统状态（备份、数据库、后台作业）
 bulk_users.go / usergroup.go / devices.go / traffic_reset.go: 用户批量筛选导出生成群发、用户组、设备数限制、流量重置日志
 catalog.go: 套餐目录、向导一次建成 / 改完、版本与价格
-manual_order.go / late_payment.go: 人工开单与线下收款、挂账转余额
-coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券、批量生券、礼品卡与批次一次性导出、分销与提现审批
+manual_order.go / late_payment.go: 人工开单（settlement: grant 赠送 / pending 待用户支付）与线下收款、挂账转余额
+coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id 非 UUID 回中性 404）、批量生券、礼品卡与批次一次性导出、分销（总览带累计佣金、邀请数与计佣范围 scope）与提现审批
 node_admin.go: 节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态，节点身份与令牌状态 nodeIdentity
 server.go / pools.go: 服务器（物理宿主）读写与状态、节点分组
 announce.go / content.go: 公告（草稿 / 定时 / 撤回）、知识库版本

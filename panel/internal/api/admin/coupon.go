@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 coupons / coupon_redemptions / users / orders 表，依赖 platform 的 db/httpx/audit、chi 的路径参数
+// [OUTPUT]: 对包内提供优惠券列表、新建、启停与兑换记录处理器
+// [POS]: api/admin 后台-06 优惠券的 HTTP 外壳与读写：券只停用不删除；路径 id 非 UUID 一律中性 404；批量生成在 coupon_batch.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 优惠券管理。
@@ -12,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/audit"
@@ -267,6 +273,11 @@ func normalizeCouponReq(req *createCouponReq, needCode bool) (*time.Time, *time.
 func (h *handlers) setCouponStatus(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 	id := chi.URLParam(r, "id")
+	// 不是 UUID 的 id 以前一路走到 SQL 的 ::uuid 上，报成 500
+	if _, err := uuid.Parse(id); err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+		return
+	}
 	var req struct {
 		Status string `json:"status"`
 	}
@@ -315,6 +326,10 @@ func (h *handlers) setCouponStatus(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) couponRedemptions(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 	id := chi.URLParam(r, "id")
+	if _, err := uuid.Parse(id); err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+		return
+	}
 
 	type item struct {
 		Email    string `json:"email"`
