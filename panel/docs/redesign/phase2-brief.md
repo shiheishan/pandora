@@ -88,7 +88,7 @@ pandora 面板按 Claude Design 设计稿重做管理后台（admin）和用户�
 
 ## 8. 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**（均已合入 `feat/panel-redesign`）：① 脚手架 `54cec13`；② 接口契约 `ccb28a8`；③ 设计规范 `51fd36e`；④ 组件库 `c5ab1f7`（`src/ui/` 16 类组件，门户后台共用、差异只来自角色令牌；弹窗用原生 `<dialog>`，Toast 用 popover）；⑤ 底层 `d5fa092`（`src/core/` 的 api / token / sse / query / router，zod 4.6.5 与 react-query 5.103.2，后端 `reauth_required` 已上线）。**下一步 ⑥ 外框，做完第 2 阶段结束。**
+**进度**（均已合入 `feat/panel-redesign`）：① 脚手架 `54cec13`；② 接口契约 `ccb28a8`；③ 设计规范 `51fd36e`；④ 组件库 `c5ab1f7`（`src/ui/` 16 类组件，门户后台共用、差异只来自角色令牌；弹窗用原生 `<dialog>`，Toast 用 popover）；⑤ 底层 `d5fa092`（`src/core/` 的 api / token / sse / query / router，zod 4.6.5 与 react-query 5.103.2，后端 `reauth_required` 已上线）；⑥ 外框 `e687e4d`（`src/shell/` 每入口一份运行时，`src/admin/` 与 `src/portal/` 的登录、外框、⌘K、实时事件、reauth 对话框，`dev/mock-api.ts` 开发期假后端）。**第 2 阶段已结束**，本会话不再开工；第 3 阶段前端会话接着在 `src/admin/`、`src/portal/` 下写页面，开工说明另写。
 
 **做事前先 `git merge feat/panel-redesign`**，主线上有后端会话的最新改动和契约修订。
 

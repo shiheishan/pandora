@@ -17,7 +17,7 @@ systemd/: aegis-public/admin/node 三网关、aegis-nodeagent、备份 service+t
 logrotate-aegis: 三个服务的日志轮转
 
 发布与切换
-build-release.sh: 打发布包，先 make frontend-embed（无 npm 即失败），拒绝占位前端进入发布物；迁移工具版本随包固定
+build-release.sh: 打发布包，先以 PANDORA_RELEASE=$VERSION 跑 make frontend-embed（无 npm 即失败；版本号注入后台登录页与侧栏），拒绝占位前端进入发布物；迁移工具版本随包固定
 release-stop-the-world.sh: 改表发布的停机切换控制器
 release-artifact.env.example: 发布物 SHA256SUMS 绑定样例（docs/RELEASE-ARTIFACT-BINDING.md）
 renewal-cutover.md: 续费幂等切换闸门手册

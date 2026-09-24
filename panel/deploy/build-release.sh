@@ -57,7 +57,8 @@ if [ -z "$PREBUILT_ROOT" ]; then
     echo "missing npm (Node 22.12+): release binaries embed the panel frontend and must not ship its placeholder" >&2
     exit 1
   }
-  make -C "$ROOT" frontend-embed
+  # 后台登录页与侧栏显示的版本号由 vite 构建时读 PANDORA_RELEASE 注入，与发布物版本同源
+  PANDORA_RELEASE="$VERSION" make -C "$ROOT" frontend-embed
   for app in admin portal; do
     if grep -q 'name="pandora-placeholder"' "$ROOT/web/$app/index.html"; then
       echo "web/$app still holds the placeholder entry after frontend-embed" >&2
