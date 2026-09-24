@@ -1,7 +1,13 @@
+// [INPUT]: 依赖 domain/notify 的 Telegram 配置读取与发信器，依赖 platform 的 db/httpx；读写 system_settings 的 telegram.* 键
+// [OUTPUT]: 对外提供 handlers 的 getTelegramSettings / setTelegramSettings / testTelegram
+// [POS]: api/admin 的 Telegram 渠道配置：Token 只进不出（信封加密），管理员群组 chat id 作测试发送的默认目标
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -14,6 +20,23 @@ import (
 
 // Telegram Bot 配置（对标 Xboard config/setTelegramWebhook）。
 
+// loadTelegramAdminChat 读管理员群组 chat id（system_settings 的 telegram.admin_chat_id）。
+// 目前只作测试发送的默认目标；推送管理告警见待决 D-A-4，未定前不做。
+func (h *handlers) loadTelegramAdminChat(r *http.Request) (*int64, error) {
+	var chat *int64
+	tenantID := httpx.TenantIDFrom(r.Context())
+	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		err := tx.QueryRow(r.Context(), `
+			SELECT (value #>> '{}')::bigint FROM system_settings
+			 WHERE tenant_id = $1 AND key = 'telegram.admin_chat_id'`, tenantID).Scan(&chat)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	return chat, err
+}
+
 func (h *handlers) getTelegramSettings(w http.ResponseWriter, r *http.Request) {
 	cfg, err := notify.LoadTelegramConfig(r.Context(), h.d.Pool, h.d.Envelope,
 		httpx.TenantIDFrom(r.Context()))
@@ -21,12 +44,18 @@ func (h *handlers) getTelegramSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	adminChat, err := h.loadTelegramAdminChat(r)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
 	// Token 只回「配没配」，不回内容。回明文等于把它摊在任何能打开
 	// 后台的人面前，也会随着浏览器缓存和截图扩散出去。
 	httpx.OK(w, map[string]any{
-		"enabled":      cfg.Enabled,
-		"bot_username": cfg.BotUsername,
-		"has_token":    cfg.BotToken != "",
+		"enabled":       cfg.Enabled,
+		"bot_username":  cfg.BotUsername,
+		"has_token":     cfg.BotToken != "",
+		"admin_chat_id": adminChat,
 	})
 }
 
@@ -34,6 +63,8 @@ type telegramSettingsReq struct {
 	Enabled     bool   `json:"enabled"`
 	BotUsername string `json:"bot_username"`
 	BotToken    string `json:"bot_token"` // 空表示不修改
+	// AdminChatID 缺省不修改，null 清空，数字（非 0 整数）保存
+	AdminChatID json.RawMessage `json:"admin_chat_id"`
 }
 
 func (h *handlers) setTelegramSettings(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +80,17 @@ func (h *handlers) setTelegramSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
 			"bot_username": "启用前要填 Bot 用户名，用户要靠它找到你的 bot"}))
 		return
+	}
+	var adminChat *int64
+	setAdminChat := len(req.AdminChatID) > 0
+	if setAdminChat && string(req.AdminChatID) != "null" {
+		var v int64
+		if err := json.Unmarshal(req.AdminChatID, &v); err != nil || v == 0 {
+			httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
+				"admin_chat_id": "管理员群组 chat id 必须是非 0 整数"}))
+			return
+		}
+		adminChat = &v
 	}
 
 	tenantID := httpx.TenantIDFrom(r.Context())
@@ -75,6 +117,11 @@ func (h *handlers) setTelegramSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := set("telegram.bot_username", req.BotUsername); err != nil {
 				return err
+			}
+			if setAdminChat {
+				if err := set("telegram.admin_chat_id", adminChat); err != nil {
+					return err
+				}
 			}
 			// 空 token 表示「不修改」—— 界面上不回显已有 token，
 			// 提交时留空就该保留原值，而不是把它清掉。
@@ -110,6 +157,7 @@ func (h *handlers) setTelegramSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 type telegramTestReq struct {
+	// ChatID 省略（或 0）时发往已保存的管理员群组
 	ChatID int64 `json:"chat_id"`
 }
 
@@ -121,9 +169,17 @@ func (h *handlers) testTelegram(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.ChatID == 0 {
-		httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
-			"chat_id": "请填写要接收测试消息的 chat id"}))
-		return
+		adminChat, err := h.loadTelegramAdminChat(r)
+		if err != nil {
+			httpx.Fail(w, r, h.d.Log, err)
+			return
+		}
+		if adminChat == nil || *adminChat == 0 {
+			httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
+				"chat_id": "请填写要接收测试消息的 chat id，或先保存管理员群组 chat id"}))
+			return
+		}
+		req.ChatID = *adminChat
 	}
 	cfg, err := notify.LoadTelegramConfig(r.Context(), h.d.Pool, h.d.Envelope,
 		httpx.TenantIDFrom(r.Context()))

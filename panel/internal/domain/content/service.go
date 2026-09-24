@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/audit/httpx，读写 content_pages，读 users（版本作者名）
+// [OUTPUT]: 对外提供 Page、ListFilter、PublishInput 与 Service 的后台列表 / 读取 / 发布 / 归档、门户可见性判定与读取
+// [POS]: domain/content 的主服务：版本化知识库与自定义页面，门户可见性一处判定（visible）；后台列表带版本作者 created_by / created_by_name
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package content implements versioned knowledge-base and custom-page delivery.
 // Stored bodies are treated as plain text/Markdown source; neither API renders
 // trusted HTML. This keeps publication useful without creating an XSS boundary.
@@ -49,6 +54,9 @@ type Page struct {
 	UpdatedAt        time.Time  `json:"updated_at"`
 	LatestVersion    int        `json:"latest_version,omitempty"`
 	IsLatestAudience bool       `json:"is_latest_in_audience,omitempty"`
+	// 版本作者只在后台列表里填（「版本历史」的 by）；门户读路径不选这两列，恒为空不输出
+	CreatedBy     *string `json:"created_by,omitempty"`
+	CreatedByName *string `json:"created_by_name,omitempty"`
 }
 
 type ListFilter struct {
@@ -235,7 +243,10 @@ func (s *Service) ListAdmin(ctx context.Context, tenantID, actorID string, filte
 			           AND coalesce(newer.max_client_version,'')=coalesce(cp.max_client_version,'')
 			           AND newer.target_plan_ids=cp.target_plan_ids AND newer.visibility=cp.visibility),
 			       review_due_at,published_at,
-			       created_at,updated_at
+			       created_at,updated_at,
+			       cp.created_by::text,
+			       (SELECT coalesce(nullif(btrim(u.display_name), ''), u.email::text) FROM users u
+			         WHERE u.tenant_id = cp.tenant_id AND u.id = cp.created_by)
 			  FROM content_pages cp
 			 WHERE tenant_id=$1
 			   AND ($2='' OR kind=$2)
@@ -255,7 +266,8 @@ func (s *Service) ListAdmin(ctx context.Context, tenantID, actorID string, filte
 				&page.TargetPlatforms, &page.MinClientVersion, &page.MaxClientVersion,
 				&page.TargetPlanIDs, &page.Visibility, &page.Status,
 				&page.LatestVersion, &page.IsLatestAudience, &page.ReviewDueAt,
-				&page.PublishedAt, &page.CreatedAt, &page.UpdatedAt); err != nil {
+				&page.PublishedAt, &page.CreatedAt, &page.UpdatedAt,
+				&page.CreatedBy, &page.CreatedByName); err != nil {
 				return err
 			}
 			out = append(out, page)

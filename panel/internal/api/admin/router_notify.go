@@ -42,6 +42,9 @@ func registerMailTemplateRoutes(r chi.Router, d Deps, h *handlers) {
 	// 测试发送要求近期重认证：它会往任意地址真发信。
 	r.With(middleware.RequirePermission("ops.notification.read", d.Log)).
 		Get("/mail/templates", h.listMailTemplates)
+	// 草稿预览是纯计算、不写库，与看模板同权
+	r.With(middleware.RequirePermission("ops.notification.read", d.Log)).
+		Post("/mail/templates/preview", h.previewMailTemplate)
 	r.With(
 		middleware.RequirePermission("platform.settings.write", d.Log),
 	).Post("/mail/templates", h.saveMailTemplate)

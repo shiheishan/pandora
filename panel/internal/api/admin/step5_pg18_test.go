@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 announcement 域的一次性库（openAnnouncementPG18）、step3/step4 的造数与请求辅助，依赖第 ⑤ 步的处理器
-// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18、TestUserProfileRegisteredIPPG18、TestDashboardReadModelsPG18、TestNodesStep5PG18
-// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色，风控画像的注册 IP，经营总览 / 收入上一区间 / 系统状态组件 / 日活，节点列表字段与排序、节点池成员、一步退役、全局路由；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
+// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18、TestUserProfileRegisteredIPPG18、TestDashboardReadModelsPG18、TestNodesStep5PG18、TestContentNotifyStep5PG18
+// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色，风控画像的注册 IP，经营总览 / 收入上一区间 / 系统状态组件 / 日活，节点列表字段与排序、节点池成员、一步退役、全局路由，公告用户组定向、Telegram 管理员群组、模板草稿预览与测试、钩子统计、访问日志 outcome；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -19,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/identity"
+	"github.com/aegispanel/aegis/internal/domain/notify"
+	"github.com/aegispanel/aegis/internal/domain/plugin"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
@@ -635,4 +637,124 @@ func TestNodesStep5PG18(t *testing.T) {
 		!strings.Contains(string(routes[1].Matcher), "example.com") {
 		t.Fatalf("effective routes=%+v err=%v", routes, err)
 	}
+}
+
+func TestContentNotifyStep5PG18(t *testing.T) {
+	ctx, admin, app := openAnnouncementPG18(t)
+	const (
+		tenant = "87000000-0000-4000-8000-000000000701"
+		actor  = "87000000-0000-4000-8000-000000000711"
+		group  = "87000000-0000-4000-8000-000000000721"
+	)
+	step3Seed(t, ctx, admin,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','cn5-pg18','CN5','CNY')`,
+		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+actor+`','`+tenant+`','ops@cn5.invalid','Ops','active')`,
+		`INSERT INTO user_groups(id,tenant_id,code,name) VALUES('`+group+`','`+tenant+`','beta','内测')`,
+		`INSERT INTO notification_templates(tenant_id,code,channel,subject,body,allowed_variables,status) VALUES
+		   ('`+tenant+`','quota.warning','email','流量 {{percent}}%','{{plan}} 剩余 {{remaining}}','{site,plan,percent,remaining}','active')`)
+	h := step4Handlers(t, app)
+	h.d.Notify = notify.New(app, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte("cn5-salt"))
+	r := step5Router(tenant, actor, nil, func(r chi.Router) {
+		r.Get("/v1/announcements", h.listAnnouncements)
+		r.Post("/v1/announcements", h.saveAnnouncement)
+		r.Get("/v1/settings/telegram", h.getTelegramSettings)
+		r.Post("/v1/settings/telegram", h.setTelegramSettings)
+		r.Post("/v1/settings/telegram/test", h.testTelegram)
+		r.Post("/v1/mail/templates/preview", h.previewMailTemplate)
+		r.Post("/v1/mail/templates/test", h.testMailTemplate)
+		r.Get("/v1/plugin-hooks", h.listHooks)
+		r.Get("/v1/access-log", h.accessLogList)
+	})
+	expect := func(method, path, body string, code int, contains ...string) string {
+		t.Helper()
+		w := step3Do(t, ctx, r, method, path, body)
+		if w.Code != code {
+			t.Fatalf("%s %s: status=%d body=%s, want %d", method, path, w.Code, w.Body.String(), code)
+		}
+		for _, c := range contains {
+			if !strings.Contains(w.Body.String(), c) {
+				t.Fatalf("%s %s: body=%s, want %q", method, path, w.Body.String(), c)
+			}
+		}
+		return w.Body.String()
+	}
+
+	// 公告：用户组定向可写可读，组必须属于本租户
+	expect(http.MethodPost, "/v1/announcements", `{"title":"维护通知","body":"今晚维护","target_user_group_ids":["`+group+`"],"expected_version":0}`, http.StatusOK)
+	expect(http.MethodPost, "/v1/announcements", `{"title":"维护通知","body":"今晚维护","target_user_group_ids":["87000000-0000-4000-8000-0000000007ff"],"expected_version":0}`,
+		http.StatusUnprocessableEntity, "target_user_group_ids")
+	expect(http.MethodGet, "/v1/announcements", "", http.StatusOK,
+		`"target_user_group_ids":["`+group+`"]`, `"user_group_targets":[{"id":"`+group+`","name":"内测"}]`, `"user_groups":[{"id":"`+group+`","name":"内测"}]`)
+
+	// Telegram：管理员群组 chat id 存取；测试发送省略 chat_id 时用它
+	expect(http.MethodPost, "/v1/settings/telegram/test", `{}`, http.StatusUnprocessableEntity, `"chat_id"`)
+	expect(http.MethodPost, "/v1/settings/telegram", `{"enabled":false,"bot_username":"","bot_token":"","admin_chat_id":0}`, http.StatusUnprocessableEntity, `"admin_chat_id"`)
+	expect(http.MethodPost, "/v1/settings/telegram", `{"enabled":false,"bot_username":"","bot_token":"","admin_chat_id":-1001234567890}`, http.StatusOK)
+	expect(http.MethodGet, "/v1/settings/telegram", "", http.StatusOK, `"admin_chat_id":-1001234567890`)
+	// 过了 chat_id 这一关，停在「没配置好」上
+	expect(http.MethodPost, "/v1/settings/telegram/test", `{}`, http.StatusUnprocessableEntity, "还没配置好")
+	expect(http.MethodPost, "/v1/settings/telegram", `{"enabled":false,"bot_username":"","bot_token":""}`, http.StatusOK)
+	expect(http.MethodGet, "/v1/settings/telegram", "", http.StatusOK, `"admin_chat_id":-1001234567890`)
+	expect(http.MethodPost, "/v1/settings/telegram", `{"enabled":false,"bot_username":"","bot_token":"","admin_chat_id":null}`, http.StatusOK)
+	expect(http.MethodGet, "/v1/settings/telegram", "", http.StatusOK, `"admin_chat_id":null`)
+
+	// 模板草稿：预览标出白名单外的变量；缺 code 400、模板不存在 404；草稿测试先校验
+	expect(http.MethodPost, "/v1/mail/templates/preview", `{"code":"quota.warning","channel":"email","subject":"{{percent}}%","body":"{{plan}} 与 {{bogus}}"}`,
+		http.StatusOK, `"preview_body":"旗舰套餐 与 {{bogus}}"`, `"unknown_variables":["bogus"]`, `"preview_subject":"85%"`)
+	expect(http.MethodPost, "/v1/mail/templates/preview", `{"channel":"email","subject":"a","body":"b"}`, http.StatusBadRequest)
+	expect(http.MethodPost, "/v1/mail/templates/preview", `{"code":"nope","channel":"email","subject":"a","body":"b"}`, http.StatusNotFound)
+	expect(http.MethodPost, "/v1/mail/templates/test", `{"code":"quota.warning","channel":"email","to":"a@b.invalid","subject":"s","body":"{{bogus}}"}`,
+		http.StatusUnprocessableEntity, `"body"`)
+	expect(http.MethodPost, "/v1/mail/templates/test", `{"code":"quota.warning","channel":"email","to":"a@b.invalid","subject":"s","body":"{{plan}}"}`,
+		http.StatusUnprocessableEntity, "SMTP 还没配置好")
+
+	// 钩子：没有钩子时是空数组；事件目录键小写；近 7 天发送数
+	expect(http.MethodGet, "/v1/plugin-hooks", "", http.StatusOK, `"hooks":[]`, `{"name":"user.registered","desc":"用户完成注册"}`)
+	if _, err := h.d.Plugin.SaveHook(ctx, tenant, plugin.SaveHookInput{Code: "crm", Name: "CRM", Enabled: true,
+		Events: []string{"user.registered"}, EndpointURL: "https://hooks.example.com/crm", TimeoutMS: 3000, MaxAttempts: 3, ActorID: actor}); err != nil {
+		t.Fatal(err)
+	}
+	step3Seed(t, ctx, admin, `INSERT INTO plugin_hook_deliveries(tenant_id,hook_id,event,dedupe_key,payload,status,sent_at)
+		SELECT tenant_id,id,'user.registered','d-'||g,'{}','sent',now() FROM plugin_hooks, generate_series(1,2) g WHERE tenant_id='`+tenant+`'`)
+	expect(http.MethodGet, "/v1/plugin-hooks", "", http.StatusOK, `"sent_count_7d":2`)
+
+	// 访问日志 outcome：error = 非 success（订阅拉取 ok 以外也算）；denied 不查订阅日志
+	uid := actor
+	if err := app.InTx(ctx, platformdb.Scope{TenantID: tenant}, func(tx pgx.Tx) error {
+		for _, oc := range []string{"success", "failure", "denied"} {
+			if err := audit.Write(ctx, tx, tenant, audit.Entry{ActorKind: "admin", ActorID: &uid,
+				Action: "admin.test_" + oc, Outcome: oc}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	step3Seed(t, ctx, admin, `INSERT INTO subscription_fetch_log(tenant_id,result) VALUES('`+tenant+`','ok'),('`+tenant+`','not_found')`)
+	count := func(query string) int {
+		t.Helper()
+		var body struct {
+			Items []struct {
+				Action string `json:"action"`
+			} `json:"items"`
+		}
+		w := step3Do(t, ctx, r, http.MethodGet, "/v1/access-log?limit=200&"+query, "")
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &body) != nil {
+			t.Fatalf("access-log %s: status=%d body=%s", query, w.Code, w.Body.String())
+		}
+		n := 0
+		for _, it := range body.Items {
+			if strings.HasPrefix(it.Action, "admin.test_") || it.Action == "subscription.fetch" {
+				n++
+			}
+		}
+		return n
+	}
+	for query, want := range map[string]int{"outcome=": 5, "outcome=error": 3, "outcome=denied": 1, "outcome=success": 2} {
+		if got := count(query); got != want {
+			t.Errorf("access-log %s: %d rows, want %d", query, got, want)
+		}
+	}
+	expect(http.MethodGet, "/v1/access-log?outcome=weird", "", http.StatusUnprocessableEntity, `"outcome"`)
 }

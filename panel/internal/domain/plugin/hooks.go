@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 plugin_hooks / plugin_hook_deliveries（00051，00081 加 last_duration_ms），依赖 platform 的 audit/crypto/db/httpx
-// [OUTPUT]: 对外提供 Events 事件目录、KnownEvent、Service、New，钩子增删查、Emit 入队、Dispatch / StartScanner 投递、Deliveries 投递记录、TestHook 同步测试
+// [OUTPUT]: 对外提供 EventInfo 与 Events 事件目录（小写 name / desc）、KnownEvent、Service、New，钩子增删查、Emit 入队、Dispatch / StartScanner 投递、Deliveries 投递记录、TestHook 同步测试
 // [POS]: domain/plugin 的主体：出站 webhook 的配置、签名投递与重试；每次尝试记往返耗时（timedPost），emit.go 为各业务事件的薄封装
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -46,7 +46,13 @@ import (
 //
 // 白名单放在代码里：允许订阅任意字符串的话，管理员打错一个字母
 // 就是一个永远不触发的钩子，而且没有任何地方会提示他。
-var Events = []struct{ Name, Desc string }{
+// EventInfo 的 JSON 键是小写 name / desc（契约后台-09；此前匿名结构体输出大写键）。
+type EventInfo struct {
+	Name string `json:"name"`
+	Desc string `json:"desc"`
+}
+
+var Events = []EventInfo{
 	{"user.registered", "用户完成注册"},
 	{"order.created", "订单创建"},
 	{"order.paid", "订单支付成功"},
@@ -110,11 +116,13 @@ type Hook struct {
 	MaxAttempts int      `json:"max_attempts"`
 	QueuedCount int      `json:"queued_count"`
 	FailedCount int      `json:"failed_count"`
-	LastSentAt  *string  `json:"last_sent_at,omitempty"`
+	// SentCount7d 与 FailedCount 同一个 7 天窗口，前端算成功率 sent / (sent + failed)
+	SentCount7d int     `json:"sent_count_7d"`
+	LastSentAt  *string `json:"last_sent_at,omitempty"`
 }
 
 func (s *Service) List(ctx context.Context, tenantID string) ([]Hook, error) {
-	var out []Hook
+	out := []Hook{}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT h.id, h.code, h.name, h.description, h.enabled, h.events,
@@ -128,7 +136,10 @@ func (s *Service) List(ctx context.Context, tenantID string) ([]Hook, error) {
 			           AND d.created_at > now() - interval '7 days'),
 			       (SELECT to_char(max(d.sent_at),'YYYY-MM-DD HH24:MI')
 			          FROM plugin_hook_deliveries d
-			         WHERE d.tenant_id=h.tenant_id AND d.hook_id=h.id AND d.status='sent')
+			         WHERE d.tenant_id=h.tenant_id AND d.hook_id=h.id AND d.status='sent'),
+			       (SELECT count(*) FROM plugin_hook_deliveries d
+			         WHERE d.tenant_id=h.tenant_id AND d.hook_id=h.id AND d.status='sent'
+			           AND d.created_at > now() - interval '7 days')
 			  FROM plugin_hooks h WHERE h.tenant_id = $1 ORDER BY h.code`, tenantID)
 		if err != nil {
 			return err
@@ -138,7 +149,7 @@ func (s *Service) List(ctx context.Context, tenantID string) ([]Hook, error) {
 			var h Hook
 			if err := rows.Scan(&h.ID, &h.Code, &h.Name, &h.Description, &h.Enabled,
 				&h.Events, &h.EndpointURL, &h.HasSecret, &h.TimeoutMS, &h.MaxAttempts,
-				&h.QueuedCount, &h.FailedCount, &h.LastSentAt); err != nil {
+				&h.QueuedCount, &h.FailedCount, &h.LastSentAt, &h.SentCount7d); err != nil {
 				return err
 			}
 			out = append(out, h)

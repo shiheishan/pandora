@@ -25,6 +25,7 @@ func TestStep5RouteProtections(t *testing.T) {
 			recentReauth: true, idempotency: "node_routing_global_publish"},
 		"POST /nodes/{id}/retire": {handler: "h.nodeRetire", permissions: []string{"node.lifecycle"},
 			recentReauth: true, idempotency: "node_retire"},
+		"POST /mail/templates/preview": {handler: "h.previewMailTemplate", permissions: []string{"ops.notification.read"}},
 		// 站点时区（R49）：读与邮件设置同权，写改变全部按日统计的切日口径
 		"GET /settings/site": {handler: "h.getSiteSettings", permissions: []string{"security.audit.read"}},
 		"POST /settings/site": {handler: "h.setSiteSettings",

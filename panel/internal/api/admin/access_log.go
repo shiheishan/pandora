@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform 的 db/crypto/httpx，依赖同包 profile.go 的 IP 解密与 Deps.GeoIP 归属地
 // [OUTPUT]: 对外提供 handlers 的 accessLogList；包内 accessCategoryRules、categoryFromAction、auditCategoryFilter
-// [POS]: api/admin 的安全事件明细：audit_events 与 subscription_fetch_log 两路归并，分类规则是展示与筛选共用的唯一一张表
+// [POS]: api/admin 的安全事件明细：audit_events 与 subscription_fetch_log 两路归并，分类规则是展示与筛选共用的唯一一张表；outcome 筛选（error = 非 success，订阅拉取 ok 以外都算 error）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -73,6 +73,18 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 	}
 	// other 的 include 为空、exclude 非空；「不过滤」是两者都为空
 	filterByCategory := category != "" && category != "subscribe"
+	// outcome：审计的四种结果之一，或 error（= 非 success）。订阅拉取只有 ok 与
+	// 各种失败，ok 算 success、其余算 error；按 failure / denied / partial 筛时
+	// 订阅日志整路不查
+	outcome := strings.ToLower(strings.TrimSpace(q.Get("outcome")))
+	switch outcome {
+	case "", "success", "failure", "denied", "partial", "error":
+	default:
+		httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
+			"outcome": "只支持 success、failure、denied、partial 或 error"}))
+		return
+	}
+	includeFetches := outcome == "" || outcome == "success" || outcome == "error"
 
 	// 按 IP 筛选只能走哈希。IP 在库里是密文，SQL 里没法比较，但同一个
 	// HMAC 盐算出的哈希是稳定的，拿它做等值匹配既能走索引又不用解密全表。
@@ -119,9 +131,10 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 				   AND ($3::bytea IS NULL OR a.source_ip_hash = $3)
 				   AND ($4::uuid IS NULL OR a.actor_id = $4)
 				   AND ($5::text IS NULL OR lower(u.email) LIKE $5)
+				   AND ($9::text = '' OR ($9 = 'error' AND a.outcome <> 'success') OR a.outcome = $9)
 				 ORDER BY a.occurred_at DESC
 				 LIMIT $6`, tenantID, nonNilStrings(include),
-				auditIPHash, actorID, emailLike, limit+offset, filterByCategory, nonNilStrings(exclude))
+				auditIPHash, actorID, emailLike, limit+offset, filterByCategory, nonNilStrings(exclude), outcome)
 			if err != nil {
 				return err
 			}
@@ -148,7 +161,7 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if category == "" || category == "subscribe" {
+		if (category == "" || category == "subscribe") && includeFetches {
 			rows, err := tx.Query(r.Context(), `
 				SELECT COALESCE(f.ip_enc, ''::bytea), COALESCE(f.ua_enc, ''::bytea),
 				       COALESCE(f.result, ''), s.user_id, COALESCE(u.email, ''),
@@ -161,8 +174,9 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 				   AND ($2::bytea IS NULL OR f.ip_hash = $2)
 				   AND ($3::uuid IS NULL OR s.user_id = $3)
 				   AND ($4::text IS NULL OR lower(u.email) LIKE $4)
+				   AND ($6::text = '' OR ($6 = 'success' AND f.result = 'ok') OR ($6 = 'error' AND f.result <> 'ok'))
 				 ORDER BY f.fetched_at DESC
-				 LIMIT $5`, tenantID, fetchIPHash, actorID, emailLike, limit+offset)
+				 LIMIT $5`, tenantID, fetchIPHash, actorID, emailLike, limit+offset, outcome)
 			if err != nil {
 				return err
 			}
