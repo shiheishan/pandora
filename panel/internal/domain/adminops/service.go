@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入
-// [OUTPUT]: 对外提供 Service、NewService，概览、用户（ListUsers / GetUser / SetUserStatus）、订单（ListOrders，OrderRow 唯一查询形状）、套餐与渠道、审计、降级开关
-// [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它；套餐目录在 catalog.go / plan_wizard*.go，订单详情在 order_detail.go；订单行的品名对流量包订单取订单项商品名
+// [OUTPUT]: 对外提供 Service、NewService，概览、用户（ListUsers / GetUser / SetUserStatus）、订单（ListOrders，OrderRow 唯一查询形状）、套餐与渠道、降级开关
+// [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它；套餐目录在 catalog.go / plan_wizard*.go，订单详情在 order_detail.go，审计在 audit.go；订单行的品名对流量包订单取订单项商品名；revokeUserLogins 是停用账号即下线的唯一实现，改状态与 risk.go 的批量停用共用
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package adminops 实现管理后台的读写用例。
@@ -489,18 +489,8 @@ func (s *Service) SetUserStatus(ctx context.Context, tenantID, actorID, userID, 
 
 		revoked := int64(0)
 		if status != "active" {
-			ct, err := tx.Exec(ctx, `
-				UPDATE sessions SET revoked_at = now(), revoked_reason = $3
-				 WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL`,
-				tenantID, userID, "账号状态变更为 "+status)
-			if err != nil {
-				return err
-			}
-			revoked = ct.RowsAffected()
-			if _, err := tx.Exec(ctx, `
-				UPDATE refresh_tokens SET status = 'revoked'
-				 WHERE tenant_id = $1 AND user_id = $2 AND status = 'active'`,
-				tenantID, userID); err != nil {
+			var err error
+			if revoked, err = revokeUserLogins(ctx, tx, tenantID, userID, status); err != nil {
 				return err
 			}
 		}
@@ -527,6 +517,26 @@ func (s *Service) SetUserStatus(ctx context.Context, tenantID, actorID, userID, 
 		return httpx.Internal(err)
 	}
 	return nil
+}
+
+// revokeUserLogins 让一个被停用或封禁的账号立刻下线：吊销全部会话与 refresh
+// 令牌，返回吊销的会话数。改状态与风控批量禁用共用它——停用却不踢下线，
+// 等于给了对方一段令牌自然过期前的窗口。
+func revokeUserLogins(ctx context.Context, tx pgx.Tx, tenantID, userID, status string) (int64, error) {
+	ct, err := tx.Exec(ctx, `
+		UPDATE sessions SET revoked_at = now(), revoked_reason = $3
+		 WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+		tenantID, userID, "账号状态变更为 "+status)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE refresh_tokens SET status = 'revoked'
+		 WHERE tenant_id = $1 AND user_id = $2 AND status = 'active'`,
+		tenantID, userID); err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
 }
 
 //==============================================================================
@@ -861,90 +871,6 @@ func (s *Service) SetProviderEnabled(ctx context.Context, tenantID, actorID, cod
 		return httpx.Internal(err)
 	}
 	return nil
-}
-
-//==============================================================================
-// 审计
-//==============================================================================
-
-type AuditRow struct {
-	ID           string    `json:"id"`
-	OccurredAt   time.Time `json:"occurred_at"`
-	ActorKind    string    `json:"actor_kind"`
-	ActorEmail   *string   `json:"actor_email"`
-	Action       string    `json:"action"`
-	ResourceType *string   `json:"resource_type"`
-	ResourceID   *string   `json:"resource_id"`
-	APIDomain    *string   `json:"api_domain"`
-	Outcome      string    `json:"outcome"`
-	// Reason 从 after_digest 里取：审计表没有独立列，
-	// 但「为什么这么改」是管理端排查时最想先看到的一列
-	Reason *string `json:"reason"`
-}
-
-// auditCond 是审计查询的筛选条件，计数与取行共用同一份。
-// 分开写迟早会出现「总数按全量算、列表按筛选取」，翻到后面全是空页。
-const auditCond = `
-			 WHERE a.tenant_id = $1
-			   AND ($2 = '' OR a.action LIKE $2 || '%')
-			   AND ($3 = '' OR a.actor_kind = $3)
-			   AND ($4 = '' OR a.outcome = $4)`
-
-// AuditFilter 是审计日志的可选筛选条件。零值表示不筛。
-//
-// 自动任务（order.expired 之类）的量远大于人工操作——压测跑完这张表
-// 一万五千条，翻开全是它。没有筛选的话，这份日志实际上没法用来追查。
-type AuditFilter struct {
-	// ActionPrefix 按动作前缀匹配。动作是 order.expired / payment.succeeded
-	// 这种带命名空间的串，前缀能一次圈定一整类。
-	ActionPrefix string
-	// ActorKind 区分 system 与 user，把自动任务和人工操作分开看。
-	ActorKind string
-	Outcome   string
-}
-
-func (s *Service) ListAudit(ctx context.Context, tenantID string, limit, offset int, f AuditFilter) ([]AuditRow, int64, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	out := []AuditRow{}
-	var total int64
-
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx,
-			`SELECT count(*) FROM audit_events a`+auditCond,
-			tenantID, f.ActionPrefix, f.ActorKind, f.Outcome).Scan(&total); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, `
-			SELECT a.id, a.occurred_at, a.actor_kind, u.email, a.action,
-			       a.resource_type, a.resource_id::text, a.api_domain, a.outcome,
-			       a.after_digest->>'reason' 
-			  FROM audit_events a
-			  LEFT JOIN users u ON u.id = a.actor_id
-			 `+auditCond+`
-			 ORDER BY a.occurred_at DESC
-			 LIMIT $5 OFFSET $6`,
-			tenantID, f.ActionPrefix, f.ActorKind, f.Outcome, limit, offset)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var r AuditRow
-			if err := rows.Scan(&r.ID, &r.OccurredAt, &r.ActorKind, &r.ActorEmail,
-				&r.Action, &r.ResourceType, &r.ResourceID, &r.APIDomain,
-				&r.Outcome, &r.Reason); err != nil {
-				return err
-			}
-			out = append(out, r)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, 0, httpx.Internal(err)
-	}
-	return out, total, nil
 }
 
 //==============================================================================

@@ -459,22 +459,6 @@ func (h *handlers) toggleProvider(w http.ResponseWriter, r *http.Request) {
 // 审计与开关
 //------------------------------------------------------------------------------
 
-func (h *handlers) listAudit(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	rows, total, err := h.d.Ops.ListAudit(r.Context(), httpx.TenantIDFrom(r.Context()),
-		atoiDefault(q.Get("limit"), 50), atoiDefault(q.Get("offset"), 0),
-		adminops.AuditFilter{
-			ActionPrefix: q.Get("action"),
-			ActorKind:    q.Get("actor_kind"),
-			Outcome:      q.Get("outcome"),
-		})
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, map[string]any{"events": rows, "total": total})
-}
-
 func (h *handlers) listSwitches(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.d.Ops.ListSwitches(r.Context(), httpx.TenantIDFrom(r.Context()))
 	if err != nil {
@@ -765,6 +749,7 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 		ServerPort            *int            `json:"server_port"`
 		TrafficRate           float64         `json:"traffic_rate"`
 		DisplayName           *string         `json:"display_name"`
+		CountryCode           *string         `json:"country_code"` // 只进管理端（保留规则 3）
 		Kernel                string          `json:"kernel"`
 		Protocol              json.RawMessage `json:"protocol_config"`
 		ProtocolSchemaVersion int             `json:"protocol_schema_version"`
@@ -832,7 +817,7 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 				        OR n.last_heartbeat_at < now() - interval '90 seconds') AS stale,
 				       i.serial, n.created_at,
 				       n.node_type, n.server_host, n.server_port,
-				       n.traffic_rate, n.display_name,
+				       n.traffic_rate, n.display_name, n.country_code,
 				       coalesce(n.kernel,'auto'), n.protocol_config,
 				       n.protocol_schema_version,n.config_validated_at,n.sort_order,n.node_no,
 				       coalesce(a.users,0), coalesce(a.ips,0), coalesce(t.bytes,0),
@@ -861,7 +846,7 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 					&x.HealthScore, &x.AppliedVer, &x.DesiredVer, &x.LastBeat,
 					&x.Stale, &x.Serial, &x.CreatedAt,
 					&x.NodeType, &x.ServerHost, &x.ServerPort,
-					&x.TrafficRate, &x.DisplayName, &x.Kernel, &x.Protocol,
+					&x.TrafficRate, &x.DisplayName, &x.CountryCode, &x.Kernel, &x.Protocol,
 					&x.ProtocolSchemaVersion, &x.ConfigValidatedAt, &x.SortOrder, &x.NodeNo,
 					&x.OnlineUsers, &x.OnlineIPs, &x.TrafficBytes,
 					&x.GrantedPlans); err != nil {

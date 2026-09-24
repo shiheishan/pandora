@@ -582,7 +582,8 @@ func (s *Service) Bootstrap(ctx context.Context, tenantID string, in BootstrapIn
 		}
 
 		if _, err := tx.Exec(ctx, `
-			UPDATE nodes SET server_token_hash=$3
+			UPDATE nodes SET server_token_hash=$3,
+			       server_token_issued_at=now(), server_token_issued_by=NULL
 			 WHERE tenant_id=$1 AND id=$2`, tenantID, nodeID, crypto.HashToken(runtimeToken)); err != nil {
 			return err
 		}
