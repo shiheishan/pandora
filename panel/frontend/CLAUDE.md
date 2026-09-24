@@ -21,7 +21,7 @@ src/env.d.ts: 构建期常量 __APP_RELEASE__ 的类型声明
 dev/: 只在 vite serve 存在的假后端：外壳 mock-api.ts + 按入口拆分的模块假接口 mock/，本机无 PostgreSQL 时在浏览器里按契约走通外壳与各页面；见 dev/CLAUDE.md
 src/styles/: 全局样式与设计令牌：Geist 字体、明暗两组语义色、尺度、门户/后台角色令牌、元素默认样式，以及供测试与演示页核对的设计稿原值；见 src/styles/CLAUDE.md
 src/ui/: 自研组件库（按钮、表单控件、标签、卡片、表格、标签页、分段、弹窗与底部抽屉、侧边抽屉、Toast、菜单、骨架、空状态），一套实现经角色令牌服务两个入口，弹层基于原生 <dialog> 与 popover；见 src/ui/CLAUDE.md
-src/core/: 与界面无关的底层：主题引导与状态、唯一 HTTP 出口 api.ts（相对 v1/ 路径、Bearer、错误信封、幂等键、reauth 重放）、令牌存储、fetch 流 SSE、react-query 客户端与实时失效、hash 路由、金额与相对时间格式化；见 src/core/CLAUDE.md
+src/core/: 与界面无关的底层：主题引导与状态、唯一 HTTP 出口 api.ts（相对 v1/ 路径、Bearer、错误信封、幂等键、reauth 重放）、令牌存储、fetch 流 SSE、react-query 客户端与实时失效、hash 路由、金额 / 计数 / 字节 / 时间格式化；见 src/core/CLAUDE.md
 src/showcase/: 只在 dev 存在的令牌与组件演示页，浏览器内逐条核对令牌与设计稿；见 src/showcase/CLAUDE.md
 tests/entries.test.ts: 入口源文件契约——域标记正确、只有外链 module script、无内联样式；与 panel/web/app_test.go 同一组前提，前移到 npm test 暴露
 tests/tokens.test.ts: 令牌契约——tokens.css / roles.css 与设计稿逐值一致、明暗两组键相同、所有 var() 都有定义、样式不引用外部来源、字体文件都在包内

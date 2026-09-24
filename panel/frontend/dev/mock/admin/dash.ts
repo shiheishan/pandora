@@ -101,8 +101,7 @@ function bytes(gb: bigint, scale: bigint, share: bigint) {
 }
 
 // ---------------------------------------------------------------------------
-// 需要处理：条目按各自读权限过滤。withdrawals_pending 按后端二 ⑤ 的开工补充挂
-// marketing.commission.read（契约原文是 billing.order.read，已报告协调会话）
+// 需要处理：条目按各自读权限过滤。withdrawals_pending 挂 marketing.commission.read（修订 R51）
 // ---------------------------------------------------------------------------
 const TASK_PERMS: Record<string, string> = {
   tickets_open: 'ops.ticket.read',

@@ -1,48 +1,17 @@
 /**
- * [INPUT]: 依赖 ../../../core/format 的 formatMoney / relativeTime，依赖 ../../modules 的 ModuleKey / Permissions / canRead / canReadModule，依赖 ./api 的响应类型
- * [OUTPUT]: 对外提供 formatBytes、formatCount、formatPercent、formatDuration、formatLatency、formatDateTime、percentChange、dashboardAccess、reachable、taskCards、kpiRevenueDelta、revenueSummary、activitySummary、backupSummary、systemRows、trafficRows、trafficNotes 及其类型
+ * [INPUT]: 依赖 ../../../core/format 的 formatMoney / formatBytes / formatCount / relativeTime，依赖 ../../modules 的 ModuleKey / Permissions / canRead / canReadModule，依赖 ../../tasks 的 TaskItem，依赖 ./api 的响应类型
+ * [OUTPUT]: 对外提供 formatPercent、formatDuration、formatLatency、percentChange、dashboardAccess、reachable、taskCards、kpiRevenueDelta、revenueSummary、activitySummary、backupSummary、systemRows、trafficRows、trafficNotes 及其类型
  * [POS]: admin/screens/dash 的纯逻辑层：把接口数据映射成卡片、行与文案（契约后台-01 的「映射」一行），不碰 React 与网络；界面组件只负责摆放，model.test.ts 覆盖这里的全部分支
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { formatMoney, relativeTime } from '../../../core/format'
+import { formatBytes, formatCount, formatMoney, relativeTime } from '../../../core/format'
 import { canRead, canReadModule, type ModuleKey, type Permissions } from '../../modules'
-import type { ActivityPoint, Backlog, BackupStatus, ComponentState, NodeTraffic, RevenuePoint, SystemComponent, SystemStatus, TaskItem, UserTraffic } from './api'
+import type { TaskItem } from '../../tasks'
+import type { ActivityPoint, Backlog, BackupStatus, ComponentState, NodeTraffic, RevenuePoint, SystemComponent, SystemStatus, UserTraffic } from './api'
 
 // ===========================================================================
 // 格式化
 // ===========================================================================
-
-const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB'] as const
-
-/**
- * 字节 → 「18.6 TB / 1.80 TB / 540 GB」，三位有效数字、1024 进制。
- * DASH-01 要求 BigInt 安全：十进制字符串不先转 number，全程整数运算再拼小数。
- */
-export function formatBytes(value: string | number | bigint): string {
-  let n = BigInt(value)
-  const sign = n < 0n ? '-' : ''
-  if (n < 0n) n = -n
-  let unit = 1n
-  let i = 0
-  while (i < BYTE_UNITS.length - 1 && n >= unit * 1024n) {
-    unit *= 1024n
-    i++
-  }
-  if (i === 0) return `${sign}${n} B`
-  const whole = n / unit
-  const decimals = whole < 10n ? 2 : whole < 100n ? 1 : 0
-  const scale = 10n ** BigInt(decimals)
-  const scaled = (n * scale + unit / 2n) / unit
-  const intPart = scaled / scale
-  const frac = decimals ? `.${String(scaled % scale).padStart(decimals, '0')}` : ''
-  return `${sign}${intPart}${frac} ${BYTE_UNITS[i]}`
-}
-
-/** 整数千分位：12408 → 12,408 */
-export function formatCount(n: number): string {
-  const sign = n < 0 ? '-' : ''
-  return sign + String(Math.abs(Math.trunc(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-}
 
 /** 百分比变化：+12.4% / −3.1%（设计稿用数学减号）/ 0.0% */
 export function formatPercent(ratio: number): string {
@@ -70,14 +39,6 @@ export function formatDuration(seconds: number): string {
 /** 往返延迟：0.4 ms / 3 ms */
 export function formatLatency(ms: number): string {
   return ms < 1 ? `${(Math.round(ms * 10) / 10).toFixed(1)} ms` : `${Math.round(ms)} ms`
-}
-
-/** 绝对时间（本地时区）：2026-09-24 08:30；无法解析时原样返回 */
-export function formatDateTime(at: string): string {
-  const d = new Date(at)
-  if (Number.isNaN(d.getTime())) return at
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 // ===========================================================================
@@ -416,28 +377,37 @@ const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
   backup: '数据库备份',
 }
 
-function queueMeta(m: { queued: number; retrying: number; failed_total: number }): string {
-  return [`${formatCount(m.queued)} 排队`, m.retrying > 0 ? `${formatCount(m.retrying)} 重试` : '', m.failed_total > 0 ? `${formatCount(m.failed_total)} 失败` : '']
+/** R52：down / unknown 时 metrics 的任何字段都可能缺，缺失显示 — */
+const num = (v: number | undefined) => (v === undefined ? '—' : formatCount(v))
+
+function queueMeta(m: { queued?: number; retrying?: number; failed_total?: number }): string {
+  return [`${num(m.queued)} 排队`, (m.retrying ?? 0) > 0 ? `${num(m.retrying)} 重试` : '', (m.failed_total ?? 0) > 0 ? `${num(m.failed_total)} 失败` : '']
     .filter(Boolean)
     .join(' · ')
 }
 
 function componentMeta(c: SystemComponent): string {
   const latency = c.latency_ms !== undefined ? formatLatency(c.latency_ms) : ''
+  // 整个 metrics 为空（down / unknown 常见）：只剩延迟可说，没有就是 —
+  if (Object.keys(c.metrics).length === 0) return latency || '—'
   switch (c.key) {
-    case 'postgres':
-      return [latency, formatBytes(c.metrics.size_bytes), `连接 ${c.metrics.connections}/${c.metrics.max_connections}`].filter(Boolean).join(' · ')
+    case 'postgres': {
+      const m = c.metrics
+      return [latency, m.size_bytes === undefined ? '' : formatBytes(m.size_bytes), `连接 ${num(m.connections)}/${num(m.max_connections)}`].filter(Boolean).join(' · ')
+    }
     case 'valkey':
       return latency || '—'
-    case 'node_fabric':
-      return [`在线 ${c.metrics.online}/${c.metrics.total}`, c.metrics.config_lagging > 0 ? `${c.metrics.config_lagging} 个节点配置未同步` : ''].filter(Boolean).join(' · ')
+    case 'node_fabric': {
+      const m = c.metrics
+      return [`在线 ${num(m.online)}/${num(m.total)}`, (m.config_lagging ?? 0) > 0 ? `${m.config_lagging} 个节点配置未同步` : ''].filter(Boolean).join(' · ')
+    }
     case 'payment_callbacks':
-      return `${formatCount(c.metrics.pending)} 积压`
+      return `${num(c.metrics.pending)} 积压`
     case 'mail':
     case 'telegram':
       return queueMeta(c.metrics)
     case 'sse':
-      return `${formatCount(c.metrics.connections)} 连接`
+      return `${num(c.metrics.connections)} 连接`
     case 'backup':
       return ''
   }
