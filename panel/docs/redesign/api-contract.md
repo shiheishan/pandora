@@ -188,6 +188,7 @@
 ### 后台-01 仪表盘（管理后台-01-仪表盘.dc.html；收入调整见后台-05）
 
 #### GET v1/dashboard/tasks — 「需要处理」卡片与侧栏徽标的计数
+- **修订 R51（2026-09-24，协调会话）**：`withdrawals_pending` 条目改挂 `marketing.commission.read`（后端一已把分销读权限统一到这个码，与后端二第 ⑤ 步说明一致），原文的 `billing.order.read` 作废。
 - 状态：待补·后端
 - 权限：新权限：`ops.dashboard.read`（路由层声明，满足 IAM-009）；处理器内再按各条目的原读权限逐条过滤，没有对应权限的条目直接不出现：tickets_open→`ops.ticket.read`、withdrawals_pending→`billing.order.read`（与 GET v1/withdrawals 一致）、nodes_offline→`node.read`、orders_pending_stale→`billing.order.read`、notifications_backlog→`ops.notification.read`、ledger_drift→`billing.ledger.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -245,6 +246,7 @@
 - 设计：后台-01「邮件投递积压」卡与「系统状态 · 邮件投递」行；后台-09 SMTP 卡状态「已连接 · 重试 3 封」。映射：积压数←ready+scheduled，「重试中」←ready_retry+scheduled_retry，「失败」←failed_total，颜色←backlog_state。分渠道数字由 GET v1/system/status 的 components 提供（不改冻结 DTO）
 
 #### GET v1/system/status — 系统状态
+- **修订 R52（2026-09-24，协调会话，后台前端一提出）**：`components[].metrics` 对象总是返回（可为 `{}`），但其中各字段只在 `state` 为 ok / warn 时保证齐全；`state` 为 down / unknown 时任何字段都可能缺失。前端把 metrics 的每个字段按可选解析，缺失显示「—」。
 - 状态：现有 `panel/internal/api/admin/system_status.go:36 systemStatus`；**components 待补·后端**；**backup 部分 待补·前端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -3083,3 +3085,5 @@
 | R48 | 2026-09-24 | 后端一 9539b4f | 按日用量的切日时区口径（用户 → 租户 → UTC），UTC 默认值问题待定 |
 | R49 | 2026-09-24 | 用户定案 | 新增站点时区设置 `GET/POST v1/settings/site`，默认 Asia/Shanghai（后端二 ⑤ 实现，前端补在后台-08 主题与插槽页） |
 | R50 | 2026-09-24 | 用户定案 | 按日用量：用户时区为默认 'UTC' 时视同未设，跟随站点时区 |
+| R51 | 2026-09-24 | 协调会话 | dashboard/tasks 的 withdrawals_pending 改挂 marketing.commission.read |
+| R52 | 2026-09-24 | 协调会话（后台前端一） | system/status 组件 metrics 在 down/unknown 时字段可缺失 |
