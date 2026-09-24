@@ -1,0 +1,281 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 subs/index.tsx 用到的类名
+ * [POS]: portal/screens/subs 的样式，逐项取自设计稿门户-02：地址框 40 高 --bg 底等宽字、列表行 48 高 --surface-2 分隔、两卡按 minmax(min(100%,420px),1fr) 折行；节点行去掉国家与负载两列（保留规则 3），改为 名称 / 协议 / 倍率
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  align-items: stretch;
+  gap: var(--space-16);
+}
+
+.linkButton {
+  display: inline-flex;
+  align-items: center;
+  height: var(--h-control-sm);
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.linkButton:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+
+/* ===========================================================================
+ * 头部
+ * ========================================================================= */
+.head {
+  gap: var(--space-16);
+}
+
+.headRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+}
+
+.headTitle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.planName {
+  margin: 0;
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+}
+
+.switcher {
+  width: auto;
+  min-width: 140px;
+  font-weight: var(--fw-semibold);
+}
+
+.meta {
+  color: var(--text-2);
+}
+
+.headActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  font-size: 13px;
+}
+
+.quietAction {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.quietAction:hover {
+  color: var(--text);
+}
+
+.quietAction:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* ===========================================================================
+ * 订阅地址
+ * ========================================================================= */
+.linkBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.label {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.linkRow {
+  display: flex;
+  gap: var(--space-8);
+}
+
+.url {
+  flex: 1;
+  min-width: 0;
+  height: var(--h-control);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
+.url[data-empty] {
+  font-family: var(--font-sans);
+  color: var(--text-3);
+  user-select: none;
+}
+
+.copy {
+  flex: none;
+}
+
+.hint,
+.stats {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.stats {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats[data-leak] {
+  color: var(--warn);
+}
+
+.leak {
+  display: block;
+  margin-top: 2px;
+  font-weight: var(--fw-medium);
+}
+
+/* ===========================================================================
+ * 一键导入 / 可用节点
+ * ========================================================================= */
+.listCard > header {
+  border-bottom: 1px solid var(--border);
+}
+
+.cardNote {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clientRow {
+  width: 100%;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--surface-2);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.clientRow:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.clientName {
+  font-weight: var(--fw-medium);
+}
+
+.clientOs {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.clientGo {
+  color: var(--link);
+  font-size: 13px;
+}
+
+.cardFoot {
+  margin-top: auto;
+  padding: 12px 16px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.cardFoot a {
+  padding: 0 2px;
+}
+
+.listSkeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-16);
+}
+
+.nodeRow {
+  height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px 56px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--surface-2);
+}
+
+.nodeName {
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeProto {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.nodeRate {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 639px) {
+  .nodeRow {
+    grid-template-columns: minmax(0, 1fr) auto 48px;
+  }
+
+  .headActions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
