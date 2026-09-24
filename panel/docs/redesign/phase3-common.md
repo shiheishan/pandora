@@ -40,7 +40,7 @@
 
 - 用户已长期授权：**只允许把自己的分支推到 origin，用来跑 CI**（`git push origin <你的分支>`）。不推 `main`，不开 PR，不 force push，不推别人的分支。
 - 每次推送后用 `gh run list --branch <你的分支>` / `gh run view` 查结果，写进报告；CI 红了先修再往下做。
-- **CI 不跑 panel 的全量单元测试**：`pandora-native.yml` 只跑几条指定契约且按路径触发（只改 `domain/` 下的包不会触发），`panel-pg18.yml` 只跑 PG18。所以每次推送前，本机 `go build/vet` 与 `go test -p 1 -count=1 ./...` 必须对**最后一个提交**跑过；CI 修好前，报告里「本机全量通过」要写明是对哪个提交跑的。（2026-09-24 后端一第 ④ 步的 `077eb27` 就是这样漏过了表登记簿测试。）
+- **panel 全量单元测试在 `panel-pg18.yml` 的 panel-unit 任务里跑**（2026-09-24 起；此前没有任何 CI 跑，后端一 `077eb27` 因此漏过表登记簿测试）。报告里写 Panel PostgreSQL 18 gates 结果时，两个任务（panel-unit、panel-pg18）都要绿；推送前本机全量仍要对最后一个提交跑，CI 是兜底不是替代。
 
 ## 6. 共享文件
 

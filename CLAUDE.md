@@ -9,7 +9,7 @@ nodeagent/ - aegis-nodeagent：pdnd 的陈旧祖先，go.mod 与 pdnd 同为 git
 docs/ - 全仓库级文档：AI 铁律、密钥轮换、发布物绑定、验证交接 (0子目录)
 .githooks/ - 提交前闸门 pre-commit：gitleaks 按 .gitleaks.toml 与本机 ops-local/gitleaks-private.toml 扫暂存区，未装 gitleaks 也拒绝提交；clone 后执行 git config core.hooksPath .githooks 启用 (0子目录)
 ops-local/ - 被 git 忽略、只在维护者本机存在：测试机一次性运维脚本、安装验证日志、ops_secrets.py（Komari 密钥经 1Password 读取）、gitleaks 私有规则（真实服务器 IP、监控域名、Komari client ID）。仓库公开，这些永不入库
-.github/workflows/ - CI：默认 shell: bash（-eo pipefail，`| tee` 不再吞掉失败）；pdnd 的 Ubuntu race/vet、原生 ubuntu-24.04-arm 的 ARM64 race 门、-tags interop 的非 race 外部客户端门与 amd64/arm64 双架构构建门禁；panel 的 nodefabric 契约、前端嵌入与根下发契约（占位入口）、表登记簿、权限字典；panel-frontend 任务对新前端跑 lint/typecheck/vitest/双入口构建，再 make frontend-embed 用真实产物跑 web、webapp、api 的 Go 契约，占位页未被替换即失败；PG18 集成门禁单独在 panel-pg18.yml（触发面是整棵 panel/internal，不拖 pdnd 的重任务），runner 自带 Docker 跑 run-pg18-gates.sh，goose 版本跟 build-release.sh (0子目录)
+.github/workflows/ - CI：默认 shell: bash（-eo pipefail，`| tee` 不再吞掉失败）；pdnd 的 Ubuntu race/vet、原生 ubuntu-24.04-arm 的 ARM64 race 门、-tags interop 的非 race 外部客户端门与 amd64/arm64 双架构构建门禁；panel 的 nodefabric 契约、前端嵌入与根下发契约（占位入口）、表登记簿、权限字典；panel-frontend 任务对新前端跑 lint/typecheck/vitest/双入口构建，再 make frontend-embed 用真实产物跑 web、webapp、api 的 Go 契约，占位页未被替换即失败；PG18 集成门禁单独在 panel-pg18.yml（触发面是整棵 panel/internal 加 cmd 与 web 的 Go 源码，不拖 pdnd 的重任务），runner 自带 Docker 跑 run-pg18-gates.sh，goose 版本跟 build-release.sh；同一 workflow 的 panel-unit 任务跑 panel 全量 build/vet/go test（PG18 用例在此跳过），这是 CI 上唯一跑 panel 全部单元测试的地方 (0子目录)
 </directory>
 
 <config>
