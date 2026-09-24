@@ -126,6 +126,9 @@ ALTER TABLE order_items
     REFERENCES traffic_packs (tenant_id, id) ON DELETE RESTRICT,
   ADD CONSTRAINT order_items_plan_or_traffic_pack
     CHECK (traffic_pack_id IS NULL OR plan_id IS NULL);
+-- order_items 是按列授权的（00036 的白名单）：新列要单独放给运行时角色，
+-- 否则全新部署的库里流量包下单会被 permission denied。
+GRANT INSERT (traffic_pack_id) ON order_items TO aegis_app;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
