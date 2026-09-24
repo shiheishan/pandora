@@ -1,5 +1,10 @@
 //go:build linux
 
+// [INPUT]: 依赖 child_linux.go 的 runProtectedChild、staging_linux.go 的 duplicateCloseOnExec，依赖 x/sys/unix 的 fcntl/prctl
+// [OUTPUT]: 对外提供受保护子进程的描述符面、进程组清理、CLOEXEC 复制测试，及 TestCA44ProcessGroupHelper 子进程入口
+// [POS]: ca44runner 子进程监督的 Linux 测试面；helper 以测试二进制自身为子进程，其 t.Fatal 输出走 stdout，父测试失败时一并打印
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package ca44runner
 
 import (
