@@ -60,7 +60,7 @@ type reauthReq struct {
 
 // reauth 用当前口令换一枚 rat 刷新过的令牌。
 //
-// 53 条写路由挂着 RequireRecentReauth，要求令牌里的 rat 在 15 分钟以内。
+// 高危写路由（以 admin/router.go 为准）挂着 RequireRecentReauth，要求令牌里的 rat 在 15 分钟以内。
 // 而 rat 只在登录那一刻写入，令牌本身却活 720 小时 —— 登录满一刻钟，
 // 后台就事实上变成只读：接入命令、编辑保存、删除、开单全部报「此操作
 // 需要重新验证身份」，而在这个接口之前，系统里没有任何地方能完成那个

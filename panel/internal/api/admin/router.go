@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 domain/* 各服务（经 Deps 注入）、middleware 的鉴权/限流/幂等/权限链、platform/webapp 的 Mount 与 web.AdminApp
 // [OUTPUT]: 对外提供 Deps、NewRouter：admin 网关的完整 chi 路由表
-// [POS]: api/admin 的装配点：/ 手写控制台、/app/ React 候选、/v1 业务路由与逐路由权限声明都在这里；处理器分散在同包各文件
+// [POS]: api/admin 的装配点：根 / 与 /assets/* 经 webapp 下发后台前端、/v1 业务路由与逐路由权限声明都在这里；处理器分散在同包各文件
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package admin 实现管理控制台 API（Admin 域）。

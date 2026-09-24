@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 domain/* 各服务（经 Deps 注入）、middleware 的鉴权/限流/严格限流/幂等链、platform/webapp 的 Mount 与 web.PortalApp
 // [OUTPUT]: 对外提供 Deps、NewRouter：public 网关的完整 chi 路由表
-// [POS]: api/public 的装配点：/ 手写门户、/app/ React 候选、/{prefix}/{token} 订阅分发、/pdnd 安装引导、/v1 用户 API；字面量路由优先于订阅通配
+// [POS]: api/public 的装配点：根 / 与 /assets/* 经 webapp 下发门户前端、/{prefix}/{token} 订阅分发、/pdnd 安装引导、/v1 用户 API；字面量路由优先于订阅通配
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package public 实现用户门户 API（Public 域）。
