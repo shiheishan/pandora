@@ -33,14 +33,20 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：⓪ PG18 进 CI（`547b5a6`、`e159d92`，独立 workflow `panel-pg18.yml`）、① 安全 `62f7283`、② 主题 `e05fd9e`、③ 功能缺陷 `107de25` 已验收并合入 `feat/panel-redesign`。迁移已用 00074–00076，下一个 00077。**下一步 ④ 新表与新接口，然后 ⑤。**
+**进度**：⓪ PG18 进 CI（`547b5a6`、`e159d92`，独立 workflow `panel-pg18.yml`）、① 安全 `62f7283`、② 主题 `e05fd9e`、③ 功能缺陷 `107de25`、④ 新表与新接口（`ae95dfd`、`1d23cd9`，迁移 00077–00082）已验收并合入 `feat/panel-redesign`（④ 合并 46d72e3，PG18 run 35982313049：188 PASS / 0 SKIP / 0 FAIL）。迁移已用 00074–00082，剩 00083–00085。**下一步 ⑤ 种子与其余扩展（M9、M10 用 00083、00084），⑤ 做完后端二结束。**
 
 补充事项（与上文冲突时以这里为准）：
-- 每步做完：推送本分支，看两个 workflow；做事前先 `git merge feat/panel-redesign` 同步。契约改动写进报告（你的已到 R21）。
+- 每步做完：推送本分支，看两个 workflow；做事前先 `git merge feat/panel-redesign` 同步。契约改动写进报告，编号由协调会话统一分配。
 - 第 ⑤ 步：`GET v1/dashboard/tasks` 实现时，`withdrawals_pending` 挂 `marketing.commission.read`（后端一已把分销读权限统一到这个码）。
 - `platform/httpx` 错误码与 `middleware.RequireRecentReauth` 仍归第 2 阶段第 ⑤ 步，不要碰。
 - 新建租户拿不到通知模板（所有模板都有）：暂不处理。SanitizeCSS 保留不删。
 - node_preview 的「从没心跳过的节点不下发」是有意规则，不是 bug。
-- 契约修订已到 R28。新 PG18 测试一律用 `platform/pg18test` 辅助包；在已有域的包里加 PG18 用例时，把该域的测试名单写精确（默认过滤 `PG18` 会把别的域的用例拉进来、跳过、被判失败）。
+- 契约修订已到 R46（R40–R46 是第 ④ 步）。新 PG18 测试一律用 `platform/pg18test` 辅助包；在已有域的包里加 PG18 用例时，把该域的测试名单写精确（默认过滤 `PG18` 会把别的域的用例拉进来、跳过、被判失败）。
 - 本会话改过、还没有 L2 的目录（api/admin、api/public、platform/realtime）：按 GEB 逆向流，下次改到时再补，不用专门补。
 - **第 ⑤ 步追加（后端一建议）**：`notify/scan.go` 的流量预警把用户的流量包剩余（`traffic_pack_grants` 的 remaining）算进可用量，有流量包余量的用户不该收到「流量即将用尽」；`deploy/configure-app-role.sql` 末尾的 REVOKE UPDATE/DELETE 名单补上 `traffic_pack_grants`、`gift_card_batches`（两表已靠触发器守住，这是纵深防御）。
+- **第 ⑤ 步第一个提交：机械拆分 `api/admin/router.go`**（现 799 行，⑤ 一加路由就超 800）。按模块把路由段移到同包的 `router_<模块>.go`（函数接收同一个路由器与依赖），不改任何路径、中间件、顺序与行为，路由契约测试与权限字典测试原样通过；这个提交单独推送、在报告里单列，后端一第 ⑥ 步会在它合入后再往后台路由里加流量包管理。
+- **第 ⑤ 步顺手修 `run-pg18-gates.sh` 的就绪检查**（第 ④ 步 CI 偶发失败的原因）：`docker exec … pg_isready` 走 unix socket，会连上 postgres 镜像初始化时的临时实例；改为 `pg_isready -h 127.0.0.1`（临时实例不监听 TCP），或等到连续两次成功。
+- **待用户定，不要动**：`audit.VerifyChain` 用从 jsonb 读回的摘要复算哈希，jsonb 会重排键、改空白，与写入时 `json.Marshal` 的字节不同，任何带摘要的审计行都验不过（第 ④ 步 PG18 实测复现，既有缺陷）。修它要改审计链哈希口径，协调会话已报用户。
+- 后台按文章统计「有帮助 / 没帮助」的接口契约未定，⑤ 不做。
+- 第 ④ 步新建了 `api/admin`、`api/public`、`domain/plugin`、`domain/content` 四个 L2；`api/public/CLAUDE.md` 合并时协调会话补上了后端一的 `traffic_packs.go`、`plan_change.go` 两行。`nodefabric/node_admin.go` 1007 行、`adminops/service.go` 959 行，既有超限，不重构。
+- 推送前对**最后一个提交**跑本机全量（见公共规则第 5 节新增条），CI 不跑 panel 单元测试。
