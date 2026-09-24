@@ -5,7 +5,7 @@
 写接口照后端中间件顺序用三个守卫：requirePermission（缺权限 404）→ requireReauth（403 reauth_required，不消耗幂等键）→ idempotent(scope, run)（同键同请求原样重放、换请求 409 idempotency_key_reuse）。形状、错误码、fields 键名一律照 api-contract.md（含修订 Rn），页面在假后端上走通就等于按契约走通。
 
 成员清单
-types.ts: 处理器契约——MockUser、AnonContext / MockContext（请求体、send / fail、路径参数、三个守卫）、MockModule { anonymous?, routes? }（键为「METHOD /v1/路径」，:name 匹配一段），matchPattern / findRoute
+types.ts: 处理器契约——MockUser、AnonContext / MockContext（请求体、send / sendRaw / fail、路径参数、三个守卫）、MockResult 可带 raw（CSV 等非 JSON 响应，幂等重放与后端一致只回 Content-Type 与 Cache-Control）、MockModule { anonymous?, routes? }（键为「METHOD /v1/路径」，:name 匹配一段），matchPattern / findRoute
 quick-login.ts: 快捷登录令牌表，签发在 portal/account.ts、消费在外壳的 POST v1/auth/quick-login，60 秒一次性
 admin/: 后台十个模块的假接口，与 src/admin/screens 一一对应；见 admin/CLAUDE.md
 portal/: 门户十一个页面的假接口，与 src/portal/screens 一一对应；见 portal/CLAUDE.md

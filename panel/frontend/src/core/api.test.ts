@@ -378,3 +378,34 @@ describe('401 handling', () => {
     expect(env.tokens.get()).toBe('tok-1')
   })
 })
+
+describe('requestRaw', () => {
+  it('returns the untouched 2xx response for non-JSON bodies such as CSV exports', async () => {
+    const csv = new Response('\uFEFF卡密,状态\nGCABCD,unused\n', { status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8' } })
+    const env = setup([csv])
+    const res = await env.client.requestRaw('v1/gift-cards/batches/b1/export', { method: 'POST', body: {}, idempotencyKey: 'intent-1' })
+    expect(await res.text()).toContain('GCABCD,unused')
+    expect(env.calls[0]).toMatchObject({ method: 'POST', accept: 'text/csv', idempotencyKey: 'intent-1', body: {} })
+  })
+
+  it('shares the reauth replay with the same idempotency key', async () => {
+    const requestReauth = vi.fn(async () => {
+      env.tokens.set('tok-2')
+      return true
+    })
+    const env = setup([reauthRequired(), new Response('a,b\n', { status: 200 })], { requestReauth })
+    const res = await env.client.requestRaw('v1/gift-cards/batches/b1/export', { method: 'POST', body: {}, idempotencyKey: true })
+    expect(await res.text()).toBe('a,b\n')
+    expect(requestReauth).toHaveBeenCalledTimes(1)
+    const [first, replay] = env.calls
+    expect(replay!.idempotencyKey).toBe(first!.idempotencyKey)
+    expect(replay!.authorization).toBe('Bearer tok-2')
+  })
+
+  it('turns error envelopes into ApiError instead of handing them back', async () => {
+    const env = setup([envelope(409, 'conflict', '该批次已导出，完整卡码不可再次获取')])
+    const error = await rejection(env.client.requestRaw('v1/gift-cards/batches/b1/export', { method: 'POST', body: {}, idempotencyKey: true }))
+    expect(error.code).toBe('conflict')
+    expect(error.message).toBe('该批次已导出，完整卡码不可再次获取')
+  })
+})

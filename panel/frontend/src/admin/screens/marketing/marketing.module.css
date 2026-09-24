@@ -1,0 +1,163 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供营销页各组件共用的类名：纵向栈、工具条、统计条、列表（表头 + 行 + 展开区）、等宽与弱化文字、进度条、表单网格、分页
+ * [POS]: admin/screens/marketing 的公共样式，取自 管理后台-06-营销.dc.html 的内联样式（卡片 10 圆角、行高 46、表头 36、统计四格 1px 分隔）；各块独有的布局写在同名 .module.css
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* 统计四格：1px 缝隙当分隔线 */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--border);
+}
+
+.stat {
+  padding: 14px var(--space-16);
+  background: var(--surface);
+}
+
+.statLabel {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.statValue {
+  margin-top: var(--space-4);
+  font-size: 20px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 48px;
+  padding: var(--space-8) var(--space-16);
+  border-bottom: 1px solid var(--border);
+}
+
+.panelTitle {
+  margin: 0;
+  white-space: nowrap;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-2);
+}
+
+.faint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.bar {
+  display: block;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+.barFill {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--text);
+}
+
+/* 内联表单：自动换行的网格，窄屏两列 */
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px var(--space-12);
+  align-items: start;
+}
+
+.span2 {
+  grid-column: span 2;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8) var(--space-16);
+}
+
+.groupLabel {
+  margin-bottom: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-16);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+@media (max-width: 960px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .span2 {
+    grid-column: auto;
+  }
+}

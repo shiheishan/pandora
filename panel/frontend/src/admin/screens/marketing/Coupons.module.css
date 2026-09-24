@@ -1,0 +1,125 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的令牌
+ * [OUTPUT]: 对外提供 Coupons.tsx 用到的类名
+ * [POS]: admin/screens/marketing 优惠券列表的网格（设计稿六列：优惠码 / 优惠 / 适用套餐 / 使用 / 有效期至 / 启用），行高 46、表头 36、展开区左缩进 32；最窄 720，窄屏在面板里横向滚动
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) 110px minmax(120px, 1fr) 110px 110px 60px;
+  gap: var(--space-12);
+  align-items: center;
+  min-width: 720px;
+  padding: 0 var(--space-16);
+}
+
+.head {
+  height: 36px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.row {
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.line {
+  min-height: 46px;
+}
+
+.code {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.code {
+  cursor: pointer;
+}
+
+button.code:hover .codeText {
+  text-decoration: underline;
+}
+
+.codeText {
+  font-family: var(--font-mono);
+  font-weight: var(--fw-medium);
+}
+
+.chevron {
+  width: 12px;
+  color: var(--text-3);
+  transition: transform 0.15s;
+}
+
+.open .chevron {
+  transform: rotate(180deg);
+}
+
+.usage {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.end {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.log {
+  min-width: 720px;
+  padding: 6px var(--space-16) var(--space-12) var(--space-32);
+  background: var(--surface-2);
+}
+
+.logTitle {
+  padding: 6px 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.logRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px 110px 110px;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-caption);
+}
+
+.right {
+  text-align: right;
+}
+
+.reverted {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.sample {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px var(--space-12);
+  border-radius: var(--radius-md);
+  background: var(--surface-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
