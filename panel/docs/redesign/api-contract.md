@@ -61,6 +61,7 @@
 - 若干接口对非法 UUID 的路径参数回 500 而不是 404（各分段核对笔记列出）；前端在调用前不必自行校验，把 500 当普通失败处理即可，后端在补接口时顺手修。
 
 ### 1.5 幂等
+- **修订 R10（2026-09-24，后端二 62f7283）**：`POST v1/nodes/status:batch` 与 `POST v1/nodes/batch/status` 共用幂等 scope `node_status_batch`；同一个 key 换条路径重放回 409 `idempotency_key_reuse`。
 
 - 挂了 `middleware.Idempotency` 的路由（条目里「幂等：是 `scope`」）必须带请求头 `Idempotency-Key`（1–255 字节可见字符），缺失或非法回 400。
 - 同一次用户意图的所有重试（网络重试、reauth 后重放）必须复用同一个 key；key 在用户发起动作时生成（UUID v4），动作结束（成功或用户放弃）后丢弃。
@@ -68,6 +69,7 @@
 - admin 路由的中间件顺序是 RequirePermission → RequireRecentReauth → Idempotency（`reset-password` 与 `rotate` 两条例外，先 reauth 后权限，见 B 段核对笔记），所以 reauth 失败**不消耗**幂等键。
 
 ### 1.6 重新验证身份（reauth，仅 admin）
+- **修订 R9（2026-09-24，后端二 62f7283）**：挂 reauth 的路由由 40 条增至 45 条（新增用户批量导出 / 生成 / 群发、改用户状态、全局设备模式）；`reset-password`、`rotate` 改为先查权限、后 reauth，原先的例外取消。
 
 - 40 条 admin 路由挂 `RequireRecentReauth`（`router.go` 中 40 处，含 `registerCatalogPlanUpdate` 注册的 `PUT v1/plans/{id}`）；开工说明与 `handlers.go:63` 注释里的「53 条」与代码不符。条目里「reauth：是」即这 40 条，另有若干条标了「待补·后端改为是」。
 - 令牌里的 rat 在 15 分钟内即通过。登录时 rat=登录时刻。`GET v1/me` 的 `reauthed` 反映当前状态。
@@ -464,6 +466,7 @@
   - 按保留规则 2，删除订阅地址整块（见上文）
 
 #### POST v1/users/{id}/status — 启用 / 停用 / 封禁
+- **修订 R9（2026-09-24，后端二 62f7283）**：reauth 改为「是」。
 - 状态：现有 `handlers.go:322 setUserStatus` → `service.go:450 SetUserStatus`
 - 权限：`iam.user.write`｜reauth：否（router 注释说要 reauth，代码没挂，设计稿也不要求，契约以代码为准）｜幂等：否
 - 请求：`{ status: "active"|"suspended"|"banned", reason: string }`。status 不是 active 时 reason 必填
@@ -477,6 +480,7 @@
 - 设计：后台-03 抽屉的「禁用账号 / 启用账号」按钮。映射：禁用 → `suspended`，启用 → `active`。待补·前端：禁用确认框加必填的「原因」输入框；另加一个次级的「封禁」选项（`banned`）
 
 #### POST v1/users/{id}/reset-password — 管理员替用户设新密码
+- **修订 R9（2026-09-24，后端二 62f7283）**：先查权限、后 reauth（无权限直接 404，不再先要求输密码）。
 - 状态：现有 `handlers.go:293 resetUserPassword`
 - 权限：`iam.user.write`｜reauth：是（中间件顺序是先检查 reauth、再检查权限）｜幂等：否
 - 请求：`{ new_password: string, reason: string(≥5 字) }`
@@ -489,6 +493,7 @@
 - 设计：后台-03 抽屉的「重置密码」。设计稿要的是「发一次性重置链接邮件」，与后端现状冲突，见 D-B-2。在 D-B-2 定下来之前，前端的重认证确认框里需要增加「新密码」和「原因」两个输入框
 
 #### POST v1/subscriptions/{id}/rotate — 管理员换发订阅链接
+- **修订 R11（2026-09-24，后端二 62f7283）**：响应改为 `{ user_email, old_revoked: true }`，不再含 `token`（D-B-1）；先查权限、后 reauth。
 - 状态：现有 `handlers.go:250 rotateSubscriptionLink` → `subscription/admin_rotate.go:44 AdminRotate`
 - 权限：`iam.user.write`｜reauth：是（先检查 reauth、再检查权限）｜幂等：否
 - 请求：path `id`，是**订阅** id，不是用户 id；body `{ reason: string(≥5 字) }`
@@ -581,6 +586,7 @@
   - 命中数取 `total`，预览列表取 `sample_rows`
 
 #### GET v1/users/bulk/export — 导出 CSV
+- **修订 R9（2026-09-24，后端二 62f7283）**：权限改为 `iam.user.write`，reauth 改为「是」。
 - 状态：现有 `bulk_users.go:54 exportUsers`
 - 权限：`iam.user.read`｜reauth：否（router 注释说要写权限 + 重认证，代码是读权限、不要 reauth，契约以代码为准）｜幂等：否
 - 请求：query `status?`、`group_id?`、`query?`、`has_active_sub?: "true"|"false"`、`limit?: int`（默认 10000，最大 50000，超出会被静默截断），外加待补的 `plan_id`、`expires_within_days`、`sub_state`
@@ -589,6 +595,7 @@
 - 设计：后台-03「导出 CSV」。映射：没有 cookie，不能用 `<a href>` 直接下载。前端要用 fetch 带 Bearer 头取回 blob，再触发下载。请求前先用 preview 的 `total` 提示「将导出 N 人（上限 10000）」
 
 #### POST v1/users/bulk/generate — 批量生成账号
+- **修订 R9（2026-09-24，后端二 62f7283）**：reauth 改为「是」。
 - 状态：现有 `bulk_users.go:106 generateUsers` → `adminops/bulk_users.go GenerateUsers`
 - 权限：`iam.user.write`｜reauth：否（注释说要，代码没挂，以代码为准）｜幂等：是 `user_bulk_generate`
 - 请求：`{ count: int(1–500), email_prefix: string（1–20 位，只能用小写字母、数字、-）, email_domain: string, group_id?: uuid, reason: string(5–500 字) }`
@@ -597,6 +604,7 @@
 - 设计：后台-03「批量生成用户」。映射：数量 → count（设计稿写的上限是 200，按后端改为 500）；邮箱后缀 → email_domain；用户组 → group_id。待补·前端：增加必填的「邮箱前缀」和「生成原因」。「开通套餐」这一项后端没有，见 D-B-7，在它定下来之前隐藏。「下载」按钮由前端把 `users` 拼成 CSV 在本地下载，不再请求服务器
 
 #### POST v1/users/bulk/mail — 群发邮件
+- **修订 R9（2026-09-24，后端二 62f7283）**：reauth 改为「是」。
 - 状态：现有 `bulk_users.go:135 sendBulkMail` → `adminops/bulk_mail.go SendBulkMail`；待补·后端（变量替换）
 - 权限：`ops.notification.write`｜reauth：否（注释说要，代码没挂，以代码为准）｜幂等：是 `user_bulk_mail`
 - 请求：`{ status?, group_id?, query?, has_active_sub?,（外加待补的 plan_id?, expires_within_days?, sub_state?）, subject: string(1–200), body: string(1–20000) }`。筛选字段直接放在 body 顶层，不嵌套在子对象里
@@ -623,6 +631,7 @@
   - 「默认同时在线设备」滑块和「设备识别窗口」下拉见 D-B-5、D-B-4
 
 #### POST v1/subscriptions/{id}/device-limit — 单个订阅的设备数覆盖
+- **修订 R12（2026-09-24，后端二 62f7283）**：写审计；订阅不存在或 id 非法回 404（原为 200）。
 - 状态：现有 `devices.go:89 setDeviceLimit`
 - 权限：`iam.user.write`｜reauth：否｜幂等：否
 - 请求：path `id`，是**订阅** id；body `{ limit: int(0–1000) | null }`。null 表示恢复套餐规定，0 表示不限
@@ -631,6 +640,7 @@
 - 设计：后台-03 抽屉「订阅」tab 的「本订阅设备上限」− / + 控件。设计稿的范围是 1–20，后端允许 0–1000，前端按 1–1000 放开。待补·前端：增加「恢复套餐默认」（传 null）和「不限」（传 0）两个快捷按钮
 
 #### POST v1/settings/device-limit — 全局设备判定模式
+- **修订 R9 / R12（2026-09-24，后端二 62f7283）**：reauth 改为「是」；写审计。
 - 状态：现有 `devices.go:130 setDeviceMode`
 - 权限：`iam.user.write`｜reauth：否（注释说「要求近期重认证」，代码没挂，以代码为准）｜幂等：否
 - 请求：`{ mode: "loose"|"strict", grace?: int(0–5) }`
@@ -1192,6 +1202,7 @@
 - 设计：后台-07「调整排序 / 完成排序」。点「完成排序」时一次提交整页顺序（sort_order 用 10、20、30…）。
 
 #### POST v1/nodes/status:batch — 批量改服务状态（启用/停用/退役）
+- **修订 R10（2026-09-24，后端二 62f7283）**：幂等 scope 改为 `node_status_batch`（与别名路由共用）。
 - 状态：现有 `panel/internal/api/admin/node_admin.go:109 batchAdminNodeStatus` → `nodefabric/node_admin.go:737 BatchAdminNodeLifecycle`
 - 权限：`node.lifecycle`｜reauth：否｜幂等：是 `node_status_batch`
 - 请求：`{ items: [{ id: uuid, row_version: int64 }](1–100), serving_status: "draft"|"active"|"draining"|"disabled"|"retired", reason?: string(≤500) }`
@@ -1200,6 +1211,7 @@
 - 设计：后台-07 批量条「启用 / 停用」、抽屉「操作 › 启用节点 / 停用节点」（单节点也走本接口，items 只放一个）。映射：设计「启用」→ `active`；「停用」→ `disabled`。**前端统一用本路径**，不用下面的别名。
 
 #### POST v1/nodes/batch/status — 同上（别名）
+- **修订 R10（2026-09-24，后端二 62f7283）**：幂等 scope 改为 `node_status_batch`（与 `status:batch` 共用）。
 - 状态：现有，与 status:batch **同一处理器** `node_admin.go:109 batchAdminNodeStatus`，路由 router.go:664
 - 权限：`node.lifecycle`｜reauth：否｜幂等：是 `node_batch_status`（与 status:batch 的 scope **不同**，同一 Idempotency-Key 跨两条路径不会去重）
 - 请求/响应/错误：与 `POST v1/nodes/status:batch` 完全相同。
@@ -1305,6 +1317,7 @@
 - 设计：设计无单节点编辑界面（后端有、设计缺）。
 
 #### POST v1/nodes/{id}/server-token — 重签服务端（UniProxy）令牌
+- **修订 R13（2026-09-24，后端二 62f7283）**：id 非法或节点不存在回 404；已退役 / 已销毁（含 serving_status=retired）回 409；签发写审计（不记令牌）。签发时间与签发人仍按 M8 在后端二第 ④ 步补。
 - 状态：现有 `panel/internal/api/admin/handlers.go:1433 nodeIssueServerToken` → `nodefabric/uniproxy.go:148 IssueServerToken`
 - 权限：`node.provision`｜reauth：是｜幂等：是 `node_server_token_issue`
 - 请求：无请求体
@@ -1582,6 +1595,7 @@
 - 设计：Telegram 卡字段 Bot Token、管理员群组 Chat ID、Bot 用户名、保存。待补·前端：卡片标题栏加「启用」开关（`enabled`，设计缺）。「管理员群组」除测试默认目标外还用来做什么见待决 D-A-4
 
 #### POST v1/settings/telegram/test — 发送 Telegram 测试消息
+- **修订 R14（2026-09-24，后端二 62f7283）**：权限改为 `ops.notification.write`。
 - 状态：现有 `telegram.go:117 testTelegram`；**chat_id 可选 待补·后端**
 - 权限：`billing.provider.write`（与保存用的权限不同，见核对笔记）｜reauth：否｜幂等：否
 - 请求（现有）：`{ chat_id: int }`（必填非 0；JSON 数字，负数群 ID 在 JS 安全整数内）；待补·后端：`chat_id?` 可省略，省略时发往 `admin_chat_id`，两者都没有回 422 `fields.chat_id`
@@ -1606,6 +1620,7 @@
 - 设计：SMTP 卡「保存」、新增的「注册与验证」卡「保存」（同一接口）
 
 #### POST v1/settings/mail/test — 发送 SMTP 测试邮件
+- **修订 R14（2026-09-24，后端二 62f7283）**：权限改为 `ops.notification.write`。
 - 状态：现有 `mail.go:220 testMailSettings`
 - 权限：`billing.provider.write`｜reauth：否｜幂等：否
 - 请求：`{ to: string }`
@@ -1647,6 +1662,7 @@
 - 设计：「恢复默认」+ 危险确认框。待补·前端：`is_default` 为 true 或该模板无内置默认时禁用按钮（后者前端靠调用失败判断，或由后端在列表加 `has_default: bool`——建议随 preview 一起补，需迁移：否）
 
 #### POST v1/mail/templates/test — 用模板实发一封测试信
+- **修订 R14（2026-09-24，后端二 62f7283）**：权限改为 `ops.notification.write`（注释说要 reauth、代码仍未挂，待后续处理）。
 - 状态：现有 `mail_template.go:93 testMailTemplate`；**草稿发送 待补·后端**
 - 权限：`billing.provider.write`｜reauth：否（router 注释写「要求近期重认证」但实际没挂，见核对笔记）｜幂等：否
 - 请求（现有）：`{ code: string, channel: "email", to: string }`，发送的是**已保存**的模板；待补·后端追加 `subject?: string, body?: string`：提供时按草稿渲染发送（先做同样的长度与变量白名单校验），省略时行为不变。需迁移：否
@@ -2321,6 +2337,7 @@
   - 映射：设计只提示「至少 8 位」，要补上「需包含字母和数字」。
 
 #### GET v1/me/sessions — 登录会话列表
+- **修订 R15（2026-09-24，后端二 62f7283）**：只列出 `audience=public` 的会话，后台会话不可见（缺陷 6 已修）。
 - 状态：现有 `panel/internal/api/public/selfservice.go:42 listMySessions`；另有待补·后端（改行为）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无
@@ -2334,6 +2351,7 @@
   - 映射：设备名由前端解析 user_agent，得到「浏览器/客户端 · 系统」。活跃时间取 last_seen_at。current=true 的显示「当前」且不显示「下线」。城市和 IP 见 D-F-3，在此之前 meta 只显示「登录于 {created_at} · 最近活跃 {last_seen_at}」。
 
 #### DELETE v1/me/sessions/{id} — 踢下线某个会话
+- **修订 R15（2026-09-24，后端二 62f7283）**：只能吊销 `audience=public` 的会话；指向后台会话回 404 且不做任何修改。
 - 状态：现有 `panel/internal/api/public/selfservice.go:53 revokeMySession`
 - 权限：登录用户｜reauth：否｜幂等：否（天然幂等，第二次回 404）
 - 请求：path `id: uuid`
@@ -2957,3 +2975,11 @@
 | R6 | 2026-09-24 | 后端一 0651cb2 | 优惠券与分销路由改用营销域权限码（迁移 00068） |
 | R7 | 2026-09-24 | 后端一 0651cb2 | 佣金可用额统一口径，转余额 409 文案 |
 | R8 | 2026-09-24 | 后端一 0651cb2 | 支付渠道停用时发起支付回 503 |
+| R9 | 2026-09-24 | 后端二 62f7283 | reauth 路由增至 45 条（批量导出/生成/群发、改用户状态、全局设备模式）；reset-password / rotate 先权限后 reauth；批量导出权限改 `iam.user.write` |
+| R10 | 2026-09-24 | 后端二 62f7283 | 两条批量改节点状态路由共用幂等 scope `node_status_batch` |
+| R11 | 2026-09-24 | 后端二 62f7283 | 换发订阅链接不再回传令牌（D-B-1） |
+| R12 | 2026-09-24 | 后端二 62f7283 | 设备上限两条写接口写审计，单订阅不存在回 404 |
+| R13 | 2026-09-24 | 后端二 62f7283 | server-token：非法 id 404、退役/销毁 409、写审计 |
+| R14 | 2026-09-24 | 后端二 62f7283 | 三个测试发送接口权限改 `ops.notification.write` |
+| R15 | 2026-09-24 | 后端二 62f7283 | 门户会话列表与吊销只作用于 public 会话（缺陷 6） |
+| R16 | 2026-09-24 | 后端二 62f7283 | 注册验证码经 notify 按地址投递（迁移 00074 模板种子），注册事务提交后立即派发（缺陷 1） |
