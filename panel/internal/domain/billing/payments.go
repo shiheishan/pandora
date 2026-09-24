@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/payment 的 Factory 与 epay/demo 适配器，依赖 platform/crypto 解密渠道凭据、platform/db、platform/httpx
+// [OUTPUT]: 对外提供 PaymentService：CreatePaymentIntent、ParseNotification、QueryAndReconcile 等渠道侧用例
+// [POS]: billing 里「送用户去收银台、把回调翻译成平台事件」的一侧；钱确认到账后一律交回 checkout.go 的 HandlePaymentWebhook
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -82,6 +87,20 @@ func NewPaymentService(pool *db.Pool, env *crypto.Envelope, masterKey []byte, pu
 
 func (s *PaymentService) Factory() *payment.Factory { return s.factory }
 
+// providerFor 取渠道实例，并把「渠道被停用」翻译成可展示的业务错误。
+// 停用是管理员的有意动作，照普通 error 往上抛会变成 500（缺陷 19）。
+func (s *PaymentService) providerFor(ctx context.Context, tenantID, code string) (payment.Provider, *payment.ProviderRecord, error) {
+	prov, rec, err := s.factory.Get(ctx, tenantID, code)
+	return prov, rec, providerLookupError(err)
+}
+
+func providerLookupError(err error) error {
+	if errors.Is(err, payment.ErrProviderDisabled) {
+		return httpx.New(httpx.CodeUnavailable, "该支付渠道已停用，请更换其他支付方式")
+	}
+	return err
+}
+
 // loadProvider 从库里读渠道并解密凭据。
 func (s *PaymentService) loadProvider(ctx context.Context, tenantID, code string) (*payment.ProviderRecord, error) {
 	var (
@@ -155,7 +174,7 @@ type CreateIntentOutput struct {
 
 // CreatePaymentIntent 为订单创建一次支付尝试并返回收银台跳转信息。
 func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID string, in CreateIntentInput) (*CreateIntentOutput, error) {
-	prov, rec, err := s.factory.Get(ctx, tenantID, in.ProviderCode)
+	prov, rec, err := s.providerFor(ctx, tenantID, in.ProviderCode)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +381,7 @@ type ParsedNotification struct {
 
 // ParseNotification 找到渠道适配器并解析回调。
 func (s *PaymentService) ParseNotification(ctx context.Context, tenantID, providerCode string, r *http.Request) (*ParsedNotification, error) {
-	prov, _, err := s.factory.Get(ctx, tenantID, providerCode)
+	prov, _, err := s.providerFor(ctx, tenantID, providerCode)
 	if err != nil {
 		return nil, err
 	}
@@ -417,7 +436,7 @@ func (s *PaymentService) ParseNotification(ctx context.Context, tenantID, provid
 // 此时靠这条路径把状态补齐，且因为走的是同一个 HandlePaymentWebhook，
 // 幂等性与账本正确性完全一致 —— 不会因为「补偿」而重复发放权益。
 func (s *PaymentService) QueryAndReconcile(ctx context.Context, tenantID, providerCode, orderNo string) (*PaymentWebhookOutput, error) {
-	prov, _, err := s.factory.Get(ctx, tenantID, providerCode)
+	prov, _, err := s.providerFor(ctx, tenantID, providerCode)
 	if err != nil {
 		return nil, err
 	}

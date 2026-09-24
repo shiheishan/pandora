@@ -30,7 +30,11 @@ type catalogSalesIdentityQuerier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-func TestUpdatePlanP0BSalesGateOrderPG18(t *testing.T) {
+// openCatalogSalesPG18 连上 run-pg18-gates.sh 为 catalog_sales 域准备的一次性库，
+// 逐项证明它确实是那一次性库（库名、标记、注释、run ID）、应用连接确实是
+// 受 RLS 约束的 aegis_app；任何一项对不上就拒绝继续。未配置时跳过。
+func openCatalogSalesPG18(t *testing.T) (context.Context, *pgxpool.Pool, *platformdb.Pool) {
+	t.Helper()
 	fixture := strings.TrimSpace(os.Getenv("AEGIS_CATALOG_SALES_PG18_FIXTURE"))
 	appDSN := strings.TrimSpace(os.Getenv("AEGIS_CATALOG_SALES_PG18_DSN"))
 	adminDSN := strings.TrimSpace(os.Getenv("AEGIS_CATALOG_SALES_PG18_ADMIN_DSN"))
@@ -48,17 +52,17 @@ func TestUpdatePlanP0BSalesGateOrderPG18(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	admin, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
 		t.Fatalf("open fixture administrator pool: %v", err)
 	}
-	defer admin.Close()
+	t.Cleanup(admin.Close)
 	app, err := platformdb.Open(ctx, appDSN)
 	if err != nil {
 		t.Fatalf("open real aegis_app pool: %v", err)
 	}
-	defer app.Close()
+	t.Cleanup(app.Close)
 
 	type fixtureIdentity struct {
 		database, marker, systemIdentifier, databaseOID, databaseComment string
@@ -109,6 +113,11 @@ func TestUpdatePlanP0BSalesGateOrderPG18(t *testing.T) {
 		FROM pg_class WHERE oid IN ('products'::regclass,'plans'::regclass,'plan_versions'::regclass,'audit_events'::regclass)`).Scan(&forcedRLS); err != nil || !forcedRLS {
 		t.Fatalf("catalog FORCE RLS proof failed forced=%v err=%v", forcedRLS, err)
 	}
+	return ctx, admin, app
+}
+
+func TestUpdatePlanP0BSalesGateOrderPG18(t *testing.T) {
+	ctx, admin, app := openCatalogSalesPG18(t)
 
 	const (
 		tenantID  = "72000000-0000-7000-8000-000000000001"

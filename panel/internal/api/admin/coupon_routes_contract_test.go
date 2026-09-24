@@ -95,8 +95,9 @@ func loadCouponRouteContracts(t *testing.T) map[string]couponRouteContract {
 
 func TestCouponRoutePermissionContracts(t *testing.T) {
 	want := map[string]couponRouteContract{
+		// 只读列表挂只读权限（00068 授予所有持有写权限的角色）。
 		"GET /coupons": {
-			handler: "h.listCoupons", permissions: []string{"marketing.coupon.write"},
+			handler: "h.listCoupons", permissions: []string{"marketing.coupon.read"},
 		},
 		"GET /coupons/{id}/redemptions": {
 			handler:     "h.couponRedemptions",

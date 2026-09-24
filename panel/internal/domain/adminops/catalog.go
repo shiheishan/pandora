@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx，依赖 domain/nodefabric 的 StableProtocolReadySQL 判定可服务节点
+// [OUTPUT]: 对外提供套餐目录用例 GetPlan/CreatePlan/UpdatePlan/CreatePlanVersion/UpdatePlanVersion/PublishPlanVersion/CreatePlanPrice/ArchivePlanPrice/ArchivePlan 及其输入输出类型；包内提供 loadPlanTx 与各 *Tx 事务体
+// [POS]: adminops 的套餐目录核心：每个用例是「事务外校验 + 事务体」两段，事务体可被 plan_wizard_update.go 在同一事务里编排
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
@@ -412,110 +417,115 @@ func (s *Service) GetPlan(ctx context.Context, tenantID, planID string) (*Catalo
 	}
 	out := &CatalogPlanDetail{Versions: []VersionRow{}, Prices: []PriceRow{}}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT id,product_id,current_version_id,row_version,code,name,description,status,visibility,
-		 visible_group_ids::text[],visible_from,visible_until,allow_new_purchase,allow_renewal,allow_upgrade,
-		 purchase_limit_per_user,stock_total,stock_reserved,sort_order FROM plans WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, planID).Scan(
-			&out.ID, &out.ProductID, &out.CurrentVersionID, &out.RowVersion, &out.Code, &out.Name, &out.Description, &out.Status, &out.Visibility, &out.VisibleGroupIDs, &out.VisibleFrom, &out.VisibleUntil, &out.AllowNewPurchase, &out.AllowRenewal, &out.AllowUpgrade, &out.PurchaseLimitPerUser, &out.StockTotal, &out.StockReserved, &out.SortOrder); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-		rows, err := tx.Query(ctx, `SELECT id,version,status,frozen_at,row_version,quota_reset_strategy,
-			quota_reset_day,grace_period_hours,grace_keeps_service,renewal_extends_period,
-			renewal_resets_quota,renewal_keeps_addons,max_devices,max_concurrent,
-			device_release_hours,overage_policy,throttle_kbps,notes,created_at
-			FROM plan_versions WHERE tenant_id=$1 AND plan_id=$2::uuid ORDER BY version DESC`, tenantID, planID)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var v VersionRow
-			if err := rows.Scan(&v.ID, &v.Version, &v.Status, &v.FrozenAt, &v.RowVersion,
-				&v.QuotaResetStrategy, &v.QuotaResetDay, &v.GracePeriodHours, &v.GraceKeepsService,
-				&v.RenewalExtendsPeriod, &v.RenewalResetsQuota, &v.RenewalKeepsAddons,
-				&v.MaxDevices, &v.MaxConcurrent, &v.DeviceReleaseHours, &v.OveragePolicy,
-				&v.ThrottleKbps, &v.Notes, &v.CreatedAt); err != nil {
-				rows.Close()
-				return err
-			}
-			out.Versions = append(out.Versions, v)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		for i := range out.Versions {
-			out.Versions[i].Entitlements = []EntitlementInput{}
-			out.Versions[i].Quotas = []QuotaInput{}
-			out.Versions[i].PoolIDs = []string{}
-			erows, err := tx.Query(ctx, `SELECT code,value FROM entitlements WHERE tenant_id=$1 AND plan_version_id=$2::uuid ORDER BY code`, tenantID, out.Versions[i].ID)
-			if err != nil {
-				return err
-			}
-			for erows.Next() {
-				var e EntitlementInput
-				if err := erows.Scan(&e.Code, &e.Value); err != nil {
-					erows.Close()
-					return err
-				}
-				out.Versions[i].Entitlements = append(out.Versions[i].Entitlements, e)
-			}
-			erows.Close()
-			if err := erows.Err(); err != nil {
-				return err
-			}
-			qrows, err := tx.Query(ctx, `SELECT metric,limit_value,unit,period FROM quota_definitions WHERE tenant_id=$1 AND plan_version_id=$2::uuid ORDER BY metric,period`, tenantID, out.Versions[i].ID)
-			if err != nil {
-				return err
-			}
-			for qrows.Next() {
-				var q QuotaInput
-				if err := qrows.Scan(&q.Metric, &q.Limit, &q.Unit, &q.Period); err != nil {
-					qrows.Close()
-					return err
-				}
-				out.Versions[i].Quotas = append(out.Versions[i].Quotas, q)
-			}
-			qrows.Close()
-			if err := qrows.Err(); err != nil {
-				return err
-			}
-			prows, err := tx.Query(ctx, `SELECT pool_id::text FROM plan_node_pools WHERE tenant_id=$1 AND plan_version_id=$2::uuid ORDER BY pool_id`, tenantID, out.Versions[i].ID)
-			if err != nil {
-				return err
-			}
-			for prows.Next() {
-				var id string
-				if err := prows.Scan(&id); err != nil {
-					prows.Close()
-					return err
-				}
-				out.Versions[i].PoolIDs = append(out.Versions[i].PoolIDs, id)
-			}
-			prows.Close()
-			if err := prows.Err(); err != nil {
-				return err
-			}
-		}
-		prows, err := tx.Query(ctx, `SELECT id,currency,unit_amount,billing_interval,interval_count,trial_days,status,user_group_id,valid_from,valid_until,row_version FROM prices WHERE tenant_id=$1 AND product_id=$2::uuid ORDER BY created_at DESC`, tenantID, out.ProductID)
-		if err != nil {
-			return err
-		}
-		defer prows.Close()
-		for prows.Next() {
-			var p PriceRow
-			if err := prows.Scan(&p.ID, &p.Currency, &p.UnitAmount, &p.Interval, &p.Count, &p.TrialDays, &p.Status, &p.UserGroupID, &p.ValidFrom, &p.ValidUntil, &p.RowVersion); err != nil {
-				return err
-			}
-			out.Prices = append(out.Prices, p)
-		}
-		return prows.Err()
+		return loadPlanTx(ctx, tx, tenantID, planID, out)
 	})
 	if err != nil {
 		return nil, catalogResult(err)
 	}
 	return out, nil
+}
+
+// loadPlanTx 在调用方的事务里读套餐详情，向导编辑靠它在同一事务里读—改—发布。
+func loadPlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID string, out *CatalogPlanDetail) error {
+	if err := tx.QueryRow(ctx, `SELECT id,product_id,current_version_id,row_version,code,name,description,status,visibility,
+	 visible_group_ids::text[],visible_from,visible_until,allow_new_purchase,allow_renewal,allow_upgrade,
+	 purchase_limit_per_user,stock_total,stock_reserved,sort_order FROM plans WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, planID).Scan(
+		&out.ID, &out.ProductID, &out.CurrentVersionID, &out.RowVersion, &out.Code, &out.Name, &out.Description, &out.Status, &out.Visibility, &out.VisibleGroupIDs, &out.VisibleFrom, &out.VisibleUntil, &out.AllowNewPurchase, &out.AllowRenewal, &out.AllowUpgrade, &out.PurchaseLimitPerUser, &out.StockTotal, &out.StockReserved, &out.SortOrder); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NotFoundOrForbidden()
+		}
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT id,version,status,frozen_at,row_version,quota_reset_strategy,
+		quota_reset_day,grace_period_hours,grace_keeps_service,renewal_extends_period,
+		renewal_resets_quota,renewal_keeps_addons,max_devices,max_concurrent,
+		device_release_hours,overage_policy,throttle_kbps,notes,created_at
+		FROM plan_versions WHERE tenant_id=$1 AND plan_id=$2::uuid ORDER BY version DESC`, tenantID, planID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var v VersionRow
+		if err := rows.Scan(&v.ID, &v.Version, &v.Status, &v.FrozenAt, &v.RowVersion,
+			&v.QuotaResetStrategy, &v.QuotaResetDay, &v.GracePeriodHours, &v.GraceKeepsService,
+			&v.RenewalExtendsPeriod, &v.RenewalResetsQuota, &v.RenewalKeepsAddons,
+			&v.MaxDevices, &v.MaxConcurrent, &v.DeviceReleaseHours, &v.OveragePolicy,
+			&v.ThrottleKbps, &v.Notes, &v.CreatedAt); err != nil {
+			rows.Close()
+			return err
+		}
+		out.Versions = append(out.Versions, v)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range out.Versions {
+		out.Versions[i].Entitlements = []EntitlementInput{}
+		out.Versions[i].Quotas = []QuotaInput{}
+		out.Versions[i].PoolIDs = []string{}
+		erows, err := tx.Query(ctx, `SELECT code,value FROM entitlements WHERE tenant_id=$1 AND plan_version_id=$2::uuid ORDER BY code`, tenantID, out.Versions[i].ID)
+		if err != nil {
+			return err
+		}
+		for erows.Next() {
+			var e EntitlementInput
+			if err := erows.Scan(&e.Code, &e.Value); err != nil {
+				erows.Close()
+				return err
+			}
+			out.Versions[i].Entitlements = append(out.Versions[i].Entitlements, e)
+		}
+		erows.Close()
+		if err := erows.Err(); err != nil {
+			return err
+		}
+		qrows, err := tx.Query(ctx, `SELECT metric,limit_value,unit,period FROM quota_definitions WHERE tenant_id=$1 AND plan_version_id=$2::uuid ORDER BY metric,period`, tenantID, out.Versions[i].ID)
+		if err != nil {
+			return err
+		}
+		for qrows.Next() {
+			var q QuotaInput
+			if err := qrows.Scan(&q.Metric, &q.Limit, &q.Unit, &q.Period); err != nil {
+				qrows.Close()
+				return err
+			}
+			out.Versions[i].Quotas = append(out.Versions[i].Quotas, q)
+		}
+		qrows.Close()
+		if err := qrows.Err(); err != nil {
+			return err
+		}
+		prows, err := tx.Query(ctx, `SELECT pool_id::text FROM plan_node_pools WHERE tenant_id=$1 AND plan_version_id=$2::uuid ORDER BY pool_id`, tenantID, out.Versions[i].ID)
+		if err != nil {
+			return err
+		}
+		for prows.Next() {
+			var id string
+			if err := prows.Scan(&id); err != nil {
+				prows.Close()
+				return err
+			}
+			out.Versions[i].PoolIDs = append(out.Versions[i].PoolIDs, id)
+		}
+		prows.Close()
+		if err := prows.Err(); err != nil {
+			return err
+		}
+	}
+	prows, err := tx.Query(ctx, `SELECT id,currency,unit_amount,billing_interval,interval_count,trial_days,status,user_group_id,valid_from,valid_until,row_version FROM prices WHERE tenant_id=$1 AND product_id=$2::uuid ORDER BY created_at DESC`, tenantID, out.ProductID)
+	if err != nil {
+		return err
+	}
+	defer prows.Close()
+	for prows.Next() {
+		var p PriceRow
+		if err := prows.Scan(&p.ID, &p.Currency, &p.UnitAmount, &p.Interval, &p.Count, &p.TrialDays, &p.Status, &p.UserGroupID, &p.ValidFrom, &p.ValidUntil, &p.RowVersion); err != nil {
+			return err
+		}
+		out.Prices = append(out.Prices, p)
+	}
+	return prows.Err()
 }
 
 func (s *Service) CreatePlan(ctx context.Context, tenantID string, in CreatePlanInput) (*CatalogPlanDetail, error) {
@@ -549,61 +559,73 @@ func (s *Service) CreatePlan(ctx context.Context, tenantID string, in CreatePlan
 }
 
 func (s *Service) UpdatePlan(ctx context.Context, tenantID, planID string, in UpdatePlanInput) (int64, error) {
+	if err := prepareUpdatePlanInput(planID, &in); err != nil {
+		return 0, err
+	}
+	var next int64
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
+		var err error
+		next, err = s.updatePlanTx(ctx, tx, tenantID, planID, in)
+		return err
+	})
+	return next, catalogResult(err)
+}
+
+// prepareUpdatePlanInput 在进事务之前规整并校验套餐资料：失败时一行都不碰。
+func prepareUpdatePlanInput(planID string, in *UpdatePlanInput) error {
 	if !validCatalogIDs(planID) {
-		return 0, httpx.NotFoundOrForbidden()
+		return httpx.NotFoundOrForbidden()
 	}
 	if in.ExpectedRowVersion <= 0 {
-		return 0, httpx.Invalid(map[string]string{"expected_row_version": "必须为正整数"})
+		return httpx.Invalid(map[string]string{"expected_row_version": "必须为正整数"})
 	}
 	in.Code = strings.TrimSpace(in.Code)
 	in.Name = strings.TrimSpace(in.Name)
-	if err := validatePlanFields(in.Code, in.Name, in.Visibility, in.VisibleGroupIDs, in.VisibleFrom, in.VisibleUntil, in.PurchaseLimitPerUser, in.StockTotal); err != nil {
-		return 0, err
-	}
+	return validatePlanFields(in.Code, in.Name, in.Visibility, in.VisibleGroupIDs, in.VisibleFrom, in.VisibleUntil, in.PurchaseLimitPerUser, in.StockTotal)
+}
+
+func (s *Service) updatePlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID string, in UpdatePlanInput) (int64, error) {
 	groupUUIDs := uuidArray(in.VisibleGroupIDs)
 	var next int64
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
-		var current int64
-		var status, productID string
-		var beforeNewPurchase, beforeRenewal, beforeUpgrade bool
-		var reserved int
-		if err := tx.QueryRow(ctx, `SELECT row_version,status,product_id,stock_reserved,allow_new_purchase,allow_renewal,allow_upgrade FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&current, &status, &productID, &reserved, &beforeNewPurchase, &beforeRenewal, &beforeUpgrade); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
+	var current int64
+	var status, productID string
+	var beforeNewPurchase, beforeRenewal, beforeUpgrade bool
+	var reserved int
+	if err := tx.QueryRow(ctx, `SELECT row_version,status,product_id,stock_reserved,allow_new_purchase,allow_renewal,allow_upgrade FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&current, &status, &productID, &reserved, &beforeNewPurchase, &beforeRenewal, &beforeUpgrade); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, httpx.NotFoundOrForbidden()
 		}
-		if status == "archived" {
-			return httpx.New(httpx.CodeConflict, "已归档套餐不能恢复或编辑")
+		return 0, err
+	}
+	if status == "archived" {
+		return 0, httpx.New(httpx.CodeConflict, "已归档套餐不能恢复或编辑")
+	}
+	if requiresP0BSalesResume(status, beforeNewPurchase, beforeRenewal, beforeUpgrade, in) {
+		if err := s.requireP0BSales(); err != nil {
+			return 0, err
 		}
-		if requiresP0BSalesResume(status, beforeNewPurchase, beforeRenewal, beforeUpgrade, in) {
-			if err := s.requireP0BSales(); err != nil {
-				return err
-			}
-		}
-		if current != in.ExpectedRowVersion {
-			return rowConflict("套餐", current)
-		}
-		if in.StockTotal != nil && *in.StockTotal < reserved {
-			return httpx.Invalid(map[string]string{"stock_total": "不能低于已预留库存"})
-		}
-		if err := ensureGroups(ctx, tx, tenantID, in.VisibleGroupIDs); err != nil {
-			return err
-		}
-		tag, err := tx.Exec(ctx, `UPDATE plans SET code=$3,name=$4,description=$5,visibility=$6,visible_group_ids=$7::uuid[],visible_from=$8,visible_until=$9,allow_new_purchase=$10,allow_renewal=$11,allow_upgrade=$12,purchase_limit_per_user=$13,stock_total=$14,sort_order=$15,row_version=row_version+1 WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$16`, tenantID, planID, in.Code, in.Name, in.Description, in.Visibility, groupUUIDs, in.VisibleFrom, in.VisibleUntil, in.AllowNewPurchase, in.AllowRenewal, in.AllowUpgrade, in.PurchaseLimitPerUser, in.StockTotal, in.SortOrder, in.ExpectedRowVersion)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return rowConflict("套餐", current)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE products SET code=$3,name=$4,description=$5,updated_at=now() WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, productID, in.Code, in.Name, in.Description); err != nil {
-			return err
-		}
-		next = current + 1
-		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "plan.update", ResourceType: "plan", ResourceID: &planID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), BeforeDigest: map[string]any{"row_version": current}, AfterDigest: map[string]any{"row_version": next, "code": in.Code}})
-	})
-	return next, catalogResult(err)
+	}
+	if current != in.ExpectedRowVersion {
+		return 0, rowConflict("套餐", current)
+	}
+	if in.StockTotal != nil && *in.StockTotal < reserved {
+		return 0, httpx.Invalid(map[string]string{"stock_total": "不能低于已预留库存"})
+	}
+	if err := ensureGroups(ctx, tx, tenantID, in.VisibleGroupIDs); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE plans SET code=$3,name=$4,description=$5,visibility=$6,visible_group_ids=$7::uuid[],visible_from=$8,visible_until=$9,allow_new_purchase=$10,allow_renewal=$11,allow_upgrade=$12,purchase_limit_per_user=$13,stock_total=$14,sort_order=$15,row_version=row_version+1 WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$16`, tenantID, planID, in.Code, in.Name, in.Description, in.Visibility, groupUUIDs, in.VisibleFrom, in.VisibleUntil, in.AllowNewPurchase, in.AllowRenewal, in.AllowUpgrade, in.PurchaseLimitPerUser, in.StockTotal, in.SortOrder, in.ExpectedRowVersion)
+	if err != nil {
+		return 0, err
+	}
+	if tag.RowsAffected() != 1 {
+		return 0, rowConflict("套餐", current)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE products SET code=$3,name=$4,description=$5,updated_at=now() WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, productID, in.Code, in.Name, in.Description); err != nil {
+		return 0, err
+	}
+	next = current + 1
+	return next, audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "plan.update", ResourceType: "plan", ResourceID: &planID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), BeforeDigest: map[string]any{"row_version": current}, AfterDigest: map[string]any{"row_version": next, "code": in.Code}})
 }
 
 func (s *Service) CreatePlanVersion(ctx context.Context, tenantID, planID, actorID string) (*VersionRow, error) {
@@ -612,20 +634,11 @@ func (s *Service) CreatePlanVersion(ctx context.Context, tenantID, planID, actor
 	}
 	var out VersionRow
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actorID}, func(tx pgx.Tx) error {
-		var status string
-		if err := tx.QueryRow(ctx, `SELECT status FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&status); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
+		created, err := s.createPlanVersionTx(ctx, tx, tenantID, planID, actorID)
+		if created != nil {
+			out = *created
 		}
-		if status == "archived" {
-			return httpx.New(httpx.CodeConflict, "已归档套餐不能创建新版本")
-		}
-		if err := tx.QueryRow(ctx, `INSERT INTO plan_versions(tenant_id,plan_id,version,created_by) SELECT $1,$2::uuid,coalesce(max(version),0)+1,$3::uuid FROM plan_versions WHERE tenant_id=$1 AND plan_id=$2::uuid RETURNING id,version,status,frozen_at,row_version,created_at`, tenantID, planID, actorID).Scan(&out.ID, &out.Version, &out.Status, &out.FrozenAt, &out.RowVersion, &out.CreatedAt); err != nil {
-			return err
-		}
-		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &actorID, Action: "plan_version.create", ResourceType: "plan_version", ResourceID: &out.ID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), AfterDigest: map[string]any{"plan_id": planID, "version": out.Version}})
+		return err
 	})
 	if err != nil {
 		return nil, catalogResult(err)
@@ -633,67 +646,97 @@ func (s *Service) CreatePlanVersion(ctx context.Context, tenantID, planID, actor
 	return &out, nil
 }
 
+func (s *Service) createPlanVersionTx(ctx context.Context, tx pgx.Tx, tenantID, planID, actorID string) (*VersionRow, error) {
+	var out VersionRow
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NotFoundOrForbidden()
+		}
+		return nil, err
+	}
+	if status == "archived" {
+		return nil, httpx.New(httpx.CodeConflict, "已归档套餐不能创建新版本")
+	}
+	if err := tx.QueryRow(ctx, `INSERT INTO plan_versions(tenant_id,plan_id,version,created_by) SELECT $1,$2::uuid,coalesce(max(version),0)+1,$3::uuid FROM plan_versions WHERE tenant_id=$1 AND plan_id=$2::uuid RETURNING id,version,status,frozen_at,row_version,created_at`, tenantID, planID, actorID).Scan(&out.ID, &out.Version, &out.Status, &out.FrozenAt, &out.RowVersion, &out.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &out, audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &actorID, Action: "plan_version.create", ResourceType: "plan_version", ResourceID: &out.ID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), AfterDigest: map[string]any{"plan_id": planID, "version": out.Version}})
+}
+
 func (s *Service) UpdatePlanVersion(ctx context.Context, tenantID, planID, versionID string, in VersionSemanticsInput) (int64, error) {
-	if !validCatalogIDs(planID, versionID) {
-		return 0, httpx.NotFoundOrForbidden()
-	}
-	if err := validateVersionUpdatePoolContract(in.PoolIDs); err != nil {
-		return 0, err
-	}
-	if in.ExpectedRowVersion <= 0 {
-		return 0, httpx.Invalid(map[string]string{"expected_row_version": "必须为正整数"})
-	}
-	if err := validateVersionSemantics(in); err != nil {
+	if err := prepareVersionSemanticsInput(planID, versionID, in); err != nil {
 		return 0, err
 	}
 	var next int64
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
-		var current int64
-		var status string
-		var frozen *time.Time
-		if err := tx.QueryRow(ctx, `SELECT row_version,status,frozen_at FROM plan_versions WHERE tenant_id=$1 AND plan_id=$2::uuid AND id=$3::uuid FOR UPDATE`, tenantID, planID, versionID).Scan(&current, &status, &frozen); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-		if current != in.ExpectedRowVersion {
-			return rowConflict("套餐版本", current)
-		}
-		if status != "draft" || frozen != nil {
-			return httpx.New(httpx.CodeConflict, "只有未发布草稿版本可以编辑")
-		}
-		tag, err := tx.Exec(ctx, `UPDATE plan_versions SET quota_reset_strategy=$4,quota_reset_day=$5,grace_period_hours=$6,grace_keeps_service=$7,renewal_extends_period=$8,renewal_resets_quota=$9,renewal_keeps_addons=$10,max_devices=$11,max_concurrent=$12,device_release_hours=$13,overage_policy=$14,throttle_kbps=$15,notes=$16,row_version=row_version+1 WHERE tenant_id=$1 AND plan_id=$2::uuid AND id=$3::uuid AND row_version=$17`, tenantID, planID, versionID, in.QuotaResetStrategy, in.QuotaResetDay, in.GracePeriodHours, in.GraceKeepsService, in.RenewalExtendsPeriod, in.RenewalResetsQuota, in.RenewalKeepsAddons, in.MaxDevices, in.MaxConcurrent, in.DeviceReleaseHours, in.OveragePolicy, in.ThrottleKbps, in.Notes, in.ExpectedRowVersion)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return rowConflict("套餐版本", current)
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM entitlements WHERE tenant_id=$1 AND plan_version_id=$2::uuid`, tenantID, versionID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM quota_definitions WHERE tenant_id=$1 AND plan_version_id=$2::uuid`, tenantID, versionID); err != nil {
-			return err
-		}
-		for _, e := range in.Entitlements {
-			value := e.Value
-			if len(value) == 0 {
-				value = json.RawMessage(`true`)
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO entitlements(tenant_id,plan_version_id,code,value) VALUES($1,$2::uuid,$3,$4)`, tenantID, versionID, strings.TrimSpace(e.Code), value); err != nil {
-				return err
-			}
-		}
-		for _, q := range in.Quotas {
-			if _, err := tx.Exec(ctx, `INSERT INTO quota_definitions(tenant_id,plan_version_id,metric,limit_value,unit,period) VALUES($1,$2::uuid,$3,$4,$5,$6)`, tenantID, versionID, strings.TrimSpace(q.Metric), q.Limit, strings.TrimSpace(q.Unit), q.Period); err != nil {
-				return err
-			}
-		}
-		next = current + 1
-		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "plan_version.update", ResourceType: "plan_version", ResourceID: &versionID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), BeforeDigest: map[string]any{"row_version": current}, AfterDigest: map[string]any{"row_version": next, "entitlements": len(in.Entitlements), "quotas": len(in.Quotas)}})
+		var err error
+		next, err = s.updatePlanVersionTx(ctx, tx, tenantID, planID, versionID, in)
+		return err
 	})
 	return next, catalogResult(err)
+}
+
+// prepareVersionSemanticsInput 在进事务之前校验版本语义，UpdatePlanVersion 与向导编辑共用。
+func prepareVersionSemanticsInput(planID, versionID string, in VersionSemanticsInput) error {
+	if !validCatalogIDs(planID, versionID) {
+		return httpx.NotFoundOrForbidden()
+	}
+	if err := validateVersionUpdatePoolContract(in.PoolIDs); err != nil {
+		return err
+	}
+	if in.ExpectedRowVersion <= 0 {
+		return httpx.Invalid(map[string]string{"expected_row_version": "必须为正整数"})
+	}
+	return validateVersionSemantics(in)
+}
+
+func (s *Service) updatePlanVersionTx(ctx context.Context, tx pgx.Tx, tenantID, planID, versionID string, in VersionSemanticsInput) (int64, error) {
+	var next int64
+	var current int64
+	var status string
+	var frozen *time.Time
+	if err := tx.QueryRow(ctx, `SELECT row_version,status,frozen_at FROM plan_versions WHERE tenant_id=$1 AND plan_id=$2::uuid AND id=$3::uuid FOR UPDATE`, tenantID, planID, versionID).Scan(&current, &status, &frozen); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, httpx.NotFoundOrForbidden()
+		}
+		return 0, err
+	}
+	if current != in.ExpectedRowVersion {
+		return 0, rowConflict("套餐版本", current)
+	}
+	if status != "draft" || frozen != nil {
+		return 0, httpx.New(httpx.CodeConflict, "只有未发布草稿版本可以编辑")
+	}
+	tag, err := tx.Exec(ctx, `UPDATE plan_versions SET quota_reset_strategy=$4,quota_reset_day=$5,grace_period_hours=$6,grace_keeps_service=$7,renewal_extends_period=$8,renewal_resets_quota=$9,renewal_keeps_addons=$10,max_devices=$11,max_concurrent=$12,device_release_hours=$13,overage_policy=$14,throttle_kbps=$15,notes=$16,row_version=row_version+1 WHERE tenant_id=$1 AND plan_id=$2::uuid AND id=$3::uuid AND row_version=$17`, tenantID, planID, versionID, in.QuotaResetStrategy, in.QuotaResetDay, in.GracePeriodHours, in.GraceKeepsService, in.RenewalExtendsPeriod, in.RenewalResetsQuota, in.RenewalKeepsAddons, in.MaxDevices, in.MaxConcurrent, in.DeviceReleaseHours, in.OveragePolicy, in.ThrottleKbps, in.Notes, in.ExpectedRowVersion)
+	if err != nil {
+		return 0, err
+	}
+	if tag.RowsAffected() != 1 {
+		return 0, rowConflict("套餐版本", current)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM entitlements WHERE tenant_id=$1 AND plan_version_id=$2::uuid`, tenantID, versionID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM quota_definitions WHERE tenant_id=$1 AND plan_version_id=$2::uuid`, tenantID, versionID); err != nil {
+		return 0, err
+	}
+	for _, e := range in.Entitlements {
+		value := e.Value
+		if len(value) == 0 {
+			value = json.RawMessage(`true`)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO entitlements(tenant_id,plan_version_id,code,value) VALUES($1,$2::uuid,$3,$4)`, tenantID, versionID, strings.TrimSpace(e.Code), value); err != nil {
+			return 0, err
+		}
+	}
+	for _, q := range in.Quotas {
+		if _, err := tx.Exec(ctx, `INSERT INTO quota_definitions(tenant_id,plan_version_id,metric,limit_value,unit,period) VALUES($1,$2::uuid,$3,$4,$5,$6)`, tenantID, versionID, strings.TrimSpace(q.Metric), q.Limit, strings.TrimSpace(q.Unit), q.Period); err != nil {
+			return 0, err
+		}
+	}
+	next = current + 1
+	return next, audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "plan_version.update", ResourceType: "plan_version", ResourceID: &versionID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), BeforeDigest: map[string]any{"row_version": current}, AfterDigest: map[string]any{"row_version": next, "entitlements": len(in.Entitlements), "quotas": len(in.Quotas)}})
 }
 
 func (s *Service) PublishPlanVersion(ctx context.Context, tenantID, planID, versionID, actorID string, expectedPlan, expectedVersion int64) (int64, int64, error) {
@@ -708,105 +751,112 @@ func (s *Service) PublishPlanVersion(ctx context.Context, tenantID, planID, vers
 	}
 	var planNext, versionNext int64
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actorID}, func(tx pgx.Tx) error {
-		var productID, status, visibility string
-		var planCurrent int64
-		var visibleGroupIDs []string
-		if err := tx.QueryRow(ctx, `SELECT product_id,status,visibility,visible_group_ids::text[],row_version FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&productID, &status, &visibility, &visibleGroupIDs, &planCurrent); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-		if status == "archived" {
-			return httpx.New(httpx.CodeConflict, "已归档套餐不能重新发布")
-		}
-		if visibility == "group" {
-			if err := ensureGroups(ctx, tx, tenantID, visibleGroupIDs); err != nil {
-				return err
-			}
-		}
-		var current int64
-		var vstatus string
-		var frozen *time.Time
-		if err := tx.QueryRow(ctx, `SELECT row_version,status,frozen_at FROM plan_versions WHERE tenant_id=$1 AND plan_id=$2::uuid AND id=$3::uuid FOR UPDATE`, tenantID, planID, versionID).Scan(&current, &vstatus, &frozen); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-		if err := validatePublishTokens(planCurrent, expectedPlan, current, expectedVersion); err != nil {
-			return err
-		}
-		if vstatus != "draft" || frozen != nil {
-			return httpx.New(httpx.CodeConflict, "只有未发布草稿版本可以发布")
-		}
-		qualifyingPriceIDs := []string{}
-		coveredGroups := map[string]bool{}
-		hasPublicPrice := false
-		priceRows, err := tx.Query(ctx, `SELECT id::text,user_group_id::text FROM prices WHERE tenant_id=$1 AND product_id=$2::uuid AND status='active' AND currency IN ('CNY','USD') AND (valid_from IS NULL OR valid_from<=now()) AND (valid_until IS NULL OR valid_until>now()) AND (user_group_id IS NULL OR ($3='group' AND user_group_id=ANY($4::uuid[]))) ORDER BY id FOR SHARE`, tenantID, productID, visibility, uuidArray(visibleGroupIDs))
-		if err != nil {
-			return err
-		}
-		for priceRows.Next() {
-			var id string
-			var groupID *string
-			if err := priceRows.Scan(&id, &groupID); err != nil {
-				priceRows.Close()
-				return err
-			}
-			qualifyingPriceIDs = append(qualifyingPriceIDs, id)
-			if groupID == nil {
-				hasPublicPrice = true
-			} else {
-				coveredGroups[*groupID] = true
-			}
-		}
-		priceRows.Close()
-		if err := priceRows.Err(); err != nil {
-			return err
-		}
-		priceOK := publishPriceCoverage(visibility, visibleGroupIDs, hasPublicPrice, coveredGroups)
-		pools := 1
-		var qualifyingPoolID string
-		if err := tx.QueryRow(ctx, `SELECT np.id::text FROM plan_node_pools pnp JOIN node_pools np ON np.tenant_id=pnp.tenant_id AND np.id=pnp.pool_id WHERE pnp.tenant_id=$1 AND pnp.plan_version_id=$2::uuid AND np.status<>'disabled' ORDER BY np.id LIMIT 1 FOR SHARE OF np`, tenantID, versionID).Scan(&qualifyingPoolID); err != nil {
-			if !errors.Is(err, pgx.ErrNoRows) {
-				return err
-			}
-			pools = 0
-		}
-		nodeOK := true
-		var qualifyingNodeID string
-		readySQL := nodefabric.StableProtocolReadySQL("n")
-		if err := tx.QueryRow(ctx, `SELECT n.id::text FROM plan_node_pools pnp JOIN nodes n ON n.tenant_id=pnp.tenant_id AND n.pool_id=pnp.pool_id JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id WHERE pnp.tenant_id=$1 AND pnp.plan_version_id=$2::uuid AND n.serving_status='active' AND s.status='ready' AND s.deleted_at IS NULL AND n.server_port BETWEEN 1 AND 65535 AND `+readySQL+` ORDER BY n.id LIMIT 1 FOR SHARE OF n,s`, tenantID, versionID).Scan(&qualifyingNodeID); err != nil {
-			if !errors.Is(err, pgx.ErrNoRows) {
-				return err
-			}
-			nodeOK = false
-		}
-		if err := validatePublishPrerequisites(visibility, priceOK, pools, nodeOK); err != nil {
-			return err
-		}
-		vtag, err := tx.Exec(ctx, `UPDATE plan_versions SET status='published',frozen_at=now(),row_version=row_version+1 WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$3`, tenantID, versionID, expectedVersion)
-		if err != nil {
-			return err
-		}
-		if vtag.RowsAffected() != 1 {
-			return rowConflict("套餐版本", current)
-		}
-		ptag, err := tx.Exec(ctx, `UPDATE plans SET current_version_id=$3::uuid,status='active',row_version=row_version+1 WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$4`, tenantID, planID, versionID, expectedPlan)
-		if err != nil {
-			return err
-		}
-		if ptag.RowsAffected() != 1 {
-			return rowConflict("套餐", planCurrent)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE products SET status='active',updated_at=now() WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, productID); err != nil {
-			return err
-		}
-		planNext, versionNext = planCurrent+1, current+1
-		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &actorID, Action: "plan_version.publish", ResourceType: "plan_version", ResourceID: &versionID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), BeforeDigest: map[string]any{"plan_row_version": planCurrent, "version_row_version": current}, AfterDigest: map[string]any{"plan_id": planID, "plan_row_version": planNext, "version_row_version": versionNext, "price_ids": qualifyingPriceIDs, "pool_id": qualifyingPoolID, "node_id": qualifyingNodeID}})
+		var err error
+		planNext, versionNext, err = s.publishPlanVersionTx(ctx, tx, tenantID, planID, versionID, actorID, expectedPlan, expectedVersion)
+		return err
 	})
 	return planNext, versionNext, catalogResult(err)
+}
+
+func (s *Service) publishPlanVersionTx(ctx context.Context, tx pgx.Tx, tenantID, planID, versionID, actorID string, expectedPlan, expectedVersion int64) (int64, int64, error) {
+	var planNext, versionNext int64
+	var productID, status, visibility string
+	var planCurrent int64
+	var visibleGroupIDs []string
+	if err := tx.QueryRow(ctx, `SELECT product_id,status,visibility,visible_group_ids::text[],row_version FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&productID, &status, &visibility, &visibleGroupIDs, &planCurrent); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, httpx.NotFoundOrForbidden()
+		}
+		return 0, 0, err
+	}
+	if status == "archived" {
+		return 0, 0, httpx.New(httpx.CodeConflict, "已归档套餐不能重新发布")
+	}
+	if visibility == "group" {
+		if err := ensureGroups(ctx, tx, tenantID, visibleGroupIDs); err != nil {
+			return 0, 0, err
+		}
+	}
+	var current int64
+	var vstatus string
+	var frozen *time.Time
+	if err := tx.QueryRow(ctx, `SELECT row_version,status,frozen_at FROM plan_versions WHERE tenant_id=$1 AND plan_id=$2::uuid AND id=$3::uuid FOR UPDATE`, tenantID, planID, versionID).Scan(&current, &vstatus, &frozen); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, httpx.NotFoundOrForbidden()
+		}
+		return 0, 0, err
+	}
+	if err := validatePublishTokens(planCurrent, expectedPlan, current, expectedVersion); err != nil {
+		return 0, 0, err
+	}
+	if vstatus != "draft" || frozen != nil {
+		return 0, 0, httpx.New(httpx.CodeConflict, "只有未发布草稿版本可以发布")
+	}
+	qualifyingPriceIDs := []string{}
+	coveredGroups := map[string]bool{}
+	hasPublicPrice := false
+	priceRows, err := tx.Query(ctx, `SELECT id::text,user_group_id::text FROM prices WHERE tenant_id=$1 AND product_id=$2::uuid AND status='active' AND currency IN ('CNY','USD') AND (valid_from IS NULL OR valid_from<=now()) AND (valid_until IS NULL OR valid_until>now()) AND (user_group_id IS NULL OR ($3='group' AND user_group_id=ANY($4::uuid[]))) ORDER BY id FOR SHARE`, tenantID, productID, visibility, uuidArray(visibleGroupIDs))
+	if err != nil {
+		return 0, 0, err
+	}
+	for priceRows.Next() {
+		var id string
+		var groupID *string
+		if err := priceRows.Scan(&id, &groupID); err != nil {
+			priceRows.Close()
+			return 0, 0, err
+		}
+		qualifyingPriceIDs = append(qualifyingPriceIDs, id)
+		if groupID == nil {
+			hasPublicPrice = true
+		} else {
+			coveredGroups[*groupID] = true
+		}
+	}
+	priceRows.Close()
+	if err := priceRows.Err(); err != nil {
+		return 0, 0, err
+	}
+	priceOK := publishPriceCoverage(visibility, visibleGroupIDs, hasPublicPrice, coveredGroups)
+	pools := 1
+	var qualifyingPoolID string
+	if err := tx.QueryRow(ctx, `SELECT np.id::text FROM plan_node_pools pnp JOIN node_pools np ON np.tenant_id=pnp.tenant_id AND np.id=pnp.pool_id WHERE pnp.tenant_id=$1 AND pnp.plan_version_id=$2::uuid AND np.status<>'disabled' ORDER BY np.id LIMIT 1 FOR SHARE OF np`, tenantID, versionID).Scan(&qualifyingPoolID); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, err
+		}
+		pools = 0
+	}
+	nodeOK := true
+	var qualifyingNodeID string
+	readySQL := nodefabric.StableProtocolReadySQL("n")
+	if err := tx.QueryRow(ctx, `SELECT n.id::text FROM plan_node_pools pnp JOIN nodes n ON n.tenant_id=pnp.tenant_id AND n.pool_id=pnp.pool_id JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id WHERE pnp.tenant_id=$1 AND pnp.plan_version_id=$2::uuid AND n.serving_status='active' AND s.status='ready' AND s.deleted_at IS NULL AND n.server_port BETWEEN 1 AND 65535 AND `+readySQL+` ORDER BY n.id LIMIT 1 FOR SHARE OF n,s`, tenantID, versionID).Scan(&qualifyingNodeID); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, err
+		}
+		nodeOK = false
+	}
+	if err := validatePublishPrerequisites(visibility, priceOK, pools, nodeOK); err != nil {
+		return 0, 0, err
+	}
+	vtag, err := tx.Exec(ctx, `UPDATE plan_versions SET status='published',frozen_at=now(),row_version=row_version+1 WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$3`, tenantID, versionID, expectedVersion)
+	if err != nil {
+		return 0, 0, err
+	}
+	if vtag.RowsAffected() != 1 {
+		return 0, 0, rowConflict("套餐版本", current)
+	}
+	ptag, err := tx.Exec(ctx, `UPDATE plans SET current_version_id=$3::uuid,status='active',row_version=row_version+1 WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$4`, tenantID, planID, versionID, expectedPlan)
+	if err != nil {
+		return 0, 0, err
+	}
+	if ptag.RowsAffected() != 1 {
+		return 0, 0, rowConflict("套餐", planCurrent)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE products SET status='active',updated_at=now() WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, productID); err != nil {
+		return 0, 0, err
+	}
+	planNext, versionNext = planCurrent+1, current+1
+	return planNext, versionNext, audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &actorID, Action: "plan_version.publish", ResourceType: "plan_version", ResourceID: &versionID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), BeforeDigest: map[string]any{"plan_row_version": planCurrent, "version_row_version": current}, AfterDigest: map[string]any{"plan_id": planID, "plan_row_version": planNext, "version_row_version": versionNext, "price_ids": qualifyingPriceIDs, "pool_id": qualifyingPoolID, "node_id": qualifyingNodeID}})
 }
 
 func (s *Service) CreatePlanPrice(ctx context.Context, tenantID, planID string, in CreatePriceInput) (*PriceRow, error) {

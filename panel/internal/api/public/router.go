@@ -166,7 +166,9 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/coupons/preview", h.previewCoupon)
 			r.Get("/me/commission", h.myCommission)
 			r.Post("/me/password", h.changePassword)
-			r.Post("/me/withdrawals", h.requestWithdrawal)
+			// 提现申请动的是钱：网络重试必须拿回同一个结果，而不是一句「还有正在处理的提现申请」
+			r.With(middleware.Idempotency(d.Pool, billing.CommissionWithdrawalIdempotencyScope, d.Log)).
+				Post("/me/withdrawals", h.requestWithdrawal)
 			r.Get("/me/balance", h.myBalance)
 			r.With(middleware.Idempotency(d.Pool, billing.TopupIdempotencyScope, d.Log)).
 				Post("/me/topups", h.createTopup)

@@ -834,6 +834,15 @@ func TestOrderReleasePG18(t *testing.T) {
 			t.Fatalf("cross-tenant cancellation output=%#v err=%v", out, err)
 		}
 	})
+
+	// D-F-1 与缺陷 13，见 commission_ledger_pg18_test.go。
+	t.Run("commission availability is one ledger rule under one lock", func(t *testing.T) {
+		orderReleasePG18CommissionLedgerCases(t, ctx, pool, service, fx, newOrder, webhook)
+	})
+	// 必须最后：它用超级用户塞了一条绕过触发器的美元挂账探针。
+	t.Run("late payment pending amounts stay per currency", func(t *testing.T) {
+		orderReleasePG18LatePaymentCurrencyCases(t, ctx, admin, service, fx)
+	})
 }
 
 func orderReleasePG18AssertRuntimeTarget(t *testing.T, ctx context.Context,
