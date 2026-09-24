@@ -113,9 +113,10 @@ func TestTrafficChargePG18(t *testing.T) {
 	must(`UPDATE quota_balances SET consumed = 0 WHERE subscription_id = $1`, subID)
 	charge(30)
 	expect("a reset plan is used before packs again", 30, 50, 15)
+	// 套餐还剩 70，超出的 30 里只有较新那包剩下的 15 可扣，另外 15 记在套餐上。
 	charge(100)
-	expect("after the plan, the remaining pack is used", 100, 50, 30)
+	expect("packs run out mid-charge, the rest stays on the plan", 115, 50, 30)
 	charge(25)
-	expect("with no packs left the overage stays on the plan", 125, 50, 30)
+	expect("with no packs left the overage stays on the plan", 140, 50, 30)
 	t.Log("marker=traffic_charge_pg18_plan_first_then_packs_ok")
 }
