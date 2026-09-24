@@ -82,6 +82,49 @@ jobs:
       - name: Route permission catalog
         run: go test -mod=readonly -run TestRoutePermissionsExistInCatalog ./internal/api/admin/
 
+  panel-frontend:
+    name: Panel frontend lint, typecheck, tests, build and embed
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panel/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: panel/frontend/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build both entries
+        run: npm run build
+      # frontend-embed 自己会 npm ci + build 一遍，再把 dist/{admin,portal} 同步进 web/；
+      # 上一步的独立构建让构建失败直接落在「Build」上，不和同步混在一起
+      - name: Sync the real build into web/{admin,portal} for go:embed
+        working-directory: panel
+        run: make frontend-embed
+      - name: Real build is embeddable and served at the gateway root
+        working-directory: panel
+        run: |
+          # 占位页还在就说明同步没生效，app_test 会退回只查入口的宽松分支。
+          # 不写成 `! grep`：bash -e 对取反命令不生效，非末行的 `! grep` 命中也不会让步骤失败
+          if grep -l pandora-placeholder web/admin/index.html web/portal/index.html; then
+            echo "placeholder entry still embedded after frontend-embed" >&2
+            exit 1
+          fi
+          go test -mod=readonly ./web/ ./internal/platform/webapp/ ./internal/api/...
+
   linux-race:
     name: Linux race and vet
     runs-on: ubuntu-latest

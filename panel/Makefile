@@ -74,7 +74,7 @@ logs: ## 查看数据基座日志
 	cd $(DEPLOY) && docker compose logs -f --tail=100
 
 .PHONY: frontend-check
-frontend-check: ## 面板前端：npm ci + typecheck + vitest + 双 mode 构建
+frontend-check: ## 面板前端：npm ci + lint + typecheck + vitest + 双 mode 构建
 	cd frontend && npm ci && npm run check
 
 .PHONY: frontend-embed
