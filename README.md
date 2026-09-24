@@ -131,7 +131,7 @@ make check-migrations  # 只在临时库演练迁移，不动主库
 make invariants        # 数据层不变量测试
 make build             # 编译全部网关到 bin/
 make test              # go test -race
-make frontend-check    # 面板前端：npm ci + typecheck + vitest + 构建
+make frontend-check    # 面板前端：npm ci + lint + typecheck + vitest + 双入口构建
 make frontend-embed    # 构建面板前端并同步进 web/{admin,portal}，由网关在根 / 下发；release-linux 会先跑它
 make e2e               # 端到端链路：注册→下单→支付→账本→订阅→配置
 make verify            # vet + check-migrations + invariants，提交前跑
