@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 announcement 域的一次性库（openAnnouncementPG18）、step3/step4 的造数与请求辅助，依赖第 ⑤ 步的处理器
-// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18
-// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
+// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18、TestUserProfileRegisteredIPPG18
+// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色，风控画像的注册 IP；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -15,9 +15,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/identity"
 	"github.com/aegispanel/aegis/internal/middleware"
+	"github.com/aegispanel/aegis/internal/platform/audit"
+	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
 )
@@ -332,5 +335,39 @@ func TestAdminMeProfilePG18(t *testing.T) {
 		len(body.Roles) != 1 || body.Roles[0]["code"] != "ops" || body.Roles[0]["name"] != "运维" ||
 		len(body.Permissions) != 1 {
 		t.Fatalf("me body=%s", w.Body.String())
+	}
+}
+
+func TestUserProfileRegisteredIPPG18(t *testing.T) {
+	ctx, admin, app := openAnnouncementPG18(t)
+	const (
+		tenant = "87000000-0000-4000-8000-000000000401"
+		actor  = "87000000-0000-4000-8000-000000000411"
+		user   = "87000000-0000-4000-8000-000000000412"
+		quiet  = "87000000-0000-4000-8000-000000000413"
+	)
+	step3Seed(t, ctx, admin,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','profile-ip-pg18','Profile','CNY')`,
+		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES
+		   ('`+actor+`','`+tenant+`','ops@profile.invalid','Ops','active'),
+		   ('`+user+`','`+tenant+`','u@profile.invalid','U','active'),
+		   ('`+quiet+`','`+tenant+`','q@profile.invalid','Q','active')`)
+	h := step4Handlers(t, app) // 配好了审计 IP 的哈希与加密
+	uid := user
+	if err := app.InTx(ctx, platformdb.Scope{TenantID: tenant}, func(tx pgx.Tx) error {
+		if err := audit.Write(ctx, tx, tenant, audit.Entry{ActorKind: "user", ActorID: &uid,
+			Action: "user.registered", ResourceType: "user", ResourceID: &uid, SourceIP: "198.51.100.7"}); err != nil {
+			return err
+		}
+		return audit.Write(ctx, tx, tenant, audit.Entry{ActorKind: "user", ActorID: &uid,
+			Action: "user.login", SourceIP: "203.0.113.9"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := step5Router(tenant, actor, nil, func(r chi.Router) { r.Get("/v1/users/{id}/profile", h.userProfile) })
+	for id, want := range map[string]string{user: `"registered_ip":"198.51.100.7"`, quiet: `"registered_ip":""`} {
+		if w := step3Do(t, ctx, r, http.MethodGet, "/v1/users/"+id+"/profile", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("profile %s: status=%d body=%s, want %s", id, w.Code, w.Body.String(), want)
+		}
 	}
 }

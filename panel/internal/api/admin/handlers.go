@@ -229,10 +229,12 @@ func (h *handlers) listUsers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rows, total, err := h.d.Ops.ListUsers(r.Context(), httpx.TenantIDFrom(r.Context()),
 		adminops.ListUsersInput{
-			Query:  q.Get("q"),
-			Status: q.Get("status"),
-			Limit:  atoiDefault(q.Get("limit"), 25),
-			Offset: atoiDefault(q.Get("offset"), 0),
+			Query:    q.Get("q"),
+			Status:   q.Get("status"),
+			GroupID:  q.Get("group_id"),
+			SubState: q.Get("sub_state"),
+			Limit:    atoiDefault(q.Get("limit"), 25),
+			Offset:   atoiDefault(q.Get("offset"), 0),
 		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)

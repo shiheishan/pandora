@@ -46,6 +46,7 @@ func registerTrafficResetRoutes(r chi.Router, d Deps, h *handlers) {
 		Get("/users/{id}/traffic-resets", h.userTrafficResetHistory)
 	r.With(
 		middleware.RequirePermission("metering.reset.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "traffic_manual_reset", d.Log),
 	).Post("/users/{id}/traffic-reset", h.manualResetTraffic)
 }

@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 audit_events / subscription_fetch_log 与 Deps.Envelope 解密来源 IP，依赖 platform 的 db/httpx
-// [OUTPUT]: 对外提供 decryptIP / decryptWith 解密助手、userProfile 风控画像、statsTimeseries 注册与活跃时序
+// [OUTPUT]: 对外提供 decryptIP / decryptWith 解密助手、userProfile 风控画像（含注册 IP registered_ip）、statsTimeseries 注册与活跃时序
 // [POS]: api/admin 的用户画像与风控统计；解密助手被 access_log.go、audit_log.go、risk.go 共用，共享 IP 聚类已移到 risk.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -16,6 +16,7 @@ package admin
 // 具体是哪个 IP，少解一次密就少一次泄露面。
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -74,8 +75,19 @@ func (h *handlers) userProfile(w http.ResponseWriter, r *http.Request) {
 	events := []event{}
 	ips := []ipStat{}
 	related := map[string]bool{}
+	registeredIP := ""
 
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		// 注册 IP 只在这里出（要 security.audit.read），不进 iam.user.read 就能看的用户详情
+		var regEnc []byte
+		if err := tx.QueryRow(r.Context(), `
+			SELECT source_ip_enc FROM audit_events
+			 WHERE tenant_id = $1 AND action = 'user.registered' AND actor_id = $2::uuid
+			 ORDER BY occurred_at, id LIMIT 1`, tenantID, userID).Scan(&regEnc); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		registeredIP = h.decryptIP(regEnc)
+
 		rows, err := tx.Query(r.Context(), `
 			SELECT action, outcome, COALESCE(source_ip_enc, ''::bytea),
 			       COALESCE(user_agent,''), COALESCE(api_domain,''), occurred_at
@@ -224,6 +236,7 @@ func (h *handlers) userProfile(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, map[string]any{
 		"events": events, "ips": ips, "related": peers,
 		"fetches": fetches, "fetch_sources_7d": fetchSources,
+		"registered_ip": registeredIP,
 	})
 }
 

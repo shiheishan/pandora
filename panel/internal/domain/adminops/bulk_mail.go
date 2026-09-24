@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 bulk_users.go 的 BulkFilter / buildFilterSQL、users.go 的 currentSubscriptionSQL，依赖 platform 的 db/audit/httpx
+// [OUTPUT]: 对外提供 BulkMailInput、BulkMailResult、Service.SendBulkMail
+// [POS]: domain/adminops 的群发邮件：按共用筛选一条 INSERT…SELECT 入队（营销偏好在 SQL 里过滤），正文 $email / $plan / $expire 逐人替换，写审计
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
@@ -98,8 +103,16 @@ func (s *Service) SendBulkMail(ctx context.Context, tenantID string,
 				 payload, status, max_attempts, next_retry_at)
 			SELECT u.tenant_id, u.id, $`+itoa(bi+3)+`::text, 'email',
 			       'bulk:' || $`+itoa(bi)+`::text || ':' || u.id::text,
+			       -- 正文里的 $email / $plan / $expire 逐人替换（契约后台-03）：套餐与到期取
+			       -- 当前订阅，到期按站点时区写 YYYY-MM-DD，没有则为空串
 			       jsonb_build_object('subject', $`+itoa(bi+1)+`::text,
-			                          'body', $`+itoa(bi+2)+`::text),
+			                          'body', replace(replace(replace($`+itoa(bi+2)+`::text,
+			                                    '$email', u.email::text),
+			                                    '$plan', coalesce((SELECT pl.name FROM plans pl
+			                                              WHERE pl.id = `+currentSubscriptionSQL("plan_id")+`), '')),
+			                                    '$expire', coalesce(to_char(`+currentSubscriptionSQL("current_period_end")+`
+			                                              AT TIME ZONE (SELECT t.timezone FROM tenants t WHERE t.id = u.tenant_id),
+			                                              'YYYY-MM-DD'), ''))),
 			       'queued', 5, now()
 			  FROM users u`+where+`
 			   AND COALESCE((SELECT np.enabled FROM notification_preferences np
@@ -122,7 +135,8 @@ func (s *Service) SendBulkMail(ctx context.Context, tenantID string,
 				"subject": in.Subject,
 				"filter": map[string]any{
 					"status": in.Filter.Status, "group_id": in.Filter.GroupID,
-					"query": in.Filter.Query,
+					"query": in.Filter.Query, "plan_id": in.Filter.PlanID,
+					"expires_within_days": in.Filter.ExpiresWithinDays, "sub_state": in.Filter.SubState,
 				},
 			},
 			APIDomain: "admin", RequestID: httpx.RequestIDFrom(ctx),

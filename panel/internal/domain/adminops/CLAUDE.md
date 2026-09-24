@@ -4,7 +4,7 @@
 管理后台的读写用例。与 billing / identity 分工：那两个包承载业务不变量（账本配平、会话吊销），这里负责把后台要看的数据拼好、把后台的写操作编排成带审计的事务。同一种行（订单行、用户行）只有一份查询形状，列表与详情复用它，避免「一处补了字段、另一处漏了」。
 
 成员清单
-service.go: Service 与构造；概览、用户列表与详情（组名、最近订单）、改用户状态（revokeUserLogins 吊销会话与 refresh，与批量停用共用）、订单列表（orderRowSelectSQL / scanOrderRow 是 OrderRow 的唯一形状）、套餐与渠道、降级开关
+service.go: Service 与构造；概览、改用户状态（revokeUserLogins 吊销会话与 refresh，与批量停用共用）、订单列表（orderRowSelectSQL / scanOrderRow 是 OrderRow 的唯一形状）、套餐与渠道、降级开关
 audit.go: 审计日志读模型与导出，auditRowSelect / auditCond 是列表、计数、导出共用的唯一形状；带对象可读名、认证强度（00080）与来源 IP 密文，导出上限 50000 行并同事务记 audit.export
 risk.go: 风控共享 IP 聚类：列聚类与成员、标记为正常（ip_cluster_reviews，30 天）、批量停用（suspended，跳过自己 / 持后台角色者 / 非成员 / 已停用，单事务、末尾核对有效管理员）
 catalog.go: 套餐目录读写与上下架
@@ -13,8 +13,9 @@ order_detail.go: 订单详情与商品快照
 revenue.go: 收入读模型
 dashboard.go: 仪表盘读模型与流量排行、通知投递积压（scanNotificationBacklog 为唯一口径）
 dashboard_tasks.go: 「需要处理」汇总 DashboardTasks：六项各挂原读权限（提现挂 marketing.commission.read），调用方没权限的项不查也不出现；工单等待从用户最后一次发言算，离线节点口径同 GET v1/nodes 的 stale
-bulk_users.go / bulk_mail.go: 用户批量筛选、导出、生成与群发
-*_test.go: 单元与契约测试；catalog_sales_pg18_test.go 与 users_pg18_test.go 为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域）
+users.go: 用户列表与详情（从 service.go 拆出）：列表带组、当前订阅摘要（流量、生效设备上限、在线设备），状态多值 / 用户组 / 订阅状态 / q（邮箱、id、订阅令牌哈希反查）筛选；详情带配额、设备、统计、邀请人与 Telegram；currentSubscriptionSQL / subStateSQL 是「当前订阅」与订阅状态的唯一口径
+bulk_users.go / bulk_mail.go: 用户批量筛选、导出、生成与群发；筛选含当前订阅的套餐、到期天数与订阅状态，预览带 sample_rows，群发正文 $email / $plan / $expire 逐人替换
+*_test.go: 单元与契约测试；catalog_sales_pg18_test.go、users_pg18_test.go 与 users_filters_pg18_test.go 为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

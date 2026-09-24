@@ -16,6 +16,9 @@ func TestStep5RouteProtections(t *testing.T) {
 		// 降级开关：每次切换都要重认证（契约后台-09），不带幂等
 		"POST /switches/{code}": {handler: "h.setSwitch",
 			permissions: []string{"platform.settings.write"}, recentReauth: true},
+		// 手动重置直接改变可用额度：权限 → 重认证 → 幂等
+		"POST /users/{id}/traffic-reset": {handler: "h.manualResetTraffic",
+			permissions: []string{"metering.reset.write"}, recentReauth: true, idempotency: "traffic_manual_reset"},
 		// 站点时区（R49）：读与邮件设置同权，写改变全部按日统计的切日口径
 		"GET /settings/site": {handler: "h.getSiteSettings", permissions: []string{"security.audit.read"}},
 		"POST /settings/site": {handler: "h.setSiteSettings",
