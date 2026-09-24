@@ -110,8 +110,11 @@ CREATE TRIGGER traffic_pack_grants_guard
   FOR EACH ROW EXECUTE FUNCTION app.guard_traffic_pack_grant();
 
 -- 用户侧的余额与目录变化推给在线的前端（notify_change 按 user_id 定向）。
+-- 余额只在「新增一笔」时推：UPDATE 只会是扣量，频率就是节点上报流量的频率，
+-- 推它等于每次上报给用户发一条 subscriptions.changed（与 00076 摘掉
+-- quota_balances 同一个理由）；DELETE 被 guard 拒绝，不会发生。
 CREATE TRIGGER zz_notify_traffic_pack_grants
-  AFTER INSERT OR UPDATE OR DELETE ON traffic_pack_grants
+  AFTER INSERT ON traffic_pack_grants
   FOR EACH ROW EXECUTE FUNCTION app.notify_change();
 CREATE TRIGGER zz_notify_traffic_packs
   AFTER INSERT OR UPDATE OR DELETE ON traffic_packs
