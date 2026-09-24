@@ -31,7 +31,7 @@ CREATE UNIQUE INDEX audit_events_chain_seq_key
   WHERE chain_seq IS NOT NULL;
 
 COMMENT ON COLUMN audit_events.chain_seq IS
-  '审计哈希链第二版口径的租户内序号（从 1 起连续）；NULL 为 00083 之前的第一版记录。';
+  '审计哈希链第二版口径的租户内序号（从 1 起连续）；NULL 为 00086 之前的第一版记录。';
 
 -- +goose Down
 -- 回滚后第一版代码按 occurred_at 取链尾、按旧口径复算，第二版记录一律验不过；

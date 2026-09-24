@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 pgx 事务读取 audit_events，依赖 encoding/json 与 math/big 做摘要规范化
 // [OUTPUT]: 对外提供 ChainReport、VerifyChain；包内提供 chainRecord、chainHashV2、chainHashV1、canonicalJSON
-// [POS]: platform/audit 的哈希链口径与校验：audit.go 的 Write 用 chainHashV2 算新记录，VerifyChain 按两版口径复算整条链。存量行（00083 之前写入、chain_seq 为空）一律不改写：不带摘要的严格复算，带摘要的先试库里文本与键排序紧凑形，复算不出就只核对 prev_hash 链接并记入 ChainReport.LegacyLinkOnly
+// [POS]: platform/audit 的哈希链口径与校验：audit.go 的 Write 用 chainHashV2 算新记录，VerifyChain 按两版口径复算整条链。存量行（00086 之前写入、chain_seq 为空）一律不改写：不带摘要的严格复算，带摘要的先试库里文本与键排序紧凑形，复算不出就只核对 prev_hash 链接并记入 ChainReport.LegacyLinkOnly
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package audit
@@ -26,7 +26,7 @@ import (
 // 两版口径
 // ============================================================================
 //
-// 第一版（chain_seq 为空，00083 之前写入）：各字段直接拼接后求 SHA-256，
+// 第一版（chain_seq 为空，00086 之前写入）：各字段直接拼接后求 SHA-256，
 // 摘要用写入时 json.Marshal 的原始字节。jsonb 不保留这串字节，所以带摘要的
 // 第一版记录大多复算不出来；链的顺序按 occurred_at, id。
 //

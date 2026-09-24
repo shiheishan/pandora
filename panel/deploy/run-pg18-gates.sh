@@ -128,7 +128,7 @@ DOMAINS=(
   # 读模型在 subscription 包，与 node_preview 同包，两边过滤都写精确。
   "usage_daily|pandora_usage_daily_gate|./internal/domain/subscription||||app_role|^TestUsageDailyReadPG18$"
   "idempotency|pandora_idempotency_gate|./internal/middleware||||app_role,idempotency_seed|"
-  # 审计哈希链（00083 第二版口径）：篡改用例要绕过追加写触发器，只在这个一次性库里做
+  # 审计哈希链（00086 第二版口径）：篡改用例要绕过追加写触发器，只在这个一次性库里做
   "audit|pandora_audit_gate|./internal/platform/audit|run_id|pandora_audit_test_marker|pandora-audit-pg18||"
   "notify|pandora_notify_gate|./internal/domain/notify|run_id|pandora_notify_test_marker|pandora-notify-pg18||"
 )

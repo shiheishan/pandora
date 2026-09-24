@@ -32,7 +32,7 @@ func openAuditPG18(t *testing.T) (context.Context, *pgxpool.Pool, *db.Pool) {
 func auditSeedTenant(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant, slug string) {
 	t.Helper()
 	if _, err := admin.Exec(ctx, `INSERT INTO tenants(id,slug,display_name,default_currency)
-		VALUES($1,$2,$2,'CNY')`, tenant, slug); err != nil {
+		VALUES($1,$2,$3,'CNY')`, tenant, slug, slug); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
 }
@@ -212,7 +212,7 @@ func TestAuditChainPG18(t *testing.T) {
 	}
 }
 
-// 第一版存量行：00083 之前写入、chain_seq 为空。直接按第一版口径造数，
+// 第一版存量行：00086 之前写入、chain_seq 为空。直接按第一版口径造数，
 // 再由 Write 接上第二版。
 func TestAuditChainLegacyPG18(t *testing.T) {
 	ctx, admin, app := openAuditPG18(t)
