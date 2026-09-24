@@ -43,3 +43,4 @@
 - 第 ⑥ 步追加：`CreatePlanComplete` 也改成单事务（缺陷 12 的同类）。
 - 不做：D-C-3（人工开单从余额扣）、D-C-5 / 缺陷 11（限速语义），未决。
 - 幂等表暂存一次性导出的明文 CSV、1 MiB 缓存上限：用户侧已接受，不用再改。
+- 后端二已建 `domain/adminops/CLAUDE.md`（L2）且 `ListOrders` 改用了与用户详情共用的订单行查询（行为不变）：你改 adminops 时在这份 L2 里补上套餐目录「事务外校验 + *Tx 事务体」的说明，不要另建。adminops 包的 PG18 域测试名单要写精确，`catalog_sales` 域的默认过滤会把后端二的 `TestAdminUsersPG18` 拉进来。

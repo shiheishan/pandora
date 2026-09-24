@@ -77,6 +77,7 @@
 - 前端流程：先发请求 → 收到 reauth_required → 弹「重新验证身份」框 → `POST v1/auth/reauth {password}` → **用返回的新 access_token 替换本地令牌** → 用原 Idempotency-Key 重放原请求。设计稿是「先弹框后执行」，实现改为「先请求、按需弹框」；`reauthed=true` 时不弹框。
 
 ### 1.7 实时事件（SSE）
+- **修订 R24（2026-09-24，后端二 107de25）**：流量上报不再触发 `subscriptions.changed`（迁移 00076 摘掉 quota_balances 的变更通知触发器）；「对该事件 2 秒节流」一条作废，用量数字靠页面主动拉取刷新。
 
 - admin `GET v1/events`（要 `ops.notification.read`，没有则 404，前端隐藏事件胶囊）与 public `GET v1/events`（登录即可）。Bearer 认证，**只能用 fetch 流读取，不能用 EventSource**。路径以 events 结尾，豁免 25 秒请求超时。
 - 帧格式：首帧 `retry: 5000`；事件帧 `id: <本连接内序号>` / `event: <topic>` / `data: <单行 JSON>`；每 25 秒注释帧 `: ping`。id 只在本连接内有意义，不支持 Last-Event-ID 续传：断线重连后把当前页相关查询全部失效重拉。重连间隔取 retry 值并加抖动。
@@ -335,6 +336,7 @@
 - 设计：后台-02「指派」下拉
 
 #### POST v1/tickets/{id}/status — 改状态（含人工升级）
+- **修订 R25（2026-09-24，后端二 107de25）**：客服关闭写 `closed_reason='agent_closed'`；重新打开时原因与说明一并清空。
 - 状态：现有 `handlers.go:659 ticketStatus`；待补·后端（行为）
 - 权限：`ops.ticket.write`｜reauth：否｜幂等：是 `admin_ticket_status`
 - 请求：`{ status: "resolved"|"closed"|"escalated"|"pending_agent", reason?: string(≤500) }`
@@ -406,6 +408,7 @@
 设计稿用户抽屉「订阅」tab 里的「订阅地址 + 复制」整块由前端删除，改为一行说明：「订阅地址仅用户本人可见；如疑似泄露，请点『更换订阅地址』后让用户在门户重新复制」。已核实，列表、详情、画像、导出这些接口都不返回令牌或订阅 URL。唯一的例外是换发接口会一次性回传新令牌，见 D-B-1。
 
 #### GET v1/users — 用户列表
+- **修订 R22（2026-09-24，后端二 107de25）**：`group_name` 现在有值（缺陷 8）。
 - 状态：现有 `handlers.go:211 listUsers` → `adminops/service.go:243 ListUsers`；待补·后端（字段、筛选、缺陷修复）
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
 - 请求（现有）：query `q?: string`（对 email、display_name 做 LIKE 模糊匹配），`status?: string`（SQL 里用的是 `status::text LIKE $3`，所以只能传单值），`limit?: int`（默认 25，最大 100），`offset?: int`
@@ -432,6 +435,7 @@
   - 待补·前端：底部加分页（limit/offset）
 
 #### GET v1/users/{id} — 用户详情
+- **修订 R22（2026-09-24，后端二 107de25）**：`recent_orders` 的套餐名、周期、项数等字段现在有值，与订单列表逐字段一致（缺陷 9）。
 - 状态：现有 `handlers.go:227 getUser` → `service.go:337 GetUser`；待补·后端（字段）
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
 - 请求：path `id: uuid`
@@ -1157,6 +1161,7 @@
 ### 后台-07 节点与服务器 · 节点（节点 tab + 节点详情抽屉）
 
 #### GET v1/nodes — 节点列表（含运营聚合）
+- **修订 R27（2026-09-24，后端二 107de25）**：新增 `limit?`（1–1000，默认 500）与 `offset?`；`total` 为同一筛选条件下的真实总数（缺陷 21）。按 `sort_order, node_no` 排序仍在后端二第 ⑤ 步。
 - 状态：现有 `panel/internal/api/admin/handlers.go:703 nodeList`；**待补·后端（字段扩展 + 排序，无迁移，cc 除外）**
 - 权限：`node.read`｜reauth：否｜幂等：否
 - 请求：query `include_retired?: "1"`（默认不含 serving_status=retired；永远不含 status=destroyed）。无分页、无服务端筛选，硬上限 200 条。
@@ -1316,6 +1321,7 @@
 - 设计：后台-07 抽屉「监控 › 单节点路由（覆盖全局）」只读列表。映射：`r.m` → matcher 的值拼接，`r.o` → `outbound_tag`；routes 为空时显示「沿用全局规则」。
 
 #### PUT v1/nodes/{id}/routing — 全量替换单节点出站与分流
+- **修订 R26（2026-09-24，后端二 107de25）**：路由规则可引用全局出站 tag（大小写不敏感）；引用不存在的出站仍 422 且不写入；保存成功、事务提交后通知节点（缺陷 18）。
 - 状态：现有 `panel/internal/api/admin/handlers.go:1251 nodeSetRouting`；**待补·前端**（→ 抽屉「路由」tab 的编辑器，复用路由页的规则行组件）；**待补·后端（校验修正）**
 - 权限：`node.config.publish`｜reauth：否｜幂等：否
 - 请求：`{ row_version: int64(节点), outbounds: [{ tag: string(1–64，不得为 direct/block，不得重复), type: "direct"|"block"|"socks"|"http"|"shadowsocks"|"vmess"|"vless"|"trojan"|"hysteria"|"hysteria2"|"tuic"|"anytls"|"shadowtls"|"wireguard", settings?: object }], routes: [{ priority?: int(0=按序号*10), matcher: object, outbound_tag: string, enabled: bool, note?: string }] }`。matcher 只支持键：`domain|domains`、`domain_suffix|domain_suffixes`、`ip|ip_cidr|ip_cidrs`、`port|ports`、`network|networks`、`source|source_ip_cidr|source_cidrs`、`source_port|source_ports`；值为字符串/整数或其数组；`{}` 为兜底且必须是最后一条启用规则。
@@ -1751,6 +1757,7 @@
 - 设计：审计页「导出」按钮。映射：前端用 fetch 带 Bearer 取 Blob 再触发下载（不能用 `<a href>`）；该路径不以 events/stream 结尾，受 25 秒超时约束，所以设上限
 
 #### GET v1/access-log — 安全事件明细（非 HTTP 访问日志）
+- **修订 R23（2026-09-24，后端二 107de25）**：`category` 只接受 login / register / reset_password / order / payment / ticket / admin / other / subscribe，其余 422 `fields.category`；`payment_provider.*` 归 admin（缺陷 14）。`outcome` 筛选在后端二第 ⑤ 步。
 - 状态：现有 `panel/internal/api/admin/access_log.go:49 accessLogList`；**筛选 待补·后端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
 - 请求（现有）：query `limit?: int(1–200，默认 50)`、`offset?: int`、`category?: "login"|"register"|"subscribe"|其它`、`ip?: string（精确匹配，走哈希）`、`user?: uuid | 邮箱片段`
@@ -2239,6 +2246,7 @@
 - 设计：门户-07 底部「补充信息…」+「发送」，按 Enter 也发送。
 
 #### POST v1/support/tickets/{id}/close — 关闭工单（问题已解决）
+- **修订 R25（2026-09-24，后端二 107de25）**：用户关闭写 `closed_reason='user_closed'`，门户可据此区分「已撤回」与「已关闭」（缺陷 17）。
 - 状态：现有 `panel/internal/api/public/handlers.go:769 closeTicket`
 - 权限：登录用户｜reauth：否｜幂等：是 `support_ticket_user_close`
 - 请求：无 body
@@ -2424,6 +2432,7 @@
   - 设计里每个事件单独一个开关，后端做不到：同一类里的到期、流量、工单回复只能一起开关。Telegram 列在未绑定时置灰，这点与设计一致。
 
 #### PUT v1/me/notification-preferences — 修改一项通知偏好
+- **修订 R28（2026-09-24，后端二 107de25）**：接口形状不变，保存不再 500（缺陷 7）。
 - 状态：现有 `panel/internal/api/public/notifications.go:227 setNotificationPreference`；另有待补·后端（修 bug）
 - 权限：登录用户｜reauth：否｜幂等：否（天然幂等）
 - 请求：`{ category: "transactional"|"service"|"marketing", channel: "email"|"telegram", enabled: bool }`，一次改一项
@@ -3001,3 +3010,10 @@
 | R19 | 2026-09-24 | 后端二 e05fd9e | 主题只剩「默认 · 纸白」（迁移 00075），tokens 改 light/dark 两组 43 键白名单，custom_css 停用，主题保存校验不再 500 |
 | R20 | 2026-09-24 | 后端二 e05fd9e | 模板测试发送加 reauth |
 | R21 | 2026-09-24 | 后端二 e05fd9e | 邮件 {{site}} 与发件人名默认取生效主题的站点名，缺省 Pandora |
+| R22 | 2026-09-24 | 后端二 107de25 | 用户列表组名、用户详情最近订单字段有值（缺陷 8、9） |
+| R23 | 2026-09-24 | 后端二 107de25 | 访问日志分类筛选按固定枚举生效，未知值 422（缺陷 14） |
+| R24 | 2026-09-24 | 后端二 107de25 | 流量上报不再推 subscriptions.changed（迁移 00076，缺陷 15） |
+| R25 | 2026-09-24 | 后端二 107de25 | 工单关闭原因按用户/客服写入，重开清空（缺陷 17） |
+| R26 | 2026-09-24 | 后端二 107de25 | 单节点路由可引用全局出站，保存后通知节点（缺陷 18） |
+| R27 | 2026-09-24 | 后端二 107de25 | 节点列表分页与真实 total（缺陷 21） |
+| R28 | 2026-09-24 | 后端二 107de25 | 通知偏好保存修复（缺陷 7） |

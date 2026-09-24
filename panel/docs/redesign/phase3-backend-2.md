@@ -33,7 +33,7 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：⓪ PG18 进 CI（`547b5a6`、`e159d92`，独立 workflow `panel-pg18.yml`）、① 安全 `62f7283`、② 主题 `e05fd9e` 已验收并合入 `feat/panel-redesign`。迁移已用 00074、00075。**③ 功能缺陷进行中。**
+**进度**：⓪ PG18 进 CI（`547b5a6`、`e159d92`，独立 workflow `panel-pg18.yml`）、① 安全 `62f7283`、② 主题 `e05fd9e`、③ 功能缺陷 `107de25` 已验收并合入 `feat/panel-redesign`。迁移已用 00074–00076，下一个 00077。**下一步 ④ 新表与新接口，然后 ⑤。**
 
 补充事项（与上文冲突时以这里为准）：
 - 每步做完：推送本分支，看两个 workflow；做事前先 `git merge feat/panel-redesign` 同步。契约改动写进报告（你的已到 R21）。
@@ -41,3 +41,5 @@
 - `platform/httpx` 错误码与 `middleware.RequireRecentReauth` 仍归第 2 阶段第 ⑤ 步，不要碰。
 - 新建租户拿不到通知模板（所有模板都有）：暂不处理。SanitizeCSS 保留不删。
 - node_preview 的「从没心跳过的节点不下发」是有意规则，不是 bug。
+- 契约修订已到 R28。新 PG18 测试一律用 `platform/pg18test` 辅助包；在已有域的包里加 PG18 用例时，把该域的测试名单写精确（默认过滤 `PG18` 会把别的域的用例拉进来、跳过、被判失败）。
+- 本会话改过、还没有 L2 的目录（api/admin、api/public、platform/realtime）：按 GEB 逆向流，下次改到时再补，不用专门补。
