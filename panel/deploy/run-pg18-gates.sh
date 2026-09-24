@@ -139,10 +139,22 @@ echo "==> 起 PostgreSQL 18"
 docker run -d --name "$CONTAINER" \
   -e POSTGRES_PASSWORD="$PGPW" -e POSTGRES_USER="$PGUSER_MIGRATE" -e POSTGRES_DB=postgres \
   -p 127.0.0.1::5432 "$PG_IMAGE" >/dev/null
+# 就绪检查必须走 TCP：镜像初始化时会先起一个只听 unix socket 的临时实例，跑完
+# 初始化脚本再关掉、重启成正式实例。经 socket 探测会在临时实例上报「就绪」，
+# 紧接着的迁移正好撞上它关停（第 ④ 步 CI 的偶发失败）。临时实例不监听 TCP。
+READY=""
 for _ in $(seq 1 60); do
-  docker exec "$CONTAINER" pg_isready -U "$PGUSER_MIGRATE" -q 2>/dev/null && break
+  if docker exec "$CONTAINER" pg_isready -h 127.0.0.1 -U "$PGUSER_MIGRATE" -q 2>/dev/null; then
+    READY=1
+    break
+  fi
   sleep 1
 done
+if [[ -z "$READY" ]]; then
+  echo "PostgreSQL 18 容器 60 秒内没有在 TCP 上就绪" >&2
+  docker logs "$CONTAINER" 2>&1 | tail -20 >&2
+  exit 1
+fi
 PORT="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' "$CONTAINER")"
 psql_root() { docker exec -i "$CONTAINER" psql -U "$PGUSER_MIGRATE" -v ON_ERROR_STOP=1 "$@"; }
 echo "    $(psql_root -d postgres -tAc 'SELECT version()' | cut -d, -f1)"

@@ -593,4 +593,11 @@ END $$;
 REVOKE UPDATE, DELETE ON gift_card_redemptions FROM aegis_app;
 REVOKE UPDATE, DELETE ON traffic_reset_logs FROM aegis_app;
 
+-- 纵深防御：这两张表各有守卫触发器（00069 批次只许一次打导出标记，00070 流量包
+-- 余额只许按规则扣减），但同样被上面的 GRANT ... ON ALL TABLES 放开了 DELETE。
+-- 触发器之外再收一道授权。UPDATE 只收 DELETE 不够：两表的业务路径都要改余额 /
+-- 导出标记，UPDATE 保留，靠触发器约束写法。
+REVOKE DELETE ON traffic_pack_grants FROM aegis_app;
+REVOKE DELETE ON gift_card_batches FROM aegis_app;
+
 COMMIT;
