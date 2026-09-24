@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/httpx 的错误模型与 Principal，依赖 go-redis 的限流计数
+// [OUTPUT]: 对外提供 RequestID、Recovery、DomainGuard、RequirePermission、RequireRecentReauth、RateLimit 与 Limit、超时与公共链装配等 http 中间件
+// [POS]: middleware 的横切中间件集合，挂在 api 路由之前；auth.go 负责令牌认证与租户注入，idempotency.go 负责幂等键，三者组成网关的公共链
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package middleware 汇集四域网关共用的横切关注点。
 //
 // 覆盖 PRD：
@@ -189,12 +194,14 @@ func RequirePermission(permission string, log *slog.Logger) func(http.Handler) h
 }
 
 // RequireRecentReauth 用于高风险动作（SEC-009）。
+// 拒绝时回 403 reauth_required 而不是通用 forbidden：前端靠这个码弹「重新验证身份」，
+// 拿到新令牌后以原 Idempotency-Key 重放；它挂在 Idempotency 之前，所以拒绝不消耗幂等键。
 func RequireRecentReauth(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !httpx.PrincipalFrom(r.Context()).ReauthedRecently {
 				httpx.Fail(w, r, log,
-					httpx.New(httpx.CodeForbidden, "此操作需要重新验证身份"))
+					httpx.New(httpx.CodeReauthRequired, "此操作需要重新验证身份"))
 				return
 			}
 			next.ServeHTTP(w, r)
