@@ -100,6 +100,9 @@ func TestCatalogWriteRouteContracts(t *testing.T) {
 		recentReauth                          bool
 	}{
 		{"POST /plans", "h.createPlan", "catalog.write", "catalog_plan_create", true},
+		// D-C-2：向导能建价格、绑线路、发布，门槛与单独的发布接口相同。
+		{"POST /plans/complete", "h.createPlanComplete", "catalog.publish", "catalog_plan_create_complete", true},
+		{"PUT /plans/{id}/complete", "h.updatePlanComplete", "catalog.publish", "catalog_plan_update_complete", true},
 		{"POST /plans/{id}/versions", "h.createPlanVersion", "catalog.write", "catalog_plan_version_create", false},
 		{"PUT /plans/{id}/versions/{versionID}", "h.updatePlanVersion", "catalog.write", "", false},
 		{"POST /plans/{id}/versions/{versionID}/publish", "h.publishPlanVersion", "catalog.publish", "catalog_plan_version_publish", true},

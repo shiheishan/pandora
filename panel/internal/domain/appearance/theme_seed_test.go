@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 migrations/ 下文件名含 theme 的迁移文本
+// [OUTPUT]: 对外提供 TestBuiltinThemeTokensPassFrontendValidation、TestStellarThemeOverridesSurfaceColors、TestThemeMigrationDownDoesNotDropActiveTheme 与迁移文本解析助手
+// [POS]: domain/appearance 的历史种子测试：00051/00055 的扁平 tokens 与 00075 的 light/dark 分组都过得了取值校验
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package appearance
 
 import (
@@ -9,7 +14,8 @@ import (
 	"testing"
 )
 
-// 前端 applySiteTheme 里的两道校验，原样复制过来。
+// 旧前端 applySiteTheme 里的两道校验，原样复制过来（00051 / 00055 的历史种子按它写）。
+// 新门户的白名单是 DesignTokenKeys，见 paper_theme_test.go。
 //
 // 复制而不是引用，是因为那段逻辑住在 HTML 里的 <script> 中，Go 这边引不到。
 // 两处必须保持一致——不一致的后果是内置主题里的某个 token 在前端被静默
@@ -40,7 +46,18 @@ func TestBuiltinThemeTokensPassFrontendValidation(t *testing.T) {
 			if _, isBranding := tokens["tagline"]; isBranding {
 				continue
 			}
+			// 00075 起 tokens 分 light / dark 两组，逐组展开再检
+			flat := map[string]any{}
 			for k, v := range tokens {
+				if group, ok := v.(map[string]any); ok && (k == "light" || k == "dark") {
+					for gk, gv := range group {
+						flat[gk] = gv
+					}
+					continue
+				}
+				flat[k] = v
+			}
+			for k, v := range flat {
 				s, ok := v.(string)
 				if !ok {
 					t.Errorf("%s: token %q 不是字符串（前端只接受字符串）", filepath.Base(path), k)

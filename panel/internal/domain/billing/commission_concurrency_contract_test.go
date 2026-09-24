@@ -158,35 +158,91 @@ func TestCommissionPayoutLockBalanceAndMonotonicStateContract(t *testing.T) {
 	}
 }
 
-func TestRequestWithdrawalRequiresOneCurrencyAndScopesPriorWithdrawals(t *testing.T) {
+// D-F-1：提现申请、转余额与摘要只认一个「可用佣金」—— 账本余额 − 未过账的在途提现，
+// 两条动账路径在同一把科目锁下按这个口径校验。
+func TestRequestWithdrawalUsesLedgerAvailabilityUnderSharedLock(t *testing.T) {
 	source := commissionConcurrencySource(t)
 	request := commissionConcurrencySection(t, source,
 		"func (s *Service) RequestWithdrawal(",
 		"// ListMyWithdrawals")
 	assertCommissionSourceOrder(t, request,
-		"count(DISTINCT currency)",
-		"if currencyCount > 1",
-		"return ErrWithdrawCurrencyAmbiguous",
-		"if currencyCount == 0 || available <= 0",
+		"s.pool.InTxSerializableRetry(",
+		"if amount < cfg.MinWithdraw",
+		"lockUserCommissionAccounts(ctx, tx, tenantID, userID)",
+		"if len(currencies) == 0",
 		"FROM withdrawals",
-		"AND currency = $3",
-		"available -= inFlight + paidOut",
 		"if inFlight > 0",
-		"if available <= 0",
+		"withdrawableCommission(ctx, tx, tenantID, userID,",
+		"if positive > 1",
+		"return ErrWithdrawCurrencyAmbiguous",
+		"if positive == 0",
+		"if amount > available",
+		"INSERT INTO withdrawals",
 	)
-	for _, needle := range []string{
-		"COALESCE(min(currency::text), '')",
-		"tenantID, userID, currency",
-		"status IN ('requested','reviewing','approved','processing')",
+	for _, forbidden := range []string{
+		"FROM commission_entries",
 		"status = 'paid'",
+		"max(currency::text)",
+		"min(currency::text)",
 	} {
-		if !strings.Contains(request, needle) {
-			t.Errorf("withdrawal currency contract missing %q", needle)
+		if strings.Contains(request, forbidden) {
+			t.Errorf("withdrawal request must not derive availability from %q", forbidden)
 		}
 	}
-	if strings.Contains(request, "max(currency::text)") ||
-		strings.Contains(request, "COALESCE(max(currency::text), 'CNY')") {
-		t.Fatal("withdrawal request must not guess one currency from a mixed balance")
+}
+
+func TestCommissionTransferUsesSameLedgerAvailability(t *testing.T) {
+	body, err := os.ReadFile("commission_transfer.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transfer := commissionConcurrencySection(t, string(body),
+		"func (s *Service) TransferCommissionToBalance(",
+		"return txnID, nil")
+	assertCommissionSourceOrder(t, transfer,
+		"s.pool.InTxSerializableRetry(",
+		"prepareAndLockLedgerAccounts(",
+		"withdrawableCommission(ctx, tx, tenantID, userID,",
+		"if avail < amount",
+		"return ErrCommissionTransferInsufficient",
+		"Post(ctx, tx",
+	)
+	if strings.Contains(transfer, "Balance(ctx, tx, accounts") {
+		t.Fatal("transfer must not bypass the shared availability rule with a raw ledger balance")
+	}
+}
+
+func TestCommissionAvailabilityDeductsOnlyUnpostedWithdrawals(t *testing.T) {
+	body, err := os.ReadFile("commission_available.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	query := commissionConcurrencySection(t, source,
+		"const unpostedWithdrawalsSQL", "// lockUserCommissionAccounts")
+	if !strings.Contains(query, "status IN ('requested','reviewing','approved')") {
+		t.Fatalf("unposted withdrawals must be exactly the pre-payout states: %s", query)
+	}
+	for _, posted := range []string{"'processing'", "'paid'"} {
+		if strings.Contains(query, posted) {
+			t.Fatalf("%s withdrawals already debited the ledger and must not be deducted twice", posted)
+		}
+	}
+	rule := commissionConcurrencySection(t, source,
+		"func withdrawableCommission(", "func commissionAvailableSnapshot(")
+	assertCommissionSourceOrder(t, rule,
+		"Balance(ctx, tx, accountID)",
+		"unpostedWithdrawalsSQL",
+		"return ledger - reserved, nil",
+	)
+
+	summary := commissionConcurrencySection(t, commissionConcurrencySource(t),
+		"func (s *Service) CommissionSummary(", "// ListMyCommissions")
+	if !strings.Contains(summary, "commissionAvailableSnapshot(ctx, tx,") {
+		t.Fatal("commission summary must display the shared availability rule")
+	}
+	if strings.Contains(summary, "FILTER (WHERE status = 'available')") {
+		t.Fatal("commission summary must not derive availability from commission entries")
 	}
 }
 

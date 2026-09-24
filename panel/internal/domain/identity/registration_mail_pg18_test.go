@@ -115,7 +115,9 @@ func TestRegistrationVerificationMailPG18(t *testing.T) {
 	}
 	mail := sender.sent[0]
 	code := regexp.MustCompile(`\b\d{6}\b`).FindString(mail.body)
+	// 这个租户没有主题：{{site}} 落到兜底值 Pandora（appearance.DefaultSiteName）
 	if mail.to != newEmail || code == "" || !strings.Contains(mail.subject, code) ||
+		!strings.HasPrefix(mail.subject, "【Pandora】") ||
 		!strings.Contains(mail.body, "10 分钟") || strings.Contains(mail.body, "{{") ||
 		strings.Contains(mail.body, "_recipient") {
 		t.Fatalf("rendered verification mail to=%q subject=%q body=%q", mail.to, mail.subject, mail.body)

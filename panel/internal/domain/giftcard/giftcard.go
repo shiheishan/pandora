@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 gift_card_templates / gift_card_codes / gift_card_batches 表，依赖 billing 经 Granter 接口注入的发放能力，依赖 platform/audit、platform/db、platform/httpx
+// [OUTPUT]: 对外提供 Service、New、Granter、模板用例（SaveTemplate/ListTemplates）、GenerateCodes 与 GenerateOutput、奖励与条件类型
+// [POS]: giftcard 的模板与生码核心：生码与批次行同一事务写入，响应只带明文样例；批次视图与一次性导出在 batches.go，读模型在 codes.go，兑换在 redeem.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package giftcard 实现礼品卡 / 卡密（对标 Xboard gift-card）。
 //
 // 三种卡型：
@@ -383,29 +388,42 @@ type GenerateInput struct {
 	ActorID    string
 }
 
+// GenerateOutput 是生码结果。明文只回 Sample（前几张），完整明文只能走
+// 一次性导出 ExportBatch；Batch 是批次视图，供界面直接插进批次列表。
+type GenerateOutput struct {
+	BatchID string   `json:"batch_id"`
+	Count   int      `json:"count"`
+	Sample  []string `json:"sample"`
+	Batch   Batch    `json:"batch"`
+}
+
+// generateSampleSize 是生码响应里给出的明文样例张数，够核对格式与前缀。
+const generateSampleSize = 4
+
 func (s *Service) GenerateCodes(ctx context.Context, tenantID string,
-	in GenerateInput) (string, []string, error) {
+	in GenerateInput) (*GenerateOutput, error) {
 
 	in.Prefix = strings.ToUpper(strings.TrimSpace(in.Prefix))
 	if in.Count < 1 || in.Count > 5000 {
-		return "", nil, httpx.Invalid(map[string]string{
+		return nil, httpx.Invalid(map[string]string{
 			"count": "一次生成 1 到 5000 个。要更多就分批 —— 单次几万个会把事务拖很久"})
 	}
 	if in.Prefix != "" && !isSafePrefix(in.Prefix) {
-		return "", nil, httpx.Invalid(map[string]string{
+		return nil, httpx.Invalid(map[string]string{
 			"prefix": "前缀只能用大写字母和数字，最多 8 位"})
 	}
 	if _, err := uuid.Parse(in.TemplateID); err != nil {
-		return "", nil, httpx.NotFoundOrForbidden()
+		return nil, httpx.NotFoundOrForbidden()
 	}
 	if in.ExpiresAt != nil && in.ExpiresAt.Before(time.Now()) {
-		return "", nil, httpx.Invalid(map[string]string{
+		return nil, httpx.Invalid(map[string]string{
 			"expires_at": "有效期不能设在过去"})
 	}
 
 	batchID := uuid.New().String()
-	codes := make([]string, 0, in.Count)
+	sample := make([]string, 0, generateSampleSize)
 	actor := in.ActorID
+	var batch *Batch
 
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor}, func(tx pgx.Tx) error {
 		var status string
@@ -421,7 +439,17 @@ func (s *Service) GenerateCodes(ctx context.Context, tenantID string,
 			return httpx.New(httpx.CodeConflict, "已归档的礼品卡不能再生成新码")
 		}
 
-		for len(codes) < in.Count {
+		// 批次行先于码写入：码上的 batch_id 外键指向它。
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO gift_card_batches
+				(id,tenant_id,template_id,prefix,count,expires_at,created_by)
+			VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7::uuid)`,
+			batchID, tenantID, in.TemplateID, in.Prefix, in.Count,
+			in.ExpiresAt, actor); err != nil {
+			return err
+		}
+
+		for inserted := 0; inserted < in.Count; {
 			code, err := newCode(in.Prefix)
 			if err != nil {
 				return err
@@ -438,10 +466,18 @@ func (s *Service) GenerateCodes(ctx context.Context, tenantID string,
 				return err
 			}
 			if tag.RowsAffected() == 1 {
-				codes = append(codes, code)
+				inserted++
+				if len(sample) < generateSampleSize {
+					sample = append(sample, code)
+				}
 			}
 		}
 
+		loaded, err := loadBatchTx(ctx, tx, tenantID, batchID)
+		if err != nil {
+			return err
+		}
+		batch = loaded
 		return audit.Write(ctx, tx, tenantID, audit.Entry{
 			ActorKind: "admin", ActorID: &actor,
 			Action: "gift_card.codes_generated", ResourceType: "gift_card_template",
@@ -453,9 +489,9 @@ func (s *Service) GenerateCodes(ctx context.Context, tenantID string,
 		})
 	})
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	return batchID, codes, nil
+	return &GenerateOutput{BatchID: batchID, Count: in.Count, Sample: sample, Batch: *batch}, nil
 }
 
 func isSafePrefix(p string) bool {

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 gift_card_codes / gift_card_redemptions / gift_card_templates 表与 batches.go 的 MaskCode，依赖 platform/audit、platform/db、platform/httpx
+// [OUTPUT]: 对外提供 Code、ListCodes、ToggleCode、Stats、Usage、ListUsages、PreviewCode
+// [POS]: giftcard 的卡码读模型与单码操作：后台列表与兑换记录只回掩码，门户预览按码查模板；批次与导出在 batches.go，兑换在 redeem.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package giftcard
 
 import (
@@ -15,9 +20,10 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+// Code 是卡码列表的一行。只给掩码：明文只在生码样例与一次性导出里出现（batches.go）。
 type Code struct {
 	ID         string     `json:"id"`
-	Code       string     `json:"code"`
+	CodeMasked string     `json:"code_masked"`
 	Status     string     `json:"status"`
 	BatchID    *string    `json:"batch_id,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
@@ -88,10 +94,12 @@ func (s *Service) ListCodes(ctx context.Context, tenantID string,
 		defer rows.Close()
 		for rows.Next() {
 			var c Code
-			if err := rows.Scan(&c.ID, &c.Code, &c.Status, &c.BatchID, &c.ExpiresAt,
+			var plain string
+			if err := rows.Scan(&c.ID, &plain, &c.Status, &c.BatchID, &c.ExpiresAt,
 				&c.UsedEmail, &c.UsedAt, &c.CreatedAt, &c.TemplateID); err != nil {
 				return err
 			}
+			c.CodeMasked = MaskCode(plain)
 			out = append(out, c)
 		}
 		return rows.Err()
@@ -151,7 +159,7 @@ func (s *Service) ToggleCode(ctx context.Context, tenantID, codeID string,
 			Action: "gift_card.code_toggled", ResourceType: "gift_card_code",
 			ResourceID:   &codeID,
 			BeforeDigest: map[string]any{"status": from},
-			AfterDigest:  map[string]any{"status": to, "code": code},
+			AfterDigest:  map[string]any{"status": to, "code": MaskCode(code)},
 			APIDomain:    "admin", RequestID: httpx.RequestIDFrom(ctx),
 		})
 	})
@@ -193,7 +201,7 @@ func (s *Service) Stats(ctx context.Context, tenantID string) (*Stats, error) {
 
 type Usage struct {
 	TemplateName string    `json:"template_name"`
-	Code         string    `json:"code"`
+	CodeMasked   string    `json:"code_masked"`
 	UserEmail    string    `json:"user_email"`
 	Granted      Rewards   `json:"granted"`
 	PrizeLabel   string    `json:"prize_label,omitempty"`
@@ -223,10 +231,12 @@ func (s *Service) ListUsages(ctx context.Context, tenantID, templateID string) (
 		for rows.Next() {
 			var u Usage
 			var raw []byte
-			if err := rows.Scan(&u.TemplateName, &u.Code, &u.UserEmail, &raw,
+			var plain string
+			if err := rows.Scan(&u.TemplateName, &plain, &u.UserEmail, &raw,
 				&u.RedeemedAt); err != nil {
 				return err
 			}
+			u.CodeMasked = MaskCode(plain)
 			var g grantedRecord
 			_ = json.Unmarshal(raw, &g)
 			u.PrizeLabel = g.PrizeLabel

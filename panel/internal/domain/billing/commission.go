@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 commission_available.go 的可用佣金口径与科目锁，依赖 ledger.go / reservations.go 的记账与加锁原语，依赖 domain/payment 的 MulDiv
+// [OUTPUT]: 对外提供 CommissionSummary、ListMyCommissions、RequestWithdrawal、ListMyWithdrawals、PostWithdrawalPayout、SettleMatured、CommissionWithdrawalIdempotencyScope 与提现错误
+// [POS]: billing 分销佣金的计提、解冻、提现申请与打款记账；转余额在 commission_transfer.go，两者共用同一口径
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 // 分销佣金。
@@ -40,6 +45,9 @@ var (
 )
 
 const maxMaturedCommissionBatch = 500
+
+// CommissionWithdrawalIdempotencyScope 是门户 POST v1/me/withdrawals 的幂等域。
+const CommissionWithdrawalIdempotencyScope = "commission_withdrawal_request"
 
 // commissionConfig 是租户级的分销参数。
 type commissionConfig struct {
@@ -437,35 +445,28 @@ func (s *Service) CommissionSummary(ctx context.Context, tenantID, userID string
 
 		if err := tx.QueryRow(ctx, `
 			SELECT COALESCE(sum(commission_amount) FILTER (WHERE status = 'pending'), 0),
-			       COALESCE(sum(commission_amount) FILTER (WHERE status = 'available'), 0),
 			       count(*) FILTER (WHERE status <> 'reversed'),
 			       COALESCE(max(currency::text), 'CNY')
 			  FROM commission_entries
 			 WHERE tenant_id = $1 AND referrer_user_id = $2::uuid`,
-			tenantID, userID).Scan(&out.Pending, &out.Available,
-			&out.Orders, &out.Currency); err != nil {
+			tenantID, userID).Scan(&out.Pending, &out.Orders, &out.Currency); err != nil {
 			return err
 		}
 
-		// 可提现 = 已解冻佣金 − 在途提现 − 已打款。
-		//
-		// 佣金条目在打款后仍然是 available 状态（它记录的是「赚到了多少」，
-		// 不是「还剩多少」），所以必须把提走的部分从这里减掉。
-		// 只减在途不减已付的话，同一笔佣金会在每次打款后重新变得可提。
-		var paidOut int64
 		if err := tx.QueryRow(ctx, `
 			SELECT COALESCE(sum(amount) FILTER (
 			         WHERE status IN ('requested','reviewing','approved','processing')), 0),
 			       COALESCE(sum(amount) FILTER (WHERE status = 'paid'), 0)
 			  FROM withdrawals
 			 WHERE tenant_id = $1 AND user_id = $2::uuid`,
-			tenantID, userID).Scan(&out.Withdrawing, &paidOut); err != nil {
+			tenantID, userID).Scan(&out.Withdrawing, &out.Settled); err != nil {
 			return err
 		}
-		out.Settled = paidOut
-		out.Available -= out.Withdrawing + paidOut
-		if out.Available < 0 {
-			out.Available = 0
+
+		// 可提现与「全部转入余额」用的是同一个数，口径见 commission_available.go
+		if out.Available, err = commissionAvailableSnapshot(ctx, tx,
+			tenantID, userID, out.Currency); err != nil {
+			return err
 		}
 
 		return tx.QueryRow(ctx, `
@@ -534,7 +535,11 @@ func (s *Service) RequestWithdrawal(ctx context.Context, tenantID, userID string
 	amount int64, payoutDetail string) (string, error) {
 
 	var id string
-	err := s.pool.InTxSerializable(ctx, dbScope(tenantID, userID), func(tx pgx.Tx) error {
+	// 与 TransferCommissionToBalance 同一把锁、同一口径（commission_available.go）。
+	// 锁等待之后的序列化冲突（40001）在这里自动重试，后到的一方拿到的是
+	// 「余额不足」这类业务错误，而不是 500。
+	err := s.pool.InTxSerializableRetry(ctx, dbScope(tenantID, userID), func(tx pgx.Tx) error {
+		id = ""
 		cfg, err := loadCommissionConfig(ctx, tx, tenantID)
 		if err != nil {
 			return err
@@ -543,45 +548,49 @@ func (s *Service) RequestWithdrawal(ctx context.Context, tenantID, userID string
 			return ErrWithdrawTooSmall
 		}
 
-		var available, inFlight int64
-		var currency string
-		var currencyCount int
-		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE(sum(commission_amount), 0),
-			       COALESCE(min(currency::text), ''),
-			       count(DISTINCT currency)
-			  FROM commission_entries
-			 WHERE tenant_id = $1 AND referrer_user_id = $2::uuid AND status = 'available'`,
-			tenantID, userID).Scan(&available, &currency, &currencyCount); err != nil {
+		accounts, currencies, err := lockUserCommissionAccounts(ctx, tx, tenantID, userID)
+		if err != nil {
 			return err
 		}
-		if currencyCount > 1 {
+		if len(currencies) == 0 {
+			return ErrNoCommission
+		}
+
+		// 一次只允许一笔在途。多笔并行会让「可提现余额」
+		// 变成一道需要减去若干在途金额的算术题，用户算错就会反复被拒
+		var inFlight int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM withdrawals
+			 WHERE tenant_id = $1 AND user_id = $2::uuid
+			   AND status IN ('requested','reviewing','approved','processing')`,
+			tenantID, userID).Scan(&inFlight); err != nil {
+			return err
+		}
+		if inFlight > 0 {
+			return ErrWithdrawPending
+		}
+
+		var currency string
+		var available int64
+		positive := 0
+		for _, candidate := range currencies {
+			avail, err := withdrawableCommission(ctx, tx, tenantID, userID,
+				candidate, accounts[candidate])
+			if err != nil {
+				return err
+			}
+			if avail > 0 {
+				positive++
+				currency, available = candidate, avail
+			}
+		}
+		if positive > 1 {
 			// The public request currently has no currency field. Never combine
 			// balances with different monetary units or guess which one the user
 			// intended; a future version can expose an explicit currency selector.
 			return ErrWithdrawCurrencyAmbiguous
 		}
-		if currencyCount == 0 || available <= 0 {
-			return ErrNoCommission
-		}
-
-		var paidOut int64
-		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE(sum(amount) FILTER (
-			         WHERE status IN ('requested','reviewing','approved','processing')), 0),
-			       COALESCE(sum(amount) FILTER (WHERE status = 'paid'), 0)
-			  FROM withdrawals
-			 WHERE tenant_id = $1 AND user_id = $2::uuid AND currency = $3`,
-			tenantID, userID, currency).Scan(&inFlight, &paidOut); err != nil {
-			return err
-		}
-		available -= inFlight + paidOut
-		if inFlight > 0 {
-			// 一次只允许一笔在途。多笔并行会让「可提现余额」
-			// 变成一道需要减去若干在途金额的算术题，用户算错就会反复被拒
-			return ErrWithdrawPending
-		}
-		if available <= 0 {
+		if positive == 0 {
 			return ErrNoCommission
 		}
 		if amount > available {

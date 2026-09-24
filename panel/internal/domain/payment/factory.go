@@ -1,3 +1,8 @@
+// [INPUT]: 依赖调用方注入的 Loader（billing 从 payment_providers 读取并解密）与各适配器登记的 Builder
+// [OUTPUT]: 对外提供 Factory、NewFactory、ProviderRecord、Credentials、ErrProviderDisabled 与凭据、配置的编解码工具
+// [POS]: domain/payment 的渠道实例工厂与缓存，被 billing/payments.go 独占使用；本包不依赖数据库与 httpx，错误语义由 billing 翻译
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package payment
 
 import (
@@ -32,6 +37,10 @@ type ProviderRecord struct {
 	Config       map[string]any
 	Credentials  Credentials
 }
+
+// ErrProviderDisabled 表示渠道存在但被管理员完全停用（enabled=false）。
+// 这是运营状态而不是故障：调用方应把它翻译成「服务暂不可用」，而不是 500。
+var ErrProviderDisabled = errors.New("payment provider is disabled")
 
 // Builder 把一条渠道记录构造成可用的 Provider 实例。
 type Builder func(rec ProviderRecord) (Provider, error)
@@ -93,7 +102,7 @@ func (f *Factory) Get(ctx context.Context, tenantID, code string) (Provider, *Pr
 		return nil, nil, err
 	}
 	if !rec.Enabled {
-		return nil, nil, fmt.Errorf("支付渠道 %q 未启用", code)
+		return nil, nil, fmt.Errorf("支付渠道 %q: %w", code, ErrProviderDisabled)
 	}
 
 	build, ok := f.builders[rec.Adapter]
