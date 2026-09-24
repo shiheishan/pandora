@@ -161,10 +161,26 @@ jobs:
         run: go test -mod=readonly -p 1 -run TestProcessProbeRoundTrip -count=3 ./cmd/pandora-h3-probe
       - name: Default dependency boundary
         run: |
-          ! go list -mod=readonly -deps . | grep -q 'github.com/aegispanel/nodeagent/core/multi'
-          ! go list -mod=readonly -deps . | grep -q 'github.com/aegispanel/nodeagent/core/sing'
-          ! go list -mod=readonly -deps . | grep -q 'github.com/aegispanel/nodeagent/core/xray'
-          ! go list -mod=readonly -deps . | grep -q 'github.com/sagernet/sing-box'
+          # 不写成 `! go list | grep`：bash -e 对取反命令不生效，只有末行能让步骤失败。
+          # 先取整份依赖再 grep：管道接 grep -q 时，pipefail 下 go list 失败或被 SIGPIPE
+          # 都会让 if 判为未命中而静默放行；单独赋值则 go list 出错直接由 -e 终止。
+          deps="$(go list -mod=readonly -deps .)"
+          if grep -q 'github.com/aegispanel/nodeagent/core/multi' <<<"${deps}"; then
+            echo "github.com/aegispanel/nodeagent/core/multi leaked into the default build" >&2
+            exit 1
+          fi
+          if grep -q 'github.com/aegispanel/nodeagent/core/sing' <<<"${deps}"; then
+            echo "github.com/aegispanel/nodeagent/core/sing leaked into the default build" >&2
+            exit 1
+          fi
+          if grep -q 'github.com/aegispanel/nodeagent/core/xray' <<<"${deps}"; then
+            echo "github.com/aegispanel/nodeagent/core/xray leaked into the default build" >&2
+            exit 1
+          fi
+          if grep -q 'github.com/sagernet/sing-box' <<<"${deps}"; then
+            echo "github.com/sagernet/sing-box leaked into the default build" >&2
+            exit 1
+          fi
       - name: Compatibility migration compile
         run: go test -mod=readonly -tags compat -p 1 ./...
       - name: External Xray TLS XHTTP H3 interoperability
