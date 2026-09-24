@@ -214,14 +214,19 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 		Period string `json:"period"`
 	}
 	type planView struct {
-		ID          string      `json:"id"`
-		Code        string      `json:"code"`
-		Name        string      `json:"name"`
-		Description *string     `json:"description"`
-		Version     *int        `json:"version"`
-		MaxDevices  *int        `json:"max_devices"`
-		Quotas      []quotaView `json:"quotas"`
-		Prices      []priceView `json:"prices"`
+		ID          string  `json:"id"`
+		Code        string  `json:"code"`
+		Name        string  `json:"name"`
+		Description *string `json:"description"`
+		Version     *int    `json:"version"`
+		MaxDevices  *int    `json:"max_devices"`
+		// 卡片上的「每月 1 日重置」与续费 / 变更按钮要这几项，取当前发布版本与套餐开关
+		QuotaResetStrategy string      `json:"quota_reset_strategy"`
+		QuotaResetDay      *int16      `json:"quota_reset_day"`
+		AllowRenewal       bool        `json:"allow_renewal"`
+		AllowUpgrade       bool        `json:"allow_upgrade"`
+		Quotas             []quotaView `json:"quotas"`
+		Prices             []priceView `json:"prices"`
 	}
 
 	out := []planView{}
@@ -238,7 +243,8 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 		// 它对组内的人可见，对其他人连存在都不该暴露
 
 		rows, err := tx.Query(ctx, `
-			SELECT p.id, p.code, p.name, p.description, pv.version, pv.max_devices
+			SELECT p.id, p.code, p.name, p.description, pv.version, pv.max_devices,
+			       pv.quota_reset_strategy, pv.quota_reset_day, p.allow_renewal, p.allow_upgrade
 			  FROM plans p
 			  JOIN plan_versions pv ON pv.tenant_id = p.tenant_id
 			   AND pv.id = p.current_version_id
@@ -276,7 +282,8 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 
 		for rows.Next() {
 			var pv planView
-			if err := rows.Scan(&pv.ID, &pv.Code, &pv.Name, &pv.Description, &pv.Version, &pv.MaxDevices); err != nil {
+			if err := rows.Scan(&pv.ID, &pv.Code, &pv.Name, &pv.Description, &pv.Version, &pv.MaxDevices,
+				&pv.QuotaResetStrategy, &pv.QuotaResetDay, &pv.AllowRenewal, &pv.AllowUpgrade); err != nil {
 				return err
 			}
 			pv.Prices = []priceView{}
@@ -731,29 +738,47 @@ func (h *handlers) previewCoupon(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PlanID     string `json:"plan_id"`
 		PriceID    string `json:"price_id"`
+		PackID     string `json:"pack_id"`
 		CouponCode string `json:"coupon_code"`
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	// 两种互斥形态：{plan_id, price_id} 试算套餐，{pack_id} 试算流量包。
 	// 空串或不是 UUID 的值会一路传到 SQL 的 uuid 列上，
 	// 在那里报出的是类型错误 —— 对用户显示成「服务暂时不可用」，
 	// 而实际上只是参数没填对
 	fields := map[string]string{}
-	if !isUUID(req.PlanID) {
-		fields["plan_id"] = "必填"
-	}
-	if !isUUID(req.PriceID) {
-		fields["price_id"] = "必填"
+	if req.PackID != "" {
+		if !isUUID(req.PackID) {
+			fields["pack_id"] = "必填"
+		}
+		if req.PlanID != "" || req.PriceID != "" {
+			fields["pack_id"] = "流量包与套餐只能二选一"
+		}
+	} else {
+		if !isUUID(req.PlanID) {
+			fields["plan_id"] = "必填"
+		}
+		if !isUUID(req.PriceID) {
+			fields["price_id"] = "必填"
+		}
 	}
 	if len(fields) > 0 {
 		httpx.Fail(w, r, h.d.Log, httpx.Invalid(fields))
 		return
 	}
 
-	out, err := h.d.Billing.PreviewForPrice(r.Context(), p.TenantID, p.UserID,
-		req.CouponCode, req.PlanID, req.PriceID)
+	var out map[string]any
+	var err error
+	if req.PackID != "" {
+		out, err = h.d.Billing.PreviewForTrafficPack(r.Context(), p.TenantID, p.UserID,
+			req.CouponCode, req.PackID)
+	} else {
+		out, err = h.d.Billing.PreviewForPrice(r.Context(), p.TenantID, p.UserID,
+			req.CouponCode, req.PlanID, req.PriceID)
+	}
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -786,8 +811,13 @@ func (h *handlers) myCommission(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	transfers, err := h.d.Billing.ListMyCommissionTransfers(r.Context(), p.TenantID, p.UserID)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
 	httpx.OK(w, map[string]any{
-		"summary": sum, "entries": entries, "withdrawals": wds,
+		"summary": sum, "entries": entries, "withdrawals": wds, "transfers": transfers,
 	})
 }
 

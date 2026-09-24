@@ -367,6 +367,7 @@ func (h *handlers) listOrders(w http.ResponseWriter, r *http.Request) {
 		adminops.ListOrdersInput{
 			Query:  q.Get("q"),
 			Status: q.Get("status"),
+			UserID: q.Get("user_id"),
 			From:   parseDayStart(q.Get("from")),
 			To:     parseDayEnd(q.Get("to")),
 			Limit:  atoiDefault(q.Get("limit"), 25),

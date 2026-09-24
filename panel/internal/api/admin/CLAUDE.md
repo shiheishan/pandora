@@ -15,8 +15,8 @@ profile.go: IP 解密助手、用户风控画像（含注册 IP）、注册与�
 dashboard.go / revenue.go / system_status.go / system_components.go: 仪表盘流量排行、通知积压、「需要处理」汇总（路由挂 ops.dashboard.read，逐项按主体权限过滤）、收入趋势（带上一区间合计 previous_total）与调整、系统状态（备份、数据库，以及 8 个组件的 state / components：postgres、valkey、节点、支付回调、邮件、Telegram、SSE 连接数、备份）
 bulk_users.go / usergroup.go / devices.go / traffic_reset.go: 用户批量筛选导出生成群发（筛选含套餐、到期、订阅状态）、用户组、设备数限制、流量重置日志
 catalog.go: 套餐目录、向导一次建成 / 改完、版本与价格
-manual_order.go / late_payment.go: 人工开单与线下收款、挂账转余额
-coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券、批量生券、礼品卡与批次一次性导出、分销与提现审批
+manual_order.go / late_payment.go: 人工开单（settlement: grant 赠送 / pending 待用户支付）与线下收款、挂账转余额
+coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id 非 UUID 回中性 404）、批量生券、礼品卡与批次一次性导出、分销（总览带累计佣金、邀请数与计佣范围 scope）与提现审批
 node_admin.go: 节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步退役 nodeRetire（node.lifecycle + 重认证 + node_retire 幂等），节点身份与令牌状态 nodeIdentity
 node_routing.go: 全局出站与分流 GET / PUT v1/nodes/routing（revision 乐观并发、持 node-config-release 锁、推进全部未退役节点并逐个通知）；validateRoutingPayload 是单节点与全局路由共用的校验
 server.go / pools.go: 服务器（物理宿主）读写与状态、节点分组（列表带组内节点 members 与绑定套餐名 plan_names）

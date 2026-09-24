@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/billing 的提现打款记账、佣金口径与 CommissionScope* / ValidCommissionScope，读写 commission_entries / withdrawals / referrals / system_settings，依赖 platform 的 db/httpx/audit
+// [OUTPUT]: 对包内提供提现列表、审批、打款、分销总览、分销参数与余额调整处理器
+// [POS]: api/admin 后台-06 佣金与提现的 HTTP 外壳与读模型：总览带累计佣金、邀请注册数与计佣范围；分销参数的计佣范围以字符串 jsonb 存进 system_settings
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 提现审批与打款。
@@ -253,17 +258,21 @@ func (h *handlers) commissionOverview(w http.ResponseWriter, r *http.Request) {
 
 	out := map[string]any{}
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var pending, available, paidOut, thisMonth int64
-		var entries, reviewers int
+		var pending, available, paidOut, thisMonth, totalEarned int64
+		var entries, reviewers, invited int
 		if err := tx.QueryRow(r.Context(), `
 			SELECT COALESCE(sum(commission_amount) FILTER (WHERE status='pending'),0),
 			       COALESCE(sum(commission_amount) FILTER (WHERE status='available'),0),
 			       COALESCE(sum(commission_amount) FILTER (
 			         WHERE created_at >= date_trunc('month', now())),0),
+			       COALESCE(sum(commission_amount) FILTER (
+			         WHERE status NOT IN ('reversed','rejected')),0),
 			       count(*),
-			       count(*) FILTER (WHERE review_required = true AND status = 'pending')
+			       count(*) FILTER (WHERE review_required = true AND status = 'pending'),
+			       (SELECT count(*) FROM referrals WHERE tenant_id = $1)
 			  FROM commission_entries WHERE tenant_id = $1`,
-			tenantID).Scan(&pending, &available, &thisMonth, &entries, &reviewers); err != nil {
+			tenantID).Scan(&pending, &available, &thisMonth, &totalEarned,
+			&entries, &reviewers, &invited); err != nil {
 			return err
 		}
 		if err := tx.QueryRow(r.Context(), `
@@ -274,15 +283,22 @@ func (h *handlers) commissionOverview(w http.ResponseWriter, r *http.Request) {
 
 		var rate, freeze int
 		var minW int64
+		var scope string
 		if err := tx.QueryRow(r.Context(), `
 			SELECT COALESCE((SELECT (value #>> '{}')::int FROM system_settings
 			                  WHERE tenant_id=$1 AND key='commission.rate_percent'),0),
 			       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
 			                  WHERE tenant_id=$1 AND key='commission.freeze_days'),3),
 			       COALESCE((SELECT (value #>> '{}')::bigint FROM system_settings
-			                  WHERE tenant_id=$1 AND key='commission.min_withdraw'),10000)`,
-			tenantID).Scan(&rate, &freeze, &minW); err != nil {
+			                  WHERE tenant_id=$1 AND key='commission.min_withdraw'),10000),
+			       COALESCE((SELECT value #>> '{}' FROM system_settings
+			                  WHERE tenant_id=$1 AND key='commission.scope'),'')`,
+			tenantID).Scan(&rate, &freeze, &minW, &scope); err != nil {
 			return err
+		}
+		// 与计提同一个兜底：没有设置或值不认识都按每笔订单
+		if !billing.ValidCommissionScope(scope) {
+			scope = billing.CommissionScopeEveryOrder
 		}
 
 		var waiting int
@@ -298,6 +314,7 @@ func (h *handlers) commissionOverview(w http.ResponseWriter, r *http.Request) {
 			"this_month": thisMonth, "entries": entries,
 			"need_review": reviewers, "waiting_withdrawals": waiting,
 			"rate_percent": rate, "freeze_days": freeze, "min_withdraw": minW,
+			"total_earned": totalEarned, "invited_users": invited, "scope": scope,
 		}
 		return nil
 	})
@@ -312,9 +329,10 @@ func (h *handlers) commissionOverview(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) setCommissionConfig(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 	var req struct {
-		RatePercent *int   `json:"rate_percent"`
-		FreezeDays  *int   `json:"freeze_days"`
-		MinWithdraw *int64 `json:"min_withdraw"`
+		RatePercent *int    `json:"rate_percent"`
+		FreezeDays  *int    `json:"freeze_days"`
+		MinWithdraw *int64  `json:"min_withdraw"`
+		Scope       *string `json:"scope"`
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
@@ -331,6 +349,9 @@ func (h *handlers) setCommissionConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MinWithdraw != nil && *req.MinWithdraw < 0 {
 		fields["min_withdraw"] = "最低提现金额不能为负"
+	}
+	if req.Scope != nil && !billing.ValidCommissionScope(*req.Scope) {
+		fields["scope"] = "计佣范围只能是 first_order 或 every_order"
 	}
 	if len(fields) > 0 {
 		httpx.Fail(w, r, h.d.Log, httpx.Invalid(fields))
@@ -354,6 +375,18 @@ func (h *handlers) setCommissionConfig(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		changed := map[string]any{}
+		if req.Scope != nil {
+			// 计佣范围是字符串，不能走上面按 bigint 写的 set
+			if _, err := tx.Exec(r.Context(), `
+				INSERT INTO system_settings (tenant_id, key, value)
+				VALUES ($1, 'commission.scope', to_jsonb($2::text))
+				ON CONFLICT (tenant_id, key)
+				DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+				tenantID, *req.Scope); err != nil {
+				return err
+			}
+			changed["scope"] = *req.Scope
+		}
 		if req.RatePercent != nil {
 			if err := set("commission.rate_percent", int64(*req.RatePercent)); err != nil {
 				return err
@@ -395,8 +428,6 @@ func nullIfBlank(s string) *string {
 	}
 	return &s
 }
-
-var _ = billing.CommissionSummary{}
 
 // adjustBalance 由管理员直接增减用户余额。
 //

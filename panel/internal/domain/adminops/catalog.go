@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx，依赖 domain/nodefabric 的 StableProtocolReadySQL 判定可服务节点
-// [OUTPUT]: 对外提供套餐目录用例 GetPlan/CreatePlan/UpdatePlan/CreatePlanVersion/UpdatePlanVersion/PublishPlanVersion/CreatePlanPrice/ArchivePlanPrice/ArchivePlan 及其输入输出类型；包内提供 loadPlanTx 与各 *Tx 事务体
-// [POS]: adminops 的套餐目录核心：每个用例是「事务外校验 + 事务体」两段，事务体可被 plan_wizard_update.go 在同一事务里编排
+// [OUTPUT]: 对外提供套餐目录用例 GetPlan/CreatePlan/UpdatePlan/CreatePlanVersion/UpdatePlanVersion/PublishPlanVersion/CreatePlanPrice/ArchivePlanPrice/ArchivePlan 及其输入输出类型（VersionRow 带建版本人邮箱）；包内提供 loadPlanTx、prepare*Input 校验与各 *Tx 事务体（createPlanTx/createPlanPriceTx 供向导新建编排）
+// [POS]: adminops 的套餐目录核心：每个用例是「事务外校验 + 事务体」两段，事务体可被 plan_wizard.go / plan_wizard_update.go 在同一事务里编排
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
@@ -127,7 +127,10 @@ type VersionRow struct {
 	Entitlements         []EntitlementInput `json:"entitlements"`
 	Quotas               []QuotaInput       `json:"quotas"`
 	PoolIDs              []string           `json:"pool_ids"`
-	CreatedAt            time.Time          `json:"created_at"`
+	// CreatedByEmail 是建这个版本的管理员（版本行「草稿 · 某人 · 日期」）；
+	// 迁移前建的版本或账号已删除时为空。
+	CreatedByEmail *string   `json:"created_by_email"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type CatalogPlanDetail struct {
@@ -439,7 +442,8 @@ func loadPlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID string, out *Ca
 	rows, err := tx.Query(ctx, `SELECT id,version,status,frozen_at,row_version,quota_reset_strategy,
 		quota_reset_day,grace_period_hours,grace_keeps_service,renewal_extends_period,
 		renewal_resets_quota,renewal_keeps_addons,max_devices,max_concurrent,
-		device_release_hours,overage_policy,throttle_kbps,notes,created_at
+		device_release_hours,overage_policy,throttle_kbps,notes,
+		(SELECT u.email FROM users u WHERE u.tenant_id=plan_versions.tenant_id AND u.id=plan_versions.created_by),created_at
 		FROM plan_versions WHERE tenant_id=$1 AND plan_id=$2::uuid ORDER BY version DESC`, tenantID, planID)
 	if err != nil {
 		return err
@@ -450,7 +454,7 @@ func loadPlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID string, out *Ca
 			&v.QuotaResetStrategy, &v.QuotaResetDay, &v.GracePeriodHours, &v.GraceKeepsService,
 			&v.RenewalExtendsPeriod, &v.RenewalResetsQuota, &v.RenewalKeepsAddons,
 			&v.MaxDevices, &v.MaxConcurrent, &v.DeviceReleaseHours, &v.OveragePolicy,
-			&v.ThrottleKbps, &v.Notes, &v.CreatedAt); err != nil {
+			&v.ThrottleKbps, &v.Notes, &v.CreatedByEmail, &v.CreatedAt); err != nil {
 			rows.Close()
 			return err
 		}
@@ -529,33 +533,44 @@ func loadPlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID string, out *Ca
 }
 
 func (s *Service) CreatePlan(ctx context.Context, tenantID string, in CreatePlanInput) (*CatalogPlanDetail, error) {
-	in.Code = strings.TrimSpace(in.Code)
-	in.Name = strings.TrimSpace(in.Name)
-	if in.Visibility == "" {
-		in.Visibility = "public"
-	}
-	if err := validatePlanFields(in.Code, in.Name, in.Visibility, in.VisibleGroupIDs, in.VisibleFrom, in.VisibleUntil, in.PurchaseLimitPerUser, in.StockTotal); err != nil {
+	if err := prepareCreatePlanInput(&in); err != nil {
 		return nil, err
 	}
-	groupUUIDs := uuidArray(in.VisibleGroupIDs)
 	var planID string
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
-		if err := ensureGroups(ctx, tx, tenantID, in.VisibleGroupIDs); err != nil {
-			return err
-		}
-		var productID string
-		if err := tx.QueryRow(ctx, `INSERT INTO products(tenant_id,code,name,description,kind,status) VALUES($1,$2,$3,$4,'subscription','draft') RETURNING id`, tenantID, in.Code, in.Name, in.Description).Scan(&productID); err != nil {
-			return err
-		}
-		if err := tx.QueryRow(ctx, `INSERT INTO plans(tenant_id,product_id,code,name,description,visibility,visible_group_ids,visible_from,visible_until,allow_new_purchase,allow_renewal,allow_upgrade,purchase_limit_per_user,stock_total,sort_order,status) VALUES($1,$2,$3,$4,$5,$6,$7::uuid[],$8,$9,$10,$11,$12,$13,$14,$15,'draft') RETURNING id`, tenantID, productID, in.Code, in.Name, in.Description, in.Visibility, groupUUIDs, in.VisibleFrom, in.VisibleUntil, defaultTrue(in.AllowNewPurchase), defaultTrue(in.AllowRenewal), defaultTrue(in.AllowUpgrade), in.PurchaseLimitPerUser, in.StockTotal, in.SortOrder).Scan(&planID); err != nil {
-			return err
-		}
-		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "plan.create", ResourceType: "plan", ResourceID: &planID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), AfterDigest: map[string]any{"code": in.Code, "visibility": in.Visibility}})
+		var err error
+		planID, err = createPlanTx(ctx, tx, tenantID, in)
+		return err
 	})
 	if err != nil {
 		return nil, catalogResult(err)
 	}
 	return s.GetPlan(ctx, tenantID, planID)
+}
+
+// prepareCreatePlanInput 在进事务之前规整并校验套餐资料，CreatePlan 与向导新建共用。
+func prepareCreatePlanInput(in *CreatePlanInput) error {
+	in.Code = strings.TrimSpace(in.Code)
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Visibility == "" {
+		in.Visibility = "public"
+	}
+	return validatePlanFields(in.Code, in.Name, in.Visibility, in.VisibleGroupIDs, in.VisibleFrom, in.VisibleUntil, in.PurchaseLimitPerUser, in.StockTotal)
+}
+
+// createPlanTx 建产品与草稿套餐壳并写审计，返回套餐 ID；输入须已经过 prepareCreatePlanInput。
+func createPlanTx(ctx context.Context, tx pgx.Tx, tenantID string, in CreatePlanInput) (string, error) {
+	if err := ensureGroups(ctx, tx, tenantID, in.VisibleGroupIDs); err != nil {
+		return "", err
+	}
+	var productID, planID string
+	if err := tx.QueryRow(ctx, `INSERT INTO products(tenant_id,code,name,description,kind,status) VALUES($1,$2,$3,$4,'subscription','draft') RETURNING id`, tenantID, in.Code, in.Name, in.Description).Scan(&productID); err != nil {
+		return "", err
+	}
+	if err := tx.QueryRow(ctx, `INSERT INTO plans(tenant_id,product_id,code,name,description,visibility,visible_group_ids,visible_from,visible_until,allow_new_purchase,allow_renewal,allow_upgrade,purchase_limit_per_user,stock_total,sort_order,status) VALUES($1,$2,$3,$4,$5,$6,$7::uuid[],$8,$9,$10,$11,$12,$13,$14,$15,'draft') RETURNING id`, tenantID, productID, in.Code, in.Name, in.Description, in.Visibility, uuidArray(in.VisibleGroupIDs), in.VisibleFrom, in.VisibleUntil, defaultTrue(in.AllowNewPurchase), defaultTrue(in.AllowRenewal), defaultTrue(in.AllowUpgrade), in.PurchaseLimitPerUser, in.StockTotal, in.SortOrder).Scan(&planID); err != nil {
+		return "", err
+	}
+	return planID, audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "plan.create", ResourceType: "plan", ResourceID: &planID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), AfterDigest: map[string]any{"code": in.Code, "visibility": in.Visibility}})
 }
 
 func (s *Service) UpdatePlan(ctx context.Context, tenantID, planID string, in UpdatePlanInput) (int64, error) {
@@ -869,36 +884,45 @@ func (s *Service) CreatePlanPrice(ctx context.Context, tenantID, planID string, 
 	if err := validatePrice(in); err != nil {
 		return nil, err
 	}
-	var out PriceRow
+	var out *PriceRow
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
-		var productID, status string
-		if err := tx.QueryRow(ctx, `SELECT product_id,status FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&productID, &status); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-		if status == "archived" {
-			return httpx.New(httpx.CodeConflict, "已归档套餐不能新增价格")
-		}
-		if in.UserGroupID != nil {
-			var lockedID string
-			if err := tx.QueryRow(ctx, `SELECT id::text FROM user_groups WHERE tenant_id=$1 AND id=$2::uuid FOR KEY SHARE`, tenantID, *in.UserGroupID).Scan(&lockedID); err != nil {
-				if !errors.Is(err, pgx.ErrNoRows) {
-					return err
-				}
-				return httpx.Invalid(map[string]string{"user_group_id": "用户组不存在"})
-			}
-		}
-		if err := tx.QueryRow(ctx, `INSERT INTO prices(tenant_id,product_id,currency,unit_amount,billing_interval,interval_count,trial_days,status,user_group_id,valid_from,valid_until) VALUES($1,$2::uuid,$3,$4,$5,$6,$7,'active',$8::uuid,$9,$10) RETURNING id,currency,unit_amount,billing_interval,interval_count,trial_days,status,user_group_id,valid_from,valid_until,row_version`, tenantID, productID, in.Currency, in.UnitAmount, in.BillingInterval, in.IntervalCount, in.TrialDays, in.UserGroupID, in.ValidFrom, in.ValidUntil).Scan(&out.ID, &out.Currency, &out.UnitAmount, &out.Interval, &out.Count, &out.TrialDays, &out.Status, &out.UserGroupID, &out.ValidFrom, &out.ValidUntil, &out.RowVersion); err != nil {
-			return err
-		}
-		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "price.create", ResourceType: "price", ResourceID: &out.ID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), AfterDigest: map[string]any{"plan_id": planID, "currency": in.Currency, "unit_amount": in.UnitAmount, "user_group_id": in.UserGroupID}})
+		var err error
+		out, err = createPlanPriceTx(ctx, tx, tenantID, planID, in)
+		return err
 	})
 	if err != nil {
 		return nil, catalogResult(err)
 	}
-	return &out, nil
+	return out, nil
+}
+
+// createPlanPriceTx 在调用方事务里给套餐加一档价格并写审计；销售开关与价格
+// 字段须已在事务外判过（CreatePlanPrice 与向导新建共用）。
+func createPlanPriceTx(ctx context.Context, tx pgx.Tx, tenantID, planID string, in CreatePriceInput) (*PriceRow, error) {
+	var out PriceRow
+	var productID, status string
+	if err := tx.QueryRow(ctx, `SELECT product_id,status FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&productID, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NotFoundOrForbidden()
+		}
+		return nil, err
+	}
+	if status == "archived" {
+		return nil, httpx.New(httpx.CodeConflict, "已归档套餐不能新增价格")
+	}
+	if in.UserGroupID != nil {
+		var lockedID string
+		if err := tx.QueryRow(ctx, `SELECT id::text FROM user_groups WHERE tenant_id=$1 AND id=$2::uuid FOR KEY SHARE`, tenantID, *in.UserGroupID).Scan(&lockedID); err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return nil, err
+			}
+			return nil, httpx.Invalid(map[string]string{"user_group_id": "用户组不存在"})
+		}
+	}
+	if err := tx.QueryRow(ctx, `INSERT INTO prices(tenant_id,product_id,currency,unit_amount,billing_interval,interval_count,trial_days,status,user_group_id,valid_from,valid_until) VALUES($1,$2::uuid,$3,$4,$5,$6,$7,'active',$8::uuid,$9,$10) RETURNING id,currency,unit_amount,billing_interval,interval_count,trial_days,status,user_group_id,valid_from,valid_until,row_version`, tenantID, productID, in.Currency, in.UnitAmount, in.BillingInterval, in.IntervalCount, in.TrialDays, in.UserGroupID, in.ValidFrom, in.ValidUntil).Scan(&out.ID, &out.Currency, &out.UnitAmount, &out.Interval, &out.Count, &out.TrialDays, &out.Status, &out.UserGroupID, &out.ValidFrom, &out.ValidUntil, &out.RowVersion); err != nil {
+		return nil, err
+	}
+	return &out, audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "price.create", ResourceType: "price", ResourceID: &out.ID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), AfterDigest: map[string]any{"plan_id": planID, "currency": in.Currency, "unit_amount": in.UnitAmount, "user_group_id": in.UserGroupID}})
 }
 
 func requiresP0BSalesResume(status string, beforeNewPurchase, beforeRenewal, beforeUpgrade bool, in UpdatePlanInput) bool {
