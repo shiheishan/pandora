@@ -654,6 +654,8 @@ func TestContentNotifyStep5PG18(t *testing.T) {
 		   ('`+tenant+`','quota.warning','email','流量 {{percent}}%','{{plan}} 剩余 {{remaining}}','{site,plan,percent,remaining}','active')`)
 	h := step4Handlers(t, app)
 	h.d.Notify = notify.New(app, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte("cn5-salt"))
+	// 新建钩子会生成并加密一把签名密钥，插件服务要带上信封
+	h.d.Plugin = plugin.New(app, h.d.Envelope, true)
 	r := step5Router(tenant, actor, nil, func(r chi.Router) {
 		r.Get("/v1/announcements", h.listAnnouncements)
 		r.Post("/v1/announcements", h.saveAnnouncement)
