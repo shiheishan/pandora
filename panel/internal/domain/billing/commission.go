@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 commission_available.go 的可用佣金口径与科目锁，依赖 ledger.go / reservations.go 的记账与加锁原语，依赖 domain/payment 的 MulDiv
-// [OUTPUT]: 对外提供 CommissionSummary、ListMyCommissions、RequestWithdrawal、ListMyWithdrawals、PostWithdrawalPayout、SettleMatured、CommissionWithdrawalIdempotencyScope 与提现错误
-// [POS]: billing 分销佣金的计提、解冻、提现申请与打款记账；转余额在 commission_transfer.go，两者共用同一口径
+// [OUTPUT]: 对外提供 CommissionSummary、ListMyCommissions、RequestWithdrawal、ListMyWithdrawals、PostWithdrawalPayout、SettleMatured、CommissionWithdrawalIdempotencyScope、CommissionScope* 与 ValidCommissionScope、提现错误
+// [POS]: billing 分销佣金的计提（计佣范围 first_order 时被推荐人只计第一笔）、解冻、提现申请与打款记账；转余额在 commission_transfer.go，两者共用同一口径
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -49,11 +49,24 @@ const maxMaturedCommissionBatch = 500
 // CommissionWithdrawalIdempotencyScope 是门户 POST v1/me/withdrawals 的幂等域。
 const CommissionWithdrawalIdempotencyScope = "commission_withdrawal_request"
 
+// 计佣范围（system_settings commission.scope，字符串）。没有这条设置时按
+// every_order 兜底，与引入这个开关之前的行为一致。
+const (
+	CommissionScopeFirstOrder = "first_order" // 只对被推荐人的第一笔计佣订单返佣
+	CommissionScopeEveryOrder = "every_order" // 被推荐人每一笔订单都返佣
+)
+
+// ValidCommissionScope 判断后台写入的计佣范围是否合法。
+func ValidCommissionScope(scope string) bool {
+	return scope == CommissionScopeFirstOrder || scope == CommissionScopeEveryOrder
+}
+
 // commissionConfig 是租户级的分销参数。
 type commissionConfig struct {
-	RatePercent int   // 整数百分比。精度就到 1%，再细对代理没有意义
-	FreezeDays  int   // 冻结天数
-	MinWithdraw int64 // 最低提现金额，最小货币单位
+	RatePercent int    // 整数百分比。精度就到 1%，再细对代理没有意义
+	FreezeDays  int    // 冻结天数
+	MinWithdraw int64  // 最低提现金额，最小货币单位
+	Scope       string // 计佣范围，见 CommissionScope*
 }
 
 func loadCommissionConfig(ctx context.Context, tx pgx.Tx, tenantID string) (commissionConfig, error) {
@@ -65,8 +78,13 @@ func loadCommissionConfig(ctx context.Context, tx pgx.Tx, tenantID string) (comm
 		       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
 		                  WHERE tenant_id = $1 AND key = 'commission.freeze_days'), 3),
 		       COALESCE((SELECT (value #>> '{}')::bigint FROM system_settings
-		                  WHERE tenant_id = $1 AND key = 'commission.min_withdraw'), 10000)`,
-		tenantID).Scan(&c.RatePercent, &c.FreezeDays, &c.MinWithdraw)
+		                  WHERE tenant_id = $1 AND key = 'commission.min_withdraw'), 10000),
+		       COALESCE((SELECT value #>> '{}' FROM system_settings
+		                  WHERE tenant_id = $1 AND key = 'commission.scope'), '')`,
+		tenantID).Scan(&c.RatePercent, &c.FreezeDays, &c.MinWithdraw, &c.Scope)
+	if !ValidCommissionScope(c.Scope) {
+		c.Scope = CommissionScopeEveryOrder
+	}
 	return c, err
 }
 
@@ -106,6 +124,21 @@ func (s *Service) accrueCommission(ctx context.Context, tx pgx.Tx, tenantID,
 	}
 	if cfg.RatePercent <= 0 {
 		return nil
+	}
+	if cfg.Scope == CommissionScopeFirstOrder {
+		// 「首单」按佣金记录判：被推荐人已有别的订单计过佣（含后来冲销的），
+		// 这一单就不再计。回调重放同一单时 order_id 相同，不算「别的订单」。
+		var earlier bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM commission_entries
+			                WHERE tenant_id = $1 AND referee_user_id = $2::uuid
+			                  AND order_id <> $3::uuid)`,
+			tenantID, buyerUserID, orderID).Scan(&earlier); err != nil {
+			return err
+		}
+		if earlier {
+			return nil
+		}
 	}
 
 	rateBP := cfg.RatePercent * 100

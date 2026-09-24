@@ -21,12 +21,12 @@ late_payment.go: 挂账的查看与转入余额，供后台消费
 manual_order.go: 管理员人工单与 mark-paid，复用下单与回调主链路
 my_orders.go: 门户订单读模型：myOrderSelectSQL 是列表与详情共用的行形状（首项周期与商品名快照），列表带筛选段计数 counts，详情带优惠码、订阅到期与支付渠道名；ParseOrderStatuses 是门户与后台订单列表共用的状态白名单（逗号多值、精确匹配、未知回 400）
 coupon.go: 优惠券校验 applyCoupon、核销 redeemCoupon 与试算
-commission.go: 分销佣金计提、解冻、提现申请与打款记账
+commission.go: 分销佣金计提、解冻、提现申请与打款记账；计佣范围 commission.scope（first_order 只给被推荐人第一笔计佣订单返佣，缺省 every_order），ValidCommissionScope 供后台校验
 commission_available.go: 「可用佣金」唯一口径（D-F-1），提现与转余额共用
 commission_transfer.go: 佣金转入余额，与提现同一把科目锁
 giftgrant.go: 礼品卡的发放侧（余额、流量包余额、延期、重置、开套餐）
 ledger.go: 科目类型与余额方向、EnsureAccount、Post 记账与 Balance
-*_test.go: 源码契约测试（锁序、kind 分支完整）、纯函数单元测试与 PG18 集成测试（*_pg18_test.go，由 deploy/run-pg18-gates.sh 的 billing / order_release / traffic_pack / plan_change 等域驱动）
+*_test.go: 源码契约测试（锁序、kind 分支完整）、纯函数单元测试与 PG18 集成测试（*_pg18_test.go，由 deploy/run-pg18-gates.sh 的 billing / order_release / traffic_pack / plan_change 等域驱动；commission_ledger_pg18_test.go 与 commission_scope_pg18_test.go 是挂在 TestOrderReleasePG18 上的子用例）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
