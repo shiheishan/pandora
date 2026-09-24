@@ -103,6 +103,7 @@ DOMAINS=(
   "node_config|pandora_nodecfg_gate|./internal/api/admin|run_id,oid,system_id||pandora-nodecfg-disposable||^(TestNodeConfigLegacyPG18|TestNodeConfigPG18LockSchedule)$"
   "catalog_sales|pandora_catalog_sales_gate|./internal/domain/adminops|run_id|pandora_catalog_sales_test_marker|pandora-catalog-sales-pg18||"
   "content|pandora_content_gate|./internal/domain/content|run_id|pandora_content_test_marker|pandora-content-pg18||"
+  "appearance|pandora_appearance_gate|./internal/domain/appearance|run_id|pandora_appearance_test_marker|pandora-appearance-pg18||"
   "logout|pandora_logout_gate|./internal/domain/identity|run_id|pandora_logout_test_marker|pandora-logout-pg18||"
   "node_preview|pandora_node_preview_gate|./internal/domain/subscription|run_id|pandora_node_preview_test_marker|pandora-node-preview-pg18||"
   "support|pandora_node_preview_support|./internal/domain/support|run_id|pandora_support_test_marker|pandora-node-preview-pg18||"

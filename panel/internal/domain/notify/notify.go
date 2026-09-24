@@ -111,9 +111,9 @@ func (s *Service) Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		return nil
 	}
 
-	payload := make(map[string]any, len(vars))
-	for k, v := range vars {
-		payload[k] = v
+	payload, err := withSite(ctx, tx, tenantID, vars)
+	if err != nil {
+		return err
 	}
 
 	for _, t := range targets {

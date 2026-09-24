@@ -89,7 +89,6 @@ func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error
 					"plan":       it.plan,
 					"days":       fmt.Sprint(win.label),
 					"expires_at": it.endAt,
-					"site":       SiteName,
 				}
 				// 键里带区间标签：进入下一个更紧急的区间时会再提醒一次，
 				// 而同一个区间内反复扫描只发一条
@@ -162,7 +161,6 @@ func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 					"plan":      it.plan,
 					"percent":   fmt.Sprint(pct),
 					"remaining": humanBytes(remain),
-					"site":      SiteName,
 				}
 				// 键里带上周期起点：下个结算周期流量重置后，
 				// 同一条订阅应该能再次收到提醒
@@ -230,7 +228,6 @@ func (s *Service) ScanPaidOrders(ctx context.Context, tenantID string) (int, err
 				"order_no":   it.orderNo,
 				"plan":       it.plan,
 				"expires_at": it.endAt,
-				"site":       SiteName,
 			}
 			// 一个订单只通知一次，与扫描频率无关
 			key := "order-paid:" + it.orderID

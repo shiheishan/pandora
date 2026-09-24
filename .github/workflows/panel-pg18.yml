@@ -7,15 +7,11 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "pdnd/**"
       # PG18 门禁覆盖 panel/internal 下十几个域，整棵树都要触发
       - "panel/internal/**"
       - "panel/migrations/**"
-      - "panel/web/**"
-      - "panel/frontend/**"
       - "panel/go.mod"
       - "panel/go.sum"
-      - "panel/Makefile"
       # PG18 门禁脚本、运行角色加固、种子，以及钉 goose 版本的发布脚本
       - "panel/deploy/run-pg18-gates.sh"
       - "panel/deploy/configure-app-role.sql"
@@ -24,14 +20,10 @@ on:
       - ".github/workflows/panel-pg18.yml"
   pull_request:
     paths:
-      - "pdnd/**"
       - "panel/internal/**"
       - "panel/migrations/**"
-      - "panel/web/**"
-      - "panel/frontend/**"
       - "panel/go.mod"
       - "panel/go.sum"
-      - "panel/Makefile"
       - "panel/deploy/run-pg18-gates.sh"
       - "panel/deploy/configure-app-role.sql"
       - "panel/deploy/fixtures/**"

@@ -5,7 +5,7 @@
 
 成员清单
 adminops/: 管理后台的读写用例，9 文件
-appearance/: 主题与外观配置，service.go 读写、sanitize.go 清洗用户提交的样式
+appearance/: 主题与外观配置，service.go 读写、tokens.go 设计稿令牌白名单与站点名、sanitize.go 清洗插槽 HTML；见 appearance/CLAUDE.md
 billing/: 订单、支付与复式账本，17 文件；借贷配平与回调幂等在此编排
 content/: 版本化知识库与自定义页面投递
 dbbackup/: 数据库备份编排，12 文件：config 配置、manifest 签名清单与 linux 锁、retention 保留策略、checkpoint_hook 备份前检查点、file_open/file_owner 的 linux/other 双实现

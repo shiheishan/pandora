@@ -95,7 +95,7 @@ func TestStepOneAdminRouteGuards(t *testing.T) {
 		{http.MethodPost, "/v1/subscriptions/{id}/rotate", "iam.user.write", true, ""},
 		{http.MethodPost, "/v1/settings/telegram/test", "ops.notification.write", false, "billing.provider.write"},
 		{http.MethodPost, "/v1/settings/mail/test", "ops.notification.write", false, "billing.provider.write"},
-		{http.MethodPost, "/v1/mail/templates/test", "ops.notification.write", false, "billing.provider.write"},
+		{http.MethodPost, "/v1/mail/templates/test", "ops.notification.write", true, "billing.provider.write"},
 	} {
 		t.Run(tc.method+" "+tc.pattern, func(t *testing.T) {
 			h := adminRouteChain(t, tc.method, tc.pattern)

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/crypto，依赖 domain/appearance 的 SiteNameTx
+// [OUTPUT]: 对外提供 DBSMTPProvider、NewDBSMTPProvider、LoadSMTPConfig、SealSMTPPassword、NewDynamicSMTPSender
+// [POS]: domain/notify 的邮件配置：从 system_settings 读 SMTP 设置并短缓存，发件人名缺省取站点名
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package notify
 
 // 数据库里的邮件设置。
@@ -15,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/appearance"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 )
@@ -80,7 +86,7 @@ func LoadSMTPConfig(ctx context.Context, pool *db.Pool, envelope *crypto.Envelop
 	var pwEnc []byte
 
 	err := pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
+		err := tx.QueryRow(ctx, `
 			SELECT COALESCE((SELECT value #>> '{}' FROM system_settings
 			                  WHERE tenant_id=$1 AND key='mail.smtp_host'), ''),
 			       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
@@ -93,10 +99,16 @@ func LoadSMTPConfig(ctx context.Context, pool *db.Pool, envelope *crypto.Envelop
 			                  WHERE tenant_id=$1 AND key='mail.smtp_password'), ''::bytea),
 			       COALESCE((SELECT value #>> '{}' FROM system_settings
 			                  WHERE tenant_id=$1 AND key='mail.from_address'), ''),
-			       COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id=$1 AND key='mail.from_name'), 'AegisPanel')`,
+			       COALESCE((SELECT btrim(value #>> '{}') FROM system_settings
+			                  WHERE tenant_id=$1 AND key='mail.from_name'), '')`,
 			tenantID).Scan(&cfg.Host, &cfg.Port, &encryption, &cfg.Username,
 			&pwEnc, &cfg.From, &cfg.FromName)
+		if err != nil || cfg.FromName != "" {
+			return err
+		}
+		// 没单独设发件人名时用站点名（生效主题的 branding.site_name）
+		cfg.FromName, err = appearance.SiteNameTx(ctx, tx, tenantID)
+		return err
 	})
 	if err != nil {
 		return cfg, err
