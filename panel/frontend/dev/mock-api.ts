@@ -1,23 +1,27 @@
 /**
- * [INPUT]: 依赖 vite 的 Plugin 与 Connect 中间件类型，依赖 node:crypto 的 randomUUID，依赖 node:http 的请求响应
+ * [INPUT]: 依赖 vite 的 Plugin 与 Connect 中间件类型，依赖 node:crypto 的 randomUUID，依赖 node:http 的请求响应，依赖 ./mock/types 的上下文契约与路由匹配，依赖 ./mock/admin 与 ./mock/portal 的模块登记表，依赖 ./mock/quick-login 的令牌表
  * [OUTPUT]: 对外提供 mockApi(app) 插件、MOCK_ACCOUNTS 演示账号
- * [POS]: panel/frontend 的开发期假后端，只在 vite serve 且未设 PANDORA_API 时挂上，永不进产物；按 api-contract.md 的外壳接口返回同形状数据，让没有 PostgreSQL 的本机也能在浏览器里走登录、退出、reauth 重放与 SSE
+ * [POS]: panel/frontend 的开发期假后端外壳，只在 vite serve 且未设 PANDORA_API 时挂上，永不进产物：持有账号、会话、rat 与幂等表，自己只答外壳接口（登录 / 退出 / me / reauth / 改密码 / SSE，门户再加注册、快捷登录消费、站点开关、外观），其余按入口依次询问 mock/admin 或 mock/portal 的模块处理器
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
+import { ADMIN_MODULES } from './mock/admin/index.ts'
+import { PORTAL_MODULES } from './mock/portal/index.ts'
+import { consumeQuickLogin } from './mock/quick-login.ts'
+import { findRoute, type AnonContext, type Json, type MockApp, type MockContext, type MockResult, type MockUser } from './mock/types.ts'
 
 // ---------------------------------------------------------------------------
-// 只模拟外壳用到的接口，形状以 panel/docs/redesign/api-contract.md 为准：
-// 登录 / 退出 / me / reauth / 改密码 / SSE，门户再加注册、快捷登录、站点开关、
-// 外观与顶栏的余额、订阅、佣金、未读数。其余 v1/ 一律 404 信封。
-// 另有一条挂了 reauth + 幂等的真实路由 POST v1/users/{id}/balance，用来在浏览器里
-// 验证「弹框 → 换令牌 → 原键重放」；POST /__mock/expire-reauth 让当前会话的
-// rat 立即过期，不必干等 15 分钟。
+// 形状以 panel/docs/redesign/api-contract.md 为准。这里只放外壳接口与共用设施：
+// 会话与 rat、reauth 窗口、幂等表、错误信封；模块接口写在 mock/<入口>/<模块>.ts，
+// 由各页面的会话各自维护。先外壳、后模块，未匹配的 v1/ 一律 404 信封。
+// POST /__mock/expire-reauth 让所有会话的 rat 立即过期，不必干等 15 分钟。
 // ---------------------------------------------------------------------------
 export const MOCK_ACCOUNTS = {
   admin: { email: 'admin@pandora.dev', password: 'pandora-dev-pass' },
+  /** 只读管理员：用来实测侧栏、⌘K 与页头标签按权限隐藏 */
+  viewer: { email: 'viewer@pandora.dev', password: 'pandora-dev-pass' },
   portal: { email: 'user@pandora.dev', password: 'pandora-dev-pass' },
 } as const
 
@@ -29,15 +33,17 @@ interface Session {
   rat: number
 }
 
-type Json = Record<string, unknown>
+interface Replay {
+  fingerprint: string
+  result: MockResult | null
+}
 
 function send(res: ServerResponse, status: number, body?: unknown) {
+  res.statusCode = status
   if (body === undefined) {
-    res.statusCode = status
     res.end()
     return
   }
-  res.statusCode = status
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
   res.end(JSON.stringify(body))
 }
@@ -46,10 +52,13 @@ function fail(res: ServerResponse, status: number, code: string, message: string
   send(res, status, { error: { code, message, ...(fields ? { fields } : {}), request_id: randomUUID().slice(0, 8) } })
 }
 
-async function readJson(req: IncomingMessage): Promise<Json | null> {
+async function readText(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = []
   for await (const chunk of req) chunks.push(chunk as Buffer)
-  const text = Buffer.concat(chunks).toString('utf8')
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+function parseObject(text: string): Json | null {
   if (text === '') return {}
   try {
     const value: unknown = JSON.parse(text)
@@ -61,19 +70,20 @@ async function readJson(req: IncomingMessage): Promise<Json | null> {
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 
-export function mockApi(app: 'admin' | 'portal'): Plugin {
-  interface User {
-    email: string
-    password: string
-    userId: string
-  }
-  const account: User = { ...MOCK_ACCOUNTS[app], userId: randomUUID() }
-  const users = new Map<string, User>([[account.email, account]])
+function initialUsers(app: MockApp): MockUser[] {
+  if (app === 'portal') return [{ ...MOCK_ACCOUNTS.portal, userId: randomUUID(), displayName: '张伟', permissions: [], roles: [] }]
+  return [
+    { ...MOCK_ACCOUNTS.admin, userId: randomUUID(), displayName: '林舟', permissions: ADMIN_PERMISSIONS, roles: [{ code: 'ops', name: '运维' }] },
+    { ...MOCK_ACCOUNTS.viewer, userId: randomUUID(), displayName: '只读', permissions: VIEWER_PERMISSIONS, roles: [{ code: 'viewer', name: '只读' }] },
+  ]
+}
+
+export function mockApi(app: MockApp): Plugin {
+  const users = new Map<string, MockUser>(initialUsers(app).map((u) => [u.email, u]))
   const sessions = new Map<string, Session>()
   const registrations = new Map<string, { email: string; code: string }>()
-  const quickTokens = new Map<string, { userId: string; expires: number }>()
-  const replays = new Map<string, { status: number; body: unknown }>()
-  let balanceCents = 265000
+  const replays = new Map<string, Replay>()
+  const modules = app === 'admin' ? ADMIN_MODULES : PORTAL_MODULES
 
   const issue = (userId: string, rat = Date.now()) => {
     const token = `mock-${randomUUID()}`
@@ -88,19 +98,33 @@ export function mockApi(app: 'admin' | 'portal'): Plugin {
   }
   const userById = (id: string) => [...users.values()].find((u) => u.userId === id)
 
-  async function handle(req: IncomingMessage, res: ServerResponse, path: string) {
+  async function handle(req: IncomingMessage, res: ServerResponse, url: URL) {
     const method = req.method ?? 'GET'
+    const path = url.pathname
     const route = `${method} ${path}`
+    let raw: Promise<string> | null = null
+    const text = () => (raw ??= readText(req))
+    const base: Omit<AnonContext, 'params'> = {
+      app,
+      req,
+      res,
+      method,
+      path,
+      query: url.searchParams,
+      body: async () => parseObject(await text()),
+      send: (status, body) => send(res, status, body),
+      fail: (status, code, message, fields) => fail(res, status, code, message, fields),
+    }
 
-    // --- 匿名接口 ------------------------------------------------------------
+    // --- 匿名接口：外壳 ------------------------------------------------------
     if (route === 'POST /v1/auth/login') {
-      const body = await readJson(req)
+      const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
       const user = users.get(str(body.email).trim().toLowerCase())
       if (!user || user.password !== str(body.password)) return fail(res, 401, 'unauthorized', '邮箱或密码不正确')
       const token = issue(user.userId)
       return app === 'admin'
-        ? send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId, permissions: ADMIN_PERMISSIONS })
+        ? send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId, permissions: user.permissions })
         : send(res, 200, { access_token: token, refresh_token: randomUUID(), token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId })
     }
     if (app === 'portal' && route === 'GET /v1/site-config') {
@@ -113,7 +137,7 @@ export function mockApi(app: 'admin' | 'portal'): Plugin {
       })
     }
     if (app === 'portal' && route === 'POST /v1/auth/register/start') {
-      const body = await readJson(req)
+      const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
       const email = str(body.email).trim().toLowerCase()
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
@@ -129,7 +153,7 @@ export function mockApi(app: 'admin' | 'portal'): Plugin {
       })
     }
     if (app === 'portal' && route === 'POST /v1/auth/register/complete') {
-      const body = await readJson(req)
+      const body = await base.body()
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
       const reg = registrations.get(str(body.registration_token))
       if (!reg || reg.code !== str(body.code)) return fail(res, 403, 'forbidden', '注册当前不可用或邀请码无效')
@@ -137,27 +161,33 @@ export function mockApi(app: 'admin' | 'portal'): Plugin {
       if (password.length < 8) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码至少需要 8 个字符' })
       if (!/[a-z]/i.test(password) || !/\d/.test(password)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码必须同时包含字母和数字' })
       registrations.delete(str(body.registration_token))
-      const user: User = { email: reg.email, password, userId: randomUUID() }
+      const user: MockUser = { email: reg.email, password, userId: randomUUID(), displayName: null, permissions: [], roles: [] }
       users.set(reg.email, user)
       return send(res, 201, { user_id: user.userId, email: user.email })
     }
     if (app === 'portal' && route === 'POST /v1/auth/quick-login') {
-      const body = await readJson(req)
-      const entry = quickTokens.get(str(body?.token))
-      quickTokens.delete(str(body?.token))
-      if (!entry || entry.expires < Date.now()) return fail(res, 401, 'unauthorized', '快捷登录链接无效或已过期')
-      return send(res, 200, { access_token: issue(entry.userId), refresh_token: randomUUID(), expires_in: TTL_SECONDS })
+      const body = await base.body()
+      const userId = consumeQuickLogin(str(body?.token))
+      if (!userId) return fail(res, 401, 'unauthorized', '快捷登录链接无效或已过期')
+      return send(res, 200, { access_token: issue(userId), refresh_token: randomUUID(), expires_in: TTL_SECONDS })
     }
     if (route === 'POST /__mock/expire-reauth') {
       sessions.forEach((s) => (s.rat = 0))
       return send(res, 204)
     }
 
+    // --- 匿名接口：模块 ------------------------------------------------------
+    const anon = findRoute(
+      modules.map((m) => m.anonymous),
+      method,
+      path,
+    )
+    if (anon) return anon.handler({ ...base, params: anon.params })
+
     // --- 以下需登录 ----------------------------------------------------------
     const auth = bearer(req)
-    if (!auth) return fail(res, 401, 'unauthorized', '需要登录')
-    const user = userById(auth.session.userId)
-    if (!user) return fail(res, 401, 'unauthorized', '需要登录')
+    const user = auth ? userById(auth.session.userId) : undefined
+    if (!auth || !user) return fail(res, 401, 'unauthorized', '需要登录')
     const reauthed = Date.now() - auth.session.rat < REAUTH_WINDOW_MS
 
     if (route === 'POST /v1/auth/logout') {
@@ -171,15 +201,15 @@ export function mockApi(app: 'admin' | 'portal'): Plugin {
         return send(res, 200, {
           user_id: user.userId,
           kind: 'user',
-          permissions: ADMIN_PERMISSIONS,
+          permissions: user.permissions,
           reauthed,
           email: user.email,
-          display_name: '林舟',
-          roles: [{ code: 'ops', name: '运维' }],
+          display_name: user.displayName,
+          roles: user.roles,
         })
       }
       if (route === 'POST /v1/auth/reauth') {
-        const body = await readJson(req)
+        const body = await base.body()
         if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
         if (str(body.password) === '') return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '请输入当前密码' })
         if (str(body.password) !== user.password) return fail(res, 401, 'unauthorized', '密码不正确')
@@ -187,7 +217,7 @@ export function mockApi(app: 'admin' | 'portal'): Plugin {
         return send(res, 200, { access_token: issue(user.userId), token_type: 'Bearer', expires_in: TTL_SECONDS })
       }
       if (route === 'POST /v1/me/password') {
-        const body = await readJson(req)
+        const body = await base.body()
         if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
         const oldPw = str(body.old_password)
         const newPw = str(body.new_password)
@@ -199,67 +229,63 @@ export function mockApi(app: 'admin' | 'portal'): Plugin {
         for (const [token, s] of sessions) if (s.userId === user.userId) sessions.delete(token)
         return send(res, 200, { ok: true, reauthenticate: true })
       }
-      const balance = /^POST \/v1\/users\/([^/]+)\/balance$/.exec(route)
-      if (balance) {
-        // 与后端同序：权限 → reauth → 幂等，reauth 拒绝不消耗幂等键
-        if (!reauthed) return fail(res, 403, 'reauth_required', '此操作需要重新验证身份')
-        const key = req.headers['idempotency-key']
-        if (typeof key !== 'string' || key === '') return fail(res, 400, 'bad_request', '缺少 Idempotency-Key')
-        const body = await readJson(req)
-        const replay = replays.get(key)
-        if (replay) return send(res, replay.status, replay.body)
-        const amount = typeof body?.amount === 'number' ? body.amount : 0
-        balanceCents += amount
-        const result = { ok: true, user_id: balance[1], balance: balanceCents, idempotency_key: key }
-        replays.set(key, { status: 200, body: result })
-        return send(res, 200, result)
-      }
-    } else {
-      if (route === 'GET /v1/me') {
-        return send(res, 200, {
-          user_id: user.userId,
-          email: user.email,
-          display_name: user.email === MOCK_ACCOUNTS.portal.email ? '张伟' : null,
-          status: 'active',
-          created_at: '2026-05-04T11:40:00Z',
-          permissions: null,
-        })
-      }
-      if (route === 'GET /v1/me/balance') return send(res, 200, { balance: 2650, currency: 'CNY', history: [] })
-      if (route === 'GET /v1/me/subscriptions') {
-        return send(res, 200, {
-          subscriptions: [
-            {
-              id: randomUUID(),
-              plan_id: randomUUID(),
-              price_id: '',
-              plan_name: '专业版',
-              plan_version: 3,
-              status: 'active',
-              current_period_start: '2026-09-04T00:00:00Z',
-              current_period_end: '2026-11-04T00:00:00Z',
-              currency: 'CNY',
-              amount: 5900,
-              quotas: [],
-            },
-          ],
-        })
-      }
-      if (route === 'GET /v1/me/commission') {
-        return send(res, 200, {
-          summary: { currency: 'CNY', pending: 0, available: 8640, withdrawing: 0, settled: 0, invitees: 4, orders: 2, rate_percent: 20, min_withdraw: 5000 },
-          entries: [],
-          withdrawals: [],
-        })
-      }
-      if (route === 'GET /v1/me/notifications') return send(res, 200, { notifications: [], unread: 2 })
-      if (route === 'POST /v1/me/quick-login') {
-        const token = randomUUID().replace(/-/g, '')
-        quickTokens.set(token, { userId: user.userId, expires: Date.now() + 60_000 })
-        return send(res, 200, { token, expires_at: new Date(Date.now() + 60_000).toISOString(), expires_in: 60 })
-      }
+    } else if (route === 'GET /v1/me') {
+      return send(res, 200, {
+        user_id: user.userId,
+        email: user.email,
+        display_name: user.displayName,
+        status: 'active',
+        created_at: '2026-05-04T11:40:00Z',
+        permissions: null,
+      })
     }
-    return fail(res, 404, 'not_found', '资源不存在或无权访问')
+
+    // --- 需登录接口：模块 ----------------------------------------------------
+    const found = findRoute(
+      modules.map((m) => m.routes),
+      method,
+      path,
+    )
+    if (!found) return fail(res, 404, 'not_found', '资源不存在或无权访问')
+    const ctx: MockContext = {
+      ...base,
+      params: found.params,
+      user,
+      reauthed,
+      requirePermission: (code) => {
+        if (user.permissions.includes(code)) return true
+        fail(res, 404, 'not_found', '资源不存在或无权访问')
+        return false
+      },
+      requireReauth: () => {
+        if (reauthed) return true
+        fail(res, 403, 'reauth_required', '此操作需要重新验证身份')
+        return false
+      },
+      idempotent: async (scope, run) => {
+        const key = req.headers['idempotency-key']
+        if (typeof key !== 'string' || !/^[\x21-\x7e]{1,255}$/.test(key)) return fail(res, 400, 'bad_request', '缺少或非法的 Idempotency-Key')
+        const slot = `${user.userId}\n${scope}\n${key}`
+        const fingerprint = `${method} ${url.pathname}${url.search}\n${await text()}`
+        const seen = replays.get(slot)
+        if (seen) {
+          if (seen.fingerprint !== fingerprint) return fail(res, 409, 'idempotency_key_reuse', '幂等键已用于另一个请求')
+          if (!seen.result) return fail(res, 409, 'conflict', '同一请求正在处理')
+          return send(res, seen.result.status, seen.result.body)
+        }
+        replays.set(slot, { fingerprint, result: null })
+        try {
+          const result = await run()
+          if (result.status >= 500) replays.delete(slot)
+          else replays.set(slot, { fingerprint, result })
+          send(res, result.status, result.body)
+        } catch (err) {
+          replays.delete(slot)
+          throw err
+        }
+      },
+    }
+    return found.handler(ctx)
   }
 
   // 与后端同帧格式：首帧 retry，事件 id / event / data，25 秒注释心跳；这里每 15 秒随机推一条表变更
@@ -285,27 +311,70 @@ export function mockApi(app: 'admin' | 'portal'): Plugin {
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        const path = (req.url ?? '').split('?')[0] ?? ''
-        if (!path.startsWith('/v1/') && !path.startsWith('/__mock/')) return next()
-        handle(req, res, path).catch((err: unknown) => {
+        const url = new URL(req.url ?? '/', 'http://mock.local')
+        if (!url.pathname.startsWith('/v1/') && !url.pathname.startsWith('/__mock/')) return next()
+        handle(req, res, url).catch((err: unknown) => {
           server.config.logger.error(`[mock-api] ${String(err)}`)
           if (!res.headersSent) fail(res, 500, 'internal_error', '服务暂时不可用，请稍后重试')
         })
       })
-      server.config.logger.info(`  mock api (${app}): ${MOCK_ACCOUNTS[app].email} / ${MOCK_ACCOUNTS[app].password}`)
+      const accounts = app === 'admin' ? [MOCK_ACCOUNTS.admin, MOCK_ACCOUNTS.viewer] : [MOCK_ACCOUNTS.portal]
+      server.config.logger.info(`  mock api (${app}): ${accounts.map((a) => a.email).join(' / ')}，口令 ${MOCK_ACCOUNTS.admin.password}`)
     },
   }
 }
 
-const ADMIN_PERMISSIONS = [
-  'ops.notification.read',
-  'ops.ticket.read',
+// ---------------------------------------------------------------------------
+// 管理员拿契约第 3 节出现过的全部权限码；只读账号只有几项读权限，
+// 看得到仪表盘、工单、用户（除流量重置）、套餐、订单、节点、邮件模板，
+// 看不到营销、内容与外观、安全与运维，以及各模块里缺权限的标签。
+// ---------------------------------------------------------------------------
+const ADMIN_PERMISSIONS: readonly string[] = [
+  'billing.adjustment.write',
+  'billing.ledger.read',
+  'billing.order.read',
+  'billing.order.write',
+  'billing.payment.read',
+  'billing.provider.write',
+  'catalog.publish',
+  'catalog.read',
+  'catalog.write',
   'iam.user.read',
   'iam.user.write',
-  'catalog.read',
-  'billing.order.read',
+  'marketing.commission.read',
+  'marketing.commission.write',
+  'marketing.coupon.read',
+  'marketing.coupon.write',
+  'marketing.giftcard.read',
+  'marketing.giftcard.write',
+  'marketing.withdrawal.approve',
+  'metering.read',
+  'metering.reset.read',
+  'metering.reset.write',
+  'node.config.publish',
+  'node.identity.revoke',
+  'node.lifecycle',
+  'node.provision',
   'node.read',
+  'node.write',
+  'ops.announcement.write',
+  'ops.content.write',
+  'ops.dashboard.read',
+  'ops.export',
+  'ops.notification.read',
+  'ops.notification.write',
+  'ops.ticket.read',
+  'ops.ticket.write',
+  'platform.appearance.read',
+  'platform.appearance.write',
+  'platform.plugin.read',
+  'platform.plugin.write',
+  'platform.settings.write',
+  'security.audit.read',
+  'security.risk.review',
 ]
+
+const VIEWER_PERMISSIONS: readonly string[] = ['ops.ticket.read', 'iam.user.read', 'catalog.read', 'billing.order.read', 'node.read', 'ops.notification.read']
 
 const ADMIN_TOPICS: ReadonlyArray<readonly [string, string]> = [
   ['orders.changed', 'orders'],

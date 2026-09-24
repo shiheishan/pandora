@@ -41,7 +41,7 @@
 - `platform/httpx` 错误码与 `middleware.RequireRecentReauth` 仍归第 2 阶段第 ⑤ 步，不要碰。
 - 新建租户拿不到通知模板（所有模板都有）：暂不处理。SanitizeCSS 保留不删。
 - node_preview 的「从没心跳过的节点不下发」是有意规则，不是 bug。
-- 契约修订已到 R46（R40–R46 是第 ④ 步）。新 PG18 测试一律用 `platform/pg18test` 辅助包；在已有域的包里加 PG18 用例时，把该域的测试名单写精确（默认过滤 `PG18` 会把别的域的用例拉进来、跳过、被判失败）。
+- 契约修订已到 R50（R40–R46 是第 ④ 步）。新 PG18 测试一律用 `platform/pg18test` 辅助包；在已有域的包里加 PG18 用例时，把该域的测试名单写精确（默认过滤 `PG18` 会把别的域的用例拉进来、跳过、被判失败）。
 - 本会话改过、还没有 L2 的目录（api/admin、api/public、platform/realtime）：按 GEB 逆向流，下次改到时再补，不用专门补。
 - **第 ⑤ 步追加（后端一建议）**：`notify/scan.go` 的流量预警把用户的流量包剩余（`traffic_pack_grants` 的 remaining）算进可用量，有流量包余量的用户不该收到「流量即将用尽」；`deploy/configure-app-role.sql` 末尾的 REVOKE UPDATE/DELETE 名单补上 `traffic_pack_grants`、`gift_card_batches`（两表已靠触发器守住，这是纵深防御）。
 - **第 ⑤ 步第一个提交：机械拆分 `api/admin/router.go`**（现 799 行，⑤ 一加路由就超 800）。按模块把路由段移到同包的 `router_<模块>.go`（函数接收同一个路由器与依赖），不改任何路径、中间件、顺序与行为，路由契约测试与权限字典测试原样通过；这个提交单独推送、在报告里单列，后端一第 ⑥ 步会在它合入后再往后台路由里加流量包管理。
@@ -55,3 +55,8 @@
 - 后台按文章统计「有帮助 / 没帮助」的接口契约未定，⑤ 不做。
 - 第 ④ 步新建了 `api/admin`、`api/public`、`domain/plugin`、`domain/content` 四个 L2；`api/public/CLAUDE.md` 合并时协调会话补上了后端一的 `traffic_packs.go`、`plan_change.go` 两行。`nodefabric/node_admin.go` 1007 行、`adminops/service.go` 959 行，既有超限，不重构。
 - 推送前对**最后一个提交**跑本机全量（见公共规则第 5 节新增条），CI 不跑 panel 单元测试。
+- **第 ⑤ 步追加：站点时区（2026-09-24 用户定案，契约 R49、R50）**。现状：`users.timezone` 与 `tenants.timezone` 默认都是 `'UTC'`，Go 里没有任何地方能改，所以门户按日用量（后端一 00072）和后台收入趋势（`adminops/revenue.go`）都按 UTC 切日，国内用户差 8 小时。要做：
+  - 迁移：`tenants.timezone` 默认值改为 `'Asia/Shanghai'`，存量仍为 `'UTC'` 的租户改成 `'Asia/Shanghai'`（迁移前没有任何写入口，存量 `'UTC'` 都是默认值）；Down 恢复默认 `'UTC'` 并把 `'Asia/Shanghai'` 改回 `'UTC'`。`users.timezone` 不动。
+  - 接口：`GET / POST v1/settings/site`，形状、权限、reauth、审计见契约后台-08 同名条目；时区名用 `time.LoadLocation` 校验，拒绝空串与 `Local`。
+  - 切日口径：改 `nodefabric/usage_daily.go` 的 `UsageLocation`（后端一的文件，后端一第 ⑥ 步不会碰它），用户时区为 `'UTC'` 时视同未设、走租户时区；补单元测试，并在 `TestUsageDailyWritePG18` 或新用例里覆盖「用户 UTC + 租户 Asia/Shanghai 按上海切日」。
+  - **迁移号**：⑤ 现在要 M9、M10、站点时区三个迁移，正好用完 00083–00085；审计链修复如果也要迁移，**追加分配 00086**，不用再问。

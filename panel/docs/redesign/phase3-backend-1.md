@@ -34,7 +34,7 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：① 权限与财务不变量 `0651cb2`、② 礼品卡批次 `0f83ca4`、③ 流量包 `f944089`（含 `b6d8e85`、`7f97f3d`）、④ 变更套餐（`1c2f2a7` 00070 扣量不推送、`91738d3` 主体与迁移 00071、`44161cc`、`077eb27`）已验收并合入 `feat/panel-redesign`（PG18 全绿，④ 为 run 35984228598：185 PASS / 0 SKIP / 0 FAIL）。迁移已用 00068–00071，剩 00072–00073（⑤ 的 M4 用 00072）。**下一步 ⑤ 按日流量，然后 ⑥。**
+**进度**：① 权限与财务不变量 `0651cb2`、② 礼品卡批次 `0f83ca4`、③ 流量包 `f944089`（含 `b6d8e85`、`7f97f3d`）、④ 变更套餐（`1c2f2a7`、`91738d3`、`44161cc`、`077eb27`，迁移 00071）、⑤ 按日流量 `9539b4f`（迁移 00072，PG18 run 35987062234：187 PASS / 0 SKIP / 0 FAIL）已验收并合入 `feat/panel-redesign`。迁移已用 00068–00072，**只剩 00073**；⑥ 如需不止一个迁移，先报告协调会话再动。**下一步 ⑥ 其余扩展，⑥ 做完后端一结束。**
 
 补充事项（与上文冲突时以这里为准）：
 - 每步做完：推送本分支，看 **Panel PostgreSQL 18 gates** 与 Pandora NativeCore 两个 workflow；PG18 红了先修再报告。做事前先 `git merge feat/panel-redesign` 同步。
@@ -45,9 +45,12 @@
 - 幂等表暂存一次性导出的明文 CSV、1 MiB 缓存上限：用户侧已接受，不用再改。
 - 后端二已建 `domain/adminops/CLAUDE.md`（L2）且 `ListOrders` 改用了与用户详情共用的订单行查询（行为不变）：你改 adminops 时在这份 L2 里补上套餐目录「事务外校验 + *Tx 事务体」的说明，不要另建。adminops 包的 PG18 域测试名单要写精确，`catalog_sales` 域的默认过滤会把后端二的 `TestAdminUsersPG18` 拉进来。
 - **第 ⑥ 步追加：后台流量包管理**（按「后端有、设计稿没有就补进前端」的规则，后台-04 套餐页加流量包 tab）：列表、新建、修改、上下架接口，写操作挂 `catalog.publish` + reauth + 幂等（与 D-C-2 同门槛，因为改的是在售商品和价格），变更写审计。契约形状在报告里给出。
-- 契约修订已到 R46；R35–R39 是你的第 ④ 步（R35–R39 是第 ④ 步：change-plan 两接口、续费互斥 409、重置日志 plan_change、D-E-2 补充定案）。
+- 契约修订已到 R50（R47–R48 是你的第 ⑤ 步）；R35–R39 是你的第 ④ 步（R35–R39 是第 ④ 步：change-plan 两接口、续费互斥 409、重置日志 plan_change、D-E-2 补充定案）。
 - **第 ④ 步留下的共享数据库对象**：00071 重写了三个幂等函数（订单与幂等绑定检查、00038 `bind_idempotency_resource`、00039 `complete_bound_idempotency_success`，后两者有订单幂等 scope 白名单），并把 00036「一条订阅一张在途续费单」的唯一索引换成覆盖续费与变更的新索引。以后再改这几个函数，以 00071 里的函数体为底本，Down 恢复到 00071 的版本。
 - `domain/billing/CLAUDE.md`（L2）已建；`checkout.go` 1842 行，既有超限，不重构。
 - 已知未修（推断、未复现，协调会话记录待定）：续费或变更单待支付的 30 分钟内订阅恰好过期，状态机不允许 expired → active，履约会失败。不要顺手改，碰到相关代码时在报告里说明。
 - 用户已定：折算基数为本周期全部付费单、付费天数先用赠送天数后用、优惠码升降级都可用（见 5.A D-E-2 修订 R39）。
 - 第 ⑥ 步往 `api/admin/router.go` 加流量包管理路由前，先确认后端二第 ⑤ 步的路由拆分（`router_<模块>.go`）已合入主线并 `git merge feat/panel-redesign`；路由加在套餐模块那个文件里。
+- **第 ⑥ 步的顺序**：新增后台路由（流量包管理、渠道统计、礼品卡统计等）要等后端二第 ⑤ 步把 `api/admin/router.go` 机械拆成 `router_<模块>.go` 并合入主线；在那之前先做不加路由的部分（已有接口的字段扩展、`CreatePlanComplete` 单事务、门户结账 / 订单 / 钱包 / 邀请页字段）。开工时 `git merge feat/panel-redesign` 后看主线有没有 `router_*.go`。
+- 时区已由用户定案（契约 R49、R50）：站点时区默认 Asia/Shanghai、后台可改，用户时区为默认 'UTC' 时跟随站点。**由后端二第 ⑤ 步实现，包括改 `nodefabric/usage_daily.go` 的 `UsageLocation`**，你 ⑥ 不要碰这个函数。`subscription_usage_daily` 没有清理策略，暂不处理。
+- 本分支推送后，Panel PostgreSQL 18 gates 里会多一个 panel-unit 任务（panel 全量 build/vet/go test，排除两个既有 Linux 失败包），它和 panel-pg18 都要绿。

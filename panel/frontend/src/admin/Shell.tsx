@@ -1,32 +1,39 @@
 /**
- * [INPUT]: 依赖 react 的 state / effect，依赖 ../core/router 的 useHashLocation / navigate，依赖 ../ui 的 Tabs / Empty，依赖 ./Sidebar、./EventsCapsule、./CommandPalette、./ChangePasswordDialog、./me、./modules，依赖 ./Shell.module.css
+ * [INPUT]: 依赖 react 的 state / effect / memo，依赖 ../core/router 的 useHashLocation / navigate，依赖 ../shell/ScreenFrame，依赖 ../ui 的 Tabs / Empty / Button，依赖 ./Sidebar、./EventsCapsule、./CommandPalette、./ChangePasswordDialog、./me、./modules、./screens，依赖 ./Shell.module.css
  * [OUTPUT]: 对外提供 Shell
- * [POS]: admin 登录后的外框（管理后台.dc.html showApp）：左侧 Sidebar，右侧粘性顶栏（面包屑 + 实时事件）、页头（标题 + 标签页）与模块内容区；模块页在第 3 阶段按 MODULES 接入，这里先放空状态
+ * [POS]: admin 登录后的外框（管理后台.dc.html showApp）：左侧 Sidebar，右侧粘性顶栏（面包屑 + 实时事件）、页头（标题 + 有权限的标签页）与模块内容区；内容区按路由从 screens 登记表取懒加载页面，包在 ScreenFrame 里，缺读权限的地址显示「无权限或不存在」
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { navigate, useHashLocation } from '../core/router'
-import { Empty, Tabs } from '../ui'
+import { NotFoundScreen, ScreenFallback, ScreenFrame } from '../shell/ScreenFrame'
+import { Button, Empty, Tabs } from '../ui'
 import { ChangePasswordDialog } from './ChangePasswordDialog'
 import { CommandPalette } from './CommandPalette'
 import { EventsCapsule } from './EventsCapsule'
 import { useAdminMe } from './me'
-import { MODULES, modulePath, resolveRoute, type ModuleKey } from './modules'
+import { MODULES, canRead, modulePath, resolveRoute, visibleTabs, type AdminRoute, type ModuleKey, type Permissions } from './modules'
+import { SCREENS } from './screens'
 import css from './Shell.module.css'
 import { Sidebar } from './Sidebar'
 
 export function Shell() {
   const location = useHashLocation()
-  const route = resolveRoute(location.path)
-  const def = MODULES[route.module]
   const me = useAdminMe()
+  const perms = useMemo<Permissions | undefined>(() => (me.data ? new Set(me.data.permissions) : undefined), [me.data])
+  const route = resolveRoute(location.path, perms)
+  const def = MODULES[route.module]
   const [palette, setPalette] = useState(false)
   const [password, setPassword] = useState(false)
 
-  // 未知模块、缺省标签一律改写成规范地址，刷新与分享都落在同一处
+  // 未知模块、缺省标签一律改写成规范地址，刷新与分享都落在同一处；
+  // 等 GET v1/me 回来再改写，缺省标签才能落在第一个有权限的标签上。
+  // 模块认得时查询串（页面的筛选条件）跟着走，落回仪表盘时丢掉
   useEffect(() => {
-    if (location.path !== route.canonical) navigate(route.canonical, { replace: true })
-  }, [location.path, route.canonical])
+    if (!perms || location.path === route.canonical) return
+    const sameModule = location.path.split('/')[1] === route.module
+    navigate(route.canonical, { replace: true, query: sameModule ? Object.fromEntries(location.query) : undefined })
+  }, [perms, location, route.canonical, route.module])
 
   useEffect(() => {
     const tab = def.tabs?.find(([k]) => k === route.tab)?.[1]
@@ -44,12 +51,12 @@ export function Shell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const go = (module: ModuleKey, tab?: string | null) => navigate(modulePath(module, tab))
-  const tabTitle = def.tabs?.find(([k]) => k === route.tab)?.[1]
+  const go = (module: ModuleKey, tab?: string | null) => navigate(modulePath(module, tab, perms))
+  const tabs = perms ? visibleTabs(route.module, perms) : []
 
   return (
     <div className={css.frame}>
-      <Sidebar current={route.module} me={me.data} onOpenPalette={() => setPalette(true)} onChangePassword={() => setPassword(true)} />
+      <Sidebar current={route.module} me={me.data} perms={perms} onOpenPalette={() => setPalette(true)} onChangePassword={() => setPassword(true)} />
       <main className={css.main}>
         <header className={css.topbar}>
           <div className={css.crumbs}>
@@ -62,21 +69,46 @@ export function Shell() {
         </header>
         <div className={css.pageHead}>
           <h1 className={css.title}>{def.title}</h1>
-          {def.tabs && route.tab && (
+          {tabs.length > 0 && route.tab && (
             <Tabs
               label={def.title}
-              items={def.tabs.map(([value, label]) => ({ value, label }))}
+              items={tabs.map(([value, label]) => ({ value, label }))}
               value={route.tab}
               onChange={(tab) => go(route.module, tab)}
             />
           )}
         </div>
         <div className={css.content}>
-          <Empty title="这里还是空的" description={`「${def.title}${tabTitle ? ` / ${tabTitle}` : ''}」的页面将在第 3 阶段接入。`} />
+          {me.isError ? (
+            <Empty
+              title="读取账号信息失败"
+              description="暂时拿不到当前账号的权限，页面无法判断能否显示。"
+              action={
+                <Button variant="secondary" size="sm" onClick={() => void me.refetch()}>
+                  重试
+                </Button>
+              }
+            />
+          ) : perms ? (
+            <Content route={route} perms={perms} />
+          ) : (
+            <ScreenFallback />
+          )}
         </div>
       </main>
-      <CommandPalette open={palette} onClose={() => setPalette(false)} onPick={(item) => go(item.module, item.tab)} />
+      <CommandPalette open={palette} perms={perms} onClose={() => setPalette(false)} onPick={(item) => go(item.module, item.tab)} />
       <ChangePasswordDialog open={password} onClose={() => setPassword(false)} />
     </div>
+  )
+}
+
+// 权限只看 GET v1/me；缺读权限与不存在同样处理，不透露模块是否存在
+function Content({ route, perms }: { route: AdminRoute; perms: Permissions }) {
+  if (!canRead(route.module, route.tab, perms)) return <NotFoundScreen />
+  const Screen = SCREENS[route.module]
+  return (
+    <ScreenFrame resetKey={route.canonical}>
+      <Screen tab={route.tab} rest={route.rest} />
+    </ScreenFrame>
   )
 }

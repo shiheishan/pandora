@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../core/theme 的 useTheme / toggleTheme，依赖 ../core/router 的 href，依赖 ../shell/runtime 的 useApi / useRuntime / signOut，依赖 ../shell/Logo，依赖 ../ui 的 Menu，依赖 ./me 与 ./modules，依赖 ./Sidebar.module.css
  * [OUTPUT]: 对外提供 Sidebar
- * [POS]: admin 外框的深色侧栏（管理后台.dc.html aside）：字标与版本号、⌘K 入口、六组导航（工单 / 营销徽标取 GET v1/dashboard/tasks）、底部账户块与向上弹出的账户菜单（主题、改密码、打开门户、退出）
+ * [POS]: admin 外框的深色侧栏（管理后台.dc.html aside）：字标与版本号、⌘K 入口、六组导航（只列有读权限的模块，整组没有就不显示组名；工单 / 营销徽标取 GET v1/dashboard/tasks）、底部账户块与向上弹出的账户菜单（主题、改密码、打开门户、退出）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useQuery } from '@tanstack/react-query'
@@ -12,7 +12,7 @@ import { Logo } from '../shell/Logo'
 import { signOut, useApi, useRuntime } from '../shell/runtime'
 import { Menu } from '../ui'
 import { identityLabels, type AdminMe } from './me'
-import { MODULES, NAV_GROUPS, modulePath, type ModuleKey } from './modules'
+import { MODULES, NAV_GROUPS, canReadModule, modulePath, type ModuleKey, type Permissions } from './modules'
 import css from './Sidebar.module.css'
 
 // 侧栏徽标：待补·后端的 GET v1/dashboard/tasks，只在有 ops.dashboard.read 时请求；
@@ -37,11 +37,14 @@ function useNavBadges(enabled: boolean): Partial<Record<ModuleKey, number>> {
 export function Sidebar({
   current,
   me,
+  perms,
   onOpenPalette,
   onChangePassword,
 }: {
   current: ModuleKey
   me: AdminMe | undefined
+  /** undefined = GET v1/me 还没回来，导航先不画，免得无权限的入口闪一下 */
+  perms: Permissions | undefined
   onOpenPalette: () => void
   onChangePassword: () => void
 }) {
@@ -61,22 +64,26 @@ export function Sidebar({
         <kbd className={css.kbd}>⌘K</kbd>
       </button>
       <nav className={css.nav} aria-label="主导航">
-        {NAV_GROUPS.map(([group, keys]) => (
-          <div key={group} className={css.group}>
-            <div className={css.groupLabel}>{group}</div>
-            {keys.map((key) => {
-              const on = key === current
-              const badge = badges[key] ?? 0
-              return (
-                <a key={key} href={href(modulePath(key))} className={on ? `${css.item} ${css.on}` : css.item} aria-current={on ? 'page' : undefined}>
-                  <span className={css.dot} aria-hidden="true" />
-                  <span className={css.itemLabel}>{MODULES[key].title}</span>
-                  {badge > 0 && <span className={css.badge}>{badge > 99 ? '99+' : badge}</span>}
-                </a>
-              )
-            })}
-          </div>
-        ))}
+        {NAV_GROUPS.map(([group, all]) => {
+          const keys = perms ? all.filter((key) => canReadModule(key, perms)) : []
+          if (keys.length === 0) return null
+          return (
+            <div key={group} className={css.group}>
+              <div className={css.groupLabel}>{group}</div>
+              {keys.map((key) => {
+                const on = key === current
+                const badge = badges[key] ?? 0
+                return (
+                  <a key={key} href={href(modulePath(key, null, perms))} className={on ? `${css.item} ${css.on}` : css.item} aria-current={on ? 'page' : undefined}>
+                    <span className={css.dot} aria-hidden="true" />
+                    <span className={css.itemLabel}>{MODULES[key].title}</span>
+                    {badge > 0 && <span className={css.badge}>{badge > 99 ? '99+' : badge}</span>}
+                  </a>
+                )
+              })}
+            </div>
+          )
+        })}
       </nav>
       <Menu
         label="账户"

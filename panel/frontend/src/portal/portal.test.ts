@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./pages、./entry-links、./appearance 的 pickThemeTokens、./queries 的 displayName
  * [OUTPUT]: 对外提供 portal 外框纯逻辑的单元测试
- * [POS]: portal 的单元测试：页面路由与导航归属、邀请链接取码并抹掉查询串、快捷登录令牌识别、主题令牌白名单、用户名映射；界面交互在浏览器里对 dev/mock-api 验收
+ * [POS]: portal 的单元测试：页面路由、rest 子路由与导航归属、邀请链接取码并抹掉查询串、快捷登录令牌识别、主题令牌白名单、用户名映射；界面交互在浏览器里对 dev/mock-api 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it, vi } from 'vitest'
@@ -12,11 +12,19 @@ import { displayName } from './queries'
 
 describe('pages', () => {
   it('resolves known pages and sends everything else to the overview', () => {
-    expect(resolvePage('/orders')).toEqual({ page: 'orders', canonical: '/orders' })
+    expect(resolvePage('/orders')).toEqual({ page: 'orders', rest: [], canonical: '/orders' })
     expect(resolvePage('/').canonical).toBe('/overview')
     expect(resolvePage('/nope').canonical).toBe('/overview')
-    expect(resolvePage('/orders/extra').canonical).toBe('/overview')
+    expect(resolvePage('/nope/abc')).toEqual({ page: 'overview', rest: [], canonical: '/overview' })
     expect(resolvePage('/constructor').canonical).toBe('/overview')
+  })
+
+  it('hands the segments after the page to it as rest', () => {
+    expect(resolvePage('/orders/ORD20260924-X1')).toEqual({ page: 'orders', rest: ['ORD20260924-X1'], canonical: '/orders/ORD20260924-X1' })
+    expect(resolvePage('/tickets/abc/')).toEqual({ page: 'tickets', rest: ['abc'], canonical: '/tickets/abc' })
+    expect(resolvePage('/help/%E5%85%A5%E9%97%A8')).toEqual({ page: 'help', rest: ['入门'], canonical: '/help/%E5%85%A5%E9%97%A8' })
+    expect(resolvePage('/orders//x').canonical).toBe('/orders/x')
+    expect(resolvePage('/orders/%E0%A4%A').canonical).toBe('/orders')
   })
 
   it('checkout belongs to the plans tab; the orders tab is labelled 订单', () => {

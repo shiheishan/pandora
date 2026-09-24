@@ -1,0 +1,12 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的间距令牌
+ * [OUTPUT]: 对外提供 ScreenFrame.tsx 用到的类名
+ * [POS]: shell/ScreenFrame 的样式：加载骨架纵向排列，间距 16
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
