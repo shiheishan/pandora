@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 react 的 state / effect，依赖 ../core/router 的 useHashLocation / navigate / href，依赖 ../core/theme，依赖 ../core/format 的 formatMoney，依赖 ../shell/runtime 的 useRuntime / useRealtime / signOut，依赖 ../shell/Logo，依赖 ../ui 的 Menu / Tag / CountBadge / Empty / IconChevronDown，依赖 ./pages、./queries，依赖 ./Shell.module.css
+ * [INPUT]: 依赖 react 的 state / effect，依赖 ../core/router 的 useHashLocation / navigate / href，依赖 ../core/theme，依赖 ../core/format 的 formatMoney，依赖 ../shell/runtime 的 useRuntime / useRealtime / signOut，依赖 ../shell/Logo 与 ../shell/ScreenFrame，依赖 ../ui 的 Menu / Tag / CountBadge / IconChevronDown，依赖 ./pages、./queries、./screens，依赖 ./Shell.module.css
  * [OUTPUT]: 对外提供 Shell
- * [POS]: portal 登录后的外框（用户门户.dc.html showApp）：粘性顶栏（字标、四项导航、余额胶囊、消息铃铛、头像菜单）、页头、内容区、页脚；< 640 导航收进底部五格标签栏，「我的」打开头像菜单；门户的 SSE 在这里连上，只驱动查询失效
+ * [POS]: portal 登录后的外框（用户门户.dc.html showApp）：粘性顶栏（字标、四项导航、余额胶囊、消息铃铛、头像菜单）、页头、内容区（按路由从 screens 登记表取懒加载页面，包在 ScreenFrame 里）、页脚；< 640 导航收进底部五格标签栏，「我的」打开头像菜单；门户的 SSE 在这里连上，只驱动查询失效
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useState } from 'react'
@@ -9,16 +9,18 @@ import { formatMoney } from '../core/format'
 import { href, navigate, useHashLocation } from '../core/router'
 import { toggleTheme, useTheme } from '../core/theme'
 import { Logo } from '../shell/Logo'
+import { ScreenFrame } from '../shell/ScreenFrame'
 import { signOut, useRealtime, useRuntime } from '../shell/runtime'
-import { CountBadge, Empty, IconChevronDown, Menu, Tag } from '../ui'
+import { CountBadge, IconChevronDown, Menu, Tag } from '../ui'
 import { MENU_PAGES, NAV_PAGES, PAGES, greeting, navLabel, navOwner, pagePath, resolvePage, type PageKey } from './pages'
 import { displayName, useActivePlanName, useBalance, useCommissionAvailable, usePortalMe, useUnreadCount } from './queries'
+import { SCREENS } from './screens'
 import css from './Shell.module.css'
 
 export function Shell() {
   const runtime = useRuntime()
   const location = useHashLocation()
-  const { page, canonical } = resolvePage(location.path)
+  const { page, rest, canonical } = resolvePage(location.path)
   const theme = useTheme()
   const me = usePortalMe()
   const balance = useBalance()
@@ -29,8 +31,10 @@ export function Shell() {
   useRealtime(true)
 
   useEffect(() => {
-    if (location.path !== canonical) navigate(canonical, { replace: true })
-  }, [location.path, canonical])
+    if (location.path === canonical) return
+    // 页面认得时查询串（如结账参数）跟着走，落回概览时丢掉
+    navigate(canonical, { replace: true, query: location.path.split('/')[1] === page ? Object.fromEntries(location.query) : undefined })
+  }, [location, canonical, page])
 
   // 换页回到顶部；菜单项与标签栏点击时 Menu 自己会关
   useEffect(() => {
@@ -42,6 +46,7 @@ export function Shell() {
   const inMenu = MENU_PAGES.includes(page)
   const balanceLabel = balance.data ? formatMoney(balance.data.balance, balance.data.currency) : null
   const [title, subtitle] = PAGES[page]
+  const Screen = SCREENS[page]
   const heading = page === 'overview' ? `${greeting()}${name ? `，${name}` : ''}` : title
 
   const hints: Partial<Record<PageKey, string | null>> = {
@@ -115,7 +120,9 @@ export function Shell() {
           <h1 className={css.title}>{heading}</h1>
           {subtitle && <p className={css.subtitle}>{subtitle}</p>}
         </div>
-        <Empty title="这里还是空的" description={`「${title}」页面将在第 3 阶段接入。`} />
+        <ScreenFrame resetKey={canonical}>
+          <Screen rest={rest} />
+        </ScreenFrame>
       </main>
 
       <footer className={css.footer}>
