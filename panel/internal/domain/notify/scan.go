@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/db、domain/plugin 的事件发射
+// [INPUT]: 依赖 platform/db、domain/plugin 的事件发射，流量预警读 traffic_pack_grants 的剩余（00070）
 // [OUTPUT]: 对外提供 ScanExpiring、ScanQuota、ScanPaidOrders、StartScanner
 // [POS]: domain/notify 的后台循环：定时扫描入队并派发，Kick 触发只派发不扫描
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -112,24 +112,38 @@ func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error
 }
 
 // ScanQuota 扫出流量接近用尽的订阅。
+//
+// 可用量 = 套餐本期额度 + 该用户流量包的剩余（D-E-1）。套餐额度用完后扣量转到
+// 流量包，订阅配额行的 consumed 就停在额度上；只看套餐额度的话，买了流量包的
+// 用户照样会收到「流量即将用尽」。流量包挂在用户上、几条订阅共用，这里给每条
+// 订阅都算上全部剩余 —— 与扣量时「套餐不够再动流量包」的口径一致。
 func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 	queued := 0
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		for _, pct := range quotaThresholds {
 			rows, err := tx.Query(ctx, `
-				SELECT q.subscription_id::text, s.user_id::text, p.name,
-				       q.consumed, COALESCE(q.granted,0) + COALESCE(q.granted_addon,0)
-				  FROM quota_balances q
-				  JOIN subscriptions s ON s.id = q.subscription_id
-				  JOIN plans p ON p.id = s.plan_id
-				 WHERE q.tenant_id = $1
-				   AND q.metric = 'traffic.bytes'
-				   AND s.status IN ('active','trialing')
-				   AND COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) > 0
-				   AND q.consumed * 100 >= (COALESCE(q.granted,0) + COALESCE(q.granted_addon,0)) * $2
+				WITH usage AS (
+					SELECT q.subscription_id, s.user_id, p.name, q.consumed,
+					       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) AS plan_total,
+					       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) + pk.pack_left AS total
+					  FROM quota_balances q
+					  JOIN subscriptions s ON s.id = q.subscription_id
+					  JOIN plans p ON p.id = s.plan_id
+					 CROSS JOIN LATERAL (
+					       SELECT COALESCE(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint AS pack_left
+					         FROM traffic_pack_grants g
+					        WHERE g.tenant_id = q.tenant_id AND g.user_id = s.user_id
+					          AND g.consumed_bytes < g.granted_bytes) pk
+					 WHERE q.tenant_id = $1
+					   AND q.metric = 'traffic.bytes'
+					   AND s.status IN ('active','trialing'))
+				SELECT subscription_id::text, user_id::text, name, consumed, total
+				  FROM usage
+				 WHERE plan_total > 0
+				   AND consumed * 100 >= total * $2
 				   -- 只取刚跨过这条线的：已经超过更高阈值的由那一档负责，
 				   -- 否则用量到 96% 时会同时收到 80% 和 95% 两条
-				   AND ($2 = 95 OR q.consumed * 100 < (COALESCE(q.granted,0) + COALESCE(q.granted_addon,0)) * 95)`,
+				   AND ($2 = 95 OR consumed * 100 < total * 95)`,
 				tenantID, pct)
 			if err != nil {
 				return err
