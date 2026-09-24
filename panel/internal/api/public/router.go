@@ -175,6 +175,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/me/announcements", h.myAnnouncements)
 			r.Get("/content/pages", h.listContentPages)
 			r.Get("/content/pages/{slug}", h.getContentPage)
+			r.Post("/content/pages/{slug}/feedback", h.submitContentFeedback)
 			r.Get("/me/notifications", h.listNotifications)
 			r.Post("/me/notifications/read-all", h.markAllNotificationsRead)
 			r.Post("/me/notifications/{id}/read", h.markNotificationRead)

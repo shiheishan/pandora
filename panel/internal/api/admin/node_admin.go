@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/nodefabric 的后台节点编排与 NodeCredentials，依赖 platform/httpx
+// [OUTPUT]: 对外提供节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态与身份令牌状态（nodeIdentity）处理器
+// [POS]: api/admin 的节点编排处理器（后台-07 节点 tab 与抽屉），路径 id 先做 UUID 校验回 404
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -118,4 +123,15 @@ func (h *handlers) batchAdminNodeStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.OK(w, map[string]any{"ok": true, "updated": len(in.Items), "serving_status": in.ServingStatus})
+}
+
+// nodeIdentity 返回节点身份与令牌状态（后台节点抽屉「身份与令牌」）。
+func (h *handlers) nodeIdentity(w http.ResponseWriter, r *http.Request) {
+	out, err := h.d.Node.NodeCredentials(r.Context(), httpx.TenantIDFrom(r.Context()),
+		chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	httpx.OK(w, out)
 }

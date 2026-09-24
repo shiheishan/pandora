@@ -4,7 +4,7 @@
 无业务语义的基础设施层，被 api、domain、middleware 依赖，自身不 import 它们。配置、连接池、加密、令牌、日志、HTTP 模型各只有一个实现，这是 entropy 段"统一范式"的落点：日志只走 logging，响应与错误只走 httpx，配置只走 config。
 
 成员清单
-audit/: 不可删审计记录写入（SEC-012）
+audit/: 不可删审计记录写入（SEC-012），哈希链；auth_context（session / reauth）由 Write 从请求主体推出，非空时纳入 entry_hash
 clientauth/: CLIENT-AUTH 的字节精确、无副作用原语，107 文件；子包 ca42admission、ca42controlv3、ca42execution、evidencecodec 各带 README
 config/: 从环境变量加载配置，缺一项拒绝启动，不引入配置框架（NFR-006）
 credentialrevocation/: 登录凭据的 fail-closed 集中吊销

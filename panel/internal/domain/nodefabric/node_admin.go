@@ -1,3 +1,8 @@
+// [INPUT]: 依赖同包 protocol_schema / xboard_validate 的协议校验与 service.go 的 notifyNodeChanged，依赖 platform 的 audit/db/httpx
+// [OUTPUT]: 对外提供 AdminNode 与各输入类型、StableProtocol* 服务协议白名单、Service 的节点增改复制移动排序、批量改服务状态与销毁
+// [POS]: domain/nodefabric 的后台节点编排：乐观锁 row_version、服务器容量锁、协议 schema 校验；国家代码（00082）只在这里写、只进管理端
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
@@ -31,6 +36,7 @@ type AdminNode struct {
 	Kernel                string          `json:"kernel"`
 	TrafficRate           float64         `json:"traffic_rate"`
 	DisplayName           *string         `json:"display_name"`
+	CountryCode           *string         `json:"country_code"`
 	ProtocolConfig        json.RawMessage `json:"protocol_config"`
 	ProtocolSchemaVersion int             `json:"protocol_schema_version"`
 	ConfigValidatedAt     *time.Time      `json:"config_validated_at"`
@@ -72,6 +78,7 @@ type CreateAdminNodeInput struct {
 	Kernel         string          `json:"kernel"`
 	TrafficRate    float64         `json:"traffic_rate"`
 	DisplayName    string          `json:"display_name"`
+	CountryCode    string          `json:"country_code"`
 	ProtocolConfig json.RawMessage `json:"protocol_config"`
 	SortOrder      int             `json:"sort_order"`
 }
@@ -87,6 +94,7 @@ type PatchAdminNodeInput struct {
 	Kernel         *string                `json:"kernel"`
 	TrafficRate    *float64               `json:"traffic_rate"`
 	DisplayName    *string                `json:"display_name"`
+	CountryCode    OptionalNullableString `json:"country_code"`
 	ProtocolConfig *json.RawMessage       `json:"protocol_config"`
 }
 
@@ -182,14 +190,14 @@ func StableProtocolReadySQL(alias string) string {
 
 const adminNodeSelect = `SELECT n.id,n.row_version,n.name,n.server_id,n.pool_id,
 	n.status,n.serving_status,n.node_type,n.server_host,n.server_port,coalesce(n.kernel,'auto'),
-	n.traffic_rate,n.display_name,n.protocol_config,n.protocol_schema_version,
+	n.traffic_rate,n.display_name,n.country_code,n.protocol_config,n.protocol_schema_version,
 	n.config_validated_at,n.sort_order,n.created_at,n.updated_at FROM nodes n`
 
 func scanAdminNode(row pgx.Row) (*AdminNode, error) {
 	var n AdminNode
 	err := row.Scan(&n.ID, &n.RowVersion, &n.Name, &n.ServerID, &n.PoolID, &n.Status,
 		&n.ServingStatus, &n.NodeType, &n.ServerHost, &n.ServerPort, &n.Kernel,
-		&n.TrafficRate, &n.DisplayName, &n.ProtocolConfig, &n.ProtocolSchemaVersion,
+		&n.TrafficRate, &n.DisplayName, &n.CountryCode, &n.ProtocolConfig, &n.ProtocolSchemaVersion,
 		&n.ConfigValidatedAt, &n.SortOrder, &n.CreatedAt, &n.UpdatedAt)
 	return &n, err
 }
@@ -200,6 +208,20 @@ func validateAdminNodeName(name string) error {
 		return httpx.Invalid(map[string]string{"name": "名称必须为 1 到 120 个字符"})
 	}
 	return nil
+}
+
+// normalizeCountryCode 把国家代码规范成两位大写字母（ISO 3166-1 alpha-2 的形状），
+// 空串表示不填。只校验形状不校验是否真有这个国家：国旗由前端按代码渲染，
+// 认不出的代码显示成字母，比后端维护一张会过时的国家表更稳。
+func normalizeCountryCode(raw string) (string, error) {
+	code := strings.ToUpper(strings.TrimSpace(raw))
+	if code == "" {
+		return "", nil
+	}
+	if len(code) != 2 || code[0] < 'A' || code[0] > 'Z' || code[1] < 'A' || code[1] > 'Z' {
+		return "", httpx.Invalid(map[string]string{"country_code": "必须是两位字母国家代码"})
+	}
+	return code, nil
 }
 
 func validateNewNodeProtocol(nodeType, kernel, host string, port int, raw json.RawMessage) (int, error) {
@@ -294,6 +316,10 @@ func (s *Service) CreateAdminNode(ctx context.Context, tenantID string, in Creat
 	if err := validateAdminNodeName(in.Name); err != nil {
 		return nil, err
 	}
+	country, err := normalizeCountryCode(in.CountryCode)
+	if err != nil {
+		return nil, err
+	}
 	if err := validateAdminUUID("server_id", in.ServerID, true); err != nil {
 		return nil, err
 	}
@@ -324,12 +350,12 @@ func (s *Service) CreateAdminNode(ctx context.Context, tenantID string, in Creat
 		err := tx.QueryRow(ctx, `INSERT INTO nodes
 			(tenant_id,name,server_id,pool_id,status,serving_status,node_type,server_host,
 			 server_port,kernel,traffic_rate,display_name,protocol_config,
-			 protocol_schema_version,config_validated_at,sort_order,row_version)
+			 protocol_schema_version,config_validated_at,sort_order,row_version,country_code)
 			VALUES ($1,$2,$3::uuid,nullif($4,'')::uuid,'draft','draft',$5,nullif($6,''),
-			 $7,$8,$9,nullif($10,''),$11,$12,now(),$13,1) RETURNING id`,
+			 $7,$8,$9,nullif($10,''),$11,$12,now(),$13,1,nullif($14,'')) RETURNING id`,
 			tenantID, in.Name, in.ServerID, in.PoolID, in.NodeType, in.ServerHost,
 			in.ServerPort, in.Kernel, in.TrafficRate, in.DisplayName,
-			in.ProtocolConfig, version, in.SortOrder).Scan(&id)
+			in.ProtocolConfig, version, in.SortOrder, country).Scan(&id)
 		if db.IsUniqueViolation(err) {
 			return httpx.New(httpx.CodeConflict, "节点名称已存在")
 		}
@@ -378,6 +404,14 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 			return nil, err
 		}
 	}
+	// 国家代码：省略=不改，null 或空串=清空
+	patchCountry := ""
+	if in.CountryCode.Set && in.CountryCode.Value != nil {
+		var err error
+		if patchCountry, err = normalizeCountryCode(*in.CountryCode.Value); err != nil {
+			return nil, err
+		}
+	}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
 		before, err := scanAdminNode(tx.QueryRow(ctx, adminNodeSelect+` WHERE n.tenant_id=$1 AND n.id=$2::uuid FOR UPDATE`, tenantID, id))
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -392,6 +426,10 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 		name, nodeType, host, kernel := before.Name, value(before.NodeType), value(before.ServerHost), before.Kernel
 		poolID := value(before.PoolID)
 		port, rate, display, raw := intValue(before.ServerPort), before.TrafficRate, value(before.DisplayName), before.ProtocolConfig
+		country := value(before.CountryCode)
+		if in.CountryCode.Set {
+			country = patchCountry
+		}
 		if in.Name != nil {
 			name = strings.TrimSpace(*in.Name)
 		}
@@ -445,9 +483,11 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 			protocol_config=$12,protocol_schema_version=$13,
 			config_validated_at=CASE WHEN $14 THEN now() ELSE config_validated_at END,
 			config_source_generation=config_source_generation + CASE WHEN $15 THEN 1 ELSE 0 END,
+			country_code=nullif($16,''),
 			row_version=row_version+1
 			WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$3`, tenantID, id,
-			in.RowVersion, name, poolID, nodeType, host, port, kernel, rate, display, raw, version, protocolTouched, configSourceTouched)
+			in.RowVersion, name, poolID, nodeType, host, port, kernel, rate, display, raw, version, protocolTouched, configSourceTouched,
+			country)
 		if db.IsUniqueViolation(err) {
 			return httpx.New(httpx.CodeConflict, "节点名称已存在")
 		}
@@ -460,7 +500,7 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID,
 			Action: "node.update", ResourceType: "node", ResourceID: &id, APIDomain: "admin",
 			RequestID: httpx.RequestIDFrom(ctx), BeforeDigest: map[string]any{"row_version": before.RowVersion, "name": before.Name},
-			AfterDigest: map[string]any{"name": name, "pool_id": poolID, "schema_version": version}})
+			AfterDigest: map[string]any{"name": name, "pool_id": poolID, "schema_version": version, "country_code": country}})
 	})
 	if err != nil {
 		return nil, err
@@ -529,7 +569,7 @@ func (s *Service) CloneAdminNode(ctx context.Context, tenantID, id string, in Cl
 		err = tx.QueryRow(ctx, `INSERT INTO nodes
 			(tenant_id,name,server_id,pool_id,status,serving_status,node_type,server_host,
 			 server_port,kernel,traffic_rate,display_name,protocol_config,
-			 protocol_schema_version,config_validated_at,sort_order,row_version)
+			 protocol_schema_version,config_validated_at,sort_order,row_version,country_code)
 			SELECT tenant_id,$3,$4::uuid,nullif($5,'')::uuid,'draft','draft',
 			 CASE WHEN protocol_schema_version=0 THEN NULL ELSE node_type END,
 			 CASE WHEN protocol_schema_version=0 THEN NULL ELSE server_host END,
@@ -538,7 +578,7 @@ func (s *Service) CloneAdminNode(ctx context.Context, tenantID, id string, in Cl
 			 CASE WHEN protocol_schema_version=0 THEN '{}'::jsonb ELSE protocol_config END,
 			 protocol_schema_version,
 			 CASE WHEN protocol_schema_version=0 THEN NULL ELSE config_validated_at END,
-			 $6,1
+			 $6,1,country_code
 			FROM nodes WHERE tenant_id=$1 AND id=$2::uuid RETURNING id`,
 			tenantID, id, name, targetServerID, poolID, sortOrder).Scan(&cloneID)
 		if db.IsUniqueViolation(err) {
@@ -917,7 +957,7 @@ func (s *Service) DeleteNode(ctx context.Context, tenantID string, in DeleteNode
 			// 走合法路径退役。这里对允许直接销毁的状态直接执行，其余状态
 			// 一律要求先退役，避免 UPDATE 触发状态机守卫返回数据库错误。
 			directDestroy := map[string]bool{
-				"draft":              true,
+				"draft":               true,
 				"provisioning_failed": true,
 				"bootstrap_failed":    true,
 				"retired":             true,

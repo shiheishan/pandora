@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform 的 crypto/db/httpx/audit
 // [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、BuildNodeConfig、路由校验、ListNodeUsers、ReportTraffic / ReportAlive / ReportRuntimeStatus
-// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、拒绝已退出服务的节点）、用户下发与流量上报
+// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、记签发时间与签发人、拒绝已退出服务的节点）、用户下发与流量上报
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -180,9 +180,11 @@ func (s *Service) IssueServerToken(ctx context.Context, tenantID, actorID, nodeI
 			return httpx.New(httpx.CodeConflict, "节点已退役或已销毁，不能签发接入令牌")
 		}
 		if err := tx.QueryRow(ctx,
-			`UPDATE nodes SET server_token_hash = $3 WHERE tenant_id = $1 AND id = $2::uuid
+			`UPDATE nodes SET server_token_hash = $3,
+			        server_token_issued_at = now(), server_token_issued_by = $4::uuid
+			  WHERE tenant_id = $1 AND id = $2::uuid
 			 RETURNING coalesce(node_type, '')`,
-			tenantID, nodeID, crypto.HashToken(tok)).Scan(&nodeType); err != nil {
+			tenantID, nodeID, crypto.HashToken(tok), actorID).Scan(&nodeType); err != nil {
 			return err
 		}
 		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &actorID,

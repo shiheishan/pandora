@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 audit_events / subscription_fetch_log 与 Deps.Envelope 解密来源 IP，依赖 platform 的 db/httpx
+// [OUTPUT]: 对外提供 decryptIP / decryptWith 解密助手、userProfile 风控画像、statsTimeseries 注册与活跃时序
+// [POS]: api/admin 的用户画像与风控统计；解密助手被 access_log.go、audit_log.go、risk.go 共用，共享 IP 聚类已移到 risk.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 用户画像与风控统计。
@@ -278,57 +283,4 @@ func (h *handlers) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.OK(w, map[string]any{"points": out})
-}
-
-// ipClusters 列出关联到多个账号的来源地址。
-//
-// 这是主动发现批量注册的入口：不必先怀疑某个人，直接看哪些 IP 下面
-// 挂着一串账号。
-func (h *handlers) ipClusters(w http.ResponseWriter, r *http.Request) {
-	tenantID := httpx.TenantIDFrom(r.Context())
-
-	type cluster struct {
-		IP       string   `json:"ip"`
-		Accounts int      `json:"accounts"`
-		Events   int      `json:"events"`
-		First    any      `json:"first"`
-		Last     any      `json:"last"`
-		Emails   []string `json:"emails"`
-	}
-	out := []cluster{}
-
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(r.Context(), `
-			SELECT c.account_count, c.event_count, c.first_seen, c.last_seen,
-			       COALESCE((SELECT a.source_ip_enc FROM audit_events a
-			                  WHERE a.tenant_id = c.tenant_id
-			                    AND a.source_ip_hash = c.source_ip_hash
-			                    AND a.source_ip_enc IS NOT NULL
-			                  LIMIT 1), ''::bytea),
-			       COALESCE((SELECT array_agg(u.email) FROM users u
-			                  WHERE u.id::text = ANY(c.accounts) LIMIT 1), ARRAY[]::text[])
-			  FROM audit_ip_clusters c
-			 WHERE c.tenant_id = $1
-			 ORDER BY c.account_count DESC, c.last_seen DESC
-			 LIMIT 50`, tenantID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var c cluster
-			var enc []byte
-			if err := rows.Scan(&c.Accounts, &c.Events, &c.First, &c.Last, &enc, &c.Emails); err != nil {
-				return err
-			}
-			c.IP = h.decryptIP(enc)
-			out = append(out, c)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, map[string]any{"clusters": out})
 }

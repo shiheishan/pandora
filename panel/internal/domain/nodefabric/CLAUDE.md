@@ -5,9 +5,10 @@
 
 成员清单
 service.go: Service 与构造；bootstrap 令牌与旧版接入、身份查询、签名请求、心跳、配置签发与回报、指标
-enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token
-uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写审计、拒绝已退出服务的节点）、配置组装与 ETag、用户下发、流量与在线上报
-node_admin.go: 后台节点增删改、复制、移动、排序、批量状态，协议白名单与稳定协议 SQL
+enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token（签发记录重置为无签发人）
+uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写审计、记 server_token_issued_at/by、拒绝已退出服务的节点）、配置组装与 ETag、用户下发、流量与在线上报
+node_admin.go: 后台节点增删改、复制、移动、排序、批量状态，协议白名单与稳定协议 SQL；country_code（00082）只在此写、只进管理端响应（保留规则 3）
+node_identity.go: 节点凭据只读视图 NodeCredentials：当前或最近一份 mTLS 身份、服务端令牌是否存在及签发时间与签发人、未用未过期的安装令牌数
 server_admin.go: 后台服务器（物理宿主）读写与状态机
 protocol_schema.go: 各协议的配置约束元数据与规范化节点类型
 xboard_field_names.go / xboard_validate.go: 后台 xboard 字段名与内核字段名的翻译，校验复用同一翻译

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/httpx 的来源信息与调用主体（ClientIPFrom / UserAgentFrom / PrincipalFrom），依赖 pgx 事务
+// [OUTPUT]: 对外提供 Entry、Configure、Write、VerifyChain
+// [POS]: platform 的审计写入唯一入口，全部领域的审计都经 Write 进 audit_events；auth_context（00080）在这里从主体推出
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package audit 写入不可删审计记录（SEC-012）。
 //
 // 除了数据库层的追加写触发器，这里再加一层哈希链：
@@ -39,6 +44,9 @@ type Entry struct {
 	ApprovalID *string
 	Outcome    string // success / failure / denied / partial
 	ErrorCode  string
+	// AuthContext 是操作者此刻的认证强度：session / reauth，空表示不适用。
+	// 调用点一般不填，由 Write 从 context 的主体推出（见 authContextFrom）。
+	AuthContext string
 }
 
 // 来源信息的哈希盐与加密器，由 main 在启动时注入。
@@ -80,6 +88,9 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 	}
 	if e.UserAgent == "" {
 		e.UserAgent = httpx.UserAgentFrom(ctx)
+	}
+	if e.AuthContext == "" {
+		e.AuthContext = authContextFrom(ctx, e.ActorID)
 	}
 
 	// 明文 IP 优先：算哈希用于关联分析，加密一份供后台查看
@@ -134,13 +145,13 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 			 resource_type, resource_id, before_digest, after_digest,
 			 request_id, api_domain, source_ip_hash, user_agent,
 			 approval_request_id, outcome, error_code, prev_hash, entry_hash,
-			 source_ip_enc)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+			 source_ip_enc, auth_context)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
 		tenantID, e.ActorKind, e.ActorID, nullIfEmpty(e.ActorLabel), e.Action,
 		nullIfEmpty(e.ResourceType), e.ResourceID, beforeJSON, afterJSON,
 		nullIfEmpty(e.RequestID), nullIfEmpty(e.APIDomain), e.SourceIPHash,
 		nullIfEmpty(e.UserAgent), e.ApprovalID, e.Outcome, nullIfEmpty(e.ErrorCode),
-		prevHash, entryHash, ipEnc)
+		prevHash, entryHash, ipEnc, nullIfEmpty(e.AuthContext))
 	if err != nil {
 		return fmt.Errorf("写入审计记录: %w", err)
 	}
@@ -152,7 +163,8 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 func VerifyChain(ctx context.Context, tx pgx.Tx, tenantID string) (string, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id, actor_kind, actor_id, action, resource_type, resource_id,
-		       before_digest, after_digest, outcome, prev_hash, entry_hash
+		       before_digest, after_digest, outcome, coalesce(auth_context, ''),
+		       prev_hash, entry_hash
 		  FROM audit_events
 		 WHERE tenant_id = $1
 		 ORDER BY occurred_at, id`, tenantID)
@@ -165,17 +177,19 @@ func VerifyChain(ctx context.Context, tx pgx.Tx, tenantID string) (string, error
 	for rows.Next() {
 		var (
 			id, actorKind, action, outcome    string
+			authContext                       string
 			actorID, resourceType, resourceID *string
 			beforeJSON, afterJSON             []byte
 			storedPrev, storedHash            []byte
 		)
 		if err := rows.Scan(&id, &actorKind, &actorID, &action, &resourceType,
-			&resourceID, &beforeJSON, &afterJSON, &outcome,
+			&resourceID, &beforeJSON, &afterJSON, &outcome, &authContext,
 			&storedPrev, &storedHash); err != nil {
 			return "", err
 		}
 
-		e := Entry{ActorKind: actorKind, ActorID: actorID, Action: action, Outcome: outcome}
+		e := Entry{ActorKind: actorKind, ActorID: actorID, Action: action, Outcome: outcome,
+			AuthContext: authContext}
 		if resourceType != nil {
 			e.ResourceType = *resourceType
 		}
@@ -206,7 +220,27 @@ func chainHash(prev []byte, tenantID string, e Entry, before, after []byte) []by
 	h.Write(before)
 	h.Write(after)
 	h.Write([]byte(e.Outcome))
+	// 只在非空时参与：00080 之前的记录没有这一列，它们的哈希必须原样可复算
+	if e.AuthContext != "" {
+		h.Write([]byte(e.AuthContext))
+	}
 	return h.Sum(nil)
+}
+
+// authContextFrom 从请求主体推出本条记录的认证强度。
+//
+// 只有「主体就是这条记录的操作者、且带着一个登录会话」时才有意义：系统任务
+// 没有主体；管理员替用户记的账（actor 是用户）也不该把管理员的认证强度记到
+// 用户头上。其余一律留空，比猜一个值诚实。
+func authContextFrom(ctx context.Context, actorID *string) string {
+	p := httpx.PrincipalFrom(ctx)
+	if p.IsAnonymous() || p.SessionID == "" || actorID == nil || *actorID != p.UserID {
+		return ""
+	}
+	if p.ReauthedRecently {
+		return "reauth"
+	}
+	return "session"
 }
 
 func sha256Sum(s string) []byte {
