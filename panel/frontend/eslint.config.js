@@ -18,7 +18,7 @@ export default defineConfig(
     extends: [reactHooks.configs.flat['recommended-latest']],
   },
   {
-    files: ['vite.config.ts', 'eslint.config.js', 'tests/**/*.ts'],
+    files: ['vite.config.ts', 'eslint.config.js', 'tests/**/*.ts', 'dev/**/*.ts'],
     languageOptions: { globals: globals.node },
   },
 )

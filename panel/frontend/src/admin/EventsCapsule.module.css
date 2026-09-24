@@ -1,0 +1,178 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的表面、描边、文字、状态色令牌
+ * [OUTPUT]: 对外提供 EventsCapsule.tsx 用到的类名
+ * [POS]: admin/EventsCapsule 的样式：30 高胶囊（圆角 15）、脉冲绿点、墨底未读数；下拉宽 360、圆角 10、列表最高 340
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.root {
+  position: relative;
+}
+
+.capsule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 15px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.capsule:hover {
+  border-color: var(--border-hover);
+}
+
+.dotLive,
+.dotWait {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.dotLive {
+  animation: pulse 2s infinite;
+}
+
+.dotWait {
+  background: var(--warn);
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(47, 154, 106, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(47, 154, 106, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 154, 106, 0);
+  }
+}
+
+.count {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--text);
+  color: var(--on-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.panel {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  z-index: 30;
+  width: 360px;
+  /* 下拉在右栏的滚动容器里，左边会被侧栏截断：不超过右栏宽度 */
+  max-width: calc(100vw - 224px - 56px);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 16px 40px -12px rgba(20, 20, 30, 0.25);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--surface-3);
+}
+
+.headTitle {
+  font-weight: var(--fw-semibold);
+}
+
+.state {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.list {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.empty {
+  padding: 24px 14px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--surface-2);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.item:disabled {
+  cursor: default;
+  color: inherit;
+}
+
+.ok,
+.warn,
+.danger,
+.info {
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--info);
+}
+
+.ok {
+  background: var(--ok);
+}
+
+.warn {
+  background: var(--warn);
+}
+
+.danger {
+  background: var(--danger);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-weight: var(--fw-medium);
+}
+
+.body {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-family: var(--font-mono);
+}
+
+.at {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}

@@ -12,8 +12,9 @@ api.ts: 唯一 HTTP 出口。路径只收 v1/ 开头、相对 document.baseURI �
 token.ts: 访问令牌存储，localStorage 键按入口区分（pandora-admin-token / pandora-portal-token，两网关同源），存储不可用退回内存，storage 事件同步其它标签页；只存 access_token，不存 refresh_token（后端无 refresh 接口）
 sse.ts: 实时事件流。createSseParser 按 WHATWG 规范解析（任意块边界、CRLF/CR/LF、注释心跳、retry）；openEventStream 经 connect（一般是 api.openStream）用 fetch 流读，流结束、断网、5xx、429 等 retry（首帧 5000）加随机抖动重连并以 reconnected 标记，4xx 调 onStop 停止（404 = 无 ops.notification.read）；不用 EventSource，因为认证只有 Bearer 头
 query.ts: react-query 接入。createQueryClient 默认查询只对 5xx 补一次重试、写不在这层重试（重发要复用幂等键，归 api.ts），staleTime 30 秒；Register 把默认错误登记为 ApiError、queryMeta 登记 topics；createRealtimeInvalidator 按 meta.topics 精确失效、同 topic 2 秒节流合并（节点上报会刷屏 subscriptions.changed）、重连时失效全部；REALTIME_TOPICS 对齐 platform/realtime/listener.go
+format.ts: formatMoney（最小单位 → ¥1,280.00，CNY / USD 符号，其它币种写代码）与 relativeTime（刚刚 / N 分钟 / N 小时 / MM-DD，设计稿口径）
 router.ts: hash 路由原语，parseHash / href / navigate（push 或 replace）/ matchPath（:param，已解码）/ useHashLocation（useSyncExternalStore 订阅 hashchange）；真相在 location.hash，不含路由表；为什么是 hash：网关只下发 / 与 /assets/*，public 根下还有两段式订阅通配
-*.test.ts: api / token / sse / query / router 的单元测试，node 环境下伪造 fetch、流、location 与计时器，不引入 DOM 测试库；覆盖第 ⑤ 步验收的幂等键跨重试复用、reauth 后重放、SSE 断线重连、前缀下相对路径解析
+*.test.ts: api / token / sse / query / router / format 的单元测试，node 环境下伪造 fetch、流、location 与计时器，不引入 DOM 测试库；覆盖第 ⑤ 步验收的幂等键跨重试复用、reauth 后重放、SSE 断线重连、前缀下相对路径解析
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

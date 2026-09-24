@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 state、ref、effect、id 与键盘事件，依赖 ./cx 与 ./Menu.module.css
  * [OUTPUT]: 对外提供 Menu 与 MenuEntry 类型
- * [POS]: ui 的下拉菜单（门户头像菜单、后台账户与行内「更多」），自己渲染触发按钮、调用方只给按钮内容与样式：宽 248、圆角 12、内边距 6，菜单项圆角 7、高随入口；按 WAI-ARIA menu button 模式实现方向键、Home/End、Esc 回到触发按钮、点外面关闭
+ * [POS]: ui 的下拉菜单（门户头像菜单、后台账户与行内「更多」），自己渲染触发按钮、调用方只给按钮内容与样式：宽 248、圆角 12、内边距 6，菜单项圆角 7、高随入口；按 WAI-ARIA menu button 模式实现方向键、Home/End、Esc 回到触发按钮、点外面关闭；可受控（门户底部标签栏「我的」要从外面打开它），可向上弹出（后台侧栏底部的账户菜单）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
@@ -42,10 +42,38 @@ export interface MenuProps {
   align?: 'start' | 'end'
   label: string
   className?: string
+  /** 菜单面板的 className，用于改宽度（后台账户菜单与侧栏同宽） */
+  menuClassName?: string
+  /** bottom（默认）在触发按钮下方，top 向上弹出 */
+  placement?: 'bottom' | 'top'
+  /** 受控打开状态；不传则自管 */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
-export function Menu({ trigger, triggerLabel, triggerClassName, entries, header, align = 'end', label, className }: MenuProps) {
-  const [open, setOpen] = useState(false)
+export function Menu({
+  trigger,
+  triggerLabel,
+  triggerClassName,
+  entries,
+  header,
+  align = 'end',
+  label,
+  className,
+  menuClassName,
+  placement = 'bottom',
+  open: controlledOpen,
+  onOpenChange,
+}: MenuProps) {
+  const [ownOpen, setOwnOpen] = useState(false)
+  const open = controlledOpen ?? ownOpen
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (controlledOpen === undefined) setOwnOpen(next)
+      onOpenChange?.(next)
+    },
+    [controlledOpen, onOpenChange],
+  )
   const menuId = useId()
   const root = useRef<HTMLDivElement>(null)
   const button = useRef<HTMLButtonElement>(null)
@@ -54,10 +82,13 @@ export function Menu({ trigger, triggerLabel, triggerClassName, entries, header,
 
   const focusables = () => items.current.filter((el): el is HTMLButtonElement => el != null && !el.disabled)
 
-  const close = useCallback((restoreFocus: boolean) => {
-    setOpen(false)
-    if (restoreFocus) button.current?.focus()
-  }, [])
+  const close = useCallback(
+    (restoreFocus: boolean) => {
+      setOpen(false)
+      if (restoreFocus) button.current?.focus()
+    },
+    [setOpen],
+  )
 
   // 打开后把焦点放到第一项（或按上键打开时的最后一项）
   useEffect(() => {
@@ -71,7 +102,10 @@ export function Menu({ trigger, triggerLabel, triggerClassName, entries, header,
   useEffect(() => {
     if (!open) return
     const onPointer = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) close(false)
+      const target = event.target as Element | null
+      // 受控时外部开关（如底部标签栏「我的」）自己负责切换，这里不抢先关掉
+      if (target?.closest?.('[data-menu-toggle]')) return
+      if (!root.current?.contains(target)) close(false)
     }
     document.addEventListener('pointerdown', onPointer)
     return () => document.removeEventListener('pointerdown', onPointer)
@@ -121,7 +155,7 @@ export function Menu({ trigger, triggerLabel, triggerClassName, entries, header,
         {trigger}
       </button>
       {open && (
-        <div id={menuId} role="menu" aria-label={label} className={cx(css.menu, align === 'end' ? css.end : css.start)} onKeyDown={onMenuKeyDown}>
+        <div id={menuId} role="menu" aria-label={label} className={cx(css.menu, align === 'end' ? css.end : css.start, placement === 'top' && css.top, menuClassName)} onKeyDown={onMenuKeyDown}>
           {header != null && (
             <>
               <div className={css.header}>{header}</div>

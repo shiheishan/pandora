@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 依赖 vite / vitest 的 defineConfig 与 Plugin 类型，依赖 @vitejs/plugin-react 的 JSX 变换，依赖 src/core/theme-boot.js 的源码
- * [OUTPUT]: 对外提供按 mode 切换的构建配置：--mode admin|portal 各出一份独立产物，showcase 只允许 dev，vitest 的 test mode 以工程根为根；导出 themeBootFileName 供测试核对
+ * [INPUT]: 依赖 vite / vitest 的 defineConfig 与 Plugin 类型，依赖 @vitejs/plugin-react 的 JSX 变换，依赖 src/core/theme-boot.js 的源码，依赖 dev/mock-api.ts 的开发期假后端
+ * [OUTPUT]: 对外提供按 mode 切换的构建配置：--mode admin|portal 各出一份独立产物，showcase 只允许 dev，vitest 的 test mode 以工程根为根；dev 下 v1/ 请求走 PANDORA_API 代理或假后端；__APP_RELEASE__ 取 PANDORA_RELEASE；导出 themeBootFileName 供测试核对
  * [POS]: panel/frontend 的唯一构建入口，产物由 panel/Makefile 的 frontend-embed 同步进 panel/web/{admin,portal}
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
+import { mockApi } from './dev/mock-api.ts'
 
 // ---------------------------------------------------------------------------
 // 一个工程两个入口，但必须分两次构建：一次多入口构建会把两个 index.html 放进
@@ -61,9 +62,17 @@ function themeBoot(): Plugin {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 版本号：后台登录页与侧栏的「r55」由构建时注入，发布链设 PANDORA_RELEASE，本地为 dev。
+// 开发期后端：设了 PANDORA_API（如 http://127.0.0.1:8081）就把 /v1 代理过去，
+// 否则挂 dev/mock-api.ts 的假后端（只在 serve 时加入插件列表，构建产物里没有它）。
+// ---------------------------------------------------------------------------
+const define = { __APP_RELEASE__: JSON.stringify(process.env.PANDORA_RELEASE || 'dev') }
+
 export default defineConfig(({ mode, command }) => {
   if (mode === 'test') {
     return {
+      define,
       plugins: [react()],
       test: {
         root: here('.'),
@@ -78,12 +87,15 @@ export default defineConfig(({ mode, command }) => {
     throw new Error(`unknown mode "${mode}": use --mode admin, --mode portal or (dev only) --mode showcase`)
   }
   const entry: Entry = mode
+  const apiTarget = process.env.PANDORA_API
   return {
     root: here(`./src/${entry}`),
     // 后台挂在 nginx 高熵前缀后面，入口与资源一律相对引用
     base: './',
     publicDir: false,
-    plugins: [react(), themeBoot()],
+    define,
+    plugins: [react(), themeBoot(), ...(command === 'serve' && isApp(entry) && !apiTarget ? [mockApi(entry)] : [])],
+    server: apiTarget ? { proxy: { '/v1': { target: apiTarget, changeOrigin: true } } } : undefined,
     build: {
       outDir: here(`./dist/${entry}`),
       emptyOutDir: true,

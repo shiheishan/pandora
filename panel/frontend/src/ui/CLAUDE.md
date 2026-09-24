@@ -27,7 +27,7 @@ Modal.tsx: Modal（宽 400 / 560 / 720，圆角随入口，内边距 22，可选
 Modal.module.css: <dialog> 铺满视口作遮罩层，::backdrop 用 --scrim；:root:has(dialog[open]) 锁住页面滚动
 Drawer.tsx: 右侧抽屉（默认 480，用户详情传 560），头部标题/副标题/操作/关闭，可挂 toolbar（如 Tabs），内容滚动，底部操作区；< 640 全宽
 Toast.tsx: ToastProvider 与 useToast(message, tone)；反色底 + 状态圆点，2.6 秒消失，role="status" 播报；门户 < 640 抬到底部标签栏之上
-Menu.tsx: 下拉菜单，自己渲染触发按钮（调用方给内容与 className）；条目为普通项（hint、current、danger、disabled）、开关项（menuitemcheckbox，如深色模式）与分隔线，可带 header
+Menu.tsx: 下拉菜单，自己渲染触发按钮（调用方给内容与 className）；条目为普通项（hint、current、danger、disabled）、开关项（menuitemcheckbox，如深色模式）与分隔线，可带 header；可受控（open / onOpenChange，外部开关带 data-menu-toggle 免被点外关闭抢先）、可向上弹出（placement="top"）、menuClassName 改面板宽度
 Skeleton.tsx: 骨架块，300ms 后才显现（CSS 动画延迟），aria-hidden
 Empty.tsx: 空状态：一句现状 + 一句能做什么 + 最多一个次按钮；bare 用于表格与卡片内部
 *.module.css: 各组件同名样式，只引用令牌

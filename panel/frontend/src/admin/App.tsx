@@ -1,9 +1,24 @@
 /**
- * [INPUT]: 无外部依赖
+ * [INPUT]: 依赖 ../shell/runtime 的 RuntimeProvider / useSignedIn / AppRuntime，依赖 ./LoginPage、./Shell、./ReauthDialog、./reauth
  * [OUTPUT]: 对外提供 App 组件
- * [POS]: 管理后台的根组件，面板重构第 2 阶段第 ① 步只放空壳，外框与路由在第 ⑥ 步接入
+ * [POS]: 管理后台的根组件：装配运行时，按登录态在登录页与外框之间切换；ReauthDialog 常驻，任何页面的请求被 reauth_required 拦下都由它接住
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-export function App() {
-  return <main>Pandora 管理控制台</main>
+import { RuntimeProvider, useSignedIn, type AppRuntime } from '../shell/runtime'
+import { LoginPage } from './LoginPage'
+import { ReauthDialog } from './ReauthDialog'
+import type { ReauthController } from './reauth'
+import { Shell } from './Shell'
+
+export function App({ runtime, reauth }: { runtime: AppRuntime; reauth: ReauthController }) {
+  return (
+    <RuntimeProvider runtime={runtime}>
+      <Root />
+      <ReauthDialog controller={reauth} />
+    </RuntimeProvider>
+  )
+}
+
+function Root() {
+  return useSignedIn() ? <Shell /> : <LoginPage />
 }

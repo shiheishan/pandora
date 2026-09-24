@@ -15,12 +15,14 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "isolatedModules": true,
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true
   },
   "include": [
     "vite.config.ts",
-    "tests"
+    "tests",
+    "dev"
   ]
 }

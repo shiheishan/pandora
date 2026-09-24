@@ -1,0 +1,33 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的 --brand 与 --ls-wordmark
+ * [OUTPUT]: 对外提供 Logo.tsx 用到的类名
+ * [POS]: shell/Logo 的样式：环描边 8、缺口虚线，与设计稿 svg 逐值一致
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.mark {
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+.ring {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 8;
+  stroke-dasharray: 78.5 15.7;
+}
+
+.dot {
+  fill: var(--logo-dot, var(--brand));
+}
+
+.word {
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-wordmark);
+}
