@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/notify 的模板读写、示例渲染与草稿校验、SMTP 配置与发信器，依赖 platform/httpx
+// [OUTPUT]: 对外提供 handlers 的 listMailTemplates / saveMailTemplate / resetMailTemplate / previewMailTemplate / testMailTemplate
+// [POS]: api/admin 的通知模板：code 只能改不能建，列表带 has_default，草稿可预览、可直接实发测试
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -24,6 +29,7 @@ func (h *handlers) listMailTemplates(w http.ResponseWriter, r *http.Request) {
 			"subject": t.Subject, "body": t.Body,
 			"allowed_variables": t.AllowedVariables,
 			"is_default":        t.IsDefault,
+			"has_default":       notify.HasDefaultTemplate(t.Code, t.Channel),
 			"updated_at":        t.UpdatedAt,
 			"description":       notify.TemplateDescription(t.Code),
 			"preview_subject":   subject,
@@ -84,6 +90,25 @@ type testMailTemplateReq struct {
 	Code    string `json:"code"`
 	Channel string `json:"channel"`
 	To      string `json:"to"`
+	// Subject / Body 提供时按草稿渲染发送（先做保存时同样的校验），省略时发已保存的模板
+	Subject *string `json:"subject"`
+	Body    *string `json:"body"`
+}
+
+// previewMailTemplate 用示例值渲染一份未保存的草稿（纯计算，不写库）。
+func (h *handlers) previewMailTemplate(w http.ResponseWriter, r *http.Request) {
+	var req saveMailTemplateReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	out, err := h.d.Notify.PreviewDraft(r.Context(), httpx.TenantIDFrom(r.Context()),
+		req.Code, req.Channel, req.Subject, req.Body)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	httpx.OK(w, out)
 }
 
 // testMailTemplate 用示例值渲染当前模板并真发一封。
@@ -107,23 +132,39 @@ func (h *handlers) testMailTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := httpx.TenantIDFrom(r.Context())
-	rows, err := h.d.Notify.ListTemplates(r.Context(), tenantID)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	var found bool
 	var subject, body string
-	for _, t := range rows {
-		if t.Code == req.Code && t.Channel == req.Channel {
-			subject, body = notify.RenderPreview(t.Subject, t.Body, t.AllowedVariables)
-			found = true
-			break
+	if req.Subject != nil || req.Body != nil {
+		draftSubject, draftBody := "", ""
+		if req.Subject != nil {
+			draftSubject = *req.Subject
 		}
-	}
-	if !found {
-		httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
-		return
+		if req.Body != nil {
+			draftBody = *req.Body
+		}
+		var err error
+		subject, body, err = h.d.Notify.RenderDraftForTest(r.Context(), tenantID, req.Code, req.Channel, draftSubject, draftBody)
+		if err != nil {
+			httpx.Fail(w, r, h.d.Log, err)
+			return
+		}
+	} else {
+		rows, err := h.d.Notify.ListTemplates(r.Context(), tenantID)
+		if err != nil {
+			httpx.Fail(w, r, h.d.Log, err)
+			return
+		}
+		var found bool
+		for _, t := range rows {
+			if t.Code == req.Code && t.Channel == req.Channel {
+				subject, body = notify.RenderPreview(t.Subject, t.Body, t.AllowedVariables)
+				found = true
+				break
+			}
+		}
+		if !found {
+			httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+			return
+		}
 	}
 
 	cfg, err := notify.LoadSMTPConfig(r.Context(), h.d.Pool, h.d.Envelope, tenantID)

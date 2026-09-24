@@ -99,7 +99,14 @@ type Overview struct {
 		Trialing int64 `json:"trialing"`
 		Expiring int64 `json:"expiring_7_days"`
 		Expired  int64 `json:"expired"`
+		// New7Days 是近 7 天新建、当前仍 active / trialing 的订阅
+		New7Days int64 `json:"new_7_days"`
 	} `json:"subscriptions"`
+	// Nodes 只算没退役的节点；online 与 GET v1/nodes 的 stale 取反一致（心跳 ≤90 秒）
+	Nodes struct {
+		Total  int64 `json:"total"`
+		Online int64 `json:"online"`
+	} `json:"nodes"`
 	// 按币种分组而不是汇总成一个数：不同币种的最小单位金额直接相加
 	// 得到的是无意义的数字（1 日元 + 1 美元 = 2 什么？）。
 	// 平台同时在售多币种价格时，混加会让经营数据彻底失真。
@@ -116,6 +123,8 @@ type Overview struct {
 type RevenueRow struct {
 	Currency         string `json:"currency"`
 	Today            int64  `json:"today"`
+	Yesterday        int64  `json:"yesterday"`
+	ActualYesterday  int64  `json:"actual_yesterday"`
 	Last7Days        int64  `json:"last_7_days"`
 	Last30           int64  `json:"last_30_days"`
 	Total            int64  `json:"total"`
@@ -149,10 +158,20 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 			       count(*) FILTER (WHERE status = 'trialing'),
 			       count(*) FILTER (WHERE status IN ('active','trialing')
 			                          AND current_period_end < now() + interval '7 days'),
-			       count(*) FILTER (WHERE status = 'expired')
+			       count(*) FILTER (WHERE status = 'expired'),
+			       count(*) FILTER (WHERE status IN ('active','trialing')
+			                          AND created_at >= now() - interval '7 days')
 			  FROM subscriptions WHERE tenant_id = $1`, tenantID,
 		).Scan(&o.Subscriptions.Active, &o.Subscriptions.Trialing,
-			&o.Subscriptions.Expiring, &o.Subscriptions.Expired); err != nil {
+			&o.Subscriptions.Expiring, &o.Subscriptions.Expired, &o.Subscriptions.New7Days); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*),
+			       count(*) FILTER (WHERE last_heartbeat_at >= now() - interval '90 seconds')
+			  FROM nodes
+			 WHERE tenant_id = $1 AND status <> 'destroyed' AND serving_status <> 'retired'`, tenantID,
+		).Scan(&o.Nodes.Total, &o.Nodes.Online); err != nil {
 			return err
 		}
 
@@ -164,6 +183,7 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 		}
 		for _, currency := range []string{"CNY", "USD"} {
 			r := RevenueRow{Currency: currency}
+			var adjYesterday int64
 			if err := tx.QueryRow(ctx, `
 				WITH params AS (
 				 SELECT (now() AT TIME ZONE $3)::date AS today
@@ -174,7 +194,9 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date>=p.today-6),0)::bigint,
 				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
 				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date>=p.today-29),0)::bigint,
-				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END),0)::bigint
+				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END),0)::bigint,
+				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
+				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date=p.today-1),0)::bigint
 				   FROM ledger_entries le
 				   JOIN ledger_transactions lt ON lt.id=le.transaction_id AND lt.tenant_id=le.tenant_id
 				   JOIN ledger_accounts la ON la.id=le.account_id AND la.tenant_id=le.tenant_id
@@ -184,13 +206,15 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 				 SELECT coalesce(sum(amount) FILTER(WHERE effective_on=p.today),0)::bigint,
 				        coalesce(sum(amount) FILTER(WHERE effective_on>=p.today-6),0)::bigint,
 				        coalesce(sum(amount) FILTER(WHERE effective_on>=p.today-29),0)::bigint,
-				        coalesce(sum(amount),0)::bigint
+				        coalesce(sum(amount),0)::bigint,
+				        coalesce(sum(amount) FILTER(WHERE effective_on=p.today-1),0)::bigint
 				   FROM revenue_report_adjustments, params p WHERE tenant_id=$1 AND currency=$2
 				) SELECT * FROM actual CROSS JOIN adj`, tenantID, currency, revenueTimezone).
-				Scan(&r.ActualToday, &r.Actual7Days, &r.Actual30Days, &r.ActualTotal,
-					&r.AdjustmentToday, &r.Adjustment7Days, &r.Adjustment30Days, &r.AdjustmentTotal); err != nil {
+				Scan(&r.ActualToday, &r.Actual7Days, &r.Actual30Days, &r.ActualTotal, &r.ActualYesterday,
+					&r.AdjustmentToday, &r.Adjustment7Days, &r.Adjustment30Days, &r.AdjustmentTotal, &adjYesterday); err != nil {
 				return err
 			}
+			r.Yesterday = r.ActualYesterday + adjYesterday
 			r.Today = r.ActualToday + r.AdjustmentToday
 			r.Last7Days = r.Actual7Days + r.Adjustment7Days
 			r.Last30 = r.Actual30Days + r.Adjustment30Days
@@ -221,231 +245,6 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 //==============================================================================
 // 用户
 //==============================================================================
-
-type UserRow struct {
-	ID          string  `json:"id"`
-	Email       string  `json:"email"`
-	DisplayName *string `json:"display_name"`
-	Status      string  `json:"status"`
-	RiskLevel   string  `json:"risk_level"`
-	// GroupName 决定这个用户能看到哪些套餐、能用哪些券、按什么价买
-	GroupName   string     `json:"group_name"`
-	CreatedAt   time.Time  `json:"created_at"`
-	LastLoginAt *time.Time `json:"last_login_at"`
-	SubCount    int        `json:"subscription_count"`
-	ActiveSub   *string    `json:"active_plan"`
-	Balance     int64      `json:"balance"`
-	Currency    string     `json:"currency"`
-}
-
-type ListUsersInput struct {
-	Query  string
-	Status string
-	Limit  int
-	Offset int
-}
-
-func (s *Service) ListUsers(ctx context.Context, tenantID string, in ListUsersInput) ([]UserRow, int64, error) {
-	if in.Limit <= 0 || in.Limit > 100 {
-		in.Limit = 25
-	}
-	if in.Offset < 0 {
-		in.Offset = 0
-	}
-
-	out := []UserRow{}
-	var total int64
-
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// ILIKE 前后都加通配会让索引失效，但管理端搜索量小且结果集有上限，
-		// 这里优先保证「输入片段就能搜到」的可用性。数据量上来后改全文索引。
-		q := "%" + strings.ToLower(strings.TrimSpace(in.Query)) + "%"
-		if strings.TrimSpace(in.Query) == "" {
-			q = "%"
-		}
-		status := in.Status
-		if status == "" {
-			status = "%"
-		}
-
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM users
-			 WHERE tenant_id = $1
-			   AND (lower(email) LIKE $2 OR lower(coalesce(display_name,'')) LIKE $2)
-			   AND status::text LIKE $3`,
-			tenantID, q, status).Scan(&total); err != nil {
-			return err
-		}
-
-		rows, err := tx.Query(ctx, `
-			SELECT u.id, u.email, u.display_name, u.status, u.risk_level,
-			       u.created_at, u.last_login_at,
-			       (SELECT count(*) FROM subscriptions s WHERE s.user_id = u.id),
-			       (SELECT pl.name FROM subscriptions s
-			          JOIN plans pl ON pl.id = s.plan_id
-			         WHERE s.user_id = u.id AND s.status IN ('active','trialing')
-			         ORDER BY s.created_at DESC LIMIT 1),
-			       coalesce((SELECT -la.balance_signed FROM ledger_accounts la
-			                  WHERE la.owner_user_id = u.id
-			                    AND la.account_type = 'user_balance' LIMIT 1), 0),
-			       coalesce((SELECT la.currency FROM ledger_accounts la
-			                  WHERE la.owner_user_id = u.id
-                                    AND la.account_type = 'user_balance' LIMIT 1), 'CNY'),
-			       coalesce(g.name, '')
-			  FROM users u
-			  -- 用户组名：原先 SELECT 与 Scan 都漏了它，列表里恒为空（缺陷 8）
-			  LEFT JOIN user_groups g ON g.tenant_id = u.tenant_id AND g.id = u.user_group_id
-			 WHERE u.tenant_id = $1
-			   AND (lower(u.email) LIKE $2 OR lower(coalesce(u.display_name,'')) LIKE $2)
-			   AND u.status::text LIKE $3
-			 ORDER BY u.created_at DESC
-			 LIMIT $4 OFFSET $5`,
-			tenantID, q, status, in.Limit, in.Offset)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var r UserRow
-			if err := rows.Scan(&r.ID, &r.Email, &r.DisplayName, &r.Status, &r.RiskLevel,
-				&r.CreatedAt, &r.LastLoginAt, &r.SubCount, &r.ActiveSub,
-				&r.Balance, &r.Currency, &r.GroupName); err != nil {
-				return err
-			}
-			out = append(out, r)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, 0, httpx.Internal(err)
-	}
-	return out, total, nil
-}
-
-type UserDetail struct {
-	UserRow
-	EmailVerified bool              `json:"email_verified"`
-	Subscriptions []SubscriptionRow `json:"subscriptions"`
-	Orders        []OrderRow        `json:"recent_orders"`
-	Roles         []string          `json:"roles"`
-}
-
-type SubscriptionRow struct {
-	ID          string     `json:"id"`
-	PlanName    string     `json:"plan_name"`
-	PlanVersion int        `json:"plan_version"`
-	Status      string     `json:"status"`
-	PeriodEnd   *time.Time `json:"current_period_end"`
-	Amount      int64      `json:"amount"`
-	Currency    string     `json:"currency"`
-	AutoRenew   bool       `json:"auto_renew"`
-}
-
-func (s *Service) GetUser(ctx context.Context, tenantID, userID string) (*UserDetail, error) {
-	var d UserDetail
-
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var verifiedAt *time.Time
-		err := tx.QueryRow(ctx, `
-			SELECT u.id, u.email, u.display_name, u.status, u.risk_level,
-			       u.created_at, u.last_login_at, u.email_verified_at,
-			       coalesce((SELECT -la.balance_signed FROM ledger_accounts la
-			                  WHERE la.owner_user_id = u.id
-			                    AND la.account_type = 'user_balance' LIMIT 1), 0),
-			       coalesce((SELECT la.currency FROM ledger_accounts la
-			                  WHERE la.owner_user_id = u.id
-			                    AND la.account_type = 'user_balance' LIMIT 1), 'CNY'),
-			       coalesce((SELECT g.name FROM user_groups g
-			                  WHERE g.id = u.user_group_id), '')
-			  FROM users u WHERE u.tenant_id = $1 AND u.id = $2`,
-			tenantID, userID,
-		).Scan(&d.ID, &d.Email, &d.DisplayName, &d.Status, &d.RiskLevel,
-			&d.CreatedAt, &d.LastLoginAt, &verifiedAt, &d.Balance, &d.Currency,
-			&d.GroupName)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.NotFoundOrForbidden()
-		}
-		if err != nil {
-			return err
-		}
-		d.EmailVerified = verifiedAt != nil
-
-		d.Subscriptions = []SubscriptionRow{}
-		srows, err := tx.Query(ctx, `
-			SELECT s.id, pl.name, pv.version, s.status, s.current_period_end,
-			       s.snapshot_amount, s.snapshot_currency, s.auto_renew
-			  FROM subscriptions s
-			  JOIN plans pl ON pl.id = s.plan_id
-			  JOIN plan_versions pv ON pv.id = s.plan_version_id
-			 WHERE s.tenant_id = $1 AND s.user_id = $2
-			 ORDER BY s.created_at DESC`, tenantID, userID)
-		if err != nil {
-			return err
-		}
-		for srows.Next() {
-			var r SubscriptionRow
-			if err := srows.Scan(&r.ID, &r.PlanName, &r.PlanVersion, &r.Status,
-				&r.PeriodEnd, &r.Amount, &r.Currency, &r.AutoRenew); err != nil {
-				srows.Close()
-				return err
-			}
-			d.Subscriptions = append(d.Subscriptions, r)
-		}
-		srows.Close()
-		if err := srows.Err(); err != nil {
-			return err
-		}
-
-		d.Orders = []OrderRow{}
-		// 与订单列表同一份查询：原先这里自己写了一遍 SELECT，漏了首项快照，
-		// plan_name / interval / interval_count / item_count 恒为零值（缺陷 9）
-		orows, err := tx.Query(ctx, orderRowSelectSQL+`
-			 WHERE o.tenant_id = $1 AND o.user_id = $2
-			 ORDER BY o.created_at DESC LIMIT 20`, tenantID, userID)
-		if err != nil {
-			return err
-		}
-		for orows.Next() {
-			r, err := scanOrderRow(orows)
-			if err != nil {
-				orows.Close()
-				return err
-			}
-			d.Orders = append(d.Orders, r)
-		}
-		orows.Close()
-		if err := orows.Err(); err != nil {
-			return err
-		}
-
-		d.Roles = []string{}
-		rrows, err := tx.Query(ctx, `
-			SELECT r.code FROM role_bindings rb JOIN roles r ON r.id = rb.role_id
-			 WHERE rb.tenant_id = $1 AND rb.user_id = $2
-			   AND (rb.expires_at IS NULL OR rb.expires_at > now())
-			 ORDER BY r.code`, tenantID, userID)
-		if err != nil {
-			return err
-		}
-		defer rrows.Close()
-		for rrows.Next() {
-			var c string
-			if err := rrows.Scan(&c); err != nil {
-				return err
-			}
-			d.Roles = append(d.Roles, c)
-		}
-		return rrows.Err()
-	})
-	if err != nil {
-		if httpErr := new(httpx.Error); errors.As(err, &httpErr) {
-			return nil, err
-		}
-		return nil, httpx.Internal(err)
-	}
-	return &d, nil
-}
 
 // SetUserStatus 停用/恢复账号。
 //

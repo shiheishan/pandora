@@ -637,3 +637,17 @@ func validatePassword(p string) error {
 	}
 	return nil
 }
+
+// adminPasswordMinRunes 是管理员改自己密码的最短长度（契约后台外壳）：管理员口令
+// 是权限的根，比门户用户的 8 位更严；字母 + 数字与 256 字节上限仍走通用规则。
+const adminPasswordMinRunes = 12
+
+func validatePasswordFor(apiDomain, p string) error {
+	if err := validatePassword(p); err != nil {
+		return err
+	}
+	if apiDomain == "admin" && len([]rune(p)) < adminPasswordMinRunes {
+		return httpx.Invalid(map[string]string{"password": "管理员密码至少需要 12 个字符"})
+	}
+	return nil
+}

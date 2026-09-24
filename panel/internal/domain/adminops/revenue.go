@@ -55,14 +55,17 @@ func validateRevenueDays(days int) error {
 	return nil
 }
 
-func (s *Service) RevenueTimeseries(ctx context.Context, tenantID, currency string, days int) ([]RevenuePoint, error) {
+// RevenueTimeseries 返回按日补齐的收入点，以及紧邻的前一个等长区间的 displayed_net
+// 合计（「较上一区间」用）。两者同一个时区、同一份口径。
+func (s *Service) RevenueTimeseries(ctx context.Context, tenantID, currency string, days int) ([]RevenuePoint, int64, error) {
 	if err := validateRevenueCurrency(currency); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if err := validateRevenueDays(days); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	points := []RevenuePoint{}
+	var previousTotal int64
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var timezone string
 		if err := tx.QueryRow(ctx, `SELECT timezone FROM tenants WHERE id=$1`, tenantID).Scan(&timezone); err != nil {
@@ -107,12 +110,29 @@ func (s *Service) RevenueTimeseries(ctx context.Context, tenantID, currency stri
 			}
 			points = append(points, p)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// 前一个等长区间：[today-2d+1, today-d]
+		return tx.QueryRow(ctx, `
+			WITH params AS (
+			  SELECT (now() AT TIME ZONE $4)::date - $3::int AS last_day
+			)
+			SELECT coalesce((SELECT sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
+			                   FROM ledger_entries le
+			                   JOIN ledger_transactions lt ON lt.id=le.transaction_id AND lt.tenant_id=le.tenant_id
+			                   JOIN ledger_accounts la ON la.id=le.account_id AND la.tenant_id=le.tenant_id
+			                  WHERE le.tenant_id=$1 AND le.currency=$2 AND la.account_type='platform_revenue'
+			                    AND (lt.occurred_at AT TIME ZONE $4)::date BETWEEN p.last_day - ($3::int - 1) AND p.last_day), 0)::bigint
+			     + coalesce((SELECT sum(a.amount) FROM revenue_report_adjustments a
+			                  WHERE a.tenant_id=$1 AND a.currency=$2
+			                    AND a.effective_on BETWEEN p.last_day - ($3::int - 1) AND p.last_day), 0)::bigint
+			  FROM params p`, tenantID, currency, days, timezone).Scan(&previousTotal)
 	})
 	if err != nil {
-		return nil, httpx.Internal(err)
+		return nil, 0, httpx.Internal(err)
 	}
-	return points, nil
+	return points, previousTotal, nil
 }
 
 func (s *Service) ListRevenueAdjustments(ctx context.Context, tenantID, currency string) ([]RevenueAdjustment, error) {

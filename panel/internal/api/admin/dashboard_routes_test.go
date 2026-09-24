@@ -2,9 +2,7 @@ package admin
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
-	"os"
 	"reflect"
 	"sort"
 	"strconv"
@@ -43,16 +41,8 @@ func dashboardLiteral(expr ast.Expr) (string, bool) {
 
 func loadDashboardRoutes(t *testing.T) map[string]dashboardRouteContract {
 	t.Helper()
-	source, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	file, err := parser.ParseFile(token.NewFileSet(), "router.go", source, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
 	out := map[string]dashboardRouteContract{}
-	ast.Inspect(file, func(node ast.Node) bool {
+	inspectRouterFiles(t, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) < 2 {
 			return true
@@ -99,6 +89,8 @@ func TestDashboardRoutePermissionContracts(t *testing.T) {
 		"/dashboard/traffic/nodes":         {handler: "h.dashboardNodeTraffic", permissions: []string{"metering.read", "node.read"}},
 		"/dashboard/traffic/users":         {handler: "h.dashboardUserTraffic", permissions: []string{"iam.user.read", "metering.read"}},
 		"/dashboard/backlog/notifications": {handler: "h.dashboardNotificationBacklog", permissions: []string{"ops.notification.read"}},
+		// 「需要处理」只挂 M9 的汇总权限，各项在处理器里按原读权限过滤
+		"/dashboard/tasks": {handler: "h.dashboardTasks", permissions: []string{"ops.dashboard.read"}},
 	}
 	got := loadDashboardRoutes(t)
 	if !reflect.DeepEqual(got, want) {

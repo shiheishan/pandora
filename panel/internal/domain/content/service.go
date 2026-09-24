@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/audit/httpx，读写 content_pages，读 users（版本作者名）
+// [OUTPUT]: 对外提供 Page、ListFilter、PublishInput 与 Service 的后台列表 / 读取 / 发布 / 归档、门户可见性判定与读取
+// [POS]: domain/content 的主服务：版本化知识库与自定义页面，门户可见性一处判定（visible，支持 platform=any 与 q 全文包含）；后台列表带版本作者 created_by / created_by_name
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package content implements versioned knowledge-base and custom-page delivery.
 // Stored bodies are treated as plain text/Markdown source; neither API renders
 // trusted HTML. This keeps publication useful without creating an XSS boundary.
@@ -49,6 +54,9 @@ type Page struct {
 	UpdatedAt        time.Time  `json:"updated_at"`
 	LatestVersion    int        `json:"latest_version,omitempty"`
 	IsLatestAudience bool       `json:"is_latest_in_audience,omitempty"`
+	// 版本作者只在后台列表里填（「版本历史」的 by）；门户读路径不选这两列，恒为空不输出
+	CreatedBy     *string `json:"created_by,omitempty"`
+	CreatedByName *string `json:"created_by_name,omitempty"`
 }
 
 type ListFilter struct {
@@ -235,7 +243,10 @@ func (s *Service) ListAdmin(ctx context.Context, tenantID, actorID string, filte
 			           AND coalesce(newer.max_client_version,'')=coalesce(cp.max_client_version,'')
 			           AND newer.target_plan_ids=cp.target_plan_ids AND newer.visibility=cp.visibility),
 			       review_due_at,published_at,
-			       created_at,updated_at
+			       created_at,updated_at,
+			       cp.created_by::text,
+			       (SELECT coalesce(nullif(btrim(u.display_name), ''), u.email::text) FROM users u
+			         WHERE u.tenant_id = cp.tenant_id AND u.id = cp.created_by)
 			  FROM content_pages cp
 			 WHERE tenant_id=$1
 			   AND ($2='' OR kind=$2)
@@ -255,7 +266,8 @@ func (s *Service) ListAdmin(ctx context.Context, tenantID, actorID string, filte
 				&page.TargetPlatforms, &page.MinClientVersion, &page.MaxClientVersion,
 				&page.TargetPlanIDs, &page.Visibility, &page.Status,
 				&page.LatestVersion, &page.IsLatestAudience, &page.ReviewDueAt,
-				&page.PublishedAt, &page.CreatedAt, &page.UpdatedAt); err != nil {
+				&page.PublishedAt, &page.CreatedAt, &page.UpdatedAt,
+				&page.CreatedBy, &page.CreatedByName); err != nil {
 				return err
 			}
 			out = append(out, page)
@@ -450,7 +462,13 @@ func (s *Service) Archive(ctx context.Context, tenantID, actorID, requestID, pag
 
 type VisibleFilter struct {
 	Kind, Platform, ClientVersion, Locale string
+	// Query 对标题、摘要、正文做不区分大小写的包含匹配（≤100 字）；只看每篇文章
+	// 可见的那一版，旧版本命中不算
+	Query string
 }
+
+// PlatformAny 表示不按平台过滤（帮助中心要看到全部平台的客户端教程）。
+const PlatformAny = "any"
 
 func (s *Service) ListVisible(ctx context.Context, tenantID, userID string, filter VisibleFilter) ([]Page, error) {
 	return s.visible(ctx, tenantID, userID, "", filter, false)
@@ -476,8 +494,12 @@ func (s *Service) visible(ctx context.Context, tenantID, userID, slug string, fi
 		return nil, httpx.Invalid(map[string]string{"kind": "无效的内容类型"})
 	}
 	filter.Platform = strings.ToLower(strings.TrimSpace(filter.Platform))
-	if filter.Platform != "" && !allowedPlatforms[filter.Platform] {
+	if filter.Platform != "" && filter.Platform != PlatformAny && !allowedPlatforms[filter.Platform] {
 		return nil, httpx.Invalid(map[string]string{"platform": "无效的平台"})
+	}
+	filter.Query = strings.TrimSpace(filter.Query)
+	if utf8.RuneCountInString(filter.Query) > 100 {
+		return nil, httpx.Invalid(map[string]string{"q": "搜索词最多 100 个字"})
 	}
 	if filter.ClientVersion != "" && !versionPattern.MatchString(filter.ClientVersion) {
 		return nil, httpx.Invalid(map[string]string{"client_version": "客户端版本格式不正确"})
@@ -501,12 +523,14 @@ func (s *Service) visible(ctx context.Context, tenantID, userID, slug string, fi
 			       `+bodyExpr+`,coalesce(content->>'locale','zh-CN'),
 			       sanitizer_version,target_platforms,coalesce(min_client_version,''),
 			       coalesce(max_client_version,''),target_plan_ids::text[],visibility,status,
-			       review_due_at,published_at,created_at,updated_at
+			       review_due_at,published_at,created_at,updated_at,
+			       ($7='' OR strpos(lower(coalesce(content->>'title','')||' '||coalesce(content->>'summary','')
+			                        ||' '||coalesce(content->>'body','')), lower($7)) > 0)
 			  FROM content_pages cp
 			 WHERE cp.tenant_id=$1 AND cp.status='published'
 			   AND cp.visibility='authenticated'
 			   AND ($3='' OR cp.kind=$3)
-			   AND (cardinality(cp.target_platforms)=0 OR ($4<>'' AND $4=ANY(cp.target_platforms)))
+			   AND ($4='`+PlatformAny+`' OR cardinality(cp.target_platforms)=0 OR ($4<>'' AND $4=ANY(cp.target_platforms)))
 			   AND ($5='' OR cp.slug=$5)
 			   AND coalesce(cp.content->>'locale','zh-CN')=$6
 			   AND (cardinality(cp.target_plan_ids)=0 OR EXISTS (
@@ -515,7 +539,7 @@ func (s *Service) visible(ctx context.Context, tenantID, userID, slug string, fi
 			          AND s.status IN ('trialing','active','past_due','grace')
 			          AND s.plan_id=ANY(cp.target_plan_ids)))
 			 ORDER BY cp.slug,cp.version DESC LIMIT 200`,
-			tenantID, userID, filter.Kind, filter.Platform, slug, filter.Locale)
+			tenantID, userID, filter.Kind, filter.Platform, slug, filter.Locale, filter.Query)
 		if err != nil {
 			return err
 		}
@@ -523,16 +547,20 @@ func (s *Service) visible(ctx context.Context, tenantID, userID, slug string, fi
 		seen := map[string]bool{}
 		for rows.Next() {
 			var page Page
+			var matched bool
 			if err := rows.Scan(&page.ID, &page.Slug, &page.Kind, &page.Category, &page.Version,
 				&page.Title, &page.Summary, &page.Body, &page.Locale, &page.SanitizerVersion,
 				&page.TargetPlatforms, &page.MinClientVersion, &page.MaxClientVersion,
 				&page.TargetPlanIDs, &page.Visibility, &page.Status, &page.ReviewDueAt,
-				&page.PublishedAt, &page.CreatedAt, &page.UpdatedAt); err != nil {
+				&page.PublishedAt, &page.CreatedAt, &page.UpdatedAt, &matched); err != nil {
 				return err
 			}
+			// 先按版本挑出每篇的可见版，再看它是否命中搜索词
 			if !seen[page.Slug] && versionVisible(page.MinClientVersion, page.MaxClientVersion, filter.ClientVersion) {
 				seen[page.Slug] = true
-				out = append(out, page)
+				if matched {
+					out = append(out, page)
+				}
 			}
 		}
 		return rows.Err()

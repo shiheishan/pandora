@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 domain/* 各服务（经 Deps 注入）、middleware 的鉴权/限流/严格限流/幂等链、platform/webapp 的 Mount 与 web.PortalApp
+// [INPUT]: 依赖 domain/* 各服务（经 Deps 注入）、middleware 的鉴权/限流/严格限流/幂等链与降级开关门（billing.checkout、marketing.giftcard.redeem）、platform/webapp 的 Mount 与 web.PortalApp
 // [OUTPUT]: 对外提供 Deps、NewRouter：public 网关的完整 chi 路由表
 // [POS]: api/public 的装配点：根 / 与 /assets/* 经 webapp 下发门户前端、/{prefix}/{token} 订阅分发、/pdnd 安装引导、/v1 用户 API；字面量路由优先于订阅通配
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -156,9 +156,14 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(middleware.RateLimit(d.Redis, d.Log,
 				middleware.ByAccount("acct", time.Minute, d.Cfg.RateLimitPerAccountPerMinute),
 			))
+			// billing.checkout 关闭时拒绝新建订单（新购、续费、变更套餐、流量包、充值）
+			// 与发起支付；已发起支付的回调走 /webhooks，不受影响。挂在幂等之前
+			checkout := middleware.FeatureSwitch(d.Pool, "billing.checkout", "下单与支付暂停中，请稍后再试", d.Log)
 
 			r.Post("/auth/logout", h.logout)
 			r.Get("/me", h.me)
+			// 结账页与充值的支付方式（只读）
+			r.Get("/payment-methods", h.listPaymentMethods)
 			r.Get("/me/subscriptions", h.listSubscriptions)
 			r.Get("/me/subscriptions/{id}/nodes", h.meSubscriptionNodes)
 			// 按日用量（门户-02 柱状图）：只读，数据由节点流量上报同事务累加（迁移 00072）
@@ -174,7 +179,7 @@ func NewRouter(d Deps) http.Handler {
 			r.With(middleware.Idempotency(d.Pool, billing.CommissionWithdrawalIdempotencyScope, d.Log)).
 				Post("/me/withdrawals", h.requestWithdrawal)
 			r.Get("/me/balance", h.myBalance)
-			r.With(middleware.Idempotency(d.Pool, billing.TopupIdempotencyScope, d.Log)).
+			r.With(checkout, middleware.Idempotency(d.Pool, billing.TopupIdempotencyScope, d.Log)).
 				Post("/me/topups", h.createTopup)
 			r.Get("/me/announcements", h.myAnnouncements)
 			r.Get("/content/pages", h.listContentPages)
@@ -186,27 +191,27 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/me/notification-preferences", h.getNotificationPreferences)
 			r.Put("/me/notification-preferences", h.setNotificationPreference)
 			r.Post("/me/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
-			r.With(middleware.Idempotency(d.Pool, "subscription_renewal_create", d.Log)).
+			r.With(checkout, middleware.Idempotency(d.Pool, "subscription_renewal_create", d.Log)).
 				Post("/me/subscriptions/{id}/renew", h.createRenewal)
 			// 变更套餐（D-E-2）：试算不落库；下单有自己的幂等域，数据库的订单/幂等
 			// 对称绑定把 kind=upgrade 映射到它（迁移 00071）
 			r.Post("/me/subscriptions/{id}/change-plan/preview", h.previewPlanChange)
-			r.With(middleware.Idempotency(d.Pool, billing.PlanChangeIdempotencyScope, d.Log)).
+			r.With(checkout, middleware.Idempotency(d.Pool, billing.PlanChangeIdempotencyScope, d.Log)).
 				Post("/me/subscriptions/{id}/change-plan", h.createPlanChange)
 
 			// 下单要求幂等键：用户网络抖动重发不能变成两张订单
-			r.With(middleware.Idempotency(d.Pool, "order_create", d.Log)).
+			r.With(checkout, middleware.Idempotency(d.Pool, "order_create", d.Log)).
 				Post("/orders", h.createOrder)
 			// 流量包订单（kind=addon）与新购共用 order_create 幂等域：数据库的订单/幂等
 			// 对称绑定按 kind 映射幂等域，addon 映射到它（迁移 00070）
-			r.With(middleware.Idempotency(d.Pool, billing.CheckoutIdempotencyScope, d.Log)).
+			r.With(checkout, middleware.Idempotency(d.Pool, billing.CheckoutIdempotencyScope, d.Log)).
 				Post("/me/traffic-pack-orders", h.createTrafficPackOrder)
 			r.Get("/me/traffic-packs", h.myTrafficPacks)
 
 			// 发起支付：返回收银台跳转地址。
 			// 不加网关级幂等 —— 复用在途意图的逻辑在服务层用行锁做，
 			// 用户连点两次会拿回同一个收银台而不是报幂等冲突。
-			r.Post("/orders/{id}/pay", h.payOrder)
+			r.With(checkout).Post("/orders/{id}/pay", h.payOrder)
 			r.Post("/orders/{id}/cancel", h.cancelOrder)
 
 			// --- 礼品卡兑换 ---
@@ -214,8 +219,10 @@ func NewRouter(d Deps) http.Handler {
 			// 已经能防住重复发放，幂等键让重发拿回同一个结果，
 			// 而不是一句让人困惑的「卡密无效」。
 			r.Post("/gift-cards/preview", h.previewGiftCard)
-			r.With(middleware.Idempotency(d.Pool, "gift_card_redeem", d.Log)).
-				Post("/gift-cards/redeem", h.redeemGiftCard)
+			r.With(
+				middleware.FeatureSwitch(d.Pool, "marketing.giftcard.redeem", "礼品卡兑换暂停中，请稍后再试", d.Log),
+				middleware.Idempotency(d.Pool, "gift_card_redeem", d.Log),
+			).Post("/gift-cards/redeem", h.redeemGiftCard)
 			r.Get("/me/gift-cards", h.myGiftRedemptions)
 
 			// --- Telegram 绑定 ---

@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务与 pgx
 // [OUTPUT]: 对外提供 Channel、Sender、ErrChannelNotConfigured、Service、New、Enqueue、Render、Dispatch
-// [POS]: domain/notify 的队列核心：按用户入队与统一派发；按地址入队在 address.go，扫描循环在 scan.go
+// [POS]: domain/notify 的队列核心：按用户入队与统一派发（notify.email 降级开关关闭时派发跳过邮件渠道）；按地址入队在 address.go，扫描循环在 scan.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package notify 实现通知：站内信、邮件，以及到期与流量预警。
@@ -198,6 +198,11 @@ func (s *Service) Dispatch(ctx context.Context, tenantID string, limit int) (int
 			  FROM notification_deliveries
 			 WHERE tenant_id = $1 AND status = 'queued'
 			   AND (next_retry_at IS NULL OR next_retry_at <= now())
+			   -- notify.email 关闭时跳过邮件渠道：留在队列里，恢复后按原顺序投递。
+			   -- 缺行视为开启（与网关的降级开关门同一口径）
+			   AND (channel <> 'email' OR COALESCE(
+			         (SELECT f.enabled FROM feature_switches f
+			           WHERE f.tenant_id = $1 AND f.code = 'notify.email'), true))
 			 ORDER BY created_at
 			 LIMIT $2
 			 FOR UPDATE SKIP LOCKED`, tenantID, limit)

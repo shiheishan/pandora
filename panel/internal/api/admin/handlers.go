@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 domain 的 adminops/billing/identity/nodefabric/subscription/support 服务、middleware、platform 的 audit/crypto/db/httpx/realtime
+// [INPUT]: 依赖 domain 的 adminops/billing/identity/nodefabric/subscription/support 服务、middleware、platform 的 audit/crypto/db/httpx/realtime（降级开关切换后发 switches.changed）
 // [OUTPUT]: 对外提供 handlers 结构与登录、用户、订阅、订单、节点、工单等核心处理器，adminRotateResponse
 // [POS]: api/admin 的核心处理器集合，被 router.go 装配；专题处理器分散在同包其它文件
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/adminops"
@@ -152,11 +153,20 @@ func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFrom(r.Context())
+	// 令牌里的身份之外，补上侧栏账户块要的邮箱、显示名与角色（只读库，不改令牌）
+	prof, err := h.d.Identity.AdminProfile(r.Context(), p.TenantID, p.UserID)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
 	httpx.OK(w, map[string]any{
-		"user_id":     p.UserID,
-		"kind":        p.Kind,
-		"permissions": p.Permissions,
-		"reauthed":    p.ReauthedRecently,
+		"user_id":      p.UserID,
+		"kind":         p.Kind,
+		"permissions":  p.Permissions,
+		"reauthed":     p.ReauthedRecently,
+		"email":        prof.Email,
+		"display_name": prof.DisplayName,
+		"roles":        prof.Roles,
 	})
 }
 
@@ -219,10 +229,12 @@ func (h *handlers) listUsers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rows, total, err := h.d.Ops.ListUsers(r.Context(), httpx.TenantIDFrom(r.Context()),
 		adminops.ListUsersInput{
-			Query:  q.Get("q"),
-			Status: q.Get("status"),
-			Limit:  atoiDefault(q.Get("limit"), 25),
-			Offset: atoiDefault(q.Get("offset"), 0),
+			Query:    q.Get("q"),
+			Status:   q.Get("status"),
+			GroupID:  q.Get("group_id"),
+			SubState: q.Get("sub_state"),
+			Limit:    atoiDefault(q.Get("limit"), 25),
+			Offset:   atoiDefault(q.Get("offset"), 0),
 		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
@@ -486,6 +498,12 @@ func (h *handlers) setSwitch(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	// 只发管理端频道，不挂表触发器：触发器会把没有 user_id 的变更同时广播到
+	// 门户的公共频道
+	if h.d.Realtime != nil {
+		h.d.Realtime.Publish(r.Context(), realtime.ChannelAdmin(httpx.TenantIDFrom(r.Context())),
+			"switches.changed", map[string]any{"code": chi.URLParam(r, "code"), "enabled": req.Enabled})
+	}
 	httpx.OK(w, map[string]any{"ok": true, "enabled": req.Enabled})
 }
 
@@ -569,6 +587,11 @@ func (h *handlers) ticketQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) ticketDetail(w http.ResponseWriter, r *http.Request) {
+	// 非 uuid 的 id 直接 404：交给 SQL 会变成 500（契约 §1.4）
+	if _, err := uuid.Parse(chi.URLParam(r, "id")); err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeNotFound, "工单不存在"))
+		return
+	}
 	t, err := h.d.Support.GetForAgent(r.Context(),
 		httpx.TenantIDFrom(r.Context()), chi.URLParam(r, "id"))
 	if err != nil {
@@ -762,6 +785,12 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 		// 前者就说明有人在共享账号，这是两个不能合并的指标。
 		OnlineUsers int `json:"online_users"`
 		OnlineIPs   int `json:"online_ips"`
+		// TrafficBytes24h 是近 24 小时上下行合计（原始量），设计表格的「24h 流量」列
+		TrafficBytes24h int64 `json:"traffic_bytes_24h"`
+		// 所在服务器控制节点最近一条探针（与服务器列表的 cpu_bp 同源）；无探针为 null
+		CPUPercent *float64   `json:"cpu_percent"`
+		MemPercent *float64   `json:"mem_percent"`
+		MetricsAt  *time.Time `json:"metrics_at"`
 		// TrafficBytes 是近 30 天上下行合计（原始量，未乘倍率）。
 		// 不做全量累计：node_traffic_reports 每节点每分钟一条，
 		// 全表 SUM 会随运行时长线性变慢，而列表页每次打开都要算。
@@ -794,7 +823,9 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 				   WHERE tenant_id = $1 AND last_seen_at > now() - interval '5 minutes'
 				   GROUP BY node_id
 				), traffic AS (
-				  SELECT node_id, sum(total_upload + total_download)::bigint AS bytes
+				  SELECT node_id, sum(total_upload + total_download)::bigint AS bytes,
+				         coalesce(sum(total_upload + total_download)
+				           FILTER (WHERE received_at > now() - interval '24 hours'), 0)::bigint AS bytes_24h
 				    FROM node_traffic_reports
 				   WHERE tenant_id = $1 AND duplicate_of IS NULL
 				     AND received_at > now() - interval '30 days'
@@ -821,7 +852,10 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 				       coalesce(n.kernel,'auto'), n.protocol_config,
 				       n.protocol_schema_version,n.config_validated_at,n.sort_order,n.node_no,
 				       coalesce(a.users,0), coalesce(a.ips,0), coalesce(t.bytes,0),
-				       coalesce(g.plans, '{}')
+				       coalesce(g.plans, '{}'), coalesce(t.bytes_24h,0),
+				       m.cpu_bp / 100.0,
+				       CASE WHEN m.mem_total_mb > 0 THEN round(m.mem_used_mb * 100.0 / m.mem_total_mb, 1) END,
+				       m.recorded_at
 				  FROM nodes n
 				  LEFT JOIN node_pools p ON p.id = n.pool_id
 				  LEFT JOIN servers s ON s.id=n.server_id AND s.tenant_id=n.tenant_id
@@ -829,9 +863,15 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 				  LEFT JOIN alive a ON a.node_id = n.id
 				  LEFT JOIN traffic t ON t.node_id = n.id
 				  LEFT JOIN grants g ON g.pool_id = n.pool_id
+				  LEFT JOIN LATERAL (
+				        SELECT nm.cpu_bp, nm.mem_used_mb, nm.mem_total_mb, nm.recorded_at
+				          FROM node_metrics nm
+				         WHERE nm.tenant_id = s.tenant_id AND nm.node_id = s.control_node_id
+				         ORDER BY nm.recorded_at DESC LIMIT 1) m ON true
 				 WHERE n.tenant_id = $1 AND n.status <> 'destroyed'
 				   AND ($2::boolean OR n.serving_status <> 'retired')
-				 ORDER BY n.created_at DESC, n.id
+				 -- 与「调整排序」同一个顺序（契约后台-07）
+				 ORDER BY n.sort_order, n.node_no, n.id
 				 LIMIT $3 OFFSET $4`,
 				httpx.TenantIDFrom(r.Context()), includeRetired, limit, offset)
 			if err != nil {
@@ -849,7 +889,7 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 					&x.TrafficRate, &x.DisplayName, &x.CountryCode, &x.Kernel, &x.Protocol,
 					&x.ProtocolSchemaVersion, &x.ConfigValidatedAt, &x.SortOrder, &x.NodeNo,
 					&x.OnlineUsers, &x.OnlineIPs, &x.TrafficBytes,
-					&x.GrantedPlans); err != nil {
+					&x.GrantedPlans, &x.TrafficBytes24h, &x.CPUPercent, &x.MemPercent, &x.MetricsAt); err != nil {
 					return err
 				}
 				// 心跳的两个事实由 Go 侧从 LastBeat 推出，不在 SQL 里算。
@@ -1277,46 +1317,10 @@ func (h *handlers) nodeSetRouting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 先在内存里把引用关系校验掉。留到数据库外键去挡的话，
-	// 报出来的是一句 SQL 错误，用户看不懂错在第几条规则
-	tags := map[string]bool{"direct": true, "block": true}
-	for i := range req.Outbounds {
-		o := &req.Outbounds[i]
-		o.Tag = strings.TrimSpace(o.Tag)
-		o.Type = strings.ToLower(strings.TrimSpace(o.Type))
-		if o.Tag == "" || o.Type == "" {
-			httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
-				"outbounds": "每条出站都要有 tag 和 type"}))
-			return
-		}
-		tagKey := strings.ToLower(o.Tag)
-		if tags[tagKey] {
-			httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
-				"outbounds": "出站 tag 重复或占用内置名称：" + o.Tag}))
-			return
-		}
-		tags[tagKey] = true
-	}
-	lastEnabled := -1
-	for i, x := range req.Routes {
-		if x.Enabled {
-			lastEnabled = i
-		}
-	}
-	// 规则指向的出站是否存在，要连全局出站一起看（见事务里的检查），
-	// 这里先把不依赖数据库的校验做完
-	for i, x := range req.Routes {
-		empty, err := nodefabric.ValidateRoutingMatcher(x.Matcher)
-		if err != nil {
-			httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
-				"routes": fmt.Sprintf("第 %d 条规则无法跨内核下发：%v", i+1, err)}))
-			return
-		}
-		if x.Enabled && empty && i != lastEnabled {
-			httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
-				"routes": fmt.Sprintf("第 %d 条空匹配兜底规则必须放在最后", i+1)}))
-			return
-		}
+	tags, err := validateRoutingPayload(req.Outbounds, req.Routes)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
 	}
 
 	id := chi.URLParam(r, "id")
@@ -1327,7 +1331,7 @@ func (h *handlers) nodeSetRouting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID, ActorID: actor},
+	err = h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID, ActorID: actor},
 		func(tx pgx.Tx) error {
 			// Even an empty replacement must target a real Node. Locking the row also
 			// serializes routing replacement with Node lifecycle/move operations.

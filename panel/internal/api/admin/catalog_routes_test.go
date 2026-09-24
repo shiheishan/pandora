@@ -2,7 +2,6 @@ package admin
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"strconv"
@@ -43,16 +42,8 @@ func catalogStringLiteral(expr ast.Expr) (string, bool) {
 
 func loadCatalogRouteContracts(t *testing.T) map[string]catalogRouteContract {
 	t.Helper()
-	b, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	file, err := parser.ParseFile(token.NewFileSet(), "router.go", b, 0)
-	if err != nil {
-		t.Fatalf("parse router.go: %v", err)
-	}
 	routes := map[string]catalogRouteContract{}
-	ast.Inspect(file, func(node ast.Node) bool {
+	inspectRouterFiles(t, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) < 2 {
 			return true

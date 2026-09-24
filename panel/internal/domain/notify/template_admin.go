@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 platform 的 db/audit/httpx
-// [OUTPUT]: 对外提供 TemplateRow、TemplateDescription、ListTemplates、SaveTemplate、ResetTemplate、RenderPreview
+// [OUTPUT]: 对外提供 TemplateRow、TemplateDescription、ListTemplates、SaveTemplate、ResetTemplate、RenderPreview、HasDefaultTemplate、DraftPreview、PreviewDraft、RenderDraftForTest
 // [POS]: domain/notify 的模板管理端读写；defaultTemplates 与迁移种子逐字一致，恢复默认回到它
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -191,6 +191,77 @@ func (s *Service) ResetTemplate(ctx context.Context, tenantID, code, channel,
 	}
 	return s.SaveTemplate(ctx, tenantID, SaveTemplateInput{
 		Code: code, Channel: channel, Subject: d.Subject, Body: d.Body, ActorID: actorID})
+}
+
+// HasDefaultTemplate 报告模板有没有内置默认内容（「恢复默认」是否可用）。
+func HasDefaultTemplate(code, channel string) bool {
+	_, ok := defaultTemplates[code+"|"+channel]
+	return ok
+}
+
+// DraftPreview 是未保存草稿按示例值渲染的结果。
+type DraftPreview struct {
+	Subject          string   `json:"preview_subject"`
+	Body             string   `json:"preview_body"`
+	UnknownVariables []string `json:"unknown_variables"`
+}
+
+// PreviewDraft 用示例值渲染一份未保存的草稿，并列出白名单外的变量——编辑时
+// 就能提示，不必等保存报错。只读库取白名单，不写库。
+func (s *Service) PreviewDraft(ctx context.Context, tenantID, code, channel, subject, body string) (*DraftPreview, error) {
+	allowed, err := s.templateAllowedVariables(ctx, tenantID, code, channel)
+	if err != nil {
+		return nil, err
+	}
+	out := &DraftPreview{UnknownVariables: unknownVariables(subject+"\n"+body, allowed)}
+	if out.UnknownVariables == nil {
+		out.UnknownVariables = []string{}
+	}
+	out.Subject, out.Body = RenderPreview(subject, body, allowed)
+	return out, nil
+}
+
+// RenderDraftForTest 按保存时同样的长度与变量白名单校验一份草稿，通过后用示例值
+// 渲染，供「实发测试信」直接发草稿。
+func (s *Service) RenderDraftForTest(ctx context.Context, tenantID, code, channel, subject, body string) (string, string, error) {
+	subject, body = strings.TrimSpace(subject), strings.TrimSpace(body)
+	if subject == "" || utf8.RuneCountInString(subject) > 200 {
+		return "", "", httpx.Invalid(map[string]string{"subject": "主题必填，且不超过 200 字"})
+	}
+	if body == "" || utf8.RuneCountInString(body) > 20000 {
+		return "", "", httpx.Invalid(map[string]string{"body": "正文必填，且不超过 20000 字"})
+	}
+	allowed, err := s.templateAllowedVariables(ctx, tenantID, code, channel)
+	if err != nil {
+		return "", "", err
+	}
+	if bad := unknownVariables(subject+"\n"+body, allowed); len(bad) > 0 {
+		return "", "", httpx.Invalid(map[string]string{
+			"body": "用到了这个模板不提供的变量：" + strings.Join(bad, "、") + "。可用变量：" + strings.Join(allowed, "、"),
+		})
+	}
+	subject, body = RenderPreview(subject, body, allowed)
+	return subject, body, nil
+}
+
+func (s *Service) templateAllowedVariables(ctx context.Context, tenantID, code, channel string) ([]string, error) {
+	if code == "" || channel == "" {
+		return nil, httpx.New(httpx.CodeBadRequest, "code 与 channel 必填")
+	}
+	var allowed []string
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT allowed_variables FROM notification_templates
+			 WHERE tenant_id = $1 AND code = $2 AND channel = $3 AND locale = 'zh-CN'
+			 ORDER BY version DESC LIMIT 1`, tenantID, code, channel).Scan(&allowed)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, httpx.New(httpx.CodeNotFound, "模板不存在")
+	}
+	if err != nil {
+		return nil, httpx.Internal(err)
+	}
+	return allowed, nil
 }
 
 // RenderPreview 用示例值渲染，让管理员保存前能看到成品。

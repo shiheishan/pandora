@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 users.go 的 currentSubscriptionSQL / subStateSQL，依赖 platform 的 crypto/db/audit/httpx
+// [OUTPUT]: 对外提供 BulkFilter、BulkPreview、BulkSampleRow、ExportRow 与 Service.PreviewBulk / ExportUsers / GenerateUsers
+// [POS]: domain/adminops 的用户批量运营：预览、导出、群发共用 buildFilterSQL 圈人（含当前订阅的套餐、到期天数与订阅状态），批量生成账号
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
@@ -8,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/audit"
@@ -29,6 +35,10 @@ type BulkFilter struct {
 	GroupID      string // 用户分组
 	HasActiveSub *bool  // 有无生效订阅
 	Query        string // 邮箱模糊匹配
+	// 以下三项按「当前订阅」判断，挑法与用户列表的 current_subscription 相同
+	PlanID            string // 当前订阅的套餐
+	ExpiresWithinDays int    // 当前订阅在 N 天内到期（1–365，0 不限）
+	SubState          string // active / expired / none
 }
 
 // buildFilterSQL 把筛选条件翻成 WHERE 片段。
@@ -59,6 +69,19 @@ func buildFilterSQL(f BulkFilter, args *[]any, tenantID string) string {
 		where += " AND " + cond + " (SELECT 1 FROM subscriptions s" +
 			" WHERE s.tenant_id = u.tenant_id AND s.user_id = u.id AND s.status = 'active')"
 	}
+	if f.PlanID != "" {
+		*args = append(*args, f.PlanID)
+		where += " AND " + currentSubscriptionSQL("plan_id") + " = $" + itoa(len(*args)) + "::uuid"
+	}
+	if f.ExpiresWithinDays > 0 {
+		*args = append(*args, f.ExpiresWithinDays)
+		end := currentSubscriptionSQL("current_period_end")
+		where += " AND " + end + " >= now() AND " + end + " < now() + make_interval(days => $" + itoa(len(*args)) + "::int)"
+	}
+	if f.SubState != "" {
+		*args = append(*args, f.SubState)
+		where += " AND " + subStateSQL("$"+itoa(len(*args))+"::text")
+	}
 	return where
 }
 
@@ -82,10 +105,25 @@ func (f BulkFilter) validate() error {
 	default:
 		return httpx.Invalid(map[string]string{"status": "不支持的用户状态"})
 	}
+	fields := map[string]string{}
 	if f.GroupID != "" {
 		if err := validateUUID(f.GroupID); err != nil {
-			return httpx.Invalid(map[string]string{"group_id": "分组标识格式不正确"})
+			fields["group_id"] = "分组标识格式不正确"
 		}
+	}
+	if f.PlanID != "" {
+		if _, err := uuid.Parse(f.PlanID); err != nil {
+			fields["plan_id"] = "套餐标识格式不正确"
+		}
+	}
+	if f.ExpiresWithinDays < 0 || f.ExpiresWithinDays > 365 {
+		fields["expires_within_days"] = "到期天数只能是 1–365"
+	}
+	if !validSubState(f.SubState) {
+		fields["sub_state"] = "订阅状态只能是 active、expired 或 none"
+	}
+	if len(fields) > 0 {
+		return httpx.Invalid(fields)
 	}
 	return nil
 }
@@ -104,6 +142,14 @@ func validateUUID(s string) error {
 type BulkPreview struct {
 	Total   int      `json:"total"`
 	Samples []string `json:"samples"` // 前若干个邮箱，让人确认圈对了没
+	// SampleRows 是同一批样本带上当前订阅的套餐与到期（预览列表用）
+	SampleRows []BulkSampleRow `json:"sample_rows"`
+}
+
+type BulkSampleRow struct {
+	Email            string     `json:"email"`
+	PlanName         *string    `json:"plan_name"`
+	CurrentPeriodEnd *time.Time `json:"current_period_end"`
 }
 
 // PreviewBulk 先告诉管理员这一批是多少人、都有谁。
@@ -116,7 +162,7 @@ func (s *Service) PreviewBulk(ctx context.Context, tenantID string,
 	if err := f.validate(); err != nil {
 		return nil, err
 	}
-	out := &BulkPreview{Samples: []string{}}
+	out := &BulkPreview{Samples: []string{}, SampleRows: []BulkSampleRow{}}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var args []any
 		where := buildFilterSQL(f, &args, tenantID)
@@ -125,18 +171,21 @@ func (s *Service) PreviewBulk(ctx context.Context, tenantID string,
 			return err
 		}
 		rows, err := tx.Query(ctx,
-			"SELECT u.email::text FROM users u"+where+" ORDER BY u.created_at DESC LIMIT 10",
+			"SELECT u.email::text, (SELECT pl.name FROM plans pl WHERE pl.id = "+currentSubscriptionSQL("plan_id")+"), "+
+				currentSubscriptionSQL("current_period_end")+
+				" FROM users u"+where+" ORDER BY u.created_at DESC LIMIT 10",
 			args...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var e string
-			if err := rows.Scan(&e); err != nil {
+			var r BulkSampleRow
+			if err := rows.Scan(&r.Email, &r.PlanName, &r.CurrentPeriodEnd); err != nil {
 				return err
 			}
-			out.Samples = append(out.Samples, e)
+			out.Samples = append(out.Samples, r.Email)
+			out.SampleRows = append(out.SampleRows, r)
 		}
 		return rows.Err()
 	})

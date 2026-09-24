@@ -391,98 +391,6 @@ func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *handlers) listSubscriptions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	p := httpx.PrincipalFrom(ctx)
-
-	type quotaView struct {
-		Metric    string `json:"metric"`
-		Limit     *int64 `json:"limit"`
-		Consumed  int64  `json:"consumed"`
-		Remaining *int64 `json:"remaining"`
-	}
-	type subView struct {
-		ID string `json:"id"`
-		// 续费界面靠这两个 ID 定位套餐与当前价格档，
-		// 好把「同一套餐下的其它周期」列出来给用户选
-		PlanID      string      `json:"plan_id"`
-		PriceID     string      `json:"price_id"`
-		PlanName    string      `json:"plan_name"`
-		PlanVersion int         `json:"plan_version"`
-		Status      string      `json:"status"`
-		PeriodStart *time.Time  `json:"current_period_start"`
-		PeriodEnd   *time.Time  `json:"current_period_end"`
-		Currency    string      `json:"currency"`
-		Amount      int64       `json:"amount"`
-		Quotas      []quotaView `json:"quotas"`
-	}
-
-	out := []subView{}
-
-	err := h.d.Pool.InTx(ctx, db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
-		func(tx pgx.Tx) error {
-			rows, err := tx.Query(ctx, `
-				SELECT s.id, s.plan_id::text, COALESCE(s.price_id::text, ''),
-				       pl.name, pv.version, s.status,
-				       s.current_period_start, s.current_period_end,
-				       s.snapshot_currency, s.snapshot_amount
-				  FROM subscriptions s
-				  JOIN plans pl         ON pl.id = s.plan_id
-				  JOIN plan_versions pv ON pv.id = s.plan_version_id
-				 WHERE s.tenant_id = $1 AND s.user_id = $2
-				 ORDER BY s.created_at DESC`,
-				p.TenantID, p.UserID)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-
-			for rows.Next() {
-				var v subView
-				if err := rows.Scan(&v.ID, &v.PlanID, &v.PriceID,
-					&v.PlanName, &v.PlanVersion, &v.Status,
-					&v.PeriodStart, &v.PeriodEnd, &v.Currency, &v.Amount); err != nil {
-					return err
-				}
-				v.Quotas = []quotaView{}
-				out = append(out, v)
-			}
-			if err := rows.Err(); err != nil {
-				return err
-			}
-
-			for i := range out {
-				qrows, err := tx.Query(ctx, `
-					SELECT metric, limit_value, consumed, remaining
-					  FROM quota_balances
-					 WHERE tenant_id = $1 AND subscription_id = $2`,
-					p.TenantID, out[i].ID)
-				if err != nil {
-					return err
-				}
-				for qrows.Next() {
-					var q quotaView
-					if err := qrows.Scan(&q.Metric, &q.Limit, &q.Consumed, &q.Remaining); err != nil {
-						qrows.Close()
-						return err
-					}
-					out[i].Quotas = append(out[i].Quotas, q)
-				}
-				qrows.Close()
-				if err := qrows.Err(); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
-		return
-	}
-
-	httpx.OK(w, map[string]any{"subscriptions": out})
-}
-
 //------------------------------------------------------------------------------
 // 下单与支付
 //------------------------------------------------------------------------------
@@ -983,8 +891,10 @@ func (h *handlers) changePassword(w http.ResponseWriter, r *http.Request) {
 		OldPassword: req.OldPassword,
 		NewPassword: req.NewPassword,
 		APIDomain:   "public",
-		IP:          httpx.ClientIP(r),
-		UserAgent:   r.UserAgent(),
+		// 按设计保留当前会话：其它会话与 refresh 令牌照样吊销
+		KeepSessionID: p.SessionID,
+		IP:            httpx.ClientIP(r),
+		UserAgent:     r.UserAgent(),
 	}); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return

@@ -100,7 +100,7 @@ LOG_DIR="$(mktemp -d)"
 DOMAINS=(
   "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18)$"
   "enrollment|pandora_enrollment_pg18|./internal/domain/nodefabric|||||^(TestNodeEnrollmentPG18|TestIssueServerTokenPG18)$"
-  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||^(TestAnnouncementPG18|TestDeviceLimitWritesPG18|TestAccessLogCategoryPG18|TestNodeRoutingGlobalOutboundPG18|TestNodeListPagingPG18|TestIPClusterPG18|TestAuditLogPG18|TestNodeCountryAndCredentialsPG18|TestPluginDeliveryDurationPG18)$"
+  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||^(TestAnnouncementPG18|TestDeviceLimitWritesPG18|TestAccessLogCategoryPG18|TestNodeRoutingGlobalOutboundPG18|TestNodeListPagingPG18|TestIPClusterPG18|TestAuditLogPG18|TestNodeCountryAndCredentialsPG18|TestPluginDeliveryDurationPG18|TestSiteSettingsPG18|TestDashboardTasksPG18|TestFeatureSwitchGatesPG18|TestAdminMeProfilePG18|TestUserProfileRegisteredIPPG18|TestDashboardReadModelsPG18|TestNodesStep5PG18|TestContentNotifyStep5PG18)$"
   "node_config|pandora_nodecfg_gate|./internal/api/admin|run_id,oid,system_id||pandora-nodecfg-disposable||^(TestNodeConfigLegacyPG18|TestNodeConfigPG18LockSchedule)$"
   "catalog_sales|pandora_catalog_sales_gate|./internal/domain/adminops|run_id|pandora_catalog_sales_test_marker|pandora-catalog-sales-pg18||"
   "giftcard|pandora_giftcard_gate|./internal/domain/giftcard|run_id|pandora_giftcard_test_marker|pandora-giftcard-pg18||"
@@ -128,6 +128,9 @@ DOMAINS=(
   # 读模型在 subscription 包，与 node_preview 同包，两边过滤都写精确。
   "usage_daily|pandora_usage_daily_gate|./internal/domain/subscription||||app_role|^TestUsageDailyReadPG18$"
   "idempotency|pandora_idempotency_gate|./internal/middleware||||app_role,idempotency_seed|"
+  # 审计哈希链（00086 第二版口径）：篡改用例要绕过追加写触发器，只在这个一次性库里做
+  "audit|pandora_audit_gate|./internal/platform/audit|run_id|pandora_audit_test_marker|pandora-audit-pg18||"
+  "notify|pandora_notify_gate|./internal/domain/notify|run_id|pandora_notify_test_marker|pandora-notify-pg18||"
 )
 
 selected() {
@@ -141,10 +144,22 @@ echo "==> 起 PostgreSQL 18"
 docker run -d --name "$CONTAINER" \
   -e POSTGRES_PASSWORD="$PGPW" -e POSTGRES_USER="$PGUSER_MIGRATE" -e POSTGRES_DB=postgres \
   -p 127.0.0.1::5432 "$PG_IMAGE" >/dev/null
+# 就绪检查必须走 TCP：镜像初始化时会先起一个只听 unix socket 的临时实例，跑完
+# 初始化脚本再关掉、重启成正式实例。经 socket 探测会在临时实例上报「就绪」，
+# 紧接着的迁移正好撞上它关停（第 ④ 步 CI 的偶发失败）。临时实例不监听 TCP。
+READY=""
 for _ in $(seq 1 60); do
-  docker exec "$CONTAINER" pg_isready -U "$PGUSER_MIGRATE" -q 2>/dev/null && break
+  if docker exec "$CONTAINER" pg_isready -h 127.0.0.1 -U "$PGUSER_MIGRATE" -q 2>/dev/null; then
+    READY=1
+    break
+  fi
   sleep 1
 done
+if [[ -z "$READY" ]]; then
+  echo "PostgreSQL 18 容器 60 秒内没有在 TCP 上就绪" >&2
+  docker logs "$CONTAINER" 2>&1 | tail -20 >&2
+  exit 1
+fi
 PORT="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' "$CONTAINER")"
 psql_root() { docker exec -i "$CONTAINER" psql -U "$PGUSER_MIGRATE" -v ON_ERROR_STOP=1 "$@"; }
 echo "    $(psql_root -d postgres -tAc 'SELECT version()' | cut -d, -f1)"

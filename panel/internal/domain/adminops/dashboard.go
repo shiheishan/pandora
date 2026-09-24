@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db 的租户事务与 platform/httpx 的错误模型，读 node_traffic_reports / subscription 用量 / notification_deliveries
+// [OUTPUT]: 对外提供 DashboardTrafficQuery、DashboardNodeTraffic / DashboardUserTraffic 排行、DashboardNotificationBacklog 与对应 Service 方法
+// [POS]: domain/adminops 的仪表盘读模型：流量排行与通知投递积压；积压口径 scanNotificationBacklog 也被 dashboard_tasks.go 复用
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
@@ -473,19 +478,31 @@ SELECT to_char(as_of AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
   FROM lag`
 
 func (s *Service) DashboardNotificationBacklog(ctx context.Context, tenantID string) (*DashboardNotificationBacklog, error) {
+	var out *DashboardNotificationBacklog
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) (err error) {
+		out, err = scanNotificationBacklog(ctx, tx, tenantID)
+		return err
+	})
+	if err != nil {
+		return nil, httpx.Internal(err)
+	}
+	return out, nil
+}
+
+// scanNotificationBacklog 是通知积压的唯一口径，dashboard/backlog/notifications 与
+// dashboard/tasks 的 notifications_backlog 项共用。
+func scanNotificationBacklog(ctx context.Context, tx pgx.Tx, tenantID string) (*DashboardNotificationBacklog, error) {
 	out := &DashboardNotificationBacklog{
 		ProcessorState: "unobservable", ScannerIntervalSeconds: 300,
 		Assessment: DashboardNotificationAssessment{ThresholdSeconds: 600},
 	}
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, dashboardNotificationBacklogSQL, tenantID).Scan(
-			&out.AsOf, &out.BacklogState,
-			&out.Counts.Ready, &out.Counts.ReadyRetry, &out.Counts.Scheduled, &out.Counts.ScheduledRetry,
-			&out.Counts.SendingUnobservable, &out.Counts.FailedTotal, &out.Counts.SuppressedTotal, &out.Counts.BouncedTotal,
-			&out.OldestReadyAt, &out.MaxReadyLagSeconds, &out.LastSentAt, &out.Assessment.Reason)
-	})
+	err := tx.QueryRow(ctx, dashboardNotificationBacklogSQL, tenantID).Scan(
+		&out.AsOf, &out.BacklogState,
+		&out.Counts.Ready, &out.Counts.ReadyRetry, &out.Counts.Scheduled, &out.Counts.ScheduledRetry,
+		&out.Counts.SendingUnobservable, &out.Counts.FailedTotal, &out.Counts.SuppressedTotal, &out.Counts.BouncedTotal,
+		&out.OldestReadyAt, &out.MaxReadyLagSeconds, &out.LastSentAt, &out.Assessment.Reason)
 	if err != nil {
-		return nil, httpx.Internal(err)
+		return nil, err
 	}
 	return out, nil
 }

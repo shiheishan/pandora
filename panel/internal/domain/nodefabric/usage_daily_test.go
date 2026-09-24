@@ -21,6 +21,10 @@ func TestUsageLocationFallsBack(t *testing.T) {
 		{"Local", "Asia/Shanghai", "Asia/Shanghai"},
 		{"Not/AZone", "Also/Bogus", "UTC"},
 		{"", "", "UTC"},
+		// R50：用户 'UTC' 是从没设过的默认值，跟随站点时区；站点本身是 UTC 时仍按 UTC
+		{"UTC", "Asia/Shanghai", "Asia/Shanghai"},
+		{"UTC", "UTC", "UTC"},
+		{"UTC", "", "UTC"},
 	} {
 		if got := UsageLocation(tc.user, tc.tenant).String(); got != tc.want {
 			t.Errorf("UsageLocation(%q, %q) = %q, want %q", tc.user, tc.tenant, got, tc.want)

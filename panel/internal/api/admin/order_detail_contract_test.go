@@ -7,7 +7,7 @@ import (
 )
 
 func TestOrderDetailAndCancellationRoutesArePermissionGuarded(t *testing.T) {
-	router, err := os.ReadFile("router.go")
+	router, err := routerSource()
 	if err != nil {
 		t.Fatal(err)
 	}

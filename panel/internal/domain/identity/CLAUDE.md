@@ -9,7 +9,8 @@ registration_policy.go: 注册总开关 feature_switches.auth.registration 与 a
 invite.go: 邀请码绑定「谁邀请了谁」，不发奖励
 sessions.go: 门户自助会话列表与吊销，只触及 audience=public 的会话（后台会话不可见、不可踢）
 logout.go: 退出当前会话，会话与整条 refresh 链同事务吊销
-password.go: 自助改密，吊销既有凭据；口令错误的审计先于事务错误提交
+password.go: 自助改密，吊销既有凭据（门户保留当前会话与其 refresh 令牌，admin 全部吊销）；口令错误的审计先于事务错误提交；admin 域新密码至少 12 位（validatePasswordFor），门户仍 8 位
+admin_profile.go: 管理员展示信息 AdminProfile（GET v1/me 追加的邮箱、显示名与生效角色），角色过滤与 admin 登录展开权限一致
 admin_reset_password.go: 管理员替用户设新密码
 reauth.go: 用口令换一枚 rat 刷新过的令牌，供 RequireRecentReauth 保护的高危路由使用
 quicklogin.go: 已登录设备生成 60 秒一次性快捷登录链接

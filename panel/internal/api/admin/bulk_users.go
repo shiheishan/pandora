@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/adminops 的批量运营用例，依赖 platform/httpx
+// [OUTPUT]: 对外提供 handlers 的 previewBulkUsers / exportUsers / generateUsers / sendBulkMail
+// [POS]: api/admin 的用户批量运营处理器：三个动作共用 bulkFilterReq（导出用同名 query 参数），CSV 带 BOM
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -15,16 +20,20 @@ import (
 // 和导出/群发实际命中的必须是同一批人。
 
 type bulkFilterReq struct {
-	Status       string `json:"status"`
-	GroupID      string `json:"group_id"`
-	Query        string `json:"query"`
-	HasActiveSub *bool  `json:"has_active_sub"`
+	Status            string `json:"status"`
+	GroupID           string `json:"group_id"`
+	Query             string `json:"query"`
+	HasActiveSub      *bool  `json:"has_active_sub"`
+	PlanID            string `json:"plan_id"`
+	ExpiresWithinDays int    `json:"expires_within_days"`
+	SubState          string `json:"sub_state"`
 }
 
 func (r bulkFilterReq) toFilter() adminops.BulkFilter {
 	return adminops.BulkFilter{
 		Status: r.Status, GroupID: r.GroupID, Query: r.Query,
-		HasActiveSub: r.HasActiveSub,
+		HasActiveSub: r.HasActiveSub, PlanID: r.PlanID,
+		ExpiresWithinDays: r.ExpiresWithinDays, SubState: r.SubState,
 	}
 }
 
@@ -59,10 +68,20 @@ func (h *handlers) exportUsers(w http.ResponseWriter, r *http.Request) {
 		b := v == "true"
 		hasSub = &b
 	}
+	expires := 0
+	if v := q.Get("expires_within_days"); v != "" {
+		// 不是整数时按越界处理，交给同一处校验回 422
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			n = -1
+		}
+		expires = n
+	}
 	rows, err := h.d.Ops.ExportUsers(r.Context(), httpx.TenantIDFrom(r.Context()),
 		adminops.BulkFilter{
 			Status: q.Get("status"), GroupID: q.Get("group_id"),
-			Query: q.Get("query"), HasActiveSub: hasSub,
+			Query: q.Get("query"), HasActiveSub: hasSub, PlanID: q.Get("plan_id"),
+			ExpiresWithinDays: expires, SubState: q.Get("sub_state"),
 		}, limit)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)

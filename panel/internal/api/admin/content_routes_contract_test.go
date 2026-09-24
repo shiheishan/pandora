@@ -7,7 +7,7 @@ import (
 )
 
 func TestContentPageRouteContracts(t *testing.T) {
-	source, err := os.ReadFile("router.go")
+	source, err := routerSource()
 	if err != nil {
 		t.Fatal(err)
 	}

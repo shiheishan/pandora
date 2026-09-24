@@ -52,8 +52,11 @@ func contentFilter(r *http.Request) content.VisibleFilter {
 func (h *handlers) listContentPages(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	p := httpx.PrincipalFrom(r.Context())
+	// q 只用于列表：帮助中心的搜索要匹配正文，而列表不带正文
+	filter := contentFilter(r)
+	filter.Query = r.URL.Query().Get("q")
 	pages, err := h.d.Content.ListVisible(r.Context(), httpx.TenantIDFrom(r.Context()),
-		p.UserID, contentFilter(r))
+		p.UserID, filter)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return

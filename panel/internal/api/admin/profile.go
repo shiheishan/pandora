@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 audit_events / subscription_fetch_log 与 Deps.Envelope 解密来源 IP，依赖 platform 的 db/httpx
-// [OUTPUT]: 对外提供 decryptIP / decryptWith 解密助手、userProfile 风控画像、statsTimeseries 注册与活跃时序
+// [OUTPUT]: 对外提供 decryptIP / decryptWith 解密助手、userProfile 风控画像（含注册 IP registered_ip）、statsTimeseries 注册与活跃时序
 // [POS]: api/admin 的用户画像与风控统计；解密助手被 access_log.go、audit_log.go、risk.go 共用，共享 IP 聚类已移到 risk.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -16,6 +16,7 @@ package admin
 // 具体是哪个 IP，少解一次密就少一次泄露面。
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -74,8 +75,19 @@ func (h *handlers) userProfile(w http.ResponseWriter, r *http.Request) {
 	events := []event{}
 	ips := []ipStat{}
 	related := map[string]bool{}
+	registeredIP := ""
 
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		// 注册 IP 只在这里出（要 security.audit.read），不进 iam.user.read 就能看的用户详情
+		var regEnc []byte
+		if err := tx.QueryRow(r.Context(), `
+			SELECT source_ip_enc FROM audit_events
+			 WHERE tenant_id = $1 AND action = 'user.registered' AND actor_id = $2::uuid
+			 ORDER BY occurred_at, id LIMIT 1`, tenantID, userID).Scan(&regEnc); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		registeredIP = h.decryptIP(regEnc)
+
 		rows, err := tx.Query(r.Context(), `
 			SELECT action, outcome, COALESCE(source_ip_enc, ''::bytea),
 			       COALESCE(user_agent,''), COALESCE(api_domain,''), occurred_at
@@ -224,6 +236,7 @@ func (h *handlers) userProfile(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, map[string]any{
 		"events": events, "ips": ips, "related": peers,
 		"fetches": fetches, "fetch_sources_7d": fetchSources,
+		"registered_ip": registeredIP,
 	})
 }
 
@@ -243,6 +256,8 @@ func (h *handlers) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		Logins     int    `json:"logins"`
 		Orders     int    `json:"orders"`
 		UniqueIPs  int    `json:"unique_ips"`
+		// ActiveUsers 是当天有成功订阅拉取或有流量归属的去重用户数
+		ActiveUsers int `json:"active_users"`
 	}
 	out := []point{}
 
@@ -255,13 +270,31 @@ func (h *handlers) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 			  SELECT generate_series(
 			    date_trunc('day', now()) - make_interval(days => $2 - 1),
 			    date_trunc('day', now()), '1 day')::date AS day
+			), active AS (
+			  -- 两路来源去重：成功的订阅拉取（按会话时区切日，与本接口其余列一致），
+			  -- 与按日流量（00072，按用户 / 站点时区记的日）
+			  SELECT day, count(DISTINCT user_id)::int AS n FROM (
+			    SELECT date_trunc('day', f.fetched_at)::date AS day, s.user_id
+			      FROM subscription_fetch_log f
+			      JOIN subscriptions s ON s.tenant_id = f.tenant_id AND s.id = f.subscription_id
+			     WHERE f.tenant_id = $1 AND f.result = 'ok'
+			       AND f.fetched_at >= date_trunc('day', now()) - make_interval(days => $2 - 1)
+			    UNION
+			    SELECT u.day, s.user_id
+			      FROM subscription_usage_daily u
+			      JOIN subscriptions s ON s.tenant_id = u.tenant_id AND s.id = u.subscription_id
+			     WHERE u.tenant_id = $1 AND u.bytes > 0
+			       AND u.day >= (date_trunc('day', now()) - make_interval(days => $2 - 1))::date
+			  ) x GROUP BY day
 			)
 			SELECT to_char(d.day, 'MM-DD'),
 			  count(*) FILTER (WHERE a.action = 'user.registered'),
 			  count(*) FILTER (WHERE a.action = 'user.login' AND a.outcome = 'success'),
 			  count(*) FILTER (WHERE a.action = 'order.created'),
-			  count(DISTINCT a.source_ip_hash)
+			  count(DISTINCT a.source_ip_hash),
+			  coalesce(max(ac.n), 0)
 			  FROM d
+			  LEFT JOIN active ac ON ac.day = d.day
 			  LEFT JOIN audit_events a
 			    ON a.tenant_id = $1 AND date_trunc('day', a.occurred_at)::date = d.day
 			 GROUP BY d.day ORDER BY d.day`, tenantID, days)
@@ -271,7 +304,7 @@ func (h *handlers) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var p point
-			if err := rows.Scan(&p.Day, &p.Registered, &p.Logins, &p.Orders, &p.UniqueIPs); err != nil {
+			if err := rows.Scan(&p.Day, &p.Registered, &p.Logins, &p.Orders, &p.UniqueIPs, &p.ActiveUsers); err != nil {
 				return err
 			}
 			out = append(out, p)

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/audit/httpx，读写 node_pools、plan_node_pools，读 nodes / plan_versions / plans
+// [OUTPUT]: 对外提供 handlers 的 listNodePools / createNodePool / updateNodePool / deleteNodePool / assignNodePool / planPools / setPlanPools
+// [POS]: api/admin 的节点分组：节点与套餐之间唯一的连接层；列表带组内节点 members 与绑定套餐名 plan_names
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 节点分组。
@@ -37,6 +42,16 @@ type poolRow struct {
 	Active int `json:"active_nodes"`
 	// Plans 是绑定了这个分组的套餐版本数。为零说明这组节点当前没被任何套餐用到
 	Plans int `json:"plans"`
+	// Members 是组内节点（不含已销毁），卡片上的节点标签
+	Members []poolMember `json:"members"`
+	// PlanNames 是绑定了这个分组的套餐名（去重），卡片上的「绑定套餐」
+	PlanNames []string `json:"plan_names"`
+}
+
+type poolMember struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	NodeNo int    `json:"node_no"`
 }
 
 func (h *handlers) listNodePools(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +65,15 @@ func (h *handlers) listNodePools(w http.ResponseWriter, r *http.Request) {
 			       (SELECT count(*) FROM nodes n
 			         WHERE n.pool_id = p.id AND n.status = 'active'
 			           AND n.node_type IS NOT NULL),
-			       (SELECT count(*) FROM plan_node_pools pnp WHERE pnp.pool_id = p.id)
+			       (SELECT count(*) FROM plan_node_pools pnp WHERE pnp.pool_id = p.id),
+			       coalesce((SELECT jsonb_agg(jsonb_build_object('id', n.id, 'name', n.name, 'node_no', n.node_no)
+			                                  ORDER BY n.sort_order, n.node_no)
+			                   FROM nodes n WHERE n.pool_id = p.id AND n.status <> 'destroyed'), '[]'),
+			       coalesce((SELECT array_agg(DISTINCT pl.name ORDER BY pl.name)
+			                   FROM plan_node_pools pnp
+			                   JOIN plan_versions pv ON pv.tenant_id = pnp.tenant_id AND pv.id = pnp.plan_version_id
+			                   JOIN plans pl ON pl.tenant_id = pv.tenant_id AND pl.id = pv.plan_id
+			                  WHERE pnp.pool_id = p.id), '{}')
 			  FROM node_pools p
 			 WHERE p.tenant_id = $1
 			 ORDER BY p.name, p.created_at`, tenantID)
@@ -61,7 +84,7 @@ func (h *handlers) listNodePools(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var p poolRow
 			if err := rows.Scan(&p.ID, &p.Code, &p.Name, &p.Region, &p.Status,
-				&p.Nodes, &p.Active, &p.Plans); err != nil {
+				&p.Nodes, &p.Active, &p.Plans, &p.Members, &p.PlanNames); err != nil {
 				return err
 			}
 			out = append(out, p)

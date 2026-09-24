@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 subscriptions / users / tenants 的归属与时区，依赖 uniproxy.go 的 chargeTraffic；写 subscription_usage_daily（迁移 00072）；time/tzdata 内嵌时区库
+// [INPUT]: 依赖 subscriptions / users / tenants 的归属与时区（用户默认 UTC 跟随站点时区，R50），依赖 uniproxy.go 的 chargeTraffic；写 subscription_usage_daily（迁移 00072）；time/tzdata 内嵌时区库
 // [OUTPUT]: 对外提供 UsageLocation、UsageDay（按日流量的日界口径，subscription 的读接口共用）；包内提供 chargeReportEntry
 // [POS]: domain/nodefabric 流量上报的单用户记账：扣配额与流量包（chargeTraffic）并在同一事务里累加当日用量，被 ReportTraffic 逐条调用
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -42,11 +42,17 @@ func loadZone(name string) (*time.Location, bool) {
 }
 
 // UsageLocation 决定按日流量按哪个时区切日：用户 timezone，无效退回租户
-// timezone，再无效退回 UTC。写入（上报）与读取（门户柱状图）必须用同一个
-// 函数，否则同一笔流量会落在两边不同的「那一天」。
+// （站点）timezone，再无效退回 UTC。写入（上报）与读取（门户柱状图）必须用
+// 同一个函数，否则同一笔流量会落在两边不同的「那一天」。
+//
+// 用户 timezone 为 'UTC' 视同未设（R50）：users.timezone 非空、默认 'UTC'，
+// 而且没有任何入口能改它，存量的 'UTC' 都是默认值。真想按 UTC 切日的站点把
+// 站点时区设成 UTC 即可。
 func UsageLocation(userTZ, tenantTZ string) *time.Location {
-	if loc, ok := loadZone(userTZ); ok {
-		return loc
+	if userTZ != "UTC" {
+		if loc, ok := loadZone(userTZ); ok {
+			return loc
+		}
 	}
 	if loc, ok := loadZone(tenantTZ); ok {
 		return loc
