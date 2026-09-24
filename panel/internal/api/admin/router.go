@@ -502,6 +502,7 @@ func NewRouter(d Deps) http.Handler {
 			).Post("/mail/templates/reset", h.resetMailTemplate)
 			r.With(
 				middleware.RequirePermission("ops.notification.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 			).Post("/mail/templates/test", h.testMailTemplate)
 
 			// 节点分组：节点与套餐之间的连接层

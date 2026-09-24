@@ -1,5 +1,5 @@
-// [INPUT]: 依赖 notify.go 的 Service（模板表、投递表、收件人哈希），依赖 pgx 的业务事务
-// [OUTPUT]: 对外提供 EnqueueToAddress、Kick、SiteName；包内提供 recipientPayloadKey、scrubAddressPayloadSQL
+// [INPUT]: 依赖 notify.go 的 Service（模板表、投递表、收件人哈希），依赖 pgx 的业务事务，依赖 domain/appearance 的 SiteNameTx
+// [OUTPUT]: 对外提供 EnqueueToAddress、Kick；包内提供 recipientPayloadKey、scrubAddressPayloadSQL、withSite
 // [POS]: domain/notify 的「按地址投递」分支：收件人还不是用户（注册验证码）时走这里，派发仍由 notify.go 的 Dispatch/deliver 统一完成
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -10,10 +10,9 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-)
 
-// SiteName 是通知文案里 {{site}} 的取值，各处入队共用这一个。
-const SiteName = "AegisPanel"
+	"github.com/aegispanel/aegis/internal/domain/appearance"
+)
 
 // recipientPayloadKey 是按地址投递时存放收件地址的保留键。
 //
@@ -27,7 +26,7 @@ const recipientPayloadKey = "_recipient"
 // 发完就没有理由再留着。普通投递的 payload 不动 —— 站内信要靠它展示。
 const scrubAddressPayloadSQL = `payload = CASE WHEN user_id IS NULL THEN '{}'::jsonb ELSE payload END`
 
-// EnqueueToAddress 给一个还不是用户的邮箱排一封信。vars 里没给 site 时按 SiteName 填。
+// EnqueueToAddress 给一个还不是用户的邮箱排一封信。vars 里没给 site 时按生效主题的站点名填。
 //
 // 目前唯一的调用方是注册验证码：用户在第 2 步之前根本不存在，Enqueue 的
 // 「按 user_id 反查邮箱」走不通。这里只排邮件渠道，也不查退订偏好 ——
@@ -54,10 +53,9 @@ func (s *Service) EnqueueToAddress(ctx context.Context, tx pgx.Tx, tenantID,
 		return nil
 	}
 
-	// {{site}} 由这里统一补上：调用方（identity）不该为了一个站点名依赖 notify
-	payload := map[string]any{"site": SiteName}
-	for k, v := range vars {
-		payload[k] = v
+	payload, err := withSite(ctx, tx, tenantID, vars)
+	if err != nil {
+		return err
 	}
 	payload[recipientPayloadKey] = address
 
@@ -72,6 +70,25 @@ func (s *Service) EnqueueToAddress(ctx context.Context, tx pgx.Tx, tenantID,
 		return fmt.Errorf("按地址排队 %s: %w", code, err)
 	}
 	return nil
+}
+
+// withSite 把入队变量转成 payload，并补上 {{site}}。
+//
+// 站点名以生效主题的 branding.site_name 为准（appearance.SiteNameTx），
+// 在入队这一处统一补，调用方不必各自去查；显式传了 site 的以调用方为准。
+func withSite(ctx context.Context, tx pgx.Tx, tenantID string, vars map[string]string) (map[string]any, error) {
+	payload := make(map[string]any, len(vars)+2)
+	for k, v := range vars {
+		payload[k] = v
+	}
+	if _, ok := payload["site"]; !ok {
+		site, err := appearance.SiteNameTx(ctx, tx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		payload["site"] = site
+	}
+	return payload, nil
 }
 
 // Kick 让派发循环立刻跑一轮，不等下一个周期。

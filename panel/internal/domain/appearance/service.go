@@ -1,10 +1,17 @@
+// [INPUT]: 依赖 platform 的 db/audit/httpx，依赖同包 tokens.go 的令牌白名单与 sanitize.go 的 HTML 净化
+// [OUTPUT]: 对外提供 Service、New、Theme、Slot、SlotCatalog、PublicAppearance、Public、ListThemes、SaveThemeInput、SaveTheme、ActivateTheme、DeleteTheme、ListSlots、SaveSlotInput、SaveSlot
+// [POS]: domain/appearance 的主服务：门户一次取齐外观（令牌过滤、custom_css 不下发），后台主题与插槽的读写
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package appearance
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -23,6 +30,9 @@ type Service struct {
 }
 
 func New(pool *db.Pool) *Service { return &Service{pool: pool} }
+
+// themeCodePattern 与 site_themes.code 的 CHECK 一致。
+var themeCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,38}$`)
 
 //------------------------------------------------------------------------------
 // 类型
@@ -90,6 +100,10 @@ func (s *Service) Public(ctx context.Context, tenantID string) (*PublicAppearanc
 		case err != nil:
 			return err
 		default:
+			// 门户只拿到设计稿白名单内的 token；custom_css 本期停用，一律不下发
+			// （CSP 没有 unsafe-inline，旧门户注入 <style> 的做法在新前端上本来就不生效）
+			t.Tokens = filterTokens(t.Tokens)
+			t.CustomCSS = ""
 			out.Theme = &t
 		}
 
@@ -152,34 +166,52 @@ type SaveThemeInput struct {
 	ActorID   string
 }
 
-// SaveTheme 新建或改一套主题，返回净化 CSS 时丢掉的东西。
+// SaveTheme 新建或改一套主题。返回值保留给「净化时丢掉的东西」，
+// custom_css 停用后恒为空。
 //
 // 内置主题不允许原地改：它们是「回到已知可用状态」的退路。
 // 想基于内置改就复制一份 —— 复制在管理端是一次带新 code 的保存。
+//
+// 表上的 CHECK（code 格式、name 长度）在这里先校验一遍，tokens 按设计稿白名单校验：
+// 让违规变成带字段的 422，而不是撞约束变成 500（缺陷 20）。
 func (s *Service) SaveTheme(ctx context.Context, tenantID string, in SaveThemeInput) ([]string, error) {
 	in.Code = strings.ToLower(strings.TrimSpace(in.Code))
 	in.Name = strings.TrimSpace(in.Name)
-	if in.Code == "" || in.Name == "" {
-		return nil, httpx.Invalid(map[string]string{
-			"code": "主题标识必填", "name": "主题名称必填"})
+	fields := map[string]string{}
+	switch {
+	case in.Code == "":
+		fields["code"] = "主题标识必填"
+	case !themeCodePattern.MatchString(in.Code):
+		fields["code"] = "主题标识须以小写字母开头，只含小写字母、数字、- 与 _，共 2–39 个字符"
 	}
-	if len(in.Tokens) == 0 {
-		in.Tokens = json.RawMessage(`{}`)
+	if n := utf8.RuneCountInString(in.Name); n == 0 || n > 60 {
+		fields["name"] = "主题名称必填，最多 60 个字"
 	}
+	// custom_css 本期停用：新门户的 CSP 不允许注入 <style>，存了也不会生效。
+	// 拒绝而不是静默丢弃，管理员才知道这段 CSS 没被收下。
+	if strings.TrimSpace(in.CustomCSS) != "" {
+		fields["custom_css"] = "自定义 CSS 本期停用，请留空"
+	}
+	if len(fields) > 0 {
+		return nil, httpx.Invalid(fields)
+	}
+	tokens, err := normalizeTokens(in.Tokens)
+	if err != nil {
+		return nil, err
+	}
+	in.Tokens = tokens
 	if len(in.Branding) == 0 {
 		in.Branding = json.RawMessage(`{}`)
 	}
-	if !json.Valid(in.Tokens) || !json.Valid(in.Branding) {
-		return nil, httpx.Invalid(map[string]string{"tokens": "不是合法的 JSON"})
+	var branding map[string]any
+	if err := json.Unmarshal(in.Branding, &branding); err != nil || branding == nil {
+		return nil, httpx.Invalid(map[string]string{"branding": "必须是 JSON 对象"})
 	}
+	// custom_css 停用：写库恒为空串，dropped 恒为空数组（不是 null）
+	css := ""
+	notes := []string{}
 
-	css, notes := SanitizeCSS(in.CustomCSS)
-	if len(css) > 65536 {
-		return nil, httpx.Invalid(map[string]string{
-			"custom_css": "自定义 CSS 超过 64KB，请精简"})
-	}
-
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID},
+	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID},
 		func(tx pgx.Tx) error {
 			var builtin bool
 			err := tx.QueryRow(ctx,
