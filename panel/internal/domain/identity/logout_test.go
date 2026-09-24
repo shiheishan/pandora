@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -48,9 +49,13 @@ func (tx *logoutFakeTx) Exec(_ context.Context, query string, args ...any) (pgco
 	}
 }
 
-func (tx *logoutFakeTx) QueryRow(_ context.Context, query string, _ ...any) pgx.Row {
+func (tx *logoutFakeTx) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
 	if strings.Contains(query, "SELECT EXISTS") && strings.Contains(query, "FROM sessions") {
 		return logoutFakeRow{value: tx.exactSessionExists}
+	}
+	// audit.Write 取链尾：没有第二版记录，uuid 原样回显
+	if strings.Contains(query, "LEFT JOIN LATERAL") && strings.Contains(query, "chain_seq") {
+		return logoutAuditTailRow{args: args}
 	}
 	if !strings.Contains(query, "SELECT entry_hash FROM audit_events") {
 		return logoutFakeRow{err: errors.New("unexpected QueryRow query")}
@@ -77,6 +82,20 @@ func (r logoutFakeRow) Scan(dest ...any) error {
 	default:
 		return errors.New("unexpected scan destination")
 	}
+}
+
+type logoutAuditTailRow struct{ args []any }
+
+func (r logoutAuditTailRow) Scan(dest ...any) error {
+	if len(dest) != 7 || len(r.args) != 4 {
+		return errors.New("unexpected audit tail scan")
+	}
+	*dest[0].(*time.Time) = time.Now()
+	*dest[1].(*string) = r.args[0].(string)
+	for i := 1; i <= 3; i++ {
+		*dest[i+1].(**string) = r.args[i].(*string)
+	}
+	return nil
 }
 
 type logoutFakeRunner struct {

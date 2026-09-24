@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/httpx 的来源信息与调用主体（ClientIPFrom / UserAgentFrom / PrincipalFrom），依赖 pgx 事务
-// [OUTPUT]: 对外提供 Entry、Configure、Write、VerifyChain
-// [POS]: platform 的审计写入唯一入口，全部领域的审计都经 Write 进 audit_events；auth_context（00080）在这里从主体推出
+// [OUTPUT]: 对外提供 Entry、Configure、Write
+// [POS]: platform 的审计写入唯一入口，全部领域的审计都经 Write 进 audit_events；auth_context（00080）在这里从主体推出；链序号与第二版哈希（00083）在同租户 advisory lock 内取定，口径与校验在 chain.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package audit 写入不可删审计记录（SEC-012）。
@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -118,14 +119,45 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 		return fmt.Errorf("获取审计链锁: %w", err)
 	}
 
-	var prevHash []byte
+	// 链尾、发生时间与 uuid 的规范文本一次取回。
+	//
+	// uuid 经 PostgreSQL 往返一次：库里存的是 uuid 值，读回永远是小写带连字符
+	// 的形式，调用方给的大写或不带连字符的写法不能直接进哈希。发生时间显式
+	// 取 now() 再写回列里（与列默认值相同），这样哈希里的时间就是库里那一个。
+	var (
+		rec      chainRecord
+		prevHash []byte
+		tailSeq  *int64
+	)
 	err := tx.QueryRow(ctx, `
-		SELECT entry_hash FROM audit_events
-		 WHERE tenant_id = $1
-		 ORDER BY occurred_at DESC, id DESC
-		 LIMIT 1`, tenantID).Scan(&prevHash)
-	if err != nil && err != pgx.ErrNoRows {
+		SELECT now(), $1::uuid::text, $2::uuid::text, $3::uuid::text, $4::uuid::text,
+		       t.entry_hash, t.chain_seq
+		  FROM (SELECT 1) AS one
+		  LEFT JOIN LATERAL (
+		        SELECT entry_hash, chain_seq FROM audit_events
+		         WHERE tenant_id = $1 AND chain_seq IS NOT NULL
+		         ORDER BY chain_seq DESC
+		         LIMIT 1) AS t ON true`,
+		tenantID, e.ActorID, e.ResourceID, e.ApprovalID).Scan(
+		&rec.OccurredAt, &rec.TenantID, &rec.ActorID, &rec.ResourceID, &rec.ApprovalID,
+		&prevHash, &tailSeq)
+	if err != nil {
 		return fmt.Errorf("读取审计链尾: %w", err)
+	}
+	rec.Seq = 1
+	if tailSeq != nil {
+		rec.Seq = *tailSeq + 1
+	} else {
+		// 本租户还没有第二版记录：接在第一版链尾之后（00083 之前的记录按
+		// occurred_at, id 排序，与 VerifyChain 走第一版行的顺序一致）
+		err := tx.QueryRow(ctx, `
+			SELECT entry_hash FROM audit_events
+			 WHERE tenant_id = $1
+			 ORDER BY occurred_at DESC, id DESC
+			 LIMIT 1`, tenantID).Scan(&prevHash)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("读取审计链尾: %w", err)
+		}
 	}
 
 	beforeJSON, err := toJSON(e.BeforeDigest)
@@ -137,7 +169,15 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 		return err
 	}
 
-	entryHash := chainHash(prevHash, tenantID, e, beforeJSON, afterJSON)
+	rec.ActorKind, rec.ActorLabel, rec.Action = e.ActorKind, e.ActorLabel, e.Action
+	rec.ResourceType, rec.Before, rec.After = e.ResourceType, beforeJSON, afterJSON
+	rec.RequestID, rec.APIDomain, rec.SourceIPHash = e.RequestID, e.APIDomain, e.SourceIPHash
+	rec.UserAgent, rec.Outcome, rec.ErrorCode = e.UserAgent, e.Outcome, e.ErrorCode
+	rec.SourceIPEnc, rec.AuthContext = ipEnc, e.AuthContext
+	entryHash, err := chainHashV2(prevHash, rec)
+	if err != nil {
+		return err
+	}
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_events
@@ -145,86 +185,17 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 			 resource_type, resource_id, before_digest, after_digest,
 			 request_id, api_domain, source_ip_hash, user_agent,
 			 approval_request_id, outcome, error_code, prev_hash, entry_hash,
-			 source_ip_enc, auth_context)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
-		tenantID, e.ActorKind, e.ActorID, nullIfEmpty(e.ActorLabel), e.Action,
-		nullIfEmpty(e.ResourceType), e.ResourceID, beforeJSON, afterJSON,
-		nullIfEmpty(e.RequestID), nullIfEmpty(e.APIDomain), e.SourceIPHash,
-		nullIfEmpty(e.UserAgent), e.ApprovalID, e.Outcome, nullIfEmpty(e.ErrorCode),
-		prevHash, entryHash, ipEnc, nullIfEmpty(e.AuthContext))
+			 source_ip_enc, auth_context, chain_seq, occurred_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+		tenantID, rec.ActorKind, rec.ActorID, nullIfEmpty(rec.ActorLabel), rec.Action,
+		nullIfEmpty(rec.ResourceType), rec.ResourceID, beforeJSON, afterJSON,
+		nullIfEmpty(rec.RequestID), nullIfEmpty(rec.APIDomain), rec.SourceIPHash,
+		nullIfEmpty(rec.UserAgent), rec.ApprovalID, rec.Outcome, nullIfEmpty(rec.ErrorCode),
+		prevHash, entryHash, ipEnc, nullIfEmpty(rec.AuthContext), rec.Seq, rec.OccurredAt)
 	if err != nil {
 		return fmt.Errorf("写入审计记录: %w", err)
 	}
 	return nil
-}
-
-// VerifyChain 重算整条链并返回第一处断裂的记录 ID。
-// 返回空串表示链条完整。供 SEC-016 的取证与季度演练使用。
-func VerifyChain(ctx context.Context, tx pgx.Tx, tenantID string) (string, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT id, actor_kind, actor_id, action, resource_type, resource_id,
-		       before_digest, after_digest, outcome, coalesce(auth_context, ''),
-		       prev_hash, entry_hash
-		  FROM audit_events
-		 WHERE tenant_id = $1
-		 ORDER BY occurred_at, id`, tenantID)
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-
-	var prev []byte
-	for rows.Next() {
-		var (
-			id, actorKind, action, outcome    string
-			authContext                       string
-			actorID, resourceType, resourceID *string
-			beforeJSON, afterJSON             []byte
-			storedPrev, storedHash            []byte
-		)
-		if err := rows.Scan(&id, &actorKind, &actorID, &action, &resourceType,
-			&resourceID, &beforeJSON, &afterJSON, &outcome, &authContext,
-			&storedPrev, &storedHash); err != nil {
-			return "", err
-		}
-
-		e := Entry{ActorKind: actorKind, ActorID: actorID, Action: action, Outcome: outcome,
-			AuthContext: authContext}
-		if resourceType != nil {
-			e.ResourceType = *resourceType
-		}
-		e.ResourceID = resourceID
-
-		want := chainHash(prev, tenantID, e, beforeJSON, afterJSON)
-		if !equalBytes(want, storedHash) {
-			return id, nil
-		}
-		prev = storedHash
-	}
-	return "", rows.Err()
-}
-
-func chainHash(prev []byte, tenantID string, e Entry, before, after []byte) []byte {
-	h := sha256.New()
-	h.Write(prev)
-	h.Write([]byte(tenantID))
-	h.Write([]byte(e.ActorKind))
-	if e.ActorID != nil {
-		h.Write([]byte(*e.ActorID))
-	}
-	h.Write([]byte(e.Action))
-	h.Write([]byte(e.ResourceType))
-	if e.ResourceID != nil {
-		h.Write([]byte(*e.ResourceID))
-	}
-	h.Write(before)
-	h.Write(after)
-	h.Write([]byte(e.Outcome))
-	// 只在非空时参与：00080 之前的记录没有这一列，它们的哈希必须原样可复算
-	if e.AuthContext != "" {
-		h.Write([]byte(e.AuthContext))
-	}
-	return h.Sum(nil)
 }
 
 // authContextFrom 从请求主体推出本条记录的认证强度。
@@ -264,16 +235,4 @@ func nullIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-func equalBytes(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

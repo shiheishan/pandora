@@ -124,6 +124,8 @@ DOMAINS=(
   # 变更套餐（00071）：同 traffic_pack，复用 order_release 的一次性租户夹具，独占一个库。
   "plan_change|pandora_plan_change_gate|./internal/domain/billing||||app_role|^TestPlanChangePG18$"
   "idempotency|pandora_idempotency_gate|./internal/middleware||||app_role,idempotency_seed|"
+  # 审计哈希链（00083 第二版口径）：篡改用例要绕过追加写触发器，只在这个一次性库里做
+  "audit|pandora_audit_gate|./internal/platform/audit|run_id|pandora_audit_test_marker|pandora-audit-pg18||"
 )
 
 selected() {

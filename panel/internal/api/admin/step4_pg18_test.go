@@ -327,9 +327,16 @@ func TestAuditLogPG18(t *testing.T) {
 		AND (after_digest->>'rows')::int = 2 AND auth_context='reauth'`, tenant).Scan(&exports); err != nil || exports != 1 {
 		t.Fatalf("audit.export rows=%d err=%v", exports, err)
 	}
-	// 不在这里跑 audit.VerifyChain：它从 jsonb 读回摘要再算哈希，而 jsonb 的输出
-	// 字节与写入时 json.Marshal 的不同（键序、冒号后空格），任何带摘要的记录都
-	// 复算不出——既有缺陷，已报告协调会话。auth_context 入链由 audit 包单测证明。
+	// 真实处理器写出的整条链（带摘要、带 auth_context）按第二版口径复算得出
+	verifyTx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = verifyTx.Rollback(ctx) }()
+	if report, err := audit.VerifyChain(ctx, verifyTx, tenant); err != nil || report.BrokenAt != "" ||
+		report.LegacyLinkOnly != 0 || report.Rows < 4 {
+		t.Fatalf("audit chain report=%+v err=%v", report, err)
+	}
 }
 
 func TestNodeCountryAndCredentialsPG18(t *testing.T) {
