@@ -1,0 +1,10 @@
+/**
+ * [INPUT]: 依赖同目录 fonts.css、tokens.css、roles.css、base.css
+ * [OUTPUT]: 对外提供全局样式的唯一入口
+ * [POS]: styles 的聚合点，被 admin / portal / showcase 三个入口的 main.tsx 各引入一次；顺序即层次：字体 → 令牌 → 角色 → 基础
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+@import './fonts.css';
+@import './tokens.css';
+@import './roles.css';
+@import './base.css';

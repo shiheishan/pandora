@@ -8,6 +8,7 @@
   "scripts": {
     "dev:admin": "vite --mode admin",
     "dev:portal": "vite --mode portal",
+    "dev:showcase": "vite --mode showcase",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "test": "vitest run",
