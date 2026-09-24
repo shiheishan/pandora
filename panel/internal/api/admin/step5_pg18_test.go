@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 announcement 域的一次性库（openAnnouncementPG18）、step3/step4 的造数与请求辅助，依赖第 ⑤ 步的处理器
-// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18、TestUserProfileRegisteredIPPG18
-// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色，风控画像的注册 IP；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
+// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18、TestUserProfileRegisteredIPPG18、TestDashboardReadModelsPG18
+// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色，风控画像的注册 IP，经营总览 / 收入上一区间 / 系统状态组件 / 日活；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -369,5 +369,124 @@ func TestUserProfileRegisteredIPPG18(t *testing.T) {
 		if w := step3Do(t, ctx, r, http.MethodGet, "/v1/users/"+id+"/profile", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("profile %s: status=%d body=%s, want %s", id, w.Code, w.Body.String(), want)
 		}
+	}
+}
+
+func TestDashboardReadModelsPG18(t *testing.T) {
+	ctx, admin, app := openAnnouncementPG18(t)
+	const (
+		tenant = "87000000-0000-4000-8000-000000000501"
+		actor  = "87000000-0000-4000-8000-000000000511"
+		other  = "87000000-0000-4000-8000-000000000512"
+		pre    = "87000000-0000-4000-8000-000000000"
+	)
+	step3Seed(t, ctx, admin,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','dash-pg18','Dash','CNY')`,
+		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES
+		   ('`+actor+`','`+tenant+`','ops@dash.invalid','Ops','active'),
+		   ('`+other+`','`+tenant+`','o@dash.invalid','O','active')`)
+	// 节点 id 前缀与 TestDashboardTasksPG18 错开：同一个库，主键不能撞
+	nodes := step3Nodes(t, ctx, admin, tenant, "87000005-0000-4000-8000-", 2)
+	step3Seed(t, ctx, admin, `UPDATE nodes SET last_heartbeat_at = now() WHERE id='`+nodes[0]+`'`)
+	subA, subB := pre+"5a1", pre+"5a2"
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`SET LOCAL session_replication_role = replica`,
+		// 一条新建的 active 订阅（算 new_7_days），一条老订阅
+		`INSERT INTO subscriptions(id,tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount,current_period_end,created_at) VALUES
+		   ('` + subA + `','` + tenant + `','` + actor + `',gen_random_uuid(),gen_random_uuid(),'active','CNY',0,now()+interval '30 days',now()),
+		   ('` + subB + `','` + tenant + `','` + other + `',gen_random_uuid(),gen_random_uuid(),'active','CNY',0,now()+interval '30 days',now()-interval '40 days')`,
+		// 站点时区（新租户默认上海）的昨天调增 500；10 天前调增 700（落在 7 天的上一区间里）
+		`INSERT INTO revenue_report_adjustments(tenant_id,currency,amount,reason,effective_on,created_by,idempotency_key) VALUES
+		   ('` + tenant + `','CNY',500,'昨日补录收入',(now() AT TIME ZONE 'Asia/Shanghai')::date - 1,'` + actor + `','dash-1'),
+		   ('` + tenant + `','CNY',700,'上一区间补录',(now() AT TIME ZONE 'Asia/Shanghai')::date - 10,'` + actor + `','dash-2')`,
+		// 日活：actor 今天拉取成功且有流量（去重算 1），other 今天只有流量
+		`INSERT INTO subscription_fetch_log(tenant_id,subscription_id,result,fetched_at) VALUES('` + tenant + `','` + subA + `','ok',now())`,
+		`INSERT INTO subscription_usage_daily(tenant_id,subscription_id,day,bytes) VALUES
+		   ('` + tenant + `','` + subA + `',current_date,10),('` + tenant + `','` + subB + `',current_date,20)`,
+	} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("seed: %v\nSQL: %s", err, sql)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	h := step4Handlers(t, app)
+	r := step5Router(tenant, actor, nil, func(r chi.Router) {
+		r.Get("/v1/overview", h.overview)
+		r.Get("/v1/revenue/timeseries", h.revenueTimeseries)
+		r.Get("/v1/system/status", h.systemStatus)
+		r.Get("/v1/stats/timeseries", h.statsTimeseries)
+	})
+	getJSON := func(path string, dst any) {
+		t.Helper()
+		w := step3Do(t, ctx, r, http.MethodGet, path, "")
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), dst) != nil {
+			t.Fatalf("%s: status=%d body=%s", path, w.Code, w.Body.String())
+		}
+	}
+
+	var ov struct {
+		Subscriptions struct {
+			New7Days int `json:"new_7_days"`
+		} `json:"subscriptions"`
+		Nodes struct {
+			Total, Online int
+		} `json:"nodes"`
+		Revenue []struct {
+			Currency        string
+			Yesterday       int64 `json:"yesterday"`
+			ActualYesterday int64 `json:"actual_yesterday"`
+		} `json:"revenue"`
+	}
+	getJSON("/v1/overview", &ov)
+	if ov.Subscriptions.New7Days != 1 || ov.Nodes.Total != 2 || ov.Nodes.Online != 1 ||
+		len(ov.Revenue) != 2 || ov.Revenue[0].Currency != "CNY" || ov.Revenue[0].Yesterday != 500 || ov.Revenue[0].ActualYesterday != 0 {
+		t.Fatalf("overview=%+v", ov)
+	}
+
+	var ts struct {
+		PreviousTotal int64 `json:"previous_total"`
+		Points        []any `json:"points"`
+	}
+	getJSON("/v1/revenue/timeseries?currency=cny&days=7", &ts)
+	if ts.PreviousTotal != 700 || len(ts.Points) != 7 {
+		t.Fatalf("timeseries previous_total=%d points=%d", ts.PreviousTotal, len(ts.Points))
+	}
+
+	var st struct {
+		State      string `json:"state"`
+		Components []struct {
+			Key     string         `json:"key"`
+			State   string         `json:"state"`
+			Metrics map[string]any `json:"metrics"`
+		} `json:"components"`
+	}
+	getJSON("/v1/system/status", &st)
+	comp := map[string]map[string]any{}
+	states := map[string]string{}
+	for _, c := range st.Components {
+		comp[c.Key], states[c.Key] = c.Metrics, c.State
+	}
+	if len(st.Components) != 8 || st.State != "degraded" || states["postgres"] != "ok" || states["valkey"] != "unknown" ||
+		states["node_fabric"] != "warn" || comp["node_fabric"]["online"] != float64(1) || comp["node_fabric"]["total"] != float64(2) ||
+		states["payment_callbacks"] != "ok" || states["mail"] != "ok" || states["sse"] != "unknown" {
+		t.Fatalf("system status state=%s components=%+v", st.State, st.Components)
+	}
+
+	var stats struct {
+		Points []struct {
+			ActiveUsers int `json:"active_users"`
+		} `json:"points"`
+	}
+	getJSON("/v1/stats/timeseries?days=3", &stats)
+	if len(stats.Points) != 3 || stats.Points[2].ActiveUsers != 2 || stats.Points[0].ActiveUsers != 0 {
+		t.Fatalf("stats points=%+v", stats.Points)
 	}
 }

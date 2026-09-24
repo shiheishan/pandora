@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db 的租户事务读数据库体积与连接数，读 AEGIS_BACKUP_DIR 等环境变量探测备份目录，依赖 system_components.go 的组件清单
+// [OUTPUT]: 对外提供 handlers.systemStatus、backupStatus
+// [POS]: api/admin 的系统状态（契约后台-01 GET v1/system/status）：备份、数据库与 state / components
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -36,7 +41,8 @@ type backupFile struct {
 func (h *handlers) systemStatus(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{}
 
-	out["backup"] = h.backupStatus()
+	backup := h.backupStatus()
+	out["backup"] = backup
 
 	// 数据库体积与连接数：扩容和排查慢查询时最先要看的两个数。
 	if err := h.d.Pool.InTx(r.Context(),
@@ -61,6 +67,8 @@ func (h *handlers) systemStatus(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 		out["database"] = map[string]any{"error": "读取数据库状态失败"}
 	}
+	database, _ := out["database"].(map[string]any)
+	out["state"], out["components"] = h.systemComponents(r, database, backup)
 
 	httpx.OK(w, out)
 }

@@ -256,6 +256,8 @@ func (h *handlers) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		Logins     int    `json:"logins"`
 		Orders     int    `json:"orders"`
 		UniqueIPs  int    `json:"unique_ips"`
+		// ActiveUsers 是当天有成功订阅拉取或有流量归属的去重用户数
+		ActiveUsers int `json:"active_users"`
 	}
 	out := []point{}
 
@@ -268,13 +270,31 @@ func (h *handlers) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 			  SELECT generate_series(
 			    date_trunc('day', now()) - make_interval(days => $2 - 1),
 			    date_trunc('day', now()), '1 day')::date AS day
+			), active AS (
+			  -- 两路来源去重：成功的订阅拉取（按会话时区切日，与本接口其余列一致），
+			  -- 与按日流量（00072，按用户 / 站点时区记的日）
+			  SELECT day, count(DISTINCT user_id)::int AS n FROM (
+			    SELECT date_trunc('day', f.fetched_at)::date AS day, s.user_id
+			      FROM subscription_fetch_log f
+			      JOIN subscriptions s ON s.tenant_id = f.tenant_id AND s.id = f.subscription_id
+			     WHERE f.tenant_id = $1 AND f.result = 'ok'
+			       AND f.fetched_at >= date_trunc('day', now()) - make_interval(days => $2 - 1)
+			    UNION
+			    SELECT u.day, s.user_id
+			      FROM subscription_usage_daily u
+			      JOIN subscriptions s ON s.tenant_id = u.tenant_id AND s.id = u.subscription_id
+			     WHERE u.tenant_id = $1 AND u.bytes > 0
+			       AND u.day >= (date_trunc('day', now()) - make_interval(days => $2 - 1))::date
+			  ) x GROUP BY day
 			)
 			SELECT to_char(d.day, 'MM-DD'),
 			  count(*) FILTER (WHERE a.action = 'user.registered'),
 			  count(*) FILTER (WHERE a.action = 'user.login' AND a.outcome = 'success'),
 			  count(*) FILTER (WHERE a.action = 'order.created'),
-			  count(DISTINCT a.source_ip_hash)
+			  count(DISTINCT a.source_ip_hash),
+			  coalesce(max(ac.n), 0)
 			  FROM d
+			  LEFT JOIN active ac ON ac.day = d.day
 			  LEFT JOIN audit_events a
 			    ON a.tenant_id = $1 AND date_trunc('day', a.occurred_at)::date = d.day
 			 GROUP BY d.day ORDER BY d.day`, tenantID, days)
@@ -284,7 +304,7 @@ func (h *handlers) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var p point
-			if err := rows.Scan(&p.Day, &p.Registered, &p.Logins, &p.Orders, &p.UniqueIPs); err != nil {
+			if err := rows.Scan(&p.Day, &p.Registered, &p.Logins, &p.Orders, &p.UniqueIPs, &p.ActiveUsers); err != nil {
 				return err
 			}
 			out = append(out, p)

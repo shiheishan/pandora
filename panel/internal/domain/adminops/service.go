@@ -99,7 +99,14 @@ type Overview struct {
 		Trialing int64 `json:"trialing"`
 		Expiring int64 `json:"expiring_7_days"`
 		Expired  int64 `json:"expired"`
+		// New7Days 是近 7 天新建、当前仍 active / trialing 的订阅
+		New7Days int64 `json:"new_7_days"`
 	} `json:"subscriptions"`
+	// Nodes 只算没退役的节点；online 与 GET v1/nodes 的 stale 取反一致（心跳 ≤90 秒）
+	Nodes struct {
+		Total  int64 `json:"total"`
+		Online int64 `json:"online"`
+	} `json:"nodes"`
 	// 按币种分组而不是汇总成一个数：不同币种的最小单位金额直接相加
 	// 得到的是无意义的数字（1 日元 + 1 美元 = 2 什么？）。
 	// 平台同时在售多币种价格时，混加会让经营数据彻底失真。
@@ -116,6 +123,8 @@ type Overview struct {
 type RevenueRow struct {
 	Currency         string `json:"currency"`
 	Today            int64  `json:"today"`
+	Yesterday        int64  `json:"yesterday"`
+	ActualYesterday  int64  `json:"actual_yesterday"`
 	Last7Days        int64  `json:"last_7_days"`
 	Last30           int64  `json:"last_30_days"`
 	Total            int64  `json:"total"`
@@ -149,10 +158,20 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 			       count(*) FILTER (WHERE status = 'trialing'),
 			       count(*) FILTER (WHERE status IN ('active','trialing')
 			                          AND current_period_end < now() + interval '7 days'),
-			       count(*) FILTER (WHERE status = 'expired')
+			       count(*) FILTER (WHERE status = 'expired'),
+			       count(*) FILTER (WHERE status IN ('active','trialing')
+			                          AND created_at >= now() - interval '7 days')
 			  FROM subscriptions WHERE tenant_id = $1`, tenantID,
 		).Scan(&o.Subscriptions.Active, &o.Subscriptions.Trialing,
-			&o.Subscriptions.Expiring, &o.Subscriptions.Expired); err != nil {
+			&o.Subscriptions.Expiring, &o.Subscriptions.Expired, &o.Subscriptions.New7Days); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*),
+			       count(*) FILTER (WHERE last_heartbeat_at >= now() - interval '90 seconds')
+			  FROM nodes
+			 WHERE tenant_id = $1 AND status <> 'destroyed' AND serving_status <> 'retired'`, tenantID,
+		).Scan(&o.Nodes.Total, &o.Nodes.Online); err != nil {
 			return err
 		}
 
@@ -164,6 +183,7 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 		}
 		for _, currency := range []string{"CNY", "USD"} {
 			r := RevenueRow{Currency: currency}
+			var adjYesterday int64
 			if err := tx.QueryRow(ctx, `
 				WITH params AS (
 				 SELECT (now() AT TIME ZONE $3)::date AS today
@@ -174,7 +194,9 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date>=p.today-6),0)::bigint,
 				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
 				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date>=p.today-29),0)::bigint,
-				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END),0)::bigint
+				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END),0)::bigint,
+				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
+				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date=p.today-1),0)::bigint
 				   FROM ledger_entries le
 				   JOIN ledger_transactions lt ON lt.id=le.transaction_id AND lt.tenant_id=le.tenant_id
 				   JOIN ledger_accounts la ON la.id=le.account_id AND la.tenant_id=le.tenant_id
@@ -184,13 +206,15 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 				 SELECT coalesce(sum(amount) FILTER(WHERE effective_on=p.today),0)::bigint,
 				        coalesce(sum(amount) FILTER(WHERE effective_on>=p.today-6),0)::bigint,
 				        coalesce(sum(amount) FILTER(WHERE effective_on>=p.today-29),0)::bigint,
-				        coalesce(sum(amount),0)::bigint
+				        coalesce(sum(amount),0)::bigint,
+				        coalesce(sum(amount) FILTER(WHERE effective_on=p.today-1),0)::bigint
 				   FROM revenue_report_adjustments, params p WHERE tenant_id=$1 AND currency=$2
 				) SELECT * FROM actual CROSS JOIN adj`, tenantID, currency, revenueTimezone).
-				Scan(&r.ActualToday, &r.Actual7Days, &r.Actual30Days, &r.ActualTotal,
-					&r.AdjustmentToday, &r.Adjustment7Days, &r.Adjustment30Days, &r.AdjustmentTotal); err != nil {
+				Scan(&r.ActualToday, &r.Actual7Days, &r.Actual30Days, &r.ActualTotal, &r.ActualYesterday,
+					&r.AdjustmentToday, &r.Adjustment7Days, &r.Adjustment30Days, &r.AdjustmentTotal, &adjYesterday); err != nil {
 				return err
 			}
+			r.Yesterday = r.ActualYesterday + adjYesterday
 			r.Today = r.ActualToday + r.AdjustmentToday
 			r.Last7Days = r.Actual7Days + r.Adjustment7Days
 			r.Last30 = r.Actual30Days + r.Adjustment30Days

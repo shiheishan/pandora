@@ -100,7 +100,7 @@ LOG_DIR="$(mktemp -d)"
 DOMAINS=(
   "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18)$"
   "enrollment|pandora_enrollment_pg18|./internal/domain/nodefabric|||||^(TestNodeEnrollmentPG18|TestIssueServerTokenPG18)$"
-  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||^(TestAnnouncementPG18|TestDeviceLimitWritesPG18|TestAccessLogCategoryPG18|TestNodeRoutingGlobalOutboundPG18|TestNodeListPagingPG18|TestIPClusterPG18|TestAuditLogPG18|TestNodeCountryAndCredentialsPG18|TestPluginDeliveryDurationPG18|TestSiteSettingsPG18|TestDashboardTasksPG18|TestFeatureSwitchGatesPG18|TestAdminMeProfilePG18|TestUserProfileRegisteredIPPG18)$"
+  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||^(TestAnnouncementPG18|TestDeviceLimitWritesPG18|TestAccessLogCategoryPG18|TestNodeRoutingGlobalOutboundPG18|TestNodeListPagingPG18|TestIPClusterPG18|TestAuditLogPG18|TestNodeCountryAndCredentialsPG18|TestPluginDeliveryDurationPG18|TestSiteSettingsPG18|TestDashboardTasksPG18|TestFeatureSwitchGatesPG18|TestAdminMeProfilePG18|TestUserProfileRegisteredIPPG18|TestDashboardReadModelsPG18)$"
   "node_config|pandora_nodecfg_gate|./internal/api/admin|run_id,oid,system_id||pandora-nodecfg-disposable||^(TestNodeConfigLegacyPG18|TestNodeConfigPG18LockSchedule)$"
   "catalog_sales|pandora_catalog_sales_gate|./internal/domain/adminops|run_id|pandora_catalog_sales_test_marker|pandora-catalog-sales-pg18||"
   "giftcard|pandora_giftcard_gate|./internal/domain/giftcard|run_id|pandora_giftcard_test_marker|pandora-giftcard-pg18||"
