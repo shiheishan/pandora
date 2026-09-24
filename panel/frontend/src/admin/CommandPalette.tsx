@@ -1,19 +1,31 @@
 /**
- * [INPUT]: 依赖 react 的 state / ref / effect，依赖 ./modules 的 paletteItems / PaletteItem，依赖 ./CommandPalette.module.css
+ * [INPUT]: 依赖 react 的 state / ref / effect，依赖 ./modules 的 paletteItems / PaletteItem / Permissions，依赖 ./CommandPalette.module.css
  * [OUTPUT]: 对外提供 CommandPalette
- * [POS]: admin 的 ⌘K 命令面板（管理后台.dc.html pal）：原生 <dialog> 顶部 12vh、宽 560，输入即筛选模块、标签与深链，↑↓ 选择、↵ 打开、Esc 关闭；纯前端，无接口
+ * [POS]: admin 的 ⌘K 命令面板（管理后台.dc.html pal）：原生 <dialog> 顶部 12vh、宽 560，输入即筛选有读权限的模块、标签与深链，↑↓ 选择、↵ 打开、Esc 关闭；纯前端，无接口
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import css from './CommandPalette.module.css'
-import { paletteItems, type PaletteItem } from './modules'
+import { paletteItems, type PaletteItem, type Permissions } from './modules'
 
-export function CommandPalette({ open, onClose, onPick }: { open: boolean; onClose: () => void; onPick: (item: PaletteItem) => void }) {
+const NO_PERMISSIONS: Permissions = new Set()
+
+export function CommandPalette({
+  open,
+  perms = NO_PERMISSIONS,
+  onClose,
+  onPick,
+}: {
+  open: boolean
+  perms?: Permissions
+  onClose: () => void
+  onPick: (item: PaletteItem) => void
+}) {
   const dialog = useRef<HTMLDialogElement>(null)
   const input = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
-  const items = paletteItems(query)
+  const items = paletteItems(query, perms)
   const index = Math.min(active, Math.max(0, items.length - 1))
 
   useEffect(() => {
