@@ -4,7 +4,7 @@
 业务用例层：每个包对应一个业务域，只依赖 platform，不依赖 api 和彼此的内部实现。状态机与账本规则由数据库触发器兜底，这里负责编排事务、幂等键与领域校验。
 
 成员清单
-adminops/: 管理后台的读写用例，9 文件；套餐目录用例拆成「事务外校验 + *Tx 事务体」，向导编辑 plan_wizard_update.go 把资料、价格、版本发布编排进同一事务
+adminops/: 管理后台的读写用例，9 文件；套餐目录用例拆成「事务外校验 + *Tx 事务体」，向导编辑 plan_wizard_update.go 把资料、价格、版本发布编排进同一事务；见 adminops/CLAUDE.md
 appearance/: 主题与外观配置，service.go 读写、tokens.go 设计稿令牌白名单与站点名、sanitize.go 清洗插槽 HTML；见 appearance/CLAUDE.md
 billing/: 订单、支付与复式账本，18 文件；借贷配平与回调幂等在此编排；commission_available.go 是「可用佣金 = 账本余额 − 未过账在途提现」的唯一口径，提现申请与转余额在同一把科目锁下共用
 content/: 版本化知识库与自定义页面投递
@@ -16,7 +16,7 @@ notify/: 站内信、邮件，以及到期与流量预警，8 文件；见 notif
 payment/: 支付渠道适配器接口（PAY-002）与跨渠道通用的金额换算，5 文件；不依赖 httpx，渠道停用以 ErrProviderDisabled 哨兵交给 billing 翻译成 503
 plugin/: 插件钩子 hooks.go 与事件发射 emit.go
 subscription/: 订阅分发，3 文件；见 subscription/CLAUDE.md
-support/: 工单（OPS-001），2 文件
+support/: 工单（OPS-001），2 文件；见 support/CLAUDE.md
 *_test.go: 各域用例测试随包放置
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

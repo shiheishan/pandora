@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/httpx，依赖 notification_deliveries / notification_preferences 两张表
+// [OUTPUT]: 对外提供 handlers 的 listNotifications / markNotificationRead / markAllNotificationsRead / getNotificationPreferences / setNotificationPreference
+// [POS]: api/public 的站内信与通知偏好；偏好按表主键 (user_id, category, channel) upsert
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 // 站内信与通知偏好。
@@ -249,13 +254,16 @@ func (h *handlers) setNotificationPreference(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// 冲突目标必须与表主键 (user_id, category, channel) 一致（00008）：
+	// 多写一个 tenant_id 就没有匹配的唯一约束，PostgreSQL 直接拒绝这条语句（缺陷 7）。
+	// 用户只属于一个租户，按主键冲突不会跨租户误改。
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
 		func(tx pgx.Tx) error {
 			_, err := tx.Exec(r.Context(), `
 				INSERT INTO notification_preferences
 					(tenant_id, user_id, category, channel, enabled)
 				VALUES ($1,$2::uuid,$3,$4,$5)
-				ON CONFLICT (tenant_id, user_id, category, channel)
+				ON CONFLICT (user_id, category, channel)
 				DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
 				p.TenantID, p.UserID, req.Category, req.Channel, req.Enabled)
 			return err

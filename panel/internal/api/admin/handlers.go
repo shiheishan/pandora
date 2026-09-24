@@ -6,12 +6,14 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -710,6 +712,9 @@ func (h *handlers) ticketEscalate(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 	includeRetired := r.URL.Query().Get("include_retired") == "1"
+	// 原先写死 LIMIT 200、total 取本页条数：第 201 个节点起被静默截掉，
+	// 前端还以为那就是全部（缺陷 21）。现在可分页，total 是真实总数。
+	limit, offset := nodeListPage(r.URL.Query())
 	type row struct {
 		ID string `json:"id"`
 		// NodeNo 是给人看的短编号（101、102…）。UUID 仍然是主键和接口
@@ -781,8 +786,18 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 		GrantedPlans []string `json:"granted_plans"`
 	}
 	out := []row{}
+	var total int64
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: httpx.TenantIDFrom(r.Context())},
 		func(tx pgx.Tx) error {
+			// total 用与列表相同的筛选单独数一次：翻过最后一页时列表为空，
+			// 窗口函数就取不到总数了
+			if err := tx.QueryRow(r.Context(), `
+				SELECT count(*) FROM nodes n
+				 WHERE n.tenant_id = $1 AND n.status <> 'destroyed'
+				   AND ($2::boolean OR n.serving_status <> 'retired')`,
+				httpx.TenantIDFrom(r.Context()), includeRetired).Scan(&total); err != nil {
+				return err
+			}
 			// 在线数与流量先各自聚合成一张小表再 JOIN，而不是给每个节点
 			// 挂相关子查询：后者会把同一个时间窗扫 200 遍。
 			rows, err := tx.Query(r.Context(), `
@@ -831,8 +846,9 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 				  LEFT JOIN grants g ON g.pool_id = n.pool_id
 				 WHERE n.tenant_id = $1 AND n.status <> 'destroyed'
 				   AND ($2::boolean OR n.serving_status <> 'retired')
-				 ORDER BY n.created_at DESC LIMIT 200`,
-				httpx.TenantIDFrom(r.Context()), includeRetired)
+				 ORDER BY n.created_at DESC, n.id
+				 LIMIT $3 OFFSET $4`,
+				httpx.TenantIDFrom(r.Context()), includeRetired, limit, offset)
 			if err != nil {
 				return err
 			}
@@ -872,7 +888,20 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
 	}
-	httpx.OK(w, map[string]any{"nodes": out, "total": len(out)})
+	httpx.OK(w, map[string]any{"nodes": out, "total": total})
+}
+
+// nodeListPage 解析节点列表的分页参数。默认 500 条、最多 1000 条：前端按
+// 设计在本地做筛选与搜索，一页要装得下常规规模的全部节点。非法值回默认。
+func nodeListPage(q url.Values) (limit, offset int) {
+	limit, offset = 500, 0
+	if v, err := strconv.Atoi(strings.TrimSpace(q.Get("limit"))); err == nil && v >= 1 && v <= 1000 {
+		limit = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(q.Get("offset"))); err == nil && v > 0 {
+		offset = v
+	}
+	return limit, offset
 }
 
 // panelURLFrom 推导机器该回连的面板地址。
@@ -1289,12 +1318,9 @@ func (h *handlers) nodeSetRouting(w http.ResponseWriter, r *http.Request) {
 			lastEnabled = i
 		}
 	}
+	// 规则指向的出站是否存在，要连全局出站一起看（见事务里的检查），
+	// 这里先把不依赖数据库的校验做完
 	for i, x := range req.Routes {
-		if !tags[strings.ToLower(strings.TrimSpace(x.OutboundTag))] {
-			httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
-				"routes": fmt.Sprintf("第 %d 条规则指向不存在的出站 %q", i+1, x.OutboundTag)}))
-			return
-		}
 		empty, err := nodefabric.ValidateRoutingMatcher(x.Matcher)
 		if err != nil {
 			httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
@@ -1336,6 +1362,20 @@ func (h *handlers) nodeSetRouting(w http.ResponseWriter, r *http.Request) {
 			if currentVersion != req.RowVersion {
 				return &httpx.Error{Code: httpx.CodeConflict, Message: "节点已被其他管理员修改，请刷新后重试",
 					Fields: map[string]string{"row_version": fmt.Sprintf("current=%d", currentVersion)}}
+			}
+			// 规则可以指向 direct/block、本次提交的私有出站，也可以指向全局出站
+			// （node_id IS NULL）：下发时 LoadRouting 本来就把两者合在一起。
+			// 原先只认前两类，单节点规则没法用「US-LAX-01」这种公共中转（缺陷 18）
+			globalTags, err := loadGlobalOutboundTags(r.Context(), tx, tenantID)
+			if err != nil {
+				return err
+			}
+			for i, x := range req.Routes {
+				tag := strings.ToLower(strings.TrimSpace(x.OutboundTag))
+				if !tags[tag] && !globalTags[tag] {
+					return httpx.Invalid(map[string]string{
+						"routes": fmt.Sprintf("第 %d 条规则指向不存在的出站 %q", i+1, x.OutboundTag)})
+				}
 			}
 			if _, err := tx.Exec(r.Context(),
 				`DELETE FROM node_routes WHERE tenant_id=$1 AND node_id=$2::uuid`,
@@ -1395,7 +1435,29 @@ func (h *handlers) nodeSetRouting(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	// 提交之后通知节点：原先只递增 config_source_generation，在线节点要等
+	// 下一轮轮询才生效，长连接推送形同虚设（缺陷 18）
+	h.d.Node.NotifyNodeChanged(r.Context(), tenantID, id)
 	httpx.OK(w, map[string]any{"ok": true, "row_version": req.RowVersion + 1})
+}
+
+// loadGlobalOutboundTags 取租户的全局出站 tag（小写），供单节点规则校验引用。
+func loadGlobalOutboundTags(ctx context.Context, tx pgx.Tx, tenantID string) (map[string]bool, error) {
+	rows, err := tx.Query(ctx,
+		`SELECT lower(tag) FROM node_outbounds WHERE tenant_id=$1 AND node_id IS NULL`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		out[tag] = true
+	}
+	return out, rows.Err()
 }
 
 // nodeSetProtocol 配置节点的对外服务参数（UniProxy 下发给节点端的内容）。
