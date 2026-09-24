@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit
+// [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、BuildNodeConfig、路由校验、ListNodeUsers、ReportTraffic / ReportAlive / ReportRuntimeStatus
+// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、拒绝已退出服务的节点）、用户下发与流量上报
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
@@ -10,8 +15,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -145,26 +152,55 @@ func legacyNodeStatusAllowsServing(isControlNode bool, legacyStatus string) bool
 //
 // 顺带返回节点类型：调用方要用它拼一键安装命令，而这里本来就要写这一行
 // UPDATE，用 RETURNING 带出来比让上层再查一次省一个来回。
+//
+// 已退役 / 已销毁的节点拒绝签发（409）：给一个不再服务的节点发接入凭据，
+// 等于让一台本该下线的机器重新拿到用户名单。签发写审计，与换令牌、吊销
+// 身份同级（SEC-012）；审计只记签发这件事，不记令牌或其哈希。
 func (s *Service) IssueServerToken(ctx context.Context, tenantID, actorID, nodeID string) (string, string, error) {
+	if _, err := uuid.Parse(nodeID); err != nil {
+		return "", "", httpx.New(httpx.CodeNotFound, "节点不存在")
+	}
 	tok, err := crypto.NewToken(24)
 	if err != nil {
 		return "", "", httpx.Internal(err)
 	}
 	var nodeType string
 	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actorID}, func(tx pgx.Tx) error {
+		var status, servingStatus string
 		scanErr := tx.QueryRow(ctx,
-			`UPDATE nodes SET server_token_hash = $3 WHERE tenant_id = $1 AND id = $2
-			 RETURNING coalesce(node_type, '')`,
-			tenantID, nodeID, crypto.HashToken(tok)).Scan(&nodeType)
+			`SELECT status, serving_status FROM nodes WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE`,
+			tenantID, nodeID).Scan(&status, &servingStatus)
 		if errors.Is(scanErr, pgx.ErrNoRows) {
 			return httpx.New(httpx.CodeNotFound, "节点不存在")
 		}
-		return scanErr
+		if scanErr != nil {
+			return scanErr
+		}
+		if serverTokenRefused(status, servingStatus) {
+			return httpx.New(httpx.CodeConflict, "节点已退役或已销毁，不能签发接入令牌")
+		}
+		if err := tx.QueryRow(ctx,
+			`UPDATE nodes SET server_token_hash = $3 WHERE tenant_id = $1 AND id = $2::uuid
+			 RETURNING coalesce(node_type, '')`,
+			tenantID, nodeID, crypto.HashToken(tok)).Scan(&nodeType); err != nil {
+			return err
+		}
+		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &actorID,
+			Action: "node.server_token.issue", ResourceType: "node", ResourceID: &nodeID,
+			APIDomain: "admin", RequestID: httpx.RequestIDFrom(ctx), Outcome: "success",
+			AfterDigest: map[string]any{"node_type": nodeType, "old_token_revoked": true}})
 	})
 	if err != nil {
 		return "", "", err
 	}
 	return tok, nodeType, nil
+}
+
+// serverTokenRefused 判定节点是否已退出服务、不能再签发接入令牌。
+// 口径与 00058 的「非终态节点」一致：生命周期 retired / destroyed，
+// 或服务状态 retired（后台「退役」即它）。
+func serverTokenRefused(status, servingStatus string) bool {
+	return status == "retired" || status == "destroyed" || servingStatus == "retired"
 }
 
 //------------------------------------------------------------------------------

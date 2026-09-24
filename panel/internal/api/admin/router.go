@@ -95,6 +95,9 @@ func registerCatalogPlanUpdate(r chi.Router, d Deps, handler http.HandlerFunc, i
 	).Put("/plans/{id}", handler)
 }
 
+// nodeBatchStatusIdempotencyScope 由批量改节点状态的两条路由共用。
+const nodeBatchStatusIdempotencyScope = "node_status_batch"
+
 func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
@@ -231,7 +234,9 @@ func NewRouter(d Deps) http.Handler {
 			r.With(
 				middleware.RequirePermission("platform.settings.write", d.Log),
 			).Post("/settings/telegram", h.setTelegramSettings)
-			r.With(middleware.RequirePermission("billing.provider.write", d.Log)).
+			// 测试发送（Telegram / SMTP / 模板）统一用通知写权限：它们是
+			// 「往外真发一条」，与支付渠道无关，原先挂的 billing.provider.write 是错位。
+			r.With(middleware.RequirePermission("ops.notification.write", d.Log)).
 				Post("/settings/telegram/test", h.testTelegram)
 
 			// --- 用户批量运营 ---
@@ -241,14 +246,17 @@ func NewRouter(d Deps) http.Handler {
 			r.With(middleware.RequirePermission("iam.user.read", d.Log)).
 				Post("/users/bulk/preview", h.previewBulkUsers)
 			r.With(
-				middleware.RequirePermission("iam.user.read", d.Log),
+				middleware.RequirePermission("iam.user.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 			).Get("/users/bulk/export", h.exportUsers)
 			r.With(
 				middleware.RequirePermission("iam.user.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 				middleware.Idempotency(d.Pool, "user_bulk_generate", d.Log),
 			).Post("/users/bulk/generate", h.generateUsers)
 			r.With(
 				middleware.RequirePermission("ops.notification.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 				middleware.Idempotency(d.Pool, "user_bulk_mail", d.Log),
 			).Post("/users/bulk/mail", h.sendBulkMail)
 
@@ -310,16 +318,19 @@ func NewRouter(d Deps) http.Handler {
 			// 改用户状态是高风险动作：要写权限 + 近期重认证
 			r.With(
 				middleware.RequirePermission("iam.user.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 			).Post("/users/{id}/status", h.setUserStatus)
+			// 下面两条与全网关一致：先权限、后重认证。反过来的话，没有权限的
+			// 管理员会先被要求输一遍密码，然后才收到拒绝。
 			r.With(
 				// 改别人的密码属于「出事没法补救」那一类，保留重认证。
-				middleware.RequireRecentReauth(d.Log),
 				middleware.RequirePermission("iam.user.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 			).Post("/users/{id}/reset-password", h.resetUserPassword)
 			r.With(
 				// 换掉别人的订阅链接会让他的客户端立刻断，同样保留重认证。
-				middleware.RequireRecentReauth(d.Log),
 				middleware.RequirePermission("iam.user.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 			).Post("/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
 
 			// --- 订单 ---
@@ -475,7 +486,7 @@ func NewRouter(d Deps) http.Handler {
 			r.With(
 				middleware.RequirePermission("platform.settings.write", d.Log),
 			).Post("/settings/mail", h.setMailSettings)
-			r.With(middleware.RequirePermission("billing.provider.write", d.Log)).
+			r.With(middleware.RequirePermission("ops.notification.write", d.Log)).
 				Post("/settings/mail/test", h.testMailSettings)
 
 			// 通知模板：内容可改，但 code 不能新建 ——
@@ -490,7 +501,7 @@ func NewRouter(d Deps) http.Handler {
 				middleware.RequirePermission("platform.settings.write", d.Log),
 			).Post("/mail/templates/reset", h.resetMailTemplate)
 			r.With(
-				middleware.RequirePermission("billing.provider.write", d.Log),
+				middleware.RequirePermission("ops.notification.write", d.Log),
 			).Post("/mail/templates/test", h.testMailTemplate)
 
 			// 节点分组：节点与套餐之间的连接层
@@ -578,6 +589,7 @@ func NewRouter(d Deps) http.Handler {
 			// 切换模式会影响所有人能否连上，与改支付渠道同级，要求近期重认证
 			r.With(
 				middleware.RequirePermission("iam.user.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 			).Post("/settings/device-limit", h.setDeviceMode)
 
 			r.With(middleware.RequirePermission("node.read", d.Log)).
@@ -601,7 +613,7 @@ func NewRouter(d Deps) http.Handler {
 			).Put("/nodes/order", h.reorderAdminNodes)
 			r.With(
 				middleware.RequirePermission("node.lifecycle", d.Log),
-				middleware.Idempotency(d.Pool, "node_status_batch", d.Log),
+				middleware.Idempotency(d.Pool, nodeBatchStatusIdempotencyScope, d.Log),
 			).Post("/nodes/status:batch", h.batchAdminNodeStatus)
 			r.With(middleware.RequirePermission("node.read", d.Log)).
 				Get("/node-protocol-schemas", h.nodeProtocolSchemas)
@@ -656,11 +668,12 @@ func NewRouter(d Deps) http.Handler {
 				Post("/nodes/{id}/status", h.nodeSetStatus)
 
 			// --- 节点批量操作 ---
-			// 批量改状态的处理器早就写好了，却一直没接进路由 —— 后台点不到。
+			// batch/status 是 status:batch 的别名，同一个处理器、同一个幂等 scope：
+			// scope 不同的话，同一个 Idempotency-Key 换条路径就会再执行一次。
 			// retired 就是这个模型里的「删除」：节点有历史，不做物理删除。
 			r.With(
 				middleware.RequirePermission("node.lifecycle", d.Log),
-				middleware.Idempotency(d.Pool, "node_batch_status", d.Log),
+				middleware.Idempotency(d.Pool, nodeBatchStatusIdempotencyScope, d.Log),
 			).Post("/nodes/batch/status", h.batchAdminNodeStatus)
 			// 没有批量移动：单节点移动要求节点停用且不带任何 agent 资产
 			// （身份、指标、任务、流量上报、有效令牌…），也就是只有从没用过的

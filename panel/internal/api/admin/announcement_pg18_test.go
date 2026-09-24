@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/notify 的公告服务与 platform/db，依赖一次性 PG18 库（run-pg18-gates.sh 的 announcement 域）
+// [OUTPUT]: 对外提供 TestAnnouncementPG18 与 openAnnouncementPG18（库护栏，devices_pg18_test.go 共用）
+// [POS]: api/admin 的 PG18 集成测试：公告定时发布、跨租户隔离与 RLS
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -25,7 +30,10 @@ import (
 
 const announcementPG18Fixture = "disposable-v1"
 
-func TestAnnouncementPG18(t *testing.T) {
+// openAnnouncementPG18 校验并打开 announcement 域的一次性 PG18 库（未配置则跳过）。
+// 同包其它借用这个库的 PG18 用例（设备上限写入）共用这道护栏，各用各的租户。
+func openAnnouncementPG18(t *testing.T) (context.Context, *pgxpool.Pool, *platformdb.Pool) {
+	t.Helper()
 	fixture := strings.TrimSpace(os.Getenv("AEGIS_ANNOUNCEMENT_PG18_FIXTURE"))
 	appDSN := strings.TrimSpace(os.Getenv("AEGIS_ANNOUNCEMENT_PG18_DSN"))
 	adminDSN := strings.TrimSpace(os.Getenv("AEGIS_ANNOUNCEMENT_PG18_ADMIN_DSN"))
@@ -43,17 +51,17 @@ func TestAnnouncementPG18(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	adminDB, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
 		t.Fatalf("open fixture administrator pool: %v", err)
 	}
-	defer adminDB.Close()
+	t.Cleanup(adminDB.Close)
 	app, err := platformdb.Open(ctx, appDSN)
 	if err != nil {
 		t.Fatalf("open real aegis_app pool: %v", err)
 	}
-	defer app.Close()
+	t.Cleanup(app.Close)
 
 	var database, marker, comment string
 	var version int
@@ -65,6 +73,11 @@ func TestAnnouncementPG18(t *testing.T) {
 	if database != expectedDatabase || version/10000 != 18 || marker != runID || comment != "pandora-node-preview-pg18:"+runID {
 		t.Fatalf("refusing unexpected fixture database=%q version=%d marker=%q comment=%q", database, version, marker, comment)
 	}
+	return ctx, adminDB, app
+}
+
+func TestAnnouncementPG18(t *testing.T) {
+	ctx, adminDB, app := openAnnouncementPG18(t)
 
 	const (
 		tenantA  = "75000000-0000-4000-8000-000000000001"

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit/realtime/geoip
+// [OUTPUT]: 对外提供 Service、NewService，bootstrap 令牌与接入、身份、签名请求、心跳、配置签发与回报、指标
+// [POS]: domain/nodefabric 的主服务：Agent 接入与配置下发；uniproxy.go、node_admin.go、enrollment.go 等同包文件扩展它
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package nodefabric 实现节点接入与配置下发（PRD 第 8–9 章）。
 //
 // 认证方案的取舍：AGT-001 要求 Agent 主动建立 mTLS 长连接。首版改用
@@ -526,7 +531,9 @@ func (s *Service) Bootstrap(ctx context.Context, tenantID string, in BootstrapIn
 			  cpu_cores=EXCLUDED.cpu_cores,
 			  memory_mb=EXCLUDED.memory_mb,
 			  disk_gb=EXCLUDED.disk_gb,
-			  region=coalesce(nullif(region,''),EXCLUDED.region)`,
+			  -- 必须写表名：DO UPDATE 里 EXCLUDED 也有 region，裸写会报
+			  -- 42702 ambiguous，整条 bootstrap 失败（enrollment.go 同一句早已写对）
+			  region=coalesce(nullif(servers.region,''),EXCLUDED.region)`,
 			nodeID, tenantID, in.NodeName, nullStr(in.Hostname), nullStr(in.PublicIP),
 			in.AgentVer, nullInt(in.CPUCores), nullInt(in.MemoryMB), nullInt(in.DiskGB), region); err != nil {
 			return err

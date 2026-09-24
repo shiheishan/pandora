@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx
+// [OUTPUT]: 对外提供 SessionInfo、ListActiveSessions、RevokeSession
+// [POS]: domain/identity 的门户自助会话管理：只列出、只吊销 audience=public 的会话
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package identity
 
 import (
@@ -29,6 +34,13 @@ import (
 //
 // IP 只回国家，不回明文地址：库里存的本来就是哈希，
 // 而且用户的 IP 列表若被他人看到，等于泄漏行踪。
+//
+// 只看得见、也只踢得掉门户（public）会话。同一个人可能也是管理员：
+// 门户令牌若能列出并吊销后台会话，一枚泄漏的门户令牌就能把管理员
+// 踢下线、还能看到后台登录的设备与时间 —— 两个域互不越界（ARC-002）。
+
+// selfServiceAudience 是门户自助会话管理能触及的唯一 audience。
+const selfServiceAudience = "public"
 
 type SessionInfo struct {
 	ID         string     `json:"id"`
@@ -52,11 +64,11 @@ func (s *Service) ListActiveSessions(ctx context.Context, tenantID, userID,
 			SELECT id::text, coalesce(user_agent,''), coalesce(ip_country,''),
 			       created_at, last_seen_at, expires_at
 			  FROM sessions
-			 WHERE tenant_id=$1 AND user_id=$2::uuid
+			 WHERE tenant_id=$1 AND user_id=$2::uuid AND audience=$3
 			   AND revoked_at IS NULL
 			   AND (expires_at IS NULL OR expires_at > now())
 			 ORDER BY last_seen_at DESC NULLS LAST, created_at DESC
-			 LIMIT 50`, tenantID, userID)
+			 LIMIT 50`, tenantID, userID, selfServiceAudience)
 		if err != nil {
 			return err
 		}
@@ -77,7 +89,8 @@ func (s *Service) ListActiveSessions(ctx context.Context, tenantID, userID,
 
 // RevokeSession 踢掉一个会话。
 //
-// 只能踢自己的：WHERE 里带 user_id，别人的会话 id 传进来会当作不存在。
+// 只能踢自己的门户会话：WHERE 里带 user_id 与 audience，别人的会话、
+// 自己的后台会话传进来都当作不存在。
 func (s *Service) RevokeSession(ctx context.Context, tenantID, userID,
 	target, currentSessionID string) error {
 
@@ -91,8 +104,8 @@ func (s *Service) RevokeSession(ctx context.Context, tenantID, userID,
 			SELECT EXISTS (
 				SELECT 1 FROM sessions
 				 WHERE tenant_id=$1 AND user_id=$2::uuid AND id=$3::uuid
-				   AND revoked_at IS NULL)`,
-			tenantID, userID, target).Scan(&exists); err != nil {
+				   AND audience=$4 AND revoked_at IS NULL)`,
+			tenantID, userID, target, selfServiceAudience).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -106,8 +119,8 @@ func (s *Service) RevokeSession(ctx context.Context, tenantID, userID,
 		tag, err := tx.Exec(ctx, `
 			UPDATE sessions
 			   SET revoked_at = now(), revoked_reason = 'user_revoked'
-			 WHERE tenant_id=$1 AND id=$2::uuid AND revoked_at IS NULL`,
-			tenantID, target)
+			 WHERE tenant_id=$1 AND id=$2::uuid AND audience=$3 AND revoked_at IS NULL`,
+			tenantID, target, selfServiceAudience)
 		if err != nil {
 			return err
 		}
