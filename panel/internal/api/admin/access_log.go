@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/crypto/httpx，依赖同包 profile.go 的 IP 解密与 Deps.GeoIP 归属地
+// [OUTPUT]: 对外提供 handlers 的 accessLogList；包内 accessCategoryRules、categoryFromAction、auditCategoryFilter
+// [POS]: api/admin 的安全事件明细：audit_events 与 subscription_fetch_log 两路归并，分类规则是展示与筛选共用的唯一一张表
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -60,6 +65,14 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 	}
 	// category 决定查哪张表。空值表示两张都要。
 	category := strings.ToLower(strings.TrimSpace(q.Get("category")))
+	include, exclude, known := auditCategoryFilter(category)
+	if !known && category != "subscribe" {
+		httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
+			"category": "不认识的分类"}))
+		return
+	}
+	// other 的 include 为空、exclude 非空；「不过滤」是两者都为空
+	filterByCategory := category != "" && category != "subscribe"
 
 	// 按 IP 筛选只能走哈希。IP 在库里是密文，SQL 里没法比较，但同一个
 	// HMAC 盐算出的哈希是稳定的，拿它做等值匹配既能走索引又不用解密全表。
@@ -99,13 +112,16 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 				  FROM audit_events a
 				  LEFT JOIN users u ON u.tenant_id = a.tenant_id AND u.id = a.actor_id
 				 WHERE a.tenant_id = $1
-				   AND ($2::text IS NULL OR a.action = $2)
+				   AND (NOT $7::bool
+				        OR ((cardinality($2::text[]) = 0
+				             OR EXISTS (SELECT 1 FROM unnest($2::text[]) p WHERE starts_with(a.action, p)))
+				            AND NOT EXISTS (SELECT 1 FROM unnest($8::text[]) p WHERE starts_with(a.action, p))))
 				   AND ($3::bytea IS NULL OR a.source_ip_hash = $3)
 				   AND ($4::uuid IS NULL OR a.actor_id = $4)
 				   AND ($5::text IS NULL OR lower(u.email) LIKE $5)
 				 ORDER BY a.occurred_at DESC
-				 LIMIT $6`, tenantID, auditActionFilter(category),
-				auditIPHash, actorID, emailLike, limit+offset)
+				 LIMIT $6`, tenantID, nonNilStrings(include),
+				auditIPHash, actorID, emailLike, limit+offset, filterByCategory, nonNilStrings(exclude))
 			if err != nil {
 				return err
 			}
@@ -207,45 +223,71 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, map[string]any{"items": items})
 }
 
-// auditActionFilter 把前端的分类映射成 audit_events 里的 action。
-// 返回 nil 表示不按 action 过滤。
-func auditActionFilter(category string) any {
-	switch category {
-	case "login":
-		return "user.login"
-	case "register":
-		return "user.registered"
-	default:
-		return nil
-	}
+// accessCategoryRules 是审计动作到展示分类的唯一映射，按顺序匹配前缀，先命中者胜。
+//
+// 展示归类（categoryFromAction）和按分类筛选（auditCategoryFilter）都从这里
+// 来：原先筛选只认 login/register，选「管理端」「订单」等分类时审计表根本
+// 不过滤（缺陷 14）。两处各写一份迟早又会对不上。
+//
+// admin 排在 payment 前面：payment_provider.* 也以 payment 开头，原先 payment
+// 先匹配，后台改支付渠道的动作全被归成了用户支付。
+var accessCategoryRules = []struct {
+	category string
+	prefixes []string
+}{
+	{"login", []string{"user.login"}},
+	{"register", []string{"user.registered"}},
+	{"reset_password", []string{"user.password", "user.reset"}},
+	{"order", []string{"order."}},
+	// 管理侧动作：节点状态变更、后台引导、渠道开关这些。它们和用户行为
+	// 混在一张表里，但风控看的是两回事，分开标出来才不会互相淹没。
+	{"admin", []string{"node.", "adminctl.", "server.", "plan.", "payment_provider."}},
+	{"payment", []string{"payment"}},
+	{"ticket", []string{"ticket."}},
 }
 
-// categoryFromAction 反过来把 action 归到展示用的分类。
+// categoryFromAction 把 action 归到展示用的分类。
 // 认不出来的一律归到 other，而不是硬塞进某一类——后台看到 other 会去
 // 补映射，塞错分类则永远不会有人发现。
 func categoryFromAction(action string) string {
-	switch {
-	case strings.HasPrefix(action, "user.login"):
-		return "login"
-	case strings.HasPrefix(action, "user.registered"):
-		return "register"
-	case strings.HasPrefix(action, "user.password"), strings.HasPrefix(action, "user.reset"):
-		return "reset_password"
-	case strings.HasPrefix(action, "order."):
-		return "order"
-	case strings.HasPrefix(action, "payment"):
-		return "payment"
-	case strings.HasPrefix(action, "ticket."):
-		return "ticket"
-	// 管理侧动作：节点状态变更、后台引导、渠道开关这些。它们和用户行为
-	// 混在一张表里，但风控看的是两回事，分开标出来才不会互相淹没。
-	case strings.HasPrefix(action, "node."), strings.HasPrefix(action, "adminctl."),
-		strings.HasPrefix(action, "server."), strings.HasPrefix(action, "plan."),
-		strings.HasPrefix(action, "payment_provider."):
-		return "admin"
-	default:
-		return "other"
+	for _, rule := range accessCategoryRules {
+		for _, p := range rule.prefixes {
+			if strings.HasPrefix(action, p) {
+				return rule.category
+			}
+		}
 	}
+	return "other"
+}
+
+// auditCategoryFilter 把分类翻成 SQL 用的两组前缀：action 要命中 include
+// 之一、且不命中 exclude 之一（排在它前面的规则，保持「先命中者胜」）。
+// other 没有 include，只排除全部规则。空分类返回 ok 且两组都为 nil，表示不过滤；
+// subscribe 不走审计表，调用方另行处理；不认识的分类返回 ok=false。
+func auditCategoryFilter(category string) (include, exclude []string, ok bool) {
+	if category == "" {
+		return nil, nil, true
+	}
+	var earlier []string
+	for _, rule := range accessCategoryRules {
+		if rule.category == category {
+			return rule.prefixes, earlier, true
+		}
+		earlier = append(earlier, rule.prefixes...)
+	}
+	if category == "other" {
+		return nil, earlier, true
+	}
+	return nil, nil, false
+}
+
+// nonNilStrings 让空切片以空数组而不是 NULL 传进 SQL：unnest(NULL) 与
+// cardinality(NULL) 的语义和空数组不同，统一成空数组省得每处都判 NULL。
+func nonNilStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
 }
 
 // sortByOccurredDesc 按时间倒序。数据量是 limit+offset 级别（最多几百条），

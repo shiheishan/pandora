@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/realtime 的跨进程广播、同包 uniproxy.go 的配置组装与用户下发
+// [OUTPUT]: 对外提供 StreamHub、StreamConn 与节点长连接注册；AttachStream / AttachRealtime、NotifyNodeChanged、RegisterStream / WatchNodeChanges
+// [POS]: domain/nodefabric 的推送层：配置或用户变更后经 Valkey 通知持有连接的进程，再推给节点端；尽力而为，失败由轮询兜底
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
@@ -326,6 +331,13 @@ func (s *Service) notifyNodeChanged(ctx context.Context, tenantID, nodeID string
 	if users, uerr := s.ListNodeUsers(ctx, tenantID, n); uerr == nil {
 		s.stream.PushUsers(tenantID, nodeID, users, nil)
 	}
+}
+
+// NotifyNodeChanged 给不走本包写路径、却改了节点下发内容的调用方用
+// （后台单节点路由保存直接写 node_routes / node_outbounds），语义同 notifyNodeChanged：
+// 事务提交之后调，尽力而为，不返回错误。
+func (s *Service) NotifyNodeChanged(ctx context.Context, tenantID, nodeID string) {
+	s.notifyNodeChanged(ctx, tenantID, nodeID)
 }
 
 // loadServingNodeForPush 按 ID 取出下发用的节点视图。

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入
+// [OUTPUT]: 对外提供 Service、NewService，概览、用户（ListUsers / GetUser / SetUserStatus）、订单（ListOrders，OrderRow 唯一查询形状）、套餐与渠道、审计、降级开关
+// [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package adminops 实现管理后台的读写用例。
 //
 // 与 billing / identity 的分工：那两个包承载业务不变量（账本必须配平、
@@ -285,8 +290,11 @@ func (s *Service) ListUsers(ctx context.Context, tenantID string, in ListUsersIn
 			                    AND la.account_type = 'user_balance' LIMIT 1), 0),
 			       coalesce((SELECT la.currency FROM ledger_accounts la
 			                  WHERE la.owner_user_id = u.id
-                                    AND la.account_type = 'user_balance' LIMIT 1), 'CNY')
+                                    AND la.account_type = 'user_balance' LIMIT 1), 'CNY'),
+			       coalesce(g.name, '')
 			  FROM users u
+			  -- 用户组名：原先 SELECT 与 Scan 都漏了它，列表里恒为空（缺陷 8）
+			  LEFT JOIN user_groups g ON g.tenant_id = u.tenant_id AND g.id = u.user_group_id
 			 WHERE u.tenant_id = $1
 			   AND (lower(u.email) LIKE $2 OR lower(coalesce(u.display_name,'')) LIKE $2)
 			   AND u.status::text LIKE $3
@@ -302,7 +310,7 @@ func (s *Service) ListUsers(ctx context.Context, tenantID string, in ListUsersIn
 			var r UserRow
 			if err := rows.Scan(&r.ID, &r.Email, &r.DisplayName, &r.Status, &r.RiskLevel,
 				&r.CreatedAt, &r.LastLoginAt, &r.SubCount, &r.ActiveSub,
-				&r.Balance, &r.Currency); err != nil {
+				&r.Balance, &r.Currency, &r.GroupName); err != nil {
 				return err
 			}
 			out = append(out, r)
@@ -390,21 +398,17 @@ func (s *Service) GetUser(ctx context.Context, tenantID, userID string) (*UserDe
 		}
 
 		d.Orders = []OrderRow{}
-		orows, err := tx.Query(ctx, `
-			SELECT o.id, o.order_no, o.kind, o.status, o.currency,
-			       o.total_amount, o.payable_amount, o.paid_amount, o.refunded_amount,
-			       o.created_at, o.paid_at, u.email
-			  FROM orders o JOIN users u ON u.id = o.user_id
+		// 与订单列表同一份查询：原先这里自己写了一遍 SELECT，漏了首项快照，
+		// plan_name / interval / interval_count / item_count 恒为零值（缺陷 9）
+		orows, err := tx.Query(ctx, orderRowSelectSQL+`
 			 WHERE o.tenant_id = $1 AND o.user_id = $2
 			 ORDER BY o.created_at DESC LIMIT 20`, tenantID, userID)
 		if err != nil {
 			return err
 		}
 		for orows.Next() {
-			var r OrderRow
-			if err := orows.Scan(&r.ID, &r.OrderNo, &r.Kind, &r.Status, &r.Currency,
-				&r.TotalAmount, &r.PayableAmount, &r.PaidAmount, &r.RefundedAmount,
-				&r.CreatedAt, &r.PaidAt, &r.UserEmail); err != nil {
+			r, err := scanOrderRow(orows)
+			if err != nil {
 				orows.Close()
 				return err
 			}
@@ -553,6 +557,36 @@ type OrderRow struct {
 	ItemCount int32 `json:"item_count"`
 }
 
+// orderRowSelectSQL 是 OrderRow 的唯一查询形状，调用方只拼 WHERE / ORDER / LIMIT。
+//
+// 套餐名走 LATERAL 取首项而不是 GROUP BY 聚合：一单多项时聚合出来的是
+// 拼接串，长度不可控，会把表格挤变形。取第一项加个「等 N 项」，想看全部
+// 就点详情。count(*) OVER () 在 LIMIT 之前算，所以 n 是全部项数。
+const orderRowSelectSQL = `
+			SELECT o.id, o.order_no, u.email, o.kind, o.status, o.currency,
+			       o.total_amount, o.payable_amount, o.paid_amount, o.refunded_amount,
+			       o.created_at, o.paid_at,
+			       COALESCE(it.snapshot_plan_name, ''), COALESCE(it.snapshot_interval, ''),
+			       COALESCE(it.snapshot_interval_count, 0), COALESCE(it.n, 0)
+			  FROM orders o JOIN users u ON u.id = o.user_id
+			  LEFT JOIN LATERAL (
+			    SELECT i.snapshot_plan_name, i.snapshot_interval, i.snapshot_interval_count,
+			           count(*) OVER () AS n
+			      FROM order_items i
+			     WHERE i.tenant_id = o.tenant_id AND i.order_id = o.id
+			     ORDER BY i.created_at, i.id
+			     LIMIT 1
+			  ) it ON true`
+
+func scanOrderRow(row pgx.Row) (OrderRow, error) {
+	var r OrderRow
+	err := row.Scan(&r.ID, &r.OrderNo, &r.UserEmail, &r.Kind, &r.Status,
+		&r.Currency, &r.TotalAmount, &r.PayableAmount, &r.PaidAmount,
+		&r.RefundedAmount, &r.CreatedAt, &r.PaidAt,
+		&r.PlanName, &r.Interval, &r.IntervalCount, &r.ItemCount)
+	return r, err
+}
+
 type ListOrdersInput struct {
 	Query  string
 	Status string
@@ -592,24 +626,7 @@ func (s *Service) ListOrders(ctx context.Context, tenantID string, in ListOrders
 			return err
 		}
 
-		// 套餐名走 LATERAL 取首项而不是 GROUP BY 聚合：一单多项时
-		// 聚合出来的是拼接串，长度不可控，会把表格挤变形。取第一项
-		// 加个「等 N 项」，想看全部就点详情。
-		rows, err := tx.Query(ctx, `
-			SELECT o.id, o.order_no, u.email, o.kind, o.status, o.currency,
-			       o.total_amount, o.payable_amount, o.paid_amount, o.refunded_amount,
-			       o.created_at, o.paid_at,
-			       COALESCE(it.snapshot_plan_name, ''), COALESCE(it.snapshot_interval, ''),
-			       COALESCE(it.snapshot_interval_count, 0), COALESCE(it.n, 0)
-			  FROM orders o JOIN users u ON u.id = o.user_id
-			  LEFT JOIN LATERAL (
-			    SELECT i.snapshot_plan_name, i.snapshot_interval, i.snapshot_interval_count,
-			           count(*) OVER () AS n
-			      FROM order_items i
-			     WHERE i.tenant_id = o.tenant_id AND i.order_id = o.id
-			     ORDER BY i.created_at, i.id
-			     LIMIT 1
-			  ) it ON true
+		rows, err := tx.Query(ctx, orderRowSelectSQL+`
 			 WHERE o.tenant_id = $1
 			   AND (lower(o.order_no) LIKE $2 OR lower(u.email) LIKE $2)
 			   AND o.status::text LIKE $3
@@ -624,11 +641,8 @@ func (s *Service) ListOrders(ctx context.Context, tenantID string, in ListOrders
 		defer rows.Close()
 
 		for rows.Next() {
-			var r OrderRow
-			if err := rows.Scan(&r.ID, &r.OrderNo, &r.UserEmail, &r.Kind, &r.Status,
-				&r.Currency, &r.TotalAmount, &r.PayableAmount, &r.PaidAmount,
-				&r.RefundedAmount, &r.CreatedAt, &r.PaidAt,
-				&r.PlanName, &r.Interval, &r.IntervalCount, &r.ItemCount); err != nil {
+			r, err := scanOrderRow(rows)
+			if err != nil {
 				return err
 			}
 			out = append(out, r)

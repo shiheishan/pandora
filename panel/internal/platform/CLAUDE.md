@@ -16,7 +16,8 @@ httpx/: 统一的响应与错误模型
 iamguard/: 租户范围的 IAM 不变量，HTTP 与 CLI 共用
 idempotencybind/: 数据库持有的唯一资源绑定器，幂等键与资源一一绑定
 logging/: 带脱敏的结构化日志，log/slog
-realtime/: 服务端推送 SSE，realtime.go 广播与订阅、listener.go Redis/Valkey 跨进程监听
+pg18test/: PG18 集成测试打开一次性库的公共护栏，只被 *_pg18_test.go 引用；见 pg18test/CLAUDE.md
+realtime/: 服务端推送 SSE，realtime.go 广播与订阅、listener.go 把数据库变更通知转成 topic（quota_balances 已移出监听，00076）
 releasejournal/: 发布 journal v3，12 文件，model/receipt/export 通用，store/session/publisher/bootstrap/artifact_boundary/root_capability 为 linux 专用实现
 server/: 全部网关共享的 HTTP server 生命周期
 token/: 访问令牌签发与校验，每域独立密钥

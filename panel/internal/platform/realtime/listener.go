@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 pgx 的 LISTEN、同包 realtime.go 的 Hub 广播
+// [OUTPUT]: 对外提供 StartDBListener
+// [POS]: platform/realtime 的数据库变更监听：app.notify_change() 触发器发出的 aegis_change 通知在这里转成 SSE topic
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package realtime
 
 // 数据库变更监听。
@@ -44,7 +49,9 @@ func topicFor(table string) string {
 	switch table {
 	case "orders":
 		return "orders.changed"
-	case "subscriptions", "subscription_credentials", "quota_balances":
+	// quota_balances 已移出变更通知（迁移 00076）：它随每次流量上报更新、
+	// 又没有 user_id，挂着就是给全租户的高频广播
+	case "subscriptions", "subscription_credentials":
 		return "subscriptions.changed"
 	case "tickets", "ticket_messages":
 		return "tickets.changed"

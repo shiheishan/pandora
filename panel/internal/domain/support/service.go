@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成
+// [OUTPUT]: 对外提供 Service、NewService，工单创建、用户侧读写与关闭、客服侧队列 / 回复 / 指派 / 改状态 / 升级，各写操作的 *Atomic 版本
+// [POS]: domain/support 的主服务：工单全生命周期；closed_reason 在每条关闭路径上写对（user_closed / withdrawn / agent_closed），重新打开时清空
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package support 实现工单（OPS-001）。
 //
 // 两条必须守住的性质：
@@ -583,8 +588,11 @@ func (s *Service) closeByUser(
 		if before == "closed" {
 			return httpx.NotFoundOrForbidden()
 		}
+		// closed_reason 区分「用户关闭 / 撤回 / 客服关闭」，门户与解决率统计
+		// 都靠它；原先这里不写，用户关闭的工单与撤回的分不出来（缺陷 17）
 		ct, err := tx.Exec(ctx, `
-			UPDATE tickets SET status = 'closed', closed_at = now()
+			UPDATE tickets SET status = 'closed', closed_at = now(),
+			       closed_reason = 'user_closed', closed_note = NULL
 			 WHERE tenant_id = $1 AND id = $2 AND user_id = $3
 			   AND status NOT IN ('closed')`,
 			tenantID, ticketID, userID)
@@ -606,7 +614,7 @@ func (s *Service) closeByUser(
 			APIDomain: "public", Outcome: "success",
 			RequestID:    httpx.RequestIDFrom(ctx),
 			BeforeDigest: map[string]any{"status": before},
-			AfterDigest:  map[string]any{"status": "closed"},
+			AfterDigest:  map[string]any{"status": "closed", "closed_reason": "user_closed"},
 		}); err != nil {
 			return err
 		}
@@ -1058,6 +1066,14 @@ func (s *Service) setStatus(
 			                          WHEN $2 = 'closed' THEN resolved_at
 			                          ELSE NULL END,
 			       closed_at   = CASE WHEN $2 = 'closed' THEN coalesce(closed_at, now()) ELSE NULL END,
+			       -- 客服关闭记 agent_closed；已经是关闭态（用户关闭、撤回）时保留原因。
+			       -- 重新打开则清空：关闭原因只描述「当前这次关闭」
+			       -- （右侧的 status 是更新前的值：从非关闭态关掉一律是 agent_closed，
+			       -- 不沿用旧数据里重新打开后残留的原因）
+			       closed_reason = CASE WHEN $2 <> 'closed' THEN NULL
+			                            WHEN status = 'closed' THEN coalesce(closed_reason, 'agent_closed')
+			                            ELSE 'agent_closed' END,
+			       closed_note   = CASE WHEN $2 = 'closed' AND status = 'closed' THEN closed_note ELSE NULL END,
 			       escalated_at= CASE WHEN $2 = 'escalated' THEN coalesce(escalated_at, now())
 			                          ELSE escalated_at END
 			 WHERE id = $1`, ticketID, status); err != nil {
