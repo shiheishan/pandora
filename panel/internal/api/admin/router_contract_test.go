@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 ./router.go 的 NewRouter，依赖 chi.Walk 遍历注册表
 // [OUTPUT]: 对外提供 admin 路由契约测试与 assertAdminRouteContract 断言助手
-// [POS]: api/admin 的路由存在性守卫：账户操作与 /app 静态挂载必须注册在预期方法上
+// [POS]: api/admin 的路由存在性守卫：账户操作与根上的前端挂载（/、/assets/*）必须注册在预期方法上
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -25,17 +25,16 @@ func TestAdminRouterExposesAuthenticatedAccountContracts(t *testing.T) {
 	assertAdminRouteContract(t, router, http.MethodPost, "/v1/me/password")
 }
 
-// React 候选控制台与旧单页并存：/app 与 /app/* 只接 GET/HEAD
+// 管理控制台前端挂在网关根：/ 与 /assets/* 只接 GET/HEAD
 func TestAdminRouterServesEmbeddedApp(t *testing.T) {
 	router := NewRouter(Deps{
 		Cfg: &config.Config{},
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
-	for _, path := range []string{"/app", "/app/*"} {
+	for _, path := range []string{"/", "/assets/*"} {
 		assertAdminRouteContract(t, router, http.MethodGet, path)
 		assertAdminRouteContract(t, router, http.MethodHead, path)
 	}
-	assertAdminRouteContract(t, router, http.MethodGet, "/")
 }
 
 func assertAdminRouteContract(t *testing.T, handler http.Handler, method, path string) {

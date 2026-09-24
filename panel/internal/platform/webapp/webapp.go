@@ -1,9 +1,9 @@
 // [INPUT]: 依赖标准库 io/fs 读取调用方传入的构建产物目录（panel/web 的 AdminApp / PortalApp），依赖 net/http 的 ServeContent
-// [OUTPUT]: 对外提供 Handler(mount, fsys) 只读下发一个 Vite 构建产物目录，Mount(r, mount, fsys) 把它以 GET/HEAD 注册到 mount 与 mount/*，Routes 为其最小路由接口
-// [POS]: platform 的静态前端托管器，无业务语义；admin 与 public 两个 router 各挂一次 /app，旧单页仍由各自 handlers 在 / 下发
+// [OUTPUT]: 对外提供 Handler(fsys) 只读下发一个 Vite 构建产物目录，Mount(r, fsys) 把它以 GET/HEAD 注册到网关根 / 与 /assets/*，Routes 为其最小路由接口
+// [POS]: platform 的静态前端托管器，无业务语义；admin 与 public 两个 router 各挂一次，面板前端就是网关的根入口
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
-// Package webapp 把 React 候选前端的构建产物从二进制里下发。
+// Package webapp 把面板前端的构建产物从二进制里下发，挂在网关根上。
 //
 // 为什么不用 http.FileServerFS：
 //
@@ -11,8 +11,9 @@
 //	  三件事在静态二进制 + nginx 高熵前缀的部署里都是隐患；
 //	· 缓存策略要按文件区分：入口页每次回源校验，带 hash 的资源一年不变。
 //
-// 不做 SPA 回退：React 用 hash 路由，业务路径永远不会打到服务端，
-// 缺失的资源就该是 404，而不是一张 200 的入口页掩盖构建错配。
+// 只认两类路径：入口 / 与 Vite 产物目录 /assets/*。前端用 hash 路由，业务路径永远不会打到服务端；
+// 不做 SPA 回退，缺失的资源就该是 404，而不是一张 200 的入口页掩盖构建错配。
+// 根下其余路径（/v1、/healthz、订阅通配 /{prefix}/{token}）继续归各自的路由，互不抢占。
 package webapp
 
 import (
@@ -31,13 +32,15 @@ import (
 // 响应头策略
 //------------------------------------------------------------------------------
 
-// indexCSP 比旧单页更紧：Vite 产物没有内联脚本，script-src 只留 'self'；
-// antd 的 CSS-in-JS 会注入 <style>，所以 style-src 仍需 'unsafe-inline'。
+// indexCSP 对脚本与样式都只放行同源：
+//   - Vite 产物没有内联脚本，由 panel/web 的 app_test.go 对真实产物验证；
+//   - 前端不用 CSS-in-JS，样式全部在构建出的 .css 文件里；React 的 style 属性走 CSSOM 赋值，不受 style-src 约束。
+//
 // 每一类放行都与 contentTypes 对应：图片走 img-src，字体走 font-src，json/txt 由脚本 fetch 走 connect-src；
 // 登记了 MIME 却不放行，产物一带上这类文件浏览器就会拒绝加载。wasm 因此不登记：编译它需要
 // script-src 'wasm-unsafe-eval'，真有需要时两处一起加。
 const indexCSP = "default-src 'none'; script-src 'self'; " +
-	"style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; " +
+	"style-src 'self'; img-src 'self' data:; font-src 'self'; " +
 	"connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
 const (
@@ -46,6 +49,9 @@ const (
 	// 文件名带内容 hash，内容变了名字就变
 	assetCache = "public, max-age=31536000, immutable"
 )
+
+// assetDir 是 Vite 默认的产物子目录，也是入口之外唯一对外下发的目录。
+const assetDir = "assets"
 
 // contentTypes 显式列出构建产物会出现的扩展名。
 // 不走 mime.TypeByExtension：它读宿主的 /etc/mime.types，静态二进制换台机器结果就可能变；
@@ -71,7 +77,7 @@ var contentTypes = map[string]string{
 }
 
 //------------------------------------------------------------------------------
-// Handler
+// 挂载
 //------------------------------------------------------------------------------
 
 // Routes 是 Mount 需要的最小路由接口。chi.Router 天然满足，platform 因此不必 import chi。
@@ -80,33 +86,35 @@ type Routes interface {
 	Head(pattern string, h http.HandlerFunc)
 }
 
-// Mount 把 Handler 注册到 mount 与 mount/* 两个模式，只接 GET/HEAD：
+// Mount 把 Handler 注册到 / 与 /assets/* 两个模式，只接 GET/HEAD：
 // 静态资源没有写语义，其余方法交给路由器的默认 405。
-func Mount(r Routes, mount string, fsys fs.FS) {
-	h := Handler(mount, fsys).ServeHTTP
-	for _, pattern := range []string{mount, mount + "/*"} {
+func Mount(r Routes, fsys fs.FS) {
+	h := Handler(fsys).ServeHTTP
+	for _, pattern := range []string{"/", "/" + assetDir + "/*"} {
 		r.Get(pattern, h)
 		r.Head(pattern, h)
 	}
 }
 
+//------------------------------------------------------------------------------
+// Handler
+//------------------------------------------------------------------------------
+
 type handler struct {
-	mount string
 	fsys  fs.FS
 	index []byte
 	etag  string
 }
 
-// Handler 在 mount（如 "/app"）下只读下发 fsys：
+// Handler 只读下发 fsys：
 //
-//	mount           → 301 到相对地址 "<末段>/"，保留 nginx 前缀
-//	mount/          → index.html，no-cache + ETag + CSP
-//	mount/assets/*  → 按扩展名给类型，一年 immutable
-//	其余文件        → no-cache；目录、点开头的段、非法路径一律 404
+//	/              → index.html，no-cache + ETag + CSP
+//	/assets/<文件> → 按扩展名给类型，一年 immutable
+//	其余           → 404；目录、点开头的段、非法路径同样 404
 //
 // 调用方只应以 GET/HEAD 注册它，通常经 Mount。
-func Handler(mount string, fsys fs.FS) http.Handler {
-	h := &handler{mount: strings.TrimSuffix(mount, "/"), fsys: fsys}
+func Handler(fsys fs.FS) http.Handler {
+	h := &handler{fsys: fsys}
 	// 入口页随二进制固定，启动时读一次；缺失时入口返回 404，不 panic ——
 	// 这是构建链的问题，不该让整个网关起不来
 	if index, err := fs.ReadFile(fsys, "index.html"); err == nil {
@@ -119,27 +127,16 @@ func Handler(mount string, fsys fs.FS) http.Handler {
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
-	if p == h.mount {
-		// 相对 Location 由浏览器按请求 URL 解析：/PREFIX/app → /PREFIX/app/。
-		// 不用 http.Redirect，它会按 Go 看到的路径补成绝对地址，丢掉 nginx 剥掉的前缀。
-		w.Header().Set("Location", path.Base(h.mount)+"/")
-		w.WriteHeader(http.StatusMovedPermanently)
-		return
-	}
-	rel, ok := strings.CutPrefix(p, h.mount+"/")
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	if rel == "" || rel == "index.html" {
+	if p == "/" {
 		h.serveIndex(w, r)
 		return
 	}
-	if !servable(rel) {
+	rel := strings.TrimPrefix(p, "/")
+	if !strings.HasPrefix(rel, assetDir+"/") || !servable(rel) {
 		http.NotFound(w, r)
 		return
 	}
-	h.serveFile(w, r, rel)
+	h.serveAsset(w, r, rel)
 }
 
 func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +153,7 @@ func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(h.index))
 }
 
-func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, rel string) {
+func (h *handler) serveAsset(w http.ResponseWriter, r *http.Request, rel string) {
 	f, err := h.fsys.Open(rel)
 	if err != nil {
 		http.NotFound(w, r)
@@ -184,11 +181,7 @@ func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, rel string) 
 		contentType = "application/octet-stream"
 	}
 	hd.Set("Content-Type", contentType)
-	if strings.HasPrefix(rel, "assets/") {
-		hd.Set("Cache-Control", assetCache)
-	} else {
-		hd.Set("Cache-Control", indexCache)
-	}
+	hd.Set("Cache-Control", assetCache)
 	http.ServeContent(w, r, info.Name(), time.Time{}, rs)
 }
 

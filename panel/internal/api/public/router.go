@@ -84,13 +84,10 @@ func NewRouter(d Deps) http.Handler {
 
 	h := &handlers{d: d}
 
-	// 用户门户单页。放在 /v1 之外，与 API 命名空间互不干扰。
+	// 用户门户前端：入口 / 与 /assets/*，放在 /v1 之外，与 API 命名空间互不干扰。
 	// 同时注册 HEAD：健康探针与 CDN 预检常用 HEAD，只注册 GET 会让它们收到 404。
-	r.Get("/", h.portal)
-	r.Head("/", h.portal)
-	// React 候选门户。字面量 /app 优先于下面的 /{prefix}/{token}，
-	// 而订阅前缀是 12 位十六进制（迁移 00018），永远不会等于 app。
-	webapp.Mount(r, "/app", web.PortalApp)
+	// 字面量 /assets 优先于下面的 /{prefix}/{token}，而订阅前缀是 12 位十六进制（迁移 00018），永远不会等于 assets。
+	webapp.Mount(r, web.PortalApp)
 
 	r.Get("/healthz", h.health)
 	r.Get("/readyz", h.ready)

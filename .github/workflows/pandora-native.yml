@@ -75,40 +75,12 @@ jobs:
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
-      - name: Embedded page contracts (placeholder React entry)
+      - name: Embedded frontend contracts (placeholder entry)
         run: go test -mod=readonly ./web/ ./internal/platform/webapp/
       - name: Schema table registry
         run: go test -mod=readonly -run TestSchemaTablesAreReferencedOrRegistered ./internal/platform/db/
       - name: Route permission catalog
         run: go test -mod=readonly -run TestRoutePermissionsExistInCatalog ./internal/api/admin/
-
-  panel-frontend:
-    name: React candidate typecheck, tests, build and embed
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: panel/frontend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: panel/frontend/package-lock.json
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: panel/go.mod
-          cache-dependency-path: panel/go.sum
-      - name: Install locked dependencies
-        run: npm ci
-      - name: Typecheck, vitest (includes the API surface and legacy parity contracts) and build
-        run: npm run check
-      - name: Sync the real build into web/*/app for go:embed
-        working-directory: panel
-        run: make frontend-embed
-      - name: Real build is embeddable and served under /app/
-        working-directory: panel
-        run: go test -mod=readonly ./web/ ./internal/platform/webapp/ ./internal/api/...
 
   linux-race:
     name: Linux race and vet

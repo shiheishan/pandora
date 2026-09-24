@@ -129,7 +129,6 @@ write_source_inventory() {
     "$source_root/deploy/test-node-config-legacy-pg18.sh"
     "$source_root/deploy/configure-app-role.sql"
     "$source_root/go.mod" "$source_root/go.sum"
-    "$source_root/web/portal/index.html" "$source_root/web/admin/index.html"
   )
   for migration in "$source_root"/migrations/000{01..41}_*.sql; do
     [[ -f "$migration" ]]

@@ -4,10 +4,12 @@
 /panel/dist/
 /panel/bin/
 /panel/logs/
-# React 候选前端的嵌入产物由 make frontend-embed 生成；仓库只留占位入口，
+# 面板前端的嵌入产物由 make frontend-embed 生成；仓库只留占位入口 index.html，
 # 保证没有 npm 的机器上 go build 照常通过
-/panel/web/*/app/*
-!/panel/web/*/app/index.html
+/panel/web/admin/*
+!/panel/web/admin/index.html
+/panel/web/portal/*
+!/panel/web/portal/index.html
 /pdnd/bin/
 /pdnd/.tmp/
 /pdnd/release/dist/

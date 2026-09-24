@@ -2,7 +2,6 @@ package admin
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -28,38 +27,9 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
-	"github.com/aegispanel/aegis/web"
 )
 
 type handlers struct{ d Deps }
-
-//------------------------------------------------------------------------------
-// 控制台页面
-//------------------------------------------------------------------------------
-
-func (h *handlers) console(w http.ResponseWriter, r *http.Request) {
-	hd := w.Header()
-	hd.Set("Content-Type", "text/html; charset=utf-8")
-	hd.Set("Content-Security-Policy",
-		"default-src 'none'; script-src 'self' 'unsafe-inline'; "+
-			"style-src 'self' 'unsafe-inline'; img-src 'self' data:; "+
-			"connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
-	// 管理界面不进任何共享缓存：它反映的是当前管理员的权限视图
-	hd.Set("Cache-Control", "private, max-age=0, must-revalidate")
-	hd.Set("ETag", consoleETag)
-
-	if r.Header.Get("If-None-Match") == consoleETag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(web.ConsoleHTML)
-}
-
-var consoleETag = func() string {
-	sum := sha256.Sum256(web.ConsoleHTML)
-	return `"` + hex.EncodeToString(sum[:8]) + `"`
-}()
 
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, map[string]string{"status": "ok"})

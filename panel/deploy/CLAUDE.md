@@ -54,7 +54,6 @@ client-auth-00044-verifier-gate.py / verify-client-auth-00044-evidence-vectors.p
 render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名
 run-pg18-gates.sh: 一次跑完全部 PostgreSQL 18 集成门禁
 test-*-pg18.sh: 各业务的 PG18 集成门禁，每次新建隔离容器与库、结束即删；口令为 *-test-only 字样
-test-*-ui-playwright.*: 真实浏览器 UI 验收，对本机临时服务；test-vps-public-ui-playwright 的目标地址由 PANDORA_VPS_UI_TARGET 运行时给出，不入库
 test-install.sh / test-ca42-*-e2e.sh / test-client-auth-*: 安装链与 CLIENT-AUTH 端到端；test-install.sh 发现库里已有用户即拒绝执行
 *_mock_test.sh / *_static_test.sh / *_linux_test.sh / *_linux_fault_test.sh / release-stop-the-world_test.ps1: 对上面各脚本的桩测试与静态检查，不需要数据库或 root
 fixtures/: billing、idempotency 两份 PG18 门禁种子数据

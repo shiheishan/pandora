@@ -45,8 +45,8 @@ aegis-public    aegis-admin     aegis-node
 | `panel/cmd/` | 各域网关与运维工具的可执行入口 |
 | `panel/internal/` | `api/`（public、admin、node 路由与处理器）、`domain/`（业务域）、`middleware/`（认证、限流、幂等、租户注入）、`platform/`（配置、数据库、加密、日志、审计、令牌） |
 | `panel/tests/` | 数据层不变量 SQL 与端到端脚本 |
-| `panel/frontend/` | React + TypeScript + Vite 候选前端；`make frontend-embed` 嵌入网关，在 `/app/` 下发，尚未切为生产入口；待接后端契约登记在 `src/core/contracts.ts`，旧页独有操作登记在 `tests/legacy-parity.ts` |
-| `panel/web/` | 网关下发的全部前端，`go:embed` 进二进制：`/` 下是生产手写单页，`/app/` 下是 React 候选产物（仓库只存占位入口） |
+| `panel/frontend/` | 面板前端，2026-09-23 起按设计稿从零重写（React + TypeScript + Vite，管理后台与用户门户双入口）；重写期间目录不存在 |
+| `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
 | `panel/migrations/` | SQL 迁移，按序号递增，当前 00001–00067 共 67 个；00067 删除 21 张无依赖孤儿表（未在任何环境执行）；`RESERVED-TABLES.md` 登记其余 16 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
 | `panel/docs/` | XBoard 对标与实施计划、DASH / CLIENT-AUTH 冻结契约、ADR |
@@ -57,7 +57,7 @@ aegis-public    aegis-admin     aegis-node
 | `nodeagent/` | `pdnd/` 的陈旧祖先：两个 go.mod 同为 `github.com/aegispanel/nodeagent`，`panel/deploy/systemd/` 仍留有 `aegis-nodeagent.service` 与 `overrides/aegis-nodeagent-small-shared-host.conf`，但 `build-release.sh` 不打包它、所有安装脚本都不安装不启用它（`install-native.sh` 的 `systemd/*.service` 通配会把该单元拷进 `/opt/pandora/deploy/`，不启用）；测试机上的 `aegis-nodeagent` 进程来源待查证，查清前保留 |
 | `docs/` | 密钥轮换、发布物绑定、交接记录、约束清单 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
-| `.github/workflows/` | pdnd 的 Ubuntu race / vet 与双架构构建门禁；panel 的 web 嵌入页、表登记簿、权限字典契约测试，React 候选前端 typecheck / vitest（含旧页迁移清单）/ 构建，以及真实产物嵌入后的 `/app/` 下发测试 |
+| `.github/workflows/` | pdnd 的 Ubuntu race / vet 与双架构构建门禁；panel 的前端嵌入与根下发契约、表登记簿、权限字典契约测试；新前端的 typecheck / vitest / 构建任务随重写恢复 |
 | `CLAUDE.md`（根目录及各模块目录） | GEB 分形文档地图：根为 L1 项目宪法，模块目录为 L2 成员清单，源文件头部为 L3 契约 |
 
 本地快照不含 `.env`、密钥、私钥和编译产物（二进制、`node_modules`、`dist`）。
@@ -97,7 +97,7 @@ aegis-public    aegis-admin     aegis-node
 
 礼品卡、知识库、主题、插件、套餐、订单操作均已有真实代码；早期文档里“仅占位”的说法已过时。
 
-前端有两套实现并存：生产入口 `/` 下发的是 `panel/web` 的手写单页；`panel/frontend` 的 React 工程是候选，已能从同一个二进制在 `/app/` 下发（旧控制台顶栏“试用新版”），尚未切为入口。旧页有而 React 没有的操作（管理端 27 条、门户 13 条 v1 路径）登记在 `panel/frontend/tests/legacy-parity.ts`，清单归零才切换。React 工程里按未落地后端写的入口（退款工作台、主动查单、共享路由组、优惠券编辑、模板预览、调账回查）已登记为待接后端契约并默认关闭，见 `panel/frontend/README.md` 的“待接后端契约”；`npm test` 里的 API 契约检查会拒绝任何未登记的前后端漂移。
+前端：2026-09-23 起，旧的两套前端（`/` 下的手写单页与 `/app/` 下的 React 候选）已整体删除，管理后台与用户门户按新设计稿在 `panel/frontend` 从零重写，同时让设计稿与后端双向对齐——设计有而后端没有的能力补后端，后端有而设计没有的能力补进前端。重写完成前两个网关的 `/` 下发的是占位页。上面列的功能都在后端，重写期间没有可用界面。
 
 运维：WebDAV 自动备份、签名清单、保留策略、systemd timer/service 与恢复脚本已存在，见 [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)。真实远端恢复演练状态见“验证状态与门禁”。
 
@@ -131,8 +131,8 @@ make check-migrations  # 只在临时库演练迁移，不动主库
 make invariants        # 数据层不变量测试
 make build             # 编译全部网关到 bin/
 make test              # go test -race
-make frontend-check    # React 候选前端：npm ci + typecheck + vitest（含 API 契约检查）+ 构建
-make frontend-embed    # 构建 React 候选并同步进 web/*/app，由网关在 /app/ 下发；release-linux 会先跑它
+make frontend-check    # 面板前端：npm ci + typecheck + vitest + 构建
+make frontend-embed    # 构建面板前端并同步进 web/{admin,portal}，由网关在根 / 下发；release-linux 会先跑它
 make e2e               # 端到端链路：注册→下单→支付→账本→订阅→配置
 make verify            # vet + check-migrations + invariants，提交前跑
 ```
@@ -301,7 +301,7 @@ bash panel/deploy/test-install.sh <发布目录>
 
 ### 已有证据（FACT）
 
-- Portal 真实 Chrome Playwright 通过 390 / 820 / 1440 / 3840 四个宽度，覆盖工单撤回、佣金换算、通知偏好、XSS、内部备注过滤和稳定幂等键。
+- Portal 真实 Chrome Playwright 通过 390 / 820 / 1440 / 3840 四个宽度，覆盖工单撤回、佣金换算、通知偏好、XSS、内部备注过滤和稳定幂等键。（对象是已于 2026-09-23 删除的旧门户单页，只作历史证据，不覆盖新前端。）
 - 2026-09-21：`python pdnd/release/check_native_panel_parity.py` 在本快照上输出 `NATIVE_PANEL_PARITY_OK`（NativeCore、Panel Schema、serving allowlist 各 13 个协议一致）。
 - Xray 客户端互操作：REALITY+XHTTP/H1、H2 与普通 TLS+XHTTP/H3。
 - 2026-08-11：当时工作树的 pdnd 在 Linux amd64 隔离目录通过外部 Xray 的 REALITY+XHTTP+H3 互操作测试（`TestExternalXrayVLESSXHTTPH3Interop`）；panel、pdnd、pdnd `-tags compat` 的 `go test -p 1` 与 `go vet` 本地通过。详见 [docs/CLAUDE_HANDOFF_2026-08-11.md](docs/CLAUDE_HANDOFF_2026-08-11.md)。
@@ -337,6 +337,7 @@ bash panel/deploy/test-install.sh <发布目录>
 | r55 | 已随 `f1390b3` 入库，未部署 |
 | CI | 首跑 `35827175294` 失败；`35833526284`（`e7c9737`）八绿一红，唯一红为 React candidate 1/156 的 `findBy` 超时；改全局 `asyncUtilTimeout` 后 `35835685398`（`05a2aa3`）九个 job 全绿，React candidate 156/156，race 日志无 `DATA RACE`；原因与修复见上文 FACT |
 | Xboard 功能验收 | PARTIAL，未 RELEASED |
+| 前端 | 2026-09-23 在分支 `feat/panel-redesign` 删除旧的手写单页与 React 候选，按设计稿重写管理后台与用户门户并补齐后端缺口；未部署，生产机仍跑 r54 的旧前端 |
 | 生产运行 | 台湾生产机：aegis-public / admin / node + pandora-native + pandora-rust 均 active |
 
 未收口的历史工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成）当时状态为 PARTIAL at INTEGRATED，目标是把快照推到 VERIFIED。之后的交接记录没有它完成的证据，相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
@@ -357,8 +358,7 @@ r55 随 `f1390b3` 入库的内容：
 按优先级：
 
 1. 支付渠道安全配置、加密凭据、连通性测试、轮换与事件钻取。
-2. 订单退款、主动查单、优惠券编辑、共享路由组等待接后端契约（清单见 `panel/frontend/src/core/contracts.ts`），补齐后从清单删除并打开入口。
-   同时按页把旧单页独有操作迁进 React（清单见 `panel/frontend/tests/legacy-parity.ts`），归零后 `/` 切到 React、旧页挪到 `/legacy/` 保留一个版本。
+2. 面板重构：按设计稿重写管理后台与用户门户（分支 `feat/panel-redesign`），并补齐设计需要的后端能力：流量包、换套餐折算、礼品卡卡码脱敏与一次性导出、全局路由组、优惠券编辑、模板预览、主动查单等。
 3. CLIENT-AUTH 产品化。
 4. Android / Desktop 专属客户端及公共 SDK。
 5. 全后台四视口浏览器矩阵。

@@ -20,7 +20,7 @@ realtime/: 服务端推送 SSE，realtime.go 广播与订阅、listener.go Redis
 releasejournal/: 发布 journal v3，12 文件，model/receipt/export 通用，store/session/publisher/bootstrap/artifact_boundary/root_capability 为 linux 专用实现
 server/: 全部网关共享的 HTTP server 生命周期
 token/: 访问令牌签发与校验，每域独立密钥
-webapp/: React 候选前端的静态下发器，Mount 把 go:embed 的 Vite 产物以 GET/HEAD 挂到 /app 与 /app/*；入口 no-cache + ETag + 严格 CSP，assets/ 一年 immutable，显式 MIME 表，不做 SPA 回退；以最小 Routes 接口接 chi，本层不 import chi；见 webapp/CLAUDE.md
+webapp/: 面板前端的静态下发器，Mount 把 go:embed 的 Vite 产物以 GET/HEAD 挂到网关根 / 与 /assets/*；入口 no-cache + ETag + 严格 CSP，assets/ 一年 immutable，显式 MIME 表，不做 SPA 回退；以最小 Routes 接口接 chi，本层不 import chi；见 webapp/CLAUDE.md
 *_test.go: 各包测试随包放置
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

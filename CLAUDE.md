@@ -1,15 +1,15 @@
 # Pandora Panel - Xboard 类代理订阅面板 + 自研 NativeCore 节点端
 
-Go 1.26 + PostgreSQL 18 + Valkey 8 + 手写单页前端（生产入口 /，panel/web）+ React/TypeScript/Vite + Ant Design（候选，panel/frontend，嵌入后在 /app/ 下发）
+Go 1.26 + PostgreSQL 18 + Valkey 8 + React/TypeScript/Vite 面板前端（panel/frontend，按设计稿重写中，嵌入 panel/web 后在两个网关根 / 下发）
 
 <directory>
-panel/ - 面板：public/admin/node 三个 HTTP 网关 + agent 节点代理，计费账本、节点编排、审计、安装发布链 (8子目录: cmd, internal, migrations, deploy, frontend, web, docs, tests)
+panel/ - 面板：public/admin/node 三个 HTTP 网关 + agent 节点代理，计费账本、节点编排、审计、安装发布链 (7子目录: cmd, internal, migrations, deploy, web, docs, tests；frontend 重写中)
 pdnd/ - Pandora node：NativeCore 数据面，一个二进制承载 13 个协议，兼容内核仅在 compat 构建下按需链接 (10子目录: kernel, core, internal, node, panel, outbound, route, release, cmd, tools)
 nodeagent/ - aegis-nodeagent：pdnd 的陈旧祖先，go.mod 与 pdnd 同为 github.com/aegispanel/nodeagent，panel/deploy/systemd 留有其单元与 override，但 build-release.sh 不打包、安装脚本不安装不启用；测试机在跑的 aegis-nodeagent 来源查清前保留 (4子目录: core, node, panel, tools)
 docs/ - 全仓库级文档：AI 铁律、密钥轮换、发布物绑定、验证交接 (0子目录)
 .githooks/ - 提交前闸门 pre-commit：gitleaks 按 .gitleaks.toml 与本机 ops-local/gitleaks-private.toml 扫暂存区，未装 gitleaks 也拒绝提交；clone 后执行 git config core.hooksPath .githooks 启用 (0子目录)
 ops-local/ - 被 git 忽略、只在维护者本机存在：测试机一次性运维脚本、安装验证日志、ops_secrets.py（Komari 密钥经 1Password 读取）、gitleaks 私有规则（真实服务器 IP、监控域名、Komari client ID）。仓库公开，这些永不入库
-.github/workflows/ - CI：默认 shell: bash（-eo pipefail，`| tee` 不再吞掉失败）；pdnd 的 Ubuntu race/vet、原生 ubuntu-24.04-arm 的 ARM64 race 门、-tags interop 的非 race 外部客户端门与 amd64/arm64 双架构构建门禁；panel 的 nodefabric 契约、web 嵌入页契约、表登记簿、权限字典，React 候选前端检查（含旧页迁移清单）与真实产物嵌入后的 /app/ 下发测试 (0子目录)
+.github/workflows/ - CI：默认 shell: bash（-eo pipefail，`| tee` 不再吞掉失败）；pdnd 的 Ubuntu race/vet、原生 ubuntu-24.04-arm 的 ARM64 race 门、-tags interop 的非 race 外部客户端门与 amd64/arm64 双架构构建门禁；panel 的 nodefabric 契约、前端嵌入与根下发契约（占位入口）、表登记簿、权限字典；新前端的检查任务随重写恢复 (0子目录)
 </directory>
 
 <config>
@@ -20,7 +20,6 @@ panel/go.mod、pdnd/go.mod、nodeagent/go.mod - 三个独立 Go module，面板�
 panel/Makefile - 本地开发入口：up/migrate/check-migrations/invariants/build/test/e2e/verify，CGO_ENABLED=0
 panel/deploy/.env.example - 运行配置模板，敏感项 CHANGE_ME 由 install.sh 首装生成
 panel/deploy/docker-compose.yml - 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1:5433/6380
-panel/frontend/package.json、vite.config.ts - React 候选前端双 mode（admin/portal）依赖锁定与构建；make frontend-embed 同步进 panel/web/*/app，待接后端契约见 src/core/contracts.ts，旧页迁移清单见 tests/legacy-parity.ts
 panel/migrations/RESERVED-TABLES.md - 迁移留存但 Go 从不引用的 16 张表及锁定原因，platform/db 契约测试按 Up 段重放守同构
 pdnd/release/build.sh - Linux amd64/arm64 发布包与 SHA-256 manifest
 pdnd/release/check_native_panel_parity.py - NativeCore/Panel Schema/serving allowlist 13 协议静态对齐检查
@@ -261,7 +260,7 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 
 # 本项目适配说明
 
-- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api/domain/platform、panel/internal/platform/webapp、panel/web、panel/deploy、pdnd、pdnd/kernel、pdnd/core、nodeagent、panel/frontend。其余目录按逆向流在进入时补建。
+- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api/domain/platform、panel/internal/platform/webapp、panel/web、panel/deploy、pdnd、pdnd/kernel、pdnd/core、nodeagent。panel/frontend 随重写重新播种。其余目录按逆向流在进入时补建。
 - L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]；TS/TSX 用模板里的 `/** */`。Go 文件多已带中文设计注释，L3 加在其上方（中间空一行，不成为包文档），不改写原注释；带 `//go:build` 的文件，L3 放在构建约束与空行之后。
 - L3 按逆向流渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性播种（2026-09-23 实测：Go 1038 个、TS/TSX 102 个；已有 L3 头的 Go 19 个、TS/TSX 16 个）。
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。

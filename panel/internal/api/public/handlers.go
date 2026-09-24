@@ -2,8 +2,6 @@ package public
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"time"
@@ -20,7 +18,6 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
-	"github.com/aegispanel/aegis/web"
 )
 
 type handlers struct{ d Deps }
@@ -37,37 +34,6 @@ type handlers struct{ d Deps }
 //	  而页面是编进二进制的静态资源，可以短时间缓存，用 ETag 让刷新走 304；
 //	· 页面需要一条 CSP —— API 不返回 HTML 所以不设 CSP，
 //	  但这里返回 HTML，就必须挡住外部脚本与被注入的资源加载。
-func (h *handlers) portal(w http.ResponseWriter, r *http.Request) {
-	hd := w.Header()
-	hd.Set("Content-Type", "text/html; charset=utf-8")
-	// 页面全部资源内联，所以除了自身与 data: 图片之外一律拒绝。
-	// 'unsafe-inline' 是必须的：样式与脚本就写在页面里。
-	hd.Set("Content-Security-Policy",
-		"default-src 'none'; "+
-			"script-src 'self' 'unsafe-inline'; "+
-			"style-src 'self' 'unsafe-inline'; "+
-			"img-src 'self' data:; "+
-			"connect-src 'self'; "+
-			"form-action 'self'; "+
-			"base-uri 'none'; "+
-			"frame-ancestors 'none'")
-	hd.Set("Cache-Control", "public, max-age=60, must-revalidate")
-	hd.Set("ETag", portalETag)
-
-	if match := r.Header.Get("If-None-Match"); match == portalETag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(web.PortalHTML)
-}
-
-// portalETag 在启动时算一次。内容随二进制固定，不会中途变化。
-var portalETag = func() string {
-	sum := sha256.Sum256(web.PortalHTML)
-	return `"` + hex.EncodeToString(sum[:8]) + `"`
-}()
-
 //------------------------------------------------------------------------------
 // 健康检查
 //------------------------------------------------------------------------------

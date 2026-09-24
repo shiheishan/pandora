@@ -44,28 +44,3 @@ func TestCommissionTransferRequiresIdempotencyMiddleware(t *testing.T) {
 		t.Fatal("commission transfer route lacks globally unique idempotency middleware scope")
 	}
 }
-
-func TestPortalMoneyActionsUseStableIdempotencyAttempts(t *testing.T) {
-	raw, err := os.ReadFile("../../../web/portal/index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
-	for _, route := range []string{
-		"/v1/me/topups",
-		"/renew',",
-		"/v1/gift-cards/redeem",
-	} {
-		at := strings.Index(source, route)
-		if at < 0 {
-			t.Fatalf("portal route missing %q", route)
-		}
-		end := at + 350
-		if end > len(source) {
-			end = len(source)
-		}
-		if !strings.Contains(source[at:end], "keyFor(") {
-			t.Fatalf("portal route %q lacks stable idempotency attempt", route)
-		}
-	}
-}

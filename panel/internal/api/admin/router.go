@@ -117,10 +117,8 @@ func NewRouter(d Deps) http.Handler {
 
 	h := &handlers{d: d}
 
-	r.Get("/", h.console)
-	r.Head("/", h.console)
-	// React 候选控制台，与旧单页并存；切换前两个入口都可达
-	webapp.Mount(r, "/app", web.AdminApp)
+	// 管理控制台前端：入口 / 与 /assets/*，只接 GET/HEAD
+	webapp.Mount(r, web.AdminApp)
 	r.Get("/healthz", h.health)
 	r.Get("/readyz", h.ready)
 
