@@ -37,7 +37,8 @@ D-E-3、D-F-2、D-F-3。
 **进度**：前提已满足——后台前端二 ⓪ 接线已合入主线（cab2bd9）。尚未开工，**下一步 ① 概览与我的订阅。**
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R52。
+- 契约修订已到 R62。
 - 外框已有的读接口（site-config、appearance、me、余额、当前套餐名、可用佣金、未读数）在 `src/portal/queries.ts`，页面要复用同一个查询键，不要重复定义。
 - 外框顶栏读的 `me/balance`、`me/subscriptions`、`me/commission`、`me/notifications` 与快捷登录签发的假接口，⓪ 已搬进 `dev/mock/portal/` 下对应页面的文件（wallet / subs / referral / messages / account），扩充时就在那里改，形状不能破坏外框已有的读取。
 - 字节、日期时间、计数的格式化函数（`formatBytes` 等）正由后台前端一提升到 `src/core/format.ts`，合入主线后协调会话通知你；在那之前如果需要，先在自己目录里临时写，合入后改为从 core 引用、删掉临时版本，不要各写一份长期留着。
+- 后端二已全部完成（R53–R62）：门户改密保留当前会话（R62）；会话列表的 `last_seen_at` 没有实现，先不显示这一列；`GET v1/payment-methods` 已实现（R61）；工单 `related_order` 无关联时为 null（R60）。

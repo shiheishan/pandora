@@ -188,6 +188,7 @@
 ### 后台-01 仪表盘（管理后台-01-仪表盘.dc.html；收入调整见后台-05）
 
 #### GET v1/dashboard/tasks — 「需要处理」卡片与侧栏徽标的计数
+- **修订 R53（2026-09-24，后端二 ⑤ 70274c0）**：已实现（迁移 00084 权限 `ops.dashboard.read`）。
 - **修订 R51（2026-09-24，协调会话）**：`withdrawals_pending` 条目改挂 `marketing.commission.read`（后端一已把分销读权限统一到这个码，与后端二第 ⑤ 步说明一致），原文的 `billing.order.read` 作废。
 - 状态：待补·后端
 - 权限：新权限：`ops.dashboard.read`（路由层声明，满足 IAM-009）；处理器内再按各条目的原读权限逐条过滤，没有对应权限的条目直接不出现：tickets_open→`ops.ticket.read`、withdrawals_pending→`billing.order.read`（与 GET v1/withdrawals 一致）、nodes_offline→`node.read`、orders_pending_stale→`billing.order.read`、notifications_backlog→`ops.notification.read`、ledger_drift→`billing.ledger.read`｜reauth：否｜幂等：否
@@ -246,6 +247,7 @@
 - 设计：后台-01「邮件投递积压」卡与「系统状态 · 邮件投递」行；后台-09 SMTP 卡状态「已连接 · 重试 3 封」。映射：积压数←ready+scheduled，「重试中」←ready_retry+scheduled_retry，「失败」←failed_total，颜色←backlog_state。分渠道数字由 GET v1/system/status 的 components 提供（不改冻结 DTO）
 
 #### GET v1/system/status — 系统状态
+- **修订 R54（2026-09-24，后端二 ⑤ 8cb4208、c2dd164）**：`state` / `components` 已实现。`payment_callbacks` 的数据源改为 `payment_events` 中 `processing_status` ∈ pending/failed 且收到超过 1 分钟的记录（原文的 `payment_webhook_receipts` 是无代码写入的孤儿表，读出来恒为 0）；`sse` 的连接数经 Valkey 跨进程汇总。
 - **修订 R52（2026-09-24，协调会话，后台前端一提出）**：`components[].metrics` 对象总是返回（可为 `{}`），但其中各字段只在 `state` 为 ok / warn 时保证齐全；`state` 为 down / unknown 时任何字段都可能缺失。前端把 metrics 的每个字段按可选解析，缺失显示「—」。
 - 状态：现有 `panel/internal/api/admin/system_status.go:36 systemStatus`；**components 待补·后端**；**backup 部分 待补·前端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
@@ -256,6 +258,7 @@
 - 设计：后台-01「系统状态」卡（总状态胶囊「全部正常/n 项降级」+ 7 行组件：PostgreSQL 主库、Redis、NativeCore 调度、支付回调队列、邮件投递 · SMTP、Telegram、SSE 推送）。映射：「NativeCore 调度 r53」→ node_fabric 行，meta 显示「在线 x/y · z 个节点配置未同步」（版本号不由后端提供）；「Redis」→ valkey。待补·前端：卡片末尾加第 8 行「数据库备份」（meta：最近一份 x 小时前 / 过期 / 未配解密私钥 / 未配异地），点击打开抽屉展示 `backup` 全部字段与 `recent` 列表、`message`/`identity_hint` 原文；PostgreSQL 行 meta 追加库大小与连接数
 
 #### GET v1/stats/timeseries — 注册与活跃（按天）
+- **修订 R55（2026-09-24，后端二 ⑤ 8cb4208）**：`active_users` 已实现。注意两路来源切日口径不同：订阅拉取按会话时区，流量按用户 / 站点时区（R50）。
 - 状态：现有 `panel/internal/api/admin/profile.go:228 statsTimeseries`；**active_users 待补·后端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
 - 请求：query `days?: int(1–90，默认 14，非法按 14)`
@@ -290,6 +293,7 @@
 - 设计：后台-02 详情头的「指派」下拉。映射：选项文字用 `display_name ?? email`，选项值用 `id`；「未指派」对应空串
 
 #### GET v1/tickets — 工单队列
+- **修订 R60（2026-09-24，后端二 ⑤ 10d0240）**：支持多状态筛选；行新增 `last_message_author_kind`、`user_active_plan`；列表与详情都返回 `closed_reason`。手动升级为 escalated 时自动提升优先级。
 - 状态：现有 `handlers.go:557 ticketQueue`；待补·后端（字段与筛选，见下）
 - 权限：`ops.ticket.read`｜reauth：否｜幂等：否
 - 请求（现有）：query `status?: string`（单值等值匹配，不校验取值，传未知值只会得到空结果），`priority?: low|normal|high|urgent`，`category?: string`，`assigned_to?: uuid`，`q?: string`（对 ticket_no、subject、用户邮箱做 ILIKE 模糊匹配），`breached?: "1"`，`limit?: int`（默认 25，最大 100），`offset?: int`
@@ -1279,6 +1283,7 @@
 - 设计：不直接使用。新前端的「退役」走下面的待补接口；本接口只在「服务器详情」高级区保留（不做）。
 
 #### POST v1/nodes/{id}/retire — 退役节点（两套状态机一步到位）
+- **修订 R57（2026-09-24，后端二 ⑤ dccfc0d）**：已实现。接入中（enrolling）的节点回 409；接入失败的节点与 draft 一样只改服务状态。
 - 状态：**待补·后端**（新接口，放 handlers.go 节点区或 node_admin.go）
 - 权限：`node.lifecycle`｜reauth：是｜幂等：是 `node_retire`（不可逆）
 - 请求：`{ row_version: int64, reason?: string(≤500) }`
@@ -1471,6 +1476,7 @@
 - 设计：后台-07 路由 tab 的「分流规则」列表与「出站」列表。
 
 #### PUT v1/nodes/routing — 保存并发布全局出站与分流到全部节点
+- **修订 R56（2026-09-24，后端二 ⑤ dccfc0d）**：全局路由 GET/PUT 已实现；节点下发时节点规则在前、全局规则在后。删除仍被引用的出站回 **409**（原文「行为」写 422、「错误」写 409，以 409 为准），报错里列出引用它的节点名。
 - 状态：**待补·后端**（新接口）
 - 权限：`node.config.publish`｜reauth：是｜幂等：是 `node_routing_global_publish`（批量影响全部节点）
 - 请求：`{ expected_revision: string, outbounds: [...同单节点], routes: [...同单节点] }`（校验规则与 PUT v1/nodes/{id}/routing 完全一致，复用同一函数）
@@ -1722,6 +1728,7 @@
 - 设计：后台-09 邮件模板「注册验证码」；门户注册第二步
 
 #### GET v1/plugin-hooks — Webhook 钩子列表与事件目录
+- **修订 R59（2026-09-24，后端二 ⑤ dce85df）**：钩子行新增 `sent_count_7d`；无钩子时 `hooks: []`（不是 null）；**事件目录的键改为小写 `name` / `desc`**（破坏性，但此前没有前端使用）。
 - 状态：现有 `panel/internal/api/admin/appearance.go:119 listHooks`；**成功率 待补·后端**
 - 权限：`platform.plugin.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1836,6 +1843,7 @@
 - 设计：后台-09「降级开关」列表（名称、code、说明、状态「已开启/关闭」、开关）。映射（以后端编码为准）：设计 `portal.register`「暂停新用户注册」↔ 后端 `auth.registration`，**极性相反**：设计「已开启（红）」= 后端 `enabled=false`；设计的其余 5 个开关后端没有对应，见下一条；中文名、说明文案由前端按 code 维护字典。待补·前端：essential 行显示锁定、不可切换；ops.bulk_export/ops.reports/node.autoscale 目前没有任何代码读取（见待决 D-A-3），在定下之前以「未接入」灰显
 
 #### POST v1/switches/{code} — 切换降级开关
+- **修订 R58（2026-09-24，后端二 ⑤ 86c35af）**：已实现（迁移 00085 种子）：切换要求 reauth，成功后广播 `switches.changed`。四个新开关 `billing.checkout`、`marketing.giftcard.redeem`、`notify.email`、`admin.writes` **缺行视为开启**（迁移后新建的租户没有这几行，按关闭会让新租户无法下单），与 `auth.registration` 缺行即关闭相反。`billing.checkout` 关闭时，新购、续费、变更套餐、流量包、充值、发起支付都在幂等中间件之前被拦，支付回调不受影响。`notify.email` 关闭时注册验证码也会滞留，注册实际走不通——后台开关旁需提示这一点。
 - 状态：现有 `handlers.go:482 setSwitch`；**reauth、广播、新开关 待补·后端**
 - 权限：`platform.settings.write`｜reauth：现有否 → 待补·后端改为是（设计明确要求每次切换二次认证）｜幂等：否
 - 请求：`{ enabled: bool, reason: string }`（`enabled=false` 时 reason 必填——数据库 CHECK 约束）
@@ -1935,6 +1943,7 @@
 - 设计：全局。映射：orders.changed → 重拉订单列表/待支付条/余额/订阅（充值、下单履约都会改 orders）；subscriptions.changed → 节流（≥5 秒合并一次）后重拉 `GET v1/me/subscriptions`；plans.changed → 选购页重拉；announcements.changed → 概览公告重拉；nodes.changed → 我的订阅节点列表节流重拉。余额的其他来源（礼品卡、佣金转余额、后台调账）没有推送，自己的操作完成后主动重拉 `GET v1/me/balance`。60 秒收不到任何字节视为断线重连。
 
 #### GET v1/payment-methods — 可用的支付方式
+- **修订 R61（2026-09-24，后端二 ⑤ f914fb2）**：已由后端二实现（只读），后端一不再重复实现。
 - 状态：待补·后端
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无
@@ -2238,6 +2247,7 @@
   - 映射：设计写死的 5 类（线路质量/客户端/账号/账单/其他）改为按接口返回渲染，显示 name，提交 code，默认选 general。
 
 #### GET v1/support/tickets — 我的工单列表
+- **修订 R60（2026-09-24，后端二 ⑤ f914fb2）**：行新增 `closed_reason`、`related_order`（无关联时为 null）。
 - 状态：现有 `panel/internal/api/public/handlers.go:719 listTickets`；另有待补·后端（改形状）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无，不分页，最多 100 条，按 updated_at 倒序
@@ -2389,6 +2399,7 @@
 > 「个人信息」卡片用 `GET v1/me`（分段 E）：email、user_id、created_at。设计里的「用户组」和数字 ID「#10482」，`GET v1/me` 目前都没有，由分段 E 定。「退出登录」按钮用 `POST v1/auth/logout`（分段 E）。
 
 #### POST v1/me/password — 修改密码
+- **修订 R62（2026-09-24，后端二 ⑤ f914fb2）**：门户改密后**保留当前会话**及其刷新令牌，其余网页会话与客户端刷新令牌全部吊销（后台改密仍按保留规则 4 踢掉全部会话含当前）。
 - 状态：现有 `panel/internal/api/public/handlers.go:959 changePassword`；另有待补·后端（改行为）
 - 权限：登录用户｜reauth：否（本身要求填旧密码）｜幂等：否
 - 请求：`{ old_password: string, new_password: string }`
@@ -2404,6 +2415,7 @@
   - 映射：设计只提示「至少 8 位」，要补上「需包含字母和数字」。
 
 #### GET v1/me/sessions — 登录会话列表
+- **修订 R62（2026-09-24，后端二 ⑤）**：`last_seen_at` 未实现——契约说刷新令牌时更新，但两个网关都没有刷新接口，没有写入点。前端先不显示这一列；要做需先定契约（例如在认证中间件里节流写入）。
 - **修订 R15（2026-09-24，后端二 62f7283）**：只列出 `audience=public` 的会话，后台会话不可见（缺陷 6 已修）。
 - 状态：现有 `panel/internal/api/public/selfservice.go:42 listMySessions`；另有待补·后端（改行为）
 - 权限：登录用户｜reauth：否｜幂等：否
@@ -3087,3 +3099,13 @@
 | R50 | 2026-09-24 | 用户定案 | 按日用量：用户时区为默认 'UTC' 时视同未设，跟随站点时区 |
 | R51 | 2026-09-24 | 协调会话 | dashboard/tasks 的 withdrawals_pending 改挂 marketing.commission.read |
 | R52 | 2026-09-24 | 协调会话（后台前端一） | system/status 组件 metrics 在 down/unknown 时字段可缺失 |
+| R53 | 2026-09-24 | 后端二 70274c0 | dashboard/tasks 已实现（00084） |
+| R54 | 2026-09-24 | 后端二 8cb4208、c2dd164 | 系统状态 components 已实现；payment_callbacks 改读 payment_events |
+| R55 | 2026-09-24 | 后端二 8cb4208 | 日活 active_users 已实现，两路来源切日口径不同 |
+| R56 | 2026-09-24 | 后端二 dccfc0d | 全局路由已实现；删除被引用出站回 409 |
+| R57 | 2026-09-24 | 后端二 dccfc0d | 节点退役已实现；enrolling 回 409 |
+| R58 | 2026-09-24 | 后端二 86c35af | 四个新降级开关：缺行视为开启、checkout 拦截范围、notify.email 连带注册 |
+| R59 | 2026-09-24 | 后端二 dce85df | 钩子 sent_count_7d、hooks 恒为数组、事件目录键改小写 |
+| R60 | 2026-09-24 | 后端二 10d0240、f914fb2 | 工单多状态筛选与新字段、closed_reason、门户 related_order |
+| R61 | 2026-09-24 | 后端二 f914fb2 | GET v1/payment-methods 由后端二实现 |
+| R62 | 2026-09-24 | 后端二 f914fb2 | 门户改密保留当前会话；me/sessions 的 last_seen_at 未实现 |
