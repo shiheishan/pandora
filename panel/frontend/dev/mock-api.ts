@@ -10,7 +10,7 @@ import type { Plugin } from 'vite'
 import { ADMIN_MODULES } from './mock/admin/index.ts'
 import { PORTAL_MODULES } from './mock/portal/index.ts'
 import { consumeQuickLogin } from './mock/quick-login.ts'
-import { findRoute, type AnonContext, type Json, type MockApp, type MockContext, type MockResult, type MockUser } from './mock/types.ts'
+import { findRoute, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
 
 // ---------------------------------------------------------------------------
 // 形状以 panel/docs/redesign/api-contract.md 为准。这里只放外壳接口与共用设施：
@@ -46,6 +46,14 @@ function send(res: ServerResponse, status: number, body?: unknown) {
   }
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
   res.end(JSON.stringify(body))
+}
+
+function sendRaw(res: ServerResponse, status: number, raw: MockRaw, replay = false) {
+  res.statusCode = status
+  res.setHeader('Content-Type', raw.contentType)
+  res.setHeader('Cache-Control', 'no-store')
+  if (!replay) for (const [name, value] of Object.entries(raw.headers ?? {})) res.setHeader(name, value)
+  res.end(raw.text)
 }
 
 function fail(res: ServerResponse, status: number, code: string, message: string, fields?: Record<string, string>) {
@@ -113,6 +121,7 @@ export function mockApi(app: MockApp): Plugin {
       query: url.searchParams,
       body: async () => parseObject(await text()),
       send: (status, body) => send(res, status, body),
+      sendRaw: (status, raw) => sendRaw(res, status, raw),
       fail: (status, code, message, fields) => fail(res, status, code, message, fields),
     }
 
@@ -271,14 +280,15 @@ export function mockApi(app: MockApp): Plugin {
         if (seen) {
           if (seen.fingerprint !== fingerprint) return fail(res, 409, 'idempotency_key_reuse', '幂等键已用于另一个请求')
           if (!seen.result) return fail(res, 409, 'conflict', '同一请求正在处理')
-          return send(res, seen.result.status, seen.result.body)
+          return seen.result.raw ? sendRaw(res, seen.result.status, seen.result.raw, true) : send(res, seen.result.status, seen.result.body)
         }
         replays.set(slot, { fingerprint, result: null })
         try {
           const result = await run()
           if (result.status >= 500) replays.delete(slot)
           else replays.set(slot, { fingerprint, result })
-          send(res, result.status, result.body)
+          if (result.raw) sendRaw(res, result.status, result.raw)
+          else send(res, result.status, result.body)
         } catch (err) {
           replays.delete(slot)
           throw err

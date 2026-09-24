@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:http 的 IncomingMessage / ServerResponse 类型
- * [OUTPUT]: 对外提供 Json、MockApp、MockUser、MockResult、AnonContext、MockContext、AnonRoute、MockRoute、MockModule、matchPattern、findRoute
+ * [OUTPUT]: 对外提供 Json、MockApp、MockUser、MockRaw、MockResult、AnonContext、MockContext、AnonRoute、MockRoute、MockModule、matchPattern、findRoute
  * [POS]: dev/mock 的处理器契约：mock-api.ts 为每个请求造一份上下文，按入口依次询问 admin/ 或 portal/ 下的模块处理器；模块文件只依赖这里，不碰会话、令牌、幂等表的实现
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -19,10 +19,19 @@ export interface MockUser {
   roles: ReadonlyArray<{ code: string; name: string }>
 }
 
-/** 可以原样回放的响应：幂等重放时状态码与响应体都与第一次一致 */
+/** 非 JSON 响应体（CSV 导出等） */
+export interface MockRaw {
+  contentType: string
+  text: string
+  /** 只在第一次响应里带的头（如 Content-Disposition）；幂等重放与后端一致，只回 Content-Type 与 Cache-Control */
+  headers?: Readonly<Record<string, string>>
+}
+
+/** 可以原样回放的响应：幂等重放时状态码与响应体都与第一次一致；raw 与 body 二选一 */
 export interface MockResult {
   status: number
   body?: unknown
+  raw?: MockRaw
 }
 
 /** 匿名接口的上下文 */
@@ -39,6 +48,8 @@ export interface AnonContext {
   /** 请求体按 JSON 对象解析：空体为 {}，非对象或非法 JSON 为 null（应回 400）；多次调用读同一份 */
   body(): Promise<Json | null>
   send(status: number, body?: unknown): void
+  /** 非 JSON 响应，带 Cache-Control: no-store */
+  sendRaw(status: number, raw: MockRaw): void
   /** 错误信封 { error: { code, message, fields?, request_id } }，形状与 platform/httpx 一致 */
   fail(status: number, code: string, message: string, fields?: Record<string, string>): void
 }

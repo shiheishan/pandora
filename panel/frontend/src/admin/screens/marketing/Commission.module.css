@@ -1,0 +1,136 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Commission.tsx 用到的类名
+ * [POS]: admin/screens/marketing 佣金与提现的样式（设计稿 t_commission）：提现列表与设置卡 2 : 1 自动换行（520 / 280 起），提现行 56 高、拒绝描边危险色、打款实心成功色；设置卡的比例滑块与两列输入
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-16);
+  align-items: flex-start;
+}
+
+.withdrawals {
+  flex: 2 1 520px;
+}
+
+.settings {
+  flex: 1 1 280px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: 56px;
+  padding: 10px var(--space-16);
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-of-type {
+  border-bottom: 0;
+}
+
+.who {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amount {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.money {
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.state {
+  flex: none;
+  width: 64px;
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 104px;
+}
+
+.reject {
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+
+.pay {
+  background: var(--ok);
+  color: var(--on-ink);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: var(--space-16);
+}
+
+.rate {
+  display: flex;
+  flex-direction: column;
+}
+
+.rateLine {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rateLine > :last-child {
+  width: 40px;
+  text-align: right;
+}
+
+.range {
+  flex: 1;
+  accent-color: var(--text);
+}
+
+.scope {
+  width: 100%;
+}
+
+.scope > * {
+  flex: 1;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .row {
+    flex-wrap: wrap;
+  }
+
+  .actions {
+    width: 100%;
+    min-width: 0;
+  }
+}

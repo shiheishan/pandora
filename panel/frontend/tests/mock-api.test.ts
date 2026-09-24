@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 node:http 的 createServer，依赖 ../dev/mock-api 的 mockApi / MOCK_ACCOUNTS，依赖 ../dev/mock/types 的 matchPattern
  * [OUTPUT]: 对外提供假后端外壳与模块分发的测试
- * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为
+ * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为；另守营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -119,6 +119,54 @@ describe('mock api · admin', () => {
     expect(bad.status).toBe(422)
     expect(await bad.json()).toMatchObject({ error: { code: 'validation_failed', fields: { reason: expect.any(String) } } })
     expect((await adjust(access_token, 'intent-2', { amount: 1, reason: '短' })).status).toBe(422)
+  })
+})
+
+describe('mock api · admin marketing', () => {
+  let server: Server
+  let base: string
+  let auth: Record<string, string>
+  beforeAll(async () => {
+    ;({ server, base } = await serve('admin'))
+    const res = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.admin) })
+    auth = { Authorization: `Bearer ${((await res.json()) as { access_token: string }).access_token}` }
+  })
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())))
+
+  const post = (path: string, body: unknown, key?: string) =>
+    fetch(`${base}${path}`, { method: 'POST', headers: { ...auth, ...(key ? { 'Idempotency-Key': key } : {}) }, body: JSON.stringify(body) })
+
+  it('never returns plaintext gift codes outside the generate sample and the one-time export', async () => {
+    const { templates } = (await (await fetch(`${base}/v1/gift-cards`, { headers: auth })).json()) as { templates: Array<{ id: string; type: string }> }
+    const general = templates.find((t) => t.type === 'general')!
+    const made = (await (await post(`/v1/gift-cards/${general.id}/codes`, { count: 6, prefix: 'T' }, 'gen-1')).json()) as { batch_id: string; sample: string[]; batch: { exported_at: string | null } }
+    expect(made.sample).toHaveLength(4)
+    expect(made.batch.exported_at).toBeNull()
+    const list = (await (await fetch(`${base}/v1/gift-cards/codes?batch_id=${made.batch_id}`, { headers: auth })).json()) as { codes: Array<Record<string, unknown>>; total: number }
+    expect(list.total).toBe(6)
+    expect(list.codes.every((c) => !('code' in c) && /^T[A-Z0-9]{4}•{8}$/.test(String(c.code_masked)))).toBe(true)
+
+    const first = await post(`/v1/gift-cards/batches/${made.batch_id}/export`, {}, 'exp-1')
+    expect(first.headers.get('content-disposition')).toBe(`attachment; filename="gift-codes-${made.batch_id.slice(0, 8)}.csv"`)
+    const csv = await first.text()
+    expect(csv.split('\n').filter(Boolean)).toHaveLength(7)
+    expect(csv).toContain(made.sample[0]!)
+    // 同键重放：同一份 CSV，但与后端一致不带 Content-Disposition
+    const replay = await post(`/v1/gift-cards/batches/${made.batch_id}/export`, {}, 'exp-1')
+    expect(replay.headers.get('content-disposition')).toBeNull()
+    expect(await replay.text()).toBe(csv)
+    const again = await post(`/v1/gift-cards/batches/${made.batch_id}/export`, {}, 'exp-2')
+    expect(again.status).toBe(409)
+    expect(await again.json()).toMatchObject({ error: { code: 'conflict', message: '该批次已导出，完整卡码不可再次获取' } })
+  })
+
+  it('rejects unknown fields like the Go decoder and keeps field-level 422s', async () => {
+    const extra = await post('/v1/coupons', { code: 'X1', discount_type: 'percent', discount_value: 100, batch: true })
+    expect(extra.status).toBe(400)
+    const dup = await post('/v1/coupons', { code: 'autumn26', discount_type: 'percent', discount_value: 100 })
+    expect(dup.status).toBe(409)
+    const bad = await post('/v1/commission/config', { rate_percent: 51 })
+    expect(await bad.json()).toMatchObject({ error: { code: 'validation_failed', fields: { rate_percent: '佣金比例需在 0 到 50 之间' } } })
   })
 })
 

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 zod 的 ZodType 校验响应，依赖 ./token 的 TokenStore 读写 Bearer，依赖浏览器 fetch / crypto.getRandomValues / document.baseURI（均可注入）
- * [OUTPUT]: 对外提供 ApiError、isApiError、SERVER_ERROR_CODES 与错误码类型、resolveApiUrl、newIdempotencyKey、createApiClient 与 ApiClient（request/get/post/put/delete/reauth/openStream）
- * [POS]: core 的唯一 HTTP 出口，页面与 hooks 只经它访问两个网关；sse.ts 经 openStream 建流，query.ts 按它抛出的 ApiError 决定重试
+ * [OUTPUT]: 对外提供 ApiError、isApiError、SERVER_ERROR_CODES 与错误码类型、resolveApiUrl、newIdempotencyKey、createApiClient 与 ApiClient（request/get/post/put/delete/requestRaw/reauth/openStream）
+ * [POS]: core 的唯一 HTTP 出口，页面与 hooks 只经它访问两个网关；sse.ts 经 openStream 建流，CSV 导出等非 JSON 响应经 requestRaw 取原始 Response，query.ts 按它抛出的 ApiError 决定重试
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { ZodType } from 'zod'
@@ -230,6 +230,12 @@ export interface ApiClient {
   post<S extends ZodType>(path: string, schema: S, options?: MethodOptions): Promise<z.output<S>>
   put<S extends ZodType>(path: string, schema: S, options?: MethodOptions): Promise<z.output<S>>
   delete<S extends ZodType>(path: string, schema: S, options?: MethodOptions): Promise<z.output<S>>
+  /**
+   * 非 JSON 响应（CSV 导出等）：与 request 走同一条链路——Bearer、幂等键、reauth 弹框与原键重放、
+   * 网络重试、401 清令牌、错误信封转 ApiError——只是 2xx 时不解析，把 Response 原样交给调用方读 blob / text。
+   * accept 默认 text/csv。
+   */
+  requestRaw(path: string, options?: RequestOptions & { accept?: string }): Promise<Response>
   /** admin POST v1/auth/reauth：成功后用新令牌替换本地令牌；口令错抛 401 ApiError，不登出。 */
   reauth(password: string, signal?: AbortSignal): Promise<void>
   /** 以 Bearer 打开一个 text/event-stream 响应，非 2xx 抛 ApiError（401 照常清令牌）。 */
@@ -378,6 +384,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     post: (path, schema, opts) => client.request(path, schema, { ...opts, method: 'POST' }),
     put: (path, schema, opts) => client.request(path, schema, { ...opts, method: 'PUT' }),
     delete: (path, schema, opts) => client.request(path, schema, { ...opts, method: 'DELETE' }),
+    requestRaw: (path, { accept = 'text/csv', ...opts } = {}) => exchange(path, opts, accept),
     async reauth(password, signal) {
       const res = await client.post('v1/auth/reauth', reauthResponseSchema, {
         body: { password },
