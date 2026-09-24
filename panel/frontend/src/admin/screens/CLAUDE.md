@@ -8,7 +8,8 @@ rest 是模块（与标签）之后剩下的路径段，已解码，由页面自
 成员清单
 index.ts: 页面登记表 SCREENS（十个 React.lazy）与页面入参类型 AdminScreenProps { tab: string | null; rest: string[] }
 Placeholder.tsx: 占位页（第 2 阶段 Shell 的空状态），十个模块都换成真页面后删除
-dash/ tickets/ users/ plans/ billing/ marketing/ nodes/ content/ system/ security/: 各模块目录，index.tsx 默认导出页面组件，目前渲染 Placeholder
+dash/: 仪表盘（后台-01），八个只读接口拼成的落地页；见 dash/CLAUDE.md
+tickets/ users/ plans/ billing/ marketing/ nodes/ content/ system/ security/: 各模块目录，index.tsx 默认导出页面组件，目前渲染 Placeholder
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
