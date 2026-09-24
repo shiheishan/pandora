@@ -10,7 +10,7 @@ package billing
 //	金额   新价（优惠后）减原订阅的剩余价值（plan_change_quote.go）：
 //	       为正就补差价；为负就 total = 0，差额在履约时退进余额
 //	周期   从履约当天按新套餐的计费周期起算
-//	配额   按新套餐版本整套重建，已用量清零并留重置日志
+//	配额   按新套餐版本重置上限与周期，已用量清零并留重置日志；新套餐没有的指标变成不限量
 //	凭据   不动（设计「订阅地址不变」），只把有效期跟到新周期末
 //	流量包 挂在用户身上，不受影响（D-E-1）
 //
@@ -532,8 +532,10 @@ func (s *Service) fulfillPlanChangeLocked(ctx context.Context, tx pgx.Tx, tenant
 	now := time.Now().UTC()
 	newEnd := addInterval(now, interval, int(intervalCount))
 
-	// 旧套餐的配额行整套换掉：新套餐可能少了某个指标（换到不限量就没有流量行），
-	// 原地改只会把旧限额留在那里。清零前的用量先留日志。
+	// 配额按新套餐重新起算，清零前的用量先留日志。配额行不能删：人工调整记录
+	// （quota_adjustments）挂在行上且只许追加（DATA-003）。新套餐没有的指标把
+	// 上限置空 —— 上限为空在节点下发与扣量里本来就是「不限量」，与新开一条
+	// 该套餐的订阅（没有这一行）效果相同。
 	type usedQuota struct {
 		metric   string
 		consumed int64
@@ -557,11 +559,6 @@ func (s *Service) fulfillPlanChangeLocked(ctx context.Context, tx pgx.Tx, tenant
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM quota_balances
-		WHERE tenant_id = $1 AND subscription_id = $2::uuid`, tenantID, subID); err != nil {
-		return "", fmt.Errorf("清理旧套餐配额: %w", err)
-	}
-
 	if _, err := tx.Exec(ctx, `
 		UPDATE subscriptions
 		   SET status = 'active', plan_id = $3::uuid, plan_version_id = $4::uuid,
@@ -573,6 +570,27 @@ func (s *Service) fulfillPlanChangeLocked(ctx context.Context, tx pgx.Tx, tenant
 		unitAmount); err != nil {
 		return "", fmt.Errorf("变更订阅套餐: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE quota_balances qb
+		   SET limit_value = qd.limit_value,
+		       granted = coalesce(qd.limit_value, 0),
+		       consumed = 0,
+		       period_start = $4,
+		       period_end = CASE WHEN qb.period = 'total' THEN NULL::timestamptz
+		                         ELSE $5::timestamptz END,
+		       notified_thresholds = '{}',
+		       overage_applied_at = NULL,
+		       updated_at = now()
+		  FROM quota_balances cur
+		  LEFT JOIN quota_definitions qd
+		    ON qd.plan_version_id = $3::uuid
+		   AND qd.metric = cur.metric AND qd.period = cur.period
+		 WHERE qb.id = cur.id
+		   AND cur.tenant_id = $1 AND cur.subscription_id = $2::uuid`,
+		tenantID, subID, planVersionID, now, newEnd); err != nil {
+		return "", fmt.Errorf("按新套餐重置配额: %w", err)
+	}
+	// 新套餐多出来的指标补上配额行（已有的在上面改过，这里跳过）。
 	if err := initQuotaBalances(ctx, tx, tenantID, subID, planVersionID, now, newEnd); err != nil {
 		return "", err
 	}

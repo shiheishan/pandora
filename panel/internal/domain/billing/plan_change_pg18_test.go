@@ -256,16 +256,18 @@ func TestPlanChangePG18(t *testing.T) {
 	if got := balance(t) - walletBefore; got != 1650 {
 		t.Fatalf("downgrade refunded %d to balance want 1650", got)
 	}
-	var trafficRows, refundTxns int
+	// 轻量版不限量：流量配额行保留（人工调整只许追加，行不能删），上限置空即不限量。
+	var limitedRows, refundTxns int
 	if err := admin.QueryRow(ctx, `
-		SELECT (SELECT count(*) FROM quota_balances WHERE subscription_id=$1::uuid AND metric='traffic.bytes'),
+		SELECT (SELECT count(*) FROM quota_balances WHERE subscription_id=$1::uuid
+		           AND metric='traffic.bytes' AND (limit_value IS NOT NULL OR consumed <> 0)),
 		       (SELECT count(*) FROM ledger_transactions WHERE source_type='order'
 		           AND source_id=$2::uuid AND kind='plan_change_refund')`,
-		subID, downgrade.OrderID).Scan(&trafficRows, &refundTxns); err != nil {
+		subID, downgrade.OrderID).Scan(&limitedRows, &refundTxns); err != nil {
 		t.Fatalf("read downgrade evidence: %v", err)
 	}
-	if trafficRows != 0 || refundTxns != 1 || readSub(t, subID).plan != planC {
-		t.Fatalf("downgrade evidence traffic rows=%d refund txns=%d", trafficRows, refundTxns)
+	if limitedRows != 0 || refundTxns != 1 || readSub(t, subID).plan != planC {
+		t.Fatalf("downgrade evidence limited traffic rows=%d refund txns=%d", limitedRows, refundTxns)
 	}
 	t.Log("marker=plan_change_pg18_downgrade_refunds_balance_ok")
 

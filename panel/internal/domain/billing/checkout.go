@@ -1650,8 +1650,9 @@ func (s *Service) provisionSubscription(ctx context.Context, tx pgx.Tx,
 	return subID, nil
 }
 
-// initQuotaBalances 按套餐版本的配额定义给订阅建一整套配额行（USE-005）。
-// 新开订阅与变更套餐（plan_change.go）都从这里起算新周期的配额。
+// initQuotaBalances 按套餐版本的配额定义给订阅补齐配额行（USE-005），已有同
+// 指标同周期的行跳过。新开订阅从这里建整套；变更套餐（plan_change.go）先原地
+// 重置已有的行，再从这里补上新套餐多出来的指标。
 //
 // 注意 $4 必须显式转型：在 CASE 的一个分支是裸 NULL 时，
 // PostgreSQL 无从推断参数类型，会退化成 text 并与 timestamptz 列冲突。
@@ -1667,7 +1668,10 @@ func initQuotaBalances(ctx context.Context, tx pgx.Tx, tenantID, subID,
 		            ELSE $4::timestamptz END,
 		       coalesce(qd.limit_value, 0), qd.limit_value
 		  FROM quota_definitions qd
-		 WHERE qd.plan_version_id = $5`,
+		 WHERE qd.plan_version_id = $5
+		   AND NOT EXISTS (SELECT 1 FROM quota_balances qb
+		                    WHERE qb.subscription_id = $2 AND qb.metric = qd.metric
+		                      AND qb.period = qd.period)`,
 		tenantID, subID, periodStart, periodEnd, planVersionID); err != nil {
 		return fmt.Errorf("初始化配额: %w", err)
 	}

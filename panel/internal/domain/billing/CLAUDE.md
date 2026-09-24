@@ -10,7 +10,7 @@ reservations.go: 结算与释放共用的预留图加锁校验；orderTotal 是�
 release.go: 取消 / 过期释放，held 预留图整体转 released 并退回余额冻结；续费走专用分支，其余 kind 共用预留图锁
 reservation_expiry.go: 到期预留的批量释放扫描
 renewal.go: 续费 CreateRenewal 与周期滚动 RollQuotaPeriods；与变更套餐共用零元单捕获 captureZeroPaySubscriptionOrder 和结算锁 lockOrderSubscriptionForSettlement
-plan_change.go: 变更套餐（D-E-2，kind=upgrade）的试算、下单与原地履约：换套餐不换凭据、配额整套重建、降级差额冲回收入退进余额（plan_change_refund 分录）；同一订阅同时只许一张在途续费或变更单
+plan_change.go: 变更套餐（D-E-2，kind=upgrade）的试算、下单与原地履约：换套餐不换凭据、配额按新套餐重置（新套餐没有的指标变不限量，配额行不删因人工调整只许追加）、降级差额冲回收入退进余额（plan_change_refund 分录）；同一订阅同时只许一张在途续费或变更单
 plan_change_quote.go: 变更套餐的剩余价值折算，只算不写：本周期付费合计 × min(时间比, 流量比) 向下取整，付费天数先用、赠送天数最后用
 traffic_pack.go: 流量包（D-E-1）目录、下单（kind=addon）、履约成挂用户的 traffic_pack_grants 余额与余额查询
 traffic_reset.go: 流量重置日志与后台手动重置；只清套餐已用量，不碰流量包
