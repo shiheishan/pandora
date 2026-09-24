@@ -88,7 +88,7 @@ pandora 面板按 Claude Design 设计稿重做管理后台（admin）和用户�
 
 ## 8. 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**（均已合入 `feat/panel-redesign`）：① 脚手架 `54cec13`；② 接口契约 `ccb28a8`；③ 设计规范 `51fd36e`；④ 组件库 `c5ab1f7`（`src/ui/` 16 类组件，门户后台共用、差异只来自角色令牌；弹窗用原生 `<dialog>`，Toast 用 popover）。**下一步 ⑤ 底层，然后 ⑥ 外框，⑥ 做完第 2 阶段结束。**
+**进度**（均已合入 `feat/panel-redesign`）：① 脚手架 `54cec13`；② 接口契约 `ccb28a8`；③ 设计规范 `51fd36e`；④ 组件库 `c5ab1f7`（`src/ui/` 16 类组件，门户后台共用、差异只来自角色令牌；弹窗用原生 `<dialog>`，Toast 用 popover）；⑤ 底层 `d5fa092`（`src/core/` 的 api / token / sse / query / router，zod 4.6.5 与 react-query 5.103.2，后端 `reauth_required` 已上线）。**下一步 ⑥ 外框，做完第 2 阶段结束。**
 
 **做事前先 `git merge feat/panel-redesign`**，主线上有后端会话的最新改动和契约修订。
 
@@ -99,3 +99,5 @@ pandora 面板按 Claude Design 设计稿重做管理后台（admin）和用户�
 - **reauth_required**：仍由本会话在第 ⑤ 步做（httpx 登记错误码、RequireRecentReauth 改用它、补测试）；后端会话被要求不碰这两处。
 - **主题**：只有「默认 · 纸白」一个主题（5.A）。后端 `GET v1/appearance` 的 `theme.tokens` 是 `{ light: {"--bg": …}, dark: {…} }`，键就是 `src/styles/design-tokens.ts` 的 43 个名字（迁移 00075，后端有测试逐条对照）；门户按当前明暗取一组 `setProperty`，白名单外的键忽略。`--brand-hover` 取 `#a33a23`。
 - **测试库**：第 ④ 步没引入 DOM 测试库；第 ⑤ 步如确需（api 重放、SSE 重连），可以加，报告里写理由。
+- **后台地址**：nginx 已改为不带尾斜杠的后台前缀 301 到带斜杠的地址（协调会话提交），第 ⑥ 步不用处理。
+- **第 ⑥ 步要接的**：各入口的 api 实例、QueryClient、reauth 对话框、登录态都在这一步接进两个入口，并在浏览器里实测登录、退出、刷新保持登录态、reauth 弹框后重放。

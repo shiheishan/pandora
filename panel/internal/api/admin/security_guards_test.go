@@ -112,7 +112,7 @@ func TestStepOneAdminRouteGuards(t *testing.T) {
 			}
 			if tc.reauth {
 				w := serveGuarded(h, tc.method, guardPrincipal(false, tc.permission))
-				if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "重新验证身份") {
+				if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), `"code":"reauth_required"`) {
 					t.Fatalf("permission without recent reauth: status=%d body=%s", w.Code, w.Body.String())
 				}
 			}

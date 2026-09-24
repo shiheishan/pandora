@@ -55,7 +55,7 @@
 {"error":{"code":"…","message":"…","fields?":{"字段":"原因"},"request_id?":"…"}}
 ```
 
-错误码是 `platform/httpx/httpx.go` 的封闭列表：bad_request 400、unauthorized 401、forbidden 403、not_found 404、conflict 409、validation_failed 422（带 fields）、rate_limited 429、idempotency_key_reuse 409、service_unavailable 503、internal_error 500。第 ⑤ 步新增 **reauth_required 403**。
+错误码是 `platform/httpx/httpx.go` 的封闭列表：bad_request 400、unauthorized 401、forbidden 403、not_found 404、conflict 409、validation_failed 422（带 fields）、rate_limited 429、idempotency_key_reuse 409、service_unavailable 503、internal_error 500、**reauth_required 403**（修订 R29 已实现）。
 
 - `message` 是可直接展示的中文；前端按 `code` 分支，按 `fields` 标红表单项。注意 `fields` 的键名不一定等于请求字段名（例：改密码的新密码错误键是 `password` 不是 `new_password`），条目里逐一写明。
 - 若干接口对非法 UUID 的路径参数回 500 而不是 404（各分段核对笔记列出）；前端在调用前不必自行校验，把 500 当普通失败处理即可，后端在补接口时顺手修。
@@ -71,9 +71,9 @@
 ### 1.6 重新验证身份（reauth，仅 admin）
 - **修订 R9（2026-09-24，后端二 62f7283）**：挂 reauth 的路由由 40 条增至 45 条（新增用户批量导出 / 生成 / 群发、改用户状态、全局设备模式）；`reset-password`、`rotate` 改为先查权限、后 reauth，原先的例外取消。
 
-- 40 条 admin 路由挂 `RequireRecentReauth`（`router.go` 中 40 处，含 `registerCatalogPlanUpdate` 注册的 `PUT v1/plans/{id}`）；开工说明与 `handlers.go:63` 注释里的「53 条」与代码不符。条目里「reauth：是」即这 40 条，另有若干条标了「待补·后端改为是」。
+- admin 路由挂 `RequireRecentReauth` 的条数以 `router.go` 为准（契约初版时 40 条，修订 R1/R4/R9/R20 之后更多）；条目里「reauth：是」或对应修订行即为挂了的路由。
 - 令牌里的 rat 在 15 分钟内即通过。登录时 rat=登录时刻。`GET v1/me` 的 `reauthed` 反映当前状态。
-- 现状：未通过回 403 forbidden「此操作需要重新验证身份」，与其它 403 无法区分。第 ⑤ 步改为 403 **reauth_required**。
+- 未通过回 403 **reauth_required**（修订 R29，第 2 阶段 d5fa092 已实现；此前是通用 forbidden）。
 - 前端流程：先发请求 → 收到 reauth_required → 弹「重新验证身份」框 → `POST v1/auth/reauth {password}` → **用返回的新 access_token 替换本地令牌** → 用原 Idempotency-Key 重放原请求。设计稿是「先弹框后执行」，实现改为「先请求、按需弹框」；`reauthed=true` 时不弹框。
 
 ### 1.7 实时事件（SSE）
@@ -3017,3 +3017,4 @@
 | R26 | 2026-09-24 | 后端二 107de25 | 单节点路由可引用全局出站，保存后通知节点（缺陷 18） |
 | R27 | 2026-09-24 | 后端二 107de25 | 节点列表分页与真实 total（缺陷 21） |
 | R28 | 2026-09-24 | 后端二 107de25 | 通知偏好保存修复（缺陷 7） |
+| R29 | 2026-09-24 | 第 2 阶段 d5fa092 | RequireRecentReauth 拒绝时回 403 `reauth_required`；前端 api.ts 据此弹框并以原幂等键重放 |
