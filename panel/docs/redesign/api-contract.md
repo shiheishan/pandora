@@ -742,6 +742,7 @@
 - 设计：无。前端不需要单独入口。
 
 #### POST v1/plans/complete — 向导一次建成套餐（资料 + 额度 + 价格 + 线路 + 可选发布）
+- **修订 R65（2026-09-24，后端一 ⑥ 36f2fcd）**：改为单事务，任一步失败库里不留任何东西；响应的 `plan` 是建成后的完整详情。原文「中途失败自动归档」「回滚失败回 500」两条作废。
 - **修订 R1（2026-09-24，后端一 0651cb2）**：权限改为 `catalog.publish`，reauth 改为「是」（D-C-2）。以下原文中的权限行作废。
 - 状态：现有 `panel/internal/api/admin/catalog.go:41 createPlanComplete`
 - 权限：`catalog.write`｜reauth：否（见 D-C-2）｜幂等：是 `catalog_plan_create_complete`
@@ -867,6 +868,7 @@
 - 设计 mock 里的渠道（支付宝当面付 / 微信 Native / USDT / Stripe）后端都没有。后端适配器只有 `epay`（聚合收银台）和 `demo`，外加系统内置的 `offline`（线下收款，`accepting_new=false`，结账页选不到）。不做 USDT。
 
 #### GET v1/orders — 订单列表
+- **修订 R63（2026-09-24，后端一 ⑥ 36f2fcd）**：`status` 改为逗号分隔多值、按白名单精确匹配，未知值 400；新增 `user_id`（非法 400「用户 ID 格式不正确」）；`offset` 为负按 0。行新增 `balance_applied`、`provider_code` / `provider_name`（先取最近一笔入账的渠道，没有再取最近一次支付尝试）。
 - **修订 R32（2026-09-24，后端一 f944089）**：流量包订单 `kind` 为 `addon`，`plan_name` 显示流量包名。
 - 状态：现有 `panel/internal/api/admin/handlers.go:342 listOrders`；待补·后端（扩展）
 - 权限：`billing.order.read`｜reauth：否｜幂等：否
@@ -882,6 +884,7 @@
 - 设计：后台-05「订单」tab。搜索框 → `q`；状态分段 → `status` 多值（「待支付」= `draft,pending_payment,processing`，「已支付」= `paid,fulfilled`，「已取消」= `cancelled,expired`）；列映射：订单号 `order_no`、用户 `user_email`、内容 `plan_name` + 周期（`kind=topup` 时显示「余额充值」，`item_count>1` 时显示「等 N 项」）、金额 `total_amount` + currency、渠道 `provider_name`（为空时：`balance_applied == total_amount` 显示「余额」，人工单显示「人工」，否则显示「—」）、状态按上面的映射、创建时间 `created_at`。
 
 #### GET v1/orders/{id} — 订单详情（快照）
+- **修订 R63（2026-09-24，后端一 ⑥ 36f2fcd）**：改用列表同一份查询（修掉首项套餐名、周期、项数恒为零值），另加开单人 `created_by` / `created_by_email`。
 - 状态：现有 `panel/internal/api/admin/handlers.go:360 getOrder`；待补·后端（扩展）
 - 权限：`billing.order.read`｜reauth：否｜幂等：否
 - 请求：路径 `id: uuid`
@@ -906,6 +909,7 @@
 - 设计：后台-05 抽屉「取消订单」确认框。待补·前端：设计确认框里没有理由输入框，要补一个必填的「取消原因」（5 字起）。
 
 #### POST v1/orders/manual — 人工开单
+- **修订 R64（2026-09-24，后端一 ⑥ 14f27cb，协调会话定）**：新增 `settlement: "grant" | "pending"`：grant 当场赠送开通，pending 生成待用户支付的订单（同样 30 分钟过期）。`offline`（线下已收款）与 `balance`（从余额扣，D-C-3 未决）暂回 422。**本接口改挂 RequireRecentReauth**（与 mark-paid 同门槛：offline 会直接记收入并触发佣金），后端一在 ⑥ 的加路由部分实现，实现后再开放 `offline`。
 - 状态：现有 `panel/internal/api/admin/manual_order.go:22 createManualOrder`；待补·后端（扩展：结算方式）
 - 权限：`billing.order.write`｜reauth：否（路由注释写了要重认证，实际代码没挂）｜幂等：是 `order_create`（与用户结账共用 scope，`billing.CheckoutIdempotencyScope`）
 - 请求（现有）：`{ user_id:uuid, plan_id:uuid, price_id:uuid, reason:string(5..500 字) }`
@@ -941,6 +945,7 @@
 - 设计：后台-05 挂账行「转入余额」（设计确认框本来就标了 reauth）。待补·前端：确认框补必填的「处理原因」。确认文案改为「{user_email} 的余额将**增加** {amount}，挂账关闭」。
 
 #### GET v1/payment-providers — 支付渠道列表
+- **修订 R66（2026-09-24，后端一 ⑥ 36f2fcd）**：渠道卡新增 `today`（按租户时区、分币种的今日成交）、`success_rate_24h`、`last_callback_at`。
 - 状态：现有 `panel/internal/api/admin/handlers.go:418 listProviders`；待补·后端（扩展：统计）
 - 权限：`billing.payment.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -958,6 +963,7 @@
 - 设计：后台-05 渠道卡的开关。设计停用时的说明是「结账页不再显示，进行中的支付仍会回调」，这正是 `accepting_new=false` 的语义（PAY-009）。映射：开 → `{enabled:true, accepting_new:true}`，关 → `{enabled:true, accepting_new:false}`；`enabled:false`（连回调也停）不放在开关上。待补·前端：在卡片「更多」菜单里放「完全停用（回调也不处理）」，二次确认后发 `enabled:false`。
 
 #### GET v1/revenue/adjustments — 收入调整列表
+- **修订 R66（2026-09-24，后端一 ⑥ 36f2fcd）**：列表、登记、冲销的响应都带登记人 `created_by_email`；套餐版本行同样新增 `created_by_email`。
 - 状态：现有 `revenue.go:27 revenueAdjustments`；**登记人展示字段 待补·后端**
 - 权限：`billing.ledger.read`｜reauth：否｜幂等：否
 - 请求：query `currency?: "CNY" | "USD"`（空=全部）
@@ -1020,6 +1026,7 @@
 - 设计：后台-06「批量生成」表单：码前缀 → `prefix`，数量 → `count`（设计上限 500，后端 1000，前端按 500 限制即可），类型 / 数值 / 每码可用次数同上。待补·前端：补必填的「活动名称」→ `name`（批次靠它找回）。生成后可以把 `codes` 下载成 CSV（优惠码不是等价现金，没有一次性可见的要求）。
 
 #### POST v1/coupons/{id}/status — 启停优惠券
+- **修订 R70（2026-09-24，后端一 ⑥ 8d14e52）**：路径 id 不是 UUID 时回中性 404（原为 500）；`GET v1/coupons/{id}/redemptions` 同。
 - 状态：现有 `panel/internal/api/admin/coupon.go:267 setCouponStatus`
 - 权限：`marketing.coupon.write`｜reauth：是｜幂等：否
 - 请求：`{ status:"active"|"paused" }`
@@ -1038,6 +1045,7 @@
 - 设计：后台-06 礼品卡「模板」卡片：面额（general：balance → ¥，traffic_bytes → GB，expire_days → 天；plan：套餐名；mystery：「盲盒」）、类型标签、名称、「兑换后」说明（balance「直接入账」/ plan「立即开通」/ traffic「当期有效」）、「已发 `code_total` 张」。
 
 #### GET v1/gift-cards/stats — 礼品卡统计
+- **修订 R68（2026-09-24，后端一 ⑥ b84dc47）**：新增 `balance_issued`，按模板当前的 `rewards.balance` 计，已停用、已过期的码也计入。
 - 状态：现有 `panel/internal/api/admin/giftcard.go:163 giftCardStats`；待补·后端（扩展）
 - 权限：`marketing.giftcard.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1122,6 +1130,7 @@
 - 设计：后台-06 码行「停用 / 启用」；已兑换的码禁用按钮（与设计一致）。
 
 #### GET v1/commission/overview — 分销总览与当前配置
+- **修订 R67（2026-09-24，后端一 ⑥ b84dc47）**：新增 `total_earned`、`invited_users`、`scope: "every_order" | "first_order"`；`POST v1/commission/config` 可改 `scope`。`first_order`：被推荐人只要有别的订单计过佣（含后来被冲销的），这一单就不再计；未设置或值不认识按 `every_order`。
 - **修订 R6（2026-09-24）**：权限改为 `marketing.commission.read`。
 - 状态：现有 `panel/internal/api/admin/commission.go:251 commissionOverview`；待补·后端（扩展）
 - 权限：`billing.order.read`｜reauth：否｜幂等：否
@@ -2020,6 +2029,7 @@
 ### 门户-03 选购套餐与结账（套餐列表、流量包、结账页）
 
 #### GET v1/plans — 可购套餐目录
+- **修订 R69（2026-09-24，后端一 ⑥ e77e65b）**：新增 `quota_reset_strategy`、`quota_reset_day`、`allow_renewal`、`allow_upgrade`。
 - 状态：现有 `panel/internal/api/public/handlers.go:188 listPlans`；字段扩展为待补·后端（无迁移）
 - 权限：匿名（路由在免鉴权区，但会解析 Bearer：带令牌才看得到 authenticated/group 套餐与组专属价格，门户登录后必须带）｜reauth：否｜幂等：否
 - 请求：无
@@ -2029,6 +2039,7 @@
 - 设计：选购页「订阅套餐」卡片、月付/季付/年付切换、结账页周期选项。映射：周期 1m/3m/12m ↔ (month,1)/(month,3)|(quarter,1)/(year,1)|(month,12)，其他组合按「每 N 天/周/月」通用文案；「省 ¥X」「折合 ¥Y/月」「年付 · 省 N%」由前端用同套餐同币种价格计算；GB/月 = traffic.bytes 的 limit；「到期日自动重置」按 quota_reset_strategy 出文案（never→「不重置」、natural_month→「每月 1 日重置」、fixed_day→「每月 N 日重置」）；「N 台设备同时在线」= max_devices；只展示 CNY 价格（余额与 epay 只有 CNY）；「当前」徽标 = plan.id 等于当前订阅 plan_id；月付副文案「可随时取消自动续费」**改为**「按月付费」（后端无自动续费）。特性列表与「推荐」徽标见 D-E-3。
 
 #### POST v1/coupons/preview — 优惠码试算
+- **修订 R69（2026-09-24，后端一 ⑥ e77e65b）**：支持 `{ pack_id }` 形态（流量包），与 `plan_id` / `price_id` 同时传回 422 `fields.pack_id`，流量包不存在 404；响应新增 `coupon` 券面对象。
 - 状态：现有 `panel/internal/api/public/handlers.go:817 previewCoupon`（domain `billing/coupon.go:248 PreviewForPrice`）；扩展为待补·后端（无迁移）
 - 权限：登录用户｜reauth：否｜幂等：否（不落库）
 - 请求（现有）：`{ plan_id: uuid, price_id: uuid, coupon_code: string }`；（待补·后端）增加互斥形态 `{ pack_id: uuid, coupon_code: string }`
@@ -2106,6 +2117,7 @@
 ### 门户-04 订单
 
 #### GET v1/orders — 我的订单列表
+- **修订 R69（2026-09-24，后端一 ⑥ 36f2fcd）**：`status` 多值；响应新增 `counts`，行新增 `interval` / `interval_count` / `item_name`。
 - **修订 R32（2026-09-24，后端一 f944089）**：流量包订单 `kind` 为 `addon`，`plan_name` 显示流量包名。
 - 状态：现有 `panel/internal/api/public/my_orders.go:13 listMyOrders`（domain `billing/my_orders.go:58`）；扩展为待补·后端（无迁移）
 - 权限：登录用户｜reauth：否｜幂等：否
@@ -2116,6 +2128,7 @@
 - 待补·前端（→ 补进 订单列表状态徽标与筛选）：partially_refunded「部分退款」、refunded「已退款」两种徽标（info 色），归入「全部」，筛选段加「已退款」一项（counts.refunded=0 时隐藏）。
 
 #### GET v1/orders/{id} — 订单详情
+- **修订 R69（2026-09-24，后端一 ⑥ 36f2fcd）**：新增 `coupon_code`、`subscription_period_end`，支付记录带 `method` / `provider_name`。
 - 状态：现有 `panel/internal/api/public/my_orders.go:29 myOrderDetail`（domain `billing/my_orders.go:156`）；扩展为待补·后端（无迁移）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：路径 id
@@ -2152,6 +2165,7 @@
 - 设计：钱包「充值」按钮。映射：金额按钮与输入框元 → ×100 转分；选中支付方式（来自 payment-methods，删 USDT）后依次调本接口与 `POST v1/orders/{order_id}/pay`，走同一个支付弹窗；前端校验下限改为 ¥1、上限 ¥50000。
 
 #### POST v1/gift-cards/preview — 礼品卡预览
+- **修订 R68（2026-09-24，后端一 ⑥ b84dc47）**：不再返回发行量与兑换量；套餐类卡补套餐名与周期。`GET v1/me/gift-cards` 的行新增 `code_hint`。
 - 状态：现有 `panel/internal/api/public/giftcard.go:14 previewGiftCard`（domain `giftcard/codes.go:246 PreviewCode`）；扩展为待补·后端（无迁移）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：`{ code: string(8–32 字符，服务端转大写去空白) }`
@@ -2191,6 +2205,7 @@
   - 待补·前端（→ 门户-06「佣金记录」卡片下方新增「邀请记录」卡片）：列出 invitees 的 email 和 bound_at，**不展示 risk_flag**，因为那是风控内部判定，不该让邀请人看到。
 
 #### GET v1/me/commission — 佣金概况、明细、提现记录
+- **修订 R69（2026-09-24，后端一 ⑥ e77e65b）**：概况新增 `paid_invitees`、`total_earned` 与转入余额记录 `transfers`。
 - 状态：现有 `panel/internal/api/public/handlers.go:860 myCommission`；另有待补·后端（改形状，见下）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无
@@ -3109,3 +3124,11 @@
 | R60 | 2026-09-24 | 后端二 10d0240、f914fb2 | 工单多状态筛选与新字段、closed_reason、门户 related_order |
 | R61 | 2026-09-24 | 后端二 f914fb2 | GET v1/payment-methods 由后端二实现 |
 | R62 | 2026-09-24 | 后端二 f914fb2 | 门户改密保留当前会话；me/sessions 的 last_seen_at 未实现 |
+| R63 | 2026-09-24 | 后端一 36f2fcd | 后台订单列表多值状态、user_id、余额抵扣与渠道；详情开单人 |
+| R64 | 2026-09-24 | 后端一 14f27cb、协调会话 | 人工开单 settlement grant/pending；offline 暂 422，接口改挂 reauth 后开放 |
+| R65 | 2026-09-24 | 后端一 36f2fcd | 套餐向导新建单事务，响应为建成后详情 |
+| R66 | 2026-09-24 | 后端一 36f2fcd | 渠道卡今日成交与成功率；收入调整、版本带登记人 |
+| R67 | 2026-09-24 | 后端一 b84dc47 | 分销总览累计与计佣范围 scope（first_order 口径） |
+| R68 | 2026-09-24 | 后端一 b84dc47 | 礼品卡 balance_issued、预览不回发行量、兑换记录 code_hint |
+| R69 | 2026-09-24 | 后端一 36f2fcd、e77e65b | 门户套餐目录、优惠码试算 pack_id、订单 counts 与明细、佣金概况扩展 |
+| R70 | 2026-09-24 | 后端一 8d14e52 | 优惠券路径 id 非 UUID 回 404 |
