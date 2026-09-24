@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 reservations.go 的 lockOrderReservationGraph、ledger.go 的记账、platform/audit、platform/httpx
 // [OUTPUT]: 对外提供 AdminCancelOrder、CancelOrder、ReleaseOrderOutput；包内提供释放共用的 releaseOrderReservation 与 lockReleaseReservationGraph
-// [POS]: billing 的订单释放（取消 / 过期）：把 held 预留图整体转成 released 并退回余额冻结；new / topup / addon 走同一套预留图锁，renewal 走续费专用分支
+// [POS]: billing 的订单释放（取消 / 过期）：把 held 预留图整体转成 released 并退回余额冻结；new / topup / addon / upgrade（变更套餐）走同一套预留图锁，renewal 走续费专用分支；金额恒等式经 reservations.go 的 orderTotal
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -79,6 +79,7 @@ type releaseOrderShape struct {
 	BalanceAmount     int64
 	PayableAmount     int64
 	CouponID          *string
+	ProrationCredit   int64
 	StateVersion      int64
 	CancelledAt       *time.Time
 	CancelReason      *string
@@ -367,7 +368,7 @@ func lockReleaseOrder(ctx context.Context, tx pgx.Tx, tenantID string,
 		SELECT id::text,user_id::text,status,kind,currency::text,
 		       business_request_id::text,subtotal_amount,discount_amount,tax_amount,
 		       total_amount,balance_applied,payable_amount,coupon_id::text,
-		       state_version,cancelled_at,cancel_reason
+		       state_version,cancelled_at,cancel_reason,proration_credit_amount
 		  FROM orders
 		 WHERE tenant_id=$1 AND id=$2::uuid`
 	args := []any{tenantID, req.OrderID}
@@ -386,7 +387,7 @@ func lockReleaseOrder(ctx context.Context, tx pgx.Tx, tenantID string,
 		&shape.BusinessRequestID, &shape.SubtotalAmount, &shape.DiscountAmount,
 		&shape.TaxAmount, &shape.TotalAmount, &shape.BalanceAmount,
 		&shape.PayableAmount, &shape.CouponID, &shape.StateVersion,
-		&shape.CancelledAt, &shape.CancelReason)
+		&shape.CancelledAt, &shape.CancelReason, &shape.ProrationCredit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if req.SkipLocked {
 			return shape, true, nil
@@ -475,19 +476,22 @@ func lockAndRejectSettledPaymentEvidence(ctx context.Context, tx pgx.Tx,
 func lockReleaseReservationGraph(ctx context.Context, tx pgx.Tx, tenantID string,
 	shape releaseOrderShape, requireDue bool) (*lockedReservation, error) {
 
-	if shape.SubtotalAmount-shape.DiscountAmount+shape.TaxAmount != shape.TotalAmount ||
+	if orderTotal(shape.SubtotalAmount, shape.DiscountAmount, shape.ProrationCredit,
+		shape.TaxAmount) != shape.TotalAmount ||
 		shape.TotalAmount-shape.BalanceAmount != shape.PayableAmount {
 		return nil, errors.New("order financial shape is inconsistent")
 	}
 
-	if shape.Kind == "new" || shape.Kind == "topup" || shape.Kind == "addon" {
+	// 变更套餐单释放时不碰订阅（下单只冻结了券与余额），与新购走同一套预留图锁。
+	if shape.Kind == "new" || shape.Kind == "topup" || shape.Kind == "addon" ||
+		shape.Kind == "upgrade" {
 		locked, err := lockOrderReservationGraph(ctx, tx, reservationLockRequest{
 			TenantID: tenantID, OrderID: shape.ID, UserID: shape.UserID,
 			Kind: shape.Kind, Currency: shape.Currency, CouponID: shape.CouponID,
 			SubtotalAmount: shape.SubtotalAmount, DiscountAmount: shape.DiscountAmount,
 			TaxAmount: shape.TaxAmount, TotalAmount: shape.TotalAmount,
 			PayableAmount: shape.PayableAmount,
-			BalanceAmount: shape.BalanceAmount,
+			BalanceAmount: shape.BalanceAmount, ProrationCredit: shape.ProrationCredit,
 		})
 		if err != nil {
 			return nil, err

@@ -1,19 +1,28 @@
+// [INPUT]: 依赖 uniproxy.go 的 chargeTraffic，依赖 platform/db 的 InTx，依赖迁移 00070 的 traffic_pack_grants 与其变更通知触发器、00076 摘掉 quota_balances 通知
+// [OUTPUT]: 对外提供 TestTrafficChargePG18（run-pg18-gates.sh 的 traffic_charge 域）
+// [POS]: domain/nodefabric 扣量路径的 PG18 集成门禁，与 traffic_charge_test.go 的单元测试互补：这里证明真实 SQL 的扣量顺序与推送面
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 )
 
 // TestTrafficChargePG18 证明扣量顺序（D-E-1）：本周期先扣套餐额度，扣完再按
 // 先到先扣扣流量包；流量包扣光后超出的部分记在套餐上（配额变负、停止下发）；
-// 套餐额度的重置不动流量包。由 run-pg18-gates.sh 的 traffic_charge 域驱动。
+// 套餐额度的重置不动流量包；扣量写流量包余额不产生变更推送，只有新增一笔
+// 余额才推（00070 的 zz_notify_traffic_pack_grants 只挂 INSERT）。
+// 由 run-pg18-gates.sh 的 traffic_charge 域驱动。
 func TestTrafficChargePG18(t *testing.T) {
 	appDSN := os.Getenv("AEGIS_TRAFFIC_CHARGE_PG18_DSN")
 	adminDSN := os.Getenv("AEGIS_TRAFFIC_CHARGE_PG18_ADMIN_DSN")
@@ -70,11 +79,42 @@ func TestTrafficChargePG18(t *testing.T) {
 			period_start, period_end, granted, limit_value)
 		VALUES ($1, $2, 'traffic.bytes', 'cycle', now() - interval '1 day',
 		        now() + interval '30 days', 100, 100)`, tenantID, subID)
+	// 夹具连接自己也听变更通道：新增余额要推给用户，扣量不推（00070）。
+	must(`LISTEN aegis_change`)
 	must(`INSERT INTO traffic_pack_grants (id, tenant_id, user_id, source, source_id,
 			granted_bytes, created_at)
 		VALUES ($1, $3, $4, 'migration', gen_random_uuid(), 50, now() - interval '2 hours'),
 		       ($2, $3, $4, 'migration', gen_random_uuid(), 30, now() - interval '1 hour')`,
 		older, newer, tenantID, userID)
+
+	grantNotices := func() (n int) {
+		t.Helper()
+		// 通知在提交后投递；夹具连接执行一条空语句把积压的通知收进来，再逐条非阻塞读。
+		must(`SELECT 1`)
+		for {
+			waitCtx, stop := context.WithTimeout(ctx, 200*time.Millisecond)
+			note, err := admin.WaitForNotification(waitCtx)
+			stop()
+			if err != nil {
+				if !pgconn.Timeout(err) || ctx.Err() != nil {
+					t.Fatalf("wait for notifications: %v", err)
+				}
+				return n
+			}
+			var payload struct {
+				Table string `json:"tbl"`
+			}
+			if err := json.Unmarshal([]byte(note.Payload), &payload); err != nil {
+				t.Fatalf("decode change notice %q: %v", note.Payload, err)
+			}
+			if payload.Table == "traffic_pack_grants" {
+				n++
+			}
+		}
+	}
+	if n := grantNotices(); n != 2 {
+		t.Fatalf("new traffic pack grants sent %d change notices, want 2", n)
+	}
 
 	charge := func(billed int64) {
 		t.Helper()
@@ -118,5 +158,10 @@ func TestTrafficChargePG18(t *testing.T) {
 	expect("packs run out mid-charge, the rest stays on the plan", 115, 50, 30)
 	charge(25)
 	expect("with no packs left the overage stays on the plan", 140, 50, 30)
+	// 上面每一次扣量都 UPDATE 了流量包余额，一条都不该变成推送。
+	if n := grantNotices(); n != 0 {
+		t.Fatalf("traffic charges sent %d traffic pack change notices, want 0", n)
+	}
 	t.Log("marker=traffic_charge_pg18_plan_first_then_packs_ok")
+	t.Log("marker=traffic_charge_pg18_charges_do_not_notify_ok")
 }

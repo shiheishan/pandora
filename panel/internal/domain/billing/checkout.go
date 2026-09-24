@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 reservations.go 的资源预留与科目锁、ledger.go 的记账、commission.go 的计提，依赖 platform/db、platform/httpx、middleware 的幂等声明
-// [OUTPUT]: 对外提供 Service、CreateOrder、HandlePaymentWebhook 及其输入输出类型、CheckoutIdempotencyScope
-// [POS]: billing 的结账与支付回调主链路；mark-paid（manual_order.go）与补偿查询（payments.go）都复用 HandlePaymentWebhook 与 PaymentWebhookOutput
+// [OUTPUT]: 对外提供 Service、CreateOrder、HandlePaymentWebhook 及其输入输出类型、CheckoutIdempotencyScope；包内提供 provisionSubscription、initQuotaBalances（新开订阅与变更套餐共用的配额初始化）、addInterval
+// [POS]: billing 的结账与支付回调主链路，回调按 kind 分派履约（upgrade 交 plan_change.go）；mark-paid（manual_order.go）与补偿查询（payments.go）都复用 HandlePaymentWebhook 与 PaymentWebhookOutput
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -1101,19 +1101,22 @@ func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in 
 			businessRequestID                            string
 			subtotalAmount, discountAmount, taxAmount    int64
 			payable, balanceApplied, totalAmount         int64
+			prorationCredit                              int64
 			couponID, idempotencyKeyID                   *string
 		)
 		query := `
 			SELECT id::text,user_id::text,status,currency::text,subtotal_amount,
 			       discount_amount,tax_amount,payable_amount,balance_applied,total_amount,
-			       kind,business_request_id::text,coupon_id::text,idempotency_key_id::text
+			       kind,business_request_id::text,coupon_id::text,idempotency_key_id::text,
+			       proration_credit_amount
 			  FROM orders WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`
 		identifier := in.OrderID
 		if identifier == "" {
 			query = `
 				SELECT id::text,user_id::text,status,currency::text,subtotal_amount,
 				       discount_amount,tax_amount,payable_amount,balance_applied,total_amount,
-				       kind,business_request_id::text,coupon_id::text,idempotency_key_id::text
+				       kind,business_request_id::text,coupon_id::text,idempotency_key_id::text,
+				       proration_credit_amount
 				  FROM orders WHERE tenant_id=$1 AND order_no=$2 FOR UPDATE`
 			identifier = in.OrderNo
 		}
@@ -1123,7 +1126,7 @@ func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in 
 		err = tx.QueryRow(ctx, query, tenantID, identifier).Scan(
 			&orderID, &userID, &status, &currency, &subtotalAmount,
 			&discountAmount, &taxAmount, &payable, &balanceApplied, &totalAmount,
-			&orderKind, &businessRequestID, &couponID, &idempotencyKeyID)
+			&orderKind, &businessRequestID, &couponID, &idempotencyKeyID, &prorationCredit)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.New(httpx.CodeNotFound, "order not found")
 		}
@@ -1131,9 +1134,9 @@ func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in 
 			return err
 		}
 		in.OrderID = orderID
-		if orderKind == "renewal" && (idempotencyKeyID == nil ||
+		if subscriptionBoundOrderKind(orderKind) && (idempotencyKeyID == nil ||
 			*idempotencyKeyID != businessRequestID) {
-			return errors.New("renewal order is missing its exact idempotency linkage")
+			return errors.New("subscription-bound order is missing its exact idempotency linkage")
 		}
 
 		// Distinct provider events for the same provider payment must serialize
@@ -1189,13 +1192,14 @@ func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in 
 			return httpx.New(httpx.CodeConflict, "payment currency or amount does not match the order")
 		}
 
-		// Renewal settlement must acquire the existing subscription before any
-		// reservation child or ledger-account lock. Renewal creation uses the
-		// same subscription -> coupon -> ledger order, closing the cross-flow
-		// deadlock cycle without weakening new-order or top-up settlement.
+		// Renewal and plan-change settlement must acquire the existing
+		// subscription before any reservation child or ledger-account lock.
+		// Their creation uses the same subscription -> coupon -> ledger order,
+		// closing the cross-flow deadlock cycle without weakening new-order or
+		// top-up settlement.
 		var renewalSubscriptionID string
-		if orderKind == "renewal" {
-			renewalSubscriptionID, err = lockRenewalSubscriptionForSettlement(
+		if subscriptionBoundOrderKind(orderKind) {
+			renewalSubscriptionID, err = lockOrderSubscriptionForSettlement(
 				ctx, tx, tenantID, orderID, userID,
 			)
 			if err != nil {
@@ -1235,6 +1239,7 @@ func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in 
 			Currency: currency, CouponID: couponID, SubtotalAmount: subtotalAmount,
 			DiscountAmount: discountAmount, TaxAmount: taxAmount, TotalAmount: totalAmount,
 			PayableAmount: payable, BalanceAmount: balanceApplied,
+			ProrationCredit: prorationCredit,
 		})
 		if err != nil {
 			return err
@@ -1406,6 +1411,15 @@ func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in 
 			if _, err := fulfillTrafficPackOrder(ctx, tx, tenantID, orderID, userID); err != nil {
 				return err
 			}
+		case "upgrade":
+			// 要外部付款的变更单一定是补差价（total > 0），不会有退余额，
+			// 退余额只发生在 plan_change.go 的零元单捕获里。
+			subscriptionID, err := s.fulfillPlanChangeLocked(ctx, tx, tenantID,
+				orderID, userID, renewalSubscriptionID)
+			if err != nil {
+				return err
+			}
+			out.SubscriptionID = subscriptionID
 		default:
 			return fmt.Errorf("unsupported paid order kind %q", orderKind)
 		}
@@ -1604,22 +1618,9 @@ func (s *Service) provisionSubscription(ctx context.Context, tx pgx.Tx,
 		return "", err
 	}
 
-	// --- 初始化配额（USE-005）---
-	// 注意 $4 必须显式转型：在 CASE 的一个分支是裸 NULL 时，
-	// PostgreSQL 无从推断参数类型，会退化成 text 并与 timestamptz 列冲突。
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO quota_balances
-			(tenant_id, subscription_id, metric, period, period_start, period_end,
-			 granted, limit_value)
-		SELECT $1, $2, qd.metric, qd.period, $3::timestamptz,
-		       CASE WHEN qd.period = 'total'
-		            THEN NULL::timestamptz
-		            ELSE $4::timestamptz END,
-		       coalesce(qd.limit_value, 0), qd.limit_value
-		  FROM quota_definitions qd
-		 WHERE qd.plan_version_id = $5`,
-		tenantID, subID, now, periodEnd, spec.PlanVersionID); err != nil {
-		return "", fmt.Errorf("初始化配额: %w", err)
+	if err := initQuotaBalances(ctx, tx, tenantID, subID, spec.PlanVersionID,
+		now, periodEnd); err != nil {
+		return "", err
 	}
 
 	// --- 签发订阅凭据（XBD-002）---
@@ -1647,6 +1648,34 @@ func (s *Service) provisionSubscription(ctx context.Context, tx pgx.Tx,
 	}
 
 	return subID, nil
+}
+
+// initQuotaBalances 按套餐版本的配额定义给订阅补齐配额行（USE-005），已有同
+// 指标同周期的行跳过。新开订阅从这里建整套；变更套餐（plan_change.go）先原地
+// 重置已有的行，再从这里补上新套餐多出来的指标。
+//
+// 注意 $4 必须显式转型：在 CASE 的一个分支是裸 NULL 时，
+// PostgreSQL 无从推断参数类型，会退化成 text 并与 timestamptz 列冲突。
+func initQuotaBalances(ctx context.Context, tx pgx.Tx, tenantID, subID,
+	planVersionID string, periodStart, periodEnd time.Time) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO quota_balances
+			(tenant_id, subscription_id, metric, period, period_start, period_end,
+			 granted, limit_value)
+		SELECT $1, $2, qd.metric, qd.period, $3::timestamptz,
+		       CASE WHEN qd.period = 'total'
+		            THEN NULL::timestamptz
+		            ELSE $4::timestamptz END,
+		       coalesce(qd.limit_value, 0), qd.limit_value
+		  FROM quota_definitions qd
+		 WHERE qd.plan_version_id = $5
+		   AND NOT EXISTS (SELECT 1 FROM quota_balances qb
+		                    WHERE qb.subscription_id = $2 AND qb.metric = qd.metric
+		                      AND qb.period = qd.period)`,
+		tenantID, subID, periodStart, periodEnd, planVersionID); err != nil {
+		return fmt.Errorf("初始化配额: %w", err)
+	}
+	return nil
 }
 
 // fulfillOrder 依据订单行的快照创建并激活订阅，同时初始化配额与订阅凭据。

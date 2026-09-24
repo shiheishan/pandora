@@ -13,7 +13,7 @@ func TestRenewalCreateReservationAndIdempotencySourceContract(t *testing.T) {
 	}
 	src := string(body)
 	start := strings.Index(src, "func (s *Service) CreateRenewal")
-	end := strings.Index(src[start:], "type zeroPayRenewalCapture")
+	end := strings.Index(src[start:], "type zeroPaySubscriptionCapture")
 	if start < 0 || end < 0 {
 		t.Fatal("renewal creation source boundary missing")
 	}
@@ -30,7 +30,7 @@ func TestRenewalCreateReservationAndIdempotencySourceContract(t *testing.T) {
 		"INSERT INTO order_reservation_events",
 		"redeemCoupon(",
 		"INSERT INTO balance_holds",
-		"captureZeroPayRenewal(",
+		"captureZeroPaySubscriptionOrder(",
 		"httpx.PrepareJSON(http.StatusCreated, out)",
 		"idempotencybind.BindResource(",
 		"idempotencybind.CompleteSuccessJSON(",
@@ -63,7 +63,7 @@ func TestRenewalZeroPayAndFulfilmentLockSourceContract(t *testing.T) {
 		"captureLockedReservation(",
 		`SET status='paid', paid_amount=total_amount`,
 		"s.fulfillRenewalLocked(",
-		"func lockRenewalSubscriptionForSettlement(",
+		"func lockOrderSubscriptionForSettlement(",
 		"order -> subscription -> payment intents -> reservation graph -> ledger",
 		"FOR UPDATE",
 		"AND user_id=$3::uuid",

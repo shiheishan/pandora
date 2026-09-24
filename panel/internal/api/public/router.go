@@ -185,6 +185,11 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/me/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
 			r.With(middleware.Idempotency(d.Pool, "subscription_renewal_create", d.Log)).
 				Post("/me/subscriptions/{id}/renew", h.createRenewal)
+			// 变更套餐（D-E-2）：试算不落库；下单有自己的幂等域，数据库的订单/幂等
+			// 对称绑定把 kind=upgrade 映射到它（迁移 00071）
+			r.Post("/me/subscriptions/{id}/change-plan/preview", h.previewPlanChange)
+			r.With(middleware.Idempotency(d.Pool, billing.PlanChangeIdempotencyScope, d.Log)).
+				Post("/me/subscriptions/{id}/change-plan", h.createPlanChange)
 
 			// 下单要求幂等键：用户网络抖动重发不能变成两张订单
 			r.With(middleware.Idempotency(d.Pool, "order_create", d.Log)).

@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 reservations.go 的 prepareAndLockLedgerAccounts、ledger.go 的 Balance/Post 与科目类型
 // [OUTPUT]: 对包内提供 insertHeldReservation、prepareBalanceHold、postBalanceHold
-// [POS]: billing 各种建单路径（checkout.go 的新购、topup.go 的充值、traffic_pack.go 的流量包）共用的预留父节点与余额冻结步骤；零元单捕获仍在 checkout.go
+// [POS]: billing 各种建单路径（checkout.go 的新购、topup.go 的充值、traffic_pack.go 的流量包、plan_change.go 的变更套餐）共用的预留父节点与余额冻结步骤；零元单捕获仍在 checkout.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -46,10 +46,12 @@ func insertHeldReservation(ctx context.Context, tx pgx.Tx, tenantID, orderID,
 	return reservationID, nil
 }
 
-// balanceHoldAccounts 是一次余额抵扣要动的两个科目。
+// balanceHoldAccounts 是一次余额抵扣要动的科目；RevenueID 只在零元单（payable = 0）
+// 时一并锁住，供当场捕获记收入。
 type balanceHoldAccounts struct {
 	AvailableID string
 	HoldID      string
+	RevenueID   string
 }
 
 // prepareBalanceHold 在建单之前锁住余额科目并确认够扣。
@@ -75,7 +77,8 @@ func prepareBalanceHold(ctx context.Context, tx pgx.Tx, tenantID, userID,
 	if err != nil {
 		return balanceHoldAccounts{}, err
 	}
-	out := balanceHoldAccounts{AvailableID: accounts["available"], HoldID: accounts["hold"]}
+	out := balanceHoldAccounts{AvailableID: accounts["available"], HoldID: accounts["hold"],
+		RevenueID: accounts["revenue"]}
 	avail, err := Balance(ctx, tx, out.AvailableID)
 	if err != nil {
 		return balanceHoldAccounts{}, err

@@ -121,6 +121,8 @@ DOMAINS=(
   # 过滤写精确，免得同包里别的 PG18 测试因拿不到环境变量而被算作跳过。
   "traffic_pack|pandora_traffic_pack_gate|./internal/domain/billing||||app_role|^TestTrafficPackOrderPG18$"
   "traffic_charge|pandora_traffic_charge_gate|./internal/domain/nodefabric||||app_role|^TestTrafficChargePG18$"
+  # 变更套餐（00071）：同 traffic_pack，复用 order_release 的一次性租户夹具，独占一个库。
+  "plan_change|pandora_plan_change_gate|./internal/domain/billing||||app_role|^TestPlanChangePG18$"
   "idempotency|pandora_idempotency_gate|./internal/middleware||||app_role,idempotency_seed|"
 )
 
