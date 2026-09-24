@@ -56,7 +56,9 @@ func registerSwitchRoutes(r chi.Router, d Deps, h *handlers) {
 	// --- 降级开关 ---
 	r.With(middleware.RequirePermission("security.audit.read", d.Log)).
 		Get("/switches", h.listSwitches)
+	// 每次切换都要重认证：关掉的是整个站点的某项能力（契约后台-09）
 	r.With(
 		middleware.RequirePermission("platform.settings.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
 	).Post("/switches/{code}", h.setSwitch)
 }

@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 domain 的 adminops/billing/identity/nodefabric/subscription/support 服务、middleware、platform 的 audit/crypto/db/httpx/realtime
+// [INPUT]: 依赖 domain 的 adminops/billing/identity/nodefabric/subscription/support 服务、middleware、platform 的 audit/crypto/db/httpx/realtime（降级开关切换后发 switches.changed）
 // [OUTPUT]: 对外提供 handlers 结构与登录、用户、订阅、订单、节点、工单等核心处理器，adminRotateResponse
 // [POS]: api/admin 的核心处理器集合，被 router.go 装配；专题处理器分散在同包其它文件
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -485,6 +485,12 @@ func (h *handlers) setSwitch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
+	}
+	// 只发管理端频道，不挂表触发器：触发器会把没有 user_id 的变更同时广播到
+	// 门户的公共频道
+	if h.d.Realtime != nil {
+		h.d.Realtime.Publish(r.Context(), realtime.ChannelAdmin(httpx.TenantIDFrom(r.Context())),
+			"switches.changed", map[string]any{"code": chi.URLParam(r, "code"), "enabled": req.Enabled})
 	}
 	httpx.OK(w, map[string]any{"ok": true, "enabled": req.Enabled})
 }

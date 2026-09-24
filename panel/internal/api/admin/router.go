@@ -113,6 +113,9 @@ func NewRouter(d Deps) http.Handler {
 	r.Get("/readyz", h.ready)
 
 	r.Route("/v1", func(r chi.Router) {
+		// admin.writes 关闭时整棵 /v1 只读（切开关、登录、重认证、改密码除外）
+		r.Use(middleware.AdminWritesGate(d.Pool, d.Log))
+
 		// 登录入口：不需要已登录，但限流最严（管理员口令是权限的根）
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RateLimit(d.Redis, d.Log,

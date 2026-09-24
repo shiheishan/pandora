@@ -1,19 +1,24 @@
 // [INPUT]: 依赖 announcement 域的一次性库（openAnnouncementPG18）、step3/step4 的造数与请求辅助，依赖第 ⑤ 步的处理器
-// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18
-// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
+// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18
+// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/realtime"
 )
 
 // step5Router 把被测处理器挂在一个带租户与主体的路由上；主体带会话且刚重认证过。
@@ -199,4 +204,77 @@ func TestDashboardTasksPG18(t *testing.T) {
 	if none := get([]string{"ops.dashboard.read"}); len(none) != 0 {
 		t.Fatalf("no item permissions, items=%v", none)
 	}
+}
+
+func TestFeatureSwitchGatesPG18(t *testing.T) {
+	ctx, admin, app := openAnnouncementPG18(t)
+	const (
+		tenant = "87000000-0000-4000-8000-000000000201"
+		actor  = "87000000-0000-4000-8000-000000000211"
+	)
+	// 迁移 00085：迁移时已有的租户（种子里的默认租户）有四个新开关，默认开启、非 essential
+	var seeded int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM feature_switches f JOIN tenants t ON t.id=f.tenant_id
+		WHERE t.slug='default' AND f.enabled AND NOT f.essential
+		  AND f.code IN ('billing.checkout','marketing.giftcard.redeem','notify.email','admin.writes')`).Scan(&seeded); err != nil || seeded != 4 {
+		t.Fatalf("seeded switches=%d err=%v, want 4", seeded, err)
+	}
+	// 迁移之后才建的租户没有这几行：billing.checkout 与 admin.writes 显式关掉，
+	// 礼品卡兑换没有行（缺行视为开启）
+	step3Seed(t, ctx, admin,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','switch-pg18','Switch','CNY')`,
+		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+actor+`','`+tenant+`','ops@switch.invalid','Ops','active')`,
+		`INSERT INTO feature_switches(tenant_id,code,enabled,essential,reason) VALUES
+		   ('`+tenant+`','billing.checkout',false,false,'支付渠道故障'),
+		   ('`+tenant+`','admin.writes',false,false,'迁移维护')`)
+
+	h := step4Handlers(t, app)
+	hub := realtime.NewHub(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Cleanup(hub.Close)
+	h.d.Realtime = hub
+	events, unsubscribe := hub.Subscribe([]string{realtime.ChannelAdmin(tenant)})
+	t.Cleanup(unsubscribe)
+
+	ok := func(w http.ResponseWriter, _ *http.Request) { httpx.OK(w, map[string]any{"ok": true}) }
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	r := step5Router(tenant, actor, nil, func(r chi.Router) {
+		r.Route("/v1", func(r chi.Router) {
+			r.Use(middleware.AdminWritesGate(app, log))
+			r.Get("/users", ok)
+			r.Post("/users/{id}/status", ok)
+			r.Post("/auth/reauth", ok)
+			r.Post("/me/password", ok)
+			r.Post("/switches/{code}", h.setSwitch)
+		})
+		r.With(middleware.FeatureSwitch(app, "billing.checkout", "下单与支付暂停中，请稍后再试", log)).Post("/p/orders", ok)
+		r.With(middleware.FeatureSwitch(app, "marketing.giftcard.redeem", "礼品卡兑换暂停中，请稍后再试", log)).Post("/p/redeem", ok)
+	})
+	expect := func(method, path, body string, code int, contains string) {
+		t.Helper()
+		w := step3Do(t, ctx, r, method, path, body)
+		if w.Code != code || !strings.Contains(w.Body.String(), contains) {
+			t.Fatalf("%s %s: status=%d body=%s, want %d containing %q", method, path, w.Code, w.Body.String(), code, contains)
+		}
+	}
+
+	// 只读模式：写被拒，读、重认证、改密码照常
+	expect(http.MethodPost, "/v1/users/x/status", `{}`, http.StatusServiceUnavailable, "管理端只读模式")
+	expect(http.MethodGet, "/v1/users", "", http.StatusOK, `"ok":true`)
+	expect(http.MethodPost, "/v1/auth/reauth", `{}`, http.StatusOK, `"ok":true`)
+	expect(http.MethodPost, "/v1/me/password", `{}`, http.StatusOK, `"ok":true`)
+	// 下单关闭；礼品卡兑换没有开关行，放行
+	expect(http.MethodPost, "/p/orders", `{}`, http.StatusServiceUnavailable, "下单与支付暂停中")
+	expect(http.MethodPost, "/p/redeem", `{}`, http.StatusOK, `"ok":true`)
+
+	// 切开关本身在只读模式下也放行，成功后只向管理端频道广播 switches.changed
+	expect(http.MethodPost, "/v1/switches/admin.writes", `{"enabled":true}`, http.StatusOK, `"enabled":true`)
+	select {
+	case ev := <-events:
+		if ev.Topic != "switches.changed" || ev.Payload["code"] != "admin.writes" || ev.Payload["enabled"] != true {
+			t.Fatalf("event=%+v", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("switches.changed was not published")
+	}
+	expect(http.MethodPost, "/v1/users/x/status", `{}`, http.StatusOK, `"ok":true`)
 }
