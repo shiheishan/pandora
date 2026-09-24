@@ -6,7 +6,7 @@
 成员清单
 service.go: Service 与构造；bootstrap 令牌与旧版接入、身份查询、签名请求、心跳、配置签发与回报、指标
 enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token
-uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写审计、拒绝已退出服务的节点）、配置组装与 ETag、用户下发、流量与在线上报
+uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写审计、拒绝已退出服务的节点）、配置组装与 ETag、用户下发、流量与在线上报；扣量先吃套餐本周期额度、再按先到先扣吃用户流量包（D-E-1），套餐用完但流量包有剩余的订阅继续下发
 node_admin.go: 后台节点增删改、复制、移动、排序、批量状态，协议白名单与稳定协议 SQL
 server_admin.go: 后台服务器（物理宿主）读写与状态机
 protocol_schema.go: 各协议的配置约束元数据与规范化节点类型
@@ -16,7 +16,7 @@ config_key_transition.go: 配置签名密钥轮换的过渡声明与校验
 nodestream.go / nodestream_event.go: 节点长连接推送（内存 StreamHub）与事件定义
 userdelta.go: 用户列表增量下发
 testdata/: 生产协议配置样本与 VLESS 迁移往返样本
-*_test.go: 单元与契约测试；*_pg18_test.go 为 PG18 集成测试（effective 与 enrollment 两个域，server_token_pg18_test.go 共用 enrollment 的 openEnrollmentPG18）
+*_test.go: 单元与契约测试；*_pg18_test.go 为 PG18 集成测试（effective 与 enrollment 两个域，server_token_pg18_test.go 共用 enrollment 的 openEnrollmentPG18；traffic_charge_pg18_test.go 独占 traffic_charge 域）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

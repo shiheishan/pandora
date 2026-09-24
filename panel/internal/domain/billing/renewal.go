@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 reservations.go 的预留图与科目锁、ledger.go 的记账、traffic_reset.go 的 LogTrafficReset、middleware 幂等声明、platform/db
+// [OUTPUT]: 对外提供 CreateRenewal、RollQuotaPeriods；包内提供 fulfillRenewal / fulfillRenewalLocked / captureZeroPayRenewal
+// [POS]: billing 的续费：在原订阅上延长周期、重置 cycle 配额；流量包余额挂用户，续费不碰（D-E-1）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 // 续费与周期滚动。
@@ -11,7 +16,7 @@ package billing
 //	周期     从当前周期末往后延，而不是从今天算 —— 提前几天续费不该损失那几天
 //	配额     按 quota_definitions 的 period 决定：cycle 重置，total 保留
 //	凭据     不动。换订阅链接等于逼所有设备重新导入一次
-//	附加包   granted_addon 保留，那是用户单独花钱买的
+//	流量包   挂在用户身上（traffic_pack_grants），续费不碰它，余量原样保留（D-E-1）
 
 import (
 	"context"
@@ -547,7 +552,6 @@ func (s *Service) fulfillRenewalLocked(ctx context.Context, tx pgx.Tx, tenantID,
 	// 只有跟随订阅周期的 cycle 配额在续费时清零。day/month 有自己的
 	// RollQuotaPeriods 边界；在这里把它们改成订阅周期末，会吞掉尚未结束
 	// 的日/月额度。total 也是订阅存续期总量，始终保留。
-	// granted_addon 单独存列，因此也不会被这次基础额度更新覆盖。
 	// 先把清零前的用量取出来 —— UPDATE 之后就再也读不到了，
 	// 而「续费时你已经用了多少」正是用户最常问的那个数字。
 	resetRows, err := tx.Query(ctx, `

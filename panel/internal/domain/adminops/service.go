@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入
 // [OUTPUT]: 对外提供 Service、NewService，概览、用户（ListUsers / GetUser / SetUserStatus）、订单（ListOrders，OrderRow 唯一查询形状）、套餐与渠道、审计、降级开关
-// [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它
+// [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它；套餐目录在 catalog.go / plan_wizard*.go，订单详情在 order_detail.go；订单行的品名对流量包订单取订单项商品名
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package adminops 实现管理后台的读写用例。
@@ -570,7 +570,9 @@ const orderRowSelectSQL = `
 			       COALESCE(it.snapshot_interval_count, 0), COALESCE(it.n, 0)
 			  FROM orders o JOIN users u ON u.id = o.user_id
 			  LEFT JOIN LATERAL (
-			    SELECT i.snapshot_plan_name, i.snapshot_interval, i.snapshot_interval_count,
+			    -- 流量包订单没有套餐名，用订单项上的商品名（流量包名）顶上
+			    SELECT coalesce(i.snapshot_plan_name, i.snapshot_product_name) AS snapshot_plan_name,
+			           i.snapshot_interval, i.snapshot_interval_count,
 			           count(*) OVER () AS n
 			      FROM order_items i
 			     WHERE i.tenant_id = o.tenant_id AND i.order_id = o.id

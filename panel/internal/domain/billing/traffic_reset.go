@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 traffic_reset_logs / quota_balances 表与 platform/audit、platform/db、platform/httpx
+// [OUTPUT]: 对外提供 LogTrafficReset、ListTrafficResets、TrafficResetStats、ManualResetTraffic 及其类型
+// [POS]: billing 的流量重置：只清套餐配额的已用量并留痕；流量包余额挂用户，重置不碰（D-E-1）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -169,8 +174,8 @@ type ManualResetInput struct {
 // ManualResetTraffic 把用户当前订阅的已用流量清零。
 //
 // 这是个会直接改变用户可用额度的动作，所以要理由、要审计、要落日志。
-// 只清 consumed，不动 limit_value 和 granted_addon —— 那两个是「给了多少」，
-// 重置改的是「用了多少」。
+// 只清 consumed，不动 limit_value —— 那是「给了多少」，重置改的是「用了多少」。
+// 流量包余额挂在用户身上（traffic_pack_grants），重置不碰它（D-E-1）。
 func (s *Service) ManualResetTraffic(ctx context.Context, tenantID string,
 	in ManualResetInput) (int64, error) {
 

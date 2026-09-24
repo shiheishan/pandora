@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 giftcard.go 的模板与 Granter 接口（billing 注入）、domain/plugin 事件、platform/audit
+// [OUTPUT]: 对外提供 Redeem、RedeemResult、MyRedemptions、MyRedemption
+// [POS]: giftcard 的兑换：锁码、校验条件与限制、按卡型发放（流量奖励经 Granter 发成一码一笔的流量包余额）、写兑换流水
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package giftcard
 
 import (
@@ -114,7 +119,7 @@ func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string) (*R
 			}
 
 			// 5) 结算奖励
-			granted, err := s.applyRewards(ctx, tx, tenantID, userID, t, &out)
+			granted, err := s.applyRewards(ctx, tx, tenantID, userID, codeID, t, &out)
 			if err != nil {
 				return err
 			}
@@ -196,7 +201,7 @@ type grantedRecord struct {
 	LedgerTxnID  string `json:"ledger_txn_id,omitempty"`
 }
 
-func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID string,
+func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID string,
 	t Template, out *RedeemResult) (grantedRecord, error) {
 
 	var g grantedRecord
@@ -241,7 +246,7 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID 
 		out.Summary = append(out.Summary, "余额 +"+formatMoney(r.Balance))
 	}
 	if r.TrafficBytes > 0 {
-		if err := s.grant.GrantTraffic(ctx, tx, tenantID, userID, r.TrafficBytes); err != nil {
+		if err := s.grant.GrantTraffic(ctx, tx, tenantID, userID, codeID, r.TrafficBytes); err != nil {
 			return g, err
 		}
 		g.TrafficBytes = r.TrafficBytes

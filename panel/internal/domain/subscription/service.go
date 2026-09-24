@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 subscription_credentials / subscriptions / quota_balances / traffic_pack_grants 表，依赖 platform/crypto、platform/db
+// [OUTPUT]: 对外提供 Service、New 与订阅分发用例：ListLinks、Rotate、Authenticate、ListNodes、ListOwnedNodePreviews、LoadUsage、Log 等
+// [POS]: subscription 的订阅分发核心；LoadUsage 的总量 = 套餐本期额度 + 用户流量包剩余（D-E-1），供 Subscription-Userinfo
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package subscription 实现订阅分发。
 //
 // 这是整条链路的最后一环：用户付了钱、节点也跑起来了，但只有订阅链接
@@ -601,7 +606,18 @@ func (s *Service) LoadUsage(ctx context.Context, tenantID string, c *Credential)
 		if err != nil {
 			return err
 		}
-		u.Total = granted
+		// 流量包余额（D-E-1）挂在用户身上，套餐额度用完后接着用：客户端显示的
+		// 总量 = 套餐本期额度 + 流量包剩余，已用量只算套餐部分，剩余正好是两者之和。
+		var packRemaining int64
+		if err := tx.QueryRow(ctx, `
+			SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
+			  FROM traffic_pack_grants g
+			  JOIN subscriptions s ON s.tenant_id = g.tenant_id AND s.user_id = g.user_id
+			 WHERE g.tenant_id = $1 AND s.id = $2::uuid`,
+			tenantID, c.SubscriptionID).Scan(&packRemaining); err != nil {
+			return err
+		}
+		u.Total = granted + packRemaining
 		// 客户端把 upload+download 相加当作已用量。
 		// 我们只记总量，全部计入 download 而不是对半分 ——
 		// 编造一个看似合理的上下行比例，会让用户在客户端里看到假数据。

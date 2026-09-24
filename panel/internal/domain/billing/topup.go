@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 order_holds.go 的 insertHeldReservation、ledger.go 的记账、middleware 幂等声明、platform/idempotencybind
+// [OUTPUT]: 对外提供 CreateTopup 与输入输出、TopupIdempotencyScope、AdjustBalance、BalanceOf、ListBalanceHistory；包内提供 postTopupPaid
+// [POS]: billing 的余额入金：自助充值单（kind=topup，结算即履约）与管理员调账
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 // 余额充值与手动调账。
@@ -130,25 +135,8 @@ func (s *Service) CreateTopup(ctx context.Context, tenantID string,
 			return err
 		}
 
-		var reservationID string
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO order_reservations
-				(tenant_id, order_id, user_id, expires_at)
-			VALUES ($1, $2::uuid, $3::uuid, $4)
-			RETURNING id::text`,
-			tenantID, orderID, in.UserID, expiresAt,
-		).Scan(&reservationID); err != nil {
-			return err
-		}
-
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO order_reservation_events
-				(tenant_id, reservation_id, order_id, from_state, to_state,
-				 event_kind, business_request_id, actor_kind, actor_id)
-			VALUES ($1, $2::uuid, $3::uuid, NULL, 'held',
-			        'reserve', $4::uuid, 'user', $5::uuid)`,
-			tenantID, reservationID, orderID, in.Claim.ID, in.UserID,
-		); err != nil {
+		if _, err := insertHeldReservation(ctx, tx, tenantID, orderID,
+			in.UserID, in.Claim.ID, expiresAt); err != nil {
 			return err
 		}
 

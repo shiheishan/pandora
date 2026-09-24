@@ -56,8 +56,9 @@ type Granter interface {
 	// GrantBalance 往用户余额记一笔，返回账本流水号。
 	GrantBalance(ctx context.Context, tx pgx.Tx, tenantID, userID string,
 		amount int64, currency, memo string) (string, error)
-	// GrantTraffic 给用户当前生效的订阅追加流量（字节）。
-	GrantTraffic(ctx context.Context, tx pgx.Tx, tenantID, userID string,
+	// GrantTraffic 给用户发一笔流量包余额（字节），codeID 是这张卡密，
+	// 一码只能发一笔（D-E-1：礼品卡流量与购买的流量包同一余额、同一规则）。
+	GrantTraffic(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID string,
 		bytes int64) error
 	// ExtendExpiry 把用户当前生效订阅的到期时间往后推。
 	ExtendExpiry(ctx context.Context, tx pgx.Tx, tenantID, userID string,

@@ -117,6 +117,10 @@ DOMAINS=(
   # 再灌 billing 那份——后者带着已取消 / 已过期的订单，一进库就把释放路径的
   # 水位置上，而这个测试开跑第一件事就是断言水位还是干净的。
   "order_release|pandora_order_release_gate|./internal/domain/billing|order_release|||app_role|TestOrderReleasePG18"
+  # 流量包（00070）：下单与余额在 billing，扣量在 nodefabric；各自独占一个库，
+  # 过滤写精确，免得同包里别的 PG18 测试因拿不到环境变量而被算作跳过。
+  "traffic_pack|pandora_traffic_pack_gate|./internal/domain/billing||||app_role|^TestTrafficPackOrderPG18$"
+  "traffic_charge|pandora_traffic_charge_gate|./internal/domain/nodefabric||||app_role|^TestTrafficChargePG18$"
   "idempotency|pandora_idempotency_gate|./internal/middleware||||app_role,idempotency_seed|"
 )
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aegispanel/aegis/internal/domain/plugin"
 	"github.com/aegispanel/aegis/internal/middleware"
@@ -341,34 +342,11 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 
 		payable := total - balanceApplied
 
-		// Prepare both sides of the hold before taking either row lock.  A
-		// zero-pay capture also includes revenue in the same UUID-sorted lock set.
-		var availableAccountID, holdAccountID string
+		var holdAccounts balanceHoldAccounts
 		if balanceApplied > 0 {
-			specs := []ledgerAccountSpec{
-				{Key: "available", AccountType: AccountUserBalance,
-					Currency: currency, UserID: &in.UserID},
-				{Key: "hold", AccountType: AccountUserBalanceHold,
-					Currency: currency, UserID: &in.UserID},
-			}
-			if payable == 0 {
-				specs = append(specs, ledgerAccountSpec{
-					Key: "revenue", AccountType: AccountPlatformRevenue,
-					Currency: currency, OwnerRef: "main",
-				})
-			}
-			accounts, err := prepareAndLockLedgerAccounts(ctx, tx, tenantID, specs)
-			if err != nil {
+			if holdAccounts, err = prepareBalanceHold(ctx, tx, tenantID, in.UserID,
+				currency, balanceApplied, payable); err != nil {
 				return err
-			}
-			availableAccountID = accounts["available"]
-			holdAccountID = accounts["hold"]
-			avail, err := Balance(ctx, tx, availableAccountID)
-			if err != nil {
-				return err
-			}
-			if avail < balanceApplied {
-				return httpx.New(httpx.CodeConflict, "余额不足")
 			}
 		}
 
@@ -397,24 +375,9 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 			return err
 		}
 
-		var reservationID string
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO order_reservations
-				(tenant_id, order_id, user_id, expires_at)
-			VALUES ($1, $2::uuid, $3::uuid, $4)
-			RETURNING id::text`,
-			tenantID, orderID, in.UserID, expiresAt,
-		).Scan(&reservationID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO order_reservation_events
-				(tenant_id, reservation_id, order_id, from_state, to_state,
-				 event_kind, business_request_id, actor_kind, actor_id)
-			VALUES ($1, $2::uuid, $3::uuid, NULL, 'held',
-			        'reserve', $4::uuid, 'user', $5::uuid)`,
-			tenantID, reservationID, orderID, in.Claim.ID, in.UserID,
-		); err != nil {
+		reservationID, err := insertHeldReservation(ctx, tx, tenantID, orderID,
+			in.UserID, in.Claim.ID, expiresAt)
+		if err != nil {
 			return err
 		}
 
@@ -477,29 +440,8 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 		}
 
 		if balanceApplied > 0 {
-			holdTxnID, err := Post(ctx, tx, tenantID, Posting{
-				Kind: "balance_hold", Currency: currency,
-				SourceType: "order", SourceID: &orderID,
-				Memo: "order balance hold", ActorKind: "user", ActorID: &in.UserID,
-				Entries: []Entry{
-					{AccountID: availableAccountID, Direction: Debit, Amount: balanceApplied,
-						Description: "order balance reserved"},
-					{AccountID: holdAccountID, Direction: Credit, Amount: balanceApplied,
-						Description: "order balance hold liability"},
-				},
-			})
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO balance_holds
-					(tenant_id, reservation_id, order_id, user_id, currency, amount,
-					 available_account_id, hold_account_id, hold_txn_id)
-				VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5, $6,
-				        $7::uuid, $8::uuid, $9::uuid)`,
-				tenantID, reservationID, orderID, in.UserID, currency, balanceApplied,
-				availableAccountID, holdAccountID, holdTxnID,
-			); err != nil {
+			if err := postBalanceHold(ctx, tx, tenantID, reservationID, orderID,
+				in.UserID, currency, balanceApplied, holdAccounts); err != nil {
 				return err
 			}
 		}
@@ -509,8 +451,8 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 			if err := s.captureZeroPayOrder(ctx, tx, zeroPayCapture{
 				TenantID: tenantID, UserID: in.UserID, OrderID: orderID,
 				ReservationID: reservationID, BusinessRequestID: in.Claim.ID,
-				PlanID: in.PlanID, Currency: currency, TotalAmount: total,
-				BalanceApplied: balanceApplied, HoldAccountID: holdAccountID,
+				Kind: "new", PlanID: in.PlanID, Currency: currency, TotalAmount: total,
+				BalanceApplied: balanceApplied, HoldAccountID: holdAccounts.HoldID,
 				HasPurchaseLimit: purchaseLimit != nil, Coupon: coupon,
 			}); err != nil {
 				return err
@@ -582,13 +524,15 @@ type zeroPayCapture struct {
 	OrderID           string
 	ReservationID     string
 	BusinessRequestID string
-	PlanID            string
-	Currency          string
-	TotalAmount       int64
-	BalanceApplied    int64
-	HoldAccountID     string
-	HasPurchaseLimit  bool
-	Coupon            *couponMatch
+	// Kind 是 new 或 addon：新购要结转库存并开订阅，流量包没有库存、履约是发余额
+	Kind             string
+	PlanID           string
+	Currency         string
+	TotalAmount      int64
+	BalanceApplied   int64
+	HoldAccountID    string
+	HasPurchaseLimit bool
+	Coupon           *couponMatch
 }
 
 // captureZeroPayOrder converts every held resource to captured and fulfils a
@@ -632,16 +576,23 @@ func (s *Service) captureZeroPayOrder(ctx context.Context, tx pgx.Tx, in zeroPay
 		}
 	}
 
-	tag, err := tx.Exec(ctx, `
-		UPDATE plans
-		   SET stock_reserved = stock_reserved - 1, stock_sold = stock_sold + 1
-		 WHERE tenant_id = $1 AND id = $2::uuid AND stock_reserved > 0`,
-		in.TenantID, in.PlanID)
-	if err != nil {
-		return err
+	if in.Kind != "new" && in.Kind != "addon" {
+		return fmt.Errorf("zero-pay capture does not support order kind %q", in.Kind)
 	}
-	if tag.RowsAffected() != 1 {
-		return errors.New("zero-pay order stock capture lost")
+	var tag pgconn.CommandTag
+	var err error
+	if in.Kind == "new" {
+		tag, err = tx.Exec(ctx, `
+			UPDATE plans
+			   SET stock_reserved = stock_reserved - 1, stock_sold = stock_sold + 1
+			 WHERE tenant_id = $1 AND id = $2::uuid AND stock_reserved > 0`,
+			in.TenantID, in.PlanID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errors.New("zero-pay order stock capture lost")
+		}
 	}
 
 	if in.HasPurchaseLimit {
@@ -722,13 +673,17 @@ func (s *Service) captureZeroPayOrder(ctx context.Context, tx pgx.Tx, in zeroPay
 	if tag.RowsAffected() != 1 {
 		return errors.New("zero-pay order paid transition lost")
 	}
-	subID, err := s.fulfillOrder(ctx, tx, in.TenantID, in.OrderID, in.UserID)
-	if err != nil {
+	subID := ""
+	if in.Kind == "addon" {
+		if _, err := fulfillTrafficPackOrder(ctx, tx, in.TenantID, in.OrderID, in.UserID); err != nil {
+			return err
+		}
+	} else if subID, err = s.fulfillOrder(ctx, tx, in.TenantID, in.OrderID, in.UserID); err != nil {
 		return err
 	}
 	// 零元单也算一次支付完成：插件那边不该因为金额是 0 就漏掉这笔。
 	return plugin.EmitOrderPaid(ctx, tx, in.TenantID, in.OrderID, in.UserID,
-		"new", "", 0, subID)
+		in.Kind, "", 0, subID)
 }
 
 //------------------------------------------------------------------------------
@@ -1446,6 +1401,11 @@ func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in 
 				return err
 			}
 			out.SubscriptionID = subscriptionID
+		case "addon":
+			// 流量包：履约就是按购买时的容量快照发一笔用户级余额，没有订阅要开
+			if _, err := fulfillTrafficPackOrder(ctx, tx, tenantID, orderID, userID); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unsupported paid order kind %q", orderKind)
 		}

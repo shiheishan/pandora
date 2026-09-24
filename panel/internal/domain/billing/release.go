@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 reservations.go 的 lockOrderReservationGraph、ledger.go 的记账、platform/audit、platform/httpx
+// [OUTPUT]: 对外提供 AdminCancelOrder、CancelOrder、ReleaseOrderOutput；包内提供释放共用的 releaseOrderReservation 与 lockReleaseReservationGraph
+// [POS]: billing 的订单释放（取消 / 过期）：把 held 预留图整体转成 released 并退回余额冻结；new / topup / addon 走同一套预留图锁，renewal 走续费专用分支
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -475,7 +480,7 @@ func lockReleaseReservationGraph(ctx context.Context, tx pgx.Tx, tenantID string
 		return nil, errors.New("order financial shape is inconsistent")
 	}
 
-	if shape.Kind == "new" || shape.Kind == "topup" {
+	if shape.Kind == "new" || shape.Kind == "topup" || shape.Kind == "addon" {
 		locked, err := lockOrderReservationGraph(ctx, tx, reservationLockRequest{
 			TenantID: tenantID, OrderID: shape.ID, UserID: shape.UserID,
 			Kind: shape.Kind, Currency: shape.Currency, CouponID: shape.CouponID,
