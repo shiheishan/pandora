@@ -1000,6 +1000,7 @@
 - 设计：后台-06「优惠券」tab。分段「全部 / 启用中 / 已停用」→ 不传 / `active` / `paused`；`expired`、`exhausted` 在「全部」里显示为「已过期」「已用完」标签（设计缺，待补·前端）。列：优惠码 `code`，批次标签在 `name != code` 时显示 `name`（后端没有 batch 概念，靠同名归批；「· N 张」需要按 name 再查一次 total，建议去掉），优惠（percent：`discount_value/100` %，fixed：`discount_value/100` 元），适用套餐（`applicable_plan_ids` 为空 →「全部套餐」，否则映射成套餐名），使用 `redeemed_count / max_redemptions`（null →「不限」），有效期至 `valid_until`（null →「长期」），启用开关 `status=active`。
 
 #### GET v1/coupons/{id}/redemptions — 单张券的兑换记录
+- **修订 R72（2026-09-24，协调会话核对 router_marketing.go）**：权限是 `marketing.coupon.read` **加** `billing.order.read` 两个都要（R6 只写了前一个，以本行为准）。
 - **修订 R6（2026-09-24，后端一 0f83ca4）**：权限改为 `marketing.coupon.read`。
 - 状态：现有 `panel/internal/api/admin/coupon.go:315 couponRedemptions`
 - 权限：`marketing.coupon.write` + `billing.order.read`｜reauth：否｜幂等：否
@@ -2364,6 +2365,7 @@
 - 设计：门户-08 点击某条通知，先标已读再跳转。
 
 #### GET v1/me/announcements — 我可见的公告
+- **修订 R71（2026-09-24，门户前端核对 notify/announce.go）**：`published_at` 可能为 null（排序用 `COALESCE(published_at, created_at)`），前端按可空处理，缺失时不显示发布时间。
 - 状态：现有 `panel/internal/api/public/handlers.go:1104 myAnnouncements`
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无
@@ -3133,3 +3135,5 @@
 | R68 | 2026-09-24 | 后端一 b84dc47 | 礼品卡 balance_issued、预览不回发行量、兑换记录 code_hint |
 | R69 | 2026-09-24 | 后端一 36f2fcd、e77e65b | 门户套餐目录、优惠码试算 pack_id、订单 counts 与明细、佣金概况扩展 |
 | R70 | 2026-09-24 | 后端一 8d14e52 | 优惠券路径 id 非 UUID 回 404 |
+| R71 | 2026-09-24 | 门户前端 | 我的公告 published_at 可为 null |
+| R72 | 2026-09-24 | 后台前端二 | 优惠券兑换记录要 marketing.coupon.read + billing.order.read |

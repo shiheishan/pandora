@@ -34,12 +34,17 @@ D-E-3、D-F-2、D-F-3。
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：前提已满足——后台前端二 ⓪ 接线已合入主线（cab2bd9）。尚未开工，**下一步 ① 概览与我的订阅。**
+**进度**：① 概览与我的订阅 `52e7726` 已验收并合入 `feat/panel-redesign`（合并 676694c；CI 35994324372 / 35994324518 全绿）。**下一步 ② 选购套餐与结账。**
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R70。
+- 契约修订已到 R72。
 - 外框已有的读接口（site-config、appearance、me、余额、当前套餐名、可用佣金、未读数）在 `src/portal/queries.ts`，页面要复用同一个查询键，不要重复定义。
 - 外框顶栏读的 `me/balance`、`me/subscriptions`、`me/commission`、`me/notifications` 与快捷登录签发的假接口，⓪ 已搬进 `dev/mock/portal/` 下对应页面的文件（wallet / subs / referral / messages / account），扩充时就在那里改，形状不能破坏外框已有的读取。
 - 字节、日期时间、计数的格式化函数（`formatBytes` 等）正由后台前端一提升到 `src/core/format.ts`，合入主线后协调会话通知你；在那之前如果需要，先在自己目录里临时写，合入后改为从 core 引用、删掉临时版本，不要各写一份长期留着。
 - 后端二已全部完成（R53–R62）：门户改密保留当前会话（R62）；会话列表的 `last_seen_at` 没有实现，先不显示这一列；`GET v1/payment-methods` 已实现（R61）；工单 `related_order` 无关联时为 null（R60）。
 - 后端一 ⑥ 第一部分已上线（R68、R69）：套餐目录重置策略与续费 / 变更开关、优惠码试算支持 `{ pack_id }` 并回券面、订单 `counts` 与明细字段、佣金概况 `paid_invitees` / `total_earned` / `transfers`、礼品卡预览不再回发行量、兑换记录 `code_hint`。
+- ① 的验收结论：
+  - **授权你改 `src/portal/queries.ts`**（门户外框归你）：订阅 schema 写全，外框经 `select` 取自己要的字段，页面与外框共用 `['portal','subscriptions']` 一个查询键，去掉 `detail` 子键与重复请求。放进 ② 的提交里。
+  - 字节格式化改用 `core/format.ts` 的 `formatBytes` 等（后台前端一已提升，合并 3b0930e）；`screens/common/traffic.ts` 里与之重复的换算删掉，按切日时区出日期的函数先留在门户。
+  - `published_at` 可为 null 已写成契约 R71。v2rayN 改为复制地址、critical 横幅与宽限期徽标，认可。
+  - 你报告里标「尚未实现」的后端项现在都已上线：订阅扩展字段与 R50 时区口径（后端二 ⑤，R53–R62）、订单 `interval` / `item_name` / `counts`（后端一 ⑥，R69）。假后端 legacy 场景可以留着测降级，default 场景对齐最终形状。
