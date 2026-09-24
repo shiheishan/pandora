@@ -147,6 +147,8 @@ func NewRouter(d Deps) http.Handler {
 		// 用户数据 —— 主题和插槽是站点公开的门面。
 		r.Get("/appearance", h.appearance)
 		r.Get("/plans", h.listPlans)
+		// 流量包目录与套餐同在公开目录：没登录也能看价格
+		r.Get("/traffic-packs", h.listTrafficPacks)
 
 		// --- 需登录 ---
 		r.Group(func(r chi.Router) {
@@ -187,6 +189,11 @@ func NewRouter(d Deps) http.Handler {
 			// 下单要求幂等键：用户网络抖动重发不能变成两张订单
 			r.With(middleware.Idempotency(d.Pool, "order_create", d.Log)).
 				Post("/orders", h.createOrder)
+			// 流量包订单（kind=addon）与新购共用 order_create 幂等域：数据库的订单/幂等
+			// 对称绑定按 kind 映射幂等域，addon 映射到它（迁移 00070）
+			r.With(middleware.Idempotency(d.Pool, billing.CheckoutIdempotencyScope, d.Log)).
+				Post("/me/traffic-pack-orders", h.createTrafficPackOrder)
+			r.Get("/me/traffic-packs", h.myTrafficPacks)
 
 			// 发起支付：返回收银台跳转地址。
 			// 不加网关级幂等 —— 复用在途意图的逻辑在服务层用行锁做，

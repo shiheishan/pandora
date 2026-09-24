@@ -1,17 +1,19 @@
-// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit
+// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit；读写 quota_balances 与 traffic_pack_grants（迁移 00070）
 // [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、BuildNodeConfig、路由校验、ListNodeUsers、ReportTraffic / ReportAlive / ReportRuntimeStatus
-// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、拒绝已退出服务的节点）、用户下发与流量上报
+// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、拒绝已退出服务的节点）、用户下发与流量上报（先扣套餐本周期额度，超出部分扣用户流量包余额，D-E-1）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"time"
 
@@ -614,13 +616,18 @@ func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *Serving
 			          AND gate_node.node_type IS NOT NULL
 			          AND gate_node.server_port BETWEEN 1 AND 65535
 			          AND `+StableProtocolReadySQL("gate_node")+`)
-			   -- 流量耗尽的订阅不下发到节点（USE-007）
-			   AND NOT EXISTS (
-			         SELECT 1 FROM quota_balances qb
-			          WHERE qb.subscription_id = s.id
-			            AND qb.metric = 'traffic.bytes'
-			            AND qb.remaining IS NOT NULL
-			            AND qb.remaining <= 0)
+			   -- 流量耗尽的订阅不下发到节点（USE-007）：套餐额度用完、
+			   -- 而且用户名下的流量包也没有剩余（D-E-1 先扣套餐再扣流量包）
+			   AND ( NOT EXISTS (
+			           SELECT 1 FROM quota_balances qb
+			            WHERE qb.subscription_id = s.id
+			              AND qb.metric = 'traffic.bytes'
+			              AND qb.remaining IS NOT NULL
+			              AND qb.remaining <= 0)
+			      OR EXISTS (
+			           SELECT 1 FROM traffic_pack_grants g
+			            WHERE g.tenant_id = s.tenant_id AND g.user_id = s.user_id
+			              AND g.consumed_bytes < g.granted_bytes) )
 			`+poolFilter+`
 			 ORDER BY s.node_uid`,
 			tenantID, n.PoolID, strict, grace, n.ID)
@@ -711,35 +718,26 @@ func (s *Service) ReportTraffic(ctx context.Context, tenantID string, n *Serving
 		}
 
 		// --- 扣减配额 ---
-		for uidStr, v := range report {
-			uid, err := strconv.ParseInt(uidStr, 10, 64)
-			if err != nil {
-				continue // 非法 key 跳过，不因一个坏值毁掉整批
-			}
-			used := v[0] + v[1]
+		// 按 uid 排序逐个处理：并发的两份上报以同一顺序锁配额行与流量包，
+		// 不会交叉死锁（map 迭代顺序是随机的）。
+		for _, entry := range sortedReportEntries(report) {
+			uid, used := entry.uid, entry.used
 			if used <= 0 {
 				continue
 			}
 			// 按节点倍率折算后计费
 			billed := int64(float64(used) * n.TrafficRate)
 
-			var subID string
+			var subID, userID string
 			if err := tx.QueryRow(ctx,
-				`SELECT id FROM subscriptions WHERE tenant_id=$1 AND node_uid=$2`,
-				tenantID, uid).Scan(&subID); err != nil {
+				`SELECT id::text, user_id::text FROM subscriptions WHERE tenant_id=$1 AND node_uid=$2`,
+				tenantID, uid).Scan(&subID, &userID); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					continue // 订阅已删除，忽略该条
 				}
 				return err
 			}
-
-			if _, err := tx.Exec(ctx, `
-				UPDATE quota_balances
-				   SET consumed = consumed + $2
-				 WHERE subscription_id = $1 AND metric = 'traffic.bytes'
-				   AND period_start <= now()
-				   AND (period_end IS NULL OR period_end > now())`,
-				subID, billed); err != nil {
+			if err := chargeTraffic(ctx, tx, tenantID, subID, userID, billed); err != nil {
 				return err
 			}
 			out.Accepted++
@@ -750,6 +748,128 @@ func (s *Service) ReportTraffic(ctx context.Context, tenantID string, n *Serving
 		return nil, err
 	}
 	return out, nil
+}
+
+type reportEntry struct {
+	uid  int64
+	used int64
+}
+
+// sortedReportEntries 把上报整理成按 uid 升序的 (uid, 上下行合计)；非法 key 跳过，
+// 不因一个坏值毁掉整批。同一 uid 出现多种写法（"7" 与 "007"）时合并。
+func sortedReportEntries(report map[string][2]int64) []reportEntry {
+	byUID := map[int64]int64{}
+	for key, v := range report {
+		uid, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			continue
+		}
+		byUID[uid] += v[0] + v[1]
+	}
+	out := make([]reportEntry, 0, len(byUID))
+	for uid, used := range byUID {
+		out = append(out, reportEntry{uid: uid, used: used})
+	}
+	slices.SortFunc(out, func(a, b reportEntry) int { return cmp.Compare(a.uid, b.uid) })
+	return out
+}
+
+// splitTrafficCharge 决定一笔用量怎么分：先吃套餐本周期剩余额度（planRoom，
+// nil 表示不限量），超出的部分再从流量包余额里扣（packRemaining），
+// 两者都不够的那部分仍记在套餐上（让配额变负、下一轮停止下发）。
+// 返回 记到套餐配额上的量 与 从流量包扣的量。
+func splitTrafficCharge(billed int64, planRoom *int64, packRemaining int64) (int64, int64) {
+	if billed <= 0 {
+		return 0, 0
+	}
+	if planRoom == nil {
+		return billed, 0
+	}
+	overflow := billed - max(*planRoom, 0)
+	if overflow <= 0 {
+		return billed, 0
+	}
+	fromPacks := min(overflow, max(packRemaining, 0))
+	return billed - fromPacks, fromPacks
+}
+
+// chargeTraffic 把一笔已计费的用量记到订阅配额与用户的流量包上（D-E-1）。
+//
+// 锁顺序：先锁本周期的流量配额行，再按先到先扣的顺序锁流量包。所有上报走同一
+// 顺序。套餐剩余额度取本周期所有限量流量行里最紧的一条；没有限量行就是不限量，
+// 不动流量包。
+func chargeTraffic(ctx context.Context, tx pgx.Tx, tenantID, subID, userID string, billed int64) error {
+	var planRoom *int64
+	if err := tx.QueryRow(ctx, `
+		SELECT min(limit_value + adjusted - consumed)
+		  FROM (SELECT limit_value, adjusted, consumed FROM quota_balances
+		         WHERE tenant_id = $1 AND subscription_id = $2::uuid
+		           AND metric = 'traffic.bytes'
+		           AND period_start <= now()
+		           AND (period_end IS NULL OR period_end > now())
+		         ORDER BY id FOR UPDATE) q
+		 WHERE limit_value IS NOT NULL`, tenantID, subID).Scan(&planRoom); err != nil {
+		return err
+	}
+
+	fromPacks := int64(0)
+	if planRoom != nil && billed > max(*planRoom, 0) {
+		type openGrant struct {
+			id   string
+			left int64
+		}
+		var grants []openGrant
+		var packRemaining int64
+		rows, err := tx.Query(ctx, `
+			SELECT id::text, granted_bytes - consumed_bytes
+			  FROM traffic_pack_grants
+			 WHERE tenant_id = $1 AND user_id = $2::uuid
+			   AND consumed_bytes < granted_bytes
+			 ORDER BY created_at, id FOR UPDATE`, tenantID, userID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var g openGrant
+			if err := rows.Scan(&g.id, &g.left); err != nil {
+				rows.Close()
+				return err
+			}
+			grants = append(grants, g)
+			packRemaining += g.left
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		_, fromPacks = splitTrafficCharge(billed, planRoom, packRemaining)
+		left := fromPacks
+		for _, g := range grants {
+			if left == 0 {
+				break
+			}
+			take := min(left, g.left)
+			if _, err := tx.Exec(ctx, `
+				UPDATE traffic_pack_grants SET consumed_bytes = consumed_bytes + $3
+				 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, g.id, take); err != nil {
+				return err
+			}
+			left -= take
+		}
+	}
+
+	if planCharge := billed - fromPacks; planCharge > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE quota_balances
+			   SET consumed = consumed + $3
+			 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND metric = 'traffic.bytes'
+			   AND period_start <= now()
+			   AND (period_end IS NULL OR period_end > now())`,
+			tenantID, subID, planCharge); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 //------------------------------------------------------------------------------

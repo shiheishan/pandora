@@ -35,11 +35,15 @@ func TestCreateOrderOutputPreparedJSONContract(t *testing.T) {
 }
 
 func TestCheckoutAtomicWriterSourceContract(t *testing.T) {
-	body, err := os.ReadFile("checkout.go")
-	if err != nil {
-		t.Fatal(err)
+	// 预留父节点与余额冻结抽到了 order_holds.go，新购、充值、流量包共用。
+	var s string
+	for _, name := range []string{"checkout.go", "order_holds.go"} {
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s += string(body)
 	}
-	s := string(body)
 	required := []string{
 		"middleware.ValidateIdempotencyClaim(",
 		"CheckoutIdempotencyScope",
@@ -177,10 +181,11 @@ func TestReservationCaptureSourceContract(t *testing.T) {
 	}
 	s := string(body)
 	for _, needle := range []string{
-		`in.Kind != "new" && in.Kind != "renewal" && in.Kind != "topup"`,
+		`in.Kind != "new" && in.Kind != "renewal" && in.Kind != "topup" && in.Kind != "addon"`,
 		`topup reservation graph must contain only its parent`,
 		`new-order stock reservation shape is incomplete or inconsistent`,
-		`renewal reservation graph cannot contain stock or purchase-limit reservations`,
+		`renewal and addon reservation graphs cannot contain stock or purchase-limit reservations`,
+		`(in.Kind == "addon") != (items[0].planID == "" && items[0].trafficPack)`,
 		`items[0].lineAmount != items[0].unitAmount*int64(items[0].quantity)`,
 		`limited plan is missing its exact purchase-limit reservation`,
 		`coupon reservation shape is incomplete or inconsistent`,
@@ -246,7 +251,7 @@ func TestEveryPaidOrderKindReachesFulfilled(t *testing.T) {
 	}
 	sw := s[start : start+end]
 
-	for _, kind := range []string{`case "topup":`, `case "renewal":`, `case "new":`} {
+	for _, kind := range []string{`case "topup":`, `case "renewal":`, `case "new":`, `case "addon":`} {
 		if !strings.Contains(sw, kind) {
 			t.Fatalf("paid-order switch is missing %s", kind)
 		}
@@ -263,7 +268,7 @@ func TestEveryPaidOrderKindReachesFulfilled(t *testing.T) {
 			"callback cannot re-fulfil an order that moved on")
 	}
 
-	for _, branch := range []string{`case "renewal":`, `case "new":`} {
+	for _, branch := range []string{`case "renewal":`, `case "new":`, `case "addon":`} {
 		seg := sw[strings.Index(sw, branch):]
 		if next := strings.Index(seg[len(branch):], `case "`); next >= 0 {
 			seg = seg[:len(branch)+next]

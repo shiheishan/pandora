@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db、platform/audit、platform/httpx，依赖 SalesCapability 注入的销售开关
+// [OUTPUT]: 对外提供 Service、NewService 与后台读写用例：Overview、ListUsers/GetUser/SetUserStatus、ListOrders、ListPlans、ListProviders/SetProviderEnabled、ListAudit、ListSwitches/SetSwitch
+// [POS]: adminops 的服务骨架与后台列表类用例；套餐目录在 catalog.go / plan_wizard*.go，订单详情在 order_detail.go。ListOrders 的品名对流量包订单取订单项商品名
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package adminops 实现管理后台的读写用例。
 //
 // 与 billing / identity 的分工：那两个包承载业务不变量（账本必须配平、
@@ -603,7 +608,9 @@ func (s *Service) ListOrders(ctx context.Context, tenantID string, in ListOrders
 			       COALESCE(it.snapshot_interval_count, 0), COALESCE(it.n, 0)
 			  FROM orders o JOIN users u ON u.id = o.user_id
 			  LEFT JOIN LATERAL (
-			    SELECT i.snapshot_plan_name, i.snapshot_interval, i.snapshot_interval_count,
+			    -- 流量包订单没有套餐名，用订单项上的商品名（流量包名）顶上
+			    SELECT coalesce(i.snapshot_plan_name, i.snapshot_product_name) AS snapshot_plan_name,
+			           i.snapshot_interval, i.snapshot_interval_count,
 			           count(*) OVER () AS n
 			      FROM order_items i
 			     WHERE i.tenant_id = o.tenant_id AND i.order_id = o.id

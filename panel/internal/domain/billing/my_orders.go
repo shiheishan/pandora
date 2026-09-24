@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 orders / order_items 表与 platform/db、platform/httpx
+// [OUTPUT]: 对外提供 ListMyOrders、MyOrderDetail 及其行类型
+// [POS]: billing 的门户订单读模型；订单名取订单项套餐名，流量包订单没有套餐名时取商品名（流量包名）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -94,7 +99,7 @@ func (s *Service) ListMyOrders(ctx context.Context, tenantID, userID string,
 			SELECT o.id::text, o.order_no, o.kind, o.status, o.currency::text,
 			       o.total_amount, o.discount_amount, o.balance_applied,
 			       o.payable_amount, o.paid_amount, o.refunded_amount,
-			       COALESCE((SELECT oi.snapshot_plan_name FROM order_items oi
+			       COALESCE((SELECT coalesce(oi.snapshot_plan_name, oi.snapshot_product_name) FROM order_items oi
 			                  WHERE oi.tenant_id = o.tenant_id AND oi.order_id = o.id
 			                  ORDER BY oi.id LIMIT 1), ''),
 			       o.created_at, o.paid_at, o.cancelled_at, o.cancel_reason,
@@ -174,7 +179,7 @@ func (s *Service) MyOrderDetail(ctx context.Context, tenantID, userID,
 			SELECT o.id::text, o.order_no, o.kind, o.status, o.currency::text,
 			       o.total_amount, o.discount_amount, o.balance_applied,
 			       o.payable_amount, o.paid_amount, o.refunded_amount,
-			       COALESCE((SELECT oi.snapshot_plan_name FROM order_items oi
+			       COALESCE((SELECT coalesce(oi.snapshot_plan_name, oi.snapshot_product_name) FROM order_items oi
 			                  WHERE oi.tenant_id = o.tenant_id AND oi.order_id = o.id
 			                  ORDER BY oi.id LIMIT 1), ''),
 			       o.created_at, o.paid_at, o.cancelled_at, o.cancel_reason,
@@ -196,7 +201,7 @@ func (s *Service) MyOrderDetail(ctx context.Context, tenantID, userID,
 		out.Cancellable = cancellableOrderStatuses[out.Status]
 
 		itemRows, err := tx.Query(ctx, `
-			SELECT snapshot_plan_name, quantity, unit_amount, line_amount
+			SELECT coalesce(snapshot_plan_name, snapshot_product_name), quantity, unit_amount, line_amount
 			  FROM order_items
 			 WHERE tenant_id = $1 AND order_id = $2::uuid
 			 ORDER BY id`, tenantID, orderID)
