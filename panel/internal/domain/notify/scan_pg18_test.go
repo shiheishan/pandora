@@ -56,8 +56,8 @@ func TestScanQuotaCountsTrafficPacksPG18(t *testing.T) {
 		user := prefix + "1" + string(rune('0'+i))
 		sub := prefix + "2" + string(rune('0'+i))
 		subs[sub] = u.key
-		must(`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES($1,$2,$3,$3,'active')`,
-			user, tenant, u.key+"@notify-scan.invalid")
+		must(`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES($1,$2,$3,$4,'active')`,
+			user, tenant, u.key+"@notify-scan.invalid", u.key)
 		// 订阅背后的版本与本测试无关：关掉触发器（含外键）直接插一条生效订阅
 		must(`SET session_replication_role = replica`)
 		must(`INSERT INTO subscriptions(id,tenant_id,user_id,plan_id,plan_version_id,status,
