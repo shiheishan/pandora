@@ -9,7 +9,7 @@ appearance/: 主题与外观配置，service.go 读写、sanitize.go 清洗用�
 billing/: 订单、支付与复式账本，18 文件；借贷配平与回调幂等在此编排；commission_available.go 是「可用佣金 = 账本余额 − 未过账在途提现」的唯一口径，提现申请与转余额在同一把科目锁下共用
 content/: 版本化知识库与自定义页面投递
 dbbackup/: 数据库备份编排，12 文件：config 配置、manifest 签名清单与 linux 锁、retention 保留策略、checkpoint_hook 备份前检查点、file_open/file_owner 的 linux/other 双实现
-giftcard/: 礼品卡与卡密，对标 Xboard gift-card，3 文件
+giftcard/: 礼品卡与卡密，对标 Xboard gift-card，4 文件；batches.go 管批次与一次性导出，明文卡码只在生码样例与那一次导出里出站，其余读模型一律经 MaskCode 掩码
 identity/: 注册、验证与登录，9 文件
 nodefabric/: 节点接入与配置下发（PRD 第 8–9 章），14 文件；enrollment、node/server admin、service
 notify/: 站内信、邮件，以及到期与流量预警，7 文件

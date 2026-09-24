@@ -277,7 +277,15 @@ func NewRouter(d Deps) http.Handler {
 			r.With(middleware.RequirePermission("marketing.giftcard.read", d.Log)).
 				Get("/gift-cards/codes", h.listGiftCodes)
 			r.With(middleware.RequirePermission("marketing.giftcard.read", d.Log)).
-				Get("/gift-cards/codes/export", h.exportGiftCodes)
+				Get("/gift-cards/batches", h.listGiftBatches)
+			// 明文卡码的唯一出口：每批只能导出一次，写权限 + 近期重认证 + 幂等键
+			// （同一个键的重试原样拿回同一份 CSV）。旧的 GET codes/export 可以
+			// 被只读权限无限次导出，已下线。
+			r.With(
+				middleware.RequirePermission("marketing.giftcard.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
+				middleware.Idempotency(d.Pool, "giftcard_batch_export", d.Log),
+			).Post("/gift-cards/batches/{id}/export", h.exportGiftBatch)
 			r.With(middleware.RequirePermission("marketing.giftcard.read", d.Log)).
 				Get("/gift-cards/usages", h.listGiftUsages)
 			// 改模板奖励会同时改变全部未兑换码的价值，和生码同级要求重认证。
@@ -436,7 +444,7 @@ func NewRouter(d Deps) http.Handler {
 			r.With(middleware.RequirePermission("marketing.coupon.read", d.Log)).
 				Get("/coupons", h.listCoupons)
 			r.With(
-				middleware.RequirePermission("marketing.coupon.write", d.Log),
+				middleware.RequirePermission("marketing.coupon.read", d.Log),
 				middleware.RequirePermission("billing.order.read", d.Log),
 			).
 				Get("/coupons/{id}/redemptions", h.couponRedemptions)

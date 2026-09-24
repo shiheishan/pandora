@@ -90,6 +90,7 @@ DOMAINS=(
   "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||"
   "node_config|pandora_nodecfg_gate|./internal/api/admin|run_id,oid,system_id||pandora-nodecfg-disposable||"
   "catalog_sales|pandora_catalog_sales_gate|./internal/domain/adminops|run_id|pandora_catalog_sales_test_marker|pandora-catalog-sales-pg18||"
+  "giftcard|pandora_giftcard_gate|./internal/domain/giftcard|run_id|pandora_giftcard_test_marker|pandora-giftcard-pg18||"
   "content|pandora_content_gate|./internal/domain/content|run_id|pandora_content_test_marker|pandora-content-pg18||"
   "logout|pandora_logout_gate|./internal/domain/identity|run_id|pandora_logout_test_marker|pandora-logout-pg18||"
   "node_preview|pandora_node_preview_gate|./internal/domain/subscription|run_id|pandora_node_preview_test_marker|pandora-node-preview-pg18||"
