@@ -1,0 +1,22 @@
+# panel/internal/domain/nodefabric/
+> L2 | 父级: /panel/internal/domain/CLAUDE.md
+
+节点编排（PRD 第 8–9 章）：节点接入、身份、配置签发与下发、数据面兼容接口，以及后台的节点 / 服务器管理。两套状态并存：生命周期 status（node_transitions 触发器强制）与服务状态 serving_status（Go 内强制）。凭据只存哈希；配置与有效发布物用 Ed25519 签名，节点端 fail closed。
+
+成员清单
+service.go: Service 与构造；bootstrap 令牌与旧版接入、身份查询、签名请求、心跳、配置签发与回报、指标
+enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token
+uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写审计、拒绝已退出服务的节点）、配置组装与 ETag、用户下发、流量与在线上报
+node_admin.go: 后台节点增删改、复制、移动、排序、批量状态，协议白名单与稳定协议 SQL
+server_admin.go: 后台服务器（物理宿主）读写与状态机
+protocol_schema.go: 各协议的配置约束元数据与规范化节点类型
+xboard_field_names.go / xboard_validate.go: 后台 xboard 字段名与内核字段名的翻译，校验复用同一翻译
+effective_release_codec.go / effective_release_service.go: 按节点物化的不可变有效发布物，签名字段编解码与生成
+config_key_transition.go: 配置签名密钥轮换的过渡声明与校验
+nodestream.go / nodestream_event.go: 节点长连接推送（内存 StreamHub）与事件定义
+userdelta.go: 用户列表增量下发
+testdata/: 生产协议配置样本与 VLESS 迁移往返样本
+*_test.go: 单元与契约测试；*_pg18_test.go 为 PG18 集成测试（effective 与 enrollment 两个域，server_token_pg18_test.go 共用 enrollment 的 openEnrollmentPG18）
+
+法则: 成员完整·一行一文件·父级链接·技术词前置
+[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

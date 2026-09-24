@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db、domain/plugin 的事件发射
+// [OUTPUT]: 对外提供 ScanExpiring、ScanQuota、ScanPaidOrders、StartScanner
+// [POS]: domain/notify 的后台循环：定时扫描入队并派发，Kick 触发只派发不扫描
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package notify
 
 // 到期与流量预警的定时扫描。
@@ -84,7 +89,7 @@ func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error
 					"plan":       it.plan,
 					"days":       fmt.Sprint(win.label),
 					"expires_at": it.endAt,
-					"site":       "AegisPanel",
+					"site":       SiteName,
 				}
 				// 键里带区间标签：进入下一个更紧急的区间时会再提醒一次，
 				// 而同一个区间内反复扫描只发一条
@@ -157,7 +162,7 @@ func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 					"plan":      it.plan,
 					"percent":   fmt.Sprint(pct),
 					"remaining": humanBytes(remain),
-					"site":      "AegisPanel",
+					"site":      SiteName,
 				}
 				// 键里带上周期起点：下个结算周期流量重置后，
 				// 同一条订阅应该能再次收到提醒
@@ -225,7 +230,7 @@ func (s *Service) ScanPaidOrders(ctx context.Context, tenantID string) (int, err
 				"order_no":   it.orderNo,
 				"plan":       it.plan,
 				"expires_at": it.endAt,
-				"site":       "AegisPanel",
+				"site":       SiteName,
 			}
 			// 一个订单只通知一次，与扫描频率无关
 			key := "order-paid:" + it.orderID
@@ -244,20 +249,36 @@ func (s *Service) StartScanner(ctx context.Context, tenantID string, every time.
 	go func() {
 		// 启动后先等一会儿再扫：进程刚起来时连接池、缓存都还没热，
 		// 立刻压一轮全表扫描没必要
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(30 * time.Second):
+		// 预热期间来的 Kick 只发不扫：有人在等验证码，不该陪预热一起等。
+		warm := time.After(30 * time.Second)
+	warmup:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.kick:
+				s.dispatchOnce(ctx, tenantID)
+			case <-warm:
+				break warmup
+			}
 		}
 
 		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
 			s.runOnce(ctx, tenantID)
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
+		wait:
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					break wait
+				case <-s.kick:
+					// Kick 只提前派发，不提前扫描：扫描是全表的，没有理由跟着
+					// 每一次注册跑一遍。派发完继续等下一个周期。
+					s.dispatchOnce(ctx, tenantID)
+				}
 			}
 		}
 	}()
@@ -281,6 +302,10 @@ func (s *Service) runOnce(ctx context.Context, tenantID string) {
 	}
 	// 派发放在扫描之后：刚排的队这一轮就能发出去，
 	// 而不必等到下一个周期
+	s.dispatchOnce(ctx, tenantID)
+}
+
+func (s *Service) dispatchOnce(ctx context.Context, tenantID string) {
 	if n, err := s.Dispatch(ctx, tenantID, 100); err != nil {
 		s.log.Warn("通知派发失败", "err", err)
 	} else if n > 0 {

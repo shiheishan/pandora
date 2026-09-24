@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain 的 adminops/billing/identity/nodefabric/subscription/support 服务、middleware、platform 的 audit/crypto/db/httpx/realtime
+// [OUTPUT]: 对外提供 handlers 结构与登录、用户、订阅、订单、节点、工单等核心处理器，adminRotateResponse
+// [POS]: api/admin 的核心处理器集合，被 router.go 装配；专题处理器分散在同包其它文件
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -271,10 +276,13 @@ func (h *handlers) rotateSubscriptionLink(w http.ResponseWriter, r *http.Request
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	// 令牌明文只在这一次返回：库里存的是哈希与信封密文，关掉这个响应
-	// 就再也取不出来。界面上要提示管理员立刻转交给用户。
-	httpx.OK(w, map[string]any{
-		"token": out.Token, "user_email": out.UserEmail, "old_revoked": true})
+	// 不回新令牌（保留规则 2 / D-B-1）：界面提示用户到门户重新复制订阅地址。
+	httpx.OK(w, adminRotateResponse(out))
+}
+
+// adminRotateResponse 是换发订阅链接的完整响应形状，单独成函数好让测试锁住它。
+func adminRotateResponse(out *subscription.AdminRotateOutput) map[string]any {
+	return map[string]any{"user_email": out.UserEmail, "old_revoked": true}
 }
 
 type adminResetPasswordReq struct {

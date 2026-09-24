@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/crypto 与 platform/db，依赖一次性 PG18 库（run-pg18-gates.sh 的 enrollment 域）
+// [OUTPUT]: 对外提供 TestNodeEnrollmentPG18 与 openEnrollmentPG18（库护栏，server_token_pg18_test.go 共用）
+// [POS]: domain/nodefabric 的 PG18 集成测试：节点两阶段接入的幂等与凭据激活
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
@@ -18,7 +23,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestNodeEnrollmentPG18(t *testing.T) {
+// openEnrollmentPG18 打开 enrollment 域的一次性 PG18 库（未配置则跳过），
+// 同包其它 PG18 用例（server-token 签发）共用这道护栏，各用各的随机租户。
+func openEnrollmentPG18(t *testing.T) (context.Context, *pgxpool.Pool, *db.Pool) {
+	t.Helper()
 	if strings.TrimSpace(os.Getenv("AEGIS_ENROLLMENT_PG18_FIXTURE")) != "disposable-v1" {
 		t.Skip("disposable PG18 fixture is required")
 	}
@@ -27,12 +35,12 @@ func TestNodeEnrollmentPG18(t *testing.T) {
 		t.Skip("PG18 DSNs are required")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	admin, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer admin.Close()
+	t.Cleanup(admin.Close)
 	var dbName string
 	var version int
 	if err := admin.QueryRow(ctx, `SELECT current_database(),current_setting('server_version_num')::int`).Scan(&dbName, &version); err != nil {
@@ -45,7 +53,12 @@ func TestNodeEnrollmentPG18(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer app.Close()
+	t.Cleanup(app.Close)
+	return ctx, admin, app
+}
+
+func TestNodeEnrollmentPG18(t *testing.T) {
+	ctx, admin, app := openEnrollmentPG18(t)
 	signerSeed := sha256.Sum256([]byte("enrollment-pg18-test-signer"))
 	signer, err := platformcrypto.NewSigner(signerSeed[:])
 	if err != nil {

@@ -1,0 +1,73 @@
+name: Panel PostgreSQL 18 gates
+
+# 面板的 PG18 集成门禁单独成一个 workflow：它的触发面是整棵 panel/internal，
+# 放进 pandora-native.yml 会让每次面板改动都拖着 pdnd 的 race 与发布构建一起跑。
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "pdnd/**"
+      # PG18 门禁覆盖 panel/internal 下十几个域，整棵树都要触发
+      - "panel/internal/**"
+      - "panel/migrations/**"
+      - "panel/web/**"
+      - "panel/frontend/**"
+      - "panel/go.mod"
+      - "panel/go.sum"
+      - "panel/Makefile"
+      # PG18 门禁脚本、运行角色加固、种子，以及钉 goose 版本的发布脚本
+      - "panel/deploy/run-pg18-gates.sh"
+      - "panel/deploy/configure-app-role.sql"
+      - "panel/deploy/fixtures/**"
+      - "panel/deploy/build-release.sh"
+      - ".github/workflows/panel-pg18.yml"
+  pull_request:
+    paths:
+      - "pdnd/**"
+      - "panel/internal/**"
+      - "panel/migrations/**"
+      - "panel/web/**"
+      - "panel/frontend/**"
+      - "panel/go.mod"
+      - "panel/go.sum"
+      - "panel/Makefile"
+      - "panel/deploy/run-pg18-gates.sh"
+      - "panel/deploy/configure-app-role.sql"
+      - "panel/deploy/fixtures/**"
+      - "panel/deploy/build-release.sh"
+      - ".github/workflows/panel-pg18.yml"
+
+permissions:
+  contents: read
+
+# 显式 shell: bash 带 -eo pipefail，与 pandora-native.yml 同一理由：管道不吞失败
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  panel-pg18:
+    name: Panel PostgreSQL 18 integration gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      # goose 版本只有一处真相：发布包 build-release.sh 里钉死的那个。
+      # 这里跟着它走，门禁迁移用的就是生产安装会用的同一版
+      - name: Install goose pinned by the release bundle
+        run: |
+          v="$(grep -m1 '^GOOSE_VERSION=' panel/deploy/build-release.sh | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')"
+          test -n "$v"
+          GOBIN="$RUNNER_TEMP/bin" go install "github.com/pressly/goose/v3/cmd/goose@$v"
+          "$RUNNER_TEMP/bin/goose" --version
+      # 脚本自己起 postgres:18-alpine 容器（runner 自带 Docker），迁移到最新、
+      # 查运行角色授权，再给每个域克隆一次性库跑 go test -v；有用例跳过或
+      # 一个都没跑也判失败
+      - name: Run every PG18 domain gate
+        env:
+          GOOSE_BIN: ${{ runner.temp }}/bin/goose
+        run: bash panel/deploy/run-pg18-gates.sh panel

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit/token、domain/plugin 的事件发射；验证码投递经 VerificationMailer 接口（notify 实现）
+// [OUTPUT]: 对外提供 Service、NewService、VerificationMailer、SetVerificationMailer，注册（StartRegistration / CompleteRegistration）与登录（Login）
+// [POS]: domain/identity 的主服务：注册、验证码、登录与会话签发；sessions.go、reauth.go 等同包文件扩展它
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package identity 实现注册、验证与登录。
 //
 // 对应 IAM-001..IAM-006。本包最需要小心的是 IAM-006：
@@ -9,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,11 +39,33 @@ type Service struct {
 	hashSalt   []byte
 	// devMode 为 true 时在响应里回带验证码，便于本地联调；生产必须为 false。
 	devMode bool
+	// mailer 投递注册验证码。为 nil 时不投递（只有不承载注册的网关会这样）。
+	mailer VerificationMailer
 }
 
 func NewService(pool *db.Pool, issuer *token.Issuer, refreshTTL time.Duration, hashSalt []byte, devMode bool) *Service {
 	return &Service{pool: pool, issuer: issuer, refreshTTL: refreshTTL, hashSalt: hashSalt, devMode: devMode}
 }
+
+// VerificationMailer 是注册验证码的投递出口，由 notify.Service 实现。
+//
+// 放一个接口而不是直接依赖 notify：identity 是最底层的域，只需要「在我的
+// 事务里排一封信」和「提交后催一下」这两件事。
+type VerificationMailer interface {
+	EnqueueToAddress(ctx context.Context, tx pgx.Tx, tenantID, code, address string,
+		vars map[string]string, dedupeKey string) error
+	Kick()
+}
+
+// SetVerificationMailer 接上验证码投递。承载注册的 public 网关必须调用它。
+func (s *Service) SetVerificationMailer(m VerificationMailer) { s.mailer = m }
+
+// 注册验证码的模板与有效期。有效期同时决定 verification_codes.expires_at
+// 与邮件里告诉用户的分钟数，两处只能从这里取。
+const (
+	emailVerifyTemplateCode = "auth.email_verify"
+	emailVerifyTTL          = 10 * time.Minute
+)
 
 //------------------------------------------------------------------------------
 // 注册（IAM-001 / IAM-002）
@@ -107,7 +135,7 @@ func (s *Service) StartRegistration(ctx context.Context, tenantID string, in Sta
 	}
 
 	// IAM-002：5–10 分钟失效
-	expiresAt := time.Now().Add(10 * time.Minute)
+	expiresAt := time.Now().Add(emailVerifyTTL)
 
 	var alreadyExists bool
 	var needVerify bool
@@ -128,14 +156,16 @@ func (s *Service) StartRegistration(ctx context.Context, tenantID string, in Sta
 			return err
 		}
 
-		if _, err := tx.Exec(ctx, `
+		var sessionID string
+		if err := tx.QueryRow(ctx, `
 			INSERT INTO registration_sessions
 				(tenant_id, token_hash, email, nonce, risk_context, expires_at, invite_code_id)
-			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::uuid)`,
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::uuid)
+			RETURNING id::text`,
 			tenantID, crypto.HashToken(regToken), email,
 			crypto.HashToken(nonce),
 			map[string]any{"ip_hash": fmt.Sprintf("%x", in.IPHash), "ua": in.UserAgent},
-			expiresAt, inviteID); err != nil {
+			expiresAt, inviteID).Scan(&sessionID); err != nil {
 			return err
 		}
 
@@ -152,6 +182,18 @@ func (s *Service) StartRegistration(ctx context.Context, tenantID string, in Sta
 				expiresAt); err != nil {
 				return err
 			}
+			// 与验证码同一事务入队：要么两者都在，要么都不在。
+			// 邮箱已存在时走不到这里，响应与新邮箱一致（IAM-006），
+			// 只是不会收到信 —— 不能借注册接口探测邮箱是否注册过。
+			if s.mailer != nil {
+				if err := s.mailer.EnqueueToAddress(ctx, tx, tenantID, emailVerifyTemplateCode, email,
+					map[string]string{
+						"code":    code,
+						"minutes": strconv.Itoa(int(emailVerifyTTL / time.Minute)),
+					}, emailVerifyTemplateCode+":"+sessionID); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	})
@@ -161,6 +203,11 @@ func (s *Service) StartRegistration(ctx context.Context, tenantID string, in Sta
 			return nil, he
 		}
 		return nil, httpx.Internal(err)
+	}
+
+	if needVerify && !alreadyExists && s.mailer != nil {
+		// 事务已提交，催派发循环立刻发，不等它的 5 分钟周期
+		s.mailer.Kick()
 	}
 
 	out := &StartRegistrationOutput{

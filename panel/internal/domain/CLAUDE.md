@@ -10,12 +10,12 @@ billing/: 订单、支付与复式账本，17 文件；借贷配平与回调幂�
 content/: 版本化知识库与自定义页面投递
 dbbackup/: 数据库备份编排，12 文件：config 配置、manifest 签名清单与 linux 锁、retention 保留策略、checkpoint_hook 备份前检查点、file_open/file_owner 的 linux/other 双实现
 giftcard/: 礼品卡与卡密，对标 Xboard gift-card，3 文件
-identity/: 注册、验证与登录，9 文件
-nodefabric/: 节点接入与配置下发（PRD 第 8–9 章），14 文件；enrollment、node/server admin、service
-notify/: 站内信、邮件，以及到期与流量预警，7 文件
+identity/: 注册、验证与登录，9 文件；见 identity/CLAUDE.md
+nodefabric/: 节点接入与配置下发（PRD 第 8–9 章），14 文件；enrollment、node/server admin、service；见 nodefabric/CLAUDE.md
+notify/: 站内信、邮件，以及到期与流量预警，8 文件；见 notify/CLAUDE.md
 payment/: 支付渠道适配器接口（PAY-002）与跨渠道通用的金额换算，5 文件
 plugin/: 插件钩子 hooks.go 与事件发射 emit.go
-subscription/: 订阅分发，3 文件
+subscription/: 订阅分发，3 文件；见 subscription/CLAUDE.md
 support/: 工单（OPS-001），2 文件
 *_test.go: 各域用例测试随包放置
 

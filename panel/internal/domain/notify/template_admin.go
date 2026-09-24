@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/audit/httpx
+// [OUTPUT]: 对外提供 TemplateRow、TemplateDescription、ListTemplates、SaveTemplate、ResetTemplate、RenderPreview
+// [POS]: domain/notify 的模板管理端读写；defaultTemplates 与迁移种子逐字一致，恢复默认回到它
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package notify
 
 import (
@@ -47,6 +52,7 @@ var templateDescription = map[string]string{
 	"quota.warning":         "流量用量预警（用量越过阈值时触发）",
 	"order.paid":            "订单支付成功后发给下单用户",
 	"ticket.replied":        "工单被管理员回复后通知提单人",
+	"auth.email_verify":     "注册第 1 步发给注册邮箱的验证码（开启邮箱验证时；邮箱已注册则不发）",
 }
 
 func TemplateDescription(code string) string { return templateDescription[code] }
@@ -266,5 +272,18 @@ var defaultTemplates = map[string]defaultTemplate{
 	"ticket.replied|inapp": {
 		Subject: "工单有新回复",
 		Body:    "你的工单「{{subject}}」有新回复，点击查看。",
+	},
+	// 与迁移 00074 的种子逐字一致，恢复默认时回到这里
+	"auth.email_verify|email": {
+		Subject: "【{{site}}】注册验证码 {{code}}",
+		Body: `你好，
+
+你正在注册 {{site}}，验证码是：
+
+{{code}}
+
+验证码 {{minutes}} 分钟内有效。如果这不是你本人的操作，忽略这封邮件即可。
+
+{{site}}`,
 	},
 }
