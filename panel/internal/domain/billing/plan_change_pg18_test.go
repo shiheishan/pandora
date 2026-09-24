@@ -124,7 +124,7 @@ func TestPlanChangePG18(t *testing.T) {
 		var s subState
 		if err := admin.QueryRow(ctx, `
 			SELECT s.plan_id::text, s.price_id::text, s.status, s.current_period_start,
-			       s.current_period_end, c.token_hash, c.expires_at
+			       s.current_period_end, encode(c.token_hash, 'hex'), c.expires_at
 			  FROM subscriptions s
 			  JOIN subscription_credentials c ON c.subscription_id = s.id AND c.status = 'active'
 			 WHERE s.id = $1::uuid`, subID).Scan(&s.plan, &s.price, &s.status, &s.start,
