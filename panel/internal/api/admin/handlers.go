@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/adminops"
@@ -152,11 +153,20 @@ func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFrom(r.Context())
+	// 令牌里的身份之外，补上侧栏账户块要的邮箱、显示名与角色（只读库，不改令牌）
+	prof, err := h.d.Identity.AdminProfile(r.Context(), p.TenantID, p.UserID)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
 	httpx.OK(w, map[string]any{
-		"user_id":     p.UserID,
-		"kind":        p.Kind,
-		"permissions": p.Permissions,
-		"reauthed":    p.ReauthedRecently,
+		"user_id":      p.UserID,
+		"kind":         p.Kind,
+		"permissions":  p.Permissions,
+		"reauthed":     p.ReauthedRecently,
+		"email":        prof.Email,
+		"display_name": prof.DisplayName,
+		"roles":        prof.Roles,
 	})
 }
 
@@ -575,6 +585,11 @@ func (h *handlers) ticketQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) ticketDetail(w http.ResponseWriter, r *http.Request) {
+	// 非 uuid 的 id 直接 404：交给 SQL 会变成 500（契约 §1.4）
+	if _, err := uuid.Parse(chi.URLParam(r, "id")); err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeNotFound, "工单不存在"))
+		return
+	}
 	t, err := h.d.Support.GetForAgent(r.Context(),
 		httpx.TenantIDFrom(r.Context()), chi.URLParam(r, "id"))
 	if err != nil {

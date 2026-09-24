@@ -6,7 +6,7 @@
 成员清单
 router.go: Deps 与 NewRouter：全局中间件链，/v1 挂 admin.writes 只读门（middleware.AdminWritesGate），根 / 与 /assets/* 经 webapp 下发后台前端，/v1 登录分组与已登录分组；已登录分组按拆分前的原顺序调用各 router_<模块>.go 的 register*Routes，顺序不要重排
 router_<模块>.go: 按模块分段的路由表，每个 register*Routes(r, d, h) 声明一段路由的权限、重认证与幂等 scope。dashboard 仪表盘与收入；appearance 主题、插槽、插件钩子；notify Telegram、邮件设置、通知模板；users 批量运营、流量重置、用户状态、用户组、设备数；marketing 礼品卡、优惠券、分销；billing 挂账、订单、支付渠道、余额调账；catalog 套餐（含 registerCatalogPlanUpdate，套餐类新路由加这里）；security 审计、系统状态、风控、降级开关；nodes 节点分组、节点、服务器（含 nodeBatchStatusIdempotencyScope）；content 公告与知识库；support 工单与快捷回复
-handlers.go: handlers 结构与核心处理器：登录、me、用户、订阅换链接、订单、节点列表（含 country_code）、工单队列与处理、降级开关（切换后向管理端频道发 switches.changed）
+handlers.go: handlers 结构与核心处理器：登录、me（追加邮箱、显示名、角色）、用户、订阅换链接、订单、节点列表（含 country_code）、工单队列与处理、降级开关（切换后向管理端频道发 switches.changed）
 helpers.go: 包内共用小工具：域常量、请求级超时
 access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两路归并，分类规则展示与筛选共用
 audit_log.go: 审计日志列表与 CSV 导出（security.audit.read + ops.export + reauth），导出日期区间格式错回 422，自由文本列做公式防护

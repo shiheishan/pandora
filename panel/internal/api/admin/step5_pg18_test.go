@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 announcement 域的一次性库（openAnnouncementPG18）、step3/step4 的造数与请求辅助，依赖第 ⑤ 步的处理器
-// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18
-// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
+// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18
+// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/identity"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
@@ -277,4 +278,59 @@ func TestFeatureSwitchGatesPG18(t *testing.T) {
 		t.Fatal("switches.changed was not published")
 	}
 	expect(http.MethodPost, "/v1/users/x/status", `{}`, http.StatusOK, `"ok":true`)
+}
+
+func TestAdminMeProfilePG18(t *testing.T) {
+	ctx, admin, app := openAnnouncementPG18(t)
+	const (
+		tenant = "87000000-0000-4000-8000-000000000301"
+		actor  = "87000000-0000-4000-8000-000000000311"
+	)
+	step3Seed(t, ctx, admin,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','me-pg18','Me','CNY')`,
+		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+actor+`','`+tenant+`','linzhou@me.invalid','林舟','active')`)
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`SET LOCAL session_replication_role = replica`,
+		`INSERT INTO roles(id,tenant_id,code,name) VALUES
+		   ('87000000-0000-4000-8000-000000000321','` + tenant + `','ops','运维'),
+		   ('87000000-0000-4000-8000-000000000322','` + tenant + `','finance','财务'),
+		   ('87000000-0000-4000-8000-000000000323','` + tenant + `','support','客服')`,
+		// 生效：租户级、未过期；不算：已过期、非租户级（与 admin 登录展开权限同一过滤）
+		`INSERT INTO role_bindings(tenant_id,user_id,role_id,scope_type,expires_at) VALUES
+		   ('` + tenant + `','` + actor + `','87000000-0000-4000-8000-000000000321','tenant',NULL),
+		   ('` + tenant + `','` + actor + `','87000000-0000-4000-8000-000000000322','tenant',now()-interval '1 day'),
+		   ('` + tenant + `','` + actor + `','87000000-0000-4000-8000-000000000323','self',NULL)`,
+	} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("seed: %v\nSQL: %s", err, sql)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	h := step4Handlers(t, app)
+	h.d.Identity = identity.NewService(app, nil, time.Hour, []byte("me-pg18-salt"), false)
+	r := step5Router(tenant, actor, []string{"ops.ticket.read"}, func(r chi.Router) { r.Get("/v1/me", h.me) })
+	w := step3Do(t, ctx, r, http.MethodGet, "/v1/me", "")
+	var body struct {
+		UserID      string              `json:"user_id"`
+		Email       string              `json:"email"`
+		DisplayName *string             `json:"display_name"`
+		Roles       []map[string]string `json:"roles"`
+		Permissions []string            `json:"permissions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("me: status=%d body=%s err=%v", w.Code, w.Body.String(), err)
+	}
+	if body.UserID != actor || body.Email != "linzhou@me.invalid" || body.DisplayName == nil || *body.DisplayName != "林舟" ||
+		len(body.Roles) != 1 || body.Roles[0]["code"] != "ops" || body.Roles[0]["name"] != "运维" ||
+		len(body.Permissions) != 1 {
+		t.Fatalf("me body=%s", w.Body.String())
+	}
 }

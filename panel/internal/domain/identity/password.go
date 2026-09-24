@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit，依赖 service.go 的 validatePasswordFor
+// [OUTPUT]: 对外提供 ChangePasswordInput、Service.ChangePassword
+// [POS]: domain/identity 的改自己密码：校验旧密码、按网关域套长度规则（admin 至少 12 位）、同事务吊销全部会话与 refresh 令牌并写审计
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package identity
 
 import (
@@ -80,7 +85,7 @@ func (s *Service) ChangePassword(ctx context.Context, tenantID string, in Change
 		if in.NewPassword == in.OldPassword {
 			return httpx.New(httpx.CodeBadRequest, "新密码不能与当前密码相同")
 		}
-		if err := validatePassword(in.NewPassword); err != nil {
+		if err := validatePasswordFor(apiDomain, in.NewPassword); err != nil {
 			return err
 		}
 

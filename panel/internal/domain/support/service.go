@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成
 // [OUTPUT]: 对外提供 Service、NewService，工单创建、用户侧读写与关闭、客服侧队列 / 回复 / 指派 / 改状态 / 升级，各写操作的 *Atomic 版本
-// [POS]: domain/support 的主服务：工单全生命周期；closed_reason 在每条关闭路径上写对（user_closed / withdrawn / agent_closed），重新打开时清空
+// [POS]: domain/support 的主服务：工单全生命周期；队列 status 接受逗号分隔并回 last_message_author_kind，详情回 user_active_plan，人工升级把优先级提到至少 high；closed_reason 在每条关闭路径上写对（user_closed / withdrawn / agent_closed），重新打开时清空
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package support 实现工单（OPS-001）。
@@ -144,6 +144,12 @@ type Ticket struct {
 	EscalatedAt      *time.Time `json:"escalated_at,omitempty"`
 	// SLABreached 表示首次响应已超时且尚未响应
 	SLABreached bool `json:"sla_breached,omitempty"`
+	// LastMessageAuthorKind 是最后一条非内部备注消息的作者类型（队列）：为 user 时
+	// 前端加粗，免得给每个客服建一张已读表
+	LastMessageAuthorKind string `json:"last_message_author_kind,omitempty"`
+	// UserActivePlan 是用户 active / trialing 最新订阅的套餐名（详情）：客服不一定
+	// 有 iam.user.read，不能再去调用户接口
+	UserActivePlan *string `json:"user_active_plan,omitempty"`
 
 	MessageCount int       `json:"message_count"`
 	LastReplyAt  time.Time `json:"last_reply_at"`
@@ -692,7 +698,7 @@ func (s *Service) ListForAgent(ctx context.Context, tenantID string, f ListFilte
 		// 队列排序：升级的最前，然后按优先级、再按创建时间。
 		// 不用 updated_at 排序 —— 那会让频繁往返的工单一直霸占队首。
 		where := `t.tenant_id = $1
-			AND ($2 = '' OR t.status = $2)
+			AND ($2 = '' OR t.status = ANY(string_to_array(replace($2, ' ', ''), ',')))
 			AND ($3 = '' OR t.priority = $3)
 			AND ($4 = '' OR t.category = $4)
 			AND ($5 = '' OR t.assigned_to::text = $5)
@@ -722,7 +728,10 @@ func (s *Service) ListForAgent(ctx context.Context, tenantID string, f ListFilte
 			        AND t.status NOT IN ('resolved','closed')) AS breached,
 			       (SELECT count(*)::int FROM ticket_messages m WHERE m.ticket_id = t.id),
 			       (SELECT coalesce(max(m.created_at), t.created_at)
-			          FROM ticket_messages m WHERE m.ticket_id = t.id)
+			          FROM ticket_messages m WHERE m.ticket_id = t.id),
+			       coalesce((SELECT m.author_kind FROM ticket_messages m
+			                  WHERE m.ticket_id = t.id AND NOT m.internal_note
+			                  ORDER BY m.created_at DESC, m.id DESC LIMIT 1), '')
 			  FROM tickets t
 			  JOIN users u ON u.id = t.user_id
 			  LEFT JOIN users a ON a.id = t.assigned_to
@@ -744,7 +753,8 @@ func (s *Service) ListForAgent(ctx context.Context, tenantID string, f ListFilte
 				&t.Priority, &t.Status, &t.CreatedAt, &t.UpdatedAt, &t.ResolvedAt,
 				&t.UserID, &t.UserEmail, &t.AssignedTo, &t.AssigneeEmail,
 				&t.SLAFirstDue, &t.SLAResolutionDue, &t.FirstRespondedAt,
-				&t.EscalatedAt, &t.SLABreached, &t.MessageCount, &t.LastReplyAt); err != nil {
+				&t.EscalatedAt, &t.SLABreached, &t.MessageCount, &t.LastReplyAt,
+				&t.LastMessageAuthorKind); err != nil {
 				return err
 			}
 			out = append(out, t)
@@ -765,7 +775,13 @@ func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*
 			       t.sla_first_response_due, t.sla_resolution_due,
 			       t.first_responded_at, t.escalated_at,
 			       (t.first_responded_at IS NULL AND t.sla_first_response_due < now()
-			        AND t.status NOT IN ('resolved','closed'))
+			        AND t.status NOT IN ('resolved','closed')),
+			       -- 与后台用户列表的 active_plan 同一口径
+			       (SELECT pl.name FROM subscriptions s
+			          JOIN plans pl ON pl.id = s.plan_id
+			         WHERE s.tenant_id = t.tenant_id AND s.user_id = t.user_id
+			           AND s.status IN ('active','trialing')
+			         ORDER BY s.created_at DESC LIMIT 1)
 			  FROM tickets t
 			  JOIN users u ON u.id = t.user_id
 			  LEFT JOIN users a ON a.id = t.assigned_to
@@ -774,7 +790,7 @@ func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*
 		).Scan(&t.ID, &t.TicketNo, &t.Subject, &t.Category, &t.Priority, &t.Status,
 			&t.CreatedAt, &t.UpdatedAt, &t.ResolvedAt, &t.UserID, &t.UserEmail,
 			&t.AssignedTo, &t.AssigneeEmail, &t.SLAFirstDue, &t.SLAResolutionDue,
-			&t.FirstRespondedAt, &t.EscalatedAt, &t.SLABreached)
+			&t.FirstRespondedAt, &t.EscalatedAt, &t.SLABreached, &t.UserActivePlan)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.New(httpx.CodeNotFound, "工单不存在")
 		}
@@ -1075,7 +1091,10 @@ func (s *Service) setStatus(
 			                            ELSE 'agent_closed' END,
 			       closed_note   = CASE WHEN $2 = 'closed' AND status = 'closed' THEN closed_note ELSE NULL END,
 			       escalated_at= CASE WHEN $2 = 'escalated' THEN coalesce(escalated_at, now())
-			                          ELSE escalated_at END
+			                          ELSE escalated_at END,
+			       -- 人工升级至少提到 high（设计「升级后标记为高优先级」）；已是 urgent 不降
+			       priority    = CASE WHEN $2 = 'escalated' AND priority IN ('low','normal') THEN 'high'
+			                          ELSE priority END
 			 WHERE id = $1`, ticketID, status); err != nil {
 			return err
 		}
