@@ -161,6 +161,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/me", h.me)
 			r.Get("/me/subscriptions", h.listSubscriptions)
 			r.Get("/me/subscriptions/{id}/nodes", h.meSubscriptionNodes)
+			// 按日用量（门户-02 柱状图）：只读，数据由节点流量上报同事务累加（迁移 00072）
+			r.Get("/me/subscriptions/{id}/usage", h.meSubscriptionUsage)
 			// 实时事件流。放在需要登录的分组内 —— 订阅范围就是鉴权边界
 			r.Get("/events", h.events)
 			r.Get("/me/subscription-links", h.meSubscriptionLinks)

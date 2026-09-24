@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit；读写 quota_balances 与 traffic_pack_grants（迁移 00070）
+// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit；读写 quota_balances 与 traffic_pack_grants（迁移 00070），经 usage_daily.go 的 chargeReportEntry 逐用户记账
 // [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、BuildNodeConfig、路由校验、ListNodeUsers、ReportTraffic / ReportAlive / ReportRuntimeStatus
-// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、拒绝已退出服务的节点）、用户下发与流量上报（先扣套餐本周期额度，超出部分扣用户流量包余额，D-E-1）
+// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、拒绝已退出服务的节点）、用户下发与流量上报（先扣套餐本周期额度，超出部分扣用户流量包余额，D-E-1；同事务累加按日用量，00072）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -718,29 +718,22 @@ func (s *Service) ReportTraffic(ctx context.Context, tenantID string, n *Serving
 		}
 
 		// --- 扣减配额 ---
-		// 按 uid 排序逐个处理：并发的两份上报以同一顺序锁配额行与流量包，
-		// 不会交叉死锁（map 迭代顺序是随机的）。
+		// 按 uid 排序逐个处理：并发的两份上报以同一顺序锁配额行、流量包与
+		// 当日用量行，不会交叉死锁（map 迭代顺序是随机的）。
+		now := time.Now()
 		for _, entry := range sortedReportEntries(report) {
-			uid, used := entry.uid, entry.used
-			if used <= 0 {
+			if entry.used <= 0 {
 				continue
 			}
 			// 按节点倍率折算后计费
-			billed := int64(float64(used) * n.TrafficRate)
-
-			var subID, userID string
-			if err := tx.QueryRow(ctx,
-				`SELECT id::text, user_id::text FROM subscriptions WHERE tenant_id=$1 AND node_uid=$2`,
-				tenantID, uid).Scan(&subID, &userID); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					continue // 订阅已删除，忽略该条
-				}
+			billed := int64(float64(entry.used) * n.TrafficRate)
+			accepted, err := chargeReportEntry(ctx, tx, tenantID, entry.uid, billed, now)
+			if err != nil {
 				return err
 			}
-			if err := chargeTraffic(ctx, tx, tenantID, subID, userID, billed); err != nil {
-				return err
+			if accepted { // 订阅已删除的 uid 忽略
+				out.Accepted++
 			}
-			out.Accepted++
 		}
 		return nil
 	})

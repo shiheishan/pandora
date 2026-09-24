@@ -91,10 +91,11 @@ LOG_DIR="$(mktemp -d)"
 #   - 这两个域的注释前缀也都是 pandora-node-preview-pg18
 # 要理顺就得连测试一起改，那是另一件事。
 #
-# 测试过滤缺省是 PG18。两个包里各住着两个域（nodefabric：effective 与
-# enrollment；api/admin：announcement 与 node_config），缺省过滤会把另一个
-# 域的测试也拉进来，它们因为拿不到自己的环境变量而 t.Skip。跳过在下面算
-# 失败（见结果判定），所以这四个域必须把过滤写精确。过滤是最后一个字段，
+# 测试过滤缺省是 PG18。好几个包里住着不止一个域（nodefabric：effective、
+# enrollment 与 traffic_charge；api/admin：announcement 与 node_config；
+# subscription：node_preview 与 usage_daily），缺省过滤会把另一个域的测试
+# 也拉进来，它们因为拿不到自己的环境变量而 t.Skip。跳过在下面算失败（见
+# 结果判定），所以同包的域必须把过滤写精确。过滤是最后一个字段，
 # 里面的 | 会被 read 原样留给它。
 DOMAINS=(
   "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18)$"
@@ -107,7 +108,7 @@ DOMAINS=(
   "appearance|pandora_appearance_gate|./internal/domain/appearance|run_id|pandora_appearance_test_marker|pandora-appearance-pg18||"
   "public_api|pandora_public_api_gate|./internal/api/public|run_id|pandora_public_api_test_marker|pandora-public-api-pg18||"
   "logout|pandora_logout_gate|./internal/domain/identity|run_id|pandora_logout_test_marker|pandora-logout-pg18||"
-  "node_preview|pandora_node_preview_gate|./internal/domain/subscription|run_id|pandora_node_preview_test_marker|pandora-node-preview-pg18||"
+  "node_preview|pandora_node_preview_gate|./internal/domain/subscription|run_id|pandora_node_preview_test_marker|pandora-node-preview-pg18||^TestNodePreviewPG18$"
   "support|pandora_node_preview_support|./internal/domain/support|run_id|pandora_support_test_marker|pandora-node-preview-pg18||"
   "billing|pandora_billing_gate|./internal/domain/billing|billing|||app_role,billing_seed|TestCheckoutAtomicPG18|TestSettlementPG18"
   # order_release 必须独占一个库：它断言 app.order_release_00040_meta 这个
@@ -120,9 +121,12 @@ DOMAINS=(
   # 流量包（00070）：下单与余额在 billing，扣量在 nodefabric；各自独占一个库，
   # 过滤写精确，免得同包里别的 PG18 测试因拿不到环境变量而被算作跳过。
   "traffic_pack|pandora_traffic_pack_gate|./internal/domain/billing||||app_role|^TestTrafficPackOrderPG18$"
-  "traffic_charge|pandora_traffic_charge_gate|./internal/domain/nodefabric||||app_role|^TestTrafficChargePG18$"
+  "traffic_charge|pandora_traffic_charge_gate|./internal/domain/nodefabric||||app_role|^(TestTrafficChargePG18|TestUsageDailyWritePG18)$"
   # 变更套餐（00071）：同 traffic_pack，复用 order_release 的一次性租户夹具，独占一个库。
   "plan_change|pandora_plan_change_gate|./internal/domain/billing||||app_role|^TestPlanChangePG18$"
+  # 按日流量（00072）：写入与扣量同事务，写入测试并进 traffic_charge 的库；
+  # 读模型在 subscription 包，与 node_preview 同包，两边过滤都写精确。
+  "usage_daily|pandora_usage_daily_gate|./internal/domain/subscription||||app_role|^TestUsageDailyReadPG18$"
   "idempotency|pandora_idempotency_gate|./internal/middleware||||app_role,idempotency_seed|"
 )
 
