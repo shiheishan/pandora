@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ./modules、./reauth、./me、./ChangePasswordDialog 的 passwordStrength、./EventsCapsule 的 describeEvent
+ * [INPUT]: 依赖 vitest，依赖 ./modules、./reauth、./me、./tasks 的 tasksSchema / taskCount、./ChangePasswordDialog 的 passwordStrength、./EventsCapsule 的 describeEvent
  * [OUTPUT]: 对外提供 admin 外框纯逻辑的单元测试
- * [POS]: admin 的单元测试：路由规范化、标签回落与 rest 子路由、读权限表与按权限取舍、⌘K 筛选与隐藏、reauth 桥的单次弹框与结算、身份文字的契约映射与回退、强度条、实时事件条目；界面交互在浏览器里对 dev/mock-api 验收
+ * [POS]: admin 的单元测试：路由规范化、标签回落与 rest 子路由、读权限表与按权限取舍、⌘K 筛选与隐藏、reauth 桥的单次弹框与结算、身份文字的契约映射与回退、强度条、实时事件条目、「需要处理」计数的严格 schema 与徽标取数；界面交互在浏览器里对 dev/mock-api 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,7 @@ import { describeEvent } from './EventsCapsule'
 import { identityLabels } from './me'
 import { MODULES, canRead, canReadModule, modulePath, paletteItems, resolveRoute, visibleTabs, type Permissions } from './modules'
 import { createReauthController } from './reauth'
+import { taskCount, tasksSchema } from './tasks'
 
 const ALL: Permissions = new Set(
   Object.values(MODULES).flatMap((def) => (def.read === null ? [] : typeof def.read === 'string' ? [def.read] : Object.values(def.read))),
@@ -155,5 +156,30 @@ describe('describeEvent', () => {
   it('handles ticket replies, unknown topics and bad payloads', () => {
     expect(describeEvent({ event: 'ticket.updated', data: '{"ticket_id":"t-123456789"}' }, 2)).toMatchObject({ title: '工单回复变更', body: 't-123456', module: 'tickets' })
     expect(describeEvent({ event: 'data.changed', data: 'not json' }, 3)).toMatchObject({ title: '数据变更', body: '', module: null })
+  })
+})
+
+describe('dashboard/tasks', () => {
+  const payload = {
+    as_of: '2026-09-24T08:00:00Z',
+    items: [
+      { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: null },
+      { kind: 'withdrawals_pending', count: 3, amounts: [{ currency: 'CNY', amount: 128000 }] },
+      { kind: 'notifications_backlog', queued: 214, failed_total: 9, backlog_state: 'backlogged' },
+    ],
+  }
+
+  it('侧栏与仪表盘共用的严格 schema：未知 kind、缺字段都判为不符约定', () => {
+    expect(tasksSchema.safeParse(payload).success).toBe(true)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'mystery', count: 1 }] }).success).toBe(false)
+    expect(tasksSchema.safeParse({ ...payload, items: [{ kind: 'tickets_open', count: 7 }] }).success).toBe(false)
+  })
+
+  it('徽标取数：条目缺失（无权限）为 0', () => {
+    const items = tasksSchema.parse(payload).items
+    expect(taskCount(items, 'tickets_open')).toBe(7)
+    expect(taskCount(items, 'withdrawals_pending')).toBe(3)
+    expect(taskCount(items, 'nodes_offline')).toBe(0)
+    expect(taskCount(undefined, 'tickets_open')).toBe(0)
   })
 })

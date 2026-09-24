@@ -12,17 +12,18 @@ main.tsx: 建运行时与 ReauthController 并挂载 App；仅 DEV 把运行时�
 App.tsx: RuntimeProvider 包住 Root（按 useSignedIn 切 LoginPage / Shell）与常驻 ReauthDialog
 modules.ts: 十个模块的标题、分组、标签（「欠费单」按保留规则 6 叫「挂账」）与读权限码（取自契约各模块主列表接口，含修订 R6），侧栏六组，⌘K 深链；canRead / visibleTabs / canReadModule 判权限，resolveRoute 拆出 module / tab / rest 并给规范地址，modulePath 拼链接，paletteItems 按权限筛选
 reauth.ts: createReauthController：api 在 React 外、对话框在 React 内，用可订阅的小仓库接起来；并发请求共用一个待决 Promise
+tasks.ts: 待补·后端 GET v1/dashboard/tasks 的严格 schema（按 kind 区分，未知 kind 判为不符）、共用查询键与 useDashboardTasks、taskCount；侧栏徽标与仪表盘「需要处理」共用一条查询、一种缓存形状
 me.ts: GET v1/me 的 schema 与 useAdminMe（permissions 为 null 时归一为空数组；email / display_name / roles 是待补·后端字段，按可选）；identityLabels 按契约映射侧栏账户块文字，字段缺失时退回「管理员」与 user_id 前 8 位
 LoginPage.tsx: 两栏登录页，左栏侧栏深底（< 960 收起），POST v1/auth/login（auth:false）成功写令牌，401 在密码框下内联显示
 Shell.tsx: 外框编排：Sidebar、顶栏面包屑与 EventsCapsule、页头标题与可读的 ui/Tabs、内容区（按权限渲染 screens 登记的页面或「无权限或不存在」，me 读取失败给重试）；⌘K 全局快捷键、规范地址 replace（等 me 回来、保留查询串）、document.title
-Sidebar.tsx: 字标与构建版本号（__APP_RELEASE__）、⌘K 入口、六组导航（只列可读模块，整组不可读就不画组名；工单 / 营销徽标取待补·后端的 GET v1/dashboard/tasks，只在有 ops.dashboard.read 时请求）、向上弹出的账户菜单（主题、改密码、打开门户 ../、退出）
+Sidebar.tsx: 字标与构建版本号（__APP_RELEASE__）、⌘K 入口、六组导航（只列可读模块，整组不可读就不画组名；工单 / 营销徽标取 tasks.ts 的共用查询，只在有 ops.dashboard.read 时请求）、向上弹出的账户菜单（主题、改密码、打开门户 ../、退出）
 EventsCapsule.tsx: 顶栏「实时事件」：持有后台唯一的 SSE 连接（需 ops.notification.read，4xx 时整块不渲染），事件同时驱动查询失效；可读事件流是待决 D-A-1，暂按 topic + op 生成通用条目，点击跳对应模块；describeEvent 为纯函数
 CommandPalette.tsx: ⌘K 命令面板，原生 <dialog>，combobox + listbox，↑↓ / ↵ / Esc；只列当前权限可读的条目
 ChangePasswordDialog.tsx: 修改我的密码：前端先拦 12 位且含字母数字（后端 12 位规则待补），POST v1/me/password（passwordCheck，401 显示在当前密码框），成功即清令牌回登录页（保留规则 4：后端已吊销全部会话）；passwordStrength 为四段强度条
 ReauthDialog.tsx: 「敏感操作 · 需要重新认证」：api.reauth(password) 换新令牌后 resolve(true)，口令错在框内显示、不登出
 *.module.css: 各组件同名样式；Sidebar.module.css 在侧栏内重定义 --surface / --border / --text 等令牌，让 ui/Menu 直接用在深底上
 screens/: 十个模块的页面与懒加载登记表，三个前端会话各改各的目录；见 screens/CLAUDE.md
-admin.test.ts: 路由规范化与 rest 子路由、读权限表、⌘K 筛选与隐藏、reauth 桥、身份文字映射、强度条、事件条目的纯逻辑测试；界面交互在浏览器里对 dev/mock-api 验收
+admin.test.ts: 路由规范化与 rest 子路由、读权限表、⌘K 筛选与隐藏、reauth 桥、身份文字映射、强度条、事件条目、tasks schema 与徽标取数的纯逻辑测试；界面交互在浏览器里对 dev/mock-api 验收
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -1,37 +1,24 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../core/theme 的 useTheme / toggleTheme，依赖 ../core/router 的 href，依赖 ../shell/runtime 的 useApi / useRuntime / signOut，依赖 ../shell/Logo，依赖 ../ui 的 Menu，依赖 ./me 与 ./modules，依赖 ./Sidebar.module.css
+ * [INPUT]: 依赖 ../core/theme 的 useTheme / toggleTheme，依赖 ../core/router 的 href，依赖 ../shell/runtime 的 useRuntime / signOut，依赖 ../shell/Logo，依赖 ../ui 的 Menu，依赖 ./me、./modules 与 ./tasks 的 useDashboardTasks / taskCount，依赖 ./Sidebar.module.css
  * [OUTPUT]: 对外提供 Sidebar
  * [POS]: admin 外框的深色侧栏（管理后台.dc.html aside）：字标与版本号、⌘K 入口、六组导航（只列有读权限的模块，整组没有就不显示组名；工单 / 营销徽标取 GET v1/dashboard/tasks）、底部账户块与向上弹出的账户菜单（主题、改密码、打开门户、退出）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { useQuery } from '@tanstack/react-query'
-import { z } from 'zod'
 import { href } from '../core/router'
 import { toggleTheme, useTheme } from '../core/theme'
 import { Logo } from '../shell/Logo'
-import { signOut, useApi, useRuntime } from '../shell/runtime'
+import { signOut, useRuntime } from '../shell/runtime'
 import { Menu } from '../ui'
 import { identityLabels, type AdminMe } from './me'
 import { MODULES, NAV_GROUPS, canReadModule, modulePath, type ModuleKey, type Permissions } from './modules'
+import { taskCount, useDashboardTasks } from './tasks'
 import css from './Sidebar.module.css'
 
 // 侧栏徽标：待补·后端的 GET v1/dashboard/tasks，只在有 ops.dashboard.read 时请求；
-// 条目按各自读权限过滤，缺的条目就不显示徽标
-const tasksSchema = z.object({
-  items: z.array(z.object({ kind: z.string(), count: z.number().optional() })),
-})
-
+// 与仪表盘「需要处理」共用同一个查询（./tasks）。条目按各自读权限过滤，缺的条目就不显示徽标
 function useNavBadges(enabled: boolean): Partial<Record<ModuleKey, number>> {
-  const api = useApi()
-  const { data } = useQuery({
-    queryKey: ['admin', 'dashboard', 'tasks'],
-    queryFn: ({ signal }) => api.get('v1/dashboard/tasks', tasksSchema, { signal }),
-    enabled,
-    meta: { topics: ['tickets.changed', 'orders.changed'] },
-    refetchInterval: 60_000,
-  })
-  const count = (kind: string) => data?.items.find((i) => i.kind === kind)?.count ?? 0
-  return { tickets: count('tickets_open'), marketing: count('withdrawals_pending') }
+  const { data } = useDashboardTasks(enabled)
+  return { tickets: taskCount(data?.items, 'tickets_open'), marketing: taskCount(data?.items, 'withdrawals_pending') }
 }
 
 export function Sidebar({

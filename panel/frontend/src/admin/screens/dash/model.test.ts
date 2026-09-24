@@ -5,13 +5,12 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
-import { nodeTrafficSchema, overviewSchema, systemStatusSchema, tasksSchema, type Backlog, type NodeTraffic, type SystemStatus, type TaskItem, type UserTraffic } from './api'
+import type { TaskItem } from '../../tasks'
+import { nodeTrafficSchema, overviewSchema, systemStatusSchema, type Backlog, type NodeTraffic, type SystemStatus, type UserTraffic } from './api'
 import {
   activitySummary,
   backupSummary,
   dashboardAccess,
-  formatBytes,
-  formatCount,
   formatDuration,
   formatLatency,
   formatPercent,
@@ -39,25 +38,7 @@ const ALL = new Set([
 const VIEWER = new Set(['ops.ticket.read', 'iam.user.read', 'catalog.read', 'billing.order.read', 'node.read', 'ops.notification.read'])
 
 describe('格式化', () => {
-  it('formatBytes 三位有效数字、1024 进制', () => {
-    expect(formatBytes('0')).toBe('0 B')
-    expect(formatBytes('1023')).toBe('1023 B')
-    expect(formatBytes('1024')).toBe('1.00 KB')
-    expect(formatBytes(String(540n * 1024n ** 3n))).toBe('540 GB')
-    expect(formatBytes(String(1840n * 1024n ** 3n))).toBe('1.80 TB')
-    expect(formatBytes(String((186n * 1024n ** 4n) / 10n))).toBe('18.6 TB')
-  })
-
-  it('formatBytes 对超过 2^53 的十进制字符串不丢精度（DASH-01）', () => {
-    // 2^63-1：先转 number 会变成 9223372036854775808，这里全程 BigInt
-    expect(formatBytes('9223372036854775807')).toBe('8.00 EB')
-    const justUnder = String(1024n ** 5n * 10n - 1n) // 10 PB − 1 字节：四舍五入到两位小数是 10.00 PB
-    expect(formatBytes(justUnder)).toBe('10.00 PB')
-  })
-
-  it('formatCount / formatPercent / percentChange', () => {
-    expect(formatCount(12408)).toBe('12,408')
-    expect(formatCount(-1234567)).toBe('-1,234,567')
+  it('formatPercent / percentChange', () => {
     expect(formatPercent(0.124)).toBe('+12.4%')
     expect(formatPercent(-0.031)).toBe('−3.1%')
     expect(formatPercent(0.0001)).toBe('0.0%')
@@ -331,8 +312,7 @@ describe('schema 守住契约形状', () => {
     expect(ok.success).toBe(true)
   })
 
-  it('未知 kind 与数字形态的字节都判为不符约定', () => {
-    expect(tasksSchema.safeParse({ as_of: 'x', items: [{ kind: 'mystery', count: 1 }] }).success).toBe(false)
+  it('数字形态的字节判为不符约定', () => {
     const numeric = { ...NODE_TRAFFIC, totals: { ...NODE_TRAFFIC.totals, reported_bytes: 1010 } }
     expect(nodeTrafficSchema.safeParse(numeric).success).toBe(false)
   })
@@ -340,5 +320,31 @@ describe('schema 守住契约形状', () => {
   it('系统状态：后端读不到备份目录时只有 dir / readable / message', () => {
     const res = systemStatusSchema.safeParse({ backup: { dir: '/x', readable: false, message: '读不到' }, database: { error: '读取数据库状态失败' } })
     expect(res.success).toBe(true)
+  })
+})
+
+describe('修订 R52：down / unknown 时 metrics 字段可缺', () => {
+  it('schema 放行缺字段与空 metrics，界面缺失处显示 —', () => {
+    const raw = {
+      ...STATUS_BASE,
+      state: 'degraded',
+      components: [
+        { key: 'postgres', state: 'down', metrics: {} },
+        { key: 'node_fabric', state: 'unknown', metrics: { total: 44 } },
+        { key: 'mail', state: 'down', metrics: { failed_total: 3 } },
+        { key: 'sse', state: 'unknown', latency_ms: 2, metrics: {} },
+        { key: 'backup', state: 'unknown', metrics: {} },
+      ],
+    }
+    const parsed = systemStatusSchema.safeParse(raw)
+    expect(parsed.success).toBe(true)
+    const view = systemRows(parsed.data!, ALL)
+    expect(view.rows.map((r) => [r.key, r.meta])).toEqual([
+      ['postgres', '—'],
+      ['node_fabric', '在线 —/44'],
+      ['mail', '— 排队 · 3 失败'],
+      ['sse', '2 ms'],
+      ['backup', '最近一份 5 小时前'],
+    ])
   })
 })

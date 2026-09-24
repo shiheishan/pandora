@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / keepPreviousData，依赖 zod，依赖 ../../../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供仪表盘八个读接口的 zod schema 与类型（Tasks、Backlog、Overview、Revenue、NodeTraffic、UserTraffic、SystemStatus、Activity 等）及对应的 useXxx 查询 hook
- * [POS]: admin/screens/dash 的数据层：只经 core/api.ts 取数、只经 react-query 缓存；形状逐字照 api-contract.md 后台-01（待补·后端字段一律可选），流量与积压三件照 DASH-01 冻结契约；model.ts 消费这里的类型，界面组件消费这里的 hook
+ * [OUTPUT]: 对外提供仪表盘七个读接口的 zod schema 与类型（Backlog、Overview、Revenue、NodeTraffic、UserTraffic、SystemStatus、Activity 等）及对应的 useXxx 查询 hook
+ * [POS]: admin/screens/dash 的数据层：只经 core/api.ts 取数、只经 react-query 缓存；形状逐字照 api-contract.md 后台-01（待补·后端字段一律可选），流量与积压三件照 DASH-01 冻结契约；第八个 GET v1/dashboard/tasks 与侧栏共用，在 ../../tasks.ts；model.ts 消费这里的类型，界面组件消费这里的 hook
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
@@ -17,26 +17,6 @@ const count = int.nonnegative()
 /** DASH-01：numeric 聚合的字节一律是十进制字符串，禁止 JSON number */
 const decimalBytes = z.string().regex(/^\d+$/)
 const currency = z.string().min(1)
-
-// ---------------------------------------------------------------------------
-// GET v1/dashboard/tasks（待补·后端，ops.dashboard.read）：条目按各自读权限过滤
-// ---------------------------------------------------------------------------
-const taskItemSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('tickets_open'), count, high_priority: count, oldest_wait_seconds: count.nullable() }),
-  z.object({ kind: z.literal('withdrawals_pending'), count, amounts: z.array(z.object({ currency, amount: int })) }),
-  z.object({
-    kind: z.literal('nodes_offline'),
-    count,
-    sample: z.array(z.object({ id: z.string(), name: z.string() })).max(3),
-    longest_offline_seconds: count.nullable(),
-  }),
-  z.object({ kind: z.literal('orders_pending_stale'), count, threshold_seconds: count }),
-  z.object({ kind: z.literal('notifications_backlog'), queued: count, failed_total: count, backlog_state: z.enum(['clear', 'backlogged']) }),
-  z.object({ kind: z.literal('ledger_drift'), count }),
-])
-export const tasksSchema = z.object({ as_of: z.string(), items: z.array(taskItemSchema) })
-export type TaskItem = z.output<typeof taskItemSchema>
-export type Tasks = z.output<typeof tasksSchema>
 
 // ---------------------------------------------------------------------------
 // GET v1/dashboard/backlog/notifications（DASH-01 冻结，ops.notification.read）
@@ -170,20 +150,26 @@ const backupSchema = z.object({
   offsite_configured: z.boolean().optional(),
 })
 const componentState = z.enum(['ok', 'warn', 'down', 'unknown'])
+// 修订 R52：metrics 对象总在（可为 {}），字段只在 ok / warn 时保证齐全，down / unknown 时任何字段都可能缺，一律按可选解析
 const componentBase = { state: componentState, latency_ms: z.number().nonnegative().optional(), message: z.string().optional() }
-const queueMetrics = z.object({ queued: count, retrying: count, failed_total: count })
+const queueMetrics = z.object({ queued: count.optional(), retrying: count.optional(), failed_total: count.optional() })
 const componentSchema = z.discriminatedUnion('key', [
-  z.object({ key: z.literal('postgres'), ...componentBase, metrics: z.object({ size_bytes: count, connections: count, max_connections: count }) }),
+  z.object({ key: z.literal('postgres'), ...componentBase, metrics: z.object({ size_bytes: count.optional(), connections: count.optional(), max_connections: count.optional() }) }),
   z.object({ key: z.literal('valkey'), ...componentBase, metrics: z.object({}) }),
-  z.object({ key: z.literal('node_fabric'), ...componentBase, metrics: z.object({ total: count, online: count, config_lagging: count }) }),
-  z.object({ key: z.literal('payment_callbacks'), ...componentBase, metrics: z.object({ pending: count }) }),
+  z.object({ key: z.literal('node_fabric'), ...componentBase, metrics: z.object({ total: count.optional(), online: count.optional(), config_lagging: count.optional() }) }),
+  z.object({ key: z.literal('payment_callbacks'), ...componentBase, metrics: z.object({ pending: count.optional() }) }),
   z.object({ key: z.literal('mail'), ...componentBase, metrics: queueMetrics }),
   z.object({ key: z.literal('telegram'), ...componentBase, metrics: queueMetrics }),
-  z.object({ key: z.literal('sse'), ...componentBase, metrics: z.object({ connections: count }) }),
+  z.object({ key: z.literal('sse'), ...componentBase, metrics: z.object({ connections: count.optional() }) }),
   z.object({
     key: z.literal('backup'),
     ...componentBase,
-    metrics: z.object({ latest_age_hours: count.nullable(), stale: z.boolean(), identity_configured: z.boolean(), offsite_configured: z.boolean() }),
+    metrics: z.object({
+      latest_age_hours: count.nullable().optional(),
+      stale: z.boolean().optional(),
+      identity_configured: z.boolean().optional(),
+      offsite_configured: z.boolean().optional(),
+    }),
   }),
 ])
 export const systemStatusSchema = z.object({
@@ -215,21 +201,9 @@ export type ActivityPoint = z.output<typeof activityPointSchema>
 
 // ---------------------------------------------------------------------------
 // 查询 hook。enabled 由页面按权限决定：缺权限不发请求（DASH-01：不制造无意义的 404）。
-// 查询键不与侧栏的 ['admin','dashboard','tasks'] 共用：侧栏的 schema 只取 count，
-// 共用一条缓存会让两边互相覆盖出对方的形状。
+// GET v1/dashboard/tasks 不在这里：它与侧栏徽标共用，在 src/admin/tasks.ts。
 // ---------------------------------------------------------------------------
 const MINUTE = 60_000
-
-export function useTasks(enabled: boolean) {
-  const api = useApi()
-  return useQuery({
-    queryKey: ['admin', 'dash', 'tasks'],
-    queryFn: ({ signal }) => api.get('v1/dashboard/tasks', tasksSchema, { signal }),
-    enabled,
-    meta: { topics: ['tickets.changed', 'orders.changed', 'nodes.changed'] },
-    refetchInterval: MINUTE,
-  })
-}
 
 export function useBacklog(enabled: boolean) {
   const api = useApi()

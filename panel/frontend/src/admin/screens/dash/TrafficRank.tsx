@@ -1,9 +1,10 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 UseQueryResult，依赖 react 的 useState，依赖 ../../../core/router 的 href，依赖 ../../../ui 的 Empty / Segmented，依赖 ../../modules 的 Permissions / canRead / modulePath，依赖 ./api 的 useUserTraffic 与 NodeTraffic，依赖 ./model 的 trafficRows / trafficNotes / formatBytes，依赖 ./parts，依赖 ./Dash.module.css
+ * [INPUT]: 依赖 @tanstack/react-query 的 UseQueryResult，依赖 react 的 useState，依赖 ../../../core/format 的 formatBytes，依赖 ../../../core/router 的 href，依赖 ../../../ui 的 Empty / Segmented，依赖 ../../modules 的 Permissions / canRead / modulePath，依赖 ./api 的 useUserTraffic 与 NodeTraffic，依赖 ./model 的 trafficRows / trafficNotes，依赖 ./parts，依赖 ./Dash.module.css
  * [OUTPUT]: 对外提供 TrafficRank
  * [POS]: 仪表盘「流量排行 · 近 24 小时」面板：节点 / 用户两个页签（按 metering.read + node.read / iam.user.read 分别出现），前 5 名。节点页签的数据与「流量」KPI 共用一条查询；用户页签以节点查询的 snapshot_at 为锚点（DASH-01）。用户只显示 email_masked（待决 D-A-2 未决前），行点进用户详情；底部小字给未归属流量与质量计数
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
+import { formatBytes } from '../../../core/format'
 import type { UseQueryResult } from '@tanstack/react-query'
 import { useState } from 'react'
 import { href } from '../../../core/router'
@@ -11,7 +12,7 @@ import { Empty, Segmented } from '../../../ui'
 import { canRead, modulePath, type Permissions } from '../../modules'
 import { useUserTraffic, type NodeTraffic, type UserTraffic } from './api'
 import css from './Dash.module.css'
-import { formatBytes, trafficNotes, trafficRows } from './model'
+import { trafficNotes, trafficRows } from './model'
 import { CardError, isForbidden, PanelSkeleton } from './parts'
 
 type Tab = 'nodes' | 'users'

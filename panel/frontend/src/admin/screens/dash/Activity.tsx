@@ -1,13 +1,14 @@
 /**
- * [INPUT]: 依赖 ../../../ui 的 Empty，依赖 ./api 的 useActivity，依赖 ./model 的 activitySummary / formatCount，依赖 ./parts，依赖 ./Dash.module.css
+ * [INPUT]: 依赖 ../../../core/format 的 formatCount，依赖 ../../../ui 的 Empty，依赖 ./api 的 useActivity，依赖 ./model 的 activitySummary，依赖 ./parts，依赖 ./Dash.module.css
  * [OUTPUT]: 对外提供 Activity
  * [POS]: 仪表盘「注册与活跃 · 近 14 天」面板：GET v1/stats/timeseries?days=14，注册柱与活跃柱成对（active_users 待补·后端，未上时只画注册柱、日活均值显示 —），tooltip 附登录、订单、独立 IP（待补·前端）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
+import { formatCount } from '../../../core/format'
 import { Empty } from '../../../ui'
 import { useActivity } from './api'
 import css from './Dash.module.css'
-import { activitySummary, formatCount } from './model'
+import { activitySummary } from './model'
 import { CardError, isForbidden, PanelSkeleton } from './parts'
 
 export function Activity() {

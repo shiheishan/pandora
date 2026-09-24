@@ -1,14 +1,14 @@
 /**
- * [INPUT]: 依赖 ../../../core/format 的 relativeTime，依赖 ../../../ui 的 Drawer / Empty / Table / Tag，依赖 ./api 的 BackupStatus / BackupFile，依赖 ./model 的 backupSummary / formatBytes / formatDateTime，依赖 ./Dash.module.css
+ * [INPUT]: 依赖 ../../../core/format 的 relativeTime / formatBytes / formatDateTime，依赖 ../../../ui 的 Drawer / Empty / Table / Tag，依赖 ./api 的 BackupStatus / BackupFile，依赖 ./model 的 backupSummary，依赖 ./Dash.module.css
  * [OUTPUT]: 对外提供 BackupDrawer
  * [POS]: 仪表盘系统状态第 8 行「数据库备份」的抽屉（待补·前端，后端有、设计缺）：原样展示 GET v1/system/status 的 backup 段——目录、可读性、份数与总量、最近一份、过期、缺校验、解密私钥、异地，以及 recent 列表；message / identity_hint 是后端写给运维的原文，照登不改
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { relativeTime } from '../../../core/format'
+import { formatBytes, formatDateTime, relativeTime } from '../../../core/format'
 import { Drawer, Empty, Table, Tag, type TableColumn } from '../../../ui'
 import type { BackupFile, BackupStatus } from './api'
 import css from './Dash.module.css'
-import { backupSummary, formatBytes, formatDateTime } from './model'
+import { backupSummary } from './model'
 
 const yesNo = (v: boolean | undefined, yes: string, no: string) => (v === undefined ? '—' : v ? yes : no)
 

@@ -1,17 +1,17 @@
 /**
- * [INPUT]: 依赖 ../../../core/format 的 formatMoney，依赖 ../../../ui 的 Skeleton，依赖 ../../modules 的 Permissions，依赖 ./api 的 Overview / NodeTraffic 与查询结果类型，依赖 ./model 的 kpiRevenueDelta / reachable / formatBytes / formatCount，依赖 ./parts，依赖 ./Dash.module.css
+ * [INPUT]: 依赖 ../../../core/format 的 formatMoney / formatBytes / formatCount，依赖 ../../../ui 的 Skeleton，依赖 ../../modules 的 Permissions，依赖 ./api 的 Overview / NodeTraffic 与查询结果类型，依赖 ./model 的 kpiRevenueDelta / reachable，依赖 ./parts，依赖 ./Dash.module.css
  * [OUTPUT]: 对外提供 Kpis
  * [POS]: 仪表盘第二块「经营」四格 KPI：收入按币种各一格（GET v1/overview）、有效订阅、近 24 小时流量（节点流量排行查询的 totals，与排行卡共用一次请求）；待补·前端的调账、试用、即将到期、待支付放进格子 tooltip
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { formatMoney } from '../../../core/format'
+import { formatBytes, formatCount, formatMoney } from '../../../core/format'
 import { Skeleton } from '../../../ui'
 import type { Permissions } from '../../modules'
 import type { NodeTraffic, Overview } from './api'
 import css from './Dash.module.css'
-import { formatBytes, formatCount, kpiRevenueDelta, reachable, type Target, type Tone } from './model'
+import { kpiRevenueDelta, reachable, type Target, type Tone } from './model'
 import { CardError, isForbidden, targetHref, toneText } from './parts'
 
 interface Tile {

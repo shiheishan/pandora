@@ -1,18 +1,20 @@
 /**
- * [INPUT]: 依赖 ../../../ui 的 Skeleton，依赖 ../../modules 的 Permissions，依赖 ./api 的 useTasks / useBacklog，依赖 ./model 的 taskCards / formatCount，依赖 ./parts，依赖 ./Dash.module.css
+ * [INPUT]: 依赖 ../../../core/format 的 formatCount，依赖 ../../../ui 的 Skeleton，依赖 ../../modules 的 Permissions，依赖 ../../tasks 的 useDashboardTasks，依赖 ./api 的 useBacklog，依赖 ./model 的 taskCards，依赖 ./parts，依赖 ./Dash.module.css
  * [OUTPUT]: 对外提供 Tasks
- * [POS]: 仪表盘第一块「需要处理」：GET v1/dashboard/tasks（待补·后端，与侧栏徽标同一个接口）的各条目 + 冻结契约的通知积压明细，卡片点一下直达处理页（目标页不可读时卡片不可点）
+ * [POS]: 仪表盘第一块「需要处理」：GET v1/dashboard/tasks（待补·后端，与侧栏徽标同一条查询）的各条目 + 冻结契约的通知积压明细，卡片点一下直达处理页（目标页不可读时卡片不可点）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
+import { formatCount } from '../../../core/format'
 import { Skeleton } from '../../../ui'
 import type { Permissions } from '../../modules'
-import { useBacklog, useTasks } from './api'
+import { useDashboardTasks } from '../../tasks'
+import { useBacklog } from './api'
 import css from './Dash.module.css'
-import { formatCount, taskCards, type TaskCard } from './model'
+import { taskCards, type TaskCard } from './model'
 import { CardError, Dot, isForbidden, targetHref } from './parts'
 
 export function Tasks({ perms, canTasks, canBacklog }: { perms: Permissions; canTasks: boolean; canBacklog: boolean }) {
-  const tasks = useTasks(canTasks)
+  const tasks = useDashboardTasks(canTasks)
   const backlog = useBacklog(canBacklog)
 
   const tasksHidden = !canTasks || (tasks.isError && isForbidden(tasks.error))
