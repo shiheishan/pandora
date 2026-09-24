@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/db 的租户事务（节点、支付回调收据、通知投递）、Deps.Redis 的 PING、platform/realtime 的 SSEConnections，依赖 system_status.go 的 backupStatus 结果
+// [INPUT]: 依赖 platform/db 的租户事务（节点、payment_events 未处理的支付回调、通知投递）、Deps.Redis 的 PING、platform/realtime 的 SSEConnections，依赖 system_status.go 的 backupStatus 结果
 // [OUTPUT]: 对外提供 systemComponent 与 handlers.systemComponents
 // [POS]: api/admin 系统状态的组件清单（契约后台-01 GET v1/system/status 的 state / components）：8 个组件各自 ok / warn / down / unknown，任一 warn 或 down 总状态即 degraded
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -86,10 +86,13 @@ func (h *handlers) systemComponents(r *http.Request, database map[string]any, ba
 				nodes.State = "warn"
 			}
 		}
+		// 契约写的来源是 00036 建的回调收据表，没有任何代码写入、登记为孤儿表
+		// （RESERVED-TABLES.md），回调收据实际落在 payment_events：pending / failed
+		// 且收到超过 1 分钟仍未处理的，才是卡住的回调
 		var pending int64
 		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM payment_webhook_receipts
-			 WHERE tenant_id = $1 AND parse_status = 'unattempted'
+			SELECT count(*) FROM payment_events
+			 WHERE tenant_id = $1 AND processing_status IN ('pending','failed')
 			   AND received_at < now() - interval '1 minute'`, tenantID).Scan(&pending); err == nil {
 			callbacks.Metrics = map[string]any{"pending": pending}
 			callbacks.State = "ok"
