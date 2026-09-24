@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 revenue_report_adjustments / orders / tenants / users 表，依赖 platform 的 db/httpx/audit
+// [OUTPUT]: 对外提供 RevenueTimeseries、RevenueAdjustment 与 List/Create/ReverseRevenueAdjustment
+// [POS]: domain/adminops 的收入读模型与收入调整：日界按租户时区，调整追加写、冲销另起反向记录，每条带登记人邮箱
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
@@ -22,15 +27,17 @@ type RevenuePoint struct {
 }
 
 type RevenueAdjustment struct {
-	ID          string    `json:"id"`
-	Currency    string    `json:"currency"`
-	Amount      int64     `json:"amount"`
-	Reason      string    `json:"reason"`
-	EffectiveOn string    `json:"effective_on"`
-	ReversalOf  *string   `json:"reversal_of,omitempty"`
-	CreatedBy   string    `json:"created_by"`
-	CreatedAt   time.Time `json:"created_at"`
-	Reversed    bool      `json:"reversed"`
+	ID          string  `json:"id"`
+	Currency    string  `json:"currency"`
+	Amount      int64   `json:"amount"`
+	Reason      string  `json:"reason"`
+	EffectiveOn string  `json:"effective_on"`
+	ReversalOf  *string `json:"reversal_of,omitempty"`
+	CreatedBy   string  `json:"created_by"`
+	// CreatedByEmail 是登记人（列表「登记人 · 时间」）；账号已删除时为空。
+	CreatedByEmail *string   `json:"created_by_email"`
+	CreatedAt      time.Time `json:"created_at"`
+	Reversed       bool      `json:"reversed"`
 }
 
 type CreateRevenueAdjustmentInput struct {
@@ -124,7 +131,7 @@ func (s *Service) ListRevenueAdjustments(ctx context.Context, tenantID, currency
 	out := []RevenueAdjustment{}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT a.id,a.currency,a.amount,a.reason,to_char(a.effective_on,'YYYY-MM-DD'),
-		       a.reversal_of,a.created_by,a.created_at,exists(SELECT 1 FROM revenue_report_adjustments r WHERE r.tenant_id=a.tenant_id AND r.reversal_of=a.id)
+		       a.reversal_of,a.created_by,(SELECT u.email FROM users u WHERE u.tenant_id=a.tenant_id AND u.id=a.created_by),a.created_at,exists(SELECT 1 FROM revenue_report_adjustments r WHERE r.tenant_id=a.tenant_id AND r.reversal_of=a.id)
 		  FROM revenue_report_adjustments a WHERE a.tenant_id=$1 AND ($2='' OR a.currency=$2)
 		 ORDER BY a.created_at DESC LIMIT 200`, tenantID, currency)
 		if err != nil {
@@ -133,7 +140,7 @@ func (s *Service) ListRevenueAdjustments(ctx context.Context, tenantID, currency
 		defer rows.Close()
 		for rows.Next() {
 			var a RevenueAdjustment
-			if err := rows.Scan(&a.ID, &a.Currency, &a.Amount, &a.Reason, &a.EffectiveOn, &a.ReversalOf, &a.CreatedBy, &a.CreatedAt, &a.Reversed); err != nil {
+			if err := rows.Scan(&a.ID, &a.Currency, &a.Amount, &a.Reason, &a.EffectiveOn, &a.ReversalOf, &a.CreatedBy, &a.CreatedByEmail, &a.CreatedAt, &a.Reversed); err != nil {
 				return err
 			}
 			out = append(out, a)
@@ -191,10 +198,10 @@ func (s *Service) CreateRevenueAdjustment(ctx context.Context, tenantID, actorID
 		}
 
 		err := tx.QueryRow(ctx, `SELECT id,currency,amount,reason,to_char(effective_on,'YYYY-MM-DD'),
-		       reversal_of,created_by,created_at FROM revenue_report_adjustments
+		       reversal_of,created_by,(SELECT u.email FROM users u WHERE u.tenant_id=revenue_report_adjustments.tenant_id AND u.id=revenue_report_adjustments.created_by),created_at FROM revenue_report_adjustments
 		 WHERE tenant_id=$1 AND idempotency_key=$2`, tenantID, in.IdempotencyKey).
 			Scan(&out.ID, &out.Currency, &out.Amount, &out.Reason, &out.EffectiveOn,
-				&out.ReversalOf, &out.CreatedBy, &out.CreatedAt)
+				&out.ReversalOf, &out.CreatedBy, &out.CreatedByEmail, &out.CreatedAt)
 		if err == nil {
 			if out.Currency != in.Currency || out.Amount != in.Amount || out.Reason != in.Reason || out.EffectiveOn != day.Format("2006-01-02") || out.ReversalOf != nil {
 				return httpx.New(httpx.CodeIdempotencyReuse, "该幂等键已用于不同的报表调整")
@@ -208,9 +215,9 @@ func (s *Service) CreateRevenueAdjustment(ctx context.Context, tenantID, actorID
 		if err := tx.QueryRow(ctx, `INSERT INTO revenue_report_adjustments
 		 (tenant_id,currency,amount,reason,effective_on,created_by,idempotency_key)
 		 VALUES($1,$2,$3,$4,$5,$6,$7)
-		 RETURNING id,currency,amount,reason,to_char(effective_on,'YYYY-MM-DD'),created_by,created_at`,
+		 RETURNING id,currency,amount,reason,to_char(effective_on,'YYYY-MM-DD'),created_by,(SELECT u.email FROM users u WHERE u.tenant_id=revenue_report_adjustments.tenant_id AND u.id=revenue_report_adjustments.created_by),created_at`,
 			tenantID, in.Currency, in.Amount, in.Reason, day, actorID, in.IdempotencyKey).
-			Scan(&out.ID, &out.Currency, &out.Amount, &out.Reason, &out.EffectiveOn, &out.CreatedBy, &out.CreatedAt); err != nil {
+			Scan(&out.ID, &out.Currency, &out.Amount, &out.Reason, &out.EffectiveOn, &out.CreatedBy, &out.CreatedByEmail, &out.CreatedAt); err != nil {
 			return err
 		}
 		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &actorID, Action: "revenue.adjustment.create", ResourceType: "revenue_report_adjustment", ResourceID: &out.ID, APIDomain: "admin", Outcome: "success", AfterDigest: map[string]any{"currency": out.Currency, "amount": out.Amount, "effective_on": out.EffectiveOn, "reason": out.Reason}, RequestID: httpx.RequestIDFrom(ctx)})
@@ -242,10 +249,10 @@ func (s *Service) ReverseRevenueAdjustment(ctx context.Context, tenantID, actorI
 	var out RevenueAdjustment
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actorID}, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `SELECT id,currency,amount,reason,to_char(effective_on,'YYYY-MM-DD'),
-		       reversal_of,created_by,created_at FROM revenue_report_adjustments
+		       reversal_of,created_by,(SELECT u.email FROM users u WHERE u.tenant_id=revenue_report_adjustments.tenant_id AND u.id=revenue_report_adjustments.created_by),created_at FROM revenue_report_adjustments
 		 WHERE tenant_id=$1 AND idempotency_key=$2`, tenantID, idempotencyKey).
 			Scan(&out.ID, &out.Currency, &out.Amount, &out.Reason, &out.EffectiveOn,
-				&out.ReversalOf, &out.CreatedBy, &out.CreatedAt)
+				&out.ReversalOf, &out.CreatedBy, &out.CreatedByEmail, &out.CreatedAt)
 		if err == nil {
 			if out.ReversalOf == nil || *out.ReversalOf != id || out.Reason != reason {
 				return httpx.New(httpx.CodeIdempotencyReuse, "该幂等键已用于不同的撤销操作")
@@ -289,9 +296,9 @@ func (s *Service) ReverseRevenueAdjustment(ctx context.Context, tenantID, actorI
 		if err := tx.QueryRow(ctx, `INSERT INTO revenue_report_adjustments
 		 (tenant_id,currency,amount,reason,effective_on,reversal_of,created_by,idempotency_key)
 		 VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-		 RETURNING id,currency,amount,reason,to_char(effective_on,'YYYY-MM-DD'),reversal_of,created_by,created_at`,
+		 RETURNING id,currency,amount,reason,to_char(effective_on,'YYYY-MM-DD'),reversal_of,created_by,(SELECT u.email FROM users u WHERE u.tenant_id=revenue_report_adjustments.tenant_id AND u.id=revenue_report_adjustments.created_by),created_at`,
 			tenantID, currency, -amount, reason, effective, id, actorID, idempotencyKey).
-			Scan(&out.ID, &out.Currency, &out.Amount, &out.Reason, &out.EffectiveOn, &out.ReversalOf, &out.CreatedBy, &out.CreatedAt); err != nil {
+			Scan(&out.ID, &out.Currency, &out.Amount, &out.Reason, &out.EffectiveOn, &out.ReversalOf, &out.CreatedBy, &out.CreatedByEmail, &out.CreatedAt); err != nil {
 			return err
 		}
 		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &actorID, Action: "revenue.adjustment.reverse", ResourceType: "revenue_report_adjustment", ResourceID: &out.ID, APIDomain: "admin", Outcome: "success", BeforeDigest: map[string]any{"original_id": id, "currency": currency, "amount": amount, "reason": originalReason}, AfterDigest: map[string]any{"reversal_id": out.ID, "amount": out.Amount, "reason": out.Reason}, RequestID: httpx.RequestIDFrom(ctx)})

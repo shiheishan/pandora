@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 service.go 的 orderRowSelectSQL / scanOrderRow（订单行唯一形状），读 orders / order_items / users / payment_intents / payments / refunds，依赖 platform/db、platform/httpx
+// [OUTPUT]: 对外提供 OrderDetail、OrderItemDetail、OrderPaymentHistory 及 GetOrder、GetOrderPaymentHistory
+// [POS]: domain/adminops 的订单详情读模型：列表行 + 不可变快照 + 开单人；支付证据单独放在更高一级的 billing.payment.read 之下
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
@@ -17,15 +22,17 @@ import (
 // intentionally served under the stronger billing.payment.read permission.
 type OrderDetail struct {
 	OrderRow
-	UserID         string            `json:"user_id"`
-	OrganizationID *string           `json:"organization_id"`
-	StateVersion   int64             `json:"state_version"`
-	SubtotalAmount int64             `json:"subtotal_amount"`
-	DiscountAmount int64             `json:"discount_amount"`
-	TaxAmount      int64             `json:"tax_amount"`
-	BalanceApplied int64             `json:"balance_applied"`
-	CouponID       *string           `json:"coupon_id"`
-	ManualReason   *string           `json:"manual_reason"`
+	UserID         string  `json:"user_id"`
+	OrganizationID *string `json:"organization_id"`
+	StateVersion   int64   `json:"state_version"`
+	SubtotalAmount int64   `json:"subtotal_amount"`
+	DiscountAmount int64   `json:"discount_amount"`
+	TaxAmount      int64   `json:"tax_amount"`
+	CouponID       *string `json:"coupon_id"`
+	ManualReason   *string `json:"manual_reason"`
+	// 人工单的开单人（抽屉「来源：人工开单 · 邮箱」）；门户下单为空。
+	CreatedBy      *string           `json:"created_by"`
+	CreatedByEmail *string           `json:"created_by_email"`
 	SubscriptionID *string           `json:"subscription_id"`
 	ExpiresAt      *time.Time        `json:"expires_at"`
 	FulfilledAt    *time.Time        `json:"fulfilled_at"`
@@ -116,25 +123,31 @@ func (s *Service) GetOrder(ctx context.Context, tenantID, orderID string) (*Orde
 
 	out := &OrderDetail{Items: []OrderItemDetail{}}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
-			SELECT o.id,o.order_no,u.email,o.kind,o.status,o.currency,
-			       o.total_amount,o.payable_amount,o.paid_amount,o.refunded_amount,
-			       o.created_at,o.paid_at,o.user_id,o.organization_id,o.state_version,
-			       o.subtotal_amount,o.discount_amount,o.tax_amount,o.balance_applied,
-			       o.coupon_id,o.manual_reason,o.subscription_id,o.expires_at,
-			       o.fulfilled_at,o.cancelled_at,o.expired_at,o.cancel_reason,o.updated_at
-			  FROM orders o JOIN users u ON u.tenant_id=o.tenant_id AND u.id=o.user_id
-			 WHERE o.tenant_id=$1 AND o.id=$2::uuid`, tenantID, orderID).Scan(
-			&out.ID, &out.OrderNo, &out.UserEmail, &out.Kind, &out.Status, &out.Currency,
-			&out.TotalAmount, &out.PayableAmount, &out.PaidAmount, &out.RefundedAmount,
-			&out.CreatedAt, &out.PaidAt, &out.UserID, &out.OrganizationID, &out.StateVersion,
-			&out.SubtotalAmount, &out.DiscountAmount, &out.TaxAmount, &out.BalanceApplied,
-			&out.CouponID, &out.ManualReason, &out.SubscriptionID, &out.ExpiresAt,
-			&out.FulfilledAt, &out.CancelledAt, &out.ExpiredAt, &out.CancelReason,
-			&out.UpdatedAt); err != nil {
+		// 列表行部分与订单列表同一份查询：以前这里自己写一遍 SELECT，
+		// 首项快照（plan_name / interval / item_count）恒为零值，与缺陷 9 同类
+		row, err := scanOrderRow(tx.QueryRow(ctx, orderRowSelectSQL+`
+			 WHERE o.tenant_id = $1 AND o.id = $2::uuid`, tenantID, orderID))
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return httpx.NotFoundOrForbidden()
 			}
+			return err
+		}
+		out.OrderRow = row
+		if err := tx.QueryRow(ctx, `
+			SELECT o.user_id,o.organization_id,o.state_version,
+			       o.subtotal_amount,o.discount_amount,o.tax_amount,
+			       o.coupon_id,o.manual_reason,o.created_by,cb.email,o.subscription_id,o.expires_at,
+			       o.fulfilled_at,o.cancelled_at,o.expired_at,o.cancel_reason,o.updated_at
+			  FROM orders o
+			  LEFT JOIN users cb ON cb.tenant_id=o.tenant_id AND cb.id=o.created_by
+			 WHERE o.tenant_id=$1 AND o.id=$2::uuid`, tenantID, orderID).Scan(
+			&out.UserID, &out.OrganizationID, &out.StateVersion,
+			&out.SubtotalAmount, &out.DiscountAmount, &out.TaxAmount,
+			&out.CouponID, &out.ManualReason, &out.CreatedBy, &out.CreatedByEmail,
+			&out.SubscriptionID, &out.ExpiresAt,
+			&out.FulfilledAt, &out.CancelledAt, &out.ExpiredAt, &out.CancelReason,
+			&out.UpdatedAt); err != nil {
 			return err
 		}
 

@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入
+// [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入与 ParseOrderStatuses 订单状态白名单
 // [OUTPUT]: 对外提供 Service、NewService，概览、用户（ListUsers / GetUser / SetUserStatus）、订单（ListOrders，OrderRow 唯一查询形状）、套餐与渠道、降级开关
 // [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它；套餐目录在 catalog.go / plan_wizard*.go，订单详情在 order_detail.go，审计在 audit.go；订单行的品名对流量包订单取订单项商品名；revokeUserLogins 是停用账号即下线的唯一实现，改状态与 risk.go 的批量停用共用
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -20,8 +20,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -554,8 +556,13 @@ type OrderRow struct {
 	PayableAmount  int64      `json:"payable_amount"`
 	PaidAmount     int64      `json:"paid_amount"`
 	RefundedAmount int64      `json:"refunded_amount"`
+	BalanceApplied int64      `json:"balance_applied"`
 	CreatedAt      time.Time  `json:"created_at"`
 	PaidAt         *time.Time `json:"paid_at"`
+	// 收款渠道：最近一笔入账的渠道，没有入账时取最近一次支付尝试的渠道；
+	// 两者都没有（全额余额、赠送、人工单）时为空，列表按余额 / 人工兜底显示。
+	ProviderCode *string `json:"provider_code"`
+	ProviderName *string `json:"provider_name"`
 
 	// 首个订单项的套餐快照。列表页要回答的第一个问题是「这单买的什么」，
 	// 以前只能点进详情才知道。取快照而不是现在的套餐名：套餐改名或下架
@@ -575,10 +582,23 @@ type OrderRow struct {
 const orderRowSelectSQL = `
 			SELECT o.id, o.order_no, u.email, o.kind, o.status, o.currency,
 			       o.total_amount, o.payable_amount, o.paid_amount, o.refunded_amount,
-			       o.created_at, o.paid_at,
+			       o.balance_applied, o.created_at, o.paid_at, pv.code, pv.display_name,
 			       COALESCE(it.snapshot_plan_name, ''), COALESCE(it.snapshot_interval, ''),
 			       COALESCE(it.snapshot_interval_count, 0), COALESCE(it.n, 0)
 			  FROM orders o JOIN users u ON u.id = o.user_id
+			  LEFT JOIN LATERAL (
+			    -- 入账优先于支付尝试：换过渠道的单，钱最终从哪个渠道进来才算数
+			    SELECT pp.code, pp.display_name
+			      FROM ((SELECT p.provider_id, 0 AS rank FROM payments p
+			              WHERE p.tenant_id = o.tenant_id AND p.order_id = o.id
+			              ORDER BY p.paid_at DESC, p.id DESC LIMIT 1)
+			            UNION ALL
+			            (SELECT pi.provider_id, 1 FROM payment_intents pi
+			              WHERE pi.tenant_id = o.tenant_id AND pi.order_id = o.id
+			              ORDER BY pi.created_at DESC, pi.id DESC LIMIT 1)) c
+			      JOIN payment_providers pp ON pp.tenant_id = o.tenant_id AND pp.id = c.provider_id
+			     ORDER BY c.rank LIMIT 1
+			  ) pv ON true
 			  LEFT JOIN LATERAL (
 			    -- 流量包订单没有套餐名，用订单项上的商品名（流量包名）顶上
 			    SELECT coalesce(i.snapshot_plan_name, i.snapshot_product_name) AS snapshot_plan_name,
@@ -594,14 +614,18 @@ func scanOrderRow(row pgx.Row) (OrderRow, error) {
 	var r OrderRow
 	err := row.Scan(&r.ID, &r.OrderNo, &r.UserEmail, &r.Kind, &r.Status,
 		&r.Currency, &r.TotalAmount, &r.PayableAmount, &r.PaidAmount,
-		&r.RefundedAmount, &r.CreatedAt, &r.PaidAt,
-		&r.PlanName, &r.Interval, &r.IntervalCount, &r.ItemCount)
+		&r.RefundedAmount, &r.BalanceApplied, &r.CreatedAt, &r.PaidAt,
+		&r.ProviderCode, &r.ProviderName, &r.PlanName, &r.Interval, &r.IntervalCount, &r.ItemCount)
 	return r, err
 }
 
 type ListOrdersInput struct {
-	Query  string
+	Query string
+	// Status 逗号分隔多值，按枚举白名单精确匹配（billing.ParseOrderStatuses），
+	// 未知值回 400；以前原样当 LIKE 模式，% 与 _ 都是通配符。
 	Status string
+	// UserID 精确筛一个用户的订单（用户详情 › 订单 tab），空 = 不限。
+	UserID string
 	// From / To 按下单时间过滤，都是闭区间，为 nil 表示不限。
 	// 对账时最常用的就是「这个月的单」，原来只能靠翻页找。
 	From   *time.Time
@@ -614,39 +638,45 @@ func (s *Service) ListOrders(ctx context.Context, tenantID string, in ListOrders
 	if in.Limit <= 0 || in.Limit > 100 {
 		in.Limit = 25
 	}
+	// 负 offset 曾经直接进 SQL 报错回 500
+	in.Offset = max(in.Offset, 0)
+	statuses, err := billing.ParseOrderStatuses(in.Status)
+	if err != nil {
+		return nil, 0, err
+	}
+	var userID *string
+	if u := strings.TrimSpace(in.UserID); u != "" {
+		if _, err := uuid.Parse(u); err != nil {
+			return nil, 0, httpx.New(httpx.CodeBadRequest, "用户 ID 格式不正确")
+		}
+		userID = &u
+	}
 	out := []OrderRow{}
 	var total int64
 
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		q := "%" + strings.ToLower(strings.TrimSpace(in.Query)) + "%"
 		if strings.TrimSpace(in.Query) == "" {
 			q = "%"
 		}
-		status := in.Status
-		if status == "" {
-			status = "%"
-		}
-
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM orders o JOIN users u ON u.id = o.user_id
+		const where = `
 			 WHERE o.tenant_id = $1
 			   AND (lower(o.order_no) LIKE $2 OR lower(u.email) LIKE $2)
-			   AND o.status::text LIKE $3
+			   AND ($3::text[] IS NULL OR o.status::text = ANY($3))
 			   AND ($4::timestamptz IS NULL OR o.created_at >= $4)
-			   AND ($5::timestamptz IS NULL OR o.created_at < $5)`,
-			tenantID, q, status, in.From, in.To).Scan(&total); err != nil {
+			   AND ($5::timestamptz IS NULL OR o.created_at < $5)
+			   AND ($6::uuid IS NULL OR o.user_id = $6)`
+
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM orders o JOIN users u ON u.id = o.user_id`+where,
+			tenantID, q, statuses, in.From, in.To, userID).Scan(&total); err != nil {
 			return err
 		}
 
-		rows, err := tx.Query(ctx, orderRowSelectSQL+`
-			 WHERE o.tenant_id = $1
-			   AND (lower(o.order_no) LIKE $2 OR lower(u.email) LIKE $2)
-			   AND o.status::text LIKE $3
-			   AND ($4::timestamptz IS NULL OR o.created_at >= $4)
-			   AND ($5::timestamptz IS NULL OR o.created_at < $5)
+		rows, err := tx.Query(ctx, orderRowSelectSQL+where+`
 			 ORDER BY o.created_at DESC
-			 LIMIT $6 OFFSET $7`,
-			tenantID, q, status, in.From, in.To, in.Limit, in.Offset)
+			 LIMIT $7 OFFSET $8`,
+			tenantID, q, statuses, in.From, in.To, userID, in.Limit, in.Offset)
 		if err != nil {
 			return err
 		}
@@ -801,17 +831,42 @@ type ProviderRow struct {
 	HasCreds     bool     `json:"has_credentials"`
 	BaseURL      string   `json:"base_url"`
 	Currencies   []string `json:"currencies"`
+	// 渠道卡统计（后台-05）。Today 是租户时区今天成功入账的金额，按币种分开
+	// ——与挂账合计同一个理由，分和美分不能相加。SuccessRate24h 是近 24 小时
+	// 进入终态的支付尝试里成功的比例，没有样本为 nil；LastCallbackAt 是最近
+	// 一条渠道回调（payment_events）的接收时间。
+	Today          map[string]int64 `json:"today"`
+	SuccessRate24h *float64         `json:"success_rate_24h"`
+	LastCallbackAt *time.Time       `json:"last_callback_at"`
 }
 
 func (s *Service) ListProviders(ctx context.Context, tenantID string) ([]ProviderRow, error) {
 	out := []ProviderRow{}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT id, code, adapter, display_name, enabled, accepting_new,
-			       credentials_encrypted IS NOT NULL,
-			       coalesce(config->>'base_url', ''),
-			       coalesce(supported_currencies, '{}')
-			  FROM payment_providers WHERE tenant_id = $1 ORDER BY code`, tenantID)
+			SELECT pp.id, pp.code, pp.adapter, pp.display_name, pp.enabled, pp.accepting_new,
+			       pp.credentials_encrypted IS NOT NULL,
+			       coalesce(pp.config->>'base_url', ''),
+			       coalesce(pp.supported_currencies, '{}'),
+			       coalesce((SELECT jsonb_object_agg(d.currency, d.amount)
+			                   FROM (SELECT p.currency::text AS currency, sum(p.amount) AS amount
+			                           FROM payments p
+			                          WHERE p.tenant_id = pp.tenant_id AND p.provider_id = pp.id
+			                            AND p.status = 'succeeded'
+			                            AND (p.paid_at AT TIME ZONE t.timezone)::date
+			                                = (now() AT TIME ZONE t.timezone)::date
+			                          GROUP BY p.currency) d), '{}'::jsonb),
+			       (SELECT (count(*) FILTER (WHERE pi.status = 'succeeded'))::float8
+			               / nullif(count(*), 0)
+			          FROM payment_intents pi
+			         WHERE pi.tenant_id = pp.tenant_id AND pi.provider_id = pp.id
+			           AND pi.status IN ('succeeded','failed','cancelled','expired')
+			           AND pi.updated_at > now() - interval '24 hours'),
+			       (SELECT max(e.received_at) FROM payment_events e
+			         WHERE e.tenant_id = pp.tenant_id AND e.provider_id = pp.id)
+			  FROM payment_providers pp
+			  JOIN tenants t ON t.id = pp.tenant_id
+			 WHERE pp.tenant_id = $1 ORDER BY pp.code`, tenantID)
 		if err != nil {
 			return err
 		}
@@ -820,7 +875,7 @@ func (s *Service) ListProviders(ctx context.Context, tenantID string) ([]Provide
 			var p ProviderRow
 			if err := rows.Scan(&p.ID, &p.Code, &p.Adapter, &p.DisplayName,
 				&p.Enabled, &p.AcceptingNew, &p.HasCreds, &p.BaseURL,
-				&p.Currencies); err != nil {
+				&p.Currencies, &p.Today, &p.SuccessRate24h, &p.LastCallbackAt); err != nil {
 				return err
 			}
 			out = append(out, p)
