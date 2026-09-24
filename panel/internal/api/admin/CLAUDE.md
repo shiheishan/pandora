@@ -21,10 +21,11 @@ node_admin.go: 节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状�
 server.go / pools.go: 服务器（物理宿主）读写与状态、节点分组
 announce.go / content.go: 公告（草稿 / 定时 / 撤回）、知识库版本
 appearance.go: 主题、插槽、Webhook 钩子与投递记录（含 duration_ms）
+site_settings.go: 站点时区读写（R49），即 tenants.timezone，按日用量与收入趋势的切日口径；时区名须能被 time.LoadLocation 加载，拒绝空串与 Local，改动写审计
 mail.go / mail_template.go / telegram.go: 邮件与注册设置、通知模板、Telegram 配置，三个测试发送挂 ops.notification.write
 ticket_macros.go: 工单快捷回复的列表与增改删
 events.go: 管理端 SSE
-*_test.go: 路由契约与守卫（router_contract、security_guards、step4_test 与三份 AST 契约；源码级契约经 router_source_test.go 读全部 router*.go）、权限字典契约、处理器单测；*_pg18_test.go 为 PG18 集成测试，announcement 与 node_config 两个域同包，run-pg18-gates.sh 用精确 -run 过滤分开
+*_test.go: 路由契约与守卫（router_contract、security_guards、step4_test、step5_test 与三份 AST 契约；源码级契约经 router_source_test.go 读全部 router*.go）、权限字典契约、处理器单测；*_pg18_test.go 为 PG18 集成测试，announcement 与 node_config 两个域同包，run-pg18-gates.sh 用精确 -run 过滤分开
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

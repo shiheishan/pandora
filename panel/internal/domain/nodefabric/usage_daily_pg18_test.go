@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 uniproxy.go 的 ReportTraffic、usage_daily.go 的 chargeReportEntry / UsageLocation / UsageDay，依赖 platform/db 的 InTx，依赖迁移 00072 的 subscription_usage_daily
 // [OUTPUT]: 对外提供 TestUsageDailyWritePG18（run-pg18-gates.sh 的 traffic_charge 域，与 TestTrafficChargePG18 共用一个库）
-// [POS]: domain/nodefabric 按日流量写入的 PG18 集成门禁：真实上报路径的倍率、累加、重试去重、按用户时区切日、租户隔离与不推送
+// [POS]: domain/nodefabric 按日流量写入的 PG18 集成门禁：真实上报路径的倍率、累加、重试去重、按用户时区切日（默认 UTC 跟随站点时区）、租户隔离与不推送
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -20,7 +20,7 @@ import (
 
 // TestUsageDailyWritePG18 证明按日流量（00072）与扣量同源：同一次上报在同一
 // 事务里扣配额并累加当日用量，计的是乘过倍率的字节；被判为重试的重复报文
-// 两边都不记；日界按用户时区切（用户时区无效退回租户时区）；运行时角色
+// 两边都不记；日界按用户时区切（用户时区无效或为默认 UTC 时退回租户时区，R50）；运行时角色
 // 看不到别的租户的行；写入不产生变更推送。
 // 由 run-pg18-gates.sh 的 traffic_charge 域驱动（复用该域的环境变量与库）。
 func TestUsageDailyWritePG18(t *testing.T) {
@@ -55,11 +55,14 @@ func TestUsageDailyWritePG18(t *testing.T) {
 		otherTen = "75200000-0000-7000-8000-000000000002"
 		userNY   = "75200000-0000-7000-8000-000000000011"
 		userBad  = "75200000-0000-7000-8000-000000000012"
+		userUTC  = "75200000-0000-7000-8000-000000000013"
 		subNY    = "75200000-0000-7000-8000-000000000021"
 		subBad   = "75200000-0000-7000-8000-000000000022"
+		subUTC   = "75200000-0000-7000-8000-000000000023"
 		nodeID   = "75200000-0000-7000-8000-000000000031"
 		uidNY    = int64(7520001)
 		uidBad   = int64(7520002)
+		uidUTC   = int64(7520003)
 	)
 	must := func(sql string, args ...any) {
 		t.Helper()
@@ -75,6 +78,9 @@ func TestUsageDailyWritePG18(t *testing.T) {
 		VALUES ($1, $3, 'usage-ny@example.test', 'Usage NY', 'active', 'America/New_York'),
 		       ($2, $3, 'usage-bad@example.test', 'Usage Bad', 'active', 'Not/AZone')`,
 		userNY, userBad, tenantID)
+	// 第三个用户没设过时区（列默认 'UTC'）：R50 视同未设，跟随站点时区（上海）。
+	must(`INSERT INTO users (id, tenant_id, email, display_name, status)
+		VALUES ($1, $2, 'usage-utc@example.test', 'Usage UTC', 'active')`, userUTC, tenantID)
 	must(`INSERT INTO nodes (id, tenant_id, name, status) VALUES ($1, $2, 'usage-node', 'active')`, nodeID, tenantID)
 	// 订阅只是扣量的挂载点：关掉触发器（含外键）直接插，套餐与版本与本测试无关。
 	must(`SET session_replication_role = replica`)
@@ -85,6 +91,10 @@ func TestUsageDailyWritePG18(t *testing.T) {
 		       ($2, $3, $6, gen_random_uuid(), gen_random_uuid(), 'active', 'CNY', 0,
 		        now() + interval '30 days', $7)`,
 		subNY, subBad, tenantID, userNY, uidNY, userBad, uidBad)
+	must(`INSERT INTO subscriptions (id, tenant_id, user_id, plan_id, plan_version_id,
+			status, snapshot_currency, snapshot_amount, current_period_end, node_uid)
+		VALUES ($1, $2, $3, gen_random_uuid(), gen_random_uuid(), 'active', 'CNY', 0,
+		        now() + interval '30 days', $4)`, subUTC, tenantID, userUTC, uidUTC)
 	must(`SET session_replication_role = origin`)
 	// 纽约用户有限量配额（扣量要落在这里），另一个不限量（照样记按日用量）。
 	must(`INSERT INTO quota_balances (tenant_id, subscription_id, metric, period,
@@ -170,7 +180,7 @@ func TestUsageDailyWritePG18(t *testing.T) {
 	// --- 日界：同一时刻，纽约还是 24 日，上海（租户回退）已是 25 日 ---
 	at := time.Date(2030, 9, 24, 17, 30, 0, 0, time.UTC)
 	if err := app.InTx(ctx, platformdb.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		for _, uid := range []int64{uidNY, uidBad} {
+		for _, uid := range []int64{uidNY, uidBad, uidUTC} {
 			if ok, err := chargeReportEntry(ctx, tx, tenantID, uid, 7, at); err != nil || !ok {
 				t.Errorf("charge uid %d at %v: ok=%v err=%v", uid, at, ok, err)
 			}
@@ -184,6 +194,13 @@ func TestUsageDailyWritePG18(t *testing.T) {
 	}
 	if got := rowsOf(subBad); got[len(got)-1] != (usageRow{"2030-09-25", 7}) {
 		t.Fatalf("tenant-timezone day cut = %+v, want 2030-09-25", got)
+	}
+	var userTZ string
+	if err := admin.QueryRow(ctx, `SELECT timezone FROM users WHERE id = $1`, userUTC).Scan(&userTZ); err != nil || userTZ != "UTC" {
+		t.Fatalf("default user timezone = %q err=%v, want the column default UTC", userTZ, err)
+	}
+	if got := rowsOf(subUTC); len(got) != 1 || got[0] != (usageRow{"2030-09-25", 7}) {
+		t.Fatalf("default-UTC user day cut = %+v, want 2030-09-25 on the site (Shanghai) day", got)
 	}
 
 	// --- 租户隔离：别的租户作用域里一行都看不到 ---

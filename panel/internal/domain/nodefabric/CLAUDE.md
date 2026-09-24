@@ -7,7 +7,7 @@
 service.go: Service 与构造；bootstrap 令牌与旧版接入、身份查询、签名请求、心跳、配置签发与回报、指标
 enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token（签发记录重置为无签发人）
 uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写审计、记 server_token_issued_at/by、拒绝已退出服务的节点）、配置组装与 ETag、用户下发、流量与在线上报；扣量先吃套餐本周期额度、再按先到先扣吃用户流量包（D-E-1），套餐用完但流量包有剩余的订阅继续下发；逐用户记账委托 usage_daily.go
-usage_daily.go: 流量上报的单用户记账 chargeReportEntry：同一事务里扣量（chargeTraffic）并累加 subscription_usage_daily 当日行（00072，重试报文两边都不记）；UsageLocation / UsageDay 是按日流量唯一的日界口径（用户时区 → 租户时区 → UTC，内嵌 time/tzdata），subscription 的读接口共用
+usage_daily.go: 流量上报的单用户记账 chargeReportEntry：同一事务里扣量（chargeTraffic）并累加 subscription_usage_daily 当日行（00072，重试报文两边都不记）；UsageLocation / UsageDay 是按日流量唯一的日界口径（用户时区 → 租户时区 → UTC；用户为默认 UTC 时视同未设、跟随站点时区（R50）；内嵌 time/tzdata），subscription 的读接口共用
 node_admin.go: 后台节点增删改、复制、移动、排序、批量状态，协议白名单与稳定协议 SQL；country_code（00082）只在此写、只进管理端响应（保留规则 3）
 node_identity.go: 节点凭据只读视图 NodeCredentials：当前或最近一份 mTLS 身份、服务端令牌是否存在及签发时间与签发人、未用未过期的安装令牌数
 server_admin.go: 后台服务器（物理宿主）读写与状态机
