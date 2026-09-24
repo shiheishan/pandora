@@ -434,6 +434,12 @@ func NewRouter(d Deps) http.Handler {
 			// --- 审计 ---
 			r.With(middleware.RequirePermission("security.audit.read", d.Log)).
 				Get("/audit", h.listAudit)
+			// 导出带走含明文来源 IP 的全量记录：要导出权限，并且刚输过密码
+			r.With(
+				middleware.RequirePermission("security.audit.read", d.Log),
+				middleware.RequirePermission("ops.export", d.Log),
+				middleware.RequireRecentReauth(d.Log),
+			).Get("/audit/export", h.exportAudit)
 			// 系统状态：备份跑没跑、数据库多大。备份原先是彻底的盲区 ——
 			// 每天都在正常跑，但面板上看不到；定时器哪天坏了同样没人发现。
 			r.With(middleware.RequirePermission("security.audit.read", d.Log)).
@@ -450,6 +456,17 @@ func NewRouter(d Deps) http.Handler {
 				Get("/stats/timeseries", h.statsTimeseries)
 			r.With(middleware.RequirePermission("security.audit.read", d.Log)).
 				Get("/ip-clusters", h.ipClusters)
+			// 风控处置。标记正常可逆且只影响提示，不要重认证；批量停用会把
+			// 一批人登出、订阅停止下发，要风控复核与用户写两个权限并重认证，
+			// 幂等防止网络重试把「部分跳过」的结果算两遍
+			r.With(middleware.RequirePermission("security.risk.review", d.Log)).
+				Post("/ip-clusters/{key}/review", h.reviewIPCluster)
+			r.With(
+				middleware.RequirePermission("security.risk.review", d.Log),
+				middleware.RequirePermission("iam.user.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
+				middleware.Idempotency(d.Pool, "ip_cluster_disable", d.Log),
+			).Post("/ip-clusters/{key}/disable-accounts", h.disableIPClusterAccounts)
 
 			// 优惠券
 			r.With(middleware.RequirePermission("marketing.coupon.read", d.Log)).
@@ -709,6 +726,8 @@ func NewRouter(d Deps) http.Handler {
 			).Post("/nodes/config/publish", h.nodePublishConfig)
 			r.With(middleware.RequirePermission("node.read", d.Log)).
 				Get("/nodes/{id}/metrics", h.nodeMetrics)
+			r.With(middleware.RequirePermission("node.read", d.Log)).
+				Get("/nodes/{id}/identity", h.nodeIdentity)
 			r.With(middleware.RequirePermission("node.write", d.Log)).
 				Post("/nodes/{id}/protocol", h.nodeSetProtocol)
 			r.With(middleware.RequirePermission("node.read", d.Log)).
@@ -749,6 +768,16 @@ func NewRouter(d Deps) http.Handler {
 				middleware.Idempotency(d.Pool, support.EscalateIdempotencyScope, d.Log),
 			).
 				Post("/tickets/escalate", h.ticketEscalate)
+			// 快捷回复：独立资源路径（不挂在 tickets/ 下），配置类写操作不带幂等，
+			// 同 user-groups 的惯例
+			r.With(middleware.RequirePermission("ops.ticket.read", d.Log)).
+				Get("/ticket-macros", h.listTicketMacros)
+			r.With(middleware.RequirePermission("ops.ticket.write", d.Log)).
+				Post("/ticket-macros", h.saveTicketMacro)
+			r.With(middleware.RequirePermission("ops.ticket.write", d.Log)).
+				Post("/ticket-macros/{id}", h.saveTicketMacro)
+			r.With(middleware.RequirePermission("ops.ticket.write", d.Log)).
+				Delete("/ticket-macros/{id}", h.deleteTicketMacro)
 
 			// --- 降级开关 ---
 			r.With(middleware.RequirePermission("security.audit.read", d.Log)).

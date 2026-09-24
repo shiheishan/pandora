@@ -2,9 +2,12 @@ package nodefabric
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 func TestPoolMoveBumpsEffectiveReleaseGeneration(t *testing.T) {
@@ -156,5 +159,21 @@ func TestLegacyNodeStatusGateSeparatesControlAndLogicalNodes(t *testing.T) {
 	}
 	if !legacyNodeStatusAllowsServing(true, "active") {
 		t.Fatal("active control Node should pass the legacy status gate")
+	}
+}
+
+func TestNormalizeCountryCode(t *testing.T) {
+	for raw, want := range map[string]string{"": "", "  ": "", "jp": "JP", " Us ": "US", "HK": "HK"} {
+		got, err := normalizeCountryCode(raw)
+		if err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"J", "JPN", "J1", "日本", "é1"} {
+		_, err := normalizeCountryCode(raw)
+		var httpErr *httpx.Error
+		if !errors.As(err, &httpErr) || httpErr.Fields["country_code"] == "" {
+			t.Errorf("%q: want 422 fields.country_code, got %v", raw, err)
+		}
 	}
 }

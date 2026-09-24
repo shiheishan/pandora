@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 ./router.go 的 NewRouter，依赖 chi.Walk / Routes.Match 解析注册表
 // [OUTPUT]: 对外提供 public 路由契约测试与 assertRouteContract 断言助手
-// [POS]: api/public 的路由存在性守卫：登出、通知偏好、根上的前端挂载，以及 /assets/* 与订阅通配互不抢路由
+// [POS]: api/public 的路由存在性守卫：登出、通知偏好、帮助文章反馈、根上的前端挂载，以及 /assets/* 与订阅通配互不抢路由
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
@@ -31,6 +31,15 @@ func TestPublicRouterExposesNotificationPreferenceContracts(t *testing.T) {
 	})
 	assertRouteContract(t, router, http.MethodGet, "/v1/me/notification-preferences")
 	assertRouteContract(t, router, http.MethodPut, "/v1/me/notification-preferences")
+}
+
+// 帮助文章反馈在需登录组里：反馈按用户记，匿名请求没有落点
+func TestPublicRouterExposesContentFeedbackContract(t *testing.T) {
+	router := NewRouter(Deps{
+		Cfg: &config.Config{},
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	assertRouteContract(t, router, http.MethodPost, "/v1/content/pages/{slug}/feedback")
 }
 
 // 用户门户前端挂在网关根，与订阅通配 /{prefix}/{token} 共存：

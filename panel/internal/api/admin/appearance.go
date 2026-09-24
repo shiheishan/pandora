@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/appearance 的主题与插槽服务、domain/plugin 的钩子服务，依赖 platform/httpx
+// [OUTPUT]: 对外提供主题（列表 / 保存 / 激活 / 删除）、插槽（列表 / 保存）与 Webhook 钩子（列表 / 保存 / 删除 / 投递记录 / 测试投递）处理器
+// [POS]: api/admin 的外观与插件处理器（后台-08 主题与插槽、后台-09 Webhook 钩子）；测试投递回 duration_ms
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -186,7 +191,7 @@ func (h *handlers) hookDeliveries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) testHook(w http.ResponseWriter, r *http.Request) {
-	code, err := h.d.Plugin.TestHook(r.Context(), httpx.TenantIDFrom(r.Context()),
+	code, durationMS, err := h.d.Plugin.TestHook(r.Context(), httpx.TenantIDFrom(r.Context()),
 		chi.URLParam(r, "code"))
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeValidationFailed,
@@ -198,5 +203,5 @@ func (h *handlers) testHook(w http.ResponseWriter, r *http.Request) {
 			"对方返回 HTTP "+itoa64(int64(code))+"，不是 2xx"))
 		return
 	}
-	httpx.OK(w, map[string]any{"sent": true, "response_code": code})
+	httpx.OK(w, map[string]any{"sent": true, "response_code": code, "duration_ms": durationMS})
 }

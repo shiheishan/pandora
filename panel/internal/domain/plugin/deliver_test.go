@@ -235,6 +235,31 @@ func TestPost_生产模式挡内网(t *testing.T) {
 	}
 }
 
+// 耗时只记真正发出去的尝试：被地址校验挡下的请求没有往返，必须是 nil 而不是 0，
+// 否则落库后会被读成「对方秒回」（M7）。
+func TestTimedPost_耗时只记发出去的请求(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(30 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	d := dueDelivery{id: "d", event: "e", payload: []byte(`{}`),
+		endpoint: srv.URL, timeoutMS: 5000, code: "c"}
+
+	code, ms, err := New(nil, nil, true).timedPost(context.Background(), d, "k")
+	if err != nil || code != http.StatusNoContent {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if ms == nil || *ms < 30 {
+		t.Fatalf("耗时 %v，期望至少 30ms", ms)
+	}
+
+	code, ms, err = New(nil, nil, false).timedPost(context.Background(), d, "k")
+	if err == nil || code != 0 || ms != nil {
+		t.Fatalf("被拦下的请求：code=%d ms=%v err=%v，期望 0/nil/有错", code, ms, err)
+	}
+}
+
 func TestKnownEvent(t *testing.T) {
 	if !KnownEvent("order.paid") {
 		t.Error("order.paid 应当是已知事件")

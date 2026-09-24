@@ -533,7 +533,7 @@ func (s *Service) fulfillPlanChangeLocked(ctx context.Context, tx pgx.Tx, tenant
 	newEnd := addInterval(now, interval, int(intervalCount))
 
 	// 配额按新套餐重新起算，清零前的用量先留日志。配额行不能删：人工调整记录
-	// （quota_adjustments）挂在行上且只许追加（DATA-003）。新套餐没有的指标把
+	// （00006 的配额调整表）挂在行上且只许追加（DATA-003）。新套餐没有的指标把
 	// 上限置空 —— 上限为空在节点下发与扣量里本来就是「不限量」，与新开一条
 	// 该套餐的订阅（没有这一行）效果相同。
 	type usedQuota struct {

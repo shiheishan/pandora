@@ -356,6 +356,7 @@
 - 设计：设计稿没有这个动作。注意它是租户级的批量扫描，不是单张工单的升级，不能用来实现「升级到 L2」按钮
 
 #### GET v1/ticket-macros — 快捷回复列表
+- **修订 R42（2026-09-24，后端二 ae95dfd）**：本节四个接口已实现（迁移 00078），形状同契约；标题与正文去首尾空白，写操作记审计。
 - 状态：待补·后端（需迁移：新表 `ticket_macros`）
 - 权限：`ops.ticket.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -655,6 +656,7 @@
 - 设计：后台-03「保存策略」。映射见 GET v1/devices
 
 #### GET v1/traffic-resets — 流量重置日志
+- **修订 R38（2026-09-24，后端一 91738d3）**：`reason` 新增取值 `plan_change`（变更套餐清零），筛选与 `by_reason` 同步认它；「方式」列显示为「变更套餐」。
 - 状态：现有 `traffic_reset.go:13 listTrafficResets` → `billing/traffic_reset.go:61`
 - 权限：`metering.reset.read`｜reauth：否｜幂等：否
 - 请求：query `user_id?: uuid`、`reason?: renewal|cycle_roll|manual|gift_card`、`limit?: int`（默认 50，最大 200）、`offset?: int`
@@ -1178,6 +1180,7 @@
 - 设计：后台-07 节点表格与抽屉头。映射：`n.cc` → `country_code`；`n.name` → `name`（`display_name` 是给用户看的名字，放进编辑表单）；`n.addr` → `server_host:server_port`；`n.proto` → `node_type`；`n.server` → `server_name`；`n.online` → `online_users`（可在悬停中补 `online_ips`）；`n.cpu` → `cpu_percent`；`n.traffic` → `traffic_bytes_24h`；心跳 → `last_heartbeat_at`。状态映射：`serving_status=active && !stale` → 在线；`active && stale` → 离线；`draining` → 在线（标「排空中」）；`draft|disabled` → 已停用（draft 标「草稿」）；`retired` → 已退役（需 `include_retired=1`）。筛选/搜索按设计在前端做。**待补·前端**：在行尾或抽屉头展示 `delivered_to_users=false` 时的 `delivery_note`（交付提示），抽屉「监控」补 `online_ips`、`health_score`、`applied/desired_config_version`、`agent_version`、`granted_plans`、`pool_name`。
 
 #### POST v1/nodes — 新建节点（草稿）
+- **修订 R46（2026-09-24，后端二 ae95dfd）**：请求 / 响应新增 `country_code`（只进管理端，保留规则 3）：接受小写、存为大写，格式 `^[A-Z]{2}$`；编辑时传 null 或空串即清空；复制节点沿用原值；列表同样返回。
 - 状态：现有 `panel/internal/api/admin/node_admin.go:20 createAdminNode` → `nodefabric/node_admin.go:286 CreateAdminNode`
 - 权限：`node.provision`｜reauth：否｜幂等：是 `node_create`
 - 请求：`{ name: string(1–120), server_id: uuid, node_type: string(13 个稳定协议之一), server_host: string(IP 或 ASCII 主机名), server_port: int, protocol_config: object(按 node-protocol-schemas), pool_id?: uuid, kernel?: string(默认 "auto"), traffic_rate?: float(<=0 视为 1), display_name?: string, sort_order?: int }`；待补·后端：加 `country_code?: string(2)`。
@@ -1334,6 +1337,7 @@
 - 设计：设计无单节点编辑界面（后端有、设计缺）。
 
 #### POST v1/nodes/{id}/server-token — 重签服务端（UniProxy）令牌
+- **修订 R46（2026-09-24，后端二 ae95dfd）**：签发时记 `server_token_issued_at` 与签发人。
 - **修订 R13（2026-09-24，后端二 62f7283）**：id 非法或节点不存在回 404；已退役 / 已销毁（含 serving_status=retired）回 409；签发写审计（不记令牌）。签发时间与签发人仍按 M8 在后端二第 ④ 步补。
 - 状态：现有 `panel/internal/api/admin/handlers.go:1433 nodeIssueServerToken` → `nodefabric/uniproxy.go:148 IssueServerToken`
 - 权限：`node.provision`｜reauth：是｜幂等：是 `node_server_token_issue`
@@ -1344,6 +1348,7 @@
 - 设计：后台-07 抽屉「身份与令牌 › 重签服务端令牌」。映射：设计只 toast，后端返回一次性令牌和命令——前端必须弹出一次性展示框（令牌 + 命令 + `hint`），关闭后不可再看。
 
 #### GET v1/nodes/{id}/identity — 节点身份与令牌状态
+- **修订 R46（2026-09-24，后端二 ae95dfd）**：已实现（迁移 00082）：当前或最近一份 mTLS 身份、服务端令牌是否存在及 `server_token_issued_at` / `server_token_issued_by`、未用未过期的安装令牌数。经安装令牌或接入流程拿到的服务端令牌，签发人为 null。
 - 状态：**待补·后端**（新接口）
 - 权限：`node.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1723,6 +1728,7 @@
 - 设计：卡片「删除」+ 危险确认框（映射：确认框走 reauth 流程）
 
 #### GET v1/plugin-hooks/{code}/deliveries — 投递记录
+- **修订 R45（2026-09-24，后端二 ae95dfd）**：已实现（迁移 00081）。行新增 `duration_ms: int|null`，请求没发出去时为 null。
 - 状态：现有 `appearance.go:178 hookDeliveries`；**耗时字段 待补·后端**
 - 权限：`platform.plugin.read`｜reauth：否｜幂等：否
 - 请求：无（固定最近 50 条）
@@ -1732,6 +1738,7 @@
 - 设计：卡片展开「投递记录」（状态码、事件、耗时、时间）。映射：状态码←response_code（0 显示「—」并用 error_message 作 tooltip）；「user.created · 重试 2」这类行←后端一次投递一行、重试累加在 `attempts` 上，显示为「event · 第 n 次」
 
 #### POST v1/plugin-hooks/{code}/test — 同步测试投递
+- **修订 R45（2026-09-24，后端二 ae95dfd）**：响应新增 `duration_ms: int|null`，只在响应里返回、不写库。
 - 状态：现有 `appearance.go:188 testHook`；**耗时字段 待补·后端**
 - 权限：`platform.plugin.write`｜reauth：是｜幂等：否
 - 请求：无 body（发送固定的 `panel.test` 事件，带签名）
@@ -1742,6 +1749,7 @@
 ### 后台-09 通知与安全 · 安全与运维（审计日志 / 访问日志 / 风控 / 降级开关）
 
 #### GET v1/audit — 审计日志
+- **修订 R44（2026-09-24，后端二 ae95dfd）**：已实现（迁移 00080）。新增 query `q`（搜索）；行新增 `source_ip`、`resource_label`、`auth_context: "session"|"reauth"|null`（写审计时由当前会话推出，历史行为 null）。
 - 状态：现有 `handlers.go:452 listAudit`（数据 `adminops/service.go:890 ListAudit`）；**搜索与展示字段 待补·后端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
 - 请求（现有）：query `limit?: int(1–200，默认 50)`、`offset?: int`、`action?: string（前缀匹配）`、`actor_kind?: "user"|"admin"|"system"|"agent"|"plugin"|"anonymous"`、`outcome?: "success"|"failure"|"denied"|"partial"`；待补·后端追加 `q?: string`（对 action、操作者邮箱做 ILIKE，对 resource_id 做精确匹配）
@@ -1751,6 +1759,7 @@
 - 设计：后台-09「审计日志」（搜索框「操作人、动作或对象」、导出、表格：时间、操作人、动作、对象、来源 IP、认证）。映射：操作人←`actor_email`（actor_kind=system 显示「系统」）；对象←`resource_label ?? resource_type + 短 id`，`reason` 作为对象列 tooltip；认证←auth_context（reauth=「二次认证」、session=「会话」、null=「—」）。待补·前端：搜索框旁加筛选「动作前缀 / 操作者类型 / 结果」，分页用 total
 
 #### GET v1/audit/export — 审计日志导出
+- **修订 R44（2026-09-24，后端二 ae95dfd）**：已实现，要 reauth，导出本身写审计。CSV 带 UTF-8 BOM，上限 5 万行；以 `= + - @` 开头的文本加单引号前缀防公式注入；结束日期早于开始日期 422 `fields.to`。
 - 状态：待补·后端
 - 权限：`security.audit.read` + `ops.export`｜reauth：是（导出带走含明文 IP 的全量记录）｜幂等：否（GET）
 - 请求：query 与 GET v1/audit 相同的筛选（action、actor_kind、outcome、q）+ `from?: YYYY-MM-DD`、`to?: YYYY-MM-DD`（半开区间，与订单列表的日期解析一致）；单次最多 50000 行
@@ -1770,6 +1779,7 @@
 - 设计：后台-09「访问日志」（深色「实时尾随」终端：时间、方法、路径、状态码、耗时、IP；分段「全部 / 仅错误 / 管理端」）。映射（以后端为准）：这是**安全事件流**，不是 nginx 访问日志：方法列←category 徽标，路径列←action，状态列←outcome（非 success 标红），耗时列删除，IP 列←`ip · geo`，行 tooltip←user_email + user_agent；标题改「实时尾随 · 登录/注册/订阅拉取/管理动作」；「仅错误」←`outcome=error`，「管理端」←`category=admin`；「实时尾随」用 5 秒轮询 `offset=0` 实现（审计表不在 SSE 监听里）。待补·前端：加 IP、账号两个筛选框和「订阅拉取」「登录」「注册」分段
 
 #### GET v1/ip-clusters — 共享 IP 聚类
+- **修订 R40（2026-09-24，后端二 ae95dfd）**：已实现（迁移 00077）。字段按本条目补齐（key、归属地、网络类型、风险等级、成员账号、复核结论），新增 query `include_reviewed`；`first` / `last` 为 RFC3339。
 - 状态：现有 `profile.go:287 ipClusters`；**展示与处置字段 待补·后端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
 - 请求：无（固定前 50 个，近 90 天，账号数 >1）
@@ -1779,6 +1789,7 @@
 - 设计：后台-09「风控」卡片（IP、归属 · 最近时间、风险徽标、账号+套餐列表、标记为正常、禁用 N 个账号）
 
 #### POST v1/ip-clusters/{key}/review — 标记为正常
+- **修订 R41（2026-09-24，后端二 ae95dfd）**：已实现。标记正常 30 天后重新提示；`note` 最多 500 字，超出 422 `fields.note`。
 - 状态：待补·后端
 - 权限：`security.risk.review`（权限字典已有、目前无路由使用）｜reauth：否｜幂等：否（重复标记只刷新有效期）
 - 请求：`{ note?: string(≤500) }`
@@ -1788,6 +1799,7 @@
 - 设计：卡片「标记为正常」→ 结果行「已标记为正常，30 天内不再提示」
 
 #### POST v1/ip-clusters/{key}/disable-accounts — 批量禁用聚类内账号
+- **修订 R41（2026-09-24，后端二 ae95dfd）**：已实现，两个权限 + reauth + 幂等，单事务。`user_ids` 1–200 个；持有任何后台角色的账号跳过，跳过原因为 `administrator`；一个都没禁掉时不写复核结论，审计 result=failure。
 - 状态：待补·后端
 - 权限：`security.risk.review` + `iam.user.write`｜reauth：是｜幂等：是 `ip_cluster_disable`
 - 请求：`{ user_ids: uuid[]（必须是该聚类当前成员的子集，前端默认全选）, reason: string(5–500 字) }`
@@ -1965,6 +1977,7 @@
 - 设计：我的订阅「更换订阅地址」确认框。按钮在请求期间禁用防连点；成功后用返回 url 覆盖显示并重拉 subscription-links。
 
 #### POST v1/me/subscriptions/{id}/renew — 续费（在原订阅上延长）
+- **修订 R37（2026-09-24，后端一 91738d3）**：同一条订阅同时只能有一张未完成的续费或变更套餐订单，重复下单回 409「这条订阅还有未完成的续费或变更套餐订单，请先支付或取消」（此前重复续费回 500）。
 - 状态：现有 `panel/internal/api/public/handlers.go:1063 createRenewal`（domain `billing/renewal.go:51 CreateRenewal`）
 - 权限：登录用户｜reauth：否｜幂等：是 `subscription_renewal_create`
 - 请求：`{ price_id?: uuid(不传沿用订阅当前价格；传同套餐其他价格=换周期续费), use_balance?: int(≥0，超出应付自动截断到应付), coupon_code?: string }`
@@ -2040,6 +2053,7 @@
 - 设计：选购页流量包 tab 提示「您的专业版本期还剩 N GB。买了流量包后…」、概览主卡剩余流量（订阅剩余 + 流量包剩余，另起一行小字「含流量包 X GB」）。
 
 #### POST v1/me/subscriptions/{id}/change-plan/preview — 变更套餐试算（剩余价值折算）
+- **修订 R35（2026-09-24，后端一 91738d3）**：已实现。响应另加 `balance_refund: int`（降级时退进余额的差额，升级为 0）；`direction` 在 total > 0 时为 `upgrade`，否则为 `downgrade`；「暂不支持降级」删除（5.A D-E-2 升降级都允许）。可变更的订阅状态为 active / trialing / grace / past_due；只校验目标套餐的 `allow_upgrade` 与可见性，不校验 allow_new_purchase、库存与限购；价格、版本类错误与新购一致（409「该价格已下架」「该价格当前不在有效期内」「该套餐尚未发布可用版本」等）。新增 409：「变更套餐不能更换币种」「这条订阅本周期的付费订单币种不一致，无法折算」「这条订阅还有未完成的续费或变更套餐订单，请先支付或取消」。优惠码升级、降级都可用（降级时折扣使退回余额变多）。
 - 状态：待补·后端
 - 权限：登录用户｜reauth：否｜幂等：否（不落库）
 - 请求：`{ plan_id: uuid, price_id: uuid, coupon_code?: string }`
@@ -2049,6 +2063,7 @@
 - 设计：选购页副文案「换套餐时剩余天数自动折算」、结账页订单预览「剩余天数折算：差价已计入」行（显示 −¥proration_credit）。折算公式见 D-E-2。
 
 #### POST v1/me/subscriptions/{id}/change-plan — 变更套餐下单
+- **修订 R36（2026-09-24，后端一 91738d3、077eb27）**：已实现（迁移 00071）。响应另加 `proration_credit: int`、`balance_refund: int`；**升级与降级的订单 kind 都是 `upgrade`**（后台订单列表的 `downgrade` 取值不会出现）。应付为 0 时当场履约（status=fulfilled），差额以 `plan_change_refund` 分录退进余额。履约在原订阅上换套餐，订阅地址不变，新周期从当天按新套餐起算，已用流量清零并记重置日志（reason `plan_change`），流量包余额不受影响；新套餐没有的配额指标置为不限量。错误同 preview，另 409「余额不足」。
 - 状态：待补·后端
 - 权限：登录用户｜reauth：否（public 无 reauth 机制，与 POST v1/orders 一致）｜幂等：是 `subscription_change_plan_create`
 - 请求：`{ plan_id: uuid, price_id: uuid, use_balance?: int, coupon_code?: string }`
@@ -2338,6 +2353,7 @@
   - 映射：「更新于」→ published_at。正文由前端按段落和 `## ` 标题渲染为纯文本节点，不用 innerHTML。
 
 #### POST v1/content/pages/{slug}/feedback — 文章「有帮助」反馈
+- **修订 R43（2026-09-24，后端二 ae95dfd）**：已实现（迁移 00079）。`helpful` 必填，缺失 422 `fields.helpful`；文章可见性按请求的 `platform` / `client_version` / `locale` 判定，**前端要带与读正文时相同的参数**，不可见 404；版本不存在 422；已被新版本归档的旧版本仍收反馈。后台按文章统计「有帮助 / 没帮助」的接口契约未定，暂无。
 - 状态：待补·后端
 - 权限：登录用户｜reauth：否｜幂等：否（按用户、文章、版本 upsert，天然幂等）
 - 请求：`{ helpful: bool, version: int(当前看到的 page.version) }`
@@ -2467,7 +2483,7 @@
 | D-D-1 | 方案 a：路由规则下拉只放后端支持的类型（domain / domain_suffix / ip_cidr / port / network / source / source_port），设计里的 geosite/geoip 示例换成等价写法，去掉 selector 出站；pdnd 支持 geosite/geoip 另行立项 |
 | D-D-4 / D-E-4 | **主题模块保留，只保留设计稿「默认 · 纸白」一个主题**：新迁移删除 00051 默认主题与 00055 stellar 两个内置主题，新建内置主题「默认 · 纸白」并激活，tokens 用设计稿变量名，分 light / dark 两组（切暗色不能被主题覆盖）；站点名称、标语、Logo 继续放在该主题的 branding。后台主题区只显示这一张卡片（使用中），不做「夜航」「国庆限定」，「保存新主题」入口隐藏（接口保留）。custom_css 本期停用。门户只认设计稿 token 白名单内的键 |
 | D-E-1 | **流量包挂在用户身上，永不过期，用完为止，可叠加**（剩 30G 再买 100G 即 130G）；每周期先扣套餐额度，扣完再扣流量包，流量包不随周期重置；订阅到期或续费余量保留；必须有生效订阅才能消耗（无订阅时可以买、留着）。礼品卡赠送流量并入同一余额，修掉现有 addon 每周期复用的问题；已发放未用完的 addon 一次性转入流量包余额。设计里「没有订阅也能买并单独使用（3 台设备、全部常规线路）」一条删去 |
-| D-E-2 | **升级、降级都允许**：剩余价值 = 原订单实付（现金 + 余额抵扣）× 剩余比例，**剩余比例取剩余时间比例与剩余流量比例中的较小者**，向下取整到分；新套餐价 > 剩余价值则补差价，< 则差额退入余额（账本记分录，余额不可提现）；新周期从当天按新套餐周期起算。赠送 / 礼品卡 / 0 元单实付为 0，降级不退 |
+| D-E-2 | **修订 R39（2026-09-24 用户补充定案）**：「原订单实付」指**本周期全部付费单的实付合计**（提前续费会让一个周期由多张单拼成）；剩余时间比按「付费天数先用、赠送天数最后用」计，礼品卡加的天数折不成钱；流量比只看随整个周期走的流量配额（period 为 cycle / total），不限量视为 1；优惠码升降级都可用。<br>**升级、降级都允许**：剩余价值 = 原订单实付（现金 + 余额抵扣）× 剩余比例，**剩余比例取剩余时间比例与剩余流量比例中的较小者**，向下取整到分；新套餐价 > 剩余价值则补差价，< 则差额退入余额（账本记分录，余额不可提现）；新周期从当天按新套餐周期起算。赠送 / 礼品卡 / 0 元单实付为 0，降级不退 |
 | D-F-1 | 方案 a：可用佣金统一以账本为准（账本余额 − 在途提现），提现申请与转余额在同一把锁下按同一口径校验；授权修改计费域 |
 
 其余 21 条非阻塞项（索引 30 行减去 9 行 ●，D-D-4 与 D-E-4 是同一条决定）：第 3 阶段先按各条「未决前」处理，做到对应页面时由协调会话汇总再请用户定。
@@ -3031,3 +3047,15 @@
 | R32 | 2026-09-24 | 后端一 f944089 | 订单列表中流量包订单 kind=addon，品名为流量包名 |
 | R33 | 2026-09-24 | 后端一 f944089 | 流量包的实时事件主题；扣量不推送 |
 | R34 | 2026-09-24 | 第 2 阶段 e687e4d | reauth 取消时请求以 `reauth_required` 失败，页面静默忽略；对话框由入口统一接管 |
+| R35 | 2026-09-24 | 后端一 91738d3 | change-plan/preview 已实现：加 balance_refund、direction 按 total 定、允许降级、新增三种 409 |
+| R36 | 2026-09-24 | 后端一 91738d3、077eb27 | change-plan 下单已实现：升降级 kind 都是 upgrade，0 元当场履约并退余额，原地换套餐 |
+| R37 | 2026-09-24 | 后端一 91738d3 | 续费与变更套餐在途单互斥，重复下单 409（原 500） |
+| R38 | 2026-09-24 | 后端一 91738d3 | 流量重置日志 reason 新增 plan_change |
+| R39 | 2026-09-24 | 用户（经后端一） | D-E-2 补充：折算基数为本周期全部付费单、付费天数先用、流量比只看周期配额、优惠码升降级都可用 |
+| R40 | 2026-09-24 | 后端二 ae95dfd | 共享 IP 聚类字段补齐、include_reviewed |
+| R41 | 2026-09-24 | 后端二 ae95dfd | 聚类标记正常（30 天、note ≤ 500）与批量禁用（1–200、跳过后台账号） |
+| R42 | 2026-09-24 | 后端二 ae95dfd | 工单快捷回复四接口已实现 |
+| R43 | 2026-09-24 | 后端二 ae95dfd | 文章反馈已实现，可见性参数须与读正文一致；后台统计接口未定 |
+| R44 | 2026-09-24 | 后端二 ae95dfd | 审计 q 搜索、source_ip / resource_label / auth_context，CSV 导出（BOM、5 万行、防公式） |
+| R45 | 2026-09-24 | 后端二 ae95dfd | webhook 投递与测试投递返回 duration_ms（可 null） |
+| R46 | 2026-09-24 | 后端二 ae95dfd | 节点 country_code、服务端令牌签发记录、GET v1/nodes/{id}/identity |
