@@ -365,7 +365,7 @@ GRANT INSERT (
   tenant_id, order_no, user_id, kind, status, currency, subtotal_amount,
   discount_amount, tax_amount, total_amount, balance_applied, payable_amount,
   expires_at, coupon_id, subscription_id, idempotency_key_id,
-  manual_reason, created_by
+  manual_reason, created_by, proration_credit_amount
 ) ON orders TO aegis_app;
 DO $$
 BEGIN
@@ -380,7 +380,7 @@ GRANT INSERT (
   tenant_id, order_id, product_id, price_id, plan_id, plan_version_id,
   snapshot_product_name, snapshot_plan_name, snapshot_plan_version,
   snapshot_interval, snapshot_interval_count, snapshot_entitlements,
-  snapshot_quotas, quantity, unit_amount, line_amount, currency
+  snapshot_quotas, quantity, unit_amount, line_amount, currency, traffic_pack_id
 ) ON order_items TO aegis_app;
 GRANT INSERT (
   tenant_id, order_id, provider_id, currency, amount, status, provider_ref,

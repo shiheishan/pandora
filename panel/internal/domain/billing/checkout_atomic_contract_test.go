@@ -118,8 +118,8 @@ func TestSettlementReservationAndLockOrderSourceContract(t *testing.T) {
 	ordered := []string{
 		"INSERT INTO payment_events",
 		"FROM orders WHERE tenant_id=$1",
-		"renewal order is missing its exact idempotency linkage",
-		"lockRenewalSubscriptionForSettlement(",
+		"subscription-bound order is missing its exact idempotency linkage",
+		"lockOrderSubscriptionForSettlement(",
 		"ORDER BY id FOR UPDATE",
 		"lockOrderReservationGraph(",
 		"prepareAndLockLedgerAccounts(",
@@ -129,6 +129,7 @@ func TestSettlementReservationAndLockOrderSourceContract(t *testing.T) {
 		"AND status IN ('pending_payment','processing')",
 		"s.fulfillRenewalLocked(",
 		"s.fulfillOrder(",
+		"s.fulfillPlanChangeLocked(",
 		"audit.Write(",
 	}
 	last := -1
@@ -181,10 +182,11 @@ func TestReservationCaptureSourceContract(t *testing.T) {
 	}
 	s := string(body)
 	for _, needle := range []string{
-		`in.Kind != "new" && in.Kind != "renewal" && in.Kind != "topup" && in.Kind != "addon"`,
+		`case "new", "renewal", "topup", "addon", "upgrade":`,
+		`only plan change orders carry a proration credit`,
 		`topup reservation graph must contain only its parent`,
 		`new-order stock reservation shape is incomplete or inconsistent`,
-		`renewal and addon reservation graphs cannot contain stock or purchase-limit reservations`,
+		`renewal, addon and plan change reservation graphs cannot contain stock or purchase-limit reservations`,
 		`(in.Kind == "addon") != (items[0].planID == "" && items[0].trafficPack)`,
 		`items[0].lineAmount != items[0].unitAmount*int64(items[0].quantity)`,
 		`limited plan is missing its exact purchase-limit reservation`,
@@ -251,7 +253,7 @@ func TestEveryPaidOrderKindReachesFulfilled(t *testing.T) {
 	}
 	sw := s[start : start+end]
 
-	for _, kind := range []string{`case "topup":`, `case "renewal":`, `case "new":`, `case "addon":`} {
+	for _, kind := range []string{`case "topup":`, `case "renewal":`, `case "new":`, `case "addon":`, `case "upgrade":`} {
 		if !strings.Contains(sw, kind) {
 			t.Fatalf("paid-order switch is missing %s", kind)
 		}
@@ -268,7 +270,7 @@ func TestEveryPaidOrderKindReachesFulfilled(t *testing.T) {
 			"callback cannot re-fulfil an order that moved on")
 	}
 
-	for _, branch := range []string{`case "renewal":`, `case "new":`, `case "addon":`} {
+	for _, branch := range []string{`case "renewal":`, `case "new":`, `case "addon":`, `case "upgrade":`} {
 		seg := sw[strings.Index(sw, branch):]
 		if next := strings.Index(seg[len(branch):], `case "`); next >= 0 {
 			seg = seg[:len(branch)+next]

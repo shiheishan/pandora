@@ -73,7 +73,7 @@ func (s *Service) ListTrafficResets(ctx context.Context, tenantID string,
 		in.Offset = 0
 	}
 	switch in.Reason {
-	case "", "renewal", "cycle_roll", "manual", "gift_card":
+	case "", "renewal", "cycle_roll", "manual", "gift_card", "plan_change":
 	default:
 		return nil, 0, httpx.New(httpx.CodeBadRequest, "不支持的重置原因")
 	}
