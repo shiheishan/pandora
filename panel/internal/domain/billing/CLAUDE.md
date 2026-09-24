@@ -18,7 +18,7 @@ topup.go: 自助充值单（kind=topup，结算即履约）与管理员调账
 payments.go: 发起支付取收银台、渠道回调翻译成平台事件，确认到账后交回 HandlePaymentWebhook
 unexpected_payment.go: 已释放或已付清订单又来的钱，隔离进挂账（late_payment_suspense）
 late_payment.go: 挂账的查看与转入余额，供后台消费
-manual_order.go: 管理员人工单与 mark-paid，复用下单与回调主链路
+manual_order.go: 管理员人工单与 mark-paid，复用下单与回调主链路；人工单结算方式 grant（赠送当场履约，缺省）/ pending（建待支付单交给用户付，仍记开单人），offline 与 balance 暂不接受
 my_orders.go: 门户订单读模型：myOrderSelectSQL 是列表与详情共用的行形状（首项周期与商品名快照），列表带筛选段计数 counts，详情带优惠码、订阅到期与支付渠道名；ParseOrderStatuses 是门户与后台订单列表共用的状态白名单（逗号多值、精确匹配、未知回 400）
 coupon.go: 优惠券校验 applyCoupon、核销 redeemCoupon 与试算（套餐 PreviewForPrice、流量包 PreviewForTrafficPack 共用 previewCoupon 外壳，响应带券面）
 commission.go: 分销佣金计提、解冻、提现申请与打款记账；计佣范围 commission.scope（first_order 只给被推荐人第一笔计佣订单返佣，缺省 every_order），ValidCommissionScope 供后台校验
@@ -26,7 +26,7 @@ commission_available.go: 「可用佣金」唯一口径（D-F-1），提现与�
 commission_transfer.go: 佣金转入余额，与提现同一把科目锁；ListMyCommissionTransfers 列本人转出（门户佣金记录）
 giftgrant.go: 礼品卡的发放侧（余额、流量包余额、延期、重置、开套餐）
 ledger.go: 科目类型与余额方向、EnsureAccount、Post 记账与 Balance
-*_test.go: 源码契约测试（锁序、kind 分支完整）、纯函数单元测试与 PG18 集成测试（*_pg18_test.go，由 deploy/run-pg18-gates.sh 的 billing / order_release / traffic_pack / plan_change 等域驱动；commission_ledger_pg18_test.go 与 commission_scope_pg18_test.go 是挂在 TestOrderReleasePG18 上的子用例）
+*_test.go: 源码契约测试（锁序、kind 分支完整）、纯函数单元测试与 PG18 集成测试（*_pg18_test.go，由 deploy/run-pg18-gates.sh 的 billing / order_release / traffic_pack / plan_change 等域驱动；commission_ledger_pg18_test.go、commission_scope_pg18_test.go 与 manual_order_pg18_test.go 是挂在 TestOrderReleasePG18 上的子用例）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

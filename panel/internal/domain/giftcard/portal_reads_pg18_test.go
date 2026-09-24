@@ -45,8 +45,8 @@ func TestGiftCardReadsPG18(t *testing.T) {
 		($1, $3, '五元卡', 'general', '{"balance":500}'::jsonb),
 		($2, $3, '专业版季卡', 'plan', jsonb_build_object('plan_id', $4::text, 'price_id', $5::text))`,
 		generalT, planT, tenantID, planID, priceID)
-	must(`INSERT INTO gift_card_codes (id, tenant_id, template_id, code, status) VALUES
-		($1, $2, $3, 'GCREADSUSED0001', 'used')`, usedCode, tenantID, generalT)
+	must(`INSERT INTO gift_card_codes (id, tenant_id, template_id, code, status, used_by, used_at) VALUES
+		($1, $2, $3, 'GCREADSUSED0001', 'used', $4, now())`, usedCode, tenantID, generalT, userID)
 	must(`INSERT INTO gift_card_codes (tenant_id, template_id, code, status) VALUES
 		($1, $2, 'GCREADSOPEN0002', 'unused'),
 		($1, $2, 'GCREADSDEAD0003', 'disabled'),

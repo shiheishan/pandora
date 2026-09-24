@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/billing 的 CreateManualOrder / MarkOrderPaid，依赖 middleware 的幂等声明与 platform/httpx、chi 的路径参数
+// [OUTPUT]: 对包内提供 createManualOrder、markOrderPaid 两个处理器
+// [POS]: api/admin 后台-05 人工开单（settlement: grant | pending）与标记线下已收款的 HTTP 外壳；人工单回放业务层预写的 201 响应，路由在 router.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -12,13 +17,14 @@ import (
 )
 
 type manualOrderReq struct {
-	UserID  string `json:"user_id"`
-	PlanID  string `json:"plan_id"`
-	PriceID string `json:"price_id"`
-	Reason  string `json:"reason"`
+	UserID     string `json:"user_id"`
+	PlanID     string `json:"plan_id"`
+	PriceID    string `json:"price_id"`
+	Reason     string `json:"reason"`
+	Settlement string `json:"settlement"`
 }
 
-// createManualOrder 给用户直接开一张已履约的订单（赠送 / 补偿 / 线下成交）。
+// createManualOrder 替用户开单：赠送（缺省，当场履约）或待用户支付。
 func (h *handlers) createManualOrder(w http.ResponseWriter, r *http.Request) {
 	var req manualOrderReq
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -35,7 +41,7 @@ func (h *handlers) createManualOrder(w http.ResponseWriter, r *http.Request) {
 		httpx.TenantIDFrom(r.Context()), billing.CreateManualOrderInput{
 			UserID: req.UserID, PlanID: req.PlanID, PriceID: req.PriceID,
 			Reason: req.Reason, ActorID: principal.UserID,
-			Claim: claim,
+			Settlement: req.Settlement, Claim: claim,
 		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)

@@ -74,6 +74,9 @@ type CreateOrderInput struct {
 
 	// --- 以下仅供管理端人工单（XBD-015）使用，用户端一律留空 ---
 	//
+	// ManualActor / ManualReason 标出「这是管理员开的单」；ManualGrant 另外
+	// 决定是否全额减免当场履约。只给前两者就是一张交给用户去付的待支付单。
+	//
 	// 人工单走的是和普通下单完全相同的这条路：同样占库存、同样受限购约束、
 	// 同样建预留图、同样产生订单项快照。区别只有两点 —— 全额减免因而
 	// payable=0（于是复用既有的零元单捕获直接履约），以及 kind='manual'
@@ -127,7 +130,8 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 	// 普通下单两者相同；人工单是管理员替用户开的，发起人是管理员 ——
 	// 拿目标用户去校验会一律报「actor 不匹配」。
 	claimActor := in.UserID
-	if in.ManualGrant {
+	if in.ManualActor != "" {
+		// 人工单（赠送或待用户支付）都由管理员发起
 		claimActor = in.ManualActor
 	}
 	if err := middleware.ValidateIdempotencyClaim(

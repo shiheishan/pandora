@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 checkout.go 的 CreateOrder（人工单复用下单主路径）与 payments 的 HandlePaymentWebhook（线下收款合成一笔 offline 渠道回调），依赖 middleware 幂等声明、platform/audit、platform/db、platform/httpx
+// [OUTPUT]: 对外提供 CreateManualOrder、CreateManualOrderInput、ManualSettlement*、MarkOrderPaid、MarkOrderPaidInput、OfflineProviderCode
+// [POS]: billing 的管理员订单动作：人工单（赠送当场履约，或建待支付单交给用户付）与标记线下已收款；两者都不另起炉灶，履约与记账与用户自己支付完全一致
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -32,13 +37,23 @@ import (
 // 只有管理员标记已支付时才会用到。
 const OfflineProviderCode = "offline"
 
+// 人工单的结算方式。
+const (
+	ManualSettlementGrant   = "grant"   // 赠送：全额减免、当场履约（缺省）
+	ManualSettlementPending = "pending" // 待用户支付：建一张待支付单交给用户去付
+)
+
 type CreateManualOrderInput struct {
 	UserID  string
 	PlanID  string
 	PriceID string
 	Reason  string
 	ActorID string
-	Claim   middleware.IdempotencyClaim
+	// Settlement 为空按 grant。「线下已收款」（offline）与「从余额扣除」
+	// （balance，D-C-3 未决）暂不接受：前者会让一次入账绕开标记已支付的
+	// 近期重认证，要等人工单路由也挂上重认证再开。
+	Settlement string
+	Claim      middleware.IdempotencyClaim
 }
 
 func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
@@ -59,10 +74,21 @@ func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
 		return nil, httpx.Invalid(map[string]string{
 			"reason": "请写清开单原因，5 到 500 个字。这条会进审计，是日后对账的唯一依据"})
 	}
+	switch in.Settlement {
+	case "":
+		in.Settlement = ManualSettlementGrant
+	case ManualSettlementGrant, ManualSettlementPending:
+	case "offline", "balance":
+		return nil, httpx.Invalid(map[string]string{
+			"settlement": "暂不支持这种结算方式；线下已收款请先建待支付单，再在订单详情里标记已支付"})
+	default:
+		return nil, httpx.Invalid(map[string]string{"settlement": "结算方式只能是 grant 或 pending"})
+	}
 
 	out, err := s.CreateOrder(ctx, tenantID, CreateOrderInput{
 		UserID: in.UserID, PlanID: in.PlanID, PriceID: in.PriceID, Claim: in.Claim,
-		ManualGrant: true, ManualReason: in.Reason, ManualActor: in.ActorID,
+		ManualGrant:  in.Settlement == ManualSettlementGrant,
+		ManualReason: in.Reason, ManualActor: in.ActorID,
 	})
 	if err != nil {
 		return nil, err
@@ -79,7 +105,7 @@ func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
 				ResourceID: &out.OrderID,
 				AfterDigest: map[string]any{
 					"order_no": out.OrderNo, "user_id": in.UserID, "plan_id": in.PlanID,
-					"reason": in.Reason, "status": out.Status,
+					"reason": in.Reason, "status": out.Status, "settlement": in.Settlement,
 					"subtotal": out.TotalAmount + out.DiscountAmount,
 					"granted":  out.DiscountAmount,
 				},
@@ -89,7 +115,7 @@ func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
 		// 订单已经建好并履约了，这里只能如实上报。
 		// 吞掉它等于留下一笔没人负责的赠送记录。
 		return out, httpx.New(httpx.CodeInternal,
-			"人工单 "+out.OrderNo+" 已创建并履约，但审计写入失败，请立即联系运维核对："+err.Error())
+			"人工单 "+out.OrderNo+" 已创建，但审计写入失败，请立即联系运维核对："+err.Error())
 	}
 	return out, nil
 }

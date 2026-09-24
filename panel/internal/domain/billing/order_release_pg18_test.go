@@ -844,6 +844,9 @@ func TestOrderReleasePG18(t *testing.T) {
 	t.Run("commission scope first_order accrues only the first order", func(t *testing.T) {
 		orderReleasePG18CommissionScopeCases(t, ctx, admin, service, fx, newOrder, webhook)
 	})
+	t.Run("manual orders settle as a grant or a pending order", func(t *testing.T) {
+		orderReleasePG18ManualOrderCases(t, ctx, admin, service, fx)
+	})
 	// 必须最后：它用超级用户塞了一条绕过触发器的美元挂账探针。
 	t.Run("late payment pending amounts stay per currency", func(t *testing.T) {
 		orderReleasePG18LatePaymentCurrencyCases(t, ctx, admin, service, fx)

@@ -25,8 +25,10 @@ func orderReleasePG18CommissionScopeCases(t *testing.T, ctx context.Context, adm
 			t.Fatalf("commission scope fixture: %v\nSQL: %s", err, query)
 		}
 	}
-	// 用完恢复兜底：后面的子测试按每笔计佣写的。
-	defer must(`DELETE FROM system_settings WHERE tenant_id=$1 AND key='commission.scope'`, fx.tenant)
+	// 用完恢复成每笔计佣：后面的子测试按它写的。system_settings 的改动记进
+	// 追加写的 system_setting_revisions，删不掉，只能改回去。
+	defer must(`UPDATE system_settings SET value='"every_order"'::jsonb
+		WHERE tenant_id=$1 AND key='commission.scope'`, fx.tenant)
 
 	seq := 0
 	pay := func(t *testing.T, userID string) (string, bool) {
