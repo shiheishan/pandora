@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 catalog.go 的 CreatePlan/CreatePlanVersion/UpdatePlanVersion/CreatePlanPrice/PublishPlanVersion/ArchivePlan，依赖 platform/db、platform/httpx
+// [OUTPUT]: 对外提供 CreatePlanComplete、CreatePlanCompleteInput/Output、PlanPriceInput；包内提供 bindPoolsTx 与 bytesPerGB
+// [POS]: adminops 套餐向导的「一次建成」：逐步调用目录用例、失败时归档已建套餐；plan_wizard_update.go 是它的「一次改完」兄弟，并复用 bindPoolsTx
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
@@ -271,6 +276,17 @@ func ptrInt64(v int64) *int64 { return &v }
 func (s *Service) bindPoolsToFreshVersion(ctx context.Context,
 	tenantID, versionID string, poolIDs []string) error {
 
+	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		_, err := bindPoolsTx(ctx, tx, tenantID, versionID, poolIDs)
+		return err
+	})
+}
+
+// bindPoolsTx 在调用方的事务里绑定，返回实际绑定的分组数（去重、去空之后）。
+// 绑定了至少一个分组时版本行推进一格，发布时的乐观锁要跟上。
+func bindPoolsTx(ctx context.Context, tx pgx.Tx,
+	tenantID, versionID string, poolIDs []string) (int, error) {
+
 	seen := map[string]bool{}
 	unique := make([]string, 0, len(poolIDs))
 	for _, id := range poolIDs {
@@ -281,33 +297,33 @@ func (s *Service) bindPoolsToFreshVersion(ctx context.Context,
 		unique = append(unique, id)
 	}
 	if len(unique) == 0 {
-		return nil
+		return 0, nil
 	}
 
-	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		for _, pid := range unique {
-			var ok string
-			err := tx.QueryRow(ctx, `
-				SELECT id::text FROM node_pools
-				 WHERE tenant_id=$1 AND id=$2::uuid AND status <> 'disabled'`,
-				tenantID, pid).Scan(&ok)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.Invalid(map[string]string{
-					"pool_ids": "包含不存在或已禁用的节点分组",
-				})
-			}
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO plan_node_pools (tenant_id, plan_version_id, pool_id)
-				VALUES ($1, $2::uuid, $3::uuid)`, tenantID, versionID, pid); err != nil {
-				return err
-			}
+	for _, pid := range unique {
+		var ok string
+		err := tx.QueryRow(ctx, `
+			SELECT id::text FROM node_pools
+			 WHERE tenant_id=$1 AND id=$2::uuid AND status <> 'disabled'`,
+			tenantID, pid).Scan(&ok)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, httpx.Invalid(map[string]string{
+				"pool_ids": "包含不存在或已禁用的节点分组",
+			})
 		}
-		_, err := tx.Exec(ctx, `
-			UPDATE plan_versions SET row_version = row_version + 1
-			 WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, versionID)
-		return err
-	})
+		if err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO plan_node_pools (tenant_id, plan_version_id, pool_id)
+			VALUES ($1, $2::uuid, $3::uuid)`, tenantID, versionID, pid); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE plan_versions SET row_version = row_version + 1
+		 WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, versionID); err != nil {
+		return 0, err
+	}
+	return len(unique), nil
 }

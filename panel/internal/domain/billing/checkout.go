@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 reservations.go 的资源预留与科目锁、ledger.go 的记账、commission.go 的计提，依赖 platform/db、platform/httpx、middleware 的幂等声明
+// [OUTPUT]: 对外提供 Service、CreateOrder、HandlePaymentWebhook 及其输入输出类型、CheckoutIdempotencyScope
+// [POS]: billing 的结账与支付回调主链路；mark-paid（manual_order.go）与补偿查询（payments.go）都复用 HandlePaymentWebhook 与 PaymentWebhookOutput
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -762,13 +767,16 @@ type PaymentWebhookInput struct {
 // 这段注释是补写的：原先没有任何地方写明 AlreadyHandled 时 PaymentID 该不该
 // 有值，于是 unexpected_payment.go 那条路径返回了它，而 settlement 测试断言
 // 它必须为空，两边各自成理，谁也不知道对方的约定。
+//
+// json tag 是后台 POST v1/orders/{id}/mark-paid 的响应形状（契约 snake_case）。
+// SignatureFailed 只给回调入口用来决定是否回渠道 401，不对外暴露。
 type PaymentWebhookOutput struct {
-	Processed      bool
-	AlreadyHandled bool
-	SignatureFailed bool
-	PaymentID      string
-	SubscriptionID string
-	LedgerTxnID    string
+	Processed       bool   `json:"processed"`
+	AlreadyHandled  bool   `json:"already_handled"`
+	SignatureFailed bool   `json:"-"`
+	PaymentID       string `json:"payment_id"`
+	SubscriptionID  string `json:"subscription_id"`
+	LedgerTxnID     string `json:"ledger_txn_id"`
 }
 
 // HandlePaymentWebhook 处理支付成功回调。

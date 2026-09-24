@@ -432,7 +432,9 @@ func TestOrderReleasePG18(t *testing.T) {
 		if err != nil || out == nil || !out.Processed || out.AlreadyHandled {
 			t.Fatalf("topup capture output=%#v err=%v", out, err)
 		}
-		orderReleasePG18AssertOrderStatus(t, ctx, pool, fx.tenant, orderID, "paid")
+		// 充值单结算即履约（checkout.go 的 topup 分支），所以停在 fulfilled；
+		// 之后到达的第二笔捕获对 paid 与 fulfilled 同样按 excess_capture 隔离。
+		orderReleasePG18AssertOrderStatus(t, ctx, pool, fx.tenant, orderID, "fulfilled")
 		late := webhook(orderID, "paid-late-event-1-"+fx.suffix,
 			"paid-late-payment-"+fx.suffix, 600)
 		lateOut, err := service.HandlePaymentWebhook(ctx, fx.tenant, late)
@@ -456,7 +458,7 @@ func TestOrderReleasePG18(t *testing.T) {
 		orderReleasePG18AssertQuarantine(t, ctx, pool, fx.tenant, orderID,
 			late.ProviderPaymentID, fx.providerCode, "excess_capture", 600, 7, 1, 1)
 		orderReleasePG18AssertPaymentShape(t, ctx, pool, fx.tenant, orderID, 2, 1)
-		orderReleasePG18AssertOrderStatus(t, ctx, pool, fx.tenant, orderID, "paid")
+		orderReleasePG18AssertOrderStatus(t, ctx, pool, fx.tenant, orderID, "fulfilled")
 		t.Log("marker=order_release_pg18_paid_distinct_capture_quarantine_exactly_once_ok")
 	})
 
@@ -833,6 +835,15 @@ func TestOrderReleasePG18(t *testing.T) {
 			cancelledOrder); err == nil || out != nil {
 			t.Fatalf("cross-tenant cancellation output=%#v err=%v", out, err)
 		}
+	})
+
+	// D-F-1 与缺陷 13，见 commission_ledger_pg18_test.go。
+	t.Run("commission availability is one ledger rule under one lock", func(t *testing.T) {
+		orderReleasePG18CommissionLedgerCases(t, ctx, pool, service, fx, newOrder, webhook)
+	})
+	// 必须最后：它用超级用户塞了一条绕过触发器的美元挂账探针。
+	t.Run("late payment pending amounts stay per currency", func(t *testing.T) {
+		orderReleasePG18LatePaymentCurrencyCases(t, ctx, admin, service, fx)
 	})
 }
 

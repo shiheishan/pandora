@@ -285,11 +285,22 @@ func NewRouter(d Deps) http.Handler {
 			r.With(middleware.RequirePermission("marketing.giftcard.read", d.Log)).
 				Get("/gift-cards/codes", h.listGiftCodes)
 			r.With(middleware.RequirePermission("marketing.giftcard.read", d.Log)).
-				Get("/gift-cards/codes/export", h.exportGiftCodes)
+				Get("/gift-cards/batches", h.listGiftBatches)
+			// 明文卡码的唯一出口：每批只能导出一次，写权限 + 近期重认证 + 幂等键
+			// （同一个键的重试原样拿回同一份 CSV）。旧的 GET codes/export 可以
+			// 被只读权限无限次导出，已下线。
+			r.With(
+				middleware.RequirePermission("marketing.giftcard.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
+				middleware.Idempotency(d.Pool, "giftcard_batch_export", d.Log),
+			).Post("/gift-cards/batches/{id}/export", h.exportGiftBatch)
 			r.With(middleware.RequirePermission("marketing.giftcard.read", d.Log)).
 				Get("/gift-cards/usages", h.listGiftUsages)
-			r.With(middleware.RequirePermission("marketing.giftcard.write", d.Log)).
-				Post("/gift-cards", h.saveGiftTemplate)
+			// 改模板奖励会同时改变全部未兑换码的价值，和生码同级要求重认证。
+			r.With(
+				middleware.RequirePermission("marketing.giftcard.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
+			).Post("/gift-cards", h.saveGiftTemplate)
 			r.With(
 				middleware.RequirePermission("marketing.giftcard.write", d.Log),
 				middleware.RequireRecentReauth(d.Log),
@@ -369,18 +380,19 @@ func NewRouter(d Deps) http.Handler {
 				middleware.RequireRecentReauth(d.Log),
 				middleware.Idempotency(d.Pool, "catalog_plan_create", d.Log),
 			).Post("/plans", h.createPlan)
+			// 向导一次就能建价格、绑线路、发布版本（D-C-2），门槛与单独的
+			// 发布 / 改价接口相同：catalog.publish + 近期重认证。
 			r.With(
-				middleware.RequirePermission("catalog.write", d.Log),
+				middleware.RequirePermission("catalog.publish", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 				// 独立的幂等域：和 /plans 共用一个 scope 的话，两个接口的
 				// 幂等键会互相撞 —— 同一个 key 在这边建过整套餐，在那边
 				// 就会被当成重放。
 				middleware.Idempotency(d.Pool, "catalog_plan_create_complete", d.Log),
 			).Post("/plans/complete", h.createPlanComplete)
 			r.With(
-				middleware.RequirePermission("catalog.write", d.Log),
-				// 独立的幂等域：和 /plans 共用一个 scope 的话，两个接口的
-				// 幂等键会互相撞 —— 同一个 key 在这边建过整套餐，在那边
-				// 就会被当成重放。
+				middleware.RequirePermission("catalog.publish", d.Log),
+				middleware.RequireRecentReauth(d.Log),
 				middleware.Idempotency(d.Pool, "catalog_plan_update_complete", d.Log),
 			).Put("/plans/{id}/complete", h.updatePlanComplete)
 			registerCatalogPlanUpdate(r, d, h.updatePlan, middleware.Idempotency)
@@ -440,10 +452,10 @@ func NewRouter(d Deps) http.Handler {
 				Get("/ip-clusters", h.ipClusters)
 
 			// 优惠券
-			r.With(middleware.RequirePermission("marketing.coupon.write", d.Log)).
+			r.With(middleware.RequirePermission("marketing.coupon.read", d.Log)).
 				Get("/coupons", h.listCoupons)
 			r.With(
-				middleware.RequirePermission("marketing.coupon.write", d.Log),
+				middleware.RequirePermission("marketing.coupon.read", d.Log),
 				middleware.RequirePermission("billing.order.read", d.Log),
 			).
 				Get("/coupons/{id}/redemptions", h.couponRedemptions)
@@ -452,9 +464,11 @@ func NewRouter(d Deps) http.Handler {
 				middleware.RequireRecentReauth(d.Log),
 			).
 				Post("/coupons", h.createCoupon)
+			// 一次最多上千张：网络重试不能变成两批券。
 			r.With(
 				middleware.RequirePermission("marketing.coupon.write", d.Log),
 				middleware.RequireRecentReauth(d.Log),
+				middleware.Idempotency(d.Pool, "coupon_batch_generate", d.Log),
 			).
 				Post("/coupons/batch", h.generateCoupons)
 			r.With(
@@ -463,22 +477,26 @@ func NewRouter(d Deps) http.Handler {
 			).
 				Post("/coupons/{id}/status", h.setCouponStatus)
 
-			// 分销佣金
-			r.With(middleware.RequirePermission("billing.order.read", d.Log)).
+			// 分销佣金：权限码用营销域自己的 marketing.commission.* /
+			// marketing.withdrawal.approve，不再借用订单与支付渠道的权限。
+			r.With(middleware.RequirePermission("marketing.commission.read", d.Log)).
 				Get("/commission/overview", h.commissionOverview)
-			r.With(middleware.RequirePermission("billing.order.read", d.Log)).
+			r.With(middleware.RequirePermission("marketing.commission.read", d.Log)).
 				Get("/withdrawals", h.listWithdrawals)
 			r.With(
-				middleware.RequirePermission("billing.provider.write", d.Log),
+				middleware.RequirePermission("marketing.withdrawal.approve", d.Log),
 				middleware.RequireRecentReauth(d.Log),
 			).Post("/withdrawals/{id}/review", h.reviewWithdrawal)
 			r.With(
-				middleware.RequirePermission("billing.provider.write", d.Log),
+				middleware.RequirePermission("marketing.withdrawal.approve", d.Log),
 				middleware.RequireRecentReauth(d.Log),
 				middleware.Idempotency(d.Pool, "commission_withdrawal_mark_paid", d.Log),
 			).Post("/withdrawals/{id}/paid", h.markWithdrawalPaid)
-			r.With(middleware.RequirePermission("billing.provider.write", d.Log)).
-				Post("/commission/config", h.setCommissionConfig)
+			// 改返佣比例直接改变之后每一笔订单的支出，要重认证。
+			r.With(
+				middleware.RequirePermission("marketing.commission.write", d.Log),
+				middleware.RequireRecentReauth(d.Log),
+			).Post("/commission/config", h.setCommissionConfig)
 
 			// 邮件设置
 			r.With(middleware.RequirePermission("security.audit.read", d.Log)).

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/billing 的 ListLatePayments 与 ApplyLatePaymentToBalance，依赖 platform/httpx
+// [OUTPUT]: 对包内提供 listLatePayments、applyLatePayment 两个处理器
+// [POS]: api/admin 的挂账 tab：列表按币种返回待处理合计（pending_amounts，旧 pending_amount 过渡保留一版），转入余额走 router.go 的重认证与幂等链
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -24,8 +29,19 @@ func (h *handlers) listLatePayments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.OK(w, map[string]any{
-		"cases": cases, "total": total, "pending_amount": pending,
+		"cases": cases, "total": total, "pending_amounts": pending,
+		"pending_amount": legacyPendingAmount(pending),
 	})
+}
+
+// legacyPendingAmount 是旧字段 pending_amount 的原值：各币种直接相加，没有单位。
+// 契约要求保留一个版本供过渡，新前端只读 pending_amounts；下个版本删掉。
+func legacyPendingAmount(byCurrency map[string]int64) int64 {
+	var sum int64
+	for _, amount := range byCurrency {
+		sum += amount
+	}
+	return sum
 }
 
 type applyLatePaymentReq struct {
