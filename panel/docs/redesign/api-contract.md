@@ -1930,6 +1930,8 @@
 映射：待支付条文案「15 分钟内未支付将自动取消」→ 用订单 `expires_at` 显示倒计时（后端 30 分钟）；「买流量包 →」跳选购页流量包 tab；「续费」「立即续费」→ 结账页续费模式（`POST v1/me/subscriptions/{id}/renew`）。多条订阅时概览展示第一条 status∈{active,trialing,grace,past_due} 的订阅（按 current_period_end 最晚）。
 
 #### GET v1/me/subscriptions/{id}/usage — 本期按日用量（柱状图）
+- **修订 R47（2026-09-24，后端一 9539b4f）**：已实现（迁移 00072，`api/public/subscription_usage.go`）。`days` 不是 1–93 的整数回 422 `fields.days`；不是本人的订阅、不存在、ID 非法一律 404。缺省窗口：从本期流量周期起点那天到今天，最多 93 天；周期起点依次取当前生效的流量配额行、订阅的 `current_period_start`，都没有则看最近 30 天，此时 `period_start` 为窗口第一天在所用时区的零点。`days[]` 对没数据的日子补 0；`avg_daily_bytes` = 窗口总量 ÷ 窗口天数（含今天，整除）。
+- **修订 R48（2026-09-24，后端一 9539b4f）**：切日时区依次取用户 `timezone`、租户 `timezone`、UTC（只有名字无效才往下退），写入（上报）与读取共用同一口径，响应的 `timezone` 即实际所用时区。注意 `users.timezone` 非空且默认 `'UTC'`，所以没设过时区的用户按 UTC 切日（是否把 `'UTC'` 视同未设、改用租户时区待用户定）。用户改时区后，已记下的历史行保留原切日。记的是乘节点倍率后的字节，超出套餐改扣流量包的部分也计入；10 秒内的重复上报（既有去重）不计。
 - 状态：待补·后端
 - 权限：登录用户（订阅须归属本人，否则 404）｜reauth：否｜幂等：否
 - 请求：query `days?: int(1–93，默认覆盖当前流量周期)`
@@ -3059,3 +3061,5 @@
 | R44 | 2026-09-24 | 后端二 ae95dfd | 审计 q 搜索、source_ip / resource_label / auth_context，CSV 导出（BOM、5 万行、防公式） |
 | R45 | 2026-09-24 | 后端二 ae95dfd | webhook 投递与测试投递返回 duration_ms（可 null） |
 | R46 | 2026-09-24 | 后端二 ae95dfd | 节点 country_code、服务端令牌签发记录、GET v1/nodes/{id}/identity |
+| R47 | 2026-09-24 | 后端一 9539b4f | 按日用量接口已实现：days 422、缺省窗口、补 0、日均口径 |
+| R48 | 2026-09-24 | 后端一 9539b4f | 按日用量的切日时区口径（用户 → 租户 → UTC），UTC 默认值问题待定 |
