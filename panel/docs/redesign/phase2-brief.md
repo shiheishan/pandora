@@ -85,3 +85,17 @@ pandora 面板按 Claude Design 设计稿重做管理后台（admin）和用户�
 - 本机没有 Docker，依赖 PostgreSQL 的测试会跳过，这是预期；Go 全量测试用 `go test -p 1 -count=1 -timeout 10m ./...`。
 - 启用 GEB 文档协议（见根 CLAUDE.md）：新目录建 L2，TS/TSX 文件带 L3 头。
 - 每步报告：提交号、跑了哪些检查及结果（原样贴失败输出）、没跑什么、给协调会话的待办（路由、全局文档、待决问题）。
+
+## 8. 进度与补充事项（协调会话维护，接力的新会话从这里接上）
+
+**进度**（均已合入 `feat/panel-redesign`）：① 脚手架 `54cec13`；② 接口契约 `ccb28a8`；③ 设计规范 `51fd36e`；④ 组件库 `c5ab1f7`（`src/ui/` 16 类组件，门户后台共用、差异只来自角色令牌；弹窗用原生 `<dialog>`，Toast 用 popover）。**下一步 ⑤ 底层，然后 ⑥ 外框，⑥ 做完第 2 阶段结束。**
+
+**做事前先 `git merge feat/panel-redesign`**，主线上有后端会话的最新改动和契约修订。
+
+补充事项（执行过程中陆续定下的，与上文冲突时以这里为准）：
+- **推送**：用户已授权 `feat/panel-redesign` 开头的分支推到 origin 跑 CI。只推自己的分支，不推 main、不开 PR、不强推；每步做完推送一次，报告附两个 workflow（Pandora NativeCore、Panel PostgreSQL 18 gates）的结果。
+- **恢复占位页**：`make frontend-embed` 验证完要跑 `git checkout -- web && git clean -fdX web`；只 checkout 删不掉被忽略的 `web/*/assets/`。
+- **契约以修订为准**：`api-contract.md` 第 5.A 节（8 条已决）和第 9 节修订记录（R1 起）优先于原文，条目里「修订 Rn」开头的行优先于该条目。第 ⑤ 步写 `api.ts` 前重读第 1 节和第 9 节：reauth 路由已增至 45 条；缺权限回 404；三个口令错也回 401 的接口不能触发全局登出。
+- **reauth_required**：仍由本会话在第 ⑤ 步做（httpx 登记错误码、RequireRecentReauth 改用它、补测试）；后端会话被要求不碰这两处。
+- **主题**：只有「默认 · 纸白」一个主题（5.A）。后端 `GET v1/appearance` 的 `theme.tokens` 是 `{ light: {"--bg": …}, dark: {…} }`，键就是 `src/styles/design-tokens.ts` 的 43 个名字（迁移 00075，后端有测试逐条对照）；门户按当前明暗取一组 `setProperty`，白名单外的键忽略。`--brand-hover` 取 `#a33a23`。
+- **测试库**：第 ④ 步没引入 DOM 测试库；第 ⑤ 步如确需（api 重放、SSE 重连），可以加，报告里写理由。

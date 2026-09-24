@@ -30,3 +30,14 @@
 - 每个安全修复都有反向测试：无权限 / 未 reauth / 错 audience 的请求被拒。
 - 涉及 SQL 的都有 PG18 测试并登记进 `run-pg18-gates.sh`，推送后在 CI 上通过。
 - 主题迁移的 Down 能恢复原内置主题；门户 `GET v1/appearance` 返回的 tokens 只含设计稿变量名。
+
+## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
+
+**进度**：⓪ PG18 进 CI（`547b5a6`、`e159d92`，独立 workflow `panel-pg18.yml`）、① 安全 `62f7283`、② 主题 `e05fd9e` 已验收并合入 `feat/panel-redesign`。迁移已用 00074、00075。**③ 功能缺陷进行中。**
+
+补充事项（与上文冲突时以这里为准）：
+- 每步做完：推送本分支，看两个 workflow；做事前先 `git merge feat/panel-redesign` 同步。契约改动写进报告（你的已到 R21）。
+- 第 ⑤ 步：`GET v1/dashboard/tasks` 实现时，`withdrawals_pending` 挂 `marketing.commission.read`（后端一已把分销读权限统一到这个码）。
+- `platform/httpx` 错误码与 `middleware.RequireRecentReauth` 仍归第 2 阶段第 ⑤ 步，不要碰。
+- 新建租户拿不到通知模板（所有模板都有）：暂不处理。SanitizeCSS 保留不删。
+- node_preview 的「从没心跳过的节点不下发」是有意规则，不是 bug。
