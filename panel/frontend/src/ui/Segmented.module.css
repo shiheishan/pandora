@@ -1,0 +1,50 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的令牌
+ * [OUTPUT]: 对外提供 Segmented.tsx 用到的类名
+ * [POS]: ui/Segmented 的样式：底 3px 内边距、圆角 9，选项高 30、圆角 7、13px（规范「选择」一行）
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.group {
+  display: inline-flex;
+  /* 放进纵向 flex 容器时不被拉伸成整行 */
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--surface-3);
+}
+
+.option {
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.option:hover {
+  color: var(--text);
+}
+
+.on {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  box-shadow: var(--shadow-segment);
+}
+
+.option:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.sm .option {
+  height: 24px;
+  padding: 0 10px;
+  font-size: var(--fs-caption);
+}

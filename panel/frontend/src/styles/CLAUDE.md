@@ -10,7 +10,7 @@ index.css: 全局样式唯一入口，按 字体 → 令牌 → 角色 → 基�
 fonts.css: @font-face 声明 Geist 与 Geist Mono，各两个可变字体子集（latin 常驻、latin-ext 按 unicode-range 按需），字重 400–600 共用一个文件
 fonts/: Geist / Geist Mono 的 woff2 子集（取自 @fontsource-variable/geist 与 geist-mono 5.3.0 的 latin、latin-ext normal 文件）与 OFL.txt；OFL 未声明保留字体名，子集可沿用 Geist 字族名
 tokens.css: 语义色 43 个（与设计稿模块文件 html:root 块逐字一致的 33 个 + 规范页补充的危险按钮字、Toast 圆点、分段阴影、后台侧栏 10 个），[data-theme='dark'] 覆盖同一组键；字体栈、八档字号、字距行高、八档间距、六档圆角、布局尺寸；< 640 把 --gutter 收到 16
-roles.css: [data-app='portal'|'admin'] 两组角色令牌：强调色与其上字色、输入框聚焦外圈、键盘焦点色、链接样式、正文字号行高（14/1.55 与 13/1.5）、控件三档高度（40/36/32 与 32/28/24）、控件与卡片圆角、卡片内边距
+roles.css: [data-app='portal'|'admin'] 两组角色令牌：强调色与其上字色、输入框聚焦外圈、键盘焦点色、链接样式、正文字号行高（14/1.55 与 13/1.5）、控件三档高度（40/36/32 与 32/28/24）、按钮与输入框水平内边距、弹窗按钮高度（36 与 32）、开关选中圆钮色（白与页面底色）、控件与卡片圆角、卡片内边距
 base.css: 盒模型、页面底色与正文、表单控件继承字体、链接、选区、:focus-visible 外圈、后台窄滚动条、.mono 与 .num 工具类、减弱动态效果
 design-tokens.ts: 设计稿原值的 TS 转写（COLOR_TOKENS / TYPE_SCALE / SPACE_SCALE / RADIUS_SCALE / ROLE_TOKENS）与 normalizeCssValue；tests/tokens.test.ts 用它逐值核对 CSS 文本，showcase 用它核对浏览器计算值——改令牌要两边一起改，测试会拦住只改一边
 

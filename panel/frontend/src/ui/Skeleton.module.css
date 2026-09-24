@@ -1,0 +1,32 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的令牌
+ * [OUTPUT]: 对外提供 Skeleton.tsx 用到的类名
+ * [POS]: ui/Skeleton 的样式：先透明，300ms 后显现并缓慢呼吸
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.skeleton {
+  display: block;
+  border-radius: var(--radius-tag);
+  background: var(--surface-3);
+  opacity: 0;
+  animation:
+    appear 0s linear 0.3s forwards,
+    breathe 1.4s ease-in-out 0.3s infinite;
+}
+
+@keyframes appear {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}

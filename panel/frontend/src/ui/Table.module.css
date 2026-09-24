@@ -1,0 +1,67 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Table.tsx 用到的类名
+ * [POS]: ui/Table 的样式：表头 12px --text-3、行间 1px --border、勾选行 --surface-2 底（规范「表格 · 后台」）
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: var(--fs-body-sm);
+}
+
+.pickCol {
+  width: 38px;
+}
+
+.table th,
+.table td {
+  padding: 9px 14px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.table th {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+  white-space: nowrap;
+}
+
+.table tbody tr + tr td {
+  border-top: 1px solid var(--border);
+}
+
+.table th:first-child,
+.table td:first-child {
+  padding-left: 14px;
+}
+
+.right {
+  text-align: right !important;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover,
+.picked {
+  background: var(--surface-2);
+}
+
+.emptyCell {
+  padding: 0 !important;
+}

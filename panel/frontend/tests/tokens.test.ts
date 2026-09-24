@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:fs 读取 src/styles/*.css，依赖 src/styles/design-tokens.ts 的设计稿原值
  * [OUTPUT]: 对外提供令牌契约测试
- * [POS]: tests 的样式守卫：tokens.css / roles.css 必须与设计稿逐值一致、明暗两组键相同、所有 var() 都有定义、字体只引用包内文件
+ * [POS]: tests 的样式守卫：tokens.css / roles.css 必须与设计稿逐值一致、明暗两组键相同、styles 与 ui 组件样式里所有 var() 都有定义、字体只引用包内文件
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -96,6 +96,17 @@ describe('stylesheets stay self-contained', () => {
     // CSP 是 font-src / style-src 'self'：外链字体或 @import 远程样式上线后会被浏览器拒绝
     expect(read(file)).not.toMatch(/url\(\s*['"]?(https?:)?\/\//)
     expect(read(file)).not.toMatch(/@import\s+['"]?(https?:)?\/\//)
+  })
+
+  // 组件样式可以声明自己的局部变量（如 Button 的 --h / --pad），其余必须是全局令牌
+  const uiDir = new URL('../src/ui/', import.meta.url)
+  const uiFiles = readdirSync(uiDir).filter((f) => f.endsWith('.css'))
+  it.each(uiFiles)('ui/%s only references declared custom properties', (file) => {
+    const source = readFileSync(new URL(file, uiDir), 'utf8')
+    const local = new Set([...source.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]!))
+    for (const [, name] of source.matchAll(/var\((--[\w-]+)/g)) {
+      expect(declared.has(name!) || local.has(name!), `ui/${file}: ${name}`).toBe(true)
+    }
   })
 
   it('every @font-face source is a bundled file', () => {

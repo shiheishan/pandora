@@ -17,6 +17,7 @@ eslint.config.js: flat config，JS/TS 推荐规则 + React Hooks 规则，src/ �
 src/admin/: 管理后台入口，index.html 带 pandora-app=admin 标记与 <html data-app="admin">（角色令牌据此切到墨色中性），main.tsx 引入全局样式并挂载 App.tsx；目前是空壳
 src/portal/: 用户门户入口，结构与 admin 对称，标记 pandora-app=portal 与 data-app="portal"
 src/styles/: 全局样式与设计令牌：Geist 字体、明暗两组语义色、尺度、门户/后台角色令牌、元素默认样式，以及供测试与演示页核对的设计稿原值；见 src/styles/CLAUDE.md
+src/ui/: 自研组件库（按钮、表单控件、标签、卡片、表格、标签页、分段、弹窗与底部抽屉、侧边抽屉、Toast、菜单、骨架、空状态），一套实现经角色令牌服务两个入口，弹层基于原生 <dialog> 与 popover；见 src/ui/CLAUDE.md
 src/core/: 与界面无关的底层：首帧前主题引导脚本与主题状态（第 ⑤ 步起加 api.ts、SSE、路由）；见 src/core/CLAUDE.md
 src/showcase/: 只在 dev 存在的令牌与组件演示页，浏览器内逐条核对令牌与设计稿；见 src/showcase/CLAUDE.md
 tests/entries.test.ts: 入口源文件契约——域标记正确、只有外链 module script、无内联样式；与 panel/web/app_test.go 同一组前提，前移到 npm test 暴露

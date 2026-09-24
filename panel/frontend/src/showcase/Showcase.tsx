@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 ../core/theme 的 useTheme / setTheme，依赖 ../styles/design-tokens 的设计稿原值与 normalizeCssValue，依赖 ./Showcase.module.css
+ * [INPUT]: 依赖 ../core/theme 的 useTheme / setTheme，依赖 ../styles/design-tokens 的设计稿原值与 normalizeCssValue，依赖 ../ui 的 Segmented，依赖 ./ComponentsDemo 与 ./Showcase.module.css
  * [OUTPUT]: 对外提供 Showcase 组件
- * [POS]: showcase 的页面本体：按设计规范 02 颜色、03 字体、04 尺寸的顺序铺开令牌，并在浏览器里把算出的值与设计稿逐条核对；第 ④ 步的组件演示接在后面
+ * [POS]: showcase 的页面本体：按设计规范 02 颜色、03 字体、04 尺寸的顺序铺开令牌，并在浏览器里把算出的值与设计稿逐条核对；05 角色令牌，06 组件演示（ComponentsDemo）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState, type ReactNode } from 'react'
@@ -16,6 +16,8 @@ import {
   type ColorToken,
   type TokenGroup,
 } from '../styles/design-tokens'
+import { Segmented } from '../ui'
+import { ComponentsDemo } from './ComponentsDemo'
 import css from './Showcase.module.css'
 
 type App = 'portal' | 'admin'
@@ -47,30 +49,6 @@ function verify(theme: Theme, app: App): { checked: number; mismatches: Mismatch
     .map(({ name, expected }) => ({ name, expected, actual: value(name) }))
     .filter((m) => m.actual !== m.expected)
   return { checked: expectations.length, mismatches }
-}
-
-function Segmented<T extends string>(props: {
-  label: string
-  value: T
-  options: readonly (readonly [T, string])[]
-  onChange: (value: T) => void
-}) {
-  return (
-    <div className={css.segmented} role="radiogroup" aria-label={props.label}>
-      {props.options.map(([value, text]) => (
-        <button
-          key={value}
-          type="button"
-          role="radio"
-          aria-checked={props.value === value}
-          className={props.value === value ? css.segmentOn : css.segment}
-          onClick={() => props.onChange(value)}
-        >
-          {text}
-        </button>
-      ))}
-    </div>
-  )
 }
 
 function Section(props: { no: string; title: string; children: ReactNode }) {
@@ -139,8 +117,24 @@ export function Showcase() {
         </div>
         <h1 className={css.h1}>令牌与组件演示</h1>
         <div className={css.controls}>
-          <Segmented label="主题" value={theme} onChange={setTheme} options={[['light', '浅色'], ['dark', '深色']]} />
-          <Segmented label="入口" value={app} onChange={setApp} options={[['portal', '门户'], ['admin', '后台']]} />
+          <Segmented
+            label="主题"
+            value={theme}
+            onChange={setTheme}
+            options={[
+              { value: 'light', label: '浅色' },
+              { value: 'dark', label: '深色' },
+            ]}
+          />
+          <Segmented
+            label="入口"
+            value={app}
+            onChange={setApp}
+            options={[
+              { value: 'portal', label: '门户' },
+              { value: 'admin', label: '后台' },
+            ]}
+          />
           <span className={report.mismatches.length ? css.badBadge : css.okBadge} data-testid="token-report">
             {report.mismatches.length
               ? `${report.mismatches.length} / ${report.checked} 个令牌与设计稿不一致`
@@ -300,6 +294,10 @@ export function Showcase() {
             </div>
           ))}
         </div>
+      </Section>
+
+      <Section no="06" title={`组件 · 当前入口：${app === 'portal' ? '门户' : '后台'}`}>
+        <ComponentsDemo />
       </Section>
     </div>
   )

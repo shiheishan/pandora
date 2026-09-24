@@ -1,0 +1,87 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Input / TextArea / Select 共用的输入框外观类名
+ * [POS]: ui 的输入控件外观：高度与圆角随入口（门户 40/9、后台 32/7），聚焦时边框转强调色并加 3px 外圈，错误时转危险色
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.control {
+  width: 100%;
+  height: var(--h-control);
+  padding: 0 var(--pad-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+
+.control::placeholder {
+  color: var(--text-3);
+}
+
+.control:hover:not(:disabled) {
+  border-color: var(--border-hover);
+}
+
+.control:focus,
+.control:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-halo);
+  outline: none;
+}
+
+.control:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.control[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.control[aria-invalid='true']:focus {
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.sm {
+  height: var(--h-control-sm);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* 多行 */
+.area {
+  height: auto;
+  min-height: calc(var(--h-control) * 2.4);
+  padding: 8px var(--pad-input);
+  line-height: var(--body-leading);
+  resize: vertical;
+}
+
+/* 原生 select：去掉系统箭头，用一个跟随文字色的折线代替 */
+.selectWrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.select {
+  appearance: none;
+  padding-right: calc(var(--pad-input) + 20px);
+  cursor: pointer;
+}
+
+.chevron {
+  position: absolute;
+  right: var(--pad-input);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  pointer-events: none;
+}

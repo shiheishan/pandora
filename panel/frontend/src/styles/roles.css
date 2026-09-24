@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 tokens.css 的语义色与尺度令牌，依赖入口 index.html 上的 <html data-app="admin|portal">
- * [OUTPUT]: 对外提供角色令牌：--accent / --on-accent / --accent-hover / --focus-ring / --focus-halo / --link*、正文字号行高、控件三档高度、控件与卡片圆角
+ * [OUTPUT]: 对外提供角色令牌：--accent / --on-accent / --accent-hover / --focus-ring / --focus-halo / --link*、正文字号行高、控件三档高度与水平内边距、弹窗按钮高度、开关选中时圆钮色、控件与卡片圆角
  * [POS]: styles 的角色层，把规范里「门户用朱砂、后台用墨色」的差异收成同名变量，让一套组件同时服务两个入口；base.css 与组件只读角色令牌
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -27,6 +27,13 @@
   --h-control: 40px;
   --h-control-sm: 36px;
   --h-control-xs: 32px;
+  /* 按钮 16 / 输入框 12 的水平内边距；实心按钮再加 2（规范：主按钮 0 18，次按钮 0 16） */
+  --pad-button: 16px;
+  --pad-input: 12px;
+  /* 弹窗按钮：门户 36 / 9 */
+  --h-dialog-action: 36px;
+  /* 开关选中时的圆钮：门户朱砂底上始终是白 */
+  --switch-knob-on: #fff;
   --radius-control: var(--radius-md);
   --radius-card: var(--radius-xl);
   --pad-card: var(--space-20);
@@ -54,6 +61,13 @@
   --h-control: 32px;
   --h-control-sm: 28px;
   --h-control-xs: 24px;
+  /* 规范：主按钮 0 14，次按钮 0 12，输入框 0 10 */
+  --pad-button: 12px;
+  --pad-input: 10px;
+  /* 弹窗按钮：后台 32 / 7 */
+  --h-dialog-action: 32px;
+  /* 墨色底上的圆钮用页面底色，深色模式下随之变深 */
+  --switch-knob-on: var(--bg);
   --radius-control: var(--radius-sm);
   --radius-card: var(--radius-lg);
   --pad-card: var(--space-16);

@@ -1,0 +1,70 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Switch.tsx 用到的类名
+ * [POS]: ui/Switch 的样式：轨道 32×18、圆钮 14，关闭态用 --border-hover
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  cursor: pointer;
+}
+
+.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 真正的 checkbox 盖在轨道上方且透明：点击与键盘都落在它身上 */
+.input {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.track {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  background: var(--border-hover);
+  transition: background-color 0.15s;
+}
+
+.knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition:
+    transform 0.15s,
+    background-color 0.15s;
+}
+
+.input:checked + .track {
+  background: var(--accent);
+}
+
+.input:checked + .track .knob {
+  transform: translateX(14px);
+  background: var(--switch-knob-on);
+}
+
+.input:focus-visible + .track {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--focus-ring);
+}

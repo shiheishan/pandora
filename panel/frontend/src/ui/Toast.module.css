@@ -1,0 +1,67 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的令牌
+ * [OUTPUT]: 对外提供 Toast.tsx 用到的类名
+ * [POS]: ui/Toast 的样式：抵消 popover 的默认样式，底部居中；门户 < 640 时抬到底部标签栏之上
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.host {
+  position: fixed;
+  inset: auto auto 24px 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  pointer-events: none;
+}
+
+/* popover 不支持时它就是普通的 fixed 元素，没有提示时不占位 */
+.host:empty {
+  display: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 18px;
+  border-radius: var(--radius-lg);
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: var(--shadow);
+  animation: rise 0.2s ease-out;
+}
+
+.dotOk,
+.dotDanger {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--toast-ok);
+}
+
+.dotDanger {
+  background: var(--toast-danger);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (max-width: 639px) {
+  :root[data-app='portal'] .host {
+    bottom: calc(var(--tabbar-h) + 20px);
+  }
+}
