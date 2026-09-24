@@ -1,0 +1,72 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的 --hdr / --border / 字号令牌
+ * [OUTPUT]: 对外提供 Shell.tsx 用到的类名
+ * [POS]: admin/Shell 的样式：两栏 224 + 自适应，整屏高、右栏自己滚动；顶栏 52 高、左右 28、半透明底加 8px 模糊；页头上 26、标题 22；内容区 20 28 48
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.frame {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.main {
+  min-width: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 52px;
+  flex: none;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--hdr);
+  backdrop-filter: blur(8px);
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.crumbCurrent {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.pageHead {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 26px 28px 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-h1);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 20px 28px 48px;
+}

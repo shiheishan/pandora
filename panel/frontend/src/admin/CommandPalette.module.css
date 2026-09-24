@@ -1,0 +1,97 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的表面、描边、文字、圆角令牌
+ * [OUTPUT]: 对外提供 CommandPalette.tsx 用到的类名
+ * [POS]: admin/CommandPalette 的样式：<dialog> 铺满视口作遮罩，面板距顶 12vh、宽 560、圆角 12；输入框 50 高 15px，列表项 38 高，底部等宽快捷键提示
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.overlay {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  margin: 0;
+  padding: 12vh 16px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.overlay[open] {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.overlay::backdrop {
+  background: rgba(20, 20, 24, 0.35);
+}
+
+.panel {
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.45);
+}
+
+.input {
+  width: 100%;
+  height: 50px;
+  padding: 0 18px;
+  border: 0;
+  border-bottom: 1px solid var(--surface-3);
+  background: transparent;
+  font-size: 15px;
+  outline: none;
+}
+
+.list {
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.item {
+  width: 100%;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.active {
+  background: var(--surface-2);
+}
+
+.title {
+  font-weight: var(--fw-medium);
+}
+
+.path {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-3);
+}
+
+.keys {
+  display: flex;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--surface-3);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
