@@ -30,10 +30,12 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：① 小缺陷 `f4ad6e3` + `43ac5e3` 已验收并合入（合并 24c2174；PG18 run 36126425025：218 PASS / 0 SKIP / 0 FAIL，NativeCore 36126425062 全绿；契约 R106）。**下一步 ②**，先做下面「② 之前」一条。
+**进度**：① `f4ad6e3` + `43ac5e3`（合并 24c2174，R106）、② `698617d` + `a49875a`（合并 cb861f6；PG18 run 36129026975：222 PASS / 0 SKIP / 0 FAIL，NativeCore 36129026978、panel-smoke 36129026983 全绿；契约 R107）已验收合入。**下一步 ③** 卖点与推荐（迁移 00088）。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R106。
+- 契约修订已到 R108。
+- ② 的验收结论：`mask_password` 抹敏与名单一致性测试（删键时能报出 trojan、vless 两处）、`mask` 开关门控补回（关掉掩码或切出 mKCP 不补口令，否则会 422）、00087 的 Down 在存量不符旧约束时拒绝回滚、三态传 0 回 422、新版本以当前版本为底稿继承全部设置与权益、流量没改原样照抄、保留上架时间窗、不限流量再提交 0 不白滚版本，都认可，已写成 R107。
+- **③ 请尽快**：前端收尾 ② 的后台套餐 schema 已按 R100 把 `highlights`、`recommended` 写成必填，要等你的 ③ 合入主线才能一起合，免得真后端上套餐页读崩。
 - ① 的验收结论：`PreserveRedactedProtocolSecrets` 与抹敏严格对称（缺席的补、显式给的以请求为准、数组同长才补、换协议类型不补、有重复键原样交给校验）、R93 越界 422、R84 非 UUID 404、PG18 用例改用 `8b…` 前缀、gitleaks 命中改假值而不加放行，都认可。R78 的事实更正已写进 R106。
 - **② 之前（② 的第一个提交）**：`mask_password` 补进 `nodefabric/protocol_schema.go` 的 `sensitiveProtocolKey`。同时加一条单元测试：遍历 `ProtocolSchemas()` 里每个协议的 `SensitiveProperties`，断言都在抹敏键名表里——两份名单以后不会再悄悄分叉。PG18 测试的租户 id 前缀先 grep 确认没人用。
 - 后端四已在 `nodefabric/nodestream.go` 加了 `Service.NotifyUsersChanged(ctx, tenantID)`（租户级 `node.users.changed`，合并 b3eea00）。第 ⑤ 步给赠送单加通知时用它；同一步顺带把 `cmd/aegis-admin`、`cmd/aegis-public` 里履约通知手写的发布代码改用它（行为不变）。做事前先 `git merge feat/panel-redesign`。

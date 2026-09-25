@@ -755,6 +755,7 @@
 - 设计：无。前端不需要单独入口。
 
 #### POST v1/plans/complete — 向导一次建成套餐（资料 + 额度 + 价格 + 线路 + 可选发布）
+- **修订 R107（2026-09-25，后端三 ② a49875a）**：`max_devices: 0` 等同不限（以前回 422）；`throttle_kbps` 正常写入。
 - **修订 R99（2026-09-25，用户定案 D-C-5）**：`throttle_kbps` 与超额策略解耦、全程生效、null = 不限；见本节「公共映射」的 R99。另加可选 `highlights`、`recommended`（R100）。
 - **修订 R65（2026-09-24，后端一 ⑥ 36f2fcd）**：改为单事务，任一步失败库里不留任何东西；响应的 `plan` 是建成后的完整详情。原文「中途失败自动归档」「回滚失败回 500」两条作废。
 - **修订 R1（2026-09-24，后端一 0651cb2）**：权限改为 `catalog.publish`，reauth 改为「是」（D-C-2）。以下原文中的权限行作废。
@@ -766,6 +767,7 @@
 - 设计：后台-04「新建套餐」向导 5 步。映射：第 1 步 name / code / description；第 2 步 traffic_gb / max_devices（留空 = 不限）；第 3 步 prices（设计只让填「价格（元）」+ 周期，前端固定 `currency:"CNY"` 并 ×100；想卖 USD 需要补币种选择，见下文「后端有、设计缺」）；第 4 步 pool_ids（chip 的名称和数量来自 GET v1/plans/{id}/pools 或节点池列表）；第 5 步开关「保存后立即发布上架」→ `publish`。
 
 #### PUT v1/plans/{id}/complete — 向导一次改完套餐
+- **修订 R107（2026-09-25，后端三 ② a49875a，已实现 R92、R99）**：`max_devices`、`throttle_kbps` 三态已实现，**传 0 或负数回 422**（清为不限要传 null）；`traffic_gb` 仍是 null 不动、0 不限。额度或线路变化滚出的新版本以当前版本为底稿，继承全部高级设置、权益与流量设备以外的配额行，流量没改时原样照抄（不再按 GB 取整）；资料整体写入时保留 `visible_from` / `visible_until`。本来就不限流量时再提交 0 不再白滚版本。`changed` 文案为「流量、设备数与限速已更新；……」。R92 三处缺陷已修。
 - **修订 R99（2026-09-25，用户定案 D-C-5）**：`throttle_kbps` 与超额策略解耦、全程生效、null = 不限；见本节「公共映射」的 R99。本接口的 `throttle_kbps`、`max_devices` 改为三态（缺省不动、null 清为不限、正整数设置）。另加 `highlights?`、`recommended?`，缺省 = 不动（R100）。
 - **修订 R92（2026-09-24，后台前端一 ⑤ 核对 adminops/plan_wizard_update.go，协调会话未逐条复现）**：三处现状（前端如实提示，后端修复列入遗留）：① `max_devices: null` 表示「不动」，传 0 过不了正整数校验，所以向导**改不回「不限设备」**；② 额度或线路变化时开新版本并发布，新版本的宽限期、权益等高级设置回到默认，**权益会丢**；③ 请求里没有 `visible_from` / `visible_until`，而套餐资料整体写入，**上架时间窗会被清空**。
 - **修订 R1（2026-09-24，后端一 0651cb2）**：权限 `catalog.publish`、reauth「是」；整个编辑在一个事务里完成，发布失败时资料、价格、新草稿版本全部回滚；`prices` 只同步本次清单里出现的币种的公开价，用户组价与其他币种不动，`[]` 等同 `null`。原文「`[]` = 全部归档」「不是原子操作」作废。
@@ -796,6 +798,7 @@
 - 设计：后台-04「新建版本」。设计里新版本会继承当前版本的流量和设备数，后端不复制。前端流程：POST 建草稿 → PUT 版本写入从当前版本复制的全部语义 → POST v1/plans/{id}/pools 复制池绑定 → 可选发布。已有草稿（`draft_version_id != null`）时禁用按钮。
 
 #### PUT v1/plans/{id}/versions/{versionID} — 编辑草稿版本的额度与语义
+- **修订 R107（2026-09-25，后端三 ② a49875a）**：已实现 R99：`overage_policy` 只收 `suspend`（可省略，落库为 suspend），`throttle`、`metered_billing` 回 422 `fields.overage_policy`。读接口的 `VersionRow.overage_policy` 仍可能读到存量的 `throttle` / `metered_billing`，前端 schema 照收，一律显示为「流量用完后停止服务」（运行时本来就只有这一种效果）。
 - **修订 R99（2026-09-25，用户定案 D-C-5）**：`throttle_kbps` 与超额策略解耦、全程生效、null = 不限；见本节「公共映射」的 R99。本接口 `overage_policy` 只接受 `suspend`（可省略），`throttle_kbps` 可与之同时出现。
 - 状态：现有 `panel/internal/api/admin/catalog.go:105 updatePlanVersion`
 - 权限：`catalog.write`｜reauth：否｜幂等：否
@@ -1256,6 +1259,7 @@
 - 设计：后台-07「新建节点」。映射：设计是先生成空白草稿再填协议，后端不允许无协议的草稿。**待补·前端**：「新建节点」改为弹窗/抽屉表单，一次收集 名称、服务器（GET v1/servers）、协议类型、地址、端口、协议参数（schema 驱动）、资源池、内核、倍率、展示名、国家；提交成功后打开抽屉，并提示「节点已创建为草稿，签发安装令牌并启用后才会下发」。
 
 #### PATCH v1/nodes/{id} — 编辑节点基本信息与协议参数
+- **修订 R107（2026-09-25，后端三 ② 698617d）**：`mask_password` 已补进抹敏键名表（后台读节点不再明文返回），另有单元测试保证协议 schema 的 `SensitiveProperties` 与抹敏名单一致。它跟着开关 `mask` 走：请求里带了 `mask` 且值没变时才从库里补回口令；关掉掩码、去掉 `mask` 键或切出 mKCP 时不补。前端：关掉掩码不用传 `mask_password`；改口令时显式传新值。
 - **修订 R106（2026-09-25，后端三 ① f4ad6e3，已修）**：R78 的后端修复已合入。规则：PATCH 的 `protocol_config` 里**缺席**的敏感键按原路径从库里补回；**显式给了**的（包括空串与 null）以请求为准，所以仍能清空；普通键缺席仍是删除（整体替换语义不变）；数组两边长度相同时才按下标补；换协议类型时不补旧密钥。事实更正：vless reality、shadowtls、hysteria2 等协议的密钥是必填的，过去把抹敏后的配置原样回写多半是 422 保存失败，真正被悄悄清空的只有选填的敏感键。前端：敏感字段没动就**不要带这个键**（留空 = 不改），去掉「留空会被清空」的确认；要清空选填密钥时显式传 null 并先确认。另：`mask_password`（mKCP）在协议 schema 里标为敏感，但抹敏键名表漏了它，后台读节点时明文返回，由后端三补上。
 - **修订 R78（2026-09-24，后台前端二 ② 核对）**：`protocol_config` 是**整体替换**，而读接口按名字抹掉敏感键（password、private_key、psk 等），所以只改一个普通协议字段、不重填敏感字段就会把已存的密钥清空。前端：没改协议字段就不带 `protocol_config`；改了且敏感字段留空时先确认会被清空。后端「PATCH 时保留请求里没给的敏感键」列入遗留（优先）。422 的字段键形如 `protocol_config.<内核字段名>`，与表单点号路径不一定一致，前端先按整条路径、再按最后一段名字落到表单项。
 - 状态：现有 `panel/internal/api/admin/node_admin.go:35 patchAdminNode` → `nodefabric/node_admin.go:369 PatchAdminNode`
@@ -1345,6 +1349,18 @@
 - 响应：200 `{ ok: true, row_version: int64 }`
 - 错误：404「节点不存在」；422 row_version；409 版本冲突；409 非法跳转（DB 触发器 check_violation 的消息）。status 为 retired/destroyed 时会顺带吊销有效身份，并按映射改服务器状态。
 - 设计：不直接使用。新前端的「退役」走下面的待补接口；本接口只在「服务器详情」高级区保留（不做）。
+
+#### POST v1/nodes/{id}/activate — 节点上线（生命周期一步推到 active）
+- **修订 R108（2026-09-25，协调会话定，前端收尾核对代码发现）**：新接口。起因（FACT）：节点生命周期状态机是 attesting → installing → validating → standby → canary → active（00005），接入流程 `enrollment.go` 只推到 bootstrapping / attesting，此后除了旧接口 `POST v1/nodes/{id}/status` 没有任何代码往前推；而 `status:batch` 启用节点要求服务器已 ready，服务器进 ready 又要求名下有 `status=active AND serving_status=active` 的节点——新服务器 + 新节点在新前端里上不了线。选方案 A（后端一步到位，与 R57 退役对称），不让前端逐级调旧接口。
+- 状态：**待补·后端**（后端四）
+- 权限：`node.lifecycle`｜reauth：否（与 status:batch 启用、旧 status 接口同门槛）｜幂等：是 `node_activate`
+- 请求：`{ row_version: int64 }`
+- 响应：200 `AdminNode`（同 GET v1/nodes 的 Node），另带 `warnings: string[]`（如无池节点的「未划入节点池，不服务任何用户」，R105）
+- 行为：一个事务里：持 `node-config-release` 锁 → 校验版本 → 前置条件 → 生命周期**按 00005 的合法边逐条推进**到 active（每一步都过状态机触发器，不绕过）→ `serving_status` 按旧接口同一套投影（`projectNodeLifecycle`，协议未就绪不置 active）→ 服务器按同一套规则进 ready → 审计 `node.activate`（before / after 生命周期与服务器状态）→ 提交后通知节点（`NotifyNodeChanged`）。已经是 active 的回 200、不改动（幂等）。
+- 前置条件（不满足回 409，message 写明原因）：节点已完成接入、有有效的节点身份；协议配置已就绪；不在 retired / destroyed / quarantined / bootstrap_failed 等终态或失败态。具体判据由后端四按代码定，写进报告，协调会话回写本条。
+- 错误：404；409 版本冲突；409 前置条件不满足；409 非法跳转（触发器消息）。
+- 需迁移：否。
+- 设计：后台-07 节点抽屉「操作 › 上线」，节点处于接入尾段（attesting 至 canary）时显示；失败时原样显示 409 的原因。旧 `POST v1/nodes/{id}/status` 保留、前端仍不用；冒烟在本接口合入后改用它。
 
 #### POST v1/nodes/{id}/retire — 退役节点（两套状态机一步到位）
 - **修订 R57（2026-09-24，后端二 ⑤ dccfc0d）**：已实现。接入中（enrolling）的节点回 409；接入失败的节点与 draft 一样只改服务状态。
@@ -3275,3 +3291,5 @@
 | R104 | 2026-09-25 | 用户（D-B-3） | 节点池限定用户组（池侧专属）；无池节点不服务任何人；换组与池绑定变化通知节点 |
 | R105 | 2026-09-25 | 后端四 | 节点列表对无池节点回 delivered_to_users=false 与固定的 delivery_note |
 | R106 | 2026-09-25 | 后端三 | R78、R84、R93 已修；R78 事实更正与前端「敏感字段没动就不带」口径；mask_password 抹敏遗漏 |
+| R107 | 2026-09-25 | 后端三 | mask_password 抹敏并跟着 mask 开关补回；R92、R99 已实现：三态传 0 回 422、新建向导 0 台 = 不限、存量策略照收显示为停止服务 |
+| R108 | 2026-09-25 | 前端收尾、协调会话 | 新接口 POST v1/nodes/{id}/activate：生命周期一步推到 active，解决新节点在新前端里上不了线 |
