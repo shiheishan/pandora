@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 AnonContext / Json / MockResult，依赖 ./catalog 的目录与优惠码，依赖 ./fixtures 的 PortalState / OrderFixture / makeSub / scenario
- * [OUTPUT]: 对外提供 BillingError、readStrict、isUuid、couponCheck、couponView、placeOrder、createdView、fulfill、sweepExpired、assertNoOpenChange、changeQuote、orderRow、orderDetail
- * [POS]: dev/mock/portal 的计费逻辑（不是模块，不进登记表）：结账、订单、选购三个页面文件共用——请求体逐字段校验（后端 DisallowUnknownFields）、优惠码试算、下单时扣余额与 30 分钟过期、履约（新购开订阅、续费延期、变更原地换套餐并退余额、流量包加余量）、变更套餐折算（5.A D-E-2：剩余时间与剩余流量比取小）
+ * [OUTPUT]: 对外提供 BillingError、readStrict、isUuid、couponCheck、couponView、placeOrder、createdView、fulfill、moveBalance、cancelOrder、sweepExpired、assertNoOpenChange、changeQuote、orderRow、orderDetail
+ * [POS]: dev/mock/portal 的计费逻辑（不是模块，不进登记表）：结账、订单、选购三个页面文件共用——请求体逐字段校验（后端 DisallowUnknownFields）、优惠码试算、下单时扣余额（记 balance_hold 流水）与 30 分钟过期或取消退回（balance_release）、履约（充值记 balance_topup）（新购开订阅、续费延期、变更原地换套餐并退余额、流量包加余量）、变更套餐折算（5.A D-E-2：剩余时间与剩余流量比取小）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -83,7 +83,6 @@ export function placeOrder(
   const want = Math.max(0, (init.useBalance as number | undefined) ?? 0)
   const applied = Math.min(want, total)
   if (applied > state.balance) throw new BillingError(409, 'conflict', '余额不足')
-  state.balance -= applied
   const now = Date.now()
   const order: OrderFixture = {
     id: randomUUID(),
@@ -107,6 +106,7 @@ export function placeOrder(
     effect: init.effect,
   }
   state.orders.unshift(order)
+  if (applied > 0) moveBalance(state, 'balance_hold', -applied, `订单 ${order.order_no}`)
   if (order.payable_amount === 0) fulfill(state, order)
   return order
 }
@@ -142,6 +142,7 @@ export function fulfill(state: PortalState, order: OrderFixture, via?: { provide
   }
   const e = order.effect
   if (e.type === 'addon') state.packBytes += e.bytes
+  if (e.type === 'topup') moveBalance(state, 'balance_topup', e.amount, `充值 ${order.order_no}`)
   if (e.type === 'new') {
     const plan = findPlan(e.planId)!
     const price = plan.prices.find((p) => p.id === e.priceId)!
@@ -165,7 +166,7 @@ export function fulfill(state: PortalState, order: OrderFixture, via?: { provide
     const plan = findPlan(e.planId)
     const price = plan?.prices.find((p) => p.id === e.priceId)
     if (sub && plan && price) swapPlan(sub, plan, price)
-    state.balance += e.refund
+    if (e.refund > 0) moveBalance(state, 'plan_change_refund', e.refund, '变更套餐差额退回')
   }
 }
 
@@ -188,6 +189,20 @@ function swapPlan(sub: SubFixture, plan: CatalogPlan, price: CatalogPrice) {
   })
 }
 
+/** 余额变动一律记流水（契约门户-05 history 的 kind 取值） */
+export function moveBalance(state: PortalState, kind: string, delta: number, memo: string) {
+  state.balance += delta
+  state.ledger.unshift({ kind, delta, memo, at: new Date().toISOString() })
+}
+
+/** 用户取消待支付单：退回冻结的余额（契约 POST v1/orders/{id}/cancel） */
+export function cancelOrder(state: PortalState, order: OrderFixture) {
+  order.status = 'cancelled'
+  order.cancel_reason = 'user_cancelled'
+  order.cancelled_at = new Date().toISOString()
+  if (order.balance_applied > 0) moveBalance(state, 'balance_release', order.balance_applied, `订单 ${order.order_no} 取消`)
+}
+
 /** 读之前把超时的待支付单转为 expired，退回冻结的余额 */
 export function sweepExpired(state: PortalState) {
   const now = Date.now()
@@ -195,7 +210,7 @@ export function sweepExpired(state: PortalState) {
     if (o.status === 'pending_payment' && o.expires_at && new Date(o.expires_at).getTime() <= now) {
       o.status = 'expired'
       o.cancelled_at = o.expires_at
-      state.balance += o.balance_applied
+      if (o.balance_applied > 0) moveBalance(state, 'balance_release', o.balance_applied, `订单 ${o.order_no} 超时取消`)
     }
   }
 }
@@ -257,7 +272,7 @@ export function orderRow(o: OrderFixture) {
     balance_applied: o.balance_applied,
     payable_amount: o.payable_amount,
     paid_amount: o.paid_amount,
-    refunded_amount: 0,
+    refunded_amount: o.refunded_amount ?? 0,
     ...(o.plan_name === undefined ? {} : { plan_name: o.plan_name }),
     cancellable: OPEN.has(o.status),
     created_at: o.created_at,

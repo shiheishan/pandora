@@ -1,12 +1,13 @@
 /**
- * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 AnonContext，依赖 ./catalog 的套餐与流量包目录
- * [OUTPUT]: 对外提供 Scenario、SCENARIOS、setScenario、scenario、gate、portalState、subscriptionView、linkUrl、usageDays、makeSub、ARCHIVED_PRICE_ID、zoneMidnight、GIB、MOCK_TIMEZONE 与各夹具类型（含订单履约效果 OrderEffect）
+ * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 AnonContext，依赖 ./catalog 的套餐与流量包目录，依赖 ./seeds 的历史订单、流水与兑换记录
+ * [OUTPUT]: 对外提供 Scenario、SCENARIOS、setScenario、scenario、gate、portalState、subscriptionView、linkUrl、usageDays、makeSub、ARCHIVED_PRICE_ID、zoneMidnight、GIB、MOCK_TIMEZONE 与各夹具类型（含订单履约效果 OrderEffect、余额流水 LedgerEntry、兑换记录 RedemptionFixture）
  * [POS]: dev/mock/portal 的共享夹具：概览、我的订阅、订单、流量包、公告几个页面文件读同一份按用户建的内存状态（订阅挂在目录套餐上、ID 稳定、订阅地址可换发，另有余额与订单）；场景开关让浏览器实测空、多订阅、旧形状（待补字段缺席）、错误与慢加载，只在 dev 存在
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { AnonContext } from '../types.ts'
 import { findPlan, findPrice, GIB, PACKS, PLANS } from './catalog.ts'
+import { pastOrders, seedLedger, seedRedemptions } from './seeds.ts'
 
 export { GIB }
 const DAY_MS = 86_400_000
@@ -84,6 +85,7 @@ export type OrderEffect =
   | { type: 'renewal'; subId: string; priceId: string }
   | { type: 'upgrade'; subId: string; planId: string; priceId: string; credit: number; refund: number }
   | { type: 'addon'; bytes: number }
+  | { type: 'topup'; amount: number }
   | { type: 'none' }
 
 export interface OrderFixture {
@@ -103,6 +105,7 @@ export interface OrderFixture {
   balance_applied: number
   payable_amount: number
   paid_amount: number
+  refunded_amount?: number
   coupon_code?: string
   subscription_id?: string
   created_at: string
@@ -129,8 +132,32 @@ export interface PortalState {
   packBytes: number
   /** 余额（分）；下单抵扣当场扣，订单过期或取消时退回 */
   balance: number
+  /** 余额流水（契约门户-05 history），新的在前 */
+  ledger: LedgerEntry[]
   orders: OrderFixture[]
   announcements: AnnouncementFixture[]
+  /** 我的礼品卡兑换记录，新的在前 */
+  redemptions: RedemptionFixture[]
+  /** 已兑换过的卡码（大写），再兑回 422 */
+  usedCodes: Set<string>
+}
+
+export interface LedgerEntry {
+  kind: string
+  delta: number
+  memo: string
+  at: string
+}
+
+export interface RedemptionFixture {
+  template_name: string
+  type: string
+  code_hint: string
+  prize_label?: string
+  balance?: number
+  traffic_bytes?: number
+  expire_days?: number
+  redeemed_at: string
 }
 
 const states = new Map<string, PortalState>()
@@ -210,7 +237,7 @@ export function makeSub(init: { planId: string; priceId: string; status: SubFixt
 export const ARCHIVED_PRICE_ID = '6f1c2a10-0000-4000-8000-0000000000aa'
 
 function build(s: Scenario): PortalState {
-  if (s === 'empty') return { subs: [], packBytes: 0, balance: 2650, orders: [], announcements: [] }
+  if (s === 'empty') return { subs: [], packBytes: 0, balance: 2650, ledger: [], orders: [], announcements: [], redemptions: [], usedCodes: new Set() }
   const now = Date.now()
   const [std, pro] = [PLANS[0]!, PLANS[1]!]
   const subs = [makeSub({ planId: pro.id, priceId: pro.prices[0]!.id, status: 'active', usedGiB: 312, elapsedDays: 28, resetInDays: 3, expiresInDays: 42, online: 3, sources: 3 })]
@@ -224,6 +251,9 @@ function build(s: Scenario): PortalState {
     subs,
     packBytes: 30 * GIB,
     balance: 2650,
+    ledger: seedLedger(now),
+    redemptions: seedRedemptions(now),
+    usedCodes: new Set(['GC-0830-B4NC-TRAF']),
     orders: [
       {
         id: randomUUID(),
@@ -242,6 +272,7 @@ function build(s: Scenario): PortalState {
         expires_at: new Date(now + 18 * 60_000).toISOString(),
         effect: { type: 'addon', bytes: pack.traffic_bytes },
       },
+      ...pastOrders(now, subs[0]!),
     ],
     announcements: [
       { id: randomUUID(), title: '9 月 28 日凌晨 2:00–3:00 香港节点维护', body: '维护期间香港 01、02 会短暂中断，其他节点不受影响。', severity: 'critical', pinned: true, published_at: new Date(now - 2 * DAY_MS).toISOString() },

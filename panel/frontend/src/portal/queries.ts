@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供 siteConfigSchema、appearanceSchema 与 useSiteConfig、useAppearance、usePortalMe、useBalance、订阅 schema 与类型（subscriptionSchema、Subscription、SUBSCRIPTION_STATUSES）、LIVE_STATUSES / isLive / liveSubscriptions / pickPrimary、SUBSCRIPTIONS_KEY、useSubscriptions、useActivePlanName、useCommissionAvailable、useUnreadCount、displayName
+ * [OUTPUT]: 对外提供 siteConfigSchema、appearanceSchema 与 useSiteConfig、useAppearance、usePortalMe、balanceSchema / Balance / useBalance、订阅 schema 与类型（subscriptionSchema、Subscription、SUBSCRIPTION_STATUSES）、LIVE_STATUSES / isLive / liveSubscriptions / pickPrimary、SUBSCRIPTIONS_KEY、useSubscriptions、useActivePlanName、useCommissionAvailable、useUnreadCount、displayName
  * [POS]: portal 外框用到的读接口（契约「门户外壳与认证」与各页的外壳映射）：顶栏余额、头像菜单的用户名 / 套餐 / 佣金、铃铛未读数、登录页的站点开关与插槽；订阅列表是页面与外框共用的全字段查询（外框经 select 取套餐名），其余 schema 只收外框用到的字段，页面要全字段时在这里扩展、不另起查询键
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -28,7 +28,13 @@ export const appearanceSchema = z.object({
 export type Appearance = z.output<typeof appearanceSchema>
 
 const meSchema = z.object({ user_id: z.string(), email: z.string(), display_name: z.string().nullable() })
-const balanceSchema = z.object({ balance: z.number(), currency: z.string() })
+// 余额与流水（契约门户-05）：外框只读 balance，钱包页读 history，同键一份全字段
+export const balanceSchema = z.object({
+  balance: z.number().int(),
+  currency: z.string(),
+  history: z.array(z.object({ kind: z.string(), delta: z.number().int(), memo: z.string(), at: z.string() })),
+})
+export type Balance = z.output<typeof balanceSchema>
 const commissionSchema = z.object({ summary: z.object({ available: z.number(), currency: z.string() }) })
 const notificationsSchema = z.object({ unread: z.number() })
 

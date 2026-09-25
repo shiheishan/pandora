@@ -1,11 +1,12 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../../../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供 ORDER_KINDS、ORDER_STATUSES、orderRowSchema、OrderRow、intervalLabel、orderTitle、expiryNote、usePendingOrders、orderDetailSchema / OrderDetail / orderKey / useOrder、orderCreatedSchema / OrderCreated、PAID_STATUSES / SETTLED_STATUSES
- * [POS]: portal/screens/common 的订单读模型（契约门户-04 GET v1/orders）：概览顶部待支付条、结账后的支付结果确认先用，第 ③ 步订单页在此基础上扩展；标题与期限文案是纯函数、有单元测试
+ * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useInfiniteQuery / useMutation / useQueryClient，依赖 zod，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../shell/runtime 的 useApi
+ * [OUTPUT]: 对外提供 ORDER_KINDS、ORDER_STATUSES、OPEN_STATUSES、ORDER_FILTERS / OrderFilter、ORDER_PAGE_SIZE、useOrderPages、useOpenOrders、useCancelOrder、statusBadge、groupByMonth、orderResult、orderFacts、orderRowSchema、OrderRow、intervalLabel、orderTitle、expiryNote、usePendingOrders、orderDetailSchema / OrderDetail / orderKey / useOrder、orderCreatedSchema / OrderCreated、PAID_STATUSES / SETTLED_STATUSES
+ * [POS]: portal/screens/common 的订单读模型（契约门户-04 GET v1/orders）：概览待支付条、支付结果确认与订单页共用；标题与期限文案是纯函数、有单元测试
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
+import { formatDateTime, formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 
 export const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade'] as const
@@ -159,3 +160,164 @@ export const orderCreatedSchema = z.object({
 export type OrderCreated = z.output<typeof orderCreatedSchema>
 
 export const PAID_STATUSES: ReadonlySet<string> = new Set(['paid', 'fulfilled'])
+
+// ---------------------------------------------------------------------------
+// 订单页（契约门户-04 与修订 R69：status 可逗号多值、counts 四类计数）
+// 设计的「全部」= 除待支付外的所有状态；待支付在顶部单独成卡
+// ---------------------------------------------------------------------------
+export const OPEN_STATUSES = ['draft', 'pending_payment', 'processing'] as const
+export const ORDER_FILTERS = {
+  all: ['paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'],
+  paid: ['paid', 'fulfilled'],
+  cancelled: ['cancelled', 'expired'],
+  refunded: ['partially_refunded', 'refunded'],
+} as const
+export type OrderFilter = keyof typeof ORDER_FILTERS
+
+export const ORDER_PAGE_SIZE = 6
+
+/** 已结束订单的分段加载：「显示更早的订单」按 offset 往后取，每页 6 条 */
+export function useOrderPages(filter: OrderFilter) {
+  const api = useApi()
+  return useInfiniteQuery({
+    queryKey: ['portal', 'orders', 'list', filter],
+    queryFn: ({ pageParam, signal }) =>
+      api.get('v1/orders', ordersPageSchema, { query: { status: ORDER_FILTERS[filter].join(','), limit: ORDER_PAGE_SIZE, offset: pageParam }, signal }),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.orders.length, 0)
+      return loaded < last.total ? loaded : undefined
+    },
+    meta: { topics: ['orders.changed'] },
+  })
+}
+
+/** 顶部待支付卡片：draft / pending_payment / processing */
+export function useOpenOrders() {
+  const api = useApi()
+  return useQuery({
+    queryKey: ['portal', 'orders', { status: OPEN_STATUSES.join(',') }],
+    queryFn: ({ signal }) => api.get('v1/orders', ordersPageSchema, { query: { status: OPEN_STATUSES.join(','), limit: 20 }, signal }),
+    select: (d) => d.orders,
+    meta: { topics: ['orders.changed'] },
+  })
+}
+
+const cancelSchema = z.object({
+  order_id: z.string(),
+  status: z.literal('cancelled'),
+  state_version: z.number().int(),
+  cancelled_at: z.string().optional(),
+  cancel_reason: z.string().optional(),
+  already_terminal: z.boolean(),
+})
+
+/** POST v1/orders/{id}/cancel：无 body、不幂等（重复取消回成功）；同事务退回优惠码与冻结的余额 */
+export function useCancelOrder() {
+  const api = useApi()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post(`v1/orders/${encodeURIComponent(id)}/cancel`, cancelSchema),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ['portal'] }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 纯映射
+// ---------------------------------------------------------------------------
+export interface StatusBadge {
+  label: string
+  tone: 'ok' | 'warn' | 'neutral' | 'info'
+}
+
+export function statusBadge(status: OrderRow['status']): StatusBadge {
+  switch (status) {
+    case 'paid':
+    case 'fulfilled':
+      return { label: '已支付', tone: 'ok' }
+    case 'processing':
+      return { label: '处理中', tone: 'warn' }
+    case 'draft':
+    case 'pending_payment':
+      return { label: '待支付', tone: 'warn' }
+    case 'partially_refunded':
+      return { label: '部分退款', tone: 'info' }
+    case 'refunded':
+      return { label: '已退款', tone: 'info' }
+    default:
+      return { label: '已取消', tone: 'neutral' }
+  }
+}
+
+export interface MonthGroup<T> {
+  key: string
+  label: string
+  rows: T[]
+  /** 该月已加载行里已支付订单的 total_amount 合计（契约：只对已加载行求和） */
+  paid: number
+}
+
+/** 按下单月份（浏览器本地时区）分组，保持列表原有顺序 */
+export function groupByMonth<T extends Pick<OrderRow, 'created_at' | 'status' | 'total_amount'>>(rows: readonly T[]): MonthGroup<T>[] {
+  const groups: MonthGroup<T>[] = []
+  for (const row of rows) {
+    const d = new Date(row.created_at)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    let g = groups.find((x) => x.key === key)
+    if (!g) {
+      g = { key, label: `${d.getFullYear()} 年 ${d.getMonth() + 1} 月`, rows: [], paid: 0 }
+      groups.push(g)
+    }
+    g.rows.push(row)
+    if (PAID_STATUSES.has(row.status)) g.paid += row.total_amount
+  }
+  return groups
+}
+
+/** 展开区「结果」（契约门户-04 订单详情映射） */
+export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at' | 'refunded_amount' | 'currency'>): string {
+  const via = o.payments.find((p) => p.provider_name || p.method)
+  const method = via ? (via.provider_name ?? via.method ?? '') : ''
+  switch (o.status) {
+    case 'fulfilled':
+    case 'paid':
+      if (o.kind === 'topup') return '余额已到账'
+      if (o.kind === 'addon') return '流量包已到账'
+      if (o.kind === 'upgrade') return '已变更套餐，订阅地址不变'
+      return [method, o.subscription_period_end ? `有效期至 ${formatDateTime(o.subscription_period_end).slice(0, 10)}` : '已开通'].filter(Boolean).join(' · ')
+    case 'expired':
+      return '超时未支付，已自动取消'
+    case 'cancelled':
+      return !o.cancel_reason || o.cancel_reason === 'user_cancelled' ? '已由您取消' : o.cancel_reason
+    case 'partially_refunded':
+    case 'refunded':
+      return `已退款 ${formatMoney(o.refunded_amount, o.currency)}`
+    case 'processing':
+      return '支付处理中，稍后自动到账'
+    default:
+      return o.expires_at ? `待支付，${formatDateTime(o.expires_at)} 前有效` : '待支付'
+  }
+}
+
+const PAYMENT_STATUS: Readonly<Record<string, string>> = { succeeded: '成功', success: '成功', paid: '成功', pending: '处理中', failed: '失败', refunded: '已退款', cancelled: '已取消' }
+
+/** 展开区事实行（契约门户-04 待补·前端）：订单号、时间、结果、金额拆分、支付记录 */
+export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
+  const money = (m: number) => formatMoney(m, o.currency)
+  const original = o.items.reduce((n, i) => n + i.line_amount, 0)
+  const facts = [
+    { k: '订单号', v: o.order_no },
+    { k: '下单时间', v: formatDateTime(o.created_at) },
+    { k: '结果', v: orderResult(o) },
+    { k: '原价', v: money(original) },
+  ]
+  if (o.discount_amount > 0) facts.push({ k: '优惠', v: `−${money(o.discount_amount)}${o.coupon_code ? `（${o.coupon_code}）` : ''}` })
+  if (o.balance_applied > 0) facts.push({ k: '余额抵扣', v: `−${money(o.balance_applied)}` })
+  if (PAID_STATUSES.has(o.status) || o.status.endsWith('refunded')) facts.push({ k: '实付', v: money(o.paid_amount) })
+  if (o.refunded_amount > 0) facts.push({ k: '退款', v: money(o.refunded_amount) })
+  if (OPEN_STATUSES.includes(o.status as (typeof OPEN_STATUSES)[number]) && o.expires_at) facts.push({ k: '过期时间', v: formatDateTime(o.expires_at) })
+  for (const p of o.payments) {
+    facts.push({ k: '支付记录', v: [p.provider_name ?? p.method ?? '支付', formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
+  }
+  return facts
+}

@@ -34,7 +34,7 @@ D-A-1（外框实时事件，已由第 2 阶段按通用条目处理，不用再
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：① 仪表盘 `f0b97fd`、`da73257`（合并 3b0930e）、② 工单 `a35785e`（合并 415fa3a；CI 36078249173 / 36078249194 全绿）已验收合入。**下一步：先做下面「③ 之前」一件事，单独一个提交推送报告；然后 ③ 用户列表与详情。**
+**进度**：① 仪表盘 `f0b97fd`、`da73257`（合并 3b0930e）、② 工单 `a35785e`（合并 415fa3a）、写操作三件提升 `af5158f`（合并 2c1fc82）已验收合入。**下一步 ③ 用户列表与详情。**
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R76。
@@ -54,5 +54,5 @@ D-A-1（外框实时事件，已由第 2 阶段按通用条目处理，不用再
 - 后台前端二在营销假后端里临时挂了一份 `GET v1/plans`（只含营销用到的字段）；你做 ⑤ 套餐时在 `dev/mock/admin/plans.ts` 实现完整版，登记表里 plans 排在前面会自动接管，告诉协调会话，由后台前端二删掉临时那份。
 - **ui 新组件已合入主线（后台前端二 1b1ac26，合并 c93dec6）**：`StatStrip`（四格统计条）、`Pager`（total / limit / offset 分页）、`QueryView`（react-query 结果的加载 / 404 无权限 / 错误重试 / 空 / 正文五态），从 `ui/index.ts` 取。本步新写的页面改用它们，自己目录里的临时版本删掉；`enabled: false` 的查询不要套 `QueryView`（`isPending` 会一直为真）。`Checkbox` 带文字标签时现在用 `htmlFor` 关联，按名字查找能找到。
 - ② 的验收结论：关闭说明框、系统消息里状态码换中文叫法、左栏 `min(340px, 38%)`、「超时」缩写、D-B-6 确认框写「目前不会自动通知任何人」，都认可。后台详情不填 `related_order` / `last_reply_at` / `message_count` 已写成契约 R75，后端补齐列入遗留；关联订单的 schema 保留，有值才显示，`#/billing/orders/<id>` 深链在 ⑥ 实现。
-- **③ 之前先做（单独一个提交，协调会话会尽快合并）**：把 `tickets/actions.ts` 的 `useCan` / `useIntentKey` / `useFailure` 提升到新文件 `src/admin/actions.ts`（后台外框归你，新增文件），补单元测试，工单改为从那里引用、删掉 `tickets/actions.ts`。营销里同名的三件由后台前端二在合并后自己切换，你不要改 marketing 目录。
+- **（已完成，af5158f）③ 之前先做**：把 `tickets/actions.ts` 的 `useCan` / `useIntentKey` / `useFailure` 提升到新文件 `src/admin/actions.ts`（后台外框归你，新增文件），补单元测试，工单改为从那里引用、删掉 `tickets/actions.ts`。营销里同名的三件由后台前端二在合并后自己切换，你不要改 marketing 目录。
 - ③ 起的新页面用 ui 的 `StatStrip` / `Pager` / `QueryView`（左右分栏的详情面板、无限滚动队列这类不合适的场景可以不套，报告里说明）。

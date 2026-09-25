@@ -65,5 +65,5 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 - ui 提升的验收结论：`StatStrip`、`Pager`、`QueryView` 认可，`QueryView` 依赖 `core/api` 的 `isApiError` 符合 core → ui 方向。Checkbox 改为 `htmlFor` + 直接文字认可（「on」是浏览器检查工具只认 `label[for]` 直接文字造成的，已写进公共规则 10.5）。
 - 注意 `QueryView` 用 `isPending` 判断加载：`enabled: false` 的查询（例如等选中某行才查的详情）会一直显示骨架，这种场景别套 QueryView，或者只在启用后渲染它。
 - 假后端批量生成优惠券的两条校验文案对齐 Go 原文，并进 ② 的提交。
-- 后台前端一 ③ 之前会把 `useCan` / `useIntentKey` / `useFailure` 提升到 `src/admin/actions.ts`；合入主线后，你在之后某一步的提交里把 `marketing/queries.ts` 里的同名三件改为从那里引用（行为一致，不用另外报告）。
+- 后台前端一已把 `useCan` / `useIntentKey` / `useFailure` 提升到 `src/admin/actions.ts`（合并 2c1fc82，另有纯函数 `canWith` / `createIntentKey` / `classifyFailure`）；你在之后某一步的提交里把 `marketing/queries.ts` 里的同名三件改为从那里引用（行为一致，不用另外报告）。
 - 后台前端一 ② 把 `screens/CLAUDE.md`、`dev/mock/admin/CLAUDE.md` 里 tickets 从并列行拆成了单独一行；你改这两份 L2 时先同步主线，同样把自己的模块拆成单独一行。

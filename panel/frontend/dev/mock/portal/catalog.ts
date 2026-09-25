@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 无外部依赖（静态夹具）
- * [OUTPUT]: 对外提供 CatalogPlan / CatalogPrice / CatalogPack / CatalogCoupon / PayMethod 类型与 PLANS、PACKS、COUPONS、PAY_METHODS、findPlan、findPrice、findPack、planView、GIB、intervalMonths
+ * [OUTPUT]: 对外提供 CatalogPlan / CatalogPrice / CatalogPack / CatalogCoupon / PayMethod / GiftTemplate 类型与 PLANS、PACKS、COUPONS、PAY_METHODS、GIFT_CARDS、findPlan、findPrice、findPack、planView、GIB、intervalMonths
  * [POS]: dev/mock/portal 的商品目录夹具（不是模块，不进登记表）：选购页、结账页与订阅夹具共用同一批套餐 / 价格 / 流量包 / 优惠码 / 支付方式，形状照契约门户-03（含修订 R30、R61、R69）；家庭版 allow_upgrade=false、优惠码覆盖各种错误、一个 POST 跳转渠道，便于浏览器实测每条分支
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -168,3 +168,35 @@ export const PAY_METHODS: readonly PayMethod[] = [
   { provider: 'legacy', method: 'qqpay', label: 'QQ 钱包', currencies: ['CNY'], httpMethod: 'POST' },
   { provider: 'stripe', method: 'card', label: '银行卡（美元）', currencies: ['USD'], httpMethod: 'GET' },
 ]
+
+// ---------------------------------------------------------------------------
+// 礼品卡（契约门户-05，修订 R31、R68）：卡码 → 模板；error 模拟兑换条件不满足
+// ---------------------------------------------------------------------------
+export interface GiftTemplate {
+  name: string
+  description: string
+  type: 'general' | 'plan' | 'mystery'
+  rewards: { balance?: number; traffic_bytes?: number; expire_days?: number; reset_quota?: boolean; plan_id?: string; price_id?: string; pool?: Array<{ label: string; weight: number; balance?: number; traffic_bytes?: number; expire_days?: number }> }
+  /** 兑换时的拒绝（预览照常能看到卡面） */
+  redeemError?: string
+}
+
+export const GIFT_CARDS: Readonly<Record<string, GiftTemplate>> = {
+  'GC-0923-H2K9-7QPA': { name: '国庆余额卡', description: '', type: 'general', rewards: { balance: 10000 } },
+  'GC-1001-TRAF-0200': { name: '流量礼包', description: '', type: 'general', rewards: { traffic_bytes: 200 * GIB } },
+  'GC-0911-Q7ZP-M3VX': { name: '专业版月卡', description: '兑换后开通专业版，已有订阅则顺延 30 天', type: 'plan', rewards: { plan_id: PLANS[1]!.id, price_id: PLANS[1]!.prices[0]!.id } },
+  'GC-1024-MYST-BOX1': {
+    name: '万圣节盲盒',
+    description: '',
+    type: 'mystery',
+    rewards: {
+      pool: [
+        { label: '¥5 余额', weight: 0, balance: 500 },
+        { label: '50 GB 流量', weight: 0, traffic_bytes: 50 * GIB },
+        { label: '延长 7 天', weight: 0, expire_days: 7 },
+      ],
+    },
+  },
+  'GC-EXTD-0007-DAYS': { name: '续命卡', description: '', type: 'general', rewards: { expire_days: 7 } },
+  'GC-0000-NEWU-0001': { name: '新人专享卡', description: '仅限新注册用户', type: 'general', rewards: { balance: 2000 }, redeemError: '这张卡只能新用户使用' },
+}

@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 react 的 useEffect / useRef / useState，依赖 @tanstack/react-query 的 useMutation / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Modal / Skeleton，依赖 ./orders 的 useOrder / PAID_STATUSES / OrderDetail，依赖 ./catalog 的 PaymentMethod，依赖 ./traffic 的 formatDate
+ * [INPUT]: 依赖 react 的 useEffect / useRef / useState，依赖 @tanstack/react-query 的 useMutation / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Modal / Skeleton，依赖 ./orders 的 useOrder / PAID_STATUSES / OrderDetail，依赖 ./catalog 的 PaymentMethod / usePaymentMethods / methodKey，依赖 ./traffic 的 formatDate
  * [OUTPUT]: 对外提供 PayState、PaymentModal、payReturnUrl、paySuccessText
- * [POS]: portal/screens/common 的支付弹窗（用户门户.dc.html 外壳的支付弹窗，契约门户-03 支付条目）：结账页下单后打开它去收银台，0 元订单直接显示成功；订单页收到收银台回跳（#/orders/<id>?paid=1）时用它轮询确认。无二维码：拿到 GET 跳转就顶层导航，POST 跳转按「暂不可用」处理（CSP form-action 'self' 会拦自动提交表单）
+ * [POS]: portal/screens/common 的支付弹窗（用户门户.dc.html 外壳的支付弹窗，契约门户-03 支付条目）：结账页下单后打开它去收银台，0 元订单直接显示成功；订单页的「去支付」用 choose 态先选支付方式；订单页收到收银台回跳（#/orders/<id>?paid=1）时用它轮询确认。无二维码：拿到 GET 跳转就顶层导航，POST 跳转按「暂不可用」处理（CSP form-action 'self' 会拦自动提交表单）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -12,7 +12,7 @@ import { formatMoney } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Modal, Skeleton } from '../../../ui'
-import type { PaymentMethod } from './catalog'
+import { methodKey, usePaymentMethods, type PaymentMethod } from './catalog'
 import css from './PayFlow.module.css'
 import { PAID_STATUSES, useOrder, type OrderDetail } from './orders'
 import { formatDate } from './traffic'
@@ -24,6 +24,8 @@ export type PayState =
   | { phase: 'done'; orderId: string }
   /** 收银台回跳：轮询订单直到 paid / fulfilled，最多 2 分钟 */
   | { phase: 'confirm'; orderId: string }
+  /** 已有的待支付订单（订单页「去支付」）：先选支付方式，选完进入 redirect */
+  | { phase: 'choose'; orderId: string; orderNo: string; amount: number; currency: string }
 
 /** 回跳地址：相对入口页解析，令门户在后台前缀或子路径下也成立；后端要求以 PublicBaseURL + "/" 开头 */
 export function payReturnUrl(orderId: string, base = window.location.href): string {
@@ -60,24 +62,71 @@ function useRefreshAccount() {
   return () => void client.invalidateQueries({ queryKey: ['portal'] })
 }
 
-const TITLES: Record<PayState['phase'], string> = { redirect: '正在前往收银台…', done: '支付成功', confirm: '正在确认支付结果' }
+const TITLES: Record<PayState['phase'], string> = { redirect: '正在前往收银台…', done: '支付成功', confirm: '正在确认支付结果', choose: '选择支付方式' }
 
-export function PaymentModal({ state, onClose }: { state: PayState | null; onClose: () => void }) {
+export function PaymentModal({ state: given, onClose }: { state: PayState | null; onClose: () => void }) {
+  // choose 态选定后在弹窗内部转成 redirect；换了订单或关掉就作废
+  const [picked, setPicked] = useState<{ orderId: string; method: PaymentMethod } | null>(null)
+  const state: PayState | null =
+    given?.phase === 'choose' && picked?.orderId === given.orderId
+      ? { phase: 'redirect', orderId: given.orderId, orderNo: given.orderNo, amount: given.amount, currency: given.currency, method: picked.method }
+      : given
+  const close = () => {
+    setPicked(null)
+    onClose()
+  }
   const confirm = useConfirmation(state?.phase === 'confirm' ? state.orderId : undefined)
   const title = !state ? '' : state.phase === 'confirm' && confirm.paid ? '支付成功' : TITLES[state.phase]
   return (
-    <Modal open={state !== null} onClose={onClose} title={title} className={css.modal}>
-      {state?.phase === 'redirect' && <Redirecting state={state} onLater={onClose} />}
-      {state?.phase === 'done' && <Done orderId={state.orderId} onClose={onClose} />}
-      {state?.phase === 'confirm' && <Confirming confirm={confirm} onClose={onClose} />}
+    <Modal open={state !== null} onClose={close} title={title} className={css.modal}>
+      {state?.phase === 'choose' && <Choose state={state} onPick={(method) => setPicked({ orderId: state.orderId, method })} onLater={close} />}
+      {state?.phase === 'redirect' && <Redirecting state={state} onLater={close} onBack={picked ? () => setPicked(null) : undefined} />}
+      {state?.phase === 'done' && <Done orderId={state.orderId} onClose={close} />}
+      {state?.phase === 'confirm' && <Confirming confirm={confirm} onClose={close} />}
     </Modal>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 选支付方式：只列能收该币种的方式（GET v1/payment-methods，修订 R61）
+// ---------------------------------------------------------------------------
+function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 'choose' }>; onPick: (m: PaymentMethod) => void; onLater: () => void }) {
+  const methods = usePaymentMethods()
+  return (
+    <div className={css.body}>
+      <div className={css.amount}>{formatMoney(state.amount, state.currency)}</div>
+      <div className={css.note}>订单 {state.orderNo}</div>
+      {methods.isPending ? (
+        <Skeleton height={40} radius="var(--radius-md)" />
+      ) : methods.isError ? (
+        <div className={css.error} role="alert">
+          支付方式读取失败，
+          <button type="button" className={css.inlineRetry} onClick={() => void methods.refetch()}>
+            重试
+          </button>
+        </div>
+      ) : methods.data.length === 0 ? (
+        <div className={css.hint}>暂无可用的支付方式，请稍后再试。</div>
+      ) : (
+        <div className={css.methods}>
+          {methods.data.map((m) => (
+            <Button key={methodKey(m)} block onClick={() => onPick(m)}>
+              {m.label}
+            </Button>
+          ))}
+        </div>
+      )}
+      <button type="button" className={css.later} onClick={onLater}>
+        稍后支付
+      </button>
+    </div>
   )
 }
 
 // ---------------------------------------------------------------------------
 // 去收银台：pay 不幂等，但服务层对同渠道复用在途意图（reused=true），重试是安全的
 // ---------------------------------------------------------------------------
-function Redirecting({ state, onLater }: { state: Extract<PayState, { phase: 'redirect' }>; onLater: () => void }) {
+function Redirecting({ state, onLater, onBack }: { state: Extract<PayState, { phase: 'redirect' }>; onLater: () => void; onBack?: () => void }) {
   const api = useApi()
   const started = useRef(false)
   const pay = useMutation({
@@ -114,6 +163,11 @@ function Redirecting({ state, onLater }: { state: Extract<PayState, { phase: 're
           {!unsupported && (
             <Button variant="primary" block onClick={() => pay.mutate()} busy={pay.isPending}>
               重试
+            </Button>
+          )}
+          {onBack && (
+            <Button block onClick={onBack}>
+              换一种支付方式
             </Button>
           )}
         </>
