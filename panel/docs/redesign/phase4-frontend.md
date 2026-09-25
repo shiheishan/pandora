@@ -27,9 +27,10 @@
 **进度**：①（合并 283797d）、② `f1ea0ad`（合并 bb0480a，与后端三 ③ 同批）已验收合入。③ `9e14d0b` 检查已过（frontend-check 623 用例、嵌入契约、产物扫描），**暂不合入**：设备策略 schema 的 `window_minutes` 按 R103 必填、上线按钮调 R108 新接口，要等后端四 ③、④ 合入主线后再合。④ 先出方案等协调会话同意。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R110。
+- 契约修订已到 R111。
 - ③ 的验收结论：节点池名单只在真改了才带字段、没有 `iam.user.read` 时只读显示、`setPoolSource` 登记避免模块互引、用户组「可用节点池」列与删除置灰（判断顺序与后端 409 一致）、设备窗口改了才带、敏感字段留空不带键与选填「清空」显式 null、`mask_password` 进抹敏名单、「上线」按钮与接入尾段节点的「启用」置灰、删掉 R92 提示并让套餐假后端按 R107、用户组页 1440 以下改上下排修掉名称列被挤没，都认可。
 - **上线接口响应（R110 更正）**：R108 原写「同 GET v1/nodes 的 Node」是错的，定为 `AdminNode`（与退役接口、PATCH 同一个形状）+ `warnings`。你先收两者共有字段的做法可以留着，后端四 ④ 合入后按 AdminNode 收紧 schema，放进 ③ 合入前的那个补丁提交里。
+- **④ 方案已同意（2026-09-25）**：① 新建 `core/intent.ts`（`createIntentKey`、`useIntentKey`、带 `reauth_required` 例外的 `endsIntent`、`IntentKey` 类型），统一用后台的 `keyFor / reset` 写法；`admin/actions.ts` 改为从 core 转出，导出名与签名不变；门户 3 个文件改调用写法，`usePlacedOrder` 与 `recallPayable` 留在 `common/intent.ts`；测试移到 `core/intent.test.ts`，删掉两处重复。② `GET v1/plans` 不合并成一条：用户、内容两处的键改为 `['admin','plans','options',<模块>]`，各自 schema 与 `select` 不变，用户那处补 `meta.topics: ['plans.changed']`；补「查询键落在套餐前缀下」的断言。一个提交，门户调用写法的改动在报告里单列。④ 与 ③ 在同一分支，随 ③ 一起等后端四 ③、④ 合入后再合。
 - CI 那组先绿后 404 的运行不是协调会话动的，GitHub 上同一提交偶尔会出现重跑，以最新一组为准即可。
 - ③ 节点池与用户组照 R109（后端四 ② 已合入主线）：名单上限 100、带字段才要 reauth、删组 409 原样显示、非法路径 id 回 404。
 - **③ 追加（R108）**：节点抽屉「操作 › 上线」，节点生命周期在接入尾段（attesting 至 canary）时显示，调 `POST v1/nodes/{id}/activate`（`node.lifecycle`、幂等键 `node_activate`、无 reauth），409 原样显示原因，响应里的 `warnings` 用 Toast 提示。后端四 ④ 实现前在假后端模拟。谢谢你查出这个缺口。

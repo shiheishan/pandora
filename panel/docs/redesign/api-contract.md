@@ -639,6 +639,7 @@
 - 设计：后台-03「群发邮件」。映射：发送前的确认框显示 preview 的 `total`；成功后 toast 显示「已排队 queued 封，跳过 skipped 封（用户退订）」
 
 #### GET v1/devices — 在线设备与全局策略
+- **修订 R111（2026-09-25，后端四 ③ ba90e94，已实现 R103）**：窗口只在库函数 `app.device_limit_window_minutes(tenant)`（00094）里算，视图 `subscription_online_devices`、后台节点列表在线统计、本接口的 `window_minutes` 都读它；只认 5 / 10 / 30 / 60，缺行或库里存了别的值一律按 5，不报错。`POST v1/settings/device-limit` 的非法窗口在碰库前回 422 `fields.window_minutes`「设备识别窗口只能是 5、10、30 或 60 分钟」（`mode`、`grace` 出错仍无 fields）。审计仍记在 `device_limit.mode_changed`：after 带 `window_minutes`（省略时为 null），只有这次改了窗口 before 才记旧的生效值。`PurgeStaleAlive` 清理截止为 70 分钟（仍无调用方）。
 - **修订 R103（2026-09-25，用户定案 D-B-4 方案 B）**：设备识别窗口可选。新设置键 `device_limit.window_minutes`，取值 5（默认，缺行按 5）/ 10 / 30 / 60。本接口响应加 `window_minutes: int`；`POST v1/settings/device-limit` 请求加 `window_minutes?: 5|10|30|60`（省略 = 不改，其他值 422），同样挂 reauth、写审计。后端：视图 `subscription_online_devices` 改为按租户读这个键（缺行按 5），这样 uniproxy strict 判定、本接口、用户列表与详情、门户订阅的在线数自动跟着变；后台节点列表（`api/admin/handlers.go` 在线人数与 IP 统计）里写死的 5 分钟改用同一口径；`nodefabric.PurgeStaleAlive`（目前没有调用方）的清理截止改为不小于最大窗口（如 70 分钟），免得以后接上时删掉窗口内的行。**事实更正**：原文与迁移 00024 注释说窗口「与节点 TTL 对齐」，只对 compat 构建成立；生产 NativeCore 按连接进出跟踪设备、没有 5 分钟 TTL，节点每 60 秒上报在线 IP，所以这是**纯面板改动，不碰 pdnd**，窗口不得低于 5 分钟。代价（前端在下拉旁说明）：窗口越长，换了网络的旧 IP 被多算得越久；strict 模式下超限的订阅要等大约一个窗口才恢复下发。
 - 状态：现有 `devices.go:18 listOnlineDevices`
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
@@ -3299,3 +3300,4 @@
 | R108 | 2026-09-25 | 前端收尾、协调会话 | 新接口 POST v1/nodes/{id}/activate：生命周期一步推到 active，解决新节点在新前端里上不了线 |
 | R109 | 2026-09-25 | 后端四 | R104 已实现：名单上限 100、字段级 reauth、重复提交不审计不通知、非法路径 id 回 404、删组 409 判断顺序 |
 | R110 | 2026-09-25 | 后端三、前端收尾 | R100 已实现：卖点四种 422 文案、complete 里 null 不动 [] 清空；R108 上线接口响应更正为 AdminNode（同退役接口） |
+| R111 | 2026-09-25 | 后端四 | R103 已实现：窗口唯一来源为库函数，非法存值按 5，422 文案与审计口径 |
