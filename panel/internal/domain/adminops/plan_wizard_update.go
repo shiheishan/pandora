@@ -1,12 +1,13 @@
 // [INPUT]: 依赖 catalog.go 的 loadPlanTx、prepare*Input 校验与 updatePlanTx/createPlanVersionTx/updatePlanVersionTx/publishPlanVersionTx 事务体，依赖 plan_wizard.go 的 bindPoolsTx，依赖 platform/audit、platform/db、platform/httpx
-// [OUTPUT]: 对外提供 UpdatePlanComplete 与 UpdatePlanCompleteInput/Output
-// [POS]: adminops 套餐向导的「一次改完」：把资料、价格、额度与线路编排进同一个事务；plan_wizard.go 是它的「一次建成」兄弟
+// [OUTPUT]: 对外提供 UpdatePlanComplete、UpdatePlanCompleteInput/Output 与三态 OptionalInt；包内 inheritVersionSemantics
+// [POS]: adminops 套餐向导的「一次改完」：把资料、价格、额度与线路编排进同一个事务；设备数与限速三态、新版本继承当前版本全部高级设置、资料写入保留上架时间窗（R92）；plan_wizard.go 是它的「一次建成」兄弟
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -69,10 +70,13 @@ type UpdatePlanCompleteInput struct {
 	PurchaseLimitPerUser *int     `json:"purchase_limit_per_user"`
 	StockTotal           *int     `json:"stock_total"`
 
-	// --- 卖的是什么。为 nil 表示这次不动它 ---
-	TrafficGB    *int64 `json:"traffic_gb"`
-	MaxDevices   *int   `json:"max_devices"`
-	ThrottleKbps *int   `json:"throttle_kbps"`
+	// --- 卖的是什么 ---
+	// TrafficGB 为 nil 表示这次不动它，0 表示不限。
+	TrafficGB *int64 `json:"traffic_gb"`
+	// MaxDevices / ThrottleKbps 是三态（R92、R99）：字段缺省 = 不动，显式 null =
+	// 清为不限，正整数 = 设置。*int 分不出前两种，向导因此改不回「不限设备」。
+	MaxDevices   OptionalInt `json:"max_devices"`
+	ThrottleKbps OptionalInt `json:"throttle_kbps"`
 
 	// --- 价格与分组。为 nil 表示不动 ---
 	// Prices 只管清单里出现的币种的公开价（不绑用户组）：同币种清单外的
@@ -81,6 +85,35 @@ type UpdatePlanCompleteInput struct {
 	Prices *[]PlanPriceInput `json:"prices"`
 	// PoolIDs 给了空数组表示清空线路。
 	PoolIDs *[]string `json:"pool_ids"`
+}
+
+// OptionalInt 区分「字段缺省」与「显式 null」：Set 为假是缺省，Set 为真且
+// Value 为 nil 是 null。同 nodefabric.OptionalNullableString 的做法。
+type OptionalInt struct {
+	Set   bool
+	Value *int
+}
+
+func (o *OptionalInt) UnmarshalJSON(data []byte) error {
+	o.Set = true
+	if string(data) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var v int
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	o.Value = &v
+	return nil
+}
+
+// resolve 把三态落成最终值：缺省沿用 current，其余取请求值（nil = 不限）。
+func (o OptionalInt) resolve(current *int) *int {
+	if !o.Set {
+		return current
+	}
+	return o.Value
 }
 
 type UpdatePlanCompleteOutput struct {
@@ -104,6 +137,9 @@ func (s *Service) UpdatePlanComplete(ctx context.Context, tenantID, planID strin
 		StockTotal:           in.StockTotal, SortOrder: in.SortOrder,
 	}
 	if err := prepareUpdatePlanInput(planID, &planInput); err != nil {
+		return nil, err
+	}
+	if err := validateWizardQuotaEdits(in); err != nil {
 		return nil, err
 	}
 	var wantPrices map[string]PlanPriceInput
@@ -137,6 +173,9 @@ func (s *Service) UpdatePlanComplete(ctx context.Context, tenantID, planID strin
 		planInput.AllowNewPurchase = boolOr(in.AllowNewPurchase, before.AllowNewPurchase)
 		planInput.AllowRenewal = boolOr(in.AllowRenewal, before.AllowRenewal)
 		planInput.AllowUpgrade = boolOr(in.AllowUpgrade, before.AllowUpgrade)
+		// 向导没有上架时间窗的输入，资料又是整体写入：不从现状带上，窗口就被
+		// 清成「永远可见」（R92 ③）。时间窗只在「销售设置」里改。
+		planInput.VisibleFrom, planInput.VisibleUntil = before.VisibleFrom, before.VisibleUntil
 		if _, err := s.updatePlanTx(ctx, tx, tenantID, planID, planInput); err != nil {
 			return err
 		}
@@ -166,7 +205,7 @@ func (s *Service) UpdatePlanComplete(ctx context.Context, tenantID, planID strin
 			}
 			if quotaChanged {
 				changed = append(changed,
-					"流量与设备数已更新；新购买的用户按新额度，已经买了的用户仍按原额度")
+					"流量、设备数与限速已更新；新购买的用户按新额度，已经买了的用户仍按原额度")
 			}
 			if poolsChanged {
 				changed = append(changed,
@@ -187,23 +226,43 @@ func (s *Service) UpdatePlanComplete(ctx context.Context, tenantID, planID strin
 	return &UpdatePlanCompleteOutput{Plan: out, Changed: changed}, nil
 }
 
+// validateWizardQuotaEdits 在进事务前拦掉额度字段的非法值，字段键即请求字段名。
+func validateWizardQuotaEdits(in UpdatePlanCompleteInput) error {
+	fields := map[string]string{}
+	if in.TrafficGB != nil && *in.TrafficGB < 0 {
+		fields["traffic_gb"] = "流量不能是负数；不限流量填 0"
+	}
+	if in.MaxDevices.Value != nil && *in.MaxDevices.Value <= 0 {
+		fields["max_devices"] = "必须为正整数；不限设备请传 null"
+	}
+	if in.ThrottleKbps.Value != nil && *in.ThrottleKbps.Value <= 0 {
+		fields["throttle_kbps"] = "必须为正整数；不限速请传 null"
+	}
+	if len(fields) > 0 {
+		return httpx.Invalid(fields)
+	}
+	return nil
+}
+
 // quotaDiffers 判断这次提交有没有真的改动额度。
 func quotaDiffers(before *CatalogPlanDetail, in UpdatePlanCompleteInput) bool {
-	if in.TrafficGB == nil && in.MaxDevices == nil && in.ThrottleKbps == nil {
+	if in.TrafficGB == nil && !in.MaxDevices.Set && !in.ThrottleKbps.Set {
 		return false
 	}
 	cur := currentVersion(before)
 	if cur == nil {
 		return true
 	}
-	if in.MaxDevices != nil && !sameIntPtr(cur.MaxDevices, in.MaxDevices) {
+	if in.MaxDevices.Set && !sameIntPtr(cur.MaxDevices, in.MaxDevices.Value) {
 		return true
 	}
-	if in.ThrottleKbps != nil && !sameIntPtr(cur.ThrottleKbps, in.ThrottleKbps) {
+	if in.ThrottleKbps.Set && !sameIntPtr(cur.ThrottleKbps, in.ThrottleKbps.Value) {
 		return true
 	}
 	if in.TrafficGB != nil {
-		var curGB int64 = -1
+		// 没有流量行或行上 limit 为空都是不限，与请求里的 0 同义；按 -1 起算的话，
+		// 每次原样提交「不限」都会白白滚出一个新版本。
+		var curGB int64
 		for _, q := range cur.Quotas {
 			if q.Metric == "traffic.bytes" && q.Limit != nil {
 				curGB = *q.Limit / bytesPerGB
@@ -433,58 +492,8 @@ func (s *Service) rollPlanVersionTx(ctx context.Context, tx pgx.Tx, tenantID, pl
 		}
 	}
 
-	// 没填的沿用当前版本，不要因为「这次只想改流量」把设备数清掉。
-	quotas := []QuotaInput{}
-	trafficGB := int64(-1)
-	if in.TrafficGB != nil {
-		trafficGB = *in.TrafficGB
-	} else if cur != nil {
-		for _, q := range cur.Quotas {
-			if q.Metric == "traffic.bytes" && q.Limit != nil {
-				trafficGB = *q.Limit / bytesPerGB
-			}
-		}
-	}
-	if trafficGB > 0 {
-		quotas = append(quotas, QuotaInput{
-			Metric: "traffic.bytes", Limit: ptrInt64(trafficGB * bytesPerGB),
-			Unit: "bytes", Period: "cycle"})
-	}
-
-	devices := in.MaxDevices
-	if devices == nil && cur != nil {
-		devices = cur.MaxDevices
-	}
-	if devices != nil && *devices > 0 {
-		quotas = append(quotas, QuotaInput{
-			Metric: "devices.active", Limit: ptrInt64(int64(*devices)),
-			Unit: "count", Period: "cycle"})
-	}
-
-	throttle := in.ThrottleKbps
-	if throttle == nil && cur != nil {
-		throttle = cur.ThrottleKbps
-	}
-
-	strategy := "billing_cycle"
-	overage := "suspend"
-	if cur != nil {
-		if cur.QuotaResetStrategy != "" {
-			strategy = cur.QuotaResetStrategy
-		}
-		if cur.OveragePolicy != "" {
-			overage = cur.OveragePolicy
-		}
-	}
-
-	semantics := VersionSemanticsInput{
-		ActorID: in.ActorID, ExpectedRowVersion: ver.RowVersion,
-		QuotaResetStrategy: strategy,
-		GraceKeepsService:  true, RenewalExtendsPeriod: true,
-		RenewalResetsQuota: true, RenewalKeepsAddons: true,
-		MaxDevices: devices, ThrottleKbps: throttle,
-		OveragePolicy: overage, Quotas: quotas,
-	}
+	semantics := inheritVersionSemantics(cur, in)
+	semantics.ActorID, semantics.ExpectedRowVersion = in.ActorID, ver.RowVersion
 	if err := prepareVersionSemanticsInput(planID, ver.ID, semantics); err != nil {
 		return err
 	}
@@ -525,4 +534,74 @@ func (s *Service) rollPlanVersionTx(ctx context.Context, tx pgx.Tx, tenantID, pl
 	_, _, err := s.publishPlanVersionTx(ctx, tx, tenantID, planID, ver.ID,
 		in.ActorID, planRow, versionRow)
 	return err
+}
+
+// inheritVersionSemantics 以当前版本为底稿拼出新版本的语义，只换向导这次
+// 改了的额度（R92 ②）。
+//
+// 此前新版本除了额度一律取默认值：宽限期归零、续费语义回到默认、权益整批
+// 丢失——管理员只改了个流量，已配好的高级设置就悄悄没了。现在凡是向导
+// 表达不了的都原样继承：重置策略与日、宽限、续费三项、并发与设备释放、
+// 备注、权益，以及流量与设备以外的配额行。
+//
+// 例外只有超额策略：新写入只收 suspend（R99）。旧版本若是 throttle，它的
+// 速率照样继承——限速本来就全程生效，与策略无关。
+func inheritVersionSemantics(cur *VersionRow, in UpdatePlanCompleteInput) VersionSemanticsInput {
+	out := VersionSemanticsInput{
+		QuotaResetStrategy: "billing_cycle",
+		GraceKeepsService:  true, RenewalExtendsPeriod: true,
+		RenewalResetsQuota: true, RenewalKeepsAddons: true,
+		OveragePolicy: "suspend",
+		Entitlements:  []EntitlementInput{},
+	}
+	var curQuotas []QuotaInput
+	var curDevices, curThrottle *int
+	if cur != nil {
+		if cur.QuotaResetStrategy != "" {
+			out.QuotaResetStrategy = cur.QuotaResetStrategy
+			out.QuotaResetDay = cur.QuotaResetDay
+		}
+		out.GracePeriodHours = cur.GracePeriodHours
+		out.GraceKeepsService = cur.GraceKeepsService
+		out.RenewalExtendsPeriod = cur.RenewalExtendsPeriod
+		out.RenewalResetsQuota = cur.RenewalResetsQuota
+		out.RenewalKeepsAddons = cur.RenewalKeepsAddons
+		out.MaxConcurrent = cur.MaxConcurrent
+		out.DeviceReleaseHours = cur.DeviceReleaseHours
+		out.Notes = cur.Notes
+		out.Entitlements = append(out.Entitlements, cur.Entitlements...)
+		curQuotas, curDevices, curThrottle = cur.Quotas, cur.MaxDevices, cur.ThrottleKbps
+	}
+	out.MaxDevices = in.MaxDevices.resolve(curDevices)
+	out.ThrottleKbps = in.ThrottleKbps.resolve(curThrottle)
+
+	// 配额行：流量没改就整行照抄（不经 GB 换算，免得非整 GB 的额度被取整）；
+	// 改了就按新值重写，0 = 不限、不写行。设备行始终跟着最终的 max_devices。
+	out.Quotas = []QuotaInput{}
+	trafficPeriod, devicesPeriod := "cycle", "cycle"
+	for _, q := range curQuotas {
+		switch q.Metric {
+		case "traffic.bytes":
+			if in.TrafficGB == nil {
+				out.Quotas = append(out.Quotas, q)
+			} else {
+				trafficPeriod = q.Period
+			}
+		case "devices.active":
+			devicesPeriod = q.Period
+		default:
+			out.Quotas = append(out.Quotas, q)
+		}
+	}
+	if in.TrafficGB != nil && *in.TrafficGB > 0 {
+		out.Quotas = append(out.Quotas, QuotaInput{
+			Metric: "traffic.bytes", Limit: ptrInt64(*in.TrafficGB * bytesPerGB),
+			Unit: "bytes", Period: trafficPeriod})
+	}
+	if out.MaxDevices != nil {
+		out.Quotas = append(out.Quotas, QuotaInput{
+			Metric: "devices.active", Limit: ptrInt64(int64(*out.MaxDevices)),
+			Unit: "count", Period: devicesPeriod})
+	}
+	return out
 }

@@ -12,8 +12,8 @@ node_admin.go: 后台节点增删改、复制、移动、排序、批量状态�
 node_retire.go: 一步退役 RetireNode：持 node-config-release 锁，生命周期按 node_transitions 合法边推进到 retired（active 等经 draining、canary 经 standby；draft 与接入失败态只改服务状态），服务状态 retired、清 desired_config_version、吊销有效身份、在途任务置 failed，拒绝在役服务器的控制节点
 node_identity.go: 节点凭据只读视图 NodeCredentials：当前或最近一份 mTLS 身份、服务端令牌是否存在及签发时间与签发人、未用未过期的安装令牌数
 server_admin.go: 后台服务器（物理宿主）读写与状态机
-protocol_schema.go: 各协议的配置约束元数据与规范化节点类型；RedactProtocolConfig 按键名抹掉敏感值，读接口共用
-protocol_secrets.go: RedactProtocolConfig 的逆运算 PreserveRedactedProtocolSecrets：只补抹掉的那几条路径，显式给值（含空串、null）以请求为准，数组长度变化不补，换协议类型不补
+protocol_schema.go: 各协议的配置约束元数据与规范化节点类型；RedactProtocolConfig 按键名表 sensitiveProtocolKey 抹掉敏感值，读接口共用；键名表必须覆盖每个 schema 的 SensitiveProperties（含 mask_password），单测守住两份名单不分叉
+protocol_secrets.go: RedactProtocolConfig 的逆运算 PreserveRedactedProtocolSecrets：只补抹掉的那几条路径，显式给值（含空串、null）以请求为准，数组长度变化不补，换协议类型不补；挂在开关上的密钥（secretGates：mask_password 跟 mask）开关变了不补，关掉 mKCP 掩码不必显式清口令
 xboard_field_names.go / xboard_validate.go: 后台 xboard 字段名与内核字段名的翻译，校验复用同一翻译
 effective_release_codec.go / effective_release_service.go: 按节点物化的不可变有效发布物，签名字段编解码与生成
 config_key_transition.go: 配置签名密钥轮换的过渡声明与校验

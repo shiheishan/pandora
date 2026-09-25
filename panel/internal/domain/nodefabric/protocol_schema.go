@@ -1,3 +1,8 @@
+// [INPUT]: 依赖标准库 encoding/json 与 net，依赖 golang.org/x/crypto/curve25519 生成 REALITY 密钥对
+// [OUTPUT]: 对外提供 ProtocolSchema 与 ProtocolSchemas 协议约束元数据、CanonicalNodeType、RedactProtocolConfig 抹敏、ValidateProtocolConfig 内核形状校验、GenerateRealityKeypair
+// [POS]: domain/nodefabric 的协议约束中心：xboard_validate 先翻译再调这里校验，读接口经 RedactProtocolConfig 抹敏，protocol_secrets 是抹敏的逆运算；sensitiveProtocolKey 必须覆盖每个 schema 的 SensitiveProperties（单测守住）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
@@ -44,6 +49,8 @@ var sensitiveProtocolKey = map[string]struct{}{
 	"password": {}, "passwd": {}, "secret": {}, "token": {},
 	"private_key": {}, "private-key": {}, "psk": {},
 	"obfs_password": {}, "obfs-password": {},
+	// mKCP 加密掩码的口令：schema 早就把它标成敏感，这张表漏了，读接口曾明文回显
+	"mask_password": {},
 }
 
 var legacyProtocolTypes = []string{

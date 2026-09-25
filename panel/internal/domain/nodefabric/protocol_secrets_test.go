@@ -3,6 +3,7 @@ package nodefabric
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -127,4 +128,44 @@ func sameJSON(t *testing.T, got json.RawMessage, want string) bool {
 		t.Fatalf("decode want %s: %v", want, err)
 	}
 	return reflect.DeepEqual(g, w)
+}
+
+// mask_password 挂在 mask 上：开关没变才补，关掉掩码或离开 mKCP 时不补。
+// 直接拿真实校验器验证合并结果，确认三种常见编辑都能保存。
+func TestPreserveRedactedProtocolSecretsGatedMaskPassword(t *testing.T) {
+	stored := json.RawMessage(`{"network":"mkcp","mask":"mkcp-aes128gcm","mask_password":"kcp-pass","mtu":1200}`)
+	cases := []struct {
+		name, incoming string
+		wantPassword   bool
+	}{
+		{"掩码不变只改 MTU：补回口令", `{"network":"mkcp","mask":"mkcp-aes128gcm","mtu":1100}`, true},
+		{"关掉掩码：不补", `{"network":"mkcp","mask":"none","mtu":1100}`, false},
+		{"去掉 mask 键：不补", `{"network":"mkcp","mtu":1100}`, false},
+		{"离开 mKCP：不补", `{"network":"tcp"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			merged, err := PreserveRedactedProtocolSecrets(stored, json.RawMessage(tc.incoming))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(merged), "kcp-pass"); got != tc.wantPassword {
+				t.Fatalf("password restored=%v want %v: %s", got, tc.wantPassword, merged)
+			}
+			if _, err := validateNewNodeProtocol("vless", "auto", "n.invalid", 443, merged); err != nil {
+				t.Fatalf("merged config rejected: %v (%s)", err, merged)
+			}
+		})
+	}
+}
+
+func TestSecretGatesPointAtSensitiveKeys(t *testing.T) {
+	for secret, gate := range secretGates {
+		if _, ok := sensitiveProtocolKey[secret]; !ok {
+			t.Errorf("gated secret %q is not redacted", secret)
+		}
+		if _, ok := sensitiveProtocolKey[gate]; ok {
+			t.Errorf("gate %q must be a visible key, but it is redacted", gate)
+		}
+	}
 }

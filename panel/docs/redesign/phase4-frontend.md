@@ -24,10 +24,13 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：① 定案清理与小清单 `c38265c` 已验收并合入（合并 283797d；NativeCore 36126340924 全绿）。**下一步 ②**。**② 起请在 `pandora-fe-final` 目录里开会话**（① 是在 pandora-smoke 目录里用绝对路径做的）。
+**进度**：① `c38265c` 已验收合入（合并 283797d）。② `f1ea0ad` 检查已过（frontend-check 612 用例、嵌入契约、产物扫描），**暂不合入**：后台套餐 schema 的 `highlights`、`recommended` 按 R100 必填，要等后端三 ③ 合入主线后同批合。可以先在本分支接着做 ③。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R106。
+- 契约修订已到 R108。
+- **③ 追加（R108）**：节点抽屉「操作 › 上线」，节点生命周期在接入尾段（attesting 至 canary）时显示，调 `POST v1/nodes/{id}/activate`（`node.lifecycle`、幂等键 `node_activate`、无 reauth），409 原样显示原因，响应里的 `warnings` 用 Toast 提示。后端四 ④ 实现前在假后端模拟。谢谢你查出这个缺口。
+- **③ 追加（R107）**：mKCP 关掉掩码时不传 `mask_password`，改口令时显式传新值；版本读回的 `throttle` / `metered_billing` 策略一律显示为「流量用完后停止服务」。
+- 协调会话的报告不要贴给你：用户如果把别的会话的报告贴进来，像这次一样只读不改就好。
 - ① 的验收结论：R101、R102、`switches.changed` 进 `REALTIME_TOPICS` 与事件胶囊、假后端只读模式 503 与 Go `AdminWritesGate` 同范围、`activeNodesInPool`、仪表盘卡片带 `?s=pending`、门户会话吊销与快捷登录作废、「未决」清理（四条要写代码的标「已决，第 ② / ③ 步接入」），都认可。共享层改动（`core/query.ts`、`EventsCapsule.tsx`、`dev/mock-api.ts`、`dev/mock/types.ts` 只增、`quick-login.ts` 加必填参数、`dash/model.ts` 的可选 `query`）认可。
 - **深色模式不跟系统**：前端的深色是顶栏「深色模式」开关写 `<html data-theme>`（`core/theme.ts`），浏览器模拟 `prefers-color-scheme` 不起作用，① 看到「暗色下还是亮底」就是这个原因，不是缺陷。以后验暗色用顶栏开关。② 顺带用这个方式补看后台 960 暗色与亮色、门户 1280 与 375。
 - 假后端数据：仪表盘「超时未支付」9 张，订单假后端待支付只有 4 张。② 顺带让仪表盘的数从订单假后端算（或两边种子对齐），小改。
