@@ -1,0 +1,271 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 account/index.tsx 与 Connections.tsx 用到的类名
+ * [POS]: portal/screens/account 的样式，取自设计稿门户-10：两列卡片流（每列最窄 420，放不下即一列）、个人信息 100px 标签列、快捷登录链接与绑定码的 --bg 底等宽块、会话行右侧危险描边「下线」、通知偏好三列网格（标签 / 邮件 70 / Telegram 80）、红字「退出登录」
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: var(--space-16);
+  align-items: start;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+
+.muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.hint {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 个人信息 */
+.facts {
+  display: grid;
+  row-gap: 9px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.fact {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+}
+
+.fact dt {
+  color: var(--text-3);
+}
+
+.fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 修改密码 */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.formError {
+  font-size: 13px;
+  color: var(--danger);
+}
+
+/* 快捷登录 */
+.quick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.code {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  word-break: break-all;
+  user-select: all;
+}
+
+.quickBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.countdown {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 登录会话 */
+.sessions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--surface-3);
+}
+
+.session {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--surface-2);
+}
+
+.session:last-child {
+  border-bottom: 0;
+}
+
+.sessionMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.sessionName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-weight: var(--fw-medium);
+}
+
+.sessionMeta {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.kick {
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+
+/* Telegram */
+.status {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.tgRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.codeBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.bindCode {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: var(--fw-medium);
+  user-select: all;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
+.actions > * {
+  flex: 1 1 180px;
+}
+
+.linkButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--h-control);
+  padding: 0 var(--pad-button);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.linkButton:hover {
+  background: var(--surface-3);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.linkButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-halo);
+  border-color: var(--focus-ring);
+}
+
+/* 通知偏好 */
+.prefHead,
+.prefRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px 80px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--surface-2);
+}
+
+.prefHead {
+  padding-block: 14px;
+  border-bottom-color: var(--surface-3);
+}
+
+.prefTitle {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+}
+
+.prefCol {
+  display: flex;
+  justify-content: center;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.prefLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.prefNote {
+  margin: 0;
+  padding: 10px 20px 14px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* 退出登录 */
+.logout {
+  color: var(--danger);
+}
+
+@media (max-width: 639px) {
+  .session,
+  .prefHead,
+  .prefRow,
+  .prefNote {
+    padding-inline: var(--pad-card);
+  }
+
+  .prefHead,
+  .prefRow {
+    grid-template-columns: minmax(0, 1fr) 56px 72px;
+  }
+}

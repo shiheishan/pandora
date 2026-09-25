@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供 siteConfigSchema、appearanceSchema 与 useSiteConfig、useAppearance、usePortalMe、balanceSchema / Balance / useBalance、订阅 schema 与类型（subscriptionSchema、Subscription、SUBSCRIPTION_STATUSES）、LIVE_STATUSES / isLive / liveSubscriptions / pickPrimary、SUBSCRIPTIONS_KEY、useSubscriptions、useActivePlanName、佣金 schema 与类型（commissionSchema、Commission、COMMISSION_ENTRY_STATUSES、WITHDRAWAL_STATUSES）、COMMISSION_KEY、useCommission、useCommissionAvailable、useUnreadCount、displayName
- * [POS]: portal 外框用到的读接口（契约「门户外壳与认证」与各页的外壳映射）：顶栏余额、头像菜单的用户名 / 套餐 / 佣金、铃铛未读数、登录页的站点开关与插槽；订阅列表与佣金概况是页面与外框共用的全字段查询（外框经 select 取套餐名 / 可用佣金），其余 schema 只收外框用到的字段，页面要全字段时在这里扩展、不另起查询键
+ * [OUTPUT]: 对外提供 siteConfigSchema、appearanceSchema 与 useSiteConfig、useAppearance、meSchema / PortalMe / usePortalMe、balanceSchema / Balance / useBalance、订阅 schema 与类型（subscriptionSchema、Subscription、SUBSCRIPTION_STATUSES）、LIVE_STATUSES / isLive / liveSubscriptions / pickPrimary、SUBSCRIPTIONS_KEY、useSubscriptions、useActivePlanName、佣金 schema 与类型（commissionSchema、Commission、COMMISSION_ENTRY_STATUSES、WITHDRAWAL_STATUSES）、COMMISSION_KEY、useCommission、useCommissionAvailable、useUnreadCount、displayName
+ * [POS]: portal 外框用到的读接口（契约「门户外壳与认证」与各页的外壳映射）：顶栏余额、头像菜单的用户名 / 套餐 / 佣金、铃铛未读数、登录页的站点开关与插槽；me、订阅列表与佣金概况是页面与外框共用的全字段查询（外框经 select 取套餐名 / 可用佣金，账号安全页读 me 的注册时间），其余 schema 只收外框用到的字段，页面要全字段时在这里扩展、不另起查询键
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useQuery } from '@tanstack/react-query'
@@ -27,7 +27,16 @@ export const appearanceSchema = z.object({
 })
 export type Appearance = z.output<typeof appearanceSchema>
 
-const meSchema = z.object({ user_id: z.string(), email: z.string(), display_name: z.string().nullable() })
+// GET v1/me 全字段：外框只用用户名与邮箱，账号安全页的「个人信息」读 user_id / created_at，同键一份
+export const meSchema = z.object({
+  user_id: z.string(),
+  email: z.string(),
+  display_name: z.string().nullable(),
+  status: z.string(),
+  created_at: z.string(),
+  permissions: z.array(z.string()).nullable(),
+})
+export type PortalMe = z.output<typeof meSchema>
 // 余额与流水（契约门户-05）：外框只读 balance，钱包页读 history，同键一份全字段
 export const balanceSchema = z.object({
   balance: z.number().int(),

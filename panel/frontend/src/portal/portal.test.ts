@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { pickThemeTokens } from './appearance'
-import { quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
+import { quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
 import { greeting, navLabel, navOwner, resolvePage } from './pages'
 import { displayName } from './queries'
 
@@ -82,6 +82,13 @@ describe('quick-login tokens', () => {
     expect(quickLoginTokenFromInput('https://portal.example/q/abc')).toBeNull()
     expect(quickLoginTokenFromInput('not a token!')).toBeNull()
     expect(quickLoginTokenFromInput('')).toBeNull()
+  })
+
+  it('the link the account page builds is the one the login page reads back (hash form, relative to the entry page)', () => {
+    const link = quickLoginLink(token, 'https://portal.example/#/account?x=1')
+    expect(link).toBe(`https://portal.example/#/quick-login/${token}`)
+    expect(quickLoginTokenFromInput(link)).toBe(token)
+    expect(quickLoginLink(token, 'https://example.com/portal/index.html#/account')).toBe(`https://example.com/portal/#/quick-login/${token}`)
   })
 })
 

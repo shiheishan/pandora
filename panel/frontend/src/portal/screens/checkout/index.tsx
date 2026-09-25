@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../common/intent 的 useIntentKey / usePlacedOrder / endsIntent，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 href / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Empty / Input / Skeleton / Switch，依赖 ../../queries 的 useBalance / useSubscriptions，依赖 ../common 的目录、订单、支付弹窗与 LoadError，依赖 ./model 的模式与预览逻辑
+ * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../common/intent 的 useIntentKey / usePlacedOrder / recallPayable / endsIntent，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 href / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Empty / Input / Skeleton / Switch，依赖 ../../queries 的 useBalance / useSubscriptions，依赖 ../common 的目录、订单、支付弹窗与 LoadError，依赖 ./model 的模式与预览逻辑
  * [OUTPUT]: 默认导出 Checkout 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/checkout 的入口：确认订单（门户-03 结账页）。按地址参数进四种模式——新购、续费（含遇改价）、变更套餐（服务端试算折算与退余额）、流量包；左栏选周期 / 容量、优惠码、余额抵扣开关、支付方式，右栏订单预览与提交；下单后交给 common/PayFlow 的支付弹窗；幂等键成功或 4xx 后丢弃，刚下的待支付单记在 usePlacedOrder，同样的请求 30 分钟内再点就重开它的支付，不下第二张
+ * [POS]: portal/screens/checkout 的入口：确认订单（门户-03 结账页）。按地址参数进四种模式——新购、续费（含遇改价）、变更套餐（服务端试算折算与退余额）、流量包；左栏选周期 / 容量、优惠码、余额抵扣开关、支付方式，右栏订单预览与提交；下单后交给 common/PayFlow 的支付弹窗；幂等键成功或 4xx 后丢弃，刚下的待支付单记在 usePlacedOrder，同样的请求 30 分钟内再点先经 recallPayable 确认它还能付再重开支付，不下第二张；已取消、超时或付掉（含支付接口 409）就忘掉、按新请求下单
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -15,8 +15,8 @@ import { Button, Card, Empty, Input, Skeleton, Switch } from '../../../ui'
 import { useBalance, useSubscriptions } from '../../queries'
 import { LoadError } from '../common/Blocks'
 import { methodKey, periodName, periodOf, perGbNote, savingAmount, usePackCatalog, usePaymentMethods, usePlans } from '../common/catalog'
-import { endsIntent, useIntentKey, usePlacedOrder } from '../common/intent'
-import { orderCreatedSchema } from '../common/orders'
+import { endsIntent, recallPayable, useIntentKey, usePlacedOrder } from '../common/intent'
+import { orderCreatedSchema, useOrderPayable } from '../common/orders'
 import { PaymentModal, type PayState } from '../common/PayFlow'
 import { compactBytes, formatDate } from '../common/traffic'
 import css from './Checkout.module.css'
@@ -152,6 +152,8 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
   const [payState, setPayState] = useState<PayState | null>(null)
   const intentKey = useIntentKey()
   const placed = usePlacedOrder<Extract<PayState, { phase: 'redirect' }>>()
+  const payable = useOrderPayable()
+  const [reopening, setReopening] = useState(false)
 
   // 流量包模式里换容量等于换商品
   const pack = mode.kind === 'pack' ? (packs.data?.find((p) => p.id === packId) ?? mode.pack) : null
@@ -208,12 +210,14 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
 
   const changeBlocked = target.kind === 'change' && (change.isPending || change.isError)
   const renewBlocked = mode.kind === 'renew' && (mode.plan === null || mode.plan.allow_renewal === false || mode.sub.renewable === false)
-  const canSubmit = (pack !== null || price !== null) && !changeBlocked && !renewBlocked && (!needsMethod || method !== null) && !create.isPending
+  const canSubmit = (pack !== null || price !== null) && !changeBlocked && !renewBlocked && (!needsMethod || method !== null) && !create.isPending && !reopening
 
-  function submit() {
+  async function submit() {
     const request = orderRequest(target, pack ? null : priceId, quote.balanceApplied, couponValid ? appliedCode : null)
-    // 刚下过同样的单、还没过期：关掉支付弹窗后再点，重开这张单的支付，不下第二张
-    const again = placed.recall(request)
+    // 刚下过同样的单、还能付：关掉支付弹窗后再点，重开这张单的支付，不下第二张；
+    // 它已被取消、超时或付掉就忘掉，按新请求下单
+    setReopening(true)
+    const again = await recallPayable(placed, request, (p) => payable(p.orderId)).finally(() => setReopening(false))
     if (again && method) return setPayState({ ...again, method })
     // 一次用户意图一个幂等键：双击、断网或 5xx 重试复用；成功或 4xx 拒绝后丢弃
     create.mutate(
@@ -361,7 +365,7 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
           <span className={css.totalValue}>{target.kind === 'change' && change.isPending ? <Skeleton width={90} height={28} /> : changeBlocked ? '—' : formatMoney(quote.payable, quote.currency)}</span>
         </div>
         {create.isError && <SubmitError error={create.error} />}
-        <Button variant="primary" block busy={create.isPending} disabled={!canSubmit} onClick={submit}>
+        <Button variant="primary" block busy={create.isPending || reopening} disabled={!canSubmit} onClick={() => void submit()}>
           {needsMethod ? '提交订单并支付' : '确认支付'}
         </Button>
         <a className={css.back} href={href('/plans', pack ? { tab: 'packs' } : undefined)}>
@@ -369,7 +373,7 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
         </a>
       </Card>
 
-      <PaymentModal state={payState} onClose={() => setPayState(null)} />
+      <PaymentModal state={payState} onClose={() => setPayState(null)} onUnpayable={placed.forget} />
     </div>
   )
 }

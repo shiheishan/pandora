@@ -1,15 +1,15 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ../../../core/api 的 ApiError，依赖同目录 traffic / orders / clients / subscriptions / intent 的纯函数与 schema，依赖 ../subs/labels
  * [OUTPUT]: 无（测试文件）
- * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、订单标题与期限、深链与协议名、主订阅选择、schema 对契约形状（含待补字段缺席）的收放、幂等键的复用与丢弃（成功或 4xx reset、断网与 5xx 保留）与刚下待支付单的取回
+ * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、订单标题与期限、深链与协议名、主订阅选择、schema 对契约形状（含待补字段缺席）的收放、幂等键的复用与丢弃（成功或 4xx reset、断网与 5xx 保留）与刚下待支付单的取回（已不可支付即 forget、按新请求下单）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { fetchStats, metaLabel } from '../subs/labels'
 import { ApiError } from '../../../core/api'
 import { importClients, protocolLabel, rateLabel } from './clients'
-import { createIntentKey, createPlacedOrder, endsIntent } from './intent'
-import { expiryNote, intervalLabel, orderRowSchema, orderTitle } from './orders'
+import { createIntentKey, createPlacedOrder, endsIntent, recallPayable } from './intent'
+import { expiryNote, intervalLabel, isPayable, orderRowSchema, orderTitle } from './orders'
 import { canRenew, pickPrimary, subscriptionSchema, usageReportSchema, type Subscription } from './subscriptions'
 import { buildUsageBars, bytesParts, expiryInfo, pickTrafficQuota, projectUsage, resetAtOf, trafficSummary, usageLevel } from './traffic'
 
@@ -242,5 +242,28 @@ describe('intent', () => {
     now = 0
     placed.forget()
     expect(placed.recall({ plan: 'p', price: 'a' })).toBeNull()
+  })
+
+  it('再点时刚下的单还能付就重开它；已不可支付就忘掉，下次同样的请求不再取回', async () => {
+    const placed = createPlacedOrder<string>(() => 0)
+    const request = { plan: 'p', price: 'a' }
+    placed.remember(request, 'order-1')
+    const asked: string[] = []
+    expect(await recallPayable(placed, request, async (id) => (asked.push(id), true))).toBe('order-1')
+    expect(placed.recall(request)).toBe('order-1')
+    // 在别处取消 / 超时 / 已付掉：忘掉并返回 null，调用方按新请求下单
+    expect(await recallPayable(placed, request, async () => false)).toBeNull()
+    expect(placed.recall(request)).toBeNull()
+    // 没有记下的单时不去问后端
+    expect(await recallPayable(placed, request, async (id) => (asked.push(id), true))).toBeNull()
+    expect(asked).toEqual(['order-1'])
+  })
+
+  it('可支付：只有 draft / pending_payment 且未到 expires_at', () => {
+    const at = Date.parse('2026-09-24T12:00:00Z')
+    expect(isPayable({ status: 'pending_payment', expires_at: '2026-09-24T12:10:00Z' }, at)).toBe(true)
+    expect(isPayable({ status: 'draft', expires_at: undefined }, at)).toBe(true)
+    expect(isPayable({ status: 'pending_payment', expires_at: '2026-09-24T11:59:59Z' }, at)).toBe(false)
+    for (const status of ['processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded'] as const) expect(isPayable({ status, expires_at: undefined }, at)).toBe(false)
   })
 })
