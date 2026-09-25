@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform 的 crypto/db/httpx/audit；读写 quota_balances 与 traffic_pack_grants（迁移 00070），经 usage_daily.go 的 chargeReportEntry 逐用户记账
 // [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、BuildNodeConfig、路由校验、ListNodeUsers、ReportTraffic / ReportAlive / ReportRuntimeStatus
-// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、记签发时间与签发人、拒绝已退出服务的节点）、用户下发与流量上报（先扣套餐本周期额度，超出部分扣用户流量包余额，D-E-1；同事务累加按日用量，00072）
+// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、记签发时间与签发人、拒绝已退出服务的节点）、用户下发（只下发给套餐绑定了本节点所在池的订阅，无池节点不下发任何人，R104）与流量上报（先扣套餐本周期额度，超出部分扣用户流量包余额，D-E-1；同事务累加按日用量，00072）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -554,7 +554,7 @@ type ProxyUser struct {
 //
 // 过滤条件是这套系统里最要紧的一段 SQL —— 它同时决定了「谁能用」和「谁不能用」：
 //   - 订阅必须处于可用状态（active / trialing，宽限期内也算）
-//   - 套餐必须授权了该节点所属的资源池（XBD-010）
+//   - 套餐必须授权了该节点所属的资源池（XBD-010）；没划进池的节点不服务任何人（R104）
 //   - 流量必须没跑超（USE-007 超额停用）
 //
 // 任何一条漏掉，都会变成免费用或该用用不了，两种都是事故。
@@ -562,13 +562,16 @@ func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *Serving
 	users := []ProxyUser{}
 
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 没有分配资源池的节点视为公共节点，对所有有效订阅开放。
-		// 这是给单节点小规模场景的便利，配了池就必须走授权。
+		// 节点必须划进节点池，且订阅的套餐版本绑定了这个池。没划进池的节点
+		// 不服务任何订阅（R104，fail closed）：$2 为 NULL 时等式求值为 NULL，
+		// EXISTS 为假，列表为空。这与订阅下载、门户预览里的
+		// JOIN plan_node_pools 是同一口径；过去这里把无池节点当成对所有有效
+		// 订阅开放的公共节点，节点就成了绕过套餐授权的后门。
 		poolFilter := `
-			AND ( $2::uuid IS NULL
-			   OR EXISTS (SELECT 1 FROM plan_node_pools pnp
-			               WHERE pnp.plan_version_id = s.plan_version_id
-			                 AND pnp.pool_id = $2::uuid) )`
+			AND EXISTS (SELECT 1 FROM plan_node_pools pnp
+			             WHERE pnp.tenant_id = s.tenant_id
+			               AND pnp.plan_version_id = s.plan_version_id
+			               AND pnp.pool_id = $2::uuid)`
 
 		// 设备限制的判定模式。读设置失败时按 loose 走 ——
 		// 配置读不出来不该导致所有人被当成超限踢下线。

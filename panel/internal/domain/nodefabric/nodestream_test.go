@@ -198,6 +198,38 @@ func TestNotifyNodeChangedPublishesTenantNodeChannel(t *testing.T) {
 	}
 }
 
+// 交付集合变化是租户级事件：不带 node_id，WatchNodeChanges 据此给本进程上
+// 该租户的每个节点重算用户列表（R104）。
+func TestNotifyUsersChangedPublishesTenantLevelEvent(t *testing.T) {
+	hub := realtime.NewHub(nil, slog.Default())
+	defer hub.Close()
+
+	events, unsubscribe := hub.Subscribe([]string{realtime.ChannelNodeAll("tenant-a")})
+	defer unsubscribe()
+
+	svc := NewService(nil, nil)
+	svc.NotifyUsersChanged(context.Background(), "tenant-a") // 没挂 realtime：静默
+	svc.AttachRealtime(hub)
+	svc.NotifyUsersChanged(context.Background(), "tenant-a")
+
+	select {
+	case event := <-events:
+		if event.Topic != realtime.TopicNodeUsersChanged {
+			t.Fatalf("topic = %q, want %q", event.Topic, realtime.TopicNodeUsersChanged)
+		}
+		if _, ok := event.Payload["node_id"]; ok {
+			t.Fatalf("tenant-level event must not carry node_id: %v", event.Payload)
+		}
+	default:
+		t.Fatal("users change was not published to the tenant node channel")
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected second event: %+v", event)
+	default:
+	}
+}
+
 func TestRegisterStreamSharesTenantWatcherUntilLastConnectionLeaves(t *testing.T) {
 	hub := realtime.NewHub(nil, slog.Default())
 	defer hub.Close()

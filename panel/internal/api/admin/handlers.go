@@ -904,7 +904,7 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 				beatFresh := everSeen &&
 					time.Since(*x.LastBeat) < subscription.HeartbeatFreshWindow
 				x.Delivered, x.DeliveryNote = subscription.DeliveryState(
-					x.ServingStatus, everSeen, beatFresh)
+					x.ServingStatus, x.PoolID != nil, everSeen, beatFresh)
 				x.Protocol = nodefabric.RedactProtocolConfig(x.Protocol)
 				out = append(out, x)
 			}

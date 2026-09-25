@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 platform/realtime 的跨进程广播、同包 uniproxy.go 的配置组装与用户下发
-// [OUTPUT]: 对外提供 StreamHub、StreamConn 与节点长连接注册；AttachStream / AttachRealtime、NotifyNodeChanged、RegisterStream / WatchNodeChanges
+// [OUTPUT]: 对外提供 StreamHub、StreamConn 与节点长连接注册；AttachStream / AttachRealtime、NotifyNodeChanged、NotifyUsersChanged（租户级 node.users.changed）、RegisterStream / WatchNodeChanges
 // [POS]: domain/nodefabric 的推送层：配置或用户变更后经 Valkey 通知持有连接的进程，再推给节点端；尽力而为，失败由轮询兜底
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -338,6 +338,17 @@ func (s *Service) notifyNodeChanged(ctx context.Context, tenantID, nodeID string
 // 事务提交之后调，尽力而为，不返回错误。
 func (s *Service) NotifyNodeChanged(ctx context.Context, tenantID, nodeID string) {
 	s.notifyNodeChanged(ctx, tenantID, nodeID)
+}
+
+// NotifyUsersChanged 在「谁能连哪些节点」变了之后发一次租户级 node.users.changed：
+// 套餐版本换绑节点池、池的用户组名单变化、用户换组（R104）。事件不带 node_id，
+// 持有连接的进程收到后给本进程上该租户的每个节点重算用户列表（WatchNodeChanges）。
+// 事务提交之后调，尽力而为，不返回错误；节点端的轮询兜底。
+func (s *Service) NotifyUsersChanged(ctx context.Context, tenantID string) {
+	if s.realtime != nil {
+		s.realtime.Publish(ctx, realtime.ChannelNodeAll(tenantID),
+			realtime.TopicNodeUsersChanged, map[string]any{})
+	}
 }
 
 // loadServingNodeForPush 按 ID 取出下发用的节点视图。
