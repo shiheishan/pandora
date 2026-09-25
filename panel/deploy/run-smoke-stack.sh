@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖 docker（postgres:18-alpine、valkey/valkey:8-alpine）、goose、go、openssl、curl、python3，同目录 configure-app-role.sql，../migrations，../cmd 下的网关源码
-# [OUTPUT]: up 起一套一次性的真实面板栈（PG18 + Valkey + aegis-public + aegis-admin + 一个平台管理员），把地址与账号写进 <状态目录>/smoke.env；down 拆掉
+# [OUTPUT]: up 起一套一次性的真实面板栈（PG18 + Valkey + aegis-public + aegis-admin + aegis-node + 一个平台管理员），把地址与账号写进 <状态目录>/smoke.env；down 拆掉
 # [POS]: 第 4 阶段联调冒烟的底座，被 .github/workflows/panel-smoke.yml 调用，之后的造数据与 frontend/tests/smoke 都读 smoke.env；起库做法照 run-pg18-gates.sh，运行角色照 bootstrap.sh
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
@@ -70,6 +70,7 @@ PG_IMAGE="${PANDORA_SMOKE_PG_IMAGE:-postgres:18-alpine}"
 VALKEY_IMAGE="${PANDORA_SMOKE_VALKEY_IMAGE:-valkey/valkey:8-alpine}"
 PUB_ADDR="${PANDORA_SMOKE_PUBLIC_ADDR:-127.0.0.1:9000}"
 ADM_ADDR="${PANDORA_SMOKE_ADMIN_ADDR:-127.0.0.1:9001}"
+NODE_ADDR="${PANDORA_SMOKE_NODE_ADDR:-127.0.0.1:9003}"
 PG_CONTAINER="pandora-smoke-pg-$$"
 VK_CONTAINER="pandora-smoke-valkey-$$"
 
@@ -160,6 +161,7 @@ AEGIS_DATABASE_URL=$APP_DSN
 AEGIS_REDIS_URL=redis://:${VALKEY_PW}@127.0.0.1:${VK_PORT}/0
 AEGIS_PUBLIC_ADDR=$PUB_ADDR
 AEGIS_ADMIN_ADDR=$ADM_ADDR
+AEGIS_NODE_ADDR=$NODE_ADDR
 AEGIS_PUBLIC_BASE_URL=http://$PUB_ADDR
 AEGIS_MASTER_KEY=$(rand_b64)
 AEGIS_JWT_PUBLIC_SECRET=$(rand_b64)
@@ -173,7 +175,7 @@ chmod 600 "$STATE/gateway.env"
 
 echo "==> 编译网关（CGO_ENABLED=0，与发布包一致）"
 ( cd "$PANEL_DIR" && CGO_ENABLED=0 go build -mod=readonly -o "$STATE/bin/" \
-    ./cmd/aegis-public ./cmd/aegis-admin ./cmd/aegis-adminctl )
+    ./cmd/aegis-public ./cmd/aegis-admin ./cmd/aegis-node ./cmd/aegis-adminctl )
 
 echo "==> aegis-adminctl 建平台管理员"
 ( set -a; . "$STATE/gateway.env"; set +a
@@ -181,7 +183,7 @@ echo "==> aegis-adminctl 建平台管理员"
     --email "$ADMIN_EMAIL" --password-stdin --role platform_admin
 ) > "$STATE/logs/adminctl.log" 2>&1 || { cat "$STATE/logs/adminctl.log" >&2; false; }
 
-echo "==> 启动 aegis-public 与 aegis-admin"
+echo "==> 启动 aegis-public、aegis-admin 与 aegis-node"
 start_gateway() {
   local name="$1"
   ( set -a; . "$STATE/gateway.env"; set +a
@@ -190,25 +192,29 @@ start_gateway() {
 }
 start_gateway aegis-public
 start_gateway aegis-admin
+# 节点控制面：造数据时节点经它上报心跳（UniProxy）
+start_gateway aegis-node
 
 # ---------------------------------------------------------------------------
 # 健康检查：readyz 连库连缓存；再用管理员真登录一次，证明 adminctl 建的号能用
 # ---------------------------------------------------------------------------
 curl() { command curl -q --noproxy '*' "$@"; }
+# 节点控制面没有 readyz，只探 healthz（第三个参数）
 wait_ready() {
-  local base="$1" name="$2"
+  local base="$1" name="$2" probe="${3:-readyz}"
   for _ in $(seq 1 60); do
-    if [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$base/readyz")" == 200 ]]; then
+    if [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$base/$probe")" == 200 ]]; then
       echo "    $name 就绪：$(curl -s --max-time 3 "$base/healthz")"
       return 0
     fi
     sleep 1
   done
-  echo "$name 60 秒内 readyz 没有返回 200" >&2
+  echo "$name 60 秒内 $probe 没有返回 200" >&2
   return 1
 }
 wait_ready "http://$PUB_ADDR" aegis-public
 wait_ready "http://$ADM_ADDR" aegis-admin
+wait_ready "http://$NODE_ADDR" aegis-node healthz
 
 login="$(curl -s -X POST "http://$ADM_ADDR/v1/auth/login" -H 'Content-Type: application/json' \
   --data-binary @- <<<"{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASS\"}")"
@@ -222,6 +228,7 @@ echo "    管理员登录与 /v1/me 通过"
 cat > "$STATE/smoke.env" <<EOF
 SMOKE_PUBLIC_BASE=http://$PUB_ADDR
 SMOKE_ADMIN_BASE=http://$ADM_ADDR
+SMOKE_NODE_BASE=http://$NODE_ADDR
 SMOKE_ADMIN_EMAIL=$ADMIN_EMAIL
 SMOKE_ADMIN_PASSWORD=$ADMIN_PASS
 SMOKE_MIGRATION_DSN=$MIGRATION_DSN
