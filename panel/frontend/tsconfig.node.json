@@ -24,5 +24,8 @@
     "vite.config.ts",
     "tests",
     "dev"
+  ],
+  "exclude": [
+    "tests/smoke"
   ]
 }

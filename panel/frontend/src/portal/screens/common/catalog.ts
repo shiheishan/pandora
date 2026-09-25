@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ./catalog-schema 的套餐 schema，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../core/format 的 formatMoney
- * [OUTPUT]: 对外提供套餐目录 / 流量包目录 / 支付方式的 schema、类型与查询（usePlans、usePackCatalog、usePaymentMethods），周期映射 periodOf / PERIODS / periodName / periodUnit，价格文案 monthlyNote / savingPercent / perGbNote，额度文案 trafficQuotaOf / resetNote / quotaPeriodNote / throttleNote，cnyPrices / priceFor / savingAmount / periodMonths / methodKey
+ * [OUTPUT]: 对外提供套餐目录 / 流量包目录 / 支付方式的 schema、类型与查询（usePlans、usePackCatalog、usePaymentMethods），周期映射 periodOf / PERIODS / periodName / periodUnit，价格文案 monthlyNote / savingPercent / perGbNote，额度文案 trafficQuotaOf / resetNote / quotaPeriodNote / throttleNote，cnyPrices / priceFor / savingAmount / periodMonths / methodKey；plansSchema 为 tests/smoke 形状冒烟导出
  * [POS]: portal/screens/common 的商品目录层（契约门户-03 与外壳的 payment-methods）：选购页与结账页共用；只展示 CNY 价格（余额与 epay 只有 CNY），周期把 (month,3)|(quarter,1)、(year,1)|(month,12) 归成同一档；套餐行含 R99 限速与 R100 卖点 / 推荐
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -13,7 +13,7 @@ import { planSchema, type Plan, type Price } from './catalog-schema'
 // GET v1/plans 的形状在 catalog-schema.ts（纯 zod，测试也用），这里转出
 export { planSchema, priceSchema, RESET_STRATEGIES, type Plan, type Price } from './catalog-schema'
 
-const plansSchema = z.object({ plans: z.array(planSchema) })
+export const plansSchema = z.object({ plans: z.array(planSchema) })
 
 /** 套餐卡的限速事实：「限速 N Mbps」，不限速为 null（R99：全程生效的按用户限速） */
 export const throttleNote = (kbps: number | null) => (kbps === null ? null : `限速 ${Number((kbps / 1000).toFixed(3))} Mbps`)

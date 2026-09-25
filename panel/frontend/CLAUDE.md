@@ -11,7 +11,7 @@ package.json: 脚本入口 dev:admin/dev:portal/dev:showcase（演示页，仅 d
 package-lock.json: npm ci 的锁文件，CI 与 frontend-embed 都只走 npm ci
 vite.config.ts: mode 即入口，未知 mode 直接报错，showcase 只许 dev、build 时拒绝；base './'、publicDir 关闭、不产 manifest、assetsInlineLimit 0（CSP 不放行字体 data:）；themeBoot 插件把 src/core/theme-boot.js 按内容哈希输出到 assets/ 并注入 <meta charset> 之后；define __APP_RELEASE__ 取 PANDORA_RELEASE（缺省 dev）；serve 时 /v1 走 PANDORA_API 代理，未设则挂 dev/mock-api；vitest 在 test mode 下以工程根为根
 tsconfig.json: 浏览器侧 src/ 的严格类型检查（bundler 解析、react-jsx、noUncheckedIndexedAccess），types 只有 vite/client
-tsconfig.node.json: vite.config.ts、tests/ 与 dev/ 的 node 侧类型检查（lib 带 DOM，测试要伪造浏览器对象；允许 .ts 扩展名导入，vite 原生配置加载要求），与浏览器侧隔开，node 类型不漏进应用代码
+tsconfig.node.json: vite.config.ts、tests/（除 tests/smoke，它有自己的 tsconfig）与 dev/ 的 node 侧类型检查（lib 带 DOM，测试要伪造浏览器对象；允许 .ts 扩展名导入，vite 原生配置加载要求），与浏览器侧隔开，node 类型不漏进应用代码
 eslint.config.js: flat config，JS/TS 推荐规则 + React Hooks 规则，src/ 的 ts/tsx/js 用浏览器全局、配置与 tests/、dev/ 用 node 全局
 .gitignore: node_modules/ 与 dist/ 不入库
 src/admin/: 管理后台入口与外框：登录页、深色侧栏 + 顶栏 + 页头标签、⌘K、实时事件、改密码、常驻 reauth 对话框（接到 api 的 requestReauth）；入口按 GET v1/me 的权限码隐藏；十个模块页经 screens/ 登记表懒加载；见 src/admin/CLAUDE.md
