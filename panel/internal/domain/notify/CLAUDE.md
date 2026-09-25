@@ -12,7 +12,7 @@ announce.go: 用户可见公告与定时发布
 mailcfg.go: 数据库里的 SMTP 设置（信封加密口令、短缓存）与按租户动态发信器；未设发件人名时用站点名
 smtp.go: 标准库 net/smtp 的邮件渠道
 telegram.go: Telegram 渠道与双向验证的账号绑定
-*_test.go: 单元测试（address_test.go 守验证码模板种子与 Kick 不阻塞）；scan_pg18_test.go、dispatch_pg18_test.go 由 run-pg18-gates.sh 的 notify 域跑
+*_test.go: 单元测试（address_test.go 守验证码模板种子与 Kick 不阻塞；tenant_seed_test.go 守建租户触发器种下的 12 个模板与 defaultTemplates 逐字一致）；scan_pg18_test.go、dispatch_pg18_test.go 由 run-pg18-gates.sh 的 notify 域跑
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

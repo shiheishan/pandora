@@ -318,9 +318,10 @@ func (h *handlers) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	if utf8.RuneCountInString(strings.TrimSpace(req.Reason)) < 5 {
+	// 原因可选（R101，D-B-2）：不填不校验；填了限 500 字，照旧进审计。
+	if utf8.RuneCountInString(strings.TrimSpace(req.Reason)) > 500 {
 		httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
-			"reason": "请写清为什么要改这个用户的密码，5 到 500 字。这条会进审计"}))
+			"reason": "原因最多 500 字"}))
 		return
 	}
 	if err := h.d.Identity.AdminResetPassword(r.Context(),

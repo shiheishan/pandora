@@ -83,7 +83,6 @@ func TestPortalStep5PG18(t *testing.T) {
 			[]any{tenant, order, user}},
 		{`INSERT INTO payment_providers(tenant_id,code,adapter,display_name,supported_currencies,config,enabled,accepting_new) VALUES
 		   ($1,'epay','epay','易支付','{CNY}','{"methods":["alipay","wxpay"]}',true,true),
-		   ($1,'offline','offline','线下收款','{CNY}','{}',true,false),
 		   ($1,'stripe','stripe','Stripe','{USD}','{}',true,true)`, []any{tenant}},
 		{`INSERT INTO sessions(id,tenant_id,user_id,audience,auth_methods,expires_at) VALUES
 		   ($2,$1,$3,'public',ARRAY['password'],now()+interval '30 days'),($4,$1,$3,'public',ARRAY['password'],now()+interval '30 days')`,

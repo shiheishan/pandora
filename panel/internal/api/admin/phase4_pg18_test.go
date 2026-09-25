@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 announcement_pg18_test.go 的 openAnnouncementPG18、step3_pg18_test.go 的 step3Seed / step3Do / step3Nodes、step4_pg18_test.go 的 step4Handlers / step4Router，依赖 node_admin.go 与 appearance.go 的处理器
-// [OUTPUT]: 对外提供 TestNodePatchKeepsSecretsPG18、TestPluginHookBoundsPG18
-// [POS]: api/admin 的第 4 阶段后端三 PG18 测试：节点 PATCH 缺席的敏感键保留原值（R78）、钩子超时与重试次数越界回 422 且不落库（R93）
+// [INPUT]: 依赖 announcement_pg18_test.go 的 openAnnouncementPG18、step3_pg18_test.go 的 step3Seed / step3Do / step3Nodes、step4_pg18_test.go 的 step4Handlers / step4Router，依赖 node_admin.go、appearance.go、handlers.go（setSwitch）与 mail.go 的处理器，依赖 domain/notify 的 LoadSMTPConfig
+// [OUTPUT]: 对外提供 TestNodePatchKeepsSecretsPG18、TestPluginHookBoundsPG18、TestTenantSeedDefaultsPG18
+// [POS]: api/admin 的第 4 阶段后端三 PG18 测试：节点 PATCH 缺席的敏感键保留原值（R78）、钩子超时与重试次数越界回 422 且不落库（R93）、建租户触发器补种与 SMTP 密码 upsert（R94、R97）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -13,8 +13,11 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/notify"
 	"github.com/aegispanel/aegis/internal/domain/plugin"
+	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 )
 
 // R78：读接口抹掉敏感键，前端拿抹过的配置只改一个普通字段再 PATCH 回来，
@@ -143,5 +146,105 @@ func TestPluginHookBoundsPG18(t *testing.T) {
 	}
 	if timeout != 30000 || attempts != 10 {
 		t.Fatalf("saved timeout=%d attempts=%d", timeout, attempts)
+	}
+}
+
+// R94 / R97 与线下渠道、通知模板：新建的租户由 tenants 的 AFTER INSERT 触发器
+// 种下线下渠道、12 个内置模板与 8 个降级开关，和默认租户一样能用。
+func TestTenantSeedDefaultsPG18(t *testing.T) {
+	ctx, admin, app := openAnnouncementPG18(t)
+	const (
+		tenant  = "8b000000-0000-4000-8000-000000000201"
+		actor   = "8b000000-0000-4000-8000-000000000211"
+		viaApp  = "8b000000-0000-4000-8000-000000000221"
+		scopeOf = "8b000000-0000-4000-8000-000000000231"
+	)
+	step3Seed(t, ctx, admin,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','seed-pg18','Seed','CNY')`,
+		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+actor+`','`+tenant+`','ops@seed.invalid','Ops','active')`,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+scopeOf+`','seed-scope-pg18','Seed Scope','CNY')`)
+
+	type seeded struct {
+		offline, offlineSelectable     bool
+		templates, switches, essential int
+	}
+	read := func(id string) seeded {
+		t.Helper()
+		var out seeded
+		if err := admin.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM payment_providers WHERE tenant_id=$1 AND code='offline' AND enabled),
+			       EXISTS (SELECT 1 FROM payment_providers WHERE tenant_id=$1 AND code='offline' AND accepting_new),
+			       (SELECT count(*) FROM notification_templates WHERE tenant_id=$1 AND status='active'),
+			       (SELECT count(*) FROM feature_switches WHERE tenant_id=$1 AND enabled),
+			       (SELECT count(*) FROM feature_switches WHERE tenant_id=$1 AND essential)`, id).Scan(
+			&out.offline, &out.offlineSelectable, &out.templates, &out.switches, &out.essential); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	want := seeded{offline: true, templates: 12, switches: 8, essential: 3}
+	if got := read(tenant); got != want {
+		t.Fatalf("seeded tenant=%+v want %+v", got, want)
+	}
+	// 默认租户经迁移补种后同样齐全（其余测试可能改过它的开关状态，只数行）；R102 删掉的三项不在
+	var defaultRows int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM feature_switches WHERE tenant_id='00000000-0000-7000-8000-000000000001'`).Scan(&defaultRows); err != nil || defaultRows != 8 {
+		t.Fatalf("default tenant switch rows=%d err=%v", defaultRows, err)
+	}
+	if got := read("00000000-0000-7000-8000-000000000001"); got.templates < 12 || !got.offline || got.essential != 3 {
+		t.Fatalf("default tenant=%+v", got)
+	}
+	var dropped int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM feature_switches WHERE code IN ('ops.bulk_export','ops.reports','node.autoscale')`).Scan(&dropped); err != nil || dropped != 0 {
+		t.Fatalf("unwired switches left=%d err=%v", dropped, err)
+	}
+
+	// 应用角色建租户也有种子；seed 函数只经触发器进来，应用角色自己调不到；
+	// 函数临时切过会话租户，事务里后续语句看到的仍是调用方自己的租户
+	var restored string
+	if err := app.InTx(ctx, platformdb.Scope{TenantID: scopeOf}, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO tenants(id,slug,display_name,default_currency) VALUES($1,'seed-app-pg18','Seed App','CNY')`, viaApp); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT current_setting('app.tenant_id')`).Scan(&restored)
+	}); err != nil {
+		t.Fatalf("app role tenant insert: %v", err)
+	}
+	if restored != scopeOf {
+		t.Fatalf("app.tenant_id after trigger=%q want %q", restored, scopeOf)
+	}
+	if got := read(viaApp); got != want {
+		t.Fatalf("app-created tenant=%+v want %+v", got, want)
+	}
+	var appExec, publicExec bool
+	if err := admin.QueryRow(ctx, `SELECT has_function_privilege('aegis_app','app.seed_tenant_defaults(uuid)','EXECUTE'),
+		has_function_privilege('public','app.seed_tenant_defaults(uuid)','EXECUTE')`).Scan(&appExec, &publicExec); err != nil || appExec || publicExec {
+		t.Fatalf("seed function executable by app=%v public=%v err=%v", appExec, publicExec, err)
+	}
+
+	// 新租户在后台切得动开关（R97），SMTP 密码行缺失时也写得进去（R94）
+	h := step4Handlers(t, app)
+	r := step4Router(tenant, actor, h).(*chi.Mux)
+	r.Post("/v1/switches/{code}", h.setSwitch)
+	r.Post("/v1/settings/mail", h.setMailSettings)
+	if w := step3Do(t, ctx, r, http.MethodPost, "/v1/switches/marketing.giftcard.redeem", `{"enabled":false,"reason":"演练"}`); w.Code != http.StatusOK {
+		t.Fatalf("toggle seeded switch: status=%d body=%s", w.Code, w.Body.String())
+	}
+	var redeemOn bool
+	if err := admin.QueryRow(ctx, `SELECT enabled FROM feature_switches WHERE tenant_id=$1 AND code='marketing.giftcard.redeem'`, tenant).Scan(&redeemOn); err != nil || redeemOn {
+		t.Fatalf("switch not toggled: enabled=%v err=%v", redeemOn, err)
+	}
+	step3Seed(t, ctx, admin, `DELETE FROM system_settings WHERE tenant_id='`+tenant+`' AND key='mail.smtp_password'`)
+	body := `{"smtp_host":"smtp.example.test","smtp_port":465,"encryption":"ssl","smtp_username":"u","smtp_password":"fixture-smtp","from_address":"noreply@example.test","from_name":"Seed"}`
+	if w := step3Do(t, ctx, r, http.MethodPost, "/v1/settings/mail", body); w.Code != http.StatusOK {
+		t.Fatalf("save mail settings: status=%d body=%s", w.Code, w.Body.String())
+	}
+	cfg, err := notify.LoadSMTPConfig(ctx, app, h.d.Envelope, tenant)
+	if err != nil || cfg.Password != "fixture-smtp" {
+		t.Fatalf("smtp password after upsert=%q err=%v", cfg.Password, err)
+	}
+	var secret bool
+	if err := admin.QueryRow(ctx, `SELECT is_secret FROM system_settings WHERE tenant_id=$1 AND key='mail.smtp_password'`, tenant).Scan(&secret); err != nil || !secret {
+		t.Fatalf("upserted row is_secret=%v err=%v", secret, err)
 	}
 }

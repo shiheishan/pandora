@@ -452,7 +452,7 @@ $sql$);
 
 SELECT _reject('NFR-008', '关闭开关但不填原因必须拒绝', $sql$
   UPDATE feature_switches SET enabled = false, reason = NULL
-   WHERE code = 'ops.reports' AND tenant_id = '00000000-0000-7000-8000-000000000001';
+   WHERE code = 'billing.checkout' AND tenant_id = '00000000-0000-7000-8000-000000000001';
 $sql$);
 
 --------------------------------------------------------------------------------

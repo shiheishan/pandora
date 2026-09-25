@@ -6,7 +6,7 @@
 成员清单
 router.go: Deps 与 NewRouter：全局中间件链，/v1 挂 admin.writes 只读门（middleware.AdminWritesGate），根 / 与 /assets/* 经 webapp 下发后台前端，/v1 登录分组与已登录分组；已登录分组按拆分前的原顺序调用各 router_<模块>.go 的 register*Routes，顺序不要重排
 router_<模块>.go: 按模块分段的路由表，每个 register*Routes(r, d, h) 声明一段路由的权限、重认证与幂等 scope。dashboard 仪表盘与收入；appearance 主题、插槽、插件钩子；notify Telegram、邮件设置、通知模板；users 批量运营、流量重置、用户状态、用户组、设备数；marketing 礼品卡、优惠券、分销；billing 挂账、订单（人工开单与标记已支付都挂重认证）、支付渠道、余额调账；catalog 套餐（含 registerCatalogPlanUpdate，套餐类新路由加这里）与流量包（registerTrafficPackRoutes，写接口 catalog.publish + 重认证 + 幂等）；security 审计、系统状态、风控、降级开关；nodes 节点分组、节点、服务器（含 nodeBatchStatusIdempotencyScope）；content 公告与知识库；support 工单与快捷回复
-handlers.go: handlers 结构与核心处理器：登录、me（追加邮箱、显示名、角色）、用户、订阅换链接、订单、节点列表（含 country_code、近 24h 流量、控制节点探针的 CPU / 内存，按 sort_order, node_no 排序）、工单队列与处理、降级开关（切换后向管理端频道发 switches.changed）
+handlers.go: handlers 结构与核心处理器：登录、me（追加邮箱、显示名、角色）、用户（替用户重置密码的原因可选、限 500 字，R101）、订阅换链接、订单、节点列表（含 country_code、近 24h 流量、控制节点探针的 CPU / 内存，按 sort_order, node_no 排序）、工单队列与处理、降级开关（切换后向管理端频道发 switches.changed）
 helpers.go: 包内共用小工具：域常量、请求级超时
 access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两路归并，分类规则展示与筛选共用；outcome 筛选（error = 非 success）
 audit_log.go: 审计日志列表与 CSV 导出（security.audit.read + ops.export + reauth），导出日期区间格式错回 422，自由文本列做公式防护
@@ -25,10 +25,10 @@ pool_user_groups.go: 节点池「仅限用户组」名单（R104，表 node_pool
 announce.go / content.go: 公告（草稿 / 定时 / 撤回，按套餐与用户组定向）、知识库版本
 appearance.go: 主题、插槽、Webhook 钩子与投递记录（含 duration_ms）
 site_settings.go: 站点时区读写（R49），即 tenants.timezone，按日用量与收入趋势的切日口径；时区名须能被 time.LoadLocation 加载，拒绝空串与 Local，改动写审计
-mail.go / mail_template.go / telegram.go: 邮件与注册设置、通知模板（列表带 has_default、草稿预览、草稿实发测试）、Telegram 配置（管理员群组 admin_chat_id 作测试默认目标），三个测试发送挂 ops.notification.write
+mail.go / mail_template.go / telegram.go: 邮件与注册设置（全部 upsert，SMTP 密码行缺失也写得进，R94）、通知模板（列表带 has_default、草稿预览、草稿实发测试）、Telegram 配置（管理员群组 admin_chat_id 作测试默认目标），三个测试发送挂 ops.notification.write
 ticket_macros.go: 工单快捷回复的列表与增改删
 events.go: 管理端 SSE
-*_test.go: 路由契约与守卫（router_contract、security_guards、step4_test、step5_test 与四份 AST 契约，order_pack_routes_test 另用真实注册函数证明未重认证到不了幂等与处理器；源码级契约经 router_source_test.go 读全部 router*.go）、权限字典契约、处理器单测；*_pg18_test.go 为 PG18 集成测试，announcement、node_config 与 delivery（delivery_pg18_test.go：交付集合变化后通知节点、节点列表交付判定与节点用户列表同口径；pool_user_groups_pg18_test.go：池名单的字段级 reauth、校验、审计、通知、删组被拒与换组后的实际下发；与 domain/subscription 同域）三个域同包，run-pg18-gates.sh 用精确 -run 过滤分开；phase4_pg18_test.go 归 announcement 域，守节点 PATCH 保留敏感键（R78）与钩子数值越界 422（R93）
+*_test.go: 路由契约与守卫（router_contract、security_guards、step4_test、step5_test 与四份 AST 契约，order_pack_routes_test 另用真实注册函数证明未重认证到不了幂等与处理器；源码级契约经 router_source_test.go 读全部 router*.go）、权限字典契约、处理器单测；*_pg18_test.go 为 PG18 集成测试，announcement、node_config 与 delivery（delivery_pg18_test.go：交付集合变化后通知节点、节点列表交付判定与节点用户列表同口径；pool_user_groups_pg18_test.go：池名单的字段级 reauth、校验、审计、通知、删组被拒与换组后的实际下发；与 domain/subscription 同域）三个域同包，run-pg18-gates.sh 用精确 -run 过滤分开；phase4_pg18_test.go 归 announcement 域，守节点 PATCH 保留敏感键（R78）、钩子数值越界 422（R93）与建租户补种、新租户切开关、SMTP 密码 upsert（R94、R97）；reset_password_reason_test.go 守重置密码原因只限长度（R101）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
