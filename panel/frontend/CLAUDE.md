@@ -26,15 +26,15 @@ src/showcase/: 只在 dev 存在的令牌与组件演示页，浏览器内逐条
 tests/entries.test.ts: 入口源文件契约——域标记正确、只有外链 module script、无内联样式；与 panel/web/app_test.go 同一组前提，前移到 npm test 暴露
 tests/tokens.test.ts: 令牌契约——tokens.css / roles.css 与设计稿逐值一致、明暗两组键相同、所有 var() 都有定义、样式不引用外部来源、字体文件都在包内
 tests/mock-helpers.ts: 假后端测试共用辅助——serve 把 mockApi 挂到本地 HTTP 服务（非 API 路径回 418 代表交给 vite）、close、loginAs、bearer、mockFetch（可选请求体与幂等键）；每个测试文件各起各的服务，模块假数据按文件隔离
-tests/mock-api.test.ts: 假后端外壳守卫——matchPattern；外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同键重新执行，条件改好即成功）（调账打在真实种子用户上，余额经详情接口核对、重放不再记账，种子外的 id 回 404）
-tests/mock-admin-users.test.ts: 用户第 ④ 步假接口——流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验
+tests/mock-api.test.ts: 假后端外壳守卫——matchPattern；外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同键重新执行，条件改好即成功）（调账打在真实种子用户上，余额经详情接口核对、重放不再记账，种子外的 id 回 404）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码，503 后同键重新执行）
+tests/mock-admin-users.test.ts: 用户第 ④ 步假接口——流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验，设新密码不要原因（R101）
 tests/mock-admin-plans.test.ts: 套餐假接口——目录能被页面 schema 接住、向导单事务新建与幂等重放、编辑向导的 null = 不动与开新版本、草稿版本全流程、价格与销售开关 503、流量包 updated_at 乐观锁
 tests/mock-admin-marketing.test.ts: 营销假接口——礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400
 tests/mock-admin-nodes.test.ts: 节点与服务器假接口——节点列表能被页面 schema 接住、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器 schema、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布
 tests/mock-admin-content.test.ts: 内容与外观假接口——只读账号整块 404、公告状态机与版本冲突、知识库新版本归档同受众旧版与重复归档、内置主题 43 键、插槽净化与空内容 dropped 为 null、站点时区校验
 tests/mock-admin-system.test.ts: 通知与插件假接口——只读账号只开放模板、SMTP 整体覆盖与密码保留 / 清空、注册校验、Telegram chat id 缺省不改与测试回落、模板变量白名单 / 预览 / 恢复默认 / 测试信要 reauth、钩子 upsert 一次性密钥、内网地址与未知事件 422、越界 500、投递记录 null、删除 404
-tests/mock-admin-security.test.ts: 安全与运维假接口——只读账号整块 404（停用先 404 不弹 reauth）；审计 schema、存量行、筛选与 limit 越界；导出先 reauth、日期 422、BOM 与防公式、导出记审计；访问日志分类表、未知分类与结果 422、仅错误、IP 与账号筛选；聚类默认不列标记正常的、机房判高风险、标记正常；批量停用 reauth、422、跳过后台账号 / 已停用 / 非成员、同键重放、用户模块看到已停用；开关排序、核心项与缺原因 409、切换记审计
-tests/mock-portal.test.ts: 门户假接口——外框读接口来自各页面模块、快捷登录令牌一次性往返
+tests/mock-admin-security.test.ts: 安全与运维假接口——只读账号整块 404（停用先 404 不弹 reauth）；审计 schema、存量行、筛选与 limit 越界；导出先 reauth、日期 422、BOM 与防公式、导出记审计；访问日志分类表、未知分类与结果 422、仅错误、IP 与账号筛选；聚类默认不列标记正常的、机房判高风险、标记正常；批量停用 reauth、422、跳过后台账号 / 已停用 / 非成员、同键重放、用户模块看到已停用；开关八行（R102）、排序、核心项与缺原因 409、切换记审计
+tests/mock-portal.test.ts: 门户假接口——外框读接口来自各页面模块、快捷登录令牌一次性往返、同会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
 tests/mock-admin-billing.test.ts: 订单与收款假接口守卫（后台前端一第 ⑥ 步；起服务与发请求用 mock-helpers，登录与 reauth 辅助留在文件内）：只读账号只看得到订单列表；订单 schema、多值状态、user_id 与用户详情同一份；人工开单先 reauth、201 重放、三种结算与拒绝项；标记已支付开通；取消 CAS 与重放；挂账按币种合计与只能转一次；渠道启停；收入调整登记、冲销与重复冲销 409
 tests/theme-boot.test.ts: 用 node:vm 执行引导脚本覆盖各种存储状态，核对它与 theme.ts 同键；vite 配置拒绝构建 showcase 与未知 mode、引导脚本带内容哈希、不内联资源、假后端只在 serve 时挂上
 

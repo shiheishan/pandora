@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatCount，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / ConfirmModal / Empty / Input / QueryView / Table / useToast，依赖 ../../actions 的 useCan / useFailure，依赖 ./api 的 useUserGroups / useInvalidateUsers / groupSavedSchema / okSchema / UserGroup，依赖 ./model 的 groupBlocker / groupRefs，依赖 ./Users.module.css 与 ./Ops.module.css
  * [OUTPUT]: 对外提供 GroupsTab
- * [POS]: 用户页「用户组」标签（#/users/groups）：左表格（名称与说明、成员、被引用、查看成员 / 编辑 / 删除），右「新建用户组」卡片（名称、说明、折叠的「标识（英文）」）。契约后台-03：D-B-3 未决前隐藏「可用节点池」列；编辑是行内改名称与说明（code 不可改）；删除在成员或任一引用不为 0 时置灰并说明原因，后端 409 的原文兜底。写操作要 iam.user.write，只读账号只看表格
+ * [POS]: 用户页「用户组」标签（#/users/groups）：左表格（名称与说明、成员、被引用、查看成员 / 编辑 / 删除），右「新建用户组」卡片（名称、说明、折叠的「标识（英文）」）。契约后台-03：D-B-3 / R104 已决，第 ③ 步加「可用节点池」列，在那之前隐藏；编辑是行内改名称与说明（code 不可改）；删除在成员或任一引用不为 0 时置灰并说明原因，后端 409 的原文兜底。写操作要 iam.user.write，只读账号只看表格
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'

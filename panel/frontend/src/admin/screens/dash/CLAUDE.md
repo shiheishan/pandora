@@ -10,13 +10,13 @@ index.tsx: 页面入口，按 dashboardAccess 决定哪些卡出现；概览与�
 api.ts: 其余七个接口的 zod schema、类型与 useXxx 查询 hook（backlog / overview / revenue / traffic nodes·users / system status / stats timeseries），刷新间隔与实时 topic 在这里声明；用户流量以节点流量的 snapshot_at 为锚点
 model.ts: 纯逻辑——百分比 / 时长 / 延迟文案、按权限的 dashboardAccess 与 reachable、需要处理卡片（含通知积压合并与待补·前端的账本漂移卡）、KPI 较昨日、收入趋势与注册活跃的柱数据、备份摘要与系统状态行（R52：组件 metrics 缺字段处显示 —）、流量排行与未归属告警
 model.test.ts: model.ts 全部分支与 schema 形状的单元测试（待补字段缺失时的退化、字节必须是字符串、R52 缺字段、只读账号只剩通知积压）
-Tasks.tsx: 「需要处理」卡片网格（共用的 tasks 查询 + 冻结契约的通知积压明细），目标页不可读时卡片不可点
+Tasks.tsx: 「需要处理」卡片网格（共用的 tasks 查询 + 冻结契约的通知积压明细），目标页不可读时卡片不可点；「超时未支付订单」带待支付筛选跳订单页
 Kpis.tsx: 「经营」四格：按币种的今日收入、有效订阅、近 24 小时流量；调账、试用、即将到期、待支付放进 tooltip
 RevenueTrend.tsx: 「收入趋势」CNY/USD × 7/30/90 天，区间合计、日均、较上一区间、柱图；切换时保留上一张图
 SystemStatus.tsx: 「系统状态」总状态胶囊与组件行（components 未上时只有数据库一行），第 8 行「数据库备份」打开 BackupDrawer
 BackupDrawer.tsx: 备份抽屉（待补·前端），backup 段逐项展示与最近 5 份表格，后端 message / identity_hint 原文照登
 Activity.tsx: 「注册与活跃 · 近 14 天」成对柱图，active_users 未上时只画注册柱
-TrafficRank.tsx: 「流量排行 · 近 24 小时」节点 / 用户两个页签，用户只显示脱敏邮箱（待决 D-A-2 未决前），行点进 #/users/list/<id>；底部小字给未归属与质量计数
+TrafficRank.tsx: 「流量排行 · 近 24 小时」节点 / 用户两个页签，用户只显示脱敏邮箱（D-A-2 已决，5.A.2），行点进 #/users/list/<id>；底部小字给未归属与质量计数
 parts.tsx: 本目录共用的小部件：卡片内错误行与重试、骨架、状态圆点、404 判定、链接拼接
 Dash.module.css: 本目录唯一样式表，数值取自设计稿，只引用令牌
 

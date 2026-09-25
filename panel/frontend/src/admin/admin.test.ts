@@ -159,6 +159,11 @@ describe('describeEvent', () => {
     expect(describeEvent({ event: 'ticket.updated', data: '{"ticket_id":"t-123456789"}' }, 2)).toMatchObject({ title: '工单回复变更', body: 't-123456', module: 'tickets' })
     expect(describeEvent({ event: 'data.changed', data: 'not json' }, 3)).toMatchObject({ title: '数据变更', body: '', module: null })
   })
+
+  it('describes switch toggles by code and direction', () => {
+    expect(describeEvent({ event: 'switches.changed', data: '{"code":"billing.checkout","enabled":false}' }, 4)).toMatchObject({ title: '降级开关变更 · 已暂停', body: 'billing.checkout', module: 'security', tab: 'switches', tone: 'warn' })
+    expect(describeEvent({ event: 'switches.changed', data: '{"code":"admin.writes","enabled":true}' }, 5)).toMatchObject({ title: '降级开关变更 · 已恢复', body: 'admin.writes' })
+  })
 })
 
 describe('dashboard/tasks', () => {

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 ../../../ui 的 TagTone 类型，依赖 ./api 的 TicketRow / TicketDetail / TicketMessage 类型
  * [OUTPUT]: 对外提供 TicketRoute / ticketRoute、ticketStatus、canWithdraw、canClose、canReply、authorLabel、messageTime、validateTicket / TicketErrors、SUBJECT_RANGE、BODY_RANGE、REPLY_MAX
- * [POS]: portal/screens/tickets 的纯逻辑（契约门户-07）：子路由（列表 / 新建 / 某张工单）、状态文案与色调（closed 按 closed_reason 分已撤回与已关闭）、三个按钮的可见条件（与后端 withdraw.go / 关闭 / 回复的判定一致）、作者名（待决 D-F-2 未决前客服统一显示「客服」）、消息时间、新建表单校验（与 support.create 同口径）；有单元测试
+ * [POS]: portal/screens/tickets 的纯逻辑（契约门户-07）：子路由（列表 / 新建 / 某张工单）、状态文案与色调（closed 按 closed_reason 分已撤回与已关闭）、三个按钮的可见条件（与后端 withdraw.go / 关闭 / 回复的判定一致）、作者名（D-F-2 已决（5.A.2）：客服统一显示「客服」）、消息时间、新建表单校验（与 support.create 同口径）；有单元测试
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { TagTone } from '../../../ui'
@@ -44,7 +44,7 @@ export const canClose = (t: Pick<TicketDetail, 'status'>) => t.status !== 'close
 /** 回复：未关闭即可，resolved 被追问会重开 */
 export const canReply = canClose
 
-/** D-F-2 未决前：客服不显示姓名；系统消息居中灰字，不需要作者 */
+/** D-F-2 已决（5.A.2）：客服不显示姓名；系统消息居中灰字，不需要作者 */
 export function authorLabel(m: Pick<TicketMessage, 'author_kind'>): string {
   return m.author_kind === 'user' ? '我' : m.author_kind === 'agent' ? '客服' : '系统'
 }

@@ -6,7 +6,7 @@
 两条后端事实决定了节点表单写法：protocol_config 写入是整体替换，而读接口按名字抹掉敏感键（password、private_key、psk…），所以 PATCH 只在协议字段真的改了才带 protocol_config，协议改了而敏感字段留空时先确认会被清空；协议 schema 由后端给出（13 个 stable + 2 个 legacy-read-compatible），表单按 allowed_properties 渲染、点号路径展开成嵌套对象，422 的 protocol_config.<键> 按路径再按叶子名落回字段。
 保留规则 5：只有从未部署过的草稿（draft / disabled、无心跳、无身份）能迁移，其余引导「复制到新服务器再退役」。列表一次取 1000 条并总带 include_retired=1，「全部」里藏掉已退役，刚退役的节点抽屉仍可继续删除。
 服务器三条后端事实：状态机 ready 不能直达 maintenance，所以卡片「标记维护」发 draining（卡片显示「维护中」），完整状态走详情里的合法边下拉；进入 ready 要有一个协议校验通过的在役节点，否则 409；删除只许草稿或已退役，名下节点不拒绝而是级联静默（身份吊销、摘掉 server_id），文案按此改写了设计的「先迁移或删除」。安装令牌固定传 ttl_minutes 30（后端缺省 20）。
-全局路由：编辑在本地，「发布到全部节点」一次 PUT 带 expected_revision（全局配置没有行版本，用规范 JSON 的 sha256），要 reauth 与幂等键；匹配类型只放后端支持的（D-D-1），节点私有规则排在全局之前、私有兜底会遮住全局；删除仍被节点私有规则引用的全局出站回 409（R56），前端先拦住仍被全局规则引用的出站，改名时规则跟着改。节点池的「仅用户组」是待决 D-B-3，未决前不显示也不提交。
+全局路由：编辑在本地，「发布到全部节点」一次 PUT 带 expected_revision（全局配置没有行版本，用规范 JSON 的 sha256），要 reauth 与幂等键；匹配类型只放后端支持的（D-D-1），节点私有规则排在全局之前、私有兜底会遮住全局；删除仍被节点私有规则引用的全局出站回 409（R56），前端先拦住仍被全局规则引用的出站，改名时规则跟着改。节点池的「仅用户组」是 D-B-3 / R104（已决，第 ③ 步接入），在那之前不显示也不提交。
 
 成员清单
 index.tsx: 页面入口，按标签分发：nodes → NodesTab（rest = [节点 id, 抽屉标签]）、servers → ServersTab（rest = [服务器 id, 抽屉标签]）、pools → PoolsTab、routing → RoutingTab

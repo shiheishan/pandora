@@ -178,7 +178,7 @@ export const serverNodesResponse = z.object({ nodes: z.array(serverNodeSchema), 
 export type ServerNode = z.output<typeof serverNodeSchema>
 
 // ---------------------------------------------------------------------------
-// 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；用户组限制是待决 D-B-3，未决前不做
+// 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；用户组限制是 D-B-3 / R104（已决，第 ③ 步接入），在那之前不做
 // ---------------------------------------------------------------------------
 export const POOL_STATUSES = ['active', 'draining', 'disabled'] as const
 export type PoolStatus = (typeof POOL_STATUSES)[number]

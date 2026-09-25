@@ -1,10 +1,11 @@
 /**
- * [INPUT]: 依赖 ../../../core/format 的 formatMoney / formatBytes / formatCount / relativeTime，依赖 ../../modules 的 ModuleKey / Permissions / canRead / canReadModule，依赖 ../../tasks 的 TaskItem，依赖 ./api 的响应类型
+ * [INPUT]: 依赖 ../../../core/format 的 formatMoney / formatBytes / formatCount / relativeTime，依赖 ../../../core/router 的 RouteQuery 类型，依赖 ../../modules 的 ModuleKey / Permissions / canRead / canReadModule，依赖 ../../tasks 的 TaskItem，依赖 ./api 的响应类型
  * [OUTPUT]: 对外提供 formatPercent、formatDuration、formatLatency、percentChange、dashboardAccess、reachable、taskCards、kpiRevenueDelta、revenueSummary、activitySummary、backupSummary、systemRows、trafficRows、trafficNotes 及其类型
  * [POS]: admin/screens/dash 的纯逻辑层：把接口数据映射成卡片、行与文案（契约后台-01 的「映射」一行），不碰 React 与网络；界面组件只负责摆放，model.test.ts 覆盖这里的全部分支
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatBytes, formatCount, formatMoney, relativeTime } from '../../../core/format'
+import type { RouteQuery } from '../../../core/router'
 import { canRead, canReadModule, type ModuleKey, type Permissions } from '../../modules'
 import type { TaskItem } from '../../tasks'
 import type { ActivityPoint, Backlog, BackupStatus, ComponentState, NodeTraffic, RevenuePoint, SystemComponent, SystemStatus, UserTraffic } from './api'
@@ -77,6 +78,8 @@ export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 export interface Target {
   module: ModuleKey
   tab: string | null
+  /** 目标页的地址筛选（如订单页 s=pending），不影响可达性判断 */
+  query?: RouteQuery
 }
 
 export interface TaskCard {
@@ -180,7 +183,8 @@ function taskCard(item: TaskItem, perms: Permissions): TaskCard | null {
         sub: item.count > 0 ? `超过 ${Math.round(item.threshold_seconds / 60)} 分钟，可能是回调丢失` : none,
         tone: item.count > 0 ? 'warn' : 'ok',
         action: '去核对',
-        target: reachable({ module: 'billing', tab: 'orders' }, perms),
+        // 带上「待支付」筛选（订单页 s=pending，含 pending_payment），落地就是要核对的那几单
+        target: reachable({ module: 'billing', tab: 'orders', query: { s: 'pending' } }, perms),
         pending: item.count > 0,
       }
     case 'ledger_drift':

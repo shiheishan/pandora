@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useMutation，依赖 react 的 useEffect / useRef / useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / Empty / Modal / Select / Skeleton / Tag / TextArea / useToast，依赖 ../../actions 的 useCan / useFailure / useIntentKey，依赖 ./api、./model、./Composer、./Queue 的 useNow，依赖 ./Tickets.module.css
  * [OUTPUT]: 对外提供 Detail
- * [POS]: 工单页右栏：详情头（标题、编号 · 用户 · 套餐 · 创建时间、已升级徽标、关闭原因、关联订单、SLA 两行）、状态 / 指派下拉、查看用户、升级到 L2（D-B-6 未决前只改状态与优先级、不说「通知值班」）、对话流（用户 / 客服 / 内部备注 / 系统四种气泡）与底部 Composer；没有 ops.ticket.write 时只读
+ * [POS]: 工单页右栏：详情头（标题、编号 · 用户 · 套餐 · 创建时间、已升级徽标、关闭原因、关联订单、SLA 两行）、状态 / 指派下拉、查看用户、升级到 L2（D-B-6 已决（5.A.2）：只改状态与优先级、不说「通知值班」）、对话流（用户 / 客服 / 内部备注 / 系统四种气泡）与底部 Composer；没有 ops.ticket.write 时只读
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
@@ -186,7 +186,7 @@ function Controls({ t, canWrite, canViewUser }: { t: TicketDetail; canWrite: boo
       <ConfirmModal
         open={escalating}
         title="升级到 L2？"
-        // D-B-6 未决前按方案 A：只改状态与优先级，不发通知，文案不承诺「通知二线值班」
+        // D-B-6 已决（5.A.2）方案 A：只改状态与优先级，不发通知，文案不承诺「通知二线值班」
         body="工单会标为已升级，优先级至少提到「高」，并在对话里留一条系统记录。目前不会自动通知任何人。"
         confirmLabel="升级"
         tone="danger"

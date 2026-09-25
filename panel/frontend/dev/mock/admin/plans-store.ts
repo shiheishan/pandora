@@ -1,12 +1,12 @@
 /**
- * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockResult，依赖 ./users 的 PLAN_IDS / GROUPS / activeSubscriptions，依赖 ./nodes-infra 的 pools（只读）
+ * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockResult，依赖 ./users 的 PLAN_IDS / GROUPS / activeSubscriptions，依赖 ./nodes-infra 的 pools（只读）与 activeNodesInPool（在线节点数与节点池列表同口径）
  * [OUTPUT]: 对外提供套餐假接口的存储与规则：Plan 类型、种子目录 plans 与查找（find、currentOf、draftOf、trafficOf）、行形状（listRow、priceRow、detail）、与 Go 同键名同文案的校验（planFieldProblems、semanticsProblems、priceProblems、poolProblems、wizardPriceProblems、publishProblems）、写入小件（publish、applySemantics、applyBasics、blankVersion、quotasFor、seedPlan、seedPrice、newPrice、priceKey、touch）、在线节点数 activeNodes、工具（GiB、UUID、isInt、str）、错误结果（err、invalid、NOT_FOUND、DUP、stale、SALES_OFF、unknownField）与销售开关（sales、setSalesEnabled）
  * [POS]: dev/mock/admin 的「套餐（后台-04）」数据层，plans.ts 的路由与向导都经它读写。种子五个套餐沿用 users.ts 的固定套餐 id（批量筛选按套餐能命中）与用户组 id，节点池沿用 nodes-infra.ts 的池（id 一致），在线节点数是这里的固定值、不与节点假后端联动（企业专线为 0，演示「空订阅」警示）；有效订阅按 users.ts 的种子订阅实时数（active / trialing）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { Json, MockResult } from '../types.ts'
-import { pools } from './nodes-infra.ts'
+import { activeNodesInPool, pools } from './nodes-infra.ts'
 import { activeSubscriptions, GROUPS, PLAN_IDS } from './users.ts'
 
 // ---------------------------------------------------------------------------
@@ -39,12 +39,8 @@ export function setSalesEnabled(on: boolean): void {
 export const sales = () => salesEnabled
 export const SALES_OFF = err(503, 'service_unavailable', '服务暂时不可用')
 
-// 在线节点数：节点假后端不导出节点表，这里按池 code 给固定值（企业专线故意为 0，演示「空订阅」警示）
-const ACTIVE_NODES: Record<string, number> = { asia: 3, global: 6, beta: 1, enterprise: 0 }
-export const activeNodes = (poolId: string) => {
-  const p = pools.find((x) => x.id === poolId)
-  return p ? (ACTIVE_NODES[p.code] ?? 1) : 0
-}
+// 在线节点数：与节点池列表的 active_nodes 同一口径，取节点假后端的同一份节点表（节点页改了状态，套餐这边跟着变）
+export const activeNodes = activeNodesInPool
 const poolId = (code: string) => pools.find((p) => p.code === code)?.id ?? randomUUID()
 const livePool = (id: string) => pools.some((p) => p.id === id && p.status !== 'disabled')
 

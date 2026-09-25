@@ -1,13 +1,14 @@
 /**
- * [INPUT]: 依赖 vite 的 Plugin 与 Connect 中间件类型，依赖 node:crypto 的 randomUUID，依赖 node:http 的请求响应，依赖 ./mock/types 的上下文契约与路由匹配，依赖 ./mock/admin 与 ./mock/portal 的模块登记表，依赖 ./mock/quick-login 的令牌表
+ * [INPUT]: 依赖 vite 的 Plugin 与 Connect 中间件类型，依赖 node:crypto 的 randomUUID，依赖 node:http 的请求响应，依赖 ./mock/types 的上下文契约与路由匹配，依赖 ./mock/admin 与 ./mock/portal 的模块登记表，依赖 ./mock/admin/security 的 admin.writes 状态与开关切换通知，依赖 ./mock/quick-login 的令牌表
  * [OUTPUT]: 对外提供 mockApi(app) 插件、MOCK_ACCOUNTS 演示账号
- * [POS]: panel/frontend 的开发期假后端外壳，只在 vite serve 且未设 PANDORA_API 时挂上，永不进产物：持有账号、会话、rat 与幂等表（与 Go 中间件一致：只重放 2xx，非 2xx 同 key 同请求重新执行，换请求 409），自己只答外壳接口（登录 / 退出 / me / reauth / 改密码 / SSE，门户再加注册、快捷登录消费、站点开关、外观），其余按入口依次询问 mock/admin 或 mock/portal 的模块处理器
+ * [POS]: panel/frontend 的开发期假后端外壳，只在 vite serve 且未设 PANDORA_API 时挂上，永不进产物：持有账号、会话、rat 与幂等表（与 Go 中间件一致：只重放 2xx，非 2xx 同 key 同请求重新执行，换请求 409），自己只答外壳接口（登录 / 退出 / me / reauth / 改密码 / SSE，门户再加注册、快捷登录消费、站点开关、外观）并守 admin.writes 只读门（与 middleware.AdminWritesGate 同一张豁免表，关闭时其余非 GET 回 503），其余按入口依次询问 mock/admin 或 mock/portal 的模块处理器
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'
 import { ADMIN_MODULES } from './mock/admin/index.ts'
+import { adminWritesEnabled, onSwitchChanged } from './mock/admin/security.ts'
 import { PORTAL_MODULES } from './mock/portal/index.ts'
 import { consumeQuickLogin } from './mock/quick-login.ts'
 import { findRoute, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
@@ -31,6 +32,9 @@ const TTL_SECONDS = 2592000
 interface Session {
   userId: string
   rat: number
+  /** 建会话的时刻与 User-Agent：门户「账号安全」列其它会话时用 */
+  created: number
+  userAgent: string
 }
 
 /**
@@ -43,6 +47,12 @@ interface Replay {
   fingerprint: string
   state: 'in_flight' | 'succeeded' | 'failed'
   result: MockResult | null
+}
+
+/** middleware.adminWriteExempt：只读模式下仍放行 GET 类、POST v1/switches/*、v1/auth/*、v1/me/password */
+function adminWriteExempt(method: string, path: string): boolean {
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true
+  return (method === 'POST' && path.startsWith('/v1/switches/')) || path.startsWith('/v1/auth/') || path === '/v1/me/password'
 }
 
 function send(res: ServerResponse, status: number, body?: unknown) {
@@ -100,9 +110,9 @@ export function mockApi(app: MockApp): Plugin {
   const replays = new Map<string, Replay>()
   const modules = app === 'admin' ? ADMIN_MODULES : PORTAL_MODULES
 
-  const issue = (userId: string, rat = Date.now()) => {
+  const issue = (userId: string, req: IncomingMessage, rat = Date.now()) => {
     const token = `mock-${randomUUID()}`
-    sessions.set(token, { userId, rat })
+    sessions.set(token, { userId, rat, created: Date.now(), userAgent: String(req.headers['user-agent'] ?? '') })
     return token
   }
   const bearer = (req: IncomingMessage) => {
@@ -138,7 +148,7 @@ export function mockApi(app: MockApp): Plugin {
       if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
       const user = users.get(str(body.email).trim().toLowerCase())
       if (!user || user.password !== str(body.password)) return fail(res, 401, 'unauthorized', '邮箱或密码不正确')
-      const token = issue(user.userId)
+      const token = issue(user.userId, req)
       return app === 'admin'
         ? send(res, 200, { access_token: token, token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId, permissions: user.permissions })
         : send(res, 200, { access_token: token, refresh_token: randomUUID(), token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId })
@@ -185,12 +195,15 @@ export function mockApi(app: MockApp): Plugin {
       const body = await base.body()
       const userId = consumeQuickLogin(str(body?.token))
       if (!userId) return fail(res, 401, 'unauthorized', '快捷登录链接无效或已过期')
-      return send(res, 200, { access_token: issue(userId), refresh_token: randomUUID(), expires_in: TTL_SECONDS })
+      return send(res, 200, { access_token: issue(userId, req), refresh_token: randomUUID(), expires_in: TTL_SECONDS })
     }
     if (route === 'POST /__mock/expire-reauth') {
       sessions.forEach((s) => (s.rat = 0))
       return send(res, 204)
     }
+
+    // --- admin.writes 只读门：Go 挂在整棵 /v1 上、先于认证 ----------------------
+    if (app === 'admin' && !adminWriteExempt(method, path) && !adminWritesEnabled()) return fail(res, 503, 'service_unavailable', '管理端只读模式')
 
     // --- 匿名接口：模块 ------------------------------------------------------
     const anon = findRoute(
@@ -230,7 +243,7 @@ export function mockApi(app: MockApp): Plugin {
         if (str(body.password) === '') return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '请输入当前密码' })
         if (str(body.password) !== user.password) return fail(res, 401, 'unauthorized', '密码不正确')
         // 与后端一致：同一会话换发一枚 rat 刷新的令牌，旧令牌照样有效到会话结束
-        return send(res, 200, { access_token: issue(user.userId), token_type: 'Bearer', expires_in: TTL_SECONDS })
+        return send(res, 200, { access_token: issue(user.userId, req), token_type: 'Bearer', expires_in: TTL_SECONDS })
       }
       if (route === 'POST /v1/me/password') {
         const body = await base.body()
@@ -268,6 +281,11 @@ export function mockApi(app: MockApp): Plugin {
       params: found.params,
       user,
       reauthed,
+      otherSessions: () =>
+        [...sessions]
+          .filter(([token, s]) => s.userId === user.userId && token !== auth.token)
+          .map(([token, s]) => ({ token, created: s.created, userAgent: s.userAgent })),
+      revokeSession: (token) => sessions.get(token)?.userId === user.userId && sessions.delete(token),
       requirePermission: (code) => {
         if (user.permissions.includes(code)) return true
         fail(res, 404, 'not_found', '资源不存在或无权访问')
@@ -306,12 +324,14 @@ export function mockApi(app: MockApp): Plugin {
     return found.handler(ctx)
   }
 
-  // 与后端同帧格式：首帧 retry，事件 id / event / data，25 秒注释心跳；这里每 15 秒随机推一条表变更
+  // 与后端同帧格式：首帧 retry，事件 id / event / data，25 秒注释心跳；这里每 15 秒随机推一条表变更，
+  // 后台另在降级开关切换后立即推 switches.changed
   function stream(req: IncomingMessage, res: ServerResponse) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
     res.write('retry: 5000\n\n')
     const topics = app === 'admin' ? ADMIN_TOPICS : PORTAL_TOPICS
     let seq = 0
+    const unsubscribe = app === 'admin' ? onSwitchChanged((payload) => res.write(`id: ${++seq}\nevent: switches.changed\ndata: ${JSON.stringify(payload)}\n\n`)) : () => undefined
     const tick = setInterval(() => {
       const [topic, table] = topics[Math.floor(Math.random() * topics.length)]!
       const op = ['INSERT', 'UPDATE', 'UPDATE', 'DELETE'][Math.floor(Math.random() * 4)]
@@ -319,6 +339,7 @@ export function mockApi(app: MockApp): Plugin {
     }, 15_000)
     const ping = setInterval(() => res.write(': ping\n\n'), 25_000)
     req.on('close', () => {
+      unsubscribe()
       clearInterval(tick)
       clearInterval(ping)
     })

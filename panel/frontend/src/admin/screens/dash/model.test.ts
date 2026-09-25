@@ -99,7 +99,7 @@ describe('需要处理', () => {
     expect(byKey.tickets_open!.sub).toBe('最久已等 3 小时 · 2 个高优先级')
     expect(byKey.withdrawals_pending!.sub).toBe('合计 ¥1,280.00')
     expect(byKey.nodes_offline!.sub).toBe('JP-TYO-03 等 · 最长 26 分钟')
-    expect(byKey.orders_pending_stale!).toMatchObject({ sub: '目前没有', tone: 'ok', pending: false })
+    expect(byKey.orders_pending_stale!).toMatchObject({ sub: '目前没有', tone: 'ok', pending: false, target: { module: 'billing', tab: 'orders', query: { s: 'pending' } } })
     expect(byKey.notifications_backlog!).toMatchObject({ count: 214, tone: 'warn', pending: true })
     expect(cards.filter((c) => c.pending)).toHaveLength(4)
   })

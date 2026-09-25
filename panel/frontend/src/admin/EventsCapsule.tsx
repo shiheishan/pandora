@@ -13,8 +13,9 @@ import css from './EventsCapsule.module.css'
 import type { ModuleKey } from './modules'
 
 // ---------------------------------------------------------------------------
-// 事件只说「哪张表哪一行变了」，没有标题正文（可读事件流是待决 D-A-1）。
-// 在它定下之前按契约用 topic + op 生成通用条目，点击跳到对应模块。
+// 事件只说「哪张表哪一行变了」，没有标题正文。D-A-1 已决（5.A.2）：维持按契约
+// 用 topic + op 生成通用条目，点击跳到对应模块。降级开关的 switches.changed
+// 不是表变更，载荷是 { code, enabled }，正文写开关 code 与切换方向。
 // ---------------------------------------------------------------------------
 const TOPICS: Record<string, { label: string; module: ModuleKey | null; tab?: string; tone: 'ok' | 'warn' | 'danger' | 'info' }> = {
   'orders.changed': { label: '订单', module: 'billing', tab: 'orders', tone: 'ok' },
@@ -24,10 +25,11 @@ const TOPICS: Record<string, { label: string; module: ModuleKey | null; tab?: st
   'plans.changed': { label: '套餐', module: 'plans', tone: 'info' },
   'nodes.changed': { label: '节点', module: 'nodes', tab: 'nodes', tone: 'warn' },
   'announcements.changed': { label: '公告', module: 'content', tab: 'announce', tone: 'info' },
+  'switches.changed': { label: '降级开关', module: 'security', tab: 'switches', tone: 'warn' },
 }
 const OPS: Record<string, string> = { INSERT: '新建', UPDATE: '更新', DELETE: '删除' }
 
-const payloadSchema = z.object({ table: z.string().optional(), op: z.string().optional(), id: z.string().optional(), ticket_id: z.string().optional() })
+const payloadSchema = z.object({ table: z.string().optional(), op: z.string().optional(), id: z.string().optional(), ticket_id: z.string().optional(), code: z.string().optional(), enabled: z.boolean().optional() })
 
 export interface EventItem {
   key: number
@@ -48,12 +50,13 @@ export function describeEvent(event: SseEvent, key: number, at = new Date()): Ev
   } catch {
     // data 不是 JSON：只显示 topic
   }
-  const op = payload.op ? (OPS[payload.op] ?? payload.op) : null
+  // 开关极性：enabled = 功能可用，false = 进入降级（与降级开关页一致）
+  const op = payload.op ? (OPS[payload.op] ?? payload.op) : payload.enabled === undefined ? null : payload.enabled ? '已恢复' : '已暂停'
   const id = payload.id ?? payload.ticket_id
   return {
     key,
     title: op ? `${topic.label}变更 · ${op}` : `${topic.label}变更`,
-    body: [payload.table, id?.slice(0, 8)].filter(Boolean).join(' · '),
+    body: [payload.table ?? payload.code, id?.slice(0, 8)].filter(Boolean).join(' · '),
     at,
     tone: topic.tone,
     module: topic.module,

@@ -3,7 +3,7 @@
  * [OUTPUT]: 对外提供 TemplatesTab（通知与插件 · 邮件模板标签）
  * [POS]: admin/screens/system 的邮件模板（设计稿 t_templates）：左栏渠道分段（邮件 / 站内信 / Telegram，契约待补·前端）+ 模板列表（名称、默认 / 已自定义 / 未保存的修改 / 无内置默认），中栏主题、正文与变量 chips（插入 {{name}}，取自 allowed_variables），右栏「以示例数据预览」。
  *        预览：没改时用列表带回的 preview_*，改了 300ms 防抖后 POST v1/mail/templates/preview（示例值只在后端一份），白名单外的变量当场提示；保存与恢复默认要 platform.settings.write（无 reauth、无幂等），恢复默认先确认、没有内置默认或已是默认时禁用；
- *        实发测试信只对邮件渠道显示（ops.notification.write + reauth），有未保存修改时直接发草稿。切换模板时各自的草稿都留着。设计里的「重置密码」「礼品卡兑换成功」后端没有（待决 D-A-5），按后端现有模板显示
+ *        实发测试信只对邮件渠道显示（ops.notification.write + reauth），有未保存修改时直接发草稿。切换模板时各自的草稿都留着。设计里的「重置密码」「礼品卡兑换成功」后端没有（D-A-5 已决：不做），按后端现有模板显示
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'

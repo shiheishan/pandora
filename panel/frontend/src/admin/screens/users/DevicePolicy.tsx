@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatCount / relativeTime，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Empty / Input / QueryView / Table / Tag / useToast，依赖 ../../actions 的 useCan / useFailure，依赖 ./api 的 useDevices / useFindUserByEmail / useInvalidateUsers / okSchema / DeviceMode / OnlineDevice，依赖 ./model 的 nearLimit / pips，依赖 ./Users.module.css 与 ./Ops.module.css
  * [OUTPUT]: 对外提供 DevicePolicy
- * [POS]: 用户页「设备策略」标签（#/users/devices）：左「全局设备数策略」（loose / strict 两种判定，strict 时给宽容值 0–5，POST v1/settings/device-limit 要 reauth），右「接近或超出上限的订阅」（GET v1/devices 里有上限且在线已到上限的，点行按邮箱找到用户、打开抽屉「订阅」标签）。契约后台-03：模式文案以后端为准；D-B-5 未决前不给「默认同时在线设备」滑块，D-B-4 未决前识别窗口只读说明 5 分钟
+ * [POS]: 用户页「设备策略」标签（#/users/devices）：左「全局设备数策略」（loose / strict 两种判定，strict 时给宽容值 0–5，POST v1/settings/device-limit 要 reauth），右「接近或超出上限的订阅」（GET v1/devices 里有上限且在线已到上限的，点行按邮箱找到用户、打开抽屉「订阅」标签）。契约后台-03：模式文案以后端为准；D-B-5 已决（5.A.2）不给「默认同时在线设备」滑块；D-B-4 已决（R103，可选 5 / 10 / 30 / 60 分钟），第 ③ 步接入，在那之前识别窗口只读说明 5 分钟
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'

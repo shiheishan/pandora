@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/download 的 filenameFromDisposition / saveFile / toCsv，依赖 ../../../core/format 的 formatCount，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / ConfirmModal / Empty / Input / QueryView / Select / TextArea / useToast，依赖 ../../actions 的 useCan / useFailure / useIntentKey，依赖 ./api，依赖 ./model，依赖 ./Users.module.css 与 ./Ops.module.css
  * [OUTPUT]: 对外提供 BulkTab
- * [POS]: 用户页「批量运营」标签（#/users/bulk）：左「按条件筛选用户」（套餐 / 状态 / 到期 / 用户组 → 预览命中数与前 10 位，导出 CSV、群发邮件），右「批量生成用户」（数量、邮箱前缀与后缀、用户组、生成原因，结果只显示一次、本地拼 CSV 下载）。契约后台-03 与 R9：导出与生成要 iam.user.write + reauth，群发要 ops.notification.write + reauth；生成与群发带幂等键。D-B-7 未决前不出现「开通套餐」
+ * [POS]: 用户页「批量运营」标签（#/users/bulk）：左「按条件筛选用户」（套餐 / 状态 / 到期 / 用户组 → 预览命中数与前 10 位，导出 CSV、群发邮件），右「批量生成用户」（数量、邮箱前缀与后缀、用户组、生成原因，结果只显示一次、本地拼 CSV 下载）。契约后台-03 与 R9：导出与生成要 iam.user.write + reauth，群发要 ops.notification.write + reauth；生成与群发带幂等键。D-B-7 已决（5.A.2）：不出现「开通套餐」，之后走人工开单
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'

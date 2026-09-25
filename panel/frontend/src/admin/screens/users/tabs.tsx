@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState / ReactNode，依赖 ../../../core/format 的 formatBytes / formatDateTime / formatMoney / relativeTime，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Empty / Select / StatStrip / Tag / useToast，依赖 ../../actions 的 useCan / useFailure，依赖 ./api，依赖 ./model，依赖 ./Users.module.css
  * [OUTPUT]: 对外提供 ProfileTab、SubscriptionsTab、DevicesTab、OrdersTab
- * [POS]: 用户抽屉的四个资料标签页：画像（累计消费 / 订单数 / 邀请人数统计条、用户组分配、显示名 / 邮箱验证 / 风险 / 角色 / 余额 / 邀请人 / 注册 IP / 最近登录 / Telegram）、订阅（全部订阅，流量配额、设备上限 − / + 与「恢复套餐默认」「不限」，按保留规则 2 不出现订阅地址）、设备（D-B-8 未决前按方案 A：只有在线台数与上限）、订单（最近 20 单，跳订单页按 user_id 精确筛选）
+ * [POS]: 用户抽屉的四个资料标签页：画像（累计消费 / 订单数 / 邀请人数统计条、用户组分配、显示名 / 邮箱验证 / 风险 / 角色 / 余额 / 邀请人 / 注册 IP / 最近登录 / Telegram）、订阅（全部订阅，流量配额、设备上限 − / + 与「恢复套餐默认」「不限」，按保留规则 2 不出现订阅地址）、设备（D-B-8 已决（5.A.2）方案 A：只有在线台数与上限）、订单（最近 20 单，跳订单页按 user_id 精确筛选）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState, type ReactNode } from 'react'
@@ -222,7 +222,7 @@ function DeviceLimit({ s }: { s: SubscriptionRow }) {
 }
 
 // ===========================================================================
-// 设备：D-B-8 未决前按方案 A——节点只上报 IP 哈希，没有客户端名与明文 IP，只给台数与上限
+// 设备：D-B-8 已决（5.A.2）方案 A——节点只上报 IP 哈希，没有客户端名与明文 IP，只给台数与上限
 // ===========================================================================
 export function DevicesTab({ d }: { d: UserDetail }) {
   const live = d.subscriptions.filter((s) => isLiveSub(s.status))

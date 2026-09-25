@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatMoney，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Input / Modal / Segmented / Select / TextArea / useToast，依赖 ../../actions 的 endsIntent / useFailure / useIntentKey，依赖 ./api 的写响应 schema 与类型，依赖 ./model，依赖 ./Users.module.css
  * [OUTPUT]: 对外提供 ActionModal（带表单的写操作对话框骨架，④ 的用户组 / 批量运营 / 流量重置共用）、StatusDialog、ResetPasswordDialog、RotateDialog、BalanceForm
- * [POS]: 用户抽屉的四个写操作（契约后台-03）：启用 / 停用 / 封禁（原因必填、挂 reauth）、替用户设新密码（D-B-2 未决前按方案 A：新密码 + 原因，挂 reauth）、换发订阅链接（保留规则 2 与 5.A D-B-1：只选订阅填原因，成功后不显示也拿不到新地址）、人工调账（元转分、原因必填、reauth + 幂等）。reauth 由外框对话框接管，取消时静默
+ * [POS]: 用户抽屉的四个写操作（契约后台-03）：启用 / 停用 / 封禁（原因必填、挂 reauth）、替用户设新密码（D-B-2 已决（5.A.2）、R101：只填新密码、不要原因，挂 reauth）、换发订阅链接（保留规则 2 与 5.A D-B-1：只选订阅填原因，成功后不显示也拿不到新地址）、人工调账（元转分、原因必填、reauth + 幂等）。reauth 由外框对话框接管，取消时静默
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState, type ReactNode } from 'react'
@@ -141,20 +141,18 @@ export function StatusDialog({ user, open, onClose, onDone }: { user: UserDetail
 
 // ---------------------------------------------------------------------------
 // 设新密码：POST v1/users/{id}/reset-password（iam.user.write + reauth，无幂等）
-// D-B-2 未决前按方案 A：管理员直接设新密码，不发邮件；新密码不回显
+// D-B-2 已决（5.A.2）、R101：管理员直接设新密码，不要原因、不发邮件；新密码不回显
 // ---------------------------------------------------------------------------
 export function ResetPasswordDialog({ user, open, onClose }: { user: UserDetail; open: boolean; onClose: () => void }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const [password, setPassword] = useState('')
-  const [reason, setReason] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
 
   const close = () => {
     setPassword('')
-    setReason('')
     setErrors({})
     onClose()
   }
@@ -162,11 +160,10 @@ export function ResetPasswordDialog({ user, open, onClose }: { user: UserDetail;
     const local: Record<string, string> = {}
     const problem = passwordProblem(password)
     if (problem) local.password = problem
-    if (reasonShort(reason)) local.reason = `请写清原因，至少 ${REASON_MIN} 个字`
     if (Object.keys(local).length) return setErrors(local)
     setBusy(true)
     try {
-      await api.post(`v1/users/${encodeURIComponent(user.id)}/reset-password`, passwordResetSchema, { body: { new_password: password, reason: reason.trim() } })
+      await api.post(`v1/users/${encodeURIComponent(user.id)}/reset-password`, passwordResetSchema, { body: { new_password: password } })
       toast('新密码已生效，该用户的登录会话已全部失效')
       close()
     } catch (e) {
@@ -194,17 +191,6 @@ export function ResetPasswordDialog({ user, open, onClose }: { user: UserDetail;
         error={errors.password || undefined}
         hint="至少 8 位，同时包含字母和数字"
         data-autofocus=""
-      />
-      <TextArea
-        label="原因"
-        rows={2}
-        value={reason}
-        onChange={(e) => {
-          setReason(e.target.value)
-          setErrors((f) => ({ ...f, reason: '' }))
-        }}
-        error={errors.reason || undefined}
-        hint="写进审计日志，至少 5 个字"
       />
     </ActionModal>
   )

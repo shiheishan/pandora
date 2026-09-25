@@ -209,7 +209,7 @@ export const POOL_STATUS: Readonly<Record<PoolStatus, { label: string; tone: Ton
   disabled: { label: '已停用', tone: 'neutral' },
 }
 
-/** 「绑定套餐」：套餐名用「、」连接，没有显示「—」（「仅用户组」是待决 D-B-3，未决前不显示） */
+/** 「绑定套餐」：套餐名用「、」连接，没有显示「—」（「仅用户组」是 D-B-3 / R104，第 ③ 步接入，在那之前不显示） */
 export const planNamesLabel = (p: Pick<Pool, 'plan_names'>) => (p.plan_names.length ? p.plan_names.join('、') : '—')
 
 /** 契约：nodes > 0 或 plans > 0 时删除按钮直接禁用并说明；模板、发布记录、未用令牌这三种只有后端知道，靠 409 的消息 */

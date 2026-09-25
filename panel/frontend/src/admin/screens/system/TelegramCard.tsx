@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./ChannelCard，依赖 ./logic 的 Telegram 函数，依赖 ./queries，依赖 ./schemas，依赖 ./system.module.css
  * [OUTPUT]: 对外提供 TelegramCard（通知渠道里的 Telegram 卡）
- * [POS]: admin/screens/system 通知渠道的 Telegram 卡（设计稿 channels[1]）：标题栏状态（已启用 @bot / 已停用 / 未配置 Token，后端不做连通性探测）与契约待补·前端的「启用」开关；Bot Token 只进不出（留空不修改），管理员群组 chat id 按待决 D-A-4「未决前」只作测试的默认目标（没改不提交、清空提交 null）。
+ * [POS]: admin/screens/system 通知渠道的 Telegram 卡（设计稿 channels[1]）：标题栏状态（已启用 @bot / 已停用 / 未配置 Token，后端不做连通性探测）与契约待补·前端的「启用」开关；Bot Token 只进不出（留空不修改），管理员群组 chat id 按 D-A-4（已决，5.A.2）只作测试的默认目标（没改不提交、清空提交 null）。
  *        保存 platform.settings.write、无 reauth 无幂等；测试 ops.notification.write，用的是已保存的配置，chat id 留空发往管理员群组，有未保存修改时先禁用
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */

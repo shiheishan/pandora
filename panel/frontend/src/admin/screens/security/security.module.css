@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌（终端用 --sidebar* 深底令牌）
  * [OUTPUT]: 对外提供安全与运维四个标签用到的类名
- * [POS]: admin/screens/security 的样式，取自 管理后台-09-通知与安全.dc.html：工具条（搜索 260）、表格面板（圆角 10）、深色「实时尾随」终端（与侧栏同一做法在容器内重映射 --surface / --text 等令牌，ui 的分段、骨架、空状态直接可用；行网格 时间 | 分类 | 动作 | 结果 | IP）、风控卡片网格（auto-fill 340）、开关行（降级中浅红底、未接入灰显）；后台只支持 960 以上
+ * [POS]: admin/screens/security 的样式，取自 管理后台-09-通知与安全.dc.html：工具条（搜索 260）、表格面板（圆角 10）、深色「实时尾随」终端（与侧栏同一做法在容器内重映射 --surface / --text 等令牌，ui 的分段、骨架、空状态直接可用；行网格 时间 | 分类 | 动作 | 结果 | IP）、风控卡片网格（auto-fill 340）、开关行（降级中浅红底）；后台只支持 960 以上
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
@@ -409,10 +409,6 @@
   --accent: var(--danger);
 
   background: var(--danger-tint);
-}
-
-.switchIdle .switchMain {
-  opacity: 0.6;
 }
 
 .switchMain {
