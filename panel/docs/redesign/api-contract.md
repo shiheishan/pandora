@@ -1730,6 +1730,7 @@
 - 设计：SMTP 卡底部「测试收件地址」+「发送测试」。映射：用**已保存**配置直连发送，未保存修改时先提示保存
 
 #### GET v1/mail/templates — 通知模板列表
+- **修订 R94（2026-09-25，后台前端二 ⑤ 核对，协调会话核实 api/admin/mail.go）**：模板共 12 个，本条列表漏了 `ticket.replied|telegram`；`auth.email_verify|email` 已实现（R16），以 `GET` 实际返回为准。另：`POST v1/settings/mail` 写 SMTP 密码只做 `UPDATE system_settings … WHERE key = 'mail.smtp_password'`，该行不存在的租户密码会静默存不上（00030 有种子，只影响缺这一行的租户），列入后端遗留。
 - 状态：现有 `panel/internal/api/admin/mail_template.go:10 listMailTemplates`
 - 权限：`ops.notification.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1789,6 +1790,7 @@
 - 设计：后台-09「Webhook 钩子」卡片列表（状态点、URL、事件 · 成功率、投递记录、测试投递、删除）。映射：事件名以后端目录为准：设计 `user.created`→`user.registered`；设计 `ticket.replied`、`node.offline`、`node.online` 后端没有（见待决 D-A-6）；「全部事件」= 提交目录里全部 name。状态点颜色←`failed_count>0` 为黄。待补·前端：卡片加启用开关、编辑（name/description/events/timeout_ms/max_attempts/更换密钥）、`queued_count` 显示
 
 #### POST v1/plugin-hooks — 新建或修改钩子（upsert）
+- **修订 R93（2026-09-25，后台前端二 ⑤ 核对 domain/plugin/hooks.go）**：`timeout_ms`（500–30000）与 `max_attempts`（1–10）后端只靠数据库约束，越界回 **500**（缺陷，应回 422 带字段，列入后端遗留），前端先拦；保存时省略的字段会写成零值，编辑与启停都要回填全部字段；code 撞上已有钩子会静默覆盖，前端新建时生成不冲突的 code。钩子行的 `last_sent_at` 从没送达时整个字段省略；测试投递请求没发出去时 `duration_ms` 为 0（不是 null）。
 - 状态：现有 `appearance.go:140 saveHook`
 - 权限：`platform.plugin.write`｜reauth：是｜幂等：是 `plugin_hook_save`
 - 请求：`{ code: string（小写，唯一键）, name: string, description?: string, enabled: bool, events: string[], endpoint_url: string(生产必须 https、不得解析到内网), secret?: string（空=不改；新建时空则自动生成）, timeout_ms?: int(0→5000), max_attempts?: int(0→5) }`。**按 code upsert，省略的字段会被写成零值/默认值**：编辑时必须回填全部字段；新建时前端必须生成一个不与现有 code 冲突的 code（例如 `hook-` + 6 位随机），否则会静默覆盖已有钩子
@@ -3205,3 +3207,5 @@
 | R90 | 2026-09-24 | 后台前端二 | 插槽保存内容为空时 dropped 为 null |
 | R91 | 2026-09-24 | 后台前端二 | 公告两个时间缺值为 null；知识库限定套餐名的来源 |
 | R92 | 2026-09-24 | 后台前端一 | 编辑向导改不回不限设备、新版本高级设置回默认、上架时间窗被清空 |
+| R93 | 2026-09-25 | 后台前端二 | 钩子超时与重试次数越界回 500（缺陷）、省略字段写零值、若干形状 |
+| R94 | 2026-09-25 | 后台前端二、协调会话 | 模板实为 12 个；SMTP 密码行缺失时静默存不上 |
