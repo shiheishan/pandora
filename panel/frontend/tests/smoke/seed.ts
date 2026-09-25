@@ -134,14 +134,15 @@ step('管理员登录')
 const admin = str(await call(ADM, '/v1/auth/login', { body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } }), 'access_token')
 
 // ============================================================================
-//  池与套餐先行：上线接口发现「所在池没绑套餐」会带 warnings，所以先把池绑在发布版本上
-//  （用户买的是哪个版本就看哪个版本的池；没划进池的节点不服务任何用户，R104、R105）
+//  池与套餐草稿先行。两条规则互相咬合：上线接口发现「所在池没绑任何套餐」会带 warnings，
+//  而发布版本要求绑定池里已有可服务节点——所以先用向导建草稿版本并绑池（草稿绑定就算绑了），
+//  节点上线后再发布这个版本（用户买的是哪个版本就看哪个版本的池；无池节点不服务任何人，R104、R105）
 // ============================================================================
 
 step('节点池')
 const poolId = str(await call(ADM, '/v1/node-pools', { token: admin, body: { name: 'Smoke Pool', code: 'smoke-pool' }, expect: [200, 201] }), 'id')
 
-step('套餐向导：建套餐、绑池、定价、发布')
+step('套餐向导：建套餐、绑池、定价（草稿，暂不发布）')
 const plan = await call(ADM, '/v1/plans/complete', {
   token: admin,
   idem: true,
@@ -153,11 +154,12 @@ const plan = await call(ADM, '/v1/plans/complete', {
     max_devices: 3,
     pool_ids: [poolId],
     prices: [{ billing_interval: 'month', interval_count: 1, unit_amount: 990, currency: 'CNY', trial_days: 0 }],
-    publish: true,
+    publish: false,
   },
   expect: 201,
 })
 const planId = str(plan, 'plan.id')
+const versionId = str(plan, 'version_id')
 
 // ============================================================================
 //  新服务器 + 新节点一步上线（R108 / R113）：后台建服务器与节点 → 节点抽屉签发接入令牌 →
@@ -267,6 +269,17 @@ const activated = await call(ADM, `/v1/nodes/${nodeId}/activate`, { token: admin
 if (activated.status !== 'active' || activated.serving_status !== 'active') throw new Error(`上线后状态不对：${JSON.stringify(activated).slice(0, 300)}`)
 // warnings 缺省表示没有提示（R113）；出现就说明池或套餐绑定没接上，节点不会服务任何人
 if (activated.warnings !== undefined) throw new Error(`上线带了提示：${JSON.stringify(activated.warnings)}`)
+
+step('发布套餐版本（绑定池里现在有可服务节点了）')
+// 两个乐观锁都取自详情，与后台「版本」页的发布对话框同一个请求
+const detail = (await call(ADM, `/v1/plans/${planId}`, { token: admin })).plan as Json
+const version = (detail.versions as Json[]).find((v) => v.id === versionId)
+if (!version) throw new Error(`套餐详情里没有刚建的版本：${JSON.stringify(detail).slice(0, 300)}`)
+await call(ADM, `/v1/plans/${planId}/versions/${versionId}/publish`, {
+  token: admin,
+  idem: true,
+  body: { expected_plan_row_version: num(detail, 'row_version'), expected_version_row_version: num(version, 'row_version') },
+})
 
 step('UniProxy 心跳（运行令牌认证）')
 const uni = (path: string) => `/api/v1/server/UniProxy/${path}?node_id=${nodeId}&node_type=${nodeType}`
