@@ -1,19 +1,11 @@
 /**
- * [INPUT]: 依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime，依赖 ./schemas 的类型与枚举
- * [OUTPUT]: 对外提供公告（状态文字、列表时间与可见范围文字、表单模型与校验、请求体、按钮取舍）、知识库（按 slug 聚成文章、按分类分组、表单模型与校验、请求体、受众是否改动）、时间输入互转、站点时区选项、插槽的脏判断与过滤提示、主题预览色、幂等键丢弃判断
+ * [INPUT]: 依赖 ../../../core/format 的 formatDateTime，依赖 ./schemas 的类型与枚举
+ * [OUTPUT]: 对外提供公告（状态文字、列表时间与可见范围文字、表单模型与校验、请求体、按钮取舍）、知识库（按 slug 聚成文章、按分类分组、表单模型与校验、请求体、受众是否改动）、时间输入互转、站点时区选项、插槽的脏判断与过滤提示、主题预览色
  * [POS]: admin/screens/content 的纯函数层，组件只做渲染与请求；content.test.ts 守住。校验文案与上下限照 Go 的 announce.go、domain/content/service.go
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import { isApiError } from '../../../core/api'
 import { formatDateTime } from '../../../core/format'
 import type { Announcement, AnnStatus, Kind, Page, Platform, Severity, Slot, Theme, Visibility } from './schemas'
-
-// ---------------------------------------------------------------------------
-// 幂等键（公共规则 10.4、契约 R85）：4xx 业务拒绝后丢弃，reauth 取消（R34）与断网、5xx 保留
-// ---------------------------------------------------------------------------
-export function dropsIntent(error: unknown): boolean {
-  return isApiError(error) && error.status >= 400 && error.status < 500 && error.code !== 'reauth_required'
-}
 
 const runes = (s: string) => [...s.trim()].length
 

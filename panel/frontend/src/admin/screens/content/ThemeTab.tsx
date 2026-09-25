@@ -10,7 +10,7 @@ import { useId, useState, type CSSProperties } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, QueryView, Select, Skeleton, Switch, Tag, TextArea, useToast } from '../../../ui'
 import css from './content.module.css'
-import { droppedMessage, dropsIntent, siteName, slotDirty, themePreview, timezoneOptions } from './logic'
+import { droppedMessage, siteName, slotDirty, themePreview, timezoneOptions } from './logic'
 import { useCan, useFailure, useIntentKey, useInvalidateContent, useSiteSettings, useSlots, useThemes } from './queries'
 import { siteSettingsSchema, slotSaved, type Slot, type Theme } from './schemas'
 
@@ -137,8 +137,7 @@ function SlotRow({ slot, writable }: { slot: Slot; writable: boolean }) {
       void invalidate('slots').then(() => setDraft(undefined))
     },
     onError: (error) => {
-      if (dropsIntent(error)) intent.reset()
-      fail(error)
+      fail(error, { intent })
     },
   })
 

@@ -14,7 +14,7 @@ import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Input, Menu, Select, Switch, TextArea, useToast, type MenuEntry } from '../../../ui'
 import css from './content.module.css'
-import { annActions, annBody, annFieldErrors, annFormFrom, dropsIntent, emptyAnnForm, SEVERITY, validateAnn, type AnnBody, type AnnForm } from './logic'
+import { annActions, annBody, annFieldErrors, annFormFrom, emptyAnnForm, SEVERITY, validateAnn, type AnnBody, type AnnForm } from './logic'
 import { useFailure, useIntentKey, useInvalidateContent } from './queries'
 import { annSaved, annWithdrawn, SEVERITIES, type Announcement, type AnnouncementsData, type Severity } from './schemas'
 
@@ -71,9 +71,8 @@ export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
       void invalidate('announcements').then(() => !original && navigate(`/content/announce/${r.id}`, { replace: true }))
     },
     onError: (error) => {
-      if (dropsIntent(error)) intent.reset()
       if (isApiError(error, 'conflict')) void invalidate('announcements')
-      fail(error, (f) => setErrors(annFieldErrors(f)))
+      fail(error, { fields: (f) => setErrors(annFieldErrors(f)), intent })
     },
   })
 
@@ -85,9 +84,8 @@ export function AnnounceEditor({ data, original, prefill, onCopy }: Props) {
       void invalidate('announcements')
     },
     onError: (error) => {
-      if (dropsIntent(error)) intent.reset()
       if (isApiError(error, 'conflict')) void invalidate('announcements')
-      fail(error)
+      fail(error, { intent })
     },
   })
 

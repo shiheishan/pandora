@@ -17,7 +17,8 @@ content.ts: 内容与外观（后台-08）：公告列表（读时把到点的�
 plans.ts: 套餐（后台-04）的路由与向导：列表、详情、只建壳、向导新建（单事务）与编辑（null = 不动、额度或线路变了开新版本并发布、价格只同步出现过的币种，并照后端现状清掉时间窗、新版本高级设置回默认）、销售设置、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池候选与替换；转出 setSalesEnabled 给测试关销售开关验 503；流量包路由从 plans-packs.ts 展开进来
 plans-store.ts: 套餐假接口的数据与规则：五个种子套餐（沿用 users.ts 的固定套餐 id 与用户组 id，节点池沿用 nodes-infra.ts 的池 id，在线节点数是这里的固定值、企业专线为 0）、列表行与详情形状、与 Go 同键名同文案的校验、发布前置条件、销售开关、按 DisallowUnknownFields 拒绝未知字段
 plans-packs.ts: 流量包四接口（R73）：状态筛选与排序、新建即在售、updated_at 乐观锁 409、已是目标状态 409、新建 / 修改 / 上架受销售开关控制而下架不受
-billing.ts / system.ts / security.ts: 其余模块，未接入的为空壳
+system.ts: 通知与插件（后台-09 前半）：邮件设置（SMTP 六字段整体覆盖、密码空不改 / "-" 清空、from_name 空回站点名、开邮箱验证要 host 与发件人）与测试、Telegram（Token 只进不出、admin_chat_id 缺省不改 / null 清空、测试缺 chat 回落管理员群组）、12 个模板（种子、变量白名单、有无内置默认与 Go 一致，保存 / 恢复 / 草稿预览 / 测试信要 reauth 可发草稿）、钩子（按 code upsert、新建无密钥生成 whsec_ 一次性回传、https 与内网校验、超时 / 次数越界模拟 DB CHECK 的 500、删除、投递记录无记录 null、测试投递地址含 crm. 或 fail 时对方回 503）；权限 / reauth / 幂等 scope / 文案照契约与 Go，按 DisallowUnknownFields 拒绝未知字段
+billing.ts / security.ts: 其余模块，未接入的为空壳
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
