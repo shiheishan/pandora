@@ -1,11 +1,11 @@
 /**
- * [INPUT]: 依赖 react 的 useEffect / useState，依赖 ../../../core/format 的 formatMoney / relativeTime，依赖 ../../../core/router 的 href，依赖 ../../../ui 的 Button / Card / Empty / Modal / Skeleton / Tag / useToast，依赖 ../../queries 的 useBalance / useCommissionAvailable，依赖 ../common 下的订阅、订单、公告读模型与 Slot / LoadError / UsageCard
+ * [INPUT]: 依赖 react 的 useEffect / useState，依赖 ../../../core/format 的 formatBytes / formatMoney / relativeTime，依赖 ../../../core/router 的 href，依赖 ../../../ui 的 Button / Card / Empty / Modal / Skeleton / Tag / useToast，依赖 ../../queries 的 useBalance / useCommissionAvailable，依赖 ../common 下的订阅、订单、公告读模型与 Slot / LoadError / UsageCard
  * [OUTPUT]: 默认导出 Overview 页面组件（登记表 React.lazy 的目标）
  * [POS]: portal/screens/overview 的入口：概览（门户-01）。顶部插槽与 critical 公告横幅、待支付条、当前套餐主卡（剩余流量含流量包、到期、重置日、导入 / 复制 / 续费）、三格统计（余额 / 可提佣金 / 在线设备）、公告卡、本期用量图、底部插槽；主卡展示 current_period_end 最晚的生效订阅
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useState } from 'react'
-import { formatMoney, relativeTime } from '../../../core/format'
+import { formatBytes, formatMoney, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { Button, Card, Empty, Modal, Skeleton, Tag, useToast } from '../../../ui'
 import { useBalance, useCommissionAvailable } from '../../queries'
@@ -14,7 +14,7 @@ import { LoadError, Slot } from '../common/Blocks'
 import { copyText } from '../common/clients'
 import { expiryNote, orderTitle, usePendingOrders } from '../common/orders'
 import { canRenew, pickPrimary, usePlanTraffic, useSubscriptionLinks, useSubscriptions, type Subscription } from '../common/subscriptions'
-import { daysUntil, expiryInfo, formatGB, shortDate, usageLevel } from '../common/traffic'
+import { bytesParts, daysUntil, expiryInfo, shortDate, usageLevel } from '../common/traffic'
 import { UsageCard } from '../common/UsageCard'
 import css from './Overview.module.css'
 
@@ -118,7 +118,7 @@ function PendingOrders() {
       <span className={css.pendingWhat}>{orderTitle(o)}</span>
       <span className={css.pendingAmount}>{formatMoney(o.payable_amount, o.currency)}</span>
       <span className={css.pendingNote}>{expiryNote(o.expires_at, now)}</span>
-      <a className={css.pendingGo} href={href(`/orders/${o.order_no}`)}>
+      <a className={css.pendingGo} href={href(`/orders/${o.id}`)}>
         去支付 →
       </a>
     </div>
@@ -135,6 +135,7 @@ function PlanCard({ sub }: { sub: Subscription }) {
   const expiry = expiryInfo(sub.current_period_end, new Date(), timeZone)
   const link = links.data?.find((l) => l.subscription_id === sub.id)
   const level = summary ? usageLevel(summary.ratio) : 'ok'
+  const left = bytesParts(summary ? (summary.remaining ?? 0) + summary.pack : 0)
   const renewHref = canRenew(sub) ? href('/checkout', { renew: sub.id }) : null
 
   async function copy() {
@@ -172,12 +173,18 @@ function PlanCard({ sub }: { sub: Subscription }) {
             <div className={css.trafficLeft}>
               <div className={css.caption}>剩余流量</div>
               <div className={css.bigNumber} data-level={level}>
-                {summary.remaining === null ? '不限' : formatGB(summary.remaining + summary.pack)}
-                {summary.remaining !== null && <span className={css.unit}>GB</span>}
+                {summary.remaining === null ? (
+                  '不限'
+                ) : (
+                  <>
+                    {left[0]}
+                    <span className={css.unit}>{left[1]}</span>
+                  </>
+                )}
               </div>
             </div>
             <div className={css.trafficUsed}>
-              已用 {formatGB(summary.used)} / {summary.total === null ? '不限' : `${formatGB(summary.total)} GB`}
+              已用 {formatBytes(summary.used)} / {summary.total === null ? '不限' : formatBytes(summary.total)}
             </div>
           </div>
           {summary.total !== null && (
@@ -191,7 +198,7 @@ function PlanCard({ sub }: { sub: Subscription }) {
                 已用 {Math.round(summary.ratio * 100)}%{level === 'ok' ? '' : '，流量即将用完'}
               </span>
             )}
-            {summary.pack > 0 && <span>含流量包 {formatGB(summary.pack)} GB</span>}
+            {summary.pack > 0 && <span>含流量包 {formatBytes(summary.pack)}</span>}
             <span className={css.spacer} />
             {resetAt && (
               <span>

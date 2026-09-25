@@ -1,0 +1,64 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 PayFlow.tsx 用到的类名
+ * [POS]: portal/screens/common 支付弹窗的样式，取自用户门户.dc.html 的支付弹窗：居中排版、26 号金额、48 圆形对勾；去掉二维码块（epay 是收银台跳转）
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.modal {
+  text-align: center;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.amount {
+  font-size: 26px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.hint {
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.error {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.later {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.later:hover {
+  color: var(--text);
+}
+
+.check {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-size: 22px;
+}

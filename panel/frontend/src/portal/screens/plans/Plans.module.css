@@ -1,0 +1,281 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 plans/index.tsx 用到的类名
+ * [POS]: portal/screens/plans 的样式，取自设计稿门户-03 列表部分：17 号标签页标题 + 2px 朱砂下划线、套餐卡 minmax(min(100%,250px),1fr)、价格 34 号、流量包卡 minmax(min(100%,200px),1fr) 与 30 号容量、规则三格 1px 分隔；入口是链接做成的按钮
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+}
+
+.kinds {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kindTabs {
+  display: flex;
+  gap: 28px;
+  border-bottom: 1px solid var(--border);
+}
+
+.kind {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  margin-bottom: -1px;
+  padding: 0 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.kind:hover {
+  color: var(--text);
+}
+
+.kind[aria-selected='true'] {
+  border-bottom-color: var(--brand);
+  color: var(--text);
+}
+
+.kindTitle {
+  font-size: 17px;
+  font-weight: var(--fw-semibold);
+}
+
+.kindTag {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.kindDesc,
+.hint {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.periodRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+}
+
+/* ===========================================================================
+ * 套餐卡
+ * ========================================================================= */
+.planGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: var(--space-16);
+}
+
+.planCard {
+  gap: 14px;
+}
+
+.planHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.planName {
+  font-size: 17px;
+  font-weight: var(--fw-semibold);
+}
+
+.planDesc {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.priceBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.priceRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
+.price {
+  font-size: 34px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.per {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.monthly {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.facts {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.traffic {
+  display: flex;
+  flex-direction: column;
+}
+
+.trafficValue {
+  font-size: 20px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.reset {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.fact {
+  display: flex;
+  gap: var(--space-8);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* 入口：导航用 <a>，外观与 ui/Button 的 secondary / primary 一致 */
+.cta,
+.ctaPrimary,
+.ctaDisabled {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--h-control);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.cta:hover {
+  background: var(--surface-3);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.ctaPrimary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.ctaPrimary:hover {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+  text-decoration: none;
+}
+
+.ctaDisabled {
+  color: var(--text-3);
+  background: var(--surface-2);
+  cursor: default;
+}
+
+/* ===========================================================================
+ * 流量包
+ * ========================================================================= */
+.packGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: var(--space-16);
+}
+
+.packCard,
+.packHot {
+  gap: 14px;
+}
+
+.packHot {
+  border-color: var(--brand);
+}
+
+.packHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 22px;
+}
+
+.packKind {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.packSize {
+  font-size: 30px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.packPriceRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
+.packPrice {
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.packCard > a,
+.packHot > a {
+  margin-top: auto;
+}
+
+.rules {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.rule {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  background: var(--surface);
+}
+
+.ruleTitle {
+  font-weight: var(--fw-medium);
+}
+
+.ruleBody {
+  font-size: 13px;
+  color: var(--text-2);
+}

@@ -1,96 +1,23 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useMutation / useQueryClient，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ./traffic 的额度摘要与重置日计算
- * [OUTPUT]: 对外提供订阅相关 schema 与类型（Subscription、SubscriptionLink、UsageReport…）、LIVE_STATUSES、isLive、pickPrimary、useSubscriptions、useSubscriptionLinks、useSubscriptionNodes、useSubscriptionUsage、useTrafficPacks、useRotateLink、usePlanTraffic / PlanTraffic、liveSubscriptions、canRenew
- * [POS]: portal/screens/common 的订阅数据层（契约门户-01 / 门户-02，流量包余量属门户-03）：概览与我的订阅共用；schema 按契约写全写严，「待补·后端」字段一律可选，页面对缺席做降级
+ * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useMutation / useQueryClient，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../../queries 的订阅 schema 与共用查询，依赖 ./traffic 的额度摘要与重置日计算
+ * [OUTPUT]: 对外提供（转出外框的）Subscription、subscriptionSchema、LIVE_STATUSES、isLive、pickPrimary、useSubscriptions，自有的 SubscriptionLink、UsageReport 等 schema 与 useSubscriptionLinks、useSubscriptionNodes、useSubscriptionUsage、useTrafficPacks、useRotateLink、usePlanTraffic / PlanTraffic、liveSubscriptions、canRenew
+ * [POS]: portal/screens/common 的订阅数据层（契约门户-01 / 门户-02，流量包余量属门户-03）：概览与我的订阅共用；订阅列表的 schema 与查询在外框 queries.ts（同键共用），这里转出；其余 schema 按契约写全写严，扩展字段（修订 R53–R62 已上线）写成可选，旧后端缺席时页面降级
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
+import { isLive, type Subscription } from '../../queries'
 import { pickTrafficQuota, resetAtOf, trafficSummary, type TrafficSummary } from './traffic'
 
 // ---------------------------------------------------------------------------
-// GET v1/me/subscriptions
-// 外框 queries.ts 用 ['portal','subscriptions'] 读同一接口，但它的 schema 只收
-// plan_name / status（zod 会裁掉其余字段），同键共享缓存会把页面要的字段裁没，
-// 所以页面用子键 detail；两者按同样的 topic 失效。
+// GET v1/me/subscriptions 的 schema 与查询在外框 queries.ts（外框徽标与页面同键共用），
+// 这里转出，页面照旧从 common 取
 // ---------------------------------------------------------------------------
-export const SUBSCRIPTION_STATUSES = ['pending', 'trialing', 'active', 'past_due', 'grace', 'paused', 'cancelled', 'expired'] as const
-export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number]
+export { isLive, LIVE_STATUSES, liveSubscriptions, pickPrimary, subscriptionSchema, useSubscriptions, type Subscription } from '../../queries'
 
-const quotaSchema = z.object({
-  metric: z.string(),
-  limit: z.number().int().nullable(),
-  consumed: z.number().int(),
-  remaining: z.number().int().nullable(),
-  // 待补·后端
-  period: z.string().optional(),
-  period_start: z.string().nullable().optional(),
-  period_end: z.string().nullable().optional(),
-  granted_addon: z.number().int().optional(),
-  adjusted: z.number().int().optional(),
-})
-
-const renewalPriceSchema = z.object({
-  id: z.string(),
-  currency: z.string(),
-  unit_amount: z.number().int(),
-  billing_interval: z.string(),
-  interval_count: z.number().int(),
-  available: z.boolean(),
-})
-
-export const subscriptionSchema = z.object({
-  id: z.string(),
-  plan_id: z.string(),
-  price_id: z.string(),
-  plan_name: z.string(),
-  plan_version: z.number().int(),
-  status: z.enum(SUBSCRIPTION_STATUSES),
-  current_period_start: z.string().nullable(),
-  current_period_end: z.string().nullable(),
-  currency: z.string(),
-  amount: z.number().int(),
-  quotas: z.array(quotaSchema),
-  // 待补·后端（后端二第 ⑤ 步）
-  device_limit: z.number().int().nullable().optional(),
-  online_devices: z.number().int().optional(),
-  quota_reset_strategy: z.enum(['never', 'natural_month', 'billing_cycle', 'fixed_day']).optional(),
-  next_reset_at: z.string().nullable().optional(),
-  renewable: z.boolean().optional(),
-  renewal_price: renewalPriceSchema.nullable().optional(),
-  pack_remaining_bytes: z.number().int().optional(),
-})
-export type Subscription = z.output<typeof subscriptionSchema>
-
-const subscriptionsSchema = z.object({ subscriptions: z.array(subscriptionSchema) })
-
-export const LIVE_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(['active', 'trialing', 'grace', 'past_due'])
-export const isLive = (s: Pick<Subscription, 'status'>) => LIVE_STATUSES.has(s.status)
-
-/** 仍然生效的订阅，按 current_period_end 最晚在前（没有周期末的视为最晚）。 */
-export function liveSubscriptions(subs: readonly Subscription[]): Subscription[] {
-  const end = (s: Subscription) => (s.current_period_end ? new Date(s.current_period_end).getTime() : Number.POSITIVE_INFINITY)
-  return subs.filter(isLive).sort((a, b) => end(b) - end(a))
-}
-
-/** 契约：多条订阅时概览展示 status∈{active,trialing,grace,past_due} 中 current_period_end 最晚的一条。 */
-export const pickPrimary = (subs: readonly Subscription[]): Subscription | null => liveSubscriptions(subs)[0] ?? null
-
-/** 能否续费：待补字段 renewable 上线前按状态判断（allow_renewal 由下单时的 409 兜底）。 */
+/** 能否续费：renewable 优先；旧后端缺这个字段时按状态判断（allow_renewal 由下单时的 409 兜底）。 */
 export const canRenew = (s: Subscription) => s.renewable ?? isLive(s)
-
-const SUBS_KEY = ['portal', 'subscriptions', 'detail'] as const
-
-export function useSubscriptions() {
-  const api = useApi()
-  return useQuery({
-    queryKey: SUBS_KEY,
-    queryFn: ({ signal }) => api.get('v1/me/subscriptions', subscriptionsSchema, { signal }),
-    select: (d) => d.subscriptions,
-    meta: { topics: ['subscriptions.changed', 'orders.changed'] },
-  })
-}
 
 // ---------------------------------------------------------------------------
 // GET v1/me/subscription-links：只含 active 且未过期的凭据，按 subscription_id 配对

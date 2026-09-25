@@ -9,9 +9,10 @@ import { fetchStats, metaLabel } from '../subs/labels'
 import { importClients, protocolLabel, rateLabel } from './clients'
 import { expiryNote, intervalLabel, orderRowSchema, orderTitle } from './orders'
 import { canRenew, pickPrimary, subscriptionSchema, usageReportSchema, type Subscription } from './subscriptions'
-import { buildUsageBars, expiryInfo, formatGB, GIB, pickTrafficQuota, projectUsage, resetAtOf, trafficSummary, usageLevel } from './traffic'
+import { buildUsageBars, bytesParts, expiryInfo, pickTrafficQuota, projectUsage, resetAtOf, trafficSummary, usageLevel } from './traffic'
 
 const NOW = new Date('2026-09-24T12:00:00Z')
+const GIB = 1024 ** 3
 
 function sub(over: Partial<Subscription> = {}): Subscription {
   return subscriptionSchema.parse({
@@ -31,12 +32,11 @@ function sub(over: Partial<Subscription> = {}): Subscription {
 }
 
 describe('traffic', () => {
-  it('formatGB：≥10 取整，<10 一位小数去掉 .0，显式位数照给', () => {
-    expect(formatGB(312 * GIB)).toBe('312')
-    expect(formatGB(2.5 * GIB)).toBe('2.5')
-    expect(formatGB(3 * GIB)).toBe('3')
-    expect(formatGB(10.34 * GIB, 1)).toBe('10.3')
-    expect(formatGB(-5)).toBe('0')
+  it('bytesParts：core formatBytes 拆成数字与单位，负数与小数按 0 与取整处理', () => {
+    expect(bytesParts(218 * GIB)).toEqual(['218', 'GB'])
+    expect(bytesParts(4.7 * GIB)).toEqual(['4.70', 'GB'])
+    expect(bytesParts(-5)).toEqual(['0', 'B'])
+    expect(bytesParts(1.5)).toEqual(['2', 'B'])
   })
 
   it('摘要：总量 = 已用 + 剩余，remaining=null 为不限', () => {
