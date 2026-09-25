@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 node:http 的 createServer，依赖 ../dev/mock-api 的 mockApi / MOCK_ACCOUNTS，依赖 ../dev/mock/types 的 matchPattern，依赖 ../src/admin/screens/nodes/schemas 的 nodesResponse
  * [OUTPUT]: 对外提供假后端外壳与模块分发的测试
- * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为；另守营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400；节点假接口的列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验
+ * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409（调账用 users 假后端的真实种子用户，余额经详情接口核对，种子外的 id 回 404）——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为；另守营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400；节点假接口的列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -52,8 +52,10 @@ describe('mock api · admin', () => {
     expect(res.status).toBe(200)
     return (await res.json()) as { access_token: string; permissions: string[] }
   }
-  const adjust = (token: string, key: string | null, body: unknown) =>
-    fetch(`${base}/v1/users/u1/balance`, {
+  // dev/mock/admin/users.ts 的第 2 个种子用户（前 6 个 id 固定，与仪表盘流量排行一致），种子余额非 0
+  const SEED_USER = '1a2b3c42-0000-4000-8000-000000000002'
+  const adjust = (token: string, key: string | null, body: unknown, id = SEED_USER) =>
+    fetch(`${base}/v1/users/${id}/balance`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, ...(key ? { 'Idempotency-Key': key } : {}) },
       body: JSON.stringify(body),
@@ -101,13 +103,23 @@ describe('mock api · admin', () => {
       body: JSON.stringify({ password: MOCK_ACCOUNTS.admin.password }),
     })
     const fresh = ((await reauth.json()) as { access_token: string }).access_token
+    const balanceOf = async () => {
+      const res = await fetch(`${base}/v1/users/${SEED_USER}`, { headers: { Authorization: `Bearer ${fresh}` } })
+      expect(res.status).toBe(200)
+      return ((await res.json()) as { balance: number }).balance
+    }
+    const seeded = await balanceOf()
+    expect(seeded).toBeGreaterThan(0)
     const first = await adjust(fresh, 'intent-1', body)
     expect(first.status).toBe(200)
     const balance = ((await first.json()) as { balance: number }).balance
-    expect(balance).toBe(270000)
+    expect(balance).toBe(seeded + 5000)
+    expect(await balanceOf()).toBe(balance)
 
+    // 重放回存下的响应，不再记一笔
     const replay = await adjust(fresh, 'intent-1', body)
     expect(await replay.json()).toEqual({ balance })
+    expect(await balanceOf()).toBe(balance)
     const reused = await adjust(fresh, 'intent-1', { ...body, amount: 1 })
     expect(reused.status).toBe(409)
     expect(await reused.json()).toMatchObject({ error: { code: 'idempotency_key_reuse' } })
@@ -120,6 +132,13 @@ describe('mock api · admin', () => {
     expect(bad.status).toBe(422)
     expect(await bad.json()).toMatchObject({ error: { code: 'validation_failed', fields: { reason: expect.any(String) } } })
     expect((await adjust(access_token, 'intent-2', { amount: 1, reason: '短' })).status).toBe(422)
+  })
+
+  it('answers 404 for a user outside the seed instead of inventing a balance', async () => {
+    const { access_token } = await login(MOCK_ACCOUNTS.admin)
+    const res = await adjust(access_token, 'intent-3', { amount: 100, reason: '测试调账理由' }, '00000000-0000-4000-8000-000000000000')
+    expect(res.status).toBe(404)
+    expect(await res.json()).toMatchObject({ error: { code: 'not_found' } })
   })
 })
 

@@ -1,10 +1,10 @@
 /**
- * [INPUT]: 依赖 react 的 ReactNode 与 Key，依赖 ./Checkbox、./Empty、./Skeleton、./cx、./Table.module.css
+ * [INPUT]: 依赖 react 的 ReactNode、Key 与 KeyboardEvent，依赖 ./Checkbox、./Empty、./Skeleton、./cx、./Table.module.css
  * [OUTPUT]: 对外提供 Table 组件与 TableColumn、TableProps 类型
- * [POS]: ui 的数据表：语义化 <table>，列由 columns 描述；可选行勾选（表头三态）、行点击、加载骨架与空状态；窄屏横向滚动而不是挤压列
+ * [POS]: ui 的数据表：语义化 <table>，列由 columns 描述；可选行勾选（表头三态）、行点击（行可聚焦，Enter / 空格走同一回调）、加载骨架与空状态；窄屏横向滚动而不是挤压列
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
-import type { Key, ReactNode } from 'react'
+import type { Key, KeyboardEvent, ReactNode } from 'react'
 import { Checkbox } from './Checkbox'
 import { cx } from './cx'
 import { Empty } from './Empty'
@@ -31,6 +31,7 @@ export interface TableProps<T> {
   loading?: boolean
   /** 空状态；不给则用默认一句 */
   empty?: ReactNode
+  /** 行点击；传入则行可 Tab 聚焦，Enter / 空格触发同一回调 */
   onRowClick?: (row: T) => void
   /** 勾选：传入则第一列出现复选框 */
   selection?: {
@@ -107,6 +108,8 @@ export function Table<T>({ columns, rows, rowKey, label, loading = false, empty,
                   key={key}
                   className={cx(isPicked && css.picked, onRowClick && css.clickable)}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onKeyDown={onRowClick ? (e) => activateOnKey(e, () => onRowClick(row)) : undefined}
                 >
                   {selection && (
                     <td onClick={(e) => e.stopPropagation()}>
@@ -125,4 +128,11 @@ export function Table<T>({ columns, rows, rowKey, label, loading = false, empty,
       </table>
     </div>
   )
+}
+
+/** 行上的 Enter / 空格等同点击；只认行本身得到的按键，行里的链接、按钮、复选框各管各的 */
+function activateOnKey(e: KeyboardEvent<HTMLTableRowElement>, activate: () => void) {
+  if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+  e.preventDefault()
+  activate()
 }

@@ -25,7 +25,7 @@ src/core/: 与界面无关的底层：主题引导与状态、唯一 HTTP 出口
 src/showcase/: 只在 dev 存在的令牌与组件演示页，浏览器内逐条核对令牌与设计稿；见 src/showcase/CLAUDE.md
 tests/entries.test.ts: 入口源文件契约——域标记正确、只有外链 module script、无内联样式；与 panel/web/app_test.go 同一组前提，前移到 npm test 暴露
 tests/tokens.test.ts: 令牌契约——tokens.css / roles.css 与设计稿逐值一致、明暗两组键相同、所有 var() 都有定义、样式不引用外部来源、字体文件都在包内
-tests/mock-api.test.ts: 假后端守卫——把 mockApi 挂到本地 HTTP 服务上，验证外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、门户外框读接口与快捷登录往返；营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400；节点假接口的列表能被页面 schema 接住、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验
+tests/mock-api.test.ts: 假后端守卫——把 mockApi 挂到本地 HTTP 服务上，验证外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409（调账打在真实种子用户上，余额经详情接口核对、重放不再记账，种子外的 id 回 404）、门户外框读接口与快捷登录往返；营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400；节点假接口的列表能被页面 schema 接住、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验
 tests/theme-boot.test.ts: 用 node:vm 执行引导脚本覆盖各种存储状态，核对它与 theme.ts 同键；vite 配置拒绝构建 showcase 与未知 mode、引导脚本带内容哈希、不内联资源、假后端只在 serve 时挂上
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
