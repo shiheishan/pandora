@@ -6,7 +6,7 @@
  */
 import { forwardRef, type InputHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { cx } from './cx'
-import { Field, useFieldIds, type FieldControlProps } from './Field'
+import { Field, hasError, useFieldIds, type FieldControlProps } from './Field'
 import css from './control.module.css'
 
 interface Shared extends FieldControlProps {
@@ -29,8 +29,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       <input
         ref={ref}
         id={controlId}
-        aria-invalid={error != null || undefined}
-        aria-describedby={error != null || hint != null ? messageId : undefined}
+        aria-invalid={hasError(error) || undefined}
+        aria-describedby={hasError(error) || hint != null ? messageId : undefined}
         className={cx(css.control, size === 'sm' && css.sm, mono && css.mono, className)}
         {...rest}
       />
@@ -50,8 +50,8 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
       <textarea
         ref={ref}
         id={controlId}
-        aria-invalid={error != null || undefined}
-        aria-describedby={error != null || hint != null ? messageId : undefined}
+        aria-invalid={hasError(error) || undefined}
+        aria-describedby={hasError(error) || hint != null ? messageId : undefined}
         className={cx(css.control, css.area, mono && css.mono, className)}
         {...rest}
       />

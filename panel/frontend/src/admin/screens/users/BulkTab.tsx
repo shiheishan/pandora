@@ -69,17 +69,19 @@ function FilterPanel({ now }: { now: Date }) {
           <Select
             label="套餐"
             size="sm"
-            options={[{ value: '', label: '不限' }, ...(plans.data ?? []).map((p) => ({ value: p.id, label: p.status === 'archived' ? `${p.name}（已归档）` : p.name }))]}
+            emptyOption="不限"
+            options={(plans.data ?? []).map((p) => ({ value: p.id, label: p.status === 'archived' ? `${p.name}（已归档）` : p.name }))}
             value={form.plan}
             onChange={(e) => set({ plan: e.target.value })}
           />
         )}
-        <Select label="状态" size="sm" options={BULK_STATUS.map(([value, label]) => ({ value, label }))} value={form.status} onChange={(e) => set({ status: e.target.value as BulkStatus })} />
-        <Select label="到期时间" size="sm" options={BULK_EXPIRY.map(([value, label]) => ({ value, label }))} value={form.expiry} onChange={(e) => set({ expiry: e.target.value as BulkExpiry })} />
+        <Select label="状态" size="sm" emptyOption="不限" options={BULK_STATUS.map(([value, label]) => ({ value, label }))} value={form.status} onChange={(e) => set({ status: e.target.value as BulkStatus })} />
+        <Select label="到期时间" size="sm" emptyOption="不限" options={BULK_EXPIRY.map(([value, label]) => ({ value, label }))} value={form.expiry} onChange={(e) => set({ expiry: e.target.value as BulkExpiry })} />
         <Select
           label="用户组"
           size="sm"
-          options={[{ value: '', label: '不限' }, ...(groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))]}
+          emptyOption="不限"
+          options={(groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))}
           value={form.group}
           onChange={(e) => set({ group: e.target.value })}
         />
@@ -262,12 +264,7 @@ function GeneratePanel() {
 
   const set = (key: keyof GenerateForm, value: string) => {
     setForm((f) => ({ ...f, [key]: value }))
-    // 删键而不是置空串：Field 把任何非 null 的 error 都画成错误态
-    setErrors((e) => {
-      const next = { ...e }
-      delete next[key]
-      return next
-    })
+    setErrors((e) => ({ ...e, [key]: '' }))
   }
   const submit = async () => {
     const local = generateProblems(form)
@@ -323,7 +320,8 @@ function GeneratePanel() {
         />
         <Select
           label="用户组"
-          options={[{ value: '', label: '不分组' }, ...(groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))]}
+          emptyOption="不分组"
+          options={(groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))}
           value={form.group}
           error={errors.group}
           onChange={(e) => set('group', e.target.value)}

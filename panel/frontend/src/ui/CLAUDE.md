@@ -11,10 +11,10 @@ index.ts: 公开出口，页面只从这里 import；cx 与 useModalDialog 是�
 cx.ts: className 拼接
 icons.tsx: IconCheck / IconChevronDown / IconClose，16px 线性单色（规范：图标只用线性单色）
 Button.tsx: 六种 variant（primary 实心强调、outline、secondary、ghost、danger、link）× 四档 size（md / sm / xs 对应 --h-control 三档，dialog 为弹窗按钮）；busy 禁用并转圈；默认 type="button"
-Field.tsx: 字段外壳与 useFieldIds：标签在上、说明或错误在下，生成 id 接好 htmlFor、aria-describedby、aria-invalid，错误行 role="alert"
+Field.tsx: 字段外壳、useFieldIds 与 hasError：标签在上、说明或错误在下，生成 id 接好 htmlFor、aria-describedby、aria-invalid，错误行 role="alert"；error 为空串 / false 不算错误（页面清错常置空串），各控件的 aria-invalid 同用 hasError
 control.module.css: Input / TextArea / Select 共用的输入框外观：聚焦边框转强调色加 3px --focus-halo 外圈，错误转危险色，select 换成跟随文字色的折线
 Input.tsx: Input 与 TextArea；mono 用于邀请码、优惠码、IP
-Select.tsx: 原生 select 加占位项
+Select.tsx: 原生 select；两种空值——placeholder 是必选下拉的 disabled 占位项，emptyOption 是「不限 / 全部」这类可选回去的空值项（传了就不渲染 placeholder）
 Switch.tsx: 原生 checkbox + role="switch"，32×18；选中底 --accent、圆钮 --switch-knob-on
 Checkbox.tsx: 原生 checkbox 换外观，16px（表格里 14px），支持 indeterminate；外层 label 用 htmlFor 显式指向 input id、标签文字是 label 的直接文字（按规范隐式关联读屏也认，但各会话实测用的浏览器检查工具只认 label[for] 的直接文字，否则把名字读成 value「on」）
 Tag.tsx: Tag 八种配色（ok / warn / danger / info / neutral / brand / brandSolid / outline），圆角 5 不做胶囊；CountBadge 朱砂角标，0 不渲染、超过上限显示 99+
@@ -34,7 +34,7 @@ StatStrip.tsx: 统计条：一排等宽格（标签 + 20px 等宽数字），格
 Pager.tsx: 分页条：「第 N / M 页 · 共 T 条」+ 上一页 / 下一页，按 offset / limit 翻页（与后端列表接口同形），不满一页不渲染
 QueryView.tsx: 查询三态容器：把 useQuery 结果渲染成加载骨架 / 错误（接口 404 按「无权限或不存在」，其它给重试）/ 空 / 正文；只认结果对象的形状，是 ui 里唯一依赖 core（api.ts 的 isApiError）的组件
 *.module.css: 各组件同名样式，只引用令牌
-ui.test.tsx: 以 renderToStaticMarkup 核对角色与 aria 结构（按钮类型与进行中、字段接线、复选框名称、下拉占位、开关角色、角标、标签页漫游 tabindex、分段单选、表格语义与三态勾选、可点行的聚焦与 Enter / 空格激活、弹层标题关联与关闭按钮、菜单初始关闭、统计条骨架与分组名、分页边界、查询三态；Table 行键盘激活直接调用组件取元素树喂假按键），不引入 DOM 库；键盘与弹层开合在 showcase 用浏览器验收
+ui.test.tsx: 以 renderToStaticMarkup 核对角色与 aria 结构（按钮类型与进行中、字段接线、复选框名称、下拉占位与可选空值项、空串 error 不算错误、开关角色、角标、标签页漫游 tabindex、分段单选、表格语义与三态勾选、可点行的聚焦与 Enter / 空格激活、弹层标题关联与关闭按钮、菜单初始关闭、统计条骨架与分组名、分页边界、查询三态；Table 行键盘激活直接调用组件取元素树喂假按键），不引入 DOM 库；键盘与弹层开合在 showcase 用浏览器验收
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

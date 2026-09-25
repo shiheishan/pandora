@@ -78,6 +78,22 @@ describe('form controls', () => {
     expect(out).toContain('<option value="jp" disabled="">东京</option>')
   })
 
+  it('Select emptyOption is a selectable empty value and replaces the placeholder', () => {
+    const out = html(<Select label="用户组" emptyOption="全部用户组" placeholder="请选择" value="" onChange={noop} options={[{ value: 'vip', label: 'VIP' }]} />)
+    expect(out).toMatch(/<option value="" selected="">全部用户组<\/option>/)
+    expect(out).not.toContain('请选择')
+    expect(out).not.toMatch(/<option value=""[^>]*disabled/)
+  })
+
+  it('an empty-string error counts as no error: no red state, no alert, hint stays', () => {
+    const cleared = html(<Input id="n" label="名称" error="" hint="必填" />)
+    expect(cleared).not.toContain('aria-invalid')
+    expect(cleared).not.toContain('role="alert"')
+    expect(cleared).toMatch(/id="n-message"[^>]*>必填</)
+    expect(html(<Select id="s" label="组" error="" options={[]} />)).not.toContain('aria-invalid')
+    expect(html(<TextArea id="t" label="原因" error="" />)).not.toContain('aria-describedby')
+  })
+
   it('Switch is a real checkbox with the switch role', () => {
     const out = html(<Switch aria-label="启用" defaultChecked />)
     expect(out).toContain('type="checkbox"')

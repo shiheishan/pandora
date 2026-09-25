@@ -219,20 +219,19 @@ export function groupRefs(g: Pick<UserGroup, 'plans' | 'prices' | 'coupons'>): s
 // 批量运营：设计稿的四个下拉 → BulkFilter（契约映射）
 // 「已禁用」在 bulk 里只能单值：停用与封禁分成两项；「已过期」是订阅态
 // ===========================================================================
+// 「不限」是 Select 的 emptyOption（空串），不在表里
 export const BULK_STATUS = [
-  ['', '不限'],
   ['active', '正常'],
   ['suspended', '已停用'],
   ['banned', '已封禁'],
   ['expired', '订阅已过期'],
 ] as const
 export const BULK_EXPIRY = [
-  ['', '不限'],
   ['7', '7 天内到期'],
   ['30', '30 天内到期'],
 ] as const
-export type BulkStatus = (typeof BULK_STATUS)[number][0]
-export type BulkExpiry = (typeof BULK_EXPIRY)[number][0]
+export type BulkStatus = (typeof BULK_STATUS)[number][0] | ''
+export type BulkExpiry = (typeof BULK_EXPIRY)[number][0] | ''
 
 export interface BulkForm {
   plan: string

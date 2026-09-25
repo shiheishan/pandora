@@ -96,7 +96,7 @@ function GroupPicker({ d }: { d: UserDetail }) {
   const groups = useUserGroups()
   const [busy, setBusy] = useState(false)
   if (!can('iam.user.write')) return <>{d.group_name || '未分组（默认）'}</>
-  const options = [{ value: '', label: '未分组（默认）' }, ...(groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))]
+  const options = (groups.data ?? []).map((g) => ({ value: g.id, label: g.name }))
   const assign = async (groupId: string) => {
     setBusy(true)
     try {
@@ -109,7 +109,7 @@ function GroupPicker({ d }: { d: UserDetail }) {
       setBusy(false)
     }
   }
-  return <Select size="sm" aria-label="用户组" options={options} value={d.group_id ?? ''} disabled={busy || groups.isPending} onChange={(e) => void assign(e.target.value)} fieldClassName={css.groupSelect} />
+  return <Select size="sm" aria-label="用户组" emptyOption="未分组（默认）" options={options} value={d.group_id ?? ''} disabled={busy || groups.isPending} onChange={(e) => void assign(e.target.value)} fieldClassName={css.groupSelect} />
 }
 
 // ===========================================================================
