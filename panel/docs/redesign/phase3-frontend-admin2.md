@@ -50,7 +50,7 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：⓪ 接线、① 营销 `fbc1aa5`（合并 2271de6）、「② 之前」的 ui 提升 `1b1ac26`（合并 c93dec6；CI 36077147631 / 36077147565 全绿）已验收合入。**下一步 ② 节点。**
+**进度**：⓪ 接线、① 营销 `fbc1aa5`（合并 2271de6）、「② 之前」的 ui 提升 `1b1ac26`（合并 c93dec6）、② 节点 `044c18e` + 营销与节点改用 `src/admin/actions.ts` 的 `f6654fd`（合并 7259656；PG18 36085263145 绿）已验收合入。**下一步 ③ 服务器、节点池、路由。** 2026-09-24 ② 之后上下文将满，同一 worktree 由新会话接力：先读 `phase3-common.md`、本文件全文、`src/admin/CLAUDE.md`、`src/admin/screens/nodes/CLAUDE.md`，再 `git merge feat/panel-redesign`。
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R76。
@@ -65,5 +65,7 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 - ui 提升的验收结论：`StatStrip`、`Pager`、`QueryView` 认可，`QueryView` 依赖 `core/api` 的 `isApiError` 符合 core → ui 方向。Checkbox 改为 `htmlFor` + 直接文字认可（「on」是浏览器检查工具只认 `label[for]` 直接文字造成的，已写进公共规则 10.5）。
 - 注意 `QueryView` 用 `isPending` 判断加载：`enabled: false` 的查询（例如等选中某行才查的详情）会一直显示骨架，这种场景别套 QueryView，或者只在启用后渲染它。
 - 假后端批量生成优惠券的两条校验文案对齐 Go 原文，并进 ② 的提交。
-- 后台前端一已把 `useCan` / `useIntentKey` / `useFailure` 提升到 `src/admin/actions.ts`（合并 2c1fc82，另有纯函数 `canWith` / `createIntentKey` / `classifyFailure`）；你在之后某一步的提交里把 `marketing/queries.ts` 里的同名三件改为从那里引用（行为一致，不用另外报告）。
+- （已完成，f6654fd）后台前端一已把 `useCan` / `useIntentKey` / `useFailure` 提升到 `src/admin/actions.ts`（合并 2c1fc82，另有纯函数 `canWith` / `createIntentKey` / `classifyFailure`）；你在之后某一步的提交里把 `marketing/queries.ts` 里的同名三件改为从那里引用（行为一致，不用另外报告）。
 - 后台前端一 ② 把 `screens/CLAUDE.md`、`dev/mock/admin/CLAUDE.md` 里 tickets 从并列行拆成了单独一行；你改这两份 L2 时先同步主线，同样把自己的模块拆成单独一行。
+- ② 的验收结论：节点列表与五标签详情抽屉、schema 驱动的协议表单（PATCH 只在协议字段改动时带 `protocol_config`，敏感字段留空先确认会被清空）、保留规则 5 的迁移资格与「复制到新服务器再退役」引导、令牌仅此一次可见、`node-schemas.ts` 夹具由 Go `ProtocolSchemas()` 导出，都认可。往 `tests/mock-api.test.ts` 追加节点测试块、营销假后端两条文案对齐 Go，认可。
+- **③ 要点**：服务器列表 / 详情 / 编辑、节点池增删改、全局路由组与规则（下拉只放后端支持的类型，5.A D-D-1；全局出站被引用时删除回 409，R56；规则行编辑器复用 `NodeRouting.tsx` 的 `RuleRows`）；D-B-3 按「未决前」。`nodes.ts` 假后端里服务器、节点池、全局路由目前只有节点页要的读接口，③ 补全；`nodes.ts` 现 589 行，快到 800 时把服务器 / 节点池 / 全局路由的处理拆到同目录新文件（如 `nodes-servers.ts`），由 `nodes.ts` 引入并入同一个 MockModule，不改登记表 `dev/mock/admin/index.ts`。
