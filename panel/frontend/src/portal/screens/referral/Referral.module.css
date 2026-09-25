@@ -1,0 +1,314 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 referral/index.tsx 用到的类名
+ * [POS]: portal/screens/referral 的样式，取自设计稿门户-06：邀请横幅 --brand-tint 底、链接等宽字、两列（左列使用佣金 + 邀请记录，右列佣金记录跨两行，< 640 单列按使用 → 记录 → 邀请排）、记录行三列（事项 / 金额 / 状态）
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ===========================================================================
+ * 邀请横幅
+ * ========================================================================= */
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--brand-soft);
+  border-radius: var(--radius-lg);
+  background: var(--brand-tint);
+  color: var(--text);
+}
+
+.headline {
+  margin: 0;
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+}
+
+.linkRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
+.link {
+  flex: 1;
+  min-width: 240px;
+  padding: 11px 14px;
+  border: 1px solid var(--brand-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.code {
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.bannerNote,
+.bannerWarn {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.bannerWarn {
+  color: var(--warn);
+}
+
+@media (max-width: 639px) {
+  .link {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+}
+
+/* ===========================================================================
+ * 两列：左列使用佣金 + 邀请记录，右列佣金记录跨两行
+ * ========================================================================= */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    'use records'
+    'invitees records';
+  grid-template-rows: auto 1fr;
+  align-items: start;
+  gap: var(--space-16);
+}
+
+.useArea,
+.recordsArea,
+.inviteesArea {
+  min-width: 0;
+}
+
+.useArea {
+  grid-area: use;
+}
+
+.recordsArea {
+  grid-area: records;
+}
+
+.inviteesArea {
+  grid-area: invitees;
+}
+
+@media (max-width: 639px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'use'
+      'records'
+      'invitees';
+    grid-template-rows: none;
+  }
+}
+
+/* ===========================================================================
+ * 使用佣金
+ * ========================================================================= */
+.use {
+  gap: var(--space-12);
+}
+
+.transfer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  height: var(--h-control);
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.transfer:not(:disabled):hover {
+  background: var(--surface-2);
+}
+
+.transfer:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--focus-ring);
+}
+
+.transfer:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.transferNote {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.divider {
+  width: 100%;
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--surface-3);
+}
+
+.caption,
+.hint,
+.blocked,
+.error {
+  margin: 0;
+  font-size: var(--fs-caption);
+}
+
+.caption {
+  color: var(--text-2);
+}
+
+.hint {
+  color: var(--text-3);
+}
+
+.blocked {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.withdrawRow {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: var(--space-8);
+  align-items: start;
+}
+
+.withdraw {
+  width: 100%;
+}
+
+/* ===========================================================================
+ * 列表（佣金记录、邀请记录）
+ * ========================================================================= */
+.listCard > header {
+  border-bottom: 1px solid var(--border);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.record {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 76px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px var(--pad-card);
+  border-bottom: 1px solid var(--surface-2);
+  font-size: 13px;
+}
+
+.recordMain {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 标题可换行：窄屏上订单号不能被省略号吃掉，但订单号本身整段不拆 */
+.recordTitle {
+  overflow-wrap: anywhere;
+}
+
+.ref {
+  white-space: nowrap;
+}
+
+.inviteeEmail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recordMeta {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.plus,
+.minus,
+.void {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plus {
+  color: var(--ok);
+}
+
+.minus {
+  color: var(--text-2);
+}
+
+.void {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.recordStatus {
+  text-align: right;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.invitee {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: 10px var(--pad-card);
+  border-bottom: 1px solid var(--surface-2);
+  font-size: 13px;
+}
+
+.invitee .recordMeta {
+  flex: none;
+}
+
+.more {
+  width: 100%;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.more:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}

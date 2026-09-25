@@ -15,7 +15,7 @@ plans.ts: 选购套餐（门户-03）；匿名的套餐目录与流量包目录�
 checkout.ts: 确认订单（门户-03 结账）；支付方式、新购（order_create）、续费（subscription_renewal_create）、变更试算与下单（subscription_change_plan_create）、发起支付（同渠道复用意图）；匿名的假收银台 GET v1/__mock/cashier（HTML）与 …/complete（履约后 302 回 return_url）
 orders.ts: 我的订单（门户-04）；列表（status 逗号多值、未知状态 400、limit / offset、counts、按下单时间倒序）、明细、取消（非 UUID 400、重复取消 already_terminal），读前把超时待支付单转 expired
 wallet.ts: 钱包（门户-05）；余额与流水（外框余额胶囊也读它）、充值建单（balance_topup_create、200）、礼品卡预览与兑换（gift_card_redeem，流量进流量包余额、延期要有订阅、盲盒固定抽第二项）、我的兑换记录
-referral.ts: 邀请返利（门户-06）；GET v1/me/commission（外框菜单的可用佣金提示也读它）
+referral.ts: 邀请返利（门户-06）；自带按 PortalState 挂的佣金状态（WeakMap，切场景跟着重建）：GET v1/me/invite（没有码时懒生成 8 位码）、GET v1/me/commission（外框菜单的可用佣金提示也读它；可用 = 账本余额 − 未过账在途提现，5.A D-F-1；legacy 去掉 R69 字段）、申请提现（commission_withdrawal_request，检查顺序照 RequestWithdrawal）、转余额（commission_transfer_to_balance，记进钱包余额与流水）；empty 无码无记录，multi 有一笔审核中提现且邀请码已用满
 messages.ts: 消息（门户-08）；GET v1/me/notifications（外框铃铛未读数轮询它）、GET v1/me/announcements（置顶优先，最多 20 条）
 account.ts: 账号安全（门户-10）；POST v1/me/quick-login 签发快捷登录令牌
 tickets.ts / help.ts: 其余两个页面，目前为空壳

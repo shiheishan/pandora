@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供 siteConfigSchema、appearanceSchema 与 useSiteConfig、useAppearance、usePortalMe、balanceSchema / Balance / useBalance、订阅 schema 与类型（subscriptionSchema、Subscription、SUBSCRIPTION_STATUSES）、LIVE_STATUSES / isLive / liveSubscriptions / pickPrimary、SUBSCRIPTIONS_KEY、useSubscriptions、useActivePlanName、useCommissionAvailable、useUnreadCount、displayName
- * [POS]: portal 外框用到的读接口（契约「门户外壳与认证」与各页的外壳映射）：顶栏余额、头像菜单的用户名 / 套餐 / 佣金、铃铛未读数、登录页的站点开关与插槽；订阅列表是页面与外框共用的全字段查询（外框经 select 取套餐名），其余 schema 只收外框用到的字段，页面要全字段时在这里扩展、不另起查询键
+ * [OUTPUT]: 对外提供 siteConfigSchema、appearanceSchema 与 useSiteConfig、useAppearance、usePortalMe、balanceSchema / Balance / useBalance、订阅 schema 与类型（subscriptionSchema、Subscription、SUBSCRIPTION_STATUSES）、LIVE_STATUSES / isLive / liveSubscriptions / pickPrimary、SUBSCRIPTIONS_KEY、useSubscriptions、useActivePlanName、佣金 schema 与类型（commissionSchema、Commission、COMMISSION_ENTRY_STATUSES、WITHDRAWAL_STATUSES）、COMMISSION_KEY、useCommission、useCommissionAvailable、useUnreadCount、displayName
+ * [POS]: portal 外框用到的读接口（契约「门户外壳与认证」与各页的外壳映射）：顶栏余额、头像菜单的用户名 / 套餐 / 佣金、铃铛未读数、登录页的站点开关与插槽；订阅列表与佣金概况是页面与外框共用的全字段查询（外框经 select 取套餐名 / 可用佣金），其余 schema 只收外框用到的字段，页面要全字段时在这里扩展、不另起查询键
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useQuery } from '@tanstack/react-query'
@@ -35,7 +35,6 @@ export const balanceSchema = z.object({
   history: z.array(z.object({ kind: z.string(), delta: z.number().int(), memo: z.string(), at: z.string() })),
 })
 export type Balance = z.output<typeof balanceSchema>
-const commissionSchema = z.object({ summary: z.object({ available: z.number(), currency: z.string() }) })
 const notificationsSchema = z.object({ unread: z.number() })
 
 // 匿名接口：登录页也要用
@@ -162,13 +161,74 @@ export function useActivePlanName(): string | null {
   return useSubscriptions(primaryPlanName).data ?? null
 }
 
-export function useCommissionAvailable() {
+// ---------------------------------------------------------------------------
+// GET v1/me/commission（契约门户-06，含修订 R69）：外框头像菜单读可用佣金，邀请返利页读全部，
+// 同键一份全字段。可用额按 5.A D-F-1 已统一为「账本余额 − 在途提现」，转余额与提现同一口径。
+// R69 的 paid_invitees / total_earned / transfers 写成可选：旧后端缺席时页面降级。
+// 三个列表 Go 端都以空切片初始化，没有记录时是 []，不是 null。
+// ---------------------------------------------------------------------------
+// CHECK 允许六种；Go 只写 pending / available，冲销由 SQL 写 reversed
+export const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected'] as const
+export const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', 'processing', 'paid', 'failed', 'returned'] as const
+
+export const commissionSchema = z.object({
+  summary: z.object({
+    currency: z.string(),
+    pending: z.number().int(),
+    available: z.number().int(),
+    withdrawing: z.number().int(),
+    settled: z.number().int(),
+    invitees: z.number().int(),
+    orders: z.number().int(),
+    paid_invitees: z.number().int().optional(),
+    total_earned: z.number().int().optional(),
+    rate_percent: z.number().int(),
+    min_withdraw: z.number().int(),
+  }),
+  entries: z.array(
+    z.object({
+      amount: z.number().int(),
+      base: z.number().int(),
+      rate_percent: z.number().int(),
+      currency: z.string(),
+      status: z.enum(COMMISSION_ENTRY_STATUSES),
+      frozen_until: z.string().nullable(),
+      created_at: z.string(),
+      order_no: z.string(),
+      from: z.string(),
+    }),
+  ),
+  withdrawals: z.array(
+    z.object({
+      id: z.string(),
+      amount: z.number().int(),
+      currency: z.string(),
+      status: z.enum(WITHDRAWAL_STATUSES),
+      reject_reason: z.string(),
+      requested_at: z.string(),
+      completed_at: z.string().nullable(),
+    }),
+  ),
+  transfers: z.array(z.object({ ledger_txn_id: z.string(), amount: z.number().int(), currency: z.string(), created_at: z.string() })).optional(),
+})
+export type Commission = z.output<typeof commissionSchema>
+
+export const COMMISSION_KEY = ['portal', 'commission'] as const
+
+export function useCommission<T = Commission>(select?: (d: Commission) => T) {
   const api = useApi()
   return useQuery({
-    queryKey: ['portal', 'commission'],
+    queryKey: COMMISSION_KEY,
     queryFn: ({ signal }) => api.get('v1/me/commission', commissionSchema, { signal }),
-    select: (d) => d.summary,
+    select: (d) => (select ? select(d) : (d as T)),
   })
+}
+
+const commissionSummary = (d: Commission) => d.summary
+
+/** 头像菜单的可用佣金提示。 */
+export function useCommissionAvailable() {
+  return useCommission(commissionSummary)
 }
 
 /** 铃铛角标：新通知没有 SSE，按契约 60 秒与窗口聚焦时用 limit=1 刷新 unread。 */

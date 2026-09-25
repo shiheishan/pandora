@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./model 的钱包纯映射与 ./api 的 schema，依赖 ../common/orders 的订单页纯映射与 schema
  * [OUTPUT]: 无（测试文件）
- * [POS]: 第 ③ 步订单与钱包的单元测试：充值金额元转分与上下限、流水类型名（挂账按保留规则 6）、礼品卡卡面 / 说明 / 获得列、兑换响应 summary 可为 null；订单状态徽标、按月分组与已支付合计、展开区「结果」与事实行、筛选的状态集合
+ * [POS]: 第 ③ 步订单与钱包的单元测试：充值金额元转分与上下限、流水类型名（挂账按保留规则 6）、礼品卡卡面 / 说明 / 获得列、兑换响应 summary 必为数组；订单状态徽标、按月分组与已支付合计、展开区「结果」与事实行、筛选的状态集合
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -58,8 +58,9 @@ describe('礼品卡', () => {
     expect(normalizeGiftCode(' gc-1024 myst ')).toBe('GC-1024MYST')
   })
 
-  it('兑换响应的 summary 可能是 null（Go nil 切片）', () => {
-    expect(redeemResultSchema.parse({ template_name: 'T', type: 'general', summary: null }).summary).toBeNull()
+  it('兑换响应的 summary 是非空数组，null 不放行（Redeem 空摘要即报错）', () => {
+    expect(redeemResultSchema.parse({ template_name: 'T', type: 'general', summary: ['余额 +¥10.00'] }).summary).toEqual(['余额 +¥10.00'])
+    expect(redeemResultSchema.safeParse({ template_name: 'T', type: 'general', summary: null }).success).toBe(false)
   })
 })
 
