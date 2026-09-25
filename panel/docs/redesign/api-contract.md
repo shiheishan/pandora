@@ -1356,6 +1356,13 @@
 - 设计：不直接使用。新前端的「退役」走下面的待补接口；本接口只在「服务器详情」高级区保留（不做）。
 
 #### POST v1/nodes/{id}/activate — 节点上线（生命周期一步推到 active）
+- **修订 R113（2026-09-25，后端四 ④ f6ce152，已实现 R108、R110）**：实现在 `nodefabric/node_activate.go` 的 `ActivateNode`，投影函数提为 `nodefabric.ProjectNodeLifecycle`（旧状态接口转调）。定稿口径：
+  - **路径**：attesting → installing → validating → standby → canary → active，其余接入尾段状态从各自位置接上，每一步单独 UPDATE、过状态机触发器；触发器拒绝时原样回 409（数据库原文，带节点 id）并整体回滚。节点 `row_version` 只加 1。
+  - **已 active**：直接 200，不改、不审计、不通知；这一判断在版本号之前，带过期 `row_version` 重放也回 200。
+  - **前置条件（409，message 写明原因，什么都不改）**：还在接入（draft、provisioning、bootstrapping）→「还没完成接入」；失败或终态（`*_failed`、quarantined、retired）→「不能上线」；在役后离开的（draining、maintenance、unhealthy、upgrade_failed）→「不在接入尾段，请用启用或状态操作」；没有 active 且未过期的节点身份 →「没有有效的节点身份」；协议未就绪 →「协议配置还没就绪」；没有绑定服务器 / 服务器已删除；服务器不能按服务器状态机进 ready（draft、draining、maintenance 可以，已 ready 不动）→「服务器处于 X，不能进入 ready」。节点不存在或 id 非法回 404。
+  - **服务器进 ready 不要求本节点是控制节点**：与 `server_admin.go` 手动进 ready 的规则一致（只要求名下有在线且协议就绪的节点），协调会话认可；旧状态接口只在控制节点时改服务器，是它自己的口径。
+  - **通知**：提交后 `NotifyNodeChanged`；服务器是这次才进 ready 的，再发一次租户级 `NotifyUsersChanged`（同服务器其他节点的下发也跟着变）。审计 `node.activate` 记前后生命周期、服务状态、服务器状态与实际走过的路径。
+  - **warnings**（`AdminNode` 的 omitempty，**没有提示时不出现这个字段**，schema 写成可选）：无池节点「未划入节点池，不服务任何用户」；所在池没绑套餐「所在节点池没有绑定任何套餐，暂时不服务任何用户」。
 - **修订 R108（2026-09-25，协调会话定，前端收尾核对代码发现）**：新接口。起因（FACT）：节点生命周期状态机是 attesting → installing → validating → standby → canary → active（00005），接入流程 `enrollment.go` 只推到 bootstrapping / attesting，此后除了旧接口 `POST v1/nodes/{id}/status` 没有任何代码往前推；而 `status:batch` 启用节点要求服务器已 ready，服务器进 ready 又要求名下有 `status=active AND serving_status=active` 的节点——新服务器 + 新节点在新前端里上不了线。选方案 A（后端一步到位，与 R57 退役对称），不让前端逐级调旧接口。
 - 状态：**待补·后端**（后端四）
 - 权限：`node.lifecycle`｜reauth：否（与 status:batch 启用、旧 status 接口同门槛）｜幂等：是 `node_activate`
@@ -3304,3 +3311,4 @@
 | R110 | 2026-09-25 | 后端三、前端收尾 | R100 已实现：卖点四种 422 文案、complete 里 null 不动 [] 清空；R108 上线接口响应更正为 AdminNode（同退役接口） |
 | R111 | 2026-09-25 | 后端四 | R103 已实现：窗口唯一来源为库函数，非法存值按 5，422 文案与审计口径 |
 | R112 | 2026-09-25 | 后端三 | 建租户触发器补种渠道、模板、开关（R97、R94 已修）；删三个开关（R102）；重置密码原因超 500 字 422（R101） |
+| R113 | 2026-09-25 | 后端四 | 上线接口已实现：路径、前置条件与文案、已 active 先于版本号幂等、服务器进 ready 不要求控制节点、warnings 可缺省 |
