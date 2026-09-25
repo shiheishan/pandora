@@ -1537,6 +1537,7 @@
 ### 后台-08 内容与外观 · 公告
 
 #### GET v1/announcements — 公告列表（附可选套餐）
+- **修订 R91（2026-09-24，后台前端二 ④ 核对 api/admin/announce.go）**：`publish_at`、`expires_at` 是指针字段、没有 omitempty，总会出现，缺值为 `null`（不是省略）。另：知识库「限定套餐」的套餐名取 `GET v1/plans`（`catalog.read`）；没有该权限时只显示「已限定 N 个套餐」，保存时原样带回 `target_plan_ids`。
 - 状态：现有 `panel/internal/api/admin/announce.go:44 listAnnouncements`；**待补·后端（字段扩展，无迁移）**
 - 权限：`ops.announcement.write`（没有单独的读权限）｜reauth：否｜幂等：否
 - 请求：无（上限 200，置顶在前，按 published_at/created_at 倒序）
@@ -1649,6 +1650,7 @@
 - 设计：后台-08「前端插槽」。映射：`s.name` → `label`（下方小字补 `where`），`s.key` → `key`，`s.val` → `content`，`s.on` → `enabled`。设计 mock 的 key（portal.login.banner、portal.subscription.notice）不存在，以接口返回为准。新门户必须在这 7 个位置挂载插槽（与 public 段对齐）。
 
 #### POST v1/slots/{key} — 保存插槽
+- **修订 R90（2026-09-24，后台前端二 ④ 核对 api/admin/appearance.go）**：内容为空时净化器返回 nil 切片，`dropped` 为 `null`；前端按 `string[] | null` 处理。
 - 状态：现有 `panel/internal/api/admin/appearance.go:96 saveSlot` → `service.go:315 SaveSlot`
 - 权限：`platform.appearance.write`｜reauth：是｜幂等：是 `appearance_slot_save`
 - 请求：`{ content: string(HTML 白名单净化后 ≤32KB), enabled: bool }`（全量覆盖，切换开关也要带 content）
@@ -3199,3 +3201,5 @@
 | R87 | 2026-09-24 | 后台前端二 | 服务器列表排序、PATCH 空名 422、节点池 members / plan_names 已实现 |
 | R88 | 2026-09-24 | 门户前端 | 帮助文章正文 body 为空时字段缺席 |
 | R89 | 2026-09-24 | 门户前端、协调会话 | 门户账号页不显示用户组，用户 ID 用 uuid 前 8 位 |
+| R90 | 2026-09-24 | 后台前端二 | 插槽保存内容为空时 dropped 为 null |
+| R91 | 2026-09-24 | 后台前端二 | 公告两个时间缺值为 null；知识库限定套餐名的来源 |

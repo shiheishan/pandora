@@ -50,10 +50,10 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：⓪ 接线、① 营销 `fbc1aa5`（合并 2271de6）、「② 之前」的 ui 提升 `1b1ac26`（合并 c93dec6）、② 节点 `044c18e` + `f6654fd`（合并 7259656）、③ 服务器、节点池、路由 `f278413`（合并 0e00c6c；NativeCore 36088507207 第 2 次运行全绿，第 1 次因账号计费未启动）已验收合入。「④ 之前」`394df0c`（假后端幂等只重放 2xx，合并 b07414e）已合入。**下一步 ④ 内容与外观。** 2026-09-24 此后上下文用完（第一次接力后的会话），同一 worktree 由新会话接力：先读 `phase3-common.md`（10.4 幂等键口径）、本文件全文、`src/admin/CLAUDE.md`、`dev/CLAUDE.md`、`dev/mock/CLAUDE.md`、`dev/mock/admin/CLAUDE.md`，再 `git merge feat/panel-redesign`。 2026-09-24 ② 之后上下文将满，同一 worktree 由新会话接力：先读 `phase3-common.md`、本文件全文、`src/admin/CLAUDE.md`、`src/admin/screens/nodes/CLAUDE.md`，再 `git merge feat/panel-redesign`。
+**进度**：⓪ 接线、① 营销 `fbc1aa5`（合并 2271de6）、「② 之前」的 ui 提升 `1b1ac26`（合并 c93dec6）、② 节点 `044c18e` + `f6654fd`（合并 7259656）、③ 服务器、节点池、路由 `f278413`（合并 0e00c6c；NativeCore 36088507207 第 2 次运行全绿，第 1 次因账号计费未启动）已验收合入。「④ 之前」`394df0c`（合并 b07414e）、④ 内容与外观 `eb73934`（合并 a655ad3；NativeCore 36102016803 全绿）已验收合入。**下一步 ⑤ 通知与插件。** 2026-09-24 此后上下文用完（第一次接力后的会话），同一 worktree 由新会话接力：先读 `phase3-common.md`（10.4 幂等键口径）、本文件全文、`src/admin/CLAUDE.md`、`dev/CLAUDE.md`、`dev/mock/CLAUDE.md`、`dev/mock/admin/CLAUDE.md`，再 `git merge feat/panel-redesign`。 2026-09-24 ② 之后上下文将满，同一 worktree 由新会话接力：先读 `phase3-common.md`、本文件全文、`src/admin/CLAUDE.md`、`src/admin/screens/nodes/CLAUDE.md`，再 `git merge feat/panel-redesign`。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R89。
+- 契约修订已到 R91。
 - ⓪ 的验收结论（后续照此）：门户外框读的 `me/balance`、`me/subscriptions`、`me/commission`、`me/notifications` 与快捷登录签发的假接口已搬进对应页面的假后端文件（wallet / subs / referral / messages / account），`mock-api.ts` 本体只留登录、会话、reauth、幂等与 SSE，协调会话认可；假后端 `users/{id}/balance` 已按契约要求权限、reauth、幂等与 `reason`。
 - 模块读权限按契约现状登记：仪表盘登录即可见（各卡片按自己的权限过滤）；通知渠道的读取挂 `security.audit.read`，公告、知识库没有读权限、用写权限判断——这些是契约事实，不要自己改；只读账号停在无权限标签时标签栏无选中项，可接受。
 - 只读演示账号 `viewer@pandora.dev`（6 个读权限）用于实测按权限隐藏；每个模块页都要在它下面看一遍。
@@ -81,3 +81,5 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 - ui 的 `Select` 已有 `emptyOption?: string`（后台前端一 2a5a00e）：「不限 / 全部」这类要能选回去的空值项用它，不要再往 options 里拼空值项；④ 新写的下拉照此，营销、节点里已有的写法等以后改到时再换。
 - **④ 要点**：公告（定时、级别）、知识库、主题与插槽（只显示「默认 · 纸白」一张使用中的卡片，保存新主题入口隐藏，custom_css 不出现，5.A）、站点时区卡（R49 `GET/POST v1/settings/site`，设计稿没有，按设计稿风格补）；待决 D-D-2、D-D-3 按「未决前」。
 - 后台前端一已把「4xx 后丢弃幂等键」统一进 `src/admin/actions.ts`（`endsIntent`、`useFailure` 的 `{ fields, intent }` 写法），营销、节点目录的调用处也已改完（4263c49，合并 1ccfd2b）。你之后改到营销、节点前先同步主线；④ 起新写的带幂等键的写操作一律 `fail(e, { intent })`，自己先处理 4xx 的分支在 catch 开头 `if (endsIntent(e)) intent.reset()`。
+- ④ 的验收结论：公告（可见范围、级别、定时与自动下线、已发布锁定发布时间、全量覆盖原样送回时间）、知识库（类型切换与搜索、slug、发布设置、版本历史只读查看与恢复、改受众的并存提示）、主题只留「默认 · 纸白」、站点时区卡、插槽失焦保存与净化回填、别人先改时不冲掉本地输入，都认可。D-D-2（不提供「即将到期」）、D-D-3（已撤回只读 + 复制为新公告）按「未决前」认可。契约：R90、R91。
+- **⑤ 的提交里顺带**：`content/logic.ts` 的 `dropsIntent` 改用 `src/admin/actions.ts` 的 `endsIntent` 与 `fail(e, { intent })` 写法（后台前端一 4263c49 已合入），删掉本地版本与对应单测。
