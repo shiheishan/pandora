@@ -39,7 +39,16 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
       ['resets', '流量重置'],
     ],
   },
-  plans: { title: '套餐', group: '商业', read: 'catalog.read' },
+  plans: {
+    title: '套餐',
+    group: '商业',
+    // 流量包是后端有、设计稿缺的标签（修订 R73），与套餐同一个读权限
+    read: { catalog: 'catalog.read', packs: 'catalog.read' },
+    tabs: [
+      ['catalog', '套餐'],
+      ['packs', '流量包'],
+    ],
+  },
   billing: {
     title: '订单与收款',
     group: '商业',

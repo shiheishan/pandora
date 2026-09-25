@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 node:http 的 createServer，依赖 ../dev/mock-api 的 mockApi / MOCK_ACCOUNTS，依赖 ../dev/mock/types 的 matchPattern，依赖 ../src/admin/screens/nodes/schemas 的节点 / 服务器 / 节点池 / 全局路由 schema，依赖 ../src/admin/screens/content/schemas 的公告 / 内容页 / 主题 / 插槽 / 站点时区 schema
+ * [INPUT]: 依赖 vitest，依赖 node:http 的 createServer，依赖 ../dev/mock-api 的 mockApi / MOCK_ACCOUNTS，依赖 ../dev/mock/types 的 matchPattern，依赖 ../src/admin/screens/nodes/schemas 的节点 / 服务器 / 节点池 / 全局路由 schema，依赖 ../src/admin/screens/content/schemas 的公告 / 内容页 / 主题 / 插槽 / 站点时区 schema，依赖 ../dev/mock/admin/plans 的 setSalesEnabled，依赖 ../src/admin/screens/plans/schemas 的套餐与流量包 schema
  * [OUTPUT]: 对外提供假后端外壳与模块分发的测试
- * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409、只重放 2xx（4xx 后同 key 重新执行、条件改好后成功，R85）（调账用 users 假后端的真实种子用户，余额经详情接口核对，种子外的 id 回 404）——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为；另守用户第 ④ 步（流量重置、批量、用户组、设备模式）；营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400；节点假接口的列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器假接口能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布；内容假接口对只读账号整块 404、公告草稿 → 定时 → 发布 → 撤回的状态机与版本冲突、知识库保存新版本归档同受众旧发布版与重复归档、内置主题 43 键、插槽净化与空内容 dropped 为 null、站点时区校验
+ * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409、只重放 2xx（4xx 后同 key 重新执行、条件改好后成功，R85）（调账用 users 假后端的真实种子用户，余额经详情接口核对，种子外的 id 回 404）——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为；另守用户第 ④ 步（流量重置、批量、用户组、设备模式）；营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400；节点假接口的列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器假接口能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布；内容假接口对只读账号整块 404、公告草稿 → 定时 → 发布 → 撤回的状态机与版本冲突、知识库保存新版本归档同受众旧发布版与重复归档、内置主题 43 键、插槽净化与空内容 dropped 为 null、站点时区校验；套餐假接口的目录能被页面 schema 接住、向导单事务新建与幂等重放、编辑向导的 null = 不动与开新版本、草稿版本全流程、价格与销售开关 503、流量包 updated_at 乐观锁
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -9,8 +9,20 @@ import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS, mockApi } from '../dev/mock-api'
 import { matchPattern } from '../dev/mock/types'
+import { setSalesEnabled } from '../dev/mock/admin/plans'
 import { announcementsResponse, annSaved, pageArchived, pageResponse, pageSaved, pagesResponse, siteSettingsSchema, slotSaved, slotsResponse, themesResponse } from '../src/admin/screens/content/schemas'
 import { globalRoutingSchema, nodesResponse, poolsResponse, serverSchema, serversResponse } from '../src/admin/screens/nodes/schemas'
+import {
+  packResponseSchema,
+  packsSchema,
+  planCreatedSchema,
+  planPoolsSchema,
+  planResponseSchema,
+  plansSchema,
+  planUpdatedSchema,
+  priceCreatedSchema,
+  versionCreatedSchema,
+} from '../src/admin/screens/plans/schemas'
 
 type Middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) => void
 
@@ -559,6 +571,156 @@ describe('mock api · admin content', () => {
     expect(siteSettingsSchema.parse(await (await call('GET', '/v1/settings/site')).json()).timezone).toBe('Asia/Shanghai')
     for (const timezone of ['', 'Local', 'Mars/Base']) expect(await (await call('POST', '/v1/settings/site', { timezone })).json()).toMatchObject({ error: { fields: { timezone: '不是有效的时区' } } })
     expect(await (await call('POST', '/v1/settings/site', { timezone: 'Asia/Tokyo' })).json()).toEqual({ timezone: 'Asia/Tokyo' })
+  })
+})
+
+describe('mock api · admin plans', () => {
+  let server: Server
+  let base: string
+  let auth: Record<string, string>
+  beforeAll(async () => {
+    ;({ server, base } = await serve('admin'))
+    const res = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.admin) })
+    auth = { Authorization: `Bearer ${((await res.json()) as { access_token: string }).access_token}` }
+  })
+  afterAll(() => {
+    setSalesEnabled(true)
+    return new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+
+  // users 假后端的固定套餐 id：标准版，批量筛选按套餐能命中
+  const STD = '9c0e1a2b-3333-4b00-8000-000000000001'
+  const get = (path: string) => fetch(`${base}${path}`, { headers: auth })
+  const send = (method: string, path: string, body: unknown, key?: string) =>
+    fetch(`${base}${path}`, { method, headers: { ...auth, ...(key ? { 'Idempotency-Key': key } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+  const detailOf = async (id: string) => planResponseSchema.parse(await (await get(`/v1/plans/${id}`)).json()).plan
+  const poolIds = async () => {
+    const res = (await (await get(`/v1/plans/${STD}/pools`)).json()) as { pools: Array<{ id: string; name: string; active_nodes: number }> }
+    return { live: res.pools.find((p) => p.active_nodes > 0)!.id, empty: res.pools.find((p) => p.active_nodes === 0)!.id }
+  }
+
+  it('serves a catalog the page schemas accept, on the users seed plan ids', async () => {
+    const list = plansSchema.parse(await (await get('/v1/plans')).json()).plans
+    expect(list.map((p) => p.code)).toEqual(['std', 'pro', 'family', 'trial', 'ent-line'])
+    const std = list.find((p) => p.id === STD)!
+    expect(std.active_subscriptions).toBeGreaterThan(0)
+    expect(std.node_count).toBeGreaterThan(0)
+    expect(list.find((p) => p.code === 'pro')!.draft_version_id).not.toBeNull()
+    expect(list.find((p) => p.code === 'ent-line')).toMatchObject({ status: 'draft', current_version_id: null })
+    const d = await detailOf(STD)
+    expect(d.versions[0]!.version).toBeGreaterThan(d.versions[1]!.version)
+    expect(planPoolsSchema.parse(await (await get(`/v1/plans/${STD}/pools`)).json()).editable).toBe(false)
+    expect(packsSchema.parse(await (await get('/v1/traffic-packs?status=archived')).json()).packs.every((p) => p.status === 'archived')).toBe(true)
+  })
+
+  it('creates through the wizard in one transaction, replays, and validates like the Go wizard', async () => {
+    const { live, empty } = await poolIds()
+    const before = plansSchema.parse(await (await get('/v1/plans')).json()).plans.length
+    const bad = await send(
+      'POST',
+      '/v1/plans/complete',
+      { code: 'wiz', name: '向导', prices: [{ billing_interval: 'month', interval_count: 1, unit_amount: 0, currency: 'CNY' }], publish: true },
+      'wiz-0',
+    )
+    expect(await bad.json()).toMatchObject({ error: { fields: { 'prices.0.unit_amount': expect.any(String), pool_ids: expect.any(String) } } })
+    // 池里没有可服务节点：发布失败，库里什么也不留（R65）
+    const body = {
+      code: 'wiz',
+      name: '向导',
+      traffic_gb: 100,
+      max_devices: 2,
+      pool_ids: [empty],
+      prices: [{ billing_interval: 'month', interval_count: 1, unit_amount: 1900, currency: 'CNY', trial_days: 0 }],
+      publish: true,
+    }
+    const noNodes = await send('POST', '/v1/plans/complete', body, 'wiz-1')
+    expect(await noNodes.json()).toMatchObject({ error: { fields: { pool_ids: expect.any(String) } } })
+    expect(plansSchema.parse(await (await get('/v1/plans')).json()).plans).toHaveLength(before)
+
+    const ok = { ...body, pool_ids: [live] }
+    const created = await send('POST', '/v1/plans/complete', ok, 'wiz-2')
+    expect(created.status).toBe(201)
+    const r = planCreatedSchema.parse(await created.json())
+    expect(r).toMatchObject({ published: true, plan: { status: 'active', code: 'wiz' } })
+    expect(r.plan.current_version_id).toBe(r.version_id)
+    expect(planCreatedSchema.parse(await (await send('POST', '/v1/plans/complete', ok, 'wiz-2')).json()).plan.id).toBe(r.plan.id)
+    expect((await send('POST', '/v1/plans/complete', ok, 'wiz-3')).status).toBe(409)
+    expect((await send('POST', '/v1/plans/complete', { ...ok, code: 'wiz-x', max_devices: 0 }, 'wiz-4')).status).toBe(422)
+  })
+
+  it('edits through the wizard: null leaves things alone, quota changes roll a published version', async () => {
+    const d = await detailOf(STD)
+    const basics = {
+      code: d.code,
+      name: d.name,
+      description: d.description,
+      visibility: d.visibility,
+      sort_order: d.sort_order,
+      visible_group_ids: [],
+      purchase_limit_per_user: null,
+      stock_total: null,
+    }
+    const stale = await send('PUT', `/v1/plans/${STD}/complete`, { ...basics, expected_row_version: d.row_version - 1 }, 'edit-0')
+    expect(await stale.json()).toMatchObject({ error: { code: 'conflict', fields: { row_version: `current=${d.row_version}` } } })
+    const res = await send('PUT', `/v1/plans/${STD}/complete`, { ...basics, expected_row_version: d.row_version, traffic_gb: 300, prices: null, pool_ids: null }, 'edit-1')
+    const r = planUpdatedSchema.parse(await res.json())
+    expect(r.changed).toHaveLength(2)
+    const cur = r.plan.versions.find((v) => v.id === r.plan.current_version_id)!
+    expect(cur.quotas.find((q) => q.metric === 'traffic.bytes')!.limit).toBe(300 * 1024 ** 3)
+    expect(cur.entitlements).toEqual([])
+    expect(r.plan.prices).toEqual(d.prices)
+  })
+
+  it('walks a draft version: create, reject pool_ids and a stray throttle, save, bind, publish', async () => {
+    const d = await detailOf(STD)
+    const v = versionCreatedSchema.parse(await (await send('POST', `/v1/plans/${STD}/versions`, undefined, 'ver-1')).json()).version
+    expect([v.status, v.quotas, v.pool_ids]).toEqual(['draft', [], []])
+    expect((await send('POST', `/v1/plans/${STD}/versions`, undefined, 'ver-2')).status).toBe(409)
+    const cur = d.versions.find((x) => x.id === d.current_version_id)!
+    const semantics = { ...cur, expected_row_version: v.row_version }
+    for (const k of ['id', 'version', 'status', 'frozen_at', 'row_version', 'pool_ids', 'created_by_email', 'created_at'] as const) delete (semantics as Partial<typeof semantics>)[k]
+    expect((await send('PUT', `/v1/plans/${STD}/versions/${v.id}`, { ...semantics, pool_ids: [] })).status).toBe(422)
+    expect(await (await send('PUT', `/v1/plans/${STD}/versions/${v.id}`, { ...semantics, throttle_kbps: 5000 })).json()).toMatchObject({ error: { fields: { throttle_kbps: expect.any(String) } } })
+    const saved = (await (await send('PUT', `/v1/plans/${STD}/versions/${v.id}`, semantics)).json()) as { row_version: number }
+    const bound = await send('POST', `/v1/plans/${STD}/pools`, { version_id: v.id, expected_version_row_version: saved.row_version, pool_ids: cur.pool_ids }, 'bind-1')
+    const { row_version } = (await bound.json()) as { row_version: number }
+    const plan = await detailOf(STD)
+    const pub = await send('POST', `/v1/plans/${STD}/versions/${v.id}/publish`, { expected_plan_row_version: plan.row_version, expected_version_row_version: row_version }, 'pub-1')
+    expect(pub.status).toBe(200)
+    expect((await detailOf(STD)).current_version_id).toBe(v.id)
+  })
+
+  it('adds and archives prices, and answers 503 for catalog.publish writes while sales are off', async () => {
+    const add = { currency: 'USD', unit_amount: 3000, billing_interval: 'year', interval_count: 1 }
+    const created = priceCreatedSchema.parse(await (await send('POST', `/v1/plans/${STD}/prices`, add, 'price-1')).json()).price
+    expect((await send('POST', `/v1/plans/${STD}/prices`, add, 'price-2')).status).toBe(409)
+    expect((await send('POST', `/v1/plans/${STD}/prices`, { ...add, currency: 'EUR' }, 'price-3')).status).toBe(422)
+    const archive = (key: string) => send('POST', `/v1/plans/${STD}/prices/${created.id}/archive`, { expected_row_version: created.row_version }, key)
+    expect((await archive('arch-1')).status).toBe(200)
+    expect(await (await archive('arch-2')).json()).toMatchObject({ error: { message: '价格已经归档' } })
+
+    setSalesEnabled(false)
+    const off = await send('POST', `/v1/plans/${STD}/prices`, { ...add, billing_interval: 'month' }, 'price-4')
+    expect(off.status).toBe(503)
+    expect(await off.json()).toMatchObject({ error: { code: 'service_unavailable' } })
+    const pack = packsSchema.parse(await (await get('/v1/traffic-packs?status=active')).json()).packs[0]!
+    const down = await send('POST', `/v1/traffic-packs/${pack.id}/status`, { status: 'archived', expected_updated_at: pack.updated_at }, 'pack-off')
+    const archived = packResponseSchema.parse(await down.json()).pack
+    expect((await send('POST', `/v1/traffic-packs/${pack.id}/status`, { status: 'active', expected_updated_at: archived.updated_at }, 'pack-on')).status).toBe(503)
+    setSalesEnabled(true)
+    expect((await send('POST', `/v1/traffic-packs/${pack.id}/status`, { status: 'active', expected_updated_at: archived.updated_at }, 'pack-on')).status).toBe(200)
+  })
+
+  it('creates and edits traffic packs with the updated_at lock and rejects unknown fields', async () => {
+    const body = { name: '20 GB 小包', traffic_bytes: 20 * 1024 ** 3, currency: 'CNY', unit_amount: 800, recommended: false, sort_order: 5 }
+    expect((await send('POST', '/v1/traffic-packs', { ...body, stock: 1 }, 'tp-0')).status).toBe(400)
+    const pack = packResponseSchema.parse(await (await send('POST', '/v1/traffic-packs', body, 'tp-1')).json()).pack
+    expect(pack).toMatchObject({ status: 'active', sold_count: 0 })
+    const edited = packResponseSchema.parse(await (await send('PUT', `/v1/traffic-packs/${pack.id}`, { ...body, unit_amount: 900, expected_updated_at: pack.updated_at }, 'tp-2')).json()).pack
+    expect(edited.updated_at).not.toBe(pack.updated_at)
+    const stale = await send('PUT', `/v1/traffic-packs/${pack.id}`, { ...body, expected_updated_at: pack.updated_at }, 'tp-3')
+    expect(await stale.json()).toMatchObject({ error: { code: 'conflict', fields: { updated_at: `current=${edited.updated_at}` } } })
+    expect((await send('POST', `/v1/traffic-packs/${pack.id}/status`, { status: 'active', expected_updated_at: edited.updated_at }, 'tp-4')).status).toBe(409)
   })
 })
 

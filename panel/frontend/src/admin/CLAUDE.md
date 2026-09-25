@@ -10,7 +10,7 @@ reauth 的接线是本入口独有的：main.tsx 建 ReauthController 并作为 
 index.html: 入口页，pandora-app=admin 标记、<html data-app="admin">（角色令牌切到墨色中性）
 main.tsx: 建运行时与 ReauthController 并挂载 App；仅 DEV 把运行时挂到 window.__pandora 供浏览器里对假后端验证 reauth 重放，构建时整段裁掉
 App.tsx: RuntimeProvider 包住 Root（按 useSignedIn 切 LoginPage / Shell）与常驻 ReauthDialog
-modules.ts: 十个模块的标题、分组、标签（「欠费单」按保留规则 6 叫「挂账」）与读权限码（取自契约各模块主列表接口，含修订 R6），侧栏六组，⌘K 深链；canRead / visibleTabs / canReadModule 判权限，resolveRoute 拆出 module / tab / rest 并给规范地址，modulePath 拼链接，paletteItems 按权限筛选
+modules.ts: 十个模块的标题、分组、标签（「欠费单」按保留规则 6 叫「挂账」；套餐分「套餐 / 流量包」，流量包是设计稿缺、按 R73 补的标签）与读权限码（取自契约各模块主列表接口，含修订 R6），侧栏六组，⌘K 深链；canRead / visibleTabs / canReadModule 判权限，resolveRoute 拆出 module / tab / rest 并给规范地址，modulePath 拼链接，paletteItems 按权限筛选
 reauth.ts: createReauthController：api 在 React 外、对话框在 React 内，用可订阅的小仓库接起来；并发请求共用一个待决 Promise
 actions.ts: 各模块页写操作共用的三件：useCan（按 GET v1/me 的权限码）、useIntentKey（一次用户意图一把幂等键，意图变了换新键、成功后 reset）、useFailure（reauth 取消静默、fields 标表单、其它 Toast；第二参数传 { fields, intent } 时 4xx 业务拒绝在此丢弃幂等键，断网与 5xx 保留，契约 1.5 与 R85）；自己先处理 4xx 分支、不经 useFailure 的写操作直接用 endsIntent；逻辑在纯函数 canWith / createIntentKey / endsIntent / classifyFailure / handleFailure 里
 tasks.ts: 待补·后端 GET v1/dashboard/tasks 的严格 schema（按 kind 区分，未知 kind 判为不符）、共用查询键与 useDashboardTasks、taskCount；侧栏徽标与仪表盘「需要处理」共用一条查询、一种缓存形状

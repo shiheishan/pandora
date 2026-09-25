@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule / MockContext
- * [OUTPUT]: 对外提供 users 模块的假接口 MockModule
+ * [OUTPUT]: 对外提供 users 模块的假接口 MockModule，以及给 plans-store.ts 用的 PLAN_IDS、GROUPS 与 activeSubscriptions
  * [POS]: dev/mock/admin 的「用户（后台-03）」假接口，归后台前端一：列表（q 按邮箱 / 显示名 / 用户 id / 订阅令牌反查，status 逗号多值，group_id 含 none，sub_state，limit/offset）、详情、启停封禁、替用户设新密码、换发订阅链接（不回令牌）、人工调账、分配用户组、用户组列表、单订阅设备上限、风控画像；形状、权限、reauth、幂等与错误照 api-contract.md（含 R9 / R11 / R12 / R22）与 domain/adminops/users.go。订阅令牌只在内存里用于反查，任何响应都不返回
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -68,7 +68,7 @@ export interface Group {
   coupons: number
 }
 
-const GROUPS: Group[] = [
+export const GROUPS: Group[] = [
   { id: '9c0e1a2b-2222-4b00-8000-000000000001', code: 'vip', name: 'VIP', description: '长期付费与大客户', plans: 2, prices: 3, coupons: 1 },
   { id: '9c0e1a2b-2222-4b00-8000-000000000002', code: 'enterprise', name: '企业客户', description: '对公结算', plans: 1, prices: 1, coupons: 0 },
   { id: '9c0e1a2b-2222-4b00-8000-000000000003', code: 'trial', name: '体验用户', description: '', plans: 0, prices: 0, coupons: 2 },
@@ -81,8 +81,8 @@ const PLANS: Array<[string, number, number | null, number | null]> = [
   ['家庭版', 6800, 1000, 8],
   ['体验版', 0, 20, 1],
 ]
-// 套餐 id 固定：批量运营按 plan_id 筛当前订阅的套餐
-const PLAN_IDS = PLANS.map((_, k) => `9c0e1a2b-3333-4b00-8000-00000000000${k + 1}`)
+// 套餐 id 固定：批量运营按 plan_id 筛当前订阅的套餐；plans-store.ts 用同一组 id 建目录
+export const PLAN_IDS = PLANS.map((_, k) => `9c0e1a2b-3333-4b00-8000-00000000000${k + 1}`)
 
 const DOMAINS = ['qq.com', 'gmail.com', '163.com', 'outlook.com', 'proton.me', 'icloud.com', 'foxmail.com']
 const NAMES = ['zhang.wei', 'k.liu', 'wu.qing', 'm.chen', 'yao_ops', 'tomato', 'grace.h', 'lin.xiao', 'sec.check', 'mira', 'hu.jun', 'sun.yue', 'zhao.lei', 'qian.fei', 'luo.an', 'ma.teng', 'he.xin', 'gao.yu', 'lin.bo', 'xu.ke']
@@ -283,6 +283,11 @@ function passwordProblem(p: string): string | null {
   if (Buffer.byteLength(p) > 256) return '密码过长'
   if (!/\p{L}/u.test(p) || !/\p{Nd}/u.test(p)) return '密码必须同时包含字母和数字'
   return null
+}
+
+/** 套餐列表的「有效订阅」（plans-store.ts 用）：与 adminops.ListPlans 同口径，status 为 active 或 trialing */
+export function activeSubscriptions(planId: string): number {
+  return users.reduce((n, u) => n + u.subs.filter((s) => s.plan_id === planId && (s.status === 'active' || s.status === 'trialing')).length, 0)
 }
 
 export const users_: MockModule = {
