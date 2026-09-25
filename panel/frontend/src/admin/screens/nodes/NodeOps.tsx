@@ -13,7 +13,7 @@ import { Button, Checkbox, ConfirmModal, Input, Modal, Select, useToast } from '
 import { MOVE_BLOCKED_HINT, canActivate, canMove, canTransition, moveBlockers } from './logic'
 import css from './nodes.module.css'
 import { endsIntent, useCan, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
-import { activatedResponse, adminNodeSchema, batchStatusResponse, deletedResponse, publishResponse, type NodeRow } from './schemas'
+import { adminNodeSchema, batchStatusResponse, deletedResponse, publishResponse, type NodeRow } from './schemas'
 
 type Pending = 'publish' | 'toggle' | 'retire' | 'delete' | null
 
@@ -70,7 +70,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
   const activate = useMutation({
     mutationFn: () => {
       const body = { row_version: node.row_version }
-      return api.post(`v1/nodes/${node.id}/activate`, activatedResponse, { body, idempotencyKey: activateIntent.keyFor([node.id, body]) })
+      return api.post(`v1/nodes/${node.id}/activate`, adminNodeSchema, { body, idempotencyKey: activateIntent.keyFor([node.id, body]) })
     },
     onSuccess: (r) => {
       activateIntent.reset()

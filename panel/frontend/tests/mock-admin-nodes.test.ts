@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../dev/mock/admin/nodes-infra 的 activeNodesInPool，依赖 ../src/admin/screens/nodes/schemas 的节点 / 服务器 / 节点池 / 全局路由 schema
  * [OUTPUT]: 对外提供节点与服务器（后台-07）假接口的测试
- * [POS]: tests 的节点假后端守卫：节点列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布
+ * [POS]: tests 的节点假后端守卫：节点列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布；上线（R113）的 AdminNode 形状、warnings 缺省与已 active 先于版本号
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
 import { storedProtocolConfig } from '../dev/mock/admin/nodes'
 import { activeNodesInPool } from '../dev/mock/admin/nodes-infra'
-import { activatedResponse, globalRoutingSchema, nodesResponse, poolsResponse, serverSchema, serversResponse } from '../src/admin/screens/nodes/schemas'
+import { adminNodeSchema, globalRoutingSchema, nodesResponse, poolsResponse, serverSchema, serversResponse } from '../src/admin/screens/nodes/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin nodes', () => {
@@ -250,23 +250,36 @@ describe('mock api · admin nodes · phase 4 step 3 (R104 R105 R106 R107 R108)',
     expect(cleared.reality_settings.private_key).toBeNull()
   })
 
-  it('R108: activate walks an attesting node to active, readies its server, replays, and refuses others with 409', async () => {
+  it('R108/R113: activate walks an attesting node to active, readies its server, replays, and refuses others with 409', async () => {
     const n = (await list()).find((x) => x.name === '大阪 01（待上线）')!
     expect(n.status).toBe('attesting')
     const res = await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-1')
     expect(res.status).toBe(200)
-    const body = activatedResponse.parse(await res.json())
-    expect(body).toMatchObject({ status: 'active', serving_status: 'active' })
-    // 同键重放拿到同一结果；已是 active 再上线是 200 不改动
-    expect(activatedResponse.parse(await (await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-1')).json())).toEqual(body)
-    expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: body.row_version }, 'act-2')).status).toBe(200)
+    const body = adminNodeSchema.parse(await res.json())
+    expect(body).toMatchObject({ status: 'active', serving_status: 'active', row_version: n.row_version + 1 })
+    // R113：池绑着套餐，没有提示时不出现 warnings 这个键
+    expect(body).not.toHaveProperty('warnings')
+    // 同键重放拿到同一结果；已是 active 再上线是 200 不改动，且先于版本号判断（带过期版本号也回 200）
+    expect(adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-1')).json())).toEqual(body)
+    expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-2')).status).toBe(200)
+    // 无池的在役节点：200 并带「未划入节点池」提示
+    const noPool = (await list()).find((x) => x.pool_id === null && x.status === 'active')!
+    const warned = adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${noPool.id}/activate`, { row_version: noPool.row_version }, 'act-5')).json())
+    expect(warned.warnings).toEqual(['未划入节点池，不服务任何用户'])
+    // 版本号非法先回 422（httpx.Invalid）
+    expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: 0 }, 'act-6')).status).toBe(422)
     const srv = serversResponse.parse(await (await call('GET', '/v1/servers')).json()).servers.find((s) => s.id === n.server_id)!
     expect(srv.status).toBe('ready')
     // 版本冲突、终态
     const retired = (await list()).find((x) => x.serving_status === 'retired')!
-    expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: 1 }, 'act-3')).status).toBe(409)
-    const refused = await call('POST', `/v1/nodes/${retired.id}/activate`, { row_version: retired.row_version }, 'act-4')
+        const refused = await call('POST', `/v1/nodes/${retired.id}/activate`, { row_version: retired.row_version }, 'act-4')
     expect(refused.status).toBe(409)
     expect(((await refused.json()) as { error: { message: string } }).error.message).toContain('retired')
+    // 过期版本号对未上线节点回 409
+    const pending = (await list()).find((x) => x.status === 'draft')!
+    expect((await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version + 9 }, 'act-3')).status).toBe(409)
+    // 还在接入：同版本号回 409 并说「还没完成接入」
+    const early = await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version }, 'act-7')
+    expect(((await early.json()) as { error: { message: string } }).error.message).toContain('还没完成接入')
   })
 })

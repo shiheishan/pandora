@@ -10,7 +10,7 @@
 
 成员清单
 index.tsx: 页面入口，按标签分发：nodes → NodesTab（rest = [节点 id, 抽屉标签]）、servers → ServersTab（rest = [服务器 id, 抽屉标签]）、pools → PoolsTab、routing → RoutingTab
-schemas.ts: 节点列表行、AdminNode、协议 schema、服务器与下属节点、节点池（members / plan_names / R104 allowed_user_groups）、身份、探针、单节点与全局路由、写操作响应（含 R108 上线只收用得到的字段）的 zod schema
+schemas.ts: 节点列表行、AdminNode、协议 schema、服务器与下属节点、节点池（members / plan_names / R104 allowed_user_groups）、身份、探针、单节点与全局路由、写操作响应的 zod schema；上线（R108）按 R110 / R113 回 AdminNode，warnings 是它可缺省的字段（出现即至少一条），不另设响应 schema
 queries.ts: 查询键前缀 NK、各读 hook（节点列表、服务器列表 / 详情 / 下属节点、节点池挂 nodes.changed）、useInvalidateNodes，转出 admin/actions.ts 的三件通用 hook 与 endsIntent（自己先处理 4xx 分支的写操作用它丢弃幂等键）
 logic.ts: 节点状态映射（在线 / 离线 / 排空中 / 草稿 / 已停用 / 已退役）与筛选搜索、心跳与地址文案、迁移资格与 409 资产清单、R108 上线资格、合法状态边与批量取舍、排序提交项、协议表单模型（敏感字段留空不带 / 显式清空为 null、要清空的列表）、基本信息校验与新建体 / PATCH 差量、路由规则行互转与兜底校验、新规则插在兜底前、出站被引用计数与改名联动、出站行校验、带宽分桶
 infra.ts: 服务器圆点与状态文字、三条占用与三档色、卡片快捷状态切换、合法状态边、删除资格与后果文案、节点按服务器分组、服务器表单校验 / 新建体 / PATCH 差量 / 容量冲突解析；节点池状态文字、删除资格、绑定套餐文字、R104「仅用户组」文字与名单是否改动、新建体与编辑差量（名单变了才带）

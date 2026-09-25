@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 MockModule / MockContext / MockResult / Json，依赖 ./nodes-infra 的服务器 / 节点池 / 全局路由数据、infraRoutes 与 validateRouting，依赖 ./node-schemas 的协议 schema 夹具
  * [OUTPUT]: 对外提供 nodes 模块的假接口 MockModule，以及测试用的 storedProtocolConfig（读库里未抹敏的协议配置）
- * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」假接口，归后台前端二。节点在这里：列表（含 R27 分页与 R46 国家、24h 流量、探针）、新建 / 编辑 / 复制 / 迁移（保留规则 5）/ 排序 / 批量改服务状态（合法边）/ 退役（R57）/ 上线（R108 activate：接入尾段一步推到 active、服务器进 ready、无池带 warnings）/ 删除、列表的交付提示按 R105（先服务状态、再有没有池、再心跳）、PATCH 缺席的敏感键从库里补回（R106，mask_password 跟着 mask 开关走，R107）、协议 schema、REALITY 密钥、一键安装令牌、服务端令牌（R13）、吊销身份、发布配置、探针、单节点路由（R26，校验与全局共用 validateRouting）、节点身份（R46）；服务器、节点池、全局路由在 nodes-infra.ts（第 ③ 步），由 infraRoutes(store) 并入本模块，数据与节点共享。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器
+ * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」假接口，归后台前端二。节点在这里：列表（含 R27 分页与 R46 国家、24h 流量、探针）、新建 / 编辑 / 复制 / 迁移（保留规则 5）/ 排序 / 批量改服务状态（合法边）/ 退役（R57）/ 上线（R108 / R113 activate：判断顺序与 409 文案照 nodefabric.ActivateNode，已 active 先于版本号回 200，服务器进 ready，无池或池没绑套餐时带 warnings、没有提示不出现这个键）/ 删除、列表的交付提示按 R105（先服务状态、再有没有池、再心跳）、PATCH 缺席的敏感键从库里补回（R106，mask_password 跟着 mask 开关走，R107）、协议 schema、REALITY 密钥、一键安装令牌、服务端令牌（R13）、吊销身份、发布配置、探针、单节点路由（R26，校验与全局共用 validateRouting）、节点身份（R46）；服务器、节点池、全局路由在 nodes-infra.ts（第 ③ 步），由 infraRoutes(store) 并入本模块，数据与节点共享。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -115,6 +115,21 @@ const NO_POOL_NOTE = '未划入节点池，不服务任何用户'
 
 // R108：接入尾段的生命周期（attesting 之后、active 之前），「上线」按 00005 的合法边逐条推进到 active
 const ACTIVATABLE = ['attesting', 'installing', 'validating', 'standby', 'canary']
+// 服务器状态机里能进 ready 的状态（已 ready 的不动）
+const SERVER_TO_READY = ['draft', 'draining', 'maintenance']
+
+/** nodefabric.activateRefusal：不在接入尾段时为什么不能上线 */
+function activateRefusal(status: string): string {
+  if (['draft', 'provisioning', 'bootstrapping'].includes(status)) return `节点还没完成接入（${status}），等接入提交后再上线`
+  if (['provisioning_failed', 'bootstrap_failed', 'destroy_failed', 'quarantined', 'retired'].includes(status)) return `节点处于 ${status}，不能上线；需要重新接入或先处理这个状态`
+  return `节点处于 ${status}，不在接入尾段，请用启用或状态操作恢复服务`
+}
+
+/** nodefabric.activationWarnings：上线成功但不会服务任何人的提示（与 delivery_note 同口径，R105 / R113） */
+function activationWarnings(n: Node): string[] {
+  if (n.pool_id === null) return [NO_POOL_NOTE]
+  return pools.find((p) => p.id === n.pool_id)?.plans.length ? [] : ['所在节点池没有绑定任何套餐，暂时不服务任何用户']
+}
 
 function listRow(n: Node) {
   const srv = servers.find((s) => s.id === n.server_id)
@@ -482,8 +497,9 @@ export const nodes: MockModule = {
       n.name = `${n.name}#destroyed-${Date.now()}`
       ctx.send(200, { deleted: true })
     },
-    // R108：一步上线（后端四 ④ 实现前在这里模拟）：node.lifecycle、幂等 node_activate、无 reauth；
-    // 已是 active 回 200 不改动；前置条件不满足回 409 且说清原因；服务器跟着进 ready；无池节点带 warnings
+    // R108 / R113：一步上线，照 nodefabric.ActivateNode：node.lifecycle、幂等 node_activate、无 reauth；
+    // 判断顺序同 Go——版本号非法 400、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409，
+    // 再依次是接入尾段、节点身份、协议就绪、服务器；服务器跟着进 ready；warnings 没有提示时不出现
     'POST /v1/nodes/:id/activate': async (ctx) => {
       if (!ctx.requirePermission('node.lifecycle')) return
       const body = await ctx.body()
@@ -491,21 +507,23 @@ export const nodes: MockModule = {
       await ctx.idempotent('node_activate', () => {
         const extra = Object.keys(body).find((k) => k !== 'row_version')
         if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+        if (!(typeof body.row_version === 'number' && body.row_version > 0)) return invalid({ row_version: '必须提供正整数版本号' })
         const n = findNode(ctx.params.id)
         if (!n) return notFound('节点不存在')
-        if (!(typeof body.row_version === 'number' && body.row_version > 0)) return invalid({ row_version: '必须提供正整数版本号' })
+        if (n.status === 'active') return { status: 200, body: adminNode(n, activationWarnings(n)) }
         if (body.row_version !== n.row_version) return conflict(n)
-        const warnings = n.pool_id === null ? [NO_POOL_NOTE] : []
-        if (n.status === 'active') return { status: 200, body: adminNode(n, warnings) }
-        if (!ACTIVATABLE.includes(n.status)) return err(409, 'conflict', `节点生命周期是 ${n.status}，只有接入完成（attesting 至 canary）的节点能上线`)
-        if (!n.identity_serial || n.identityRevoked) return err(409, 'conflict', '节点还没有有效的节点身份，先签发安装令牌完成接入')
-        if (!n.node_type || n.server_port === null) return err(409, 'conflict', '节点协议配置还没有就绪，先在「协议参数」里填好')
+        if (!ACTIVATABLE.includes(n.status)) return err(409, 'conflict', activateRefusal(n.status))
+        if (!n.identity_serial || n.identityRevoked) return err(409, 'conflict', '节点没有有效的节点身份，请重新接入后再上线')
+        if (!n.node_type || n.server_port === null) return err(409, 'conflict', '节点的协议配置还没就绪（协议类型、端口与稳定协议配置），先保存协议再上线')
+        if (!n.server_id) return err(409, 'conflict', '节点没有绑定服务器，不能上线')
+        const srv = servers.find((s) => s.id === n.server_id)
+        if (!srv) return err(409, 'conflict', '节点所在的服务器已删除，不能上线')
+        if (srv.status !== 'ready' && !SERVER_TO_READY.includes(srv.status)) return err(409, 'conflict', `节点所在的服务器处于 ${srv.status}，不能进入 ready，先处理服务器状态再上线`)
         n.status = 'active'
         n.serving_status = 'active'
-        const srv = servers.find((s) => s.id === n.server_id)
-        if (srv && ['draft', 'maintenance', 'draining'].includes(srv.status)) srv.status = 'ready'
+        srv.status = 'ready'
         touch(n)
-        return { status: 200, body: adminNode(n, warnings) }
+        return { status: 200, body: adminNode(n, activationWarnings(n)) }
       })
     },
 
