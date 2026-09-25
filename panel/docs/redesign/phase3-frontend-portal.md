@@ -34,7 +34,7 @@ D-E-3、D-F-2、D-F-3。
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：① 概览与我的订阅 `52e7726`（合并 676694c）、② 选购套餐与结账 `ea55742`（合并 860c3e3）、③ 订单与钱包 `cd690c4` + `0b0543d`（合并 8144a5d）、④ 邀请返利 `5316e05`（合并 d474f01）、⑤ 工单与消息 `44edd7e`（合并 fd3ecc3；NativeCore 36088330834 全绿）已验收合入。**下一步 ⑥ 帮助与账号安全（门户最后一步）。** 2026-09-24 ③ 之后上下文用完，同一 worktree 由新会话接力：先读 `phase3-common.md`、本文件全文，再 `git merge feat/panel-redesign`。
+**进度**：① 概览与我的订阅 `52e7726`（合并 676694c）、② 选购套餐与结账 `ea55742`（合并 860c3e3）、③ 订单与钱包 `cd690c4` + `0b0543d`（合并 8144a5d）、④ 邀请返利 `5316e05`（合并 d474f01）、⑤ 工单与消息 `44edd7e`（合并 fd3ecc3；NativeCore 36088330834 全绿）已验收合入。**下一步 ⑥ 帮助与账号安全（门户最后一步）。** 2026-09-24 ⑤ 之后上下文用完（第二次接力），同一 worktree 由新会话接力：先读 `phase3-common.md`（第 10.4 节幂等键口径已按契约 R85 更新）、本文件全文、`src/portal/CLAUDE.md`、`src/portal/screens/CLAUDE.md`、`src/portal/screens/common/CLAUDE.md`、`dev/mock/portal/CLAUDE.md`，再 `git merge feat/panel-redesign`。⑥ 的提交里顺带补 `usePlacedOrder` 的 `forget()`（见下文 ⑤ 的验收结论）。 2026-09-24 ③ 之后上下文用完，同一 worktree 由新会话接力：先读 `phase3-common.md`、本文件全文，再 `git merge feat/panel-redesign`。
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R87。
