@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 users 目录下各组件用到的类名
- * [POS]: admin/screens/users 的唯一样式表，数值取自 管理后台-03-用户.dc.html（工具栏、表格列、560 抽屉、订阅卡、设备 pips），只引用令牌不写色值
+ * [OUTPUT]: 对外提供用户列表、详情抽屉、对话框用到的类名与通用小件（stack / small / muted / mono / tone_* / pips 等，Ops.module.css 的四个标签也用）
+ * [POS]: admin/screens/users 的主样式表，数值取自 管理后台-03-用户.dc.html（工具栏、表格列、560 抽屉、订阅卡、设备 pips），只引用令牌不写色值；第 ④ 步四个标签的版式在 Ops.module.css
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 

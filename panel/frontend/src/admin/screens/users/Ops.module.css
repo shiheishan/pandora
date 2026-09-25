@@ -1,0 +1,311 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供用户组、批量运营、设备策略、流量重置四个标签用到的类名
+ * [POS]: admin/screens/users 的第二张样式表（第 ④ 步），与 Users.module.css（列表、抽屉、对话框与通用小件）并列，数值取自 管理后台-03-用户.dc.html；通用小件（stack / small / muted / mono / tone_* / pips）仍从 Users.module.css 取
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+/* ===========================================================================
+ * ④ 用户组 / 批量运营 / 设备策略 / 流量重置
+ * ========================================================================= */
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 表格放进卡片或分栏时：卡片自己有边框，表格外框去掉（ui/Table 的根是滚动容器 div） */
+.bare > div:first-child {
+  border: 0;
+  border-radius: 0;
+}
+
+/* 列表以外的表格：单元格不折行，窄时在自己的框里横向滚动 */
+.plainTable {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.plainTable table,
+.bare table {
+  table-layout: fixed;
+}
+
+.plainTable td,
+.bare td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 设计稿：用户组 1.6fr / 280 起的右栏；批量运营 1.4fr / 300 起（960 宽时放到 260，给预览的邮箱留地方）；设备策略左 300 起 / 右 1.4fr */
+.split,
+.splitBulk,
+.splitDevices {
+  display: grid;
+  align-items: start;
+  gap: var(--space-16);
+}
+
+.split {
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+}
+
+.splitBulk {
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr);
+}
+
+.splitDevices {
+  grid-template-columns: minmax(300px, 1fr) minmax(0, 1.4fr);
+}
+
+.formStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+
+.formStack p {
+  margin: 0;
+}
+
+.groupName {
+  font-weight: var(--fw-medium);
+}
+
+.groupEdit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 6px;
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: var(--fs-caption);
+}
+
+.advanced > summary {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.advanced[open] > summary {
+  margin-bottom: var(--space-8);
+}
+
+/* --- 批量运营 ----------------------------------------------------------- */
+.cardTitle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-8);
+}
+
+.titleNote {
+  font-weight: var(--fw-regular);
+}
+
+.filterGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+  padding: var(--space-16);
+  border-top: 1px solid var(--surface-3);
+}
+
+.hitBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--space-12) var(--space-16);
+  border-top: 1px solid var(--surface-3);
+  background: var(--surface-2);
+}
+
+.hitCount {
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.mailForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--space-16);
+  border-top: 1px solid var(--surface-3);
+}
+
+.mailActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-12);
+  font-size: var(--fs-caption);
+}
+
+.previewList {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--surface-3);
+  list-style: none;
+}
+
+.previewRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 76px;
+  gap: 8px;
+  padding: 8px var(--space-16);
+  font-size: var(--fs-caption);
+}
+
+.previewRow + .previewRow {
+  border-top: 1px solid var(--surface-3);
+}
+
+.previewRow > :last-child {
+  text-align: right;
+}
+
+.previewFoot {
+  margin: 0;
+  padding: 8px var(--space-16) var(--space-12);
+  border-top: 1px solid var(--surface-3);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.genRow {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.genResult {
+  overflow: hidden;
+  border: 1px solid var(--surface-3);
+  border-radius: var(--radius-sm);
+}
+
+.genHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px var(--space-12);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.genList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.genList li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: 6px var(--space-12);
+  border-top: 1px solid var(--surface-3);
+}
+
+.genWarn {
+  margin: 0;
+  padding: 8px var(--space-12);
+  border-top: 1px solid var(--surface-3);
+  color: var(--warn);
+  font-size: var(--fs-caption);
+}
+
+/* --- 设备策略 ----------------------------------------------------------- */
+.modeSet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.modeSet > legend {
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.modeOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px var(--space-12);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.modeOption > input {
+  margin: 3px 0 0;
+  accent-color: var(--text);
+}
+
+.modeOn {
+  border-color: var(--text);
+  background: var(--surface-2);
+}
+
+.modeSet:disabled .modeOption {
+  cursor: default;
+}
+
+.readonlyRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-2);
+}
+
+.cardFoot {
+  margin: 0;
+  padding: 10px var(--space-16);
+  border-top: 1px solid var(--surface-3);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* --- 流量重置 ----------------------------------------------------------- */
+.manualReset {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+}
+
+.manualInput {
+  width: 300px;
+}
+
+.historyHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.historyRow {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--surface-3);
+}

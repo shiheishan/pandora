@@ -1,13 +1,14 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient / keepPreviousData，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供用户模块的 zod schema 与类型（UserRow、UserDetail、SubscriptionRow、OrderRow、UserGroup、UserProfile 等）、读 hook（useUsers、useUser、useUserGroups、useUserProfile）、UK 查询键前缀与 useInvalidateUsers、写接口的响应 schema
- * [POS]: admin/screens/users 的数据层：形状照 api-contract.md 后台-03（含修订 R9 / R11 / R12 / R22），并按 domain/adminops/users.go、api/admin/profile.go、usergroup.go 的 json tag 核对；按保留规则 2，没有任何字段携带订阅令牌或订阅地址
+ * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient / keepPreviousData，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ./model 的 exactEmail
+ * [OUTPUT]: 对外提供用户模块的 zod schema 与类型（UserRow、UserDetail、SubscriptionRow、OrderRow、UserGroup、UserProfile、BulkFilter、BulkPreview、OnlineDevice、ResetLog、ResetReason 等）、读 hook（useUsers、useUser、useUserGroups、useUserProfile、useFindUserByEmail、usePlanOptions、useBulkPreview、useDevices、useTrafficResets、useResetStats、useUserResets）、UK 查询键前缀、useInvalidateUsers 与 useInvalidateResets、写接口的响应 schema
+ * [POS]: admin/screens/users 的数据层：形状照 api-contract.md 后台-03（含修订 R9 / R11 / R12 / R22 / R38），并按 domain/adminops/users.go、bulk_users.go、bulk_mail.go、api/admin/profile.go、usergroup.go、devices.go、domain/billing/traffic_reset.go 的 json tag 核对；按保留规则 2，没有任何字段携带订阅令牌或订阅地址
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
+import { exactEmail } from './model'
 
 // ---------------------------------------------------------------------------
 // 封闭枚举（迁移里的 CHECK）：未知值判为不符约定
@@ -157,6 +158,82 @@ export const passwordResetSchema = z.object({ ok: z.literal(true), sessions_revo
 export const rotatedSchema = z.object({ user_email: z.string(), old_revoked: z.literal(true) }).strict()
 export const balanceSchema = z.object({ balance: int })
 
+export const groupSavedSchema = z.object({ id: z.string() })
+
+// ---------------------------------------------------------------------------
+// 批量运营：预览 / 生成 / 群发（筛选字段直接放在请求体顶层；后端 DisallowUnknownFields，空值不传）
+// ---------------------------------------------------------------------------
+export interface BulkFilter {
+  status?: 'active' | 'suspended' | 'banned'
+  group_id?: string
+  plan_id?: string
+  expires_within_days?: number
+  sub_state?: 'active' | 'expired' | 'none'
+}
+export const bulkPreviewSchema = z.object({
+  total: count,
+  samples: z.array(z.string()),
+  sample_rows: z.array(z.object({ email: z.string(), plan_name: z.string().nullable(), current_period_end: time.nullable() })),
+})
+export type BulkPreview = z.output<typeof bulkPreviewSchema>
+// 口令明文只回这一次；warning 是后端给的中文提醒
+export const generatedSchema = z.object({ count: count, users: z.array(z.object({ email: z.string(), password: z.string() })), warning: z.string() })
+export type Generated = z.output<typeof generatedSchema>
+export const bulkMailSchema = z.object({ queued: count, skipped: count })
+
+// ---------------------------------------------------------------------------
+// GET v1/devices：active / trialing / grace 订阅按在线数倒序，最多 200 条
+// ---------------------------------------------------------------------------
+const onlineDeviceSchema = z.object({
+  subscription_id: z.string(),
+  email: z.string(),
+  plan: z.string(),
+  // 生效值，0 表示不限
+  limit: count,
+  online: count,
+  nodes: count,
+  overridden: z.boolean(),
+  exceeded: z.boolean(),
+  last_seen_at: time.nullable(),
+})
+export const devicesSchema = z.object({ devices: z.array(onlineDeviceSchema), mode: z.enum(['loose', 'strict']), grace: count })
+export type OnlineDevice = z.output<typeof onlineDeviceSchema>
+export type DeviceMode = z.output<typeof devicesSchema>['mode']
+
+// ---------------------------------------------------------------------------
+// 流量重置（metering.reset.*）：日志的 plan_name / actor_email / note 是 omitempty，空时整键省略
+// ---------------------------------------------------------------------------
+export const RESET_REASONS = ['renewal', 'cycle_roll', 'manual', 'gift_card', 'plan_change'] as const
+export type ResetReason = (typeof RESET_REASONS)[number]
+const resetLogSchema = z.object({
+  id: z.string(),
+  user_email: z.string(),
+  plan_name: z.string().optional(),
+  metric: z.string(),
+  reason: z.enum(RESET_REASONS),
+  consumed_before: count,
+  actor_email: z.string().optional(),
+  note: z.string().optional(),
+  created_at: time,
+})
+export const resetLogsSchema = z.object({ logs: z.array(resetLogSchema), total: count })
+export type ResetLog = z.output<typeof resetLogSchema>
+export const resetStatsSchema = z.object({
+  last_30_days: count,
+  // 只有近 30 天出现过的原因才有键
+  by_reason: z.object({ renewal: count.optional(), cycle_roll: count.optional(), manual: count.optional(), gift_card: count.optional(), plan_change: count.optional() }),
+  freed_bytes: count,
+  manual_count: count,
+})
+export type ResetStats = z.output<typeof resetStatsSchema>
+export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: count })
+
+// ---------------------------------------------------------------------------
+// GET v1/plans（catalog.read）：批量筛选的「套餐」下拉只要 id / 名称 / 状态
+// ---------------------------------------------------------------------------
+const planOptionsSchema = z.object({ plans: z.array(z.object({ id: z.string(), name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
+export type PlanOption = z.output<typeof planOptionsSchema>['plans'][number]
+
 // ---------------------------------------------------------------------------
 // 查询
 // ---------------------------------------------------------------------------
@@ -209,7 +286,80 @@ export function useUserProfile(id: string, enabled: boolean) {
   })
 }
 
-/** 写成功后：列表与该用户详情重拉（分组人数变了时连带用户组） */
+/**
+ * 按邮箱找人（设备策略只有 subscription_id + email、手动重置只填邮箱）：GET v1/users?q= 是模糊匹配，
+ * 取邮箱完全相等的那条；找不到返回 null
+ */
+export function useFindUserByEmail() {
+  const api = useApi()
+  return useCallback(
+    async (email: string) => {
+      const r = await api.get('v1/users', usersSchema, { query: { q: email.trim(), limit: 100, offset: 0 } })
+      return exactEmail(r.users, email) ?? null
+    },
+    [api],
+  )
+}
+
+export function usePlanOptions(enabled: boolean) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'plan-options'],
+    queryFn: ({ signal }) => api.get('v1/plans', planOptionsSchema, { signal }).then((r) => r.plans),
+    enabled,
+    staleTime: 5 * 60_000,
+  })
+}
+
+/** 预览是只读的 POST：按筛选条件做查询键，条件变了自动重拉 */
+export function useBulkPreview(filter: BulkFilter) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'bulk', filter],
+    queryFn: ({ signal }) => api.post('v1/users/bulk/preview', bulkPreviewSchema, { signal, body: filter }),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useDevices() {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'devices'],
+    queryFn: ({ signal }) => api.get('v1/devices', devicesSchema, { signal }),
+    // 在线数是 5 分钟窗口，一分钟刷一次足够
+    refetchInterval: 60_000,
+  })
+}
+
+export const RESETS_PAGE = 25
+
+export function useTrafficResets(reason: ResetReason | '', offset: number) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'resets', 'list', reason, offset],
+    queryFn: ({ signal }) => api.get('v1/traffic-resets', resetLogsSchema, { signal, query: { reason: reason || undefined, limit: RESETS_PAGE, offset } }),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useResetStats() {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'resets', 'stats'],
+    queryFn: ({ signal }) => api.get('v1/traffic-resets/stats', resetStatsSchema, { signal }),
+  })
+}
+
+/** 抽屉「流量重置」标签：后端固定最近 50 条，不分页 */
+export function useUserResets(id: string) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'resets', 'user', id],
+    queryFn: ({ signal }) => api.get(`v1/users/${encodeURIComponent(id)}/traffic-resets`, resetLogsSchema, { signal }),
+  })
+}
+
+/** 写成功后：列表、详情与设备策略重拉（分组人数变了时连带用户组） */
 export function useInvalidateUsers() {
   const client = useQueryClient()
   return useCallback(
@@ -217,8 +367,17 @@ export function useInvalidateUsers() {
       Promise.all([
         client.invalidateQueries({ queryKey: [...UK, 'list'] }),
         client.invalidateQueries({ queryKey: [...UK, 'detail'] }),
+        client.invalidateQueries({ queryKey: [...UK, 'devices'] }),
+        client.invalidateQueries({ queryKey: [...UK, 'bulk'] }),
         withGroups ? client.invalidateQueries({ queryKey: [...UK, 'groups'] }) : undefined,
       ]),
     [client],
   )
+}
+
+/** 手动重置后：日志、统计、单用户历史，以及列表与详情里的本期用量 */
+export function useInvalidateResets() {
+  const client = useQueryClient()
+  const users = useInvalidateUsers()
+  return useCallback(() => Promise.all([client.invalidateQueries({ queryKey: [...UK, 'resets'] }), users()]), [client, users])
 }
