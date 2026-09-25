@@ -48,3 +48,4 @@ D-E-3、D-F-2、D-F-3。
   - 字节格式化改用 `core/format.ts` 的 `formatBytes` 等（后台前端一已提升，合并 3b0930e）；`screens/common/traffic.ts` 里与之重复的换算删掉，按切日时区出日期的函数先留在门户。
   - `published_at` 可为 null 已写成契约 R71。v2rayN 改为复制地址、critical 横幅与宽限期徽标，认可。
   - 你报告里标「尚未实现」的后端项现在都已上线：订阅扩展字段与 R50 时区口径（后端二 ⑤，R53–R62）、订单 `interval` / `item_name` / `counts`（后端一 ⑥，R69）。假后端 legacy 场景可以留着测降级，default 场景对齐最终形状。
+- **ui 新组件已合入主线（后台前端二 1b1ac26，合并 c93dec6）**：`StatStrip`（四格统计条）、`Pager`（total / limit / offset 分页）、`QueryView`（react-query 结果的加载 / 404 无权限 / 错误重试 / 空 / 正文五态），从 `ui/index.ts` 取。本步新写的页面改用它们，自己目录里的临时版本删掉；`enabled: false` 的查询不要套 `QueryView`（`isPending` 会一直为真）。`Checkbox` 带文字标签时现在用 `htmlFor` 关联，按名字查找能找到。

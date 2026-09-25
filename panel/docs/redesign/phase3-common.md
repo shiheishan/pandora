@@ -104,6 +104,7 @@
 - `cd panel && make frontend-check`（lint、typecheck、vitest、双入口构建）通过。
 - `make frontend-embed && go test ./web/... ./internal/platform/webapp/...` 通过，然后 `git checkout -- web && git clean -fdX web` 恢复占位页，不提交产物。
 - 纯逻辑（数据映射、表单校验、筛选排序、金额计算、状态文案）写 vitest 单元测试；界面在浏览器里对假后端实测：门户看 1280、960、375 三个宽度；**后台只支持 960 及以上（2026-09-24 用户定），看 1280 与 960 两个宽度，窄于 960 允许横向滚动、不做窄屏适配**；明暗两种主题，加载 / 空 / 错误 / 无权限四种状态，每个写操作走一遍（含 reauth 与幂等重放）。报告里写清实测了什么、没测什么。
+- 浏览器检查工具（find / read_page）读表单控件名字时只认 `label[for]` 的直接文字，包裹式 label、`aria-labelledby` 会被读成 value（如复选框的「on」）。这是工具的局限，不是组件缺陷；ui 的 `Checkbox` 已改为 `htmlFor` 关联。自己写的表单控件按同样方式关联标签，按名字查找才可靠。
 - 开发服务器端口按开工说明，`--strictPort`，避免三个会话互相抢端口；做完一步关掉。
 - 新文件 ≤ 800 行；GEB：新目录建 L2，每个 TS/TSX 文件带 L3 头，文件增删同步 L2。
 
