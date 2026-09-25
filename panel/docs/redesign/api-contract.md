@@ -2375,6 +2375,7 @@
 ### 门户-08 消息（含外壳顶栏铃铛角标）
 
 #### GET v1/me/notifications — 站内信收件箱
+- **修订 R83（2026-09-24，门户前端 ⑤ 核对）**：`sent_at` 对应可空列，可能为 `null`，前端缺失时不显示时间。
 - 状态：现有 `panel/internal/api/public/notifications.go:23 listNotifications`
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：query `limit?: int(1–100，默认 30)`、`unread?: "1"`（只看未读）。没有游标，也没有分类筛选
@@ -2395,6 +2396,7 @@
 - 设计：门户-08「全部标为已读」按钮，只在「通知」页签下显示。
 
 #### POST v1/me/notifications/{id}/read — 单条标为已读
+- **修订 R84（2026-09-24，门户前端 ⑤ 核对，协调会话核实 api/public/notifications.go）**：不存在（或不属于本人）的 id 也回 200；id 不是 UUID 时 SQL `$2::uuid` 转换失败回 **500**（缺陷，应回 404，列入后端遗留）。前端只会传列表里拿到的 id，不受影响。
 - 状态：现有 `panel/internal/api/public/notifications.go:100 markNotificationRead`
 - 权限：登录用户｜reauth：否｜幂等：否（天然幂等）
 - 请求：path `id: uuid`，无 body
@@ -3185,3 +3187,5 @@
 | R80 | 2026-09-24 | 后台前端一、协调会话 | 用户详情 stats.paid_total 跨币种直接相加 |
 | R81 | 2026-09-24 | 门户前端 | 门户佣金概况不回 scope，横幅不写「首单」 |
 | R82 | 2026-09-24 | 门户前端 | 转余额 409 显示后端原文；提现条目幂等以 R5 为准 |
+| R83 | 2026-09-24 | 门户前端 | 站内信 sent_at 可为 null |
+| R84 | 2026-09-24 | 门户前端、协调会话 | 单条标已读：不存在的 id 回 200，非 UUID 回 500（缺陷） |
