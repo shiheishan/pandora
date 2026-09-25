@@ -168,7 +168,7 @@ await call(ADM, `/v1/servers/${serverId}/status`, {
 })
 
 step('签发服务端令牌并经 UniProxy 上报心跳')
-const serverToken = str(await call(ADM, `/v1/nodes/${nodeId}/server-token`, { token: admin, idem: true, expect: 201 }), 'token')
+const serverToken = str(await call(ADM, `/v1/nodes/${nodeId}/server-token`, { method: 'POST', token: admin, idem: true, expect: 201 }), 'token')
 await call(NODE, `/api/v1/server/UniProxy/status?node_id=${nodeId}&node_type=${nodeType}`, {
   token: serverToken,
   body: { cpu: 12.5, mem: { total: 1073741824, used: 536870912 }, swap: { total: 0, used: 0 }, disk: { total: 10737418240, used: 2147483648 } },
