@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供营销页各组件共用的类名：纵向栈、工具条、统计条、列表（表头 + 行 + 展开区）、等宽与弱化文字、进度条、表单网格、分页
- * [POS]: admin/screens/marketing 的公共样式，取自 管理后台-06-营销.dc.html 的内联样式（卡片 10 圆角、行高 46、表头 36、统计四格 1px 分隔）；各块独有的布局写在同名 .module.css
+ * [OUTPUT]: 对外提供营销页各组件共用的类名：纵向栈、工具条、面板、等宽与弱化文字、进度条、表单网格
+ * [POS]: admin/screens/marketing 的公共样式，取自 管理后台-06-营销.dc.html 的内联样式（卡片 10 圆角、行高 46、表头 36）；统计条、分页、三态容器已提升到 ui/；各块独有的布局写在同名 .module.css
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
@@ -21,34 +21,6 @@
 
 .spacer {
   flex: 1;
-}
-
-/* 统计四格：1px 缝隙当分隔线 */
-.stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--border);
-}
-
-.stat {
-  padding: 14px var(--space-16);
-  background: var(--surface);
-}
-
-.statLabel {
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-.statValue {
-  margin-top: var(--space-4);
-  font-size: 20px;
-  font-weight: var(--fw-semibold);
-  font-variant-numeric: tabular-nums;
 }
 
 .panel {
@@ -138,22 +110,6 @@
 .error {
   color: var(--danger);
   font-size: var(--fs-caption);
-}
-
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-8);
-  padding: var(--space-8) var(--space-16);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-}
-
-@media (max-width: 960px) {
-  .stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 640px) {

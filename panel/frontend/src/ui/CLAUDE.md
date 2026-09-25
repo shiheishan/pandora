@@ -16,7 +16,7 @@ control.module.css: Input / TextArea / Select 共用的输入框外观：聚焦�
 Input.tsx: Input 与 TextArea；mono 用于邀请码、优惠码、IP
 Select.tsx: 原生 select 加占位项
 Switch.tsx: 原生 checkbox + role="switch"，32×18；选中底 --accent、圆钮 --switch-knob-on
-Checkbox.tsx: 原生 checkbox 换外观，16px（表格里 14px），支持 indeterminate
+Checkbox.tsx: 原生 checkbox 换外观，16px（表格里 14px），支持 indeterminate；外层 label 用 htmlFor 显式指向 input id、标签文字是 label 的直接文字（按规范隐式关联读屏也认，但各会话实测用的浏览器检查工具只认 label[for] 的直接文字，否则把名字读成 value「on」）
 Tag.tsx: Tag 八种配色（ok / warn / danger / info / neutral / brand / brandSolid / outline），圆角 5 不做胶囊；CountBadge 朱砂角标，0 不渲染、超过上限显示 99+
 Card.tsx: 1px 描边无阴影，圆角与内边距随入口；tint 为套餐卡朱砂极浅底；flush 给贴边的表格与列表
 Table.tsx: 语义化 <table>，columns 描述列（宽度、右对齐、mono）；可选行勾选（表头三态）、行点击、加载骨架、空状态；外层横向滚动，窄屏不挤压列
@@ -30,8 +30,11 @@ Toast.tsx: ToastProvider 与 useToast(message, tone)；反色底 + 状态圆点�
 Menu.tsx: 下拉菜单，自己渲染触发按钮（调用方给内容与 className）；条目为普通项（hint、current、danger、disabled）、开关项（menuitemcheckbox，如深色模式）与分隔线，可带 header；可受控（open / onOpenChange，外部开关带 data-menu-toggle 免被点外关闭抢先）、可向上弹出（placement="top"）、menuClassName 改面板宽度
 Skeleton.tsx: 骨架块，300ms 后才显现（CSS 动画延迟），aria-hidden
 Empty.tsx: 空状态：一句现状 + 一句能做什么 + 最多一个次按钮；bare 用于表格与卡片内部
+StatStrip.tsx: 统计条：一排等宽格（标签 + 20px 等宽数字），格间 1px 缝当分隔线，items 未到时画骨架格，< 960 两列；role=group 带整组名称
+Pager.tsx: 分页条：「第 N / M 页 · 共 T 条」+ 上一页 / 下一页，按 offset / limit 翻页（与后端列表接口同形），不满一页不渲染
+QueryView.tsx: 查询三态容器：把 useQuery 结果渲染成加载骨架 / 错误（接口 404 按「无权限或不存在」，其它给重试）/ 空 / 正文；只认结果对象的形状，是 ui 里唯一依赖 core（api.ts 的 isApiError）的组件
 *.module.css: 各组件同名样式，只引用令牌
-ui.test.tsx: 以 renderToStaticMarkup 核对角色与 aria 结构（按钮类型与进行中、字段接线、下拉占位、开关角色、角标、标签页漫游 tabindex、分段单选、表格语义与三态勾选、弹层标题关联与关闭按钮、菜单初始关闭），不引入 DOM 库；键盘与弹层开合在 showcase 用浏览器验收
+ui.test.tsx: 以 renderToStaticMarkup 核对角色与 aria 结构（按钮类型与进行中、字段接线、复选框名称、下拉占位、开关角色、角标、标签页漫游 tabindex、分段单选、表格语义与三态勾选、弹层标题关联与关闭按钮、菜单初始关闭、统计条骨架与分组名、分页边界、查询三态），不引入 DOM 库；键盘与弹层开合在 showcase 用浏览器验收
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

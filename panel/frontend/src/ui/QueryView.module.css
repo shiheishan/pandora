@@ -1,0 +1,13 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的令牌
+ * [OUTPUT]: 对外提供 QueryView.tsx 用到的类名
+ * [POS]: ui/QueryView 的样式：加载骨架纵向排列，间距 16、四周留白与列表行对齐
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-16);
+}

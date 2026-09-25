@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./GenerateCodes、./TemplateDrawer、./logic、./parts、./queries、./schemas，依赖 ./marketing.module.css 与 ./Gifts.module.css
+ * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./GenerateCodes、./TemplateDrawer、./logic、./queries、./schemas，依赖 ./marketing.module.css 与 ./Gifts.module.css
  * [OUTPUT]: 对外提供 Gifts（营销 · 礼品卡标签）
  * [POS]: admin/screens/marketing 的礼品卡标签（设计稿 t_gifts）：四个统计、分段「模板 / 批次与卡码 / 使用记录」。子视图与选中批次记在 rest 里（#/marketing/gifts/batches/<批次 id>），刷新与分享都落在同一处。卡码全是掩码（R17），完整明文只有一次性导出
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -9,13 +9,12 @@ import { useState } from 'react'
 import { formatMoney } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, ConfirmModal, Empty, Segmented, Select, Tag, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, Pager, QueryView, Segmented, Select, StatStrip, Tag, useToast } from '../../../ui'
 import { GenerateModal, OneTimeModal, useBatchExport } from './GenerateCodes'
 import { TemplateDrawer } from './TemplateDrawer'
 import local from './Gifts.module.css'
 import { CODE_STATUS, batchLabel, formatDate, formatDateTime, grantedLabel, redeemRate, templateFace } from './logic'
 import css from './marketing.module.css'
-import { Pager, QueryView, StatStrip } from './parts'
 import { useCan, useFailure, useGiftBatches, useGiftCodes, useGiftStats, useGiftTemplates, useGiftUsages, useInvalidateMarketing, usePlanCatalog } from './queries'
 import { toggleResponse, type Batch, type CodesGenerated, type GiftCode, type GiftStats, type GiftTemplate } from './schemas'
 
