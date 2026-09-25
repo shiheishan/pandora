@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useEffect / useState，依赖 ../../../core/format 的 formatMoney / relativeTime，依赖 ../../../ui 的 Empty / Pager / QueryView / Segmented / Select / Table / Tag，依赖 ./api 的 useUsers / useUserGroups，依赖 ./model，依赖 ./Users.module.css
  * [OUTPUT]: 对外提供 UserList 与 ListState
- * [POS]: 用户页「用户列表」标签：搜索（邮箱 / 显示名 / 用户 ID / 订阅令牌反查，防抖后交给后端 q）、状态分段、用户组下拉、计数、表格（用户、用户组、套餐 · 到期、本期流量、余额、设备、状态、最近登录）与分页；行与邮箱链接（键盘可达）打开 #/users/list/<id> 的抽屉，筛选全在查询串上；有写权限时右侧给「批量生成」入口
+ * [POS]: 用户页「用户列表」标签：搜索（邮箱 / 显示名 / 用户 ID / 订阅令牌反查，防抖后交给后端 q）、状态分段、用户组下拉、计数、表格（用户、用户组、套餐 · 到期、本期流量、余额、设备、状态、最近登录）与分页；行点击或聚焦后 Enter / 空格（ui/Table 行级激活）打开 #/users/list/<id> 的抽屉，筛选全在查询串上；有写权限时右侧给「批量生成」入口
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useState } from 'react'
@@ -82,7 +82,7 @@ export function UserList({
             />
           }
         >
-          {(d) => <Table label="用户列表" columns={columns(now, linkFor)} rows={d.users} rowKey={(u) => u.id} onRowClick={(u) => window.location.assign(linkFor(u.id))} />}
+          {(d) => <Table label="用户列表" columns={columns(now)} rows={d.users} rowKey={(u) => u.id} onRowClick={(u) => window.location.assign(linkFor(u.id))} />}
         </QueryView>
       </div>
       <Pager total={total} limit={USERS_PAGE} offset={state.offset} onChange={(offset) => onChange({ offset })} />
@@ -90,7 +90,7 @@ export function UserList({
   )
 }
 
-function columns(now: Date, linkFor: (id: string) => string): TableColumn<UserRow>[] {
+function columns(now: Date): TableColumn<UserRow>[] {
   return [
     {
       key: 'user',
@@ -101,10 +101,7 @@ function columns(now: Date, linkFor: (id: string) => string): TableColumn<UserRo
             {initial(u.email, u.display_name)}
           </span>
           <span className={css.whoText}>
-            {/* 行点击给鼠标，链接给键盘；链接自己处理，别再冒泡到行 */}
-            <a className={css.email} href={linkFor(u.id)} onClick={(e) => e.stopPropagation()}>
-              {u.email}
-            </a>
+            <span className={css.email}>{u.email}</span>
             <span className={css.mono}>#{shortId(u.id)}</span>
           </span>
         </span>

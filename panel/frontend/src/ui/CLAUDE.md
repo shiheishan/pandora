@@ -19,7 +19,7 @@ Switch.tsx: 原生 checkbox + role="switch"，32×18；选中底 --accent、圆�
 Checkbox.tsx: 原生 checkbox 换外观，16px（表格里 14px），支持 indeterminate；外层 label 用 htmlFor 显式指向 input id、标签文字是 label 的直接文字（按规范隐式关联读屏也认，但各会话实测用的浏览器检查工具只认 label[for] 的直接文字，否则把名字读成 value「on」）
 Tag.tsx: Tag 八种配色（ok / warn / danger / info / neutral / brand / brandSolid / outline），圆角 5 不做胶囊；CountBadge 朱砂角标，0 不渲染、超过上限显示 99+
 Card.tsx: 1px 描边无阴影，圆角与内边距随入口；tint 为套餐卡朱砂极浅底；flush 给贴边的表格与列表
-Table.tsx: 语义化 <table>，columns 描述列（宽度、右对齐、mono）；可选行勾选（表头三态）、行点击、加载骨架、空状态；外层横向滚动，窄屏不挤压列
+Table.tsx: 语义化 <table>，columns 描述列（宽度、右对齐、mono）；可选行勾选（表头三态）、行点击（传了才让行 Tab 可聚焦，Enter / 空格走同一回调，只认行本身得到的按键，行内链接按钮各管各的；焦点外圈内收免被滚动容器裁掉）、加载骨架、空状态；外层横向滚动，窄屏不挤压列
 Tabs.tsx: 下划线标签页，当前项 600 字重 + 2px --accent 内阴影下划线
 Segmented.tsx: 分段单选，--surface-3 底上浮起 --surface 与 --shadow-segment
 useModalDialog.ts: 受控 open ↔ showModal()/close()；Esc 与点遮罩统一成 onClose（dismissible=false 时都不关）；打开时焦点给 [data-autofocus]，没有就给面板本身，避免第一个按钮上出现键盘焦点圈
@@ -34,7 +34,7 @@ StatStrip.tsx: 统计条：一排等宽格（标签 + 20px 等宽数字），格
 Pager.tsx: 分页条：「第 N / M 页 · 共 T 条」+ 上一页 / 下一页，按 offset / limit 翻页（与后端列表接口同形），不满一页不渲染
 QueryView.tsx: 查询三态容器：把 useQuery 结果渲染成加载骨架 / 错误（接口 404 按「无权限或不存在」，其它给重试）/ 空 / 正文；只认结果对象的形状，是 ui 里唯一依赖 core（api.ts 的 isApiError）的组件
 *.module.css: 各组件同名样式，只引用令牌
-ui.test.tsx: 以 renderToStaticMarkup 核对角色与 aria 结构（按钮类型与进行中、字段接线、复选框名称、下拉占位、开关角色、角标、标签页漫游 tabindex、分段单选、表格语义与三态勾选、弹层标题关联与关闭按钮、菜单初始关闭、统计条骨架与分组名、分页边界、查询三态），不引入 DOM 库；键盘与弹层开合在 showcase 用浏览器验收
+ui.test.tsx: 以 renderToStaticMarkup 核对角色与 aria 结构（按钮类型与进行中、字段接线、复选框名称、下拉占位、开关角色、角标、标签页漫游 tabindex、分段单选、表格语义与三态勾选、可点行的聚焦与 Enter / 空格激活、弹层标题关联与关闭按钮、菜单初始关闭、统计条骨架与分组名、分页边界、查询三态；Table 行键盘激活直接调用组件取元素树喂假按键），不引入 DOM 库；键盘与弹层开合在 showcase 用浏览器验收
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

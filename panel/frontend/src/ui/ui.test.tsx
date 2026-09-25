@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react-dom/server 的 renderToStaticMarkup，依赖 ../core/api 的 ApiError，依赖 ./index 的全部组件
  * [OUTPUT]: 对外提供组件库的无障碍与结构测试
- * [POS]: ui 的单元测试：不引入 DOM 库，用服务端渲染核对角色、aria 属性与关键结构；交互（方向键、弹层开合、焦点）在 showcase 里用浏览器验收
+ * [POS]: ui 的单元测试：不引入 DOM 库，用服务端渲染核对角色、aria 属性与关键结构，Table 行的 Enter / 空格激活直接调用组件取元素树喂假按键事件；交互（方向键、弹层开合、焦点）在 showcase 里用浏览器验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { ReactElement } from 'react'
@@ -159,7 +159,46 @@ describe('Table', () => {
     expect(html(<Table label="x" columns={columns} rows={[]} rowKey={(r) => r.id} />)).toContain('暂无数据')
     expect(html(<Table label="x" columns={columns} rows={rows} rowKey={(r) => r.id} loading />)).toContain('aria-busy="true"')
   })
+
+  it('makes rows focusable only when they have a click handler', () => {
+    const plain = html(<Table label="x" columns={columns} rows={rows} rowKey={(r) => r.id} />)
+    expect(plain).not.toContain('tabindex')
+    const clickable = html(<Table label="x" columns={columns} rows={rows} rowKey={(r) => r.id} onRowClick={noop} />)
+    expect(clickable.match(/<tr[^>]*tabindex="0"/g)).toHaveLength(rows.length)
+    // 加载与空状态的占位行不是数据行，不可聚焦
+    expect(html(<Table label="x" columns={columns} rows={rows} rowKey={(r) => r.id} onRowClick={noop} loading />)).not.toContain('tabindex')
+    expect(html(<Table label="x" columns={columns} rows={[]} rowKey={(r) => r.id} onRowClick={noop} />)).not.toContain('tabindex')
+  })
+
+  it('activates a focused row with Enter or Space, and leaves keys inside the row alone', () => {
+    const hits: string[] = []
+    // Table 没有 hook，直接调用拿元素树，取出数据行的 onKeyDown
+    const tree = Table({ label: 'x', columns, rows, rowKey: (r) => r.id, onRowClick: (r) => hits.push(r.id) })
+    const rowsOf = (node: unknown): ReactElement<RowProps>[] => {
+      if (Array.isArray(node)) return node.flatMap(rowsOf)
+      if (!node || typeof node !== 'object' || !('props' in node)) return []
+      const el = node as ReactElement<RowProps & { children?: unknown }>
+      return el.type === 'tr' && el.props.tabIndex === 0 ? [el] : rowsOf(el.props.children)
+    }
+    const [first, second] = rowsOf(tree)
+    const press = (row: ReactElement<RowProps> | undefined, key: string, fromChild = false) => {
+      let prevented = false
+      const self = {}
+      row!.props.onKeyDown!({ key, currentTarget: self, target: fromChild ? {} : self, preventDefault: () => (prevented = true) })
+      return prevented
+    }
+    expect(press(first, 'Enter')).toBe(true)
+    expect(press(second, ' ')).toBe(true)
+    expect(press(first, 'a')).toBe(false)
+    expect(press(first, 'Enter', true)).toBe(false)
+    expect(hits).toEqual(['a', 'b'])
+  })
 })
+
+interface RowProps {
+  tabIndex?: number
+  onKeyDown?: (e: { key: string; currentTarget: object; target: object; preventDefault: () => void }) => void
+}
 
 describe('overlays', () => {
   it('Modal keeps its content out of the DOM while closed', () => {

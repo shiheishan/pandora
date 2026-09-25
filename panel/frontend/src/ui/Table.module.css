@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 Table.tsx 用到的类名
- * [POS]: ui/Table 的样式：表头 12px --text-3、行间 1px --border、勾选行 --surface-2 底（规范「表格 · 后台」）
+ * [POS]: ui/Table 的样式：表头 12px --text-3、行间 1px --border、勾选行 --surface-2 底（规范「表格 · 后台」），可点行的键盘焦点外圈内收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
@@ -58,8 +58,15 @@
 }
 
 .clickable:hover,
+.clickable:focus-visible,
 .picked {
   background: var(--surface-2);
+}
+
+/* 键盘聚焦的行：外圈画在行内，免得被横向滚动容器裁掉 */
+.clickable:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .emptyCell {

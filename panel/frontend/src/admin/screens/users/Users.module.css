@@ -169,16 +169,8 @@
   overflow: hidden;
   color: var(--text);
   font-weight: var(--fw-medium);
-  text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.email:hover {
-  color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: var(--border-hover);
-  text-underline-offset: 3px;
 }
 
 .whoText .mono {

@@ -258,8 +258,6 @@ function envelope(code: string, message: string, fields?: Record<string, string>
   return { error: { code, message, ...(fields ? { fields } : {}) } }
 }
 
-const strayBalances = new Map<string, number>()
-
 const reasonOk = (v: unknown) => typeof v === 'string' && [...v.trim()].length >= 5
 const findUser = (ctx: MockContext) => users.find((u) => u.id === ctx.params.id)
 
@@ -385,13 +383,11 @@ export const users_: MockModule = {
         const amount = typeof body.amount === 'number' && Number.isInteger(body.amount) ? body.amount : 0
         if (amount === 0) return { status: 422, body: envelope('validation_failed', '调整金额不能为 0') }
         if (!reasonOk(body.reason)) return { status: 422, body: envelope('validation_failed', '请求参数校验未通过', { reason: '调整原因至少 5 个字' }) }
-        // 不在种子里的 id（tests/mock-api.test.ts 外壳守卫用的 u1）沿用第 2 阶段的口径：从 2650.00 元起
         const u = findUser(ctx)
-        const before = u ? u.balance : (strayBalances.get(ctx.params.id!) ?? 265000)
-        if (before + amount < 0) return { status: 409, body: envelope('conflict', '余额不足，无法扣减') }
-        if (u) u.balance = before + amount
-        else strayBalances.set(ctx.params.id!, before + amount)
-        return { status: 200, body: { balance: before + amount } }
+        if (!u) return { status: 404, body: envelope('not_found', '资源不存在或无权访问') }
+        if (u.balance + amount < 0) return { status: 409, body: envelope('conflict', '余额不足，无法扣减') }
+        u.balance += amount
+        return { status: 200, body: { balance: u.balance } }
       })
     },
 
