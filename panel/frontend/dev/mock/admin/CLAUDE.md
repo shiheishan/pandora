@@ -5,7 +5,7 @@
 
 成员清单
 index.ts: 登记表 ADMIN_MODULES
-users.ts: 用户（后台-03）；已有 POST v1/users/{id}/balance（billing.provider.write + reauth + 幂等 admin_user_balance_adjust，响应 { balance }），第 2 阶段起用来在浏览器里验证 reauth 重放
+users.ts: 用户（后台-03）：48 个确定性种子用户（前 6 个 id 与仪表盘流量排行一致）；列表（q 按邮箱 / 显示名 / 用户 id / 订阅令牌反查，status 逗号多值，group_id 含 none，sub_state，limit/offset）、详情、启停封禁、设新密码、换发订阅链接（不回令牌）、人工调账（reauth + 幂等；不在种子里的 id 沿用第 2 阶段从 2650.00 元起的口径，供 tests/mock-api.test.ts）、分配用户组、用户组列表、单订阅设备上限、风控画像；订阅令牌只在内存里用于反查
 dash.ts: 仪表盘（后台-01）八个只读接口，照契约按权限回 404、tasks 条目按各自读权限过滤（withdrawals_pending 挂 marketing.commission.read）、校验 currency / days / range / limit / snapshot_at 并回契约里的 422；数据按日期确定性生成，概览今日 / 昨日与收入趋势末两天同源；含全部待补·后端字段
 marketing.ts: 营销（后台-06）；优惠券、礼品卡（模板 / 统计 / 批次 / 掩码卡码 / 一次性导出 CSV / 使用记录）、佣金总览与提现、分销参数，权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器，按 DisallowUnknownFields 拒绝未知字段；另临时挂了 GET v1/plans（营销页读套餐名与价格用，plans 模块在登记表里排在前面，后台前端一补上后自动失效，届时删除）
 tickets.ts: 工单（后台-02）：队列（逗号分隔多状态、指派人、q、breached、limit/offset、后端同款排序）、详情、回复与内部备注、指派、改状态（人工升级提到 high、closed_reason）、SLA 扫描、可指派目录（固定三位客服 + 当前管理员）、快捷回复四接口；写接口照契约用幂等 scope，omitempty 字段为空时省略，related_order 恒 null、详情 last_reply_at 零值，与后端现状一致
