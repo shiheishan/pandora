@@ -368,7 +368,8 @@ await call(ADM, '/v1/commission/config', { token: admin, body: { rate_percent: 1
 const invite = await call(PUB, '/v1/me/invite', { token: user })
 const inviteCode = str(invite, 'invite.code')
 const inviteeEmail = 'smoke-invitee@example.test'
-const inviteeId = await register(inviteeEmail, `Smoke-Invitee-${randomUUID()}`, inviteCode)
+const inviteePassword = `Smoke-Invitee-${randomUUID()}`
+const inviteeId = await register(inviteeEmail, inviteePassword, inviteCode)
 
 // ============================================================================
 //  订单：一张经演示渠道付清（开出订阅），一张留在待支付
@@ -394,6 +395,12 @@ const pendingOrderId = str(
   'order_id',
 )
 
+step('被邀请人下单并付清：推荐人的佣金明细不空')
+// 佣金只在被邀请人付款时记一笔；同 IP 会被标待复核、不会解冻，但明细照样有这一行
+const invitee = await portalLogin(inviteeEmail, inviteePassword)
+const inviteeOrder = await call(PUB, '/v1/orders', { token: invitee, idem: true, body: { plan_id: planId, price_id: priceId, use_balance: 0 }, expect: [200, 201] })
+await demoWebhook(str(inviteeOrder, 'order_id'), num(inviteeOrder, 'payable_amount'), str(inviteeOrder, 'currency'))
+
 step('挂账：对已付清的订单再送一笔新的回调（新 event_id / payment_id），落进 excess_capture')
 // 挂账只由支付回调产生（已付或已取消的订单又收到钱），没有后台新建接口；这是最便宜的真实路径
 await demoWebhook(orderId, amount, currency)
@@ -411,6 +418,33 @@ if (nodeUsers.length === 0) throw new Error(`上线的节点取不到任何用�
 const nodeUid = String(nodeUsers[0]!.id)
 await call(NODE, uni('push'), { token: runtimeToken, body: { [nodeUid]: [1048576, 4194304] } })
 await call(NODE, uni('alive'), { token: runtimeToken, body: { [nodeUid]: ['198.51.100.7'] } })
+
+// ============================================================================
+//  路由：全局与单节点各一条规则（出站用内置的 block / direct），请求体与节点页「发布」同形
+// ============================================================================
+
+step('全局路由一条规则、单节点路由一条规则')
+const globalRouting = await call(ADM, '/v1/nodes/routing', { token: admin })
+await call(ADM, '/v1/nodes/routing', {
+  method: 'PUT',
+  token: admin,
+  idem: true,
+  body: {
+    expected_revision: str(globalRouting, 'revision'),
+    outbounds: [],
+    routes: [{ priority: 10, matcher: { domain: ['ads.example.test'] }, outbound_tag: 'block', enabled: true, note: 'smoke' }],
+  },
+})
+const nodeRouting = await call(ADM, `/v1/nodes/${nodeId}/routing`, { token: admin })
+await call(ADM, `/v1/nodes/${nodeId}/routing`, {
+  method: 'PUT',
+  token: admin,
+  body: {
+    row_version: num(nodeRouting, 'row_version'),
+    outbounds: [],
+    routes: [{ priority: 10, matcher: { domain: ['cdn.example.test'] }, outbound_tag: 'direct', enabled: true, note: 'smoke' }],
+  },
+})
 
 // ============================================================================
 //  支持、内容与营销
@@ -532,12 +566,15 @@ const lists: Array<[string, string, string]> = [
   [ADM, `/v1/plugin-hooks/${hookCode}/deliveries`, admin],
   [ADM, '/v1/dashboard/traffic/nodes?range=24h&limit=5', admin],
   [ADM, '/v1/dashboard/traffic/users?range=24h&limit=5', admin],
+  [ADM, '/v1/nodes/routing', admin],
+  [ADM, `/v1/nodes/${nodeId}/routing`, admin],
   [PUB, '/v1/plans', user],
   [PUB, '/v1/orders', user],
   [PUB, '/v1/me/subscriptions', user],
   [PUB, `/v1/me/subscriptions/${subscriptionId}/nodes`, user],
   [PUB, '/v1/traffic-packs', user],
   [PUB, '/v1/me/traffic-packs', user],
+  [PUB, '/v1/me/commission', user],
   [PUB, '/v1/support/tickets', user],
   [PUB, '/v1/me/announcements', user],
   [PUB, '/v1/content/pages', user],

@@ -5,6 +5,8 @@
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHmac, randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { isApiError, type ApiClient } from '../../src/core/api'
@@ -28,7 +30,7 @@ import { lastHeaders, loginToken, pageClient, record, state } from './harness'
 const s = state.seed
 
 /** 一条写路径用例：跑 fn，结果进逐行表（入口 write） */
-function writeCase(at: string, path: string, title: string, fn: () => Promise<string | void>): void {
+function writeCase(at: string, path: string, title: string, fn: () => Promise<string | void>, timeout?: number): void {
   it(`${title} ← ${at}`, async () => {
     try {
       const note = await fn()
@@ -37,7 +39,7 @@ function writeCase(at: string, path: string, title: string, fn: () => Promise<st
       record('write', { at, path }, '不一致', `${title}：${error instanceof Error ? error.message : String(error)}`)
       throw error
     }
-  })
+  }, timeout)
 }
 
 // ============================================================================
@@ -185,6 +187,24 @@ describe('各模块写操作的响应能被页面 schema 解析', () => {
       idempotencyKey: randomUUID(),
     })
   })
+})
+
+// ============================================================================
+//  插件投递：本机接收端真的收到了 ticket.created（不只是投递表里有一行 sent）
+// ============================================================================
+
+describe('插件钩子投递到本机接收端', () => {
+  writeCase('system/queries.ts:41', 'v1/plugin-hooks/{code}/deliveries', '接收端收到带签名头的 ticket.created', async () => {
+    const file = join(state.dir, 'hook-received.jsonl')
+    // 扫描器 20 秒后第一次、之后每 60 秒；读表那行已经等到 sent，这里再给 90 秒兜底
+    const deadline = Date.now() + 90_000
+    while (!existsSync(file) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5000))
+    const got = existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { event: string; signed: boolean }) : []
+    const hit = got.find((g) => g.event === 'ticket.created')
+    expect(hit, '接收端没有收到 ticket.created').toBeDefined()
+    expect(hit!.signed, '投递缺 X-Pandora-Signature / X-Pandora-Timestamp').toBe(true)
+    return `接收端收到 ${got.length} 次投递，含带签名头的 ticket.created`
+  }, 120_000)
 })
 
 // ============================================================================

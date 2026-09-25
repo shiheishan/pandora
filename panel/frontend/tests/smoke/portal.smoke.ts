@@ -35,7 +35,7 @@ const rows: Row[] = [
   { at: 'portal/queries.ts:70', path: 'v1/me', schema: meSchema },
   { at: 'portal/queries.ts:82', path: 'v1/me/balance', schema: balanceSchema },
   { at: 'portal/queries.ts:160', path: 'v1/me/subscriptions', schema: subscriptionsSchema },
-  { at: 'portal/queries.ts:231', path: 'v1/me/commission', schema: commissionSchema },
+  { at: 'portal/queries.ts:231', seed: '被邀请人下单并经演示渠道付清', path: 'v1/me/commission', schema: commissionSchema },
   // 外框只取角标：它的 schema 只有 unread，解析结果里没有 notifications 数组，等待条件改看 unread
   {
     at: 'portal/queries.ts:248', seed: '定时扫描派发的支付通知',

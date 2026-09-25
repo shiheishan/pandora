@@ -102,8 +102,8 @@ const rows: Row[] = [
   { at: 'nodes/queries.ts:72', seed: '后台 POST node-pools', path: 'v1/node-pools', schema: poolsResponse },
   { at: 'nodes/queries.ts:80', path: `v1/nodes/${s.node_id}/identity`, schema: identitySchema },
   { at: 'nodes/queries.ts:88', seed: 'UniProxy /status', path: `v1/nodes/${s.node_id}/metrics`, query: { minutes: 1440 }, schema: metricsSchema },
-  { at: 'nodes/queries.ts:95', path: `v1/nodes/${s.node_id}/routing`, schema: nodeRoutingSchema },
-  { at: 'nodes/queries.ts:101', path: 'v1/nodes/routing', schema: globalRoutingSchema },
+  { at: 'nodes/queries.ts:95', seed: '后台 PUT nodes/{id}/routing', path: `v1/nodes/${s.node_id}/routing`, schema: nodeRoutingSchema },
+  { at: 'nodes/queries.ts:101', seed: '后台 PUT nodes/routing（reauth + 幂等）', path: 'v1/nodes/routing', schema: globalRoutingSchema },
 
   // ---- 内容与外观 ----
   { at: 'content/queries.ts:21', seed: '后台 POST announcements', path: 'v1/announcements', schema: announcementsResponse },

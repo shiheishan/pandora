@@ -53,6 +53,8 @@ export interface SeedState {
 }
 
 export const state = {
+  /** 状态目录：插件接收端的落盘文件也在这里 */
+  dir,
   admin: env.SMOKE_ADMIN_BASE!,
   portal: env.SMOKE_PUBLIC_BASE!,
   node: env.SMOKE_NODE_BASE!,
