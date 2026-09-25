@@ -21,7 +21,7 @@ export default function Referral() {
   const summary = commission.data?.summary
   return (
     <div className={css.page}>
-      <InviteBanner ratePercent={summary?.rate_percent} />
+      <InviteBanner summary={summary} />
       {commission.isError ? (
         <Card>
           <LoadError error={commission.error} what="佣金概况" onRetry={() => void commission.refetch()} />
@@ -55,7 +55,7 @@ export default function Referral() {
 // ---------------------------------------------------------------------------
 // 邀请横幅：链接与邀请码各一个复制按钮；站点关闭注册或邀请码用满时说明链接暂时无效
 // ---------------------------------------------------------------------------
-function InviteBanner({ ratePercent }: { ratePercent: number | undefined }) {
+function InviteBanner({ summary }: { summary: Commission['summary'] | undefined }) {
   const toast = useToast()
   const invite = useInvite()
   const site = useSiteConfig()
@@ -71,7 +71,7 @@ function InviteBanner({ ratePercent }: { ratePercent: number | undefined }) {
 
   return (
     <section className={css.banner} aria-label="我的邀请链接">
-      <h2 className={css.headline}>{ratePercent === undefined ? <Skeleton width={220} height={22} /> : headline(ratePercent)}</h2>
+      <h2 className={css.headline}>{summary === undefined ? <Skeleton width={220} height={22} /> : headline(summary.rate_percent, summary.scope)}</h2>
       {invite.isError ? (
         <LoadError error={invite.error} what="邀请链接" onRetry={() => void invite.refetch()} />
       ) : (

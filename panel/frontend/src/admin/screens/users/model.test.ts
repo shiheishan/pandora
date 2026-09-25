@@ -15,6 +15,7 @@ import {
   listParams,
   liveSubscriptions,
   orderWhat,
+  paidTotalsLabel,
   parseYuan,
   passwordProblem,
   shortId,
@@ -89,6 +90,13 @@ describe('订单与输入', () => {
     expect(orderWhat({ kind: 'new', plan_name: '标准版', interval: 'month', interval_count: 1, item_count: 1 })).toBe('标准版 · 月付')
     expect(orderWhat({ kind: 'renewal', plan_name: '专业版', interval: 'month', interval_count: 3, item_count: 2 })).toBe('专业版 · 3 × 月付 等 2 项')
     expect(orderWhat({ kind: 'topup', plan_name: '', interval: '', interval_count: 0, item_count: 1 })).toBe('余额充值')
+  })
+
+  it('累计消费按币种各写一笔，没有实收时按用户币种写 0（R114）', () => {
+    expect(paidTotalsLabel([], 'CNY')).toBe(paidTotalsLabel([{ currency: 'CNY', amount: 0 }], 'USD'))
+    const both = paidTotalsLabel([{ currency: 'CNY', amount: 12000 }, { currency: 'USD', amount: 500 }], 'CNY')
+    expect(both.split(' · ')).toHaveLength(2)
+    expect(both).toContain('120')
   })
 
   it('调账：元转分，正负号、两位小数；0 与非法返回 null', () => {

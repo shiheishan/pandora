@@ -266,6 +266,10 @@ describe('mock api · admin nodes · phase 4 step 3 (R104 R105 R106 R107 R108)',
     const noPool = (await list()).find((x) => x.pool_id === null && x.status === 'active')!
     const warned = adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${noPool.id}/activate`, { row_version: noPool.row_version }, 'act-5')).json())
     expect(warned.warnings).toEqual(['未划入节点池，不服务任何用户'])
+    // 首次搭建：池还没绑套餐，上线成功并带提示
+    const fresh = (await list()).find((x) => x.name === '大阪 02（新池待上线）')!
+    const unbound = adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${fresh.id}/activate`, { row_version: fresh.row_version }, 'act-8')).json())
+    expect(unbound).toMatchObject({ status: 'active', warnings: ['所在节点池没有绑定任何套餐，暂时不服务任何用户'] })
     // 版本号非法先回 422（httpx.Invalid）
     expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: 0 }, 'act-6')).status).toBe(422)
     const srv = serversResponse.parse(await (await call('GET', '/v1/servers')).json()).servers.find((s) => s.id === n.server_id)!

@@ -107,6 +107,8 @@ const store: Node[] = [
   node({ name: '香港 03（未入池）', node_type: 'shadowsocks', serving_status: 'active', country_code: 'HK', server_port: 8389, pool_id: null, protocol_config: { cipher: 'aes-256-gcm' } }, 0),
   // R108：新服务器（大阪，草稿）上刚接入完的节点，生命周期停在 attesting，等「上线」一步推到 active
   node({ name: '大阪 01（待上线）', node_type: 'shadowsocks', serving_status: 'draft', status: 'attesting', country_code: 'JP', server_port: 8388, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[1]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
+  // R113：同一台新服务器上、划进还没绑套餐的新池的节点——首次搭建的常态，上线成功但带 warnings
+  node({ name: '大阪 02（新池待上线）', node_type: 'shadowsocks', serving_status: 'draft', status: 'attesting', country_code: 'JP', server_port: 8389, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[4]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
 ]
 keepAlive(store, (n) => n.serving_status !== 'retired' && n.status !== 'destroyed' && !n.identityRevoked)
 store[0]!.routing = { outbounds: [], routes: [{ priority: 10, matcher: { domain_suffix: ['openai.com'] }, outbound_tag: 'US-LAX-01', enabled: true, note: '' }] }

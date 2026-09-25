@@ -25,7 +25,7 @@ const time = z.string()
 // ---------------------------------------------------------------------------
 // Ticket：列表与详情共用一个 Go 结构。带 omitempty 的字段（后端 nil / false / '' 时省略）
 // 写 optional；closed_reason、related_order 没有 omitempty，恒在、可为 null。
-// related_order 目前只在门户详情填，后台恒为 null（已报告协调会话），有值时照样显示。
+// related_order：队列恒为 null，详情按关联订单联表；详情的 message_count / last_reply_at 与队列同口径（R114）。
 // ---------------------------------------------------------------------------
 const ticketSchema = z.object({
   id: z.string(),

@@ -9,7 +9,7 @@ import { commissionSchema, type Commission } from '../../queries'
 import { inviteSchema } from './api'
 import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, withdrawBlock } from './model'
 
-const SUMMARY = { currency: 'CNY', pending: 1180, available: 13560, withdrawing: 0, settled: 10000, invitees: 6, orders: 5, paid_invitees: 4, total_earned: 29740, rate_percent: 20, min_withdraw: 10000 }
+const SUMMARY = { currency: 'CNY', pending: 1180, available: 13560, withdrawing: 0, settled: 10000, invitees: 6, orders: 5, paid_invitees: 4, total_earned: 29740, rate_percent: 20, min_withdraw: 10000, scope: 'every_order' as const }
 
 function commission(over: Partial<Commission> = {}): Commission {
   return commissionSchema.parse({ summary: SUMMARY, entries: [], withdrawals: [], transfers: [], ...over })
@@ -48,9 +48,9 @@ describe('邀请横幅', () => {
   })
 
   it('横幅不写「首单」（公开接口没有计佣范围）；费率为 0 不提佣金', () => {
-    expect(headline(20)).toBe('邀请好友付费，您得 20% 佣金')
-    expect(headline(20)).not.toContain('首单')
-    expect(headline(0)).toBe('邀请好友注册')
+    expect(headline(20, 'every_order')).toBe('邀请好友付费，您得 20% 佣金')
+    expect(headline(20, 'first_order')).toBe('好友首单付费，您得 20% 佣金')
+    expect(headline(0, 'first_order')).toBe('邀请好友注册')
   })
 
   it('邀请码用量：无上限不说，用满警示', () => {

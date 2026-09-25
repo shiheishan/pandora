@@ -90,11 +90,13 @@ export const userDetailSchema = z.object({
   subscriptions: z.array(subscriptionSchema),
   recent_orders: z.array(orderRowSchema),
   roles: z.array(z.string()),
-  stats: z.object({ paid_total: int, order_count: count, referral_count: count }),
+  // R80 / R114：实收按币种（币种升序、只列大于 0 的）；paid_total 已弃用（跨币种直接相加），不收
+  stats: z.object({ paid_totals: z.array(z.object({ currency: z.string(), amount: int })), order_count: count, referral_count: count }),
   referrer: z.object({ id: z.string(), email: z.string() }).nullable(),
   telegram: z.object({ username: z.string(), bound_at: time }).nullable(),
 })
 export type UserDetail = z.output<typeof userDetailSchema>
+export type PaidTotal = UserDetail['stats']['paid_totals'][number]
 export type SubscriptionRow = z.output<typeof subscriptionSchema>
 export type Quota = z.output<typeof quotaSchema>
 

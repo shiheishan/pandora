@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 relativeTime，依赖 ./schemas 的类型
- * [OUTPUT]: 对外提供节点页的纯函数：状态映射与筛选搜索、心跳与地址文案（流量用 core/format 的 formatBytes）、迁移资格（保留规则 5）、R108 上线资格（接入尾段的生命周期）、状态转换合法边与批量取舍、排序提交项、schema 驱动的协议表单模型（字段推导、拍平 / 还原、敏感字段：编辑时留空 = 不改、选填的可显式清空为 null（R106 / R107）、REALITY）、PATCH 差量、路由规则行与 matcher 互转、插入规则（兜底之前）、出站被引用计数与改名联动、出站行校验与互转（单节点与全局共用）、带宽分桶
+ * [OUTPUT]: 对外提供节点页的纯函数：状态映射与筛选搜索、心跳与地址文案（流量用 core/format 的 formatBytes）、迁移资格（保留规则 5）、R108 上线资格（接入尾段的生命周期）与 R113 上线提示 activationHint、状态转换合法边与批量取舍、排序提交项、schema 驱动的协议表单模型（字段推导、拍平 / 还原、敏感字段：编辑时留空 = 不改、选填的可显式清空为 null（R106 / R107）、REALITY）、PATCH 差量、路由规则行与 matcher 互转、插入规则（兜底之前）、出站被引用计数与改名联动、出站行校验与互转（单节点与全局共用）、带宽分桶
  * [POS]: admin/screens/nodes 的逻辑层：映射全部取自 api-contract.md 后台-07 · 节点条目的「设计 / 映射」行与 Go 校验器，nodes.test.ts 逐条守住；组件只负责渲染与交互
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -93,6 +93,16 @@ export function canMove(n: Pick<NodeRow, 'serving_status' | 'last_heartbeat_at' 
  */
 export const ACTIVATABLE_LIFECYCLES = ['attesting', 'installing', 'validating', 'standby', 'canary'] as const
 export const canActivate = (n: Pick<NodeRow, 'status'>) => (ACTIVATABLE_LIFECYCLES as readonly string[]).includes(n.status)
+
+/**
+ * R113 上线响应的 warnings → 带下一步的提示（Toast 用普通语气，不是错误）。首次搭建时池还没绑套餐是正常流程：
+ * 先上线节点，再去套餐页发布绑了这个池的版本。只认 nodefabric.activationWarnings 的两条原文，其余原样接在后面
+ */
+export function activationHint(warning: string): string {
+  if (warning === '所在节点池没有绑定任何套餐，暂时不服务任何用户') return '已上线。所在节点池还没绑定套餐，暂时不服务用户——下一步到「套餐」页，在套餐版本里选上这个节点池并发布。'
+  if (warning === '未划入节点池，不服务任何用户') return '已上线。节点还没划入节点池，不服务任何用户——下一步在「协议参数」里给它选一个资源池。'
+  return `已上线。${warning}`
+}
 
 export const MOVE_BLOCKED_HINT = '只能迁移从未部署过的草稿节点。已部署节点请用「复制节点」选目标服务器，再退役原节点。'
 

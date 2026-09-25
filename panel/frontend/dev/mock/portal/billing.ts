@@ -58,12 +58,17 @@ export function couponCheck(code: unknown, subtotal: number, priceId: string | n
   return Math.min(subtotal, c.type === 'percent' ? Math.floor((subtotal * c.value) / 10000) : c.value)
 }
 
+/** 券面对象（billing.CouponFace）：码为空或不认识时 null */
+function couponFace(code: unknown) {
+  const key = typeof code === 'string' ? code.trim().toUpperCase() : ''
+  const c = key ? COUPONS[key] : undefined
+  return c ? { code: key, discount_type: c.type, discount_value: c.value } : null
+}
+
 /** 修订 R69 的券面对象；legacy 场景不回 */
 export function couponView(code: unknown) {
   if (scenario() === 'legacy' || typeof code !== 'string') return undefined
-  const key = code.trim().toUpperCase()
-  const c = COUPONS[key]
-  return c ? { code: key, discount_type: c.type, discount_value: c.value } : null
+  return couponFace(code)
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +256,8 @@ export function changeQuote(sub: SubFixture, plan: CatalogPlan, price: CatalogPr
     current_period_end: sub.current_period_end,
     new_period_start: new Date(now).toISOString(),
     new_period_end: new Date(now + Math.round(intervalMonths(price) * 30) * DAY_MS).toISOString(),
+    // R76 / R114：券面与优惠码试算同形，没用码时为 null（真后端已上线，legacy 场景也照回）
+    coupon: couponFace(coupon),
   }
 }
 

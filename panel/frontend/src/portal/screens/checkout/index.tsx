@@ -96,12 +96,15 @@ function Problem({ kind }: { kind: keyof typeof PROBLEMS }) {
 // ---------------------------------------------------------------------------
 // 优惠码试算 / 变更套餐试算的响应
 // ---------------------------------------------------------------------------
+// billing.CouponFace：优惠码试算（R69）与变更套餐试算（R76 / R114）同一个形状
+const couponFaceSchema = z.object({ code: z.string(), discount_type: z.enum(['percent', 'fixed']), discount_value: z.number().int() })
+
 const couponPreviewSchema = z.object({
   subtotal: z.number().int(),
   discount: z.number().int(),
   payable: z.number().int(),
   currency: z.string(),
-  coupon: z.object({ code: z.string(), discount_type: z.enum(['percent', 'fixed']), discount_value: z.number().int() }).nullable().optional(),
+  coupon: couponFaceSchema.nullable().optional(),
 })
 
 const changePreviewSchema = z.object({
@@ -115,6 +118,7 @@ const changePreviewSchema = z.object({
   current_period_end: z.string(),
   new_period_start: z.string(),
   new_period_end: z.string(),
+  coupon: couponFaceSchema.nullable(),
 }) satisfies z.ZodType<ChangePreview>
 
 function useChangePreview(mode: CheckoutMode, priceId: string | null, code: string | null) {
@@ -178,7 +182,7 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
       ? changeWithCoupon.isError
         ? { ok: false, text: changeWithCoupon.error.message }
         : changeWithCoupon.isSuccess
-          ? { ok: true, text: couponNote(appliedCode, null, changeWithCoupon.data.discount, (m) => formatMoney(m, changeWithCoupon.data.currency)) }
+          ? { ok: true, text: couponNote(appliedCode, changeWithCoupon.data.coupon, changeWithCoupon.data.discount, (m) => formatMoney(m, changeWithCoupon.data.currency)) }
           : { ok: true, text: '正在校验优惠码…' }
       : coupon.isError
         ? { ok: false, text: coupon.error.message }

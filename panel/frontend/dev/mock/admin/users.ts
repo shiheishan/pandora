@@ -231,6 +231,8 @@ export function seedOrders(u: User) {
     interval: 'month',
     interval_count: 1,
     item_count: 1,
+    // R95 / R114：manual_reason 非空即人工单；种子订单都不是
+    manual: false,
     // 以下不是列表行字段：billing.ts 建订单表时用，详情响应前剥掉
     sub_id: s.id,
     plan_id: s.plan_id,
@@ -248,6 +250,12 @@ function listView(o: SeedOrder): OrderView {
 }
 export function setOrderSource(source: (userId: string) => OrderView[]): void {
   orderSource = source
+}
+
+function paidTotals(orders: readonly OrderView[]): Array<{ currency: string; amount: number }> {
+  const sums = new Map<string, number>()
+  for (const o of orders) if (o.status === 'paid' || o.status === 'fulfilled') sums.set(o.currency, (sums.get(o.currency) ?? 0) + o.paid_amount)
+  return [...sums].filter(([, amount]) => amount > 0).sort(([a], [b]) => a.localeCompare(b)).map(([currency, amount]) => ({ currency, amount }))
 }
 
 function detail(u: User) {
@@ -280,7 +288,9 @@ function detail(u: User) {
     recent_orders: orders.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20),
     roles: u.roles,
     stats: {
+      // R114：paid_total 已弃用但 Go 仍回（跨币种直接相加）；paid_totals 按币种分组、币种升序、只列大于 0 的
       paid_total: orders.filter((o) => o.status === 'paid' || o.status === 'fulfilled').reduce((sum, o) => sum + o.paid_amount, 0),
+      paid_totals: paidTotals(orders),
       order_count: orders.length,
       referral_count: users.filter((r) => r.referrer === u.id).length,
     },

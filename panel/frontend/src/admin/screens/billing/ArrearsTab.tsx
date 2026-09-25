@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../core/router 的 href / navigate / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Empty / Modal / Pager / QueryView / Segmented / Table / Tag / TextArea / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ../users/api 的 useInvalidateUsers，依赖 ./api，依赖 ./model，依赖 ./failure 的 useBillingFailure，依赖 ./Billing.module.css
+ * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../core/router 的 href / navigate / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Empty / Modal / Pager / QueryView / Segmented / Table / Tag / TextArea / useToast，依赖 ../../actions 的 useCan / useFailure / useIntentKey，依赖 ../users/api 的 useInvalidateUsers，依赖 ./api，依赖 ./model，依赖 ./Billing.module.css
  * [OUTPUT]: 对外提供 ArrearsTab
  * [POS]: 订单与收款「挂账」标签（设计稿「欠费单」，保留规则 6 按后端挂账语义做，方向是平台欠用户）：说明条与按币种分开的待处理合计（R3）、状态分段与分页（?s=&o=）、表格（用户与成因 · 单号叠成一格、金额、账龄、状态）、「转入余额」确认框（处理原因必填，billing.adjustment.write + reauth + 幂等 late_payment_apply）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -10,11 +10,10 @@ import { formatDateTime, formatMoney } from '../../../core/format'
 import { href, navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Modal, Pager, QueryView, Segmented, Table, Tag, TextArea, useToast, type TableColumn } from '../../../ui'
-import { useCan, useIntentKey } from '../../actions'
+import { useCan, useFailure, useIntentKey } from '../../actions'
 import { useInvalidateUsers } from '../users/api'
 import { LATE_PAGE, lateAppliedSchema, useInvalidateBilling, useLatePayments, type LateCase } from './api'
 import css from './Billing.module.css'
-import { useBillingFailure } from './failure'
 import { ageDays, isLateFilter, LATE_FILTERS, LATE_STATUS_VIEW, lateReason, pendingTotals, reasonProblem, type LateFilter } from './model'
 
 export function ArrearsTab({ now }: { now: Date }) {
@@ -136,7 +135,7 @@ export function ArrearsTab({ now }: { now: Date }) {
 function ApplyDialog({ c, onClose }: { c: LateCase; onClose: () => void }) {
   const api = useApi()
   const toast = useToast()
-  const fail = useBillingFailure()
+  const fail = useFailure()
   const intent = useIntentKey()
   const invalidate = useInvalidateBilling()
   const invalidateUsers = useInvalidateUsers()

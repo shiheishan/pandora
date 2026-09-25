@@ -1,10 +1,11 @@
 /**
  * [INPUT]: 依赖 ../../../core/api 的 ApiError
- * [OUTPUT]: 对外提供 deviceName、validateNewPassword、passwordErrors / PasswordErrors、PREF_CATEGORIES / PREF_CHANNELS / PREF_ROWS / PrefCategory / PrefChannel、secondsLeft、formatCountdown、shortUserId、telegramDeepLink、sortSessions
+ * [OUTPUT]: 对外提供 deviceName、lastSeenLabel、validateNewPassword、passwordErrors / PasswordErrors、PREF_CATEGORIES / PREF_CHANNELS / PREF_ROWS / PrefCategory / PrefChannel、secondsLeft、formatCountdown、shortUserId、telegramDeepLink、sortSessions
  * [POS]: portal/screens/account 的纯逻辑（契约门户-10）：会话设备名由 user_agent 推出「浏览器 / 客户端 · 系统」；改密的本地校验（≥ 8 字符、字母与数字、≤ 256 字节）与错误落位（401 当前密码不正确落到当前密码框，fields.password 落到新密码框）；通知偏好三行 × 两列；快捷登录与绑定码的倒计时；有单元测试
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { ApiError } from '../../../core/api'
+import { relativeTime } from '../../../core/format'
 
 // ---------------------------------------------------------------------------
 // 设备名：门户会话都是网页登录，UA 多为浏览器；认不出的给「未知设备」
@@ -41,9 +42,16 @@ export function deviceName(ua: string): string {
   return client ?? system ?? '未知设备'
 }
 
-/** 当前会话排最前，其余按登录时间倒序（后端按 last_seen_at，而它现在等于 created_at，修订 R62） */
-export function sortSessions<T extends { current: boolean; created_at: string }>(list: readonly T[]): T[] {
-  return [...list].sort((a, b) => Number(b.current) - Number(a.current) || b.created_at.localeCompare(a.created_at))
+/** 会话的「最近活跃」：刚刚活跃 / N 分钟前活跃 / N 小时前活跃 / MM-DD 活跃（R114） */
+export function lastSeenLabel(at: string, now: Date = new Date()): string {
+  const rel = relativeTime(at, now)
+  if (rel === '刚刚') return '刚刚活跃'
+  return /分钟|小时/.test(rel) ? `${rel}前活跃` : `${rel} 活跃`
+}
+
+/** 当前会话排最前，其余按最近活跃倒序（与后端同口径，R62 / R114） */
+export function sortSessions<T extends { current: boolean; last_seen_at: string }>(list: readonly T[]): T[] {
+  return [...list].sort((a, b) => Number(b.current) - Number(a.current) || b.last_seen_at.localeCompare(a.last_seen_at))
 }
 
 // ---------------------------------------------------------------------------

@@ -116,13 +116,17 @@ export const billing: MockModule = {
         const o = findOrder(ctx.params.id)
         if (!o) return NOT_FOUND
         const expected = body.expected_state_version
-        if (typeof expected !== 'number' || !Number.isInteger(expected) || expected <= 0) return err(400, 'bad_request', 'expected_state_version must be positive')
+        if (typeof expected !== 'number' || !Number.isInteger(expected) || expected <= 0) return err(400, 'bad_request', 'expected_state_version 必须是正整数')
         const reason = str(body.reason).trim()
-        if (chars(reason) < 5 || chars(reason) > 500) return err(400, 'bad_request', 'reason must be 5 to 500 characters')
+        if (chars(reason) < 5 || chars(reason) > 500) return err(400, 'bad_request', '取消原因需要 5 到 500 个字')
         const out = () => ({ order_id: o.id, status: o.status, state_version: o.state_version, cancelled_at: o.cancelled_at ?? undefined, cancel_reason: o.cancel_reason ?? undefined })
         if (o.status === 'cancelled') return { status: 200, body: { order: { ...out(), already_terminal: true }, already_terminal: true } }
-        if (o.payments.some((p) => p.status === 'succeeded')) return err(409, 'conflict', 'order has successful payment evidence')
-        if (!['draft', 'pending_payment', 'processing'].includes(o.status) || o.state_version !== expected) return err(409, 'conflict', 'order cannot enter the requested release state')
+        // R95 / R114：与 billing.releaseOrderReservation 同顺序同文案——终态、已付、其余不可取消，再版本号，最后才看入账
+        if (o.status === 'expired') return err(409, 'conflict', '订单已过期')
+        if (['paid', 'fulfilled', 'partially_refunded', 'refunded'].includes(o.status)) return err(409, 'conflict', '订单已支付，不能取消')
+        if (!['draft', 'pending_payment', 'processing'].includes(o.status)) return err(409, 'conflict', `订单当前状态（${o.status}）不能取消`)
+        if (o.state_version !== expected) return err(409, 'conflict', '订单状态已变化，请刷新后再操作')
+        if (o.payments.some((p) => p.status === 'succeeded')) return err(409, 'conflict', '这张订单已有入账，不能取消')
         const at = new Date().toISOString()
         Object.assign(o, { status: 'cancelled', cancelled_at: at, cancel_reason: reason, state_version: o.state_version + 1, updated_at: at })
         for (const i of o.intents) if (['created', 'requires_action', 'processing'].includes(i.status)) Object.assign(i, { status: 'cancelled', updated_at: at })
@@ -159,7 +163,7 @@ export const billing: MockModule = {
         // 假后端的近似：CreateOrder 的套餐 / 价格失效错误形状以后端为准
         if (!plan || plan.status !== 'active' || !price || price.status !== 'active') return invalid({ price_id: '价格不存在、已下架或不属于该套餐' })
         if (settlement === 'offline' && price.unit_amount <= 0) return err(409, 'conflict', '这张订单不需要支付，请改用赠送')
-        if (settlement === 'offline' && referenceOwner(reference)) return err(409, 'conflict', 'provider payment is already attached to another order')
+        if (settlement === 'offline' && referenceOwner(reference)) return err(409, 'conflict', '凭证号已用于其他订单')
 
         const at = new Date().toISOString()
         const grant = settlement === 'grant'
@@ -248,7 +252,7 @@ export const billing: MockModule = {
         }
         if (o.status !== 'pending_payment' && o.status !== 'processing') return err(409, 'conflict', `只有待支付的订单可以标记为已支付，当前状态：${o.status}`)
         if (o.payable_amount <= 0) return err(409, 'conflict', '这张订单不需要支付')
-        if (owner) return err(409, 'conflict', 'provider payment is already attached to another order')
+        if (owner) return err(409, 'conflict', '凭证号已用于其他订单')
         const at = new Date().toISOString()
         const p = paymentFor(o, 'offline', null, at, `offline:${reference}`)
         o.payments.push(p)

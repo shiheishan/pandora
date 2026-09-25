@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState / ReactNode，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic、./queries、./schemas，依赖 ./nodes.module.css
  * [OUTPUT]: 对外提供 NodeOps（节点抽屉「操作」标签）
- * [POS]: admin/screens/nodes 抽屉的操作页（设计稿 d_ops，文案按契约改写）：发布配置（POST config/publish scope=node payload={}，等于强制重新下发）、复制节点（补目标服务器与复制路由两个选项，这也是已部署节点换机器的正确路径）、迁移（保留规则 5：只有从未部署过的草稿能迁移，409 时列出仍绑定的资产）、上线（R108 activate：生命周期在接入尾段 attesting 至 canary 时显示，一步推到 active 并让服务器就绪，409 原样显示原因、warnings 逐条 Toast）、启用 / 停用（status:batch 只放一项）、退役（R57 retire，不可逆）、删除（转终态 destroyed、名字可复用、历史保留）
+ * [POS]: admin/screens/nodes 抽屉的操作页（设计稿 d_ops，文案按契约改写）：发布配置（POST config/publish scope=node payload={}，等于强制重新下发）、复制节点（补目标服务器与复制路由两个选项，这也是已部署节点换机器的正确路径）、迁移（保留规则 5：只有从未部署过的草稿能迁移，409 时列出仍绑定的资产）、上线（R108 activate：生命周期在接入尾段 attesting 至 canary 时显示，一步推到 active 并让服务器就绪，409 原样显示原因、warnings 按 activationHint 用普通语气逐条提示下一步，R113 第 ⑤ 步）、启用 / 停用（status:batch 只放一项）、退役（R57 retire，不可逆）、删除（转终态 destroyed、名字可复用、历史保留）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
@@ -10,7 +10,7 @@ import { isApiError } from '../../../core/api'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Modal, Select, useToast } from '../../../ui'
-import { MOVE_BLOCKED_HINT, canActivate, canMove, canTransition, moveBlockers } from './logic'
+import { MOVE_BLOCKED_HINT, activationHint, canActivate, canMove, canTransition, moveBlockers } from './logic'
 import css from './nodes.module.css'
 import { endsIntent, useCan, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
 import { adminNodeSchema, batchStatusResponse, deletedResponse, publishResponse, type NodeRow } from './schemas'
@@ -74,9 +74,10 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
     },
     onSuccess: (r) => {
       activateIntent.reset()
-      // warnings（如「未划入节点池，不服务任何用户」）逐条提示，不挡上线
-      r.warnings?.forEach((w) => toast(w, 'danger'))
-      after('已上线：节点进入服务，服务器已就绪')()
+      // R113 warnings（没划池、池没绑套餐）是搭建途中的正常状态：用普通语气提示下一步，不用错误样式
+      if (r.warnings) r.warnings.forEach((w) => toast(activationHint(w)))
+      else toast('已上线：节点进入服务，服务器已就绪')
+      void invalidate()
     },
     onError: (e) => {
       // 409 的原因（身份、协议、终态等）由 useFailure 原样 Toast

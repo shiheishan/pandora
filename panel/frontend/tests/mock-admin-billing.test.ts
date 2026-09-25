@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close / bearer / mockFetch，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/billing/schemas 的订单与收款 schema
  * [OUTPUT]: 对外提供订单与收款（后台-05）假接口的测试
- * [POS]: tests 的后台订单与收款假后端守卫：只读账号只看得到订单列表（支付记录、挂账、渠道、调整整块 404，人工开单先 404 不弹 reauth）；仪表盘「超时未支付」与待支付筛选同一份数据；订单列表能被页面 schema 接住、多值状态与未知状态 400、按 user_id 精确筛选且与用户详情的最近订单同一份数据；人工开单先 reauth、三种结算、201 重放、余额扣除 422、凭证号重复 409（英文原文）；标记已支付开通订阅；取消的 state_version CAS 与重放；挂账按币种合计、转入余额记到用户余额且只能一次；渠道启停；收入调整登记、生效日上限、冲销与重复冲销 409。起服务与发请求用 tests/mock-helpers.ts，登录与 reauth 辅助留在本文件（登录带状态断言）
+ * [POS]: tests 的后台订单与收款假后端守卫：只读账号只看得到订单列表（支付记录、挂账、渠道、调整整块 404，人工开单先 404 不弹 reauth）；仪表盘「超时未支付」与待支付筛选同一份数据；订单列表能被页面 schema 接住、多值状态与未知状态 400、按 user_id 精确筛选且与用户详情的最近订单同一份数据；人工开单先 reauth、三种结算、201 重放、余额扣除 422、凭证号重复 409（中文原文，R114）；标记已支付开通订阅；取消的 state_version CAS、重放与已支付拒绝（与 Go 同序同文案，R114）；挂账按币种合计、转入余额记到用户余额且只能一次；渠道启停；收入调整登记、生效日上限、冲销与重复冲销 409。起服务与发请求用 tests/mock-helpers.ts，登录与 reauth 辅助留在本文件（登录带状态断言）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -122,7 +122,7 @@ describe('mock api · admin billing', () => {
     expect(manualCreatedSchema.parse(await offline.json()).status).toBe('fulfilled')
     const reused = await post(admin, 'orders/manual', { ...body, settlement: 'offline', reference: 'ICBC-TEST-1' }, 'manual-6')
     expect(reused.status).toBe(409)
-    expect(await reused.json()).toMatchObject({ error: { message: 'provider payment is already attached to another order' } })
+    expect(await reused.json()).toMatchObject({ error: { message: '凭证号已用于其他订单' } })
 
     const grant = manualCreatedSchema.parse(await json(await post(admin, 'orders/manual', { ...body, settlement: 'grant' }, 'manual-7')))
     expect(grant).toMatchObject({ status: 'fulfilled', total_amount: 0, payable_amount: 0 })
@@ -156,7 +156,7 @@ describe('mock api · admin billing', () => {
     const paid = ordersSchema.parse(await json(await get(admin, 'orders?status=paid,fulfilled&limit=100'))).orders.find((o) => o.paid_amount > 0)!
     const paidDetail = orderResponseSchema.parse(await json(await get(admin, `orders/${paid.id}`))).order
     const refused = await post(admin, `orders/${paid.id}/cancel`, { expected_state_version: paidDetail.state_version, reason: '用户要求取消订单' }, 'cancel-4')
-    expect(await refused.json()).toMatchObject({ error: { code: 'conflict', message: 'order has successful payment evidence' } })
+    expect(await refused.json()).toMatchObject({ error: { code: 'conflict', message: '订单已支付，不能取消' } })
   })
 
   it('totals late payments per currency and applies one to the balance exactly once (R3)', async () => {

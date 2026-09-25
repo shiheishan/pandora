@@ -95,6 +95,8 @@ export interface ChangePreview {
   current_period_end: string
   new_period_start: string
   new_period_end: string
+  /** R76 / R114：所用优惠码的券面，没用码时为 null */
+  coupon: { code: string; discount_type: 'percent' | 'fixed'; discount_value: number } | null
 }
 
 export interface Quote {

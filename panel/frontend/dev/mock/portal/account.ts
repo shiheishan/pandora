@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 createHash / randomInt，依赖 ../types 的 MockModule / MockContext，依赖 ../quick-login 的 issueQuickLogin，依赖 ./fixtures 的 gate / portalState / scenario / PortalState，依赖 ./billing 的 isUuid / readStrict
  * [OUTPUT]: 对外提供 account 模块的假接口 MockModule
- * [POS]: dev/mock/portal 的「账号安全（门户-10）」假接口，归门户前端；形状照 api-contract.md（修订 R15、R28、R62）与 Go identity / notify / notifications.go。会话：当前会话与外壳里本账号的其它会话（ctx.otherSessions，如快捷登录新建的）都由 Bearer 令牌推出稳定 id，另有两条种子会话；下线外壳会话经 ctx.revokeSession 让那枚令牌立即失效，下线种子会话只从本模块的列表删除；改密校验与后端同序（空 422 两字段、旧密码错 401、新旧相同 400、规则 422 fields.password），成功改掉外壳账号的口令并清掉其余会话。Telegram：default 未绑定、multi 已绑定、legacy 站点未启用；获取绑定码 8 秒后视为用户已在 Telegram 发送 /start CODE，下一次读状态即已绑定。通知偏好 3 类 × 2 渠道，交易类锁定。签发快捷登录令牌在这里（绑定当前会话，重新生成作废旧令牌），消费端 POST v1/auth/quick-login 属外壳，两边经 quick-login.ts 共用令牌表
+ * [POS]: dev/mock/portal 的「账号安全（门户-10）」假接口，归门户前端；形状照 api-contract.md（修订 R15、R28、R62、R114 的 last_seen_at 与按它排序）与 Go identity / notify / notifications.go。会话：当前会话与外壳里本账号的其它会话（ctx.otherSessions，如快捷登录新建的）都由 Bearer 令牌推出稳定 id，另有两条种子会话；下线外壳会话经 ctx.revokeSession 让那枚令牌立即失效，下线种子会话只从本模块的列表删除；改密校验与后端同序（空 422 两字段、旧密码错 401、新旧相同 400、规则 422 fields.password），成功改掉外壳账号的口令并清掉其余会话。Telegram：default 未绑定、multi 已绑定、legacy 站点未启用；获取绑定码 8 秒后视为用户已在 Telegram 发送 /start CODE，下一次读状态即已绑定。通知偏好 3 类 × 2 渠道，交易类锁定。签发快捷登录令牌在这里（绑定当前会话，重新生成作废旧令牌），消费端 POST v1/auth/quick-login 属外壳，两边经 quick-login.ts 共用令牌表
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHash, randomInt } from 'node:crypto'
@@ -14,6 +14,8 @@ interface SessionFixture {
   id: string
   user_agent: string
   created_at: string
+  /** R62 / R114：认证中间件刷新的最近活跃（同一会话 5 分钟最多写一次）；没有单独记录时等于登录时间 */
+  last_seen_at: string
 }
 
 interface AccountState {
@@ -65,11 +67,13 @@ function build(): AccountState {
               id: '3b1f6c2e-5d7a-4c11-9e2b-7a0d4f8c6e21',
               user_agent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
               created_at: ago(2 * 3_600_000),
+              last_seen_at: ago(20 * 60_000),
             },
             {
               id: '8c4e2a91-0f3b-4d6a-b7e5-1c9d2f4a8b30',
               user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0',
               created_at: ago(3 * DAY_MS),
+              last_seen_at: ago(DAY_MS),
             },
           ],
     firstSeen: new Map(),
@@ -91,7 +95,7 @@ function sessionIdOf(token: string): string {
 
 /** 外壳会话表里本账号的其它会话，形状同种子会话，另带令牌供吊销 */
 function shellOthers(ctx: MockContext): Array<SessionFixture & { token: string }> {
-  return ctx.otherSessions().map((s) => ({ id: sessionIdOf(s.token), token: s.token, user_agent: s.userAgent, created_at: new Date(s.created).toISOString() }))
+  return ctx.otherSessions().map((s) => ({ id: sessionIdOf(s.token), token: s.token, user_agent: s.userAgent, created_at: new Date(s.created).toISOString(), last_seen_at: new Date(s.created).toISOString() }))
 }
 
 function currentSession(ctx: MockContext, state: AccountState): SessionFixture {
@@ -101,17 +105,18 @@ function currentSession(ctx: MockContext, state: AccountState): SessionFixture {
     created = new Date().toISOString()
     state.firstSeen.set(token, created)
   }
-  return { id: sessionIdOf(token), user_agent: String(ctx.req.headers['user-agent'] ?? ''), created_at: created }
+  // 当前会话正在发请求，认证中间件刚刷新过它（5 分钟节流，这里取整到 5 分钟内的「现在」即可）
+  return { id: sessionIdOf(token), user_agent: String(ctx.req.headers['user-agent'] ?? ''), created_at: created, last_seen_at: new Date().toISOString() }
 }
 
-// Go SessionInfo：country 无人写入（omitempty 缺席），last_seen_at 只在建会话时写一次（修订 R62）
+// Go SessionInfo：country 无人写入（omitempty 缺席），last_seen_at 由认证中间件刷新（R62 / R114）
 function sessionView(s: SessionFixture, current: boolean) {
   return {
     id: s.id,
     current,
     user_agent: s.user_agent,
     created_at: s.created_at,
-    last_seen_at: s.created_at,
+    last_seen_at: s.last_seen_at,
     expires_at: new Date(Date.parse(s.created_at) + 30 * DAY_MS).toISOString(),
   }
 }
@@ -154,7 +159,8 @@ export const account: MockModule = {
       const state = stateOf(ctx.user.userId)
       const current = currentSession(ctx, state)
       const list = [sessionView(current, true), ...shellOthers(ctx).map((s) => sessionView(s, false)), ...state.others.map((s) => sessionView(s, false))]
-      list.sort((a, b) => b.created_at.localeCompare(a.created_at))
+      // 与 identity.ListActiveSessions 同序：按最近活跃倒序
+      list.sort((a, b) => b.last_seen_at.localeCompare(a.last_seen_at))
       ctx.send(200, { sessions: list.slice(0, 50) })
     },
     'DELETE /v1/me/sessions/:id': (ctx) => {
