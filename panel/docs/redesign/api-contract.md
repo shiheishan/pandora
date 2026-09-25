@@ -1256,6 +1256,7 @@
 - 设计：后台-07「新建节点」。映射：设计是先生成空白草稿再填协议，后端不允许无协议的草稿。**待补·前端**：「新建节点」改为弹窗/抽屉表单，一次收集 名称、服务器（GET v1/servers）、协议类型、地址、端口、协议参数（schema 驱动）、资源池、内核、倍率、展示名、国家；提交成功后打开抽屉，并提示「节点已创建为草稿，签发安装令牌并启用后才会下发」。
 
 #### PATCH v1/nodes/{id} — 编辑节点基本信息与协议参数
+- **修订 R106（2026-09-25，后端三 ① f4ad6e3，已修）**：R78 的后端修复已合入。规则：PATCH 的 `protocol_config` 里**缺席**的敏感键按原路径从库里补回；**显式给了**的（包括空串与 null）以请求为准，所以仍能清空；普通键缺席仍是删除（整体替换语义不变）；数组两边长度相同时才按下标补；换协议类型时不补旧密钥。事实更正：vless reality、shadowtls、hysteria2 等协议的密钥是必填的，过去把抹敏后的配置原样回写多半是 422 保存失败，真正被悄悄清空的只有选填的敏感键。前端：敏感字段没动就**不要带这个键**（留空 = 不改），去掉「留空会被清空」的确认；要清空选填密钥时显式传 null 并先确认。另：`mask_password`（mKCP）在协议 schema 里标为敏感，但抹敏键名表漏了它，后台读节点时明文返回，由后端三补上。
 - **修订 R78（2026-09-24，后台前端二 ② 核对）**：`protocol_config` 是**整体替换**，而读接口按名字抹掉敏感键（password、private_key、psk 等），所以只改一个普通协议字段、不重填敏感字段就会把已存的密钥清空。前端：没改协议字段就不带 `protocol_config`；改了且敏感字段留空时先确认会被清空。后端「PATCH 时保留请求里没给的敏感键」列入遗留（优先）。422 的字段键形如 `protocol_config.<内核字段名>`，与表单点号路径不一定一致，前端先按整条路径、再按最后一段名字落到表单项。
 - 状态：现有 `panel/internal/api/admin/node_admin.go:35 patchAdminNode` → `nodefabric/node_admin.go:369 PatchAdminNode`
 - 权限：`node.write`｜reauth：否｜幂等：否
@@ -1808,6 +1809,7 @@
 - 设计：后台-09「Webhook 钩子」卡片列表（状态点、URL、事件 · 成功率、投递记录、测试投递、删除）。映射：事件名以后端目录为准：设计 `user.created`→`user.registered`；设计 `ticket.replied`、`node.offline`、`node.online` 后端没有（见待决 D-A-6）；「全部事件」= 提交目录里全部 name。状态点颜色←`failed_count>0` 为黄。待补·前端：卡片加启用开关、编辑（name/description/events/timeout_ms/max_attempts/更换密钥）、`queued_count` 显示
 
 #### POST v1/plugin-hooks — 新建或修改钩子（upsert）
+- **修订 R106（2026-09-25，后端三 ① f4ad6e3）**：已修：`timeout_ms` 超出 500–30000、`max_attempts` 超出 1–10 回 422，字段键同名；传 0 仍取默认值。
 - **修订 R93（2026-09-25，后台前端二 ⑤ 核对 domain/plugin/hooks.go）**：`timeout_ms`（500–30000）与 `max_attempts`（1–10）后端只靠数据库约束，越界回 **500**（缺陷，应回 422 带字段，列入后端遗留），前端先拦；保存时省略的字段会写成零值，编辑与启停都要回填全部字段；code 撞上已有钩子会静默覆盖，前端新建时生成不冲突的 code。钩子行的 `last_sent_at` 从没送达时整个字段省略；测试投递请求没发出去时 `duration_ms` 为 0（不是 null）。
 - 状态：现有 `appearance.go:140 saveHook`
 - 权限：`platform.plugin.write`｜reauth：是｜幂等：是 `plugin_hook_save`
@@ -2428,6 +2430,7 @@
 - 设计：门户-08「全部标为已读」按钮，只在「通知」页签下显示。
 
 #### POST v1/me/notifications/{id}/read — 单条标为已读
+- **修订 R106（2026-09-25，后端三 ① f4ad6e3）**：已修：单条标已读的 id 不是 UUID 时回 404；合法但不存在的 id 仍回 200。
 - **修订 R84（2026-09-24，门户前端 ⑤ 核对，协调会话核实 api/public/notifications.go）**：不存在（或不属于本人）的 id 也回 200；id 不是 UUID 时 SQL `$2::uuid` 转换失败回 **500**（缺陷，应回 404，列入后端遗留）。前端只会传列表里拿到的 id，不受影响。
 - 状态：现有 `panel/internal/api/public/notifications.go:100 markNotificationRead`
 - 权限：登录用户｜reauth：否｜幂等：否（天然幂等）
@@ -3271,3 +3274,4 @@
 | R103 | 2026-09-25 | 用户（D-B-4） | 设备识别窗口 5/10/30/60 分钟可选，纯面板改动 |
 | R104 | 2026-09-25 | 用户（D-B-3） | 节点池限定用户组（池侧专属）；无池节点不服务任何人；换组与池绑定变化通知节点 |
 | R105 | 2026-09-25 | 后端四 | 节点列表对无池节点回 delivered_to_users=false 与固定的 delivery_note |
+| R106 | 2026-09-25 | 后端三 | R78、R84、R93 已修；R78 事实更正与前端「敏感字段没动就不带」口径；mask_password 抹敏遗漏 |

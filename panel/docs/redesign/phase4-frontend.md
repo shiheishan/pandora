@@ -24,10 +24,14 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：尚未开工。
+**进度**：① 定案清理与小清单 `c38265c` 已验收并合入（合并 283797d；NativeCore 36126340924 全绿）。**下一步 ②**。**② 起请在 `pandora-fe-final` 目录里开会话**（① 是在 pandora-smoke 目录里用绝对路径做的）。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R105。
+- 契约修订已到 R106。
+- ① 的验收结论：R101、R102、`switches.changed` 进 `REALTIME_TOPICS` 与事件胶囊、假后端只读模式 503 与 Go `AdminWritesGate` 同范围、`activeNodesInPool`、仪表盘卡片带 `?s=pending`、门户会话吊销与快捷登录作废、「未决」清理（四条要写代码的标「已决，第 ② / ③ 步接入」），都认可。共享层改动（`core/query.ts`、`EventsCapsule.tsx`、`dev/mock-api.ts`、`dev/mock/types.ts` 只增、`quick-login.ts` 加必填参数、`dash/model.ts` 的可选 `query`）认可。
+- **深色模式不跟系统**：前端的深色是顶栏「深色模式」开关写 `<html data-theme>`（`core/theme.ts`），浏览器模拟 `prefers-color-scheme` 不起作用，① 看到「暗色下还是亮底」就是这个原因，不是缺陷。以后验暗色用顶栏开关。② 顺带用这个方式补看后台 960 暗色与亮色、门户 1280 与 375。
+- 假后端数据：仪表盘「超时未支付」9 张，订单假后端待支付只有 4 张。② 顺带让仪表盘的数从订单假后端算（或两边种子对齐），小改。
+- **③ 追加（R106）**：节点编辑里敏感字段没动就不带这个键（后端会保留原值），去掉「留空会被清空」的确认；选填密钥要清空时显式传 null 并先确认。
 - ③ 的无池节点提示直接显示节点列表的 `delivery_note`（R105），不要自己根据 `pool_id` 另写一套判断。
 - 假后端测试一律按模块放在 `tests/mock-<入口>-<模块>.test.ts`，用 `tests/mock-helpers.ts`。
 - 幂等口径（R85、第 10.4 节）：后端只重放 2xx；成功与 4xx 后丢 key（`reauth_required` 除外），断网与 5xx 保留；带幂等键的写操作用 `fail(e, { intent })` 写法；下单类用门户 `usePlacedOrder`。
