@@ -1,13 +1,13 @@
 /**
- * [INPUT]: 依赖 react 的 useRef / useState，依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError / newIdempotencyKey，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 href / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Empty / Input / Skeleton / Switch，依赖 ../../queries 的 useBalance / useSubscriptions，依赖 ../common 的目录、订单、支付弹窗与 LoadError，依赖 ./model 的模式与预览逻辑
+ * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../common/intent 的 useIntentKey，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 href / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Empty / Input / Skeleton / Switch，依赖 ../../queries 的 useBalance / useSubscriptions，依赖 ../common 的目录、订单、支付弹窗与 LoadError，依赖 ./model 的模式与预览逻辑
  * [OUTPUT]: 默认导出 Checkout 页面组件（登记表 React.lazy 的目标）
  * [POS]: portal/screens/checkout 的入口：确认订单（门户-03 结账页）。按地址参数进四种模式——新购、续费（含遇改价）、变更套餐（服务端试算折算与退余额）、流量包；左栏选周期 / 容量、优惠码、余额抵扣开关、支付方式，右栏订单预览与提交；下单后交给 common/PayFlow 的支付弹窗
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useRef, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { z } from 'zod'
-import { isApiError, newIdempotencyKey } from '../../../core/api'
+import { isApiError } from '../../../core/api'
 import { formatMoney } from '../../../core/format'
 import { href, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
@@ -15,6 +15,7 @@ import { Button, Card, Empty, Input, Skeleton, Switch } from '../../../ui'
 import { useBalance, useSubscriptions } from '../../queries'
 import { LoadError } from '../common/Blocks'
 import { methodKey, periodName, periodOf, perGbNote, savingAmount, usePackCatalog, usePaymentMethods, usePlans } from '../common/catalog'
+import { useIntentKey } from '../common/intent'
 import { orderCreatedSchema } from '../common/orders'
 import { PaymentModal, type PayState } from '../common/PayFlow'
 import { compactBytes, formatDate } from '../common/traffic'
@@ -149,7 +150,7 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
   const [useBalanceOn, setUseBalance] = useState(false)
   const [methodChoice, setMethodChoice] = useState<string | null>(null)
   const [payState, setPayState] = useState<PayState | null>(null)
-  const intent = useRef<{ fingerprint: string; key: string } | null>(null)
+  const intentKey = useIntentKey()
 
   // 流量包模式里换容量等于换商品
   const pack = mode.kind === 'pack' ? (packs.data?.find((p) => p.id === packId) ?? mode.pack) : null
@@ -213,9 +214,7 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
   function submit() {
     const request = orderRequest(target, pack ? null : priceId, quote.balanceApplied, couponValid ? appliedCode : null)
     // 一次用户意图一个幂等键：同样的请求（含重试、双击、稍后再点）复用，改了任何参数才换新键
-    const fingerprint = JSON.stringify(request)
-    if (intent.current?.fingerprint !== fingerprint) intent.current = { fingerprint, key: newIdempotencyKey() }
-    create.mutate({ ...request, key: intent.current.key })
+    create.mutate({ ...request, key: intentKey(request) })
   }
 
   function applyCoupon() {
