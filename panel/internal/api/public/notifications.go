@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 platform 的 db/httpx，依赖 notification_deliveries / notification_preferences 两张表
+// [INPUT]: 依赖 platform 的 db/httpx、同包 handlers.go 的 isUUID，依赖 notification_deliveries / notification_preferences 两张表
 // [OUTPUT]: 对外提供 handlers 的 listNotifications / markNotificationRead / markAllNotificationsRead / getNotificationPreferences / setNotificationPreference
-// [POS]: api/public 的站内信与通知偏好；偏好按表主键 (user_id, category, channel) upsert
+// [POS]: api/public 的站内信与通知偏好；单条标已读的非 UUID id 回 404（R84）；偏好按表主键 (user_id, category, channel) upsert
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
@@ -109,6 +109,12 @@ func (h *handlers) markNotificationRead(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := chi.URLParam(r, "id")
+	// 不是 UUID 的 id 进 SQL 会在 ::uuid 转换处炸成 500（R84），先挡成 404。
+	// 合法但不存在或不属于本人的 id 仍回 200：标已读天然幂等，也不借状态码泄露存在性。
+	if !isUUID(id) {
+		httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+		return
+	}
 
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
 		func(tx pgx.Tx) error {

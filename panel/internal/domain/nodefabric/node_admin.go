@@ -1,6 +1,6 @@
-// [INPUT]: 依赖同包 protocol_schema / xboard_validate 的协议校验与 service.go 的 notifyNodeChanged，依赖 platform 的 audit/db/httpx
+// [INPUT]: 依赖同包 protocol_schema / xboard_validate 的协议校验、protocol_secrets 的敏感键保全与 service.go 的 notifyNodeChanged，依赖 platform 的 audit/db/httpx
 // [OUTPUT]: 对外提供 AdminNode 与各输入类型、StableProtocol* 服务协议白名单、Service 的节点增改复制移动排序、批量改服务状态与销毁
-// [POS]: domain/nodefabric 的后台节点编排：乐观锁 row_version、服务器容量锁、协议 schema 校验；国家代码（00082）只在这里写、只进管理端
+// [POS]: domain/nodefabric 的后台节点编排：乐观锁 row_version、服务器容量锁、协议 schema 校验；PATCH 缺席的敏感键保留原值（R78）；国家代码（00082）只在这里写、只进管理端
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -453,6 +453,13 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 		}
 		if in.ProtocolConfig != nil {
 			raw = *in.ProtocolConfig
+			// R78：读接口抹掉了敏感键，请求里缺席的按原路径从库里补回。换了协议
+			// 类型时旧密钥不属于新协议，补回去只会换来一条莫名其妙的 422，不补。
+			if nodeType == value(before.NodeType) {
+				if raw, err = PreserveRedactedProtocolSecrets(before.ProtocolConfig, raw); err != nil {
+					return err
+				}
+			}
 		}
 		poolChanged := false
 		if in.PoolID.Set {
