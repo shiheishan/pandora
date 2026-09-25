@@ -22,13 +22,13 @@ import (
 func TestNodePatchKeepsSecretsPG18(t *testing.T) {
 	ctx, admin, app := openAnnouncementPG18(t)
 	const (
-		tenant = "87000000-0000-4000-8000-000000000001"
-		actor  = "87000000-0000-4000-8000-000000000011"
+		tenant = "8b000000-0000-4000-8000-000000000001"
+		actor  = "8b000000-0000-4000-8000-000000000011"
 	)
 	step3Seed(t, ctx, admin,
 		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','node-secret-pg18','Node Secret','CNY')`,
 		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+actor+`','`+tenant+`','ops@node-secret.invalid','Ops','active')`)
-	nodes := step3Nodes(t, ctx, admin, tenant, "87000000-0000-4000-8000-", 2)
+	nodes := step3Nodes(t, ctx, admin, tenant, "8b000000-0000-4000-8000-", 2)
 	hy2, stls := nodes[0], nodes[1]
 	step3Seed(t, ctx, admin,
 		`UPDATE nodes SET node_type='hysteria2', protocol_config='{"network":"udp","cert_path":"/etc/pandora/cert.pem","key_path":"/etc/pandora/key.pem","obfs":{"type":"salamander","password":"fixture-obfs"}}' WHERE id='`+hy2+`'`,
@@ -97,8 +97,8 @@ func TestNodePatchKeepsSecretsPG18(t *testing.T) {
 func TestPluginHookBoundsPG18(t *testing.T) {
 	ctx, admin, app := openAnnouncementPG18(t)
 	const (
-		tenant = "87000000-0000-4000-8000-000000000101"
-		actor  = "87000000-0000-4000-8000-000000000111"
+		tenant = "8b000000-0000-4000-8000-000000000101"
+		actor  = "8b000000-0000-4000-8000-000000000111"
 	)
 	step3Seed(t, ctx, admin,
 		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','hook-bounds-pg18','Hook Bounds','CNY')`,
