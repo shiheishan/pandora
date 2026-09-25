@@ -1,0 +1,451 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供通知与插件三个标签用到的类名
+ * [POS]: admin/screens/system 的样式，取自 管理后台-09-通知与安全.dc.html：渠道卡网格（auto-fit 340）与卡片头 / 两列字段 / 浅底底栏，模板三栏（240 列表 | 编辑 | 预览，窄于 1180 预览移到编辑区下方），钩子新建条、卡片、投递记录四列（60 | 事件 | 70 | 110）；后台只支持 960 以上
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.spacer,
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.span2 {
+  grid-column: 1 / -1;
+}
+
+.faint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.label {
+  margin-bottom: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.error {
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+.note {
+  padding: 8px 12px;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-control);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+}
+
+.note a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.pad {
+  padding: 16px 14px;
+}
+
+.right {
+  text-align: right;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dangerText {
+  color: var(--danger);
+}
+
+/* ---- 状态色（圆点与文字） ---- */
+.ok {
+  color: var(--ok);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+/* ---- 通知渠道卡 ---- */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--space-16);
+  align-items: start;
+}
+
+.card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cardTitle {
+  flex: 1;
+  font-weight: var(--fw-semibold);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-caption);
+}
+
+.cardBody {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+  padding: 16px;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 8px;
+}
+
+.inlineCheck {
+  margin-top: 6px;
+  font-size: var(--fs-caption);
+}
+
+.cardFoot {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
+  background: var(--surface-2);
+}
+
+/* ---- 邮件模板：240 列表 | 编辑 | 预览 ---- */
+.tplLayout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-16);
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .tplLayout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .tplLayout > .previewCard {
+    grid-column: 2;
+  }
+}
+
+.spanRest {
+  grid-column: 2 / -1;
+}
+
+.tplList {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.tplTools {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tplItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tplItem:last-child {
+  border-bottom: 0;
+}
+
+.tplItem:hover {
+  background: var(--surface-2);
+}
+
+.tplItem:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.tplCurrent,
+.tplCurrent:hover {
+  background: var(--surface-3);
+}
+
+.tplName {
+  font-weight: var(--fw-medium);
+}
+
+.tplMeta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.tplHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--border-hover);
+}
+
+.previewCard {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.previewHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.previewBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 260px;
+  padding: 18px;
+  background: var(--surface-2);
+}
+
+.previewSubject {
+  font-weight: var(--fw-semibold);
+}
+
+.previewText {
+  color: var(--text-2);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Webhook 钩子 ---- */
+.createBar {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.createUrl,
+.createEvents {
+  min-width: 0;
+}
+
+.picker {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  height: var(--h-control);
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  text-align: left;
+}
+
+.picker:hover {
+  border-color: var(--border-hover);
+}
+
+.pickerRoot {
+  display: block;
+  width: 100%;
+}
+
+.pickerText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerMenu {
+  width: 340px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.hook {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.hookHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.hookHead > .dot {
+  width: 8px;
+  height: 8px;
+}
+
+.hookMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.hookUrl {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deliveries {
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.delivery {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr) 70px 110px;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.delivery:last-child {
+  border-bottom: 0;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+}
+
+.eventChecks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+  font-size: var(--fs-caption);
+}
+
+.secret {
+  display: block;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--surface-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+  user-select: all;
+}

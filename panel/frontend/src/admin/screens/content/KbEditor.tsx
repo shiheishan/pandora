@@ -13,7 +13,7 @@ import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Menu, Select, TextArea, useToast, type MenuEntry } from '../../../ui'
 import css from './content.module.css'
-import { audienceChanged, dropsIntent, emptyKbForm, KIND_LABEL, kbBody, kbFormFrom, PLATFORM_LABEL, validateKb, VISIBILITY_LABEL, type Article, type KbBody, type KbForm } from './logic'
+import { audienceChanged, emptyKbForm, KIND_LABEL, kbBody, kbFormFrom, PLATFORM_LABEL, validateKb, VISIBILITY_LABEL, type Article, type KbBody, type KbForm } from './logic'
 import { useCan, useFailure, useIntentKey, useInvalidateContent, usePlanCatalog } from './queries'
 import { KINDS, pageArchived, pageSaved, PLATFORMS, VISIBILITIES, type Kind, type Page, type Visibility } from './schemas'
 
@@ -65,9 +65,8 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
       void invalidate('pages').then(() => !article && navigate(`/content/kb/${r.page.slug}`, { replace: true }))
     },
     onError: (error) => {
-      if (dropsIntent(error)) intent.reset()
       if (isApiError(error, 'conflict')) void invalidate('pages')
-      fail(error, setErrors)
+      fail(error, { fields: setErrors, intent })
     },
   })
 
@@ -79,9 +78,8 @@ export function KbEditor({ article, page, kind, categories, takenSlugs }: Props)
       void invalidate('pages')
     },
     onError: (error) => {
-      if (dropsIntent(error)) intent.reset()
       if (isApiError(error, 'conflict')) void invalidate('pages')
-      fail(error)
+      fail(error, { intent })
     },
   })
 
