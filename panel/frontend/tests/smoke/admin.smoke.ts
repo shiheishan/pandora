@@ -44,9 +44,9 @@ const s = state.seed
 
 // 种子里没有、要从列表里取的 id：列表响应原样读（不经 schema，schema 由对应行去验）
 const kbPages = (await rawGet(state.admin, 'v1/content-pages?kind=kb_article&limit=500')) as { pages?: Array<{ id: string }> }
-const batches = (await rawGet(state.admin, 'v1/gift-cards/batches?limit=50&offset=0')) as { batches?: Array<{ id: string }> }
+const batches = (await rawGet(state.admin, 'v1/gift-cards/batches?limit=50&offset=0')) as { items?: Array<{ id: string }> | null }
 const pageId = kbPages.pages?.[0]?.id ?? 'missing'
-const batchId = batches.batches?.[0]?.id ?? 'missing'
+const batchId = batches.items?.[0]?.id ?? 'missing'
 
 const rows: Row[] = [
   // ---- 外框 ----

@@ -21,11 +21,11 @@ import { runTable, state, type Row } from './harness'
 const s = state.seed
 
 // 通知只由 aegis-public 的定时扫描写入（启动约 30 秒后第一次，之后每 5 分钟，写死在 cmd/aegis-public/main.go）。
-// 等到非空或超时：6 分钟覆盖「第一次扫描早于付款」时的下一轮
+// 等到非空或超时：8 分钟覆盖「第一次扫描早于付款」时的下一轮（5 分钟一轮，外加起栈与造数据的时间）
 const notifications = {
   ok: (d: unknown) => ((d as { notifications?: unknown[] }).notifications?.length ?? 0) > 0,
-  timeoutMs: 6 * 60_000,
-  why: '6 分钟内通知列表仍为空（只由定时扫描写入），空数组验不出行 schema',
+  timeoutMs: 8 * 60_000,
+  why: '8 分钟内通知列表仍为空（只由定时扫描写入），空数组验不出行 schema',
 }
 
 const rows: Row[] = [

@@ -227,6 +227,7 @@ export function runTable(app: App, rows: Row[]): void {
         continue
       }
       it(title, async (ctx) => {
+        let timedOut = false
         try {
           if (row.kind === 'raw') await checkRaw(api, row)
           else if (row.kind === 'sse') await checkStream(api, row)
@@ -234,9 +235,8 @@ export function runTable(app: App, rows: Row[]): void {
             const deadline = Date.now() + row.waitFor.timeoutMs
             while (!row.waitFor.ok(await checkJson(api, app, row))) {
               if (Date.now() > deadline) {
-                record(app, row, '跳过', row.waitFor.why)
-                ctx.skip()
-                return
+                timedOut = true
+                break
               }
               await new Promise((r) => setTimeout(r, 5000))
             }
@@ -244,6 +244,11 @@ export function runTable(app: App, rows: Row[]): void {
         } catch (error) {
           record(app, row, '不一致', error instanceof Error ? error.message : String(error))
           throw error
+        }
+        // ctx.skip() 靠抛异常中止用例，放在 try 之外，免得被当成不一致记下
+        if (timedOut) {
+          record(app, row, '跳过', row.waitFor!.why)
+          ctx.skip()
         }
         record(app, row, row.kind === 'raw' ? '已验（CSV）' : row.kind === 'sse' ? '已验（事件流）' : '已验')
         // 要等异步数据的行，单条超时放到等待上限之外
