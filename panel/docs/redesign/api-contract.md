@@ -315,6 +315,7 @@
 - 权限：`ops.ticket.read`｜reauth：否｜幂等：否
 - 请求：path `id: uuid`
 - 响应：200，结构是 Ticket 加 `messages: [{ id, author_kind: user|agent|system, author_name: string|null, body, internal_note?: true, created_at }]`，消息按时间升序
+- **修订 R75（2026-09-24，后台前端一 ② 核对 support/service.go `GetForAgent`，协调会话核实）**：详情**不填** `last_reply_at`（回零值时间 `0001-01-01T00:00:00Z`）和 `message_count`（回 0），前端从 `messages` 自行推算，不要读这两个字段；后台队列与详情的 `related_order` 恒为 null（只有门户详情填，R60），后台详情暂不显示关联订单。后端补齐列入遗留，由后续后端会话处理。
 - 待补·后端（需迁移：否）：增加 `user_active_plan: string|null`，口径与用户列表的 `active_plan` 一致，取 status 为 active 或 trialing 的最新订阅的套餐名。设计稿的详情头要显示用户套餐，而客服角色不一定有 `iam.user.read` 权限，不能再去调用户接口
 - 错误：not_found 404「工单不存在」（用的是 CodeNotFound，不是 NotFoundOrForbidden）
 - 设计：后台-02 右侧详情。映射：
@@ -2127,6 +2128,7 @@
 - 设计：选购页流量包 tab 提示「您的专业版本期还剩 N GB。买了流量包后…」、概览主卡剩余流量（订阅剩余 + 流量包剩余，另起一行小字「含流量包 X GB」）。
 
 #### POST v1/me/subscriptions/{id}/change-plan/preview — 变更套餐试算（剩余价值折算）
+- **修订 R76（2026-09-24，门户前端 ② 核对）**：响应不回优惠券券面（`coupon` 对象），变更模式下优惠码那一行只显示「优惠 ¥X」（取响应里的优惠金额），不显示「20% 折扣」之类券面；后端补 `coupon`（与 R69 试算同形）列为遗留，不补也可用。
 - **修订 R35（2026-09-24，后端一 91738d3）**：已实现。响应另加 `balance_refund: int`（降级时退进余额的差额，升级为 0）；`direction` 在 total > 0 时为 `upgrade`，否则为 `downgrade`；「暂不支持降级」删除（5.A D-E-2 升降级都允许）。可变更的订阅状态为 active / trialing / grace / past_due；只校验目标套餐的 `allow_upgrade` 与可见性，不校验 allow_new_purchase、库存与限购；价格、版本类错误与新购一致（409「该价格已下架」「该价格当前不在有效期内」「该套餐尚未发布可用版本」等）。新增 409：「变更套餐不能更换币种」「这条订阅本周期的付费订单币种不一致，无法折算」「这条订阅还有未完成的续费或变更套餐订单，请先支付或取消」。优惠码升级、降级都可用（降级时折扣使退回余额变多）。
 - 状态：待补·后端
 - 权限：登录用户｜reauth：否｜幂等：否（不落库）
@@ -3169,3 +3171,5 @@
 | R72 | 2026-09-24 | 后台前端二 | 优惠券兑换记录要 marketing.coupon.read + billing.order.read |
 | R73 | 2026-09-24 | 后端一 9b4aaab | 后台流量包管理四接口（catalog.publish + reauth + 幂等，updated_at 乐观锁） |
 | R74 | 2026-09-24 | 后端一 9b4aaab | 人工开单已挂 reauth，开放 offline（必带 reference，建单与结清同一事务） |
+| R75 | 2026-09-24 | 后台前端一、协调会话 | 后台工单详情不填 last_reply_at / message_count，后台 related_order 恒为 null |
+| R76 | 2026-09-24 | 门户前端 | 变更套餐试算不回券面，前端只显示优惠金额 |
