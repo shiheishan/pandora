@@ -389,9 +389,8 @@ const CODE_RE = /^[a-z0-9][a-z0-9_-]{1,63}$/
 
 /**
  * 与 Go 的 validatePlanFields / validateWizardInput 同规则，键名一致。
- * edit 时 original 是打开向导时的值。
  */
-export function wizardProblems(f: WizardForm, mode: 'new' | 'edit', original?: WizardForm): Fields {
+export function wizardProblems(f: WizardForm, mode: 'new' | 'edit'): Fields {
   const out: Fields = {}
   if (!CODE_RE.test(f.code.trim())) out.code = '需为 2-64 位小写字母、数字、下划线或连字符，首位不能是符号'
   const name = [...f.name.trim()].length
@@ -403,8 +402,6 @@ export function wizardProblems(f: WizardForm, mode: 'new' | 'edit', original?: W
   if (isBad(gb)) out.traffic_gb = '填整数 GB；不限流量请留空'
   const devices = parseCount(f.devices)
   if (isBad(devices) || devices === 0) out.max_devices = '必须为正整数；不限请留空'
-  // R92 ①（后端现状）：真后端把 null 当「不动」，改不回不限。R99 的三态已在 updateBody 里照写，后端三 ② 合入主线后删掉这一行
-  else if (mode === 'edit' && devices === null && original && original.devices !== '') out.max_devices = '编辑向导不能把设备数改回不限；需要时新建版本，在版本里清空设备上限'
   if (isBad(parseKbps(f.mbps))) out.throttle_kbps = MBPS_HINT
   if (mode === 'new' && f.strategy === 'fixed_day') {
     const d = parseCount(f.resetDay)

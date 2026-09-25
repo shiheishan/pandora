@@ -1,12 +1,12 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ../core/api 的 ApiError，依赖 ./actions 的 canWith / createIntentKey / endsIntent / classifyFailure / handleFailure，依赖 ./modules、./reauth、./me、./tasks 的 tasksSchema / taskCount、./ChangePasswordDialog 的 passwordStrength、./EventsCapsule 的 describeEvent
+ * [INPUT]: 依赖 vitest，依赖 ../core/api 的 ApiError，依赖 ./actions 的 canWith / createIntentKey / classifyFailure / handleFailure（幂等键本身的测试在 core/intent.test.ts），依赖 ./modules、./reauth、./me、./tasks 的 tasksSchema / taskCount、./ChangePasswordDialog 的 passwordStrength、./EventsCapsule 的 describeEvent
  * [OUTPUT]: 对外提供 admin 外框纯逻辑的单元测试
  * [POS]: admin 的单元测试：路由规范化、标签回落与 rest 子路由、读权限表与按权限取舍、⌘K 筛选与隐藏、reauth 桥的单次弹框与结算、身份文字的契约映射与回退、强度条、实时事件条目、「需要处理」计数的严格 schema 与徽标取数；界面交互在浏览器里对 dev/mock-api 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../core/api'
-import { canWith, classifyFailure, createIntentKey, endsIntent, handleFailure } from './actions'
+import { canWith, classifyFailure, createIntentKey, handleFailure } from './actions'
 import { passwordStrength } from './ChangePasswordDialog'
 import { describeEvent } from './EventsCapsule'
 import { identityLabels } from './me'
@@ -198,23 +198,6 @@ describe('actions', () => {
     expect(canWith(undefined, 'ops.ticket.read')).toBe(false)
   })
 
-  it('createIntentKey：同一意图复用一把键，意图变了换新键，reset 后必换', () => {
-    let n = 0
-    const intent = createIntentKey(() => `k${++n}`)
-    const first = intent.keyFor(['t1', { body: 'hi' }])
-    expect(intent.keyFor(['t1', { body: 'hi' }])).toBe(first)
-    const changed = intent.keyFor(['t1', { body: 'hi!' }])
-    expect(changed).not.toBe(first)
-    expect(intent.keyFor(['t1', { body: 'hi!' }])).toBe(changed)
-    intent.reset()
-    expect(intent.keyFor(['t1', { body: 'hi!' }])).not.toBe(changed)
-    expect(n).toBe(3)
-  })
-
-  it('createIntentKey：默认生成 UUID v4', () => {
-    expect(createIntentKey().keyFor('x')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
-  })
-
   it('classifyFailure：reauth 取消静默；有 fields 且能标表单才标；其余 Toast 服务端文案', () => {
     const reauth = new ApiError({ status: 403, code: 'reauth_required', message: '需要重新验证' })
     const invalid = new ApiError({ status: 422, code: 'validation_failed', message: '请求参数校验未通过', fields: { body: '内容需在 1–5000 字之间' } })
@@ -229,18 +212,6 @@ describe('actions', () => {
   // 契约 1.5 与 R85：后端只重放 2xx，4xx 业务拒绝后同 key 会重新执行或回 409
   const failure = (status: number, code: ConstructorParameters<typeof ApiError>[0]['code'], fields?: Record<string, string>) =>
     new ApiError({ status, code, message: `失败 ${status}`, ...(fields ? { fields } : {}) })
-
-  it('endsIntent：4xx 业务拒绝结束意图；reauth 取消、断网、5xx、2xx 回包解析失败都保留键', () => {
-    expect(endsIntent(failure(422, 'validation_failed'))).toBe(true)
-    expect(endsIntent(failure(409, 'conflict'))).toBe(true)
-    expect(endsIntent(failure(404, 'not_found'))).toBe(true)
-    expect(endsIntent(failure(409, 'idempotency_key_reuse'))).toBe(true)
-    expect(endsIntent(failure(403, 'reauth_required'))).toBe(false)
-    expect(endsIntent(failure(0, 'network_error'))).toBe(false)
-    expect(endsIntent(failure(500, 'internal_error'))).toBe(false)
-    expect(endsIntent(failure(200, 'invalid_response'))).toBe(false)
-    expect(endsIntent(new Error('boom'))).toBe(false)
-  })
 
   it('handleFailure：传了 intent 时 4xx 丢弃键、其余保留；回调与选项两种写法等价', () => {
     let n = 0

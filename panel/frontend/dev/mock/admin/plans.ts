@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockContext / MockModule / MockResult / MockRoute，依赖 ./plans-store 的存储与规则，依赖 ./nodes-infra 的 pools（只读），依赖 ./plans-packs 的 packRoutes
  * [OUTPUT]: 对外提供 plans 模块的假接口 MockModule；转出 plans-store 的 setSalesEnabled 给测试用
- * [POS]: dev/mock/admin 的「套餐（后台-04）」假接口，归后台前端一：列表、详情、只建壳、向导新建（单事务，R65）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动，R1 / R99 / R100；额度 / 线路变了开新版本并立即发布，价格只同步出现过的币种）、销售设置（含卖点与推荐整体覆盖）、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池绑定候选与替换；流量包四接口在 plans-packs.ts，数据与校验在 plans-store.ts。权限、reauth、幂等 scope、校验键名与文案照 api-contract.md 与 domain/adminops 的 catalog.go、plan_wizard*.go、api/admin/pools.go；按 DisallowUnknownFields 拒绝未知字段；销售开关关着时 catalog.publish 类写回 503。超额策略只收 suspend、限速与策略解耦（R99）。R92 的后端现状也照做（后端三 ② 修好后同步删）：编辑向导会清掉上架时间窗、新版本的高级设置回到默认
+ * [POS]: dev/mock/admin 的「套餐（后台-04）」假接口，归后台前端一：列表、详情、只建壳、向导新建（单事务，R65）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动，R1 / R99 / R100；额度 / 线路变了开新版本并立即发布，价格只同步出现过的币种）、销售设置（含卖点与推荐整体覆盖）、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池绑定候选与替换；流量包四接口在 plans-packs.ts，数据与校验在 plans-store.ts。权限、reauth、幂等 scope、校验键名与文案照 api-contract.md 与 domain/adminops 的 catalog.go、plan_wizard*.go、api/admin/pools.go；按 DisallowUnknownFields 拒绝未知字段；销售开关关着时 catalog.publish 类写回 503。超额策略只收 suspend、限速与策略解耦（R99）。R107（R92 已修）：编辑向导保留上架时间窗、滚出的新版本继承当前版本全部设置，本来不限流量时再交 0 不滚版本
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -102,7 +102,8 @@ function createComplete(ctx: MockContext, b: Json): MockResult {
     ...version,
     quota_reset_strategy: str(b.quota_reset_strategy) || 'billing_cycle',
     quota_reset_day: b.quota_reset_day ?? null,
-    max_devices: b.max_devices ?? null,
+    // R107：新建向导的 max_devices 0 等同不限
+    max_devices: b.max_devices || null,
     throttle_kbps: b.throttle_kbps ?? null,
     quotas: quotasFor((b.traffic_gb as number | null) ?? null, (b.max_devices as number | null) ?? null),
   }
@@ -150,7 +151,9 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
   const curGB = trafficOf(cur) === null ? -1 : Math.floor(trafficOf(cur)! / GiB)
   const devicesChanged = has('max_devices') && (b.max_devices ?? null) !== (cur?.max_devices ?? null)
   const throttleChanged = has('throttle_kbps') && (b.throttle_kbps ?? null) !== (cur?.throttle_kbps ?? null)
-  const quotaChanged = (b.traffic_gb != null && b.traffic_gb !== curGB) || devicesChanged || throttleChanged
+  // 本来就不限流量时再交 0（不限）不算变化（R107）
+  const trafficChanged = b.traffic_gb != null && (b.traffic_gb === 0 ? curGB !== -1 : b.traffic_gb !== curGB)
+  const quotaChanged = trafficChanged || devicesChanged || throttleChanged
   const poolsIn = Array.isArray(b.pool_ids) ? (b.pool_ids as string[]) : null
   const poolsChanged = poolsIn !== null && [...poolsIn].sort().join() !== [...(cur?.pool_ids ?? [])].sort().join()
   if (poolsIn) {
@@ -164,9 +167,7 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
   const changed = ['套餐资料已更新']
   applyBasics(p, b)
   applySalesPoints(p, b)
-  // 后端现状（R92 ③，后端三 ② 修）：UpdatePlanInput 不带时间窗，编辑向导会把它清空
-  p.visible_from = null
-  p.visible_until = null
+  // R107（R92 ③ 已修）：资料整体写入时保留 visible_from / visible_until
   if (typeof b.allow_new_purchase === 'boolean') p.allow_new_purchase = b.allow_new_purchase
   if (typeof b.allow_renewal === 'boolean') p.allow_renewal = b.allow_renewal
   if (typeof b.allow_upgrade === 'boolean') p.allow_upgrade = b.allow_upgrade
@@ -193,17 +194,17 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
   }
   if (quotaChanged || poolsChanged) {
     const ver = draftOf(p) ?? blankVersion(Math.max(0, ...p.versions.map((v) => v.version)) + 1, ctx.user.email)
-    const gb = b.traffic_gb != null ? (b.traffic_gb as number) : curGB
     const devices = has('max_devices') ? ((b.max_devices as number | null) ?? null) : (cur?.max_devices ?? null)
-    // 后端现状（R92 ②，后端三 ② 修）：新版本只沿用重置策略与超额策略，宽限、权益等回到默认
-    const fresh = blankVersion(ver.version, ver.created_by_email)
-    Object.assign(ver, { ...fresh, id: ver.id, row_version: ver.row_version + 1, created_at: ver.created_at })
-    ver.quota_reset_strategy = cur?.quota_reset_strategy ?? 'billing_cycle'
-    ver.quota_reset_day = cur?.quota_reset_day ?? null
-    ver.overage_policy = cur?.overage_policy ?? 'suspend'
+    // R107（R92 ② 已修）：新版本以当前版本为底稿，继承全部高级设置、权益与流量设备以外的配额行；
+    // 流量没改时流量行原样照抄；存量的 throttle 策略写成 suspend，限速值照样继承
+    const base = cur ? structuredClone(cur) : blankVersion(ver.version, ver.created_by_email)
+    Object.assign(ver, { ...base, id: ver.id, version: ver.version, status: 'draft', frozen_at: null, row_version: ver.row_version + 1, created_by_email: ver.created_by_email, created_at: ver.created_at })
+    ver.overage_policy = 'suspend'
     ver.throttle_kbps = has('throttle_kbps') ? ((b.throttle_kbps as number | null) ?? null) : (cur?.throttle_kbps ?? null)
     ver.max_devices = devices
-    ver.quotas = quotasFor(gb > 0 ? gb : null, devices)
+    const others = ver.quotas.filter((q) => q.metric !== 'traffic.bytes' && q.metric !== 'devices.active')
+    const trafficRow = trafficChanged ? quotasFor((b.traffic_gb as number) || null, null) : ver.quotas.filter((q) => q.metric === 'traffic.bytes')
+    ver.quotas = [...others, ...trafficRow, ...quotasFor(null, devices)]
     ver.pool_ids = poolsIn ?? [...(cur?.pool_ids ?? [])]
     if (!p.versions.includes(ver)) p.versions.unshift(ver)
     const pub = publishProblems(p, ver)

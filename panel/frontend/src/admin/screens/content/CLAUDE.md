@@ -9,7 +9,7 @@
 成员清单
 index.tsx: 页面入口，按标签分发：announce → AnnounceTab（rest = [公告 id | new]）、kb → KbTab（rest = [slug | new]）、theme → ThemeTab
 schemas.ts: 公告列表与写响应、内容页（列表行 / 单版本 / 保存 / 归档）、主题（R19 light / dark 两组令牌）、插槽、站点时区、套餐目录子集的 zod schema 与枚举
-queries.ts: 查询键前缀 CK、各读 hook（公告挂 announcements.changed；内容页按类型取全部版本；单版本同一篇文章换新版本时保留上一版数据免得编辑区卸载；套餐目录只在有 catalog.read 时请求；站点时区只在有 security.audit.read 时请求）、useInvalidateContent，转出三件通用 hook
+queries.ts: 查询键前缀 CK、各读 hook（公告挂 announcements.changed；内容页按类型取全部版本；单版本同一篇文章换新版本时保留上一版数据免得编辑区卸载；套餐目录只在有 catalog.read 时请求，键挂在套餐前缀下（plans/api 的 planOptionsKey('content')），套餐页写后一并刷新；站点时区只在有 security.audit.read 时请求）、useInvalidateContent，转出三件通用 hook
 logic.ts: datetime-local / date 与 RFC3339 互转（未改动的原样送回）、公告状态文字 / 列表时间 / 可见范围文字 / 表单校验 / 全量请求体 / 按钮取舍、知识库按 slug 聚成文章（最新版、最大已发布版、是否归档）/ 按分类分组与前端搜索 / 表单校验 / 请求体 / 受众改动判断、站点时区选项与 UTC 偏移、插槽脏判断与过滤提示、主题预览色与站点名
 AnnounceTab.tsx: 公告左栏（新建、公告卡片：置顶、警告 / 紧急级别、状态彩字、可见范围 · 时间，已撤回淡显）与右栏分发，选中项在地址上，新建建成后换成新 id，「复制为新公告」带预填
 AnnounceEditor.tsx: 公告编辑区：标题、正文、可见范围菜单（套餐 · / 用户组 · 开关）、级别、置顶、定时发布、自动下线；保存草稿 / 发布 / 定时发布 / 保存修改 / 撤回（确认框说清后果）/ 复制为新公告，版本变化时的覆盖提示

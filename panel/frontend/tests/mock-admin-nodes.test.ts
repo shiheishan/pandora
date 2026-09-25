@@ -1,14 +1,15 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../dev/mock/admin/nodes-infra 的 activeNodesInPool，依赖 ../src/admin/screens/nodes/schemas 的节点 / 服务器 / 节点池 / 全局路由 schema
  * [OUTPUT]: 对外提供节点与服务器（后台-07）假接口的测试
- * [POS]: tests 的节点假后端守卫：节点列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布
+ * [POS]: tests 的节点假后端守卫：节点列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布；上线（R113）的 AdminNode 形状、warnings 缺省与已 active 先于版本号
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
+import { storedProtocolConfig } from '../dev/mock/admin/nodes'
 import { activeNodesInPool } from '../dev/mock/admin/nodes-infra'
-import { globalRoutingSchema, nodesResponse, poolsResponse, serverSchema, serversResponse } from '../src/admin/screens/nodes/schemas'
+import { adminNodeSchema, globalRoutingSchema, nodesResponse, poolsResponse, serverSchema, serversResponse } from '../src/admin/screens/nodes/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin nodes', () => {
@@ -163,5 +164,122 @@ describe('mock api · admin nodes infra', () => {
     expect(saved.revision).not.toBe(g.revision)
     expect(saved.affected_nodes).toBeGreaterThan(0)
     expect((await call('GET', '/v1/nodes/routing').then((r) => r.json())) as { routes: unknown[] }).toMatchObject({ revision: saved.revision, routes: [{ outbound_tag: 'block' }] })
+  })
+})
+
+describe('mock api · admin nodes · phase 4 step 3 (R104 R105 R106 R107 R108)', () => {
+  let server: Server
+  let base: string
+  let auth: Record<string, string>
+  beforeAll(async () => {
+    ;({ server, base } = await serve('admin'))
+    auth = bearer((await loginAs(base, MOCK_ACCOUNTS.admin)).access_token)
+  })
+  afterAll(() => close(server))
+
+  const call = (method: string, path: string, body?: unknown, key?: string) => mockFetch(base, auth, method, path, body, key)
+  const list = async () => nodesResponse.parse(await (await call('GET', '/v1/nodes?include_retired=1')).json()).nodes
+  const pools = async () => poolsResponse.parse(await (await call('GET', '/v1/node-pools')).json()).pools
+  const reauth = async () => {
+    const res = await fetch(`${base}/v1/auth/reauth`, { method: 'POST', headers: auth, body: JSON.stringify({ password: MOCK_ACCOUNTS.admin.password }) })
+    auth = bearer(((await res.json()) as { access_token: string }).access_token)
+  }
+  const VIP = '9c0e1a2b-2222-4b00-8000-000000000001'
+  const TRIAL = '9c0e1a2b-2222-4b00-8000-000000000003'
+
+  it('R104: pools carry allowed_user_groups, and only requests that send the list need reauth', async () => {
+    const seeded = await pools()
+    expect(seeded.find((p) => p.name === '企业专线')!.allowed_user_groups.map((g) => g.name)).toEqual(['企业客户'])
+    await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
+    // 不带名单：改名、新建都不用 reauth
+    const asia = seeded.find((p) => p.name === '亚太精选')!
+    expect((await call('POST', `/v1/node-pools/${asia.id}`, { region: 'APAC-2' })).status).toBe(200)
+    // 带了名单：先 403，什么都不建
+    const blocked = await call('POST', '/v1/node-pools', { name: '内测专线', allowed_user_group_ids: [TRIAL] })
+    expect(blocked.status).toBe(403)
+    expect((await pools()).some((p) => p.name === '内测专线')).toBe(false)
+    await reauth()
+    // 校验：格式、重复、上限、不存在
+    for (const bad of [['nope'], [TRIAL, TRIAL], Array.from({ length: 101 }, () => TRIAL), ['9c0e1a2b-2222-4b00-8000-0000000000ff']]) {
+      const r = await call('POST', '/v1/node-pools', { name: '内测专线', allowed_user_group_ids: bad })
+      expect(await r.json()).toMatchObject({ error: { fields: { allowed_user_group_ids: expect.any(String) } } })
+    }
+    const created = (await (await call('POST', '/v1/node-pools', { name: '内测专线', allowed_user_group_ids: [TRIAL, VIP] })).json()) as { id: string }
+    const mine = (await pools()).find((p) => p.id === created.id)!
+    expect(mine.allowed_user_groups.map((g) => g.id).sort()).toEqual([TRIAL, VIP].sort())
+    // 省略 = 不改，[] = 取消限定
+    await call('POST', `/v1/node-pools/${created.id}`, { name: '内测专线 2' })
+    expect((await pools()).find((p) => p.id === created.id)!.allowed_user_groups).toHaveLength(2)
+    await call('POST', `/v1/node-pools/${created.id}`, { allowed_user_group_ids: [] })
+    expect((await pools()).find((p) => p.id === created.id)!.allowed_user_groups).toEqual([])
+  })
+
+  it('R104: user groups list exclusive_pools, and a group named by a pool cannot be deleted (pool named first)', async () => {
+    const groups = (await (await call('GET', '/v1/user-groups')).json()) as { groups: Array<{ id: string; name: string; exclusive_pools: Array<{ name: string }> }> }
+    expect(groups.groups.find((g) => g.id === VIP)!.exclusive_pools.map((p) => p.name)).toContain('灰度池')
+    const del = await call('DELETE', `/v1/user-groups/${VIP}`)
+    expect(del.status).toBe(409)
+    expect(((await del.json()) as { error: { message: string } }).error.message).toContain('灰度池')
+  })
+
+  it('R105: an active node without a pool is not delivered and says so', async () => {
+    const row = (await list()).find((n) => n.name === '香港 03（未入池）')!
+    expect(row).toMatchObject({ pool_id: null, delivered_to_users: false, delivery_note: '未划入节点池，不服务任何用户' })
+  })
+
+  it('R106 / R107: PATCH keeps absent secrets, honours explicit null, and mask_password follows mask', async () => {
+    const n = (await list()).find((x) => x.name === '东京 03')!
+    const base = { network: 'mkcp', tls: 2, reality_settings: { dest: 'www.apple.com:443', server_name: 'www.apple.com' }, mask: 'srtp' }
+    let row = n.row_version
+    const patch = async (config: unknown) => {
+      const r = await call('PATCH', `/v1/nodes/${n.id}`, { row_version: row, protocol_config: config })
+      expect(r.status).toBe(200)
+      row = ((await r.json()) as { row_version: number }).row_version
+      return storedProtocolConfig(n.id) as Record<string, unknown> & { reality_settings: Record<string, unknown> }
+    }
+    const stored = await patch({ ...base, reality_settings: { ...base.reality_settings, private_key: 'PK' }, mask_password: 'MP' })
+    expect(stored).toMatchObject({ mask_password: 'MP', reality_settings: { private_key: 'PK' } })
+    // 只改普通字段、敏感键缺席：补回
+    expect(await patch({ ...base, mtu: 1350 })).toMatchObject({ mtu: 1350, mask_password: 'MP', reality_settings: { private_key: 'PK' } })
+    // 关掉掩码（去掉 mask 键）：mask_password 不补
+    const off = await patch({ network: 'mkcp', tls: 2, reality_settings: base.reality_settings })
+    expect(off).not.toHaveProperty('mask_password')
+    expect(off.reality_settings.private_key).toBe('PK')
+    // 显式 null：以请求为准清空
+    const cleared = await patch({ ...base, reality_settings: { ...base.reality_settings, private_key: null } })
+    expect(cleared.reality_settings.private_key).toBeNull()
+  })
+
+  it('R108/R113: activate walks an attesting node to active, readies its server, replays, and refuses others with 409', async () => {
+    const n = (await list()).find((x) => x.name === '大阪 01（待上线）')!
+    expect(n.status).toBe('attesting')
+    const res = await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-1')
+    expect(res.status).toBe(200)
+    const body = adminNodeSchema.parse(await res.json())
+    expect(body).toMatchObject({ status: 'active', serving_status: 'active', row_version: n.row_version + 1 })
+    // R113：池绑着套餐，没有提示时不出现 warnings 这个键
+    expect(body).not.toHaveProperty('warnings')
+    // 同键重放拿到同一结果；已是 active 再上线是 200 不改动，且先于版本号判断（带过期版本号也回 200）
+    expect(adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-1')).json())).toEqual(body)
+    expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: n.row_version }, 'act-2')).status).toBe(200)
+    // 无池的在役节点：200 并带「未划入节点池」提示
+    const noPool = (await list()).find((x) => x.pool_id === null && x.status === 'active')!
+    const warned = adminNodeSchema.parse(await (await call('POST', `/v1/nodes/${noPool.id}/activate`, { row_version: noPool.row_version }, 'act-5')).json())
+    expect(warned.warnings).toEqual(['未划入节点池，不服务任何用户'])
+    // 版本号非法先回 422（httpx.Invalid）
+    expect((await call('POST', `/v1/nodes/${n.id}/activate`, { row_version: 0 }, 'act-6')).status).toBe(422)
+    const srv = serversResponse.parse(await (await call('GET', '/v1/servers')).json()).servers.find((s) => s.id === n.server_id)!
+    expect(srv.status).toBe('ready')
+    // 版本冲突、终态
+    const retired = (await list()).find((x) => x.serving_status === 'retired')!
+        const refused = await call('POST', `/v1/nodes/${retired.id}/activate`, { row_version: retired.row_version }, 'act-4')
+    expect(refused.status).toBe(409)
+    expect(((await refused.json()) as { error: { message: string } }).error.message).toContain('retired')
+    // 过期版本号对未上线节点回 409
+    const pending = (await list()).find((x) => x.status === 'draft')!
+    expect((await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version + 9 }, 'act-3')).status).toBe(409)
+    // 还在接入：同版本号回 409 并说「还没完成接入」
+    const early = await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version }, 'act-7')
+    expect(((await early.json()) as { error: { message: string } }).error.message).toContain('还没完成接入')
   })
 })

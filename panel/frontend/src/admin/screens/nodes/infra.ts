@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 ./logic 的 Tone 与 protocolLabel，依赖 ./schemas 的 Server / ServerStatus / Pool / PoolStatus / NodeRow 类型
- * [OUTPUT]: 对外提供服务器与节点池的纯函数：服务器圆点与状态文字、CPU / 内存 / 磁盘三条占用、卡片上的快捷状态切换、合法状态边、删除资格与后果文案、按服务器分组节点、服务器表单模型（校验、新建体、PATCH 差量、容量冲突解析）；节点池状态文字、删除资格、绑定套餐文字、表单新建体与编辑差量
+ * [OUTPUT]: 对外提供服务器与节点池的纯函数：服务器圆点与状态文字、CPU / 内存 / 磁盘三条占用、卡片上的快捷状态切换、合法状态边、删除资格与后果文案、按服务器分组节点、服务器表单模型（校验、新建体、PATCH 差量、容量冲突解析）；节点池状态文字、删除资格、绑定套餐文字、R104「仅用户组」文字与名单是否改动、表单新建体与编辑差量
  * [POS]: admin/screens/nodes 第 ③ 步的逻辑层（logic.ts 管节点与路由，这里管服务器与节点池）：映射全部取自 api-contract.md 后台-07 · 服务器 / 节点池 两节的「设计 / 映射」行与 Go 的 server_admin.go、pools.go 校验器，infra.test.ts 逐条守住
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -209,8 +209,11 @@ export const POOL_STATUS: Readonly<Record<PoolStatus, { label: string; tone: Ton
   disabled: { label: '已停用', tone: 'neutral' },
 }
 
-/** 「绑定套餐」：套餐名用「、」连接，没有显示「—」（「仅用户组」是 D-B-3 / R104，第 ③ 步接入，在那之前不显示） */
+/** 「绑定套餐」：套餐名用「、」连接，没有显示「—」 */
 export const planNamesLabel = (p: Pick<Pool, 'plan_names'>) => (p.plan_names.length ? p.plan_names.join('、') : '—')
+
+/** R104 设计稿的「仅用户组『内测』」：多个组用「、」连在一对『』里；没有限定为 null */
+export const poolGroupsLabel = (p: Pick<Pool, 'allowed_user_groups'>) => (p.allowed_user_groups.length ? `仅用户组『${p.allowed_user_groups.map((g) => g.name).join('、')}』` : null)
 
 /** 契约：nodes > 0 或 plans > 0 时删除按钮直接禁用并说明；模板、发布记录、未用令牌这三种只有后端知道，靠 409 的消息 */
 export function poolDeleteBlock(p: Pick<Pool, 'nodes' | 'plans'>): string | null {
@@ -224,18 +227,41 @@ export interface PoolForm {
   code: string
   region: string
   status: PoolStatus
+  /** R104「仅限用户组」名单（用户组 id）；空 = 不限定 */
+  groupIds: string[]
 }
-export const emptyPoolForm = (): PoolForm => ({ name: '', code: '', region: '', status: 'active' })
-export const poolFormFrom = (p: Pool): PoolForm => ({ name: p.name, code: p.code, region: p.region, status: p.status })
+export const emptyPoolForm = (): PoolForm => ({ name: '', code: '', region: '', status: 'active', groupIds: [] })
+export const poolFormFrom = (p: Pool): PoolForm => ({ name: p.name, code: p.code, region: p.region, status: p.status, groupIds: p.allowed_user_groups.map((g) => g.id) })
 
-/** POST v1/node-pools：name 必填，code 留空由后端从名字派生；status 被后端忽略，不传 */
+const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join()
+
+/**
+ * POST v1/node-pools：name 必填，code 留空由后端从名字派生；status 被后端忽略，不传。
+ * R104：请求里带了 allowed_user_group_ids 就要 reauth，所以只在真的限定了用户组时才带
+ */
 export function createPoolBody(f: PoolForm): Record<string, unknown> {
-  return { name: f.name.trim(), ...(f.code.trim() ? { code: f.code.trim() } : {}), ...(f.region.trim() ? { region: f.region.trim() } : {}) }
+  return {
+    name: f.name.trim(),
+    ...(f.code.trim() ? { code: f.code.trim() } : {}),
+    ...(f.region.trim() ? { region: f.region.trim() } : {}),
+    ...(f.groupIds.length ? { allowed_user_group_ids: f.groupIds } : {}),
+  }
 }
 
-/** POST v1/node-pools/{id}：空串 = 不改，所以只带改了且非空的字段（名称与地区都清不空）；code 被后端忽略，不传。没改动返回 null */
+/** 编辑后这次保存是否会改动「仅限用户组」名单（会就要 reauth，弹窗里提前说） */
+export const poolGroupsChanged = (p: Pick<Pool, 'allowed_user_groups'>, f: Pick<PoolForm, 'groupIds'>) =>
+  !sameIds(
+    p.allowed_user_groups.map((g) => g.id),
+    f.groupIds,
+  )
+
+/**
+ * POST v1/node-pools/{id}：空串 = 不改，所以只带改了且非空的字段（名称与地区都清不空）；code 被后端忽略，不传。
+ * R104 名单省略 = 不改、[] = 取消限定，只在名单真的变了才带（带了就要 reauth）。没改动返回 null
+ */
 export function patchPoolBody(p: Pool, f: PoolForm): Record<string, unknown> | null {
   const body: Record<string, unknown> = {}
+  if (poolGroupsChanged(p, f)) body.allowed_user_group_ids = f.groupIds
   if (f.name.trim() && f.name.trim() !== p.name) body.name = f.name.trim()
   if (f.region.trim() && f.region.trim() !== p.region) body.region = f.region.trim()
   if (f.status !== p.status) body.status = f.status

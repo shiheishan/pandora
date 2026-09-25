@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 MockModule / MockContext / MockResult / Json，依赖 ./nodes-infra 的服务器 / 节点池 / 全局路由数据、infraRoutes 与 validateRouting，依赖 ./node-schemas 的协议 schema 夹具
- * [OUTPUT]: 对外提供 nodes 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」假接口，归后台前端二。节点在这里：列表（含 R27 分页与 R46 国家、24h 流量、探针）、新建 / 编辑 / 复制 / 迁移（保留规则 5）/ 排序 / 批量改服务状态（合法边）/ 退役（R57）/ 删除、协议 schema、REALITY 密钥、一键安装令牌、服务端令牌（R13）、吊销身份、发布配置、探针、单节点路由（R26，校验与全局共用 validateRouting）、节点身份（R46）；服务器、节点池、全局路由在 nodes-infra.ts（第 ③ 步），由 infraRoutes(store) 并入本模块，数据与节点共享。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器
+ * [OUTPUT]: 对外提供 nodes 模块的假接口 MockModule，以及测试用的 storedProtocolConfig（读库里未抹敏的协议配置）
+ * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」假接口，归后台前端二。节点在这里：列表（含 R27 分页与 R46 国家、24h 流量、探针）、新建 / 编辑 / 复制 / 迁移（保留规则 5）/ 排序 / 批量改服务状态（合法边）/ 退役（R57）/ 上线（R108 / R113 activate：判断顺序与 409 文案照 nodefabric.ActivateNode，已 active 先于版本号回 200，服务器进 ready，无池或池没绑套餐时带 warnings、没有提示不出现这个键）/ 删除、列表的交付提示按 R105（先服务状态、再有没有池、再心跳）、PATCH 缺席的敏感键从库里补回（R106，mask_password 跟着 mask 开关走，R107）、协议 schema、REALITY 密钥、一键安装令牌、服务端令牌（R13）、吊销身份、发布配置、探针、单节点路由（R26，校验与全局共用 validateRouting）、节点身份（R46）；服务器、节点池、全局路由在 nodes-infra.ts（第 ③ 步），由 infraRoutes(store) 并入本模块，数据与节点共享。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -103,16 +103,50 @@ const store: Node[] = [
   node({ name: '首尔 01 · 灰度', node_type: 'tuic', serving_status: 'disabled', country_code: 'KR', pool_id: pools[2]!.id, protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' } }, 1),
   node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, serverToken: { present: false }, protocol_config: {} }, 2),
   node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 5),
+  // R105：在役但没划进节点池，不服务任何用户
+  node({ name: '香港 03（未入池）', node_type: 'shadowsocks', serving_status: 'active', country_code: 'HK', server_port: 8389, pool_id: null, protocol_config: { cipher: 'aes-256-gcm' } }, 0),
+  // R108：新服务器（大阪，草稿）上刚接入完的节点，生命周期停在 attesting，等「上线」一步推到 active
+  node({ name: '大阪 01（待上线）', node_type: 'shadowsocks', serving_status: 'draft', status: 'attesting', country_code: 'JP', server_port: 8388, last_heartbeat_at: ago(20), identity_serial: 1, pool_id: pools[1]!.id, protocol_config: { cipher: 'aes-256-gcm' } }, 7),
 ]
 keepAlive(store, (n) => n.serving_status !== 'retired' && n.status !== 'destroyed' && !n.identityRevoked)
 store[0]!.routing = { outbounds: [], routes: [{ priority: 10, matcher: { domain_suffix: ['openai.com'] }, outbound_tag: 'US-LAX-01', enabled: true, note: '' }] }
+
+const NO_POOL_NOTE = '未划入节点池，不服务任何用户'
+
+// R108：接入尾段的生命周期（attesting 之后、active 之前），「上线」按 00005 的合法边逐条推进到 active
+const ACTIVATABLE = ['attesting', 'installing', 'validating', 'standby', 'canary']
+// 服务器状态机里能进 ready 的状态（已 ready 的不动）
+const SERVER_TO_READY = ['draft', 'draining', 'maintenance']
+
+/** nodefabric.activateRefusal：不在接入尾段时为什么不能上线 */
+function activateRefusal(status: string): string {
+  if (['draft', 'provisioning', 'bootstrapping'].includes(status)) return `节点还没完成接入（${status}），等接入提交后再上线`
+  if (['provisioning_failed', 'bootstrap_failed', 'destroy_failed', 'quarantined', 'retired'].includes(status)) return `节点处于 ${status}，不能上线；需要重新接入或先处理这个状态`
+  return `节点处于 ${status}，不在接入尾段，请用启用或状态操作恢复服务`
+}
+
+/** nodefabric.activationWarnings：上线成功但不会服务任何人的提示（与 delivery_note 同口径，R105 / R113） */
+function activationWarnings(n: Node): string[] {
+  if (n.pool_id === null) return [NO_POOL_NOTE]
+  return pools.find((p) => p.id === n.pool_id)?.plans.length ? [] : ['所在节点池没有绑定任何套餐，暂时不服务任何用户']
+}
 
 function listRow(n: Node) {
   const srv = servers.find((s) => s.id === n.server_id)
   const pool = pools.find((p) => p.id === n.pool_id)
   const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
-  const delivered = n.serving_status === 'active' && !!n.last_heartbeat_at && Date.now() - new Date(n.last_heartbeat_at).getTime() < 600_000
-  const note = delivered ? '' : n.serving_status !== 'active' ? '服务状态不是 active，不会下发给用户' : !n.last_heartbeat_at ? '从未心跳，不会下发给用户' : '超过 10 分钟没有心跳，已停止下发'
+  const heartbeatOk = !!n.last_heartbeat_at && Date.now() - new Date(n.last_heartbeat_at).getTime() < 600_000
+  // R105：先看服务状态，再看有没有池，再看心跳；无池节点不服务任何订阅
+  const delivered = n.serving_status === 'active' && n.pool_id !== null && heartbeatOk
+  const note = delivered
+    ? ''
+    : n.serving_status !== 'active'
+      ? '服务状态不是 active，不会下发给用户'
+      : n.pool_id === null
+        ? NO_POOL_NOTE
+        : !n.last_heartbeat_at
+          ? '从未心跳，不会下发给用户'
+          : '超过 10 分钟没有心跳，已停止下发'
   const cpu = srv?.probe ? srv.probe.cpu_bp / 100 : null
   return {
     id: n.id,
@@ -163,7 +197,29 @@ function listRow(n: Node) {
 }
 
 /** nodefabric.RedactProtocolConfig：按名字在任意深度删掉敏感键 */
-const SENSITIVE = new Set(['password', 'passwd', 'secret', 'token', 'private_key', 'private-key', 'psk', 'obfs_password', 'obfs-password'])
+// R107：mask_password（mKCP）也在抹敏名单里
+const SENSITIVE = new Set(['password', 'passwd', 'secret', 'token', 'private_key', 'private-key', 'psk', 'obfs_password', 'obfs-password', 'mask_password'])
+// R107：跟着开关走的密钥——请求里带了开关键且值没变时才从库里补回（关掉掩码、去掉开关、切出 mKCP 都不补）
+const SECRET_SWITCH: Record<string, string> = { mask_password: 'mask' }
+
+/**
+ * R106：PATCH 的 protocol_config 是整体替换，但**缺席**的敏感键按原路径从库里补回；显式给了的（含空串与 null）
+ * 以请求为准；普通键缺席仍是删除；数组两边长度相同才按下标补。换协议类型时调用方不补。返回补好的新对象
+ */
+function restoreSecrets(stored: unknown, incoming: unknown): unknown {
+  if (Array.isArray(stored) && Array.isArray(incoming)) return stored.length === incoming.length ? incoming.map((v, i) => restoreSecrets(stored[i], v)) : incoming
+  if (!stored || !incoming || typeof stored !== 'object' || typeof incoming !== 'object' || Array.isArray(stored) || Array.isArray(incoming)) return incoming
+  const from = stored as Json
+  const out: Json = { ...(incoming as Json) }
+  for (const [k, v] of Object.entries(from)) {
+    if (k in out) out[k] = restoreSecrets(v, out[k])
+    else if (SENSITIVE.has(k.toLowerCase())) {
+      const sw = SECRET_SWITCH[k]
+      if (!sw || (sw in out && out[sw] === from[sw])) out[k] = v
+    }
+  }
+  return out
+}
 function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redact)
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([k]) => !SENSITIVE.has(k.toLowerCase())).map(([k, v]) => [k, redact(v)]))
@@ -228,6 +284,9 @@ function basicErrors(body: Json, creating: boolean): Record<string, string> {
 }
 
 const findNode = (id: string | undefined) => store.find((n) => n.id === id && n.status !== 'destroyed')
+
+/** 只给 tests/mock-admin-nodes.test.ts 核对 R106 / R107 的补回：接口永远抹掉敏感键，测试只能从库里看 */
+export const storedProtocolConfig = (id: string) => structuredClone(findNode(id)?.protocol_config ?? null)
 const touch = (n: Node) => {
   n.row_version += 1
   n.updated_at = new Date().toISOString()
@@ -298,7 +357,8 @@ export const nodes: MockModule = {
       if (int(body.row_version) === null) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { row_version: '必填' })
       if (body.row_version !== n.row_version) return reply(ctx, conflict(n))
       const nodeType = body.node_type === undefined ? n.node_type ?? '' : text(body.node_type)
-      const config = body.protocol_config === undefined ? n.protocol_config : body.protocol_config
+      // 换协议类型时不补旧密钥（R106）
+      const config = body.protocol_config === undefined ? n.protocol_config : nodeType === n.node_type ? restoreSecrets(n.protocol_config, body.protocol_config) : body.protocol_config
       const touched = ['node_type', 'server_host', 'server_port', 'kernel', 'protocol_config'].some((k) => body[k] !== undefined)
       const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}) }
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
@@ -312,7 +372,7 @@ export const nodes: MockModule = {
       if (body.traffic_rate !== undefined) n.traffic_rate = Number(body.traffic_rate)
       if (body.display_name !== undefined) n.display_name = text(body.display_name) || null
       if (body.country_code !== undefined) n.country_code = text(body.country_code).toUpperCase() || null
-      if (body.protocol_config !== undefined) n.protocol_config = body.protocol_config as Json
+      if (body.protocol_config !== undefined) n.protocol_config = config as Json
       touch(n)
       ctx.send(200, adminNode(n))
     },
@@ -437,6 +497,36 @@ export const nodes: MockModule = {
       n.name = `${n.name}#destroyed-${Date.now()}`
       ctx.send(200, { deleted: true })
     },
+    // R108 / R113：一步上线，照 nodefabric.ActivateNode：node.lifecycle、幂等 node_activate、无 reauth；
+    // 判断顺序同 Go——版本号非法 400、节点不存在 404、已是 active 回 200 不改动（先于版本号）、版本冲突 409，
+    // 再依次是接入尾段、节点身份、协议就绪、服务器；服务器跟着进 ready；warnings 没有提示时不出现
+    'POST /v1/nodes/:id/activate': async (ctx) => {
+      if (!ctx.requirePermission('node.lifecycle')) return
+      const body = await ctx.body()
+      if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
+      await ctx.idempotent('node_activate', () => {
+        const extra = Object.keys(body).find((k) => k !== 'row_version')
+        if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+        if (!(typeof body.row_version === 'number' && body.row_version > 0)) return invalid({ row_version: '必须提供正整数版本号' })
+        const n = findNode(ctx.params.id)
+        if (!n) return notFound('节点不存在')
+        if (n.status === 'active') return { status: 200, body: adminNode(n, activationWarnings(n)) }
+        if (body.row_version !== n.row_version) return conflict(n)
+        if (!ACTIVATABLE.includes(n.status)) return err(409, 'conflict', activateRefusal(n.status))
+        if (!n.identity_serial || n.identityRevoked) return err(409, 'conflict', '节点没有有效的节点身份，请重新接入后再上线')
+        if (!n.node_type || n.server_port === null) return err(409, 'conflict', '节点的协议配置还没就绪（协议类型、端口与稳定协议配置），先保存协议再上线')
+        if (!n.server_id) return err(409, 'conflict', '节点没有绑定服务器，不能上线')
+        const srv = servers.find((s) => s.id === n.server_id)
+        if (!srv) return err(409, 'conflict', '节点所在的服务器已删除，不能上线')
+        if (srv.status !== 'ready' && !SERVER_TO_READY.includes(srv.status)) return err(409, 'conflict', `节点所在的服务器处于 ${srv.status}，不能进入 ready，先处理服务器状态再上线`)
+        n.status = 'active'
+        n.serving_status = 'active'
+        srv.status = 'ready'
+        touch(n)
+        return { status: 200, body: adminNode(n, activationWarnings(n)) }
+      })
+    },
+
     'POST /v1/nodes/:id/retire': async (ctx) => {
       if (!ctx.requirePermission('node.lifecycle') || !ctx.requireReauth()) return
       const body = await ctx.body()

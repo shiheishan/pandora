@@ -80,7 +80,10 @@ describe('mock api · admin plans', () => {
     expect(r.plan.current_version_id).toBe(r.version_id)
     expect(planCreatedSchema.parse(await (await send('POST', '/v1/plans/complete', ok, 'wiz-2')).json()).plan.id).toBe(r.plan.id)
     expect((await send('POST', '/v1/plans/complete', ok, 'wiz-3')).status).toBe(409)
-    expect((await send('POST', '/v1/plans/complete', { ...ok, code: 'wiz-x', max_devices: 0 }, 'wiz-4')).status).toBe(422)
+    // R107：新建向导的 max_devices 0 等同不限，负数仍 422
+    const zero = planCreatedSchema.parse(await (await send('POST', '/v1/plans/complete', { ...ok, code: 'wiz-x', max_devices: 0 }, 'wiz-4')).json())
+    expect(zero.plan.versions[0]!.max_devices).toBeNull()
+    expect((await send('POST', '/v1/plans/complete', { ...ok, code: 'wiz-y', max_devices: -1 }, 'wiz-6')).status).toBe(422)
     // R99 / R100：向导的限速正常生效；卖点与推荐可选
     const extra = planCreatedSchema.parse(await (await send('POST', '/v1/plans/complete', { ...ok, code: 'wiz-t', throttle_kbps: 100_000, highlights: ['稳'], recommended: true }, 'wiz-5')).json())
     expect(extra.plan).toMatchObject({ highlights: ['稳'], recommended: true })
@@ -106,8 +109,14 @@ describe('mock api · admin plans', () => {
     expect(r.changed).toHaveLength(2)
     const cur = r.plan.versions.find((v) => v.id === r.plan.current_version_id)!
     expect(cur.quotas.find((q) => q.metric === 'traffic.bytes')!.limit).toBe(300 * 1024 ** 3)
-    expect(cur.entitlements).toEqual([])
+    // R107：新版本继承当前版本的权益与宽限期，上架时间窗不被清空
+    const was = d.versions.find((v) => v.id === d.current_version_id)!
+    expect(cur).toMatchObject({ entitlements: was.entitlements, grace_period_hours: was.grace_period_hours, overage_policy: 'suspend' })
+    expect(r.plan).toMatchObject({ visible_from: d.visible_from, visible_until: d.visible_until })
     expect(r.plan.prices).toEqual(d.prices)
+    // 本来不限流量时再交 0 不滚版本（这里先前的版本有流量，交同样的 300 也不滚）
+    const again = planUpdatedSchema.parse(await (await send('PUT', `/v1/plans/${STD}/complete`, { ...basics, expected_row_version: r.plan.row_version, traffic_gb: 300 }, 'edit-2')).json())
+    expect(again.plan.current_version_id).toBe(r.plan.current_version_id)
   })
 
   it('R99 tri-state on the edit wizard: absent keeps, null clears, a number sets; highlights and recommended only when sent', async () => {

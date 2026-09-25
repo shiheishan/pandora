@@ -75,9 +75,7 @@ function Binding({ plan, data }: { plan: PlanDetail; data: PlanPools }) {
           <span className={css.small}>
             {data.editable
               ? `改的是草稿 v${draft?.version ?? ''}，发布后生效`
-              : plan.visible_from || plan.visible_until
-                ? '保存即开新版本并发布；注意：这会清掉上架时间窗，保存后到「销售设置」重新填'
-                : '保存即开新版本并发布：新购立即用新线路，已买的用户续费时切换'}
+              : '保存即开新版本并发布：新购立即用新线路，已买的用户续费时切换'}
           </span>
           <span className={css.spacer} />
           <Button size="sm" variant="outline" busy={busy} disabled={!dirty} onClick={() => void save()}>

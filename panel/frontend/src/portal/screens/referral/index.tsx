@@ -114,7 +114,7 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
   async function doTransfer() {
     const request = { amount: summary.available }
     try {
-      await transfer.mutateAsync({ amount: summary.available, key: transferKey(request) })
+      await transfer.mutateAsync({ amount: summary.available, key: transferKey.keyFor(request) })
       transferKey.reset()
       setConfirming(false)
       setTransferError(null)
@@ -134,7 +134,7 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
     if ('error' in parsed || !detail) return
     const body = { amount: parsed.cents, payout_detail: detail }
     withdraw.mutate(
-      { body, key: withdrawKey(body) },
+      { body, key: withdrawKey.keyFor(body) },
       {
         onSuccess: () => {
           withdrawKey.reset()

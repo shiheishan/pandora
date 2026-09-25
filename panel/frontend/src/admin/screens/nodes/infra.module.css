@@ -448,3 +448,22 @@ button.nodeItem:hover {
 .publishButton {
   width: 100%;
 }
+
+/* 节点池弹窗的「仅限用户组」多选（R104） */
+.fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.groupChecks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8) var(--space-16);
+}
+
+.fieldError {
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}

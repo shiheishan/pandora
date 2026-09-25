@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./logic 的全部纯函数，依赖 ./schemas 的 schema（核对 Go 的 null 切片与指针字段），依赖 ../../../../dev/mock/admin/node-schemas 的真实 schema 夹具
  * [OUTPUT]: 对外提供节点页纯逻辑的单元测试
- * [POS]: admin/screens/nodes 的单元测试：状态映射与筛选搜索、心跳文案、迁移资格（保留规则 5）与 409 资产清单、合法状态边与批量取舍、排序提交项、协议表单（由真实 schema 推字段、拍平 / 还原、敏感字段、REALITY、422 键映射）、PATCH 差量不回写协议、路由规则互转与兜底校验、新规则插在兜底之前、出站行校验、带宽分桶；界面交互在浏览器里对 dev/mock/admin/nodes.ts 验收
+ * [POS]: admin/screens/nodes 的单元测试：状态映射与筛选搜索、心跳文案、迁移资格（保留规则 5）与 409 资产清单、R108 上线资格、R106 / R107 敏感字段留空不带与显式清空、合法状态边与批量取舍、排序提交项、协议表单（由真实 schema 推字段、拍平 / 还原、敏感字段、REALITY、422 键映射）、PATCH 差量不回写协议、路由规则互转与兜底校验、新规则插在兜底之前、出站行校验、带宽分桶；界面交互在浏览器里对 dev/mock/admin/nodes.ts 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -10,8 +10,10 @@ import {
   bandwidthBuckets,
   basicFromRow,
   batchPlan,
-  blankSensitive,
+  canActivate,
   canMove,
+  clearableSecret,
+  clearedSecrets,
   canTransition,
   createBody,
   filterNodes,
@@ -202,7 +204,38 @@ describe('protocol form', () => {
     expect(toProtocolConfig(protocolFields(schemaOf('shadowsocks')), {}).errors).toEqual({ cipher: '必填' })
   })
 
-  it('knows when REALITY applies, what changed and which secrets would be cleared', () => {
+  it('R106 / R107: blank secrets are left out when editing the same protocol, and clearing sends an explicit null', () => {
+    const s = schemaOf('vless')
+    const fields = protocolFields(s)
+    const values = toFormValues(fields, { network: 'tcp', tls: 2, reality_settings: { dest: 'a:443', server_name: 'a' } })
+    // 编辑同一协议：留空的敏感字段不带键、必填的也不算缺
+    const kept = toProtocolConfig(fields, values, s.property_types, { keepSecrets: true })
+    expect(JSON.stringify(kept.config)).not.toContain('private_key')
+    expect(Object.keys(kept.errors).filter((k) => fields.find((f) => f.path === k)?.sensitive)).toEqual([])
+    // mask_password 进了抹敏名单，按敏感字段处理（R107）
+    expect(fields.find((f) => f.path.endsWith('mask_password'))?.sensitive).toBe(true)
+    // 选填的敏感字段点了「清空」：显式 null，并列入保存前确认
+    const optional = fields.find((f) => clearableSecret(f))!
+    const cleared = new Set([optional.path])
+    const out = toProtocolConfig(fields, values, s.property_types, { keepSecrets: true, cleared })
+    expect(JSON.stringify(out.config)).toContain(`"${optional.path.split('.').pop()}":null`)
+    expect(clearedSecrets(fields, values, cleared)).toEqual([optional.path])
+    expect(clearedSecrets(fields, { ...values, [optional.path]: 'new' }, cleared)).toEqual([])
+    expect(protocolChanged(fields, values, values, cleared)).toBe(true)
+    // 必填的敏感字段不给清空
+    const required = fields.filter((f) => f.sensitive && f.required)
+    required.forEach((f) => expect(clearableSecret(f)).toBe(false))
+    // 换协议（keepSecrets=false）：必填照常要填
+    const hy = protocolFields(schemaOf('hysteria2'))
+    expect(toProtocolConfig(hy, {}, undefined, { keepSecrets: false }).errors).toMatchObject({ cert_path: '必填' })
+  })
+
+  it('R108: offers 上线 only while the lifecycle sits between attesting and canary', () => {
+    for (const status of ['attesting', 'installing', 'validating', 'standby', 'canary']) expect(canActivate({ status })).toBe(true)
+    for (const status of ['draft', 'bootstrapping', 'active', 'retired', 'destroyed', 'bootstrap_failed', 'quarantined']) expect(canActivate({ status })).toBe(false)
+  })
+
+  it('knows when REALITY applies and what changed', () => {
     const fields = protocolFields(schemaOf('vless'))
     const initial = toFormValues(fields, { network: 'tcp', tls: 2 })
     expect(realityEnabled('vless', initial)).toBe(true)
@@ -210,7 +243,6 @@ describe('protocol form', () => {
     expect(protocolChanged(fields, initial, initial)).toBe(false)
     expect(protocolChanged(fields, initial, { ...initial, network: 'ws' })).toBe(true)
     expect(protocolChanged(fields, initial, { ...initial, 'reality_settings.private_key': 'K' })).toBe(true)
-    expect(blankSensitive(fields, initial)).toEqual(['mask_password', 'reality_settings.private_key'].sort((a, b) => fields.findIndex((f) => f.path === a) - fields.findIndex((f) => f.path === b)))
   })
 
   it('maps protocol_config.* 422 keys onto form fields by path, then by leaf', () => {

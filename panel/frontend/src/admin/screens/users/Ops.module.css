@@ -53,6 +53,13 @@
   grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
 }
 
+/* 用户组表五列（名称、成员、可用节点池、被引用、操作）放不进左栏时，上下排：表格占满宽度、新建卡片在下 */
+@media (max-width: 1439px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .splitBulk {
   grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr);
 }
@@ -266,13 +273,6 @@
 
 .modeSet:disabled .modeOption {
   cursor: default;
-}
-
-.readonlyRow {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--text-2);
 }
 
 .cardFoot {

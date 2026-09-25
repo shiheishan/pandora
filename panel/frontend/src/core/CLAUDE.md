@@ -12,6 +12,8 @@ api.ts: 唯一 HTTP 出口。路径只收 v1/ 开头、相对 document.baseURI �
 token.ts: 访问令牌存储，localStorage 键按入口区分（pandora-admin-token / pandora-portal-token，两网关同源），存储不可用退回内存，storage 事件同步其它标签页；只存 access_token，不存 refresh_token（后端无 refresh 接口）
 sse.ts: 实时事件流。createSseParser 按 WHATWG 规范解析（任意块边界、CRLF/CR/LF、注释心跳、retry）；openEventStream 经 connect（一般是 api.openStream）用 fetch 流读，流结束、断网、5xx、429 等 retry（首帧 5000）加随机抖动重连并以 reconnected 标记，4xx 调 onStop 停止（404 = 无 ops.notification.read）；不用 EventSource，因为认证只有 Bearer 头
 query.ts: react-query 接入。createQueryClient 默认查询只对 5xx 补一次重试、写不在这层重试（重发要复用幂等键，归 api.ts），staleTime 30 秒；Register 把默认错误登记为 ApiError、queryMeta 登记 topics；createRealtimeInvalidator 按 meta.topics 精确失效、同 topic 2 秒节流合并（节点上报会刷屏 subscriptions.changed）、重连时失效全部；REALTIME_TOPICS 对齐 platform/realtime/listener.go，另收管理端的 switches.changed（R58）
+intent.ts: 幂等键约定（契约 1.5 与 R85），两个入口共用一份：createIntentKey / useIntentKey 按意图的 JSON 指纹给键（keyFor 取键、reset 丢弃），同一意图的重试与 reauth 重放复用、意图变了换新键；endsIntent 判定失败是否结束意图（4xx 结束，reauth_required、断网、5xx、回包解析失败保留）；后台 admin/actions.ts 与门户 screens/common/intent.ts 原样转出
+intent.test.ts: intent.ts 的单元测试（同指纹同键、换键、reset、UUID v4、endsIntent 四种情形），第 4 阶段 ④ 从后台与门户两处收拢过来
 download.ts: saveFile（Blob 经 <a download> 存文件，对象 URL 用后回收）、filenameFromDisposition（取 Content-Disposition 文件名，缺失时回退，幂等重放就不带这个头）、toCsv（BOM + RFC 4180 转义 + 防公式注入）
 format.ts: formatMoney（最小单位 → ¥1,280.00，CNY / USD 符号，其它币种写代码）、formatCount（整数千分位）、formatBytes（1024 进制三位有效数字，BigInt 安全，吃 DASH-01 的十进制字符串）、relativeTime（刚刚 / N 分钟 / N 小时 / MM-DD，设计稿口径）与 formatDateTime（本地时区 YYYY-MM-DD HH:mm，解析不了原样返回）
 router.ts: hash 路由原语，parseHash / href / navigate（push 或 replace）/ matchPath（:param，已解码）/ useHashLocation（useSyncExternalStore 订阅 hashchange）；真相在 location.hash，不含路由表；为什么是 hash：网关只下发 / 与 /assets/*，public 根下还有两段式订阅通配

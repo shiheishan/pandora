@@ -1,11 +1,12 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ./api 的 schema，依赖 ./model 的纯函数
+ * [INPUT]: 依赖 vitest，依赖 @tanstack/react-query 的 QueryClient（核对查询键前缀），依赖 ./api 的 schema，依赖 ./model 的纯函数
  * [OUTPUT]: 无（测试文件）
  * [POS]: admin/screens/plans 的单元测试：schema 归一与封闭枚举、周期与金额、版本表单与 quotas 同步（R99 限速与 suspend）、卖点、向导两种提交体（编辑三态）与校验、销售设置、新增价格、流量包；界面交互在浏览器里对 dev/mock-api 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
+import { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
-import { packSchema, planCreatedSchema, planDetailSchema, planRowSchema, versionRowSchema, type PlanDetail, type PriceRow, type VersionRow } from './api'
+import { packSchema, PK, planCreatedSchema, planDetailSchema, planOptionsKey, planRowSchema, versionRowSchema, type PlanDetail, type PriceRow, type VersionRow } from './api'
 import {
   createBody,
   emptyPriceForm,
@@ -301,7 +302,7 @@ describe('向导', () => {
     const sales = updateBody({ ...orig, highlights: ['流媒体解锁 ', '工单支持'], recommended: true }, orig, 7)
     expect(sales).toMatchObject({ highlights: ['流媒体解锁', '工单支持'], recommended: true })
     expect(updateBody({ ...orig, highlights: [' 流媒体解锁'] }, orig, 7)).not.toHaveProperty('highlights')
-    expect(wizardProblems({ ...orig, mbps: '-1' }, 'edit', orig)).toHaveProperty('throttle_kbps')
+    expect(wizardProblems({ ...orig, mbps: '-1' }, 'edit')).toHaveProperty('throttle_kbps')
   })
 
   it('卖点：最多 5 条、每条 1–40 字（按字符数）、不许空与重复，键名同后端', () => {
@@ -312,10 +313,11 @@ describe('向导', () => {
     expect(wizardProblems({ ...emptyWizard(), name: 'x', code: 'xx', publish: false, prices: [], highlights: [''] }, 'new')).toHaveProperty(['highlights.0'])
   })
 
-  it('编辑：设备数暂不能改回不限（R92 后端现状，后端三 ② 合入后删）；删光一个币种要提示去价格卡归档', () => {
+  it('编辑：设备数可以改回不限（R107 已修 R92）；删光一个币种要提示去价格卡归档', () => {
     const orig = wizardFromPlan(plan())
-    expect(wizardProblems({ ...orig, devices: '' }, 'edit', orig)).toHaveProperty('max_devices')
-    expect(wizardProblems(orig, 'edit', orig)).toEqual({})
+    expect(wizardProblems({ ...orig, devices: '' }, 'edit')).toEqual({})
+    expect(updateBody({ ...orig, devices: '' }, orig, 7)).toMatchObject({ max_devices: null })
+    expect(wizardProblems(orig, 'edit')).toEqual({})
     expect(removedCurrencies({ ...orig, prices: orig.prices.filter((x) => x.currency === 'CNY') }, orig)).toEqual(['USD'])
   })
 
@@ -379,5 +381,18 @@ describe('流量包', () => {
     expect(packBody({ ...f, gb: '0.5' }).traffic_bytes).toBe(GiB / 2)
     expect(Object.keys(packProblems({ ...packForm(), sortOrder: '2000000' })).sort()).toEqual(['name', 'sort_order', 'traffic_bytes', 'unit_amount'])
     expect(packProblems(f)).toEqual({})
+  })
+})
+
+describe('别的模块的 GET v1/plans 查询键（第 4 阶段 ④）', () => {
+  it('挂在套餐前缀下：套餐页按 PK 失效时，用户、内容两处一并失效', async () => {
+    const client = new QueryClient()
+    client.setQueryData(planOptionsKey('users'), [])
+    client.setQueryData(planOptionsKey('content'), [])
+    client.setQueryData(['admin', 'users', 'list'], [])
+    await client.invalidateQueries({ queryKey: [...PK] })
+    expect(client.getQueryState(planOptionsKey('users'))?.isInvalidated).toBe(true)
+    expect(client.getQueryState(planOptionsKey('content'))?.isInvalidated).toBe(true)
+    expect(client.getQueryState(['admin', 'users', 'list'])?.isInvalidated).toBe(false)
   })
 })
