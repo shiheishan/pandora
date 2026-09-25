@@ -69,9 +69,9 @@ export interface MockContext extends AnonContext {
   /** RequireRecentReauth：超出窗口回 403 reauth_required 并返回 false；不消耗幂等键 */
   requireReauth(): boolean
   /**
-   * Idempotency：缺 Idempotency-Key 回 400；同 key 同请求原样重放第一次的结果；
-   * 同 key 换请求（方法 + 路径 + 查询串 + 请求体）回 409 idempotency_key_reuse。
-   * scope 相同的路由共用一个键空间（契约里「幂等：是 scope」）。5xx 不入表，可重试。
+   * Idempotency（契约 R85，与 Go 中间件一致）：缺 Idempotency-Key 回 400；同 key 同请求——上次是 2xx
+   * 原样重放，上次非 2xx（含 5xx）重新执行 run，在途回 409 conflict；同 key 换请求（方法 + 路径 +
+   * 查询串 + 请求体）不论上次结果都回 409 idempotency_key_reuse。scope 相同的路由共用一个键空间。
    */
   idempotent(scope: string, run: () => MockResult | Promise<MockResult>): Promise<void>
 }

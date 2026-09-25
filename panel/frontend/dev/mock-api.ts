@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vite 的 Plugin 与 Connect 中间件类型，依赖 node:crypto 的 randomUUID，依赖 node:http 的请求响应，依赖 ./mock/types 的上下文契约与路由匹配，依赖 ./mock/admin 与 ./mock/portal 的模块登记表，依赖 ./mock/quick-login 的令牌表
  * [OUTPUT]: 对外提供 mockApi(app) 插件、MOCK_ACCOUNTS 演示账号
- * [POS]: panel/frontend 的开发期假后端外壳，只在 vite serve 且未设 PANDORA_API 时挂上，永不进产物：持有账号、会话、rat 与幂等表，自己只答外壳接口（登录 / 退出 / me / reauth / 改密码 / SSE，门户再加注册、快捷登录消费、站点开关、外观），其余按入口依次询问 mock/admin 或 mock/portal 的模块处理器
+ * [POS]: panel/frontend 的开发期假后端外壳，只在 vite serve 且未设 PANDORA_API 时挂上，永不进产物：持有账号、会话、rat 与幂等表（与 Go 中间件一致：只重放 2xx，非 2xx 同 key 同请求重新执行，换请求 409），自己只答外壳接口（登录 / 退出 / me / reauth / 改密码 / SSE，门户再加注册、快捷登录消费、站点开关、外观），其余按入口依次询问 mock/admin 或 mock/portal 的模块处理器
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -33,8 +33,15 @@ interface Session {
   rat: number
 }
 
+/**
+ * 幂等表的一格，仿 middleware/idempotency.go（契约 R85）：in_flight 在途；succeeded 只收 2xx，原样重放；
+ * failed 收一切非 2xx（含 5xx 与处理器抛错），同 key 同请求再来时重新执行。指纹一旦记下就不变，
+ * 无论哪种状态，同 key 换请求都回 409 idempotency_key_reuse。「已绑定业务资源的 failed 回 409」
+ * 这一支假后端不模拟（模块处理器没有资源绑定的概念）
+ */
 interface Replay {
   fingerprint: string
+  state: 'in_flight' | 'succeeded' | 'failed'
   result: MockResult | null
 }
 
@@ -279,18 +286,19 @@ export function mockApi(app: MockApp): Plugin {
         const seen = replays.get(slot)
         if (seen) {
           if (seen.fingerprint !== fingerprint) return fail(res, 409, 'idempotency_key_reuse', '幂等键已用于另一个请求')
-          if (!seen.result) return fail(res, 409, 'conflict', '同一请求正在处理')
-          return seen.result.raw ? sendRaw(res, seen.result.status, seen.result.raw, true) : send(res, seen.result.status, seen.result.body)
+          if (seen.state === 'in_flight') return fail(res, 409, 'conflict', '同一请求正在处理')
+          if (seen.state === 'succeeded' && seen.result) return seen.result.raw ? sendRaw(res, seen.result.status, seen.result.raw, true) : send(res, seen.result.status, seen.result.body)
+          // failed：接管这一格，重新执行
         }
-        replays.set(slot, { fingerprint, result: null })
+        replays.set(slot, { fingerprint, state: 'in_flight', result: null })
         try {
           const result = await run()
-          if (result.status >= 500) replays.delete(slot)
-          else replays.set(slot, { fingerprint, result })
+          const ok = result.status >= 200 && result.status < 300
+          replays.set(slot, ok ? { fingerprint, state: 'succeeded', result } : { fingerprint, state: 'failed', result: null })
           if (result.raw) sendRaw(res, result.status, result.raw)
           else send(res, result.status, result.body)
         } catch (err) {
-          replays.delete(slot)
+          replays.set(slot, { fingerprint, state: 'failed', result: null })
           throw err
         }
       },
