@@ -9,7 +9,8 @@ import type { ApiError } from './api'
 import { isApiError } from './api'
 
 // ---------------------------------------------------------------------------
-// 实时 topic：platform/realtime/listener.go 的 topicFor。事件只是「哪块该刷新」
+// 实时 topic：platform/realtime/listener.go 的 topicFor，外加 admin handlers.go
+// 降级开关切换后直接发到管理端频道的 switches.changed（R58）。事件只是「哪块该刷新」
 // 的信号，不带业务内容；查询在 meta.topics 里声明自己关心哪些 topic，
 // 失效器按它精确失效，页面之间互不知道对方。
 // ---------------------------------------------------------------------------
@@ -22,6 +23,7 @@ export const REALTIME_TOPICS = [
   'announcements.changed',
   'data.changed',
   'ticket.updated',
+  'switches.changed',
 ] as const
 export type RealtimeTopic = (typeof REALTIME_TOPICS)[number]
 

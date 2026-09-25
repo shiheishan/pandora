@@ -5,7 +5,7 @@
 分层：schemas（zod）→ queries（读 hook，这几张表没有实时通知，写后按 SK 前缀失效；转出 admin/actions.ts 的 useCan / useFailure / useIntentKey）→ logic（纯函数，system.test.ts 守住）→ hookActions（钩子保存）→ 组件。
 三条后端事实决定了写法：邮件设置 SMTP 六字段每次整体覆盖，所以注册卡保存带的是「已保存」的 SMTP 字段；钩子按 code upsert、省略的字段写成零值，所以新建时生成避开现有 code 的 code、编辑与启停都回填全字段；钩子超时与重试次数后端只有 DB CHECK（越界 500），前端先拦。三个测试发送用的都是已保存的配置，渠道卡有未保存修改时禁用测试。
 权限：通知渠道读挂 security.audit.read、存 platform.settings.write（无 reauth 无幂等）、测试 ops.notification.write；模板读 / 预览 ops.notification.read、存 / 恢复 platform.settings.write、测试信 ops.notification.write + reauth；钩子读 platform.plugin.read、写全部 platform.plugin.write + reauth，保存带幂等键 plugin_hook_save。只读账号（ops.notification.read）只能看模板。
-待决：D-A-4 管理员群组只作测试默认目标；D-A-5 设计里的「重置密码」「礼品卡兑换成功」模板后端没有，按后端现有模板显示；D-A-6 事件只用后端目录，不提供 ticket.replied / node.offline / node.online。
+已决（5.A.2）：D-A-4 管理员群组只作测试默认目标；D-A-5 设计里的「重置密码」「礼品卡兑换成功」模板后端没有，按后端现有模板显示；D-A-6 事件只用后端目录，不提供 ticket.replied / node.offline / node.online。
 
 成员清单
 index.tsx: 页面入口，按标签分发：notify → ChannelsTab、templates → TemplatesTab、hooks → HooksTab

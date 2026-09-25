@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Input / Modal / Select / Switch / TextArea / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ./api 的 usePlanPools / usePoolOptions / planCreatedSchema / planUpdatedSchema / useInvalidatePlans / PlanDetail，依赖 ./model 的向导表单、校验与提交体，依赖 ./failure 的 useCatalogFailure，依赖 ./PoolCard 的 PoolChips，依赖 ./SalesDrawer 的 GroupPicker / VISIBILITY_OPTIONS，依赖 ./Plans.module.css
  * [OUTPUT]: 对外提供 Wizard
- * [POS]: 套餐向导（后台-04「新建套餐」「用向导编辑」，720 宽弹窗，左步骤栏右表单）：基本资料（+ 可见范围与排序）、用量与设备（新建时 + 流量重置）、销售价格（每档币种 / 周期 / 试用）、可用线路、确认（+ 购买限制；新建时「保存后立即发布上架」）。新建 POST v1/plans/complete，编辑 PUT v1/plans/{id}/complete（没改的额度、价格、线路发 null）；都是 catalog.publish + reauth + 幂等（5.A D-C-2）。每步「下一步」只校验本步，提交时前端或后端的 fields 跳到出错的那一步。D-C-5 未决前向导不放限速（后端必定 422）；编辑向导的三处后端限制（设备数改不回不限、新版本的高级设置回到默认、会清掉上架时间窗）如实提示
+ * [POS]: 套餐向导（后台-04「新建套餐」「用向导编辑」，720 宽弹窗，左步骤栏右表单）：基本资料（+ 可见范围与排序）、用量与设备（新建时 + 流量重置）、销售价格（每档币种 / 周期 / 试用）、可用线路、确认（+ 购买限制；新建时「保存后立即发布上架」）。新建 POST v1/plans/complete，编辑 PUT v1/plans/{id}/complete（没改的额度、价格、线路发 null）；都是 catalog.publish + reauth + 幂等（5.A D-C-2）。每步「下一步」只校验本步，提交时前端或后端的 fields 跳到出错的那一步。D-C-5 已决（5.A.2、R99），第 ② 步在「额度」一步加限速；在那之前向导不放限速（后端必定 422）；编辑向导的三处后端限制（设备数改不回不限、新版本的高级设置回到默认、会清掉上架时间窗）如实提示
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'

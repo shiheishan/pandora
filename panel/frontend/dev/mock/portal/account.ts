@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 createHash / randomInt，依赖 ../types 的 MockModule / MockContext，依赖 ../quick-login 的 issueQuickLogin，依赖 ./fixtures 的 gate / portalState / scenario / PortalState，依赖 ./billing 的 isUuid / readStrict
  * [OUTPUT]: 对外提供 account 模块的假接口 MockModule
- * [POS]: dev/mock/portal 的「账号安全（门户-10）」假接口，归门户前端；形状照 api-contract.md（修订 R15、R28、R62）与 Go identity / notify / notifications.go。会话表不在外壳：当前会话由 Bearer 令牌推出稳定 id，另有两条种子会话可下线（吊销只作用于本模块的列表，不让外壳令牌失效）；改密校验与后端同序（空 422 两字段、旧密码错 401、新旧相同 400、规则 422 fields.password），成功改掉外壳账号的口令并清掉其余会话。Telegram：default 未绑定、multi 已绑定、legacy 站点未启用；获取绑定码 8 秒后视为用户已在 Telegram 发送 /start CODE，下一次读状态即已绑定。通知偏好 3 类 × 2 渠道，交易类锁定。签发快捷登录令牌在这里，消费端 POST v1/auth/quick-login 属外壳，两边经 quick-login.ts 共用令牌表
+ * [POS]: dev/mock/portal 的「账号安全（门户-10）」假接口，归门户前端；形状照 api-contract.md（修订 R15、R28、R62）与 Go identity / notify / notifications.go。会话：当前会话与外壳里本账号的其它会话（ctx.otherSessions，如快捷登录新建的）都由 Bearer 令牌推出稳定 id，另有两条种子会话；下线外壳会话经 ctx.revokeSession 让那枚令牌立即失效，下线种子会话只从本模块的列表删除；改密校验与后端同序（空 422 两字段、旧密码错 401、新旧相同 400、规则 422 fields.password），成功改掉外壳账号的口令并清掉其余会话。Telegram：default 未绑定、multi 已绑定、legacy 站点未启用；获取绑定码 8 秒后视为用户已在 Telegram 发送 /start CODE，下一次读状态即已绑定。通知偏好 3 类 × 2 渠道，交易类锁定。签发快捷登录令牌在这里（绑定当前会话，重新生成作废旧令牌），消费端 POST v1/auth/quick-login 属外壳，两边经 quick-login.ts 共用令牌表
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHash, randomInt } from 'node:crypto'
@@ -89,6 +89,11 @@ function sessionIdOf(token: string): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`
 }
 
+/** 外壳会话表里本账号的其它会话，形状同种子会话，另带令牌供吊销 */
+function shellOthers(ctx: MockContext): Array<SessionFixture & { token: string }> {
+  return ctx.otherSessions().map((s) => ({ id: sessionIdOf(s.token), token: s.token, user_agent: s.userAgent, created_at: new Date(s.created).toISOString() }))
+}
+
 function currentSession(ctx: MockContext, state: AccountState): SessionFixture {
   const token = bearer(ctx)
   let created = state.firstSeen.get(token)
@@ -139,7 +144,7 @@ function settleTelegram(state: AccountState) {
 export const account: MockModule = {
   routes: {
     'POST /v1/me/quick-login': (ctx) => {
-      const { token, expires } = issueQuickLogin(ctx.user.userId)
+      const { token, expires } = issueQuickLogin(ctx.user.userId, bearer(ctx))
       ctx.send(200, { token, expires_at: new Date(expires).toISOString(), expires_in: 60 })
     },
 
@@ -148,7 +153,7 @@ export const account: MockModule = {
       if (!(await gate(ctx))) return
       const state = stateOf(ctx.user.userId)
       const current = currentSession(ctx, state)
-      const list = [sessionView(current, true), ...state.others.map((s) => sessionView(s, false))]
+      const list = [sessionView(current, true), ...shellOthers(ctx).map((s) => sessionView(s, false)), ...state.others.map((s) => sessionView(s, false))]
       list.sort((a, b) => b.created_at.localeCompare(a.created_at))
       ctx.send(200, { sessions: list.slice(0, 50) })
     },
@@ -157,6 +162,11 @@ export const account: MockModule = {
       const id = ctx.params.id!
       if (!isUuid(id)) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       if (id === currentSession(ctx, state).id) return ctx.fail(422, 'validation_failed', '这是你当前正在使用的会话，请使用「退出登录」')
+      const shell = shellOthers(ctx).find((s) => s.id === id)
+      if (shell) {
+        ctx.revokeSession(shell.token)
+        return ctx.send(200, { revoked: true })
+      }
       const at = state.others.findIndex((s) => s.id === id)
       if (at < 0) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       state.others.splice(at, 1)

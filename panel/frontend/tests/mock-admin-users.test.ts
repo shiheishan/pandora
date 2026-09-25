@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
  * [OUTPUT]: 对外提供用户（后台-03）第 ④ 步假接口的测试
- * [POS]: tests 的用户运营假后端守卫：流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验
+ * [POS]: tests 的用户运营假后端守卫：流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验，设新密码不要原因（R101）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -103,5 +103,14 @@ describe('mock api · admin users ops', () => {
     const d = (await (await get('/v1/devices')).json()) as { mode: string; grace: number; devices: Array<{ limit: number; online: number; exceeded: boolean }> }
     expect(d).toMatchObject({ mode: 'strict', grace: 0 })
     expect(d.devices.every((x) => x.exceeded === (x.limit > 0 && x.online > x.limit))).toBe(true)
+  })
+
+  it('sets a new password without a reason (R101) but still caps a given reason at 500', async () => {
+    const fresh = bearer((await loginAs(base, MOCK_ACCOUNTS.admin)).access_token)
+    const reset = (body: unknown) => mockFetch(base, fresh, 'POST', `/v1/users/${SEED_USER}/reset-password`, body)
+    expect(await (await reset({ new_password: 'newpass2026' })).json()).toEqual({ ok: true, sessions_revoked: true })
+    expect((await reset({ new_password: 'newpass2026', reason: '' })).status).toBe(200)
+    expect(await (await reset({ new_password: 'newpass2026', reason: '长'.repeat(501) })).json()).toMatchObject({ error: { code: 'validation_failed', fields: { reason: expect.any(String) } } })
+    expect(await (await reset({ new_password: 'short' })).json()).toMatchObject({ error: { fields: { password: expect.any(String) } } })
   })
 })

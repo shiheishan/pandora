@@ -225,7 +225,7 @@ describe('版本表单', () => {
     expect(body.expected_row_version).toBe(1)
   })
 
-  it('D-C-5 未决前按后端校验：限速只配「用完限速」，该策略必须有速率', () => {
+  it('D-C-5 第 ② 步（R99）改之前按后端校验：限速只配「用完限速」，该策略必须有速率', () => {
     const f = versionForm(version())
     expect(versionProblems({ ...f, mbps: '50' })).toHaveProperty('throttle_kbps')
     expect(versionProblems({ ...f, overage: 'throttle' })).toHaveProperty('throttle_kbps')

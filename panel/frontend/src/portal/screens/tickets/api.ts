@@ -37,7 +37,7 @@ export type TicketRow = z.output<typeof ticketRowSchema>
 export const ticketMessageSchema = z.object({
   id: z.string(),
   author_kind: z.enum(['user', 'agent', 'system']),
-  // 非 user 恒为 null（客服真实姓名不给用户，待决 D-F-2）；user 是自己的 display_name，也可能为 null
+  // 非 user 恒为 null（客服真实姓名不给用户，D-F-2 已决）；user 是自己的 display_name，也可能为 null
   author_name: z.string().nullable(),
   body: z.string(),
   created_at: z.string(),

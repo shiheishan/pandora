@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatBytes / formatCount / formatDateTime，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / QueryView / StatStrip / Tag / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ./api 的 usePlan / useInvalidatePlans / rowVersionSchema / PlanDetail / PlanRow，依赖 ./model，依赖 ./failure 的 useCatalogFailure，依赖 ./PriceCard、./PoolCard、./Versions、./SalesDrawer，依赖 ./Plans.module.css
  * [OUTPUT]: 对外提供 PlanDetailView
- * [POS]: 套餐详情（后台-04 右侧）：头部（名称、状态、说明、「用向导编辑」「销售设置」「归档套餐」）、四格事实（有效订阅取列表行的 active_subscriptions，详情接口没有）、提示条（node_count = 0 的「买了也是空订阅」、停止新购、上架时间窗），下面是价格 / 线路两卡与版本列表。D-C-1 未决前不做「恢复上架」：归档写明不可恢复，只想暂停售卖的引导去销售设置
+ * [POS]: 套餐详情（后台-04 右侧）：头部（名称、状态、说明、「用向导编辑」「销售设置」「归档套餐」）、四格事实（有效订阅取列表行的 active_subscriptions，详情接口没有）、提示条（node_count = 0 的「买了也是空订阅」、停止新购、上架时间窗），下面是价格 / 线路两卡与版本列表。D-C-1 已决（5.A.2）不做「恢复上架」：归档写明不可恢复，只想暂停售卖的引导去销售设置
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'

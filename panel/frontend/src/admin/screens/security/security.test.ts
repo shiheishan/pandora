@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./logic，依赖 ./schemas
  * [OUTPUT]: 无（测试文件）
- * [POS]: admin/screens/security 纯函数层与 schema 边界的单元测试：审计查询串 / 导出日期校验 / 操作人 · 对象 · 认证文字、访问日志分段与结果文字、聚类复核状态 / 可停用成员 / 停用校验与摘要 / 写后缓存补丁、降级开关视图（极性、核心项、未接入、缺行）与切换请求；界面交互在浏览器里对 dev 假后端验收
+ * [POS]: admin/screens/security 纯函数层与 schema 边界的单元测试：审计查询串 / 导出日期校验 / 操作人 · 对象 · 认证文字、访问日志分段与结果文字、聚类复核状态 / 可停用成员 / 停用校验与摘要 / 写后缓存补丁、降级开关视图（极性、核心项、缺行、R102 删掉的开关不在字典）与切换请求；界面交互在浏览器里对 dev 假后端验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -24,6 +24,7 @@ import {
   objectLabel,
   reviewState,
   reviewText,
+  SWITCH_META,
   switchBody,
   switchViews,
   validateDisable,
@@ -196,11 +197,10 @@ describe('degradation switches', () => {
     expect(checkout).toMatchObject({ kind: 'toggle', degraded: false, status: '关闭', tone: 'muted' })
   })
 
-  it('locks essentials, greys unwired switches and orders them last', () => {
-    const views = switchViews([row('auth.login', true, true), row('node.autoscale', false, false, '首版默认关闭'), row('billing.checkout'), row('auth.registration'), row('marketing.giftcard.redeem'), row('admin.writes'), row('notify.email')])
-    expect(views.map((v) => v.code)).toEqual(['auth.registration', 'billing.checkout', 'marketing.giftcard.redeem', 'admin.writes', 'notify.email', 'node.autoscale', 'auth.login'])
+  it('locks essentials and orders them last', () => {
+    const views = switchViews([row('auth.login', true, true), row('billing.checkout'), row('auth.registration'), row('marketing.giftcard.redeem'), row('admin.writes'), row('notify.email')])
+    expect(views.map((v) => v.code)).toEqual(['auth.registration', 'billing.checkout', 'marketing.giftcard.redeem', 'admin.writes', 'notify.email', 'auth.login'])
     expect(views.at(-1)).toMatchObject({ kind: 'essential', status: '始终开启', degraded: false })
-    expect(views.at(-2)).toMatchObject({ kind: 'unwired', status: '未接入' })
     expect(views.find((v) => v.code === 'notify.email')!.note).toContain('注册')
   })
 
@@ -208,6 +208,11 @@ describe('degradation switches', () => {
     const views = switchViews([row('auth.login', true, true)])
     const missing = Object.fromEntries(views.filter((v) => v.kind === 'missing').map((v) => [v.code, v.degraded]))
     expect(missing).toEqual({ 'auth.registration': true, 'billing.checkout': false, 'marketing.giftcard.redeem': false, 'admin.writes': false, 'notify.email': false })
+  })
+
+  it('drops the three unwired switches from the dictionary (R102)', () => {
+    for (const code of ['ops.bulk_export', 'ops.reports', 'node.autoscale']) expect(SWITCH_META[code]).toBeUndefined()
+    expect(Object.keys(SWITCH_META)).toHaveLength(8)
   })
 
   it('keeps unknown codes toggleable with the backend polarity', () => {

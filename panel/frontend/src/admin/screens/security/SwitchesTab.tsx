@@ -2,7 +2,7 @@
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的开关字典与视图，依赖 ./queries，依赖 ./schemas 的 switchSaved，依赖 ./security.module.css
  * [OUTPUT]: 对外提供 SwitchesTab（安全与运维 · 降级开关标签）
  * [POS]: admin/screens/security 的降级开关（设计稿 t_switches）：黄底提示条 + 一行一个开关（中文名、code、说明、连带影响、当前原因、状态字、开关）。极性按后端：enabled = 功能可用，设计稿的「开启『暂停…』」= enabled=false，所以开关打开表示「降级中」（红）。
- *        切换（platform.settings.write + reauth，R58）先弹确认框：进入降级时原因必填（数据库 CHECK，后端回 409 不是 422，前端先拦），恢复时可选；成功后失效开关与审计。核心三项锁定、不画开关；ops.bulk_export / ops.reports / node.autoscale 没有代码读取，按待决 D-A-3 灰显「未接入」；「订阅下发使用缓存」后端做不到，不显示；R58 四个新开关缺行视为开启、auth.registration 缺行即暂停，缺行的列出来但不能切；notify.email 旁提示会连带让开了邮箱验证的注册走不通；admin.writes 关闭时顶部另给红色提示
+ *        切换（platform.settings.write + reauth，R58）先弹确认框：进入降级时原因必填（数据库 CHECK，后端回 409 不是 422，前端先拦），恢复时可选；成功后失效开关与审计。核心三项锁定、不画开关；D-A-3 已决（5.A.2、R102）：「订阅下发使用缓存」不做，三个没有代码读取的开关后端删行、这里不再列；R58 四个新开关缺行视为开启、auth.registration 缺行即暂停，缺行的列出来但不能切；notify.email 旁提示会连带让开了邮箱验证的注册走不通；admin.writes 关闭时顶部另给红色提示
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
@@ -47,22 +47,17 @@ export function SwitchesTab() {
 function SwitchLine({ view: v, writable, onToggle }: { view: SwitchView; writable: boolean; onToggle: () => void }) {
   const toggleable = v.kind === 'toggle' && writable
   return (
-    <div className={`${css.switchRow} ${v.degraded && v.kind === 'toggle' ? css.switchOn : ''} ${v.kind === 'unwired' ? css.switchIdle : ''}`}>
+    <div className={`${css.switchRow} ${v.degraded && v.kind === 'toggle' ? css.switchOn : ''}`}>
       <div className={css.switchMain}>
         <div className={css.switchTitle}>
           <span className={css.strong}>{v.title}</span>
           <span className={`${css.mono} ${css.faint}`}>{v.code}</span>
           {v.kind === 'essential' && <Tag tone="neutral">核心 · 不可关闭</Tag>}
-          {v.kind === 'unwired' && (
-            <Tag tone="outline" title="目前没有任何代码读取这个开关，切换不会生效（待决 D-A-3）">
-              未接入
-            </Tag>
-          )}
           {v.kind === 'missing' && <Tag tone="outline">缺行</Tag>}
         </div>
         <div className={css.switchDesc}>{v.desc}</div>
         {v.note && <div className={css.switchNote}>{v.note}</div>}
-        {v.degraded && v.reason && v.kind !== 'unwired' && <div className={css.switchDesc}>原因：{v.reason}</div>}
+        {v.degraded && v.reason && <div className={css.switchDesc}>原因：{v.reason}</div>}
       </div>
       <span className={`${css.switchStatus} ${css[v.tone]}`}>{v.status}</span>
       {v.kind === 'essential' ? (

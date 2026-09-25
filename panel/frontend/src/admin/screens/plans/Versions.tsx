@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Checkbox / ConfirmModal / Input / Select / Tag / TextArea / useToast，依赖 ../../actions 的 endsIntent / useCan / useIntentKey，依赖 ./api 的写响应 schema、useInvalidatePlans、PlanDetail / VersionRow，依赖 ./model 的版本表单与文案，依赖 ./failure 的 useCatalogFailure，依赖 ./Plans.module.css
  * [OUTPUT]: 对外提供 Versions
- * [POS]: 套餐详情的「版本」卡（后台-04）：版本行（vN、额度摘要、「草稿 · 创建人 · 日期」或发布日、草稿 / 当前发布 / 历史），展开是设计稿的三项（流量 GB、设备上限、限速 Mbps）加「高级」折叠（重置策略、超额策略、宽限、续费语义、并发、设备释放、备注；权益与其它配额原样回填）。草稿「保存草稿」走 PUT versions（catalog.write）；已发布版本在没有草稿时可「另存为新版本」。「新建版本」= POST versions → PUT 复制当前版本语义 → POST pools 复制绑定（后端不复制，契约后台-04），已有草稿时禁用。发布走确认框（catalog.publish + reauth + 幂等），先把看得出的前置条件列出来。D-C-5 未决前：限速只在「用完限速」策略下可填
+ * [POS]: 套餐详情的「版本」卡（后台-04）：版本行（vN、额度摘要、「草稿 · 创建人 · 日期」或发布日、草稿 / 当前发布 / 历史），展开是设计稿的三项（流量 GB、设备上限、限速 Mbps）加「高级」折叠（重置策略、超额策略、宽限、续费语义、并发、设备释放、备注；权益与其它配额原样回填）。草稿「保存草稿」走 PUT versions（catalog.write）；已发布版本在没有草稿时可「另存为新版本」。「新建版本」= POST versions → PUT 复制当前版本语义 → POST pools 复制绑定（后端不复制，契约后台-04），已有草稿时禁用。发布走确认框（catalog.publish + reauth + 幂等），先把看得出的前置条件列出来。D-C-5 已决（5.A.2、R99：写多少限多少、与超额策略无关），第 ② 步改；在那之前限速只在「用完限速」策略下可填
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'

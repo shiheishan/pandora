@@ -5,7 +5,7 @@
 分层：schemas（zod）→ queries（读 hook，写后按 SK 前缀失效；转出 admin/actions.ts 的 useCan / useFailure / useIntentKey）→ logic（纯函数，security.test.ts 守住）→ 组件。
 四条后端事实决定了写法：访问日志是 audit_events 与订阅拉取日志的归并，不是 HTTP 访问日志，没有方法、路径、状态码与耗时，设计稿的列按契约换义；这几张表都不在 SSE 监听里，「实时尾随」是第一页 5 秒轮询；开关极性是 enabled = 功能可用，设计稿的「开启『暂停…』」对应 enabled=false，关闭时没给原因是数据库 CHECK，回 409 而不是 422，前端先拦；停用走 suspended（可恢复）且后台账号由后端跳过，所以结果按 disabled / skipped 汇总，一个都没停成时后端不写结论。
 权限：四个标签的读都挂 security.audit.read；审计导出另要 ops.export + reauth；标记正常 security.risk.review（无 reauth 无幂等），批量停用另要 iam.user.write + reauth + 幂等 ip_cluster_disable；开关切换 platform.settings.write + reauth（无幂等）。只读演示账号没有 security.audit.read，整个模块不可见。
-待决：D-A-3 ——「订阅下发使用缓存」后端做不到，不显示；ops.bulk_export / ops.reports / node.autoscale 没有代码读取，灰显「未接入」不可切；admin.writes 的豁免清单按后端现状写在说明里。switches.changed 广播还没登记进 core/query 的 REALTIME_TOPICS，报告协调会话。
+D-A-3 已决（5.A.2、R102）：「订阅下发使用缓存」不做；ops.bulk_export / ops.reports / node.autoscale 后端删行，字典与「未接入」灰显一并删掉（旧库残留的行按未知 code 显示、照后端极性可切）；admin.writes 的豁免清单按后端现状写在说明里。开关查询按 meta.topics 接 switches.changed，别的管理员切换后即时刷新。
 
 成员清单
 index.tsx: 页面入口，按标签分发：audit → AuditTab、access → AccessTab、risk → RiskTab、switches → SwitchesTab
@@ -15,8 +15,8 @@ logic.ts: 审计查询串 / 导出查询串与日期校验（与 auditExportRang
 AuditTab.tsx: 审计日志：搜索框（300ms 防抖）+ 动作前缀 / 操作者 / 结果筛选 + 导出，六列表格（非成功结果标签、对象的原因提示、存量行认证与 IP 显示「—」）与分页；导出弹窗选可选起止日期，经 requestRaw 取 CSV 存文件
 AccessTab.tsx: 访问日志：IP 与账号两个筛选框，深色终端（实时尾随指示与暂停、六段分段、时间 / 分类 / 动作 / 结果 / IP · 归属地五列、账号与客户端放行提示），接口没有 total，按「这页满没满」给「更早」与「回到最新」
 RiskTab.tsx: 风控：说明 + 「显示已标记正常的」，聚类卡片（IP 或「IP 无法解密」、归属地 · 网络类型 · 最近时间、风险徽标、账号数与事件数、成员可跳用户详情并标出非正常状态、结果行），标记为正常直接执行，禁用走 DisableModal（默认全选可停用成员、原因必填、幂等键一次意图一把），成功后就地补缓存、失效审计与用户模块
-SwitchesTab.tsx: 降级开关：黄底提示、只读模式开启时的红色提示、开关行（中文名 + code、说明、连带影响、当前原因、状态字、受控开关；核心项锁定、未接入灰显、缺行不可切），ToggleModal 进入降级时原因必填、恢复时可选
-security.module.css: 工具条（换行时导出仍贴右）与表格面板（审计表在容器里改固定布局、最小 840，1280 铺满、960 面板内横滚，不挤没列）、弹窗表单、深色终端（容器内重映射令牌让 ui 分段 / 骨架 / 空状态可用）、聚类卡片网格（auto-fill 340）、开关行（降级中浅红底且开关转危险色、未接入灰显）
+SwitchesTab.tsx: 降级开关：黄底提示、只读模式开启时的红色提示、开关行（中文名 + code、说明、连带影响、当前原因、状态字、受控开关；核心项锁定、缺行不可切），ToggleModal 进入降级时原因必填、恢复时可选
+security.module.css: 工具条（换行时导出仍贴右）与表格面板（审计表在容器里改固定布局、最小 840，1280 铺满、960 面板内横滚，不挤没列）、弹窗表单、深色终端（容器内重映射令牌让 ui 分段 / 骨架 / 空状态可用）、聚类卡片网格（auto-fill 340）、开关行（降级中浅红底且开关转危险色）
 security.test.ts: logic 与 schema 边界的单元测试
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

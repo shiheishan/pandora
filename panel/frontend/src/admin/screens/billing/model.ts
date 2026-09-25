@@ -197,7 +197,7 @@ export function knownMessage(message: string): string | null {
 }
 
 // ===========================================================================
-// 人工开单：POST v1/orders/manual（R64 / R74；balance 按 D-C-3 未决不提供）
+// 人工开单：POST v1/orders/manual（R64 / R74；balance 按 D-C-3（已决，5.A.2）不提供）
 // ===========================================================================
 export type Settlement = 'grant' | 'pending' | 'offline'
 export const SETTLEMENTS: ReadonlyArray<{ value: Settlement; label: string; hint: string }> = [

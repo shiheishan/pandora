@@ -2,7 +2,7 @@
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./hookActions 的 useSaveHook，依赖 ./HookDialogs 的 HookModal / SecretModal / EventPicker，依赖 ./logic 的钩子函数，依赖 ./queries，依赖 ./schemas，依赖 ./system.module.css
  * [OUTPUT]: 对外提供 HooksTab（通知与插件 · Webhook 钩子标签）
  * [POS]: admin/screens/system 的 Webhook 钩子（设计稿 t_hooks）：顶部「端点 URL + 订阅事件 + 新建钩子」（code 前端生成且避开现有 code——按 code upsert，撞上会静默覆盖；名称默认取主机名），卡片列表（状态点：停用灰、近 7 天有失败黄；URL；事件 · 近 7 天成功率 · 排队数），卡片上补了启用开关、编辑（契约待补·前端），投递记录展开（状态码、事件 · 第 n 次、耗时 R45、时间）、测试投递（toast「200 · 88 ms」）、删除（先确认）。
- *        写操作都要 platform.plugin.write + reauth；保存（新建 / 编辑 / 启停）按 code upsert 全字段并带幂等键 plugin_hook_save，删除与测试无幂等。事件名只用后端目录（待决 D-A-6 未决前不提供 ticket.replied / node.offline / node.online）
+ *        写操作都要 platform.plugin.write + reauth；保存（新建 / 编辑 / 启停）按 code upsert 全字段并带幂等键 plugin_hook_save，删除与测试无幂等。事件名只用后端目录（D-A-6 已决（5.A.2），不提供 ticket.replied / node.offline / node.online）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'

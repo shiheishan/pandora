@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useEffect / useState，依赖 ../../../core/format 的 formatMoney，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Input / Modal / Select / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ../plans/api 的 usePlans，依赖 ../users/api 的 useUser / useInvalidateUsers，依赖 ./api 的 manualCreatedSchema / useUserPick / useInvalidateBilling，依赖 ./model，依赖 ./failure 的 useBillingFailure，依赖 ./Billing.module.css
  * [OUTPUT]: 对外提供 ManualOrder
- * [POS]: 「人工开单」弹窗（后台-05；POST v1/orders/manual，billing.order.write + reauth + 幂等 order_create，R64 / R74）：用户改成可搜索选择器（GET v1/users?q=，从用户抽屉「为其开单」进来时按 ?new=<用户 id> 预先选好）、套餐与周期取套餐页同一条 GET v1/plans 的在售价格、结算方式（待用户支付 / 线下已收款 + 凭证号 / 赠送；从余额扣除按 D-C-3 未决不提供）、开单原因必填；成功后关框并打开新订单的抽屉
+ * [POS]: 「人工开单」弹窗（后台-05；POST v1/orders/manual，billing.order.write + reauth + 幂等 order_create，R64 / R74）：用户改成可搜索选择器（GET v1/users?q=，从用户抽屉「为其开单」进来时按 ?new=<用户 id> 预先选好）、套餐与周期取套餐页同一条 GET v1/plans 的在售价格、结算方式（待用户支付 / 线下已收款 + 凭证号 / 赠送；从余额扣除按 D-C-3（已决，5.A.2）不提供）、开单原因必填；成功后关框并打开新订单的抽屉
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useState } from 'react'

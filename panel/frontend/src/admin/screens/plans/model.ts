@@ -215,7 +215,7 @@ export function versionProblems(f: VersionForm): Fields {
     const d = parseCount(f.resetDay)
     if (d === null || Number.isNaN(d) || d < 1 || d > 28) out.quota_reset_day = '固定日必须为 1-28'
   }
-  // D-C-5 未决前按后端校验：限速只能配「用完限速」策略，且该策略必须有速率
+  // D-C-5 第 ② 步（R99）改之前按后端校验：限速只能配「用完限速」策略，且该策略必须有速率
   const kbps = parseKbps(f.mbps)
   if (isBad(kbps)) out.throttle_kbps = '填正数 Mbps'
   else if (f.overage === 'throttle' && kbps === null) out.throttle_kbps = '「用完限速」策略必须设置速率'

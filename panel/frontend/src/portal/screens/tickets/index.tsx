@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 ApiError，依赖 ../../../core/router 的 href / navigate / useHashLocation，依赖 ../../../ui 的 Button / Card / ConfirmModal / Empty / Input / QueryView / Select / Skeleton / Tag / TextArea / useToast，依赖 ../common/intent 的 useIntentKey / endsIntent，依赖 ../common/orders 的 orderTitle / useOrder，依赖 ../index 的 PortalScreenProps，依赖 ./api 与 ./model
  * [OUTPUT]: 默认导出 Tickets 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/tickets 的入口：工单支持（门户-07）。左列「提交新工单」与工单列表，右列新建表单或会话；地址驱动 #/tickets、#/tickets/new[?order=]、#/tickets/<id>，宽屏两列（列表页右侧显示第一张），< 640 列表与会话分屏、会话头有「全部工单」返回。按钮可见条件照后端判定，撤回与关闭都先确认；客服按待决 D-F-2 未决前显示「客服」
+ * [POS]: portal/screens/tickets 的入口：工单支持（门户-07）。左列「提交新工单」与工单列表，右列新建表单或会话；地址驱动 #/tickets、#/tickets/new[?order=]、#/tickets/<id>，宽屏两列（列表页右侧显示第一张），< 640 列表与会话分屏、会话头有「全部工单」返回。按钮可见条件照后端判定，撤回与关闭都先确认；客服按 D-F-2（已决，5.A.2）显示「客服」
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState, type KeyboardEvent } from 'react'

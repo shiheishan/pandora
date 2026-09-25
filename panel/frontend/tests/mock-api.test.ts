@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../dev/mock/types 的 matchPattern
  * [OUTPUT]: 对外提供假后端外壳与模块分发的测试
- * [POS]: tests 的假后端外壳守卫：matchPattern 的段匹配；外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同 key 重新执行、条件改好后成功，R85）——调账用 users 假后端的真实种子用户，余额经详情接口核对，种子外的 id 回 404；各页面会话往 dev/mock/ 里加接口时都依赖这几条行为。各模块的假接口测试在同目录的 mock-admin-*.test.ts 与 mock-portal.test.ts
+ * [POS]: tests 的假后端外壳守卫：matchPattern 的段匹配；外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同 key 重新执行、条件改好后成功，R85）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码）——调账用 users 假后端的真实种子用户，余额经详情接口核对，种子外的 id 回 404；各页面会话往 dev/mock/ 里加接口时都依赖这几条行为。各模块的假接口测试在同目录的 mock-admin-*.test.ts 与 mock-portal.test.ts
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -142,5 +142,23 @@ describe('mock api · admin', () => {
     const res = await adjust(access_token, 'intent-3', { amount: 100, reason: '测试调账理由' }, '00000000-0000-4000-8000-000000000000')
     expect(res.status).toBe(404)
     expect(await res.json()).toMatchObject({ error: { code: 'not_found' } })
+  })
+
+  it('turns the admin gateway read-only while admin.writes is off, exempting switches, auth and own password', async () => {
+    const { access_token } = await login(MOCK_ACCOUNTS.admin)
+    const auth = { Authorization: `Bearer ${access_token}` }
+    const toggle = (enabled: boolean) => fetch(`${base}/v1/switches/admin.writes`, { method: 'POST', headers: auth, body: JSON.stringify({ enabled, reason: enabled ? '' : '演练只读' }) })
+    expect((await toggle(false)).status).toBe(200)
+    const denied = await adjust(access_token, 'ro-1', { amount: 100, currency: 'CNY', reason: '只读模式演练' })
+    expect(denied.status).toBe(503)
+    expect(await denied.json()).toMatchObject({ error: { code: 'service_unavailable', message: '管理端只读模式' } })
+    // 先于认证：没有令牌的写也是 503；读、登录与重认证照常
+    expect((await fetch(`${base}/v1/users/${SEED_USER}/balance`, { method: 'POST', body: '{}' })).status).toBe(503)
+    expect((await fetch(`${base}/v1/switches`, { headers: auth })).status).toBe(200)
+    expect((await fetch(`${base}/v1/auth/reauth`, { method: 'POST', headers: auth, body: JSON.stringify({ password: MOCK_ACCOUNTS.admin.password }) })).status).toBe(200)
+    await login(MOCK_ACCOUNTS.admin)
+    // 切开关本身放行，否则关了就开不回来；恢复后同一个 key 重新执行（503 不重放）
+    expect((await toggle(true)).status).toBe(200)
+    expect((await adjust(access_token, 'ro-1', { amount: 100, currency: 'CNY', reason: '只读模式演练' })).status).toBe(200)
   })
 })

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./infra 的节点池纯函数，依赖 ./queries、./schemas，依赖 ./nodes.module.css 与 ./infra.module.css
  * [OUTPUT]: 对外提供 PoolsTab（节点与服务器 · 节点池标签）
- * [POS]: admin/screens/nodes 的节点池（设计稿 t_pools）：三栏卡片（名称 · 节点数 · 状态 | 组内节点标签，点标签跳节点抽屉 | 绑定套餐名「、」连接）；设计缺、契约待补·前端的新建 / 编辑 / 删除都补上：新建 POST v1/node-pools（code 留空由名字派生，回 200 { id }），编辑 POST v1/node-pools/{id}（空串 = 不改，名称与地区清不空），删除在有节点或套餐时直接禁用并说明，其余阻碍（节点模板、发布记录、未用令牌）靠 409 文案。用户组限制是待决 D-B-3，未决前不显示也不提交；节点归属不在这里改，走节点编辑的资源池
+ * [POS]: admin/screens/nodes 的节点池（设计稿 t_pools）：三栏卡片（名称 · 节点数 · 状态 | 组内节点标签，点标签跳节点抽屉 | 绑定套餐名「、」连接）；设计缺、契约待补·前端的新建 / 编辑 / 删除都补上：新建 POST v1/node-pools（code 留空由名字派生，回 200 { id }），编辑 POST v1/node-pools/{id}（空串 = 不改，名称与地区清不空），删除在有节点或套餐时直接禁用并说明，其余阻碍（节点模板、发布记录、未用令牌）靠 409 文案。用户组限制是 D-B-3 / R104（已决，第 ③ 步接入），在那之前不显示也不提交；节点归属不在这里改，走节点编辑的资源池
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'

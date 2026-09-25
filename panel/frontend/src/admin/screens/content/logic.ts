@@ -164,7 +164,7 @@ export interface AnnActions {
   withdraw: boolean
   /** 已发布公告的发布时间不可改（改到将来会变成定时，后端 409） */
   scheduleLocked: boolean
-  /** 已撤回是终态（待决 D-D-3 未决前）：只读，给「复制为新公告」 */
+  /** 已撤回是终态（D-D-3 已决，5.A.2）：只读，给「复制为新公告」 */
   readOnly: boolean
 }
 

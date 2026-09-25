@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 ../../../core/api 的 isApiError，依赖 ../../../core/router 的 href，依赖 ../../../ui 的 Button / Skeleton，依赖 ../../modules 的 modulePath / Permissions，依赖 ./model 的 Target / Tone，依赖 ./Dash.module.css
  * [OUTPUT]: 对外提供 isForbidden、targetHref、Dot、CardError、PanelSkeleton、toneText
- * [POS]: admin/screens/dash 各卡片共用的小部件：卡片内错误行（带重试，404 由调用方先当无权限隐藏）、骨架、状态圆点、链接拼接；只在本目录用，不进 ui/
+ * [POS]: admin/screens/dash 各卡片共用的小部件：卡片内错误行（带重试，404 由调用方先当无权限隐藏）、骨架、状态圆点、链接拼接（目标可带地址筛选）；只在本目录用，不进 ui/
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { isApiError } from '../../../core/api'
@@ -17,7 +17,7 @@ export function isForbidden(error: unknown): boolean {
 }
 
 export function targetHref(target: Target, perms: Permissions): string {
-  return href(modulePath(target.module, target.tab, perms))
+  return href(modulePath(target.module, target.tab, perms), target.query)
 }
 
 export function Dot({ tone }: { tone: Tone }) {

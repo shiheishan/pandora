@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./api 的 schema，依赖 ./model 的纯逻辑
  * [OUTPUT]: 无（测试）
- * [POS]: 第 ⑤ 步工单的单元测试：列表与详情 schema（R60 字段可缺席、列表不收 null、详情零值 last_reply_at）、子路由、状态文案（closed 按 closed_reason 分）、三个按钮的可见条件、作者名（D-F-2 未决前）、消息时间、新建表单校验
+ * [POS]: 第 ⑤ 步工单的单元测试：列表与详情 schema（R60 字段可缺席、列表不收 null、详情零值 last_reply_at）、子路由、状态文案（closed 按 closed_reason 分）、三个按钮的可见条件、作者名（D-F-2 已决）、消息时间、新建表单校验
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -75,7 +75,7 @@ describe('状态与按钮', () => {
     expect(canReply(detail({ status: 'closed' }))).toBe(false)
   })
 
-  it('作者：客服不显示姓名（D-F-2 未决前）', () => {
+  it('作者：客服不显示姓名（D-F-2 已决）', () => {
     expect(authorLabel({ author_kind: 'user' })).toBe('我')
     expect(authorLabel({ author_kind: 'agent' })).toBe('客服')
   })

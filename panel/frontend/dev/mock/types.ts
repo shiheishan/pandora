@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:http 的 IncomingMessage / ServerResponse 类型
  * [OUTPUT]: 对外提供 Json、MockApp、MockUser、MockRaw、MockResult、AnonContext、MockContext、AnonRoute、MockRoute、MockModule、matchPattern、findRoute
- * [POS]: dev/mock 的处理器契约：mock-api.ts 为每个请求造一份上下文，按入口依次询问 admin/ 或 portal/ 下的模块处理器；模块文件只依赖这里，不碰会话、令牌、幂等表的实现
+ * [POS]: dev/mock 的处理器契约：mock-api.ts 为每个请求造一份上下文，按入口依次询问 admin/ 或 portal/ 下的模块处理器；模块文件只依赖这里，不碰会话、令牌、幂等表的实现（门户账号安全要列出与吊销外壳会话，经 otherSessions / revokeSession 两个方法）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -64,6 +64,10 @@ export interface MockContext extends AnonContext {
   user: MockUser
   /** 当前会话 15 分钟内验证过口令（GET v1/me 的 reauthed） */
   reauthed: boolean
+  /** 外壳会话表里本账号的其它会话（不含当前令牌）：门户账号安全把它们与种子会话一起列出 */
+  otherSessions(): ReadonlyArray<{ token: string; created: number; userAgent: string }>
+  /** 吊销本账号的一个外壳会话，令牌立即失效（之后请求 401）；不是本账号的令牌返回 false */
+  revokeSession(token: string): boolean
   /** RequirePermission：缺权限回 404 not_found（与后端 NotFoundOrForbidden 一致）并返回 false */
   requirePermission(code: string): boolean
   /** RequireRecentReauth：超出窗口回 403 reauth_required 并返回 false；不消耗幂等键 */

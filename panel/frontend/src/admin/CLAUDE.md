@@ -18,7 +18,7 @@ me.ts: GET v1/me 的 schema 与 useAdminMe（permissions 为 null 时归一为�
 LoginPage.tsx: 两栏登录页，左栏侧栏深底（< 960 收起），POST v1/auth/login（auth:false）成功写令牌，401 在密码框下内联显示
 Shell.tsx: 外框编排：Sidebar、顶栏面包屑与 EventsCapsule、页头标题与可读的 ui/Tabs、内容区（按权限渲染 screens 登记的页面或「无权限或不存在」，me 读取失败给重试）；⌘K 全局快捷键、规范地址 replace（等 me 回来、保留查询串）、document.title
 Sidebar.tsx: 字标与构建版本号（__APP_RELEASE__）、⌘K 入口、六组导航（只列可读模块，整组不可读就不画组名；工单 / 营销徽标取 tasks.ts 的共用查询，只在有 ops.dashboard.read 时请求）、向上弹出的账户菜单（主题、改密码、打开门户 ../、退出）
-EventsCapsule.tsx: 顶栏「实时事件」：持有后台唯一的 SSE 连接（需 ops.notification.read，4xx 时整块不渲染），事件同时驱动查询失效；可读事件流是待决 D-A-1，暂按 topic + op 生成通用条目，点击跳对应模块；describeEvent 为纯函数
+EventsCapsule.tsx: 顶栏「实时事件」：持有后台唯一的 SSE 连接（需 ops.notification.read，4xx 时整块不渲染），事件同时驱动查询失效；D-A-1 已决（5.A.2）：按 topic + op 生成通用条目（switches.changed 写开关 code 与方向），点击跳对应模块；describeEvent 为纯函数
 CommandPalette.tsx: ⌘K 命令面板，原生 <dialog>，combobox + listbox，↑↓ / ↵ / Esc；只列当前权限可读的条目
 ChangePasswordDialog.tsx: 修改我的密码：前端先拦 12 位且含字母数字（后端 12 位规则待补），POST v1/me/password（passwordCheck，401 显示在当前密码框），成功即清令牌回登录页（保留规则 4：后端已吊销全部会话）；passwordStrength 为四段强度条
 ReauthDialog.tsx: 「敏感操作 · 需要重新认证」：api.reauth(password) 换新令牌后 resolve(true)，口令错在框内显示、不登出

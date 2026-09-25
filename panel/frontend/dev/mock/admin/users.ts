@@ -405,7 +405,8 @@ export const users_: MockModule = {
       if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      if (!reasonOk(body.reason)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { reason: '请写清为什么要改这个用户的密码，5 到 500 字。这条会进审计' })
+      // R101：reason 可选，缺省或空串不校验；给了就限 500 字（照旧写进审计）
+      if (body.reason !== undefined && (typeof body.reason !== 'string' || [...body.reason.trim()].length > 500)) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { reason: '原因最多 500 字' })
       if (ctx.params.id === ctx.user.userId) return ctx.fail(400, 'bad_request', '改自己的密码请用「修改密码」，那里会先验证当前密码')
       const problem = passwordProblem(typeof body.new_password === 'string' ? body.new_password : '')
       if (problem) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { password: problem })
