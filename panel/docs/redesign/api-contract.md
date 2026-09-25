@@ -328,6 +328,7 @@
   - 「查看用户」直接打开用户抽屉，参数为 `user_id`。这需要 `iam.user.read` 权限，没有权限时按钮置灰
 
 #### POST v1/tickets/{id}/reply — 客服回复 / 内部备注
+- **修订 R115（2026-09-25，联调冒烟 ④ 实测，协调会话核实）**：非内部回复**要给提单人排一条 `ticket.replied` 通知**（现在不发：模板 00023 / 00050 / 00090 早已种下 inapp 与 telegram 两个渠道，后台模板页也写着「工单被管理员回复后通知提单人」，但 `support.replyAsAgent` 从不调 `notify.Enqueue`）。与回复同一事务排队，变量 `subject` 取工单标题，去重键 `ticket-replied:<消息 id>`（每条回复一条，重放不重复），类别 service 按用户偏好过滤；内部备注不发；排完 Kick 一次派发。响应形状不变。
 - 状态：现有 `handlers.go:592 ticketReply`
 - 权限：`ops.ticket.write`｜reauth：否｜幂等：是 `admin_ticket_reply`
 - 请求：`{ body: string(1–5000，trim 后计数), internal_note?: bool }`
@@ -3321,3 +3322,4 @@
 | R112 | 2026-09-25 | 后端三 | 建租户触发器补种渠道、模板、开关（R97、R94 已修）；删三个开关（R102）；重置密码原因超 500 字 422（R101） |
 | R113 | 2026-09-25 | 后端四 | 上线接口已实现：路径、前置条件与文案、已 active 先于版本号幂等、服务器进 ready 不要求控制节点、warnings 可缺省 |
 | R114 | 2026-09-25 | 后端三 | R75、R80、R95、R74、R76、R81、R62 遗留已修：工单详情计数与关联订单、`paid_totals` 按币种（`paid_total` 弃用）、取消与凭证号文案中文、订单行 `manual`、变更试算回券面、门户佣金回 `scope`、`last_seen_at` 认证中间件节流写入；零元单履约通知节点；周期走完后续费从付款时刻起算 |
+| R115 | 2026-09-25 | 联调冒烟 | 客服非内部回复给提单人排 `ticket.replied` 通知（模板早已种下、代码从未排队） |
