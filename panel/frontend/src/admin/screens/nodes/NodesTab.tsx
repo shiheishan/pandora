@@ -60,7 +60,7 @@ export function NodesTab({ rest }: { rest: string[] }) {
       toast(updated ? `已${verb} ${updated} 个节点${skipped ? `，跳过 ${skipped} 个（当前状态不能${verb}）` : ''}` : `选中的节点当前状态都不能${verb}`, updated ? 'ok' : 'danger')
     },
     onError: (e) => {
-      fail(e)
+      fail(e, { intent: batchIntent })
       void invalidate()
     },
   })

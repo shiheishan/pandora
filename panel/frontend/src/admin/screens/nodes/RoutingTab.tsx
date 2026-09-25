@@ -13,7 +13,7 @@ import { OUTBOUND_TYPES, outboundToRow, renameOutbound, routeToRow, rowsToOutbou
 import { RuleRows } from './NodeRouting'
 import x from './infra.module.css'
 import css from './nodes.module.css'
-import { useCan, useFailure, useGlobalRouting, useIntentKey, useInvalidateNodes } from './queries'
+import { endsIntent, useCan, useFailure, useGlobalRouting, useIntentKey, useInvalidateNodes } from './queries'
 import { globalRoutingSaved, type GlobalRouting } from './schemas'
 
 export function RoutingTab() {
@@ -60,6 +60,7 @@ function RoutingEditor({ data }: { data: GlobalRouting }) {
       void invalidate()
     },
     onError: (error) => {
+      if (endsIntent(error)) intent.reset()
       if (isApiError(error, 'conflict') && error.fields.expected_revision) {
         toast('全局路由已被其他管理员修改，已刷新到最新（这次的修改没有发布）', 'danger')
         void invalidate()

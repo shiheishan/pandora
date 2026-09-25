@@ -53,7 +53,7 @@ export function CouponForm({
     onError: (error) => {
       // 409「这个优惠码已经存在」落在码输入框下，而不是一闪而过的 Toast
       if (!batch && isApiError(error, 'conflict')) return setErrors({ code: error.message })
-      fail(error, setErrors)
+      fail(error, { fields: setErrors, intent })
     },
   })
 

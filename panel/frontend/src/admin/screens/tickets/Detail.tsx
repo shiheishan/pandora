@@ -133,7 +133,7 @@ function Controls({ t, canWrite, canViewUser }: { t: TicketDetail; canWrite: boo
       const who = assignees.data?.find((a) => a.id === assigned_to)
       toast(assigned_to ? `已指派给 ${who?.display_name || who?.email || '所选客服'}` : '已取消指派')
     },
-    onError: (e) => fail(e),
+    onError: (e) => fail(e, { intent: assignKey }),
   })
 
   const onStatus = (value: string) => {
@@ -141,7 +141,7 @@ function Controls({ t, canWrite, canViewUser }: { t: TicketDetail; canWrite: boo
     if (status === t.status) return
     // 关闭会让用户看到「客服关闭」，先问原因（选填，写进系统消息）
     if (status === 'closed') return setClosing(true)
-    setStatus.mutate({ status }, { onError: (e) => fail(e) })
+    setStatus.mutate({ status }, { onError: (e) => fail(e, { intent: statusKey }) })
   }
 
   return (
@@ -196,7 +196,7 @@ function Controls({ t, canWrite, canViewUser }: { t: TicketDetail; canWrite: boo
             () => setEscalating(false),
             (e: unknown) => {
               if (isApiError(e, 'reauth_required')) return
-              fail(e)
+              fail(e, { intent: statusKey })
             },
           )
         }
@@ -208,7 +208,7 @@ function Controls({ t, canWrite, canViewUser }: { t: TicketDetail; canWrite: boo
         onConfirm={(reason, setError) =>
           setStatus.mutate(reason ? { status: 'closed', reason } : { status: 'closed' }, {
             onSuccess: () => setClosing(false),
-            onError: (e) => void fail(e, (f) => setError(f.reason ?? f.status ?? '关闭失败')),
+            onError: (e) => void fail(e, { fields: (f) => setError(f.reason ?? f.status ?? '关闭失败'), intent: statusKey }),
           })
         }
       />

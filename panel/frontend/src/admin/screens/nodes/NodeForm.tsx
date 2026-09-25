@@ -32,7 +32,7 @@ import {
   type ProtocolField,
 } from './logic'
 import css from './nodes.module.css'
-import { useCan, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
+import { endsIntent, useCan, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
 import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeRow, type ProtocolSchema } from './schemas'
 
 export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; onSaved: (saved: AdminNode) => void; onCancel?: () => void }) {
@@ -73,6 +73,7 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; on
       onSaved(saved)
     },
     onError: (error) => {
+      if (endsIntent(error)) intent.reset()
       if (isApiError(error) && error.status === 422 && Object.keys(error.fields).length) {
         const { byField, rest } = mapProtocolErrors(fields, error.fields)
         setErrors({ ...rest, ...byField })

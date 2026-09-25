@@ -199,7 +199,7 @@ function PayDialog({ withdrawal, onClose }: { withdrawal: Withdrawal | null; onC
       close()
     },
     onError: (error) => {
-      if (!fail(error, setErrors)) close()
+      if (!fail(error, { fields: setErrors, intent })) close()
       void invalidate()
     },
   })

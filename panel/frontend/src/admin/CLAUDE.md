@@ -12,7 +12,7 @@ main.tsx: 建运行时与 ReauthController 并挂载 App；仅 DEV 把运行时�
 App.tsx: RuntimeProvider 包住 Root（按 useSignedIn 切 LoginPage / Shell）与常驻 ReauthDialog
 modules.ts: 十个模块的标题、分组、标签（「欠费单」按保留规则 6 叫「挂账」）与读权限码（取自契约各模块主列表接口，含修订 R6），侧栏六组，⌘K 深链；canRead / visibleTabs / canReadModule 判权限，resolveRoute 拆出 module / tab / rest 并给规范地址，modulePath 拼链接，paletteItems 按权限筛选
 reauth.ts: createReauthController：api 在 React 外、对话框在 React 内，用可订阅的小仓库接起来；并发请求共用一个待决 Promise
-actions.ts: 各模块页写操作共用的三件：useCan（按 GET v1/me 的权限码）、useIntentKey（一次用户意图一把幂等键，意图变了换新键、成功后 reset）、useFailure（reauth 取消静默、fields 标表单、其它 Toast）；逻辑在纯函数 canWith / createIntentKey / classifyFailure 里
+actions.ts: 各模块页写操作共用的三件：useCan（按 GET v1/me 的权限码）、useIntentKey（一次用户意图一把幂等键，意图变了换新键、成功后 reset）、useFailure（reauth 取消静默、fields 标表单、其它 Toast；第二参数传 { fields, intent } 时 4xx 业务拒绝在此丢弃幂等键，断网与 5xx 保留，契约 1.5 与 R85）；自己先处理 4xx 分支、不经 useFailure 的写操作直接用 endsIntent；逻辑在纯函数 canWith / createIntentKey / endsIntent / classifyFailure / handleFailure 里
 tasks.ts: 待补·后端 GET v1/dashboard/tasks 的严格 schema（按 kind 区分，未知 kind 判为不符）、共用查询键与 useDashboardTasks、taskCount；侧栏徽标与仪表盘「需要处理」共用一条查询、一种缓存形状
 me.ts: GET v1/me 的 schema 与 useAdminMe（permissions 为 null 时归一为空数组；email / display_name / roles 是待补·后端字段，按可选）；identityLabels 按契约映射侧栏账户块文字，字段缺失时退回「管理员」与 user_id 前 8 位
 LoginPage.tsx: 两栏登录页，左栏侧栏深底（< 960 收起），POST v1/auth/login（auth:false）成功写令牌，401 在密码框下内联显示

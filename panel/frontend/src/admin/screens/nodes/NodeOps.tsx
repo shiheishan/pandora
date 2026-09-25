@@ -12,7 +12,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Modal, Select, useToast } from '../../../ui'
 import { MOVE_BLOCKED_HINT, canMove, canTransition, moveBlockers } from './logic'
 import css from './nodes.module.css'
-import { useCan, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
+import { endsIntent, useCan, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
 import { adminNodeSchema, batchStatusResponse, deletedResponse, publishResponse, type NodeRow } from './schemas'
 
 type Pending = 'publish' | 'toggle' | 'retire' | 'delete' | null
@@ -50,7 +50,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
       publishIntent.reset()
       after(`配置已发布 · 版本 #${r.version}`)()
     },
-    onError: (e) => fail(e),
+    onError: (e) => fail(e, { intent: publishIntent }),
   })
   const toggle = useMutation({
     mutationFn: () => {
@@ -62,7 +62,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
       after(enabling ? '已启用，心跳正常后开始下发给用户' : '已停用，不再下发给用户')()
     },
     onError: (e) => {
-      fail(e)
+      fail(e, { intent: toggleIntent })
       void invalidate()
     },
   })
@@ -76,7 +76,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
       after('已退役：不再下发，历史流量与审计保留')()
     },
     onError: (e) => {
-      fail(e)
+      fail(e, { intent: retireIntent })
       void invalidate()
     },
   })
@@ -99,6 +99,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
       after('已迁移到新服务器')()
     },
     onError: (e) => {
+      if (endsIntent(e)) moveIntent.reset()
       if (isApiError(e, 'conflict') && moveBlockers(e.fields).length) return setMoveBlock(moveBlockers(e.fields))
       fail(e)
       void invalidate()
@@ -240,6 +241,7 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
       navigate(`/nodes/nodes/${created.id}/proto`)
     },
     onError: (e) => {
+      if (endsIntent(e)) intent.reset()
       if (isApiError(e, 'conflict') && /名称/.test(e.message)) return setErrors({ name: e.message })
       fail(e, setErrors)
     },

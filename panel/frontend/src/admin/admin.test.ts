@@ -1,12 +1,12 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ../core/api 的 ApiError，依赖 ./actions 的 canWith / createIntentKey / classifyFailure，依赖 ./modules、./reauth、./me、./tasks 的 tasksSchema / taskCount、./ChangePasswordDialog 的 passwordStrength、./EventsCapsule 的 describeEvent
+ * [INPUT]: 依赖 vitest，依赖 ../core/api 的 ApiError，依赖 ./actions 的 canWith / createIntentKey / endsIntent / classifyFailure / handleFailure，依赖 ./modules、./reauth、./me、./tasks 的 tasksSchema / taskCount、./ChangePasswordDialog 的 passwordStrength、./EventsCapsule 的 describeEvent
  * [OUTPUT]: 对外提供 admin 外框纯逻辑的单元测试
  * [POS]: admin 的单元测试：路由规范化、标签回落与 rest 子路由、读权限表与按权限取舍、⌘K 筛选与隐藏、reauth 桥的单次弹框与结算、身份文字的契约映射与回退、强度条、实时事件条目、「需要处理」计数的严格 schema 与徽标取数；界面交互在浏览器里对 dev/mock-api 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../core/api'
-import { canWith, classifyFailure, createIntentKey } from './actions'
+import { canWith, classifyFailure, createIntentKey, endsIntent, handleFailure } from './actions'
 import { passwordStrength } from './ChangePasswordDialog'
 import { describeEvent } from './EventsCapsule'
 import { identityLabels } from './me'
@@ -219,5 +219,52 @@ describe('actions', () => {
     expect(classifyFailure(invalid, false)).toEqual({ kind: 'toast', message: '请求参数校验未通过' })
     expect(classifyFailure(conflict, true)).toEqual({ kind: 'toast', message: '已被他人修改' })
     expect(classifyFailure(new Error('boom'), true)).toEqual({ kind: 'toast', message: '操作失败，请稍后重试' })
+  })
+
+  // 契约 1.5 与 R85：后端只重放 2xx，4xx 业务拒绝后同 key 会重新执行或回 409
+  const failure = (status: number, code: ConstructorParameters<typeof ApiError>[0]['code'], fields?: Record<string, string>) =>
+    new ApiError({ status, code, message: `失败 ${status}`, ...(fields ? { fields } : {}) })
+
+  it('endsIntent：4xx 业务拒绝结束意图；reauth 取消、断网、5xx、2xx 回包解析失败都保留键', () => {
+    expect(endsIntent(failure(422, 'validation_failed'))).toBe(true)
+    expect(endsIntent(failure(409, 'conflict'))).toBe(true)
+    expect(endsIntent(failure(404, 'not_found'))).toBe(true)
+    expect(endsIntent(failure(409, 'idempotency_key_reuse'))).toBe(true)
+    expect(endsIntent(failure(403, 'reauth_required'))).toBe(false)
+    expect(endsIntent(failure(0, 'network_error'))).toBe(false)
+    expect(endsIntent(failure(500, 'internal_error'))).toBe(false)
+    expect(endsIntent(failure(200, 'invalid_response'))).toBe(false)
+    expect(endsIntent(new Error('boom'))).toBe(false)
+  })
+
+  it('handleFailure：传了 intent 时 4xx 丢弃键、其余保留；回调与选项两种写法等价', () => {
+    let n = 0
+    const intent = createIntentKey(() => `k${++n}`)
+    const toasts: string[] = []
+    const toast = (m: string) => void toasts.push(m)
+    const key = intent.keyFor('pay')
+
+    // 断网与 5xx：Toast，键保留，重试回放同一把
+    expect(handleFailure(failure(0, 'network_error'), { intent }, toast)).toBe(false)
+    expect(handleFailure(failure(503, 'service_unavailable'), { intent }, toast)).toBe(false)
+    expect(intent.keyFor('pay')).toBe(key)
+    // reauth 取消：静默，键保留
+    expect(handleFailure(failure(403, 'reauth_required'), { intent }, toast)).toBe(true)
+    expect(intent.keyFor('pay')).toBe(key)
+    // 409：Toast，键丢弃，下一次是新键
+    expect(handleFailure(failure(409, 'conflict'), { intent }, toast)).toBe(false)
+    const next = intent.keyFor('pay')
+    expect(next).not.toBe(key)
+    // 422 标表单：键同样丢弃
+    let marked: Record<string, string> = {}
+    expect(handleFailure(failure(422, 'validation_failed', { note: '太短' }), { fields: (f) => (marked = f), intent }, toast)).toBe(true)
+    expect(marked).toEqual({ note: '太短' })
+    expect(intent.keyFor('pay')).not.toBe(next)
+    // 只传回调（无幂等键的写操作）行为不变
+    marked = {}
+    expect(handleFailure(failure(422, 'validation_failed', { name: '重复' }), (f) => (marked = f), toast)).toBe(true)
+    expect(marked).toEqual({ name: '重复' })
+    expect(handleFailure(failure(422, 'validation_failed', { name: '重复' }), undefined, toast)).toBe(false)
+    expect(toasts).toEqual(['失败 0', '失败 503', '失败 409', '失败 422'])
   })
 })
