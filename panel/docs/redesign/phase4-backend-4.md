@@ -26,8 +26,10 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：尚未开工。
+**进度**：① 无池节点与通知 `8977de1` 已验收并合入（合并 b3eea00；PG18 run 36125785094：218 PASS / 0 SKIP / 0 FAIL，NativeCore 36125785080 全绿；契约 R105）。**下一步 ②**（节点池限定用户组，迁移从 00093 起）。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R104。
+- 契约修订已到 R105。
+- ① 的验收结论：`ListNodeUsers` 去掉无池公共节点一支并加上 `pnp.tenant_id` 条件、`setPlanPools` 提交后通知、`NotifyUsersChanged` 放在 `nodestream.go`、后台节点列表 `DeliveryState` 加「是否在池」参数、新建 `delivery` 门禁域且过滤写精确，都认可。② 的池名单变化与用户换组一律用 `NotifyUsersChanged`；`delivery` 域的测试名单加新用例时同步更新过滤正则。
+- `cmd/aegis-admin`、`cmd/aegis-public` 里履约通知手写的发布代码改用 `NotifyUsersChanged`，这件**交给后端三**（它第 ⑤ 步本来就要给赠送单加通知），你不要动 `cmd/`。
 - 上线提醒（给协调会话与用户）：① 合入后，测试机上没划进节点池的节点会停止服务，部署前先把它们划进池。

@@ -33,4 +33,5 @@
 **进度**：尚未开工。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R104。
+- 契约修订已到 R105。
+- 后端四已在 `nodefabric/nodestream.go` 加了 `Service.NotifyUsersChanged(ctx, tenantID)`（租户级 `node.users.changed`，合并 b3eea00）。第 ⑤ 步给赠送单加通知时用它；同一步顺带把 `cmd/aegis-admin`、`cmd/aegis-public` 里履约通知手写的发布代码改用它（行为不变）。做事前先 `git merge feat/panel-redesign`。

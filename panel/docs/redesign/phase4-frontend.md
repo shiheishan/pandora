@@ -27,6 +27,7 @@
 **进度**：尚未开工。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R104。
+- 契约修订已到 R105。
+- ③ 的无池节点提示直接显示节点列表的 `delivery_note`（R105），不要自己根据 `pool_id` 另写一套判断。
 - 假后端测试一律按模块放在 `tests/mock-<入口>-<模块>.test.ts`，用 `tests/mock-helpers.ts`。
 - 幂等口径（R85、第 10.4 节）：后端只重放 2xx；成功与 4xx 后丢 key（`reauth_required` 除外），断网与 5xx 保留；带幂等键的写操作用 `fail(e, { intent })` 写法；下单类用门户 `usePlacedOrder`。

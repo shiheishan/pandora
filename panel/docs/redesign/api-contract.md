@@ -1231,6 +1231,7 @@
 ### 后台-07 节点与服务器 · 节点（节点 tab + 节点详情抽屉）
 
 #### GET v1/nodes — 节点列表（含运营聚合）
+- **修订 R105（2026-09-25，后端四 ① 8977de1）**：没划进节点池（`pool_id` 为 null）的节点，`delivered_to_users=false`，`delivery_note`=「未划入节点池，不服务任何用户」（判断顺序：先看 serving_status，再看有没有池，再看心跳）。前端的无池提示直接显示 `delivery_note`，不要自己根据 `pool_id` 另写一套判断（R104）。
 - **修订 R77（2026-09-24，后台前端二 ② 核对）**：Node 里标 `?` 的字段（`server_id`、`server_name`、`pool_id`、`pool_name`、`cpu_percent`、心跳与身份类字段等）是 Go 指针字段且没有 omitempty，**缺值时返回 `null`，不是省略**；`granted_plans` 也可能为 `null`。前端按 `| null` 写 schema。
 - **修订 R27（2026-09-24，后端二 107de25）**：新增 `limit?`（1–1000，默认 500）与 `offset?`；`total` 为同一筛选条件下的真实总数（缺陷 21）。按 `sort_order, node_no` 排序仍在后端二第 ⑤ 步。
 - 状态：现有 `panel/internal/api/admin/handlers.go:703 nodeList`；**待补·后端（字段扩展 + 排序，无迁移，cc 除外）**
@@ -3269,3 +3270,4 @@
 | R102 | 2026-09-25 | 用户（D-A-3） | 删除三个未接入的降级开关 |
 | R103 | 2026-09-25 | 用户（D-B-4） | 设备识别窗口 5/10/30/60 分钟可选，纯面板改动 |
 | R104 | 2026-09-25 | 用户（D-B-3） | 节点池限定用户组（池侧专属）；无池节点不服务任何人；换组与池绑定变化通知节点 |
+| R105 | 2026-09-25 | 后端四 | 节点列表对无池节点回 delivered_to_users=false 与固定的 delivery_note |
