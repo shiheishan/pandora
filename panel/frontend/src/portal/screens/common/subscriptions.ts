@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useMutation / useQueryClient，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../../queries 的订阅 schema 与共用查询，依赖 ./traffic 的额度摘要与重置日计算
- * [OUTPUT]: 对外提供（转出外框的）Subscription、subscriptionSchema、LIVE_STATUSES、isLive、pickPrimary、useSubscriptions，自有的 SubscriptionLink、UsageReport 等 schema 与 useSubscriptionLinks、useSubscriptionNodes、useSubscriptionUsage、useTrafficPacks、useRotateLink、usePlanTraffic / PlanTraffic、liveSubscriptions、canRenew
+ * [OUTPUT]: 对外提供（转出外框的）Subscription、subscriptionSchema、LIVE_STATUSES、isLive、pickPrimary、useSubscriptions，自有的 SubscriptionLink、UsageReport 等 schema 与 useSubscriptionLinks、useSubscriptionNodes、useSubscriptionUsage、useTrafficPacks、useRotateLink、usePlanTraffic / PlanTraffic、liveSubscriptions、canRenew；linksSchema / nodesSchema / trafficPacksSchema 为 tests/smoke 形状冒烟导出
  * [POS]: portal/screens/common 的订阅数据层（契约门户-01 / 门户-02，流量包余量属门户-03）：概览与我的订阅共用；订阅列表的 schema 与查询在外框 queries.ts（同键共用），这里转出；其余 schema 按契约写全写严，扩展字段（修订 R53–R62 已上线）写成可选，旧后端缺席时页面降级
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -32,7 +32,7 @@ export const subscriptionLinkSchema = z.object({
 })
 export type SubscriptionLink = z.output<typeof subscriptionLinkSchema>
 
-const linksSchema = z.object({ links: z.array(subscriptionLinkSchema) })
+export const linksSchema = z.object({ links: z.array(subscriptionLinkSchema) })
 const LINKS_KEY = ['portal', 'subscription-links'] as const
 
 export function useSubscriptionLinks() {
@@ -74,7 +74,7 @@ export function useRotateLink() {
 // ---------------------------------------------------------------------------
 export const nodePreviewSchema = z.object({ name: z.string(), protocol: z.string(), traffic_rate: z.number() })
 export type NodePreview = z.output<typeof nodePreviewSchema>
-const nodesSchema = z.object({ count: z.number().int(), nodes: z.array(nodePreviewSchema) })
+export const nodesSchema = z.object({ count: z.number().int(), nodes: z.array(nodePreviewSchema) })
 
 export function useSubscriptionNodes(subscriptionId: string | undefined) {
   const api = useApi()
@@ -111,7 +111,7 @@ export function useSubscriptionUsage(subscriptionId: string | undefined) {
 // ---------------------------------------------------------------------------
 // GET v1/me/traffic-packs（修订 R30）：流量包挂用户，余量新增推 subscriptions.changed（R33）
 // ---------------------------------------------------------------------------
-const trafficPacksSchema = z.object({
+export const trafficPacksSchema = z.object({
   remaining_bytes_total: z.number().int(),
   packs: z.array(
     z.object({
