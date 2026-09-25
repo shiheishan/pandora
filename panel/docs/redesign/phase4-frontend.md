@@ -24,10 +24,17 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：①（合并 283797d）、② `f1ea0ad`（合并 bb0480a，与后端三 ③ 同批）已验收合入。③ `9e14d0b` 检查已过（frontend-check 623 用例、嵌入契约、产物扫描），**暂不合入**：设备策略 schema 的 `window_minutes` 按 R103 必填、上线按钮调 R108 新接口，要等后端四 ③、④ 合入主线后再合。④ 先出方案等协调会话同意。
+**进度**：①（合并 283797d）、②（合并 bb0480a）已验收合入。③ `9e14d0b`、④ `e3700e7` 检查已过（frontend-check 625 用例、嵌入契约、产物扫描；④ CI：panel-smoke 36140139501、PG18 36140139469、NativeCore 36140139471 全绿），**后端四 ④ 已合入主线（合并 b8f8520，R113），可以做补丁了**。**上一个会话上下文用完已结束，新会话从这里接上**：后端四 ④ 合入后，`git merge feat/panel-redesign`，做一个补丁提交把上线接口响应的 schema 按 R110 收紧为 `AdminNode` + `warnings`（假后端同步返回这个形状），跑 frontend-check 与嵌入契约，推送，报告；协调会话随后把 ③ ④ 和补丁一起合入。之后联调冒烟查出的前端问题会追加在下面，由你修。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R110。
+- 契约修订已到 R113。
+- 补丁提交按 R113：上线接口响应 `AdminNode` 的 `warnings` 可缺省（没有提示时不出现），schema 写可选；409 的各条原因原样 Toast。
+- ④ 的验收结论：`core/intent.ts` 收拢（`endsIntent` 带 reauth 例外，后台 `actions.ts` 转出不变，门户实际 4 个文件 8 处改 `keyFor`，下单专用函数留门户）、`planOptionsKey(module)` 挂在套餐前缀下且用户那处补 `plans.changed`、按前缀失效的测试、浏览器实测门户 7 个带键写操作与后台下拉随改名刷新，都认可。
+- **接力须知（新会话先读）**：
+  - dev 端口 5241（`--strictPort`），做完关掉；深色用顶栏「深色模式」开关，浏览器模拟不起作用。
+  - 浏览器登录不要手输口令：用命令行向本机假后端取演示令牌写进浏览器存储（`dev/mock-api.ts` 的 `MOCK_ACCOUNTS` 是本地夹具）；reauth 过期同样方式刷新。
+  - 同一提交的 CI 偶尔会出现一组先绿后 404、再冒出一组新运行，以最新一组为准；`gh run list` 显示完成时 NativeCore 可能还有任务在跑，按任务状态等到结束。
+  - 共享层改已有文件的行为或签名要在报告里单列；假后端测试按模块放 `tests/mock-<入口>-<模块>.test.ts`。
 - ③ 的验收结论：节点池名单只在真改了才带字段、没有 `iam.user.read` 时只读显示、`setPoolSource` 登记避免模块互引、用户组「可用节点池」列与删除置灰（判断顺序与后端 409 一致）、设备窗口改了才带、敏感字段留空不带键与选填「清空」显式 null、`mask_password` 进抹敏名单、「上线」按钮与接入尾段节点的「启用」置灰、删掉 R92 提示并让套餐假后端按 R107、用户组页 1440 以下改上下排修掉名称列被挤没，都认可。
 - **上线接口响应（R110 更正）**：R108 原写「同 GET v1/nodes 的 Node」是错的，定为 `AdminNode`（与退役接口、PATCH 同一个形状）+ `warnings`。你先收两者共有字段的做法可以留着，后端四 ④ 合入后按 AdminNode 收紧 schema，放进 ③ 合入前的那个补丁提交里。
 - **④ 方案已同意（2026-09-25）**：① 新建 `core/intent.ts`（`createIntentKey`、`useIntentKey`、带 `reauth_required` 例外的 `endsIntent`、`IntentKey` 类型），统一用后台的 `keyFor / reset` 写法；`admin/actions.ts` 改为从 core 转出，导出名与签名不变；门户 3 个文件改调用写法，`usePlacedOrder` 与 `recallPayable` 留在 `common/intent.ts`；测试移到 `core/intent.test.ts`，删掉两处重复。② `GET v1/plans` 不合并成一条：用户、内容两处的键改为 `['admin','plans','options',<模块>]`，各自 schema 与 `select` 不变，用户那处补 `meta.topics: ['plans.changed']`；补「查询键落在套餐前缀下」的断言。一个提交，门户调用写法的改动在报告里单列。④ 与 ③ 在同一分支，随 ③ 一起等后端四 ③、④ 合入后再合。

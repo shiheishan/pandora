@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 platform 的 crypto/db/httpx/audit；读 node_pool_user_groups（00093）与 users.user_group_id；读写 quota_balances 与 traffic_pack_grants（迁移 00070），经 usage_daily.go 的 chargeReportEntry 逐用户记账
-// [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、BuildNodeConfig、路由校验、ListNodeUsers、PoolAdmitsUserSQL（池限定用户组的唯一谓词）、ReportTraffic / ReportAlive / ReportRuntimeStatus
+// [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、BuildNodeConfig、路由校验、ListNodeUsers、PoolAdmitsUserSQL（池限定用户组的唯一谓词）、DeviceWindowMinutes 与 PurgeStaleAlive（清理截止 70 分钟，不小于最大设备窗口，R103）、ReportTraffic / ReportAlive / ReportRuntimeStatus
 // [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、记签发时间与签发人、拒绝已退出服务的节点）、用户下发（只下发给套餐绑定了本节点所在池的订阅，无池节点不下发任何人；池限定了用户组时只给名单内组的用户，R104）与流量上报（先扣套餐本周期额度，超出部分扣用户流量包余额，D-E-1；同事务累加按日用量，00072）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -1010,12 +1010,22 @@ func (s *Service) ReportRuntimeStatus(ctx context.Context, tenantID string, n *S
 	})
 }
 
-// PurgeStaleAlive 清理过期的在线记录。由定时任务调用，幂等。
+// DeviceWindowMinutes 是设备识别窗口的可选值（R103），与迁移 00094 的
+// app.device_limit_window_minutes 认的是同一组值；窗口本身只在库里算
+// （缺行或非法值按 5），Go 侧只用它校验写入与定清理截止。
+var DeviceWindowMinutes = [...]int{5, 10, 30, 60}
+
+// staleAliveRetentionMinutes 是在线记录的清理截止：不小于最大窗口再留 10 分钟
+// 余量，清理任务无论何时跑都不会删掉仍在某个租户窗口内的行（R103）。
+const staleAliveRetentionMinutes = 70
+
+// PurgeStaleAlive 清理过期的在线记录。由定时任务调用，幂等；目前还没有调用方。
 func (s *Service) PurgeStaleAlive(ctx context.Context, tenantID string) (int64, error) {
 	var n int64
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		ct, err := tx.Exec(ctx,
-			`DELETE FROM node_alive_ips WHERE last_seen_at < now() - interval '10 minutes'`)
+			`DELETE FROM node_alive_ips WHERE last_seen_at < now() - make_interval(mins => $1)`,
+			staleAliveRetentionMinutes)
 		if err != nil {
 			return err
 		}
@@ -1024,5 +1034,3 @@ func (s *Service) PurgeStaleAlive(ctx context.Context, tenantID string) (int64, 
 	})
 	return n, err
 }
-
-var _ = time.Now // 保留 time 导入供将来的窗口计算使用

@@ -37,8 +37,12 @@ func TestScanQuotaCountsTrafficPacksPG18(t *testing.T) {
 	must(`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES($1,'notify-scan-pg18','Notify','CNY')`, tenant)
 	must(`INSERT INTO products(id,tenant_id,code,name,status) VALUES($2,$1,'notify-product','Notify Product','active')`, tenant, product)
 	must(`INSERT INTO plans(id,tenant_id,product_id,code,name,status) VALUES($3,$1,$2,'notify-plan','Notify Plan','draft')`, tenant, product, plan)
-	must(`INSERT INTO notification_templates(tenant_id,code,channel,body,category,status)
-		VALUES($1,'quota.warning','inapp','{{percent}} {{remaining}}','service','active')`, tenant)
+	// 模板由建租户触发器种下：只留站内信一个渠道（本测试数的是流量包口径，
+	// 不是渠道），并换成只含两个变量的正文，便于断言渲染结果
+	must(`DELETE FROM notification_templates
+		WHERE tenant_id=$1 AND code='quota.warning' AND channel<>'inapp'`, tenant)
+	must(`UPDATE notification_templates SET body='{{percent}} {{remaining}}'
+		WHERE tenant_id=$1 AND code='quota.warning' AND channel='inapp'`, tenant)
 
 	// 每个用户一条生效订阅、本期套餐额度 100 字节；pack 为 [授予, 已用]，nil 表示没买
 	users := []struct {

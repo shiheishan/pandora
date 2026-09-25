@@ -226,14 +226,14 @@ func TestFeatureSwitchGatesPG18(t *testing.T) {
 		  AND f.code IN ('billing.checkout','marketing.giftcard.redeem','notify.email','admin.writes')`).Scan(&seeded); err != nil || seeded != 4 {
 		t.Fatalf("seeded switches=%d err=%v, want 4", seeded, err)
 	}
-	// 迁移之后才建的租户没有这几行：billing.checkout 与 admin.writes 显式关掉，
-	// 礼品卡兑换没有行（缺行视为开启）
+	// 新租户由建租户触发器种下全部开关（开启）：billing.checkout 与 admin.writes
+	// 显式关掉；礼品卡兑换的行删掉，继续验 R58「缺行视为开启」
 	step3Seed(t, ctx, admin,
 		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','switch-pg18','Switch','CNY')`,
 		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+actor+`','`+tenant+`','ops@switch.invalid','Ops','active')`,
-		`INSERT INTO feature_switches(tenant_id,code,enabled,essential,reason) VALUES
-		   ('`+tenant+`','billing.checkout',false,false,'支付渠道故障'),
-		   ('`+tenant+`','admin.writes',false,false,'迁移维护')`)
+		`UPDATE feature_switches SET enabled=false, reason='支付渠道故障' WHERE tenant_id='`+tenant+`' AND code='billing.checkout'`,
+		`UPDATE feature_switches SET enabled=false, reason='迁移维护' WHERE tenant_id='`+tenant+`' AND code='admin.writes'`,
+		`DELETE FROM feature_switches WHERE tenant_id='`+tenant+`' AND code='marketing.giftcard.redeem'`)
 
 	h := step4Handlers(t, app)
 	hub := realtime.NewHub(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -649,9 +649,8 @@ func TestContentNotifyStep5PG18(t *testing.T) {
 	step3Seed(t, ctx, admin,
 		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','cn5-pg18','CN5','CNY')`,
 		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+actor+`','`+tenant+`','ops@cn5.invalid','Ops','active')`,
-		`INSERT INTO user_groups(id,tenant_id,code,name) VALUES('`+group+`','`+tenant+`','beta','内测')`,
-		`INSERT INTO notification_templates(tenant_id,code,channel,subject,body,allowed_variables,status) VALUES
-		   ('`+tenant+`','quota.warning','email','流量 {{percent}}%','{{plan}} 剩余 {{remaining}}','{site,plan,percent,remaining}','active')`)
+		// quota.warning|email 模板由建租户触发器种下，变量白名单即 site/plan/percent/remaining
+		`INSERT INTO user_groups(id,tenant_id,code,name) VALUES('`+group+`','`+tenant+`','beta','内测')`)
 	h := step4Handlers(t, app)
 	h.d.Notify = notify.New(app, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte("cn5-salt"))
 	// 新建钩子会生成并加密一把签名密钥，插件服务要带上信封

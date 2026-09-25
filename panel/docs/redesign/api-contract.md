@@ -496,6 +496,7 @@
 - 设计：后台-03 抽屉的「禁用账号 / 启用账号」按钮。映射：禁用 → `suspended`，启用 → `active`。待补·前端：禁用确认框加必填的「原因」输入框；另加一个次级的「封禁」选项（`banned`）
 
 #### POST v1/users/{id}/reset-password — 管理员替用户设新密码
+- **修订 R112（2026-09-25，后端三 ④ e98948f，已实现 R101）**：不给原因不校验；给了且超过 500 字回 422 `fields.reason`「原因最多 500 字」；只有给了原因才写进审计摘要。
 - **修订 R101（2026-09-25，用户定案 D-B-2）**：维持「管理员直接设新密码 + 吊销该用户全部会话与刷新令牌」，**不要求原因**：`reason` 改为可选（缺省或空串不校验；给了就限 500 字并照旧写进审计），`fields.reason` 这条 422 删除。前端对话框去掉「原因」，只留新密码（reauth 照旧）。
 - **修订 R9（2026-09-24，后端二 62f7283）**：先查权限、后 reauth（无权限直接 404，不再先要求输密码）。
 - 状态：现有 `handlers.go:293 resetUserPassword`
@@ -639,6 +640,7 @@
 - 设计：后台-03「群发邮件」。映射：发送前的确认框显示 preview 的 `total`；成功后 toast 显示「已排队 queued 封，跳过 skipped 封（用户退订）」
 
 #### GET v1/devices — 在线设备与全局策略
+- **修订 R111（2026-09-25，后端四 ③ ba90e94，已实现 R103）**：窗口只在库函数 `app.device_limit_window_minutes(tenant)`（00094）里算，视图 `subscription_online_devices`、后台节点列表在线统计、本接口的 `window_minutes` 都读它；只认 5 / 10 / 30 / 60，缺行或库里存了别的值一律按 5，不报错。`POST v1/settings/device-limit` 的非法窗口在碰库前回 422 `fields.window_minutes`「设备识别窗口只能是 5、10、30 或 60 分钟」（`mode`、`grace` 出错仍无 fields）。审计仍记在 `device_limit.mode_changed`：after 带 `window_minutes`（省略时为 null），只有这次改了窗口 before 才记旧的生效值。`PurgeStaleAlive` 清理截止为 70 分钟（仍无调用方）。
 - **修订 R103（2026-09-25，用户定案 D-B-4 方案 B）**：设备识别窗口可选。新设置键 `device_limit.window_minutes`，取值 5（默认，缺行按 5）/ 10 / 30 / 60。本接口响应加 `window_minutes: int`；`POST v1/settings/device-limit` 请求加 `window_minutes?: 5|10|30|60`（省略 = 不改，其他值 422），同样挂 reauth、写审计。后端：视图 `subscription_online_devices` 改为按租户读这个键（缺行按 5），这样 uniproxy strict 判定、本接口、用户列表与详情、门户订阅的在线数自动跟着变；后台节点列表（`api/admin/handlers.go` 在线人数与 IP 统计）里写死的 5 分钟改用同一口径；`nodefabric.PurgeStaleAlive`（目前没有调用方）的清理截止改为不小于最大窗口（如 70 分钟），免得以后接上时删掉窗口内的行。**事实更正**：原文与迁移 00024 注释说窗口「与节点 TTL 对齐」，只对 compat 构建成立；生产 NativeCore 按连接进出跟踪设备、没有 5 分钟 TTL，节点每 60 秒上报在线 IP，所以这是**纯面板改动，不碰 pdnd**，窗口不得低于 5 分钟。代价（前端在下拉旁说明）：窗口越长，换了网络的旧 IP 被多算得越久；strict 模式下超限的订阅要等大约一个窗口才恢复下发。
 - 状态：现有 `devices.go:18 listOnlineDevices`
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
@@ -1354,6 +1356,13 @@
 - 设计：不直接使用。新前端的「退役」走下面的待补接口；本接口只在「服务器详情」高级区保留（不做）。
 
 #### POST v1/nodes/{id}/activate — 节点上线（生命周期一步推到 active）
+- **修订 R113（2026-09-25，后端四 ④ f6ce152，已实现 R108、R110）**：实现在 `nodefabric/node_activate.go` 的 `ActivateNode`，投影函数提为 `nodefabric.ProjectNodeLifecycle`（旧状态接口转调）。定稿口径：
+  - **路径**：attesting → installing → validating → standby → canary → active，其余接入尾段状态从各自位置接上，每一步单独 UPDATE、过状态机触发器；触发器拒绝时原样回 409（数据库原文，带节点 id）并整体回滚。节点 `row_version` 只加 1。
+  - **已 active**：直接 200，不改、不审计、不通知；这一判断在版本号之前，带过期 `row_version` 重放也回 200。
+  - **前置条件（409，message 写明原因，什么都不改）**：还在接入（draft、provisioning、bootstrapping）→「还没完成接入」；失败或终态（`*_failed`、quarantined、retired）→「不能上线」；在役后离开的（draining、maintenance、unhealthy、upgrade_failed）→「不在接入尾段，请用启用或状态操作」；没有 active 且未过期的节点身份 →「没有有效的节点身份」；协议未就绪 →「协议配置还没就绪」；没有绑定服务器 / 服务器已删除；服务器不能按服务器状态机进 ready（draft、draining、maintenance 可以，已 ready 不动）→「服务器处于 X，不能进入 ready」。节点不存在或 id 非法回 404。
+  - **服务器进 ready 不要求本节点是控制节点**：与 `server_admin.go` 手动进 ready 的规则一致（只要求名下有在线且协议就绪的节点），协调会话认可；旧状态接口只在控制节点时改服务器，是它自己的口径。
+  - **通知**：提交后 `NotifyNodeChanged`；服务器是这次才进 ready 的，再发一次租户级 `NotifyUsersChanged`（同服务器其他节点的下发也跟着变）。审计 `node.activate` 记前后生命周期、服务状态、服务器状态与实际走过的路径。
+  - **warnings**（`AdminNode` 的 omitempty，**没有提示时不出现这个字段**，schema 写成可选）：无池节点「未划入节点池，不服务任何用户」；所在池没绑套餐「所在节点池没有绑定任何套餐，暂时不服务任何用户」。
 - **修订 R108（2026-09-25，协调会话定，前端收尾核对代码发现）**：新接口。起因（FACT）：节点生命周期状态机是 attesting → installing → validating → standby → canary → active（00005），接入流程 `enrollment.go` 只推到 bootstrapping / attesting，此后除了旧接口 `POST v1/nodes/{id}/status` 没有任何代码往前推；而 `status:batch` 启用节点要求服务器已 ready，服务器进 ready 又要求名下有 `status=active AND serving_status=active` 的节点——新服务器 + 新节点在新前端里上不了线。选方案 A（后端一步到位，与 R57 退役对称），不让前端逐级调旧接口。
 - 状态：**待补·后端**（后端四）
 - 权限：`node.lifecycle`｜reauth：否（与 status:batch 启用、旧 status 接口同门槛）｜幂等：是 `node_activate`
@@ -1930,6 +1939,7 @@
 - 设计：卡片「禁用 N 个账号」+ reauth 危险确认框（「账号将被登出，订阅停止下发」）。映射：设计「禁用」→ 后端 `suspended`（可恢复，不用 banned）。待补·前端：确认框加「原因」必填输入
 
 #### GET v1/switches — 降级开关列表
+- **修订 R112（2026-09-25，后端三 ④ e98948f，已实现 R97、R102）**：00089 删掉三个未接入的开关。00090 给 `tenants` 加插入后触发器，新租户出生即带线下收款渠道、12 个内置通知模板（正文与原种子一字不差，单元测试钉住）和 8 个降级开关（3 个 essential），存量租户同时补种——所以**所有租户的列表都是完整的 8 行，都能切换**；代码不认识的 code 仍回 404。事实：生产里只有迁移 00010 建的默认租户，Go 没有建租户入口，每个请求都固定在默认租户；「新租户缺种子」此前只出现在手写 SQL 与测试夹具建的租户上。
 - **修订 R102（2026-09-25，用户定案 D-A-3）**：「订阅下发使用缓存」不做。`ops.bulk_export`、`ops.reports`、`node.autoscale` 三个开关没有任何代码读取，新迁移从 `feature_switches` 删除这三行（只有默认租户有，00010 种子；Down 按 00010 原样插回）；`tests/invariants.sql` 里借 `ops.reports` 验「无原因进入降级被拒」的用例改用其他非核心开关。之后现有 code 为 auth.login、subscription.renewal、client.config_sync（essential）、auth.registration，以及 R58 的四个。前端删掉这三项的字典与「未接入」灰显，假后端种子与测试同步。
 - **修订 R97（2026-09-25，后台前端二 ⑥ 核对）**：列表**不返回缺行的开关**，对缺行的开关 `POST v1/switches/{code}` 回 404。所以 R58「缺行视为开启」的租户在后台切不了这几个开关；前端按 R58 默认值显示为只读。后端建租户时补种这几行、或 POST 改成 upsert，列入后端遗留（与「新建租户缺种子」一并处理）。进入降级时缺原因回 409（不是 422），前端先拦。
 - 状态：现有 `handlers.go:468 listSwitches`
@@ -3299,3 +3309,6 @@
 | R108 | 2026-09-25 | 前端收尾、协调会话 | 新接口 POST v1/nodes/{id}/activate：生命周期一步推到 active，解决新节点在新前端里上不了线 |
 | R109 | 2026-09-25 | 后端四 | R104 已实现：名单上限 100、字段级 reauth、重复提交不审计不通知、非法路径 id 回 404、删组 409 判断顺序 |
 | R110 | 2026-09-25 | 后端三、前端收尾 | R100 已实现：卖点四种 422 文案、complete 里 null 不动 [] 清空；R108 上线接口响应更正为 AdminNode（同退役接口） |
+| R111 | 2026-09-25 | 后端四 | R103 已实现：窗口唯一来源为库函数，非法存值按 5，422 文案与审计口径 |
+| R112 | 2026-09-25 | 后端三 | 建租户触发器补种渠道、模板、开关（R97、R94 已修）；删三个开关（R102）；重置密码原因超 500 字 422（R101） |
+| R113 | 2026-09-25 | 后端四 | 上线接口已实现：路径、前置条件与文案、已 active 先于版本号幂等、服务器进 ready 不要求控制节点、warnings 可缺省 |

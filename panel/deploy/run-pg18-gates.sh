@@ -100,7 +100,7 @@ LOG_DIR="$(mktemp -d)"
 DOMAINS=(
   "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18)$"
   "enrollment|pandora_enrollment_pg18|./internal/domain/nodefabric|||||^(TestNodeEnrollmentPG18|TestIssueServerTokenPG18)$"
-  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||^(TestAnnouncementPG18|TestDeviceLimitWritesPG18|TestAccessLogCategoryPG18|TestNodeRoutingGlobalOutboundPG18|TestNodeListPagingPG18|TestIPClusterPG18|TestAuditLogPG18|TestNodeCountryAndCredentialsPG18|TestPluginDeliveryDurationPG18|TestSiteSettingsPG18|TestDashboardTasksPG18|TestFeatureSwitchGatesPG18|TestAdminMeProfilePG18|TestUserProfileRegisteredIPPG18|TestDashboardReadModelsPG18|TestNodesStep5PG18|TestContentNotifyStep5PG18|TestNodePatchKeepsSecretsPG18|TestPluginHookBoundsPG18)$"
+  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||^(TestAnnouncementPG18|TestDeviceLimitWritesPG18|TestAccessLogCategoryPG18|TestNodeRoutingGlobalOutboundPG18|TestNodeListPagingPG18|TestIPClusterPG18|TestAuditLogPG18|TestNodeCountryAndCredentialsPG18|TestPluginDeliveryDurationPG18|TestSiteSettingsPG18|TestDashboardTasksPG18|TestFeatureSwitchGatesPG18|TestAdminMeProfilePG18|TestUserProfileRegisteredIPPG18|TestDashboardReadModelsPG18|TestNodesStep5PG18|TestContentNotifyStep5PG18|TestNodePatchKeepsSecretsPG18|TestPluginHookBoundsPG18|TestTenantSeedDefaultsPG18)$"
   "node_config|pandora_nodecfg_gate|./internal/api/admin|run_id,oid,system_id||pandora-nodecfg-disposable||^(TestNodeConfigLegacyPG18|TestNodeConfigPG18LockSchedule)$"
   "catalog_sales|pandora_catalog_sales_gate|./internal/domain/adminops|run_id|pandora_catalog_sales_test_marker|pandora-catalog-sales-pg18||"
   "giftcard|pandora_giftcard_gate|./internal/domain/giftcard|run_id|pandora_giftcard_test_marker|pandora-giftcard-pg18||"
@@ -132,8 +132,8 @@ DOMAINS=(
   "audit|pandora_audit_gate|./internal/platform/audit|run_id|pandora_audit_test_marker|pandora-audit-pg18||"
   "notify|pandora_notify_gate|./internal/domain/notify|run_id|pandora_notify_test_marker|pandora-notify-pg18||"
   # 交付集合（R103、R104）：同一个库里对照节点用户列表、订阅下载、门户预览与后台
-  # 写接口的通知，含节点池限定用户组（00093）。跨两个包，过滤写精确，免得把两个包里别的域拉进来被算作跳过。
-  "delivery|pandora_delivery_gate|./internal/domain/subscription ./internal/api/admin|run_id|pandora_delivery_test_marker|pandora-delivery-pg18||^(TestDeliverySetPG18|TestDeliveryAdminPG18|TestPoolUserGroupsDeliveryPG18|TestPoolUserGroupsAdminPG18)$"
+  # 写接口的通知，含节点池限定用户组（00093）、设备识别窗口（00094）与节点一步上线（R108）。跨两个包，过滤写精确，免得把两个包里别的域拉进来被算作跳过。
+  "delivery|pandora_delivery_gate|./internal/domain/subscription ./internal/api/admin|run_id|pandora_delivery_test_marker|pandora-delivery-pg18||^(TestDeliverySetPG18|TestDeliveryAdminPG18|TestPoolUserGroupsDeliveryPG18|TestPoolUserGroupsAdminPG18|TestDeviceWindowPG18|TestDeviceWindowAdminPG18|TestNodeActivatePG18)$"
 )
 
 selected() {

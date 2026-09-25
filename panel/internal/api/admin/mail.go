@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 domain/notify 的 SMTP 配置与发信器、domain/appearance 的 SiteNameTx、platform 的 db/audit/httpx
 // [OUTPUT]: 对外提供 handlers 的 getMailSettings / setMailSettings / testMailSettings
-// [POS]: api/admin 的邮件与注册设置接口；发件人名缺省显示站点名，测试信主题带发件人名
+// [POS]: api/admin 的邮件与注册设置接口；全部设置项 upsert（SMTP 密码行缺失也能写入，R94）；发件人名缺省显示站点名，测试信主题带发件人名
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -193,9 +193,13 @@ func (h *handlers) setMailSettings(w http.ResponseWriter, r *http.Request) {
 			if enc == nil {
 				enc = []byte{}
 			}
+			// upsert（R94）：以前只 UPDATE，缺这一行的租户密码会静默存不上。
+			// 新插入时行的形状照 00030 的种子：value 占位空串、带 schema、标为密文项。
 			if _, err := tx.Exec(r.Context(), `
-				UPDATE system_settings SET secret_encrypted = $3, updated_at = now()
-				 WHERE tenant_id = $1 AND key = $2`,
+				INSERT INTO system_settings (tenant_id, key, value, value_schema, is_secret, secret_encrypted)
+				VALUES ($1, $2, '""'::jsonb, '{"type":"string","title":"密码"}'::jsonb, true, $3)
+				ON CONFLICT (tenant_id, key)
+				DO UPDATE SET secret_encrypted = EXCLUDED.secret_encrypted, updated_at = now()`,
 				tenantID, "mail.smtp_password", enc); err != nil {
 				return err
 			}

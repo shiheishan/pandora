@@ -318,9 +318,10 @@ func (h *handlers) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	if utf8.RuneCountInString(strings.TrimSpace(req.Reason)) < 5 {
+	// 原因可选（R101，D-B-2）：不填不校验；填了限 500 字，照旧进审计。
+	if utf8.RuneCountInString(strings.TrimSpace(req.Reason)) > 500 {
 		httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
-			"reason": "请写清为什么要改这个用户的密码，5 到 500 字。这条会进审计"}))
+			"reason": "原因最多 500 字"}))
 		return
 	}
 	if err := h.d.Identity.AdminResetPassword(r.Context(),
@@ -821,7 +822,9 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 				         count(DISTINCT subscription_id)::int AS users,
 				         count(*)::int AS ips
 				    FROM node_alive_ips
-				   WHERE tenant_id = $1 AND last_seen_at > now() - interval '5 minutes'
+				   -- 与在线设备视图同一个窗口（按租户设置，R103），不另写字面量
+				   WHERE tenant_id = $1
+				     AND last_seen_at > now() - make_interval(mins => app.device_limit_window_minutes($1))
 				   GROUP BY node_id
 				), traffic AS (
 				  SELECT node_id, sum(total_upload + total_download)::bigint AS bytes,
@@ -1112,32 +1115,10 @@ func (h *handlers) nodeSetStatus(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, map[string]any{"ok": true, "row_version": req.RowVersion + 1})
 }
 
-// projectNodeLifecycle keeps the legacy Node state machine and the split
-// serving/host state machines in one reviewed mapping. Canary is serviceable
-// for validation but remains absent from subscriber delivery; draining keeps
-// data-plane authentication alive while stopping new subscription allocation.
+// projectNodeLifecycle 是旧状态接口对 nodefabric.ProjectNodeLifecycle 的调用点：
+// 映射只有一份，与一步上线（POST v1/nodes/{id}/activate）共用。
 func projectNodeLifecycle(nodeStatus string, protocolReady bool) (servingStatus, serverStatus string) {
-	var serving, server string
-	switch nodeStatus {
-	case "active", "canary":
-		serving, server = "active", "ready"
-	case "draining":
-		serving, server = "draining", "draining"
-	case "maintenance":
-		serving, server = "disabled", "maintenance"
-	case "unhealthy":
-		serving, server = "disabled", "unhealthy"
-	case "quarantined":
-		serving, server = "disabled", "quarantined"
-	case "retired", "destroyed":
-		serving, server = "retired", "retired"
-	default:
-		serving, server = "draft", "draft"
-	}
-	if !protocolReady && (serving == "active" || serving == "draining") {
-		serving = "disabled"
-	}
-	return serving, server
+	return nodefabric.ProjectNodeLifecycle(nodeStatus, protocolReady)
 }
 
 // nodeRevokeIdentity 吊销节点身份（NODE-014）。
