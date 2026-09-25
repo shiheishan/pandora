@@ -1,13 +1,14 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useInfiniteQuery / useMutation / useQueryClient，依赖 zod，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供 ORDER_KINDS、ORDER_STATUSES、OPEN_STATUSES、ORDER_FILTERS / OrderFilter、ORDER_PAGE_SIZE、useOrderPages、useOpenOrders、useCancelOrder、statusBadge、groupByMonth、orderResult、orderFacts、orderRowSchema、OrderRow、intervalLabel、orderTitle、expiryNote、usePendingOrders、orderDetailSchema / OrderDetail / orderKey / useOrder、orderCreatedSchema / OrderCreated、PAID_STATUSES / SETTLED_STATUSES
- * [POS]: portal/screens/common 的订单读模型（契约门户-04 GET v1/orders）：概览待支付条、支付结果确认与订单页共用；标题与期限文案是纯函数、有单元测试
+ * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useInfiniteQuery / useMutation / useQueryClient，依赖 zod，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../shell/runtime 的 useApi，依赖 ./intent 的 endsIntent
+ * [OUTPUT]: 对外提供 ORDER_KINDS、ORDER_STATUSES、OPEN_STATUSES、ORDER_FILTERS / OrderFilter、ORDER_PAGE_SIZE、useOrderPages、useOpenOrders、useCancelOrder、statusBadge、groupByMonth、orderResult、orderFacts、orderRowSchema、OrderRow、intervalLabel、orderTitle、expiryNote、usePendingOrders、orderDetailSchema / OrderDetail / orderKey / useOrder、orderCreatedSchema / OrderCreated、PAID_STATUSES / SETTLED_STATUSES、PAYABLE_STATUSES / isPayable / useOrderPayable
+ * [POS]: portal/screens/common 的订单读模型（契约门户-04 GET v1/orders）：概览待支付条、支付结果确认、订单页与重开刚下的单前的可支付判定共用；标题与期限文案是纯函数、有单元测试
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { formatDateTime, formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
+import { endsIntent } from './intent'
 
 export const ORDER_KINDS = ['new', 'renewal', 'topup', 'addon', 'upgrade'] as const
 export const ORDER_STATUSES = ['draft', 'pending_payment', 'processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'] as const
@@ -160,6 +161,35 @@ export const orderCreatedSchema = z.object({
 export type OrderCreated = z.output<typeof orderCreatedSchema>
 
 export const PAID_STATUSES: ReadonlySet<string> = new Set(['paid', 'fulfilled'])
+
+/** 发起支付只收这两种状态，其余回 409「该订单当前状态不可支付」（契约门户-03 支付条目） */
+export const PAYABLE_STATUSES: ReadonlySet<string> = new Set(['draft', 'pending_payment'])
+
+/** 还能去付：状态可支付、且没到 expires_at（服务端过期扫描可能还没跑到） */
+export function isPayable(o: Pick<OrderRow, 'status' | 'expires_at'>, now: number = Date.now()): boolean {
+  return PAYABLE_STATUSES.has(o.status) && (o.expires_at === undefined || Date.parse(o.expires_at) > now)
+}
+
+/**
+ * 重开刚下的单之前问一次后端它还能不能付（给 intent.ts 的 recallPayable 用）：取最新详情写进同一个缓存键；
+ * 4xx（查不到）答「不能」，断网与 5xx 答「能」，让支付弹窗去报错与重试，不因一次查询失败多下一张单。
+ */
+export function useOrderPayable(): (orderId: string) => Promise<boolean> {
+  const api = useApi()
+  const client = useQueryClient()
+  return async (orderId) => {
+    try {
+      const d = await client.fetchQuery({
+        queryKey: orderKey(orderId),
+        queryFn: ({ signal }) => api.get(`v1/orders/${encodeURIComponent(orderId)}`, orderDetailSchema, { signal }),
+        staleTime: 0,
+      })
+      return isPayable(d.order)
+    } catch (e) {
+      return !endsIntent(e)
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 订单页（契约门户-04 与修订 R69：status 可逗号多值、counts 四类计数）

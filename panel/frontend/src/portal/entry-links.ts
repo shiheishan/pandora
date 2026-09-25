@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖浏览器 location / history / sessionStorage（均可注入，便于测试）
- * [OUTPUT]: 对外提供 INVITE_STORAGE_KEY、takeInviteFromUrl、readStoredInvite、quickLoginTokenFromHash
- * [POS]: portal 入口页加载时的两类外来链接：邀请链接 /?invite=CODE（转大写存 sessionStorage 后抹掉查询串）与快捷登录 /#/quick-login/<token>（令牌在 hash 里，不进服务器与 nginx 日志）
+ * [OUTPUT]: 对外提供 INVITE_STORAGE_KEY、takeInviteFromUrl、readStoredInvite、quickLoginLink、quickLoginTokenFromHash、quickLoginTokenFromInput
+ * [POS]: portal 入口页加载时的两类外来链接：邀请链接 /?invite=CODE（转大写存 sessionStorage 后抹掉查询串）与快捷登录 /#/quick-login/<token>（令牌在 hash 里，不进服务器与 nginx 日志）；账号安全页生成链接用同文件的 quickLoginLink，生成与识别同一格式
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { matchPath, parseHash } from '../core/router'
@@ -50,6 +50,14 @@ export function readStoredInvite(env: Env = browserEnv()): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * 账号安全页生成的快捷登录链接（契约门户-10）：相对入口页解析，门户在子路径下也成立；
+ * 不用 /q/<token>，两段式路径会撞订阅通配，令牌放 fragment 也不进访问日志与 Referer。
+ */
+export function quickLoginLink(token: string, base: string = window.location.href): string {
+  return new URL(`./#/quick-login/${encodeURIComponent(token)}`, base).href
 }
 
 /** #/quick-login/<token> → token；其它地址返回 null。 */

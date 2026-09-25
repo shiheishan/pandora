@@ -11,14 +11,14 @@ index.html: 入口页，pandora-app=portal 标记、<html data-app="portal">
 main.tsx: 建运行时（无 requestReauth），渲染前 takeInviteFromUrl，挂载 App
 App.tsx: RuntimeProvider + Root：应用外观令牌、先消费快捷登录链接，再按登录态切 AuthPage / Shell；快捷登录失败落在快捷登录标签并显示原因
 pages.ts: 十一个页面的标题与副标题、顶部导航四项（「订单」短于页标题）、头像菜单五项；resolvePage 拆出 page / rest 并给规范地址，navOwner 让结账页归「选购套餐」，greeting 按时段问候
-queries.ts: 外框读接口：site-config 与 appearance（匿名，登录页用）、me、余额与流水（全字段，外框只用 balance，钱包页用 history；topic orders.changed）、订阅列表（全字段 schema，外框与页面共用 ['portal','subscriptions'] 一个键，套餐徽标经 select 取 pickPrimary 那条，与概览主卡一致）、佣金概况（全字段 schema，外框与邀请返利页共用 ['portal','commission']，头像菜单经 select 取可用佣金）、未读数（无 SSE，60 秒轮询 limit=1）；除订阅、余额与佣金外 schema 只收外框用到的字段；displayName 按契约映射
+queries.ts: 外框读接口：site-config 与 appearance（匿名，登录页用）、me（全字段，外框用用户名与邮箱，账号安全页读注册时间）、余额与流水（全字段，外框只用 balance，钱包页用 history；topic orders.changed）、订阅列表（全字段 schema，外框与页面共用 ['portal','subscriptions'] 一个键，套餐徽标经 select 取 pickPrimary 那条，与概览主卡一致）、佣金概况（全字段 schema，外框与邀请返利页共用 ['portal','commission']，头像菜单经 select 取可用佣金）、未读数（无 SSE，60 秒轮询 limit=1）；除 me、订阅、余额与佣金外 schema 只收外框用到的字段；displayName 按契约映射
 appearance.ts: pickThemeTokens 取当前明暗那组并按白名单过滤，useAppearanceTheme 写入与撤销 CSS 变量（不注入 <style>，CSP 无 unsafe-inline）
-entry-links.ts: takeInviteFromUrl / readStoredInvite 与 quickLoginTokenFromHash / quickLoginTokenFromInput（令牌是 base64url，粘贴整条链接或裸令牌都认）；环境可注入便于测试
+entry-links.ts: takeInviteFromUrl / readStoredInvite 与 quickLoginLink（账号安全页生成，相对入口页的 #/quick-login/<token>）/ quickLoginTokenFromHash / quickLoginTokenFromInput（令牌是 base64url，粘贴整条链接或裸令牌都认），生成与识别同一文件同一格式；环境可注入便于测试
 AuthPage.tsx: 三标签卡片：登录（auth:false，401 内联）；注册按 registration_mode 定邀请码必填 / 选填 / 隐藏标签，step1 register/start、step2 register/complete（验证码框以 verification_required 为准，dev_code 显示为提示）后自动登录；快捷登录只收已登录设备生成的链接（保留规则 1）；loginWithPassword / consumeQuickLogin 导出供 App 复用
 Shell.tsx: 顶栏（字标、导航、≥ 960 余额胶囊、铃铛未读角标、头像菜单：用户名 + 套餐徽标 + 邮箱、五项带余额 / 佣金提示、深色模式开关、退出）、页头、内容区（screens 登记的页面）、页脚、< 640 五格标签栏（「我的」受控打开头像菜单）；连门户 SSE，只驱动查询失效
 *.module.css: 各组件同名样式，断点只用规范的 960 与 640
 screens/: 十一个页面与懒加载登记表，归门户前端会话；见 screens/CLAUDE.md
-portal.test.ts: 页面路由、rest 子路由与导航归属、邀请码取用与查询串清理、快捷登录令牌识别、主题令牌白名单、用户名映射的纯逻辑测试；界面交互在浏览器里对 dev/mock-api 验收
+portal.test.ts: 页面路由、rest 子路由与导航归属、邀请码取用与查询串清理、快捷登录链接生成与令牌识别往返、主题令牌白名单、用户名映射的纯逻辑测试；界面交互在浏览器里对 dev/mock-api 验收
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

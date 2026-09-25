@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useEffect / useRef / useState，依赖 @tanstack/react-query 的 useMutation / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Modal / Skeleton，依赖 ./orders 的 useOrder / PAID_STATUSES / OrderDetail，依赖 ./catalog 的 PaymentMethod / usePaymentMethods / methodKey，依赖 ./traffic 的 formatDate
  * [OUTPUT]: 对外提供 PayState、PaymentModal、payReturnUrl、paySuccessText
- * [POS]: portal/screens/common 的支付弹窗（用户门户.dc.html 外壳的支付弹窗，契约门户-03 支付条目）：结账页下单后打开它去收银台，0 元订单直接显示成功；订单页的「去支付」用 choose 态先选支付方式；订单页收到收银台回跳（#/orders/<id>?paid=1）时用它轮询确认。无二维码：拿到 GET 跳转就顶层导航，POST 跳转按「暂不可用」处理（CSP form-action 'self' 会拦自动提交表单）
+ * [POS]: portal/screens/common 的支付弹窗（用户门户.dc.html 外壳的支付弹窗，契约门户-03 支付条目）：结账页下单后打开它去收银台，0 元订单直接显示成功；支付接口回 409（订单已不可支付）时经 onUnpayable 通知调用方忘掉记下的待支付单、不给无效的「重试」；订单页的「去支付」用 choose 态先选支付方式；订单页收到收银台回跳（#/orders/<id>?paid=1）时用它轮询确认。无二维码：拿到 GET 跳转就顶层导航，POST 跳转按「暂不可用」处理（CSP form-action 'self' 会拦自动提交表单）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -64,7 +64,11 @@ function useRefreshAccount() {
 
 const TITLES: Record<PayState['phase'], string> = { redirect: '正在前往收银台…', done: '支付成功', confirm: '正在确认支付结果', choose: '选择支付方式' }
 
-export function PaymentModal({ state: given, onClose }: { state: PayState | null; onClose: () => void }) {
+/**
+ * onUnpayable：支付接口回 409（订单已不可支付——别处取消、已超时或已付掉）时调用，
+ * 结账与充值借它 forget() 记下的待支付单，下次同样的请求重新下单
+ */
+export function PaymentModal({ state: given, onClose, onUnpayable }: { state: PayState | null; onClose: () => void; onUnpayable?: () => void }) {
   // choose 态选定后在弹窗内部转成 redirect；换了订单或关掉就作废
   const [picked, setPicked] = useState<{ orderId: string; method: PaymentMethod } | null>(null)
   const state: PayState | null =
@@ -80,7 +84,7 @@ export function PaymentModal({ state: given, onClose }: { state: PayState | null
   return (
     <Modal open={state !== null} onClose={close} title={title} className={css.modal}>
       {state?.phase === 'choose' && <Choose state={state} onPick={(method) => setPicked({ orderId: state.orderId, method })} onLater={close} />}
-      {state?.phase === 'redirect' && <Redirecting state={state} onLater={close} onBack={picked ? () => setPicked(null) : undefined} />}
+      {state?.phase === 'redirect' && <Redirecting state={state} onLater={close} onBack={picked ? () => setPicked(null) : undefined} onUnpayable={onUnpayable} />}
       {state?.phase === 'done' && <Done orderId={state.orderId} onClose={close} />}
       {state?.phase === 'confirm' && <Confirming confirm={confirm} onClose={close} />}
     </Modal>
@@ -126,7 +130,7 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
 // ---------------------------------------------------------------------------
 // 去收银台：pay 不幂等，但服务层对同渠道复用在途意图（reused=true），重试是安全的
 // ---------------------------------------------------------------------------
-function Redirecting({ state, onLater, onBack }: { state: Extract<PayState, { phase: 'redirect' }>; onLater: () => void; onBack?: () => void }) {
+function Redirecting({ state, onLater, onBack, onUnpayable }: { state: Extract<PayState, { phase: 'redirect' }>; onLater: () => void; onBack?: () => void; onUnpayable?: () => void }) {
   const api = useApi()
   const started = useRef(false)
   const pay = useMutation({
@@ -138,6 +142,9 @@ function Redirecting({ state, onLater, onBack }: { state: Extract<PayState, { ph
       // http_method 目前只有 GET；POST 要自动提交表单，会被入口页 CSP 的 form-action 'self' 拦下
       if (intent.http_method === 'GET') window.location.assign(intent.redirect_url)
     },
+    onError: (e) => {
+      if (isApiError(e, 'conflict')) onUnpayable?.()
+    },
   })
 
   useEffect(() => {
@@ -147,6 +154,8 @@ function Redirecting({ state, onLater, onBack }: { state: Extract<PayState, { ph
   }, [pay])
 
   const unsupported = pay.data?.http_method === 'POST'
+  // 4xx 是后端的明确答复（订单已不可支付、渠道不存在），原样重试不会变
+  const final = isApiError(pay.error) && pay.error.status >= 400 && pay.error.status < 500
   const error = unsupported ? '该支付方式暂不可用，请换一种支付方式。' : pay.isError ? payErrorText(pay.error) : null
 
   return (
@@ -160,7 +169,7 @@ function Redirecting({ state, onLater, onBack }: { state: Extract<PayState, { ph
           <div className={css.error} role="alert">
             {error}
           </div>
-          {!unsupported && (
+          {!unsupported && !final && (
             <Button variant="primary" block onClick={() => pay.mutate()} busy={pay.isPending}>
               重试
             </Button>

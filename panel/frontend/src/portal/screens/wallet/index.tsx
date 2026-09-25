@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../ui 的 Button / Card / Empty / Input / QueryView / Select / Skeleton / useToast，依赖 ../../queries 的 useBalance，依赖 ../common 的支付方式、幂等键（useIntentKey / usePlacedOrder / endsIntent）、支付弹窗与 shortDate，依赖 ./api 与 ./model
+ * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../ui 的 Button / Card / Empty / Input / QueryView / Select / Skeleton / useToast，依赖 ../../queries 的 useBalance，依赖 ../common 的支付方式、幂等键（useIntentKey / usePlacedOrder / recallPayable / endsIntent）、useOrderPayable、支付弹窗与 shortDate，依赖 ./api 与 ./model
  * [OUTPUT]: 默认导出 Wallet 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/wallet 的入口：钱包（门户-05）。左列账户余额与充值（预设金额 / 自定义金额、支付方式、建单后走支付弹窗）和余额明细（契约待补·前端），右列兑换礼品卡；< 640 单列时礼品卡排在余额明细之前（查询卡面 → 立即兑换）与我的礼品卡；设计稿的 USDT 与「试试 GC-…」演示提示删除；充值与兑换的幂等键成功或 4xx 后丢弃，同额充值 30 分钟内再点重开刚建的那张单
+ * [POS]: portal/screens/wallet 的入口：钱包（门户-05）。左列账户余额与充值（预设金额 / 自定义金额、支付方式、建单后走支付弹窗）和余额明细（契约待补·前端），右列兑换礼品卡；< 640 单列时礼品卡排在余额明细之前（查询卡面 → 立即兑换）与我的礼品卡；设计稿的 USDT 与「试试 GC-…」演示提示删除；充值与兑换的幂等键成功或 4xx 后丢弃，同额充值 30 分钟内再点先确认刚建的那张单还能付再重开，已取消、超时或付掉就重建
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -9,7 +9,8 @@ import { formatDateTime, formatMoney } from '../../../core/format'
 import { Button, Card, Empty, Input, QueryView, Select, Skeleton, useToast } from '../../../ui'
 import { useBalance } from '../../queries'
 import { methodKey, usePaymentMethods } from '../common/catalog'
-import { endsIntent, useIntentKey, usePlacedOrder } from '../common/intent'
+import { endsIntent, recallPayable, useIntentKey, usePlacedOrder } from '../common/intent'
+import { useOrderPayable } from '../common/orders'
 import { PaymentModal, type PayState } from '../common/PayFlow'
 import { shortDate } from '../common/traffic'
 import { useGiftPreview, useMyGiftCards, useRedeemGift, useTopup } from './api'
@@ -41,6 +42,8 @@ function BalanceCard() {
   const topup = useTopup()
   const intentKey = useIntentKey()
   const placed = usePlacedOrder<{ orderId: string; orderNo: string; amount: number; currency: string }>()
+  const payable = useOrderPayable()
+  const [reopening, setReopening] = useState(false)
   const [amount, setAmount] = useState('100')
   const [methodChoice, setMethodChoice] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -49,14 +52,15 @@ function BalanceCard() {
   const list = methods.data ?? []
   const method = list.find((m) => methodKey(m) === methodChoice) ?? list[0] ?? null
 
-  function recharge() {
+  async function recharge() {
     const parsed = parseTopupAmount(amount)
     if ('error' in parsed) return setError(parsed.error)
     if (!method) return setError('暂无可用的支付方式')
     setError(null)
     const body = { amount: parsed.cents }
-    // 刚建过同额的充值单、还没过期：重开它的支付，不再建第二张
-    const again = placed.recall(body)
+    // 刚建过同额的充值单、还能付：重开它的支付，不再建第二张；已取消、超时或付掉就忘掉重建
+    setReopening(true)
+    const again = await recallPayable(placed, body, (o) => payable(o.orderId)).finally(() => setReopening(false))
     if (again) return setPay({ phase: 'redirect', ...again, method })
     topup.mutate(
       { amount: parsed.cents, key: intentKey(body) },
@@ -114,11 +118,11 @@ function BalanceCard() {
             onChange={(e) => setMethodChoice(e.target.value)}
           />
         )}
-        <Button variant="primary" busy={topup.isPending} disabled={!method} onClick={recharge}>
+        <Button variant="primary" busy={topup.isPending || reopening} disabled={!method} onClick={() => void recharge()}>
           充值
         </Button>
       </div>
-      <PaymentModal state={pay} onClose={() => setPay(null)} />
+      <PaymentModal state={pay} onClose={() => setPay(null)} onUnpayable={placed.forget} />
     </Card>
   )
 }

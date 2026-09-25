@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 ApiError / newIdempotencyKey
- * [OUTPUT]: 对外提供 useIntentKey、createIntentKey、IntentKey、endsIntent、usePlacedOrder、createPlacedOrder、PlacedOrder
- * [POS]: portal/screens/common 的幂等键约定（契约 1.5：一次用户意图一个键，重试与重放复用，动作结束后丢弃）：按请求指纹给键，同样的请求（双击、断网或 5xx 后重试）拿到同一个键、后端回放同一结果，改了任何参数才换新键；成功或 4xx 业务拒绝即动作结束，调用方 reset()（协调会话定的统一口径，所有门户写操作都照此）。下单类动作成功后键已丢弃，usePlacedOrder 记住刚下的待支付单，同样的请求在有效期内再点就重开这张单的支付，不再下第二张（否则余额抵扣会冻结两次）
+ * [OUTPUT]: 对外提供 useIntentKey、createIntentKey、IntentKey、endsIntent、usePlacedOrder、createPlacedOrder、PlacedOrder、recallPayable
+ * [POS]: portal/screens/common 的幂等键约定（契约 1.5：一次用户意图一个键，重试与重放复用，动作结束后丢弃）：按请求指纹给键，同样的请求（双击、断网或 5xx 后重试）拿到同一个键、后端回放同一结果，改了任何参数才换新键；成功或 4xx 业务拒绝即动作结束，调用方 reset()（协调会话定的统一口径，所有门户写操作都照此）。下单类动作成功后键已丢弃，usePlacedOrder 记住刚下的待支付单，同样的请求在有效期内再点就重开这张单的支付，不再下第二张（否则余额抵扣会冻结两次）；重开前经 recallPayable 问一次它还能不能付，已取消、超时或已支付就 forget() 并按新请求下单
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -63,4 +63,17 @@ export function createPlacedOrder<T>(now: () => number = Date.now, ttlMs = ORDER
 export function usePlacedOrder<T>(): PlacedOrder<T> {
   const [placed] = useState(() => createPlacedOrder<T>())
   return placed
+}
+
+/**
+ * 同样的请求再点时先调它：记下的单还能付就返回它（调用方重开支付）；已不能付——在别处取消、
+ * 服务端先一步超时、已在另一个标签页付掉——就 forget() 并返回 null，调用方按新请求下单。
+ * payable 由调用方给（查订单详情），查询本身断网或 5xx 时应答「能」，交给支付弹窗报错与重试。
+ */
+export async function recallPayable<T>(placed: PlacedOrder<T>, request: unknown, payable: (value: T) => Promise<boolean>): Promise<T | null> {
+  const value = placed.recall(request)
+  if (value === null) return null
+  if (await payable(value)) return value
+  placed.forget()
+  return null
 }
