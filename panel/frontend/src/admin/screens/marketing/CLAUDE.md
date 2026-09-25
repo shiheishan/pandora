@@ -10,7 +10,7 @@
 成员清单
 index.tsx: 页面入口，按 tab 切 Coupons / Gifts / Commission，rest 交给礼品卡（#/marketing/gifts/<templates|batches|usages>[/<批次 id>]）
 schemas.ts: 全部接口的 zod schema 与类型；待补字段可选，Go 的 omitempty 可选，nil 切片 nullable 归一成 []
-queries.ts: 查询键前缀 MK、useCan、各读 hook（券与兑换记录挂 orders.changed，其余营销表没有变更通知）、useInvalidateMarketing（写后整前缀失效）、useFailure（reauth_required 静默、422 fields 回表单、其余 Toast）、useIntentKey（按请求体指纹复用幂等键）
+queries.ts: 查询键前缀 MK、各读 hook（券与兑换记录挂 orders.changed，其余营销表没有变更通知）、useInvalidateMarketing（写后整前缀失效），并转出 admin/actions.ts 的 useCan / useFailure / useIntentKey
 logic.ts: 纯函数——元 / 百分比与分 / 万分比互转（多于两位小数判非法）、优惠与用量文案、券 / 卡码 / 提现状态映射、礼品卡面额与兑换内容、批次名 GB-MMDD-XXXX、四张表单到请求体的构建与前端校验（错误键与后端 fields 同名）
 Coupons.tsx: 优惠券标签：状态分段、六列列表、行内启停开关、点码展开兑换记录、批量生成结果弹窗与前端拼的 CSV
 CouponForm.tsx: 新建单张 / 批量生成共用的内联表单；409 码已存在落在码输入框

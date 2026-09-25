@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 node:http 的 createServer，依赖 ../dev/mock-api 的 mockApi / MOCK_ACCOUNTS，依赖 ../dev/mock/types 的 matchPattern
+ * [INPUT]: 依赖 vitest，依赖 node:http 的 createServer，依赖 ../dev/mock-api 的 mockApi / MOCK_ACCOUNTS，依赖 ../dev/mock/types 的 matchPattern，依赖 ../src/admin/screens/nodes/schemas 的 nodesResponse
  * [OUTPUT]: 对外提供假后端外壳与模块分发的测试
- * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为；另守营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400
+ * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为；另守营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400；节点假接口的列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -9,6 +9,7 @@ import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS, mockApi } from '../dev/mock-api'
 import { matchPattern } from '../dev/mock/types'
+import { nodesResponse } from '../src/admin/screens/nodes/schemas'
 
 type Middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) => void
 
@@ -167,6 +168,58 @@ describe('mock api · admin marketing', () => {
     expect(dup.status).toBe(409)
     const bad = await post('/v1/commission/config', { rate_percent: 51 })
     expect(await bad.json()).toMatchObject({ error: { code: 'validation_failed', fields: { rate_percent: '佣金比例需在 0 到 50 之间' } } })
+  })
+})
+
+describe('mock api · admin nodes', () => {
+  let server: Server
+  let base: string
+  let auth: Record<string, string>
+  beforeAll(async () => {
+    ;({ server, base } = await serve('admin'))
+    const res = await fetch(`${base}/v1/auth/login`, { method: 'POST', body: JSON.stringify(MOCK_ACCOUNTS.admin) })
+    auth = { Authorization: `Bearer ${((await res.json()) as { access_token: string }).access_token}` }
+  })
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())))
+
+  const call = (method: string, path: string, body?: unknown, key?: string) =>
+    fetch(`${base}${path}`, { method, headers: { ...auth, ...(key ? { 'Idempotency-Key': key } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+  const list = async () => nodesResponse.parse(await (await call('GET', '/v1/nodes')).json()).nodes
+
+  it('serves a list the page schema accepts, retired only on request', async () => {
+    const rows = await list()
+    expect(rows.length).toBeGreaterThan(3)
+    expect(rows.some((n) => n.serving_status === 'retired')).toBe(false)
+    const all = nodesResponse.parse(await (await call('GET', '/v1/nodes?include_retired=1')).json()).nodes
+    expect(all.some((n) => n.serving_status === 'retired')).toBe(true)
+    // 读接口抹掉敏感键
+    expect(JSON.stringify(rows.map((n) => n.protocol_config))).not.toContain('private_key')
+  })
+
+  it('copies into a new node and refuses illegal transitions and deployed moves', async () => {
+    const [src] = await list()
+    const copy = await call('POST', `/v1/nodes/${src!.id}/copy`, { row_version: src!.row_version, name: `${src!.name} 副本` }, 'copy-1')
+    expect(copy.status).toBe(201)
+    const created = (await copy.json()) as { id: string; serving_status: string }
+    expect(created.id).not.toBe(src!.id)
+    expect(created.serving_status).toBe('draft')
+    const draft = await call('POST', '/v1/nodes/status:batch', { items: [{ id: src!.id, row_version: src!.row_version }], serving_status: 'draft' }, 'batch-1')
+    expect(draft.status).toBe(409)
+    expect(await draft.json()).toMatchObject({ error: { fields: { serving_status: 'active -> draft' } } })
+    const disabled = (await list()).find((n) => n.serving_status === 'disabled')!
+    const move = await call('POST', `/v1/nodes/${disabled.id}/move`, { server_id: src!.server_id, row_version: disabled.row_version }, 'move-1')
+    expect(move.status).toBe(409)
+    expect(await move.json()).toMatchObject({ error: { fields: { active_identities: '1' } } })
+  })
+
+  it('validates protocol config against the schema and rejects unknown fields', async () => {
+    const [n] = await list()
+    const bad = await call('PATCH', `/v1/nodes/${n!.id}`, { row_version: n!.row_version, node_type: 'shadowsocks', protocol_config: {} })
+    expect(bad.status).toBe(422)
+    expect(await bad.json()).toMatchObject({ error: { fields: { 'protocol_config.cipher': '必填' } } })
+    expect((await call('PATCH', `/v1/nodes/${n!.id}`, { row_version: n!.row_version, sort_order: 1 })).status).toBe(400)
+    const stale = await call('PATCH', `/v1/nodes/${n!.id}`, { row_version: n!.row_version - 1, name: 'x' })
+    expect(stale.status).toBe(409)
   })
 })
 
