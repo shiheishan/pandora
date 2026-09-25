@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 node:http 的 createServer，依赖 ../dev/mock-api 的 mockApi / MOCK_ACCOUNTS，依赖 ../dev/mock/types 的 matchPattern，依赖 ../src/admin/screens/nodes/schemas 的节点 / 服务器 / 节点池 / 全局路由 schema
  * [OUTPUT]: 对外提供假后端外壳与模块分发的测试
- * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409（调账用 users 假后端的真实种子用户，余额经详情接口核对，种子外的 id 回 404）——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为；另守用户第 ④ 步（流量重置、批量、用户组、设备模式）；营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400；节点假接口的列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器假接口能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布
+ * [POS]: tests 的假后端守卫：把 mockApi 的中间件挂到真实的本地 HTTP 服务上，用 fetch 验证外壳接口、模块分发、权限 404、reauth 先于幂等、同键重放与换请求 409、只重放 2xx（4xx 后同 key 重新执行、条件改好后成功，R85）（调账用 users 假后端的真实种子用户，余额经详情接口核对，种子外的 id 回 404）——各页面会话往 dev/mock/ 里加接口时都依赖这几条行为；另守用户第 ④ 步（流量重置、批量、用户组、设备模式）；营销假接口的礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400；节点假接口的列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器假接口能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -125,13 +125,37 @@ describe('mock api · admin', () => {
     expect(await reused.json()).toMatchObject({ error: { code: 'idempotency_key_reuse' } })
   })
 
-  it('requires an Idempotency-Key and stores validation errors for replay', async () => {
+  it('requires an Idempotency-Key and re-executes a rejected request instead of replaying it', async () => {
     const { access_token } = await login(MOCK_ACCOUNTS.admin)
     expect((await adjust(access_token, null, { amount: 1, reason: '测试调账理由' })).status).toBe(400)
     const bad = await adjust(access_token, 'intent-2', { amount: 1, reason: '短' })
     expect(bad.status).toBe(422)
     expect(await bad.json()).toMatchObject({ error: { code: 'validation_failed', fields: { reason: expect.any(String) } } })
     expect((await adjust(access_token, 'intent-2', { amount: 1, reason: '短' })).status).toBe(422)
+    // 失败记录同样记住了指纹：换请求体仍是 idempotency_key_reuse
+    const reused = await adjust(access_token, 'intent-2', { amount: 1, reason: '测试调账理由' })
+    expect(await reused.json()).toMatchObject({ error: { code: 'idempotency_key_reuse' } })
+  })
+
+  it('re-executes a 4xx under the same key and succeeds once the condition is fixed (R85)', async () => {
+    const { access_token } = await login(MOCK_ACCOUNTS.admin)
+    const user = '1a2b3c45-0000-4000-8000-000000000005'
+    const balanceOf = async () => ((await (await fetch(`${base}/v1/users/${user}`, { headers: { Authorization: `Bearer ${access_token}` } })).json()) as { balance: number }).balance
+    const start = await balanceOf()
+    const debit = { amount: -(start + 10000), reason: '扣回多发的补偿' }
+    const refused = await adjust(access_token, 'debit-1', debit, user)
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ error: { code: 'conflict', message: '余额不足，无法扣减' } })
+    expect(await balanceOf()).toBe(start)
+    // 另一次意图把余额补上，原 key 原请求再来：重新执行而不是重放 409
+    expect((await adjust(access_token, 'topup-1', { amount: 20000, reason: '补足余额以便扣减' }, user)).status).toBe(200)
+    const retried = await adjust(access_token, 'debit-1', debit, user)
+    expect(retried.status).toBe(200)
+    const after = ((await retried.json()) as { balance: number }).balance
+    expect(after).toBe(start + 20000 + debit.amount)
+    // 成功之后同 key 同请求原样重放，不再扣第二次
+    expect(await (await adjust(access_token, 'debit-1', debit, user)).json()).toEqual({ balance: after })
+    expect(await balanceOf()).toBe(after)
   })
 
   it('answers 404 for a user outside the seed instead of inventing a balance', async () => {
