@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 ./harness 的 state / pageClient / loginToken / lastHeaders / record，依赖页面模块里写操作用的响应 schema 与请求体构造函数（annBody、salesBody、orderItems、toggleBody 等），依赖 node:crypto 的 HMAC（把真实会话的重认证时间往回拨）
  * [OUTPUT]: 第 ④ 步写路径冒烟：新服务器 + 新节点一步上线后能下发用户；reauth_required → reauth → 同键重放；幂等 2xx 同键重放与换请求体 409；每个后台模块与门户至少一个写操作的响应能被页面 schema 解析；工单回复发不发站内通知（FACT）
- * [POS]: tests/smoke 的写路径表，排在 admin / portal 两张读表之后跑（文件名序）；请求体一律用页面自己的构造函数拼，响应用页面自己的 schema 解析，结果以入口 write 进逐行表
+ * [POS]: tests/smoke 的写路径表，排在 admin / portal 两张读表之后跑（vitest.config.ts 的 ReadsBeforeWrites 固定）；请求体一律用页面自己的构造函数拼，响应用页面自己的 schema 解析，结果以入口 write 进逐行表
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHmac, randomUUID } from 'node:crypto'

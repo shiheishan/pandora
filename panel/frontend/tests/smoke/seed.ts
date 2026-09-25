@@ -42,6 +42,7 @@ const NODE = need(smokeEnv, 'SMOKE_NODE_BASE')
 const ADMIN_EMAIL = need(smokeEnv, 'SMOKE_ADMIN_EMAIL')
 const ADMIN_PASSWORD = need(smokeEnv, 'SMOKE_ADMIN_PASSWORD')
 const PG_CONTAINER = need(smokeEnv, 'SMOKE_PG_CONTAINER')
+const PG_DB = need(smokeEnv, 'SMOKE_PG_DB')
 const MASTER_KEY = Buffer.from(need(gatewayEnv, 'AEGIS_MASTER_KEY'), 'base64')
 const TENANT = '00000000-0000-7000-8000-000000000001'
 // 插件投递接收端的端口：只在 runner 上、只听回环
@@ -111,7 +112,7 @@ function step(title: string): void {
 
 /** SQL 夹具：以迁移账号直连冒烟库。只用于产品接口造不出来的数据，每处都写明为什么 */
 function sqlFixture(what: string, sql: string): void {
-  const r = spawnSync('docker', ['exec', '-i', PG_CONTAINER, 'psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'aegis', '-d', 'aegis'], { input: sql, encoding: 'utf8' })
+  const r = spawnSync('docker', ['exec', '-i', PG_CONTAINER, 'psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'aegis', '-d', PG_DB], { input: sql, encoding: 'utf8' })
   if (r.status !== 0) throw new Error(`SQL 夹具「${what}」失败：${r.stderr}`)
 }
 
