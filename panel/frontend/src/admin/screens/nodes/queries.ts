@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient，依赖 react 的 useCallback，依赖 ../../../shell/runtime 的 useApi，依赖 ../marketing/queries 的 useCan / useFailure / useIntentKey（后台前端一把它们提升到 admin/actions.ts 并合入后改为从那里引用），依赖 ./schemas
+ * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient，依赖 react 的 useCallback，依赖 ../../../shell/runtime 的 useApi，依赖 ../../actions 的 useCan / useFailure / useIntentKey（转出），依赖 ./schemas
  * [OUTPUT]: 对外提供 NK 查询键前缀、节点页各读 hook（节点列表、协议 schema、服务器与节点池选项、身份、探针、单节点与全局路由）、useInvalidateNodes，并转出 useCan / useFailure / useIntentKey
  * [POS]: admin/screens/nodes 的数据层：读只经 react-query + core/api；节点列表挂 nodes.changed（nodes 表有变更通知），其余读接口没有对应表通知，写后按前缀整体失效
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -9,7 +9,7 @@ import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { globalRoutingSchema, identitySchema, metricsSchema, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, serversResponse } from './schemas'
 
-export { useCan, useFailure, useIntentKey } from '../marketing/queries'
+export { useCan, useFailure, useIntentKey } from '../../actions'
 
 export const NK = ['admin', 'nodes'] as const
 
