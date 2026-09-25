@@ -56,7 +56,7 @@ func (s *Service) quarantineUnexpectedPayment(ctx context.Context, tx pgx.Tx,
 	if err == nil {
 		if existingOrderID != orderID {
 			return nil, httpx.New(httpx.CodeConflict,
-				"provider payment is already attached to another order")
+				"凭证号已用于其他订单")
 		}
 		if existingCurrency != in.Currency || existingAmount != in.Amount ||
 			existingFee != in.FeeAmount ||

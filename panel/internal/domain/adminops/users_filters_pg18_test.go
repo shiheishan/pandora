@@ -1,11 +1,12 @@
 // [INPUT]: 依赖 platform/pg18test 打开 catalog_sales 域的一次性库，依赖 users.go 的 ListUsers / GetUser、bulk_users.go 的 PreviewBulk、bulk_mail.go 的 SendBulkMail，依赖 platform/crypto 的 HashToken
 // [OUTPUT]: 对外提供 TestAdminUsersFiltersAndFieldsPG18
-// [POS]: domain/adminops 的 PG18 测试（契约后台-03）：用户列表的状态多值、用户组、订阅状态与 q（id / 订阅令牌）筛选与当前订阅摘要，详情的配额、设备、统计、邀请人与 Telegram；批量筛选的套餐、到期、订阅状态与样本行，群发正文变量替换
+// [POS]: domain/adminops 的 PG18 测试（契约后台-03）：用户列表的状态多值、用户组、订阅状态与 q（id / 订阅令牌）筛选与当前订阅摘要，详情的配额、设备、统计（paid_totals 按币种拆开，R80）、邀请人与 Telegram；批量筛选的套餐、到期、订阅状态与样本行，群发正文变量替换
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 
 import (
+	"reflect"
 	"sort"
 	"testing"
 
@@ -59,6 +60,15 @@ func TestAdminUsersFiltersAndFieldsPG18(t *testing.T) {
 		  VALUES($1,$2,$3,$4,$5,'active')`, []any{tenant, subA, alice, crypto.HashToken(token), token[:8]}},
 		{`INSERT INTO referrals(referee_user_id,tenant_id,referrer_user_id) VALUES($2,$1,$3)`, []any{tenant, alice, bob}},
 		{`INSERT INTO telegram_bindings(tenant_id,user_id,chat_id,username) VALUES($1,$2,42,'alice_tg')`, []any{tenant, alice}},
+		// carol 的实收跨两个币种（R80）：待支付单不计，0 元赠送单不出现在拆分里
+		{`INSERT INTO orders(tenant_id,order_no,user_id,kind,status,currency,subtotal_amount,discount_amount,tax_amount,
+			total_amount,balance_applied,payable_amount,paid_amount,paid_at,expires_at,business_request_id)
+		  VALUES($1,'UF-CNY-1',$2,'new','fulfilled','CNY',3000,0,0,3000,0,3000,3000,now(),now(),gen_random_uuid()),
+		        ($1,'UF-CNY-2',$2,'renewal','paid','CNY',1200,0,0,1200,0,1200,1200,now(),now(),gen_random_uuid()),
+		        ($1,'UF-USD-1',$2,'new','fulfilled','USD',500,0,0,500,0,500,500,now(),now(),gen_random_uuid()),
+		        ($1,'UF-CNY-3',$2,'new','pending_payment','CNY',900,0,0,900,0,900,0,NULL,now()+interval '30 minutes',gen_random_uuid()),
+		        ($1,'UF-GBP-0',$2,'new','fulfilled','GBP',0,0,0,0,0,0,0,now(),now(),gen_random_uuid())`,
+			[]any{tenant, carol}},
 	} {
 		if _, err := tx.Exec(ctx, row.sql, row.args...); err != nil {
 			_ = tx.Rollback(ctx)
@@ -138,7 +148,8 @@ func TestAdminUsersFiltersAndFieldsPG18(t *testing.T) {
 		t.Fatal(err)
 	}
 	if d.GroupID == nil || *d.GroupID != group || d.Referrer == nil || d.Referrer.ID != bob ||
-		d.Telegram == nil || d.Telegram.Username != "alice_tg" || d.Stats != (UserStats{}) || len(d.Subscriptions) != 1 {
+		d.Telegram == nil || d.Telegram.Username != "alice_tg" || !reflect.DeepEqual(d.Stats, UserStats{PaidTotals: []CurrencyAmount{}}) ||
+		len(d.Subscriptions) != 1 {
 		t.Fatalf("alice detail = %+v", d)
 	}
 	sub := d.Subscriptions[0]
@@ -148,6 +159,11 @@ func TestAdminUsersFiltersAndFieldsPG18(t *testing.T) {
 	}
 	if bd, err := svc.GetUser(ctx, tenant, bob); err != nil || bd.Stats.ReferralCount != 1 || bd.Referrer != nil || bd.Telegram != nil {
 		t.Fatalf("bob detail = %+v err=%v", bd, err)
+	}
+	// R80：旧字段仍是跨币种直接相加，paid_totals 按币种拆开、币种升序
+	if cd, err := svc.GetUser(ctx, tenant, carol); err != nil || cd.Stats.PaidTotal != 4700 || cd.Stats.OrderCount != 5 ||
+		!reflect.DeepEqual(cd.Stats.PaidTotals, []CurrencyAmount{{"CNY", 4200}, {"USD", 500}}) {
+		t.Fatalf("carol stats = %+v err=%v", cd.Stats, err)
 	}
 	if _, err := svc.GetUser(ctx, tenant, "not-a-uuid"); err == nil {
 		t.Fatal("non-uuid user id did not fail")

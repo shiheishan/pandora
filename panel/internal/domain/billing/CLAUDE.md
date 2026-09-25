@@ -7,7 +7,7 @@
 checkout.go: 新购下单 CreateOrder 与支付回调 HandlePaymentWebhook 主链路，回调按 kind 分派履约；结算体 settlePaymentTx 在调用方事务里执行，回调 / 标记已支付各开一个事务调它，人工单线下已收款在建单事务里调它；provisionSubscription / initQuotaBalances 开订阅与建配额；超 800 行的存量大文件
 order_holds.go: 各建单路径共用的预留父节点与余额冻结（insertHeldReservation / prepareBalanceHold / postBalanceHold）
 reservations.go: 结算与释放共用的预留图加锁校验；orderTotal 是金额恒等式 total = max(小计 − 折扣 − 折算, 0) + 税（00071）
-release.go: 取消 / 过期释放，held 预留图整体转 released 并退回余额冻结；续费走专用分支，其余 kind 共用预留图锁
+release.go: 取消 / 过期释放，held 预留图整体转 released 并退回余额冻结；续费走专用分支，其余 kind 共用预留图锁；冲突原因用 releaseConflict 带中文文案（errors.Is 仍认作冲突哨兵，过期任务照旧空转），releaseHTTPError 是后台与门户取消共用的错误翻译（R95）
 reservation_expiry.go: 到期预留的批量释放扫描
 renewal.go: 续费 CreateRenewal 与周期滚动 RollQuotaPeriods；与变更套餐共用零元单捕获 captureZeroPaySubscriptionOrder 和结算锁 lockOrderSubscriptionForSettlement
 plan_change.go: 变更套餐（D-E-2，kind=upgrade）的试算、下单与原地履约：换套餐不换凭据、配额按新套餐重置（新套餐没有的指标变不限量，配额行不删因人工调整只许追加）、降级差额冲回收入退进余额（plan_change_refund 分录）；同一订阅同时只许一张在途续费或变更单

@@ -1220,7 +1220,7 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 	if err == nil {
 		if recordedOrderID != orderID {
 			return httpx.New(httpx.CodeConflict,
-				"provider payment is already attached to another order")
+				"凭证号已用于其他订单")
 		}
 		if status != "paid" && status != "fulfilled" &&
 			status != "cancelled" && status != "expired" {
