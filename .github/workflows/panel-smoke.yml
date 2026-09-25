@@ -53,8 +53,6 @@ jobs:
   smoke:
     name: Real gateways under the frontend schemas
     runs-on: ubuntu-latest
-    env:
-      SMOKE_STATE: ${{ runner.temp }}/smoke
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -72,14 +70,14 @@ jobs:
       - name: Start the stack
         env:
           GOOSE_BIN: ${{ runner.temp }}/bin/goose
-        run: bash panel/deploy/run-smoke-stack.sh up panel "$SMOKE_STATE"
+        run: bash panel/deploy/run-smoke-stack.sh up panel "$RUNNER_TEMP/smoke"
       - name: Gateway logs
         if: always()
         run: |
-          for f in "$SMOKE_STATE"/logs/aegis-*.log; do
+          for f in "$RUNNER_TEMP/smoke"/logs/aegis-*.log; do
             [ -f "$f" ] || continue
             echo "::group::$(basename "$f")"; tail -200 "$f"; echo "::endgroup::"
           done
       - name: Stop the stack
         if: always()
-        run: bash panel/deploy/run-smoke-stack.sh down "$SMOKE_STATE"
+        run: bash panel/deploy/run-smoke-stack.sh down "$RUNNER_TEMP/smoke"
