@@ -125,7 +125,7 @@ func TestDeliverySetPG18(t *testing.T) {
 
 	// 订阅侧：下载与预览只含已绑定池里的那个节点。
 	svc := New(app, nil, nil)
-	download, err := svc.ListNodes(ctx, tenant, &Credential{PlanVersionID: planVer})
+	download, err := svc.ListNodes(ctx, tenant, &Credential{UserID: user, PlanVersionID: planVer})
 	if err != nil {
 		t.Fatalf("ListNodes: %v", err)
 	}

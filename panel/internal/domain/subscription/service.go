@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 subscription_credentials / subscriptions / quota_balances / traffic_pack_grants 表，依赖 platform/crypto、platform/db
-// [OUTPUT]: 对外提供 Service、New 与订阅分发用例：ListLinks、Rotate、Authenticate、ListNodes、ListOwnedNodePreviews、DeliveryState（后台节点列表对下发规则的复述，含无池节点）、LoadUsage、Log 等
+// [OUTPUT]: 对外提供 Service、New 与订阅分发用例：ListLinks、Rotate、Authenticate、ListNodes、ListOwnedNodePreviews（两者按订阅主人过滤限定了用户组的节点池，R104）、DeliveryState（后台节点列表对下发规则的复述，含无池节点）、LoadUsage、Log 等
 // [POS]: subscription 的订阅分发核心；LoadUsage 的总量 = 套餐本期额度 + 用户流量包剩余（D-E-1），供 Subscription-Userinfo
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -413,7 +413,7 @@ func (s *Service) ListNodes(ctx context.Context, tenantID string, c *Credential)
 	var out []Node
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var err error
-		out, err = listEligibleNodesTx(ctx, tx, tenantID, c.PlanVersionID)
+		out, err = listEligibleNodesTx(ctx, tx, tenantID, c.UserID, c.PlanVersionID)
 		return err
 	})
 	return out, err
@@ -449,7 +449,7 @@ func (s *Service) ListOwnedNodePreviews(ctx context.Context, tenantID, userID, r
 			}
 			return err
 		}
-		nodes, err := listEligibleNodesTx(ctx, tx, tenantID, planVersionID)
+		nodes, err := listEligibleNodesTx(ctx, tx, tenantID, userID, planVersionID)
 		if err != nil {
 			return err
 		}
@@ -505,7 +505,11 @@ func DeliveryState(servingStatus string, pooled, everSeen, beatFresh bool) (bool
 
 // listEligibleNodesTx 是订阅下发和面板预览共用的唯一资格查询。
 // 任何维护状态、协议稳定性或套餐资源池规则都只能在这里修改，避免两处漂移。
-func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, planVersionID string) ([]Node, error) {
+//
+// 要带上用户：节点池可以限定用户组（R104），同一个套餐版本下不同组的用户
+// 拿到的节点可能不同。谓词与节点拉用户（nodefabric.ListNodeUsers）共用
+// nodefabric.PoolAdmitsUserSQL。userID 必须是订阅的主人。
+func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planVersionID string) ([]Node, error) {
 	out := []Node{}
 	rows, err := tx.Query(ctx, `
 			SELECT COALESCE(NULLIF(n.display_name, ''), n.name),
@@ -539,8 +543,10 @@ func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, planVersionID
 			   -- 超时的降级处理放在下面 Go 侧。
 			   AND n.last_heartbeat_at IS NOT NULL
 			   AND `+nodefabric.StableProtocolReadySQL("n")+`
+			   -- 池限定了用户组时，订阅的主人必须在名单内的组里（R104）
+			   AND `+nodefabric.PoolAdmitsUserSQL("n.tenant_id", "n.pool_id", "$4::uuid")+`
 			 ORDER BY n.sort_order, n.id`,
-		tenantID, planVersionID, HeartbeatFreshWindow.String())
+		tenantID, planVersionID, HeartbeatFreshWindow.String(), userID)
 	if err != nil {
 		return nil, err
 	}
