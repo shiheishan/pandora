@@ -2244,6 +2244,7 @@
 
 #### GET v1/me/commission — 佣金概况、明细、提现记录
 - **修订 R69（2026-09-24，后端一 ⑥ e77e65b）**：概况新增 `paid_invitees`、`total_earned` 与转入余额记录 `transfers`。
+- **修订 R81（2026-09-24，门户前端 ④ 核对）**：门户这个接口**不返回计佣范围 `scope`**（R67 只在后台分销总览）。横幅按「邀请好友付费，您得 N% 佣金」写，两种范围下都成立；要写「首单」需后端在 `summary` 里加 `scope`，列入遗留（可选）。
 - 状态：现有 `panel/internal/api/public/handlers.go:860 myCommission`；另有待补·后端（改形状，见下）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无
@@ -2264,7 +2265,7 @@
 #### POST v1/me/withdrawals — 申请佣金提现
 - **修订 R5（2026-09-24）**：幂等改为「是」，scope `commission_withdrawal_request`；可提现金额按 D-F-1 统一口径（账本余额 − 在途提现）。
 - 状态：现有 `panel/internal/api/public/handlers.go:886 requestWithdrawal`
-- 权限：登录用户｜reauth：否｜幂等：否（后端限制同一时间只能有一笔在途提现，重复提交会回 409；按「动钱写操作」惯例建议补幂等，但本段不强制）
+- 权限：登录用户｜reauth：否｜幂等：**是（R5，scope `commission_withdrawal_request`；本行原文「否」已过时）**。原文：否（后端限制同一时间只能有一笔在途提现，重复提交会回 409；按「动钱写操作」惯例建议补幂等，但本段不强制）
 - 请求：`{ amount: int64(分), payout_detail: string(收款方式，非空；信封加密落库) }`
 - 响应：200 `{ id: uuid }`
 - 错误：
@@ -2275,6 +2276,7 @@
   - 映射：最低额取 `summary.min_withdraw`，不写死 ¥100。设计输入框占位是「支付宝账号 / USDT 地址」，改为「支付宝账号 / 银行卡号」，不做 USDT。成功后 invalidate `v1/me/commission`。
 
 #### POST v1/me/commission/transfer — 佣金转入余额
+- **修订 R82（2026-09-24，门户前端 ④ 核对）**：D-F-1 已落地（R7，可用佣金以账本为准），下文「D-F-1 落地之前提示『可用佣金已变化，请刷新』」作废：409 时显示后端原文，并重拉佣金与余额。
 - **修订 R7（2026-09-24）**：可用金额按 D-F-1 统一口径；409 文案改为「可提现佣金不足……提现处理中的金额也不能再转」。
 - 状态：现有 `panel/internal/api/public/selfservice.go:26 transferCommission`
 - 权限：登录用户｜reauth：否｜幂等：是 `commission_transfer_to_balance`
@@ -3181,3 +3183,5 @@
 | R78 | 2026-09-24 | 后台前端二 | 节点 PATCH 的 protocol_config 整体替换会清空敏感键；422 字段键口径 |
 | R79 | 2026-09-24 | 后台前端二 | 协议 schema 含两个 legacy 条目、数组可能为 null、字段路径口径 |
 | R80 | 2026-09-24 | 后台前端一、协调会话 | 用户详情 stats.paid_total 跨币种直接相加 |
+| R81 | 2026-09-24 | 门户前端 | 门户佣金概况不回 scope，横幅不写「首单」 |
+| R82 | 2026-09-24 | 门户前端 | 转余额 409 显示后端原文；提现条目幂等以 R5 为准 |
