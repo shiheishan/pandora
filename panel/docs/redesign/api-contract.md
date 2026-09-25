@@ -316,6 +316,7 @@
 - 权限：`ops.ticket.read`｜reauth：否｜幂等：否
 - 请求：path `id: uuid`
 - 响应：200，结构是 Ticket 加 `messages: [{ id, author_kind: user|agent|system, author_name: string|null, body, internal_note?: true, created_at }]`，消息按时间升序
+- **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：R75 已修：后台详情回 `related_order: { id, order_no } | null`（按工单关联订单联表），`message_count` 与 `last_reply_at` 与队列同口径（内部备注、系统消息都算，没有消息时取建单时间）。前端直接用这两个字段，不必再从 `messages` 推算。
 - **修订 R75（2026-09-24，后台前端一 ② 核对 support/service.go `GetForAgent`，协调会话核实）**：详情**不填** `last_reply_at`（回零值时间 `0001-01-01T00:00:00Z`）和 `message_count`（回 0），前端从 `messages` 自行推算，不要读这两个字段；后台队列与详情的 `related_order` 恒为 null（只有门户详情填，R60），后台详情暂不显示关联订单。后端补齐列入遗留，由后续后端会话处理。
 - 待补·后端（需迁移：否）：增加 `user_active_plan: string|null`，口径与用户列表的 `active_plan` 一致，取 status 为 active 或 trialing 的最新订阅的套餐名。设计稿的详情头要显示用户套餐，而客服角色不一定有 `iam.user.read` 权限，不能再去调用户接口
 - 错误：not_found 404「工单不存在」（用的是 CodeNotFound，不是 NotFoundOrForbidden）
@@ -466,6 +467,7 @@
   3. 顶层增加：
      - `group_id: uuid|null`
      - `stats: { paid_total: int64, order_count: int, referral_count: int }`。其中 `paid_total` 的口径与导出一致，即 status 为 paid 或 fulfilled 的订单的 paid_amount 之和；`referral_count` 取 referrals 表里 referrer 为该用户的行数
+     - **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：R80 已修：`stats` 新增 `paid_totals: [{ currency: string, amount: int }]`，与 `paid_total` 同口径（paid / fulfilled 订单的 `paid_amount`）按币种分组，币种升序，只列大于 0 的，没有实收时为 `[]`。`paid_total` 保留但**已弃用**（跨币种直接相加），前端改读 `paid_totals`；删除不排期。
      - **修订 R80（2026-09-24，后台前端一 ③ 核对 adminops/users.go，协调会话核实）**：`paid_total` 是所有币种的 `paid_amount` 直接相加，没有币种字段。前端暂按用户余额币种显示，用户有 USD 订单时这个数不准；后端按币种拆开（如 `paid_totals: [{currency, amount}]`）列入遗留。
      - `referrer: { id, email } | null`，来自 referrals 表
      - `telegram: { username, bound_at } | null`，来自 telegram_bindings 表
@@ -956,6 +958,7 @@
 - 设计：后台-05 抽屉「支付记录」。映射：intent `created`/`requires_action`/`processing` →「等待回调」，`succeeded` →「成功」，`failed` →「失败」，`cancelled`/`expired` →「已关闭」（设计没有这一项，待补·前端补标签）；`provider_code=offline` 的 payment →「人工确认」，流水号取 `provider_payment_id`（格式 `offline:<凭证号>`）。设计每行只有一个状态：以 intent 为行，有对应 payment 的显示 payment 状态。没有 `billing.payment.read` 权限时回 404，前端要隐藏这一块而不是报错。
 
 #### POST v1/orders/{id}/cancel — 管理员取消待支付订单
+- **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：R95 已修：后台与门户两个取消接口共用同一个错误翻译，400 与 409 的 message 全部是中文（已有入账时为「这张订单已有入账，不能取消」），前端的英文→中文映射可以删掉。`GET v1/orders` 列表行与用户详情 `recent_orders` 加 `manual: bool`（`manual_reason` 非空即人工单，与详情「来源」同口径），开单人仍只在详情里。
 - **修订 R95（2026-09-25，后台前端一 ⑥ 核对）**：本接口 400 与两种 409 的 message 是英文，前端映射成中文，后端补中文列入遗留。另：`GET v1/orders` 列表行没有人工单标识（开单人只在详情里，R63），列表渠道列在赠送单上只能显示「—」；给列表行加 `created_by` 或 `manual` 列入后端遗留（可选）。
 - 状态：现有 `panel/internal/api/admin/handlers.go:380 cancelOrder`
 - 权限：`billing.order.write`｜reauth：否｜幂等：是 `admin_order_cancel`
@@ -966,6 +969,7 @@
 
 #### POST v1/orders/manual — 人工开单
 - **修订 R64（2026-09-24，后端一 ⑥ 14f27cb，协调会话定）**：新增 `settlement: "grant" | "pending"`：grant 当场赠送开通，pending 生成待用户支付的订单（同样 30 分钟过期）。`offline`（线下已收款）与 `balance`（从余额扣，D-C-3 未决）暂回 422。**本接口改挂 RequireRecentReauth**（与 mark-paid 同门槛：offline 会直接记收入并触发佣金），后端一在 ⑥ 的加路由部分实现，实现后再开放 `offline`。
+- **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：凭证号已被其他订单使用时，409 的 message 由英文改为「凭证号已用于其他订单」（与线下支付回调同一文案）。
 - **修订 R74（2026-09-24，后端一 ⑥ 9b4aaab）**：**已挂 RequireRecentReauth**（权限 → reauth → 幂等，与 mark-paid 同门槛），`settlement: "offline"` 已开放：必须带 `reference`（去首尾空白后 1..128 字，缺失回 422 `fields.reference`）；建单与按 offline 渠道结清在同一事务（收入、渠道资金、佣金、开订阅、审计、幂等记录与 mark-paid 同口径，任何一步失败整单回滚），响应 201 `status:"fulfilled"`、`payable_amount` 为线下实收额，重放得到同一份 201。错误：409 凭证号已用于其他订单（文案目前是英文 `provider payment is already attached to another order`，与 mark-paid 相同，前端映射为「凭证号已用于其他订单」）；409 应付为 0（「这张订单不需要支付，请改用赠送」）。`balance` 仍回 422（D-C-3 未决）。已知限制（推断未复现）：迁移 00043 之后新建的租户没有 `offline` 渠道，mark-paid 与线下已收款会回 404 `unknown payment provider`，单租户默认租户不受影响。
 - 状态：现有 `panel/internal/api/admin/manual_order.go:22 createManualOrder`；待补·后端（扩展：结算方式）
 - 权限：`billing.order.write`｜reauth：否（路由注释写了要重认证，实际代码没挂）｜幂等：是 `order_create`（与用户结账共用 scope，`billing.CheckoutIdempotencyScope`）
@@ -2117,6 +2121,7 @@
 - 设计：我的订阅「更换订阅地址」确认框。按钮在请求期间禁用防连点；成功后用返回 url 覆盖显示并重拉 subscription-links。
 
 #### POST v1/me/subscriptions/{id}/renew — 续费（在原订阅上延长）
+- **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：订阅周期已经走完（`current_period_end` 已过，状态仍是 active）时续费履约，新周期**从付款时刻起算**：`current_period_start` 改为付款时刻，`current_period_end` 从它往后加周期。以前起点留在旧周期，中断的那段会算进本周期、摊薄变更套餐的折算基数。另：零元续费与零元变更套餐（余额或券全额抵扣）建单即履约时，提交后也发租户级 `node.users.changed`，与赠送单、支付回调同一口径。
 - **修订 R37（2026-09-24，后端一 91738d3）**：同一条订阅同时只能有一张未完成的续费或变更套餐订单，重复下单回 409「这条订阅还有未完成的续费或变更套餐订单，请先支付或取消」（此前重复续费回 500）。
 - 状态：现有 `panel/internal/api/public/handlers.go:1063 createRenewal`（domain `billing/renewal.go:51 CreateRenewal`）
 - 权限：登录用户｜reauth：否｜幂等：是 `subscription_renewal_create`
@@ -2196,6 +2201,7 @@
 - 设计：选购页流量包 tab 提示「您的专业版本期还剩 N GB。买了流量包后…」、概览主卡剩余流量（订阅剩余 + 流量包剩余，另起一行小字「含流量包 X GB」）。
 
 #### POST v1/me/subscriptions/{id}/change-plan/preview — 变更套餐试算（剩余价值折算）
+- **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：R76 已修：变更套餐试算回 `coupon: { code, discount_type, discount_value } | null`，与优惠码试算（R69）同一个类型，没用码时为 null。前端可以显示券面。
 - **修订 R76（2026-09-24，门户前端 ② 核对）**：响应不回优惠券券面（`coupon` 对象），变更模式下优惠码那一行只显示「优惠 ¥X」（取响应里的优惠金额），不显示「20% 折扣」之类券面；后端补 `coupon`（与 R69 试算同形）列为遗留，不补也可用。
 - **修订 R35（2026-09-24，后端一 91738d3）**：已实现。响应另加 `balance_refund: int`（降级时退进余额的差额，升级为 0）；`direction` 在 total > 0 时为 `upgrade`，否则为 `downgrade`；「暂不支持降级」删除（5.A D-E-2 升降级都允许）。可变更的订阅状态为 active / trialing / grace / past_due；只校验目标套餐的 `allow_upgrade` 与可见性，不校验 allow_new_purchase、库存与限购；价格、版本类错误与新购一致（409「该价格已下架」「该价格当前不在有效期内」「该套餐尚未发布可用版本」等）。新增 409：「变更套餐不能更换币种」「这条订阅本周期的付费订单币种不一致，无法折算」「这条订阅还有未完成的续费或变更套餐订单，请先支付或取消」。优惠码升级、降级都可用（降级时折扣使退回余额变多）。
 - 状态：待补·后端
@@ -2308,6 +2314,7 @@
 
 #### GET v1/me/commission — 佣金概况、明细、提现记录
 - **修订 R69（2026-09-24，后端一 ⑥ e77e65b）**：概况新增 `paid_invitees`、`total_earned` 与转入余额记录 `transfers`。
+- **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：R81 已修：`summary` 加 `scope: "every_order" | "first_order"`，与计提同一个兜底值。前端可以按它写「首单」。
 - **修订 R81（2026-09-24，门户前端 ④ 核对）**：门户这个接口**不返回计佣范围 `scope`**（R67 只在后台分销总览）。横幅按「邀请好友付费，您得 N% 佣金」写，两种范围下都成立；要写「首单」需后端在 `summary` 里加 `scope`，列入遗留（可选）。
 - 状态：现有 `panel/internal/api/public/handlers.go:860 myCommission`；另有待补·后端（改形状，见下）
 - 权限：登录用户｜reauth：否｜幂等：否
@@ -2539,6 +2546,7 @@
   - 映射：设计只提示「至少 8 位」，要补上「需包含字母和数字」。
 
 #### GET v1/me/sessions — 登录会话列表
+- **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：R62 的 `last_seen_at` 已实现：唯一写入点是认证中间件，与会话有效性检查同一事务，同一会话 5 分钟最多写一次，已吊销的会话不写（两个网关的会话都会刷新，本接口仍只列 audience=public）。列表按 `last_seen_at` 排序现在有意义，前端可以显示「最近活跃」。
 - **修订 R62（2026-09-24，后端二 ⑤）**：`last_seen_at` 未实现——契约说刷新令牌时更新，但两个网关都没有刷新接口，没有写入点。前端先不显示这一列；要做需先定契约（例如在认证中间件里节流写入）。
 - **修订 R15（2026-09-24，后端二 62f7283）**：只列出 `audience=public` 的会话，后台会话不可见（缺陷 6 已修）。
 - 状态：现有 `panel/internal/api/public/selfservice.go:42 listMySessions`；另有待补·后端（改行为）
@@ -3312,3 +3320,4 @@
 | R111 | 2026-09-25 | 后端四 | R103 已实现：窗口唯一来源为库函数，非法存值按 5，422 文案与审计口径 |
 | R112 | 2026-09-25 | 后端三 | 建租户触发器补种渠道、模板、开关（R97、R94 已修）；删三个开关（R102）；重置密码原因超 500 字 422（R101） |
 | R113 | 2026-09-25 | 后端四 | 上线接口已实现：路径、前置条件与文案、已 active 先于版本号幂等、服务器进 ready 不要求控制节点、warnings 可缺省 |
+| R114 | 2026-09-25 | 后端三 | R75、R80、R95、R74、R76、R81、R62 遗留已修：工单详情计数与关联订单、`paid_totals` 按币种（`paid_total` 弃用）、取消与凭证号文案中文、订单行 `manual`、变更试算回券面、门户佣金回 `scope`、`last_seen_at` 认证中间件节流写入；零元单履约通知节点；周期走完后续费从付款时刻起算 |

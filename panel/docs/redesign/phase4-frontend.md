@@ -24,10 +24,19 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：①（合并 283797d）、②（合并 bb0480a）、③ `9e14d0b` + ④ `e3700e7` + 补丁 `1299443`（合并 873a6f1；补丁 CI：NativeCore 36142036941、PG18 36142036852、panel-smoke 36142036835 全绿；主线合并后 frontend-check 625 用例、嵌入契约、冒烟 tsc 通过）已验收合入。**前端收尾四步全部完成，暂无待办**：联调冒烟 ④ 查出属于前端的问题时，协调会话追加在下面，用户在同一 worktree 开会话处理。
+**进度**：①（合并 283797d）、②（合并 bb0480a）、③ `9e14d0b` + ④ `e3700e7` + 补丁 `1299443`（合并 873a6f1）已验收合入。**新增第 ⑤ 步：接上后端三 ⑤ 修好的遗留（R114）**，见补充事项最前面；做完报告。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R113。
+- 契约修订已到 R114。
+- **第 ⑤ 步（R114，后端三 ⑤ 已合入主线 bd0b7ff）**：先 `git merge feat/panel-redesign`。以前按「后端没做」降级写的七处，现在后端都已补上，schema 收紧为必填（真后端已上线），假后端同步形状，逐条对照契约里的「修订 R114」行：
+  1. 后台工单详情：直接用 `message_count`、`last_reply_at`、`related_order`（R75），删掉从 `messages` 推算的那段。
+  2. 用户详情：实收按币种显示 `paid_totals`（R80），不再读 `paid_total`（已弃用，schema 里删掉）。
+  3. 订单列表与用户详情的最近订单：`manual: true` 显示「人工」标识（R95）。
+  4. 取消订单与人工开单：删掉英文→中文的文案映射，后端 message 原样显示（R95、R74）。
+  5. 门户变更套餐试算：优惠码那一行显示券面（R76，与优惠码试算同一个 `coupon` 形状）。
+  6. 门户佣金横幅：按 `summary.scope` 写，`first_order` 时写「首单」（R81）。
+  7. 门户会话列表：显示「最近活跃」（`last_seen_at`，R62），更新 `account/model.ts` 里「last_seen_at 等于创建时间」的说明。
+  一个或两个提交都行；共享层改动单列；跑 frontend-check 与嵌入契约，推送后看 CI，报告。
 - 补丁的验收结论：上线接口直接用 `adminNodeSchema`、删掉过渡用的 `activatedResponse`，`warnings` 写 `.min(1).optional()`（与 Go omitempty 一致），假后端照 `ActivateNode` 的判断顺序与 409 原文重写（已 active 先于版本号、版本号非法 422），共享层没动，都认可。合入主线时 `users/api.ts` 只有 L3 头与冒烟 ③ 冲突，已保留双方。
 - 补丁提交按 R113：上线接口响应 `AdminNode` 的 `warnings` 可缺省（没有提示时不出现），schema 写可选；409 的各条原因原样 Toast。
 - ④ 的验收结论：`core/intent.ts` 收拢（`endsIntent` 带 reauth 例外，后台 `actions.ts` 转出不变，门户实际 4 个文件 8 处改 `keyFor`，下单专用函数留门户）、`planOptionsKey(module)` 挂在套餐前缀下且用户那处补 `plans.changed`、按前缀失效的测试、浏览器实测门户 7 个带键写操作与后台下拉随改名刷新，都认可。
