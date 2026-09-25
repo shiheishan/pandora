@@ -19,7 +19,8 @@ plans-store.ts: 套餐假接口的数据与规则：五个种子套餐（沿用 
 plans-packs.ts: 流量包四接口（R73）：状态筛选与排序、新建即在售、updated_at 乐观锁 409、已是目标状态 409、新建 / 修改 / 上架受销售开关控制而下架不受
 billing.ts: 订单与收款（后台-05）的路由：订单列表（q、status 逗号多值白名单、user_id、from / to、limit / offset）/ 详情 / 支付记录 / 取消（state_version CAS、英文 400 / 409 原文）/ 人工开单（grant / pending / offline，reauth + order_create 幂等，201 重放，balance 422，凭证号重复 409 英文原文）/ 标记已支付（金额从订单读、同凭证已入账 already_handled）、挂账列表（suspense 在前、pending_amounts 按币种）与转入余额（记到用户余额、不拒绝多余字段）、渠道列表与启停（reauth、无幂等）、收入调整列表 / 登记（生效日不晚于今天）/ 冲销（已冲销与反向记录 409）；按 DisallowUnknownFields 拒绝未知字段
 billing-store.ts: 订单与收款的数据与视图：订单表以 users.ts 的种子订单（同 id）为底，补齐待支付 / 处理中 / 余额付 / 美元 / 流量包 / 多项 / 充值 / 人工赠送与线下 / 已取消 / 已过期 / 退款各情形，并登记为 users.ts 的订单来源；渠道只有 epay / demo 适配器与内置 offline；挂账与收入调整是种子；fulfil 在赠送、线下、标记已支付后给用户开订阅；列表行 / 详情 / 支付记录 / 渠道统计（今日成交按本机日期、24 小时成功率）视图与 Go 同键名
-system.ts / security.ts: 其余模块，未接入的为空壳
+system.ts: 通知与插件（后台-09 前半）：邮件设置（SMTP 六字段整体覆盖、密码空不改 / "-" 清空、from_name 空回站点名、开邮箱验证要 host 与发件人）与测试、Telegram（Token 只进不出、admin_chat_id 缺省不改 / null 清空、测试缺 chat 回落管理员群组）、12 个模板（种子、变量白名单、有无内置默认与 Go 一致，保存 / 恢复 / 草稿预览 / 测试信要 reauth 可发草稿）、钩子（按 code upsert、新建无密钥生成 whsec_ 一次性回传、https 与内网校验、超时 / 次数越界模拟 DB CHECK 的 500、删除、投递记录无记录 null、测试投递地址含 crm. 或 fail 时对方回 503）；权限 / reauth / 幂等 scope / 文案照契约与 Go，按 DisallowUnknownFields 拒绝未知字段
+security.ts: 其余模块，未接入的为空壳
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

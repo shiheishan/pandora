@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 node:http 的 createServer，依赖 ../dev/mock-api 的 mockApi / MOCK_ACCOUNTS，依赖 ../src/admin/screens/billing/schemas 的订单与收款 schema
  * [OUTPUT]: 对外提供订单与收款（后台-05）假接口的测试
- * [POS]: tests 的后台订单与收款假后端守卫：只读账号只看得到订单列表（支付记录、挂账、渠道、调整整块 404，人工开单先 404 不弹 reauth）；订单列表能被页面 schema 接住、多值状态与未知状态 400、按 user_id 精确筛选且与用户详情的最近订单同一份数据；人工开单先 reauth、三种结算、201 重放、余额扣除 422、凭证号重复 409（英文原文）；标记已支付开通订阅；取消的 state_version CAS 与重放；挂账按币种合计、转入余额记到用户余额且只能一次；渠道启停；收入调整登记、生效日上限、冲销与重复冲销 409。serve / login / reauth 辅助是本文件自带的一份——待 tests 拆分合入后改用公用 helper
+ * [POS]: tests 的后台订单与收款假后端守卫：只读账号只看得到订单列表（支付记录、挂账、渠道、调整整块 404，人工开单先 404 不弹 reauth）；订单列表能被页面 schema 接住、多值状态与未知状态 400、按 user_id 精确筛选且与用户详情的最近订单同一份数据；人工开单先 reauth、三种结算、201 重放、余额扣除 422、凭证号重复 409（英文原文）；标记已支付开通订阅；取消的 state_version CAS 与重放；挂账按币种合计、转入余额记到用户余额且只能一次；渠道启停；收入调整登记、生效日上限、冲销与重复冲销 409。serve / login / reauth 辅助是本文件自带的一份——待 tests 拆分合入后改用 tests/mock-helpers.ts
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -22,7 +22,7 @@ import {
 } from '../src/admin/screens/billing/schemas'
 
 // ---------------------------------------------------------------------------
-// 辅助（待 tests 拆分合入后改用公用 helper）
+// 辅助（待 tests 拆分合入后改用 tests/mock-helpers.ts）
 // ---------------------------------------------------------------------------
 type Middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) => void
 

@@ -1,11 +1,10 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ../../../core/api 的 ApiError，依赖 ./logic，依赖 ./schemas
+ * [INPUT]: 依赖 vitest，依赖 ./logic，依赖 ./schemas
  * [OUTPUT]: 无（测试文件）
- * [POS]: admin/screens/content 纯函数层与 schema 边界的单元测试：幂等键丢弃口径、时间输入互转、公告文字 / 校验 / 请求体 / 按钮取舍、知识库聚合 / 分组 / 校验 / 请求体 / 受众改动、时区选项、插槽脏判断与过滤提示、主题预览；界面交互在浏览器里对 dev 假后端验收
+ * [POS]: admin/screens/content 纯函数层与 schema 边界的单元测试：时间输入互转、公告文字 / 校验 / 请求体 / 按钮取舍、知识库聚合 / 分组 / 校验 / 请求体 / 受众改动、时区选项、插槽脏判断与过滤提示、主题预览；界面交互在浏览器里对 dev 假后端验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
-import { ApiError } from '../../../core/api'
 import {
   annActions,
   annBody,
@@ -16,7 +15,6 @@ import {
   audienceChanged,
   compareVersion,
   droppedMessage,
-  dropsIntent,
   emptyAnnForm,
   emptyKbForm,
   fromDateInput,
@@ -72,17 +70,6 @@ const page = (patch: Partial<Page> = {}): Page => ({
   updated_at: '2026-09-01T00:00:00Z',
   latest_version: 1,
   ...patch,
-})
-
-describe('dropsIntent', () => {
-  it('drops the key on 4xx business rejections only', () => {
-    expect(dropsIntent(new ApiError({ status: 409, code: 'conflict', message: 'x' }))).toBe(true)
-    expect(dropsIntent(new ApiError({ status: 422, code: 'validation_failed', message: 'x' }))).toBe(true)
-    expect(dropsIntent(new ApiError({ status: 403, code: 'reauth_required', message: 'x' }))).toBe(false)
-    expect(dropsIntent(new ApiError({ status: 0, code: 'network_error', message: 'x' }))).toBe(false)
-    expect(dropsIntent(new ApiError({ status: 503, code: 'service_unavailable', message: 'x' }))).toBe(false)
-    expect(dropsIntent(new Error('x'))).toBe(false)
-  })
 })
 
 describe('time inputs', () => {

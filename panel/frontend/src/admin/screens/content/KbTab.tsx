@@ -14,7 +14,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Input, QueryView, Segmented, Skeleton, TextArea, useToast } from '../../../ui'
 import css from './content.module.css'
 import { KbEditor } from './KbEditor'
-import { dropsIntent, groupArticles, groupByCategory, kbBody, kbFormFrom, KIND_LABEL, knownCategories, PAGE_STATUS_LABEL, type Article } from './logic'
+import { groupArticles, groupByCategory, kbBody, kbFormFrom, KIND_LABEL, knownCategories, PAGE_STATUS_LABEL, type Article } from './logic'
 import { useContentPage, useContentPages, useFailure, useIntentKey, useInvalidateContent } from './queries'
 import { KINDS, pageArchived, pageSaved, type Kind, type Page } from './schemas'
 
@@ -158,9 +158,8 @@ function VersionView({ article, row, onBack }: { article: Article; row: Page; on
       onBack()
     },
     onError: (error) => {
-      if (dropsIntent(error)) intent.reset()
       if (isApiError(error, 'conflict')) void invalidate('pages')
-      fail(error)
+      fail(error, { intent })
     },
   })
 
@@ -172,9 +171,8 @@ function VersionView({ article, row, onBack }: { article: Article; row: Page; on
       void invalidate('pages')
     },
     onError: (error) => {
-      if (dropsIntent(error)) intent.reset()
       if (isApiError(error, 'conflict')) void invalidate('pages')
-      fail(error)
+      fail(error, { intent })
     },
   })
 
