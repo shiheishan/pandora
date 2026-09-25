@@ -1,11 +1,12 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ./api 的 schema，依赖 ./model 的纯函数
+ * [INPUT]: 依赖 vitest，依赖 @tanstack/react-query 的 QueryClient（核对查询键前缀），依赖 ./api 的 schema，依赖 ./model 的纯函数
  * [OUTPUT]: 无（测试文件）
  * [POS]: admin/screens/plans 的单元测试：schema 归一与封闭枚举、周期与金额、版本表单与 quotas 同步（R99 限速与 suspend）、卖点、向导两种提交体（编辑三态）与校验、销售设置、新增价格、流量包；界面交互在浏览器里对 dev/mock-api 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
+import { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
-import { packSchema, planCreatedSchema, planDetailSchema, planRowSchema, versionRowSchema, type PlanDetail, type PriceRow, type VersionRow } from './api'
+import { packSchema, PK, planCreatedSchema, planDetailSchema, planOptionsKey, planRowSchema, versionRowSchema, type PlanDetail, type PriceRow, type VersionRow } from './api'
 import {
   createBody,
   emptyPriceForm,
@@ -380,5 +381,18 @@ describe('流量包', () => {
     expect(packBody({ ...f, gb: '0.5' }).traffic_bytes).toBe(GiB / 2)
     expect(Object.keys(packProblems({ ...packForm(), sortOrder: '2000000' })).sort()).toEqual(['name', 'sort_order', 'traffic_bytes', 'unit_amount'])
     expect(packProblems(f)).toEqual({})
+  })
+})
+
+describe('别的模块的 GET v1/plans 查询键（第 4 阶段 ④）', () => {
+  it('挂在套餐前缀下：套餐页按 PK 失效时，用户、内容两处一并失效', async () => {
+    const client = new QueryClient()
+    client.setQueryData(planOptionsKey('users'), [])
+    client.setQueryData(planOptionsKey('content'), [])
+    client.setQueryData(['admin', 'users', 'list'], [])
+    await client.invalidateQueries({ queryKey: [...PK] })
+    expect(client.getQueryState(planOptionsKey('users'))?.isInvalidated).toBe(true)
+    expect(client.getQueryState(planOptionsKey('content'))?.isInvalidated).toBe(true)
+    expect(client.getQueryState(['admin', 'users', 'list'])?.isInvalidated).toBe(false)
   })
 })

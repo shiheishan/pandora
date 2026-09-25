@@ -63,7 +63,7 @@ function BalanceCard() {
     const again = await recallPayable(placed, body, (o) => payable(o.orderId)).finally(() => setReopening(false))
     if (again) return setPay({ phase: 'redirect', ...again, method })
     topup.mutate(
-      { amount: parsed.cents, key: intentKey(body) },
+      { amount: parsed.cents, key: intentKey.keyFor(body) },
       {
         onSuccess: (order) => {
           intentKey.reset()
@@ -193,7 +193,7 @@ function GiftCardCard() {
   function doRedeem() {
     const body = { code: normalized }
     redeem.mutate(
-      { code: normalized, key: intentKey(body) },
+      { code: normalized, key: intentKey.keyFor(body) },
       {
         onSuccess: (r) => {
           intentKey.reset()

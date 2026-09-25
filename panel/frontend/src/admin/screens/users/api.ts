@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient / keepPreviousData，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../billing/schemas 的订单枚举与 orderRowSchema，依赖 ./model 的 exactEmail
+ * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient / keepPreviousData，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../billing/schemas 的订单枚举与 orderRowSchema，依赖 ../plans/api 的 planOptionsKey（套餐下拉挂在套餐的键前缀下），依赖 ./model 的 exactEmail
  * [OUTPUT]: 对外提供用户模块的 zod schema 与类型（UserRow、UserDetail、SubscriptionRow、OrderRow、UserGroup、UserProfile、BulkFilter、BulkPreview、OnlineDevice、ResetLog、ResetReason 等）、读 hook（useUsers、useUser、useUserGroups、useUserProfile、useFindUserByEmail、usePlanOptions、useBulkPreview、useDevices、useTrafficResets、useResetStats、useUserResets）、UK 查询键前缀、useInvalidateUsers 与 useInvalidateResets、写接口的响应 schema
  * [POS]: admin/screens/users 的数据层：形状照 api-contract.md 后台-03（含修订 R9 / R11 / R12 / R22 / R38 / R103 / R104），并按 domain/adminops/users.go、bulk_users.go、bulk_mail.go、api/admin/profile.go、usergroup.go、devices.go、domain/billing/traffic_reset.go 的 json tag 核对；按保留规则 2，没有任何字段携带订阅令牌或订阅地址
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -9,6 +9,7 @@ import { useCallback } from 'react'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
 import { orderRowSchema } from '../billing/schemas'
+import { planOptionsKey } from '../plans/api'
 import { exactEmail } from './model'
 
 // 订单的封闭枚举与列表行归订单与收款模块（后台-05），用户详情「最近订单」同形
@@ -297,10 +298,12 @@ export function useFindUserByEmail() {
 export function usePlanOptions(enabled: boolean) {
   const api = useApi()
   return useQuery({
-    queryKey: [...UK, 'plan-options'],
+    // 挂在套餐的键前缀下：套餐页写后按前缀失效会一并刷新；别的管理员改了套餐靠 plans.changed
+    queryKey: planOptionsKey('users'),
     queryFn: ({ signal }) => api.get('v1/plans', planOptionsSchema, { signal }).then((r) => r.plans),
     enabled,
     staleTime: 5 * 60_000,
+    meta: { topics: ['plans.changed'] },
   })
 }
 

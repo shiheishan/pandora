@@ -8,7 +8,7 @@
 
 成员清单
 index.tsx: 页面入口，按标签分发到五个组件，相对时间的 now 每分钟走一次、各标签共用；「用户列表」从地址读筛选、翻页、打开的用户与抽屉标签并回写
-api.ts: zod schema 与类型（账号 6 态、风险 4 档、订阅 8 态、重置 5 种原因的封闭枚举；订单 9 态与 7 种 kind 及订单行取自 billing/schemas 并转出；列表行、详情、订阅与配额、用户组（含 R104 exclusive_pools）、风控画像、批量预览与生成结果、在线设备与模式（含 R103 识别窗口与 DEVICE_WINDOWS）、重置日志与统计；写响应含 strict 的换发响应）、读 hook（列表、详情、用户组、画像、按邮箱精确找人、套餐下拉、批量预览、设备、重置日志 / 统计 / 单用户历史），useInvalidateUsers 与 useInvalidateResets；useUserGroups 带可选 enabled，套餐页（可见用户组、组专属价）按 iam.user.read 借用同一条查询
+api.ts: zod schema 与类型（账号 6 态、风险 4 档、订阅 8 态、重置 5 种原因的封闭枚举；订单 9 态与 7 种 kind 及订单行取自 billing/schemas 并转出；列表行、详情、订阅与配额、用户组（含 R104 exclusive_pools）、风控画像、批量预览与生成结果、在线设备与模式（含 R103 识别窗口与 DEVICE_WINDOWS）、重置日志与统计；写响应含 strict 的换发响应）、读 hook（列表、详情、用户组、画像、按邮箱精确找人、套餐下拉（键挂在套餐前缀下 planOptionsKey('users')，挂 plans.changed）、批量预览、设备、重置日志 / 统计 / 单用户历史），useInvalidateUsers 与 useInvalidateResets；useUserGroups 带可选 enabled，套餐页（可见用户组、组专属价）按 iam.user.read 借用同一条查询
 model.ts: 纯逻辑——状态分段到后端 query（已过期走 sub_state）、账号 / 订阅 / 订单 / 风险标签（订单标签与 orderWhat 也供订单页用，充值单叫「余额充值」）、到期 / 流量 / 设备三列文案与色、设备上限显示值、当前订阅挑法（与后端 currentSubscriptionSQL 同口径）、订单「买了什么」、调账元转分、与 platform/crypto 同策略的密码预检；④ 的用户组删除拦截（R104 先看节点池名单）、「可用节点池」与「被引用」、设备策略请求体（R103 窗口改了才带）、批量筛选表单到 BulkFilter、批量生成校验（与 adminops.GenerateUsers 同规则）、接近上限与在线格、重置方式与操作人文案、手动重置挑哪条订阅（与 billing.ManualResetTraffic 同口径）、按邮箱精确匹配
 model.test.ts: 列表与抽屉部分的 model、分享提示与 schema 的单元测试（含「换发响应带令牌即判为不符约定」）
 ops.test.ts: 第 ④ 步的纯逻辑与 schema 单元测试（omitempty 键、封闭枚举、生成结果形状），以及第 4 阶段 ③ 的节点池名单、可用节点池与识别窗口

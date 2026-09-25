@@ -21,7 +21,7 @@ Highlights.tsx: HighlightsField：卖点列表（逐条输入、移除、最多 
 PacksTab.tsx: 「流量包」标签：状态分段（在地址上）、表格、新建 / 编辑抽屉（updated_at 乐观锁，409 时刷新）、上下架确认
 failure.ts: useCatalogFailure 与 SALES_OFF，见上文写失败口径
 schemas.ts: 封闭枚举与 zod schema：列表行与详情（含 R100 highlights / recommended）、价格行、版本行（含 R66 created_by_email，R99 限速为 null 或正整数）、节点池候选、流量包行、各写响应（R65 向导新建返回完整详情）
-api.ts: 读 hook（usePlans、usePlan、usePlanPools、usePoolOptions、useTrafficPacks）、PK 查询键前缀、useInvalidatePlans，转出 schemas；新建向导的节点池候选取 GET v1/node-pools（node.read），只收 id / 名称 / 状态 / 在线数，查询键与节点页分开
+api.ts: 读 hook（usePlans、usePlan、usePlanPools、usePoolOptions、useTrafficPacks）、PK 查询键前缀、planOptionsKey（用户、内容两个模块各自查 GET v1/plans 的键，挂在 PK 下，各自一份 schema，套餐页写后按前缀一并失效）、useInvalidatePlans，转出 schemas；新建向导的节点池候选取 GET v1/node-pools（node.read），只收 id / 名称 / 状态 / 在线数，查询键与节点页分开
 model.ts: 纯逻辑：状态 / 可见性 / 重置文案，周期映射（五档预设、季付 = month×3、自定义），元 ↔ 分、GB ↔ 字节，起价与额度文案，版本表单与 quotas 同步（traffic.bytes / devices.active）、Mbps ↔ kbps，卖点校验，向导两种提交体（编辑的三态）与校验（键名同 Go），销售设置、新增价格、流量包的表单与校验，datetime-local 互转
 model.test.ts: schema 归一与封闭枚举、周期与金额、版本表单（R99 限速与 suspend）、卖点、向导新建 / 编辑提交体（三态）与后端限制、fields 落步、销售设置、新增价格、流量包的单元测试
 Plans.module.css: 唯一样式表，数值取自设计稿；详情栏开 container query，960 宽时版本行与表单改紧凑排布

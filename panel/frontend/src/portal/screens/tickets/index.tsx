@@ -103,7 +103,7 @@ function Thread({ ticket, category }: { ticket: TicketDetail; category: string }
 
   async function doClose() {
     try {
-      await close.mutateAsync(closeKey({ close: ticket.id }))
+      await close.mutateAsync(closeKey.keyFor({ close: ticket.id }))
       closeKey.reset()
       toast('感谢反馈，工单已关闭')
     } catch (e) {
@@ -205,7 +205,7 @@ function ReplyBox({ id, onError }: { id: string; onError: (message: string | nul
     if ([...body].length > REPLY_MAX) return setFieldError(`最多 ${REPLY_MAX} 字`)
     const request = { id, body }
     reply.mutate(
-      { body, key: intentKey(request) },
+      { body, key: intentKey.keyFor(request) },
       {
         onSuccess: () => {
           intentKey.reset()
@@ -269,7 +269,7 @@ function NewTicket({ orderId }: { orderId: string | null }) {
     if (found.subject || found.body) return
     const request = { subject: subject.trim(), category, body: body.trim(), ...(order ? { order_id: order } : {}) }
     create.mutate(
-      { body: request, key: intentKey(request) },
+      { body: request, key: intentKey.keyFor(request) },
       {
         onSuccess: (t) => {
           intentKey.reset()

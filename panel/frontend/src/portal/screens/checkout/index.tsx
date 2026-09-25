@@ -221,7 +221,7 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
     if (again && method) return setPayState({ ...again, method })
     // 一次用户意图一个幂等键：双击、断网或 5xx 重试复用；成功或 4xx 拒绝后丢弃
     create.mutate(
-      { ...request, key: intentKey(request) },
+      { ...request, key: intentKey.keyFor(request) },
       {
         onSuccess: (order) => {
           intentKey.reset()

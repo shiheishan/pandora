@@ -15,11 +15,11 @@ traffic.ts: 纯函数——bytesParts / compactBytes（包 core formatBytes）�
 clients.ts: 一键导入深链（Clash Verge / Shadowrocket / Hiddify / Stash / sing-box；v2rayN 无 scheme 改复制）、协议展示名、倍率标签、copyText（非安全上下文退回 execCommand）
 PayFlow.tsx: 支付弹窗（外壳的支付弹窗）：choose 态给已有的待支付订单选支付方式（选完在弹窗内转 redirect，POST 渠道失败可「换一种支付方式」），redirect 态发起 POST v1/orders/{id}/pay 后顶层 GET 导航去收银台（POST 跳转按暂不可用，CSP form-action 会拦表单；409 订单已不可支付时回调 onUnpayable 并不给重试），done 态显示按订单种类的成功文案，confirm 态在收银台回跳后 3 秒轮询订单、最多 2 分钟；成功后失效 portal 前缀下全部查询
 PayFlow.module.css: 支付弹窗样式，去掉设计稿的二维码块
-intent.ts: useIntentKey / createIntentKey——按请求指纹给幂等键，同样的请求复用、改了参数换新键；endsIntent 判定 4xx（协调会话定的统一口径：所有门户写操作成功或 4xx 后 reset，断网与 5xx 保留键）；usePlacedOrder / createPlacedOrder 记住刚下的待支付单，结账与充值在同样的请求 30 分钟内再点时重开它的支付，不下第二张（否则余额抵扣冻结两次）；recallPayable 重开前问一次还能不能付，已取消、超时或付掉就 forget() 按新请求下单（支付弹窗收到 409 也 forget）
+intent.ts: 转出 core/intent 的 useIntentKey / createIntentKey / endsIntent（两个入口同一份：keyFor 按请求指纹给键，同样的请求复用、改了参数换新键；成功或 4xx 后 reset，reauth 取消、断网与 5xx 保留键）；usePlacedOrder / createPlacedOrder 记住刚下的待支付单，结账与充值在同样的请求 30 分钟内再点时重开它的支付，不下第二张（否则余额抵扣冻结两次）；recallPayable 重开前问一次还能不能付，已取消、超时或付掉就 forget() 按新请求下单（支付弹窗收到 409 也 forget）
 Blocks.tsx: Slot（外观插槽，服务端净化过的 HTML，空则不占位）与 LoadError（卡片内失败态 + 重试，断网单独一句）
 UsageCard.tsx: 「本期用量」卡：柱状图（今天朱砂、未到灰色矮柱、超 40 根收窄间距）、日均 / 今天、预测与「买流量包 →」
 common.module.css: 插槽与用量卡样式
-common.test.ts: traffic / orders / clients / subscriptions schema、subs/labels 与 intent（reset 口径、待支付单取回与不可支付时忘掉、isPayable）的单元测试，跨时区稳定（UTC、洛杉矶、上海、奥克兰实测）
+common.test.ts: traffic / orders / clients / subscriptions schema、subs/labels 与下单防重复（待支付单取回与不可支付时忘掉、isPayable；幂等键本身在 core/intent.test.ts）的单元测试，跨时区稳定（UTC、洛杉矶、上海、奥克兰实测）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

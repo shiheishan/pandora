@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient，依赖 react 的 useCallback，依赖 ../../../shell/runtime 的 useApi，依赖 ../../actions 的 useCan / useFailure / useIntentKey（转出），依赖 ./schemas
+ * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient，依赖 react 的 useCallback，依赖 ../../../shell/runtime 的 useApi，依赖 ../plans/api 的 planOptionsKey（套餐名字的查询挂在套餐的键前缀下），依赖 ../../actions 的 useCan / useFailure / useIntentKey（转出），依赖 ./schemas
  * [OUTPUT]: 对外提供 CK 查询键前缀、内容与外观页各读 hook（公告、知识库列表与单版本、套餐目录、主题、插槽、站点时区）、useInvalidateContent，并转出 useCan / useFailure / useIntentKey
  * [POS]: admin/screens/content 的数据层：读只经 react-query + core/api；公告挂 announcements.changed（门户可见内容的唯一表变更通知），其余没有通知的接口写后按 CK 前缀整体失效
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -7,6 +7,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
+import { planOptionsKey } from '../plans/api'
 import type { Kind } from './schemas'
 import { announcementsResponse, pageResponse, pagesResponse, planCatalogResponse, siteSettingsSchema, slotsResponse, themesResponse } from './schemas'
 
@@ -54,7 +55,8 @@ export function useContentPage(id: string, slug: string) {
 export function usePlanCatalog(enabled: boolean) {
   const api = useApi()
   return useQuery({
-    queryKey: [...CK, 'plans'],
+    // 挂在套餐的键前缀下：套餐页写后按前缀失效会一并刷新（第 4 阶段 ④）
+    queryKey: planOptionsKey('content'),
     queryFn: ({ signal }) => api.get('v1/plans', planCatalogResponse, { signal }).then((r) => r.plans),
     enabled,
     staleTime: 5 * 60_000,
