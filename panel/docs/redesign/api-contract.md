@@ -66,6 +66,7 @@
 - 挂了 `middleware.Idempotency` 的路由（条目里「幂等：是 `scope`」）必须带请求头 `Idempotency-Key`（1–255 字节可见字符），缺失或非法回 400。
 - 同一次用户意图的所有重试（网络重试、reauth 后重放）必须复用同一个 key；key 在用户发起动作时生成（UUID v4），动作结束（成功或用户放弃）后丢弃。
 - 同 key 不同请求体（方法+路径+query+body 的哈希）→ 409 idempotency_key_reuse；同 key 在途 → 409 conflict「同一请求正在处理」；同 key 同请求 → 原样重放第一次的响应（状态码与响应体都一样）。
+- **修订 R85（2026-09-24，后台前端二 ③ 发现，协调会话核实 `internal/middleware/idempotency.go`）**：**只有 2xx 会被原样重放**。非 2xx 的结果记为 failed：没有绑定业务资源的，同 key 同请求会**重新执行**；已绑定资源的，回 409 conflict「同一请求正在处理或需要人工核对，请稍后重试」。前端口径：成功后丢弃 key；收到 4xx 业务拒绝后也丢弃（门户已这样做，避免撞上已绑定资源的 409）；断网与 5xx 保留 key 重试。假后端 `dev/mock-api.ts` 目前会重放 4xx，与此不符，由后台前端二修。
 - admin 路由的中间件顺序是 RequirePermission → RequireRecentReauth → Idempotency（`reset-password` 与 `rotate` 两条例外，先 reauth 后权限，见 B 段核对笔记），所以 reauth 失败**不消耗**幂等键。
 
 ### 1.6 重新验证身份（reauth，仅 admin）
@@ -585,6 +586,7 @@
 - 设计：设计稿没有这个入口。待补·前端：删除按钮在 users、plans、prices、coupons 任一不为 0 时置灰，悬停提示具体原因
 
 #### POST v1/users/bulk/preview — 批量筛选预览
+- **修订 R86（2026-09-24，后台前端一 ④ 核对 adminops/bulk_users.go、bulk_mail.go 与 router_users.go）**：本节「待补·后端」三件已实现：批量筛选的 `plan_id`、`expires_within_days`（1–365）、`sub_state` 与预览的 `sample_rows`；群发正文的 `$email`、`$plan`、`$expire` 变量替换；`POST v1/users/{id}/traffic-reset` 已挂 reauth。手动重置时用户 id 合法但用户不存在，回 422「这个用户没有生效中的订阅」而不是 404。
 - 状态：现有 `bulk_users.go:35 previewBulkUsers` → `adminops/bulk_users.go PreviewBulk`；待补·后端（筛选与字段）
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
 - 请求（现有）：`{ status?: ""|pending|active|suspended|banned|deletion_scheduled, group_id?: uuid, query?: string（邮箱模糊匹配）, has_active_sub?: bool }`。注意 has_active_sub 只认 status 为 `active` 的订阅，不包括 trialing
@@ -1412,6 +1414,7 @@
 ### 后台-07 节点与服务器 · 服务器
 
 #### GET v1/servers — 服务器列表
+- **修订 R87（2026-09-24，后台前端二 ③ 核对 nodefabric/server_admin.go）**：列表按 `created_at` 倒序（同时刻按 id 倒序），最多 500 条；可选字段缺值为 `null`。`PATCH v1/servers/{id}` 传 `name: ""` 回 422 `name`（下文「空串不清空」不准）。`GET v1/node-pools` 的 `members`、`plan_names` 已实现，条目里的「待补·后端」作废。
 - 状态：现有 `panel/internal/api/admin/server.go:53 serverList` → `nodefabric/server_admin.go:195 ListServers`
 - 权限：`node.read`｜reauth：否｜幂等：否
 - 请求：query `status?: "draft"|"ready"|"draining"|"maintenance"|"unhealthy"|"quarantined"|"retired"`, `q?: string(≤120，匹配 name/hostname)`；上限 500。
@@ -3189,3 +3192,6 @@
 | R82 | 2026-09-24 | 门户前端 | 转余额 409 显示后端原文；提现条目幂等以 R5 为准 |
 | R83 | 2026-09-24 | 门户前端 | 站内信 sent_at 可为 null |
 | R84 | 2026-09-24 | 门户前端、协调会话 | 单条标已读：不存在的 id 回 200，非 UUID 回 500（缺陷） |
+| R85 | 2026-09-24 | 后台前端二、协调会话 | 幂等只重放 2xx；非 2xx 同 key 重新执行或 409 |
+| R86 | 2026-09-24 | 后台前端一 | 批量筛选扩展、群发变量、流量重置 reauth 已实现；重置不存在用户回 422 |
+| R87 | 2026-09-24 | 后台前端二 | 服务器列表排序、PATCH 空名 422、节点池 members / plan_names 已实现 |
