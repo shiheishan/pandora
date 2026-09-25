@@ -1,12 +1,13 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/nodes/schemas 的节点 / 服务器 / 节点池 / 全局路由 schema
+ * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../dev/mock/admin/nodes-infra 的 activeNodesInPool，依赖 ../src/admin/screens/nodes/schemas 的节点 / 服务器 / 节点池 / 全局路由 schema
  * [OUTPUT]: 对外提供节点与服务器（后台-07）假接口的测试
- * [POS]: tests 的节点假后端守卫：节点列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布
+ * [POS]: tests 的节点假后端守卫：节点列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
+import { activeNodesInPool } from '../dev/mock/admin/nodes-infra'
 import { globalRoutingSchema, nodesResponse, poolsResponse, serverSchema, serversResponse } from '../src/admin/screens/nodes/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
@@ -138,6 +139,9 @@ describe('mock api · admin nodes infra', () => {
     expect(pools.find((p) => p.id === id)).toMatchObject({ code: 'europe-west', region: 'EU', status: 'draining', members: [], plan_names: [] })
     const busy = pools.find((p) => p.nodes > 0)!
     expect(busy.members.length).toBeGreaterThan(0)
+    // 套餐假后端要读的按池在线数与列表的 active_nodes 同一口径
+    expect(pools.every((p) => p.active_nodes === activeNodesInPool(p.id))).toBe(true)
+    expect(pools.some((p) => p.active_nodes > 0)).toBe(true)
     expect((await call('DELETE', `/v1/node-pools/${busy.id}`)).status).toBe(409)
     expect(await (await call('DELETE', `/v1/node-pools/${pools.find((p) => p.code === 'enterprise')!.id}`)).json()).toMatchObject({ error: { message: '还有未使用的引导令牌绑定这个分组，请等待令牌过期后再删除' } })
     expect((await call('DELETE', `/v1/node-pools/${id}`)).status).toBe(200)

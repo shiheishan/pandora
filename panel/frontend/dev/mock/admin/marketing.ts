@@ -1,11 +1,13 @@
 /**
- * [INPUT]: 依赖 node:crypto 的 randomUUID / randomInt，依赖 ../types 的 MockModule / MockContext / MockResult / Json
+ * [INPUT]: 依赖 node:crypto 的 randomUUID / randomInt，依赖 ../types 的 MockModule / MockContext / MockResult / Json，依赖 ./users 的 PLAN_IDS 与 ./plans-store 的 plans（券的适用套餐与套餐卡用固定套餐 id 与种子价格，GET v1/plans 归套餐模块）
  * [OUTPUT]: 对外提供 marketing 模块的假接口 MockModule
  * [POS]: dev/mock/admin 的「营销（后台-06）」假接口，归后台前端二：优惠券、礼品卡（模板 / 批次 / 掩码卡码 / 一次性导出 / 使用记录 / 统计）、佣金与提现。形状、权限、reauth、幂等 scope、校验文案照 api-contract.md（含 R4 R5 R6 R17）与 Go 处理器；请求体按后端 DisallowUnknownFields 拒绝未知字段
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomInt, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
+import { plans } from './plans-store.ts'
+import { PLAN_IDS } from './users.ts'
 
 // ---------------------------------------------------------------------------
 // 工具：错误信封（幂等表存完整响应，错误也要按信封入表）、未知字段、时间
@@ -37,21 +39,11 @@ const page = (q: URLSearchParams, def: number, max: number) => {
 }
 
 // ---------------------------------------------------------------------------
-// 套餐目录（临时）：券的「适用套餐」与套餐卡要读 GET v1/plans，那条接口归 plans 模块
-// （后台前端一）。plans 在登记表里排在 marketing 前面，它补上后这里自动失效，届时删除。
-// 只给出契约 GET v1/plans 里营销页用到的字段。
+// 套餐：GET v1/plans 归套餐模块（plans.ts），这里只借它的固定套餐 id 与种子价格，
+// 让券的「适用套餐」与套餐卡在营销页上对得上套餐页
 // ---------------------------------------------------------------------------
-const PLANS = [
-  { id: randomUUID(), code: 'basic', name: '基础版', status: 'active' },
-  { id: randomUUID(), code: 'pro', name: '专业版', status: 'active' },
-  { id: randomUUID(), code: 'team', name: '团队版', status: 'active' },
-].map((p, i) => ({
-  ...p,
-  prices: [
-    { id: randomUUID(), currency: 'CNY', unit_amount: [1900, 5900, 19900][i]!, billing_interval: 'month', interval_count: 1, trial_days: 0, status: 'active' },
-    { id: randomUUID(), currency: 'CNY', unit_amount: [19000, 59000, 199000][i]!, billing_interval: 'year', interval_count: 1, trial_days: 0, status: 'active' },
-  ],
-}))
+const PRO = plans.find((p) => p.id === PLAN_IDS[1])!
+const PRO_MONTH = PRO.prices.find((p) => p.status === 'active' && p.currency === 'CNY' && p.billing_interval === 'month' && !p.user_group_id)!
 
 // ---------------------------------------------------------------------------
 // 优惠券（契约后台-06 · 优惠券）
@@ -109,7 +101,7 @@ const coupon = (c: Partial<Coupon> & Pick<Coupon, 'code' | 'discount_type' | 'di
 
 const coupons: Coupon[] = [
   coupon({ code: 'AUTUMN26', discount_type: 'percent', discount_value: 2000, max_redemptions: 1000, redeemed_count: 412, valid_until: days(13) }, 1),
-  coupon({ code: 'PROYEAR', discount_type: 'fixed', discount_value: 10000, applicable_plan_ids: [PLANS[1]!.id], max_redemptions: 200, redeemed_count: 38, valid_until: days(98), min_order_amount: 50000 }, 3),
+  coupon({ code: 'PROYEAR', discount_type: 'fixed', discount_value: 10000, applicable_plan_ids: [PLAN_IDS[1]!], max_redemptions: 200, redeemed_count: 38, valid_until: days(98), min_order_amount: 50000 }, 3),
   coupon({ code: 'WELCOME', discount_type: 'percent', discount_value: 1000, max_discount: 3000, redeemed_count: 2204 }, 120),
   coupon({ code: 'KOLA7Q2M8X', name: 'KOL 渠道 09', discount_type: 'percent', discount_value: 1500, max_redemptions: 1, redeemed_count: 1, valid_until: days(38) }, 5),
   coupon({ code: 'KOLB3ZPK4T', name: 'KOL 渠道 09', discount_type: 'percent', discount_value: 1500, max_redemptions: 1, valid_until: days(38) }, 5),
@@ -230,7 +222,7 @@ interface Batch {
 const GB = 1024 ** 3
 const templates: Template[] = [
   { id: randomUUID(), name: '100 元余额卡', description: '渠道合作用', type: 'general', status: 'active', rewards: { balance: 10000 }, conditions: {}, limits: { max_use_per_user: 1 }, theme_color: '#b9442b', created_at: days(-40) },
-  { id: randomUUID(), name: '专业版月卡', description: '', type: 'plan', status: 'active', rewards: { plan_id: PLANS[1]!.id, price_id: PLANS[1]!.prices[0]!.id }, conditions: { new_user_only: true }, limits: {}, theme_color: '#34507c', created_at: days(-30) },
+  { id: randomUUID(), name: '专业版月卡', description: '', type: 'plan', status: 'active', rewards: { plan_id: PRO.id, price_id: PRO_MONTH.id }, conditions: { new_user_only: true }, limits: {}, theme_color: '#34507c', created_at: days(-30) },
   { id: randomUUID(), name: '流量加油包', description: '当期有效', type: 'general', status: 'active', rewards: { traffic_bytes: 100 * GB }, conditions: {}, limits: { cooldown_hours: 24 }, theme_color: '#1f7a4f', created_at: days(-25) },
   {
     id: randomUUID(),
@@ -388,12 +380,6 @@ const withdrawals: Withdrawal[] = [
 // ---------------------------------------------------------------------------
 export const marketing: MockModule = {
   routes: {
-    // 临时：见 PLANS 注释
-    'GET /v1/plans': (ctx) => {
-      if (!ctx.requirePermission('catalog.read')) return
-      ctx.send(200, { plans: PLANS })
-    },
-
     // --- 优惠券 -----------------------------------------------------------
     'GET /v1/coupons': (ctx) => {
       if (!ctx.requirePermission('marketing.coupon.read')) return

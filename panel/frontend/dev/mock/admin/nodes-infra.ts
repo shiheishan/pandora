@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 createHash / randomBytes / randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute
- * [OUTPUT]: 对外提供服务器、节点池、全局路由的假数据（servers / pools / globalRouting）、路由校验 validateRouting（单节点与全局共用）、空体判断 emptyBody、心跳保活 keepAlive，以及 infraRoutes(节点存储) 返回的路由表
+ * [OUTPUT]: 对外提供服务器、节点池、全局路由的假数据（servers / pools / globalRouting）、路由校验 validateRouting（单节点与全局共用）、空体判断 emptyBody、心跳保活 keepAlive、按池统计在线节点数 activeNodesInPool（与节点池列表的 active_nodes 同口径，给套餐假后端用），以及 infraRoutes(节点存储) 返回的路由表
  * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」第 ③ 步假接口，由 nodes.ts 引入并入同一个 MockModule（登记表不动）：服务器列表 / 新建 / 详情 / 下属节点 / 编辑 / 改状态（合法边、进入 ready 要有可服务节点）/ 删除（仅草稿或已退役，名下节点级联静默）/ 安装令牌；节点池增删改（删除前查节点、套餐、未用令牌）；全局出站与分流读写（revision 为规范 JSON 的 sha256，删除被节点规则引用的出站回 409，R56）。节点存储以参数传入而不 import nodes.ts，避免循环依赖。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 的 server.go、server_admin.go、pools.go、node_routing.go
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -269,7 +269,13 @@ const revisionOf = () => createHash('sha256').update(JSON.stringify({ outbounds:
 // ---------------------------------------------------------------------------
 // 路由表
 // ---------------------------------------------------------------------------
+// 节点存储由 nodes.ts 经 infraRoutes 交进来；按池统计的在线节点数给套餐假后端用，
+// 与 GET v1/node-pools 的 active_nodes 同一口径（生命周期 active 且已定协议）
+let nodeStore: readonly InfraNode[] = []
+export const activeNodesInPool = (poolId: string): number => nodeStore.filter((n) => n.pool_id === poolId && n.status === 'active' && n.node_type).length
+
 export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
+  nodeStore = nodes
   const live = () => nodes.filter((n) => n.status !== 'destroyed')
   return {
     // ---- 全局路由（静态段 routing 先于 /nodes/:id 系列）----
@@ -446,7 +452,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
             .filter((n) => n.status !== 'destroyed')
             .sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
             .map((n) => ({ id: n.id, name: n.name, node_no: n.node_no }))
-          return { id: p.id, code: p.code, name: p.name, region: p.region ?? '', status: p.status, nodes: mine.length, active_nodes: mine.filter((n) => n.status === 'active' && n.node_type).length, plans: p.plans.length, members, plan_names: [...new Set(p.plans)].sort() }
+          return { id: p.id, code: p.code, name: p.name, region: p.region ?? '', status: p.status, nodes: mine.length, active_nodes: activeNodesInPool(p.id), plans: p.plans.length, members, plan_names: [...new Set(p.plans)].sort() }
         })
       ctx.send(200, { pools: rows })
     },
