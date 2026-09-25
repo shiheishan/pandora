@@ -821,7 +821,9 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 				         count(DISTINCT subscription_id)::int AS users,
 				         count(*)::int AS ips
 				    FROM node_alive_ips
-				   WHERE tenant_id = $1 AND last_seen_at > now() - interval '5 minutes'
+				   -- 与在线设备视图同一个窗口（按租户设置，R103），不另写字面量
+				   WHERE tenant_id = $1
+				     AND last_seen_at > now() - make_interval(mins => app.device_limit_window_minutes($1))
 				   GROUP BY node_id
 				), traffic AS (
 				  SELECT node_id, sum(total_upload + total_download)::bigint AS bytes,
