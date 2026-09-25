@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 plugin_hooks / plugin_hook_deliveries（00051，00081 加 last_duration_ms），依赖 platform 的 audit/crypto/db/httpx
 // [OUTPUT]: 对外提供 EventInfo 与 Events 事件目录（小写 name / desc）、KnownEvent、Service、New，钩子增删查、Emit 入队、Dispatch / StartScanner 投递、Deliveries 投递记录、TestHook 同步测试
-// [POS]: domain/plugin 的主体：出站 webhook 的配置、签名投递与重试；每次尝试记往返耗时（timedPost），emit.go 为各业务事件的薄封装
+// [POS]: domain/plugin 的主体：出站 webhook 的配置、签名投递与重试；超时与重试次数越界在保存时回 422（R93）；每次尝试记往返耗时（timedPost），emit.go 为各业务事件的薄封装
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package plugin
@@ -196,15 +196,21 @@ func (s *Service) SaveHook(ctx context.Context, tenantID string, in SaveHookInpu
 	if in.Enabled && len(in.Events) == 0 {
 		fields["events"] = "启用前至少要订阅一个事件，否则这个钩子永远不会触发"
 	}
-	if len(fields) > 0 {
-		return "", httpx.Invalid(fields)
-	}
-
+	// 0 取默认值；越界在这里拦成 422（R93），别让 00051 的 CHECK 约束变成 500。
 	if in.TimeoutMS == 0 {
 		in.TimeoutMS = 5000
 	}
 	if in.MaxAttempts == 0 {
 		in.MaxAttempts = 5
+	}
+	if in.TimeoutMS < 500 || in.TimeoutMS > 30000 {
+		fields["timeout_ms"] = "超时必须在 500–30000 毫秒之间"
+	}
+	if in.MaxAttempts < 1 || in.MaxAttempts > 10 {
+		fields["max_attempts"] = "最多尝试次数必须在 1–10 之间"
+	}
+	if len(fields) > 0 {
+		return "", httpx.Invalid(fields)
 	}
 
 	// 没给密钥就生成一个：让插件在「不设签名」的状态下跑起来太容易了，
