@@ -859,6 +859,35 @@
 | user_group_id、valid_from / valid_until | price | 详情页价格卡新增行的「高级」（complete 不收这几个字段） | POST prices |
 | billing_interval day / week、interval_count 任意值 | price | 周期下拉补「自定义」 | 同上 |
 
+#### 后台流量包管理（后端有、设计缺：后台-04 加「流量包」tab）
+- **修订 R73（2026-09-24，后端一 ⑥ 9b4aaab）**：新增以下四个接口，路由在 `router_catalog.go` 的 `registerTrafficPackRoutes`，业务在 `adminops/traffic_packs.go`。乐观锁用 `updated_at`（traffic_packs 没有 row_version；触发器在每次 UPDATE 时改写它），客户端把列表里读到的 `updated_at` 原样作为 `expected_updated_at` 传回。新建、修改、上架受销售开关 `AEGIS_SALES_ENABLED` 控制（关时 503），下架不受（与归档套餐一致）。每次写操作同事务写审计，动作 `traffic_pack.create` / `update` / `archive` / `restore`，审计列表 `resource_label` 为流量包名；目录变化沿用 R33 推 `plans.changed`。
+- 行形状：`{ id:uuid, name, traffic_bytes:int64, currency:"CNY"|"USD", unit_amount:int64, recommended:bool, status:"active"|"archived", sort_order:int, sold_count:int, created_at, updated_at }`。`sold_count` = 已付款的该流量包订单数（含后来退款的）。
+- 状态映射：`active` →「在售」，`archived` →「已下架」。
+
+##### GET v1/traffic-packs — 流量包列表（后台）
+- 权限：`catalog.read`｜reauth：否｜幂等：否
+- 请求：query `status?: "active"|"archived"`，不传列全部
+- 响应：200 `{ packs: [行] }`，在售在前，再按 `sort_order`、创建时间排
+
+##### POST v1/traffic-packs — 新建流量包
+- 权限：`catalog.publish`｜reauth：是｜幂等：是 `catalog_traffic_pack_create`
+- 请求：`{ name:string(1..60 字), traffic_bytes:int64(1..2^50), currency:"CNY"|"USD", unit_amount:int64(1..100000000), recommended?:bool, sort_order?:int(-1e6..1e6) }`
+- 响应：201 `{ pack: 行 }`，新建即在售
+- 错误：422 各字段；503 销售开关关闭
+
+##### PUT v1/traffic-packs/{id} — 修改流量包
+- 权限：`catalog.publish`｜reauth：是｜幂等：是 `catalog_traffic_pack_update`
+- 请求：新建的全部字段 + `expected_updated_at`（必填）；不改上下架状态
+- 响应：200 `{ pack: 行 }`
+- 错误：404 id 不存在或非 UUID；409 `fields.updated_at = "current=<RFC3339Nano>"`（已被别人改过，前端提示刷新）；422；503
+
+##### POST v1/traffic-packs/{id}/status — 上架 / 下架
+- 权限：`catalog.publish`｜reauth：是｜幂等：是 `catalog_traffic_pack_status`
+- 请求：`{ status:"active"|"archived", expected_updated_at }`
+- 响应：200 `{ pack: 行 }`
+- 错误：404；409 `updated_at` 过期，或已经是目标状态；422；503（仅上架）
+- 设计：后台-04 流量包 tab：列表（容量、价格、推荐、状态、已售）、新建 / 编辑抽屉、上下架用 `ConfirmModal`。下架只影响之后的购买，已买的流量包余量不受影响。
+
 ### 后台-05 订单与收款（tab：订单 / 挂账 / 支付渠道 / 收入调整）
 
 公共映射：
@@ -910,6 +939,7 @@
 
 #### POST v1/orders/manual — 人工开单
 - **修订 R64（2026-09-24，后端一 ⑥ 14f27cb，协调会话定）**：新增 `settlement: "grant" | "pending"`：grant 当场赠送开通，pending 生成待用户支付的订单（同样 30 分钟过期）。`offline`（线下已收款）与 `balance`（从余额扣，D-C-3 未决）暂回 422。**本接口改挂 RequireRecentReauth**（与 mark-paid 同门槛：offline 会直接记收入并触发佣金），后端一在 ⑥ 的加路由部分实现，实现后再开放 `offline`。
+- **修订 R74（2026-09-24，后端一 ⑥ 9b4aaab）**：**已挂 RequireRecentReauth**（权限 → reauth → 幂等，与 mark-paid 同门槛），`settlement: "offline"` 已开放：必须带 `reference`（去首尾空白后 1..128 字，缺失回 422 `fields.reference`）；建单与按 offline 渠道结清在同一事务（收入、渠道资金、佣金、开订阅、审计、幂等记录与 mark-paid 同口径，任何一步失败整单回滚），响应 201 `status:"fulfilled"`、`payable_amount` 为线下实收额，重放得到同一份 201。错误：409 凭证号已用于其他订单（文案目前是英文 `provider payment is already attached to another order`，与 mark-paid 相同，前端映射为「凭证号已用于其他订单」）；409 应付为 0（「这张订单不需要支付，请改用赠送」）。`balance` 仍回 422（D-C-3 未决）。已知限制（推断未复现）：迁移 00043 之后新建的租户没有 `offline` 渠道，mark-paid 与线下已收款会回 404 `unknown payment provider`，单租户默认租户不受影响。
 - 状态：现有 `panel/internal/api/admin/manual_order.go:22 createManualOrder`；待补·后端（扩展：结算方式）
 - 权限：`billing.order.write`｜reauth：否（路由注释写了要重认证，实际代码没挂）｜幂等：是 `order_create`（与用户结账共用 scope，`billing.CheckoutIdempotencyScope`）
 - 请求（现有）：`{ user_id:uuid, plan_id:uuid, price_id:uuid, reason:string(5..500 字) }`
@@ -3137,3 +3167,5 @@
 | R70 | 2026-09-24 | 后端一 8d14e52 | 优惠券路径 id 非 UUID 回 404 |
 | R71 | 2026-09-24 | 门户前端 | 我的公告 published_at 可为 null |
 | R72 | 2026-09-24 | 后台前端二 | 优惠券兑换记录要 marketing.coupon.read + billing.order.read |
+| R73 | 2026-09-24 | 后端一 9b4aaab | 后台流量包管理四接口（catalog.publish + reauth + 幂等，updated_at 乐观锁） |
+| R74 | 2026-09-24 | 后端一 9b4aaab | 人工开单已挂 reauth，开放 offline（必带 reference，建单与结清同一事务） |

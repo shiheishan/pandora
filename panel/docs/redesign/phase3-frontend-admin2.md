@@ -53,7 +53,7 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 **进度**：⓪ 接线、① 营销 `fbc1aa5` 已验收并合入 `feat/panel-redesign`（合并 2271de6；CI 35995586358 / 35995586385 全绿）。**下一步：先做下面「② 之前」一件事，单独一个提交推送报告；然后 ② 节点。**
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R72。
+- 契约修订已到 R74。
 - ⓪ 的验收结论（后续照此）：门户外框读的 `me/balance`、`me/subscriptions`、`me/commission`、`me/notifications` 与快捷登录签发的假接口已搬进对应页面的假后端文件（wallet / subs / referral / messages / account），`mock-api.ts` 本体只留登录、会话、reauth、幂等与 SSE，协调会话认可；假后端 `users/{id}/balance` 已按契约要求权限、reauth、幂等与 `reason`。
 - 模块读权限按契约现状登记：仪表盘登录即可见（各卡片按自己的权限过滤）；通知渠道的读取挂 `security.audit.read`，公告、知识库没有读权限、用写权限判断——这些是契约事实，不要自己改；只读账号停在无权限标签时标签栏无选中项，可接受。
 - 只读演示账号 `viewer@pandora.dev`（6 个读权限）用于实测按权限隐藏；每个模块页都要在它下面看一遍。
