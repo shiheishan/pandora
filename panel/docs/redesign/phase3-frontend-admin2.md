@@ -50,10 +50,10 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：⓪ 接线、① 营销 `fbc1aa5`（合并 2271de6）、「② 之前」的 ui 提升 `1b1ac26`（合并 c93dec6）、② 节点 `044c18e` + `f6654fd`（合并 7259656）、③ 服务器、节点池、路由 `f278413`（合并 0e00c6c；NativeCore 36088507207 第 2 次运行全绿，第 1 次因账号计费未启动）已验收合入。「④ 之前」`394df0c`（合并 b07414e）、④ 内容与外观 `eb73934`（合并 a655ad3）、⑤ 通知与插件 `e54e232`（合并 cc7d462；NativeCore 36105196866 全绿）已验收合入。「⑥ 之前」`28488ef`（拆 mock 测试：`tests/mock-helpers.ts` + 每模块一个文件，40 条用例 / 268 个 expect 不变，合并 67f083d）已合入。**下一步 ⑥ 安全与运维（后台前端二最后一步）。** 2026-09-25「⑥ 之前」之后上下文用完（第三次接力），同一 worktree 由新会话接力：先读 `phase3-common.md`、本文件全文、`panel/frontend/CLAUDE.md`、`src/admin/CLAUDE.md`、`src/ui/CLAUDE.md`、`dev/mock/CLAUDE.md`、`dev/mock/admin/CLAUDE.md`，再 `git merge feat/panel-redesign`。
+**进度**：⓪ 接线、① 营销 `fbc1aa5`（合并 2271de6）、「② 之前」的 ui 提升 `1b1ac26`（合并 c93dec6）、② 节点 `044c18e` + `f6654fd`（合并 7259656）、③ 服务器、节点池、路由 `f278413`（合并 0e00c6c；NativeCore 36088507207 第 2 次运行全绿，第 1 次因账号计费未启动）已验收合入。「④ 之前」`394df0c`（合并 b07414e）、④ 内容与外观 `eb73934`（合并 a655ad3）、⑤ 通知与插件 `e54e232`（合并 cc7d462；NativeCore 36105196866 全绿）已验收合入。「⑥ 之前」`28488ef`（合并 67f083d）、⑥ 安全与运维 `6ec7bac`（合并 4299a74；NativeCore 36116870249 全绿）已验收合入。**后台前端二 ⓪–⑥ 全部完成，本会话不再开工。** 第 3 阶段收尾的真实联调发现问题时，协调会话会在同一 worktree 另开会话处理。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R95。
+- 契约修订已到 R97。
 - ⓪ 的验收结论（后续照此）：门户外框读的 `me/balance`、`me/subscriptions`、`me/commission`、`me/notifications` 与快捷登录签发的假接口已搬进对应页面的假后端文件（wallet / subs / referral / messages / account），`mock-api.ts` 本体只留登录、会话、reauth、幂等与 SSE，协调会话认可；假后端 `users/{id}/balance` 已按契约要求权限、reauth、幂等与 `reason`。
 - 模块读权限按契约现状登记：仪表盘登录即可见（各卡片按自己的权限过滤）；通知渠道的读取挂 `security.audit.read`，公告、知识库没有读权限、用写权限判断——这些是契约事实，不要自己改；只读账号停在无权限标签时标签栏无选中项，可接受。
 - 只读演示账号 `viewer@pandora.dev`（6 个读权限）用于实测按权限隐藏；每个模块页都要在它下面看一遍。
@@ -89,3 +89,6 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 - ⑥ 的提交里顺带上面「后台前端一 ⑤ 套餐已合入」那一条的三件（删营销里临时的 `GET v1/plans`、优惠券种子改用固定套餐 id、可选导出按池在线数）。
 - 「⑥ 之前」的验收结论：拆分认可，计费测试文件一并改用 helper 是按开工说明做的、正确（协调会话给你的消息写「不用管」在前，开工说明更新在后，以开工说明为准）。以后假后端测试一律按模块放在 `tests/mock-<入口>-<模块>.test.ts`，用 `tests/mock-helpers.ts`。
 - **⑥ 要点**：审计日志（搜索、导出、`auth_context`；审计链 v2 与存量行 `LegacyLinkOnly` 见 R53–R62 一带）、访问日志（是安全事件不是 HTTP 日志）、风控（共享 IP 聚类、复核、批量禁用与标记正常）、降级开关（R58：四个新开关缺行视为开启，`notify.email` 关闭会连带让注册走不通，开关旁要提示）；待决 D-A-3 按「未决前」。同一个提交里顺带三件套餐跟进（见上）。假后端测试放 `tests/mock-admin-security.test.ts`。
+- ⑥ 的验收结论：审计日志（搜索、三个补充筛选、分页、认证列、存量行显示「—」、导出要 reauth 且导出后刷新）、访问日志（安全事件流、六个分段、5 秒尾随可暂停、按页满判断「更早」）、风控（聚类、标记正常、批量禁用 reauth + 幂等、跳过后台账号）、降级开关（极性按后端、进入降级原因必填、核心项锁定、缺行只读、`notify.email` 提示）、三件套餐跟进（含可选的 `activeNodesInPool`）、删掉后台 `Placeholder.tsx`，都认可。D-A-3 按「未决前」认可。契约：R96、R97。
+- 删掉 `Placeholder.tsx` 后 Rollup 把原来的 ui 共享块并进了入口：入口从 278.9 kB 变成 404.3 kB，但首屏预加载总量前后都是约 405 kB（gzip 约 125 kB），协调会话已逐块核对，不是退化。
+- 留给前端收尾（协调会话记在台账，另开会话统一做）：`core/query.ts` 的 `REALTIME_TOPICS` 与 `admin/EventsCapsule.tsx` 的 TOPICS 补 `switches.changed`；假后端外壳模拟 `admin.writes` 关闭后其他写接口回 503；`plans-store.ts` 改用 `nodes-infra.ts` 的 `activeNodesInPool`。

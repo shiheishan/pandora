@@ -1829,6 +1829,7 @@
 ### 后台-09 通知与安全 · 安全与运维（审计日志 / 访问日志 / 风控 / 降级开关）
 
 #### GET v1/audit — 审计日志
+- **修订 R96（2026-09-25，后台前端二 ⑥ 核对迁移 00012）**：`actor_kind` 除条目里的 6 个值外还有 `node`（节点代理）；`agent` 指客服。前端 schema 按迁移的 CHECK 写。
 - **修订 R44（2026-09-24，后端二 ae95dfd）**：已实现（迁移 00080）。新增 query `q`（搜索）；行新增 `source_ip`、`resource_label`、`auth_context: "session"|"reauth"|null`（写审计时由当前会话推出，历史行为 null）。
 - 状态：现有 `handlers.go:452 listAudit`（数据 `adminops/service.go:890 ListAudit`）；**搜索与展示字段 待补·后端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
@@ -1849,6 +1850,7 @@
 - 设计：审计页「导出」按钮。映射：前端用 fetch 带 Bearer 取 Blob 再触发下载（不能用 `<a href>`）；该路径不以 events/stream 结尾，受 25 秒超时约束，所以设上限
 
 #### GET v1/access-log — 安全事件明细（非 HTTP 访问日志）
+- **修订 R96（续）**：订阅拉取事件的 `outcome` 是原始 result（`ok` / `not_found` / `revoked` / `expired` / `rate_limited`），不是审计的四种结果；接口没有 total，按「这页满没满」判断还有没有更早的记录。
 - **修订 R23（2026-09-24，后端二 107de25）**：`category` 只接受 login / register / reset_password / order / payment / ticket / admin / other / subscribe，其余 422 `fields.category`；`payment_provider.*` 归 admin（缺陷 14）。`outcome` 筛选在后端二第 ⑤ 步。
 - 状态：现有 `panel/internal/api/admin/access_log.go:49 accessLogList`；**筛选 待补·后端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
@@ -1889,6 +1891,7 @@
 - 设计：卡片「禁用 N 个账号」+ reauth 危险确认框（「账号将被登出，订阅停止下发」）。映射：设计「禁用」→ 后端 `suspended`（可恢复，不用 banned）。待补·前端：确认框加「原因」必填输入
 
 #### GET v1/switches — 降级开关列表
+- **修订 R97（2026-09-25，后台前端二 ⑥ 核对）**：列表**不返回缺行的开关**，对缺行的开关 `POST v1/switches/{code}` 回 404。所以 R58「缺行视为开启」的租户在后台切不了这几个开关；前端按 R58 默认值显示为只读。后端建租户时补种这几行、或 POST 改成 upsert，列入后端遗留（与「新建租户缺种子」一并处理）。进入降级时缺原因回 409（不是 422），前端先拦。
 - 状态：现有 `handlers.go:468 listSwitches`
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -3211,3 +3214,5 @@
 | R93 | 2026-09-25 | 后台前端二 | 钩子超时与重试次数越界回 500（缺陷）、省略字段写零值、若干形状 |
 | R94 | 2026-09-25 | 后台前端二、协调会话 | 模板实为 12 个；SMTP 密码行缺失时静默存不上 |
 | R95 | 2026-09-25 | 后台前端一 | 取消订单文案英文；订单列表行无人工单标识 |
+| R96 | 2026-09-25 | 后台前端二 | 审计 actor_kind 含 node、agent 指客服；访问日志订阅拉取 outcome 取值 |
+| R97 | 2026-09-25 | 后台前端二 | 降级开关缺行不返回、POST 回 404；缺原因回 409 |
