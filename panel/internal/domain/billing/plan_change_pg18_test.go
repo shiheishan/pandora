@@ -363,7 +363,8 @@ func TestPlanChangePG18(t *testing.T) {
 	if err != nil || lapse.Status != "pending_payment" || lapse.PayableAmount != 200 {
 		t.Fatalf("pending renewal=%+v err=%v", lapse, err)
 	}
-	must(`UPDATE subscriptions SET current_period_end = now() - interval '1 minute' WHERE id = $1::uuid`, subID)
+	must(`UPDATE subscriptions SET current_period_start = now() - interval '31 days',
+		current_period_end = now() - interval '1 minute' WHERE id = $1::uuid`, subID)
 	must(`UPDATE subscription_credentials SET expires_at = now() - interval '1 minute' WHERE subscription_id = $1::uuid`, subID)
 	paidAt := time.Now().UTC().Add(-time.Second)
 	pay(t, "pc-renew-lapse", lapse.OrderID, 200)

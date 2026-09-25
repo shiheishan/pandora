@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/db、domain/plugin 的事件发射，流量预警读 traffic_pack_grants 的剩余（00070）
 // [OUTPUT]: 对外提供 ScanExpiring、ScanQuota、ScanPaidOrders、StartScanner
-// [POS]: domain/notify 的后台循环：定时扫描入队并派发，Kick 触发只派发不扫描
+// [POS]: domain/notify 的后台循环：定时扫描入队并派发，Kick 触发只派发不扫描；扫描返回与日志的条数是 Enqueue 实际插入的行数，撞去重键的不计
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package notify
@@ -93,8 +93,9 @@ func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error
 				// 键里带区间标签：进入下一个更紧急的区间时会再提醒一次，
 				// 而同一个区间内反复扫描只发一条
 				key := fmt.Sprintf("expiring:%s:%dd", it.subID, win.label)
-				if err := s.Enqueue(ctx, tx, tenantID, it.userID,
-					"subscription.expiring", vars, key); err != nil {
+				n, err := s.Enqueue(ctx, tx, tenantID, it.userID,
+					"subscription.expiring", vars, key)
+				if err != nil {
 					return err
 				}
 				// 插件复用同一个 dedupe 键：到期提醒的分档规则在这里，
@@ -103,7 +104,7 @@ func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error
 					it.subID, it.userID, it.plan, it.endAt, win.label); err != nil {
 					return err
 				}
-				queued++
+				queued += n
 			}
 		}
 		return nil
@@ -179,15 +180,16 @@ func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 				// 键里带上周期起点：下个结算周期流量重置后，
 				// 同一条订阅应该能再次收到提醒
 				key := fmt.Sprintf("quota:%s:%d", it.subID, pct)
-				if err := s.Enqueue(ctx, tx, tenantID, it.userID,
-					"quota.warning", vars, key); err != nil {
+				n, err := s.Enqueue(ctx, tx, tenantID, it.userID,
+					"quota.warning", vars, key)
+				if err != nil {
 					return err
 				}
 				if err := plugin.EmitTrafficExhausted(ctx, tx, tenantID, key,
 					it.subID, it.userID, it.plan, it.consumed, it.total, pct); err != nil {
 					return err
 				}
-				queued++
+				queued += n
 			}
 		}
 		return nil
@@ -245,10 +247,12 @@ func (s *Service) ScanPaidOrders(ctx context.Context, tenantID string) (int, err
 			}
 			// 一个订单只通知一次，与扫描频率无关
 			key := "order-paid:" + it.orderID
-			if err := s.Enqueue(ctx, tx, tenantID, it.userID, "order.paid", vars, key); err != nil {
+			n, err := s.Enqueue(ctx, tx, tenantID, it.userID, "order.paid", vars, key)
+			if err != nil {
 				return err
 			}
-			queued++
+			// 只数真正新排的：2 小时窗口里每轮都会扫到同一单，撞键的不算
+			queued += n
 		}
 		return nil
 	})

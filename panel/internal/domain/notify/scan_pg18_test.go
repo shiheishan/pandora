@@ -1,11 +1,12 @@
-// [INPUT]: 依赖 platform/pg18test 打开 notify 域的一次性库，依赖 scan.go 的 ScanQuota
-// [OUTPUT]: 对外提供 TestScanQuotaCountsTrafficPacksPG18
-// [POS]: domain/notify 的 PG18 测试：流量预警把用户流量包剩余算进可用量，有余量的用户不再收到「流量即将用尽」
+// [INPUT]: 依赖 platform/pg18test 打开 notify 域的一次性库，依赖 scan.go 的 ScanQuota / ScanExpiring / ScanPaidOrders
+// [OUTPUT]: 对外提供 TestScanQuotaCountsTrafficPacksPG18、TestScanCountsOnlyInsertedRowsPG18
+// [POS]: domain/notify 的 PG18 测试：流量预警把用户流量包剩余算进可用量，有余量的用户不再收到「流量即将用尽」；三个扫描只数实际新排的行，同一批数据扫第二遍返回 0
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package notify
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"sort"
@@ -123,4 +124,86 @@ func TestScanQuotaCountsTrafficPacksPG18(t *testing.T) {
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM notification_deliveries WHERE tenant_id=$1`, tenant).Scan(&total); err != nil || total != 3 {
 		t.Fatalf("deliveries after rescan=%d err=%v", total, err)
 	}
+}
+
+// 三个扫描的返回值是「实际新排的行数」：2 小时窗口、到期区间、预警档位里
+// 每轮都会扫到同一批数据，撞了去重键的不算，第二遍必须是 0（冒烟查出日志
+// 每轮都报「已排队 1 条」）。
+func TestScanCountsOnlyInsertedRowsPG18(t *testing.T) {
+	ctx, admin, app := pg18test.Open(t, pg18test.Fixture{
+		Domain: "NOTIFY", DatabasePrefix: "pandora_notify_",
+		MarkerTable: "pandora_notify_test_marker", CommentTag: "pandora-notify-pg18",
+	})
+	const (
+		tenant  = "8e000000-0000-4000-8000-000000000001"
+		product = "8e000000-0000-4000-8000-000000000002"
+		plan    = "8e000000-0000-4000-8000-000000000003"
+		user    = "8e000000-0000-4000-8000-000000000011"
+		sub     = "8e000000-0000-4000-8000-000000000021"
+		order   = "8e000000-0000-4000-8000-000000000031"
+	)
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('` + tenant + `','notify-rescan-pg18','Rescan','CNY')`,
+		`SET LOCAL session_replication_role = replica`,
+		`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('` + user + `','` + tenant + `','u@notify-rescan.invalid','U','active')`,
+		`INSERT INTO products(id,tenant_id,code,name,status) VALUES('` + product + `','` + tenant + `','rescan-product','Rescan','active')`,
+		`INSERT INTO plans(id,tenant_id,product_id,code,name,status) VALUES('` + plan + `','` + tenant + `','` + product + `','rescan-plan','Rescan Plan','draft')`,
+		// 5 天后到期、不自动续费：落在 7 天区间
+		`INSERT INTO subscriptions(id,tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount,
+			current_period_start,current_period_end,auto_renew)
+		 VALUES('` + sub + `','` + tenant + `','` + user + `','` + plan + `',gen_random_uuid(),'active','CNY',0,
+			now()-interval '25 days',now()+interval '5 days',false)`,
+		// 用了 85%：落在 80 档
+		`INSERT INTO quota_balances(tenant_id,subscription_id,metric,period,period_start,period_end,granted,limit_value,consumed)
+		 VALUES('` + tenant + `','` + sub + `','traffic.bytes','cycle',now()-interval '1 day',now()+interval '5 days',100,100,85)`,
+		// 刚履约的订单：落在 2 小时窗口
+		`INSERT INTO orders(id,tenant_id,order_no,user_id,kind,status,currency,subtotal_amount,discount_amount,tax_amount,
+			total_amount,balance_applied,payable_amount,paid_amount,paid_at,fulfilled_at,subscription_id,expires_at,business_request_id)
+		 VALUES('` + order + `','` + tenant + `','RESCAN-1','` + user + `','new','fulfilled','CNY',100,0,0,100,0,100,100,
+			now(),now(),'` + sub + `',now(),gen_random_uuid())`,
+	} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("seed: %v\nSQL: %s", err, sql)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(app, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte("notify-rescan-salt"))
+	scans := []struct {
+		code string
+		scan func(context.Context, string) (int, error)
+	}{
+		{"subscription.expiring", svc.ScanExpiring},
+		{"quota.warning", svc.ScanQuota},
+		{"order.paid", svc.ScanPaidOrders},
+	}
+	rowsOf := func(code string) int {
+		t.Helper()
+		var n int
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM notification_deliveries
+			WHERE tenant_id=$1 AND template_code=$2`, tenant, code).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, sc := range scans {
+		// 第一遍：返回值等于这个模板真正落库的行数（每个渠道一行）
+		first, err := sc.scan(ctx, tenant)
+		if err != nil || first == 0 || first != rowsOf(sc.code) {
+			t.Fatalf("%s first scan=%d rows=%d err=%v", sc.code, first, rowsOf(sc.code), err)
+		}
+		// 第二遍：全部撞去重键，返回 0、不多一行
+		second, err := sc.scan(ctx, tenant)
+		if err != nil || second != 0 || rowsOf(sc.code) != first {
+			t.Fatalf("%s rescan=%d rows=%d err=%v, want 0 and %d rows", sc.code, second, rowsOf(sc.code), err, first)
+		}
+	}
+	t.Log("marker=notify_rescan_counts_zero_ok")
 }
