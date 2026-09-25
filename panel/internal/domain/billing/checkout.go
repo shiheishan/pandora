@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 reservations.go 的资源预留与科目锁、ledger.go 的记账、commission.go 的计提，依赖 platform/db、platform/httpx、middleware 的幂等声明
-// [OUTPUT]: 对外提供 Service、CreateOrder、HandlePaymentWebhook 及其输入输出类型、CheckoutIdempotencyScope；包内提供 provisionSubscription、initQuotaBalances（新开订阅与变更套餐共用的配额初始化）、addInterval
+// [OUTPUT]: 对外提供 Service、CreateOrder、HandlePaymentWebhook 及其输入输出类型、CheckoutIdempotencyScope；包内提供 notifyUsersChanged / notifyIfFulfilled（提交后通知节点，零元单建单即履约也发）、provisionSubscription、initQuotaBalances（新开订阅与变更套餐共用的配额初始化）、addInterval
 // [POS]: billing 的结账与支付回调主链路，回调按 kind 分派履约（upgrade 交 plan_change.go）；mark-paid（manual_order.go）与补偿查询（payments.go）都复用 HandlePaymentWebhook 与 PaymentWebhookOutput
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -56,6 +56,14 @@ func (s *Service) notifyUsersChanged(ctx context.Context, tenantID string) {
 		return
 	}
 	s.onUsersChanged(ctx, tenantID)
+}
+
+// notifyIfFulfilled 给建单即履约的零元单发通知：赠送、余额或券全额抵扣、零元续费与
+// 变更都在建单事务里开通或延长订阅，不经过支付回调，以前节点要等轮询才看到
+func (s *Service) notifyIfFulfilled(ctx context.Context, tenantID, status string) {
+	if status == "fulfilled" {
+		s.notifyUsersChanged(ctx, tenantID)
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -551,9 +559,12 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 		}
 		return nil, httpx.Internal(err)
 	}
-	// 与 HandlePaymentWebhook 同一口径：事务提交后、确实开了订阅才通知节点
+	// 与 HandlePaymentWebhook 同一口径：事务提交后、确实开了订阅才通知节点；
+	// 线下已收款看结算结果，零元单（含赠送）看是否已履约
 	if out.settlement != nil && out.settlement.SubscriptionID != "" {
 		s.notifyUsersChanged(ctx, tenantID)
+	} else {
+		s.notifyIfFulfilled(ctx, tenantID, out.Status)
 	}
 	return &out, nil
 }

@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 coupons / coupon_redemptions / prices / plans / traffic_packs 表，依赖 platform/db、platform/httpx
-// [OUTPUT]: 对外提供 PreviewForPrice、PreviewForTrafficPack（试算，响应带券面 coupon）；包内提供 applyCoupon / redeemCoupon 与 couponMatch
+// [OUTPUT]: 对外提供 PreviewForPrice、PreviewForTrafficPack（试算，响应带券面 coupon）与券面类型 CouponFace（变更套餐试算同形，R76）；包内提供 applyCoupon / redeemCoupon 与 couponMatch（face 取券面）
 // [POS]: billing 的优惠券校验与核销：下单、续费、变更套餐、流量包与两种试算共用 applyCoupon 这一个口径
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -46,6 +46,21 @@ var (
 )
 
 // couponMatch 是一次成功校验的结果。
+// CouponFace 是试算回显的券面（R69 优惠码试算与 R76 变更套餐试算同形），没用码时为 null
+type CouponFace struct {
+	Code          string `json:"code"`
+	DiscountType  string `json:"discount_type"`
+	DiscountValue int64  `json:"discount_value"`
+}
+
+// face 取券面；nil 安全，没用码时返回 nil
+func (m *couponMatch) face() *CouponFace {
+	if m == nil {
+		return nil
+	}
+	return &CouponFace{Code: m.Code, DiscountType: m.DiscountType, DiscountValue: m.DiscountValue}
+}
+
 type couponMatch struct {
 	ID       string
 	Discount int64 // 最小货币单位
@@ -309,16 +324,12 @@ func (s *Service) previewCoupon(ctx context.Context, tenantID, userID, code, pla
 			return err
 		}
 		var discount int64
-		var coupon any // 没用码时为 null
 		if m != nil {
 			discount = m.Discount
-			coupon = map[string]any{
-				"code": m.Code, "discount_type": m.DiscountType, "discount_value": m.DiscountValue,
-			}
 		}
 		out = map[string]any{
 			"subtotal": subtotal, "discount": discount,
-			"payable": subtotal - discount, "currency": currency, "coupon": coupon,
+			"payable": subtotal - discount, "currency": currency, "coupon": m.face(),
 		}
 		return nil
 	})

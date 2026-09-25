@@ -104,11 +104,25 @@ func TestAgentQueueFieldsPG18(t *testing.T) {
 
 	// 详情的 related_order（R75）：后台和门户一样回单号
 	const orderID = "79000000-0000-4000-8000-000000000131"
-	if _, err := admin.Exec(ctx, `INSERT INTO orders(id,tenant_id,order_no,user_id,kind,status,currency,subtotal_amount,discount_amount,
-		tax_amount,total_amount,balance_applied,payable_amount,expires_at,business_request_id)
-		VALUES($1,$2,'AQ-ORDER-1',$3,'new','pending_payment','USD',100,0,0,100,0,100,now()+interval '30 minutes',gen_random_uuid())`,
-		orderID, tenantID, ownerID); err != nil {
-		t.Fatalf("seed order: %v", err)
+	// 订单只作关联对象：绕过建单幂等触发器直接种一行
+	otx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`SET LOCAL session_replication_role = replica`,
+		`INSERT INTO orders(id,tenant_id,order_no,user_id,kind,status,currency,subtotal_amount,discount_amount,
+		   tax_amount,total_amount,balance_applied,payable_amount,expires_at,business_request_id)
+		 VALUES('` + orderID + `','` + tenantID + `','AQ-ORDER-1','` + ownerID + `','new','pending_payment','USD',100,0,0,100,0,100,
+		   now()+interval '30 minutes',gen_random_uuid())`,
+	} {
+		if _, err := otx.Exec(ctx, sql); err != nil {
+			_ = otx.Rollback(ctx)
+			t.Fatalf("seed order: %v", err)
+		}
+	}
+	if err := otx.Commit(ctx); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := admin.Exec(ctx, `UPDATE tickets SET related_order_id=$1 WHERE id=$2`, orderID, noted); err != nil {
 		t.Fatal(err)

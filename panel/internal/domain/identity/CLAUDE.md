@@ -7,7 +7,7 @@
 service.go: Service 与构造、VerificationMailer 注入点；注册两步（StartRegistration 同事务写验证码并经 mailer 入队，提交后 Kick；邮箱已存在时响应一致但不入队，IAM-006）、Login 与会话签发
 registration_policy.go: 注册总开关 feature_switches.auth.registration 与 auth.registration_mode（closed/invite_only/open）的判定，缺配置按关闭
 invite.go: 邀请码绑定「谁邀请了谁」，不发奖励
-sessions.go: 门户自助会话列表与吊销，只触及 audience=public 的会话（后台会话不可见、不可踢）
+sessions.go: 门户自助会话列表与吊销，只触及 audience=public 的会话（后台会话不可见、不可踢）；last_seen_at 只读，写入点在认证中间件
 logout.go: 退出当前会话，会话与整条 refresh 链同事务吊销
 password.go: 自助改密，吊销既有凭据（门户保留当前会话与其 refresh 令牌，admin 全部吊销）；口令错误的审计先于事务错误提交；admin 域新密码至少 12 位（validatePasswordFor），门户仍 8 位
 admin_profile.go: 管理员展示信息 AdminProfile（GET v1/me 追加的邮箱、显示名与生效角色），角色过滤与 admin 登录展开权限一致

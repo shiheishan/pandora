@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 announcement_pg18_test.go 的 openAnnouncementPG18、step3_pg18_test.go 的 step3Seed / step3Do / step3Nodes、step4_pg18_test.go 的 step4Handlers / step4Router，依赖 node_admin.go、appearance.go、handlers.go（setSwitch）与 mail.go 的处理器，依赖 domain/notify 的 LoadSMTPConfig
 // [OUTPUT]: 对外提供 TestNodePatchKeepsSecretsPG18、TestPluginHookBoundsPG18、TestTenantSeedDefaultsPG18
-// [POS]: api/admin 的第 4 阶段后端三 PG18 测试：节点 PATCH 缺席的敏感键保留原值（R78）、钩子超时与重试次数越界回 422 且不落库（R93）、建租户触发器补种与 SMTP 密码 upsert（R94、R97）
+// [POS]: api/admin 的第 4 阶段后端三 PG18 测试：节点 PATCH 缺席的敏感键保留原值（R78）、钩子超时与重试次数越界回 422 且不落库（R93）、建租户触发器补种（存量与新租户的开关集逐项一致）与 SMTP 密码 upsert（R94、R97）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -193,6 +193,14 @@ func TestTenantSeedDefaultsPG18(t *testing.T) {
 	}
 	if got := read("00000000-0000-7000-8000-000000000001"); got.templates < 12 || !got.offline || got.essential != 3 {
 		t.Fatalf("default tenant=%+v", got)
+	}
+	// 存量迁移种出来的开关与触发器种的逐项一致（code 与 essential），两条路不会分叉
+	var sameSwitches bool
+	if err := admin.QueryRow(ctx, `
+		SELECT (SELECT array_agg(code || ':' || essential ORDER BY code) FROM feature_switches WHERE tenant_id=$1)
+		     = (SELECT array_agg(code || ':' || essential ORDER BY code) FROM feature_switches
+		         WHERE tenant_id='00000000-0000-7000-8000-000000000001')`, tenant).Scan(&sameSwitches); err != nil || !sameSwitches {
+		t.Fatalf("default and seeded tenant switch sets differ (same=%v err=%v)", sameSwitches, err)
 	}
 	var dropped int
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM feature_switches WHERE code IN ('ops.bulk_export','ops.reports','node.autoscale')`).Scan(&dropped); err != nil || dropped != 0 {

@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 handlers.go 的 listPlans / previewCoupon / myCommission、my_orders.go 的 listMyOrders / myOrderDetail，依赖 domain/billing 的 NewService，依赖 platform/pg18test 打开 public_api 域的一次性库
 // [OUTPUT]: 对外提供 TestPortalCommerceReadsPG18
-// [POS]: api/public 门户-03/04/06 字段扩展的 PG18 集成门禁：目录的重置策略、限速（R99）、卖点与推荐（R100）与续费变更开关、优惠码试算的流量包形态与券面、订单筛选段计数与详情扩展、佣金概况与转出记录
+// [POS]: api/public 门户-03/04/06 字段扩展的 PG18 集成门禁：目录的重置策略、限速（R99）、卖点与推荐（R100）与续费变更开关、优惠码试算的流量包形态与券面、订单筛选段计数与详情扩展、佣金概况（含计佣范围 scope，R81）与转出记录
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
@@ -257,17 +257,27 @@ func TestPortalCommerceReadsPG18(t *testing.T) {
 	// --- 佣金：付费好友、累计佣金（不含冲销）、只有本人的转出 ---
 	var commission struct {
 		Summary struct {
-			Invitees     int   `json:"invitees"`
-			PaidInvitees int   `json:"paid_invitees"`
-			TotalEarned  int64 `json:"total_earned"`
+			Invitees     int    `json:"invitees"`
+			PaidInvitees int    `json:"paid_invitees"`
+			TotalEarned  int64  `json:"total_earned"`
+			Scope        string `json:"scope"`
 		} `json:"summary"`
 		Transfers []billing.CommissionTransfer `json:"transfers"`
 	}
 	if code := call(h.myCommission, http.MethodGet, "/v1/me/commission", "", nil, &commission); code != http.StatusOK {
 		t.Fatalf("my commission status=%d", code)
 	}
-	if s := commission.Summary; s.Invitees != 2 || s.PaidInvitees != 1 || s.TotalEarned != 150 {
-		t.Fatalf("commission summary=%+v, want invitees 2 paid 1 earned 150", s)
+	if s := commission.Summary; s.Invitees != 2 || s.PaidInvitees != 1 || s.TotalEarned != 150 || s.Scope != "every_order" {
+		t.Fatalf("commission summary=%+v, want invitees 2 paid 1 earned 150 scope every_order", s)
+	}
+	// 计佣范围（R81）：与计提同一个兜底，设成首单后门户读得到
+	if _, err := admin.Exec(ctx, `INSERT INTO system_settings(tenant_id,key,value) VALUES($1,'commission.scope','"first_order"')
+		ON CONFLICT (tenant_id,key) DO UPDATE SET value=EXCLUDED.value`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if code := call(h.myCommission, http.MethodGet, "/v1/me/commission", "", nil, &commission); code != http.StatusOK ||
+		commission.Summary.Scope != "first_order" {
+		t.Fatalf("commission scope after first_order setting: status=%d scope=%q", code, commission.Summary.Scope)
 	}
 	if len(commission.Transfers) != 1 || commission.Transfers[0].LedgerTxnID != txnMine ||
 		commission.Transfers[0].Amount != 80 || commission.Transfers[0].Currency != "CNY" {
