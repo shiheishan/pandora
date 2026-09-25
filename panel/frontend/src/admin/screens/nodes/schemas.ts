@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 zod
- * [OUTPUT]: 对外提供节点页全部接口的 zod schema 与推导类型：节点列表行、AdminNode（写接口回的节点）、协议 schema、服务器 / 节点池的选择项子集、节点身份、探针、单节点与全局路由、各写操作的响应
- * [POS]: admin/screens/nodes 与后端对账的唯一防线：形状取自 api-contract.md 后台-07 · 节点（含 R10 R13 R26 R27 R46 R57）并与 Go json tag 核对；Go 指针字段没有 omitempty，缺值序列化成 null 而不是缺键，所以这些字段写 nullable；nil 切片写 nullable 并归一成 []
+ * [OUTPUT]: 对外提供节点与服务器页全部接口的 zod schema 与推导类型：节点列表行、AdminNode（写接口回的节点）、协议 schema、服务器与其下属节点、节点池（members / plan_names）、节点身份、探针、单节点与全局路由、各写操作的响应
+ * [POS]: admin/screens/nodes 与后端对账的唯一防线：形状取自 api-contract.md 后台-07 的节点 / 服务器 / 节点池 / 路由四节（含 R10 R13 R26 R27 R46 R56 R57 R77–R79）并与 Go json tag 核对；Go 指针字段没有 omitempty，缺值序列化成 null 而不是缺键，所以这些字段写 nullable；nil 切片写 nullable 并归一成 []
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
@@ -114,26 +114,89 @@ export const protocolSchemasResponse = z.object({ schemas: list(protocolSchemaSc
 export type ProtocolSchema = z.output<typeof protocolSchemaSchema>
 
 // ---------------------------------------------------------------------------
-// 选择项：服务器与节点池（完整形状属第 ③ 步，这里只收节点页要的字段）
+// 服务器（GET v1/servers 与 /servers/{id}，nodefabric.Server）：指针字段全是 null 而不是缺键
 // ---------------------------------------------------------------------------
-export const serverOptionSchema = z.object({
+export const SERVER_STATUSES = ['draft', 'ready', 'draining', 'maintenance', 'unhealthy', 'quarantined', 'retired'] as const
+export type ServerStatus = (typeof SERVER_STATUSES)[number]
+
+export const serverSchema = z.object({
+  id: uuid,
+  name: z.string(),
+  status: z.enum(SERVER_STATUSES),
+  status_reason: z.string().nullable(),
+  row_version: z.number(),
+  region: z.string().nullable(),
+  hostname: z.string().nullable(),
+  public_ipv4: z.string().nullable(),
+  public_ipv6: z.string().nullable(),
+  private_ipv4: z.string().nullable(),
+  architecture: z.string().nullable(),
+  os_name: z.string().nullable(),
+  agent_version: z.string().nullable(),
+  last_heartbeat_at: iso.nullable(),
+  heartbeat_online: z.boolean(),
+  cpu_cores: z.number().nullable(),
+  memory_mb: z.number().nullable(),
+  disk_gb: z.number().nullable(),
+  capacity_nodes: z.number(),
+  notes: z.string().nullable(),
+  control_node_id: uuid.nullable(),
+  node_count: z.number(),
+  active_node_count: z.number(),
+  serving_node_count: z.number(),
+  never_seen_node_count: z.number(),
+  created_at: iso,
+  updated_at: iso,
+  cpu_bp: z.number().nullable(),
+  mem_used_mb: z.number().nullable(),
+  mem_total_mb: z.number().nullable(),
+  disk_used_gb: z.number().nullable(),
+  disk_total_gb: z.number().nullable(),
+  metrics_at: iso.nullable(),
+})
+// 三个列表 Go 侧都以空切片起步，不会是 null，按严格数组写
+export const serversResponse = z.object({ servers: z.array(serverSchema), total: z.number() })
+export type Server = z.output<typeof serverSchema>
+
+/** GET v1/servers/{id}/nodes：含已退役与已销毁，按 sort_order */
+export const serverNodeSchema = z.object({
   id: uuid,
   name: z.string(),
   status: z.string(),
-  region: z.string().nullable().optional(),
-  public_ipv4: z.string().nullable().optional(),
-  capacity_nodes: z.number(),
-  node_count: z.number(),
-  cpu_bp: z.number().nullable().optional(),
-  mem_used_mb: z.number().nullable().optional(),
-  mem_total_mb: z.number().nullable().optional(),
+  serving_status: z.string(),
+  node_type: z.string().nullable(),
+  display_name: z.string().nullable(),
+  server_host: z.string().nullable(),
+  server_port: z.number().nullable(),
+  kernel: z.string(),
+  traffic_rate: z.number(),
+  config_validated_at: iso.nullable(),
+  last_heartbeat_at: iso.nullable(),
+  created_at: iso,
 })
-export const serversResponse = z.object({ servers: list(serverOptionSchema), total: z.number() })
-export type ServerOption = z.output<typeof serverOptionSchema>
+export const serverNodesResponse = z.object({ nodes: z.array(serverNodeSchema), total: z.number() })
+export type ServerNode = z.output<typeof serverNodeSchema>
 
-export const poolOptionSchema = z.object({ id: uuid, code: z.string(), name: z.string(), status: z.string() })
-export const poolsResponse = z.object({ pools: list(poolOptionSchema) })
-export type PoolOption = z.output<typeof poolOptionSchema>
+// ---------------------------------------------------------------------------
+// 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；用户组限制是待决 D-B-3，未决前不做
+// ---------------------------------------------------------------------------
+export const POOL_STATUSES = ['active', 'draining', 'disabled'] as const
+export type PoolStatus = (typeof POOL_STATUSES)[number]
+
+export const poolSchema = z.object({
+  id: uuid,
+  code: z.string(),
+  name: z.string(),
+  region: z.string(),
+  status: z.enum(POOL_STATUSES),
+  nodes: z.number(),
+  active_nodes: z.number(),
+  plans: z.number(),
+  members: z.array(z.object({ id: uuid, name: z.string(), node_no: z.number() })),
+  plan_names: z.array(z.string()),
+})
+export const poolsResponse = z.object({ pools: z.array(poolSchema) })
+export type Pool = z.output<typeof poolSchema>
 
 // ---------------------------------------------------------------------------
 // 身份、探针、路由
@@ -200,6 +263,7 @@ export type Route = z.output<typeof routeSchema>
 export const nodeRoutingSchema = z.object({ row_version: z.number(), outbounds: list(outboundSchema), routes: list(routeSchema) })
 export type NodeRouting = z.output<typeof nodeRoutingSchema>
 export const globalRoutingSchema = z.object({ revision: z.string(), outbounds: list(outboundSchema), routes: list(routeSchema), online_nodes: z.number() })
+export type GlobalRouting = z.output<typeof globalRoutingSchema>
 
 // ---------------------------------------------------------------------------
 // 写操作的响应
@@ -214,4 +278,7 @@ export const realityKeypairResponse = z.object({ private_key: z.string(), public
 export const publishResponse = z.object({ config_id: uuid, version: z.number(), scope: z.string(), affected_nodes: z.number() })
 export const routingSaved = z.object({ ok: z.literal(true), row_version: z.number() })
 export const okResponse = z.object({ ok: z.literal(true) })
+export const poolCreated = z.object({ id: uuid })
+export const serverDeleted = z.object({ ok: z.literal(true), id: uuid })
+export const globalRoutingSaved = z.object({ ok: z.literal(true), revision: z.string(), affected_nodes: z.number() })
 export const deletedResponse = z.object({ deleted: z.literal(true) })

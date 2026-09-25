@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 relativeTime，依赖 ./schemas 的类型
- * [OUTPUT]: 对外提供节点页的纯函数：状态映射与筛选搜索、心跳与地址文案（流量用 core/format 的 formatBytes）、迁移资格（保留规则 5）、状态转换合法边与批量取舍、排序提交项、schema 驱动的协议表单模型（字段推导、拍平 / 还原、敏感字段、REALITY）、PATCH 差量、路由规则行与 matcher 互转、带宽分桶
+ * [OUTPUT]: 对外提供节点页的纯函数：状态映射与筛选搜索、心跳与地址文案（流量用 core/format 的 formatBytes）、迁移资格（保留规则 5）、状态转换合法边与批量取舍、排序提交项、schema 驱动的协议表单模型（字段推导、拍平 / 还原、敏感字段、REALITY）、PATCH 差量、路由规则行与 matcher 互转、插入规则（兜底之前）、出站被引用计数与改名联动、出站行校验与互转（单节点与全局共用）、带宽分桶
  * [POS]: admin/screens/nodes 的逻辑层：映射全部取自 api-contract.md 后台-07 · 节点条目的「设计 / 映射」行与 Go 校验器，nodes.test.ts 逐条守住；组件只负责渲染与交互
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -428,6 +428,60 @@ export function rowsToRoutes(rows: readonly RuleRow[]): { routes: Array<Record<s
     if (r.enabled && r.kind === 'fallback' && i !== lastEnabled[lastEnabled.length - 1]) errors[i] ??= '兜底规则必须是最后一条启用的规则'
   })
   return { routes, errors }
+}
+
+/** 加一条规则：末尾是兜底时插到兜底之前（设计稿「规则已添加（兜底规则之前）」），否则追加 */
+export function insertRule(rows: readonly RuleRow[], row: RuleRow): RuleRow[] {
+  const last = rows[rows.length - 1]
+  return last?.kind === 'fallback' ? [...rows.slice(0, -1), row, last] : [...rows, row]
+}
+
+// ---------------------------------------------------------------------------
+// 出站行（单节点私有出站与全局出站共用；校验与 Go validateRoutingPayload 一致）
+// ---------------------------------------------------------------------------
+/** 可选的出站类型：node_outbounds.type 的 CHECK 去掉内置的 direct / block（它们是固定的两个 tag） */
+export const OUTBOUND_TYPES = ['socks', 'http', 'shadowsocks', 'vmess', 'vless', 'trojan', 'hysteria', 'hysteria2', 'tuic', 'anytls', 'shadowtls', 'wireguard'] as const
+
+export interface OutboundRow {
+  tag: string
+  type: string
+  /** settings 的 JSON 文本 */
+  settings: string
+}
+
+export const outboundToRow = (o: { tag: string; type: string; settings: unknown }): OutboundRow => ({ tag: o.tag, type: o.type, settings: JSON.stringify(o.settings ?? {}, null, 2) })
+
+/** 出站行 → PUT 的 outbounds；tag 1–64 字、不占 direct / block、大小写不敏感不重复，settings 必须是 JSON 对象；错误以行号为键 */
+export function rowsToOutbounds(rows: readonly OutboundRow[]): { outbounds: Array<{ tag: string; type: string; settings: unknown }>; errors: Record<number, string> } {
+  const errors: Record<number, string> = {}
+  const seen = new Set<string>()
+  const outbounds = rows.map((o, i) => {
+    const tag = o.tag.trim()
+    const key = tag.toLowerCase()
+    if (!tag || [...tag].length > 64) errors[i] = '标签 1–64 字'
+    else if (key === 'direct' || key === 'block') errors[i] = '不能叫 direct 或 block'
+    else if (seen.has(key)) errors[i] = '标签重复'
+    seen.add(key)
+    let settings: unknown = {}
+    try {
+      settings = o.settings.trim() ? JSON.parse(o.settings) : {}
+    } catch {
+      errors[i] ??= 'settings 不是合法的 JSON'
+    }
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) errors[i] ??= 'settings 必须是 JSON 对象'
+    return { tag, type: o.type, settings }
+  })
+  return { outbounds, errors }
+}
+
+/** 指向某个出站的规则条数（大小写不敏感，与后端一致）：删出站前先拦，免得保存时才 422 */
+export const rulesUsing = (rows: readonly RuleRow[], tag: string) => rows.filter((r) => r.outbound.toLowerCase() === tag.trim().toLowerCase()).length
+
+/** 出站改名时，把指向旧名的规则一起改过去 */
+export function renameOutbound(rows: readonly RuleRow[], from: string, to: string): RuleRow[] {
+  const key = from.trim().toLowerCase()
+  if (!key || key === to.trim().toLowerCase()) return [...rows]
+  return rows.map((r) => (r.outbound.toLowerCase() === key ? { ...r, outbound: to.trim() } : r))
 }
 
 /** 规则的简短文字（抽屉只读列表） */
