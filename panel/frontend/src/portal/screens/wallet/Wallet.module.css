@@ -1,0 +1,254 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 wallet/index.tsx 用到的类名
+ * [POS]: portal/screens/wallet 的样式，取自设计稿门户-05：两列（右列礼品卡跨两行，< 640 单列且礼品卡在明细前）、余额 34 号数字、充值金额四格等宽字、礼品卡卡面 --brand-tint 底 20 号字、我的礼品卡三列；左列在余额卡下补「余额明细」卡
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+/* 宽屏：左列余额 + 明细，右列礼品卡跨两行；< 640 单列，礼品卡提到明细前面（明细可能很长） */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    'balance gift'
+    'history gift';
+  grid-template-rows: auto 1fr;
+  align-items: start;
+  gap: var(--space-16);
+}
+
+.balanceArea,
+.giftArea,
+.historyArea {
+  min-width: 0;
+}
+
+.balanceArea {
+  grid-area: balance;
+}
+
+.giftArea {
+  grid-area: gift;
+}
+
+.historyArea {
+  grid-area: history;
+}
+
+@media (max-width: 639px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'balance'
+      'gift'
+      'history';
+    grid-template-rows: none;
+  }
+}
+
+.caption {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.hint {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.upper {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.error {
+  font-size: 13px;
+  color: var(--danger);
+}
+
+/* ===========================================================================
+ * 余额与充值
+ * ========================================================================= */
+.balance {
+  gap: var(--space-16);
+}
+
+.bigAmount {
+  min-height: 48px;
+  font-size: 34px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-8);
+}
+
+.preset {
+  height: var(--h-control);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.preset[aria-checked='true'] {
+  border-color: var(--text);
+  background: var(--surface-2);
+}
+
+.payRow {
+  display: flex;
+  gap: var(--space-8);
+}
+
+/* ===========================================================================
+ * 列表（余额明细、我的礼品卡）
+ * ========================================================================= */
+.listCard > header {
+  border-bottom: 1px solid var(--border);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.historyRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 10px var(--pad-card);
+  border-bottom: 1px solid var(--surface-2);
+}
+
+.historyMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.historyKind {
+  font-weight: var(--fw-medium);
+}
+
+.historyMeta {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plus,
+.minus {
+  flex: none;
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.plus {
+  color: var(--ok);
+}
+
+.more {
+  width: 100%;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.more:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* ===========================================================================
+ * 礼品卡
+ * ========================================================================= */
+.gift {
+  gap: 14px;
+}
+
+.giftRow {
+  display: flex;
+  gap: var(--space-8);
+}
+
+.giftCard {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--brand-soft);
+  border-radius: var(--radius-lg);
+  background: var(--brand-tint);
+}
+
+.giftInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.giftFace {
+  font-size: 20px;
+  font-weight: var(--fw-semibold);
+}
+
+.mine {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: var(--space-12);
+  border-top: 1px solid var(--border);
+}
+
+.mineRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: var(--space-12);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--surface-2);
+  font-size: 13px;
+}
+
+.mineCode {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mineGain {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mineAt {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
