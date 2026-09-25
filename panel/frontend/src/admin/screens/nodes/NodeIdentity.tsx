@@ -50,7 +50,7 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
       void invalidate()
       setSecret({ title: '一键安装令牌', token: r.token, command: r.install_command, hint: `在新机器上执行命令，按提示粘贴上面的令牌。${formatDateTime(r.expires_at)} 前有效，只显示这一次。` })
     },
-    onError: (error) => fail(error),
+    onError: (error) => fail(error, { intent: bootstrapIntent }),
   })
 
   const serverToken = useMutation({
@@ -60,7 +60,7 @@ export function NodeIdentity({ node }: { node: NodeRow }) {
       void invalidate()
       setSecret({ title: '服务端令牌（UniProxy）', token: r.token, command: r.install_command, hint: `${r.hint}（面板地址 ${r.panel_url}，协议 ${r.node_type}）` })
     },
-    onError: (error) => fail(error),
+    onError: (error) => fail(error, { intent: serverIntent }),
   })
 
   const revoke = useMutation({

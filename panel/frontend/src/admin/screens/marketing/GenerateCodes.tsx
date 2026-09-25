@@ -34,7 +34,7 @@ export function useBatchExport(onDone?: () => void) {
       onDone?.()
     },
     onError: (error) => {
-      fail(error)
+      fail(error, { intent })
       void invalidate()
     },
   })
@@ -56,7 +56,7 @@ export function GenerateModal({ template, onClose, onGenerated }: { template: Gi
       setForm({ count: '100', prefix: '', expiresAt: '' })
       onGenerated(result)
     },
-    onError: (error) => fail(error, setErrors),
+    onError: (error) => fail(error, { fields: setErrors, intent }),
   })
 
   const submit = (event: FormEvent) => {

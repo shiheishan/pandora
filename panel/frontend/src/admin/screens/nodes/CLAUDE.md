@@ -2,7 +2,7 @@
 > L2 | 父级: /panel/frontend/src/admin/screens/CLAUDE.md
 
 节点与服务器（后台-07，归后台前端二）。四个标签全部接入：第 ② 步节点（列表 + 五标签详情抽屉），第 ③ 步服务器（卡片 + 四标签详情抽屉）、节点池、全局路由。视觉按 管理后台-07-节点与服务器.dc.html，数据与规则按 api-contract.md 后台-07 的节点 / 服务器 / 节点池 / 路由四节（含 R10 R13 R26 R27 R46 R56 R57 R77–R79）；设计缺、契约标「待补·前端」的都补上了：新建节点弹窗、协议页的基本信息区、单节点路由编辑、交付提示、监控里的运行信息、复制的目标服务器与复制路由、一次性令牌展示框；服务器的添加弹窗、详情 / 下属节点 / 编辑 / 完整状态、在役与容量、从未心跳提示；节点池增删改；全局出站的增改删。
-分层：schemas（zod；Go 指针字段写 nullable、nil 切片归一成 []，Go 保证非空的列表写严格数组）→ queries（读 hook、写后按 NK 前缀失效；节点列表与随节点变化的服务器、节点池计数挂 nodes.changed；转出 admin/actions.ts 的 useCan / useFailure / useIntentKey）→ logic（节点与路由）/ infra（服务器与节点池），纯函数，nodes.test.ts / infra.test.ts 守住 → 组件。
+分层：schemas（zod；Go 指针字段写 nullable、nil 切片归一成 []，Go 保证非空的列表写严格数组）→ queries（读 hook、写后按 NK 前缀失效；节点列表与随节点变化的服务器、节点池计数挂 nodes.changed；转出 admin/actions.ts 的 endsIntent / useCan / useFailure / useIntentKey）→ logic（节点与路由）/ infra（服务器与节点池），纯函数，nodes.test.ts / infra.test.ts 守住 → 组件。
 两条后端事实决定了节点表单写法：protocol_config 写入是整体替换，而读接口按名字抹掉敏感键（password、private_key、psk…），所以 PATCH 只在协议字段真的改了才带 protocol_config，协议改了而敏感字段留空时先确认会被清空；协议 schema 由后端给出（13 个 stable + 2 个 legacy-read-compatible），表单按 allowed_properties 渲染、点号路径展开成嵌套对象，422 的 protocol_config.<键> 按路径再按叶子名落回字段。
 保留规则 5：只有从未部署过的草稿（draft / disabled、无心跳、无身份）能迁移，其余引导「复制到新服务器再退役」。列表一次取 1000 条并总带 include_retired=1，「全部」里藏掉已退役，刚退役的节点抽屉仍可继续删除。
 服务器三条后端事实：状态机 ready 不能直达 maintenance，所以卡片「标记维护」发 draining（卡片显示「维护中」），完整状态走详情里的合法边下拉；进入 ready 要有一个协议校验通过的在役节点，否则 409；删除只许草稿或已退役，名下节点不拒绝而是级联静默（身份吊销、摘掉 server_id），文案按此改写了设计的「先迁移或删除」。安装令牌固定传 ttl_minutes 30（后端缺省 20）。
@@ -11,7 +11,7 @@
 成员清单
 index.tsx: 页面入口，按标签分发：nodes → NodesTab（rest = [节点 id, 抽屉标签]）、servers → ServersTab（rest = [服务器 id, 抽屉标签]）、pools → PoolsTab、routing → RoutingTab
 schemas.ts: 节点列表行、AdminNode、协议 schema、服务器与下属节点、节点池（members / plan_names）、身份、探针、单节点与全局路由、写操作响应的 zod schema
-queries.ts: 查询键前缀 NK、各读 hook（节点列表、服务器列表 / 详情 / 下属节点、节点池挂 nodes.changed）、useInvalidateNodes，转出 admin/actions.ts 的三件通用 hook
+queries.ts: 查询键前缀 NK、各读 hook（节点列表、服务器列表 / 详情 / 下属节点、节点池挂 nodes.changed）、useInvalidateNodes，转出 admin/actions.ts 的三件通用 hook 与 endsIntent（自己先处理 4xx 分支的写操作用它丢弃幂等键）
 logic.ts: 节点状态映射（在线 / 离线 / 排空中 / 草稿 / 已停用 / 已退役）与筛选搜索、心跳与地址文案、迁移资格与 409 资产清单、合法状态边与批量取舍、排序提交项、协议表单模型、基本信息校验与新建体 / PATCH 差量、路由规则行互转与兜底校验、新规则插在兜底前、出站被引用计数与改名联动、出站行校验、带宽分桶
 infra.ts: 服务器圆点与状态文字、三条占用与三档色、卡片快捷状态切换、合法状态边、删除资格与后果文案、节点按服务器分组、服务器表单校验 / 新建体 / PATCH 差量 / 容量冲突解析；节点池状态文字、删除资格、绑定套餐文字、新建体与编辑差量
 NodesTab.tsx: 节点列表：搜索、状态分段、勾选批量启停（只交允许的并计数跳过）、调整排序、新建节点弹窗，抽屉在 rest 里

@@ -194,7 +194,7 @@ function MailForm({ filter, total, onSent }: { filter: BulkFilter; total: number
       setBody('')
       onSent()
     } catch (e) {
-      fail(e, setErrors)
+      fail(e, { fields: setErrors, intent })
     }
     setConfirming(false)
   }
@@ -285,7 +285,7 @@ function GeneratePanel() {
       toast(`已生成 ${formatCount(data.count)} 个账号`)
       void invalidate(true)
     } catch (e) {
-      fail(e, (f) => setErrors(Object.fromEntries(Object.entries(f).map(([k, v]) => [FIELD_KEYS[k] ?? k, v]))))
+      fail(e, { fields: (f) => setErrors(Object.fromEntries(Object.entries(f).map(([k, v]) => [FIELD_KEYS[k] ?? k, v]))), intent })
     } finally {
       setBusy(false)
     }

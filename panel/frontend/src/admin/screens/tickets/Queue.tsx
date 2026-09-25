@@ -145,7 +145,7 @@ function EscalateButton() {
       void invalidate()
       toast(r.escalated > 0 ? `已把 ${r.escalated} 张超时工单升级` : '没有新的超时工单')
     },
-    onError: (e) => fail(e),
+    onError: (e) => fail(e, { intent }),
   })
   return (
     <Button size="sm" busy={run.isPending} onClick={() => run.mutate()} title="立即扫描首次响应已超时的工单并升级（后台每 5 分钟也会自动扫一次）">

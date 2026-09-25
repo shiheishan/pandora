@@ -32,7 +32,7 @@ export function useIssueServerToken(onIssued: (secret: InstallSecret) => void) {
       void invalidate()
       onIssued({ serverId: s.id, title: `在 ${s.name} 上执行`, token: r.token, command: r.install_command, expiresAt: r.expires_at })
     },
-    onError: (error) => fail(error),
+    onError: (error) => fail(error, { intent }),
   })
 }
 

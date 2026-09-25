@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatBytes / formatCount / formatDateTime，依赖 ../../../core/router 的 navigate / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Empty / Input / Pager / QueryView / Segmented / StatStrip / Table / Tag / TextArea / useToast，依赖 ../../actions 的 useCan / useFailure / useIntentKey，依赖 ./api，依赖 ./dialogs 的 ActionModal，依赖 ./model，依赖 ./Users.module.css 与 ./Ops.module.css
+ * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatBytes / formatCount / formatDateTime，依赖 ../../../core/router 的 navigate / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Empty / Input / Pager / QueryView / Segmented / StatStrip / Table / Tag / TextArea / useToast，依赖 ../../actions 的 endsIntent / useCan / useFailure / useIntentKey，依赖 ./api，依赖 ./dialogs 的 ActionModal，依赖 ./model，依赖 ./Users.module.css 与 ./Ops.module.css
  * [OUTPUT]: 对外提供 ResetsTab、ResetHistory、ResetDialog
  * [POS]: 流量重置（契约后台-03，metering.reset.*）：ResetsTab 是「流量重置」标签（#/users/resets?r=<原因>&o=<偏移>）——近 30 天四格统计、按邮箱手动重置、按原因筛选的分页日志；ResetHistory 是用户抽屉的「流量重置」标签（最近 50 条 + 立即重置本期）；两处都经 ResetDialog 确认，必填重置原因 5–500 字，POST v1/users/{id}/traffic-reset 要 reauth + 幂等 traffic_manual_reset。只清当前订阅的本期已用，挑哪条与后端同口径（status=active、到期最晚）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -10,7 +10,7 @@ import { formatBytes, formatCount, formatDateTime } from '../../../core/format'
 import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Input, Pager, QueryView, Segmented, StatStrip, Table, Tag, TextArea, useToast, type TableColumn } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from '../../actions'
+import { endsIntent, useCan, useFailure, useIntentKey } from '../../actions'
 import {
   RESET_REASONS,
   RESETS_PAGE,
@@ -249,6 +249,7 @@ export function ResetDialog({ user, onClose, onDone }: { user: { id: string; ema
       setError(null)
       onDone()
     } catch (e) {
+      if (endsIntent(e)) intent.reset()
       // 没有生效订阅 / 没有流量配额是 422 且没有 fields，原文放进框里
       if (isApiError(e, 'validation_failed') && Object.keys(e.fields).length === 0) setError(e.message)
       else fail(e, (f) => setError(f.note ?? Object.values(f)[0] ?? null))

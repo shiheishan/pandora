@@ -66,8 +66,9 @@ export function Composer({ ticket }: { ticket: TicketDetail }) {
       toast(note ? '已添加内部备注' : mode === 'resolve' ? '已回复并解决' : '已回复，状态改为等待用户')
     } catch (e) {
       if (isApiError(e, 'reauth_required')) return
-      // 422 的 body 键标在输入框；其它错误 Toast。第一步已成功时说清楚只差解决
-      const handled = fail(e, (f) => setError(f.body ?? Object.values(f)[0] ?? '提交失败'))
+      // 422 的 body 键标在输入框；其它错误 Toast。第一步已成功时说清楚只差解决。
+      // 失败的是哪一步就交哪一把键：回复已送达时失败的只可能是标记解决
+      const handled = fail(e, { fields: (f) => setError(f.body ?? Object.values(f)[0] ?? '提交失败'), intent: delivered ? resolveKey : replyKey })
       if (!handled && delivered && mode === 'resolve') setError('回复已发出，但标记解决失败，可以再点一次「回复并解决」')
     } finally {
       setBusy(null)
