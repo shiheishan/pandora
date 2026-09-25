@@ -128,6 +128,11 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "node_retire", d.Log),
 	).Post("/nodes/{id}/retire", h.nodeRetire)
+	// 一步上线（R108）：与批量启用、旧状态接口同门槛，不要求重认证；重放不重做
+	r.With(
+		middleware.RequirePermission("node.lifecycle", d.Log),
+		middleware.Idempotency(d.Pool, "node_activate", d.Log),
+	).Post("/nodes/{id}/activate", h.nodeActivate)
 	r.With(
 		middleware.RequirePermission("node.identity.revoke", d.Log),
 		middleware.RequireRecentReauth(d.Log),

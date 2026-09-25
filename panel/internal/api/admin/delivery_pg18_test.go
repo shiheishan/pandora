@@ -81,6 +81,7 @@ func newDeliveryHarness(t *testing.T, ctx context.Context, app *platformdb.Pool,
 	r.Post("/v1/users/{id}/group", h.assignUserGroup)
 	r.Get("/v1/devices", h.listOnlineDevices)
 	r.Post("/v1/settings/device-limit", h.setDeviceMode)
+	r.Post("/v1/nodes/{id}/activate", h.nodeActivate)
 	d.router = r
 	return d
 }
