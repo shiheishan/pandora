@@ -74,6 +74,8 @@ type PlanChangePreview struct {
 	CurrentPeriodEnd *time.Time `json:"current_period_end"`
 	NewPeriodStart   time.Time  `json:"new_period_start"`
 	NewPeriodEnd     time.Time  `json:"new_period_end"`
+	// CouponFace 是所用优惠码的券面，与优惠码试算同形（R76），没用码时为 null
+	CouponFace *CouponFace `json:"coupon"`
 }
 
 // PlanChangeOrderOutput 与新购下单同形，另加折算与退余额两项。
@@ -270,6 +272,7 @@ func quotePlanChange(ctx context.Context, tx pgx.Tx, tenantID string,
 	if q.Coupon != nil {
 		q.Discount = q.Coupon.Discount
 	}
+	q.CouponFace = q.Coupon.face()
 	q.Total = orderTotal(q.Subtotal, q.Discount, q.ProrationCredit, 0)
 	q.BalanceRefund = max(q.ProrationCredit-(q.Subtotal-q.Discount), 0)
 	q.Direction = "downgrade"
@@ -476,6 +479,7 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 		}
 		return nil, httpx.Internal(err)
 	}
+	s.notifyIfFulfilled(ctx, tenantID, out.Status)
 	return &out, nil
 }
 

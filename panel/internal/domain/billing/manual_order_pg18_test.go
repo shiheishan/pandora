@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 manual_order.go 的 CreateManualOrder 与 ManualSettlement*，依赖 release.go 的 CancelOrder，依赖 order_release_pg18_test.go 的一次性租户夹具与 orderReleasePG18Claim
 // [OUTPUT]: 对包内提供 orderReleasePG18ManualOrderCases，挂在 TestOrderReleasePG18（run-pg18-gates.sh 的 order_release 域）
-// [POS]: billing 人工单结算方式的 PG18 证明：赠送当场履约、待用户支付留下一张带开单人的待支付单、线下已收款在建单事务里按 offline 渠道结清（收入、佣金、履约、幂等记录与标记已支付同口径，凭证号重复整单回滚）、从余额扣除仍拒绝
+// [POS]: billing 人工单结算方式的 PG18 证明：赠送当场履约并通知节点一次、待用户支付（不通知）留下一张带开单人的待支付单、线下已收款在建单事务里按 offline 渠道结清（收入、佣金、履约、幂等记录与标记已支付同口径，凭证号重复整单回滚）、从余额扣除仍拒绝
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -52,6 +52,12 @@ func orderReleasePG18ManualOrderCases(t *testing.T, ctx context.Context, admin *
 		return
 	}
 
+	// 数一数节点通知：待支付单不通知，赠送单履约后通知一次（租户级 node.users.changed）
+	var notified []string
+	previous := service.onUsersChanged
+	service.SetUsersChangedNotifier(func(_ context.Context, tenantID string) { notified = append(notified, tenantID) })
+	defer service.SetUsersChangedNotifier(previous)
+
 	// 待用户支付：原价挂账给用户付，开单人与原因照样落库。
 	pending, err := create(t, ManualSettlementPending, "manual-pending")
 	if err != nil {
@@ -68,6 +74,9 @@ func orderReleasePG18ManualOrderCases(t *testing.T, ctx context.Context, admin *
 	if out, err := service.CancelOrder(ctx, fx.tenant, target, pending.OrderID); err != nil || out == nil || out.Status != "cancelled" {
 		t.Fatalf("cancel pending manual order out=%#v err=%v", out, err)
 	}
+	if len(notified) != 0 {
+		t.Fatalf("pending manual order notified nodes %v, want none", notified)
+	}
 	t.Log("marker=manual_order_pending_settlement_ok")
 
 	// 缺省是赠送：全额减免、当场履约。
@@ -78,6 +87,9 @@ func orderReleasePG18ManualOrderCases(t *testing.T, ctx context.Context, admin *
 	if status, payable, createdBy, _ := row(t, grant.OrderID); grant.Status != "fulfilled" ||
 		status != "fulfilled" || payable != 0 || createdBy == nil || *createdBy != operator {
 		t.Fatalf("grant manual order out=%#v db status=%s payable=%d", grant, status, payable)
+	}
+	if len(notified) != 1 || notified[0] != fx.tenant {
+		t.Fatalf("grant manual order notified %v, want exactly one for the tenant", notified)
 	}
 	t.Log("marker=manual_order_grant_default_ok")
 

@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/pg18test 打开 support 域的一次性库，依赖 service.go 的 Create / ListForAgent / GetForAgent / SetStatus
 // [OUTPUT]: 对外提供 TestAgentQueueFieldsPG18
-// [POS]: domain/support 的 PG18 测试（契约后台-02）：队列 status 多值筛选与 last_message_author_kind（跳过内部备注）、详情 user_active_plan、人工升级把优先级提到至少 high
+// [POS]: domain/support 的 PG18 测试（契约后台-02）：队列 status 多值筛选与 last_message_author_kind（跳过内部备注）、详情 user_active_plan、详情 message_count / last_reply_at 与队列一致及 related_order（R75）、人工升级把优先级提到至少 high
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package support
@@ -74,13 +74,62 @@ func TestAgentQueueFieldsPG18(t *testing.T) {
 			open[userOnly].LastMessageAuthorKind, open[noted].LastMessageAuthorKind)
 	}
 	// 改状态会写一条 system 消息
-	if all := list(""); len(all) != 3 || all[resolved].LastMessageAuthorKind != "system" {
+	all := list("")
+	if len(all) != 3 || all[resolved].LastMessageAuthorKind != "system" {
 		t.Fatalf("all tickets=%d resolved last author=%q", len(all), all[resolved].LastMessageAuthorKind)
 	}
 
 	// 详情：没有生效订阅时为空；有 active 订阅时是套餐名
-	if tk, err := svc.GetForAgent(ctx, tenantID, userOnly); err != nil || tk.UserActivePlan != nil {
-		t.Fatalf("detail without subscription: plan=%v err=%v", tk.UserActivePlan, err)
+	if tk, err := svc.GetForAgent(ctx, tenantID, userOnly); err != nil || tk.UserActivePlan != nil || tk.RelatedOrder != nil {
+		t.Fatalf("detail without subscription: plan=%v order=%v err=%v", tk.UserActivePlan, tk.RelatedOrder, err)
+	}
+
+	// 详情的 message_count / last_reply_at 与队列同口径（R75）：内部备注与系统消息都算
+	for id, want := range map[string]int{userOnly: 1, noted: 2, resolved: 2} {
+		tk, err := svc.GetForAgent(ctx, tenantID, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := all[id]
+		if tk.MessageCount != want || tk.MessageCount != row.MessageCount ||
+			!tk.LastReplyAt.Equal(row.LastReplyAt) || tk.LastReplyAt.Before(tk.CreatedAt) {
+			t.Fatalf("detail %s: count=%d last=%s, queue count=%d last=%s, want count %d",
+				id, tk.MessageCount, tk.LastReplyAt, row.MessageCount, row.LastReplyAt, want)
+		}
+	}
+	if !all[noted].LastReplyAt.After(all[userOnly].LastReplyAt) {
+		t.Fatalf("internal note did not move last_reply_at: noted=%s plain=%s",
+			all[noted].LastReplyAt, all[userOnly].LastReplyAt)
+	}
+
+	// 详情的 related_order（R75）：后台和门户一样回单号
+	const orderID = "79000000-0000-4000-8000-000000000131"
+	// 订单只作关联对象：绕过建单幂等触发器直接种一行
+	otx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`SET LOCAL session_replication_role = replica`,
+		`INSERT INTO orders(id,tenant_id,order_no,user_id,kind,status,currency,subtotal_amount,discount_amount,
+		   tax_amount,total_amount,balance_applied,payable_amount,expires_at,business_request_id)
+		 VALUES('` + orderID + `','` + tenantID + `','AQ-ORDER-1','` + ownerID + `','new','pending_payment','USD',100,0,0,100,0,100,
+		   now()+interval '30 minutes',gen_random_uuid())`,
+	} {
+		if _, err := otx.Exec(ctx, sql); err != nil {
+			_ = otx.Rollback(ctx)
+			t.Fatalf("seed order: %v", err)
+		}
+	}
+	if err := otx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE tickets SET related_order_id=$1 WHERE id=$2`, orderID, noted); err != nil {
+		t.Fatal(err)
+	}
+	if tk, err := svc.GetForAgent(ctx, tenantID, noted); err != nil || tk.RelatedOrder == nil ||
+		tk.RelatedOrder.ID != orderID || tk.RelatedOrder.OrderNo != "AQ-ORDER-1" {
+		t.Fatalf("detail related order=%+v err=%v", tk.RelatedOrder, err)
 	}
 	tx, err := admin.Begin(ctx)
 	if err != nil {

@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx
 // [OUTPUT]: 对外提供 SessionInfo、ListActiveSessions、RevokeSession
-// [POS]: domain/identity 的门户自助会话管理：只列出、只吊销 audience=public 的会话
+// [POS]: domain/identity 的门户自助会话管理：只列出、只吊销 audience=public 的会话；last_seen_at 由 middleware/auth.go 节流刷新（R62），这里只读
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package identity

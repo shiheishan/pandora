@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 service.go 的 ListOrders / ListProviders、order_detail.go 的 GetOrder、revenue.go 的 ListRevenueAdjustments，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 夹具与 catalog_sales_capability_test.go 的 staticSalesCapability
 // [OUTPUT]: 对外提供 TestAdminFinanceReadsPG18（run-pg18-gates.sh 的 catalog_sales 域）
-// [POS]: adminops 后台-05 读模型扩展的 PG18 集成门禁：订单状态多值白名单与按用户筛、收款渠道回退、详情复用列表行与开单人、渠道卡统计、收入调整登记人
+// [POS]: adminops 后台-05 读模型扩展的 PG18 集成门禁：订单状态多值白名单与按用户筛、收款渠道回退、人工单标识、详情复用列表行与开单人、渠道卡统计、收入调整登记人
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
@@ -151,6 +151,12 @@ func TestAdminFinanceReadsPG18(t *testing.T) {
 		t.Fatalf("balance_applied=%d plan_name=%q", all["FR-BAL"].BalanceApplied, all["FR-PAID"].PlanName)
 	}
 	t.Log("marker=admin_orders_provider_fallback_ok")
+
+	// --- 人工单标识（R95）：与详情「来源」同口径，manual_reason 非空才算 ---
+	if !all["FR-PAID"].Manual || all["FR-OPEN"].Manual || all["FR-BAL"].Manual {
+		t.Fatalf("manual flags paid=%v open=%v bal=%v, want true/false/false",
+			all["FR-PAID"].Manual, all["FR-OPEN"].Manual, all["FR-BAL"].Manual)
+	}
 
 	// --- 详情复用列表行：首项快照不再是零值；开单人 ---
 	detail, err := svc.GetOrder(ctx, tenantID, paidO)

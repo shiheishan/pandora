@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 reservations.go 的 lockOrderReservationGraph、ledger.go 的记账、platform/audit、platform/httpx
-// [OUTPUT]: 对外提供 AdminCancelOrder、CancelOrder、ReleaseOrderOutput；包内提供释放共用的 releaseOrderReservation 与 lockReleaseReservationGraph
+// [OUTPUT]: 对外提供 AdminCancelOrder、CancelOrder、ReleaseOrderOutput；包内提供释放共用的 releaseOrderReservation、lockReleaseReservationGraph 与把释放错误翻成中文接口错误的 releaseHTTPError
 // [POS]: billing 的订单释放（取消 / 过期）：把 held 预留图整体转成 released 并退回余额冻结；new / topup / addon / upgrade（变更套餐）走同一套预留图锁，renewal 走续费专用分支；金额恒等式经 reservations.go 的 orderTotal
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -26,6 +26,31 @@ var (
 	errOrderReleaseConflict        = errors.New("order cannot enter the requested release state")
 	errOrderReleasePaymentEvidence = errors.New("order has successful payment evidence")
 )
+
+// releaseConflict 是给人看的冲突原因：errors.Is 仍认作 errOrderReleaseConflict，
+// 过期任务照旧把它当正常的空转，取消接口把 message 原样回给前端（R95）
+type releaseConflict struct{ message string }
+
+func (e releaseConflict) Error() string        { return e.message }
+func (e releaseConflict) Is(target error) bool { return target == errOrderReleaseConflict }
+
+// releaseHTTPError 把释放事务的错误翻成接口错误，后台与门户取消共用
+func releaseHTTPError(err error) error {
+	var rc releaseConflict
+	var he *httpx.Error
+	switch {
+	case errors.Is(err, errOrderReleaseNotFound):
+		return httpx.NotFoundOrForbidden()
+	case errors.As(err, &rc):
+		return httpx.New(httpx.CodeConflict, rc.message)
+	case errors.Is(err, errOrderReleasePaymentEvidence):
+		return httpx.New(httpx.CodeConflict, "这张订单已有入账，不能取消")
+	case errors.As(err, &he):
+		return he
+	default:
+		return httpx.Internal(err)
+	}
+}
 
 // ReleaseOrderOutput is the monotonic terminal result of a cancellation or
 // expiry. AlreadyTerminal is true only when the order was already in the same
@@ -101,10 +126,10 @@ func (s *Service) AdminCancelOrder(ctx context.Context, tenantID string,
 		return nil, httpx.NotFoundOrForbidden()
 	}
 	if in.ExpectedStateVersion <= 0 {
-		return nil, httpx.New(httpx.CodeBadRequest, "expected_state_version must be positive")
+		return nil, httpx.New(httpx.CodeBadRequest, "expected_state_version 必须是正整数")
 	}
 	if n := utf8.RuneCountInString(in.Reason); n < 5 || n > 500 {
-		return nil, httpx.New(httpx.CodeBadRequest, "reason must be 5 to 500 characters")
+		return nil, httpx.New(httpx.CodeBadRequest, "取消原因需要 5 到 500 个字")
 	}
 
 	actorID := in.ActorID
@@ -119,20 +144,16 @@ func (s *Service) AdminCancelOrder(ctx context.Context, tenantID string,
 		return err
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, errOrderReleaseNotFound):
-			return nil, httpx.NotFoundOrForbidden()
-		case errors.Is(err, errOrderReleaseConflict), errors.Is(err, errOrderReleasePaymentEvidence):
-			return nil, httpx.New(httpx.CodeConflict, err.Error())
-		default:
-			var he *httpx.Error
-			if errors.As(err, &he) {
-				return nil, he
-			}
-			return nil, httpx.Internal(err)
-		}
+		return nil, releaseHTTPError(err)
 	}
 	return &result.Output, nil
+}
+
+func releasedStatusMessage(status string) string {
+	if status == "expired" {
+		return "订单已过期"
+	}
+	return "订单已取消"
 }
 
 type releaseIntentLock struct {
@@ -168,19 +189,7 @@ func (s *Service) CancelOrder(ctx context.Context, tenantID, userID,
 		return err
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, errOrderReleaseNotFound):
-			return nil, httpx.NotFoundOrForbidden()
-		case errors.Is(err, errOrderReleaseConflict),
-			errors.Is(err, errOrderReleasePaymentEvidence):
-			return nil, httpx.New(httpx.CodeConflict, err.Error())
-		default:
-			var he *httpx.Error
-			if errors.As(err, &he) {
-				return nil, he
-			}
-			return nil, httpx.Internal(err)
-		}
+		return nil, releaseHTTPError(err)
 	}
 	return &result.Output, nil
 }
@@ -231,16 +240,16 @@ func releaseOrderReservation(ctx context.Context, tx pgx.Tx, tenantID string,
 		result.Output.AlreadyTerminal = true
 		return result, nil
 	case "cancelled", "expired":
-		return result, fmt.Errorf("%w: order is already %s", errOrderReleaseConflict, shape.Status)
+		return result, releaseConflict{releasedStatusMessage(shape.Status)}
 	case "paid", "fulfilled", "partially_refunded", "refunded":
-		return result, fmt.Errorf("%w: paid or captured orders cannot be released", errOrderReleaseConflict)
+		return result, releaseConflict{"订单已支付，不能取消"}
 	case "draft", "pending_payment", "processing":
 		// Continue below.
 	default:
-		return result, fmt.Errorf("%w: unsupported order status %s", errOrderReleaseConflict, shape.Status)
+		return result, releaseConflict{"订单当前状态（" + shape.Status + "）不能取消"}
 	}
 	if req.ExpectedStateVersion > 0 && shape.StateVersion != req.ExpectedStateVersion {
-		return result, httpx.New(httpx.CodeConflict, "order state changed; reload before cancelling")
+		return result, httpx.New(httpx.CodeConflict, "订单状态已变化，请刷新后再操作")
 	}
 
 	intents, err := lockActiveReleaseIntents(ctx, tx, tenantID, shape.ID)

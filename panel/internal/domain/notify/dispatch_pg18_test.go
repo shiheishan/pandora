@@ -44,7 +44,8 @@ func TestDispatchHoldsEmailWhileSwitchedOffPG18(t *testing.T) {
 	// 关着时根本不会被取出，仍是 queued —— 状态本身就能区分两条路径
 	svc := New(app, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte("notify-switch-salt"))
 	if err := app.InTx(ctx, db.Scope{TenantID: tenant}, func(tx pgx.Tx) error {
-		return svc.Enqueue(ctx, tx, tenant, user, "switch.test", map[string]string{}, "switch-test")
+		_, err := svc.Enqueue(ctx, tx, tenant, user, "switch.test", map[string]string{}, "switch-test")
+		return err
 	}); err != nil {
 		t.Fatal(err)
 	}

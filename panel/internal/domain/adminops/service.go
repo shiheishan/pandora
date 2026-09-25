@@ -371,6 +371,9 @@ type OrderRow struct {
 	IntervalCount int32  `json:"interval_count"`
 	// ItemCount > 1 时列表只显示第一项，由前端提示还有几项。
 	ItemCount int32 `json:"item_count"`
+	// Manual 是人工单标识（R95），与详情「来源」同口径：manual_reason 非空即后台开的单。
+	// 赠送单没有渠道，列表靠它显示「人工」而不是「—」；开单人仍只在详情里。
+	Manual bool `json:"manual"`
 }
 
 // orderRowSelectSQL 是 OrderRow 的唯一查询形状，调用方只拼 WHERE / ORDER / LIMIT。
@@ -383,7 +386,8 @@ const orderRowSelectSQL = `
 			       o.total_amount, o.payable_amount, o.paid_amount, o.refunded_amount,
 			       o.balance_applied, o.created_at, o.paid_at, pv.code, pv.display_name,
 			       COALESCE(it.snapshot_plan_name, ''), COALESCE(it.snapshot_interval, ''),
-			       COALESCE(it.snapshot_interval_count, 0), COALESCE(it.n, 0)
+			       COALESCE(it.snapshot_interval_count, 0), COALESCE(it.n, 0),
+			       o.manual_reason IS NOT NULL
 			  FROM orders o JOIN users u ON u.id = o.user_id
 			  LEFT JOIN LATERAL (
 			    -- 入账优先于支付尝试：换过渠道的单，钱最终从哪个渠道进来才算数
@@ -414,7 +418,8 @@ func scanOrderRow(row pgx.Row) (OrderRow, error) {
 	err := row.Scan(&r.ID, &r.OrderNo, &r.UserEmail, &r.Kind, &r.Status,
 		&r.Currency, &r.TotalAmount, &r.PayableAmount, &r.PaidAmount,
 		&r.RefundedAmount, &r.BalanceApplied, &r.CreatedAt, &r.PaidAt,
-		&r.ProviderCode, &r.ProviderName, &r.PlanName, &r.Interval, &r.IntervalCount, &r.ItemCount)
+		&r.ProviderCode, &r.ProviderName, &r.PlanName, &r.Interval, &r.IntervalCount, &r.ItemCount,
+		&r.Manual)
 	return r, err
 }
 

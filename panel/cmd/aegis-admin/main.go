@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/admin 的 NewRouter
+// [OUTPUT]: 对外提供 可执行入口 aegis-admin：装配管理控制台网关并启动工单超时升级、定时公告、配额周期滚动、佣金解冻等后台循环
+// [POS]: panel/cmd 的 admin 网关进程，与 aegis-public 分进程分端口；mark-paid 与人工开单履约后的节点通知经 nodefabric.NotifyUsersChanged 发出
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Command aegis-admin 是管理控制台网关（Admin 域）。
 //
 // 与 aegis-public 完全独立的进程与端口：管理面故障不影响用户下单续费，
@@ -132,11 +137,9 @@ func run() error {
 	// 管理端只用到 billing 的后台作业部分（佣金解冻），
 	// 下单与支付仍然只在 public 网关里发生
 	billingSvc := billing.NewService(pool, envelope)
-	// 管理员手动标记已付走的也是同一条履约路径，同样要通知节点。
-	billingSvc.SetUsersChangedNotifier(func(ctx context.Context, tenantID string) {
-		rtHub.Publish(ctx, realtime.ChannelNodeAll(tenantID),
-			realtime.TopicNodeUsersChanged, map[string]any{})
-	})
+	// 管理员手动标记已付、人工开单走的也是同一条履约路径，同样要通知节点；
+	// 发布只经 nodefabric 的 NotifyUsersChanged 一处
+	billingSvc.SetUsersChangedNotifier(nodeSvc.NotifyUsersChanged)
 	// 管理端只用它把到点的定时公告转正，不投递任何消息，所以没有 sender
 	notifySvc := notify.New(pool, log, cfg.MasterKey)
 	appearanceSvc := appearance.New(pool)

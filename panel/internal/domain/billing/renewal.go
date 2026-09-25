@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 reservations.go 的预留图与科目锁、ledger.go 的记账、traffic_reset.go 的 LogTrafficReset、middleware 幂等声明、platform/db
 // [OUTPUT]: 对外提供 CreateRenewal、RollQuotaPeriods；包内提供 fulfillRenewal / fulfillRenewalLocked，以及续费与变更套餐（plan_change.go）共用的 captureZeroPaySubscriptionOrder / lockOrderSubscriptionForSettlement
-// [POS]: billing 的续费：在原订阅上延长周期、重置 cycle 配额；流量包余额挂用户，续费不碰（D-E-1）
+// [POS]: billing 的续费：在原订阅上延长周期（旧周期已走完就从现在起算新周期）、重置 cycle 配额；流量包余额挂用户，续费不碰（D-E-1）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -376,6 +376,7 @@ func (s *Service) CreateRenewal(ctx context.Context, tenantID string,
 		}
 		return nil, httpx.Internal(err)
 	}
+	s.notifyIfFulfilled(ctx, tenantID, out.Status)
 	return &out, nil
 }
 
@@ -557,11 +558,15 @@ func (s *Service) fulfillRenewalLocked(ctx context.Context, tx pgx.Tx, tenantID,
 		base = *oldEnd
 	}
 	newEnd := addInterval(base, interval, int(intervalCount))
+	// 周期已经走完（状态仍是 active 也算：代码里没有把订阅改成 expired 的扫描）时，
+	// 新周期从现在开始；否则起点留在旧周期，中间断掉的那段会被算进本周期，
+	// 变更套餐的折算基数也会跟着被摊薄
+	restart := oldEnd == nil || !oldEnd.After(now)
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE subscriptions
 		   SET status = 'active',
-		       current_period_start = CASE WHEN status IN ('expired','past_due','grace')
+		       current_period_start = CASE WHEN $7 OR status IN ('expired','past_due','grace')
 		                                   THEN $3 ELSE current_period_start END,
 		       current_period_end = $4,
 		       plan_version_id = $5::uuid,
@@ -569,7 +574,7 @@ func (s *Service) fulfillRenewalLocked(ctx context.Context, tx pgx.Tx, tenantID,
 		       grace_end = NULL,
 		       updated_at = now()
 		 WHERE tenant_id = $1 AND id = $2::uuid`,
-		tenantID, subID, now, newEnd, planVersionID, priceID); err != nil {
+		tenantID, subID, now, newEnd, planVersionID, priceID, restart); err != nil {
 		return "", fmt.Errorf("延长订阅周期: %w", err)
 	}
 

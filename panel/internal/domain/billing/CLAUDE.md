@@ -4,12 +4,12 @@
 订单、支付与复式账本。钱的不变量（金额恒等式、预留图、借贷配平、订单/幂等对称绑定、各 kind 的履约证据）落在迁移的约束与触发器里，这里编排事务与锁序：订单 →（续费 / 变更单才有的）订阅 → 支付意图 → 预留图子资源 → 按 UUID 排序的账本科目。订单 kind 决定建单与履约路径：new 开订阅、renewal 延周期、upgrade 原地换套餐（D-E-2）、addon 发流量包余额（D-E-1）、topup 入余额。
 
 成员清单
-checkout.go: 新购下单 CreateOrder 与支付回调 HandlePaymentWebhook 主链路，回调按 kind 分派履约；结算体 settlePaymentTx 在调用方事务里执行，回调 / 标记已支付各开一个事务调它，人工单线下已收款在建单事务里调它；provisionSubscription / initQuotaBalances 开订阅与建配额；超 800 行的存量大文件
+checkout.go: 新购下单 CreateOrder 与支付回调 HandlePaymentWebhook 主链路，回调按 kind 分派履约；结算体 settlePaymentTx 在调用方事务里执行，回调 / 标记已支付各开一个事务调它，人工单线下已收款在建单事务里调它；履约后经注入的 onUsersChanged 发租户级节点通知，零元单（赠送、全额抵扣、零元续费与变更）由 notifyIfFulfilled 在提交后补发；provisionSubscription / initQuotaBalances 开订阅与建配额；超 800 行的存量大文件
 order_holds.go: 各建单路径共用的预留父节点与余额冻结（insertHeldReservation / prepareBalanceHold / postBalanceHold）
 reservations.go: 结算与释放共用的预留图加锁校验；orderTotal 是金额恒等式 total = max(小计 − 折扣 − 折算, 0) + 税（00071）
-release.go: 取消 / 过期释放，held 预留图整体转 released 并退回余额冻结；续费走专用分支，其余 kind 共用预留图锁
+release.go: 取消 / 过期释放，held 预留图整体转 released 并退回余额冻结；续费走专用分支，其余 kind 共用预留图锁；冲突原因用 releaseConflict 带中文文案（errors.Is 仍认作冲突哨兵，过期任务照旧空转），releaseHTTPError 是后台与门户取消共用的错误翻译（R95）
 reservation_expiry.go: 到期预留的批量释放扫描
-renewal.go: 续费 CreateRenewal 与周期滚动 RollQuotaPeriods；与变更套餐共用零元单捕获 captureZeroPaySubscriptionOrder 和结算锁 lockOrderSubscriptionForSettlement
+renewal.go: 续费 CreateRenewal 与周期滚动 RollQuotaPeriods；旧周期已走完（状态仍 active 也算）时新周期从付款时刻起算；与变更套餐共用零元单捕获 captureZeroPaySubscriptionOrder 和结算锁 lockOrderSubscriptionForSettlement
 plan_change.go: 变更套餐（D-E-2，kind=upgrade）的试算、下单与原地履约：换套餐不换凭据、配额按新套餐重置（新套餐没有的指标变不限量，配额行不删因人工调整只许追加）、降级差额冲回收入退进余额（plan_change_refund 分录）；同一订阅同时只许一张在途续费或变更单
 plan_change_quote.go: 变更套餐的剩余价值折算，只算不写：本周期付费合计 × min(时间比, 流量比) 向下取整，付费天数先用、赠送天数最后用
 traffic_pack.go: 流量包（D-E-1）目录、下单（kind=addon）、履约成挂用户的 traffic_pack_grants 余额与余额查询

@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 plan_change.go 的 PreviewPlanChange/CreatePlanChange、checkout.go 的 CreateOrder/HandlePaymentWebhook、renewal.go 的 CreateRenewal、release.go 的 CancelOrder，复用 order_release_pg18_test.go 的一次性租户夹具与幂等键工具，依赖迁移 00071
 // [OUTPUT]: 对外提供 TestPlanChangePG18（run-pg18-gates.sh 的 plan_change 域）
-// [POS]: billing 变更套餐的 PG18 集成门禁：真实 SQL 下的折算基数、补差价结算、降级退余额、与续费互斥、释放与数据库守卫；纯算术边界在 plan_change_test.go
+// [POS]: billing 变更套餐的 PG18 集成门禁：真实 SQL 下的折算基数、补差价结算、降级退余额、试算回券面（R76）、零元变更与续费建单即通知节点、续费单待支付期间周期走完仍能履约（expired → active 推断未复现）、与续费互斥、释放与数据库守卫；纯算术边界在 plan_change_test.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -180,7 +180,7 @@ func TestPlanChangePG18(t *testing.T) {
 		UserID: fx.buyer, SubscriptionID: subID, PlanID: planB, PriceID: priceB,
 	})
 	if err != nil || preview.Direction != "upgrade" || preview.ProrationCredit != 750 ||
-		preview.Total != 2250 || preview.BalanceRefund != 0 || preview.Subtotal != 3000 {
+		preview.Total != 2250 || preview.BalanceRefund != 0 || preview.Subtotal != 3000 || preview.CouponFace != nil {
 		t.Fatalf("upgrade preview=%+v err=%v", preview, err)
 	}
 	pending, err := changeTo(t, "pc-up-cancel", planB, priceB, "", 0)
@@ -247,11 +247,25 @@ func TestPlanChangePG18(t *testing.T) {
 	//    floor(3000 × 600/1000) = 1800，抵完 150 还剩 1650 退进余额，当场履约。
 	must(`UPDATE quota_balances SET consumed = 400 WHERE subscription_id = $1::uuid`, subID)
 	walletBefore := balance(t)
+	// 试算回券面（R76），与优惠码试算同形
+	if p, err := service.PreviewPlanChange(ctx, fx.tenant, PlanChangeInput{
+		UserID: fx.buyer, SubscriptionID: subID, PlanID: planC, PriceID: priceC, CouponCode: couponC,
+	}); err != nil || p.Discount != 50 || p.CouponFace == nil ||
+		*p.CouponFace != (CouponFace{Code: strings.ToUpper(couponC), DiscountType: "fixed", DiscountValue: 50}) {
+		t.Fatalf("downgrade preview with coupon=%+v err=%v", p, err)
+	}
+	// 零元变更与零元续费在建单事务里就履约，不经过支付回调：各通知节点一次
+	notified := 0
+	service.SetUsersChangedNotifier(func(context.Context, string) { notified++ })
+	defer service.SetUsersChangedNotifier(nil)
 	downgrade, err := changeTo(t, "pc-down", planC, priceC, couponC, 0)
 	if err != nil || downgrade.Status != "fulfilled" || downgrade.TotalAmount != 0 ||
 		downgrade.DiscountAmount != 50 || downgrade.ProrationCredit != 1800 ||
 		downgrade.BalanceRefund != 1650 {
 		t.Fatalf("downgrade=%+v err=%v", downgrade, err)
+	}
+	if notified != 1 {
+		t.Fatalf("zero-pay downgrade notified nodes %d times, want 1", notified)
 	}
 	if got := balance(t) - walletBefore; got != 1650 {
 		t.Fatalf("downgrade refunded %d to balance want 1650", got)
@@ -277,8 +291,8 @@ func TestPlanChangePG18(t *testing.T) {
 	renewed, err := service.CreateRenewal(ctx, fx.tenant, CreateRenewalInput{
 		UserID: fx.buyer, SubscriptionID: subID, UseBalance: 200, Claim: renewClaim,
 	})
-	if err != nil || renewed.Status != "fulfilled" {
-		t.Fatalf("renew plan C=%+v err=%v", renewed, err)
+	if err != nil || renewed.Status != "fulfilled" || notified != 2 {
+		t.Fatalf("renew plan C=%+v notified=%d err=%v", renewed, notified, err)
 	}
 	stacked, err := service.PreviewPlanChange(ctx, fx.tenant, PlanChangeInput{
 		UserID: fx.buyer, SubscriptionID: subID, PlanID: planB, PriceID: priceB,
@@ -337,4 +351,32 @@ func TestPlanChangePG18(t *testing.T) {
 		t.Fatalf("forged plan change refund SQLSTATE=%q err=%v", state, forgedRefund)
 	}
 	t.Log("marker=plan_change_pg18_guards_ok")
+
+	// 8) 第 3 阶段后端一的推断「续费单待支付的 30 分钟里订阅过期，状态机不许 expired → active，
+	//    履约失败」按产品真实路径复现：代码里没有任何地方把订阅状态改成 expired，到期只是
+	//    current_period_end 走过去、状态仍是 active。付款照常履约；新周期的起点从付款时刻算
+	//    （修前起点留在旧周期，断掉的那段被算进本周期）。
+	renewClaim = orderReleasePG18Claim(t, ctx, admin, fx.tenant, fx.buyer, RenewalIdempotencyScope, "pc-renew-lapse")
+	lapse, err := service.CreateRenewal(ctx, fx.tenant, CreateRenewalInput{
+		UserID: fx.buyer, SubscriptionID: subID, Claim: renewClaim,
+	})
+	if err != nil || lapse.Status != "pending_payment" || lapse.PayableAmount != 200 {
+		t.Fatalf("pending renewal=%+v err=%v", lapse, err)
+	}
+	must(`UPDATE subscriptions SET current_period_start = now() - interval '31 days',
+		current_period_end = now() - interval '1 minute' WHERE id = $1::uuid`, subID)
+	must(`UPDATE subscription_credentials SET expires_at = now() - interval '1 minute' WHERE subscription_id = $1::uuid`, subID)
+	paidAt := time.Now().UTC().Add(-time.Second)
+	pay(t, "pc-renew-lapse", lapse.OrderID, 200)
+	var lapsedFrom string
+	if err := admin.QueryRow(ctx, `SELECT from_status FROM subscription_events
+		WHERE subscription_id=$1::uuid AND order_id=$2::uuid AND event_type='renewed'`,
+		subID, lapse.OrderID).Scan(&lapsedFrom); err != nil {
+		t.Fatalf("read lapse renewal event: %v", err)
+	}
+	if got := readSub(t, subID); got.status != "active" || got.start.Before(paidAt) ||
+		!got.end.Equal(got.start.UTC().AddDate(0, 1, 0)) || !got.credExpires.Equal(got.end) || lapsedFrom != "active" {
+		t.Fatalf("renewal after lapse subscription=%+v from=%s paid_after=%s", got, lapsedFrom, paidAt)
+	}
+	t.Log("marker=plan_change_pg18_renewal_after_lapse_ok")
 }

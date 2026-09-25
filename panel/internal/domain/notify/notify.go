@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务与 pgx
 // [OUTPUT]: 对外提供 Channel、Sender、ErrChannelNotConfigured、Service、New、Enqueue、Render、Dispatch
-// [POS]: domain/notify 的队列核心：按用户入队与统一派发（notify.email 降级开关关闭时派发跳过邮件渠道）；按地址入队在 address.go，扫描循环在 scan.go
+// [POS]: domain/notify 的队列核心：按用户入队（Enqueue 返回实际插入行数，撞去重键不计）与统一派发（notify.email 降级开关关闭时派发跳过邮件渠道）；按地址入队在 address.go，扫描循环在 scan.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package notify 实现通知：站内信、邮件，以及到期与流量预警。
@@ -79,8 +79,11 @@ func New(pool *db.Pool, log *slog.Logger, salt []byte, senders ...Sender) *Servi
 // 由定时任务反复扫描产生的通知，每轮扫描都会命中同一批订阅，
 // 没有去重的话用户每分钟收一条。键里带上业务标识与窗口即可，
 // 例如 "expiring:<订阅ID>:3d"。
+//
+// 返回实际插入的行数（每个渠道一行）：撞了去重键的静默跳过、不计数，
+// 扫描日志的「已排队 N 条」据此只数真正新排的。
 func (s *Service) Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID,
-	code string, vars map[string]string, dedupeKey string) error {
+	code string, vars map[string]string, dedupeKey string) (int, error) {
 
 	// 一个 code 通常有多个渠道的模板（站内 + 邮件），逐个排队
 	rows, err := tx.Query(ctx, `
@@ -88,7 +91,7 @@ func (s *Service) Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		 WHERE tenant_id = $1 AND code = $2 AND status = 'active' AND locale = 'zh-CN'`,
 		tenantID, code)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	type target struct{ channel, category string }
 	var targets []target
@@ -96,26 +99,27 @@ func (s *Service) Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		var t target
 		if err := rows.Scan(&t.channel, &t.category); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		targets = append(targets, t)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
 	if len(targets) == 0 {
 		// 没有模板不是错误：可能这个通知只配了站内没配邮件。
 		// 但完全没有任何模板通常意味着 code 拼错了，值得留个痕迹。
 		s.log.Warn("通知模板缺失", "code", code)
-		return nil
+		return 0, nil
 	}
 
 	payload, err := withSite(ctx, tx, tenantID, vars)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
+	inserted := 0
 	for _, t := range targets {
 		// 用户关掉的类别不再排队。
 		// transactional 不查偏好 —— 表上的约束已经保证它关不掉，
@@ -141,18 +145,20 @@ func (s *Service) Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		// dedupe_key 上有唯一约束时，重复排队会撞键。
 		// 用 ON CONFLICT DO NOTHING 让重复变成静默跳过 ——
 		// 这正是去重想要的行为，不该报错。
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			INSERT INTO notification_deliveries
 				(tenant_id, user_id, template_code, channel, dedupe_key,
 				 recipient_hash, payload, status, max_attempts, next_retry_at)
 			VALUES ($1,$2::uuid,$3,$4,NULLIF($5,''),$6,$7,'queued',5,now())
 			ON CONFLICT DO NOTHING`,
 			tenantID, userID, code, t.channel, key,
-			s.hash(userID), payload); err != nil {
-			return fmt.Errorf("排队通知 %s/%s: %w", code, t.channel, err)
+			s.hash(userID), payload)
+		if err != nil {
+			return 0, fmt.Errorf("排队通知 %s/%s: %w", code, t.channel, err)
 		}
+		inserted += int(tag.RowsAffected())
 	}
-	return nil
+	return inserted, nil
 }
 
 // Render 用变量填充模板。

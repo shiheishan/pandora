@@ -4,8 +4,10 @@ deploy/.env
 *.key
 !*.pub
 
-# 构建产物
+# 构建产物（含在 panel/ 下直接 go build ./cmd/<名字> 留下的二进制）
 /bin/
+/aegis-*
+/pandora-*
 *.exe
 
 # Go

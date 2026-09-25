@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务、platform/crypto 的 HashToken（订阅令牌反查）、platform/httpx 的错误模型；读 users / user_groups / subscriptions / quota_balances / subscription_online_devices / orders / referrals / telegram_bindings；订单行复用 orderRowSelectSQL
 // [OUTPUT]: 对外提供 UserRow、UserCurrentSub、ListUsersInput、UserDetail、SubscriptionRow、QuotaRow、UserStats、UserRef、TelegramRef 与 Service.ListUsers / GetUser
-// [POS]: domain/adminops 的后台用户读模型（契约后台-03 GET v1/users 与 GET v1/users/{id}）：从 service.go 拆出，列表带当前订阅摘要与多条件筛选，详情带配额、设备、统计、邀请人与 Telegram
+// [POS]: domain/adminops 的后台用户读模型（契约后台-03 GET v1/users 与 GET v1/users/{id}）：从 service.go 拆出，列表带当前订阅摘要与多条件筛选，详情带配额、设备、统计（实收按币种拆开）、邀请人与 Telegram
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
@@ -266,10 +266,13 @@ type QuotaRow struct {
 }
 
 type UserStats struct {
-	// PaidTotal 与导出同一口径：paid / fulfilled 订单的 paid_amount 之和
-	PaidTotal     int64 `json:"paid_total"`
-	OrderCount    int   `json:"order_count"`
-	ReferralCount int   `json:"referral_count"`
+	// PaidTotal 与导出同一口径：paid / fulfilled 订单的 paid_amount 之和，跨币种直接相加；
+	// 只为不打断已上线的前端而保留，按币种显示改读 PaidTotals（R80）
+	PaidTotal int64 `json:"paid_total"`
+	// PaidTotals 是同一口径按币种拆开，币种升序，没有实收时为空数组；元素复用 dashboard_tasks.go 的 CurrencyAmount
+	PaidTotals    []CurrencyAmount `json:"paid_totals"`
+	OrderCount    int              `json:"order_count"`
+	ReferralCount int              `json:"referral_count"`
 }
 
 type UserRef struct {
@@ -320,6 +323,22 @@ func (s *Service) GetUser(ctx context.Context, tenantID, userID string) (*UserDe
 			return err
 		}
 		d.EmailVerified = verifiedAt != nil
+
+		rows, err := tx.Query(ctx, `
+			SELECT currency, sum(paid_amount)::bigint FROM orders
+			 WHERE tenant_id = $1 AND user_id = $2 AND status IN ('paid','fulfilled')
+			 GROUP BY currency HAVING sum(paid_amount) > 0
+			 ORDER BY currency`, tenantID, userID)
+		if err != nil {
+			return err
+		}
+		d.Stats.PaidTotals, err = pgx.CollectRows(rows, pgx.RowToStructByPos[CurrencyAmount])
+		if err != nil {
+			return err
+		}
+		if d.Stats.PaidTotals == nil {
+			d.Stats.PaidTotals = []CurrencyAmount{}
+		}
 
 		var ref UserRef
 		switch err := tx.QueryRow(ctx, `

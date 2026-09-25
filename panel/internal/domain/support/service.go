@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成
 // [OUTPUT]: 对外提供 Service、NewService，工单创建、用户侧读写与关闭、客服侧队列 / 回复 / 指派 / 改状态 / 升级，各写操作的 *Atomic 版本
-// [POS]: domain/support 的主服务：工单全生命周期；队列 status 接受逗号分隔并回 last_message_author_kind，详情回 user_active_plan，人工升级把优先级提到至少 high；用户与客服两侧都回 closed_reason，用户详情回 related_order；closed_reason 在每条关闭路径上写对（user_closed / withdrawn / agent_closed），重新打开时清空
+// [POS]: domain/support 的主服务：工单全生命周期；队列 status 接受逗号分隔并回 last_message_author_kind，详情回 user_active_plan，人工升级把优先级提到至少 high；用户与客服两侧都回 closed_reason，两侧详情都回 related_order，客服详情的 message_count / last_reply_at 与队列同口径；closed_reason 在每条关闭路径上写对（user_closed / withdrawn / agent_closed），重新打开时清空
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package support 实现工单（OPS-001）。
@@ -157,7 +157,7 @@ type Ticket struct {
 	Messages     []Message `json:"messages,omitempty"`
 	// ClosedReason 分辨「已撤回」与「已关闭」：user_closed / withdrawn / agent_closed，未关闭为 null
 	ClosedReason *string `json:"closed_reason"`
-	// RelatedOrder 只在详情里填（门户详情头「关联订单」）
+	// RelatedOrder 只在详情里填（门户与后台详情头「关联订单」，队列不填）
 	RelatedOrder *TicketOrderRef `json:"related_order"`
 }
 
@@ -790,6 +790,7 @@ func (s *Service) ListForAgent(ctx context.Context, tenantID string, f ListFilte
 func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*Ticket, error) {
 	var t Ticket
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		var orderID, orderNo *string
 		err := tx.QueryRow(ctx, `
 			SELECT t.id, t.ticket_no, t.subject, t.category, t.priority, t.status,
 			       t.created_at, t.updated_at, t.resolved_at,
@@ -804,21 +805,26 @@ func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*
 			         WHERE s.tenant_id = t.tenant_id AND s.user_id = t.user_id
 			           AND s.status IN ('active','trialing')
 			         ORDER BY s.created_at DESC LIMIT 1),
-			       t.closed_reason
+			       t.closed_reason, o.id::text, o.order_no
 			  FROM tickets t
 			  JOIN users u ON u.id = t.user_id
 			  LEFT JOIN users a ON a.id = t.assigned_to
+			  LEFT JOIN orders o ON o.tenant_id = t.tenant_id AND o.id = t.related_order_id
 			 WHERE t.tenant_id = $1 AND t.id = $2`,
 			tenantID, ticketID,
 		).Scan(&t.ID, &t.TicketNo, &t.Subject, &t.Category, &t.Priority, &t.Status,
 			&t.CreatedAt, &t.UpdatedAt, &t.ResolvedAt, &t.UserID, &t.UserEmail,
 			&t.AssignedTo, &t.AssigneeEmail, &t.SLAFirstDue, &t.SLAResolutionDue,
-			&t.FirstRespondedAt, &t.EscalatedAt, &t.SLABreached, &t.UserActivePlan, &t.ClosedReason)
+			&t.FirstRespondedAt, &t.EscalatedAt, &t.SLABreached, &t.UserActivePlan, &t.ClosedReason,
+			&orderID, &orderNo)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.New(httpx.CodeNotFound, "工单不存在")
 		}
 		if err != nil {
 			return err
+		}
+		if orderID != nil {
+			t.RelatedOrder = &TicketOrderRef{ID: *orderID, OrderNo: *orderNo}
 		}
 
 		rows, err := tx.Query(ctx, `
@@ -841,8 +847,16 @@ func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*
 			}
 			t.Messages = append(t.Messages, m)
 		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// 与队列同口径：条数与最后时间都算内部备注和系统消息，没有消息时取建单时间
 		t.MessageCount = len(t.Messages)
-		return rows.Err()
+		t.LastReplyAt = t.CreatedAt
+		if n := len(t.Messages); n > 0 {
+			t.LastReplyAt = t.Messages[n-1].CreatedAt
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

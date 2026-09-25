@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 commission_available.go 的可用佣金口径与科目锁，依赖 ledger.go / reservations.go 的记账与加锁原语，依赖 domain/payment 的 MulDiv
 // [OUTPUT]: 对外提供 CommissionSummary、ListMyCommissions、RequestWithdrawal、ListMyWithdrawals、PostWithdrawalPayout、SettleMatured、CommissionWithdrawalIdempotencyScope、CommissionScope* 与 ValidCommissionScope、提现错误
-// [POS]: billing 分销佣金的计提（计佣范围 first_order 时被推荐人只计第一笔）、解冻、提现申请与打款记账；转余额在 commission_transfer.go，两者共用同一口径
+// [POS]: billing 分销佣金的计提（计佣范围 first_order 时被推荐人只计第一笔；门户概况回 scope，R81）、解冻、提现申请与打款记账；转余额在 commission_transfer.go，两者共用同一口径
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -468,6 +468,8 @@ type CommissionSummary struct {
 	TotalEarned  int64 `json:"total_earned"`
 	RatePercent  int   `json:"rate_percent"` // 当前费率
 	MinWithdraw  int64 `json:"min_withdraw"`
+	// Scope 是计佣范围 every_order / first_order（R81），与计提同一个兜底，门户据此写「首单」
+	Scope string `json:"scope"`
 }
 
 func (s *Service) CommissionSummary(ctx context.Context, tenantID, userID string) (*CommissionSummary, error) {
@@ -479,6 +481,7 @@ func (s *Service) CommissionSummary(ctx context.Context, tenantID, userID string
 		}
 		out.RatePercent = cfg.RatePercent
 		out.MinWithdraw = cfg.MinWithdraw
+		out.Scope = cfg.Scope
 
 		if err := tx.QueryRow(ctx, `
 			SELECT COALESCE(sum(commission_amount) FILTER (WHERE status = 'pending'), 0),
