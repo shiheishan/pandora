@@ -783,6 +783,7 @@
   - `prices` 按「周期 + 币种」整组同步：清单里没有的在售价格会被**归档**，包括 USD 价格和用户组专属价。设计的 editPlan 只回填了 CNY 价格，照着做会把 USD 价格和用户组专属价全部归档。前端必须回填全部在售价格，或者没改价格时传 `prices: null`。
 
 #### PUT v1/plans/{id} — 改套餐资料与销售设置（不动版本、价格）
+- **修订 R110（2026-09-25，后端三 ③ 068614a，已实现 R100）**：00088 加两列，数据库约束只兜底「最多 5 条、无 NULL 元素」，逐条规则在应用层（`adminops/plan_highlights.go` 唯一出处）：每条去首尾空白、保持顺序；422 文案——超过 5 条 `highlights`「最多 5 条卖点」；空串 `highlights.{i}`「卖点不能为空」；超长 `highlights.{i}`「每条卖点最多 40 个字」；重复（按去空白后的值）`highlights.{i}`「卖点不能重复」。卖点错误与资料其他字段错误合并成一次 422。`PUT v1/plans/{id}/complete` 里 `highlights: null` 等同没传（不动），清空要传 `[]`。门户 `GET v1/plans` 的两个字段取自套餐本身，不跟版本走。
 - **修订 R100（2026-09-25，用户定案 D-E-3 方案 a）**：`plans` 加两列：`highlights text[] NOT NULL DEFAULT '{}'`（卖点，最多 5 条，每条去首尾空白后 1–40 字，不许空串与重复，按给定顺序）、`recommended boolean NOT NULL DEFAULT false`（「推荐」标记；字段名与流量包的 `recommended` 一致，不用第 6 节 C8 原写的 featured；多个套餐可同时推荐，不做互斥）。写入：本接口请求加 `highlights: string[]`、`recommended: bool`（整体覆盖，要回填当前值）；`POST v1/plans`、`POST v1/plans/complete` 可选（缺省空与 false）；`PUT v1/plans/{id}/complete` 缺省 = 不动。422 字段键 `highlights`、`highlights.{i}`。已归档套餐不可编辑沿用现有规则。读取：后台 `GET v1/plans` 列表项与 `GET v1/plans/{id}` 的 `plan` 各加 `highlights: string[]`、`recommended: bool`；门户 `GET v1/plans` 每项同样加这两个字段。前端：「销售设置」抽屉与向导第 1 步加「卖点（最多 5 条）」和「标为推荐」开关；门户套餐卡把 `highlights` 显示为特性列表（流量、设备、重置、限速等事实照现有位置显示），`recommended` 为真时显示「推荐」徽标。
 - 状态：现有 `panel/internal/api/admin/catalog.go:80 updatePlan`（路由由 `router.go registerCatalogPlanUpdate` 注册）
 - 权限：`catalog.publish`｜reauth：是｜幂等：是 `catalog_plan_update`
@@ -1357,7 +1358,7 @@
 - 状态：**待补·后端**（后端四）
 - 权限：`node.lifecycle`｜reauth：否（与 status:batch 启用、旧 status 接口同门槛）｜幂等：是 `node_activate`
 - 请求：`{ row_version: int64 }`
-- 响应：200 `AdminNode`（同 GET v1/nodes 的 Node），另带 `warnings: string[]`（如无池节点的「未划入节点池，不服务任何用户」，R105）
+- 响应：200 `AdminNode`（**与 `POST v1/nodes/{id}/retire`、`PATCH v1/nodes/{id}` 同一个形状**，不是 GET v1/nodes 列表里的 Node；R110 更正），另带 `warnings: string[]`（如无池节点的「未划入节点池，不服务任何用户」，R105）
 - 行为：一个事务里：持 `node-config-release` 锁 → 校验版本 → 前置条件 → 生命周期**按 00005 的合法边逐条推进**到 active（每一步都过状态机触发器，不绕过）→ `serving_status` 按旧接口同一套投影（`projectNodeLifecycle`，协议未就绪不置 active）→ 服务器按同一套规则进 ready → 审计 `node.activate`（before / after 生命周期与服务器状态）→ 提交后通知节点（`NotifyNodeChanged`）。已经是 active 的回 200、不改动（幂等）。
 - 前置条件（不满足回 409，message 写明原因）：节点已完成接入、有有效的节点身份；协议配置已就绪；不在 retired / destroyed / quarantined / bootstrap_failed 等终态或失败态。具体判据由后端四按代码定，写进报告，协调会话回写本条。
 - 错误：404；409 版本冲突；409 前置条件不满足；409 非法跳转（触发器消息）。
@@ -3297,3 +3298,4 @@
 | R107 | 2026-09-25 | 后端三 | mask_password 抹敏并跟着 mask 开关补回；R92、R99 已实现：三态传 0 回 422、新建向导 0 台 = 不限、存量策略照收显示为停止服务 |
 | R108 | 2026-09-25 | 前端收尾、协调会话 | 新接口 POST v1/nodes/{id}/activate：生命周期一步推到 active，解决新节点在新前端里上不了线 |
 | R109 | 2026-09-25 | 后端四 | R104 已实现：名单上限 100、字段级 reauth、重复提交不审计不通知、非法路径 id 回 404、删组 409 判断顺序 |
+| R110 | 2026-09-25 | 后端三、前端收尾 | R100 已实现：卖点四种 422 文案、complete 里 null 不动 [] 清空；R108 上线接口响应更正为 AdminNode（同退役接口） |
