@@ -156,6 +156,7 @@ func NewRouter(d Deps) http.Handler {
 			registerUserRoutes(r, d, h)
 			registerOrderRoutes(r, d, h)
 			registerPlanRoutes(r, d, h)
+			registerTrafficPackRoutes(r, d, h)
 			registerPaymentProviderRoutes(r, d, h)
 			registerAuditRoutes(r, d, h)
 			registerRiskRoutes(r, d, h)

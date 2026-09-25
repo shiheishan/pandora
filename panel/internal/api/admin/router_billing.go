@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerLatePaymentRoutes、registerOrderRoutes、registerPaymentProviderRoutes、registerBalanceAdjustRoutes
-// [POS]: api/admin 路由表的「挂账转余额、订单与人工单、支付渠道、余额人工调账」段，由 NewRouter 按原注册顺序调用；人工单的幂等 scope 取 billing.CheckoutIdempotencyScope
+// [POS]: api/admin 路由表的「挂账转余额、订单与人工单、支付渠道、余额人工调账」段，由 NewRouter 按原注册顺序调用；人工单与标记已支付都挂近期重认证，人工单的幂等 scope 取 billing.CheckoutIdempotencyScope
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -39,10 +39,12 @@ func registerOrderRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.Idempotency(d.Pool, "admin_order_cancel", d.Log),
 	).Post("/orders/{id}/cancel", h.cancelOrder)
 
-	// 人工单与线下收款（XBD-015）。两者都动真金白银或真权益，
-	// 所以和取消订单同级：写权限 + 近期重认证 + 幂等键。
+	// 人工单与线下收款（XBD-015）。两者都动真金白银或真权益：
+	// 写权限 + 近期重认证 + 幂等键。人工单的「线下已收款」直接记收入并
+	// 触发佣金，与标记已支付同门槛（R64）。
 	r.With(
 		middleware.RequirePermission("billing.order.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
 		// 作用域必须与 CreateOrder 校验时用的一致：人工单本来就是一次建单，
 		// 换个名字只会让声明校验过不去。
 		middleware.Idempotency(d.Pool, billing.CheckoutIdempotencyScope, d.Log),

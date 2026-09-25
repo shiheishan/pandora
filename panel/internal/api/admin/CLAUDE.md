@@ -5,7 +5,7 @@
 
 成员清单
 router.go: Deps 与 NewRouter：全局中间件链，/v1 挂 admin.writes 只读门（middleware.AdminWritesGate），根 / 与 /assets/* 经 webapp 下发后台前端，/v1 登录分组与已登录分组；已登录分组按拆分前的原顺序调用各 router_<模块>.go 的 register*Routes，顺序不要重排
-router_<模块>.go: 按模块分段的路由表，每个 register*Routes(r, d, h) 声明一段路由的权限、重认证与幂等 scope。dashboard 仪表盘与收入；appearance 主题、插槽、插件钩子；notify Telegram、邮件设置、通知模板；users 批量运营、流量重置、用户状态、用户组、设备数；marketing 礼品卡、优惠券、分销；billing 挂账、订单、支付渠道、余额调账；catalog 套餐（含 registerCatalogPlanUpdate，套餐类新路由加这里）；security 审计、系统状态、风控、降级开关；nodes 节点分组、节点、服务器（含 nodeBatchStatusIdempotencyScope）；content 公告与知识库；support 工单与快捷回复
+router_<模块>.go: 按模块分段的路由表，每个 register*Routes(r, d, h) 声明一段路由的权限、重认证与幂等 scope。dashboard 仪表盘与收入；appearance 主题、插槽、插件钩子；notify Telegram、邮件设置、通知模板；users 批量运营、流量重置、用户状态、用户组、设备数；marketing 礼品卡、优惠券、分销；billing 挂账、订单（人工开单与标记已支付都挂重认证）、支付渠道、余额调账；catalog 套餐（含 registerCatalogPlanUpdate，套餐类新路由加这里）与流量包（registerTrafficPackRoutes，写接口 catalog.publish + 重认证 + 幂等）；security 审计、系统状态、风控、降级开关；nodes 节点分组、节点、服务器（含 nodeBatchStatusIdempotencyScope）；content 公告与知识库；support 工单与快捷回复
 handlers.go: handlers 结构与核心处理器：登录、me（追加邮箱、显示名、角色）、用户、订阅换链接、订单、节点列表（含 country_code、近 24h 流量、控制节点探针的 CPU / 内存，按 sort_order, node_no 排序）、工单队列与处理、降级开关（切换后向管理端频道发 switches.changed）
 helpers.go: 包内共用小工具：域常量、请求级超时
 access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两路归并，分类规则展示与筛选共用；outcome 筛选（error = 非 success）
@@ -15,7 +15,8 @@ profile.go: IP 解密助手、用户风控画像（含注册 IP）、注册与�
 dashboard.go / revenue.go / system_status.go / system_components.go: 仪表盘流量排行、通知积压、「需要处理」汇总（路由挂 ops.dashboard.read，逐项按主体权限过滤）、收入趋势（带上一区间合计 previous_total）与调整、系统状态（备份、数据库，以及 8 个组件的 state / components：postgres、valkey、节点、支付回调、邮件、Telegram、SSE 连接数、备份）
 bulk_users.go / usergroup.go / devices.go / traffic_reset.go: 用户批量筛选导出生成群发（筛选含套餐、到期、订阅状态）、用户组、设备数限制、流量重置日志
 catalog.go: 套餐目录、向导一次建成 / 改完、版本与价格
-manual_order.go / late_payment.go: 人工开单（settlement: grant 赠送 / pending 待用户支付）与线下收款、挂账转余额
+traffic_packs.go: 流量包目录管理（后台-04 流量包 tab）：列表、新建、修改、上下架，updated_at 作乐观锁由客户端原样传回
+manual_order.go / late_payment.go: 人工开单（settlement: grant 赠送 / pending 待用户支付 / offline 线下已收款，带 reference 当场结清）与标记线下已收款、挂账转余额
 coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id 非 UUID 回中性 404）、批量生券、礼品卡与批次一次性导出、分销（总览带累计佣金、邀请数与计佣范围 scope）与提现审批
 node_admin.go: 节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步退役 nodeRetire（node.lifecycle + 重认证 + node_retire 幂等），节点身份与令牌状态 nodeIdentity
 node_routing.go: 全局出站与分流 GET / PUT v1/nodes/routing（revision 乐观并发、持 node-config-release 锁、推进全部未退役节点并逐个通知）；validateRoutingPayload 是单节点与全局路由共用的校验
@@ -26,7 +27,7 @@ site_settings.go: 站点时区读写（R49），即 tenants.timezone，按日用
 mail.go / mail_template.go / telegram.go: 邮件与注册设置、通知模板（列表带 has_default、草稿预览、草稿实发测试）、Telegram 配置（管理员群组 admin_chat_id 作测试默认目标），三个测试发送挂 ops.notification.write
 ticket_macros.go: 工单快捷回复的列表与增改删
 events.go: 管理端 SSE
-*_test.go: 路由契约与守卫（router_contract、security_guards、step4_test、step5_test 与三份 AST 契约；源码级契约经 router_source_test.go 读全部 router*.go）、权限字典契约、处理器单测；*_pg18_test.go 为 PG18 集成测试，announcement 与 node_config 两个域同包，run-pg18-gates.sh 用精确 -run 过滤分开
+*_test.go: 路由契约与守卫（router_contract、security_guards、step4_test、step5_test 与四份 AST 契约，order_pack_routes_test 另用真实注册函数证明未重认证到不了幂等与处理器；源码级契约经 router_source_test.go 读全部 router*.go）、权限字典契约、处理器单测；*_pg18_test.go 为 PG18 集成测试，announcement 与 node_config 两个域同包，run-pg18-gates.sh 用精确 -run 过滤分开
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

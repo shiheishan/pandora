@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 audit_events（含 00080 的 auth_context 与 source_ip_enc 密文），按 resource_type 连 users / orders / nodes / plans / tickets 取可读名，依赖 platform 的 db/audit/httpx
+// [INPUT]: 依赖 audit_events（含 00080 的 auth_context 与 source_ip_enc 密文），按 resource_type 连 users / orders / nodes / plans / tickets / traffic_packs 取可读名，依赖 platform 的 db/audit/httpx
 // [OUTPUT]: 对外提供 AuditRow、AuditFilter、AuditExportMax、Service.ListAudit / ExportAudit
 // [POS]: adminops 的审计日志读模型（后台-09「审计日志」与导出）；列表与导出共用 auditRowSelect 与 auditCond 一份形状，来源 IP 只给密文，由 api 层用信封解密
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -82,8 +82,8 @@ const auditFrom = `
 			  LEFT JOIN users u ON u.id = a.actor_id`
 
 // auditRowSelect 是 AuditRow 的唯一查询形状。对象可读名用按类型分派的标量
-// 子查询：每行至多一次主键查找，而一次 LEFT JOIN 五张表会在任何一行上都付
-// 五次连接的代价。
+// 子查询：每行至多一次主键查找，而一次 LEFT JOIN 六张表会在任何一行上都付
+// 六次连接的代价。
 const auditRowSelect = `
 			SELECT a.id, a.occurred_at, a.actor_kind, u.email, a.action,
 			       a.resource_type, a.resource_id::text, a.api_domain, a.outcome,
@@ -98,6 +98,8 @@ const auditRowSelect = `
 			         WHEN 'plan'   THEN (SELECT x.name::text FROM plans x
 			                              WHERE x.tenant_id = a.tenant_id AND x.id = a.resource_id)
 			         WHEN 'ticket' THEN (SELECT x.ticket_no::text FROM tickets x
+			                              WHERE x.tenant_id = a.tenant_id AND x.id = a.resource_id)
+			         WHEN 'traffic_pack' THEN (SELECT x.name::text FROM traffic_packs x
 			                              WHERE x.tenant_id = a.tenant_id AND x.id = a.resource_id)
 			       END,
 			       a.auth_context, a.source_ip_enc` + auditFrom

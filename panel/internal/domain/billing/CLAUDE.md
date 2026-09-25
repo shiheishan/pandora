@@ -4,7 +4,7 @@
 订单、支付与复式账本。钱的不变量（金额恒等式、预留图、借贷配平、订单/幂等对称绑定、各 kind 的履约证据）落在迁移的约束与触发器里，这里编排事务与锁序：订单 →（续费 / 变更单才有的）订阅 → 支付意图 → 预留图子资源 → 按 UUID 排序的账本科目。订单 kind 决定建单与履约路径：new 开订阅、renewal 延周期、upgrade 原地换套餐（D-E-2）、addon 发流量包余额（D-E-1）、topup 入余额。
 
 成员清单
-checkout.go: 新购下单 CreateOrder 与支付回调 HandlePaymentWebhook 主链路，回调按 kind 分派履约；provisionSubscription / initQuotaBalances 开订阅与建配额；超 800 行的存量大文件
+checkout.go: 新购下单 CreateOrder 与支付回调 HandlePaymentWebhook 主链路，回调按 kind 分派履约；结算体 settlePaymentTx 在调用方事务里执行，回调 / 标记已支付各开一个事务调它，人工单线下已收款在建单事务里调它；provisionSubscription / initQuotaBalances 开订阅与建配额；超 800 行的存量大文件
 order_holds.go: 各建单路径共用的预留父节点与余额冻结（insertHeldReservation / prepareBalanceHold / postBalanceHold）
 reservations.go: 结算与释放共用的预留图加锁校验；orderTotal 是金额恒等式 total = max(小计 − 折扣 − 折算, 0) + 税（00071）
 release.go: 取消 / 过期释放，held 预留图整体转 released 并退回余额冻结；续费走专用分支，其余 kind 共用预留图锁
@@ -18,7 +18,7 @@ topup.go: 自助充值单（kind=topup，结算即履约）与管理员调账
 payments.go: 发起支付取收银台、渠道回调翻译成平台事件，确认到账后交回 HandlePaymentWebhook
 unexpected_payment.go: 已释放或已付清订单又来的钱，隔离进挂账（late_payment_suspense）
 late_payment.go: 挂账的查看与转入余额，供后台消费
-manual_order.go: 管理员人工单与 mark-paid，复用下单与回调主链路；人工单结算方式 grant（赠送当场履约，缺省）/ pending（建待支付单交给用户付，仍记开单人），offline 与 balance 暂不接受
+manual_order.go: 管理员人工单与 mark-paid，复用下单与回调主链路；人工单结算方式 grant（赠送当场履约，缺省）/ pending（建待支付单交给用户付，仍记开单人）/ offline（带凭证号，建单事务里按 offline 渠道结清，收入与佣金同 mark-paid，offlinePaymentInput 是两条路共用的回调形状），balance 暂不接受（D-C-3）
 my_orders.go: 门户订单读模型：myOrderSelectSQL 是列表与详情共用的行形状（首项周期与商品名快照），列表带筛选段计数 counts，详情带优惠码、订阅到期与支付渠道名；ParseOrderStatuses 是门户与后台订单列表共用的状态白名单（逗号多值、精确匹配、未知回 400）
 coupon.go: 优惠券校验 applyCoupon、核销 redeemCoupon 与试算（套餐 PreviewForPrice、流量包 PreviewForTrafficPack 共用 previewCoupon 外壳，响应带券面）
 commission.go: 分销佣金计提、解冻、提现申请与打款记账；计佣范围 commission.scope（first_order 只给被推荐人第一笔计佣订单返佣，缺省 every_order），ValidCommissionScope 供后台校验

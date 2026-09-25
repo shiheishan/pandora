@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 checkout.go 的 CreateOrder（人工单复用下单主路径）与 payments 的 HandlePaymentWebhook（线下收款合成一笔 offline 渠道回调），依赖 middleware 幂等声明、platform/audit、platform/db、platform/httpx
-// [OUTPUT]: 对外提供 CreateManualOrder、CreateManualOrderInput、ManualSettlement*、MarkOrderPaid、MarkOrderPaidInput、OfflineProviderCode
-// [POS]: billing 的管理员订单动作：人工单（赠送当场履约，或建待支付单交给用户付）与标记线下已收款；两者都不另起炉灶，履约与记账与用户自己支付完全一致
+// [INPUT]: 依赖 checkout.go 的 CreateOrder（人工单复用下单主路径，线下已收款在建单事务里经 settlePaymentTx 结清）与 HandlePaymentWebhook（标记已支付合成一笔 offline 渠道回调），依赖 middleware 幂等声明、platform/audit、platform/db、platform/httpx
+// [OUTPUT]: 对外提供 CreateManualOrder、CreateManualOrderInput、ManualSettlement*、OfflineReceipt、MarkOrderPaid、MarkOrderPaidInput、OfflineProviderCode；包内提供 offlinePaymentInput（两条线下收款路径共用的回调形状）
+// [POS]: billing 的管理员订单动作：人工单（赠送当场履约、建待支付单交给用户付、线下已收款当场结清）与标记线下已收款；都不另起炉灶，履约与记账与用户自己支付完全一致
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -26,7 +26,8 @@ import (
 //   2. 标记已支付 —— 用户线下付了钱（银行转账、当面收款），把待支付订单结掉
 //
 // 两个动作都不另起炉灶：
-//   人工单复用 CreateOrder（全额减免 → payable 0 → 既有零元单捕获直接履约）；
+//   人工单复用 CreateOrder（赠送：全额减免 → payable 0 → 既有零元单捕获直接履约；
+//   线下已收款：建单后在同一事务里按 offline 渠道结清）；
 //   标记已支付复用 HandlePaymentWebhook（合成一笔 offline 渠道的收款）。
 //
 // 这样订阅开通、配额、优惠券核销、佣金计提、账本分录的行为，
@@ -34,14 +35,60 @@ import (
 
 // OfflineProviderCode 是线下收款用的渠道标识。
 // 它在 payment_providers 里 accepting_new=false，用户结账时选不到，
-// 只有管理员标记已支付时才会用到。
+// 只有管理员标记已支付或人工开单「线下已收款」时才会用到。
 const OfflineProviderCode = "offline"
 
 // 人工单的结算方式。
 const (
 	ManualSettlementGrant   = "grant"   // 赠送：全额减免、当场履约（缺省）
 	ManualSettlementPending = "pending" // 待用户支付：建一张待支付单交给用户去付
+	ManualSettlementOffline = "offline" // 线下已收款：建单并按线下渠道当场结清
 )
+
+// OfflineReceipt 是一笔线下收款的凭据：凭证号与收款说明。
+type OfflineReceipt struct {
+	Reference string // 线下凭证号：银行流水号、收据编号之类
+	Reason    string
+}
+
+func validateOfflineReference(ref string) error {
+	if ref == "" || utf8.RuneCountInString(ref) > 128 {
+		return httpx.Invalid(map[string]string{
+			"reference": "请填写线下凭证号（银行流水号、收据编号等），最多 128 字"})
+	}
+	return nil
+}
+
+// offlinePaymentInput 把一笔线下收款合成为 offline 渠道的一次成功回调。
+// 标记已支付与人工单「线下已收款」共用它，两条路记账口径因此完全相同。
+//
+// provider_payment_id 用凭证号：渠道侧的唯一约束因此变成
+// 「同一张凭证不能入账两次」，是这个场景真正需要的幂等口径。
+// SignatureVerified 直接给 true —— 这条路的「签名」是管理员的 RBAC 权限
+// 加近期重认证，不是渠道密钥。
+func offlinePaymentInput(orderID, currency string, payable int64, actorID string,
+	receipt OfflineReceipt) PaymentWebhookInput {
+	return PaymentWebhookInput{
+		ProviderCode:      OfflineProviderCode,
+		ProviderEventID:   "offline:" + orderID + ":" + receipt.Reference,
+		ProviderPaymentID: "offline:" + receipt.Reference,
+		EventType:         "payment.succeeded",
+		OrderID:           orderID,
+		Amount:            payable,
+		Currency:          currency,
+		FeeAmount:         0,
+		SignatureVerified: true,
+		// payment_events.raw_payload 非空。真实渠道往里塞的是回调原文；
+		// 线下收款没有回调，就把「谁在什么依据下确认了这笔钱」记进去 ——
+		// 日后查这笔账时，这是唯一能追到人的线索。
+		RawPayload: map[string]any{
+			"source":    "admin_offline",
+			"actor_id":  actorID,
+			"reference": receipt.Reference,
+			"reason":    receipt.Reason,
+		},
+	}
+}
 
 type CreateManualOrderInput struct {
 	UserID  string
@@ -49,11 +96,13 @@ type CreateManualOrderInput struct {
 	PriceID string
 	Reason  string
 	ActorID string
-	// Settlement 为空按 grant。「线下已收款」（offline）与「从余额扣除」
-	// （balance，D-C-3 未决）暂不接受：前者会让一次入账绕开标记已支付的
-	// 近期重认证，要等人工单路由也挂上重认证再开。
+	// Settlement 为空按 grant。「线下已收款」（offline）直接记收入并触发
+	// 佣金，与标记已支付同门槛：路由挂近期重认证（R64）。「从余额扣除」
+	// （balance，D-C-3 未决）暂不接受。
 	Settlement string
-	Claim      middleware.IdempotencyClaim
+	// Reference 是线下凭证号，仅 offline 必填，别的结算方式忽略。
+	Reference string
+	Claim     middleware.IdempotencyClaim
 }
 
 func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
@@ -74,24 +123,45 @@ func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
 		return nil, httpx.Invalid(map[string]string{
 			"reason": "请写清开单原因，5 到 500 个字。这条会进审计，是日后对账的唯一依据"})
 	}
+	var offline *OfflineReceipt
 	switch in.Settlement {
 	case "":
 		in.Settlement = ManualSettlementGrant
 	case ManualSettlementGrant, ManualSettlementPending:
-	case "offline", "balance":
+	case ManualSettlementOffline:
+		in.Reference = strings.TrimSpace(in.Reference)
+		if err := validateOfflineReference(in.Reference); err != nil {
+			return nil, err
+		}
+		offline = &OfflineReceipt{Reference: in.Reference, Reason: in.Reason}
+	case "balance":
 		return nil, httpx.Invalid(map[string]string{
-			"settlement": "暂不支持这种结算方式；线下已收款请先建待支付单，再在订单详情里标记已支付"})
+			"settlement": "暂不支持从余额扣除；需要时请先调账，再用赠送开单"})
 	default:
-		return nil, httpx.Invalid(map[string]string{"settlement": "结算方式只能是 grant 或 pending"})
+		return nil, httpx.Invalid(map[string]string{"settlement": "结算方式只能是 grant、pending 或 offline"})
 	}
 
 	out, err := s.CreateOrder(ctx, tenantID, CreateOrderInput{
 		UserID: in.UserID, PlanID: in.PlanID, PriceID: in.PriceID, Claim: in.Claim,
 		ManualGrant:  in.Settlement == ManualSettlementGrant,
 		ManualReason: in.Reason, ManualActor: in.ActorID,
+		Offline: offline,
 	})
 	if err != nil {
 		return nil, err
+	}
+	digest := map[string]any{
+		"order_no": out.OrderNo, "user_id": in.UserID, "plan_id": in.PlanID,
+		"reason": in.Reason, "status": out.Status, "settlement": in.Settlement,
+		"subtotal": out.TotalAmount + out.DiscountAmount,
+		"granted":  out.DiscountAmount,
+	}
+	if out.settlement != nil {
+		digest["reference"] = in.Reference
+		digest["amount"] = out.PayableAmount
+		digest["currency"] = out.Currency
+		digest["payment_id"] = out.settlement.PaymentID
+		digest["ledger_txn"] = out.settlement.LedgerTxnID
 	}
 
 	// 审计单独一笔事务：CreateOrder 已经提交，这里失败不该把订单回滚掉，
@@ -102,14 +172,9 @@ func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
 			return audit.Write(ctx, tx, tenantID, audit.Entry{
 				ActorKind: "admin", ActorID: &actor,
 				Action: "order.manual_created", ResourceType: "order",
-				ResourceID: &out.OrderID,
-				AfterDigest: map[string]any{
-					"order_no": out.OrderNo, "user_id": in.UserID, "plan_id": in.PlanID,
-					"reason": in.Reason, "status": out.Status, "settlement": in.Settlement,
-					"subtotal": out.TotalAmount + out.DiscountAmount,
-					"granted":  out.DiscountAmount,
-				},
-				APIDomain: "admin", RequestID: httpx.RequestIDFrom(ctx),
+				ResourceID:  &out.OrderID,
+				AfterDigest: digest,
+				APIDomain:   "admin", RequestID: httpx.RequestIDFrom(ctx),
 			})
 		}); err != nil {
 		// 订单已经建好并履约了，这里只能如实上报。
@@ -130,8 +195,7 @@ type MarkOrderPaidInput struct {
 // MarkOrderPaid 把一张待支付订单按「线下已收款」结清。
 //
 // 走的是和真实渠道回调同一条结算链路，所以订阅开通、优惠券核销、
-// 余额解冻、佣金计提、账本分录一个不少。SignatureVerified 直接给 true ——
-// 这条路的"签名"是管理员的 RBAC 权限加近期重认证，不是渠道密钥。
+// 余额解冻、佣金计提、账本分录一个不少（回调形状见 offlinePaymentInput）。
 func (s *Service) MarkOrderPaid(ctx context.Context, tenantID string,
 	in MarkOrderPaidInput) (*PaymentWebhookOutput, error) {
 
@@ -147,9 +211,8 @@ func (s *Service) MarkOrderPaid(ctx context.Context, tenantID string,
 		return nil, httpx.Invalid(map[string]string{
 			"reason": "请写清收款说明，5 到 500 个字"})
 	}
-	if in.Reference == "" || utf8.RuneCountInString(in.Reference) > 128 {
-		return nil, httpx.Invalid(map[string]string{
-			"reference": "请填写线下凭证号（银行流水号、收据编号等），最多 128 字"})
+	if err := validateOfflineReference(in.Reference); err != nil {
+		return nil, err
 	}
 
 	// 先读订单：金额必须由服务端从库里取，不能让调用方传 ——
@@ -177,28 +240,9 @@ func (s *Service) MarkOrderPaid(ctx context.Context, tenantID string,
 		return nil, httpx.New(httpx.CodeConflict, "这张订单不需要支付")
 	}
 
-	// provider_payment_id 用凭证号：渠道侧的唯一约束因此变成
-	// 「同一张凭证不能入账两次」，是这个场景真正需要的幂等口径。
-	out, err := s.HandlePaymentWebhook(ctx, tenantID, PaymentWebhookInput{
-		ProviderCode:      OfflineProviderCode,
-		ProviderEventID:   "offline:" + in.OrderID + ":" + in.Reference,
-		ProviderPaymentID: "offline:" + in.Reference,
-		EventType:         "payment.succeeded",
-		OrderID:           in.OrderID,
-		Amount:            payable,
-		Currency:          currency,
-		FeeAmount:         0,
-		SignatureVerified: true,
-		// payment_events.raw_payload 非空。真实渠道往里塞的是回调原文；
-		// 线下收款没有回调，就把「谁在什么依据下确认了这笔钱」记进去 ——
-		// 日后查这笔账时，这是唯一能追到人的线索。
-		RawPayload: map[string]any{
-			"source":    "admin_offline",
-			"actor_id":  in.ActorID,
-			"reference": in.Reference,
-			"reason":    in.Reason,
-		},
-	})
+	out, err := s.HandlePaymentWebhook(ctx, tenantID, offlinePaymentInput(
+		in.OrderID, currency, payable, in.ActorID,
+		OfflineReceipt{Reference: in.Reference, Reason: in.Reason}))
 	if err != nil {
 		return nil, err
 	}
