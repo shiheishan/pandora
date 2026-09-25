@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 relativeTime，依赖 ./schemas 的类型
- * [OUTPUT]: 对外提供节点页的纯函数：状态映射与筛选搜索、心跳与地址文案（流量用 core/format 的 formatBytes）、迁移资格（保留规则 5）、状态转换合法边与批量取舍、排序提交项、schema 驱动的协议表单模型（字段推导、拍平 / 还原、敏感字段、REALITY）、PATCH 差量、路由规则行与 matcher 互转、插入规则（兜底之前）、出站被引用计数与改名联动、出站行校验与互转（单节点与全局共用）、带宽分桶
+ * [OUTPUT]: 对外提供节点页的纯函数：状态映射与筛选搜索、心跳与地址文案（流量用 core/format 的 formatBytes）、迁移资格（保留规则 5）、R108 上线资格（接入尾段的生命周期）、状态转换合法边与批量取舍、排序提交项、schema 驱动的协议表单模型（字段推导、拍平 / 还原、敏感字段：编辑时留空 = 不改、选填的可显式清空为 null（R106 / R107）、REALITY）、PATCH 差量、路由规则行与 matcher 互转、插入规则（兜底之前）、出站被引用计数与改名联动、出站行校验与互转（单节点与全局共用）、带宽分桶
  * [POS]: admin/screens/nodes 的逻辑层：映射全部取自 api-contract.md 后台-07 · 节点条目的「设计 / 映射」行与 Go 校验器，nodes.test.ts 逐条守住；组件只负责渲染与交互
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -87,6 +87,13 @@ export const protocolLabel = (t: string | null) => (t ? (PROTOCOL_LABELS[t] ?? t
 export function canMove(n: Pick<NodeRow, 'serving_status' | 'last_heartbeat_at' | 'identity_serial'>): boolean {
   return (n.serving_status === 'draft' || n.serving_status === 'disabled') && n.last_heartbeat_at === null && n.identity_serial === null
 }
+/**
+ * R108「上线」：生命周期停在接入尾段（attesting 至 canary，00005 的合法边）的节点，
+ * 由后端一步推到 active 并把服务器置 ready；接入流程本身只推到 attesting，此外没有别的路径
+ */
+export const ACTIVATABLE_LIFECYCLES = ['attesting', 'installing', 'validating', 'standby', 'canary'] as const
+export const canActivate = (n: Pick<NodeRow, 'status'>) => (ACTIVATABLE_LIFECYCLES as readonly string[]).includes(n.status)
+
 export const MOVE_BLOCKED_HINT = '只能迁移从未部署过的草稿节点。已部署节点请用「复制节点」选目标服务器，再退役原节点。'
 
 /** 后端 409 的 fields 逐项计数，只列非 0 的（契约 move 条目） */
@@ -157,8 +164,8 @@ export interface ProtocolField {
 
 export const isStable = (s: ProtocolSchema) => s.status === 'stable'
 
-/** 读接口按名字在任意深度抹掉的键（nodefabric.sensitiveProtocolKey）：这些字段永远读不回来，只能写 */
-const REDACTED_KEYS = new Set(['password', 'passwd', 'secret', 'token', 'private_key', 'private-key', 'psk', 'obfs_password', 'obfs-password'])
+/** 读接口按名字在任意深度抹掉的键（nodefabric.sensitiveProtocolKey，R107 补了 mask_password）：这些字段永远读不回来，只能写 */
+const REDACTED_KEYS = new Set(['password', 'passwd', 'secret', 'token', 'private_key', 'private-key', 'psk', 'obfs_password', 'obfs-password', 'mask_password'])
 
 /** 敏感判断按整条路径或叶子名：schema 给的是 private_key，字段路径是 reality_settings.private_key */
 function sensitiveOf(s: ProtocolSchema, path: string): boolean {
@@ -198,19 +205,41 @@ export function toFormValues(fields: readonly ProtocolField[], config: unknown):
   return out
 }
 
-/** 表单 → protocol_config（点号路径展开为嵌套对象）；空串不写入；错误键为字段路径 */
-export function toProtocolConfig(fields: readonly ProtocolField[], values: FormValues, types?: ProtocolSchema['property_types']): { config: Record<string, unknown>; errors: Record<string, string> } {
+/**
+ * 编辑时敏感字段的口径（R106 / R107）：PATCH 的 protocol_config 里**缺席**的敏感键后端按原路径补回，
+ * 所以留空 = 不改（不带这个键，必填的也不算缺）；要清空选填的敏感键，显式传 null（cleared 里的路径）。
+ * keepSecrets 只在编辑同一种协议时为真——换协议后端不补旧密钥，必填照常要填。
+ * mask_password 跟着开关 mask 走，关掉掩码时它本来就留空不带，无需特别处理
+ */
+export interface SecretOptions {
+  keepSecrets?: boolean
+  cleared?: ReadonlySet<string>
+}
+
+/** 编辑时可以「清空」的敏感字段：选填的才行（必填的清空会被后端 422） */
+export const clearableSecret = (f: ProtocolField) => f.sensitive && !f.required
+
+/** 表单 → protocol_config（点号路径展开为嵌套对象）；空串不写入；cleared 的敏感字段写 null；错误键为字段路径 */
+export function toProtocolConfig(
+  fields: readonly ProtocolField[],
+  values: FormValues,
+  types?: ProtocolSchema['property_types'],
+  secrets: SecretOptions = {},
+): { config: Record<string, unknown>; errors: Record<string, string> } {
   const config: Record<string, unknown> = {}
   const errors: Record<string, string> = {}
   for (const f of fields) {
     const raw = (values[f.path] ?? '').trim()
-    if (raw === '') {
-      if (f.required) errors[f.path] = '必填'
+    const cleared = f.sensitive && raw === '' && secrets.cleared?.has(f.path) === true
+    if (raw === '' && !cleared) {
+      if (f.required && !(f.sensitive && secrets.keepSecrets)) errors[f.path] = '必填'
       continue
     }
-    let value: unknown = raw
+    let value: unknown = cleared ? null : raw
     const numeric = f.kind === 'number' || types?.[f.path] === 'number'
-    if (f.kind === 'boolean') value = raw === 'true'
+    if (cleared) {
+      // 显式 null：后端以请求为准清空（R106）
+    } else if (f.kind === 'boolean') value = raw === 'true'
     else if (numeric) {
       value = Number(raw)
       if (!Number.isFinite(value)) errors[f.path] = '填数字'
@@ -326,8 +355,8 @@ export function createBody(b: BasicForm, config: Record<string, unknown>): Recor
 }
 
 /**
- * PATCH 差量：省略 = 不改。protocol_config 只在协议字段真的改了（或换了协议）才带——
- * 后端整体替换已存配置，而读接口抹掉了敏感值，没改协议却回写会把私钥清掉。
+ * PATCH 差量：省略 = 不改。protocol_config 只在协议字段真的改了（或换了协议）才带：
+ * 它是整体替换，普通键缺席就是删除；敏感键缺席由后端补回（R106），所以没动的敏感字段不带键即可。
  */
 export function patchBody(row: NodeRow, b: BasicForm, protocol: { changed: boolean; config: Record<string, unknown> }): Record<string, unknown> {
   const before = basicFromRow(row)
@@ -345,13 +374,14 @@ export function patchBody(row: NodeRow, b: BasicForm, protocol: { changed: boole
   return body
 }
 
-/** 协议是否改动：非敏感字段与初值不同，或填了任何敏感字段 */
-export function protocolChanged(fields: readonly ProtocolField[], initial: FormValues, current: FormValues): boolean {
-  return fields.some((f) => (f.sensitive ? (current[f.path] ?? '') !== '' : (current[f.path] ?? '') !== (initial[f.path] ?? '')))
+/** 协议是否改动：非敏感字段与初值不同，或填了任何敏感字段，或要清空某个敏感字段 */
+export function protocolChanged(fields: readonly ProtocolField[], initial: FormValues, current: FormValues, cleared: ReadonlySet<string> = new Set()): boolean {
+  return fields.some((f) => (f.sensitive ? (current[f.path] ?? '') !== '' || cleared.has(f.path) : (current[f.path] ?? '') !== (initial[f.path] ?? '')))
 }
 
-/** 保存会整体替换协议：这些敏感字段留空就会被清掉 */
-export const blankSensitive = (fields: readonly ProtocolField[], current: FormValues) => fields.filter((f) => f.sensitive && !(current[f.path] ?? '').trim()).map((f) => f.path)
+/** 这次保存会显式清空的敏感字段（留空且点了「清空」的），保存前要确认 */
+export const clearedSecrets = (fields: readonly ProtocolField[], current: FormValues, cleared: ReadonlySet<string>) =>
+  fields.filter((f) => clearableSecret(f) && cleared.has(f.path) && !(current[f.path] ?? '').trim()).map((f) => f.path)
 
 // ---------------------------------------------------------------------------
 // 路由规则行（D-D-1：下拉只放后端支持的匹配类型）

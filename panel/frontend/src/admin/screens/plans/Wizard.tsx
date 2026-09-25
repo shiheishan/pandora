@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Input / Modal / Select / Switch / TextArea / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ./api 的 usePlanPools / usePoolOptions / planCreatedSchema / planUpdatedSchema / useInvalidatePlans / PlanDetail，依赖 ./model 的向导表单、校验与提交体，依赖 ./failure 的 useCatalogFailure，依赖 ./PoolCard 的 PoolChips，依赖 ./SalesDrawer 的 GroupPicker / VISIBILITY_OPTIONS，依赖 ./Highlights 的 HighlightsField，依赖 ./Plans.module.css
  * [OUTPUT]: 对外提供 Wizard
- * [POS]: 套餐向导（后台-04「新建套餐」「用向导编辑」，720 宽弹窗，左步骤栏右表单）：基本资料（+ 卖点与「推荐」、可见范围与排序）、用量与设备（+ 限速 Mbps，留空不限速；新建时 + 流量重置）、销售价格（每档币种 / 周期 / 试用）、可用线路、确认（+ 购买限制；新建时「保存后立即发布上架」）。新建 POST v1/plans/complete，编辑 PUT v1/plans/{id}/complete（没改的流量、价格、线路发 null，没改的设备、限速、卖点、推荐不带键，R99 / R100）；都是 catalog.publish + reauth + 幂等（5.A D-C-2）。每步「下一步」只校验本步，提交时前端或后端的 fields 跳到出错的那一步。限速全程生效、与超额策略无关（R99）。编辑向导的三处后端现状（R92：设备数改不回不限、新版本的高级设置回到默认、会清掉上架时间窗）如实提示，后端三 ② 合入主线后删
+ * [POS]: 套餐向导（后台-04「新建套餐」「用向导编辑」，720 宽弹窗，左步骤栏右表单）：基本资料（+ 卖点与「推荐」、可见范围与排序）、用量与设备（+ 限速 Mbps，留空不限速；新建时 + 流量重置）、销售价格（每档币种 / 周期 / 试用）、可用线路、确认（+ 购买限制；新建时「保存后立即发布上架」）。新建 POST v1/plans/complete，编辑 PUT v1/plans/{id}/complete（没改的流量、价格、线路发 null，没改的设备、限速、卖点、推荐不带键，R99 / R100）；都是 catalog.publish + reauth + 幂等（5.A D-C-2）。每步「下一步」只校验本步，提交时前端或后端的 fields 跳到出错的那一步。限速全程生效、与超额策略无关（R99）。R92 三处后端缺陷已由 R107 修好：设备与限速清空即改回不限，滚出的新版本继承当前版本全部设置，上架时间窗保留
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -56,7 +56,7 @@ export function Wizard({ plan, onClose, onSaved }: { plan: PlanDetail | null; on
     setForm((f) => ({ ...f, [key]: value }))
     setErrors({})
   }
-  const problems = () => wizardProblems(form, mode, original)
+  const problems = () => wizardProblems(form, mode)
   const badSteps = new Set(Object.keys(errors).map(stepOfField))
   // 从步骤栏直接跳到后面时，跳过的步不算完成：只有本步字段都过了预检才打 ✓
   const pending = new Set(Object.keys(problems()).map(stepOfField))
@@ -231,7 +231,7 @@ function StepQuota({ form, set, errors, mode }: StepProps & { mode: 'new' | 'edi
         </div>
       ) : (
         <p className={css.note}>
-          额度变了会开一个新版本并立即发布：新购按新额度，已买的用户仍按原额度。新版本的宽限期、权益等高级设置会回到默认值，要保留它们请改用详情里的「新建版本」。流量重置方式在版本的「高级」里改。
+          额度变了会开一个新版本并立即发布：新购按新额度，已买的用户仍按原额度；新版本沿用当前版本的宽限期、权益等全部设置。清空设备或限速就是改回不限。流量重置方式在版本的「高级」里改。
         </p>
       )}
     </>
@@ -389,11 +389,7 @@ function StepConfirm({ form, set, errors, plan }: StepProps & { plan: PlanDetail
           </div>
         </div>
       </details>
-      {plan ? (
-        (plan.visible_from || plan.visible_until) && <p className={css.note}>保存会清掉这个套餐的上架时间窗（编辑向导不带这两个字段），保存后到「销售设置」重新填。</p>
-      ) : (
-        <Switch label="保存后立即发布上架" checked={form.publish} onChange={(e) => set('publish', e.target.checked)} />
-      )}
+      {!plan && <Switch label="保存后立即发布上架" checked={form.publish} onChange={(e) => set('publish', e.target.checked)} />}
     </>
   )
 }

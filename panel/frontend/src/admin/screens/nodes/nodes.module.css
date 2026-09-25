@@ -462,6 +462,19 @@
   grid-column: span 2;
 }
 
+/* 编辑时选填的敏感字段：输入框 + 「清空 / 撤回清空」（R106） */
+.secretField {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.secretField > button {
+  margin-top: 22px;
+}
+
 .checkField {
   display: flex;
   flex-direction: column;

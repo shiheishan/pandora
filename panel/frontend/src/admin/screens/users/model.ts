@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 formatBytes，依赖 ./api 的类型与枚举
- * [OUTPUT]: 对外提供 STATUS_FILTERS / StatusFilter / isStatusFilter、listParams、USER_STATUS_VIEW、SUB_STATUS_VIEW、ORDER_STATUS_VIEW、RISK_VIEW、INTERVAL_LABELS、orderWhat、initial、shortId、expiryView、trafficView、deviceView、deviceLimitLabel、trafficQuota、currentSubscription、liveSubscriptions、isLiveSub、parseYuan、passwordProblem、REASON_MIN、Tone；④ 的 groupBlocker / groupRefs、BULK_STATUS / BULK_EXPIRY / BulkForm / bulkFilter / exportQuery / MAIL_MAX、GenerateForm / generateProblems / generatedRows、nearLimit / pips、RESET_REASON_VIEW / resetActor / noteProblem / NOTE_MAX / resettableSub / exactEmail
- * [POS]: admin/screens/users 的纯逻辑：契约后台-03 的账号状态 / 订阅态 / 订单状态映射、状态分段到后端 query、「套餐 · 到期」「本期流量」「设备」三列的文案与色、当前订阅的挑法（与后端 currentSubscriptionSQL 同一口径）、调账金额（元 → 分）与密码策略的前端预检；④ 的用户组删除拦截、批量筛选表单到 BulkFilter、批量生成的前端校验（与 adminops.GenerateUsers 同规则）、接近上限的订阅、重置日志的方式与操作人文案、手动重置挑哪条订阅（与 billing.ManualResetTraffic 同口径）、按邮箱精确匹配；不碰 React 与网络，model.test.ts 覆盖
+ * [OUTPUT]: 对外提供 STATUS_FILTERS / StatusFilter / isStatusFilter、listParams、USER_STATUS_VIEW、SUB_STATUS_VIEW、ORDER_STATUS_VIEW、RISK_VIEW、INTERVAL_LABELS、orderWhat、initial、shortId、expiryView、trafficView、deviceView、deviceLimitLabel、trafficQuota、currentSubscription、liveSubscriptions、isLiveSub、parseYuan、passwordProblem、REASON_MIN、Tone；④ 的 groupBlocker / groupRefs、R104 的 exclusivePoolsLabel / EXCLUSIVE_NONE_HINT、R103 的 devicePolicyBody、BULK_STATUS / BULK_EXPIRY / BulkForm / bulkFilter / exportQuery / MAIL_MAX、GenerateForm / generateProblems / generatedRows、nearLimit / pips、RESET_REASON_VIEW / resetActor / noteProblem / NOTE_MAX / resettableSub / exactEmail
+ * [POS]: admin/screens/users 的纯逻辑：契约后台-03 的账号状态 / 订阅态 / 订单状态映射、状态分段到后端 query、「套餐 · 到期」「本期流量」「设备」三列的文案与色、当前订阅的挑法（与后端 currentSubscriptionSQL 同一口径）、调账金额（元 → 分）与密码策略的前端预检；④ 的用户组删除拦截（R104 先看节点池名单）与「可用节点池」文案、批量筛选表单到 BulkFilter、批量生成的前端校验（与 adminops.GenerateUsers 同规则）、接近上限的订阅、重置日志的方式与操作人文案、手动重置挑哪条订阅（与 billing.ManualResetTraffic 同口径）、按邮箱精确匹配；不碰 React 与网络，model.test.ts 覆盖
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatBytes } from '../../../core/format'
@@ -202,12 +202,29 @@ export function passwordProblem(p: string): string | null {
 // ===========================================================================
 // 用户组：删除前的拦截与「被引用」列（后端 409 的四种情况，按同样的先后顺序）
 // ===========================================================================
-export function groupBlocker(g: Pick<UserGroup, 'users' | 'plans' | 'prices' | 'coupons'>): string | null {
+export function groupBlocker(g: Pick<UserGroup, 'users' | 'plans' | 'prices' | 'coupons' | 'exclusive_pools'>): string | null {
+  // R104：与后端 409 同一顺序，先看节点池名单（删了会让那个池悄悄对所有人开放）
+  const pool = g.exclusive_pools[0]
+  if (pool) return `节点池「${pool.name}」限定了这个组，先在节点池里把它移出名单`
   if (g.users > 0) return `组内还有 ${g.users} 位用户，先把他们移出去`
   if (g.plans > 0) return `还有 ${g.plans} 个套餐按这个组控制可见性，先解除`
   if (g.prices > 0) return `还有 ${g.prices} 个专属价格挂在这个组上，先删掉`
   if (g.coupons > 0) return `还有 ${g.coupons} 张优惠券限定了这个组，先解除`
   return null
+}
+
+/** R104「可用节点池」列：把这个组列入限定名单的池；空 = 只能用未限定的池（显示「—」，悬停说明） */
+export const EXCLUSIVE_NONE_HINT = '只能用未限定的节点池'
+export const exclusivePoolsLabel = (g: Pick<UserGroup, 'exclusive_pools'>) => (g.exclusive_pools.length ? g.exclusive_pools.map((p) => p.name).join('、') : '—')
+
+/**
+ * POST v1/settings/device-limit 的请求体：strict 才带 grace；R103 的 window_minutes 省略 = 不改，只在改了时带。
+ * 宽容值不合法时返回 null（页面在输入框下提示）
+ */
+export function devicePolicyBody(form: { mode: 'loose' | 'strict'; grace: string; window: number }, savedWindow: number): Record<string, unknown> | null {
+  const g = Number(form.grace.trim())
+  if (form.mode === 'strict' && !(form.grace.trim() !== '' && Number.isInteger(g) && g >= 0 && g <= 5)) return null
+  return { mode: form.mode, ...(form.mode === 'strict' ? { grace: g } : {}), ...(form.window !== savedWindow ? { window_minutes: form.window } : {}) }
 }
 
 export function groupRefs(g: Pick<UserGroup, 'plans' | 'prices' | 'coupons'>): string {

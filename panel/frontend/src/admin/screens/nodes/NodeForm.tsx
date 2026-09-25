@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useMemo / useState / FormEvent，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic、./queries、./schemas，依赖 ./nodes.module.css
  * [OUTPUT]: 对外提供 NodeForm（新建与编辑共用的节点表单）
- * [POS]: admin/screens/nodes 的节点表单：上半「基本信息」（后端可编辑字段全集：名称、展示名、服务器、资源池、协议、地址、端口、内核、倍率、国家），下半按 GET v1/node-protocol-schemas 渲染协议参数（必填、敏感、枚举 / 数字 / 布尔 / JSON）。新建 POST v1/nodes（幂等 node_create），编辑 PATCH v1/nodes/{id} 只发改了的字段；协议整体替换且读接口不回显敏感值，所以协议改动而敏感字段留空时先确认再清空
+ * [POS]: admin/screens/nodes 的节点表单：上半「基本信息」（后端可编辑字段全集：名称、展示名、服务器、资源池、协议、地址、端口、内核、倍率、国家），下半按 GET v1/node-protocol-schemas 渲染协议参数（必填、敏感、枚举 / 数字 / 布尔 / JSON）。新建 POST v1/nodes（幂等 node_create），编辑 PATCH v1/nodes/{id} 只发改了的字段；读接口不回显敏感值，编辑同一协议时敏感字段留空 = 不改（不带这个键，后端补回，R106），选填的敏感字段可点「清空」，保存前确认后显式发 null；换协议后端不补旧密钥，必填照常要填；mKCP 关掉掩码时 mask_password 本来就不带（R107）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
@@ -13,7 +13,8 @@ import {
   KERNELS,
   REALITY_KEYS,
   basicFromRow,
-  blankSensitive,
+  clearableSecret,
+  clearedSecrets,
   createBody,
   emptyBasic,
   isStable,
@@ -56,10 +57,20 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; on
   const [values, setValues] = useState<FormValues | null>(null)
   const current = values ?? initial
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const [confirmBlank, setConfirmBlank] = useState<string[] | null>(null)
+  // 要显式清空的选填敏感字段（R106）；换协议时作废
+  const [cleared, setCleared] = useState<ReadonlySet<string>>(new Set())
+  const [confirmClear, setConfirmClear] = useState<string[] | null>(null)
+  // 编辑同一种协议时，留空的敏感字段由后端补回原值
+  const keepSecrets = !creating && basic.nodeType === node.node_type
+  const liveCleared = keepSecrets ? cleared : new Set<string>()
 
   const set = <K extends keyof BasicForm>(key: K, v: BasicForm[K]) => setBasic((b) => ({ ...b, [key]: v }))
-  const setValue = (path: string, v: string) => setValues({ ...current, [path]: v })
+  const setValue = (path: string, v: string) => {
+    setValues({ ...current, [path]: v })
+    // 重新填了值就不再是「清空」
+    if (v && cleared.has(path)) setCleared(new Set([...cleared].filter((p) => p !== path)))
+  }
+  const toggleClear = (path: string) => setCleared(cleared.has(path) ? new Set([...cleared].filter((p) => p !== path)) : new Set([...cleared, path]))
 
   const save = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
@@ -67,6 +78,7 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; on
     onSuccess: (saved) => {
       intent.reset()
       setValues(null)
+      setCleared(new Set())
       void invalidate()
       saved.warnings?.forEach((w) => toast(w, 'danger'))
       if (!creating) toast('已保存，自动下发到在线节点')
@@ -92,15 +104,15 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; on
   const submit = (event?: FormEvent, confirmed = false) => {
     event?.preventDefault()
     const basicErrors = validateBasic(basic, creating)
-    const { config, errors: protoErrors } = toProtocolConfig(fields, current, schema?.property_types)
+    const { config, errors: protoErrors } = toProtocolConfig(fields, current, schema?.property_types, { keepSecrets, cleared: liveCleared })
     if (!schema && basic.nodeType) basicErrors.node_type = '这是旧协议，请重新选择协议'
     const all = { ...basicErrors, ...protoErrors }
     if (Object.keys(all).length) return setErrors(all)
     setErrors({})
     if (creating) return save.mutate(createBody(basic, config))
-    const changed = protocolChanged(fields, initial, current) || basic.nodeType !== node.node_type
-    const blanks = changed ? blankSensitive(fields, current) : []
-    if (blanks.length && !confirmed) return setConfirmBlank(blanks)
+    const changed = protocolChanged(fields, initial, current, liveCleared) || basic.nodeType !== node.node_type
+    const clearing = clearedSecrets(fields, current, liveCleared)
+    if (clearing.length && !confirmed) return setConfirmClear(clearing)
     const body = patchBody(node, basic, { changed, config })
     if (Object.keys(body).length === 1) return toast('没有改动')
     save.mutate(body)
@@ -181,8 +193,24 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; on
           <div className={css.faint}>{schemas.isPending ? '正在读取协议定义…' : '没有这个协议的定义。'}</div>
         ) : (
           <>
-            {fields.some((f) => f.sensitive) && !creating && <div className={css.notice}>敏感字段（标「敏感」）读接口不回显。改动协议参数会整体替换已存配置，留空的敏感字段会被清空；只改基本信息不受影响。</div>}
-            <ProtocolFields schema={schema} fields={fields} values={current} errors={errors} disabled={disabled} onChange={setValue} />
+            {fields.some((f) => f.sensitive) && !creating && (
+              <div className={css.notice}>
+                {keepSecrets
+                  ? '敏感字段（标「敏感」）读接口不回显：留空保存会保留原值，要改就填新值；选填的敏感字段可以点「清空」删掉。'
+                  : '换了协议，原来的敏感字段不会带过来：必填的敏感字段要重新填写。'}
+              </div>
+            )}
+            <ProtocolFields
+              schema={schema}
+              fields={fields}
+              values={current}
+              errors={errors}
+              disabled={disabled}
+              onChange={setValue}
+              keepSecrets={keepSecrets}
+              cleared={liveCleared}
+              onToggleClear={toggleClear}
+            />
             {realityEnabled(basic.nodeType, current) && (
               <div>
                 <Button size="sm" busy={reality.isPending} disabled={disabled} onClick={() => reality.mutate()}>
@@ -208,16 +236,16 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; on
       )}
 
       <ConfirmModal
-        open={confirmBlank !== null}
+        open={confirmClear !== null}
         title="清空这些敏感字段？"
-        body={`协议参数会整体替换，下面这些敏感字段留空，保存后会被清掉：${(confirmBlank ?? []).join('、')}。要保留就先重新填写。`}
+        body={`保存后这些字段的原值会被删掉，节点下次拉配置时生效：${(confirmClear ?? []).join('、')}。不想删就取消，再点一次「清空」撤回。`}
         confirmLabel="清空并保存"
         tone="danger"
         onConfirm={() => {
-          setConfirmBlank(null)
+          setConfirmClear(null)
           submit(undefined, true)
         }}
-        onCancel={() => setConfirmBlank(null)}
+        onCancel={() => setConfirmClear(null)}
       />
     </form>
   )
@@ -232,6 +260,9 @@ function ProtocolFields({
   errors,
   disabled,
   onChange,
+  keepSecrets,
+  cleared,
+  onToggleClear,
 }: {
   schema: ProtocolSchema
   fields: readonly ProtocolField[]
@@ -239,6 +270,9 @@ function ProtocolFields({
   errors: Record<string, string>
   disabled: boolean
   onChange: (path: string, value: string) => void
+  keepSecrets: boolean
+  cleared: ReadonlySet<string>
+  onToggleClear: (path: string) => void
 }) {
   if (!fields.length) return <div className={css.faint}>这个协议没有可配置的参数。</div>
   return (
@@ -277,7 +311,8 @@ function ProtocolFields({
         if (f.kind === 'json') {
           return <TextArea key={f.path} label={label} mono rows={3} value={value} error={errors[f.path]} disabled={disabled} onChange={(e) => onChange(f.path, e.target.value)} fieldClassName={css.span2} placeholder="JSON" />
         }
-        return (
+        const clearing = f.sensitive && cleared.has(f.path) && !value
+        const input = (
           <Input
             key={f.path}
             label={label}
@@ -288,10 +323,20 @@ function ProtocolFields({
             value={value}
             error={errors[f.path]}
             disabled={disabled}
-            placeholder={f.sensitive ? '不回显，留空即不设置' : undefined}
+            placeholder={!f.sensitive ? undefined : clearing ? '保存时清空' : keepSecrets ? '不回显，留空 = 不改' : '不回显，留空即不设置'}
+            hint={clearing ? '保存时会清空原值' : undefined}
             onChange={(e) => onChange(f.path, e.target.value)}
             fieldClassName={f.path.endsWith('private_key') || f.path.endsWith('public_key') ? css.span2 : undefined}
           />
+        )
+        if (!(keepSecrets && clearableSecret(f))) return input
+        return (
+          <div key={f.path} className={`${css.secretField} ${f.path.endsWith('private_key') || f.path.endsWith('public_key') ? css.span2 : ''}`}>
+            {input}
+            <Button size="xs" variant="ghost" disabled={disabled || Boolean(value)} onClick={() => onToggleClear(f.path)} aria-label={`${clearing ? '撤回清空' : '清空'} ${f.path}`}>
+              {clearing ? '撤回清空' : '清空'}
+            </Button>
+          </div>
         )
       })}
     </div>

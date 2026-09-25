@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./infra 的全部纯函数，依赖 ./schemas 的服务器 / 节点池 / 节点行 schema（核对 Go 的 null 指针字段）
  * [OUTPUT]: 对外提供服务器与节点池纯逻辑的单元测试
- * [POS]: admin/screens/nodes 第 ③ 步的单元测试：schema 接住 Go 原样形状、服务器圆点与快捷状态切换、合法状态边、删除资格与后果文案、三条占用与三档色、节点按服务器分组、服务器表单校验 / 新建体 / PATCH 差量 / 容量冲突；节点池删除资格、绑定套餐文字、新建体与编辑差量；界面交互在浏览器里对 dev/mock/admin/nodes-infra.ts 验收
+ * [POS]: admin/screens/nodes 第 ③ 步的单元测试：schema 接住 Go 原样形状、服务器圆点与快捷状态切换、合法状态边、删除资格与后果文案、R104 节点池名单的文字与只在改动时提交、三条占用与三档色、节点按服务器分组、服务器表单校验 / 新建体 / PATCH 差量 / 容量冲突；节点池删除资格、绑定套餐文字、新建体与编辑差量；界面交互在浏览器里对 dev/mock/admin/nodes-infra.ts 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -11,6 +11,7 @@ import {
   createPoolBody,
   createServerBody,
   deleteServerNotice,
+  emptyPoolForm,
   emptyServerForm,
   meterLevel,
   nextServerStatuses,
@@ -20,6 +21,8 @@ import {
   planNamesLabel,
   poolDeleteBlock,
   poolFormFrom,
+  poolGroupsChanged,
+  poolGroupsLabel,
   quickToggle,
   serverDot,
   serverFormFrom,
@@ -121,7 +124,7 @@ describe('schemas', () => {
     expect(serversResponse.parse({ servers: [server()], total: 1 }).servers[0]!.disk_used_gb).toBeNull()
     expect(() => serversResponse.parse({ servers: null, total: 0 })).toThrow()
     expect(() => serverSchema.parse({ ...server(), status: 'online' })).toThrow()
-    const pools = poolsResponse.parse({ pools: [{ id: 'p', code: 'asia', name: '亚太', region: '', status: 'active', nodes: 0, active_nodes: 0, plans: 0, members: [], plan_names: [] }] })
+    const pools = poolsResponse.parse({ pools: [{ id: 'p', code: 'asia', name: '亚太', region: '', status: 'active', nodes: 0, active_nodes: 0, plans: 0, members: [], plan_names: [], allowed_user_groups: [] }] })
     expect(pools.pools[0]!.members).toEqual([])
     expect(() => poolsResponse.parse({ pools: [{ ...pools.pools[0], plan_names: null }] })).toThrow()
   })
@@ -200,7 +203,7 @@ describe('server form', () => {
 })
 
 describe('pools', () => {
-  const pool = { id: 'p', code: 'asia', name: '亚太', region: 'HK', status: 'active' as const, nodes: 0, active_nodes: 0, plans: 0, members: [], plan_names: [] as string[] }
+  const pool = { id: 'p', code: 'asia', name: '亚太', region: 'HK', status: 'active' as const, nodes: 0, active_nodes: 0, plans: 0, members: [], plan_names: [] as string[], allowed_user_groups: [] as Array<{ id: string; name: string }> }
 
   it('blocks deletion while nodes or plans hang on it', () => {
     expect(poolDeleteBlock(pool)).toBeNull()
@@ -208,14 +211,27 @@ describe('pools', () => {
     expect(poolDeleteBlock({ ...pool, plans: 1 })).toContain('1 个套餐版本')
   })
 
-  it('labels bound plans without the undecided user-group part', () => {
+  it('labels bound plans and the R104 user-group restriction', () => {
     expect(planNamesLabel(pool)).toBe('—')
     expect(planNamesLabel({ plan_names: ['专业版', '团队版'] })).toBe('专业版、团队版')
+    expect(poolGroupsLabel(pool)).toBeNull()
+    expect(poolGroupsLabel({ allowed_user_groups: [{ id: 'g1', name: '内测' }, { id: 'g2', name: 'VIP' }] })).toBe('仅用户组『内测、VIP』')
+  })
+
+  it('R104: sends allowed_user_group_ids only when the list changes (it triggers reauth)', () => {
+    const limited = { ...pool, allowed_user_groups: [{ id: 'g1', name: '内测' }] }
+    expect(poolFormFrom(limited).groupIds).toEqual(['g1'])
+    expect(patchPoolBody(limited, poolFormFrom(limited))).toBeNull()
+    expect(patchPoolBody(limited, { ...poolFormFrom(limited), groupIds: [] })).toEqual({ allowed_user_group_ids: [] })
+    expect(patchPoolBody(pool, { ...poolFormFrom(pool), groupIds: ['g2', 'g1'] })).toEqual({ allowed_user_group_ids: ['g2', 'g1'] })
+    expect(poolGroupsChanged({ allowed_user_groups: [{ id: 'a', name: '' }, { id: 'b', name: '' }] }, { groupIds: ['b', 'a'] })).toBe(false)
+    expect(createPoolBody({ ...emptyPoolForm(), name: '专线', groupIds: ['g1'] })).toEqual({ name: '专线', allowed_user_group_ids: ['g1'] })
+    expect(poolsResponse.parse({ pools: [{ ...pool, allowed_user_groups: null }] }).pools[0]!.allowed_user_groups).toEqual([])
   })
 
   it('creates and patches with the handler semantics', () => {
-    expect(createPoolBody({ name: ' 亚太 ', code: '', region: '', status: 'disabled' })).toEqual({ name: '亚太' })
-    expect(createPoolBody({ name: '欧美', code: 'eu', region: 'EU', status: 'active' })).toEqual({ name: '欧美', code: 'eu', region: 'EU' })
+    expect(createPoolBody({ name: ' 亚太 ', code: '', region: '', status: 'disabled', groupIds: [] })).toEqual({ name: '亚太' })
+    expect(createPoolBody({ name: '欧美', code: 'eu', region: 'EU', status: 'active', groupIds: [] })).toEqual({ name: '欧美', code: 'eu', region: 'EU' })
     expect(patchPoolBody(pool, poolFormFrom(pool))).toBeNull()
     expect(patchPoolBody(pool, { ...poolFormFrom(pool), region: '', status: 'draining', code: 'x' })).toEqual({ status: 'draining' })
     expect(patchPoolBody(pool, { ...poolFormFrom(pool), name: '亚太精选' })).toEqual({ name: '亚太精选' })

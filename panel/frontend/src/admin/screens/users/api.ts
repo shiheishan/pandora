@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient / keepPreviousData，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../billing/schemas 的订单枚举与 orderRowSchema，依赖 ./model 的 exactEmail
  * [OUTPUT]: 对外提供用户模块的 zod schema 与类型（UserRow、UserDetail、SubscriptionRow、OrderRow、UserGroup、UserProfile、BulkFilter、BulkPreview、OnlineDevice、ResetLog、ResetReason 等）、读 hook（useUsers、useUser、useUserGroups、useUserProfile、useFindUserByEmail、usePlanOptions、useBulkPreview、useDevices、useTrafficResets、useResetStats、useUserResets）、UK 查询键前缀、useInvalidateUsers 与 useInvalidateResets、写接口的响应 schema
- * [POS]: admin/screens/users 的数据层：形状照 api-contract.md 后台-03（含修订 R9 / R11 / R12 / R22 / R38），并按 domain/adminops/users.go、bulk_users.go、bulk_mail.go、api/admin/profile.go、usergroup.go、devices.go、domain/billing/traffic_reset.go 的 json tag 核对；按保留规则 2，没有任何字段携带订阅令牌或订阅地址
+ * [POS]: admin/screens/users 的数据层：形状照 api-contract.md 后台-03（含修订 R9 / R11 / R12 / R22 / R38 / R103 / R104），并按 domain/adminops/users.go、bulk_users.go、bulk_mail.go、api/admin/profile.go、usergroup.go、devices.go、domain/billing/traffic_reset.go 的 json tag 核对；按保留规则 2，没有任何字段携带订阅令牌或订阅地址
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -109,6 +109,11 @@ const userGroupSchema = z.object({
   plans: count,
   prices: count,
   coupons: count,
+  // R104：把这个组列入「仅限用户组」名单的节点池（只读）；Go 的 nil 切片可能编成 null，归一成 []
+  exclusive_pools: z
+    .array(z.object({ id: z.string(), name: z.string() }))
+    .nullable()
+    .transform((v) => v ?? []),
 })
 export const userGroupsSchema = z.object({ groups: z.array(userGroupSchema) })
 export type UserGroup = z.output<typeof userGroupSchema>
@@ -174,7 +179,15 @@ const onlineDeviceSchema = z.object({
   exceeded: z.boolean(),
   last_seen_at: time.nullable(),
 })
-export const devicesSchema = z.object({ devices: z.array(onlineDeviceSchema), mode: z.enum(['loose', 'strict']), grace: count })
+// R103：设备识别窗口只有这四档（分钟），缺行按 5
+export const DEVICE_WINDOWS = [5, 10, 30, 60] as const
+export type DeviceWindow = (typeof DEVICE_WINDOWS)[number]
+export const devicesSchema = z.object({
+  devices: z.array(onlineDeviceSchema),
+  mode: z.enum(['loose', 'strict']),
+  grace: count,
+  window_minutes: z.union([z.literal(5), z.literal(10), z.literal(30), z.literal(60)]),
+})
 export type OnlineDevice = z.output<typeof onlineDeviceSchema>
 export type DeviceMode = z.output<typeof devicesSchema>['mode']
 

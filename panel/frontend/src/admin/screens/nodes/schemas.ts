@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 zod
- * [OUTPUT]: 对外提供节点与服务器页全部接口的 zod schema 与推导类型：节点列表行、AdminNode（写接口回的节点）、协议 schema、服务器与其下属节点、节点池（members / plan_names）、节点身份、探针、单节点与全局路由、各写操作的响应
- * [POS]: admin/screens/nodes 与后端对账的唯一防线：形状取自 api-contract.md 后台-07 的节点 / 服务器 / 节点池 / 路由四节（含 R10 R13 R26 R27 R46 R56 R57 R77–R79）并与 Go json tag 核对；Go 指针字段没有 omitempty，缺值序列化成 null 而不是缺键，所以这些字段写 nullable；nil 切片写 nullable 并归一成 []
+ * [OUTPUT]: 对外提供节点与服务器页全部接口的 zod schema 与推导类型：节点列表行、AdminNode（写接口回的节点）、协议 schema、服务器与其下属节点、节点池（members / plan_names / R104 allowed_user_groups）、R108 上线响应 activatedResponse、节点身份、探针、单节点与全局路由、各写操作的响应
+ * [POS]: admin/screens/nodes 与后端对账的唯一防线：形状取自 api-contract.md 后台-07 的节点 / 服务器 / 节点池 / 路由四节（含 R10 R13 R26 R27 R46 R56 R57 R77–R79 R104 R105 R108）并与 Go json tag 核对；Go 指针字段没有 omitempty，缺值序列化成 null 而不是缺键，所以这些字段写 nullable；nil 切片写 nullable 并归一成 []
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
@@ -178,7 +178,8 @@ export const serverNodesResponse = z.object({ nodes: z.array(serverNodeSchema), 
 export type ServerNode = z.output<typeof serverNodeSchema>
 
 // ---------------------------------------------------------------------------
-// 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；用户组限制是 D-B-3 / R104（已决，第 ③ 步接入），在那之前不做
+// 节点池（GET v1/node-pools）：members 不含已销毁节点，plan_names 去重（两者 SQL 里 coalesce 过，恒为数组）；
+// allowed_user_groups 是 R104「仅限用户组」名单（空 = 不限定），Go 的 nil 切片可能编成 null，归一成 []
 // ---------------------------------------------------------------------------
 export const POOL_STATUSES = ['active', 'draining', 'disabled'] as const
 export type PoolStatus = (typeof POOL_STATUSES)[number]
@@ -194,6 +195,10 @@ export const poolSchema = z.object({
   plans: z.number(),
   members: z.array(z.object({ id: uuid, name: z.string(), node_no: z.number() })),
   plan_names: z.array(z.string()),
+  allowed_user_groups: z
+    .array(z.object({ id: uuid, name: z.string() }))
+    .nullable()
+    .transform((v) => v ?? []),
 })
 export const poolsResponse = z.object({ pools: z.array(poolSchema) })
 export type Pool = z.output<typeof poolSchema>
@@ -279,6 +284,18 @@ export const publishResponse = z.object({ config_id: uuid, version: z.number(), 
 export const routingSaved = z.object({ ok: z.literal(true), row_version: z.number() })
 export const okResponse = z.object({ ok: z.literal(true) })
 export const poolCreated = z.object({ id: uuid })
+
+/**
+ * R108 POST v1/nodes/{id}/activate：契约写「AdminNode（同 GET v1/nodes 的 Node）另带 warnings」，两种形状都有这几个字段，
+ * 页面也只用这几个（成功后重拉列表），所以只收它们；后端四 ④ 定了形状再收紧
+ */
+export const activatedResponse = z.object({
+  id: uuid,
+  row_version: z.number(),
+  status: z.string(),
+  serving_status: z.enum(SERVING_STATUSES),
+  warnings: z.array(z.string()).optional(),
+})
 export const serverDeleted = z.object({ ok: z.literal(true), id: uuid })
 export const globalRoutingSaved = z.object({ ok: z.literal(true), revision: z.string(), affected_nodes: z.number() })
 export const deletedResponse = z.object({ deleted: z.literal(true) })

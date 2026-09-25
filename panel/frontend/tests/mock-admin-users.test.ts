@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
  * [OUTPUT]: 对外提供用户（后台-03）第 ④ 步假接口的测试
- * [POS]: tests 的用户运营假后端守卫：流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验，设新密码不要原因（R101）
+ * [POS]: tests 的用户运营假后端守卫：流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验与 R103 识别窗口，设新密码不要原因（R101）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -103,6 +103,17 @@ describe('mock api · admin users ops', () => {
     const d = (await (await get('/v1/devices')).json()) as { mode: string; grace: number; devices: Array<{ limit: number; online: number; exceeded: boolean }> }
     expect(d).toMatchObject({ mode: 'strict', grace: 0 })
     expect(d.devices.every((x) => x.exceeded === (x.limit > 0 && x.online > x.limit))).toBe(true)
+  })
+
+  it('R103: the device window is one of 5 / 10 / 30 / 60 minutes, left alone when omitted', async () => {
+    // 窗口的封闭取值由页面 schema 在 users/ops.test.ts 守着（users/api.ts 连着 React，节点侧 tsconfig 引不进来）
+    const win = async () => ((await (await get('/v1/devices')).json()) as { window_minutes: number }).window_minutes
+    expect(await win()).toBe(5)
+    expect((await send('POST', '/v1/settings/device-limit', { mode: 'loose', window_minutes: 15 })).status).toBe(422)
+    expect((await send('POST', '/v1/settings/device-limit', { mode: 'loose', window_minutes: 30 })).status).toBe(200)
+    expect(await win()).toBe(30)
+    expect((await send('POST', '/v1/settings/device-limit', { mode: 'strict', grace: 1 })).status).toBe(200)
+    expect(await win()).toBe(30)
   })
 
   it('sets a new password without a reason (R101) but still caps a given reason at 500', async () => {

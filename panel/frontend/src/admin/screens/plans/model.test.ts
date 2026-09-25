@@ -301,7 +301,7 @@ describe('向导', () => {
     const sales = updateBody({ ...orig, highlights: ['流媒体解锁 ', '工单支持'], recommended: true }, orig, 7)
     expect(sales).toMatchObject({ highlights: ['流媒体解锁', '工单支持'], recommended: true })
     expect(updateBody({ ...orig, highlights: [' 流媒体解锁'] }, orig, 7)).not.toHaveProperty('highlights')
-    expect(wizardProblems({ ...orig, mbps: '-1' }, 'edit', orig)).toHaveProperty('throttle_kbps')
+    expect(wizardProblems({ ...orig, mbps: '-1' }, 'edit')).toHaveProperty('throttle_kbps')
   })
 
   it('卖点：最多 5 条、每条 1–40 字（按字符数）、不许空与重复，键名同后端', () => {
@@ -312,10 +312,11 @@ describe('向导', () => {
     expect(wizardProblems({ ...emptyWizard(), name: 'x', code: 'xx', publish: false, prices: [], highlights: [''] }, 'new')).toHaveProperty(['highlights.0'])
   })
 
-  it('编辑：设备数暂不能改回不限（R92 后端现状，后端三 ② 合入后删）；删光一个币种要提示去价格卡归档', () => {
+  it('编辑：设备数可以改回不限（R107 已修 R92）；删光一个币种要提示去价格卡归档', () => {
     const orig = wizardFromPlan(plan())
-    expect(wizardProblems({ ...orig, devices: '' }, 'edit', orig)).toHaveProperty('max_devices')
-    expect(wizardProblems(orig, 'edit', orig)).toEqual({})
+    expect(wizardProblems({ ...orig, devices: '' }, 'edit')).toEqual({})
+    expect(updateBody({ ...orig, devices: '' }, orig, 7)).toMatchObject({ max_devices: null })
+    expect(wizardProblems(orig, 'edit')).toEqual({})
     expect(removedCurrencies({ ...orig, prices: orig.prices.filter((x) => x.currency === 'CNY') }, orig)).toEqual(['USD'])
   })
 

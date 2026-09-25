@@ -1,17 +1,17 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatCount / relativeTime，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Empty / Input / QueryView / Table / Tag / useToast，依赖 ../../actions 的 useCan / useFailure，依赖 ./api 的 useDevices / useFindUserByEmail / useInvalidateUsers / okSchema / DeviceMode / OnlineDevice，依赖 ./model 的 nearLimit / pips，依赖 ./Users.module.css 与 ./Ops.module.css
  * [OUTPUT]: 对外提供 DevicePolicy
- * [POS]: 用户页「设备策略」标签（#/users/devices）：左「全局设备数策略」（loose / strict 两种判定，strict 时给宽容值 0–5，POST v1/settings/device-limit 要 reauth），右「接近或超出上限的订阅」（GET v1/devices 里有上限且在线已到上限的，点行按邮箱找到用户、打开抽屉「订阅」标签）。契约后台-03：模式文案以后端为准；D-B-5 已决（5.A.2）不给「默认同时在线设备」滑块；D-B-4 已决（R103，可选 5 / 10 / 30 / 60 分钟），第 ③ 步接入，在那之前识别窗口只读说明 5 分钟
+ * [POS]: 用户页「设备策略」标签（#/users/devices）：左「全局设备数策略」（loose / strict 两种判定，strict 时给宽容值 0–5，POST v1/settings/device-limit 要 reauth），右「接近或超出上限的订阅」（GET v1/devices 里有上限且在线已到上限的，点行按邮箱找到用户、打开抽屉「订阅」标签）。契约后台-03：模式文案以后端为准；D-B-5 已决（5.A.2）不给「默认同时在线设备」滑块；R103 设备识别窗口可选 5 / 10 / 30 / 60 分钟，下拉旁说明代价（旧 IP 被多算更久、strict 超限约一个窗口后才恢复），改了才带 window_minutes（省略 = 不改）；右侧脚注跟着窗口变
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
 import { formatCount, relativeTime } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Card, Empty, Input, QueryView, Table, Tag, useToast, type TableColumn } from '../../../ui'
+import { Button, Card, Empty, Input, QueryView, Select, Table, Tag, useToast, type TableColumn } from '../../../ui'
 import { useCan, useFailure } from '../../actions'
-import { okSchema, useDevices, useFindUserByEmail, useInvalidateUsers, type DeviceMode, type OnlineDevice } from './api'
-import { nearLimit, pips } from './model'
+import { DEVICE_WINDOWS, okSchema, useDevices, useFindUserByEmail, useInvalidateUsers, type DeviceMode, type DeviceWindow, type OnlineDevice } from './api'
+import { devicePolicyBody, nearLimit, pips } from './model'
 import ops from './Ops.module.css'
 import css from './Users.module.css'
 
@@ -35,7 +35,7 @@ export function DevicePolicy({ now }: { now: Date }) {
       >
         {devices.data ? (
           // 服务端值变了（保存后重拉）就重置草稿
-          <PolicyForm key={`${devices.data.mode}-${devices.data.grace}`} mode={devices.data.mode} grace={devices.data.grace} />
+          <PolicyForm key={`${devices.data.mode}-${devices.data.grace}-${devices.data.window_minutes}`} mode={devices.data.mode} grace={devices.data.grace} window={devices.data.window_minutes} />
         ) : devices.isError ? (
           <Empty bare title="策略读取失败" description="稍后重试。" />
         ) : (
@@ -53,13 +53,13 @@ export function DevicePolicy({ now }: { now: Date }) {
             {(d) => <HotList rows={nearLimit(d.devices)} now={now} />}
           </QueryView>
         </div>
-        <p className={ops.cardFoot}>在线按近 5 分钟内的来源 IP 去重；统计生效中、试用与宽限期订阅里在线最多的 200 条。</p>
+        <p className={ops.cardFoot}>在线按近 {devices.data?.window_minutes ?? 5} 分钟内的来源 IP 去重；统计生效中、试用与宽限期订阅里在线最多的 200 条。</p>
       </Card>
     </div>
   )
 }
 
-function PolicyForm({ mode: saved, grace: savedGrace }: { mode: DeviceMode; grace: number }) {
+function PolicyForm({ mode: saved, grace: savedGrace, window: savedWindow }: { mode: DeviceMode; grace: number; window: DeviceWindow }) {
   const api = useApi()
   const can = useCan()
   const toast = useToast()
@@ -68,16 +68,17 @@ function PolicyForm({ mode: saved, grace: savedGrace }: { mode: DeviceMode; grac
   const canWrite = can('iam.user.write')
   const [mode, setMode] = useState(saved)
   const [grace, setGrace] = useState(String(savedGrace))
+  const [win, setWin] = useState<DeviceWindow>(savedWindow)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const dirty = mode !== saved || (mode === 'strict' && grace.trim() !== String(savedGrace))
+  const dirty = mode !== saved || (mode === 'strict' && grace.trim() !== String(savedGrace)) || win !== savedWindow
 
   const save = async () => {
-    const g = Number(grace.trim())
-    if (mode === 'strict' && !(Number.isInteger(g) && g >= 0 && g <= 5)) return setError('宽容值是 0 到 5 的整数')
+    const body = devicePolicyBody({ mode, grace, window: win }, savedWindow)
+    if (!body) return setError('宽容值是 0 到 5 的整数')
     setBusy(true)
     try {
-      await api.post('v1/settings/device-limit', okSchema, { body: mode === 'strict' ? { mode, grace: g } : { mode } })
+      await api.post('v1/settings/device-limit', okSchema, { body })
       toast('全局设备策略已保存')
       void invalidate()
     } catch (e) {
@@ -116,10 +117,18 @@ function PolicyForm({ mode: saved, grace: savedGrace }: { mode: DeviceMode; grac
           }}
         />
       )}
-      <div className={ops.readonlyRow}>
-        <span className={css.fieldLabel}>设备识别窗口</span>
-        <span>5 分钟内活跃视为在线（与节点同步周期一致）</span>
-      </div>
+      <Select
+        label="设备识别窗口"
+        value={String(win)}
+        disabled={!canWrite}
+        options={DEVICE_WINDOWS.map((m) => ({ value: String(m), label: `${m} 分钟` }))}
+        onChange={(e) => setWin(Number(e.target.value) as DeviceWindow)}
+        hint={
+          mode === 'strict'
+            ? '窗口内出现过的来源 IP 都算在线。窗口越长，换了网络的旧 IP 被多算得越久；超限停止下发的订阅，大约要一个窗口后才恢复。'
+            : '窗口内出现过的来源 IP 都算在线。窗口越长，换了网络的旧 IP 被多算得越久。'
+        }
+      />
       {canWrite && (
         <Button variant="primary" busy={busy} disabled={!dirty} onClick={() => void save()}>
           保存策略

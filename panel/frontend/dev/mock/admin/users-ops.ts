@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomInt / randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute，依赖 ./users 的 User / Sub / Group 类型（只取类型，运行时不回引）
  * [OUTPUT]: 对外提供 opsRoutes(store)：用户模块第 ④ 步的假接口，由 users.ts 展开进同一个 MockModule
- * [POS]: dev/mock/admin 的「用户（后台-03）」其余四个标签：用户组增删改、批量运营（预览 / 导出 CSV / 批量生成 / 群发）、设备策略（在线订阅与全局模式）、流量重置（日志、统计、单用户历史、手动重置）。形状、权限、reauth、幂等 scope、校验顺序与文案照 api-contract.md 后台-03（含 R9 / R12 / R38）与 Go 处理器（usergroup.go、bulk_users.go、adminops/bulk_*.go、devices.go、billing/traffic_reset.go）；请求体按 DisallowUnknownFields 拒绝未知字段。与 users.ts 共用同一份用户数组，生成的账号、重置清掉的用量在列表和详情里立即可见
+ * [POS]: dev/mock/admin 的「用户（后台-03）」其余四个标签：用户组增删改（删组先看节点池限定名单，R104）、批量运营（预览 / 导出 CSV / 批量生成 / 群发）、设备策略（在线订阅与全局模式，含 R103 设备识别窗口）、流量重置（日志、统计、单用户历史、手动重置）。形状、权限、reauth、幂等 scope、校验顺序与文案照 api-contract.md 后台-03（含 R9 / R12 / R38）与 Go 处理器（usergroup.go、bulk_users.go、adminops/bulk_*.go、devices.go、billing/traffic_reset.go）；请求体按 DisallowUnknownFields 拒绝未知字段。与 users.ts 共用同一份用户数组，生成的账号、重置清掉的用量在列表和详情里立即可见
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomInt, randomUUID } from 'node:crypto'
@@ -15,6 +15,8 @@ export interface UsersStore {
   current(u: User): Sub | undefined
   hasSubState(u: User, state: string): boolean
   effectiveLimit(s: Sub): number
+  /** 把这个组列入「仅限用户组」名单的节点池（R104，来自节点假后端） */
+  exclusivePools(groupId: string): Array<{ id: string; name: string }>
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +181,8 @@ function seedLogs(users: readonly User[]): ResetLog[] {
 export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
   const { users, groups } = store
   const logs = seedLogs(users)
-  const device = { mode: 'loose' as 'loose' | 'strict', grace: 1 }
+  // window_minutes：R103 设备识别窗口（5 / 10 / 30 / 60，缺省 5）
+  const device = { mode: 'loose' as 'loose' | 'strict', grace: 1, window_minutes: 5 }
 
   const slug = (name: string) => {
     const s = name
@@ -229,6 +232,9 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       const k = groups.findIndex((x) => x.id === ctx.params.id)
       if (k < 0) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
       const g = groups[k]!
+      // R104：先看节点池的限定名单（否则名单变空会让池悄悄对所有人开放），再看成员与各类引用
+      const pool = store.exclusivePools(g.id)[0]
+      if (pool) return ctx.fail(409, 'conflict', `节点池「${pool.name}」限定了这个分组，先在节点池里把它移出名单再删`)
       if (users.some((u) => u.group_id === g.id)) return ctx.fail(409, 'conflict', '这个分组下还有用户，先把他们移出去')
       if (g.plans > 0) return ctx.fail(409, 'conflict', '还有套餐按这个分组控制可见性，先解除')
       if (g.prices > 0) return ctx.fail(409, 'conflict', '还有分组专属价格挂在这里，先删掉那些价格')
@@ -384,7 +390,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
             last_seen_at: s.online_devices ? new Date(Date.now() - ((k * 37) % 290) * 1000).toISOString() : null,
           }
         })
-      ctx.send(200, { devices: rows, mode: device.mode, grace: device.grace })
+      ctx.send(200, { devices: rows, mode: device.mode, grace: device.grace, window_minutes: device.window_minutes })
     },
 
     // 全局模式：iam.user.write + reauth（R9），无幂等；grace 只在传了时写
@@ -392,13 +398,17 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      const extra = unknownField(body, ['mode', 'grace'])
+      const extra = unknownField(body, ['mode', 'grace', 'window_minutes'])
       if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
       if (body.mode !== 'loose' && body.mode !== 'strict') return ctx.fail(422, 'validation_failed', '模式只能是 loose 或 strict')
       const grace = body.grace
       if (grace !== undefined && grace !== null && !(typeof grace === 'number' && Number.isInteger(grace) && grace >= 0 && grace <= 5)) return ctx.fail(422, 'validation_failed', '宽容值需在 0 到 5 之间')
+      // R103：省略 = 不改，其它值 422
+      const win = body.window_minutes
+      if (win !== undefined && win !== null && ![5, 10, 30, 60].includes(win as number)) return ctx.fail(422, 'validation_failed', '设备识别窗口只能是 5、10、30 或 60 分钟')
       device.mode = body.mode
       if (typeof grace === 'number') device.grace = grace
+      if (typeof win === 'number') device.window_minutes = win
       ctx.send(200, { ok: true })
     },
 

@@ -1,11 +1,12 @@
 /**
- * [INPUT]: 依赖 node:crypto 的 createHash / randomBytes / randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute
+ * [INPUT]: 依赖 node:crypto 的 createHash / randomBytes / randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute，依赖 ./users 的 GROUPS 与 setPoolSource（R104 名单登记回用户组）
  * [OUTPUT]: 对外提供服务器、节点池、全局路由的假数据（servers / pools / globalRouting）、路由校验 validateRouting（单节点与全局共用）、空体判断 emptyBody、心跳保活 keepAlive、按池统计在线节点数 activeNodesInPool（与节点池列表的 active_nodes 同口径，给套餐假后端用），以及 infraRoutes(节点存储) 返回的路由表
- * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」第 ③ 步假接口，由 nodes.ts 引入并入同一个 MockModule（登记表不动）：服务器列表 / 新建 / 详情 / 下属节点 / 编辑 / 改状态（合法边、进入 ready 要有可服务节点）/ 删除（仅草稿或已退役，名下节点级联静默）/ 安装令牌；节点池增删改（删除前查节点、套餐、未用令牌）；全局出站与分流读写（revision 为规范 JSON 的 sha256，删除被节点规则引用的出站回 409，R56）。节点存储以参数传入而不 import nodes.ts，避免循环依赖。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 的 server.go、server_admin.go、pools.go、node_routing.go
+ * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」第 ③ 步假接口，由 nodes.ts 引入并入同一个 MockModule（登记表不动）：服务器列表 / 新建 / 详情 / 下属节点 / 编辑 / 改状态（合法边、进入 ready 要有可服务节点）/ 删除（仅草稿或已退役，名下节点级联静默）/ 安装令牌；节点池增删改（删除前查节点、套餐、未用令牌；R104「仅限用户组」名单：带字段要 reauth、校验格式 / 重复 / 上限 100 / 存在性，经 setPoolSource 登记回用户组）；全局出站与分流读写（revision 为规范 JSON 的 sha256，删除被节点规则引用的出站回 409，R56）。节点存储以参数传入而不 import nodes.ts，避免循环依赖。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 的 server.go、server_admin.go、pools.go、node_routing.go
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockResult, MockRoute } from '../types.ts'
+import { GROUPS, setPoolSource } from './users.ts'
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -125,6 +126,8 @@ servers.push(
   server('de-fra-edge-1', '法兰克福', '78.47.110.2', { status: 'maintenance', status_reason: '更换网卡', cpu: 22, mem: 30, disk: 18, notes: 'Hetzner FSN1，工单 #88213' }),
   server('tw-tpe-edge-1', '台北', '61.216.4.19', { last_heartbeat_at: ago(3600 * 5), cpu: 0, mem: 12, disk: 40 }),
   server('kr-sel-edge-1', '首尔', '', { status: 'draft', public_ipv4: null, hostname: null, architecture: null, os_name: null, agent_version: null, last_heartbeat_at: null, cpu_cores: null, memory_mb: null, disk_gb: null, capacity_nodes: 32 }),
+  // R108：刚装好、还在草稿的新服务器，上面有一个接入完成待上线的节点（nodes.ts 的「大阪 01（待上线）」）
+  server('jp-osa-edge-1', '大阪', '45.77.30.12', { status: 'draft', agent_version: 'core r53', capacity_nodes: 16 }),
 )
 // 列表按 created_at 倒序：让第一台最新，顺序与设计稿一致
 servers.forEach((s, i) => (s.created_at = s.updated_at = ago(86400 * (10 + i))))
@@ -203,9 +206,36 @@ interface MockPool {
   status: string
   plans: string[]
   pendingTokens: number
+  /** R104「仅限用户组」名单（用户组 id，排好序）；空 = 不限定 */
+  groups: string[]
 }
-const pool = (code: string, name: string, region: string | null, plans: string[], pendingTokens = 0): MockPool => ({ id: randomUUID(), code, name, region, status: 'active', plans, pendingTokens })
-export const pools: MockPool[] = [pool('asia', '亚太精选', 'APAC', ['专业版', '团队版']), pool('global', '全部线路', null, ['标准版', '专业版', '家庭版']), pool('beta', '灰度池', null, []), pool('enterprise', '企业专线', 'CN', [], 1)]
+const pool = (code: string, name: string, region: string | null, plans: string[], pendingTokens = 0, groups: string[] = []): MockPool => ({ id: randomUUID(), code, name, region, status: 'active', plans, pendingTokens, groups })
+// 种子：企业专线只给「企业客户」，灰度池只给「VIP」（用户组 id 取 users.ts 的 GROUPS）
+export const pools: MockPool[] = [
+  pool('asia', '亚太精选', 'APAC', ['专业版', '团队版']),
+  pool('global', '全部线路', null, ['标准版', '专业版', '家庭版']),
+  pool('beta', '灰度池', null, [], 0, [GROUPS[0]!.id]),
+  pool('enterprise', '企业专线', 'CN', [], 1, [GROUPS[1]!.id]),
+]
+
+// ---------------------------------------------------------------------------
+// R104 名单：带了 allowed_user_group_ids 就要 reauth（字段级，改名改状态照旧不用）；
+// 校验格式、重复、上限 100、存在性（跨租户同样按不存在回）；同一份名单重复提交不算变化
+// ---------------------------------------------------------------------------
+const groupRef = (id: string) => ({ id, name: GROUPS.find((g) => g.id === id)?.name ?? id })
+setPoolSource((groupId) => pools.filter((p) => p.groups.includes(groupId)).map((p) => ({ id: p.id, name: p.name })))
+
+/** 返回规范化名单（排序去重后），或 422；不存在的组与格式问题同一个字段键 */
+function poolGroupIds(raw: unknown): string[] | MockResult {
+  const bad = (msg: string) => invalid({ allowed_user_group_ids: msg })
+  if (!Array.isArray(raw)) return bad('必须是无重复的用户组 UUID 列表')
+  if (raw.length > 100) return bad('一个节点池最多限定 100 个用户组')
+  if (raw.some((x) => typeof x !== 'string' || !UUID.test(x))) return bad('必须是无重复的用户组 UUID 列表')
+  const ids = (raw as string[]).map((x) => x.toLowerCase()).sort()
+  if (new Set(ids).size !== ids.length) return bad('必须是无重复的用户组 UUID 列表')
+  if (ids.some((id) => !GROUPS.some((g) => g.id === id))) return bad('包含不存在的用户组')
+  return ids
+}
 
 function slugify(name: string): string {
   const s = name
@@ -452,7 +482,19 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
             .filter((n) => n.status !== 'destroyed')
             .sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
             .map((n) => ({ id: n.id, name: n.name, node_no: n.node_no }))
-          return { id: p.id, code: p.code, name: p.name, region: p.region ?? '', status: p.status, nodes: mine.length, active_nodes: activeNodesInPool(p.id), plans: p.plans.length, members, plan_names: [...new Set(p.plans)].sort() }
+          return {
+            id: p.id,
+            code: p.code,
+            name: p.name,
+            region: p.region ?? '',
+            status: p.status,
+            nodes: mine.length,
+            active_nodes: activeNodesInPool(p.id),
+            plans: p.plans.length,
+            members,
+            plan_names: [...new Set(p.plans)].sort(),
+            allowed_user_groups: p.groups.map(groupRef),
+          }
         })
       ctx.send(200, { pools: rows })
     },
@@ -460,13 +502,18 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      const extra = unknownField(body, ['code', 'name', 'region', 'status'])
+      const extra = unknownField(body, ['code', 'name', 'region', 'status', 'allowed_user_group_ids'])
       if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+      // 字段级 reauth 在一切校验与写入之前（被拒的请求什么都不建）
+      const hasGroups = body.allowed_user_group_ids !== undefined && body.allowed_user_group_ids !== null
+      if (hasGroups && !ctx.requireReauth()) return
       const name = text(body.name).trim()
       if (!name) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { name: '分组名必填' })
+      const groups = hasGroups ? poolGroupIds(body.allowed_user_group_ids) : []
+      if (!Array.isArray(groups)) return reply(ctx, groups)
       const code = text(body.code).trim() || slugify(name)
       if (pools.some((p) => p.code === code)) return ctx.fail(409, 'conflict', '这个分组标识已存在')
-      const p = pool(code, name, text(body.region) || null, [])
+      const p = pool(code, name, text(body.region) || null, [], 0, groups)
       pools.push(p)
       ctx.send(200, { id: p.id })
     },
@@ -474,12 +521,18 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
       if (!ctx.requirePermission('node.provision')) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
-      const extra = unknownField(body, ['code', 'name', 'region', 'status'])
+      const extra = unknownField(body, ['code', 'name', 'region', 'status', 'allowed_user_group_ids'])
       if (extra) return ctx.fail(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+      // 省略或 null = 不改名单，[] = 取消限定；带了就要 reauth
+      const hasGroups = body.allowed_user_group_ids !== undefined && body.allowed_user_group_ids !== null
+      if (hasGroups && !ctx.requireReauth()) return
       const status = text(body.status)
       if (status && !['active', 'draining', 'disabled'].includes(status)) return ctx.fail(422, 'validation_failed', '状态只能是 active / draining / disabled')
       const p = pools.find((x) => x.id === ctx.params.id)
       if (!p) return reply(ctx, notFound())
+      const groups = hasGroups ? poolGroupIds(body.allowed_user_group_ids) : null
+      if (groups && !Array.isArray(groups)) return reply(ctx, groups)
+      if (groups) p.groups = groups
       if (text(body.name).trim()) p.name = text(body.name).trim()
       if (text(body.region)) p.region = text(body.region)
       if (status) p.status = status

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule / MockContext
- * [OUTPUT]: 对外提供 users 模块的假接口 MockModule，给 plans-store.ts 用的 PLAN_IDS、GROUPS 与 activeSubscriptions，给 billing-store.ts 用的 userStore、seedOrders / SeedOrder 与 setOrderSource（订单表归订单与收款，详情的最近订单取它登记的来源），以及 Sub / User 类型
+ * [OUTPUT]: 对外提供 users 模块的假接口 MockModule，给 plans-store.ts 用的 PLAN_IDS、GROUPS 与 activeSubscriptions，给 nodes-infra.ts 登记节点池名单用的 setPoolSource（R104，用户组列表的 exclusive_pools 取它），给 billing-store.ts 用的 userStore、seedOrders / SeedOrder 与 setOrderSource（订单表归订单与收款，详情的最近订单取它登记的来源），以及 Sub / User 类型
  * [POS]: dev/mock/admin 的「用户（后台-03）」假接口，归后台前端一：列表（q 按邮箱 / 显示名 / 用户 id / 订阅令牌反查，status 逗号多值，group_id 含 none，sub_state，limit/offset）、详情、启停封禁、替用户设新密码、换发订阅链接（不回令牌）、人工调账、分配用户组、用户组列表、单订阅设备上限、风控画像；形状、权限、reauth、幂等与错误照 api-contract.md（含 R9 / R11 / R12 / R22）与 domain/adminops/users.go。订阅令牌只在内存里用于反查，任何响应都不返回
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -67,6 +67,15 @@ export interface Group {
   prices: number
   coupons: number
 }
+
+// 节点池的「仅限用户组」名单归节点假后端（nodes-infra.ts）：它经 setPoolSource 登记回来，
+// 用户组列表的 exclusive_pools 与删组的 409 就与节点池页同一份数据（R104）；没登记时视为没有限定
+type PoolRef = { id: string; name: string }
+let poolSource: (groupId: string) => PoolRef[] = () => []
+export function setPoolSource(fn: (groupId: string) => PoolRef[]): void {
+  poolSource = fn
+}
+export const exclusivePoolsOf = (groupId: string) => poolSource(groupId)
 
 export const GROUPS: Group[] = [
   { id: '9c0e1a2b-2222-4b00-8000-000000000001', code: 'vip', name: 'VIP', description: '长期付费与大客户', plans: 2, prices: 3, coupons: 1 },
@@ -357,7 +366,7 @@ export const users_: MockModule = {
 
     'GET /v1/user-groups': (ctx) => {
       if (!ctx.requirePermission('iam.user.read')) return
-      ctx.send(200, { groups: GROUPS.map((g) => ({ ...g, users: users.filter((u) => u.group_id === g.id).length })) })
+      ctx.send(200, { groups: GROUPS.map((g) => ({ ...g, users: users.filter((u) => u.group_id === g.id).length, exclusive_pools: exclusivePoolsOf(g.id) })) })
     },
 
     'GET /v1/users/:id': (ctx) => {
@@ -470,7 +479,7 @@ export const users_: MockModule = {
     },
 
     // 第 ④ 步：用户组增删改、批量运营、设备策略、流量重置（users-ops.ts）
-    ...opsRoutes({ users, groups: GROUPS, current, hasSubState, effectiveLimit }),
+    ...opsRoutes({ users, groups: GROUPS, current, hasSubState, effectiveLimit, exclusivePools: exclusivePoolsOf }),
   },
 }
 
