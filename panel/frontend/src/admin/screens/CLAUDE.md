@@ -11,7 +11,8 @@ Placeholder.tsx: 占位页（第 2 阶段 Shell 的空状态），十个模块�
 dash/: 仪表盘（后台-01），八个只读接口拼成的落地页；见 dash/CLAUDE.md
 marketing/: 营销（后台-06）已接入：优惠券、礼品卡、佣金与提现；见 marketing/CLAUDE.md
 tickets/: 工单（后台-02），左队列右详情，选中、筛选与搜索都在地址上；见 tickets/CLAUDE.md
-users/ plans/ billing/ nodes/ content/ system/ security/: 其余模块目录，index.tsx 默认导出页面组件，未接入的渲染 Placeholder
+users/: 用户（后台-03），列表 + 详情抽屉已接入（第 ③ 步），其余四个标签第 ④ 步接入；见 users/CLAUDE.md
+plans/ billing/ nodes/ content/ system/ security/: 其余模块目录，index.tsx 默认导出页面组件，未接入的渲染 Placeholder
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
