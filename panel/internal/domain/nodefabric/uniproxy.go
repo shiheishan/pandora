@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit；读写 quota_balances 与 traffic_pack_grants（迁移 00070），经 usage_daily.go 的 chargeReportEntry 逐用户记账
-// [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、BuildNodeConfig、路由校验、ListNodeUsers、ReportTraffic / ReportAlive / ReportRuntimeStatus
-// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、记签发时间与签发人、拒绝已退出服务的节点）、用户下发（只下发给套餐绑定了本节点所在池的订阅，无池节点不下发任何人，R104）与流量上报（先扣套餐本周期额度，超出部分扣用户流量包余额，D-E-1；同事务累加按日用量，00072）
+// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit；读 node_pool_user_groups（00093）与 users.user_group_id；读写 quota_balances 与 traffic_pack_grants（迁移 00070），经 usage_daily.go 的 chargeReportEntry 逐用户记账
+// [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、BuildNodeConfig、路由校验、ListNodeUsers、PoolAdmitsUserSQL（池限定用户组的唯一谓词）、ReportTraffic / ReportAlive / ReportRuntimeStatus
+// [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、记签发时间与签发人、拒绝已退出服务的节点）、用户下发（只下发给套餐绑定了本节点所在池的订阅，无池节点不下发任何人；池限定了用户组时只给名单内组的用户，R104）与流量上报（先扣套餐本周期额度，超出部分扣用户流量包余额，D-E-1；同事务累加按日用量，00072）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -543,6 +543,28 @@ func routingValueStrings(value any) ([]string, error) {
 // GET /api/v1/server/UniProxy/user
 //------------------------------------------------------------------------------
 
+// PoolAdmitsUserSQL 是节点池用户组限定（R104）的唯一 SQL 谓词：池没有限定
+// （node_pool_user_groups 里没有它的行），或者用户所在的组在池的名单里。
+// 默认组（users.user_group_id 为空）的用户进不了任何限定了的池——NULL 与
+// 名单里的组连不上。
+//
+// 下发三处只能用它：本包 ListNodeUsers（节点拉用户），以及 subscription 的
+// listEligibleNodesTx（订阅下载与门户预览）。三个参数是租户、池、用户的
+// SQL 表达式，只接受这两个调用方的静态写法，绝不能是用户数据；写成白名单
+// 也让「另写一份变体」在调用处就过不去。
+func PoolAdmitsUserSQL(tenant, pool, user string) string {
+	switch tenant + "|" + pool + "|" + user {
+	case "s.tenant_id|$2::uuid|s.user_id", "n.tenant_id|n.pool_id|$4::uuid":
+	default:
+		panic("unsupported pool admission SQL expressions")
+	}
+	return "(NOT EXISTS (SELECT 1 FROM node_pool_user_groups npug" +
+		" WHERE npug.tenant_id = " + tenant + " AND npug.pool_id = " + pool + ")" +
+		" OR EXISTS (SELECT 1 FROM node_pool_user_groups npug" +
+		" JOIN users npu ON npu.tenant_id = npug.tenant_id AND npu.user_group_id = npug.user_group_id" +
+		" WHERE npug.tenant_id = " + tenant + " AND npug.pool_id = " + pool + " AND npu.id = " + user + "))"
+}
+
 type ProxyUser struct {
 	ID          int64  `json:"id"`
 	UUID        string `json:"uuid"`
@@ -555,6 +577,7 @@ type ProxyUser struct {
 // 过滤条件是这套系统里最要紧的一段 SQL —— 它同时决定了「谁能用」和「谁不能用」：
 //   - 订阅必须处于可用状态（active / trialing，宽限期内也算）
 //   - 套餐必须授权了该节点所属的资源池（XBD-010）；没划进池的节点不服务任何人（R104）
+//   - 池限定了用户组时，用户所在的组必须在名单里（R104，PoolAdmitsUserSQL）
 //   - 流量必须没跑超（USE-007 超额停用）
 //
 // 任何一条漏掉，都会变成免费用或该用用不了，两种都是事故。
@@ -567,11 +590,14 @@ func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *Serving
 		// EXISTS 为假，列表为空。这与订阅下载、门户预览里的
 		// JOIN plan_node_pools 是同一口径；过去这里把无池节点当成对所有有效
 		// 订阅开放的公共节点，节点就成了绕过套餐授权的后门。
+		//
+		// 池限定了用户组时，还要用户所在的组在名单里（R104）。
 		poolFilter := `
 			AND EXISTS (SELECT 1 FROM plan_node_pools pnp
 			             WHERE pnp.tenant_id = s.tenant_id
 			               AND pnp.plan_version_id = s.plan_version_id
-			               AND pnp.pool_id = $2::uuid)`
+			               AND pnp.pool_id = $2::uuid)
+			AND ` + PoolAdmitsUserSQL("s.tenant_id", "$2::uuid", "s.user_id")
 
 		// 设备限制的判定模式。读设置失败时按 loose 走 ——
 		// 配置读不出来不该导致所有人被当成超限踢下线。

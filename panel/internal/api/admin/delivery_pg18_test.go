@@ -46,6 +46,8 @@ type deliveryHarness struct {
 	router chi.Router
 	nodes  *nodefabric.Service
 	events <-chan realtime.Event
+	// reauthed 是请求主体的 ReauthedRecently，默认 true；测字段级 reauth 时临时关掉
+	reauthed bool
 }
 
 func newDeliveryHarness(t *testing.T, ctx context.Context, app *platformdb.Pool, tenant, actor string,
@@ -58,18 +60,27 @@ func newDeliveryHarness(t *testing.T, ctx context.Context, app *platformdb.Pool,
 	nodes.AttachRealtime(hub)
 
 	h := &handlers{d: Deps{Pool: app, Node: nodes, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	d := &deliveryHarness{t: t, ctx: ctx, tenant: tenant, actor: actor, nodes: nodes, events: events, reauthed: true}
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			c := httpx.WithTenantID(req.Context(), tenant)
 			c = httpx.WithPrincipal(c, &httpx.Principal{Kind: "admin", Audience: "admin",
-				UserID: actor, TenantID: tenant, Permissions: perms, ReauthedRecently: true})
+				UserID: actor, TenantID: tenant, Permissions: perms, ReauthedRecently: d.reauthed})
 			next.ServeHTTP(w, req.WithContext(c))
 		})
 	})
+	// 直接挂处理器：权限、路由级 reauth 与幂等由路由契约测试守，这里证明处理器本身
 	r.Post("/v1/plans/{id}/pools", h.setPlanPools)
 	r.Get("/v1/nodes", h.nodeList)
-	return &deliveryHarness{t: t, ctx: ctx, tenant: tenant, actor: actor, router: r, nodes: nodes, events: events}
+	r.Get("/v1/node-pools", h.listNodePools)
+	r.Post("/v1/node-pools", h.createNodePool)
+	r.Post("/v1/node-pools/{id}", h.updateNodePool)
+	r.Get("/v1/user-groups", h.listUserGroups)
+	r.Delete("/v1/user-groups/{id}", h.deleteUserGroup)
+	r.Post("/v1/users/{id}/group", h.assignUserGroup)
+	d.router = r
+	return d
 }
 
 func (d *deliveryHarness) do(method, path, body string) *httptest.ResponseRecorder {

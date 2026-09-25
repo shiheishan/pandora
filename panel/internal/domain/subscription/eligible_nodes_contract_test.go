@@ -57,6 +57,15 @@ func TestSubscriptionAndPreviewShareOneEligibilityQuery(t *testing.T) {
 		strings.Count(body, `nodefabric.StableProtocolReadySQL("n")`) != 1 {
 		t.Fatal("stable protocol qualification must exist only in the shared query")
 	}
+	// 池限定用户组（R104）同理：谓词只出现在共用查询里，且带订阅主人。
+	if strings.Count(eligible, `nodefabric.PoolAdmitsUserSQL("n.tenant_id", "n.pool_id", "$4::uuid")`) != 1 ||
+		strings.Count(body, `nodefabric.PoolAdmitsUserSQL(`) != 1 {
+		t.Fatal("pool user-group admission must exist only in the shared query")
+	}
+	if !strings.Contains(listNodes, `listEligibleNodesTx(ctx, tx, tenantID, c.UserID, c.PlanVersionID)`) ||
+		!strings.Contains(owned, `listEligibleNodesTx(ctx, tx, tenantID, userID, planVersionID)`) {
+		t.Fatal("both callers must pass the subscription owner into the shared query")
+	}
 	for _, want := range []string{
 		`db.Scope{TenantID: tenantID, ActorID: userID}`,
 		`AND s.status IN ('active','trialing','grace')`,
