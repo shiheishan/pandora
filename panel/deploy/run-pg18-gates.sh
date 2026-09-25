@@ -132,8 +132,8 @@ DOMAINS=(
   "audit|pandora_audit_gate|./internal/platform/audit|run_id|pandora_audit_test_marker|pandora-audit-pg18||"
   "notify|pandora_notify_gate|./internal/domain/notify|run_id|pandora_notify_test_marker|pandora-notify-pg18||"
   # 交付集合（R103、R104）：同一个库里对照节点用户列表、订阅下载、门户预览与后台
-  # 写接口的通知，含节点池限定用户组（00093）与设备识别窗口（00094）。跨两个包，过滤写精确，免得把两个包里别的域拉进来被算作跳过。
-  "delivery|pandora_delivery_gate|./internal/domain/subscription ./internal/api/admin|run_id|pandora_delivery_test_marker|pandora-delivery-pg18||^(TestDeliverySetPG18|TestDeliveryAdminPG18|TestPoolUserGroupsDeliveryPG18|TestPoolUserGroupsAdminPG18|TestDeviceWindowPG18|TestDeviceWindowAdminPG18)$"
+  # 写接口的通知，含节点池限定用户组（00093）、设备识别窗口（00094）与节点一步上线（R108）。跨两个包，过滤写精确，免得把两个包里别的域拉进来被算作跳过。
+  "delivery|pandora_delivery_gate|./internal/domain/subscription ./internal/api/admin|run_id|pandora_delivery_test_marker|pandora-delivery-pg18||^(TestDeliverySetPG18|TestDeliveryAdminPG18|TestPoolUserGroupsDeliveryPG18|TestPoolUserGroupsAdminPG18|TestDeviceWindowPG18|TestDeviceWindowAdminPG18|TestNodeActivatePG18)$"
 )
 
 selected() {

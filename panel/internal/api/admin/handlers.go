@@ -1114,32 +1114,10 @@ func (h *handlers) nodeSetStatus(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, map[string]any{"ok": true, "row_version": req.RowVersion + 1})
 }
 
-// projectNodeLifecycle keeps the legacy Node state machine and the split
-// serving/host state machines in one reviewed mapping. Canary is serviceable
-// for validation but remains absent from subscriber delivery; draining keeps
-// data-plane authentication alive while stopping new subscription allocation.
+// projectNodeLifecycle 是旧状态接口对 nodefabric.ProjectNodeLifecycle 的调用点：
+// 映射只有一份，与一步上线（POST v1/nodes/{id}/activate）共用。
 func projectNodeLifecycle(nodeStatus string, protocolReady bool) (servingStatus, serverStatus string) {
-	var serving, server string
-	switch nodeStatus {
-	case "active", "canary":
-		serving, server = "active", "ready"
-	case "draining":
-		serving, server = "draining", "draining"
-	case "maintenance":
-		serving, server = "disabled", "maintenance"
-	case "unhealthy":
-		serving, server = "disabled", "unhealthy"
-	case "quarantined":
-		serving, server = "disabled", "quarantined"
-	case "retired", "destroyed":
-		serving, server = "retired", "retired"
-	default:
-		serving, server = "draft", "draft"
-	}
-	if !protocolReady && (serving == "active" || serving == "draining") {
-		serving = "disabled"
-	}
-	return serving, server
+	return nodefabric.ProjectNodeLifecycle(nodeStatus, protocolReady)
 }
 
 // nodeRevokeIdentity 吊销节点身份（NODE-014）。
