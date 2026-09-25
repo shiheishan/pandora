@@ -43,6 +43,7 @@
   - `adminops/catalog.go`、`service.go`、admin `handlers.go` 本来就超 800 行，只改函数不重构。
   - 本机全量用 `go test -p 1 -count=1 -timeout 10m ./...`；zsh 下取退出码要用 `$pipestatus`。
 - **⑤ 补充**：
+  - 小项，联调冒烟查出（2026-09-25）：`notify/scan.go` 的「支付通知已排队」等日志把「扫到的条数」当成了「排队条数」。`Enqueue` 是 `ON CONFLICT DO NOTHING`，重复的键会静默跳过，但计数照加，结果 2 小时窗口内每轮扫描都报「已排队 1 条」，看起来像重复入队（实际没有）。改成按实际插入的行数计数（`Enqueue` 返回插入数，或累加 `RowsAffected`，三个扫描都改），加一个 PG18 断言：同一批数据扫第二遍返回 0。
   - 「赠送单履约后通知节点」用后端四加的 `Service.NotifyUsersChanged(ctx, tenantID)`（`nodefabric/nodestream.go`）；同一步把 `cmd/aegis-admin`、`cmd/aegis-public` 里履约通知手写的发布代码改用它，行为不变。
   - 租户级种子里触发器还没带的（系统角色与权限、主题与插槽、其余 system_settings）**不做**：产品里没有建租户入口，等哪天真要多租户再立项（协调会话已报用户）。以后新增内置模板或降级开关要同步改 `app.seed_tenant_defaults`：给开关也补一条和模板一样的一致性测试，放进 ⑤。
   - ⑤ 内容较多，可以拆成两个提交（例如「缺陷与文案」「通知与写入点」），每个提交推送后都看 CI，全部做完再报告。
