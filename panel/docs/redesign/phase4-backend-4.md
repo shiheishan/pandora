@@ -30,12 +30,14 @@
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R113。
+- **接力（2026-09-25）**：原会话上下文将满，用户在同一 worktree 开新会话**待命**。目前没有指派的活；联调冒烟 ④ 查出属于本范围（下发、节点池、用户组、设备、节点上线）的问题时，协调会话追加在这里再开工。待命期间不写代码，先 `git merge feat/panel-redesign` 跟上主线，读完本文件与 `phase3-common.md` 第 11 节就停。
+- 用户定案（2026-09-25）：**节点池状态（draining / disabled）维持现状，不影响下发**，只是后台上的标签。不要改下发三处口径。
 - ④ 的验收结论：与退役对称的单事务、逐边过触发器（临时删边能证明）、投影提到 nodefabric 只留一份、已 active 先于版本号幂等、服务器进 ready 不要求控制节点（与 `server_admin.go` 规则一致）、服务器新进 ready 时补发租户级通知、两种 warnings，都认可，已写成 R113。
 - ③ 的验收结论：窗口唯一来源是库函数（STABLE，缺行与非法值按 5，不放宽不归零）、视图列不变让所有消费方自动跟随、节点列表改调同一函数、清理截止 70 分钟、`DeviceWindowMinutes` 只做写入校验与清理常量、单测钉住与迁移一致且源码不再写死窗口、Down 恢复写死 5 分钟并保留设置行，都认可，已写成 R111。`GET v1/devices` 读模式与宽容值吞错的既有写法不动。
 - **④ 请尽快**：前端收尾 ③ 的上线按钮和设备窗口已写好，只等你的 ④ 合入主线就能一起合；冒烟也要在 ④ 之后改用新接口。
 - ④ 的响应形状已更正（R110）：`AdminNode`，与 `POST v1/nodes/{id}/retire`、`PATCH v1/nodes/{id}` 同一个形状，另带 `warnings: string[]`。前端收尾 ③ 的上线按钮和设备窗口已写好在等你的 ③、④，请按顺序做完。
 - ② 的验收结论：独立关联表而不用 policy 或数组列、`PoolAdmitsUserSQL` 只收两种写死参数组合（其余 panic）、`listEligibleNodesTx` 带用户并有契约测试钉住调用方、处理器里按字段判 reauth（与中间件同一个 `ReauthedRecently` 标志、先于一切校验与写入）、名单没变不审计不通知、删组被名单引用回 409 且外键兜底、换组成功即通知、顺手把两处非法路径 id 从 500 改成 404，都认可。名单上限 100 认可。已写成 R109。
-- 你提的「节点池 status（draining / disabled）不影响下发」记下了，属既有口径，本阶段不动，协调会话会报给用户。
+- 你提的「节点池 status（draining / disabled）不影响下发」已报用户，用户定维持现状（见上）。
 - **新增第 ④ 步：`POST v1/nodes/{id}/activate`（R108）**。前端收尾核对代码发现：接入流程只把节点推到 attesting，之后只有旧 `POST v1/nodes/{id}/status` 能往前推，而 `status:batch` 启用要求服务器 ready、服务器 ready 又要求名下有 active 节点，新服务器 + 新节点在新前端里上不了线。做法照 R57 退役：一个事务里按 00005 的合法边逐条推进到 active（每步过触发器）、`serving_status` 用 `projectNodeLifecycle` 同一套投影、服务器同事务进 ready、审计、提交后通知节点；已 active 幂等回 200；前置条件的具体判据按代码定，写进报告。PG18 测试要覆盖：新服务器 + 新接入节点调一次就能被下发用户（节点划进池、池绑到套餐）；每种不满足前置条件的情况回 409；非法状态不绕过触发器。
 - ① 的验收结论：`ListNodeUsers` 去掉无池公共节点一支并加上 `pnp.tenant_id` 条件、`setPlanPools` 提交后通知、`NotifyUsersChanged` 放在 `nodestream.go`、后台节点列表 `DeliveryState` 加「是否在池」参数、新建 `delivery` 门禁域且过滤写精确，都认可。② 的池名单变化与用户换组一律用 `NotifyUsersChanged`；`delivery` 域的测试名单加新用例时同步更新过滤正则。
 - `cmd/aegis-admin`、`cmd/aegis-public` 里履约通知手写的发布代码改用 `NotifyUsersChanged`，这件**交给后端三**（它第 ⑤ 步本来就要给赠送单加通知），你不要动 `cmd/`。

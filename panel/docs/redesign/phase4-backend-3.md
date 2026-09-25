@@ -34,6 +34,12 @@
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R113。
+- **报告前先改写分支（用户 2026-09-25 授权）**：`fe0e69a` 误提交了 22MB 的 `panel/aegis-admin`，已推送；`5f240c4` 虽然删了，文件仍在历史里，合入后会永久留在公开仓库。改写只动你自己的 `feat/panel-redesign-be3`，不动主线。参考做法：
+  1. `git branch be3-backup HEAD`
+  2. `git reset --hard e7c72d0`，`git cherry-pick -n fe0e69a`，`git rm --cached -q panel/aegis-admin && rm -f panel/aegis-admin`，把 `5f240c4` 里 `panel/.gitignore` 的改动并进来（`git show 5f240c4 -- panel/.gitignore | git apply --index`），`git commit -C fe0e69a`；`5f240c4` 整个丢掉
+  3. `git merge feat/panel-redesign`（重做主线合并，冲突照原样解决），再 `git cherry-pick` 之后的提交（`220a9dd` 及以后）
+  4. 自检：`git diff be3-backup HEAD` 必须为空（改写不改任何内容）；`git log --oneline feat/panel-redesign..HEAD -- panel/aegis-admin` 必须无输出
+  5. `git push --force-with-lease origin feat/panel-redesign-be3`，等 CI，报告里写新旧提交号对照；`be3-backup` 留到协调会话合入后再删
 - ④ 的验收结论：租户只由迁移 00010 建（事实已写进 R112）；种子放数据库触发器而不是 Go（租户没有 Go 入口，将来任何建租户方式都经过这张表）；开关选「建租户时补种」而不是 POST upsert（列表与切换仍以库里的行为准，essential 标记留在数据里）；`app.seed_tenant_defaults` 收回 aegis_app 与 PUBLIC 执行权、只经 SECURITY DEFINER 触发器进入、切会话租户后恢复；模板正文用脚本从四个原迁移摘出并有逐字比对的单元测试（改一个字能报出）；夹具改为依赖触发器且保留原意；`TestScanQuotaCountsTrafficPacksPG18` 只留站内信模板，都认可。
 - **接力须知（新会话先读）**：
   - 这个 worktree 的 PG18 夹具 id 前缀已用 `8b…`（① 的 phase4 用例）、`8c…`（② ③ 的套餐用例，③ 用 `8c…02xx`）；新用例先 grep 全仓确认前缀没人用。
