@@ -16,9 +16,10 @@ checkout.ts: 确认订单（门户-03 结账）；支付方式、新购（order_
 orders.ts: 我的订单（门户-04）；列表（status 逗号多值、未知状态 400、limit / offset、counts、按下单时间倒序）、明细、取消（非 UUID 400、重复取消 already_terminal），读前把超时待支付单转 expired
 wallet.ts: 钱包（门户-05）；余额与流水（外框余额胶囊也读它）、充值建单（balance_topup_create、200）、礼品卡预览与兑换（gift_card_redeem，流量进流量包余额、延期要有订阅、盲盒固定抽第二项）、我的兑换记录
 referral.ts: 邀请返利（门户-06）；自带按 PortalState 挂的佣金状态（WeakMap，切场景跟着重建）：GET v1/me/invite（没有码时懒生成 8 位码）、GET v1/me/commission（外框菜单的可用佣金提示也读它；可用 = 账本余额 − 未过账在途提现，5.A D-F-1；legacy 去掉 R69 字段）、申请提现（commission_withdrawal_request，检查顺序照 RequestWithdrawal）、转余额（commission_transfer_to_balance，记进钱包余额与流水）；empty 无码无记录，multi 有一笔审核中提现且邀请码已用满
-messages.ts: 消息（门户-08）；GET v1/me/notifications（外框铃铛未读数轮询它）、GET v1/me/announcements（置顶优先，最多 20 条）
+messages.ts: 消息（门户-08）；按 PortalState 挂的站内信（WeakMap）：GET v1/me/notifications（外框铃铛未读数也轮询它；limit 1–100 默认 30、unread=1、unread 计数全量）、单条已读（他人或不存在也 200，非 UUID 500）、全部已读、GET v1/me/announcements（置顶优先，最多 20 条）；empty 无站内信
 account.ts: 账号安全（门户-10）；POST v1/me/quick-login 签发快捷登录令牌
-tickets.ts / help.ts: 其余两个页面，目前为空壳
+tickets.ts: 工单支持（门户-07）；按 PortalState 挂的工单（WeakMap）：分类、列表（不带 messages、related_order 恒 null）、详情（message_count 0、last_reply_at 零值、related_order）、新建（support_ticket_create，201，空标题取正文首行，未结满 5 个 409，订单须是本人的）、回复（_user_reply，resolved 重开、closed 409）、关闭（_user_close，已关闭 404）、撤回（必须带 JSON 体、客服回复过 409）；四张种子覆盖等待回复 / 客服已回复 / 已关闭带关联订单 / 已撤回，multi 另加三张未结凑满 5，empty 无工单，legacy 去掉 R60 字段
+help.ts: 帮助（门户-09），目前为空壳
 读接口经 fixtures.gate 过一道，error / slow 场景对它们生效；外框的余额与佣金也在内，所以 error 场景下外框同样显示失败态
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

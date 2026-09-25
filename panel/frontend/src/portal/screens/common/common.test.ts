@@ -1,12 +1,14 @@
 /**
- * [INPUT]: 依赖 vitest，依赖同目录 traffic / orders / clients / subscriptions 的纯函数与 schema，依赖 ../subs/labels
+ * [INPUT]: 依赖 vitest，依赖 ../../../core/api 的 ApiError，依赖同目录 traffic / orders / clients / subscriptions / intent 的纯函数与 schema，依赖 ../subs/labels
  * [OUTPUT]: 无（测试文件）
- * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、订单标题与期限、深链与协议名、主订阅选择、schema 对契约形状（含待补字段缺席）的收放
+ * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、订单标题与期限、深链与协议名、主订阅选择、schema 对契约形状（含待补字段缺席）的收放、幂等键的复用与丢弃（成功或 4xx reset、断网与 5xx 保留）与刚下待支付单的取回
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { fetchStats, metaLabel } from '../subs/labels'
+import { ApiError } from '../../../core/api'
 import { importClients, protocolLabel, rateLabel } from './clients'
+import { createIntentKey, createPlacedOrder, endsIntent } from './intent'
 import { expiryNote, intervalLabel, orderRowSchema, orderTitle } from './orders'
 import { canRenew, pickPrimary, subscriptionSchema, usageReportSchema, type Subscription } from './subscriptions'
 import { buildUsageBars, bytesParts, expiryInfo, pickTrafficQuota, projectUsage, resetAtOf, trafficSummary, usageLevel } from './traffic'
@@ -205,5 +207,40 @@ describe('clients', () => {
     expect(rateLabel(1)).toBeNull()
     expect(rateLabel(1.5)).toBe('×1.5')
     expect(rateLabel(0.333)).toBe('×0.33')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 幂等键口径（协调会话定）：成功或 4xx 业务拒绝即 reset，断网与 5xx 保留键
+// ---------------------------------------------------------------------------
+describe('intent', () => {
+  it('同样的请求复用键、改参数换键，reset 后同样的请求也换键', () => {
+    let n = 0
+    const key = createIntentKey(() => `k${++n}`)
+    expect(key({ amount: 1 })).toBe('k1')
+    expect(key({ amount: 1 })).toBe('k1')
+    expect(key({ amount: 2 })).toBe('k2')
+    key.reset()
+    expect(key({ amount: 2 })).toBe('k3')
+  })
+
+  it('4xx 结束意图；断网（status 0）、5xx 与非 ApiError 保留键', () => {
+    const err = (status: number) => new ApiError({ status, code: status === 0 ? 'network_error' : status >= 500 ? 'internal_error' : 'conflict', message: 'x' })
+    expect([400, 404, 409, 422, 429].map((s) => endsIntent(err(s)))).toEqual([true, true, true, true, true])
+    expect([0, 500, 503].map((s) => endsIntent(err(s)))).toEqual([false, false, false])
+    expect(endsIntent(new Error('x'))).toBe(false)
+  })
+
+  it('刚下的待支付单：同样的请求在 30 分钟内取回，换参数、过期或 forget 后取不到', () => {
+    let now = 0
+    const placed = createPlacedOrder<string>(() => now)
+    placed.remember({ plan: 'p', price: 'a' }, 'order-1')
+    expect(placed.recall({ plan: 'p', price: 'a' })).toBe('order-1')
+    expect(placed.recall({ plan: 'p', price: 'b' })).toBeNull()
+    now = 30 * 60_000
+    expect(placed.recall({ plan: 'p', price: 'a' })).toBeNull()
+    now = 0
+    placed.forget()
+    expect(placed.recall({ plan: 'p', price: 'a' })).toBeNull()
   })
 })
