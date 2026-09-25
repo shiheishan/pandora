@@ -9,7 +9,8 @@ users.ts: 用户（后台-03）：48 个确定性种子用户（前 6 个 id 与
 dash.ts: 仪表盘（后台-01）八个只读接口，照契约按权限回 404、tasks 条目按各自读权限过滤（withdrawals_pending 挂 marketing.commission.read）、校验 currency / days / range / limit / snapshot_at 并回契约里的 422；数据按日期确定性生成，概览今日 / 昨日与收入趋势末两天同源；含全部待补·后端字段
 marketing.ts: 营销（后台-06）；优惠券、礼品卡（模板 / 统计 / 批次 / 掩码卡码 / 一次性导出 CSV / 使用记录）、佣金总览与提现、分销参数，权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器，按 DisallowUnknownFields 拒绝未知字段；另临时挂了 GET v1/plans（营销页读套餐名与价格用，plans 模块在登记表里排在前面，后台前端一补上后自动失效，届时删除）
 tickets.ts: 工单（后台-02）：队列（逗号分隔多状态、指派人、q、breached、limit/offset、后端同款排序）、详情、回复与内部备注、指派、改状态（人工升级提到 high、closed_reason）、SLA 扫描、可指派目录（固定三位客服 + 当前管理员）、快捷回复四接口；写接口照契约用幂等 scope，omitempty 字段为空时省略，related_order 恒 null、详情 last_reply_at 零值，与后端现状一致
-nodes.ts: 节点与服务器（后台-07）；第 ② 步的节点全套接口（列表、新建 / 编辑 / 复制 / 迁移 / 排序 / 批量改状态 / 退役 / 删除、REALITY、一键安装令牌、服务端令牌、吊销身份、发布配置、探针、单节点路由、身份），按合法状态边、保留规则 5、协议 schema 与 DisallowUnknownFields 校验，读接口按名字抹掉敏感键；服务器、节点池、全局路由暂只给节点页要的读接口，第 ③ 步补全
+nodes.ts: 节点与服务器（后台-07）的节点全套接口（列表、新建 / 编辑 / 复制 / 迁移 / 排序 / 批量改状态 / 退役 / 删除、REALITY、一键安装令牌、服务端令牌、吊销身份、发布配置、探针、单节点路由、身份），按合法状态边、保留规则 5、协议 schema 与 DisallowUnknownFields 校验，读接口按名字抹掉敏感键；把 nodes-infra.ts 的路由表并入同一个 MockModule，节点存储以参数传给它
+nodes-infra.ts: 节点与服务器（后台-07）第 ③ 步：服务器（列表 status / q、新建、详情、下属节点、PATCH 清空与容量下限、合法边改状态与进入 ready 的前提、删除仅草稿或已退役并级联静默名下节点、安装令牌 reauth + 幂等）、节点池增删改（删除按节点 / 套餐 / 未用令牌 409）、全局出站与分流（revision 为规范 JSON 的 sha256、reauth + 幂等、删除被节点私有规则引用的出站 409）；导出与单节点路由共用的 validateRouting、空体判断 emptyBody、心跳保活 keepAlive（种子里在线的行每 10 秒刷新心跳，定时器 unref）
 node-schemas.ts: 协议 schema 夹具，由 Go 的 nodefabric.ProtocolSchemas() 原样导出（含 null 数组与两个 legacy 协议），nodes.ts 与页面单测共用
 plans.ts / billing.ts / content.ts / system.ts / security.ts: 其余模块，未接入的为空壳
 

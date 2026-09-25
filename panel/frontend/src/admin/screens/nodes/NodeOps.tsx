@@ -12,7 +12,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Modal, Select, useToast } from '../../../ui'
 import { MOVE_BLOCKED_HINT, canMove, canTransition, moveBlockers } from './logic'
 import css from './nodes.module.css'
-import { useCan, useFailure, useIntentKey, useInvalidateNodes, useServerOptions } from './queries'
+import { useCan, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
 import { adminNodeSchema, batchStatusResponse, deletedResponse, publishResponse, type NodeRow } from './schemas'
 
 type Pending = 'publish' | 'toggle' | 'retire' | 'delete' | null
@@ -23,7 +23,7 @@ export function NodeOps({ node, onGone }: { node: NodeRow; onGone: () => void })
   const toast = useToast()
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
-  const servers = useServerOptions()
+  const servers = useServers()
   const publishIntent = useIntentKey()
   const toggleIntent = useIntentKey()
   const retireIntent = useIntentKey()
@@ -220,7 +220,7 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const intent = useIntentKey()
-  const servers = useServerOptions()
+  const servers = useServers()
   const [name, setName] = useState(`${node.name} 副本`)
   const [target, setTarget] = useState(node.server_id ?? '')
   const [copyRouting, setCopyRouting] = useState(true)

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./logic 的全部纯函数，依赖 ./schemas 的 schema（核对 Go 的 null 切片与指针字段），依赖 ../../../../dev/mock/admin/node-schemas 的真实 schema 夹具
  * [OUTPUT]: 对外提供节点页纯逻辑的单元测试
- * [POS]: admin/screens/nodes 的单元测试：状态映射与筛选搜索、心跳文案、迁移资格（保留规则 5）与 409 资产清单、合法状态边与批量取舍、排序提交项、协议表单（由真实 schema 推字段、拍平 / 还原、敏感字段、REALITY、422 键映射）、PATCH 差量不回写协议、路由规则互转与兜底校验、带宽分桶；界面交互在浏览器里对 dev/mock/admin/nodes.ts 验收
+ * [POS]: admin/screens/nodes 的单元测试：状态映射与筛选搜索、心跳文案、迁移资格（保留规则 5）与 409 资产清单、合法状态边与批量取舍、排序提交项、协议表单（由真实 schema 推字段、拍平 / 还原、敏感字段、REALITY、422 键映射）、PATCH 差量不回写协议、路由规则互转与兜底校验、新规则插在兜底之前、出站行校验、带宽分桶；界面交互在浏览器里对 dev/mock/admin/nodes.ts 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -26,8 +26,12 @@ import {
   protocolChanged,
   protocolFields,
   realityEnabled,
+  insertRule,
+  renameOutbound,
   routeToRow,
+  rowsToOutbounds,
   rowsToRoutes,
+  rulesUsing,
   toFormValues,
   toProtocolConfig,
   validateBasic,
@@ -257,6 +261,43 @@ describe('routing rows', () => {
       { kind: 'domain', value: '', outbound: '', enabled: true, note: '' },
     ])
     expect(bad.errors).toEqual({ 0: '兜底规则必须是最后一条启用的规则', 1: '填匹配值' })
+  })
+
+  it('inserts new rules before a trailing fallback', () => {
+    const add = { kind: 'domain' as const, value: 'x.com', outbound: 'direct', enabled: true, note: '' }
+    const fb = { kind: 'fallback' as const, value: '', outbound: 'US', enabled: true, note: '' }
+    expect(insertRule([fb], add)).toEqual([add, fb])
+    expect(insertRule([add], fb)).toEqual([add, fb])
+    expect(insertRule([], add)).toEqual([add])
+  })
+
+  it('counts and renames rules that point at an outbound', () => {
+    const rows = [
+      { kind: 'domain' as const, value: 'a', outbound: 'us-lax-01', enabled: true, note: '' },
+      { kind: 'fallback' as const, value: '', outbound: 'direct', enabled: true, note: '' },
+    ]
+    expect(rulesUsing(rows, 'US-LAX-01')).toBe(1)
+    expect(rulesUsing(rows, 'HK')).toBe(0)
+    expect(renameOutbound(rows, 'US-LAX-01', ' US-SJC ').map((r) => r.outbound)).toEqual(['US-SJC', 'direct'])
+    expect(renameOutbound(rows, '', 'x')).toEqual(rows)
+  })
+
+  it('validates outbound rows like validateRoutingPayload', () => {
+    const ok = rowsToOutbounds([{ tag: ' US-LAX-01 ', type: 'vless', settings: '{"server":"a"}' }, { tag: 'hk', type: 'trojan', settings: '' }])
+    expect(ok.errors).toEqual({})
+    expect(ok.outbounds).toEqual([
+      { tag: 'US-LAX-01', type: 'vless', settings: { server: 'a' } },
+      { tag: 'hk', type: 'trojan', settings: {} },
+    ])
+    const bad = rowsToOutbounds([
+      { tag: 'Direct', type: 'vless', settings: '{}' },
+      { tag: 'hk', type: 'vless', settings: '{' },
+      { tag: 'HK', type: 'vless', settings: '{}' },
+      { tag: '', type: 'vless', settings: '[]' },
+      { tag: 'x'.repeat(65), type: 'vless', settings: '{}' },
+      { tag: 'arr', type: 'vless', settings: '[1]' },
+    ])
+    expect(bad.errors).toEqual({ 0: '不能叫 direct 或 block', 1: 'settings 不是合法的 JSON', 2: '标签重复', 3: '标签 1–64 字', 4: '标签 1–64 字', 5: 'settings 必须是 JSON 对象' })
   })
 })
 

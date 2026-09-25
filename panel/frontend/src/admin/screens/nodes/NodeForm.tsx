@@ -32,7 +32,7 @@ import {
   type ProtocolField,
 } from './logic'
 import css from './nodes.module.css'
-import { useCan, useFailure, useIntentKey, useInvalidateNodes, usePoolOptions, useProtocolSchemas, useServerOptions } from './queries'
+import { useCan, useFailure, useIntentKey, useInvalidateNodes, usePools, useProtocolSchemas, useServers } from './queries'
 import { adminNodeSchema, realityKeypairResponse, type AdminNode, type NodeRow, type ProtocolSchema } from './schemas'
 
 export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; onSaved: (saved: AdminNode) => void; onCancel?: () => void }) {
@@ -43,8 +43,8 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; on
   const invalidate = useInvalidateNodes()
   const intent = useIntentKey()
   const schemas = useProtocolSchemas()
-  const servers = useServerOptions()
-  const pools = usePoolOptions()
+  const servers = useServers()
+  const pools = usePools()
   const creating = node === null
   const writable = can(creating ? 'node.provision' : 'node.write')
 

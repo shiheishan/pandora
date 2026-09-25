@@ -12,7 +12,7 @@ dash/: 仪表盘（后台-01），八个只读接口拼成的落地页；见 das
 marketing/: 营销（后台-06）已接入：优惠券、礼品卡、佣金与提现；见 marketing/CLAUDE.md
 tickets/: 工单（后台-02），左队列右详情，选中、筛选与搜索都在地址上；见 tickets/CLAUDE.md
 users/: 用户（后台-03），列表 + 详情抽屉已接入（第 ③ 步），其余四个标签第 ④ 步接入；见 users/CLAUDE.md
-nodes/: 节点与服务器（后台-07），第 ② 步接入节点标签（列表 + 五个标签的详情抽屉），服务器 / 节点池 / 路由待第 ③ 步；见 nodes/CLAUDE.md
+nodes/: 节点与服务器（后台-07）四个标签已接入：节点（列表 + 五标签详情抽屉）、服务器（卡片 + 四标签详情抽屉）、节点池、全局路由；见 nodes/CLAUDE.md
 plans/ billing/ content/ system/ security/: 其余模块目录，index.tsx 默认导出页面组件，未接入的渲染 Placeholder
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

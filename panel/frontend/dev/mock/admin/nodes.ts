@@ -1,11 +1,12 @@
 /**
- * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 MockModule / MockContext / MockResult / Json，依赖 ./node-schemas 的协议 schema 夹具
+ * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 MockModule / MockContext / MockResult / Json，依赖 ./nodes-infra 的服务器 / 节点池 / 全局路由数据、infraRoutes 与 validateRouting，依赖 ./node-schemas 的协议 schema 夹具
  * [OUTPUT]: 对外提供 nodes 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」假接口，归后台前端二。第 ② 步做节点：列表（含 R27 分页与 R46 国家、24h 流量、探针）、新建 / 编辑 / 复制 / 迁移（保留规则 5）/ 排序 / 批量改服务状态（合法边）/ 退役（R57）/ 删除、协议 schema、REALITY 密钥、一键安装令牌、服务端令牌（R13）、吊销身份、发布配置、探针、单节点路由（R26）、节点身份（R46）；服务器、节点池、全局路由目前只给节点页要的读接口，第 ③ 步补全。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器
+ * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」假接口，归后台前端二。节点在这里：列表（含 R27 分页与 R46 国家、24h 流量、探针）、新建 / 编辑 / 复制 / 迁移（保留规则 5）/ 排序 / 批量改服务状态（合法边）/ 退役（R57）/ 删除、协议 schema、REALITY 密钥、一键安装令牌、服务端令牌（R13）、吊销身份、发布配置、探针、单节点路由（R26，校验与全局共用 validateRouting）、节点身份（R46）；服务器、节点池、全局路由在 nodes-infra.ts（第 ③ 步），由 infraRoutes(store) 并入本模块，数据与节点共享。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
+import { emptyBody, globalRouting, infraRoutes, keepAlive, pools, servers, validateRouting } from './nodes-infra.ts'
 import { NODE_PROTOCOL_SCHEMAS } from './node-schemas.ts'
 
 // ---------------------------------------------------------------------------
@@ -24,38 +25,6 @@ const unknownField = (body: Json, allowed: readonly string[]) => Object.keys(bod
 
 type Schema = { node_type: string; version: number; status: string; required: readonly string[] | null; allowed_properties: readonly string[] | null; enums?: Readonly<Record<string, readonly string[]>>; methods?: readonly string[]; property_types?: Readonly<Record<string, string>> }
 const SCHEMAS = NODE_PROTOCOL_SCHEMAS.schemas as unknown as readonly Schema[]
-
-// ---------------------------------------------------------------------------
-// 服务器、节点池、全局路由（节点页的选择项；完整接口第 ③ 步补）
-// ---------------------------------------------------------------------------
-const server = (name: string, region: string, ip: string, status = 'ready', capacity = 8) => ({
-  id: randomUUID(),
-  name,
-  status,
-  region,
-  public_ipv4: ip,
-  capacity_nodes: capacity,
-  node_count: 0,
-  cpu_bp: status === 'ready' ? 3000 + Math.floor(Math.random() * 5000) : null,
-  mem_used_mb: status === 'ready' ? 2400 : null,
-  mem_total_mb: status === 'ready' ? 4096 : null,
-})
-const servers = [server('hk-hkg-edge-1', '香港', '103.151.12.8'), server('jp-tyo-edge-2', '东京', '45.76.201.33'), server('sg-sin-edge-1', '新加坡', '139.180.140.7'), server('us-lax-edge-1', '洛杉矶', '149.28.72.190'), server('de-fra-edge-1', '法兰克福', '78.47.110.2', 'maintenance')]
-const pools = [
-  { id: randomUUID(), code: 'asia', name: '亚太', status: 'active' },
-  { id: randomUUID(), code: 'global', name: '全球', status: 'active' },
-  { id: randomUUID(), code: 'beta', name: '内测', status: 'active' },
-]
-const globalRouting = {
-  outbounds: [
-    { tag: 'US-LAX-01', type: 'vless', settings: { server: 'us1.pandora.run', port: 443 } },
-    { tag: 'HK-RELAY', type: 'shadowsocks', settings: { server: 'hk-relay.pandora.run', port: 8388 } },
-  ],
-  routes: [
-    { priority: 10, matcher: { domain_suffix: ['netflix.com', 'nflxvideo.net'] }, outbound_tag: 'US-LAX-01', enabled: true, note: '流媒体' },
-    { priority: 20, matcher: { port: [25, 465, 587] }, outbound_tag: 'block', enabled: true, note: '禁止发信' },
-  ],
-}
 
 // ---------------------------------------------------------------------------
 // 节点
@@ -130,11 +99,12 @@ const store: Node[] = [
   node({ name: '香港 02 · IPLC', node_type: 'hysteria2', serving_status: 'active', country_code: 'HK', server_port: 8443, online_users: 288, online_ips: 301, traffic_bytes_24h: Math.round(1.12 * 1024 * GB), protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key', 'bandwidth': { up: 200, down: 1000 } } }, 0),
   node({ name: '东京 03', node_type: 'trojan', serving_status: 'active', country_code: 'JP', online_users: 356, online_ips: 402, traffic_bytes_24h: Math.round(1.49 * 1024 * GB), protocol_config: { network: 'tcp', tls: 2, reality_settings: { dest: 'www.apple.com:443', server_name: 'www.apple.com' } } }, 1),
   node({ name: '新加坡 02', node_type: 'shadowsocks', serving_status: 'active', country_code: 'SG', server_port: 8388, last_heartbeat_at: ago(900), online_users: 0, traffic_bytes_24h: 864 * GB, protocol_config: { cipher: 'aes-256-gcm' } }, 2),
-  node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'draining', country_code: 'US', online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' } }, 3),
-  node({ name: '首尔 01 · 灰度', node_type: 'tuic', serving_status: 'disabled', country_code: 'KR', protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' } }, 1),
+  node({ name: '洛杉矶 01', node_type: 'vless', serving_status: 'draining', country_code: 'US', pool_id: pools[1]!.id, online_users: 96, online_ips: 110, traffic_bytes_24h: 540 * GB, protocol_config: { network: 'ws', tls: 0, ws_path: '/ws' } }, 3),
+  node({ name: '首尔 01 · 灰度', node_type: 'tuic', serving_status: 'disabled', country_code: 'KR', pool_id: pools[2]!.id, protocol_config: { cert_path: '/etc/pandora/tls.crt', key_path: '/etc/pandora/tls.key' } }, 1),
   node({ name: '新加坡 03（草稿）', node_type: 'anytls', serving_status: 'draft', country_code: 'SG', last_heartbeat_at: null, identity_serial: null, serverToken: { present: false }, protocol_config: {} }, 2),
-  node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 0),
+  node({ name: '台北 01', node_type: 'vmess', serving_status: 'retired', country_code: 'TW', last_heartbeat_at: ago(86400 * 9), protocol_config: { network: 'ws', tls: 0 } }, 5),
 ]
+keepAlive(store, (n) => n.serving_status !== 'retired' && n.status !== 'destroyed' && !n.identityRevoked)
 store[0]!.routing = { outbounds: [], routes: [{ priority: 10, matcher: { domain_suffix: ['openai.com'] }, outbound_tag: 'US-LAX-01', enabled: true, note: '' }] }
 
 function listRow(n: Node) {
@@ -143,7 +113,7 @@ function listRow(n: Node) {
   const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
   const delivered = n.serving_status === 'active' && !!n.last_heartbeat_at && Date.now() - new Date(n.last_heartbeat_at).getTime() < 600_000
   const note = delivered ? '' : n.serving_status !== 'active' ? '服务状态不是 active，不会下发给用户' : !n.last_heartbeat_at ? '从未心跳，不会下发给用户' : '超过 10 分钟没有心跳，已停止下发'
-  const cpu = srv?.cpu_bp == null ? null : srv.cpu_bp / 100
+  const cpu = srv?.probe ? srv.probe.cpu_bp / 100 : null
   return {
     id: n.id,
     node_no: n.node_no,
@@ -185,10 +155,10 @@ function listRow(n: Node) {
     online_ips: n.online_ips,
     traffic_bytes_24h: n.traffic_bytes_24h,
     cpu_percent: cpu,
-    mem_percent: srv?.mem_used_mb ? Math.round((srv.mem_used_mb / srv.mem_total_mb!) * 1000) / 10 : null,
+    mem_percent: srv?.probe ? Math.round((srv.probe.mem_used_mb / srv.probe.mem_total_mb) * 1000) / 10 : null,
     metrics_at: cpu === null ? null : ago(20),
     traffic_bytes: n.traffic_bytes_24h * 30,
-    granted_plans: n.pool_id === pools[0]!.id ? ['专业版', '团队版'] : null,
+    granted_plans: pool?.plans.length ? pool.plans : null,
   }
 }
 
@@ -269,19 +239,7 @@ const conflict = (n: Node) => err(409, 'conflict', '节点已被其他人修改�
 // ---------------------------------------------------------------------------
 export const nodes: MockModule = {
   routes: {
-    'GET /v1/servers': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
-      const rows = servers.map((s) => ({ ...s, node_count: store.filter((n) => n.server_id === s.id && n.status !== 'destroyed').length }))
-      ctx.send(200, { servers: rows, total: rows.length })
-    },
-    'GET /v1/node-pools': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
-      ctx.send(200, { pools: pools.map((p) => ({ ...p, region: '', nodes: store.filter((n) => n.pool_id === p.id).length, active_nodes: store.filter((n) => n.pool_id === p.id && n.serving_status === 'active').length, plans: 2 })) })
-    },
-    'GET /v1/nodes/routing': (ctx) => {
-      if (!ctx.requirePermission('node.read')) return
-      ctx.send(200, { revision: 'a3f1c0de', ...globalRouting, online_nodes: store.filter((n) => n.serving_status === 'active').length })
-    },
+    ...infraRoutes(store),
     'GET /v1/node-protocol-schemas': (ctx) => {
       if (!ctx.requirePermission('node.read')) return
       ctx.send(200, NODE_PROTOCOL_SCHEMAS)
@@ -469,7 +427,7 @@ export const nodes: MockModule = {
     'DELETE /v1/nodes/:id': async (ctx) => {
       if (!ctx.requirePermission('node.lifecycle') || !ctx.requireReauth()) return
       const body = await ctx.body()
-      if (!body || ctx.req.headers['content-length'] === '0') return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
+      if (!body || emptyBody(ctx)) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
       if (int(body.row_version) && body.row_version !== n.row_version) return reply(ctx, conflict(n))
@@ -541,15 +499,8 @@ export const nodes: MockModule = {
       if (body.row_version !== n.row_version) return reply(ctx, conflict(n))
       const outbounds = (Array.isArray(body.outbounds) ? body.outbounds : []) as Array<{ tag: string; type: string; settings?: unknown }>
       const routes = (Array.isArray(body.routes) ? body.routes : []) as Json[]
-      const tags = new Set(['direct', 'block', ...outbounds.map((o) => o.tag.toLowerCase()), ...globalRouting.outbounds.map((o) => o.tag.toLowerCase())])
-      const keys = ['domain', 'domains', 'domain_suffix', 'domain_suffixes', 'ip', 'ip_cidr', 'ip_cidrs', 'port', 'ports', 'network', 'networks', 'source', 'source_ip_cidr', 'source_cidrs', 'source_port', 'source_ports']
-      for (const [i, r] of routes.entries()) {
-        if (!tags.has(text(r.outbound_tag).toLowerCase())) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { routes: `第 ${i + 1} 条规则指向不存在的出站` })
-        const m = (r.matcher ?? {}) as Json
-        if (Object.keys(m).some((k) => !keys.includes(k))) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { routes: `第 ${i + 1} 条规则的匹配类型不支持` })
-        const lastEnabled = routes.map((x, j) => (x.enabled ? j : -1)).filter((j) => j >= 0).at(-1)
-        if (Object.keys(m).length === 0 && r.enabled && i !== lastEnabled) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { routes: '空匹配兜底规则必须放在最后' })
-      }
+      const bad = validateRouting(outbounds, routes, globalRouting.outbounds.map((o) => o.tag))
+      if (bad) return reply(ctx, bad)
       n.routing = { outbounds: outbounds.map((o) => ({ tag: o.tag, type: o.type, settings: o.settings ?? {} })), routes: routes.map((r, i) => ({ priority: int(r.priority) || (i + 1) * 10, matcher: r.matcher as Json, outbound_tag: text(r.outbound_tag), enabled: r.enabled === true, note: text(r.note) })) }
       touch(n)
       ctx.send(200, { ok: true, row_version: n.row_version })
