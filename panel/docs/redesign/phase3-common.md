@@ -110,4 +110,4 @@
 
 ### 10.6 推送与报告
 
-与第 5、8 节相同：每步一个提交、推送自己的分支跑 CI（Pandora NativeCore 里的 panel-frontend 任务必须绿）、停下报告等验收。做事前先 `git merge feat/panel-redesign` 同步主线。
+与第 5、8 节相同：每步一个提交、推送自己的分支跑 CI（Pandora NativeCore 里的 panel-frontend 任务必须绿）、停下报告等验收。只改前端和文档的推送不会触发 Panel PostgreSQL 18 gates（它只看 Go 路径），这时报告只写 NativeCore 的运行号即可。做事前先 `git merge feat/panel-redesign` 同步主线。
