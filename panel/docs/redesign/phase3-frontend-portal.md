@@ -37,7 +37,7 @@ D-E-3、D-F-2、D-F-3。
 **进度**：① 概览与我的订阅 `52e7726`（合并 676694c）、② 选购套餐与结账 `ea55742`（合并 860c3e3）、③ 订单与钱包 `cd690c4` + `0b0543d`（合并 8144a5d；NativeCore 36084205208 全绿）已验收合入。**下一步 ④ 邀请返利。** 2026-09-24 ③ 之后上下文用完，同一 worktree 由新会话接力：先读 `phase3-common.md`、本文件全文，再 `git merge feat/panel-redesign`。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R76。
+- 契约修订已到 R80。
 - 外框已有的读接口（site-config、appearance、me、余额、当前套餐名、可用佣金、未读数）在 `src/portal/queries.ts`，页面要复用同一个查询键，不要重复定义。
 - 外框顶栏读的 `me/balance`、`me/subscriptions`、`me/commission`、`me/notifications` 与快捷登录签发的假接口，⓪ 已搬进 `dev/mock/portal/` 下对应页面的文件（wallet / subs / referral / messages / account），扩充时就在那里改，形状不能破坏外框已有的读取。
 - 字节、日期时间、计数的格式化函数（`formatBytes` 等）正由后台前端一提升到 `src/core/format.ts`，合入主线后协调会话通知你；在那之前如果需要，先在自己目录里临时写，合入后改为从 core 引用、删掉临时版本，不要各写一份长期留着。

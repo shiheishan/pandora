@@ -465,6 +465,7 @@
   3. 顶层增加：
      - `group_id: uuid|null`
      - `stats: { paid_total: int64, order_count: int, referral_count: int }`。其中 `paid_total` 的口径与导出一致，即 status 为 paid 或 fulfilled 的订单的 paid_amount 之和；`referral_count` 取 referrals 表里 referrer 为该用户的行数
+     - **修订 R80（2026-09-24，后台前端一 ③ 核对 adminops/users.go，协调会话核实）**：`paid_total` 是所有币种的 `paid_amount` 直接相加，没有币种字段。前端暂按用户余额币种显示，用户有 USD 订单时这个数不准；后端按币种拆开（如 `paid_totals: [{currency, amount}]`）列入遗留。
      - `referrer: { id, email } | null`，来自 referrals 表
      - `telegram: { username, bound_at } | null`，来自 telegram_bindings 表
 - 错误：404 NotFoundOrForbidden。传非 uuid 的 id 时推测会返回 500（INFERENCE：没有格式校验，uuid 列和 text 参数比较会报错）
@@ -1213,6 +1214,7 @@
 ### 后台-07 节点与服务器 · 节点（节点 tab + 节点详情抽屉）
 
 #### GET v1/nodes — 节点列表（含运营聚合）
+- **修订 R77（2026-09-24，后台前端二 ② 核对）**：Node 里标 `?` 的字段（`server_id`、`server_name`、`pool_id`、`pool_name`、`cpu_percent`、心跳与身份类字段等）是 Go 指针字段且没有 omitempty，**缺值时返回 `null`，不是省略**；`granted_plans` 也可能为 `null`。前端按 `| null` 写 schema。
 - **修订 R27（2026-09-24，后端二 107de25）**：新增 `limit?`（1–1000，默认 500）与 `offset?`；`total` 为同一筛选条件下的真实总数（缺陷 21）。按 `sort_order, node_no` 排序仍在后端二第 ⑤ 步。
 - 状态：现有 `panel/internal/api/admin/handlers.go:703 nodeList`；**待补·后端（字段扩展 + 排序，无迁移，cc 除外）**
 - 权限：`node.read`｜reauth：否｜幂等：否
@@ -1236,6 +1238,7 @@
 - 设计：后台-07「新建节点」。映射：设计是先生成空白草稿再填协议，后端不允许无协议的草稿。**待补·前端**：「新建节点」改为弹窗/抽屉表单，一次收集 名称、服务器（GET v1/servers）、协议类型、地址、端口、协议参数（schema 驱动）、资源池、内核、倍率、展示名、国家；提交成功后打开抽屉，并提示「节点已创建为草稿，签发安装令牌并启用后才会下发」。
 
 #### PATCH v1/nodes/{id} — 编辑节点基本信息与协议参数
+- **修订 R78（2026-09-24，后台前端二 ② 核对）**：`protocol_config` 是**整体替换**，而读接口按名字抹掉敏感键（password、private_key、psk 等），所以只改一个普通协议字段、不重填敏感字段就会把已存的密钥清空。前端：没改协议字段就不带 `protocol_config`；改了且敏感字段留空时先确认会被清空。后端「PATCH 时保留请求里没给的敏感键」列入遗留（优先）。422 的字段键形如 `protocol_config.<内核字段名>`，与表单点号路径不一定一致，前端先按整条路径、再按最后一段名字落到表单项。
 - 状态：现有 `panel/internal/api/admin/node_admin.go:35 patchAdminNode` → `nodefabric/node_admin.go:369 PatchAdminNode`
 - 权限：`node.write`｜reauth：否｜幂等：否
 - 请求：`{ row_version: int64, name?: string, pool_id?: uuid|null(显式 null 或 "" = 清空), node_type?: string, server_host?: string, server_port?: int, kernel?: string, traffic_rate?: float(>0), display_name?: string, protocol_config?: object }`（省略=不改）；待补·后端：加 `country_code?: string|null`。
@@ -1284,6 +1287,7 @@
 - 设计：不使用。status:batch 是 e2e（`panel/tests/uniproxy_e2e.sh`）使用的正式路径；本别名是后补的重复入口。
 
 #### GET v1/node-protocol-schemas — 协议表单 schema
+- **修订 R79（2026-09-24，后台前端二 ② 核对 nodefabric/protocol_schema.go）**：除 13 个 `status:"stable"` 外，还返回 v2ray、hysteria 两个 `status:"legacy-read-compatible"`、`version:0` 的条目（只读兼容，前端不允许用它们新建）；Go 空切片编码成 `null`，`required` 等数组字段可能为 `null`（如 socks、vless 的 `required`）。REALITY 相关字段在 `reality_settings.*` 路径下；`enums` 的键可能只是字段名最后一段（如 `mode` 对应 `network_settings.mode`），前端按整条路径找不到时再按最后一段名字找。
 - 状态：现有 `panel/internal/api/admin/handlers.go:1428 nodeProtocolSchemas` → `nodefabric/protocol_schema.go:59 ProtocolSchemas`
 - 权限：`node.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -3173,3 +3177,7 @@
 | R74 | 2026-09-24 | 后端一 9b4aaab | 人工开单已挂 reauth，开放 offline（必带 reference，建单与结清同一事务） |
 | R75 | 2026-09-24 | 后台前端一、协调会话 | 后台工单详情不填 last_reply_at / message_count，后台 related_order 恒为 null |
 | R76 | 2026-09-24 | 门户前端 | 变更套餐试算不回券面，前端只显示优惠金额 |
+| R77 | 2026-09-24 | 后台前端二 | 节点列表可选字段缺值为 null 而非省略 |
+| R78 | 2026-09-24 | 后台前端二 | 节点 PATCH 的 protocol_config 整体替换会清空敏感键；422 字段键口径 |
+| R79 | 2026-09-24 | 后台前端二 | 协议 schema 含两个 legacy 条目、数组可能为 null、字段路径口径 |
+| R80 | 2026-09-24 | 后台前端一、协调会话 | 用户详情 stats.paid_total 跨币种直接相加 |
