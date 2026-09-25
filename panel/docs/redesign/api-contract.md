@@ -496,6 +496,7 @@
 - 设计：后台-03 抽屉的「禁用账号 / 启用账号」按钮。映射：禁用 → `suspended`，启用 → `active`。待补·前端：禁用确认框加必填的「原因」输入框；另加一个次级的「封禁」选项（`banned`）
 
 #### POST v1/users/{id}/reset-password — 管理员替用户设新密码
+- **修订 R101（2026-09-25，用户定案 D-B-2）**：维持「管理员直接设新密码 + 吊销该用户全部会话与刷新令牌」，**不要求原因**：`reason` 改为可选（缺省或空串不校验；给了就限 500 字并照旧写进审计），`fields.reason` 这条 422 删除。前端对话框去掉「原因」，只留新密码（reauth 照旧）。
 - **修订 R9（2026-09-24，后端二 62f7283）**：先查权限、后 reauth（无权限直接 404，不再先要求输密码）。
 - 状态：现有 `handlers.go:293 resetUserPassword`
 - 权限：`iam.user.write`｜reauth：是（中间件顺序是先检查 reauth、再检查权限）｜幂等：否
@@ -546,6 +547,7 @@
 - 设计：设计稿抽屉的「画像」tab 其实是资料卡，不包含风控数据。「注册 IP」这一行由前端在持有 `security.audit.read` 时从本接口取值，没有权限时隐藏。风控 tab 的内容为：IP 聚合表（`accounts > 1` 的行高亮）、关联账号列表（可点击跳转到对应用户）、订阅拉取记录，以及用 `fetch_sources_7d` 给出的「疑似分享」提示
 
 #### POST v1/users/{id}/group — 分配用户组
+- **修订 R104（2026-09-25，用户定案 D-B-3）**：换组会改变该用户能用的节点池，提交后通知节点重拉用户。
 - 状态：现有 `usergroup.go:208 assignUserGroup`
 - 权限：`iam.user.write`｜reauth：否｜幂等：否
 - 请求：`{ group_id: uuid | "" }`，传空串表示移出分组
@@ -554,6 +556,7 @@
 - 设计：后台-03 抽屉「画像」tab 的「用户组」下拉。映射：选项值为 `group_id`。设计稿的「默认」组在后端对应 `user_group_id = NULL`，新注册用户就是这种情况，后端没有叫「默认」的组。待补·前端：下拉第一项改为「未分组（默认）」，对应传空串
 
 #### GET v1/user-groups — 用户组列表
+- **修订 R104（2026-09-25，用户定案 D-B-3）**：每项加 `exclusive_pools: [{ id, name }]`（只读，把该组列入限定名单的节点池），前端显示为「可用节点池」列（空显示「—」，表示只能用未限定的池）。
 - 状态：现有 `usergroup.go:41 listUserGroups`
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -578,6 +581,7 @@
 - 设计：设计稿没有这个入口
 
 #### DELETE v1/user-groups/{id} — 删除用户组
+- **修订 R104（2026-09-25，用户定案 D-B-3）**：仍被某个节点池的限定名单引用时回 409，message 写明池名。
 - 状态：现有 `usergroup.go:151 deleteUserGroup`；待补·前端（→ 补进后台-03「用户组」表格每行的「删除」按钮）
 - 权限：`iam.user.write`｜reauth：否｜幂等：否
 - 请求：无
@@ -633,6 +637,7 @@
 - 设计：后台-03「群发邮件」。映射：发送前的确认框显示 preview 的 `total`；成功后 toast 显示「已排队 queued 封，跳过 skipped 封（用户退订）」
 
 #### GET v1/devices — 在线设备与全局策略
+- **修订 R103（2026-09-25，用户定案 D-B-4 方案 B）**：设备识别窗口可选。新设置键 `device_limit.window_minutes`，取值 5（默认，缺行按 5）/ 10 / 30 / 60。本接口响应加 `window_minutes: int`；`POST v1/settings/device-limit` 请求加 `window_minutes?: 5|10|30|60`（省略 = 不改，其他值 422），同样挂 reauth、写审计。后端：视图 `subscription_online_devices` 改为按租户读这个键（缺行按 5），这样 uniproxy strict 判定、本接口、用户列表与详情、门户订阅的在线数自动跟着变；后台节点列表（`api/admin/handlers.go` 在线人数与 IP 统计）里写死的 5 分钟改用同一口径；`nodefabric.PurgeStaleAlive`（目前没有调用方）的清理截止改为不小于最大窗口（如 70 分钟），免得以后接上时删掉窗口内的行。**事实更正**：原文与迁移 00024 注释说窗口「与节点 TTL 对齐」，只对 compat 构建成立；生产 NativeCore 按连接进出跟踪设备、没有 5 分钟 TTL，节点每 60 秒上报在线 IP，所以这是**纯面板改动，不碰 pdnd**，窗口不得低于 5 分钟。代价（前端在下拉旁说明）：窗口越长，换了网络的旧 IP 被多算得越久；strict 模式下超限的订阅要等大约一个窗口才恢复下发。
 - 状态：现有 `devices.go:18 listOnlineDevices`
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
 - 请求：无，也不分页
@@ -657,6 +662,7 @@
 - 设计：后台-03 抽屉「订阅」tab 的「本订阅设备上限」− / + 控件。设计稿的范围是 1–20，后端允许 0–1000，前端按 1–1000 放开。待补·前端：增加「恢复套餐默认」（传 null）和「不限」（传 0）两个快捷按钮
 
 #### POST v1/settings/device-limit — 全局设备判定模式
+- **修订 R103（2026-09-25，用户定案 D-B-4）**：请求加 `window_minutes?: 5|10|30|60`（省略 = 不改）；见 GET v1/devices 的 R103。另：本条「reauth：否」已由 R9 改为「是」，审计已由 R12 补上，第 7 节对应缺陷已修。
 - **修订 R9 / R12（2026-09-24，后端二 62f7283）**：reauth 改为「是」；写审计。
 - 状态：现有 `devices.go:130 setDeviceMode`
 - 权限：`iam.user.write`｜reauth：否（注释说「要求近期重认证」，代码没挂，以代码为准）｜幂等：否
@@ -718,10 +724,12 @@
 - 价格周期：设计的 `1m` → `{billing_interval:"month", interval_count:1}`，`3m` → month×3，`6m` → month×6，`12m` → `year`×1，`once` → `one_time`×1（后端注释的约定：季付就是 month×3，不是单独的周期类型）。后端另外支持 `day`、`week`、`quarter`，设计没有。
 - 流量：后端存在版本的 `quotas[]` 里，`metric:"traffic.bytes"`、`unit:"bytes"`、`period:"cycle"`；GB = limit ÷ 1024³。列表直接给 `traffic_limit`（字节）。设备数取版本的 `max_devices`；向导同时写一条 `devices.active` quota。
 - 限速：设计「限速 Mbps」→ 后端 `throttle_kbps`（Mbps × 1000）。数据面 pdnd 把它当作始终生效的按用户限速；但后台校验要求它只能配 `overage_policy:"throttle"`，见 D-C-5。
+- **修订 R99（2026-09-25，用户定案 D-C-5）**：限速就是套餐版本上写的速率，对每个用户**全程生效**，`throttle_kbps` 为 null = 不限速，与超额策略无关（数据面本来就这样执行：`nodefabric/uniproxy.go` 把 `throttle_kbps` 原样下发为 `speed_limit`，pdnd 按用户常驻令牌桶限速）。后端：① 新迁移删掉 00035 的 `plan_versions_throttle_exact` 约束（Down 在存量满足时恢复）；`adminops/catalog.go validateVersionSemantics` 去掉限速与策略的耦合，`throttle_kbps` 只校验 null 或正整数。② 超额策略运行时只有一种效果——流量用完（且无流量包余额）后停止向节点下发；`throttle`、`metered_billing` 没有任何实现，所以新写入的 `overage_policy` 只接受 `suspend`（省略按 suspend），其余值回 422 `fields.overage_policy`，存量行不改。③ 向导两接口的 `throttle_kbps` 正常生效（不再必定 422）；`PUT v1/plans/{id}/complete` 要能清空限速：与 R92「改回不限设备」同一种三态写法——字段缺省 = 不动、显式 null = 清为不限、正整数 = 设置，`max_devices` 同样按这个改。④ 门户 `GET v1/plans` 每项加 `throttle_kbps: int|null`（取当前发布版本）。前端：向导「额度」一步加「限速 Mbps（留空不限速）」；版本编辑里限速输入框常开，去掉超额策略下拉，固定说明「流量用完后停止服务」；门户套餐卡有限速时显示「限速 N Mbps」。
 - 乐观锁：写操作都要带从 GET 拿到的 `row_version`；版本号对不上时回 409 conflict，`fields.row_version = "current=N"`。
 - `catalog.publish` 类写接口（新增价格、改价、发布）受一个默认关闭的销售开关控制（环境变量 `AEGIS_SALES_ENABLED=1`），开关没开时回 503 service_unavailable「服务暂时不可用」。前端对这个 503 要给出明确提示，不要让用户反复重试。
 
 #### GET v1/plans — 套餐列表（左栏卡片）
+- **修订 R100（2026-09-25，用户定案 D-E-3）**：每项加 `highlights: string[]`、`recommended: bool`，见 PUT v1/plans/{id} 的 R100。
 - 状态：现有 `panel/internal/api/admin/handlers.go:405 listPlans`
 - 权限：`catalog.read`｜reauth：否｜幂等：否
 - 请求：无参数（不分页，按 sort_order、created_at 排序，包含 archived）
@@ -730,6 +738,7 @@
 - 设计：后台-04 左栏卡片（名称 / 代码 / 状态 / 起价 / 流量·设备 / 订阅数）；详情里的「有效订阅」也取这里的 `active_subscriptions`（GET v1/plans/{id} 没有这个字段）。起价 = 价格中 `status=active` 的最低一档。`node_count = 0` 时建议加一个「无可用节点」警示（待补·前端：设计里没有，但这是后端专门留出来防止「买了空订阅」的字段）。人工开单弹窗的「套餐与周期」下拉也用这个接口。
 
 #### GET v1/plans/{id} — 套餐详情（含全部版本与价格）
+- **修订 R100（2026-09-25，用户定案 D-E-3）**：`plan` 加 `highlights: string[]`、`recommended: bool`，见 PUT v1/plans/{id} 的 R100。
 - 状态：现有 `panel/internal/api/admin/catalog.go:12 getPlan`
 - 权限：`catalog.read`｜reauth：否｜幂等：否
 - 请求：路径 `id: uuid`
@@ -746,6 +755,7 @@
 - 设计：无。前端不需要单独入口。
 
 #### POST v1/plans/complete — 向导一次建成套餐（资料 + 额度 + 价格 + 线路 + 可选发布）
+- **修订 R99（2026-09-25，用户定案 D-C-5）**：`throttle_kbps` 与超额策略解耦、全程生效、null = 不限；见本节「公共映射」的 R99。另加可选 `highlights`、`recommended`（R100）。
 - **修订 R65（2026-09-24，后端一 ⑥ 36f2fcd）**：改为单事务，任一步失败库里不留任何东西；响应的 `plan` 是建成后的完整详情。原文「中途失败自动归档」「回滚失败回 500」两条作废。
 - **修订 R1（2026-09-24，后端一 0651cb2）**：权限改为 `catalog.publish`，reauth 改为「是」（D-C-2）。以下原文中的权限行作废。
 - 状态：现有 `panel/internal/api/admin/catalog.go:41 createPlanComplete`
@@ -756,6 +766,7 @@
 - 设计：后台-04「新建套餐」向导 5 步。映射：第 1 步 name / code / description；第 2 步 traffic_gb / max_devices（留空 = 不限）；第 3 步 prices（设计只让填「价格（元）」+ 周期，前端固定 `currency:"CNY"` 并 ×100；想卖 USD 需要补币种选择，见下文「后端有、设计缺」）；第 4 步 pool_ids（chip 的名称和数量来自 GET v1/plans/{id}/pools 或节点池列表）；第 5 步开关「保存后立即发布上架」→ `publish`。
 
 #### PUT v1/plans/{id}/complete — 向导一次改完套餐
+- **修订 R99（2026-09-25，用户定案 D-C-5）**：`throttle_kbps` 与超额策略解耦、全程生效、null = 不限；见本节「公共映射」的 R99。本接口的 `throttle_kbps`、`max_devices` 改为三态（缺省不动、null 清为不限、正整数设置）。另加 `highlights?`、`recommended?`，缺省 = 不动（R100）。
 - **修订 R92（2026-09-24，后台前端一 ⑤ 核对 adminops/plan_wizard_update.go，协调会话未逐条复现）**：三处现状（前端如实提示，后端修复列入遗留）：① `max_devices: null` 表示「不动」，传 0 过不了正整数校验，所以向导**改不回「不限设备」**；② 额度或线路变化时开新版本并发布，新版本的宽限期、权益等高级设置回到默认，**权益会丢**；③ 请求里没有 `visible_from` / `visible_until`，而套餐资料整体写入，**上架时间窗会被清空**。
 - **修订 R1（2026-09-24，后端一 0651cb2）**：权限 `catalog.publish`、reauth「是」；整个编辑在一个事务里完成，发布失败时资料、价格、新草稿版本全部回滚；`prices` 只同步本次清单里出现的币种的公开价，用户组价与其他币种不动，`[]` 等同 `null`。原文「`[]` = 全部归档」「不是原子操作」作废。
 - 状态：现有 `panel/internal/api/admin/catalog.go:64 updatePlanComplete`
@@ -768,6 +779,7 @@
   - `prices` 按「周期 + 币种」整组同步：清单里没有的在售价格会被**归档**，包括 USD 价格和用户组专属价。设计的 editPlan 只回填了 CNY 价格，照着做会把 USD 价格和用户组专属价全部归档。前端必须回填全部在售价格，或者没改价格时传 `prices: null`。
 
 #### PUT v1/plans/{id} — 改套餐资料与销售设置（不动版本、价格）
+- **修订 R100（2026-09-25，用户定案 D-E-3 方案 a）**：`plans` 加两列：`highlights text[] NOT NULL DEFAULT '{}'`（卖点，最多 5 条，每条去首尾空白后 1–40 字，不许空串与重复，按给定顺序）、`recommended boolean NOT NULL DEFAULT false`（「推荐」标记；字段名与流量包的 `recommended` 一致，不用第 6 节 C8 原写的 featured；多个套餐可同时推荐，不做互斥）。写入：本接口请求加 `highlights: string[]`、`recommended: bool`（整体覆盖，要回填当前值）；`POST v1/plans`、`POST v1/plans/complete` 可选（缺省空与 false）；`PUT v1/plans/{id}/complete` 缺省 = 不动。422 字段键 `highlights`、`highlights.{i}`。已归档套餐不可编辑沿用现有规则。读取：后台 `GET v1/plans` 列表项与 `GET v1/plans/{id}` 的 `plan` 各加 `highlights: string[]`、`recommended: bool`；门户 `GET v1/plans` 每项同样加这两个字段。前端：「销售设置」抽屉与向导第 1 步加「卖点（最多 5 条）」和「标为推荐」开关；门户套餐卡把 `highlights` 显示为特性列表（流量、设备、重置、限速等事实照现有位置显示），`recommended` 为真时显示「推荐」徽标。
 - 状态：现有 `panel/internal/api/admin/catalog.go:80 updatePlan`（路由由 `router.go registerCatalogPlanUpdate` 注册）
 - 权限：`catalog.publish`｜reauth：是｜幂等：是 `catalog_plan_update`
 - 请求：`{ expected_row_version:int64, code, name, description?:string|null, visibility, visible_group_ids:uuid[], visible_from?:RFC3339|null, visible_until?:RFC3339|null, allow_new_purchase:bool, allow_renewal:bool, allow_upgrade:bool, purchase_limit_per_user:int|null, stock_total:int|null, sort_order:int }`（整体覆盖，三个 allow_* 是 bool 而不是可空）
@@ -784,6 +796,7 @@
 - 设计：后台-04「新建版本」。设计里新版本会继承当前版本的流量和设备数，后端不复制。前端流程：POST 建草稿 → PUT 版本写入从当前版本复制的全部语义 → POST v1/plans/{id}/pools 复制池绑定 → 可选发布。已有草稿（`draft_version_id != null`）时禁用按钮。
 
 #### PUT v1/plans/{id}/versions/{versionID} — 编辑草稿版本的额度与语义
+- **修订 R99（2026-09-25，用户定案 D-C-5）**：`throttle_kbps` 与超额策略解耦、全程生效、null = 不限；见本节「公共映射」的 R99。本接口 `overage_policy` 只接受 `suspend`（可省略），`throttle_kbps` 可与之同时出现。
 - 状态：现有 `panel/internal/api/admin/catalog.go:105 updatePlanVersion`
 - 权限：`catalog.write`｜reauth：否｜幂等：否
 - 请求：`{ expected_row_version:int64, quota_reset_strategy:"never"|"natural_month"|"billing_cycle"|"fixed_day", quota_reset_day?:1..28(仅 fixed_day，其它策略必须为 null), grace_period_hours:int>=0, grace_keeps_service:bool, renewal_extends_period:bool, renewal_resets_quota:bool, renewal_keeps_addons:bool, max_devices?:int>0|null, max_concurrent?:int>0|null, device_release_hours:int>=0, overage_policy:"suspend"|"throttle"|"metered_billing", throttle_kbps?:int>0|null(仅 throttle 时必填，其余策略必须为 null), notes?:string|null, entitlements:[{code, value?:json}], quotas:[{metric, limit:int64|null, unit, period}] }`。`pool_ids` **必须省略**，传了（包括 []）就回 422。全量覆盖：entitlements / quotas 会先删后插
@@ -1483,6 +1496,7 @@
 ### 后台-07 节点与服务器 · 节点池
 
 #### GET v1/node-pools — 节点池列表
+- **修订 R104（2026-09-25，用户定案 D-B-3 方案 C，节点池侧专属）**：节点池可以限定「仅这些用户组」。**规则**：用户能用某个节点池，要同时满足 ① 订阅的套餐版本绑定了这个池（现有规则）；② 这个池没有限定用户组，或者用户所在的组在名单里。默认组（`users.user_group_id` 为空）的用户用不了任何限定了用户组的池。**存储**：新表（如 `node_pool_user_groups(tenant_id, pool_id, user_group_id)`，复合外键、租户 RLS，过表登记簿与权限字典两条契约测试）；不用 `user_groups.policy`，也不用数组列。**下发**：三处都按这条规则——节点用户列表 `nodefabric.ListNodeUsers`，以及订阅下载与门户节点预览共用的 `subscription.listEligibleNodesTx`（要把用户带进去）。**接口**：本接口每项加 `allowed_user_groups: [{ id, name }]`（空 = 不限，原写的 `allowed_user_group_ids` 不再单独返回）；`POST v1/node-pools` 与 `POST v1/node-pools/{id}` 加 `allowed_user_group_ids?: uuid[]`（编辑时省略 = 不改，`[]` = 取消限定），**请求里带了这个字段就要求 reauth**（改变交付集合），写审计，组 id 不存在或跨租户回 422 `fields.allowed_user_group_ids`；`GET v1/user-groups` 每项加 `exclusive_pools: [{ id, name }]`（把该组列入名单的池，只读，即设计稿用户组表的「可用节点池」列）；`DELETE v1/user-groups/{id}` 仍被某个池的名单引用时回 409（否则名单变空会让池悄悄对所有人开放），message 写明是哪个池。**通知**：池的名单变化、用户换组（`POST v1/users/{id}/group`）提交后，发一次租户级 `node.users.changed`，节点立即重拉用户；`POST v1/plans/{id}/pools` 现在也不通知节点，一并补上。**无池节点（用户定案）**：`pool_id` 为空的节点**不服务任何订阅**——`ListNodeUsers` 去掉「`$2 IS NULL` 视为公共节点」这一支，与订阅下载、套餐发布前置条件一致（fail closed）。后台节点列表与节点详情对无池节点提示「未划入节点池，不服务任何用户」。上线前要先把测试机上的无池节点划进池。
 - 状态：现有 `panel/internal/api/admin/pools.go:42 listNodePools`；**待补·后端（字段扩展，user group 部分需迁移）**
 - 权限：`node.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1492,6 +1506,7 @@
 - 设计：后台-07 节点池卡片。映射：`p.name` → `name`；`p.n` → `nodes`；节点标签 → `members[].name`；「绑定套餐」→ `plan_names` 用「、」连接；「— · 仅用户组『内测』」→ `plan_names` 为空显示「—」，`allowed_user_groups` 非空时追加「仅用户组『…』」。
 
 #### POST v1/node-pools — 新建节点池
+- **修订 R104（2026-09-25，用户定案 D-B-3）**：加 `allowed_user_group_ids?: uuid[]`，带了就要 reauth；见 GET v1/node-pools 的 R104。
 - 状态：现有 `panel/internal/api/admin/pools.go:85 createNodePool`；**待补·前端**（→ 节点池 tab 右上「新建节点池」）
 - 权限：`node.provision`｜reauth：否｜幂等：否
 - 请求：`{ name: string(必填), code?: string(缺省由 name 派生), region?: string, status?: string(被忽略，新建一律 active) }`；待补·后端（取决于 D-B-3）：加 `allowed_user_group_ids?: uuid[]`。
@@ -1500,6 +1515,7 @@
 - 设计：设计缺（后端有）。
 
 #### POST v1/node-pools/{id} — 编辑节点池
+- **修订 R104（2026-09-25，用户定案 D-B-3）**：加 `allowed_user_group_ids?: uuid[]`（省略 = 不改，`[]` = 取消限定），带了就要 reauth；见 GET v1/node-pools 的 R104。
 - 状态：现有 `panel/internal/api/admin/pools.go:128 updateNodePool`；**待补·前端**（→ 节点池卡片「编辑」）
 - 权限：`node.provision`｜reauth：否｜幂等：否
 - 请求：`{ name?: string, region?: string, status?: "active"|"draining"|"disabled", code?: string(被忽略) }`（空字符串=不改，region 无法清空）；待补·后端（取决于 D-B-3）：加 `allowed_user_group_ids?: uuid[]`（省略=不改，`[]`=不限制）。
@@ -1891,6 +1907,7 @@
 - 设计：卡片「禁用 N 个账号」+ reauth 危险确认框（「账号将被登出，订阅停止下发」）。映射：设计「禁用」→ 后端 `suspended`（可恢复，不用 banned）。待补·前端：确认框加「原因」必填输入
 
 #### GET v1/switches — 降级开关列表
+- **修订 R102（2026-09-25，用户定案 D-A-3）**：「订阅下发使用缓存」不做。`ops.bulk_export`、`ops.reports`、`node.autoscale` 三个开关没有任何代码读取，新迁移从 `feature_switches` 删除这三行（只有默认租户有，00010 种子；Down 按 00010 原样插回）；`tests/invariants.sql` 里借 `ops.reports` 验「无原因进入降级被拒」的用例改用其他非核心开关。之后现有 code 为 auth.login、subscription.renewal、client.config_sync（essential）、auth.registration，以及 R58 的四个。前端删掉这三项的字典与「未接入」灰显，假后端种子与测试同步。
 - **修订 R97（2026-09-25，后台前端二 ⑥ 核对）**：列表**不返回缺行的开关**，对缺行的开关 `POST v1/switches/{code}` 回 404。所以 R58「缺行视为开启」的租户在后台切不了这几个开关；前端按 R58 默认值显示为只读。后端建租户时补种这几行、或 POST 改成 upsert，列入后端遗留（与「新建租户缺种子」一并处理）。进入降级时缺原因回 409（不是 422），前端先拦。
 - 状态：现有 `handlers.go:468 listSwitches`
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
@@ -2079,6 +2096,7 @@
 ### 门户-03 选购套餐与结账（套餐列表、流量包、结账页）
 
 #### GET v1/plans — 可购套餐目录
+- **修订 R99 / R100（2026-09-25，用户定案）**：每项加 `throttle_kbps: int|null`（当前发布版本的限速，null = 不限，D-C-5）、`highlights: string[]`、`recommended: bool`（D-E-3）。套餐卡：有限速时显示「限速 N Mbps」；`highlights` 作特性列表；`recommended` 为真显示「推荐」。
 - **修订 R69（2026-09-24，后端一 ⑥ e77e65b）**：新增 `quota_reset_strategy`、`quota_reset_day`、`allow_renewal`、`allow_upgrade`。
 - 状态：现有 `panel/internal/api/public/handlers.go:188 listPlans`；字段扩展为待补·后端（无迁移）
 - 权限：匿名（路由在免鉴权区，但会解析 Bearer：带令牌才看得到 authenticated/group 套餐与组专属价格，门户登录后必须带）｜reauth：否｜幂等：否
@@ -2592,7 +2610,35 @@
 | D-E-2 | **修订 R39（2026-09-24 用户补充定案）**：「原订单实付」指**本周期全部付费单的实付合计**（提前续费会让一个周期由多张单拼成）；剩余时间比按「付费天数先用、赠送天数最后用」计，礼品卡加的天数折不成钱；流量比只看随整个周期走的流量配额（period 为 cycle / total），不限量视为 1；优惠码升降级都可用。<br>**升级、降级都允许**：剩余价值 = 原订单实付（现金 + 余额抵扣）× 剩余比例，**剩余比例取剩余时间比例与剩余流量比例中的较小者**，向下取整到分；新套餐价 > 剩余价值则补差价，< 则差额退入余额（账本记分录，余额不可提现）；新周期从当天按新套餐周期起算。赠送 / 礼品卡 / 0 元单实付为 0，降级不退 |
 | D-F-1 | 方案 a：可用佣金统一以账本为准（账本余额 − 在途提现），提现申请与转余额在同一把锁下按同一口径校验；授权修改计费域 |
 
-其余 21 条非阻塞项（索引 30 行减去 9 行 ●，D-D-4 与 D-E-4 是同一条决定）：第 3 阶段先按各条「未决前」处理，做到对应页面时由协调会话汇总再请用户定。
+其余 21 条非阻塞项（索引 30 行减去 9 行 ●，D-D-4 与 D-E-4 是同一条决定）：第 3 阶段先按各条「未决前」处理；**2026-09-25 用户已全部定案，见 5.A.2（修订 R98）**，第 5 节已无待决。
+
+### 5.A.2 非阻塞 21 条定案（2026-09-25 用户拍板，修订 R98）
+
+「维持」= 第 3 阶段的「未决前」做法转为最终做法，代码不用再改，只把注释与文档里的「未决」改成「已决」。要改代码的几条另有修订号，形状以那条修订为准。
+
+| 编号 | 结论 | 要做的事 |
+|---|---|---|
+| D-A-1 | 维持：顶栏实时事件按 topic + op 显示通用条目 | 无 |
+| D-A-2 | 维持：用户流量排行只显示脱敏邮箱，点行进用户详情 | 无 |
+| D-A-3 | 「订阅下发使用缓存」不做；`ops.bulk_export`、`ops.reports`、`node.autoscale` 三个未接入的开关从种子里删掉 | 后端迁移 + 前端删字典，R102 |
+| D-A-4 | 方案 a：Telegram 管理员群组只作测试消息的默认目标 | 无 |
+| D-A-5 | 不做：邮件模板按后端现有的显示 | 无 |
+| D-A-6 | 方案 a：Webhook 事件只用后端目录 | 无 |
+| D-B-2 | 管理员直接设新密码，吊销该用户全部会话，**不用写原因** | 后端 reason 改可选 + 前端去掉原因框，R101 |
+| D-B-3 | 方案 C，**节点池侧专属**：节点池可限定「仅这些用户组」，下发时生效；另定：没划进节点池的节点不服务任何人 | 后端迁移与下发逻辑 + 前端，R104 |
+| D-B-4 | 方案 B：设备识别窗口可选 5 / 10 / 30 / 60 分钟 | 后端（纯面板，不碰 pdnd）+ 前端，R103 |
+| D-B-5 | 方案 A：不做全局默认设备数 | 无 |
+| D-B-6 | 方案 A：工单升级只改状态与优先级，不通知 | 无 |
+| D-B-7 | 方案 A：批量生成不带开通套餐，之后走人工开单 | 无 |
+| D-B-8 | 方案 A：设备 tab 只显示在线台数与上限 | 无 |
+| D-C-1 | 方案 a：套餐归档不可逆，不做恢复上架 | 无 |
+| D-C-3 | 方案 b：人工开单不提供「从余额扣除」 | 无（后端继续回 422） |
+| D-C-5 | **套餐上写多少速率就限多少，全程生效；留空 = 不限速**，与超额策略无关 | 后端迁移与校验 + 前端 + 门户展示，R99 |
+| D-D-2 | 方案 a：公告可见范围不提供「即将到期」 | 无 |
+| D-D-3 | 方案 b：已撤回公告只读，提供「复制为新公告」 | 无 |
+| D-E-3 | 方案 a：套餐加「卖点」列表与「推荐」标记，后台可编辑，门户套餐卡显示 | 后端迁移 + 前端，R100 |
+| D-F-2 | 方案 a：门户工单里客服统一显示「客服」 | 无 |
+| D-F-3 | 方案 d：门户会话列表不显示城市与 IP | 无 |
 
 ### 5.0 索引
 
@@ -3216,3 +3262,10 @@
 | R95 | 2026-09-25 | 后台前端一 | 取消订单文案英文；订单列表行无人工单标识 |
 | R96 | 2026-09-25 | 后台前端二 | 审计 actor_kind 含 node、agent 指客服；访问日志订阅拉取 outcome 取值 |
 | R97 | 2026-09-25 | 后台前端二 | 降级开关缺行不返回、POST 回 404；缺原因回 409 |
+| R98 | 2026-09-25 | 用户 | 非阻塞 21 条全部定案（5.A.2） |
+| R99 | 2026-09-25 | 用户（D-C-5） | 限速与超额策略解耦、全程生效、留空不限；超额策略只收 suspend；门户套餐加 throttle_kbps |
+| R100 | 2026-09-25 | 用户（D-E-3） | 套餐加 highlights 与 recommended，后台可编辑、门户显示 |
+| R101 | 2026-09-25 | 用户（D-B-2） | 管理员重置密码不再要求原因 |
+| R102 | 2026-09-25 | 用户（D-A-3） | 删除三个未接入的降级开关 |
+| R103 | 2026-09-25 | 用户（D-B-4） | 设备识别窗口 5/10/30/60 分钟可选，纯面板改动 |
+| R104 | 2026-09-25 | 用户（D-B-3） | 节点池限定用户组（池侧专属）；无池节点不服务任何人；换组与池绑定变化通知节点 |
