@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient / keepPreviousData，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ./model 的 exactEmail
+ * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient / keepPreviousData，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../billing/schemas 的订单枚举与 orderRowSchema，依赖 ./model 的 exactEmail
  * [OUTPUT]: 对外提供用户模块的 zod schema 与类型（UserRow、UserDetail、SubscriptionRow、OrderRow、UserGroup、UserProfile、BulkFilter、BulkPreview、OnlineDevice、ResetLog、ResetReason 等）、读 hook（useUsers、useUser、useUserGroups、useUserProfile、useFindUserByEmail、usePlanOptions、useBulkPreview、useDevices、useTrafficResets、useResetStats、useUserResets）、UK 查询键前缀、useInvalidateUsers 与 useInvalidateResets、写接口的响应 schema
  * [POS]: admin/screens/users 的数据层：形状照 api-contract.md 后台-03（含修订 R9 / R11 / R12 / R22 / R38），并按 domain/adminops/users.go、bulk_users.go、bulk_mail.go、api/admin/profile.go、usergroup.go、devices.go、domain/billing/traffic_reset.go 的 json tag 核对；按保留规则 2，没有任何字段携带订阅令牌或订阅地址
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -8,7 +8,11 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useCallback } from 'react'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
+import { orderRowSchema } from '../billing/schemas'
 import { exactEmail } from './model'
+
+// 订单的封闭枚举与列表行归订单与收款模块（后台-05），用户详情「最近订单」同形
+export { ORDER_KINDS, ORDER_STATUSES, type OrderKind, type OrderRow, type OrderStatus } from '../billing/schemas'
 
 // ---------------------------------------------------------------------------
 // 封闭枚举（迁移里的 CHECK）：未知值判为不符约定
@@ -16,13 +20,9 @@ import { exactEmail } from './model'
 export const USER_STATUSES = ['pending', 'active', 'suspended', 'banned', 'deletion_scheduled', 'anonymized'] as const
 export const RISK_LEVELS = ['trusted', 'normal', 'elevated', 'high'] as const
 export const SUB_STATUSES = ['pending', 'trialing', 'active', 'past_due', 'grace', 'paused', 'cancelled', 'expired'] as const
-export const ORDER_STATUSES = ['draft', 'pending_payment', 'processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded', 'partially_refunded'] as const
-export const ORDER_KINDS = ['new', 'renewal', 'upgrade', 'downgrade', 'addon', 'topup', 'manual'] as const
 export type UserStatus = (typeof USER_STATUSES)[number]
 export type RiskLevel = (typeof RISK_LEVELS)[number]
 export type SubStatus = (typeof SUB_STATUSES)[number]
-export type OrderStatus = (typeof ORDER_STATUSES)[number]
-export type OrderKind = (typeof ORDER_KINDS)[number]
 
 const int = z.number().int()
 const count = int.nonnegative()
@@ -83,27 +83,6 @@ const subscriptionSchema = z.object({
   plan_max_devices: count.nullable(),
   online_devices: count,
 })
-const orderRowSchema = z.object({
-  id: z.string(),
-  order_no: z.string(),
-  user_email: z.string(),
-  kind: z.enum(ORDER_KINDS),
-  status: z.enum(ORDER_STATUSES),
-  currency: z.string(),
-  total_amount: int,
-  payable_amount: int,
-  paid_amount: int,
-  refunded_amount: int,
-  balance_applied: int,
-  created_at: time,
-  paid_at: time.nullable(),
-  provider_code: z.string().nullable(),
-  provider_name: z.string().nullable(),
-  plan_name: z.string(),
-  interval: z.string(),
-  interval_count: int,
-  item_count: int,
-})
 export const userDetailSchema = z.object({
   ...userRowShape,
   email_verified: z.boolean(),
@@ -116,7 +95,6 @@ export const userDetailSchema = z.object({
 })
 export type UserDetail = z.output<typeof userDetailSchema>
 export type SubscriptionRow = z.output<typeof subscriptionSchema>
-export type OrderRow = z.output<typeof orderRowSchema>
 export type Quota = z.output<typeof quotaSchema>
 
 // ---------------------------------------------------------------------------

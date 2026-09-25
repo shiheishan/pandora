@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule / MockContext
- * [OUTPUT]: 对外提供 users 模块的假接口 MockModule，以及给 plans-store.ts 用的 PLAN_IDS、GROUPS 与 activeSubscriptions
+ * [OUTPUT]: 对外提供 users 模块的假接口 MockModule，给 plans-store.ts 用的 PLAN_IDS、GROUPS 与 activeSubscriptions，给 billing-store.ts 用的 userStore、seedOrders / SeedOrder 与 setOrderSource（订单表归订单与收款，详情的最近订单取它登记的来源），以及 Sub / User 类型
  * [POS]: dev/mock/admin 的「用户（后台-03）」假接口，归后台前端一：列表（q 按邮箱 / 显示名 / 用户 id / 订阅令牌反查，status 逗号多值，group_id 含 none，sub_state，limit/offset）、详情、启停封禁、替用户设新密码、换发订阅链接（不回令牌）、人工调账、分配用户组、用户组列表、单订阅设备上限、风控画像；形状、权限、reauth、幂等与错误照 api-contract.md（含 R9 / R11 / R12 / R22）与 domain/adminops/users.go。订阅令牌只在内存里用于反查，任何响应都不返回
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -194,13 +194,20 @@ function row(u: User) {
   }
 }
 
-function detail(u: User) {
-  const orders = u.subs.map((s, k) => ({
+// ---------------------------------------------------------------------------
+// 订单归订单与收款（billing.ts）：它用 seedOrders 建订单表，再经 setOrderSource 登记回来，
+// 详情的最近订单与统计就与订单页同一份数据（人工开单、标记已支付在抽屉里看得见）；没登记时退回种子
+// ---------------------------------------------------------------------------
+export type SeedOrder = ReturnType<typeof seedOrders>[number]
+
+/** 每条订阅一张订单：首张新购、其余续费，免费套餐直接履约，每第三张已过期（没付） */
+export function seedOrders(u: User) {
+  return u.subs.map((s, k) => ({
     id: randomUUIDFor(`${u.id}-o${k}`),
     order_no: `PD${u.created_at.slice(2, 10).replaceAll('-', '')}${String(k + 1).padStart(4, '0')}`,
     user_email: u.email,
-    kind: k === 0 ? 'new' : 'renewal',
-    status: s.amount === 0 ? 'fulfilled' : k % 3 === 2 ? 'expired' : 'paid',
+    kind: (k === 0 ? 'new' : 'renewal') as string,
+    status: (s.amount === 0 ? 'fulfilled' : k % 3 === 2 ? 'expired' : 'paid') as string,
     currency: s.currency,
     total_amount: s.amount,
     payable_amount: s.amount,
@@ -208,14 +215,34 @@ function detail(u: User) {
     refunded_amount: 0,
     balance_applied: 0,
     created_at: s.created_at,
-    paid_at: k % 3 === 2 ? null : s.created_at,
-    provider_code: s.amount ? 'epay' : null,
-    provider_name: s.amount ? '聚合收银台' : null,
+    paid_at: (k % 3 === 2 ? null : s.created_at) as string | null,
+    provider_code: (s.amount ? 'epay' : null) as string | null,
+    provider_name: (s.amount ? '聚合收银台' : null) as string | null,
     plan_name: s.plan_name,
     interval: 'month',
     interval_count: 1,
     item_count: 1,
+    // 以下不是列表行字段：billing.ts 建订单表时用，详情响应前剥掉
+    sub_id: s.id,
+    plan_id: s.plan_id,
   }))
+}
+
+type OrderView = Omit<SeedOrder, 'sub_id' | 'plan_id'>
+let orderSource: ((userId: string) => OrderView[]) | null = null
+/** 剥掉只给 billing.ts 建表用的两个键 */
+function listView(o: SeedOrder): OrderView {
+  const view: Partial<SeedOrder> = { ...o }
+  delete view.sub_id
+  delete view.plan_id
+  return view as OrderView
+}
+export function setOrderSource(source: (userId: string) => OrderView[]): void {
+  orderSource = source
+}
+
+function detail(u: User) {
+  const orders: OrderView[] = orderSource ? orderSource(u.id) : seedOrders(u).map(listView)
   const referrer = users.find((r) => r.id === u.referrer)
   return {
     ...row(u),
@@ -289,6 +316,9 @@ function passwordProblem(p: string): string | null {
 export function activeSubscriptions(planId: string): number {
   return users.reduce((n, u) => n + u.subs.filter((s) => s.plan_id === planId && (s.status === 'active' || s.status === 'trialing')).length, 0)
 }
+
+/** 同一份用户数组：billing.ts 开单开订阅、挂账转入余额时直接改这里 */
+export const userStore: User[] = users
 
 export const users_: MockModule = {
   routes: {

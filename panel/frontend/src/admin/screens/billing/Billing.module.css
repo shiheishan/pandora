@@ -1,0 +1,544 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供订单与收款四个标签、订单抽屉、人工开单与各确认框用到的类名
+ * [POS]: admin/screens/billing 的唯一样式表，数值取自 管理后台-05-订单与收款.dc.html（订单七列、480 抽屉、facts 90px 标签列、渠道卡 minmax(280px)、收入调整五列），只引用令牌不写色值
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+/* ===========================================================================
+ * 通用小件
+ * ========================================================================= */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.small {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.muted {
+  color: var(--text-2);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.link {
+  color: var(--link);
+  text-decoration: var(--link-decoration);
+  text-decoration-color: var(--link-underline);
+  text-underline-offset: 3px;
+}
+
+.tone_ok {
+  color: var(--ok);
+}
+
+.tone_warn {
+  color: var(--warn);
+}
+
+.tone_danger {
+  color: var(--danger);
+}
+
+.tone_info {
+  color: var(--info);
+}
+
+.tone_neutral {
+  color: var(--text-3);
+}
+
+.faded {
+  opacity: 0.5;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.search {
+  width: 240px;
+  height: var(--h-control);
+  padding: 0 var(--space-12);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+.search:focus {
+  border-color: var(--text);
+  box-shadow: 0 0 0 3px var(--focus-halo);
+}
+
+/* 按用户筛选的标签：「只看 某人 ×」 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--h-control-sm);
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  font-size: var(--fs-caption);
+}
+
+.chipClose {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.chipClose:hover {
+  background: var(--surface-3);
+}
+
+.tableBox {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* 表格最小宽：订单照设计稿七列之和，960 宽时在卡片内横向滚动；挂账五列放得下 */
+.tableBox table {
+  min-width: 640px;
+}
+
+.wide table {
+  min-width: 820px;
+}
+
+/* ===========================================================================
+ * 订单抽屉
+ * ========================================================================= */
+.drawerBody {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.drawerTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.orderNo {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.titleMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 400;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  row-gap: 9px;
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--text-3);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--body-size);
+  font-weight: 600;
+}
+
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 76px;
+  gap: var(--space-8);
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.lineAmount {
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.lineState {
+  font-size: var(--fs-caption);
+  text-align: right;
+}
+
+.box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.boxText {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+/* ===========================================================================
+ * 对话框（人工开单、取消、确认）
+ * ========================================================================= */
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.dialogText {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.fieldLabel {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.picked {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--h-control);
+  padding: 0 4px 0 var(--pad-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+
+.pickList {
+  display: flex;
+  flex-direction: column;
+  max-height: 208px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  list-style: none;
+}
+
+.pickItem {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-8);
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pickItem:hover,
+.pickItem:focus-visible {
+  background: var(--surface-3);
+  outline: none;
+}
+
+.pickEmpty {
+  padding: 6px 8px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* ===========================================================================
+ * 挂账
+ * ========================================================================= */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.bannerText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bannerTitle {
+  font-weight: 600;
+}
+
+.total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.totalValue {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* ===========================================================================
+ * 支付渠道
+ * ========================================================================= */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-16);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.cardOff {
+  opacity: 0.65;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.abbr {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+.cardName {
+  font-weight: 600;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-8);
+  margin: 0;
+}
+
+.stats dt {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.stats dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.statMono {
+  font-family: var(--font-mono);
+}
+
+.note {
+  font-size: var(--fs-caption);
+}
+
+.moreButton {
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.moreButton:hover {
+  background: var(--surface-3);
+}
+
+/* ===========================================================================
+ * 收入调整
+ * ========================================================================= */
+.adjCard {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.adjHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 行内表单：960 宽时原因框收窄，按钮放不下就换到下一行 */
+.adjForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-8);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.adjCurrency {
+  width: 90px;
+}
+
+.adjAmount {
+  width: 130px;
+}
+
+.adjReason {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.adjDate {
+  width: 150px;
+}
+
+/* 只有列表横向滚动，表头与表单不跟着走 */
+.adjList {
+  overflow-x: auto;
+}
+
+/* 登记人 · 时间叠在原因下面（设计稿是单列，960 宽放不下六列） */
+.adjRow {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) 96px 48px 120px 52px;
+  gap: var(--space-12);
+  align-items: center;
+  min-width: 600px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--surface-2);
+}
+
+.adjHeader {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-bottom-color: var(--border);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.right {
+  text-align: right;
+}
+
+.textAction {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  font: inherit;
+  font-size: var(--fs-caption);
+  text-align: right;
+  cursor: pointer;
+}
+
+.textAction:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
