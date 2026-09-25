@@ -433,9 +433,9 @@ export const marketing: MockModule = {
         const count = int(body.count) ?? 0
         const prefix = text(body.prefix).trim().toUpperCase()
         const name = text(body.name).trim()
-        if (count < 1 || count > 1000) return invalid({ count: '一次生成 1 到 1000 张' })
+        if (count < 1 || count > 1000) return invalid({ count: '一次生成 1 到 1000 张。要更多就分批 —— 一次几万张会把事务拖很久，而且生成出来的码也没法在一个页面里交接' })
         if (!safePrefix(prefix)) return invalid({ prefix: '前缀只能用大写字母和数字，最多 8 位' })
-        if (!name) return invalid({ name: '批量生成必须填写名称，之后靠它找回这一批' })
+        if (!name) return invalid({ name: '批量生成必须填活动名称，之后要靠它把整批券找回来' })
         const norm = normalizeCoupon({ ...body, max_redemptions: body.max_redemptions === undefined ? 1 : body.max_redemptions }, false)
         if ('status' in norm) return norm
         const made: string[] = []
