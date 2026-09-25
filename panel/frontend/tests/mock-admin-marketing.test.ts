@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
  * [OUTPUT]: 对外提供营销（后台-06）假接口的测试
- * [POS]: tests 的营销假后端守卫：礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）与未知字段 400
+ * [POS]: tests 的营销假后端守卫：礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -43,6 +43,19 @@ describe('mock api · admin marketing', () => {
     const again = await post(`/v1/gift-cards/batches/${made.batch_id}/export`, {}, 'exp-2')
     expect(again.status).toBe(409)
     expect(await again.json()).toMatchObject({ error: { code: 'conflict', message: '该批次已导出，完整卡码不可再次获取' } })
+  })
+
+  it('points coupons and plan cards at the plans module catalog (fixed plan ids)', async () => {
+    const { plans } = (await (await fetch(`${base}/v1/plans`, { headers: auth })).json()) as { plans: Array<{ id: string }> }
+    const ids = new Set(plans.map((p) => p.id))
+    const { coupons } = (await (await fetch(`${base}/v1/coupons?limit=200`, { headers: auth })).json()) as { coupons: Array<{ applicable_plan_ids: string[] }> }
+    const scoped = coupons.flatMap((c) => c.applicable_plan_ids)
+    expect(scoped.length).toBeGreaterThan(0)
+    expect(scoped.every((id) => ids.has(id) && /^9c0e1a2b-3333-4b00-8000-00000000000[1-4]$/.test(id))).toBe(true)
+    const { templates } = (await (await fetch(`${base}/v1/gift-cards`, { headers: auth })).json()) as { templates: Array<{ type: string; rewards: { plan_id?: string; price_id?: string } }> }
+    const card = templates.find((t) => t.type === 'plan')!
+    const { plan: detail } = (await (await fetch(`${base}/v1/plans/${card.rewards.plan_id}`, { headers: auth })).json()) as { plan: { prices: Array<{ id: string }> } }
+    expect(detail.prices.map((p) => p.id)).toContain(card.rewards.price_id)
   })
 
   it('rejects unknown fields like the Go decoder and keeps field-level 422s', async () => {
