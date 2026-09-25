@@ -13,7 +13,8 @@ marketing/: 营销（后台-06）已接入：优惠券、礼品卡、佣金与�
 tickets/: 工单（后台-02），左队列右详情，选中、筛选与搜索都在地址上；见 tickets/CLAUDE.md
 users/: 用户（后台-03），五个标签全部接入：列表 + 详情抽屉（第 ③ 步）、用户组 / 批量运营 / 设备策略 / 流量重置（第 ④ 步）；见 users/CLAUDE.md
 nodes/: 节点与服务器（后台-07）四个标签已接入：节点（列表 + 五标签详情抽屉）、服务器（卡片 + 四标签详情抽屉）、节点池、全局路由；见 nodes/CLAUDE.md
-plans/ billing/ content/ system/ security/: 其余模块目录，index.tsx 默认导出页面组件，未接入的渲染 Placeholder
+plans/: 套餐（后台-04），两个标签：套餐（左栏卡片 + 详情：价格 / 线路 / 版本、五步向导、销售设置、归档）与流量包（R73）；见 plans/CLAUDE.md
+billing/ content/ system/ security/: 其余模块目录，index.tsx 默认导出页面组件，未接入的渲染 Placeholder
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
