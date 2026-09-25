@@ -2,7 +2,7 @@
 > L2 | 父级: /panel/frontend/src/admin/screens/CLAUDE.md
 
 套餐（管理后台-04-套餐.dc.html）。两个标签：「套餐」#/plans/catalog/<套餐 id> 是左栏卡片 + 右侧详情（没选中时落到第一张），「流量包」#/plans/packs?s=<状态> 是后端有、设计稿缺、按同一风格补的表格（修订 R73）。
-数据流：schemas（纯 zod，Go 的 nil 切片写 nullable 归一成 []，tests/mock-api.test.ts 也拿它核对假后端）→ api（读 hook 挂 plans.changed，写后按 PK 前缀整体失效）→ model（纯函数，model.test.ts 守住）→ 组件。写失败一律走 failure.ts 的 useCatalogFailure：503 是销售开关 AEGIS_SALES_ENABLED 没开，说清原因不劝重试；只有 422 的 fields 给表单（没有表单可标的确认框直接 Toast 出来），409 的 fields 是乐观锁现值，Toast 信封原文；幂等键去留仍由 actions.ts 的 endsIntent 定。
+数据流：schemas（纯 zod，Go 的 nil 切片写 nullable 归一成 []，tests/mock-admin-plans.test.ts 也拿它核对假后端）→ api（读 hook 挂 plans.changed，写后按 PK 前缀整体失效）→ model（纯函数，model.test.ts 守住）→ 组件。写失败一律走 failure.ts 的 useCatalogFailure：503 是销售开关 AEGIS_SALES_ENABLED 没开，说清原因不劝重试；只有 422 的 fields 给表单（没有表单可标的确认框直接 Toast 出来），409 的 fields 是乐观锁现值，Toast 信封原文；幂等键去留仍由 actions.ts 的 endsIntent 定。
 权限分层：catalog.read 看全部；catalog.write 才能新建版本、改草稿；catalog.publish 才有向导（新建与编辑，5.A D-C-2）、销售设置、归档、价格增删、节点池绑定、发布、流量包写操作。reauth 由外框对话框接管，取消时静默。
 后端现状照实处理并在界面上说清：编辑向导（PUT complete）设备数改不回不限、额度或线路一变就开新版本并立即发布且新版本的宽限期与权益回到默认、会清掉上架时间窗；「新建版本」后端不复制，前端 POST versions → PUT 复制当前版本语义 → POST pools 复制绑定。
 待决按「未决前」：D-C-1 不做「恢复上架」，归档写明不可恢复、暂停售卖引导到销售设置；D-C-5 向导不放限速（后端必定 422），版本里限速只跟「用完限速」策略走；D-E-3 不加特性列表与「推荐」字段（流量包自带 recommended，不受影响）。

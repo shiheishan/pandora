@@ -31,7 +31,7 @@ export function unknownField(body: Json, allowed: readonly string[]): MockResult
   return extra ? err(400, 'bad_request', `请求体包含未知字段 "${extra}"`) : null
 }
 
-// 销售开关（AEGIS_SALES_ENABLED）：dev 默认开，tests/mock-api.test.ts 关掉它验 503
+// 销售开关（AEGIS_SALES_ENABLED）：dev 默认开，tests/mock-admin-plans.test.ts 关掉它验 503
 let salesEnabled = true
 export function setSalesEnabled(on: boolean): void {
   salesEnabled = on
