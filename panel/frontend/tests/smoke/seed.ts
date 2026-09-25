@@ -534,15 +534,17 @@ COMMIT;`,
 //  收尾：确认各列表真的不空，再把 id 与门户账号交给 *.smoke.ts
 // ============================================================================
 
-/** 响应本身是数组，或顶层第一个数组字段的长度 */
-function listLength(o: unknown): number {
+/** 响应本身是数组，或指定字段 / 顶层第一个数组字段的长度 */
+function listLength(o: unknown, key?: string): number {
   if (Array.isArray(o)) return o.length
+  if (key) return Array.isArray((o as Json)[key]) ? ((o as Json)[key] as unknown[]).length : -1
   for (const v of Object.values(o as Json)) if (Array.isArray(v)) return v.length
   return -1
 }
 
 step('核对列表不空')
-const lists: Array<[string, string, string]> = [
+// 第四项：列表字段不是第一个数组时写明（路由响应里 outbounds 排在 routes 前面）
+const lists: Array<[string, string, string, string?]> = [
   [ADM, '/v1/node-pools', admin],
   [ADM, '/v1/servers', admin],
   [ADM, '/v1/nodes', admin],
@@ -566,8 +568,8 @@ const lists: Array<[string, string, string]> = [
   [ADM, `/v1/plugin-hooks/${hookCode}/deliveries`, admin],
   [ADM, '/v1/dashboard/traffic/nodes?range=24h&limit=5', admin],
   [ADM, '/v1/dashboard/traffic/users?range=24h&limit=5', admin],
-  [ADM, '/v1/nodes/routing', admin],
-  [ADM, `/v1/nodes/${nodeId}/routing`, admin],
+  [ADM, '/v1/nodes/routing', admin, 'routes'],
+  [ADM, `/v1/nodes/${nodeId}/routing`, admin, 'routes'],
   [PUB, '/v1/plans', user],
   [PUB, '/v1/orders', user],
   [PUB, '/v1/me/subscriptions', user],
@@ -580,8 +582,8 @@ const lists: Array<[string, string, string]> = [
   [PUB, '/v1/content/pages', user],
 ]
 const empty: string[] = []
-for (const [base, path, token] of lists) {
-  const n = listLength(await call(base, path, { token }))
+for (const [base, path, token, key] of lists) {
+  const n = listLength(await call(base, path, { token }), key)
   console.log(`    ${base === ADM ? 'admin ' : 'portal'} ${path}: ${n}`)
   if (n <= 0) empty.push(path)
 }

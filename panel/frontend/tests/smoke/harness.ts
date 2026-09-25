@@ -160,6 +160,8 @@ export interface Row {
   kind?: 'json' | 'raw' | 'sse'
   /** 给了就跳过，写原因 */
   skip?: string
+  /** 列表字段不是响应里第一个数组时写明（「条数 · 覆盖」按它数） */
+  list?: string
   /** 这行的数据是怎么造出来的（进逐行表的「造数」列）：接口名、节点上报或「SQL 夹具」 */
   seed?: string
   /** 数据由后台作业异步产生：轮询到它为真，超时就标跳过 */
@@ -240,13 +242,13 @@ export function record(app: App | 'write', row: Pick<Row, 'path' | 'query' | 'at
  * 覆盖：列表接口看 schema 解析后的数组有几条——0 条只验到了外层，行 schema 没碰到真数据。
  * 取法：响应本身是数组，或顶层第一个数组字段；再往下一层找一次（{ plan: { prices: [] } } 这种详情不算列表）
  */
-function coverage(data: unknown): string {
+function coverage(data: unknown, key?: string): string {
   const arrayIn = (o: unknown): unknown[] | undefined => {
     if (Array.isArray(o)) return o
     if (o === null || typeof o !== 'object') return undefined
     return Object.values(o).find(Array.isArray) as unknown[] | undefined
   }
-  const list = arrayIn(data)
+  const list = key ? arrayIn((data as Record<string, unknown> | null)?.[key]) : arrayIn(data)
   if (!list) return '对象'
   return list.length > 0 ? `${list.length} 条 · 验到行` : '0 条 · 只验到外层'
 }
@@ -292,7 +294,7 @@ export function runTable(app: App, rows: Row[]): void {
         }
         if (row.kind === 'raw') record(app, row, '已验（CSV）')
         else if (row.kind === 'sse') record(app, row, '已验（事件流）')
-        else record(app, row, '已验', '', coverage(data))
+        else record(app, row, '已验', '', coverage(data, row.list))
         // 要等异步数据的行，单条超时放到等待上限之外
       }, row.waitFor ? row.waitFor.timeoutMs + 30_000 : undefined)
     }
