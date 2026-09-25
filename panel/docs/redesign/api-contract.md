@@ -935,6 +935,7 @@
 - 设计：后台-05 抽屉「支付记录」。映射：intent `created`/`requires_action`/`processing` →「等待回调」，`succeeded` →「成功」，`failed` →「失败」，`cancelled`/`expired` →「已关闭」（设计没有这一项，待补·前端补标签）；`provider_code=offline` 的 payment →「人工确认」，流水号取 `provider_payment_id`（格式 `offline:<凭证号>`）。设计每行只有一个状态：以 intent 为行，有对应 payment 的显示 payment 状态。没有 `billing.payment.read` 权限时回 404，前端要隐藏这一块而不是报错。
 
 #### POST v1/orders/{id}/cancel — 管理员取消待支付订单
+- **修订 R95（2026-09-25，后台前端一 ⑥ 核对）**：本接口 400 与两种 409 的 message 是英文，前端映射成中文，后端补中文列入遗留。另：`GET v1/orders` 列表行没有人工单标识（开单人只在详情里，R63），列表渠道列在赠送单上只能显示「—」；给列表行加 `created_by` 或 `manual` 列入后端遗留（可选）。
 - 状态：现有 `panel/internal/api/admin/handlers.go:380 cancelOrder`
 - 权限：`billing.order.write`｜reauth：否｜幂等：是 `admin_order_cancel`
 - 请求：`{ expected_state_version:int64>0, reason:string(5..500 字) }`
@@ -3209,3 +3210,4 @@
 | R92 | 2026-09-24 | 后台前端一 | 编辑向导改不回不限设备、新版本高级设置回默认、上架时间窗被清空 |
 | R93 | 2026-09-25 | 后台前端二 | 钩子超时与重试次数越界回 500（缺陷）、省略字段写零值、若干形状 |
 | R94 | 2026-09-25 | 后台前端二、协调会话 | 模板实为 12 个；SMTP 密码行缺失时静默存不上 |
+| R95 | 2026-09-25 | 后台前端一 | 取消订单文案英文；订单列表行无人工单标识 |
