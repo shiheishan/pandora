@@ -80,3 +80,4 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 - `src/admin/actions.ts` 的「4xx 后丢弃幂等键」由后台前端一统一改，包括营销、节点目录里的调用处；**你做 ④ 期间不要改 marketing / nodes 目录**，合并后同步主线即可。
 - ui 的 `Select` 已有 `emptyOption?: string`（后台前端一 2a5a00e）：「不限 / 全部」这类要能选回去的空值项用它，不要再往 options 里拼空值项；④ 新写的下拉照此，营销、节点里已有的写法等以后改到时再换。
 - **④ 要点**：公告（定时、级别）、知识库、主题与插槽（只显示「默认 · 纸白」一张使用中的卡片，保存新主题入口隐藏，custom_css 不出现，5.A）、站点时区卡（R49 `GET/POST v1/settings/site`，设计稿没有，按设计稿风格补）；待决 D-D-2、D-D-3 按「未决前」。
+- 后台前端一已把「4xx 后丢弃幂等键」统一进 `src/admin/actions.ts`（`endsIntent`、`useFailure` 的 `{ fields, intent }` 写法），营销、节点目录的调用处也已改完（4263c49，合并 1ccfd2b）。你之后改到营销、节点前先同步主线；④ 起新写的带幂等键的写操作一律 `fail(e, { intent })`，自己先处理 4xx 的分支在 catch 开头 `if (endsIntent(e)) intent.reset()`。

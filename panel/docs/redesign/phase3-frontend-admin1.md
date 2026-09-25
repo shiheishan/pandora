@@ -34,7 +34,7 @@ D-A-1（外框实时事件，已由第 2 阶段按通用条目处理，不用再
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：① 仪表盘 `f0b97fd`、`da73257`（合并 3b0930e）、② 工单 `a35785e`（合并 415fa3a）、写操作三件提升 `af5158f`（合并 2c1fc82）、③ 用户列表与详情 `9c4a509`（合并 9a45d53；NativeCore 36085029781、手动 PG18 36085060773 全绿）已验收合入。「④ 之前」`b1b9b77`（合并 0e4cbd5）、④ 用户其余标签 `77612c2`（合并 f63b69e；NativeCore 36089193990 第 2 次运行全绿，第 1 次因账号计费未启动）已验收合入。「⑤ 之前」`2a5a00e`（ui/Select `emptyOption`、ui/Field 空串不算错误，合并 9a8693a）已合入。**下一步：先做下面「⑤ 之前（二）」一件事，单独一个提交；然后 ⑤ 套餐。** 2026-09-24 此后上下文用完（第一次接力后的会话），同一 worktree 由新会话接力：先读 `phase3-common.md`（10.4 幂等键口径）、本文件全文、`src/admin/CLAUDE.md`、`src/ui/CLAUDE.md`、`src/admin/screens/users/CLAUDE.md`、`dev/mock/admin/CLAUDE.md`，再 `git merge feat/panel-redesign`。 2026-09-24 ③ 之后上下文将满，同一 worktree 由新会话接力：先读 `phase3-common.md`、本文件全文、`src/admin/CLAUDE.md`、`src/admin/screens/users/CLAUDE.md`，再 `git merge feat/panel-redesign`。
+**进度**：① 仪表盘 `f0b97fd`、`da73257`（合并 3b0930e）、② 工单 `a35785e`（合并 415fa3a）、写操作三件提升 `af5158f`（合并 2c1fc82）、③ 用户列表与详情 `9c4a509`（合并 9a45d53；NativeCore 36085029781、手动 PG18 36085060773 全绿）已验收合入。「④ 之前」`b1b9b77`（合并 0e4cbd5）、④ 用户其余标签 `77612c2`（合并 f63b69e；NativeCore 36089193990 第 2 次运行全绿，第 1 次因账号计费未启动）已验收合入。「⑤ 之前」`2a5a00e`（ui/Select `emptyOption`、ui/Field 空串不算错误，合并 9a8693a）已合入。「⑤ 之前（二）」`4263c49`（4xx 后丢弃幂等键，合并 1ccfd2b）已合入。**下一步 ⑤ 套餐。** 2026-09-24 此后上下文用完（第一次接力后的会话），同一 worktree 由新会话接力：先读 `phase3-common.md`（10.4 幂等键口径）、本文件全文、`src/admin/CLAUDE.md`、`src/ui/CLAUDE.md`、`src/admin/screens/users/CLAUDE.md`、`dev/mock/admin/CLAUDE.md`，再 `git merge feat/panel-redesign`。 2026-09-24 ③ 之后上下文将满，同一 worktree 由新会话接力：先读 `phase3-common.md`、本文件全文、`src/admin/CLAUDE.md`、`src/admin/screens/users/CLAUDE.md`，再 `git merge feat/panel-redesign`。
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R89。
@@ -66,4 +66,6 @@ D-A-1（外框实时事件，已由第 2 阶段按通用条目处理，不用再
 - **（已完成，2a5a00e）⑤ 之前先做**：① `ui/Select` 支持可选的「不限 / 全部」空值项（占位项目前是 disabled，选过别的值就回不去；加一个显式属性，如 `emptyOption?: string`，传了就渲染一个可选的空值项，不传时行为不变），用户列表的「全部用户组」与 ④ 的筛选改用它、删掉页面里的临时写法；② `ui/Field` 的 `error` 为空串时不算错误（不显示红框与文字），补 `ui.test.tsx`。推送、报告，合并后再做 ⑤。
 - ⑤ 套餐：`dev/mock/admin/plans.ts` 实现完整 `GET v1/plans` 时沿用 users 假后端里固定的套餐 id（`9c0e1a2b-3333-…`），批量筛选按套餐就能命中；做完告诉协调会话，由后台前端二删掉营销假后端里临时的那份。⑤ 的流量包 tab 按 R73。
 - 「⑤ 之前」的验收结论：`emptyOption` 与 placeholder 分工写进组件头注释、`hasError` 一处判定同时管 Field 错误行与控件的 `aria-invalid`、抽屉用户组下拉一并改用，都认可。
-- **⑤ 之前（二）（单独一个提交，协调会话指派给你，授权改 marketing 与 nodes 目录里的调用处）**：按公共规则 10.4 与契约 R85，`src/admin/actions.ts` 让写操作在收到 4xx 业务拒绝后丢弃幂等键（reauth 取消即 `reauth_required` 除外，断网与 5xx 保留）。做法你定，但要一处集中、调用方改动最小（例如给 `useFailure` 加可选的 intent 参数、或提供 `endsIntent` 并在 `useFailure` 里 reset）；补单测；工单、用户、营销、节点四个目录的调用处都换上。后台前端二这段时间做 ④ 内容与外观，不会碰 marketing / nodes 目录。推送、报告，合并后再做 ⑤。
+- **（已完成，4263c49）⑤ 之前（二）**：按公共规则 10.4 与契约 R85，`src/admin/actions.ts` 让写操作在收到 4xx 业务拒绝后丢弃幂等键（reauth 取消即 `reauth_required` 除外，断网与 5xx 保留）。做法你定，但要一处集中、调用方改动最小（例如给 `useFailure` 加可选的 intent 参数、或提供 `endsIntent` 并在 `useFailure` 里 reset）；补单测；工单、用户、营销、节点四个目录的调用处都换上。后台前端二这段时间做 ④ 内容与外观，不会碰 marketing / nodes 目录。推送、报告，合并后再做 ⑤。
+- 「⑤ 之前（二）」的验收结论：规则只在 `actions.ts` 的 `endsIntent` 一处（4xx 丢键、`reauth_required` 除外，断网 / 5xx / `invalid_response` 保键），`useFailure` 兼容旧写法、新写法 `fail(e, { intent })`，自己先处理 4xx 的分支在 catch 开头 `if (endsIntent(e)) intent.reset()`，工单「回复并解决」只丢解决那把键，都认可。之后新写的带幂等键的写操作一律按这个写法。
+- 浏览器实测的登录方式：不要在登录页或 reauth 框里手输口令。照其他会话的做法，用命令行向本机假后端取演示令牌（`dev/mock-api.ts` 的 `MOCK_ACCOUNTS` 是本地夹具，不是真实凭据）再写进浏览器存储；reauth 过期后用同样方式刷新 rat，再提交。
