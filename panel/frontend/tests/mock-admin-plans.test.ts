@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../dev/mock/admin/plans 的 setSalesEnabled，依赖 ../src/admin/screens/plans/schemas 的套餐与流量包 schema
  * [OUTPUT]: 对外提供套餐（后台-04）假接口的测试
- * [POS]: tests 的套餐假后端守卫：目录能被页面 schema 接住、向导单事务新建与幂等重放、编辑向导的 null = 不动与开新版本、草稿版本全流程、价格与销售开关 503、流量包 updated_at 乐观锁
+ * [POS]: tests 的套餐假后端守卫：目录能被页面 schema 接住、向导单事务新建与幂等重放、编辑向导的 null = 不动与开新版本、R99 设备与限速三态、R100 卖点与推荐（向导缺省不动、销售设置整体覆盖）、超额策略只收 suspend、草稿版本全流程、价格与销售开关 503、流量包 updated_at 乐观锁
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -81,6 +81,10 @@ describe('mock api · admin plans', () => {
     expect(planCreatedSchema.parse(await (await send('POST', '/v1/plans/complete', ok, 'wiz-2')).json()).plan.id).toBe(r.plan.id)
     expect((await send('POST', '/v1/plans/complete', ok, 'wiz-3')).status).toBe(409)
     expect((await send('POST', '/v1/plans/complete', { ...ok, code: 'wiz-x', max_devices: 0 }, 'wiz-4')).status).toBe(422)
+    // R99 / R100：向导的限速正常生效；卖点与推荐可选
+    const extra = planCreatedSchema.parse(await (await send('POST', '/v1/plans/complete', { ...ok, code: 'wiz-t', throttle_kbps: 100_000, highlights: ['稳'], recommended: true }, 'wiz-5')).json())
+    expect(extra.plan).toMatchObject({ highlights: ['稳'], recommended: true })
+    expect(extra.plan.versions[0]).toMatchObject({ throttle_kbps: 100_000, overage_policy: 'suspend' })
   })
 
   it('edits through the wizard: null leaves things alone, quota changes roll a published version', async () => {
@@ -106,7 +110,56 @@ describe('mock api · admin plans', () => {
     expect(r.plan.prices).toEqual(d.prices)
   })
 
-  it('walks a draft version: create, reject pool_ids and a stray throttle, save, bind, publish', async () => {
+  it('R99 tri-state on the edit wizard: absent keeps, null clears, a number sets; highlights and recommended only when sent', async () => {
+    const PRO = '9c0e1a2b-3333-4b00-8000-000000000002'
+    const d = await detailOf(PRO)
+    expect(d).toMatchObject({ recommended: true, highlights: expect.arrayContaining(['流媒体解锁']) })
+    const basics = { code: d.code, name: d.name, description: d.description, visibility: d.visibility, sort_order: d.sort_order, visible_group_ids: [], purchase_limit_per_user: null, stock_total: d.stock_total }
+    const curOf = (plan: typeof d) => plan.versions.find((v) => v.id === plan.current_version_id)!
+    expect(curOf(d)).toMatchObject({ throttle_kbps: 300_000, max_devices: 5 })
+    // 什么都不带：额度不动、不开新版本，卖点与推荐原样
+    const same = planUpdatedSchema.parse(await (await send('PUT', `/v1/plans/${PRO}/complete`, { ...basics, expected_row_version: d.row_version }, 'tri-0')).json())
+    expect(same.changed).toEqual(['套餐资料已更新'])
+    expect(same.plan).toMatchObject({ current_version_id: d.current_version_id, recommended: true, highlights: d.highlights })
+    // 显式 null：清为不限；卖点整体换掉、取消推荐
+    const cleared = planUpdatedSchema.parse(
+      await (await send('PUT', `/v1/plans/${PRO}/complete`, { ...basics, expected_row_version: same.plan.row_version, max_devices: null, throttle_kbps: null, highlights: [' 新卖点 '], recommended: false }, 'tri-1')).json(),
+    )
+    expect(curOf(cleared.plan)).toMatchObject({ throttle_kbps: null, max_devices: null })
+    expect(cleared.plan).toMatchObject({ highlights: ['新卖点'], recommended: false })
+    const set = planUpdatedSchema.parse(await (await send('PUT', `/v1/plans/${PRO}/complete`, { ...basics, expected_row_version: cleared.plan.row_version, throttle_kbps: 50_000 }, 'tri-2')).json())
+    expect(curOf(set.plan)).toMatchObject({ throttle_kbps: 50_000, max_devices: null })
+    const bad = await send('PUT', `/v1/plans/${PRO}/complete`, { ...basics, expected_row_version: set.plan.row_version, highlights: ['a', 'a', '字'.repeat(41)] }, 'tri-3')
+    expect(await bad.json()).toMatchObject({ error: { fields: { 'highlights.1': expect.any(String), 'highlights.2': expect.any(String) } } })
+  })
+
+  it('sales settings overwrite highlights and recommended as a whole (absent = empty and false)', async () => {
+    const FAMILY = '9c0e1a2b-3333-4b00-8000-000000000003'
+    const d = await detailOf(FAMILY)
+    const body = {
+      expected_row_version: d.row_version,
+      code: d.code,
+      name: d.name,
+      description: d.description,
+      visibility: d.visibility,
+      visible_group_ids: d.visible_group_ids,
+      visible_from: d.visible_from,
+      visible_until: d.visible_until,
+      allow_new_purchase: d.allow_new_purchase,
+      allow_renewal: d.allow_renewal,
+      allow_upgrade: d.allow_upgrade,
+      purchase_limit_per_user: d.purchase_limit_per_user,
+      stock_total: d.stock_total,
+      sort_order: d.sort_order,
+    }
+    expect((await send('PUT', `/v1/plans/${FAMILY}`, { ...body, highlights: Array.from({ length: 6 }, (_, i) => `卖点${i}`) }, 'sp-0')).status).toBe(422)
+    const ok = (await (await send('PUT', `/v1/plans/${FAMILY}`, { ...body, highlights: ['适合家庭'], recommended: true }, 'sp-1')).json()) as { row_version: number }
+    expect(await detailOf(FAMILY)).toMatchObject({ highlights: ['适合家庭'], recommended: true })
+    await send('PUT', `/v1/plans/${FAMILY}`, { ...body, expected_row_version: ok.row_version }, 'sp-2')
+    expect(await detailOf(FAMILY)).toMatchObject({ highlights: [], recommended: false })
+  })
+
+  it('walks a draft version: create, reject pool_ids and non-suspend overage, save, bind, publish', async () => {
     const d = await detailOf(STD)
     const v = versionCreatedSchema.parse(await (await send('POST', `/v1/plans/${STD}/versions`, undefined, 'ver-1')).json()).version
     expect([v.status, v.quotas, v.pool_ids]).toEqual(['draft', [], []])
@@ -115,8 +168,10 @@ describe('mock api · admin plans', () => {
     const semantics = { ...cur, expected_row_version: v.row_version }
     for (const k of ['id', 'version', 'status', 'frozen_at', 'row_version', 'pool_ids', 'created_by_email', 'created_at'] as const) delete (semantics as Partial<typeof semantics>)[k]
     expect((await send('PUT', `/v1/plans/${STD}/versions/${v.id}`, { ...semantics, pool_ids: [] })).status).toBe(422)
-    expect(await (await send('PUT', `/v1/plans/${STD}/versions/${v.id}`, { ...semantics, throttle_kbps: 5000 })).json()).toMatchObject({ error: { fields: { throttle_kbps: expect.any(String) } } })
-    const saved = (await (await send('PUT', `/v1/plans/${STD}/versions/${v.id}`, semantics)).json()) as { row_version: number }
+    // R99：超额策略只收 suspend，限速只校验正整数、与策略无关
+    expect(await (await send('PUT', `/v1/plans/${STD}/versions/${v.id}`, { ...semantics, overage_policy: 'throttle', throttle_kbps: 5000 })).json()).toMatchObject({ error: { fields: { overage_policy: expect.any(String) } } })
+    expect(await (await send('PUT', `/v1/plans/${STD}/versions/${v.id}`, { ...semantics, throttle_kbps: 0 })).json()).toMatchObject({ error: { fields: { throttle_kbps: expect.any(String) } } })
+    const saved = (await (await send('PUT', `/v1/plans/${STD}/versions/${v.id}`, { ...semantics, throttle_kbps: 5000 })).json()) as { row_version: number }
     const bound = await send('POST', `/v1/plans/${STD}/pools`, { version_id: v.id, expected_version_row_version: saved.row_version, pool_ids: cur.pool_ids }, 'bind-1')
     const { row_version } = (await bound.json()) as { row_version: number }
     const plan = await detailOf(STD)

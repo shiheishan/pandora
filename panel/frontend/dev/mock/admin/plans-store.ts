@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockResult，依赖 ./users 的 PLAN_IDS / GROUPS / activeSubscriptions，依赖 ./nodes-infra 的 pools（只读）与 activeNodesInPool（在线节点数与节点池列表同口径）
- * [OUTPUT]: 对外提供套餐假接口的存储与规则：Plan 类型、种子目录 plans 与查找（find、currentOf、draftOf、trafficOf）、行形状（listRow、priceRow、detail）、与 Go 同键名同文案的校验（planFieldProblems、semanticsProblems、priceProblems、poolProblems、wizardPriceProblems、publishProblems）、写入小件（publish、applySemantics、applyBasics、blankVersion、quotasFor、seedPlan、seedPrice、newPrice、priceKey、touch）、在线节点数 activeNodes、工具（GiB、UUID、isInt、str）、错误结果（err、invalid、NOT_FOUND、DUP、stale、SALES_OFF、unknownField）与销售开关（sales、setSalesEnabled）
- * [POS]: dev/mock/admin 的「套餐（后台-04）」数据层，plans.ts 的路由与向导都经它读写。种子五个套餐沿用 users.ts 的固定套餐 id（批量筛选按套餐能命中）与用户组 id，节点池沿用 nodes-infra.ts 的池（id 一致），在线节点数是这里的固定值、不与节点假后端联动（企业专线为 0，演示「空订阅」警示）；有效订阅按 users.ts 的种子订阅实时数（active / trialing）
+ * [OUTPUT]: 对外提供套餐假接口的存储与规则：Plan 类型、种子目录 plans 与查找（find、currentOf、draftOf、trafficOf）、行形状（listRow、priceRow、detail）、与 Go 同键名同文案的校验（planFieldProblems、semanticsProblems、salesPointProblems、priceProblems、poolProblems、wizardPriceProblems、publishProblems）、写入小件（publish、applySemantics、applyBasics、applySalesPoints、blankVersion、quotasFor、seedPlan、seedPrice、newPrice、priceKey、touch）、在线节点数 activeNodes、工具（GiB、UUID、isInt、str）、错误结果（err、invalid、NOT_FOUND、DUP、stale、SALES_OFF、unknownField）与销售开关（sales、setSalesEnabled）
+ * [POS]: dev/mock/admin 的「套餐（后台-04）」数据层，plans.ts 的路由与向导都经它读写。种子五个套餐沿用 users.ts 的固定套餐 id（批量筛选按套餐能命中）与用户组 id，节点池沿用 nodes-infra.ts 的池（id 一致），在线节点数是这里的固定值、不与节点假后端联动（企业专线为 0，演示「空订阅」警示）；有效订阅按 users.ts 的种子订阅实时数（active / trialing）；标准版 v1 是 R99 之前的「用完限速」存量行，专业版当前版本限速 300 Mbps、带卖点并标为推荐（R100）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -111,6 +111,8 @@ export interface Plan {
   stock_total: number | null
   stock_reserved: number
   sort_order: number
+  highlights: string[]
+  recommended: boolean
   current_version_id: string | null
   versions: Version[]
   prices: Price[]
@@ -207,6 +209,8 @@ export function seedPlan(id: string, code: string, name: string, description: st
     stock_total: null,
     stock_reserved: 0,
     sort_order: sort,
+    highlights: [],
+    recommended: false,
     current_version_id: current?.id ?? null,
     versions: [...versions].sort((a, b) => b.version - a.version),
     prices: [...prices].sort((a, b) => b.created_at.localeCompare(a.created_at)),
@@ -225,13 +229,15 @@ export const plans: Plan[] = [
     '日常浏览与流媒体，适合个人单设备到三设备。',
     'active',
     10,
-    [seedVersion(1, 'published', 150, 3, ['global'], 200), seedVersion(2, 'published', 200, 3, ['global'], 55)],
+    // v1 是 R99 之前的存量写法（「用完限速」策略），读取照收、保存时改回 suspend
+    [{ ...seedVersion(1, 'published', 150, 3, ['global'], 200), overage_policy: 'throttle', throttle_kbps: 5000 }, seedVersion(2, 'published', 200, 3, ['global'], 55)],
     [
       seedPrice('CNY', 2000, 'month', 1, 300, { status: 'archived', row_version: 2 }),
       seedPrice('CNY', 2500, 'month', 1, 60),
       seedPrice('CNY', 6900, 'month', 3, 60),
       seedPrice('USD', 390, 'month', 1, 40),
     ],
+    { highlights: ['全部常规线路', '工单支持'] },
   ),
   seedPlan(
     PLAN_IDS[1]!,
@@ -242,7 +248,7 @@ export const plans: Plan[] = [
     20,
     [
       seedVersion(1, 'published', 400, 5, ['global'], 260),
-      seedVersion(2, 'published', 500, 5, ['asia', 'global'], 100),
+      { ...seedVersion(2, 'published', 500, 5, ['asia', 'global'], 100), throttle_kbps: 300_000 },
       seedVersion(3, 'draft', 600, 5, ['asia', 'global'], 1, 'zhou.min@pandora.dev'),
     ],
     [
@@ -251,7 +257,7 @@ export const plans: Plan[] = [
       seedPrice('USD', 690, 'month', 1, 90),
       seedPrice('CNY', 3900, 'month', 1, 30, { user_group_id: VIP }),
     ],
-    { stock_total: 500, stock_reserved: 3 },
+    { stock_total: 500, stock_reserved: 3, highlights: ['亚太精选 + 欧美线路', '流媒体解锁', '工单优先处理'], recommended: true },
   ),
   seedPlan(PLAN_IDS[2]!, 'family', '家庭版', '多设备共享，适合家庭与小团队。', 'active', 30, [seedVersion(1, 'published', 1000, 8, ['global'], 140)], [seedPrice('CNY', 6800, 'month', 1, 140)], {
     visible_until: new Date(Date.now() + 45 * DAY).toISOString(),
@@ -298,6 +304,8 @@ export function listRow(p: Plan) {
     prices: p.prices.map(priceRow),
     active_subscriptions: activeSubscriptions(p.id),
     node_count: cur ? cur.pool_ids.reduce((n, id) => n + activeNodes(id), 0) : 0,
+    highlights: p.highlights,
+    recommended: p.recommended,
   }
 }
 
@@ -356,10 +364,9 @@ export function semanticsProblems(b: Json): Record<string, string> {
   if (b.max_devices != null && !(isInt(b.max_devices) && b.max_devices > 0)) f.max_devices = '必须为正整数'
   if (b.max_concurrent != null && !(isInt(b.max_concurrent) && b.max_concurrent > 0)) f.max_concurrent = '必须为正整数'
   if (!(isInt(b.device_release_hours) && b.device_release_hours >= 0)) f.device_release_hours = '不能为负数'
-  const overage = str(b.overage_policy)
-  if (!['suspend', 'throttle', 'metered_billing'].includes(overage)) f.overage_policy = '不支持的超额策略'
-  if (overage === 'throttle' && !(isInt(b.throttle_kbps) && b.throttle_kbps > 0)) f.throttle_kbps = '限速策略必须设置正整数速率'
-  if (overage !== 'throttle' && b.throttle_kbps != null) f.throttle_kbps = '非限速策略不能设置速率'
+  // R99：新写入的超额策略只收 suspend（省略按 suspend），限速与策略解耦，只校验 null 或正整数
+  if (b.overage_policy !== undefined && b.overage_policy !== 'suspend') f.overage_policy = '超额策略只支持 suspend（流量用完后停止服务）'
+  if (b.throttle_kbps != null && !(isInt(b.throttle_kbps) && b.throttle_kbps > 0)) f.throttle_kbps = '必须为正整数'
   const quotas = Array.isArray(b.quotas) ? (b.quotas as Json[]) : []
   quotas.forEach((q, i) => {
     if (!q || typeof q.metric !== 'string' || !q.metric) f[`quotas.${i}`] = '缺少 metric'
@@ -371,6 +378,28 @@ export function semanticsProblems(b: Json): Record<string, string> {
     if (!e || typeof e.code !== 'string' || !e.code) f[`entitlements.${i}`] = '缺少 code'
   })
   return f
+}
+
+/** R100 卖点：数组、最多 5 条、每条去首尾空白后 1–40 字、不许重复；recommended 必须是 bool。只校验出现了的字段 */
+export function salesPointProblems(b: Json): Record<string, string> {
+  const f: Record<string, string> = {}
+  if (b.recommended !== undefined && typeof b.recommended !== 'boolean') f.recommended = '必须是布尔值'
+  if (b.highlights === undefined) return f
+  if (!Array.isArray(b.highlights) || b.highlights.some((h) => typeof h !== 'string')) return { ...f, highlights: '必须是字符串数组' }
+  const list = (b.highlights as string[]).map((h) => h.trim())
+  if (list.length > 5) f.highlights = '最多 5 条'
+  list.forEach((h, i) => {
+    const n = [...h].length
+    if (n < 1 || n > 40) f[`highlights.${i}`] = '每条 1-40 个字'
+    else if (list.indexOf(h) !== i) f[`highlights.${i}`] = '不能重复'
+  })
+  return f
+}
+
+/** 写入出现了的卖点与推荐（按去空白后的顺序） */
+export function applySalesPoints(p: Plan, b: Json): void {
+  if (Array.isArray(b.highlights)) p.highlights = (b.highlights as string[]).map((h) => h.trim())
+  if (typeof b.recommended === 'boolean') p.recommended = b.recommended
 }
 
 /** validatePriceInput */
@@ -426,7 +455,7 @@ export function applySemantics(v: Version, b: Json): void {
   v.max_devices = (b.max_devices as number | null) ?? null
   v.max_concurrent = (b.max_concurrent as number | null) ?? null
   v.device_release_hours = b.device_release_hours as number
-  v.overage_policy = str(b.overage_policy)
+  v.overage_policy = str(b.overage_policy) || 'suspend'
   v.throttle_kbps = (b.throttle_kbps as number | null) ?? null
   v.notes = typeof b.notes === 'string' && b.notes.trim() ? b.notes : null
   v.entitlements = (Array.isArray(b.entitlements) ? (b.entitlements as Json[]) : []).map((e) => ({ code: str(e.code), value: e.value ?? null }))

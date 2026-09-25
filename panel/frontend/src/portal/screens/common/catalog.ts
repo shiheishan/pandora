@@ -1,46 +1,22 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../core/format 的 formatMoney
- * [OUTPUT]: 对外提供套餐目录 / 流量包目录 / 支付方式的 schema、类型与查询（usePlans、usePackCatalog、usePaymentMethods），周期映射 periodOf / PERIODS / periodName / periodUnit，价格文案 monthlyNote / savingPercent / perGbNote，额度文案 trafficQuotaOf / resetNote / quotaPeriodNote，cnyPrices / priceFor / savingAmount / periodMonths / methodKey
- * [POS]: portal/screens/common 的商品目录层（契约门户-03 与外壳的 payment-methods）：选购页与结账页共用；只展示 CNY 价格（余额与 epay 只有 CNY），周期把 (month,3)|(quarter,1)、(year,1)|(month,12) 归成同一档
+ * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ./catalog-schema 的套餐 schema，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../core/format 的 formatMoney
+ * [OUTPUT]: 对外提供套餐目录 / 流量包目录 / 支付方式的 schema、类型与查询（usePlans、usePackCatalog、usePaymentMethods），周期映射 periodOf / PERIODS / periodName / periodUnit，价格文案 monthlyNote / savingPercent / perGbNote，额度文案 trafficQuotaOf / resetNote / quotaPeriodNote / throttleNote，cnyPrices / priceFor / savingAmount / periodMonths / methodKey
+ * [POS]: portal/screens/common 的商品目录层（契约门户-03 与外壳的 payment-methods）：选购页与结账页共用；只展示 CNY 价格（余额与 epay 只有 CNY），周期把 (month,3)|(quarter,1)、(year,1)|(month,12) 归成同一档；套餐行含 R99 限速与 R100 卖点 / 推荐
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
+import { planSchema, type Plan, type Price } from './catalog-schema'
 
-// ---------------------------------------------------------------------------
-// GET v1/plans（修订 R69 的四个字段写成可选：旧后端缺席时文案降级）
-// ---------------------------------------------------------------------------
-export const RESET_STRATEGIES = ['never', 'natural_month', 'billing_cycle', 'fixed_day'] as const
-
-export const priceSchema = z.object({
-  id: z.string(),
-  currency: z.string(),
-  unit_amount: z.number().int(),
-  billing_interval: z.enum(['day', 'week', 'month', 'quarter', 'year', 'one_time']),
-  interval_count: z.number().int(),
-  trial_days: z.number().int(),
-})
-export type Price = z.output<typeof priceSchema>
-
-export const planSchema = z.object({
-  id: z.string(),
-  code: z.string(),
-  name: z.string(),
-  description: z.string().nullable(),
-  version: z.number().int().nullable(),
-  max_devices: z.number().int().nullable(),
-  quotas: z.array(z.object({ metric: z.string(), limit: z.number().int().nullable(), unit: z.string(), period: z.enum(['total', 'cycle', 'day', 'month']) })),
-  prices: z.array(priceSchema),
-  quota_reset_strategy: z.enum(RESET_STRATEGIES).optional(),
-  quota_reset_day: z.number().int().nullable().optional(),
-  allow_renewal: z.boolean().optional(),
-  allow_upgrade: z.boolean().optional(),
-})
-export type Plan = z.output<typeof planSchema>
+// GET v1/plans 的形状在 catalog-schema.ts（纯 zod，测试也用），这里转出
+export { planSchema, priceSchema, RESET_STRATEGIES, type Plan, type Price } from './catalog-schema'
 
 const plansSchema = z.object({ plans: z.array(planSchema) })
+
+/** 套餐卡的限速事实：「限速 N Mbps」，不限速为 null（R99：全程生效的按用户限速） */
+export const throttleNote = (kbps: number | null) => (kbps === null ? null : `限速 ${Number((kbps / 1000).toFixed(3))} Mbps`)
 
 /** 匿名接口但会解析 Bearer：登录后带令牌才看得到 authenticated / group 套餐与组专属价格，所以走默认的带令牌请求。 */
 export function usePlans() {

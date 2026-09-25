@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatBytes / formatCount / formatDateTime，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / QueryView / StatStrip / Tag / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ./api 的 usePlan / useInvalidatePlans / rowVersionSchema / PlanDetail / PlanRow，依赖 ./model，依赖 ./failure 的 useCatalogFailure，依赖 ./PriceCard、./PoolCard、./Versions、./SalesDrawer，依赖 ./Plans.module.css
  * [OUTPUT]: 对外提供 PlanDetailView
- * [POS]: 套餐详情（后台-04 右侧）：头部（名称、状态、说明、「用向导编辑」「销售设置」「归档套餐」）、四格事实（有效订阅取列表行的 active_subscriptions，详情接口没有）、提示条（node_count = 0 的「买了也是空订阅」、停止新购、上架时间窗），下面是价格 / 线路两卡与版本列表。D-C-1 已决（5.A.2）不做「恢复上架」：归档写明不可恢复，只想暂停售卖的引导去销售设置
+ * [POS]: 套餐详情（后台-04 右侧）：头部（名称、状态、「推荐」（R100）、说明、「用向导编辑」「销售设置」「归档套餐」）、四格事实（有效订阅取列表行的 active_subscriptions，详情接口没有）、提示条（node_count = 0 的「买了也是空订阅」、停止新购、门户卖点、上架时间窗），下面是价格 / 线路两卡与版本列表。D-C-1 已决（5.A.2）不做「恢复上架」：归档写明不可恢复，只想暂停售卖的引导去销售设置
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -44,6 +44,7 @@ function Loaded({ plan, row, onEdit }: { plan: PlanDetail; row: PlanRow | undefi
     notes.push({ text: `当前版本没有在线节点：买了这个套餐的用户会拿到一份空订阅。${publish ? '在「线路 · 节点池」里绑定有在线节点的池。' : ''}` })
   if (!archived && !plan.allow_new_purchase) notes.push({ text: '已关闭新购：门户看得到也买不了，已有订阅照常续费。', info: true })
   if (!archived && plan.visibility !== 'public') notes.push({ text: `可见范围：${VISIBILITY_LABELS[plan.visibility]}。`, info: true })
+  if (plan.highlights.length) notes.push({ text: `门户卖点：${plan.highlights.join(' · ')}。`, info: true })
   if (plan.visible_from || plan.visible_until)
     notes.push({ text: `上架时间窗：${plan.visible_from ? formatDateTime(plan.visible_from) : '不限'} 至 ${plan.visible_until ? formatDateTime(plan.visible_until) : '不限'}。`, info: true })
 
@@ -54,6 +55,7 @@ function Loaded({ plan, row, onEdit }: { plan: PlanDetail; row: PlanRow | undefi
           <div className={css.headTitle}>
             <h2>{plan.name}</h2>
             <Tag tone={view.tone}>{view.label}</Tag>
+            {plan.recommended && <Tag tone="brand">推荐</Tag>}
             <span className={css.cardCode}>{plan.code}</span>
           </div>
           <p className={css.desc}>{plan.description || '没有说明'}</p>

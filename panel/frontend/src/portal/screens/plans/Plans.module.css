@@ -77,8 +77,14 @@
   gap: var(--space-16);
 }
 
-.planCard {
+.planCard,
+.planHot {
   gap: 14px;
+}
+
+/* 推荐套餐（R100）：与「最划算」流量包同一种强调——品牌描边 + tint 底（Card tint） */
+.planHot {
+  border-color: var(--brand);
 }
 
 .planHead {
@@ -150,6 +156,15 @@
 .reset {
   font-size: var(--fs-caption);
   color: var(--text-3);
+}
+
+.factList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .fact {

@@ -1,12 +1,13 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
+ * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/portal/screens/common/catalog-schema 的 planSchema
  * [OUTPUT]: 对外提供门户假接口的测试
- * [POS]: tests 的门户假后端守卫：外框读接口来自各页面模块、快捷登录令牌一次性往返、同一会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
+ * [POS]: tests 的门户假后端守卫：外框读接口来自各页面模块、套餐目录能被页面 schema 接住（R99 / R100）、快捷登录令牌一次性往返、同一会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
+import { planSchema } from '../src/portal/screens/common/catalog-schema'
 import { close, serve } from './mock-helpers'
 
 describe('mock api · portal', () => {
@@ -27,6 +28,14 @@ describe('mock api · portal', () => {
     const consume = () => fetch(`${base}/v1/auth/quick-login`, { method: 'POST', body: JSON.stringify({ token }) })
     expect((await consume()).status).toBe(200)
     expect((await consume()).status).toBe(401)
+  })
+
+  it('serves a plan catalog the page schema accepts, with R99 throttle and R100 highlights / recommended', async () => {
+    const res = (await (await fetch(`${base}/v1/plans`)).json()) as { plans: unknown[] }
+    const plans = res.plans.map((p) => planSchema.parse(p))
+    expect(plans.filter((p) => p.recommended).map((p) => p.code)).toEqual(['pro'])
+    expect(plans.find((p) => p.code === 'fam')).toMatchObject({ throttle_kbps: 100_000, highlights: ['适合家庭与小团队'] })
+    expect(plans.every((p) => p.highlights.length <= 5)).toBe(true)
   })
 
   it('binds quick-login tokens to the issuing session: regenerating voids the previous one', async () => {

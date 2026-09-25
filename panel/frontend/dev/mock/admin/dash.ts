@@ -1,10 +1,11 @@
 /**
- * [INPUT]: 依赖 ../types 的 MockModule / MockContext
+ * [INPUT]: 依赖 ../types 的 MockModule / MockContext，依赖 ./billing-store 的 stalePendingCount
  * [OUTPUT]: 对外提供 dash 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「仪表盘（后台-01）」假接口，归后台前端一；八个只读接口，形状、权限、参数校验与错误码照 api-contract.md 后台-01（含待补·后端字段）与 DASH-01 冻结契约。数据按日期确定性生成，概览的今日 / 昨日与收入趋势的最后两天是同一组数
+ * [POS]: dev/mock/admin 的「仪表盘（后台-01）」假接口，归后台前端一；八个只读接口，形状、权限、参数校验与错误码照 api-contract.md 后台-01（含待补·后端字段）与 DASH-01 冻结契约。数据按日期确定性生成，概览的今日 / 昨日与收入趋势的最后两天是同一组数；「超时未支付订单」从订单假后端实时数（billing-store 的 stalePendingCount），点进订单页待支付筛选能对上
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { MockContext, MockModule } from '../types.ts'
+import { stalePendingCount } from './billing-store.ts'
 
 // ---------------------------------------------------------------------------
 // 确定性的伪数据：同一天、同一币种得到同一组数，刷新不跳
@@ -131,7 +132,8 @@ export const dash: MockModule = {
         { kind: 'tickets_open', count: 7, high_priority: 2, oldest_wait_seconds: 3 * 3600 + 540 },
         { kind: 'withdrawals_pending', count: 3, amounts: [{ currency: 'CNY', amount: 128_000 }] },
         { kind: 'nodes_offline', count: 3, sample: [{ id: NODE_ROWS[1].node_id, name: 'JP-TYO-03' }, { id: NODE_ROWS[3].node_id, name: 'US-LAX-01' }, { id: NODE_ROWS[5].node_id, name: 'DE-FRA-01' }], longest_offline_seconds: 26 * 60 },
-        { kind: 'orders_pending_stale', count: 9, threshold_seconds: 1800 },
+        // 与订单假后端同一份数据：待支付筛选里能看到这几张
+        { kind: 'orders_pending_stale', count: stalePendingCount(1800 * 1000), threshold_seconds: 1800 },
         { kind: 'notifications_backlog', queued: BACKLOG.counts.ready + BACKLOG.counts.scheduled, failed_total: BACKLOG.counts.failed_total, backlog_state: BACKLOG.backlog_state },
         { kind: 'ledger_drift', count: 0 },
       ].filter((item) => ctx.user.permissions.includes(TASK_PERMS[item.kind]!))

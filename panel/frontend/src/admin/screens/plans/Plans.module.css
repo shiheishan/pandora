@@ -73,6 +73,22 @@
   font-size: var(--fs-caption);
 }
 
+/* 字段组标题：与 ui/Field 的 label 同字号同色 */
+.legend {
+  margin-bottom: var(--space-4);
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+/* 卖点一行：输入框 + 移除 */
+.highlightRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-8);
+}
+
 /* 提示条：警示（无可用节点、编辑会清掉时间窗）与说明 */
 .note {
   margin: 0;

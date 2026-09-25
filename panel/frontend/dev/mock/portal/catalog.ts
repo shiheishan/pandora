@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 无外部依赖（静态夹具）
  * [OUTPUT]: 对外提供 CatalogPlan / CatalogPrice / CatalogPack / CatalogCoupon / PayMethod / GiftTemplate 类型与 PLANS、PACKS、COUPONS、PAY_METHODS、GIFT_CARDS、findPlan、findPrice、findPack、planView、GIB、intervalMonths
- * [POS]: dev/mock/portal 的商品目录夹具（不是模块，不进登记表）：选购页、结账页与订阅夹具共用同一批套餐 / 价格 / 流量包 / 优惠码 / 支付方式，形状照契约门户-03（含修订 R30、R61、R69）；家庭版 allow_upgrade=false、优惠码覆盖各种错误、一个 POST 跳转渠道，便于浏览器实测每条分支
+ * [POS]: dev/mock/portal 的商品目录夹具（不是模块，不进登记表）：选购页、结账页与订阅夹具共用同一批套餐 / 价格 / 流量包 / 优惠码 / 支付方式，形状照契约门户-03（含修订 R30、R61、R69、R99、R100）；专业版标为推荐、家庭版 allow_upgrade=false 且限速 100 Mbps、优惠码覆盖各种错误、一个 POST 跳转渠道，便于浏览器实测每条分支
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 export const GIB = 1024 ** 3
@@ -26,6 +26,9 @@ export interface CatalogPlan {
   quota_reset_day: number | null
   allow_renewal: boolean
   allow_upgrade: boolean
+  throttle_kbps: number | null
+  highlights: string[]
+  recommended: boolean
   prices: CatalogPrice[]
 }
 
@@ -50,6 +53,9 @@ export const PLANS: readonly CatalogPlan[] = [
     quota_reset_day: null,
     allow_renewal: true,
     allow_upgrade: true,
+    throttle_kbps: null,
+    highlights: ['全部常规线路', '工单支持'],
+    recommended: false,
     prices: [
       price('6f1c2a10-0000-4000-8000-000000000011', 2900, 'month'),
       price('6f1c2a10-0000-4000-8000-000000000012', 7900, 'quarter'),
@@ -68,6 +74,9 @@ export const PLANS: readonly CatalogPlan[] = [
     quota_reset_day: null,
     allow_renewal: true,
     allow_upgrade: true,
+    throttle_kbps: null,
+    highlights: ['亚太精选 + 欧美线路', '流媒体解锁'],
+    recommended: true,
     prices: [price('6f1c2a10-0000-4000-8000-000000000021', 5900, 'month'), price('6f1c2a10-0000-4000-8000-000000000022', 15900, 'month', 3), price('6f1c2a10-0000-4000-8000-000000000023', 59900, 'year')],
   },
   {
@@ -82,6 +91,10 @@ export const PLANS: readonly CatalogPlan[] = [
     allow_renewal: true,
     // 用来实测「不支持变更」
     allow_upgrade: false,
+    // 用来实测「限速 N Mbps」
+    throttle_kbps: 100_000,
+    highlights: ['适合家庭与小团队'],
+    recommended: false,
     prices: [price('6f1c2a10-0000-4000-8000-000000000031', 4900, 'month'), price('6f1c2a10-0000-4000-8000-000000000032', 13900, 'month', 3), price('6f1c2a10-0000-4000-8000-000000000033', 49900, 'year')],
   },
 ]
@@ -89,7 +102,7 @@ export const PLANS: readonly CatalogPlan[] = [
 export const findPlan = (id: unknown) => PLANS.find((p) => p.id === id)
 export const findPrice = (plan: CatalogPlan, id: unknown) => plan.prices.find((p) => p.id === id)
 
-/** 契约门户-03 GET v1/plans 的一行；legacy 场景去掉修订 R69 的四个字段 */
+/** 契约门户-03 GET v1/plans 的一行；legacy 场景只去掉修订 R69 的四个字段（R99 / R100 的字段照带） */
 export function planView(p: CatalogPlan, legacy: boolean) {
   const base = {
     id: p.id,
@@ -100,6 +113,9 @@ export function planView(p: CatalogPlan, legacy: boolean) {
     max_devices: p.max_devices,
     quotas: [{ metric: 'traffic.bytes', limit: p.trafficBytes, unit: 'bytes', period: 'cycle' }],
     prices: [...p.prices].sort((a, b) => a.unit_amount - b.unit_amount),
+    throttle_kbps: p.throttle_kbps,
+    highlights: p.highlights,
+    recommended: p.recommended,
   }
   if (legacy) return base
   return { ...base, quota_reset_strategy: p.quota_reset_strategy, quota_reset_day: p.quota_reset_day, allow_renewal: p.allow_renewal, allow_upgrade: p.allow_upgrade }

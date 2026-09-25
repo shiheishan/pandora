@@ -1,13 +1,14 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ../../../core/api 的 ApiError，依赖同目录 traffic / orders / clients / subscriptions / intent 的纯函数与 schema，依赖 ../subs/labels
  * [OUTPUT]: 无（测试文件）
- * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、订单标题与期限、深链与协议名、主订阅选择、schema 对契约形状（含待补字段缺席）的收放、幂等键的复用与丢弃（成功或 4xx reset、断网与 5xx 保留）与刚下待支付单的取回（已不可支付即 forget、按新请求下单）
+ * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、套餐限速文案、订单标题与期限、深链与协议名、主订阅选择、schema 对契约形状（含待补字段缺席）的收放、幂等键的复用与丢弃（成功或 4xx reset、断网与 5xx 保留）与刚下待支付单的取回（已不可支付即 forget、按新请求下单）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { fetchStats, metaLabel } from '../subs/labels'
 import { ApiError } from '../../../core/api'
 import { importClients, protocolLabel, rateLabel } from './clients'
+import { throttleNote } from './catalog'
 import { createIntentKey, createPlacedOrder, endsIntent, recallPayable } from './intent'
 import { expiryNote, intervalLabel, isPayable, orderRowSchema, orderTitle } from './orders'
 import { canRenew, pickPrimary, subscriptionSchema, usageReportSchema, type Subscription } from './subscriptions'
@@ -110,6 +111,14 @@ describe('traffic', () => {
     expect(chart).toMatchObject({ start: '09-22', endLabel: '09-27 重置', range: '09-22 至 09-27' })
     const open = buildUsageBars({ timezone: 'Nope/Zone', period_end: null, days: [{ date: '2026-09-24', bytes: 0 }] })
     expect(open).toMatchObject({ endLabel: '09-24', bars: [{ today: true, height: 0 }] })
+  })
+})
+
+describe('catalog', () => {
+  it('限速文案（R99）：kbps → Mbps，不限速为 null', () => {
+    expect(throttleNote(null)).toBeNull()
+    expect(throttleNote(100_000)).toBe('限速 100 Mbps')
+    expect(throttleNote(2500)).toBe('限速 2.5 Mbps')
   })
 })
 

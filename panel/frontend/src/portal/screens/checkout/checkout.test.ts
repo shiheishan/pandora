@@ -26,6 +26,9 @@ const STD: Plan = {
   quota_reset_strategy: 'natural_month',
   allow_renewal: true,
   allow_upgrade: true,
+  throttle_kbps: null,
+  highlights: [],
+  recommended: false,
 }
 const PRO: Plan = { ...STD, id: 'pro', code: 'pro', name: '专业版', prices: [price('p1', 5900, 'month'), price('p3', 15900, 'month', 3), price('p12', 59900, 'month', 12)] }
 const FAM: Plan = { ...STD, id: 'fam', code: 'fam', name: '家庭版', allow_upgrade: false, prices: [price('f1', 4900, 'month')] }
