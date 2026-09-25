@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../ui 的 Button / Drawer / Empty / Skeleton / Tabs / Tag，依赖 ../../actions 的 useCan，依赖 ./api 的 useUser / useInvalidateUsers / UserDetail，依赖 ./dialogs，依赖 ./tabs，依赖 ./RiskTab，依赖 ./model，依赖 ./Users.module.css
+ * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../ui 的 Button / Drawer / Empty / Skeleton / Tabs / Tag，依赖 ../../actions 的 useCan，依赖 ./api 的 useUser / useInvalidateUsers / UserDetail，依赖 ./dialogs，依赖 ./tabs，依赖 ./Resets 的 ResetHistory，依赖 ./RiskTab，依赖 ./model，依赖 ./Users.module.css
  * [OUTPUT]: 对外提供 UserDrawer、DRAWER_TABS 与 DrawerTab
- * [POS]: 用户详情抽屉（560 宽，设计稿后台-03）：头部（首字头像、邮箱、状态、封禁标注、#id · 注册于）、操作条（启用 / 停用、重置密码、调整余额、更换订阅地址，各按权限出现）、行内调账表单与标签页（画像 / 订阅 / 设备 / 订单，持 security.audit.read 时加「风控」）；标签页在地址的第二段 #/users/list/<id>/<tab>，可深链
+ * [POS]: 用户详情抽屉（560 宽，设计稿后台-03）：头部（首字头像、邮箱、状态、封禁标注、#id · 注册于）、操作条（启用 / 停用、重置密码、调整余额、更换订阅地址，各按权限出现）、行内调账表单与标签页（画像 / 订阅 / 设备 / 流量重置 / 订单，流量重置要 metering.reset.read，持 security.audit.read 时加「风控」）；标签页在地址的第二段 #/users/list/<id>/<tab>，可深链
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -12,6 +12,7 @@ import { useCan } from '../../actions'
 import { useInvalidateUsers, useUser, type UserDetail } from './api'
 import { BalanceForm, ResetPasswordDialog, RotateDialog, StatusDialog } from './dialogs'
 import { initial, shortId, USER_STATUS_VIEW } from './model'
+import { ResetHistory } from './Resets'
 import { RiskTab } from './RiskTab'
 import { DevicesTab, OrdersTab, ProfileTab, SubscriptionsTab } from './tabs'
 import css from './Users.module.css'
@@ -20,6 +21,7 @@ export const DRAWER_TABS = [
   ['profile', '画像'],
   ['sub', '订阅'],
   ['devices', '设备'],
+  ['resets', '流量重置'],
   ['orders', '订单'],
   ['risk', '风控'],
 ] as const
@@ -91,7 +93,8 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
   const [balanceOpen, setBalanceOpen] = useState(false)
   const canWrite = can('iam.user.write')
   const canRisk = can('security.audit.read')
-  const tabs = DRAWER_TABS.filter(([k]) => k !== 'risk' || canRisk)
+  const canResets = can('metering.reset.read')
+  const tabs = DRAWER_TABS.filter(([k]) => (k !== 'risk' || canRisk) && (k !== 'resets' || canResets))
   const current: DrawerTab = tabs.some(([k]) => k === tab) ? tab : 'profile'
   const disabled = d.status === 'suspended' || d.status === 'banned'
   // 待验证、注销中、已匿名的账号不给启停：后端只收 active / suspended / banned 之间的切换语义
@@ -131,6 +134,7 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
         {current === 'profile' && <ProfileTab d={d} now={now} />}
         {current === 'sub' && <SubscriptionsTab d={d} now={now} />}
         {current === 'devices' && <DevicesTab d={d} />}
+        {current === 'resets' && canResets && <ResetHistory d={d} />}
         {current === 'orders' && <OrdersTab d={d} now={now} />}
         {current === 'risk' && canRisk && <RiskTab userId={d.id} now={now} />}
       </div>

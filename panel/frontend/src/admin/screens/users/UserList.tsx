@@ -38,7 +38,9 @@ export function UserList({
   const total = users.data?.total ?? 0
   const shown = users.data?.users.length ?? 0
 
+  // 「全部用户组」是可选回去的空值项，不用 Select 的 placeholder（那是 disabled 的，选过别的组就回不来）
   const groupOptions = [
+    { value: '', label: '全部用户组' },
     { value: 'none', label: '未分组（默认）' },
     ...(groups.data ?? []).map((g) => ({ value: g.id, label: g.name })),
   ]
@@ -51,7 +53,6 @@ export function UserList({
         <Select
           size="sm"
           aria-label="用户组"
-          placeholder="全部用户组"
           options={groupOptions}
           value={state.group}
           onChange={(e) => onChange({ group: e.target.value, offset: 0 })}

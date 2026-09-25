@@ -1,11 +1,11 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 formatBytes，依赖 ./api 的类型与枚举
- * [OUTPUT]: 对外提供 STATUS_FILTERS / StatusFilter / isStatusFilter、listParams、USER_STATUS_VIEW、SUB_STATUS_VIEW、ORDER_STATUS_VIEW、RISK_VIEW、INTERVAL_LABELS、orderWhat、initial、shortId、expiryView、trafficView、deviceView、deviceLimitLabel、trafficQuota、currentSubscription、liveSubscriptions、isLiveSub、parseYuan、passwordProblem、REASON_MIN、Tone
- * [POS]: admin/screens/users 的纯逻辑：契约后台-03 的账号状态 / 订阅态 / 订单状态映射、状态分段到后端 query、「套餐 · 到期」「本期流量」「设备」三列的文案与色、当前订阅的挑法（与后端 currentSubscriptionSQL 同一口径）、调账金额（元 → 分）与密码策略的前端预检；不碰 React 与网络，model.test.ts 覆盖
+ * [OUTPUT]: 对外提供 STATUS_FILTERS / StatusFilter / isStatusFilter、listParams、USER_STATUS_VIEW、SUB_STATUS_VIEW、ORDER_STATUS_VIEW、RISK_VIEW、INTERVAL_LABELS、orderWhat、initial、shortId、expiryView、trafficView、deviceView、deviceLimitLabel、trafficQuota、currentSubscription、liveSubscriptions、isLiveSub、parseYuan、passwordProblem、REASON_MIN、Tone；④ 的 groupBlocker / groupRefs、BULK_STATUS / BULK_EXPIRY / BulkForm / bulkFilter / exportQuery / MAIL_MAX、GenerateForm / generateProblems / generatedRows、nearLimit / pips、RESET_REASON_VIEW / resetActor / noteProblem / NOTE_MAX / resettableSub / exactEmail
+ * [POS]: admin/screens/users 的纯逻辑：契约后台-03 的账号状态 / 订阅态 / 订单状态映射、状态分段到后端 query、「套餐 · 到期」「本期流量」「设备」三列的文案与色、当前订阅的挑法（与后端 currentSubscriptionSQL 同一口径）、调账金额（元 → 分）与密码策略的前端预检；④ 的用户组删除拦截、批量筛选表单到 BulkFilter、批量生成的前端校验（与 adminops.GenerateUsers 同规则）、接近上限的订阅、重置日志的方式与操作人文案、手动重置挑哪条订阅（与 billing.ManualResetTraffic 同口径）、按邮箱精确匹配；不碰 React 与网络，model.test.ts 覆盖
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatBytes } from '../../../core/format'
-import type { OrderRow, OrderStatus, Quota, RiskLevel, SubscriptionRow, SubStatus, UserStatus, UsersParams } from './api'
+import type { BulkFilter, OnlineDevice, OrderRow, OrderStatus, Quota, ResetLog, ResetReason, RiskLevel, SubscriptionRow, SubStatus, UserGroup, UserRow, UserStatus, UsersParams } from './api'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
@@ -197,4 +197,151 @@ export function passwordProblem(p: string): string | null {
   if (new TextEncoder().encode(p).length > 256) return '密码过长'
   if (!/\p{L}/u.test(p) || !/\p{Nd}/u.test(p)) return '密码必须同时包含字母和数字'
   return null
+}
+
+// ===========================================================================
+// 用户组：删除前的拦截与「被引用」列（后端 409 的四种情况，按同样的先后顺序）
+// ===========================================================================
+export function groupBlocker(g: Pick<UserGroup, 'users' | 'plans' | 'prices' | 'coupons'>): string | null {
+  if (g.users > 0) return `组内还有 ${g.users} 位用户，先把他们移出去`
+  if (g.plans > 0) return `还有 ${g.plans} 个套餐按这个组控制可见性，先解除`
+  if (g.prices > 0) return `还有 ${g.prices} 个专属价格挂在这个组上，先删掉`
+  if (g.coupons > 0) return `还有 ${g.coupons} 张优惠券限定了这个组，先解除`
+  return null
+}
+
+export function groupRefs(g: Pick<UserGroup, 'plans' | 'prices' | 'coupons'>): string {
+  const parts = [g.plans && `套餐 ${g.plans}`, g.prices && `价格 ${g.prices}`, g.coupons && `优惠券 ${g.coupons}`].filter(Boolean)
+  return parts.length ? parts.join(' · ') : '—'
+}
+
+// ===========================================================================
+// 批量运营：设计稿的四个下拉 → BulkFilter（契约映射）
+// 「已禁用」在 bulk 里只能单值：停用与封禁分成两项；「已过期」是订阅态
+// ===========================================================================
+export const BULK_STATUS = [
+  ['', '不限'],
+  ['active', '正常'],
+  ['suspended', '已停用'],
+  ['banned', '已封禁'],
+  ['expired', '订阅已过期'],
+] as const
+export const BULK_EXPIRY = [
+  ['', '不限'],
+  ['7', '7 天内到期'],
+  ['30', '30 天内到期'],
+] as const
+export type BulkStatus = (typeof BULK_STATUS)[number][0]
+export type BulkExpiry = (typeof BULK_EXPIRY)[number][0]
+
+export interface BulkForm {
+  plan: string
+  status: BulkStatus
+  expiry: BulkExpiry
+  group: string
+}
+
+/** 只放有值的键：后端 DisallowUnknownFields 不怕多键，但空串的 status / group_id 会被当成条件校验 */
+export function bulkFilter(f: BulkForm): BulkFilter {
+  const out: BulkFilter = {}
+  if (f.plan) out.plan_id = f.plan
+  if (f.status === 'expired') out.sub_state = 'expired'
+  else if (f.status) out.status = f.status
+  if (f.expiry) out.expires_within_days = Number(f.expiry)
+  if (f.group) out.group_id = f.group
+  return out
+}
+
+/** 导出是 GET：同名 query 参数，数字转成字符串 */
+export function exportQuery(filter: BulkFilter): Record<string, string> {
+  return Object.fromEntries(Object.entries(filter).map(([k, v]) => [k, String(v)]))
+}
+
+/** 导出默认上限 10000（契约）；群发一次最多 20000 人（后端 422） */
+export const EXPORT_MAX = 10_000
+export const MAIL_MAX = 20_000
+
+export interface GenerateForm {
+  count: string
+  prefix: string
+  domain: string
+  group: string
+  reason: string
+}
+
+/** 与 adminops.GenerateUsers 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
+export function generateProblems(f: GenerateForm): Record<string, string> {
+  const out: Record<string, string> = {}
+  const n = Number(f.count.trim())
+  if (!Number.isInteger(n) || n < 1 || n > 500) out.count = '一次生成 1 到 500 个'
+  if (!/^[a-z0-9-]{1,20}$/.test(f.prefix.trim().toLowerCase())) out.prefix = '只能用小写字母、数字和短横线，1 到 20 位'
+  const domain = f.domain.trim().toLowerCase()
+  if (domain.length < 4 || domain.length > 63 || !domain.includes('.') || !/^[a-z0-9.-]+$/.test(domain)) out.domain = '域名格式不正确，如 example.com'
+  const r = [...f.reason.trim()].length
+  if (r < 5 || r > 500) out.reason = '请写清生成原因，5 到 500 个字'
+  return out
+}
+
+/** 生成结果的本地 CSV（契约：「下载」不再请求服务器） */
+export function generatedRows(users: ReadonlyArray<{ email: string; password: string }>): string[][] {
+  return [['邮箱', '初始密码'], ...users.map((u) => [u.email, u.password])]
+}
+
+// ===========================================================================
+// 设备策略：「接近或超出上限」= 有上限且在线数已到上限（契约前端过滤口径）
+// ===========================================================================
+export function nearLimit(devices: readonly OnlineDevice[]): OnlineDevice[] {
+  return devices.filter((d) => d.limit > 0 && d.online >= d.limit)
+}
+
+/** 在线格：前 limit 格是额度，超出的画成危险色；最多画 12 格 */
+export function pips(online: number, limit: number): Array<'on' | 'over' | 'off'> {
+  const n = Math.min(Math.max(online, limit), 12)
+  return Array.from({ length: n }, (_, i) => (i < online ? (limit > 0 && i >= limit ? 'over' : 'on') : 'off'))
+}
+
+// ===========================================================================
+// 流量重置
+// ===========================================================================
+export const RESET_REASON_VIEW: Record<ResetReason, { label: string; tone: Tone; filter: string }> = {
+  renewal: { label: '自动', tone: 'neutral', filter: '续费' },
+  cycle_roll: { label: '自动', tone: 'neutral', filter: '周期滚动' },
+  manual: { label: '手动', tone: 'info', filter: '手动' },
+  gift_card: { label: '礼品卡', tone: 'ok', filter: '礼品卡' },
+  plan_change: { label: '变更套餐', tone: 'warn', filter: '变更套餐' },
+}
+
+/** 操作人：有 actor_email 用它（有 note 追加「 · note」）；没有时按原因写成「系统 · …」 */
+export function resetActor(log: Pick<ResetLog, 'reason' | 'actor_email' | 'note'>): string {
+  if (log.actor_email) return log.note ? `${log.actor_email} · ${log.note}` : log.actor_email
+  const system: Record<ResetReason, string> = {
+    renewal: '系统 · 续费',
+    cycle_roll: '系统 · 周期滚动',
+    manual: '系统',
+    gift_card: '用户 · 兑换礼品卡',
+    plan_change: '系统 · 变更套餐',
+  }
+  return log.note ? `${system[log.reason]} · ${log.note}` : system[log.reason]
+}
+
+export const NOTE_MAX = 500
+
+/** 重置原因 5–500 字（后端 fields.note） */
+export function noteProblem(note: string): string | null {
+  const n = [...note.trim()].length
+  if (n < REASON_MIN) return `请写清重置原因，至少 ${REASON_MIN} 个字`
+  if (n > NOTE_MAX) return `重置原因不超过 ${NOTE_MAX} 个字`
+  return null
+}
+
+/** 手动重置作用的订阅：与 billing.ManualResetTraffic 同口径——只看 status=active，到期最晚的一条（不含试用） */
+export function resettableSub<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
+  const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : -Infinity)
+  return subs.filter((s) => s.status === 'active').sort((a, b) => end(b) - end(a))[0]
+}
+
+/** 按邮箱找人：GET v1/users?q= 是模糊匹配，只认邮箱完全相等（不分大小写）的那一条 */
+export function exactEmail<T extends Pick<UserRow, 'email'>>(users: readonly T[], email: string): T | undefined {
+  const want = email.trim().toLowerCase()
+  return want ? users.find((u) => u.email.toLowerCase() === want) : undefined
 }

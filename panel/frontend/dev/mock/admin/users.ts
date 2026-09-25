@@ -6,6 +6,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { MockContext, MockModule } from '../types.ts'
+import { opsRoutes } from './users-ops.ts'
 
 // ---------------------------------------------------------------------------
 // 数据：确定性生成，vite 重启即复原。前 6 个用户的 id 与仪表盘流量排行里的一致，
@@ -17,8 +18,9 @@ const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
 
 type SubStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'grace' | 'paused' | 'cancelled' | 'expired'
 
-interface Sub {
+export interface Sub {
   id: string
+  plan_id: string
   plan_name: string
   plan_version: number
   status: SubStatus
@@ -37,7 +39,7 @@ interface Sub {
   token: string
 }
 
-interface User {
+export interface User {
   id: string
   email: string
   display_name: string | null
@@ -55,7 +57,18 @@ interface User {
   roles: string[]
 }
 
-const GROUPS = [
+export interface Group {
+  id: string
+  code: string
+  name: string
+  description: string
+  /** 引用计数：套餐可见性、专属价格、优惠券限定（后端按表实时数，这里是固定种子） */
+  plans: number
+  prices: number
+  coupons: number
+}
+
+const GROUPS: Group[] = [
   { id: '9c0e1a2b-2222-4b00-8000-000000000001', code: 'vip', name: 'VIP', description: '长期付费与大客户', plans: 2, prices: 3, coupons: 1 },
   { id: '9c0e1a2b-2222-4b00-8000-000000000002', code: 'enterprise', name: '企业客户', description: '对公结算', plans: 1, prices: 1, coupons: 0 },
   { id: '9c0e1a2b-2222-4b00-8000-000000000003', code: 'trial', name: '体验用户', description: '', plans: 0, prices: 0, coupons: 2 },
@@ -68,12 +81,15 @@ const PLANS: Array<[string, number, number | null, number | null]> = [
   ['家庭版', 6800, 1000, 8],
   ['体验版', 0, 20, 1],
 ]
+// 套餐 id 固定：批量运营按 plan_id 筛当前订阅的套餐
+const PLAN_IDS = PLANS.map((_, k) => `9c0e1a2b-3333-4b00-8000-00000000000${k + 1}`)
 
 const DOMAINS = ['qq.com', 'gmail.com', '163.com', 'outlook.com', 'proton.me', 'icloud.com', 'foxmail.com']
 const NAMES = ['zhang.wei', 'k.liu', 'wu.qing', 'm.chen', 'yao_ops', 'tomato', 'grace.h', 'lin.xiao', 'sec.check', 'mira', 'hu.jun', 'sun.yue', 'zhao.lei', 'qian.fei', 'luo.an', 'ma.teng', 'he.xin', 'gao.yu', 'lin.bo', 'xu.ke']
 
 function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
   const [name, price, gib, devices] = PLANS[(i + j) % PLANS.length]!
+  const planId = PLAN_IDS[(i + j) % PLANS.length]!
   const start = Date.now() - ((i * 3 + j * 11) % 28) * DAY - (state === 'expired' ? 40 * DAY : 0)
   const end = start + 30 * DAY
   const status: SubStatus = state === 'expired' ? (j % 2 ? 'cancelled' : 'expired') : i % 9 === 4 ? 'trialing' : i % 13 === 7 ? 'grace' : 'active'
@@ -81,6 +97,7 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
   const used = limit === null ? (i * 7 + 3) * GiB : Math.round(limit * (((i * 37 + j * 11) % 100) / 100))
   return {
     id: randomUUID(),
+    plan_id: planId,
     plan_name: name,
     plan_version: 1 + ((i + j) % 3),
     status,
@@ -415,6 +432,9 @@ export const users_: MockModule = {
       sub.device_limit_override = limit as number | null
       ctx.send(200, { ok: true })
     },
+
+    // 第 ④ 步：用户组增删改、批量运营、设备策略、流量重置（users-ops.ts）
+    ...opsRoutes({ users, groups: GROUPS, current, hasSubState, effectiveLimit }),
   },
 }
 
