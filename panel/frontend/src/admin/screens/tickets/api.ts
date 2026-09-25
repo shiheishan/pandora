@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useInfiniteQuery / useQueryClient，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供工单模块的 zod schema 与类型（Ticket、TicketDetail、Message、Assignee、Macro 等）、读 hook（useTicketQueue、useTicketDetail、useAssignees、useMacros）、TK 查询键前缀与 useInvalidateTickets、写接口的响应 schema
+ * [OUTPUT]: 对外提供工单模块的 zod schema 与类型（Ticket、TicketDetail、Message、Assignee、Macro 等）、读 hook（useTicketQueue、useTicketDetail、useAssignees、useMacros）、TK 查询键前缀与 useInvalidateTickets、写接口的响应 schema；ticketDetailSchema / assigneesSchema / macrosSchema 为 tests/smoke 形状冒烟导出
  * [POS]: admin/screens/tickets 的数据层：形状照 api-contract.md 后台-02 与修订 R25 / R42 / R60，并按 domain/support/service.go 的 json tag 核对（omitempty 的字段一律可选）；model.ts 消费类型，界面组件消费 hook
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -66,7 +66,7 @@ const messageSchema = z.object({
 })
 
 // 详情的 messages 在 Go 里是 omitempty 的切片：一条都没有时整个键省略，归一成 []
-const ticketDetailSchema = ticketSchema.extend({
+export const ticketDetailSchema = ticketSchema.extend({
   messages: z
     .array(messageSchema)
     .optional()
@@ -79,11 +79,11 @@ export type TicketDetail = z.output<typeof ticketDetailSchema>
 export type Message = z.output<typeof messageSchema>
 
 const assigneeSchema = z.object({ id: z.string(), email: z.string(), display_name: z.string().optional() })
-const assigneesSchema = z.object({ assignees: z.array(assigneeSchema) })
+export const assigneesSchema = z.object({ assignees: z.array(assigneeSchema) })
 export type Assignee = z.output<typeof assigneeSchema>
 
 const macroSchema = z.object({ id: z.string(), title: z.string(), body: z.string(), sort_order: z.number().int(), updated_at: time })
-const macrosSchema = z.object({ macros: z.array(macroSchema) })
+export const macrosSchema = z.object({ macros: z.array(macroSchema) })
 export type Macro = z.output<typeof macroSchema>
 
 // 写接口的响应

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient / keepPreviousData，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../billing/schemas 的订单枚举与 orderRowSchema，依赖 ./model 的 exactEmail
- * [OUTPUT]: 对外提供用户模块的 zod schema 与类型（UserRow、UserDetail、SubscriptionRow、OrderRow、UserGroup、UserProfile、BulkFilter、BulkPreview、OnlineDevice、ResetLog、ResetReason 等）、读 hook（useUsers、useUser、useUserGroups、useUserProfile、useFindUserByEmail、usePlanOptions、useBulkPreview、useDevices、useTrafficResets、useResetStats、useUserResets）、UK 查询键前缀、useInvalidateUsers 与 useInvalidateResets、写接口的响应 schema
+ * [OUTPUT]: 对外提供用户模块的 zod schema 与类型（UserRow、UserDetail、SubscriptionRow、OrderRow、UserGroup、UserProfile、BulkFilter、BulkPreview、OnlineDevice、ResetLog、ResetReason 等）、读 hook（useUsers、useUser、useUserGroups、useUserProfile、useFindUserByEmail、usePlanOptions、useBulkPreview、useDevices、useTrafficResets、useResetStats、useUserResets）、UK 查询键前缀、useInvalidateUsers 与 useInvalidateResets、写接口的响应 schema；profileSchema / planOptionsSchema 为 tests/smoke 形状冒烟导出
  * [POS]: admin/screens/users 的数据层：形状照 api-contract.md 后台-03（含修订 R9 / R11 / R12 / R22 / R38），并按 domain/adminops/users.go、bulk_users.go、bulk_mail.go、api/admin/profile.go、usergroup.go、devices.go、domain/billing/traffic_reset.go 的 json tag 核对；按保留规则 2，没有任何字段携带订阅令牌或订阅地址
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -116,7 +116,7 @@ export type UserGroup = z.output<typeof userGroupSchema>
 // ---------------------------------------------------------------------------
 // GET v1/users/{id}/profile（security.audit.read）：风控画像，明文 IP 只在这里
 // ---------------------------------------------------------------------------
-const profileSchema = z.object({
+export const profileSchema = z.object({
   events: z.array(z.object({ action: z.string(), outcome: z.string(), ip: z.string(), ua: z.string(), domain: z.string(), at: time })),
   ips: z.array(z.object({ ip: z.string(), count: count, first: time, last: time, accounts: count })),
   related: z.array(z.object({ id: z.string(), email: z.string() })),
@@ -209,7 +209,7 @@ export const resetDoneSchema = z.object({ reset: z.literal(true), freed_bytes: c
 // ---------------------------------------------------------------------------
 // GET v1/plans（catalog.read）：批量筛选的「套餐」下拉只要 id / 名称 / 状态
 // ---------------------------------------------------------------------------
-const planOptionsSchema = z.object({ plans: z.array(z.object({ id: z.string(), name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
+export const planOptionsSchema = z.object({ plans: z.array(z.object({ id: z.string(), name: z.string(), status: z.enum(['draft', 'active', 'archived']) })) })
 export type PlanOption = z.output<typeof planOptionsSchema>['plans'][number]
 
 // ---------------------------------------------------------------------------

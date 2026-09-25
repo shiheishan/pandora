@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ./model 的偏好类别与渠道
- * [OUTPUT]: 对外提供 sessionSchema / Session、useSessions、useRevokeSession、useChangePassword、quickLoginSchema、useIssueQuickLogin、telegramSchema / Telegram、useTelegram、useBindCode、useUnbindTelegram、preferenceSchema / Preference、usePreferences、useSetPreference
+ * [OUTPUT]: 对外提供 sessionSchema / Session、useSessions、useRevokeSession、useChangePassword、quickLoginSchema、useIssueQuickLogin、telegramSchema / Telegram、useTelegram、useBindCode、useUnbindTelegram、preferenceSchema / Preference、usePreferences、useSetPreference，preferencesSchema（tests/smoke 形状冒烟用）
  * [POS]: portal/screens/account 的数据层（契约门户-10，修订 R15、R28、R62）：会话列表与吊销、改密码（口令错回 401，passwordCheck 不触发登出；成功保留当前会话、其余下线）、快捷登录签发（保留规则 1：只在已登录会话签发、60 秒、一次性）、Telegram 状态 / 绑定码 / 解绑、通知偏好（一次改一项，乐观更新、失败回滚）。这几条都没挂幂等中间件，不带键；个人信息复用外框的 usePortalMe
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -109,7 +109,7 @@ export const preferenceSchema = z.object({
   locked: z.boolean(),
 })
 export type Preference = z.output<typeof preferenceSchema>
-const preferencesSchema = z.object({ preferences: z.array(preferenceSchema) })
+export const preferencesSchema = z.object({ preferences: z.array(preferenceSchema) })
 type Preferences = z.output<typeof preferencesSchema>
 
 export function usePreferences() {

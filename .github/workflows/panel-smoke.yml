@@ -78,6 +78,32 @@ jobs:
       # Node 22 原生剥类型直接跑，不需要 npm ci
       - name: Seed through the real gateways
         run: node panel/frontend/tests/smoke/seed.ts "$RUNNER_TEMP/smoke"
+      - name: Install frontend dependencies
+        working-directory: panel/frontend
+        run: npm ci
+      # 冒烟自己的 tsconfig：页面模块会连带 .tsx，node 侧那份没开 jsx
+      - name: Typecheck the smoke tables
+        working-directory: panel/frontend
+        run: npx tsc -p tests/smoke/tsconfig.json
+      # 前端调用的每个 GET 接口，用调用处那个页面 schema 解析真响应
+      - name: Parse real responses with the page schemas
+        working-directory: panel/frontend
+        env:
+          SMOKE_STATE: ${{ runner.temp }}/smoke
+        run: npx vitest run -c tests/smoke/vitest.config.ts
+      - name: Shape table
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/smoke/smoke-results.md"
+          [ -f "$f" ] || exit 0
+          {
+            echo "### GET 接口 × 页面 schema"
+            echo
+            echo "| 入口 | 接口 | 调用处 | 结果 | 说明 |"
+            echo "|---|---|---|---|---|"
+            cat "$f"
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$f"
       - name: Gateway logs
         if: always()
         run: |
