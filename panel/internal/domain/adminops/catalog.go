@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx，依赖 domain/nodefabric 的 StableProtocolReadySQL 判定可服务节点
 // [OUTPUT]: 对外提供套餐目录用例 GetPlan/CreatePlan/UpdatePlan/CreatePlanVersion/UpdatePlanVersion/PublishPlanVersion/CreatePlanPrice/ArchivePlanPrice/ArchivePlan 及其输入输出类型（VersionRow 带建版本人邮箱）；包内提供 loadPlanTx、prepare*Input 校验与各 *Tx 事务体（createPlanTx/createPlanPriceTx 供向导新建编排）
-// [POS]: adminops 的套餐目录核心：每个用例是「事务外校验 + 事务体」两段，事务体可被 plan_wizard.go / plan_wizard_update.go 在同一事务里编排
+// [POS]: adminops 的套餐目录核心：每个用例是「事务外校验 + 事务体」两段，事务体可被 plan_wizard.go / plan_wizard_update.go 在同一事务里编排；版本语义里限速与超额策略解耦、新写入的策略只收 suspend（R99）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
@@ -244,17 +244,16 @@ func validateVersionSemantics(in VersionSemanticsInput) error {
 	if in.DeviceReleaseHours < 0 {
 		fields["device_release_hours"] = "不能为负数"
 	}
+	// R99（D-C-5）：超额策略运行时只有一种效果——流量用完且无流量包余额后停止
+	// 下发；throttle / metered_billing 从没实现过，新写入只收 suspend（省略按
+	// suspend），存量行不改。限速与策略无关：写多少就全程限多少，null = 不限。
 	switch in.OveragePolicy {
-	case "suspend", "throttle", "metered_billing":
+	case "", "suspend":
 	default:
-		fields["overage_policy"] = "不支持的超额策略"
+		fields["overage_policy"] = "只支持 suspend：流量用完后停止服务"
 	}
-	if in.OveragePolicy == "throttle" {
-		if in.ThrottleKbps == nil || *in.ThrottleKbps <= 0 {
-			fields["throttle_kbps"] = "限速策略必须设置正整数速率"
-		}
-	} else if in.ThrottleKbps != nil {
-		fields["throttle_kbps"] = "非限速策略不能设置速率"
+	if in.ThrottleKbps != nil && *in.ThrottleKbps <= 0 {
+		fields["throttle_kbps"] = "必须为正整数；不限速请留空"
 	}
 	entSeen, quotaSeen := map[string]bool{}, map[string]bool{}
 	for i, e := range in.Entitlements {
@@ -722,6 +721,9 @@ func (s *Service) updatePlanVersionTx(ctx context.Context, tx pgx.Tx, tenantID, 
 	}
 	if status != "draft" || frozen != nil {
 		return 0, httpx.New(httpx.CodeConflict, "只有未发布草稿版本可以编辑")
+	}
+	if in.OveragePolicy == "" {
+		in.OveragePolicy = "suspend"
 	}
 	tag, err := tx.Exec(ctx, `UPDATE plan_versions SET quota_reset_strategy=$4,quota_reset_day=$5,grace_period_hours=$6,grace_keeps_service=$7,renewal_extends_period=$8,renewal_resets_quota=$9,renewal_keeps_addons=$10,max_devices=$11,max_concurrent=$12,device_release_hours=$13,overage_policy=$14,throttle_kbps=$15,notes=$16,row_version=row_version+1 WHERE tenant_id=$1 AND plan_id=$2::uuid AND id=$3::uuid AND row_version=$17`, tenantID, planID, versionID, in.QuotaResetStrategy, in.QuotaResetDay, in.GracePeriodHours, in.GraceKeepsService, in.RenewalExtendsPeriod, in.RenewalResetsQuota, in.RenewalKeepsAddons, in.MaxDevices, in.MaxConcurrent, in.DeviceReleaseHours, in.OveragePolicy, in.ThrottleKbps, in.Notes, in.ExpectedRowVersion)
 	if err != nil {

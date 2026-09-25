@@ -212,6 +212,11 @@ func wizardVersionSemantics(in CreatePlanCompleteInput) VersionSemanticsInput {
 	if strategy == "" {
 		strategy = "billing_cycle"
 	}
+	// 设备数 0 与留空同义：都是不限。版本语义只认 null 或正整数，0 原样传下去会 422。
+	devices := in.MaxDevices
+	if devices != nil && *devices == 0 {
+		devices = nil
+	}
 	return VersionSemanticsInput{
 		ActorID:            in.ActorID,
 		QuotaResetStrategy: strategy, QuotaResetDay: in.QuotaResetDay,
@@ -219,9 +224,9 @@ func wizardVersionSemantics(in CreatePlanCompleteInput) VersionSemanticsInput {
 		RenewalExtendsPeriod: true,
 		RenewalResetsQuota:   true,
 		RenewalKeepsAddons:   true,
-		MaxDevices:           in.MaxDevices,
-		ThrottleKbps:         in.ThrottleKbps,
-		OveragePolicy:        "suspend", // 流量用完即停服；合法值只有 suspend/throttle/metered_billing
+		MaxDevices:           devices,
+		ThrottleKbps:         in.ThrottleKbps, // 全程限速，null = 不限，与超额策略无关（R99）
+		OveragePolicy:        "suspend",       // 流量用完即停服；新写入只收这一种（R99）
 		Quotas:               quotas,
 	}
 }
