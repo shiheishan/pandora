@@ -10,7 +10,8 @@ index.ts: 页面登记表 SCREENS（十个 React.lazy）与页面入参类型 Ad
 Placeholder.tsx: 占位页（第 2 阶段 Shell 的空状态），十个模块都换成真页面后删除
 dash/: 仪表盘（后台-01），八个只读接口拼成的落地页；见 dash/CLAUDE.md
 marketing/: 营销（后台-06）已接入：优惠券、礼品卡、佣金与提现；见 marketing/CLAUDE.md
-tickets/ users/ plans/ billing/ nodes/ content/ system/ security/: 其余模块目录，index.tsx 默认导出页面组件，未接入的渲染 Placeholder
+tickets/: 工单（后台-02），左队列右详情，选中、筛选与搜索都在地址上；见 tickets/CLAUDE.md
+users/ plans/ billing/ nodes/ content/ system/ security/: 其余模块目录，index.tsx 默认导出页面组件，未接入的渲染 Placeholder
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
