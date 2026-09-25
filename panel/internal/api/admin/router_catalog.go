@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
-// [OUTPUT]: 对外提供 registerPlanRoutes、registerCatalogPlanUpdate、catalogIdempotencyFactory
-// [POS]: api/admin 路由表的「套餐目录、向导、版本与价格；PUT /plans/{id} 经 registerCatalogPlanUpdate 注册，便于测试注入幂等中间件」段，由 NewRouter 按原注册顺序调用；处理器在 catalog.go；套餐绑节点分组的两条路由在 router_nodes.go
+// [OUTPUT]: 对外提供 registerPlanRoutes、registerTrafficPackRoutes、registerCatalogPlanUpdate、catalogIdempotencyFactory
+// [POS]: api/admin 路由表的「套餐目录、向导、版本与价格，以及流量包目录；PUT /plans/{id} 经 registerCatalogPlanUpdate 注册，便于测试注入幂等中间件」段，由 NewRouter 按原注册顺序调用；处理器在 catalog.go 与 traffic_packs.go；套餐绑节点分组的两条路由在 router_nodes.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -78,4 +78,27 @@ func registerPlanRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "catalog_plan_archive", d.Log),
 	).Post("/plans/{id}/archive", h.archivePlan)
+}
+
+func registerTrafficPackRoutes(r chi.Router, d Deps, h *handlers) {
+	// --- 流量包 ---
+	// 流量包是在售商品：新建、改价、上下架与套餐改价同门槛（D-C-2），
+	// catalog.publish + 近期重认证 + 幂等键，四个写接口各用一个幂等域。
+	r.With(middleware.RequirePermission("catalog.read", d.Log)).
+		Get("/traffic-packs", h.listTrafficPacks)
+	r.With(
+		middleware.RequirePermission("catalog.publish", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "catalog_traffic_pack_create", d.Log),
+	).Post("/traffic-packs", h.createTrafficPack)
+	r.With(
+		middleware.RequirePermission("catalog.publish", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "catalog_traffic_pack_update", d.Log),
+	).Put("/traffic-packs/{id}", h.updateTrafficPack)
+	r.With(
+		middleware.RequirePermission("catalog.publish", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "catalog_traffic_pack_status", d.Log),
+	).Post("/traffic-packs/{id}/status", h.setTrafficPackStatus)
 }

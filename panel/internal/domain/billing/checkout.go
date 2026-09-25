@@ -88,6 +88,11 @@ type CreateOrderInput struct {
 	ManualGrant  bool
 	ManualReason string
 	ManualActor  string
+	// Offline 只给人工单「线下已收款」用（与 ManualGrant 互斥）：建单之后在
+	// 同一个事务里按线下渠道结清，走的是与标记已支付完全相同的结算链路
+	// （settlePaymentTx），收入、佣金、履约一个不少；建单、入账与幂等记录
+	// 要么一起生效，要么一起回滚，不会留下「单建了、钱没记」的中间态。
+	Offline *OfflineReceipt
 }
 
 type CreateOrderOutput struct {
@@ -101,6 +106,8 @@ type CreateOrderOutput struct {
 	Status         string `json:"status"`
 
 	prepared httpx.PreparedResponse
+	// settlement 是线下已收款在建单事务里结算的结果，只有 Offline 时非空
+	settlement *PaymentWebhookOutput
 }
 
 func (o *CreateOrderOutput) PreparedResponse() httpx.PreparedResponse {
@@ -345,6 +352,9 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 		}
 
 		payable := total - balanceApplied
+		if in.Offline != nil && payable == 0 {
+			return httpx.New(httpx.CodeConflict, "这张订单不需要支付，请改用赠送")
+		}
 
 		var holdAccounts balanceHoldAccounts
 		if balanceApplied > 0 {
@@ -464,24 +474,8 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 			status = "fulfilled"
 		}
 
-		out = CreateOrderOutput{
-			DiscountAmount: discount,
-			OrderID:        orderID, OrderNo: orderNo, Currency: currency,
-			TotalAmount: total, BalanceApplied: balanceApplied,
-			PayableAmount: payable, Status: status,
-		}
-		prepared, err := httpx.PrepareJSON(http.StatusCreated, out)
-		if err != nil {
-			return err
-		}
-		out.prepared = prepared
 		if err := idempotencybind.BindResource(
 			ctx, tx, in.Claim, "order", orderID,
-		); err != nil {
-			return err
-		}
-		if err := idempotencybind.CompleteSuccessJSON(
-			ctx, tx, in.Claim, "order", orderID, prepared,
 		); err != nil {
 			return err
 		}
@@ -505,6 +499,44 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 			return err
 		}
 
+		// 线下已收款：订单与幂等绑定都已就位，接着在同一事务里结清。
+		// 放在 order.created 之后，插件先看到建单、再看到付款，与在线支付的顺序一致。
+		var settled *PaymentWebhookOutput
+		if in.Offline != nil {
+			settled = &PaymentWebhookOutput{}
+			if err := s.settlePaymentTx(ctx, tx, tenantID, offlinePaymentInput(
+				orderID, currency, payable, in.ManualActor, *in.Offline), settled); err != nil {
+				return err
+			}
+			// 新建的订单不可能已经有过这笔事件或收款；不是正常结算就是出了错
+			if !settled.Processed || settled.AlreadyHandled || settled.PaymentID == "" {
+				return errors.New("offline settlement of a new manual order did not capture")
+			}
+			if err := tx.QueryRow(ctx, `SELECT status FROM orders
+				WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, orderID).Scan(&status); err != nil {
+				return err
+			}
+		}
+
+		// 幂等记录最后写：重放拿到的必须是这次请求最终的样子（线下已收款即已履约）
+		out = CreateOrderOutput{
+			DiscountAmount: discount,
+			OrderID:        orderID, OrderNo: orderNo, Currency: currency,
+			TotalAmount: total, BalanceApplied: balanceApplied,
+			PayableAmount: payable, Status: status,
+			settlement: settled,
+		}
+		prepared, err := httpx.PrepareJSON(http.StatusCreated, out)
+		if err != nil {
+			return err
+		}
+		out.prepared = prepared
+		if err := idempotencybind.CompleteSuccessJSON(
+			ctx, tx, in.Claim, "order", orderID, prepared,
+		); err != nil {
+			return err
+		}
+
 		_, err = tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE`)
 		return err
 	})
@@ -518,6 +550,10 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 			return nil, httpx.New(httpx.CodeConflict, "请求冲突，请重试")
 		}
 		return nil, httpx.Internal(err)
+	}
+	// 与 HandlePaymentWebhook 同一口径：事务提交后、确实开了订阅才通知节点
+	if out.settlement != nil && out.settlement.SubscriptionID != "" {
+		s.notifyUsersChanged(ctx, tenantID)
 	}
 	return &out, nil
 }
@@ -1015,458 +1051,12 @@ func (s *Service) handlePaymentWebhookLegacy(ctx context.Context, tenantID strin
 
 // HandlePaymentWebhook captures a successful payment and the order's complete
 // held reservation graph in one transaction. The legacy implementation remains
-// below only as historical source while this path is exercised by callers.
+// above only as historical source while this path is exercised by callers.
 func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in PaymentWebhookInput) (*PaymentWebhookOutput, error) {
-	if in.ProviderEventID == "" || in.ProviderPaymentID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "payment event and payment identifiers are required")
-	}
-	if in.Amount <= 0 || in.FeeAmount < 0 || in.FeeAmount > in.Amount {
-		return nil, httpx.New(httpx.CodeBadRequest, "payment amount or fee is invalid")
-	}
-
 	var out PaymentWebhookOutput
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var providerID string
-		err := tx.QueryRow(ctx, `
-			SELECT id::text FROM payment_providers
-			 WHERE tenant_id=$1 AND code=$2`, tenantID, in.ProviderCode).Scan(&providerID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.New(httpx.CodeNotFound, "unknown payment provider")
-		}
-		if err != nil {
-			return err
-		}
-
-		forceConstraints := func() error {
-			_, err := tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE`)
-			return err
-		}
-
-		// Unique provider event gate is deliberately the first mutable operation.
-		var eventID string
-		err = tx.QueryRow(ctx, `
-			INSERT INTO payment_events
-				(tenant_id,provider_id,provider_event_id,event_type,
-				 provider_payment_id,raw_payload,signature_verified)
-			VALUES ($1,$2::uuid,$3,$4,$5,$6,$7)
-			ON CONFLICT (provider_id,provider_event_id) DO NOTHING
-			RETURNING id::text`, tenantID, providerID, in.ProviderEventID,
-			in.EventType, in.ProviderPaymentID, in.RawPayload, in.SignatureVerified).
-			Scan(&eventID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			if err := forceConstraints(); err != nil {
-				return err
-			}
-			out.AlreadyHandled = true
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-
-		if !in.SignatureVerified {
-			// 验签失败的事件必须留库可审计：把这条 payment_event 以
-			// ignored 状态提交（证据保全），然后返回 nil 让事务真正
-			// 提交——不能返回 error，否则整个事务回滚，伪造回调的
-			// 原始报文和验签失败证据一条都留不下来。
-			if _, err := tx.Exec(ctx, `
-				UPDATE payment_events
-				   SET processing_status='ignored', processed_at=now()
-				 WHERE id=$1::uuid AND processing_status='pending'`, eventID); err != nil {
-				return err
-			}
-			if err := forceConstraints(); err != nil {
-				return err
-			}
-			out.Processed = true
-			out.SignatureFailed = true
-			return nil
-		}
-		if in.EventType != "payment.succeeded" {
-			tag, err := tx.Exec(ctx, `
-				UPDATE payment_events
-				   SET processing_status='ignored', processed_at=now()
-				 WHERE id=$1::uuid AND processing_status='pending'`, eventID)
-			if err != nil {
-				return err
-			}
-			if tag.RowsAffected() != 1 {
-				return errors.New("ignored payment event transition lost")
-			}
-			if err := forceConstraints(); err != nil {
-				return err
-			}
-			out.Processed = true
-			return nil
-		}
-
-		var (
-			orderID, userID, status, currency, orderKind string
-			businessRequestID                            string
-			subtotalAmount, discountAmount, taxAmount    int64
-			payable, balanceApplied, totalAmount         int64
-			prorationCredit                              int64
-			couponID, idempotencyKeyID                   *string
-		)
-		query := `
-			SELECT id::text,user_id::text,status,currency::text,subtotal_amount,
-			       discount_amount,tax_amount,payable_amount,balance_applied,total_amount,
-			       kind,business_request_id::text,coupon_id::text,idempotency_key_id::text,
-			       proration_credit_amount
-			  FROM orders WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`
-		identifier := in.OrderID
-		if identifier == "" {
-			query = `
-				SELECT id::text,user_id::text,status,currency::text,subtotal_amount,
-				       discount_amount,tax_amount,payable_amount,balance_applied,total_amount,
-				       kind,business_request_id::text,coupon_id::text,idempotency_key_id::text,
-				       proration_credit_amount
-				  FROM orders WHERE tenant_id=$1 AND order_no=$2 FOR UPDATE`
-			identifier = in.OrderNo
-		}
-		if identifier == "" {
-			return httpx.New(httpx.CodeBadRequest, "payment callback has no order identifier")
-		}
-		err = tx.QueryRow(ctx, query, tenantID, identifier).Scan(
-			&orderID, &userID, &status, &currency, &subtotalAmount,
-			&discountAmount, &taxAmount, &payable, &balanceApplied, &totalAmount,
-			&orderKind, &businessRequestID, &couponID, &idempotencyKeyID, &prorationCredit)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.New(httpx.CodeNotFound, "order not found")
-		}
-		if err != nil {
-			return err
-		}
-		in.OrderID = orderID
-		if subscriptionBoundOrderKind(orderKind) && (idempotencyKeyID == nil ||
-			*idempotencyKeyID != businessRequestID) {
-			return errors.New("subscription-bound order is missing its exact idempotency linkage")
-		}
-
-		// Distinct provider events for the same provider payment must serialize
-		// even before the unique payment row exists. The order row remains the
-		// first lock; this key closes only the absent-provider-payment gap.
-		if _, err := tx.Exec(ctx,
-			`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
-			providerID+":"+in.ProviderPaymentID); err != nil {
-			return err
-		}
-		var recordedOrderID string
-		err = tx.QueryRow(ctx, `
-			SELECT order_id::text FROM payments
-			 WHERE tenant_id=$1 AND provider_id=$2::uuid AND provider_payment_id=$3`,
-			tenantID, providerID, in.ProviderPaymentID).Scan(&recordedOrderID)
-		if err == nil {
-			if recordedOrderID != orderID {
-				return httpx.New(httpx.CodeConflict,
-					"provider payment is already attached to another order")
-			}
-			if status != "paid" && status != "fulfilled" &&
-				status != "cancelled" && status != "expired" {
-				return errors.New("provider payment exists before order reached a terminal state")
-			}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-
-		if status == "paid" || status == "fulfilled" {
-			quarantined, err := s.quarantineUnexpectedPayment(ctx, tx,
-				tenantID, eventID, providerID, orderID, userID, status,
-				in.ProviderCode, "excess_capture", in)
-			if err != nil {
-				return err
-			}
-			out = *quarantined
-			return nil
-		}
-		if status == "cancelled" || status == "expired" {
-			quarantined, err := s.quarantineUnexpectedPayment(ctx, tx,
-				tenantID, eventID, providerID, orderID, userID, status,
-				in.ProviderCode, "released_order", in)
-			if err != nil {
-				return err
-			}
-			out = *quarantined
-			return nil
-		}
-		if status != "pending_payment" && status != "processing" {
-			return httpx.New(httpx.CodeConflict, "order is not payable")
-		}
-		if in.Currency != currency || in.Amount != payable {
-			return httpx.New(httpx.CodeConflict, "payment currency or amount does not match the order")
-		}
-
-		// Renewal and plan-change settlement must acquire the existing
-		// subscription before any reservation child or ledger-account lock.
-		// Their creation uses the same subscription -> coupon -> ledger order,
-		// closing the cross-flow deadlock cycle without weakening new-order or
-		// top-up settlement.
-		var renewalSubscriptionID string
-		if subscriptionBoundOrderKind(orderKind) {
-			renewalSubscriptionID, err = lockOrderSubscriptionForSettlement(
-				ctx, tx, tenantID, orderID, userID,
-			)
-			if err != nil {
-				return err
-			}
-		}
-
-		// Active payment intents are locked immediately after the order.
-		var activeIntentIDs []string
-		rows, err := tx.Query(ctx, `
-			SELECT id::text FROM payment_intents
-			 WHERE tenant_id=$1 AND order_id=$2::uuid
-			   AND status IN ('created','requires_action','processing')
-			 ORDER BY id FOR UPDATE`, tenantID, orderID)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			activeIntentIDs = append(activeIntentIDs, id)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
-		if len(activeIntentIDs) > 1 {
-			return errors.New("order has more than one active payment intent")
-		}
-
-		locked, err := lockOrderReservationGraph(ctx, tx, reservationLockRequest{
-			TenantID: tenantID, OrderID: orderID, UserID: userID, Kind: orderKind,
-			Currency: currency, CouponID: couponID, SubtotalAmount: subtotalAmount,
-			DiscountAmount: discountAmount, TaxAmount: taxAmount, TotalAmount: totalAmount,
-			PayableAmount: payable, BalanceAmount: balanceApplied,
-			ProrationCredit: prorationCredit,
-		})
-		if err != nil {
-			return err
-		}
-
-		accountSpecs := []ledgerAccountSpec{{
-			Key: "channel", AccountType: AccountChannelCash,
-			Currency: currency, OwnerRef: in.ProviderCode,
-		}}
-		var existingAccountIDs []string
-		var commissionReferrerID *string
-		if orderKind == "topup" {
-			accountSpecs = append(accountSpecs, ledgerAccountSpec{
-				Key: "available", AccountType: AccountUserBalance,
-				Currency: currency, UserID: &userID,
-			})
-		} else {
-			accountSpecs = append(accountSpecs, ledgerAccountSpec{
-				Key: "revenue", AccountType: AccountPlatformRevenue,
-				Currency: currency, OwnerRef: "main",
-			})
-			if locked.Balance != nil {
-				existingAccountIDs = append(existingAccountIDs,
-					locked.Balance.AvailableAccountID, locked.Balance.HoldAccountID)
-			}
-			var referrerID string
-			err := tx.QueryRow(ctx, `
-				SELECT referrer_user_id::text FROM referrals
-				 WHERE tenant_id=$1 AND referee_user_id=$2::uuid`,
-				tenantID, userID).Scan(&referrerID)
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return err
-			}
-			if err == nil {
-				commissionReferrerID = &referrerID
-				accountSpecs = append(accountSpecs, ledgerAccountSpec{
-					Key: "commission_pending", AccountType: AccountUserCommissionPending,
-					Currency: currency, UserID: commissionReferrerID,
-				})
-			}
-		}
-		if in.FeeAmount > 0 {
-			accountSpecs = append(accountSpecs, ledgerAccountSpec{
-				Key: "fee", AccountType: AccountPlatformFeeExpense,
-				Currency: currency, OwnerRef: in.ProviderCode,
-			})
-		}
-		if _, err := prepareAndLockLedgerAccounts(ctx, tx, tenantID,
-			accountSpecs, existingAccountIDs...); err != nil {
-			return err
-		}
-
-		var intentID *string
-		if len(activeIntentIDs) == 1 {
-			id := activeIntentIDs[0]
-			tag, err := tx.Exec(ctx, `
-				UPDATE payment_intents
-				   SET status='succeeded',provider_ref=coalesce(provider_ref,$3)
-				 WHERE tenant_id=$1 AND id=$2::uuid
-				   AND status IN ('created','requires_action','processing')`,
-				tenantID, id, in.ProviderPaymentID)
-			if err != nil {
-				return err
-			}
-			if tag.RowsAffected() != 1 {
-				return errors.New("active payment intent transition lost")
-			}
-			intentID = &id
-		}
-
-		var paymentID string
-		err = tx.QueryRow(ctx, `
-			INSERT INTO payments
-				(tenant_id,order_id,provider_id,provider_payment_id,
-				 payment_intent_id,currency,amount,fee_amount,status)
-			VALUES ($1,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8,'succeeded')
-			RETURNING id::text`, tenantID, orderID, providerID,
-			in.ProviderPaymentID, intentID, currency, in.Amount, in.FeeAmount).
-			Scan(&paymentID)
-		if err != nil {
-			return err
-		}
-		out.PaymentID = paymentID
-
-		var txnID string
-		if orderKind == "topup" {
-			txnID, err = s.postTopupPaid(ctx, tx, tenantID, topupPaidPosting{
-				OrderID: orderID, UserID: userID, Currency: currency,
-				Amount: in.Amount, FeeAmount: in.FeeAmount,
-				ProviderCode: in.ProviderCode,
-			})
-		} else {
-			holdAccountID := ""
-			if locked.Balance != nil {
-				holdAccountID = locked.Balance.HoldAccountID
-			}
-			txnID, err = s.postOrderPaid(ctx, tx, tenantID, orderPaidPosting{
-				OrderID: orderID, UserID: userID, Currency: currency,
-				ChannelAmount: in.Amount, BalanceApplied: balanceApplied,
-				FeeAmount: in.FeeAmount, TotalAmount: totalAmount,
-				ProviderCode: in.ProviderCode, HoldAccountID: holdAccountID,
-			})
-		}
-		if err != nil {
-			return err
-		}
-		out.LedgerTxnID = txnID
-		// Commission accounts joined the same UUID-sorted lock set above. Keep
-		// every settlement ledger write before reservation/order transitions.
-		if orderKind != "topup" && commissionReferrerID != nil {
-			if err := s.accrueCommission(ctx, tx, tenantID, orderID, userID,
-				currency, totalAmount); err != nil {
-				return err
-			}
-		}
-
-		if err := captureLockedReservation(ctx, tx, tenantID, orderID, userID,
-			businessRequestID, locked, txnID); err != nil {
-			return err
-		}
-		tag, err := tx.Exec(ctx, `
-			UPDATE orders
-			   SET status='paid',paid_amount=$3,paid_at=now()
-			 WHERE tenant_id=$1 AND id=$2::uuid
-			   AND status IN ('pending_payment','processing')`,
-			tenantID, orderID, totalAmount)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return errors.New("order paid transition lost")
-		}
-
-		switch orderKind {
-		case "topup":
-			// 余额入账已经在上面的结算分录里做完了，这里只把订单收尾。
-			//
-			// 早先这个分支是空的，充值单于是永远停在 status='paid'、
-			// fulfilled_at IS NULL —— 钱到账了，订单却看起来像卡住了。
-			// 两个后果：后台订单列表里充值单永远显示「已支付」而不是
-			// 「已履约」，看不出到底完没完成；更麻烦的是「付了钱没履约」
-			// 是排查卡单的标准查询，而每一张充值单都会命中它，真有一张
-			// 入账失败卡在那里，会淹没在这堆假阳性里没人发现。
-			//
-			// 充值的履约就是余额落账那一刻，没有别的后续动作，所以在
-			// 同一个事务里直接置为 fulfilled。
-			if _, err := tx.Exec(ctx, `
-				UPDATE orders
-				   SET status='fulfilled', fulfilled_at=now()
-				 WHERE tenant_id=$1 AND id=$2::uuid AND status='paid'`,
-				tenantID, orderID); err != nil {
-				return err
-			}
-		case "renewal":
-			subscriptionID, err := s.fulfillRenewalLocked(ctx, tx, tenantID,
-				orderID, userID, renewalSubscriptionID)
-			if err != nil {
-				return err
-			}
-			out.SubscriptionID = subscriptionID
-		case "new":
-			subscriptionID, err := s.fulfillOrder(ctx, tx, tenantID, orderID, userID)
-			if err != nil {
-				return err
-			}
-			out.SubscriptionID = subscriptionID
-		case "addon":
-			// 流量包：履约就是按购买时的容量快照发一笔用户级余额，没有订阅要开
-			if _, err := fulfillTrafficPackOrder(ctx, tx, tenantID, orderID, userID); err != nil {
-				return err
-			}
-		case "upgrade":
-			// 要外部付款的变更单一定是补差价（total > 0），不会有退余额，
-			// 退余额只发生在 plan_change.go 的零元单捕获里。
-			subscriptionID, err := s.fulfillPlanChangeLocked(ctx, tx, tenantID,
-				orderID, userID, renewalSubscriptionID)
-			if err != nil {
-				return err
-			}
-			out.SubscriptionID = subscriptionID
-		default:
-			return fmt.Errorf("unsupported paid order kind %q", orderKind)
-		}
-
-		// dedupe 用订单号：支付渠道会重投回调，同一笔订单只该通知插件一次。
-		if err := plugin.EmitOrderPaid(ctx, tx, tenantID, orderID, userID,
-			orderKind, currency, totalAmount, out.SubscriptionID); err != nil {
-			return err
-		}
-		if out.SubscriptionID != "" {
-			if err := plugin.EmitSubscriptionProvisioned(ctx, tx, tenantID,
-				out.SubscriptionID, userID, orderID, orderKind); err != nil {
-				return err
-			}
-		}
-
-		tag, err = tx.Exec(ctx, `
-			UPDATE payment_events
-			   SET processing_status='processed',processed_at=now()
-			 WHERE id=$1::uuid AND processing_status='pending'`, eventID)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return errors.New("payment event processed transition lost")
-		}
-		if err := audit.Write(ctx, tx, tenantID, audit.Entry{
-			ActorKind: "system", Action: "payment.succeeded",
-			ResourceType: "order", ResourceID: &orderID,
-			AfterDigest: map[string]any{
-				"payment_id": paymentID, "amount": in.Amount, "currency": currency,
-				"ledger_txn": txnID, "subscription_id": out.SubscriptionID,
-				"order_kind": orderKind,
-			},
-			APIDomain: "public", RequestID: httpx.RequestIDFrom(ctx),
-		}); err != nil {
-			return err
-		}
-		if err := forceConstraints(); err != nil {
-			return err
-		}
-		out.Processed = true
-		return nil
+		out = PaymentWebhookOutput{}
+		return s.settlePaymentTx(ctx, tx, tenantID, in, &out)
 	})
 	if err != nil {
 		var he *httpx.Error
@@ -1481,6 +1071,463 @@ func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in 
 		s.notifyUsersChanged(ctx, tenantID)
 	}
 	return &out, nil
+}
+
+// settlePaymentTx 是一笔收款的完整结算，在调用方的事务里执行：渠道回调与
+// 标记已支付经 HandlePaymentWebhook 各开一个事务调用它；人工开单「线下已收款」
+// 在建单的同一个事务里调用它，建单、入账、履约、幂等记录要么一起生效，
+// 要么一起回滚（manual_order.go）。
+func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID string,
+	in PaymentWebhookInput, out *PaymentWebhookOutput) error {
+
+	if in.ProviderEventID == "" || in.ProviderPaymentID == "" {
+		return httpx.New(httpx.CodeBadRequest, "payment event and payment identifiers are required")
+	}
+	if in.Amount <= 0 || in.FeeAmount < 0 || in.FeeAmount > in.Amount {
+		return httpx.New(httpx.CodeBadRequest, "payment amount or fee is invalid")
+	}
+
+	var providerID string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text FROM payment_providers
+		 WHERE tenant_id=$1 AND code=$2`, tenantID, in.ProviderCode).Scan(&providerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return httpx.New(httpx.CodeNotFound, "unknown payment provider")
+	}
+	if err != nil {
+		return err
+	}
+
+	forceConstraints := func() error {
+		_, err := tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE`)
+		return err
+	}
+
+	// Unique provider event gate is deliberately the first mutable operation.
+	var eventID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO payment_events
+			(tenant_id,provider_id,provider_event_id,event_type,
+			 provider_payment_id,raw_payload,signature_verified)
+		VALUES ($1,$2::uuid,$3,$4,$5,$6,$7)
+		ON CONFLICT (provider_id,provider_event_id) DO NOTHING
+		RETURNING id::text`, tenantID, providerID, in.ProviderEventID,
+		in.EventType, in.ProviderPaymentID, in.RawPayload, in.SignatureVerified).
+		Scan(&eventID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := forceConstraints(); err != nil {
+			return err
+		}
+		out.AlreadyHandled = true
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	if !in.SignatureVerified {
+		// 验签失败的事件必须留库可审计：把这条 payment_event 以
+		// ignored 状态提交（证据保全），然后返回 nil 让事务真正
+		// 提交——不能返回 error，否则整个事务回滚，伪造回调的
+		// 原始报文和验签失败证据一条都留不下来。
+		if _, err := tx.Exec(ctx, `
+			UPDATE payment_events
+			   SET processing_status='ignored', processed_at=now()
+			 WHERE id=$1::uuid AND processing_status='pending'`, eventID); err != nil {
+			return err
+		}
+		if err := forceConstraints(); err != nil {
+			return err
+		}
+		out.Processed = true
+		out.SignatureFailed = true
+		return nil
+	}
+	if in.EventType != "payment.succeeded" {
+		tag, err := tx.Exec(ctx, `
+			UPDATE payment_events
+			   SET processing_status='ignored', processed_at=now()
+			 WHERE id=$1::uuid AND processing_status='pending'`, eventID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errors.New("ignored payment event transition lost")
+		}
+		if err := forceConstraints(); err != nil {
+			return err
+		}
+		out.Processed = true
+		return nil
+	}
+
+	var (
+		orderID, userID, status, currency, orderKind string
+		businessRequestID                            string
+		subtotalAmount, discountAmount, taxAmount    int64
+		payable, balanceApplied, totalAmount         int64
+		prorationCredit                              int64
+		couponID, idempotencyKeyID                   *string
+	)
+	query := `
+		SELECT id::text,user_id::text,status,currency::text,subtotal_amount,
+		       discount_amount,tax_amount,payable_amount,balance_applied,total_amount,
+		       kind,business_request_id::text,coupon_id::text,idempotency_key_id::text,
+		       proration_credit_amount
+		  FROM orders WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`
+	identifier := in.OrderID
+	if identifier == "" {
+		query = `
+			SELECT id::text,user_id::text,status,currency::text,subtotal_amount,
+			       discount_amount,tax_amount,payable_amount,balance_applied,total_amount,
+			       kind,business_request_id::text,coupon_id::text,idempotency_key_id::text,
+			       proration_credit_amount
+			  FROM orders WHERE tenant_id=$1 AND order_no=$2 FOR UPDATE`
+		identifier = in.OrderNo
+	}
+	if identifier == "" {
+		return httpx.New(httpx.CodeBadRequest, "payment callback has no order identifier")
+	}
+	err = tx.QueryRow(ctx, query, tenantID, identifier).Scan(
+		&orderID, &userID, &status, &currency, &subtotalAmount,
+		&discountAmount, &taxAmount, &payable, &balanceApplied, &totalAmount,
+		&orderKind, &businessRequestID, &couponID, &idempotencyKeyID, &prorationCredit)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return httpx.New(httpx.CodeNotFound, "order not found")
+	}
+	if err != nil {
+		return err
+	}
+	in.OrderID = orderID
+	if subscriptionBoundOrderKind(orderKind) && (idempotencyKeyID == nil ||
+		*idempotencyKeyID != businessRequestID) {
+		return errors.New("subscription-bound order is missing its exact idempotency linkage")
+	}
+
+	// Distinct provider events for the same provider payment must serialize
+	// even before the unique payment row exists. The order row remains the
+	// first lock; this key closes only the absent-provider-payment gap.
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+		providerID+":"+in.ProviderPaymentID); err != nil {
+		return err
+	}
+	var recordedOrderID string
+	err = tx.QueryRow(ctx, `
+		SELECT order_id::text FROM payments
+		 WHERE tenant_id=$1 AND provider_id=$2::uuid AND provider_payment_id=$3`,
+		tenantID, providerID, in.ProviderPaymentID).Scan(&recordedOrderID)
+	if err == nil {
+		if recordedOrderID != orderID {
+			return httpx.New(httpx.CodeConflict,
+				"provider payment is already attached to another order")
+		}
+		if status != "paid" && status != "fulfilled" &&
+			status != "cancelled" && status != "expired" {
+			return errors.New("provider payment exists before order reached a terminal state")
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	if status == "paid" || status == "fulfilled" {
+		quarantined, err := s.quarantineUnexpectedPayment(ctx, tx,
+			tenantID, eventID, providerID, orderID, userID, status,
+			in.ProviderCode, "excess_capture", in)
+		if err != nil {
+			return err
+		}
+		*out = *quarantined
+		return nil
+	}
+	if status == "cancelled" || status == "expired" {
+		quarantined, err := s.quarantineUnexpectedPayment(ctx, tx,
+			tenantID, eventID, providerID, orderID, userID, status,
+			in.ProviderCode, "released_order", in)
+		if err != nil {
+			return err
+		}
+		*out = *quarantined
+		return nil
+	}
+	if status != "pending_payment" && status != "processing" {
+		return httpx.New(httpx.CodeConflict, "order is not payable")
+	}
+	if in.Currency != currency || in.Amount != payable {
+		return httpx.New(httpx.CodeConflict, "payment currency or amount does not match the order")
+	}
+
+	// Renewal and plan-change settlement must acquire the existing
+	// subscription before any reservation child or ledger-account lock.
+	// Their creation uses the same subscription -> coupon -> ledger order,
+	// closing the cross-flow deadlock cycle without weakening new-order or
+	// top-up settlement.
+	var renewalSubscriptionID string
+	if subscriptionBoundOrderKind(orderKind) {
+		renewalSubscriptionID, err = lockOrderSubscriptionForSettlement(
+			ctx, tx, tenantID, orderID, userID,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Active payment intents are locked immediately after the order.
+	var activeIntentIDs []string
+	rows, err := tx.Query(ctx, `
+		SELECT id::text FROM payment_intents
+		 WHERE tenant_id=$1 AND order_id=$2::uuid
+		   AND status IN ('created','requires_action','processing')
+		 ORDER BY id FOR UPDATE`, tenantID, orderID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		activeIntentIDs = append(activeIntentIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if len(activeIntentIDs) > 1 {
+		return errors.New("order has more than one active payment intent")
+	}
+
+	locked, err := lockOrderReservationGraph(ctx, tx, reservationLockRequest{
+		TenantID: tenantID, OrderID: orderID, UserID: userID, Kind: orderKind,
+		Currency: currency, CouponID: couponID, SubtotalAmount: subtotalAmount,
+		DiscountAmount: discountAmount, TaxAmount: taxAmount, TotalAmount: totalAmount,
+		PayableAmount: payable, BalanceAmount: balanceApplied,
+		ProrationCredit: prorationCredit,
+	})
+	if err != nil {
+		return err
+	}
+
+	accountSpecs := []ledgerAccountSpec{{
+		Key: "channel", AccountType: AccountChannelCash,
+		Currency: currency, OwnerRef: in.ProviderCode,
+	}}
+	var existingAccountIDs []string
+	var commissionReferrerID *string
+	if orderKind == "topup" {
+		accountSpecs = append(accountSpecs, ledgerAccountSpec{
+			Key: "available", AccountType: AccountUserBalance,
+			Currency: currency, UserID: &userID,
+		})
+	} else {
+		accountSpecs = append(accountSpecs, ledgerAccountSpec{
+			Key: "revenue", AccountType: AccountPlatformRevenue,
+			Currency: currency, OwnerRef: "main",
+		})
+		if locked.Balance != nil {
+			existingAccountIDs = append(existingAccountIDs,
+				locked.Balance.AvailableAccountID, locked.Balance.HoldAccountID)
+		}
+		var referrerID string
+		err := tx.QueryRow(ctx, `
+			SELECT referrer_user_id::text FROM referrals
+			 WHERE tenant_id=$1 AND referee_user_id=$2::uuid`,
+			tenantID, userID).Scan(&referrerID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			commissionReferrerID = &referrerID
+			accountSpecs = append(accountSpecs, ledgerAccountSpec{
+				Key: "commission_pending", AccountType: AccountUserCommissionPending,
+				Currency: currency, UserID: commissionReferrerID,
+			})
+		}
+	}
+	if in.FeeAmount > 0 {
+		accountSpecs = append(accountSpecs, ledgerAccountSpec{
+			Key: "fee", AccountType: AccountPlatformFeeExpense,
+			Currency: currency, OwnerRef: in.ProviderCode,
+		})
+	}
+	if _, err := prepareAndLockLedgerAccounts(ctx, tx, tenantID,
+		accountSpecs, existingAccountIDs...); err != nil {
+		return err
+	}
+
+	var intentID *string
+	if len(activeIntentIDs) == 1 {
+		id := activeIntentIDs[0]
+		tag, err := tx.Exec(ctx, `
+			UPDATE payment_intents
+			   SET status='succeeded',provider_ref=coalesce(provider_ref,$3)
+			 WHERE tenant_id=$1 AND id=$2::uuid
+			   AND status IN ('created','requires_action','processing')`,
+			tenantID, id, in.ProviderPaymentID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errors.New("active payment intent transition lost")
+		}
+		intentID = &id
+	}
+
+	var paymentID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO payments
+			(tenant_id,order_id,provider_id,provider_payment_id,
+			 payment_intent_id,currency,amount,fee_amount,status)
+		VALUES ($1,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8,'succeeded')
+		RETURNING id::text`, tenantID, orderID, providerID,
+		in.ProviderPaymentID, intentID, currency, in.Amount, in.FeeAmount).
+		Scan(&paymentID)
+	if err != nil {
+		return err
+	}
+	out.PaymentID = paymentID
+
+	var txnID string
+	if orderKind == "topup" {
+		txnID, err = s.postTopupPaid(ctx, tx, tenantID, topupPaidPosting{
+			OrderID: orderID, UserID: userID, Currency: currency,
+			Amount: in.Amount, FeeAmount: in.FeeAmount,
+			ProviderCode: in.ProviderCode,
+		})
+	} else {
+		holdAccountID := ""
+		if locked.Balance != nil {
+			holdAccountID = locked.Balance.HoldAccountID
+		}
+		txnID, err = s.postOrderPaid(ctx, tx, tenantID, orderPaidPosting{
+			OrderID: orderID, UserID: userID, Currency: currency,
+			ChannelAmount: in.Amount, BalanceApplied: balanceApplied,
+			FeeAmount: in.FeeAmount, TotalAmount: totalAmount,
+			ProviderCode: in.ProviderCode, HoldAccountID: holdAccountID,
+		})
+	}
+	if err != nil {
+		return err
+	}
+	out.LedgerTxnID = txnID
+	// Commission accounts joined the same UUID-sorted lock set above. Keep
+	// every settlement ledger write before reservation/order transitions.
+	if orderKind != "topup" && commissionReferrerID != nil {
+		if err := s.accrueCommission(ctx, tx, tenantID, orderID, userID,
+			currency, totalAmount); err != nil {
+			return err
+		}
+	}
+
+	if err := captureLockedReservation(ctx, tx, tenantID, orderID, userID,
+		businessRequestID, locked, txnID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE orders
+		   SET status='paid',paid_amount=$3,paid_at=now()
+		 WHERE tenant_id=$1 AND id=$2::uuid
+		   AND status IN ('pending_payment','processing')`,
+		tenantID, orderID, totalAmount)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("order paid transition lost")
+	}
+
+	switch orderKind {
+	case "topup":
+		// 余额入账已经在上面的结算分录里做完了，这里只把订单收尾。
+		//
+		// 早先这个分支是空的，充值单于是永远停在 status='paid'、
+		// fulfilled_at IS NULL —— 钱到账了，订单却看起来像卡住了。
+		// 两个后果：后台订单列表里充值单永远显示「已支付」而不是
+		// 「已履约」，看不出到底完没完成；更麻烦的是「付了钱没履约」
+		// 是排查卡单的标准查询，而每一张充值单都会命中它，真有一张
+		// 入账失败卡在那里，会淹没在这堆假阳性里没人发现。
+		//
+		// 充值的履约就是余额落账那一刻，没有别的后续动作，所以在
+		// 同一个事务里直接置为 fulfilled。
+		if _, err := tx.Exec(ctx, `
+			UPDATE orders
+			   SET status='fulfilled', fulfilled_at=now()
+			 WHERE tenant_id=$1 AND id=$2::uuid AND status='paid'`,
+			tenantID, orderID); err != nil {
+			return err
+		}
+	case "renewal":
+		subscriptionID, err := s.fulfillRenewalLocked(ctx, tx, tenantID,
+			orderID, userID, renewalSubscriptionID)
+		if err != nil {
+			return err
+		}
+		out.SubscriptionID = subscriptionID
+	case "new":
+		subscriptionID, err := s.fulfillOrder(ctx, tx, tenantID, orderID, userID)
+		if err != nil {
+			return err
+		}
+		out.SubscriptionID = subscriptionID
+	case "addon":
+		// 流量包：履约就是按购买时的容量快照发一笔用户级余额，没有订阅要开
+		if _, err := fulfillTrafficPackOrder(ctx, tx, tenantID, orderID, userID); err != nil {
+			return err
+		}
+	case "upgrade":
+		// 要外部付款的变更单一定是补差价（total > 0），不会有退余额，
+		// 退余额只发生在 plan_change.go 的零元单捕获里。
+		subscriptionID, err := s.fulfillPlanChangeLocked(ctx, tx, tenantID,
+			orderID, userID, renewalSubscriptionID)
+		if err != nil {
+			return err
+		}
+		out.SubscriptionID = subscriptionID
+	default:
+		return fmt.Errorf("unsupported paid order kind %q", orderKind)
+	}
+
+	// dedupe 用订单号：支付渠道会重投回调，同一笔订单只该通知插件一次。
+	if err := plugin.EmitOrderPaid(ctx, tx, tenantID, orderID, userID,
+		orderKind, currency, totalAmount, out.SubscriptionID); err != nil {
+		return err
+	}
+	if out.SubscriptionID != "" {
+		if err := plugin.EmitSubscriptionProvisioned(ctx, tx, tenantID,
+			out.SubscriptionID, userID, orderID, orderKind); err != nil {
+			return err
+		}
+	}
+
+	tag, err = tx.Exec(ctx, `
+		UPDATE payment_events
+		   SET processing_status='processed',processed_at=now()
+		 WHERE id=$1::uuid AND processing_status='pending'`, eventID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("payment event processed transition lost")
+	}
+	if err := audit.Write(ctx, tx, tenantID, audit.Entry{
+		ActorKind: "system", Action: "payment.succeeded",
+		ResourceType: "order", ResourceID: &orderID,
+		AfterDigest: map[string]any{
+			"payment_id": paymentID, "amount": in.Amount, "currency": currency,
+			"ledger_txn": txnID, "subscription_id": out.SubscriptionID,
+			"order_kind": orderKind,
+		},
+		APIDomain: "public", RequestID: httpx.RequestIDFrom(ctx),
+	}); err != nil {
+		return err
+	}
+	if err := forceConstraints(); err != nil {
+		return err
+	}
+	out.Processed = true
+	return nil
 }
 
 type orderPaidPosting struct {
