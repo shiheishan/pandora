@@ -36,6 +36,7 @@ tests/mock-admin-system.test.ts: 通知与插件假接口——只读账号只�
 tests/mock-admin-security.test.ts: 安全与运维假接口——只读账号整块 404（停用先 404 不弹 reauth）；审计 schema、存量行、筛选与 limit 越界；导出先 reauth、日期 422、BOM 与防公式、导出记审计；访问日志分类表、未知分类与结果 422、仅错误、IP 与账号筛选；聚类默认不列标记正常的、机房判高风险、标记正常；批量停用 reauth、422、跳过后台账号 / 已停用 / 非成员、同键重放、用户模块看到已停用；开关八行（R102）、排序、核心项与缺原因 409、切换记审计
 tests/mock-portal.test.ts: 门户假接口——外框读接口来自各页面模块、套餐目录能被页面 schema 接住（R99 / R100）、快捷登录令牌一次性往返、同会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
 tests/mock-admin-billing.test.ts: 订单与收款假接口守卫（后台前端一第 ⑥ 步；起服务与发请求用 mock-helpers，登录与 reauth 辅助留在文件内）：只读账号只看得到订单列表；仪表盘「超时未支付」与待支付筛选同一份数据；订单 schema、多值状态、user_id 与用户详情同一份；人工开单先 reauth、201 重放、三种结算与拒绝项；标记已支付开通；取消 CAS 与重放；挂账按币种合计与只能转一次；渠道启停；收入调整登记、冲销与重复冲销 409
+tests/smoke/: 对真实网关的联调冒烟（CI 的 panel-smoke.yml 专用，不进 make frontend-check）：造数据与用页面 zod schema 解析真响应；见 tests/smoke/CLAUDE.md
 tests/theme-boot.test.ts: 用 node:vm 执行引导脚本覆盖各种存储状态，核对它与 theme.ts 同键；vite 配置拒绝构建 showcase 与未知 mode、引导脚本带内容哈希、不内联资源、假后端只在 serve 时挂上
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

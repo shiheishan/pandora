@@ -178,7 +178,7 @@ func TestNodePreviewPG18(t *testing.T) {
 	}
 
 	service := New(app, nil, nil)
-	credentialNodes, err := service.ListNodes(ctx, tenantA, &Credential{PlanVersionID: planVerA})
+	credentialNodes, err := service.ListNodes(ctx, tenantA, &Credential{UserID: userA, PlanVersionID: planVerA})
 	if err != nil || len(credentialNodes) != 1 || credentialNodes[0].Name != "Good Node" {
 		t.Fatalf("subscription eligibility mismatch nodes=%+v err=%v", credentialNodes, err)
 	}

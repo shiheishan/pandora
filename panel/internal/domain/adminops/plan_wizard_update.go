@@ -69,6 +69,9 @@ type UpdatePlanCompleteInput struct {
 	VisibleGroupIDs      []string `json:"visible_group_ids"`
 	PurchaseLimitPerUser *int     `json:"purchase_limit_per_user"`
 	StockTotal           *int     `json:"stock_total"`
+	// 卖点与推荐（R100）：为 nil 表示这次不动
+	Highlights  *[]string `json:"highlights"`
+	Recommended *bool     `json:"recommended"`
 
 	// --- 卖的是什么 ---
 	// TrafficGB 为 nil 表示这次不动它，0 表示不限。
@@ -136,6 +139,9 @@ func (s *Service) UpdatePlanComplete(ctx context.Context, tenantID, planID strin
 		PurchaseLimitPerUser: in.PurchaseLimitPerUser,
 		StockTotal:           in.StockTotal, SortOrder: in.SortOrder,
 	}
+	if in.Highlights != nil {
+		planInput.Highlights = *in.Highlights
+	}
 	if err := prepareUpdatePlanInput(planID, &planInput); err != nil {
 		return nil, err
 	}
@@ -176,6 +182,11 @@ func (s *Service) UpdatePlanComplete(ctx context.Context, tenantID, planID strin
 		// 向导没有上架时间窗的输入，资料又是整体写入：不从现状带上，窗口就被
 		// 清成「永远可见」（R92 ③）。时间窗只在「销售设置」里改。
 		planInput.VisibleFrom, planInput.VisibleUntil = before.VisibleFrom, before.VisibleUntil
+		// 卖点与推荐缺省 = 不动（R100）；给了的已在事务外校验并规整过。
+		if in.Highlights == nil {
+			planInput.Highlights = before.Highlights
+		}
+		planInput.Recommended = boolOr(in.Recommended, before.Recommended)
 		if _, err := s.updatePlanTx(ctx, tx, tenantID, planID, planInput); err != nil {
 			return err
 		}

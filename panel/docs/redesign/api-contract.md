@@ -547,6 +547,7 @@
 - 设计：设计稿抽屉的「画像」tab 其实是资料卡，不包含风控数据。「注册 IP」这一行由前端在持有 `security.audit.read` 时从本接口取值，没有权限时隐藏。风控 tab 的内容为：IP 聚合表（`accounts > 1` 的行高亮）、关联账号列表（可点击跳转到对应用户）、订阅拉取记录，以及用 `fetch_sources_7d` 给出的「疑似分享」提示
 
 #### POST v1/users/{id}/group — 分配用户组
+- **修订 R109（2026-09-25，后端四 ② 2f67ac0，已实现 R104）**：只要成功就在提交后通知节点重拉用户（不比较前后是否同组），失败不通知。
 - **修订 R104（2026-09-25，用户定案 D-B-3）**：换组会改变该用户能用的节点池，提交后通知节点重拉用户。
 - 状态：现有 `usergroup.go:208 assignUserGroup`
 - 权限：`iam.user.write`｜reauth：否｜幂等：否
@@ -581,6 +582,7 @@
 - 设计：设计稿没有这个入口
 
 #### DELETE v1/user-groups/{id} — 删除用户组
+- **修订 R109（2026-09-25，后端四 ② 2f67ac0，已实现 R104）**：409 的判断顺序：先看节点池名单（message 如「节点池「专属线路 A」限定了这个分组…」），再看用户、套餐、价格、优惠券；查完到删之间被并发加进名单时外键挡住，同样 409。路径 id 不是 UUID 回 404（原为 500）。
 - **修订 R104（2026-09-25，用户定案 D-B-3）**：仍被某个节点池的限定名单引用时回 409，message 写明池名。
 - 状态：现有 `usergroup.go:151 deleteUserGroup`；待补·前端（→ 补进后台-03「用户组」表格每行的「删除」按钮）
 - 权限：`iam.user.write`｜reauth：否｜幂等：否
@@ -781,6 +783,7 @@
   - `prices` 按「周期 + 币种」整组同步：清单里没有的在售价格会被**归档**，包括 USD 价格和用户组专属价。设计的 editPlan 只回填了 CNY 价格，照着做会把 USD 价格和用户组专属价全部归档。前端必须回填全部在售价格，或者没改价格时传 `prices: null`。
 
 #### PUT v1/plans/{id} — 改套餐资料与销售设置（不动版本、价格）
+- **修订 R110（2026-09-25，后端三 ③ 068614a，已实现 R100）**：00088 加两列，数据库约束只兜底「最多 5 条、无 NULL 元素」，逐条规则在应用层（`adminops/plan_highlights.go` 唯一出处）：每条去首尾空白、保持顺序；422 文案——超过 5 条 `highlights`「最多 5 条卖点」；空串 `highlights.{i}`「卖点不能为空」；超长 `highlights.{i}`「每条卖点最多 40 个字」；重复（按去空白后的值）`highlights.{i}`「卖点不能重复」。卖点错误与资料其他字段错误合并成一次 422。`PUT v1/plans/{id}/complete` 里 `highlights: null` 等同没传（不动），清空要传 `[]`。门户 `GET v1/plans` 的两个字段取自套餐本身，不跟版本走。
 - **修订 R100（2026-09-25，用户定案 D-E-3 方案 a）**：`plans` 加两列：`highlights text[] NOT NULL DEFAULT '{}'`（卖点，最多 5 条，每条去首尾空白后 1–40 字，不许空串与重复，按给定顺序）、`recommended boolean NOT NULL DEFAULT false`（「推荐」标记；字段名与流量包的 `recommended` 一致，不用第 6 节 C8 原写的 featured；多个套餐可同时推荐，不做互斥）。写入：本接口请求加 `highlights: string[]`、`recommended: bool`（整体覆盖，要回填当前值）；`POST v1/plans`、`POST v1/plans/complete` 可选（缺省空与 false）；`PUT v1/plans/{id}/complete` 缺省 = 不动。422 字段键 `highlights`、`highlights.{i}`。已归档套餐不可编辑沿用现有规则。读取：后台 `GET v1/plans` 列表项与 `GET v1/plans/{id}` 的 `plan` 各加 `highlights: string[]`、`recommended: bool`；门户 `GET v1/plans` 每项同样加这两个字段。前端：「销售设置」抽屉与向导第 1 步加「卖点（最多 5 条）」和「标为推荐」开关；门户套餐卡把 `highlights` 显示为特性列表（流量、设备、重置、限速等事实照现有位置显示），`recommended` 为真时显示「推荐」徽标。
 - 状态：现有 `panel/internal/api/admin/catalog.go:80 updatePlan`（路由由 `router.go registerCatalogPlanUpdate` 注册）
 - 权限：`catalog.publish`｜reauth：是｜幂等：是 `catalog_plan_update`
@@ -1355,7 +1358,7 @@
 - 状态：**待补·后端**（后端四）
 - 权限：`node.lifecycle`｜reauth：否（与 status:batch 启用、旧 status 接口同门槛）｜幂等：是 `node_activate`
 - 请求：`{ row_version: int64 }`
-- 响应：200 `AdminNode`（同 GET v1/nodes 的 Node），另带 `warnings: string[]`（如无池节点的「未划入节点池，不服务任何用户」，R105）
+- 响应：200 `AdminNode`（**与 `POST v1/nodes/{id}/retire`、`PATCH v1/nodes/{id}` 同一个形状**，不是 GET v1/nodes 列表里的 Node；R110 更正），另带 `warnings: string[]`（如无池节点的「未划入节点池，不服务任何用户」，R105）
 - 行为：一个事务里：持 `node-config-release` 锁 → 校验版本 → 前置条件 → 生命周期**按 00005 的合法边逐条推进**到 active（每一步都过状态机触发器，不绕过）→ `serving_status` 按旧接口同一套投影（`projectNodeLifecycle`，协议未就绪不置 active）→ 服务器按同一套规则进 ready → 审计 `node.activate`（before / after 生命周期与服务器状态）→ 提交后通知节点（`NotifyNodeChanged`）。已经是 active 的回 200、不改动（幂等）。
 - 前置条件（不满足回 409，message 写明原因）：节点已完成接入、有有效的节点身份；协议配置已就绪；不在 retired / destroyed / quarantined / bootstrap_failed 等终态或失败态。具体判据由后端四按代码定，写进报告，协调会话回写本条。
 - 错误：404；409 版本冲突；409 前置条件不满足；409 非法跳转（触发器消息）。
@@ -1514,6 +1517,7 @@
 ### 后台-07 节点与服务器 · 节点池
 
 #### GET v1/node-pools — 节点池列表
+- **修订 R109（2026-09-25，后端四 ② 2f67ac0，已实现 R104）**：新表 `node_pool_user_groups`（00093；两头复合外键，删池级联，组仍被名单引用时数据库拒删）；下发规则只有一份 SQL 谓词 `nodefabric.PoolAdmitsUserSQL`，节点用户列表、订阅下载、门户预览共用。两个写接口的 `allowed_user_group_ids`：省略或 null = 不改，`[]` = 取消限定；422 `fields.allowed_user_group_ids` 的情形为组不存在、跨租户、重复、不是 UUID、**超过 100 个**（上限由后端四定，协调会话认可）。reauth 在处理器里按字段判：带了这个字段且没有近期重认证回 403 `reauth_required`（与中间件同码同文案），在任何校验与写入之前，被拒的请求什么都不建。同一份名单重复提交不写审计、不通知；带名单的新建算一次名单变化（审计 `node_pool.user_groups_changed` 记前后名单，提交后通知节点）。`POST v1/node-pools/{id}` 路径 id 不是 UUID 回 404（原为 500）。
 - **修订 R104（2026-09-25，用户定案 D-B-3 方案 C，节点池侧专属）**：节点池可以限定「仅这些用户组」。**规则**：用户能用某个节点池，要同时满足 ① 订阅的套餐版本绑定了这个池（现有规则）；② 这个池没有限定用户组，或者用户所在的组在名单里。默认组（`users.user_group_id` 为空）的用户用不了任何限定了用户组的池。**存储**：新表（如 `node_pool_user_groups(tenant_id, pool_id, user_group_id)`，复合外键、租户 RLS，过表登记簿与权限字典两条契约测试）；不用 `user_groups.policy`，也不用数组列。**下发**：三处都按这条规则——节点用户列表 `nodefabric.ListNodeUsers`，以及订阅下载与门户节点预览共用的 `subscription.listEligibleNodesTx`（要把用户带进去）。**接口**：本接口每项加 `allowed_user_groups: [{ id, name }]`（空 = 不限，原写的 `allowed_user_group_ids` 不再单独返回）；`POST v1/node-pools` 与 `POST v1/node-pools/{id}` 加 `allowed_user_group_ids?: uuid[]`（编辑时省略 = 不改，`[]` = 取消限定），**请求里带了这个字段就要求 reauth**（改变交付集合），写审计，组 id 不存在或跨租户回 422 `fields.allowed_user_group_ids`；`GET v1/user-groups` 每项加 `exclusive_pools: [{ id, name }]`（把该组列入名单的池，只读，即设计稿用户组表的「可用节点池」列）；`DELETE v1/user-groups/{id}` 仍被某个池的名单引用时回 409（否则名单变空会让池悄悄对所有人开放），message 写明是哪个池。**通知**：池的名单变化、用户换组（`POST v1/users/{id}/group`）提交后，发一次租户级 `node.users.changed`，节点立即重拉用户；`POST v1/plans/{id}/pools` 现在也不通知节点，一并补上。**无池节点（用户定案）**：`pool_id` 为空的节点**不服务任何订阅**——`ListNodeUsers` 去掉「`$2 IS NULL` 视为公共节点」这一支，与订阅下载、套餐发布前置条件一致（fail closed）。后台节点列表与节点详情对无池节点提示「未划入节点池，不服务任何用户」。上线前要先把测试机上的无池节点划进池。
 - 状态：现有 `panel/internal/api/admin/pools.go:42 listNodePools`；**待补·后端（字段扩展，user group 部分需迁移）**
 - 权限：`node.read`｜reauth：否｜幂等：否
@@ -3293,3 +3297,5 @@
 | R106 | 2026-09-25 | 后端三 | R78、R84、R93 已修；R78 事实更正与前端「敏感字段没动就不带」口径；mask_password 抹敏遗漏 |
 | R107 | 2026-09-25 | 后端三 | mask_password 抹敏并跟着 mask 开关补回；R92、R99 已实现：三态传 0 回 422、新建向导 0 台 = 不限、存量策略照收显示为停止服务 |
 | R108 | 2026-09-25 | 前端收尾、协调会话 | 新接口 POST v1/nodes/{id}/activate：生命周期一步推到 active，解决新节点在新前端里上不了线 |
+| R109 | 2026-09-25 | 后端四 | R104 已实现：名单上限 100、字段级 reauth、重复提交不审计不通知、非法路径 id 回 404、删组 409 判断顺序 |
+| R110 | 2026-09-25 | 后端三、前端收尾 | R100 已实现：卖点四种 422 文案、complete 里 null 不动 [] 清空；R108 上线接口响应更正为 AdminNode（同退役接口） |

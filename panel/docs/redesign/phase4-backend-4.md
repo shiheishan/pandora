@@ -26,10 +26,13 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：① `8977de1` 已验收合入（合并 b3eea00，R105）。② `2f67ac0` 已推送、CI 全绿（PG18 36127585445、NativeCore 36127585468、panel-smoke 36127585453），**等报告验收**。之后做 ③ 设备窗口，再做 **④ 节点上线接口（R108，新增）**。
+**进度**：① `8977de1`（合并 b3eea00，R105）、② `2f67ac0`（合并 4b21102；PG18 run 36127585445：220 PASS / 0 SKIP / 0 FAIL，delivery 域四个用例都跑了；NativeCore 36127585468、panel-smoke 36127585453 全绿；契约 R109）已验收合入。**下一步 ③** 设备识别窗口（迁移 00094 起），然后 **④** 节点上线接口（R108）。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R108。
+- 契约修订已到 R110。
+- ④ 的响应形状已更正（R110）：`AdminNode`，与 `POST v1/nodes/{id}/retire`、`PATCH v1/nodes/{id}` 同一个形状，另带 `warnings: string[]`。前端收尾 ③ 的上线按钮和设备窗口已写好在等你的 ③、④，请按顺序做完。
+- ② 的验收结论：独立关联表而不用 policy 或数组列、`PoolAdmitsUserSQL` 只收两种写死参数组合（其余 panic）、`listEligibleNodesTx` 带用户并有契约测试钉住调用方、处理器里按字段判 reauth（与中间件同一个 `ReauthedRecently` 标志、先于一切校验与写入）、名单没变不审计不通知、删组被名单引用回 409 且外键兜底、换组成功即通知、顺手把两处非法路径 id 从 500 改成 404，都认可。名单上限 100 认可。已写成 R109。
+- 你提的「节点池 status（draining / disabled）不影响下发」记下了，属既有口径，本阶段不动，协调会话会报给用户。
 - **新增第 ④ 步：`POST v1/nodes/{id}/activate`（R108）**。前端收尾核对代码发现：接入流程只把节点推到 attesting，之后只有旧 `POST v1/nodes/{id}/status` 能往前推，而 `status:batch` 启用要求服务器 ready、服务器 ready 又要求名下有 active 节点，新服务器 + 新节点在新前端里上不了线。做法照 R57 退役：一个事务里按 00005 的合法边逐条推进到 active（每步过触发器）、`serving_status` 用 `projectNodeLifecycle` 同一套投影、服务器同事务进 ready、审计、提交后通知节点；已 active 幂等回 200；前置条件的具体判据按代码定，写进报告。PG18 测试要覆盖：新服务器 + 新接入节点调一次就能被下发用户（节点划进池、池绑到套餐）；每种不满足前置条件的情况回 409；非法状态不绕过触发器。
 - ① 的验收结论：`ListNodeUsers` 去掉无池公共节点一支并加上 `pnp.tenant_id` 条件、`setPlanPools` 提交后通知、`NotifyUsersChanged` 放在 `nodestream.go`、后台节点列表 `DeliveryState` 加「是否在池」参数、新建 `delivery` 门禁域且过滤写精确，都认可。② 的池名单变化与用户换组一律用 `NotifyUsersChanged`；`delivery` 域的测试名单加新用例时同步更新过滤正则。
 - `cmd/aegis-admin`、`cmd/aegis-public` 里履约通知手写的发布代码改用 `NotifyUsersChanged`，这件**交给后端三**（它第 ⑤ 步本来就要给赠送单加通知），你不要动 `cmd/`。

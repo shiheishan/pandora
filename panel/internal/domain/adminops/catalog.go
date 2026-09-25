@@ -1,5 +1,5 @@
-// [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx，依赖 domain/nodefabric 的 StableProtocolReadySQL 判定可服务节点
-// [OUTPUT]: 对外提供套餐目录用例 GetPlan/CreatePlan/UpdatePlan/CreatePlanVersion/UpdatePlanVersion/PublishPlanVersion/CreatePlanPrice/ArchivePlanPrice/ArchivePlan 及其输入输出类型（VersionRow 带建版本人邮箱）；包内提供 loadPlanTx、prepare*Input 校验与各 *Tx 事务体（createPlanTx/createPlanPriceTx 供向导新建编排）
+// [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx，依赖 domain/nodefabric 的 StableProtocolReadySQL 判定可服务节点，依赖同包 plan_highlights.go 的卖点校验
+// [OUTPUT]: 对外提供套餐目录用例（套餐资料带卖点 highlights 与推荐 recommended，R100）GetPlan/CreatePlan/UpdatePlan/CreatePlanVersion/UpdatePlanVersion/PublishPlanVersion/CreatePlanPrice/ArchivePlanPrice/ArchivePlan 及其输入输出类型（VersionRow 带建版本人邮箱）；包内提供 loadPlanTx、prepare*Input 校验与各 *Tx 事务体（createPlanTx/createPlanPriceTx 供向导新建编排）
 // [POS]: adminops 的套餐目录核心：每个用例是「事务外校验 + 事务体」两段，事务体可被 plan_wizard.go / plan_wizard_update.go 在同一事务里编排；版本语义里限速与超额策略解耦、新写入的策略只收 suspend（R99）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -40,6 +40,9 @@ type CreatePlanInput struct {
 	PurchaseLimitPerUser *int       `json:"purchase_limit_per_user"`
 	StockTotal           *int       `json:"stock_total"`
 	SortOrder            int        `json:"sort_order"`
+	// 卖点与推荐（R100）：新建时可选，缺省为空与 false
+	Highlights  []string `json:"highlights"`
+	Recommended bool     `json:"recommended"`
 }
 
 type UpdatePlanInput struct {
@@ -58,6 +61,9 @@ type UpdatePlanInput struct {
 	PurchaseLimitPerUser *int       `json:"purchase_limit_per_user"`
 	StockTotal           *int       `json:"stock_total"`
 	SortOrder            int        `json:"sort_order"`
+	// 卖点与推荐（R100）：与其余资料一样整体覆盖，客户端要回填当前值
+	Highlights  []string `json:"highlights"`
+	Recommended bool     `json:"recommended"`
 }
 
 type EntitlementInput struct {
@@ -153,6 +159,8 @@ type CatalogPlanDetail struct {
 	StockTotal           *int         `json:"stock_total"`
 	StockReserved        int          `json:"stock_reserved"`
 	SortOrder            int          `json:"sort_order"`
+	Highlights           []string     `json:"highlights"`
+	Recommended          bool         `json:"recommended"`
 	Versions             []VersionRow `json:"versions"`
 	Prices               []PriceRow   `json:"prices"`
 }
@@ -431,8 +439,8 @@ func (s *Service) GetPlan(ctx context.Context, tenantID, planID string) (*Catalo
 func loadPlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID string, out *CatalogPlanDetail) error {
 	if err := tx.QueryRow(ctx, `SELECT id,product_id,current_version_id,row_version,code,name,description,status,visibility,
 	 visible_group_ids::text[],visible_from,visible_until,allow_new_purchase,allow_renewal,allow_upgrade,
-	 purchase_limit_per_user,stock_total,stock_reserved,sort_order FROM plans WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, planID).Scan(
-		&out.ID, &out.ProductID, &out.CurrentVersionID, &out.RowVersion, &out.Code, &out.Name, &out.Description, &out.Status, &out.Visibility, &out.VisibleGroupIDs, &out.VisibleFrom, &out.VisibleUntil, &out.AllowNewPurchase, &out.AllowRenewal, &out.AllowUpgrade, &out.PurchaseLimitPerUser, &out.StockTotal, &out.StockReserved, &out.SortOrder); err != nil {
+	 purchase_limit_per_user,stock_total,stock_reserved,sort_order,highlights,recommended FROM plans WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, planID).Scan(
+		&out.ID, &out.ProductID, &out.CurrentVersionID, &out.RowVersion, &out.Code, &out.Name, &out.Description, &out.Status, &out.Visibility, &out.VisibleGroupIDs, &out.VisibleFrom, &out.VisibleUntil, &out.AllowNewPurchase, &out.AllowRenewal, &out.AllowUpgrade, &out.PurchaseLimitPerUser, &out.StockTotal, &out.StockReserved, &out.SortOrder, &out.Highlights, &out.Recommended); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFoundOrForbidden()
 		}
@@ -554,7 +562,7 @@ func prepareCreatePlanInput(in *CreatePlanInput) error {
 	if in.Visibility == "" {
 		in.Visibility = "public"
 	}
-	return validatePlanFields(in.Code, in.Name, in.Visibility, in.VisibleGroupIDs, in.VisibleFrom, in.VisibleUntil, in.PurchaseLimitPerUser, in.StockTotal)
+	return withHighlightFields(validatePlanFields(in.Code, in.Name, in.Visibility, in.VisibleGroupIDs, in.VisibleFrom, in.VisibleUntil, in.PurchaseLimitPerUser, in.StockTotal), &in.Highlights)
 }
 
 // createPlanTx 建产品与草稿套餐壳并写审计，返回套餐 ID；输入须已经过 prepareCreatePlanInput。
@@ -566,7 +574,7 @@ func createPlanTx(ctx context.Context, tx pgx.Tx, tenantID string, in CreatePlan
 	if err := tx.QueryRow(ctx, `INSERT INTO products(tenant_id,code,name,description,kind,status) VALUES($1,$2,$3,$4,'subscription','draft') RETURNING id`, tenantID, in.Code, in.Name, in.Description).Scan(&productID); err != nil {
 		return "", err
 	}
-	if err := tx.QueryRow(ctx, `INSERT INTO plans(tenant_id,product_id,code,name,description,visibility,visible_group_ids,visible_from,visible_until,allow_new_purchase,allow_renewal,allow_upgrade,purchase_limit_per_user,stock_total,sort_order,status) VALUES($1,$2,$3,$4,$5,$6,$7::uuid[],$8,$9,$10,$11,$12,$13,$14,$15,'draft') RETURNING id`, tenantID, productID, in.Code, in.Name, in.Description, in.Visibility, uuidArray(in.VisibleGroupIDs), in.VisibleFrom, in.VisibleUntil, defaultTrue(in.AllowNewPurchase), defaultTrue(in.AllowRenewal), defaultTrue(in.AllowUpgrade), in.PurchaseLimitPerUser, in.StockTotal, in.SortOrder).Scan(&planID); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO plans(tenant_id,product_id,code,name,description,visibility,visible_group_ids,visible_from,visible_until,allow_new_purchase,allow_renewal,allow_upgrade,purchase_limit_per_user,stock_total,sort_order,highlights,recommended,status) VALUES($1,$2,$3,$4,$5,$6,$7::uuid[],$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'draft') RETURNING id`, tenantID, productID, in.Code, in.Name, in.Description, in.Visibility, uuidArray(in.VisibleGroupIDs), in.VisibleFrom, in.VisibleUntil, defaultTrue(in.AllowNewPurchase), defaultTrue(in.AllowRenewal), defaultTrue(in.AllowUpgrade), in.PurchaseLimitPerUser, in.StockTotal, in.SortOrder, in.Highlights, in.Recommended).Scan(&planID); err != nil {
 		return "", err
 	}
 	return planID, audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "plan.create", ResourceType: "plan", ResourceID: &planID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), AfterDigest: map[string]any{"code": in.Code, "visibility": in.Visibility}})
@@ -595,7 +603,7 @@ func prepareUpdatePlanInput(planID string, in *UpdatePlanInput) error {
 	}
 	in.Code = strings.TrimSpace(in.Code)
 	in.Name = strings.TrimSpace(in.Name)
-	return validatePlanFields(in.Code, in.Name, in.Visibility, in.VisibleGroupIDs, in.VisibleFrom, in.VisibleUntil, in.PurchaseLimitPerUser, in.StockTotal)
+	return withHighlightFields(validatePlanFields(in.Code, in.Name, in.Visibility, in.VisibleGroupIDs, in.VisibleFrom, in.VisibleUntil, in.PurchaseLimitPerUser, in.StockTotal), &in.Highlights)
 }
 
 func (s *Service) updatePlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID string, in UpdatePlanInput) (int64, error) {
@@ -628,7 +636,7 @@ func (s *Service) updatePlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID 
 	if err := ensureGroups(ctx, tx, tenantID, in.VisibleGroupIDs); err != nil {
 		return 0, err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE plans SET code=$3,name=$4,description=$5,visibility=$6,visible_group_ids=$7::uuid[],visible_from=$8,visible_until=$9,allow_new_purchase=$10,allow_renewal=$11,allow_upgrade=$12,purchase_limit_per_user=$13,stock_total=$14,sort_order=$15,row_version=row_version+1 WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$16`, tenantID, planID, in.Code, in.Name, in.Description, in.Visibility, groupUUIDs, in.VisibleFrom, in.VisibleUntil, in.AllowNewPurchase, in.AllowRenewal, in.AllowUpgrade, in.PurchaseLimitPerUser, in.StockTotal, in.SortOrder, in.ExpectedRowVersion)
+	tag, err := tx.Exec(ctx, `UPDATE plans SET code=$3,name=$4,description=$5,visibility=$6,visible_group_ids=$7::uuid[],visible_from=$8,visible_until=$9,allow_new_purchase=$10,allow_renewal=$11,allow_upgrade=$12,purchase_limit_per_user=$13,stock_total=$14,sort_order=$15,highlights=$17,recommended=$18,row_version=row_version+1 WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$16`, tenantID, planID, in.Code, in.Name, in.Description, in.Visibility, groupUUIDs, in.VisibleFrom, in.VisibleUntil, in.AllowNewPurchase, in.AllowRenewal, in.AllowUpgrade, in.PurchaseLimitPerUser, in.StockTotal, in.SortOrder, in.ExpectedRowVersion, in.Highlights, in.Recommended)
 	if err != nil {
 		return 0, err
 	}

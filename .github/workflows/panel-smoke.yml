@@ -71,6 +71,13 @@ jobs:
         env:
           GOOSE_BIN: ${{ runner.temp }}/bin/goose
         run: bash panel/deploy/run-smoke-stack.sh up panel "$RUNNER_TEMP/smoke"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # 最小业务链：各列表不为空，schema 才验得出东西。seed.ts 只用 node 内置模块，
+      # Node 22 原生剥类型直接跑，不需要 npm ci
+      - name: Seed through the real gateways
+        run: node panel/frontend/tests/smoke/seed.ts "$RUNNER_TEMP/smoke"
       - name: Gateway logs
         if: always()
         run: |
