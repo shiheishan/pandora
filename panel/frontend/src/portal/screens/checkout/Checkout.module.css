@@ -1,0 +1,251 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 checkout/index.tsx 用到的类名
+ * [POS]: portal/screens/checkout 的样式，取自设计稿门户-03 结账部分：两卡按 minmax(min(100%,380px),1fr) 折行、选项行选中为 --brand 边与 --brand-tint 底、圆点 5px 实心边、应付 28 号数字、支付方式两列；设计稿的「余额」格改为抵扣开关，USDT 删除
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  align-items: start;
+  gap: var(--space-16);
+}
+
+.form,
+.preview {
+  gap: var(--space-16);
+}
+
+.preview {
+  gap: var(--space-12);
+}
+
+.formTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-weight: var(--fw-semibold);
+}
+
+.formSub {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+  color: var(--text-2);
+}
+
+.linkButton {
+  display: inline-flex;
+  align-items: center;
+  height: var(--h-control-sm);
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.linkButton:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+
+/* ===========================================================================
+ * 周期 / 容量选项
+ * ========================================================================= */
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.option[aria-checked='true'] {
+  border-color: var(--brand);
+  background: var(--brand-tint);
+}
+
+.dot {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.option[aria-checked='true'] .dot {
+  border: 5px solid var(--brand);
+}
+
+.optionTitle {
+  flex: 1;
+  font-weight: var(--fw-medium);
+}
+
+.optionSave,
+.optionNote {
+  font-size: var(--fs-caption);
+  color: var(--ok);
+}
+
+.optionNote {
+  color: var(--text-3);
+}
+
+.optionPrice {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===========================================================================
+ * 优惠码、余额、支付方式
+ * ========================================================================= */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.couponRow {
+  display: flex;
+  gap: var(--space-8);
+}
+
+.couponInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.upper {
+  text-transform: uppercase;
+}
+
+.couponOk,
+.couponBad {
+  font-size: var(--fs-caption);
+  color: var(--ok);
+}
+
+.couponBad {
+  color: var(--danger);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-8);
+}
+
+.method {
+  height: var(--h-control);
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.method[aria-checked='true'] {
+  border-color: var(--brand);
+  background: var(--brand-tint);
+}
+
+/* ===========================================================================
+ * 订单预览
+ * ========================================================================= */
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  margin: 0;
+}
+
+.line,
+.lineOk,
+.lineMuted {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.line dd,
+.lineOk dd,
+.lineMuted dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lineOk {
+  color: var(--ok);
+}
+
+.lineMuted {
+  color: var(--text-3);
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+}
+
+.total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.totalValue {
+  font-size: 28px;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.submitError {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.inline {
+  margin-left: 6px;
+  font-weight: var(--fw-medium);
+}
+
+.back {
+  align-self: center;
+  height: var(--h-control-sm);
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-2);
+}
+
+.back:hover {
+  color: var(--text);
+  text-decoration: none;
+}

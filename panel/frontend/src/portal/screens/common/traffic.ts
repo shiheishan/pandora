@@ -1,22 +1,20 @@
 /**
- * [INPUT]: 无外部依赖（纯函数）
- * [OUTPUT]: 对外提供 GIB、formatGB、daysUntil、formatDate、shortDate、expiryInfo、usageLevel、TRAFFIC_METRIC、pickTrafficQuota、trafficSummary、resetAtOf、projectUsage、buildUsageBars 与相关类型
+ * [INPUT]: 依赖 ../../../core/format 的 formatBytes（纯函数）
+ * [OUTPUT]: 对外提供 compactBytes、bytesParts、daysUntil、formatDate、shortDate、expiryInfo、usageLevel、TRAFFIC_METRIC、pickTrafficQuota、trafficSummary、resetAtOf、projectUsage、buildUsageBars 与相关类型
  * [POS]: portal/screens/common 的流量与期限计算：概览主卡、我的订阅头部、本期用量图共用；只做数字到文案的映射，不碰请求与组件，全部有单元测试
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
+import { formatBytes } from '../../../core/format'
 
-// ---------------------------------------------------------------------------
-// 单位：后端按 1<<30 计 GB（giftcard/redeem.go 的 gb 常量、流量包容量），界面写「GB」。
-// ---------------------------------------------------------------------------
-export const GIB = 1024 ** 3
 const DAY_MS = 86_400_000
 
-/** 字节 → GB 数字串：≥ 10 取整，< 10 保留一位（去掉 .0）；digits 显式给出时按它。 */
-export function formatGB(bytes: number, digits?: number): string {
-  const value = Math.max(0, bytes) / GIB
-  const d = digits ?? (value >= 10 ? 0 : 1)
-  const text = value.toFixed(d)
-  return digits === undefined ? text.replace(/\.0$/, '') : text
+/** 商品容量这类整数值去掉无意义的小数零：50.0 GB → 50 GB、1.00 TB → 1 TB；其余同 formatBytes */
+export const compactBytes = (bytes: number) => formatBytes(Math.max(0, Math.round(bytes))).replace(/\.0+ /, ' ')
+
+/** core/format 的 formatBytes 拆成数字与单位，给「大数字 + 小单位」的排版用：218 GB → ['218', 'GB'] */
+export function bytesParts(bytes: number): [string, string] {
+  const [num = '0', unit = 'B'] = formatBytes(Math.max(0, Math.round(bytes))).split(' ')
+  return [num, unit]
 }
 
 /** 距离某时刻还有几天（向上取整，过去为 0）。 */
@@ -143,7 +141,7 @@ export function projectUsage(summary: TrafficSummary, avgDailyBytes: number, res
   if (projected >= (summary.total + summary.pack) * 0.95) {
     return { text: `按目前的速度，约 ${runout} 天后用完，比重置早。`, short: true }
   }
-  return { text: `按目前的速度，本期预计用到 ${formatGB(projected, 0)} GB，够用。`, short: false }
+  return { text: `按目前的速度，本期预计用到 ${formatBytes(Math.round(projected))}，够用。`, short: false }
 }
 
 // ---------------------------------------------------------------------------

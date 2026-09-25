@@ -1,13 +1,14 @@
 /**
- * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 AnonContext
- * [OUTPUT]: 对外提供 Scenario、SCENARIOS、setScenario、scenario、gate、portalState、subscriptionView、linkUrl、usageDays、zoneMidnight、GIB、MOCK_TIMEZONE 与各夹具类型
- * [POS]: dev/mock/portal 的共享夹具：概览、我的订阅、订单、流量包、公告几个页面文件读同一份按用户建的内存状态（订阅 ID 稳定、订阅地址可换发）；场景开关让浏览器实测空、多订阅、旧形状（待补字段缺席）、错误与慢加载，只在 dev 存在
+ * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 AnonContext，依赖 ./catalog 的套餐与流量包目录
+ * [OUTPUT]: 对外提供 Scenario、SCENARIOS、setScenario、scenario、gate、portalState、subscriptionView、linkUrl、usageDays、makeSub、ARCHIVED_PRICE_ID、zoneMidnight、GIB、MOCK_TIMEZONE 与各夹具类型（含订单履约效果 OrderEffect）
+ * [POS]: dev/mock/portal 的共享夹具：概览、我的订阅、订单、流量包、公告几个页面文件读同一份按用户建的内存状态（订阅挂在目录套餐上、ID 稳定、订阅地址可换发，另有余额与订单）；场景开关让浏览器实测空、多订阅、旧形状（待补字段缺席）、错误与慢加载，只在 dev 存在
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { AnonContext } from '../types.ts'
+import { findPlan, findPrice, GIB, PACKS, PLANS } from './catalog.ts'
 
-export const GIB = 1024 ** 3
+export { GIB }
 const DAY_MS = 86_400_000
 /** 假后端的「站点时区」（修订 R50 默认值），按日用量按它切日 */
 export const MOCK_TIMEZONE = 'Asia/Shanghai'
@@ -77,6 +78,14 @@ export interface SubFixture {
   resetAt: string
 }
 
+/** 履约效果：支付完成（或 0 元当场）时对订阅 / 流量包做的事 */
+export type OrderEffect =
+  | { type: 'new'; planId: string; priceId: string }
+  | { type: 'renewal'; subId: string; priceId: string }
+  | { type: 'upgrade'; subId: string; planId: string; priceId: string; credit: number; refund: number }
+  | { type: 'addon'; bytes: number }
+  | { type: 'none' }
+
 export interface OrderFixture {
   id: string
   order_no: string
@@ -86,9 +95,24 @@ export interface OrderFixture {
   item_name?: string
   interval?: string
   interval_count?: number
+  /** 小计（目录价） */
+  subtotal: number
+  /** 优惠后（变更套餐另减折算） */
   total_amount: number
+  discount_amount: number
+  balance_applied: number
+  payable_amount: number
+  paid_amount: number
+  coupon_code?: string
+  subscription_id?: string
   created_at: string
+  paid_at?: string
+  cancelled_at?: string
+  cancel_reason?: string
   expires_at?: string
+  payMethod?: string
+  payProvider?: string
+  effect: OrderEffect
 }
 
 export interface AnnouncementFixture {
@@ -103,6 +127,8 @@ export interface AnnouncementFixture {
 export interface PortalState {
   subs: SubFixture[]
   packBytes: number
+  /** 余额（分）；下单抵扣当场扣，订单过期或取消时退回 */
+  balance: number
   orders: OrderFixture[]
   announcements: AnnouncementFixture[]
 }
@@ -150,26 +176,29 @@ const DESIGN_NODES: NodeFixture[] = [
   { name: '法兰克福 01', protocol: 'shadowsocks', traffic_rate: 1 },
 ]
 
-function makeSub(init: { plan: string; status: SubFixture['status']; limitGiB: number; usedGiB: number; elapsedDays: number; resetInDays: number; expiresInDays: number; deviceLimit: number | null; online: number; sources: number; amount: number }): SubFixture {
+export function makeSub(init: { planId: string; priceId: string; status: SubFixture['status']; usedGiB: number; elapsedDays: number; resetInDays: number; expiresInDays: number; online: number; sources: number }): SubFixture {
+  const plan = findPlan(init.planId)!
+  const price = findPrice(plan, init.priceId)
   const now = Date.now()
-  const days = usageDays(init.elapsedDays, init.usedGiB * GIB, now)
+  const days = usageDays(Math.max(1, init.elapsedDays), init.usedGiB * GIB, now)
   const resetDay = ymdInZone(now + init.resetInDays * DAY_MS)
   return {
     id: randomUUID(),
-    plan_id: randomUUID(),
-    price_id: randomUUID(),
-    plan_name: init.plan,
-    plan_version: 3,
+    plan_id: plan.id,
+    price_id: init.priceId,
+    plan_name: plan.name,
+    plan_version: 2,
     status: init.status,
-    current_period_start: new Date(now - 18 * DAY_MS).toISOString(),
+    current_period_start: new Date(now - init.elapsedDays * DAY_MS).toISOString(),
     current_period_end: new Date(now + init.expiresInDays * DAY_MS).toISOString(),
-    amount: init.amount,
-    limitBytes: init.limitGiB * GIB,
-    deviceLimit: init.deviceLimit,
+    // 订阅上的 amount 是下单时的快照价；原价格已下架时目录里找不到它
+    amount: price?.unit_amount ?? 2500,
+    limitBytes: plan.trafficBytes ?? 0,
+    deviceLimit: plan.max_devices,
     online: init.online,
     token: newToken(),
-    fetchCount: 128,
-    lastFetchedAt: new Date(now - 6 * 60_000).toISOString(),
+    fetchCount: init.sources ? 128 : 0,
+    lastFetchedAt: init.sources ? new Date(now - 6 * 60_000).toISOString() : null,
     sources24h: init.sources,
     nodes: DESIGN_NODES,
     days,
@@ -177,29 +206,41 @@ function makeSub(init: { plan: string; status: SubFixture['status']; limitGiB: n
   }
 }
 
+/** multi 场景第二条订阅用的已下架旧价格：目录里没有，续费时 renewal_price.available=false（续费遇改价） */
+export const ARCHIVED_PRICE_ID = '6f1c2a10-0000-4000-8000-0000000000aa'
+
 function build(s: Scenario): PortalState {
-  if (s === 'empty') return { subs: [], packBytes: 0, orders: [], announcements: [] }
+  if (s === 'empty') return { subs: [], packBytes: 0, balance: 2650, orders: [], announcements: [] }
   const now = Date.now()
-  const subs = [makeSub({ plan: '专业版', status: 'active', limitGiB: 500, usedGiB: 312, elapsedDays: 28, resetInDays: 3, expiresInDays: 42, deviceLimit: 5, online: 3, sources: 3, amount: 5900 })]
+  const [std, pro] = [PLANS[0]!, PLANS[1]!]
+  const subs = [makeSub({ planId: pro.id, priceId: pro.prices[0]!.id, status: 'active', usedGiB: 312, elapsedDays: 28, resetInDays: 3, expiresInDays: 42, online: 3, sources: 3 })]
   if (s === 'multi') {
-    const second = makeSub({ plan: '标准版', status: 'past_due', limitGiB: 100, usedGiB: 88, elapsedDays: 20, resetInDays: 10, expiresInDays: 5, deviceLimit: 3, online: 1, sources: 7, amount: 2900 })
+    const second = makeSub({ planId: std.id, priceId: ARCHIVED_PRICE_ID, status: 'past_due', usedGiB: 180, elapsedDays: 20, resetInDays: 10, expiresInDays: 5, online: 1, sources: 7 })
     second.nodes = []
     subs.push(second)
   }
+  const pack = PACKS[0]!
   return {
     subs,
     packBytes: 30 * GIB,
+    balance: 2650,
     orders: [
       {
         id: randomUUID(),
         order_no: 'PD-2609-3397',
         kind: 'addon',
         status: 'pending_payment',
-        plan_name: '100 GB',
-        item_name: '100 GB',
-        total_amount: 1500,
+        plan_name: pack.name,
+        item_name: pack.name,
+        subtotal: pack.unit_amount,
+        total_amount: pack.unit_amount,
+        discount_amount: 0,
+        balance_applied: 0,
+        payable_amount: pack.unit_amount,
+        paid_amount: 0,
         created_at: new Date(now - 12 * 60_000).toISOString(),
         expires_at: new Date(now + 18 * 60_000).toISOString(),
+        effect: { type: 'addon', bytes: pack.traffic_bytes },
       },
     ],
     announcements: [
@@ -237,14 +278,19 @@ export function subscriptionView(sub: SubFixture, packBytes: number) {
     quotas: [quota],
   }
   if (legacy) return base
+  const plan = findPlan(sub.plan_id)
+  const listed = plan ? findPrice(plan, sub.price_id) : undefined
+  const live = ['active', 'trialing', 'grace', 'past_due'].includes(sub.status)
   return {
     ...base,
     device_limit: sub.deviceLimit,
     online_devices: sub.online,
-    quota_reset_strategy: 'billing_cycle',
+    quota_reset_strategy: plan?.quota_reset_strategy ?? 'billing_cycle',
     next_reset_at: sub.resetAt,
-    renewable: true,
-    renewal_price: { id: sub.price_id, currency: 'CNY', unit_amount: sub.amount, billing_interval: 'month', interval_count: 1, available: true },
+    renewable: live && (plan?.allow_renewal ?? false),
+    renewal_price: listed
+      ? { id: listed.id, currency: listed.currency, unit_amount: listed.unit_amount, billing_interval: listed.billing_interval, interval_count: listed.interval_count, available: true }
+      : { id: sub.price_id, currency: 'CNY', unit_amount: sub.amount, billing_interval: 'month', interval_count: 1, available: false },
     pack_remaining_bytes: packBytes,
   }
 }
