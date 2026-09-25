@@ -61,6 +61,9 @@ type CreatePlanCompleteInput struct {
 	VisibleGroupIDs      []string `json:"visible_group_ids"`
 	PurchaseLimitPerUser *int     `json:"purchase_limit_per_user"`
 	StockTotal           *int     `json:"stock_total"`
+	// 卖点与推荐（R100），可选，缺省为空与 false
+	Highlights  []string `json:"highlights"`
+	Recommended bool     `json:"recommended"`
 
 	// --- 卖的是什么 ---
 	// TrafficGB 为 nil 表示不限流量；0 也是不限（前端留空即可）。
@@ -112,6 +115,7 @@ func (s *Service) CreatePlanComplete(ctx context.Context, tenantID string,
 		AllowUpgrade:         in.AllowUpgrade,
 		PurchaseLimitPerUser: in.PurchaseLimitPerUser,
 		StockTotal:           in.StockTotal, SortOrder: in.SortOrder,
+		Highlights: in.Highlights, Recommended: in.Recommended,
 	}
 	if err := prepareCreatePlanInput(&planInput); err != nil {
 		return nil, err

@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入与 ParseOrderStatuses 订单状态白名单
-// [OUTPUT]: 对外提供 Service、NewService，概览、用户（ListUsers / GetUser / SetUserStatus）、订单（ListOrders，OrderRow 唯一查询形状）、套餐与渠道、降级开关
+// [OUTPUT]: 对外提供 Service、NewService，概览、用户（ListUsers / GetUser / SetUserStatus）、订单（ListOrders，OrderRow 唯一查询形状）、套餐（列表带卖点与推荐，R100）与渠道、降级开关
 // [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它；套餐目录在 catalog.go / plan_wizard*.go，订单详情在 order_detail.go，审计在 audit.go；订单行的品名对流量包订单取订单项商品名；revokeUserLogins 是停用账号即下线的唯一实现，改状态与 risk.go 的批量停用共用
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -515,6 +515,8 @@ type PlanRow struct {
 	Version          *int       `json:"version"`
 	MaxDevices       *int       `json:"max_devices"`
 	TrafficLimit     *int64     `json:"traffic_limit"`
+	Highlights       []string   `json:"highlights"`
+	Recommended      bool       `json:"recommended"`
 	Prices           []PriceRow `json:"prices"`
 	ActiveSubs       int        `json:"active_subscriptions"`
 	// NodeCount 是这个套餐当前版本能看到的在线节点数。
@@ -546,6 +548,7 @@ func (s *Service) ListPlans(ctx context.Context, tenantID string) ([]PlanRow, er
 		rows, err := tx.Query(ctx, `
 			SELECT pl.id, pl.product_id, pl.row_version, pl.code, pl.name, pl.description,
 			       pl.status, pl.visibility, pl.sort_order, pl.current_version_id,
+			       pl.highlights, pl.recommended,
 			       (SELECT dpv.id FROM plan_versions dpv
 			         WHERE dpv.tenant_id=pl.tenant_id AND dpv.plan_id=pl.id AND dpv.status='draft'
 			         LIMIT 1),
@@ -571,7 +574,7 @@ func (s *Service) ListPlans(ctx context.Context, tenantID string) ([]PlanRow, er
 			var p PlanRow
 			if err := rows.Scan(&p.ID, &p.ProductID, &p.RowVersion, &p.Code, &p.Name,
 				&p.Description, &p.Status, &p.Visibility, &p.SortOrder,
-				&p.CurrentVersionID, &p.DraftVersionID, &p.Version, &p.MaxDevices,
+				&p.CurrentVersionID, &p.Highlights, &p.Recommended, &p.DraftVersionID, &p.Version, &p.MaxDevices,
 				&p.TrafficLimit, &p.ActiveSubs, &p.NodeCount); err != nil {
 				return err
 			}

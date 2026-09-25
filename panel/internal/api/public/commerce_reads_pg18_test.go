@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 handlers.go 的 listPlans / previewCoupon / myCommission、my_orders.go 的 listMyOrders / myOrderDetail，依赖 domain/billing 的 NewService，依赖 platform/pg18test 打开 public_api 域的一次性库
 // [OUTPUT]: 对外提供 TestPortalCommerceReadsPG18
-// [POS]: api/public 门户-03/04/06 字段扩展的 PG18 集成门禁：目录的重置策略、限速（R99）与续费变更开关、优惠码试算的流量包形态与券面、订单筛选段计数与详情扩展、佣金概况与转出记录
+// [POS]: api/public 门户-03/04/06 字段扩展的 PG18 集成门禁：目录的重置策略、限速（R99）、卖点与推荐（R100）与续费变更开关、优惠码试算的流量包形态与券面、订单筛选段计数与详情扩展、佣金概况与转出记录
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
@@ -64,8 +64,8 @@ func TestPortalCommerceReadsPG18(t *testing.T) {
 			($5, $1, 'friend-b@commerce.invalid', 'Friend B', 'active')`, []any{tenant, user, other, refereeA, refereeB}},
 		// 目录：一个已发布、每月 5 日重置、允许续费但不允许变更的套餐。
 		{`INSERT INTO products (id, tenant_id, code, name, status) VALUES ($2, $1, 'pc-pro', '专业版', 'active')`, []any{tenant, product}},
-		{`INSERT INTO plans (id, tenant_id, product_id, code, name, visibility, status, allow_renewal, allow_upgrade, current_version_id)
-			VALUES ($2, $1, $3, 'pc-pro', '专业版', 'public', 'active', true, false, $4)`, []any{tenant, plan, product, version}},
+		{`INSERT INTO plans (id, tenant_id, product_id, code, name, visibility, status, allow_renewal, allow_upgrade, current_version_id, highlights, recommended)
+			VALUES ($2, $1, $3, 'pc-pro', '专业版', 'public', 'active', true, false, $4, ARRAY['高速专线','不限设备'], true)`, []any{tenant, plan, product, version}},
 		// suspend + 限速：R99 删掉 plan_versions_throttle_exact 之后才合法
 		{`INSERT INTO plan_versions (id, tenant_id, plan_id, version, status, frozen_at, quota_reset_strategy, quota_reset_day, overage_policy, throttle_kbps)
 			VALUES ($2, $1, $3, 1, 'published', now(), 'fixed_day', 5, 'suspend', 2000)`, []any{tenant, version, plan}},
@@ -151,22 +151,25 @@ func TestPortalCommerceReadsPG18(t *testing.T) {
 		return w.Code
 	}
 
-	// --- 目录：重置策略与续费、变更开关、限速（R99） ---
+	// --- 目录：重置策略与续费、变更开关、限速（R99）、卖点与推荐（R100） ---
 	var plans struct {
 		Plans []struct {
-			ID                 string `json:"id"`
-			QuotaResetStrategy string `json:"quota_reset_strategy"`
-			QuotaResetDay      *int   `json:"quota_reset_day"`
-			AllowRenewal       bool   `json:"allow_renewal"`
-			AllowUpgrade       bool   `json:"allow_upgrade"`
-			ThrottleKbps       *int   `json:"throttle_kbps"`
+			ID                 string   `json:"id"`
+			QuotaResetStrategy string   `json:"quota_reset_strategy"`
+			QuotaResetDay      *int     `json:"quota_reset_day"`
+			AllowRenewal       bool     `json:"allow_renewal"`
+			AllowUpgrade       bool     `json:"allow_upgrade"`
+			ThrottleKbps       *int     `json:"throttle_kbps"`
+			Highlights         []string `json:"highlights"`
+			Recommended        bool     `json:"recommended"`
 		} `json:"plans"`
 	}
 	if code := call(h.listPlans, http.MethodGet, "/v1/plans", "", nil, &plans); code != http.StatusOK || len(plans.Plans) != 1 {
 		t.Fatalf("list plans status=%d plans=%+v", code, plans.Plans)
 	}
 	if p := plans.Plans[0]; p.QuotaResetStrategy != "fixed_day" || p.QuotaResetDay == nil || *p.QuotaResetDay != 5 ||
-		!p.AllowRenewal || p.AllowUpgrade || p.ThrottleKbps == nil || *p.ThrottleKbps != 2000 {
+		!p.AllowRenewal || p.AllowUpgrade || p.ThrottleKbps == nil || *p.ThrottleKbps != 2000 ||
+		len(p.Highlights) != 2 || p.Highlights[0] != "高速专线" || p.Highlights[1] != "不限设备" || !p.Recommended {
 		t.Fatalf("plan catalog fields=%+v", p)
 	}
 	t.Log("marker=portal_catalog_fields_ok")
