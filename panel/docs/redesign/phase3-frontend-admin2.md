@@ -50,7 +50,7 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：⓪ 接线、① 营销 `fbc1aa5`（合并 2271de6）、「② 之前」的 ui 提升 `1b1ac26`（合并 c93dec6）、② 节点 `044c18e` + `f6654fd`（合并 7259656）、③ 服务器、节点池、路由 `f278413`（合并 0e00c6c；NativeCore 36088507207 第 2 次运行全绿，第 1 次因账号计费未启动）已验收合入。「④ 之前」`394df0c`（合并 b07414e）、④ 内容与外观 `eb73934`（合并 a655ad3）、⑤ 通知与插件 `e54e232`（合并 cc7d462；NativeCore 36105196866 全绿）已验收合入。**下一步：先做下面「⑥ 之前」一件事，单独一个提交；然后 ⑥ 安全与运维（后台前端二最后一步）。**
+**进度**：⓪ 接线、① 营销 `fbc1aa5`（合并 2271de6）、「② 之前」的 ui 提升 `1b1ac26`（合并 c93dec6）、② 节点 `044c18e` + `f6654fd`（合并 7259656）、③ 服务器、节点池、路由 `f278413`（合并 0e00c6c；NativeCore 36088507207 第 2 次运行全绿，第 1 次因账号计费未启动）已验收合入。「④ 之前」`394df0c`（合并 b07414e）、④ 内容与外观 `eb73934`（合并 a655ad3）、⑤ 通知与插件 `e54e232`（合并 cc7d462；NativeCore 36105196866 全绿）已验收合入。「⑥ 之前」`28488ef`（拆 mock 测试：`tests/mock-helpers.ts` + 每模块一个文件，40 条用例 / 268 个 expect 不变，合并 67f083d）已合入。**下一步 ⑥ 安全与运维（后台前端二最后一步）。**
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R95。
@@ -85,5 +85,7 @@ D-A-3、D-A-4、D-A-5、D-A-6（后台-09），D-B-3（节点池「仅用户组�
 - **⑤ 的提交里顺带**：`content/logic.ts` 的 `dropsIntent` 改用 `src/admin/actions.ts` 的 `endsIntent` 与 `fail(e, { intent })` 写法（后台前端一 4263c49 已合入），删掉本地版本与对应单测。
 - **后台前端一 ⑤ 套餐已合入，你在 ⑤ 的提交里顺带**：① 删掉营销假后端里临时挂的 `GET v1/plans`（plans 模块已接管）；② 营销种子里优惠券的 `applicable_plan_ids` 改用固定套餐 id `9c0e1a2b-3333-4b00-8000-000000000001` 到 `…0004`（企业专线 `…0005`，见 `dev/mock/admin/plans-store.ts`），让营销页对得上套餐；③（可选）`nodes-infra.ts` 导出按节点池统计在线节点数的函数，套餐假后端的在线数可改用它，和向导第 4 步读到的 `GET v1/node-pools` 一致——做了就在报告里说，协调会话再通知后台前端一改用。
 - ⑤ 的验收结论：通知渠道三张卡（SMTP 密码留空不改或勾选清除、发件人一框拆回两字段、注册卡保存只带已保存的 SMTP 字段、测试只用已保存配置）、邮件模板（各模板草稿保留、变量插入、300ms 防抖预览、实发测试信要 reauth）、Webhook 钩子（新建生成不冲突的 code、一次性密钥、编辑与启停回填全部字段）、content 改用 `endsIntent`，都认可。待决 D-A-4（管理员群组只作测试默认目标）、D-A-5（按后端现有模板）、D-A-6（事件只用后端目录）按「未决前」认可。契约：R93、R94。
-- **⑥ 之前（单独一个提交，`tests/` 由协调会话指派给你）**：`tests/mock-api.test.ts` 合并后已 835 行、超过 800，而且每个模块都往里追加、每次合并都冲突。拆开：公用的 `serve`、登录与带幂等键请求的辅助函数抽到 `tests/mock-helpers.ts`；外壳与 `matchPattern` 的用例留在 `tests/mock-api.test.ts`；每个模块一个文件（如 `tests/mock-admin-users.test.ts`、`tests/mock-admin-plans.test.ts`、`tests/mock-portal.test.ts`），用例原样搬、不改断言；同步 `panel/frontend/CLAUDE.md` 的 tests 成员行。后台前端一 ⑥ 已合入，新建了 `tests/mock-admin-billing.test.ts`（自带一份 serve / 登录辅助）；后台前端一已结束，**拆分时这个文件也由你改用 helper**。推送、报告，合并后再做 ⑥。
+- **（已完成，28488ef）⑥ 之前**：`tests/mock-api.test.ts` 合并后已 835 行、超过 800，而且每个模块都往里追加、每次合并都冲突。拆开：公用的 `serve`、登录与带幂等键请求的辅助函数抽到 `tests/mock-helpers.ts`；外壳与 `matchPattern` 的用例留在 `tests/mock-api.test.ts`；每个模块一个文件（如 `tests/mock-admin-users.test.ts`、`tests/mock-admin-plans.test.ts`、`tests/mock-portal.test.ts`），用例原样搬、不改断言；同步 `panel/frontend/CLAUDE.md` 的 tests 成员行。后台前端一 ⑥ 已合入，新建了 `tests/mock-admin-billing.test.ts`（自带一份 serve / 登录辅助）；后台前端一已结束，**拆分时这个文件也由你改用 helper**。推送、报告，合并后再做 ⑥。
 - ⑥ 的提交里顺带上面「后台前端一 ⑤ 套餐已合入」那一条的三件（删营销里临时的 `GET v1/plans`、优惠券种子改用固定套餐 id、可选导出按池在线数）。
+- 「⑥ 之前」的验收结论：拆分认可，计费测试文件一并改用 helper 是按开工说明做的、正确（协调会话给你的消息写「不用管」在前，开工说明更新在后，以开工说明为准）。以后假后端测试一律按模块放在 `tests/mock-<入口>-<模块>.test.ts`，用 `tests/mock-helpers.ts`。
+- **⑥ 要点**：审计日志（搜索、导出、`auth_context`；审计链 v2 与存量行 `LegacyLinkOnly` 见 R53–R62 一带）、访问日志（是安全事件不是 HTTP 日志）、风控（共享 IP 聚类、复核、批量禁用与标记正常）、降级开关（R58：四个新开关缺行视为开启，`notify.email` 关闭会连带让注册走不通，开关旁要提示）；待决 D-A-3 按「未决前」。同一个提交里顺带三件套餐跟进（见上）。假后端测试放 `tests/mock-admin-security.test.ts`。
