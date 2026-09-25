@@ -1,5 +1,5 @@
-// [INPUT]: 依赖同包 protocol_schema.go 的 sensitiveProtocolKey 与 rejectDuplicateJSONKeys，依赖 encoding/json
-// [OUTPUT]: 对外提供 PreserveRedactedProtocolSecrets：PATCH 时把请求里缺席的敏感键按原路径从库里补回
+// [INPUT]: 依赖同包 protocol_schema.go 的 sensitiveProtocolKey 与 rejectDuplicateJSONKeys，依赖 encoding/json 与 reflect
+// [OUTPUT]: 对外提供 PreserveRedactedProtocolSecrets：PATCH 时把请求里缺席的敏感键按原路径从库里补回，挂在开关上的密钥（secretGates）开关变了不补
 // [POS]: domain/nodefabric 的协议密钥保全，是 RedactProtocolConfig 的逆运算；被 node_admin.go 的 PatchAdminNode 调用
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -8,6 +8,7 @@ package nodefabric
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 )
 
@@ -18,7 +19,9 @@ import (
 //   - 请求里缺席的敏感键，从库里同一路径补回；
 //   - 请求里给了的（哪怕是空串或 null）一律以请求为准，显式清空仍然可行；
 //   - 普通键不补：缺席就是删除，与整体替换的原语义一致；
-//   - 数组只在两边长度相同时按下标对齐往里走，长度变了无法判断谁是谁，不补。
+//   - 数组只在两边长度相同时按下标对齐往里走，长度变了无法判断谁是谁，不补；
+//   - 挂在开关上的密钥（secretGates）只在开关没变时补：关掉 mKCP 掩码的请求
+//     自然不带口令，补回去反而撞上「没有启用加密掩码时不应填密码」。
 //
 // 没有任何东西要补时原样返回请求字节，不做重编码。请求本身带重复键时也
 // 原样返回，交给后面的协议校验拒掉——先解码成 map 会让后一个值悄悄盖掉
@@ -48,6 +51,12 @@ func PreserveRedactedProtocolSecrets(stored, incoming json.RawMessage) (json.Raw
 	return json.RawMessage(bytes.TrimRight(buf.Bytes(), "\n")), nil
 }
 
+// secretGates 记录「只在某个同级开关成立时才有意义」的密钥：键是敏感键名
+// （小写），值是同一对象里的开关键。开关在请求里缺席或值变了，就不补。
+var secretGates = map[string]string{
+	"mask_password": "mask",
+}
+
 // decodeJSONNumber 保留数字原文：float64 往返会把大整数改掉。
 func decodeJSONNumber(raw []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -69,8 +78,9 @@ func restoreRedactedKeys(stored, incoming any) bool {
 		}
 		for key, storedChild := range s {
 			incomingChild, present := in[key]
-			if _, sensitive := sensitiveProtocolKey[strings.ToLower(key)]; sensitive {
-				if !present {
+			lower := strings.ToLower(key)
+			if _, sensitive := sensitiveProtocolKey[lower]; sensitive {
+				if !present && gateUnchanged(s, in, lower) {
 					in[key] = storedChild
 					changed = true
 				}
@@ -92,4 +102,14 @@ func restoreRedactedKeys(stored, incoming any) bool {
 		}
 	}
 	return changed
+}
+
+func gateUnchanged(stored, incoming map[string]any, secret string) bool {
+	gate, gated := secretGates[secret]
+	if !gated {
+		return true
+	}
+	was, hadGate := stored[gate]
+	now, hasGate := incoming[gate]
+	return hadGate && hasGate && reflect.DeepEqual(was, now)
 }

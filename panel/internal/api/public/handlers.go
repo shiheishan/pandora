@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain 的 billing/identity/payment/support 用例，依赖 platform 的 db/httpx/crypto/realtime 与 middleware
+// [OUTPUT]: 对外提供 handlers 的核心门户处理器：探针、注册登录登出、me、改密、站点配置、套餐目录、续费、优惠码试算、下单支付与回调、工单、钱包、邀请佣金与提现、我的公告；包内 isUUID
+// [POS]: api/public 的主处理器文件，其余按模块拆在同包兄弟文件里；套餐目录取当前发布版本的额度、限速（R99）与重置策略
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
@@ -220,6 +225,8 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 		Description *string `json:"description"`
 		Version     *int    `json:"version"`
 		MaxDevices  *int    `json:"max_devices"`
+		// 限速（kbps）全程生效，null = 不限速，与超额策略无关（R99）
+		ThrottleKbps *int `json:"throttle_kbps"`
 		// 卡片上的「每月 1 日重置」与续费 / 变更按钮要这几项，取当前发布版本与套餐开关
 		QuotaResetStrategy string      `json:"quota_reset_strategy"`
 		QuotaResetDay      *int16      `json:"quota_reset_day"`
@@ -243,7 +250,7 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 		// 它对组内的人可见，对其他人连存在都不该暴露
 
 		rows, err := tx.Query(ctx, `
-			SELECT p.id, p.code, p.name, p.description, pv.version, pv.max_devices,
+			SELECT p.id, p.code, p.name, p.description, pv.version, pv.max_devices, pv.throttle_kbps,
 			       pv.quota_reset_strategy, pv.quota_reset_day, p.allow_renewal, p.allow_upgrade
 			  FROM plans p
 			  JOIN plan_versions pv ON pv.tenant_id = p.tenant_id
@@ -282,7 +289,7 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 
 		for rows.Next() {
 			var pv planView
-			if err := rows.Scan(&pv.ID, &pv.Code, &pv.Name, &pv.Description, &pv.Version, &pv.MaxDevices,
+			if err := rows.Scan(&pv.ID, &pv.Code, &pv.Name, &pv.Description, &pv.Version, &pv.MaxDevices, &pv.ThrottleKbps,
 				&pv.QuotaResetStrategy, &pv.QuotaResetDay, &pv.AllowRenewal, &pv.AllowUpgrade); err != nil {
 				return err
 			}
