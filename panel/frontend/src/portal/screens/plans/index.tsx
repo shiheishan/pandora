@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatBytes / formatMoney，依赖 ../../../core/router 的 href / navigate / useHashLocation，依赖 ../../../ui 的 Card / Empty / Segmented / Skeleton / Tag，依赖 ../../queries 的 useSubscriptions / pickPrimary，依赖 ../common 的目录、订阅、流量文案（compactBytes）、插槽与 LoadError，依赖 ./labels 的纯函数
  * [OUTPUT]: 默认导出 Plans 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/plans 的入口：选购套餐（门户-03 列表部分）。两个标签——订阅套餐（周期分段、套餐卡：价格、折合月价、流量与重置、设备数、当前 / 续费 / 变更入口）与流量包（容量卡、约每 GB 单价、「最划算」、使用规则）；#/plans?tab=packs 直达流量包。D-E-3 已决（5.A.2、R100：卖点与「推荐」），第 ② 步接入；在那之前特性列表只列后端已有事实、不显示「推荐」
+ * [POS]: portal/screens/plans 的入口：选购套餐（门户-03 列表部分）。两个标签——订阅套餐（周期分段、套餐卡：「推荐」徽标与强调底色和主按钮、价格、折合月价、流量与重置，特性列表依次是设备数、限速（R99）、卖点（R100））与流量包（容量卡、约每 GB 单价、「最划算」、使用规则）；#/plans?tab=packs 直达流量包
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -18,6 +18,7 @@ import {
   priceFor,
   quotaPeriodNote,
   resetNote,
+  throttleNote,
   trafficQuotaOf,
   usePackCatalog,
   usePlans,
@@ -108,11 +109,14 @@ function PlanCard({ plan, period, primary }: { plan: Plan; period: PeriodKey; pr
   const quota = trafficQuotaOf(plan)
   const current = primary?.plan_id === plan.id
   const action = planAction(plan, price, primary, period, primary ? canRenew(primary) : false)
+  // 流量、设备、限速是后端事实，照固定位置显示；卖点跟在后面（R100）
+  const facts = [plan.max_devices === null ? '不限设备数' : `${plan.max_devices} 台设备同时在线`, throttleNote(plan.throttle_kbps), ...plan.highlights].filter((f): f is string => Boolean(f))
 
   return (
-    <Card className={css.planCard}>
+    <Card tint={plan.recommended} className={plan.recommended ? css.planHot : css.planCard}>
       <div className={css.planHead}>
         <span className={css.planName}>{plan.name}</span>
+        {plan.recommended && <Tag tone="brandSolid">推荐</Tag>}
         {current && <Tag tone="ok">当前</Tag>}
       </div>
       {plan.description && <div className={css.planDesc}>{plan.description}</div>}
@@ -134,13 +138,17 @@ function PlanCard({ plan, period, primary }: { plan: Plan; period: PeriodKey; pr
           <span className={css.trafficValue}>{!quota || quota.limit === null ? '不限流量' : `${compactBytes(quota.limit)} ${quotaPeriodNote(plan, quota.period, period)}`}</span>
           {quota && quota.limit !== null && quota.period !== 'total' && <span className={css.reset}>{resetNote(plan)}</span>}
         </div>
-        <div className={css.fact}>
-          <span aria-hidden="true">—</span>
-          <span>{plan.max_devices === null ? '不限设备数' : `${plan.max_devices} 台设备同时在线`}</span>
-        </div>
+        <ul className={css.factList}>
+          {facts.map((f, i) => (
+            <li key={i} className={css.fact}>
+              <span aria-hidden="true">—</span>
+              <span>{f}</span>
+            </li>
+          ))}
+        </ul>
       </div>
       {action.href ? (
-        <a className={css.cta} href={action.href}>
+        <a className={plan.recommended ? css.ctaPrimary : css.cta} href={action.href}>
           {action.label}
         </a>
       ) : (

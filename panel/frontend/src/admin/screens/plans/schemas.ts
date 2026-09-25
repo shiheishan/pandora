@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 zod
  * [OUTPUT]: 对外提供套餐模块的封闭枚举与 zod schema（PlanRow、PriceRow、PlanDetail、VersionRow、Quota、Entitlement、PlanPools、PoolOption、TrafficPack 及各写响应）与类型
- * [POS]: admin/screens/plans 的形状层（纯 zod，不碰 React，tests/mock-admin-plans.test.ts 也用它核对假后端）：照 api-contract.md 后台-04（含修订 R1 / R65 / R66 / R73），并按 domain/adminops/service.go 的 PlanRow / PriceRow、catalog.go 的 CatalogPlanDetail / VersionRow、plan_wizard*.go、traffic_packs.go 与 api/admin/pools.go 的 json tag 核对；Go 可能给 nil 切片的数组写 nullable 并归一成 []
+ * [POS]: admin/screens/plans 的形状层（纯 zod，不碰 React，tests/mock-admin-plans.test.ts 也用它核对假后端）：照 api-contract.md 后台-04（含修订 R1 / R65 / R66 / R73 / R99 / R100），并按 domain/adminops/service.go 的 PlanRow / PriceRow、catalog.go 的 CatalogPlanDetail / VersionRow、plan_wizard*.go、traffic_packs.go 与 api/admin/pools.go 的 json tag 核对；Go 可能给 nil 切片的数组写 nullable 并归一成 []
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
@@ -76,6 +76,9 @@ export const planRowSchema = z.object({
   prices: list(priceRowSchema),
   active_subscriptions: count,
   node_count: count,
+  // 修订 R100：卖点与「推荐」
+  highlights: list(z.string()),
+  recommended: z.boolean(),
 })
 export const plansSchema = z.object({ plans: list(planRowSchema) })
 export type PlanRow = z.output<typeof planRowSchema>
@@ -104,8 +107,10 @@ export const versionRowSchema = z.object({
   max_devices: int.nullable(),
   max_concurrent: int.nullable(),
   device_release_hours: count,
+  // R99：新写入只收 suspend，存量行可能还是另外两种，读取照收
   overage_policy: z.enum(OVERAGE_POLICIES),
-  throttle_kbps: int.nullable(),
+  // R99：全程生效的按用户限速，null = 不限
+  throttle_kbps: int.positive().nullable(),
   notes: z.string().nullable(),
   entitlements: list(entitlementSchema),
   quotas: list(quotaSchema),
@@ -136,6 +141,9 @@ export const planDetailSchema = z.object({
   stock_total: int.nullable(),
   stock_reserved: count,
   sort_order: int,
+  // 修订 R100
+  highlights: list(z.string()),
+  recommended: z.boolean(),
   versions: list(versionRowSchema),
   prices: list(priceRowSchema),
 })

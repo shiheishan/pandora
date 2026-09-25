@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Checkbox / ConfirmModal / Input / Select / Tag / TextArea / useToast，依赖 ../../actions 的 endsIntent / useCan / useIntentKey，依赖 ./api 的写响应 schema、useInvalidatePlans、PlanDetail / VersionRow，依赖 ./model 的版本表单与文案，依赖 ./failure 的 useCatalogFailure，依赖 ./Plans.module.css
  * [OUTPUT]: 对外提供 Versions
- * [POS]: 套餐详情的「版本」卡（后台-04）：版本行（vN、额度摘要、「草稿 · 创建人 · 日期」或发布日、草稿 / 当前发布 / 历史），展开是设计稿的三项（流量 GB、设备上限、限速 Mbps）加「高级」折叠（重置策略、超额策略、宽限、续费语义、并发、设备释放、备注；权益与其它配额原样回填）。草稿「保存草稿」走 PUT versions（catalog.write）；已发布版本在没有草稿时可「另存为新版本」。「新建版本」= POST versions → PUT 复制当前版本语义 → POST pools 复制绑定（后端不复制，契约后台-04），已有草稿时禁用。发布走确认框（catalog.publish + reauth + 幂等），先把看得出的前置条件列出来。D-C-5 已决（5.A.2、R99：写多少限多少、与超额策略无关），第 ② 步改；在那之前限速只在「用完限速」策略下可填
+ * [POS]: 套餐详情的「版本」卡（后台-04）：版本行（vN、额度摘要、「草稿 · 创建人 · 日期」或发布日、草稿 / 当前发布 / 历史），展开是设计稿的三项（流量 GB、设备上限、限速 Mbps）加「高级」折叠（重置策略、宽限、续费语义、并发、设备释放、备注；权益与其它配额原样回填）。草稿「保存草稿」走 PUT versions（catalog.write）；已发布版本在没有草稿时可「另存为新版本」。「新建版本」= POST versions → PUT 复制当前版本语义 → POST pools 复制绑定（后端不复制，契约后台-04），已有草稿时禁用。发布走确认框（catalog.publish + reauth + 幂等），先把看得出的前置条件列出来。R99（D-C-5）：限速框常开、写多少限多少，超额策略不再可选，保存一律写 suspend 并固定说明「流量用完后停止服务」
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -11,11 +11,10 @@ import { Button, Card, Checkbox, ConfirmModal, Input, Select, Tag, TextArea, use
 import { endsIntent, useCan, useIntentKey } from '../../actions'
 import { poolsBoundSchema, publishedSchema, rowVersionSchema, useInvalidatePlans, versionCreatedSchema, type PlanDetail, type VersionRow } from './api'
 import { useCatalogFailure } from './failure'
-import { OVERAGE_LABELS, publishBlockers, RESET_LABELS, versionBody, versionForm, versionNote, versionProblems, versionSummary, versionView, type VersionForm } from './model'
+import { publishBlockers, RESET_LABELS, versionBody, versionForm, versionNote, versionProblems, versionSummary, versionView, type VersionForm } from './model'
 import css from './Plans.module.css'
 
 const RESET_OPTIONS = Object.entries(RESET_LABELS).map(([value, label]) => ({ value, label }))
-const OVERAGE_OPTIONS = Object.entries(OVERAGE_LABELS).map(([value, label]) => ({ value, label }))
 
 /** 后端把流量报在 quotas.{i}.limit，表单上是「每周期流量」一格 */
 const mapFields = (fields: Record<string, string>) => Object.fromEntries(Object.entries(fields).map(([k, v]) => [k.startsWith('quotas') ? 'traffic' : k, v]))
@@ -182,7 +181,6 @@ function VersionEditor({
     }
   }
 
-  const throttle = form.overage === 'throttle'
   const kept = [
     version.entitlements.length ? `${version.entitlements.length} 项权益` : '',
     version.quotas.filter((q) => q.metric !== 'traffic.bytes' && q.metric !== 'devices.active').length ? '其它配额' : '',
@@ -209,10 +207,9 @@ function VersionEditor({
           size="sm"
           mono
           label="限速 Mbps"
-          placeholder={throttle ? '必填' : '不限'}
+          placeholder="不限速"
           inputMode="decimal"
-          disabled={!writable || !throttle}
-          hint={throttle || !writable ? undefined : '仅「用完限速」策略可填，见高级'}
+          disabled={!writable}
           value={form.mbps}
           onChange={(e) => set('mbps', e.target.value)}
           error={errors.throttle_kbps}
@@ -223,10 +220,11 @@ function VersionEditor({
           </Button>
         )}
       </div>
+      <p className={css.small}>限速对每个用户全程生效，留空不限速；流量用完后停止服务（加购的流量包有余额时接着用）。</p>
       {!writable && version.status !== 'draft' && draft && <p className={css.small}>已发布的版本不能改；已有草稿 v{draft.version}，在草稿上改。</p>}
       {saveAs && <p className={css.small}>已发布的版本不能改，保存会另建一个草稿版本，发布后才生效。</p>}
       <details className={css.advanced}>
-        <summary>高级：重置、超额、宽限与续费</summary>
+        <summary>高级：重置、宽限与续费</summary>
         <div className={css.stack}>
           <div className={css.grid3}>
             <Select
@@ -250,15 +248,6 @@ function VersionEditor({
                 error={errors.quota_reset_day}
               />
             )}
-            <Select
-              size="sm"
-              label="流量用完后"
-              options={OVERAGE_OPTIONS}
-              disabled={!writable}
-              value={form.overage}
-              onChange={(e) => set('overage', e.target.value as VersionForm['overage'])}
-              error={errors.overage_policy}
-            />
             <Input
               size="sm"
               mono

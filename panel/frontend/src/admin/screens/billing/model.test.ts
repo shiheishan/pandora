@@ -182,6 +182,8 @@ describe('write forms', () => {
     prices: [],
     active_subscriptions: 0,
     node_count: 1,
+    highlights: [],
+    recommended: false,
     ...over,
   })
 

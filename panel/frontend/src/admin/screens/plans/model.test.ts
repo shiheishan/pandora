@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./api 的 schema，依赖 ./model 的纯函数
  * [OUTPUT]: 无（测试文件）
- * [POS]: admin/screens/plans 的单元测试：schema 归一与封闭枚举、周期与金额、版本表单与 quotas 同步、向导两种提交体与校验、销售设置、新增价格、流量包；界面交互在浏览器里对 dev/mock-api 验收
+ * [POS]: admin/screens/plans 的单元测试：schema 归一与封闭枚举、周期与金额、版本表单与 quotas 同步（R99 限速与 suspend）、卖点、向导两种提交体（编辑三态）与校验、销售设置、新增价格、流量包；界面交互在浏览器里对 dev/mock-api 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -11,6 +11,7 @@ import {
   emptyPriceForm,
   emptyWizard,
   GiB,
+  highlightProblems,
   packBody,
   packForm,
   packProblems,
@@ -104,6 +105,8 @@ const plan = (over: Partial<PlanDetail> = {}): PlanDetail => ({
   stock_total: null,
   stock_reserved: 2,
   sort_order: 10,
+  highlights: ['流媒体解锁'],
+  recommended: false,
   versions: [version()],
   prices: [price(), price({ id: 'pr2', currency: 'USD', unit_amount: 450 }), price({ id: 'pr3', user_group_id: 'g1', unit_amount: 1900 }), price({ id: 'pr4', status: 'archived', unit_amount: 100 })],
   ...over,
@@ -115,6 +118,9 @@ describe('schema', () => {
     const v = versionRowSchema.parse(raw)
     expect([v.entitlements, v.quotas, v.pool_ids]).toEqual([[], [], []])
     expect(versionRowSchema.safeParse({ ...raw, overage_policy: 'block' }).success).toBe(false)
+    // R99：存量行的另外两种策略照收；限速只能是 null 或正整数
+    expect(versionRowSchema.safeParse({ ...raw, overage_policy: 'throttle', throttle_kbps: 1000 }).success).toBe(true)
+    expect(versionRowSchema.safeParse({ ...raw, throttle_kbps: 0 }).success).toBe(false)
     expect(planDetailSchema.parse({ ...plan(), visible_group_ids: null, versions: null, prices: null }).versions).toEqual([])
     expect(planDetailSchema.safeParse({ ...plan(), visibility: 'friends' }).success).toBe(false)
   })
@@ -138,8 +144,11 @@ describe('schema', () => {
       prices: null,
       active_subscriptions: 0,
       node_count: 0,
+      highlights: null,
+      recommended: true,
     }
-    expect(planRowSchema.parse(row).prices).toEqual([])
+    expect(planRowSchema.parse(row)).toMatchObject({ prices: [], highlights: [], recommended: true })
+    expect(planRowSchema.safeParse({ ...row, recommended: undefined }).success).toBe(false)
     expect(planCreatedSchema.parse({ plan: plan(), version_id: 'v', price_ids: null, published: true }).price_ids).toEqual([])
     const pack = {
       id: 'k',
@@ -225,12 +234,15 @@ describe('版本表单', () => {
     expect(body.expected_row_version).toBe(1)
   })
 
-  it('D-C-5 第 ② 步（R99）改之前按后端校验：限速只配「用完限速」，该策略必须有速率', () => {
+  it('R99：限速与超额策略无关，只校验正数；超额策略一律写 suspend（存量 throttle 也改回）', () => {
     const f = versionForm(version())
-    expect(versionProblems({ ...f, mbps: '50' })).toHaveProperty('throttle_kbps')
-    expect(versionProblems({ ...f, overage: 'throttle' })).toHaveProperty('throttle_kbps')
-    expect(versionProblems({ ...f, overage: 'throttle', mbps: '50' })).toEqual({})
-    expect(versionBody({ ...f, overage: 'throttle', mbps: '2.5' }, version(), 4).throttle_kbps).toBe(2500)
+    expect(versionProblems({ ...f, mbps: '50' })).toEqual({})
+    expect(versionProblems({ ...f, mbps: '0' })).toHaveProperty('throttle_kbps')
+    expect(versionProblems({ ...f, mbps: '1.2345' })).toHaveProperty('throttle_kbps')
+    expect(versionBody({ ...f, mbps: '2.5' }, version(), 4)).toMatchObject({ throttle_kbps: 2500, overage_policy: 'suspend' })
+    const legacy = version({ overage_policy: 'throttle', throttle_kbps: 10000 })
+    expect(versionForm(legacy).mbps).toBe('10')
+    expect(versionBody({ ...versionForm(legacy), mbps: '' }, legacy, 4)).toMatchObject({ throttle_kbps: null, overage_policy: 'suspend' })
     expect(versionProblems({ ...f, strategy: 'fixed_day', resetDay: '31' })).toHaveProperty('quota_reset_day')
     expect(versionProblems({ ...f, devices: '0', gb: 'x' })).toMatchObject({ max_devices: expect.any(String), traffic: expect.any(String) })
   })
@@ -252,29 +264,55 @@ describe('向导', () => {
   it('新建提交体：留空 = 不限发 null（设备 0 会被版本校验拒绝）；固定日才带 quota_reset_day', () => {
     const f = { ...emptyWizard(), name: '专业版', code: 'pro', poolIds: ['a'], prices: [{ ...emptyWizard().prices[0]!, amount: '59.9', period: 'month:3', trialDays: '3' }] }
     const body = createBody(f)
-    expect(body).toMatchObject({ traffic_gb: null, max_devices: null, visible_group_ids: [], publish: true, description: null })
+    expect(body).toMatchObject({ traffic_gb: null, max_devices: null, throttle_kbps: null, visible_group_ids: [], publish: true, description: null })
+    // R100 可选字段：没填就不带（缺省为空与 false）
+    expect(body).not.toHaveProperty('highlights')
+    expect(body).not.toHaveProperty('recommended')
+    expect(createBody({ ...f, mbps: '100', highlights: [' 流媒体解锁 ', '亚太精选'], recommended: true })).toMatchObject({ throttle_kbps: 100000, highlights: ['流媒体解锁', '亚太精选'], recommended: true })
     expect(body.prices).toEqual([{ billing_interval: 'month', interval_count: 3, unit_amount: 5990, currency: 'CNY', trial_days: 3 }])
     expect(body).not.toHaveProperty('quota_reset_day')
     expect(createBody({ ...f, strategy: 'fixed_day', resetDay: '15', gb: '200', devices: '3' })).toMatchObject({ quota_reset_day: 15, traffic_gb: 200, max_devices: 3 })
   })
 
-  it('编辑：初值取当前版本与全部在售公开价；没改的额度 / 价格 / 线路发 null', () => {
+  it('编辑：初值取当前版本与全部在售公开价；没改的流量 / 价格 / 线路发 null，没改的设备 / 限速 / 卖点 / 推荐不带键', () => {
     const p = plan()
     const orig = wizardFromPlan(p)
-    expect(orig).toMatchObject({ gb: '200', devices: '3', poolIds: ['pool-a'], publish: true })
+    expect(orig).toMatchObject({ gb: '200', devices: '3', mbps: '', poolIds: ['pool-a'], publish: true, highlights: ['流媒体解锁'], recommended: false })
     expect(orig.prices.map((x) => [x.currency, x.amount, x.period])).toEqual([
       ['CNY', '29', 'month:1'],
       ['USD', '4.50', 'month:1'],
     ])
     const same = updateBody(orig, orig, p.row_version)
-    expect(same).toMatchObject({ expected_row_version: 7, traffic_gb: null, max_devices: null, prices: null, pool_ids: null, code: 'std', sort_order: 10 })
+    expect(same).toMatchObject({ expected_row_version: 7, traffic_gb: null, prices: null, pool_ids: null, code: 'std', sort_order: 10 })
+    for (const k of ['max_devices', 'throttle_kbps', 'highlights', 'recommended']) expect(same).not.toHaveProperty(k)
     const changed = updateBody({ ...orig, gb: '', poolIds: ['pool-a', 'pool-b'], prices: orig.prices.slice(0, 1) }, orig, 7)
     expect(changed.traffic_gb).toBe(0)
     expect(changed.pool_ids).toEqual(['pool-a', 'pool-b'])
     expect(changed.prices).toHaveLength(1)
   })
 
-  it('编辑：设备数不能改回不限；删光一个币种要提示去价格卡归档', () => {
+  it('R99 三态：清空设备 / 限速发 null（改回不限），填了发正整数；卖点与推荐改了才带', () => {
+    const p = plan({ versions: [version({ throttle_kbps: 50000 })] })
+    const orig = wizardFromPlan(p)
+    expect(orig.mbps).toBe('50')
+    const cleared = updateBody({ ...orig, devices: '', mbps: '' }, orig, 7)
+    expect(cleared).toMatchObject({ max_devices: null, throttle_kbps: null })
+    expect(updateBody({ ...orig, devices: '8', mbps: '20' }, orig, 7)).toMatchObject({ max_devices: 8, throttle_kbps: 20000 })
+    const sales = updateBody({ ...orig, highlights: ['流媒体解锁 ', '工单支持'], recommended: true }, orig, 7)
+    expect(sales).toMatchObject({ highlights: ['流媒体解锁', '工单支持'], recommended: true })
+    expect(updateBody({ ...orig, highlights: [' 流媒体解锁'] }, orig, 7)).not.toHaveProperty('highlights')
+    expect(wizardProblems({ ...orig, mbps: '-1' }, 'edit', orig)).toHaveProperty('throttle_kbps')
+  })
+
+  it('卖点：最多 5 条、每条 1–40 字（按字符数）、不许空与重复，键名同后端', () => {
+    expect(highlightProblems(['流媒体解锁', '亚太精选'])).toEqual({})
+    expect(highlightProblems(['a', 'b', 'c', 'd', 'e', 'f'])).toHaveProperty('highlights')
+    expect(highlightProblems(['  ', '字'.repeat(41), '字'.repeat(40)])).toEqual({ 'highlights.0': expect.any(String), 'highlights.1': expect.any(String) })
+    expect(highlightProblems(['解锁', ' 解锁 '])).toEqual({ 'highlights.1': '和第 1 条重复' })
+    expect(wizardProblems({ ...emptyWizard(), name: 'x', code: 'xx', publish: false, prices: [], highlights: [''] }, 'new')).toHaveProperty(['highlights.0'])
+  })
+
+  it('编辑：设备数暂不能改回不限（R92 后端现状，后端三 ② 合入后删）；删光一个币种要提示去价格卡归档', () => {
     const orig = wizardFromPlan(plan())
     expect(wizardProblems({ ...orig, devices: '' }, 'edit', orig)).toHaveProperty('max_devices')
     expect(wizardProblems(orig, 'edit', orig)).toEqual({})
@@ -284,6 +322,9 @@ describe('向导', () => {
   it('fields 键落到哪一步', () => {
     expect(stepOfField('code')).toBe(1)
     expect(stepOfField('visible_group_ids')).toBe(1)
+    expect(stepOfField('highlights.3')).toBe(1)
+    expect(stepOfField('recommended')).toBe(1)
+    expect(stepOfField('throttle_kbps')).toBe(2)
     expect(stepOfField('traffic_gb')).toBe(2)
     expect(stepOfField('prices.2.unit_amount')).toBe(3)
     expect(stepOfField('prices')).toBe(3)
@@ -302,6 +343,10 @@ describe('销售设置与新增价格', () => {
     expect(salesProblems({ ...f, from: '2026-10-02T00:00', until: '2026-10-01T00:00' }, 0)).toHaveProperty('visible_until')
     const body = salesBody({ ...f, visibility: 'public', allowNew: false }, p)
     expect(body).toMatchObject({ expected_row_version: 7, code: 'std', name: '标准版', description: '日常浏览', visible_group_ids: [], allow_new_purchase: false, visible_from: null })
+    // R100：整体覆盖，卖点与推荐每次都带当前值
+    expect(body).toMatchObject({ highlights: ['流媒体解锁'], recommended: false })
+    expect(salesBody({ ...f, highlights: [' 工单支持 '], recommended: true }, p)).toMatchObject({ highlights: ['工单支持'], recommended: true })
+    expect(salesProblems({ ...f, highlights: ['x', 'x'] }, 0)).toHaveProperty(['highlights.1'])
   })
 
   it('新增价格：预设周期、自定义周期与用户组价', () => {

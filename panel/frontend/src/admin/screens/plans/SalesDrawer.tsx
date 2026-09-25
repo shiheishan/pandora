@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Checkbox / Drawer / Input / Select / Switch / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ../users/api 的 useUserGroups，依赖 ./api 的 rowVersionSchema / useInvalidatePlans / PlanDetail / VISIBILITIES，依赖 ./model 的 SalesForm / salesForm / salesProblems / salesBody / VISIBILITY_LABELS，依赖 ./failure 的 useCatalogFailure，依赖 ./Plans.module.css
+ * [INPUT]: 依赖 react 的 useState，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Checkbox / Drawer / Input / Select / Switch / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ../users/api 的 useUserGroups，依赖 ./api 的 rowVersionSchema / useInvalidatePlans / PlanDetail / VISIBILITIES，依赖 ./model 的 SalesForm / salesForm / salesProblems / salesBody / VISIBILITY_LABELS，依赖 ./failure 的 useCatalogFailure，依赖 ./Highlights 的 HighlightsField，依赖 ./Plans.module.css
  * [OUTPUT]: 对外提供 SalesDrawer，以及向导也用的 GroupPicker
- * [POS]: 套餐详情「销售设置」抽屉（契约后台-04 PUT v1/plans/{id} 的待补·前端入口）：可见范围与可见用户组、上架时间窗（向导接口不收这两个字段）、三个购买开关、每人限购、库存（只读显示已预留）、排序；整体覆盖，名称 / 代码 / 说明原样回填。catalog.publish + reauth + 幂等；在售套餐把开关从关改回开受销售开关控制（503）。D-C-1 已决（5.A.2）：归档不可逆，「暂停售卖」就是在这里关新购或隐藏
+ * [POS]: 套餐详情「销售设置」抽屉（契约后台-04 PUT v1/plans/{id} 的待补·前端入口）：卖点与「标为推荐」（R100）、可见范围与可见用户组、上架时间窗（向导接口不收这两个字段）、三个购买开关、每人限购、库存（只读显示已预留）、排序；整体覆盖，名称 / 代码 / 说明原样回填，卖点与推荐也每次带上当前值。catalog.publish + reauth + 幂等；在售套餐把开关从关改回开受销售开关控制（503）。D-C-1 已决（5.A.2）：归档不可逆，「暂停售卖」就是在这里关新购或隐藏
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -11,6 +11,7 @@ import { useCan, useIntentKey } from '../../actions'
 import { useUserGroups } from '../users/api'
 import { rowVersionSchema, useInvalidatePlans, VISIBILITIES, type PlanDetail } from './api'
 import { useCatalogFailure } from './failure'
+import { HighlightsField } from './Highlights'
 import { salesBody, salesForm, salesProblems, VISIBILITY_LABELS, type SalesForm } from './model'
 import css from './Plans.module.css'
 
@@ -75,6 +76,13 @@ function SalesBody({ plan, open, onClose }: { plan: PlanDetail; open: boolean; o
       }
     >
       <div className={css.stack}>
+        <HighlightsField
+          highlights={form.highlights}
+          recommended={form.recommended}
+          onHighlights={(list) => set('highlights', list)}
+          onRecommended={(on) => set('recommended', on)}
+          errors={errors}
+        />
         <Select label="可见范围" options={VISIBILITY_OPTIONS} value={form.visibility} onChange={(e) => set('visibility', e.target.value as SalesForm['visibility'])} error={errors.visibility} />
         {form.visibility === 'group' && <GroupPicker picked={form.groupIds} onChange={(ids) => set('groupIds', ids)} error={errors.visible_group_ids} />}
         <div className={css.grid2}>

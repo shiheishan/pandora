@@ -271,6 +271,13 @@ add(U(7), { kind: 'topup', total_amount: 10000, payable_amount: 10000, created_a
   o.intents.push(intentFor(o, 'epay', 'failed', iso(8 * MIN), { failure_code: 'user_cancelled', failure_message: '渠道返回：用户取消支付' })),
 )
 add(U(3), { total_amount: 4500, payable_amount: 4500, created_at: iso(15 * MIN), expires_at: iso(-15 * MIN), manual_reason: '对公转账客户，先开单再付款', ...OPS })
+// 超时未支付（仪表盘「超时未支付订单」数的就是这两张）：创建超过 30 分钟、过期作业还没处理，像是回调丢了
+add(U(9), { total_amount: 4500, payable_amount: 4500, created_at: iso(2 * 60 * MIN), expires_at: iso(90 * MIN), items: [planItem(pro.id, pro.name, 4500, 'CNY')] }, (o) =>
+  o.intents.push(intentFor(o, 'epay', 'requires_action', iso(2 * 60 * MIN - MIN))),
+)
+add(U(6), { total_amount: 2500, payable_amount: 2500, created_at: iso(6 * 60 * MIN), expires_at: iso(5 * 60 * MIN + 30 * MIN), items: [planItem(std.id, std.name, 2500, 'CNY')] }, (o) =>
+  o.intents.push(intentFor(o, 'epay_backup', 'requires_action', iso(6 * 60 * MIN - 2 * MIN))),
+)
 add(U(11), { status: 'processing', total_amount: 69000, payable_amount: 69000, created_at: iso(22 * MIN), expires_at: iso(-8 * MIN), state_version: 2, items: [planItem(pro.id, pro.name, 69000, 'CNY', 'year')] }, (o) =>
   o.intents.push(intentFor(o, 'epay', 'processing', iso(21 * MIN))),
 )
@@ -315,6 +322,9 @@ function refunded(amount: number, reason: string, revoke: boolean) {
 }
 add(U(10), { status: 'refunded', total_amount: 4500, payable_amount: 4500, paid_amount: 4500, refunded_amount: 4500, ...done(iso(6 * DAY)), state_version: 5 }, refunded(4500, '线路不可用，全额退款', true))
 add(U(12), { status: 'partially_refunded', total_amount: 69000, payable_amount: 69000, paid_amount: 69000, refunded_amount: 20000, ...done(iso(9 * DAY)), state_version: 5 }, refunded(20000, '降级补差', false))
+
+/** 仪表盘 orders_pending_stale 的口径（契约后台-01）：pending_payment 且创建超过 thresholdMs 仍未被过期作业处理 */
+export const stalePendingCount = (thresholdMs: number, now = Date.now()) => orders.filter((o) => o.status === 'pending_payment' && now - Date.parse(o.created_at) > thresholdMs).length
 
 export const findOrder = (id: string | undefined) => (isUuid(id) ? orders.find((o) => o.id === id) : undefined)
 

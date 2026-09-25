@@ -1,11 +1,11 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 formatBytes / formatDateTime / formatMoney，依赖 ./api 的类型与枚举
- * [OUTPUT]: 对外提供 GiB、Tone、状态与可见性文案（PLAN_STATUS_VIEW、VISIBILITY_LABELS、RESET_LABELS、OVERAGE_LABELS、versionView、versionNote）、周期（PERIOD_OPTIONS、periodKey、parsePeriod、periodLabel）、金额与数字（parseAmount、parseCount）、列表与详情文案（priceFrom、quotaLabel、trafficOf、versionSummary、publishBlockers）、版本表单（VersionForm、versionForm、versionProblems、versionBody）、向导（WizardForm、WizardPrice、emptyWizard、wizardFromPlan、wizardProblems、createBody、updateBody、removedCurrencies、stepOfField、WIZARD_STEPS）、销售设置（SalesForm、salesForm、salesProblems、salesBody）、新增价格（PriceForm、emptyPriceForm、priceProblems、priceBody）、流量包（PackForm、packForm、packProblems、packBody、PACK_STATUS_VIEW）、时间输入互转（toLocalInput、fromLocalInput）
- * [POS]: admin/screens/plans 的纯逻辑：契约后台-04 的状态 / 版本 / 周期映射，额度在版本 quotas 里的读写（traffic.bytes 与 devices.active 同步维护、其余条目原样回填），向导两种提交体（新建 POST complete、编辑 PUT complete 的「null = 不动」与只同步出现过的币种），销售设置的整体覆盖，流量包 GB ↔ 字节；各校验与后端 Go 同规则、fields 键名与后端一致，页面把后端 422 与前端预检标在同一处。不碰 React 与网络，model.test.ts 覆盖
+ * [OUTPUT]: 对外提供 GiB、Tone、状态与可见性文案（PLAN_STATUS_VIEW、VISIBILITY_LABELS、RESET_LABELS、versionView、versionNote）、周期（PERIOD_OPTIONS、periodKey、parsePeriod、periodLabel）、金额与数字（parseAmount、parseCount、parseKbps）、列表与详情文案（priceFrom、quotaLabel、trafficOf、versionSummary、publishBlockers）、版本表单（VersionForm、versionForm、versionProblems、versionBody）、卖点（HIGHLIGHT_MAX、HIGHLIGHT_CHARS、highlightProblems、cleanHighlights）、向导（WizardForm、WizardPrice、emptyWizard、wizardFromPlan、wizardProblems、createBody、updateBody、removedCurrencies、stepOfField、WIZARD_STEPS）、销售设置（SalesForm、salesForm、salesProblems、salesBody）、新增价格（PriceForm、emptyPriceForm、priceProblems、priceBody）、流量包（PackForm、packForm、packProblems、packBody、PACK_STATUS_VIEW）、时间输入互转（toLocalInput、fromLocalInput）
+ * [POS]: admin/screens/plans 的纯逻辑：契约后台-04 的状态 / 版本 / 周期映射，额度在版本 quotas 里的读写（traffic.bytes 与 devices.active 同步维护、其余条目原样回填），限速全程生效且超额策略只写 suspend（R99），卖点与推荐（R100），向导两种提交体（新建 POST complete、编辑 PUT complete：流量与价格 / 线路「null = 不动」，设备、限速、卖点、推荐「缺省 = 不动」的三态，只同步出现过的币种），销售设置的整体覆盖（含卖点与推荐），流量包 GB ↔ 字节；各校验与后端 Go 同规则、fields 键名与后端一致，页面把后端 422 与前端预检标在同一处。不碰 React 与网络，model.test.ts 覆盖
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatBytes, formatDateTime, formatMoney } from '../../../core/format'
-import type { BillingInterval, Currency, OveragePolicy, PlanDetail, PlanRow, PlanStatus, PriceRow, Quota, ResetStrategy, TrafficPack, VersionRow, Visibility } from './api'
+import type { BillingInterval, Currency, PlanDetail, PlanRow, PlanStatus, PriceRow, Quota, ResetStrategy, TrafficPack, VersionRow, Visibility } from './api'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 type Fields = Record<string, string>
@@ -35,12 +35,6 @@ export const RESET_LABELS: Record<ResetStrategy, string> = {
   natural_month: '每月 1 日重置',
   fixed_day: '每月固定日重置',
   never: '不重置',
-}
-
-export const OVERAGE_LABELS: Record<OveragePolicy, string> = {
-  suspend: '用完暂停服务',
-  throttle: '用完限速',
-  metered_billing: '超额计费',
 }
 
 /** 版本状态：草稿 / 当前发布（id 等于 current_version_id）/ 历史 */
@@ -166,18 +160,19 @@ export interface VersionForm {
   renewalKeepsAddons: boolean
   maxConcurrent: string
   releaseHours: string
-  overage: OveragePolicy
   notes: string
 }
 
 const str = (n: number | null) => (n === null ? '' : String(n))
+const mbpsOf = (kbps: number | null) => (kbps === null ? '' : String(kbps / 1000))
+const MBPS_HINT = '填正数 Mbps，最多三位小数；不限速请留空'
 
 export function versionForm(v: VersionRow): VersionForm {
   const traffic = trafficOf(v.quotas)
   return {
     gb: traffic === null ? '' : String(Math.floor(traffic / GiB)),
     devices: str(v.max_devices),
-    mbps: v.throttle_kbps === null ? '' : String(v.throttle_kbps / 1000),
+    mbps: mbpsOf(v.throttle_kbps),
     strategy: v.quota_reset_strategy,
     resetDay: str(v.quota_reset_day),
     graceHours: String(v.grace_period_hours),
@@ -187,13 +182,12 @@ export function versionForm(v: VersionRow): VersionForm {
     renewalKeepsAddons: v.renewal_keeps_addons,
     maxConcurrent: str(v.max_concurrent),
     releaseHours: String(v.device_release_hours),
-    overage: v.overage_policy,
     notes: v.notes ?? '',
   }
 }
 
-/** Mbps → kbps（正整数）；空为 null，不合法为 NaN */
-function parseKbps(input: string): number | null {
+/** Mbps → kbps（正整数）；空为 null（不限速），不合法为 NaN */
+export function parseKbps(input: string): number | null {
   const text = input.trim()
   if (text === '') return null
   if (!/^\d+(\.\d{1,3})?$/.test(text)) return Number.NaN
@@ -215,11 +209,8 @@ export function versionProblems(f: VersionForm): Fields {
     const d = parseCount(f.resetDay)
     if (d === null || Number.isNaN(d) || d < 1 || d > 28) out.quota_reset_day = '固定日必须为 1-28'
   }
-  // D-C-5 第 ② 步（R99）改之前按后端校验：限速只能配「用完限速」策略，且该策略必须有速率
-  const kbps = parseKbps(f.mbps)
-  if (isBad(kbps)) out.throttle_kbps = '填正数 Mbps'
-  else if (f.overage === 'throttle' && kbps === null) out.throttle_kbps = '「用完限速」策略必须设置速率'
-  else if (f.overage !== 'throttle' && kbps !== null) out.throttle_kbps = '只有「用完限速」策略可以设置速率'
+  // R99（D-C-5）：限速全程生效、与超额策略无关，只校验正数
+  if (isBad(parseKbps(f.mbps))) out.throttle_kbps = MBPS_HINT
   return out
 }
 
@@ -235,6 +226,7 @@ function syncQuotas(quotas: readonly Quota[], trafficBytes: number | null, devic
 
 /**
  * PUT v1/plans/{id}/versions/{vid} 的请求体（全量覆盖，pool_ids 必须省略）。
+ * R99：新写入的超额策略只收 suspend（流量用完后停止服务），存量的其它值保存时一并改成 suspend。
  * base 是表单来源版本（entitlements 与其它 quotas 取自它），rowVersion 是目标草稿的乐观锁——
  * 「另存为新版本」时两者不是同一个版本。先过 versionProblems 再调用。
  */
@@ -254,13 +246,38 @@ export function versionBody(f: VersionForm, base: Pick<VersionRow, 'quotas' | 'e
     max_devices: devices,
     max_concurrent: parseCount(f.maxConcurrent),
     device_release_hours: parseCount(f.releaseHours) ?? 0,
-    overage_policy: f.overage,
-    throttle_kbps: f.overage === 'throttle' ? kbps : null,
+    overage_policy: 'suspend',
+    throttle_kbps: kbps,
     notes: f.notes.trim() || null,
     entitlements: base.entitlements.map((e) => ({ code: e.code, value: e.value })),
     quotas: syncQuotas(base.quotas, gb === null ? null : gb * GiB, devices),
   }
 }
+
+// ===========================================================================
+// 卖点（R100）：最多 5 条，每条去首尾空白后 1–40 字、不许重复，按给定顺序；向导与销售设置共用
+// ===========================================================================
+export const HIGHLIGHT_MAX = 5
+export const HIGHLIGHT_CHARS = 40
+
+/** 键名与后端一致：整体问题记 highlights，单条记 highlights.{i} */
+export function highlightProblems(list: readonly string[]): Fields {
+  const out: Fields = {}
+  if (list.length > HIGHLIGHT_MAX) out.highlights = `最多 ${HIGHLIGHT_MAX} 条`
+  const seen = new Map<string, number>()
+  list.forEach((raw, i) => {
+    const text = raw.trim()
+    const n = [...text].length
+    if (n === 0) out[`highlights.${i}`] = '不能为空；不要这一条就移除'
+    else if (n > HIGHLIGHT_CHARS) out[`highlights.${i}`] = `最多 ${HIGHLIGHT_CHARS} 个字`
+    else if (seen.has(text)) out[`highlights.${i}`] = `和第 ${seen.get(text)} 条重复`
+    if (n) seen.set(text, i + 1)
+  })
+  return out
+}
+
+export const cleanHighlights = (list: readonly string[]) => list.map((h) => h.trim())
+const sameHighlights = (a: readonly string[], b: readonly string[]) => cleanHighlights(a).join('\n') === cleanHighlights(b).join('\n')
 
 // ===========================================================================
 // 向导：新建走 POST v1/plans/complete，编辑走 PUT v1/plans/{id}/complete
@@ -279,11 +296,14 @@ export interface WizardForm {
   name: string
   code: string
   description: string
+  highlights: string[]
+  recommended: boolean
   visibility: Visibility
   groupIds: string[]
   sortOrder: string
   gb: string
   devices: string
+  mbps: string
   strategy: ResetStrategy
   resetDay: string
   prices: WizardPrice[]
@@ -304,11 +324,14 @@ export function emptyWizard(): WizardForm {
     name: '',
     code: '',
     description: '',
+    highlights: [],
+    recommended: false,
     visibility: 'public',
     groupIds: [],
     sortOrder: '0',
     gb: '',
     devices: '',
+    mbps: '',
     strategy: 'billing_cycle',
     resetDay: '',
     prices: [newPriceRow()],
@@ -332,11 +355,14 @@ export function wizardFromPlan(plan: PlanDetail): WizardForm {
     name: plan.name,
     code: plan.code,
     description: plan.description ?? '',
+    highlights: [...plan.highlights],
+    recommended: plan.recommended,
     visibility: plan.visibility,
     groupIds: [...plan.visible_group_ids],
     sortOrder: String(plan.sort_order),
     gb: traffic === null ? '' : String(Math.floor(traffic / GiB)),
     devices: str(cur?.max_devices ?? null),
+    mbps: mbpsOf(cur?.throttle_kbps ?? null),
     strategy: cur?.quota_reset_strategy ?? 'billing_cycle',
     resetDay: str(cur?.quota_reset_day ?? null),
     prices: publicPrices(plan.prices).map((p) => ({
@@ -363,7 +389,7 @@ const CODE_RE = /^[a-z0-9][a-z0-9_-]{1,63}$/
 
 /**
  * 与 Go 的 validatePlanFields / validateWizardInput 同规则，键名一致。
- * edit 时 original 是打开向导时的值：后端「null = 不动」表达不了把设备数改回不限（0 过不了正整数校验）。
+ * edit 时 original 是打开向导时的值。
  */
 export function wizardProblems(f: WizardForm, mode: 'new' | 'edit', original?: WizardForm): Fields {
   const out: Fields = {}
@@ -372,11 +398,14 @@ export function wizardProblems(f: WizardForm, mode: 'new' | 'edit', original?: W
   if (name < 1 || name > 120) out.name = '必填且最多 120 个字符'
   if (f.visibility === 'group' && !f.groupIds.length) out.visible_group_ids = '分组可见套餐至少需要一个用户组'
   if (!/^-?\d+$/.test(f.sortOrder.trim())) out.sort_order = '填整数，越小越靠前'
+  Object.assign(out, highlightProblems(f.highlights))
   const gb = parseCount(f.gb)
   if (isBad(gb)) out.traffic_gb = '填整数 GB；不限流量请留空'
   const devices = parseCount(f.devices)
   if (isBad(devices) || devices === 0) out.max_devices = '必须为正整数；不限请留空'
+  // R92 ①（后端现状）：真后端把 null 当「不动」，改不回不限。R99 的三态已在 updateBody 里照写，后端三 ② 合入主线后删掉这一行
   else if (mode === 'edit' && devices === null && original && original.devices !== '') out.max_devices = '编辑向导不能把设备数改回不限；需要时新建版本，在版本里清空设备上限'
+  if (isBad(parseKbps(f.mbps))) out.throttle_kbps = MBPS_HINT
   if (mode === 'new' && f.strategy === 'fixed_day') {
     const d = parseCount(f.resetDay)
     if (d === null || Number.isNaN(d) || d < 1 || d > 28) out.quota_reset_day = '固定日必须为 1-28'
@@ -403,7 +432,7 @@ export function wizardProblems(f: WizardForm, mode: 'new' | 'edit', original?: W
 }
 
 const STEP_OF: ReadonlyArray<[number, RegExp]> = [
-  [1, /^(name|code|description|visibility|visible_group_ids|sort_order)$/],
+  [1, /^(name|code|description|highlights(\.\d+)?|recommended|visibility|visible_group_ids|sort_order)$/],
   [2, /^(traffic_gb|max_devices|throttle_kbps|quota_reset_strategy|quota_reset_day)$/],
   [3, /^prices(\.|$)/],
   [4, /^pool_ids$/],
@@ -429,16 +458,22 @@ const planBasics = (f: WizardForm) => ({
   stock_total: parseCount(f.stockTotal),
 })
 
-/** POST v1/plans/complete；流量 / 设备留空 = 不限（发 null，不发 0：设备 0 会被版本校验拒绝） */
+/**
+ * POST v1/plans/complete；流量 / 设备 / 限速留空 = 不限（发 null，不发 0：设备 0 会被版本校验拒绝）。
+ * 卖点与推荐是可选字段（R100，缺省为空与 false），只在填了时才带
+ */
 export function createBody(f: WizardForm) {
   const devices = parseCount(f.devices)
   return {
     ...planBasics(f),
+    ...(f.highlights.length ? { highlights: cleanHighlights(f.highlights) } : {}),
+    ...(f.recommended ? { recommended: true } : {}),
     allow_new_purchase: f.allowNew,
     allow_renewal: f.allowRenewal,
     allow_upgrade: f.allowUpgrade,
     traffic_gb: parseCount(f.gb) || null,
     max_devices: devices || null,
+    throttle_kbps: parseKbps(f.mbps),
     quota_reset_strategy: f.strategy,
     ...(f.strategy === 'fixed_day' ? { quota_reset_day: parseCount(f.resetDay) } : {}),
     pool_ids: f.poolIds,
@@ -455,12 +490,14 @@ const priceSig = (prices: readonly WizardPrice[]) =>
     .join('|')
 
 /**
- * PUT v1/plans/{id}/complete（修订 R1）：基本资料每次整体覆盖；额度、价格、线路没改就发 null（= 不动），
+ * PUT v1/plans/{id}/complete（修订 R1）：基本资料每次整体覆盖；额度、价格、线路没改就不动，
  * 改了才发——额度或线路一变后端就开新版本并立即发布。价格只同步清单里出现的币种的公开价。
+ * R99 起 max_devices 与 throttle_kbps 是三态：没改就不带这个键，清空发 null（改回不限），填了发正整数；
+ * traffic_gb 仍是 null = 不动、0 = 不限。卖点与推荐（R100）缺省 = 不动，也只在改了时带
  */
 export function updateBody(f: WizardForm, original: WizardForm, rowVersion: number) {
   const gb = parseCount(f.gb)
-  const devices = parseCount(f.devices)
+  const unchanged = (k: 'devices' | 'mbps') => f[k].trim() === original[k].trim()
   return {
     expected_row_version: rowVersion,
     ...planBasics(f),
@@ -469,7 +506,10 @@ export function updateBody(f: WizardForm, original: WizardForm, rowVersion: numb
     allow_upgrade: f.allowUpgrade,
     // 流量清空 = 改为不限，后端认 0
     traffic_gb: f.gb.trim() === original.gb.trim() ? null : (gb ?? 0),
-    max_devices: f.devices.trim() === original.devices.trim() ? null : devices,
+    ...(unchanged('devices') ? {} : { max_devices: parseCount(f.devices) }),
+    ...(unchanged('mbps') ? {} : { throttle_kbps: parseKbps(f.mbps) }),
+    ...(sameHighlights(f.highlights, original.highlights) ? {} : { highlights: cleanHighlights(f.highlights) }),
+    ...(f.recommended === original.recommended ? {} : { recommended: f.recommended }),
     prices: priceSig(f.prices) === priceSig(original.prices) ? null : pricesBody(f.prices),
     pool_ids: sameList(f.poolIds, original.poolIds) ? null : f.poolIds,
   }
@@ -486,6 +526,8 @@ export function removedCurrencies(f: WizardForm, original: WizardForm): Currency
 // 销售设置：PUT v1/plans/{id} 整体覆盖（三个 allow_* 是 bool）
 // ===========================================================================
 export interface SalesForm {
+  highlights: string[]
+  recommended: boolean
   visibility: Visibility
   groupIds: string[]
   from: string
@@ -515,6 +557,8 @@ export function fromLocalInput(value: string): string | null {
 
 export function salesForm(p: PlanDetail): SalesForm {
   return {
+    highlights: [...p.highlights],
+    recommended: p.recommended,
     visibility: p.visibility,
     groupIds: [...p.visible_group_ids],
     from: toLocalInput(p.visible_from),
@@ -529,7 +573,7 @@ export function salesForm(p: PlanDetail): SalesForm {
 }
 
 export function salesProblems(f: SalesForm, stockReserved: number): Fields {
-  const out: Fields = {}
+  const out: Fields = highlightProblems(f.highlights)
   if (f.visibility === 'group' && !f.groupIds.length) out.visible_group_ids = '分组可见套餐至少需要一个用户组'
   const from = fromLocalInput(f.from)
   const until = fromLocalInput(f.until)
@@ -559,6 +603,8 @@ export function salesBody(f: SalesForm, p: PlanDetail) {
     purchase_limit_per_user: parseCount(f.purchaseLimit),
     stock_total: parseCount(f.stockTotal),
     sort_order: Number(f.sortOrder.trim()),
+    highlights: cleanHighlights(f.highlights),
+    recommended: f.recommended,
   }
 }
 

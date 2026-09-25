@@ -7,7 +7,7 @@
 index.ts: 登记表 PORTAL_MODULES
 fixtures.ts: 共享夹具（不是模块，不进登记表）：按用户建的内存状态（订阅挂在目录套餐上、ID 稳定、订阅地址可换发，另有余额与流水、订单、公告、流量包余量、礼品卡兑换记录）与场景开关——default / empty / multi（第二条订阅 past_due 且原价格已下架，测续费遇改价）/ legacy（「待补·后端」与修订 R69 字段全缺席，对照旧后端）/ error（读接口 500）/ slow（延迟 2.5 秒），经 POST v1/__mock/portal-scenario 切换，切换即重建
 seeds.ts: 历史数据种子（不是模块）：跨四个月的 13 条订单（已支付 / 已取消 / 超时 / 已退款 / 处理中）、余额流水、礼品卡兑换记录
-catalog.ts: 商品目录夹具（不是模块）：礼品卡（余额 / 流量 / 套餐 / 盲盒 / 需订阅的延期 / 限新用户）、三个套餐（家庭版 allow_upgrade=false）、四个流量包、覆盖各种拒绝的优惠码（AUTUMN26 / WELCOME / PROYEAR 限年付 / BIG50 有门槛 / EXPIRED / USED）、四种支付方式（含一个 POST 跳转渠道与一个只收 USD 的渠道）
+catalog.ts: 商品目录夹具（不是模块）：礼品卡（余额 / 流量 / 套餐 / 盲盒 / 需订阅的延期 / 限新用户）、三个套餐（专业版标为推荐、每个带卖点，家庭版 allow_upgrade=false 且限速 100 Mbps，R99 / R100）、四个流量包、覆盖各种拒绝的优惠码（AUTUMN26 / WELCOME / PROYEAR 限年付 / BIG50 有门槛 / EXPIRED / USED）、四种支付方式（含一个 POST 跳转渠道与一个只收 USD 的渠道）
 billing.ts: 计费逻辑（不是模块）：请求体拒绝多余字段、优惠码试算、下单即扣余额与 30 分钟过期或取消退回（全部记余额流水）、履约（新购开订阅、续费延期、变更原地换套餐并退余额、流量包加余量）、变更折算（剩余时间比与剩余流量比取小）、订单列表行与明细形状
 overview.ts: 概览（门户-01）；GET v1/me/subscriptions/{id}/usage（修订 R47：days 422、他人订阅 404、无数据补 0）与匿名的场景开关
 subs.ts: 我的订阅（门户-02）；GET v1/me/subscriptions（外框徽标与页面共用）、subscription-links、{id}/nodes（只对 active / trialing / grace 下发，否则 404）、{id}/rotate（无 body、不幂等、统计清零）

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockContext / MockModule / MockResult / MockRoute，依赖 ./plans-store 的存储与规则，依赖 ./nodes-infra 的 pools（只读），依赖 ./plans-packs 的 packRoutes
  * [OUTPUT]: 对外提供 plans 模块的假接口 MockModule；转出 plans-store 的 setSalesEnabled 给测试用
- * [POS]: dev/mock/admin 的「套餐（后台-04）」假接口，归后台前端一：列表、详情、只建壳、向导新建（单事务，R65）与编辑（null = 不动，额度 / 线路变了开新版本并立即发布，价格只同步出现过的币种，R1）、销售设置、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池绑定候选与替换；流量包四接口在 plans-packs.ts，数据与校验在 plans-store.ts。权限、reauth、幂等 scope、校验键名与文案照 api-contract.md 与 domain/adminops 的 catalog.go、plan_wizard*.go、api/admin/pools.go；按 DisallowUnknownFields 拒绝未知字段；销售开关关着时 catalog.publish 类写回 503。后端现状也照做：编辑向导会清掉上架时间窗、新版本的高级设置回到默认
+ * [POS]: dev/mock/admin 的「套餐（后台-04）」假接口，归后台前端一：列表、详情、只建壳、向导新建（单事务，R65）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动，R1 / R99 / R100；额度 / 线路变了开新版本并立即发布，价格只同步出现过的币种）、销售设置（含卖点与推荐整体覆盖）、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池绑定候选与替换；流量包四接口在 plans-packs.ts，数据与校验在 plans-store.ts。权限、reauth、幂等 scope、校验键名与文案照 api-contract.md 与 domain/adminops 的 catalog.go、plan_wizard*.go、api/admin/pools.go；按 DisallowUnknownFields 拒绝未知字段；销售开关关着时 catalog.publish 类写回 503。超额策略只收 suspend、限速与策略解耦（R99）。R92 的后端现状也照做（后端三 ② 修好后同步删）：编辑向导会清掉上架时间窗、新版本的高级设置回到默认
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -11,6 +11,7 @@ import { packRoutes } from './plans-packs.ts'
 import {
   activeNodes,
   applyBasics,
+  applySalesPoints,
   applySemantics,
   blankVersion,
   currentOf,
@@ -36,6 +37,7 @@ import {
   quotasFor,
   sales,
   SALES_OFF,
+  salesPointProblems,
   seedPlan,
   seedPrice,
   semanticsProblems,
@@ -69,6 +71,8 @@ const WIZARD_KEYS = [
   'traffic_gb',
   'max_devices',
   'throttle_kbps',
+  'highlights',
+  'recommended',
 ]
 
 function createComplete(ctx: MockContext, b: Json): MockResult {
@@ -85,7 +89,7 @@ function createComplete(ctx: MockContext, b: Json): MockResult {
   if (publishNow && !poolIds.length) f.pool_ids = '要上架就得选节点分组，否则买了也没有线路可用'
   if (b.traffic_gb != null && !(isInt(b.traffic_gb) && b.traffic_gb >= 0)) f.traffic_gb = '流量不能是负数；不限流量请留空'
   if (b.max_devices != null && !(isInt(b.max_devices) && b.max_devices >= 0)) f.max_devices = '设备数不能是负数；不限请留空'
-  Object.assign(f, wizardPriceProblems(priceList))
+  Object.assign(f, salesPointProblems(b), wizardPriceProblems(priceList))
   if (Object.keys(f).length) return invalid(f)
   if ((priceList.length || publishNow) && !sales()) return SALES_OFF
   // 之后是单事务里的各步（R65）：先全部算好、校验好，最后一次写入
@@ -112,6 +116,7 @@ function createComplete(ctx: MockContext, b: Json): MockResult {
   }
   const plan = seedPlan(randomUUID(), '', '', '', 'draft', 0, [version], priceList.map(newPrice), { row_version: 1, created_at: new Date().toISOString(), current_version_id: null })
   applyBasics(plan, basics)
+  applySalesPoints(plan, b)
   plan.allow_new_purchase = b.allow_new_purchase !== false
   plan.allow_renewal = b.allow_renewal !== false
   plan.allow_upgrade = b.allow_upgrade !== false
@@ -129,7 +134,7 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
   if (bad) return bad
   if (p.status === 'archived') return err(409, 'conflict', '已归档套餐不能恢复或编辑')
   if (b.expected_row_version !== p.row_version) return stale(p.row_version)
-  const pf = planFieldProblems(b)
+  const pf = { ...planFieldProblems(b), ...salesPointProblems(b) }
   if (Object.keys(pf).length) return invalid(pf)
   const priceList = Array.isArray(b.prices) ? (b.prices as Json[]) : []
   if (priceList.length) {
@@ -137,11 +142,15 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
     if (Object.keys(f).length) return invalid(f)
     if (!sales()) return SALES_OFF
   }
+  // R99 三态：max_devices / throttle_kbps 缺省 = 不动、null = 清为不限、正整数 = 设置（traffic_gb 仍是 null = 不动、0 = 不限）
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(b, k)
   if (b.max_devices != null && !(isInt(b.max_devices) && b.max_devices > 0)) return invalid({ max_devices: '必须为正整数' })
+  if (b.throttle_kbps != null && !(isInt(b.throttle_kbps) && b.throttle_kbps > 0)) return invalid({ throttle_kbps: '必须为正整数' })
   const cur = currentOf(p)
   const curGB = trafficOf(cur) === null ? -1 : Math.floor(trafficOf(cur)! / GiB)
-  const quotaChanged =
-    (b.traffic_gb != null && b.traffic_gb !== curGB) || (b.max_devices != null && b.max_devices !== cur?.max_devices) || (b.throttle_kbps != null && b.throttle_kbps !== cur?.throttle_kbps)
+  const devicesChanged = has('max_devices') && (b.max_devices ?? null) !== (cur?.max_devices ?? null)
+  const throttleChanged = has('throttle_kbps') && (b.throttle_kbps ?? null) !== (cur?.throttle_kbps ?? null)
+  const quotaChanged = (b.traffic_gb != null && b.traffic_gb !== curGB) || devicesChanged || throttleChanged
   const poolsIn = Array.isArray(b.pool_ids) ? (b.pool_ids as string[]) : null
   const poolsChanged = poolsIn !== null && [...poolsIn].sort().join() !== [...(cur?.pool_ids ?? [])].sort().join()
   if (poolsIn) {
@@ -154,7 +163,8 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
   const snapshot = structuredClone(p)
   const changed = ['套餐资料已更新']
   applyBasics(p, b)
-  // 后端现状：UpdatePlanInput 不带时间窗，编辑向导会把它清空
+  applySalesPoints(p, b)
+  // 后端现状（R92 ③，后端三 ② 修）：UpdatePlanInput 不带时间窗，编辑向导会把它清空
   p.visible_from = null
   p.visible_until = null
   if (typeof b.allow_new_purchase === 'boolean') p.allow_new_purchase = b.allow_new_purchase
@@ -184,14 +194,14 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
   if (quotaChanged || poolsChanged) {
     const ver = draftOf(p) ?? blankVersion(Math.max(0, ...p.versions.map((v) => v.version)) + 1, ctx.user.email)
     const gb = b.traffic_gb != null ? (b.traffic_gb as number) : curGB
-    const devices = (b.max_devices as number | null) ?? cur?.max_devices ?? null
-    // 后端现状：新版本只沿用重置策略与超额策略，宽限、权益等回到默认
+    const devices = has('max_devices') ? ((b.max_devices as number | null) ?? null) : (cur?.max_devices ?? null)
+    // 后端现状（R92 ②，后端三 ② 修）：新版本只沿用重置策略与超额策略，宽限、权益等回到默认
     const fresh = blankVersion(ver.version, ver.created_by_email)
     Object.assign(ver, { ...fresh, id: ver.id, row_version: ver.row_version + 1, created_at: ver.created_at })
     ver.quota_reset_strategy = cur?.quota_reset_strategy ?? 'billing_cycle'
     ver.quota_reset_day = cur?.quota_reset_day ?? null
     ver.overage_policy = cur?.overage_policy ?? 'suspend'
-    ver.throttle_kbps = (b.throttle_kbps as number | null) ?? cur?.throttle_kbps ?? null
+    ver.throttle_kbps = has('throttle_kbps') ? ((b.throttle_kbps as number | null) ?? null) : (cur?.throttle_kbps ?? null)
     ver.max_devices = devices
     ver.quotas = quotasFor(gb > 0 ? gb : null, devices)
     ver.pool_ids = poolsIn ?? [...(cur?.pool_ids ?? [])]
@@ -202,7 +212,7 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
       return invalid(pub)
     }
     publish(p, ver)
-    if (quotaChanged) changed.push('流量与设备数已更新；新购买的用户按新额度，已经买了的用户仍按原额度')
+    if (quotaChanged) changed.push('流量、设备数与限速已更新；新购买的用户按新额度，已经买了的用户仍按原额度')
     if (poolsChanged) changed.push('可用线路已更新；新购买的用户立即拿到，已经买了的用户要到续费时才切过来')
   }
   if (priceChanges) changed.push('价格已更新，只影响之后的新购与续费；已成交的订单不变')
@@ -260,14 +270,17 @@ const routes: Record<string, MockRoute> = {
         'purchase_limit_per_user',
         'stock_total',
         'sort_order',
+        'highlights',
+        'recommended',
       ])
       if (bad) return bad
       const b: Json = { ...body, visibility: str(body.visibility) || 'public' }
-      const f = planFieldProblems(b)
+      const f = { ...planFieldProblems(b), ...salesPointProblems(b) }
       if (Object.keys(f).length) return invalid(f)
       if (plans.some((p) => p.code === str(b.code).trim())) return DUP
       const plan = seedPlan(randomUUID(), '', '', '', 'draft', 0, [], [], { row_version: 1, created_at: new Date().toISOString() })
       applyBasics(plan, b)
+      applySalesPoints(plan, b)
       plan.visible_from = (b.visible_from as string | null) ?? null
       plan.visible_until = (b.visible_until as string | null) ?? null
       plans.push(plan)
@@ -308,16 +321,21 @@ const routes: Record<string, MockRoute> = {
           'purchase_limit_per_user',
           'stock_total',
           'sort_order',
+          'highlights',
+          'recommended',
         ])
         if (bad) return bad
         if (p.status === 'archived') return err(409, 'conflict', '已归档套餐不能恢复或编辑')
         if (b.expected_row_version !== p.row_version) return stale(p.row_version)
-        const f = planFieldProblems(b)
+        // R100：整体覆盖，没带就是空列表与 false（Go 结构体零值），所以前端必须回填当前值
+        const full: Json = { ...b, highlights: b.highlights ?? [], recommended: b.recommended ?? false }
+        const f = { ...planFieldProblems(b), ...salesPointProblems(full) }
         if (isInt(b.stock_total) && b.stock_total < p.stock_reserved) f.stock_total = '不能低于已预留库存'
         if (Object.keys(f).length) return invalid(f)
         const reopened = (['allow_new_purchase', 'allow_renewal', 'allow_upgrade'] as const).some((k) => !p[k] && b[k] === true)
         if (p.status === 'active' && reopened && !sales()) return SALES_OFF
         applyBasics(p, b)
+        applySalesPoints(p, full)
         p.visible_from = (b.visible_from as string | null) ?? null
         p.visible_until = (b.visible_until as string | null) ?? null
         p.allow_new_purchase = b.allow_new_purchase === true
