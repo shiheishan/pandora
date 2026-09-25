@@ -88,7 +88,7 @@ describe('订单与输入', () => {
   it('订单「买了什么」', () => {
     expect(orderWhat({ kind: 'new', plan_name: '标准版', interval: 'month', interval_count: 1, item_count: 1 })).toBe('标准版 · 月付')
     expect(orderWhat({ kind: 'renewal', plan_name: '专业版', interval: 'month', interval_count: 3, item_count: 2 })).toBe('专业版 · 3 × 月付 等 2 项')
-    expect(orderWhat({ kind: 'topup', plan_name: '', interval: '', interval_count: 0, item_count: 1 })).toBe('充值')
+    expect(orderWhat({ kind: 'topup', plan_name: '', interval: '', interval_count: 0, item_count: 1 })).toBe('余额充值')
   })
 
   it('调账：元转分，正负号、两位小数；0 与非法返回 null', () => {

@@ -8,12 +8,12 @@
 
 成员清单
 index.tsx: 页面入口，按标签分发到五个组件，相对时间的 now 每分钟走一次、各标签共用；「用户列表」从地址读筛选、翻页、打开的用户与抽屉标签并回写
-api.ts: zod schema 与类型（账号 6 态、风险 4 档、订阅 8 态、订单 9 态与 7 种 kind、重置 5 种原因的封闭枚举；列表行、详情、订阅与配额、订单行、用户组、风控画像、批量预览与生成结果、在线设备与模式、重置日志与统计；写响应含 strict 的换发响应）、读 hook（列表、详情、用户组、画像、按邮箱精确找人、套餐下拉、批量预览、设备、重置日志 / 统计 / 单用户历史），useInvalidateUsers 与 useInvalidateResets；useUserGroups 带可选 enabled，套餐页（可见用户组、组专属价）按 iam.user.read 借用同一条查询
-model.ts: 纯逻辑——状态分段到后端 query（已过期走 sub_state）、账号 / 订阅 / 订单 / 风险标签、到期 / 流量 / 设备三列文案与色、设备上限显示值、当前订阅挑法（与后端 currentSubscriptionSQL 同口径）、订单「买了什么」、调账元转分、与 platform/crypto 同策略的密码预检；④ 的用户组删除拦截与「被引用」、批量筛选表单到 BulkFilter、批量生成校验（与 adminops.GenerateUsers 同规则）、接近上限与在线格、重置方式与操作人文案、手动重置挑哪条订阅（与 billing.ManualResetTraffic 同口径）、按邮箱精确匹配
+api.ts: zod schema 与类型（账号 6 态、风险 4 档、订阅 8 态、重置 5 种原因的封闭枚举；订单 9 态与 7 种 kind 及订单行取自 billing/schemas 并转出；列表行、详情、订阅与配额、用户组、风控画像、批量预览与生成结果、在线设备与模式、重置日志与统计；写响应含 strict 的换发响应）、读 hook（列表、详情、用户组、画像、按邮箱精确找人、套餐下拉、批量预览、设备、重置日志 / 统计 / 单用户历史），useInvalidateUsers 与 useInvalidateResets；useUserGroups 带可选 enabled，套餐页（可见用户组、组专属价）按 iam.user.read 借用同一条查询
+model.ts: 纯逻辑——状态分段到后端 query（已过期走 sub_state）、账号 / 订阅 / 订单 / 风险标签（订单标签与 orderWhat 也供订单页用，充值单叫「余额充值」）、到期 / 流量 / 设备三列文案与色、设备上限显示值、当前订阅挑法（与后端 currentSubscriptionSQL 同口径）、订单「买了什么」、调账元转分、与 platform/crypto 同策略的密码预检；④ 的用户组删除拦截与「被引用」、批量筛选表单到 BulkFilter、批量生成校验（与 adminops.GenerateUsers 同规则）、接近上限与在线格、重置方式与操作人文案、手动重置挑哪条订阅（与 billing.ManualResetTraffic 同口径）、按邮箱精确匹配
 model.test.ts: 列表与抽屉部分的 model、分享提示与 schema 的单元测试（含「换发响应带令牌即判为不符约定」）
 ops.test.ts: 第 ④ 步的纯逻辑与 schema 单元测试（omitempty 键、封闭枚举、生成结果形状）
 UserList.tsx: 列表标签：搜索（防抖）、状态分段、用户组下拉（含「未分组（默认）」）、计数、八列表格（行可点击，也可 Tab 聚焦后 Enter / 空格打开抽屉）、分页、「批量生成」入口；表格最小宽 860，960 宽时在卡片内横向滚动
-UserDrawer.tsx: 详情抽屉：头部、按权限出现的操作条、行内调账、标签页（画像 / 订阅 / 设备 / 流量重置 / 订单 / 风控）与三个对话框的开合
+UserDrawer.tsx: 详情抽屉：头部、按权限出现的操作条（billing.order.write 时有「为其开单」，跳 #/billing/orders?new=<id> 的人工开单弹窗）、行内调账、标签页（画像 / 订阅 / 设备 / 流量重置 / 订单 / 风控）与三个对话框的开合
 tabs.tsx: 画像（统计条、用户组分配、资料行）、订阅（全部订阅卡、流量配额、设备上限 − / + 与恢复默认 / 不限）、设备（D-B-8 方案 A）、订单（最近 20 单，跳订单页按 user_id 精确筛选）
 RiskTab.tsx: 风控标签：分享提示、IP 聚合、共用 IP 的关联账号、订阅拉取记录、最近安全事件；导出 sharingHint
 dialogs.tsx: 四个写操作：启用 / 停用 / 封禁、设新密码、换发订阅链接、行内调账（确认后带幂等键提交）；导出 ActionModal（带表单的写操作对话框骨架，④ 的流量重置也用）

@@ -98,7 +98,7 @@ const KIND_LABELS: Record<OrderRow['kind'], string> = {
   upgrade: '变更套餐',
   downgrade: '变更套餐',
   addon: '流量包',
-  topup: '充值',
+  topup: '余额充值',
   manual: '人工',
 }
 
