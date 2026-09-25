@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useMutation，依赖 react 的 useEffect / useState，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Empty / Segmented / Skeleton / Tag / useToast，依赖 ./actions、./api、./model，依赖 ./Tickets.module.css
+ * [INPUT]: 依赖 @tanstack/react-query 的 useMutation，依赖 react 的 useEffect / useState，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Empty / Segmented / Skeleton / Tag / useToast，依赖 ../../actions 的 useFailure / useIntentKey，依赖 ./api、./model，依赖 ./Tickets.module.css
  * [OUTPUT]: 对外提供 Queue
  * [POS]: 工单页左栏：分段筛选（未解决 / 待处理 / 我的 / 超时 / 全部）、搜索（防抖后交给后端 q）、「检查 SLA 超时」（POST v1/tickets/escalate，待补·前端）、工单列表与「加载更多」；选中项由地址 #/tickets/<id> 决定，列表只负责拼链接
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react'
 import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Segmented, Skeleton, Tag, useToast } from '../../../ui'
-import { useFailure, useIntentKey } from './actions'
+import { useFailure, useIntentKey } from '../../actions'
 import { escalatedSchema, useInvalidateTickets, useTicketQueue, type QueueParams, type Ticket } from './api'
 import { CATEGORY_LABELS, FILTERS, PRIORITY_VIEW, statusView, waitLabel, type QueueFilter } from './model'
 import css from './Tickets.module.css'

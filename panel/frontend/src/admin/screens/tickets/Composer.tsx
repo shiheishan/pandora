@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 useState / KeyboardEvent，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Switch / TextArea / useToast，依赖 ./actions、./api、./model 的 MESSAGE_MAX、./MacroManager，依赖 ./Tickets.module.css
+ * [INPUT]: 依赖 react 的 useState / KeyboardEvent，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Switch / TextArea / useToast，依赖 ../../actions 的 useFailure / useIntentKey，依赖 ./api、./model 的 MESSAGE_MAX、./MacroManager，依赖 ./Tickets.module.css
  * [OUTPUT]: 对外提供 Composer
  * [POS]: 工单详情底部的回复框：快捷回复标签（点一下填入、不自动发送）与「管理」、内部备注开关（待补·前端，开启时按钮改「添加备注」、不改状态）、⌘↵ 发送、「回复并解决」（先 reply 再 status=resolved，两个请求两把幂等键，失败重试时已成功的那步不再重发）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -8,7 +8,7 @@ import { useState, type KeyboardEvent } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Switch, TextArea, useToast } from '../../../ui'
-import { useFailure, useIntentKey } from './actions'
+import { useFailure, useIntentKey } from '../../actions'
 import { okSchema, useInvalidateTickets, useMacros, type TicketDetail } from './api'
 import { MacroManager } from './MacroManager'
 import { MESSAGE_MAX } from './model'

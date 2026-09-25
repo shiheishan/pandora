@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 @tanstack/react-query 的 useMutation，依赖 react 的 useEffect / useRef / useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / Empty / Modal / Select / Skeleton / Tag / TextArea / useToast，依赖 ./actions、./api、./model、./Composer、./Queue 的 useNow，依赖 ./Tickets.module.css
+ * [INPUT]: 依赖 @tanstack/react-query 的 useMutation，依赖 react 的 useEffect / useRef / useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / Empty / Modal / Select / Skeleton / Tag / TextArea / useToast，依赖 ../../actions 的 useCan / useFailure / useIntentKey，依赖 ./api、./model、./Composer、./Queue 的 useNow，依赖 ./Tickets.module.css
  * [OUTPUT]: 对外提供 Detail
  * [POS]: 工单页右栏：详情头（标题、编号 · 用户 · 套餐 · 创建时间、已升级徽标、关闭原因、关联订单、SLA 两行）、状态 / 指派下拉、查看用户、升级到 L2（D-B-6 未决前只改状态与优先级、不说「通知值班」）、对话流（用户 / 客服 / 内部备注 / 系统四种气泡）与底部 Composer；没有 ops.ticket.write 时只读
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -11,7 +11,7 @@ import { formatDateTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Modal, Select, Skeleton, Tag, TextArea, useToast } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from './actions'
+import { useCan, useFailure, useIntentKey } from '../../actions'
 import { okSchema, useAssignees, useInvalidateTickets, useTicketDetail, type TicketDetail, type TicketStatus } from './api'
 import { Composer } from './Composer'
 import { assigneeOptions, CATEGORY_LABELS, CLOSED_REASON_LABELS, messageView, PRIORITY_VIEW, slaLines, STATUS_OPTIONS, systemText } from './model'
