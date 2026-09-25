@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 useState / FormEvent，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/format 的 formatMoney，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic、./parts、./queries、./schemas，依赖 ./marketing.module.css 与 ./Commission.module.css
+ * [INPUT]: 依赖 react 的 useState / FormEvent，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/format 的 formatMoney，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic、./queries、./schemas，依赖 ./marketing.module.css 与 ./Commission.module.css
  * [OUTPUT]: 对外提供 Commission（营销 · 佣金与提现标签）
  * [POS]: admin/screens/marketing 的佣金与提现标签（设计稿 t_commission）：四个统计（GET v1/commission/overview）、提现申请（GET v1/withdrawals；通过 / 拒绝 POST review，打款 POST paid 带幂等 commission_withdrawal_mark_paid，都要 marketing.withdrawal.approve + reauth）、邀请与佣金设置（POST v1/commission/config，marketing.commission.write + reauth）。拒绝补必填理由、打款补必填转账流水号（契约待补·前端）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -8,11 +8,10 @@ import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Input, Modal, Segmented, Tag, TextArea, useToast } from '../../../ui'
+import { Button, Empty, Input, Modal, QueryView, Segmented, StatStrip, Tag, TextArea, useToast } from '../../../ui'
 import local from './Commission.module.css'
 import { buildCommissionConfig, commissionStats, commissionToForm, formatDateTime, withdrawalState, type CommissionForm, type FieldErrors } from './logic'
 import css from './marketing.module.css'
-import { QueryView, StatStrip } from './parts'
 import { useCan, useCommissionOverview, useFailure, useIntentKey, useInvalidateMarketing, useWithdrawals } from './queries'
 import { okResponse, paidResponse, reviewResponse, type CommissionOverview, type Withdrawal } from './schemas'
 

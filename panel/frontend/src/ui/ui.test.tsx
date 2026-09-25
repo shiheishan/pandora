@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react-dom/server 的 renderToStaticMarkup，依赖 ./index 的全部组件
+ * [INPUT]: 依赖 react-dom/server 的 renderToStaticMarkup，依赖 ../core/api 的 ApiError，依赖 ./index 的全部组件
  * [OUTPUT]: 对外提供组件库的无障碍与结构测试
  * [POS]: ui 的单元测试：不引入 DOM 库，用服务端渲染核对角色、aria 属性与关键结构；交互（方向键、弹层开合、焦点）在 showcase 里用浏览器验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -7,6 +7,7 @@
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { ApiError } from '../core/api'
 import {
   Button,
   Checkbox,
@@ -16,9 +17,12 @@ import {
   Input,
   Menu,
   Modal,
+  Pager,
+  QueryView,
   Segmented,
   Select,
   Skeleton,
+  StatStrip,
   Switch,
   Table,
   Tabs,
@@ -80,8 +84,15 @@ describe('form controls', () => {
     expect(out).toContain('role="switch"')
   })
 
-  it('Checkbox renders a native checkbox', () => {
-    expect(html(<Checkbox label="记住我" />)).toContain('type="checkbox"')
+  it('Checkbox ties its label to the input with an explicit for/id, keeping a caller id', () => {
+    const out = html(<Checkbox label="记住我" />)
+    expect(out).toContain('type="checkbox"')
+    const id = /<input[^>]*id="([^"]+)"/.exec(out)?.[1]
+    expect(id).toBeTruthy()
+    expect(out).toContain(`<label for="${id}"`)
+    // 文字是 label 的直接子节点，不再包 span
+    expect(out).toMatch(/<\/span>记住我<\/label>$/)
+    expect(html(<Checkbox label="全选" id="pick-all" />)).toMatch(/<label for="pick-all"[\s\S]*id="pick-all"/)
   })
 })
 
@@ -193,5 +204,53 @@ describe('feedback', () => {
     const out = html(<Empty title="还没有工单" description="遇到问题可以在这里联系客服。" action={<Button>新建工单</Button>} />)
     expect(out).toContain('还没有工单')
     expect(out).toContain('新建工单')
+  })
+})
+
+describe('data views', () => {
+  const query = <T,>(over: Partial<{ data: T; isPending: boolean; isError: boolean; error: unknown }>) => ({
+    data: undefined as T | undefined,
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: noop,
+    ...over,
+  })
+
+  it('StatStrip is a named group and draws skeleton cells until the numbers arrive', () => {
+    const loading = html(<StatStrip label="礼品卡统计" items={undefined} count={3} />)
+    expect(loading).toContain('role="group"')
+    expect(loading).toContain('aria-label="礼品卡统计"')
+    expect(loading).toContain('aria-busy="true"')
+    expect(loading.match(/aria-hidden="true"/g)).toHaveLength(6)
+    const ready = html(<StatStrip label="佣金统计" items={[{ label: '冻结中', value: '¥3,904.00' }]} />)
+    expect(ready).toContain('冻结中')
+    expect(ready).toContain('¥3,904.00')
+    expect(ready).not.toContain('aria-busy')
+  })
+
+  it('Pager hides within one page and disables the ends', () => {
+    expect(html(<Pager total={50} limit={50} offset={0} onChange={noop} />)).toBe('')
+    const first = html(<Pager total={120} limit={50} offset={0} onChange={noop} />)
+    expect(first).toContain('aria-label="分页"')
+    expect(first).toContain('第 1 / 3 页 · 共 120 条')
+    expect(first.match(/disabled=""/g)).toHaveLength(1)
+    const last = html(<Pager total={120} limit={50} offset={100} onChange={noop} />)
+    expect(last).toMatch(/<button[^>]*disabled=""[^>]*>下一页/)
+  })
+
+  it('QueryView renders loading, 404 as missing-or-forbidden, other errors with retry, empty, then data', () => {
+    const view = (q: ReturnType<typeof query<string[]>>) => html(<QueryView query={q} empty={<p>空的</p>}>{(rows) => <p>{rows.join(',')}</p>}</QueryView>)
+    expect(view(query({ isPending: true }))).toContain('aria-label="加载中"')
+    const missing = view(query({ isError: true, error: new ApiError({ status: 404, code: 'not_found', message: '资源不存在或无权访问' }) }))
+    expect(missing).toContain('无权限或不存在')
+    expect(missing).not.toContain('重试')
+    const broken = view(query({ isError: true, error: new ApiError({ status: 500, code: 'internal_error', message: '服务暂时不可用' }) }))
+    expect(broken).toContain('服务暂时不可用')
+    expect(broken).toContain('重试')
+    expect(view(query({ data: [] }))).toBe('<p>空的</p>')
+    expect(view(query({ data: ['a', 'b'] }))).toBe('<p>a,b</p>')
+    const custom = html(<QueryView query={query({ data: { total: 0 } })} isEmpty={(d) => d.total === 0} empty={<p>无</p>}>{() => <p>有</p>}</QueryView>)
+    expect(custom).toBe('<p>无</p>')
   })
 })

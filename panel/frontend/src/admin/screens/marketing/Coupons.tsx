@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/download 的 saveFile / toCsv，依赖 ../../../core/format 的 formatMoney，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./CouponForm、./logic、./parts、./queries、./schemas，依赖 ./marketing.module.css 与 ./Coupons.module.css
+ * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/download 的 saveFile / toCsv，依赖 ../../../core/format 的 formatMoney，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./CouponForm、./logic、./queries、./schemas，依赖 ./marketing.module.css 与 ./Coupons.module.css
  * [OUTPUT]: 对外提供 Coupons（营销 · 优惠券标签）
  * [POS]: admin/screens/marketing 的优惠券标签（设计稿 t_coupons）：分段「全部 / 启用中 / 已停用」→ GET v1/coupons 的 status；行内开关 POST v1/coupons/{id}/status（reauth，由常驻对话框接管）；点码展开兑换记录（另需 billing.order.read）；批量生成成功后给出码清单与 CSV 下载（优惠码不是等价现金，没有一次性可见的要求）。契约写明没有编辑入口
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -9,12 +9,11 @@ import { useState } from 'react'
 import { saveFile, toCsv } from '../../../core/download'
 import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, IconChevronDown, Modal, Segmented, Switch, Tag, useToast } from '../../../ui'
+import { Button, Empty, IconChevronDown, Modal, Pager, QueryView, Segmented, Switch, Tag, useToast } from '../../../ui'
 import { CouponForm, type BatchResult } from './CouponForm'
 import local from './Coupons.module.css'
 import { couponBatchLabel, couponState, discountLabel, formatDateTime, planScopeLabel, usage, validUntilLabel } from './logic'
 import css from './marketing.module.css'
-import { Pager, QueryView } from './parts'
 import { useCan, useCoupons, useFailure, useInvalidateMarketing, usePlanCatalog, useRedemptions } from './queries'
 import { okResponse, type Coupon, type Plan } from './schemas'
 
