@@ -36,7 +36,14 @@ const rows: Row[] = [
   { at: 'portal/queries.ts:82', path: 'v1/me/balance', schema: balanceSchema },
   { at: 'portal/queries.ts:160', path: 'v1/me/subscriptions', schema: subscriptionsSchema },
   { at: 'portal/queries.ts:231', path: 'v1/me/commission', schema: commissionSchema },
-  { at: 'portal/queries.ts:248', path: 'v1/me/notifications', query: { limit: 1 }, schema: notificationsSchema, waitFor: notifications },
+  // 外框只取角标：它的 schema 只有 unread，解析结果里没有 notifications 数组，等待条件改看 unread
+  {
+    at: 'portal/queries.ts:248',
+    path: 'v1/me/notifications',
+    query: { limit: 1 },
+    schema: notificationsSchema,
+    waitFor: { ...notifications, ok: (d: unknown) => ((d as { unread?: number }).unread ?? 0) > 0 },
+  },
 
   // ---- 套餐与下单 ----
   { at: 'common/catalog.ts:26', path: 'v1/plans', schema: plansSchema },
