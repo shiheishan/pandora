@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / Empty / Input / Modal / TextArea / useToast，依赖 ./actions 的 useFailure，依赖 ./api 的 Macro / macroSavedSchema / okSchema / useInvalidateTickets，依赖 ./Tickets.module.css
+ * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / Empty / Input / Modal / TextArea / useToast，依赖 ../../actions 的 useFailure，依赖 ./api 的 Macro / macroSavedSchema / okSchema / useInvalidateTickets，依赖 ./Tickets.module.css
  * [OUTPUT]: 对外提供 MacroManager
  * [POS]: 快捷回复「管理」对话框（待补·前端，设计稿没有管理入口）：列表、新建、编辑、删除，对应 v1/ticket-macros 四个接口（R42，配置类写操作不带幂等、不要 reauth）；标题 1–20 字、正文 1–5000 字，服务端 fields.title / body 标到对应输入框
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -8,7 +8,7 @@ import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Input, Modal, TextArea, useToast } from '../../../ui'
-import { useFailure } from './actions'
+import { useFailure } from '../../actions'
 import { macroSavedSchema, okSchema, useInvalidateTickets, type Macro } from './api'
 import css from './Tickets.module.css'
 

@@ -1,10 +1,12 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ./modules、./reauth、./me、./tasks 的 tasksSchema / taskCount、./ChangePasswordDialog 的 passwordStrength、./EventsCapsule 的 describeEvent
+ * [INPUT]: 依赖 vitest，依赖 ../core/api 的 ApiError，依赖 ./actions 的 canWith / createIntentKey / classifyFailure，依赖 ./modules、./reauth、./me、./tasks 的 tasksSchema / taskCount、./ChangePasswordDialog 的 passwordStrength、./EventsCapsule 的 describeEvent
  * [OUTPUT]: 对外提供 admin 外框纯逻辑的单元测试
  * [POS]: admin 的单元测试：路由规范化、标签回落与 rest 子路由、读权限表与按权限取舍、⌘K 筛选与隐藏、reauth 桥的单次弹框与结算、身份文字的契约映射与回退、强度条、实时事件条目、「需要处理」计数的严格 schema 与徽标取数；界面交互在浏览器里对 dev/mock-api 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../core/api'
+import { canWith, classifyFailure, createIntentKey } from './actions'
 import { passwordStrength } from './ChangePasswordDialog'
 import { describeEvent } from './EventsCapsule'
 import { identityLabels } from './me'
@@ -181,5 +183,41 @@ describe('dashboard/tasks', () => {
     expect(taskCount(items, 'withdrawals_pending')).toBe(3)
     expect(taskCount(items, 'nodes_offline')).toBe(0)
     expect(taskCount(undefined, 'tickets_open')).toBe(0)
+  })
+})
+
+describe('actions', () => {
+  it('canWith：只看权限码；me 没回来一律 false', () => {
+    expect(canWith(['ops.ticket.write'], 'ops.ticket.write')).toBe(true)
+    expect(canWith(['ops.ticket.read'], 'ops.ticket.write')).toBe(false)
+    expect(canWith(undefined, 'ops.ticket.read')).toBe(false)
+  })
+
+  it('createIntentKey：同一意图复用一把键，意图变了换新键，reset 后必换', () => {
+    let n = 0
+    const intent = createIntentKey(() => `k${++n}`)
+    const first = intent.keyFor(['t1', { body: 'hi' }])
+    expect(intent.keyFor(['t1', { body: 'hi' }])).toBe(first)
+    const changed = intent.keyFor(['t1', { body: 'hi!' }])
+    expect(changed).not.toBe(first)
+    expect(intent.keyFor(['t1', { body: 'hi!' }])).toBe(changed)
+    intent.reset()
+    expect(intent.keyFor(['t1', { body: 'hi!' }])).not.toBe(changed)
+    expect(n).toBe(3)
+  })
+
+  it('createIntentKey：默认生成 UUID v4', () => {
+    expect(createIntentKey().keyFor('x')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  })
+
+  it('classifyFailure：reauth 取消静默；有 fields 且能标表单才标；其余 Toast 服务端文案', () => {
+    const reauth = new ApiError({ status: 403, code: 'reauth_required', message: '需要重新验证' })
+    const invalid = new ApiError({ status: 422, code: 'validation_failed', message: '请求参数校验未通过', fields: { body: '内容需在 1–5000 字之间' } })
+    const conflict = new ApiError({ status: 409, code: 'conflict', message: '已被他人修改' })
+    expect(classifyFailure(reauth, true)).toEqual({ kind: 'silent' })
+    expect(classifyFailure(invalid, true)).toEqual({ kind: 'fields', fields: { body: '内容需在 1–5000 字之间' } })
+    expect(classifyFailure(invalid, false)).toEqual({ kind: 'toast', message: '请求参数校验未通过' })
+    expect(classifyFailure(conflict, true)).toEqual({ kind: 'toast', message: '已被他人修改' })
+    expect(classifyFailure(new Error('boom'), true)).toEqual({ kind: 'toast', message: '操作失败，请稍后重试' })
   })
 })
