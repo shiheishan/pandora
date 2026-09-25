@@ -106,16 +106,14 @@ func orderReleasePG18ManualOfflineCases(t *testing.T, ctx context.Context, admin
 	row func(*testing.T, string) (string, int64, *string, *string)) {
 
 	t.Helper()
-	// 一次性租户是迁移之后才建的，00043 的线下渠道种子没覆盖到它；
+	// 一次性租户是迁移之后才建的：线下渠道由建租户触发器种下，这里不再手工补，
+	// 标记已支付 / 线下已收款走通即证明新租户能用（R94 同批）。
 	// 再给目标用户挂一个推荐人，证明佣金与在线支付同样计提。
 	referrer := uuid.NewString()
 	for _, seed := range []struct {
 		sql  string
 		args []any
 	}{
-		{`INSERT INTO payment_providers(tenant_id,code,adapter,display_name,supported_currencies,config,enabled,accepting_new)
-			VALUES ($1,'offline','offline','线下收款','{CNY,USD}','{}',true,false)
-			ON CONFLICT (tenant_id, code) DO NOTHING`, []any{fx.tenant}},
 		{`INSERT INTO users(id,tenant_id,email,display_name,status)
 			VALUES ($1,$2,$3,'Manual Offline Referrer','active')`,
 			[]any{referrer, fx.tenant, "manual-ref-" + referrer[:8] + "@example.test"}},

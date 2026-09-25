@@ -65,20 +65,25 @@ func TestRegistrationVerificationMailPG18(t *testing.T) {
 	}{
 		{`INSERT INTO tenants (id, slug, display_name, default_currency) VALUES ($1, 'registration-mail-pg18', 'Registration Mail PG18', 'USD')`, []any{tenantID}},
 		{`INSERT INTO users (id, tenant_id, email, display_name, status) VALUES ($2, $1, $3, 'Taken', 'active')`, []any{tenantID, existingUser, existingEmail}},
-		{`INSERT INTO feature_switches (tenant_id, code, enabled) VALUES ($1, 'auth.registration', true)`, []any{tenantID}},
 		{`INSERT INTO system_settings (tenant_id, key, value) VALUES
 		    ($1, 'auth.registration_mode', to_jsonb('open'::text)),
 		    ($1, 'auth.email_verification', to_jsonb(true))`, []any{tenantID}},
-		// 新租户没有赶上迁移，照默认租户的种子抄一份
-		{`INSERT INTO notification_templates
-		    (tenant_id, code, channel, locale, version, subject, body, allowed_variables, category, status)
-		  SELECT $1, code, channel, locale, version, subject, body, allowed_variables, category, status
-		    FROM notification_templates
-		   WHERE tenant_id=$2 AND code='auth.email_verify' AND channel='email'`, []any{tenantID, defaultTenant}},
 	} {
 		if _, err := admin.Exec(ctx, seed.sql, seed.args...); err != nil {
 			t.Fatalf("seed registration mail fixture: %v", err)
 		}
+	}
+	// 新租户的注册开关与验证码模板由建租户触发器种下，和默认租户同一份
+	var sameTemplate, registrationOn bool
+	if err := admin.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM notification_templates n JOIN notification_templates d
+		                 ON d.code=n.code AND d.channel=n.channel AND d.locale=n.locale
+		                AND d.subject=n.subject AND d.body=n.body AND d.allowed_variables=n.allowed_variables
+		                AND d.category=n.category
+		         WHERE n.tenant_id=$1 AND d.tenant_id=$2 AND n.code='auth.email_verify' AND n.channel='email'),
+		       EXISTS (SELECT 1 FROM feature_switches WHERE tenant_id=$1 AND code='auth.registration' AND enabled)`,
+		tenantID, defaultTenant).Scan(&sameTemplate, &registrationOn); err != nil || !sameTemplate || !registrationOn {
+		t.Fatalf("tenant seed trigger: template=%v registration=%v err=%v", sameTemplate, registrationOn, err)
 	}
 
 	sender := &captureSender{}

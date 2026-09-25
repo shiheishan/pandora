@@ -36,8 +36,9 @@ func TestDispatchHoldsEmailWhileSwitchedOffPG18(t *testing.T) {
 	must(`INSERT INTO notification_templates(tenant_id,code,channel,subject,body,category,status) VALUES
 		($1,'switch.test','email','s','b','transactional','active'),
 		($1,'switch.test','inapp',NULL,'b','transactional','active')`, tenant)
-	must(`INSERT INTO feature_switches(tenant_id,code,enabled,essential,reason)
-		VALUES($1,'notify.email',false,false,'SMTP 被封')`, tenant)
+	// 开关行由建租户触发器种下（开启），这里关掉它
+	must(`UPDATE feature_switches SET enabled=false, reason='SMTP 被封'
+		WHERE tenant_id=$1 AND code='notify.email'`, tenant)
 
 	// 没有注册任何邮件发信器：开关开着时邮件会被标成 suppressed（渠道未配置），
 	// 关着时根本不会被取出，仍是 queued —— 状态本身就能区分两条路径
