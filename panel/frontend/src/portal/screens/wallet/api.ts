@@ -67,8 +67,8 @@ export const redeemResultSchema = z.object({
   expire_days: z.number().int().optional(),
   quota_reset: z.boolean().optional(),
   plan_granted: z.string().optional(),
-  // Go 的 nil 切片会编码成 null
-  summary: z.array(z.string()).nullable(),
+  // Redeem 在 summary 为空时直接报错，成功响应一定是非空数组
+  summary: z.array(z.string()),
 })
 
 export function useRedeemGift() {
@@ -100,7 +100,8 @@ export function useMyGiftCards() {
   const api = useApi()
   return useQuery({
     queryKey: ['portal', 'gift-cards'],
-    queryFn: ({ signal }) => api.get('v1/me/gift-cards', z.object({ redemptions: z.array(redemptionSchema).nullable() }), { signal }),
-    select: (d) => d.redemptions ?? [],
+    // MyRedemptions 以空切片初始化，没有记录时回 []，不是 null
+    queryFn: ({ signal }) => api.get('v1/me/gift-cards', z.object({ redemptions: z.array(redemptionSchema) }), { signal }),
+    select: (d) => d.redemptions,
   })
 }

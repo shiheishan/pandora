@@ -180,7 +180,7 @@ function GiftCardCard() {
       { code: normalized, key: intentKey(body) },
       {
         onSuccess: (r) => {
-          toast(`兑换成功：${(r.summary ?? []).join('，') || r.template_name}`)
+          toast(`兑换成功：${r.summary.join('，')}`)
           setCode('')
           preview.reset()
         },

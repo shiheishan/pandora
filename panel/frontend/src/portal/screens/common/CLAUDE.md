@@ -14,7 +14,7 @@ traffic.ts: 纯函数——bytesParts / compactBytes（包 core formatBytes）�
 clients.ts: 一键导入深链（Clash Verge / Shadowrocket / Hiddify / Stash / sing-box；v2rayN 无 scheme 改复制）、协议展示名、倍率标签、copyText（非安全上下文退回 execCommand）
 PayFlow.tsx: 支付弹窗（外壳的支付弹窗）：choose 态给已有的待支付订单选支付方式（选完在弹窗内转 redirect，POST 渠道失败可「换一种支付方式」），redirect 态发起 POST v1/orders/{id}/pay 后顶层 GET 导航去收银台（POST 跳转按暂不可用，CSP form-action 会拦表单），done 态显示按订单种类的成功文案，confirm 态在收银台回跳后 3 秒轮询订单、最多 2 分钟；成功后失效 portal 前缀下全部查询
 PayFlow.module.css: 支付弹窗样式，去掉设计稿的二维码块
-intent.ts: useIntentKey——按请求指纹给幂等键，同样的请求复用、改了参数换新键；结账、充值、兑换礼品卡共用
+intent.ts: useIntentKey / createIntentKey——按请求指纹给幂等键，同样的请求复用、改了参数换新键，reset() 结束一次意图（成功或 4xx 业务拒绝后丢弃键，免得稍后同样的请求被回放那次结果）；结账、充值、兑换礼品卡、佣金转余额与提现共用（前三者尚未调用 reset）
 Blocks.tsx: Slot（外观插槽，服务端净化过的 HTML，空则不占位）与 LoadError（卡片内失败态 + 重试，断网单独一句）
 UsageCard.tsx: 「本期用量」卡：柱状图（今天朱砂、未到灰色矮柱、超 40 根收窄间距）、日均 / 今天、预测与「买流量包 →」
 common.module.css: 插槽与用量卡样式
