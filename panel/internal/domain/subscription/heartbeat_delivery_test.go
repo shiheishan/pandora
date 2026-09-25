@@ -65,27 +65,36 @@ func TestDeliveryStateMatchesEligibilitySQL(t *testing.T) {
 	if !strings.Contains(body, "AND n.last_heartbeat_at IS NOT NULL") {
 		t.Error("资格查询必须排除从未心跳过的节点")
 	}
-	if ok, _ := DeliveryState("active", false, false); ok {
+	if ok, _ := DeliveryState("active", true, false, false); ok {
 		t.Error("DeliveryState 说从未心跳的节点会下发，与 SQL 不符")
 	}
 
 	// 心跳超时的节点仍然可能被下发（保底路径）。后台若报「不下发」，
 	// 管理员会以为用户已经拿不到它了，从而漏掉真正的故障。
-	if ok, _ := DeliveryState("active", true, false); !ok {
+	if ok, _ := DeliveryState("active", true, true, false); !ok {
 		t.Error("DeliveryState 说超时节点不下发，但保底路径会把它发出去")
 	}
-	if ok, note := DeliveryState("active", true, false); ok && note == "" {
+	if ok, note := DeliveryState("active", true, true, false); ok && note == "" {
 		t.Error("超时但仍在下发的节点必须给出说明，否则界面上只是个没来由的标记")
 	}
 
 	// 正常节点不该带告警说明。
-	if ok, note := DeliveryState("active", true, true); !ok || note != "" {
+	if ok, note := DeliveryState("active", true, true, true); !ok || note != "" {
 		t.Errorf("健康节点应无条件下发且无说明，得到 ok=%v note=%q", ok, note)
 	}
 
 	// 非 active 的节点 SQL 里就被 serving_status 挡住了。
-	if ok, _ := DeliveryState("retired", true, true); ok {
+	if ok, _ := DeliveryState("retired", true, true, true); ok {
 		t.Error("retired 节点不该报成会下发")
+	}
+
+	// 没划进节点池的节点：SQL 靠 JOIN plan_node_pools 排除（pool_id 为 NULL
+	// 连不上），节点用户列表同样一个人都不下发（R104）。心跳再新鲜也不下发。
+	if !strings.Contains(body, "ON p.pool_id = n.pool_id") {
+		t.Error("资格查询必须经节点池连接套餐授权，无池节点才会被排除")
+	}
+	if ok, note := DeliveryState("active", false, true, true); ok || note == "" {
+		t.Errorf("无池节点必须报不下发并说明原因，得到 ok=%v note=%q", ok, note)
 	}
 
 	// 窗口只能有一个出处。两处各写一个 interval 字面量，改了一处就会

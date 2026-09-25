@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 subscription_credentials / subscriptions / quota_balances / traffic_pack_grants 表，依赖 platform/crypto、platform/db
-// [OUTPUT]: 对外提供 Service、New 与订阅分发用例：ListLinks、Rotate、Authenticate、ListNodes、ListOwnedNodePreviews、LoadUsage、Log 等
+// [OUTPUT]: 对外提供 Service、New 与订阅分发用例：ListLinks、Rotate、Authenticate、ListNodes、ListOwnedNodePreviews、DeliveryState（后台节点列表对下发规则的复述，含无池节点）、LoadUsage、Log 等
 // [POS]: subscription 的订阅分发核心；LoadUsage 的总量 = 套餐本期额度 + 用户流量包剩余（D-E-1），供 Subscription-Userinfo
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -481,11 +481,16 @@ const HeartbeatFreshWindow = 10 * time.Minute
 // 管理后台的复述。两处必须同步 —— 有一条契约测试锁着这件事，
 // 因为「同一个规则写在两处、改了一处」正是这类问题最常见的死法。
 //
+// pooled    = 划进了节点池（pool_id IS NOT NULL；SQL 里是 JOIN plan_node_pools）
 // everSeen  = 曾经上报过心跳（last_heartbeat_at IS NOT NULL）
 // beatFresh = 心跳在 HeartbeatFreshWindow 之内
-func DeliveryState(servingStatus string, everSeen, beatFresh bool) (bool, string) {
+func DeliveryState(servingStatus string, pooled, everSeen, beatFresh bool) (bool, string) {
 	if servingStatus != "active" {
 		return false, "服务状态不是 active，不下发"
+	}
+	if !pooled {
+		// 节点用户列表（ListNodeUsers）同样不下发任何人（R104）
+		return false, "未划入节点池，不服务任何用户"
 	}
 	if !everSeen {
 		return false, "从未上报过心跳，不下发 —— 多半是建了没装 agent，" +

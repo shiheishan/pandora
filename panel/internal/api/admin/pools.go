@@ -1,5 +1,5 @@
-// [INPUT]: 依赖 platform 的 db/audit/httpx，读写 node_pools、plan_node_pools，读 nodes / plan_versions / plans
-// [OUTPUT]: 对外提供 handlers 的 listNodePools / createNodePool / updateNodePool / deleteNodePool / assignNodePool / planPools / setPlanPools
+// [INPUT]: 依赖 platform 的 db/audit/httpx、domain/nodefabric 的 NotifyUsersChanged，读写 node_pools、plan_node_pools，读 nodes / plan_versions / plans
+// [OUTPUT]: 对外提供 handlers 的 listNodePools / createNodePool / updateNodePool / deleteNodePool / assignNodePool / planPools / setPlanPools（提交后发租户级 node.users.changed，R104）与 notifyNodeUsersChanged
 // [POS]: api/admin 的节点分组：节点与套餐之间唯一的连接层；列表带组内节点 members 与绑定套餐名 plan_names
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -564,9 +564,19 @@ func (h *handlers) setPlanPools(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	h.notifyNodeUsersChanged(r)
 	httpx.OK(w, map[string]any{
 		"bound": len(poolIDs), "row_version": next, "version_id": req.VersionID,
 	})
+}
+
+// notifyNodeUsersChanged 在改变交付集合的写操作提交后，发一次租户级
+// node.users.changed，让节点立即重拉用户（R104）；只在事务成功后调，
+// 失败的请求什么都没改，不该惊动节点。推送尽力而为，节点端轮询兜底。
+func (h *handlers) notifyNodeUsersChanged(r *http.Request) {
+	if h.d.Node != nil {
+		h.d.Node.NotifyUsersChanged(r.Context(), httpx.TenantIDFrom(r.Context()))
+	}
 }
 
 func auditPool(r *http.Request, tx pgx.Tx, tenantID, action, resourceID string,
