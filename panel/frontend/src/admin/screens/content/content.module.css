@@ -1,0 +1,584 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供内容与外观三个标签用到的类名
+ * [POS]: admin/screens/content 的样式，取自 管理后台-08-内容与外观.dc.html：公告两栏（320 列表 | 编辑区）、知识库三栏（300 目录 | 编辑区 | 220 版本历史）、主题卡片网格（auto-fill 240）与插槽三列行（180 | 内容 | 开关）；后台只支持 960 以上，知识库三栏在窄于 1180 时把版本历史移到下方
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.faint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.banner {
+  padding: 8px 12px;
+  border: 1px solid var(--info-line);
+  border-radius: var(--radius-control);
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: var(--fs-caption);
+}
+
+.warnBanner {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+/* ---- 状态文字（设计稿用彩色文字而不是标签） ---- */
+.ok {
+  color: var(--ok);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.info {
+  color: var(--info);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+/* ---- 公告：320 列表 | 编辑区 ---- */
+.annLayout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: var(--space-16);
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .annLayout {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.annItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.annItem:hover {
+  border-color: var(--border-hover);
+}
+
+.annItem:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.selected,
+.selected:hover {
+  border-color: var(--text);
+}
+
+.withdrawn {
+  opacity: 0.55;
+}
+
+.itemHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.itemTitle {
+  flex: 1;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.untitled {
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
+}
+
+.pin {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--info-line);
+  border-radius: 4px;
+  color: var(--info);
+  font-size: 11px;
+}
+
+.itemMeta {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-caption);
+}
+
+.itemMeta > span:last-child {
+  overflow: hidden;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titleInput {
+  height: 40px;
+  font-size: 16px;
+  font-weight: var(--fw-semibold);
+}
+
+.editorBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.inlineSelect {
+  width: auto;
+  min-width: 96px;
+}
+
+.timeInput {
+  width: 190px;
+}
+
+.picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  height: var(--h-control-sm);
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-caption);
+}
+
+.picker:hover {
+  border-color: var(--border-hover);
+}
+
+.pickerText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pickerMenu {
+  width: 280px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.error {
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+/* ---- 知识库：300 目录 | 编辑区 | 220 版本历史 ---- */
+.kbLayout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 220px;
+  gap: var(--space-16);
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .kbLayout {
+    grid-template-columns: 256px minmax(0, 1fr);
+  }
+
+  .kbLayout > :last-child {
+    grid-column: 2;
+  }
+}
+
+.spanRest {
+  grid-column: 2 / -1;
+}
+
+.tree {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.treeTools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.treeCat {
+  padding: 10px 14px 4px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  letter-spacing: 0.04em;
+}
+
+.treeItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.treeItem:hover {
+  background: var(--surface-2);
+}
+
+.treeItem:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.treeCurrent,
+.treeCurrent:hover {
+  background: var(--surface-3);
+}
+
+.dim {
+  opacity: 0.5;
+}
+
+.treeVersion {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.treeFoot {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.dashed {
+  width: 100%;
+  border-style: dashed;
+}
+
+.treeEmpty {
+  padding: 16px 14px;
+}
+
+.titleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 32%);
+  gap: 10px;
+}
+
+.kbTitle {
+  height: 38px;
+  font-size: 15px;
+  font-weight: var(--fw-semibold);
+}
+
+.settings {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.settings > summary {
+  padding: 8px 12px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.settingsBody {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+  padding: 4px 12px 12px;
+}
+
+.full {
+  grid-column: 1 / -1;
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.groupLabel {
+  margin-bottom: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.history {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.historyHead {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  font-weight: var(--fw-semibold);
+}
+
+.historyRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.historyRow:last-child {
+  border-bottom: 0;
+}
+
+.historyRow:hover {
+  background: var(--surface-2);
+}
+
+.historyRow:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.historyVersion {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+}
+
+/* ---- 主题与插槽 ---- */
+.themeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.themeCard {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--text);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 92px;
+  padding: 14px;
+  background: var(--pv-bg);
+}
+
+.previewLine {
+  height: 8px;
+  width: 40%;
+  border-radius: 4px;
+  background: var(--pv-fg);
+  opacity: 0.85;
+}
+
+.previewLine + .previewLine {
+  height: 6px;
+  width: 70%;
+  border-radius: 3px;
+  opacity: 0.3;
+}
+
+.previewButton {
+  width: 64px;
+  height: 20px;
+  margin-top: auto;
+  border-radius: 5px;
+  background: var(--pv-accent);
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.cardName {
+  flex: 1;
+  font-weight: var(--fw-semibold);
+}
+
+.swatches {
+  display: flex;
+  gap: 6px;
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.swatchBg {
+  background: var(--pv-bg);
+}
+
+.swatchFg {
+  background: var(--pv-fg);
+}
+
+.swatchAccent {
+  background: var(--pv-accent);
+}
+
+.tzCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.cardTitle {
+  font-weight: var(--fw-semibold);
+}
+
+.slots {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.slotsHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.slotRow {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 60px;
+  gap: 14px;
+  align-items: start;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.slotRow:last-child {
+  border-bottom: 0;
+}
+
+.slotName {
+  font-weight: var(--fw-medium);
+}
+
+.slotKey {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  word-break: break-all;
+}
+
+.slotWhere {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.slotArea {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.slotSwitch {
+  justify-self: end;
+  margin-top: 6px;
+}
