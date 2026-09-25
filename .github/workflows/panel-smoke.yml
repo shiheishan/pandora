@@ -1,0 +1,83 @@
+name: Panel frontend smoke
+
+# 新前端对真实网关的联调冒烟（面板重构第 4 阶段）：一次性 PG18 + Valkey，
+# 从源码起 aegis-public 与 aegis-admin，之后用前端页面自己的 zod schema 解析真响应。
+#
+# 单独成一个 workflow 而不并进 panel-pg18.yml：
+#   - 触发面不同。冒烟要跟着 panel/frontend/src 走（schema 变了就得重验），
+#     并进去会让只改前端的推送也拖着十几个域的 PG18 门禁跑一遍；
+#   - 失败的含义不同。PG18 门禁红是后端 SQL 坏了，冒烟红是前后端形状对不上，
+#     分开挂在 checks 里一眼能看出该找谁。
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "panel/internal/**"
+      - "panel/cmd/**"
+      - "panel/migrations/**"
+      - "panel/go.mod"
+      - "panel/go.sum"
+      - "panel/frontend/src/**"
+      - "panel/frontend/tests/smoke/**"
+      - "panel/frontend/package.json"
+      - "panel/frontend/package-lock.json"
+      - "panel/deploy/run-smoke-stack.sh"
+      - "panel/deploy/configure-app-role.sql"
+      - "panel/deploy/build-release.sh"
+      - ".github/workflows/panel-smoke.yml"
+  pull_request:
+    paths:
+      - "panel/internal/**"
+      - "panel/cmd/**"
+      - "panel/migrations/**"
+      - "panel/go.mod"
+      - "panel/go.sum"
+      - "panel/frontend/src/**"
+      - "panel/frontend/tests/smoke/**"
+      - "panel/frontend/package.json"
+      - "panel/frontend/package-lock.json"
+      - "panel/deploy/run-smoke-stack.sh"
+      - "panel/deploy/configure-app-role.sql"
+      - "panel/deploy/build-release.sh"
+      - ".github/workflows/panel-smoke.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  smoke:
+    name: Real gateways under the frontend schemas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      # goose 版本跟发布包 build-release.sh 走，与 panel-pg18.yml 同一个真相
+      - name: Install goose pinned by the release bundle
+        run: |
+          v="$(grep -m1 '^GOOSE_VERSION=' panel/deploy/build-release.sh | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')"
+          test -n "$v"
+          GOBIN="$RUNNER_TEMP/bin" go install "github.com/pressly/goose/v3/cmd/goose@$v"
+          "$RUNNER_TEMP/bin/goose" --version
+      # 配置在脚本里用 openssl 现场生成，不读任何 secrets
+      - name: Start the stack
+        env:
+          GOOSE_BIN: ${{ runner.temp }}/bin/goose
+        run: bash panel/deploy/run-smoke-stack.sh up panel "$RUNNER_TEMP/smoke"
+      - name: Gateway logs
+        if: always()
+        run: |
+          for f in "$RUNNER_TEMP/smoke"/logs/aegis-*.log; do
+            [ -f "$f" ] || continue
+            echo "::group::$(basename "$f")"; tail -200 "$f"; echo "::endgroup::"
+          done
+      - name: Stop the stack
+        if: always()
+        run: bash panel/deploy/run-smoke-stack.sh down "$RUNNER_TEMP/smoke"
