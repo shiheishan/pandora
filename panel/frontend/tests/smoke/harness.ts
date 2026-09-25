@@ -35,6 +35,8 @@ export interface SeedState {
   pool_id: string
   server_id: string
   node_id: string
+  node_type: string
+  node_runtime_token: string
   plan_id: string
   price_id: string
   order_id: string
@@ -45,13 +47,19 @@ export interface SeedState {
   page_slug: string
   gift_card_id: string
   coupon_id: string
+  coupon_order_id: string
+  pack_id: string
+  hook_code: string
 }
 
 export const state = {
   admin: env.SMOKE_ADMIN_BASE!,
   portal: env.SMOKE_PUBLIC_BASE!,
+  node: env.SMOKE_NODE_BASE!,
   adminEmail: env.SMOKE_ADMIN_EMAIL!,
   adminPassword: env.SMOKE_ADMIN_PASSWORD!,
+  /** 后台令牌的签名密钥：写路径冒烟用它把真实会话的 rat 往回拨，模拟 15 分钟重认证窗口已过 */
+  adminJwtSecret: readEnvFile(join(dir, 'gateway.env')).AEGIS_JWT_ADMIN_SECRET!,
   seed: JSON.parse(readFileSync(join(dir, 'seed.json'), 'utf8')) as SeedState,
 }
 
@@ -99,23 +107,33 @@ const tokens: Record<App, string> = {
 export type App = 'admin' | 'portal'
 const baseOf = (app: App): string => (app === 'admin' ? state.admin : state.portal)
 
-/** 页面的客户端，令牌预先放进内存存储；fetch 包一层记下 JSON 响应原文（流式响应不读） */
-function pageClient(app: App): ApiClient {
+/** 最近一次响应的头，按 URL 记（写路径冒烟要看 Idempotency-Replayed） */
+export const lastHeaders = new Map<string, Headers>()
+
+/**
+ * 页面的客户端，令牌预先放进内存存储；fetch 包一层记下 JSON 响应原文与响应头（流式响应不读正文）。
+ * token 缺省用该身份登录拿到的那枚；requestReauth 与后台外框的常驻 reauth 对话框同一个接口
+ */
+export function pageClient(app: App, opts: { token?: string; requestReauth?: () => Promise<boolean> } = {}): ApiClient {
   const base = baseOf(app)
   const store = memoryTokens()
-  store.set(tokens[app])
+  store.set(opts.token ?? tokens[app])
   return createApiClient({
     tokens: store,
     baseUrl: () => `${base}/`,
     retryDelays: [],
+    requestReauth: opts.requestReauth,
     fetch: async (input, init) => {
       await paced(base)
       const res = await fetch(input, init)
+      lastHeaders.set(String(input), res.headers)
       if (res.headers.get('content-type')?.includes('json')) lastBody.set(String(input), await res.clone().text())
       return res
     },
   })
 }
+
+export const loginToken = (app: App): string => tokens[app]
 
 /** 不经 schema 取一个列表，只用来拿种子里没有的 id */
 export async function rawGet(base: string, path: string): Promise<unknown> {
@@ -140,6 +158,8 @@ export interface Row {
   kind?: 'json' | 'raw' | 'sse'
   /** 给了就跳过，写原因 */
   skip?: string
+  /** 这行的数据是怎么造出来的（进逐行表的「造数」列）：接口名、节点上报或「SQL 夹具」 */
+  seed?: string
   /** 数据由后台作业异步产生：轮询到它为真，超时就标跳过 */
   waitFor?: { ok: (data: unknown) => boolean; timeoutMs: number; why: string }
 }
@@ -206,10 +226,27 @@ async function checkStream(api: ApiClient, row: Row): Promise<void> {
 
 const resultsFile = join(dir, 'smoke-results.md')
 
-function record(app: App, row: Row, result: string, note = ''): void {
+/** 逐行表追加一行；写路径冒烟以入口 write 单列 */
+export function record(app: App | 'write', row: Pick<Row, 'path' | 'query' | 'at' | 'seed'>, result: string, note = '', coverage = ''): void {
   const q = row.query ? `?${new URLSearchParams(Object.entries(row.query).map(([k, v]) => [k, String(v)])).toString()}` : ''
   const path = row.path.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '{id}')
-  appendFileSync(resultsFile, `| ${app} | \`${path}${q}\` | ${row.at} | ${result} | ${note.replace(/\n/g, '<br>').replace(/\|/g, '\\|')} |\n`)
+  const cell = (text: string) => text.replace(/\n/g, '<br>').replace(/\|/g, '\\|')
+  appendFileSync(resultsFile, `| ${app} | \`${path}${q}\` | ${row.at} | ${result} | ${coverage} | ${cell(row.seed ?? '')} | ${cell(note)} |\n`)
+}
+
+/**
+ * 覆盖：列表接口看 schema 解析后的数组有几条——0 条只验到了外层，行 schema 没碰到真数据。
+ * 取法：响应本身是数组，或顶层第一个数组字段；再往下一层找一次（{ plan: { prices: [] } } 这种详情不算列表）
+ */
+function coverage(data: unknown): string {
+  const arrayIn = (o: unknown): unknown[] | undefined => {
+    if (Array.isArray(o)) return o
+    if (o === null || typeof o !== 'object') return undefined
+    return Object.values(o).find(Array.isArray) as unknown[] | undefined
+  }
+  const list = arrayIn(data)
+  if (!list) return '对象'
+  return list.length > 0 ? `${list.length} 条 · 验到行` : '0 条 · 只验到外层'
 }
 
 /** 一个身份的整张表：每行一个用例，失败带 zod 问题与响应片段，跳过带原因 */
@@ -228,19 +265,20 @@ export function runTable(app: App, rows: Row[]): void {
       }
       it(title, async (ctx) => {
         let timedOut = false
+        let data: unknown
         try {
           if (row.kind === 'raw') await checkRaw(api, row)
           else if (row.kind === 'sse') await checkStream(api, row)
           else if (row.waitFor) {
             const deadline = Date.now() + row.waitFor.timeoutMs
-            while (!row.waitFor.ok(await checkJson(api, app, row))) {
+            while (!row.waitFor.ok((data = await checkJson(api, app, row)))) {
               if (Date.now() > deadline) {
                 timedOut = true
                 break
               }
               await new Promise((r) => setTimeout(r, 5000))
             }
-          } else await checkJson(api, app, row)
+          } else data = await checkJson(api, app, row)
         } catch (error) {
           record(app, row, '不一致', error instanceof Error ? error.message : String(error))
           throw error
@@ -250,7 +288,9 @@ export function runTable(app: App, rows: Row[]): void {
           record(app, row, '跳过', row.waitFor!.why)
           ctx.skip()
         }
-        record(app, row, row.kind === 'raw' ? '已验（CSV）' : row.kind === 'sse' ? '已验（事件流）' : '已验')
+        if (row.kind === 'raw') record(app, row, '已验（CSV）')
+        else if (row.kind === 'sse') record(app, row, '已验（事件流）')
+        else record(app, row, '已验', '', coverage(data))
         // 要等异步数据的行，单条超时放到等待上限之外
       }, row.waitFor ? row.waitFor.timeoutMs + 30_000 : undefined)
     }
