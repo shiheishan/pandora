@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../common/intent 的 useIntentKey，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 href / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Empty / Input / Skeleton / Switch，依赖 ../../queries 的 useBalance / useSubscriptions，依赖 ../common 的目录、订单、支付弹窗与 LoadError，依赖 ./model 的模式与预览逻辑
+ * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../common/intent 的 useIntentKey / usePlacedOrder / endsIntent，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 href / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Empty / Input / Skeleton / Switch，依赖 ../../queries 的 useBalance / useSubscriptions，依赖 ../common 的目录、订单、支付弹窗与 LoadError，依赖 ./model 的模式与预览逻辑
  * [OUTPUT]: 默认导出 Checkout 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/checkout 的入口：确认订单（门户-03 结账页）。按地址参数进四种模式——新购、续费（含遇改价）、变更套餐（服务端试算折算与退余额）、流量包；左栏选周期 / 容量、优惠码、余额抵扣开关、支付方式，右栏订单预览与提交；下单后交给 common/PayFlow 的支付弹窗
+ * [POS]: portal/screens/checkout 的入口：确认订单（门户-03 结账页）。按地址参数进四种模式——新购、续费（含遇改价）、变更套餐（服务端试算折算与退余额）、流量包；左栏选周期 / 容量、优惠码、余额抵扣开关、支付方式，右栏订单预览与提交；下单后交给 common/PayFlow 的支付弹窗；幂等键成功或 4xx 后丢弃，刚下的待支付单记在 usePlacedOrder，同样的请求 30 分钟内再点就重开它的支付，不下第二张
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -15,7 +15,7 @@ import { Button, Card, Empty, Input, Skeleton, Switch } from '../../../ui'
 import { useBalance, useSubscriptions } from '../../queries'
 import { LoadError } from '../common/Blocks'
 import { methodKey, periodName, periodOf, perGbNote, savingAmount, usePackCatalog, usePaymentMethods, usePlans } from '../common/catalog'
-import { useIntentKey } from '../common/intent'
+import { endsIntent, useIntentKey, usePlacedOrder } from '../common/intent'
 import { orderCreatedSchema } from '../common/orders'
 import { PaymentModal, type PayState } from '../common/PayFlow'
 import { compactBytes, formatDate } from '../common/traffic'
@@ -151,6 +151,7 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
   const [methodChoice, setMethodChoice] = useState<string | null>(null)
   const [payState, setPayState] = useState<PayState | null>(null)
   const intentKey = useIntentKey()
+  const placed = usePlacedOrder<Extract<PayState, { phase: 'redirect' }>>()
 
   // 流量包模式里换容量等于换商品
   const pack = mode.kind === 'pack' ? (packs.data?.find((p) => p.id === packId) ?? mode.pack) : null
@@ -200,10 +201,8 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
 
   const create = useMutation({
     mutationFn: ({ path, body, key }: { path: string; body: Record<string, unknown>; key: string }) => api.post(path, orderCreatedSchema, { body, idempotencyKey: key }),
-    onSuccess: (order) => {
-      void client.invalidateQueries({ queryKey: ['portal', 'orders'] })
-      if (order.status === 'fulfilled') setPayState({ phase: 'done', orderId: order.order_id })
-      else if (method) setPayState({ phase: 'redirect', orderId: order.order_id, orderNo: order.order_no, amount: order.payable_amount, currency: order.currency, method })
+    onError: (e) => {
+      if (endsIntent(e)) intentKey.reset()
     },
   })
 
@@ -213,8 +212,24 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
 
   function submit() {
     const request = orderRequest(target, pack ? null : priceId, quote.balanceApplied, couponValid ? appliedCode : null)
-    // 一次用户意图一个幂等键：同样的请求（含重试、双击、稍后再点）复用，改了任何参数才换新键
-    create.mutate({ ...request, key: intentKey(request) })
+    // 刚下过同样的单、还没过期：关掉支付弹窗后再点，重开这张单的支付，不下第二张
+    const again = placed.recall(request)
+    if (again && method) return setPayState({ ...again, method })
+    // 一次用户意图一个幂等键：双击、断网或 5xx 重试复用；成功或 4xx 拒绝后丢弃
+    create.mutate(
+      { ...request, key: intentKey(request) },
+      {
+        onSuccess: (order) => {
+          intentKey.reset()
+          void client.invalidateQueries({ queryKey: ['portal', 'orders'] })
+          if (order.status === 'fulfilled') return setPayState({ phase: 'done', orderId: order.order_id })
+          if (!method) return
+          const pay = { phase: 'redirect', orderId: order.order_id, orderNo: order.order_no, amount: order.payable_amount, currency: order.currency, method } as const
+          placed.remember(request, pay)
+          setPayState(pay)
+        },
+      },
+    )
   }
 
   function applyCoupon() {

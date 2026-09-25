@@ -15,7 +15,8 @@ export const PAGES: Readonly<Record<PageKey, readonly [string, string]>> = {
   orders: ['我的订单', ''],
   wallet: ['钱包', '余额、充值与礼品卡'],
   referral: ['邀请返利', '好友通过您的链接购买，您获得佣金'],
-  tickets: ['工单支持', '工作日 10 分钟内首次响应'],
+  // 设计稿写「工作日 10 分钟内首次响应」，后端 SLA 是普通 12 小时、紧急 1 小时（support.slaHours），不做时效承诺
+  tickets: ['工单支持', '提交问题后，客服会在这里回复你'],
   messages: ['消息', ''],
   help: ['帮助中心', ''],
   account: ['账号安全', ''],

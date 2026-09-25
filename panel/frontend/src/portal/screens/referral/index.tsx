@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 ApiError，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../ui 的 Button / Card / ConfirmModal / Empty / Input / QueryView / Skeleton / StatStrip / useToast，依赖 ../../queries 的 useCommission / useSiteConfig，依赖 ../common 的 LoadError / copyText / useIntentKey，依赖 ./api 与 ./model
+ * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 ApiError，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../ui 的 Button / Card / ConfirmModal / Empty / Input / QueryView / Skeleton / StatStrip / useToast，依赖 ../../queries 的 useCommission / useSiteConfig，依赖 ../common 的 LoadError / copyText / useIntentKey / endsIntent，依赖 ./api 与 ./model
  * [OUTPUT]: 默认导出 Referral 页面组件（登记表 React.lazy 的目标）
  * [POS]: portal/screens/referral 的入口：邀请返利（门户-06）。顶部邀请横幅（链接 /?invite= 与邀请码两个复制按钮），四格统计，左列「使用佣金」（全部转入余额 + 申请提现），右列「佣金记录」，左列下方补「邀请记录」（契约待补·前端，不展示 risk_flag）；可用佣金以账本为准（5.A D-F-1），两个写操作各一个幂等键
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -11,7 +11,7 @@ import { Button, Card, ConfirmModal, Empty, Input, QueryView, Skeleton, StatStri
 import { useCommission, useSiteConfig, type Commission } from '../../queries'
 import { LoadError } from '../common/Blocks'
 import { copyText } from '../common/clients'
-import { useIntentKey } from '../common/intent'
+import { endsIntent, useIntentKey } from '../common/intent'
 import { useInvite, useRequestWithdrawal, useTransferCommission } from './api'
 import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, withdrawBlock } from './model'
 import css from './Referral.module.css'
@@ -94,11 +94,8 @@ function InviteBanner({ ratePercent }: { ratePercent: number | undefined }) {
 
 // ---------------------------------------------------------------------------
 // 使用佣金：两个动作用同一个「可用佣金」（账本余额 − 在途提现），失败文案照后端
-// 幂等键：断网与 5xx 保留键（重试要拿回同一结果）；成功或 4xx 业务拒绝即动作结束、丢弃键，
-// 否则稍后同额同账号再申请会被后端原样回放那次拒绝
+// 幂等键：断网与 5xx 保留键（重试要拿回同一结果）；成功或 4xx 业务拒绝即动作结束、丢弃键（common/intent）
 // ---------------------------------------------------------------------------
-const isRejection = (e: unknown) => e instanceof ApiError && e.status >= 400 && e.status < 500
-
 function UseCard({ summary }: { summary: Commission['summary'] }) {
   const toast = useToast()
   const transfer = useTransferCommission()
@@ -123,7 +120,7 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
       setTransferError(null)
       toast(`已将 ${money(request.amount)} 转入余额`)
     } catch (e) {
-      if (isRejection(e)) transferKey.reset()
+      if (endsIntent(e)) transferKey.reset()
       setConfirming(false)
       setTransferError(e instanceof Error ? e.message : '转入失败，请稍后重试')
     }
@@ -146,7 +143,7 @@ function UseCard({ summary }: { summary: Commission['summary'] }) {
           setPayout('')
         },
         onError: (e) => {
-          if (isRejection(e)) withdrawKey.reset()
+          if (endsIntent(e)) withdrawKey.reset()
           const fieldMsg = e instanceof ApiError ? e.fields.payout_detail : undefined
           setErrors(fieldMsg ? { payout: fieldMsg } : { form: e.message || '提交失败，请稍后重试' })
         },

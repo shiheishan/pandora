@@ -212,6 +212,17 @@
   overflow-wrap: anywhere;
 }
 
+.askLink {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.askLink:hover {
+  color: var(--text);
+}
+
 .more {
   width: 100%;
   height: 44px;

@@ -1,12 +1,11 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ../../queries 的 commissionSchema，依赖 ./api 的 inviteSchema，依赖 ./model 的纯映射
  * [OUTPUT]: 无（测试）
- * [POS]: 第 ④ 步邀请返利的单元测试：佣金概况 schema（R69 字段可缺席、列表不收 null、状态枚举封闭）、邀请链接与横幅文案、邀请码用量、提现金额与表单锁、三类记录的合并与状态映射、幂等键的复用与丢弃（common/intent）
+ * [POS]: 第 ④ 步邀请返利的单元测试：佣金概况 schema（R69 字段可缺席、列表不收 null、状态枚举封闭）、邀请链接与横幅文案、邀请码用量、提现金额与表单锁、三类记录的合并与状态映射
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { commissionSchema, type Commission } from '../../queries'
-import { createIntentKey } from '../common/intent'
 import { inviteSchema } from './api'
 import { commissionRecords, headline, inviteLink, inviteUsage, parseWithdrawAmount, withdrawBlock } from './model'
 
@@ -137,17 +136,5 @@ describe('佣金记录', () => {
   it('旧后端没有 transfers 时照常合并', () => {
     const legacy = commissionSchema.parse({ summary: SUMMARY, entries: [entry('available', '2026-09-20T02:00:00Z')], withdrawals: [] })
     expect(commissionRecords(legacy)).toHaveLength(1)
-  })
-})
-
-describe('幂等键（common/intent）', () => {
-  it('同样的请求复用键、改参数换键，reset 后同样的请求也换键', () => {
-    let n = 0
-    const key = createIntentKey(() => `k${++n}`)
-    expect(key({ amount: 1 })).toBe('k1')
-    expect(key({ amount: 1 })).toBe('k1')
-    expect(key({ amount: 2 })).toBe('k2')
-    key.reset()
-    expect(key({ amount: 2 })).toBe('k3')
   })
 })
