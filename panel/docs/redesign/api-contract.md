@@ -756,6 +756,7 @@
 - 设计：后台-04「新建套餐」向导 5 步。映射：第 1 步 name / code / description；第 2 步 traffic_gb / max_devices（留空 = 不限）；第 3 步 prices（设计只让填「价格（元）」+ 周期，前端固定 `currency:"CNY"` 并 ×100；想卖 USD 需要补币种选择，见下文「后端有、设计缺」）；第 4 步 pool_ids（chip 的名称和数量来自 GET v1/plans/{id}/pools 或节点池列表）；第 5 步开关「保存后立即发布上架」→ `publish`。
 
 #### PUT v1/plans/{id}/complete — 向导一次改完套餐
+- **修订 R92（2026-09-24，后台前端一 ⑤ 核对 adminops/plan_wizard_update.go，协调会话未逐条复现）**：三处现状（前端如实提示，后端修复列入遗留）：① `max_devices: null` 表示「不动」，传 0 过不了正整数校验，所以向导**改不回「不限设备」**；② 额度或线路变化时开新版本并发布，新版本的宽限期、权益等高级设置回到默认，**权益会丢**；③ 请求里没有 `visible_from` / `visible_until`，而套餐资料整体写入，**上架时间窗会被清空**。
 - **修订 R1（2026-09-24，后端一 0651cb2）**：权限 `catalog.publish`、reauth「是」；整个编辑在一个事务里完成，发布失败时资料、价格、新草稿版本全部回滚；`prices` 只同步本次清单里出现的币种的公开价，用户组价与其他币种不动，`[]` 等同 `null`。原文「`[]` = 全部归档」「不是原子操作」作废。
 - 状态：现有 `panel/internal/api/admin/catalog.go:64 updatePlanComplete`
 - 权限：`catalog.write`｜reauth：否（见 D-C-2）｜幂等：是 `catalog_plan_update_complete`
@@ -3203,3 +3204,4 @@
 | R89 | 2026-09-24 | 门户前端、协调会话 | 门户账号页不显示用户组，用户 ID 用 uuid 前 8 位 |
 | R90 | 2026-09-24 | 后台前端二 | 插槽保存内容为空时 dropped 为 null |
 | R91 | 2026-09-24 | 后台前端二 | 公告两个时间缺值为 null；知识库限定套餐名的来源 |
+| R92 | 2026-09-24 | 后台前端一 | 编辑向导改不回不限设备、新版本高级设置回默认、上架时间窗被清空 |
