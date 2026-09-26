@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 node_refusal.go 的 NodeStatusRefusal（状态机报错翻译）、service.go 的 lockLegacyConfigRelease、node_admin.go 的 GetAdminNode / nodeVersionConflict / validateAdminUUID / StableProtocolReadySQL、server_admin.go 的 ValidServerStatusTransition，依赖 platform 的 db/audit/httpx；写 nodes、servers
+// [INPUT]: 依赖 node_refusal.go 的 NodeStatusRefusal（状态机报错翻译）、config_publish.go 的 lockLegacyConfigRelease、node_admin.go 的 GetAdminNode / nodeVersionConflict / validateAdminUUID / StableProtocolReadySQL、server_admin.go 的 ValidServerStatusTransition，依赖 platform 的 db/audit/httpx；写 nodes、servers
 // [OUTPUT]: 对外提供 ActivateNodeInput、ActivateNodeResult、Service.ActivateNode、ProjectNodeLifecycle
 // [POS]: domain/nodefabric 的一步上线（契约后台-07 POST v1/nodes/{id}/activate，R108）：与 node_retire.go 对称，生命周期按 node_transitions 的合法边逐条推进到 active、服务状态按 ProjectNodeLifecycle 投影、服务器同事务进 ready
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

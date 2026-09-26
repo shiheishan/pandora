@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 zod
  * [OUTPUT]: 对外提供订单与收款的封闭枚举（订单 9 态与 7 种 kind、支付尝试 / 入账 / 退款状态、挂账状态与成因、币种）与 zod schema（订单列表行、详情与订单项、支付记录、取消 / 人工开单 / 标记已支付的响应、挂账列表与转入余额响应、支付渠道与启停响应、收入调整行与列表）及类型
- * [POS]: admin/screens/billing 的形状层（纯 zod，不碰 React，tests/mock-billing.test.ts 也用它核对假后端）：照 api-contract.md 后台-05（含修订 R2 / R3 / R32 / R63 / R64 / R66 / R74），并按 domain/adminops/service.go 的 OrderRow / ProviderRow、order_detail.go、revenue.go、billing/late_payment.go、release.go、checkout.go 的 json tag 与迁移里的 CHECK 核对；omitempty 的键写 optional。订单列表行也是用户详情「最近订单」的形状，users/api.ts 从这里取
+ * [POS]: admin/screens/billing 的形状层（纯 zod，不碰 React，tests/mock-admin-billing.test.ts 也用它核对假后端）：照 api-contract.md 后台-05（含修订 R2 / R3 / R32 / R63 / R64 / R66 / R74），并按 domain/adminops/orders.go 的 OrderRow、providers.go 的 ProviderRow、order_detail.go、revenue.go、billing/late_payment.go、release.go、checkout.go 的 json tag 与迁移里的 CHECK 核对；omitempty 的键写 optional。订单列表行也是用户详情「最近订单」的形状，users/api.ts 从这里取
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'

@@ -99,7 +99,7 @@ export function ArrearsTab({ now }: { now: Date }) {
       <div className={css.banner}>
         <div className={css.bannerText}>
           <span className={css.bannerTitle}>挂账</span>
-          <span className={css.small}>订单取消后才到账、或超额扣款的款项暂记在挂账科目。「转入余额」会把这笔钱记入用户余额（贷记），挂账随之关闭。</span>
+          <span className={css.small}>订单取消后才到账、续费或变更时订阅已结束、或超额扣款的款项暂记在挂账科目。「转入余额」会把这笔钱记入用户余额（贷记），挂账随之关闭。</span>
         </div>
         <div className={css.total}>
           <span className={css.small}>待处理合计</span>
@@ -118,7 +118,7 @@ export function ArrearsTab({ now }: { now: Date }) {
             <Empty
               bare
               title={filter === 'suspense' ? '没有待处理的挂账' : filter === 'applied' ? '还没有转入余额的挂账' : '没有挂账'}
-              description="订单取消后才到账或多扣了款时，系统会把这笔钱记在这里，等你处理。"
+              description="订单取消后才到账、订阅已结束后才到账或多扣了款时，系统会把这笔钱记在这里，等你处理。"
             />
           }
         >

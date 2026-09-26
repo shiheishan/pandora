@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 node_refusal.go 的 NodeStatusRefusal（状态机报错翻译）、service.go 的 lockLegacyConfigRelease 与 node_admin.go 的 GetAdminNode / nodeVersionConflict，依赖 platform 的 db/audit/httpx；写 nodes、node_identities、node_tasks
+// [INPUT]: 依赖 node_refusal.go 的 NodeStatusRefusal（状态机报错翻译）、config_publish.go 的 lockLegacyConfigRelease 与 node_admin.go 的 GetAdminNode / nodeVersionConflict，依赖 platform 的 db/audit/httpx；写 nodes、node_identities、node_tasks
 // [OUTPUT]: 对外提供 RetireNodeInput、Service.RetireNode
 // [POS]: domain/nodefabric 的一步退役（契约后台-07 POST v1/nodes/{id}/retire）：生命周期按 node_transitions 的合法边推进、服务状态置 retired、吊销身份、结束在途任务，之后 DELETE 可直接销毁
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
