@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/realtime 的跨进程广播、同包 uniproxy.go 的配置组装与用户下发
+// [INPUT]: 依赖 platform/realtime 的跨进程广播、同包 uniproxy_config.go 的配置组装与 uniproxy.go 的用户下发
 // [OUTPUT]: 对外提供 StreamHub、StreamConn 与节点长连接注册；AttachStream / AttachRealtime、NotifyNodeChanged、NotifyUsersChanged（租户级 node.users.changed）、RegisterStream / WatchNodeChanges
 // [POS]: domain/nodefabric 的推送层：配置或用户变更后经 Valkey 通知持有连接的进程，再推给节点端；尽力而为，失败由轮询兜底
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

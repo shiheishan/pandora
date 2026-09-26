@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 node_identities / nodes.server_token_issued_* / bootstrap_tokens 三处凭据事实，依赖 platform/db 与 httpx
 // [OUTPUT]: 对外提供 NodeCredentialState 及其三个子结构、Service.NodeCredentials
-// [POS]: nodefabric 的节点凭据只读视图，服务后台节点抽屉「身份与令牌」；签发与吊销仍在 enrollment.go / uniproxy.go / service.go
+// [POS]: nodefabric 的节点凭据只读视图，服务后台节点抽屉「身份与令牌」；签发与吊销仍在 enrollment.go / uniproxy.go / bootstrap.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric

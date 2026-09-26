@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 plan_wizard.go / plan_wizard_update.go 的向导用例、catalog.go 的 UpdatePlanVersion，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 与 catalog_sales_capability_test.go 的 staticSalesCapability
+// [INPUT]: 依赖 plan_wizard.go / plan_wizard_update.go 的向导用例、catalog_version.go 的 UpdatePlanVersion，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 与 catalog_sales_capability_test.go 的 staticSalesCapability
 // [OUTPUT]: 对外提供 TestPlanWizardKeepsSettingsPG18、TestPlanThrottleDecoupledPG18（run-pg18-gates.sh 的 catalog_sales 域）
 // [POS]: adminops 第 4 阶段套餐修复的 PG18 门禁：向导编辑的三态与继承、上架时间窗保留（R92），限速与超额策略解耦（R99，迁移删掉 plan_versions_throttle_exact）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

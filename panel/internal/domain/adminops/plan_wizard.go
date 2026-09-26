@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 catalog.go 的 prepareCreatePlanInput/validatePrice/validateVersionSemantics 校验与 createPlanTx/createPlanVersionTx/updatePlanVersionTx/createPlanPriceTx/publishPlanVersionTx/loadPlanTx 事务体，依赖 platform/db、platform/httpx
+// [INPUT]: 依赖 catalog*.go 的 prepareCreatePlanInput/validatePrice/validateVersionSemantics 校验与 createPlanTx/createPlanVersionTx/updatePlanVersionTx/createPlanPriceTx/publishPlanVersionTx/loadPlanTx 事务体（版本在 catalog_version.go，价格在 catalog_price.go），依赖 platform/db、platform/httpx
 // [OUTPUT]: 对外提供 CreatePlanComplete、CreatePlanCompleteInput/Output、PlanPriceInput；包内提供 bindPoolsTx、wizardVersionSemantics 与 bytesPerGB
 // [POS]: adminops 套餐向导的「一次建成」：事务外校验后把建壳、版本、额度、线路、价格、发布编排进同一个事务；plan_wizard_update.go 是它的「一次改完」兄弟，并复用 bindPoolsTx
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

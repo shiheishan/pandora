@@ -5,7 +5,10 @@
 
 成员清单
 router.go: Deps 与 NewRouter：匿名组（登录注册、站点配置、外观、回调）与需登录组，限流与幂等挂在各自路由上；新建订单 / 发起支付 / 充值挂 billing.checkout、礼品卡兑换挂 marketing.giftcard.redeem 降级开关门（排在幂等之前，支付回调不挂）
-handlers.go: handlers 结构与核心处理器：探针、注册登录登出、me、改密（保留当前会话）、站点配置、套餐目录（带限速 throttle_kbps、卖点 highlights 与推荐 recommended、重置策略与续费、变更开关）、续费、优惠码试算（套餐 / 流量包二选一，回券面）、下单支付与支付回调、工单、钱包充值、邀请与佣金（概况带付费好友、累计佣金与转出记录）、提现、我的公告
+handlers.go: handlers 结构与核心处理器：探针、注册登录登出、me、改密（保留当前会话）、站点配置、优惠码试算（套餐 / 流量包二选一，回券面）、下单支付与支付回调、钱包充值、续费、我的公告
+plans.go: 套餐目录（从 handlers.go 拆出）：只列可见、已发布且有 CNY / USD 适用价格的套餐，带限速 throttle_kbps、卖点 highlights 与推荐 recommended、重置策略与续费、变更开关
+tickets.go: 工单（从 handlers.go 拆出）：分类、提单、列表与详情、回复、关闭，写操作走 support 的 *Atomic 并写出预制响应，成功后给本人推实时事件
+referral.go: 邀请与分销佣金（从 handlers.go 拆出）：邀请码、佣金概况（付费好友、累计佣金与转出记录）、提现申请
 helpers.go: 包内共用小工具（签名十六进制解析等）
 selfservice.go: 自助小接口：佣金转余额、会话列表与踢下线（只作用于门户会话）、工单撤回、快捷登录签发与消费
 subscribe.go: 订阅分发端点 /{prefix}/{token}

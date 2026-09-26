@@ -3,7 +3,7 @@
 Go 1.26 + PostgreSQL 18 + Valkey 8 + React/TypeScript/Vite 面板前端（panel/frontend，按设计稿重写中，嵌入 panel/web 后在两个网关根 / 下发）
 
 <directory>
-panel/ - 面板：public/admin/node 三个 HTTP 网关 + agent 节点代理，计费账本、节点编排、审计、安装发布链 (7子目录: cmd, internal, migrations, deploy, web, docs, tests；frontend 重写中)
+panel/ - 面板：public/admin/node 三个 HTTP 网关 + agent 节点代理，计费账本、节点编排、审计、安装发布链 (8子目录: cmd, internal, migrations, deploy, web, docs, tests, tools；frontend 重写中)
 pdnd/ - Pandora node：NativeCore 数据面，一个二进制承载 13 个协议，兼容内核仅在 compat 构建下按需链接 (10子目录: kernel, core, internal, node, panel, outbound, route, release, cmd, tools)
 nodeagent/ - aegis-nodeagent：pdnd 的陈旧祖先，go.mod 与 pdnd 同为 github.com/aegispanel/nodeagent，panel/deploy/systemd 留有其单元与 override，但 build-release.sh 不打包、安装脚本不安装不启用；测试机在跑的 aegis-nodeagent 来源查清前保留 (4子目录: core, node, panel, tools)
 docs/ - 全仓库级文档：AI 铁律、密钥轮换、发布物绑定、验证交接 (0子目录)
@@ -260,7 +260,7 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 
 # 本项目适配说明
 
-- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api（含 admin、public）/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric/billing/appearance/support/adminops/plugin/content、panel/internal/platform/pg18test、panel/internal/platform/sourcetest、panel/internal/platform/httpx、panel/internal/api/node、panel/cmd 下的 aegis-admin/aegis-adminctl/aegis-public、panel/web、panel/deploy、panel/frontend 及其 dev（含 dev/mock、dev/mock/admin、dev/mock/portal）与 src 下的 admin（含 admin/screens 及已做页面的模块目录 dash/tickets/marketing/users/nodes/content/plans/system/billing/security）/portal（含 portal/screens 及已做页面的 common/overview/subs/plans/checkout/orders/wallet/referral/tickets/messages/help/account）/shell/core/ui/styles/showcase、pdnd、pdnd/kernel、pdnd/core、nodeagent。其余目录按逆向流在进入时补建。
+- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api（含 admin、public）/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric/billing/appearance/support/adminops/plugin/content、panel/internal/platform/pg18test、panel/internal/platform/sourcetest、panel/internal/platform/releasejournal、panel/internal/platform/clientauth/ca42runner、panel/internal/middleware、panel/tools/refactorcheck、panel/internal/platform/httpx、panel/internal/api/node、panel/cmd 下的 aegis-admin/aegis-adminctl/aegis-public/pandora-cic-journal、panel/web、panel/deploy、panel/frontend 及其 dev（含 dev/mock、dev/mock/admin、dev/mock/portal）与 src 下的 admin（含 admin/screens 及已做页面的模块目录 dash/tickets/marketing/users/nodes/content/plans/system/billing/security）/portal（含 portal/screens 及已做页面的 common/overview/subs/plans/checkout/orders/wallet/referral/tickets/messages/help/account）/shell/core/ui/styles/showcase、pdnd、pdnd/kernel、pdnd/core、nodeagent。其余目录按逆向流在进入时补建。
 - L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]；TS/TSX 用模板里的 `/** */`。Go 文件多已带中文设计注释，L3 加在其上方（中间空一行，不成为包文档），不改写原注释；带 `//go:build` 的文件，L3 放在构建约束与空行之后。
 - L3 按逆向流渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性播种（2026-09-23 实测：Go 1038 个、TS/TSX 102 个；已有 L3 头的 Go 19 个、TS/TSX 16 个）。
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。

@@ -4,10 +4,15 @@
 管理后台的读写用例。与 billing / identity 分工：那两个包承载业务不变量（账本配平、会话吊销），这里负责把后台要看的数据拼好、把后台的写操作编排成带审计的事务。同一种行（订单行、用户行）只有一份查询形状，列表与详情复用它，避免「一处补了字段、另一处漏了」。
 
 成员清单
-service.go: Service 与构造；概览（含昨日收入、近 7 天新订阅、节点在线数）、改用户状态（revokeUserLogins 吊销会话与 refresh，与批量停用共用）、订单列表（orderRowSelectSQL / scanOrderRow 是 OrderRow 的唯一形状，带余额抵扣、收款渠道（入账优先、其次最近一次支付尝试）与人工单标识 manual；状态多值走 billing.ParseOrderStatuses 白名单，可按 user_id 精确筛）、套餐与渠道（渠道卡带租户时区今日分币种成交、近 24 小时成功率、最近回调时间）、降级开关
+service.go: Service 与构造（SalesCapability 销售闸门注入）；概览（含昨日收入、近 7 天新订阅、节点在线数）、改用户状态（revokeUserLogins 吊销会话与 refresh，与批量停用共用）、套餐列表
+orders.go: 订单列表（从 service.go 拆出）：orderRowSelectSQL / scanOrderRow 是 OrderRow 的唯一形状，带余额抵扣、收款渠道（入账优先、其次最近一次支付尝试）与人工单标识 manual；状态多值走 billing.ParseOrderStatuses 白名单，可按 user_id 精确筛
+providers.go: 支付渠道卡（从 service.go 拆出）：租户时区今日分币种成交、近 24 小时成功率、最近回调时间，启停带审计
+switches.go: 降级开关读写（从 service.go 拆出），数据库拒绝切换时按约束名给中文原因，PG 原句只进日志（R116）
 audit.go: 审计日志读模型与导出，auditRowSelect / auditCond 是列表、计数、导出共用的唯一形状；带对象可读名（含流量包名）、认证强度（00080）与来源 IP 密文，导出上限 50000 行并同事务记 audit.export
 risk.go: 风控共享 IP 聚类：列聚类与成员、标记为正常（ip_cluster_reviews，30 天）、批量停用（suspended，跳过自己 / 持后台角色者 / 非成员 / 已停用，单事务、末尾核对有效管理员）
-catalog.go: 套餐目录读写与上下架；套餐资料带卖点 highlights 与推荐 recommended（R100，新建可选、改资料整体覆盖）；版本语义里限速与超额策略解耦，新写入的策略只收 suspend（R99）；每个用例拆成「事务外校验（prepare*Input / validate*）+ *Tx 事务体」，事务体只假定输入已校验、在调用方事务里执行，所以向导能把多步编排进一个事务；版本行带建版本人邮箱
+catalog.go: 套餐目录读写：套餐资料带卖点 highlights 与推荐 recommended（R100，新建可选、改资料整体覆盖）、归档套餐，以及目录共用的输入输出类型与助手；每个用例拆成「事务外校验（prepare*Input / validate*）+ *Tx 事务体」，事务体只假定输入已校验、在调用方事务里执行，所以向导能把多步编排进一个事务；版本行带建版本人邮箱
+catalog_version.go: 版本生命周期（从 catalog.go 拆出）：建草稿、改版本语义（限速与超额策略解耦，新写入的策略只收 suspend，R99；旧 pool_ids 一律拒绝）、发布（套餐与版本双令牌、价格覆盖可见用户组、有池且有可服务节点、过 P0B 销售闸门）
+catalog_price.go: 价格（从 catalog.go 拆出）：只有新建与归档，新建过 P0B 销售闸门，归档带乐观锁；createPlanPriceTx 供向导编排
 traffic_packs.go: 流量包目录管理（后台-04 流量包 tab）：列表（带已售单数）、新建、修改、上下架；表没有 row_version，乐观锁用触发器维护的 updated_at；新建、修改、上架过 P0B 销售闸门，下架不过；每个写操作同事务记 traffic_pack.* 审计
 plan_highlights.go: 卖点规则（R100）唯一出处：去首尾空白、最多 5 条、每条 1–40 字、不空不重，字段键 highlights / highlights.{i}，与资料校验错误合并成一次 422；新建、改资料与两个向导共用，数据库 00088 只兜条数与 NULL
 plan_wizard.go / plan_wizard_update.go: 一次建成 / 一次改完一个可售套餐，都是单事务（缺陷 12 及其同类）：任一步失败库里不留半成品，新建成功返回建成后的详情；改完的设备数与限速是三态 OptionalInt（缺省不动、null 不限），滚出的新版本经 inheritVersionSemantics 继承当前版本全部高级设置，资料写入保留上架时间窗（R92）；卖点与推荐在「一次改完」里缺省 = 不动（R100）

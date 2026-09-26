@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 service.go 的 orderRowSelectSQL / scanOrderRow（订单行唯一形状），读 orders / order_items / users / payment_intents / payments / refunds，依赖 platform/db、platform/httpx
+// [INPUT]: 依赖 orders.go 的 orderRowSelectSQL / scanOrderRow（订单行唯一形状），读 orders / order_items / users / payment_intents / payments / refunds，依赖 platform/db、platform/httpx
 // [OUTPUT]: 对外提供 OrderDetail、OrderItemDetail、OrderPaymentHistory 及 GetOrder、GetOrderPaymentHistory
 // [POS]: domain/adminops 的订单详情读模型：列表行 + 不可变快照 + 开单人；支付证据单独放在更高一级的 billing.payment.read 之下
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
