@@ -6,7 +6,9 @@
 成员清单
 router.go: Deps 与 NewRouter：全局中间件链，/v1 挂 admin.writes 只读门（middleware.AdminWritesGate），根 / 与 /assets/* 经 webapp 下发后台前端，/v1 登录分组与已登录分组；已登录分组按拆分前的原顺序调用各 router_<模块>.go 的 register*Routes，顺序不要重排
 router_<模块>.go: 按模块分段的路由表，每个 register*Routes(r, d, h) 声明一段路由的权限、重认证与幂等 scope。dashboard 仪表盘与收入；appearance 主题、插槽、插件钩子；notify Telegram、邮件设置、通知模板；users 批量运营、流量重置、用户状态、用户组、设备数；marketing 礼品卡、优惠券、分销；billing 挂账、订单（人工开单与标记已支付都挂重认证）、支付渠道、余额调账；catalog 套餐（含 registerCatalogPlanUpdate，套餐类新路由加这里）与流量包（registerTrafficPackRoutes，写接口 catalog.publish + 重认证 + 幂等）；security 审计、系统状态、风控、降级开关；nodes 节点分组、节点、服务器（含 nodeBatchStatusIdempotencyScope）；content 公告与知识库；support 工单与快捷回复
-handlers.go: handlers 结构与核心处理器：登录、me（追加邮箱、显示名、角色）、用户（替用户重置密码的原因可选、限 500 字，R101）、订阅换链接、订单、节点列表（含 country_code、在线人数与 IP 按租户设备识别窗口统计、近 24h 流量、控制节点探针的 CPU / 内存，按 sort_order, node_no 排序）、工单队列与处理、降级开关（切换后向管理端频道发 switches.changed）；旧状态接口的生命周期投影委托 nodefabric.ProjectNodeLifecycle
+handlers.go: handlers 结构与核心处理器：登录、me（追加邮箱、显示名、角色）、用户（替用户重置密码的原因可选、限 500 字，R101）、订阅换链接、订单、套餐、支付渠道、降级开关（切换后向管理端频道发 switches.changed）
+nodes.go: 节点处理器（从 handlers.go 拆出）：节点列表（含 country_code、在线人数与 IP 按租户设备识别窗口统计、近 24h 流量、控制节点探针的 CPU / 内存，按 sort_order, node_no 排序；心跳只在 Go 侧判定，下发状态交给 subscription.DeliveryState）、安装与服务端令牌、旧状态接口（退役 / 销毁先取发布锁再锁节点行、吊销身份，改状态报错按约束名翻译）、吊销身份、发布配置、改协议、协议 schema、指标、REALITY 密钥对、删除
+tickets.go: 客服工单处理器（从 handlers.go 拆出）：负责人目录、队列、详情、回复、指派、改状态、人工升级，写操作走 support 的 *Atomic 并写出预制响应
 helpers.go: 包内共用小工具：域常量、请求级超时
 access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两路归并，分类规则展示与筛选共用；outcome 筛选（error = 非 success）
 audit_log.go: 审计日志列表与 CSV 导出（security.audit.read + ops.export + reauth），导出日期区间格式错回 422，自由文本列做公式防护
@@ -19,7 +21,7 @@ traffic_packs.go: 流量包目录管理（后台-04 流量包 tab）：列表、
 manual_order.go / late_payment.go: 人工开单（settlement: grant 赠送 / pending 待用户支付 / offline 线下已收款，带 reference 当场结清）与标记线下已收款、挂账转余额
 coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id 非 UUID 回中性 404）、批量生券、礼品卡与批次一次性导出、分销（总览带累计佣金、邀请数与计佣范围 scope，参数缺行回退 billing.CommissionDefault*）与提现审批
 node_admin.go: 节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步上线 nodeActivate（R108，node.lifecycle + node_activate 幂等，不要求重认证；提交后通知该节点，服务器这次才进 ready 时再发租户级 node.users.changed）/ 一步退役 nodeRetire（node.lifecycle + 重认证 + node_retire 幂等），节点身份与令牌状态 nodeIdentity
-node_routing.go: 全局出站与分流 GET / PUT v1/nodes/routing（revision 乐观并发、持 node-config-release 锁、推进全部未退役节点并逐个通知）；validateRoutingPayload 是单节点与全局路由共用的校验
+node_routing.go: 全局出站与分流 GET / PUT v1/nodes/routing（revision 乐观并发、持 node-config-release 锁、推进全部未退役节点并逐个通知）；validateRoutingPayload 是单节点与全局路由共用的校验；单节点路由 nodeGetRouting / nodeSetRouting 也在这里（从 handlers.go 挪来，保存在事务提交后才通知节点）
 server.go / pools.go: 服务器（物理宿主）读写与状态、节点分组（列表带组内节点 members、绑定套餐名 plan_names 与「仅限用户组」allowed_user_groups；新建 / 编辑带 allowed_user_group_ids 时经 pool_user_groups.go 处理；套餐版本换绑池、池名单变化提交后发租户级 node.users.changed）
 pool_user_groups.go: 节点池「仅限用户组」名单（R104，表 node_pool_user_groups）：请求带了字段才要求近期重认证（路由上的 reauth 中间件只能整条挂，这里按字段挂）、校验格式与租户内存在、整体替换、名单有变化时写 node_pool.user_groups_changed 前后对照审计
 announce.go / content.go: 公告（草稿 / 定时 / 撤回，按套餐与用户组定向）、知识库版本

@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 domain/nodefabric 的 ValidateRoutingMatcher 与 NotifyNodeChanged，依赖 platform 的 db/audit/httpx；读写 node_outbounds / node_routes（node_id 为空即全局）
-// [OUTPUT]: 对外提供 validateRoutingPayload、handlers.nodeGetGlobalRouting / nodeSetGlobalRouting
-// [POS]: api/admin 的全局出站与分流（契约后台-07 GET / PUT v1/nodes/routing）；与单节点路由 nodeSetRouting 共用同一个校验函数，生效口径（节点私有规则在前、全局在后）在 nodefabric 的两个加载函数里
+// [OUTPUT]: 对外提供 validateRoutingPayload、routingOutbound / routingRule / routingPayload，handlers 的 nodeGetGlobalRouting / nodeSetGlobalRouting 与单节点的 nodeGetRouting / nodeSetRouting；包内 loadGlobalOutboundTags
+// [POS]: api/admin 的出站与分流（NODE-012）：全局路由（契约后台-07 GET / PUT v1/nodes/routing）与单节点路由（从 handlers.go 挪来）共用同一个校验函数；单节点路由保存在事务提交后才通知节点；生效口径（节点私有规则在前、全局在后）在 nodefabric 的两个加载函数里
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -10,10 +10,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
@@ -303,4 +305,229 @@ func (h *handlers) nodeSetGlobalRouting(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	httpx.OK(w, map[string]any{"ok": true, "revision": revision, "affected_nodes": len(nodeIDs)})
+}
+
+// --- 出站与分流（NODE-012）---
+
+type routingOutbound struct {
+	Tag      string          `json:"tag"`
+	Type     string          `json:"type"`
+	Settings json.RawMessage `json:"settings"`
+}
+
+type routingRule struct {
+	Priority    int             `json:"priority"`
+	Matcher     json.RawMessage `json:"matcher"`
+	OutboundTag string          `json:"outbound_tag"`
+	Enabled     bool            `json:"enabled"`
+	Note        string          `json:"note"`
+}
+
+type routingPayload struct {
+	RowVersion int64             `json:"row_version"`
+	Outbounds  []routingOutbound `json:"outbounds"`
+	Routes     []routingRule     `json:"routes"`
+}
+
+// nodeGetRouting 读取某节点的出站与分流。
+func (h *handlers) nodeGetRouting(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	tenantID := httpx.TenantIDFrom(r.Context())
+	out := routingPayload{Outbounds: []routingOutbound{}, Routes: []routingRule{}}
+
+	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(r.Context(), `SELECT row_version FROM nodes
+			WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, id).Scan(&out.RowVersion); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return httpx.NotFoundOrForbidden()
+			}
+			return err
+		}
+		rows, err := tx.Query(r.Context(), `
+			SELECT tag, type, settings FROM node_outbounds
+			 WHERE tenant_id=$1 AND node_id=$2::uuid
+			 ORDER BY sort_order, tag`, tenantID, id)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var o routingOutbound
+			if err := rows.Scan(&o.Tag, &o.Type, &o.Settings); err != nil {
+				return err
+			}
+			out.Outbounds = append(out.Outbounds, o)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		rrows, err := tx.Query(r.Context(), `
+			SELECT priority, matcher, outbound_tag, enabled, coalesce(note,'')
+			  FROM node_routes
+			 WHERE tenant_id=$1 AND node_id=$2::uuid
+			 ORDER BY priority, created_at`, tenantID, id)
+		if err != nil {
+			return err
+		}
+		defer rrows.Close()
+		for rrows.Next() {
+			var x routingRule
+			if err := rrows.Scan(&x.Priority, &x.Matcher, &x.OutboundTag,
+				&x.Enabled, &x.Note); err != nil {
+				return err
+			}
+			out.Routes = append(out.Routes, x)
+		}
+		return rrows.Err()
+	})
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
+		return
+	}
+	httpx.OK(w, out)
+}
+
+// nodeSetRouting 全量替换某节点的出站与分流。
+//
+// 全量而非增量：分流规则是有顺序的整体，增量接口会让「调整顺序」
+// 这种最常见的操作变成一串难以原子化的增删。整体替换在一个事务里完成，
+// 要么全成要么全不成，也不会出现规则指向刚被删掉的出站这种中间态。
+func (h *handlers) nodeSetRouting(w http.ResponseWriter, r *http.Request) {
+	var req routingPayload
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+
+	tags, err := validateRoutingPayload(req.Outbounds, req.Routes)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	tenantID := httpx.TenantIDFrom(r.Context())
+	actor := httpx.PrincipalFrom(r.Context()).UserID
+	if req.RowVersion <= 0 {
+		httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{"row_version": "必须提供正整数版本号"}))
+		return
+	}
+
+	err = h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID, ActorID: actor},
+		func(tx pgx.Tx) error {
+			// Even an empty replacement must target a real Node. Locking the row also
+			// serializes routing replacement with Node lifecycle/move operations.
+			var lockedID string
+			var currentVersion int64
+			if err := tx.QueryRow(r.Context(), `SELECT id FROM nodes
+				WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, id).Scan(&lockedID); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return httpx.NotFoundOrForbidden()
+				}
+				return err
+			}
+			if err := tx.QueryRow(r.Context(), `SELECT row_version FROM nodes
+				WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, id).Scan(&currentVersion); err != nil {
+				return err
+			}
+			if currentVersion != req.RowVersion {
+				return &httpx.Error{Code: httpx.CodeConflict, Message: "节点已被其他管理员修改，请刷新后重试",
+					Fields: map[string]string{"row_version": fmt.Sprintf("current=%d", currentVersion)}}
+			}
+			// 规则可以指向 direct/block、本次提交的私有出站，也可以指向全局出站
+			// （node_id IS NULL）：下发时 LoadRouting 本来就把两者合在一起。
+			// 原先只认前两类，单节点规则没法用「US-LAX-01」这种公共中转（缺陷 18）
+			globalTags, err := loadGlobalOutboundTags(r.Context(), tx, tenantID)
+			if err != nil {
+				return err
+			}
+			for i, x := range req.Routes {
+				tag := strings.ToLower(strings.TrimSpace(x.OutboundTag))
+				if !tags[tag] && !globalTags[tag] {
+					return httpx.Invalid(map[string]string{
+						"routes": fmt.Sprintf("第 %d 条规则指向不存在的出站 %q", i+1, x.OutboundTag)})
+				}
+			}
+			if _, err := tx.Exec(r.Context(),
+				`DELETE FROM node_routes WHERE tenant_id=$1 AND node_id=$2::uuid`,
+				tenantID, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(r.Context(),
+				`DELETE FROM node_outbounds WHERE tenant_id=$1 AND node_id=$2::uuid`,
+				tenantID, id); err != nil {
+				return err
+			}
+			for i, o := range req.Outbounds {
+				settings := o.Settings
+				if len(settings) == 0 {
+					settings = json.RawMessage("{}")
+				}
+				if _, err := tx.Exec(r.Context(), `
+					INSERT INTO node_outbounds (tenant_id, node_id, tag, type, settings, sort_order)
+					VALUES ($1,$2::uuid,$3,$4,$5,$6)`,
+					tenantID, id, o.Tag, o.Type, settings, i*10); err != nil {
+					return err
+				}
+			}
+			for i, x := range req.Routes {
+				matcher := x.Matcher
+				if len(matcher) == 0 {
+					matcher = json.RawMessage("{}")
+				}
+				pri := x.Priority
+				if pri == 0 {
+					pri = (i + 1) * 10
+				}
+				if _, err := tx.Exec(r.Context(), `
+					INSERT INTO node_routes
+					  (tenant_id, node_id, priority, matcher, outbound_tag, enabled, note)
+					VALUES ($1,$2::uuid,$3,$4,$5,$6,nullif($7,''))`,
+					tenantID, id, pri, matcher, x.OutboundTag, x.Enabled, x.Note); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.Exec(r.Context(), `UPDATE nodes SET row_version=row_version+1,
+				config_source_generation=config_source_generation+1
+				WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$3`, tenantID, id, currentVersion); err != nil {
+				return err
+			}
+			return audit.Write(r.Context(), tx, tenantID, audit.Entry{
+				ActorKind: "admin", ActorID: &actor,
+				Action: "node.routing.update", ResourceType: "node", ResourceID: &id,
+				APIDomain: "admin", Outcome: "success",
+				RequestID: httpx.RequestIDFrom(r.Context()),
+				AfterDigest: map[string]any{
+					"outbounds": len(req.Outbounds), "routes": len(req.Routes),
+				},
+			})
+		})
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	// 提交之后通知节点：原先只递增 config_source_generation，在线节点要等
+	// 下一轮轮询才生效，长连接推送形同虚设（缺陷 18）
+	h.d.Node.NotifyNodeChanged(r.Context(), tenantID, id)
+	httpx.OK(w, map[string]any{"ok": true, "row_version": req.RowVersion + 1})
+}
+
+// loadGlobalOutboundTags 取租户的全局出站 tag（小写），供单节点规则校验引用。
+func loadGlobalOutboundTags(ctx context.Context, tx pgx.Tx, tenantID string) (map[string]bool, error) {
+	rows, err := tx.Query(ctx,
+		`SELECT lower(tag) FROM node_outbounds WHERE tenant_id=$1 AND node_id IS NULL`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, err
+		}
+		out[tag] = true
+	}
+	return out, rows.Err()
 }
