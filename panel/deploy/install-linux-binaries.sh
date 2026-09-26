@@ -133,7 +133,7 @@ stage_file() {
   targets+=("$target_file")
 }
 
-for binary in aegis-public aegis-admin aegis-node aegis-agent aegis-payctl aegis-adminctl aegis-backup-webdav goose; do
+for binary in aegis-public aegis-admin aegis-node aegis-payctl aegis-adminctl aegis-backup-webdav goose; do
   stage_file "$RELEASE_DIR/bin/$binary" "/opt/aegispanel/bin/$binary" 0755
 done
 for node_arch in amd64 arm64; do

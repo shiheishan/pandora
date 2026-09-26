@@ -26,14 +26,13 @@ aegis-public    aegis-admin     aegis-node
    NativeCore：协议、传输、路由、流量统计
 ```
 
-面板按域拆成四个独立的网关进程：
+面板按域拆成三个独立的网关进程：
 
 | 进程 | 职责 |
 |---|---|
 | `aegis-public` | 用户门户与订阅分发 |
 | `aegis-admin` | 管理后台 |
 | `aegis-node` | 节点接入（UniProxy 兼容） |
-| `aegis-agent` | 节点引导 |
 
 数据层用行级安全（RLS）做租户隔离；审计、账本、流量重置等表是追加写，由数据库触发器强制。应用角色 `aegis_app` 是非超级用户且不绕过 RLS。管理端、门户与节点接入都提供 SSE 事件流，跨进程分发走 Redis/Valkey（验证状态见下文门禁）。
 
@@ -225,7 +224,7 @@ cd panel && ./deploy/build-release.sh /tmp/dist
 
 | 目录 | 内容 |
 |---|---|
-| `bin/` | 四个网关 + 运维工具 + goose（迁移工具版本随包固定，不跟 `@latest` 漂移） |
+| `bin/` | 三个网关 + 运维工具 + goose（迁移工具版本随包固定，不跟 `@latest` 漂移） |
 | `deploy/` | 安装、迁移、备份、nginx 渲染脚本与 systemd 单元 |
 | `migrations/` | 全部 SQL 迁移 |
 | `pdnd-dist/` | 节点端二进制 |

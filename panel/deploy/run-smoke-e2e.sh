@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 run-smoke-stack.sh 写在状态目录的 smoke.env 与 gateway.env，依赖同目录 psql.sh（仓库自带、写死容器 aegis-postgres），依赖 ../tests 下的 e2e 脚本、../cmd 下的 aegis-agent 与 aegis-payctl 源码，依赖 sudo、go、python3、timeout
-# [OUTPUT]: 在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，每个脚本一行写进 <状态目录>/e2e-results.md（通过 / 失败 / 超时、OK 与 FAIL 计数、首个失败所在的步骤与原文），各自完整输出在 logs/e2e-*.log；跑产品代码的准备步骤（编 agent、payctl 配渠道）失败也只记一行；脚本失败不影响退出码
+# [INPUT]: 依赖 run-smoke-stack.sh 写在状态目录的 smoke.env 与 gateway.env，依赖同目录 psql.sh（仓库自带、写死容器 aegis-postgres），依赖 ../tests 下的 e2e 脚本、../cmd 下的 aegis-payctl 源码，依赖 sudo、go、python3、timeout
+# [OUTPUT]: 在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，每个脚本一行写进 <状态目录>/e2e-results.md（通过 / 失败 / 超时、OK 与 FAIL 计数、首个失败所在的步骤与原文），各自完整输出在 logs/e2e-*.log；跑产品代码的准备步骤（编译 payctl 并用它配渠道）失败也只记一行；脚本失败不影响退出码
 # [POS]: 第 4 阶段联调冒烟第 ⑤ 步，被 .github/workflows/panel-smoke.yml 在读表与写路径之后调用；只报告，不修脚本、不修 Go，失败原因由协调会话看表与日志后指派
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 这些 e2e 脚本是给「装在 /opt/aegispanel 的 docker-compose 部署」写的：
 # psql 走 /opt/aegispanel/deploy/psql.sh 或仓库的 deploy/psql.sh（读 deploy/.env、
-# docker exec 进 aegis-postgres），agent 在 /opt/aegispanel/bin，日志在
+# docker exec 进 aegis-postgres），日志在
 # /opt/aegispanel/logs。本机没有数据库，它们平时从没人跑。
 #
 # 这里只把它们声明要的环境原样搭出来，脚本一个字不改：
 #   - /opt/aegispanel/deploy 链到仓库的 deploy/，deploy/.env 由网关配置加上库超级账号拼成；
 #   - 起栈时容器名已设成 aegis-postgres、库名带 test 段（admin / uniproxy 的一次性库守卫）；
-#   - aegis-agent 编进 /opt/aegispanel/bin，网关日志按旧文件名链进 /opt/aegispanel/logs；
+#   - 网关日志按旧文件名链进 /opt/aegispanel/logs；
 #   - 易支付渠道用产品工具 aegis-payctl 配好（脚本里写死的测试商户 1001 与测试密钥）；
 #   - 两个一次性库守卫要的确认变量照实给出：冒烟库本来就是跑完即扔的。
 # 这一步要往 /opt 写东西、要写 deploy/.env，所以只肯在 GitHub Actions 的一次性 runner 上跑。
@@ -59,11 +59,10 @@ mkdir -p /opt/aegispanel/bin /opt/aegispanel/logs
 ln -s "$PANEL_DIR/deploy" /opt/aegispanel/deploy
 ln -s "$STATE/logs/aegis-public.log" /opt/aegispanel/logs/public.log
 ln -s "$STATE/logs/aegis-admin.log" /opt/aegispanel/logs/admin.log
-ln -s "$STATE/logs/aegis-node.log" /opt/aegispanel/logs/node.log
 
 RESULTS="$STATE/e2e-results.md"
 : > "$RESULTS"
-# 准备步骤里凡是跑产品代码的（编 agent、payctl 配渠道），失败只记一行，
+# 准备步骤里凡是跑产品代码的（编译 payctl 并用它配渠道），失败只记一行，
 # 让依赖它的脚本自己报出来：本步不因产品代码的问题变红
 prep() {
   local what="$1"; shift
@@ -72,8 +71,8 @@ prep() {
     echo "| 准备：$what | 失败 | | | | $(printf '%s' "$out" | tail -1 | tr '|`' "/'" | cut -c1-300) |" >> "$RESULTS"
   fi
 }
-prep "编译 aegis-agent 与 aegis-payctl" \
-  env -C "$PANEL_DIR" CGO_ENABLED=0 go build -mod=readonly -o /opt/aegispanel/bin/ ./cmd/aegis-agent ./cmd/aegis-payctl
+prep "编译 aegis-payctl" \
+  env -C "$PANEL_DIR" CGO_ENABLED=0 go build -mod=readonly -o /opt/aegispanel/bin/ ./cmd/aegis-payctl
 
 PSQL=/opt/aegispanel/deploy/psql.sh
 TENANT="$("$PSQL" -X -tAc 'SELECT id FROM tenants ORDER BY created_at LIMIT 1' | tr -d '[:space:]')"
@@ -103,7 +102,7 @@ export EPAY_KEY="$EPAY_TEST_KEY" EPAY_PID="$EPAY_TEST_PID"
 export RL_PROBE=$(( ${AUTH_PER_MIN:-14} + 10 ))
 
 # e2e.sh 放最后：它的限流探测会把登录额度打满
-SCRIPTS=(admin_e2e.sh epay_e2e.sh node_e2e.sh support_e2e.sh uniproxy_e2e.sh e2e.sh)
+SCRIPTS=(admin_e2e.sh epay_e2e.sh support_e2e.sh uniproxy_e2e.sh e2e.sh)
 # 从一份输出里取：OK 数、FAIL 数、首个失败所在的步骤、首个失败原文（连同下一行细节）
 summarize() {
   python3 - "$1" <<'PY'
