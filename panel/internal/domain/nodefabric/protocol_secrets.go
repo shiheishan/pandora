@@ -1,4 +1,4 @@
-// [INPUT]: 依赖同包 protocol_schema.go 的 sensitiveProtocolKey 与 rejectDuplicateJSONKeys，依赖 encoding/json 与 reflect
+// [INPUT]: 依赖同包 protocol_schema.go 的 sensitiveProtocolKey 与 protocol_validate.go 的 rejectDuplicateJSONKeys，依赖 encoding/json 与 reflect
 // [OUTPUT]: 对外提供 PreserveRedactedProtocolSecrets：PATCH 时把请求里缺席的敏感键按原路径从库里补回，挂在开关上的密钥（secretGates）开关变了不补
 // [POS]: domain/nodefabric 的协议密钥保全，是 RedactProtocolConfig 的逆运算；被 node_admin.go 的 PatchAdminNode 调用
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

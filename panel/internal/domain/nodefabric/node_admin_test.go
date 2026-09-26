@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 node_admin.go 与 protocol_schema.go 的校验函数，依赖 platform/sourcetest 按名取 Service.PatchAdminNode 与整包源码
+// [INPUT]: 依赖 node_admin.go 与 protocol_schema.go / protocol_validate*.go 的校验函数，依赖 platform/sourcetest 按名取 Service.PatchAdminNode 与整包源码
 // [OUTPUT]: 对外提供 TestPoolMoveBumpsEffectiveReleaseGeneration、TestValidateNewNodeProtocolFailClosed、TestValidateNewNodeProtocolRejectsInvalidHost、TestStableProtocolServingGateMatchesSchemaCatalog、TestStableProtocolReadySQLRejectsDynamicAlias、TestValidServingTransition、TestValidateAdminNodeNameUsesRunes、TestOptionalNullableString、TestLegacyNodeStatusGateSeparatesControlAndLogicalNodes、TestNormalizeCountryCode
 // [POS]: nodefabric 后台节点编辑的单元与源码契约：换池重物化有效配置、新写入协议 fail closed、服务状态迁移与名称、国家码规范化
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
