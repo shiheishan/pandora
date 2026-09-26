@@ -18,7 +18,7 @@ idempotencybind/: 数据库持有的唯一资源绑定器，幂等键与资源�
 logging/: 带脱敏的结构化日志，log/slog
 pg18test/: PG18 集成测试打开一次性库的公共护栏，只被 *_pg18_test.go 引用；见 pg18test/CLAUDE.md
 realtime/: 服务端推送 SSE，realtime.go 广播与订阅、listener.go 把数据库变更通知转成 topic（quota_balances 已移出监听，00076）、connections.go 经 Valkey 汇总各进程在线连接数；见 realtime/CLAUDE.md
-releasejournal/: 发布 journal v3，12 文件，model/receipt/export 通用，store/session/publisher/bootstrap/artifact_boundary/root_capability 为 linux 专用实现
+releasejournal/: 发布日志原语，16 个非测试文件：model / model_v3 / receipt / export 跨平台，store（v1 命令行，拆成 store / store_journal / store_fs）、session、v3 发布器与引导等为 linux 专用；见 releasejournal/CLAUDE.md
 server/: 全部网关共享的 HTTP server 生命周期
 sourcetest/: 源码契约测试按「包 + 声明名」取源码的测试辅助包，函数在包内换文件不影响断言，名字找不到即失败；只被 *_test.go 引用；见 sourcetest/CLAUDE.md
 token/: 访问令牌签发与校验，每域独立密钥
