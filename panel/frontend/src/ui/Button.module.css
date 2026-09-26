@@ -1,0 +1,160 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Button.tsx 用到的类名
+ * [POS]: ui/Button 的样式；只读令牌，不写色值
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.button {
+  --h: var(--h-control);
+  --pad: var(--pad-button);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  height: var(--h);
+  padding: 0 var(--pad);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text);
+  font-weight: var(--fw-regular);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+
+.button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 规范：键盘焦点是 2px 底色间隙 + 2px 外圈 */
+.button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--focus-ring);
+}
+
+/* --- 尺寸 ---------------------------------------------------------------- */
+.md {
+  --h: var(--h-control);
+}
+
+.sm {
+  --h: var(--h-control-sm);
+  --pad: calc(var(--pad-button) - 2px);
+}
+
+.xs {
+  --h: var(--h-control-xs);
+  --pad: calc(var(--pad-button) - 4px);
+}
+
+.dialog {
+  --h: var(--h-dialog-action);
+  --pad: calc(var(--pad-button) - 2px);
+}
+
+/* 后台工具栏（28）与紧凑按钮（24）用 12px 字 */
+:root[data-app='admin'] .sm,
+:root[data-app='admin'] .xs {
+  font-size: var(--fs-caption);
+}
+
+/* --- 变体 ---------------------------------------------------------------- */
+.primary,
+.danger {
+  padding: 0 calc(var(--pad) + 2px);
+  font-weight: var(--fw-medium);
+}
+
+.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.primary:not(:disabled):hover {
+  background: var(--accent-hover);
+}
+
+.outline {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: var(--fw-medium);
+}
+
+.outline:not(:disabled):hover {
+  background: var(--focus-halo);
+}
+
+.secondary {
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+
+.secondary:not(:disabled):hover {
+  background: var(--surface-3);
+}
+
+.ghost {
+  --pad: calc(var(--pad-button) - 4px);
+  color: var(--text-2);
+}
+
+.ghost:not(:disabled):hover {
+  color: var(--text);
+}
+
+.danger {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.link {
+  height: auto;
+  padding: 0;
+  border: 0;
+  color: var(--link);
+  text-decoration: var(--link-decoration);
+  text-decoration-color: var(--link-underline);
+  text-underline-offset: 3px;
+}
+
+.link:not(:disabled):hover {
+  color: var(--link-hover);
+}
+
+.block {
+  width: 100%;
+}
+
+/* --- 进行中 -------------------------------------------------------------- */
+.busy {
+  cursor: progress;
+}
+
+/* 进行中不是不可用：保持可读，只是不能再点 */
+.busy:disabled {
+  opacity: 0.75;
+  cursor: progress;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

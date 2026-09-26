@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/public 的 NewRouter
+// [OUTPUT]: 对外提供 可执行入口 aegis-public：装配用户门户网关并启动通知扫描、插件投递、预留过期等后台循环
+// [POS]: panel/cmd 的 public 网关进程；履约后的节点通知经 nodefabric.NotifyUsersChanged 发出；identity 的注册验证码经这里接上 notify（SetVerificationMailer）；通知收件人哈希用 crypto.NotifyRecipientSalt（与 admin 同盐），订阅审计仍用 SubscriptionAuditSalt
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Command aegis-public 是用户门户 API 网关（Public 域）。
 package main
 
@@ -21,6 +26,7 @@ import (
 	"github.com/aegispanel/aegis/internal/domain/content"
 	"github.com/aegispanel/aegis/internal/domain/giftcard"
 	"github.com/aegispanel/aegis/internal/domain/identity"
+	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	"github.com/aegispanel/aegis/internal/domain/notify"
 	"github.com/aegispanel/aegis/internal/domain/plugin"
 	"github.com/aegispanel/aegis/internal/domain/subscription"
@@ -113,11 +119,11 @@ func run() error {
 
 	// 付款履约之后立刻告诉节点「用户集合变了」，否则要等节点那轮 15 秒
 	// 轮询，用户付完款会有十几秒连不上。billingSvc 建得比 rtHub 早，
-	// 所以用 setter 而不是构造参数。
-	billingSvc.SetUsersChangedNotifier(func(ctx context.Context, tenantID string) {
-		rtHub.Publish(ctx, realtime.ChannelNodeAll(tenantID),
-			realtime.TopicNodeUsersChanged, map[string]any{})
-	})
+	// 所以用 setter 而不是构造参数。发布只经 nodefabric 的 NotifyUsersChanged
+	// 一处：public 网关不跑节点编排，这个 Service 只用来发通知，不需要签名器
+	nodeNotifier := nodefabric.NewService(pool, nil)
+	nodeNotifier.AttachRealtime(rtHub)
+	billingSvc.SetUsersChangedNotifier(nodeNotifier.NotifyUsersChanged)
 
 	// 数据库变更监听：任何一张被关注的表发生写入，都会自动推到前端。
 	// 这样新增功能不必记得「顺手发条推送」——覆盖面由触发器保证。
@@ -133,7 +139,10 @@ func run() error {
 	// Telegram 与 SMTP 并列注册：到期提醒、流量预警这些既有通知
 	// 只认 template_code，多一个渠道不用改它们一行代码。
 	tgSender := notify.NewDynamicTelegramSender(pool, envelope, middleware.DefaultTenantID)
-	notifySvc := notify.New(pool, log, subSalt, mailSender, tgSender)
+	// 收件人哈希用通知专用盐（与 admin 网关同一个），不借订阅审计盐
+	notifySvc := notify.New(pool, log, crypto.NotifyRecipientSalt(cfg.MasterKey), mailSender, tgSender)
+	// 注册验证码经 notify 投递：注册第 1 步在同一事务里排队，提交后催派发
+	identitySvc.SetVerificationMailer(notifySvc)
 	appearanceSvc := appearance.New(pool)
 	// 扫描间隔 5 分钟：到期提醒按天计，流量预警的阈值也不会分钟级跨越，
 	// 扫太密只是白白压库。

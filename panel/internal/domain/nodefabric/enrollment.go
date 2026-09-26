@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 node_enrollments / node_identities / bootstrap_tokens / nodes，依赖 platform 的 audit/crypto/db/httpx
+// [OUTPUT]: 对外提供接入签名规范串（CanonicalEnrollment*）、LookupEnrollmentCredential、两段式接入 BeginEnrollment / GetEnrollment / CommitEnrollment / AbortEnrollment
+// [POS]: domain/nodefabric 的节点两段式接入：候选身份与运行令牌在提交时一次落定，服务端令牌签发记录随之重置为「接入所得、无签发人」
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
@@ -460,9 +465,9 @@ func (s *Service) CommitEnrollment(ctx context.Context, tenantID string, in Comm
 		}
 		if err := tx.QueryRow(ctx, `SELECT status,coalesce(server_id::text,''),coalesce(public_ipv4::text,'')
 				FROM nodes WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, nodeID).
-				Scan(&nodeStatus, &actualServerID, &nodePublicIP); err != nil {
-				return err
-			}
+			Scan(&nodeStatus, &actualServerID, &nodePublicIP); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(ctx, `SELECT state,candidate_serial,public_key,fingerprint,runtime_token_hash,
 			commit_request_sha256,expires_at FROM node_enrollments WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, in.EnrollmentID).
 			Scan(&state, &serial, &pub, &fp, &runtimeHash, &priorCommit, &expiry); err != nil {
@@ -495,7 +500,10 @@ func (s *Service) CommitEnrollment(ctx context.Context, tenantID string, in Comm
 				VALUES ($1,$2::uuid,$3,$4,$5,$6,now()+interval '90 days')`, tenantID, nodeID, serial, pub, spiffe, fp); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE nodes SET server_token_hash=$3 WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, nodeID, runtimeHash); err != nil {
+			// 签发记录随令牌一起换：接入时发的令牌没有签发人（由安装令牌换得）
+			if _, err := tx.Exec(ctx, `UPDATE nodes SET server_token_hash=$3,
+				server_token_issued_at=now(), server_token_issued_by=NULL
+				WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, nodeID, runtimeHash); err != nil {
 				return err
 			}
 			cmd, err := tx.Exec(ctx, `UPDATE nodes SET status='attesting',row_version=row_version+1

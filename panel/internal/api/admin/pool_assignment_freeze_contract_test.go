@@ -1,17 +1,19 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取 handlers.assignNodePool 与 handlers.deleteNodePool 的源码
+// [OUTPUT]: 对外提供 TestDirectPoolAssignmentIsFrozenUntilEffectiveReleases、TestPoolDeletionLocksParentBeforeDependencyCounts
+// [POS]: api/admin 节点池的并发契约：直接改分组被冻结到有效发布就绪、删池先锁父行再数依赖
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestDirectPoolAssignmentIsFrozenUntilEffectiveReleases(t *testing.T) {
-	body, err := os.ReadFile("pools.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
+	src := sourcetest.Load(t, ".").Decl("handlers.assignNodePool")
 	for _, needle := range []string{
 		`SELECT pool_id::text FROM nodes`,
 		`FOR UPDATE`,
@@ -27,11 +29,7 @@ func TestDirectPoolAssignmentIsFrozenUntilEffectiveReleases(t *testing.T) {
 }
 
 func TestPoolDeletionLocksParentBeforeDependencyCounts(t *testing.T) {
-	body, err := os.ReadFile("pools.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
+	src := sourcetest.Load(t, ".").Decl("handlers.deleteNodePool")
 	advisoryAt := strings.Index(src, `"node-config-release/"+tenantID`)
 	lockAt := strings.Index(src, `SELECT id::text FROM node_pools`)
 	countAt := strings.Index(src, `SELECT (SELECT count(*) FROM nodes`)

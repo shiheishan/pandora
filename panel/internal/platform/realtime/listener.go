@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 pgxpool 的 LISTEN 连接与本包 Hub
+// [OUTPUT]: 对外提供 StartDBListener；包内提供 topicFor 表名到前端主题的映射
+// [POS]: platform/realtime 的数据库变更监听：notify_change 触发器的负载转成前端主题（traffic_pack_grants → subscriptions.changed，traffic_packs → plans.changed）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package realtime
 
 // 数据库变更监听。
@@ -44,11 +49,13 @@ func topicFor(table string) string {
 	switch table {
 	case "orders":
 		return "orders.changed"
-	case "subscriptions", "subscription_credentials", "quota_balances":
+	// quota_balances 已移出变更通知（迁移 00076）：它随每次流量上报更新、
+	// 又没有 user_id，挂着就是给全租户的高频广播
+	case "subscriptions", "subscription_credentials", "traffic_pack_grants":
 		return "subscriptions.changed"
 	case "tickets", "ticket_messages":
 		return "tickets.changed"
-	case "plans", "plan_versions", "prices":
+	case "plans", "plan_versions", "prices", "traffic_packs":
 		return "plans.changed"
 	case "nodes":
 		return "nodes.changed"

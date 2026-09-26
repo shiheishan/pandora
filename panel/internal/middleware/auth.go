@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/token 的令牌校验、platform/db 的租户事务、platform/httpx 的 Principal 与错误模型；读 sessions / role_bindings / roles / role_permissions，写 sessions.last_seen_at
+// [OUTPUT]: 对外提供 Authenticate（解析 Bearer 并装配 Principal）
+// [POS]: middleware 的认证入口：会话有效性、节流刷新 last_seen_at（R62，5 分钟一次）与实时权限在同一事务里取齐；是否必须登录交给 RequireAuth
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package middleware
 
 import (
@@ -21,6 +26,15 @@ const sessionValiditySQL = `
 	   AND id = $2::uuid
 	   AND user_id = $3::uuid
 	   AND audience = $4`
+
+// sessionTouchSQL 是会话 last_seen_at 的唯一写入点（R62）：两个网关都没有刷新令牌接口，
+// 认证中间件是每个带令牌的请求必经之处。节流到 5 分钟一次，大多数请求不写；
+// 并发请求撞上同一行时，后到的在前一个提交后重判 WHERE 落空，不会连写两次。
+const sessionTouchSQL = `
+	UPDATE sessions SET last_seen_at = now()
+	 WHERE tenant_id = $1
+	   AND id = $2::uuid
+	   AND last_seen_at < now() - interval '5 minutes'`
 
 type authTransactionRunner interface {
 	InTx(context.Context, db.Scope, func(pgx.Tx) error) error
@@ -91,6 +105,9 @@ func Authenticate(pool authTransactionRunner, iss *token.Issuer, log *slog.Logge
 					}
 					if sessionRevoked {
 						return nil
+					}
+					if _, err := tx.Exec(ctx, sessionTouchSQL, claims.TenantID, claims.SessionID); err != nil {
+						return err
 					}
 				}
 

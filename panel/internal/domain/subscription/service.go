@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 subscription_credentials / subscriptions / quota_balances / traffic_pack_grants 表，依赖 platform/crypto、platform/db
+// [OUTPUT]: 对外提供 Service、New 与订阅分发用例：ListLinks、Rotate、Authenticate、ListNodes、ListOwnedNodePreviews（两者按订阅主人过滤限定了用户组的节点池，R104）、DeliveryState（后台节点列表对下发规则的复述，含无池节点）、LoadUsage、Log 等
+// [POS]: subscription 的订阅分发核心；LoadUsage 的总量 = 套餐本期额度 + 用户流量包剩余（D-E-1），供 Subscription-Userinfo
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package subscription 实现订阅分发。
 //
 // 这是整条链路的最后一环：用户付了钱、节点也跑起来了，但只有订阅链接
@@ -408,7 +413,7 @@ func (s *Service) ListNodes(ctx context.Context, tenantID string, c *Credential)
 	var out []Node
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var err error
-		out, err = listEligibleNodesTx(ctx, tx, tenantID, c.PlanVersionID)
+		out, err = listEligibleNodesTx(ctx, tx, tenantID, c.UserID, c.PlanVersionID)
 		return err
 	})
 	return out, err
@@ -444,7 +449,7 @@ func (s *Service) ListOwnedNodePreviews(ctx context.Context, tenantID, userID, r
 			}
 			return err
 		}
-		nodes, err := listEligibleNodesTx(ctx, tx, tenantID, planVersionID)
+		nodes, err := listEligibleNodesTx(ctx, tx, tenantID, userID, planVersionID)
 		if err != nil {
 			return err
 		}
@@ -476,11 +481,16 @@ const HeartbeatFreshWindow = 10 * time.Minute
 // 管理后台的复述。两处必须同步 —— 有一条契约测试锁着这件事，
 // 因为「同一个规则写在两处、改了一处」正是这类问题最常见的死法。
 //
+// pooled    = 划进了节点池（pool_id IS NOT NULL；SQL 里是 JOIN plan_node_pools）
 // everSeen  = 曾经上报过心跳（last_heartbeat_at IS NOT NULL）
 // beatFresh = 心跳在 HeartbeatFreshWindow 之内
-func DeliveryState(servingStatus string, everSeen, beatFresh bool) (bool, string) {
+func DeliveryState(servingStatus string, pooled, everSeen, beatFresh bool) (bool, string) {
 	if servingStatus != "active" {
 		return false, "服务状态不是 active，不下发"
+	}
+	if !pooled {
+		// 节点用户列表（ListNodeUsers）同样不下发任何人（R104）
+		return false, "未划入节点池，不服务任何用户"
 	}
 	if !everSeen {
 		return false, "从未上报过心跳，不下发 —— 多半是建了没装 agent，" +
@@ -495,7 +505,11 @@ func DeliveryState(servingStatus string, everSeen, beatFresh bool) (bool, string
 
 // listEligibleNodesTx 是订阅下发和面板预览共用的唯一资格查询。
 // 任何维护状态、协议稳定性或套餐资源池规则都只能在这里修改，避免两处漂移。
-func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, planVersionID string) ([]Node, error) {
+//
+// 要带上用户：节点池可以限定用户组（R104），同一个套餐版本下不同组的用户
+// 拿到的节点可能不同。谓词与节点拉用户（nodefabric.ListNodeUsers）共用
+// nodefabric.PoolAdmitsUserSQL。userID 必须是订阅的主人。
+func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planVersionID string) ([]Node, error) {
 	out := []Node{}
 	rows, err := tx.Query(ctx, `
 			SELECT COALESCE(NULLIF(n.display_name, ''), n.name),
@@ -529,8 +543,10 @@ func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, planVersionID
 			   -- 超时的降级处理放在下面 Go 侧。
 			   AND n.last_heartbeat_at IS NOT NULL
 			   AND `+nodefabric.StableProtocolReadySQL("n")+`
+			   -- 池限定了用户组时，订阅的主人必须在名单内的组里（R104）
+			   AND `+nodefabric.PoolAdmitsUserSQL("n.tenant_id", "n.pool_id", "$4::uuid")+`
 			 ORDER BY n.sort_order, n.id`,
-		tenantID, planVersionID, HeartbeatFreshWindow.String())
+		tenantID, planVersionID, HeartbeatFreshWindow.String(), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -601,7 +617,18 @@ func (s *Service) LoadUsage(ctx context.Context, tenantID string, c *Credential)
 		if err != nil {
 			return err
 		}
-		u.Total = granted
+		// 流量包余额（D-E-1）挂在用户身上，套餐额度用完后接着用：客户端显示的
+		// 总量 = 套餐本期额度 + 流量包剩余，已用量只算套餐部分，剩余正好是两者之和。
+		var packRemaining int64
+		if err := tx.QueryRow(ctx, `
+			SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
+			  FROM traffic_pack_grants g
+			  JOIN subscriptions s ON s.tenant_id = g.tenant_id AND s.user_id = g.user_id
+			 WHERE g.tenant_id = $1 AND s.id = $2::uuid`,
+			tenantID, c.SubscriptionID).Scan(&packRemaining); err != nil {
+			return err
+		}
+		u.Total = granted + packRemaining
 		// 客户端把 upload+download 相加当作已用量。
 		// 我们只记总量，全部计入 download 而不是对半分 ——
 		// 编造一个看似合理的上下行比例，会让用户在客户端里看到假数据。

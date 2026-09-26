@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 catalog*.go 的 prepareCreatePlanInput/validatePrice/validateVersionSemantics 校验与 createPlanTx/createPlanVersionTx/updatePlanVersionTx/createPlanPriceTx/publishPlanVersionTx/loadPlanTx 事务体（版本在 catalog_version.go，价格在 catalog_price.go），依赖 platform/db、platform/httpx
+// [OUTPUT]: 对外提供 CreatePlanComplete、CreatePlanCompleteInput/Output、PlanPriceInput；包内提供 bindPoolsTx、wizardVersionSemantics 与 bytesPerGB
+// [POS]: adminops 套餐向导的「一次建成」：事务外校验后把建壳、版本、额度、线路、价格、发布编排进同一个事务；plan_wizard_update.go 是它的「一次改完」兄弟，并复用 bindPoolsTx
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
@@ -25,8 +30,8 @@ import (
 // 更要命的是新建弹窗里根本没有价格和流量字段，第一次用的人填完保存，
 // 会理所当然地以为套餐建好了。
 //
-// 这里把五步合成一次调用。失败就把已经建出来的部分删掉，对调用方
-// 要么得到一个完整可售的套餐，要么什么都没发生 —— 不留半成品。
+// 这里把五步合成一次调用、一个事务。对调用方要么得到一个完整可售的
+// 套餐，要么什么都没发生 —— 不留半成品。
 
 // PlanPriceInput 是套餐向导里的一档价格。
 type PlanPriceInput struct {
@@ -56,6 +61,9 @@ type CreatePlanCompleteInput struct {
 	VisibleGroupIDs      []string `json:"visible_group_ids"`
 	PurchaseLimitPerUser *int     `json:"purchase_limit_per_user"`
 	StockTotal           *int     `json:"stock_total"`
+	// 卖点与推荐（R100），可选，缺省为空与 false
+	Highlights  []string `json:"highlights"`
+	Recommended bool     `json:"recommended"`
 
 	// --- 卖的是什么 ---
 	// TrafficGB 为 nil 表示不限流量；0 也是不限（前端留空即可）。
@@ -77,6 +85,7 @@ type CreatePlanCompleteInput struct {
 }
 
 type CreatePlanCompleteOutput struct {
+	// Plan 是建成（含版本、价格与发布结果）之后的详情。
 	Plan      *CatalogPlanDetail `json:"plan"`
 	VersionID string             `json:"version_id"`
 	PriceIDs  []string           `json:"price_ids"`
@@ -86,14 +95,19 @@ type CreatePlanCompleteOutput struct {
 const bytesPerGB = 1024 * 1024 * 1024
 
 // CreatePlanComplete 建套餐、配额度、加价格、绑节点组、发布，一步到位。
+//
+// 整个编排在一个事务里（与 UpdatePlanComplete 同理，缺陷 12 的同类）：此前
+// 每一步各自提交，失败时靠「归档刚建的套餐」补救 —— 归档不是删除，留下一个
+// 已归档的空壳占着 code；补救本身也失败时，只能在报错里请管理员手工清理。
+// 现在任何一步失败，库里什么都不会多出来。
 func (s *Service) CreatePlanComplete(ctx context.Context, tenantID string,
 	in CreatePlanCompleteInput) (*CreatePlanCompleteOutput, error) {
 
+	// 能在事务外判的都先判：失败时一行都不碰。
 	if err := validateWizardInput(&in); err != nil {
 		return nil, err
 	}
-
-	plan, err := s.CreatePlan(ctx, tenantID, CreatePlanInput{
+	planInput := CreatePlanInput{
 		ActorID: in.ActorID, Code: in.Code, Name: in.Name,
 		Description: in.Description, Visibility: in.Visibility,
 		VisibleGroupIDs:  in.VisibleGroupIDs,
@@ -101,31 +115,90 @@ func (s *Service) CreatePlanComplete(ctx context.Context, tenantID string,
 		AllowUpgrade:         in.AllowUpgrade,
 		PurchaseLimitPerUser: in.PurchaseLimitPerUser,
 		StockTotal:           in.StockTotal, SortOrder: in.SortOrder,
-	})
-	if err != nil {
+		Highlights: in.Highlights, Recommended: in.Recommended,
+	}
+	if err := prepareCreatePlanInput(&planInput); err != nil {
+		return nil, err
+	}
+	prices := make([]CreatePriceInput, 0, len(in.Prices))
+	for _, p := range in.Prices {
+		price := CreatePriceInput{
+			ActorID: in.ActorID, Currency: p.Currency, UnitAmount: p.UnitAmount,
+			BillingInterval: p.BillingInterval, IntervalCount: p.IntervalCount,
+			TrialDays: p.TrialDays,
+		}
+		if err := validatePrice(price); err != nil {
+			return nil, err
+		}
+		prices = append(prices, price)
+	}
+	// 加价格与发布都受销售开关控制
+	if len(prices) > 0 || in.Publish {
+		if err := s.requireP0BSales(); err != nil {
+			return nil, err
+		}
+	}
+	semantics := wizardVersionSemantics(in)
+	if err := validateVersionSemantics(semantics); err != nil {
 		return nil, err
 	}
 
-	// 从这里开始任何一步失败，都要把已经建出来的套餐收掉。
-	// 半成品比没有更糟：它在列表里和正常套餐没有区别。
-	rollback := func(cause error, step string) error {
-		if _, e := s.ArchivePlan(ctx, tenantID, plan.ID, in.ActorID, plan.RowVersion); e != nil {
-			// 回滚也失败：如实报出来，让人知道有个残留要手工清理。
-			return httpx.New(httpx.CodeInternal, fmt.Sprintf(
-				"%s失败：%v；自动清理也失败了，请手工归档套餐 %s（%s）",
-				step, cause, plan.Code, plan.ID))
+	out := &CreatePlanCompleteOutput{PriceIDs: make([]string, 0, len(prices))}
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
+		planID, err := createPlanTx(ctx, tx, tenantID, planInput)
+		if err != nil {
+			return err
 		}
-		if he, ok := cause.(*httpx.Error); ok {
-			return he
+		version, err := s.createPlanVersionTx(ctx, tx, tenantID, planID, in.ActorID)
+		if err != nil {
+			return err
 		}
-		return httpx.New(httpx.CodeBadRequest, step+"失败："+cause.Error())
-	}
+		out.VersionID = version.ID
+		semantics.ExpectedRowVersion = version.RowVersion
+		// 不在语义里传 PoolIDs：UpdatePlanVersion 把节点池绑定划给了专用端点
+		// （validateVersionUpdatePoolContract），这里用 bindPoolsTx 单独绑。
+		if _, err := s.updatePlanVersionTx(ctx, tx, tenantID, planID, version.ID, semantics); err != nil {
+			return err
+		}
+		if _, err := bindPoolsTx(ctx, tx, tenantID, version.ID, in.PoolIDs); err != nil {
+			return err
+		}
+		for _, price := range prices {
+			row, err := createPlanPriceTx(ctx, tx, tenantID, planID, price)
+			if err != nil {
+				return err
+			}
+			out.PriceIDs = append(out.PriceIDs, row.ID)
+		}
 
-	version, err := s.CreatePlanVersion(ctx, tenantID, plan.ID, in.ActorID)
+		if in.Publish {
+			// 发布用的两个乐观锁令牌就地读：本事务刚把它们各推进了若干格。
+			var planRow, versionRow int64
+			if err := tx.QueryRow(ctx, `SELECT p.row_version, v.row_version
+				FROM plans p JOIN plan_versions v ON v.tenant_id=p.tenant_id AND v.plan_id=p.id
+				WHERE p.tenant_id=$1 AND p.id=$2::uuid AND v.id=$3::uuid`,
+				tenantID, planID, version.ID).Scan(&planRow, &versionRow); err != nil {
+				return err
+			}
+			if _, _, err := s.publishPlanVersionTx(ctx, tx, tenantID, planID, version.ID,
+				in.ActorID, planRow, versionRow); err != nil {
+				return err
+			}
+			out.Published = true
+		}
+
+		out.Plan = &CatalogPlanDetail{Versions: []VersionRow{}, Prices: []PriceRow{}}
+		return loadPlanTx(ctx, tx, tenantID, planID, out.Plan)
+	})
 	if err != nil {
-		return nil, rollback(err, "创建套餐版本")
+		return nil, catalogResult(err)
 	}
+	return out, nil
+}
 
+// wizardVersionSemantics 把向导的「流量 / 设备 / 限速 / 重置策略」翻成版本语义。
+// 流量与设备数不填或填 0 都是不限，不写配额行。
+func wizardVersionSemantics(in CreatePlanCompleteInput) VersionSemanticsInput {
 	quotas := make([]QuotaInput, 0, 2)
 	if in.TrafficGB != nil && *in.TrafficGB > 0 {
 		quotas = append(quotas, QuotaInput{
@@ -139,64 +212,27 @@ func (s *Service) CreatePlanComplete(ctx context.Context, tenantID string,
 			Unit: "count", Period: "cycle",
 		})
 	}
-
 	strategy := in.QuotaResetStrategy
 	if strategy == "" {
 		strategy = "billing_cycle"
 	}
-	versionRow, err := s.UpdatePlanVersion(ctx, tenantID, plan.ID, version.ID,
-		VersionSemanticsInput{
-			ActorID: in.ActorID, ExpectedRowVersion: version.RowVersion,
-			QuotaResetStrategy: strategy, QuotaResetDay: in.QuotaResetDay,
-			GraceKeepsService:    true,
-			RenewalExtendsPeriod: true,
-			RenewalResetsQuota:   true,
-			RenewalKeepsAddons:   true,
-			MaxDevices:           in.MaxDevices,
-			ThrottleKbps:         in.ThrottleKbps,
-			OveragePolicy:        "suspend", // 流量用完即停服；合法值只有 suspend/throttle/metered_billing
-			Quotas:               quotas,
-			// 不在这里传 PoolIDs：UpdatePlanVersion 明确把节点池绑定划给了
-			// 专用端点（validateVersionUpdatePoolContract），传了会被拒。
-			// 下面用 bindPoolsToFreshVersion 单独绑。
-		})
-	if err != nil {
-		return nil, rollback(err, "配置额度与节点分组")
+	// 设备数 0 与留空同义：都是不限。版本语义只认 null 或正整数，0 原样传下去会 422。
+	devices := in.MaxDevices
+	if devices != nil && *devices == 0 {
+		devices = nil
 	}
-
-	if len(in.PoolIDs) > 0 {
-		if err := s.bindPoolsToFreshVersion(ctx, tenantID, version.ID, in.PoolIDs); err != nil {
-			return nil, rollback(err, "绑定节点分组")
-		}
-		versionRow++ // 绑定把版本行推进了一格，发布时的乐观锁要跟上
+	return VersionSemanticsInput{
+		ActorID:            in.ActorID,
+		QuotaResetStrategy: strategy, QuotaResetDay: in.QuotaResetDay,
+		GraceKeepsService:    true,
+		RenewalExtendsPeriod: true,
+		RenewalResetsQuota:   true,
+		RenewalKeepsAddons:   true,
+		MaxDevices:           devices,
+		ThrottleKbps:         in.ThrottleKbps, // 全程限速，null = 不限，与超额策略无关（R99）
+		OveragePolicy:        "suspend",       // 流量用完即停服；新写入只收这一种（R99）
+		Quotas:               quotas,
 	}
-
-	priceIDs := make([]string, 0, len(in.Prices))
-	for i, p := range in.Prices {
-		row, err := s.CreatePlanPrice(ctx, tenantID, plan.ID, CreatePriceInput{
-			ActorID: in.ActorID, Currency: p.Currency, UnitAmount: p.UnitAmount,
-			BillingInterval: p.BillingInterval, IntervalCount: p.IntervalCount,
-			TrialDays: p.TrialDays,
-		})
-		if err != nil {
-			return nil, rollback(err, fmt.Sprintf("创建第 %d 档价格", i+1))
-		}
-		priceIDs = append(priceIDs, row.ID)
-	}
-
-	out := &CreatePlanCompleteOutput{
-		Plan: plan, VersionID: version.ID, PriceIDs: priceIDs,
-	}
-	if !in.Publish {
-		return out, nil
-	}
-
-	if _, _, err := s.PublishPlanVersion(ctx, tenantID, plan.ID, version.ID,
-		in.ActorID, plan.RowVersion, versionRow); err != nil {
-		return nil, rollback(err, "发布套餐")
-	}
-	out.Published = true
-	return out, nil
 }
 
 // validateWizardInput 在动手建任何东西之前先把话说清楚。
@@ -259,17 +295,10 @@ func validateWizardInput(in *CreatePlanCompleteInput) error {
 
 func ptrInt64(v int64) *int64 { return &v }
 
-// bindPoolsToFreshVersion 给一个刚创建、尚无任何绑定的 draft 版本绑节点分组。
-//
-// 常规路径是 POST /v1/plans/{id}/pools（internal/api/admin/pools.go），
-// 那里要应付已上架版本的改绑：既有绑定的前后差异审计、并发改绑的确定性
-// 加锁顺序、乐观锁冲突。这里刻意不重复那一套 —— 版本是本次调用刚建出来
-// 的，还没发布，也不可能有别人正在改它，那些保护没有对象。
-//
-// 但校验一条都不能省：分组必须存在且未被禁用，否则套餐上架后用户买到手
-// 会发现没有线路可用 —— 那正是这个向导要杜绝的半成品。
-func (s *Service) bindPoolsToFreshVersion(ctx context.Context,
-	tenantID, versionID string, poolIDs []string) error {
+// bindPoolsTx 在调用方的事务里绑定，返回实际绑定的分组数（去重、去空之后）。
+// 绑定了至少一个分组时版本行推进一格，发布时的乐观锁要跟上。
+func bindPoolsTx(ctx context.Context, tx pgx.Tx,
+	tenantID, versionID string, poolIDs []string) (int, error) {
 
 	seen := map[string]bool{}
 	unique := make([]string, 0, len(poolIDs))
@@ -281,33 +310,33 @@ func (s *Service) bindPoolsToFreshVersion(ctx context.Context,
 		unique = append(unique, id)
 	}
 	if len(unique) == 0 {
-		return nil
+		return 0, nil
 	}
 
-	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		for _, pid := range unique {
-			var ok string
-			err := tx.QueryRow(ctx, `
-				SELECT id::text FROM node_pools
-				 WHERE tenant_id=$1 AND id=$2::uuid AND status <> 'disabled'`,
-				tenantID, pid).Scan(&ok)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.Invalid(map[string]string{
-					"pool_ids": "包含不存在或已禁用的节点分组",
-				})
-			}
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO plan_node_pools (tenant_id, plan_version_id, pool_id)
-				VALUES ($1, $2::uuid, $3::uuid)`, tenantID, versionID, pid); err != nil {
-				return err
-			}
+	for _, pid := range unique {
+		var ok string
+		err := tx.QueryRow(ctx, `
+			SELECT id::text FROM node_pools
+			 WHERE tenant_id=$1 AND id=$2::uuid AND status <> 'disabled'`,
+			tenantID, pid).Scan(&ok)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, httpx.Invalid(map[string]string{
+				"pool_ids": "包含不存在或已禁用的节点分组",
+			})
 		}
-		_, err := tx.Exec(ctx, `
-			UPDATE plan_versions SET row_version = row_version + 1
-			 WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, versionID)
-		return err
-	})
+		if err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO plan_node_pools (tenant_id, plan_version_id, pool_id)
+			VALUES ($1, $2::uuid, $3::uuid)`, tenantID, versionID, pid); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE plan_versions SET row_version = row_version + 1
+		 WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, versionID); err != nil {
+		return 0, err
+	}
+	return len(unique), nil
 }

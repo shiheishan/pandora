@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit，依赖 service.go 的 validatePasswordFor
+// [OUTPUT]: 对外提供 ChangePasswordInput、Service.ChangePassword
+// [POS]: domain/identity 的改自己密码：校验旧密码、按网关域套长度规则（admin 至少 12 位）、同事务吊销会话与 refresh 令牌（门户保留当前会话，admin 全部吊销）并写审计
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package identity
 
 import (
@@ -21,6 +26,9 @@ type ChangePasswordInput struct {
 	IPHash      []byte
 	IP          string
 	UserAgent   string
+	// KeepSessionID 是改密时保留的当前会话（门户按设计保留）；admin 域一律忽略，
+	// 全部会话都吊销（保留规则 4）
+	KeepSessionID string
 }
 
 // ChangePassword 更新当前用户的口令，并让既有登录凭据立即失效。
@@ -33,6 +41,10 @@ func (s *Service) ChangePassword(ctx context.Context, tenantID string, in Change
 	apiDomain := in.APIDomain
 	if apiDomain != "admin" {
 		apiDomain = "public"
+	}
+	keepSession := in.KeepSessionID
+	if apiDomain == "admin" {
+		keepSession = ""
 	}
 
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
@@ -80,7 +92,7 @@ func (s *Service) ChangePassword(ctx context.Context, tenantID string, in Change
 		if in.NewPassword == in.OldPassword {
 			return httpx.New(httpx.CodeBadRequest, "新密码不能与当前密码相同")
 		}
-		if err := validatePassword(in.NewPassword); err != nil {
+		if err := validatePasswordFor(apiDomain, in.NewPassword); err != nil {
 			return err
 		}
 
@@ -102,11 +114,13 @@ func (s *Service) ChangePassword(ctx context.Context, tenantID string, in Change
 		}
 
 		// 改密通常意味着用户怀疑凭据已经泄露，保留旧会话会让攻击者继续驻留。
+		// 唯一的例外是门户的当前会话：改密的人就是它，踢掉只会逼他立刻再登一次。
 		if _, err := tx.Exec(ctx, `
 			UPDATE sessions
 			   SET revoked_at = now(), revoked_reason = 'password_changed'
-			 WHERE tenant_id = $1 AND user_id = $2::uuid AND revoked_at IS NULL`,
-			tenantID, userID,
+			 WHERE tenant_id = $1 AND user_id = $2::uuid AND revoked_at IS NULL
+			   AND ($3 = '' OR id <> nullif($3, '')::uuid)`,
+			tenantID, userID, keepSession,
 		); err != nil {
 			return err
 		}
@@ -115,8 +129,9 @@ func (s *Service) ChangePassword(ctx context.Context, tenantID string, in Change
 		if _, err := tx.Exec(ctx, `
 			UPDATE refresh_tokens
 			   SET status = 'revoked'
-			 WHERE tenant_id = $1 AND user_id = $2::uuid AND status = 'active'`,
-			tenantID, userID,
+			 WHERE tenant_id = $1 AND user_id = $2::uuid AND status = 'active'
+			   AND ($3 = '' OR session_id IS NULL OR session_id <> nullif($3, '')::uuid)`,
+			tenantID, userID, keepSession,
 		); err != nil {
 			return err
 		}

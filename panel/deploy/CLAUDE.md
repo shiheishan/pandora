@@ -13,11 +13,11 @@ platform.sh / preflight-linux.sh: 发行版与依赖探测（被其他脚本 sou
 migrate-to-new-host.sh: 新主机一键迁移：恢复 Age 密文备份、重建 aegis_app 角色、校验账本无漂移，第 5 步先拦下缺失的 AEGIS_PUBLIC_BASE_URL
 .env.example: 运行配置模板，机密与域名全是 CHANGE_ME 占位
 docker-compose.yml: 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1
-systemd/: aegis-public/admin/node 三网关、aegis-nodeagent、备份 service+timer 单元；overrides/ 为 1 核 2G 共享机的节点端资源上限
+systemd/: aegis-public/admin/node 三网关、备份 service+timer 单元
 logrotate-aegis: 三个服务的日志轮转
 
 发布与切换
-build-release.sh: 打发布包，先 make frontend-embed（无 npm 即失败），拒绝占位前端进入发布物；迁移工具版本随包固定
+build-release.sh: 打发布包，先以 PANDORA_RELEASE=$VERSION 跑 make frontend-embed（无 npm 即失败；版本号注入后台登录页与侧栏），拒绝占位前端进入发布物；迁移工具版本随包固定
 release-stop-the-world.sh: 改表发布的停机切换控制器
 release-artifact.env.example: 发布物 SHA256SUMS 绑定样例（docs/RELEASE-ARTIFACT-BINDING.md）
 renewal-cutover.md: 续费幂等切换闸门手册
@@ -27,7 +27,7 @@ pandora-preflight-lease-registry.sh: 预检租约登记，防止并发发布
 migrate.sh: 特权 goose 包装器，运行时服务永远拿不到迁移 DSN；up 之前先调 check-migrations.sh 在克隆库演练；拒绝 down/redo
 check-migrations.sh: 在一次性库克隆上证明精确的生产升级路径（make check-migrations 与 migrate.sh up 都走它）
 check-migrations-isolated-pg18.sh: CLIENT-AUTH-00042 那一代的历史隔离预检，钉死冻结迁移的 SHA-256；当前迁移序列的 00042 已换人，它会主动以 NOT_RUN（exit 77）拒绝运行
-bootstrap.sh / configure-app-role.sql: 迁移后配置最小权限运行角色 aegis_app（NOSUPERUSER NOBYPASSRLS）
+bootstrap.sh / configure-app-role.sql: 迁移后配置最小权限运行角色 aegis_app（NOSUPERUSER NOBYPASSRLS）；末尾在「列级提升回表级」之后收回证据流水与守卫表的 UPDATE/DELETE（traffic_pack_grants、gift_card_batches 只收 DELETE，业务要 UPDATE），顺序由 platform/db 的契约测试守
 psql.sh: 从 .env 读凭据的 psql 封装，避免口令出现在命令行
 seed-catalog-cny.sql / seed-demo.sql: 确定性演示商品目录（schema 35+），本地与 E2E 用
 reap-isolated-pg18.sh: 清理隔离 PG18 残留容器，先全量校验候选再做第一次删除
@@ -51,10 +51,11 @@ client-auth-*、generate-client-auth-*、probe-client-auth-*、verify-client-aut
 client-auth-00044-verifier-gate.py / verify-client-auth-00044-evidence-vectors.ps1: 00044 证据信封与向量的独立生成与校验，不导入被测实现
 
 测试（只用虚构数据与一次性环境，不连任何真实部署）
-render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名
-run-pg18-gates.sh: 一次跑完全部 PostgreSQL 18 集成门禁
+render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名
+run-pg18-gates.sh: 一次跑完全部 PostgreSQL 18 集成门禁，CI 的 panel-pg18.yml 每次推送都跑；每域 go test -v，有用例跳过或一个都没跑同样判失败（缺环境变量的测试会 t.Skip 报 ok），同包两域靠精确 -run 过滤互不拉入；容器就绪经 TCP 探测（镜像初始化的临时实例只听 unix socket），60 秒不就绪即失败
+run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：up 起一次性 PG18 + Valkey，goose 迁移、configure-app-role.sql 配运行角色、aegis-adminctl 建管理员，配置用 openssl 现场生成，从源码起 aegis-public/admin/node 并以 readyz（node 为 healthz）与管理员真登录验收，入口写进状态目录的 smoke.env；库名 aegis_smoke_test（带 test 段，过 e2e 脚本的一次性库守卫），PG 容器名可由 PANDORA_SMOKE_PG_CONTAINER 覆盖（CI 设成 aegis-postgres 让 psql.sh 直接可用）；down 只拆自己记下的进程与容器
+run-smoke-e2e.sh: 联调冒烟第 ⑤ 步（panel-smoke.yml 在读表与写路径之后调用）：在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，第 ⑥ 步起失败即变红；脚本一字不改，只把它们声明要的环境搭出来（/opt/aegispanel 布局链到仓库 deploy/、deploy/.env 由网关配置加库超级账号拼成、aegis-payctl 编进 bin 并配易支付测试商户、两个一次性库确认变量），脚本之间空一个限流窗口；每个脚本一行写进 e2e-results.md（结果、OK/FAIL 数、首个失败的步骤与原文），全部跑完、表格写完后有任何失败就以 1 退出；只肯在 GitHub Actions 上跑
 test-*-pg18.sh: 各业务的 PG18 集成门禁，每次新建隔离容器与库、结束即删；口令为 *-test-only 字样
-test-*-ui-playwright.*: 真实浏览器 UI 验收，对本机临时服务；test-vps-public-ui-playwright 的目标地址由 PANDORA_VPS_UI_TARGET 运行时给出，不入库
 test-install.sh / test-ca42-*-e2e.sh / test-client-auth-*: 安装链与 CLIENT-AUTH 端到端；test-install.sh 发现库里已有用户即拒绝执行
 *_mock_test.sh / *_static_test.sh / *_linux_test.sh / *_linux_fault_test.sh / release-stop-the-world_test.ps1: 对上面各脚本的桩测试与静态检查，不需要数据库或 root
 fixtures/: billing、idempotency 两份 PG18 门禁种子数据

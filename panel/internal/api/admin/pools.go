@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/audit/httpx、domain/nodefabric 的 NotifyUsersChanged，读写 node_pools、plan_node_pools，读 nodes / plan_versions / plans
+// [OUTPUT]: 对外提供 handlers 的 listNodePools / createNodePool / updateNodePool / deleteNodePool / assignNodePool / planPools / setPlanPools（提交后发租户级 node.users.changed，R104）与 notifyNodeUsersChanged
+// [POS]: api/admin 的节点分组：节点与套餐之间唯一的连接层；列表带组内节点 members 与绑定套餐名 plan_names
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 节点分组。
@@ -37,6 +42,18 @@ type poolRow struct {
 	Active int `json:"active_nodes"`
 	// Plans 是绑定了这个分组的套餐版本数。为零说明这组节点当前没被任何套餐用到
 	Plans int `json:"plans"`
+	// Members 是组内节点（不含已销毁），卡片上的节点标签
+	Members []poolMember `json:"members"`
+	// PlanNames 是绑定了这个分组的套餐名（去重），卡片上的「绑定套餐」
+	PlanNames []string `json:"plan_names"`
+	// AllowedUserGroups 是池的「仅限用户组」名单（R104），空 = 不限定
+	AllowedUserGroups []namedRef `json:"allowed_user_groups"`
+}
+
+type poolMember struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	NodeNo int    `json:"node_no"`
 }
 
 func (h *handlers) listNodePools(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +67,20 @@ func (h *handlers) listNodePools(w http.ResponseWriter, r *http.Request) {
 			       (SELECT count(*) FROM nodes n
 			         WHERE n.pool_id = p.id AND n.status = 'active'
 			           AND n.node_type IS NOT NULL),
-			       (SELECT count(*) FROM plan_node_pools pnp WHERE pnp.pool_id = p.id)
+			       (SELECT count(*) FROM plan_node_pools pnp WHERE pnp.pool_id = p.id),
+			       coalesce((SELECT jsonb_agg(jsonb_build_object('id', n.id, 'name', n.name, 'node_no', n.node_no)
+			                                  ORDER BY n.sort_order, n.node_no)
+			                   FROM nodes n WHERE n.pool_id = p.id AND n.status <> 'destroyed'), '[]'),
+			       coalesce((SELECT array_agg(DISTINCT pl.name ORDER BY pl.name)
+			                   FROM plan_node_pools pnp
+			                   JOIN plan_versions pv ON pv.tenant_id = pnp.tenant_id AND pv.id = pnp.plan_version_id
+			                   JOIN plans pl ON pl.tenant_id = pv.tenant_id AND pl.id = pv.plan_id
+			                  WHERE pnp.pool_id = p.id), '{}'),
+			       coalesce((SELECT jsonb_agg(jsonb_build_object('id', g.id, 'name', g.name)
+			                                  ORDER BY g.name, g.id)
+			                   FROM node_pool_user_groups npug
+			                   JOIN user_groups g ON g.tenant_id = npug.tenant_id AND g.id = npug.user_group_id
+			                  WHERE npug.tenant_id = p.tenant_id AND npug.pool_id = p.id), '[]')
 			  FROM node_pools p
 			 WHERE p.tenant_id = $1
 			 ORDER BY p.name, p.created_at`, tenantID)
@@ -61,7 +91,7 @@ func (h *handlers) listNodePools(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var p poolRow
 			if err := rows.Scan(&p.ID, &p.Code, &p.Name, &p.Region, &p.Status,
-				&p.Nodes, &p.Active, &p.Plans); err != nil {
+				&p.Nodes, &p.Active, &p.Plans, &p.Members, &p.PlanNames, &p.AllowedUserGroups); err != nil {
 				return err
 			}
 			out = append(out, p)
@@ -80,12 +110,31 @@ type poolReq struct {
 	Name   string `json:"name"`
 	Region string `json:"region"`
 	Status string `json:"status"`
+	// AllowedUserGroupIDs 省略（或 null）= 不改，[] = 取消限定；带了就要近期重认证（R104）
+	AllowedUserGroupIDs *[]string `json:"allowed_user_group_ids"`
+}
+
+// poolUserGroups 是 poolReq 里名单字段的校验结果：present 为 false 时不碰名单。
+func (req poolReq) poolUserGroups(r *http.Request) (ids []string, present bool, err error) {
+	if req.AllowedUserGroupIDs == nil {
+		return nil, false, nil
+	}
+	if err := requirePoolGroupsReauth(r, true); err != nil {
+		return nil, true, err
+	}
+	ids, err = normalizePoolUserGroupIDs(*req.AllowedUserGroupIDs)
+	return ids, true, err
 }
 
 func (h *handlers) createNodePool(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 	var req poolReq
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	groupIDs, withGroups, err := req.poolUserGroups(r)
+	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
@@ -102,7 +151,8 @@ func (h *handlers) createNodePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var newID string
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+	var groupsChanged bool
+	err = h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		err := tx.QueryRow(r.Context(), `
 			INSERT INTO node_pools (tenant_id, code, name, region, status)
 			VALUES ($1, $2, $3, NULLIF($4,''), 'active')
@@ -111,8 +161,14 @@ func (h *handlers) createNodePool(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return auditPool(r, tx, tenantID, "node_pool.created", newID,
-			map[string]any{"code": req.Code, "name": req.Name})
+		if err := auditPool(r, tx, tenantID, "node_pool.created", newID,
+			map[string]any{"code": req.Code, "name": req.Name}); err != nil {
+			return err
+		}
+		if withGroups {
+			groupsChanged, err = replacePoolUserGroupsTx(r.Context(), tx, tenantID, newID, groupIDs)
+		}
+		return err
 	})
 	if err != nil {
 		if db.IsUniqueViolation(err) {
@@ -121,6 +177,9 @@ func (h *handlers) createNodePool(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.Fail(w, r, h.d.Log, err)
 		return
+	}
+	if groupsChanged {
+		h.notifyNodeUsersChanged(r)
 	}
 	httpx.OK(w, map[string]any{"id": newID})
 }
@@ -133,14 +192,24 @@ func (h *handlers) updateNodePool(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	groupIDs, withGroups, err := req.poolUserGroups(r)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
 	if req.Status != "" && req.Status != "active" &&
 		req.Status != "draining" && req.Status != "disabled" {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeValidationFailed,
 			"状态只能是 active / draining / disabled"))
 		return
 	}
+	if _, err := uuid.Parse(id); err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+		return
+	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+	var groupsChanged bool
+	err = h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		// 传空的字段保持原值，这样前端可以只提交改动的部分
 		tag, err := tx.Exec(r.Context(), `
 			UPDATE node_pools
@@ -156,12 +225,22 @@ func (h *handlers) updateNodePool(w http.ResponseWriter, r *http.Request) {
 		if tag.RowsAffected() == 0 {
 			return httpx.NotFoundOrForbidden()
 		}
-		return auditPool(r, tx, tenantID, "node_pool.updated", id,
-			map[string]any{"name": req.Name, "status": req.Status})
+		if err := auditPool(r, tx, tenantID, "node_pool.updated", id,
+			map[string]any{"name": req.Name, "status": req.Status}); err != nil {
+			return err
+		}
+		// UPDATE 已锁住这一行，同一个池的两次名单替换在这里串行
+		if withGroups {
+			groupsChanged, err = replacePoolUserGroupsTx(r.Context(), tx, tenantID, id, groupIDs)
+		}
+		return err
 	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
+	}
+	if groupsChanged {
+		h.notifyNodeUsersChanged(r)
 	}
 	httpx.OK(w, map[string]any{"ok": true})
 }
@@ -541,9 +620,19 @@ func (h *handlers) setPlanPools(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	h.notifyNodeUsersChanged(r)
 	httpx.OK(w, map[string]any{
 		"bound": len(poolIDs), "row_version": next, "version_id": req.VersionID,
 	})
+}
+
+// notifyNodeUsersChanged 在改变交付集合的写操作提交后，发一次租户级
+// node.users.changed，让节点立即重拉用户（R104）；只在事务成功后调，
+// 失败的请求什么都没改，不该惊动节点。推送尽力而为，节点端轮询兜底。
+func (h *handlers) notifyNodeUsersChanged(r *http.Request) {
+	if h.d.Node != nil {
+		h.d.Node.NotifyUsersChanged(r.Context(), httpx.TenantIDFrom(r.Context()))
+	}
 }
 
 func auditPool(r *http.Request, tx pgx.Tx, tenantID, action, resourceID string,

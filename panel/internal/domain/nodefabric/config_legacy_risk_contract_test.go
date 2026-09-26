@@ -1,19 +1,23 @@
+// [INPUT]: 依赖 bootstrapTokenHash、nextLegacyConfigVersion 等校验函数，依赖 platform/sourcetest 按名取旧版发布、回报、下发、入网与生命周期的源码
+// [OUTPUT]: 对外提供 TestLegacyConfigPublishRiskReductionContract、TestNodeCreationMaterializesPublishedLegacyConfig、TestAdminPoolValidationFreezesLifecycleState、TestLegacyConfigReportFailsClosedOnAmbiguousIdentity、TestLegacyFetchUsesNeutralNotFoundForRLSMiss、TestLegacyRetirementClosesConfigDelivery、TestLegacyBootstrapLocksAndRejectsTerminalNodes、TestBootstrapTokenIssueValidatesPoolAndPreservesAuditAttribution、TestBootstrapTokenHashBindsTargetName、TestNextLegacyConfigVersion、TestValidateLegacyPublishScope、TestValidateLegacyConfigReport
+// [POS]: nodefabric 旧版配置链路的并发与终态契约：发布锁与版本分配、新节点物化、回报身份唯一、RLS 中性 404、退役关闭下发、bootstrap 锁序与终态拒绝
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
 	"bytes"
 	"math"
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestLegacyConfigPublishRiskReductionContract(t *testing.T) {
-	body, err := os.ReadFile("service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
+	pkg := sourcetest.Load(t, ".")
+	publish := pkg.Decl("Service.PublishConfig")
+	src := pkg.Decls("lockLegacyConfigRelease", "Service.PublishConfig", "nextLegacyConfigVersion", "Service.Bootstrap")
 	required := []string{
 		`pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`,
 		`"node-config-release/"+tenantID`,
@@ -36,42 +40,41 @@ func TestLegacyConfigPublishRiskReductionContract(t *testing.T) {
 		`AND serving_status<>'retired'`,
 		`FOR SHARE`,
 	} {
-		if !strings.Contains(src, needle) {
+		if !strings.Contains(publish, needle) {
 			t.Fatalf("legacy publish lifecycle lock contract missing %q", needle)
 		}
 	}
-	if strings.Contains(src, `FOR KEY SHARE`) {
+	if strings.Contains(pkg.Source(), `FOR KEY SHARE`) {
 		t.Fatal("legacy publish target lifecycle is not frozen against concurrent status changes")
 	}
-	if got := strings.Count(src, `serving_status<>'retired'`); got < 4 {
+	if got := strings.Count(publish, `serving_status<>'retired'`); got < 4 {
 		t.Fatalf("retired-node exclusion must cover target validation and every desired update, got %d", got)
 	}
-	lockAt := strings.Index(src, `pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`)
-	allocateAt := strings.Index(src, `SELECT coalesce(max(version)::bigint, 0),`)
-	supersedeAt := strings.Index(src, `UPDATE node_configs SET status='superseded'`)
-	insertAt := strings.Index(src, `INSERT INTO node_configs`)
-	if lockAt < 0 || allocateAt <= lockAt || supersedeAt <= allocateAt || insertAt <= supersedeAt {
-		t.Fatalf("legacy publish lock/allocation/write order drifted: lock=%d allocate=%d supersede=%d insert=%d",
-			lockAt, allocateAt, supersedeAt, insertAt)
+	// 锁序比的是 PublishConfig 里各加锁调用处的先后：发布锁 → 目标池 / 节点行 FOR SHARE →
+	// 受影响节点行 → 分配版本 → 取代旧层 → 写新层。发布锁的 SQL 本身由上面的 required 守住。
+	releaseLockAt := strings.Index(publish, `lockLegacyConfigRelease(ctx, tx, tenantID)`)
+	targetLockAt := strings.Index(publish, `FOR SHARE`)
+	nodeLockAt := strings.Index(publish, `lockEffectiveReleaseNodes(ctx, tx, tenantID, in.Scope, in.ScopeRef)`)
+	allocateAt := strings.Index(publish, `SELECT coalesce(max(version)::bigint, 0),`)
+	supersedeAt := strings.Index(publish, `UPDATE node_configs SET status='superseded'`)
+	insertAt := strings.Index(publish, `INSERT INTO node_configs`)
+	if releaseLockAt < 0 || targetLockAt <= releaseLockAt || nodeLockAt <= targetLockAt || allocateAt <= nodeLockAt ||
+		supersedeAt <= allocateAt || insertAt <= supersedeAt {
+		t.Fatalf("legacy publish lock/allocation/write order drifted: release=%d target=%d nodes=%d allocate=%d supersede=%d insert=%d",
+			releaseLockAt, targetLockAt, nodeLockAt, allocateAt, supersedeAt, insertAt)
 	}
 
-	if strings.Contains(src, "WHERE tenant_id=$1 AND scope=$2 AND scope_ref IS NOT DISTINCT FROM $3::uuid`,\n\t\t\ttenantID, in.Scope, ref).Scan(&ver)") {
+	if strings.Contains(pkg.Source(), "WHERE tenant_id=$1 AND scope=$2 AND scope_ref IS NOT DISTINCT FROM $3::uuid`,\n\t\t\ttenantID, in.Scope, ref).Scan(&ver)") {
 		t.Fatal("per-scope max(version)+1 allocation returned")
 	}
 }
 
 func TestNodeCreationMaterializesPublishedLegacyConfig(t *testing.T) {
-	serviceBody, err := os.ReadFile("service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminBody, err := os.ReadFile("node_admin.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	serviceSrc, adminSrc := string(serviceBody), string(adminBody)
+	pkg := sourcetest.Load(t, ".")
+	serviceSrc := pkg.Decls("Service.Bootstrap", "Service.PublishConfig")
+	adminSrc := pkg.Decls("Service.CreateAdminNode", "Service.CloneAdminNode")
 	if strings.Count(serviceSrc, `lockLegacyConfigRelease(ctx, tx, tenantID)`) < 2 ||
-		!strings.Contains(serviceSrc, `syncLegacyDesiredConfigVersion(ctx, tx, tenantID, nodeID)`) {
+		!strings.Contains(pkg.Decl("Service.Bootstrap"), `syncLegacyDesiredConfigVersion(ctx, tx, tenantID, nodeID)`) {
 		t.Fatal("bootstrap and publication do not share the legacy release lock/materialization domain")
 	}
 	if strings.Count(adminSrc, `lockLegacyConfigRelease(ctx, tx, tenantID)`) < 2 ||
@@ -86,38 +89,22 @@ func TestNodeCreationMaterializesPublishedLegacyConfig(t *testing.T) {
 		`c.scope='pool' AND c.scope_ref=n.pool_id`,
 		`c.scope='node' AND c.scope_ref=n.id`,
 	} {
-		if !strings.Contains(serviceSrc, needle) {
+		if !strings.Contains(pkg.Decl("syncLegacyDesiredConfigVersion"), needle) {
 			t.Fatalf("new-node desired materialization contract missing %q", needle)
 		}
 	}
 }
 
 func TestAdminPoolValidationFreezesLifecycleState(t *testing.T) {
-	body, err := os.ReadFile("node_admin.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
-	start := strings.Index(src, `func validatePool(`)
-	if start < 0 {
-		t.Fatal("validatePool source start not found")
-	}
-	end := strings.Index(src[start:], `func (s *Service) CreateAdminNode`)
-	if end < 0 {
-		t.Fatal("validatePool source end not found")
-	}
-	block := src[start : start+end]
+	block := sourcetest.Load(t, ".").Decl("validatePool")
 	if !strings.Contains(block, `FOR SHARE`) || strings.Contains(block, `FOR KEY SHARE`) {
 		t.Fatal("validatePool must hold a SHARE row lock against concurrent disable/delete")
 	}
 }
 
 func TestLegacyConfigReportFailsClosedOnAmbiguousIdentity(t *testing.T) {
-	body, err := os.ReadFile("service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
+	pkg := sourcetest.Load(t, ".")
+	src := pkg.Decl("Service.ReportConfigApplied")
 	for _, needle := range []string{
 		`SELECT pool_id::text FROM nodes`,
 		`FOR SHARE`,
@@ -142,24 +129,14 @@ func TestLegacyConfigReportFailsClosedOnAmbiguousIdentity(t *testing.T) {
 		`ORDER BY created_at DESC LIMIT 1`,
 		`return nil // 配置已被取代，不必记录`,
 	} {
-		if strings.Contains(src, forbidden) {
+		if strings.Contains(pkg.Source(), forbidden) {
 			t.Fatalf("legacy report guess/silent-success contract returned: %q", forbidden)
 		}
 	}
 }
 
 func TestLegacyFetchUsesNeutralNotFoundForRLSMiss(t *testing.T) {
-	body, err := os.ReadFile("service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
-	start := strings.Index(src, `func (s *Service) FetchConfig`)
-	end := strings.Index(src, `func VerifyConfigSignature`)
-	if start < 0 || end <= start {
-		t.Fatal("FetchConfig source block not found")
-	}
-	block := src[start:end]
+	block := sourcetest.Load(t, ".").Decl("Service.FetchConfig")
 	for _, needle := range []string{
 		`errors.Is(err, pgx.ErrNoRows)`,
 		`return nil, httpx.NotFoundOrForbidden()`,
@@ -176,21 +153,8 @@ func TestLegacyFetchUsesNeutralNotFoundForRLSMiss(t *testing.T) {
 }
 
 func TestLegacyRetirementClosesConfigDelivery(t *testing.T) {
-	serviceBody, err := os.ReadFile("service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminBody, err := os.ReadFile("node_admin.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	serviceSrc, adminSrc := string(serviceBody), string(adminBody)
-	fetchStart := strings.Index(serviceSrc, `func (s *Service) FetchConfig`)
-	fetchEnd := strings.Index(serviceSrc, `func VerifyConfigSignature`)
-	if fetchStart < 0 || fetchEnd <= fetchStart {
-		t.Fatal("FetchConfig source block not found")
-	}
-	fetchBlock := serviceSrc[fetchStart:fetchEnd]
+	pkg := sourcetest.Load(t, ".")
+	fetchBlock := pkg.Decl("Service.FetchConfig")
 	for _, needle := range []string{
 		`status NOT IN ('destroyed','retired')`,
 		`serving_status<>'retired' FOR SHARE`,
@@ -199,12 +163,7 @@ func TestLegacyRetirementClosesConfigDelivery(t *testing.T) {
 			t.Fatalf("retired FetchConfig refusal missing %q", needle)
 		}
 	}
-	identityStart := strings.Index(serviceSrc, `func (s *Service) LookupIdentity`)
-	identityEnd := strings.Index(serviceSrc, `func CanonicalPayload`)
-	if identityStart < 0 || identityEnd <= identityStart {
-		t.Fatal("LookupIdentity source block not found")
-	}
-	identityBlock := serviceSrc[identityStart:identityEnd]
+	identityBlock := pkg.Decl("Service.LookupIdentity")
 	for _, needle := range []string{
 		`JOIN nodes n ON n.tenant_id=i.tenant_id AND n.id=i.node_id`,
 		`n.status NOT IN ('destroyed','retired') AND n.serving_status<>'retired'`,
@@ -213,12 +172,7 @@ func TestLegacyRetirementClosesConfigDelivery(t *testing.T) {
 			t.Fatalf("retired identity refusal missing %q", needle)
 		}
 	}
-	start := strings.Index(adminSrc, `func (s *Service) BatchAdminNodeLifecycle`)
-	end := strings.Index(adminSrc, `func nodeVersionConflict`)
-	if start < 0 || end <= start {
-		t.Fatal("BatchAdminNodeLifecycle source block not found")
-	}
-	block := adminSrc[start:end]
+	block := pkg.Decl("Service.BatchAdminNodeLifecycle")
 	for _, needle := range []string{
 		`lockLegacyConfigRelease(ctx, tx, tenantID)`,
 		`node_identities WHERE tenant_id=$1 AND node_id=$2::uuid AND status='active'`,
@@ -236,17 +190,8 @@ func TestLegacyRetirementClosesConfigDelivery(t *testing.T) {
 }
 
 func TestLegacyBootstrapLocksAndRejectsTerminalNodes(t *testing.T) {
-	body, err := os.ReadFile("service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
-	start := strings.Index(src, `func (s *Service) Bootstrap`)
-	end := strings.Index(src, `func (s *Service) LookupIdentity`)
-	if start < 0 || end <= start {
-		t.Fatal("Bootstrap source block not found")
-	}
-	block := src[start:end]
+	// 原窗口从 Bootstrap 到 LookupIdentity，中间只夹着 Identity 类型
+	block := sourcetest.Load(t, ".").Decls("Service.Bootstrap", "Identity")
 	for _, needle := range []string{
 		`lockLegacyConfigRelease(ctx, tx, tenantID)`,
 		`bootstrapTokenHash(in.Token, in.NodeName)`,
@@ -291,17 +236,7 @@ func TestLegacyBootstrapLocksAndRejectsTerminalNodes(t *testing.T) {
 }
 
 func TestBootstrapTokenIssueValidatesPoolAndPreservesAuditAttribution(t *testing.T) {
-	body, err := os.ReadFile("service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
-	start := strings.Index(src, `func (s *Service) IssueBootstrapToken`)
-	end := strings.Index(src, `type BootstrapInput struct`)
-	if start < 0 || end <= start {
-		t.Fatalf("bootstrap token issue source boundary missing: start=%d end=%d", start, end)
-	}
-	block := src[start:end]
+	block := sourcetest.Load(t, ".").Decl("Service.IssueBootstrapToken")
 	for _, required := range []string{
 		`in.PoolID = strings.TrimSpace(in.PoolID)`,
 		`validateAdminUUID("pool_id", in.PoolID, false)`,

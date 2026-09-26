@@ -1,17 +1,19 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter 与用户侧工单处理器的源码
+// [OUTPUT]: 对外提供 TestSupportWriteRoutesRequireStableIdempotency、TestSupportHandlersCommitPreparedResponses
+// [POS]: api/public 工单写路由先限流后幂等、处理器走原子预制响应
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestSupportWriteRoutesRequireStableIdempotency(t *testing.T) {
-	raw, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
+	source := sourcetest.Load(t, ".").Decl("NewRouter")
 	for _, want := range []string{
 		"support.CreateIdempotencyScope",
 		"support.UserReplyIdempotencyScope",
@@ -37,11 +39,7 @@ func TestSupportWriteRoutesRequireStableIdempotency(t *testing.T) {
 }
 
 func TestSupportHandlersCommitPreparedResponses(t *testing.T) {
-	raw, err := os.ReadFile("handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
+	source := sourcetest.Load(t, ".").Decls("handlers.createTicket", "handlers.replyTicket", "handlers.closeTicket")
 	for _, want := range []string{
 		"Support.CreateAtomic(",
 		"Support.ReplyAsUserAtomic(",

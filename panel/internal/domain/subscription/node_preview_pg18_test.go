@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db，依赖一次性 PG18 库（run-pg18-gates.sh 的 node_preview 域）
+// [OUTPUT]: 对外提供 TestNodePreviewPG18
+// [POS]: domain/subscription 的 PG18 集成测试：订阅可拿到的节点集合与门户节点预览的资格规则
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package subscription
 
 import (
@@ -125,6 +130,18 @@ func TestNodePreviewPG18(t *testing.T) {
 			t.Fatalf("seed node preview fixture: %v\nSQL: %s", err, row.sql)
 		}
 	}
+	// 下发规则要求节点至少上报过一次心跳（listEligibleNodesTx 的
+	// last_heartbeat_at IS NOT NULL）。上面每个反例都该只因自己那一条被排除，
+	// 所以先让它们全部「见过」；从没心跳过的情形单独用 never-seen-node 验。
+	if _, err := admin.Exec(ctx, `UPDATE nodes SET last_heartbeat_at = now() WHERE tenant_id = $1`, tenantA); err != nil {
+		t.Fatalf("mark fixture nodes as seen: %v", err)
+	}
+	if _, err := admin.Exec(ctx, `INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
+			server_id,serving_status,protocol_schema_version,config_validated_at)
+		  VALUES('74000000-0000-4000-8000-000000000078',$1,'never-seen-node',$2,'active','vless','neverseen.invalid',443,$3,'active',1,now())`,
+		tenantA, poolA, serverA); err != nil {
+		t.Fatalf("seed never-seen node: %v", err)
+	}
 
 	for _, item := range []struct {
 		id     string
@@ -161,7 +178,7 @@ func TestNodePreviewPG18(t *testing.T) {
 	}
 
 	service := New(app, nil, nil)
-	credentialNodes, err := service.ListNodes(ctx, tenantA, &Credential{PlanVersionID: planVerA})
+	credentialNodes, err := service.ListNodes(ctx, tenantA, &Credential{UserID: userA, PlanVersionID: planVerA})
 	if err != nil || len(credentialNodes) != 1 || credentialNodes[0].Name != "Good Node" {
 		t.Fatalf("subscription eligibility mismatch nodes=%+v err=%v", credentialNodes, err)
 	}

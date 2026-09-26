@@ -1,0 +1,162 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 help/index.tsx 用到的类名
+ * [POS]: portal/screens/help 的样式，取自设计稿门户-09：左列 220–280 的搜索框 + 分组目录（当前篇 --brand-tint 底加粗），右列最宽 760 的文章卡（15px 正文、1.8 行高、16px 小标题、底部反馈条）；< 640 按 data-view 只显示目录或文章之一，「全部文章」返回只在窄屏出现
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: var(--space-16);
+  align-items: start;
+}
+
+.listPane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.articlePane {
+  min-width: 0;
+}
+
+.toc {
+  overflow: hidden;
+  padding: 6px 0;
+}
+
+.group + .group {
+  margin-top: 4px;
+}
+
+.groupTitle {
+  margin: 0;
+  padding: 10px 16px 4px;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+
+.items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: block;
+  padding: 8px 16px;
+  color: var(--text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.item:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.item[aria-current] {
+  background: var(--brand-tint);
+  font-weight: var(--fw-semibold);
+}
+
+.article {
+  max-width: 760px;
+  padding: 28px 32px;
+}
+
+.back {
+  display: none;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.meta {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+  line-height: var(--lh-heading);
+  overflow-wrap: anywhere;
+}
+
+.heading {
+  margin: 8px 0 0;
+  font-size: 16px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.8;
+}
+
+.para {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--surface-2);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+@media (max-width: 639px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .layout[data-view='list'] .articlePane,
+  .layout[data-view='article'] .listPane {
+    display: none;
+  }
+
+  /* 目录页在窄屏不显示右侧文章，宽屏默认选中的第一篇不该高亮 */
+  .layout[data-view='list'] .item[aria-current] {
+    background: none;
+    font-weight: var(--fw-regular);
+  }
+
+  .article {
+    padding: 20px var(--pad-card);
+  }
+
+  .back {
+    display: inline-block;
+    align-self: flex-start;
+    color: var(--text-2);
+    font-size: 13px;
+    text-decoration: none;
+  }
+
+  .back:hover {
+    color: var(--text);
+    text-decoration: none;
+  }
+}

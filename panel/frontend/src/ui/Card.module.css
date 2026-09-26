@@ -1,0 +1,52 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Card.tsx 用到的类名
+ * [POS]: ui/Card 的样式
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+  padding: var(--pad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.tint {
+  border-color: var(--brand-soft);
+  background: var(--brand-tint);
+}
+
+.flush {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.flush > .head {
+  padding: var(--pad-card) var(--pad-card) var(--space-12);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+}
+
+.extra {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}

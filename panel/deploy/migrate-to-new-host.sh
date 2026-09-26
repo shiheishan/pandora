@@ -143,13 +143,13 @@ say "6. 编译"
 cd "$APP"
 if [ -n "$AEGIS_RELEASE_DIR" ]; then
   (cd "$AEGIS_RELEASE_DIR" && sha256sum -c SHA256SUMS) || die "发布包摘要校验失败"
-  for b in aegis-public aegis-admin aegis-node aegis-agent aegis-payctl aegis-adminctl aegis-backup-webdav; do
+  for b in aegis-public aegis-admin aegis-node aegis-payctl aegis-adminctl aegis-backup-webdav; do
     [ -f "$AEGIS_RELEASE_DIR/bin/$b" ] || die "发布包缺少 $b"
     install -m 0755 "$AEGIS_RELEASE_DIR/bin/$b" "bin/$b"
     echo "  ✓ $b (linux/$PANDORA_ARCH release)"
   done
 else
-  for b in aegis-public aegis-admin aegis-node aegis-agent aegis-payctl aegis-adminctl aegis-backup-webdav; do
+  for b in aegis-public aegis-admin aegis-node aegis-payctl aegis-adminctl aegis-backup-webdav; do
     CGO_ENABLED=0 GOOS=linux GOARCH="$PANDORA_ARCH" \
       go build -trimpath -ldflags="-s -w" -o "bin/$b" "./cmd/$b" \
       && echo "  ✓ $b (linux/$PANDORA_ARCH)" || die "编译 $b 失败"

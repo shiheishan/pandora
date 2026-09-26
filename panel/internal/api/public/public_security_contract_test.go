@@ -1,17 +1,19 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取 handlers.telegramUpdate 与 NewRouter 的源码
+// [OUTPUT]: 对外提供 TestTelegramWebhookValidatesPersistedSecret、TestCommissionTransferRequiresIdempotencyMiddleware
+// [POS]: api/public 的两条安全契约：Telegram 回调常量时间比对持久化密钥、佣金转余额挂幂等
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestTelegramWebhookValidatesPersistedSecret(t *testing.T) {
-	handlerRaw, err := os.ReadFile("telegram.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := string(handlerRaw)
+	handler := sourcetest.Load(t, ".").Decl("handlers.telegramUpdate")
 	for _, want := range []string{
 		`chi.URLParam(r, "secret")`,
 		"subtle.ConstantTimeCompare",
@@ -24,11 +26,7 @@ func TestTelegramWebhookValidatesPersistedSecret(t *testing.T) {
 }
 
 func TestCommissionTransferRequiresIdempotencyMiddleware(t *testing.T) {
-	raw, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
+	source := sourcetest.Load(t, ".").Decl("NewRouter")
 	route := `Post("/me/commission/transfer", h.transferCommission)`
 	at := strings.Index(source, route)
 	if at < 0 {
@@ -42,30 +40,5 @@ func TestCommissionTransferRequiresIdempotencyMiddleware(t *testing.T) {
 	if !strings.Contains(window, "middleware.Idempotency") ||
 		!strings.Contains(window, "billing.CommissionTransferIdempotencyScope") {
 		t.Fatal("commission transfer route lacks globally unique idempotency middleware scope")
-	}
-}
-
-func TestPortalMoneyActionsUseStableIdempotencyAttempts(t *testing.T) {
-	raw, err := os.ReadFile("../../../web/portal/index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
-	for _, route := range []string{
-		"/v1/me/topups",
-		"/renew',",
-		"/v1/gift-cards/redeem",
-	} {
-		at := strings.Index(source, route)
-		if at < 0 {
-			t.Fatalf("portal route missing %q", route)
-		}
-		end := at + 350
-		if end > len(source) {
-			end = len(source)
-		}
-		if !strings.Contains(source[at:end], "keyFor(") {
-			t.Fatalf("portal route %q lacks stable idempotency attempt", route)
-		}
 	}
 }

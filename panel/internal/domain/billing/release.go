@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 reservations.go 的 lockOrderReservationGraph、ledger.go 的记账、platform/audit、platform/httpx
+// [OUTPUT]: 对外提供 AdminCancelOrder、CancelOrder、ReleaseOrderOutput；包内提供释放共用的 releaseOrderReservation、releaseLockedReservation 与把释放错误翻成中文接口错误的 releaseHTTPError；各加锁步骤在 release_locks.go
+// [POS]: billing 的订单释放（取消 / 过期）：把 held 预留图整体转成 released 并退回余额冻结；订单上已有收款即拒绝释放，只有订阅不收而隔离进挂账的那类（R117）不算；new / topup / addon / upgrade（变更套餐）走同一套预留图锁，renewal 走续费专用分支；金额恒等式经 reservations.go 的 orderTotal
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -21,6 +26,31 @@ var (
 	errOrderReleaseConflict        = errors.New("order cannot enter the requested release state")
 	errOrderReleasePaymentEvidence = errors.New("order has successful payment evidence")
 )
+
+// releaseConflict 是给人看的冲突原因：errors.Is 仍认作 errOrderReleaseConflict，
+// 过期任务照旧把它当正常的空转，取消接口把 message 原样回给前端（R95）
+type releaseConflict struct{ message string }
+
+func (e releaseConflict) Error() string        { return e.message }
+func (e releaseConflict) Is(target error) bool { return target == errOrderReleaseConflict }
+
+// releaseHTTPError 把释放事务的错误翻成接口错误，后台与门户取消共用
+func releaseHTTPError(err error) error {
+	var rc releaseConflict
+	var he *httpx.Error
+	switch {
+	case errors.Is(err, errOrderReleaseNotFound):
+		return httpx.NotFoundOrForbidden()
+	case errors.As(err, &rc):
+		return httpx.New(httpx.CodeConflict, rc.message)
+	case errors.Is(err, errOrderReleasePaymentEvidence):
+		return httpx.New(httpx.CodeConflict, "这张订单已有入账，不能取消")
+	case errors.As(err, &he):
+		return he
+	default:
+		return httpx.Internal(err)
+	}
+}
 
 // ReleaseOrderOutput is the monotonic terminal result of a cancellation or
 // expiry. AlreadyTerminal is true only when the order was already in the same
@@ -74,6 +104,7 @@ type releaseOrderShape struct {
 	BalanceAmount     int64
 	PayableAmount     int64
 	CouponID          *string
+	ProrationCredit   int64
 	StateVersion      int64
 	CancelledAt       *time.Time
 	CancelReason      *string
@@ -86,19 +117,19 @@ func (s *Service) AdminCancelOrder(ctx context.Context, tenantID string,
 	in AdminCancelOrderInput) (*ReleaseOrderOutput, error) {
 	in.Reason = strings.TrimSpace(in.Reason)
 	if tenantID == "" || in.OrderID == "" || in.ActorID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant, actor and order are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户、操作人或订单")
 	}
 	if _, err := uuid.Parse(in.ActorID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "actor identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "操作人标识不正确")
 	}
 	if _, err := uuid.Parse(in.OrderID); err != nil {
 		return nil, httpx.NotFoundOrForbidden()
 	}
 	if in.ExpectedStateVersion <= 0 {
-		return nil, httpx.New(httpx.CodeBadRequest, "expected_state_version must be positive")
+		return nil, httpx.New(httpx.CodeBadRequest, "expected_state_version 必须是正整数")
 	}
 	if n := utf8.RuneCountInString(in.Reason); n < 5 || n > 500 {
-		return nil, httpx.New(httpx.CodeBadRequest, "reason must be 5 to 500 characters")
+		return nil, httpx.New(httpx.CodeBadRequest, "取消原因需要 5 到 500 个字")
 	}
 
 	actorID := in.ActorID
@@ -113,20 +144,16 @@ func (s *Service) AdminCancelOrder(ctx context.Context, tenantID string,
 		return err
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, errOrderReleaseNotFound):
-			return nil, httpx.NotFoundOrForbidden()
-		case errors.Is(err, errOrderReleaseConflict), errors.Is(err, errOrderReleasePaymentEvidence):
-			return nil, httpx.New(httpx.CodeConflict, err.Error())
-		default:
-			var he *httpx.Error
-			if errors.As(err, &he) {
-				return nil, he
-			}
-			return nil, httpx.Internal(err)
-		}
+		return nil, releaseHTTPError(err)
 	}
 	return &result.Output, nil
+}
+
+func releasedStatusMessage(status string) string {
+	if status == "expired" {
+		return "订单已过期"
+	}
+	return "订单已取消"
 }
 
 type releaseIntentLock struct {
@@ -141,13 +168,13 @@ func (s *Service) CancelOrder(ctx context.Context, tenantID, userID,
 	orderID string) (*ReleaseOrderOutput, error) {
 
 	if tenantID == "" || userID == "" || orderID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant, user and order are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户、用户或订单")
 	}
 	if _, err := uuid.Parse(userID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "user identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "用户标识不正确")
 	}
 	if _, err := uuid.Parse(orderID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "order identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "订单标识不正确")
 	}
 
 	actorID := userID
@@ -162,19 +189,7 @@ func (s *Service) CancelOrder(ctx context.Context, tenantID, userID,
 		return err
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, errOrderReleaseNotFound):
-			return nil, httpx.NotFoundOrForbidden()
-		case errors.Is(err, errOrderReleaseConflict),
-			errors.Is(err, errOrderReleasePaymentEvidence):
-			return nil, httpx.New(httpx.CodeConflict, err.Error())
-		default:
-			var he *httpx.Error
-			if errors.As(err, &he) {
-				return nil, he
-			}
-			return nil, httpx.Internal(err)
-		}
+		return nil, releaseHTTPError(err)
 	}
 	return &result.Output, nil
 }
@@ -225,16 +240,16 @@ func releaseOrderReservation(ctx context.Context, tx pgx.Tx, tenantID string,
 		result.Output.AlreadyTerminal = true
 		return result, nil
 	case "cancelled", "expired":
-		return result, fmt.Errorf("%w: order is already %s", errOrderReleaseConflict, shape.Status)
+		return result, releaseConflict{releasedStatusMessage(shape.Status)}
 	case "paid", "fulfilled", "partially_refunded", "refunded":
-		return result, fmt.Errorf("%w: paid or captured orders cannot be released", errOrderReleaseConflict)
+		return result, releaseConflict{"订单已支付，不能取消"}
 	case "draft", "pending_payment", "processing":
 		// Continue below.
 	default:
-		return result, fmt.Errorf("%w: unsupported order status %s", errOrderReleaseConflict, shape.Status)
+		return result, releaseConflict{"订单当前状态（" + shape.Status + "）不能取消"}
 	}
 	if req.ExpectedStateVersion > 0 && shape.StateVersion != req.ExpectedStateVersion {
-		return result, httpx.New(httpx.CodeConflict, "order state changed; reload before cancelling")
+		return result, httpx.New(httpx.CodeConflict, "订单状态已变化，请刷新后再操作")
 	}
 
 	intents, err := lockActiveReleaseIntents(ctx, tx, tenantID, shape.ID)
@@ -353,315 +368,6 @@ func releaseOrderReservation(ctx context.Context, tx pgx.Tx, tenantID string,
 		return result, err
 	}
 	return result, nil
-}
-
-func lockReleaseOrder(ctx context.Context, tx pgx.Tx, tenantID string,
-	req releaseOrderRequest) (releaseOrderShape, bool, error) {
-
-	query := `
-		SELECT id::text,user_id::text,status,kind,currency::text,
-		       business_request_id::text,subtotal_amount,discount_amount,tax_amount,
-		       total_amount,balance_applied,payable_amount,coupon_id::text,
-		       state_version,cancelled_at,cancel_reason
-		  FROM orders
-		 WHERE tenant_id=$1 AND id=$2::uuid`
-	args := []any{tenantID, req.OrderID}
-	if req.UserID != "" {
-		query += ` AND user_id=$3::uuid`
-		args = append(args, req.UserID)
-	}
-	query += ` FOR UPDATE`
-	if req.SkipLocked {
-		query += ` SKIP LOCKED`
-	}
-
-	var shape releaseOrderShape
-	err := tx.QueryRow(ctx, query, args...).Scan(
-		&shape.ID, &shape.UserID, &shape.Status, &shape.Kind, &shape.Currency,
-		&shape.BusinessRequestID, &shape.SubtotalAmount, &shape.DiscountAmount,
-		&shape.TaxAmount, &shape.TotalAmount, &shape.BalanceAmount,
-		&shape.PayableAmount, &shape.CouponID, &shape.StateVersion,
-		&shape.CancelledAt, &shape.CancelReason)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if req.SkipLocked {
-			return shape, true, nil
-		}
-		return shape, false, errOrderReleaseNotFound
-	}
-	return shape, false, err
-}
-
-func lockActiveReleaseIntents(ctx context.Context, tx pgx.Tx, tenantID,
-	orderID string) ([]releaseIntentLock, error) {
-
-	rows, err := tx.Query(ctx, `
-		SELECT id::text,status FROM payment_intents
-		 WHERE tenant_id=$1 AND order_id=$2::uuid
-		   AND status IN ('created','requires_action','processing')
-		 ORDER BY id FOR UPDATE`, tenantID, orderID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []releaseIntentLock
-	for rows.Next() {
-		var item releaseIntentLock
-		if err := rows.Scan(&item.ID, &item.Status); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
-}
-
-func lockAndRejectSettledPaymentEvidence(ctx context.Context, tx pgx.Tx,
-	tenantID, orderID string) error {
-
-	succeededIntents, err := tx.Query(ctx, `
-		SELECT id::text FROM payment_intents
-		 WHERE tenant_id=$1 AND order_id=$2::uuid AND status='succeeded'
-		 ORDER BY id FOR UPDATE`, tenantID, orderID)
-	if err != nil {
-		return err
-	}
-	hasSucceededIntent := false
-	for succeededIntents.Next() {
-		var intentID string
-		if err := succeededIntents.Scan(&intentID); err != nil {
-			succeededIntents.Close()
-			return err
-		}
-		hasSucceededIntent = true
-	}
-	if err := succeededIntents.Err(); err != nil {
-		succeededIntents.Close()
-		return err
-	}
-	succeededIntents.Close()
-
-	payments, err := tx.Query(ctx, `
-		SELECT id::text FROM payments
-		 WHERE tenant_id=$1 AND order_id=$2::uuid
-		 ORDER BY id`, tenantID, orderID)
-	if err != nil {
-		return err
-	}
-	hasPayment := false
-	for payments.Next() {
-		var paymentID string
-		if err := payments.Scan(&paymentID); err != nil {
-			payments.Close()
-			return err
-		}
-		hasPayment = true
-	}
-	if err := payments.Err(); err != nil {
-		payments.Close()
-		return err
-	}
-	payments.Close()
-
-	if hasSucceededIntent || hasPayment {
-		return errOrderReleasePaymentEvidence
-	}
-	return nil
-}
-
-func lockReleaseReservationGraph(ctx context.Context, tx pgx.Tx, tenantID string,
-	shape releaseOrderShape, requireDue bool) (*lockedReservation, error) {
-
-	if shape.SubtotalAmount-shape.DiscountAmount+shape.TaxAmount != shape.TotalAmount ||
-		shape.TotalAmount-shape.BalanceAmount != shape.PayableAmount {
-		return nil, errors.New("order financial shape is inconsistent")
-	}
-
-	if shape.Kind == "new" || shape.Kind == "topup" {
-		locked, err := lockOrderReservationGraph(ctx, tx, reservationLockRequest{
-			TenantID: tenantID, OrderID: shape.ID, UserID: shape.UserID,
-			Kind: shape.Kind, Currency: shape.Currency, CouponID: shape.CouponID,
-			SubtotalAmount: shape.SubtotalAmount, DiscountAmount: shape.DiscountAmount,
-			TaxAmount: shape.TaxAmount, TotalAmount: shape.TotalAmount,
-			PayableAmount: shape.PayableAmount,
-			BalanceAmount: shape.BalanceAmount,
-		})
-		if err != nil {
-			return nil, err
-		}
-		if requireDue {
-			var due bool
-			if err := tx.QueryRow(ctx, `
-				SELECT expires_at<=now() FROM order_reservations
-				 WHERE tenant_id=$1 AND id=$2::uuid AND state='held'`, tenantID, locked.ID).
-				Scan(&due); err != nil {
-				return nil, err
-			}
-			if !due {
-				return nil, fmt.Errorf("%w: reservation is not due", errOrderReleaseConflict)
-			}
-		}
-		return locked, nil
-	}
-	if shape.Kind == "renewal" {
-		return lockRenewalReservationForRelease(ctx, tx, tenantID, shape, requireDue)
-	}
-	return nil, fmt.Errorf("unsupported order kind %q", shape.Kind)
-}
-
-func lockRenewalReservationForRelease(ctx context.Context, tx pgx.Tx,
-	tenantID string, shape releaseOrderShape, requireDue bool) (*lockedReservation, error) {
-
-	var out lockedReservation
-	var parentUserID, parentState string
-	var due bool
-	if err := tx.QueryRow(ctx, `
-		SELECT id::text,user_id::text,state,expires_at<=now()
-		  FROM order_reservations
-		 WHERE tenant_id=$1 AND order_id=$2::uuid FOR UPDATE`, tenantID, shape.ID).
-		Scan(&out.ID, &parentUserID, &parentState, &due); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.New("renewal reservation graph is missing its parent")
-		}
-		return nil, err
-	}
-	if parentUserID != shape.UserID || parentState != "held" {
-		return nil, errors.New("renewal reservation parent is not held for the order user")
-	}
-	if requireDue && !due {
-		return nil, fmt.Errorf("%w: reservation is not due", errOrderReleaseConflict)
-	}
-
-	var itemCount, stockCount, purchaseCount int
-	var itemCurrency string
-	var quantity int
-	var unitAmount, lineAmount int64
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*),coalesce(min(currency::text),''),coalesce(min(quantity),0),
-		       coalesce(min(unit_amount),0),coalesce(min(line_amount),0)
-		  FROM order_items WHERE tenant_id=$1 AND order_id=$2::uuid`, tenantID, shape.ID).
-		Scan(&itemCount, &itemCurrency, &quantity, &unitAmount, &lineAmount); err != nil {
-		return nil, err
-	}
-	if err := tx.QueryRow(ctx, `
-		SELECT (SELECT count(*) FROM order_stock_reservations
-		         WHERE tenant_id=$1 AND order_id=$2::uuid),
-		       (SELECT count(*) FROM order_purchase_limit_reservations
-		         WHERE tenant_id=$1 AND order_id=$2::uuid)`, tenantID, shape.ID).
-		Scan(&stockCount, &purchaseCount); err != nil {
-		return nil, err
-	}
-	if itemCount != 1 || itemCurrency != shape.Currency || quantity <= 0 ||
-		lineAmount != unitAmount*int64(quantity) || lineAmount != shape.SubtotalAmount ||
-		stockCount != 0 || purchaseCount != 0 {
-		return nil, errors.New("renewal reservation item/resource shape is incomplete")
-	}
-
-	if err := lockReleaseCoupon(ctx, tx, tenantID, shape, &out); err != nil {
-		return nil, err
-	}
-	if err := lockReleaseBalance(ctx, tx, tenantID, shape, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-func lockReleaseCoupon(ctx context.Context, tx pgx.Tx, tenantID string,
-	shape releaseOrderShape, out *lockedReservation) error {
-
-	if shape.CouponID == nil {
-		var count int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM coupon_redemptions
-			WHERE tenant_id=$1 AND order_id=$2::uuid`, tenantID, shape.ID).Scan(&count); err != nil {
-			return err
-		}
-		if count != 0 || shape.DiscountAmount != 0 {
-			return errors.New("renewal coupon shape exists without an order coupon")
-		}
-		return nil
-	}
-
-	var reserved int
-	if err := tx.QueryRow(ctx, `SELECT reserved_count FROM coupons
-		WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, *shape.CouponID).
-		Scan(&reserved); err != nil {
-		return err
-	}
-	rows, err := tx.Query(ctx, `
-		SELECT coupon_id::text,reservation_id::text,user_id::text,status,
-		       currency::text,discount_amount
-		  FROM coupon_redemptions
-		 WHERE tenant_id=$1 AND order_id=$2::uuid
-		 ORDER BY id FOR UPDATE`, tenantID, shape.ID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	var count int
-	var couponID, reservationID, userID, status, currency string
-	var discount int64
-	for rows.Next() {
-		count++
-		if err := rows.Scan(&couponID, &reservationID, &userID, &status,
-			&currency, &discount); err != nil {
-			return err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if count != 1 || reserved <= 0 || couponID != *shape.CouponID || reservationID != out.ID ||
-		userID != shape.UserID || status != "held" || currency != shape.Currency ||
-		discount != shape.DiscountAmount {
-		return errors.New("renewal coupon reservation shape is inconsistent")
-	}
-	out.Coupon = &couponReservationLock{CouponID: couponID}
-	return nil
-}
-
-func lockReleaseBalance(ctx context.Context, tx pgx.Tx, tenantID string,
-	shape releaseOrderShape, out *lockedReservation) error {
-
-	rows, err := tx.Query(ctx, `
-		SELECT h.amount,h.available_account_id::text,h.hold_account_id::text,
-		       h.reservation_id::text,h.user_id::text,h.currency::text,h.status
-		  FROM balance_holds h
-		  JOIN ledger_accounts a ON a.tenant_id=h.tenant_id AND a.id=h.available_account_id
-		   AND a.currency=h.currency AND a.account_type='user_balance'
-		   AND a.owner_user_id=h.user_id
-		  JOIN ledger_accounts ha ON ha.tenant_id=h.tenant_id AND ha.id=h.hold_account_id
-		   AND ha.currency=h.currency AND ha.account_type='user_balance_hold'
-		   AND ha.owner_user_id=h.user_id
-		 WHERE h.tenant_id=$1 AND h.order_id=$2::uuid
-		 ORDER BY h.id FOR UPDATE OF h`, tenantID, shape.ID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	var count int
-	var balance balanceReservationLock
-	var reservationID, userID, currency, status string
-	for rows.Next() {
-		count++
-		if err := rows.Scan(&balance.Amount, &balance.AvailableAccountID,
-			&balance.HoldAccountID, &reservationID, &userID, &currency, &status); err != nil {
-			return err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if shape.BalanceAmount == 0 {
-		if count != 0 {
-			return errors.New("renewal balance hold exists without balance applied")
-		}
-		return nil
-	}
-	if count != 1 || balance.Amount != shape.BalanceAmount ||
-		reservationID != out.ID || userID != shape.UserID || currency != shape.Currency ||
-		status != "held" || balance.AvailableAccountID == "" || balance.HoldAccountID == "" {
-		return errors.New("renewal balance hold shape is inconsistent")
-	}
-	out.Balance = &balance
-	return nil
 }
 
 func releaseLockedReservation(ctx context.Context, tx pgx.Tx, tenantID string,

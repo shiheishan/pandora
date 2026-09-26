@@ -1,12 +1,18 @@
+// [INPUT]: 依赖 Service 的预览与轮换入口，依赖 platform/sourcetest 按名取节点列表、预览、共用资格查询与订阅链接的源码
+// [OUTPUT]: 对外提供 TestNodePreviewCannotCarryConnectionSecrets、TestInvalidSubscriptionPreviewIDIsNeutralNotFound、TestInvalidSubscriptionRotationIDIsNeutralNotFound、TestSubscriptionAndPreviewShareOneEligibilityQuery
+// [POS]: subscription 订阅与节点预览共用一个资格查询，协议可用与池准入谓词只出现在那里，预览不带连接密钥
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package subscription
 
 import (
 	"context"
 	"errors"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestNodePreviewCannotCarryConnectionSecrets(t *testing.T) {
@@ -39,15 +45,14 @@ func TestInvalidSubscriptionRotationIDIsNeutralNotFound(t *testing.T) {
 }
 
 func TestSubscriptionAndPreviewShareOneEligibilityQuery(t *testing.T) {
-	source, err := os.ReadFile("service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(source)
-	listNodes := sourceFunction(t, body, "func (s *Service) ListNodes", "func (s *Service) ListOwnedNodePreviews")
-	owned := sourceFunction(t, body, "func (s *Service) ListOwnedNodePreviews", "func listEligibleNodesTx")
-	eligible := sourceFunction(t, body, "func listEligibleNodesTx", "func (s *Service) LoadUsage")
-	links := sourceFunction(t, body, "func (s *Service) ListLinks", "func (s *Service) Rotate")
+	pkg := sourcetest.Load(t, ".")
+	body := pkg.Source()
+	listNodes := pkg.Decl("Service.ListNodes")
+	// 原窗口从 ListOwnedNodePreviews 到 listEligibleNodesTx，中间夹着 HeartbeatFreshWindow 与 DeliveryState
+	owned := pkg.Decls("Service.ListOwnedNodePreviews", "HeartbeatFreshWindow", "DeliveryState")
+	// 原窗口从 listEligibleNodesTx 到 LoadUsage，中间夹着 preferFreshNodes
+	eligible := pkg.Decls("listEligibleNodesTx", "preferFreshNodes")
+	links := pkg.Decl("Service.ListLinks")
 	for name, function := range map[string]string{"ListNodes": listNodes, "ListOwnedNodePreviews": owned} {
 		if strings.Count(function, "listEligibleNodesTx(") != 1 || strings.Contains(function, "FROM nodes") {
 			t.Fatalf("%s must call the shared eligibility query exactly once", name)
@@ -56,6 +61,15 @@ func TestSubscriptionAndPreviewShareOneEligibilityQuery(t *testing.T) {
 	if strings.Count(eligible, `nodefabric.StableProtocolReadySQL("n")`) != 1 ||
 		strings.Count(body, `nodefabric.StableProtocolReadySQL("n")`) != 1 {
 		t.Fatal("stable protocol qualification must exist only in the shared query")
+	}
+	// 池限定用户组（R104）同理：谓词只出现在共用查询里，且带订阅主人。
+	if strings.Count(eligible, `nodefabric.PoolAdmitsUserSQL("n.tenant_id", "n.pool_id", "$4::uuid")`) != 1 ||
+		strings.Count(body, `nodefabric.PoolAdmitsUserSQL(`) != 1 {
+		t.Fatal("pool user-group admission must exist only in the shared query")
+	}
+	if !strings.Contains(listNodes, `listEligibleNodesTx(ctx, tx, tenantID, c.UserID, c.PlanVersionID)`) ||
+		!strings.Contains(owned, `listEligibleNodesTx(ctx, tx, tenantID, userID, planVersionID)`) {
+		t.Fatal("both callers must pass the subscription owner into the shared query")
 	}
 	for _, want := range []string{
 		`db.Scope{TenantID: tenantID, ActorID: userID}`,
@@ -79,17 +93,4 @@ func TestSubscriptionAndPreviewShareOneEligibilityQuery(t *testing.T) {
 			t.Fatalf("subscription link deadline contract missing %q", want)
 		}
 	}
-}
-
-func sourceFunction(t *testing.T, source, startNeedle, endNeedle string) string {
-	t.Helper()
-	start := strings.Index(source, startNeedle)
-	if start < 0 {
-		t.Fatalf("function start missing %q", startNeedle)
-	}
-	endOffset := strings.Index(source[start:], endNeedle)
-	if endOffset <= 0 {
-		t.Fatalf("function end missing %q", endNeedle)
-	}
-	return source[start : start+endOffset]
 }

@@ -1,0 +1,16 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的令牌
+ * [OUTPUT]: 对外提供 Pager.tsx 用到的类名
+ * [POS]: ui/Pager 的样式：右对齐、说明文字 --text-2 小号，按钮间距 8
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-16);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}

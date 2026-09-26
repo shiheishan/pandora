@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 file_owner_*_test.go 的 trustCurrentUserAsSecureOwner，依赖 checkpoint_hook.go 的 checkpointHookRoot
+// [OUTPUT]: 对外提供测试辅助 secureTempDir、withCheckpointHookRoot
+// [POS]: dbbackup 测试的公共夹具，给所有用到私密路径的用例造出能过安全校验的目录
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package dbbackup
 
 import (
@@ -5,7 +10,8 @@ import (
 	"testing"
 )
 
-// secureTempDir 返回一个 0700 的临时目录。
+// secureTempDir 返回一个 0700 的临时目录，并在本测试内把运行测试的用户
+// 当作私密路径的可信属主（生产只信 root，见 trustCurrentUserAsSecureOwner）。
 //
 // 不能直接用 t.TempDir()：它建目录时传的是 0777，会被 umask 削成 0755，
 // 于是父目录带上了 group/other 位。备份路径的安全校验（validateSecureParent）
@@ -20,6 +26,7 @@ func secureTempDir(t *testing.T) string {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("收紧临时目录权限失败: %v", err)
 	}
+	trustCurrentUserAsSecureOwner(t)
 	return dir
 }
 

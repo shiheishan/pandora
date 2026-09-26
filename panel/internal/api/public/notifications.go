@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/httpx、同包 handlers.go 的 isUUID，依赖 notification_deliveries / notification_preferences 两张表
+// [OUTPUT]: 对外提供 handlers 的 listNotifications / markNotificationRead / markAllNotificationsRead / getNotificationPreferences / setNotificationPreference
+// [POS]: api/public 的站内信与通知偏好；单条标已读的非 UUID id 回 404（R84）；偏好按表主键 (user_id, category, channel) upsert
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 // 站内信与通知偏好。
@@ -104,6 +109,12 @@ func (h *handlers) markNotificationRead(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := chi.URLParam(r, "id")
+	// 不是 UUID 的 id 进 SQL 会在 ::uuid 转换处炸成 500（R84），先挡成 404。
+	// 合法但不存在或不属于本人的 id 仍回 200：标已读天然幂等，也不借状态码泄露存在性。
+	if !isUUID(id) {
+		httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+		return
+	}
 
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
 		func(tx pgx.Tx) error {
@@ -249,13 +260,16 @@ func (h *handlers) setNotificationPreference(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// 冲突目标必须与表主键 (user_id, category, channel) 一致（00008）：
+	// 多写一个 tenant_id 就没有匹配的唯一约束，PostgreSQL 直接拒绝这条语句（缺陷 7）。
+	// 用户只属于一个租户，按主键冲突不会跨租户误改。
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
 		func(tx pgx.Tx) error {
 			_, err := tx.Exec(r.Context(), `
 				INSERT INTO notification_preferences
 					(tenant_id, user_id, category, channel, enabled)
 				VALUES ($1,$2::uuid,$3,$4,$5)
-				ON CONFLICT (tenant_id, user_id, category, channel)
+				ON CONFLICT (user_id, category, channel)
 				DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
 				p.TenantID, p.UserID, req.Category, req.Channel, req.Enabled)
 			return err

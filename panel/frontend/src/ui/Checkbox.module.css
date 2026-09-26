@@ -1,0 +1,82 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Checkbox.tsx 用到的类名
+ * [POS]: ui/Checkbox 的样式：未选 1.5px --border-strong 描边，选中填 --accent、勾用 --on-accent
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  cursor: pointer;
+}
+
+.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.box {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+.small {
+  width: 14px;
+  height: 14px;
+}
+
+.input {
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: inherit;
+}
+
+.input:hover:not(:disabled) {
+  border-color: var(--border-hover);
+}
+
+.input:checked,
+.input:indeterminate {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.check,
+.dash {
+  position: relative;
+  color: var(--on-accent);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.dash {
+  position: absolute;
+  width: 8px;
+  height: 1.5px;
+  background: var(--on-accent);
+}
+
+.input:checked ~ .check,
+.input:indeterminate ~ .dash {
+  visibility: visible;
+}
+
+.input:indeterminate ~ .check {
+  visibility: hidden;
+}

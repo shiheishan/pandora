@@ -1,0 +1,193 @@
+/**
+ * [INPUT]: 无依赖；数值逐一取自设计稿 设计规范.dc.html 与 21 个模块文件共用的 html:root 令牌块
+ * [OUTPUT]: 对外提供语义色令牌（浅色 :root、深色 [data-theme='dark']）与不随主题变化的字体、字号、间距、圆角、布局尺寸令牌
+ * [POS]: styles 的令牌层，是全部颜色与尺寸的唯一来源；roles.css 在它之上按门户 / 后台派生角色令牌，组件只引用令牌不写色值
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+/* ===========================================================================
+ * 语义色 · 浅色
+ *
+ * 前 33 个与设计稿模块文件的 html:root 逐字一致（tests/tokens.test.ts 守住）；
+ * 「规范补充」一段来自 设计规范.dc.html 组件区的 L 对象，模块文件里是写死的色值。
+ * 主题只有 light / dark 两档，由 <html data-theme> 决定，默认 light（theme-boot.js）。
+ * ========================================================================= */
+:root {
+  color-scheme: light;
+
+  --bg: #f5f4f0;
+  --surface: #fff;
+  --surface-2: #f9f8f5;
+  --surface-3: #efede8;
+  --border: #e7e5df;
+  --border-strong: #dcd9d1;
+  --border-hover: #c9c6bd;
+  --text: #1c1c1f;
+  --text-2: #62615c;
+  --text-3: #6e6c66;
+
+  --brand: #b9442b;
+  --brand-hover: #a33a23;
+  --brand-ink: #8c3019;
+  --brand-soft: #f6e4de;
+  --brand-tint: #fbf3ef;
+  --on-brand: #fff;
+
+  --ok: #1f7a4f;
+  --ok-soft: #e3f3ea;
+  --ok-line: #c9f0d8;
+  --warn: #9a5c00;
+  --warn-soft: #fbf0dc;
+  --warn-line: #f0d9b0;
+  --danger: #b3263a;
+  --danger-soft: #f8e1e3;
+  --danger-line: #eec3c8;
+  --danger-tint: #fdf3f3;
+  --info: #34507c;
+  --info-soft: #e6ebf3;
+  --info-line: #cdd6e4;
+
+  --on-ink: #fff;
+  --hdr: rgba(245, 244, 240, 0.9);
+  --scrim: rgba(20, 20, 24, 0.4);
+  --shadow: 0 16px 36px -14px rgba(28, 28, 31, 0.25);
+
+  /* --- 规范补充 ----------------------------------------------------------- */
+  /* 危险实心按钮上的字 */
+  --on-danger: #fff;
+  /* Toast 是反色底（浅色模式墨底），状态圆点取深色模式的状态色才看得清 */
+  --toast-ok: #6fcf9b;
+  --toast-danger: #f07a86;
+  /* 分段控件选中项：规范里唯一一档非浮层阴影 */
+  --shadow-segment: 0 1px 2px rgba(20, 20, 24, 0.08);
+  /* 后台侧栏两种模式下都是深底，上面的字色因此不随主题翻转 */
+  --sidebar: #151518;
+  --sidebar-active: #26262a;
+  --sidebar-text: #ecebe7;
+  --sidebar-text-2: #9a988f;
+  --sidebar-text-3: #8a8880;
+  --sidebar-brand: #e46e52;
+}
+
+/* ===========================================================================
+ * 语义色 · 深色
+ * 与浅色同一组键；不写的键会漏成浅色值，测试要求两组键完全相同。
+ * ========================================================================= */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #111113;
+  --surface: #1a1a1d;
+  --surface-2: #1f1f22;
+  --surface-3: #26262a;
+  --border: #2b2b2f;
+  --border-strong: #37373c;
+  --border-hover: #4a4a50;
+  --text: #ecebe7;
+  --text-2: #9a988f;
+  --text-3: #8a8880;
+
+  --brand: #e46e52;
+  --brand-hover: #ec8267;
+  --brand-ink: #f2a58f;
+  --brand-soft: #3a231c;
+  --brand-tint: #201816;
+  --on-brand: #170d0a;
+
+  --ok: #6fcf9b;
+  --ok-soft: #15271e;
+  --ok-line: #1f3a2b;
+  --warn: #f0b35a;
+  --warn-soft: #2c2213;
+  --warn-line: #4a3a1c;
+  --danger: #f07a86;
+  --danger-soft: #2c1519;
+  --danger-line: #4d252b;
+  --danger-tint: #221417;
+  --info: #93b1dc;
+  --info-soft: #172031;
+  --info-line: #2a3a52;
+
+  --on-ink: #111113;
+  --hdr: rgba(17, 17, 19, 0.88);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+
+  --on-danger: #1a0f12;
+  --toast-ok: #1f7a4f;
+  --toast-danger: #b3263a;
+  --shadow-segment: 0 1px 2px rgba(20, 20, 24, 0.08);
+  --sidebar: #0a0a0b;
+  --sidebar-active: #1f1f22;
+  --sidebar-text: #ecebe7;
+  --sidebar-text-2: #9a988f;
+  --sidebar-text-3: #8a8880;
+  --sidebar-brand: #e46e52;
+}
+
+/* ===========================================================================
+ * 不随主题变化的尺度
+ * ========================================================================= */
+:root {
+  /* --- 字体：中文回落 PingFang SC → 冬青黑 → Noto Sans SC → 微软雅黑 ---- */
+  --font-sans: 'Geist', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  /* Mono 只给要逐字核对的内容：订单号、邀请码、订阅地址、IP、节点名、命令行 */
+  --font-mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* --- 字号 · 字重 · 字距：规范 03 的八档 --------------------------------- */
+  --fs-display: 36px; /* 仅营销与空状态 */
+  --fs-h1: 24px; /* 页面标题 */
+  --fs-h2: 18px; /* 区块标题 */
+  --fs-h3: 15px; /* 卡片标题 */
+  --fs-body: 14px; /* 门户正文 */
+  --fs-body-sm: 13px; /* 后台正文 */
+  --fs-caption: 12px; /* 中文最小字号 */
+  --fs-micro: 11px; /* 只给数字和英文 */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --ls-display: -0.025em;
+  --ls-h1: -0.015em;
+  --ls-h2: -0.01em;
+  --ls-wordmark: -0.035em;
+  --lh-body: 1.55;
+  --lh-body-sm: 1.5;
+  --lh-heading: 1.3;
+
+  /* --- 间距：规范 04 的八档 ----------------------------------------------- */
+  --space-4: 4px; /* 图标与文字 */
+  --space-8: 8px; /* 按钮组、标签组 */
+  --space-12: 12px; /* 表单字段之间 */
+  --space-16: 16px; /* 卡片之间、列表行左右、后台卡片内边距 */
+  --space-20: 20px; /* 门户卡片内边距、标题与内容 */
+  --space-24: 24px; /* 卡片内分组之间 */
+  --space-32: 32px; /* 页面顶部 */
+  --space-64: 64px; /* 页面底部 */
+
+  /* --- 圆角：规范 04 的六档 ----------------------------------------------- */
+  --radius-tag: 5px; /* 所有标签，统一方角不用胶囊 */
+  --radius-sm: 7px; /* 后台控件、菜单项 */
+  --radius-md: 9px; /* 门户按钮、输入框 */
+  --radius-lg: 12px; /* 菜单、Toast、后台卡片 */
+  --radius-xl: 14px; /* 门户卡片、弹窗 */
+  --radius-pill: 999px; /* 余额、角标、头像、开关 */
+
+  /* --- 布局 --------------------------------------------------------------
+   * 断点不能写成变量（媒体查询不认 var()），全局只有两个：
+   *   ≥ 960 完整顶栏；640–959 收起余额胶囊、卡片最小宽 420 自动换行；
+   *   < 640 底部标签栏、左右边距 16、卡片单列、弹窗改底部抽屉按钮通栏。
+   * ---------------------------------------------------------------------- */
+  --content-max: 1160px;
+  --gutter: 20px;
+  --topbar-h: 58px; /* 门户顶栏 */
+  --tabbar-h: 56px; /* < 640 的底部标签栏 */
+  --dialog-w: 400px; /* 门户弹窗 */
+  --menu-w: 248px; /* 头像菜单 */
+  --touch-min: 44px; /* 移动端可点区域下限 */
+}
+
+@media (max-width: 639px) {
+  :root {
+    --gutter: 16px;
+  }
+}

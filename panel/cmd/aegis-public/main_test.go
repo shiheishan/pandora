@@ -1,13 +1,19 @@
+// [INPUT]: 依赖 startReservationExpiryWorker，依赖 platform/sourcetest 按名取 startReservationExpiryWorker 与 run 的源码
+// [OUTPUT]: 对外提供 TestReservationExpiryWorkerStopsAndJoinsOnCancellation、TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup、TestPublicNotifyUsesRecipientSalt
+// [POS]: cmd/aegis-public 的进程生命周期契约：预留过期循环可取消可 join，停机次序为取消、join、返回；通知收件人盐的装配
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (
 	"context"
 	"io"
 	"log/slog"
-	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestReservationExpiryWorkerStopsAndJoinsOnCancellation(t *testing.T) {
@@ -29,16 +35,8 @@ func TestReservationExpiryWorkerStopsAndJoinsOnCancellation(t *testing.T) {
 }
 
 func TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup(t *testing.T) {
-	sourceBytes, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(sourceBytes)
-	workerStart := strings.Index(source, "func startReservationExpiryWorker(")
-	if workerStart < 0 {
-		t.Fatal("reservation expiry worker helper is missing")
-	}
-	worker := source[workerStart:]
+	pkg := sourcetest.Load(t, ".")
+	worker := pkg.Decl("startReservationExpiryWorker")
 	for _, required := range []string{
 		"select {",
 		"case <-ctx.Done():",
@@ -50,6 +48,7 @@ func TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup(t *testing.T) {
 		}
 	}
 
+	source := pkg.Decl("run")
 	runServer := strings.Index(source, "serverErr := server.RunContext(ctx")
 	if runServer < 0 {
 		t.Fatal("public process must run the server with the signal context")
@@ -60,5 +59,16 @@ func TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup(t *testing.T) {
 	ret := strings.Index(afterServer, "return serverErr")
 	if stop < 0 || wait < 0 || ret < 0 || !(stop < wait && wait < ret) {
 		t.Fatal("public process must cancel, join expiry worker, then return for deferred cleanup")
+	}
+}
+
+// 通知收件人哈希用专用盐（⑨），与 admin 网关同一个，不借订阅审计盐
+func TestPublicNotifyUsesRecipientSalt(t *testing.T) {
+	run := sourcetest.Load(t, ".").Decl("run")
+	if !strings.Contains(run, "notify.New(pool, log, crypto.NotifyRecipientSalt(cfg.MasterKey),") {
+		t.Fatal("public gateway must hash notification recipients with crypto.NotifyRecipientSalt")
+	}
+	if strings.Contains(run, "notify.New(pool, log, subSalt") {
+		t.Fatal("public gateway must not reuse the subscription audit salt for notifications")
 	}
 }

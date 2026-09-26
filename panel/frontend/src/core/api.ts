@@ -1,244 +1,399 @@
-import { z } from "zod";
-import { isRow, recordSchema, type Row } from "./data";
-import { apiUrl } from "./runtime";
+/**
+ * [INPUT]: 依赖 zod 的 ZodType 校验响应，依赖 ./token 的 TokenStore 读写 Bearer，依赖浏览器 fetch / crypto.getRandomValues / document.baseURI（均可注入）
+ * [OUTPUT]: 对外提供 ApiError、isApiError、SERVER_ERROR_CODES 与错误码类型、resolveApiUrl、newIdempotencyKey、createApiClient 与 ApiClient（request/get/post/put/delete/requestRaw/reauth/openStream）
+ * [POS]: core 的唯一 HTTP 出口，页面与 hooks 只经它访问两个网关；sse.ts 经 openStream 建流，CSV 导出等非 JSON 响应经 requestRaw 取原始 Response，query.ts 按它抛出的 ApiError 决定重试
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+import type { ZodType } from 'zod'
+import { z } from 'zod'
+import type { TokenStore } from './token'
 
-export type FailureKind =
-  | "network"
-  | "timeout"
-  | "cancelled"
-  | "unauthenticated"
-  | "reauth-required"
-  | "forbidden"
-  | "validation"
-  | "conflict"
-  | "rate-limited"
-  | "server"
-  | "contract";
-export class ApiFailure extends Error {
-  constructor(
-    message: string,
-    public kind: FailureKind,
-    public status?: number,
-    public code?: string,
-    public fields: Record<string, string[]> = {},
-    public requestId?: string,
-  ) {
-    super(message);
-    this.name = "ApiFailure";
-  }
-  get uncertain() {
-    return (
-      this.kind === "network" ||
-      this.kind === "timeout" ||
-      this.kind === "server" ||
-      this.code === "response_unknown" ||
-      this.code === "write_cancelled"
-    );
+// CSP 没有 unsafe-eval：zod 默认会用 new Function 探测能否 JIT，异常虽被吞掉，
+// 浏览器仍会报一条 securitypolicyviolation。关掉 JIT 连探测一起省去。
+// 这是全局配置，api.ts 随入口首屏加载，早于任何一次 parse。
+z.config({ jitless: true })
+
+// ---------------------------------------------------------------------------
+// 错误：服务端信封 {"error":{code,message,fields?,request_id?}} 解析成 ApiError。
+// 码是 platform/httpx 的封闭列表（含第 ⑤ 步新增的 reauth_required）；另有两个
+// 只在前端产生的码：network_error（请求没到服务器）与 invalid_response（回来的
+// 不是约定的形状，含 nginx 错误页与 zod 校验失败）。页面按 code 分支、按 fields 标红。
+// ---------------------------------------------------------------------------
+export const SERVER_ERROR_CODES = [
+  'bad_request',
+  'unauthorized',
+  'forbidden',
+  'not_found',
+  'conflict',
+  'validation_failed',
+  'rate_limited',
+  'idempotency_key_reuse',
+  'service_unavailable',
+  'internal_error',
+  'reauth_required',
+] as const
+export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number]
+export type ApiErrorCode = ServerErrorCode | 'network_error' | 'invalid_response'
+
+export class ApiError extends Error {
+  /** HTTP 状态；请求没到服务器时为 0。 */
+  readonly status: number
+  readonly code: ApiErrorCode
+  /** 表单校验错误，键不一定等于请求字段名（以契约条目为准）。 */
+  readonly fields: Readonly<Record<string, string>>
+  readonly requestId?: string
+
+  constructor(init: {
+    status: number
+    code: ApiErrorCode
+    message: string
+    fields?: Record<string, string>
+    requestId?: string
+    cause?: unknown
+  }) {
+    super(init.message, init.cause === undefined ? undefined : { cause: init.cause })
+    this.name = 'ApiError'
+    this.status = init.status
+    this.code = init.code
+    this.fields = init.fields ?? {}
+    this.requestId = init.requestId
   }
 }
-export function failure(error: unknown): ApiFailure {
-  if (error instanceof ApiFailure) return error;
-  return new ApiFailure(
-    error instanceof Error ? error.message : "操作失败，请重试",
-    "contract",
-  );
+
+export function isApiError(error: unknown, code?: ApiErrorCode): error is ApiError {
+  return error instanceof ApiError && (code === undefined || error.code === code)
 }
-export type RequestOptions = {
-  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  body?: unknown;
-  signal?: AbortSignal;
-  idempotencyKey?: string;
-  skipReauth?: boolean;
-  anonymous?: boolean;
-  responseType?: "text";
-};
-export class ApiClient {
-  constructor(
-    public base: string,
-    private token: () => string,
-    private expired: () => void,
-    private reauth: () => Promise<boolean>,
-    private generation: () => number = () => 0,
-    private changed: () => void = () => {},
-  ) {}
-  async request<T>(
-    path: string,
-    schema: z.ZodType<T>,
-    options: RequestOptions = {},
-    replayed = false,
-  ): Promise<T> {
-    const [pathname, query = ""] = path.split("?");
-    const params = new URLSearchParams(query);
-    if ((!options.method || options.method === "GET") && pathname === "v1/nodes" && !params.has("limit") && !params.has("offset")) {
-      const result = schema.safeParse(await this.getNodeCollection(path, options.signal));
-      if (!result.success) throw new ApiFailure("节点列表响应格式不符合约定", "contract");
-      return result.data;
+
+const envelopeSchema = z.object({
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    fields: z.record(z.string(), z.string()).optional(),
+    request_id: z.string().optional(),
+  }),
+})
+
+const knownCodes: ReadonlySet<string> = new Set(SERVER_ERROR_CODES)
+
+// 没有信封（nginx 错误页、网关前的代理）时按状态推一个码，保证 401/404 照常生效
+function codeForStatus(status: number): ApiErrorCode {
+  switch (status) {
+    case 400:
+      return 'bad_request'
+    case 401:
+      return 'unauthorized'
+    case 403:
+      return 'forbidden'
+    case 404:
+      return 'not_found'
+    case 409:
+      return 'conflict'
+    case 422:
+      return 'validation_failed'
+    case 429:
+      return 'rate_limited'
+    case 502:
+    case 503:
+    case 504:
+      return 'service_unavailable'
+    default:
+      return status >= 500 ? 'internal_error' : 'invalid_response'
+  }
+}
+
+const FALLBACK_MESSAGE: Partial<Record<ApiErrorCode, string>> = {
+  unauthorized: '登录已失效，请重新登录',
+  not_found: '资源不存在或无权访问',
+  rate_limited: '操作太频繁，请稍后再试',
+  service_unavailable: '服务暂时不可用，请稍后重试',
+  internal_error: '服务暂时不可用，请稍后重试',
+}
+
+async function readError(res: Response): Promise<ApiError> {
+  let text = ''
+  try {
+    text = await res.text()
+  } catch {
+    // 读不到正文就只凭状态
+  }
+  let parsed: z.infer<typeof envelopeSchema> | null = null
+  try {
+    const result = envelopeSchema.safeParse(JSON.parse(text))
+    if (result.success) parsed = result.data
+  } catch {
+    // 不是 JSON
+  }
+  const fallback = codeForStatus(res.status)
+  if (!parsed) {
+    return new ApiError({
+      status: res.status,
+      code: fallback,
+      message: FALLBACK_MESSAGE[fallback] ?? `请求失败（HTTP ${res.status}）`,
+    })
+  }
+  const { code, message, fields, request_id } = parsed.error
+  return new ApiError({
+    status: res.status,
+    // 封闭列表之外的码不该出现；出现了保留服务端文案，码按状态归类
+    code: knownCodes.has(code) ? (code as ServerErrorCode) : fallback,
+    message,
+    fields,
+    requestId: request_id,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 路径：一律相对 v1/…，相对入口页解析。后台在 nginx 高熵前缀后面、前缀被剥掉
+// 再转发，写死 /v1 会打到门户网关；所以这里拒绝任何不以 v1/ 开头的路径。
+// hash 不参与相对解析，#/users/… 下发请求照样落在前缀之下。
+// ---------------------------------------------------------------------------
+export type QueryParams = Record<string, string | number | boolean | null | undefined>
+
+export function resolveApiUrl(path: string, base: string, query?: QueryParams): URL {
+  if (!path.startsWith('v1/')) {
+    throw new Error(`API path must be relative and start with "v1/": ${path}`)
+  }
+  const url = new URL(path, base)
+  // 插值进路径的片段带了 ../ 也不许逃出入口目录（例如从后台前缀跳到门户网关）
+  const root = new URL('.', base)
+  if (url.origin !== root.origin || !url.pathname.startsWith(`${root.pathname}v1/`)) {
+    throw new Error(`API path must be relative and stay under the entry directory: ${path}`)
+  }
+  for (const [name, value] of Object.entries(query ?? {})) {
+    if (value !== undefined && value !== null) url.searchParams.set(name, String(value))
+  }
+  return url
+}
+
+// ---------------------------------------------------------------------------
+// 幂等键：UUID v4。不用 crypto.randomUUID，它只在安全上下文（HTTPS / localhost）
+// 存在，面板在明文 HTTP 下调试时会直接抛错；getRandomValues 没有这个限制。
+// ---------------------------------------------------------------------------
+export function newIdempotencyKey(
+  random: (bytes: Uint8Array<ArrayBuffer>) => Uint8Array = (b) => crypto.getRandomValues(b),
+): string {
+  const b = random(new Uint8Array(16))
+  b[6] = (b[6]! & 0x0f) | 0x40
+  b[8] = (b[8]! & 0x3f) | 0x80
+  const hex = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+// ---------------------------------------------------------------------------
+// 客户端
+// ---------------------------------------------------------------------------
+export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+
+export interface RequestOptions {
+  method?: Method
+  query?: QueryParams
+  /** JSON 请求体；后端 DisallowUnknownFields，字段须与契约逐字一致。部分 DELETE 必须传 {}。 */
+  body?: unknown
+  /**
+   * 挂了 Idempotency 中间件的路由必须带。true = 本次调用生成一个；传字符串 = 调用方
+   * 跨多次调用复用同一意图的键（例如表单失败后「重试」）。本次调用内的网络重试与
+   * reauth 重放一律复用同一个键。
+   */
+  idempotencyKey?: true | string
+  /** 默认 true。登录等匿名接口传 false：不带 Bearer，401 也不清令牌。 */
+  auth?: boolean
+  /**
+   * 口令校验接口（admin 改密码 / reauth，门户改密码）：口令错也回 401，
+   * 这里的 401 交给表单内联显示，不触发全局登出。
+   */
+  passwordCheck?: boolean
+  signal?: AbortSignal
+}
+
+type MethodOptions = Omit<RequestOptions, 'method'>
+
+export interface ApiClientOptions {
+  tokens: TokenStore
+  /**
+   * 后台收到 403 reauth_required 时调用：界面弹「重新验证身份」，由对话框调
+   * client.reauth(password)（口令错在框内显示），成功 resolve true、用户取消 resolve false。
+   * 门户没有 reauth，不传。并发的多个请求共用同一次弹框。
+   */
+  requestReauth?: () => Promise<boolean>
+  /** 会话失效（非口令接口的 401）时，在令牌已清空之后调用。 */
+  onUnauthorized?: (error: ApiError) => void
+  /** 相对路径的解析基准，默认 document.baseURI（即入口页地址，含后台前缀）。 */
+  baseUrl?: () => string
+  fetch?: typeof fetch
+  /** 网络失败的重试间隔（毫秒），条数即最大重试次数；只对 GET 与带幂等键的请求生效。 */
+  retryDelays?: readonly number[]
+}
+
+export interface ApiClient {
+  request<S extends ZodType>(path: string, schema: S, options?: RequestOptions): Promise<z.output<S>>
+  get<S extends ZodType>(path: string, schema: S, options?: MethodOptions): Promise<z.output<S>>
+  post<S extends ZodType>(path: string, schema: S, options?: MethodOptions): Promise<z.output<S>>
+  put<S extends ZodType>(path: string, schema: S, options?: MethodOptions): Promise<z.output<S>>
+  delete<S extends ZodType>(path: string, schema: S, options?: MethodOptions): Promise<z.output<S>>
+  /**
+   * 非 JSON 响应（CSV 导出等）：与 request 走同一条链路——Bearer、幂等键、reauth 弹框与原键重放、
+   * 网络重试、401 清令牌、错误信封转 ApiError——只是 2xx 时不解析，把 Response 原样交给调用方读 blob / text。
+   * accept 默认 text/csv。
+   */
+  requestRaw(path: string, options?: RequestOptions & { accept?: string }): Promise<Response>
+  /** admin POST v1/auth/reauth：成功后用新令牌替换本地令牌；口令错抛 401 ApiError，不登出。 */
+  reauth(password: string, signal?: AbortSignal): Promise<void>
+  /** 以 Bearer 打开一个 text/event-stream 响应，非 2xx 抛 ApiError（401 照常清令牌）。 */
+  openStream(path: string, signal?: AbortSignal): Promise<Response>
+}
+
+/** 无响应体（204）的接口用它作 schema。 */
+export const noContent = z.undefined()
+
+const reauthResponseSchema = z.object({
+  access_token: z.string().min(1),
+  token_type: z.literal('Bearer'),
+  expires_in: z.number(),
+})
+
+function isAbort(error: unknown, signal?: AbortSignal): boolean {
+  return signal?.aborted === true || (error instanceof DOMException && error.name === 'AbortError')
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason)
+    const timer = setTimeout(done, ms)
+    function done() {
+      signal?.removeEventListener('abort', abort)
+      resolve()
     }
-    const generation = this.generation();
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, 15_000);
-    const abort = () => controller.abort();
-    if (options.signal?.aborted) controller.abort();
-    options.signal?.addEventListener("abort", abort, { once: true });
-    let response: Response;
-    let value: unknown;
+    function abort() {
+      clearTimeout(timer)
+      reject(signal!.reason)
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+  })
+}
+
+export function createApiClient(options: ApiClientOptions): ApiClient {
+  const { tokens } = options
+  const doFetch = options.fetch ?? ((input, init) => fetch(input, init))
+  const baseUrl = options.baseUrl ?? (() => document.baseURI)
+  const retryDelays = options.retryDelays ?? [400, 1200]
+
+  // 同一时刻只弹一次重新验证：并发被拦下的请求都等这一次的结果
+  let pendingReauth: Promise<boolean> | null = null
+  function awaitReauth(): Promise<boolean> {
+    const ask = options.requestReauth
+    if (!ask) return Promise.resolve(false)
+    pendingReauth ??= Promise.resolve()
+      .then(ask)
+      .catch(() => false)
+      .finally(() => {
+        pendingReauth = null
+      })
+    return pendingReauth
+  }
+
+  function sessionLost(error: ApiError, usedToken: string | null) {
+    // 只清发请求时用的那枚：期间用户已重新登录的话，新令牌不能被旧请求的 401 清掉
+    if (usedToken !== null && tokens.get() === usedToken) {
+      tokens.clear()
+      options.onUnauthorized?.(error)
+    }
+  }
+
+  async function send(url: URL, method: Method, opts: RequestOptions, key: string | undefined, accept: string) {
+    const headers = new Headers({ Accept: accept })
+    const token = opts.auth === false ? null : tokens.get()
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    if (key !== undefined) headers.set('Idempotency-Key', key)
+    let body: string | undefined
+    if (opts.body !== undefined) {
+      headers.set('Content-Type', 'application/json')
+      body = JSON.stringify(opts.body)
+    }
+    const res = await doFetch(url, { method, headers, body, signal: opts.signal, credentials: 'omit', cache: 'no-store' })
+    return { res, token }
+  }
+
+  async function parse<S extends ZodType>(res: Response, schema: S): Promise<z.output<S>> {
+    let value: unknown
     try {
-      const headers: Record<string, string> = { Accept: options.responseType === "text" ? "text/csv" : "application/json" };
-      if (!options.anonymous && this.token())
-        headers.Authorization = `Bearer ${this.token()}`;
-      if (options.body !== undefined)
-        headers["Content-Type"] = "application/json";
-      if (options.idempotencyKey)
-        headers["Idempotency-Key"] = options.idempotencyKey;
-      response = await fetch(apiUrl(this.base, path), {
-        cache: "no-store",
-        method: options.method || "GET",
-        headers,
-        body:
-          options.body === undefined ? undefined : JSON.stringify(options.body),
-        signal: controller.signal,
-      });
-      const raw = await response.text();
+      const text = await res.text()
+      value = text === '' ? undefined : JSON.parse(text)
+    } catch (cause) {
+      throw new ApiError({ status: res.status, code: 'invalid_response', message: '服务器返回的数据无法解析', cause })
+    }
+    const result = schema.safeParse(value)
+    if (!result.success) {
+      throw new ApiError({
+        status: res.status,
+        code: 'invalid_response',
+        message: '服务器返回的数据与约定不符',
+        cause: result.error,
+      })
+    }
+    return result.data
+  }
+
+  async function exchange(path: string, opts: RequestOptions, accept: string): Promise<Response> {
+    const method = opts.method ?? 'GET'
+    const url = resolveApiUrl(path, baseUrl(), opts.query)
+    const key = opts.idempotencyKey === true ? newIdempotencyKey() : opts.idempotencyKey
+    // 网络失败时服务器可能已经处理过：只有 GET 与带幂等键的写请求可以安全重发
+    const replayable = method === 'GET' || key !== undefined
+    let networkRetries = 0
+    let replayedAfterReauth = false
+
+    for (;;) {
+      let sent: Awaited<ReturnType<typeof send>>
       try {
-        value = response.ok && options.responseType === "text" ? raw : raw ? JSON.parse(raw) : {};
-      } catch {
-        value = null;
+        sent = await send(url, method, opts, key, accept)
+      } catch (cause) {
+        if (isAbort(cause, opts.signal)) throw cause
+        const delay = retryDelays[networkRetries]
+        if (replayable && delay !== undefined) {
+          networkRetries++
+          await sleep(delay, opts.signal)
+          continue
+        }
+        throw new ApiError({ status: 0, code: 'network_error', message: '网络连接失败，请检查网络后重试', cause })
       }
-    } catch (error) {
-      if (controller.signal.aborted)
-        throw new ApiFailure(
-          timedOut ? "请求超时，请核对操作结果后重试" : "已取消等待",
-          timedOut ? "timeout" : "cancelled",
-          undefined,
-          options.method && options.method !== "GET"
-            ? "write_cancelled"
-            : undefined,
-        );
-      throw new ApiFailure(
-        "连接失败，请检查网络；已提交的操作可能仍在处理",
-        "network",
-      );
-    } finally {
-      clearTimeout(timer);
-      options.signal?.removeEventListener("abort", abort);
-    }
-    // Public reads carry no account credentials and remain valid while /me resolves.
-    // Authenticated reads and every write still reject results from an old session.
-    if (generation !== this.generation() && !(options.anonymous && (!options.method || options.method === "GET")))
-      throw new ApiFailure(
-        "账户身份已变更，旧请求结果已隔离",
-        "cancelled",
-        undefined,
-        options.method && options.method !== "GET"
-          ? "write_cancelled"
-          : undefined,
-      );
-    if (!response.ok) {
-      const envelope = isRow(value) && isRow(value.error) ? value.error : {};
-      const code =
-        typeof envelope.code === "string" ? envelope.code : undefined;
-      const message =
-        typeof envelope.message === "string"
-          ? envelope.message
-          : `服务暂不可用（HTTP ${response.status}）`;
-      const needsReauth =
-        code === "reauth_required" ||
-        (response.status === 403 && /重新验证身份/.test(message));
-      if (needsReauth && !options.skipReauth && !replayed) {
-        if (await this.reauth())
-          return this.request(path, schema, options, true);
-        throw new ApiFailure(
-          "已取消身份确认，表单已保留",
-          "cancelled",
-          response.status,
-          code,
-        );
+
+      const { res, token } = sent
+      if (res.ok) return res
+
+      const error = await readError(res)
+      if (error.status === 401 && opts.auth !== false && !opts.passwordCheck) {
+        sessionLost(error, token)
       }
-      if (response.status === 401 && !needsReauth && !options.anonymous)
-        this.expired();
-      const kind: FailureKind = needsReauth
-        ? "reauth-required"
-        : response.status === 401
-          ? "unauthenticated"
-          : response.status === 403
-            ? "forbidden"
-            : response.status === 409
-              ? "conflict"
-              : response.status === 429
-                ? "rate-limited"
-                : response.status === 400 || response.status === 422
-                  ? "validation"
-                  : "server";
-      const fields: Record<string, string[]> = {};
-      if (isRow(envelope.fields))
-        for (const [key, item] of Object.entries(envelope.fields))
-          fields[key] = Array.isArray(item)
-            ? item.filter((x): x is string => typeof x === "string")
-            : [String(item)];
-      throw new ApiFailure(
-        message,
-        kind,
-        response.status,
-        code,
-        fields,
-        response.headers.get("X-Request-ID") || undefined,
-      );
-    }
-    if (options.method && options.method !== "GET" && !options.anonymous && !path.startsWith("v1/auth/"))
-      this.changed();
-    const parsed = schema.safeParse(value);
-    if (!parsed.success)
-      throw new ApiFailure(
-        "服务返回的数据不符合约定，请重试或联系管理员",
-        "contract",
-        response.status,
-        options.method && options.method !== "GET"
-          ? "response_unknown"
-          : undefined,
-      );
-    return parsed.data;
-  }
-  get(path: string, signal?: AbortSignal) {
-    return this.request(path, recordSchema, { signal });
-  }
-  // Pickers need all pages; management tables explicitly request just one.
-  private async getNodeCollection(path: string, signal?: AbortSignal): Promise<Row> {
-    const generation = this.generation();
-    const schema = z.object({ nodes: z.array(recordSchema), total: z.number().int().nonnegative() }).passthrough();
-    const collected: Row[] = [];
-    const ids = new Set<string>();
-    let expected: number | undefined;
-    for (let page = 0; page < 200; page++) {
-      if (generation !== this.generation() || signal?.aborted)
-        throw new ApiFailure("已取消等待", "cancelled");
-      const result = await this.request(`${path}${path.includes("?") ? "&" : "?"}limit=500&offset=${collected.length}`, schema, { signal });
-      if (expected !== undefined && result.total !== expected)
-        throw new ApiFailure("节点列表已变更，请刷新后重试", "conflict");
-      expected = result.total;
-      for (const node of result.nodes) {
-        if (typeof node.id !== "string" || ids.has(node.id))
-          throw new ApiFailure("节点列表已变更，请刷新后重试", "conflict");
-        ids.add(node.id);
-        collected.push(node);
+      // reauth_required 在 Idempotency 之前拦下，处理器没执行、幂等键没消耗，
+      // 所以不论有没有键都可以重放；有键时用同一个键。只重放一次。
+      if (error.code === 'reauth_required' && !replayedAfterReauth) {
+        replayedAfterReauth = true
+        // 发出后别处已经换过令牌（另一个请求刚完成重新验证）：直接用新令牌重放
+        const refreshed = tokens.get() !== token && tokens.get() !== null
+        if (refreshed || (await awaitReauth())) continue
       }
-      if (collected.length === expected) return { ...result, nodes: collected, offset: 0 };
-      if (!result.nodes.length || collected.length > expected) break;
+      throw error
     }
-    throw new ApiFailure("节点列表未能完整读取，请刷新后重试", "contract");
   }
-  write(
-    path: string,
-    body: unknown,
-    options: Omit<RequestOptions, "body"> = {},
-  ): Promise<Row> {
-    return this.request(path, recordSchema, {
-      method: "POST",
-      ...options,
-      body,
-    });
+
+  const client: ApiClient = {
+    async request(path, schema, opts = {}) {
+      return parse(await exchange(path, opts, 'application/json'), schema)
+    },
+    get: (path, schema, opts) => client.request(path, schema, { ...opts, method: 'GET' }),
+    post: (path, schema, opts) => client.request(path, schema, { ...opts, method: 'POST' }),
+    put: (path, schema, opts) => client.request(path, schema, { ...opts, method: 'PUT' }),
+    delete: (path, schema, opts) => client.request(path, schema, { ...opts, method: 'DELETE' }),
+    requestRaw: (path, { accept = 'text/csv', ...opts } = {}) => exchange(path, opts, accept),
+    async reauth(password, signal) {
+      const res = await client.post('v1/auth/reauth', reauthResponseSchema, {
+        body: { password },
+        passwordCheck: true,
+        signal,
+      })
+      tokens.set(res.access_token)
+    },
+    openStream: (path, signal) => exchange(path, { method: 'GET', signal }, 'text/event-stream'),
   }
+  return client
 }

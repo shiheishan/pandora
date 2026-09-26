@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 ledger.go 的记账、traffic_pack.go 的 GrantTrafficPackTx、traffic_reset.go 的 LogTrafficReset、provision.go 的 grantPlanDirect
+// [OUTPUT]: 对外提供 GiftGranter 与 Service.GiftGranter：GrantBalance、GrantTraffic、ExtendExpiry、ResetQuota、GrantPlan
+// [POS]: billing 实现 giftcard.Granter 的一侧：礼品卡「发什么」由 giftcard 决定，「怎么发」在这里；流量奖励发成用户级流量包余额（D-E-1）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -73,39 +78,20 @@ func activeSubscription(ctx context.Context, tx pgx.Tx, tenantID, userID string)
 	return subID, err
 }
 
-// GrantTraffic 往当前订阅的流量配额里追加。
+// GrantTraffic 把礼品卡送的流量发成一笔流量包余额（D-E-1）。
 //
-// 只动 granted_addon 一列，三个理由缺一不可：
-//   - granted 是套餐本身给的量，周期重置时要按套餐重新写；
-//     addon 是额外赠送的，不该被重置抹掉。
-//   - remaining 是生成列（limit_value + granted_addon + adjusted - consumed），
-//     它会自动跟着 addon 变。手写会被数据库直接拒绝（428C9）。
-//   - limit_value 同样不能加：它已经在上面那条公式里了，
-//     两边都加等于把赠送的流量算两遍，用户白拿一倍。
+// 此前是加在订阅配额行的 granted_addon 上，而配额行跨周期复用、重置与续费
+// 都不清它，一次性赠送于是每个周期重新可用（缺陷 16）。现在它和购买的流量包
+// 是同一笔余额：挂用户、永不过期、用完为止、每周期先扣套餐额度再扣它。
+// 没有生效订阅也能先领着 —— 余额在用户身上，等有了订阅再用。
 func (g *GiftGranter) GrantTraffic(ctx context.Context, tx pgx.Tx,
-	tenantID, userID string, bytes int64) error {
+	tenantID, userID, codeID string, bytes int64) error {
 
 	if bytes <= 0 {
 		return errors.New("gift traffic must be positive")
 	}
-	subID, err := activeSubscription(ctx, tx, tenantID, userID)
-	if err != nil {
-		return err
-	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE quota_balances
-		   SET granted_addon = granted_addon + $3,
-		       updated_at    = now()
-		 WHERE tenant_id=$1 AND subscription_id=$2::uuid AND metric='traffic.bytes'`,
-		tenantID, subID, bytes)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return httpx.New(httpx.CodeValidationFailed,
-			"当前订阅没有流量配额，无法追加")
-	}
-	return nil
+	_, err := GrantTrafficPackTx(ctx, tx, tenantID, userID, "gift_card", codeID, bytes)
+	return err
 }
 
 // ExtendExpiry 把订阅到期时间往后推。

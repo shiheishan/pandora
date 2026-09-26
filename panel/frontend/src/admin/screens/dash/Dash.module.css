@@ -1,0 +1,577 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 dash 目录下各组件用到的类名
+ * [POS]: admin/screens/dash 的唯一样式表，数值取自 管理后台-01-仪表盘.dc.html；只引用令牌不写色值，柱高与条宽这类真正动态的尺寸由组件的 style 属性给
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+/* ===========================================================================
+ * 页面骨架：区块纵向 24，区块内标题与内容 10
+ * ========================================================================= */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+}
+
+.hint {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 状态圆点：颜色只表达状态 */
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.ok {
+  background: var(--ok);
+}
+
+.warn {
+  background: var(--warn);
+}
+
+.danger {
+  background: var(--danger);
+}
+
+.info {
+  background: var(--info);
+}
+
+.neutral {
+  background: var(--border-hover);
+}
+
+/* ===========================================================================
+ * 需要处理
+ * ========================================================================= */
+.taskGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: var(--space-12);
+}
+
+.task {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px var(--space-16);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+}
+
+a.task:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+.taskHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--text-2);
+}
+
+.taskCount {
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.taskSub {
+  min-height: 18px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.taskAct {
+  margin-top: var(--space-4);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  text-decoration: underline;
+  text-decoration-color: var(--border-hover);
+  text-underline-offset: 3px;
+}
+
+/* ===========================================================================
+ * 经营 KPI：拼成一整块，格间 1px 分隔线。设计稿用「底色 + 1px gap」，但格子数
+ * 不整除列数时空位会露出整块底色；这里改用每格右、下各 1px 阴影，最外一圈被
+ * overflow 裁掉，空位保持卡片白底
+ * ========================================================================= */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 14px var(--space-16);
+  background: var(--surface);
+  box-shadow:
+    1px 0 0 var(--border),
+    0 1px 0 var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+
+a.kpi:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.kpiLabel {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+/* 设计稿 KPI 数字 20px，介于 h2 与 h1 之间，令牌里没有这一档 */
+.kpiValue {
+  font-size: 20px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpiSub {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.toneOk {
+  color: var(--ok);
+}
+
+.toneDanger {
+  color: var(--danger);
+}
+
+.toneWarn {
+  color: var(--warn);
+}
+
+/* ===========================================================================
+ * 面板（收入趋势、系统状态、注册与活跃、流量排行）
+ * ========================================================================= */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--space-16);
+}
+
+.wide {
+  flex: 2 1 480px;
+}
+
+.narrow {
+  flex: 1 1 280px;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: var(--space-16);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px var(--space-16);
+}
+
+.panelHeadRule {
+  border-bottom: 1px solid var(--border);
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: var(--body-size);
+  font-weight: var(--fw-semibold);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.panelBody {
+  padding: 0 var(--space-16) var(--space-16);
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  padding: 0 var(--space-16) var(--space-8);
+}
+
+.statsBottom {
+  padding: var(--space-12) var(--space-16);
+}
+
+.statValue {
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- 柱图：手写 div 柱，高度由 style 给百分比 --------------------------- */
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 180px;
+  margin: var(--space-8) var(--space-16) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.dense {
+  gap: 1px;
+}
+
+.bar {
+  flex: 1;
+  min-width: 2px;
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  background: var(--border-hover);
+}
+
+.bar:hover,
+.barToday {
+  background: var(--text);
+}
+
+.axis {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px var(--space-16) 14px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.pairBars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 150px;
+  margin: 0 var(--space-16);
+  border-bottom: 1px solid var(--border);
+}
+
+.pairSlot {
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  gap: 1px;
+  height: 100%;
+}
+
+.barActive {
+  flex: 1;
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  background: var(--border-hover);
+}
+
+.barRegistered {
+  flex: 1;
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  background: var(--text);
+}
+
+.legend {
+  display: flex;
+  gap: var(--space-12);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.swatchRegistered {
+  background: var(--text);
+}
+
+.swatchActive {
+  background: var(--border-hover);
+}
+
+/* --- 系统状态行 --------------------------------------------------------- */
+.sysRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px var(--space-16);
+  border: 0;
+  border-bottom: 1px solid var(--surface-2);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+.sysRow:last-child {
+  border-bottom: 0;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+button.sysRow,
+a.sysRow {
+  cursor: pointer;
+}
+
+button.sysRow:hover,
+a.sysRow:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.sysSkeleton {
+  padding-top: var(--space-12);
+}
+
+.sysName {
+  flex: 1;
+  min-width: 0;
+}
+
+.sysMeta {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.sysMetaWarn {
+  color: var(--warn);
+}
+
+.sysMetaDanger {
+  color: var(--danger);
+}
+
+/* --- 流量排行 ----------------------------------------------------------- */
+.rankList {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0 var(--space-16) var(--space-12);
+  list-style: none;
+}
+
+.rankRow {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+a.rankRow:hover .rankName {
+  text-decoration: underline;
+  text-decoration-color: var(--border-hover);
+  text-underline-offset: 3px;
+}
+
+.rankIndex {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.rankMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.rankName {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+.fill {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--text);
+}
+
+.rankValue {
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.notes {
+  margin: 0;
+  padding: 0 var(--space-16) var(--space-12);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  text-decoration: none;
+}
+
+.more:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* --- 卡片内的错误与空状态 ----------------------------------------------- */
+.error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-16);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.errorBox {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.skeletonStack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 var(--space-16) var(--space-16);
+}
+
+/* ===========================================================================
+ * 备份抽屉
+ * ========================================================================= */
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-8) var(--space-16);
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--text-3);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.drawerStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.drawerTitle {
+  margin: 0 0 var(--space-8);
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+}
+
+.notice {
+  margin: 0;
+  padding: 10px var(--space-12);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--text);
+}

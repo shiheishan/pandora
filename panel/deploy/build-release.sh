@@ -49,24 +49,25 @@ if [ -n "$PREBUILT_ROOT" ]; then
   esac
 fi
 
-# React 候选前端经 go:embed 编进 aegis-admin / aegis-public，必须先于 Go 构建同步进 web/*/app。
+# 面板前端经 go:embed 编进 aegis-admin / aegis-public，必须先于 Go 构建同步进 web/{admin,portal}。
 # 仓库里只有占位入口；没有 npm 就失败，不把占位页静默打进发布物。
 # 预构建模式下二进制来自别处，嵌入由产出它们的那台构建机负责。
 if [ -z "$PREBUILT_ROOT" ]; then
   command -v npm >/dev/null 2>&1 || {
-    echo "missing npm (Node 22.12+): release binaries embed the React frontend and must not ship its placeholder" >&2
+    echo "missing npm (Node 22.12+): release binaries embed the panel frontend and must not ship its placeholder" >&2
     exit 1
   }
-  make -C "$ROOT" frontend-embed
+  # 后台登录页与侧栏显示的版本号由 vite 构建时读 PANDORA_RELEASE 注入，与发布物版本同源
+  PANDORA_RELEASE="$VERSION" make -C "$ROOT" frontend-embed
   for app in admin portal; do
-    if grep -q 'name="pandora-placeholder"' "$ROOT/web/$app/app/index.html"; then
-      echo "web/$app/app still holds the placeholder entry after frontend-embed" >&2
+    if grep -q 'name="pandora-placeholder"' "$ROOT/web/$app/index.html"; then
+      echo "web/$app still holds the placeholder entry after frontend-embed" >&2
       exit 1
     fi
   done
 fi
 
-binaries=(aegis-public aegis-admin aegis-node aegis-agent aegis-payctl aegis-adminctl aegis-backup-webdav)
+binaries=(aegis-public aegis-admin aegis-node aegis-payctl aegis-adminctl aegis-backup-webdav)
 for arch in amd64 arm64; do
   expected_machine=""
   case "$arch" in

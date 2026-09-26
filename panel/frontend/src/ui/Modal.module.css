@@ -1,0 +1,127 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Modal.tsx 与 Drawer.module.css 引用的类名
+ * [POS]: ui/Modal 的样式：<dialog> 铺满视口当遮罩层，面板居中；< 640 贴底成为抽屉
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: var(--space-16);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  overflow: auto;
+}
+
+.overlay[open] {
+  display: grid;
+  place-items: center;
+}
+
+.overlay::backdrop {
+  background: var(--scrim);
+}
+
+/* 弹窗开着时页面本身不滚动 */
+:root:has(.overlay[open]) {
+  overflow: hidden;
+}
+
+.panel {
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: var(--dialog-w);
+  max-width: 100%;
+  padding: 22px;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: rise 0.18s ease-out;
+}
+
+.md {
+  width: 560px;
+}
+
+.lg {
+  width: 720px;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  color: var(--warn);
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: var(--fw-semibold);
+}
+
+.body {
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* --- < 640：底部抽屉，按钮通栏 ------------------------------------------ */
+@media (max-width: 639px) {
+  .overlay {
+    padding: 0;
+  }
+
+  .overlay[open] {
+    place-items: end stretch;
+  }
+
+  .panel,
+  .md,
+  .lg {
+    width: 100%;
+    max-height: 90dvh;
+    overflow-y: auto;
+    border-radius: 16px 16px 0 0;
+    padding-bottom: calc(22px + env(safe-area-inset-bottom));
+    animation-name: slide-up;
+  }
+
+  .actions > * {
+    flex: 1;
+  }
+
+  @keyframes slide-up {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
+  }
+}

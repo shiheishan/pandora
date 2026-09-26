@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 plugin_hooks / plugin_hook_deliveries（00051，00081 加 last_duration_ms），依赖 platform 的 audit/crypto/db/httpx
+// [OUTPUT]: 对外提供 EventInfo 与 Events 事件目录（小写 name / desc）、KnownEvent、Service、New，钩子增删查、Emit 入队、Dispatch / StartScanner 投递、Deliveries 投递记录、TestHook 同步测试
+// [POS]: domain/plugin 的主体：出站 webhook 的配置、签名投递与重试；超时与重试次数越界在保存时回 422（R93）；每次尝试记往返耗时（timedPost），emit.go 为各业务事件的薄封装
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package plugin
 
 import (
@@ -41,7 +46,13 @@ import (
 //
 // 白名单放在代码里：允许订阅任意字符串的话，管理员打错一个字母
 // 就是一个永远不触发的钩子，而且没有任何地方会提示他。
-var Events = []struct{ Name, Desc string }{
+// EventInfo 的 JSON 键是小写 name / desc（契约后台-09；此前匿名结构体输出大写键）。
+type EventInfo struct {
+	Name string `json:"name"`
+	Desc string `json:"desc"`
+}
+
+var Events = []EventInfo{
 	{"user.registered", "用户完成注册"},
 	{"order.created", "订单创建"},
 	{"order.paid", "订单支付成功"},
@@ -105,11 +116,13 @@ type Hook struct {
 	MaxAttempts int      `json:"max_attempts"`
 	QueuedCount int      `json:"queued_count"`
 	FailedCount int      `json:"failed_count"`
-	LastSentAt  *string  `json:"last_sent_at,omitempty"`
+	// SentCount7d 与 FailedCount 同一个 7 天窗口，前端算成功率 sent / (sent + failed)
+	SentCount7d int     `json:"sent_count_7d"`
+	LastSentAt  *string `json:"last_sent_at,omitempty"`
 }
 
 func (s *Service) List(ctx context.Context, tenantID string) ([]Hook, error) {
-	var out []Hook
+	out := []Hook{}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT h.id, h.code, h.name, h.description, h.enabled, h.events,
@@ -123,7 +136,10 @@ func (s *Service) List(ctx context.Context, tenantID string) ([]Hook, error) {
 			           AND d.created_at > now() - interval '7 days'),
 			       (SELECT to_char(max(d.sent_at),'YYYY-MM-DD HH24:MI')
 			          FROM plugin_hook_deliveries d
-			         WHERE d.tenant_id=h.tenant_id AND d.hook_id=h.id AND d.status='sent')
+			         WHERE d.tenant_id=h.tenant_id AND d.hook_id=h.id AND d.status='sent'),
+			       (SELECT count(*) FROM plugin_hook_deliveries d
+			         WHERE d.tenant_id=h.tenant_id AND d.hook_id=h.id AND d.status='sent'
+			           AND d.created_at > now() - interval '7 days')
 			  FROM plugin_hooks h WHERE h.tenant_id = $1 ORDER BY h.code`, tenantID)
 		if err != nil {
 			return err
@@ -133,7 +149,7 @@ func (s *Service) List(ctx context.Context, tenantID string) ([]Hook, error) {
 			var h Hook
 			if err := rows.Scan(&h.ID, &h.Code, &h.Name, &h.Description, &h.Enabled,
 				&h.Events, &h.EndpointURL, &h.HasSecret, &h.TimeoutMS, &h.MaxAttempts,
-				&h.QueuedCount, &h.FailedCount, &h.LastSentAt); err != nil {
+				&h.QueuedCount, &h.FailedCount, &h.LastSentAt, &h.SentCount7d); err != nil {
 				return err
 			}
 			out = append(out, h)
@@ -180,15 +196,21 @@ func (s *Service) SaveHook(ctx context.Context, tenantID string, in SaveHookInpu
 	if in.Enabled && len(in.Events) == 0 {
 		fields["events"] = "启用前至少要订阅一个事件，否则这个钩子永远不会触发"
 	}
-	if len(fields) > 0 {
-		return "", httpx.Invalid(fields)
-	}
-
+	// 0 取默认值；越界在这里拦成 422（R93），别让 00051 的 CHECK 约束变成 500。
 	if in.TimeoutMS == 0 {
 		in.TimeoutMS = 5000
 	}
 	if in.MaxAttempts == 0 {
 		in.MaxAttempts = 5
+	}
+	if in.TimeoutMS < 500 || in.TimeoutMS > 30000 {
+		fields["timeout_ms"] = "超时必须在 500–30000 毫秒之间"
+	}
+	if in.MaxAttempts < 1 || in.MaxAttempts > 10 {
+		fields["max_attempts"] = "最多尝试次数必须在 1–10 之间"
+	}
+	if len(fields) > 0 {
+		return "", httpx.Invalid(fields)
 	}
 
 	// 没给密钥就生成一个：让插件在「不设签名」的状态下跑起来太容易了，
@@ -437,7 +459,7 @@ func (s *Service) deliverOne(ctx context.Context, tenantID string, d dueDelivery
 		}
 	}
 
-	code, sendErr := s.post(ctx, d, secret)
+	code, durationMS, sendErr := s.timedPost(ctx, d, secret)
 	attempts := d.attempts + 1
 
 	_ = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
@@ -445,8 +467,9 @@ func (s *Service) deliverOne(ctx context.Context, tenantID string, d dueDelivery
 			_, err := tx.Exec(ctx, `
 				UPDATE plugin_hook_deliveries
 				   SET status='sent', attempts=$3, response_code=$4,
-				       sent_at=now(), error_message='', next_retry_at=NULL
-				 WHERE tenant_id=$1 AND id=$2`, tenantID, d.id, attempts, code)
+				       sent_at=now(), error_message='', next_retry_at=NULL,
+				       last_duration_ms=$5
+				 WHERE tenant_id=$1 AND id=$2`, tenantID, d.id, attempts, code, durationMS)
 			return err
 		}
 
@@ -467,8 +490,8 @@ func (s *Service) deliverOne(ctx context.Context, tenantID string, d dueDelivery
 			_, err := tx.Exec(ctx, `
 				UPDATE plugin_hook_deliveries
 				   SET status='failed', attempts=$3, response_code=nullif($4,0),
-				       error_message=$5, next_retry_at=NULL
-				 WHERE tenant_id=$1 AND id=$2`, tenantID, d.id, attempts, code, msg)
+				       error_message=$5, next_retry_at=NULL, last_duration_ms=$6
+				 WHERE tenant_id=$1 AND id=$2`, tenantID, d.id, attempts, code, msg, durationMS)
 			return err
 		}
 		// 指数退避：1、2、4、8 分钟。对方在重启的话，密集重试帮不上忙。
@@ -479,10 +502,10 @@ func (s *Service) deliverOne(ctx context.Context, tenantID string, d dueDelivery
 		_, err := tx.Exec(ctx, `
 			UPDATE plugin_hook_deliveries
 			   SET attempts=$3, response_code=nullif($4,0), error_message=$5,
-			       next_retry_at=now() + $6::interval
+			       next_retry_at=now() + $6::interval, last_duration_ms=$7
 			 WHERE tenant_id=$1 AND id=$2`,
 			tenantID, d.id, attempts, code, msg,
-			strconv.Itoa(int(backoff.Seconds()))+" seconds")
+			strconv.Itoa(int(backoff.Seconds()))+" seconds", durationMS)
 		return err
 	})
 }
@@ -493,7 +516,26 @@ func (s *Service) post(ctx context.Context, d dueDelivery, secret string) (int, 
 	if err := s.validateEndpoint(d.endpoint); err != nil {
 		return 0, err
 	}
+	return s.send(ctx, d, secret)
+}
 
+// timedPost 与 post 相同，另外量出这次尝试的往返耗时（毫秒）。
+//
+// 只量真正发出去的请求：地址校验没过时请求根本没发，耗时为 nil，
+// 落库为 NULL —— 记一个 0 会被读成「对方秒回」。连接失败、超时这类
+// 已经发起的尝试照记，它们的耗时正是排查时要看的东西。
+func (s *Service) timedPost(ctx context.Context, d dueDelivery, secret string) (int, *int, error) {
+	if err := s.validateEndpoint(d.endpoint); err != nil {
+		return 0, nil, err
+	}
+	start := time.Now()
+	code, err := s.send(ctx, d, secret)
+	ms := int(time.Since(start).Milliseconds())
+	return code, &ms, err
+}
+
+// send 发出一次签名请求，不做地址校验（由 post / timedPost 负责）。
+func (s *Service) send(ctx context.Context, d dueDelivery, secret string) (int, error) {
 	timeout := time.Duration(d.timeoutMS) * time.Millisecond
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -554,6 +596,7 @@ func (s *Service) StartScanner(ctx context.Context, tenantID string, every time.
 }
 
 // Deliveries 返回某个钩子最近的投递记录，供后台排查。
+// duration_ms 是最后一次尝试的往返耗时，00081 之前的记录与没发出去的尝试为 null。
 func (s *Service) Deliveries(ctx context.Context, tenantID, hookCode string, limit int) ([]map[string]any, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -563,7 +606,8 @@ func (s *Service) Deliveries(ctx context.Context, tenantID, hookCode string, lim
 		rows, err := tx.Query(ctx, `
 			SELECT d.event, d.status, d.attempts, coalesce(d.response_code,0),
 			       d.error_message, to_char(d.created_at,'YYYY-MM-DD HH24:MI:SS'),
-			       coalesce(to_char(d.sent_at,'YYYY-MM-DD HH24:MI:SS'),'')
+			       coalesce(to_char(d.sent_at,'YYYY-MM-DD HH24:MI:SS'),''),
+			       d.last_duration_ms
 			  FROM plugin_hook_deliveries d
 			  JOIN plugin_hooks h ON h.tenant_id=d.tenant_id AND h.id=d.hook_id
 			 WHERE d.tenant_id=$1 AND h.code=$2
@@ -575,12 +619,13 @@ func (s *Service) Deliveries(ctx context.Context, tenantID, hookCode string, lim
 		for rows.Next() {
 			var ev, st, em, ct, sa string
 			var at, rc int
-			if err := rows.Scan(&ev, &st, &at, &rc, &em, &ct, &sa); err != nil {
+			var dur *int
+			if err := rows.Scan(&ev, &st, &at, &rc, &em, &ct, &sa, &dur); err != nil {
 				return err
 			}
 			out = append(out, map[string]any{
 				"event": ev, "status": st, "attempts": at, "response_code": rc,
-				"error_message": em, "created_at": ct, "sent_at": sa,
+				"error_message": em, "created_at": ct, "sent_at": sa, "duration_ms": dur,
 			})
 		}
 		return rows.Err()
@@ -588,8 +633,9 @@ func (s *Service) Deliveries(ctx context.Context, tenantID, hookCode string, lim
 	return out, err
 }
 
-// TestHook 立刻往钩子发一条测试事件，同步返回结果。
-func (s *Service) TestHook(ctx context.Context, tenantID, code string) (int, error) {
+// TestHook 立刻往钩子发一条测试事件，同步返回状态码与往返耗时（毫秒）。
+// 测试投递不落库，耗时只在响应里返回。
+func (s *Service) TestHook(ctx context.Context, tenantID, code string) (int, int, error) {
 	var d dueDelivery
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
@@ -598,10 +644,10 @@ func (s *Service) TestHook(ctx context.Context, tenantID, code string) (int, err
 			Scan(&d.hookID, &d.endpoint, &d.timeoutMS, &d.code, &d.sealed)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, httpx.New(httpx.CodeNotFound, "插件不存在")
+		return 0, 0, httpx.New(httpx.CodeNotFound, "插件不存在")
 	}
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	d.id = "test-" + d.hookID
@@ -616,5 +662,9 @@ func (s *Service) TestHook(ctx context.Context, tenantID, code string) (int, err
 			secret = string(plain)
 		}
 	}
-	return s.post(ctx, d, secret)
+	status, durationMS, err := s.timedPost(ctx, d, secret)
+	if durationMS == nil {
+		return status, 0, err
+	}
+	return status, *durationMS, err
 }

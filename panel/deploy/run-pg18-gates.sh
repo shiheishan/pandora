@@ -67,9 +67,15 @@ APPPW=app-gate-password
 # 绕过闸门跑出来的绿灯证明不了生产能升上去。
 MIGRATE_OPTS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes -c app.order_release_writers_stopped=yes'
 
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
+cleanup() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  [[ -n "${LOG_DIR:-}" ]] && rm -rf "$LOG_DIR"
+  return 0
+}
 trap cleanup EXIT INT TERM
 cleanup
+# 每个域的 go test -v 输出留一份，跑完后用来查「有没有被跳过」。
+LOG_DIR="$(mktemp -d)"
 
 # 域定义：名字|库名|测试包|额外变量|标记表|数据库注释前缀|准备动作|测试过滤
 #
@@ -84,15 +90,25 @@ cleanup
 #   - announcement 和 support 都要求 pandora_node_preview_ 库名前缀
 #   - 这两个域的注释前缀也都是 pandora-node-preview-pg18
 # 要理顺就得连测试一起改，那是另一件事。
+#
+# 测试过滤缺省是 PG18。好几个包里住着不止一个域（nodefabric：effective、
+# enrollment 与 traffic_charge；api/admin：announcement 与 node_config；
+# subscription：node_preview 与 usage_daily），缺省过滤会把另一个域的测试
+# 也拉进来，它们因为拿不到自己的环境变量而 t.Skip。跳过在下面算失败（见
+# 结果判定），所以同包的域必须把过滤写精确。过滤是最后一个字段，
+# 里面的 | 会被 read 原样留给它。
 DOMAINS=(
-  "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||"
-  "enrollment|pandora_enrollment_pg18|./internal/domain/nodefabric|||||"
-  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||"
-  "node_config|pandora_nodecfg_gate|./internal/api/admin|run_id,oid,system_id||pandora-nodecfg-disposable||"
+  "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18)$"
+  "enrollment|pandora_enrollment_pg18|./internal/domain/nodefabric|||||^(TestNodeEnrollmentPG18|TestIssueServerTokenPG18)$"
+  "announcement|pandora_node_preview_announce|./internal/api/admin|run_id|pandora_announcement_test_marker|pandora-node-preview-pg18||^(TestAnnouncementPG18|TestDeviceLimitWritesPG18|TestAccessLogCategoryPG18|TestNodeRoutingGlobalOutboundPG18|TestNodeListPagingPG18|TestIPClusterPG18|TestAuditLogPG18|TestNodeCountryAndCredentialsPG18|TestPluginDeliveryDurationPG18|TestSiteSettingsPG18|TestDashboardTasksPG18|TestFeatureSwitchGatesPG18|TestAdminMeProfilePG18|TestUserProfileRegisteredIPPG18|TestDashboardReadModelsPG18|TestNodesStep5PG18|TestContentNotifyStep5PG18|TestNodePatchKeepsSecretsPG18|TestPluginHookBoundsPG18|TestTenantSeedDefaultsPG18)$"
+  "node_config|pandora_nodecfg_gate|./internal/api/admin|run_id,oid,system_id||pandora-nodecfg-disposable||^(TestNodeConfigLegacyPG18|TestNodeConfigPG18LockSchedule)$"
   "catalog_sales|pandora_catalog_sales_gate|./internal/domain/adminops|run_id|pandora_catalog_sales_test_marker|pandora-catalog-sales-pg18||"
+  "giftcard|pandora_giftcard_gate|./internal/domain/giftcard|run_id|pandora_giftcard_test_marker|pandora-giftcard-pg18||"
   "content|pandora_content_gate|./internal/domain/content|run_id|pandora_content_test_marker|pandora-content-pg18||"
+  "appearance|pandora_appearance_gate|./internal/domain/appearance|run_id|pandora_appearance_test_marker|pandora-appearance-pg18||"
+  "public_api|pandora_public_api_gate|./internal/api/public|run_id|pandora_public_api_test_marker|pandora-public-api-pg18||"
   "logout|pandora_logout_gate|./internal/domain/identity|run_id|pandora_logout_test_marker|pandora-logout-pg18||"
-  "node_preview|pandora_node_preview_gate|./internal/domain/subscription|run_id|pandora_node_preview_test_marker|pandora-node-preview-pg18||"
+  "node_preview|pandora_node_preview_gate|./internal/domain/subscription|run_id|pandora_node_preview_test_marker|pandora-node-preview-pg18||^TestNodePreviewPG18$"
   "support|pandora_node_preview_support|./internal/domain/support|run_id|pandora_support_test_marker|pandora-node-preview-pg18||"
   "billing|pandora_billing_gate|./internal/domain/billing|billing|||app_role,billing_seed|TestCheckoutAtomicPG18|TestSettlementPG18"
   # order_release 必须独占一个库：它断言 app.order_release_00040_meta 这个
@@ -102,7 +118,23 @@ DOMAINS=(
   # 再灌 billing 那份——后者带着已取消 / 已过期的订单，一进库就把释放路径的
   # 水位置上，而这个测试开跑第一件事就是断言水位还是干净的。
   "order_release|pandora_order_release_gate|./internal/domain/billing|order_release|||app_role|TestOrderReleasePG18"
+  # 流量包（00070）：下单与余额在 billing，扣量在 nodefabric；各自独占一个库，
+  # 过滤写精确，免得同包里别的 PG18 测试因拿不到环境变量而被算作跳过。
+  "traffic_pack|pandora_traffic_pack_gate|./internal/domain/billing||||app_role|^TestTrafficPackOrderPG18$"
+  "traffic_charge|pandora_traffic_charge_gate|./internal/domain/nodefabric||||app_role|^(TestTrafficChargePG18|TestUsageDailyWritePG18)$"
+  # 变更套餐（00071）：同 traffic_pack，复用 order_release 的一次性租户夹具，独占一个库。
+  # 订阅终态时的续费 / 变更结算进挂账（00095，R117）同属续费与变更的结算，并进这个库。
+  "plan_change|pandora_plan_change_gate|./internal/domain/billing||||app_role|^(TestPlanChangePG18|TestIneligibleSubscriptionSettlementPG18)$"
+  # 按日流量（00072）：写入与扣量同事务，写入测试并进 traffic_charge 的库；
+  # 读模型在 subscription 包，与 node_preview 同包，两边过滤都写精确。
+  "usage_daily|pandora_usage_daily_gate|./internal/domain/subscription||||app_role|^TestUsageDailyReadPG18$"
   "idempotency|pandora_idempotency_gate|./internal/middleware||||app_role,idempotency_seed|"
+  # 审计哈希链（00086 第二版口径）：篡改用例要绕过追加写触发器，只在这个一次性库里做
+  "audit|pandora_audit_gate|./internal/platform/audit|run_id|pandora_audit_test_marker|pandora-audit-pg18||"
+  "notify|pandora_notify_gate|./internal/domain/notify|run_id|pandora_notify_test_marker|pandora-notify-pg18||"
+  # 交付集合（R103、R104）：同一个库里对照节点用户列表、订阅下载、门户预览与后台
+  # 写接口的通知，含节点池限定用户组（00093）、设备识别窗口（00094）、节点一步上线（R108）与节点状态报错中文化（⑪）。跨两个包，过滤写精确，免得把两个包里别的域拉进来被算作跳过。
+  "delivery|pandora_delivery_gate|./internal/domain/subscription ./internal/api/admin|run_id|pandora_delivery_test_marker|pandora-delivery-pg18||^(TestDeliverySetPG18|TestDeliveryAdminPG18|TestPoolUserGroupsDeliveryPG18|TestPoolUserGroupsAdminPG18|TestDeviceWindowPG18|TestDeviceWindowAdminPG18|TestNodeActivatePG18|TestNodeStatusRefusalPG18)$"
 )
 
 selected() {
@@ -116,10 +148,22 @@ echo "==> 起 PostgreSQL 18"
 docker run -d --name "$CONTAINER" \
   -e POSTGRES_PASSWORD="$PGPW" -e POSTGRES_USER="$PGUSER_MIGRATE" -e POSTGRES_DB=postgres \
   -p 127.0.0.1::5432 "$PG_IMAGE" >/dev/null
+# 就绪检查必须走 TCP：镜像初始化时会先起一个只听 unix socket 的临时实例，跑完
+# 初始化脚本再关掉、重启成正式实例。经 socket 探测会在临时实例上报「就绪」，
+# 紧接着的迁移正好撞上它关停（第 ④ 步 CI 的偶发失败）。临时实例不监听 TCP。
+READY=""
 for _ in $(seq 1 60); do
-  docker exec "$CONTAINER" pg_isready -U "$PGUSER_MIGRATE" -q 2>/dev/null && break
+  if docker exec "$CONTAINER" pg_isready -h 127.0.0.1 -U "$PGUSER_MIGRATE" -q 2>/dev/null; then
+    READY=1
+    break
+  fi
   sleep 1
 done
+if [[ -z "$READY" ]]; then
+  echo "PostgreSQL 18 容器 60 秒内没有在 TCP 上就绪" >&2
+  docker logs "$CONTAINER" 2>&1 | tail -20 >&2
+  exit 1
+fi
 PORT="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' "$CONTAINER")"
 psql_root() { docker exec -i "$CONTAINER" psql -U "$PGUSER_MIGRATE" -v ON_ERROR_STOP=1 "$@"; }
 echo "    $(psql_root -d postgres -tAc 'SELECT version()' | cut -d, -f1)"
@@ -290,10 +334,25 @@ for entry in "${DOMAINS[@]}"; do
     ) ;;
   esac
 
+  # 结果判定：go test 退出 0 还不够。
+  #
+  # 这些测试缺环境变量时一律 t.Skip，而 go test 对跳过照样报 ok——环境
+  # 接错一处，整个域就在绿灯下什么也没验。-run 一个都没匹配上同样是 ok。
+  # 所以额外要求：没有任何 --- SKIP，且至少一个顶层 --- PASS。
+  LOG="$LOG_DIR/$NAME.log"
   if env "${ENVS[@]}" GOMAXPROCS="${GOMAXPROCS:-1}" \
        timeout "${PANDORA_PG18_GATE_TIMEOUT:-600}" \
-       go test -mod=readonly -p 1 -count=1 -run "${RUNFILTER:-PG18}" $PKGS 2>&1 | sed 's/^/    /'; then
-    PASSED+=("$NAME")
+       go test -mod=readonly -p 1 -count=1 -v -run "${RUNFILTER:-PG18}" $PKGS 2>&1 \
+       | tee "$LOG" | sed 's/^/    /'; then
+    if grep -q -- '--- SKIP:' "$LOG"; then
+      echo "    $NAME: 有用例被跳过，fixture 没接上" >&2
+      SKIPPED+=("$NAME")
+    elif ! grep -q '^--- PASS:' "$LOG"; then
+      echo "    $NAME: 没有任何用例执行（测试过滤没匹配上）" >&2
+      SKIPPED+=("$NAME")
+    else
+      PASSED+=("$NAME")
+    fi
   else
     FAILED+=("$NAME")
   fi
@@ -303,8 +362,9 @@ echo
 echo "================ 结果 ================"
 [[ ${#PASSED[@]} -gt 0 ]] && printf '通过: %s\n' "${PASSED[*]}"
 [[ ${#SKIPPED[@]} -gt 0 ]] && printf '跳过: %s\n' "${SKIPPED[*]}"
-if [[ ${#FAILED[@]} -gt 0 ]]; then
-  printf '失败: %s\n' "${FAILED[*]}"
+[[ ${#FAILED[@]} -gt 0 ]] && printf '失败: %s\n' "${FAILED[*]}"
+# 跳过也是失败：门禁存在的意义就是真的连上库跑一遍。
+if [[ ${#FAILED[@]} -gt 0 || ${#SKIPPED[@]} -gt 0 ]]; then
   exit 1
 fi
 echo "全部通过"

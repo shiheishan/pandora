@@ -55,6 +55,12 @@ type authFakeTx struct {
 	sessionErr      error
 	permissionQuery string
 	permissionArgs  []any
+	execs           []string
+}
+
+func (tx *authFakeTx) Exec(_ context.Context, query string, _ ...any) (pgconn.CommandTag, error) {
+	tx.execs = append(tx.execs, query)
+	return pgconn.CommandTag{}, nil
 }
 
 func (tx *authFakeTx) QueryRow(context.Context, string, ...any) pgx.Row {
@@ -115,6 +121,9 @@ func TestAuthenticateRejectsRevokedSessionToken(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", res.Code, res.Body.String())
+	}
+	if len(runner.tx.execs) != 0 {
+		t.Fatalf("revoked session was touched: %q", runner.tx.execs)
 	}
 	if nextCalled {
 		t.Fatal("revoked token reached protected handler")
@@ -203,6 +212,23 @@ func TestAuthenticateAcceptsActiveTenantBoundSession(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if !nextCalled || res.Code != http.StatusOK || runner.calls != 1 {
 		t.Fatalf("active session result next=%v status=%d db_calls=%d", nextCalled, res.Code, runner.calls)
+	}
+	// 有效会话在同一事务里节流刷新 last_seen_at（R62）
+	if len(runner.tx.execs) != 1 || runner.tx.execs[0] != sessionTouchSQL {
+		t.Fatalf("active session execs=%q, want one last_seen_at touch", runner.tx.execs)
+	}
+}
+
+func TestSessionTouchIsThrottledAndScoped(t *testing.T) {
+	for _, clause := range []string{
+		"SET last_seen_at = now()",
+		"tenant_id = $1",
+		"id = $2::uuid",
+		"last_seen_at < now() - interval '5 minutes'",
+	} {
+		if !strings.Contains(sessionTouchSQL, clause) {
+			t.Fatalf("session touch is missing %q: %s", clause, sessionTouchSQL)
+		}
 	}
 }
 

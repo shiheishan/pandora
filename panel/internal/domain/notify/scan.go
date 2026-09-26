@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db、domain/plugin 的事件发射，流量预警读 traffic_pack_grants 的剩余（00070）
+// [OUTPUT]: 对外提供 ScanExpiring、ScanQuota、ScanPaidOrders、StartScanner
+// [POS]: domain/notify 的后台循环：定时扫描入队并派发，Kick 触发只派发不扫描；扫描返回与日志的条数是 Enqueue 实际插入的行数，撞去重键的不计
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package notify
 
 // 到期与流量预警的定时扫描。
@@ -84,13 +89,13 @@ func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error
 					"plan":       it.plan,
 					"days":       fmt.Sprint(win.label),
 					"expires_at": it.endAt,
-					"site":       "AegisPanel",
 				}
 				// 键里带区间标签：进入下一个更紧急的区间时会再提醒一次，
 				// 而同一个区间内反复扫描只发一条
 				key := fmt.Sprintf("expiring:%s:%dd", it.subID, win.label)
-				if err := s.Enqueue(ctx, tx, tenantID, it.userID,
-					"subscription.expiring", vars, key); err != nil {
+				n, err := s.Enqueue(ctx, tx, tenantID, it.userID,
+					"subscription.expiring", vars, key)
+				if err != nil {
 					return err
 				}
 				// 插件复用同一个 dedupe 键：到期提醒的分档规则在这里，
@@ -99,7 +104,7 @@ func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error
 					it.subID, it.userID, it.plan, it.endAt, win.label); err != nil {
 					return err
 				}
-				queued++
+				queued += n
 			}
 		}
 		return nil
@@ -108,24 +113,38 @@ func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error
 }
 
 // ScanQuota 扫出流量接近用尽的订阅。
+//
+// 可用量 = 套餐本期额度 + 该用户流量包的剩余（D-E-1）。套餐额度用完后扣量转到
+// 流量包，订阅配额行的 consumed 就停在额度上；只看套餐额度的话，买了流量包的
+// 用户照样会收到「流量即将用尽」。流量包挂在用户上、几条订阅共用，这里给每条
+// 订阅都算上全部剩余 —— 与扣量时「套餐不够再动流量包」的口径一致。
 func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 	queued := 0
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		for _, pct := range quotaThresholds {
 			rows, err := tx.Query(ctx, `
-				SELECT q.subscription_id::text, s.user_id::text, p.name,
-				       q.consumed, COALESCE(q.granted,0) + COALESCE(q.granted_addon,0)
-				  FROM quota_balances q
-				  JOIN subscriptions s ON s.id = q.subscription_id
-				  JOIN plans p ON p.id = s.plan_id
-				 WHERE q.tenant_id = $1
-				   AND q.metric = 'traffic.bytes'
-				   AND s.status IN ('active','trialing')
-				   AND COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) > 0
-				   AND q.consumed * 100 >= (COALESCE(q.granted,0) + COALESCE(q.granted_addon,0)) * $2
+				WITH usage AS (
+					SELECT q.subscription_id, s.user_id, p.name, q.consumed,
+					       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) AS plan_total,
+					       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) + pk.pack_left AS total
+					  FROM quota_balances q
+					  JOIN subscriptions s ON s.id = q.subscription_id
+					  JOIN plans p ON p.id = s.plan_id
+					 CROSS JOIN LATERAL (
+					       SELECT COALESCE(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint AS pack_left
+					         FROM traffic_pack_grants g
+					        WHERE g.tenant_id = q.tenant_id AND g.user_id = s.user_id
+					          AND g.consumed_bytes < g.granted_bytes) pk
+					 WHERE q.tenant_id = $1
+					   AND q.metric = 'traffic.bytes'
+					   AND s.status IN ('active','trialing'))
+				SELECT subscription_id::text, user_id::text, name, consumed, total
+				  FROM usage
+				 WHERE plan_total > 0
+				   AND consumed * 100 >= total * $2
 				   -- 只取刚跨过这条线的：已经超过更高阈值的由那一档负责，
 				   -- 否则用量到 96% 时会同时收到 80% 和 95% 两条
-				   AND ($2 = 95 OR q.consumed * 100 < (COALESCE(q.granted,0) + COALESCE(q.granted_addon,0)) * 95)`,
+				   AND ($2 = 95 OR consumed * 100 < total * 95)`,
 				tenantID, pct)
 			if err != nil {
 				return err
@@ -157,20 +176,20 @@ func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 					"plan":      it.plan,
 					"percent":   fmt.Sprint(pct),
 					"remaining": humanBytes(remain),
-					"site":      "AegisPanel",
 				}
 				// 键里带上周期起点：下个结算周期流量重置后，
 				// 同一条订阅应该能再次收到提醒
 				key := fmt.Sprintf("quota:%s:%d", it.subID, pct)
-				if err := s.Enqueue(ctx, tx, tenantID, it.userID,
-					"quota.warning", vars, key); err != nil {
+				n, err := s.Enqueue(ctx, tx, tenantID, it.userID,
+					"quota.warning", vars, key)
+				if err != nil {
 					return err
 				}
 				if err := plugin.EmitTrafficExhausted(ctx, tx, tenantID, key,
 					it.subID, it.userID, it.plan, it.consumed, it.total, pct); err != nil {
 					return err
 				}
-				queued++
+				queued += n
 			}
 		}
 		return nil
@@ -225,14 +244,15 @@ func (s *Service) ScanPaidOrders(ctx context.Context, tenantID string) (int, err
 				"order_no":   it.orderNo,
 				"plan":       it.plan,
 				"expires_at": it.endAt,
-				"site":       "AegisPanel",
 			}
 			// 一个订单只通知一次，与扫描频率无关
 			key := "order-paid:" + it.orderID
-			if err := s.Enqueue(ctx, tx, tenantID, it.userID, "order.paid", vars, key); err != nil {
+			n, err := s.Enqueue(ctx, tx, tenantID, it.userID, "order.paid", vars, key)
+			if err != nil {
 				return err
 			}
-			queued++
+			// 只数真正新排的：2 小时窗口里每轮都会扫到同一单，撞键的不算
+			queued += n
 		}
 		return nil
 	})
@@ -244,20 +264,36 @@ func (s *Service) StartScanner(ctx context.Context, tenantID string, every time.
 	go func() {
 		// 启动后先等一会儿再扫：进程刚起来时连接池、缓存都还没热，
 		// 立刻压一轮全表扫描没必要
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(30 * time.Second):
+		// 预热期间来的 Kick 只发不扫：有人在等验证码，不该陪预热一起等。
+		warm := time.After(30 * time.Second)
+	warmup:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.kick:
+				s.dispatchOnce(ctx, tenantID)
+			case <-warm:
+				break warmup
+			}
 		}
 
 		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
 			s.runOnce(ctx, tenantID)
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
+		wait:
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					break wait
+				case <-s.kick:
+					// Kick 只提前派发，不提前扫描：扫描是全表的，没有理由跟着
+					// 每一次注册跑一遍。派发完继续等下一个周期。
+					s.dispatchOnce(ctx, tenantID)
+				}
 			}
 		}
 	}()
@@ -281,6 +317,10 @@ func (s *Service) runOnce(ctx context.Context, tenantID string) {
 	}
 	// 派发放在扫描之后：刚排的队这一轮就能发出去，
 	// 而不必等到下一个周期
+	s.dispatchOnce(ctx, tenantID)
+}
+
+func (s *Service) dispatchOnce(ctx context.Context, tenantID string) {
 	if n, err := s.Dispatch(ctx, tenantID, 100); err != nil {
 		s.log.Warn("通知派发失败", "err", err)
 	} else if n > 0 {

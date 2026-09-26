@@ -1,0 +1,74 @@
+/**
+ * [INPUT]: 依赖 tokens.css 的语义色与尺度令牌，依赖入口 index.html 上的 <html data-app="admin|portal">
+ * [OUTPUT]: 对外提供角色令牌：--accent / --on-accent / --accent-hover / --focus-ring / --focus-halo / --link*、正文字号行高、控件三档高度与水平内边距、弹窗按钮高度、开关选中时圆钮色、控件与卡片圆角
+ * [POS]: styles 的角色层，把规范里「门户用朱砂、后台用墨色」的差异收成同名变量，让一套组件同时服务两个入口；base.css 与组件只读角色令牌
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+/* ===========================================================================
+ * 门户：朱砂标出主要操作（主按钮、开关、进度条、当前导航、聚焦边框）
+ * ========================================================================= */
+:root[data-app='portal'] {
+  --accent: var(--brand);
+  --accent-hover: var(--brand-hover);
+  --on-accent: var(--on-brand);
+  /* 输入框聚焦：边框用强调色，外圈 3px 浅底 */
+  --focus-halo: var(--brand-soft);
+  /* 键盘焦点（:focus-visible）：2px 底色间隙 + 2px 外圈 */
+  --focus-ring: var(--brand);
+  --link: var(--brand);
+  --link-hover: var(--brand-ink);
+  --link-decoration: none;
+  --link-underline: transparent;
+
+  --body-size: var(--fs-body);
+  --body-leading: var(--lh-body);
+  /* 控件高度：主按钮与输入框 40，弹窗按钮与菜单项 36，顶栏控件 32 */
+  --h-control: 40px;
+  --h-control-sm: 36px;
+  --h-control-xs: 32px;
+  /* 按钮 16 / 输入框 12 的水平内边距；实心按钮再加 2（规范：主按钮 0 18，次按钮 0 16） */
+  --pad-button: 16px;
+  --pad-input: 12px;
+  /* 弹窗按钮：门户 36 / 9 */
+  --h-dialog-action: 36px;
+  /* 开关选中时的圆钮：门户朱砂底上始终是白 */
+  --switch-knob-on: #fff;
+  --radius-control: var(--radius-md);
+  --radius-card: var(--radius-xl);
+  --pad-card: var(--space-20);
+}
+
+/* ===========================================================================
+ * 后台：保持中性。朱砂只出现在 Logo 的点和侧栏当前菜单的小圆点上
+ * ========================================================================= */
+:root[data-app='admin'] {
+  --accent: var(--text);
+  /* 设计稿里墨色主按钮没有悬停变化 */
+  --accent-hover: var(--text);
+  --on-accent: var(--on-ink);
+  --focus-halo: var(--border);
+  --focus-ring: var(--text);
+  /* 文字链接：墨色加下划线，下划线用 --border-hover */
+  --link: var(--text);
+  --link-hover: var(--text-2);
+  --link-decoration: underline;
+  --link-underline: var(--border-hover);
+
+  --body-size: var(--fs-body-sm);
+  --body-leading: var(--lh-body-sm);
+  /* 控件高度：默认 32，工具栏与表格内 28，紧凑 24 */
+  --h-control: 32px;
+  --h-control-sm: 28px;
+  --h-control-xs: 24px;
+  /* 规范：主按钮 0 14，次按钮 0 12，输入框 0 10 */
+  --pad-button: 12px;
+  --pad-input: 10px;
+  /* 弹窗按钮：后台 32 / 7 */
+  --h-dialog-action: 32px;
+  /* 墨色底上的圆钮用页面底色，深色模式下随之变深 */
+  --switch-knob-on: var(--bg);
+  --radius-control: var(--radius-sm);
+  --radius-card: var(--radius-lg);
+  --pad-card: var(--space-16);
+}

@@ -1,19 +1,24 @@
+// [INPUT]: 依赖 node_admin.go 与 protocol_schema.go / protocol_validate*.go 的校验函数，依赖 platform/sourcetest 按名取 Service.PatchAdminNode 与整包源码
+// [OUTPUT]: 对外提供 TestPoolMoveBumpsEffectiveReleaseGeneration、TestValidateNewNodeProtocolFailClosed、TestValidateNewNodeProtocolRejectsInvalidHost、TestStableProtocolServingGateMatchesSchemaCatalog、TestStableProtocolReadySQLRejectsDynamicAlias、TestValidServingTransition、TestValidateAdminNodeNameUsesRunes、TestOptionalNullableString、TestLegacyNodeStatusGateSeparatesControlAndLogicalNodes、TestNormalizeCountryCode
+// [POS]: nodefabric 后台节点编辑的单元与源码契约：换池重物化有效配置、新写入协议 fail closed、服务状态迁移与名称、国家码规范化
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
 	"encoding/json"
-	"os"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestPoolMoveBumpsEffectiveReleaseGeneration(t *testing.T) {
-	nodeAdmin, err := os.ReadFile("node_admin.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(nodeAdmin)
-	if strings.Contains(src, `配置发布身份升级完成前暂不允许移动节点分组`) ||
+	pkg := sourcetest.Load(t, ".")
+	src := pkg.Decl("Service.PatchAdminNode")
+	if strings.Contains(pkg.Source(), `配置发布身份升级完成前暂不允许移动节点分组`) ||
 		!strings.Contains(src, `poolChanged := false`) ||
 		!strings.Contains(src, `configSourceTouched := protocolTouched || poolChanged`) ||
 		!strings.Contains(src, `config_source_generation=config_source_generation + CASE WHEN $15 THEN 1 ELSE 0 END`) {
@@ -156,5 +161,21 @@ func TestLegacyNodeStatusGateSeparatesControlAndLogicalNodes(t *testing.T) {
 	}
 	if !legacyNodeStatusAllowsServing(true, "active") {
 		t.Fatal("active control Node should pass the legacy status gate")
+	}
+}
+
+func TestNormalizeCountryCode(t *testing.T) {
+	for raw, want := range map[string]string{"": "", "  ": "", "jp": "JP", " Us ": "US", "HK": "HK"} {
+		got, err := normalizeCountryCode(raw)
+		if err != nil || got != want {
+			t.Errorf("%q: got %q err=%v, want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"J", "JPN", "J1", "日本", "é1"} {
+		_, err := normalizeCountryCode(raw)
+		var httpErr *httpx.Error
+		if !errors.As(err, &httpErr) || httpErr.Fields["country_code"] == "" {
+			t.Errorf("%q: want 422 fields.country_code, got %v", raw, err)
+		}
 	}
 }

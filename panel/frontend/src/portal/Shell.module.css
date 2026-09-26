@@ -1,0 +1,340 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌（--content-max、--gutter、--topbar-h、--tabbar-h 等）
+ * [OUTPUT]: 对外提供 Shell.tsx 用到的类名
+ * [POS]: portal/Shell 的样式：顶栏 58、内容最宽 1160；断点只用规范的两个——< 960 收起余额胶囊，< 640 隐藏顶部导航与用户名、出现 56 高底部标签栏、页脚垫高 80 让出标签栏
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  border-bottom: 1px solid var(--border);
+  background: var(--hdr);
+  backdrop-filter: blur(10px);
+}
+
+.bar {
+  max-width: var(--content-max);
+  height: var(--topbar-h);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: flex;
+  align-items: stretch;
+  gap: 28px;
+}
+
+.home {
+  display: flex;
+  align-items: center;
+  flex: none;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.home:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.logo {
+  font-size: 15px;
+}
+
+.nav {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.navItem {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  color: var(--text-2);
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.navItem:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.navOn {
+  border-bottom-color: var(--brand);
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+.tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.balance {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+
+.balance:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.bell {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-2);
+}
+
+.bell:hover,
+.bellOn {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.bellStroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bellBadge {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+.avatarButton {
+  height: 34px;
+  padding: 0 10px 0 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: 17px;
+}
+
+.avatarButton:hover {
+  border-color: var(--border-hover);
+  background: var(--surface);
+}
+
+.avatarOn,
+.avatarOn:hover {
+  border-color: var(--brand);
+  background: var(--surface);
+}
+
+.avatar {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+}
+
+.avatarName {
+  font-size: 13px;
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.avatarName:empty {
+  display: none;
+}
+
+.chevron {
+  width: 10px;
+  height: 10px;
+  color: var(--text-3);
+  transition: transform 0.15s;
+}
+
+.chevronUp {
+  transform: rotate(180deg);
+}
+
+.menuName {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menuUser {
+  font-weight: var(--fw-semibold);
+}
+
+.menuEmail {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.main {
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 32px var(--gutter) 40px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-h1);
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--text-2);
+}
+
+.footer {
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 20px var(--gutter) 32px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 20px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.footLink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.footLink:hover,
+.footOn {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.tabbar {
+  display: none;
+}
+
+@media (max-width: 959px) {
+  .balance {
+    display: none;
+  }
+}
+
+@media (max-width: 639px) {
+  .bar {
+    gap: 12px;
+  }
+
+  .nav {
+    visibility: hidden;
+  }
+
+  .avatarName {
+    display: none;
+  }
+
+  .main {
+    padding: 24px var(--gutter) 32px;
+  }
+
+  .footer {
+    padding-bottom: 80px;
+  }
+
+  .tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 25;
+    height: var(--tabbar-h);
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    border-top: 1px solid var(--border);
+    background: var(--hdr);
+    backdrop-filter: blur(10px);
+  }
+
+  .tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 0;
+    background: transparent;
+    color: var(--text-2);
+    font-size: var(--fs-caption);
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .tab:hover {
+    color: var(--text-2);
+    text-decoration: none;
+  }
+
+  .tabOn,
+  .tabOn:hover {
+    color: var(--brand);
+    font-weight: var(--fw-semibold);
+  }
+
+  .tabLine {
+    width: 18px;
+    height: 3px;
+    border-radius: 2px;
+    background: transparent;
+  }
+
+  .tabOn .tabLine {
+    background: var(--brand);
+  }
+}

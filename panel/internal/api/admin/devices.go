@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db 的租户事务、platform/audit 的审计写入、platform/httpx 的响应与错误、domain/nodefabric 的 DeviceWindowMinutes，依赖迁移 00094 的 app.device_limit_window_minutes
+// [OUTPUT]: 对外提供 handlers 的 listOnlineDevices（带 window_minutes）/ setDeviceLimit / setDeviceMode（可改设备识别窗口）三个处理器
+// [POS]: api/admin 的设备数限制接口：在线概览、单订阅覆盖、全局判定模式与设备识别窗口（R103，窗口只经库函数 app.device_limit_window_minutes 读，可选值取 nodefabric.DeviceWindowMinutes）；两条写接口都写审计，订阅不存在回 404
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 设备数限制的管理接口。
@@ -5,11 +10,16 @@ package admin
 // 三件事：看谁超了、调某条订阅的额度、切换判定模式。
 
 import (
+	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/nodefabric"
+	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -32,6 +42,7 @@ func (h *handlers) listOnlineDevices(w http.ResponseWriter, r *http.Request) {
 	out := []row{}
 	mode := "loose"
 	grace := 1
+	window := nodefabric.DeviceWindowMinutes[0]
 
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		_ = tx.QueryRow(r.Context(), `
@@ -40,6 +51,12 @@ func (h *handlers) listOnlineDevices(w http.ResponseWriter, r *http.Request) {
 			       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
 			                  WHERE tenant_id = $1 AND key = 'device_limit.grace'), 1)`,
 			tenantID).Scan(&mode, &grace)
+		// 窗口取库里的同一个函数：视图按它算在线数，这里回显的就是在线数实际用的窗口。
+		// 函数自己把缺行与非法值折成 5，读不出来只可能是库坏了，照实报错。
+		if err := tx.QueryRow(r.Context(),
+			`SELECT app.device_limit_window_minutes($1)`, tenantID).Scan(&window); err != nil {
+			return err
+		}
 
 		// 用 LEFT JOIN 而不是从视图出发：没有人在线的订阅也要能看到，
 		// 否则「这个用户到底几台设备」这个问题在他离线时就查不了了
@@ -77,7 +94,7 @@ func (h *handlers) listOnlineDevices(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"devices": out, "mode": mode, "grace": grace})
+	httpx.OK(w, map[string]any{"devices": out, "mode": mode, "grace": grace, "window_minutes": window})
 }
 
 type deviceLimitReq struct {
@@ -99,20 +116,44 @@ func (h *handlers) setDeviceLimit(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeValidationFailed, "设备数需在 0 到 1000 之间"))
 		return
 	}
+	if _, err := uuid.Parse(subID); err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+		return
+	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{
-		TenantID: tenantID,
-		ActorID:  httpx.PrincipalFrom(r.Context()).UserID,
-	}, func(tx pgx.Tx) error {
-		// 传 nil 就把覆盖清掉，回到套餐规定。
-		// 用一个单独的「恢复默认」语义而不是让管理员手填套餐值：
-		// 套餐额度日后调整时，手填的那些不会跟着变，会悄悄变成过期配置。
-		_, err := tx.Exec(r.Context(), `
-			UPDATE subscriptions SET device_limit = $3
-			 WHERE tenant_id = $1 AND id = $2::uuid`,
-			tenantID, subID, req.Limit)
-		return err
-	})
+	actor := httpx.PrincipalFrom(r.Context()).UserID
+	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID, ActorID: actor},
+		func(tx pgx.Tx) error {
+			// 先锁住读出旧值：订阅不存在要回 404（原先 UPDATE 影响 0 行也回 200），
+			// 审计也要记下改之前是多少。
+			var before *int
+			if err := tx.QueryRow(r.Context(), `
+				SELECT device_limit FROM subscriptions
+				 WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE`,
+				tenantID, subID).Scan(&before); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return httpx.NotFoundOrForbidden()
+				}
+				return err
+			}
+			// 传 nil 就把覆盖清掉，回到套餐规定。
+			// 用一个单独的「恢复默认」语义而不是让管理员手填套餐值：
+			// 套餐额度日后调整时，手填的那些不会跟着变，会悄悄变成过期配置。
+			if _, err := tx.Exec(r.Context(), `
+				UPDATE subscriptions SET device_limit = $3
+				 WHERE tenant_id = $1 AND id = $2::uuid`,
+				tenantID, subID, req.Limit); err != nil {
+				return err
+			}
+			return audit.Write(r.Context(), tx, tenantID, audit.Entry{
+				ActorKind: "admin", ActorID: &actor,
+				Action: "subscription.device_limit_changed", ResourceType: "subscription",
+				ResourceID: &subID, APIDomain: "admin", Outcome: "success",
+				RequestID:    httpx.RequestIDFrom(r.Context()),
+				BeforeDigest: map[string]any{"device_limit": before},
+				AfterDigest:  map[string]any{"device_limit": req.Limit},
+			})
+		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -124,6 +165,8 @@ func (h *handlers) setDeviceLimit(w http.ResponseWriter, r *http.Request) {
 type deviceModeReq struct {
 	Mode  string `json:"mode"`
 	Grace *int   `json:"grace"`
+	// WindowMinutes 是设备识别窗口（R103），省略 = 不改，只收 5 / 10 / 30 / 60
+	WindowMinutes *int `json:"window_minutes"`
 }
 
 // setDeviceMode 切换判定模式。
@@ -140,6 +183,11 @@ func (h *handlers) setDeviceMode(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Grace != nil && (*req.Grace < 0 || *req.Grace > 5) {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeValidationFailed, "宽容值需在 0 到 5 之间"))
+		return
+	}
+	if req.WindowMinutes != nil && !slices.Contains(nodefabric.DeviceWindowMinutes[:], *req.WindowMinutes) {
+		httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
+			"window_minutes": "设备识别窗口只能是 5、10、30 或 60 分钟"}))
 		return
 	}
 
@@ -166,12 +214,47 @@ func (h *handlers) setDeviceMode(w http.ResponseWriter, r *http.Request) {
 					return err
 				}
 			}
-			return nil
+			var windowBefore int
+			if req.WindowMinutes != nil {
+				// 窗口决定 strict 模式下谁被当成超限，和模式同级：一起审计、一起挂 reauth
+				if err := tx.QueryRow(r.Context(),
+					`SELECT app.device_limit_window_minutes($1)`, tenantID).Scan(&windowBefore); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(r.Context(), `
+					INSERT INTO system_settings (tenant_id, key, value, value_schema, updated_by)
+					VALUES ($1, 'device_limit.window_minutes', to_jsonb($2::int),
+					        '{"enum":[5,10,30,60]}'::jsonb, $3::uuid)
+					ON CONFLICT (tenant_id, key)
+					DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by,
+					              version = system_settings.version + 1, updated_at = now()`,
+					tenantID, *req.WindowMinutes, actor); err != nil {
+					return err
+				}
+			}
+			// 模式切换影响全租户能否连上，必须留下是谁在什么时候切的
+			return audit.Write(r.Context(), tx, tenantID, audit.Entry{
+				ActorKind: "admin", ActorID: &actor,
+				Action: "device_limit.mode_changed", ResourceType: "system_settings",
+				APIDomain: "admin", Outcome: "success",
+				RequestID:    httpx.RequestIDFrom(r.Context()),
+				BeforeDigest: deviceWindowBefore(req.WindowMinutes, windowBefore),
+				AfterDigest: map[string]any{"mode": req.Mode, "grace": req.Grace,
+					"window_minutes": req.WindowMinutes},
+			})
 		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	h.d.Log.Info("管理员切换设备限制模式", "mode", req.Mode)
+	h.d.Log.Info("管理员切换设备限制模式", "mode", req.Mode, "window_minutes", req.WindowMinutes)
 	httpx.OK(w, map[string]any{"ok": true})
+}
+
+// deviceWindowBefore 只在这次改了窗口时记下改之前的生效值（缺行即 5）。
+func deviceWindowBefore(requested *int, before int) any {
+	if requested == nil {
+		return nil
+	}
+	return map[string]any{"window_minutes": before}
 }

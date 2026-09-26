@@ -9,7 +9,7 @@ set -euo pipefail
 INSTALL_DIR="/opt/pandora"
 PG_PKG="postgresql"          # 系统自带版本(16+)即可, 迁移无 PG18 专属语法
 VK_PKG="valkey-server"
-SERVICES=(aegis-public aegis-admin aegis-node)   # aegis-agent 是节点侧代理，不在面板机安装
+SERVICES=(aegis-public aegis-admin aegis-node)
 ADMIN_PATH="ops_$(openssl rand -hex 12)"   # 高熵管理路径
 
 say(){ printf '\033[1;32m%s\033[0m\n' "$*"; }

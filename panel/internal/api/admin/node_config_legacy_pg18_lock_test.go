@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/nodefabric 的发布与节点生命周期，依赖 node_config_legacy_pg18_cancel_test.go 的持锁与开池工具、_lifecycle 的删池调用与结果类型、_bootstrap 的 nodeConfigPG18BootstrapPublicKey、主文件的夹具
+// [OUTPUT]: 对外提供 TestNodeConfigPG18LockSchedule（确定性两两调度表的纯单测），包内提供 runNodeConfigPG18LockStressBatch
+// [POS]: 节点配置发布链的锁压力批次（LOCK-01：七种操作两两并发、504 轮），由 TestNodeConfigLegacyPG18 最后调用；调度表单测不需要数据库
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (

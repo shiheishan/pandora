@@ -1,21 +1,47 @@
 # panel/frontend/
 > L2 | 父级: /panel/CLAUDE.md
 
-独立 React + TypeScript + Vite 工程，接现有 Go API。一套 src/ 两个入口：vite --mode admin / --mode portal 分别以 apps/admin、apps/portal 为 root，产物落到 dist/admin、dist/portal。这是候选实现：make frontend-embed 把 dist 同步进 panel/web/*/app，两个网关经 platform/webapp 在 /app/ 下发（入口 CSP 只许同源脚本，产物不得有内联脚本）；生产入口 / 仍是 panel/web 的手写单页，尚未部署切换。前端已实现而后端尚未提供的接口只能登记在 src/core/contracts.ts 并默认关闭；旧单页有而 React 还没有的操作登记在 tests/legacy-parity.ts，清单归零才具备切换条件；tests/api-surface.test.ts 同时守这两张表。数据层用 @tanstack/react-query，UI 用 antd（zhCN），校验用 zod，路由用 hash router。所有 HTTP 只经 src/core/api.ts。
+面板前端源码：管理后台（admin）与用户门户（portal）按 Claude Design 设计稿完全重写，不复用任何旧前端代码，后端行为一律以 Go 代码为准，接口以 panel/docs/redesign/api-contract.md 为准。
+一个工程两个入口，但分两次构建：vite --mode admin|portal 各以 src/<app> 为根、产物写到 dist/<app>，因为两个网关各自只下发自己目录下的 / 与 /assets/*，一次多入口构建会让两边共用一个 assets/。make frontend-embed 把 dist/{admin,portal} 同步进 panel/web/{admin,portal}，panel/web/app_test.go 对真实产物做最终裁决。
+部署前提（违反即上线白屏）：base './' 且所有请求走相对路径，后台在 nginx 高熵前缀后面；CSP 为 script-src/style-src 'self' 无 unsafe-inline，禁止内联脚本、内联 <style> 与运行时注入样式的 CSS-in-JS，样式只用 CSS 文件或 CSS Modules；hash 路由，缺失资源后端一律 404；认证是 Bearer 头，SSE 只能用 fetch 流读。
+依赖极少：运行时只有 react / react-dom / @tanstack/react-query / zod（zod 关掉 JIT 以免触犯无 unsafe-eval 的 CSP），不用任何 UI 组件库，Geist 字体（OFL）以 woff2 子集随包自带；版本全部精确锁定。typescript 停在 6.0.x，因为 typescript-eslint 8 只支持 <6.1。
 
 成员清单
-package.json / package-lock.json: 依赖精确锁定；scripts：dev:admin(5173)、dev:portal(5174)、typecheck、build（typecheck + 双 mode 构建）、test（vitest）、check
-vite.config.ts / vitest.config.ts / tsconfig.json: 双 mode 的 root/outDir 与测试配置；vitest 全局 testTimeout 30s、maxWorkers 2（2 核 CI runner 上 antd+jsdom 单例可超 10s）；testing-library 的 asyncUtilTimeout 在 tests/setup.ts 全局设为 10s，findBy/waitFor 与用例都不再各自传超时
-apps/admin/index.html、apps/portal/index.html: 两个入口页
-src/main.tsx: 启动：ConfigProvider(zhCN)、QueryClientProvider、createHashRouter、lazy + Suspense 路由装载
-src/styles.css: 全局样式
-src/app/: 壳层：Frame 布局、Gateway 入口守卫、Login、SettingsLayout、SidebarMenu、navigation/sections 导航表
-src/components/: 通用组件：common、UnsavedChangesGuard 未保存离开拦截
-src/core/: 无 UI 语义的核心：api.ts HTTP 封装、auth、realtime(SSE)、cachePolicy、data、drafts/formDraft 草稿、dialogs/FormDialog、operations、protocol/protocolInputs 节点协议表单、refunds、numbers、runtime（域/API 基址/legacyEntry 原版入口/hasContract 契约开关）、contracts（待接后端契约登记表）、appearance
-src/features/: 业务页面：Overview/Orders/Plans/Tickets 共用页，admin/ 与 portal/ 各自的功能页
-tests/: vitest 单测 *.test.ts(x)，覆盖 gateway、cache policy、contracts、表单编辑与导出；api-surface.test.ts 扫描 src/ 的 v1 路径与权限码对照 Go 路由与迁移权限字典，并解析旧单页的字符串拼接调用、按域对照 React 调用与迁移清单；legacy-parity.ts 旧页独有操作迁移清单（放 tests/ 是因为 src/ 里的 v1/ 字面量都会被当成 React 调用）；setup.ts 是 vitest setupFiles 唯一入口：jsdom 环境补丁（matchMedia、ResizeObserver、scrollTo）、每用例清理、全局 asyncUtilTimeout 10s
-README.md / VALIDATION.md: 第一轮可集成候选说明与验收记录
-BUILD-SHA256SUMS.txt: 构建产物校验和
+package.json: 脚本入口 dev:admin/dev:portal/dev:showcase（演示页，仅 dev）、lint、typecheck（应用与 node 两个 tsconfig）、test（vitest run）、build（两次 --mode 构建）、check（前四者串联，make frontend-check 调用）；engines node >=22.12
+package-lock.json: npm ci 的锁文件，CI 与 frontend-embed 都只走 npm ci
+vite.config.ts: mode 即入口，未知 mode 直接报错，showcase 只许 dev、build 时拒绝；base './'、publicDir 关闭、不产 manifest、assetsInlineLimit 0（CSP 不放行字体 data:）；themeBoot 插件把 src/core/theme-boot.js 按内容哈希输出到 assets/ 并注入 <meta charset> 之后；define __APP_RELEASE__ 取 PANDORA_RELEASE（缺省 dev）；serve 时 /v1 走 PANDORA_API 代理，未设则挂 dev/mock-api；vitest 在 test mode 下以工程根为根
+tsconfig.json: 浏览器侧 src/ 的严格类型检查（bundler 解析、react-jsx、noUncheckedIndexedAccess），types 只有 vite/client
+tsconfig.node.json: vite.config.ts、tests/（除 tests/smoke，它有自己的 tsconfig）与 dev/ 的 node 侧类型检查（lib 带 DOM，测试要伪造浏览器对象；允许 .ts 扩展名导入，vite 原生配置加载要求），与浏览器侧隔开，node 类型不漏进应用代码
+eslint.config.js: flat config，JS/TS 推荐规则 + React Hooks 规则，src/ 的 ts/tsx/js 用浏览器全局、配置与 tests/、dev/ 用 node 全局
+.gitignore: node_modules/ 与 dist/ 不入库
+src/admin/: 管理后台入口与外框：登录页、深色侧栏 + 顶栏 + 页头标签、⌘K、实时事件、改密码、常驻 reauth 对话框（接到 api 的 requestReauth）；入口按 GET v1/me 的权限码隐藏；十个模块页经 screens/ 登记表懒加载；见 src/admin/CLAUDE.md
+src/portal/: 用户门户入口与外框：登录 / 两步注册 / 快捷登录、顶栏导航与头像菜单、< 640 底部标签栏、邀请与快捷登录链接、外观令牌；十一个页面经 screens/ 登记表懒加载；见 src/portal/CLAUDE.md
+src/shell/: 两个入口共用的外框底座：每入口一份运行时（令牌 + api + QueryClient）、登录态、退出、实时事件、Logo、页面容器 ScreenFrame（Suspense + 错误边界）；见 src/shell/CLAUDE.md
+src/env.d.ts: 构建期常量 __APP_RELEASE__ 的类型声明
+dev/: 只在 vite serve 存在的假后端：外壳 mock-api.ts + 按入口拆分的模块假接口 mock/，本机无 PostgreSQL 时在浏览器里按契约走通外壳与各页面；见 dev/CLAUDE.md
+src/styles/: 全局样式与设计令牌：Geist 字体、明暗两组语义色、尺度、门户/后台角色令牌、元素默认样式，以及供测试与演示页核对的设计稿原值；见 src/styles/CLAUDE.md
+src/ui/: 自研组件库（按钮、表单控件、标签、卡片、表格、标签页、分段、弹窗与底部抽屉、侧边抽屉、Toast、菜单、骨架、空状态），一套实现经角色令牌服务两个入口，弹层基于原生 <dialog> 与 popover；见 src/ui/CLAUDE.md
+src/core/: 与界面无关的底层：主题引导与状态、唯一 HTTP 出口 api.ts（相对 v1/ 路径、Bearer、错误信封、幂等键、reauth 重放、非 JSON 响应的 requestRaw）、两个入口共用的幂等键约定 intent.ts、文件下载 download.ts、令牌存储、fetch 流 SSE、react-query 客户端与实时失效、hash 路由、金额 / 计数 / 字节 / 时间格式化；见 src/core/CLAUDE.md
+src/showcase/: 只在 dev 存在的令牌与组件演示页，浏览器内逐条核对令牌与设计稿；见 src/showcase/CLAUDE.md
+tests/entries.test.ts: 入口源文件契约——域标记正确、只有外链 module script、无内联样式；与 panel/web/app_test.go 同一组前提，前移到 npm test 暴露
+tests/tokens.test.ts: 令牌契约——tokens.css / roles.css 与设计稿逐值一致、明暗两组键相同、所有 var() 都有定义、样式不引用外部来源、字体文件都在包内
+tests/mock-helpers.ts: 假后端测试共用辅助——serve 把 mockApi 挂到本地 HTTP 服务（非 API 路径回 418 代表交给 vite）、close、loginAs、bearer、mockFetch（可选请求体与幂等键）；每个测试文件各起各的服务，模块假数据按文件隔离
+tests/mock-api.test.ts: 假后端外壳守卫——matchPattern；外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同键重新执行，条件改好即成功）（调账打在真实种子用户上，余额经详情接口核对、重放不再记账，种子外的 id 回 404）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码，503 后同键重新执行）
+tests/mock-admin-users.test.ts: 用户第 ④ 步假接口——流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验与 R103 识别窗口，设新密码不要原因（R101）
+tests/mock-admin-plans.test.ts: 套餐假接口——目录能被页面 schema 接住、向导单事务新建与幂等重放（限速、卖点与推荐）、编辑向导的 null = 不动与开新版本、R99 设备与限速三态、销售设置整体覆盖卖点与推荐、超额策略只收 suspend、草稿版本全流程、价格与销售开关 503、流量包 updated_at 乐观锁
+tests/mock-admin-marketing.test.ts: 营销假接口——礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400
+tests/mock-admin-nodes.test.ts: 节点与服务器假接口——节点列表能被页面 schema 接住、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器 schema、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布；第 4 阶段 ③：节点池名单带字段才要 reauth 与四种 422、用户组 exclusive_pools 与被池引用时删组 409、无池节点的交付提示（R105）、PATCH 补回缺席密钥 / 显式 null 清空 / mask_password 跟着 mask（R106 R107）、上线一步到 active 与服务器就绪、重放与 409（R108）；上线回 AdminNode、warnings 缺省与两种提示（首次搭建的新池没绑套餐）、已 active 先于版本号（R113）
+tests/mock-admin-content.test.ts: 内容与外观假接口——只读账号整块 404、公告状态机与版本冲突、知识库新版本归档同受众旧版与重复归档、内置主题 43 键、插槽净化与空内容 dropped 为 null、站点时区校验
+tests/mock-admin-system.test.ts: 通知与插件假接口——只读账号只开放模板、SMTP 整体覆盖与密码保留 / 清空、注册校验、Telegram chat id 缺省不改与测试回落、模板变量白名单 / 预览 / 恢复默认 / 测试信要 reauth、钩子 upsert 一次性密钥、内网地址与未知事件 422、越界 500、投递记录 null、删除 404
+tests/mock-admin-security.test.ts: 安全与运维假接口——只读账号整块 404（停用先 404 不弹 reauth）；审计 schema、存量行、筛选与 limit 越界；导出先 reauth、日期 422、BOM 与防公式、导出记审计；访问日志分类表、未知分类与结果 422、仅错误、IP 与账号筛选；聚类默认不列标记正常的、机房判高风险、标记正常；批量停用 reauth、422、跳过后台账号 / 已停用 / 非成员、同键重放、用户模块看到已停用；开关八行（R102）、排序、核心项与缺原因 409、切换记审计
+tests/mock-portal.test.ts: 门户假接口——外框读接口来自各页面模块、套餐目录能被页面 schema 接住（R99 / R100）、快捷登录令牌一次性往返、同会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
+tests/mock-portal-checkout.test.ts: 门户结账假接口（R114）——变更套餐试算的 coupon 没用码为 null、用了码是与优惠码试算同形的券面
+tests/mock-portal-referral.test.ts: 门户邀请返利假接口（R114）——佣金概况带 summary.scope，默认 every_order、multi 场景 first_order、legacy 场景照回
+tests/mock-portal-account.test.ts: 门户账号安全假接口（R114）——会话都带 last_seen_at 并按它倒序，当前会话排最前
+tests/mock-admin-tickets.test.ts: 工单假接口（R114）——队列 related_order 恒 null、详情联表出关联订单，详情的 message_count / last_reply_at 与队列同口径
+tests/mock-admin-billing.test.ts: 订单与收款假接口守卫（后台前端一第 ⑥ 步；起服务与发请求用 mock-helpers，登录与 reauth 辅助留在文件内）：只读账号只看得到订单列表；仪表盘「超时未支付」与待支付筛选同一份数据；订单 schema、多值状态、user_id 与用户详情同一份；人工开单先 reauth、201 重放、三种结算与拒绝项；标记已支付开通；取消 CAS、重放与已支付拒绝（中文原文与 Go 同序，R114）；挂账按币种合计与只能转一次；渠道启停；收入调整登记、冲销与重复冲销 409
+tests/smoke/: 对真实网关的联调冒烟（CI 的 panel-smoke.yml 专用，不进 make frontend-check）：造数据与用页面 zod schema 解析真响应；见 tests/smoke/CLAUDE.md
+tests/theme-boot.test.ts: 用 node:vm 执行引导脚本覆盖各种存储状态，核对它与 theme.ts 同键；vite 配置拒绝构建 showcase 与未知 mode、引导脚本带内容哈希、不内联资源、假后端只在 serve 时挂上
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

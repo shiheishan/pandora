@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 db/audit/httpx
+// [OUTPUT]: 对外提供 TemplateRow、TemplateDescription、ListTemplates、SaveTemplate、ResetTemplate、RenderPreview、HasDefaultTemplate、DraftPreview、PreviewDraft、RenderDraftForTest
+// [POS]: domain/notify 的模板管理端读写；defaultTemplates 与迁移种子逐字一致，恢复默认回到它
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package notify
 
 import (
@@ -47,6 +52,7 @@ var templateDescription = map[string]string{
 	"quota.warning":         "流量用量预警（用量越过阈值时触发）",
 	"order.paid":            "订单支付成功后发给下单用户",
 	"ticket.replied":        "工单被管理员回复后通知提单人",
+	"auth.email_verify":     "注册第 1 步发给注册邮箱的验证码（开启邮箱验证时；邮箱已注册则不发）",
 }
 
 func TemplateDescription(code string) string { return templateDescription[code] }
@@ -101,7 +107,7 @@ func (s *Service) SaveTemplate(ctx context.Context, tenantID string,
 	in.Subject = strings.TrimSpace(in.Subject)
 	in.Body = strings.TrimSpace(in.Body)
 	if tenantID == "" || in.Code == "" || in.Channel == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant, code and channel are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户、模板代码或渠道")
 	}
 	if in.Subject == "" || utf8.RuneCountInString(in.Subject) > 200 {
 		return nil, httpx.Invalid(map[string]string{"subject": "主题必填，且不超过 200 字"})
@@ -187,6 +193,77 @@ func (s *Service) ResetTemplate(ctx context.Context, tenantID, code, channel,
 		Code: code, Channel: channel, Subject: d.Subject, Body: d.Body, ActorID: actorID})
 }
 
+// HasDefaultTemplate 报告模板有没有内置默认内容（「恢复默认」是否可用）。
+func HasDefaultTemplate(code, channel string) bool {
+	_, ok := defaultTemplates[code+"|"+channel]
+	return ok
+}
+
+// DraftPreview 是未保存草稿按示例值渲染的结果。
+type DraftPreview struct {
+	Subject          string   `json:"preview_subject"`
+	Body             string   `json:"preview_body"`
+	UnknownVariables []string `json:"unknown_variables"`
+}
+
+// PreviewDraft 用示例值渲染一份未保存的草稿，并列出白名单外的变量——编辑时
+// 就能提示，不必等保存报错。只读库取白名单，不写库。
+func (s *Service) PreviewDraft(ctx context.Context, tenantID, code, channel, subject, body string) (*DraftPreview, error) {
+	allowed, err := s.templateAllowedVariables(ctx, tenantID, code, channel)
+	if err != nil {
+		return nil, err
+	}
+	out := &DraftPreview{UnknownVariables: unknownVariables(subject+"\n"+body, allowed)}
+	if out.UnknownVariables == nil {
+		out.UnknownVariables = []string{}
+	}
+	out.Subject, out.Body = RenderPreview(subject, body, allowed)
+	return out, nil
+}
+
+// RenderDraftForTest 按保存时同样的长度与变量白名单校验一份草稿，通过后用示例值
+// 渲染，供「实发测试信」直接发草稿。
+func (s *Service) RenderDraftForTest(ctx context.Context, tenantID, code, channel, subject, body string) (string, string, error) {
+	subject, body = strings.TrimSpace(subject), strings.TrimSpace(body)
+	if subject == "" || utf8.RuneCountInString(subject) > 200 {
+		return "", "", httpx.Invalid(map[string]string{"subject": "主题必填，且不超过 200 字"})
+	}
+	if body == "" || utf8.RuneCountInString(body) > 20000 {
+		return "", "", httpx.Invalid(map[string]string{"body": "正文必填，且不超过 20000 字"})
+	}
+	allowed, err := s.templateAllowedVariables(ctx, tenantID, code, channel)
+	if err != nil {
+		return "", "", err
+	}
+	if bad := unknownVariables(subject+"\n"+body, allowed); len(bad) > 0 {
+		return "", "", httpx.Invalid(map[string]string{
+			"body": "用到了这个模板不提供的变量：" + strings.Join(bad, "、") + "。可用变量：" + strings.Join(allowed, "、"),
+		})
+	}
+	subject, body = RenderPreview(subject, body, allowed)
+	return subject, body, nil
+}
+
+func (s *Service) templateAllowedVariables(ctx context.Context, tenantID, code, channel string) ([]string, error) {
+	if code == "" || channel == "" {
+		return nil, httpx.New(httpx.CodeBadRequest, "code 与 channel 必填")
+	}
+	var allowed []string
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT allowed_variables FROM notification_templates
+			 WHERE tenant_id = $1 AND code = $2 AND channel = $3 AND locale = 'zh-CN'
+			 ORDER BY version DESC LIMIT 1`, tenantID, code, channel).Scan(&allowed)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, httpx.New(httpx.CodeNotFound, "模板不存在")
+	}
+	if err != nil {
+		return nil, httpx.Internal(err)
+	}
+	return allowed, nil
+}
+
 // RenderPreview 用示例值渲染，让管理员保存前能看到成品。
 func RenderPreview(subject, body string, allowed []string) (string, string) {
 	sample := map[string]string{
@@ -266,5 +343,18 @@ var defaultTemplates = map[string]defaultTemplate{
 	"ticket.replied|inapp": {
 		Subject: "工单有新回复",
 		Body:    "你的工单「{{subject}}」有新回复，点击查看。",
+	},
+	// 与迁移 00074 的种子逐字一致，恢复默认时回到这里
+	"auth.email_verify|email": {
+		Subject: "【{{site}}】注册验证码 {{code}}",
+		Body: `你好，
+
+你正在注册 {{site}}，验证码是：
+
+{{code}}
+
+验证码 {{minutes}} 分钟内有效。如果这不是你本人的操作，忽略这封邮件即可。
+
+{{site}}`,
 	},
 }

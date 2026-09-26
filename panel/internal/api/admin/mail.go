@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/notify 的 SMTP 配置与发信器、domain/appearance 的 SiteNameTx、domain/identity 的 EmailVerificationDefault、platform 的 db/audit/httpx
+// [OUTPUT]: 对外提供 handlers 的 getMailSettings / setMailSettings / testMailSettings
+// [POS]: api/admin 的邮件与注册设置接口；全部设置项 upsert（SMTP 密码行缺失也能写入，R94）；发件人名缺省显示站点名，测试信主题带发件人名
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 邮件设置。
@@ -13,6 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/appearance"
 	"github.com/aegispanel/aegis/internal/domain/identity"
 	"github.com/aegispanel/aegis/internal/domain/notify"
 	"github.com/aegispanel/aegis/internal/platform/audit"
@@ -29,7 +35,7 @@ func (h *handlers) getMailSettings(w http.ResponseWriter, r *http.Request) {
 	var registrationMode string
 
 	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(r.Context(), `
+		err := tx.QueryRow(r.Context(), `
 			SELECT COALESCE((SELECT value #>> '{}' FROM system_settings
 			                  WHERE tenant_id=$1 AND key='mail.smtp_host'), ''),
 			       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
@@ -42,14 +48,21 @@ func (h *handlers) getMailSettings(w http.ResponseWriter, r *http.Request) {
 			                  WHERE tenant_id=$1 AND key='mail.smtp_password'), false),
 			       COALESCE((SELECT value #>> '{}' FROM system_settings
 			                  WHERE tenant_id=$1 AND key='mail.from_address'), ''),
-			       COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id=$1 AND key='mail.from_name'), 'AegisPanel'),
+			       COALESCE((SELECT btrim(value #>> '{}') FROM system_settings
+			                  WHERE tenant_id=$1 AND key='mail.from_name'), ''),
 			       COALESCE((SELECT (value #>> '{}')::boolean FROM system_settings
-			                  WHERE tenant_id=$1 AND key='auth.email_verification'), false),
+			                  WHERE tenant_id=$1 AND key='auth.email_verification'), $2::boolean),
 			       COALESCE((SELECT value #>> '{}' FROM system_settings
 			                  WHERE tenant_id=$1 AND key='auth.registration_mode'), 'closed')`,
-			tenantID).Scan(&host, &port, &encryption, &username, &hasPassword,
+			// 邮箱验证缺行时与注册流程同一个回退值
+			tenantID, identity.EmailVerificationDefault).Scan(&host, &port, &encryption, &username, &hasPassword,
 			&from, &fromName, &emailVerify, &registrationMode)
+		if err != nil || fromName != "" {
+			return err
+		}
+		// 没单独设发件人名时，显示实际发信会用的值：生效主题的站点名
+		fromName, err = appearance.SiteNameTx(r.Context(), tx, tenantID)
+		return err
 	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
@@ -181,9 +194,13 @@ func (h *handlers) setMailSettings(w http.ResponseWriter, r *http.Request) {
 			if enc == nil {
 				enc = []byte{}
 			}
+			// upsert（R94）：以前只 UPDATE，缺这一行的租户密码会静默存不上。
+			// 新插入时行的形状照 00030 的种子：value 占位空串、带 schema、标为密文项。
 			if _, err := tx.Exec(r.Context(), `
-				UPDATE system_settings SET secret_encrypted = $3, updated_at = now()
-				 WHERE tenant_id = $1 AND key = $2`,
+				INSERT INTO system_settings (tenant_id, key, value, value_schema, is_secret, secret_encrypted)
+				VALUES ($1, $2, '""'::jsonb, '{"type":"string","title":"密码"}'::jsonb, true, $3)
+				ON CONFLICT (tenant_id, key)
+				DO UPDATE SET secret_encrypted = EXCLUDED.secret_encrypted, updated_at = now()`,
 				tenantID, "mail.smtp_password", enc); err != nil {
 				return err
 			}
@@ -247,7 +264,7 @@ func (h *handlers) testMailSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeValidationFailed, "SMTP 配置不完整"))
 		return
 	}
-	if err := sender.Send(r.Context(), req.To, "AegisPanel 邮件配置测试",
+	if err := sender.Send(r.Context(), req.To, cfg.FromName+" 邮件配置测试",
 		"这是一封测试邮件。收到它说明面板的发信配置是通的。"); err != nil {
 		// 把底层报错原样带出去：管理员要靠它判断是认证失败、
 		// 端口不对还是被防火墙挡了。包装成「发送失败」等于什么都没说

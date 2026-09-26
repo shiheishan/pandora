@@ -18,8 +18,8 @@
 # PowerShell 只在 Windows 上跑，保留 CRLF。
 *.ps1 text eol=crlf
 
-# 二进制。仓库目前一个都没有（编译产物都在 .gitignore 里），
-# 这几条是防止将来有人加进来时被 text=auto 误判。
+# 二进制。目前入库的只有 panel/frontend/src/styles/fonts/ 随包自带的字体
+# （编译产物都在 .gitignore 里），这几条防止它们被 text=auto 误判。
 *.png  binary
 *.jpg  binary
 *.jpeg binary

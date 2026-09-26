@@ -1,0 +1,220 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的 --sidebar* 令牌与尺度令牌
+ * [OUTPUT]: 对外提供 Sidebar.tsx 用到的类名
+ * [POS]: admin/Sidebar 的样式：宽 224、明暗两种主题下都是深底；侧栏内重定义 --surface / --border / --text 等令牌，让 ui/Menu 在深底上直接可用
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+/* 侧栏内的中性层次取自 管理后台.dc.html 外壳（规范只收了 --sidebar* 五个令牌），
+ * 这里把它们映射到 ui 组件读的语义令牌上，账户菜单因此不必另写一套 */
+.sidebar {
+  --surface: #1f1f23;
+  --surface-2: #1b1b1f;
+  --surface-3: #2a2a2f;
+  --border: #303036;
+  --border-strong: #2a2a2f;
+  --text: #d9d7d1;
+  --text-2: #9a988f;
+  --text-3: #6d6b66;
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  --focus-ring: var(--sidebar-text);
+  --danger: #f07a86;
+  --danger-tint: #2a2a2f;
+
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 10px;
+  overflow-y: auto;
+  background: var(--sidebar);
+  color: var(--sidebar-text-2);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 8px;
+}
+
+.logo {
+  color: var(--sidebar-text);
+  font-size: var(--fs-body);
+  --logo-dot: var(--sidebar-brand);
+}
+
+.release {
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid #2c2c31;
+  border-radius: 4px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: #8f8d87;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search:hover {
+  border-color: #3a3a40;
+  color: #c9c7c1;
+}
+
+.search > span {
+  flex: 1;
+}
+
+.kbd {
+  padding: 0 5px;
+  border: 1px solid #34343a;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.groupLabel {
+  padding: 0 10px 4px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  letter-spacing: 0.04em;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--sidebar-text-2);
+  text-decoration: none;
+}
+
+.item:hover {
+  background: #222226;
+  color: var(--sidebar-text);
+  text-decoration: none;
+}
+
+.on,
+.on:hover {
+  background: var(--sidebar-active);
+  color: var(--sidebar-text);
+  font-weight: var(--fw-medium);
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 2px;
+  background: #3a3a40;
+}
+
+.on .dot {
+  background: var(--sidebar-brand);
+}
+
+.itemLabel {
+  flex: 1;
+}
+
+.badge {
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #3a231c;
+  color: #f2a58f;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.account {
+  display: flex;
+}
+
+.accountButton {
+  width: 100%;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.accountButton:hover {
+  background: var(--surface);
+}
+
+.accountMenu {
+  width: auto;
+  left: 0;
+  right: 0;
+  padding: 5px;
+  border-radius: 9px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #2d1b16;
+  color: #f2a58f;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+}
+
+.who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.whoTitle {
+  color: #e9e8e4;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+}
+
+.whoSub {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.more {
+  color: var(--text-3);
+}

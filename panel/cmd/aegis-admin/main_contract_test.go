@@ -1,20 +1,22 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取本包 run 的源码，依赖 waitForAdminWorkers、errAdminWorkerDrainTimeout
+// [OUTPUT]: 对外提供 TestAdminWorkersShareSignalContextAndJoinBeforeCleanup、TestWaitForAdminWorkersCompletes、TestWaitForAdminWorkersTimesOut、TestAdminWiresTicketReplyNotifier、TestAdminNotifyUsesRecipientSalt
+// [POS]: cmd/aegis-admin 的进程生命周期契约：四个后台循环挂信号 context、停机先取消再限时等待、超时不关资源，外加工单回复通知与通知收件人盐的装配
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestAdminWorkersShareSignalContextAndJoinBeforeCleanup(t *testing.T) {
-	sourceBytes, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(sourceBytes)
+	source := sourcetest.Load(t, ".").Decl("run")
 	for _, required := range []string{
 		"signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)",
 		"serverErr := server.RunContext(ctx",
@@ -99,5 +101,23 @@ func TestWaitForAdminWorkersTimesOut(t *testing.T) {
 
 	if !errors.Is(err, errAdminWorkerDrainTimeout) {
 		t.Fatalf("worker drain error = %v, want %v", err, errAdminWorkerDrainTimeout)
+	}
+}
+
+// 工单回复通知（R115）缺的正是这一行装配：support 不接 notifier 时回复照常成功、通知静默不排
+func TestAdminWiresTicketReplyNotifier(t *testing.T) {
+	if !strings.Contains(sourcetest.Load(t, ".").Decl("run"), "supportSvc.SetReplyNotifier(notifySvc)") {
+		t.Fatal("admin gateway must wire the ticket reply notifier into the support service")
+	}
+}
+
+// 通知收件人哈希用专用盐（⑨）：主密钥不能直接当 HMAC key，且必须与 public 网关同一个盐
+func TestAdminNotifyUsesRecipientSalt(t *testing.T) {
+	run := sourcetest.Load(t, ".").Decl("run")
+	if !strings.Contains(run, "notify.New(pool, log, crypto.NotifyRecipientSalt(cfg.MasterKey))") {
+		t.Fatal("admin gateway must hash notification recipients with crypto.NotifyRecipientSalt")
+	}
+	if strings.Contains(run, "notify.New(pool, log, cfg.MasterKey") {
+		t.Fatal("admin gateway must not use the master key itself as the notification salt")
 	}
 }

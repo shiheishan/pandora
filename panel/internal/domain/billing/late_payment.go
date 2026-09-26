@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 ledger.go 的 late_payment_suspense 与 user_balance 科目记账，依赖 platform/audit、platform/db、platform/httpx
+// [OUTPUT]: 对外提供 LatePaymentCase、ListLatePayments（待处理合计按币种分开）、ApplyLatePaymentToBalance 及其输入类型
+// [POS]: billing 的挂账出口：unexpected_payment.go 负责写入 case，这里负责查看与转入余额，被 api/admin/late_payment.go 消费
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -53,8 +58,11 @@ type ListLatePaymentsInput struct {
 
 // ListLatePayments 默认只列未处理的：管理员打开这一页是为了「有没有要处理的钱」，
 // 把历史已处理的混在一起会让待办淹没在流水里。
+//
+// 待处理合计按币种分开返回（币种 → 最小单位金额）：CNY 的分与 USD 的美分
+// 不能相加，此前直接 sum(amount) 得出的是一个没有单位的数（缺陷 13）。
 func (s *Service) ListLatePayments(ctx context.Context, tenantID string,
-	in ListLatePaymentsInput) ([]LatePaymentCase, int64, int64, error) {
+	in ListLatePaymentsInput) ([]LatePaymentCase, int64, map[string]int64, error) {
 
 	if in.Limit <= 0 || in.Limit > 100 {
 		in.Limit = 25
@@ -66,19 +74,40 @@ func (s *Service) ListLatePayments(ctx context.Context, tenantID string,
 	switch status {
 	case "", "suspense", "applied", "refunded", "manual_review", "refund_pending":
 	default:
-		return nil, 0, 0, httpx.New(httpx.CodeBadRequest, "不支持的挂账状态")
+		return nil, 0, nil, httpx.New(httpx.CodeBadRequest, "不支持的挂账状态")
 	}
 
 	out := []LatePaymentCase{}
-	var total, pendingAmount int64
+	var total int64
+	pendingAmounts := map[string]int64{}
 
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 待处理总额单独算：这是这一页最该一眼看到的数字。
 		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FILTER (WHERE $2 = '' OR status = $2),
-			       COALESCE(sum(amount) FILTER (WHERE status = 'suspense'), 0)::bigint
-			  FROM late_payment_cases WHERE tenant_id = $1`,
-			tenantID, status).Scan(&total, &pendingAmount); err != nil {
+			SELECT count(*) FROM late_payment_cases
+			 WHERE tenant_id = $1 AND ($2 = '' OR status = $2)`,
+			tenantID, status).Scan(&total); err != nil {
+			return err
+		}
+		// 待处理总额单独算：这是这一页最该一眼看到的数字。
+		sums, err := tx.Query(ctx, `
+			SELECT currency::text, sum(amount)::bigint
+			  FROM late_payment_cases
+			 WHERE tenant_id = $1 AND status = 'suspense'
+			 GROUP BY currency`, tenantID)
+		if err != nil {
+			return err
+		}
+		for sums.Next() {
+			var currency string
+			var amount int64
+			if err := sums.Scan(&currency, &amount); err != nil {
+				sums.Close()
+				return err
+			}
+			pendingAmounts[currency] = amount
+		}
+		sums.Close()
+		if err := sums.Err(); err != nil {
 			return err
 		}
 
@@ -108,9 +137,9 @@ func (s *Service) ListLatePayments(ctx context.Context, tenantID string,
 		return rows.Err()
 	})
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, nil, err
 	}
-	return out, total, pendingAmount, nil
+	return out, total, pendingAmounts, nil
 }
 
 type ApplyLatePaymentInput struct {
@@ -129,13 +158,13 @@ func (s *Service) ApplyLatePaymentToBalance(ctx context.Context, tenantID string
 
 	in.Reason = strings.TrimSpace(in.Reason)
 	if tenantID == "" || in.CaseID == "" || in.ActorID == "" {
-		return "", httpx.New(httpx.CodeBadRequest, "tenant, actor and case are required")
+		return "", httpx.New(httpx.CodeBadRequest, "缺少租户、操作人或迟到付款记录")
 	}
 	if _, err := uuid.Parse(in.CaseID); err != nil {
 		return "", httpx.NotFoundOrForbidden()
 	}
 	if _, err := uuid.Parse(in.ActorID); err != nil {
-		return "", httpx.New(httpx.CodeBadRequest, "actor identifier is invalid")
+		return "", httpx.New(httpx.CodeBadRequest, "操作人标识不正确")
 	}
 	if n := utf8.RuneCountInString(in.Reason); n < 5 || n > 500 {
 		return "", httpx.Invalid(map[string]string{

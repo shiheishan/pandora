@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 audit/db/httpx，读写 user_groups 与 users.user_group_id，读 plans / prices / coupons 的组引用与 node_pool_user_groups（00093）；依赖 pools.go 的 notifyNodeUsersChanged 与 pool_user_groups.go 的 namedRef
+// [OUTPUT]: 对外提供 handlers 的 listUserGroups（每项带 exclusive_pools）/ saveUserGroup / deleteUserGroup（被节点池名单引用时 409 写明池名）/ assignUserGroup（提交后发租户级 node.users.changed）
+// [POS]: api/admin 的用户分组：套餐可见、专属价格、优惠券限定、公告定向与节点池限定（R104）共用的分组实体；换组会改变用户能连的节点池，所以写路径要通知节点
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 用户分组。
@@ -8,6 +13,7 @@ package admin
 //	专属价格   同一个套餐给不同组不同的价（代理价、老用户价）
 //	优惠券     券可以限定只有某几个组能用
 //	公告       通知只发给相关的人
+//	节点池     池可以限定只有某几个组能用（R104，名单在 node_pool_user_groups）
 //
 // 这四处的字段在数据库里一直都在，只是没有组可填，所以全是死的。
 
@@ -18,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/audit"
@@ -36,6 +43,9 @@ type userGroupRow struct {
 	Plans   int `json:"plans"`
 	Prices  int `json:"prices"`
 	Coupons int `json:"coupons"`
+	// ExclusivePools 是把这个组列入限定名单的节点池（R104），只读；
+	// 空表示这个组只能用未限定的池
+	ExclusivePools []namedRef `json:"exclusive_pools"`
 }
 
 func (h *handlers) listUserGroups(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +58,12 @@ func (h *handlers) listUserGroups(w http.ResponseWriter, r *http.Request) {
 			       (SELECT count(*) FROM users u WHERE u.user_group_id = g.id),
 			       (SELECT count(*) FROM plans p WHERE g.id = ANY(p.visible_group_ids)),
 			       (SELECT count(*) FROM prices pr WHERE pr.user_group_id = g.id),
-			       (SELECT count(*) FROM coupons c WHERE g.id = ANY(c.applicable_user_group_ids))
+			       (SELECT count(*) FROM coupons c WHERE g.id = ANY(c.applicable_user_group_ids)),
+			       coalesce((SELECT jsonb_agg(jsonb_build_object('id', np.id, 'name', np.name)
+			                                  ORDER BY np.name, np.id)
+			                   FROM node_pool_user_groups npug
+			                   JOIN node_pools np ON np.tenant_id = npug.tenant_id AND np.id = npug.pool_id
+			                  WHERE npug.tenant_id = g.tenant_id AND npug.user_group_id = g.id), '[]')
 			  FROM user_groups g
 			 WHERE g.tenant_id = $1
 			 ORDER BY g.created_at`, tenantID)
@@ -59,7 +74,7 @@ func (h *handlers) listUserGroups(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var g userGroupRow
 			if err := rows.Scan(&g.ID, &g.Code, &g.Name, &g.Desc,
-				&g.Users, &g.Plans, &g.Prices, &g.Coupons); err != nil {
+				&g.Users, &g.Plans, &g.Prices, &g.Coupons, &g.ExclusivePools); err != nil {
 				return err
 			}
 			out = append(out, g)
@@ -151,6 +166,10 @@ func (h *handlers) saveUserGroup(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) deleteUserGroup(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 	id := chi.URLParam(r, "id")
+	if _, err := uuid.Parse(id); err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+		return
+	}
 
 	var actorID *string
 	if a := httpx.PrincipalFrom(r.Context()); a != nil && a.UserID != "" {
@@ -163,16 +182,27 @@ func (h *handlers) deleteUserGroup(w http.ResponseWriter, r *http.Request) {
 		//
 		// 尤其是套餐：删掉组之后 visibility='group' 的套餐会变成
 		// 谁都看不见 —— 它还在售，订单接口也还认，但没人能找到它。
+		//
+		// 节点池的限定名单同理，而且更危险：名单里只剩这一个组时，删掉它会让
+		// 名单变空，池就从「只给这个组」悄悄变成「谁都能用」（R104）。
 		var users, plans, prices, coupons int
+		var pools string
 		if err := tx.QueryRow(r.Context(), `
 			SELECT (SELECT count(*) FROM users  WHERE user_group_id = $1::uuid),
 			       (SELECT count(*) FROM plans  WHERE $1::uuid = ANY(visible_group_ids)),
 			       (SELECT count(*) FROM prices WHERE user_group_id = $1::uuid),
-			       (SELECT count(*) FROM coupons WHERE $1::uuid = ANY(applicable_user_group_ids))`,
-			id).Scan(&users, &plans, &prices, &coupons); err != nil {
+			       (SELECT count(*) FROM coupons WHERE $1::uuid = ANY(applicable_user_group_ids)),
+			       coalesce((SELECT string_agg('「' || np.name || '」', '' ORDER BY np.name, np.id)
+			                   FROM node_pool_user_groups npug
+			                   JOIN node_pools np ON np.tenant_id = npug.tenant_id AND np.id = npug.pool_id
+			                  WHERE npug.tenant_id = $2 AND npug.user_group_id = $1::uuid), '')`,
+			id, tenantID).Scan(&users, &plans, &prices, &coupons, &pools); err != nil {
 			return err
 		}
 		switch {
+		case pools != "":
+			return httpx.New(httpx.CodeConflict,
+				"节点池"+pools+"限定了这个分组，先把它从这些池的名单里移除")
 		case users > 0:
 			return httpx.New(httpx.CodeConflict, "这个分组下还有用户，先把他们移出去")
 		case plans > 0:
@@ -185,6 +215,10 @@ func (h *handlers) deleteUserGroup(w http.ResponseWriter, r *http.Request) {
 		tag, err := tx.Exec(r.Context(),
 			`DELETE FROM user_groups WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, id)
 		if err != nil {
+			// 查完到删之间有人把它加进了某个池的名单：外键兜住（00093），照样回 409
+			if db.IsForeignKeyViolation(err) {
+				return httpx.New(httpx.CodeConflict, "这个分组刚被节点池或其他配置引用，刷新后再试")
+			}
 			return err
 		}
 		if tag.RowsAffected() == 0 {
@@ -255,6 +289,8 @@ func (h *handlers) assignUserGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	// 换组会改变这个用户能用的节点池（R104），让节点立即重拉用户
+	h.notifyNodeUsersChanged(r)
 	httpx.OK(w, map[string]any{"ok": true})
 }
 

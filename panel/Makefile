@@ -74,18 +74,18 @@ logs: ## 查看数据基座日志
 	cd $(DEPLOY) && docker compose logs -f --tail=100
 
 .PHONY: frontend-check
-frontend-check: ## React 候选前端：npm ci + typecheck + vitest（含 API 契约检查）+ 双 mode 构建
+frontend-check: ## 面板前端：npm ci + lint + typecheck + vitest + 双 mode 构建
 	cd frontend && npm ci && npm run check
 
 .PHONY: frontend-embed
-frontend-embed: ## React 候选前端：npm ci + 构建，把 dist/{admin,portal} 同步进 web/*/app 供 go:embed 下发到 /app/
+frontend-embed: ## 面板前端：npm ci + 构建，把 dist/{admin,portal} 同步进 web/{admin,portal} 供 go:embed 在网关根 / 下发
 	@command -v npm >/dev/null || { echo "frontend-embed 需要 Node 22.12+ 与 npm" >&2; exit 1; }
 	cd frontend && npm ci && npm run build
 	@for app in admin portal; do \
 	  test -f frontend/dist/$$app/index.html || { echo "frontend/dist/$$app/index.html 缺失" >&2; exit 1; }; \
-	  rm -rf web/$$app/app && mkdir -p web/$$app/app && \
-	  cp -R frontend/dist/$$app/. web/$$app/app/ && rm -rf web/$$app/app/.vite && \
-	  echo "embedded frontend/dist/$$app -> web/$$app/app"; \
+	  rm -rf web/$$app && mkdir -p web/$$app && \
+	  cp -R frontend/dist/$$app/. web/$$app/ && rm -rf web/$$app/.vite && \
+	  echo "embedded frontend/dist/$$app -> web/$$app"; \
 	done
 
 .PHONY: verify

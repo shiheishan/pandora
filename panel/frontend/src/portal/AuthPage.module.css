@@ -1,0 +1,116 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 AuthPage.tsx 用到的类名
+ * [POS]: portal/AuthPage 的样式：整页居中、最宽 400；字标 26 / 18px；活动横幅朱砂浅底；卡片圆角 14、内边距 24、字段间距 16
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 16px;
+  background: var(--bg);
+}
+
+.column {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.logo {
+  justify-content: center;
+  gap: 10px;
+  font-size: 18px;
+}
+
+.notice {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  font-size: 13px;
+  text-align: center;
+}
+
+.notice > * {
+  margin: 0;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+}
+
+/* 设计稿的三个标签平分整行 */
+.card .switch {
+  display: flex;
+}
+
+.card .switch > * {
+  flex: 1;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.steps {
+  display: flex;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.stepOn {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+.stepDone {
+  color: var(--text-3);
+  font-weight: var(--fw-semibold);
+}
+
+.labelNote {
+  color: var(--text-3);
+}
+
+.upper {
+  text-transform: uppercase;
+}
+
+.code {
+  letter-spacing: 0.3em;
+}
+
+.muted {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  text-wrap: pretty;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.grow {
+  flex: 1;
+}
+
+.footer {
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}

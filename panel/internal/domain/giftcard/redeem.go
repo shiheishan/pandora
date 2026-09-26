@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 giftcard.go 的模板与 Granter 接口（billing 注入）、domain/plugin 事件、platform/audit
+// [OUTPUT]: 对外提供 Redeem、RedeemResult、MyRedemptions、MyRedemption
+// [POS]: giftcard 的兑换：锁码、校验条件与限制、按卡型发放（流量奖励经 Granter 发成一码一笔的流量包余额）、写兑换流水；门户兑换记录带卡码前 12 位提示
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package giftcard
 
 import (
@@ -48,10 +53,10 @@ type RedeemResult struct {
 func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string) (*RedeemResult, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if tenantID == "" || userID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant and user are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户或用户")
 	}
 	if _, err := uuid.Parse(userID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "user identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "用户标识不正确")
 	}
 	if len(code) < 8 || len(code) > 32 {
 		return nil, ErrCodeUnusable
@@ -114,7 +119,7 @@ func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string) (*R
 			}
 
 			// 5) 结算奖励
-			granted, err := s.applyRewards(ctx, tx, tenantID, userID, t, &out)
+			granted, err := s.applyRewards(ctx, tx, tenantID, userID, codeID, t, &out)
 			if err != nil {
 				return err
 			}
@@ -196,7 +201,7 @@ type grantedRecord struct {
 	LedgerTxnID  string `json:"ledger_txn_id,omitempty"`
 }
 
-func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID string,
+func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID string,
 	t Template, out *RedeemResult) (grantedRecord, error) {
 
 	var g grantedRecord
@@ -241,7 +246,7 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID 
 		out.Summary = append(out.Summary, "余额 +"+formatMoney(r.Balance))
 	}
 	if r.TrafficBytes > 0 {
-		if err := s.grant.GrantTraffic(ctx, tx, tenantID, userID, r.TrafficBytes); err != nil {
+		if err := s.grant.GrantTraffic(ctx, tx, tenantID, userID, codeID, r.TrafficBytes); err != nil {
 			return g, err
 		}
 		g.TrafficBytes = r.TrafficBytes
@@ -394,8 +399,11 @@ func (s *Service) checkLimits(ctx context.Context, tx pgx.Tx,
 //-----------------------------------------------------------------------------
 
 type MyRedemption struct {
-	TemplateName string    `json:"template_name"`
-	Type         string    `json:"type"`
+	TemplateName string `json:"template_name"`
+	Type         string `json:"type"`
+	// CodeHint 是兑换所用卡码的前 12 位加省略号：码已作废，给用户认得出
+	// 是哪张卡就够了，不必回整码。
+	CodeHint     string    `json:"code_hint"`
 	PrizeLabel   string    `json:"prize_label,omitempty"`
 	Balance      int64     `json:"balance,omitempty"`
 	TrafficBytes int64     `json:"traffic_bytes,omitempty"`
@@ -407,10 +415,12 @@ func (s *Service) MyRedemptions(ctx context.Context, tenantID, userID string) ([
 	out := []MyRedemption{}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT t.name, t.type, r.granted, r.redeemed_at
+			SELECT t.name, t.type, left(c.code, 12) || '…', r.granted, r.redeemed_at
 			  FROM gift_card_redemptions r
 			  JOIN gift_card_templates t
 			    ON t.tenant_id=r.tenant_id AND t.id=r.template_id
+			  JOIN gift_card_codes c
+			    ON c.tenant_id=r.tenant_id AND c.id=r.code_id
 			 WHERE r.tenant_id=$1 AND r.user_id=$2::uuid
 			 ORDER BY r.redeemed_at DESC LIMIT 100`, tenantID, userID)
 		if err != nil {
@@ -420,7 +430,7 @@ func (s *Service) MyRedemptions(ctx context.Context, tenantID, userID string) ([
 		for rows.Next() {
 			var m MyRedemption
 			var raw []byte
-			if err := rows.Scan(&m.TemplateName, &m.Type, &raw, &m.RedeemedAt); err != nil {
+			if err := rows.Scan(&m.TemplateName, &m.Type, &m.CodeHint, &raw, &m.RedeemedAt); err != nil {
 				return err
 			}
 			var g grantedRecord

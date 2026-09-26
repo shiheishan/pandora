@@ -1,18 +1,23 @@
+// [INPUT]: 依赖 router_source_test.go 的 routerSource，依赖 platform/sourcetest 按名取公告保存、撤回与 notify 定时发布的源码，依赖 platform/httpx 的错误码
+// [OUTPUT]: 对外提供 TestAnnouncementRouteContracts、TestAnnouncementWritesCarryAtomicAuditAndCAS、TestAnnouncementLifecycleCannotBypassWithdrawal、TestParseAnnounceTimeRequiresTimezoneAndNormalizesUTC、TestNormalizeAnnouncePlanIDsRejectsInvalidAndCanonicalizes
+// [POS]: api/admin 公告的路由门槛、写入审计与乐观锁、状态机与入参规范化
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
 	"errors"
-	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestAnnouncementRouteContracts(t *testing.T) {
-	source, err := os.ReadFile("router.go")
+	source, err := routerSource()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,11 +67,8 @@ func assertAnnouncementRouteGuards(t *testing.T, router, route string, guards []
 }
 
 func TestAnnouncementWritesCarryAtomicAuditAndCAS(t *testing.T) {
-	source, err := os.ReadFile("announce.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(source)
+	pkg := sourcetest.Load(t, ".")
+	body := pkg.Decls("handlers.saveAnnouncement", "handlers.withdrawAnnouncement")
 	for _, want := range []string{
 		`Action: "announcement.saved"`,
 		`Action: "announcement.withdrawn"`,
@@ -83,15 +85,11 @@ func TestAnnouncementWritesCarryAtomicAuditAndCAS(t *testing.T) {
 			t.Fatalf("announcement mutation contract missing %q", want)
 		}
 	}
-	if strings.Contains(body, "withdrawn_at=NULL") || strings.Contains(body, "withdrawn_by=NULL") {
+	if all := pkg.Source(); strings.Contains(all, "withdrawn_at=NULL") || strings.Contains(all, "withdrawn_by=NULL") {
 		t.Fatal("announcement update must not erase withdrawal evidence")
 	}
 
-	notifySource, err := os.ReadFile("../../domain/notify/announce.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	notifyBody := string(notifySource)
+	notifyBody := sourcetest.Load(t, "../../domain/notify").Decl("Service.PublishDueAnnouncements")
 	for _, want := range []string{
 		`RETURNING id::text, version`,
 		`Action: "announcement.published"`,

@@ -75,7 +75,7 @@ jobs:
         with:
           go-version-file: panel/go.mod
           cache-dependency-path: panel/go.sum
-      - name: Embedded page contracts (placeholder React entry)
+      - name: Embedded frontend contracts (placeholder entry)
         run: go test -mod=readonly ./web/ ./internal/platform/webapp/
       - name: Schema table registry
         run: go test -mod=readonly -run TestSchemaTablesAreReferencedOrRegistered ./internal/platform/db/
@@ -83,7 +83,7 @@ jobs:
         run: go test -mod=readonly -run TestRoutePermissionsExistInCatalog ./internal/api/admin/
 
   panel-frontend:
-    name: React candidate typecheck, tests, build and embed
+    name: Panel frontend lint, typecheck, tests, build and embed
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -101,14 +101,29 @@ jobs:
           cache-dependency-path: panel/go.sum
       - name: Install locked dependencies
         run: npm ci
-      - name: Typecheck, vitest (includes the API surface and legacy parity contracts) and build
-        run: npm run check
-      - name: Sync the real build into web/*/app for go:embed
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build both entries
+        run: npm run build
+      # frontend-embed 自己会 npm ci + build 一遍，再把 dist/{admin,portal} 同步进 web/；
+      # 上一步的独立构建让构建失败直接落在「Build」上，不和同步混在一起
+      - name: Sync the real build into web/{admin,portal} for go:embed
         working-directory: panel
         run: make frontend-embed
-      - name: Real build is embeddable and served under /app/
+      - name: Real build is embeddable and served at the gateway root
         working-directory: panel
-        run: go test -mod=readonly ./web/ ./internal/platform/webapp/ ./internal/api/...
+        run: |
+          # 占位页还在就说明同步没生效，app_test 会退回只查入口的宽松分支。
+          # 不写成 `! grep`：bash -e 对取反命令不生效，非末行的 `! grep` 命中也不会让步骤失败
+          if grep -l pandora-placeholder web/admin/index.html web/portal/index.html; then
+            echo "placeholder entry still embedded after frontend-embed" >&2
+            exit 1
+          fi
+          go test -mod=readonly ./web/ ./internal/platform/webapp/ ./internal/api/...
 
   linux-race:
     name: Linux race and vet
@@ -146,10 +161,26 @@ jobs:
         run: go test -mod=readonly -p 1 -run TestProcessProbeRoundTrip -count=3 ./cmd/pandora-h3-probe
       - name: Default dependency boundary
         run: |
-          ! go list -mod=readonly -deps . | grep -q 'github.com/aegispanel/nodeagent/core/multi'
-          ! go list -mod=readonly -deps . | grep -q 'github.com/aegispanel/nodeagent/core/sing'
-          ! go list -mod=readonly -deps . | grep -q 'github.com/aegispanel/nodeagent/core/xray'
-          ! go list -mod=readonly -deps . | grep -q 'github.com/sagernet/sing-box'
+          # 不写成 `! go list | grep`：bash -e 对取反命令不生效，只有末行能让步骤失败。
+          # 先取整份依赖再 grep：管道接 grep -q 时，pipefail 下 go list 失败或被 SIGPIPE
+          # 都会让 if 判为未命中而静默放行；单独赋值则 go list 出错直接由 -e 终止。
+          deps="$(go list -mod=readonly -deps .)"
+          if grep -q 'github.com/aegispanel/nodeagent/core/multi' <<<"${deps}"; then
+            echo "github.com/aegispanel/nodeagent/core/multi leaked into the default build" >&2
+            exit 1
+          fi
+          if grep -q 'github.com/aegispanel/nodeagent/core/sing' <<<"${deps}"; then
+            echo "github.com/aegispanel/nodeagent/core/sing leaked into the default build" >&2
+            exit 1
+          fi
+          if grep -q 'github.com/aegispanel/nodeagent/core/xray' <<<"${deps}"; then
+            echo "github.com/aegispanel/nodeagent/core/xray leaked into the default build" >&2
+            exit 1
+          fi
+          if grep -q 'github.com/sagernet/sing-box' <<<"${deps}"; then
+            echo "github.com/sagernet/sing-box leaked into the default build" >&2
+            exit 1
+          fi
       - name: Compatibility migration compile
         run: go test -mod=readonly -tags compat -p 1 ./...
       - name: External Xray TLS XHTTP H3 interoperability

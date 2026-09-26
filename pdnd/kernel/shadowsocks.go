@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 shadowsocksAdapter（经 newShadowsocksAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 ssStream 与主密钥 / 子密钥派生
+// [POS]: kernel 的 Shadowsocks AEAD 入站主体：原生方法表、TCP 请求处理与按用户试解定位、AEAD 分块流；UDP 在 shadowsocks_udp.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
@@ -13,16 +18,16 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/aegispanel/nodeagent/core"
-	"github.com/aegispanel/nodeagent/route"
 	M "github.com/sagernet/sing/common/metadata"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
+
+	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/route"
 )
 
 const ssChunkLimit = 16 * 1024
@@ -159,201 +164,6 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 	a.wg.Add(1)
 	go a.acceptLoop()
 	return nil
-}
-
-func (a *shadowsocksAdapter) packetLoop() {
-	defer a.wg.Done()
-	buffer := make([]byte, 64<<10)
-	for {
-		n, addr, err := a.packet.ReadFrom(buffer)
-		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
-				return
-			}
-			continue
-		}
-		payload := append([]byte(nil), buffer[:n]...)
-		a.wg.Add(1)
-		go func() {
-			defer a.wg.Done()
-			_ = a.handlePacket(a.ctx, payload, addr)
-		}()
-	}
-}
-
-func (a *shadowsocksAdapter) handlePacket(ctx context.Context, wire []byte, clientAddr net.Addr) error {
-	user, destination, payload, err := a.decodeUDPPacket(wire)
-	if err != nil {
-		return err
-	}
-	ip := remoteIP(clientAddr)
-	if !a.enterDevice(user, ip) {
-		return fmt.Errorf("shadowsocks device limit")
-	}
-	defer a.leaveDevice(user, ip)
-	sourceIP, _ := netip.ParseAddr(ip)
-	meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "udp", Protocol: "shadowsocks", SourceIP: sourceIP}
-	upstream, err := a.plane.ListenUDP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
-	if err != nil {
-		return err
-	}
-	defer upstream.Close()
-	destinationAddr, err := destinationUDPAddr(destination)
-	if err != nil {
-		return err
-	}
-	if _, err := upstream.WriteTo(payload, destinationAddr); err != nil {
-		return err
-	}
-	_ = upstream.SetReadDeadline(time.Now().Add(2 * time.Second))
-	response := make([]byte, 64<<10)
-	n, sourceAddr, err := upstream.ReadFrom(response)
-	if err != nil {
-		return err
-	}
-	responseDestination := destination
-	if sourceAddr != nil {
-		responseDestination = destinationFromNetAddr(sourceAddr)
-	}
-	encoded, err := a.encodeUDPPacket(user, responseDestination, response[:n])
-	if err != nil {
-		return err
-	}
-	_, err = a.packet.WriteTo(encoded, clientAddr)
-	if err == nil {
-		a.addTraffic(user, int64(len(payload)), int64(n))
-	}
-	return err
-}
-
-func destinationUDPAddr(destination vlessDestination) (net.Addr, error) {
-	if destination.IP.IsValid() {
-		return &net.UDPAddr{IP: net.IP(destination.IP.AsSlice()), Port: int(destination.Port)}, nil
-	}
-	return net.ResolveUDPAddr("udp", net.JoinHostPort(destination.Domain, strconv.Itoa(int(destination.Port))))
-}
-
-func (a *shadowsocksAdapter) decodeUDPPacket(wire []byte) (core.User, vlessDestination, []byte, error) {
-	var destination vlessDestination
-	if len(wire) < a.method.SaltLen+16 {
-		return core.User{}, destination, nil, fmt.Errorf("shadowsocks UDP packet too short")
-	}
-	salt := wire[:a.method.SaltLen]
-	ciphertext := wire[a.method.SaltLen:]
-	a.mu.RLock()
-	users := make([]ssUser, 0, len(a.users))
-	for _, user := range a.users {
-		users = append(users, user)
-	}
-	a.mu.RUnlock()
-	for _, candidate := range users {
-		subkey, err := deriveSSSubkey(candidate.MasterKey, salt, a.method.KeyLen)
-		if err != nil {
-			continue
-		}
-		aead, err := a.method.NewAEAD(subkey)
-		if err != nil {
-			continue
-		}
-		plain, err := aead.Open(nil, makeSSNonce(0), ciphertext, nil)
-		if err != nil {
-			continue
-		}
-		consumed, err := parseSSDestination(plain, &destination)
-		if err != nil {
-			continue
-		}
-		return core.User{ID: candidate.ID, DeviceLimit: candidate.DeviceLimit, SpeedLimit: candidate.SpeedLimit}, destination, append([]byte(nil), plain[consumed:]...), nil
-	}
-	return core.User{}, destination, nil, fmt.Errorf("shadowsocks UDP user authentication failed")
-}
-
-func (a *shadowsocksAdapter) encodeUDPPacket(user core.User, destination vlessDestination, payload []byte) ([]byte, error) {
-	key := a.userMasterKey(user.ID)
-	if len(key) == 0 {
-		return nil, fmt.Errorf("shadowsocks UDP user no longer exists")
-	}
-	salt := make([]byte, a.method.SaltLen)
-	if _, err := rand.Read(salt); err != nil {
-		return nil, err
-	}
-	subkey, err := deriveSSSubkey(key, salt, a.method.KeyLen)
-	if err != nil {
-		return nil, err
-	}
-	aead, err := a.method.NewAEAD(subkey)
-	if err != nil {
-		return nil, err
-	}
-	address, err := serializeSSDestination(destination)
-	if err != nil {
-		return nil, err
-	}
-	plain := append(address, payload...)
-	return append(salt, aead.Seal(nil, makeSSNonce(0), plain, nil)...), nil
-}
-
-func (a *shadowsocksAdapter) userMasterKey(id int64) []byte {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	for _, user := range a.users {
-		if user.ID == id {
-			return append([]byte(nil), user.MasterKey...)
-		}
-	}
-	return nil
-}
-
-func destinationFromNetAddr(addr net.Addr) vlessDestination {
-	if udp, ok := addr.(*net.UDPAddr); ok {
-		ip, ok := netip.AddrFromSlice(udp.IP)
-		if ok {
-			return vlessDestination{Host: ip.String(), IP: ip, Port: uint16(udp.Port)}
-		}
-	}
-	host, port, err := net.SplitHostPort(addr.String())
-	if err != nil {
-		return vlessDestination{Host: addr.String()}
-	}
-	parsed, _ := strconv.ParseUint(port, 10, 16)
-	if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
-		return vlessDestination{Host: host, IP: ip, Port: uint16(parsed)}
-	}
-	return vlessDestination{Host: host, Domain: host, Port: uint16(parsed)}
-}
-
-func serializeSSDestination(destination vlessDestination) ([]byte, error) {
-	var out []byte
-	if destination.IP.IsValid() {
-		if destination.IP.Is4() {
-			out = append(out, 1)
-			ip := destination.IP.As4()
-			out = append(out, ip[:]...)
-		} else {
-			out = append(out, 4)
-			ip := destination.IP.As16()
-			out = append(out, ip[:]...)
-		}
-	} else {
-		host := destination.Domain
-		if host == "" {
-			host = destination.Host
-		}
-		if len(host) == 0 || len(host) > 253 {
-			return nil, fmt.Errorf("shadowsocks destination domain invalid")
-		}
-		out = append(out, 3, byte(len(host)))
-		out = append(out, host...)
-	}
-	if destination.Port == 0 {
-		return nil, fmt.Errorf("shadowsocks destination port invalid")
-	}
-	var port [2]byte
-	binary.BigEndian.PutUint16(port[:], destination.Port)
-	return append(out, port[:]...), nil
 }
 
 func (a *shadowsocksAdapter) acceptLoop() {
@@ -618,7 +428,7 @@ func (s *ssStream) Write(p []byte) (int, error) {
 	return written, nil
 }
 
-func (s *ssStream) Close() error                       { return s.conn.Close() }
+func (s *ssStream) Close() error { return s.conn.Close() }
 
 // CloseWrite 把半关闭透传给底层连接。
 //

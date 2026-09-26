@@ -327,6 +327,16 @@ SELECT _accept('PAY-001', '金额自洽的订单应当通过', $sql$
           1000, 100, 50, 950, 200, 750);
 $sql$);
 
+-- D-E-2（00071）：剩余价值折算只属于变更套餐单，且折完 total 不为负
+SELECT _reject('D-E-2', '非变更套餐单不能带剩余价值折算', $sql$
+  INSERT INTO orders (tenant_id, order_no, user_id, currency,
+                      subtotal_amount, discount_amount, tax_amount, proration_credit_amount,
+                      total_amount, balance_applied, payable_amount)
+  VALUES ('00000000-0000-7000-8000-000000000001', 'BAD-PRORATE-001',
+          '00000000-0000-7000-8000-000000000101', 'USD',
+          1000, 0, 0, 300, 700, 0, 700);
+$sql$);
+
 SELECT _reject('XBD-015', '人工订单缺少原因时必须拒绝', $sql$
   INSERT INTO orders (tenant_id, order_no, user_id, currency, kind,
                       subtotal_amount, total_amount, payable_amount)
@@ -442,7 +452,7 @@ $sql$);
 
 SELECT _reject('NFR-008', '关闭开关但不填原因必须拒绝', $sql$
   UPDATE feature_switches SET enabled = false, reason = NULL
-   WHERE code = 'ops.reports' AND tenant_id = '00000000-0000-7000-8000-000000000001';
+   WHERE code = 'billing.checkout' AND tenant_id = '00000000-0000-7000-8000-000000000001';
 $sql$);
 
 --------------------------------------------------------------------------------

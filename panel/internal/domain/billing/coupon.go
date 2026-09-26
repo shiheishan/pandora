@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 coupons / coupon_redemptions / prices / plans / traffic_packs 表，依赖 platform/db、platform/httpx
+// [OUTPUT]: 对外提供 PreviewForPrice、PreviewForTrafficPack（试算，响应带券面 coupon）与券面类型 CouponFace（变更套餐试算同形，R76）；包内提供 applyCoupon / redeemCoupon 与 couponMatch（face 取券面）
+// [POS]: billing 的优惠券校验与核销：下单、续费、变更套餐、流量包与两种试算共用 applyCoupon 这一个口径
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 // 优惠券。
@@ -41,9 +46,28 @@ var (
 )
 
 // couponMatch 是一次成功校验的结果。
+// CouponFace 是试算回显的券面（R69 优惠码试算与 R76 变更套餐试算同形），没用码时为 null
+type CouponFace struct {
+	Code          string `json:"code"`
+	DiscountType  string `json:"discount_type"`
+	DiscountValue int64  `json:"discount_value"`
+}
+
+// face 取券面；nil 安全，没用码时返回 nil
+func (m *couponMatch) face() *CouponFace {
+	if m == nil {
+		return nil
+	}
+	return &CouponFace{Code: m.Code, DiscountType: m.DiscountType, DiscountValue: m.DiscountValue}
+}
+
 type couponMatch struct {
 	ID       string
 	Discount int64 // 最小货币单位
+	// 试算回显「已使用 CODE：20% 折扣 / 立减 ¥X」要的券面
+	Code          string
+	DiscountType  string // percent | fixed
+	DiscountValue int64  // percent 为万分比，fixed 为分
 }
 
 // applyCoupon 校验优惠码并算出这一单能减多少。
@@ -191,7 +215,8 @@ func applyCoupon(ctx context.Context, tx pgx.Tx, tenantID, userID, code string,
 	if discount < 0 {
 		discount = 0
 	}
-	return &couponMatch{ID: id, Discount: discount}, nil
+	return &couponMatch{ID: id, Discount: discount,
+		Code: code, DiscountType: discountType, DiscountValue: discountValue}, nil
 }
 
 // redeemCoupon 记一次核销并把名额扣掉。
@@ -248,8 +273,7 @@ func (s *Service) PreviewCoupon(ctx context.Context, tenantID, userID, code,
 func (s *Service) PreviewForPrice(ctx context.Context, tenantID, userID, code,
 	planID, priceID string) (map[string]any, error) {
 
-	out := map[string]any{}
-	err := s.pool.InTx(ctx, dbScope(tenantID, userID), func(tx pgx.Tx) error {
+	return s.previewCoupon(ctx, tenantID, userID, code, planID, func(tx pgx.Tx) (string, int64, error) {
 		var currency string
 		var subtotal int64
 		// 价格必须属于这个套餐（同一个 product）：否则用户可以拿
@@ -260,7 +284,35 @@ func (s *Service) PreviewForPrice(ctx context.Context, tenantID, userID, code,
 			  JOIN plans pl ON pl.product_id = pr.product_id AND pl.tenant_id = pr.tenant_id
 			 WHERE pr.tenant_id = $1 AND pr.id = $2 AND pl.id = $3 AND pr.status = 'active'`,
 			tenantID, priceID, planID).Scan(&currency, &subtotal)
-		if err == pgx.ErrNoRows {
+		return currency, subtotal, err
+	})
+}
+
+// PreviewForTrafficPack 按流量包试算优惠码（结账页流量包模式）。口径与
+// CreateTrafficPackOrder 一致：planID 传空，限定套餐的券按「不在适用范围」拒绝。
+func (s *Service) PreviewForTrafficPack(ctx context.Context, tenantID, userID, code,
+	packID string) (map[string]any, error) {
+
+	return s.previewCoupon(ctx, tenantID, userID, code, "", func(tx pgx.Tx) (string, int64, error) {
+		var currency string
+		var subtotal int64
+		err := tx.QueryRow(ctx, `
+			SELECT currency::text, unit_amount FROM traffic_packs
+			 WHERE tenant_id = $1 AND id = $2::uuid AND status = 'active'`,
+			tenantID, packID).Scan(&currency, &subtotal)
+		return currency, subtotal, err
+	})
+}
+
+// previewCoupon 是两种试算共用的外壳：price 查出币种与原价（查不到即 404），
+// 再按下单同一个 applyCoupon 算折扣。
+func (s *Service) previewCoupon(ctx context.Context, tenantID, userID, code, planID string,
+	price func(pgx.Tx) (string, int64, error)) (map[string]any, error) {
+
+	out := map[string]any{}
+	err := s.pool.InTx(ctx, dbScope(tenantID, userID), func(tx pgx.Tx) error {
+		currency, subtotal, err := price(tx)
+		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFoundOrForbidden()
 		}
 		if err != nil {
@@ -277,7 +329,7 @@ func (s *Service) PreviewForPrice(ctx context.Context, tenantID, userID, code,
 		}
 		out = map[string]any{
 			"subtotal": subtotal, "discount": discount,
-			"payable": subtotal - discount, "currency": currency,
+			"payable": subtotal - discount, "currency": currency, "coupon": m.face(),
 		}
 		return nil
 	})

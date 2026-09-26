@@ -1,18 +1,21 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取佣金解冻、提现打款、提现申请、转余额与可用佣金口径各函数的源码，依赖 ErrWithdrawCurrencyAmbiguous
+// [OUTPUT]: 对外提供 TestCommissionMaturityPerEntryTransactionContract、TestCommissionMaturityLockBalanceAndCASContract、TestCommissionPayoutLockBalanceAndMonotonicStateContract、TestRequestWithdrawalUsesLedgerAvailabilityUnderSharedLock、TestCommissionTransferUsesSameLedgerAvailability、TestCommissionAvailabilityDeductsOnlyUnpostedWithdrawals、TestWithdrawCurrencyAmbiguousErrorIsStableConflict
+// [POS]: billing 分销佣金的并发源码契约：解冻逐笔一事务、先锁后校余额再 CAS 过账，打款与提现申请的锁序，可用佣金 = 账本余额 − 未过账在途提现（D-F-1）在提现、转余额与摘要三处同一口径
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
-func commissionConcurrencySource(t *testing.T) string {
+// commissionDecl 按名取佣金声明的源码；函数挪到哪个文件都不影响。
+func commissionDecl(t *testing.T, name string) string {
 	t.Helper()
-	body, err := os.ReadFile("commission.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(body)
+	return sourcetest.Load(t, ".").Decl(name)
 }
 
 func commissionConcurrencySection(t *testing.T, source, start, end string) string {
@@ -44,10 +47,7 @@ func assertCommissionSourceOrder(t *testing.T, source string, ordered ...string)
 }
 
 func TestCommissionMaturityPerEntryTransactionContract(t *testing.T) {
-	source := commissionConcurrencySource(t)
-	worker := commissionConcurrencySection(t, source,
-		"func (s *Service) SettleMatured(",
-		"func (s *Service) discoverMaturedCommissionIDs(")
+	worker := commissionDecl(t, "Service.SettleMatured")
 	assertCommissionSourceOrder(t, worker,
 		"discoverMaturedCommissionIDs(ctx, tenantID)",
 		"for _, entryID := range ids",
@@ -60,9 +60,7 @@ func TestCommissionMaturityPerEntryTransactionContract(t *testing.T) {
 		t.Fatal("SettleMatured must not hold one transaction across account locks and postings")
 	}
 
-	discovery := commissionConcurrencySection(t, source,
-		"func (s *Service) discoverMaturedCommissionIDs(",
-		"func (s *Service) settleMaturedCommission(")
+	discovery := commissionDecl(t, "Service.discoverMaturedCommissionIDs")
 	for _, needle := range []string{
 		"s.pool.InTx(",
 		"status='pending'",
@@ -82,10 +80,7 @@ func TestCommissionMaturityPerEntryTransactionContract(t *testing.T) {
 }
 
 func TestCommissionMaturityLockBalanceAndCASContract(t *testing.T) {
-	source := commissionConcurrencySource(t)
-	entry := commissionConcurrencySection(t, source,
-		"func (s *Service) settleMaturedCommission(",
-		"// CommissionSummary")
+	entry := commissionDecl(t, "Service.settleMaturedCommission")
 	assertCommissionSourceOrder(t, entry,
 		"s.pool.InTx(",
 		"FROM commission_entries",
@@ -124,8 +119,8 @@ func TestCommissionMaturityLockBalanceAndCASContract(t *testing.T) {
 }
 
 func TestCommissionPayoutLockBalanceAndMonotonicStateContract(t *testing.T) {
-	source := commissionConcurrencySource(t)
-	payout := commissionConcurrencySection(t, source,
+	// 窗口截到函数里第一处 return txnID, nil，与原先按文件截取的范围相同
+	payout := commissionConcurrencySection(t, commissionDecl(t, "Service.PostWithdrawalPayout"),
 		"func (s *Service) PostWithdrawalPayout(",
 		"return txnID, nil")
 	assertCommissionSourceOrder(t, payout,
@@ -158,35 +153,76 @@ func TestCommissionPayoutLockBalanceAndMonotonicStateContract(t *testing.T) {
 	}
 }
 
-func TestRequestWithdrawalRequiresOneCurrencyAndScopesPriorWithdrawals(t *testing.T) {
-	source := commissionConcurrencySource(t)
-	request := commissionConcurrencySection(t, source,
-		"func (s *Service) RequestWithdrawal(",
-		"// ListMyWithdrawals")
+// D-F-1：提现申请、转余额与摘要只认一个「可用佣金」—— 账本余额 − 未过账的在途提现，
+// 两条动账路径在同一把科目锁下按这个口径校验。
+func TestRequestWithdrawalUsesLedgerAvailabilityUnderSharedLock(t *testing.T) {
+	request := commissionDecl(t, "Service.RequestWithdrawal")
 	assertCommissionSourceOrder(t, request,
-		"count(DISTINCT currency)",
-		"if currencyCount > 1",
-		"return ErrWithdrawCurrencyAmbiguous",
-		"if currencyCount == 0 || available <= 0",
+		"s.pool.InTxSerializableRetry(",
+		"if amount < cfg.MinWithdraw",
+		"lockUserCommissionAccounts(ctx, tx, tenantID, userID)",
+		"if len(currencies) == 0",
 		"FROM withdrawals",
-		"AND currency = $3",
-		"available -= inFlight + paidOut",
 		"if inFlight > 0",
-		"if available <= 0",
+		"withdrawableCommission(ctx, tx, tenantID, userID,",
+		"if positive > 1",
+		"return ErrWithdrawCurrencyAmbiguous",
+		"if positive == 0",
+		"if amount > available",
+		"INSERT INTO withdrawals",
 	)
-	for _, needle := range []string{
-		"COALESCE(min(currency::text), '')",
-		"tenantID, userID, currency",
-		"status IN ('requested','reviewing','approved','processing')",
+	for _, forbidden := range []string{
+		"FROM commission_entries",
 		"status = 'paid'",
+		"max(currency::text)",
+		"min(currency::text)",
 	} {
-		if !strings.Contains(request, needle) {
-			t.Errorf("withdrawal currency contract missing %q", needle)
+		if strings.Contains(request, forbidden) {
+			t.Errorf("withdrawal request must not derive availability from %q", forbidden)
 		}
 	}
-	if strings.Contains(request, "max(currency::text)") ||
-		strings.Contains(request, "COALESCE(max(currency::text), 'CNY')") {
-		t.Fatal("withdrawal request must not guess one currency from a mixed balance")
+}
+
+func TestCommissionTransferUsesSameLedgerAvailability(t *testing.T) {
+	transfer := commissionConcurrencySection(t, commissionDecl(t, "Service.TransferCommissionToBalance"),
+		"func (s *Service) TransferCommissionToBalance(",
+		"return txnID, nil")
+	assertCommissionSourceOrder(t, transfer,
+		"s.pool.InTxSerializableRetry(",
+		"prepareAndLockLedgerAccounts(",
+		"withdrawableCommission(ctx, tx, tenantID, userID,",
+		"if avail < amount",
+		"return ErrCommissionTransferInsufficient",
+		"Post(ctx, tx",
+	)
+	if strings.Contains(transfer, "Balance(ctx, tx, accounts") {
+		t.Fatal("transfer must not bypass the shared availability rule with a raw ledger balance")
+	}
+}
+
+func TestCommissionAvailabilityDeductsOnlyUnpostedWithdrawals(t *testing.T) {
+	query := commissionDecl(t, "unpostedWithdrawalsSQL")
+	if !strings.Contains(query, "status IN ('requested','reviewing','approved')") {
+		t.Fatalf("unposted withdrawals must be exactly the pre-payout states: %s", query)
+	}
+	for _, posted := range []string{"'processing'", "'paid'"} {
+		if strings.Contains(query, posted) {
+			t.Fatalf("%s withdrawals already debited the ledger and must not be deducted twice", posted)
+		}
+	}
+	rule := commissionDecl(t, "withdrawableCommission")
+	assertCommissionSourceOrder(t, rule,
+		"Balance(ctx, tx, accountID)",
+		"unpostedWithdrawalsSQL",
+		"return ledger - reserved, nil",
+	)
+
+	summary := commissionDecl(t, "Service.CommissionSummary")
+	if !strings.Contains(summary, "commissionAvailableSnapshot(ctx, tx,") {
+		t.Fatal("commission summary must display the shared availability rule")
+	}
+	if strings.Contains(summary, "FILTER (WHERE status = 'available')") {
+		t.Fatal("commission summary must not derive availability from commission entries")
 	}
 }
 

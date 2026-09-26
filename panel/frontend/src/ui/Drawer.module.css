@@ -1,0 +1,130 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 Drawer.tsx 用到的类名
+ * [POS]: ui/Drawer 的样式：<dialog> 铺满视口，面板贴右、全高；浮层只用一档 --shadow
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.overlay[open] {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.overlay::backdrop {
+  background: var(--scrim);
+}
+
+:root:has(.overlay[open]) {
+  overflow: hidden;
+}
+
+.panel {
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  height: 100%;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: slide-in 0.2s ease-out;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.headWithToolbar {
+  padding-bottom: 0;
+}
+
+.headRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.headText {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: var(--fw-semibold);
+  overflow-wrap: anywhere;
+}
+
+.subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-4);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-20);
+  overflow-y: auto;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-20) calc(var(--space-12) + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .panel {
+    width: 100% !important;
+  }
+}

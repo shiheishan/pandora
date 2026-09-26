@@ -1,17 +1,20 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter 与 handlers.meSubscriptionNodes 的源码
+// [OUTPUT]: 对外提供 TestSubscriptionNodePreviewRouteIsAuthenticatedGET、TestSubscriptionNodePreviewHandlerHasSafeResponseBoundary
+// [POS]: api/public 订阅节点预览：只读、在登录分组内、404 中性出口、响应不露连接信息
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestSubscriptionNodePreviewRouteIsAuthenticatedGET(t *testing.T) {
-	source, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	router := string(source)
+	pkg := sourcetest.Load(t, ".")
+	router := pkg.Decl("NewRouter")
 	want := `r.Get("/me/subscriptions/{id}/nodes", h.meSubscriptionNodes)`
 	index := strings.Index(router, want)
 	if index < 0 {
@@ -22,23 +25,13 @@ func TestSubscriptionNodePreviewRouteIsAuthenticatedGET(t *testing.T) {
 	if auth < group {
 		t.Fatal("subscription node preview route is outside the authenticated group")
 	}
-	if strings.Contains(router, `Post("/me/subscriptions/{id}/nodes"`) {
+	if strings.Contains(pkg.Source(), `Post("/me/subscriptions/{id}/nodes"`) {
 		t.Fatal("subscription node preview must remain read-only")
 	}
 }
 
 func TestSubscriptionNodePreviewHandlerHasSafeResponseBoundary(t *testing.T) {
-	source, err := os.ReadFile("subscribe.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(source)
-	start := strings.Index(body, "func (h *handlers) meSubscriptionNodes")
-	end := strings.Index(body[start:], "func (h *handlers) rotateSubscriptionLink")
-	if start < 0 || end < 0 {
-		t.Fatal("subscription node preview handler boundary missing")
-	}
-	handler := body[start : start+end]
+	handler := sourcetest.Load(t, ".").Decl("handlers.meSubscriptionNodes")
 	for _, want := range []string{
 		`errors.Is(err, subscription.ErrNotFound)`,
 		`httpx.NotFoundOrForbidden()`,

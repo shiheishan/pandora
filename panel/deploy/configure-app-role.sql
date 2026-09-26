@@ -365,7 +365,7 @@ GRANT INSERT (
   tenant_id, order_no, user_id, kind, status, currency, subtotal_amount,
   discount_amount, tax_amount, total_amount, balance_applied, payable_amount,
   expires_at, coupon_id, subscription_id, idempotency_key_id,
-  manual_reason, created_by
+  manual_reason, created_by, proration_credit_amount
 ) ON orders TO aegis_app;
 DO $$
 BEGIN
@@ -380,7 +380,7 @@ GRANT INSERT (
   tenant_id, order_id, product_id, price_id, plan_id, plan_version_id,
   snapshot_product_name, snapshot_plan_name, snapshot_plan_version,
   snapshot_interval, snapshot_interval_count, snapshot_entitlements,
-  snapshot_quotas, quantity, unit_amount, line_amount, currency
+  snapshot_quotas, quantity, unit_amount, line_amount, currency, traffic_pack_id
 ) ON order_items TO aegis_app;
 GRANT INSERT (
   tenant_id, order_id, provider_id, currency, amount, status, provider_ref,
@@ -592,5 +592,12 @@ END $$;
 -- 表最后一次被动到的地方。
 REVOKE UPDATE, DELETE ON gift_card_redemptions FROM aegis_app;
 REVOKE UPDATE, DELETE ON traffic_reset_logs FROM aegis_app;
+
+-- 纵深防御：这两张表各有守卫触发器（00069 批次只许一次打导出标记，00070 流量包
+-- 余额只许按规则扣减），但同样被上面的 GRANT ... ON ALL TABLES 放开了 DELETE。
+-- 触发器之外再收一道授权。UPDATE 只收 DELETE 不够：两表的业务路径都要改余额 /
+-- 导出标记，UPDATE 保留，靠触发器约束写法。
+REVOKE DELETE ON traffic_pack_grants FROM aegis_app;
+REVOKE DELETE ON gift_card_batches FROM aegis_app;
 
 COMMIT;

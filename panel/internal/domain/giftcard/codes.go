@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 gift_card_codes / gift_card_redemptions / gift_card_templates 表与 batches.go 的 MaskCode，依赖 platform/audit、platform/db、platform/httpx
+// [OUTPUT]: 对外提供 Code、ListCodes、ToggleCode、Stats、Usage、ListUsages、CardPreview 与 PreviewCode
+// [POS]: giftcard 的卡码读模型与单码操作：后台列表与兑换记录只回掩码，统计含已兑出与已发行面额，门户预览按码查模板；批次与导出在 batches.go，兑换在 redeem.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package giftcard
 
 import (
@@ -15,9 +20,10 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+// Code 是卡码列表的一行。只给掩码：明文只在生码样例与一次性导出里出现（batches.go）。
 type Code struct {
 	ID         string     `json:"id"`
-	Code       string     `json:"code"`
+	CodeMasked string     `json:"code_masked"`
 	Status     string     `json:"status"`
 	BatchID    *string    `json:"batch_id,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
@@ -88,10 +94,12 @@ func (s *Service) ListCodes(ctx context.Context, tenantID string,
 		defer rows.Close()
 		for rows.Next() {
 			var c Code
-			if err := rows.Scan(&c.ID, &c.Code, &c.Status, &c.BatchID, &c.ExpiresAt,
+			var plain string
+			if err := rows.Scan(&c.ID, &plain, &c.Status, &c.BatchID, &c.ExpiresAt,
 				&c.UsedEmail, &c.UsedAt, &c.CreatedAt, &c.TemplateID); err != nil {
 				return err
 			}
+			c.CodeMasked = MaskCode(plain)
 			out = append(out, c)
 		}
 		return rows.Err()
@@ -151,7 +159,7 @@ func (s *Service) ToggleCode(ctx context.Context, tenantID, codeID string,
 			Action: "gift_card.code_toggled", ResourceType: "gift_card_code",
 			ResourceID:   &codeID,
 			BeforeDigest: map[string]any{"status": from},
-			AfterDigest:  map[string]any{"status": to, "code": code},
+			AfterDigest:  map[string]any{"status": to, "code": MaskCode(code)},
 			APIDomain:    "admin", RequestID: httpx.RequestIDFrom(ctx),
 		})
 	})
@@ -164,6 +172,9 @@ type Stats struct {
 	CodesUnused int   `json:"codes_unused"`
 	BalanceOut  int64 `json:"balance_out"` // 已发出的余额合计（最小货币单位）
 	TrafficOut  int64 `json:"traffic_out"` // 已发出的流量合计（字节）
+	// BalanceIssued 是已发行的通用卡面额合计（CNY 分）：每张码按它所属模板
+	// 当前的 rewards.balance 计，不论码是否已兑换、停用或过期。
+	BalanceIssued int64 `json:"balance_issued"`
 }
 
 func (s *Service) Stats(ctx context.Context, tenantID string) (*Stats, error) {
@@ -184,16 +195,20 @@ func (s *Service) Stats(ctx context.Context, tenantID string) (*Stats, error) {
 		// 发出去多少真金白银，是这一页最该被看见的数字。
 		return tx.QueryRow(ctx, `
 			SELECT coalesce(sum((granted->>'balance')::bigint), 0),
-			       coalesce(sum((granted->>'traffic_bytes')::bigint), 0)
+			       coalesce(sum((granted->>'traffic_bytes')::bigint), 0),
+			       (SELECT coalesce(sum((t.rewards->>'balance')::bigint), 0)
+			          FROM gift_card_codes c
+			          JOIN gift_card_templates t ON t.tenant_id = c.tenant_id AND t.id = c.template_id
+			         WHERE c.tenant_id = $1 AND t.type = 'general')
 			  FROM gift_card_redemptions WHERE tenant_id=$1`,
-			tenantID).Scan(&st.BalanceOut, &st.TrafficOut)
+			tenantID).Scan(&st.BalanceOut, &st.TrafficOut, &st.BalanceIssued)
 	})
 	return &st, err
 }
 
 type Usage struct {
 	TemplateName string    `json:"template_name"`
-	Code         string    `json:"code"`
+	CodeMasked   string    `json:"code_masked"`
 	UserEmail    string    `json:"user_email"`
 	Granted      Rewards   `json:"granted"`
 	PrizeLabel   string    `json:"prize_label,omitempty"`
@@ -223,10 +238,12 @@ func (s *Service) ListUsages(ctx context.Context, tenantID, templateID string) (
 		for rows.Next() {
 			var u Usage
 			var raw []byte
-			if err := rows.Scan(&u.TemplateName, &u.Code, &u.UserEmail, &raw,
+			var plain string
+			if err := rows.Scan(&u.TemplateName, &plain, &u.UserEmail, &raw,
 				&u.RedeemedAt); err != nil {
 				return err
 			}
+			u.CodeMasked = MaskCode(plain)
 			var g grantedRecord
 			_ = json.Unmarshal(raw, &g)
 			u.PrizeLabel = g.PrizeLabel
@@ -243,12 +260,32 @@ func (s *Service) ListUsages(ctx context.Context, tenantID, templateID string) (
 //
 // 刻意不暴露卡是否存在：不存在、已用、已停用都回同一句话，
 // 否则这个接口就成了免费的卡密探测器。
-func (s *Service) PreviewCode(ctx context.Context, tenantID, code string) (*Template, error) {
+// CardPreview 是门户兑换前看到的卡面：模板里用户该看的部分。发行量与
+// 兑换量（code_total / code_used）是运营数据，不给用户；套餐卡补上套餐名与
+// 周期，用户才知道「开通专业版 · 月付」而不是一串 ID。
+type CardPreview struct {
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Description   string     `json:"description"`
+	Type          string     `json:"type"`
+	Status        string     `json:"status"`
+	Rewards       Rewards    `json:"rewards"`
+	Conditions    Conditions `json:"conditions"`
+	Limits        Limits     `json:"limits"`
+	ThemeColor    string     `json:"theme_color"`
+	CreatedAt     time.Time  `json:"created_at"`
+	PlanName      string     `json:"plan_name,omitempty"`
+	Interval      string     `json:"interval,omitempty"`
+	IntervalCount int        `json:"interval_count,omitempty"`
+}
+
+func (s *Service) PreviewCode(ctx context.Context, tenantID, code string) (*CardPreview, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if len(code) < 8 || len(code) > 32 {
 		return nil, ErrCodeUnusable
 	}
 	var out Template
+	var preview CardPreview
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var templateID, status string
 		var expiresAt *time.Time
@@ -281,10 +318,28 @@ func (s *Service) PreviewCode(ctx context.Context, tenantID, code string) (*Temp
 			}
 			out.Rewards = Rewards{Pool: labels}
 		}
+		preview = CardPreview{
+			ID: out.ID, Name: out.Name, Description: out.Description, Type: out.Type,
+			Status: out.Status, Rewards: out.Rewards, Conditions: out.Conditions,
+			Limits: out.Limits, ThemeColor: out.ThemeColor, CreatedAt: out.CreatedAt,
+		}
+		if out.Type == "plan" && out.Rewards.PlanID != "" && out.Rewards.PriceID != "" {
+			// 套餐或价格后来被删掉时不报错：卡面照样能看，兑换那一步会给出明确原因。
+			err := tx.QueryRow(ctx, `
+				SELECT pl.name, pr.billing_interval, pr.interval_count
+				  FROM plans pl
+				  JOIN prices pr ON pr.tenant_id = pl.tenant_id AND pr.product_id = pl.product_id
+				 WHERE pl.tenant_id = $1 AND pl.id = $2::uuid AND pr.id = $3::uuid`,
+				tenantID, out.Rewards.PlanID, out.Rewards.PriceID).
+				Scan(&preview.PlanName, &preview.Interval, &preview.IntervalCount)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return &preview, nil
 }

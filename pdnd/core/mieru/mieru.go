@@ -12,7 +12,7 @@
 // 代价是要自己复制一遍 apis/server.Start 的组装逻辑（就是下面 Start 里那几行），
 // 换来的是几百个在线用户不会因为别人的订阅到期而掉线。
 //
-// 许可证：mieru 为 GPL-3.0，与 sing-box 同级，不给 aegis-nodeagent
+// 许可证：mieru 为 GPL-3.0，与 sing-box 同级，不给 pandora-native
 // 增加新的约束（本模块整体已按 GPL-3.0 分发）。
 package mieru
 

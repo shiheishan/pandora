@@ -1,3 +1,8 @@
+// [INPUT]: 依赖同包的 validatePassword，依赖 platform 的 crypto（口令哈希）、credentialrevocation（吊销会话与刷新令牌）、audit/db/httpx
+// [OUTPUT]: 对外提供 AdminResetPassword 与 AdminResetPasswordInput
+// [POS]: domain/identity 的管理员替用户设新密码：同事务改哈希、吊销该用户全部会话与刷新令牌并写审计；原因可选（R101）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package identity
 
 import (
@@ -40,7 +45,7 @@ type AdminResetPasswordInput struct {
 	// ActorID 是执行这次操作的管理员。
 	ActorID     string
 	NewPassword string
-	// Reason 会写进审计。改别人的密码必须留下理由。
+	// Reason 可选（R101）：给了就写进审计，空串不写。
 	Reason    string
 	APIDomain string
 	IP        string
@@ -128,11 +133,16 @@ func (s *Service) AdminResetPassword(ctx context.Context, tenantID string,
 				RequestID:    httpx.RequestIDFrom(ctx),
 				SourceIP:     in.IP,
 				UserAgent:    in.UserAgent,
-				AfterDigest: map[string]any{
-					"target_email":     email,
-					"reason":           in.Reason,
-					"sessions_revoked": true,
-				},
+				AfterDigest:  resetAuditDigest(email, in.Reason),
 			})
 		})
+}
+
+// resetAuditDigest 是改密审计的摘要：原因只在给了时出现，不写空串占位。
+func resetAuditDigest(email, reason string) map[string]any {
+	out := map[string]any{"target_email": email, "sessions_revoked": true}
+	if reason != "" {
+		out["reason"] = reason
+	}
+	return out
 }

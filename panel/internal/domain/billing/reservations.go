@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 ledger.go 的 normalBalance 与科目类型，读写 order_reservations 及其子资源表
+// [OUTPUT]: 对包内提供 orderTotal（金额恒等式）、reservationLockRequest、lockOrderReservationGraph、captureLockedReservation、prepareAndLockLedgerAccounts 与锁类型
+// [POS]: billing 结算与释放共用的预留图加锁与校验：按 kind 校验订单项形状（addon 的唯一一行指向流量包，upgrade 的总额扣掉剩余价值折算），统一 UUID 排序加锁避免死锁
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -22,6 +27,14 @@ type reservationLockRequest struct {
 	TotalAmount    int64
 	PayableAmount  int64
 	BalanceAmount  int64
+	// ProrationCredit 只有变更套餐单（kind='upgrade'）非零：原订阅的剩余价值
+	ProrationCredit int64
+}
+
+// orderTotal 是订单的金额恒等式（迁移 00071 的 orders_total_identity）：
+// 剩余价值先抵新价，抵不完的部分不进 total —— 那部分由变更单履约时退进余额。
+func orderTotal(subtotal, discount, prorationCredit, tax int64) int64 {
+	return max(subtotal-discount-prorationCredit, 0) + tax
 }
 
 type stockReservationLock struct {
@@ -60,8 +73,13 @@ type lockedReservation struct {
 func lockOrderReservationGraph(ctx context.Context, tx pgx.Tx,
 	in reservationLockRequest) (*lockedReservation, error) {
 
-	if in.Kind != "new" && in.Kind != "renewal" && in.Kind != "topup" {
+	switch in.Kind {
+	case "new", "renewal", "topup", "addon", "upgrade":
+	default:
 		return nil, fmt.Errorf("unsupported order kind %q", in.Kind)
+	}
+	if in.ProrationCredit < 0 || (in.ProrationCredit != 0 && in.Kind != "upgrade") {
+		return nil, errors.New("only plan change orders carry a proration credit")
 	}
 
 	var out lockedReservation
@@ -82,15 +100,17 @@ func lockOrderReservationGraph(ctx context.Context, tx pgx.Tx,
 	}
 
 	type itemShape struct {
-		planID     string
-		currency   string
-		quantity   int
-		unitAmount int64
-		lineAmount int64
+		planID      string
+		trafficPack bool
+		currency    string
+		quantity    int
+		unitAmount  int64
+		lineAmount  int64
 	}
 	var items []itemShape
 	rows, err := tx.Query(ctx, `
-		SELECT plan_id::text, currency::text, quantity, unit_amount, line_amount
+		SELECT coalesce(plan_id::text, ''), traffic_pack_id IS NOT NULL,
+		       currency::text, quantity, unit_amount, line_amount
 		  FROM order_items
 		 WHERE tenant_id=$1 AND order_id=$2::uuid
 		 ORDER BY id`, in.TenantID, in.OrderID)
@@ -99,7 +119,7 @@ func lockOrderReservationGraph(ctx context.Context, tx pgx.Tx,
 	}
 	for rows.Next() {
 		var item itemShape
-		if err := rows.Scan(&item.planID, &item.currency, &item.quantity,
+		if err := rows.Scan(&item.planID, &item.trafficPack, &item.currency, &item.quantity,
 			&item.unitAmount, &item.lineAmount); err != nil {
 			rows.Close()
 			return nil, err
@@ -166,9 +186,13 @@ func lockOrderReservationGraph(ctx context.Context, tx pgx.Tx,
 			return nil, errors.New("topup reservation graph must contain only its parent")
 		}
 	} else {
-		if in.SubtotalAmount-in.DiscountAmount+in.TaxAmount != in.TotalAmount ||
+		if orderTotal(in.SubtotalAmount, in.DiscountAmount, in.ProrationCredit,
+			in.TaxAmount) != in.TotalAmount ||
 			in.TotalAmount-in.BalanceAmount != in.PayableAmount ||
-			len(items) != 1 || items[0].planID == "" || items[0].quantity <= 0 ||
+			len(items) != 1 || items[0].quantity <= 0 ||
+			// 流量包订单的那一行指向流量包、不指向套餐；其余订单反之
+			(in.Kind == "addon") != (items[0].planID == "" && items[0].trafficPack) ||
+			(in.Kind != "addon" && (items[0].planID == "" || items[0].trafficPack)) ||
 			items[0].currency != in.Currency ||
 			items[0].lineAmount != items[0].unitAmount*int64(items[0].quantity) ||
 			items[0].lineAmount != in.SubtotalAmount {
@@ -181,7 +205,7 @@ func lockOrderReservationGraph(ctx context.Context, tx pgx.Tx,
 			}
 			out.Stock = &stocks[0]
 		} else if len(stocks) != 0 || len(purchases) != 0 {
-			return nil, errors.New("renewal reservation graph cannot contain stock or purchase-limit reservations")
+			return nil, errors.New("renewal, addon and plan change reservation graphs cannot contain stock or purchase-limit reservations")
 		}
 	}
 

@@ -1,13 +1,19 @@
+// [INPUT]: 依赖 router_source_test.go 的 routerSource，依赖 platform/sourcetest 按名取 domain/content 的发布、归档与 Page 的源码
+// [OUTPUT]: 对外提供 TestContentPageRouteContracts、TestContentWritesCarryTransactionalAudit
+// [POS]: api/admin 内容页面路由的权限与重认证门槛、内容写入与审计同事务
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestContentPageRouteContracts(t *testing.T) {
-	source, err := os.ReadFile("router.go")
+	source, err := routerSource()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,11 +44,7 @@ func TestContentPageRouteContracts(t *testing.T) {
 }
 
 func TestContentWritesCarryTransactionalAudit(t *testing.T) {
-	source, err := os.ReadFile("../../domain/content/service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	service := string(source)
+	service := sourcetest.Load(t, "../../domain/content").Decls("Service.PublishVersion", "Service.Archive", "Page")
 	for _, want := range []string{
 		`Action: "content.version_created"`,
 		`Action: "content.archived"`,

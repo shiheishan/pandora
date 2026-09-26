@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -242,25 +239,73 @@ func TestCatalogPlanUpdateDefaultDenyReturnsNeutral503(t *testing.T) {
 }
 
 func TestProductionRouterBindsUpdateHandlerThroughGuardedRegistrar(t *testing.T) {
-	source, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	file, err := parser.ParseFile(token.NewFileSet(), "router.go", source, 0)
-	if err != nil {
-		t.Fatalf("parse router.go: %v", err)
-	}
+	// 路由表按模块拆在 router_<模块>.go：NewRouter 在已登录分组里调用
+	// register*Routes(r, d, h)，套餐段再调用 registerCatalogPlanUpdate。
+	// 这里沿着这条调用链找，要求整张路由表恰好注册一次，且只经已登录分组。
+	registrars := map[string]*ast.FuncDecl{}
 	var newRouter *ast.FuncDecl
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if ok && function.Name.Name == "NewRouter" {
-			newRouter = function
-			break
+	textualCalls := 0
+	for _, file := range parseRouterFiles(t) {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Recv != nil {
+				continue
+			}
+			registrars[function.Name.Name] = function
+			if function.Name.Name == "NewRouter" {
+				newRouter = function
+			}
 		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if ok && catalogExprName(call.Fun) == "registerCatalogPlanUpdate" {
+				textualCalls++
+			}
+			return true
+		})
 	}
 	if newRouter == nil {
 		t.Fatal("NewRouter function is missing")
 	}
+	if textualCalls != 1 {
+		t.Fatalf("router sources call registerCatalogPlanUpdate %d times, want exactly 1", textualCalls)
+	}
+
+	// countUpdateRegistrations 数出从 node 出发、经同包路由注册函数可达的
+	// registerCatalogPlanUpdate 调用；注册函数必须把当前的 r 原样传下去。
+	var countUpdateRegistrations func(node ast.Node, stack map[string]bool) int
+	countUpdateRegistrations = func(node ast.Node, stack map[string]bool) int {
+		count := 0
+		ast.Inspect(node, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name := catalogExprName(call.Fun)
+			if name == "registerCatalogPlanUpdate" {
+				count++
+				if len(call.Args) != 4 || catalogExprName(call.Args[0]) != "r" ||
+					catalogExprName(call.Args[1]) != "d" || catalogExprName(call.Args[2]) != "h.updatePlan" ||
+					catalogExprName(call.Args[3]) != "middleware.Idempotency" {
+					t.Fatalf("unexpected production registrar arguments")
+				}
+				return true
+			}
+			registrar, ok := registrars[name]
+			if !ok || name == "NewRouter" || stack[name] {
+				return true
+			}
+			if len(call.Args) == 0 || catalogExprName(call.Args[0]) != "r" {
+				t.Fatalf("route registrar %s must receive the enclosing router r", name)
+			}
+			stack[name] = true
+			count += countUpdateRegistrations(registrar.Body, stack)
+			delete(stack, name)
+			return true
+		})
+		return count
+	}
+
 	var v1Body *ast.BlockStmt
 	ast.Inspect(newRouter.Body, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
@@ -298,26 +343,15 @@ func TestProductionRouterBindsUpdateHandlerThroughGuardedRegistrar(t *testing.T)
 			continue
 		}
 		hasRequireAuth := false
-		groupRegistrations := 0
 		ast.Inspect(closure.Body, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			if catalogExprName(call.Fun) == "r.Use" && len(call.Args) == 1 {
+			if ok && catalogExprName(call.Fun) == "r.Use" && len(call.Args) == 1 {
 				middlewareCall, ok := call.Args[0].(*ast.CallExpr)
 				hasRequireAuth = hasRequireAuth || ok && catalogExprName(middlewareCall.Fun) == "middleware.RequireAuth"
 			}
-			if catalogExprName(call.Fun) == "registerCatalogPlanUpdate" {
-				groupRegistrations++
-				if len(call.Args) != 4 || catalogExprName(call.Args[0]) != "r" ||
-					catalogExprName(call.Args[1]) != "d" || catalogExprName(call.Args[2]) != "h.updatePlan" ||
-					catalogExprName(call.Args[3]) != "middleware.Idempotency" {
-					t.Fatalf("unexpected production registrar arguments")
-				}
-			}
 			return true
 		})
+		groupRegistrations := countUpdateRegistrations(closure.Body, map[string]bool{})
 		if hasRequireAuth {
 			authGroups++
 			registrations += groupRegistrations
@@ -328,16 +362,7 @@ func TestProductionRouterBindsUpdateHandlerThroughGuardedRegistrar(t *testing.T)
 	if authGroups != 1 || registrations != 1 {
 		t.Fatalf("authenticated /v1 groups=%d catalog update registrations=%d, want 1/1", authGroups, registrations)
 	}
-
-	totalRegistrations := 0
-	ast.Inspect(newRouter.Body, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if ok && catalogExprName(call.Fun) == "registerCatalogPlanUpdate" {
-			totalRegistrations++
-		}
-		return true
-	})
-	if totalRegistrations != 1 {
-		t.Fatalf("NewRouter catalog update registrations=%d, want exactly 1", totalRegistrations)
+	if total := countUpdateRegistrations(newRouter.Body, map[string]bool{}); total != 1 {
+		t.Fatalf("NewRouter catalog update registrations=%d, want exactly 1", total)
 	}
 }

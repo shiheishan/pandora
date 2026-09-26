@@ -1,17 +1,20 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取 AdminCancelOrder、releaseOrderReservation 及释放链路各锁函数、ExpireDueReservations 的源码
+// [OUTPUT]: 对外提供 TestAdminCancellationAddsCASWithoutWeakeningTerminalIdempotency、TestReleaseTransactionSourceContract、TestReleasePaymentEvidenceSourceContract、TestReleaseResourceAndEvidenceSourceContract、TestReservationExpiryWorkerSourceContract
+// [POS]: billing 取消与过期释放的源码契约：后台取消加 state_version CAS 而不削弱同终态幂等、释放事务的锁序、已结算收款证据的有序锁、资源回退形状、过期扫描的 SKIP LOCKED 与同步钩子次序
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestAdminCancellationAddsCASWithoutWeakeningTerminalIdempotency(t *testing.T) {
-	body, err := os.ReadFile("release.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(body)
+	pkg := sourcetest.Load(t, ".")
+	s := pkg.Decls("Service.AdminCancelOrder", "releaseOrderReservation")
 	for _, want := range []string{
 		`func (s *Service) AdminCancelOrder(`,
 		`ExpectedStateVersion: in.ExpectedStateVersion`,
@@ -25,25 +28,16 @@ func TestAdminCancellationAddsCASWithoutWeakeningTerminalIdempotency(t *testing.
 			t.Fatalf("admin cancellation contract is missing %q", want)
 		}
 	}
-	terminal := strings.Index(s, `case req.Target:`)
-	cas := strings.Index(s, `if req.ExpectedStateVersion > 0 && shape.StateVersion != req.ExpectedStateVersion`)
+	release := pkg.Decl("releaseOrderReservation")
+	terminal := strings.Index(release, `case req.Target:`)
+	cas := strings.Index(release, `if req.ExpectedStateVersion > 0 && shape.StateVersion != req.ExpectedStateVersion`)
 	if terminal < 0 || cas < 0 || terminal >= cas {
 		t.Fatal("terminal idempotency must be evaluated before active-order CAS")
 	}
 }
 
 func TestReleaseTransactionSourceContract(t *testing.T) {
-	body, err := os.ReadFile("release.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(body)
-	start := strings.Index(s, "func releaseOrderReservation(")
-	end := strings.Index(s[start:], "func lockReleaseOrder(")
-	if start < 0 || end < 0 {
-		t.Fatal("release transaction source boundary is missing")
-	}
-	tx := s[start : start+end]
+	tx := sourcetest.Load(t, ".").Decl("releaseOrderReservation")
 	ordered := []string{
 		"lockReleaseOrder(",
 		"lockActiveReleaseIntents(",
@@ -98,17 +92,7 @@ func TestReleaseTransactionSourceContract(t *testing.T) {
 }
 
 func TestReleasePaymentEvidenceSourceContract(t *testing.T) {
-	body, err := os.ReadFile("release.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(body)
-	start := strings.Index(s, "func lockAndRejectSettledPaymentEvidence(")
-	end := strings.Index(s, "func lockReleaseReservationGraph(")
-	if start < 0 || end <= start {
-		t.Fatal("settled-payment evidence lock boundary is missing")
-	}
-	lock := s[start:end]
+	lock := sourcetest.Load(t, ".").Decl("lockAndRejectSettledPaymentEvidence")
 	for _, needle := range []string{
 		`SELECT id::text FROM payment_intents`,
 		`status='succeeded'`,
@@ -129,11 +113,9 @@ func TestReleasePaymentEvidenceSourceContract(t *testing.T) {
 }
 
 func TestReleaseResourceAndEvidenceSourceContract(t *testing.T) {
-	body, err := os.ReadFile("release.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(body)
+	// 释放链路上加锁、校验与回退资源的各个函数
+	s := sourcetest.Load(t, ".").Decls("releaseOrderReservation", "lockActiveReleaseIntents",
+		"lockAndRejectSettledPaymentEvidence", "lockReleaseBalance", "releaseLockedReservation", "validateIdempotentRelease")
 	for _, needle := range []string{
 		`status='succeeded'`,
 		`SELECT id::text FROM payments`,
@@ -157,11 +139,8 @@ func TestReleaseResourceAndEvidenceSourceContract(t *testing.T) {
 }
 
 func TestReservationExpiryWorkerSourceContract(t *testing.T) {
-	body, err := os.ReadFile("reservation_expiry.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(body)
+	pkg := sourcetest.Load(t, ".")
+	s := pkg.Decl("Service.ExpireDueReservations")
 	for _, needle := range []string{
 		`r.state='held' AND r.expires_at<=now()`,
 		`o.status IN ('draft','pending_payment','processing')`,
@@ -195,11 +174,7 @@ func TestReservationExpiryWorkerSourceContract(t *testing.T) {
 		t.Fatalf("expiry synchronization hook order query=%d close=%d hook=%d release=%d",
 			queryAt, closeAt, hookAt, releaseAt)
 	}
-	release, err := os.ReadFile("release.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(release), "query += ` SKIP LOCKED`") {
+	if !strings.Contains(pkg.Decl("lockReleaseOrder"), "query += ` SKIP LOCKED`") {
 		t.Fatal("expiry must acquire the order with SKIP LOCKED")
 	}
 }

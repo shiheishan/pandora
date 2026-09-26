@@ -476,3 +476,22 @@ func TestTUICRejectsUDPOverStream(t *testing.T) {
 		t.Errorf("zero_rtt 被误拒：%v", fields)
 	}
 }
+
+// schema 对前端宣称的敏感字段与抹敏实际认的键名是两份名单，mask_password
+// 就是在这中间漏掉、被读接口明文回显的。这里把两份钉在一起：schema 里每个
+// 敏感属性（按点号路径取最后一段）都必须在抹敏键名表里，并且真的会被抹掉。
+func TestSensitivePropertiesAreRedacted(t *testing.T) {
+	for _, schema := range ProtocolSchemas() {
+		for _, prop := range schema.SensitiveProperties {
+			key := strings.ToLower(prop[strings.LastIndex(prop, ".")+1:])
+			if _, ok := sensitiveProtocolKey[key]; !ok {
+				t.Errorf("%s: sensitive property %q is not in sensitiveProtocolKey", schema.NodeType, prop)
+				continue
+			}
+			raw, _ := json.Marshal(map[string]any{key: "leak-check"})
+			if strings.Contains(string(RedactProtocolConfig(raw)), "leak-check") {
+				t.Errorf("%s: %q survives redaction", schema.NodeType, prop)
+			}
+		}
+	}
+}

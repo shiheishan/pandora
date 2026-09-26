@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/db 的租户事务与 pgx
+// [OUTPUT]: 对外提供 Channel、Sender、ErrChannelNotConfigured、Service、New、Enqueue、Render、Dispatch
+// [POS]: domain/notify 的队列核心：按用户入队（Enqueue 返回实际插入行数，撞去重键不计）与统一派发（notify.email 降级开关关闭时派发跳过邮件渠道）；按地址入队在 address.go，扫描循环在 scan.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package notify 实现通知：站内信、邮件，以及到期与流量预警。
 //
 // 设计上把「决定要通知」和「实际送出去」分成两步，中间隔着 deliveries 表：
@@ -54,6 +59,8 @@ type Service struct {
 	// salt 用于哈希收件人。投递记录会长期保留，
 	// 里面存明文邮箱等于又攒了一份用户通讯录。
 	salt []byte
+	// kick 让派发循环提前跑一轮，见 address.go 的 Kick。
+	kick chan struct{}
 }
 
 func New(pool *db.Pool, log *slog.Logger, salt []byte, senders ...Sender) *Service {
@@ -63,7 +70,7 @@ func New(pool *db.Pool, log *slog.Logger, salt []byte, senders ...Sender) *Servi
 			m[s.Channel()] = s
 		}
 	}
-	return &Service{pool: pool, log: log, senders: m, salt: salt}
+	return &Service{pool: pool, log: log, senders: m, salt: salt, kick: make(chan struct{}, 1)}
 }
 
 // Enqueue 排一条通知。
@@ -72,8 +79,11 @@ func New(pool *db.Pool, log *slog.Logger, salt []byte, senders ...Sender) *Servi
 // 由定时任务反复扫描产生的通知，每轮扫描都会命中同一批订阅，
 // 没有去重的话用户每分钟收一条。键里带上业务标识与窗口即可，
 // 例如 "expiring:<订阅ID>:3d"。
+//
+// 返回实际插入的行数（每个渠道一行）：撞了去重键的静默跳过、不计数，
+// 扫描日志的「已排队 N 条」据此只数真正新排的。
 func (s *Service) Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID,
-	code string, vars map[string]string, dedupeKey string) error {
+	code string, vars map[string]string, dedupeKey string) (int, error) {
 
 	// 一个 code 通常有多个渠道的模板（站内 + 邮件），逐个排队
 	rows, err := tx.Query(ctx, `
@@ -81,7 +91,7 @@ func (s *Service) Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		 WHERE tenant_id = $1 AND code = $2 AND status = 'active' AND locale = 'zh-CN'`,
 		tenantID, code)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	type target struct{ channel, category string }
 	var targets []target
@@ -89,26 +99,27 @@ func (s *Service) Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		var t target
 		if err := rows.Scan(&t.channel, &t.category); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		targets = append(targets, t)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
 	if len(targets) == 0 {
 		// 没有模板不是错误：可能这个通知只配了站内没配邮件。
 		// 但完全没有任何模板通常意味着 code 拼错了，值得留个痕迹。
 		s.log.Warn("通知模板缺失", "code", code)
-		return nil
+		return 0, nil
 	}
 
-	payload := make(map[string]any, len(vars))
-	for k, v := range vars {
-		payload[k] = v
+	payload, err := withSite(ctx, tx, tenantID, vars)
+	if err != nil {
+		return 0, err
 	}
 
+	inserted := 0
 	for _, t := range targets {
 		// 用户关掉的类别不再排队。
 		// transactional 不查偏好 —— 表上的约束已经保证它关不掉，
@@ -134,18 +145,20 @@ func (s *Service) Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		// dedupe_key 上有唯一约束时，重复排队会撞键。
 		// 用 ON CONFLICT DO NOTHING 让重复变成静默跳过 ——
 		// 这正是去重想要的行为，不该报错。
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			INSERT INTO notification_deliveries
 				(tenant_id, user_id, template_code, channel, dedupe_key,
 				 recipient_hash, payload, status, max_attempts, next_retry_at)
 			VALUES ($1,$2::uuid,$3,$4,NULLIF($5,''),$6,$7,'queued',5,now())
 			ON CONFLICT DO NOTHING`,
 			tenantID, userID, code, t.channel, key,
-			s.hash(userID), payload); err != nil {
-			return fmt.Errorf("排队通知 %s/%s: %w", code, t.channel, err)
+			s.hash(userID), payload)
+		if err != nil {
+			return 0, fmt.Errorf("排队通知 %s/%s: %w", code, t.channel, err)
 		}
+		inserted += int(tag.RowsAffected())
 	}
-	return nil
+	return inserted, nil
 }
 
 // Render 用变量填充模板。
@@ -186,11 +199,16 @@ func (s *Service) Dispatch(ctx context.Context, tenantID string, limit int) (int
 		// FOR UPDATE SKIP LOCKED：多个实例可以同时跑派发而不会互相抢同一条。
 		// 没有它的话要么加分布式锁（多一个依赖），要么只能单实例跑。
 		rows, err := tx.Query(ctx, `
-			SELECT id, user_id::text, template_code, channel,
+			SELECT id, COALESCE(user_id::text, ''), template_code, channel,
 			       COALESCE(payload,'{}'::jsonb), attempts, max_attempts
 			  FROM notification_deliveries
 			 WHERE tenant_id = $1 AND status = 'queued'
 			   AND (next_retry_at IS NULL OR next_retry_at <= now())
+			   -- notify.email 关闭时跳过邮件渠道：留在队列里，恢复后按原顺序投递。
+			   -- 缺行视为开启（与网关的降级开关门同一口径）
+			   AND (channel <> 'email' OR COALESCE(
+			         (SELECT f.enabled FROM feature_switches f
+			           WHERE f.tenant_id = $1 AND f.code = 'notify.email'), true))
 			 ORDER BY created_at
 			 LIMIT $2
 			 FOR UPDATE SKIP LOCKED`, tenantID, limit)
@@ -245,7 +263,7 @@ func (s *Service) deliver(ctx context.Context, tenantID, id, userID, code,
 		return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `
 				UPDATE notification_deliveries
-				   SET status = 'suppressed', error_message = '渠道未配置'
+				   SET status = 'suppressed', error_message = '渠道未配置', `+scrubAddressPayloadSQL+`
 				 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, id)
 			return err
 		})
@@ -256,18 +274,27 @@ func (s *Service) deliver(ctx context.Context, tenantID, id, userID, code,
 	// 「收件地址」按渠道解释：邮件是邮箱，Telegram 是 chat_id。
 	// 没绑 Telegram 的用户查出来是空串，下面的空值分支会把这条
 	// 标成 suppressed —— 那不是投递失败，是这个人没开这个渠道。
+	//
+	// 没有 user_id 的是按地址投递（address.go）：地址随行存在 payload 里，
+	// 取出后从 payload 删掉，不让它进入渲染。
 	var recipient, subjectTpl, bodyTpl string
+	if userID == "" {
+		recipient, _ = payload[recipientPayloadKey].(string)
+		delete(payload, recipientPayloadKey)
+	}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		recipientSQL := `SELECT COALESCE(email,'') FROM users
-		                  WHERE tenant_id = $1 AND id = $2::uuid`
-		if Channel(channel) == ChannelTelegram {
-			recipientSQL = `SELECT COALESCE(max(chat_id)::text,'')
-			                  FROM telegram_bindings
-			                 WHERE tenant_id = $1 AND user_id = $2::uuid`
-		}
-		if err := tx.QueryRow(ctx, recipientSQL,
-			tenantID, userID).Scan(&recipient); err != nil {
-			return err
+		if userID != "" {
+			recipientSQL := `SELECT COALESCE(email,'') FROM users
+			                  WHERE tenant_id = $1 AND id = $2::uuid`
+			if Channel(channel) == ChannelTelegram {
+				recipientSQL = `SELECT COALESCE(max(chat_id)::text,'')
+				                  FROM telegram_bindings
+				                 WHERE tenant_id = $1 AND user_id = $2::uuid`
+			}
+			if err := tx.QueryRow(ctx, recipientSQL,
+				tenantID, userID).Scan(&recipient); err != nil {
+				return err
+			}
 		}
 		return tx.QueryRow(ctx, `
 			SELECT COALESCE(subject,''), body FROM notification_templates
@@ -303,7 +330,7 @@ func (s *Service) deliver(ctx context.Context, tenantID, id, userID, code,
 		return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `
 				UPDATE notification_deliveries
-				   SET status = 'suppressed', error_message = '渠道未配置'
+				   SET status = 'suppressed', error_message = '渠道未配置', `+scrubAddressPayloadSQL+`
 				 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, id)
 			return err
 		})
@@ -315,7 +342,8 @@ func (s *Service) deliver(ctx context.Context, tenantID, id, userID, code,
 	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			UPDATE notification_deliveries
-			   SET status = 'sent', sent_at = now(), attempts = attempts + 1, error_message = NULL
+			   SET status = 'sent', sent_at = now(), attempts = attempts + 1, error_message = NULL,
+			       `+scrubAddressPayloadSQL+`
 			 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, id)
 		return err
 	})
@@ -335,10 +363,13 @@ func (s *Service) markFailed(ctx context.Context, tenantID, id string,
 	backoff := time.Duration(1<<uint(min(next, 6))) * time.Minute
 
 	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		// 最终失败也是终态，按地址投递的 payload 同样清空；还要重试的保留
 		_, err := tx.Exec(ctx, `
 			UPDATE notification_deliveries
 			   SET status = $3, attempts = attempts + 1,
-			       error_message = left($4, 500), next_retry_at = now() + $5::interval
+			       error_message = left($4, 500), next_retry_at = now() + $5::interval,
+			       payload = CASE WHEN $3 = 'failed' AND user_id IS NULL
+			                      THEN '{}'::jsonb ELSE payload END
 			 WHERE tenant_id = $1 AND id = $2::uuid`,
 			tenantID, id, status, msg, fmt.Sprintf("%d seconds", int(backoff.Seconds())))
 		return err

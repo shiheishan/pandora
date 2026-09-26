@@ -1,0 +1,120 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供 messages/index.tsx 用到的类名
+ * [POS]: portal/screens/messages 的样式，取自设计稿门户-08：顶部分段标签 + 右侧「全部标为已读」，一张卡片里的三列行（圆点 / 标题与正文 / 时间），未读朱砂圆点加粗，公告圆点按级别取 --info / --warn / --danger
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tabLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.listCard {
+  overflow: hidden;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: var(--space-12);
+  align-items: start;
+  width: 100%;
+  padding: 14px 18px;
+  border: 0;
+  border-bottom: 1px solid var(--surface-2);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+button.row {
+  cursor: pointer;
+}
+
+button.row:hover {
+  background: var(--surface-2);
+}
+
+button.row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 7px;
+  border-radius: 50%;
+}
+
+.row[data-unread] .dot {
+  background: var(--brand);
+}
+
+.dot[data-severity='notice'] {
+  background: var(--info);
+}
+
+.dot[data-severity='warning'] {
+  background: var(--warn);
+}
+
+.dot[data-severity='critical'] {
+  background: var(--danger);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.title {
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+.row[data-unread] .title {
+  font-weight: var(--fw-semibold);
+}
+
+.body {
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.at {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+@media (max-width: 639px) {
+  .row {
+    padding: 12px var(--pad-card);
+  }
+}

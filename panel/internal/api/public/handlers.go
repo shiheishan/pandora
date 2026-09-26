@@ -1,9 +1,11 @@
+// [INPUT]: 依赖 domain 的 billing/identity/payment 用例，依赖 platform 的 db/httpx/crypto 与 middleware
+// [OUTPUT]: 对外提供 handlers 的核心门户处理器：探针、注册登录登出、me、改密、站点配置、优惠码试算、下单支付与回调、钱包充值、续费、我的公告；包内 isUUID
+// [POS]: api/public 的主处理器文件，其余按模块拆在同包兄弟文件里：套餐目录 plans.go、工单 tickets.go、邀请与佣金 referral.go 等
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"time"
@@ -14,13 +16,10 @@ import (
 	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/domain/identity"
 	"github.com/aegispanel/aegis/internal/domain/payment"
-	"github.com/aegispanel/aegis/internal/domain/support"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
-	"github.com/aegispanel/aegis/internal/platform/realtime"
-	"github.com/aegispanel/aegis/web"
 )
 
 type handlers struct{ d Deps }
@@ -37,37 +36,6 @@ type handlers struct{ d Deps }
 //	  而页面是编进二进制的静态资源，可以短时间缓存，用 ETag 让刷新走 304；
 //	· 页面需要一条 CSP —— API 不返回 HTML 所以不设 CSP，
 //	  但这里返回 HTML，就必须挡住外部脚本与被注入的资源加载。
-func (h *handlers) portal(w http.ResponseWriter, r *http.Request) {
-	hd := w.Header()
-	hd.Set("Content-Type", "text/html; charset=utf-8")
-	// 页面全部资源内联，所以除了自身与 data: 图片之外一律拒绝。
-	// 'unsafe-inline' 是必须的：样式与脚本就写在页面里。
-	hd.Set("Content-Security-Policy",
-		"default-src 'none'; "+
-			"script-src 'self' 'unsafe-inline'; "+
-			"style-src 'self' 'unsafe-inline'; "+
-			"img-src 'self' data:; "+
-			"connect-src 'self'; "+
-			"form-action 'self'; "+
-			"base-uri 'none'; "+
-			"frame-ancestors 'none'")
-	hd.Set("Cache-Control", "public, max-age=60, must-revalidate")
-	hd.Set("ETag", portalETag)
-
-	if match := r.Header.Get("If-None-Match"); match == portalETag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(web.PortalHTML)
-}
-
-// portalETag 在启动时算一次。内容随二进制固定，不会中途变化。
-var portalETag = func() string {
-	sum := sha256.Sum256(web.PortalHTML)
-	return `"` + hex.EncodeToString(sum[:8]) + `"`
-}()
-
 //------------------------------------------------------------------------------
 // 健康检查
 //------------------------------------------------------------------------------
@@ -215,184 +183,6 @@ func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
-//------------------------------------------------------------------------------
-// 目录与账户
-//------------------------------------------------------------------------------
-
-func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	tenantID := httpx.TenantIDFrom(ctx)
-	authed := !httpx.PrincipalFrom(ctx).IsAnonymous()
-	// 分组套餐要知道「现在是谁在看」。未登录传 nil，
-	// SQL 里那句 $3::uuid IS NOT NULL 会把整个分组分支短路掉
-	var viewerID any
-	if p := httpx.PrincipalFrom(ctx); p != nil && p.UserID != "" {
-		viewerID = p.UserID
-	}
-
-	type priceView struct {
-		ID            string `json:"id"`
-		Currency      string `json:"currency"`
-		UnitAmount    int64  `json:"unit_amount"`
-		Interval      string `json:"billing_interval"`
-		IntervalCount int16  `json:"interval_count"`
-		TrialDays     int16  `json:"trial_days"`
-	}
-	// 套餐能给多少流量、几台设备，是用户选购时唯一真正关心的事。
-	// 这些值来自当前 plan_version 的 quota_definitions，
-	// 不能在前端写死 —— 换套餐版本时展示必须跟着变（SUB-002）。
-	type quotaView struct {
-		Metric string `json:"metric"`
-		Limit  *int64 `json:"limit"`
-		Unit   string `json:"unit"`
-		Period string `json:"period"`
-	}
-	type planView struct {
-		ID          string      `json:"id"`
-		Code        string      `json:"code"`
-		Name        string      `json:"name"`
-		Description *string     `json:"description"`
-		Version     *int        `json:"version"`
-		MaxDevices  *int        `json:"max_devices"`
-		Quotas      []quotaView `json:"quotas"`
-		Prices      []priceView `json:"prices"`
-	}
-
-	out := []planView{}
-
-	err := h.d.Pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// XBD-011 可见性：匿名只看 public，登录后加 authenticated。
-		// group / invite_only / hidden 一律不在此列出，
-		// 且下单路径会独立复查，列表接口的过滤不是唯一防线。
-		visibilities := []string{"public"}
-		if authed {
-			visibilities = append(visibilities, "authenticated")
-		}
-		// visibility='group' 的套餐由下面的 SQL 单独判断：
-		// 它对组内的人可见，对其他人连存在都不该暴露
-
-		rows, err := tx.Query(ctx, `
-			SELECT p.id, p.code, p.name, p.description, pv.version, pv.max_devices
-			  FROM plans p
-			  JOIN plan_versions pv ON pv.tenant_id = p.tenant_id
-			   AND pv.id = p.current_version_id
-			   AND pv.status = 'published' AND pv.frozen_at IS NOT NULL
-			 WHERE p.tenant_id = $1
-			   AND p.status = 'active'
-			   AND (
-			     p.visibility = ANY($2)
-			     OR (p.visibility = 'group' AND $3::uuid IS NOT NULL
-			         AND EXISTS (SELECT 1 FROM users u
-			                      WHERE u.tenant_id = p.tenant_id
-			                        AND u.id = $3::uuid
-			                        AND u.user_group_id = ANY(p.visible_group_ids)))
-			   )
-			   AND p.current_version_id IS NOT NULL
-			   AND (p.visible_from  IS NULL OR p.visible_from  <= now())
-			   AND (p.visible_until IS NULL OR p.visible_until >  now())
-			   AND EXISTS (
-			     SELECT 1 FROM prices offer
-			      WHERE offer.tenant_id=p.tenant_id AND offer.product_id=p.product_id
-			        AND offer.status='active' AND offer.currency IN ('CNY','USD')
-			        AND (offer.valid_from IS NULL OR offer.valid_from<=now())
-			        AND (offer.valid_until IS NULL OR offer.valid_until>now())
-			        AND (offer.user_group_id IS NULL OR ($3::uuid IS NOT NULL AND EXISTS (
-			          SELECT 1 FROM users price_viewer
-			           WHERE price_viewer.tenant_id=p.tenant_id AND price_viewer.id=$3::uuid
-			             AND price_viewer.user_group_id=offer.user_group_id)))
-			   )
-			 ORDER BY p.sort_order, p.created_at`,
-			tenantID, visibilities, viewerID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var pv planView
-			if err := rows.Scan(&pv.ID, &pv.Code, &pv.Name, &pv.Description, &pv.Version, &pv.MaxDevices); err != nil {
-				return err
-			}
-			pv.Prices = []priceView{}
-			pv.Quotas = []quotaView{}
-			out = append(out, pv)
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-
-		for i := range out {
-			// 配额跟随该套餐的当前版本：换版本时展示自动跟着变（SUB-002）
-			qrows, err := tx.Query(ctx, `
-				SELECT qd.metric, qd.limit_value, qd.unit, qd.period
-				  FROM quota_definitions qd
-				  JOIN plans pl ON pl.current_version_id = qd.plan_version_id
-				 WHERE qd.tenant_id = $1 AND pl.id = $2
-				 ORDER BY qd.metric`,
-				tenantID, out[i].ID)
-			if err != nil {
-				return err
-			}
-			for qrows.Next() {
-				var q quotaView
-				if err := qrows.Scan(&q.Metric, &q.Limit, &q.Unit, &q.Period); err != nil {
-					qrows.Close()
-					return err
-				}
-				out[i].Quotas = append(out[i].Quotas, q)
-			}
-			qrows.Close()
-			if err := qrows.Err(); err != nil {
-				return err
-			}
-
-			prows, err := tx.Query(ctx, `
-				SELECT pr.id, pr.currency, pr.unit_amount, pr.billing_interval,
-				       pr.interval_count, pr.trial_days
-				  FROM prices pr
-				  JOIN plans pl ON pl.product_id = pr.product_id
-				 WHERE pr.tenant_id = $1 AND pl.id = $2 AND pr.status = 'active'
-				   AND pr.currency IN ('CNY','USD')
-				   AND (pr.valid_from  IS NULL OR pr.valid_from  <= now())
-				   AND (pr.valid_until IS NULL OR pr.valid_until >  now())
-				   AND (
-				     pr.user_group_id IS NULL
-				     OR ($3::uuid IS NOT NULL AND EXISTS (
-				       SELECT 1 FROM users u
-				        WHERE u.tenant_id = pr.tenant_id
-				          AND u.id = $3::uuid
-				          AND u.user_group_id = pr.user_group_id
-				     ))
-				   )
-				 ORDER BY pr.unit_amount`,
-				tenantID, out[i].ID, viewerID)
-			if err != nil {
-				return err
-			}
-			for prows.Next() {
-				var v priceView
-				if err := prows.Scan(&v.ID, &v.Currency, &v.UnitAmount, &v.Interval,
-					&v.IntervalCount, &v.TrialDays); err != nil {
-					prows.Close()
-					return err
-				}
-				out[i].Prices = append(out[i].Prices, v)
-			}
-			prows.Close()
-			if err := prows.Err(); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
-		return
-	}
-
-	httpx.OK(w, map[string]any{"plans": out})
-}
-
 func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	p := httpx.PrincipalFrom(ctx)
@@ -423,98 +213,6 @@ func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 		"created_at":   createdAt.UTC().Format(time.RFC3339),
 		"permissions":  p.Permissions,
 	})
-}
-
-func (h *handlers) listSubscriptions(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	p := httpx.PrincipalFrom(ctx)
-
-	type quotaView struct {
-		Metric    string `json:"metric"`
-		Limit     *int64 `json:"limit"`
-		Consumed  int64  `json:"consumed"`
-		Remaining *int64 `json:"remaining"`
-	}
-	type subView struct {
-		ID string `json:"id"`
-		// 续费界面靠这两个 ID 定位套餐与当前价格档，
-		// 好把「同一套餐下的其它周期」列出来给用户选
-		PlanID      string      `json:"plan_id"`
-		PriceID     string      `json:"price_id"`
-		PlanName    string      `json:"plan_name"`
-		PlanVersion int         `json:"plan_version"`
-		Status      string      `json:"status"`
-		PeriodStart *time.Time  `json:"current_period_start"`
-		PeriodEnd   *time.Time  `json:"current_period_end"`
-		Currency    string      `json:"currency"`
-		Amount      int64       `json:"amount"`
-		Quotas      []quotaView `json:"quotas"`
-	}
-
-	out := []subView{}
-
-	err := h.d.Pool.InTx(ctx, db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
-		func(tx pgx.Tx) error {
-			rows, err := tx.Query(ctx, `
-				SELECT s.id, s.plan_id::text, COALESCE(s.price_id::text, ''),
-				       pl.name, pv.version, s.status,
-				       s.current_period_start, s.current_period_end,
-				       s.snapshot_currency, s.snapshot_amount
-				  FROM subscriptions s
-				  JOIN plans pl         ON pl.id = s.plan_id
-				  JOIN plan_versions pv ON pv.id = s.plan_version_id
-				 WHERE s.tenant_id = $1 AND s.user_id = $2
-				 ORDER BY s.created_at DESC`,
-				p.TenantID, p.UserID)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-
-			for rows.Next() {
-				var v subView
-				if err := rows.Scan(&v.ID, &v.PlanID, &v.PriceID,
-					&v.PlanName, &v.PlanVersion, &v.Status,
-					&v.PeriodStart, &v.PeriodEnd, &v.Currency, &v.Amount); err != nil {
-					return err
-				}
-				v.Quotas = []quotaView{}
-				out = append(out, v)
-			}
-			if err := rows.Err(); err != nil {
-				return err
-			}
-
-			for i := range out {
-				qrows, err := tx.Query(ctx, `
-					SELECT metric, limit_value, consumed, remaining
-					  FROM quota_balances
-					 WHERE tenant_id = $1 AND subscription_id = $2`,
-					p.TenantID, out[i].ID)
-				if err != nil {
-					return err
-				}
-				for qrows.Next() {
-					var q quotaView
-					if err := qrows.Scan(&q.Metric, &q.Limit, &q.Consumed, &q.Remaining); err != nil {
-						qrows.Close()
-						return err
-					}
-					out[i].Quotas = append(out[i].Quotas, q)
-				}
-				qrows.Close()
-				if err := qrows.Err(); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
-		return
-	}
-
-	httpx.OK(w, map[string]any{"subscriptions": out})
 }
 
 //------------------------------------------------------------------------------
@@ -697,156 +395,6 @@ func (h *handlers) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(resp.Body)
 }
 
-//------------------------------------------------------------------------------
-// 工单（OPS-001）
-//------------------------------------------------------------------------------
-
-func (h *handlers) listTicketCategories(w http.ResponseWriter, r *http.Request) {
-	type cat struct {
-		Code string `json:"code"`
-		Name string `json:"name"`
-	}
-	// 固定顺序输出：map 遍历顺序随机，会让前端下拉框每次刷新都换位置
-	order := []string{"general", "technical", "subscription", "billing", "account", "abuse"}
-	out := make([]cat, 0, len(order))
-	for _, c := range order {
-		if n, ok := support.Categories[c]; ok {
-			out = append(out, cat{Code: c, Name: n})
-		}
-	}
-	httpx.OK(w, map[string]any{"categories": out})
-}
-
-type createTicketReq struct {
-	Subject  string `json:"subject"`
-	Category string `json:"category"`
-	Body     string `json:"body"`
-	OrderID  string `json:"order_id"`
-}
-
-func (h *handlers) createTicket(w http.ResponseWriter, r *http.Request) {
-	var req createTicketReq
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	claim, ok := middleware.IdempotencyClaimFrom(r.Context())
-	if !ok {
-		httpx.Fail(w, r, h.d.Log, httpx.Internal(errors.New("support ticket claim missing")))
-		return
-	}
-	out, err := h.d.Support.CreateAtomic(r.Context(), httpx.TenantIDFrom(r.Context()),
-		support.CreateInput{
-			UserID:   httpx.PrincipalFrom(r.Context()).UserID,
-			Subject:  req.Subject,
-			Category: req.Category,
-			Body:     req.Body,
-			OrderID:  req.OrderID,
-		}, claim)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.WritePrepared(w, out.PreparedResponse())
-}
-
-func (h *handlers) listTickets(w http.ResponseWriter, r *http.Request) {
-	ts, err := h.d.Support.ListForUser(r.Context(),
-		httpx.TenantIDFrom(r.Context()), httpx.PrincipalFrom(r.Context()).UserID)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, map[string]any{"tickets": ts})
-}
-
-func (h *handlers) getTicket(w http.ResponseWriter, r *http.Request) {
-	t, err := h.d.Support.GetForUser(r.Context(),
-		httpx.TenantIDFrom(r.Context()), httpx.PrincipalFrom(r.Context()).UserID,
-		chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, t)
-}
-
-type ticketReplyReq struct {
-	Body string `json:"body"`
-}
-
-func (h *handlers) replyTicket(w http.ResponseWriter, r *http.Request) {
-	var req ticketReplyReq
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	p := httpx.PrincipalFrom(r.Context())
-	ticketID := chi.URLParam(r, "id")
-	claim, ok := middleware.IdempotencyClaimFrom(r.Context())
-	if !ok {
-		httpx.Fail(w, r, h.d.Log, httpx.Internal(errors.New("support reply claim missing")))
-		return
-	}
-	out, err := h.d.Support.ReplyAsUserAtomic(r.Context(), httpx.TenantIDFrom(r.Context()),
-		p.UserID, ticketID, req.Body, claim)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	// 推给自己：同一个人可能开着多个标签页或换了设备，
-	// 一处发言其它几处应当立刻跟上
-	h.publishTicket(r.Context(), p.TenantID, p.UserID, ticketID)
-	httpx.WritePrepared(w, out.PreparedResponse())
-}
-
-func (h *handlers) closeTicket(w http.ResponseWriter, r *http.Request) {
-	claim, ok := middleware.IdempotencyClaimFrom(r.Context())
-	if !ok {
-		httpx.Fail(w, r, h.d.Log, httpx.Internal(errors.New("support close claim missing")))
-		return
-	}
-	out, err := h.d.Support.CloseByUserAtomic(r.Context(), httpx.TenantIDFrom(r.Context()),
-		httpx.PrincipalFrom(r.Context()).UserID, chi.URLParam(r, "id"), claim)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.WritePrepared(w, out.PreparedResponse())
-}
-
-// publishTicket 推一条工单变更通知。
-//
-// 只带 ticket_id，不带内容 —— 前端收到后重新拉该工单，
-// 走的是既有的鉴权路径，不必在推送这条链路上再做一遍权限判断。
-func (h *handlers) publishTicket(ctx context.Context, tenantID, userID, ticketID string) {
-	if h.d.Realtime == nil {
-		return
-	}
-	h.d.Realtime.Publish(ctx, realtime.ChannelUser(tenantID, userID),
-		"ticket.updated", map[string]any{"ticket_id": ticketID})
-}
-
-// myInviteCode 返回当前用户的邀请码与已邀请人数。
-func (h *handlers) myInviteCode(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
-		return
-	}
-	sum, err := h.d.Identity.MyInviteCode(r.Context(), p.TenantID, p.UserID)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	list, err := h.d.Identity.ListInvitees(r.Context(), p.TenantID, p.UserID)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, map[string]any{"invite": sum, "invitees": list})
-}
-
 // previewCoupon 下单前试算优惠码。
 func (h *handlers) previewCoupon(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFrom(r.Context())
@@ -857,92 +405,52 @@ func (h *handlers) previewCoupon(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PlanID     string `json:"plan_id"`
 		PriceID    string `json:"price_id"`
+		PackID     string `json:"pack_id"`
 		CouponCode string `json:"coupon_code"`
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	// 两种互斥形态：{plan_id, price_id} 试算套餐，{pack_id} 试算流量包。
 	// 空串或不是 UUID 的值会一路传到 SQL 的 uuid 列上，
 	// 在那里报出的是类型错误 —— 对用户显示成「服务暂时不可用」，
 	// 而实际上只是参数没填对
 	fields := map[string]string{}
-	if !isUUID(req.PlanID) {
-		fields["plan_id"] = "必填"
-	}
-	if !isUUID(req.PriceID) {
-		fields["price_id"] = "必填"
+	if req.PackID != "" {
+		if !isUUID(req.PackID) {
+			fields["pack_id"] = "必填"
+		}
+		if req.PlanID != "" || req.PriceID != "" {
+			fields["pack_id"] = "流量包与套餐只能二选一"
+		}
+	} else {
+		if !isUUID(req.PlanID) {
+			fields["plan_id"] = "必填"
+		}
+		if !isUUID(req.PriceID) {
+			fields["price_id"] = "必填"
+		}
 	}
 	if len(fields) > 0 {
 		httpx.Fail(w, r, h.d.Log, httpx.Invalid(fields))
 		return
 	}
 
-	out, err := h.d.Billing.PreviewForPrice(r.Context(), p.TenantID, p.UserID,
-		req.CouponCode, req.PlanID, req.PriceID)
+	var out map[string]any
+	var err error
+	if req.PackID != "" {
+		out, err = h.d.Billing.PreviewForTrafficPack(r.Context(), p.TenantID, p.UserID,
+			req.CouponCode, req.PackID)
+	} else {
+		out, err = h.d.Billing.PreviewForPrice(r.Context(), p.TenantID, p.UserID,
+			req.CouponCode, req.PlanID, req.PriceID)
+	}
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	httpx.OK(w, out)
-}
-
-//------------------------------------------------------------------------------
-// 分销佣金
-//------------------------------------------------------------------------------
-
-func (h *handlers) myCommission(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
-		return
-	}
-	sum, err := h.d.Billing.CommissionSummary(r.Context(), p.TenantID, p.UserID)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	entries, err := h.d.Billing.ListMyCommissions(r.Context(), p.TenantID, p.UserID)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	wds, err := h.d.Billing.ListMyWithdrawals(r.Context(), p.TenantID, p.UserID)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, map[string]any{
-		"summary": sum, "entries": entries, "withdrawals": wds,
-	})
-}
-
-func (h *handlers) requestWithdrawal(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
-		return
-	}
-	var req struct {
-		Amount int64  `json:"amount"`
-		Payout string `json:"payout_detail"`
-	}
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	if req.Payout == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.Invalid(map[string]string{
-			"payout_detail": "请填写收款方式"}))
-		return
-	}
-	id, err := h.d.Billing.RequestWithdrawal(r.Context(), p.TenantID, p.UserID,
-		req.Amount, req.Payout)
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, map[string]any{"id": id})
 }
 
 // isUUID 粗查一个字符串是否是 UUID 形状。
@@ -1017,8 +525,10 @@ func (h *handlers) changePassword(w http.ResponseWriter, r *http.Request) {
 		OldPassword: req.OldPassword,
 		NewPassword: req.NewPassword,
 		APIDomain:   "public",
-		IP:          httpx.ClientIP(r),
-		UserAgent:   r.UserAgent(),
+		// 按设计保留当前会话：其它会话与 refresh 令牌照样吊销
+		KeepSessionID: p.SessionID,
+		IP:            httpx.ClientIP(r),
+		UserAgent:     r.UserAgent(),
 	}); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return

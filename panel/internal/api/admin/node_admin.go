@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/nodefabric 的后台节点编排与 NodeCredentials，依赖 platform/httpx
+// [OUTPUT]: 对外提供节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步上线（nodeActivate，R108）/ 一步退役（nodeRetire）与身份令牌状态（nodeIdentity）处理器
+// [POS]: api/admin 的节点编排处理器（后台-07 节点 tab 与抽屉），路径 id 先做 UUID 校验回 404
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -118,4 +123,77 @@ func (h *handlers) batchAdminNodeStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.OK(w, map[string]any{"ok": true, "updated": len(in.Items), "serving_status": in.ServingStatus})
+}
+
+// nodeIdentity 返回节点身份与令牌状态（后台节点抽屉「身份与令牌」）。
+func (h *handlers) nodeIdentity(w http.ResponseWriter, r *http.Request) {
+	out, err := h.d.Node.NodeCredentials(r.Context(), httpx.TenantIDFrom(r.Context()),
+		chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	httpx.OK(w, out)
+}
+
+// nodeActivate 一步上线（契约后台-07，R108）：接入尾段的节点按合法边推到 active、
+// 开始服务，服务器同事务进 ready。提交后通知这个节点；服务器这次才进 ready 时，
+// 同服务器上其他节点的下发集合也变了，再发一次租户级 node.users.changed
+func (h *handlers) nodeActivate(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := validateAdminNodeID(id); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	var req struct {
+		RowVersion int64 `json:"row_version"`
+	}
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	tenantID := httpx.TenantIDFrom(r.Context())
+	out, err := h.d.Node.ActivateNode(r.Context(), tenantID, nodefabric.ActivateNodeInput{
+		ID: id, RowVersion: req.RowVersion, ActorID: httpx.PrincipalFrom(r.Context()).UserID,
+	})
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	if out.Changed {
+		h.d.Node.NotifyNodeChanged(r.Context(), tenantID, id)
+		if out.ServerReady {
+			h.d.Node.NotifyUsersChanged(r.Context(), tenantID)
+		}
+	}
+	httpx.OK(w, out.Node)
+}
+
+// nodeRetire 一步退役（契约后台-07）：生命周期、服务状态、身份与在途任务在一个事务里
+// 收尾，之后 DELETE 可以直接销毁。提交后通知节点端：它的配置已不再下发
+func (h *handlers) nodeRetire(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := validateAdminNodeID(id); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	var req struct {
+		RowVersion int64  `json:"row_version"`
+		Reason     string `json:"reason"`
+	}
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	tenantID := httpx.TenantIDFrom(r.Context())
+	out, err := h.d.Node.RetireNode(r.Context(), tenantID, nodefabric.RetireNodeInput{
+		ID: id, RowVersion: req.RowVersion, Reason: req.Reason,
+		ActorID: httpx.PrincipalFrom(r.Context()).UserID,
+	})
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	h.d.Node.NotifyNodeChanged(r.Context(), tenantID, id)
+	httpx.OK(w, out)
 }

@@ -1,0 +1,97 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的侧栏深色、字号、间距令牌
+ * [OUTPUT]: 对外提供 LoginPage.tsx 用到的类名
+ * [POS]: admin/LoginPage 的样式：两栏各半，左栏在两种主题下都是侧栏深底；< 960 收起左栏只留表单；表单控件 38、登录按钮 40（外壳登录页的尺寸，不同于后台 32 档）
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.page {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  background: var(--bg);
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 48px;
+  background: var(--sidebar);
+  color: var(--sidebar-text);
+}
+
+.logo {
+  gap: 10px;
+  font-size: 15px;
+  --logo-dot: var(--sidebar-brand);
+}
+
+.pitch {
+  max-width: 420px;
+}
+
+.headline {
+  font-size: 34px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-wrap: pretty;
+}
+
+.release {
+  margin-top: 14px;
+  color: var(--sidebar-text-2);
+  font-size: var(--fs-body);
+  line-height: 1.7;
+}
+
+.footnote {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--sidebar-text-3);
+}
+
+.formSide {
+  display: grid;
+  place-items: center;
+  padding: 48px;
+}
+
+.form {
+  --h-control: 38px;
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--text-2);
+}
+
+.submit {
+  height: 40px;
+}
+
+@media (max-width: 959px) {
+  .page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .formSide {
+    padding: 48px var(--gutter);
+  }
+}
