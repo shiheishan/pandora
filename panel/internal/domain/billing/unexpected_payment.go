@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform 的 audit/httpx、pgx 事务（调用方已持有订单行锁）
 // [OUTPUT]: 包内提供 quarantineUnexpectedPayment
-// [POS]: domain/billing 的异常收款隔离：已释放或已付清的订单又收到渠道确认的钱、或续费 / 变更单结算时订阅已不收这笔钱（ineligible_subscription，R117）时，由 checkout.go 的 settlePaymentTx 调用，记进挂账而不履约；拒绝文案是中文（R116），人工开单与标记已付也会走到
+// [POS]: domain/billing 的异常收款隔离：已释放或已付清的订单又收到渠道确认的钱、或续费 / 变更单结算时订阅已不收这笔钱（ineligible_subscription，R117）时，由 settlement.go 的 settlePaymentTx 调用，记进挂账而不履约；拒绝文案是中文（R116），人工开单与标记已付也会走到
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing

@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 go/parser、go/ast 解析一个目录下的全部非测试 .go 源文件
-// [OUTPUT]: 对外提供 Package、Load，以及 Package 的 Source、Decl、Decls、FuncDecl
+// [OUTPUT]: 对外提供 Package、Load，以及 Package 的 Source、Decl、DeclWithDoc、Decls、FuncDecl
 // [POS]: platform 的测试辅助包：源码契约测试按「包 + 声明名」取源码，而不是按文件名读，函数在包内换文件不影响断言；只被 *_test.go 引用，不进任何生产二进制
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -37,6 +37,7 @@ type Package struct {
 type decl struct {
 	file string
 	text string
+	doc  string // 文档注释原文（到声明起点为止），没有则为空
 	node ast.Decl
 }
 
@@ -59,7 +60,7 @@ func Load(t testing.TB, dir string) *Package {
 		if err != nil {
 			t.Fatalf("sourcetest: read %s: %v", path, err)
 		}
-		file, err := parser.ParseFile(fset, path, src, 0)
+		file, err := parser.ParseFile(fset, path, src, parser.ParseComments)
 		if err != nil {
 			t.Fatalf("sourcetest: parse %s: %v", path, err)
 		}
@@ -80,27 +81,41 @@ func (p *Package) index(fset *token.FileSet, path string, src []byte, d ast.Decl
 	text := func(n ast.Node) string {
 		return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
 	}
-	add := func(name string, n ast.Node) {
-		if name != "_" {
-			p.decls[name] = append(p.decls[name], decl{file: filepath.Base(path), text: text(n), node: d})
+	add := func(name string, n ast.Node, doc *ast.CommentGroup) {
+		if name == "_" {
+			return
 		}
+		var docText string
+		if doc != nil {
+			docText = string(src[fset.Position(doc.Pos()).Offset:fset.Position(n.Pos()).Offset])
+		}
+		p.decls[name] = append(p.decls[name], decl{file: filepath.Base(path), text: text(n), doc: docText, node: d})
 	}
 	switch x := d.(type) {
 	case *ast.FuncDecl:
-		add(funcName(x), x)
+		add(funcName(x), x, x.Doc)
 	case *ast.GenDecl:
 		// 单个声明取整句（带 type / var / const 关键字），分组声明取各自那一项
 		for _, spec := range x.Specs {
 			var n ast.Node = spec
+			doc := x.Doc
 			if len(x.Specs) == 1 {
 				n = x
+			} else {
+				doc = nil
 			}
 			switch s := spec.(type) {
 			case *ast.TypeSpec:
-				add(s.Name.Name, n)
+				if doc == nil {
+					doc = s.Doc
+				}
+				add(s.Name.Name, n, doc)
 			case *ast.ValueSpec:
+				if doc == nil {
+					doc = s.Doc
+				}
 				for _, id := range s.Names {
-					add(id.Name, n)
+					add(id.Name, n, doc)
 				}
 			}
 		}
@@ -138,6 +153,14 @@ func (p *Package) Source() string {
 func (p *Package) Decl(name string) string {
 	p.t.Helper()
 	return p.lookup(name).text
+}
+
+// DeclWithDoc 与 Decl 相同，但连同紧贴其上的文档注释一起返回，给断言落在
+// 文档注释里的契约用（例如注释里写明的锁序）。
+func (p *Package) DeclWithDoc(name string) string {
+	p.t.Helper()
+	found := p.lookup(name)
+	return found.doc + found.text
 }
 
 // Decls 按参数顺序拼接多个顶层声明的原文，中间隔一个换行。给跨越几个声明的

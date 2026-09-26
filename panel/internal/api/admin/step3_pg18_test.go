@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 announcement_pg18_test.go 的 openAnnouncementPG18，依赖 access_log.go 的 accessLogList、handlers.go 的 nodeSetRouting / nodeList，依赖 platform/audit 写审计样本
+// [INPUT]: 依赖 announcement_pg18_test.go 的 openAnnouncementPG18，依赖 access_log.go 的 accessLogList、node_routing.go 的 nodeSetRouting、nodes.go 的 nodeList，依赖 platform/audit 写审计样本
 // [OUTPUT]: 对外提供 TestAccessLogCategoryPG18、TestNodeRoutingGlobalOutboundPG18、TestNodeListPagingPG18
 // [POS]: api/admin 的 PG18 测试：访问日志按分类真正过滤（缺陷 14）、单节点规则可引用全局出站（缺陷 18）、节点列表不再静默截断（缺陷 21）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

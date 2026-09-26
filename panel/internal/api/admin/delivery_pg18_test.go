@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/pg18test 的一次性库护栏（run-pg18-gates.sh 的 delivery 域），依赖 pools.go 的 setPlanPools、handlers.go 的 nodeList，依赖 nodefabric 的 ListNodeUsers / NotifyUsersChanged 与 platform/realtime 的本机 Hub
+// [INPUT]: 依赖 platform/pg18test 的一次性库护栏（run-pg18-gates.sh 的 delivery 域），依赖 pools.go 的 setPlanPools、nodes.go 的 nodeList，依赖 nodefabric 的 ListNodeUsers / NotifyUsersChanged 与 platform/realtime 的本机 Hub
 // [OUTPUT]: 对外提供 TestDeliveryAdminPG18、openDeliveryPG18
 // [POS]: api/admin 的交付集合 PG18 门禁：改变交付集合的后台写接口提交后通知节点、失败不通知；节点列表的 delivered_to_users 与节点实际拉到的用户同口径（R104）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

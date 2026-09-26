@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 plan_change_quote.go 的剩余价值折算、order_holds.go 的预留父节点与余额冻结、coupon.go 的 applyCoupon/redeemCoupon、renewal.go 的 captureZeroPaySubscriptionOrder、checkout.go 的 initQuotaBalances/addInterval、traffic_reset.go 的 LogTrafficReset，依赖 middleware 幂等声明、platform/audit、platform/idempotencybind、domain/plugin
 // [OUTPUT]: 对外提供 PlanChangeIdempotencyScope、PlanChangeInput、PlanChangePreview、PlanChangeOrderOutput、PreviewPlanChange、CreatePlanChange；包内提供 fulfillPlanChangeLocked、ensureNoOpenSubscriptionOrder
-// [POS]: billing 的变更套餐（D-E-2，迁移 00071）：在原订阅上换套餐，订单 kind='upgrade'；结算经 checkout.go 的回调、零元单经 renewal.go 的订阅单捕获，都落到本文件的履约
+// [POS]: billing 的变更套餐（D-E-2，迁移 00071）：在原订阅上换套餐，订单 kind='upgrade'；结算经 settlement.go 的回调、零元单经 renewal.go 的订阅单捕获，都落到本文件的履约
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing

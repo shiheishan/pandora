@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 checkout.go、coupon.go 等源码文本（os.ReadFile）
+// [INPUT]: 依赖 platform/sourcetest 按名取下单、结算、券、预留图与账本科目各声明的源码
 // [OUTPUT]: 对外提供结账与结算的源码契约测试（下单原子性、券预留、结算锁序与三条挂账隔离分支）
 // [POS]: billing 的源码契约门禁：钉住数据库执行不到本机时也必须成立的锁序与分支顺序，PG18 测试证明它们在真实 SQL 下的效果
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -7,11 +7,11 @@ package billing
 
 import (
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestCreateOrderOutputPreparedJSONContract(t *testing.T) {
@@ -41,14 +41,8 @@ func TestCreateOrderOutputPreparedJSONContract(t *testing.T) {
 
 func TestCheckoutAtomicWriterSourceContract(t *testing.T) {
 	// 预留父节点与余额冻结抽到了 order_holds.go，新购、充值、流量包共用。
-	var s string
-	for _, name := range []string{"checkout.go", "order_holds.go"} {
-		body, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		s += string(body)
-	}
+	s := sourcetest.Load(t, ".").Decls("Service.CreateOrder", "Service.captureZeroPayOrder",
+		"insertHeldReservation", "prepareBalanceHold", "postBalanceHold")
 	required := []string{
 		"middleware.ValidateIdempotencyClaim(",
 		"CheckoutIdempotencyScope",
@@ -78,21 +72,15 @@ func TestCheckoutAtomicWriterSourceContract(t *testing.T) {
 }
 
 func TestCheckoutLedgerAndCouponHoldSourceContract(t *testing.T) {
-	ledger, err := os.ReadFile("ledger.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(ledger), `AccountUserBalanceHold`) ||
-		!strings.Contains(string(ledger), `AccountType = "user_balance_hold"`) ||
-		!strings.Contains(string(ledger), `AccountUserBalanceHold:`) {
+	pkg := sourcetest.Load(t, ".")
+	ledger := pkg.Decls("AccountUserBalanceHold", "normalBalance")
+	if !strings.Contains(ledger, `AccountUserBalanceHold`) ||
+		!strings.Contains(ledger, `AccountType = "user_balance_hold"`) ||
+		!strings.Contains(ledger, `AccountUserBalanceHold:`) {
 		t.Fatal("user balance hold must be a credit-normal account")
 	}
 
-	coupon, err := os.ReadFile("coupon.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cs := string(coupon)
+	cs := pkg.Decls("applyCoupon", "redeemCoupon")
 	for _, needle := range []string{
 		"redeemed+reserved >= *maxRedeem",
 		"status IN ('held','captured')",
@@ -103,23 +91,15 @@ func TestCheckoutLedgerAndCouponHoldSourceContract(t *testing.T) {
 			t.Errorf("coupon hold contract missing %q", needle)
 		}
 	}
-	if strings.Contains(cs, "reservation_id, status") {
+	if strings.Contains(pkg.Source(), "reservation_id, status") {
 		t.Fatal("coupon insert must rely on the database's held default; app lacks INSERT(status)")
 	}
 }
 
 func TestSettlementReservationAndLockOrderSourceContract(t *testing.T) {
-	checkoutBody, err := os.ReadFile("checkout.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkout := string(checkoutBody)
-	start := strings.Index(checkout, "func (s *Service) HandlePaymentWebhook")
-	end := strings.Index(checkout[start:], "type orderPaidPosting struct")
-	if start < 0 || end < 0 {
-		t.Fatal("settlement handler source boundary is missing")
-	}
-	handler := checkout[start : start+end]
+	pkg := sourcetest.Load(t, ".")
+	// 结算主链：入口与事务体（原窗口从 HandlePaymentWebhook 到 orderPaidPosting）
+	handler := pkg.Decls("Service.HandlePaymentWebhook", "Service.settlePaymentTx")
 	ordered := []string{
 		"INSERT INTO payment_events",
 		"FROM orders WHERE tenant_id=$1",
@@ -176,12 +156,8 @@ func TestSettlementReservationAndLockOrderSourceContract(t *testing.T) {
 		t.Fatal("subscription eligibility must be rechecked under the subscription lock before intent locks")
 	}
 
-	postingStart := strings.Index(checkout, "func (s *Service) postOrderPaid")
-	postingEnd := strings.Index(checkout[postingStart:], "func (s *Service) fulfillOrder")
-	if postingStart < 0 || postingEnd < 0 {
-		t.Fatal("order-paid posting source boundary is missing")
-	}
-	posting := checkout[postingStart : postingStart+postingEnd]
+	// 原窗口从 postOrderPaid 到 fulfillOrder，中间夹着开通订阅的三个声明
+	posting := pkg.Decls("Service.postOrderPaid", "provisionSpec", "Service.provisionSubscription", "initQuotaBalances")
 	if !strings.Contains(posting, "AccountID: p.HoldAccountID") {
 		t.Fatal("mixed settlement must debit the locked hold account")
 	}
@@ -191,11 +167,7 @@ func TestSettlementReservationAndLockOrderSourceContract(t *testing.T) {
 }
 
 func TestReservationCaptureSourceContract(t *testing.T) {
-	body, err := os.ReadFile("reservations.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(body)
+	s := sourcetest.Load(t, ".").Decls("lockOrderReservationGraph", "prepareAndLockLedgerAccounts", "captureLockedReservation")
 	for _, needle := range []string{
 		`case "new", "renewal", "topup", "addon", "upgrade":`,
 		`only plan change orders carry a proration credit`,
@@ -235,15 +207,12 @@ func TestReservationCaptureSourceContract(t *testing.T) {
 // 而忘了写的分支在单元测试里通常也没有对应用例。扫源码至少保证下一个
 // 新增的 kind 会在这里绊一跤。
 func TestEveryPaidOrderKindReachesFulfilled(t *testing.T) {
-	body, err := os.ReadFile("checkout.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(body)
+	// 结算后收尾的 switch 在结算事务体里
+	s := sourcetest.Load(t, ".").Decl("Service.settlePaymentTx")
 
-	// checkout.go 里有两处 switch orderKind，认准结算后收尾的那一处：
-	// 它是唯一一个分支里会调用 fulfillOrder 的。按出现顺序取第一个会
-	// 拿到前面那个校验用的 switch，然后误报一堆缺失分支。
+	// 结算后收尾的 switch orderKind 认准分支里会调用 fulfillOrder 的那一处；
+	// 旧版实现（settlement_legacy.go 的块注释存档）里也有一处 switch orderKind，
+	// 按出现顺序取第一个会拿错，然后误报一堆缺失分支。
 	start := -1
 	for i := 0; ; {
 		j := strings.Index(s[i:], `switch orderKind {`)

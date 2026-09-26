@@ -1,5 +1,5 @@
 // [INPUT]: 依赖本包 Load 与 testdata/fixture 假包
-// [OUTPUT]: 对外提供 TestDeclReturnsExactSourceWithoutDocComment、TestSourceCoversEveryNonTestFileRegardlessOfBuildTags、TestLookupFailsLoudly
+// [OUTPUT]: 对外提供 TestDeclReturnsExactSourceWithoutDocComment（含 DeclWithDoc）、TestSourceCoversEveryNonTestFileRegardlessOfBuildTags、TestLookupFailsLoudly
 // [POS]: platform/sourcetest 的自测：取声明的原文精确、整包源码不漏构建约束文件也不含测试文件、名字缺失或重名一定让测试失败
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -51,6 +51,12 @@ func TestDeclReturnsExactSourceWithoutDocComment(t *testing.T) {
 	}
 	if got, want := p.Decls("Plain", "Single"), p.Decl("Plain")+"\n"+p.Decl("Single"); got != want {
 		t.Errorf("Decls = %q, want %q", got, want)
+	}
+	if got, want := p.DeclWithDoc("Plain"), "// Plain 的文档注释不进 Decl 的结果\n"+p.Decl("Plain"); got != want {
+		t.Errorf("DeclWithDoc(Plain) = %q, want %q", got, want)
+	}
+	if got := p.DeclWithDoc("Single"); got != p.Decl("Single") {
+		t.Errorf("DeclWithDoc without a doc comment = %q, want the bare declaration", got)
 	}
 	if fn := p.FuncDecl("Box.Get"); fn.Name.Name != "Get" {
 		t.Errorf("FuncDecl(Box.Get) = %s", fn.Name.Name)

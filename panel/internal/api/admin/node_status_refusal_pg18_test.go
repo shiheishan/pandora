@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 delivery_pg18_test.go 的 openDeliveryPG18 与 newDeliveryHarness，依赖 handlers.go 的 nodeSetStatus、nodefabric 的 NodeStatusRefusal，依赖 00005 的状态机触发器与 nodes 表的 CHECK 约束
+// [INPUT]: 依赖 delivery_pg18_test.go 的 openDeliveryPG18 与 newDeliveryHarness，依赖 nodes.go 的 nodeSetStatus、nodefabric 的 NodeStatusRefusal，依赖 00005 的状态机触发器与 nodes 表的 CHECK 约束
 // [OUTPUT]: 对外提供 TestNodeStatusRefusalPG18
 // [POS]: api/admin 的节点状态报错中文化 PG18 门禁（delivery 域，⑪）：后台改状态撞状态机时页面拿到触发器的中文原句；nodes 表能造出来的 CHECK 各造一次，真实约束名都被译成中文、英文原句不进响应
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

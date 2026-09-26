@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 checkout.go 的 CreateOrder（人工单复用下单主路径，线下已收款在建单事务里经 settlePaymentTx 结清）与 HandlePaymentWebhook（标记已支付合成一笔 offline 渠道回调），依赖 middleware 幂等声明、platform/audit、platform/db、platform/httpx
+// [INPUT]: 依赖 checkout.go 的 CreateOrder（人工单复用下单主路径，线下已收款在建单事务里经 settlement.go 的 settlePaymentTx 结清）与 settlement.go 的 HandlePaymentWebhook（标记已支付合成一笔 offline 渠道回调），依赖 middleware 幂等声明、platform/audit、platform/db、platform/httpx
 // [OUTPUT]: 对外提供 CreateManualOrder、CreateManualOrderInput、ManualSettlement*、OfflineReceipt、MarkOrderPaid、MarkOrderPaidInput、OfflineProviderCode；包内提供 offlinePaymentInput（两条线下收款路径共用的回调形状）与 markPaidQuarantined（钱进挂账时的 409）
 // [POS]: billing 的管理员订单动作：人工单（赠送当场履约、建待支付单交给用户付、线下已收款当场结清）与标记线下已收款；都不另起炉灶，履约与记账与用户自己支付完全一致
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
