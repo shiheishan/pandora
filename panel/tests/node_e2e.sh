@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖 /opt/aegispanel/bin/aegis-agent（真实 Agent 进程）、/opt/aegispanel/deploy/psql.sh 与 logs/node.log，依赖 admin 与 node 两个网关
+# [OUTPUT]: Node Fabric 端到端：一次性引导令牌、Agent 引导接入、状态机、心跳、签名认证、分层配置下发与篡改拒绝、身份吊销与重新引导；写接口都带 Idempotency-Key
+# [POS]: panel/tests 的节点生命周期脚本，由 deploy/run-smoke-e2e.sh 在冒烟栈上跑；与 uniproxy_e2e.sh 分工（后者用 SQL 夹具直接造 serving 节点）
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Node Fabric 端到端测试。
 #
 # 这个测试跑的是**真实的 Agent 进程**，不是模拟请求：
@@ -21,6 +25,9 @@ WORK=/tmp/aegis-agent-test
 ADMIN_EMAIL=${ADMIN_EMAIL:-admin@aegispanel.local}
 ADMIN_PASS=${ADMIN_PASS:-Aegis#Admin2026!}
 NODE_NAME="e2e-node-$(date +%s)"
+# 签引导令牌、旧状态接口、配置发布都挂着幂等中间件，缺 Idempotency-Key 回 400。
+# 每个用户意图一个键（照 admin_e2e.sh 的写法），本次运行内唯一
+RUN_TAG="$(date +%s)-$RANDOM"
 
 pass=0; fail=0
 ok()  { echo "  [ OK ] $1"; pass=$((pass+1)); }
@@ -46,6 +53,7 @@ AH="Authorization: Bearer $ATOK"
 sec "2. NODE-008 一次性引导令牌"
 
 R=$(curl -s -X POST "$ADM/v1/nodes/bootstrap-token" -H "$AH" -H 'Content-Type: application/json' \
+      -H "Idempotency-Key: node-bootstrap-token-$RUN_TAG" \
       -d "{\"node_name\":\"$NODE_NAME\",\"ttl_minutes\":20}")
 TOKEN=$(echo "$R" | jqr "['token']")
 [ -n "$TOKEN" ] && ok "令牌已签发（明文仅此一次）" || { bad "签发失败" "$R"; exit 1; }
@@ -94,12 +102,14 @@ echo "$OUT3" | grep -q "引导被拒绝" && ok "伪造令牌被拒" || bad "伪�
 sec "4. NODE-010 不能从创建态直跳 active"
 
 C=$(code -X POST "$ADM/v1/nodes/$NODE_ID/status" -H "$AH" -H 'Content-Type: application/json' \
+      -H "Idempotency-Key: node-status-skip-$RUN_TAG" \
       -d '{"status":"active","reason":"尝试跳过灰度"}')
 [ "$C" = "409" ] && ok "bootstrapping → active 被状态机拒绝（409）" || bad "非法跳转被接受" "HTTP $C"
 
 # 走合法路径：bootstrapping → attesting → installing → validating → standby → canary → active
 for s in attesting installing validating standby canary active; do
   curl -s -X POST "$ADM/v1/nodes/$NODE_ID/status" -H "$AH" -H 'Content-Type: application/json' \
+    -H "Idempotency-Key: node-status-$s-$RUN_TAG" \
     -d "{\"status\":\"$s\",\"reason\":\"e2e 推进\"}" >/dev/null
 done
 ST=$($PSQL -tAc "SELECT status FROM nodes WHERE id='$NODE_ID'" | tr -d '[:space:]')
@@ -145,12 +155,14 @@ sec "7. AGT-006/007 分层配置与签名下发"
 
 # 全局层
 R=$(curl -s -X POST "$ADM/v1/nodes/config/publish" -H "$AH" -H 'Content-Type: application/json' \
+      -H "Idempotency-Key: node-config-global-$RUN_TAG" \
       -d '{"scope":"global","payload":{"log_level":"info","mtu":1420,"dns":"1.1.1.1"}}')
 GV=$(echo "$R" | jqr "['version']"); GN=$(echo "$R" | jqr "['affected_nodes']")
 [ -n "$GV" ] && ok "全局配置 v$GV 已发布，影响 $GN 个节点" || { bad "发布失败" "$R"; exit 1; }
 
 # 节点层覆盖：同名键必须压过全局
 R=$(curl -s -X POST "$ADM/v1/nodes/config/publish" -H "$AH" -H 'Content-Type: application/json' \
+      -H "Idempotency-Key: node-config-node-$RUN_TAG" \
       -d "{\"scope\":\"node\",\"scope_ref\":\"$NODE_ID\",\"payload\":{\"log_level\":\"debug\",\"node_tag\":\"e2e\"}}")
 NV=$(echo "$R" | jqr "['version']")
 [ -n "$NV" ] && ok "节点层配置 v$NV 已发布" || bad "节点层发布失败" "$R"
@@ -222,6 +234,7 @@ grep -q "401\|身份校验失败" "$WORK/run4.log" && ok "被吊销的 Agent 立
 
 # 重新引导可恢复，且 serial 递增（不复用旧序号）
 R=$(curl -s -X POST "$ADM/v1/nodes/bootstrap-token" -H "$AH" -H 'Content-Type: application/json' \
+      -H "Idempotency-Key: node-bootstrap-token-reissue-$RUN_TAG" \
       -d "{\"node_name\":\"$NODE_NAME\"}")
 TOK2=$(echo "$R" | jqr "['token']")
 "$AGENT" bootstrap --server "$NODE" --token "$TOK2" --name "$NODE_NAME" >"$WORK/re.log" 2>&1
@@ -253,8 +266,10 @@ NA=$($PSQL -tAc "SELECT count(*) FROM audit_events WHERE action LIKE 'node.%'" |
 #-------------------------------------------------------------------------------
 # 清理：把测试节点退役，避免污染队列
 curl -s -X POST "$ADM/v1/nodes/$NODE_ID/status" -H "$AH" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: node-status-cleanup-draining-$RUN_TAG" \
   -d '{"status":"draining","reason":"e2e 清理"}' >/dev/null
 curl -s -X POST "$ADM/v1/nodes/$NODE_ID/status" -H "$AH" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: node-status-cleanup-retired-$RUN_TAG" \
   -d '{"status":"retired","reason":"e2e 清理"}' >/dev/null
 rm -rf "$WORK"
 
