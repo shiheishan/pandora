@@ -9,7 +9,7 @@ harness.ts: 形状校验的底座：读状态目录，两个身份各登录一�
 admin.smoke.ts: 第 ③ 步后台接口表：前端 73 处后台 GET 调用逐一成行（at 列为 src/admin 下的 file:line），schema 从调用处的页面模块导入；种子里没有的 id（知识库页版本、礼品卡批次）先原样取列表；两个 CSV 导出与事件流只验状态与内容类型
 portal.smoke.ts: 第 ③ 步门户接口表：32 处门户 GET 调用与共享的事件流；调用处内联的外层 z.object 照原样重写、里面的行 schema 导入；通知只由定时扫描写入，等到非空或 8 分钟超时就标跳过
 hook-receiver.ts: 本机插件投递接收端（seed.ts 以独立进程拉起，pid 记进状态目录由 down 收掉）：只听 127.0.0.1，每次投递往 hook-received.jsonl 追加一行并回 200；devMode 下面板本来就放行回环，不改 Go、不放宽校验
-writes.smoke.ts: 第 ④ 步写路径：以节点运行令牌取用户列表并在门户订阅配置里找到同一凭据（新服务器 + 新节点一步上线后能下发）；重认证用同一真实会话、把令牌 rat 拨回 16 分钟，由页面 api 客户端自己走 reauth_required → reauth → 同键重放；工单回复验同键重放（Idempotency-Replayed）与换体 409；用户、营销、节点、套餐、系统、安全、财务、门户各一个写操作，请求体用页面构造函数、响应用页面 schema；插件接收端落盘里有带签名头的 ticket.created；工单回复后门户通知里没有 ticket.replied（FACT）
+writes.smoke.ts: 第 ④ 步写路径：以节点运行令牌取用户列表并在门户订阅配置里找到同一凭据（新服务器 + 新节点一步上线后能下发）；重认证用同一真实会话、把令牌 rat 拨回 16 分钟，由页面 api 客户端自己走 reauth_required → reauth → 同键重放；工单回复验同键重放（Idempotency-Replayed）与换体 409；用户、营销、节点、套餐、系统、安全、财务、门户各一个写操作，请求体用页面构造函数、响应用页面 schema；插件接收端落盘里有带签名头的 ticket.created；工单回复后门户通知里出现 ticket.replied、正文带那张工单的标题（R115；admin 只排队，轮询等 public 网关的派发循环，6 分钟没有才算失败）
 vitest.config.ts: 冒烟专用配置：只收 *.smoke.ts（默认的 *.test.ts 收不到，所以不进 make frontend-check），node 环境、文件串行、单条 90 秒；自带 sequencer（ReadsBeforeWrites）把 writes.smoke.ts 固定排在两张读表之后——写路径会改种子数据，顺序是冒烟自己的数据依赖，放在配置里而不是 workflow 里，本机单跑也成立
 tsconfig.json: 冒烟专用类型检查：继承浏览器侧 tsconfig（页面模块连带 .tsx 要 jsx），加 node 类型；tsconfig.node.json 因此排除 tests/smoke
 
