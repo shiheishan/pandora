@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 renewal.go、plan_change.go 的源码文本与 subscriptionAcceptsPaidChange，依赖迁移 00095 的挂账守卫
+// [INPUT]: 依赖 platform/sourcetest 按名取续费与变更套餐各声明的源码，依赖 subscriptionAcceptsPaidChange，依赖迁移 00095 的挂账守卫
 // [OUTPUT]: 对外提供续费的源码契约测试（建单预留与幂等、零元单与履约锁序、配额周期独立）与订阅状态口径一致性测试
 // [POS]: billing 续费的源码契约门禁；可续费状态组在 Go 与 00095 守卫之间只许有一份口径
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -9,20 +9,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestRenewalCreateReservationAndIdempotencySourceContract(t *testing.T) {
-	body, err := os.ReadFile("renewal.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
-	start := strings.Index(src, "func (s *Service) CreateRenewal")
-	end := strings.Index(src[start:], "type zeroPaySubscriptionCapture")
-	if start < 0 || end < 0 {
-		t.Fatal("renewal creation source boundary missing")
-	}
-	create := src[start : start+end]
+	create := sourcetest.Load(t, ".").Decl("Service.CreateRenewal")
 	ordered := []string{
 		"ValidateIdempotencyClaim(",
 		"FROM subscriptions",
@@ -56,11 +48,10 @@ func TestRenewalCreateReservationAndIdempotencySourceContract(t *testing.T) {
 }
 
 func TestRenewalZeroPayAndFulfilmentLockSourceContract(t *testing.T) {
-	body, err := os.ReadFile("renewal.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
+	pkg := sourcetest.Load(t, ".")
+	// 零元单捕获、续费结算锁（锁序写在它的文档注释里）与续费履约
+	src := pkg.Decls("Service.CreateRenewal", "Service.captureZeroPaySubscriptionOrder", "Service.fulfillRenewalLocked") +
+		"\n" + pkg.DeclWithDoc("lockOrderSubscriptionForSettlement")
 	for _, required := range []string{
 		"lockOrderReservationGraph(ctx, tx, reservationLockRequest{",
 		`Kind: "renewal"`,
@@ -80,11 +71,8 @@ func TestRenewalZeroPayAndFulfilmentLockSourceContract(t *testing.T) {
 }
 
 func TestRenewalQuotaPeriodsRemainIndependent(t *testing.T) {
-	body, err := os.ReadFile("renewal.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
+	pkg := sourcetest.Load(t, ".")
+	src := pkg.Decl("Service.fulfillRenewalLocked")
 	for _, required := range []string{
 		"AND period = 'cycle'",
 		"qd.metric = qb.metric AND qd.period = qb.period",
@@ -93,10 +81,10 @@ func TestRenewalQuotaPeriodsRemainIndependent(t *testing.T) {
 			t.Fatalf("renewal quota contract missing %q", required)
 		}
 	}
-	if strings.Contains(src, "AND period <> 'total'") {
+	if strings.Contains(pkg.Source(), "AND period <> 'total'") {
 		t.Fatal("renewal must not reset independent day/month quota periods")
 	}
-	if strings.Contains(src, "qd.plan_version_id = $3::uuid AND qd.metric = qb.metric`") {
+	if strings.Contains(pkg.Source(), "qd.plan_version_id = $3::uuid AND qd.metric = qb.metric`") {
 		t.Fatal("renewal quota definition join must include period")
 	}
 }
@@ -124,17 +112,15 @@ func TestSubscriptionPaidChangeStatusesMatchLatePaymentGuard(t *testing.T) {
 	if !strings.Contains(up, "AND v_sub_status IN ('active','trialing','grace','past_due')") {
 		t.Fatal("00095 guard must reject exactly the statuses subscriptionAcceptsPaidChange accepts")
 	}
-	for _, src := range []string{"renewal.go", "plan_change.go"} {
-		b, err := os.ReadFile(src)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(b), `case "active", "trialing", "grace", "past_due":`) &&
-			!strings.Contains(string(b), "func subscriptionAcceptsPaidChange(") {
-			t.Errorf("%s restates the renewable status list instead of calling subscriptionAcceptsPaidChange", src)
-		}
-		if !strings.Contains(string(b), "subscriptionAcceptsPaidChange(status)") {
-			t.Errorf("%s creation must check subscriptionAcceptsPaidChange", src)
+	pkg := sourcetest.Load(t, ".")
+	// 状态列表只许写在 subscriptionAcceptsPaidChange 里，包内别处重写一份即失败
+	statusList := `case "active", "trialing", "grace", "past_due":`
+	if strings.Count(pkg.Source(), statusList) != strings.Count(pkg.Decl("subscriptionAcceptsPaidChange"), statusList) {
+		t.Error("the renewable status list is restated outside subscriptionAcceptsPaidChange")
+	}
+	for _, creator := range []string{"Service.CreateRenewal", "quotePlanChange"} {
+		if !strings.Contains(pkg.Decl(creator), "subscriptionAcceptsPaidChange(status)") {
+			t.Errorf("%s creation must check subscriptionAcceptsPaidChange", creator)
 		}
 	}
 }
