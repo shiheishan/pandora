@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/pg18test 打开 support 域的一次性库，依赖 service.go 的 Create / ListForAgent / GetForAgent / SetStatus
+// [INPUT]: 依赖 platform/pg18test 打开 support 域的一次性库，依赖 user_tickets.go 的 Create、agent_tickets.go 的 ListForAgent / GetForAgent / SetStatus
 // [OUTPUT]: 对外提供 TestAgentQueueFieldsPG18
 // [POS]: domain/support 的 PG18 测试（契约后台-02）：队列 status 多值筛选与 last_message_author_kind（跳过内部备注）、详情 user_active_plan、详情 message_count / last_reply_at 与队列一致及 related_order（R75）、人工升级把优先级提到至少 high
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

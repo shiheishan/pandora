@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 ledger.go 的记账、traffic_pack.go 的 GrantTrafficPackTx、traffic_reset.go 的 LogTrafficReset、checkout 的 grantPlanDirect
+// [INPUT]: 依赖 ledger.go 的记账、traffic_pack.go 的 GrantTrafficPackTx、traffic_reset.go 的 LogTrafficReset、provision.go 的 grantPlanDirect
 // [OUTPUT]: 对外提供 GiftGranter 与 Service.GiftGranter：GrantBalance、GrantTraffic、ExtendExpiry、ResetQuota、GrantPlan
 // [POS]: billing 实现 giftcard.Granter 的一侧：礼品卡「发什么」由 giftcard 决定，「怎么发」在这里；流量奖励发成用户级流量包余额（D-E-1）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

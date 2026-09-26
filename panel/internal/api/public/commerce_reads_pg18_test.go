@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 handlers.go 的 listPlans / previewCoupon / myCommission、my_orders.go 的 listMyOrders / myOrderDetail，依赖 domain/billing 的 NewService，依赖 platform/pg18test 打开 public_api 域的一次性库
+// [INPUT]: 依赖 plans.go 的 listPlans、handlers.go 的 previewCoupon、referral.go 的 myCommission、my_orders.go 的 listMyOrders / myOrderDetail，依赖 domain/billing 的 NewService，依赖 platform/pg18test 打开 public_api 域的一次性库
 // [OUTPUT]: 对外提供 TestPortalCommerceReadsPG18
 // [POS]: api/public 门户-03/04/06 字段扩展的 PG18 集成门禁：目录的重置策略、限速（R99）、卖点与推荐（R100）与续费变更开关、优惠码试算的流量包形态与券面、订单筛选段计数与详情扩展、佣金概况（含计佣范围 scope，R81）与转出记录
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 manual_order.go 的 CreateManualOrder 与 ManualSettlement*，依赖 release.go 的 CancelOrder，依赖 order_release_pg18_test.go 的一次性租户夹具与 orderReleasePG18Claim
+// [INPUT]: 依赖 manual_order.go 的 CreateManualOrder 与 ManualSettlement*，依赖 release.go 的 CancelOrder，依赖 order_release_pg18_fixture_test.go 的一次性租户夹具与 orderReleasePG18Claim
 // [OUTPUT]: 对包内提供 orderReleasePG18ManualOrderCases，挂在 TestOrderReleasePG18（run-pg18-gates.sh 的 order_release 域）
 // [POS]: billing 人工单结算方式的 PG18 证明：赠送当场履约并通知节点一次、待用户支付（不通知）留下一张带开单人的待支付单、线下已收款在建单事务里按 offline 渠道结清（收入、佣金、履约、幂等记录与标记已支付同口径，凭证号重复整单回滚）、从余额扣除仍拒绝
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

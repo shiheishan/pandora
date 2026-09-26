@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 settlement.go 的 HandlePaymentWebhook 结算主链、checkout.go 的 CreateOrder / CreateTopup、renewal.go 的 CreateRenewal、release.go 的 CancelOrder，依赖 settlement_pg18_fixture_test.go 的常量、认领与并发回调工具、settlement_pg18_assert_test.go 的指纹与账本断言、order_release_pg18_assert_test.go 的 orderReleasePG18AssertQuarantine，依赖迁移 00040
+// [INPUT]: 依赖 settlement.go 的 HandlePaymentWebhook 结算主链、checkout.go 的 CreateOrder、topup.go 的 CreateTopup、renewal.go 的 CreateRenewal、release.go 的 CancelOrder，依赖 settlement_pg18_fixture_test.go 的常量、认领与并发回调工具、settlement_pg18_assert_test.go 的指纹与账本断言、order_release_pg18_assert_test.go 的 orderReleasePG18AssertQuarantine，依赖迁移 00040
 // [OUTPUT]: 对外提供 TestSettlementPG18（run-pg18-gates.sh 的 billing 域）
 // [POS]: 支付结算的 PG18 集成门禁：运行角色 ACL 与强制 RLS、外部全额结算与重复身份、混合扣款、充值只记父级、佣金共享锁与唯一冲突回滚、故障矩阵回滚后同身份恰好一次、金额币种错误整体回滚、旧续费与 actor 绑定续费、损坏预留图 fail closed。deploy/test-settlement-runner_static_test.sh 按文件名 grep 本文件，门禁用到的字面量要留在这里
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

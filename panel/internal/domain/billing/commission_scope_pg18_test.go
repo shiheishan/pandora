@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 commission.go 的 accrueCommission（经 HandlePaymentWebhook 触发）与 CommissionScope*，依赖 order_release_pg18_test.go 的一次性租户夹具、newOrder 与 webhook
+// [INPUT]: 依赖 commission.go 的 accrueCommission（经 HandlePaymentWebhook 触发）与 CommissionScope*，依赖 order_release_pg18_fixture_test.go 的一次性租户夹具、order_release_pg18_test.go 里 TestOrderReleasePG18 的 newOrder 与 webhook 闭包
 // [OUTPUT]: 对包内提供 orderReleasePG18CommissionScopeCases，挂在 TestOrderReleasePG18（run-pg18-gates.sh 的 order_release 域）
 // [POS]: billing 计佣范围的 PG18 证明：first_order 下被推荐人只有第一笔计佣订单返佣，every_order（兜底）每笔都返
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

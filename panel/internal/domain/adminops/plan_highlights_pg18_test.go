@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 catalog.go 的 CreatePlan / UpdatePlan / GetPlan、service.go 的 ListPlans、两个向导用例，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 与 staticSalesCapability
+// [INPUT]: 依赖 catalog.go 的 CreatePlan / UpdatePlan / GetPlan、service.go 的 ListPlans、两个向导用例，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 与 catalog_sales_capability_test.go 的 staticSalesCapability
 // [OUTPUT]: 对外提供 TestPlanHighlightsPG18（run-pg18-gates.sh 的 catalog_sales 域）
 // [POS]: adminops 卖点与推荐（R100，迁移 00088）的 PG18 门禁：四个写入口的写入语义、两个后台读模型、422 不落库与数据库兜底约束
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
