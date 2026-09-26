@@ -264,6 +264,6 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 - L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]；TS/TSX 用模板里的 `/** */`。Go 文件多已带中文设计注释，L3 加在其上方（中间空一行，不成为包文档），不改写原注释；带 `//go:build` 的文件，L3 放在构建约束与空行之后。
 - L3 按逆向流渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性播种（2026-09-23 实测：Go 1038 个、TS/TSX 102 个；已有 L3 头的 Go 19 个、TS/TSX 16 个）。
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。
-- 单文件 ≤800 行：仓库现有 41 个 Go 文件超限（2026-09-23 实测，多为移植的 TLS/QUIC 栈）。发现时在报告中记录，重构需用户授权，服从 docs/CONSTRAINTS.md 的"只修测试直接证明的问题"。
+- 单文件 ≤800 行：第 5 阶段重构（panel/docs/redesign/phase5-refactor.md）之后，豁免之外没有超限的 .go 文件（含测试）。豁免两类：① `pdnd/internal/reality/**`（fork 自 Go crypto/tls，34 个文件）与 `pdnd/internal/realityquic/**`（fork 自 quic-go，193 个文件）是 fork 来的第三方代码，保持上游的文件划分以便合上游，整目录豁免，目前其中 14 个文件超限（reality 8、realityquic 6）；② 两个只剩一个超长测试函数、纯挪动拆不开的 PG18 测试 `panel/internal/middleware/idempotency_pg18_test.go`、`panel/internal/domain/billing/order_release_pg18_test.go`，逐个登记，拆到 800 行以内即须移出。守卫：panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go` 随 `go test ./...` 扫描全部 .go，豁免外超限即红，豁免过期也红；`nodeagent/` 待删，不在守卫内。守卫变红先按主题拆分（只挪代码，用 `panel/tools/refactorcheck` 自证），不要加豁免；改豁免表要用户授权。
 - entropy 段的范式映射到本仓库：日志用 platform/logging（log/slog），响应与错误用 platform/httpx，配置只经 platform/config，前端 HTTP 只经 src/core/api.ts。
 - docs/CONSTRAINTS.md 的十一条铁律与本协议同时生效；冲突时铁律优先。
