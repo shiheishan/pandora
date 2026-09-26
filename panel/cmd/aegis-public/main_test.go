@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 startReservationExpiryWorker，依赖 platform/sourcetest 按名取 startReservationExpiryWorker 与 run 的源码
-// [OUTPUT]: 对外提供 TestReservationExpiryWorkerStopsAndJoinsOnCancellation、TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup
-// [POS]: cmd/aegis-public 的进程生命周期契约：预留过期循环可取消可 join，停机次序为取消、join、返回
+// [OUTPUT]: 对外提供 TestReservationExpiryWorkerStopsAndJoinsOnCancellation、TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup、TestPublicNotifyUsesRecipientSalt
+// [POS]: cmd/aegis-public 的进程生命周期契约：预留过期循环可取消可 join，停机次序为取消、join、返回；通知收件人盐的装配
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package main
@@ -59,5 +59,16 @@ func TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup(t *testing.T) {
 	ret := strings.Index(afterServer, "return serverErr")
 	if stop < 0 || wait < 0 || ret < 0 || !(stop < wait && wait < ret) {
 		t.Fatal("public process must cancel, join expiry worker, then return for deferred cleanup")
+	}
+}
+
+// 通知收件人哈希用专用盐（⑨），与 admin 网关同一个，不借订阅审计盐
+func TestPublicNotifyUsesRecipientSalt(t *testing.T) {
+	run := sourcetest.Load(t, ".").Decl("run")
+	if !strings.Contains(run, "notify.New(pool, log, crypto.NotifyRecipientSalt(cfg.MasterKey),") {
+		t.Fatal("public gateway must hash notification recipients with crypto.NotifyRecipientSalt")
+	}
+	if strings.Contains(run, "notify.New(pool, log, subSalt") {
+		t.Fatal("public gateway must not reuse the subscription audit salt for notifications")
 	}
 }

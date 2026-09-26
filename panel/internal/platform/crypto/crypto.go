@@ -1,3 +1,8 @@
+// [INPUT]: 依赖标准库 crypto/*（argon2 来自 x/crypto）与 encoding
+// [OUTPUT]: 对外提供口令哈希（HashPassword/VerifyPassword/DummyVerify）、令牌与验证码（NewToken/HashToken/NewNumericCode）、标识哈希（HashIdentifier/HashRaw）、Ed25519 Signer/Verify、信封加密 Envelope、HMACSign/HMACVerify，以及从主密钥确定性派生的用途专用盐 SubscriptionAuditSalt、NotifyRecipientSalt
+// [POS]: platform/crypto 的唯一实现文件，全仓库落库秘密的哈希与加密都经这里；password_policy.go 放口令强度规则
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package crypto 提供平台统一的口令哈希、令牌生成、签名与信封加密。
 //
 // 一条贯穿全包的原则：凡是会落库的秘密，落的都是哈希或密文，从不是明文。
@@ -283,6 +288,18 @@ func HMACVerify(secret, payload, sig []byte) bool {
 // 这个盐算出的哈希。
 func SubscriptionAuditSalt(masterKey []byte) []byte {
 	sum := sha256.Sum256(append([]byte("aegis/subscription/audit-salt/v1"), masterKey...))
+	return sum[:]
+}
+
+// NotifyRecipientSalt 派生通知收件人哈希（notification_deliveries.recipient_hash）
+// 专用的盐。
+//
+// 理由与 SubscriptionAuditSalt 相同：确定性派生、不复用主密钥本身。另起一个域
+// 分隔串是为了让两类哈希互不相通——拿到其中一张表的哈希，比对不了另一张表。
+// admin 与 public 两个网关都用它，同一收件人两边才算出同一个值；在它之前
+// admin 直接拿主密钥当 HMAC key，public 借用订阅审计盐，同一人两边对不上。
+func NotifyRecipientSalt(masterKey []byte) []byte {
+	sum := sha256.Sum256(append([]byte("aegis/notify/recipient-salt/v1"), masterKey...))
 	return sum[:]
 }
 

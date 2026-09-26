@@ -8,7 +8,7 @@ audit/: 不可删审计记录写入（SEC-012）与哈希链。audit.go 的 Writ
 clientauth/: CLIENT-AUTH 的字节精确、无副作用原语，107 文件；子包 ca42admission、ca42controlv3、ca42execution、evidencecodec 各带 README
 config/: 从环境变量加载配置，缺一项拒绝启动，不引入配置框架（NFR-006）
 credentialrevocation/: 登录凭据的 fail-closed 集中吊销
-crypto/: 口令哈希、令牌生成、签名与信封加密
+crypto/: 口令哈希、令牌生成、签名与信封加密，及从主密钥派生的用途专用盐（订阅审计、通知收件人）；见 crypto/CLAUDE.md
 dashboardmigration/: 只有 migration_contract_test.go，对 00041 dashboard 读模型迁移做字面子句契约，无非测试代码
 db/: PostgreSQL 连接池与租户上下文，RLS 变量注入；schema_registry_test.go 按序号重放迁移 Up 段的 CREATE / DROP TABLE，守住现存表、Go 引用与 migrations/RESERVED-TABLES.md 登记簿三者同构
 geoip/: IP 画像：地理位置、运营商、网络性质，供风控
