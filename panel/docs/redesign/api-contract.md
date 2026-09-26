@@ -960,6 +960,7 @@
 - 设计：后台-05 抽屉「支付记录」。映射：intent `created`/`requires_action`/`processing` →「等待回调」，`succeeded` →「成功」，`failed` →「失败」，`cancelled`/`expired` →「已关闭」（设计没有这一项，待补·前端补标签）；`provider_code=offline` 的 payment →「人工确认」，流水号取 `provider_payment_id`（格式 `offline:<凭证号>`）。设计每行只有一个状态：以 intent 为行，有对应 payment 的显示 payment 状态。没有 `billing.payment.read` 权限时回 404，前端要隐藏这一块而不是报错。
 
 #### POST v1/orders/{id}/cancel — 管理员取消待支付订单
+- **修订 R117（2026-09-26，后端四 ⑧ 8993672，合并 49f7ba9）**：订单上只有「订阅已结束而进挂账」的收款时，不算已入账，仍可取消或被过期扫描释放，冻结的余额照常退回（其余有收款的订单仍拒绝释放）。
 - **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：R95 已修：后台与门户两个取消接口共用同一个错误翻译，400 与 409 的 message 全部是中文（已有入账时为「这张订单已有入账，不能取消」），前端的英文→中文映射可以删掉。`GET v1/orders` 列表行与用户详情 `recent_orders` 加 `manual: bool`（`manual_reason` 非空即人工单，与详情「来源」同口径），开单人仍只在详情里。
 - **修订 R95（2026-09-25，后台前端一 ⑥ 核对）**：本接口 400 与两种 409 的 message 是英文，前端映射成中文，后端补中文列入遗留。另：`GET v1/orders` 列表行没有人工单标识（开单人只在详情里，R63），列表渠道列在赠送单上只能显示「—」；给列表行加 `created_by` 或 `manual` 列入后端遗留（可选）。
 - 状态：现有 `panel/internal/api/admin/handlers.go:380 cancelOrder`
@@ -982,6 +983,7 @@
 - 设计：后台-05「人工开单」弹窗。映射：用户邮箱 → 要先用用户搜索（GET v1/users?q=，分段 B）解析出 `user_id`，前端改成可搜索选择器；「套餐与周期」→ `plan_id` + `price_id`（选项来自 GET v1/plans 的在售价格）；「备注」→ `reason`（改成必填，5 字起，文案改为「开单原因（写入审计）」）；「结算方式」→ `settlement`：「赠送（0 元）」= grant，「待用户支付」= pending，「线下已收款」= offline（待补·前端：选这项时出现「凭证号」输入），「从余额扣除」= balance（取决于 D-C-3）。
 
 #### POST v1/orders/{id}/mark-paid — 手工标记已支付（线下收款）
+- **修订 R117（2026-09-26，后端四 ⑧ 8993672，合并 49f7ba9）**：续费或变更单结算时订阅已不在 active / trialing / grace / past_due（被手工改成 expired、cancelled 等终态），钱照常入账并隔离进挂账（`case_kind=ineligible_subscription`），订单与订阅不动，本接口回 **409「订阅已结束，款项已转入挂账，可在挂账里转入用户余额」**；同一凭证号再标一次回 **409「已经入过账」**（以前重复标记回 200 并写一条空审计）。
 - **修订 R2（2026-09-24）**：响应已改为 snake_case `{ processed, already_handled, payment_id, subscription_id, ledger_txn_id }`，不再返回 `signature_failed`。
 - 状态：现有 `panel/internal/api/admin/manual_order.go:62 markOrderPaid`
 - 权限：`billing.order.write`｜reauth：是｜幂等：是 `admin_order_mark_paid`
@@ -991,6 +993,7 @@
 - 设计：后台-05 抽屉「手工标记已支付」。输入框「渠道流水号 / 转账凭证」→ `reference`；待补·前端：补必填的「收款说明」→ `reason`。
 
 #### GET v1/late-payments — 挂账列表（设计里的「欠费单」）
+- **修订 R117（2026-09-26，后端四 ⑧ 8993672，合并 49f7ba9）**：`case_kind` 新增 `ineligible_subscription`（续费或变更单付款时订阅已结束），与 `released_order`、`excess_capture` 并列；「转入余额」对它同样适用。前端枚举与文案要同步（前端未改前出现这类行会整页解析失败；目前只有手工 SQL 能造出）。
 - **修订 R3（2026-09-24）**：响应新增 `pending_amounts`（按币种分开的待处理合计）；旧的 `pending_amount` 保留一个版本后删除，前端只用 `pending_amounts`。
 - 状态：现有 `panel/internal/api/admin/late_payment.go:14 listLatePayments`；待补·后端（扩展）
 - 权限：`billing.ledger.read`｜reauth：否｜幂等：否
@@ -3325,3 +3328,4 @@
 | R114 | 2026-09-25 | 后端三 | R75、R80、R95、R74、R76、R81、R62 遗留已修：工单详情计数与关联订单、`paid_totals` 按币种（`paid_total` 弃用）、取消与凭证号文案中文、订单行 `manual`、变更试算回券面、门户佣金回 `scope`、`last_seen_at` 认证中间件节流写入；零元单履约通知节点；周期走完后续费从付款时刻起算 |
 | R115 | 2026-09-25 | 联调冒烟 | 客服非内部回复给提单人排 `ticket.replied` 通知（模板早已种下、代码从未排队） |
 | R116 | 2026-09-25 | 前端收尾 ⑤ | 前端已删英文→中文文案映射，4xx 响应里给用户看的 `message` 一律中文（`code` 与形状不变）；首例人工开单缺渠道的「unknown payment provider」；**已实现**（后端四 ⑥ cb1ac0c，合并 039bb12）：31 处改中文、降级开关按约束名给中文原因、源码契约测试 `TestUserFacingErrorMessagesAreChinese` 守住，节点网关与支付回调给机器看的文案不在此列 |
+| R117 | 2026-09-26 | 后端四 | 结算时订阅已结束的续费 / 变更款隔离进挂账（新 case_kind `ineligible_subscription`，迁移 00095），回调回执成功；标记已付对此回 409、重复标记回 409；这类收款不阻止订单释放 |
