@@ -29,7 +29,12 @@
 **进度**：①（合并 b3eea00，R105）、②（合并 4b21102，R109）、③（合并 2125afa，R111）、④（合并 b8f8520，R113）已合入；⑤ `8026cd0`（R115）**验收通过、暂不合入**：它会让冒烟里「工单回复不发通知」的旧断言变红，等冒烟把断言翻成正向后，协调会话按「后端四 ⑤ → 冒烟」顺序一起合（PG18 run 36201969372：232 PASS / 0 SKIP / 0 FAIL，NativeCore 绿，panel-smoke 红只因那条旧断言）。本会话回到待命。迁移 00095–00098 未用。
 
 补充事项（与上文冲突时以这里为准）：
-- 契约修订已到 R115。
+- 契约修订已到 R116。
+- **第 ⑥ 步（R116，2026-09-25 指派）**：前端已删掉英文→中文文案映射，后端 4xx 响应里给用户看的 `message` 必须是中文。后端三已收工，**越界授权你做这一件**（全仓 `panel/internal` 的 httpx 错误文案，只改 message 字符串）。做法：
+  1. grep 所有 `httpx.New` / `httpx.Invalid` 等构造与 `fields` 里的英文文案（协调会话粗扫 billing 与 api 下约 37 处），列成表：位置、原文、新文案、哪个前端页面会显示。首例是 `billing/checkout.go:1106` 的「unknown payment provider」→「支付渠道不存在」。
+  2. 只改 message 字符串，`code`、HTTP 状态、响应形状一律不动；日志与 `httpx.Internal` 包装的内部错误不改；节点端（uniproxy、agent、node 网关）给机器看的文案不改；断言文案的测试同步更新。
+  3. 加一条源码契约测试，防止面向用户的 4xx 文案再出现纯英文（白名单放不可避免的专有名词）。
+  **时序**：你的 ⑤ 还没合入主线（在等冒烟翻断言），⑥ 先在本地提交、**不要推送**，等协调会话告诉你 ⑤ 已合入主线后再 `git merge feat/panel-redesign`、推送、看三组 CI、报告。
 - ⑤ 的验收结论：窄接口 `ReplyNotifier{Enqueue, Kick}` 经 `SetReplyNotifier` 注入（support 不依赖 notify）、锁工单时顺带取提单人与标题、同事务排队且去重键带消息 id、提交后且确实排进才 Kick、内部备注不排、幂等与普通两条路径都覆盖、`main_contract_test.go` 钉住装配（根因就是没接线）、没在 admin 起派发循环（会吞掉 telegram / email），都认可。admin 里 Kick 是空操作、站内信最慢约 5 分钟可见：协调会话定为可接受，写进 R115 补，不另做跨进程唤醒。
 - 你记的小事：admin 的 notify 用 `cfg.MasterKey` 做 salt、public 用 `subSalt`，同一用户的 `recipient_hash` 两边不同。这一列只写不读，**不改**，记在这里；以后谁要读这一列，先统一 salt。
 - **第 ⑤ 步（R115，2026-09-25 指派）**：联调冒烟 ④ 实测「后台回复工单后门户收不到通知」，协调会话核实是缺陷。这本属后端三的范围（工单、通知），后端三已全部完成收工，**越界授权给你做这一件**，只动 `domain/support`、它与 `notify` 的接线（照 billing 的 setter 注入写法）和 `cmd/aegis-admin` 的装配。要求按契约 R115：非内部回复在同一事务里给提单人排 `ticket.replied`（变量 `subject`，去重键 `ticket-replied:<消息 id>`，类别 service 按偏好过滤），内部备注不发，提交后 Kick 一次派发；`ReplyAsAgentAtomic`（幂等包装）与普通路径都覆盖。PG18 测试：回复一条 → 提单人 inapp 队列多一条且变量正确；同键重放不多；内部备注不排；用户关掉 service 类别后不排。PG18 夹具前缀先 grep 全仓确认没人用。一个提交，推送看三组 CI，报告。
