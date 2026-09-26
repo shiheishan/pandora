@@ -44,8 +44,8 @@ id_ed25519*
 # 也不该在别人 clone 下来时出现。
 /.claude/
 
-# 本地运维目录：测试机一次性脚本、安装验证日志、ops_secrets.py（密钥取自 1Password）、
-# gitleaks 私有规则。里面有服务器 IP、源站 IP、后台隐藏前缀和 Komari client ID，
+# 本地运维目录：一次性运维脚本、安装验证日志、gitleaks 私有规则。
+# 里面有服务器 IP、源站 IP、后台隐藏前缀、监控域名，
 # 仓库是公开的，这些永远只留在本机
 /ops-local/
 __pycache__/

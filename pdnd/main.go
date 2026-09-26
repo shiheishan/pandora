@@ -1,4 +1,4 @@
-// aegis-nodeagent 是 AegisPanel 的自研节点端。
+// pandora-native 是 AegisPanel 的自研节点端（module 沿用旧名 aegispanel/nodeagent）。
 //
 // 与 XrayR / V2bX 的接入面相同，区别在于：
 //   - Pandora NativeCore 负责协议、传输、路由和统计；兼容层只按需承载尚未接管的组合

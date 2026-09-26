@@ -53,7 +53,6 @@ aegis-public    aegis-admin     aegis-node
 | `pdnd/kernel/`、`pdnd/internal/` | NativeCore 自研数据面 |
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
 | `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
-| `nodeagent/` | `pdnd/` 的陈旧祖先：两个 go.mod 同为 `github.com/aegispanel/nodeagent`，`panel/deploy/systemd/` 仍留有 `aegis-nodeagent.service` 与 `overrides/aegis-nodeagent-small-shared-host.conf`，但 `build-release.sh` 不打包它、所有安装脚本都不安装不启用它（`install-native.sh` 的 `systemd/*.service` 通配会把该单元拷进 `/opt/pandora/deploy/`，不启用）；测试机上的 `aegis-nodeagent` 进程来源待查证，查清前保留 |
 | `docs/` | 密钥轮换、发布物绑定、交接记录、约束清单 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
 | `.github/workflows/` | pdnd 的 Ubuntu race / vet 与双架构构建门禁；panel 的前端嵌入与根下发契约、表登记簿、权限字典契约测试；新前端的 typecheck / vitest / 构建任务随重写恢复 |
@@ -71,7 +70,7 @@ aegis-public    aegis-admin     aegis-node
 
 每一套部署自己的值都在安装时产生，不进仓库：域名由部署者写进 `.env`，主密钥、JWT 密钥、数据库口令和后台路径前缀由 `install.sh` 首装生成。
 
-维护者操作自己服务器的东西——测试机一次性脚本、安装日志、真实服务器地址——放在被 git 忽略的 `ops-local/`，只存在于维护者本机；这些脚本要用的密钥从 1Password 读取，不写进任何文件。提交前的 gitleaks 钩子（见上表 `.githooks/`）会拦下密钥、服务器 IP、后台前缀这类内容，误写进源码也提交不上去。
+维护者操作自己服务器的东西——一次性运维脚本、安装日志、真实服务器地址——放在被 git 忽略的 `ops-local/`，只存在于维护者本机；脚本要用的密钥从 1Password 读取，不写进任何文件。提交前的 gitleaks 钩子（见上表 `.githooks/`）会拦下密钥、服务器 IP、后台前缀这类内容，误写进源码也提交不上去。
 
 ## panel：面板
 

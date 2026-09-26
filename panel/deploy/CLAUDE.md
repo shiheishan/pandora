@@ -13,7 +13,7 @@ platform.sh / preflight-linux.sh: 发行版与依赖探测（被其他脚本 sou
 migrate-to-new-host.sh: 新主机一键迁移：恢复 Age 密文备份、重建 aegis_app 角色、校验账本无漂移，第 5 步先拦下缺失的 AEGIS_PUBLIC_BASE_URL
 .env.example: 运行配置模板，机密与域名全是 CHANGE_ME 占位
 docker-compose.yml: 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1
-systemd/: aegis-public/admin/node 三网关、aegis-nodeagent、备份 service+timer 单元；overrides/ 为 1 核 2G 共享机的节点端资源上限
+systemd/: aegis-public/admin/node 三网关、备份 service+timer 单元
 logrotate-aegis: 三个服务的日志轮转
 
 发布与切换

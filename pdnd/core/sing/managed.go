@@ -8,7 +8,7 @@
 // V2bX 的解法是 fork 整个 sing-box；我们只是重写 inbound 这一薄层，
 // 上游升级时需要跟进的只有 inbound 接口，而不是整个仓库的 rebase。
 //
-// 许可证：sing-box 为 GPL-3.0，因此 aegis-nodeagent 整体按 GPL-3.0 分发。
+// 许可证：sing-box 为 GPL-3.0，因此 pandora-native 整体按 GPL-3.0 分发。
 // 面板本体是独立的 Go module，不链接 sing-box，不受此约束。
 package sing
 
