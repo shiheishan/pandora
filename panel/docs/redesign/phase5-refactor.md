@@ -36,7 +36,7 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：①（合并 2f562c9）、②（合并 867122e）、③ `5d50d30` `cb69afe` `db5d5e3` `6716983`（合并 8708a0b；协调会话复跑 refactorcheck：cb69afe、6716983 加 -tests 均 PURE，db5d5e3 只改注释行；PG18 36218314529：234 PASS / 0 SKIP，NativeCore、panel-smoke 全绿；主线合并后 Go 全量、Linux vet、前端 632 用例、嵌入契约通过）已验收合入。**panel 已无超 800 行的非测试文件。下一步 ④**（先做下面「④ 之前」一件）。
+**进度**：①（2f562c9）、②（867122e）、③（8708a0b）、删死代码 `e657f06` 与 ④ `45d8036`（合并 9f47391；协调会话复跑：pdnd kernel 加 -tests PURE，e657f06 只报 HandlePaymentWebhook 文档注释与删掉的游离注释、其余改动全是注释；NativeCore 36222086225、PG18 36222086245：234 PASS / 0 SKIP、panel-smoke 全绿）已验收合入。**panel 与 pdnd（除 reality fork）已无超 800 行的非测试文件。下一步 ⑤、⑥。**
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R117（本会话不改接口，一般用不到修订号）。
@@ -44,6 +44,7 @@
 - **② 之前先做两件**：
   1. **工具进仓库**：纯挪动 AST 比对工具和打散工具放进 `panel/tools/refactorcheck/`（Go 程序，`go run` 使用，不被任何生产包 import，写 L2 与用法），协调会话验收时会用它复核。单独一个提交。
   2. **修一条近乎空转的断言**（只改测试）：`TestLegacyConfigPublishRiskReductionContract` 的锁序原来比的是 `lockLegacyConfigRelease` 函数体在文件里排在 `PublishConfig` 前面，这是排版不是调用顺序；改成比 `PublishConfig` 内部各加锁调用处的先后，做一次变异验证。单独一个提交。
+- 删死代码与 ④ 的验收结论：`settlement_legacy.go` 整个删掉、文档注释改指 git 历史、判重仍由 settlePaymentTx 实现且有契约测试；kernel 五个文件照 vless 的做法拆、`capabilities.go` 未动、三平台 vet、race、interop 编译、kernel 打散 48 → 724 通过，都认可。
 - ③ 的验收结论：billing 7 个测试改用 sourcetest（新增 `DeclWithDoc`，Load 开 ParseComments 只影响新方法）与 5 组变异；结算主链整条在 `settlement.go`、开订阅与建配额到 `provision.go`、释放加锁到 `release_locks.go`、admin 拆出 `nodes.go` / `tickets.go` 且单节点路由并入 `node_routing.go`；改文档注释单独成「只改注释」提交（compare 恰好报这几个声明），都认可。
 - **④ 之前先做一件（单独一个提交，不算纯挪动）**：**删掉 `billing/settlement_legacy.go`**（用户与协调会话定：那段约 275 行的块注释是预留图之前的旧版支付回调实现，不参与编译，git 历史里有），同时把现行 `HandlePaymentWebhook` 文档注释里指向旧实现「above」的那句改成现状，L2 同步。报告里写清删了什么、compare 报出的只有那条文档注释。
 - ⑥ 追加：做一次**全仓 L2 / L3 旧文件名清扫**：凡是文件头或 L2 里写着「某文件 的 某符号」、而该符号已被 ②③④ 拆到别的文件的，都改成现状（后端四报过 `frontend/src/admin/screens/plans/schemas.ts` 的文件头引用 `adminops/service.go`，拆分后可能已不在那里）。只改注释与文档。
