@@ -1,14 +1,20 @@
+// [INPUT]: 依赖 upsertTenantRoleBinding、replacePasswordAndRevokeCredentials、readPasswordLine，依赖 platform/sourcetest 取本包全部源码
+// [OUTPUT]: 对外提供 TestUpsertTenantRoleBindingHandlesNullScopeWithoutOnConflict、TestReplacePasswordRevokesAllCredentialClasses、TestReplacePasswordFailsBeforeRevocationWhenPasswordRowIsAmbiguous、TestReadPasswordLinePreservesSpacesAndTrimsOnlyLineEnding、TestAdministratorPasswordCommandsRejectPasswordArguments
+// [POS]: cmd/aegis-adminctl 的单元与源码契约：角色绑定不用 ON CONFLICT、改密与吊销凭据的 SQL 次序、口令只经标准输入
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 type bindingTx struct {
@@ -133,11 +139,7 @@ func TestReadPasswordLinePreservesSpacesAndTrimsOnlyLineEnding(t *testing.T) {
 }
 
 func TestAdministratorPasswordCommandsRejectPasswordArguments(t *testing.T) {
-	source, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(source)
+	text := sourcetest.Load(t, ".").Source()
 	if strings.Contains(text, `fs.String("password"`) || strings.Contains(text, `--password 或`) {
 		t.Fatal("administrator passwords must never be accepted through process arguments")
 	}

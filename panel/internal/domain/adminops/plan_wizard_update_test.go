@@ -1,26 +1,27 @@
+// [INPUT]: 依赖 preparePlanPrices、priceSyncCurrencies，依赖 platform/sourcetest 按名取向导编辑及其辅助函数的源码
+// [OUTPUT]: 对外提供 TestUpdatePlanCompleteRunsInOneTransaction、TestPriceSyncScopeIsSubmittedCurrenciesPublicOffersOnly、TestPreparePlanPricesRejectsInvalidTierBeforeTransaction
+// [POS]: adminops 套餐向导编辑（缺陷 12）：一个事务、不调自带事务的公开用例、价格同步只动提交的币种的公开报价
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
-	"os"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 // 缺陷 12：向导编辑必须是一个事务。此前资料、版本、价格各走各的事务，
 // 后一步失败时前面已提交的改动留在库里。
 func TestUpdatePlanCompleteRunsInOneTransaction(t *testing.T) {
-	body, err := os.ReadFile("plan_wizard_update.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
-	start := strings.Index(src, "func (s *Service) UpdatePlanComplete(")
-	end := strings.Index(src, "// quotaDiffers")
-	if start < 0 || end <= start {
-		t.Fatal("could not isolate UpdatePlanComplete")
-	}
-	orchestration := src[start:end]
+	pkg := sourcetest.Load(t, ".")
+	orchestration := pkg.Decls("Service.UpdatePlanComplete", "validateWizardQuotaEdits")
+	// 向导编排及它用到的全部辅助函数
+	wizard := pkg.Decls("Service.UpdatePlanComplete", "validateWizardQuotaEdits", "quotaDiffers",
+		"currentVersion", "poolsDiffer", "boolOr", "sameIntPtr", "pricesKey", "preparePlanPrices",
+		"priceSyncCurrencies", "syncPlanPricesTx", "Service.rollPlanVersionTx", "inheritVersionSemantics")
 	if n := strings.Count(orchestration, "s.pool.InTx("); n != 1 {
 		t.Fatalf("UpdatePlanComplete opens %d transactions, want exactly 1", n)
 	}
@@ -29,7 +30,7 @@ func TestUpdatePlanCompleteRunsInOneTransaction(t *testing.T) {
 		"s.GetPlan(", "s.UpdatePlan(", "s.CreatePlanVersion(", "s.UpdatePlanVersion(",
 		"s.PublishPlanVersion(", "s.CreatePlanPrice(", "s.bindPoolsToFreshVersion(",
 	} {
-		if strings.Contains(src[start:], ownTx) {
+		if strings.Contains(wizard, ownTx) {
 			t.Errorf("wizard update calls self-committing %s", ownTx)
 		}
 	}
@@ -57,12 +58,7 @@ func TestPriceSyncScopeIsSubmittedCurrenciesPublicOffersOnly(t *testing.T) {
 		t.Fatalf("empty submission must touch no currency, got %v", got)
 	}
 
-	body, err := os.ReadFile("plan_wizard_update.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
-	sync := src[strings.Index(src, "func syncPlanPricesTx("):strings.Index(src, "// rollPlanVersionTx")]
+	sync := sourcetest.Load(t, ".").Decl("syncPlanPricesTx")
 	for _, scope := range []string{"user_group_id IS NULL", "currency::text = ANY($3::text[])"} {
 		if !strings.Contains(sync, scope) {
 			t.Errorf("price sync must be limited by %q", scope)

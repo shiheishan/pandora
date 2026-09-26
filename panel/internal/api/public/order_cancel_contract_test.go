@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 middleware.RequireAuth、platform/httpx、domain/billing 的 ReleaseOrderOutput，依赖 platform/sourcetest 按名取 NewRouter、handlers.cancelOrder 与 billing 的取消链路
+// [OUTPUT]: 对外提供 TestCancelOrderHTTPAuthTenantAndResponseContract、TestCancelOrderAuthMiddlewareRejectsAnonymous、TestCancelOrderAlreadyTerminalHTTPResponse
+// [POS]: api/public 用户取消订单的鉴权、租户与归属、响应形状契约
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
@@ -6,19 +11,20 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestCancelOrderHTTPAuthTenantAndResponseContract(t *testing.T) {
-	router := readCancelContractSource(t, "router.go")
-	handler := readCancelContractSource(t, "order_cancel.go")
-	release := readCancelContractSource(t, "../../domain/billing/release.go")
+	pkg := sourcetest.Load(t, ".")
+	router := pkg.Decl("NewRouter")
+	handler := pkg.Decl("handlers.cancelOrder")
+	release := sourcetest.Load(t, "../../domain/billing").Decls("Service.CancelOrder", "lockReleaseOrder")
 
 	authAt := strings.Index(router, "r.Use(middleware.RequireAuth(d.Log))")
 	cancelAt := strings.Index(router, `r.Post("/orders/{id}/cancel", h.cancelOrder)`)
@@ -99,13 +105,4 @@ func TestCancelOrderAlreadyTerminalHTTPResponse(t *testing.T) {
 	if out.Status != "cancelled" || !out.AlreadyTerminal {
 		t.Fatalf("idempotent cancellation response=%#v", out)
 	}
-}
-
-func readCancelContractSource(t *testing.T, name string) string {
-	t.Helper()
-	b, err := os.ReadFile(name)
-	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
-	}
-	return string(b)
 }

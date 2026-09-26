@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 DeviceWindowMinutes、staleAliveRetentionMinutes 与迁移 00094，依赖 platform/sourcetest 取 api/admin 的 handlers.nodeList 与两个包的全部源码
+// [OUTPUT]: 对外提供 TestDeviceWindowHasOneSource
+// [POS]: nodefabric 设备识别窗口（R103）只有迁移一个出处，Go 可选值、清理截止与后台在线统计都跟它走
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
@@ -7,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 // 设备识别窗口（R103）只有一个出处：迁移 00094 的 app.device_limit_window_minutes。
@@ -39,20 +46,13 @@ func TestDeviceWindowHasOneSource(t *testing.T) {
 			staleAliveRetentionMinutes, max)
 	}
 
-	handlers, err := os.ReadFile(filepath.Join("..", "..", "api", "admin", "handlers.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(handlers), "app.device_limit_window_minutes($1)") {
+	admin := sourcetest.Load(t, filepath.Join("..", "..", "api", "admin"))
+	if !strings.Contains(admin.Decl("handlers.nodeList"), "app.device_limit_window_minutes($1)") {
 		t.Error("admin node list online stats must use the tenant device window")
 	}
-	for _, file := range []string{"uniproxy.go", filepath.Join("..", "..", "api", "admin", "handlers.go")} {
-		body, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(body), "last_seen_at > now() - interval") {
-			t.Errorf("%s hard-codes an online window literal", file)
+	for dir, pkg := range map[string]*sourcetest.Package{"nodefabric": sourcetest.Load(t, "."), "api/admin": admin} {
+		if strings.Contains(pkg.Source(), "last_seen_at > now() - interval") {
+			t.Errorf("%s hard-codes an online window literal", dir)
 		}
 	}
 }

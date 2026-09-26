@@ -1,9 +1,15 @@
+// [INPUT]: 依赖 nodeStatusLockSQL、projectNodeLifecycle，依赖 platform/sourcetest 按名取 handlers.nodeSetStatus 的源码
+// [OUTPUT]: 对外提供 TestNodeStatusLockSQLHasValidProtocolReadyCoalesce、TestLegacyTerminalNodeStatusRevokesDeliveryAndIdentity、TestProjectNodeLifecycle
+// [POS]: api/admin 节点状态处理：锁行 SQL 括号配平、退役与销毁吊销下发与身份且先取发布锁、生命周期投影表
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestNodeStatusLockSQLHasValidProtocolReadyCoalesce(t *testing.T) {
@@ -32,17 +38,7 @@ func TestNodeStatusLockSQLHasValidProtocolReadyCoalesce(t *testing.T) {
 }
 
 func TestLegacyTerminalNodeStatusRevokesDeliveryAndIdentity(t *testing.T) {
-	body, err := os.ReadFile("handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
-	start := strings.Index(src, `func (h *handlers) nodeSetStatus`)
-	end := strings.Index(src, `func projectNodeLifecycle`)
-	if start < 0 || end <= start {
-		t.Fatal("nodeSetStatus source block not found")
-	}
-	block := src[start:end]
+	block := sourcetest.Load(t, ".").Decl("handlers.nodeSetStatus")
 	for _, needle := range []string{
 		`terminal := req.Status == "retired" || req.Status == "destroyed"`,
 		`pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`,

@@ -1,9 +1,15 @@
+// [INPUT]: 依赖 preferFreshNodes、DeliveryState，依赖 platform/sourcetest 按名取 listEligibleNodesTx、api/admin 的 handlers.nodeList 与两个包的全部源码
+// [OUTPUT]: 对外提供 TestPreferFreshNodes、TestDeliveryStateMatchesEligibilitySQL、TestAdminDoesNotComputeHeartbeatInSQL
+// [POS]: subscription 心跳分层下发与后台 DeliveryState 不漂移；后台节点列表不在 SQL 里算心跳，否定检查先确认目标函数存在、再覆盖整个包
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package subscription
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 // 从未心跳的节点不能下发，心跳超时的节点不能因此让订阅变空。
@@ -54,11 +60,9 @@ func TestPreferFreshNodes(t *testing.T) {
 }
 
 func TestDeliveryStateMatchesEligibilitySQL(t *testing.T) {
-	source, err := os.ReadFile("service.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(source)
+	pkg := sourcetest.Load(t, ".")
+	// 资格查询先要存在，下面的正向断言都落在它身上
+	body := pkg.Decl("listEligibleNodesTx")
 
 	// SQL 必须排除从未心跳的节点。DeliveryState 对同样的输入也必须说不发；
 	// 少了这一条，后台会显示「在下发」而实际不发，运营查不出问题在哪。
@@ -99,7 +103,7 @@ func TestDeliveryStateMatchesEligibilitySQL(t *testing.T) {
 
 	// 窗口只能有一个出处。两处各写一个 interval 字面量，改了一处就会
 	// 出现「后台说在发、实际不发」这种查不出来的偏差。
-	if strings.Contains(body, "interval '10 minutes'") {
+	if strings.Contains(pkg.Source(), "interval '10 minutes'") {
 		t.Error("资格查询不该写死窗口字面量，应使用 HeartbeatFreshWindow")
 	}
 	if !strings.Contains(body, "HeartbeatFreshWindow.String()") {
@@ -122,17 +126,15 @@ func TestDeliveryStateMatchesEligibilitySQL(t *testing.T) {
 // 以 *time.Time 扫出来了，「从未心跳」由 nil 表达得清清楚楚，三值逻辑
 // 无从发生。这条测试锁住这个选择。
 func TestAdminDoesNotComputeHeartbeatInSQL(t *testing.T) {
-	source, err := os.ReadFile("../../api/admin/handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(source)
-
+	admin := sourcetest.Load(t, "../../api/admin")
+	// 先确认节点列表还在、且确实是在 Go 侧判定心跳（下面两条正向断言），再做否定检查；
+	// 否定检查覆盖整个 admin 包，节点列表挪到哪个文件都逃不掉
+	body := admin.Decl("handlers.nodeList")
 	for _, bad := range []string{
 		"AS beat_fresh",
 		"AS ever_seen",
 	} {
-		if strings.Contains(body, bad) {
+		if strings.Contains(admin.Source(), bad) {
 			t.Errorf("节点列表不该在 SQL 里算 %q —— NULL 心跳会求值成 NULL 而非 false，"+
 				"扫进 bool 会让整个列表 500。改用 LastBeat 指针在 Go 侧判断", bad)
 		}

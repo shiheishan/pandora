@@ -1,23 +1,19 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取 handlers.createOrder 的源码
+// [OUTPUT]: 对外提供 TestCreateOrderHandlerOwnsClaimAndPreparedResponse
+// [POS]: api/public 下单处理器自己消费幂等认领并写出预制响应，不重新编码
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestCreateOrderHandlerOwnsClaimAndPreparedResponse(t *testing.T) {
-	body, err := os.ReadFile("handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(body)
-	start := strings.Index(s, "func (h *handlers) createOrder(")
-	end := strings.Index(s[start:], "type payOrderReq struct")
-	if start < 0 || end < 0 {
-		t.Fatal("createOrder handler window not found")
-	}
-	window := s[start : start+end]
+	window := sourcetest.Load(t, ".").Decl("handlers.createOrder")
 	for _, needle := range []string{
 		"middleware.IdempotencyClaimFrom(r.Context())",
 		"middleware.ValidateIdempotencyClaim(",

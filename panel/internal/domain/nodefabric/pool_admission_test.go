@@ -1,9 +1,15 @@
+// [INPUT]: 依赖 PoolAdmitsUserSQL，依赖 platform/sourcetest 按名取 Service.ListNodeUsers 与整包源码
+// [OUTPUT]: 对外提供 TestPoolAdmitsUserSQLIsTheOnlyAdmissionRule
+// [POS]: nodefabric 节点池用户组准入只有 PoolAdmitsUserSQL 一个出处，节点用户列表恰好用一次，无池节点不当公开（R104）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 // 池限定用户组（R104）的谓词只有一份：节点拉用户与订阅下载各用一次，
@@ -35,12 +41,10 @@ func TestPoolAdmitsUserSQLIsTheOnlyAdmissionRule(t *testing.T) {
 		}()
 	}
 
-	source, err := os.ReadFile("uniproxy.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(source)
-	if strings.Count(body, `PoolAdmitsUserSQL("s.tenant_id", "$2::uuid", "s.user_id")`) != 1 {
+	pkg := sourcetest.Load(t, ".")
+	body := pkg.Source()
+	if !strings.Contains(pkg.Decl("Service.ListNodeUsers"), `PoolAdmitsUserSQL("s.tenant_id", "$2::uuid", "s.user_id")`) ||
+		strings.Count(body, `PoolAdmitsUserSQL("s.tenant_id", "$2::uuid", "s.user_id")`) != 1 {
 		t.Fatal("ListNodeUsers must apply the pool user-group admission exactly once")
 	}
 	if strings.Contains(body, "$2::uuid IS NULL") {

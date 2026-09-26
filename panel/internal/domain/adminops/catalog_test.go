@@ -1,14 +1,19 @@
+// [INPUT]: 依赖 catalog.go 的校验函数与 platform/httpx 的错误码，依赖 platform/sourcetest 按名取版本语义更新链路的源码
+// [OUTPUT]: 对外提供 TestValidatePriceAuthoringPolicy、TestValidateVersionSafeReplacement、TestVersionUpdatePoolContract、TestVersionUpdatePoolFieldPresence、TestVersionUpdateCannotMutatePoolBindings、TestPublishPrerequisitesFailClosed、TestOptimisticConflictIs409、TestPublishGroupPriceCoverage
+// [POS]: adminops 套餐目录的单元与源码契约：定价策略、版本替换、旧 pool_ids 拒绝、发布前置与双令牌冲突
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package adminops
 
 import (
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func expectHTTPCode(t *testing.T, err error, code httpx.Code) {
@@ -81,17 +86,9 @@ func TestVersionUpdatePoolFieldPresence(t *testing.T) {
 }
 
 func TestVersionUpdateCannotMutatePoolBindings(t *testing.T) {
-	b, err := os.ReadFile("catalog.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
-	start := strings.Index(src, "func (s *Service) UpdatePlanVersion")
-	end := strings.Index(src, "func (s *Service) PublishPlanVersion")
-	if start < 0 || end <= start {
-		t.Fatal("could not isolate UpdatePlanVersion source")
-	}
-	update := src[start:end]
+	// 版本语义更新的整条链：入口、入参整理、事务体
+	update := sourcetest.Load(t, ".").Decls(
+		"Service.UpdatePlanVersion", "prepareVersionSemanticsInput", "Service.updatePlanVersionTx")
 	if !strings.Contains(update, "validateVersionUpdatePoolContract(in.PoolIDs)") {
 		t.Fatal("UpdatePlanVersion does not enforce the legacy pool_ids rejection contract")
 	}
