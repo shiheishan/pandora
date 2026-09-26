@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../../core/api'
 import { preferenceSchema, quickLoginSchema, sessionSchema, telegramSchema } from './api'
-import { deviceName, formatCountdown, passwordErrors, secondsLeft, shortUserId, sortSessions, telegramDeepLink, validateNewPassword } from './model'
+import { deviceName, formatCountdown, lastSeenLabel, passwordErrors, secondsLeft, shortUserId, sortSessions, telegramDeepLink, validateNewPassword } from './model'
 
 const UA = {
   chromeMac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
@@ -22,9 +22,10 @@ const err = (status: number, message = '', fields?: Record<string, string>) =>
   new ApiError({ status, code: status === 401 ? 'unauthorized' : status === 400 ? 'bad_request' : status === 422 ? 'validation_failed' : 'internal_error', message, fields })
 
 describe('账号安全', () => {
-  it('会话 schema：country / last_seen_at / expires_at 可缺席', () => {
-    const s = sessionSchema.parse({ id: 'x', current: true, user_agent: '', created_at: '2026-09-24T00:00:00Z' })
+  it('会话 schema：country / expires_at 可缺席，last_seen_at 必填（R114）', () => {
+    const s = sessionSchema.parse({ id: 'x', current: true, user_agent: '', created_at: '2026-09-24T00:00:00Z', last_seen_at: '2026-09-25T00:00:00Z' })
     expect(s.country).toBeUndefined()
+    expect(() => sessionSchema.parse({ id: 'x', current: true, user_agent: '', created_at: '2026-09-24T00:00:00Z' })).toThrow()
   })
 
   it('Telegram schema：username 与 bot_username 是 omitempty，bound / enabled 必填', () => {
@@ -50,13 +51,21 @@ describe('账号安全', () => {
     expect(deviceName('')).toBe('未知设备')
   })
 
-  it('当前会话排最前，其余按登录时间倒序', () => {
+  it('当前会话排最前，其余按最近活跃倒序', () => {
     const list = sortSessions([
-      { id: 'a', current: false, created_at: '2026-09-20T00:00:00Z' },
-      { id: 'b', current: true, created_at: '2026-09-01T00:00:00Z' },
-      { id: 'c', current: false, created_at: '2026-09-23T00:00:00Z' },
+      { id: 'a', current: false, last_seen_at: '2026-09-20T00:00:00Z' },
+      { id: 'b', current: true, last_seen_at: '2026-09-01T00:00:00Z' },
+      { id: 'c', current: false, last_seen_at: '2026-09-23T00:00:00Z' },
     ])
     expect(list.map((s) => s.id)).toEqual(['b', 'c', 'a'])
+  })
+
+  it('最近活跃文案（R114）', () => {
+    const now = new Date('2026-09-25T12:00:00Z')
+    expect(lastSeenLabel('2026-09-25T11:59:30Z', now)).toBe('刚刚活跃')
+    expect(lastSeenLabel('2026-09-25T11:40:00Z', now)).toBe('20 分钟前活跃')
+    expect(lastSeenLabel('2026-09-25T09:00:00Z', now)).toBe('3 小时前活跃')
+    expect(lastSeenLabel('2026-09-20T09:00:00Z', now)).toMatch(/^\d{2}-\d{2} 活跃$/)
   })
 
   it('新密码：长度、字节上限、字母与数字，与后端同序', () => {

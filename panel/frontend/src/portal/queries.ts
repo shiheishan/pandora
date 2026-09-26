@@ -177,6 +177,7 @@ export function useActivePlanName(): string | null {
 // 三个列表 Go 端都以空切片初始化，没有记录时是 []，不是 null。
 // ---------------------------------------------------------------------------
 // CHECK 允许六种；Go 只写 pending / available，冲销由 SQL 写 reversed
+export const COMMISSION_SCOPES = ['every_order', 'first_order'] as const
 export const COMMISSION_ENTRY_STATUSES = ['pending', 'available', 'reversed', 'frozen', 'settled', 'rejected'] as const
 export const WITHDRAWAL_STATUSES = ['requested', 'reviewing', 'approved', 'rejected', 'processing', 'paid', 'failed', 'returned'] as const
 
@@ -193,6 +194,8 @@ export const commissionSchema = z.object({
     total_earned: z.number().int().optional(),
     rate_percent: z.number().int(),
     min_withdraw: z.number().int(),
+    // R81 / R114：计佣范围，与计提同一个兜底；first_order 时横幅写「首单」
+    scope: z.enum(COMMISSION_SCOPES),
   }),
   entries: z.array(
     z.object({

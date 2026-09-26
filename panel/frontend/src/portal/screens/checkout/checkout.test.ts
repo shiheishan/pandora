@@ -102,7 +102,7 @@ describe('订单预览', () => {
   })
 
   it('变更套餐用服务端试算：折算、优惠与退余额', () => {
-    const change = { direction: 'downgrade' as const, currency: 'CNY', subtotal: 2900, proration_credit: 4000, discount: 0, total: 0, balance_refund: 1100, current_period_end: 'a', new_period_start: 'b', new_period_end: 'c' }
+    const change = { direction: 'downgrade' as const, currency: 'CNY', subtotal: 2900, proration_credit: 4000, discount: 0, total: 0, balance_refund: 1100, current_period_end: 'a', new_period_start: 'b', new_period_end: 'c', coupon: null }
     expect(buildQuote({ subtotal: 0, currency: 'CNY', discount: 0, change, balance: 5000, useBalance: true })).toEqual({ currency: 'CNY', subtotal: 2900, discount: 0, credit: 4000, due: 0, balanceApplied: 0, payable: 0, refund: 1100 })
   })
 })

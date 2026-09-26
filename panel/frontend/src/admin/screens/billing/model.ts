@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 formatDateTime / formatMoney / relativeTime，依赖 ../users/model 的 ORDER_STATUS_VIEW / orderWhat / parseYuan / REASON_MIN / Tone（订单词汇与元转分同一口径），依赖 ../plans/model 的 periodLabel，依赖 ./schemas 的类型
- * [OUTPUT]: 对外提供订单（ORDER_FILTERS / OrderFilter / isOrderFilter / filterStatuses、ORDER_STATUS_VIEW、orderWhat、channelLabel、sourceLabel、canMarkPaid、canCancel、PayLine / paymentLines、orderFacts）、人工开单（Settlement / SETTLEMENTS / ManualForm / emptyManual / PriceChoice / priceChoices / manualProblems / manualBody）、通用校验（reasonProblem / referenceProblem、REASON_MAX / REFERENCE_MAX）、后端英文文案的中文映射 knownMessage、挂账（LATE_FILTERS / LateFilter / isLateFilter、LATE_STATUS_VIEW、lateReason、ageDays、pendingTotals）、渠道（isOffline、providerMode / ProviderMode、toggleBody、todayLabel、rateLabel、providerNote）、收入调整（AdjustForm / emptyAdjust / adjustProblems / adjustBody、adjustmentView、reverseReason、todayLocal、ADJUST_MAX）
+ * [OUTPUT]: 对外提供订单（ORDER_FILTERS / OrderFilter / isOrderFilter / filterStatuses、ORDER_STATUS_VIEW、orderWhat、channelLabel、sourceLabel、canMarkPaid、canCancel、PayLine / paymentLines、orderFacts）、人工开单（Settlement / SETTLEMENTS / ManualForm / emptyManual / PriceChoice / priceChoices / manualProblems / manualBody）、通用校验（reasonProblem / referenceProblem、REASON_MAX / REFERENCE_MAX）、挂账（LATE_FILTERS / LateFilter / isLateFilter、LATE_STATUS_VIEW、lateReason、ageDays、pendingTotals）、渠道（isOffline、providerMode / ProviderMode、toggleBody、todayLabel、rateLabel、providerNote）、收入调整（AdjustForm / emptyAdjust / adjustProblems / adjustBody、adjustmentView、reverseReason、todayLocal、ADJUST_MAX）
  * [POS]: admin/screens/billing 的纯逻辑：契约后台-05 的状态分组与映射、渠道兜底（余额 / 人工）、支付记录「以支付尝试为行、有入账看入账」、挂账文案（保留规则 6：平台欠用户的钱）、渠道开关到 enabled / accepting_new 的映射（PAY-009）、各写接口的前端预检（与 Go 同规则、fields 键名同后端）；不碰 React 与网络，model.test.ts 覆盖
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -39,8 +39,8 @@ export function filterStatuses(f: OrderFilter): string | undefined {
 }
 
 /**
- * 渠道列：有入账或支付尝试就是渠道名；否则全额余额支付显示「余额」，人工单显示「人工」（列表行
- * 没有人工标识，只有详情里 manual_reason 才知道，所以列表传不了 manual），其余「—」
+ * 渠道列：有入账或支付尝试就是渠道名；否则全额余额支付显示「余额」，人工单显示「人工」（抽屉按
+ * manual_reason 传；列表的人工单改在订单号旁挂「人工」标识，R114），其余「—」
  */
 export function channelLabel(o: Pick<OrderRow, 'provider_name' | 'balance_applied' | 'total_amount'>, manual = false): string {
   if (o.provider_name) return o.provider_name
@@ -179,21 +179,6 @@ export function referenceProblem(text: string): string | null {
   if (n === 0) return '请填写线下凭证号（银行流水号、收据编号等）'
   if (n > REFERENCE_MAX) return `凭证号最多 ${REFERENCE_MAX} 个字`
   return null
-}
-
-/**
- * 后端几处 message 还是英文（billing 域的 409 / 400，契约 R74 与后台-05 取消订单）：页面按原文映射成中文，
- * 认不出的原样显示
- */
-const KNOWN: Record<string, string> = {
-  'provider payment is already attached to another order': '凭证号已用于其他订单',
-  'order has successful payment evidence': '这张订单已有入账，不能取消',
-  'order cannot enter the requested release state': '订单状态已经变了（可能已支付、已取消或被他人处理），已刷新到最新',
-  'reason must be 5 to 500 characters': `取消原因需要 ${REASON_MIN} 到 ${REASON_MAX} 个字`,
-  'unknown payment provider': '找不到线下收款渠道（offline），请联系运维核对租户的支付渠道',
-}
-export function knownMessage(message: string): string | null {
-  return KNOWN[message] ?? null
 }
 
 // ===========================================================================

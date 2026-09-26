@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useCallback / useEffect / useState，依赖 ../../../core/format 的 formatMoney / relativeTime，依赖 ../../../core/router 的 href / navigate / useHashLocation / RouteQuery，依赖 ../../../ui 的 Button / Empty / IconClose / Pager / QueryView / Segmented / Table / Tag，依赖 ../../actions 的 useCan，依赖 ./api 的 useOrders / ORDERS_PAGE / OrderRow，依赖 ./model，依赖 ./OrderDrawer，依赖 ./ManualOrder，依赖 ./Billing.module.css
  * [OUTPUT]: 对外提供 OrdersTab
- * [POS]: 订单与收款「订单」标签（后台-05）：搜索（订单号 / 邮箱，防抖）、状态分段（R63 多值）、按用户筛选的标签（从用户抽屉 ?user_id= 进来）、「人工开单」、七列表格（行点击或 Enter 打开抽屉）与分页；打开的订单在地址第三段 #/billing/orders/<id>，人工开单弹窗是 ?new=1 或 ?new=<用户 id>（用户抽屉「为其开单」），刷新与分享都落在同一处
+ * [POS]: 订单与收款「订单」标签（后台-05）：搜索（订单号 / 邮箱，防抖）、状态分段（R63 多值）、按用户筛选的标签（从用户抽屉 ?user_id= 进来）、「人工开单」、七列表格（人工单在订单号旁挂「人工」标识，R114；行点击或 Enter 打开抽屉）与分页；打开的订单在地址第三段 #/billing/orders/<id>，人工开单弹窗是 ?new=1 或 ?new=<用户 id>（用户抽屉「为其开单」），刷新与分享都落在同一处
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useCallback, useEffect, useState } from 'react'
@@ -123,7 +123,22 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
 
 function columns(now: Date): TableColumn<OrderRow>[] {
   return [
-    { key: 'no', header: '订单号', width: '160px', mono: true, render: (o) => o.order_no },
+    {
+      key: 'no',
+      header: '订单号',
+      width: '160px',
+      mono: true,
+      render: (o) => (
+        <>
+          {o.order_no}
+          {o.manual && (
+            <Tag tone="outline" className={css.manualTag}>
+              人工
+            </Tag>
+          )}
+        </>
+      ),
+    },
     { key: 'user', header: '用户', render: (o) => <span className={css.ellipsis}>{o.user_email}</span> },
     { key: 'what', header: '内容', render: (o) => <span className={`${css.muted} ${css.ellipsis}`}>{orderWhat(o)}</span> },
     { key: 'amount', header: '金额', width: '100px', align: 'right', mono: true, render: (o) => formatMoney(o.total_amount, o.currency) },

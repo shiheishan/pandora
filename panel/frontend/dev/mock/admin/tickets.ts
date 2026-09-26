@@ -1,11 +1,12 @@
 /**
- * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule / MockContext / MockResult
+ * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule / MockContext / MockResult，依赖 ./billing-store 的 orders（详情的关联订单）
  * [OUTPUT]: 对外提供 tickets 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「工单（后台-02）」假接口，归后台前端一；队列（多状态、指派人、q、breached、分页、后端的排序）、详情、客服回复与内部备注、指派、改状态（含人工升级提优先级、closed_reason）、SLA 扫描、可指派目录、快捷回复四接口，形状与副作用照 api-contract.md 后台-02（含修订 R25 / R42 / R60）与 domain/support/service.go
+ * [POS]: dev/mock/admin 的「工单（后台-02）」假接口，归后台前端一；队列（多状态、指派人、q、breached、分页、后端的排序）、详情、客服回复与内部备注、指派、改状态（含人工升级提优先级、closed_reason）、SLA 扫描、可指派目录、快捷回复四接口，形状与副作用照 api-contract.md 后台-02（含修订 R25 / R42 / R60 / R114：详情 related_order 联表、message_count 与 last_reply_at 与队列同口径）与 domain/support/service.go
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { MockContext, MockModule, MockResult } from '../types.ts'
+import { orders } from './billing-store.ts'
 
 // ---------------------------------------------------------------------------
 // 状态放在模块级变量里，vite 重启即复原。时间相对启动时刻生成。
@@ -41,6 +42,8 @@ interface Row {
   first_responded_at: string | null
   escalated_at: string | null
   closed_reason: 'user_closed' | 'withdrawn' | 'agent_closed' | null
+  /** 用户建单时关联的订单（related_order_id）；详情联表出 { id, order_no } */
+  related_order_id: string | null
   messages: Msg[]
 }
 
@@ -95,6 +98,7 @@ function seed(
     first_responded_at: messages.find((m) => m.author_kind === 'agent' && !m.internal_note)?.created_at ?? null,
     escalated_at: null,
     closed_reason: null,
+    related_order_id: null,
     messages,
     ...extra,
   }
@@ -159,6 +163,14 @@ const rows: Row[] = [
   }),
 ]
 
+// R114：4818（付款后仍待支付）关联一张待支付订单，详情头能看到「关联订单」
+const unpaid = orders.find((o) => o.status === 'pending_payment')
+const billingTicket = rows.find((r) => r.ticket_no.endsWith('4818'))
+if (unpaid && billingTicket) {
+  billingTicket.related_order_id = unpaid.id
+  billingTicket.messages[0]!.body = `已经扣款了，订单 ${unpaid.order_no} 还是待支付。`
+}
+
 // 再造一批旧工单，让「加载更多」有东西可翻
 for (let i = 0; i < 26; i++) {
   rows.push(
@@ -182,6 +194,11 @@ function breached(t: Row): boolean {
   return t.first_responded_at === null && Date.parse(t.sla_first_response_due) < Date.now() && t.status !== 'resolved' && t.status !== 'closed'
 }
 
+function relatedOrder(t: Row): { id: string; order_no: string } | null {
+  const o = t.related_order_id ? orders.find((x) => x.id === t.related_order_id) : undefined
+  return o ? { id: o.id, order_no: o.order_no } : null
+}
+
 function lastReplyAt(t: Row): string {
   return t.messages.reduce((max, m) => (m.created_at > max ? m.created_at : max), t.created_at)
 }
@@ -201,12 +218,12 @@ function view(t: Row, assignees: ReadonlyArray<{ id: string; email: string }>, d
     user_email: t.user_email,
     sla_first_response_due: t.sla_first_response_due,
     sla_resolution_due: t.sla_resolution_due,
+    // R114：详情的计数与最后回复与队列同口径（内部备注、系统消息都算，没有消息时取建单时间）
     message_count: t.messages.length,
-    // 后端详情不扫 last_reply_at，恒为零值时间（已报告协调会话）；假后端照做，前端不依赖它
-    last_reply_at: detail ? '0001-01-01T00:00:00Z' : lastReplyAt(t),
+    last_reply_at: lastReplyAt(t),
     closed_reason: t.closed_reason,
-    // 后台两条接口都不填 related_order（只有门户详情填）
-    related_order: null,
+    // R114：详情按 related_order_id 联表出 { id, order_no }；队列恒为 null
+    related_order: detail ? relatedOrder(t) : null,
   }
   if (t.assigned_to) {
     out.assigned_to = t.assigned_to

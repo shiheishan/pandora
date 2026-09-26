@@ -15,8 +15,9 @@ const TELEGRAM_KEY = [...PREFIX, 'telegram'] as const
 const PREFS_KEY = [...PREFIX, 'preferences'] as const
 
 // ---------------------------------------------------------------------------
-// 会话：Go SessionInfo，country / last_seen_at / expires_at 都是 omitempty；
-// last_seen_at 从不更新（修订 R62）、country 无人写入（D-F-3），页面都不显示
+// 会话：Go SessionInfo，country / expires_at 是 omitempty；last_seen_at 虽是 omitempty 指针，
+// 但库里 NOT NULL 恒有值，由认证中间件 5 分钟一次刷新（R62 / R114），页面显示「最近活跃」；
+// country 无人写入（D-F-3），不显示
 // ---------------------------------------------------------------------------
 export const sessionSchema = z.object({
   id: z.string(),
@@ -24,7 +25,7 @@ export const sessionSchema = z.object({
   user_agent: z.string(),
   country: z.string().optional(),
   created_at: z.string(),
-  last_seen_at: z.string().optional(),
+  last_seen_at: z.string(),
   expires_at: z.string().optional(),
 })
 export type Session = z.output<typeof sessionSchema>

@@ -17,7 +17,7 @@ import css from './Account.module.css'
 import { useChangePassword, useIssueQuickLogin, useRevokeSession, useSessions, type Session } from './api'
 import { useNow } from './clock'
 import { NotificationPrefsCard, TelegramCard } from './Connections'
-import { deviceName, passwordErrors, secondsLeft, shortUserId, sortSessions, validateNewPassword, type PasswordErrors } from './model'
+import { deviceName, lastSeenLabel, passwordErrors, secondsLeft, shortUserId, sortSessions, validateNewPassword, type PasswordErrors } from './model'
 
 export default function Account() {
   const runtime = useRuntime()
@@ -197,8 +197,8 @@ function QuickLoginCard() {
 }
 
 // ---------------------------------------------------------------------------
-// 登录会话：只列门户会话（修订 R15）；位置与 IP 按 D-F-3（已决）不显示、最近活跃未实现（修订 R62），
-// meta 只写登录时间；当前会话标「当前」、不能下线
+// 登录会话：只列门户会话（修订 R15）；位置与 IP 按 D-F-3（已决）不显示；meta 写最近活跃与登录时间
+// （last_seen_at 由认证中间件 5 分钟一次刷新，R62 / R114）；当前会话标「当前」、不能下线
 // ---------------------------------------------------------------------------
 function SessionsCard() {
   const sessions = useSessions()
@@ -228,7 +228,9 @@ function SessionRow({ session }: { session: Session }) {
           {name}
           {session.current && <Tag tone="ok">当前</Tag>}
         </div>
-        <div className={css.sessionMeta}>登录于 {formatDateTime(session.created_at)}</div>
+        <div className={css.sessionMeta}>
+          {lastSeenLabel(session.last_seen_at)} · 登录于 {formatDateTime(session.created_at)}
+        </div>
       </div>
       {!session.current && (
         <Button

@@ -7,7 +7,7 @@
 
 成员清单
 index.tsx: 页面组件——载入目录与订阅、按模式建表单（整块按模式与目标重建），周期 / 容量单选、优惠码（试算失败显示后端原文、不带进下单）、余额开关、支付方式、订单预览与提交；异常地址、停售、不可续费各有空状态；续费 / 变更互斥 409 引导去订单页
-model.ts: 纯逻辑——resolveMode、periodOptions、defaultPriceId、isRepriced、buildQuote、orderRequest（四种下单请求体，可选字段不用不传）、couponPreviewBody、couponNote、normalizeCoupon
+model.ts: 纯逻辑——resolveMode、periodOptions、defaultPriceId、isRepriced、buildQuote、orderRequest（四种下单请求体，可选字段不用不传）、couponPreviewBody、couponNote（变更套餐试算也按券面写，R114）、normalizeCoupon
 Checkout.module.css: 页面样式，取自设计稿门户-03 结账部分
 checkout.test.ts: 第 ② 步的单元测试（结账模式、改价、预览、请求体、优惠码、目录文案、选购页入口、支付回跳地址与成功文案）
 

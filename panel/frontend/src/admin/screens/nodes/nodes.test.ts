@@ -10,6 +10,7 @@ import {
   bandwidthBuckets,
   basicFromRow,
   batchPlan,
+  activationHint,
   canActivate,
   canMove,
   clearableSecret,
@@ -233,6 +234,12 @@ describe('protocol form', () => {
   it('R108: offers 上线 only while the lifecycle sits between attesting and canary', () => {
     for (const status of ['attesting', 'installing', 'validating', 'standby', 'canary']) expect(canActivate({ status })).toBe(true)
     for (const status of ['draft', 'bootstrapping', 'active', 'retired', 'destroyed', 'bootstrap_failed', 'quarantined']) expect(canActivate({ status })).toBe(false)
+  })
+
+  it('R113: activation warnings read as next-step hints, unknown ones pass through', () => {
+    expect(activationHint('所在节点池没有绑定任何套餐，暂时不服务任何用户')).toContain('下一步到「套餐」页')
+    expect(activationHint('未划入节点池，不服务任何用户')).toContain('下一步在「协议参数」里')
+    expect(activationHint('别的提示')).toBe('已上线。别的提示')
   })
 
   it('knows when REALITY applies and what changed', () => {

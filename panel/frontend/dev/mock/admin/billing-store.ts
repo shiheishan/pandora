@@ -355,6 +355,8 @@ export function orderRow(o: Order) {
     interval: first?.interval ?? '',
     interval_count: first?.interval_count ?? 0,
     item_count: o.items.length,
+    // R95 / R114：manual_reason 非空即人工单，与详情「来源」同口径
+    manual: o.manual_reason !== null,
   }
 }
 

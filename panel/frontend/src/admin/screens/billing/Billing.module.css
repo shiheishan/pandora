@@ -32,6 +32,12 @@
   font-size: var(--fs-caption);
 }
 
+/* R95 / R114：人工单标识，跟在订单号后 */
+.manualTag {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
 .num {
   font-variant-numeric: tabular-nums;
 }

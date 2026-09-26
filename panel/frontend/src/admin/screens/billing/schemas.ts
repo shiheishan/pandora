@@ -55,6 +55,8 @@ export const orderRowSchema = z.object({
   interval: z.string(),
   interval_count: int,
   item_count: int,
+  // R95 / R114：manual_reason 非空即人工单（开单人仍只在详情里）
+  manual: z.boolean(),
 })
 export const ordersSchema = z.object({ orders: z.array(orderRowSchema), total: count })
 export type OrderRow = z.output<typeof orderRowSchema>

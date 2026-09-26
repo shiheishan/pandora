@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 formatMoney，依赖 ../common/traffic 的 shortDate，依赖 ../../queries 的 Commission 类型，依赖 ./api 的 Invite 类型
  * [OUTPUT]: 对外提供 inviteLink、headline、inviteUsage、parseWithdrawAmount、withdrawBlock、CommissionRecord / RecordTone、commissionRecords
- * [POS]: portal/screens/referral 的纯映射（契约门户-06）：邀请链接 /?invite=、横幅文案（公开接口没有计佣范围，不写「首单」）、邀请码用量、提现金额元 → 分与上下限、提现表单何时锁住、三类记录（佣金 / 转入余额 / 提现）合并成「佣金记录」；有单元测试
+ * [POS]: portal/screens/referral 的纯映射（契约门户-06）：邀请链接 /?invite=、横幅文案（按 summary.scope，first_order 才写「首单」，R114）、邀请码用量、提现金额元 → 分与上下限、提现表单何时锁住、三类记录（佣金 / 转入余额 / 提现）合并成「佣金记录」；有单元测试
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatMoney } from '../../../core/format'
@@ -12,11 +12,11 @@ import type { Invite } from './api'
 /** 契约门户-06：/r/CODE 会撞 public 网关根下的订阅通配，邀请链接用查询串 */
 export const inviteLink = (code: string, origin: string) => `${origin}/?invite=${encodeURIComponent(code)}`
 
-/**
- * 横幅标题。「首单」只在计佣范围是 first_order 时成立（修订 R67），而门户的佣金概况不回 scope，
- * 所以两种范围都成立的说法；费率为 0 时不提佣金。
- */
-export const headline = (ratePercent: number) => (ratePercent > 0 ? `邀请好友付费，您得 ${ratePercent}% 佣金` : '邀请好友注册')
+/** 横幅标题：按计佣范围写（R81 / R114），first_order 才说「首单」；费率为 0 时不提佣金 */
+export function headline(ratePercent: number, scope: Commission['summary']['scope']): string {
+  if (ratePercent <= 0) return '邀请好友注册'
+  return scope === 'first_order' ? `好友首单付费，您得 ${ratePercent}% 佣金` : `邀请好友付费，您得 ${ratePercent}% 佣金`
+}
 
 /** 邀请码有使用上限时的一句说明；没有上限返回 null */
 export function inviteUsage(invite: Invite['invite']): { text: string; exhausted: boolean } | null {
