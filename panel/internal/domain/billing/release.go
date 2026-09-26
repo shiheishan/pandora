@@ -117,10 +117,10 @@ func (s *Service) AdminCancelOrder(ctx context.Context, tenantID string,
 	in AdminCancelOrderInput) (*ReleaseOrderOutput, error) {
 	in.Reason = strings.TrimSpace(in.Reason)
 	if tenantID == "" || in.OrderID == "" || in.ActorID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant, actor and order are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户、操作人或订单")
 	}
 	if _, err := uuid.Parse(in.ActorID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "actor identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "操作人标识不正确")
 	}
 	if _, err := uuid.Parse(in.OrderID); err != nil {
 		return nil, httpx.NotFoundOrForbidden()
@@ -168,13 +168,13 @@ func (s *Service) CancelOrder(ctx context.Context, tenantID, userID,
 	orderID string) (*ReleaseOrderOutput, error) {
 
 	if tenantID == "" || userID == "" || orderID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant, user and order are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户、用户或订单")
 	}
 	if _, err := uuid.Parse(userID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "user identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "用户标识不正确")
 	}
 	if _, err := uuid.Parse(orderID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "order identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "订单标识不正确")
 	}
 
 	actorID := userID

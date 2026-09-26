@@ -158,13 +158,13 @@ func (s *Service) ApplyLatePaymentToBalance(ctx context.Context, tenantID string
 
 	in.Reason = strings.TrimSpace(in.Reason)
 	if tenantID == "" || in.CaseID == "" || in.ActorID == "" {
-		return "", httpx.New(httpx.CodeBadRequest, "tenant, actor and case are required")
+		return "", httpx.New(httpx.CodeBadRequest, "缺少租户、操作人或迟到付款记录")
 	}
 	if _, err := uuid.Parse(in.CaseID); err != nil {
 		return "", httpx.NotFoundOrForbidden()
 	}
 	if _, err := uuid.Parse(in.ActorID); err != nil {
-		return "", httpx.New(httpx.CodeBadRequest, "actor identifier is invalid")
+		return "", httpx.New(httpx.CodeBadRequest, "操作人标识不正确")
 	}
 	if n := utf8.RuneCountInString(in.Reason); n < 5 || n > 500 {
 		return "", httpx.Invalid(map[string]string{

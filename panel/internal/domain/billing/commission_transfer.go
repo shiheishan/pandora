@@ -38,10 +38,10 @@ func (s *Service) TransferCommissionToBalance(ctx context.Context,
 	tenantID, userID string, amount int64) (string, error) {
 
 	if tenantID == "" || userID == "" {
-		return "", httpx.New(httpx.CodeBadRequest, "tenant and user are required")
+		return "", httpx.New(httpx.CodeBadRequest, "缺少租户或用户")
 	}
 	if _, err := uuid.Parse(userID); err != nil {
-		return "", httpx.New(httpx.CodeBadRequest, "user identifier is invalid")
+		return "", httpx.New(httpx.CodeBadRequest, "用户标识不正确")
 	}
 	if amount <= 0 {
 		return "", httpx.Invalid(map[string]string{"amount": "转入金额必须大于 0"})
