@@ -4,6 +4,9 @@ umask 077
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCE="$ROOT/cmd/pandora-cic-journal/main_linux.go"
+# Linux 实现按主题分在多个 *_linux.go 里（面板重构第 5 阶段 ②）：静态检查对整组源码做，
+# 构建约束逐个文件要求，否定检查任一文件命中即失败。
+SOURCES=("$ROOT"/cmd/pandora-cic-journal/*_linux.go)
 TEST_SOURCE="$ROOT/cmd/pandora-cic-journal/main_linux_test.go"
 AMD64="$ROOT/cmd/pandora-cic-journal/syscall_linux_amd64.go"
 ARM64="$ROOT/cmd/pandora-cic-journal/syscall_linux_arm64.go"
@@ -15,66 +18,68 @@ fail() {
   exit 1
 }
 
-for path in "$SOURCE" "$TEST_SOURCE" "$AMD64" "$ARM64" "$UNSUPPORTED" "$README"; do
+for path in "$SOURCE" "${SOURCES[@]}" "$TEST_SOURCE" "$AMD64" "$ARM64" "$UNSUPPORTED" "$README"; do
   [[ -f "$path" ]] || fail source_missing
 done
 
-grep -Fq '//go:build linux && (amd64 || arm64)' "$SOURCE" || fail linux_build_tag_missing
-grep -Fq 'linuxSYSOpenat2     = 437' "$SOURCE" || fail openat2_syscall_missing
-grep -Fq 'resolveBeneath | resolveNoSymlinks | resolveNoMagicLinks' "$SOURCE" ||
+for path in "${SOURCES[@]}"; do
+  grep -Fq '//go:build linux && (amd64 || arm64)' "$path" || fail linux_build_tag_missing
+done
+grep -Fq 'linuxSYSOpenat2     = 437' "${SOURCES[@]}" || fail openat2_syscall_missing
+grep -Fq 'resolveBeneath | resolveNoSymlinks | resolveNoMagicLinks' "${SOURCES[@]}" ||
   fail openat2_resolution_policy_missing
-grep -Fq 'syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|linuxONoFollow|linuxOCloExec' "$SOURCE" ||
+grep -Fq 'syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|linuxONoFollow|linuxOCloExec' "${SOURCES[@]}" ||
   fail exclusive_stage_open_missing
-grep -Fq 'rand.Reader' "$SOURCE" || fail csprng_missing
-grep -Fq 'renameAt2NoReplace' "$SOURCE" || fail renameat2_missing
-grep -Fq 'renameNoReplace' "$SOURCE" || fail rename_noreplace_missing
-grep -Fq 'syscall.Fdatasync' "$SOURCE" || fail fdatasync_missing
-grep -Fq 'journalFsync(journalFD)' "$SOURCE" ||
+grep -Fq 'rand.Reader' "${SOURCES[@]}" || fail csprng_missing
+grep -Fq 'renameAt2NoReplace' "${SOURCES[@]}" || fail renameat2_missing
+grep -Fq 'renameNoReplace' "${SOURCES[@]}" || fail rename_noreplace_missing
+grep -Fq 'syscall.Fdatasync' "${SOURCES[@]}" || fail fdatasync_missing
+grep -Fq 'journalFsync(journalFD)' "${SOURCES[@]}" ||
   fail directory_fsync_missing
-[[ "$(grep -Fc 'journalFsync(runFD)' "$SOURCE")" -ge 2 ]] ||
+[[ "$(cat "${SOURCES[@]}" | grep -Fc 'journalFsync(runFD)')" -ge 2 ]] ||
   fail source_directory_fsync_missing
-if grep -Fq 'syscall.O_APPEND' "$SOURCE"; then
+if grep -Fq 'syscall.O_APPEND' "${SOURCES[@]}"; then
   fail mutable_append_present
 fi
-grep -Fq 'syscall.Flock(journalFD, syscall.LOCK_EX)' "$SOURCE" ||
+grep -Fq 'syscall.Flock(journalFD, syscall.LOCK_EX)' "${SOURCES[@]}" ||
   fail append_lock_missing
-grep -Fq 'stat.Uid != 0' "$SOURCE" || fail root_owner_check_missing
-grep -Fq 'stat.Mode&07777 != 0600' "$SOURCE" || fail exact_mode_check_missing
-grep -Fq 'stat.Nlink != 1' "$SOURCE" || fail nlink_check_missing
-grep -Fq 'sameFileIdentity' "$SOURCE" || fail dev_inode_recheck_missing
-grep -Fq 'journal_root_device_mismatch' "$SOURCE" || fail root_device_binding_missing
-grep -Fq 'expected_journal_sha256_mismatch' "$SOURCE" ||
+grep -Fq 'stat.Uid != 0' "${SOURCES[@]}" || fail root_owner_check_missing
+grep -Fq 'stat.Mode&07777 != 0600' "${SOURCES[@]}" || fail exact_mode_check_missing
+grep -Fq 'stat.Nlink != 1' "${SOURCES[@]}" || fail nlink_check_missing
+grep -Fq 'sameFileIdentity' "${SOURCES[@]}" || fail dev_inode_recheck_missing
+grep -Fq 'journal_root_device_mismatch' "${SOURCES[@]}" || fail root_device_binding_missing
+grep -Fq 'expected_journal_sha256_mismatch' "${SOURCES[@]}" ||
   fail whole_file_sha_binding_missing
-grep -Fq 'chainedDigest' "$SOURCE" || fail hash_chain_missing
-grep -Fq 'manifestDigest' "$SOURCE" || fail immutable_manifest_missing
-grep -Fq 'writeImmutableRecordAt' "$SOURCE" || fail immutable_record_publish_missing
-grep -Fq 'recoverPublishedAppend' "$SOURCE" || fail post_rename_recovery_missing
-grep -Fq 'journal_segment_publish_noreplace_failed' "$SOURCE" ||
+grep -Fq 'chainedDigest' "${SOURCES[@]}" || fail hash_chain_missing
+grep -Fq 'manifestDigest' "${SOURCES[@]}" || fail immutable_manifest_missing
+grep -Fq 'writeImmutableRecordAt' "${SOURCES[@]}" || fail immutable_record_publish_missing
+grep -Fq 'recoverPublishedAppend' "${SOURCES[@]}" || fail post_rename_recovery_missing
+grep -Fq 'journal_segment_publish_noreplace_failed' "${SOURCES[@]}" ||
   fail segment_noreplace_missing
-grep -Fq 'journal_non_utf8' "$SOURCE" || fail utf8_rejection_missing
-grep -Fq 'journal_cr_or_nul' "$SOURCE" || fail cr_nul_rejection_missing
-grep -Fq 'journal_key_missing_duplicate_or_reordered' "$SOURCE" ||
+grep -Fq 'journal_non_utf8' "${SOURCES[@]}" || fail utf8_rejection_missing
+grep -Fq 'journal_cr_or_nul' "${SOURCES[@]}" || fail cr_nul_rejection_missing
+grep -Fq 'journal_key_missing_duplicate_or_reordered' "${SOURCES[@]}" ||
   fail canonical_order_rejection_missing
-grep -Fq 'journal_trailing_bytes_after_closed' "$SOURCE" ||
+grep -Fq 'journal_trailing_bytes_after_closed' "${SOURCES[@]}" ||
   fail terminal_trailing_bytes_rejection_missing
-grep -Fq '"intent": {' "$SOURCE" || fail intent_schema_missing
-grep -Fq '"catalog": {' "$SOURCE" || fail catalog_schema_missing
-grep -Fq '"drop": {' "$SOURCE" || fail drop_schema_missing
-grep -Fq '"close": {' "$SOURCE" || fail close_schema_missing
-grep -Fq 'catalog_expected_hash_mismatch' "$SOURCE" ||
+grep -Fq '"intent": {' "${SOURCES[@]}" || fail intent_schema_missing
+grep -Fq '"catalog": {' "${SOURCES[@]}" || fail catalog_schema_missing
+grep -Fq '"drop": {' "${SOURCES[@]}" || fail drop_schema_missing
+grep -Fq '"close": {' "${SOURCES[@]}" || fail close_schema_missing
+grep -Fq 'catalog_expected_hash_mismatch' "${SOURCES[@]}" ||
   fail catalog_intent_binding_missing
-grep -Fq 'drop_transition_or_catalog_identity_invalid' "$SOURCE" ||
+grep -Fq 'drop_transition_or_catalog_identity_invalid' "${SOURCES[@]}" ||
   fail drop_binding_missing
-grep -Fq 'close_transition_invalid' "$SOURCE" || fail close_state_gate_missing
+grep -Fq 'close_transition_invalid' "${SOURCES[@]}" || fail close_state_gate_missing
 grep -Fq 'TestUnpublishedFaultsNeverCreateJournalSegment' "$TEST_SOURCE" ||
   fail fault_injection_test_missing
 for vector in short-write enospc fdatasync file-fsync TestKillWindowsLeavePublishedRecordAbsentOrComplete TestDirectoryFsyncFailureHasIdempotentExactRecovery; do
   grep -Fq "$vector" "$TEST_SOURCE" || fail "fault_vector_${vector}_missing"
 done
-if grep -Fq '"os/exec"' "$SOURCE"; then
+if grep -Fq '"os/exec"' "${SOURCES[@]}"; then
   fail exec_capability_present
 fi
-if grep -Eq '"(github\.com|golang\.org|gopkg\.in)/' "$SOURCE"; then
+if grep -Eq '"(github\.com|golang\.org|gopkg\.in)/' "${SOURCES[@]}"; then
   fail non_standard_library_import_present
 fi
 
