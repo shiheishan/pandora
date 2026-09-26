@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/admin 的 NewRouter
 // [OUTPUT]: 对外提供 可执行入口 aegis-admin：装配管理控制台网关并启动工单超时升级、定时公告、配额周期滚动、佣金解冻等后台循环
-// [POS]: panel/cmd 的 admin 网关进程，与 aegis-public 分进程分端口；mark-paid 与人工开单履约后的节点通知经 nodefabric.NotifyUsersChanged 发出；客服回复通知经 support.SetReplyNotifier 接到 notify，只排队不派发
+// [POS]: panel/cmd 的 admin 网关进程，与 aegis-public 分进程分端口；mark-paid 与人工开单履约后的节点通知经 nodefabric.NotifyUsersChanged 发出；客服回复通知经 support.SetReplyNotifier 接到 notify，只排队不派发；通知收件人哈希用 crypto.NotifyRecipientSalt（与 public 同盐）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Command aegis-admin 是管理控制台网关（Admin 域）。
@@ -141,7 +141,8 @@ func run() error {
 	// 发布只经 nodefabric 的 NotifyUsersChanged 一处
 	billingSvc.SetUsersChangedNotifier(nodeSvc.NotifyUsersChanged)
 	// 管理端只用它把到点的定时公告转正、给工单回复排队，不投递任何消息，所以没有 sender
-	notifySvc := notify.New(pool, log, cfg.MasterKey)
+	// 收件人哈希用通知专用盐，与 public 网关同一个，同一收件人两边算出同一个值
+	notifySvc := notify.New(pool, log, crypto.NotifyRecipientSalt(cfg.MasterKey))
 	// 客服非内部回复在同一事务里给提单人排 ticket.replied（R115）。本进程不跑派发
 	// 循环，Kick 在这里是空操作，排好的通知由 public 网关的扫描循环投递
 	supportSvc.SetReplyNotifier(notifySvc)

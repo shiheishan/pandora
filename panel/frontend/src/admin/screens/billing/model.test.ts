@@ -219,6 +219,7 @@ describe('late payments, providers and adjustments', () => {
   it('words late cases as money owed to the user and totals per currency (R3)', () => {
     expect(lateReason({ case_kind: 'released_order', order_no: 'PD1' })).toBe('订单取消后到账 · PD1')
     expect(lateReason({ case_kind: 'excess_capture', order_no: 'PD2' })).toBe('超额扣款 · PD2')
+    expect(lateReason({ case_kind: 'ineligible_subscription', order_no: 'PD3' })).toBe('订阅已结束后到账 · PD3')
     expect(pendingTotals({ USD: 120, CNY: 700000, EUR: 0 })).toEqual(['¥7,000.00', '$1.20'])
     expect(pendingTotals({})).toEqual([])
     expect(ageDays('2026-09-20T12:00:00Z', new Date('2026-09-24T11:00:00Z'))).toBe(3)

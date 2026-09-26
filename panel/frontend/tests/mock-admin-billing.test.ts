@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close / bearer / mockFetch，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/billing/schemas 的订单与收款 schema
  * [OUTPUT]: 对外提供订单与收款（后台-05）假接口的测试
- * [POS]: tests 的后台订单与收款假后端守卫：只读账号只看得到订单列表（支付记录、挂账、渠道、调整整块 404，人工开单先 404 不弹 reauth）；仪表盘「超时未支付」与待支付筛选同一份数据；订单列表能被页面 schema 接住、多值状态与未知状态 400、按 user_id 精确筛选且与用户详情的最近订单同一份数据；人工开单先 reauth、三种结算、201 重放、余额扣除 422、凭证号重复 409（中文原文，R114）；标记已支付开通订阅；取消的 state_version CAS、重放与已支付拒绝（与 Go 同序同文案，R114）；挂账按币种合计、转入余额记到用户余额且只能一次；渠道启停；收入调整登记、生效日上限、冲销与重复冲销 409。起服务与发请求用 tests/mock-helpers.ts，登录与 reauth 辅助留在本文件（登录带状态断言）
+ * [POS]: tests 的后台订单与收款假后端守卫：只读账号只看得到订单列表（支付记录、挂账、渠道、调整整块 404，人工开单先 404 不弹 reauth）；仪表盘「超时未支付」与待支付筛选同一份数据；订单列表能被页面 schema 接住、多值状态与未知状态 400、按 user_id 精确筛选且与用户详情的最近订单同一份数据；人工开单先 reauth、三种结算、201 重放、余额扣除 422、凭证号重复 409（中文原文，R114）；标记已支付开通订阅；取消的 state_version CAS、重放与已支付拒绝（与 Go 同序同文案，R114）；挂账按币种合计、转入余额记到用户余额且只能一次；订阅已结束的挂账能被页面 schema 解析并转入余额、订阅已结束的续费单标记已付回 409 且款项进挂账、同一凭证再标回 409（R117）；渠道启停；收入调整登记、生效日上限、冲销与重复冲销 409。起服务与发请求用 tests/mock-helpers.ts，登录与 reauth 辅助留在本文件（登录带状态断言）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -176,6 +176,27 @@ describe('mock api · admin billing', () => {
     expect(await again.json()).toMatchObject({ error: { code: 'conflict', message: '这笔挂账已经处理过了' } })
     const applied = latePaymentsSchema.parse(await json(await get(admin, 'late-payments?status=applied')))
     expect(applied.cases.some((x) => x.id === c.id && x.resolution_reason === '用户确认转入余额')).toBe(true)
+  })
+
+  it('lists and applies ineligible-subscription late payments, and mark-paid quarantines ended renewals (R117)', async () => {
+    const late = latePaymentsSchema.parse(await json(await get(admin, 'late-payments')))
+    const seeded = late.cases.find((c) => c.case_kind === 'ineligible_subscription' && c.status === 'suspense')!
+    expect(seeded).toBeDefined()
+    expect((await post(admin, `late-payments/${seeded.id}/apply-to-balance`, { reason: '订阅已结束，续费款转入余额' }, 'late-ine-1')).status).toBe(200)
+
+    const ended = ordersSchema.parse(await json(await get(admin, 'orders?status=pending_payment&limit=100'))).orders.filter((o) => o.kind === 'renewal')
+    expect(ended).toHaveLength(1)
+    const order = ended[0]!
+    const markBody = { reason: '客户银行转账续费', reference: 'ICBC-ENDED-1' }
+    const quarantined = await post(admin, `orders/${order.id}/mark-paid`, markBody, 'mark-ended-1')
+    expect(quarantined.status).toBe(409)
+    expect(await quarantined.json()).toMatchObject({ error: { code: 'conflict', message: '订阅已结束，款项已转入挂账，可在挂账里转入用户余额' } })
+    expect(orderResponseSchema.parse(await json(await get(admin, `orders/${order.id}`))).order.status).toBe('pending_payment')
+    const after = latePaymentsSchema.parse(await json(await get(admin, 'late-payments')))
+    expect(after.cases.some((c) => c.case_kind === 'ineligible_subscription' && c.order_no === order.order_no && c.status === 'suspense')).toBe(true)
+    const again = await post(admin, `orders/${order.id}/mark-paid`, markBody, 'mark-ended-2')
+    expect(again.status).toBe(409)
+    expect(await again.json()).toMatchObject({ error: { message: '凭证号 ICBC-ENDED-1 已经入过账，不能重复标记' } })
   })
 
   it('lists providers with card stats and toggles accepting_new (R66)', async () => {

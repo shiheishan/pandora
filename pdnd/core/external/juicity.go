@@ -1,9 +1,14 @@
+// [INPUT]: 依赖 core 的 Core 接口与 core/counter 的用户表，依赖 os/exec 拉起 juicity-server
+// [OUTPUT]: 对外提供 Juicity、JuicityOptions、NewJuicity、DefaultJuicityWorkDir
+// [POS]: pdnd/core/external 的唯一成员，只在 compat 构建里经 core/multi 调用；配置文件缺省写进 pandora-native 唯一可写的状态目录
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package external 托管以独立进程运行的协议实现。
 //
 // 为什么不把它们链接进来：许可证。Juicity 是 AGPL-3.0，一旦链接，
-// 整个 aegis-nodeagent 就要在「对外提供网络服务」时向使用者开放源码 ——
-// 而 nodeagent 现在是 GPL-3.0，只在分发二进制时才有这个义务。
-// 以独立进程运行，juicity 按它自己的许可存在，nodeagent 不受影响。
+// 整个节点端二进制（pandora-native）就要在「对外提供网络服务」时向使用者
+// 开放源码。以独立进程运行，juicity 按它自己的许可存在，节点端不受它的
+// 网络条款约束。
 //
 // 代价必须说清楚：进程外的连接我们碰不到，因此这类协议
 // 无法按用户计流量。协议能用，计费不能用。
@@ -47,12 +52,19 @@ type JuicityOptions struct {
 	Tag        string
 	Port       int
 	Binary     string // juicity-server 可执行文件路径
-	WorkDir    string // 配置文件存放目录
+	WorkDir    string // 配置文件存放目录，缺省 DefaultJuicityWorkDir
 	CertPath   string
 	KeyPath    string
 	Congestion string
 	Log        *slog.Logger
 }
+
+// DefaultJuicityWorkDir 是配置里没写 work_dir 时的配置目录。
+//
+// pandora-native 以 pandora 用户、ProtectSystem=strict 运行，只有状态目录
+// /var/lib/pandora-native 可写（release/pandora-native.service 的
+// ReadWritePaths）；旧缺省 /etc/aegis-nodeagent/juicity 写不进去，juicity 起不来。
+const DefaultJuicityWorkDir = "/var/lib/pandora-native/juicity"
 
 func NewJuicity(o JuicityOptions) *Juicity {
 	binary := o.Binary
@@ -61,7 +73,7 @@ func NewJuicity(o JuicityOptions) *Juicity {
 	}
 	workDir := o.WorkDir
 	if workDir == "" {
-		workDir = "/etc/aegis-nodeagent/juicity"
+		workDir = DefaultJuicityWorkDir
 	}
 	congest := o.Congestion
 	if congest == "" {

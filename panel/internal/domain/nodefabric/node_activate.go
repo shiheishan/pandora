@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 service.go 的 lockLegacyConfigRelease、node_admin.go 的 GetAdminNode / nodeVersionConflict / validateAdminUUID / StableProtocolReadySQL、server_admin.go 的 ValidServerStatusTransition，依赖 platform 的 db/audit/httpx；写 nodes、servers
+// [INPUT]: 依赖 node_refusal.go 的 NodeStatusRefusal（状态机报错翻译）、service.go 的 lockLegacyConfigRelease、node_admin.go 的 GetAdminNode / nodeVersionConflict / validateAdminUUID / StableProtocolReadySQL、server_admin.go 的 ValidServerStatusTransition，依赖 platform 的 db/audit/httpx；写 nodes、servers
 // [OUTPUT]: 对外提供 ActivateNodeInput、ActivateNodeResult、Service.ActivateNode、ProjectNodeLifecycle
 // [POS]: domain/nodefabric 的一步上线（契约后台-07 POST v1/nodes/{id}/activate，R108）：与 node_retire.go 对称，生命周期按 node_transitions 的合法边逐条推进到 active、服务状态按 ProjectNodeLifecycle 投影、服务器同事务进 ready
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -161,9 +161,9 @@ func (s *Service) ActivateNode(ctx context.Context, tenantID string, in Activate
 			if _, err := tx.Exec(ctx, `
 				UPDATE nodes SET status = $3, entered_status_at = now()
 				 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, in.ID, next); err != nil {
-				// 状态机触发器拒绝的跳转原样回 409
+				// 状态机触发器拒绝的跳转回 409（中文原样，约束英文原句只进日志）
 				if db.IsCheckViolation(err) {
-					return httpx.New(httpx.CodeConflict, db.Message(err))
+					return NodeStatusRefusal(err)
 				}
 				return err
 			}

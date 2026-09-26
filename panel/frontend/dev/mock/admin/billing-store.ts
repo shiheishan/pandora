@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ./users 的 userStore / seedOrders / setOrderSource / Sub / User，依赖 ./plans-store 的 plans / currentOf / trafficOf / GiB
- * [OUTPUT]: 对外提供订单表 orders 与 Order 类型、findOrder、nextOrderNo、intentFor / paymentFor（造支付尝试与入账）、orderRow / orderDetail / orderHistory 视图、fulfil（开订阅）、渠道 providers / Provider / providerView、挂账 lateCases / LateCase / lateView、收入调整 adjustments / Adjustment / adjustmentView、todayLocal、err / invalid / NOT_FOUND、isUuid
+ * [OUTPUT]: 对外提供订单表 orders 与 Order 类型、findOrder、nextOrderNo、intentFor / paymentFor（造支付尝试与入账）、orderRow / orderDetail / orderHistory 视图、fulfil（开订阅）、渠道 providers / Provider / providerView、挂账 lateCases / LateCase / lateView（三种成因，含 R117 的 ineligible_subscription）、订阅已结束的待支付续费单名单 subscriptionEnded、收入调整 adjustments / Adjustment / adjustmentView、todayLocal、err / invalid / NOT_FOUND、isUuid
  * [POS]: dev/mock/admin 的「订单与收款（后台-05）」数据层，由 billing.ts 的路由使用：订单表以 users.ts 的种子订单（同 id）为底，再补齐设计稿要看的各种情形（待支付、处理中、余额付、人工赠送 / 线下、充值、流量包、退款、美元、多项），并把自己登记为 users.ts 的订单来源，让用户抽屉「订单」与订单页同一份数据；渠道只有后端真有的 epay / demo 适配器与内置 offline；挂账与收入调整是确定性种子。视图字段与 Go 的 json tag 一一对应
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -310,6 +310,14 @@ for (const [i, days, amount] of [[14, 12, 4500], [15, 40, 6800]] as const)
   add(U(i), { status: 'expired', total_amount: amount, payable_amount: amount, created_at: iso(days * DAY + 60 * MIN), expires_at: iso(days * DAY + 30 * MIN), expired_at: iso(days * DAY + 30 * MIN), state_version: 2 }, (o) =>
     o.intents.push(intentFor(o, 'epay', 'expired', o.created_at)),
   )
+// 续费单付款时订阅已结束（R117，只有手工 SQL 造得出）：一张已过期、钱早进了挂账；
+// 一张还待支付，标记已付会进挂账并回 409
+const ineligibleRenewal = add(U(16), { kind: 'renewal', status: 'expired', total_amount: 4500, payable_amount: 4500, created_at: iso(6 * DAY + 60 * MIN), expires_at: iso(6 * DAY + 30 * MIN), expired_at: iso(6 * DAY + 30 * MIN), state_version: 2 }, (o) =>
+  o.intents.push(intentFor(o, 'epay', 'expired', o.created_at)),
+)
+const endedRenewal = add(U(17), { kind: 'renewal', total_amount: 4500, payable_amount: 4500, created_at: iso(12 * MIN), expires_at: iso(-18 * MIN) })
+/** 订阅已结束的待支付续费 / 变更单（假后端没有订阅状态机，用这张名单代替） */
+export const subscriptionEnded = new Set<string>([endedRenewal.id])
 function refunded(amount: number, reason: string, revoke: boolean) {
   return (o: Order) => {
     paidVia('epay')(o)
@@ -458,7 +466,7 @@ export function fulfil(o: Order, at: string): void {
 // ===========================================================================
 export interface LateCase {
   id: string
-  case_kind: 'released_order' | 'excess_capture'
+  case_kind: 'released_order' | 'excess_capture' | 'ineligible_subscription'
   status: 'suspense' | 'refund_pending' | 'refunded' | 'manual_review' | 'applied'
   amount: number
   currency: string
@@ -485,6 +493,7 @@ export const lateCases: LateCase[] = [
   lateSeed('released_order', expiredOrders[0] ?? cancelledOrder, 4500, 12),
   lateSeed('excess_capture', orders.find((o) => o.currency === 'USD') ?? cancelledOrder, 120, 33, { currency: 'USD' }),
   lateSeed('released_order', expiredOrders[1] ?? cancelledOrder, 6800, 40, { status: 'manual_review' }),
+  lateSeed('ineligible_subscription', ineligibleRenewal, 4500, 6),
   lateSeed('excess_capture', orders.find((o) => o.kind === 'topup' && o.status === 'paid') ?? cancelledOrder, 1000, 21, {
     status: 'applied',
     resolved_at: iso(20 * DAY),

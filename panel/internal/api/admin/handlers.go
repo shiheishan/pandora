@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 domain 的 adminops/billing/identity/nodefabric/subscription/support 服务、middleware、platform 的 audit/crypto/db/httpx/realtime（降级开关切换后发 switches.changed）
+// [INPUT]: 依赖 domain 的 adminops/billing/identity/nodefabric（含改状态报错翻译 NodeStatusRefusal）/subscription/support 服务、middleware、platform 的 audit/crypto/db/httpx/realtime（降级开关切换后发 switches.changed）
 // [OUTPUT]: 对外提供 handlers 结构与登录、用户、订阅、订单、节点、工单等核心处理器，adminRotateResponse
 // [POS]: api/admin 的核心处理器集合，被 router.go 装配；专题处理器分散在同包其它文件
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -1076,9 +1076,9 @@ func (h *handlers) nodeSetStatus(w http.ResponseWriter, r *http.Request) {
 				 row_version=row_version+1
 				 WHERE tenant_id=$1 AND id=$2 AND row_version=$5`,
 				tenantID, id, req.Status, servingStatus, currentVersion); err != nil {
-				// 违反状态机的跳转由触发器抛 check_violation
+				// 违反状态机的跳转由触发器抛 check_violation；约束的英文原句不透给页面
 				if db.IsCheckViolation(err) {
-					return httpx.New(httpx.CodeConflict, db.Message(err))
+					return nodefabric.NodeStatusRefusal(err)
 				}
 				return err
 			}
