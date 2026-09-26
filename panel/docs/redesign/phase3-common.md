@@ -142,5 +142,5 @@
 - 契约修订从 **R117** 起，仍由协调会话分配。
 - **两个会话的文件分界**：后端四这一轮要改的文件，重构会话在后端四对应步骤合入主线之前**不碰**：`domain/billing/**`、`domain/notify/**`、`domain/identity/service.go`、`api/admin/mail.go`、`api/admin/handlers.go`、`domain/nodefabric/node_activate.go`、`node_retire.go`、`platform/crypto/**`、`cmd/aegis-admin/main.go`、`cmd/aegis-public/main.go`、`middleware/middleware.go`、`pdnd/core/external/**`。重构的排序已按这个分界安排（见 phase5-refactor.md）。
 - 真机相关（测试机上的 aegis-nodeagent 定性与迁移、删 `nodeagent/`、把测试机登记进 `~/ai/servers`）**本阶段不做**。
-- **收尾状态（2026-09-26）**：后端四 ⑧–⑭（R117，迁移用到 00095）与重构 ①–⑥ 全部合入主线（合并 d3d9f74）。panel 与 pdnd 除两个 fork 目录和两个单函数超长的 PG18 测试外，已无超 800 行的 `.go` 文件；两道行数守卫随 `go test ./...` 运行，豁免规则写在根 `CLAUDE.md`。剩下的都待用户拍板：两个 PG18 测试是否另派改函数体的重构、真机（测试机）人工点与 nodeagent 定性、审计 IP 哈希换 key、`feat/panel-redesign` 何时进 `main`、收尾后的 worktree 与远端分支清理。
+- **收尾状态（2026-09-26）**：后端四 ⑧–⑭（R117，迁移用到 00095）与重构 ①–⑥ 全部合入主线（合并 d3d9f74）。panel 与 pdnd 除两个 fork 目录和两个单函数超长的 PG18 测试外，已无超 800 行的 `.go` 文件；两道行数守卫随 `go test ./...` 运行，豁免规则写在根 `CLAUDE.md`。两个 PG18 测试用户定维持豁免、不拆，前端 TS 暂不加行数守卫；be4 与 refactor 的 worktree 和本地、远端分支已清理。剩下的都待用户拍板：真机（测试机）人工点与 nodeagent 定性、审计 IP 哈希换 key、`feat/panel-redesign` 何时进 `main`。
 
