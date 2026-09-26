@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 release.go、checkout.go、unexpected_payment.go、reservation_expiry.go 的释放、结算与挂账路径，依赖 platform/db、middleware 幂等声明，依赖迁移 00036 / 00040
+// [INPUT]: 依赖 release.go / release_locks.go、checkout.go / settlement.go、unexpected_payment.go、reservation_expiry.go 的释放、结算与挂账路径，依赖 platform/db、middleware 幂等声明，依赖迁移 00036 / 00040
 // [OUTPUT]: 对外提供 TestOrderReleasePG18（run-pg18-gates.sh 的 order_release 域），包内提供一次性租户夹具 orderReleasePG18Seed 与释放、挂账、佣金的共用断言（orderReleasePG18*），供 plan_change、traffic_pack 等 PG18 测试复用
 // [POS]: billing 订单释放与迟到收款隔离的 PG18 集成门禁，也是本包 PG18 测试的夹具库
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

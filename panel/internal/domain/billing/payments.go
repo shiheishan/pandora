@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 domain/payment 的 Factory 与 epay/demo 适配器，依赖 platform/crypto 解密渠道凭据、platform/db、platform/httpx
 // [OUTPUT]: 对外提供 PaymentService：CreatePaymentIntent、ParseNotification、QueryAndReconcile 等渠道侧用例
-// [POS]: billing 里「送用户去收银台、把回调翻译成平台事件」的一侧；钱确认到账后一律交回 checkout.go 的 HandlePaymentWebhook
+// [POS]: billing 里「送用户去收银台、把回调翻译成平台事件」的一侧；钱确认到账后一律交回 settlement.go 的 HandlePaymentWebhook
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
