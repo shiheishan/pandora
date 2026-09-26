@@ -11,7 +11,7 @@ deploy/: 发布包 build-release.sh（先 make frontend-embed，无 npm 即失�
 frontend/: 面板前端源码，React + TypeScript + Vite 一个工程两个入口（--mode admin|portal 分两次构建到 dist/{admin,portal}），按设计稿重写：底座、组件库与两边外框（登录态、reauth 对话框、实时事件、按权限隐藏入口）已就绪，模块页经 screens/ 登记表懒加载、第 3 阶段逐个接入；本机无数据库时 dev 挂按模块拆分的假后端；见 frontend/CLAUDE.md
 web/: 面板前端的 go:embed 嵌入点 app.go，admin/、portal/ 两个目录由两个网关经 platform/webapp 挂在根 /（入口）与 /assets/*；仓库只存占位入口，旧的手写单页与 React 候选已于 2026-09-23 删除，前端按设计稿在 frontend/ 重写；见 web/CLAUDE.md
 docs/: redesign/ 面板重构各阶段开工说明与接口契约（协调会话维护）；XBoard 功能对标与实施计划、并行实施路线图、DASH-01 与 CLIENT-AUTH-01 冻结契约及 R1 附录、CLIENT-AUTH-00042 实现清单；adr/0001 技术选型
-tests/: invariants.sql 数据层不变量（make invariants）；e2e.sh 注册→下单→支付→账本→订阅→配置主链路；admin/node/uniproxy/epay/support 各自的 e2e 脚本；panel-smoke.yml 经 deploy/run-smoke-e2e.sh 在冒烟栈上逐个跑它们，任一失败即 job 变红；见 tests/CLAUDE.md
+tests/: invariants.sql 数据层不变量（make invariants）；e2e.sh 注册→下单→支付→账本→订阅→配置主链路；admin/uniproxy/epay/support 各自的 e2e 脚本（节点接入由冒烟 seed.ts 的两阶段接入覆盖）；panel-smoke.yml 经 deploy/run-smoke-e2e.sh 在冒烟栈上逐个跑它们，任一失败即 job 变红；见 tests/CLAUDE.md
 Makefile: up/down/logs 数据基座、migrate/migrate-status/check-migrations、invariants、build/test/vet、e2e、release-linux、preflight-linux、settlement-pg18、verify、frontend-check（面板前端：npm ci + lint + typecheck + vitest + 构建）、frontend-embed（构建并同步 dist/{admin,portal} 到 web/{admin,portal}，release-linux 的前置）；CGO_ENABLED=0 产静态二进制
 go.mod / go.sum: Go 1.26 module
 
