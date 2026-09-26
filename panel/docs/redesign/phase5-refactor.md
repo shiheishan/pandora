@@ -36,10 +36,11 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：①（2f562c9）、②（867122e）、③（8708a0b）、删死代码 `e657f06` 与 ④ `45d8036`（合并 9f47391；协调会话复跑：pdnd kernel 加 -tests PURE，e657f06 只报 HandlePaymentWebhook 文档注释与删掉的游离注释、其余改动全是注释；NativeCore 36222086225、PG18 36222086245：234 PASS / 0 SKIP、panel-smoke 全绿）已验收合入。**panel 与 pdnd（除 reality fork）已无超 800 行的非测试文件。下一步 ⑤、⑥，做完一起报告。上一个会话上下文用完已结束，新会话从这里接上。**
+**进度**：①（2f562c9）、②（867122e）、③（8708a0b）、删死代码 `e657f06` 与 ④ `45d8036`（合并 9f47391）、⑤ `c11ce3d` `c94a2c8` `0a8c3fb` 与 ⑥ `54f75e3` `7f68d66`（合并 d3d9f74）全部验收合入。**第 5 阶段重构完成，本会话结束。** 两个单函数超长的 PG18 测试（见下方 ⑤⑥ 验收结论）是否另派改函数体的重构，待用户定。
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R117（本会话不改接口，一般用不到修订号）。
+- ⑤⑥ 的验收结论：协调会话复跑 compare -tests，c11ce3d / c94a2c8 / 0a8c3fb 与 7f68d66（panel 四个包 + pdnd kernel）全部 PURE；7f68d66 的 .go 改动行全是注释；越界只有根与 panel 的 CLAUDE.md 和 `deploy/test-idempotency-middleware-pg18.sh` 源码哈希清单补登 8 个文件（含 ② 漏登的 `idempotency_replay.go`、`idempotency_recorder.go`），认可；PG18 门禁按「包 + 测试名」选测试，CI 36223847658 的 234 条测试名与 36222086245 逐条相同、0 SKIP，NativeCore 36223847669、panel-smoke 36223847611 全绿；合并提交的树与 7f68d66 相同。守卫：panel `tools/refactorcheck/linelimit_test.go` 逐文件豁免、pdnd `linelimit_test.go` 整目录豁免两个 fork，超限、豁免过期、豁免目录消失都变红，四组变异验证，认可。`frontend/src/admin/screens/plans/schemas.ts` 引用的 PlanRow / PriceRow 仍在 `adminops/service.go`、CatalogPlanDetail / VersionRow 仍在 `catalog.go`，不用改，核实属实。**遗留待用户定**：`middleware/idempotency_pg18_test.go`（1019 行，`TestIdempotencyMiddlewarePG18` 单函数 983 行）与 `billing/order_release_pg18_test.go`（857 行，`TestOrderReleasePG18` 单函数 832 行）子测试共享连接与夹具，纯挪动拆不开，暂列守卫逐文件豁免；彻底拆要把子测试提成带共享夹具参数的函数，属改函数体，需另行授权。守卫目前只管 `.go`，前端 TS 暂无超限文件，未加守卫。
 - ① 的验收结论：`platform/sourcetest`（只被测试引用，照 pg18test 先例，名字找不到或重名即失败）、窗口换成它恰好覆盖的声明、整文件「必须有」收窄到承载函数、「不许有」放宽到整包、heartbeat 否定检查先正向取 `handlers.nodeList`、豁免表改按「包目录 + 函数名」、打散验证（266 → 2932 个单声明文件全量通过）与 6 组变异验证，都认可。按文件名读源码的实际是 47 个（开工说明写的 42 不准），billing 的 7 个留到 ③。放宽到整包的几条通用字面量否定检查（`FOR KEY SHARE` 等）将来可能误报，但方向是变红不是静默，接受。
 - **② 之前先做两件**：
   1. **工具进仓库**：纯挪动 AST 比对工具和打散工具放进 `panel/tools/refactorcheck/`（Go 程序，`go run` 使用，不被任何生产包 import，写 L2 与用法），协调会话验收时会用它复核。单独一个提交。
