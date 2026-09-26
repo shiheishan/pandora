@@ -26,10 +26,16 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：①（合并 b3eea00，R105）、②（合并 4b21102，R109）、③（合并 2125afa，R111）、④（合并 b8f8520，R113）、⑤（合并 e7e72a8，R115）、⑥ `cb1ac0c` + `69087c0`（合并 039bb12；PG18 run 36205045064：232 PASS / 0 SKIP / 0 FAIL，NativeCore、panel-smoke 全绿；R116）已验收合入。**本会话回到待命。** 迁移 00095–00098 未用。
+**进度**：①–⑥ 已验收合入（⑤ 合并 e7e72a8，R115；⑥ 合并 039bb12，R116）。**新增第 ⑦ 步：退役 aegis-agent**（用户 2026-09-25 定），见补充事项最前面；做完报告。迁移 00095–00098 未用。
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R116。
+- **第 ⑦ 步：退役 aegis-agent（用户 2026-09-25 定）**。事实：服务端只收两阶段接入，`cmd/aegis-agent` 的 bootstrap 已写死成报错，角色由 pandora-native 接替，但它仍在发布包与安装脚本里；唯一专测它的 `tests/node_e2e.sh` 因此过不了（冒烟 ⑥ 查出）。接入、上线、心跳已由联调冒烟用真实 Ed25519 两阶段流程覆盖。一个提交做完：
+  1. 删 `panel/cmd/aegis-agent/` 与 `panel/tests/node_e2e.sh`。
+  2. 从 `deploy/build-release.sh`、`install-linux-binaries.sh`、`migrate-to-new-host.sh` 的二进制列表去掉它；`install-native.sh` 的那行注释、`run-smoke-e2e.sh` 里编译 aegis-agent 与 `/opt/aegispanel/bin` 准备（只为 node_e2e 存在的部分）一并清掉——这个文件归冒烟，这次授权你改，只删 aegis-agent 相关行。
+  3. 文档：根 `README.md` 二进制表、`panel/CLAUDE.md` 的 cmd 行（可执行入口数减一）、`deploy/CLAUDE.md`、`tests/CLAUDE.md`；`nodefabric/uniproxy.go:39`、`service.go:114` 两处注释里的 aegis-agent 改成现状（pandora-native / 两阶段接入）。
+  4. grep 全仓（不含 docs/redesign 与 ops-local）确认不再有 aegis-agent；有 Go 测试或发布契约测试钉着二进制列表的同步改。`nodeagent/` 目录（aegis-nodeagent）**不在本次范围**，别动。
+  5. 本机全量 + 推送看三组 CI（panel-smoke 里 e2e 表应剩五个脚本、全过），报告。
 - ⑥ 的验收结论：AST 扫描 + 追调用方区分用户文案与机器文案、31 处改中文且沿用仓库已有措辞、降级开关按约束名翻译（约束名已在 00009 核对）且 PG 原句只进日志、两条契约测试（扫描器失效下限 300、豁免清单过期即红、反查豁免函数不被后台 / 门户调用）并做过变异验证、⑥ 放单独本地分支避免被冒烟带走，都认可。
 - 已知未查（UNKNOWN，本阶段不查）：节点状态三处 `db.Message` 透传（admin `handlers.go` 改状态、`node_activate.go`、`node_retire.go`）理论上可能撞到 nodes 表的英文 CHECK 约束，页面会看到英文原句；契约测试管不到运行时文案。测试机人工点时留意。
 - **第 ⑥ 步（R116，2026-09-25 指派）**：前端已删掉英文→中文文案映射，后端 4xx 响应里给用户看的 `message` 必须是中文。后端三已收工，**越界授权你做这一件**（全仓 `panel/internal` 的 httpx 错误文案，只改 message 字符串）。做法：
