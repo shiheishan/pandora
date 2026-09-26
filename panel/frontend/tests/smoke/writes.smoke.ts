@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 ./harness 的 state / pageClient / loginToken / lastHeaders / record，依赖页面模块里写操作用的响应 schema 与请求体构造函数（annBody、salesBody、orderItems、toggleBody 等），依赖 node:crypto 的 HMAC（把真实会话的重认证时间往回拨）
- * [OUTPUT]: 第 ④ 步写路径冒烟：新服务器 + 新节点一步上线后能下发用户；reauth_required → reauth → 同键重放；幂等 2xx 同键重放与换请求体 409；每个后台模块与门户至少一个写操作的响应能被页面 schema 解析；工单回复发不发站内通知（FACT）
+ * [OUTPUT]: 第 ④ 步写路径冒烟：新服务器 + 新节点一步上线后能下发用户；reauth_required → reauth → 同键重放；幂等 2xx 同键重放与换请求体 409；每个后台模块与门户至少一个写操作的响应能被页面 schema 解析；工单回复给提单人排 ticket.replied（R115，轮询等 public 网关派发，最多 6 分钟）
  * [POS]: tests/smoke 的写路径表，排在 admin / portal 两张读表之后跑（vitest.config.ts 的 ReadsBeforeWrites 固定）；请求体一律用页面自己的构造函数拼，响应用页面自己的 schema 解析，结果以入口 write 进逐行表
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -208,17 +208,33 @@ describe('插件钩子投递到本机接收端', () => {
 })
 
 // ============================================================================
-//  工单回复发不发站内通知（FACT）：上面已有后台回复；门户通知列表里不应出现 ticket.replied
-//  （代码：support.replyAsAgent 不调 notify.Enqueue，只推一条实时 ticket.updated）
+//  工单回复通知（R115）：后台非内部回复给提单人排 ticket.replied，变量 subject 取工单标题。
+//  站内信的标题是模板自己的（「工单有新回复」），工单标题经变量渲染进正文「…」。
+//  admin 网关只排队不派发，要等 public 网关的派发循环（启动约 30 秒后一次、之后每 5 分钟），
+//  所以轮询到出现为止，6 分钟还没有才算失败
 // ============================================================================
 
+const REPLY_NOTICE_WAIT_MS = 6 * 60_000
+const REPLY_NOTICE_POLL_MS = 15_000
+
 describe('工单回复与站内通知', () => {
-  writeCase('messages/api.ts:31', 'v1/me/notifications', '后台回复工单后门户通知列表里有没有 ticket.replied', async () => {
-    const list = await pageClient('portal').get('v1/me/notifications', z.object({ notifications: z.array(notificationSchema), unread: z.number().int() }), {
-      query: { limit: NOTIFICATION_LIMIT },
-    })
-    const codes = list.notifications.map((n) => n.code)
-    expect(codes).not.toContain('ticket.replied')
-    return `FACT：后台回复后门户通知只有 [${[...new Set(codes)].join(', ') || '无'}]，没有 ticket.replied`
-  })
+  writeCase('messages/api.ts:31', 'v1/me/notifications', '后台回复工单后门户通知里出现 ticket.replied，正文带工单标题', async () => {
+    const title = (await pageClient('admin').get(`v1/tickets/${s.ticket_id}`, ticketDetailSchema)).subject
+    const portal = pageClient('portal')
+    const listSchema = z.object({ notifications: z.array(notificationSchema), unread: z.number().int() })
+    const started = Date.now()
+    for (;;) {
+      const list = await portal.get('v1/me/notifications', listSchema, { query: { limit: NOTIFICATION_LIMIT } })
+      const replied = list.notifications.filter((n) => n.code === 'ticket.replied')
+      const hit = replied.find((n) => n.body.includes(`「${title}」`))
+      if (hit) {
+        return `${Math.round((Date.now() - started) / 1000)} 秒后出现 ticket.replied（${replied.length} 条）：标题「${hit.subject}」，正文带工单标题「${title}」`
+      }
+      if (Date.now() - started > REPLY_NOTICE_WAIT_MS) {
+        const seen = replied.map((n) => n.body).join(' / ') || '无'
+        throw new Error(`等了 ${REPLY_NOTICE_WAIT_MS / 60_000} 分钟，门户通知里没有正文带「${title}」的 ticket.replied（已有 ticket.replied：${seen}；全部 code：${[...new Set(list.notifications.map((n) => n.code))].join(', ') || '无'}）`)
+      }
+      await new Promise((r) => setTimeout(r, REPLY_NOTICE_POLL_MS))
+    }
+  }, REPLY_NOTICE_WAIT_MS + 60_000)
 })
