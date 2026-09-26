@@ -101,3 +101,14 @@ func TestWaitForAdminWorkersTimesOut(t *testing.T) {
 		t.Fatalf("worker drain error = %v, want %v", err, errAdminWorkerDrainTimeout)
 	}
 }
+
+// 工单回复通知（R115）缺的正是这一行装配：support 不接 notifier 时回复照常成功、通知静默不排
+func TestAdminWiresTicketReplyNotifier(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "supportSvc.SetReplyNotifier(notifySvc)") {
+		t.Fatal("admin gateway must wire the ticket reply notifier into the support service")
+	}
+}
