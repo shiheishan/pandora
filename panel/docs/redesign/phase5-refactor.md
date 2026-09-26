@@ -36,7 +36,7 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：① `a7a67c3`（合并 2f562c9；PG18 36213610655：232 PASS / 0 SKIP / 0 FAIL，NativeCore 36213610687、panel-smoke 36213610649 全绿；主线合并后 vet、linux vet、全量通过）已验收合入。**下一步 ②**（先做下面「② 之前」两件）。
+**进度**：①（合并 2f562c9）、② 前两件 `e70b048` `02c1e32` 与 ② `2cac37c`…`183b498`（合并 867122e；协调会话用 refactorcheck 复跑 02c1e32..86f0b9f：8 个包 PURE MOVE，加 -tests 同样一致；PG18 36216011676：232 PASS / 0 SKIP，NativeCore、panel-smoke 全绿）已验收合入。**后端四 ⑧–⑬ 已全部合入主线（最后合并 089c033），③ 可以开工。**
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R117（本会话不改接口，一般用不到修订号）。
@@ -44,5 +44,8 @@
 - **② 之前先做两件**：
   1. **工具进仓库**：纯挪动 AST 比对工具和打散工具放进 `panel/tools/refactorcheck/`（Go 程序，`go run` 使用，不被任何生产包 import，写 L2 与用法），协调会话验收时会用它复核。单独一个提交。
   2. **修一条近乎空转的断言**（只改测试）：`TestLegacyConfigPublishRiskReductionContract` 的锁序原来比的是 `lockLegacyConfigRelease` 函数体在文件里排在 `PublishConfig` 前面，这是排版不是调用顺序；改成比 `PublishConfig` 内部各加锁调用处的先后，做一次变异验证。单独一个提交。
+- ② 的验收结论：九个拆分提交各自 PURE、区间整体一致、打散 362 → 3701 文件全量通过、每提交隔离全量、Linux amd64 / arm64 vet，都认可。两个 journal 的 mock shell 脚本改成覆盖整组拆出的文件（正向检查略放宽、否定禁令加强、已做变异验证），认可。
+- **③ 开工**：`git merge feat/panel-redesign`（带进后端四 ⑧–⑬：billing 新增了 `ineligible_settlement_pg18_test.go` 等，⑧ 那批 billing 测试仍按文件名读源码，归你在 ③ 改成 sourcetest；后端四这轮新加的测试已是 sourcetest 写法）。然后拆 `billing/checkout.go`、`billing/release.go`、`api/admin/handlers.go`，billing 的按文件名读源码测试一并改掉。`node_activate.go` / `node_retire.go` 的 L3 旧文件名由后端四 ⑭ 改，你不用管。
+- ④ 注意：`pdnd/release/check_native_panel_parity.py` 按文件名读 `pdnd/kernel/capabilities.go`，拆 kernel 时别动这个文件，或同步改脚本。
 - 后端四 ⑪ 可能也会改 `api/admin/handlers_test.go` 与 `message_zh_contract_test.go`：你的 ① 已先合入主线，它合主线时自己解决冲突，你不用管。
 - 后端四同时在 `../pandora-be4` 做 ⑧–⑫，它要改的文件见 `phase3-common.md` 第 12 节，③ 之前别碰。
