@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 checkout.go 的 CreateOrder（人工单复用下单主路径，线下已收款在建单事务里经 settlePaymentTx 结清）与 HandlePaymentWebhook（标记已支付合成一笔 offline 渠道回调），依赖 middleware 幂等声明、platform/audit、platform/db、platform/httpx
-// [OUTPUT]: 对外提供 CreateManualOrder、CreateManualOrderInput、ManualSettlement*、OfflineReceipt、MarkOrderPaid、MarkOrderPaidInput、OfflineProviderCode；包内提供 offlinePaymentInput（两条线下收款路径共用的回调形状）
+// [OUTPUT]: 对外提供 CreateManualOrder、CreateManualOrderInput、ManualSettlement*、OfflineReceipt、MarkOrderPaid、MarkOrderPaidInput、OfflineProviderCode；包内提供 offlinePaymentInput（两条线下收款路径共用的回调形状）与 markPaidQuarantined（钱进挂账时的 409）
 // [POS]: billing 的管理员订单动作：人工单（赠送当场履约、建待支付单交给用户付、线下已收款当场结清）与标记线下已收款；都不另起炉灶，履约与记账与用户自己支付完全一致
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -196,6 +196,8 @@ type MarkOrderPaidInput struct {
 //
 // 走的是和真实渠道回调同一条结算链路，所以订阅开通、优惠券核销、
 // 余额解冻、佣金计提、账本分录一个不少（回调形状见 offlinePaymentInput）。
+// 结算时钱若进了挂账（续费 / 变更单的订阅已结束，或订单刚被释放），
+// 入账与审计照写，接口回 409 说明款项去向。
 func (s *Service) MarkOrderPaid(ctx context.Context, tenantID string,
 	in MarkOrderPaidInput) (*PaymentWebhookOutput, error) {
 
@@ -246,7 +248,21 @@ func (s *Service) MarkOrderPaid(ctx context.Context, tenantID string,
 	if err != nil {
 		return nil, err
 	}
+	// 同一张凭证的事件号已经落过库：上一次这笔钱进了挂账（订单没结，才会又
+	// 走到这里），或者并发的另一次标记刚刚结清。这次什么都没有新发生，不写审计。
+	if out.AlreadyHandled {
+		return nil, httpx.New(httpx.CodeConflict,
+			"凭证号 "+in.Reference+" 已经入过账，不能重复标记")
+	}
 
+	digest := map[string]any{
+		"order_no": orderNo, "amount": payable, "currency": currency,
+		"reference": in.Reference, "reason": in.Reason,
+		"payment_id": out.PaymentID, "ledger_txn": out.LedgerTxnID,
+	}
+	if out.QuarantineKind != "" {
+		digest["quarantined"] = out.QuarantineKind
+	}
 	actor := in.ActorID
 	if err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor},
 		func(tx pgx.Tx) error {
@@ -255,16 +271,27 @@ func (s *Service) MarkOrderPaid(ctx context.Context, tenantID string,
 				Action: "order.marked_paid", ResourceType: "order",
 				ResourceID:   &in.OrderID,
 				BeforeDigest: map[string]any{"status": status},
-				AfterDigest: map[string]any{
-					"order_no": orderNo, "amount": payable, "currency": currency,
-					"reference": in.Reference, "reason": in.Reason,
-					"payment_id": out.PaymentID, "ledger_txn": out.LedgerTxnID,
-				},
-				APIDomain: "admin", RequestID: httpx.RequestIDFrom(ctx),
+				AfterDigest:  digest,
+				APIDomain:    "admin", RequestID: httpx.RequestIDFrom(ctx),
 			})
 		}); err != nil {
 		return out, httpx.New(httpx.CodeInternal,
 			"订单 "+orderNo+" 已入账，但审计写入失败，请立即联系运维核对："+err.Error())
 	}
+	// 钱已如实入账，但订单没有结清（R117）：回 409 让管理员知道款项去了挂账，
+	// 要在挂账里转入用户余额，而不是以为续费或变更已经生效。
+	if out.QuarantineKind != "" {
+		return nil, markPaidQuarantined(out.QuarantineKind)
+	}
 	return out, nil
+}
+
+// markPaidQuarantined 是标记已付的钱进了挂账时回给后台的 409。
+func markPaidQuarantined(caseKind string) *httpx.Error {
+	if caseKind == "ineligible_subscription" {
+		return httpx.New(httpx.CodeConflict,
+			"订阅已结束，款项已转入挂账，可在挂账里转入用户余额")
+	}
+	return httpx.New(httpx.CodeConflict,
+		"订单已不在待支付状态，款项已转入挂账，可在挂账里转入用户余额")
 }

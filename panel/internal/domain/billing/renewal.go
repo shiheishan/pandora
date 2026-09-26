@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 reservations.go 的预留图与科目锁、ledger.go 的记账、traffic_reset.go 的 LogTrafficReset、middleware 幂等声明、platform/db
-// [OUTPUT]: 对外提供 CreateRenewal、RollQuotaPeriods；包内提供 fulfillRenewal / fulfillRenewalLocked，以及续费与变更套餐（plan_change.go）共用的 captureZeroPaySubscriptionOrder / lockOrderSubscriptionForSettlement
+// [OUTPUT]: 对外提供 CreateRenewal、RollQuotaPeriods；包内提供 fulfillRenewal / fulfillRenewalLocked，以及续费与变更套餐（plan_change.go）共用的 captureZeroPaySubscriptionOrder / lockOrderSubscriptionForSettlement（锁订阅并交回锁内读到的状态）/ subscriptionAcceptsPaidChange（可续费与可变更的订阅状态唯一口径，建单与结算复核共用，R117）
 // [POS]: billing 的续费：在原订阅上延长周期（旧周期已走完就从现在起算新周期）、重置 cycle 配额；流量包余额挂用户，续费不碰（D-E-1）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -105,9 +105,7 @@ func (s *Service) CreateRenewal(ctx context.Context, tenantID string,
 
 		// 已取消或已结束的订阅不给续 —— 那种情况应该走重新购买，
 		// 因为权益版本、价格、节点分组可能都已经变了
-		switch status {
-		case "active", "trialing", "grace", "past_due":
-		default:
+		if !subscriptionAcceptsPaidChange(status) {
 			return ErrSubNotRenewable
 		}
 		if err := ensureNoOpenSubscriptionOrder(ctx, tx, tenantID, in.SubscriptionID); err != nil {
@@ -473,41 +471,54 @@ func subscriptionBoundOrderKind(kind string) bool {
 	return kind == "renewal" || kind == "upgrade"
 }
 
+// subscriptionAcceptsPaidChange 是续费与变更套餐对订阅状态的唯一口径：建单时
+// 校验一次，结算时锁住订阅后再校验一次——支付窗口里订阅可能被改成终态，履约
+// 写 active 会被状态机拒绝，钱于是改走挂账（R117）。迁移 00095 的挂账守卫写着
+// 同一组状态，renewal_contract_test.go 钉住两边一致。
+func subscriptionAcceptsPaidChange(status string) bool {
+	switch status {
+	case "active", "trialing", "grace", "past_due":
+		return true
+	}
+	return false
+}
+
 // lockOrderSubscriptionForSettlement establishes the shared lock order for
 // renewal and plan change settlement:
 // order -> subscription -> payment intents -> reservation graph -> ledger.
-// The caller has already locked the order before entering this helper.
+// The caller has already locked the order before entering this helper. The
+// returned status is read under the lock, for the settlement-time recheck.
 func lockOrderSubscriptionForSettlement(ctx context.Context, tx pgx.Tx,
-	tenantID, orderID, userID string) (string, error) {
+	tenantID, orderID, userID string) (string, string, error) {
 	var subID string
 	if err := tx.QueryRow(ctx, `
 		SELECT subscription_id::text FROM orders
 		 WHERE tenant_id=$1 AND id=$2::uuid AND user_id=$3::uuid
 		   AND kind IN ('renewal','upgrade')`,
 		tenantID, orderID, userID).Scan(&subID); err != nil {
-		return "", fmt.Errorf("读取订单关联的订阅: %w", err)
+		return "", "", fmt.Errorf("读取订单关联的订阅: %w", err)
 	}
 	if subID == "" {
-		return "", errors.New("续费或变更订单没有关联订阅")
+		return "", "", errors.New("续费或变更订单没有关联订阅")
 	}
-	var lockedID string
+	var lockedID, status string
 	if err := tx.QueryRow(ctx, `
-		SELECT id::text FROM subscriptions
+		SELECT id::text, status FROM subscriptions
 		 WHERE tenant_id=$1 AND id=$2::uuid AND user_id=$3::uuid
-		 FOR UPDATE`, tenantID, subID, userID).Scan(&lockedID); err != nil {
+		 FOR UPDATE`, tenantID, subID, userID).Scan(&lockedID, &status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", httpx.NotFoundOrForbidden()
+			return "", "", httpx.NotFoundOrForbidden()
 		}
-		return "", err
+		return "", "", err
 	}
-	return lockedID, nil
+	return lockedID, status, nil
 }
 
 // fulfillRenewal 在支付成功后延长订阅周期并按策略重置配额。
 // Callers must lock the subscription before any renewal ledger-account lock.
 func (s *Service) fulfillRenewal(ctx context.Context, tx pgx.Tx, tenantID,
 	orderID, userID string) (string, error) {
-	subID, err := lockOrderSubscriptionForSettlement(ctx, tx, tenantID, orderID, userID)
+	subID, _, err := lockOrderSubscriptionForSettlement(ctx, tx, tenantID, orderID, userID)
 	if err != nil {
 		return "", err
 	}
@@ -566,7 +577,7 @@ func (s *Service) fulfillRenewalLocked(ctx context.Context, tx pgx.Tx, tenantID,
 	if _, err := tx.Exec(ctx, `
 		UPDATE subscriptions
 		   SET status = 'active',
-		       current_period_start = CASE WHEN $7 OR status IN ('expired','past_due','grace')
+		       current_period_start = CASE WHEN $7 OR status IN ('past_due','grace')
 		                                   THEN $3 ELSE current_period_start END,
 		       current_period_end = $4,
 		       plan_version_id = $5::uuid,

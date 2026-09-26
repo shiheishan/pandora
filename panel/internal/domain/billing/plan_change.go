@@ -128,9 +128,7 @@ func quotePlanChange(ctx context.Context, tx pgx.Tx, tenantID string,
 	if err != nil {
 		return nil, err
 	}
-	switch status {
-	case "active", "trialing", "grace", "past_due":
-	default:
+	if !subscriptionAcceptsPaidChange(status) {
 		return nil, ErrPlanChangeSubStatus
 	}
 	if in.PlanID == curPlanID {
