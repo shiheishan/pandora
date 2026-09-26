@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/pg18test 打开 support 域的一次性库，依赖 service.go 的 Create / CloseByUser / SetStatus 与 withdraw.go 的 WithdrawByUser
+// [INPUT]: 依赖 platform/pg18test 打开 support 域的一次性库，依赖 user_tickets.go 的 Create / CloseByUser、agent_tickets.go 的 SetStatus 与 withdraw.go 的 WithdrawByUser
 // [OUTPUT]: 对外提供 TestTicketClosedReasonPG18
 // [POS]: domain/support 的 PG18 测试：三种关闭方式各自写对 closed_reason，重新打开时清空（缺陷 17）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

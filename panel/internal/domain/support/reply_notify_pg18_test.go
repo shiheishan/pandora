@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/pg18test 打开 support 域的一次性库，依赖 service.go 的 Create / ReplyAsAgent / ReplyAsAgentAtomic / SetReplyNotifier，依赖 domain/notify 的真实 Enqueue
+// [INPUT]: 依赖 platform/pg18test 打开 support 域的一次性库，依赖 user_tickets.go 的 Create、agent_tickets.go 的 ReplyAsAgent / ReplyAsAgentAtomic、service.go 的 SetReplyNotifier，依赖 domain/notify 的真实 Enqueue
 // [OUTPUT]: 对外提供 TestTicketReplyNotifyPG18
 // [POS]: domain/support 的 PG18 测试：客服非内部回复在同一事务里给提单人排 ticket.replied（R115），回滚不排、同键重放不多排、内部备注不排、关掉 service 类别不排，提交后才 Kick
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 plan_change.go 的 PreviewPlanChange/CreatePlanChange、checkout.go 的 CreateOrder、settlement.go 的 HandlePaymentWebhook、renewal.go 的 CreateRenewal、release.go 的 CancelOrder，复用 order_release_pg18_test.go 的一次性租户夹具与幂等键工具，依赖迁移 00071
+// [INPUT]: 依赖 plan_change.go 的 PreviewPlanChange/CreatePlanChange、checkout.go 的 CreateOrder、settlement.go 的 HandlePaymentWebhook、renewal.go 的 CreateRenewal、release.go 的 CancelOrder，复用 order_release_pg18_fixture_test.go 的一次性租户夹具与幂等键工具，依赖迁移 00071
 // [OUTPUT]: 对外提供 TestPlanChangePG18（run-pg18-gates.sh 的 plan_change 域）
 // [POS]: billing 变更套餐的 PG18 集成门禁：真实 SQL 下的折算基数、补差价结算、降级退余额、试算回券面（R76）、零元变更与续费建单即通知节点、续费单待支付期间周期走完仍能履约（expired → active 推断未复现）、与续费互斥、释放与数据库守卫；纯算术边界在 plan_change_test.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

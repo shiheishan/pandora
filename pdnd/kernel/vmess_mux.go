@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 vmess.go 的 vmessAdapter、vmessBodyReader / 响应写出与 DataPlane 拨号，依赖 sing 的 M.Socksaddr 地址编解码
+// [INPUT]: 依赖 vmess.go 的 vmessAdapter（经其 DataPlane 拨号）、vmess_codec.go 的 vmessBodyReader / newVMessAEADWriter / vmessWriteResponse、vmess_request.go 的 vmessDestination / vmessDestinationUDPAddr，依赖 sing 的 M.Socksaddr 地址编解码
 // [OUTPUT]: 包内提供 vmessMuxSession / vmessMuxStream、handleMux 与 mux 帧的读写（readVMessMuxHeader / readVMessMuxData）
 // [POS]: kernel 的 VMess 原生 mux：从 vmess.go 拆出，与 vless_mux.go 同一思路——mux 帧留在 NativeCore 内而不委托兼容内核；每条子流按 TCP / UDP 经 DataPlane 路由并计量
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

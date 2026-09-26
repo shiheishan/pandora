@@ -564,8 +564,14 @@ echo "marker=idempotency_pg18_failed_row_lock_fixture_ok"
 echo "source_hashes_begin"
 sha256sum \
   "$ROOT/internal/middleware/idempotency.go" \
+  "$ROOT/internal/middleware/idempotency_replay.go" \
+  "$ROOT/internal/middleware/idempotency_recorder.go" \
   "$ROOT/internal/middleware/idempotency_test.go" \
+  "$ROOT/internal/middleware/idempotency_recorder_test.go" \
+  "$ROOT/internal/middleware/idempotency_capture_test.go" \
+  "$ROOT/internal/middleware/idempotency_replay_test.go" \
   "$ROOT/internal/middleware/idempotency_pg18_test.go" \
+  "$ROOT/internal/middleware/idempotency_pg18_fixture_test.go" \
   "$ROOT/migrations/00037_idempotency_runtime_hardening.sql" \
   "$ROOT/deploy/configure-app-role.sql" \
   "$ROOT/deploy/test-idempotency-middleware-pg18.sh"

@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 checkout.go 的 CreateOrder、settlement.go 的 HandlePaymentWebhook、renewal.go 的 CreateRenewal、plan_change.go 的 CreatePlanChange、manual_order.go 的 MarkOrderPaid、release.go 的 CancelOrder、reservation_expiry.go 的 ExpireDueReservations、late_payment.go 的 ApplyLatePaymentToBalance、unexpected_payment.go 的 quarantineUnexpectedPayment，复用 order_release_pg18_test.go 的一次性租户夹具与挂账断言，依赖迁移 00095
+// [INPUT]: 依赖 checkout.go 的 CreateOrder、settlement.go 的 HandlePaymentWebhook、renewal.go 的 CreateRenewal、plan_change.go 的 CreatePlanChange、manual_order.go 的 MarkOrderPaid、release.go 的 CancelOrder、reservation_expiry.go 的 ExpireDueReservations、late_payment.go 的 ApplyLatePaymentToBalance、unexpected_payment.go 的 quarantineUnexpectedPayment，复用 order_release_pg18_fixture_test.go 的一次性租户夹具与 order_release_pg18_assert_test.go 的挂账断言，依赖迁移 00095
 // [OUTPUT]: 对外提供 TestIneligibleSubscriptionSettlementPG18（run-pg18-gates.sh 的 plan_change 域）
 // [POS]: billing 订阅终态结算（R117）的 PG18 集成门禁：续费 / 变更单待支付期间订阅被改成 expired 或 cancelled 时，渠道回调与后台标记已付的钱进挂账、订单与订阅不动、回执成功；订单之后照常取消或过期、退回余额冻结，挂账能转入余额；数据库守卫拒绝把仍可续的订阅或新购单归为这类挂账
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
