@@ -7,7 +7,6 @@
 service.go: Service 骨架（从 checkout.go 拆出）：NewService、SetUsersChangedNotifier 注入，履约后经 onUsersChanged 在提交后发租户级节点通知，零元单（赠送、全额抵扣、零元续费与变更）由 notifyIfFulfilled 补发；包内共用小工具
 checkout.go: 新购下单 CreateOrder（目录校验、库存与限购预留、余额冻结、券核销、幂等绑定与预制响应）与零元单当场捕获履约 captureZeroPayOrder
 settlement.go: 支付回调结算主链，整条在一个文件：HandlePaymentWebhook → settlePaymentTx → postOrderPaid → fulfillOrder，回调按 kind 分派履约；续费 / 变更单锁住订阅后按建单同一口径复核订阅状态，不收（支付窗口里被改成终态）就把钱隔离进挂账、订单与订阅不动（R117）；settlePaymentTx 在调用方事务里执行，回调 / 标记已支付各开一个事务调它，人工单线下已收款在建单事务里调它
-settlement_legacy.go: 只有注释：预留图之前的旧版支付回调实现原样存档（从 checkout.go 挪来），不参与编译
 provision.go: 开订阅 provisionSubscription 与建配额 initQuotaBalances 的唯一实现，下单履约与礼品卡套餐兑换（grantPlanDirect）共用
 order_holds.go: 各建单路径共用的预留父节点与余额冻结（insertHeldReservation / prepareBalanceHold / postBalanceHold）
 reservations.go: 结算与释放共用的预留图加锁校验；orderTotal 是金额恒等式 total = max(小计 − 折扣 − 折算, 0) + 税（00071）
