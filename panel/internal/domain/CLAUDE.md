@@ -16,7 +16,7 @@ notify/: 站内信、邮件，以及到期与流量预警，8 文件；见 notif
 payment/: 支付渠道适配器接口（PAY-002）与跨渠道通用的金额换算，5 文件；不依赖 httpx，渠道停用以 ErrProviderDisabled 哨兵交给 billing 翻译成 503
 plugin/: 出站 webhook 插件钩子 hooks.go 与事件发射 emit.go，投递记往返耗时；见 plugin/CLAUDE.md
 subscription/: 订阅分发与门户按日用量读模型，4 文件；见 subscription/CLAUDE.md
-support/: 工单（OPS-001）与客服快捷回复，3 文件；见 support/CLAUDE.md
+support/: 工单（OPS-001）与客服快捷回复，6 文件（用户侧、客服侧、超时升级分文件）；见 support/CLAUDE.md
 *_test.go: 各域用例测试随包放置
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
