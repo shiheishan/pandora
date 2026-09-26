@@ -26,12 +26,13 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：①–⑦ 已验收合入。第 5 阶段：⑧（合并 49f7ba9，R117）、⑨ `6d03e16`、⑩ `17f48df`、⑪ `33920d6`、⑫ `167a8a9`、⑬ `8549326`（合并 089c033；主线合并后 Go 全量、前端 632 用例、嵌入契约、冒烟 tsc、pdnd compat 测试通过）已验收合入。**追加 ⑭（两处小修）**，见补充事项；做完报告。迁移剩 00096–00098。
+**进度**：①–⑦ 已验收合入。第 5 阶段 ⑧–⑭ 全部验收合入（⑧ 49f7ba9，⑨–⑬ 089c033，⑭ `2dad95d` 合并见 git log；R117）。**本会话回到待命。** 迁移剩 00096–00098。
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R117。
 - **第 5 阶段（2026-09-26，新会话接力）**：先读 `phase3-common.md` 第 12 节（与重构会话的文件分界）。用户定了修下面五件，都是协调会话调查过、根因已明的问题。⑧ 单独一个提交、单独报告（牵涉钱）；⑨–⑫ 每步一个提交，全部做完一起报告。每个提交推送后看三组 CI，PG18 必须 0 SKIP；本机全量用 `go test -p 1 -count=1 -timeout 15m ./...`。
   - **重构 ① 已合入主线（合并 2f562c9）**：按文件名读源码的测试改用 `platform/sourcetest` 按声明名读取；`message_zh_contract_test.go` 的豁免表改成按「包目录 + 函数名」登记。你改 `handlers.go`、`service.go` 等时，相关源码契约测试按函数名找声明，不再依赖文件；开工前 `git merge feat/panel-redesign` 拿到它，⑪ 若要动 `handlers_test.go` 或豁免表，照新写法改。billing 的 7 个源码测试仍按文件名读（留给重构 ③），⑧ 若在 billing 里新加函数要被这些测试覆盖，照原写法即可。
+  - ⑭ 的验收结论：挂账页说明与空状态按「修订 R117 补」逐字改、相关注释与 L2 同步、node_activate / node_retire 的 L3 改指 `config_publish.go`、顺带修掉 `billing/schemas.ts` 的两处旧名，都认可。你看到的 `plans/schemas.ts` 旧名交给重构 ⑥ 的全仓清扫。
   - ⑨–⑬ 的验收结论：`NotifyRecipientSalt` 照 `SubscriptionAuditSalt` 派生、两网关装配有契约测试；回退值收成常量并有「代码 = 迁移种子」的单测，**⑩ 佣金那条是协调会话的调查错了**：00029 已把种子改成冻结 3 天、最低提现 10000，代码本来就对，你按事实只收常量，正确；`EmailVerificationDefault = false` 与种子一致；`tenant_guard_test` 钉住单租户假设；`NodeStatusRefusal` 与「今天只会撞到中文触发器」的结论（R116 遗留 UNKNOWN 就此结案，已写进修订表）；juicity 缺省目录落进 `/var/lib/pandora-native/juicity`；前端挂账枚举与标记已付 409，都认可。合入时 `panel/internal/CLAUDE.md`、`middleware/CLAUDE.md` 与重构 ② 冲突，协调会话以重构的成员清单为底、补进了你的租户守卫说明。
   - **⑭ 两处小修（一个提交）**：① 挂账页文案按契约「修订 R117 补」改（`ArrearsTab.tsx` 约 102、121 行的说明与空状态，原因列的新类型文案若已是「订阅已结束后到账 · {order_no}」就不动），假后端测试若断言了文案同步改；② `nodefabric/node_activate.go`、`node_retire.go` 的 L3 头里「service.go 的 lockLegacyConfigRelease」改成 `config_publish.go`（重构 ② 把它挪过去了），顺手 grep 你这轮改过的文件 L3 里还有没有指向被拆文件的旧名。跑 frontend-check、嵌入契约、Go 全量，推送看 CI，报告。
   - ⑧ 的验收结论：复核状态收成一处 `subscriptionAcceptsPaidChange`（建单两处与结算共用）、不合格隔离进 `ineligible_subscription` 挂账且回执成功、重投按重放不多记、00095 守卫分支与 Down（有这类挂账即拒绝、协调会话逐行比对确认原样还原 00040 守卫函数）、标记已付两种 409、释放路径只豁免这一类挂账收款（其余有收款的订单仍拒绝释放）、第一次真跑挂账转入余额的 PG18，都认可，已写成 R117。你查出的释放死锁是开工说明漏掉的，处理得对。00095 的 Down 没在 CI 上跑过，知悉。
