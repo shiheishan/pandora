@@ -329,6 +329,7 @@
 
 #### POST v1/tickets/{id}/reply — 客服回复 / 内部备注
 - **修订 R115（2026-09-25，联调冒烟 ④ 实测，协调会话核实）**：非内部回复**要给提单人排一条 `ticket.replied` 通知**（现在不发：模板 00023 / 00050 / 00090 早已种下 inapp 与 telegram 两个渠道，后台模板页也写着「工单被管理员回复后通知提单人」，但 `support.replyAsAgent` 从不调 `notify.Enqueue`）。与回复同一事务排队，变量 `subject` 取工单标题，去重键 `ticket-replied:<消息 id>`（每条回复一条，重放不重复），类别 service 按用户偏好过滤；内部备注不发；排完 Kick 一次派发。响应形状不变。
+- **修订 R115 补（2026-09-25，后端四 ⑤ 8026cd0）**：已实现，排队与回复同一事务，去重键带消息 id。**时效（FACT，协调会话定为可接受）**：admin 网关的 notify 不跑派发循环、也没配发送器，Kick 在那里是空操作；排好的站内信由 public 网关的派发循环发出（最慢约 5 分钟），在此之前门户收件箱看不到。工单本身的变化仍由实时 `ticket.updated` 即时推给用户，所以不另做跨进程唤醒。不要在 admin 里起派发循环：没有发送器，会把 telegram / email 待发行标成 suppressed。
 - 状态：现有 `handlers.go:592 ticketReply`
 - 权限：`ops.ticket.write`｜reauth：否｜幂等：是 `admin_ticket_reply`
 - 请求：`{ body: string(1–5000，trim 后计数), internal_note?: bool }`
