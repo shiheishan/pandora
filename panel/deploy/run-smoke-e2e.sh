@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖 run-smoke-stack.sh 写在状态目录的 smoke.env 与 gateway.env，依赖同目录 psql.sh（仓库自带、写死容器 aegis-postgres），依赖 ../tests 下的 e2e 脚本、../cmd 下的 aegis-payctl 源码，依赖 sudo、go、python3、timeout
-# [OUTPUT]: 在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，每个脚本一行写进 <状态目录>/e2e-results.md（通过 / 失败 / 超时、OK 与 FAIL 计数、首个失败所在的步骤与原文），各自完整输出在 logs/e2e-*.log；跑产品代码的准备步骤（编译 payctl 并用它配渠道）失败也只记一行；脚本失败不影响退出码
-# [POS]: 第 4 阶段联调冒烟第 ⑤ 步，被 .github/workflows/panel-smoke.yml 在读表与写路径之后调用；只报告，不修脚本、不修 Go，失败原因由协调会话看表与日志后指派
+# [OUTPUT]: 在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，每个脚本一行写进 <状态目录>/e2e-results.md（通过 / 失败 / 超时、OK 与 FAIL 计数、首个失败所在的步骤与原文），各自完整输出在 logs/e2e-*.log；跑产品代码的准备步骤（编译 payctl 并用它配渠道）失败不中断、记一行；五个脚本全部跑完、表格写完后，有任何脚本或准备步骤失败就以 1 退出，让 job 变红
+# [POS]: 第 4 阶段联调冒烟第 ⑤ 步起的 e2e 门禁，被 .github/workflows/panel-smoke.yml 在读表与写路径之后调用；⑥ 起五个脚本都已跟上现行接口，失败即变红，免得它们再悄悄过时
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 这些 e2e 脚本是给「装在 /opt/aegispanel 的 docker-compose 部署」写的：
@@ -62,11 +62,13 @@ ln -s "$STATE/logs/aegis-admin.log" /opt/aegispanel/logs/admin.log
 
 RESULTS="$STATE/e2e-results.md"
 : > "$RESULTS"
-# 准备步骤里凡是跑产品代码的（编译 payctl 并用它配渠道），失败只记一行，
-# 让依赖它的脚本自己报出来：本步不因产品代码的问题变红
+# 准备步骤里凡是跑产品代码的（编译 payctl 并用它配渠道），失败不中断，记一行并计入失败，
+# 依赖它的脚本照样跑完、各自报出来；结果在最后统一决定退出码
+failed=0
 prep() {
   local what="$1"; shift
   if ! out="$("$@" 2>&1)"; then
+    failed=$((failed + 1))
     echo "    准备失败：$what"; printf '%s\n' "$out" | tail -20
     echo "| 准备：$what | 失败 | | | | $(printf '%s' "$out" | tail -1 | tr '|`' "/'" | cut -c1-300) |" >> "$RESULTS"
   fi
@@ -154,9 +156,15 @@ for f in "${SCRIPTS[@]}"; do
   elif [[ $rc -eq 0 ]]; then result="失败（退出码 0 但有 FAIL 行）"
   else result="失败（退出码 $rc）"
   fi
+  [[ $result == 通过 ]] || failed=$((failed + 1))
   echo "| \`$f\` | $result | $n_ok | $n_fail | $sec | $det |" >> "$RESULTS"
   echo "    $result；OK $n_ok，FAIL $n_fail${sec:+；首个失败在「$sec」}"
   echo "::group::$f 完整输出"; cat "$log"; echo "::endgroup::"
 done
 
-echo "==> 结果写进 $RESULTS（脚本失败只记录，不影响本步退出码）"
+echo "==> 结果写进 $RESULTS"
+# 全部跑完、表格写完才决定退出码：一个脚本红了，其余脚本的结果照样在表里
+if [[ $failed -gt 0 ]]; then
+  echo "::error::e2e 脚本或准备步骤有 $failed 项失败，见 job summary 的 e2e 表"
+  exit 1
+fi

@@ -1,7 +1,7 @@
 # panel/frontend/tests/smoke/
 > L2 | 父级: /panel/frontend/CLAUDE.md
 
-新前端对真实网关的联调冒烟（面板重构第 4 阶段）。假后端只证明「页面按契约走得通」，这里证明「页面拿到真数据不会崩」：CI 的 panel-smoke.yml 先用 panel/deploy/run-smoke-stack.sh 起一次性 PG18 + Valkey + 三个网关，再在这里造数据、用页面自己的 zod schema 解析真响应；同一个栈最后还由 deploy/run-smoke-e2e.sh 跑一遍仓库现有的 tests/*_e2e.sh（第 ⑤ 步，只报告）。不进 make frontend-check（本机没有数据库）；发现形状不一致只报告，不在这里放宽断言。入口一律读状态目录（smoke.env、gateway.env、seed.json），不含任何真实部署的值。
+新前端对真实网关的联调冒烟（面板重构第 4 阶段）。假后端只证明「页面按契约走得通」，这里证明「页面拿到真数据不会崩」：CI 的 panel-smoke.yml 先用 panel/deploy/run-smoke-stack.sh 起一次性 PG18 + Valkey + 三个网关，再在这里造数据、用页面自己的 zod schema 解析真响应；同一个栈最后还由 deploy/run-smoke-e2e.sh 跑一遍仓库现有的五个 e2e 脚本（第 ⑤ 步起；第 ⑥ 步起任一失败即 job 变红）。不进 make frontend-check（本机没有数据库）；发现形状不一致只报告，不在这里放宽断言。入口一律读状态目录（smoke.env、gateway.env、seed.json），不含任何真实部署的值。
 
 成员清单
 seed.ts: 造数据，`node seed.ts <状态目录>`（SQL 夹具连 smoke.env 里的 SMOKE_PG_DB）（Node 22 原生剥类型）：池与套餐先行（池绑在发布版本上）→ 新服务器 + 新节点 → 节点抽屉签发接入令牌 → Ed25519 两段式接入（begin / commit，与 pdnd 同一套规范串，运行令牌由「节点」生成）→ POST activate 一步上线（R108 / R113，不再逐级调旧 status）→ UniProxy 心跳；门户注册与邀请注册、下单经演示渠道付清、留一张待支付、被邀请人付一单造佣金明细、对已付单再送一笔回调造挂账；全局与单节点路由各一条规则；节点取用户列表后上报流量与在线 IP（流量排行、按日用量、在线设备都只由节点上报产生）；本机插件接收端 + 订阅 ticket.created 的钩子先于工单建好；工单与回复、快捷回复、用户组、公告、知识库、礼品卡与兑换、优惠券及带券下单、流量包上架与余额购买、收入调整、手动流量重置；末了核对各列表不空，id、门户账号与节点运行令牌写进 seed.json。后台请求间隔 300ms；两处 SQL 夹具各写明原因：演示支付渠道（没有新建渠道的接口）、提现申请（佣金只由每小时的任务解冻，且同 IP 被标待复核、无接口解除）
