@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成
-// [OUTPUT]: 对外提供 Service、NewService，工单创建、用户侧读写与关闭、客服侧队列 / 回复 / 指派 / 改状态 / 升级，各写操作的 *Atomic 版本
-// [POS]: domain/support 的主服务：工单全生命周期；队列 status 接受逗号分隔并回 last_message_author_kind，详情回 user_active_plan，人工升级把优先级提到至少 high；用户与客服两侧都回 closed_reason，两侧详情都回 related_order，客服详情的 message_count / last_reply_at 与队列同口径；closed_reason 在每条关闭路径上写对（user_closed / withdrawn / agent_closed），重新打开时清空
+// [INPUT]: 依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成；ReplyNotifier 由装配注入（notify.Service 实现）
+// [OUTPUT]: 对外提供 Service、NewService、ReplyNotifier 与 SetReplyNotifier，工单创建、用户侧读写与关闭、客服侧队列 / 回复 / 指派 / 改状态 / 升级，各写操作的 *Atomic 版本
+// [POS]: domain/support 的主服务：工单全生命周期；队列 status 接受逗号分隔并回 last_message_author_kind，详情回 user_active_plan，人工升级把优先级提到至少 high；用户与客服两侧都回 closed_reason，两侧详情都回 related_order，客服详情的 message_count / last_reply_at 与队列同口径；closed_reason 在每条关闭路径上写对（user_closed / withdrawn / agent_closed），重新打开时清空；客服非内部回复在同一事务里给提单人排 ticket.replied（R115），提交后 Kick
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package support 实现工单（OPS-001）。
@@ -37,9 +37,30 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
-type Service struct{ pool *db.Pool }
+type Service struct {
+	pool *db.Pool
+	// notifier 给提单人排「工单有新回复」。为 nil 时不排（只有不承载客服回复的装配会这样）。
+	notifier ReplyNotifier
+}
 
 func NewService(pool *db.Pool) *Service { return &Service{pool: pool} }
+
+// ReplyNotifier 是客服回复通知提单人的出口，由 notify.Service 实现（R115）。
+//
+// 放一个接口而不是直接依赖 notify：工单域只需要「在我的事务里排一条」和
+// 「提交后催一下」这两件事，模板、渠道与偏好过滤都留在 notify 里。
+type ReplyNotifier interface {
+	Enqueue(ctx context.Context, tx pgx.Tx, tenantID, userID, code string,
+		vars map[string]string, dedupeKey string) (int, error)
+	Kick()
+}
+
+// SetReplyNotifier 接上客服回复通知。承载后台工单回复的 admin 网关必须调用它。
+func (s *Service) SetReplyNotifier(n ReplyNotifier) { s.notifier = n }
+
+// ticketRepliedTemplateCode 是客服回复后通知提单人的模板（00023 / 00050 / 00090 种下
+// inapp 与 telegram 两个渠道，类别 service，用户可在偏好里关掉）。
+const ticketRepliedTemplateCode = "ticket.replied"
 
 const (
 	CreateIdempotencyScope     = "support_ticket_create"
@@ -907,13 +928,14 @@ func (s *Service) replyAsAgent(
 		return httpx.Invalid(map[string]string{"body": "内容需在 1–5000 字之间"})
 	}
 
-	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.AgentID}, func(tx pgx.Tx) error {
-		var status string
+	queued := 0
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.AgentID}, func(tx pgx.Tx) error {
+		var status, ownerID, subject string
 		var firstResponded *time.Time
 		err := tx.QueryRow(ctx,
-			`SELECT status, first_responded_at FROM tickets
+			`SELECT status, first_responded_at, user_id::text, subject FROM tickets
 			  WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
-			tenantID, in.TicketID).Scan(&status, &firstResponded)
+			tenantID, in.TicketID).Scan(&status, &firstResponded, &ownerID, &subject)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.New(httpx.CodeNotFound, "工单不存在")
 		}
@@ -962,11 +984,28 @@ func (s *Service) replyAsAgent(
 		}); err != nil {
 			return err
 		}
+
+		// 通知提单人（R115）：与回复同一事务，回复回滚则通知一起消失。
+		// 去重键带消息 id：每条回复恰好一条，重放不会多排。
+		// 内部备注用户看不见，自然不通知。
+		if !in.InternalNote && s.notifier != nil {
+			n, err := s.notifier.Enqueue(ctx, tx, tenantID, ownerID, ticketRepliedTemplateCode,
+				map[string]string{"subject": subject}, "ticket-replied:"+messageID)
+			if err != nil {
+				return err
+			}
+			queued = n
+		}
 		if complete != nil {
 			return complete(tx)
 		}
 		return nil
 	})
+	// 提交之后才催派发：事务里催，可能派发循环抢在提交前扫一遍、扑个空。
+	if err == nil && queued > 0 {
+		s.notifier.Kick()
+	}
+	return err
 }
 
 // Assign 指派或取消指派（agentID 为空表示取消）。
