@@ -129,3 +129,17 @@
 - 冒烟会话发现的形状不一致，一律报告协调会话，由协调会话写成修订并指派给后端或前端会话修；冒烟会话自己只修冒烟脚本。
 - 两个超 800 行的文件（admin `handlers.go`、`nodefabric/node_admin.go`）仍不重构，除非用户另行授权。
 - **收尾状态（2026-09-26）**：四个会话全部完成并合入主线（后端三 ①–⑤、后端四 ①–⑦、前端收尾 ①–⑤、联调冒烟 ①–⑥），契约修订到 R116。CI 上 panel-smoke 用页面 zod schema 解析真网关 120 行、写路径抽样、五个 e2e 脚本失败即红。下一步是测试机人工点（部署要用户授权），部署注意：没划进节点池的节点不服务任何人（R104），先划进池；新发布包不再带 aegis-agent，旧机器上的要人工清理；节点改状态、上线、退役的报错理论上可能露出英文 CHECK 约束原句，人工点时留意。
+
+## 12. 第 5 阶段（遗留修复与重构，2026-09-26 起）
+
+第 4 阶段已收尾（第 11 节末）。用户 2026-09-26 定：修协调会话查出的遗留小问题；**授权重构超 800 行的文件，代码与文档一起改**；**暂不做任何真机（测试机）操作**，nodeagent 定性与测试机登记都往后放。第 1–11 节照旧有效。
+
+| 会话 | worktree / 分支 | 开工说明 | 迁移号段 |
+|---|---|---|---|
+| 后端四 · 遗留修复（新会话接力） | `../pandora-be4` / `feat/panel-redesign-be4` | phase4-backend-4.md 的第 ⑧–⑫ 步 | 00095–00098 |
+| 重构 | `../pandora-refactor` / `feat/panel-redesign-refactor` | phase5-refactor.md | 不写迁移 |
+
+- 契约修订从 **R117** 起，仍由协调会话分配。
+- **两个会话的文件分界**：后端四这一轮要改的文件，重构会话在后端四对应步骤合入主线之前**不碰**：`domain/billing/**`、`domain/notify/**`、`domain/identity/service.go`、`api/admin/mail.go`、`api/admin/handlers.go`、`domain/nodefabric/node_activate.go`、`node_retire.go`、`platform/crypto/**`、`cmd/aegis-admin/main.go`、`cmd/aegis-public/main.go`、`middleware/middleware.go`、`pdnd/core/external/**`。重构的排序已按这个分界安排（见 phase5-refactor.md）。
+- 真机相关（测试机上的 aegis-nodeagent 定性与迁移、删 `nodeagent/`、把测试机登记进 `~/ai/servers`）**本阶段不做**。
+
