@@ -5,7 +5,7 @@
 
 成员清单
 audit/: 不可删审计记录写入（SEC-012）与哈希链。audit.go 的 Write 在同租户 advisory lock 内取链序号 chain_seq（00086）并按第二版口径算 entry_hash：摘要规范化后参与、字段带长度前缀、绑定时间与来源等全部写入列；auth_context（session / reauth）由 Write 从请求主体推出。chain.go 放两版口径与 VerifyChain：第一版存量行（chain_seq 为空）能复算的严格复算，带摘要而复算不出的只核对链接并计数；*_pg18_test.go 由 run-pg18-gates.sh 的 audit 域跑
-clientauth/: CLIENT-AUTH 的字节精确、无副作用原语，107 文件；子包 ca42admission、ca42controlv3、ca42execution、evidencecodec 各带 README
+clientauth/: CLIENT-AUTH 的字节精确、无副作用原语，113 文件（ca42runner 带 CLAUDE.md）；子包 ca42admission、ca42controlv3、ca42execution、evidencecodec 各带 README
 config/: 从环境变量加载配置，缺一项拒绝启动，不引入配置框架（NFR-006）
 credentialrevocation/: 登录凭据的 fail-closed 集中吊销
 crypto/: 口令哈希、令牌生成、签名与信封加密
