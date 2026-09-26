@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 renewal.go、plan_change.go 的源码文本与 subscriptionAcceptsPaidChange，依赖迁移 00095 的挂账守卫
+// [OUTPUT]: 对外提供续费的源码契约测试（建单预留与幂等、零元单与履约锁序、配额周期独立）与订阅状态口径一致性测试
+// [POS]: billing 续费的源码契约门禁；可续费状态组在 Go 与 00095 守卫之间只许有一份口径
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -93,5 +98,43 @@ func TestRenewalQuotaPeriodsRemainIndependent(t *testing.T) {
 	}
 	if strings.Contains(src, "qd.plan_version_id = $3::uuid AND qd.metric = qb.metric`") {
 		t.Fatal("renewal quota definition join must include period")
+	}
+}
+
+// R117：续费与变更套餐对订阅状态的口径只有一处（subscriptionAcceptsPaidChange），
+// 建单、结算复核与迁移 00095 的挂账守卫必须是同一组状态——守卫若比 Go 宽，
+// 隔离的钱会在提交时被拒、整笔回滚；若比 Go 窄，本该履约的钱会被当成挂账。
+func TestSubscriptionPaidChangeStatusesMatchLatePaymentGuard(t *testing.T) {
+	accepted := map[string]bool{"active": true, "trialing": true, "grace": true, "past_due": true}
+	// 状态全集来自 00003 的 subscription_transitions
+	for _, status := range []string{"pending", "trialing", "active", "past_due", "grace",
+		"paused", "cancelled", "expired"} {
+		if got := subscriptionAcceptsPaidChange(status); got != accepted[status] {
+			t.Errorf("subscriptionAcceptsPaidChange(%q)=%v want %v", status, got, accepted[status])
+		}
+	}
+	body, err := os.ReadFile("../../../migrations/00095_late_payment_ineligible_subscription.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := string(body)
+	if at := strings.Index(up, "-- +goose Down"); at > 0 {
+		up = up[:at]
+	}
+	if !strings.Contains(up, "AND v_sub_status IN ('active','trialing','grace','past_due')") {
+		t.Fatal("00095 guard must reject exactly the statuses subscriptionAcceptsPaidChange accepts")
+	}
+	for _, src := range []string{"renewal.go", "plan_change.go"} {
+		b, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), `case "active", "trialing", "grace", "past_due":`) &&
+			!strings.Contains(string(b), "func subscriptionAcceptsPaidChange(") {
+			t.Errorf("%s restates the renewable status list instead of calling subscriptionAcceptsPaidChange", src)
+		}
+		if !strings.Contains(string(b), "subscriptionAcceptsPaidChange(status)") {
+			t.Errorf("%s creation must check subscriptionAcceptsPaidChange", src)
+		}
 	}
 }

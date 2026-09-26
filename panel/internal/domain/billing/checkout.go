@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 reservations.go 的资源预留与科目锁、ledger.go 的记账、commission.go 的计提，依赖 platform/db、platform/httpx、middleware 的幂等声明
 // [OUTPUT]: 对外提供 Service、CreateOrder、HandlePaymentWebhook 及其输入输出类型、CheckoutIdempotencyScope；包内提供 notifyUsersChanged / notifyIfFulfilled（提交后通知节点，零元单建单即履约也发）、provisionSubscription、initQuotaBalances（新开订阅与变更套餐共用的配额初始化）、addInterval
-// [POS]: billing 的结账与支付回调主链路，回调按 kind 分派履约（upgrade 交 plan_change.go）；mark-paid（manual_order.go）与补偿查询（payments.go）都复用 HandlePaymentWebhook 与 PaymentWebhookOutput
+// [POS]: billing 的结账与支付回调主链路，回调按 kind 分派履约（upgrade 交 plan_change.go）；续费 / 变更单锁住订阅后复核状态，不收就把钱隔离进挂账（unexpected_payment.go，R117）；mark-paid（manual_order.go）与补偿查询（payments.go）都复用 HandlePaymentWebhook 与 PaymentWebhookOutput（QuarantineKind 标出钱进了挂账）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -783,6 +783,9 @@ type PaymentWebhookOutput struct {
 	PaymentID       string `json:"payment_id"`
 	SubscriptionID  string `json:"subscription_id"`
 	LedgerTxnID     string `json:"ledger_txn_id"`
+	// QuarantineKind 非空表示这笔钱没有结算订单，而是按这个 case_kind 进了挂账
+	// （unexpected_payment.go）。渠道回执照样成功；标记已付据此回 409。
+	QuarantineKind string `json:"-"`
 }
 
 // HandlePaymentWebhook 处理支付成功回调。
@@ -1224,6 +1227,7 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 		return err
 	}
 	var recordedOrderID string
+	recordedWhilePending := false
 	err = tx.QueryRow(ctx, `
 		SELECT order_id::text FROM payments
 		 WHERE tenant_id=$1 AND provider_id=$2::uuid AND provider_payment_id=$3`,
@@ -1235,7 +1239,12 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 		}
 		if status != "paid" && status != "fulfilled" &&
 			status != "cancelled" && status != "expired" {
-			return errors.New("provider payment exists before order reached a terminal state")
+			// 未结的订单上已有这笔收款，只可能是订阅不收时隔离进挂账的那笔（R117），
+			// 换了事件号重投：交给下面的隔离分支按重放处理
+			if !subscriptionBoundOrderKind(orderKind) {
+				return errors.New("provider payment exists before order reached a terminal state")
+			}
+			recordedWhilePending = true
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -1275,11 +1284,26 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 	// top-up settlement.
 	var renewalSubscriptionID string
 	if subscriptionBoundOrderKind(orderKind) {
-		renewalSubscriptionID, err = lockOrderSubscriptionForSettlement(
+		var subscriptionStatus string
+		renewalSubscriptionID, subscriptionStatus, err = lockOrderSubscriptionForSettlement(
 			ctx, tx, tenantID, orderID, userID,
 		)
 		if err != nil {
 			return err
+		}
+		// 建单时校验过订阅状态，但支付窗口里订阅可能已被改成终态：照常履约会写
+		// active、被状态机拒绝，整笔结算回滚，连收款证据都留不下。钱已经到了，
+		// 按建单同一口径复核，不合格就隔离进挂账，订单与订阅都不动；订单之后
+		// 照常过期或被取消，释放时退回余额冻结（R117）。
+		if recordedWhilePending || !subscriptionAcceptsPaidChange(subscriptionStatus) {
+			quarantined, err := s.quarantineUnexpectedPayment(ctx, tx,
+				tenantID, eventID, providerID, orderID, userID, status,
+				in.ProviderCode, "ineligible_subscription", in)
+			if err != nil {
+				return err
+			}
+			*out = *quarantined
+			return nil
 		}
 	}
 

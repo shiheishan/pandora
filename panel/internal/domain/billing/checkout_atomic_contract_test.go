@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 checkout.go、coupon.go 等源码文本（os.ReadFile）
+// [OUTPUT]: 对外提供结账与结算的源码契约测试（下单原子性、券预留、结算锁序与三条挂账隔离分支）
+// [POS]: billing 的源码契约门禁：钉住数据库执行不到本机时也必须成立的锁序与分支顺序，PG18 测试证明它们在真实 SQL 下的效果
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -157,8 +162,18 @@ func TestSettlementReservationAndLockOrderSourceContract(t *testing.T) {
 		terminal >= intentWrite || terminal >= paymentWrite {
 		t.Fatal("cancelled/expired orders must branch before ordinary intent and payment writes")
 	}
-	if strings.Count(handler, "quarantineUnexpectedPayment(") != 2 {
-		t.Fatal("paid and released unexpected payments need explicit quarantine branches")
+	if strings.Count(handler, "quarantineUnexpectedPayment(") != 3 {
+		t.Fatal("paid, released and ineligible-subscription payments need explicit quarantine branches")
+	}
+	// R117：续费 / 变更单锁住订阅后、碰支付意图与预留图之前复核订阅状态，
+	// 不合格的钱进挂账而不是让履约撞状态机回滚。
+	subLock := strings.Index(handler, "lockOrderSubscriptionForSettlement(")
+	recheck := strings.Index(handler, "subscriptionAcceptsPaidChange(subscriptionStatus)")
+	ineligible := strings.Index(handler, `"ineligible_subscription", in)`)
+	intentLock := strings.Index(handler, "ORDER BY id FOR UPDATE")
+	if subLock < 0 || recheck < 0 || ineligible < 0 || intentLock < 0 ||
+		!(subLock < recheck && recheck < ineligible && ineligible < intentLock) {
+		t.Fatal("subscription eligibility must be rechecked under the subscription lock before intent locks")
 	}
 
 	postingStart := strings.Index(checkout, "func (s *Service) postOrderPaid")

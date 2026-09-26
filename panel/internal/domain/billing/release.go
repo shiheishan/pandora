@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 reservations.go 的 lockOrderReservationGraph、ledger.go 的记账、platform/audit、platform/httpx
 // [OUTPUT]: 对外提供 AdminCancelOrder、CancelOrder、ReleaseOrderOutput；包内提供释放共用的 releaseOrderReservation、lockReleaseReservationGraph 与把释放错误翻成中文接口错误的 releaseHTTPError
-// [POS]: billing 的订单释放（取消 / 过期）：把 held 预留图整体转成 released 并退回余额冻结；new / topup / addon / upgrade（变更套餐）走同一套预留图锁，renewal 走续费专用分支；金额恒等式经 reservations.go 的 orderTotal
+// [POS]: billing 的订单释放（取消 / 过期）：把 held 预留图整体转成 released 并退回余额冻结；订单上已有收款即拒绝释放，只有订阅不收而隔离进挂账的那类（R117）不算；new / topup / addon / upgrade（变更套餐）走同一套预留图锁，renewal 走续费专用分支；金额恒等式经 reservations.go 的 orderTotal
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -454,9 +454,15 @@ func lockAndRejectSettledPaymentEvidence(ctx context.Context, tx pgx.Tx,
 	}
 	succeededIntents.Close()
 
+	// 订阅已不收而隔离进挂账的收款（R117）不算入账：钱在挂账科目里另行处理，
+	// 订单从未被捕获，照常释放才能退回余额冻结，否则冻结永远退不回来。
 	payments, err := tx.Query(ctx, `
 		SELECT id::text FROM payments
 		 WHERE tenant_id=$1 AND order_id=$2::uuid
+		   AND NOT EXISTS (
+		         SELECT 1 FROM late_payment_cases c
+		          WHERE c.tenant_id=payments.tenant_id AND c.payment_id=payments.id
+		            AND c.case_kind='ineligible_subscription')
 		 ORDER BY id`, tenantID, orderID)
 	if err != nil {
 		return err

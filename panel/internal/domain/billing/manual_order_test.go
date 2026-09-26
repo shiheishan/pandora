@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 manual_order.go 的 CreateManualOrder、offlinePaymentInput 与 ManualSettlement*
-// [OUTPUT]: 对外提供 TestManualOrderSettlementValidatedBeforeCheckout、TestOfflinePaymentInputShape
+// [OUTPUT]: 对外提供 TestManualOrderSettlementValidatedBeforeCheckout、TestOfflinePaymentInputShape、TestMarkPaidQuarantinedConflict
 // [POS]: billing 人工单的单元测试：结算方式与凭证号在进下单事务之前被拒；两条线下收款路径（标记已支付、人工单线下已收款）共用同一个回调形状
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -53,5 +53,19 @@ func TestOfflinePaymentInputShape(t *testing.T) {
 	if payload["source"] != "admin_offline" || payload["actor_id"] != "actor-1" ||
 		payload["reference"] != "BANK-1" || payload["reason"] != "银行转账已到账" {
 		t.Fatalf("offline raw payload=%#v", in.RawPayload)
+	}
+}
+
+// 标记已付的钱进了挂账时回 409（R117），两种来由各有说明，都指向挂账。
+func TestMarkPaidQuarantinedConflict(t *testing.T) {
+	for kind, fragment := range map[string]string{
+		"ineligible_subscription": "订阅已结束",
+		"released_order":          "不在待支付状态",
+	} {
+		err := markPaidQuarantined(kind)
+		if err.Code != httpx.CodeConflict || !strings.Contains(err.Message, fragment) ||
+			!strings.Contains(err.Message, "挂账") {
+			t.Errorf("%s: code=%s message=%q", kind, err.Code, err.Message)
+		}
 	}
 }
