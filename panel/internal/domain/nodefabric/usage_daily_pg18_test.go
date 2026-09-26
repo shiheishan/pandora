@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 uniproxy.go 的 ReportTraffic、usage_daily.go 的 chargeReportEntry / UsageLocation / UsageDay，依赖 platform/db 的 InTx，依赖迁移 00072 的 subscription_usage_daily
+// [INPUT]: 依赖 uniproxy_traffic.go 的 ReportTraffic、usage_daily.go 的 chargeReportEntry / UsageLocation / UsageDay，依赖 platform/db 的 InTx，依赖迁移 00072 的 subscription_usage_daily
 // [OUTPUT]: 对外提供 TestUsageDailyWritePG18（run-pg18-gates.sh 的 traffic_charge 域，与 TestTrafficChargePG18 共用一个库）
 // [POS]: domain/nodefabric 按日流量写入的 PG18 集成门禁：真实上报路径的倍率、累加、重试去重、按用户时区切日（默认 UTC 跟随站点时区）、租户隔离与不推送
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

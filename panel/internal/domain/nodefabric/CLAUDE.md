@@ -10,9 +10,13 @@ heartbeat.go: 心跳（AGT-004，指标一律放大成整数）与探针指标�
 config_delivery.go: 旧版配置签发 FetchConfig（全局 → 池 → 节点分层合并、规范化后 Ed25519 签名，RLS 未命中回中性 404，退役节点拒绝）、VerifyConfigSignature（面板与节点端共用口径）与配置回报（要求唯一匹配的已发布配置），有效发布物的回报 ReportEffectiveConfigApplied
 config_publish.go: 旧版配置发布 PublishConfig：锁序为 node-config-release 发布锁 → 目标池 / 节点行 FOR SHARE → 受影响节点行 → 全租户版本分配 → 取代旧层 → 写新层；lockLegacyConfigRelease / syncLegacyDesiredConfigVersion 与接入、后台建节点、退役、上线共用
 enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token（签发记录重置为无签发人）
-uniproxy.go: UniProxy 兼容数据面（LoadRouting 与 effective_release_service 的 loadEffectiveRoutingTx 同一口径：节点私有规则在前、全局规则在后）：节点鉴权、server-token 签发（写审计、记 server_token_issued_at/by、拒绝已退出服务的节点）、配置组装与 ETag、用户下发（只给套餐绑定了节点所在池的订阅，无池节点不下发任何人；池限定用户组时只给名单内组的用户，谓词 PoolAdmitsUserSQL 与订阅下载共用，R104）、流量与在线上报（在线数窗口按租户设置，DeviceWindowMinutes 为可选值，PurgeStaleAlive 截止 70 分钟，R103）；扣量先吃套餐本周期额度、再按先到先扣吃用户流量包（D-E-1），套餐用完但流量包有剩余的订阅继续下发；逐用户记账委托 usage_daily.go
+uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写审计、记 server_token_issued_at/by、拒绝已退出服务的节点）、用户下发（只给套餐绑定了节点所在池的订阅，无池节点不下发任何人；池限定用户组时只给名单内组的用户，谓词 PoolAdmitsUserSQL 与订阅下载共用，R104；套餐用完但流量包有剩余的订阅继续下发）、在线与运行状态上报（在线数窗口按租户设置，DeviceWindowMinutes 为可选值，PurgeStaleAlive 截止 70 分钟，R103）
+uniproxy_config.go: UniProxy 配置组装与 ETag（LoadRouting 与 effective_release_service 的 loadEffectiveRoutingTx 同一口径：节点私有规则在前、全局规则在后），路由匹配条件翻成节点端 qnode 形状
+uniproxy_traffic.go: 流量上报：按用户排序逐个记账，扣量先吃套餐本周期额度、再按先到先扣吃用户流量包（D-E-1），先锁配额行再锁流量包；逐用户记账委托 usage_daily.go
 usage_daily.go: 流量上报的单用户记账 chargeReportEntry：同一事务里扣量（chargeTraffic）并累加 subscription_usage_daily 当日行（00072，重试报文两边都不记）；UsageLocation / UsageDay 是按日流量唯一的日界口径（用户时区 → 租户时区 → UTC；用户为默认 UTC 时视同未设、跟随站点时区（R50）；内嵌 time/tzdata），subscription 的读接口共用
-node_admin.go: 后台节点增删改、复制、移动、排序、批量状态，协议白名单与稳定协议 SQL；PATCH 的 protocol_config 整体替换，但请求里缺席的敏感键经 protocol_secrets 补回（R78）；country_code（00082）只在此写、只进管理端响应（保留规则 3）
+node_admin.go: 后台节点新建、读取与 PATCH，协议白名单与稳定协议 SQL（stableProtocolTypes 必须留在本文件，协议对齐门按文件名读）；PATCH 的 protocol_config 整体替换，但请求里缺席的敏感键经 protocol_secrets 补回（R78）；country_code（00082）只在此写、只进管理端响应（保留规则 3）
+node_admin_placement.go: 后台节点复制（发布锁下物化当前适用配置）、移动到另一台服务器、排序，均带 row_version 乐观锁与审计
+node_admin_lifecycle.go: 服务状态迁移表（只在 Go 内强制）与批量改服务状态（先取发布锁再锁节点行，退役同事务清 desired_config_version、吊销有效身份）、删除节点的三道守卫
 node_retire.go: 一步退役 RetireNode：持 node-config-release 锁，生命周期按 node_transitions 合法边推进到 retired（active 等经 draining、canary 经 standby；draft 与接入失败态只改服务状态），服务状态 retired、清 desired_config_version、吊销有效身份、在途任务置 failed，拒绝在役服务器的控制节点
 node_activate.go: 一步上线 ActivateNode（R108，与 node_retire.go 对称）：持 node-config-release 锁，接入尾段（attesting 至 canary）按 node_transitions 合法边逐条推到 active（每步过触发器），服务状态按 ProjectNodeLifecycle 投影（旧状态接口同一份映射），服务器按服务器状态机同事务进 ready；前置条件为有效未过期身份、协议就绪、绑着未删除且能进 ready 的服务器，不满足回 409；已 active 幂等不改；返回 AdminNode 与无池 / 池未绑套餐的 warnings
 node_identity.go: 节点凭据只读视图 NodeCredentials：当前或最近一份 mTLS 身份、服务端令牌是否存在及签发时间与签发人、未用未过期的安装令牌数

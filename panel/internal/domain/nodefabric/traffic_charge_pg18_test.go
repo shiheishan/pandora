@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 uniproxy.go 的 chargeTraffic，依赖 platform/db 的 InTx，依赖迁移 00070 的 traffic_pack_grants 与其变更通知触发器、00076 摘掉 quota_balances 通知
+// [INPUT]: 依赖 uniproxy_traffic.go 的 chargeTraffic，依赖 platform/db 的 InTx，依赖迁移 00070 的 traffic_pack_grants 与其变更通知触发器、00076 摘掉 quota_balances 通知
 // [OUTPUT]: 对外提供 TestTrafficChargePG18（run-pg18-gates.sh 的 traffic_charge 域）
 // [POS]: domain/nodefabric 扣量路径的 PG18 集成门禁，与 traffic_charge_test.go 的单元测试互补：这里证明真实 SQL 的扣量顺序与推送面
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 subscriptions / users / tenants 的归属与时区（用户默认 UTC 跟随站点时区，R50），依赖 uniproxy.go 的 chargeTraffic；写 subscription_usage_daily（迁移 00072）；time/tzdata 内嵌时区库
+// [INPUT]: 依赖 subscriptions / users / tenants 的归属与时区（用户默认 UTC 跟随站点时区，R50），依赖 uniproxy_traffic.go 的 chargeTraffic；写 subscription_usage_daily（迁移 00072）；time/tzdata 内嵌时区库
 // [OUTPUT]: 对外提供 UsageLocation、UsageDay（按日流量的日界口径，subscription 的读接口共用）；包内提供 chargeReportEntry
 // [POS]: domain/nodefabric 流量上报的单用户记账：扣配额与流量包（chargeTraffic）并在同一事务里累加当日用量，被 ReportTraffic 逐条调用
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
