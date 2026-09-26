@@ -177,11 +177,14 @@ if set_email_verification true; then
   [ "$(jqr "$rv" "['verification_required']")" = "True" ] && [ -n "$VCODE" ] \
     && ok "开启后要求验证码，且开发模式回显了验证码" || bad "开启后未要求验证码或未回显: $rv"
 
-  # 错误验证码必须被拒
-  wrongcode=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE}/v1/auth/register/complete" \
-               -H 'Content-Type: application/json' \
-               -d "{\"registration_token\":\"${VTOKEN}\",\"code\":\"000000\",\"password\":\"${PASSWORD}\"}")
-  [ "$wrongcode" = "400" ] && ok "错误验证码被拒（400）" || bad "错误验证码返回 ${wrongcode}"
+  # 错误验证码必须被拒。契约 register/complete：验证码错与令牌无效、尝试超限同为
+  # 403「注册当前不可用或邀请码无效」，不向调用方区分是哪一种
+  rw=$(curl -sS -w '\n%{http_code}' -X POST "${BASE}/v1/auth/register/complete" \
+        -H 'Content-Type: application/json' \
+        -d "{\"registration_token\":\"${VTOKEN}\",\"code\":\"000000\",\"password\":\"${PASSWORD}\"}")
+  wrongcode=${rw##*$'\n'}
+  [ "$wrongcode" = "403" ] && [ "$(jqr "${rw%$'\n'*}" "['error']['code']")" = "forbidden" ] \
+    && ok "错误验证码被拒（403 forbidden，与令牌无效不可区分）" || bad "错误验证码返回 ${wrongcode}: ${rw%$'\n'*}"
 
   rvc=$(curl -sS -X POST "${BASE}/v1/auth/register/complete" \
          -H 'Content-Type: application/json' \
