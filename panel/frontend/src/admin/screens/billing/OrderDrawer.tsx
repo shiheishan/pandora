@@ -183,10 +183,11 @@ function MarkPaid({ o }: { o: OrderDetail }) {
   const submit = async () => {
     const body = { reason: reason.trim(), reference: reference.trim() }
     try {
-      const r = await api.post(`v1/orders/${encodeURIComponent(o.id)}/mark-paid`, markedPaidSchema, { body, idempotencyKey: intent.keyFor([o.id, body]) })
+      await api.post(`v1/orders/${encodeURIComponent(o.id)}/mark-paid`, markedPaidSchema, { body, idempotencyKey: intent.keyFor([o.id, body]) })
       intent.reset()
       setConfirming(false)
-      toast(r.already_handled ? '这张凭证已经入过账，没有重复记账' : o.kind === 'topup' ? '已标记为已支付，余额已入账' : '已标记为已支付，订阅已开通')
+      // 重复凭证与「订阅已结束、款项进了挂账」都回 409，文案经 fail 原样 Toast（R117）
+      toast(o.kind === 'topup' ? '已标记为已支付，余额已入账' : '已标记为已支付，订阅已开通')
     } catch (e) {
       setConfirming(false)
       fail(e, { fields: setErrors, intent })

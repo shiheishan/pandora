@@ -25,6 +25,7 @@ import {
   paymentFor,
   providers,
   providerView,
+  subscriptionEnded,
   todayLocal,
   type Adjustment,
   type Order,
@@ -246,16 +247,19 @@ export const billing: MockModule = {
         const r = referenceProblem(reference)
         if (r) return invalid(r)
         const owner = referenceOwner(reference)
-        if (owner === o) {
-          const p = o.payments.find((x) => x.provider_payment_id === `offline:${reference}`)!
-          return { status: 200, body: { processed: false, already_handled: true, payment_id: p.id, subscription_id: o.subscription_id ?? '', ledger_txn_id: '' } }
-        }
         if (o.status !== 'pending_payment' && o.status !== 'processing') return err(409, 'conflict', `只有待支付的订单可以标记为已支付，当前状态：${o.status}`)
+        // 同一凭证在仍待支付的单上入过账：上一次钱进了挂账（R117）
+        if (owner === o) return err(409, 'conflict', `凭证号 ${reference} 已经入过账，不能重复标记`)
         if (o.payable_amount <= 0) return err(409, 'conflict', '这张订单不需要支付')
         if (owner) return err(409, 'conflict', '凭证号已用于其他订单')
         const at = new Date().toISOString()
         const p = paymentFor(o, 'offline', null, at, `offline:${reference}`)
         o.payments.push(p)
+        // 续费 / 变更单的订阅已结束：钱照常入账、隔离进挂账，订单不动，回 409 说明去向（R117）
+        if (subscriptionEnded.has(o.id)) {
+          lateCases.unshift({ id: randomUUID(), case_kind: 'ineligible_subscription', status: 'suspense', amount: o.payable_amount, currency: o.currency, order: o, received_at: at })
+          return err(409, 'conflict', '订阅已结束，款项已转入挂账，可在挂账里转入用户余额')
+        }
         Object.assign(o, { paid_amount: o.payable_amount, paid_at: at, state_version: o.state_version + 2, updated_at: at })
         if (o.kind === 'topup') o.status = 'paid'
         else fulfil(o, at)

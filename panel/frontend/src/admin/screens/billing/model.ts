@@ -278,7 +278,7 @@ export const LATE_STATUS_VIEW: Record<LateStatus, { label: string; tone: Tone }>
   manual_review: { label: '人工核对中', tone: 'info' },
 }
 
-const LATE_KIND_LABELS: Record<LateKind, string> = { released_order: '订单取消后到账', excess_capture: '超额扣款' }
+const LATE_KIND_LABELS: Record<LateKind, string> = { released_order: '订单取消后到账', excess_capture: '超额扣款', ineligible_subscription: '订阅已结束后到账' }
 export function lateReason(c: Pick<LateCase, 'case_kind' | 'order_no'>): string {
   return `${LATE_KIND_LABELS[c.case_kind]} · ${c.order_no}`
 }

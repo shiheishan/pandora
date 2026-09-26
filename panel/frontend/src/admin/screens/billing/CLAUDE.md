@@ -9,12 +9,12 @@ D-C-3 已决（5.A.2）：不提供「从余额扣除」，弹窗里说明先调
 
 成员清单
 index.tsx: 页面入口，按标签分发到四个组件，相对时间与账龄的 now 每分钟走一次
-schemas.ts: 封闭枚举（订单 9 态与 7 种 kind、支付尝试 / 入账 / 退款状态、挂账状态与成因）与 zod schema：订单列表行（R63）、详情与订单项、支付记录、取消 / 人工开单 201 / 标记已支付（R2 snake_case）响应、挂账（R3 pending_amounts，omitempty 键写 optional）、渠道（R66）、收入调整（reversal_of omitempty、R66 登记人）
+schemas.ts: 封闭枚举（订单 9 态与 7 种 kind、支付尝试 / 入账 / 退款状态、挂账状态与三种成因，R117 加 ineligible_subscription）与 zod schema：订单列表行（R63）、详情与订单项、支付记录、取消 / 人工开单 201 / 标记已支付（R2 snake_case）响应、挂账（R3 pending_amounts，omitempty 键写 optional）、渠道（R66）、收入调整（reversal_of omitempty、R66 登记人）
 api.ts: 读 hook（useOrders、useOrder、useOrderPayments、useUserPick、useLatePayments、useProviders、useAdjustments）、ORDERS_PAGE / LATE_PAGE、BK 查询键前缀与 useInvalidateBilling，转出 schemas
 model.ts: 纯逻辑：状态分段到多值 status、渠道兜底（余额 / 人工）与来源、可标记 / 可取消、抽屉 facts、支付记录合并（以支付尝试为行、有入账看入账、线下入账标人工确认、退款附后）、原因与凭证号预检、人工开单价格选项 / 预检 / 提交体、挂账文案 / 账龄 / 按币种合计、渠道开关映射与备注、收入调整预检 / 提交体 / 视图 / 默认冲销原因
 model.test.ts: 上述纯逻辑与 schema（omitempty、封闭枚举、R2 / R3 形状）的单元测试
 OrdersTab.tsx: 「订单」标签：搜索（防抖）、状态分段、按用户筛选的标签、人工开单入口、七列表格（最小宽 820，960 下卡片内横向滚动）与分页；挂 OrderDrawer 与 ManualOrder
-OrderDrawer.tsx: 订单抽屉：头部、facts（用户可点到用户抽屉）、多项订单的订单项、支付记录、待支付单的「手工标记已支付」（凭证号 + 收款说明，确认后提交）、底部「取消订单」（取消原因必填、带 state_version）
+OrderDrawer.tsx: 订单抽屉：头部、facts（用户可点到用户抽屉）、多项订单的订单项、支付记录、待支付单的「手工标记已支付」（凭证号 + 收款说明，确认后提交；重复凭证与订阅已结束进挂账都回 409，文案原样 Toast，R117）、底部「取消订单」（取消原因必填、带 state_version）
 ManualOrder.tsx: 人工开单弹窗：用户搜索选择器（可按 ?new=<用户 id> 预选）、套餐与周期（GET v1/plans 的在售价格，CNY 在前）、结算方式（待用户支付 / 线下已收款 + 凭证号 / 赠送）、开单原因；成功后打开新订单抽屉
 ArrearsTab.tsx: 「挂账」标签：说明条与待处理合计、状态分段与分页、表格（用户与成因叠成一格、金额、账龄、状态）、「转入余额」确认框（处理原因必填）
 ProvidersTab.tsx: 「支付渠道」标签：渠道卡（开关、今日成交 / 24 小时成功率 / 币种、备注）、「更多 → 完全停用」、启停确认（未配置凭据时提醒）
