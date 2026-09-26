@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 catalog.go 的 loadPlanTx、prepare*Input 校验与 updatePlanTx/createPlanVersionTx/updatePlanVersionTx/publishPlanVersionTx 事务体，依赖 plan_wizard.go 的 bindPoolsTx，依赖 platform/audit、platform/db、platform/httpx
+// [INPUT]: 依赖 catalog.go 的 loadPlanTx、prepare*Input 校验与 updatePlanTx，catalog_version.go 的 createPlanVersionTx/updatePlanVersionTx/publishPlanVersionTx 事务体，依赖 plan_wizard.go 的 bindPoolsTx，依赖 platform/audit、platform/db、platform/httpx
 // [OUTPUT]: 对外提供 UpdatePlanComplete、UpdatePlanCompleteInput/Output 与三态 OptionalInt；包内 inheritVersionSemantics
 // [POS]: adminops 套餐向导的「一次改完」：把资料、价格、额度与线路编排进同一个事务；设备数与限速三态、新版本继承当前版本全部高级设置、资料写入保留上架时间窗（R92）；plan_wizard.go 是它的「一次建成」兄弟
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

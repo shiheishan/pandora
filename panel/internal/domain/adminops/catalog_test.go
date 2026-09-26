@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 catalog.go 的校验函数与 platform/httpx 的错误码，依赖 platform/sourcetest 按名取版本语义更新链路的源码
+// [INPUT]: 依赖 catalog*.go 的校验函数与 platform/httpx 的错误码，依赖 platform/sourcetest 按名取版本语义更新链路的源码
 // [OUTPUT]: 对外提供 TestValidatePriceAuthoringPolicy、TestValidateVersionSafeReplacement、TestVersionUpdatePoolContract、TestVersionUpdatePoolFieldPresence、TestVersionUpdateCannotMutatePoolBindings、TestPublishPrerequisitesFailClosed、TestOptimisticConflictIs409、TestPublishGroupPriceCoverage
 // [POS]: adminops 套餐目录的单元与源码契约：定价策略、版本替换、旧 pool_ids 拒绝、发布前置与双令牌冲突
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

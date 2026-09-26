@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/pg18test 打开 catalog_sales 域的一次性库，依赖 service.go 的 ListUsers / GetUser / ListOrders
+// [INPUT]: 依赖 platform/pg18test 打开 catalog_sales 域的一次性库，依赖 users.go 的 ListUsers / GetUser、orders.go 的 ListOrders
 // [OUTPUT]: 对外提供 TestAdminUsersPG18
 // [POS]: domain/adminops 的 PG18 测试：用户列表带出用户组名（缺陷 8），用户详情的 recent_orders 带出首项套餐快照与项数且与订单列表同形（缺陷 9）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
