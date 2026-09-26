@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 platform 的 crypto/db/httpx/audit/token、domain/plugin 的事件发射；验证码投递经 VerificationMailer 接口（notify 实现）
-// [OUTPUT]: 对外提供 Service、NewService、VerificationMailer、SetVerificationMailer，注册（StartRegistration / CompleteRegistration）与登录（Login）
+// [OUTPUT]: 对外提供 Service、NewService、VerificationMailer、SetVerificationMailer，注册（StartRegistration / CompleteRegistration）与登录（Login），EmailVerificationDefault（邮箱验证缺行回退值）
 // [POS]: domain/identity 的主服务：注册、验证码、登录与会话签发；sessions.go、reauth.go 等同包文件扩展它
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -110,10 +110,16 @@ func emailVerifyEnabled(ctx context.Context, tx pgx.Tx, tenantID string) (bool, 
 		 FOR SHARE`,
 		tenantID).Scan(&on)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return true, nil
+		return EmailVerificationDefault, nil
 	}
 	return on, err
 }
+
+// EmailVerificationDefault 是 auth.email_verification 缺行时的取值，与迁移种子
+// （00030、00042 都种 false）一致。注册流程与后台邮件页两处读取共用；之前注册
+// 按 true、后台按 false，行被删后后台显示「关」、注册却要验证码。
+// email_verify_default_test.go 钉住与迁移一致。
+const EmailVerificationDefault = false
 
 func (s *Service) StartRegistration(ctx context.Context, tenantID string, in StartRegistrationInput) (*StartRegistrationOutput, error) {
 	email := normalizeEmail(in.Email)

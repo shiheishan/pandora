@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 domain/billing 的提现打款记账、佣金口径与 CommissionScope* / ValidCommissionScope，读写 commission_entries / withdrawals / referrals / system_settings，依赖 platform 的 db/httpx/audit
+// [INPUT]: 依赖 domain/billing 的提现打款记账、佣金口径与 CommissionScope* / ValidCommissionScope / CommissionDefault*，读写 commission_entries / withdrawals / referrals / system_settings，依赖 platform 的 db/httpx/audit
 // [OUTPUT]: 对包内提供提现列表、审批、打款、分销总览、分销参数与余额调整处理器
 // [POS]: api/admin 后台-06 佣金与提现的 HTTP 外壳与读模型：总览带累计佣金、邀请注册数与计佣范围；分销参数的计佣范围以字符串 jsonb 存进 system_settings
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -286,14 +286,16 @@ func (h *handlers) commissionOverview(w http.ResponseWriter, r *http.Request) {
 		var scope string
 		if err := tx.QueryRow(r.Context(), `
 			SELECT COALESCE((SELECT (value #>> '{}')::int FROM system_settings
-			                  WHERE tenant_id=$1 AND key='commission.rate_percent'),0),
+			                  WHERE tenant_id=$1 AND key='commission.rate_percent'),$2::int),
 			       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
-			                  WHERE tenant_id=$1 AND key='commission.freeze_days'),3),
+			                  WHERE tenant_id=$1 AND key='commission.freeze_days'),$3::int),
 			       COALESCE((SELECT (value #>> '{}')::bigint FROM system_settings
-			                  WHERE tenant_id=$1 AND key='commission.min_withdraw'),10000),
+			                  WHERE tenant_id=$1 AND key='commission.min_withdraw'),$4::bigint),
 			       COALESCE((SELECT value #>> '{}' FROM system_settings
 			                  WHERE tenant_id=$1 AND key='commission.scope'),'')`,
-			tenantID).Scan(&rate, &freeze, &minW, &scope); err != nil {
+			// 缺行回退与计提同一组常量（billing.CommissionDefault*）
+			tenantID, billing.CommissionDefaultRatePercent, billing.CommissionDefaultFreezeDays,
+			billing.CommissionDefaultMinWithdraw).Scan(&rate, &freeze, &minW, &scope); err != nil {
 			return err
 		}
 		// 与计提同一个兜底：没有设置或值不认识都按每笔订单

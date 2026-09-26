@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 domain/notify 的 SMTP 配置与发信器、domain/appearance 的 SiteNameTx、platform 的 db/audit/httpx
+// [INPUT]: 依赖 domain/notify 的 SMTP 配置与发信器、domain/appearance 的 SiteNameTx、domain/identity 的 EmailVerificationDefault、platform 的 db/audit/httpx
 // [OUTPUT]: 对外提供 handlers 的 getMailSettings / setMailSettings / testMailSettings
 // [POS]: api/admin 的邮件与注册设置接口；全部设置项 upsert（SMTP 密码行缺失也能写入，R94）；发件人名缺省显示站点名，测试信主题带发件人名
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -51,10 +51,11 @@ func (h *handlers) getMailSettings(w http.ResponseWriter, r *http.Request) {
 			       COALESCE((SELECT btrim(value #>> '{}') FROM system_settings
 			                  WHERE tenant_id=$1 AND key='mail.from_name'), ''),
 			       COALESCE((SELECT (value #>> '{}')::boolean FROM system_settings
-			                  WHERE tenant_id=$1 AND key='auth.email_verification'), false),
+			                  WHERE tenant_id=$1 AND key='auth.email_verification'), $2::boolean),
 			       COALESCE((SELECT value #>> '{}' FROM system_settings
 			                  WHERE tenant_id=$1 AND key='auth.registration_mode'), 'closed')`,
-			tenantID).Scan(&host, &port, &encryption, &username, &hasPassword,
+			// 邮箱验证缺行时与注册流程同一个回退值
+			tenantID, identity.EmailVerificationDefault).Scan(&host, &port, &encryption, &username, &hasPassword,
 			&from, &fromName, &emailVerify, &registrationMode)
 		if err != nil || fromName != "" {
 			return err

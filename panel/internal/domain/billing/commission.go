@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 commission_available.go 的可用佣金口径与科目锁，依赖 ledger.go / reservations.go 的记账与加锁原语，依赖 domain/payment 的 MulDiv
-// [OUTPUT]: 对外提供 CommissionSummary、ListMyCommissions、RequestWithdrawal、ListMyWithdrawals、PostWithdrawalPayout、SettleMatured、CommissionWithdrawalIdempotencyScope、CommissionScope* 与 ValidCommissionScope、提现错误
+// [OUTPUT]: 对外提供 CommissionSummary、ListMyCommissions、RequestWithdrawal、ListMyWithdrawals、PostWithdrawalPayout、SettleMatured、CommissionWithdrawalIdempotencyScope、CommissionScope* 与 ValidCommissionScope、CommissionDefault*（分销参数缺行回退值，后台共用）、提现错误
 // [POS]: billing 分销佣金的计提（计佣范围 first_order 时被推荐人只计第一笔；门户概况回 scope，R81）、解冻、提现申请与打款记账；转余额在 commission_transfer.go，两者共用同一口径
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -69,19 +69,29 @@ type commissionConfig struct {
 	Scope       string // 计佣范围，见 CommissionScope*
 }
 
+// 分销参数缺行时的回退值，与迁移种子一致（00028 建行，00029 改成冻结 3 天、
+// 最低提现 100 元）：设置被误删时行为不会突变。计提（loadCommissionConfig）与
+// 后台分销页两处读取共用，commission_defaults_test.go 钉住与迁移一致。
+const (
+	CommissionDefaultRatePercent       = 0
+	CommissionDefaultFreezeDays        = 3
+	CommissionDefaultMinWithdraw int64 = 10000
+)
+
 func loadCommissionConfig(ctx context.Context, tx pgx.Tx, tenantID string) (commissionConfig, error) {
-	// 兜底值与迁移里的默认值保持一致：设置被误删时行为不会突变
-	c := commissionConfig{RatePercent: 0, FreezeDays: 3, MinWithdraw: 10000}
+	c := commissionConfig{RatePercent: CommissionDefaultRatePercent,
+		FreezeDays: CommissionDefaultFreezeDays, MinWithdraw: CommissionDefaultMinWithdraw}
 	err := tx.QueryRow(ctx, `
 		SELECT COALESCE((SELECT (value #>> '{}')::int FROM system_settings
-		                  WHERE tenant_id = $1 AND key = 'commission.rate_percent'), 0),
+		                  WHERE tenant_id = $1 AND key = 'commission.rate_percent'), $2::int),
 		       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
-		                  WHERE tenant_id = $1 AND key = 'commission.freeze_days'), 3),
+		                  WHERE tenant_id = $1 AND key = 'commission.freeze_days'), $3::int),
 		       COALESCE((SELECT (value #>> '{}')::bigint FROM system_settings
-		                  WHERE tenant_id = $1 AND key = 'commission.min_withdraw'), 10000),
+		                  WHERE tenant_id = $1 AND key = 'commission.min_withdraw'), $4::bigint),
 		       COALESCE((SELECT value #>> '{}' FROM system_settings
 		                  WHERE tenant_id = $1 AND key = 'commission.scope'), '')`,
-		tenantID).Scan(&c.RatePercent, &c.FreezeDays, &c.MinWithdraw, &c.Scope)
+		tenantID, CommissionDefaultRatePercent, CommissionDefaultFreezeDays,
+		CommissionDefaultMinWithdraw).Scan(&c.RatePercent, &c.FreezeDays, &c.MinWithdraw, &c.Scope)
 	if !ValidCommissionScope(c.Scope) {
 		c.Scope = CommissionScopeEveryOrder
 	}
