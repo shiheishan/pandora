@@ -25,25 +25,26 @@ import (
 var nodeOnlyDirs = []string{"api/node"}
 
 // machineOnlyFuncs 与面板共用一个包、但只在节点网关或支付回调里被调用的函数。
-// 键是相对 internal 的文件，值是函数名（方法写 接收者.方法）。
+// 键是相对 internal 的包目录，值是函数名（方法写 接收者.方法）；按包登记，
+// 函数在包内换文件不影响豁免。
 // 新增一项之前先确认它不会被 api/admin、api/public 的页面接口调到——
 // TestNodeOnlyExemptionsStayOffUserGateways 会反查导出方法。
 var machineOnlyFuncs = map[string][]string{
-	"domain/nodefabric/enrollment.go": {
+	"domain/nodefabric": {
+		// 节点入网
 		"Service.BeginEnrollment", "Service.CommitEnrollment", "Service.AbortEnrollment",
 		"Service.LookupEnrollmentCredential", "validateEnrollmentEvidence",
 		"canonicalUUIDField", "decodeCanonicalSHA256",
-	},
-	"domain/nodefabric/effective_release_service.go": {
+		// 有效配置下发
 		"Service.FetchEffectiveConfig", "Service.applyEffectiveLayersTx",
-	},
-	"domain/nodefabric/service.go": {
+		// 旧版节点协议
 		"Service.Bootstrap", "Service.FetchConfig", "Service.Heartbeat",
 		"Service.ReportEffectiveConfigApplied",
+		// 配置签名密钥轮换
+		"Service.ConfigSigningKeyTransition",
 	},
-	"domain/nodefabric/config_key_transition.go": {"Service.ConfigSigningKeyTransition"},
 	// 支付渠道回调：验签失败的回应只有渠道看得到
-	"api/public/handlers.go": {"handlers.paymentWebhook"},
+	"api/public": {"handlers.paymentWebhook"},
 }
 
 // allowedEnglish 是无法翻译的专有名词整句（例如只有一个协议名）。目前为空；
@@ -66,10 +67,10 @@ func TestUserFacingErrorMessagesAreChinese(t *testing.T) {
 	if len(sites) < 300 {
 		t.Fatalf("only %d error message sites found; scanner no longer matches httpx call shapes", len(sites))
 	}
-	for file, funcs := range machineOnlyFuncs {
+	for pkg, funcs := range machineOnlyFuncs {
 		for _, fn := range funcs {
-			if !exempted[file+"#"+fn] {
-				t.Errorf("exemption %s %s no longer exists; remove it from machineOnlyFuncs", file, fn)
+			if !exempted[pkg+"#"+fn] {
+				t.Errorf("exemption %s %s no longer exists; remove it from machineOnlyFuncs", pkg, fn)
 			}
 		}
 	}
@@ -84,8 +85,8 @@ func TestUserFacingErrorMessagesAreChinese(t *testing.T) {
 func TestNodeOnlyExemptionsStayOffUserGateways(t *testing.T) {
 	root := internalRoot(t)
 	var methods []string
-	for file, funcs := range machineOnlyFuncs {
-		if strings.HasPrefix(file, "api/") {
+	for pkg, funcs := range machineOnlyFuncs {
+		if strings.HasPrefix(pkg, "api/") {
 			continue
 		}
 		for _, fn := range funcs {
@@ -148,6 +149,7 @@ func scanErrorMessages(t *testing.T, root string) ([]messageSite, map[string]boo
 	walkGo(t, root, func(path string, src []byte) {
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
+		pkg := filepath.ToSlash(filepath.Dir(rel))
 		for _, dir := range nodeOnlyDirs {
 			if strings.HasPrefix(rel, dir+"/") {
 				return
@@ -159,7 +161,7 @@ func scanErrorMessages(t *testing.T, root string) ([]messageSite, map[string]boo
 		}
 		inHttpx := f.Name.Name == "httpx"
 		skip := map[string]bool{}
-		for _, fn := range machineOnlyFuncs[rel] {
+		for _, fn := range machineOnlyFuncs[pkg] {
 			skip[fn] = true
 		}
 		add := func(e ast.Expr) {
@@ -171,7 +173,7 @@ func scanErrorMessages(t *testing.T, root string) ([]messageSite, map[string]boo
 			body := ast.Node(decl)
 			if fd, ok := decl.(*ast.FuncDecl); ok {
 				if name := funcName(fd); skip[name] {
-					exempted[rel+"#"+name] = true
+					exempted[pkg+"#"+name] = true
 					continue
 				}
 				if fd.Body == nil {

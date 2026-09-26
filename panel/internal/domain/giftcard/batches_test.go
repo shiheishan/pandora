@@ -1,11 +1,17 @@
+// [INPUT]: 依赖 MaskCode、读模型 Code / Usage 与 generateSampleSize，依赖 platform/sourcetest 按名取 Service.GenerateCodes 与 Service.ExportBatch 的源码
+// [OUTPUT]: 对外提供 TestMaskCodeShowsPrefixAndFourRandomCharacters、TestGiftCardReadModelsCarryOnlyMaskedCodes、TestGenerateCodesKeepsOnlyASmallPlaintextSample、TestExportBatchMarksReadsAndAuditsInOneTransaction
+// [POS]: giftcard 礼品卡码的脱敏、生成只回少量明文样本、一次性导出在一个事务里且审计不带码
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package giftcard
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestMaskCodeShowsPrefixAndFourRandomCharacters(t *testing.T) {
@@ -69,8 +75,7 @@ func TestGenerateCodesKeepsOnlyASmallPlaintextSample(t *testing.T) {
 	if generateSampleSize != 4 {
 		t.Fatalf("sample size=%d, contract says the first 4 codes", generateSampleSize)
 	}
-	src := readSource(t, "giftcard.go")
-	gen := src[strings.Index(src, "func (s *Service) GenerateCodes("):strings.Index(src, "func isSafePrefix(")]
+	gen := sourcetest.Load(t, ".").Decl("Service.GenerateCodes")
 	for _, ordered := range []string{
 		"INSERT INTO gift_card_batches", "INSERT INTO gift_card_codes", "loadBatchTx(", "audit.Write(",
 	} {
@@ -88,8 +93,7 @@ func TestGenerateCodesKeepsOnlyASmallPlaintextSample(t *testing.T) {
 
 // 一次性导出：打标记、读明文、写审计在同一事务里，审计不记任何码。
 func TestExportBatchMarksReadsAndAuditsInOneTransaction(t *testing.T) {
-	src := readSource(t, "batches.go")
-	export := src[strings.Index(src, "func (s *Service) ExportBatch("):]
+	export := sourcetest.Load(t, ".").Decl("Service.ExportBatch")
 	if n := strings.Count(export, "s.pool.InTx("); n != 1 {
 		t.Fatalf("ExportBatch opens %d transactions, want 1", n)
 	}
@@ -109,13 +113,4 @@ func TestExportBatchMarksReadsAndAuditsInOneTransaction(t *testing.T) {
 	if strings.Contains(digest, "Code") || strings.Contains(digest, "Rows[") {
 		t.Fatalf("export audit digest must not carry codes: %s", digest)
 	}
-}
-
-func readSource(t *testing.T, name string) string {
-	t.Helper()
-	body, err := os.ReadFile(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(body)
 }

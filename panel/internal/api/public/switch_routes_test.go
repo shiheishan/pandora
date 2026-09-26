@@ -1,4 +1,4 @@
-// [INPUT]: 依赖本包 router.go 源码
+// [INPUT]: 依赖 platform/sourcetest 按名取本包 NewRouter 的源码
 // [OUTPUT]: 对外提供 TestCheckoutAndRedeemRoutesAreSwitchGated
 // [POS]: api/public 的降级开关路由契约：新建订单、发起支付、充值与礼品卡兑换都挂开关门，且排在幂等之前
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -6,17 +6,14 @@
 package public
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestCheckoutAndRedeemRoutesAreSwitchGated(t *testing.T) {
-	raw, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
+	source := sourcetest.Load(t, ".").Decl("NewRouter")
 	if !strings.Contains(source, `checkout := middleware.FeatureSwitch(d.Pool, "billing.checkout",`) {
 		t.Fatal("billing.checkout gate is not defined")
 	}

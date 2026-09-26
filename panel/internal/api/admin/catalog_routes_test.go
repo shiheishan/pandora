@@ -1,12 +1,18 @@
+// [INPUT]: 依赖 router_source_test.go 的 inspectRouterFiles 读路由 AST，依赖 platform/sourcetest 按名取套餐版本处理器的源码
+// [OUTPUT]: 对外提供 TestCatalogWriteRouteContracts、TestPublishContractUsesDualTokens、TestLegacyVersionUpdateCannotBypassPoolWriteRoute
+// [POS]: api/admin 套餐目录写路由的权限码、重认证与幂等域契约，发布走双令牌、旧版本更新不绕道节点池写入
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
 	"go/ast"
 	"go/token"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 type catalogRouteContract struct {
@@ -118,11 +124,7 @@ func TestCatalogWriteRouteContracts(t *testing.T) {
 }
 
 func TestPublishContractUsesDualTokens(t *testing.T) {
-	b, err := os.ReadFile("catalog.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
+	src := sourcetest.Load(t, ".").Decl("handlers.publishPlanVersion")
 	for _, field := range []string{"expected_plan_row_version", "expected_version_row_version", "plan_row_version", "version_row_version"} {
 		if !strings.Contains(src, field) {
 			t.Fatalf("publish contract missing %s", field)
@@ -131,17 +133,7 @@ func TestPublishContractUsesDualTokens(t *testing.T) {
 }
 
 func TestLegacyVersionUpdateCannotBypassPoolWriteRoute(t *testing.T) {
-	b, err := os.ReadFile("catalog.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
-	start := strings.Index(src, "func (h *handlers) updatePlanVersion")
-	end := strings.Index(src, "func (h *handlers) publishPlanVersion")
-	if start < 0 || end <= start {
-		t.Fatal("could not isolate updatePlanVersion handler")
-	}
-	update := src[start:end]
+	update := sourcetest.Load(t, ".").Decl("handlers.updatePlanVersion")
 	for _, required := range []string{"VersionSemanticsInput", "UpdatePlanVersion"} {
 		if !strings.Contains(update, required) {
 			t.Fatalf("legacy version update handler no longer delegates %s contract", required)

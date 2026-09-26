@@ -1,9 +1,15 @@
+// [INPUT]: 依赖 router_source_test.go 的 routerSource，依赖 platform/sourcetest 按名取订单详情、支付记录与取消处理器的源码
+// [OUTPUT]: 对外提供 TestOrderDetailAndCancellationRoutesArePermissionGuarded
+// [POS]: api/admin 订单详情与取消的权限、重认证、幂等契约，不许出现退款、改单、删单路由
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestOrderDetailAndCancellationRoutesArePermissionGuarded(t *testing.T) {
@@ -11,12 +17,8 @@ func TestOrderDetailAndCancellationRoutesArePermissionGuarded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handlers, err := os.ReadFile("handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
 	r := string(router)
-	h := string(handlers)
+	h := sourcetest.Load(t, ".").Decls("handlers.getOrder", "handlers.getOrderPayments", "handlers.cancelOrder")
 	for _, want := range []string{
 		`RequirePermission("billing.order.read", d.Log)`,
 		`Get("/orders/{id}", h.getOrder)`,

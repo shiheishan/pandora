@@ -1,11 +1,16 @@
+// [INPUT]: 依赖 uniProxyToken，依赖 platform/sourcetest 取 handlers.authNode 的 AST
+// [OUTPUT]: 对外提供 TestUniProxyTokenPrefersBearerAndKeepsLegacyFallback、TestAuthNodeDelegatesCredentialSelection
+// [POS]: api/node 的节点凭据选择：Bearer 优先、查询参数兜底、异常一律拒绝；authNode 不自己读请求头
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package node
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestUniProxyTokenPrefersBearerAndKeepsLegacyFallback(t *testing.T) {
@@ -43,22 +48,7 @@ func TestUniProxyTokenPrefersBearerAndKeepsLegacyFallback(t *testing.T) {
 // legacy query credentials before uniProxyToken can apply the compatibility
 // policy. Credential-source precedence belongs exclusively in uniProxyToken.
 func TestAuthNodeDelegatesCredentialSelection(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "handlers.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse handlers.go: %v", err)
-	}
-	var authNode *ast.FuncDecl
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if ok && fn.Name.Name == "authNode" {
-			authNode = fn
-			break
-		}
-	}
-	if authNode == nil {
-		t.Fatal("authNode declaration not found")
-	}
+	authNode := sourcetest.Load(t, ".").FuncDecl("handlers.authNode")
 	foundSelector := false
 	ast.Inspect(authNode.Body, func(n ast.Node) bool {
 		switch v := n.(type) {

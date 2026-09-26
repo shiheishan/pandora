@@ -1,13 +1,19 @@
+// [INPUT]: 依赖 startReservationExpiryWorker，依赖 platform/sourcetest 按名取 startReservationExpiryWorker 与 run 的源码
+// [OUTPUT]: 对外提供 TestReservationExpiryWorkerStopsAndJoinsOnCancellation、TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup
+// [POS]: cmd/aegis-public 的进程生命周期契约：预留过期循环可取消可 join，停机次序为取消、join、返回
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (
 	"context"
 	"io"
 	"log/slog"
-	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestReservationExpiryWorkerStopsAndJoinsOnCancellation(t *testing.T) {
@@ -29,16 +35,8 @@ func TestReservationExpiryWorkerStopsAndJoinsOnCancellation(t *testing.T) {
 }
 
 func TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup(t *testing.T) {
-	sourceBytes, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(sourceBytes)
-	workerStart := strings.Index(source, "func startReservationExpiryWorker(")
-	if workerStart < 0 {
-		t.Fatal("reservation expiry worker helper is missing")
-	}
-	worker := source[workerStart:]
+	pkg := sourcetest.Load(t, ".")
+	worker := pkg.Decl("startReservationExpiryWorker")
 	for _, required := range []string{
 		"select {",
 		"case <-ctx.Done():",
@@ -50,6 +48,7 @@ func TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup(t *testing.T) {
 		}
 	}
 
+	source := pkg.Decl("run")
 	runServer := strings.Index(source, "serverErr := server.RunContext(ctx")
 	if runServer < 0 {
 		t.Fatal("public process must run the server with the signal context")

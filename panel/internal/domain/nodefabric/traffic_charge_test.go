@@ -1,9 +1,15 @@
+// [INPUT]: 依赖 splitTrafficCharge、sortedReportEntries，依赖 platform/sourcetest 按名取节点用户列表、扣量与流量上报的源码
+// [OUTPUT]: 对外提供 TestSplitTrafficChargePlanFirstThenPacks、TestSortedReportEntriesOrdersAndMergesUIDs、TestUniProxyServesAndChargesTrafficPacks
+// [POS]: nodefabric 流量扣减先套餐后流量包、上报按确定顺序扣、有流量包剩余的订阅继续下发
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func ptr64(v int64) *int64 { return &v }
@@ -54,12 +60,9 @@ func TestSortedReportEntriesOrdersAndMergesUIDs(t *testing.T) {
 
 // 流量包有剩余的订阅，套餐额度用完也要继续下发；扣量先锁配额行再锁流量包。
 func TestUniProxyServesAndChargesTrafficPacks(t *testing.T) {
-	body, err := os.ReadFile("uniproxy.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(body)
-	list := src[strings.Index(src, "流量耗尽的订阅不下发到节点"):]
+	pkg := sourcetest.Load(t, ".")
+	list := pkg.Decl("Service.ListNodeUsers")
+	list = list[strings.Index(list, "流量耗尽的订阅不下发到节点"):]
 	list = list[:strings.Index(list, "poolFilter")]
 	for _, needle := range []string{"qb.remaining <= 0", "OR EXISTS", "traffic_pack_grants g",
 		"g.user_id = s.user_id", "g.consumed_bytes < g.granted_bytes"} {
@@ -67,13 +70,13 @@ func TestUniProxyServesAndChargesTrafficPacks(t *testing.T) {
 			t.Errorf("node user list eligibility missing %q", needle)
 		}
 	}
-	charge := src[strings.Index(src, "func chargeTraffic("):strings.Index(src, "// POST /api/v1/server/UniProxy/alive")]
+	charge := pkg.Decl("chargeTraffic")
 	quotaLock := strings.Index(charge, "ORDER BY id FOR UPDATE")
 	packLock := strings.Index(charge, "ORDER BY created_at, id FOR UPDATE")
 	if quotaLock < 0 || packLock < 0 || quotaLock > packLock {
 		t.Fatal("chargeTraffic must lock quota rows before traffic pack grants, packs oldest first")
 	}
-	if !strings.Contains(src, "for _, entry := range sortedReportEntries(report)") {
+	if !strings.Contains(pkg.Decl("Service.ReportTraffic"), "for _, entry := range sortedReportEntries(report)") {
 		t.Fatal("ReportTraffic must charge users in a deterministic order")
 	}
 }

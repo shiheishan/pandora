@@ -1,9 +1,15 @@
+// [INPUT]: 依赖 router_source_test.go 的 routerSource，依赖 platform/sourcetest 按名取工单处理器的源码
+// [OUTPUT]: 对外提供 TestAdminSupportAssigneeCatalogIsReadProtectedAndPrecedesIDRoute、TestAdminSupportAssigneeCatalogUsesDedicatedDomainQuery、TestAdminSupportWritesRequirePermissionThenIdempotency、TestAdminSupportHandlersUseAtomicPreparedResponses
+// [POS]: api/admin 工单路由：负责人目录的权限与注册顺序、写路由先权限后幂等、处理器走原子预制响应
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestAdminSupportAssigneeCatalogIsReadProtectedAndPrecedesIDRoute(t *testing.T) {
@@ -25,22 +31,14 @@ func TestAdminSupportAssigneeCatalogIsReadProtectedAndPrecedesIDRoute(t *testing
 }
 
 func TestAdminSupportAssigneeCatalogUsesDedicatedDomainQuery(t *testing.T) {
-	raw, err := os.ReadFile("handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
-	if !strings.Contains(source, "Support.ListEligibleAssignees(") {
+	handler := sourcetest.Load(t, ".").Decl("handlers.ticketAssignees")
+	if !strings.Contains(handler, "Support.ListEligibleAssignees(") {
 		t.Fatal("assignee handler must use the dedicated eligible-assignee query")
 	}
-	if strings.Contains(source, "Ops.ListUsers") {
-		// The admin package legitimately uses Ops.ListUsers elsewhere; ensure the
-		// assignee handler itself does not become a wrapper around that directory.
-		start := strings.Index(source, "func (h *handlers) ticketAssignees")
-		end := strings.Index(source[start:], "func (h *handlers) ticketQueue")
-		if start >= 0 && end > 0 && strings.Contains(source[start:start+end], "Ops.ListUsers") {
-			t.Fatal("assignee handler must not use the ordinary user directory")
-		}
+	// The admin package legitimately uses Ops.ListUsers elsewhere; ensure the
+	// assignee handler itself does not become a wrapper around that directory.
+	if strings.Contains(handler, "Ops.ListUsers") {
+		t.Fatal("assignee handler must not use the ordinary user directory")
 	}
 }
 func TestAdminSupportWritesRequirePermissionThenIdempotency(t *testing.T) {
@@ -75,11 +73,8 @@ func TestAdminSupportWritesRequirePermissionThenIdempotency(t *testing.T) {
 }
 
 func TestAdminSupportHandlersUseAtomicPreparedResponses(t *testing.T) {
-	raw, err := os.ReadFile("handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(raw)
+	source := sourcetest.Load(t, ".").Decls(
+		"handlers.ticketReply", "handlers.ticketAssign", "handlers.ticketStatus", "handlers.ticketEscalate")
 	for _, want := range []string{
 		"Support.ReplyAsAgentAtomic(",
 		"Support.AssignAtomic(",

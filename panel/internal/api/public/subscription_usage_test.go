@@ -1,4 +1,4 @@
-// [INPUT]: 读 router.go 与 subscription_usage.go 的源码，依赖 parseUsageDays 与 platform/httpx 的错误码
+// [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter 与 handlers.meSubscriptionUsage 的源码，依赖 parseUsageDays 与 platform/httpx 的错误码
 // [OUTPUT]: 对外提供 TestParseUsageDays、TestSubscriptionUsageRouteContract
 // [POS]: api/public 按日用量接口的单元与源码契约：days 取值边界、路由在登录分组内且不挂幂等、404 中性出口与契约字段名
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -7,11 +7,11 @@ package public
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestParseUsageDays(t *testing.T) {
@@ -34,11 +34,8 @@ func TestParseUsageDays(t *testing.T) {
 }
 
 func TestSubscriptionUsageRouteContract(t *testing.T) {
-	b, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	router := string(b)
+	pkg := sourcetest.Load(t, ".")
+	router := pkg.Decl("NewRouter")
 	route := `r.Get("/me/subscriptions/{id}/usage", h.meSubscriptionUsage)`
 	at := strings.Index(router, route)
 	auth := strings.Index(router, "middleware.RequireAuth(d.Log)")
@@ -49,11 +46,7 @@ func TestSubscriptionUsageRouteContract(t *testing.T) {
 		t.Fatal("usage route is a read and must not require an idempotency key")
 	}
 
-	h, err := os.ReadFile("subscription_usage.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := string(h)
+	handler := pkg.Decl("handlers.meSubscriptionUsage")
 	for _, want := range []string{
 		`errors.Is(err, subscription.ErrNotFound)`,
 		`httpx.NotFoundOrForbidden()`,

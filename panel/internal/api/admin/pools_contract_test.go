@@ -1,12 +1,17 @@
+// [INPUT]: 依赖 validateSetPlanPoolsRequest、validateEditablePlanPoolVersion、platform/httpx 的错误码，依赖 platform/sourcetest 按名取节点池与套餐绑池处理器的源码
+// [OUTPUT]: 对外提供 TestSetPlanPoolsRequestValidation、TestPlanPoolDraftAndConflictContract、TestPlanPoolHandlerSourceContract、TestPoolUpdatePreservesLifecycleLockContract
+// [POS]: api/admin 套餐绑池的校验、草稿与冲突语义、审计口径，节点池更新保持生命周期锁
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 const (
@@ -84,11 +89,8 @@ func TestPlanPoolDraftAndConflictContract(t *testing.T) {
 }
 
 func TestPlanPoolHandlerSourceContract(t *testing.T) {
-	b, err := os.ReadFile("pools.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
+	pkg := sourcetest.Load(t, ".")
+	src := pkg.Decls("handlers.planPools", "handlers.setPlanPools")
 	for _, required := range []string{
 		"status='draft' AND frozen_at IS NULL",
 		"FOR UPDATE OF pv",
@@ -107,23 +109,13 @@ func TestPlanPoolHandlerSourceContract(t *testing.T) {
 			t.Fatalf("plan pool contract missing %q", required)
 		}
 	}
-	if strings.Contains(src, `Action: "plan.pools_changed"`) {
+	if strings.Contains(pkg.Source(), `Action: "plan.pools_changed"`) {
 		t.Fatal("legacy published-plan pool mutation audit action returned")
 	}
 }
 
 func TestPoolUpdatePreservesLifecycleLockContract(t *testing.T) {
-	b, err := os.ReadFile("pools.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
-	start := strings.Index(src, `func (h *handlers) updateNodePool`)
-	end := strings.Index(src, `func (h *handlers) deleteNodePool`)
-	if start < 0 || end <= start {
-		t.Fatalf("pool update handler boundary missing: start=%d end=%d", start, end)
-	}
-	block := src[start:end]
+	block := sourcetest.Load(t, ".").Decl("handlers.updateNodePool")
 	updateAt := strings.Index(block, `UPDATE node_pools`)
 	auditAt := strings.Index(block, `"node_pool.updated"`)
 	if updateAt < 0 || auditAt <= updateAt {

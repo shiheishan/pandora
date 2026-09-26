@@ -1,17 +1,19 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter、handlers.createRenewal 与 handlers.listPlans 的源码
+// [OUTPUT]: 对外提供 TestRenewalRouteIsIdempotent、TestRenewalHandlerConsumesClaimAndWritesPreparedResponse、TestPublicCatalogRequiresApplicableAllowedCurrencyPrice
+// [POS]: api/public 续费的独立幂等域与预制响应、公开套餐目录只给可用币种的适用价格
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestRenewalRouteIsIdempotent(t *testing.T) {
-	b, err := os.ReadFile("router.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
+	src := sourcetest.Load(t, ".").Decl("NewRouter")
 	idx := strings.Index(src, "/me/subscriptions/{id}/renew")
 	if idx < 0 {
 		t.Fatal("renewal route missing")
@@ -26,17 +28,7 @@ func TestRenewalRouteIsIdempotent(t *testing.T) {
 }
 
 func TestRenewalHandlerConsumesClaimAndWritesPreparedResponse(t *testing.T) {
-	b, err := os.ReadFile("handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
-	start := strings.Index(src, "func (h *handlers) createRenewal")
-	end := strings.Index(src[start:], "func (h *handlers) myAnnouncements")
-	if start < 0 || end < 0 {
-		t.Fatal("renewal handler source boundary missing")
-	}
-	handler := src[start : start+end]
+	handler := sourcetest.Load(t, ".").Decl("handlers.createRenewal")
 	for _, required := range []string{
 		"middleware.IdempotencyClaimFrom(r.Context())",
 		"billing.RenewalIdempotencyScope",
@@ -53,11 +45,7 @@ func TestRenewalHandlerConsumesClaimAndWritesPreparedResponse(t *testing.T) {
 }
 
 func TestPublicCatalogRequiresApplicableAllowedCurrencyPrice(t *testing.T) {
-	b, err := os.ReadFile("handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(b)
+	src := sourcetest.Load(t, ".").Decl("handlers.listPlans")
 	for _, required := range []string{"offer.currency IN ('CNY','USD')", "pr.currency IN ('CNY','USD')", "offer.user_group_id IS NULL"} {
 		if !strings.Contains(src, required) {
 			t.Fatalf("public catalog guard missing %s", required)

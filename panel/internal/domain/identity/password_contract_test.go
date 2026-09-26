@@ -1,20 +1,21 @@
+// [INPUT]: 依赖 validatePasswordFor 与 platform/httpx，依赖 platform/sourcetest 按名取 Service.ChangePassword 的源码
+// [OUTPUT]: 对外提供 TestPasswordRotationIsExactAndRevokesAllLoginCredentials、TestValidatePasswordForDomain
+// [POS]: identity 改密：精确一行、同事务吊销会话、刷新令牌与令牌族再审计；管理员口令至少 12 位
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package identity
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestPasswordRotationIsExactAndRevokesAllLoginCredentials(t *testing.T) {
-	source, err := os.ReadFile("password.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(source)
+	text := sourcetest.Load(t, ".").Decl("Service.ChangePassword")
 	for _, want := range []string{
 		"SELECT phc",
 		"FOR UPDATE",

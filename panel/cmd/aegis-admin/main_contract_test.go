@@ -1,20 +1,22 @@
+// [INPUT]: 依赖 platform/sourcetest 按名取本包 run 的源码，依赖 waitForAdminWorkers、errAdminWorkerDrainTimeout
+// [OUTPUT]: 对外提供 TestAdminWorkersShareSignalContextAndJoinBeforeCleanup、TestWaitForAdminWorkersCompletes、TestWaitForAdminWorkersTimesOut、TestAdminWiresTicketReplyNotifier
+// [POS]: cmd/aegis-admin 的进程生命周期契约：四个后台循环挂信号 context、停机先取消再限时等待、超时不关资源，外加工单回复通知的装配
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestAdminWorkersShareSignalContextAndJoinBeforeCleanup(t *testing.T) {
-	sourceBytes, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(sourceBytes)
+	source := sourcetest.Load(t, ".").Decl("run")
 	for _, required := range []string{
 		"signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)",
 		"serverErr := server.RunContext(ctx",
@@ -104,11 +106,7 @@ func TestWaitForAdminWorkersTimesOut(t *testing.T) {
 
 // 工单回复通知（R115）缺的正是这一行装配：support 不接 notifier 时回复照常成功、通知静默不排
 func TestAdminWiresTicketReplyNotifier(t *testing.T) {
-	source, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(source), "supportSvc.SetReplyNotifier(notifySvc)") {
+	if !strings.Contains(sourcetest.Load(t, ".").Decl("run"), "supportSvc.SetReplyNotifier(notifySvc)") {
 		t.Fatal("admin gateway must wire the ticket reply notifier into the support service")
 	}
 }

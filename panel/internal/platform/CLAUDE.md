@@ -12,7 +12,7 @@ crypto/: 口令哈希、令牌生成、签名与信封加密
 dashboardmigration/: 只有 migration_contract_test.go，对 00041 dashboard 读模型迁移做字面子句契约，无非测试代码
 db/: PostgreSQL 连接池与租户上下文，RLS 变量注入；schema_registry_test.go 按序号重放迁移 Up 段的 CREATE / DROP TABLE，守住现存表、Go 引用与 migrations/RESERVED-TABLES.md 登记簿三者同构
 geoip/: IP 画像：地理位置、运营商、网络性质，供风控
-httpx/: 统一的响应与错误模型，错误码是封闭列表（新增 reauth_required 403，与 forbidden 同状态不同码），前端 src/core/api.ts 按同一列表解析信封；message 由页面原样显示（前端不再做英文→中文映射，R116），message_zh_contract_test.go 扫全仓 httpx.New / httpx.Error{Message} / httpx.Invalid 字段值的字面量，不许纯英文，节点网关与只给节点、支付渠道用的函数按清单豁免
+httpx/: 统一的响应与错误模型，错误码是封闭列表（新增 reauth_required 403，与 forbidden 同状态不同码），前端 src/core/api.ts 按同一列表解析信封；message 由页面原样显示（前端不再做英文→中文映射，R116），message_zh_contract_test.go 扫全仓 httpx.New / httpx.Error{Message} / httpx.Invalid 字段值的字面量，不许纯英文，节点网关与只给节点、支付渠道用的函数按「包目录 + 函数名」清单豁免；见 httpx/CLAUDE.md
 iamguard/: 租户范围的 IAM 不变量，HTTP 与 CLI 共用
 idempotencybind/: 数据库持有的唯一资源绑定器，幂等键与资源一一绑定
 logging/: 带脱敏的结构化日志，log/slog
@@ -20,6 +20,7 @@ pg18test/: PG18 集成测试打开一次性库的公共护栏，只被 *_pg18_te
 realtime/: 服务端推送 SSE，realtime.go 广播与订阅、listener.go 把数据库变更通知转成 topic（quota_balances 已移出监听，00076）、connections.go 经 Valkey 汇总各进程在线连接数；见 realtime/CLAUDE.md
 releasejournal/: 发布 journal v3，12 文件，model/receipt/export 通用，store/session/publisher/bootstrap/artifact_boundary/root_capability 为 linux 专用实现
 server/: 全部网关共享的 HTTP server 生命周期
+sourcetest/: 源码契约测试按「包 + 声明名」取源码的测试辅助包，函数在包内换文件不影响断言，名字找不到即失败；只被 *_test.go 引用；见 sourcetest/CLAUDE.md
 token/: 访问令牌签发与校验，每域独立密钥
 webapp/: 面板前端的静态下发器，Mount 把 go:embed 的 Vite 产物以 GET/HEAD 挂到网关根 / 与 /assets/*；入口 no-cache + ETag + 严格 CSP，assets/ 一年 immutable，显式 MIME 表，不做 SPA 回退；以最小 Routes 接口接 chi，本层不 import chi；见 webapp/CLAUDE.md
 *_test.go: 各包测试随包放置
