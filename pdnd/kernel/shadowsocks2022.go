@@ -1,14 +1,16 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 shadowsocks2022_stream.go 的密钥派生与 AEAD 流，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 ss2022Adapter（经 newSS2022Adapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 parseSS2022Spec、handleConn
+// [POS]: kernel 的 Shadowsocks 2022 入站主体：方法解析、TCP 请求处理（多用户身份头逐层校验）与用户表；UDP 在 shadowsocks2022_udp.go，密钥与 TCP 流在 shadowsocks2022_stream.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -20,11 +22,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aegispanel/nodeagent/core"
-	"github.com/aegispanel/nodeagent/route"
 	M "github.com/sagernet/sing/common/metadata"
 	"golang.org/x/crypto/chacha20poly1305"
-	"lukechampine.com/blake3"
+
+	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/route"
 )
 
 const (
@@ -190,30 +192,6 @@ func (a *ss2022Adapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 	return nil
 }
 
-func (a *ss2022Adapter) udpSessionGC() {
-	defer a.wg.Done()
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			a.cleanupUDPSessions(time.Now())
-		case <-a.ctx.Done():
-			return
-		}
-	}
-}
-
-func (a *ss2022Adapter) cleanupUDPSessions(now time.Time) {
-	a.udpMu.Lock()
-	for key, session := range a.udp {
-		if !session.lastSeen.IsZero() && now.Sub(session.lastSeen) > ss2022UDPIdleTimeout {
-			delete(a.udp, key)
-		}
-	}
-	a.udpMu.Unlock()
-}
-
 func (a *ss2022Adapter) acceptLoop() {
 	defer a.wg.Done()
 	for {
@@ -239,244 +217,6 @@ func (a *ss2022Adapter) acceptLoop() {
 			}
 		}()
 	}
-}
-
-func (a *ss2022Adapter) udpLoop() {
-	defer a.wg.Done()
-	buffer := make([]byte, 64<<10)
-	for {
-		n, addr, err := a.packet.ReadFrom(buffer)
-		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
-				return
-			}
-			continue
-		}
-		wire := append([]byte(nil), buffer[:n]...)
-		a.wg.Add(1)
-		go func() {
-			defer a.wg.Done()
-			_ = a.handleUDPPacket(a.ctx, wire, addr)
-		}()
-	}
-}
-
-func (a *ss2022Adapter) handleUDPPacket(ctx context.Context, wire []byte, clientAddr net.Addr) error {
-	chachaUDP := strings.Contains(a.method.name, "chacha20")
-	if len(wire) < aes.BlockSize+ss2022Overhead && !chachaUDP || chachaUDP && len(wire) < chacha20poly1305.NonceSizeX+16+ss2022Overhead {
-		return fmt.Errorf("shadowsocks 2022 UDP packet too short")
-	}
-	var clientID, packetID uint64
-	var remote cipher.AEAD
-	var plain []byte
-	var packetPSK []byte
-	var authErr error
-	for _, candidate := range a.psks {
-		if chachaUDP {
-			udpCipher, err := chacha20poly1305.NewX(candidate)
-			if err != nil {
-				authErr = err
-				continue
-			}
-			candidatePlain, err := udpCipher.Open(nil, wire[:chacha20poly1305.NonceSizeX], wire[chacha20poly1305.NonceSizeX:], nil)
-			if err != nil {
-				authErr = err
-				continue
-			}
-			if len(candidatePlain) < 16 {
-				authErr = fmt.Errorf("shadowsocks 2022 UDP packet session header missing")
-				continue
-			}
-			clientID = binary.BigEndian.Uint64(candidatePlain[:8])
-			packetID = binary.BigEndian.Uint64(candidatePlain[8:16])
-			plain = candidatePlain[16:]
-			packetPSK = candidate
-			break
-		}
-		block, err := aes.NewCipher(candidate)
-		if err != nil {
-			authErr = err
-			continue
-		}
-		packetHeader := append([]byte(nil), wire[:aes.BlockSize]...)
-		block.Decrypt(packetHeader, packetHeader)
-		candidateRemote, err := a.method.newAEAD(ss2022SessionKey(candidate, packetHeader[:8], a.method.keyLen))
-		if err != nil {
-			authErr = err
-			continue
-		}
-		candidatePlain, err := candidateRemote.Open(nil, packetHeader[4:16], wire[aes.BlockSize:], nil)
-		if err != nil {
-			authErr = err
-			continue
-		}
-		clientID = binary.BigEndian.Uint64(packetHeader[:8])
-		packetID = binary.BigEndian.Uint64(packetHeader[8:16])
-		plain = candidatePlain
-		remote = candidateRemote
-		packetPSK = candidate
-		break
-	}
-	if packetPSK == nil {
-		if authErr == nil {
-			authErr = fmt.Errorf("no configured PSK")
-		}
-		return fmt.Errorf("shadowsocks 2022 UDP packet authentication failed: %w", authErr)
-	}
-	if len(plain) < 11 || plain[0] != ss2022ClientHeader {
-		return fmt.Errorf("shadowsocks 2022 UDP header invalid")
-	}
-	stamp := int64(binary.BigEndian.Uint64(plain[1:9]))
-	if delta := time.Now().Unix() - stamp; delta > 30 || delta < -30 {
-		return fmt.Errorf("shadowsocks 2022 UDP timestamp outside 30 seconds")
-	}
-	paddingLen := int(binary.BigEndian.Uint16(plain[9:11]))
-	if paddingLen < 0 || 11+paddingLen >= len(plain) {
-		return fmt.Errorf("shadowsocks 2022 UDP padding invalid")
-	}
-	var destination vlessDestination
-	consumed, err := parseSSDestination(plain[11+paddingLen:], &destination)
-	if err != nil {
-		return err
-	}
-	payloadOffset := 11 + paddingLen + consumed
-	if payloadOffset > len(plain) {
-		return io.ErrUnexpectedEOF
-	}
-	payload := plain[payloadOffset:]
-	ip := remoteIP(clientAddr)
-	a.mu.RLock()
-	user, hasUser := a.user, a.hasUser
-	a.mu.RUnlock()
-	if !hasUser {
-		return fmt.Errorf("shadowsocks 2022 has no configured user")
-	}
-	if !a.enterDevice(user, ip) {
-		return fmt.Errorf("shadowsocks 2022 device limit")
-	}
-	defer a.leaveDevice(user, ip)
-	sessionKey := clientAddr.String() + "#" + strconv.FormatUint(clientID, 10)
-	a.udpMu.Lock()
-	session := a.udp[sessionKey]
-	if session == nil {
-		var idBytes [8]byte
-		if _, err := io.ReadFull(rand.Reader, idBytes[:]); err != nil {
-			a.udpMu.Unlock()
-			return err
-		}
-		serverID := binary.BigEndian.Uint64(idBytes[:])
-		var local cipher.AEAD
-		if !chachaUDP {
-			localKey := make([]byte, a.method.keyLen)
-			binary.BigEndian.PutUint64(localKey[:8], serverID)
-			local, err = a.method.newAEAD(ss2022SessionKey(a.psk, localKey[:8], a.method.keyLen))
-			if err != nil {
-				a.udpMu.Unlock()
-				return err
-			}
-		}
-		session = &ss2022UDPSession{psk: append([]byte(nil), packetPSK...), clientID: clientID, serverID: serverID, remote: remote, local: local, user: user, lastSeen: time.Now()}
-		a.udp[sessionKey] = session
-	} else if !bytes.Equal(session.psk, packetPSK) {
-		a.udpMu.Unlock()
-		return fmt.Errorf("shadowsocks 2022 UDP PSK changed for session")
-	}
-	if session.clientSeen && packetID <= session.lastClientID {
-		a.udpMu.Unlock()
-		return fmt.Errorf("shadowsocks 2022 UDP packet replay")
-	}
-	session.lastClientID = packetID
-	session.clientSeen = true
-	session.lastSeen = time.Now()
-	a.udpMu.Unlock()
-	sourceIP, _ := netip.ParseAddr(ip)
-	meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "udp", Protocol: "shadowsocks-2022", SourceIP: sourceIP}
-	upstream, err := a.plane.ListenUDP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
-	if err != nil {
-		return err
-	}
-	defer upstream.Close()
-	destinationAddr, err := destinationUDPAddr(destination)
-	if err != nil {
-		return err
-	}
-	if _, err := upstream.WriteTo(payload, destinationAddr); err != nil {
-		return err
-	}
-	_ = upstream.SetReadDeadline(time.Now().Add(2 * time.Second))
-	response := make([]byte, 64<<10)
-	n, sourceAddr, err := upstream.ReadFrom(response)
-	if err != nil {
-		return err
-	}
-	responseDestination := destination
-	if sourceAddr != nil {
-		responseDestination = destinationFromNetAddr(sourceAddr)
-	}
-	encoded, err := a.encodeSS2022UDPPacket(session, responseDestination, response[:n])
-	if err != nil {
-		return err
-	}
-	if _, err := a.packet.WriteTo(encoded, clientAddr); err != nil {
-		return err
-	}
-	a.addTraffic(user, int64(len(payload)), int64(n))
-	return nil
-}
-
-func (a *ss2022Adapter) encodeSS2022UDPPacket(session *ss2022UDPSession, destination vlessDestination, payload []byte) ([]byte, error) {
-	address, err := serializeSSDestination(destination)
-	if err != nil {
-		return nil, err
-	}
-	plain := make([]byte, 0, 19+len(address)+len(payload))
-	plain = append(plain, ss2022ServerHeader)
-	var stamp [8]byte
-	binary.BigEndian.PutUint64(stamp[:], uint64(time.Now().Unix()))
-	plain = append(plain, stamp[:]...)
-	var remoteID [8]byte
-	binary.BigEndian.PutUint64(remoteID[:], session.clientID)
-	plain = append(plain, remoteID[:]...)
-	plain = append(plain, make([]byte, 2)...)
-	plain = append(plain, address...)
-	plain = append(plain, payload...)
-	if strings.Contains(a.method.name, "chacha20") {
-		udpCipher, err := chacha20poly1305.NewX(session.psk)
-		if err != nil {
-			return nil, err
-		}
-		var sessionHeader [16]byte
-		binary.BigEndian.PutUint64(sessionHeader[:8], session.clientID)
-		a.udpMu.Lock()
-		responseID := session.nextServerID
-		session.nextServerID++
-		a.udpMu.Unlock()
-		binary.BigEndian.PutUint64(sessionHeader[8:], responseID)
-		body := append(sessionHeader[:0:0], sessionHeader[:]...)
-		body = append(body, plain...)
-		nonce := make([]byte, chacha20poly1305.NonceSizeX)
-		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-			return nil, err
-		}
-		return append(nonce, udpCipher.Seal(nil, nonce, body, nil)...), nil
-	}
-	var header [16]byte
-	binary.BigEndian.PutUint64(header[:8], session.serverID)
-	a.udpMu.Lock()
-	responseID := session.nextServerID
-	session.nextServerID++
-	a.udpMu.Unlock()
-	binary.BigEndian.PutUint64(header[8:], responseID)
-	ciphertext := session.local.Seal(nil, header[4:16], plain, nil)
-	block, err := aes.NewCipher(session.psk)
-	if err != nil {
-		return nil, err
-	}
-	block.Encrypt(header[:], header[:])
-	return append(header[:], ciphertext...), nil
 }
 
 func (a *ss2022Adapter) handleConn(ctx context.Context, conn net.Conn) error {
@@ -765,135 +505,4 @@ func (a *ss2022Adapter) removeActive(conn net.Conn) {
 	a.mu.Lock()
 	delete(a.active, conn)
 	a.mu.Unlock()
-}
-
-func ss2022Key(key []byte, length int) []byte {
-	sum := sha256.Sum256(key)
-	return append([]byte(nil), sum[:length]...)
-}
-func ss2022SessionKey(psk, salt []byte, length int) []byte {
-	out := make([]byte, length)
-	material := make([]byte, len(psk)+len(salt))
-	copy(material, psk)
-	copy(material[len(psk):], salt)
-	blake3.DeriveKey(out, "shadowsocks 2022 session subkey", material)
-	return out
-}
-
-func ss2022ValidateIdentityHeaders(wire, salt []byte, psks [][]byte) error {
-	if len(wire) != (len(psks)-1)*aes.BlockSize {
-		return fmt.Errorf("shadowsocks 2022 identity header length invalid")
-	}
-	for i := 0; i < len(psks)-1; i++ {
-		block, err := aes.NewCipher(ss2022IdentitySubkey(psks[i], salt, len(psks[i])))
-		if err != nil {
-			return err
-		}
-		plain := make([]byte, aes.BlockSize)
-		block.Decrypt(plain, wire[i*aes.BlockSize:(i+1)*aes.BlockSize])
-		expectedHash := blake3.Sum512(psks[i+1])
-		if subtle.ConstantTimeCompare(plain, expectedHash[:aes.BlockSize]) != 1 {
-			return fmt.Errorf("shadowsocks 2022 identity header authentication failed")
-		}
-	}
-	return nil
-}
-
-func ss2022IdentitySubkey(psk, salt []byte, length int) []byte {
-	material := make([]byte, len(psk)+len(salt))
-	copy(material, psk)
-	copy(material[len(psk):], salt)
-	out := make([]byte, length)
-	blake3.DeriveKey(out, "shadowsocks 2022 identity subkey", material)
-	return out
-}
-
-type ss2022Stream struct {
-	reader                *bufio.Reader
-	writer                io.Writer
-	readAEAD, writeAEAD   cipher.AEAD
-	readNonce, writeNonce []byte
-	pending               []byte
-	mu                    sync.Mutex
-}
-
-func ss2022ReadRawChunk(r io.Reader, aead cipher.AEAD, nonce []byte, dst []byte) error {
-	wire := make([]byte, len(dst)+aead.Overhead())
-	if _, err := io.ReadFull(r, wire); err != nil {
-		return err
-	}
-	plain, err := aead.Open(nil, nonce, wire, nil)
-	if err != nil {
-		return fmt.Errorf("shadowsocks 2022 raw chunk authentication failed: %w", err)
-	}
-	if len(plain) != len(dst) {
-		return fmt.Errorf("shadowsocks 2022 raw chunk length %d, want %d", len(plain), len(dst))
-	}
-	copy(dst, plain)
-	return nil
-}
-
-func (s *ss2022Stream) Read(p []byte) (int, error) {
-	if len(s.pending) > 0 {
-		n := copy(p, s.pending)
-		s.pending = s.pending[n:]
-		return n, nil
-	}
-	var encryptedLength [2 + ss2022Overhead]byte
-	if _, err := io.ReadFull(s.reader, encryptedLength[:]); err != nil {
-		return 0, err
-	}
-	plainLength, err := s.readAEAD.Open(nil, s.readNonce, encryptedLength[:], nil)
-	ss2022IncNonce(s.readNonce)
-	if err != nil || len(plainLength) != 2 {
-		return 0, fmt.Errorf("shadowsocks 2022 length authentication failed")
-	}
-	length := int(binary.BigEndian.Uint16(plainLength))
-	if length == 0 || length > ss2022MaxChunk {
-		return 0, fmt.Errorf("shadowsocks 2022 frame length invalid")
-	}
-	frame := make([]byte, length+ss2022Overhead)
-	if _, err := io.ReadFull(s.reader, frame); err != nil {
-		return 0, err
-	}
-	plain, err := s.readAEAD.Open(nil, s.readNonce, frame, nil)
-	ss2022IncNonce(s.readNonce)
-	if err != nil {
-		return 0, fmt.Errorf("shadowsocks 2022 frame authentication failed")
-	}
-	n := copy(p, plain)
-	if n < len(plain) {
-		s.pending = append(s.pending, plain[n:]...)
-	}
-	return n, nil
-}
-func (s *ss2022Stream) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	written := 0
-	for len(p) > 0 {
-		chunk := p
-		if len(chunk) > ss2022MaxChunk {
-			chunk = chunk[:ss2022MaxChunk]
-		}
-		length := []byte{byte(len(chunk) >> 8), byte(len(chunk))}
-		header := s.writeAEAD.Seal(nil, s.writeNonce, length, nil)
-		ss2022IncNonce(s.writeNonce)
-		body := s.writeAEAD.Seal(nil, s.writeNonce, chunk, nil)
-		ss2022IncNonce(s.writeNonce)
-		if _, err := s.writer.Write(append(header, body...)); err != nil {
-			return written, err
-		}
-		written += len(chunk)
-		p = p[len(chunk):]
-	}
-	return written, nil
-}
-func ss2022IncNonce(nonce []byte) {
-	for i := range nonce {
-		nonce[i]++
-		if nonce[i] != 0 {
-			return
-		}
-	}
 }

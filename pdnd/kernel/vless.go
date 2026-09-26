@@ -1,17 +1,15 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 reality_listener.go、vision.go、xhttp_server.go、websocket_netconn.go 等承载，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 NewDefaultAdapterRegistry（全部原生协议的注册表）与 vlessAdapter 的 Protocol、Validate、Start、Close；包内 acceptLoop、handleConn、handleConnSession、remoteIP
+// [POS]: kernel 的 VLESS 入站主体：TCP / REALITY / WebSocket / HTTP Upgrade / XHTTP 的监听与分派、TCP 转发；请求头解析在 vless_request.go，flow 在 vless_flow.go，mux 在 vless_mux.go，UDP 在 vless_udp.go，用户表在 vless_users.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/aegispanel/nodeagent/core"
-	"github.com/aegispanel/nodeagent/route"
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
-	M "github.com/sagernet/sing/common/metadata"
-	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -19,6 +17,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
+	M "github.com/sagernet/sing/common/metadata"
+
+	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/route"
 )
 
 const (
@@ -619,259 +623,6 @@ func (a *vlessAdapter) handleConnSession(ctx context.Context, conn net.Conn, rea
 	return nil
 }
 
-type vlessDestination struct {
-	Command byte
-	Host    string
-	Domain  string
-	IP      netip.Addr
-	Port    uint16
-	// Flow 来自请求头里的 addons。空表示不启用流控。
-	Flow string
-	// Vision 表示这条连接后续要按 XTLS Vision 的帧格式收发。
-	Vision bool
-	// RawUUID 是握手里那 16 个原始字节。Vision 的首帧前缀要跟它逐字节
-	// 比对，从字符串再解析回去只是徒增一处可能失败的转换。
-	RawUUID [16]byte
-}
-
-func readVLESSRequest(conn net.Conn, lookup func(string) (core.User, bool)) (core.User, vlessDestination, error) {
-	var out vlessDestination
-	var version [1]byte
-	if _, err := io.ReadFull(conn, version[:]); err != nil || version[0] != vlessVersion {
-		return core.User{}, out, fmt.Errorf("vless version 无效")
-	}
-	var id [16]byte
-	if _, err := io.ReadFull(conn, id[:]); err != nil {
-		return core.User{}, out, fmt.Errorf("vless uuid 缺失")
-	}
-	user, ok := lookup(uuid.UUID(id).String())
-	if !ok {
-		return core.User{}, out, fmt.Errorf("vless 用户未授权")
-	}
-	out.RawUUID = id
-	var addonLen [1]byte
-	if _, err := io.ReadFull(conn, addonLen[:]); err != nil {
-		return core.User{}, out, err
-	}
-	if addonLen[0] > 64 {
-		return core.User{}, out, fmt.Errorf("vless addon 过长")
-	}
-	addon := make([]byte, addonLen[0])
-	if _, err := io.ReadFull(conn, addon); err != nil {
-		return core.User{}, out, err
-	}
-	// 这段以前读完就扔。客户端配了 xtls-rprx-vision 时握手照样通过，
-	// 之后它按 Vision 帧格式发数据，服务端把带 padding 头的帧当裸字节
-	// 转给目标——连得上、不报错、就是不通。宁可在这里明确拒绝。
-	addons, err := ParseVLESSAddons(addon)
-	if err != nil {
-		return core.User{}, out, err
-	}
-	out.Flow = addons.Flow
-	vision, err := NegotiateVLESSFlow(addons.Flow)
-	if err != nil {
-		return core.User{}, out, err
-	}
-	out.Vision = vision
-	var command [1]byte
-	if _, err := io.ReadFull(conn, command[:]); err != nil {
-		return core.User{}, out, err
-	}
-	if command[0] != vlessTCP && command[0] != vlessUDP && command[0] != vlessMux {
-		return core.User{}, out, fmt.Errorf("vless 原生切片暂不接受 command=%d", command[0])
-	}
-	out.Command = command[0]
-	// XUDP/mux carries its per-stream destination in the mux frame; the
-	// request header therefore ends immediately after command=3.
-	if out.Command == vlessMux {
-		return user, out, nil
-	}
-	var port [2]byte
-	if _, err := io.ReadFull(conn, port[:]); err != nil {
-		return core.User{}, out, err
-	}
-	out.Port = binary.BigEndian.Uint16(port[:])
-	if out.Port == 0 {
-		return core.User{}, out, fmt.Errorf("vless 目标端口无效")
-	}
-	var addrType [1]byte
-	if _, err := io.ReadFull(conn, addrType[:]); err != nil {
-		return core.User{}, out, err
-	}
-	switch addrType[0] {
-	case 1:
-		buf := make([]byte, 4)
-		if _, err := io.ReadFull(conn, buf); err != nil {
-			return core.User{}, out, err
-		}
-		out.IP = netip.AddrFrom4([4]byte{buf[0], buf[1], buf[2], buf[3]})
-		out.Host = out.IP.String()
-	case 2:
-		var length [1]byte
-		if _, err := io.ReadFull(conn, length[:]); err != nil {
-			return core.User{}, out, err
-		}
-		if length[0] == 0 || length[0] > 253 {
-			return core.User{}, out, fmt.Errorf("vless domain 长度无效")
-		}
-		buf := make([]byte, length[0])
-		if _, err := io.ReadFull(conn, buf); err != nil {
-			return core.User{}, out, err
-		}
-		out.Domain, out.Host = string(buf), string(buf)
-	case 3:
-		buf := make([]byte, 16)
-		if _, err := io.ReadFull(conn, buf); err != nil {
-			return core.User{}, out, err
-		}
-		var ip [16]byte
-		copy(ip[:], buf)
-		out.IP = netip.AddrFrom16(ip)
-		out.Host = out.IP.String()
-	default:
-		return core.User{}, out, fmt.Errorf("vless 地址类型无效")
-	}
-	return user, out, nil
-}
-
-// snapshotUUIDs 取当前已授权用户的原始 UUID，供 Vision 认帧用。
-//
-// 每条连接取一次快照而不是持有共享切片：用户增删随时可能发生，
-// 拿着会变的底层数组去做逐字节比对，出问题的时候极难复现。
-func (a *vlessAdapter) snapshotUUIDs() [][]byte {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make([][]byte, 0, len(a.users))
-	for id := range a.users {
-		parsed, err := uuid.Parse(id)
-		if err != nil {
-			continue
-		}
-		buf := parsed
-		out = append(out, append([]byte(nil), buf[:]...))
-	}
-	return out
-}
-
-func (a *vlessAdapter) lookupUser(id string) (core.User, bool) {
-	a.mu.RLock()
-	user, ok := a.users[id]
-	a.mu.RUnlock()
-	return user, ok
-}
-func (a *vlessAdapter) AddUsers(users []core.User) error {
-	validated := make([]core.User, 0, len(users))
-	for _, user := range users {
-		parsed, err := uuid.Parse(user.UUID)
-		if err != nil {
-			return fmt.Errorf("vless 用户 %q uuid 无效", user.UUID)
-		}
-		user.UUID = parsed.String()
-		validated = append(validated, user)
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.closed {
-		return fmt.Errorf("vless 适配器已关闭")
-	}
-	for _, user := range validated {
-		if _, exists := a.users[user.UUID]; !exists {
-			a.users[user.UUID] = user
-		}
-	}
-	return nil
-}
-func (a *vlessAdapter) UpsertUsers(users []core.User) error {
-	validated := make([]core.User, 0, len(users))
-	for _, user := range users {
-		parsed, err := uuid.Parse(user.UUID)
-		if err != nil {
-			return fmt.Errorf("vless 用户 %q uuid 无效", user.UUID)
-		}
-		user.UUID = parsed.String()
-		validated = append(validated, user)
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.closed {
-		return fmt.Errorf("vless 适配器已关闭")
-	}
-	for _, user := range validated {
-		if previous, exists := a.users[user.UUID]; exists {
-			a.limiters.Remove(previous.ID)
-		}
-		a.users[user.UUID] = user
-	}
-	return nil
-}
-
-func (a *vlessAdapter) DelUsers(ids []string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for _, id := range ids {
-		if parsed, err := uuid.Parse(id); err == nil {
-			key := parsed.String()
-			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
-			if user, ok := a.users[key]; ok {
-				a.limiters.Remove(user.ID)
-			}
-			delete(a.users, key)
-		}
-	}
-	return nil
-}
-func (a *vlessAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, core.UserTraffic{ID: id, Upload: traffic.Upload, Download: traffic.Download})
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
-}
-func (a *vlessAdapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
-func (a *vlessAdapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-func (a *vlessAdapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
-}
-func (a *vlessAdapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	a.traffic[user.ID] = core.UserTraffic{ID: user.ID, Upload: a.traffic[user.ID].Upload + upload, Download: a.traffic[user.ID].Download + download}
-	a.mu.Unlock()
-}
 func (a *vlessAdapter) Close() error {
 	a.mu.Lock()
 	if a.closed {
