@@ -26,10 +26,11 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：①–⑥ 已验收合入（⑤ 合并 e7e72a8，R115；⑥ 合并 039bb12，R116）。**新增第 ⑦ 步：退役 aegis-agent**（用户 2026-09-25 定），见补充事项最前面；做完报告。迁移 00095–00098 未用。
+**进度**：①–⑥ 已验收合入；⑦ `21f5e11`（退役 aegis-agent，合并 837462e；PG18 run 36207168785：232 PASS / 0 SKIP / 0 FAIL，NativeCore 36207168724、panel-smoke 36207168734 全绿，e2e 表五个脚本全过）已验收合入。**本会话回到待命。** 迁移 00095–00098 未用。
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R116。
+- ⑦ 的验收结论：删源码四个文件与 node_e2e.sh、三个部署脚本出列、runner 只编 payctl 且 SCRIPTS 剩五个、nodefabric 两处注释与 uniproxy_e2e.sh 的说明改成现状、全仓只剩 tests/CLAUDE.md 一句退役说明，都认可。Makefile 第 6 行泛称「Node Agent 分发」不是这个二进制，不动。
 - **第 ⑦ 步：退役 aegis-agent（用户 2026-09-25 定）**。事实：服务端只收两阶段接入，`cmd/aegis-agent` 的 bootstrap 已写死成报错，角色由 pandora-native 接替，但它仍在发布包与安装脚本里；唯一专测它的 `tests/node_e2e.sh` 因此过不了（冒烟 ⑥ 查出）。接入、上线、心跳已由联调冒烟用真实 Ed25519 两阶段流程覆盖。一个提交做完：
   1. 删 `panel/cmd/aegis-agent/` 与 `panel/tests/node_e2e.sh`。
   2. 从 `deploy/build-release.sh`、`install-linux-binaries.sh`、`migrate-to-new-host.sh` 的二进制列表去掉它；`install-native.sh` 的那行注释、`run-smoke-e2e.sh` 里编译 aegis-agent 与 `/opt/aegispanel/bin` 准备（只为 node_e2e 存在的部分）一并清掉——这个文件归冒烟，这次授权你改，只删 aegis-agent 相关行。**还有第 106 行 `SCRIPTS=(…)` 列表里的 `node_e2e.sh` 也要删**（按「aegis-agent」grep 找不到它，但删了脚本不删这一项，runner 会报文件不存在）。
