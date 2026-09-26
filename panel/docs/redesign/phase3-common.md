@@ -128,3 +128,4 @@
 - 两个后端会话的分界：**`nodefabric/uniproxy.go`、`subscription/service.go`、`api/admin/pools.go`、`usergroup.go`、`devices.go` 归后端四**；套餐目录（`adminops/catalog.go`、`plan_wizard*.go`）、门户套餐目录、计费、通知、工单、身份归后端三。`api/admin/handlers.go` 两边都会改：后端三只动重置密码与工单详情，后端四只动节点列表的在线统计，报告里写清改了哪几个函数。`nodefabric/node_admin.go` 的节点 PATCH（R78）归后端三。
 - 冒烟会话发现的形状不一致，一律报告协调会话，由协调会话写成修订并指派给后端或前端会话修；冒烟会话自己只修冒烟脚本。
 - 两个超 800 行的文件（admin `handlers.go`、`nodefabric/node_admin.go`）仍不重构，除非用户另行授权。
+- **收尾状态（2026-09-26）**：四个会话全部完成并合入主线（后端三 ①–⑤、后端四 ①–⑦、前端收尾 ①–⑤、联调冒烟 ①–⑥），契约修订到 R116。CI 上 panel-smoke 用页面 zod schema 解析真网关 120 行、写路径抽样、五个 e2e 脚本失败即红。下一步是测试机人工点（部署要用户授权），部署注意：没划进节点池的节点不服务任何人（R104），先划进池；新发布包不再带 aegis-agent，旧机器上的要人工清理；节点改状态、上线、退役的报错理论上可能露出英文 CHECK 约束原句，人工点时留意。
