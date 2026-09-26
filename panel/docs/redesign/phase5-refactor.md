@@ -36,7 +36,7 @@
 
 ## 进度与补充事项（协调会话维护，接力的新会话从这里接上）
 
-**进度**：①（2f562c9）、②（867122e）、③（8708a0b）、删死代码 `e657f06` 与 ④ `45d8036`（合并 9f47391；协调会话复跑：pdnd kernel 加 -tests PURE，e657f06 只报 HandlePaymentWebhook 文档注释与删掉的游离注释、其余改动全是注释；NativeCore 36222086225、PG18 36222086245：234 PASS / 0 SKIP、panel-smoke 全绿）已验收合入。**panel 与 pdnd（除 reality fork）已无超 800 行的非测试文件。下一步 ⑤、⑥。**
+**进度**：①（2f562c9）、②（867122e）、③（8708a0b）、删死代码 `e657f06` 与 ④ `45d8036`（合并 9f47391；协调会话复跑：pdnd kernel 加 -tests PURE，e657f06 只报 HandlePaymentWebhook 文档注释与删掉的游离注释、其余改动全是注释；NativeCore 36222086225、PG18 36222086245：234 PASS / 0 SKIP、panel-smoke 全绿）已验收合入。**panel 与 pdnd（除 reality fork）已无超 800 行的非测试文件。下一步 ⑤、⑥，做完一起报告。上一个会话上下文用完已结束，新会话从这里接上。**
 
 补充事项（与上文冲突时以这里为准）：
 - 契约修订已到 R117（本会话不改接口，一般用不到修订号）。
@@ -44,6 +44,12 @@
 - **② 之前先做两件**：
   1. **工具进仓库**：纯挪动 AST 比对工具和打散工具放进 `panel/tools/refactorcheck/`（Go 程序，`go run` 使用，不被任何生产包 import，写 L2 与用法），协调会话验收时会用它复核。单独一个提交。
   2. **修一条近乎空转的断言**（只改测试）：`TestLegacyConfigPublishRiskReductionContract` 的锁序原来比的是 `lockLegacyConfigRelease` 函数体在文件里排在 `PublishConfig` 前面，这是排版不是调用顺序；改成比 `PublishConfig` 内部各加锁调用处的先后，做一次变异验证。单独一个提交。
+- **接力须知（新会话先读）**：
+  - 先 `git merge feat/panel-redesign`。纯挪动自证用仓库里的 `panel/tools/refactorcheck`（用法见它的 CLAUDE.md）：`cd panel && go run ./tools/refactorcheck compare -base <sha>^ -head <sha> -tests`；pdnd 加 `-C ../pdnd`；打散验证用 `shatter`。⑤ 拆测试文件，比对一定要加 `-tests`。
+  - 测试读源码一律用 `internal/platform/sourcetest`（`Load` / `Decl` / `Decls` / `DeclWithDoc`），不要再按文件名读 `.go`。
+  - ⑤ 拆完 PG18 的 PASS 总数必须与拆前相同（现在是 234），先看 `deploy/run-pg18-gates.sh` 的门禁是按测试名还是按文件选的；拆出的测试文件要带 L3 头。
+  - 只改注释的改动（例如 L3 / 文档注释里的旧文件名）单独成提交，compare 会恰好报出那几个声明，报告里列出来。
+  - 本机：`go build ./... && go vet ./... && GOOS=linux GOARCH=amd64 go vet ./... && go test -p 1 -count=1 -timeout 15m ./...`；pdnd 另跑三平台 vet。推送后看三组 CI，PG18 必须 0 SKIP。推送走 SSH，1Password 偶尔要用户批准。
 - 删死代码与 ④ 的验收结论：`settlement_legacy.go` 整个删掉、文档注释改指 git 历史、判重仍由 settlePaymentTx 实现且有契约测试；kernel 五个文件照 vless 的做法拆、`capabilities.go` 未动、三平台 vet、race、interop 编译、kernel 打散 48 → 724 通过，都认可。
 - ③ 的验收结论：billing 7 个测试改用 sourcetest（新增 `DeclWithDoc`，Load 开 ParseComments 只影响新方法）与 5 组变异；结算主链整条在 `settlement.go`、开订阅与建配额到 `provision.go`、释放加锁到 `release_locks.go`、admin 拆出 `nodes.go` / `tickets.go` 且单节点路由并入 `node_routing.go`；改文档注释单独成「只改注释」提交（compare 恰好报这几个声明），都认可。
 - **④ 之前先做一件（单独一个提交，不算纯挪动）**：**删掉 `billing/settlement_legacy.go`**（用户与协调会话定：那段约 275 行的块注释是预留图之前的旧版支付回调实现，不参与编译，git 历史里有），同时把现行 `HandlePaymentWebhook` 文档注释里指向旧实现「above」的那句改成现状，L2 同步。报告里写清删了什么、compare 报出的只有那条文档注释。
