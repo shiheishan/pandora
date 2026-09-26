@@ -70,8 +70,8 @@ type PaymentWebhookOutput struct {
 }
 
 // HandlePaymentWebhook captures a successful payment and the order's complete
-// held reservation graph in one transaction. The legacy implementation remains
-// above only as historical source while this path is exercised by callers.
+// held reservation graph in one transaction. The pre-reservation implementation
+// has been removed; see checkout.go before commit cb69afe in git history.
 func (s *Service) HandlePaymentWebhook(ctx context.Context, tenantID string, in PaymentWebhookInput) (*PaymentWebhookOutput, error) {
 	var out PaymentWebhookOutput
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {

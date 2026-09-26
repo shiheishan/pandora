@@ -210,9 +210,8 @@ func TestEveryPaidOrderKindReachesFulfilled(t *testing.T) {
 	// 结算后收尾的 switch 在结算事务体里
 	s := sourcetest.Load(t, ".").Decl("Service.settlePaymentTx")
 
-	// 结算后收尾的 switch orderKind 认准分支里会调用 fulfillOrder 的那一处；
-	// 旧版实现（settlement_legacy.go 的块注释存档）里也有一处 switch orderKind，
-	// 按出现顺序取第一个会拿错，然后误报一堆缺失分支。
+	// 结算后收尾的 switch orderKind 认准分支里会调用 fulfillOrder 的那一处，
+	// 不按出现顺序取第一个：别处再出现一个校验用的 switch 时不会误报缺失分支。
 	start := -1
 	for i := 0; ; {
 		j := strings.Index(s[i:], `switch orderKind {`)
