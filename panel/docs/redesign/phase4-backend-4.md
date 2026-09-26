@@ -32,7 +32,7 @@
 - 契约修订已到 R116。
 - **第 ⑦ 步：退役 aegis-agent（用户 2026-09-25 定）**。事实：服务端只收两阶段接入，`cmd/aegis-agent` 的 bootstrap 已写死成报错，角色由 pandora-native 接替，但它仍在发布包与安装脚本里；唯一专测它的 `tests/node_e2e.sh` 因此过不了（冒烟 ⑥ 查出）。接入、上线、心跳已由联调冒烟用真实 Ed25519 两阶段流程覆盖。一个提交做完：
   1. 删 `panel/cmd/aegis-agent/` 与 `panel/tests/node_e2e.sh`。
-  2. 从 `deploy/build-release.sh`、`install-linux-binaries.sh`、`migrate-to-new-host.sh` 的二进制列表去掉它；`install-native.sh` 的那行注释、`run-smoke-e2e.sh` 里编译 aegis-agent 与 `/opt/aegispanel/bin` 准备（只为 node_e2e 存在的部分）一并清掉——这个文件归冒烟，这次授权你改，只删 aegis-agent 相关行。
+  2. 从 `deploy/build-release.sh`、`install-linux-binaries.sh`、`migrate-to-new-host.sh` 的二进制列表去掉它；`install-native.sh` 的那行注释、`run-smoke-e2e.sh` 里编译 aegis-agent 与 `/opt/aegispanel/bin` 准备（只为 node_e2e 存在的部分）一并清掉——这个文件归冒烟，这次授权你改，只删 aegis-agent 相关行。**还有第 106 行 `SCRIPTS=(…)` 列表里的 `node_e2e.sh` 也要删**（按「aegis-agent」grep 找不到它，但删了脚本不删这一项，runner 会报文件不存在）。
   3. 文档：根 `README.md` 二进制表、`panel/CLAUDE.md` 的 cmd 行（可执行入口数减一）、`deploy/CLAUDE.md`、`tests/CLAUDE.md`；`nodefabric/uniproxy.go:39`、`service.go:114` 两处注释里的 aegis-agent 改成现状（pandora-native / 两阶段接入）。
   4. grep 全仓（不含 docs/redesign 与 ops-local）确认不再有 aegis-agent；有 Go 测试或发布契约测试钉着二进制列表的同步改。`nodeagent/` 目录（aegis-nodeagent）**不在本次范围**，别动。
   5. 本机全量 + 推送看三组 CI（panel-smoke 里 e2e 表应剩五个脚本、全过），报告。
