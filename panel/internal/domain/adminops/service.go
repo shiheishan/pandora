@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入与 ParseOrderStatuses 订单状态白名单
-// [OUTPUT]: 对外提供 Service、NewService，概览、用户（ListUsers / GetUser / SetUserStatus）、订单（ListOrders，OrderRow 唯一查询形状）、套餐（列表带卖点与推荐，R100）与渠道、降级开关
+// [OUTPUT]: 对外提供 Service、NewService，概览、用户（ListUsers / GetUser / SetUserStatus）、订单（ListOrders，OrderRow 唯一查询形状）、套餐（列表带卖点与推荐，R100）与渠道、降级开关（数据库拒绝切换时按约束名给中文原因，PG 原句只进日志，R116）
 // [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它；套餐目录在 catalog.go / plan_wizard*.go，订单详情在 order_detail.go，审计在 audit.go；订单行的品名对流量包订单取订单项商品名；revokeUserLogins 是停用账号即下线的唯一实现，改状态与 risk.go 的批量停用共用
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -771,6 +771,21 @@ func (s *Service) ListSwitches(ctx context.Context, tenantID string) ([]SwitchRo
 	return out, nil
 }
 
+// switchRefusal 把数据库拒绝切换开关的原因翻成中文（R116）。PG 的原句是英文
+// （new row ... violates check constraint ...），只进日志，不给页面。
+func switchRefusal(err error) string {
+	switch db.ConstraintName(err) {
+	case "feature_switches_essential_stays_on":
+		return "核心开关不能关闭"
+	case "feature_switches_disable_needs_reason":
+		return "关闭开关必须填写原因"
+	}
+	if db.IsInsufficientPrivilege(err) {
+		return "当前账号没有修改这个开关的权限"
+	}
+	return "数据库约束拒绝了这次修改"
+}
+
 // SetSwitch 切换降级开关（NFR-008）。
 // essential 的三项由数据库触发器挡住，这里不重复判断，
 // 让唯一的真相来源留在约束里 —— 但要把数据库的报错翻译成人话。
@@ -792,7 +807,7 @@ func (s *Service) SetSwitch(ctx context.Context, tenantID, actorID, code string,
 			tenantID, code, enabled, nullIfEmpty(reason)); err != nil {
 			if db.IsCheckViolation(err) || db.IsInsufficientPrivilege(err) {
 				return httpx.New(httpx.CodeConflict,
-					fmt.Sprintf("开关 %s 不允许该操作：%s", code, db.Message(err)))
+					fmt.Sprintf("开关 %s 不允许该操作：%s", code, switchRefusal(err))).WithInternal(err)
 			}
 			return err
 		}

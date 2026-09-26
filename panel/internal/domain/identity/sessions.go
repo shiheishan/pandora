@@ -56,7 +56,7 @@ func (s *Service) ListActiveSessions(ctx context.Context, tenantID, userID,
 	currentSessionID string) ([]SessionInfo, error) {
 
 	if _, err := uuid.Parse(userID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "user identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "用户标识不正确")
 	}
 	out := []SessionInfo{}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {

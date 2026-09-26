@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 audit/httpx、pgx 事务（调用方已持有订单行锁）
+// [OUTPUT]: 包内提供 quarantineUnexpectedPayment
+// [POS]: domain/billing 的异常收款隔离：已释放或已付清的订单又收到渠道确认的钱时，由 checkout.go 的 settlePaymentTx 调用，记进挂账而不重新履约；拒绝文案是中文（R116），人工开单与标记已付也会走到
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package billing
 
 import (
@@ -22,18 +27,18 @@ func (s *Service) quarantineUnexpectedPayment(ctx context.Context, tx pgx.Tx,
 	case "released_order", "excess_capture":
 		// Supported quarantine classifications.
 	default:
-		return nil, httpx.New(httpx.CodeBadRequest, "unsupported payment quarantine case")
+		return nil, httpx.New(httpx.CodeBadRequest, "不支持的异常收款隔离类型")
 	}
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(eventID) == "" ||
 		strings.TrimSpace(providerID) == "" || strings.TrimSpace(orderID) == "" ||
 		strings.TrimSpace(userID) == "" || strings.TrimSpace(orderStatus) == "" ||
 		strings.TrimSpace(providerCode) == "" ||
 		strings.TrimSpace(in.ProviderPaymentID) == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "payment quarantine identity is incomplete")
+		return nil, httpx.New(httpx.CodeBadRequest, "异常收款的标识信息不完整")
 	}
 	if strings.TrimSpace(in.Currency) == "" || in.Amount <= 0 ||
 		in.FeeAmount < 0 || in.FeeAmount > in.Amount {
-		return nil, httpx.New(httpx.CodeBadRequest, "payment quarantine amount or currency is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "异常收款的金额或币种不正确")
 	}
 
 	// A provider payment can arrive under distinct event IDs concurrently. A
@@ -63,7 +68,7 @@ func (s *Service) quarantineUnexpectedPayment(ctx context.Context, tx pgx.Tx,
 			(existingStatus != "succeeded" && existingStatus != "partially_refunded" &&
 				existingStatus != "refunded") {
 			return nil, httpx.New(httpx.CodeConflict,
-				"provider payment replay does not match recorded money evidence")
+				"重放的渠道收款与已记录的金额不一致")
 		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE payment_events

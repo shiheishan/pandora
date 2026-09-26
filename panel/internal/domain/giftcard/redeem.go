@@ -53,10 +53,10 @@ type RedeemResult struct {
 func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string) (*RedeemResult, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if tenantID == "" || userID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant and user are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户或用户")
 	}
 	if _, err := uuid.Parse(userID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "user identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "用户标识不正确")
 	}
 	if len(code) < 8 || len(code) > 32 {
 		return nil, ErrCodeUnusable

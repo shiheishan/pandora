@@ -110,7 +110,7 @@ func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
 
 	in.Reason = strings.TrimSpace(in.Reason)
 	if tenantID == "" || in.UserID == "" || in.PlanID == "" || in.ActorID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant, actor, user and plan are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户、操作人、用户或套餐")
 	}
 	for _, id := range []string{in.UserID, in.PlanID, in.ActorID} {
 		if _, err := uuid.Parse(id); err != nil {
@@ -202,7 +202,7 @@ func (s *Service) MarkOrderPaid(ctx context.Context, tenantID string,
 	in.Reason = strings.TrimSpace(in.Reason)
 	in.Reference = strings.TrimSpace(in.Reference)
 	if tenantID == "" || in.OrderID == "" || in.ActorID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant, actor and order are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户、操作人或订单")
 	}
 	if _, err := uuid.Parse(in.OrderID); err != nil {
 		return nil, httpx.NotFoundOrForbidden()
