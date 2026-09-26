@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖 PSQL（默认 /opt/aegispanel/deploy/psql.sh）、admin / node / public 三个网关、易支付测试商户 1001，依赖三个一次性库确认变量
 # [OUTPUT]: UniProxy（Xboard 兼容）数据面契约：节点认证、配置与 ETag、用户资格与池隔离、流量上报去重与倍率、在线上报；清理失败时把失败的 SQL 与库的报错打到 stderr
-# [POS]: panel/tests 的数据面脚本，由 deploy/run-smoke-e2e.sh 在冒烟栈上跑；节点生命周期由 node_e2e.sh 覆盖，这里用 SQL 夹具直接造 serving 节点
+# [POS]: panel/tests 的数据面脚本，由 deploy/run-smoke-e2e.sh 在冒烟栈上跑；节点接入与上线由联调冒烟 seed.ts 的两阶段接入覆盖，这里用 SQL 夹具直接造 serving 节点
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # UniProxy end-to-end contract test (Xboard / V2board compatible data plane).
 #
 # This test deliberately creates a fixture through SQL because Server/Node lifecycle
-# is covered by node_e2e.sh. The fixture still has to satisfy the current stable
+# is covered by the smoke seed's two-phase enrolment (frontend/tests/smoke/seed.ts). The fixture still has to satisfy the current stable
 # serving contract: a ready Server, an active logical Node, protocol schema v1 and
 # a non-null validation timestamp. Every network and database operation fails closed.
 # Required safety acknowledgements (the database name must also contain test/e2e):

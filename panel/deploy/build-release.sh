@@ -67,7 +67,7 @@ if [ -z "$PREBUILT_ROOT" ]; then
   done
 fi
 
-binaries=(aegis-public aegis-admin aegis-node aegis-agent aegis-payctl aegis-adminctl aegis-backup-webdav)
+binaries=(aegis-public aegis-admin aegis-node aegis-payctl aegis-adminctl aegis-backup-webdav)
 for arch in amd64 arm64; do
   expected_machine=""
   case "$arch" in

@@ -111,7 +111,7 @@ type IssueTokenOutput struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	// InstallCommand 是直接贴到机器上执行的接入命令。
 	//
-	// 由服务端拼而不是前端：内核换代（aegis-agent → pdnd）时命令形态会变，
+	// 由服务端拼而不是前端：内核换代（面板自带的节点代理已换成 pdnd 的两阶段接入）时命令形态会变，
 	// 前端硬编码的话，页面、文档、部署脚本要各改一遍，漏掉哪个就会有人
 	// 照着过时的命令装了个装不上的东西。放在这里，改一处配置就够了。
 	InstallCommand string `json:"install_command"`
