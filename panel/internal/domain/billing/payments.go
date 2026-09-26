@@ -26,7 +26,7 @@ import (
 
 // PaymentService 负责渠道适配器的装配与支付意图的生命周期。
 //
-// 与 checkout.go 的分工：本文件只管「怎么把用户送到收银台」和
+// 与 settlement.go 的分工：本文件只管「怎么把用户送到收银台」和
 // 「怎么把渠道回调翻译成平台事件」；钱一旦确认收到，记账与订阅激活
 // 全部交回 HandlePaymentWebhook —— 那条路径不认识任何具体渠道。
 type PaymentService struct {
@@ -465,6 +465,6 @@ func (s *PaymentService) QueryAndReconcile(ctx context.Context, tenantID, provid
 }
 
 // billing 返回同池的结算服务。
-// 拆成两个 struct 是为了让 checkout.go 完全不认识渠道概念，
+// 拆成两个 struct 是为了让结算主链（settlement.go）完全不认识渠道概念，
 // 这里再把它们接回来。
 func (s *PaymentService) billing() *Service { return NewService(s.pool, s.env) }

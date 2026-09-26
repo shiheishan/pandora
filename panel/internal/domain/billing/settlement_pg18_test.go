@@ -318,7 +318,7 @@ func TestSettlementPG18(t *testing.T) {
 			paid.LedgerTxnID == "" || paid.SubscriptionID != "" {
 			t.Fatalf("topup settlement output mismatch: %#v", paid)
 		}
-		// 充值的履约就是余额落账，结算事务里直接置为 fulfilled（checkout.go 的
+		// 充值的履约就是余额落账，结算事务里直接置为 fulfilled（settlement.go 的
 		// topup 分支）。这里原先断言 paid，写在那条收尾逻辑加入之前。
 		state := settlementPG18OrderStateOf(t, ctx, pool, created.OrderID, "")
 		if state.Status != "fulfilled" || state.PaidAmount != 500 || state.HasSubscription ||

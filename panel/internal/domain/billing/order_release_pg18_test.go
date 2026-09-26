@@ -437,7 +437,7 @@ func TestOrderReleasePG18(t *testing.T) {
 		if err != nil || out == nil || !out.Processed || out.AlreadyHandled {
 			t.Fatalf("topup capture output=%#v err=%v", out, err)
 		}
-		// 充值单结算即履约（checkout.go 的 topup 分支），所以停在 fulfilled；
+		// 充值单结算即履约（settlement.go 的 topup 分支），所以停在 fulfilled；
 		// 之后到达的第二笔捕获对 paid 与 fulfilled 同样按 excess_capture 隔离。
 		orderReleasePG18AssertOrderStatus(t, ctx, pool, fx.tenant, orderID, "fulfilled")
 		late := webhook(orderID, "paid-late-event-1-"+fx.suffix,
