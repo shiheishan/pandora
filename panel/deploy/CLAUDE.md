@@ -53,7 +53,8 @@ client-auth-00044-verifier-gate.py / verify-client-auth-00044-evidence-vectors.p
 测试（只用虚构数据与一次性环境，不连任何真实部署）
 render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名
 run-pg18-gates.sh: 一次跑完全部 PostgreSQL 18 集成门禁，CI 的 panel-pg18.yml 每次推送都跑；每域 go test -v，有用例跳过或一个都没跑同样判失败（缺环境变量的测试会 t.Skip 报 ok），同包两域靠精确 -run 过滤互不拉入；容器就绪经 TCP 探测（镜像初始化的临时实例只听 unix socket），60 秒不就绪即失败
-run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：up 起一次性 PG18 + Valkey，goose 迁移、configure-app-role.sql 配运行角色、aegis-adminctl 建管理员，配置用 openssl 现场生成，从源码起 aegis-public/admin/node 并以 readyz（node 为 healthz）与管理员真登录验收，入口写进状态目录的 smoke.env；down 只拆自己记下的进程与容器
+run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：up 起一次性 PG18 + Valkey，goose 迁移、configure-app-role.sql 配运行角色、aegis-adminctl 建管理员，配置用 openssl 现场生成，从源码起 aegis-public/admin/node 并以 readyz（node 为 healthz）与管理员真登录验收，入口写进状态目录的 smoke.env；库名 aegis_smoke_test（带 test 段，过 e2e 脚本的一次性库守卫），PG 容器名可由 PANDORA_SMOKE_PG_CONTAINER 覆盖（CI 设成 aegis-postgres 让 psql.sh 直接可用）；down 只拆自己记下的进程与容器
+run-smoke-e2e.sh: 联调冒烟第 ⑤ 步（panel-smoke.yml 在读表与写路径之后调用）：在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，只报告不修；脚本一字不改，只把它们声明要的环境搭出来（/opt/aegispanel 布局链到仓库 deploy/、deploy/.env 由网关配置加库超级账号拼成、aegis-agent 编进 bin、aegis-payctl 配易支付测试商户、两个一次性库确认变量），脚本之间空一个限流窗口；每个脚本一行写进 e2e-results.md（结果、OK/FAIL 数、首个失败的步骤与原文），脚本失败不影响退出码；只肯在 GitHub Actions 上跑
 test-*-pg18.sh: 各业务的 PG18 集成门禁，每次新建隔离容器与库、结束即删；口令为 *-test-only 字样
 test-install.sh / test-ca42-*-e2e.sh / test-client-auth-*: 安装链与 CLIENT-AUTH 端到端；test-install.sh 发现库里已有用户即拒绝执行
 *_mock_test.sh / *_static_test.sh / *_linux_test.sh / *_linux_fault_test.sh / release-stop-the-world_test.ps1: 对上面各脚本的桩测试与静态检查，不需要数据库或 root

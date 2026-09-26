@@ -23,6 +23,9 @@ on:
       - "panel/frontend/package.json"
       - "panel/frontend/package-lock.json"
       - "panel/deploy/run-smoke-stack.sh"
+      - "panel/deploy/run-smoke-e2e.sh"
+      - "panel/deploy/psql.sh"
+      - "panel/tests/*.sh"
       - "panel/deploy/configure-app-role.sql"
       - "panel/deploy/build-release.sh"
       - ".github/workflows/panel-smoke.yml"
@@ -38,6 +41,9 @@ on:
       - "panel/frontend/package.json"
       - "panel/frontend/package-lock.json"
       - "panel/deploy/run-smoke-stack.sh"
+      - "panel/deploy/run-smoke-e2e.sh"
+      - "panel/deploy/psql.sh"
+      - "panel/tests/*.sh"
       - "panel/deploy/configure-app-role.sql"
       - "panel/deploy/build-release.sh"
       - ".github/workflows/panel-smoke.yml"
@@ -67,9 +73,13 @@ jobs:
           GOBIN="$RUNNER_TEMP/bin" go install "github.com/pressly/goose/v3/cmd/goose@$v"
           "$RUNNER_TEMP/bin/goose" --version
       # 配置在脚本里用 openssl 现场生成，不读任何 secrets
+      # 容器取 docker-compose 的名字 aegis-postgres：第 ⑤ 步的 e2e 脚本经仓库自带的
+      # deploy/psql.sh 查库，它写死这个名字；runner 一次性，不会撞名
       - name: Start the stack
+        id: stack
         env:
           GOOSE_BIN: ${{ runner.temp }}/bin/goose
+          PANDORA_SMOKE_PG_CONTAINER: aegis-postgres
         run: bash panel/deploy/run-smoke-stack.sh up panel "$RUNNER_TEMP/smoke"
       - uses: actions/setup-node@v4
         with:
@@ -85,12 +95,19 @@ jobs:
       - name: Typecheck the smoke tables
         working-directory: panel/frontend
         run: npx tsc -p tests/smoke/tsconfig.json
-      # 前端调用的每个 GET 接口，用调用处那个页面 schema 解析真响应
+      # 前端调用的每个 GET 接口，用调用处那个页面 schema 解析真响应；
+      # 写路径（writes.smoke.ts）由 vitest.config.ts 的 sequencer 固定排在两张读表之后
       - name: Parse real responses with the page schemas
         working-directory: panel/frontend
         env:
           SMOKE_STATE: ${{ runner.temp }}/smoke
         run: npx vitest run -c tests/smoke/vitest.config.ts
+      # 仓库现有的 tests/*_e2e.sh 与 tests/e2e.sh 在同一个栈上逐个跑，只报告：
+      # 放在读表与写路径之后，免得它们造的数据搅乱条数；脚本失败只进下面那张表，
+      # 不让 job 变红（run-smoke-e2e.sh 自己收集退出码）。前面哪步红了照样跑，只要栈起来了
+      - name: Run the legacy e2e scripts against the stack
+        if: always() && steps.stack.outcome == 'success'
+        run: bash panel/deploy/run-smoke-e2e.sh panel "$RUNNER_TEMP/smoke"
       - name: Shape table
         if: always()
         run: |
@@ -101,6 +118,19 @@ jobs:
             echo
             echo "| 入口 | 接口 | 调用处 | 结果 | 条数 · 覆盖 | 造数 | 说明 |"
             echo "|---|---|---|---|---|---|---|"
+            cat "$f"
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$f"
+      - name: E2E script table
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/smoke/e2e-results.md"
+          [ -f "$f" ] || exit 0
+          {
+            echo "### 现有 e2e 脚本 × 冒烟栈（只报告，不计入 job 结果）"
+            echo
+            echo "| 脚本 | 结果 | OK | FAIL | 首个失败所在步骤 | 首个失败 |"
+            echo "|---|---|---|---|---|---|"
             cat "$f"
           } >> "$GITHUB_STEP_SUMMARY"
           cat "$f"

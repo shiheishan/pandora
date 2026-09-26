@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖 docker（postgres:18-alpine、valkey/valkey:8-alpine）、goose、go、openssl、curl、python3，同目录 configure-app-role.sql，../migrations，../cmd 下的网关源码
-# [OUTPUT]: up 起一套一次性的真实面板栈（PG18 + Valkey + aegis-public + aegis-admin + aegis-node + 一个平台管理员），把地址与账号写进 <状态目录>/smoke.env；down 拆掉
-# [POS]: 第 4 阶段联调冒烟的底座，被 .github/workflows/panel-smoke.yml 调用，之后的造数据与 frontend/tests/smoke 都读 smoke.env；起库做法照 run-pg18-gates.sh，运行角色照 bootstrap.sh
+# [OUTPUT]: up 起一套一次性的真实面板栈（PG18 库 aegis_smoke_test + Valkey + aegis-public + aegis-admin + aegis-node + 一个平台管理员），把地址、账号、容器名与库名写进 <状态目录>/smoke.env；down 拆掉
+# [POS]: 第 4 阶段联调冒烟的底座，被 .github/workflows/panel-smoke.yml 调用，之后的造数据、frontend/tests/smoke 与 run-smoke-e2e.sh 都读 smoke.env；起库做法照 run-pg18-gates.sh，运行角色照 bootstrap.sh
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 起一套只活一次的真实面板，给前端冒烟用。
@@ -71,7 +71,12 @@ VALKEY_IMAGE="${PANDORA_SMOKE_VALKEY_IMAGE:-valkey/valkey:8-alpine}"
 PUB_ADDR="${PANDORA_SMOKE_PUBLIC_ADDR:-127.0.0.1:9000}"
 ADM_ADDR="${PANDORA_SMOKE_ADMIN_ADDR:-127.0.0.1:9001}"
 NODE_ADDR="${PANDORA_SMOKE_NODE_ADDR:-127.0.0.1:9003}"
-PG_CONTAINER="pandora-smoke-pg-$$"
+# 库名带独立的 test 段：tests/admin_e2e.sh 与 uniproxy_e2e.sh 只肯在名字看得出是一次性库的
+# 库上跑（第 ⑤ 步在冒烟栈上跑这些脚本），冒烟库本来就是一次性的
+PG_DB=aegis_smoke_test
+# 容器名可覆盖：第 ⑤ 步要让仓库自带的 deploy/psql.sh（写死 docker-compose 的 aegis-postgres）
+# 直接连上冒烟库，workflow 在一次性 runner 上把它设成 aegis-postgres
+PG_CONTAINER="${PANDORA_SMOKE_PG_CONTAINER:-pandora-smoke-pg-$$}"
 VK_CONTAINER="pandora-smoke-valkey-$$"
 
 # 失败时把网关日志尾部打出来再拆栈；成功时栈留着给后续步骤用
@@ -105,7 +110,7 @@ ADMIN_PASS="Smoke-$(rand_hex 16)"
 echo "==> 起 PostgreSQL 18 与 Valkey 8"
 echo "$PG_CONTAINER" >> "$STATE/containers"
 docker run -d --name "$PG_CONTAINER" \
-  -e POSTGRES_PASSWORD="$PG_SUPER_PW" -e POSTGRES_USER="$PG_SUPER" -e POSTGRES_DB=aegis \
+  -e POSTGRES_PASSWORD="$PG_SUPER_PW" -e POSTGRES_USER="$PG_SUPER" -e POSTGRES_DB="$PG_DB" \
   -p 127.0.0.1::5432 "$PG_IMAGE" >/dev/null
 echo "$VK_CONTAINER" >> "$STATE/containers"
 docker run -d --name "$VK_CONTAINER" -p 127.0.0.1::6379 "$VALKEY_IMAGE" \
@@ -132,9 +137,9 @@ done
 
 PG_PORT="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' "$PG_CONTAINER")"
 VK_PORT="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "6379/tcp") 0).HostPort}}' "$VK_CONTAINER")"
-MIGRATION_DSN="postgres://${PG_SUPER}:${PG_SUPER_PW}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable"
-APP_DSN="postgres://aegis_app:${APP_PW}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable"
-echo "    $(docker exec "$PG_CONTAINER" psql -U "$PG_SUPER" -d aegis -tAc 'SELECT version()' | cut -d, -f1)"
+MIGRATION_DSN="postgres://${PG_SUPER}:${PG_SUPER_PW}@127.0.0.1:${PG_PORT}/${PG_DB}?sslmode=disable"
+APP_DSN="postgres://aegis_app:${APP_PW}@127.0.0.1:${PG_PORT}/${PG_DB}?sslmode=disable"
+echo "    $(docker exec "$PG_CONTAINER" psql -U "$PG_SUPER" -d "$PG_DB" -tAc 'SELECT version()' | cut -d, -f1)"
 
 # ---------------------------------------------------------------------------
 # 迁移与运行角色：和生产同一条路
@@ -149,7 +154,7 @@ tail -1 "$STATE/logs/migrate.log"
 
 echo "==> 配置运行角色 aegis_app（configure-app-role.sql，与 bootstrap.sh 同一份）"
 docker exec -i -e PGPASSWORD="$PG_SUPER_PW" -e AEGIS_DB_APP_PASSWORD="$APP_PW" "$PG_CONTAINER" \
-  psql -X -v ON_ERROR_STOP=1 -U "$PG_SUPER" -d aegis -f - \
+  psql -X -v ON_ERROR_STOP=1 -U "$PG_SUPER" -d "$PG_DB" -f - \
   < "$PANEL_DIR/deploy/configure-app-role.sql" >/dev/null
 
 # ---------------------------------------------------------------------------
@@ -233,6 +238,7 @@ SMOKE_ADMIN_EMAIL=$ADMIN_EMAIL
 SMOKE_ADMIN_PASSWORD=$ADMIN_PASS
 SMOKE_MIGRATION_DSN=$MIGRATION_DSN
 SMOKE_PG_CONTAINER=$PG_CONTAINER
+SMOKE_PG_DB=$PG_DB
 EOF
 chmod 600 "$STATE/smoke.env"
 
