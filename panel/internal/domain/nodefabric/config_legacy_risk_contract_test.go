@@ -17,7 +17,6 @@ import (
 func TestLegacyConfigPublishRiskReductionContract(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
 	publish := pkg.Decl("Service.PublishConfig")
-	// 发布锁在前、发布在后：拼接顺序即原先两者在源码里的先后
 	src := pkg.Decls("lockLegacyConfigRelease", "Service.PublishConfig", "nextLegacyConfigVersion", "Service.Bootstrap")
 	required := []string{
 		`pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`,
@@ -51,14 +50,18 @@ func TestLegacyConfigPublishRiskReductionContract(t *testing.T) {
 	if got := strings.Count(publish, `serving_status<>'retired'`); got < 4 {
 		t.Fatalf("retired-node exclusion must cover target validation and every desired update, got %d", got)
 	}
-	order := pkg.Decls("lockLegacyConfigRelease", "Service.PublishConfig")
-	lockAt := strings.Index(order, `pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`)
-	allocateAt := strings.Index(order, `SELECT coalesce(max(version)::bigint, 0),`)
-	supersedeAt := strings.Index(order, `UPDATE node_configs SET status='superseded'`)
-	insertAt := strings.Index(order, `INSERT INTO node_configs`)
-	if lockAt < 0 || allocateAt <= lockAt || supersedeAt <= allocateAt || insertAt <= supersedeAt {
-		t.Fatalf("legacy publish lock/allocation/write order drifted: lock=%d allocate=%d supersede=%d insert=%d",
-			lockAt, allocateAt, supersedeAt, insertAt)
+	// 锁序比的是 PublishConfig 里各加锁调用处的先后：发布锁 → 目标池 / 节点行 FOR SHARE →
+	// 受影响节点行 → 分配版本 → 取代旧层 → 写新层。发布锁的 SQL 本身由上面的 required 守住。
+	releaseLockAt := strings.Index(publish, `lockLegacyConfigRelease(ctx, tx, tenantID)`)
+	targetLockAt := strings.Index(publish, `FOR SHARE`)
+	nodeLockAt := strings.Index(publish, `lockEffectiveReleaseNodes(ctx, tx, tenantID, in.Scope, in.ScopeRef)`)
+	allocateAt := strings.Index(publish, `SELECT coalesce(max(version)::bigint, 0),`)
+	supersedeAt := strings.Index(publish, `UPDATE node_configs SET status='superseded'`)
+	insertAt := strings.Index(publish, `INSERT INTO node_configs`)
+	if releaseLockAt < 0 || targetLockAt <= releaseLockAt || nodeLockAt <= targetLockAt || allocateAt <= nodeLockAt ||
+		supersedeAt <= allocateAt || insertAt <= supersedeAt {
+		t.Fatalf("legacy publish lock/allocation/write order drifted: release=%d target=%d nodes=%d allocate=%d supersede=%d insert=%d",
+			releaseLockAt, targetLockAt, nodeLockAt, allocateAt, supersedeAt, insertAt)
 	}
 
 	if strings.Contains(pkg.Source(), "WHERE tenant_id=$1 AND scope=$2 AND scope_ref IS NOT DISTINCT FROM $3::uuid`,\n\t\t\ttenantID, in.Scope, ref).Scan(&ver)") {
