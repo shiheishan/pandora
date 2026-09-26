@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖 PSQL（默认 /opt/aegispanel/deploy/psql.sh）、admin / node / public 三个网关、易支付测试商户 1001，依赖三个一次性库确认变量
+# [OUTPUT]: UniProxy（Xboard 兼容）数据面契约：节点认证、配置与 ETag、用户资格与池隔离、流量上报去重与倍率、在线上报；清理失败时把失败的 SQL 与库的报错打到 stderr
+# [POS]: panel/tests 的数据面脚本，由 deploy/run-smoke-e2e.sh 在冒烟栈上跑；节点生命周期由 node_e2e.sh 覆盖，这里用 SQL 夹具直接造 serving 节点
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # UniProxy end-to-end contract test (Xboard / V2board compatible data plane).
 #
 # This test deliberately creates a fixture through SQL because Server/Node lifecycle
@@ -69,9 +73,12 @@ register_temp() {
   TEMP_FILES+=("$1")
 }
 
+# stderr 不吞：清理失败时要看得出是哪一句、库回了什么
 cleanup_sql() {
   [ "$E2E_PREFLIGHT_OK" = 1 ] || return 0
-  "$PSQL" -X -v ON_ERROR_STOP=1 -c "$1" >/dev/null 2>&1
+  "$PSQL" -X -v ON_ERROR_STOP=1 -c "$1" >/dev/null && return 0
+  echo "  [cleanup] SQL failed: $1" >&2
+  return 1
 }
 
 cleanup() {
@@ -380,7 +387,9 @@ json_check "$HTTP_BODY" \
   "protocol update accepted only the stable v1 contract"
 NODE_ROW_VERSION=2
 
-expect_http 201 POST "$ADM/v1/nodes/$NODE_ID/server-token" -H "$AH"
+# 签服务端令牌挂着幂等中间件（node_server_token_issue），缺 Idempotency-Key 回 400
+expect_http 201 POST "$ADM/v1/nodes/$NODE_ID/server-token" -H "$AH" \
+  -H "Idempotency-Key: uni-server-token-$STAMP"
 TOKEN=$(json_get "$HTTP_BODY" token) || die "server-token response is invalid"
 assert_nonempty "$TOKEN" "one-time UniProxy token issued"
 [[ "$TOKEN" =~ ^[A-Za-z0-9_-]+$ ]] || die "server-token response used an unsafe token encoding"

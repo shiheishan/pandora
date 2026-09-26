@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖 deploy/.env（主密钥签演示渠道回调）与 deploy/psql.sh，依赖 public 网关（BASE）与 admin 网关（ADM，ADMIN_EMAIL / ADMIN_PASS 显式给出）
+# [OUTPUT]: 主链路端到端：注册（邮箱验证关闭的默认路径 + 临时开启后的验证码）→ 登录 → 自建带权益的套餐 → 下单与幂等 → 演示回调十连发 → 账本配平 → 订阅与配额 → 审计链 → 限流；退出时恢复邮件设置、归档自建套餐
+# [POS]: panel/tests 的主链路脚本（make e2e），与 invariants.sql 分工；联调冒烟第 ⑤ 步起由 deploy/run-smoke-e2e.sh 在冒烟栈上跑
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 端到端链路测试：注册 → 登录 → 下单 → 支付 → 账本 → 订阅 → 配额 → 凭据
 #
 # 与 invariants.sql 的分工：
@@ -6,9 +10,18 @@
 #   本脚本证明「整条业务链路真的跑得通，且幂等与账本在真实 HTTP 调用下成立」。
 #
 # 重点验证 PAY-003：同一支付回调连发 10 次，只能产生一次权益与一笔账。
+#
+# 需要一个后台管理员（ADMIN_EMAIL / ADMIN_PASS 显式给出）：
+#   - 注册按现在的默认（auth.email_verification 关闭，迁移 00030 / 00042 起）走；
+#     验证码那一段先经后台接口临时打开邮箱验证再测，退出时恢复原值；
+#   - 订单快照要验「权益随订单固化」，脚本自己经后台接口建一个带权益的套餐，
+#     不依赖 seed-demo，也不挑目录里的第一个套餐；退出时归档它。
 set -uo pipefail
 
 BASE="${AEGIS_BASE:-http://127.0.0.1:9000}"
+ADM="${ADM:-http://127.0.0.1:9001}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+ADMIN_PASS="${ADMIN_PASS:-}"
 DEPLOY="$(cd "$(dirname "$0")/../deploy" && pwd)"
 set -a; . "${DEPLOY}/.env"; set +a
 
@@ -20,10 +33,70 @@ ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; fail=$((fail+1)); }
 jqr()  { echo "$1" | python3 -c "import sys,json;d=json.load(sys.stdin);print(eval('d'+sys.argv[1]) if len(sys.argv)>1 else d)" "$2" 2>/dev/null; }
 
+[ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASS" ] \
+  || { echo "[FATAL] ADMIN_EMAIL / ADMIN_PASS 必须显式给出（建套餐、临时开关邮箱验证要用）" >&2; exit 1; }
+
 # 每次运行用不同邮箱，脚本可反复执行
 STAMP=$(date +%s)
 EMAIL="e2e-${STAMP}@example.test"
 PASSWORD="CorrectHorseBatteryStaple-${STAMP}"
+
+#-------------------------------------------------------------------------------
+# 后台：邮件设置整份覆盖（POST settings/mail），开关邮箱验证要带上其余各项原值。
+# 原值在第一次改动前取好；EXIT 陷阱把邮箱验证与套餐都恢复，脚本中途退出也一样
+#-------------------------------------------------------------------------------
+AH=""
+MAIL_ORIG=""        # GET settings/mail 的原始响应
+MAIL_FROM_NAME=""   # 发件人名取库里的原值：GET 在它为空时回显站点名，照抄会写脏
+MAIL_TOUCHED=0
+E2E_PLAN_ID=""; E2E_PLAN_RV=""
+
+# 用法：mail_settings_body <true|false|orig>，按原值拼出整份请求体；
+# 开启验证而原来没配 SMTP 时补上占位地址（接口要求先有发信配置），恢复时照原值写回
+mail_settings_body() {
+  MAIL_ORIG="$MAIL_ORIG" FROM_NAME="$MAIL_FROM_NAME" python3 - "$1" <<'PY'
+import json, os, sys
+o = json.loads(os.environ["MAIL_ORIG"])
+want = sys.argv[1]
+body = {
+    "smtp_host": o.get("smtp_host", ""), "smtp_port": o.get("smtp_port", 465),
+    "encryption": o.get("encryption", "ssl"), "smtp_username": o.get("smtp_username", ""),
+    "from_address": o.get("from_address", ""), "from_name": os.environ.get("FROM_NAME", ""),
+}
+if want == "orig":
+    body["email_verification"] = bool(o.get("email_verification"))
+else:
+    body["email_verification"] = want == "true"
+    if body["email_verification"]:
+        body["smtp_host"] = body["smtp_host"] or "smtp.example.test"
+        body["from_address"] = body["from_address"] or "e2e@example.test"
+print(json.dumps(body))
+PY
+}
+set_email_verification() {
+  local body c
+  body=$(mail_settings_body "$1") || return 1
+  MAIL_TOUCHED=1
+  c=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${ADM}/v1/settings/mail" \
+        -H "$AH" -H 'Content-Type: application/json' -d "$body")
+  [ "$c" = "200" ]
+}
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [ "$MAIL_TOUCHED" = 1 ]; then
+    if set_email_verification orig; then MAIL_TOUCHED=0
+    else echo "  [恢复失败] 邮件设置没能写回原值，请手动检查后台邮件设置" >&2; status=1; fi
+  fi
+  if [ -n "$E2E_PLAN_ID" ] && [ -n "$E2E_PLAN_RV" ]; then
+    c=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${ADM}/v1/plans/${E2E_PLAN_ID}/archive" \
+          -H "$AH" -H 'Content-Type: application/json' -H "Idempotency-Key: e2e-plan-archive-${STAMP}" \
+          -d "{\"expected_row_version\":${E2E_PLAN_RV}}")
+    [ "$c" = "200" ] || { echo "  [恢复失败] 本次建的套餐 ${E2E_PLAN_ID} 没能归档（HTTP ${c}）" >&2; status=1; }
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
 
 #-------------------------------------------------------------------------------
 step "0. 服务可达性"
@@ -34,17 +107,36 @@ health=$(curl -fsS --max-time 5 "${BASE}/healthz" 2>&1) \
 ready=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "${BASE}/readyz")
 [ "$ready" = "200" ] && ok "readyz 返回 200（数据库与缓存均可达）" || bad "readyz 返回 ${ready}"
 
+ra=$(curl -sS -X POST "${ADM}/v1/auth/login" -H 'Content-Type: application/json' \
+      -d "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASS}\"}")
+ATOK=$(jqr "$ra" "['access_token']")
+[ -n "$ATOK" ] && ok "后台管理员已登录" || { bad "后台管理员登录失败（响应已隐藏）"; exit 1; }
+AH="Authorization: Bearer ${ATOK}"
+MAIL_ORIG=$(curl -sS "${ADM}/v1/settings/mail" -H "$AH")
+jqr "$MAIL_ORIG" "['email_verification']" >/dev/null \
+  && ok "已取邮件设置原值（邮箱验证 $(jqr "$MAIL_ORIG" "['email_verification']")）" \
+  || { bad "取邮件设置失败: $MAIL_ORIG"; exit 1; }
+MAIL_FROM_NAME=$("$PSQL" -tAc "SELECT value #>> '{}' FROM system_settings WHERE key='mail.from_name' AND tenant_id='00000000-0000-7000-8000-000000000001';" | tr -d '\r')
+
 #-------------------------------------------------------------------------------
-step "1. 注册（IAM-001 / IAM-002 / IAM-006）"
+step "1. 注册（IAM-001 / IAM-006，邮箱验证关闭：当前默认）"
 #-------------------------------------------------------------------------------
+# 迁移 00030 / 00042 起 auth.email_verification 默认关闭：注册不下发验证码，
+# complete 不校验 code。本段在关闭状态下走；原本开着的安装先临时关掉
+if [ "$(jqr "$MAIL_ORIG" "['email_verification']")" = "True" ]; then
+  set_email_verification false && ok "邮箱验证临时关闭（退出时恢复）" || { bad "关闭邮箱验证失败"; exit 1; }
+fi
+
 r1=$(curl -sS -X POST "${BASE}/v1/auth/register/start" \
       -H 'Content-Type: application/json' \
       -d "{\"email\":\"${EMAIL}\"}")
 REG_TOKEN=$(jqr "$r1" "['registration_token']")
+VERIFY=$(jqr "$r1" "['verification_required']")
 DEV_CODE=$(jqr "$r1" "['dev_code']")
 
 [ -n "$REG_TOKEN" ] && ok "注册事务已签发" || bad "未取得 registration_token: $r1"
-[ -n "$DEV_CODE" ]  && ok "验证码已生成（开发模式回显）" || bad "未取得验证码"
+[ "$VERIFY" = "False" ] && [ -z "$DEV_CODE" ] && ok "邮箱验证关闭时不要求、也不下发验证码" \
+  || bad "邮箱验证关闭时 verification_required=${VERIFY} dev_code=${DEV_CODE:+有}"
 
 # IAM-006：对已存在邮箱，响应结构必须与新邮箱完全一致
 r1b=$(curl -sS -X POST "${BASE}/v1/auth/register/start" \
@@ -58,24 +150,48 @@ k2=$(echo "$r1b" | python3 -c "import sys,json;print(sorted(json.load(sys.stdin)
 # 弱口令必须被拒
 weak=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE}/v1/auth/register/complete" \
         -H 'Content-Type: application/json' \
-        -d "{\"registration_token\":\"${REG_TOKEN}\",\"code\":\"${DEV_CODE}\",\"password\":\"short\"}")
+        -d "{\"registration_token\":\"${REG_TOKEN}\",\"code\":\"\",\"password\":\"short\"}")
 [ "$weak" = "422" ] && ok "弱口令被拒（422）" || bad "弱口令返回 ${weak}，期望 422"
-
-# 错误验证码必须被拒
-wrongcode=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE}/v1/auth/register/complete" \
-             -H 'Content-Type: application/json' \
-             -d "{\"registration_token\":\"${REG_TOKEN}\",\"code\":\"000000\",\"password\":\"${PASSWORD}\"}")
-[ "$wrongcode" = "400" ] && ok "错误验证码被拒（400）" || bad "错误验证码返回 ${wrongcode}"
 
 r2=$(curl -sS -X POST "${BASE}/v1/auth/register/complete" \
       -H 'Content-Type: application/json' \
-      -d "{\"registration_token\":\"${REG_TOKEN}\",\"code\":\"${DEV_CODE}\",\"password\":\"${PASSWORD}\"}")
+      -d "{\"registration_token\":\"${REG_TOKEN}\",\"code\":\"\",\"password\":\"${PASSWORD}\"}")
 USER_ID=$(jqr "$r2" "['user_id']")
 [ -n "$USER_ID" ] && ok "账号已创建 user_id=${USER_ID}" || bad "注册失败: $r2"
 
 # 库中不得存在明文口令或明文验证码
 leak=$("$PSQL" -tAc "SELECT count(*) FROM user_passwords WHERE phc NOT LIKE '\$argon2id\$%';")
 [ "$leak" = "0" ] && ok "口令均为 Argon2id PHC 串，无明文（IAM-003）" || bad "发现 ${leak} 条非 Argon2id 口令"
+
+#-------------------------------------------------------------------------------
+step "1b. 邮箱验证开启时的验证码（IAM-002）"
+#-------------------------------------------------------------------------------
+# 经后台接口临时打开，测完立刻恢复原值（EXIT 陷阱兜底）
+if set_email_verification true; then
+  ok "邮箱验证已临时开启"
+  VEMAIL="e2e-verify-${STAMP}@example.test"
+  rv=$(curl -sS -X POST "${BASE}/v1/auth/register/start" \
+        -H 'Content-Type: application/json' -d "{\"email\":\"${VEMAIL}\"}")
+  VTOKEN=$(jqr "$rv" "['registration_token']")
+  VCODE=$(jqr "$rv" "['dev_code']")
+  [ "$(jqr "$rv" "['verification_required']")" = "True" ] && [ -n "$VCODE" ] \
+    && ok "开启后要求验证码，且开发模式回显了验证码" || bad "开启后未要求验证码或未回显: $rv"
+
+  # 错误验证码必须被拒
+  wrongcode=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${BASE}/v1/auth/register/complete" \
+               -H 'Content-Type: application/json' \
+               -d "{\"registration_token\":\"${VTOKEN}\",\"code\":\"000000\",\"password\":\"${PASSWORD}\"}")
+  [ "$wrongcode" = "400" ] && ok "错误验证码被拒（400）" || bad "错误验证码返回 ${wrongcode}"
+
+  rvc=$(curl -sS -X POST "${BASE}/v1/auth/register/complete" \
+         -H 'Content-Type: application/json' \
+         -d "{\"registration_token\":\"${VTOKEN}\",\"code\":\"${VCODE}\",\"password\":\"${PASSWORD}\"}")
+  [ -n "$(jqr "$rvc" "['user_id']")" ] && ok "正确验证码完成注册" || bad "正确验证码注册失败: $rvc"
+
+  set_email_verification orig && MAIL_TOUCHED=0 && ok "邮箱验证已恢复原值" || bad "恢复邮箱验证失败"
+else
+  bad "临时开启邮箱验证失败"
+fi
 
 #-------------------------------------------------------------------------------
 step "2. 登录（IAM-005 / IAM-006）"
@@ -119,14 +235,66 @@ meid=$(jqr "$me" "['user_id']")
 [ "$meid" = "$USER_ID" ] && ok "/v1/me 返回本人信息" || bad "/v1/me 异常: $me"
 
 #-------------------------------------------------------------------------------
-step "3. 套餐目录（XBD-011）"
+step "3. 套餐目录（XBD-011）：脚本自建带权益的套餐"
 #-------------------------------------------------------------------------------
+# 订单快照要验「权益随订单固化」，就得有带权益的套餐。向导建的套餐不写权益行，
+# 目录里第一个套餐未必带；所以经后台接口自己建：草稿版本写权益与配额 → 绑节点池 →
+# 价格 → 发布，下单只用它。退出时归档
+PLAN_TAG="e2e-${STAMP}-${RANDOM}"
+POOL_ID=$(curl -sS "${ADM}/v1/node-pools" -H "$AH" | python3 -c "
+import sys,json
+for p in json.load(sys.stdin).get('pools',[]):
+    if p.get('active_nodes',0)>0: print(p['id']); break" 2>/dev/null)
+[ -n "$POOL_ID" ] && ok "取到有活跃节点的节点池" || { bad "没有带活跃节点的节点池，套餐发布不了"; exit 1; }
+
+rp=$(curl -sS -X POST "${ADM}/v1/plans" -H "$AH" -H 'Content-Type: application/json' \
+      -H "Idempotency-Key: ${PLAN_TAG}-create" \
+      -d "{\"code\":\"${PLAN_TAG}\",\"name\":\"E2E 链路 ${STAMP}\",\"visibility\":\"public\"}")
+PLAN_ID=$(jqr "$rp" "['plan']['id']"); PLAN_RV=$(jqr "$rp" "['plan']['row_version']")
+[ -n "$PLAN_ID" ] && ok "草稿套餐已创建 ${PLAN_ID}" || { bad "建套餐失败: $rp"; exit 1; }
+
+rv=$(curl -sS -X POST "${ADM}/v1/plans/${PLAN_ID}/versions" -H "$AH" \
+      -H "Idempotency-Key: ${PLAN_TAG}-version")
+VID=$(jqr "$rv" "['version']['id']"); VRV=$(jqr "$rv" "['version']['row_version']")
+[ -n "$VID" ] && ok "草稿版本已创建" || { bad "建版本失败: $rv"; exit 1; }
+
+sem=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "${ADM}/v1/plans/${PLAN_ID}/versions/${VID}" -H "$AH" \
+       -H 'Content-Type: application/json' \
+       -d "{\"expected_row_version\":${VRV},\"quota_reset_strategy\":\"billing_cycle\",
+            \"entitlements\":[{\"code\":\"feature.multi_device\",\"value\":true},
+                              {\"code\":\"support.tier\",\"value\":\"standard\"}],
+            \"quotas\":[{\"metric\":\"traffic.bytes\",\"limit\":107374182400,\"unit\":\"bytes\",\"period\":\"cycle\"},
+                        {\"metric\":\"devices.active\",\"limit\":3,\"unit\":\"count\",\"period\":\"total\"}]}")
+[ "$sem" = "200" ] && VRV=$((VRV+1)) && ok "版本写入 2 项权益与 2 项配额" || { bad "写版本语义返回 ${sem}"; exit 1; }
+
+rb=$(curl -sS -X POST "${ADM}/v1/plans/${PLAN_ID}/pools" -H "$AH" -H 'Content-Type: application/json' \
+      -H "Idempotency-Key: ${PLAN_TAG}-pools" \
+      -d "{\"version_id\":\"${VID}\",\"expected_version_row_version\":${VRV},\"pool_ids\":[\"${POOL_ID}\"]}")
+VRV=$(jqr "$rb" "['row_version']")
+[ -n "$VRV" ] && ok "版本已绑定节点池" || { bad "绑节点池失败: $rb"; exit 1; }
+
+rpr=$(curl -sS -X POST "${ADM}/v1/plans/${PLAN_ID}/prices" -H "$AH" -H 'Content-Type: application/json' \
+       -H "Idempotency-Key: ${PLAN_TAG}-price" \
+       -d '{"currency":"CNY","unit_amount":990,"billing_interval":"month","interval_count":1}')
+[ -n "$(jqr "$rpr" "['price']['id']")" ] && ok "价格已创建（CNY 9.90 / 月）" || { bad "建价格失败: $rpr"; exit 1; }
+
+rpub=$(curl -sS -X POST "${ADM}/v1/plans/${PLAN_ID}/versions/${VID}/publish" -H "$AH" \
+        -H 'Content-Type: application/json' -H "Idempotency-Key: ${PLAN_TAG}-publish" \
+        -d "{\"expected_plan_row_version\":${PLAN_RV},\"expected_version_row_version\":${VRV}}")
+PLAN_RV=$(jqr "$rpub" "['plan_row_version']")
+[ -n "$PLAN_RV" ] && ok "版本已发布" || { bad "发布失败: $rpub"; exit 1; }
+E2E_PLAN_ID="$PLAN_ID"; E2E_PLAN_RV="$PLAN_RV"
+
 plans=$(curl -sS "${BASE}/v1/plans")
-PLAN_ID=$(jqr "$plans" "['plans'][0]['id']")
-PRICE_ID=$(jqr "$plans" "['plans'][0]['prices'][0]['id']")
-PRICE_AMT=$(jqr "$plans" "['plans'][0]['prices'][0]['unit_amount']")
-[ -n "$PLAN_ID" ] && ok "套餐列表可见 plan=${PLAN_ID}" || bad "套餐列表为空: $plans"
-[ -n "$PRICE_ID" ] && ok "价格可见 ${PRICE_AMT} (最小单位)" || bad "价格缺失"
+PRICE_ID=$(echo "$plans" | python3 -c "
+import sys,json
+for p in json.load(sys.stdin)['plans']:
+    if p['id']=='${PLAN_ID}': print(p['prices'][0]['id']); break" 2>/dev/null)
+PRICE_AMT=$(echo "$plans" | python3 -c "
+import sys,json
+for p in json.load(sys.stdin)['plans']:
+    if p['id']=='${PLAN_ID}': print(p['prices'][0]['unit_amount']); break" 2>/dev/null)
+[ -n "$PRICE_ID" ] && ok "门户目录可见本套餐，价格 ${PRICE_AMT} (最小单位)" || bad "门户目录里没有本套餐: $plans"
 
 #-------------------------------------------------------------------------------
 step "4. 下单（SUB-001 价格快照）"
