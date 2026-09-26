@@ -112,10 +112,10 @@ func (s *Service) ListMyOrders(ctx context.Context, tenantID, userID string,
 
 	var counts MyOrderCounts
 	if tenantID == "" || userID == "" {
-		return nil, 0, counts, httpx.New(httpx.CodeBadRequest, "tenant and user are required")
+		return nil, 0, counts, httpx.New(httpx.CodeBadRequest, "缺少租户或用户")
 	}
 	if _, err := uuid.Parse(userID); err != nil {
-		return nil, 0, counts, httpx.New(httpx.CodeBadRequest, "user identifier is invalid")
+		return nil, 0, counts, httpx.New(httpx.CodeBadRequest, "用户标识不正确")
 	}
 	if in.Limit <= 0 || in.Limit > 100 {
 		in.Limit = 20
@@ -204,10 +204,10 @@ func (s *Service) MyOrderDetail(ctx context.Context, tenantID, userID,
 	orderID string) (*MyOrderDetail, error) {
 
 	if tenantID == "" || userID == "" || orderID == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant, user and order are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户、用户或订单")
 	}
 	if _, err := uuid.Parse(userID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "user identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "用户标识不正确")
 	}
 	// 订单号非 UUID 时直接当"不存在"处理，而不是报参数错误：
 	// 两者回不同的错，就等于告诉试探者哪些 id 格式是对的。

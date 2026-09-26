@@ -1092,10 +1092,10 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 	in PaymentWebhookInput, out *PaymentWebhookOutput) error {
 
 	if in.ProviderEventID == "" || in.ProviderPaymentID == "" {
-		return httpx.New(httpx.CodeBadRequest, "payment event and payment identifiers are required")
+		return httpx.New(httpx.CodeBadRequest, "缺少支付事件号或支付流水号")
 	}
 	if in.Amount <= 0 || in.FeeAmount < 0 || in.FeeAmount > in.Amount {
-		return httpx.New(httpx.CodeBadRequest, "payment amount or fee is invalid")
+		return httpx.New(httpx.CodeBadRequest, "支付金额或手续费不正确")
 	}
 
 	var providerID string
@@ -1103,7 +1103,7 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 		SELECT id::text FROM payment_providers
 		 WHERE tenant_id=$1 AND code=$2`, tenantID, in.ProviderCode).Scan(&providerID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return httpx.New(httpx.CodeNotFound, "unknown payment provider")
+		return httpx.New(httpx.CodeNotFound, "支付渠道不存在")
 	}
 	if err != nil {
 		return err
@@ -1197,14 +1197,14 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 		identifier = in.OrderNo
 	}
 	if identifier == "" {
-		return httpx.New(httpx.CodeBadRequest, "payment callback has no order identifier")
+		return httpx.New(httpx.CodeBadRequest, "支付回调缺少订单号")
 	}
 	err = tx.QueryRow(ctx, query, tenantID, identifier).Scan(
 		&orderID, &userID, &status, &currency, &subtotalAmount,
 		&discountAmount, &taxAmount, &payable, &balanceApplied, &totalAmount,
 		&orderKind, &businessRequestID, &couponID, &idempotencyKeyID, &prorationCredit)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return httpx.New(httpx.CodeNotFound, "order not found")
+		return httpx.New(httpx.CodeNotFound, "订单不存在")
 	}
 	if err != nil {
 		return err
@@ -1262,10 +1262,10 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 		return nil
 	}
 	if status != "pending_payment" && status != "processing" {
-		return httpx.New(httpx.CodeConflict, "order is not payable")
+		return httpx.New(httpx.CodeConflict, "该订单当前状态不可支付")
 	}
 	if in.Currency != currency || in.Amount != payable {
-		return httpx.New(httpx.CodeConflict, "payment currency or amount does not match the order")
+		return httpx.New(httpx.CodeConflict, "支付币种或金额与订单不一致")
 	}
 
 	// Renewal and plan-change settlement must acquire the existing

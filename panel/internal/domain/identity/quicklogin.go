@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform 的 audit/crypto/db/httpx/token，依赖 google/uuid
+// [OUTPUT]: 对外提供 QuickLoginTTL、QuickLoginOutput、IssueQuickLogin、ConsumeQuickLogin
+// [POS]: domain/identity 的快捷登录：门户已登录设备签发 60 秒一次性链接，库里只存哈希且绑定签发会话，会话失效链接即作废
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package identity
 
 import (
@@ -41,7 +46,7 @@ func (s *Service) IssueQuickLogin(ctx context.Context, tenantID, userID,
 	sessionID string) (*QuickLoginOutput, error) {
 
 	if _, err := uuid.Parse(userID); err != nil {
-		return nil, httpx.New(httpx.CodeBadRequest, "user identifier is invalid")
+		return nil, httpx.New(httpx.CodeBadRequest, "用户标识不正确")
 	}
 	if _, err := uuid.Parse(sessionID); err != nil {
 		// 没有会话就没有可绑定的生命周期，这条链接会活得比登录状态还久

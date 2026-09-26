@@ -107,7 +107,7 @@ func (s *Service) SaveTemplate(ctx context.Context, tenantID string,
 	in.Subject = strings.TrimSpace(in.Subject)
 	in.Body = strings.TrimSpace(in.Body)
 	if tenantID == "" || in.Code == "" || in.Channel == "" {
-		return nil, httpx.New(httpx.CodeBadRequest, "tenant, code and channel are required")
+		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户、模板代码或渠道")
 	}
 	if in.Subject == "" || utf8.RuneCountInString(in.Subject) > 200 {
 		return nil, httpx.Invalid(map[string]string{"subject": "主题必填，且不超过 200 字"})
