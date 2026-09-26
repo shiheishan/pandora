@@ -30,7 +30,7 @@ commission_available.go: 「可用佣金」唯一口径（D-F-1），提现与�
 commission_transfer.go: 佣金转入余额，与提现同一把科目锁；ListMyCommissionTransfers 列本人转出（门户佣金记录）
 giftgrant.go: 礼品卡的发放侧（余额、流量包余额、延期、重置、开套餐）
 ledger.go: 科目类型与余额方向、EnsureAccount、Post 记账与 Balance
-*_test.go: 源码契约测试（锁序、kind 分支完整；经 platform/sourcetest 按声明名取源码，不按文件名读）、纯函数单元测试与 PG18 集成测试（*_pg18_test.go，由 deploy/run-pg18-gates.sh 的 billing / order_release / traffic_pack / plan_change 等域驱动；commission_ledger_pg18_test.go、commission_scope_pg18_test.go 与 manual_order_pg18_test.go 是挂在 TestOrderReleasePG18 上的子用例；ineligible_settlement_pg18_test.go 的订阅终态结算进挂账与 TestPlanChangePG18 同在 plan_change 域）
+*_test.go: 源码契约测试（锁序、kind 分支完整；经 platform/sourcetest 按声明名取源码，不按文件名读）、纯函数单元测试与 PG18 集成测试（*_pg18_test.go，由 deploy/run-pg18-gates.sh 的 billing / order_release / traffic_pack / plan_change 等域驱动；commission_ledger_pg18_test.go、commission_scope_pg18_test.go 与 manual_order_pg18_test.go 是挂在 TestOrderReleasePG18 上的子用例；ineligible_settlement_pg18_test.go 的订阅终态结算进挂账与 TestPlanChangePG18 同在 plan_change 域；本包 PG18 的共用夹具在 order_release_pg18_fixture_test.go、共用断言在 order_release_pg18_assert_test.go，settlement 的夹具与断言在 settlement_pg18_{fixture,assert}_test.go；order_release_pg18_test.go 只有一个 832 行的门禁函数，纯挪动拆不开，行数守卫单独豁免；settlement_pg18_test.go 被 deploy/test-settlement-runner_static_test.sh 按文件名 grep，门禁字面量留在它里面）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
