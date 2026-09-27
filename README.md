@@ -315,7 +315,7 @@ bash panel/deploy/test-install.sh <发布目录>
 
 **历史证据**（早期快照，不等于当前 `main`）：
 
-- 2026-08-11：pdnd 在 Linux amd64 隔离目录通过外部 Xray 的 REALITY+XHTTP+H3 互操作测试（`TestExternalXrayVLESSXHTTPH3Interop`），Xray 客户端互操作覆盖 REALITY+XHTTP/H1、H2 与普通 TLS+XHTTP/H3。详见 [docs/CLAUDE_HANDOFF_2026-08-11.md](docs/CLAUDE_HANDOFF_2026-08-11.md)。
+- 2026-08-11：pdnd 在 Linux amd64 隔离目录通过外部 Xray 的 REALITY+XHTTP+H3 互操作测试（`TestExternalXrayVLESSXHTTPH3Interop`），Xray 客户端互操作覆盖 REALITY+XHTTP/H1、H2 与普通 TLS+XHTTP/H3。
 - 2026-08-11：在远端旧快照上完成隔离 WebDAV + PostgreSQL 18 备份恢复演练（HTTPS 上传、签名 manifest、SHA-256、Age 加解密、全新实例恢复），RTO 约 2 秒。
 - 更早：Debian x86_64 完整 race 与 13 协议逐项测试曾通过。
 
@@ -365,7 +365,6 @@ r55 随 `f1390b3` 入库的内容：
 ## 相关文档
 
 - [PANDORA_PROJECT_DOSSIER_20260831.md](PANDORA_PROJECT_DOSSIER_20260831.md)：2026-08-31 的完整项目册，功能清单更细。
-- [docs/CLAUDE_HANDOFF_2026-08-11.md](docs/CLAUDE_HANDOFF_2026-08-11.md)：最近一次验证交接记录。
 - [docs/CONFIG-SIGNING-KEY-ROTATION.md](docs/CONFIG-SIGNING-KEY-ROTATION.md)、[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)：密钥轮换与发布物绑定。
 - [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)：备份与恢复。
 - [panel/docs/](panel/docs/)：XBoard 对标与实施计划、DASH / CLIENT-AUTH 冻结契约、ADR。
