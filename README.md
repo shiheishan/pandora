@@ -44,7 +44,7 @@ aegis-public    aegis-admin     aegis-node
 | `panel/cmd/` | 各域网关与运维工具的可执行入口 |
 | `panel/internal/` | `api/`（public、admin、node 路由与处理器）、`domain/`（业务域）、`middleware/`（认证、限流、幂等、租户注入）、`platform/`（配置、数据库、加密、日志、审计、令牌） |
 | `panel/tests/` | 数据层不变量 SQL 与端到端脚本 |
-| `panel/frontend/` | 面板前端，2026-09-23 起按设计稿从零重写（React + TypeScript + Vite，管理后台与用户门户双入口）；重写期间目录不存在 |
+| `panel/frontend/` | 面板前端，2026-09-23 起按设计稿从零重写、2026-09-26 完成（React + TypeScript + Vite，管理后台与用户门户双入口），构建后经 `make frontend-embed` 嵌入 `panel/web/` |
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
 | `panel/migrations/` | SQL 迁移，按序号递增，当前 00001–00067 共 67 个；00067 删除 21 张无依赖孤儿表（未在任何环境执行）；`RESERVED-TABLES.md` 登记其余 16 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
@@ -95,7 +95,7 @@ aegis-public    aegis-admin     aegis-node
 
 礼品卡、知识库、主题、插件、套餐、订单操作均已有真实代码；早期文档里“仅占位”的说法已过时。
 
-前端：2026-09-23 起，旧的两套前端（`/` 下的手写单页与 `/app/` 下的 React 候选）已整体删除，管理后台与用户门户按新设计稿在 `panel/frontend` 从零重写，同时让设计稿与后端双向对齐——设计有而后端没有的能力补后端，后端有而设计没有的能力补进前端。重写完成前两个网关的 `/` 下发的是占位页。上面列的功能都在后端，重写期间没有可用界面。
+前端：2026-09-23 起，旧的两套前端（`/` 下的手写单页与 `/app/` 下的 React 候选）已整体删除，管理后台与用户门户按新设计稿在 `panel/frontend` 从零重写，同时让设计稿与后端双向对齐——设计有而后端没有的能力补后端，后端有而设计没有的能力补进前端。重写已完成：发布包构建时把前端嵌入网关，两个网关的 `/` 分别下发管理后台与用户门户；仓库里 `panel/web/` 只存占位入口，未嵌入真实产物时下发的是占位页。
 
 运维：WebDAV 自动备份、签名清单、保留策略、systemd timer/service 与恢复脚本已存在，见 [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)。真实远端恢复演练状态见“验证状态与门禁”。
 
@@ -299,30 +299,39 @@ bash panel/deploy/test-install.sh <发布目录>
 
 ### 已有证据（FACT）
 
-- Portal 真实 Chrome Playwright 通过 390 / 820 / 1440 / 3840 四个宽度，覆盖工单撤回、佣金换算、通知偏好、XSS、内部备注过滤和稳定幂等键。（对象是已于 2026-09-23 删除的旧门户单页，只作历史证据，不覆盖新前端。）
-- 2026-09-21：`python pdnd/release/check_native_panel_parity.py` 在本快照上输出 `NATIVE_PANEL_PARITY_OK`（NativeCore、Panel Schema、serving allowlist 各 13 个协议一致）。
-- Xray 客户端互操作：REALITY+XHTTP/H1、H2 与普通 TLS+XHTTP/H3。
-- 2026-08-11：当时工作树的 pdnd 在 Linux amd64 隔离目录通过外部 Xray 的 REALITY+XHTTP+H3 互操作测试（`TestExternalXrayVLESSXHTTPH3Interop`）；panel、pdnd、pdnd `-tags compat` 的 `go test -p 1` 与 `go vet` 本地通过。详见 [docs/CLAUDE_HANDOFF_2026-08-11.md](docs/CLAUDE_HANDOFF_2026-08-11.md)。
-- 2026-08-11：在远端旧快照上完成隔离 WebDAV + PostgreSQL 18 备份恢复演练（HTTPS 上传、签名 manifest、SHA-256、Age 加解密、全新实例恢复），RTO 约 2 秒。这是旧快照证据，不等于当前工作树的生产验收。
-- 历史 Debian x86_64 完整 race 与 13 协议逐项测试曾通过；同样是早期快照，不等于当前工作树。
-- 未提交的 SSE / Node 集成曾在 Debian 做过受影响包的 compile-only 验证。
-- 2026-09-23：GitHub Actions 首跑 `35827175294`（推送 `f1390b3` 触发）失败。逐步日志：`Native capability smoke` 仍 grep 旧名 `"reality-h3"`（能力矩阵发布的是 `reality-h3-experimental`），其后 self-check、H3 探针、依赖边界、compat 编译、外部 Xray 五步从未执行；React candidate 有 10 个用例超 vitest 默认 5s。看板上显示为绿的 amd64 / arm64 两条 race 步骤实际也失败：`cmd/pandora-h3-probe` 的 `TestProcessProbeRoundTrip` 两架构都在 20.1s 超时，arm64 另有 `kernel` 的 `TestAnyTLSNativeClientTCPAndUOTUDP` 报 `DATA RACE`；当时 workflow 用默认 shell（无 `pipefail`），`go test … | tee` 的失败被 `tee` 吞掉。**因此在 workflow 加上 `shell: bash`（`-eo pipefail`）之前的 race 绿灯不能当证据。**
-- 同日修复（`fix/ci-green`，本机 macOS arm64、Go 1.27.1 验证，CI 以推送后的运行为准）：workflow 默认 `shell: bash`；capability smoke 改 grep `reality-h3-experimental`，并加 grep `external-reality-xhttp-h3-unverified` 守住 H3 未独立验证的边界；H3 探针测试先 `go build`（3 分钟上限）再以 20s 上限运行产物；AnyTLS 客户端往返测试的竞争位于 `sing-anytls` 客户端内部（`session/stream.go` 的 `closeLocally` 与 `Write`，v0.0.11 本机 3/3 复现、升到 v0.0.13 后 10 次仍有 1 次），不升级依赖，改为 `-tags interop` 的非 race 选跑门（`kernel/anytls_client_interop_test.go`），与外部 Xray 客户端同一先例；vitest 全局 `testTimeout: 30_000`；`tests/node-pools.test.tsx` 的删除失败提示用例根因是断言时 antd Modal 仍在 zoom 入场阶段（`opacity: 0`），测试改为先等弹窗可见、再以 `waitFor` 断言提示，组件不动。修复推送后运行 `35833526284`（`e7c9737`）九个 job 八绿：amd64 race / vet 与原生门禁全过，ARM64 原生 13 个包 race 全 ok（`kernel` 13.8s、`cmd/pandora-h3-probe` 1.7s）；唯一红是 React candidate 156 个用例挂 1 个，`tests/refund-execution.test.tsx` 的 `findByRole` 等确认按钮超时，根因是 testing-library 的 `asyncUtilTimeout` 默认 1s，与 vitest 的 `testTimeout` 无关；修复为 `tests/setup.ts` 全局设 10s，两处逐用例 `timeout` 随之删除。
-- 2026-09-23：ARM64 原生门（GitHub `ubuntu-24.04-arm` 上 race / vet / self-check / capabilities）在 `pipefail` 生效后的运行 `35833526284` 中通过。
+**CI 门禁（2026-09-26 在 `main` 上全绿：`36230330995` / `36230331009` / `36230331011`）**。三个 workflow 各有路径过滤，只改文档不触发。
+
+- **Panel PostgreSQL 18 gates**（`panel-pg18.yml`）：
+  - `panel-unit` 跑 panel 全量 build / vet / go test，是 CI 上唯一跑 panel 全部单元测试的地方；
+  - `panel-pg18` 在 runner 的 Docker 里起一次性 PG18，用发布包钉死的 goose 从空库套用全部迁移（到 00095），再跑 15 个包的 PG18 集成用例：234 PASS / 0 SKIP / 0 FAIL。有用例跳过、或一个都没跑，同样判失败。
+- **Pandora NativeCore**（`pandora-native.yml`）：
+  - pdnd：amd64 race / vet、原生 `ubuntu-24.04-arm` 的 ARM64 race、`-tags interop` 外部客户端门（外部 Xray、AnyTLS 客户端，非 race）；
+  - 能力矩阵 smoke、H3 探针、默认构建依赖边界（sing-box / xray 不得进默认构建）、compat 编译、amd64 / arm64 双架构发布构建；
+  - `check_native_panel_parity.py`（NativeCore、Panel Schema、serving allowlist 各 13 个协议一致）与 nodefabric 契约；
+  - `panel-frontend`：新前端 lint / typecheck / vitest（对假后端）/ 双入口构建，再 `make frontend-embed` 用真实产物跑 web、webapp、api 的 Go 契约，占位页没被替换即失败。
+- **Panel frontend smoke**（`panel-smoke.yml`）：起一次性 PG18 + 真实网关，经真网关造数据，用前端页面自己的 zod schema 解析真实响应（读表先于写路径），再在同一栈上跑 `tests/` 下五个 e2e 脚本；任一失败即红。
+- **仓库守卫**（随 `go test ./...`）：panel 与 pdnd 两道 800 行守卫、表登记簿与权限字典契约。第 5 阶段拆分超长文件时，每步都用 `panel/tools/refactorcheck` 证明是纯挪动。
+- 2026-09-23 起 workflow 默认 `shell: bash`（`-eo pipefail`）。在此之前 `go test … | tee` 的失败会被 `tee` 吞掉，**那之前的 race 绿灯不能当证据**。
+
+**历史证据**（早期快照，不等于当前 `main`）：
+
+- 2026-08-11：pdnd 在 Linux amd64 隔离目录通过外部 Xray 的 REALITY+XHTTP+H3 互操作测试（`TestExternalXrayVLESSXHTTPH3Interop`），Xray 客户端互操作覆盖 REALITY+XHTTP/H1、H2 与普通 TLS+XHTTP/H3。详见 [docs/CLAUDE_HANDOFF_2026-08-11.md](docs/CLAUDE_HANDOFF_2026-08-11.md)。
+- 2026-08-11：在远端旧快照上完成隔离 WebDAV + PostgreSQL 18 备份恢复演练（HTTPS 上传、签名 manifest、SHA-256、Age 加解密、全新实例恢复），RTO 约 2 秒。
+- 更早：Debian x86_64 完整 race 与 13 协议逐项测试曾通过。
 
 ### 未关闭的门禁（UNKNOWN）
 
+- **新前端没在真实浏览器里对真后端跑过**：CI 只有 vitest 对假后端，以及用页面 schema 解析真网关响应（不渲染页面）。后台只支持 ≥960 宽度，门户各视口都没有浏览器矩阵。
+- **当前 `main` 的真实安装式端到端**：`build-release.sh` 全流程、安装脚本、nginx、TLS、systemd、pandora-native 两阶段接入、真客户端连节点，都没在真机上跑过。部署前注意：没划进节点池的节点不服务任何人（契约 R104）。
+- **迁移 Down 段**：CI 只跑 Up，Down 没在 CI 上执行过。
 - REALITY+XHTTP/H3 的独立公网第三方客户端端点验证；amd64 外部 Xray 测试不能替代。
 - 13 个协议的全部传输组合与独立客户端协议矩阵。
-- ARM64：CI 原生门已通过（见上文 FACT），安装式或生产 ARM64 运行仍 UNKNOWN，交叉编译或静态 ELF 检查不能替代。
-- 当前 `main` 的真实安装式 TLS + PostgreSQL 18 + systemd + NativeCore 端到端。
-- 跨进程 SSE：租户 / 节点隔离、Redis 重连、重复信号、watcher 生命周期、慢消费者不阻塞。当时快照的完整 race 曾超过 4 分钟被停止，不是通过。
+- ARM64：CI 原生门已通过，安装式 ARM64 运行仍 UNKNOWN；交叉编译或静态 ELF 检查不能替代。
+- 跨进程 SSE：租户 / 节点隔离、Redis 重连、重复信号、watcher 生命周期、慢消费者不阻塞。
 - 真实支付、退款、通知外发的独立验收。
 - WebDAV 在当前 `main` 上的真实远端恢复演练。
 - CLIENT-AUTH：正式路由未接通，外部 manifest 仍为 `PLACEHOLDER_NO_GO`；历史 CA42 / CA43 辅助门缺少当前 handoff，不得误报通过。
-- 生产冷启动与回滚；G0 release intent 尚未授权。
-- 2026-09-21 新增的四条契约测试：表登记簿与权限字典两条 Go 测试已在 CI 首跑中通过；前端 api-surface、typecheck 与构建在本机 2026-09-22 实跑通过，CI 运行 `35833526284` 中 React candidate 156 个用例 155 过，唯一失败是 `findBy` 默认 1s 等待超时（与这四条契约无关），修复见上文 FACT。
-- 2026-09-22 本机实跑（macOS arm64，Go 1.27.1、Node 22.23.2；CI 仍是 Go 1.26，`GOMAXPROCS=1 -p 1`）：PASS `internal/platform/webapp`、`internal/platform/db`（含 Up 段重放的表登记簿）、`internal/api/admin|node|public`（PG18 夹具测试因未设环境变量跳过）、`web/app_test.go` 占位与真实产物两种形态、`make frontend-embed`、`tests/api-surface.test.ts` 8 项。同日修掉三处早于本轮的红：删除 admin 页无调用方的旧分流编辑器（194 行，`embed_test.go` 的 `rtState.rowVersion` 断言随之删除）；删除 `tests/manual-order.test.tsx` 中要求旧页写恢复记录的用例（旧页从不写）；`tests/node-pools.test.tsx` 见上文 FACT。NOT RUN：`deploy/build-release.sh` 全流程、00067 的迁移演练（需 Linux + Docker）；00067 未在任何数据库执行。
+- 冷启动与回滚；G0 release intent 尚未授权。
 
 ## 当前进度
 
@@ -353,15 +362,17 @@ r55 随 `f1390b3` 入库的内容：
 
 按优先级：
 
-1. 支付渠道安全配置、加密凭据、连通性测试、轮换与事件钻取。
-2. 面板重构：按设计稿重写管理后台与用户门户（分支 `feat/panel-redesign`），并补齐设计需要的后端能力：流量包、换套餐折算、礼品卡卡码脱敏与一次性导出、全局路由组、优惠券编辑、模板预览、主动查单等。
-3. CLIENT-AUTH 产品化。
-4. Android / Desktop 专属客户端及公共 SDK。
-5. 全后台四视口浏览器矩阵。
-6. WebDAV 真实备份恢复演练。
-7. ARM64：CI 原生门已在 `35833526284` 通过；下一步安装式 ARM64、独立客户端协议矩阵、冷启动 / 回滚与最终发布。
+1. **真机端到端**：找一台新机器，按发布包安装式部署当前 `main`，浏览器把管理后台和用户门户逐页点一遍，真客户端连节点。
+2. **新前端浏览器矩阵**：管理后台（≥960）与用户门户各视口，在真实浏览器里对真后端跑。
+3. **支付渠道安全配置**：加密凭据、连通性测试、轮换与事件钻取（后台现在只能列出与开关渠道，凭据经 `aegis-payctl` 配置）。
+4. **WebDAV 真实备份恢复演练**（当前 `main`）。
+5. **ARM64 与发布**：安装式 ARM64、独立客户端协议矩阵、冷启动 / 回滚与最终发布。
+6. CLIENT-AUTH 产品化。
+7. Android / Desktop 专属客户端及公共 SDK。
 
-工单 eligible assignee 接口与分配 UI 已存在（`GET /v1/tickets/assignees`、`POST /v1/tickets/{id}/assign`），2026-09-21 从路线图移除。
+另议、暂不排期：审计与访问日志的 IP 哈希直接用主密钥当 HMAC key（换 key 要配数据迁移）；多租户本身不做。
+
+面板重构（按设计稿重写管理后台与用户门户并补齐后端）已于 2026-09-26 全部合入 `main`，从路线图移除。
 
 ## 相关文档
 
