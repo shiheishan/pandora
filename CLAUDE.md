@@ -1,9 +1,9 @@
 # Pandora Panel - Xboard 类代理订阅面板 + 自研 NativeCore 节点端
 
-Go 1.26 + PostgreSQL 18 + Valkey 8 + React/TypeScript/Vite 面板前端（panel/frontend，按设计稿重写中，嵌入 panel/web 后在两个网关根 / 下发）
+Go 1.26 + PostgreSQL 18 + Valkey 8 + React/TypeScript/Vite 面板前端（panel/frontend，按设计稿重写，嵌入 panel/web 后在两个网关根 / 下发）
 
 <directory>
-panel/ - 面板：public/admin/node 三个 HTTP 网关 + agent 节点代理，计费账本、节点编排、审计、安装发布链 (8子目录: cmd, internal, migrations, deploy, web, docs, tests, tools；frontend 重写中)
+panel/ - 面板：public/admin/node 三个 HTTP 网关（节点接入由 pdnd 的 pandora-native 两阶段承担，面板不带节点代理），计费账本、节点编排、审计、安装发布链 (9子目录: cmd, internal, migrations, deploy, frontend, web, docs, tests, tools)
 pdnd/ - Pandora node：NativeCore 数据面，一个二进制承载 13 个协议，兼容内核仅在 compat 构建下按需链接 (10子目录: kernel, core, internal, node, panel, outbound, route, release, cmd, tools)
 docs/ - 全仓库级文档：AI 铁律、密钥轮换、发布物绑定、验证交接 (0子目录)
 .githooks/ - 提交前闸门 pre-commit：gitleaks 按 .gitleaks.toml 与本机可选的 ops-local/gitleaks-private.toml 扫暂存区，未装 gitleaks 也拒绝提交；clone 后执行 git config core.hooksPath .githooks 启用 (0子目录)
