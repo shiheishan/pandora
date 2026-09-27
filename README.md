@@ -2,7 +2,7 @@
 
 Xboard 类代理订阅面板 + 自研节点端（Pandora NativeCore）。目标是提供 XBoard 级运营能力，并把协议、传输、路由与流量统计逐步收回单一自研内核。别名：AegisPanel / pandora-native。
 
-本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是 GEB 分形文档协议与 L1 地图，各模块目录的 CLAUDE.md 是 L2 成员清单，操作红线见 [docs/CONSTRAINTS.md](docs/CONSTRAINTS.md)。
+本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是 GEB 分形文档协议与 L1 地图，各模块目录的 CLAUDE.md 是 L2 成员清单，仓库公开、不写部署专属值的红线也写在根 CLAUDE.md 末尾。
 
 ## 架构
 
@@ -48,12 +48,12 @@ aegis-public    aegis-admin     aegis-node
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
 | `panel/migrations/` | SQL 迁移，按序号递增，当前 00001–00067 共 67 个；00067 删除 21 张无依赖孤儿表（未在任何环境执行）；`RESERVED-TABLES.md` 登记其余 16 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
-| `panel/docs/` | XBoard 对标与实施计划、DASH / CLIENT-AUTH 冻结契约、ADR |
+| `panel/docs/` | `redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿、ADR |
 | `pdnd/` | Pandora node（pdnd / pandora-native）：NativeCore 协议入站、认证、路由、用户与流量 |
 | `pdnd/kernel/`、`pdnd/internal/` | NativeCore 自研数据面 |
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
 | `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
-| `docs/` | 密钥轮换、发布物绑定、交接记录、约束清单 |
+| `docs/` | 配置签名密钥轮换、发布物绑定 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
 | `.github/workflows/` | pdnd 的 Ubuntu race / vet 与双架构构建门禁；panel 的前端嵌入与根下发契约、表登记簿、权限字典契约测试；新前端的 typecheck / vitest / 构建任务随重写恢复 |
 | `CLAUDE.md`（根目录及各模块目录） | GEB 分形文档地图：根为 L1 项目宪法，模块目录为 L2 成员清单，源文件头部为 L3 契约 |
@@ -293,6 +293,17 @@ bash panel/deploy/test-install.sh <发布目录>
 真实的 `.env` 不进仓库。模板见 `deploy/.env.example`，所有敏感项都是
 `CHANGE_ME`，由 `install.sh` 首装时随机生成。
 
+### 上线前检查
+
+隐藏的后台路径挡不住公网扫描；来源、速率和端口最终要在云防火墙、安全组和反向代理层收住。
+
+1. 只开放 80/443 或明确需要的代理端口；
+2. 节点控制端口不直接暴露到公网；
+3. 管理路径再加一层 IP 白名单、二次验证或 VPN 入口；
+4. 注册、登录、订阅、工单接口配置限速与挑战策略；
+5. 管理、节点、数据库日志分开存放，并做 secret scan；
+6. 不把密钥、`.env`、私钥和真实备份地址写进仓库。
+
 ## 验证状态与门禁
 
 状态标记沿用项目约定：FACT 有命令或源码直接证明；INFERENCE 是基于证据的判断；UNKNOWN 尚缺验收证据。静态对齐、进程存在或 HTTP 200 不等于功能验收。
@@ -364,9 +375,8 @@ r55 随 `f1390b3` 入库的内容：
 
 ## 相关文档
 
-- [PANDORA_PROJECT_DOSSIER_20260831.md](PANDORA_PROJECT_DOSSIER_20260831.md)：2026-08-31 的完整项目册，功能清单更细。
 - [docs/CONFIG-SIGNING-KEY-ROTATION.md](docs/CONFIG-SIGNING-KEY-ROTATION.md)、[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)：密钥轮换与发布物绑定。
 - [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)：备份与恢复。
-- [panel/docs/](panel/docs/)：XBoard 对标与实施计划、DASH / CLIENT-AUTH 冻结契约、ADR。
+- [panel/docs/](panel/docs/)：`redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿、ADR。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。
 - [panel/docs/adr/0001-technology-stack.md](panel/docs/adr/0001-technology-stack.md)：技术选型决策记录。

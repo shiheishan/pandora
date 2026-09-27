@@ -5,7 +5,7 @@ Go 1.26 + PostgreSQL 18 + Valkey 8 + React/TypeScript/Vite 面板前端（panel/
 <directory>
 panel/ - 面板：public/admin/node 三个 HTTP 网关（节点接入由 pdnd 的 pandora-native 两阶段承担，面板不带节点代理），计费账本、节点编排、审计、安装发布链 (9子目录: cmd, internal, migrations, deploy, frontend, web, docs, tests, tools)
 pdnd/ - Pandora node：NativeCore 数据面，一个二进制承载 13 个协议，兼容内核仅在 compat 构建下按需链接 (10子目录: kernel, core, internal, node, panel, outbound, route, release, cmd, tools)
-docs/ - 全仓库级文档：AI 铁律、密钥轮换、发布物绑定 (0子目录)
+docs/ - 全仓库级文档：配置签名密钥轮换、发布物绑定 (0子目录)
 .githooks/ - 提交前闸门 pre-commit：gitleaks 按 .gitleaks.toml 与本机可选的 ops-local/gitleaks-private.toml 扫暂存区，未装 gitleaks 也拒绝提交；clone 后执行 git config core.hooksPath .githooks 启用 (0子目录)
 ops-local/ - 按需创建，目前不存在：被 git 忽略、只在维护者本机存在，给以后放私有运维资料（真实服务器 IP、域名、gitleaks 私有规则 gitleaks-private.toml）。仓库公开，这些永不入库；pre-commit 钩子在该文件存在时才加载它
 .github/workflows/ - CI：默认 shell: bash（-eo pipefail，`| tee` 不再吞掉失败）；pdnd 的 Ubuntu race/vet、原生 ubuntu-24.04-arm 的 ARM64 race 门、-tags interop 的非 race 外部客户端门与 amd64/arm64 双架构构建门禁；panel 的 nodefabric 契约、前端嵌入与根下发契约（占位入口）、表登记簿、权限字典；panel-frontend 任务对新前端跑 lint/typecheck/vitest/双入口构建，再 make frontend-embed 用真实产物跑 web、webapp、api 的 Go 契约，占位页未被替换即失败；PG18 集成门禁单独在 panel-pg18.yml（触发面是整棵 panel/internal 加 cmd 与 web 的 Go 源码，不拖 pdnd 的重任务），runner 自带 Docker 跑 run-pg18-gates.sh，goose 版本跟 build-release.sh；同一 workflow 的 panel-unit 任务跑 panel 全量 build/vet/go test（PG18 用例在此跳过），这是 CI 上唯一跑 panel 全部单元测试的地方；panel-smoke.yml 是新前端对真实网关的联调冒烟（面板重构第 4 阶段），触发面含 panel/frontend/src 与 panel/tests，经 deploy/run-smoke-stack.sh 起一次性 PG18 + 网关，读表先于写路径，最后经 deploy/run-smoke-e2e.sh 在同一栈上跑 tests 下的五个 e2e 脚本（全部跑完再判，任一失败即 job 变红） (0子目录)
@@ -13,8 +13,6 @@ ops-local/ - 按需创建，目前不存在：被 git 忽略、只在维护者�
 
 <config>
 README.md - 项目全貌：架构、功能、部署、验证状态、进度、路线图，给人看的唯一入口
-PANDORA_PROJECT_DOSSIER_20260831.md - 2026-08-31 的完整项目册，功能清单比 README 更细，README 相关文档一节链接它
-docs/CONSTRAINTS.md - AI 操作铁律：不部署/不提交/不推送/不迁移，NativeCore fail closed，FACT/INFERENCE/UNKNOWN 报告，仓库只放产品不放部署专属值
 panel/go.mod、pdnd/go.mod - 两个独立 Go module，面板为 github.com/aegispanel/aegis，pdnd 沿用旧 module 名 github.com/aegispanel/nodeagent
 panel/Makefile - 本地开发入口：up/migrate/check-migrations/invariants/build/test/e2e/verify，CGO_ENABLED=0
 panel/deploy/.env.example - 运行配置模板，敏感项 CHANGE_ME 由 install.sh 首装生成
@@ -263,6 +261,6 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 - L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]；TS/TSX 用模板里的 `/** */`。Go 文件多已带中文设计注释，L3 加在其上方（中间空一行，不成为包文档），不改写原注释；带 `//go:build` 的文件，L3 放在构建约束与空行之后。
 - L3 按逆向流渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性播种（2026-09-23 实测：Go 1038 个、TS/TSX 102 个；已有 L3 头的 Go 19 个、TS/TSX 16 个）。
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。
-- 单文件 ≤800 行：第 5 阶段重构（panel/docs/redesign/phase5-refactor.md）之后，豁免之外没有超限的 .go 文件（含测试）。豁免两类：① `pdnd/internal/reality/**`（fork 自 Go crypto/tls，34 个文件）与 `pdnd/internal/realityquic/**`（fork 自 quic-go，193 个文件）是 fork 来的第三方代码，保持上游的文件划分以便合上游，整目录豁免，目前其中 14 个文件超限（reality 8、realityquic 6）；② 两个只剩一个超长测试函数、纯挪动拆不开的 PG18 测试 `panel/internal/middleware/idempotency_pg18_test.go`、`panel/internal/domain/billing/order_release_pg18_test.go`，逐个登记，拆到 800 行以内即须移出。守卫：panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go` 随 `go test ./...` 扫描全部 .go，豁免外超限即红，豁免过期也红。守卫变红先按主题拆分（只挪代码，用 `panel/tools/refactorcheck` 自证），不要加豁免；改豁免表要用户授权。
+- 单文件 ≤800 行：第 5 阶段重构之后，豁免之外没有超限的 .go 文件（含测试）。豁免两类：① `pdnd/internal/reality/**`（fork 自 Go crypto/tls，34 个文件）与 `pdnd/internal/realityquic/**`（fork 自 quic-go，193 个文件）是 fork 来的第三方代码，保持上游的文件划分以便合上游，整目录豁免，目前其中 14 个文件超限（reality 8、realityquic 6）；② 两个只剩一个超长测试函数、纯挪动拆不开的 PG18 测试 `panel/internal/middleware/idempotency_pg18_test.go`、`panel/internal/domain/billing/order_release_pg18_test.go`，逐个登记，拆到 800 行以内即须移出。守卫：panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go` 随 `go test ./...` 扫描全部 .go，豁免外超限即红，豁免过期也红。守卫变红先按主题拆分（只挪代码，用 `panel/tools/refactorcheck` 自证），不要加豁免；改豁免表要用户授权。
 - entropy 段的范式映射到本仓库：日志用 platform/logging（log/slog），响应与错误用 platform/httpx，配置只经 platform/config，前端 HTTP 只经 src/core/api.ts。
-- docs/CONSTRAINTS.md 的十一条铁律与本协议同时生效；冲突时铁律优先。
+- 仓库公开，只放产品：不写入任何具体部署的值（服务器 IP、域名、后台路径前缀、密钥、从生产导出的数据）；测试夹具只用虚构数据，模板只含占位符。gitleaks 命中必须停下处理，扫描不得与提交、推送串在同一条命令里。
