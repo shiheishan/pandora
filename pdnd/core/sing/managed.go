@@ -11,7 +11,8 @@
 // 许可证：sing-box 为 GPL-3.0。本包只在 compat 构建里链接（默认发布包由
 // release/build.sh 闸门保证不依赖 sing-box），但默认构建仍链接 GPL-3.0 的
 // mieru 与 sagernet/sing，所以 pandora-native 无论哪种构建都按 GPL-3.0 分发。
-// 面板本体是独立的 Go module，不链接 sing-box，不受此约束。
+// 面板本体是独立的 Go module，不链接这些库；它同样按 GPL-3.0 发布是仓库整体
+// 的选择（仓库根 LICENSE），不是被依赖传染。
 package sing
 
 import (
