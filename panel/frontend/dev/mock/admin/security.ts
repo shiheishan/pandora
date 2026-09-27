@@ -420,7 +420,8 @@ export function onSwitchChanged(listener: (payload: { code: string; enabled: boo
   return () => switchListeners.delete(listener)
 }
 
-const CHECK = (name: string) => `new row for relation "feature_switches" violates check constraint "${name}"`
+// R116：与 adminops.switchRefusal 同文——数据库 CHECK 原句只进日志，页面拿到的是中文原因
+const CHECK = (name: string) => (name === 'feature_switches_essential_stays_on' ? '核心开关不能关闭' : '关闭开关必须填写原因')
 
 async function setSwitch(ctx: MockContext): Promise<MockResult> {
   const d = await decode(ctx, { enabled: 'boolean', reason: 'string' })
@@ -430,7 +431,7 @@ async function setSwitch(ctx: MockContext): Promise<MockResult> {
   const enabled = d.body.enabled === true
   const reason = typeof d.body.reason === 'string' ? d.body.reason : ''
   const stored = reason.trim() ? reason : null
-  // 两条都是数据库 CHECK，Go 翻成 409 并带上数据库原文
+  // 两条都是数据库 CHECK，Go 翻成 409 并换成中文原因
   if (s.essential && !enabled) return err(409, 'conflict', `开关 ${s.code} 不允许该操作：${CHECK('feature_switches_essential_stays_on')}`)
   if (!enabled && stored === null) return err(409, 'conflict', `开关 ${s.code} 不允许该操作：${CHECK('feature_switches_disable_needs_reason')}`)
   s.enabled = enabled

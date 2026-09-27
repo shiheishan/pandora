@@ -33,7 +33,7 @@ tests/mock-admin-marketing.test.ts: 营销假接口——礼品卡掩码、一�
 tests/mock-admin-nodes.test.ts: 节点与服务器假接口——节点列表能被页面 schema 接住、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器 schema、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409、匹配类型校验与发布；节点池名单带字段才要 reauth 与四种 422、用户组 exclusive_pools 与被池引用时删组 409、无池节点的交付提示（R105）、PATCH 补回缺席密钥 / 显式 null 清空 / mask_password 跟着 mask（R106 R107）、上线一步到 active 与服务器就绪、重放与 409（R108）；上线回 AdminNode、warnings 缺省与两种提示（首次搭建的新池没绑套餐）、已 active 先于版本号（R113）
 tests/mock-admin-content.test.ts: 内容与外观假接口——只读账号整块 404、公告状态机与版本冲突、知识库新版本归档同受众旧版与重复归档、内置主题 43 键、插槽净化与空内容 dropped 为 null、站点时区校验
 tests/mock-admin-system.test.ts: 通知与插件假接口——只读账号只开放模板、SMTP 整体覆盖与密码保留 / 清空、注册校验、Telegram chat id 缺省不改与测试回落、模板变量白名单 / 预览 / 恢复默认 / 测试信要 reauth、钩子 upsert 一次性密钥、内网地址与未知事件 422、越界 500、投递记录 null、删除 404
-tests/mock-admin-security.test.ts: 安全与运维假接口——只读账号整块 404（停用先 404 不弹 reauth）；审计 schema、存量行、筛选与 limit 越界；导出先 reauth、日期 422、BOM 与防公式、导出记审计；访问日志分类表、未知分类与结果 422、仅错误、IP 与账号筛选；聚类默认不列标记正常的、机房判高风险、标记正常；批量停用 reauth、422、跳过后台账号 / 已停用 / 非成员、同键重放、用户模块看到已停用；开关八行（R102）、排序、核心项与缺原因 409、切换记审计
+tests/mock-admin-security.test.ts: 安全与运维假接口——只读账号整块 404（停用先 404 不弹 reauth）；审计 schema、存量行、筛选与 limit 越界；导出先 reauth、日期 422、BOM 与防公式、导出记审计；访问日志分类表、未知分类与结果 422、仅错误、IP 与账号筛选；聚类默认不列标记正常的、机房判高风险、标记正常；批量停用 reauth、422、跳过后台账号 / 已停用 / 非成员、同键重放、用户模块看到已停用；开关八行（R102）、排序、核心项与缺原因 409 的中文原文（R116）、切换记审计
 tests/mock-portal.test.ts: 门户假接口——外框读接口来自各页面模块、套餐目录能被页面 schema 接住（R99 / R100）、快捷登录令牌一次性往返、同会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
 tests/mock-portal-checkout.test.ts: 门户结账假接口（R114）——变更套餐试算的 coupon 没用码为 null、用了码是与优惠码试算同形的券面
 tests/mock-portal-referral.test.ts: 门户邀请返利假接口（R114）——佣金概况带 summary.scope，默认 every_order、multi 场景 first_order、legacy 场景照回
