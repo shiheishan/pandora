@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖 /opt/aegis-migrate 下的 Age 密文备份与代码包、新主机的 deploy/.env（须含 AEGIS_PUBLIC_BASE_URL）
-# [OUTPUT]: 在新主机恢复数据、重建 aegis_app、校验账本、编译启动并渲染 nginx
+# [OUTPUT]: 在新主机恢复数据、重建 aegis_app、校验账本、编译（源码模式先 make frontend-embed）或装发布包二进制，拒绝嵌着占位前端的网关，启动并渲染 nginx
 # [POS]: deploy 的整机迁移编排，复用 restore-postgres.sh / bootstrap.sh / render-nginx.sh，不接收未校验的额外模板
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 在**新服务器**上执行的一键迁移脚本。
@@ -65,6 +65,10 @@ if [ -n "$AEGIS_RELEASE_DIR" ]; then
   [ -f "$AEGIS_RELEASE_DIR/SHA256SUMS" ] || die "AEGIS_RELEASE_DIR 缺少 SHA256SUMS"
 else
   pandora_go_version_ok || die "源码编译需要 Go 1.26+；也可用 AEGIS_RELEASE_DIR 指向预编译的 linux/$PANDORA_ARCH 发布包"
+  # 面板前端经 go:embed 编进 aegis-admin / aegis-public；源码树里只有占位入口，
+  # 编译前要 make frontend-embed 用真实产物覆盖，没有 npm 就编出一个只有占位页的面板
+  command -v npm >/dev/null 2>&1 || \
+    die "源码编译需要 Node 22.12+ 与 npm（构建面板前端）；也可用 AEGIS_RELEASE_DIR 指向预编译的 linux/$PANDORA_ARCH 发布包"
 fi
 echo "  docker: $(docker --version)"
 echo "  compose: $(docker compose version | head -1)"
@@ -148,13 +152,31 @@ if [ -n "$AEGIS_RELEASE_DIR" ]; then
     install -m 0755 "$AEGIS_RELEASE_DIR/bin/$b" "bin/$b"
     echo "  ✓ $b (linux/$PANDORA_ARCH release)"
   done
+  # 节点接入的发布物绑定，aegis-node.service 以 EnvironmentFile= 加载
+  if [ -f "$AEGIS_RELEASE_DIR/deploy/release-artifact.env" ]; then
+    install -m 0644 "$AEGIS_RELEASE_DIR/deploy/release-artifact.env" "$APP/deploy/release-artifact.env"
+    echo "  ✓ release-artifact.env"
+  fi
 else
+  make frontend-embed || die "构建面板前端失败（make frontend-embed）"
+  for app in admin portal; do
+    ! grep -q 'name="pandora-placeholder"' "web/$app/index.html" \
+      || die "web/$app 在 frontend-embed 之后仍是占位入口"
+  done
   for b in aegis-public aegis-admin aegis-node aegis-payctl aegis-adminctl aegis-backup-webdav; do
     CGO_ENABLED=0 GOOS=linux GOARCH="$PANDORA_ARCH" \
       go build -trimpath -ldflags="-s -w" -o "bin/$b" "./cmd/$b" \
       && echo "  ✓ $b (linux/$PANDORA_ARCH)" || die "编译 $b 失败"
   done
 fi
+# 两条路都查成品：嵌进网关的若还是占位入口，门户与后台打开只有一张占位页。
+# 标记只出现在占位 index.html 里（Go 源码不含它），go:embed 原样存字节，直接查二进制。
+for b in aegis-public aegis-admin; do
+  if LC_ALL=C grep -a -F -q 'name="pandora-placeholder"' "bin/$b"; then
+    die "bin/$b 嵌着前端占位页；源码模式先确认 make frontend-embed 成功，发布包模式换一个用 build-release.sh 打的包"
+  fi
+done
+echo "  ✓ 网关嵌入的是真实前端（非占位页）"
 
 #-------------------------------------------------------------------------------
 say "7. 服务"

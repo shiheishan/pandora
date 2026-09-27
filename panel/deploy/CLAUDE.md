@@ -10,7 +10,7 @@ install.sh: 一键安装 / 升级（Docker 数据基座）。发布包装出来�
 install-native.sh: 无 Docker 的直装版，首装生成 .env 的全部 CHANGE_ME 机密
 install-linux-binaries.sh: 按带外获得的 SHA-256 摘要校验后，以可回滚事务安装发布包二进制、运维脚本、systemd 单元与 release-artifact.env（到 /opt/aegispanel/deploy/）
 platform.sh / preflight-linux.sh: 发行版与依赖探测（被其他脚本 source），装前环境预检
-migrate-to-new-host.sh: 新主机一键迁移：恢复 Age 密文备份、重建 aegis_app 角色、校验账本无漂移，第 5 步先拦下缺失的 AEGIS_PUBLIC_BASE_URL
+migrate-to-new-host.sh: 新主机一键迁移：恢复 Age 密文备份、重建 aegis_app 角色、校验账本无漂移，第 5 步先拦下缺失的 AEGIS_PUBLIC_BASE_URL；第 6 步源码模式先 make frontend-embed（无 npm 即停），两种模式都查 aegis-public/admin 二进制里没有前端占位标记
 .env.example: 运行配置模板，机密与域名全是 CHANGE_ME 占位；AEGIS_ENV 默认 development 给本地开发，install.sh 首装改成 production
 docker-compose.yml: 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1
 systemd/: aegis-public/admin/node 三网关、备份 service+timer 单元；aegis-node 在 .env 之后再加载 release-artifact.env（节点接入的发布物绑定）
