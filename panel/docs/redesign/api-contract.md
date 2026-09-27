@@ -255,6 +255,7 @@
 - 设计：后台-01「邮件投递积压」卡与「系统状态 · 邮件投递」行；后台-09 SMTP 卡状态「已连接 · 重试 3 封」。映射：积压数←ready+scheduled，「重试中」←ready_retry+scheduled_retry，「失败」←failed_total，颜色←backlog_state。分渠道数字由 GET v1/system/status 的 components 提供（不改冻结 DTO）
 
 #### GET v1/system/status — 系统状态
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：补充 R52：postgres 组件 `SELECT 1` 成功但统计读取失败时，`state` 为 warn 并带中文 `message`，`size_bytes` / `connections` / `max_connections` 三个键都不出现（以前会写成 null，或把单条查询失败吞成 0 仍报 ok）；`SELECT 1` 失败为 down、metrics 为空；两者都成功为 ok、三个键齐全。（93b8210）
 - **修订 R54（2026-09-24，后端二 ⑤ 8cb4208、c2dd164）**：`state` / `components` 已实现。`payment_callbacks` 的数据源改为 `payment_events` 中 `processing_status` ∈ pending/failed 且收到超过 1 分钟的记录（原文的 `payment_webhook_receipts` 是无代码写入的孤儿表，读出来恒为 0）；`sse` 的连接数经 Valkey 跨进程汇总。
 - **修订 R52（2026-09-24，协调会话，后台前端一提出）**：`components[].metrics` 对象总是返回（可为 `{}`），但其中各字段只在 `state` 为 ok / warn 时保证齐全；`state` 为 down / unknown 时任何字段都可能缺失。前端把 metrics 的每个字段按可选解析，缺失显示「—」。
 - 状态：现有 `panel/internal/api/admin/system_status.go:36 systemStatus`；**components 待补·后端**；**backup 部分 待补·前端**
@@ -319,6 +320,7 @@
   - 待补·前端：`sla_breached` 为 true 时，等待时长显示为红色并加「SLA 超时」标记；分段筛选新增「SLA 超时」（对应 `breached=1`）
 
 #### GET v1/tickets/{id} — 工单详情（含内部备注）
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：`messages` 总是数组（没有消息时 `[]`）；队列行不带 `messages` 键（Go 拆出 `TicketDetail`，77e2ba6）。
 - 状态：现有 `handlers.go:577 ticketDetail`；待补·后端（字段）
 - 权限：`ops.ticket.read`｜reauth：否｜幂等：否
 - 请求：path `id: uuid`
@@ -751,6 +753,7 @@
 - `catalog.publish` 类写接口（新增价格、改价、发布）受一个默认关闭的销售开关控制（环境变量 `AEGIS_SALES_ENABLED=1`），开关没开时回 503 service_unavailable「服务暂时不可用」。前端对这个 503 要给出明确提示，不要让用户反复重试。
 
 #### GET v1/plans — 套餐列表（左栏卡片）
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：`active_subscriptions` 按后台-03「订阅态口径」的在用计数（active / trialing / grace / past_due），并补上租户条件（5f43f73）。
 - **修订 R100（2026-09-25，用户定案 D-E-3）**：每项加 `highlights: string[]`、`recommended: bool`，见 PUT v1/plans/{id} 的 R100。
 - 状态：现有 `panel/internal/api/admin/handlers.go:405 listPlans`
 - 权限：`catalog.read`｜reauth：否｜幂等：否
@@ -1007,6 +1010,7 @@
 - 设计：后台-05 抽屉「手工标记已支付」。输入框「渠道流水号 / 转账凭证」→ `reference`；待补·前端：补必填的「收款说明」→ `reason`。
 
 #### GET v1/late-payments — 挂账列表（设计里的「欠费单」）
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：过渡字段 `pending_amount` 已删除（R3 说的「保留一个版本」到期），响应为 `{ cases, total, pending_amounts }`；前端 schema 与 mock 同步删除（3e454ba）。
 - **修订 R117 补（2026-09-26）**：挂账页说明与空状态文案补上第三种来源：说明改为「订单取消后才到账、续费或变更时订阅已结束、或超额扣款的款项暂记在挂账科目。「转入余额」会把这笔钱记入用户余额（贷记），挂账随之关闭。」；空状态改为「订单取消后才到账、订阅已结束后才到账或多扣了款时，系统会把这笔钱记在这里，等你处理。」；`ineligible_subscription` 的原因列为「订阅已结束后到账 · {order_no}」。
 - **修订 R117（2026-09-26，后端四 ⑧ 8993672，合并 49f7ba9）**：`case_kind` 新增 `ineligible_subscription`（续费或变更单付款时订阅已结束），与 `released_order`、`excess_capture` 并列；「转入余额」对它同样适用。前端枚举与文案要同步（前端未改前出现这类行会整页解析失败；目前只有手工 SQL 能造出）。
 - **修订 R3（2026-09-24）**：响应新增 `pending_amounts`（按币种分开的待处理合计）；旧的 `pending_amount` 保留一个版本后删除，前端只用 `pending_amounts`。
@@ -2427,6 +2431,7 @@
     - 其余 closed → 「已关闭」
 
 #### GET v1/support/tickets/{id} — 工单详情（含消息）
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：`messages` 总是数组（没有消息时 `[]`）；「我的工单列表」的行不带 `messages` 键（77e2ba6）。
 - **修订说明（2026-09-26 文档对齐）**：已实现（R60）：详情带 `closed_reason` 与 `related_order: { id, order_no } | null`（`domain/support/user_tickets.go`）。
 - 状态：现有 `panel/internal/api/public/handlers.go:729 getTicket`；另有待补·后端（改形状）
 - 权限：登录用户｜reauth：否｜幂等：否
@@ -3368,3 +3373,4 @@
 | R116 | 2026-09-25 | 前端收尾 ⑤ | 前端已删英文→中文文案映射，4xx 响应里给用户看的 `message` 一律中文（`code` 与形状不变）；首例人工开单缺渠道的「unknown payment provider」；**已实现**（后端四 ⑥ cb1ac0c，合并 039bb12）：31 处改中文、降级开关按约束名给中文原因、源码契约测试 `TestUserFacingErrorMessagesAreChinese` 守住，节点网关与支付回调给机器看的文案不在此列；R116 遗留的节点状态报错已结案（后端四 ⑪ 33920d6）：三处只会撞到状态机触发器的中文报错，约束名翻译为兜底 |
 | R117 | 2026-09-26 | 后端四 | 结算时订阅已结束的续费 / 变更款隔离进挂账（新 case_kind `ineligible_subscription`，迁移 00095），回调回执成功；标记已付对此回 409、重复标记回 409；这类收款不阻止订单释放 |
 | R118 | 2026-09-26 | 协调会话定案 | 「当前订阅」全后台统一：在用 = active / trialing / grace / past_due；`active_plan`、`user_active_plan`、风控聚类成员套餐名 = 当前订阅在用时的套餐名，没有时 `active_plan` 为 null、`user_active_plan` 不返回；`has_active_sub` 与导出订阅数按在用计。已实现（backend b7571bb，合并 6a3fdd3，真相源 `domain/subscription/current.go`）；工单队列行此前漏返回 `user_active_plan`，一并补上 |
+| R119 | 2026-09-27 | backend 后续 | system/status 数据库统计读失败时 postgres 组件降为 warn、不写三项指标；工单详情（后台与门户）`messages` 总是数组；套餐列表 `active_subscriptions` 按在用计数；挂账列表删 `pending_amount`；节点网关签名心跳（本契约未收录该接口）的 metrics 越界回中文 400、整条心跳不落库（cpu_bp 0–10000，其余 int 0–2147483647，bigint 非负；f7c415a） |
