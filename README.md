@@ -115,7 +115,7 @@ aegis-public    aegis-admin     aegis-node
 | 订阅 / 节点状态机 | 合法转换表 + `BEFORE UPDATE` 守卫触发器 | SUB-004、NODE-010 |
 | 重复回调只生效一次 | `(provider_id, provider_event_id)` 唯一约束 | PAY-003 |
 | 申请人不能审批自己 | 跨表校验触发器 | SEC-013 |
-| 四域令牌不可交叉 | 每域独立 HMAC 密钥，域名参与签名 | EXT-001 |
+| 各域令牌不可交叉 | 每域独立 HMAC 密钥，域名参与签名 | EXT-001 |
 
 `aegis_app` 是应用专用的数据库角色（`NOSUPERUSER NOBYPASSRLS`）。这一点是必需的：Docker 镜像的 `POSTGRES_USER` 是 superuser，隐含 `BYPASSRLS`，若应用直接用它连库，RLS 就形同虚设。
 

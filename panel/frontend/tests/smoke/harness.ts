@@ -149,7 +149,7 @@ export async function rawGet(base: string, path: string): Promise<unknown> {
 // ============================================================================
 
 export interface Row {
-  /** 调用处，src 下的 file:line；只用于用例标题与结果表，仅供参考、可能随源码漂移 */
+  /** 调用处所在的 src 下文件；只用于用例标题与结果表，不参与断言 */
   at: string
   path: string
   query?: QueryParams

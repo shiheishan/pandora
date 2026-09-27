@@ -1,6 +1,6 @@
 // Package config 从环境变量加载配置。
 //
-// 设计取舍：不引入配置框架。四域网关的配置项有限且必须在启动时全部校验通过，
+// 设计取舍：不引入配置框架。三个网关的配置项有限且必须在启动时全部校验通过，
 // 「缺一项就拒绝启动」比「运行时读到零值」安全得多（NFR-006：错误配置不能未经验证发布）。
 package config
 
@@ -15,7 +15,8 @@ import (
 	"time"
 )
 
-// Domain 是 API 域。四域令牌互不相通（EXT-001）。
+// Domain 是 API 令牌域：public、admin、node 各有一个网关，client 域保留给冻结中的
+// CLIENT-AUTH（有密钥、暂无网关）。各域令牌互不相通（EXT-001）。
 type Domain string
 
 const (
