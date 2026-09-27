@@ -48,7 +48,7 @@ const ticketSchema = z.object({
   sla_breached: z.boolean().optional(),
   // R60：队列行有，最后一条非内部备注消息的作者；为 user 时加粗（代替已读表）
   last_message_author_kind: z.enum(['user', 'agent', 'system']).optional(),
-  // R60：详情有，active / trialing 最新订阅的套餐名
+  // R60 / R118：队列与详情都有，当前订阅在用时的套餐名；没有在用订阅时整个键不返回
   user_active_plan: z.string().optional(),
   message_count: count,
   last_reply_at: time,
