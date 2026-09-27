@@ -7,7 +7,7 @@ Node 域网关：调用方是机器不是人，没有会话与用户令牌，身
 router.go: NewRouter 装 UniProxy、入网、签名节点三组路由；requireEnrollmentSignature / requireNodeSignature 两道验签中间件
 handlers.go: 入网 begin/status/commit/abort、心跳、配置与签名密钥下发、配置回报；UniProxy 的 config/user/push/alive/status；authNode 只把凭据选择交给 uniProxyToken；ETag 协商
 stream.go: 节点 SSE，推配置与用户变动，20 秒注释帧保活；是快车道不是唯一通路，失败即放弃，节点端有轮询兜底
-*_test.go: uniProxyToken 的凭据优先级与 fail-closed、authNode 不自己读请求头（经 platform/sourcetest 取 AST）、旧 bootstrap 不碰节点服务；signed_e2e_pg18_test.go 由 run-pg18-gates.sh 跑签名链路端到端
+*_test.go: uniProxyToken 的凭据优先级与 fail-closed、authNode 不自己读请求头（经 platform/sourcetest 取 AST）、旧 bootstrap 不碰节点服务；signed_e2e_pg18_test.go 由 run-pg18-gates.sh（effective 域）跑签名链路端到端，心跳一步调用 heartbeat_metrics_pg18_test.go 的 checkHeartbeatMetricsRange：越界 metrics 回中文 400 且整条心跳不落库，边界合法值照常写一行
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -6,7 +6,7 @@
 成员清单
 service.go: Service 与构造（GeoIP、上一把配置签名密钥的注入）、节点身份查询（吊销即失效，NODE-014）与签名请求（V2 规范化载荷、nonce 防重放、5 分钟接受窗口），以及 canonicalJSON 等共用助手
 bootstrap.go: 一次性 bootstrap 令牌（NODE-008，只存绑定节点名的哈希，接入命令模板占位符经 shellQuote 转义）与旧版接入 Bootstrap（持 node-config-release 锁，令牌消费与身份签发同事务，终态节点只有服务器删除级联静默的才许同名重装）
-heartbeat.go: 心跳（AGT-004，指标一律放大成整数）与探针指标的查询、清理
+heartbeat.go: 心跳（AGT-004，指标一律放大成整数；写库前 Metrics.validate 做范围校验：cpu_bp 0–10000、int 列不超 int4、bigint 列非负，越界回中文 400，参照兼容通道 ReportRuntimeStatus）与探针指标的查询、清理
 config_delivery.go: 旧版配置签发 FetchConfig（全局 → 池 → 节点分层合并、规范化后 Ed25519 签名，RLS 未命中回中性 404，退役节点拒绝）、VerifyConfigSignature（面板与节点端共用口径）与配置回报（要求唯一匹配的已发布配置），有效发布物的回报 ReportEffectiveConfigApplied
 config_publish.go: 旧版配置发布 PublishConfig：锁序为 node-config-release 发布锁 → 目标池 / 节点行 FOR SHARE → 受影响节点行 → 全租户版本分配 → 取代旧层 → 写新层；lockLegacyConfigRelease / syncLegacyDesiredConfigVersion 与接入、后台建节点、退役、上线共用
 enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token（签发记录重置为无签发人）；提交比对 SetReleaseBinding 注入的发布绑定（产物摘要与版本），生产缺失即拒，未注入的 Service 一律拒
@@ -32,7 +32,7 @@ config_key_transition.go: 配置签名密钥轮换的过渡声明与校验
 nodestream.go / nodestream_event.go: 节点长连接推送（内存 StreamHub）与事件定义；NotifyUsersChanged 发租户级 node.users.changed，供改变交付集合的后台写路径（套餐换绑池等）在提交后调
 userdelta.go: 用户列表增量下发
 testdata/: 生产协议配置样本与 VLESS 迁移往返样本
-*_test.go: 单元与契约测试（pool_admission_test.go 钉住 PoolAdmitsUserSQL 的白名单与唯一用法；device_window_test.go 钉住设备窗口可选值与迁移 00094 一致、清理截止大于最大窗口、后台节点列表不写死窗口；node_activate_test.go 钉住上线路径只走 00005 的边且经 canary 进 active；node_refusal_test.go 钉住约束名翻译并守住全仓不再把 db.Message 直接塞进 httpx 错误）；*_pg18_test.go 为 PG18 集成测试（effective 与 enrollment 两个域，server_token_pg18_test.go 共用 enrollment 的 openEnrollmentPG18；traffic_charge_pg18_test.go 与 usage_daily_pg18_test.go 共用 traffic_charge 域）
+*_test.go: 单元与契约测试（heartbeat_metrics_test.go 钉住心跳探针的范围边界；pool_admission_test.go 钉住 PoolAdmitsUserSQL 的白名单与唯一用法；device_window_test.go 钉住设备窗口可选值与迁移 00094 一致、清理截止大于最大窗口、后台节点列表不写死窗口；node_activate_test.go 钉住上线路径只走 00005 的边且经 canary 进 active；node_refusal_test.go 钉住约束名翻译并守住全仓不再把 db.Message 直接塞进 httpx 错误）；*_pg18_test.go 为 PG18 集成测试（effective 与 enrollment 两个域，server_token_pg18_test.go 共用 enrollment 的 openEnrollmentPG18；traffic_charge_pg18_test.go 与 usage_daily_pg18_test.go 共用 traffic_charge 域）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

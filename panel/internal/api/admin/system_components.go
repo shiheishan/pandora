@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务（节点、payment_events 未处理的支付回调、通知投递）、Deps.Redis 的 PING、platform/realtime 的 SSEConnections，依赖 system_status.go 的 backupStatus 结果
-// [OUTPUT]: 对外提供 systemComponent 与 handlers.systemComponents
-// [POS]: api/admin 系统状态的组件清单（契约后台-01 GET v1/system/status 的 state / components）：8 个组件各自 ok / warn / down / unknown，任一 warn 或 down 总状态即 degraded
+// [OUTPUT]: 对外提供 systemComponent、postgresComponent 与 handlers.systemComponents
+// [POS]: api/admin 系统状态的组件清单（契约后台-01 GET v1/system/status 的 state / components）：8 个组件各自 ok / warn / down / unknown，任一 warn 或 down 总状态即 degraded；postgres 在统计读失败时降为 warn 且不写 metrics 键（R52：ok 时 metrics 齐全）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -30,6 +30,31 @@ func millis(d time.Duration) *float64 {
 	return &v
 }
 
+// postgresDatabaseKeys 是 postgres 组件 ok 时必须齐全的 metrics（契约 R52）。
+var postgresDatabaseKeys = []string{"size_bytes", "connections", "max_connections"}
+
+// postgresComponent 由 SELECT 1 的结果与数据库统计拼出 postgres 组件：
+// 连不上为 down；连得上但统计没读到为 warn，metrics 里一个键都不写
+// （而不是写成 null）；两者都好才是 ok，三个键齐全。
+func postgresComponent(pingErr error, latency time.Duration, database map[string]any) systemComponent {
+	pg := systemComponent{Key: "postgres", State: "ok", Metrics: map[string]any{}}
+	if pingErr != nil {
+		pg.State, pg.Message = "down", "数据库不可达"
+		return pg
+	}
+	pg.LatencyMS = millis(latency)
+	for _, k := range postgresDatabaseKeys {
+		if _, ok := database[k]; !ok {
+			pg.State, pg.Message = "warn", "数据库可以连通，但体积与连接数统计读取失败"
+			return pg
+		}
+	}
+	for _, k := range postgresDatabaseKeys {
+		pg.Metrics[k] = database[k]
+	}
+	return pg
+}
+
 // systemComponents 逐项探测。任何一项失败只把那一项标成 down / unknown，
 // 不让整个接口报错：系统状态页恰恰要在部分组件坏掉时还能打开。
 func (h *handlers) systemComponents(r *http.Request, database map[string]any, backup map[string]any) (string, []systemComponent) {
@@ -39,18 +64,10 @@ func (h *handlers) systemComponents(r *http.Request, database map[string]any, ba
 	var out []systemComponent
 
 	// --- postgres：一次 SELECT 1 的往返 ---
-	pg := systemComponent{Key: "postgres", State: "ok", Metrics: map[string]any{}}
 	start := time.Now()
 	var one int
-	if err := h.d.Pool.QueryRow(ctx, `SELECT 1`).Scan(&one); err != nil {
-		pg.State, pg.Message = "down", "数据库不可达"
-	} else {
-		pg.LatencyMS = millis(time.Since(start))
-		for _, k := range []string{"size_bytes", "connections", "max_connections"} {
-			pg.Metrics[k] = database[k]
-		}
-	}
-	out = append(out, pg)
+	pingErr := h.d.Pool.QueryRow(ctx, `SELECT 1`).Scan(&one)
+	out = append(out, postgresComponent(pingErr, time.Since(start), database))
 
 	// --- valkey：PING ---
 	vk := systemComponent{Key: "valkey", State: "unknown", Metrics: map[string]any{}}
