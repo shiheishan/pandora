@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 run-smoke-stack.sh 写在状态目录的 smoke.env 与 gateway.env，依赖同目录 psql.sh（仓库自带、写死容器 aegis-postgres），依赖 ../tests 下的 e2e 脚本、../cmd 下的 aegis-payctl 源码，依赖 sudo、go、python3、timeout
+# [INPUT]: 会创建 /opt/aegispanel 与 /var/log/aegis（已存在即拒绝）；依赖 run-smoke-stack.sh 写在状态目录的 smoke.env 与 gateway.env，依赖同目录 psql.sh（仓库自带、写死容器 aegis-postgres），依赖 ../tests 下的 e2e 脚本、../cmd 下的 aegis-payctl 源码，依赖 sudo、go、python3、timeout
 # [OUTPUT]: 在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，每个脚本一行写进 <状态目录>/e2e-results.md（通过 / 失败 / 超时、OK 与 FAIL 计数、首个失败所在的步骤与原文），各自完整输出在 logs/e2e-*.log；跑产品代码的准备步骤（编译 payctl 并用它配渠道）失败不中断、记一行；五个脚本全部跑完、表格写完后，有任何脚本或准备步骤失败就以 1 退出，让 job 变红
 # [POS]: 第 4 阶段联调冒烟第 ⑤ 步起的 e2e 门禁，被 .github/workflows/panel-smoke.yml 在读表与写路径之后调用；⑥ 起五个脚本都已跟上现行接口，失败即变红，免得它们再悄悄过时
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 这些 e2e 脚本是给「装在 /opt/aegispanel 的 docker-compose 部署」写的：
 # psql 走 /opt/aegispanel/deploy/psql.sh 或仓库的 deploy/psql.sh（读 deploy/.env、
-# docker exec 进 aegis-postgres），日志在
-# /opt/aegispanel/logs。本机没有数据库，它们平时从没人跑。
+# docker exec 进 aegis-postgres），公开网关日志在 systemd 单元写的
+# /var/log/aegis/public.log。本机没有数据库，它们平时从没人跑。
 #
 # 这里只把它们声明要的环境原样搭出来，脚本一个字不改：
 #   - /opt/aegispanel/deploy 链到仓库的 deploy/，deploy/.env 由网关配置加上库超级账号拼成；
 #   - 起栈时容器名已设成 aegis-postgres、库名带 test 段（admin / uniproxy 的一次性库守卫）；
-#   - 网关日志按旧文件名链进 /opt/aegispanel/logs；
+#   - 公开网关日志链到单元的实际路径 /var/log/aegis/public.log（epay_e2e.sh 查密钥不落日志）；
 #   - 易支付渠道用产品工具 aegis-payctl 配好（脚本里写死的测试商户 1001 与测试密钥）；
 #   - 两个一次性库守卫要的确认变量照实给出：冒烟库本来就是跑完即扔的。
-# 这一步要往 /opt 写东西、要写 deploy/.env，所以只肯在 GitHub Actions 的一次性 runner 上跑。
+# 这一步要往 /opt 与 /var/log 写东西、要写 deploy/.env，所以只肯在 GitHub Actions 的一次性 runner 上跑。
 #
 # 用法：run-smoke-e2e.sh <panel 源码目录> <状态目录>
 
@@ -31,6 +31,7 @@ STATE="$(cd "$2" && pwd)"
 [[ -f "$STATE/smoke.env" && -f "$STATE/gateway.env" ]] || { echo "状态目录里没有冒烟栈，先 run-smoke-stack.sh up" >&2; exit 2; }
 [[ ! -e "$PANEL_DIR/deploy/.env" ]] || { echo "deploy/.env 已存在，拒绝覆盖" >&2; exit 2; }
 [[ ! -e /opt/aegispanel ]] || { echo "/opt/aegispanel 已存在，拒绝覆盖" >&2; exit 2; }
+[[ ! -e /var/log/aegis ]] || { echo "/var/log/aegis 已存在，拒绝覆盖" >&2; exit 2; }
 
 set -a; . "$STATE/smoke.env"; set +a
 AUTH_PER_MIN="$(grep -m1 '^AEGIS_RL_AUTH_PER_MIN=' "$STATE/gateway.env" | cut -d= -f2)"
@@ -55,10 +56,10 @@ pg_pw="$(python3 -c 'import sys, urllib.parse as u; print(u.unquote(u.urlsplit(s
     echo "POSTGRES_DB=$SMOKE_PG_DB"
   } > "$PANEL_DIR/deploy/.env" )
 sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/aegispanel
-mkdir -p /opt/aegispanel/bin /opt/aegispanel/logs
+mkdir -p /opt/aegispanel/bin
 ln -s "$PANEL_DIR/deploy" /opt/aegispanel/deploy
-ln -s "$STATE/logs/aegis-public.log" /opt/aegispanel/logs/public.log
-ln -s "$STATE/logs/aegis-admin.log" /opt/aegispanel/logs/admin.log
+sudo install -d -o "$(id -u)" -g "$(id -g)" /var/log/aegis
+ln -s "$STATE/logs/aegis-public.log" /var/log/aegis/public.log
 
 RESULTS="$STATE/e2e-results.md"
 : > "$RESULTS"

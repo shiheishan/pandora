@@ -84,21 +84,9 @@ done
   "它由 build-release.sh 生成，记着节点端二进制的 SHA-256 与版本；没有它生产模式下节点接入全部被拒。"
 info "环境检查通过（$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") / $(uname -m)）"
 
-# 与 render-nginx.sh 同一规则（https://<DNS 域名>，不带端口与路径），也满足网关在
-# production 下的 CanonicalPublicOrigin：https、公网 Host。
-valid_public_base_url() {
-  local url="${1%/}" host
-  [[ "$url" != *CHANGE_ME* ]] || return 1
-  [[ "$url" =~ ^https://([^/:]+)$ ]] || return 1
-  host="${BASH_REMATCH[1],,}"
-  [[ ${#host} -le 253 ]] || return 1
-  [[ "$host" != *.localhost ]] || return 1
-  [[ "$host" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$ ]]
-}
-# 读 .env 的单个键，不 source（此时还没决定要不要执行它）
-env_file_value() {
-  awk -F= -v key="$2" '$1 == key { sub(/^[^=]*=/, ""); sub(/\r$/, ""); v = $0 } END { print v }' "$1"
-}
+# 对外地址的校验与取值、.env 单键读取，与 install-native.sh 共用一份
+[ -f "$HERE/public-base-url.sh" ] || die "发布目录缺少 deploy/public-base-url.sh"
+. "$HERE/public-base-url.sh"
 
 #------------------------------------------------------------------------------
 # 2) 判断首装还是升级
@@ -111,7 +99,7 @@ if [ "$MODE" = upgrade ]; then
   info "检测到 $DEST/deploy/.env，将保留现有配置与数据"
   # 升级不改运行模式：把别人的 development 悄悄改成 production，可能因为域名
   # 不合规让三个网关起不来。只提示，由管理员自己决定。
-  current_env="$(env_file_value "$DEST/deploy/.env" AEGIS_ENV)"
+  current_env="$(pandora_env_file_value "$DEST/deploy/.env" AEGIS_ENV)"
   if [ "${current_env,,}" != production ]; then
     warn "现有 .env 的 AEGIS_ENV=${current_env:-（未设置，按 development）}，不是 production："
     warn "  节点接入不会强制校验发布物的 SHA-256 与版本，支付回调、插件钩子也按开发模式放宽。"
@@ -120,19 +108,8 @@ if [ "$MODE" = upgrade ]; then
   fi
 else
   info "全新安装到 $DEST"
-  PUBLIC_BASE_URL="${PANDORA_PUBLIC_BASE_URL:-}"
-  if [ -z "$PUBLIC_BASE_URL" ] && [ "${PANDORA_ASSUME_YES:-}" != 1 ] && [ -t 0 ]; then
-    printf '    面板对外地址（https://你的域名，接入命令、支付回调、订阅链接都从它拼出来）：'
-    read -r PUBLIC_BASE_URL
-  fi
-  [ -n "$PUBLIC_BASE_URL" ] || die "首装需要面板的对外地址" \
-"发布包装出来的面板以 production 模式运行，网关启动时要求 AEGIS_PUBLIC_BASE_URL 是
-https://公网域名，否则拒绝启动。请带上它重新运行，例如：
-  sudo PANDORA_PUBLIC_BASE_URL=https://panel.example.com ./install.sh"
-  PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
-  valid_public_base_url "$PUBLIC_BASE_URL" || die "面板对外地址不合规：$PUBLIC_BASE_URL" \
-"必须形如 https://panel.example.com：https、DNS 域名（不能是 IP、localhost），不带端口与路径。
-production 模式下网关拿不到这样的地址会拒绝启动；nginx 的 server_name 与证书路径也从它生成。"
+  PUBLIC_BASE_URL="$(pandora_resolve_public_base_url ./install.sh)" \
+    || die "首装需要合规的面板对外地址（原因见上）"
   info "面板对外地址：$PUBLIC_BASE_URL（运行模式 production）"
 fi
 
@@ -177,8 +154,8 @@ if [ "$MODE" = install ]; then
     -e "s|^AEGIS_BACKUP_AGE_IDENTITY=.*|AEGIS_BACKUP_AGE_IDENTITY=$DEST/secrets/backup-age.key|" \
     "$RELEASE_ROOT/deploy/.env.example" > "$DEST/deploy/.env"
   chmod 600 "$DEST/deploy/.env"
-  [ "$(env_file_value "$DEST/deploy/.env" AEGIS_ENV)" = production ] \
-    && [ "$(env_file_value "$DEST/deploy/.env" AEGIS_PUBLIC_BASE_URL)" = "$PUBLIC_BASE_URL" ] \
+  [ "$(pandora_env_file_value "$DEST/deploy/.env" AEGIS_ENV)" = production ] \
+    && [ "$(pandora_env_file_value "$DEST/deploy/.env" AEGIS_PUBLIC_BASE_URL)" = "$PUBLIC_BASE_URL" ] \
     || die "生成的 .env 缺少 AEGIS_ENV=production 或 AEGIS_PUBLIC_BASE_URL" "检查发布包里的 deploy/.env.example 是否被改过。"
 
   remaining="$(grep -c 'CHANGE_ME' "$DEST/deploy/.env" || true)"

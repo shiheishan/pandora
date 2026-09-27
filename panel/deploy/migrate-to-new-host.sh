@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 /opt/aegis-migrate 下的 Age 密文备份与代码包、新主机的 deploy/.env（须含 AEGIS_PUBLIC_BASE_URL）
+# [INPUT]: 依赖 /opt/aegis-migrate（可由 AEGIS_MIGRATE_DIR 覆盖）下的 Age 密文备份与代码包、新主机的 deploy/.env（须含 AEGIS_PUBLIC_BASE_URL；AEGIS_ENV=production 时必须给 AEGIS_RELEASE_DIR）、同目录 platform.sh / public-base-url.sh
 # [OUTPUT]: 在新主机恢复数据、重建 aegis_app、校验账本、编译（源码模式先 make frontend-embed）或装发布包二进制，拒绝嵌着占位前端的网关，启动并渲染 nginx
 # [POS]: deploy 的整机迁移编排，复用 restore-postgres.sh / bootstrap.sh / render-nginx.sh，不接收未校验的额外模板
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -16,7 +16,7 @@
 set -euo pipefail
 umask 077
 
-MIG=/opt/aegis-migrate
+MIG="${AEGIS_MIGRATE_DIR:-/opt/aegis-migrate}"
 APP=/opt/aegispanel
 NEW_IP="${NEW_IP:-}"
 AEGIS_SECRET_ENV_FILE="${AEGIS_SECRET_ENV_FILE:-}"
@@ -26,6 +26,8 @@ AEGIS_RELEASE_DIR="${AEGIS_RELEASE_DIR:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=platform.sh
 . "$SCRIPT_DIR/platform.sh"
+# shellcheck source=public-base-url.sh
+. "$SCRIPT_DIR/public-base-url.sh"
 
 say(){ echo; echo "════════ $* ════════"; }
 die(){ echo "错误: $*" >&2; exit 1; }
@@ -40,6 +42,15 @@ die(){ echo "错误: $*" >&2; exit 1; }
 [ -f "$AEGIS_SECRET_ENV_FILE" ] || die "找不到独立供应的环境文件"
 [ "$(stat -c '%a' "$AEGIS_SECRET_ENV_FILE")" = "600" ] || die "AEGIS_SECRET_ENV_FILE 权限必须是 0600"
 [ -n "$NEW_IP" ] || die "无法确定本机公网 IP，请用 NEW_IP=x.x.x.x 显式指定"
+
+# 生产不接受源码模式。源码模式只编三个网关，不产 pdnd-dist/（节点端二进制）也不产
+# release-artifact.env（节点端的 SHA-256 与版本），而 production 下节点接入要求这份
+# 绑定，缺了就一律拒绝——迁过去的面板上没有一台节点能接入。在动任何东西之前拦下。
+target_env="$(pandora_env_file_value "$AEGIS_SECRET_ENV_FILE" AEGIS_ENV)"
+target_env="${target_env//[[:space:]]/}"
+if [ "${target_env,,}" = production ] && [ -z "$AEGIS_RELEASE_DIR" ]; then
+  die "目标 .env 是 AEGIS_ENV=production，不能用源码模式迁移：源码模式不产 pdnd-dist 与发布物绑定（release-artifact.env），节点接入会被全部拒绝。请用 AEGIS_RELEASE_DIR 指向 build-release.sh 为本机架构打的发布包目录（pandora-panel_<版本>_linux_<架构>）后重跑"
+fi
 
 pandora_detect_platform
 
