@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 platform/pg18test 打开 catalog_sales 域的一次性库，依赖 users.go 的 ListUsers、bulk_users.go 的 PreviewBulk / ExportUsers
+// [INPUT]: 依赖 platform/pg18test 打开 catalog_sales 域的一次性库，依赖 users.go 的 ListUsers、bulk_users.go 的 PreviewBulk / ExportUsers、service.go 的 ListPlans
 // [OUTPUT]: 对外提供 TestCurrentSubscriptionContractPG18
-// [POS]: domain/adminops 的 PG18 测试（契约后台-03 订阅态口径 R118）：宽限期、欠费、只有过期、两条在用、别的租户五种用户在列表 active_plan 与 current_subscription、sub_state、批量 has_active_sub 与导出订阅数上口径一致
+// [POS]: domain/adminops 的 PG18 测试（契约后台-03 订阅态口径 R118）：宽限期、欠费、只有过期、两条在用、别的租户五种用户在列表 active_plan 与 current_subscription、sub_state、批量 has_active_sub、导出订阅数与套餐列表 active_subscriptions 上口径一致
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
@@ -159,5 +159,19 @@ func TestCurrentSubscriptionContractPG18(t *testing.T) {
 		if counts[email] != want {
 			t.Errorf("export %s live subscriptions = %d, want %d", email, counts[email], want)
 		}
+	}
+
+	// 套餐列表的 active_subscriptions 按在用计：Pro 有宽限期、欠费、在用各一条，
+	// 旧套餐只有过期的，别的租户的套餐不出现
+	plans, err := svc.ListPlans(ctx, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := map[string]int{}
+	for _, p := range plans {
+		live[p.ID] = p.ActiveSubs
+	}
+	if len(plans) != 3 || live[planPro] != 3 || live[planOld] != 0 || live[planMax] != 1 {
+		t.Errorf("plan active_subscriptions = %v, want pro 3 / old 0 / max 1 across 3 plans", live)
 	}
 }

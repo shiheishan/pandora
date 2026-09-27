@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入
+// [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入，依赖 domain/subscription 的在用口径（套餐的 active_subscriptions，R118）
 // [OUTPUT]: 对外提供 Service、NewService、SalesCapability，概览 Overview、改用户状态 SetUserStatus、套餐列表 ListPlans（带卖点与推荐，R100）
 // [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它；订单列表在 orders.go、支付渠道在 providers.go、降级开关在 switches.go，套餐目录在 catalog*.go / plan_wizard*.go，订单详情在 order_detail.go，审计在 audit.go；revokeUserLogins 是停用账号即下线的唯一实现，改状态与 risk.go 的批量停用共用
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -21,6 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/subscription"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -397,7 +398,8 @@ func (s *Service) ListPlans(ctx context.Context, tenantID string) ([]PlanRow, er
 			       (SELECT qd.limit_value FROM quota_definitions qd
 			         WHERE qd.plan_version_id = pv.id AND qd.metric = 'traffic.bytes' LIMIT 1),
 			       (SELECT count(*) FROM subscriptions s
-			         WHERE s.plan_id = pl.id AND s.status IN ('active','trialing')),
+			         WHERE s.tenant_id = pl.tenant_id AND s.plan_id = pl.id
+			           AND s.status IN `+subscription.LiveStatusesSQL+`),
 			       (SELECT count(*) FROM nodes n
 			          JOIN plan_node_pools pnp ON pnp.pool_id = n.pool_id
 			         WHERE pnp.plan_version_id = pv.id

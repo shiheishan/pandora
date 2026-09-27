@@ -4,7 +4,7 @@
 管理后台的读写用例。与 billing / identity 分工：那两个包承载业务不变量（账本配平、会话吊销），这里负责把后台要看的数据拼好、把后台的写操作编排成带审计的事务。同一种行（订单行、用户行）只有一份查询形状，列表与详情复用它，避免「一处补了字段、另一处漏了」。
 
 成员清单
-service.go: Service 与构造（SalesCapability 销售闸门注入）；概览（含昨日收入、近 7 天新订阅、节点在线数）、改用户状态（revokeUserLogins 吊销会话与 refresh，与批量停用共用）、套餐列表
+service.go: Service 与构造（SalesCapability 销售闸门注入）；概览（含昨日收入、近 7 天新订阅、节点在线数）、改用户状态（revokeUserLogins 吊销会话与 refresh，与批量停用共用）、套餐列表（active_subscriptions 按 subscription.LiveStatusesSQL 在用计，R118）
 orders.go: 订单列表（从 service.go 拆出）：orderRowSelectSQL / scanOrderRow 是 OrderRow 的唯一形状，带余额抵扣、收款渠道（入账优先、其次最近一次支付尝试）与人工单标识 manual；状态多值走 billing.ParseOrderStatuses 白名单，可按 user_id 精确筛
 providers.go: 支付渠道卡（从 service.go 拆出）：租户时区今日分币种成交、近 24 小时成功率、最近回调时间，启停带审计
 switches.go: 降级开关读写（从 service.go 拆出），数据库拒绝切换时按约束名给中文原因，PG 原句只进日志（R116）
@@ -22,7 +22,7 @@ dashboard.go: 仪表盘读模型与流量排行、通知投递积压（scanNotif
 dashboard_tasks.go: 「需要处理」汇总 DashboardTasks：六项各挂原读权限（提现挂 marketing.commission.read），调用方没权限的项不查也不出现；工单等待从用户最后一次发言算，离线节点口径同 GET v1/nodes 的 stale
 users.go: 用户列表与详情（从 service.go 拆出）：列表带组、当前订阅摘要（流量、生效设备上限、在线设备），状态多值 / 用户组 / 订阅状态 / q（邮箱、id、订阅令牌哈希反查）筛选；详情带配额、设备、统计（实收另按币种拆成 paid_totals，R80）、邀请人与 Telegram；currentSubscriptionSQL / hasLiveSubscriptionSQL / subStateSQL 把 subscription 包的订阅态口径（R118）套到别名 u 上，active_plan 从同一行当前订阅派生（在用时取其套餐名，否则 null）
 bulk_users.go / bulk_mail.go: 用户批量筛选、导出、生成与群发；筛选含当前订阅的套餐、到期天数与订阅状态，has_active_sub 即存在在用订阅（与 sub_state=active 同义），导出的订阅数列按在用计（R118），预览带 sample_rows，群发正文 $email / $plan / $expire 逐人替换
-*_test.go: 单元与契约测试；catalog_sales_pg18_test.go、plan_wizard_pg18_test.go、plan_wizard_update_pg18_test.go、finance_reads_pg18_test.go、users_pg18_test.go、users_filters_pg18_test.go、users_current_sub_pg18_test.go（订阅态口径 R118：宽限期、欠费、只有过期、两条在用、别的租户）、traffic_packs_pg18_test.go、plan_wizard_r92_pg18_test.go（向导继承与三态、限速解耦）与 plan_highlights_pg18_test.go（卖点与推荐）为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域，共用 openCatalogSalesPG18 夹具）
+*_test.go: 单元与契约测试；catalog_sales_pg18_test.go、plan_wizard_pg18_test.go、plan_wizard_update_pg18_test.go、finance_reads_pg18_test.go、users_pg18_test.go、users_filters_pg18_test.go、users_current_sub_pg18_test.go（订阅态口径 R118：宽限期、欠费、只有过期、两条在用、别的租户，及套餐列表的在用订阅数）、traffic_packs_pg18_test.go、plan_wizard_r92_pg18_test.go（向导继承与三态、限速解耦）与 plan_highlights_pg18_test.go（卖点与推荐）为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域，共用 openCatalogSalesPG18 夹具）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
