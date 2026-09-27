@@ -325,7 +325,7 @@
 - 响应：200，结构是 Ticket 加 `messages: [{ id, author_kind: user|agent|system, author_name: string|null, body, internal_note?: true, created_at }]`，消息按时间升序
 - **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：R75 已修：后台详情回 `related_order: { id, order_no } | null`（按工单关联订单联表），`message_count` 与 `last_reply_at` 与队列同口径（内部备注、系统消息都算，没有消息时取建单时间）。前端直接用这两个字段，不必再从 `messages` 推算。
 - **修订 R75（2026-09-24，后台前端一 ② 核对 support/service.go `GetForAgent`，协调会话核实）**：详情**不填** `last_reply_at`（回零值时间 `0001-01-01T00:00:00Z`）和 `message_count`（回 0），前端从 `messages` 自行推算，不要读这两个字段；后台队列与详情的 `related_order` 恒为 null（只有门户详情填，R60），后台详情暂不显示关联订单。后端补齐列入遗留，由后续后端会话处理。
-- 待补·后端（需迁移：否）：增加 `user_active_plan: string|null`，口径与用户列表的 `active_plan` 一致，取 status 为 active 或 trialing 的最新订阅的套餐名。（R118 起口径改为后台-03「订阅态口径」：当前订阅在用时的套餐名，否则 null；队列与详情同）设计稿的详情头要显示用户套餐，而客服角色不一定有 `iam.user.read` 权限，不能再去调用户接口
+- 待补·后端（需迁移：否）：增加 `user_active_plan: string|null`，口径与用户列表的 `active_plan` 一致，取 status 为 active 或 trialing 的最新订阅的套餐名。（R118 起口径改为后台-03「订阅态口径」：当前订阅在用时的套餐名，没有时不返回该键；队列与详情同）设计稿的详情头要显示用户套餐，而客服角色不一定有 `iam.user.read` 权限，不能再去调用户接口
 - 错误：not_found 404「工单不存在」（用的是 CodeNotFound，不是 NotFoundOrForbidden）
 - 设计：后台-02 右侧详情。映射：
   - `who` 取 `author_name ?? (author_kind==='user' ? user_email : '客服')`
@@ -420,7 +420,7 @@
 | anonymized | 已匿名（设计稿没有，灰色） |
 
 **订阅态口径**（本分段的待补项共用这一定义）
-- **修订 R118（2026-09-26，协调会话定案，待后端实现）**：本节第一句（只认 active / trialing、按 created_at 取最新）作废，全后台统一为下面的口径。**在用**：status 为 active、trialing、grace、past_due（`adminops/users.go` 的 `liveSubscriptionStatusesSQL`）。**当前订阅**：在用的优先，其次到期最晚，再次最近创建，取一条（`currentSubscriptionSQL`；用户没有在用订阅时它可以是一条已结束的订阅）。`active_plan`（用户列表、风控聚类成员）与工单的 `user_active_plan` 一律是「当前订阅在用时它的套餐名，否则 null」，所以同一行的 `active_plan` 与 `current_subscription` 不会再指向两条订阅。批量运营的 `has_active_sub` 等价于 `sub_state=active`（存在在用订阅），导出的订阅数列按在用计。`sub_state` 三值定义不变；仪表盘按单一状态分别计数的统计不在此列。
+- **修订 R118（2026-09-26，协调会话定案，待后端实现）**：本节第一句（只认 active / trialing、按 created_at 取最新）作废，全后台统一为下面的口径。**在用**：status 为 active、trialing、grace、past_due（`adminops/users.go` 的 `liveSubscriptionStatusesSQL`）。**当前订阅**：在用的优先，其次到期最晚，再次最近创建，取一条（`currentSubscriptionSQL`；用户没有在用订阅时它可以是一条已结束的订阅）。`active_plan`（用户列表、风控聚类成员）与工单的 `user_active_plan` 一律取「当前订阅在用时它的套餐名」；没有时 `active_plan` 为 null，`user_active_plan` 整个键不返回（Go 是 `*string,omitempty`，前端按可缺省解析，不要改成 null，否则前端解析失败），所以同一行的 `active_plan` 与 `current_subscription` 不会再指向两条订阅。批量运营的 `has_active_sub` 等价于 `sub_state=active`（存在在用订阅），导出的订阅数列按在用计。`sub_state` 三值定义不变；仪表盘按单一状态分别计数的统计不在此列。
 - 当前订阅：status 为 active 或 trialing、按 created_at 取最新的一条。这与现有 `active_plan` 的口径一致（`panel/internal/domain/adminops/service.go:280`）
 - `sub_state=active`：存在当前订阅
 - `sub_state=expired`：不存在当前订阅，但存在任何一条状态为 expired、cancelled，或 `current_period_end < now()` 的订阅
@@ -3367,4 +3367,4 @@
 | R115 | 2026-09-25 | 联调冒烟 | 客服非内部回复给提单人排 `ticket.replied` 通知（模板早已种下、代码从未排队） |
 | R116 | 2026-09-25 | 前端收尾 ⑤ | 前端已删英文→中文文案映射，4xx 响应里给用户看的 `message` 一律中文（`code` 与形状不变）；首例人工开单缺渠道的「unknown payment provider」；**已实现**（后端四 ⑥ cb1ac0c，合并 039bb12）：31 处改中文、降级开关按约束名给中文原因、源码契约测试 `TestUserFacingErrorMessagesAreChinese` 守住，节点网关与支付回调给机器看的文案不在此列；R116 遗留的节点状态报错已结案（后端四 ⑪ 33920d6）：三处只会撞到状态机触发器的中文报错，约束名翻译为兜底 |
 | R117 | 2026-09-26 | 后端四 | 结算时订阅已结束的续费 / 变更款隔离进挂账（新 case_kind `ineligible_subscription`，迁移 00095），回调回执成功；标记已付对此回 409、重复标记回 409；这类收款不阻止订单释放 |
-| R118 | 2026-09-26 | 协调会话定案 | 「当前订阅」全后台统一：在用 = active / trialing / grace / past_due；`active_plan`、`user_active_plan`、风控聚类成员套餐名 = 当前订阅在用时的套餐名，否则 null；`has_active_sub` 与导出订阅数按在用计。待后端实现 |
+| R118 | 2026-09-26 | 协调会话定案 | 「当前订阅」全后台统一：在用 = active / trialing / grace / past_due；`active_plan`、`user_active_plan`、风控聚类成员套餐名 = 当前订阅在用时的套餐名，没有时 `active_plan` 为 null、`user_active_plan` 不返回；`has_active_sub` 与导出订阅数按在用计。待后端实现 |
