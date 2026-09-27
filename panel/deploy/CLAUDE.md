@@ -47,7 +47,7 @@ healthcheck.sh / aegis-health.service / aegis-health.timer: 面板健康巡检�
 clear-ratelimit.sh: 清空限流计数，仅开发与集成测试用
 
 CLIENT-AUTH 发布门禁（00042–00044，未接生产路由）
-client-auth-*、generate-client-auth-*、probe-client-auth-*、verify-client-auth-*、run-client-auth-00043-indexes.sh: 冻结契约的清单生成、离线 Ed25519 证明、OID 无关目录探针与校验、可续跑索引执行器；各 README 说明输入输出
+client-auth-*、generate-client-auth-*、probe-client-auth-*、verify-client-auth-*、run-client-auth-00043-indexes.sh: 冻结契约的清单生成、离线 Ed25519 证明、OID 无关目录探针与校验、可续跑索引执行器；各 README 说明输入输出。其中约 9 个脚本在运行时按 SHA-256 钉住或 grep 从未入库的 `.ai-company/handoffs/*.md` 交接稿（相对 panel/ 解析），新 clone 上只能 NOT_RUN（77）或失败，CI 不调它们；恢复 CLIENT-AUTH 前要先把这些交接稿入库
 client-auth-00044-verifier-gate.py / verify-client-auth-00044-evidence-vectors.ps1: 00044 证据信封与向量的独立生成与校验，不导入被测实现
 
 测试（只用虚构数据与一次性环境，不连任何真实部署）
