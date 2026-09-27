@@ -20,7 +20,6 @@ func TestTicketUserActivePlanMatchesUserListPG18(t *testing.T) {
 	const (
 		tenant  = "79118000-0000-4000-8000-000000000001"
 		other   = "79118000-0000-4000-8000-000000000002"
-		product = "79118000-0000-4000-8000-000000000003"
 		planPro = "79118000-0000-4000-8000-000000000004"
 		planOld = "79118000-0000-4000-8000-000000000005"
 		planOut = "79118000-0000-4000-8000-000000000006"
@@ -41,10 +40,13 @@ func TestTicketUserActivePlanMatchesUserListPG18(t *testing.T) {
 		{`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES
 			($2,$1,'grace@r118-tickets.invalid','Grace','active'),($3,$1,'expired@r118-tickets.invalid','Expired','active')`,
 			[]any{tenant, grace, expired}},
-		{`INSERT INTO products(id,tenant_id,code,name,status) VALUES($2,$1,'r118t','R118 Tickets Product','active')`, []any{tenant, product}},
+		// 一个产品只挂一个套餐（plans_tenant_product_unique），套餐 id 兼作产品 id
+		{`INSERT INTO products(id,tenant_id,code,name,status) VALUES
+			($2,$1,'r118t-pro','R118 Pro','active'),($3,$1,'r118t-old','R118 Old','active'),($4,$5,'r118t-out','R118 Out','active')`,
+			[]any{tenant, planPro, planOld, planOut, other}},
 		{`INSERT INTO plans(id,tenant_id,product_id,code,name,status) VALUES
-			($2,$1,$5,'pro','Pro 月付','active'),($3,$1,$5,'old','旧套餐','active'),($4,$6,$5,'out','别家套餐','active')`,
-			[]any{tenant, planPro, planOld, planOut, product, other}},
+			($2,$1,$2,'pro','Pro 月付','active'),($3,$1,$3,'old','旧套餐','active'),($4,$5,$4,'out','别家套餐','active')`,
+			[]any{tenant, planPro, planOld, planOut, other}},
 		{`INSERT INTO subscriptions(tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount,
 			current_period_end,created_at) VALUES
 			($1,$2,$3,gen_random_uuid(),'grace','CNY',0,now()+interval '2 days',now()-interval '40 days'),

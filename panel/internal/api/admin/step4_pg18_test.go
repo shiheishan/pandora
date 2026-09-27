@@ -245,7 +245,6 @@ func ipClusterActivePlans(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 	t.Helper()
 	const (
 		otherTenant = "82000000-0000-4000-8000-000000000002"
-		product     = "82000000-0000-4000-8000-000000000031"
 		planPro     = "82000000-0000-4000-8000-000000000032"
 		planOld     = "82000000-0000-4000-8000-000000000033"
 		planOther   = "82000000-0000-4000-8000-000000000034"
@@ -257,11 +256,15 @@ func ipClusterActivePlans(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 	for _, sql := range []string{
 		`SET LOCAL session_replication_role = replica`,
 		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('` + otherTenant + `','ip-cluster-other','Other','CNY')`,
-		`INSERT INTO products(id,tenant_id,code,name,status) VALUES('` + product + `','` + tenant + `','cluster-product','Cluster Product','active')`,
+		// 一个产品只挂一个套餐（plans_tenant_product_unique），套餐 id 兼作产品 id
+		`INSERT INTO products(id,tenant_id,code,name,status) VALUES
+			('` + planPro + `','` + tenant + `','cluster-pro','Cluster Pro','active'),
+			('` + planOld + `','` + tenant + `','cluster-old','Cluster Old','active'),
+			('` + planOther + `','` + otherTenant + `','cluster-other','Cluster Other','active')`,
 		`INSERT INTO plans(id,tenant_id,product_id,code,name,status) VALUES
-			('` + planPro + `','` + tenant + `','` + product + `','pro','Pro 月付','active'),
-			('` + planOld + `','` + tenant + `','` + product + `','old','旧套餐','active'),
-			('` + planOther + `','` + otherTenant + `','` + product + `','other','别家套餐','active')`,
+			('` + planPro + `','` + tenant + `','` + planPro + `','pro','Pro 月付','active'),
+			('` + planOld + `','` + tenant + `','` + planOld + `','old','旧套餐','active'),
+			('` + planOther + `','` + otherTenant + `','` + planOther + `','other','别家套餐','active')`,
 		`INSERT INTO subscriptions(tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount,current_period_end,created_at) VALUES
 			('` + tenant + `','` + grace + `','` + planPro + `',gen_random_uuid(),'grace','CNY',0,now()+interval '2 days',now()-interval '40 days'),
 			('` + tenant + `','` + grace + `','` + planOld + `',gen_random_uuid(),'expired','CNY',0,now()-interval '1 day',now()-interval '1 day'),
