@@ -103,7 +103,7 @@ export function usePendingOrders() {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/orders/{id}（修订 R69 的明细字段）：支付回跳后的结果确认与第 ③ 步订单明细共用
+// GET v1/orders/{id}（修订 R69 的明细字段）：支付回跳后的结果确认与订单页的明细共用
 // ---------------------------------------------------------------------------
 export const orderDetailSchema = z.object({
   order: orderRowSchema.extend({

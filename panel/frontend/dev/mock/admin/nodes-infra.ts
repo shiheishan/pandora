@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 createHash / randomBytes / randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute，依赖 ./users 的 GROUPS 与 setPoolSource（R104 名单登记回用户组）
  * [OUTPUT]: 对外提供服务器、节点池、全局路由的假数据（servers / pools / globalRouting）、路由校验 validateRouting（单节点与全局共用）、空体判断 emptyBody、心跳保活 keepAlive、按池统计在线节点数 activeNodesInPool（与节点池列表的 active_nodes 同口径，给套餐假后端用），以及 infraRoutes(节点存储) 返回的路由表
- * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」第 ③ 步假接口，由 nodes.ts 引入并入同一个 MockModule（登记表不动）：服务器列表 / 新建 / 详情 / 下属节点 / 编辑 / 改状态（合法边、进入 ready 要有可服务节点）/ 删除（仅草稿或已退役，名下节点级联静默）/ 安装令牌；节点池增删改（删除前查节点、套餐、未用令牌；R104「仅限用户组」名单：带字段要 reauth、校验格式 / 重复 / 上限 100 / 存在性，经 setPoolSource 登记回用户组）；全局出站与分流读写（revision 为规范 JSON 的 sha256，删除被节点规则引用的出站回 409，R56）。节点存储以参数传入而不 import nodes.ts，避免循环依赖。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 的 server.go、server_admin.go、pools.go、node_routing.go
+ * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」基础设施部分的假接口，由 nodes.ts 引入并入同一个 MockModule（登记表不动）：服务器列表 / 新建 / 详情 / 下属节点 / 编辑 / 改状态（合法边、进入 ready 要有可服务节点）/ 删除（仅草稿或已退役，名下节点级联静默）/ 安装令牌；节点池增删改（删除前查节点、套餐、未用令牌；R104「仅限用户组」名单：带字段要 reauth、校验格式 / 重复 / 上限 100 / 存在性，经 setPoolSource 登记回用户组）；全局出站与分流读写（revision 为规范 JSON 的 sha256，删除被节点规则引用的出站回 409，R56）。节点存储以参数传入而不 import nodes.ts，避免循环依赖。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 的 server.go、server_admin.go、pools.go、node_routing.go
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
@@ -36,7 +36,7 @@ export function keepAlive<T extends { last_heartbeat_at: string | null }>(rows: 
   setInterval(() => live.forEach((r) => alive(r) && (r.last_heartbeat_at = ago(5))), 10_000).unref()
 }
 
-/** nodes.ts 的节点存储里第 ③ 步要读写的字段（结构类型，nodes.ts 的 Node 满足它） */
+/** nodes.ts 的节点存储里服务器与节点池逻辑要读写的字段（结构类型，nodes.ts 的 Node 满足它） */
 export interface InfraNode {
   id: string
   node_no: number
@@ -216,7 +216,7 @@ export const pools: MockPool[] = [
   pool('global', '全部线路', null, ['标准版', '专业版', '家庭版']),
   pool('beta', '灰度池', null, [], 0, [GROUPS[0]!.id]),
   pool('enterprise', '企业专线', 'CN', [], 1, [GROUPS[1]!.id]),
-  // 首次搭建：新建的池还没绑套餐，上线大阪 02 会带「所在节点池没有绑定任何套餐」（R113，第 ⑤ 步）
+  // 首次搭建：新建的池还没绑套餐，上线大阪 02 会带「所在节点池没有绑定任何套餐」（R113）
   pool('kansai', '关西新线路', 'JP', []),
 ]
 

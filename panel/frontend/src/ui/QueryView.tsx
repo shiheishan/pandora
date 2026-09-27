@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 ReactNode，依赖 ../core/api 的 isApiError，依赖 ./Button、./Empty、./Skeleton，依赖 ./QueryView.module.css
  * [OUTPUT]: 对外提供 QueryView、QueryViewProps、QueryLike
- * [POS]: ui 的查询三态容器：把一个 react-query 结果渲染成加载（骨架行）/ 错误（接口 404 按「无权限或不存在」、其它给重试）/ 空 / 正文之一，统一第 10.4 节「列表与卡片都有加载、空、错误三种状态」。只认结果对象的形状，不依赖 react-query 本身
+ * [POS]: ui 的查询三态容器：把一个 react-query 结果渲染成加载（骨架行）/ 错误（接口 404 按「无权限或不存在」、其它给重试）/ 空 / 正文之一，落实「列表与卡片都有加载、空、错误三种状态，缺权限的 404 不显示成报错」。只认结果对象的形状，不依赖 react-query 本身
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { ReactNode } from 'react'

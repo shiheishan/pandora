@@ -1,7 +1,7 @@
 # panel/frontend/src/admin/screens/marketing/
 > L2 | 父级: /panel/frontend/src/admin/screens/CLAUDE.md
 
-营销（后台-06，归后台前端二）：优惠券、礼品卡、佣金与提现三个标签。视觉按 管理后台-06-营销.dc.html，数据与规则按 api-contract.md 后台-06（含 R4 R5 R6 R17）；设计缺、契约标「待补·前端」的都补上了：券的门槛 / 封顶 / 每人限用 / 有效期 / 适用套餐与批量的活动名称、礼品卡的模板编辑抽屉与生码参数、提现的拒绝理由与转账流水号、已过期 / 已用完 / 打款失败等状态。
+营销（后台-06）：优惠券、礼品卡、佣金与提现三个标签。视觉按 管理后台-06-营销.dc.html，数据与规则按 api-contract.md 后台-06（含 R4 R5 R6 R17）；设计缺、契约标「待补·前端」的都补上了：券的门槛 / 封顶 / 每人限用 / 有效期 / 适用套餐与批量的活动名称、礼品卡的模板编辑抽屉与生码参数、提现的拒绝理由与转账流水号、已过期 / 已用完 / 打款失败等状态。
 分层：schemas（zod，与后端对账的唯一防线）→ queries（react-query 读、权限、写失败统一处理、幂等键）→ logic（纯函数，单测守住）→ 组件。写接口的 reauth 由常驻对话框接管，取消时静默（R34）；要幂等的接口一次用户意图一个键，改了请求体换新键。
 权限：标签读权限由 Shell 判；页面内再按写权限（marketing.coupon.write / giftcard.write / withdrawal.approve / commission.write）隐藏按钮，兑换记录另要 billing.order.read，套餐名与套餐卡要 catalog.read（没有时退回「N 个套餐」、套餐卡不可编辑）。
 礼品卡明文只在两处出现（R17）：生码响应里的前 4 张样例与一次性导出的 CSV；列表、使用记录一律掩码。导出经 core/api 的 requestRaw 拿 CSV，重放不带 Content-Disposition，文件名按批次 id 前 8 位自拼。

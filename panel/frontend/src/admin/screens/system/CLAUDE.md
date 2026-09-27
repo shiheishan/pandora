@@ -1,7 +1,7 @@
 # panel/frontend/src/admin/screens/system/
 > L2 | 父级: /panel/frontend/src/admin/screens/CLAUDE.md
 
-通知与插件（后台-09 前半，归后台前端二）。三个标签全部接入：通知渠道、邮件模板、Webhook 钩子。视觉按 管理后台-09-通知与安全.dc.html，数据与规则按 api-contract.md 后台-09 · 通知与插件（含 R14 R20 R21 R45 R59），并对过 Go 的 mail.go、telegram.go、mail_template.go、notify/template_admin.go、plugin/hooks.go；契约里的待补·后端（admin_chat_id、测试可省 chat_id、草稿预览、has_default、测试信发草稿、sent_count_7d、duration_ms）主线都已实现，照实现写。设计缺、契约标「待补·前端」的都补上了：SMTP 加密方式、「注册与验证」卡、Telegram 启用开关、模板渠道分段、钩子的启用开关 / 编辑 / 排队数。
+通知与插件（后台-09 前半）。三个标签全部接入：通知渠道、邮件模板、Webhook 钩子。视觉按 管理后台-09-通知与安全.dc.html，数据与规则按 api-contract.md 后台-09 · 通知与插件（含 R14 R20 R21 R45 R59），并对过 Go 的 mail.go、telegram.go、mail_template.go、notify/template_admin.go、plugin/hooks.go；契约里的待补·后端（admin_chat_id、测试可省 chat_id、草稿预览、has_default、测试信发草稿、sent_count_7d、duration_ms）主线都已实现，照实现写。设计缺、契约标「待补·前端」的都补上了：SMTP 加密方式、「注册与验证」卡、Telegram 启用开关、模板渠道分段、钩子的启用开关 / 编辑 / 排队数。
 分层：schemas（zod）→ queries（读 hook，这几张表没有实时通知，写后按 SK 前缀失效；转出 admin/actions.ts 的 useCan / useFailure / useIntentKey）→ logic（纯函数，system.test.ts 守住）→ hookActions（钩子保存）→ 组件。
 三条后端事实决定了写法：邮件设置 SMTP 六字段每次整体覆盖，所以注册卡保存带的是「已保存」的 SMTP 字段；钩子按 code upsert、省略的字段写成零值，所以新建时生成避开现有 code 的 code、编辑与启停都回填全字段；钩子超时与重试次数后端只有 DB CHECK（越界 500），前端先拦。三个测试发送用的都是已保存的配置，渠道卡有未保存修改时禁用测试。
 权限：通知渠道读挂 security.audit.read、存 platform.settings.write（无 reauth 无幂等）、测试 ops.notification.write；模板读 / 预览 ops.notification.read、存 / 恢复 platform.settings.write、测试信 ops.notification.write + reauth；钩子读 platform.plugin.read、写全部 platform.plugin.write + reauth，保存带幂等键 plugin_hook_save。只读账号（ops.notification.read）只能看模板。

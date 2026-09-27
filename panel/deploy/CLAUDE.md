@@ -1,7 +1,7 @@
 # panel/deploy/
 > L2 | 父级: /panel/CLAUDE.md
 
-面板从源码到一台 Linux 主机的全部路径：打包、安装与升级、迁移、备份恢复、边缘入口、巡检，以及证明这些路径正确的隔离门禁。这里是产品的一部分，任何人下载后照同一套脚本部署，所以脚本与模板里不出现任何具体部署的值：域名、后台前缀、主密钥都在安装时产生并落在主机的 `.env`，模板只含占位符（`__AEGIS_ADMIN_PATH__`、`__AEGIS_DOMAIN__`）。运行时服务永远拿不到迁移 DSN；破坏性脚本先校验全部输入、再做第一次破坏动作；迁移类脚本按自身位置找与 deploy/ 并排的 migrations/，不写死安装路径（/opt/aegispanel 与 /opt/pandora 两种布局都成立）。维护者操作自己服务器的一次性脚本不在这里，在仓库根被忽略的 ops-local/。
+面板从源码到一台 Linux 主机的全部路径：打包、安装与升级、迁移、备份恢复、边缘入口、巡检，以及证明这些路径正确的隔离门禁。这里是产品的一部分，任何人下载后照同一套脚本部署，所以脚本与模板里不出现任何具体部署的值：域名、后台前缀、主密钥都在安装时产生并落在主机的 `.env`，模板只含占位符（`__AEGIS_ADMIN_PATH__`、`__AEGIS_DOMAIN__`）。运行时服务永远拿不到迁移 DSN；破坏性脚本先校验全部输入、再做第一次破坏动作；迁移类脚本按自身位置找与 deploy/ 并排的 migrations/，不写死安装路径（/opt/aegispanel 与 /opt/pandora 两种布局都成立）。维护者操作自己服务器的一次性脚本不进仓库，需要时放在仓库根被忽略的 ops-local/（按需创建）。
 
 成员清单
 
@@ -57,7 +57,7 @@ run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：up
 run-smoke-e2e.sh: 联调冒烟第 ⑤ 步（panel-smoke.yml 在读表与写路径之后调用）：在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，第 ⑥ 步起失败即变红；脚本一字不改，只把它们声明要的环境搭出来（/opt/aegispanel 布局链到仓库 deploy/、deploy/.env 由网关配置加库超级账号拼成、aegis-payctl 编进 bin 并配易支付测试商户、两个一次性库确认变量），脚本之间空一个限流窗口；每个脚本一行写进 e2e-results.md（结果、OK/FAIL 数、首个失败的步骤与原文），全部跑完、表格写完后有任何失败就以 1 退出；只肯在 GitHub Actions 上跑
 test-*-pg18.sh: 各业务的 PG18 集成门禁，每次新建隔离容器与库、结束即删；口令为 *-test-only 字样
 test-install.sh / test-ca42-*-e2e.sh / test-client-auth-*: 安装链与 CLIENT-AUTH 端到端；test-install.sh 发现库里已有用户即拒绝执行
-*_mock_test.sh / *_static_test.sh / *_linux_test.sh / *_linux_fault_test.sh / release-stop-the-world_test.ps1: 对上面各脚本的桩测试与静态检查，不需要数据库或 root
+*_mock_test.sh / *_static_test.sh / *_linux_test.sh / *_linux_fault_test.sh / release-stop-the-world_test.ps1: 对上面各脚本的桩测试与静态检查，不需要数据库；*_linux_* 与部分 mock 测试（pandora-cic-journal、pandora-pathtrust、release-stop-the-world、verify-backup_manifest、client-auth-00043-linux-wiring、test-client-auth-00044-verifier-linux-root）需要 Linux root
 fixtures/: billing、idempotency 两份 PG18 门禁种子数据
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

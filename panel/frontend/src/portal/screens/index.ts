@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 lazy，依赖 ../pages 的 PageKey
  * [OUTPUT]: 对外提供 PortalScreenProps、PortalScreen、SCREENS
- * [POS]: portal 的页面登记表：十一个页面（含结账）各一个懒加载入口，Shell 的内容区按路由取组件渲染；每个页面一个目录、一个独立块，门户前端会话只改各页面目录，本文件不再改动
+ * [POS]: portal 的页面登记表：十一个页面（含结账）各一个懒加载入口，Shell 的内容区按路由取组件渲染；每个页面一个目录、一个独立块，页面只改各自目录，本文件不再改动
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'

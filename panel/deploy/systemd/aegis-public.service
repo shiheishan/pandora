@@ -40,7 +40,7 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
 
-# 1 vCPU / 2G 宿主上还跑着其他业务，给网关设硬上限避免互相挤占
+# 给网关设硬上限，避免与同机服务互相挤占
 MemoryMax=256M
 CPUQuota=60%
 

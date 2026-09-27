@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./api 的 contentPageSchema / contentDetailSchema，依赖 ./model 的纯映射
  * [OUTPUT]: 无（测试）
- * [POS]: 第 ⑥ 步帮助中心的单元测试：文章 schema（omitempty 字段缺席、空正文归一）、按分类分组（只留 kb_article / tutorial、空分类归「其他」排最后）、正文按段落与「## 」小标题拆块
+ * [POS]: 帮助中心的单元测试：文章 schema（omitempty 字段缺席、空正文归一）、按分类分组（只留 kb_article / tutorial、空分类归「其他」排最后）、正文按段落与「## 」小标题拆块
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'

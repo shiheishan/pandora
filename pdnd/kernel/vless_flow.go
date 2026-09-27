@@ -1,3 +1,8 @@
+// [INPUT]: 只依赖标准库（errors / fmt / unicode/utf8），手写 Addons 的 protobuf 线格式而不引入 protobuf 运行时
+// [OUTPUT]: 对外提供 VLESSAddons、ParseVLESSAddons、EncodeVLESSAddons、NegotiateVLESSFlow 与 flow 名常量（FlowVision、FlowVisionUDP443 等）
+// [POS]: kernel 的 VLESS addons 编解码与 flow 协商：被 vless_request.go 在读请求头时调用，决定后续是否走 vision.go 的 Vision 帧解析；不认识的 flow 当场拒绝，避免握手通过却静默不通
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (

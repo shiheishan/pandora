@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/config、db、crypto、logging、server 的进程装配，realtime 的跨进程事件 Hub，geoip 的可选库，domain/nodefabric 的节点服务与流 Hub
+// [OUTPUT]: 对外提供 aegis-node 进程：Node 域 HTTP 网关（默认 127.0.0.1:9003）
+// [POS]: panel/cmd 的三个网关之一，只做装配，路由与处理在 internal/api/node；与 aegis-public、aegis-admin 并列
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Command aegis-node 是节点控制面网关（Node 域）。
 package main
 

@@ -13,9 +13,9 @@ model.test.ts: model.ts 全部分支与 schema 形状的单元测试（待补字
 Tasks.tsx: 「需要处理」卡片网格（共用的 tasks 查询 + 冻结契约的通知积压明细），目标页不可读时卡片不可点；「超时未支付订单」带待支付筛选跳订单页
 Kpis.tsx: 「经营」四格：按币种的今日收入、有效订阅、近 24 小时流量；调账、试用、即将到期、待支付放进 tooltip
 RevenueTrend.tsx: 「收入趋势」CNY/USD × 7/30/90 天，区间合计、日均、较上一区间、柱图；切换时保留上一张图
-SystemStatus.tsx: 「系统状态」总状态胶囊与组件行（components 未上时只有数据库一行），第 8 行「数据库备份」打开 BackupDrawer
+SystemStatus.tsx: 「系统状态」总状态胶囊与组件行（components 后端已实现；字段缺席时兜底为只有数据库一行），第 8 行「数据库备份」打开 BackupDrawer
 BackupDrawer.tsx: 备份抽屉（待补·前端），backup 段逐项展示与最近 5 份表格，后端 message / identity_hint 原文照登
-Activity.tsx: 「注册与活跃 · 近 14 天」成对柱图，active_users 未上时只画注册柱
+Activity.tsx: 「注册与活跃 · 近 14 天」成对柱图（active_users 后端已实现；字段缺席时兜底为只画注册柱）
 TrafficRank.tsx: 「流量排行 · 近 24 小时」节点 / 用户两个页签，用户只显示脱敏邮箱（D-A-2 已决，5.A.2），行点进 #/users/list/<id>；底部小字给未归属与质量计数
 parts.tsx: 本目录共用的小部件：卡片内错误行与重试、骨架、状态圆点、404 判定、链接拼接
 Dash.module.css: 本目录唯一样式表，数值取自设计稿，只引用令牌

@@ -17,7 +17,7 @@ entry-links.ts: takeInviteFromUrl / readStoredInvite 与 quickLoginLink（账号
 AuthPage.tsx: 三标签卡片：登录（auth:false，401 内联）；注册按 registration_mode 定邀请码必填 / 选填 / 隐藏标签，step1 register/start、step2 register/complete（验证码框以 verification_required 为准，dev_code 显示为提示）后自动登录；快捷登录只收已登录设备生成的链接（保留规则 1）；loginWithPassword / consumeQuickLogin 导出供 App 复用
 Shell.tsx: 顶栏（字标、导航、≥ 960 余额胶囊、铃铛未读角标、头像菜单：用户名 + 套餐徽标 + 邮箱、五项带余额 / 佣金提示、深色模式开关、退出）、页头、内容区（screens 登记的页面）、页脚、< 640 五格标签栏（「我的」受控打开头像菜单）；连门户 SSE，只驱动查询失效
 *.module.css: 各组件同名样式，断点只用规范的 960 与 640
-screens/: 十一个页面与懒加载登记表，归门户前端会话；见 screens/CLAUDE.md
+screens/: 十一个页面与懒加载登记表；见 screens/CLAUDE.md
 portal.test.ts: 页面路由、rest 子路由与导航归属、邀请码取用与查询串清理、快捷登录链接生成与令牌识别往返、主题令牌白名单、用户名映射的纯逻辑测试；界面交互在浏览器里对 dev/mock-api 验收
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

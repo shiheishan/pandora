@@ -2,7 +2,7 @@
 
 // [INPUT]: 依赖 syscall 的 Stat_t（属主 UID、硬链接数），依赖 checkpoint_hook.go 的 checkpointHookRoot
 // [OUTPUT]: 对外提供 RequireRootRuntime；包内提供私密路径的属主、权限位、单链接、父目录解析校验
-// [POS]: dbbackup 私密文件校验的 Linux 实现，被 config.go/manifest.go 的 openSecureRegular 调用，与 file_owner_other.go 的空实现成对
+// [POS]: dbbackup 私密文件校验的 Linux 实现，被 config.go 的 openSecureRegular 与 validateSecureParent 使用（manifest.go 也调用后者，并直接复用权限位、属主与单链接校验），与 file_owner_other.go 的空实现成对
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package dbbackup

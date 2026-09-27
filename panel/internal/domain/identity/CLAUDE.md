@@ -1,7 +1,7 @@
 # panel/internal/domain/identity/
 > L2 | 父级: /panel/internal/domain/CLAUDE.md
 
-身份域：注册、登录、会话与口令，是所有网关鉴权的上游。只依赖 platform（crypto/db/httpx/audit/token）与 plugin 的事件发射；需要外部能力时（注册验证码投递）经本包定义的接口注入，不 import 其它业务域。凭据一律只存哈希，明文只在签发那一刻返回一次。
+身份域：注册、登录、会话与口令，是所有网关鉴权的上游。只依赖 platform（crypto/db/httpx/audit/token/credentialrevocation）与 plugin 的事件发射；需要外部能力时（注册验证码投递）经本包定义的接口注入，不 import 其它业务域。凭据一律只存哈希，明文只在签发那一刻返回一次。
 
 成员清单
 service.go: Service 与构造、VerificationMailer 注入点；注册两步（StartRegistration 同事务写验证码并经 mailer 入队，提交后 Kick；邮箱已存在时响应一致但不入队，IAM-006）、Login 与会话签发；EmailVerificationDefault 是 auth.email_verification 缺行时的唯一回退值（= 迁移种子 false，后台邮件页共用）

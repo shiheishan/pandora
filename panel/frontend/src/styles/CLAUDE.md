@@ -1,7 +1,7 @@
 # panel/frontend/src/styles/
 > L2 | 父级: /panel/frontend/CLAUDE.md
 
-全局样式与设计令牌，门户、后台与 showcase 三个入口共用。设计稿 设计规范.dc.html 是唯一依据：颜色、字号、间距、圆角、控件高度都先落成令牌，组件（第 ④ 步起的 CSS Modules）只引用令牌、不写色值。
+全局样式与设计令牌，门户、后台与 showcase 三个入口共用。设计稿 设计规范.dc.html 是唯一依据：颜色、字号、间距、圆角、控件高度都先落成令牌，组件（CSS Modules）只引用令牌、不写色值。
 分三层：tokens.css 是设计稿原值（明暗两组语义色 + 不随主题变化的尺度）；roles.css 把「门户用朱砂标主要操作、后台保持墨色中性」收成同名角色令牌（--accent、--h-control、--radius-control …），按 <html data-app> 切换，于是一套组件同时服务两个入口；base.css 是元素默认样式。主题由 <html data-theme="light|dark"> 决定，写入方是 core/theme-boot.js 与 core/theme.ts。
 CSP 约束：style-src 'self' 无 unsafe-inline，只用静态 CSS 文件与 CSS Modules；font-src 'self'，字体随包自带、不走 Google Fonts，vite.config.ts 把 assetsInlineLimit 设 0 保证不被内联成 data:。
 

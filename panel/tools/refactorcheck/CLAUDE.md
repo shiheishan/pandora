@@ -1,7 +1,7 @@
 # panel/tools/refactorcheck/
 > L2 | 父级: /panel/CLAUDE.md（tools/ 一行）
 
-第 5 阶段超长文件重构（phase5-refactor.md）的机器自证工具：重构铁律是「只挪代码、不改行为」，这里把它变成两条可复跑的检查；拆完之后再由一道行数守卫测试防止文件长回去。main 包，只用 `go run` 在开发机与验收时跑，不被任何包 import，不进发布包（build-release.sh 只编 cmd/<名字>）。只依赖标准库与本机的 git、go。
+超长文件拆分重构的机器自证工具：重构铁律是「只挪代码、不改行为」，这里把它变成两条可复跑的检查；拆完之后再由一道行数守卫测试防止文件长回去。main 包，只用 `go run` 在开发机与验收时跑，不被任何包 import，不进发布包（build-release.sh 只编 cmd/<名字>）。只依赖标准库与本机的 git、go。
 
 用法（在 module 根目录 panel/ 下）
 - 提交前自查：`go run ./tools/refactorcheck compare`（base 默认 HEAD，head 默认工作树含未跟踪文件，不给目录时比对全部有 .go 变化的目录）

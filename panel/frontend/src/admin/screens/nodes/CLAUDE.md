@@ -1,7 +1,7 @@
 # panel/frontend/src/admin/screens/nodes/
 > L2 | 父级: /panel/frontend/src/admin/screens/CLAUDE.md
 
-节点与服务器（后台-07，归后台前端二）。四个标签全部接入：第 ② 步节点（列表 + 五标签详情抽屉），第 ③ 步服务器（卡片 + 四标签详情抽屉）、节点池、全局路由。视觉按 管理后台-07-节点与服务器.dc.html，数据与规则按 api-contract.md 后台-07 的节点 / 服务器 / 节点池 / 路由四节（含 R10 R13 R26 R27 R46 R56 R57 R77–R79）；设计缺、契约标「待补·前端」的都补上了：新建节点弹窗、协议页的基本信息区、单节点路由编辑、交付提示、监控里的运行信息、复制的目标服务器与复制路由、一次性令牌展示框；服务器的添加弹窗、详情 / 下属节点 / 编辑 / 完整状态、在役与容量、从未心跳提示；节点池增删改；全局出站的增改删。
+节点与服务器（后台-07）。四个标签全部接入：节点（列表 + 五标签详情抽屉）、服务器（卡片 + 四标签详情抽屉）、节点池、全局路由。视觉按 管理后台-07-节点与服务器.dc.html，数据与规则按 api-contract.md 后台-07 的节点 / 服务器 / 节点池 / 路由四节（含 R10 R13 R26 R27 R46 R56 R57 R77–R79）；设计缺、契约标「待补·前端」的都补上了：新建节点弹窗、协议页的基本信息区、单节点路由编辑、交付提示、监控里的运行信息、复制的目标服务器与复制路由、一次性令牌展示框；服务器的添加弹窗、详情 / 下属节点 / 编辑 / 完整状态、在役与容量、从未心跳提示；节点池增删改；全局出站的增改删。
 分层：schemas（zod；Go 指针字段写 nullable、nil 切片归一成 []，Go 保证非空的列表写严格数组）→ queries（读 hook、写后按 NK 前缀失效；节点列表与随节点变化的服务器、节点池计数挂 nodes.changed；转出 admin/actions.ts 的 endsIntent / useCan / useFailure / useIntentKey）→ logic（节点与路由）/ infra（服务器与节点池），纯函数，nodes.test.ts / infra.test.ts 守住 → 组件。
 节点表单的后端口径：protocol_config 写入是整体替换（普通键缺席即删除），读接口按名字抹掉敏感键（password、private_key、psk、mask_password…），而 PATCH 里缺席的敏感键后端按原路径补回（R106）——所以 PATCH 只在协议字段真的改了才带 protocol_config；编辑同一协议时敏感字段留空 = 不改、不带这个键（必填的也不算缺），选填的敏感字段可点「清空」，保存前确认后显式发 null；换协议后端不补旧密钥，必填照常要填；mKCP 关掉掩码时 mask_password 本来就不带（R107）；协议 schema 由后端给出（13 个 stable + 2 个 legacy-read-compatible），表单按 allowed_properties 渲染、点号路径展开成嵌套对象，422 的 protocol_config.<键> 按路径再按叶子名落回字段。
 保留规则 5：只有从未部署过的草稿（draft / disabled、无心跳、无身份）能迁移，其余引导「复制到新服务器再退役」。列表一次取 1000 条并总带 include_retired=1，「全部」里藏掉已退役，刚退役的节点抽屉仍可继续删除。

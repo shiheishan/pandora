@@ -88,3 +88,12 @@ PRD 未锁定技术栈。附录 B 把 Xboard（PHP/Laravel）列为业务基线�
 | Node + NestJS | 内存占用高；Agent 分发需打包运行时 |
 | Rust 全栈 | 开发速度代价过大，团队规模（18.2 建议 3–4 名后端）撑不住 |
 | MySQL | 无 RLS，DATA-002 只能靠应用自觉；无 DEFERRABLE 约束触发器 |
+
+## 后续变更（2026-09）
+
+上文是 2026-07-25 的原始决策，保留不改。之后的实际走向：
+
+- 节点端是独立的 pdnd（pandora-native，自己的 Go module），不与面板共享代码；节点与面板之间用 Ed25519 节点身份签名的通道，不是 mTLS。
+- 面板是三个网关进程（public、admin、node），不是四域。
+- 数据层不变量为 50 项（`panel/tests/invariants.sql` 里的 `_reject` / `_accept` 用例）。
+- 前端 HTTP 走手写的 `panel/frontend/src/core/api.ts` 加 zod 校验，没有从 OpenAPI 生成 TS 客户端。

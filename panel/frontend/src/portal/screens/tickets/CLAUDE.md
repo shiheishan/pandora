@@ -11,7 +11,7 @@ index.tsx: 页面组件——列表（TicketItem）、会话（TicketView / Thre
 api.ts: 数据层——分类、列表、详情 schema 与查询，最近订单，新建 / 回复 / 关闭 / 撤回四个 mutation，写后失效列表与该工单
 model.ts: 纯逻辑——ticketRoute、ticketStatus、canWithdraw / canClose / canReply、authorLabel、messageTime、validateTicket
 Tickets.module.css: 页面样式，取自设计稿门户-07（< 640 按 data-view 分屏）
-tickets.test.ts: 第 ⑤ 步工单的单元测试（schema、子路由、状态与按钮、作者、消息时间、表单校验）
+tickets.test.ts: 工单的单元测试（schema、子路由、状态与按钮、作者、消息时间、表单校验）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

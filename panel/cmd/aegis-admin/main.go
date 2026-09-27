@@ -190,7 +190,7 @@ func run() error {
 
 	// SLA 扫描：把首次响应超时的工单自动升级（OPS-001 验收「超时自动升级」）。
 	//
-	// 放在 admin 网关而不是单独的 worker 进程：这台机器只有 1 核，
+	// 放在 admin 网关而不是单独的 worker 进程：面向低配单机部署，
 	// 多一个常驻进程的代价大于收益；而 EscalateOverdue 本身是幂等的，
 	// 将来拆成独立 worker 或换成 cron 也不需要改动业务代码。
 	var workers sync.WaitGroup

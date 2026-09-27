@@ -11,7 +11,7 @@ index.tsx: 页面组件——搜索框、分组目录（锚点，当前篇 aria-
 api.ts: 数据层——文章 schema（omitempty 字段可选，空正文归一为 ''）、列表 / 正文查询、反馈 mutation，共用 HELP_QUERY
 model.ts: 纯映射——helpGroups、articleBlocks、SEARCH_MAX
 Help.module.css: 页面样式，取自设计稿门户-09
-help.test.ts: 第 ⑥ 步帮助中心的单元测试（schema、分组、正文拆块）
+help.test.ts: 帮助中心的单元测试（schema、分组、正文拆块）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

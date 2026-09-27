@@ -15,7 +15,7 @@ api.ts: 数据层——会话、改密、快捷登录、Telegram、通知偏好�
 model.ts: 纯逻辑——deviceName、lastSeenLabel、sortSessions、validateNewPassword、passwordErrors、偏好行、倒计时、shortUserId、telegramDeepLink
 clock.ts: useNow 秒级时钟，只在有倒计时时走表
 Account.module.css: 页面样式，取自设计稿门户-10
-account.test.ts: 第 ⑥ 步账号安全的单元测试（schema、设备名、排序、密码校验与错误落位、倒计时与深链）
+account.test.ts: 账号安全的单元测试（schema、设备名、排序、密码校验与错误落位、倒计时与深链）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

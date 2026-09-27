@@ -1,3 +1,8 @@
+// [INPUT]: 依赖同包 classifier.go 的 classifySource 与 buildDetachedManifest，artifact_linux.go / artifact_other.go 的产物读写
+// [OUTPUT]: 对外提供 pandora-device-key-classifier 命令：只读分类设备公钥来源并写出签名 manifest，panic 也收成 DENY 退出
+// [POS]: panel/cmd 的 CLIENT-AUTH 00044 设备公钥分类器入口，只管参数、文件描述符与退出码；分类规则在 classifier.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (

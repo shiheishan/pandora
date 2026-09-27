@@ -55,7 +55,7 @@ export function useContentPage(id: string, slug: string) {
 export function usePlanCatalog(enabled: boolean) {
   const api = useApi()
   return useQuery({
-    // 挂在套餐的键前缀下：套餐页写后按前缀失效会一并刷新（第 4 阶段 ④）
+    // 挂在套餐的键前缀下：套餐页写后按前缀失效会一并刷新
     queryKey: planOptionsKey('content'),
     queryFn: ({ signal }) => api.get('v1/plans', planCatalogResponse, { signal }).then((r) => r.plans),
     enabled,

@@ -25,6 +25,8 @@ valid identity-encoded gRPC frames for broad client compatibility.
 ./pandora-native --capabilities
 ```
 
+输出是稳定的 JSON，包含 `kernel`、`native_only` 和各协议的网络、加密、特性与明确边界。面板下发组合前应先读取该矩阵；VLESS `REALITY + xhttp-h3` 走 Pandora NativeCore 的 QUIC-native REALITY 握手，不会静默降级为普通 HTTP/3 TLS。
+
 发布或升级后可先运行原生适配器自检；它不会打开监听端口，只检查能力矩阵与默认注册表是否一致：
 
 ```bash
@@ -43,21 +45,27 @@ go test -mod=readonly -tags interop -run 'TestExternalXray(VLESSXHTTPRealityH2In
 
 普通 TLS + XHTTP/HTTP3 以及 REALITY + XHTTP/HTTP2 已有真实 Xray 客户端门禁；REALITY + XHTTP/HTTP3 仍是 NativeCore 自有协议路径。在没有独立第三方客户端成功证据前，REALITY-H3 发布门禁必须保持“未验证”，不能把内部探针结果包装成互操作承诺。
 
-另有 `interop_mihomo` 黑盒门禁，要求显式提供外部 Mihomo 可执行文件：
+同一 `interop` 标签下还有 AnyTLS 客户端门：用 sing-anytls 客户端验证 TCP 与 UDP-over-TCP。它不进默认 race 套件（该客户端库自带数据竞争），CI 的 `linux-race` job 以非 race 方式跑三遍：
 
 ```bash
-MIHOMO_BIN=/path/to/mihomo go test -mod=readonly -tags interop_mihomo -run TestExternalMihomoVLESSXHTTPRealityH3Interop -count=1 -v ./kernel
+go test -mod=readonly -tags interop -run 'TestAnyTLSNativeClientTCPAndUOTUDP$' -count=3 ./kernel
 ```
 
-在目标 Debian staging 上使用官方 Mihomo v1.19.29（下载包 SHA-256
+上面的 Xray 门与这条 AnyTLS 门都由 CI 的 `linux-race` job 执行。
+
+另有 `interop_mihomo` 黑盒门禁，要求显式提供外部 Mihomo 可执行文件及其 SHA-256（未提供二进制则跳过；提供了二进制却缺哈希或哈希不符即失败）：
+
+```bash
+MIHOMO_BIN=/path/to/mihomo MIHOMO_SHA256=<64位hex> go test -mod=readonly -tags interop_mihomo -run TestExternalMihomoVLESSXHTTPRealityH3Interop -count=1 -v ./kernel
+```
+
+历史实测记录（当时的结论，未随后续 Mihomo 版本复测）：在目标 Debian staging 上使用官方 Mihomo v1.19.29（下载包 SHA-256
 `60de76a35a6cbf7b4fa4a20f5c257c24345d1d635ab1aa3877022a1997ef413c`）实测，
 客户端在发起连接前明确记录 `xhttp HTTP/3 does not support REALITY`；测试因此以
 “已识别的客户端能力限制”跳过，而不是将其误报为成功互操作。该边界必须继续显示为未验证，
 直到有支持此组合的独立客户端通过完整回环。
 
 发布脚本会同时产出节点二进制和 `pandora-h3-probe-linux-{amd64,arm64}` 两个诊断客户端，并将四个文件的 SHA-256 写入同一份 manifest；`verify.sh` 会逐项校验，避免只验证文件存在。
-
-输出是稳定的 JSON，包含 `kernel`、`native_only` 和各协议的网络、加密、特性与明确边界。面板下发组合前应先读取该矩阵；VLESS `REALITY + xhttp-h3` 走 Pandora NativeCore 的 QUIC-native REALITY 握手，不会静默降级为普通 HTTP/3 TLS。
 
 面板稳定 Schema、NativeCore 能力矩阵和 serving allowlist 由同一静态门禁校验，避免新增协议只更新一层：
 
@@ -83,17 +91,26 @@ systemd 服务。脚本会按当前架构选择 x64/ARM64 二进制，运行 `--
 bash ./release/staging-acceptance.sh ./release/dist /var/tmp/pandora-native-staging v0.1.0
 ```
 
-只有该隔离验收和回滚窗口确认后，才允许人工执行上面的正式安装命令；此脚本本身不
+只有该隔离验收和回滚窗口确认后，才允许人工执行下面「systemd 冷启动」一节的安装命令；此脚本本身不
 负责生产切换。
 
-仓库 CI 的 Linux release job 会对同一份四产物先执行 `verify.sh`，再执行该 staging
+仓库 CI 的 `release-manifest` job 会用 `build.sh` 产出同一份四产物，先执行 `verify.sh`，再执行该 staging
 验收脚本；Linux 上 `verify.sh` 还会用 `file` 校验 node ELF 的 x86-64/aarch64 架构。
 因此 CI 的绿色结果只代表隔离验收通过，不代表已经修改生产 systemd。
 
-发布前必须在真实 Linux runner 上补跑：
+CI 已覆盖的部分：`linux-race` job 在 x64 上跑全量 `go test -race` 与 vet；`linux-arm64-runtime` job
+在原生 ARM64 runner 上跑全量 race 与 vet，并实际执行编出的二进制做 `--self-check` / `--capabilities`。
 
-- `go test -race -count=1 ./...`
-- 冷启动、SIGTERM 收尾、端口释放和重复启动
+CI 未覆盖、发布前需在真实 Linux 机器上补跑的：
+
+- 冷启动、SIGTERM 收尾、端口释放和重复启动：用 `release/runtime-acceptance.sh`。它在本机回环上起一个
+  模拟面板（Python）和指定的节点二进制，冷启动两次，每次等端口就绪后发 SIGTERM，确认进程退出且端口已释放，
+  成功时输出 `{"status":"ok",...}`；不写系统路径、不碰 systemd，需要 `python3`：
+
+  ```bash
+  bash ./release/runtime-acceptance.sh ./release/dist/pandora-native-linux-amd64 /var/tmp/pandora-native-runtime
+  ```
+
 - x64/ARM64 目标机上的协议互操作与回滚
 
 Windows 交叉构建只能证明 `CGO_ENABLED=0` 编译产物可生成，不能替代 Linux race 或生产部署验收。
@@ -106,13 +123,17 @@ the panel service environment before enabling first-time enrollment; the
 control plane rejects production evidence that does not match the selected
 release version and architecture digest.
 
+正式安装走面板生成的节点安装脚本（面板 `pdnd_install.go`）：它建 `pandora` 系统用户、写配置与身份文件、
+内联生成 unit 并完成 enrollment。下面是不经安装器的手工安装，执行前需先自行建好 `pandora` 系统用户与组。
+
 `pandora-native.service` 假定二进制安装到 `/usr/local/bin/pandora-native`，配置文件为
 `/etc/pandora-native/config.json`，并以无特权 `pandora` 用户运行。安装后应执行：
 
 正式部署省略 `native_only` 即启用 NativeCore-only，让未验证的协议组合直接报错；只有迁移阶段显式设置
 使用 `-tags compat` 构建并设置 `"native_only": false` 才允许
 回落到兼容内核；默认发布物不链接兼容多内核。
-NativeCore-only 同样拒绝显式的 `kernel: "xray-core"` 与 `kernel: "sing-box"`。
+默认构建只链接 NativeCore，节点配置里的 `kernel` 字段被忽略；只有 `-tags compat` 构建在 native-only 模式下才会拒绝显式的
+`kernel: "xray-core"` 与 `kernel: "sing-box"`。
 
 ```bash
 install -d -o pandora -g pandora -m 0750 /etc/pandora-native /var/lib/pandora-native /var/log/pandora-native
@@ -127,10 +148,10 @@ systemctl show pandora-native -p ActiveState -p SubState
 
 The NativeCore implementation includes a native REALITY-over-H3 path and its
 own loopback probe. That probe is not a third-party interoperability result.
-The `interop_external` suite also contains independent Juicity and Naive client
-gates. Each gate requires an explicitly pinned external binary and a matching
-SHA-256 value; a missing or untrusted binary must remain skipped rather than
-being reported as an interoperability pass.
+The `interop_external` suite also contains independent sing-box (VLESS + TLS +
+Vision), Juicity and Naive client gates. Each gate requires an explicitly pinned external binary and a matching
+SHA-256 value; a missing binary is skipped and a missing or mismatched digest
+fails the test, so neither can be reported as an interoperability pass.
 The external interop gate therefore reports TLS + XHTTP/H3 and REALITY +
 XHTTP/H2 separately. Until an independent client completes a REALITY +
 XHTTP/H3 round trip, the capability matrix must continue to expose
@@ -146,22 +167,24 @@ combinations; they do not prove REALITY + XHTTP/H3. This is an explicit
 interop limitation, not a NativeCore fallback or a silently delegated
 compatibility path.
 
-The legacy REALITY `Show` compatibility field is retained only for config
-decoding. Native production handshakes do not write per-flight debug traces or
-derived authentication material to stdout, so enabling that legacy field
+The legacy REALITY `Show` field survives only in the forked `internal/reality`
+config struct; the panel-delivered node config does not decode it, so it
+cannot be switched on from the panel. Native production handshakes do not write per-flight debug traces or
+derived authentication material to stdout, so even that fork field
 cannot create an unbounded log stream or disclose client ShortIDs.
 
 用 `pandora-native --version` 验证发布版本；用 `systemctl stop pandora-native` 后检查端口释放，再执行回滚。
 
 ## 排查：节点不上报心跳
 
-面板的 `nodes.last_heartbeat_at` 只由 UniProxy 的 `status` 接口写入，而订阅
+面板的 `nodes.last_heartbeat_at` 有两个写入口：签名通道由 `/v1/nodes/heartbeat` 写入，
+兼容通道由 UniProxy 的 `status` 接口写入。订阅
 下发会跳过从未上报过心跳的节点。所以「没有心跳」的后果不是告警，是这个节点
 被静默排除在订阅之外——内核照常转发、用户照常同步，两边都不报错。
 
 2026-08-22 在一台 1 核 2G 的共享节点机上排查过一次，根因是两处部署漂移，两个都值得先查：
 
-**一、二进制比源码旧。** 状态上报是 2026-08-08（`657b95d`）才加进 `panel/status.go`
+**一、二进制比源码旧。** 状态上报是 2026-08-08 才加进 `panel/status.go`
 的，早于这个日期编出来的二进制根本没有这个调用。
 
 ```bash
@@ -182,13 +205,15 @@ diff /etc/systemd/system/pandora-native.service pandora-native.service
 ```
 
 本目录的 `pandora-native.service` 是唯一正确的那份：`User=pandora`、
-`StateDirectory=pandora-native`、`ReadWritePaths` 一样不缺。配套的权限要求：
+`StateDirectory=pandora-native`、`ReadWritePaths` 一样不缺。面板安装器内联生成的是等价 unit（仅二进制与配置路径可变），
+`panel/internal/api/public/pdnd_install_test.go` 守住两者关键项一致。配套的权限要求：
 
 ```bash
 chown root:pandora /etc/pandora-native/config.json && chmod 0640 /etc/pandora-native/config.json
 chown -R pandora:pandora /var/lib/pandora-native  && chmod 0700 /var/lib/pandora-native
 ```
 
-**签名通道**另需 `/var/lib/pandora-native/identity.json`，由 enrollment 流程签发。
+**签名通道**另需身份文件，由 enrollment 流程签发。路径以配置里的 `identity_path` 为准：面板安装器写的是
+`/etc/pandora-native/identity.json`；配置未指定时才用缺省的 `/var/lib/pandora-native/identity.json`。
 没有它时日志报 `no such file or directory` 并降级到兼容通道；若报的是
 `permission denied`，那是上面第二个问题，不是没签发。
