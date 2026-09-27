@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 core 的 Core 接口与 core/counter 的用户表，依赖 os/exec 拉起 juicity-server
 // [OUTPUT]: 对外提供 Juicity、JuicityOptions、NewJuicity、DefaultJuicityWorkDir
-// [POS]: pdnd/core/external 的唯一成员，只在 compat 构建里经 core/multi 调用；配置文件缺省写进 pandora-native 唯一可写的状态目录
+// [POS]: pdnd/core/external 的唯一成员，只在 compat 构建里经 core/multi 调用；配置文件缺省写进 pandora-native 的状态目录（unit 里可写的只有它与日志目录）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package external 托管以独立进程运行的协议实现。
@@ -61,9 +61,9 @@ type JuicityOptions struct {
 
 // DefaultJuicityWorkDir 是配置里没写 work_dir 时的配置目录。
 //
-// pandora-native 以 pandora 用户、ProtectSystem=strict 运行，只有状态目录
-// /var/lib/pandora-native 可写（release/pandora-native.service 的
-// ReadWritePaths）；旧缺省 /etc/aegis-nodeagent/juicity 写不进去，juicity 起不来。
+// pandora-native 以 pandora 用户、ProtectSystem=strict 运行，可写的只有状态目录
+// /var/lib/pandora-native 与日志目录 /var/log/pandora-native（release/pandora-native.service
+// 的 ReadWritePaths），配置放状态目录；旧缺省 /etc/aegis-nodeagent/juicity 写不进去，juicity 起不来。
 const DefaultJuicityWorkDir = "/var/lib/pandora-native/juicity"
 
 func NewJuicity(o JuicityOptions) *Juicity {

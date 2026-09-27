@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 xhttp_packet.go 的 XHTTPPacketBroker / XHTTPPacketDuplex，依赖 xhttp_server.go 的 XHTTPSession，依赖 vless_xhttp_packet.go 的 newXHTTPPacketConn，依赖 vmess.go 的 vmessAdapter.handleConn
+// [OUTPUT]: 包内提供 vmessXHTTPPacketSession 与 vmessAdapter 的 startXHTTPPacketSession、xhttpPacketHandler
+// [POS]: kernel 的 VMess XHTTP packet 模式：从 vmess.go 拆出，与 vless_xhttp_packet.go 同构——GET 拉下行、带序号的 POST 推上行，同一会话 ID 只起一个工作协程把拼出的连接交回 VMess 主流程
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
