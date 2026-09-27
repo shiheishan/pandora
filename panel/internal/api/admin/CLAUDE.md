@@ -14,7 +14,7 @@ access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两�
 audit_log.go: 审计日志列表与 CSV 导出（security.audit.read + ops.export + reauth），导出日期区间格式错回 422，自由文本列做公式防护
 risk.go: 风控共享 IP 聚类：列表补明文 IP、归属地与 high/mid/low 分级，标记为正常，批量停用聚类内账号
 profile.go: IP 解密助手、用户风控画像（含注册 IP）、注册与活跃时序（含 active_users：成功拉取或有流量的去重用户）
-dashboard.go / revenue.go / system_status.go / system_components.go: 仪表盘流量排行、通知积压、「需要处理」汇总（路由挂 ops.dashboard.read，逐项按主体权限过滤）、收入趋势（带上一区间合计 previous_total）与调整、系统状态（备份目录与解密私钥路径取 Cfg.Deployment，备份、数据库，以及 8 个组件的 state / components：postgres、valkey、节点、支付回调、邮件、Telegram、SSE 连接数、备份）
+dashboard.go / revenue.go / system_status.go / system_components.go: 仪表盘流量排行、通知积压、「需要处理」汇总（路由挂 ops.dashboard.read，逐项按主体权限过滤）、收入趋势（带上一区间合计 previous_total）与调整、系统状态（备份目录与解密私钥路径取 Cfg.Deployment，备份、数据库，以及 8 个组件的 state / components：postgres、valkey、节点、支付回调、邮件、Telegram、SSE 连接数、备份；数据库统计三个数要么一起读到要么都不给，postgres 连得上但统计读失败时降为 warn、不写 metrics 键（R52），判定在 postgresComponent，由 system_components_test.go 钉住）
 bulk_users.go / usergroup.go / devices.go / traffic_reset.go: 用户批量筛选导出生成群发（筛选含套餐、到期、订阅状态）、用户组（列表带 exclusive_pools；被节点池名单引用时删除回 409 写明池名；换组提交后发 node.users.changed）、设备数限制（概览回显 window_minutes，全局策略可改设备识别窗口 5/10/30/60，窗口只经库函数读，R103）、流量重置日志
 catalog.go: 套餐目录、向导一次建成 / 改完、版本与价格
 traffic_packs.go: 流量包目录管理（后台-04 流量包 tab）：列表、新建、修改、上下架，updated_at 作乐观锁由客户端原样传回
