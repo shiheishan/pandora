@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 service.go 的 Service，依赖 platform 的 db、httpx
 // [OUTPUT]: 对外提供 Metrics、HeartbeatInput / HeartbeatOutput、MetricPoint、NodeMetrics，Service 的 Heartbeat、FetchMetrics、PurgeMetrics
-// [POS]: domain/nodefabric 的心跳与探针（AGT-004）：从 service.go 拆出。指标全部是放大后的整数，避免浮点在存储与聚合时引入误差；后台按分钟窗口查询、定期按小时清理
+// [POS]: domain/nodefabric 的心跳与探针（AGT-004）：从 service.go 拆出。探针值写库前先做范围校验（越界回中文 400，不再撞 CHECK 或列宽回滚成 500）。指标全部是放大后的整数，避免浮点在存储与聚合时引入误差；后台按分钟窗口查询、定期按小时清理
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,41 @@ type Metrics struct {
 	NetTxBytes     int64 `json:"net_tx_bytes"`
 	TCPConns       int   `json:"tcp_conns"`
 	UptimeSec      int64 `json:"uptime_sec"`
+}
+
+// validate 在写库之前核对探针值的范围：cpu_bp 撞 node_metrics 的 CHECK、int 字段
+// 超出 int4 列宽，都会让整条心跳事务回滚成 500，节点连「活着」都报不上来。
+// 越界按兼容通道 ReportRuntimeStatus 的做法回 400，整条心跳不落库。
+func (m *Metrics) validate() error {
+	if m.CPUBasisPoints < 0 || m.CPUBasisPoints > 10000 {
+		return httpx.New(httpx.CodeBadRequest, "心跳指标 cpu_bp 必须在 0 到 10000 之间")
+	}
+	const maxInt4 = math.MaxInt32
+	for _, f := range []struct {
+		name  string
+		value int
+	}{
+		{"mem_used_mb", m.MemUsedMB}, {"mem_total_mb", m.MemTotalMB},
+		{"disk_used_gb", m.DiskUsedGB}, {"disk_total_gb", m.DiskTotalGB},
+		{"load1_cbp", m.Load1CBP}, {"load5_cbp", m.Load5CBP}, {"load15_cbp", m.Load15CBP},
+		{"tcp_conns", m.TCPConns},
+	} {
+		if f.value < 0 || f.value > maxInt4 {
+			return httpx.New(httpx.CodeBadRequest, "心跳指标 "+f.name+" 必须是 0 到 2147483647 之间的整数")
+		}
+	}
+	// bigint 列与 Go 的 int64 同宽，只需不为负
+	for _, f := range []struct {
+		name  string
+		value int64
+	}{
+		{"net_rx_bytes", m.NetRxBytes}, {"net_tx_bytes", m.NetTxBytes}, {"uptime_sec", m.UptimeSec},
+	} {
+		if f.value < 0 {
+			return httpx.New(httpx.CodeBadRequest, "心跳指标 "+f.name+" 不能为负数")
+		}
+	}
+	return nil
 }
 
 type HeartbeatInput struct {
@@ -69,6 +105,11 @@ func (s *Service) Heartbeat(ctx context.Context, tenantID, nodeID string, in Hea
 	if in.ConfigSigningKeyID != "" {
 		if _, err := canonicalEffectiveReleaseKeyID(in.ConfigSigningKeyID); err != nil {
 			return nil, httpx.New(httpx.CodeBadRequest, "invalid config signing key id").WithInternal(err)
+		}
+	}
+	if in.Metrics != nil {
+		if err := in.Metrics.validate(); err != nil {
+			return nil, err
 		}
 	}
 	var out HeartbeatOutput
