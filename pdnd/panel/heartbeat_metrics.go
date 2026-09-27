@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 status.go 的 CollectRuntimeStatus（CPU / 内存 / 磁盘），依赖 /proc 的 loadavg、uptime、net/dev、net/sockstat(6)
-// [OUTPUT]: 对外提供 HeartbeatMetrics、CollectHeartbeatMetrics、HeartbeatInput.AttachHostMetrics
-// [POS]: pdnd/panel 的签名通道资源指标：把本机采样换算成面板 nodefabric.Metrics 的整数口径，挂进 signed.go 的 HeartbeatInput；与 status.go（兼容通道 /status 的字节口径）共用同一份采样
+// [OUTPUT]: 对外提供 HeartbeatMetrics、CollectHeartbeatMetrics、HeartbeatInput.AttachHostMetrics、HostCapacity、CollectHostCapacity
+// [POS]: pdnd/panel 的签名通道资源指标：把本机采样换算成面板 nodefabric.Metrics 的整数口径，挂进 signed.go 的 HeartbeatInput，容量部分也供 enrollment.go 的 begin 请求；与 status.go（兼容通道 /status 的字节口径）共用同一份采样
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package panel
@@ -57,9 +57,27 @@ func (in *HeartbeatInput) AttachHostMetrics() {
 	m, partial := CollectHeartbeatMetrics()
 	in.Metrics = m
 	in.MetricsPartial = partial
-	in.CPUCores = runtime.NumCPU()
-	in.MemoryMB = m.MemTotalMB
-	in.DiskGB = m.DiskTotalGB
+	c := capacityFrom(m)
+	in.CPUCores, in.MemoryMB, in.DiskGB = c.CPUCores, c.MemoryMB, c.DiskGB
+}
+
+// HostCapacity 是机器容量，签名心跳与 enrollment begin 报给面板的
+// cpu_cores / memory_mb / disk_gb。两处共用同一份采集与换算，面板在接入
+// 时看到的容量就和之后心跳刷新的口径一致。
+type HostCapacity struct {
+	CPUCores int
+	MemoryMB int
+	DiskGB   int
+}
+
+// CollectHostCapacity 采一次本机容量；读不到的项为零，面板按「未知」存。
+func CollectHostCapacity() HostCapacity {
+	m, _ := CollectHeartbeatMetrics()
+	return capacityFrom(m)
+}
+
+func capacityFrom(m *HeartbeatMetrics) HostCapacity {
+	return HostCapacity{CPUCores: runtime.NumCPU(), MemoryMB: m.MemTotalMB, DiskGB: m.DiskTotalGB}
 }
 
 // CollectHeartbeatMetrics 采一次本机资源。partial 为真表示有数据源读不到

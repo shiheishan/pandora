@@ -295,3 +295,12 @@ jobs:
           bash pdnd/release/staging-acceptance.sh \
             "$RUNNER_TEMP/pandora-release" \
             "$RUNNER_TEMP/pandora-native-staging" ci
+      - name: Runtime acceptance (signed and compat channels)
+        # 验的是上一步 build.sh 产出的 amd64 发布二进制本身：回环模拟面板上
+        # signed（enrollment 后的生产形态）与 compat 两种接入各冷启动两次，
+        # 查 SIGTERM 收尾与端口释放。模拟面板由脚本用本 checkout 的 Go 编出。
+        run: |
+          test "$(uname -m)" = x86_64
+          bash pdnd/release/runtime-acceptance.sh \
+            "$RUNNER_TEMP/pandora-release/pandora-native-linux-amd64" \
+            "$RUNNER_TEMP/pandora-native-runtime"

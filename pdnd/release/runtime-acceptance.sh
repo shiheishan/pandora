@@ -149,6 +149,8 @@ JSON
 
   run_once "${mode}" 1 "${dir}" "${node_port}" "${expect}"
   run_once "${mode}" 2 "${dir}" "${node_port}" "${expect}"
+  # 每个模式一行面板侧观测，CI 日志里能直接看出两种接入都真跑了。
+  printf '{"mode_passed":"%s","cold_starts":2,"panel_observed":%s}\n' "${mode}" "$(cat "${dir}/state.json")"
   kill -TERM "${panel_pid}" 2>/dev/null || true
   wait "${panel_pid}" 2>/dev/null || true
   panel_pid=""

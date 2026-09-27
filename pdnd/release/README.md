@@ -99,19 +99,23 @@ bash ./release/staging-acceptance.sh ./release/dist /var/tmp/pandora-native-stag
 因此 CI 的绿色结果只代表隔离验收通过，不代表已经修改生产 systemd。
 
 CI 已覆盖的部分：`linux-race` job 在 x64 上跑全量 `go test -race` 与 vet；`linux-arm64-runtime` job
-在原生 ARM64 runner 上跑全量 race 与 vet，并实际执行编出的二进制做 `--self-check` / `--capabilities`。
+在原生 ARM64 runner 上跑全量 race 与 vet，并实际执行编出的二进制做 `--self-check` / `--capabilities`；
+`release-manifest` job 在 staging 验收之后，对同一份 amd64 发布二进制跑下面的 `runtime-acceptance.sh`
+（signed、compat 两种模式），日志里每个模式各有一行 `{"mode_passed":...}` 记录面板侧观测。ARM64 二进制的
+这项验收 CI 未覆盖。
 
-CI 未覆盖、发布前需在真实 Linux 机器上补跑的：
+发布前需在真实 Linux 目标机上补跑的：
 
-- 冷启动、SIGTERM 收尾、端口释放和重复启动：用 `release/runtime-acceptance.sh`。它在本机回环上起一个
+- 冷启动、SIGTERM 收尾、端口释放和重复启动（CI 只在 amd64 runner 上跑过；ARM64 与目标机环境需补跑）：
+  用 `release/runtime-acceptance.sh`。它在本机回环上起一个
   模拟面板（Go，`release/acceptancepanel`）和指定的节点二进制，按两种接入各冷启动两次：
   - `signed`：安装器 enrollment 之后的生产形态——身份文件加 `signed_required: true`。配置来自签名的
     effective release，要看到带 `metrics` 的签名心跳和 `health_passed` 配置上报，且全程没有碰 UniProxy
     的配置与 `/status`、没有签名不合法的请求；
   - `compat`：不带身份、只有 UniProxy 令牌的兼容接入，要看到经 UniProxy 拉配置与 `/status` 上报。
 
-  每次都等端口就绪、面板侧看到上述上报后发 SIGTERM，确认进程退出且端口已释放，成功时输出
-  `{"status":"ok",...}`；不写系统路径、不碰 systemd，需要 `python3` 和 `go`（用来编模拟面板）。验收机
+  每次都等端口就绪、面板侧看到上述上报后发 SIGTERM，确认进程退出且端口已释放；每个模式通过后输出一行
+  `{"mode_passed":...}`，全部通过时输出 `{"status":"ok",...}`；不写系统路径、不碰 systemd，需要 `python3` 和 `go`（用来编模拟面板）。验收机
   没有 Go 时，在别处交叉编好再传进去：
 
   ```bash

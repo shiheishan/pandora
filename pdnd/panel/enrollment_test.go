@@ -108,3 +108,36 @@ func TestEnrollmentBeginRejectsIncompleteResponse(t *testing.T) {
 		t.Fatalf("identity file exists after a rejected begin: %v", err)
 	}
 }
+
+// begin 请求要带上本机容量：面板在接入事务里把它写进 nodes，节点从出现在
+// 后台那一刻起就有 CPU / 内存 / 磁盘，而不是一直空到第一次签名心跳。
+func TestEnrollmentBeginReportsHostCapacity(t *testing.T) {
+	saved := collectEnrollmentCapacity
+	collectEnrollmentCapacity = func() HostCapacity { return HostCapacity{CPUCores: 4, MemoryMB: 8192, DiskGB: 80} }
+	defer func() { collectEnrollmentCapacity = saved }()
+
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Errorf("begin body: %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"enrollment_id": "enr-1", "node_id": "node-1", "serial": 1, "state": "pending",
+			"config_key_id": "key-1", "config_public_key": "fixture-config-public-key",
+		})
+	}))
+	defer server.Close()
+
+	if _, err := BeginEnrollment(context.Background(), BootstrapOptions{
+		Server: server.URL, Token: "fixture-bootstrap-token", Name: "node-1", Path: filepath.Join(t.TempDir(), "identity.json"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]float64{"cpu_cores": 4, "memory_mb": 8192, "disk_gb": 80} {
+		if got[key] != want {
+			t.Errorf("begin %s = %v, want %v", key, got[key], want)
+		}
+	}
+}
