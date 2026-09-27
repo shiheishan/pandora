@@ -333,8 +333,9 @@ func (n *Node) protocolFrom(cfg map[string]any) string {
 // 「这个节点还活着吗」的唯一依据。不报的话那几列一直空着，服务挂了后台
 // 也不变色，只能等用户报障。
 //
-// 资源占用（CPU、内存、磁盘）只在兼容通道上报：签名通道的 Heartbeat 只带
-// 版本、配置与运行状态，不带资源指标。
+// 两条通道都带资源占用，面板都写进 node_metrics（后台资源曲线读那张表）：
+// 签名通道随 Heartbeat 带 metrics（另含负载、网络累计、TCP 连接数、开机
+// 时长），兼容通道走 /status，只有 CPU、内存、磁盘。
 //
 // 失败只记日志不重试：下一个节拍会再来一次，而卡在这里重试会挤掉同一个
 // 循环里的配置同步和流量上报——那两件比状态上报重要。
@@ -351,6 +352,7 @@ func (n *Node) reportStatus(ctx context.Context) {
 		} else {
 			input.ConfigHash = n.appliedConfigHash
 		}
+		input.AttachHostMetrics()
 		if _, err := n.signed.Heartbeat(ctx, input); err != nil {
 			n.log.Error("签名上报运行状态失败", "err", err)
 		}
