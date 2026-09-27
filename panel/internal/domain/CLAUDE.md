@@ -15,7 +15,7 @@ nodefabric/: 节点接入与配置下发（PRD 第 8–9 章），32 文件；pr
 notify/: 站内信、邮件，以及到期与流量预警，8 文件；见 notify/CLAUDE.md
 payment/: 支付渠道适配器接口（PAY-002）与跨渠道通用的金额换算，3 文件，另含 demo/、epay/ 两个渠道子包；不依赖 httpx，渠道停用以 ErrProviderDisabled 哨兵交给 billing 翻译成 503
 plugin/: 出站 webhook 插件钩子 hooks.go 与事件发射 emit.go，投递记往返耗时；见 plugin/CLAUDE.md
-subscription/: 订阅分发与门户按日用量读模型，4 文件；见 subscription/CLAUDE.md
+subscription/: 订阅分发与门户按日用量读模型，5 文件；current.go 是后台「当前订阅 / 在用」口径的唯一真相源（R118），adminops 与 support 引用；见 subscription/CLAUDE.md
 support/: 工单（OPS-001）与客服快捷回复，6 文件（用户侧、客服侧、超时升级分文件）；见 support/CLAUDE.md
 *_test.go: 各域用例测试随包放置
 
