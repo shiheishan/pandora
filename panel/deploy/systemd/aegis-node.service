@@ -7,6 +7,10 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/aegispanel
 EnvironmentFile=/opt/aegispanel/deploy/.env
+# 节点端发布物绑定（版本与两个架构的 SHA-256），随每次升级覆盖；放在 .env 之后，
+# 发布包的值压过 .env 里可能残留的旧手填值。「-」：缺文件不阻止启动，生产模式下
+# 节点接入照样 fail closed。
+EnvironmentFile=-/opt/aegispanel/deploy/release-artifact.env
 ExecStart=/opt/aegispanel/bin/aegis-node
 KillSignal=SIGTERM
 TimeoutStopSec=30

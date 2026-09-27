@@ -6,20 +6,20 @@
 成员清单
 
 安装与升级
-install.sh: 一键安装 / 升级（Docker 数据基座），升级前自动全量备份，不替人造管理员；收尾提示先填 AEGIS_PUBLIC_BASE_URL 再渲染 nginx
+install.sh: 一键安装 / 升级（Docker 数据基座）。发布包装出来的就是生产：首装写 AEGIS_ENV=production，并先拿到 https 公网域名（PANDORA_PUBLIC_BASE_URL 或现场询问，不合规即在动手前停下）；升级不改现有运行模式，非 production 只提示；升级前自动全量备份，不替人造管理员
 install-native.sh: 无 Docker 的直装版，首装生成 .env 的全部 CHANGE_ME 机密
-install-linux-binaries.sh: 按带外获得的 SHA-256 摘要校验后安装发布包二进制
+install-linux-binaries.sh: 按带外获得的 SHA-256 摘要校验后，以可回滚事务安装发布包二进制、运维脚本、systemd 单元与 release-artifact.env（到 /opt/aegispanel/deploy/）
 platform.sh / preflight-linux.sh: 发行版与依赖探测（被其他脚本 source），装前环境预检
 migrate-to-new-host.sh: 新主机一键迁移：恢复 Age 密文备份、重建 aegis_app 角色、校验账本无漂移，第 5 步先拦下缺失的 AEGIS_PUBLIC_BASE_URL
-.env.example: 运行配置模板，机密与域名全是 CHANGE_ME 占位
+.env.example: 运行配置模板，机密与域名全是 CHANGE_ME 占位；AEGIS_ENV 默认 development 给本地开发，install.sh 首装改成 production
 docker-compose.yml: 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1
-systemd/: aegis-public/admin/node 三网关、备份 service+timer 单元
+systemd/: aegis-public/admin/node 三网关、备份 service+timer 单元；aegis-node 在 .env 之后再加载 release-artifact.env（节点接入的发布物绑定）
 logrotate-aegis: 三个服务的日志轮转
 
 发布与切换
 build-release.sh: 打发布包，先以 PANDORA_RELEASE=$VERSION 跑 make frontend-embed（无 npm 即失败；版本号注入后台登录页与侧栏），拒绝占位前端进入发布物；迁移工具版本随包固定
 release-stop-the-world.sh: 改表发布的停机切换控制器
-release-artifact.env.example: 发布物 SHA256SUMS 绑定样例（docs/RELEASE-ARTIFACT-BINDING.md）
+release-artifact.env.example: 发布物绑定样例；真实文件由 build-release.sh 按本包 pdnd-dist 生成（版本 + 两架构 SHA-256，不含 AEGIS_ENV），全链路见 docs/RELEASE-ARTIFACT-BINDING.md，release-artifact-binding_mock_test.sh 守
 renewal-cutover.md: 续费幂等切换闸门手册
 pandora-preflight-lease-registry.sh: 预检租约登记，防止并发发布
 

@@ -237,10 +237,18 @@ cd panel && ./deploy/build-release.sh /tmp/dist
 
 ```bash
 scp -r /tmp/dist/pandora-panel_*_linux_amd64 root@目标机:/opt/pandora-release/rel
-ssh root@目标机 'cd /opt/pandora-release/rel/deploy && ./install.sh'
+ssh -t root@目标机 'cd /opt/pandora-release/rel/deploy && ./install.sh'
 ```
 
-无人值守加 `PANDORA_ASSUME_YES=1`。
+发布包装出来的就是生产：首装把 `.env` 定为 `AEGIS_ENV=production`。生产模式下网关要求
+`AEGIS_PUBLIC_BASE_URL` 是 `https://公网域名`，否则拒绝启动，所以首装会先问面板的对外地址
+（形如 `https://panel.example.com`，不能是 IP、不带端口与路径），不合规就在动手前停下。
+无人值守加 `PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名`。
+升级不改现有 `.env` 的运行模式；不是 production 时只打印提示和切换步骤。
+
+节点接入的发布物绑定（节点端两个架构的 SHA-256 与版本）随包生成在 `deploy/release-artifact.env`，
+安装到 `/opt/aegispanel/deploy/`，由 `aegis-node` 加载，每次升级随包覆盖；全过程见
+[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)。
 
 安装器拒绝从任何人可写的目录安装（防止有人塞一份假的进来），所以包要放在
 root 独占的目录下——直接拿 `/tmp` 里的构建产物去装会被挡住，那是它在正确工作。
@@ -259,9 +267,9 @@ root 独占的目录下——直接拿 `/tmp` 里的构建产物去装会被挡�
 
 ### 3. 装完
 
-三个网关只监听 `127.0.0.1`，公网访问要在前面放反向代理并配 TLS。先把 `/opt/aegispanel/deploy/.env` 里的
-`AEGIS_PUBLIC_BASE_URL` 改成 `https://你的域名`，再渲染 nginx 配置：`server_name` 和 Let's Encrypt 证书路径都从这个域名生成，
-没填、仍是示例值、不是 HTTPS 域名时脚本拒绝渲染。
+三个网关只监听 `127.0.0.1`，公网访问要在前面放反向代理并配 TLS。渲染 nginx 配置：`server_name` 和
+Let's Encrypt 证书路径都从 `.env` 的 `AEGIS_PUBLIC_BASE_URL`（首装时填的域名）生成，
+没填、仍是示例值、不是 HTTPS 域名时脚本拒绝渲染。公网只听 80（跳 443）与 443，另有本机回环运维入口 `127.0.0.1:9080`。
 
 ```bash
 /opt/aegispanel/deploy/render-nginx.sh

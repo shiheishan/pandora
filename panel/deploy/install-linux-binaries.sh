@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖带外获得的 PANDORA_RELEASE_MANIFEST_SHA256、发布目录的 SHA256SUMS、同包 platform.sh / preflight-linux.sh、systemctl
+# [OUTPUT]: 以可回滚事务把二进制、运维脚本、数据文件（含 release-artifact.env）、systemd 单元装进 /opt/aegispanel 与 /etc/systemd/system
+# [POS]: install.sh 第 8 步调用的事务安装器；只装文件不启服务，失败整体回滚，未完成的事务让下一次安装 fail closed
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -Eeuo pipefail
 umask 022
 
@@ -143,8 +147,10 @@ done
 for script in backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh migrate.sh platform.sh check-migrations.sh; do
   stage_file "$RELEASE_DIR/deploy/$script" "/opt/aegispanel/deploy/$script" 0755
 done
+# release-artifact.env 是本包节点端二进制的 SHA-256 与版本，aegis-node.service
+# 以 EnvironmentFile= 加载；和二进制同一事务替换，升级随包覆盖、失败随包回滚。
 for data_file in BACKUP.md backup-webdav.example.json .env.example \
-                 docker-compose.yml configure-app-role.sql; do
+                 docker-compose.yml configure-app-role.sql release-artifact.env; do
   stage_file "$RELEASE_DIR/deploy/$data_file" "/opt/aegispanel/deploy/$data_file" 0644
 done
 for unit in aegis-public.service aegis-admin.service aegis-node.service \
