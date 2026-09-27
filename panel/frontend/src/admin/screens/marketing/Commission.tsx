@@ -245,8 +245,6 @@ function Settings({ overview }: { overview: CommissionOverview }) {
   const fail = useFailure()
   const invalidate = useInvalidateMarketing()
   const writable = can('marketing.commission.write')
-  // 计佣范围是待补·后端：overview 没回 scope 说明后端还不认这个字段，控件与请求里都不出现
-  const supportsScope = overview.scope !== undefined
   const [form, setForm] = useState<CommissionForm>(() => commissionToForm(overview))
   const [errors, setErrors] = useState<FieldErrors>({})
 
@@ -261,7 +259,7 @@ function Settings({ overview }: { overview: CommissionOverview }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    const built = buildCommissionConfig(form, supportsScope)
+    const built = buildCommissionConfig(form)
     if (!built.ok) return setErrors(built.errors)
     setErrors({})
     save.mutate(built.body)
@@ -277,22 +275,20 @@ function Settings({ overview }: { overview: CommissionOverview }) {
         </span>
         {errors.rate_percent && <span className={css.error}>{errors.rate_percent}</span>}
       </label>
-      {supportsScope && (
-        <div>
-          <div className={css.groupLabel}>计佣范围</div>
-          <Segmented<CommissionForm['scope']>
-            label="计佣范围"
-            size="sm"
-            value={form.scope}
-            onChange={(scope) => writable && setForm({ ...form, scope })}
-            options={[
-              { value: 'first_order', label: '仅首单' },
-              { value: 'every_order', label: '每笔订单' },
-            ]}
-            className={local.scope}
-          />
-        </div>
-      )}
+      <div>
+        <div className={css.groupLabel}>计佣范围</div>
+        <Segmented<CommissionForm['scope']>
+          label="计佣范围"
+          size="sm"
+          value={form.scope}
+          onChange={(scope) => writable && setForm({ ...form, scope })}
+          options={[
+            { value: 'first_order', label: '仅首单' },
+            { value: 'every_order', label: '每笔订单' },
+          ]}
+          className={local.scope}
+        />
+      </div>
       <div className={local.pair}>
         <Input label="结算冻结期（天）" mono inputMode="numeric" value={form.freezeDays} disabled={!writable} onChange={(e) => setForm({ ...form, freezeDays: e.target.value })} error={errors.freeze_days} />
         <Input label="最低提现（¥）" mono inputMode="decimal" value={form.minWithdraw} disabled={!writable} onChange={(e) => setForm({ ...form, minWithdraw: e.target.value })} error={errors.min_withdraw} />

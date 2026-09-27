@@ -22,13 +22,13 @@ type View = 'templates' | 'batches' | 'usages'
 const VIEWS: readonly View[] = ['templates', 'batches', 'usages']
 const giftPath = (view: View, batchId?: string) => `/marketing/gifts/${view}${batchId ? `/${encodeURIComponent(batchId)}` : ''}`
 
-/** 面额合计是待补·后端的 balance_issued；缺时退回已兑出余额并改标签（契约） */
+/** 第四格是已发行通用卡的面额合计 balance_issued（契约） */
 function giftStats(s: GiftStats) {
   return [
     { label: '已发行', value: s.codes_total.toLocaleString('zh-CN') },
     { label: '已兑换', value: s.codes_used.toLocaleString('zh-CN') },
     { label: '兑换率', value: redeemRate(s.codes_used, s.codes_total) },
-    s.balance_issued === undefined ? { label: '已兑出余额', value: formatMoney(s.balance_out, 'CNY') } : { label: '面额合计', value: formatMoney(s.balance_issued, 'CNY') },
+    { label: '面额合计', value: formatMoney(s.balance_issued, 'CNY') },
   ]
 }
 

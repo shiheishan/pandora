@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 zod
  * [OUTPUT]: 对外提供营销页全部接口的 zod schema 与推导类型：优惠券、兑换记录、礼品卡模板 / 统计 / 批次 / 卡码 / 使用记录 / 生码结果、佣金总览、提现，以及营销页用到的套餐目录子集
- * [POS]: admin/screens/marketing 与后端对账的唯一防线：形状逐字取自 api-contract.md 后台-06（含 R4 R5 R6 R17）并与 Go 处理器的 json tag 核对过；待补·后端的字段标可选，Go 的 omitempty 字段标可选，nil 切片可能序列化成 null 的标 nullable
+ * [POS]: admin/screens/marketing 与后端对账的唯一防线：形状逐字取自 api-contract.md 后台-06（含 R4 R5 R6 R17）并与 Go 处理器的 json tag 核对过；Go 的 omitempty 字段标可选，后端必回的字段一律必填（原待补·后端字段 R67 R68 已上线并收紧），nil 切片可能序列化成 null 的标 nullable
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
@@ -121,7 +121,7 @@ export const templatesResponse = z.object({
 export const templateSaved = z.object({ template: templateSchema })
 export type GiftTemplate = z.output<typeof templateSchema>
 
-/** balance_issued 是待补·后端（扩展），缺时统计格退回 balance_out 并改标签 */
+/** balance_issued：已发行通用卡面额合计（giftcard.Stats，无 omitempty，恒返回） */
 export const giftStatsSchema = z.object({
   templates: z.number(),
   codes_total: z.number(),
@@ -129,7 +129,7 @@ export const giftStatsSchema = z.object({
   codes_unused: z.number(),
   balance_out: z.number(),
   traffic_out: z.number(),
-  balance_issued: z.number().optional(),
+  balance_issued: z.number(),
 })
 export type GiftStats = z.output<typeof giftStatsSchema>
 
@@ -206,7 +206,7 @@ export const toggleResponse = z.object({ disabled: z.boolean() })
 // ---------------------------------------------------------------------------
 // 佣金与提现
 // ---------------------------------------------------------------------------
-/** total_earned / invited_users / scope 是待补·后端（扩展），按可选 */
+/** total_earned / invited_users / scope 由 commissionOverview 的 map 字面量恒返回；scope 缺行或非法时后端已兜底成 every_order */
 export const overviewSchema = z.object({
   pending: z.number(),
   available: z.number(),
@@ -218,9 +218,9 @@ export const overviewSchema = z.object({
   rate_percent: z.number(),
   freeze_days: z.number(),
   min_withdraw: z.number(),
-  total_earned: z.number().optional(),
-  invited_users: z.number().optional(),
-  scope: z.enum(['first_order', 'every_order']).optional(),
+  total_earned: z.number(),
+  invited_users: z.number(),
+  scope: z.enum(['first_order', 'every_order']),
 })
 export type CommissionOverview = z.output<typeof overviewSchema>
 
