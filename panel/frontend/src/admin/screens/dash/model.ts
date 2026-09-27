@@ -21,9 +21,9 @@ export function formatPercent(ratio: number): string {
   return `${pct > 0 ? '+' : '−'}${Math.abs(pct).toFixed(1)}%`
 }
 
-/** 相对变化；上一期缺失（待补·后端字段未上）或为 0 时无意义，返回 null */
-export function percentChange(current: number, previous: number | undefined): number | null {
-  if (previous === undefined || previous === 0) return null
+/** 相对变化；上一期为 0 时无意义，返回 null */
+export function percentChange(current: number, previous: number): number | null {
+  if (previous === 0) return null
   return (current - previous) / Math.abs(previous)
 }
 
@@ -224,9 +224,8 @@ export function taskCards(items: readonly TaskItem[] | undefined, backlog: Backl
 // 经营 KPI
 // ===========================================================================
 
-/** 「较昨日」：yesterday 是待补·后端字段，缺失时不瞎算 */
-export function kpiRevenueDelta(today: number, yesterday: number | undefined): { text: string; tone: Tone } {
-  if (yesterday === undefined) return { text: '较昨日 —', tone: 'neutral' }
+/** 「较昨日」：昨日为 0 时不算百分比，只说有无收入 */
+export function kpiRevenueDelta(today: number, yesterday: number): { text: string; tone: Tone } {
   if (yesterday === 0) return { text: today === 0 ? '昨日今日均无收入' : '昨日无收入', tone: 'neutral' }
   const change = percentChange(today, yesterday)!
   return { text: `较昨日 ${formatPercent(change)}`, tone: change > 0 ? 'ok' : change < 0 ? 'danger' : 'neutral' }
@@ -247,13 +246,13 @@ export interface Bar {
 export interface RevenueSummary {
   total: number
   average: number
-  /** 较上一区间，previous_total 缺失或为 0 时 null */
+  /** 较上一区间，previous_total 为 0 时 null */
   delta: number | null
   empty: boolean
   bars: Bar[]
 }
 
-export function revenueSummary(points: readonly RevenuePoint[], currency: string, previousTotal: number | undefined): RevenueSummary {
+export function revenueSummary(points: readonly RevenuePoint[], currency: string, previousTotal: number): RevenueSummary {
   const total = points.reduce((sum, p) => sum + p.displayed_net, 0)
   const max = Math.max(1, ...points.map((p) => p.displayed_net))
   const bars = points.map((p, i) => {
@@ -282,44 +281,40 @@ export function revenueSummary(points: readonly RevenuePoint[], currency: string
 export interface ActivityBar {
   key: string
   registered: number
-  /** active_users 是待补·后端字段，缺失时为 null，不画活跃柱 */
-  active: number | null
+  active: number
   tip: string
 }
 
 export interface ActivitySummary {
   registeredTotal: number
-  /** 日活均值；后端未补 active_users 时 null */
-  activeAverage: number | null
+  /** 日活均值；没有点时为 0 */
+  activeAverage: number
   empty: boolean
   bars: ActivityBar[]
 }
 
 export function activitySummary(points: readonly ActivityPoint[]): ActivitySummary {
   const regMax = Math.max(1, ...points.map((p) => p.registered))
-  const hasActive = points.length > 0 && points.every((p) => p.active_users !== undefined)
-  const actMax = Math.max(1, ...points.map((p) => p.active_users ?? 0))
+  const actMax = Math.max(1, ...points.map((p) => p.active_users))
   const registeredTotal = points.reduce((s, p) => s + p.registered, 0)
-  const activeTotal = points.reduce((s, p) => s + (p.active_users ?? 0), 0)
+  const activeTotal = points.reduce((s, p) => s + p.active_users, 0)
   return {
     registeredTotal,
-    activeAverage: hasActive ? Math.round(activeTotal / points.length) : null,
-    empty: points.every((p) => p.registered === 0 && (p.active_users ?? 0) === 0 && p.logins === 0 && p.orders === 0),
+    activeAverage: points.length ? Math.round(activeTotal / points.length) : 0,
+    empty: points.every((p) => p.registered === 0 && p.active_users === 0 && p.logins === 0 && p.orders === 0),
     bars: points.map((p) => ({
       key: p.day,
       // 设计稿：注册柱最高 70%，活跃柱最高 100%，两者量级不同各自归一
       registered: Math.round((p.registered / regMax) * 70),
-      active: hasActive ? Math.round(((p.active_users ?? 0) / actMax) * 100) : null,
+      active: Math.round((p.active_users / actMax) * 100),
       tip: [
         p.day,
         `注册 ${formatCount(p.registered)}`,
-        p.active_users !== undefined ? `活跃 ${formatCount(p.active_users)}` : '',
+        `活跃 ${formatCount(p.active_users)}`,
         `登录 ${formatCount(p.logins)}`,
         `订单 ${formatCount(p.orders)}`,
         `独立 IP ${formatCount(p.unique_ips)}`,
-      ]
-        .filter(Boolean)
-        .join(' · '),
+      ].join(' · '),
     })),
   }
 }
@@ -382,7 +377,7 @@ const COMPONENT_NAMES: Record<SystemComponent['key'], string> = {
 }
 
 /** R52：down / unknown 时 metrics 的任何字段都可能缺，缺失显示 — */
-const num = (v: number | undefined) => (v === undefined ? '—' : formatCount(v))
+const num = (v: number | null | undefined) => (v == null ? '—' : formatCount(v))
 
 function queueMeta(m: { queued?: number; retrying?: number; failed_total?: number }): string {
   return [`${num(m.queued)} 排队`, (m.retrying ?? 0) > 0 ? `${num(m.retrying)} 重试` : '', (m.failed_total ?? 0) > 0 ? `${num(m.failed_total)} 失败` : '']
@@ -397,7 +392,7 @@ function componentMeta(c: SystemComponent): string {
   switch (c.key) {
     case 'postgres': {
       const m = c.metrics
-      return [latency, m.size_bytes === undefined ? '' : formatBytes(m.size_bytes), `连接 ${num(m.connections)}/${num(m.max_connections)}`].filter(Boolean).join(' · ')
+      return [latency, m.size_bytes == null ? '' : formatBytes(m.size_bytes), `连接 ${num(m.connections)}/${num(m.max_connections)}`].filter(Boolean).join(' · ')
     }
     case 'valkey':
       return latency || '—'
@@ -426,28 +421,17 @@ const ROW_ACTIONS: Partial<Record<SystemComponent['key'], Target>> = {
 export function systemRows(status: SystemStatus, perms: Permissions): SystemView {
   const backup = backupSummary(status.backup)
   const backupRow: SystemRow = { key: 'backup', name: COMPONENT_NAMES.backup, state: backup.state, meta: backup.meta, action: { kind: 'backup' } }
-  let rows: SystemRow[]
-  if (status.components) {
-    rows = status.components
-      .filter((c) => c.key !== 'backup')
-      .map((c) => {
-        const target = ROW_ACTIONS[c.key]
-        const go = target ? reachable(target, perms) : null
-        return { key: c.key, name: COMPONENT_NAMES[c.key], state: c.state, meta: componentMeta(c), hint: c.message, action: go ? { kind: 'go' as const, target: go } : undefined }
-      })
-    // 备份行的状态以后端组件为准（它还看 missing_checksum 等），文案由完整的 backup 段给出
-    const fromServer = status.components.find((c) => c.key === 'backup')
-    rows.push(fromServer ? { ...backupRow, state: fromServer.state, hint: fromServer.message } : backupRow)
-  } else {
-    // 后端未补 components 前：只有数据库与备份两行来自现有字段
-    const db = status.database
-    rows = [
-      'error' in db
-        ? { key: 'postgres', name: COMPONENT_NAMES.postgres, state: 'down', meta: db.error }
-        : { key: 'postgres', name: COMPONENT_NAMES.postgres, state: 'ok', meta: `${formatBytes(db.size_bytes)} · 连接 ${db.connections}/${db.max_connections}` },
-      backupRow,
-    ]
-  }
+  const rows: SystemRow[] = status.components
+    .filter((c) => c.key !== 'backup')
+    .map((c) => {
+      const target = ROW_ACTIONS[c.key]
+      const go = target ? reachable(target, perms) : null
+      return { key: c.key, name: COMPONENT_NAMES[c.key], state: c.state, meta: componentMeta(c), hint: c.message, action: go ? { kind: 'go' as const, target: go } : undefined }
+    })
+  // 备份行的状态以后端组件为准（它还看 missing_checksum 等），文案由完整的 backup 段给出；
+  // Go 总会给 backup 组件，find 落空只是类型上的可能，此时退回 backup 段自己的判断
+  const fromServer = status.components.find((c) => c.key === 'backup')
+  rows.push(fromServer ? { ...backupRow, state: fromServer.state, hint: fromServer.message } : backupRow)
   const degraded = rows.filter((r) => r.state === 'warn' || r.state === 'down').length
   const bad = status.state === 'degraded' || degraded > 0
   return { rows, degraded, label: bad ? `${Math.max(degraded, 1)} 项降级` : '全部正常', tone: bad ? 'warn' : 'ok' }

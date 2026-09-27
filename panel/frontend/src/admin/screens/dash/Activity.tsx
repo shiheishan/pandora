@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 formatCount，依赖 ../../../ui 的 Empty，依赖 ./api 的 useActivity，依赖 ./model 的 activitySummary，依赖 ./parts，依赖 ./Dash.module.css
  * [OUTPUT]: 对外提供 Activity
- * [POS]: 仪表盘「注册与活跃 · 近 14 天」面板：GET v1/stats/timeseries?days=14，注册柱与活跃柱成对（active_users 后端已实现，字段缺席时兜底：只画注册柱、日活均值显示 —），tooltip 附登录、订单、独立 IP（待补·前端）
+ * [POS]: 仪表盘「注册与活跃 · 近 14 天」面板：GET v1/stats/timeseries?days=14，注册柱与活跃柱成对（active_users 必回），下方 14 日注册与日活均值，tooltip 附登录、订单、独立 IP（待补·前端）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatCount } from '../../../core/format'
@@ -29,12 +29,10 @@ export function Activity() {
             <span className={`${css.swatch} ${css.swatchRegistered}`} />
             注册
           </span>
-          {summary && summary.activeAverage !== null && (
-            <span className={css.legendItem}>
-              <span className={`${css.swatch} ${css.swatchActive}`} />
-              活跃
-            </span>
-          )}
+          <span className={css.legendItem}>
+            <span className={`${css.swatch} ${css.swatchActive}`} />
+            活跃
+          </span>
         </div>
       </div>
       {q.isError && !summary ? (
@@ -48,7 +46,7 @@ export function Activity() {
           <div className={css.pairBars} role="img" aria-label="近 14 天每日注册与活跃柱图">
             {summary.bars.map((b) => (
               <div key={b.key} className={css.pairSlot} title={b.tip}>
-                {b.active !== null && <div className={css.barActive} style={{ height: `${b.active}%` }} />}
+                <div className={css.barActive} style={{ height: `${b.active}%` }} />
                 <div className={css.barRegistered} style={{ height: `${b.registered}%` }} />
               </div>
             ))}
@@ -60,7 +58,7 @@ export function Activity() {
             </div>
             <div>
               <div className={css.hint}>日活均值</div>
-              <div className={css.statValue}>{summary.activeAverage === null ? '—' : formatCount(summary.activeAverage)}</div>
+              <div className={css.statValue}>{formatCount(summary.activeAverage)}</div>
             </div>
           </div>
         </>

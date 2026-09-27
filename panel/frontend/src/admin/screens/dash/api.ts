@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / keepPreviousData，依赖 zod，依赖 ../../../shell/runtime 的 useApi
  * [OUTPUT]: 对外提供仪表盘七个读接口的 zod schema 与类型（Backlog、Overview、Revenue、NodeTraffic、UserTraffic、SystemStatus、Activity 等）及对应的 useXxx 查询 hook
- * [POS]: admin/screens/dash 的数据层：只经 core/api.ts 取数、只经 react-query 缓存；形状逐字照 api-contract.md 后台-01（待补·后端字段一律可选），流量与积压三件照 DASH-01 冻结契约；第八个 GET v1/dashboard/tasks 与侧栏共用，在 ../../tasks.ts；model.ts 消费这里的类型，界面组件消费这里的 hook
+ * [POS]: admin/screens/dash 的数据层：只经 core/api.ts 取数、只经 react-query 缓存；形状逐字照 api-contract.md 后台-01，并按 Go 实际编码收紧（后端必回的字段必填，只有按条件放键的备份段、R52 的组件 metrics 与 omitempty 的 latency_ms / message 保持可选，postgres 三项指标照抄 database 段、读失败时为 null），流量与积压三件照 DASH-01 冻结契约；第八个 GET v1/dashboard/tasks 与侧栏共用，在 ../../tasks.ts；model.ts 消费这里的类型，界面组件消费这里的 hook
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
@@ -9,8 +9,8 @@ import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
 
 // ---------------------------------------------------------------------------
-// 共用片段。本机没有真网关，zod 是和后端对账的唯一防线：按契约写全、写严，
-// 待补·后端的字段写 optional，后端补上即生效；多一个未知 kind 就判为不符约定。
+// 共用片段。zod 是和后端对账的防线：按契约与 Go 实际编码写全、写严，后端必回的
+// 字段一律必填，只有 Go 按条件放键或 omitempty 的才写 optional；多一个未知 kind 就判为不符约定。
 // ---------------------------------------------------------------------------
 const int = z.number().int()
 const count = int.nonnegative()
@@ -44,7 +44,7 @@ export const backlogSchema = z.object({
 export type Backlog = z.output<typeof backlogSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/overview（现有 + 待补·后端追加字段，billing.ledger.read）
+// GET v1/overview（adminops.Overview，billing.ledger.read）
 // ---------------------------------------------------------------------------
 const revenueRowSchema = z.object({
   currency,
@@ -60,24 +60,22 @@ const revenueRowSchema = z.object({
   adjustment_7_days: int,
   adjustment_30_days: int,
   adjustment_total: int,
-  // 待补·后端
-  yesterday: int.optional(),
-  actual_yesterday: int.optional(),
+  yesterday: int,
+  actual_yesterday: int,
 })
 export const overviewSchema = z.object({
   users: z.object({ total: count, active: count, today: count, last_7_days: count }),
-  subscriptions: z.object({ active: count, trialing: count, expiring_7_days: count, expired: count, new_7_days: count.optional() }),
+  subscriptions: z.object({ active: count, trialing: count, expiring_7_days: count, expired: count, new_7_days: count }),
   revenue: z.array(revenueRowSchema),
   orders: z.object({ paid_today: count, pending: count, failed_today: count }),
   ledger_drift_accounts: count,
-  // 待补·后端
-  nodes: z.object({ total: count, online: count }).optional(),
+  nodes: z.object({ total: count, online: count }),
 })
 export type RevenueRow = z.output<typeof revenueRowSchema>
 export type Overview = z.output<typeof overviewSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/revenue/timeseries（现有 + 待补 previous_total，billing.ledger.read）
+// GET v1/revenue/timeseries（previous_total 为紧邻前一等长区间的 displayed_net 合计，billing.ledger.read）
 // ---------------------------------------------------------------------------
 export type RevenueCurrency = 'CNY' | 'USD'
 export type RevenueDays = 7 | 30 | 90
@@ -92,7 +90,7 @@ export const revenueSchema = z.object({
   currency,
   days: count,
   points: z.array(revenuePointSchema),
-  previous_total: int.optional(),
+  previous_total: int,
 })
 export type RevenuePoint = z.output<typeof revenuePointSchema>
 export type Revenue = z.output<typeof revenueSchema>
@@ -131,7 +129,8 @@ export type NodeTraffic = z.output<typeof nodeTrafficSchema>
 export type UserTraffic = z.output<typeof userTrafficSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/system/status（现有 backup / database + 待补·后端 state / components，security.audit.read）
+// GET v1/system/status（backup / database / state / components，security.audit.read）。
+// backup 段是 Go 按条件放键的 map：读不到目录时只有 dir / readable / message，没有备份时没有 latest 等，故保持可选
 // ---------------------------------------------------------------------------
 const backupFileSchema = z.object({ name: z.string(), size: count, created_at: z.string(), has_checksum: z.boolean() })
 const backupSchema = z.object({
@@ -151,10 +150,12 @@ const backupSchema = z.object({
 })
 const componentState = z.enum(['ok', 'warn', 'down', 'unknown'])
 // 修订 R52：metrics 对象总在（可为 {}），字段只在 ok / warn 时保证齐全，down / unknown 时任何字段都可能缺，一律按可选解析
+// latency_ms / message 在 Go 里是 omitempty（只在探测成功 / 有话要说时出现），同样可选
 const componentBase = { state: componentState, latency_ms: z.number().nonnegative().optional(), message: z.string().optional() }
 const queueMetrics = z.object({ queued: count.optional(), retrying: count.optional(), failed_total: count.optional() })
 const componentSchema = z.discriminatedUnion('key', [
-  z.object({ key: z.literal('postgres'), ...componentBase, metrics: z.object({ size_bytes: count.optional(), connections: count.optional(), max_connections: count.optional() }) }),
+  // postgres 的三项照抄 database 段：数据库状态读失败而 SELECT 1 成功时 Go 写进去的是 nil（system_components.go），所以可为 null
+  z.object({ key: z.literal('postgres'), ...componentBase, metrics: z.object({ size_bytes: count.nullable().optional(), connections: count.nullable().optional(), max_connections: count.nullable().optional() }) }),
   z.object({ key: z.literal('valkey'), ...componentBase, metrics: z.object({}) }),
   z.object({ key: z.literal('node_fabric'), ...componentBase, metrics: z.object({ total: count.optional(), online: count.optional(), config_lagging: count.optional() }) }),
   z.object({ key: z.literal('payment_callbacks'), ...componentBase, metrics: z.object({ pending: count.optional() }) }),
@@ -175,9 +176,9 @@ const componentSchema = z.discriminatedUnion('key', [
 export const systemStatusSchema = z.object({
   backup: backupSchema,
   database: z.union([z.object({ size_bytes: count, connections: count, max_connections: count }), z.object({ error: z.string() })]),
-  // 待补·后端
-  state: z.enum(['ok', 'degraded']).optional(),
-  components: z.array(componentSchema).optional(),
+  state: z.enum(['ok', 'degraded']),
+  // 8 个组件总在（各自探测失败只把那一项标成 down / unknown），backup 也在其中
+  components: z.array(componentSchema),
 })
 export type BackupFile = z.output<typeof backupFileSchema>
 export type BackupStatus = z.output<typeof backupSchema>
@@ -186,7 +187,7 @@ export type SystemComponent = z.output<typeof componentSchema>
 export type SystemStatus = z.output<typeof systemStatusSchema>
 
 // ---------------------------------------------------------------------------
-// GET v1/stats/timeseries（现有 + 待补 active_users，security.audit.read）
+// GET v1/stats/timeseries（security.audit.read）
 // ---------------------------------------------------------------------------
 const activityPointSchema = z.object({
   day: z.string().regex(/^\d{2}-\d{2}$/),
@@ -194,7 +195,7 @@ const activityPointSchema = z.object({
   logins: count,
   orders: count,
   unique_ips: count,
-  active_users: count.optional(),
+  active_users: count,
 })
 export const activitySchema = z.object({ points: z.array(activityPointSchema) })
 export type ActivityPoint = z.output<typeof activityPointSchema>

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 ../types 的 MockModule / MockContext，依赖 ./billing-store 的 stalePendingCount
  * [OUTPUT]: 对外提供 dash 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「仪表盘（后台-01）」假接口；八个只读接口，形状、权限、参数校验与错误码照 api-contract.md 后台-01（含待补·后端字段）与 DASH-01 冻结契约。数据按日期确定性生成，概览的今日 / 昨日与收入趋势的最后两天是同一组数；「超时未支付订单」从订单假后端实时数（billing-store 的 stalePendingCount），点进订单页待支付筛选能对上
+ * [POS]: dev/mock/admin 的「仪表盘（后台-01）」假接口；八个只读接口，形状、权限、参数校验与错误码照 api-contract.md 后台-01 与 DASH-01 冻结契约，字段与 Go 必回的集合一致（收紧后的 dash/api.ts schema 全部必填项都给）。数据按日期确定性生成，概览的今日 / 昨日与收入趋势的最后两天是同一组数；「超时未支付订单」从订单假后端实时数（billing-store 的 stalePendingCount），点进订单页待支付筛选能对上
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { MockContext, MockModule } from '../types.ts'
@@ -125,7 +125,7 @@ function isInt(raw: string | null): boolean {
 
 export const dash: MockModule = {
   routes: {
-    // 待补·后端：ops.dashboard.read，处理器内再按条目权限过滤
+    // ops.dashboard.read，处理器内再按条目权限过滤
     'GET /v1/dashboard/tasks': (ctx) => {
       if (!ctx.requirePermission('ops.dashboard.read')) return
       const items = [
@@ -157,7 +157,7 @@ export const dash: MockModule = {
       })
     },
 
-    // 现有 + 待补·后端（yesterday / actual_yesterday / new_7_days / nodes）：billing.ledger.read
+    // billing.ledger.read；yesterday / actual_yesterday / new_7_days / nodes 与 Go 一样必回
     'GET /v1/overview': (ctx) => {
       if (!ctx.requirePermission('billing.ledger.read')) return
       const revenue = ['CNY', 'USD'].map((currency) => {
@@ -191,7 +191,7 @@ export const dash: MockModule = {
       })
     },
 
-    // 现有 + 待补 previous_total：billing.ledger.read
+    // billing.ledger.read；previous_total 必回
     'GET /v1/revenue/timeseries': (ctx) => {
       if (!ctx.requirePermission('billing.ledger.read')) return
       const currency = (ctx.query.get('currency') ?? '').toUpperCase()
@@ -269,7 +269,7 @@ export const dash: MockModule = {
       })
     },
 
-    // 现有 backup / database + 待补·后端 state / components：security.audit.read
+    // security.audit.read；state / components 必回，8 个组件总在
     'GET /v1/system/status': (ctx) => {
       if (!ctx.requirePermission('security.audit.read')) return
       const now = Date.now()
@@ -311,7 +311,7 @@ export const dash: MockModule = {
       })
     },
 
-    // 现有 + 待补 active_users：security.audit.read；days 1–90，非法按 14
+    // security.audit.read；active_users 必回；days 1–90，非法按 14
     'GET /v1/stats/timeseries': (ctx) => {
       if (!ctx.requirePermission('security.audit.read')) return
       const raw = ctx.query.get('days')
