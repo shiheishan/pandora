@@ -352,7 +352,7 @@ func main() {
 
 	kernel, err := newRuntime(log, cfg.nativeOnly())
 	if err != nil {
-		log.Error("鍒涘缓鍐呮牳澶辫触", "err", err)
+		log.Error("创建内核失败", "err", err)
 		os.Exit(1)
 	}
 	if err := kernel.Start(ctx); err != nil {
