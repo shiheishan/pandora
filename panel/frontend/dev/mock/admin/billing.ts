@@ -284,7 +284,6 @@ export const billing: MockModule = {
         cases: rows.slice(offset, offset + limit).map(lateView),
         total: rows.length,
         pending_amounts: pending,
-        pending_amount: Object.values(pending).reduce((a, b) => a + b, 0),
       })
     },
 
