@@ -110,7 +110,7 @@ export function trafficSummary(quota: QuotaLike | null, packBytes = 0): TrafficS
 }
 
 /**
- * 下次重置时刻：strategy=never 不重置；待补字段 next_reset_at 优先，其次是额度行的周期末，
+ * 下次重置时刻：strategy=never 不重置；next_reset_at 优先（服务端取最新流量额度行的周期末，可为 null），其次是额度行的周期末，
  * 再其次是按日用量接口的 period_end（它的窗口就是当前流量周期，修订 R47）。
  */
 export function resetAtOf(

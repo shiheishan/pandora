@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 AnonContext，依赖 ./catalog 的套餐与流量包目录，依赖 ./seeds 的历史订单、流水与兑换记录
  * [OUTPUT]: 对外提供 Scenario、SCENARIOS、setScenario、scenario、gate、portalState、subscriptionView、linkUrl、usageDays、makeSub、ARCHIVED_PRICE_ID、zoneMidnight、GIB、MOCK_TIMEZONE 与各夹具类型（含订单履约效果 OrderEffect、余额流水 LedgerEntry、兑换记录 RedemptionFixture）
- * [POS]: dev/mock/portal 的共享夹具：概览、我的订阅、订单、流量包、公告几个页面文件读同一份按用户建的内存状态（订阅挂在目录套餐上、ID 稳定、订阅地址可换发，另有余额与订单）；场景开关让浏览器实测空、多订阅、旧形状（待补字段缺席）、错误与慢加载，只在 dev 存在
+ * [POS]: dev/mock/portal 的共享夹具：概览、我的订阅、订单、流量包、公告几个页面文件读同一份按用户建的内存状态（订阅挂在目录套餐上、ID 稳定、订阅地址可换发，另有余额与订单）；场景开关让浏览器实测空、多订阅、可缺席字段全缺席、错误与慢加载，只在 dev 存在
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -19,7 +19,7 @@ export const MOCK_TIMEZONE = 'Asia/Shanghai'
 //   default  一条生效订阅、一张待支付单、流量包、公告（含 critical）
 //   empty    无订阅、无订单、无公告、无流量包
 //   multi    两条生效订阅（第二条 past_due，节点 404、近 24 小时来源超设备上限、流量将尽）
-//   legacy   同 default，但「待补·后端」字段全部缺席（对照后端当前实现）
+//   legacy   同 default，但 Go 带 omitempty 的可缺席字段全部缺席（订单周期、支付方式、优惠码、有效期至），Telegram 站点未启用
 //   error    页面读接口一律 500
 //   slow     页面读接口延迟 2.5 秒（看骨架）
 // ---------------------------------------------------------------------------
@@ -283,19 +283,25 @@ function build(s: Scenario): PortalState {
 }
 
 // ---------------------------------------------------------------------------
-// 契约门户-02 GET v1/me/subscriptions 的一行；legacy 场景去掉全部「待补·后端」字段
+// 契约门户-02 GET v1/me/subscriptions 的一行；Go 的 mySubscriptionView 无 omitempty，各场景字段恒在
 // ---------------------------------------------------------------------------
 export function subscriptionView(sub: SubFixture, packBytes: number) {
   const consumed = sub.days.reduce((s, d) => s + d.bytes, 0)
-  const legacy = current === 'legacy'
   const quota = {
     metric: 'traffic.bytes',
     limit: sub.limitBytes,
     consumed,
     remaining: Math.max(0, sub.limitBytes - consumed),
-    ...(legacy ? {} : { period: 'cycle', period_start: zoneMidnight(sub.days[0]!.date), period_end: sub.resetAt, granted_addon: 0, adjusted: 0 }),
+    period: 'cycle',
+    period_start: zoneMidnight(sub.days[0]!.date),
+    period_end: sub.resetAt,
+    granted_addon: 0,
+    adjusted: 0,
   }
-  const base = {
+  const plan = findPlan(sub.plan_id)
+  const listed = plan ? findPrice(plan, sub.price_id) : undefined
+  const live = ['active', 'trialing', 'grace', 'past_due'].includes(sub.status)
+  return {
     id: sub.id,
     plan_id: sub.plan_id,
     price_id: sub.price_id,
@@ -307,13 +313,6 @@ export function subscriptionView(sub: SubFixture, packBytes: number) {
     currency: 'CNY',
     amount: sub.amount,
     quotas: [quota],
-  }
-  if (legacy) return base
-  const plan = findPlan(sub.plan_id)
-  const listed = plan ? findPrice(plan, sub.price_id) : undefined
-  const live = ['active', 'trialing', 'grace', 'past_due'].includes(sub.status)
-  return {
-    ...base,
     device_limit: sub.deviceLimit,
     online_devices: sub.online,
     quota_reset_strategy: plan?.quota_reset_strategy ?? 'billing_cycle',

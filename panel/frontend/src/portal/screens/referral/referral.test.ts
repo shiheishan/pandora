@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ../../queries 的 commissionSchema，依赖 ./api 的 inviteSchema，依赖 ./model 的纯映射
  * [OUTPUT]: 无（测试）
- * [POS]: 邀请返利的单元测试：佣金概况 schema（R69 字段可缺席、列表不收 null、状态枚举封闭）、邀请链接与横幅文案、邀请码用量、提现金额与表单锁、三类记录的合并与状态映射
+ * [POS]: 邀请返利的单元测试：佣金概况 schema（R69 字段必回、列表不收 null、状态枚举封闭）、邀请链接与横幅文案、邀请码用量、提现金额与表单锁、三类记录的合并与状态映射
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -16,23 +16,21 @@ function commission(over: Partial<Commission> = {}): Commission {
 }
 
 describe('佣金概况 schema', () => {
-  it('修订 R69 的字段可以缺席（旧后端）', () => {
-    const legacy: Record<string, unknown> = { ...SUMMARY }
-    delete legacy.paid_invitees
-    delete legacy.total_earned
-    const parsed = commissionSchema.parse({ summary: legacy, entries: [], withdrawals: [] })
-    expect(parsed.summary.paid_invitees).toBeUndefined()
-    expect(parsed.transfers).toBeUndefined()
+  it('修订 R69 的字段 Go 无 omitempty，缺席不放行', () => {
+    const missing: Record<string, unknown> = { ...SUMMARY }
+    delete missing.paid_invitees
+    expect(commissionSchema.safeParse({ summary: missing, entries: [], withdrawals: [], transfers: [] }).success).toBe(false)
+    expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [], withdrawals: [] }).success).toBe(false)
   })
 
   it('三个列表 Go 端以空切片初始化，null 不放行', () => {
-    expect(commissionSchema.safeParse({ summary: SUMMARY, entries: null, withdrawals: [] }).success).toBe(false)
+    expect(commissionSchema.safeParse({ summary: SUMMARY, entries: null, withdrawals: [], transfers: [] }).success).toBe(false)
     expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [], withdrawals: [], transfers: null }).success).toBe(false)
   })
 
   it('提现状态是封闭枚举', () => {
     const w = { id: 'w', amount: 1, currency: 'CNY', status: 'queued', reject_reason: '', requested_at: '2026-09-01T00:00:00Z', completed_at: null }
-    expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [], withdrawals: [w] }).success).toBe(false)
+    expect(commissionSchema.safeParse({ summary: SUMMARY, entries: [], withdrawals: [w], transfers: [] }).success).toBe(false)
   })
 
   it('邀请：max_uses 可为 null，invitees 不收 null', () => {
@@ -133,8 +131,7 @@ describe('佣金记录', () => {
     expect(rows[3]!.tone).toBe('void')
   })
 
-  it('旧后端没有 transfers 时照常合并', () => {
-    const legacy = commissionSchema.parse({ summary: SUMMARY, entries: [entry('available', '2026-09-20T02:00:00Z')], withdrawals: [] })
-    expect(commissionRecords(legacy)).toHaveLength(1)
+  it('没有转出记录（transfers 为空数组）时照常合并', () => {
+    expect(commissionRecords(commission({ entries: [entry('available', '2026-09-20T02:00:00Z')] }))).toHaveLength(1)
   })
 })

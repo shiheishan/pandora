@@ -164,7 +164,7 @@ export function trafficQuotaOf(plan: Pick<Plan, 'quotas'>) {
   return plan.quotas.find((q) => q.metric === 'traffic.bytes') ?? null
 }
 
-/** 契约门户-03：never「不重置」、natural_month「每月 1 日重置」、fixed_day「每月 N 日重置」；billing_cycle 与缺席为「到期日自动重置」 */
+/** 契约门户-03：never「不重置」、natural_month「每月 1 日重置」、fixed_day「每月 N 日重置」；billing_cycle 为「到期日自动重置」 */
 export function resetNote(plan: Pick<Plan, 'quota_reset_strategy' | 'quota_reset_day'>): string {
   switch (plan.quota_reset_strategy) {
     case 'never':
@@ -180,7 +180,7 @@ export function resetNote(plan: Pick<Plan, 'quota_reset_strategy' | 'quota_reset
 
 /**
  * 额度周期后缀：month 与按月重置的 cycle 为「/ 月」，day「/ 天」，total「总量」；
- * 按计费周期重置（billing_cycle 或旧后端缺席）的 cycle 跟着所选价格走，年付即「/ 年」。
+ * 按计费周期重置（billing_cycle）的 cycle 跟着所选价格走，年付即「/ 年」。
  */
 export function quotaPeriodNote(plan: Pick<Plan, 'quota_reset_strategy'>, period: 'total' | 'cycle' | 'day' | 'month', key: PeriodKey): string {
   if (period === 'day') return '/ 天'

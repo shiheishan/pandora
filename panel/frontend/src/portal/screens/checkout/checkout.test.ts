@@ -24,6 +24,7 @@ const STD: Plan = {
   quotas: [{ metric: 'traffic.bytes', limit: 200 * GIB, unit: 'bytes', period: 'cycle' }],
   prices: [price('s1', 2900, 'month'), price('s3', 7900, 'quarter'), price('s12', 29900, 'year'), price('su', 499, 'month', 1, 'USD')],
   quota_reset_strategy: 'natural_month',
+  quota_reset_day: null,
   allow_renewal: true,
   allow_upgrade: true,
   throttle_kbps: null,
@@ -34,19 +35,28 @@ const PRO: Plan = { ...STD, id: 'pro', code: 'pro', name: '专业版', prices: [
 const FAM: Plan = { ...STD, id: 'fam', code: 'fam', name: '家庭版', allow_upgrade: false, prices: [price('f1', 4900, 'month')] }
 const PACK: Pack = { id: 'k', name: '500 GB', traffic_bytes: 500 * GIB, currency: 'CNY', unit_amount: 9900, recommended: true }
 
+// renewable 与 Go 同口径：生效状态即可续费（测试里的套餐都允许续费）
 function sub(over: Partial<Subscription> = {}): Subscription {
+  const status = over.status ?? 'active'
   return subscriptionSchema.parse({
     id: 'sub1',
     plan_id: 'pro',
     price_id: 'p1',
     plan_name: '专业版',
     plan_version: 1,
-    status: 'active',
+    status,
     current_period_start: '2026-09-01T00:00:00Z',
     current_period_end: '2026-11-01T00:00:00Z',
     currency: 'CNY',
     amount: 5900,
     quotas: [],
+    device_limit: null,
+    online_devices: 0,
+    quota_reset_strategy: 'billing_cycle',
+    next_reset_at: null,
+    renewable: ['active', 'trialing', 'grace', 'past_due'].includes(status),
+    renewal_price: null,
+    pack_remaining_bytes: 0,
     ...over,
   })
 }
@@ -148,12 +158,12 @@ describe('目录文案', () => {
     expect(perGbNote(PACK)).toBe('约 ¥0.20 / GB')
   })
 
-  it('重置与额度周期文案（R69 缺席时按到期日重置）', () => {
+  it('重置与额度周期文案（billing_cycle 按到期日重置）', () => {
     expect(resetNote({ quota_reset_strategy: 'fixed_day', quota_reset_day: 15 })).toBe('每月 15 日重置')
-    expect(resetNote({})).toBe('到期日自动重置')
+    expect(resetNote({ quota_reset_strategy: 'billing_cycle', quota_reset_day: null })).toBe('到期日自动重置')
     expect(quotaPeriodNote({ quota_reset_strategy: 'billing_cycle' }, 'cycle', '12m')).toBe('/ 年')
     expect(quotaPeriodNote({ quota_reset_strategy: 'natural_month' }, 'cycle', '12m')).toBe('/ 月')
-    expect(quotaPeriodNote({}, 'total', '1m')).toBe('总量')
+    expect(quotaPeriodNote({ quota_reset_strategy: 'billing_cycle' }, 'total', '1m')).toBe('总量')
   })
 })
 

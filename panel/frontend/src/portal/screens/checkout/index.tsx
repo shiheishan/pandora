@@ -104,7 +104,8 @@ const couponPreviewSchema = z.object({
   discount: z.number().int(),
   payable: z.number().int(),
   currency: z.string(),
-  coupon: couponFaceSchema.nullable().optional(),
+  // Go 的 previewCoupon 恒放 coupon 键：没用码或码不生效时为 null
+  coupon: couponFaceSchema.nullable(),
 })
 
 const changePreviewSchema = z.object({
@@ -213,7 +214,7 @@ function CheckoutForm({ mode, requestedPrice }: { mode: CheckoutMode; requestedP
   })
 
   const changeBlocked = target.kind === 'change' && (change.isPending || change.isError)
-  const renewBlocked = mode.kind === 'renew' && (mode.plan === null || mode.plan.allow_renewal === false || mode.sub.renewable === false)
+  const renewBlocked = mode.kind === 'renew' && (mode.plan === null || !mode.plan.allow_renewal || !mode.sub.renewable)
   const canSubmit = (pack !== null || price !== null) && !changeBlocked && !renewBlocked && (!needsMethod || method !== null) && !create.isPending && !reopening
 
   async function submit() {
@@ -485,7 +486,7 @@ function RenewBlocked({ mode }: { mode: Extract<CheckoutMode, { kind: 'renew' }>
   const [title, description] =
     mode.plan === null
       ? ['该套餐已停售', '请选购其他套餐；当前订阅到期前仍可正常使用。']
-      : mode.plan.allow_renewal === false
+      : !mode.plan.allow_renewal
         ? ['该套餐当前不允许续费', '可以选购其他套餐，剩余天数会自动折算。']
         : ['这条订阅当前不能续费', '订阅状态不允许续费，可以选购其他套餐。']
   return (
