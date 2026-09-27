@@ -49,6 +49,7 @@ jobs:
             release-artifact-binding_mock_test.sh
             logrotate-aegis_static_test.sh
             public-base-url_mock_test.sh
+            migrate-to-new-host_mock_test.sh
           )
           failed=()
           for t in "${tests[@]}"; do

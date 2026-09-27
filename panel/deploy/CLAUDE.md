@@ -11,7 +11,7 @@ install-native.sh: 无 Docker 的直装版（/opt/pandora），首装先取合�
 public-base-url.sh: 两个安装脚本 source 的共用段：首装对外地址的取值（PANDORA_PUBLIC_BASE_URL 或终端现场问）与校验（与 render-nginx.sh 同一规则），不合规给中文原因与重跑命令；另带不 source 地读 .env 单键
 install-linux-binaries.sh: 按带外获得的 SHA-256 摘要校验后，以可回滚事务安装发布包二进制、运维脚本、systemd 单元与 release-artifact.env（到 /opt/aegispanel/deploy/）
 platform.sh / preflight-linux.sh: 发行版与依赖探测（被其他脚本 source），装前环境预检
-migrate-to-new-host.sh: 新主机一键迁移：恢复 Age 密文备份、重建 aegis_app 角色、校验账本无漂移，第 5 步先拦下缺失的 AEGIS_PUBLIC_BASE_URL；第 6 步源码模式先 make frontend-embed（无 npm 即停），两种模式都查 aegis-public/admin 二进制里没有前端占位标记
+migrate-to-new-host.sh: 新主机一键迁移：恢复 Age 密文备份、重建 aegis_app 角色、校验账本无漂移，目标 .env 为 AEGIS_ENV=production 时在动手之前拒绝源码模式（不产 pdnd-dist 与发布物绑定，节点接入会被拒），要 AEGIS_RELEASE_DIR 指向发布包；第 5 步先拦下缺失的 AEGIS_PUBLIC_BASE_URL；第 6 步源码模式先 make frontend-embed（无 npm 即停），两种模式都查 aegis-public/admin 二进制里没有前端占位标记
 .env.example: 运行配置模板，机密与域名全是 CHANGE_ME 占位；AEGIS_ENV 默认 development 给本地开发，install.sh 首装改成 production
 docker-compose.yml: 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1
 systemd/: aegis-public/admin/node 三网关、备份 service+timer 单元；aegis-node 在 .env 之后再加载 release-artifact.env（节点接入的发布物绑定）
@@ -52,6 +52,7 @@ client-auth-*、generate-client-auth-*、probe-client-auth-*、verify-client-aut
 client-auth-00044-verifier-gate.py / verify-client-auth-00044-evidence-vectors.ps1: 00044 证据信封与向量的独立生成与校验，不导入被测实现
 
 测试（只用虚构数据与一次性环境，不连任何真实部署）
+migrate-to-new-host_mock_test.sh: 迁新主机的生产闸门：production + 源码模式以中文原因拒绝，production + 发布包、development + 源码都放过；docker compose 桩保证不走到第 2 步
 public-base-url_mock_test.sh: 对外地址闸门的规则矩阵、取值与报错、两个安装脚本共用一份、install-native.sh 不写示例值且 .env 只在首装写
 logrotate-aegis_static_test.sh: 轮转 glob 覆盖三个网关单元 append: 的全部日志文件，规则随包分发并装到 /etc/logrotate.d/aegis
 render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名、listen 只许 80/443 与回环 9080
