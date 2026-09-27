@@ -24,9 +24,9 @@ renewal-cutover.md: 续费幂等切换闸门手册
 pandora-preflight-lease-registry.sh: 预检租约登记，防止并发发布
 
 数据库
-migrate.sh: 特权 goose 包装器，运行时服务永远拿不到迁移 DSN；up 之前先调 check-migrations.sh 在克隆库演练；拒绝 down/redo
+migrate.sh: 特权 goose 包装器，运行时服务永远拿不到迁移 DSN；迁移编号只要求严格递增、不重复（主序列有 00073、00091、00092 历史空号，同号拒绝），三个迁移脚本同一规则；up 之前先调 check-migrations.sh 在克隆库演练；拒绝 down/redo
 check-migrations.sh: 在一次性库克隆上证明精确的生产升级路径（make check-migrations 与 migrate.sh up 都走它）
-check-migrations-isolated-pg18.sh: CLIENT-AUTH-00042 那一代的历史隔离预检，钉死冻结迁移的 SHA-256；当前迁移序列的 00042 已换人，它会主动以 NOT_RUN（exit 77）拒绝运行
+check-migrations-isolated-pg18.sh: CLIENT-AUTH-00042 那一代的历史隔离预检，钉死冻结迁移的 SHA-256；当前迁移序列的 00042 已换人，它会主动以 NOT_RUN（exit 77）拒绝运行；桩测试改在合成的历史序列（主序列 00001–00041 加冻结的 00042）上跑全套用例
 bootstrap.sh / configure-app-role.sql: 迁移后配置最小权限运行角色 aegis_app（NOSUPERUSER NOBYPASSRLS）；末尾在「列级提升回表级」之后收回证据流水与守卫表的 UPDATE/DELETE（traffic_pack_grants、gift_card_batches 只收 DELETE，业务要 UPDATE），顺序由 platform/db 的契约测试守
 psql.sh: 从 .env 读凭据的 psql 封装，避免口令出现在命令行
 seed-catalog-cny.sql / seed-demo.sql: 确定性演示商品目录（schema 35+），本地与 E2E 用
@@ -57,7 +57,7 @@ run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：up
 run-smoke-e2e.sh: 联调冒烟第 ⑤ 步（panel-smoke.yml 在读表与写路径之后调用）：在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，第 ⑥ 步起失败即变红；脚本一字不改，只把它们声明要的环境搭出来（/opt/aegispanel 布局链到仓库 deploy/、deploy/.env 由网关配置加库超级账号拼成、aegis-payctl 编进 bin 并配易支付测试商户、两个一次性库确认变量），脚本之间空一个限流窗口；每个脚本一行写进 e2e-results.md（结果、OK/FAIL 数、首个失败的步骤与原文），全部跑完、表格写完后有任何失败就以 1 退出；只肯在 GitHub Actions 上跑
 test-*-pg18.sh: 各业务的 PG18 集成门禁，每次新建隔离容器与库、结束即删；口令为 *-test-only 字样
 test-install.sh / test-ca42-*-e2e.sh / test-client-auth-*: 安装链与 CLIENT-AUTH 端到端；test-install.sh 发现库里已有用户即拒绝执行
-*_mock_test.sh / *_static_test.sh / *_linux_test.sh / *_linux_fault_test.sh / release-stop-the-world_test.ps1: 对上面各脚本的桩测试与静态检查，不需要数据库；*_linux_* 与部分 mock 测试（pandora-cic-journal、pandora-pathtrust、release-stop-the-world、verify-backup_manifest、client-auth-00043-linux-wiring、test-client-auth-00044-verifier-linux-root）需要 Linux root
+*_mock_test.sh / *_static_test.sh / *_linux_test.sh / *_linux_fault_test.sh / release-stop-the-world_test.ps1: 对上面各脚本的桩测试与静态检查，不需要数据库；CI 的 panel-deploy.yml 逐个点名跑其中与安装、迁移、nginx、发布物绑定相关的几个（清单在 workflow 里，新增相关桩测试要补进去）；*_linux_* 与部分 mock 测试（pandora-cic-journal、pandora-pathtrust、release-stop-the-world、verify-backup_manifest、client-auth-00043-linux-wiring、test-client-auth-00044-verifier-linux-root）需要 Linux root
 fixtures/: billing、idempotency 两份 PG18 门禁种子数据
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

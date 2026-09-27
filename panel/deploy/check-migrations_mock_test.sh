@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖同目录 check-migrations.sh、仓库真实的 ../migrations/，docker/goose/env 用桩脚本代替
+# [OUTPUT]: check-migrations.sh 的动态契约：编号规则、Up 标记、续费闸门、口令不进 argv、克隆库清理
+# [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要数据库或 root
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Dynamic tests for strict migration extraction and password argv hygiene.
 set -Eeuo pipefail
 umask 077
@@ -162,9 +166,34 @@ grep -Fq 'FAIL' "$TMP/missing.out"
 printf '%s\n' '-- +goose Up' 'SELECT 1;' '-- +goose Down' 'SELECT 1;' \
   >"$TMP/valid/00001_valid.sql"
 
+# 编号规则：严格递增、不重复，允许空号。同号在碰数据库之前就以 78 拒绝。
+mkdir -p "$TMP/gapped" "$TMP/duplicate"
+for file in 00001_a.sql 00003_c.sql; do
+  printf '%s\n' '-- +goose Up' 'SELECT 1;' >"$TMP/gapped/$file"
+done
+for file in 00001_a.sql 00002_b.sql 00002_c.sql; do
+  printf '%s\n' '-- +goose Up' 'SELECT 1;' >"$TMP/duplicate/$file"
+done
+run_check "$TMP/gapped" >"$TMP/gapped.out" 2>&1 \
+  || { echo 'gapped migration sequence was rejected' >&2; cat "$TMP/gapped.out" >&2; exit 1; }
+grep -Fq 'migration precheck complete' "$TMP/gapped.out"
+rm -f "$TMP/create.id" "$TMP/docker.argv"
+set +e
+run_check "$TMP/duplicate" >"$TMP/duplicate.out" 2>&1
+duplicate_status=$?
+set -e
+[ "$duplicate_status" -eq 78 ]
+grep -Fq 'duplicate migration version: 00002_c.sql' "$TMP/duplicate.out"
+[ ! -e "$TMP/create.id" ] && [ ! -s "$TMP/docker.argv" ]
+
+# 仓库里真实的 migrations/ 必须能过文件名、编号与 Up 标记这一层校验。
+run_check "$ROOT/migrations" >"$TMP/real.out" 2>&1 \
+  || { echo 'the real migrations directory was rejected' >&2; cat "$TMP/real.out" >&2; exit 1; }
+grep -Fq 'migration precheck complete' "$TMP/real.out"
+
 # CLIENT-AUTH-00042 is intentionally frozen outside the runtime migration
 # directory. The precheck must not retain the old version-number guard, while
-# the current 00042 runtime migration remains part of the contiguous sequence.
+# the current 00042 runtime migration remains part of the ordinary sequence.
 [ -f "$ROOT/migrations/00042_seed_registration_mode.sql" ]
 [ -f "$ROOT/migrations/frozen-client-auth/00042_client_auth_expand.sql" ]
 if grep -Fq 'CLIENT-AUTH-00042 is pending' "$CHECK"; then

@@ -1,4 +1,8 @@
 #!/bin/bash -p
+# [INPUT]: 依赖 .env 的 POSTGRES_*、docker 容器 aegis-postgres、goose、与 deploy/ 并排的 migrations/
+# [OUTPUT]: 在一次性克隆库上重放待应用迁移的预检：文件名/编号/Up 标记校验、源库水位不高于发布物、续费切换闸门
+# [POS]: migrate.sh up 与 make check-migrations 的前置闸门；桩测试 check-migrations_mock_test.sh
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Prove the exact production upgrade path on a disposable database clone.
 #
 # A scratch database is not a faithful release probe once migrations create
@@ -40,8 +44,9 @@ migration_files=("$MIGRATIONS_DIR"/*.sql)
 
 # Validate the complete artifact before touching PostgreSQL. Goose ignores an
 # unrelated SQL file without annotations; release packages must fail instead.
+# 编号只要求严格递增、不重复，允许空号（主序列有 00073、00091、00092 三个历史
+# 空号，不重编）。previous_version 最终是最大版本号，下面拿它和源库水位比。
 previous_version=0
-expected_version=1
 for migration in "${migration_files[@]}"; do
   name="${migration##*/}"
   if [[ ! "$name" =~ ^([0-9]{5})_[A-Za-z0-9._-]+\.sql$ ]]; then
@@ -49,12 +54,15 @@ for migration in "${migration_files[@]}"; do
     exit 1
   fi
   version=$((10#${BASH_REMATCH[1]}))
-  if [ "$version" -ne "$expected_version" ]; then
-    echo "migration precheck: migration sequence is incomplete" >&2
+  if [ "$version" -eq "$previous_version" ] && [ "$version" -ne 0 ]; then
+    echo "migration precheck: duplicate migration version: $name" >&2
+    exit 78
+  fi
+  if [ "$version" -le "$previous_version" ] || [ "$version" -eq 0 ]; then
+    echo "migration precheck: migration versions must be strictly increasing from 00001: $name" >&2
     exit 78
   fi
   previous_version=$version
-  expected_version=$((expected_version + 1))
   printf '%-48s' "$name"
   if awk '
       /^-- \+goose Up([[:space:]]*)$/ { up=1 }
