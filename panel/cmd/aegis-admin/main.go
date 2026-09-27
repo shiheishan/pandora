@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -97,7 +96,7 @@ func run() error {
 	identitySvc := identity.NewService(pool, issuer, cfg.RefreshTokenTTL, cfg.MasterKey, !cfg.IsProduction())
 	// 销售能力必须显式授权，默认关闭（详见 salescap.go）。
 	// 不注入的话定价与上架会一直 503 —— 这正是它上线以来的状态。
-	salesCap := salesCapabilityFromEnv()
+	salesCap := salesCapability{allowed: cfg.SalesEnabled}
 	if !salesCap.AllowsP0BSales() {
 		log.Warn("销售能力未授权：定价与套餐上架将返回 503。" +
 			"如需启用，在 .env 里设置 AEGIS_SALES_ENABLED=1 后重启 aegis-admin")
@@ -156,10 +155,10 @@ func run() error {
 
 	// IP 归属地库。缺文件不算致命：后台照常可用，只是归属地列留空。
 	// 风控明细里最要紧的是 IP 和时间，归属地是帮着判断的旁证。
-	geoResolver, geoErr := geoip.Open(geoDatabasePath())
+	geoResolver, geoErr := geoip.Open(cfg.AdminGeoIPDB(), cfg.GeoIPIPv6DB)
 	if geoErr != nil {
 		log.Warn("IP 归属地库不可用，归属地列将留空",
-			"path", geoDatabasePath(), "err", geoErr)
+			"path", cfg.AdminGeoIPDB(), "err", geoErr)
 	} else {
 		defer geoResolver.Close()
 	}
@@ -337,15 +336,4 @@ func waitForAdminWorkers(workers *sync.WaitGroup, timeout time.Duration) error {
 	case <-timer.C:
 		return fmt.Errorf("%w after %s", errAdminWorkerDrainTimeout, timeout)
 	}
-}
-
-// geoDatabasePath 是 ip2region 数据文件的位置。
-//
-// 走环境变量而不是配置表：这个路径由部署决定（文件跟着发布产物走），
-// 不是运营会去改的东西。
-func geoDatabasePath() string {
-	if p := strings.TrimSpace(os.Getenv("AEGIS_GEOIP_DB")); p != "" {
-		return p
-	}
-	return "/opt/aegispanel/geoip/ip2region_v4.xdb"
 }

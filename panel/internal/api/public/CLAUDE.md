@@ -22,7 +22,7 @@ plan_change.go: 变更套餐试算与下单（D-E-2，kind=upgrade，升降级�
 notifications.go: 站内信收件箱与已读（单条标已读的非 UUID id 回 404，R84）、通知偏好（按主键 upsert）
 content.go: 帮助文章列表（q 全文包含、platform=any）、正文与「有帮助」反馈（反馈与详情共用可见性 query）
 telegram.go: Telegram 绑定状态、绑定码与解绑，Telegram webhook（/webhooks/telegram/{secret}），以及匿名的 /appearance 外观读取
-pdnd_install.go: NativeCore 一键安装脚本与二进制分发
+pdnd_install.go: NativeCore 一键安装脚本与二进制分发，产物目录取 Cfg.PdndDistDir
 events.go: 门户 SSE，只推本人与全租户事件
 *_test.go: 路由契约（含反馈路由在需登录组、switch_routes_test 守降级开关门）、安全契约与处理器单测（notifications_read_test 不连库验非 UUID 回 404）；notifications_pg18_test.go、portal_step5_pg18_test.go、commerce_reads_pg18_test.go 与 session_last_seen_pg18_test.go 为 PG18 集成测试（public_api 域；commerce_reads 经处理器驱动目录、试算、订单与佣金读模型，session_last_seen 经真实认证中间件验 last_seen_at 节流刷新）
 

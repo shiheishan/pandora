@@ -25,6 +25,7 @@ import (
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	"github.com/aegispanel/aegis/internal/domain/plugin"
 	"github.com/aegispanel/aegis/internal/platform/audit"
+	"github.com/aegispanel/aegis/internal/platform/config"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -43,7 +44,9 @@ func step4Handlers(t *testing.T, app *platformdb.Pool) *handlers {
 		return sum[:]
 	}, func(plain []byte) ([]byte, error) { return env.Seal(plain, []byte("audit")) })
 	t.Cleanup(func() { audit.Configure(nil, nil) })
-	return &handlers{d: Deps{Pool: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	// 备份目录指向不存在的路径：系统状态按「读不到备份」降级，与 CI 主机上一致
+	cfg := &config.Config{Deployment: config.Deployment{BackupDir: t.TempDir() + "/no-backups"}}
+	return &handlers{d: Deps{Cfg: cfg, Pool: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Node: nodefabric.NewService(app, nil), Ops: adminops.NewService(app),
 		Plugin: plugin.New(app, nil, true), Envelope: env}}
 }

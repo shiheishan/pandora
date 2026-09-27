@@ -69,6 +69,7 @@ func TestSignedNodeHTTPPG18(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := nodefabric.NewService(app, signer)
+	svc.SetReleaseBinding(nodefabric.ReleaseBinding{}) // 非生产：不比对发布产物
 	server := httptest.NewServer(NewRouter(Deps{Pool: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Node: svc}))
 	defer server.Close()
 
