@@ -180,7 +180,6 @@ printf 'mock renewal procedure\n' >"$TMP/good-release/deploy/renewal-cutover.md"
 amd64_digest="$(sha256sum "$TMP/good-release/pdnd-dist/pandora-native-linux-amd64" | awk '{print $1}')"
 arm64_digest="$(sha256sum "$TMP/good-release/pdnd-dist/pandora-native-linux-arm64" | awk '{print $1}')"
 cat >"$TMP/good-release/deploy/release-artifact.env" <<ENV
-AEGIS_ENV=production
 PANDORA_NATIVE_RELEASE_VERSION=mock-v1
 PANDORA_NATIVE_ARTIFACT_AMD64_SHA256=$amd64_digest
 PANDORA_NATIVE_ARTIFACT_ARM64_SHA256=$arm64_digest

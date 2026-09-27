@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖一台一次性 Linux 验证机（root、docker、systemd）与一份发布目录
+# [OUTPUT]: 安装链回归：全新安装、升级、老式 .env、备份单元 failed 四种形态，含 production 模式、发布物绑定已装且进了 aegis-node 环境、logrotate 规则已装且指向 /var/log/aegis
+# [POS]: deploy 的破坏性端到端测试，只在验证机上手工跑，CI 不跑；开头护栏挡着有真实用户的库
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 安装链回归测试：全新安装 与 存量升级 两种形态各跑一遍。
 #
 #   bash deploy/test-install.sh <发布目录>
@@ -91,12 +95,24 @@ assert_healthy() {
     [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$p/healthz")" = 200 ] || bad_http=1
   done
   [ "$bad_http" -eq 0 ] && ok "$label healthz 全 200" || bad "$label healthz 有非 200"
+
+  # 发布物绑定：装到固定位置、与发布包一致，且确实进了 aegis-node 的进程环境
+  cmp -s "$RELEASE/deploy/release-artifact.env" /opt/aegispanel/deploy/release-artifact.env \
+    && ok "$label release-artifact.env 已装且与发布包一致" || bad "$label release-artifact.env 缺失或与发布包不符"
+  local node_pid; node_pid="$(systemctl show aegis-node --property=MainPID --value)"
+  tr '\0' '\n' < "/proc/$node_pid/environ" 2>/dev/null | grep -q '^PANDORA_NATIVE_ARTIFACT_AMD64_SHA256=[0-9a-f]\{64\}$' \
+    && ok "$label aegis-node 已加载发布物绑定" || bad "$label aegis-node 环境里没有发布物绑定"
+  grep -q '^/var/log/aegis/\*\.log {' /etc/logrotate.d/aegis 2>/dev/null \
+    && logrotate -d /etc/logrotate.d/aegis >/dev/null 2>&1 \
+    && ok "$label logrotate 规则已装且可解析" || bad "$label /etc/logrotate.d/aegis 缺失或无法解析"
 }
 
 run_install() {
   local label="$1" log="$2"
   local start; start=$(date +%s)
-  if ( cd "$RELEASE/deploy" && PANDORA_ASSUME_YES=1 bash ./install.sh ) > "$log" 2>&1; then
+  # 首装要求对外地址（发布包装出来的是 production）；虚构域名，只写进 .env
+  if ( cd "$RELEASE/deploy" && PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test \
+      bash ./install.sh ) > "$log" 2>&1; then
     ok "$label 安装脚本退出码 0（耗时 $(( $(date +%s) - start ))s）"
     return 0
   fi
@@ -110,6 +126,9 @@ run_install() {
 step "场景一：全新安装（空机器）"
 wipe
 run_install "全新安装" /tmp/test-install-fresh.log && assert_healthy "全新安装"
+
+grep -qx 'AEGIS_ENV=production' /opt/aegispanel/deploy/.env \
+  && ok "全新安装定为 production" || bad "全新安装的 .env 不是 AEGIS_ENV=production"
 
 grep -q "跳过一次性数据库预检" /tmp/test-install-fresh.log \
   && ok "全新库正确跳过了预检" \

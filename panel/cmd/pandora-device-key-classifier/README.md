@@ -3,9 +3,12 @@
 Status: **NOT_RELEASE / NOT RELEASE APPROVAL**.
 
 This is a Linux-only, read-only, fail-closed candidate for the
-CLIENT-AUTH-00044 maintenance window. Its normative input is
-`.ai-company/handoffs/client-auth-00044-classify-backfill-contract-20260731.md`.
-The release owner must pin that contract's final SHA-256 after shared edits stop.
+CLIENT-AUTH-00044 maintenance window. Its normative input was the
+`client-auth-00044-classify-backfill-contract-20260731.md` handoff, which never
+entered this repository; the in-repo basis is the classification backfill
+step (§9.7, step 3) of `panel/docs/潘多拉面板-CLIENT-AUTH-01冻结契约-20260730.md`.
+Before any release, the release owner must commit that contract and pin its
+final SHA-256.
 
 The classifier does not connect to PostgreSQL, mutate a row, choose a duplicate
 winner, accept private keys, or infer tenant/user ownership. It only consumes a

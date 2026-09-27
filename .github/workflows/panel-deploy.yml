@@ -1,0 +1,62 @@
+name: Panel deploy script contracts
+
+# deploy/ 下的桩测试原本 CI 一个都不跑：迁移脚本要求编号连续、真实目录却有历史空号，
+# 按发布包安装会卡在迁移，而 CI 的迁移直接调 goose，一直没人发现。这里只跑不需要
+# 数据库、不需要 root 的桩测试，几秒跑完，所以单独成一个 workflow、只按 deploy 与
+# migrations 的路径触发，不拖 PG18 门禁和前端构建。
+# 迁移三件套的桩测试会拿仓库里真实的 panel/migrations 跑校验：脚本拒绝真实目录即变红。
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "panel/deploy/**"
+      - "panel/migrations/**"
+      - ".github/workflows/panel-deploy.yml"
+  pull_request:
+    paths:
+      - "panel/deploy/**"
+      - "panel/migrations/**"
+      - ".github/workflows/panel-deploy.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy-mock-tests:
+    name: Deploy script mock tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: panel/deploy
+    steps:
+      - uses: actions/checkout@v4
+      # 清单逐个点名：新加一个与本 workflow 触发面相关、无需 root 的桩测试就补进来。
+      # 每个都跑完再判，失败的名字集中列出
+      - name: Run deploy mock tests
+        run: |
+          tests=(
+            migrate_fail_closed_mock_test.sh
+            migrate-layout_mock_test.sh
+            check-migrations_mock_test.sh
+            check-migrations-isolated-pg18_mock_test.sh
+            render-nginx_test.sh
+            release-artifact-binding_mock_test.sh
+            logrotate-aegis_static_test.sh
+          )
+          failed=()
+          for t in "${tests[@]}"; do
+            echo "::group::$t"
+            if bash "$t"; then echo "PASS $t"; else echo "FAIL $t (exit $?)"; failed+=("$t"); fi
+            echo "::endgroup::"
+          done
+          if [ "${#failed[@]}" -ne 0 ]; then
+            printf 'failed: %s\n' "${failed[@]}" >&2
+            exit 1
+          fi
+          echo "deploy mock tests: ${#tests[@]} passed"

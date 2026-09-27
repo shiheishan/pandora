@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖 apt 系发行版的 PostgreSQL 18（PGDG）与 Valkey、发布包 bin/ migrations/ deploy/
+# [OUTPUT]: 无 Docker 的直装：/opt/pandora 布局、首装生成 .env（AEGIS_ENV=production）、迁移、收窄 aegis_app、装 systemd 单元（路径替换为 /opt/pandora）
+# [POS]: 与 install.sh 并列的另一条安装路径，共用 migrate.sh、configure-app-role.sql 与 release-artifact.env
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Pandora Panel — 普通直接安装版（无 Docker）
 # 用法: sudo bash install-native.sh
 # 信条: 目录简单、文件简单、不臃肿
@@ -163,6 +167,9 @@ mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/migrations" "$INSTALL_DIR/deploy"
 cp -f "$SCRIPT_DIR"/../bin/* "$INSTALL_DIR/bin/"
 cp -f "$SCRIPT_DIR"/../migrations/*.sql "$INSTALL_DIR/migrations/"
 cp -f "$SCRIPT_DIR"/systemd/*.service "$INSTALL_DIR/deploy/"
+# 节点端发布物绑定（SHA-256 与版本），aegis-node.service 以 EnvironmentFile= 加载；
+# 下面装单元时 /opt/aegispanel 会被替换成 $INSTALL_DIR
+[[ ! -f "$SCRIPT_DIR/release-artifact.env" ]] || cp -f "$SCRIPT_DIR/release-artifact.env" "$INSTALL_DIR/deploy/"
 chmod 0755 "$INSTALL_DIR/bin/"*
 
 # ── 4. 建库 + 迁移 ────────────────────────────────────
@@ -261,6 +268,10 @@ rm -f /tmp/configure-app-role.sql
 
 # ── 5. systemd ───────────────────────────────────────
 say "[5/6] 安装 systemd 服务"
+# 单元把日志 append 到 /var/log/aegis，目录不存在时 systemd 以 209/STDOUT 失败
+install -d -m 0750 /var/log/aegis
+[[ ! -d /etc/logrotate.d || ! -f "$SCRIPT_DIR/logrotate-aegis" ]] \
+  || install -m 0644 "$SCRIPT_DIR/logrotate-aegis" /etc/logrotate.d/aegis
 for s in "${SERVICES[@]}"; do
   sed "s|/opt/aegispanel|${INSTALL_DIR}|g" "$SCRIPT_DIR/systemd/${s}.service" > "/etc/systemd/system/${s}.service"
 done

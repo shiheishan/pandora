@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖同目录 check-migrations.sh（up 前的克隆库预检）、.env 的迁移 DSN 或本机 PostgreSQL 凭据、与 deploy/ 并排的 migrations/、goose
+# [OUTPUT]: 特权迁移入口：迁移文件名与编号校验（严格递增、不重复、允许空号），拒绝 down/redo，以净化过的环境 exec goose
+# [POS]: deploy 迁移链的唯一公开入口，install.sh、install-native.sh、release-stop-the-world.sh 调它；桩测试 migrate_fail_closed_mock_test.sh、migrate-layout_mock_test.sh
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Privileged goose wrapper. Runtime services never receive the migration DSN.
 set -Eeuo pipefail
 umask 077
@@ -47,7 +51,9 @@ esac
 shopt -s nullglob
 migration_files=("$MIGRATIONS_DIR"/*.sql)
 [ "${#migration_files[@]}" -gt 0 ] || { echo "migration: no SQL migrations found" >&2; exit 78; }
-expected_version=1
+# 编号只要求严格递增、不重复，允许空号：主序列历史上合并压号留下了 00073、
+# 00091、00092 三个空号，已装的库 goose_db_version 里记着其后的版本号，不能重编；
+# goose 本身按版本号排序、容忍空号。同号两个文件 goose 会报错，这里提前拒绝。
 MAX_MIGRATION_VERSION=0
 for migration in "${migration_files[@]}"; do
   name="${migration##*/}"
@@ -56,12 +62,15 @@ for migration in "${migration_files[@]}"; do
     exit 78
   fi
   version=$((10#${BASH_REMATCH[1]}))
-  if [ "$version" -ne "$expected_version" ]; then
-    echo "migration: migration sequence is incomplete" >&2
+  if [ "$version" -eq "$MAX_MIGRATION_VERSION" ] && [ "$version" -ne 0 ]; then
+    echo "migration: duplicate migration version: $name" >&2
+    exit 78
+  fi
+  if [ "$version" -le "$MAX_MIGRATION_VERSION" ] || [ "$version" -eq 0 ]; then
+    echo "migration: migration versions must be strictly increasing from 00001: $name" >&2
     exit 78
   fi
   MAX_MIGRATION_VERSION=$version
-  expected_version=$((expected_version + 1))
 done
 # CA42 客户端认证子系统冻结后，它的迁移已移出主序列（见
 # migrations/frozen-client-auth/README.md），原先「版本号 ≥42 就必须存在
