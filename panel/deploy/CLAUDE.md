@@ -38,7 +38,7 @@ backup-webdav.example.json: WebDAV 远端备份配置样例（example.com）
 BACKUP.md / ADMIN-PASSWORD-RESET.md / LINUX-COMPATIBILITY.md: 备份恢复、管理员密码重置、发行版兼容运维手册
 
 边缘入口
-nginx-aegis.conf: 统一边缘模板，只含占位符：后台前缀 __AEGIS_ADMIN_PATH__、域名 __AEGIS_DOMAIN__（server_name 与 Let's Encrypt 路径）
+nginx-aegis.conf: 统一边缘模板，公网只听 80（跳 443）与 443，另有本机回环运维入口 127.0.0.1:9080；只含占位符：后台前缀 __AEGIS_ADMIN_PATH__、域名 __AEGIS_DOMAIN__（server_name 与 Let's Encrypt 路径）
 render-nginx.sh: 只读解析 .env（不 source）的 AEGIS_ADMIN_PATH 与 AEGIS_PUBLIC_BASE_URL，校验后原子写出 nginx 配置；域名与面板拼链接用的是同一个值
 update-cloudflare-realip.sh: 刷新可信 Cloudflare 回源网段（模板 include 的 cloudflare-realip.conf）
 
@@ -51,7 +51,7 @@ client-auth-*、generate-client-auth-*、probe-client-auth-*、verify-client-aut
 client-auth-00044-verifier-gate.py / verify-client-auth-00044-evidence-vectors.ps1: 00044 证据信封与向量的独立生成与校验，不导入被测实现
 
 测试（只用虚构数据与一次性环境，不连任何真实部署）
-render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名
+render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名、listen 只许 80/443 与回环 9080
 run-pg18-gates.sh: 一次跑完全部 PostgreSQL 18 集成门禁，CI 的 panel-pg18.yml 每次推送都跑；每域 go test -v，有用例跳过或一个都没跑同样判失败（缺环境变量的测试会 t.Skip 报 ok），同包两域靠精确 -run 过滤互不拉入；容器就绪经 TCP 探测（镜像初始化的临时实例只听 unix socket），60 秒不就绪即失败
 run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：up 起一次性 PG18 + Valkey，goose 迁移、configure-app-role.sql 配运行角色、aegis-adminctl 建管理员，配置用 openssl 现场生成，从源码起 aegis-public/admin/node 并以 readyz（node 为 healthz）与管理员真登录验收，入口写进状态目录的 smoke.env；库名 aegis_smoke_test（带 test 段，过 e2e 脚本的一次性库守卫），PG 容器名可由 PANDORA_SMOKE_PG_CONTAINER 覆盖（CI 设成 aegis-postgres 让 psql.sh 直接可用）；down 只拆自己记下的进程与容器
 run-smoke-e2e.sh: 联调冒烟第 ⑤ 步（panel-smoke.yml 在读表与写路径之后调用）：在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，第 ⑥ 步起失败即变红；脚本一字不改，只把它们声明要的环境搭出来（/opt/aegispanel 布局链到仓库 deploy/、deploy/.env 由网关配置加库超级账号拼成、aegis-payctl 编进 bin 并配易支付测试商户、两个一次性库确认变量），脚本之间空一个限流窗口；每个脚本一行写进 e2e-results.md（结果、OK/FAIL 数、首个失败的步骤与原文），全部跑完、表格写完后有任何失败就以 1 退出；只肯在 GitHub Actions 上跑

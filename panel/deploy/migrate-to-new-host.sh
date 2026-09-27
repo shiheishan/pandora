@@ -178,8 +178,7 @@ say "8. 边缘入口"
 
 "$APP/deploy/render-nginx.sh" "$APP/deploy/.env" /etc/nginx/conf.d/aegis.conf
 
-# 9080 保持本机回环运维入口；公网测试入口使用 7001。生产公网入口应由
-# HTTPS/零信任边缘显式提供。
+# 9080 是本机回环运维入口，下面第 9 步的验证走它；公网只经域名的 80/443。
 nginx -t || die "nginx 配置校验失败"
 systemctl reload nginx || systemctl restart nginx
 echo "  nginx 已加载"
