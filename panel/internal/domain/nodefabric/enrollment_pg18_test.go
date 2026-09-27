@@ -65,6 +65,7 @@ func TestNodeEnrollmentPG18(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := NewService(app, signer)
+	svc.SetReleaseBinding(ReleaseBinding{}) // 非生产：不比对发布产物
 	tenant := uuid.New()
 	name := "enroll-" + uuid.NewString()
 	token := "bootstrap-secret-" + uuid.NewString()

@@ -9,7 +9,7 @@ bootstrap.go: 一次性 bootstrap 令牌（NODE-008，只存绑定节点名的�
 heartbeat.go: 心跳（AGT-004，指标一律放大成整数）与探针指标的查询、清理
 config_delivery.go: 旧版配置签发 FetchConfig（全局 → 池 → 节点分层合并、规范化后 Ed25519 签名，RLS 未命中回中性 404，退役节点拒绝）、VerifyConfigSignature（面板与节点端共用口径）与配置回报（要求唯一匹配的已发布配置），有效发布物的回报 ReportEffectiveConfigApplied
 config_publish.go: 旧版配置发布 PublishConfig：锁序为 node-config-release 发布锁 → 目标池 / 节点行 FOR SHARE → 受影响节点行 → 全租户版本分配 → 取代旧层 → 写新层；lockLegacyConfigRelease / syncLegacyDesiredConfigVersion 与接入、后台建节点、退役、上线共用
-enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token（签发记录重置为无签发人）
+enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token（签发记录重置为无签发人）；提交比对 SetReleaseBinding 注入的发布绑定（产物摘要与版本），生产缺失即拒，未注入的 Service 一律拒
 uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写审计、记 server_token_issued_at/by、拒绝已退出服务的节点）、用户下发（只给套餐绑定了节点所在池的订阅，无池节点不下发任何人；池限定用户组时只给名单内组的用户，谓词 PoolAdmitsUserSQL 与订阅下载共用，R104；套餐用完但流量包有剩余的订阅继续下发）、在线与运行状态上报（在线数窗口按租户设置，DeviceWindowMinutes 为可选值，PurgeStaleAlive 截止 70 分钟，R103）
 uniproxy_config.go: UniProxy 配置组装与 ETag（LoadRouting 与 effective_release_service 的 loadEffectiveRoutingTx 同一口径：节点私有规则在前、全局规则在后），路由匹配条件翻成节点端 qnode 形状
 uniproxy_traffic.go: 流量上报：按用户排序逐个记账，扣量先吃套餐本周期额度、再按先到先扣吃用户流量包（D-E-1），先锁配额行再锁流量包；逐用户记账委托 usage_daily.go

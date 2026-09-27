@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 go/parser、go/ast 解析一个目录下的全部非测试 .go 源文件
-// [OUTPUT]: 对外提供 Package、Load，以及 Package 的 Source、Decl、DeclWithDoc、Decls、FuncDecl
+// [OUTPUT]: 对外提供 Package、Load、Ref，以及 Package 的 Source、Decl、DeclWithDoc、Decls、FuncDecl、Refs
 // [POS]: platform 的测试辅助包：源码契约测试按「包 + 声明名」取源码，而不是按文件名读，函数在包内换文件不影响断言；只被 *_test.go 引用，不进任何生产二进制
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -32,6 +33,13 @@ type Package struct {
 	dir    string
 	source string
 	decls  map[string][]decl
+	files  []parsedFile
+}
+
+type parsedFile struct {
+	name string // 文件名，不含目录
+	fset *token.FileSet
+	ast  *ast.File
 }
 
 type decl struct {
@@ -66,6 +74,7 @@ func Load(t testing.TB, dir string) *Package {
 		}
 		all.Write(src)
 		all.WriteByte('\n')
+		p.files = append(p.files, parsedFile{name: filepath.Base(path), fset: fset, ast: file})
 		for _, d := range file.Decls {
 			p.index(fset, path, src, d)
 		}
@@ -182,6 +191,55 @@ func (p *Package) FuncDecl(name string) *ast.FuncDecl {
 		p.t.Fatalf("sourcetest: %s in %s is not a function", name, p.dir)
 	}
 	return fn
+}
+
+// Ref 是一处对导入包成员的引用。
+type Ref struct {
+	File string // 文件名，不含目录
+	Line int
+	Name string // 写成「导入路径.成员」，如 os.Getenv
+}
+
+// Refs 返回全部非测试源文件里对 importPath 包中 names 成员的引用：调用与取函数值
+// 都算，按每个文件自己的导入名解析别名。点导入无法按选择子识别，遇到直接失败，
+// 不给静默漏报留余地。
+func (p *Package) Refs(importPath string, names ...string) []Ref {
+	p.t.Helper()
+	want := map[string]bool{}
+	for _, n := range names {
+		want[n] = true
+	}
+	var refs []Ref
+	for _, f := range p.files {
+		local := ""
+		for _, imp := range f.ast.Imports {
+			if path, _ := strconv.Unquote(imp.Path.Value); path != importPath {
+				continue
+			}
+			local = filepath.Base(importPath)
+			if imp.Name != nil {
+				local = imp.Name.Name
+			}
+		}
+		switch local {
+		case "", "_":
+			continue
+		case ".":
+			p.t.Fatalf("sourcetest: %s dot-imports %s; Refs cannot see its members", f.name, importPath)
+		}
+		ast.Inspect(f.ast, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok || !want[sel.Sel.Name] {
+				return true
+			}
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == local {
+				refs = append(refs, Ref{File: f.name, Line: f.fset.Position(sel.Pos()).Line,
+					Name: importPath + "." + sel.Sel.Name})
+			}
+			return true
+		})
+	}
+	return refs
 }
 
 func (p *Package) lookup(name string) decl {

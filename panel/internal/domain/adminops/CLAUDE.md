@@ -9,7 +9,7 @@ orders.go: 订单列表（从 service.go 拆出）：orderRowSelectSQL / scanOrd
 providers.go: 支付渠道卡（从 service.go 拆出）：租户时区今日分币种成交、近 24 小时成功率、最近回调时间，启停带审计
 switches.go: 降级开关读写（从 service.go 拆出），数据库拒绝切换时按约束名给中文原因，PG 原句只进日志（R116）
 audit.go: 审计日志读模型与导出，auditRowSelect / auditCond 是列表、计数、导出共用的唯一形状；带对象可读名（含流量包名）、认证强度（00080）与来源 IP 密文，导出上限 50000 行并同事务记 audit.export
-risk.go: 风控共享 IP 聚类：列聚类与成员、标记为正常（ip_cluster_reviews，30 天）、批量停用（suspended，跳过自己 / 持后台角色者 / 非成员 / 已停用，单事务、末尾核对有效管理员）
+risk.go: 风控共享 IP 聚类：列聚类与成员（成员 active_plan 取 subscription.ActivePlanNameSQL，R118）、标记为正常（ip_cluster_reviews，30 天）、批量停用（suspended，跳过自己 / 持后台角色者 / 非成员 / 已停用，单事务、末尾核对有效管理员）
 catalog.go: 套餐目录读写：套餐资料带卖点 highlights 与推荐 recommended（R100，新建可选、改资料整体覆盖）、归档套餐，以及目录共用的输入输出类型与助手；每个用例拆成「事务外校验（prepare*Input / validate*）+ *Tx 事务体」，事务体只假定输入已校验、在调用方事务里执行，所以向导能把多步编排进一个事务；版本行带建版本人邮箱
 catalog_version.go: 版本生命周期（从 catalog.go 拆出）：建草稿、改版本语义（限速与超额策略解耦，新写入的策略只收 suspend，R99；旧 pool_ids 一律拒绝）、发布（套餐与版本双令牌、价格覆盖可见用户组、有池且有可服务节点、过 P0B 销售闸门）
 catalog_price.go: 价格（从 catalog.go 拆出）：只有新建与归档，新建过 P0B 销售闸门，归档带乐观锁；createPlanPriceTx 供向导编排
@@ -20,9 +20,9 @@ order_detail.go: 订单详情与商品快照；列表行部分复用 orderRowSel
 revenue.go: 收入读模型与收入调整（列表、登记、冲销都带登记人邮箱）；趋势同时回紧邻前一个等长区间的合计
 dashboard.go: 仪表盘读模型与流量排行、通知投递积压（scanNotificationBacklog 为唯一口径）
 dashboard_tasks.go: 「需要处理」汇总 DashboardTasks：六项各挂原读权限（提现挂 marketing.commission.read），调用方没权限的项不查也不出现；工单等待从用户最后一次发言算，离线节点口径同 GET v1/nodes 的 stale
-users.go: 用户列表与详情（从 service.go 拆出）：列表带组、当前订阅摘要（流量、生效设备上限、在线设备），状态多值 / 用户组 / 订阅状态 / q（邮箱、id、订阅令牌哈希反查）筛选；详情带配额、设备、统计（实收另按币种拆成 paid_totals，R80）、邀请人与 Telegram；currentSubscriptionSQL / subStateSQL 是「当前订阅」与订阅状态的唯一口径
-bulk_users.go / bulk_mail.go: 用户批量筛选、导出、生成与群发；筛选含当前订阅的套餐、到期天数与订阅状态，预览带 sample_rows，群发正文 $email / $plan / $expire 逐人替换
-*_test.go: 单元与契约测试；catalog_sales_pg18_test.go、plan_wizard_pg18_test.go、plan_wizard_update_pg18_test.go、finance_reads_pg18_test.go、users_pg18_test.go、users_filters_pg18_test.go、traffic_packs_pg18_test.go、plan_wizard_r92_pg18_test.go（向导继承与三态、限速解耦）与 plan_highlights_pg18_test.go（卖点与推荐）为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域，共用 openCatalogSalesPG18 夹具）
+users.go: 用户列表与详情（从 service.go 拆出）：列表带组、当前订阅摘要（流量、生效设备上限、在线设备），状态多值 / 用户组 / 订阅状态 / q（邮箱、id、订阅令牌哈希反查）筛选；详情带配额、设备、统计（实收另按币种拆成 paid_totals，R80）、邀请人与 Telegram；currentSubscriptionSQL / hasLiveSubscriptionSQL / subStateSQL 把 subscription 包的订阅态口径（R118）套到别名 u 上，active_plan 从同一行当前订阅派生（在用时取其套餐名，否则 null）
+bulk_users.go / bulk_mail.go: 用户批量筛选、导出、生成与群发；筛选含当前订阅的套餐、到期天数与订阅状态，has_active_sub 即存在在用订阅（与 sub_state=active 同义），导出的订阅数列按在用计（R118），预览带 sample_rows，群发正文 $email / $plan / $expire 逐人替换
+*_test.go: 单元与契约测试；catalog_sales_pg18_test.go、plan_wizard_pg18_test.go、plan_wizard_update_pg18_test.go、finance_reads_pg18_test.go、users_pg18_test.go、users_filters_pg18_test.go、users_current_sub_pg18_test.go（订阅态口径 R118：宽限期、欠费、只有过期、两条在用、别的租户）、traffic_packs_pg18_test.go、plan_wizard_r92_pg18_test.go（向导继承与三态、限速解耦）与 plan_highlights_pg18_test.go（卖点与推荐）为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域，共用 openCatalogSalesPG18 夹具）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

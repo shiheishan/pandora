@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -78,7 +77,23 @@ type CommitEnrollmentInput struct {
 	PreflightSHA256     string
 }
 
-func validateEnrollmentEvidence(in CommitEnrollmentInput) error {
+// ReleaseBinding 是本次发布钉死的 NativeCore 产物：节点提交接入时上报的二进制
+// 摘要与版本必须与它一致。值由 platform/config 的 Deployment 读出、网关装配时注入；
+// 生产下缺摘要或缺版本一律 fail closed，非生产缺省即不比对。
+type ReleaseBinding struct {
+	Production bool
+	// ArtifactSHA256 按架构（amd64 / arm64）给出小写十六进制摘要，未发布的架构不出现。
+	ArtifactSHA256 map[string]string
+	Version        string
+}
+
+// SetReleaseBinding 注入发布绑定。只有承载节点接入的 aegis-node 需要；没注入的
+// Service 拒绝一切接入提交。
+func (s *Service) SetReleaseBinding(b ReleaseBinding) {
+	s.release = &b
+}
+
+func validateEnrollmentEvidence(in CommitEnrollmentInput, release *ReleaseBinding) error {
 	fields := map[string]string{
 		"binary_sha256": in.BinarySHA256, "config_sha256": in.ConfigSHA256,
 		"unit_sha256": in.UnitSHA256, "preflight_sha256": in.PreflightSHA256,
@@ -96,18 +111,23 @@ func validateEnrollmentEvidence(in CommitEnrollmentInput) error {
 			errs[name] = "must be a canonical lowercase SHA-256 hex digest"
 		}
 	}
-	digestEnv := "PANDORA_NATIVE_ARTIFACT_" + strings.ToUpper(in.Architecture) + "_SHA256"
-	expectedDigest := strings.ToLower(strings.TrimSpace(os.Getenv(digestEnv)))
-	if expectedDigest == "" && strings.EqualFold(strings.TrimSpace(os.Getenv("AEGIS_ENV")), "production") {
-		errs["artifact"] = digestEnv + " must be configured in production"
-	} else if expectedDigest != "" && expectedDigest != strings.ToLower(in.BinarySHA256) {
-		errs["binary_sha256"] = "does not match the published architecture artifact"
-	}
-	expectedVersion := strings.TrimSpace(os.Getenv("PANDORA_NATIVE_RELEASE_VERSION"))
-	if expectedVersion == "" && strings.EqualFold(strings.TrimSpace(os.Getenv("AEGIS_ENV")), "production") {
-		errs["agent_version"] = "PANDORA_NATIVE_RELEASE_VERSION must be configured in production"
-	} else if expectedVersion != "" && in.AgentVersion != expectedVersion {
-		errs["agent_version"] = "does not match the published release version"
+	switch {
+	case release == nil:
+		// 没注入绑定就是装配漏了，按生产口径拒绝，而不是悄悄放行任意二进制
+		errs["artifact"] = "release binding is not configured"
+	default:
+		digestEnv := "PANDORA_NATIVE_ARTIFACT_" + strings.ToUpper(in.Architecture) + "_SHA256"
+		expectedDigest := release.ArtifactSHA256[in.Architecture]
+		if expectedDigest == "" && release.Production {
+			errs["artifact"] = digestEnv + " must be configured in production"
+		} else if expectedDigest != "" && expectedDigest != strings.ToLower(in.BinarySHA256) {
+			errs["binary_sha256"] = "does not match the published architecture artifact"
+		}
+		if release.Version == "" && release.Production {
+			errs["agent_version"] = "PANDORA_NATIVE_RELEASE_VERSION must be configured in production"
+		} else if release.Version != "" && in.AgentVersion != release.Version {
+			errs["agent_version"] = "does not match the published release version"
+		}
 	}
 	if len(errs) != 0 {
 		return httpx.Invalid(errs)
@@ -425,7 +445,7 @@ func (s *Service) CommitEnrollment(ctx context.Context, tenantID string, in Comm
 	if len(in.CommitRequestSHA256) != sha256.Size {
 		return nil, httpx.Invalid(map[string]string{"request": "missing verified request digest"})
 	}
-	if err := validateEnrollmentEvidence(in); err != nil {
+	if err := validateEnrollmentEvidence(in, s.release); err != nil {
 		return nil, err
 	}
 	evidenceJSON, err := json.Marshal(map[string]string{

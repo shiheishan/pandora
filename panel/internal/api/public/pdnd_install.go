@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/config 的 CanonicalPublicOrigin 与 Deployment.PdndDistDir，依赖 chi 的路径参数
+// [OUTPUT]: 对外提供 handlers.pdndInstallScript、pdndBinary、pdndChecksum，安装脚本模板 pdndInstallTemplate、产物名白名单 pdndAllowedArtifact 与 pdndPanelBaseURL
+// [POS]: api/public 的 pdnd 一键安装分发：/pdnd 下的安装脚本、固定名发布产物与校验和，产物目录跟着发布走
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
@@ -29,15 +34,12 @@ import (
 // 挂在 /pdnd 下，是字面量路由，不会被订阅那条 /{prefix}/{token} 通配吃掉
 // （chi 里字面量优先于通配符）。
 
-// pdndDistDir 是二进制的存放目录。
+// pdndDistDir 是二进制的存放目录（config 的 PdndDistDir）。
 //
 // 之所以允许用环境变量覆盖：面板可能装在不同的路径下，而这个目录要跟着
 // 发布产物走，不适合写死在配置表里——配置表是运营改的，这个是部署时定的。
-func pdndDistDir() string {
-	if dir := strings.TrimSpace(os.Getenv("PANDORA_PDND_DIST_DIR")); dir != "" {
-		return dir
-	}
-	return "/opt/aegispanel/pdnd-dist"
+func (h *handlers) pdndDistDir() string {
+	return h.d.Cfg.PdndDistDir
 }
 
 // pdndPanelBaseURL 推导落地机该回连的面板地址。
@@ -76,7 +78,7 @@ func (h *handlers) pdndBinary(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	path := filepath.Join(pdndDistDir(), name)
+	path := filepath.Join(h.pdndDistDir(), name)
 	file, err := os.Open(path)
 	if err != nil {
 		h.d.Log.Warn("pdnd 发布产物不可读", "artifact", name, "err", err)
@@ -104,7 +106,7 @@ func (h *handlers) pdndChecksum(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	file, err := os.Open(filepath.Join(pdndDistDir(), name))
+	file, err := os.Open(filepath.Join(h.pdndDistDir(), name))
 	if err != nil {
 		http.Error(w, "artifact unavailable", http.StatusNotFound)
 		return

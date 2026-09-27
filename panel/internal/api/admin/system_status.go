@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/db 的租户事务读数据库体积与连接数，读 AEGIS_BACKUP_DIR 等环境变量探测备份目录，依赖 system_components.go 的组件清单
+// [INPUT]: 依赖 platform/db 的租户事务读数据库体积与连接数，经 Deps.Cfg 的 Deployment 取备份目录与解密私钥路径（环境变量只在 platform/config 读），依赖 system_components.go 的组件清单
 // [OUTPUT]: 对外提供 handlers.systemStatus、backupStatus
 // [POS]: api/admin 的系统状态（契约后台-01 GET v1/system/status）：备份、数据库与 state / components
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/platform/config"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -79,10 +80,7 @@ func (h *handlers) systemStatus(w http.ResponseWriter, r *http.Request) {
 // 「我以为备份成功了」，不如去看真实产物 —— 定时器停了、磁盘满了、
 // 脚本改坏了，这里都会如实反映出来。
 func (h *handlers) backupStatus() map[string]any {
-	dir := strings.TrimSpace(os.Getenv("AEGIS_BACKUP_DIR"))
-	if dir == "" {
-		dir = "/var/backups/aegispanel"
-	}
+	dir := h.d.Cfg.BackupDir
 
 	st := map[string]any{"dir": dir}
 
@@ -160,7 +158,7 @@ func (h *handlers) backupStatus() map[string]any {
 	//
 	// 只看变量有没有设、文件在不在，不读内容。备份私钥不该被一个对外的
 	// Web 进程持有，能回答「配了没有」就够了。
-	identity := strings.TrimSpace(os.Getenv("AEGIS_BACKUP_AGE_IDENTITY"))
+	identity := h.d.Cfg.BackupAgeIdentity
 	switch {
 	case identity == "":
 		st["identity_configured"] = false
@@ -179,7 +177,7 @@ func (h *handlers) backupStatus() map[string]any {
 	// 异地备份：有没有配 WebDAV。只在本机的备份，机器挂了会跟着一起没。
 	offsite := false
 	for _, p := range []string{
-		"/etc/aegispanel/backup-webdav.json",
+		config.DefaultBackupWebDAVConfigPath,
 		filepath.Join(dir, "backup-webdav.json"),
 	} {
 		if _, err := os.Stat(p); err == nil {

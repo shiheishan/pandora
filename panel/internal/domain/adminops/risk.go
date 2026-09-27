@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 00026 的 audit_ip_clusters 视图、00077 的 ip_cluster_reviews，依赖同包 service.go 的 revokeUserLogins，依赖 platform 的 db/audit/httpx/iamguard
+// [INPUT]: 依赖 00026 的 audit_ip_clusters 视图、00077 的 ip_cluster_reviews，依赖同包 service.go 的 revokeUserLogins、domain/subscription 的 ActivePlanNameSQL，依赖 platform 的 db/audit/httpx/iamguard
 // [OUTPUT]: 对外提供 IPCluster、IPClusterUser、IPClusterReview、DisableClusterResult、ParseClusterKey、Service.ListIPClusters / ReviewIPCluster / DisableIPClusterAccounts
 // [POS]: adminops 的风控聚类用例（后台-09「风控」卡片）：读聚类与复核结论、标记正常、批量停用；停用逐个复用改用户状态的语义，全部在一个事务里
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/subscription"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -122,10 +123,7 @@ func (s *Service) ListIPClusters(ctx context.Context, tenantID string, includeRe
 		users := map[string]IPClusterUser{}
 		urows, err := tx.Query(ctx, `
 			SELECT u.id::text, u.email::text, u.status::text,
-			       (SELECT pl.name FROM subscriptions s
-			          JOIN plans pl ON pl.id = s.plan_id
-			         WHERE s.user_id = u.id AND s.status IN ('active','trialing')
-			         ORDER BY s.created_at DESC LIMIT 1)
+			       `+subscription.ActivePlanNameSQL("u.tenant_id", "u.id")+`
 			  FROM users u
 			 WHERE u.tenant_id = $1 AND u.id = ANY($2::uuid[])`, tenantID, all)
 		if err != nil {

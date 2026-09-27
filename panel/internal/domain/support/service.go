@@ -162,8 +162,8 @@ type Ticket struct {
 	// LastMessageAuthorKind 是最后一条非内部备注消息的作者类型（队列）：为 user 时
 	// 前端加粗，免得给每个客服建一张已读表
 	LastMessageAuthorKind string `json:"last_message_author_kind,omitempty"`
-	// UserActivePlan 是用户 active / trialing 最新订阅的套餐名（详情）：客服不一定
-	// 有 iam.user.read，不能再去调用户接口
+	// UserActivePlan 是用户当前订阅在用时的套餐名，否则为空（队列与详情，R118，
+	// 与后台用户列表的 active_plan 同一口径）：客服不一定有 iam.user.read，不能再去调用户接口
 	UserActivePlan *string `json:"user_active_plan,omitempty"`
 
 	MessageCount int       `json:"message_count"`

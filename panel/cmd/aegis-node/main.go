@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/config、db、crypto、logging、server 的进程装配，realtime 的跨进程事件 Hub，geoip 的可选库，domain/nodefabric 的节点服务与流 Hub
+// [INPUT]: 依赖 platform/config、db、crypto、logging、server 的进程装配，realtime 的跨进程事件 Hub，geoip 的可选库，domain/nodefabric 的节点服务、发布绑定注入与流 Hub
 // [OUTPUT]: 对外提供 aegis-node 进程：Node 域 HTTP 网关（默认 127.0.0.1:9003）
 // [POS]: panel/cmd 的三个网关之一，只做装配，路由与处理在 internal/api/node；与 aegis-public、aegis-admin 并列
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -67,13 +67,20 @@ func run() error {
 	nodeService := nodefabric.NewService(pool, signer)
 	// 节点首次接入把公网 IP 自动识别成地区填 servers.region。
 	// 缺库不致命：自动识别降级为空，接入照常。
-	if geoResolver, geoErr := geoip.Open(os.Getenv("AEGIS_GEOIP_DB")); geoErr == nil {
+	// 与 aegis-admin 不同，这里 AEGIS_GEOIP_DB 没有缺省路径：未设置就不开。
+	if geoResolver, geoErr := geoip.Open(cfg.GeoIPDB, cfg.GeoIPIPv6DB); geoErr == nil {
 		defer geoResolver.Close()
 		nodeService.SetGeoIP(geoResolver)
 	} else if geoErr != geoip.ErrNoDatabase {
 		log.Warn("IP 归属地库不可用，服务器地区将不会自动识别",
-			"path", os.Getenv("AEGIS_GEOIP_DB"), "err", geoErr)
+			"path", cfg.GeoIPDB, "err", geoErr)
 	}
+	// 节点接入比对本次发布钉死的 NativeCore 摘要与版本；生产缺失即拒绝接入。
+	nodeService.SetReleaseBinding(nodefabric.ReleaseBinding{
+		Production:     cfg.IsProduction(),
+		ArtifactSHA256: cfg.NativeArtifactSHA256,
+		Version:        cfg.NativeReleaseVersion,
+	})
 	if len(cfg.PreviousConfigSigningSeed) > 0 {
 		previousSigner, err := crypto.NewSigner(cfg.PreviousConfigSigningSeed)
 		if err != nil {
