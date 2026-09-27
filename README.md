@@ -326,17 +326,15 @@ bash panel/deploy/test-install.sh <发布目录>
 
 ## 当前进度
 
-截至 2026-09-23：
+截至 2026-09-26：
 
 | 项 | 状态 |
 |---|---|
-| 当前版本 | r54 管理端已发布（2026-09-09）；后端、迁移、NativeCore 沿用 r53 |
-| 仓库基线 | GitHub `main` 三个提交：`f1390b3` 导入 → `3283da8` → `64c0b21`，工作树干净 |
-| r55 | 已随 `f1390b3` 入库，未部署 |
-| CI | 首跑 `35827175294` 失败；`35833526284`（`e7c9737`）八绿一红，唯一红为 React candidate 1/156 的 `findBy` 超时；改全局 `asyncUtilTimeout` 后 `35835685398`（`05a2aa3`）九个 job 全绿，React candidate 156/156，race 日志无 `DATA RACE`；原因与修复见上文 FACT |
+| 仓库基线 | 面板重构第 1–5 阶段全部合入 `main`（合并提交 `d04513e`、`d3ae3f8`） |
+| CI | `main` 上三组全绿（`36230330995` / `36230331009` / `36230331011`）：PG18 集成门禁 234 PASS / 0 SKIP，NativeCore（含 race、原生 ARM64、interop），新前端对真实网关的联调冒烟 |
 | Xboard 功能验收 | PARTIAL，未 RELEASED |
-| 前端 | 2026-09-23 在分支 `feat/panel-redesign` 删除旧的手写单页与 React 候选，按设计稿重写管理后台与用户门户并补齐后端缺口；未部署，生产机仍跑 r54 的旧前端 |
-| 生产运行 | 台湾生产机：aegis-public / admin / node + pandora-native + pandora-rust 均 active |
+| 前端 | 旧的手写单页与 React 候选已删除，管理后台与用户门户按设计稿在 `panel/frontend` 重写完成并补齐后端缺口 |
+| 部署 | 这一版尚未在任何真实机器上部署或实测；真机测试待换新机器再做 |
 
 未收口的历史工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成）当时状态为 PARTIAL at INTEGRATED，目标是把快照推到 VERIFIED。之后的交接记录没有它完成的证据，相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
 
