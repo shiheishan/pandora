@@ -5,7 +5,7 @@
 
 成员清单
 auth.go: Authenticate 解析 Bearer 装配 Principal：会话有效性、节流刷新 sessions.last_seen_at（5 分钟一次，R62 唯一写入点）与实时权限在同一事务里取齐
-middleware.go: 请求 ID、Recovery、安全头、租户（Tenant 恒定注入 DefaultTenantID）、DomainGuard、RequireAuth、RequirePermission（缺权限回 404）、RequireRecentReauth（拒绝回 403 reauth_required，前端弹框后以原幂等键重放）、Valkey 限流（按 IP / 前缀 / 账号 / 路由 / 租户 / JSON 字段哈希）、超时与公共链装配
+middleware.go: 请求 ID、Recovery、安全头、租户（Tenant 恒定注入 DefaultTenantID）、DomainGuard、RequireAuth、RequirePermission（缺权限回 404）、RequireRecentReauth（拒绝回 403 reauth_required，前端弹框后以原幂等键重放）、Valkey 限流（按 IP / 前缀 / 账号 / 路由 / 租户 / JSON 字段哈希）与超时
 switches.go: 降级开关门：FeatureSwitch 按开关回 503、AdminWritesGate 管理端只读模式，缺行视为开启
 idempotency.go: 幂等键主体：Idempotency 中间件（INSERT 新占认领，SELECT FOR UPDATE + 条件 UPDATE 接管可重试的旧认领）、IdempotencyClaim 交给业务处理器、CompleteSuccessJSONInTx 在业务事务里完成认领，作用域按主体隔离，键与请求目标、正文哈希绑定
 idempotency_replay.go: 重放判定（按记录状态与存储格式，含两种旧格式）、存储响应编解码与重放出口；只保存并重放五个白名单业务响应头，写回前校验

@@ -7,7 +7,7 @@
 service.go: 主题与插槽读写；Public 一次取齐生效主题（tokens 过滤、custom_css 置空）与启用插槽；SaveTheme 先按表 CHECK 与令牌白名单校验再入库（缺陷 20），内置主题不可原地改；激活、删除、插槽保存都写审计
 tokens.go: DesignTokenKeys 白名单与 light/dark 分组、normalizeTokens（保存校验）与 filterTokens（读取过滤）、DefaultSiteName 与 SiteNameTx
 sanitize.go: 插槽 HTML 白名单净化；SanitizeCSS 随 custom_css 停用暂无生产调用方，恢复自定义 CSS 时复用
-*_test.go: theme_seed_test.go 守 00051/00055 历史种子能被旧前端接受；paper_theme_test.go 守 00075「默认 · 纸白」与 design-tokens.ts 逐字一致、Down 原值恢复、保存校验；theme_pg18_test.go 为 PG18 集成测试（run-pg18-gates.sh 的 appearance 域）
+*_test.go: theme_seed_test.go 守 00051/00055 历史种子满足当年前端的校验规则；paper_theme_test.go 守 00075「默认 · 纸白」与 design-tokens.ts 逐字一致、Down 原值恢复、保存校验；theme_pg18_test.go 为 PG18 集成测试（run-pg18-gates.sh 的 appearance 域）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

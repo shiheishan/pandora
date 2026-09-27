@@ -1,7 +1,7 @@
 # panel/internal/
 > L2 | 父级: /panel/CLAUDE.md
 
-依赖方向自上而下：api → domain → platform，middleware 挂在 api 之前只依赖 platform。已核对：domain 与 platform 不 import api，platform 不 import domain，middleware 不 import domain，api import domain 33 处。api 只做路由、鉴权与 DTO，domain 承载用例与状态机，platform 提供无业务语义的基础设施。
+依赖方向自上而下：api → domain → platform，middleware 挂在 api 之前只依赖 platform。已核对：domain 与 platform 不 import api，platform 不 import domain，middleware 不 import domain，只有 api 单向 import domain。api 只做路由、鉴权与 DTO，domain 承载用例与状态机，platform 提供无业务语义的基础设施。
 
 成员清单
 api/: 三个域网关的 HTTP 路由与处理器，admin 50 文件、public 21 文件、node 3 文件；见 api/CLAUDE.md
