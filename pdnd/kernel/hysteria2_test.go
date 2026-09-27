@@ -185,10 +185,10 @@ func TestHysteria2NativeClientTCPUDPAndAuth(t *testing.T) {
 
 func TestHysteria2AddUsersRejectsBatchAtomically(t *testing.T) {
 	a := &hysteria2Adapter{
-		users: make(map[string]int),
+		users:   make(map[string]int),
 		traffic: make(map[int64]core.UserTraffic),
-		online: make(map[int64]map[string]struct{}),
-		active: make(map[net.Conn]struct{}),
+		online:  make(map[int64]map[string]struct{}),
+		active:  make(map[net.Conn]struct{}),
 	}
 	if err := a.AddUsers([]core.User{{ID: 1, UUID: "ok"}, {ID: 2}}); err == nil {
 		t.Fatal("invalid batch unexpectedly accepted")

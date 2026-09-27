@@ -206,9 +206,9 @@ func shadowTLSMethod(raw map[string]any) string {
 	}
 	return method
 }
-func (a *shadowTLSAdapter) AddUsers(users []core.User) error  { return a.inner.AddUsers(users) }
+func (a *shadowTLSAdapter) AddUsers(users []core.User) error    { return a.inner.AddUsers(users) }
 func (a *shadowTLSAdapter) UpsertUsers(users []core.User) error { return a.inner.UpsertUsers(users) }
-func (a *shadowTLSAdapter) DelUsers(ids []string) error        { return a.inner.DelUsers(ids) }
+func (a *shadowTLSAdapter) DelUsers(ids []string) error         { return a.inner.DelUsers(ids) }
 func (a *shadowTLSAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	return a.inner.SnapshotTraffic()
 }

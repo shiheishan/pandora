@@ -112,9 +112,9 @@ func TestVerifyConfigRejectsUnexpectedKeyID(t *testing.T) {
 	client, err := NewSignedClient(&Identity{
 		Server:          "https://panel.example.test",
 		NodeID:          "node-1",
-		PrivateKey:       base64.StdEncoding.EncodeToString(private),
-		ConfigPublicKey:  base64.StdEncoding.EncodeToString(public),
-		ConfigKeyID:      "expected-key",
+		PrivateKey:      base64.StdEncoding.EncodeToString(private),
+		ConfigPublicKey: base64.StdEncoding.EncodeToString(public),
+		ConfigKeyID:     "expected-key",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestVerifyConfigRejectsUnexpectedKeyID(t *testing.T) {
 	err = client.VerifyConfig(&SignedConfig{
 		Payload: payload, Hash: base64.StdEncoding.EncodeToString(sum[:]),
 		Signature: base64.StdEncoding.EncodeToString(signature),
-		KeyID: "unexpected-key", ExpiresAt: expires,
+		KeyID:     "unexpected-key", ExpiresAt: expires,
 	})
 	if err == nil {
 		t.Fatal("config signed by an unexpected key id was accepted")
