@@ -52,9 +52,9 @@ describe('礼品卡', () => {
   })
 
   it('兑换记录「获得」列与卡码归一', () => {
-    expect(redemptionGain({ template_name: 'T', type: 'mystery', prize_label: '50 GB 流量', redeemed_at: 'x' })).toBe('50 GB 流量')
-    expect(redemptionGain({ template_name: 'T', type: 'general', balance: 1000, redeemed_at: 'x' })).toBe('¥10.00 余额')
-    expect(redemptionGain({ template_name: '专业版月卡', type: 'plan', redeemed_at: 'x' })).toBe('专业版月卡')
+    expect(redemptionGain({ template_name: 'T', type: 'mystery', code_hint: 'GC-1…', prize_label: '50 GB 流量', redeemed_at: 'x' })).toBe('50 GB 流量')
+    expect(redemptionGain({ template_name: 'T', type: 'general', code_hint: 'GC-2…', balance: 1000, redeemed_at: 'x' })).toBe('¥10.00 余额')
+    expect(redemptionGain({ template_name: '专业版月卡', type: 'plan', code_hint: 'GC-3…', redeemed_at: 'x' })).toBe('专业版月卡')
     expect(normalizeGiftCode(' gc-1024 myst ')).toBe('GC-1024MYST')
   })
 
@@ -82,6 +82,7 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       paid_amount: 4720,
       refunded_amount: 0,
       plan_name: '专业版',
+      item_name: '专业版',
       cancellable: false,
       created_at: '2026-09-21T10:00:00Z',
       items: [{ name: '专业版', quantity: 1, unit_amount: 5900, line_amount: 5900 }],

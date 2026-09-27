@@ -282,6 +282,9 @@ describe('commission', () => {
     rate_percent: 20,
     freeze_days: 7,
     min_withdraw: 10050,
+    total_earned: 4821000,
+    invited_users: 2318,
+    scope: 'every_order',
   })
 
   it('maps withdrawal statuses; only approved can be paid', () => {
@@ -294,17 +297,22 @@ describe('commission', () => {
     expect(withdrawalState('returned').label).toBe('已退回')
   })
 
-  it('shows 「—」 for the backend-pending totals and fills them once present', () => {
-    expect(commissionStats(overview).map((s) => s.value)).toEqual(['—', '¥3,904.00', '¥31,660.00', '—'])
-    expect(commissionStats({ ...overview, total_earned: 4821000, invited_users: 2318 }).map((s) => s.value)).toEqual(['¥48,210.00', '¥3,904.00', '¥31,660.00', '2,318'])
+  it('formats the four overview stats', () => {
+    expect(commissionStats(overview).map((s) => s.value)).toEqual(['¥48,210.00', '¥3,904.00', '¥31,660.00', '2,318'])
   })
 
-  it('omits scope until the backend reports it (DisallowUnknownFields would reject the whole save)', () => {
+  it('requires the backend-reported totals and scope', () => {
+    const legacy: Partial<CommissionOverview> = { ...overview }
+    delete legacy.scope
+    expect(overviewSchema.safeParse(legacy).success).toBe(false)
+  })
+
+  it('round-trips the settings form into the config body with scope', () => {
     const form = commissionToForm(overview)
     expect(form).toEqual({ rate: 20, scope: 'every_order', freezeDays: '7', minWithdraw: '100.50' })
-    expect(buildCommissionConfig(form, false)).toEqual({ ok: true, body: { rate_percent: 20, freeze_days: 7, min_withdraw: 10050 } })
-    expect(buildCommissionConfig({ ...form, scope: 'first_order' }, true)).toEqual({ ok: true, body: { rate_percent: 20, freeze_days: 7, min_withdraw: 10050, scope: 'first_order' } })
-    const bad = buildCommissionConfig({ rate: 51, scope: 'every_order', freezeDays: '91', minWithdraw: 'x' }, false)
+    expect(buildCommissionConfig(form)).toEqual({ ok: true, body: { rate_percent: 20, freeze_days: 7, min_withdraw: 10050, scope: 'every_order' } })
+    expect(buildCommissionConfig({ ...form, scope: 'first_order' })).toEqual({ ok: true, body: { rate_percent: 20, freeze_days: 7, min_withdraw: 10050, scope: 'first_order' } })
+    const bad = buildCommissionConfig({ rate: 51, scope: 'every_order', freezeDays: '91', minWithdraw: 'x' })
     expect(!bad.ok && Object.keys(bad.errors).sort()).toEqual(['freeze_days', 'min_withdraw', 'rate_percent'])
   })
 })

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./api 的 schema，依赖 ./model 的纯逻辑
  * [OUTPUT]: 无（测试）
- * [POS]: 工单的单元测试：列表与详情 schema（R60 字段可缺席、列表不收 null、详情零值 last_reply_at）、子路由、状态文案（closed 按 closed_reason 分）、三个按钮的可见条件、作者名（D-F-2 已决）、消息时间、新建表单校验
+ * [POS]: 工单的单元测试：列表与详情 schema（R60 字段必在、列表 related_order 恒 null、详情零值 last_reply_at）、子路由、状态文案（closed 按 closed_reason 分）、三个按钮的可见条件、作者名（D-F-2 已决）、消息时间、新建表单校验
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -29,12 +29,13 @@ function detail(over: Partial<TicketDetail> = {}): TicketDetail {
 }
 
 describe('工单 schema', () => {
-  it('列表行：related_order 恒为 null；修订 R60 字段缺席也能过（旧后端）', () => {
+  it('列表行：related_order 恒为 null；R60 两个字段 Go 不带 omitempty，缺席即不符约定', () => {
     expect(ticketRowSchema.parse(ROW).related_order).toBeNull()
-    const legacy: Record<string, unknown> = { ...ROW }
-    delete legacy.closed_reason
-    delete legacy.related_order
-    expect(ticketRowSchema.parse(legacy).closed_reason).toBeUndefined()
+    for (const key of ['closed_reason', 'related_order']) {
+      const missing: Record<string, unknown> = { ...ROW }
+      delete missing[key]
+      expect(ticketRowSchema.safeParse(missing).success).toBe(false)
+    }
     expect(ticketRowSchema.safeParse({ ...ROW, status: 'withdrawn' }).success).toBe(false)
   })
 
@@ -62,7 +63,7 @@ describe('状态与按钮', () => {
     expect(label('resolved')).toBe('已解决')
     expect(label('closed', 'withdrawn')).toBe('已撤回')
     expect(label('closed', 'user_closed')).toBe('已关闭')
-    expect(ticketStatus({ status: 'closed' }).label).toBe('已关闭')
+    expect(ticketStatus({ status: 'closed', closed_reason: null }).label).toBe('已关闭')
   })
 
   it('撤回只在未关闭且客服没回复过时出现；关闭与回复只看是否已关闭（resolved 仍可回复）', () => {

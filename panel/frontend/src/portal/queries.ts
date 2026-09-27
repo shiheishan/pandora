@@ -88,8 +88,8 @@ export function useBalance() {
 // ---------------------------------------------------------------------------
 // GET v1/me/subscriptions：外框的套餐徽标与概览、我的订阅、结账页共用一个查询键和一份
 // 完整 schema（契约门户-02，含修订 R53–R62 的扩展字段），各处经 select 取自己要的部分，
-// 所以缓存里始终是全字段、整个门户只发一次请求。扩展字段写成可选：旧后端（假后端 legacy
-// 场景）缺席时页面降级，不因 schema 失败而整页报错。
+// 所以缓存里始终是全字段、整个门户只发一次请求。字段与 Go 的 mySubscriptionView / myQuotaView
+// 一一对应：都没有 omitempty，指针字段（设备上限、周期末、下次重置、续费价）为 null 而不缺席。
 // ---------------------------------------------------------------------------
 export const SUBSCRIPTION_STATUSES = ['pending', 'trialing', 'active', 'past_due', 'grace', 'paused', 'cancelled', 'expired'] as const
 export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number]
@@ -99,11 +99,11 @@ const quotaSchema = z.object({
   limit: z.number().int().nullable(),
   consumed: z.number().int(),
   remaining: z.number().int().nullable(),
-  period: z.string().optional(),
-  period_start: z.string().nullable().optional(),
-  period_end: z.string().nullable().optional(),
-  granted_addon: z.number().int().optional(),
-  adjusted: z.number().int().optional(),
+  period: z.string(),
+  period_start: z.string(),
+  period_end: z.string().nullable(),
+  granted_addon: z.number().int(),
+  adjusted: z.number().int(),
 })
 
 const renewalPriceSchema = z.object({
@@ -127,13 +127,13 @@ export const subscriptionSchema = z.object({
   currency: z.string(),
   amount: z.number().int(),
   quotas: z.array(quotaSchema),
-  device_limit: z.number().int().nullable().optional(),
-  online_devices: z.number().int().optional(),
-  quota_reset_strategy: z.enum(['never', 'natural_month', 'billing_cycle', 'fixed_day']).optional(),
-  next_reset_at: z.string().nullable().optional(),
-  renewable: z.boolean().optional(),
-  renewal_price: renewalPriceSchema.nullable().optional(),
-  pack_remaining_bytes: z.number().int().optional(),
+  device_limit: z.number().int().nullable(),
+  online_devices: z.number().int(),
+  quota_reset_strategy: z.enum(['never', 'natural_month', 'billing_cycle', 'fixed_day']),
+  next_reset_at: z.string().nullable(),
+  renewable: z.boolean(),
+  renewal_price: renewalPriceSchema.nullable(),
+  pack_remaining_bytes: z.number().int(),
 })
 export type Subscription = z.output<typeof subscriptionSchema>
 
@@ -173,7 +173,7 @@ export function useActivePlanName(): string | null {
 // ---------------------------------------------------------------------------
 // GET v1/me/commission（契约门户-06，含修订 R69）：外框头像菜单读可用佣金，邀请返利页读全部，
 // 同键一份全字段。可用额按 5.A D-F-1 已统一为「账本余额 − 在途提现」，转余额与提现同一口径。
-// R69 的 paid_invitees / total_earned / transfers 写成可选：旧后端缺席时页面降级。
+// R69 的 paid_invitees / total_earned / transfers 已上线且必回（Go 无 omitempty）。
 // 三个列表 Go 端都以空切片初始化，没有记录时是 []，不是 null。
 // ---------------------------------------------------------------------------
 // CHECK 允许六种；Go 只写 pending / available，冲销由 SQL 写 reversed
@@ -190,8 +190,8 @@ export const commissionSchema = z.object({
     settled: z.number().int(),
     invitees: z.number().int(),
     orders: z.number().int(),
-    paid_invitees: z.number().int().optional(),
-    total_earned: z.number().int().optional(),
+    paid_invitees: z.number().int(),
+    total_earned: z.number().int(),
     rate_percent: z.number().int(),
     min_withdraw: z.number().int(),
     // R81 / R114：计佣范围，与计提同一个兜底；first_order 时横幅写「首单」
@@ -221,7 +221,7 @@ export const commissionSchema = z.object({
       completed_at: z.string().nullable(),
     }),
   ),
-  transfers: z.array(z.object({ ledger_txn_id: z.string(), amount: z.number().int(), currency: z.string(), created_at: z.string() })).optional(),
+  transfers: z.array(z.object({ ledger_txn_id: z.string(), amount: z.number().int(), currency: z.string(), created_at: z.string() })),
 })
 export type Commission = z.output<typeof commissionSchema>
 

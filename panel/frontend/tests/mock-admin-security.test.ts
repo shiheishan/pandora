@@ -185,8 +185,8 @@ describe('mock api · admin security and operations', () => {
     const reauth = await expireAndReauth()
     expect(await json(await call('POST', '/v1/switches/billing.checkout', { enabled: false, reason: '渠道故障' }))).toMatchObject({ error: { code: 'reauth_required' } })
     await reauth()
-    expect(await json(await call('POST', '/v1/switches/auth.login', { enabled: false, reason: '演练' }))).toMatchObject({ error: { code: 'conflict', message: expect.stringContaining('feature_switches_essential_stays_on') } })
-    expect(await json(await call('POST', '/v1/switches/billing.checkout', { enabled: false, reason: '  ' }))).toMatchObject({ error: { code: 'conflict', message: expect.stringContaining('feature_switches_disable_needs_reason') } })
+    expect(await json(await call('POST', '/v1/switches/auth.login', { enabled: false, reason: '演练' }))).toMatchObject({ error: { code: 'conflict', message: '开关 auth.login 不允许该操作：核心开关不能关闭' } })
+    expect(await json(await call('POST', '/v1/switches/billing.checkout', { enabled: false, reason: '  ' }))).toMatchObject({ error: { code: 'conflict', message: '开关 billing.checkout 不允许该操作：关闭开关必须填写原因' } })
     expect((await call('POST', '/v1/switches/nope', { enabled: true, reason: '' })).status).toBe(404)
     expect((await call('POST', '/v1/switches/billing.checkout', { enabled: false, reason: '渠道故障', note: 1 })).status).toBe(400)
 

@@ -253,7 +253,7 @@ function GiftCardCard() {
             <ul className={css.list}>
               {rows.map((r, i) => (
                 <li key={`${r.redeemed_at}-${i}`} className={css.mineRow}>
-                  <span className={css.mineCode}>{r.code_hint ?? r.template_name}</span>
+                  <span className={css.mineCode}>{r.code_hint}</span>
                   <span className={css.mineGain}>{redemptionGain(r)}</span>
                   <span className={css.mineAt}>{shortDate(r.redeemed_at)}</span>
                 </li>

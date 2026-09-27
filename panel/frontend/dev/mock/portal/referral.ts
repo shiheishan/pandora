@@ -122,7 +122,7 @@ const available = (c: CommissionState) => ledgerBalance(c) - sum(c.withdrawals, 
 
 function summary(c: CommissionState) {
   const live = c.entries.filter((e) => e.status !== 'reversed')
-  const base = {
+  return {
     currency: 'CNY',
     pending: sum(c.entries, (e) => (e.status === 'pending' ? e.amount : 0)),
     available: available(c),
@@ -134,10 +134,10 @@ function summary(c: CommissionState) {
     min_withdraw: MIN_WITHDRAW,
     // R81 / R114：计佣范围（真后端已上线，legacy 场景也照回）；multi 场景取「首单」，横幅写「好友首单付费」
     scope: scenario() === 'multi' ? 'first_order' : 'every_order',
+    // R69：Go 的 CommissionSummary 无 omitempty，各场景恒在
+    paid_invitees: new Set(live.map((e) => e.from)).size,
+    total_earned: sum(live, (e) => e.amount),
   }
-  // legacy：修订 R69 之前没有这两个字段
-  if (scenario() === 'legacy') return base
-  return { ...base, paid_invitees: new Set(live.map((e) => e.from)).size, total_earned: sum(live, (e) => e.amount) }
 }
 
 // 8 位，字母表 A–Z2–9 去掉 0/O/1/I/L（identity/invite.go）
@@ -166,7 +166,7 @@ export const referral: MockModule = {
         summary: summary(c),
         entries: c.entries.slice(0, 100).map((e) => ({ ...e, rate_percent: RATE_PERCENT, currency: 'CNY' })),
         withdrawals: c.withdrawals.slice(0, 50).map((w) => ({ ...w, currency: 'CNY' })),
-        ...(scenario() === 'legacy' ? {} : { transfers: c.transfers.slice(0, 50).map((t) => ({ ...t, currency: 'CNY' })) }),
+        transfers: c.transfers.slice(0, 50).map((t) => ({ ...t, currency: 'CNY' })),
       })
     },
 

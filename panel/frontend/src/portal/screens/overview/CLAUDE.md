@@ -1,7 +1,7 @@
 # panel/frontend/src/portal/screens/overview/
 > L2 | 父级: /panel/frontend/src/portal/screens/CLAUDE.md
 
-概览（用户门户-01-概览.dc.html；契约门户-01）。只组合读取，不写：主卡展示 status∈{active,trialing,grace,past_due} 中 current_period_end 最晚的一条订阅；余额与可提佣金直接用外框 queries.ts 的同键查询；在线设备、设备上限、重置日（online_devices / device_limit / next_reset_at）后端已实现，字段缺席时兜底：显示「—」或退回按日用量接口的周期末。
+概览（用户门户-01-概览.dc.html；契约门户-01）。只组合读取，不写：主卡展示 status∈{active,trialing,grace,past_due} 中 current_period_end 最晚的一条订阅；余额与可提佣金直接用外框 queries.ts 的同键查询；在线设备、设备上限、重置日（online_devices / device_limit / next_reset_at）必回：设备上限 null 写「不限」，重置日为 null 时退回额度行或按日用量接口的周期末；没有订阅时在线设备显示「—」。
 设计稿之外补了三处，均有契约依据：critical 公告顶部横幅（门户-08 建议）、grace / past_due 徽标（门户-02 待补·前端）、流量包余量并入剩余流量并注明「含流量包」（门户-03 我的流量包）。
 
 成员清单

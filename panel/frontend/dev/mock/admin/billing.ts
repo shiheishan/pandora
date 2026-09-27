@@ -145,7 +145,7 @@ export const billing: MockModule = {
         if (bad) return bad
         const userId = str(body.user_id)
         const planId = str(body.plan_id)
-        if (!userId || !planId) return err(400, 'bad_request', 'tenant, actor, user and plan are required')
+        if (!userId || !planId) return err(400, 'bad_request', '缺少租户、操作人、用户或套餐')
         if (!isUuid(userId) || !isUuid(planId)) return err(400, 'bad_request', '标识符格式不正确')
         const reason = str(body.reason).trim()
         if (chars(reason) < 5 || chars(reason) > 500) return invalid({ reason: '请写清开单原因，5 到 500 个字。这条会进审计，是日后对账的唯一依据' })

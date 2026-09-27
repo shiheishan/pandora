@@ -32,18 +32,19 @@ export const orderRowSchema = z.object({
   cancelled_at: z.string().optional(),
   cancel_reason: z.string().optional(),
   expires_at: z.string().optional(),
-  // 修订 R69 已上线；写成可选，旧后端（假后端 legacy 场景）缺席时标题退回 plan_name
+  // 修订 R69：周期是首个订单项的快照，Go 带 omitempty，没有周期（充值）时缺席；
+  // 商品名 Go 无 omitempty，恒在（没有订单项时为空串）
   interval: z.string().optional(),
   interval_count: z.number().int().optional(),
-  item_name: z.string().optional(),
+  item_name: z.string(),
 })
 export type OrderRow = z.output<typeof orderRowSchema>
 
 export const ordersPageSchema = z.object({
   orders: z.array(orderRowSchema),
   total: z.number().int(),
-  // 修订 R69
-  counts: z.object({ open: z.number().int(), paid: z.number().int(), closed: z.number().int(), refunded: z.number().int() }).optional(),
+  // 修订 R69：本人全部订单按筛选段的计数，不受当前筛选影响
+  counts: z.object({ open: z.number().int(), paid: z.number().int(), closed: z.number().int(), refunded: z.number().int() }),
 })
 
 /** 价格周期 → 「月付 / 季付 / 年付」；billing_interval 取值见 00003 的 CHECK。 */
@@ -66,7 +67,7 @@ export function intervalLabel(interval: string | undefined, count = 1): string {
   return unit ? `${count} ${unit}` : ''
 }
 
-/** 契约门户-04 的标题映射；待补字段缺席时退回 plan_name（修订 R32：流量包订单的 plan_name 即流量包名）。 */
+/** 契约门户-04 的标题映射；plan_name 缺席时为空串（修订 R32：流量包订单的 plan_name 即流量包名），流量包标题取 item_name。 */
 export function orderTitle(o: Pick<OrderRow, 'kind' | 'plan_name' | 'item_name' | 'interval' | 'interval_count'>): string {
   const plan = o.plan_name ?? ''
   const period = intervalLabel(o.interval, o.interval_count)
@@ -74,7 +75,7 @@ export function orderTitle(o: Pick<OrderRow, 'kind' | 'plan_name' | 'item_name' 
     case 'topup':
       return '余额充值'
     case 'addon':
-      return `流量包 · ${o.item_name ?? plan}`
+      return `流量包 · ${o.item_name}`
     case 'upgrade':
       return `${plan} · 变更套餐`
     case 'renewal':
@@ -115,7 +116,7 @@ export const orderDetailSchema = z.object({
         currency: z.string(),
         created_at: z.string(),
         method: z.string().optional(),
-        provider_name: z.string().optional(),
+        provider_name: z.string(),
       }),
     ),
     coupon_code: z.string().optional(),
@@ -307,7 +308,7 @@ export function groupByMonth<T extends Pick<OrderRow, 'created_at' | 'status' | 
 /** 展开区「结果」（契约门户-04 订单详情映射） */
 export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at' | 'refunded_amount' | 'currency'>): string {
   const via = o.payments.find((p) => p.provider_name || p.method)
-  const method = via ? (via.provider_name ?? via.method ?? '') : ''
+  const method = via ? via.provider_name : ''
   switch (o.status) {
     case 'fulfilled':
     case 'paid':
@@ -347,7 +348,7 @@ export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
   if (o.refunded_amount > 0) facts.push({ k: '退款', v: money(o.refunded_amount) })
   if (OPEN_STATUSES.includes(o.status as (typeof OPEN_STATUSES)[number]) && o.expires_at) facts.push({ k: '过期时间', v: formatDateTime(o.expires_at) })
   for (const p of o.payments) {
-    facts.push({ k: '支付记录', v: [p.provider_name ?? p.method ?? '支付', formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
+    facts.push({ k: '支付记录', v: [p.provider_name, formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
   }
   return facts
 }

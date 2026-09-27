@@ -336,7 +336,7 @@ function csvCell(v: string) {
 
 // ---------------------------------------------------------------------------
 // 佣金与提现（契约后台-06 · 佣金与提现，R4 R6；overview 的 total_earned / invited_users / scope
-// 与 config 的 scope 是待补·后端，这里照契约形状给出）
+// 与 config 的 scope 后端已上线（R67 R68），前端 schema 按必填收紧，这里必须恒返回）
 // ---------------------------------------------------------------------------
 const commission = { rate_percent: 20, freeze_days: 7, min_withdraw: 10000, scope: 'first_order' as 'first_order' | 'every_order' }
 interface Withdrawal {

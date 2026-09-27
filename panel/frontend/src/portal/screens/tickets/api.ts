@@ -11,7 +11,7 @@ import { ordersPageSchema } from '../common/orders'
 
 // ---------------------------------------------------------------------------
 // 读形状（domain/support.Ticket）。三个列表 Go 端都以空切片初始化，不收 null。
-// 修订 R60 的 closed_reason / related_order 写成可选：旧后端（假后端 legacy）缺席时降级
+// 修订 R60 的 closed_reason / related_order 在 Go 里是无 omitempty 的指针：恒在，未关闭 / 无关联为 null
 // ---------------------------------------------------------------------------
 export const TICKET_STATUSES = ['open', 'pending_user', 'pending_agent', 'escalated', 'resolved', 'closed'] as const
 
@@ -27,11 +27,11 @@ const ticketBase = {
   resolved_at: z.string().nullable(),
   message_count: z.number().int(),
   last_reply_at: z.string(),
-  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed']).nullable().optional(),
+  closed_reason: z.enum(['user_closed', 'withdrawn', 'agent_closed']).nullable(),
 }
 
 /** 列表行：related_order 只在详情里填，列表恒为 null */
-export const ticketRowSchema = z.object({ ...ticketBase, related_order: z.null().optional() })
+export const ticketRowSchema = z.object({ ...ticketBase, related_order: z.null() })
 export type TicketRow = z.output<typeof ticketRowSchema>
 
 export const ticketMessageSchema = z.object({
@@ -47,7 +47,7 @@ export type TicketMessage = z.output<typeof ticketMessageSchema>
 /** 详情：message_count 为 0、last_reply_at 为零值（详情不填），以 messages 为准 */
 export const ticketDetailSchema = z.object({
   ...ticketBase,
-  related_order: z.object({ id: z.string(), order_no: z.string() }).nullable().optional(),
+  related_order: z.object({ id: z.string(), order_no: z.string() }).nullable(),
   messages: z.array(ticketMessageSchema),
 })
 export type TicketDetail = z.output<typeof ticketDetailSchema>

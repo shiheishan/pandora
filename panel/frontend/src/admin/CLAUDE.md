@@ -14,7 +14,7 @@ modules.ts: 十个模块的标题、分组、标签（「欠费单」按保留�
 reauth.ts: createReauthController：api 在 React 外、对话框在 React 内，用可订阅的小仓库接起来；并发请求共用一个待决 Promise
 actions.ts: 各模块页写操作共用的三件：useCan（按 GET v1/me 的权限码）、useIntentKey（一次用户意图一把幂等键，意图变了换新键、成功后 reset；实现在 core/intent.ts，这里原样转出，导出名与签名不变）、useFailure（reauth 取消静默、fields 标表单、其它 Toast；第二参数传 { fields, intent } 时 4xx 业务拒绝在此丢弃幂等键，断网与 5xx 保留，契约 1.5 与 R85）；自己先处理 4xx 分支、不经 useFailure 的写操作直接用 endsIntent；逻辑在纯函数 canWith / classifyFailure / handleFailure 里（createIntentKey / endsIntent 在 core/intent）
 tasks.ts: GET v1/dashboard/tasks（后端已实现，R51）的严格 schema（按 kind 区分，未知 kind 判为不符）、共用查询键与 useDashboardTasks、taskCount；侧栏徽标与仪表盘「需要处理」共用一条查询、一种缓存形状
-me.ts: GET v1/me 的 schema 与 useAdminMe（permissions 为 null 时归一为空数组；email / display_name / roles 后端已实现，schema 仍按可选、字段缺席时兜底）；identityLabels 按契约映射侧栏账户块文字，字段缺失时退回「管理员」与 user_id 前 8 位
+me.ts: GET v1/me 的 schema 与 useAdminMe（permissions 为 null 时归一为空数组；email / display_name / roles 恒在，display_name 可为 null、roles 可为空数组）；identityLabels 按契约映射侧栏账户块文字，没有角色时退回「管理员」
 LoginPage.tsx: 两栏登录页，左栏侧栏深底（< 960 收起），POST v1/auth/login（auth:false）成功写令牌，401 在密码框下内联显示
 Shell.tsx: 外框编排：Sidebar、顶栏面包屑与 EventsCapsule、页头标题与可读的 ui/Tabs、内容区（按权限渲染 screens 登记的页面或「无权限或不存在」，me 读取失败给重试）；⌘K 全局快捷键、规范地址 replace（等 me 回来、保留查询串）、document.title
 Sidebar.tsx: 字标与构建版本号（__APP_RELEASE__）、⌘K 入口、六组导航（只列可读模块，整组不可读就不画组名；工单 / 营销徽标取 tasks.ts 的共用查询，只在有 ops.dashboard.read 时请求）、向上弹出的账户菜单（主题、改密码、打开门户 ../、退出）

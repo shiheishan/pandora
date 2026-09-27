@@ -1,12 +1,13 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
+ * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/marketing/schemas 的 giftStatsSchema / overviewSchema
  * [OUTPUT]: 对外提供营销（后台-06）假接口的测试
- * [POS]: tests 的营销假后端守卫：礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400
+ * [POS]: tests 的营销假后端守卫：礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400、统计与佣金总览能被收紧后的 schema 解析
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
+import { giftStatsSchema, overviewSchema } from '../src/admin/screens/marketing/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin marketing', () => {
@@ -56,6 +57,13 @@ describe('mock api · admin marketing', () => {
     const card = templates.find((t) => t.type === 'plan')!
     const { plan: detail } = (await (await fetch(`${base}/v1/plans/${card.rewards.plan_id}`, { headers: auth })).json()) as { plan: { prices: Array<{ id: string }> } }
     expect(detail.prices.map((p) => p.id)).toContain(card.rewards.price_id)
+  })
+
+  it('returns every backend-guaranteed stat field the tightened schemas require', async () => {
+    const stats = await (await fetch(`${base}/v1/gift-cards/stats`, { headers: auth })).json()
+    expect(giftStatsSchema.safeParse(stats).success).toBe(true)
+    const overview = await (await fetch(`${base}/v1/commission/overview`, { headers: auth })).json()
+    expect(overviewSchema.safeParse(overview).success).toBe(true)
   })
 
   it('rejects unknown fields like the Go decoder and keeps field-level 422s', async () => {

@@ -8,13 +8,13 @@ import { relativeTime } from '../../../core/format'
 import type { Subscription, SubscriptionLink } from '../common/subscriptions'
 import { expiryInfo } from '../common/traffic'
 
-/** 头部元信息：「N 天后到期 · 日期 · M 台设备 · 当前在线 K」；设备上限与在线数后端已实现，字段缺席时兜底省掉对应段。 */
+/** 头部元信息：「N 天后到期 · 日期 · M 台设备 · 当前在线 K」；设备上限为 null 时写「不限设备」。 */
 export function metaLabel(sub: Subscription, now: Date = new Date(), timeZone?: string): string {
   const parts: string[] = []
   const expiry = expiryInfo(sub.current_period_end, now, timeZone)
   parts.push(expiry ? `${expiry.days} 天后到期 · ${expiry.date}` : '长期有效')
-  if (sub.device_limit !== undefined) parts.push(sub.device_limit === null ? '不限设备' : `${sub.device_limit} 台设备`)
-  if (sub.online_devices !== undefined) parts.push(`当前在线 ${sub.online_devices}`)
+  parts.push(sub.device_limit === null ? '不限设备' : `${sub.device_limit} 台设备`)
+  parts.push(`当前在线 ${sub.online_devices}`)
   return parts.join(' · ')
 }
 
