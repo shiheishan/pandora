@@ -30,15 +30,15 @@ const notifications = {
 
 const rows: Row[] = [
   // ---- 外框 ----
-  { at: 'portal/queries.ts:54', path: 'v1/site-config', auth: false, schema: siteConfigSchema },
-  { at: 'portal/queries.ts:63', path: 'v1/appearance', auth: false, schema: appearanceSchema },
-  { at: 'portal/queries.ts:70', path: 'v1/me', schema: meSchema },
-  { at: 'portal/queries.ts:82', path: 'v1/me/balance', schema: balanceSchema },
-  { at: 'portal/queries.ts:160', path: 'v1/me/subscriptions', schema: subscriptionsSchema },
-  { at: 'portal/queries.ts:231', seed: '被邀请人下单并经演示渠道付清', path: 'v1/me/commission', schema: commissionSchema },
+  { at: 'portal/queries.ts', path: 'v1/site-config', auth: false, schema: siteConfigSchema },
+  { at: 'portal/queries.ts', path: 'v1/appearance', auth: false, schema: appearanceSchema },
+  { at: 'portal/queries.ts', path: 'v1/me', schema: meSchema },
+  { at: 'portal/queries.ts', path: 'v1/me/balance', schema: balanceSchema },
+  { at: 'portal/queries.ts', path: 'v1/me/subscriptions', schema: subscriptionsSchema },
+  { at: 'portal/queries.ts', seed: '被邀请人下单并经演示渠道付清', path: 'v1/me/commission', schema: commissionSchema },
   // 外框只取角标：它的 schema 只有 unread，解析结果里没有 notifications 数组，等待条件改看 unread
   {
-    at: 'portal/queries.ts:248', seed: '定时扫描派发的支付通知',
+    at: 'portal/queries.ts', seed: '定时扫描派发的支付通知',
     path: 'v1/me/notifications',
     query: { limit: 1 },
     schema: notificationsSchema,
@@ -46,48 +46,48 @@ const rows: Row[] = [
   },
 
   // ---- 套餐与下单 ----
-  { at: 'common/catalog.ts:26', seed: '后台 POST plans/complete', path: 'v1/plans', schema: plansSchema },
-  { at: 'common/catalog.ts:49', seed: '后台 POST traffic-packs', path: 'v1/traffic-packs', schema: z.object({ packs: z.array(packSchema) }) },
-  { at: 'common/catalog.ts:67', seed: 'SQL 夹具 demo 渠道', path: 'v1/payment-methods', schema: z.object({ methods: z.array(paymentMethodSchema) }) },
+  { at: 'common/catalog.ts', seed: '后台 POST plans/complete', path: 'v1/plans', schema: plansSchema },
+  { at: 'common/catalog.ts', seed: '后台 POST traffic-packs', path: 'v1/traffic-packs', schema: z.object({ packs: z.array(packSchema) }) },
+  { at: 'common/catalog.ts', seed: 'SQL 夹具 demo 渠道', path: 'v1/payment-methods', schema: z.object({ methods: z.array(paymentMethodSchema) }) },
 
   // ---- 订阅 ----
-  { at: 'common/subscriptions.ts:42', path: 'v1/me/subscription-links', schema: linksSchema },
-  { at: 'common/subscriptions.ts:83', seed: '接入 + POST activate，池绑在套餐版本上', path: `v1/me/subscriptions/${s.subscription_id}/nodes`, schema: nodesSchema },
-  { at: 'common/subscriptions.ts:106', seed: 'UniProxy /push 同事务写按日用量', path: `v1/me/subscriptions/${s.subscription_id}/usage`, schema: usageReportSchema },
-  { at: 'common/subscriptions.ts:133', seed: '门户用余额买流量包（应付 0 同步履约）', path: 'v1/me/traffic-packs', schema: trafficPacksSchema },
+  { at: 'common/subscriptions.ts', path: 'v1/me/subscription-links', schema: linksSchema },
+  { at: 'common/subscriptions.ts', seed: '接入 + POST activate，池绑在套餐版本上', path: `v1/me/subscriptions/${s.subscription_id}/nodes`, schema: nodesSchema },
+  { at: 'common/subscriptions.ts', seed: 'UniProxy /push 同事务写按日用量', path: `v1/me/subscriptions/${s.subscription_id}/usage`, schema: usageReportSchema },
+  { at: 'common/subscriptions.ts', seed: '门户用余额买流量包（应付 0 同步履约）', path: 'v1/me/traffic-packs', schema: trafficPacksSchema },
 
   // ---- 订单 ----
-  { at: 'common/orders.ts:99', path: 'v1/orders', query: { status: 'pending_payment' }, schema: ordersPageSchema },
-  { at: 'common/orders.ts:137', path: `v1/orders/${s.order_id}`, schema: orderDetailSchema },
-  { at: 'common/orders.ts:184', path: `v1/orders/${s.pending_order_id}`, schema: orderDetailSchema },
-  { at: 'common/orders.ts:215', path: 'v1/orders', query: { status: 'paid,fulfilled,cancelled,expired,partially_refunded,refunded', limit: 6, offset: 0 }, schema: ordersPageSchema },
-  { at: 'common/orders.ts:230', path: 'v1/orders', query: { status: 'draft,pending_payment,processing', limit: 20 }, schema: ordersPageSchema },
+  { at: 'common/orders.ts', path: 'v1/orders', query: { status: 'pending_payment' }, schema: ordersPageSchema },
+  { at: 'common/orders.ts', path: `v1/orders/${s.order_id}`, schema: orderDetailSchema },
+  { at: 'common/orders.ts', path: `v1/orders/${s.pending_order_id}`, schema: orderDetailSchema },
+  { at: 'common/orders.ts', path: 'v1/orders', query: { status: 'paid,fulfilled,cancelled,expired,partially_refunded,refunded', limit: 6, offset: 0 }, schema: ordersPageSchema },
+  { at: 'common/orders.ts', path: 'v1/orders', query: { status: 'draft,pending_payment,processing', limit: 20 }, schema: ordersPageSchema },
 
   // ---- 工单 ----
-  { at: 'tickets/api.ts:66', path: 'v1/support/categories', schema: z.object({ categories: z.array(z.object({ code: z.string(), name: z.string() })) }) },
-  { at: 'tickets/api.ts:77', path: 'v1/support/tickets', schema: z.object({ tickets: z.array(ticketRowSchema) }) },
-  { at: 'tickets/api.ts:87', path: `v1/support/tickets/${s.ticket_id}`, schema: ticketDetailSchema },
-  { at: 'tickets/api.ts:98', path: 'v1/orders', query: { limit: 20 }, schema: ordersPageSchema },
+  { at: 'tickets/api.ts', path: 'v1/support/categories', schema: z.object({ categories: z.array(z.object({ code: z.string(), name: z.string() })) }) },
+  { at: 'tickets/api.ts', path: 'v1/support/tickets', schema: z.object({ tickets: z.array(ticketRowSchema) }) },
+  { at: 'tickets/api.ts', path: `v1/support/tickets/${s.ticket_id}`, schema: ticketDetailSchema },
+  { at: 'tickets/api.ts', path: 'v1/orders', query: { limit: 20 }, schema: ordersPageSchema },
 
   // ---- 消息、推荐、钱包、账号、帮助 ----
   {
-    at: 'messages/api.ts:31', seed: '定时扫描派发的支付通知',
+    at: 'messages/api.ts', seed: '定时扫描派发的支付通知',
     path: 'v1/me/notifications',
     query: { limit: NOTIFICATION_LIMIT },
     schema: z.object({ notifications: z.array(notificationSchema), unread: z.number().int() }),
     waitFor: notifications,
   },
-  { at: 'common/announcements.ts:33', path: 'v1/me/announcements', schema: announcementListSchema },
-  { at: 'referral/api.ts:26', seed: '邀请码注册第二个用户', path: 'v1/me/invite', schema: inviteSchema },
-  { at: 'wallet/api.ts:104', seed: '门户 POST gift-cards/redeem', path: 'v1/me/gift-cards', schema: z.object({ redemptions: z.array(redemptionSchema) }) },
-  { at: 'account/api.ts:36', seed: '门户登录', path: 'v1/me/sessions', schema: z.object({ sessions: z.array(sessionSchema) }) },
-  { at: 'account/api.ts:83', path: 'v1/me/telegram', schema: telegramSchema },
-  { at: 'account/api.ts:119', path: 'v1/me/notification-preferences', schema: preferencesSchema },
-  { at: 'help/api.ts:41', path: 'v1/content/pages', query: { ...HELP_QUERY }, schema: z.object({ pages: z.array(contentPageSchema) }) },
-  { at: 'help/api.ts:52', path: `v1/content/pages/${s.page_slug}`, query: { ...HELP_QUERY }, schema: contentDetailSchema },
+  { at: 'common/announcements.ts', path: 'v1/me/announcements', schema: announcementListSchema },
+  { at: 'referral/api.ts', seed: '邀请码注册第二个用户', path: 'v1/me/invite', schema: inviteSchema },
+  { at: 'wallet/api.ts', seed: '门户 POST gift-cards/redeem', path: 'v1/me/gift-cards', schema: z.object({ redemptions: z.array(redemptionSchema) }) },
+  { at: 'account/api.ts', seed: '门户登录', path: 'v1/me/sessions', schema: z.object({ sessions: z.array(sessionSchema) }) },
+  { at: 'account/api.ts', path: 'v1/me/telegram', schema: telegramSchema },
+  { at: 'account/api.ts', path: 'v1/me/notification-preferences', schema: preferencesSchema },
+  { at: 'help/api.ts', path: 'v1/content/pages', query: { ...HELP_QUERY }, schema: z.object({ pages: z.array(contentPageSchema) }) },
+  { at: 'help/api.ts', path: `v1/content/pages/${s.page_slug}`, query: { ...HELP_QUERY }, schema: contentDetailSchema },
 
   // ---- 事件流 ----
-  { at: 'shell/runtime.tsx:96', path: 'v1/events', kind: 'sse' },
+  { at: 'shell/runtime.tsx', path: 'v1/events', kind: 'sse' },
 ]
 
 runTable('portal', rows)

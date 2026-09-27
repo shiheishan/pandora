@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 panel 的 Client（兼容通道 UniProxy）与 SignedClient（签名通道），依赖 core 的 Core 抽象
+// [OUTPUT]: 对外提供 Node、New、NewWithSignedClient、Tag、Run
+// [POS]: pdnd/node 的唯一业务文件，面板与内核之间的闭环：按节拍拉配置（含协议切换与失败回滚）、同步用户、上报流量与心跳；签名通道在时优先走签名通道
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package node 把面板与内核粘起来：拉配置、同步用户、上报流量。
 package node
 
@@ -327,6 +332,9 @@ func (n *Node) protocolFrom(cfg map[string]any) string {
 // 面板拿它更新 last_heartbeat_at 和 health_score——也就是后台节点列表上
 // 「这个节点还活着吗」的唯一依据。不报的话那几列一直空着，服务挂了后台
 // 也不变色，只能等用户报障。
+//
+// 资源占用（CPU、内存、磁盘）只在兼容通道上报：签名通道的 Heartbeat 只带
+// 版本、配置与运行状态，不带资源指标。
 //
 // 失败只记日志不重试：下一个节拍会再来一次，而卡在这里重试会挤掉同一个
 // 循环里的配置同步和流量上报——那两件比状态上报重要。

@@ -21,8 +21,8 @@ const maxGoFileLines = 800
 // 整个目录豁免：fork 来的第三方代码保持上游的文件划分，拆了就难再合上游。
 // 目录不存在了（fork 被删或改名）本测试即红，要求同步这张表与根 CLAUDE.md。
 var lineLimitExemptDirs = map[string]string{
-	"internal/reality":     "fork 自 Go crypto/tls",
-	"internal/realityquic": "fork 自 quic-go",
+	"internal/reality":     "fork 自 XTLS/REALITY（基于 Go crypto/tls）",
+	"internal/realityquic": "fork 自 apernet/quic-go",
 }
 
 func TestGoFilesStayWithinLineLimit(t *testing.T) {

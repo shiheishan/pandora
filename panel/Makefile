@@ -3,7 +3,7 @@ GO ?= go
 DEPLOY := deploy
 BIN := bin
 
-# CGO 关闭：产出静态二进制，容器与 Node Agent 分发都不必带 glibc
+# CGO 关闭：产出静态二进制，容器与发布包分发都不必带 glibc
 export CGO_ENABLED := 0
 
 .PHONY: help
@@ -16,7 +16,7 @@ tidy: ## 整理并下载依赖
 	$(GO) mod tidy
 
 .PHONY: build
-build: ## 编译全部网关
+build: ## 编译 cmd/ 下全部可执行入口
 	@mkdir -p $(BIN)
 	$(GO) build -trimpath -ldflags="-s -w" -o $(BIN)/ ./cmd/...
 	@ls -la $(BIN)/

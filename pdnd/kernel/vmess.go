@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 grpc_stream.go / xhttp_server.go 的承载与 vmess_xhttp_packet.go，依赖 core 的用户与 route 的路由
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 grpc_stream.go / xhttp_server.go / native_transport_server.go / mkcp_transport.go 的承载与 vmess_xhttp_packet.go，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 vmessAdapter（经 newVMessAdapter 注册）的 Protocol、Validate、Start、Close；包内 acceptLoop、handleConn、handleUDP、acceptAuthID
-// [POS]: kernel 的 VMess 入站主体：原生 gRPC（h2c、TLS+h2）、XHTTP stream 与 packet-up/reconnect 的监听与分派，AuthID 防重放，按命令转 TCP / UDP / mux；请求头解析在 vmess_request.go，正文编解码在 vmess_codec.go，mux 在 vmess_mux.go，用户表在 vmess_users.go
+// [POS]: kernel 的 VMess 入站主体：TCP、mKCP、WebSocket、HTTP Upgrade、原生 gRPC（h2c、TLS+h2）、XHTTP stream 与 packet-up/reconnect 的监听与分派，AuthID 防重放，按命令转 TCP / UDP / mux；请求头解析在 vmess_request.go，正文编解码在 vmess_codec.go，mux 在 vmess_mux.go，用户表在 vmess_users.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel

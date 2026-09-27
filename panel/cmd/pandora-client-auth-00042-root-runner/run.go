@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/clientauth/ca42runner 的命令解析、编译期根密钥集与只读校验，ca42authority 的 RootKeyset
+// [OUTPUT]: 对外提供 runCLI 与可注入根密钥加载器、校验器的 runCLIWith（测试用）
+// [POS]: pandora-client-auth-00042-root-runner 的平台无关主体：解析参数 → 加载根 → 只读校验 → 写回执，任一步失败即 DENY
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (

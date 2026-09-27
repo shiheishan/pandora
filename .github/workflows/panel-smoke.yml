@@ -1,7 +1,8 @@
 name: Panel frontend smoke
 
 # 新前端对真实网关的联调冒烟（面板重构第 4 阶段）：一次性 PG18 + Valkey，
-# 从源码起 aegis-public 与 aegis-admin，之后用前端页面自己的 zod schema 解析真响应。
+# 从源码编译 aegis-public、aegis-admin、aegis-node 与 aegis-adminctl（后者建平台管理员），
+# 起三个网关，之后用前端页面自己的 zod schema 解析真响应。
 #
 # 单独成一个 workflow 而不并进 panel-pg18.yml：
 #   - 触发面不同。冒烟要跟着 panel/frontend/src 走（schema 变了就得重验），

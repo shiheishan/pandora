@@ -234,7 +234,7 @@ function PrimaryUsage({ sub }: { sub: Subscription }) {
 }
 
 // ---------------------------------------------------------------------------
-// 三格统计：余额与可提佣金复用外框查询（同键同 schema），在线设备取订阅待补字段
+// 三格统计：余额与可提佣金复用外框查询（同键同 schema），在线设备取订阅的 online_devices（后端已实现，缺席时兜底显示「—」）
 // ---------------------------------------------------------------------------
 function Stats({ sub, loading }: { sub: Subscription | null; loading: boolean }) {
   const balance = useBalance()

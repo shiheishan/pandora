@@ -1,13 +1,13 @@
 // [INPUT]: 依赖 platform/httpx 的错误模型与 Principal，依赖 go-redis 的限流计数
-// [OUTPUT]: 对外提供 RequestID、Recovery、DomainGuard、RequirePermission、RequireRecentReauth、RateLimit 与 Limit、超时与公共链装配等 http 中间件
-// [POS]: middleware 的横切中间件集合，挂在 api 路由之前；auth.go 负责令牌认证与租户注入，idempotency.go 负责幂等键，三者组成网关的公共链
+// [OUTPUT]: 对外提供 ClientInfo、RequestID、Recovery、SecurityHeaders、Tenant、DomainGuard、RequireAuth、RequirePermission、RequireRecentReauth、RateLimit / RateLimitStrict 与 Limit 构造器、Timeout 等 http 中间件
+// [POS]: middleware 的横切中间件集合，挂在 api 路由之前；auth.go 负责令牌认证，租户注入 Tenant 在本文件，idempotency.go 负责幂等键
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
-// Package middleware 汇集四域网关共用的横切关注点。
+// Package middleware 汇集三个网关共用的横切关注点。
 //
 // 覆盖 PRD：
 //
-//	EXT-001 四域令牌隔离       DomainGuard
+//	EXT-001 令牌域隔离         DomainGuard
 //	IAM-009 默认拒绝的权限校验  RequirePermission
 //	DATA-002 租户注入          Tenant
 //	SEC-002 多维限流           RateLimit
@@ -129,7 +129,7 @@ func Tenant(next http.Handler) http.Handler {
 }
 
 //------------------------------------------------------------------------------
-// EXT-001 四域隔离
+// EXT-001 令牌域隔离
 //------------------------------------------------------------------------------
 
 // DomainGuard 拒绝为其他域签发的主体。

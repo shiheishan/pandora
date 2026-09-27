@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌（安装命令条借用侧栏深底一组）
  * [OUTPUT]: 对外提供服务器、节点池、路由三个标签用到的类名
- * [POS]: admin/screens/nodes 第 ③ 步的样式，取自 管理后台-07-节点与服务器.dc.html 的 t_servers / t_pools / t_routing：服务器卡片网格（auto-fill 300px，三条占用 4px 高、三档色）、顶部深色安装命令条、节点池三栏卡片（200px | 节点标签 | 160px 绑定套餐）、路由两栏（1.7fr 规则 | 260px 以上出站，视口窄于 1100 时上下堆叠）；节点页共用的 stack / faint / mono 等仍在 nodes.module.css
+ * [POS]: admin/screens/nodes 服务器、节点池与全局路由三个标签的样式，取自 管理后台-07-节点与服务器.dc.html 的 t_servers / t_pools / t_routing：服务器卡片网格（auto-fill 300px，三条占用 4px 高、三档色）、顶部深色安装命令条、节点池三栏卡片（200px | 节点标签 | 160px 绑定套餐）、路由两栏（1.7fr 规则 | 260px 以上出站，视口窄于 1100 时上下堆叠）；节点页共用的 stack / faint / mono 等仍在 nodes.module.css
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 

@@ -18,7 +18,7 @@ export function passwordStrength(value: string): number {
   return Math.min(4, Math.floor(value.length / 4))
 }
 
-// 前端先按契约拦：后台新密码至少 12 位、同时含字母和数字（后端 12 位规则是待补项，先在这里守住）
+// 前端先按契约拦：后台新密码至少 12 位、同时含字母和数字（后端 identity 同样按 12 位校验，这里先拦只为少一次往返）
 function validateNew(value: string): string | null {
   if (value.length < 12) return '新密码至少 12 位'
   if (!/[a-z]/i.test(value) || !/\d/.test(value)) return '新密码必须同时包含字母和数字'

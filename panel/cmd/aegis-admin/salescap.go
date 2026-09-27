@@ -1,3 +1,8 @@
+// [INPUT]: 依赖进程环境变量 AEGIS_SALES_ENABLED
+// [OUTPUT]: 对外提供 envSalesCapability 与 salesCapabilityFromEnv，实现 adminops.SalesCapability
+// [POS]: aegis-admin 的销售能力注入方，main.go 装配 adminops 服务时传入；定价与上架闸门的授权在启动时定死
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (

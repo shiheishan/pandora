@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖状态目录（环境变量 SMOKE_STATE）里 run-smoke-stack.sh 写的 smoke.env 与 seed.ts 写的 seed.json，依赖 ../../src/core/api 的 createApiClient / isApiError（页面用的同一个 HTTP 出口），依赖 zod 的 ZodError
- * [OUTPUT]: 对外提供 state（网关地址与种子 id）、adminClient / portalClient（已登录的页面 api 客户端）、Row 行类型与 checkRow（用页面 schema 解析真响应，失败时带 zod 问题与响应片段）、waitNonEmpty（等异步产生的数据）
- * [POS]: tests/smoke 的底座，admin.smoke.ts 与 portal.smoke.ts 只写接口表；解析走 createApiClient.get，与页面在浏览器里拿到响应后的处理一字不差
+ * [INPUT]: 依赖状态目录（环境变量 SMOKE_STATE）里 run-smoke-stack.sh 写的 smoke.env / gateway.env 与 seed.ts 写的 seed.json，依赖 ../../src/core/api 的 createApiClient / isApiError（页面用的同一个 HTTP 出口），依赖 ../../src/core/token 的 TokenStore 类型（内存令牌），依赖 zod 的 ZodError，依赖 vitest 的 beforeAll / describe / it
+ * [OUTPUT]: 对外提供 state（网关地址、管理员账号、后台签名密钥与 SeedState 种子）、SeedState、App、pageClient（注入令牌与 requestReauth 的页面 api 客户端）、loginToken、lastHeaders（按 URL 记的响应头）、rawGet（不经 schema 取列表拿 id）、Row 行类型、record（往 smoke-results.md 追加一行）、runTable（每行一个用例，按 json / raw / sse 校验）
+ * [POS]: tests/smoke 的底座，admin.smoke.ts 与 portal.smoke.ts 只写接口表，writes.smoke.ts 借它的 pageClient / record 走写路径；解析走 createApiClient.get，与页面在浏览器里拿到响应后的处理一字不差
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { appendFileSync, readFileSync } from 'node:fs'
@@ -149,7 +149,7 @@ export async function rawGet(base: string, path: string): Promise<unknown> {
 // ============================================================================
 
 export interface Row {
-  /** 调用处，src 下的 file:line */
+  /** 调用处所在的 src 下文件；只用于用例标题与结果表，不参与断言 */
   at: string
   path: string
   query?: QueryParams

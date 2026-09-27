@@ -19,7 +19,7 @@ vless_mux.go: 原生 XUDP/mux 帧，刻意留在 NativeCore 内而不委托兼�
 vless_udp.go: VLESS command=UDP：两字节长度帧的数据报经 DataPlane 路由并计量
 vless_xhttp_packet.go: VLESS 在 XHTTP packet 模式下的收发
 vision.go: XTLS Vision：VisionConn 与 padding/直通状态机
-vmess.go: VMess 入站主体：原生 gRPC（h2c、TLS+h2）、XHTTP stream 与 packet-up/reconnect，AuthID 防重放，按命令分派 TCP / UDP / mux
+vmess.go: VMess 入站主体：各承载的监听与分派（TCP、mKCP、WebSocket、HTTP Upgrade、原生 gRPC 的 h2c 与 TLS+h2、XHTTP stream 与 packet-up/reconnect），AuthID 防重放，按命令分派 TCP / UDP / mux
 vmess_request.go: VMess AEAD 请求头解析与候选用户定位
 vmess_codec.go: VMess 正文分块读写（明文 / AEAD）、KDF 与响应头
 vmess_mux.go: VMess 原生 mux 子流，与 vless_mux.go 同一思路留在 NativeCore 内
@@ -41,7 +41,7 @@ naive.go: Naive 入站
 mieru.go: mieru 接入 NativeCore 的薄层（TCP/UDP）
 reality.go: REALITY 服务端配置解析：dest、xver、短 ID、私钥、超时
 reality_listener.go: REALITY 监听器与会话上下文，握手错误上报钩子
-reality_client.go: REALITY 客户端配置，供自检与探针
+reality_client.go: REALITY 客户端配置解析 ParseRealityClientConfig，目前只有单测消费（自检与 cmd/pandora-h3-probe 都不调用它）
 inbound_tls.go: 普通 TLS 入站证书加载
 xhttp.go: XHTTP 配置与模式解析，请求元数据编解码
 xhttp_server.go: XHTTP 会话与双工连接，HTTP/1、2、3 承载
@@ -52,7 +52,7 @@ httpupgrade_netconn.go: HTTP Upgrade 承载的 net.Conn
 native_transport_server.go: WebSocket 与 HTTP Upgrade 的服务端分派
 mkcp_transport.go: mKCP 传输：配置与掩码解析、监听、MTU 校验、socket 缓冲调优
 uot_bridge.go: UDP-over-TCP 桥：把 uot 数据报接到路由后的 PacketConn
-*_test.go: 各协议单测，nativecore_test.go 跨协议契约测试，-tags interop 的非 race 互操作门：外部 Xray/mihomo 客户端，以及 anytls_client_interop_test.go（sing-anytls v0.0.11/v0.0.13 客户端内部自带 closeLocally/Write 数据竞争，移出默认 race 套件）
+*_test.go: 各协议单测，nativecore_test.go 跨协议契约测试，互操作门分三个构建标签，都不进默认套件：`interop`（xhttp_external、mkcp_external 的外部 Xray 客户端，与 anytls_client 的 sing-anytls 客户端——后者 v0.0.11/v0.0.13 内部自带 closeLocally/Write 数据竞争，所以移出默认 race 套件，CI 以非 race 方式跑）；`interop_mihomo`（mihomo_* 系列，需 MIHOMO_BIN 与 MIHOMO_SHA256）；`interop_external`（external_clients：sing-box VLESS TLS Vision、Juicity、Naive，各需钉住哈希的外部二进制）。CI 只跑 `interop` 里的 Xray XHTTP 与 AnyTLS 两组
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -1,5 +1,10 @@
 //go:build linux
 
+// [INPUT]: 依赖 platform/clientauth/ca44runner 的 ParseCLI 与 Run
+// [OUTPUT]: 对外提供 Linux 上的 main 与 runCLI：信号转成取消，失败按类型映射退出码
+// [POS]: pandora-client-auth-00044-root-runner 的 Linux 入口，只做信号与 I/O，监管逻辑在 ca44runner；非 Linux 由 main_other.go 拒绝
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (

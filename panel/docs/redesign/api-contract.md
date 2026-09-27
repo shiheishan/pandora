@@ -1,7 +1,7 @@
 # 面板重构 · 接口契约
 
 > 第 2 阶段第 ② 步产物，写于 2026-09-23，代码基线 `feat/panel-redesign-p2 @ 54cec13`。
-> 第 3 阶段前后端并行的唯一依据：前端照它写页面，补后端照它实现，合并时以它对账。与 docs/CONSTRAINTS.md 冲突时以铁律为准。
+> 面板重构已于 2026-09-26 全部完成并合入 main；本文是现行接口契约。第 3、4 节条目上的「待补·后端 / 待决」状态以其下的「修订 Rn」行、「修订说明」行和第 9 节为准；第 5 节的待决已全部定案（5.A、5.A.2）。仓库公开，不写部署专属值的规则见根 `CLAUDE.md`「本项目适配说明」。
 > 文中「后台-05」= `管理后台-05-订单与收款.dc.html`，「门户-03」= `用户门户-03-选购套餐.dc.html`，「外壳」= `管理后台.dc.html` / `用户门户.dc.html`；设计稿在协调会话本机 `~/Desktop/Pandora前端代码-20260923/设计稿/`。
 > 行号是基线提交上的位置，代码改动后以函数名为准。
 
@@ -118,6 +118,7 @@
 > - 处理器里凡是 `httpx.OK` 都是 200，包括新建类接口。
 
 > 代码行号以 feat/panel-redesign-p2 @ 54cec13 为准。handler 文件都在 `panel/internal/api/admin/`，路由在 `router.go`。
+> 修订说明（2026-09-26）：路由已按模块拆到 `panel/internal/api/admin/router_<模块>.go`（appearance、billing、catalog、content、dashboard、marketing、nodes、notify、security、support、users），`router.go` 只剩全局中间件、登录分组与按序调用各 `register*Routes`；下文的「router.go:行号」按路由路径或处理函数名到对应的 `router_<模块>.go` 查。
 > 金额一律为最小货币单位（分，int64）；流量为字节（int64）；时间为 RFC3339。
 > 用户、订阅、工单、分组的 ID 都是 uuid。设计稿里的 `#10482`、`#4821` 这类数字编号在后端不存在：用户显示 uuid 前 8 位，工单显示 `ticket_no`（形如 `TK20260923-ABCDEFGH`）。
 
@@ -126,6 +127,7 @@
 > 状态行里「现有；待补·后端（扩展）」表示路由已在，但设计要的字段 / 参数需要后端在原接口上补，不另开新路由。
 
 > 路由全部定义在 `panel/internal/api/admin/router.go`（节点/服务器块 584–690，节点池 497–504，公告/知识库 522–558，外观 182–204）。
+> 修订说明（2026-09-26）：已拆分，节点/服务器/节点池在 `router_nodes.go`，公告/知识库在 `router_content.go`，外观在 `router_appearance.go`；行号作废，见本节上文。
 > 本分段通用事实（不再逐条重复）：
 > - 节点/服务器/公告/知识库的写接口普遍带乐观锁：节点、服务器用 `row_version`（int64），公告用 `expected_version`，知识库用 `expected_latest_version` / `expected_version`。版本不符一律 409 conflict，节点/服务器的 409 带 `fields.row_version = "current=N"`。**每次成功写入后行版本 +1，前端必须用响应或重新拉取的新版本号继续操作。**
 > - 所有 DELETE 路由里凡是调用了 `httpx.DecodeJSON` 的（`DELETE v1/nodes/{id}`、`DELETE v1/servers/{id}`），**必须带 JSON 请求体**（至少 `{}`），空体会 400 bad_request。
@@ -151,6 +153,7 @@
 - 设计：侧栏账户菜单「退出登录」。成功后前端清令牌回登录页
 
 #### GET v1/me — 当前管理员身份
+- **修订说明（2026-09-26 文档对齐）**：已实现：响应已带 `email`、`display_name`、`roles: [{code, name}]`（`api/admin/handlers.go` 的 me → `domain/identity/admin_profile.go` AdminProfile）。
 - 状态：现有 `handlers.go:146 me`；**扩展字段 待补·后端**
 - 权限：登录即可｜reauth：否｜幂等：否
 - 请求：无
@@ -160,6 +163,7 @@
 - 设计：侧栏底部账户块「运维 · 林舟 / linzhou@…」、头像首字。映射：角色标签 ← `roles[0].name`；姓名 ← `display_name ?? email 的 local 部分`；头像字 ← 角色名首字（设计即如此）
 
 #### POST v1/me/password — 修改自己的密码
+- **修订说明（2026-09-26 文档对齐）**：已实现：admin 域新密码至少 12 个字符（`domain/identity/service.go` 的 `adminPasswordMinRunes`），仍要求字母+数字，错误仍走 `fields.password`；门户规则不变。
 - 状态：现有 `handlers.go:159 changePassword`；**新密码长度规则 待补·后端**
 - 权限：登录即可｜reauth：否｜幂等：否。**没有**认证类限流（只有网关级 240/分钟），与 reauth 不对称，见核对笔记
 - 请求：`{ old_password: string, new_password: string }`
@@ -177,12 +181,13 @@
 - 设计：外壳全局确认框 `ask({reauth:true})`（「敏感操作 · 需要重新认证」+ 当前登录密码）。映射：设计是「先弹框后执行」，实现改为「先发请求，收到 reauth 错误再弹框、认证后重放」；已知必定需要 reauth 的动作（本分段 5 条 + 全表 40 条，见核对笔记）也可以预先弹框，但只要 `GET v1/me.reauthed` 为 true 就跳过密码输入。reauth 错误码当前是 403 forbidden「此操作需要重新验证身份」，第 ⑤ 步改为 403 `reauth_required`
 
 #### GET v1/events — 管理端实时事件流（SSE）
+- **修订说明（2026-09-26 文档对齐）**：`switches.changed` 已实现（R58）：`POST v1/switches/{code}` 成功后只向 admin 频道发布，data `{ code, enabled }`（`api/admin/handlers.go` setSwitch）。D-A-1 已决（5.A.2，维持）：顶栏按 topic + op 显示通用条目。
 - 状态：现有 `panel/internal/api/admin/events.go:26 events`；新增 topic `switches.changed` 待补·后端（见降级开关）
 - 权限：`ops.notification.read`｜reauth：否｜幂等：否。路径以 `events` 结尾，豁免 25 秒请求超时
 - 请求：无；必须用 fetch 流读取（Bearer 头，不能用 EventSource）
 - 响应：200 `text/event-stream`。首帧 `retry: 5000`；事件帧 `id: <本连接内递增序号>\nevent: <topic>\ndata: {"table": string, "op": "INSERT"|"UPDATE"|"DELETE", "id"?: string}\n\n`；每 25 秒一个注释帧 `: ping`。id 只在本连接内有意义，**不支持 Last-Event-ID 续传**——断线重连后前端要把当前页相关查询全部失效重拉。topic 与来源表（`platform/realtime/listener.go:43 topicFor`；触发器表见迁移 00021/00022）：`orders.changed`←orders；`subscriptions.changed`←subscriptions/subscription_credentials/quota_balances；`tickets.changed`←tickets；`plans.changed`←plans/plan_versions/prices；`nodes.changed`←nodes；`announcements.changed`←announcements；`data.changed` 兜底。admin 频道收到租户内全部上述变更
 - 错误：500 internal_error（实时推送未启用 / 响应不支持流式）
-- 设计：顶栏「实时事件」胶囊（脉冲点、未读数）与下拉列表（标题、正文、相对时间、点击跳转模块）。映射：事件只携带「哪张表哪一行变了」，**没有标题/正文/金额**；设计里的「新用户注册、提现申请、礼品卡兑换、节点负载告警」来源表（users、withdrawals、gift card 使用、节点指标）根本不在监听列表里。可读事件流见待决 D-A-1；在 D-A-1 定下之前前端按 topic+op 生成通用条目（如「订单变更 · 新建」），点击跳到对应模块，并用事件触发 react-query 失效。无 `ops.notification.read` 的管理员此接口 404，前端隐藏胶囊
+- 设计：顶栏「实时事件」胶囊（脉冲点、未读数）与下拉列表（标题、正文、相对时间、点击跳转模块）。映射：事件只携带「哪张表哪一行变了」，**没有标题/正文/金额**；设计里的「新用户注册、提现申请、礼品卡兑换、节点负载告警」来源表（users、withdrawals、gift card 使用、节点指标）根本不在监听列表里。可读事件流 D-A-1 已决（维持，5.A.2）：前端按 topic+op 生成通用条目（如「订单变更 · 新建」），点击跳到对应模块，并用事件触发 react-query 失效。无 `ops.notification.read` 的管理员此接口 404，前端隐藏胶囊
 
 > ⌘K 命令面板、主题切换、「打开用户门户 ↗」（同域，链接 `../`）均为纯前端，无接口。侧栏徽标（工单 7、营销 3）取自 `GET v1/dashboard/tasks`。
 
@@ -206,6 +211,7 @@
 - 设计：后台-01「需要处理」5 张卡（待处理工单、提现待审核、离线节点、超时未支付订单、邮件投递积压）；外壳侧栏「工单」「营销」徽标。映射：卡片副标题「最久已等 3 小时 · 2 个高优先级」←oldest_wait_seconds/high_priority；「合计 ¥1,280.00」←amounts；「JP-TYO-03 等 · 最长 26 分钟」←sample/longest_offline_seconds；「邮件投递积压」改称「通知投递积压」（该计数含全部渠道）。待补·前端：ledger_drift count>0 时追加一张红色卡「账本漂移」（设计没有，但它是必须立刻查的严重信号），点击去订单与收款
 
 #### GET v1/overview — 经营总览
+- **修订说明（2026-09-26 文档对齐）**：已实现：`revenue[].yesterday`、`revenue[].actual_yesterday`、`subscriptions.new_7_days`、`nodes: { total, online }` 已返回（`domain/adminops/service.go` Overview 的响应结构）。
 - 状态：现有 `handlers.go:198 overview`（数据 `domain/adminops/service.go:127 Overview`）；**扩展字段 待补·后端**
 - 权限：`billing.ledger.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -215,6 +221,7 @@
 - 设计：后台-01「经营」4 格 KPI。映射：「收入 · CNY / USD」←`revenue[currency].today`，「较昨日 ±x%」←today 与 yesterday；「有效订阅」←`subscriptions.active`（trialing 放 tooltip），「本周新增」←new_7_days；「流量 18.6 TB」取 `GET v1/dashboard/traffic/nodes?range=24h` 的 `totals.reported_bytes`（标签改「近 24 小时」），「41 / 44 节点在线」←`nodes.online/total`。待补·前端：KPI 的 tooltip 或副行里标出 `adjustment_today`（有调账时展示「含调整 ±x」），`subscriptions.expiring_7_days`、`orders.pending` 在「需要处理」之外无处展示，放进「有效订阅」「收入」卡的 tooltip
 
 #### GET v1/revenue/timeseries — 收入趋势
+- **修订说明（2026-09-26 文档对齐）**：已实现：响应已带 `previous_total`（`api/admin/revenue.go` → `domain/adminops/revenue.go` RevenueTimeseries）。
 - 状态：现有 `panel/internal/api/admin/revenue.go:14 revenueTimeseries`；**上一区间合计 待补·后端**
 - 权限：`billing.ledger.read`｜reauth：否｜幂等：否
 - 请求：query `currency: "CNY" | "USD"`（必填，大小写不敏感）、`days?: 7 | 30 | 90`（缺省或非数字按 30）
@@ -237,7 +244,7 @@
 - 请求：同上；带 `identity` 参数（任何值）直接 422
 - 响应：200 同上结构，items 为 `[{ user_id, email_masked: string（"a***@example.com" 或 "***"）, upload_bytes, download_bytes, total_bytes, subscription_count: int, contributing_entry_count: int, last_report_at }]`，`ranking.other_user_bytes`
 - 错误：422 validation_failed（含 identity 参数）
-- 设计：后台-01「流量排行」用户页签。冲突：设计显示完整邮箱，后端冻结契约只给脱敏邮箱且明文禁止 UI 用其它已加载对象补回——见待决 D-A-2；未决前显示 `email_masked`，行点击跳用户详情（按 user_id）
+- 设计：后台-01「流量排行」用户页签。冲突：设计显示完整邮箱，后端冻结契约只给脱敏邮箱且明文禁止 UI 用其它已加载对象补回——见 D-A-2（已决：维持，5.A.2）；显示 `email_masked`，行点击跳用户详情（按 user_id）
 
 #### GET v1/dashboard/backlog/notifications — 通知投递积压
 - 状态：现有 `dashboard.go:59 dashboardNotificationBacklog`（DASH-01 冻结契约）
@@ -422,6 +429,7 @@
 设计稿用户抽屉「订阅」tab 里的「订阅地址 + 复制」整块由前端删除，改为一行说明：「订阅地址仅用户本人可见；如疑似泄露，请点『更换订阅地址』后让用户在门户重新复制」。已核实，列表、详情、画像、导出这些接口都不返回令牌或订阅 URL。唯一的例外是换发接口会一次性回传新令牌，见 D-B-1。
 
 #### GET v1/users — 用户列表
+- **修订说明（2026-09-26 文档对齐）**：待补·后端第 2–5 项已实现（`domain/adminops/users.go` ListUsers，第 1 项见 R22）：每行 `group_id`、`current_subscription`；筛选 `group_id`（uuid 或 none）、`sub_state`；`status` 接受逗号分隔多值、等值匹配；`q` 另按用户 uuid 精确匹配、按订阅令牌哈希反查（active / grace 凭据，粘贴整条订阅地址时取最后一段）。「当前订阅」的挑法以代码为准：优先 active / trialing / grace / past_due，其次到期最晚、最近创建（`currentSubscriptionSQL`）；`sub_state=expired` 指有过订阅但没有一条仍在用。
 - **修订 R22（2026-09-24，后端二 107de25）**：`group_name` 现在有值（缺陷 8）。
 - 状态：现有 `handlers.go:211 listUsers` → `adminops/service.go:243 ListUsers`；待补·后端（字段、筛选、缺陷修复）
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
@@ -449,6 +457,7 @@
   - 待补·前端：底部加分页（limit/offset）
 
 #### GET v1/users/{id} — 用户详情
+- **修订说明（2026-09-26 文档对齐）**：待补·后端各项已实现（`domain/adminops/users.go` GetUser）：`recent_orders` 字段见 R22；`subscriptions[]` 的 `current_period_start`、`quotas`、`device_limit_override`、`plan_max_devices`、`online_devices`；顶层 `group_id`、`stats`（按币种的 `paid_totals` 见 R114）、`referrer`、`telegram`。
 - **修订 R22（2026-09-24，后端二 107de25）**：`recent_orders` 的套餐名、周期、项数等字段现在有值，与订单列表逐字段一致（缺陷 9）。
 - 状态：现有 `handlers.go:227 getUser` → `service.go:337 GetUser`；待补·后端（字段）
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
@@ -538,6 +547,7 @@
 - 设计：后台-03 抽屉的「调整余额」行内表单。映射：设计稿输入的「+50 / -20」是元，前端乘以 100 后传给后端；「调整原因」对应 reason
 
 #### GET v1/users/{id}/profile — 风控画像
+- **修订说明（2026-09-26 文档对齐）**：已实现：响应已带 `registered_ip`（`api/admin/profile.go` userProfile）。
 - 状态：现有 `profile.go:47 userProfile`；待补·前端（→ 补进用户抽屉，新增「风控」tab，只在持有 `security.audit.read` 时显示）；待补·后端（字段）
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
 - 请求：path `id`
@@ -629,9 +639,10 @@
 - 请求：`{ count: int(1–500), email_prefix: string（1–20 位，只能用小写字母、数字、-）, email_domain: string, group_id?: uuid, reason: string(5–500 字) }`
 - 响应：200 `{ count: int, users: [{ email, password }], warning: string }`。邮箱格式为 `<prefix>-<8 位随机>@<domain>`，口令明文只返回这一次
 - 错误：validation_failed 422 `fields.count|email_prefix|email_domain|reason|group_id`
-- 设计：后台-03「批量生成用户」。映射：数量 → count（设计稿写的上限是 200，按后端改为 500）；邮箱后缀 → email_domain；用户组 → group_id。待补·前端：增加必填的「邮箱前缀」和「生成原因」。「开通套餐」这一项后端没有，见 D-B-7，在它定下来之前隐藏。「下载」按钮由前端把 `users` 拼成 CSV 在本地下载，不再请求服务器
+- 设计：后台-03「批量生成用户」。映射：数量 → count（设计稿写的上限是 200，按后端改为 500）；邮箱后缀 → email_domain；用户组 → group_id。待补·前端：增加必填的「邮箱前缀」和「生成原因」。「开通套餐」这一项不做（D-B-7 已决方案 A：批量生成不带开通套餐，之后走人工开单），前端隐藏。「下载」按钮由前端把 `users` 拼成 CSV 在本地下载，不再请求服务器
 
 #### POST v1/users/bulk/mail — 群发邮件
+- **修订说明（2026-09-26 文档对齐）**：已实现（R86）：正文 `$email`、`$plan`、`$expire` 在入队的 INSERT…SELECT 里逐人替换（`domain/adminops/bulk_mail.go`）；筛选的 `plan_id`、`expires_within_days`、`sub_state` 同样已实现。
 - **修订 R9（2026-09-24，后端二 62f7283）**：reauth 改为「是」。
 - 状态：现有 `bulk_users.go:135 sendBulkMail` → `adminops/bulk_mail.go SendBulkMail`；待补·后端（变量替换）
 - 权限：`ops.notification.write`｜reauth：否（注释说要，代码没挂，以代码为准）｜幂等：是 `user_bulk_mail`
@@ -713,6 +724,7 @@
 - 设计：后台-03 抽屉「流量重置」tab。映射同 GET v1/traffic-resets
 
 #### POST v1/users/{id}/traffic-reset — 手动重置本期流量
+- **修订说明（2026-09-26 文档对齐）**：已实现（R86）：路由已挂 RequireRecentReauth（`api/admin/router_users.go`），reauth 为「是」。
 - 状态：现有 `traffic_reset.go:55 manualResetTraffic` → `billing/traffic_reset.go:174 ManualResetTraffic`；待补·后端（挂 reauth）
 - 权限：`metering.reset.write`｜reauth：否（现状）；待补·后端改为「是」｜幂等：是 `traffic_manual_reset`
 - 请求：`{ note: string(5–500 字) }`
@@ -849,7 +861,7 @@
 - 设计：后台-04 详情「归档套餐」。设计的「恢复上架」见下一条与 D-C-1。
 
 #### POST v1/plans/{id}/unarchive — 恢复上架
-- 状态：待决（D-C-1）。库里 `app.guard_plan_catalog_transition` 触发器规定套餐生命周期单调（archived 不能回到 active），`UpdatePlan` 也显式拒绝「已归档套餐不能恢复或编辑」
+- 状态：**不做**（D-C-1 已定方案 a，见 5.A.2：套餐归档不可逆，不做恢复上架；路由表里没有这条路由，不需要迁移）。下面「若选 b」各行是定案前的备选，保留备查。原因：库里 `app.guard_plan_catalog_transition` 触发器规定套餐生命周期单调（archived 不能回到 active），`UpdatePlan` 也显式拒绝「已归档套餐不能恢复或编辑」
 - 权限：（若选 b）`catalog.publish`｜reauth：是｜幂等：是 `catalog_plan_unarchive`
 - 请求：（若选 b）`{ expected_row_version:int64 }`
 - 响应：（若选 b）200 `{ ok:true, row_version:int64, status:"active" }`
@@ -971,16 +983,16 @@
 - 设计：后台-05 抽屉「取消订单」确认框。待补·前端：设计确认框里没有理由输入框，要补一个必填的「取消原因」（5 字起）。
 
 #### POST v1/orders/manual — 人工开单
-- **修订 R64（2026-09-24，后端一 ⑥ 14f27cb，协调会话定）**：新增 `settlement: "grant" | "pending"`：grant 当场赠送开通，pending 生成待用户支付的订单（同样 30 分钟过期）。`offline`（线下已收款）与 `balance`（从余额扣，D-C-3 未决）暂回 422。**本接口改挂 RequireRecentReauth**（与 mark-paid 同门槛：offline 会直接记收入并触发佣金），后端一在 ⑥ 的加路由部分实现，实现后再开放 `offline`。
+- **修订 R64（2026-09-24，后端一 ⑥ 14f27cb，协调会话定）**：新增 `settlement: "grant" | "pending"`：grant 当场赠送开通，pending 生成待用户支付的订单（同样 30 分钟过期）。`offline`（线下已收款）与 `balance`（从余额扣，D-C-3 当时未决，后定方案 b 不提供）暂回 422。**本接口改挂 RequireRecentReauth**（与 mark-paid 同门槛：offline 会直接记收入并触发佣金），后端一在 ⑥ 的加路由部分实现，实现后再开放 `offline`。
 - **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：凭证号已被其他订单使用时，409 的 message 由英文改为「凭证号已用于其他订单」（与线下支付回调同一文案）。
-- **修订 R74（2026-09-24，后端一 ⑥ 9b4aaab）**：**已挂 RequireRecentReauth**（权限 → reauth → 幂等，与 mark-paid 同门槛），`settlement: "offline"` 已开放：必须带 `reference`（去首尾空白后 1..128 字，缺失回 422 `fields.reference`）；建单与按 offline 渠道结清在同一事务（收入、渠道资金、佣金、开订阅、审计、幂等记录与 mark-paid 同口径，任何一步失败整单回滚），响应 201 `status:"fulfilled"`、`payable_amount` 为线下实收额，重放得到同一份 201。错误：409 凭证号已用于其他订单（文案目前是英文 `provider payment is already attached to another order`，与 mark-paid 相同，前端映射为「凭证号已用于其他订单」）；409 应付为 0（「这张订单不需要支付，请改用赠送」）。`balance` 仍回 422（D-C-3 未决）。已知限制（推断未复现）：迁移 00043 之后新建的租户没有 `offline` 渠道，mark-paid 与线下已收款会回 404 `unknown payment provider`，单租户默认租户不受影响。
+- **修订 R74（2026-09-24，后端一 ⑥ 9b4aaab）**：**已挂 RequireRecentReauth**（权限 → reauth → 幂等，与 mark-paid 同门槛），`settlement: "offline"` 已开放：必须带 `reference`（去首尾空白后 1..128 字，缺失回 422 `fields.reference`）；建单与按 offline 渠道结清在同一事务（收入、渠道资金、佣金、开订阅、审计、幂等记录与 mark-paid 同口径，任何一步失败整单回滚），响应 201 `status:"fulfilled"`、`payable_amount` 为线下实收额，重放得到同一份 201。错误：409 凭证号已用于其他订单（文案目前是英文 `provider payment is already attached to another order`，与 mark-paid 相同，前端映射为「凭证号已用于其他订单」）；409 应付为 0（「这张订单不需要支付，请改用赠送」）。`balance` 仍回 422（D-C-3 已决方案 b：人工开单不提供「从余额扣除」，后端继续回 422 `fields.settlement`）。已知限制（推断未复现）：迁移 00043 之后新建的租户没有 `offline` 渠道，mark-paid 与线下已收款会回 404 `unknown payment provider`，单租户默认租户不受影响——**已由 R112 修复**：迁移 00090 的建租户触发器给新租户补种 offline 渠道，存量租户同时补种。
 - 状态：现有 `panel/internal/api/admin/manual_order.go:22 createManualOrder`；待补·后端（扩展：结算方式）
 - 权限：`billing.order.write`｜reauth：否（路由注释写了要重认证，实际代码没挂）｜幂等：是 `order_create`（与用户结账共用 scope，`billing.CheckoutIdempotencyScope`）
 - 请求（现有）：`{ user_id:uuid, plan_id:uuid, price_id:uuid, reason:string(5..500 字) }`
-- 请求（扩展后）：`{ user_id, plan_id, price_id, reason, settlement?: "grant"(默认，即现有行为) | "pending" | "offline" | "balance", reference?: string(settlement=offline 时必填，≤128 字) }`。`pending` = 建一张 `pending_payment` 单交给用户去付（走 CreateOrder，不带 ManualGrant，但写入 manual_reason / created_by）；`offline` = 同一事务链上先建待支付单，再走 MarkOrderPaid（offline 渠道，凭证号 = reference）；`balance` = CreateOrder 时 `UseBalance = 应付全额`，余额不足回 409（是否提供这一项见 D-C-3）
+- 请求（扩展后）：`{ user_id, plan_id, price_id, reason, settlement?: "grant"(默认，即现有行为) | "pending" | "offline" | "balance", reference?: string(settlement=offline 时必填，≤128 字) }`。`pending` = 建一张 `pending_payment` 单交给用户去付（走 CreateOrder，不带 ManualGrant，但写入 manual_reason / created_by）；`offline` = 同一事务链上先建待支付单，再走 MarkOrderPaid（offline 渠道，凭证号 = reference）；`balance` = CreateOrder 时 `UseBalance = 应付全额`，余额不足回 409（D-C-3 已决方案 b：不提供这一项，`balance` 回 422，见 `domain/billing/manual_order.go`）
 - 响应：201，body 是业务层预先写入幂等记录的那一份：`{ discount_amount, order_id, order_no, currency, total_amount, balance_applied, payable_amount, status }`（重放同一 key 得到完全相同的 201 响应）
 - 错误：400 id 格式不对 / 缺字段；422 `reason`；409 / 422 CreateOrder 的库存、限购、价格失效等错误；500「已创建并履约，但审计写入失败」（订单已生效，message 里带单号）
-- 设计：后台-05「人工开单」弹窗。映射：用户邮箱 → 要先用用户搜索（GET v1/users?q=，分段 B）解析出 `user_id`，前端改成可搜索选择器；「套餐与周期」→ `plan_id` + `price_id`（选项来自 GET v1/plans 的在售价格）；「备注」→ `reason`（改成必填，5 字起，文案改为「开单原因（写入审计）」）；「结算方式」→ `settlement`：「赠送（0 元）」= grant，「待用户支付」= pending，「线下已收款」= offline（待补·前端：选这项时出现「凭证号」输入），「从余额扣除」= balance（取决于 D-C-3）。
+- 设计：后台-05「人工开单」弹窗。映射：用户邮箱 → 要先用用户搜索（GET v1/users?q=，分段 B）解析出 `user_id`，前端改成可搜索选择器；「套餐与周期」→ `plan_id` + `price_id`（选项来自 GET v1/plans 的在售价格）；「备注」→ `reason`（改成必填，5 字起，文案改为「开单原因（写入审计）」）；「结算方式」→ `settlement`：「赠送（0 元）」= grant，「待用户支付」= pending，「线下已收款」= offline（待补·前端：选这项时出现「凭证号」输入），「从余额扣除」不提供（D-C-3 已决方案 b）。
 
 #### POST v1/orders/{id}/mark-paid — 手工标记已支付（线下收款）
 - **修订 R117（2026-09-26，后端四 ⑧ 8993672，合并 49f7ba9）**：续费或变更单结算时订阅已不在 active / trialing / grace / past_due（被手工改成 expired、cancelled 等终态），钱照常入账并隔离进挂账（`case_kind=ineligible_subscription`），订单与订阅不动，本接口回 **409「订阅已结束，款项已转入挂账，可在挂账里转入用户余额」**；同一凭证号再标一次回 **409「已经入过账」**（以前重复标记回 200 并写一条空审计）。
@@ -1249,6 +1261,7 @@
 ### 后台-07 节点与服务器 · 节点（节点 tab + 节点详情抽屉）
 
 #### GET v1/nodes — 节点列表（含运营聚合）
+- **修订说明（2026-09-26 文档对齐）**：已实现：排序为 `ORDER BY n.sort_order, n.node_no, n.id`（`api/admin/nodes.go` nodeList）；待补·后端的 `traffic_bytes_24h`、`cpu_percent`、`mem_percent`、`metrics_at`、`country_code`（R46）均已返回。
 - **修订 R105（2026-09-25，后端四 ① 8977de1）**：没划进节点池（`pool_id` 为 null）的节点，`delivered_to_users=false`，`delivery_note`=「未划入节点池，不服务任何用户」（判断顺序：先看 serving_status，再看有没有池，再看心跳）。前端的无池提示直接显示 `delivery_note`，不要自己根据 `pool_id` 另写一套判断（R104）。
 - **修订 R77（2026-09-24，后台前端二 ② 核对）**：Node 里标 `?` 的字段（`server_id`、`server_name`、`pool_id`、`pool_name`、`cpu_percent`、心跳与身份类字段等）是 Go 指针字段且没有 omitempty，**缺值时返回 `null`，不是省略**；`granted_plans` 也可能为 `null`。前端按 `| null` 写 schema。
 - **修订 R27（2026-09-24，后端二 107de25）**：新增 `limit?`（1–1000，默认 500）与 `offset?`；`total` 为同一筛选条件下的真实总数（缺陷 21）。按 `sort_order, node_no` 排序仍在后端二第 ⑤ 步。
@@ -1575,6 +1588,7 @@
 ### 后台-07 节点与服务器 · 路由
 
 #### GET v1/nodes/routing — 读全局出站与分流
+- **修订说明（2026-09-26 文档对齐）**：已实现（R56）：`api/admin/node_routing.go` nodeGetGlobalRouting，路由在 `router_nodes.go`。
 - 状态：**待补·后端**（新接口；静态段 `routing` 与 `/nodes/{id}` 同级，chi 静态优先，与现有 `/nodes/order`、`/nodes/bootstrap-token` 同一模式）
 - 权限：`node.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1596,6 +1610,7 @@
 ### 后台-08 内容与外观 · 公告
 
 #### GET v1/announcements — 公告列表（附可选套餐）
+- **修订说明（2026-09-26 文档对齐）**：已实现：每项 `target_user_group_ids`、`user_group_targets`，顶层 `user_groups`（`api/admin/announce.go` listAnnouncements）。
 - **修订 R91（2026-09-24，后台前端二 ④ 核对 api/admin/announce.go）**：`publish_at`、`expires_at` 是指针字段、没有 omitempty，总会出现，缺值为 `null`（不是省略）。另：知识库「限定套餐」的套餐名取 `GET v1/plans`（`catalog.read`）；没有该权限时只显示「已限定 N 个套餐」，保存时原样带回 `target_plan_ids`。
 - 状态：现有 `panel/internal/api/admin/announce.go:44 listAnnouncements`；**待补·后端（字段扩展，无迁移）**
 - 权限：`ops.announcement.write`（没有单独的读权限）｜reauth：否｜幂等：否
@@ -1606,6 +1621,7 @@
 - 设计：后台-08 公告左侧列表。映射：`a.st` live → `published`，draft → `draft`，withdrawn → `withdrawn`；**`scheduled` 设计缺**，待补·前端：显示「定时 · MM-DD HH:mm」（取 publish_at）；`a.target` → 由 `plan_targets` + `user_group_targets` 名称拼接，都为空显示「全部用户」；`a.at` → published 用 `publish_at`、draft 显示「草稿」。
 
 #### POST v1/announcements — 新建公告（草稿/立即发布/定时发布）
+- **修订说明（2026-09-26 文档对齐）**：已实现：请求接受 `target_user_group_ids`，校验属于本租户，不存在或跨租户回 422 `fields.target_user_group_ids`（`api/admin/announce.go` saveAnnouncement，新建与编辑共用）。
 - 状态：现有 `panel/internal/api/admin/announce.go:220 saveAnnouncement`（无 id 分支）
 - 权限：`ops.announcement.write`｜reauth：是｜幂等：是 `announcement_save`
 - 请求：`{ title: string(2–160), body: string(2–20000，Markdown 纯文本), severity?: "info"|"notice"|"warning"|"critical"(缺省 info), pinned?: bool, target_plan_ids?: uuid[], publish_at?: RFC3339(带时区), expires_at?: RFC3339(须晚于 publish_at), publish?: bool, expected_version?: 0 }`；待补·后端：加 `target_user_group_ids?: uuid[]`（同样校验属于本租户）。
@@ -1619,7 +1635,7 @@
 - 请求：同新建（全量覆盖），`expected_version: int(>0，当前 version)`
 - 响应：200 `{ id, status, version }`
 - 错误：同新建；404；409 版本冲突；409「已撤回公告不可重新编辑，请新建公告」；409「已发布公告只能保持发布状态」（published 再传 publish=false）。
-- 设计：后台-08 编辑区「发布 / 保存修改」。映射：已发布公告「保存修改」→ `publish: true`；草稿「发布」→ `publish: true`。设计允许对已撤回公告点「发布」——后端拒绝，见待决 D-D-3。
+- 设计：后台-08 编辑区「发布 / 保存修改」。映射：已发布公告「保存修改」→ `publish: true`；草稿「发布」→ `publish: true`。设计允许对已撤回公告点「发布」——后端拒绝；D-D-3 已决方案 b（5.A.2）：已撤回公告只读，前端提供「复制为新公告」（`admin/screens/content/AnnounceEditor.tsx`）。
 
 #### POST v1/announcements/{id}/withdraw — 撤回公告
 - 状态：现有 `panel/internal/api/admin/announce.go:390 withdrawAnnouncement`
@@ -1632,6 +1648,7 @@
 ### 后台-08 内容与外观 · 知识库
 
 #### GET v1/content-pages — 内容页列表（每个版本一行）
+- **修订说明（2026-09-26 文档对齐）**：已实现：`Page` 带 `created_by`、`created_by_name`（只在后台列表里填，`domain/content/service.go` ListAdmin）。
 - 状态：现有 `panel/internal/api/admin/content.go:13 listContentPages` → `domain/content/service.go ListAdmin`；**待补·后端（字段扩展，无迁移）**
 - 权限：`ops.content.write`｜reauth：否｜幂等：否
 - 请求：query `kind?: "page"|"kb_article"|"tutorial"|"legal"`, `status?: "draft"|"published"|"archived"`, `q?: string(匹配 slug/标题)`, `limit?: int(1–500，缺省 200)`
@@ -1718,6 +1735,7 @@
 - 设计：后台-08 插槽「失焦保存」与开关。映射：每次保存都要 reauth + 新 Idempotency-Key；前端改为「内容有变化才在失焦时保存」，开关切换带上当前 content；`dropped` 非空时提示被过滤的标签/属性，并用返回后重新 GET 的 content 回填（显示净化后的真实内容）。
 
 #### GET v1/settings/site — 读取站点时区
+- **修订说明（2026-09-26 文档对齐）**：已实现（R49）：`api/admin/site_settings.go` getSiteSettings，路由在 `router_appearance.go`。
 - 状态：待补·后端（修订 R49，2026-09-24 用户定案）
 - 权限：与 `GET v1/settings/mail` 同一读权限｜reauth：否｜幂等：否
 - 请求：无
@@ -1726,6 +1744,7 @@
 - 设计：设计稿没有（后端有、设计缺的同类补法）。补进后台-08「主题与插槽」页，站点品牌卡片旁加「站点时区」卡：下拉选常用时区（Asia/Shanghai 置顶）+ 说明「门户用量图按天统计、后台收入趋势都按这个时区切日；修改只影响之后的数据，已记下的按日用量不重算」。
 
 #### POST v1/settings/site — 保存站点时区
+- **修订说明（2026-09-26 文档对齐）**：已实现（R49）：`api/admin/site_settings.go` setSiteSettings，挂 reauth。
 - 状态：待补·后端（修订 R49）
 - 权限：`platform.settings.write`｜reauth：是（改变所有按日统计的切日口径）｜幂等：否（与 `POST v1/settings/mail` 一致）
 - 请求：`{ timezone: string }`，必须是能加载的 IANA 名；空串、`Local` 拒绝
@@ -1737,6 +1756,7 @@
 ### 后台-09 通知与安全 · 通知与插件（通知渠道 / 邮件模板 / Webhook 钩子）
 
 #### GET v1/settings/telegram — 读取 Telegram 配置
+- **修订说明（2026-09-26 文档对齐）**：已实现：响应已带 `admin_chat_id`（`api/admin/telegram.go`，读 system_settings 的 `telegram.admin_chat_id`）。
 - 状态：现有 `panel/internal/api/admin/telegram.go:17 getTelegramSettings`；**admin_chat_id 待补·后端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -1745,14 +1765,16 @@
 - 设计：后台-09 通知渠道「Telegram」卡。映射：状态点「已连接 @bot」← `enabled && has_token` 显示「已启用 @bot_username」，`!has_token` 显示「未配置 Token」，`!enabled` 显示「已停用」（后端不做连通性探测）；Bot Token 输入框为空占位「已设置，留空不修改」
 
 #### POST v1/settings/telegram — 保存 Telegram 配置
+- **修订说明（2026-09-26 文档对齐）**：已实现：请求接受 `admin_chat_id`（省略 = 不改，null = 清空，非 0 整数保存，否则 422 `fields.admin_chat_id`；`api/admin/telegram.go`）。D-A-4 已决方案 a（5.A.2）：管理员群组只作测试消息的默认目标。
 - 状态：现有 `telegram.go:39 setTelegramSettings`；**admin_chat_id 待补·后端**
 - 权限：`platform.settings.write`｜reauth：否｜幂等：否
 - 请求：`{ enabled: bool, bot_username: string（可带 @，后端去掉）, bot_token: string（空=不修改） }`；待补·后端追加 `admin_chat_id?: int | null`
 - 响应：200 `{ ok: true, enabled: bool }`
 - 错误：422 `fields.bot_username`（启用却没填用户名）
-- 设计：Telegram 卡字段 Bot Token、管理员群组 Chat ID、Bot 用户名、保存。待补·前端：卡片标题栏加「启用」开关（`enabled`，设计缺）。「管理员群组」除测试默认目标外还用来做什么见待决 D-A-4
+- 设计：Telegram 卡字段 Bot Token、管理员群组 Chat ID、Bot 用户名、保存。待补·前端：卡片标题栏加「启用」开关（`enabled`，设计缺）。「管理员群组」只作测试消息的默认目标（D-A-4 已决方案 a）
 
 #### POST v1/settings/telegram/test — 发送 Telegram 测试消息
+- **修订说明（2026-09-26 文档对齐）**：已实现：`chat_id` 可省略（或 0），省略时发往已保存的管理员群组，两者都没有回 422 `fields.chat_id`（`api/admin/telegram.go` testTelegram）。
 - **修订 R14（2026-09-24，后端二 62f7283）**：权限改为 `ops.notification.write`。
 - 状态：现有 `telegram.go:117 testTelegram`；**chat_id 可选 待补·后端**
 - 权限：`billing.provider.write`（与保存用的权限不同，见核对笔记）｜reauth：否｜幂等：否
@@ -1805,6 +1827,7 @@
 - 设计：模板编辑区「保存」
 
 #### POST v1/mail/templates/preview — 用示例数据渲染未保存的草稿
+- **修订说明（2026-09-26 文档对齐）**：已实现：`api/admin/mail_template.go` previewMailTemplate，响应含 `unknown_variables`；路由在 `router_notify.go`。
 - 状态：待补·后端
 - 权限：`ops.notification.read`｜reauth：否｜幂等：否（纯计算，不写库）
 - 请求：`{ code: string, channel: string, subject: string, body: string }`
@@ -1822,6 +1845,7 @@
 - 设计：「恢复默认」+ 危险确认框。待补·前端：`is_default` 为 true 或该模板无内置默认时禁用按钮（后者前端靠调用失败判断，或由后端在列表加 `has_default: bool`——建议随 preview 一起补，需迁移：否）
 
 #### POST v1/mail/templates/test — 用模板实发一封测试信
+- **修订说明（2026-09-26 文档对齐）**：已实现：请求接受 `subject?`、`body?`，提供时按草稿渲染发送（`api/admin/mail_template.go` testMailTemplate）。
 - **修订 R20（2026-09-24，后端二 e05fd9e）**：reauth 改为「是」。
 - **修订 R14（2026-09-24，后端二 62f7283）**：权限改为 `ops.notification.write`（注释说要 reauth、代码仍未挂，待后续处理）。
 - 状态：现有 `mail_template.go:93 testMailTemplate`；**草稿发送 待补·后端**
@@ -1832,6 +1856,7 @@
 - 设计：预览栏底部收件地址 +「实发测试信」。映射：非 email 渠道隐藏该区
 
 #### （模板补充）auth.email_verify 注册验证码邮件
+- **修订说明（2026-09-26 文档对齐）**：已实现（R16）：模板种子见迁移 00074（新租户由 00090 的建租户触发器补种），注册验证码经 notify 按地址投递。
 - 状态：待补·后端（不是新路由，是新模板 + 投递）
 - 说明：`identity.StartRegistration` 写入 verification_codes 后**没有任何代码把验证码发出去**（只有开发模式在响应里回 `dev_code`），生产环境一旦开启 `email_verification`，注册必然卡死。补：新增模板 `auth.email_verify|email`（allowed_variables `site, code, minutes`），StartRegistration 在同一事务内经 notify 入队（邮箱已存在时不入队，保持 IAM-006 响应一致），`defaultTemplates` 与种子同步。设计「注册验证码」模板即它
 - 需迁移：notification_templates 种子一行（数据迁移，无表结构变更）
@@ -1908,6 +1933,7 @@
 - 设计：审计页「导出」按钮。映射：前端用 fetch 带 Bearer 取 Blob 再触发下载（不能用 `<a href>`）；该路径不以 events/stream 结尾，受 25 秒超时约束，所以设上限
 
 #### GET v1/access-log — 安全事件明细（非 HTTP 访问日志）
+- **修订说明（2026-09-26 文档对齐）**：已实现：`outcome` 筛选（success / failure / denied / partial / error，error = 非 success，订阅拉取 ok 以外都算 error；其他值 422 `fields.outcome`），见 `api/admin/access_log.go`；`category` 过滤见 R23。
 - **修订 R96（续）**：订阅拉取事件的 `outcome` 是原始 result（`ok` / `not_found` / `revoked` / `expired` / `rate_limited`），不是审计的四种结果；接口没有 total，按「这页满没满」判断还有没有更早的记录。
 - **修订 R23（2026-09-24，后端二 107de25）**：`category` 只接受 login / register / reset_password / order / payment / ticket / admin / other / subscribe，其余 422 `fields.category`；`payment_provider.*` 归 admin（缺陷 14）。`outcome` 筛选在后端二第 ⑤ 步。
 - 状态：现有 `panel/internal/api/admin/access_log.go:49 accessLogList`；**筛选 待补·后端**
@@ -2091,6 +2117,7 @@
 ### 门户-02 我的订阅
 
 #### GET v1/me/subscriptions — 我的订阅列表
+- **修订说明（2026-09-26 文档对齐）**：已实现：订阅级 `device_limit`、`online_devices`、`quota_reset_strategy`、`next_reset_at`、`renewable`、`renewal_price`、`pack_remaining_bytes` 与 quotas[] 的 `period`、`period_start`、`period_end`、`granted_addon`、`adjusted` 均已返回（`api/public/my_subscriptions.go`）。
 - 状态：现有 `panel/internal/api/public/handlers.go:394 listSubscriptions`；字段扩展为待补·后端（无迁移）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无
@@ -2298,6 +2325,7 @@
 - 设计：钱包「立即兑换」。映射：toast「兑换成功：」+ summary.join('，')；成功后重拉余额、订阅、我的礼品卡。
 
 #### GET v1/me/gift-cards — 我的兑换记录
+- **修订说明（2026-09-26 文档对齐）**：已实现：每条带 `code_hint`（`domain/giftcard/redeem.go` MyRedemptions）。
 - 状态：现有 `panel/internal/api/public/giftcard.go:44 myGiftRedemptions`（domain `giftcard/redeem.go:406 MyRedemptions`）；扩展为待补·后端（无迁移）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：无
@@ -2396,6 +2424,7 @@
     - 其余 closed → 「已关闭」
 
 #### GET v1/support/tickets/{id} — 工单详情（含消息）
+- **修订说明（2026-09-26 文档对齐）**：已实现（R60）：详情带 `closed_reason` 与 `related_order: { id, order_no } | null`（`domain/support/user_tickets.go`）。
 - 状态：现有 `panel/internal/api/public/handlers.go:729 getTicket`；另有待补·后端（改形状）
 - 权限：登录用户｜reauth：否｜幂等：否
 - 请求：path `id: uuid`
@@ -2496,6 +2525,7 @@
 ### 门户-09 帮助
 
 #### GET v1/content/pages — 帮助文章列表
+- **修订说明（2026-09-26 文档对齐）**：已实现：`q`（≤100 字，标题、摘要、正文不区分大小写包含匹配）与 `platform=any`（`api/public/content.go` → `domain/content/service.go` 的 `PlatformAny`）。
 - 状态：现有 `panel/internal/api/public/content.go:47 listContentPages`；另有待补·后端（加 query 参数）
 - 权限：登录用户｜reauth：否｜幂等：否（响应头 `Cache-Control: no-store`）
 - 请求（现有）：query 字段如下
@@ -2565,7 +2595,7 @@
   - 查询加上 `audience='public'`。或者保留全部，但在响应里加 `audience` 字段，让前端标出「管理后台」。建议前者。
 - 错误：无
 - 设计：门户-10「登录会话」：设备名 + 「当前」标签；meta 为「城市 · IP · 活跃中/2 分钟前」；非当前会话有「下线」按钮。
-  - 映射：设备名由前端解析 user_agent，得到「浏览器/客户端 · 系统」。活跃时间取 last_seen_at。current=true 的显示「当前」且不显示「下线」。城市和 IP 见 D-F-3，在此之前 meta 只显示「登录于 {created_at} · 最近活跃 {last_seen_at}」。
+  - 映射：设备名由前端解析 user_agent，得到「浏览器/客户端 · 系统」。活跃时间取 last_seen_at。current=true 的显示「当前」且不显示「下线」。城市和 IP 不显示（D-F-3 已决方案 d，5.A.2），meta 只显示「登录于 {created_at} · 最近活跃 {last_seen_at}」。
 
 #### DELETE v1/me/sessions/{id} — 踢下线某个会话
 - **修订 R15（2026-09-24，后端二 62f7283）**：只能吊销 `audience=public` 的会话；指向后台会话回 404 且不做任何修改。
@@ -2796,7 +2826,7 @@
 
 ### 5.4 分段 D（后台节点与服务器、内容与外观）
 
-- **D-D-1 路由规则类型 geosite/geoip 与 selector 出站**：设计路由页的核心规则是 `geosite:category-ads-all`、`geosite:cn`、`geoip:cn, private`，出站里有「代理 · selector 自动选优」。后端 `qnodeMatch`（`nodefabric/uniproxy.go:425`）只接受 domain/domain_suffix/ip_cidr/port/network/source/source_port，其余键 422「暂不支持跨内核转换」；`node_outbounds.type` 的 CHECK 里也没有 selector。这不是 panel 单方面能补的：geosite/geoip 需要 pdnd NativeCore 带数据文件并实现匹配，按 CONSTRAINTS 的 fail-closed，面板不能下发节点端不认识的规则。方案：(a) 前端下拉只放后端支持的类型，设计的 geosite/geoip 示例换成等价域名后缀/IP 段，selector 去掉；(b) 立项让 pdnd 支持 geosite/geoip（跨模块，含数据文件分发与更新），面板随后放开校验；(c) 面板侧把 geosite/geoip 在保存时展开成域名/IP 列表（数据量大、更新难）。
+- **D-D-1 路由规则类型 geosite/geoip 与 selector 出站**：设计路由页的核心规则是 `geosite:category-ads-all`、`geosite:cn`、`geoip:cn, private`，出站里有「代理 · selector 自动选优」。后端 `qnodeMatch`（`nodefabric/uniproxy.go:425`）只接受 domain/domain_suffix/ip_cidr/port/network/source/source_port，其余键 422「暂不支持跨内核转换」；`node_outbounds.type` 的 CHECK 里也没有 selector。这不是 panel 单方面能补的：geosite/geoip 需要 pdnd NativeCore 带数据文件并实现匹配，按 NativeCore fail closed 的原则，面板不能下发节点端不认识的规则。方案：(a) 前端下拉只放后端支持的类型，设计的 geosite/geoip 示例换成等价域名后缀/IP 段，selector 去掉；(b) 立项让 pdnd 支持 geosite/geoip（跨模块，含数据文件分发与更新），面板随后放开校验；(c) 面板侧把 geosite/geoip 在保存时展开成域名/IP 列表（数据量大、更新难）。
 - **D-D-2 公告可见范围「即将到期」**：设计的可见范围选项有「即将到期」，这是动态人群，不是套餐或用户组。后端公告只有 `target_plan_ids`、`target_user_group_ids` 两种静态定向。方案：(a) 去掉该选项；(b) 新增定向维度 `target_expiring_within_days?: int`，public 端按订阅 `current_period_end` 过滤（需改表 announcements 加列，并要定义「即将到期」的天数与订阅状态口径）。
 - **D-D-3 已撤回公告能否重新发布**：设计的「发布」按钮对 withdrawn 公告同样可点（`publishAnn` 对任何非 live 状态都置为 live）。后端有意设为终态：「已撤回公告不可重新编辑，请新建公告」（`announce.go:154`）。两种理解都说得通（设计可能只是没考虑撤回态）。方案：(a) 按设计改后端，允许 withdrawn → draft/published，审计保留；(b) 前端对 withdrawn 隐藏「发布」，改成「复制为新公告」（预填标题正文走 POST v1/announcements）。建议 (b)。
 - **D-D-4 主题 token 键名**：内置主题（00051、00055 两个 migration 种子）的 tokens 用的是旧门户的变量名（`brand`、`brand-2`、`brand-soft`、`brand-on-soft`、`r-lg`、`fg`、`line`…）；新设计的变量是 `--brand/--brand-hover/--brand-ink/--brand-soft/--brand-tint/--bg/--surface*/--text*/--border*`。门户按「键名 = CSS 变量名」无映射直接 setProperty，旧种子在新门户上大多不生效。方案：(a) 新门户维护一张旧键→新键的兼容映射；(b) 写一个 migration 把内置主题的 tokens 重写成新变量名（内置主题不可原地编辑，只能迁移改）；(c) 两者都做。影响 public 段门户渲染，需与 A/B 段对齐。
@@ -2839,6 +2869,8 @@
 
 ## 6. 迁移预估
 
+> 本节为 2026-09-23 的快照，落实情况见第 9 节修订表。
+
 > 现有最新迁移 00067。编号由协调会话统一分配，本阶段不创建迁移文件。「条件」项只有在对应待决选了特定方案时才需要。各分段的原文预估见第 8 节。
 
 ### 6.1 确定要做的（不依赖待决）
@@ -2879,6 +2911,8 @@
 条件项全选时最多再加新表 3 张（C1 两张、C9 一张）、改表或改约束约 10 处、数据迁移 1 项（C7）。
 
 ## 7. 核对中发现的既有缺陷
+
+> 本节为 2026-09-23 的快照，落实情况见第 9 节修订表。
 
 > 这些不是设计冲突，是现有代码的问题，第 3 阶段「补后端」会话按优先级处理。标「授权」的动到安全/计费逻辑，按边界需要用户点头；其余属于「补接口时顺手修」。出处见第 8 节对应分段。
 
@@ -2963,7 +2997,7 @@
 - reauth 返回新令牌后前端要替换令牌：**确认**。`identity/reauth.go` 签新访问令牌（同 session、rat=now、exp 重新计算），不发 refresh；旧令牌仍有效到过期，但 rat 旧，必须换。
 - admin 令牌有没有 refresh 机制：**确认没有**。Login 在库里建了 refresh_tokens，但 admin 响应不下发 refresh_token，两个网关也都没有 refresh 路由（public 的登录响应倒是下发了 refresh_token，却同样没有刷新接口）。访问令牌 TTL = `AEGIS_ACCESS_TOKEN_TTL`（默认 30 天），会话过期 = `AEGIS_REFRESH_TOKEN_TTL`（默认 30 天，且配置校验要求 access ≤ refresh）；reauth 会顺延访问令牌的 exp，但中间件每次请求都校验会话 expires_at，所以最长活到会话到期。到期即 401，前端回登录页。
 - admin 改密码后的行为（保留规则 4）：**确认**。`identity/password.go` 同事务吊销该用户全部 sessions（revoked_reason=password_changed）、全部 active refresh_tokens 及 refresh 家族；响应 `{ok:true, reauthenticate:true}`。设计文案「其他会话被登出」需改成「所有会话」。
-- RequireRecentReauth 路由总数：**40 条**（`router.go` 中 `RequireRecentReauth(d.Log)` 共 40 处，每处对应一条路由，其中 1 处在 `registerCatalogPlanUpdate` 的 `PUT v1/plans/{id}`；第 146 行那处出现在注释里，不算）。`handlers.go:63`、`identity/reauth.go` 注释和 phase2-brief 里写的「53 条」**与代码不符**。本分段占 5 条：POST revenue/adjustments、POST revenue/adjustments/{id}/reverse、POST plugin-hooks、DELETE plugin-hooks/{code}、POST plugin-hooks/{code}/test；待补后再加 3 条（POST switches/{code}、GET audit/export、POST ip-clusters/{key}/disable-accounts）。
+- RequireRecentReauth 路由总数：**40 条**（`router.go` 中 `RequireRecentReauth(d.Log)` 共 40 处，每处对应一条路由，其中 1 处在 `registerCatalogPlanUpdate` 的 `PUT v1/plans/{id}`；第 146 行那处出现在注释里，不算）。`handlers.go:63`、`identity/reauth.go` 注释和当时的第 2 阶段开工说明里写的「53 条」**与代码不符**。本分段占 5 条：POST revenue/adjustments、POST revenue/adjustments/{id}/reverse、POST plugin-hooks、DELETE plugin-hooks/{code}、POST plugin-hooks/{code}/test；待补后再加 3 条（POST switches/{code}、GET audit/export、POST ip-clusters/{key}/disable-accounts）。
 
 **发现的其他事实**
 - **注册验证码从未发送（缺陷）**：`identity.StartRegistration`（`domain/identity/service.go:65` 注释「开启注册事务并发送验证码」）只写 verification_codes，全仓没有投递路径，只有开发模式在响应里回 `dev_code`。生产环境开启 email_verification 后没有人能完成注册。已写成待补·后端（auth.email_verify 模板）。

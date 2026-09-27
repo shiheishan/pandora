@@ -239,7 +239,7 @@ echo "marker=checkout_pg18_image_identity_ok postgres=$POSTGRES_IMAGE_ID go=$GO_
 docker start "$PG_CONTAINER_ID" >/dev/null
 # 等 initdb 完成。
 #
-# 原本是 90 秒，在一台只有 1 vCPU、同时还跑着生产库的机器上不够——
+# 原本是 90 秒，在低配、同机还有其他负载的主机上不够——
 # 同一份脚本连跑两次，一次过一次超时。超时的表现是后面那句 pg_isready
 # 断言失败，看不出是「没起来」还是「起得慢」，很容易误判成容器崩了。
 : "${CHECKOUT_PG18_READY_TIMEOUT:=300}"

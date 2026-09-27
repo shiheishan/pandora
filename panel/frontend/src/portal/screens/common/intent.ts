@@ -6,7 +6,7 @@
  */
 import { useState } from 'react'
 
-// 幂等键本身收在 core/intent（两个入口共用一份，第 4 阶段 ④），门户各页照旧从这里取
+// 幂等键本身收在 core/intent（两个入口共用一份），门户各页照旧从这里取
 export { createIntentKey, endsIntent, useIntentKey, type IntentKey } from '../../../core/intent'
 
 const fingerprintOf = (request: unknown) => JSON.stringify(request)

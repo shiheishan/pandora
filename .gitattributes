@@ -1,4 +1,4 @@
-# 这个仓库在 Windows 上开发、在 Linux 上运行。core.autocrlf=true 会在
+# 这个仓库跨平台开发（含 Windows）、在 Linux 上运行。core.autocrlf=true 会在
 # checkout 和 git archive 时给文本文件加 CRLF，而 CRLF 的 shell 脚本在
 # Linux 上会以 `$'\r': command not found` 失败。
 #

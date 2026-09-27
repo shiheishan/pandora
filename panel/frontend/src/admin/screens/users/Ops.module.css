@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供用户组、批量运营、设备策略、流量重置四个标签用到的类名
- * [POS]: admin/screens/users 的第二张样式表（第 ④ 步），与 Users.module.css（列表、抽屉、对话框与通用小件）并列，数值取自 管理后台-03-用户.dc.html；通用小件（stack / small / muted / mono / tone_* / pips）仍从 Users.module.css 取
+ * [POS]: admin/screens/users 的第二张样式表（用户组、批量运营、设备策略、流量重置四个标签），与 Users.module.css（列表、抽屉、对话框与通用小件）并列，数值取自 管理后台-03-用户.dc.html；通用小件（stack / small / muted / mono / tone_* / pips）仍从 Users.module.css 取
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 

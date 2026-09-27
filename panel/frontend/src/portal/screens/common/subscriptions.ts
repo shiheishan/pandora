@@ -137,7 +137,7 @@ export function useTrafficPacks() {
 
 // ---------------------------------------------------------------------------
 // 一条订阅的流量摘要与下次重置：主卡、我的订阅、用量图共用；流量包余量优先取
-// 订阅上的待补字段 pack_remaining_bytes，缺席时读 GET v1/me/traffic-packs。
+// 订阅上的 pack_remaining_bytes（后端已实现），字段缺席时兜底读 GET v1/me/traffic-packs。
 // 用量查询与用量图同键，缓存共享、不多发请求。
 // ---------------------------------------------------------------------------
 export interface PlanTraffic {

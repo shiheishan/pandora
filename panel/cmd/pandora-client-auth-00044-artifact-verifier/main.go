@@ -1,3 +1,8 @@
+// [INPUT]: 依赖同包 verifier.go 的 verifyAll（重新生成分类产物并比对 detached manifest 与发布期望），fd_linux.go / fd_other.go 的文件描述符读取
+// [OUTPUT]: 对外提供 pandora-client-auth-00044-artifact-verifier 命令：参数只接文件描述符与密钥 ID，失败按 I/O、校验、内部三类映射退出码
+// [POS]: panel/cmd 的 CLIENT-AUTH 00044 分类产物校验器，由 00044 root runner 调起；本文件只管 CLI 与退出码，校验在 verifier.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (

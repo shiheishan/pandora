@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatMoney，依赖 ../../../ui 的 Empty / Segmented / Skeleton，依赖 ./api 的 useRevenue 与币种 / 区间类型，依赖 ./model 的 revenueSummary / formatPercent，依赖 ./parts，依赖 ./Dash.module.css
  * [OUTPUT]: 对外提供 RevenueTrend
- * [POS]: 仪表盘「收入趋势」面板：GET v1/revenue/timeseries（CNY/USD × 7/30/90 天），区间合计、日均、较上一区间（previous_total 待补·后端，缺失显示 —），手写柱图，最后一根是今天；切换时保留上一张图不闪骨架
+ * [POS]: 仪表盘「收入趋势」面板：GET v1/revenue/timeseries（CNY/USD × 7/30/90 天），区间合计、日均、较上一区间（previous_total 后端已实现，字段缺席时兜底显示 —），手写柱图，最后一根是今天；切换时保留上一张图不闪骨架
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'

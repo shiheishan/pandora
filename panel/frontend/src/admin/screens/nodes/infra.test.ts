@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./infra 的全部纯函数，依赖 ./schemas 的服务器 / 节点池 / 节点行 schema（核对 Go 的 null 指针字段）
  * [OUTPUT]: 对外提供服务器与节点池纯逻辑的单元测试
- * [POS]: admin/screens/nodes 第 ③ 步的单元测试：schema 接住 Go 原样形状、服务器圆点与快捷状态切换、合法状态边、删除资格与后果文案、R104 节点池名单的文字与只在改动时提交、三条占用与三档色、节点按服务器分组、服务器表单校验 / 新建体 / PATCH 差量 / 容量冲突；节点池删除资格、绑定套餐文字、新建体与编辑差量；界面交互在浏览器里对 dev/mock/admin/nodes-infra.ts 验收
+ * [POS]: admin/screens/nodes 服务器与节点池的单元测试：schema 接住 Go 原样形状、服务器圆点与快捷状态切换、合法状态边、删除资格与后果文案、R104 节点池名单的文字与只在改动时提交、三条占用与三档色、节点按服务器分组、服务器表单校验 / 新建体 / PATCH 差量 / 容量冲突；节点池删除资格、绑定套餐文字、新建体与编辑差量；界面交互在浏览器里对 dev/mock/admin/nodes-infra.ts 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'

@@ -12,7 +12,7 @@
 configure-app-role.sql、在用表外键或冻结契约）本身就是需要用户授权的独立变更。
 
 另有两张表被 Go 引用但从未写入，只做只读依赖计数：`node_templates`（pools.go 删除资源池前计数）
-与 `provisioning_runs`（node_admin.go 迁移节点前计数）。它们有引用，不在下表；计数恒为 0。
+与 `provisioning_runs`（nodefabric/node_admin_placement.go 迁移节点前计数）。它们有引用，不在下表；计数恒为 0。
 
 状态：`孤儿` = 无 Go 引用、也没有迁移内 SQL 函数或触发器读写；`库内使用` = 无 Go 引用，但迁移内的
 种子、函数或触发器读写它。

@@ -7,7 +7,7 @@
 页面只从 index.ts 引入；验收用 showcase（npm run dev:showcase）。
 
 成员清单
-index.ts: 公开出口，页面只从这里 import；cx 与 useModalDialog 是内部实现不导出
+index.ts: 公开出口，页面只从这里 import；cx、useModalDialog 与 Field.tsx 的 Field / useFieldIds / hasError 是内部实现不导出（由 Input / Select 内部套用）
 cx.ts: className 拼接
 icons.tsx: IconCheck / IconChevronDown / IconClose，16px 线性单色（规范：图标只用线性单色）
 Button.tsx: 六种 variant（primary 实心强调、outline、secondary、ghost、danger、link）× 四档 size（md / sm / xs 对应 --h-control 三档，dialog 为弹窗按钮）；busy 禁用并转圈；默认 type="button"
@@ -16,7 +16,7 @@ control.module.css: Input / TextArea / Select 共用的输入框外观：聚焦�
 Input.tsx: Input 与 TextArea；mono 用于邀请码、优惠码、IP
 Select.tsx: 原生 select；两种空值——placeholder 是必选下拉的 disabled 占位项，emptyOption 是「不限 / 全部」这类可选回去的空值项（传了就不渲染 placeholder）
 Switch.tsx: 原生 checkbox + role="switch"，32×18；选中底 --accent、圆钮 --switch-knob-on
-Checkbox.tsx: 原生 checkbox 换外观，16px（表格里 14px），支持 indeterminate；外层 label 用 htmlFor 显式指向 input id、标签文字是 label 的直接文字（按规范隐式关联读屏也认，但各会话实测用的浏览器检查工具只认 label[for] 的直接文字，否则把名字读成 value「on」）
+Checkbox.tsx: 原生 checkbox 换外观，16px（表格里 14px），支持 indeterminate；外层 label 用 htmlFor 显式指向 input id、标签文字是 label 的直接文字（按规范隐式关联读屏也认，但部分可访问性检查工具只认 label[for] 的直接文字，否则把名字读成 value「on」）
 Tag.tsx: Tag 八种配色（ok / warn / danger / info / neutral / brand / brandSolid / outline），圆角 5 不做胶囊；CountBadge 朱砂角标，0 不渲染、超过上限显示 99+
 Card.tsx: 1px 描边无阴影，圆角与内边距随入口；tint 为套餐卡朱砂极浅底；flush 给贴边的表格与列表
 Table.tsx: 语义化 <table>，columns 描述列（宽度、右对齐、mono）；可选行勾选（表头三态）、行点击（传了才让行 Tab 可聚焦，Enter / 空格走同一回调，只认行本身得到的按键，行内链接按钮各管各的；焦点外圈内收免被滚动容器裁掉）、加载骨架、空状态；外层横向滚动，窄屏不挤压列

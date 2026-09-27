@@ -7,5 +7,5 @@ is kept local so its TLS event wiring can bind to
 
 The fork intentionally excludes upstream tests, examples, fuzzing and
 integration fixtures from the production tree. Keep the upstream `LICENSE`
-with this copy and re-run the focused package tests plus the
-`kernel/TestNativeRealityH3RoundTrip` acceptance test after upgrades.
+with this copy and re-run the `kernel/TestNativeRealityH3RoundTrip`
+acceptance test after upgrades; this directory itself contains no tests.

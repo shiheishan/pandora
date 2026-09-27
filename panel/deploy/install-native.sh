@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pandora Panel — 普通直接安装版（无 Docker）
-# 用法: sudo bash install.sh [--yes]
+# 用法: sudo bash install-native.sh
 # 信条: 目录简单、文件简单、不臃肿
 set -euo pipefail
 

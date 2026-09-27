@@ -14,7 +14,7 @@ import { MODULES, NAV_GROUPS, canReadModule, modulePath, type ModuleKey, type Pe
 import { taskCount, useDashboardTasks } from './tasks'
 import css from './Sidebar.module.css'
 
-// 侧栏徽标：待补·后端的 GET v1/dashboard/tasks，只在有 ops.dashboard.read 时请求；
+// 侧栏徽标：GET v1/dashboard/tasks（后端已实现），只在有 ops.dashboard.read 时请求；
 // 与仪表盘「需要处理」共用同一个查询（./tasks）。条目按各自读权限过滤，缺的条目就不显示徽标
 function useNavBadges(enabled: boolean): Partial<Record<ModuleKey, number>> {
   const { data } = useDashboardTasks(enabled)

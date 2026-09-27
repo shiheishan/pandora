@@ -1,7 +1,7 @@
 # panel/frontend/src/portal/screens/common/
 > L2 | 父级: /panel/frontend/src/portal/screens/CLAUDE.md
 
-门户多个页面共用的读模型与小块，归门户前端会话。只有一个页面用的东西仍放在那个页面自己的目录里；这里的东西若后台也要，报告协调会话决定是否提升到 core/ 或 ui/，不在这里给后台用（字节换算已由后台前端一提升为 core/format 的 formatBytes，这里只包一层排版用的 bytesParts / compactBytes）。
+门户多个页面共用的读模型与小块。只有一个页面用的东西仍放在那个页面自己的目录里；这里的东西若后台也要，就提升到 core/ 或 ui/，不在这里给后台用（字节换算已提升为 core/format 的 formatBytes，这里只包一层排版用的 bytesParts / compactBytes）。
 数据层一律 useApi + react-query，schema 按 api-contract.md 写全写严：「现有」字段必填，「待补·后端」字段可选，页面对缺席做降级而不是放宽 schema；实时失效只靠 meta.topics。同一接口与外框 queries.ts 共用查询键：订阅列表的全字段 schema 与查询住在 queries.ts，这里转出。
 日期显示统一按按日用量接口回的切日时区（修订 R48 / R50），与用量柱同一口径；拿不到时退回浏览器本地时区。
 

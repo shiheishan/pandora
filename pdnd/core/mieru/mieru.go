@@ -1,9 +1,15 @@
+// [INPUT]: 依赖 enfein/mieru 的 protocol.Mux 与 socks5 请求解码，依赖 core 的 User / 限速与 core/counter 的用户表、计量、在线设备，依赖 route 的 Meta 与 sing 的 M.Socksaddr
+// [OUTPUT]: 对外提供 Inbound（New、SetTransport、Start、Close、AddUsers / UpsertUsers / DelUsers、Traffic、Online）与出站契约 Transport
+// [POS]: pdnd/core 的 mieru 入站：默认构建里被 kernel/mieru.go 包成 NativeCore 适配器并注入 DataPlane 作 Transport；compat 构建里由 core/multi 直接托管、未注入 Transport 时直接拨号
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package mieru 用 mieru 协议提供入站。
 //
 // mieru 与 sing-box 系的协议差别很大，不能挂在 sing-box 的 inbound 注册表上：
 // 它自带监听器，把已认证的连接连同一个 socks5 请求一起交出来，转发由调用方做。
-// 好处是集成面很窄；代价是路由、DNS、嗅探这些 sing-box 的能力用不上 ——
-// 机场节点本来就是直出，这个代价可以接受。
+// 好处是集成面很窄。转发的去向：默认构建里 kernel/mieru.go 经 SetTransport
+// 注入 NativeCore 的 DataPlane，TCP 与 UDP 都走 NativeCore 的路由与出站；
+// 没有注入 Transport 时（compat 构建经 core/multi）才直接拨号直出。
 //
 // 这里绕过了 mieru 的 apis/server 门面，直接持有底层的 protocol.Mux。
 // 原因只有一个：apis/server 没有暴露运行时改用户的能力，用它就只能

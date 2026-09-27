@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./ChannelCard，依赖 ./logic 的邮件函数，依赖 ./queries，依赖 ./schemas，依赖 ./system.module.css
+ * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./ChannelCard，依赖 ./TelegramCard，依赖 ./logic 的邮件函数，依赖 ./queries，依赖 ./schemas，依赖 ./system.module.css
  * [OUTPUT]: 对外提供 ChannelsTab（通知与插件 · 通知渠道标签）
  * [POS]: admin/screens/system 的通知渠道（设计稿 t_notify）：邮件 · SMTP 卡（设计缺的加密方式下拉、清除已存密码补上）、契约待补·前端的「注册与验证」卡（注册模式 + 邮箱验证，注明还受降级开关控制）、Telegram 卡在 TelegramCard.tsx。
  *        保存都是 platform.settings.write、无 reauth 无幂等；SMTP 六个字段每次整体覆盖，注册卡用同一接口、带「已保存」的 SMTP 字段而不是 SMTP 卡里没保存的输入。测试发送（ops.notification.write）用的是已保存的配置，有未保存的修改时先禁用并提示保存。

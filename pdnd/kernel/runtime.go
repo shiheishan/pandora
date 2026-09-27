@@ -1,8 +1,15 @@
+// [INPUT]: 依赖 core 的 Routing 配置，依赖 route 的 Engine 与 Meta，依赖 outbound 的 Set，依赖 sing 的 M.Socksaddr
+// [OUTPUT]: 对外提供 Runtime（Build、Select、DialTCP、ListenUDP、Close）与 DirectTag / BlockTag
+// [POS]: kernel 的包文档与每入站一代的路由运行时：nativecore.go 为每个入站 Build 一代并在热更新时替换，适配器经 DataPlane 间接使用它选路与出站
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package kernel is Pandora's protocol-independent data-plane runtime.
 //
 // It owns one route engine and one outbound generation per inbound. Sing-box,
 // Xray, and standalone compatibility processes are deliberately not imported
-// here: protocol adapters will call this package, not the other way around.
+// here: protocol adapters are registered into this package and reach the
+// network only through its DataPlane. The one core/ package it links is
+// core/mieru, whose wire decoder runs behind a NativeCore adapter.
 package kernel
 
 import (

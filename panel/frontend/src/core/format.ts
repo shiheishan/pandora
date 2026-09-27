@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 无外部依赖
  * [OUTPUT]: 对外提供 formatMoney、formatCount、formatBytes、relativeTime、formatDateTime
- * [POS]: core 的展示格式化，外框与第 3 阶段页面共用：金额是币种最小单位整数（契约 1.8），流量是字节（int64 或 DASH-01 的十进制字符串），时间是 RFC3339 或 Date
+ * [POS]: core 的展示格式化，外框与各页面共用：金额是币种最小单位整数（契约 1.8），流量是字节（int64 或 DASH-01 的十进制字符串），时间是 RFC3339 或 Date
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
