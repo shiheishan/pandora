@@ -153,7 +153,7 @@ export function couponPreviewBody(mode: CheckoutMode, priceId: string | null, co
 export const normalizeCoupon = (raw: string) => raw.trim().toUpperCase()
 
 /** 成功行「已使用 CODE：20% 折扣 / 立减 ¥X」；percent 的 discount_value 是万分比 */
-export function couponNote(code: string, coupon: { discount_type: 'percent' | 'fixed'; discount_value: number } | null | undefined, discount: number, fmt: (minor: number) => string): string {
+export function couponNote(code: string, coupon: { discount_type: 'percent' | 'fixed'; discount_value: number } | null, discount: number, fmt: (minor: number) => string): string {
   if (coupon?.discount_type === 'percent') return `已使用 ${code}：${Number((coupon.discount_value / 100).toFixed(2))}% 折扣`
   if (coupon?.discount_type === 'fixed') return `已使用 ${code}：立减 ${fmt(coupon.discount_value)}`
   return `已使用 ${code}：优惠 ${fmt(discount)}`

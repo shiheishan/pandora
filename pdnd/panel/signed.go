@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 crypto/ed25519 的节点签名与配置验签，依赖 net/http 访问面板 /v1/nodes/*
+// [OUTPUT]: 对外提供 Identity、BootstrapOptions、LoadIdentity / SaveIdentity、CanonicalSignedServer、SignedClient（Heartbeat、Config、ReportConfig、ReportEffectiveConfig、VerifyConfig、Do）
+// [POS]: pdnd/panel 的签名通道：节点身份的落盘格式与每个请求的 Ed25519 签名；身份由 enrollment.go 的两阶段接入产生，本文件只消费它（旧的一步式 /v1/nodes/bootstrap 面板已返回 426，客户端已删）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package panel
 
 import (
@@ -14,7 +19,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
@@ -33,71 +37,12 @@ type Identity struct {
 	RuntimeToken    string `json:"runtime_token"`
 }
 
+// BootstrapOptions 是安装器 bootstrap 子命令的参数，交给 BeginEnrollment。
 type BootstrapOptions struct {
 	Server string
 	Token  string
 	Name   string
 	Path   string
-}
-
-func Bootstrap(ctx context.Context, opts BootstrapOptions) (*Identity, error) {
-	if strings.TrimSpace(opts.Server) == "" || strings.TrimSpace(opts.Token) == "" || strings.TrimSpace(opts.Name) == "" {
-		return nil, fmt.Errorf("server, token and name are required")
-	}
-	server, err := validateSignedServer(opts.Server)
-	if err != nil {
-		return nil, err
-	}
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	body, err := json.Marshal(map[string]any{
-		"token": opts.Token, "node_name": opts.Name,
-		"public_key":    base64.StdEncoding.EncodeToString(pub),
-		"agent_version": "pandora-native", "hostname": hostname(),
-		"cpu_cores": runtime.NumCPU(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server+"/v1/nodes/bootstrap", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 30 * time.Second, CheckRedirect: rejectCredentialRedirect}).Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("bootstrap rejected (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
-	var out struct {
-		NodeID          string `json:"node_id"`
-		Serial          int    `json:"serial"`
-		ConfigPublicKey string `json:"config_public_key"`
-		ConfigKeyID     string `json:"config_key_id"`
-		RuntimeToken    string `json:"runtime_token"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, err
-	}
-	if out.NodeID == "" || out.Serial <= 0 || out.ConfigPublicKey == "" || out.ConfigKeyID == "" || out.RuntimeToken == "" {
-		return nil, fmt.Errorf("bootstrap response is incomplete")
-	}
-	identity := &Identity{Server: server, NodeID: out.NodeID, Serial: out.Serial,
-		PrivateKey: base64.StdEncoding.EncodeToString(priv), ConfigPublicKey: out.ConfigPublicKey, ConfigKeyID: out.ConfigKeyID, RuntimeToken: out.RuntimeToken}
-	path := opts.Path
-	if path == "" {
-		path = DefaultIdentityPath
-	}
-	if err := SaveIdentity(path, identity); err != nil {
-		return nil, err
-	}
-	return identity, nil
 }
 
 func validateSignedServer(raw string) (string, error) {
@@ -196,6 +141,9 @@ type HeartbeatInput struct {
 	MemoryMB             int    `json:"memory_mb"`
 	DiskGB               int    `json:"disk_gb"`
 	RuntimeStatus        string `json:"runtime_status"`
+	// Metrics 为空时面板不写 node_metrics；由 AttachHostMetrics 填
+	Metrics        *HeartbeatMetrics `json:"metrics,omitempty"`
+	MetricsPartial bool              `json:"metrics_partial,omitempty"`
 }
 
 type HeartbeatOutput struct {

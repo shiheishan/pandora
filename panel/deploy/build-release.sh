@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖 go、npm（make frontend-embed）、../cmd 下的面板入口、../../pdnd、../migrations、同目录的安装脚本与 systemd 单元
+# [OUTPUT]: 每个架构一份发布包目录与 tar.gz：bin/（含钉版本的 goose）、pdnd-dist/、migrations/、deploy/（含现场生成的 release-artifact.env）、SHA256SUMS 及两个 sidecar 摘要
+# [POS]: deploy 发布链的起点，产物由 install.sh / install-linux-binaries.sh / release-stop-the-world.sh 消费；panel-pg18.yml 从这里读 goose 版本
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -214,7 +218,7 @@ for arch in amd64 arm64; do
   # unit.  Shipping only binaries makes it possible to run new code against an
   # old schema (or vice versa), which is not a supported rollout mode.
   cp "$ROOT"/migrations/*.sql "$target/migrations/"
-  for script in install.sh install-native.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh; do
+  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh; do
     cp "$ROOT/deploy/$script" "$target/deploy/$script"
   done
   cp "$ROOT/deploy/renewal-cutover.md" "$target/deploy/renewal-cutover.md"
@@ -226,13 +230,16 @@ for arch in amd64 arm64; do
   # 也没法把 aegis_app 收敛成 NOSUPERUSER + NOBYPASSRLS 的运行时角色。
   cp "$ROOT/deploy/docker-compose.yml" "$target/deploy/docker-compose.yml"
   cp "$ROOT/deploy/configure-app-role.sql" "$target/deploy/configure-app-role.sql"
-  # Publish the exact native-node digests with the panel archive. Operators
-  # can load this file into the panel service environment without copying
-  # hashes by hand from an unrelated build.
+  # 网关日志轮转，install-linux-binaries.sh 装到 /etc/logrotate.d/aegis
+  cp "$ROOT/deploy/logrotate-aegis" "$target/deploy/logrotate-aegis"
+  # 节点端发布物绑定：本包里两个架构 pandora-native 的 SHA-256 与版本号（即
+  # -X main.buildVersion 注入的 $VERSION）。install-linux-binaries.sh 把它装到
+  # /opt/aegispanel/deploy/release-artifact.env，aegis-node.service 以 EnvironmentFile=
+  # 加载，每次升级随包覆盖。运行模式 AEGIS_ENV 不写在这里：它归 .env 管，
+  # 否则升级会把已装机器的 development 悄悄翻成 production。
   amd64_digest="$(sha256sum "$target/pdnd-dist/pandora-native-linux-amd64" | awk '{print $1}')"
   arm64_digest="$(sha256sum "$target/pdnd-dist/pandora-native-linux-arm64" | awk '{print $1}')"
   {
-    printf 'AEGIS_ENV=production\n'
     printf 'PANDORA_NATIVE_RELEASE_VERSION=%s\n' "$VERSION"
     printf 'PANDORA_NATIVE_ARTIFACT_AMD64_SHA256=%s\n' "$amd64_digest"
     printf 'PANDORA_NATIVE_ARTIFACT_ARM64_SHA256=%s\n' "$arm64_digest"
@@ -281,7 +288,7 @@ for arch in amd64 arm64; do
   rm -f "$archive" "$archive_tar"
   target_base="$(basename "$target")"
   release_scripts=()
-  for script in install.sh install-native.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh; do
+  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh; do
     release_scripts+=("$target_base/deploy/$script")
   done
   release_data=(
@@ -293,6 +300,7 @@ for arch in amd64 arm64; do
     "$target_base/deploy/backup-webdav.example.json"
     "$target_base/deploy/docker-compose.yml"
     "$target_base/deploy/configure-app-role.sql"
+    "$target_base/deploy/logrotate-aegis"
     "$target_base/deploy/systemd/aegis-public.service"
     "$target_base/deploy/systemd/aegis-admin.service"
     "$target_base/deploy/systemd/aegis-node.service"

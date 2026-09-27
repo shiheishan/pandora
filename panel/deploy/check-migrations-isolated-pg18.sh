@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖本机 Docker、postgres:18 镜像、goose、openssl、sha256sum，以及带 00042_client_auth_expand.sql 的历史迁移序列
+# [OUTPUT]: CLIENT-AUTH-00042 历史隔离预检的 attestation；对当前主序列以 NOT_RUN（exit 77）拒绝运行
+# [POS]: CLIENT-AUTH 冻结子系统的历史门禁，不在生产发布路径上；编号规则与 migrate.sh 相同；桩测试 check-migrations-isolated-pg18_mock_test.sh
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Isolated PostgreSQL 18 migration preflight. This script is intentionally not
 # wired into the production release path yet.
 set -Eeuo pipefail
@@ -235,15 +239,18 @@ BOOTSTRAP_ROLE_COLLISION="$(source_psql -d postgres -tAc \
   || deny "cannot check isolated bootstrap role provenance"
 [ "$BOOTSTRAP_ROLE_COLLISION" = 0 ] || deny "isolated bootstrap role collides with source globals"
 
-expected_version=1
+# 编号严格递增、不重复即可，允许空号，与 migrate.sh / check-migrations.sh 同一规则。
+previous_version=0
 CLIENT_AUTH_00042_FROZEN_SHA256=ffaf84b6e73eb0eef6794f5ca72859607b0c4c5bf313d9f7548dae120848dff5
 for migration in "${MIGRATION_FILES[@]}"; do
   [ -f "$migration" ] && [ ! -L "$migration" ] || deny "migration must be a regular non-symlink file"
   name="${migration##*/}"
   [[ "$name" =~ ^([0-9]{5})_[A-Za-z0-9._-]+\.sql$ ]] || deny "invalid migration filename: $name"
   version=$((10#${BASH_REMATCH[1]}))
-  [ "$version" -eq "$expected_version" ] || deny "migration versions must be continuous from 00001"
-  expected_version=$((expected_version + 1))
+  [ "$version" -ne "$previous_version" ] || [ "$version" -eq 0 ] \
+    || deny "duplicate migration version: $name"
+  [ "$version" -gt "$previous_version" ] || deny "migration versions must be strictly increasing from 00001: $name"
+  previous_version=$version
   if [ "$version" -eq 42 ]; then
     [ "$name" = 00042_client_auth_expand.sql ] || deny "unexpected CLIENT-AUTH-00042 filename"
   fi

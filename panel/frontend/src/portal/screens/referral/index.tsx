@@ -32,8 +32,8 @@ export default function Referral() {
           items={
             summary && [
               { label: '邀请注册', value: summary.invitees },
-              { label: '付费好友', value: summary.paid_invitees ?? '—' },
-              { label: '累计佣金', value: summary.total_earned === undefined ? '—' : formatMoney(summary.total_earned, summary.currency) },
+              { label: '付费好友', value: summary.paid_invitees },
+              { label: '累计佣金', value: formatMoney(summary.total_earned, summary.currency) },
               { label: '可用佣金', value: formatMoney(summary.available, summary.currency) },
             ]
           }

@@ -1,13 +1,13 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useMutation / useQueryClient，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../../queries 的订阅 schema 与共用查询，依赖 ./traffic 的额度摘要与重置日计算
  * [OUTPUT]: 对外提供（转出外框的）Subscription、subscriptionSchema、LIVE_STATUSES、isLive、pickPrimary、useSubscriptions，自有的 SubscriptionLink、UsageReport 等 schema 与 useSubscriptionLinks、useSubscriptionNodes、useSubscriptionUsage、useTrafficPacks、useRotateLink、usePlanTraffic / PlanTraffic、liveSubscriptions、canRenew；linksSchema / nodesSchema / trafficPacksSchema 为 tests/smoke 形状冒烟导出
- * [POS]: portal/screens/common 的订阅数据层（契约门户-01 / 门户-02，流量包余量属门户-03）：概览与我的订阅共用；订阅列表的 schema 与查询在外框 queries.ts（同键共用），这里转出；其余 schema 按契约写全写严，扩展字段（修订 R53–R62 已上线）写成可选，旧后端缺席时页面降级
+ * [POS]: portal/screens/common 的订阅数据层（契约门户-01 / 门户-02，流量包余量属门户-03）：概览与我的订阅共用；订阅列表的 schema 与查询在外框 queries.ts（同键共用），这里转出；其余 schema 按契约写全写严；修订 R53–R62 的扩展字段已上线且必回，页面直接读、不再降级
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'
-import { isLive, type Subscription } from '../../queries'
+import type { Subscription } from '../../queries'
 import { pickTrafficQuota, resetAtOf, trafficSummary, type TrafficSummary } from './traffic'
 
 // ---------------------------------------------------------------------------
@@ -16,8 +16,8 @@ import { pickTrafficQuota, resetAtOf, trafficSummary, type TrafficSummary } from
 // ---------------------------------------------------------------------------
 export { isLive, LIVE_STATUSES, liveSubscriptions, pickPrimary, subscriptionSchema, useSubscriptions, type Subscription } from '../../queries'
 
-/** 能否续费：renewable 优先；旧后端缺这个字段时按状态判断（allow_renewal 由下单时的 409 兜底）。 */
-export const canRenew = (s: Subscription) => s.renewable ?? isLive(s)
+/** 能否续费：取服务端的 renewable（生效状态且套餐允许续费，与续费下单同一口径）。 */
+export const canRenew = (s: Subscription) => s.renewable
 
 // ---------------------------------------------------------------------------
 // GET v1/me/subscription-links：只含 active 且未过期的凭据，按 subscription_id 配对
@@ -136,9 +136,8 @@ export function useTrafficPacks() {
 }
 
 // ---------------------------------------------------------------------------
-// 一条订阅的流量摘要与下次重置：主卡、我的订阅、用量图共用；流量包余量优先取
-// 订阅上的 pack_remaining_bytes（后端已实现），字段缺席时兜底读 GET v1/me/traffic-packs。
-// 用量查询与用量图同键，缓存共享、不多发请求。
+// 一条订阅的流量摘要与下次重置：主卡、我的订阅、用量图共用；流量包余量取订阅上的
+// pack_remaining_bytes（挂在用户上，几条订阅同一个数）。用量查询与用量图同键，缓存共享、不多发请求。
 // ---------------------------------------------------------------------------
 export interface PlanTraffic {
   summary: TrafficSummary | null
@@ -148,11 +147,10 @@ export interface PlanTraffic {
 }
 
 export function usePlanTraffic(sub: Subscription): PlanTraffic {
-  const packs = useTrafficPacks()
   const usage = useSubscriptionUsage(sub.id)
   const quota = pickTrafficQuota(sub.quotas)
   return {
-    summary: trafficSummary(quota, sub.pack_remaining_bytes ?? packs.data?.remaining_bytes_total ?? 0),
+    summary: trafficSummary(quota, sub.pack_remaining_bytes),
     resetAt: resetAtOf(sub, quota, usage.data),
     timeZone: usage.data?.timezone,
   }

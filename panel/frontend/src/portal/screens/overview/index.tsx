@@ -234,13 +234,13 @@ function PrimaryUsage({ sub }: { sub: Subscription }) {
 }
 
 // ---------------------------------------------------------------------------
-// 三格统计：余额与可提佣金复用外框查询（同键同 schema），在线设备取订阅的 online_devices（后端已实现，缺席时兜底显示「—」）
+// 三格统计：余额与可提佣金复用外框查询（同键同 schema），在线设备取订阅的 online_devices / device_limit（没有订阅时显示「—」）
 // ---------------------------------------------------------------------------
 function Stats({ sub, loading }: { sub: Subscription | null; loading: boolean }) {
   const balance = useBalance()
   const commission = useCommissionAvailable()
   const devices =
-    sub?.online_devices === undefined ? null : { on: sub.online_devices, max: sub.device_limit === undefined ? null : sub.device_limit === null ? '不限' : String(sub.device_limit) }
+    sub === null ? null : { on: sub.online_devices, max: sub.device_limit === null ? '不限' : String(sub.device_limit) }
 
   return (
     <div className={css.stats}>
@@ -262,7 +262,7 @@ function Stats({ sub, loading }: { sub: Subscription | null; loading: boolean })
           ) : devices ? (
             <>
               {devices.on}
-              {devices.max !== null && <span className={css.statUnit}> / {devices.max}</span>}
+              <span className={css.statUnit}> / {devices.max}</span>
             </>
           ) : (
             '—'

@@ -17,26 +17,43 @@ func validEnrollmentEvidenceForTest() CommitEnrollmentInput {
 }
 
 func TestValidateEnrollmentEvidenceRequiresPublishedBindingInProduction(t *testing.T) {
-	t.Setenv("AEGIS_ENV", "production")
-	t.Setenv("PANDORA_NATIVE_ARTIFACT_AMD64_SHA256", "")
-	t.Setenv("PANDORA_NATIVE_RELEASE_VERSION", "")
-
-	if err := validateEnrollmentEvidence(validEnrollmentEvidenceForTest()); err == nil {
+	production := &ReleaseBinding{Production: true}
+	if err := validateEnrollmentEvidence(validEnrollmentEvidenceForTest(), production); err == nil {
 		t.Fatal("production evidence was accepted without published artifact/version binding")
+	}
+}
+
+func TestValidateEnrollmentEvidenceFailsClosedWithoutInjectedBinding(t *testing.T) {
+	if err := validateEnrollmentEvidence(validEnrollmentEvidenceForTest(), nil); err == nil {
+		t.Fatal("evidence was accepted by a service that never received a release binding")
+	}
+}
+
+func TestValidateEnrollmentEvidenceSkipsComparisonOutsideProduction(t *testing.T) {
+	if err := validateEnrollmentEvidence(validEnrollmentEvidenceForTest(), &ReleaseBinding{}); err != nil {
+		t.Fatalf("non-production evidence without binding rejected: %v", err)
 	}
 }
 
 func TestValidateEnrollmentEvidenceBindsPublishedArtifactAndVersion(t *testing.T) {
 	evidence := validEnrollmentEvidenceForTest()
-	t.Setenv("AEGIS_ENV", "production")
-	t.Setenv("PANDORA_NATIVE_ARTIFACT_AMD64_SHA256", evidence.BinarySHA256)
-	t.Setenv("PANDORA_NATIVE_RELEASE_VERSION", evidence.AgentVersion)
-	if err := validateEnrollmentEvidence(evidence); err != nil {
+	binding := &ReleaseBinding{
+		Production:     true,
+		ArtifactSHA256: map[string]string{"amd64": evidence.BinarySHA256},
+		Version:        evidence.AgentVersion,
+	}
+	if err := validateEnrollmentEvidence(evidence, binding); err != nil {
 		t.Fatalf("matching published evidence rejected: %v", err)
 	}
 
-	t.Setenv("PANDORA_NATIVE_ARTIFACT_AMD64_SHA256", strings.Repeat("e", 64))
-	if err := validateEnrollmentEvidence(evidence); err == nil {
+	binding.ArtifactSHA256["amd64"] = strings.Repeat("e", 64)
+	if err := validateEnrollmentEvidence(evidence, binding); err == nil {
 		t.Fatal("mismatched published artifact was accepted")
+	}
+
+	binding.ArtifactSHA256["amd64"] = evidence.BinarySHA256
+	binding.Version = "pandora-native-other"
+	if err := validateEnrollmentEvidence(evidence, binding); err == nil {
+		t.Fatal("mismatched published version was accepted")
 	}
 }

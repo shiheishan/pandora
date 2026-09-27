@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./model 的全部纯函数，依赖 ./api 的 zod schema
  * [OUTPUT]: 仪表盘数据映射与 schema 的单元测试
- * [POS]: admin/screens/dash 的纯逻辑测试：字节 BigInt 安全、百分比与时长文案、按权限取舍卡片与链接、待补·后端字段缺失时的退化、系统状态行与备份摘要、流量排行与未归属告警；schema 守住契约形状（待补字段可缺、字节必须是字符串、未知 kind 判为不符）
+ * [POS]: admin/screens/dash 的纯逻辑测试：字节 BigInt 安全、百分比与时长文案、按权限取舍卡片与链接、上一期为 0 时的退化、系统状态行与备份摘要、流量排行与未归属告警；schema 守住契约形状（后端必回字段缺了判为不符、字节必须是字符串、R52 metrics 可缺、未知 kind 判为不符）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -43,7 +43,6 @@ describe('格式化', () => {
     expect(formatPercent(-0.031)).toBe('−3.1%')
     expect(formatPercent(0.0001)).toBe('0.0%')
     expect(percentChange(110, 100)).toBeCloseTo(0.1)
-    expect(percentChange(50, undefined)).toBeNull()
     expect(percentChange(50, 0)).toBeNull()
     expect(percentChange(-50, -100)).toBeCloseTo(0.5)
   })
@@ -129,8 +128,7 @@ describe('需要处理', () => {
 })
 
 describe('经营 KPI', () => {
-  it('较昨日：yesterday 待补缺失时不瞎算', () => {
-    expect(kpiRevenueDelta(1000, undefined)).toEqual({ text: '较昨日 —', tone: 'neutral' })
+  it('较昨日：昨日为 0 时不算百分比', () => {
     expect(kpiRevenueDelta(1000, 0)).toEqual({ text: '昨日无收入', tone: 'neutral' })
     expect(kpiRevenueDelta(0, 0).text).toBe('昨日今日均无收入')
     expect(kpiRevenueDelta(1124, 1000)).toEqual({ text: '较昨日 +12.4%', tone: 'ok' })
@@ -152,15 +150,15 @@ describe('收入趋势', () => {
     expect(s.empty).toBe(false)
   })
 
-  it('previous_total 缺失时较上一区间为 null；全零为空', () => {
-    const s = revenueSummary([p('2026-09-24', 0)], 'USD', undefined)
+  it('previous_total 为 0 时较上一区间为 null；全零为空', () => {
+    const s = revenueSummary([p('2026-09-24', 0)], 'USD', 0)
     expect(s.delta).toBeNull()
     expect(s.empty).toBe(true)
   })
 })
 
 describe('注册与活跃', () => {
-  const pt = (day: string, registered: number, active_users?: number) => ({ day, registered, logins: 3, orders: 1, unique_ips: 2, ...(active_users === undefined ? {} : { active_users }) })
+  const pt = (day: string, registered: number, active_users: number) => ({ day, registered, logins: 3, orders: 1, unique_ips: 2, active_users })
 
   it('注册柱最高 70%、活跃柱最高 100%', () => {
     const s = activitySummary([pt('09-23', 50, 5000), pt('09-24', 100, 2500)])
@@ -173,10 +171,9 @@ describe('注册与活跃', () => {
     expect(s.bars[0]!.tip).toBe('09-23 · 注册 50 · 活跃 5,000 · 登录 3 · 订单 1 · 独立 IP 2')
   })
 
-  it('active_users 待补缺失时不画活跃柱', () => {
-    const s = activitySummary([pt('09-24', 10)])
-    expect(s.activeAverage).toBeNull()
-    expect(s.bars[0]!.active).toBeNull()
+  it('没有点时日活均值为 0；全零为空', () => {
+    expect(activitySummary([])).toMatchObject({ registeredTotal: 0, activeAverage: 0, bars: [] })
+    expect(activitySummary([{ ...pt('09-24', 0, 0), logins: 0, orders: 0 }]).empty).toBe(true)
   })
 })
 
@@ -195,6 +192,11 @@ const STATUS_BASE: SystemStatus = {
     offsite_configured: true,
   },
   database: { size_bytes: 3 * 1024 ** 3, connections: 23, max_connections: 200 },
+  state: 'ok',
+  components: [
+    { key: 'postgres', state: 'ok', latency_ms: 3.2, metrics: { size_bytes: 3 * 1024 ** 3, connections: 23, max_connections: 200 } },
+    { key: 'backup', state: 'ok', metrics: { latest_age_hours: 5, stale: false, identity_configured: true, offsite_configured: true } },
+  ],
 }
 
 describe('系统状态', () => {
@@ -206,14 +208,13 @@ describe('系统状态', () => {
     expect(backupSummary({ ...STATUS_BASE.backup, latest_age_hours: 72 }).meta).toBe('最近一份 3 天前')
   })
 
-  it('components 未上时只有数据库与备份两行', () => {
+  it('行来自 components，备份行排最后、文案取 backup 段', () => {
     const view = systemRows(STATUS_BASE, ALL)
     expect(view.rows.map((r) => [r.key, r.state, r.meta])).toEqual([
-      ['postgres', 'ok', '3.00 GB · 连接 23/200'],
+      ['postgres', 'ok', '3 ms · 3.00 GB · 连接 23/200'],
       ['backup', 'ok', '最近一份 5 小时前'],
     ])
     expect(view).toMatchObject({ label: '全部正常', tone: 'ok' })
-    expect(systemRows({ ...STATUS_BASE, database: { error: '读取数据库状态失败' } }, ALL).rows[0]).toMatchObject({ state: 'down', meta: '读取数据库状态失败' })
   })
 
   it('components 按契约映射，备份永远是第 8 行，可点的行按权限给链接', () => {
@@ -300,16 +301,21 @@ describe('流量排行', () => {
 })
 
 describe('schema 守住契约形状', () => {
-  it('概览缺待补·后端字段也能过', () => {
-    const row = { currency: 'CNY', today: 1, last_7_days: 1, last_30_days: 1, total: 1, actual_today: 1, actual_7_days: 1, actual_30_days: 1, actual_total: 1, adjustment_today: 0, adjustment_7_days: 0, adjustment_30_days: 0, adjustment_total: 0 }
-    const ok = overviewSchema.safeParse({
+  it('概览：Go 必回的字段齐全才过，缺 yesterday / new_7_days / nodes 判为不符', () => {
+    const row = { currency: 'CNY', today: 1, yesterday: 1, actual_yesterday: 1, last_7_days: 1, last_30_days: 1, total: 1, actual_today: 1, actual_7_days: 1, actual_30_days: 1, actual_total: 1, adjustment_today: 0, adjustment_7_days: 0, adjustment_30_days: 0, adjustment_total: 0 }
+    const full = {
       users: { total: 1, active: 1, today: 0, last_7_days: 0 },
-      subscriptions: { active: 1, trialing: 0, expiring_7_days: 0, expired: 0 },
+      subscriptions: { active: 1, trialing: 0, expiring_7_days: 0, expired: 0, new_7_days: 0 },
+      nodes: { total: 2, online: 1 },
       revenue: [row, { ...row, currency: 'USD' }],
       orders: { paid_today: 0, pending: 0, failed_today: 0 },
       ledger_drift_accounts: 0,
-    })
-    expect(ok.success).toBe(true)
+    }
+    expect(overviewSchema.safeParse(full).success).toBe(true)
+    const without = <T extends object>(o: T, key: keyof T) => Object.fromEntries(Object.entries(o).filter(([k]) => k !== key))
+    expect(overviewSchema.safeParse({ ...full, revenue: [without(row, 'yesterday')] }).success).toBe(false)
+    expect(overviewSchema.safeParse({ ...full, subscriptions: { active: 1, trialing: 0, expiring_7_days: 0, expired: 0 } }).success).toBe(false)
+    expect(overviewSchema.safeParse(without(full, 'nodes')).success).toBe(false)
   })
 
   it('数字形态的字节判为不符约定', () => {
@@ -318,8 +324,11 @@ describe('schema 守住契约形状', () => {
   })
 
   it('系统状态：后端读不到备份目录时只有 dir / readable / message', () => {
-    const res = systemStatusSchema.safeParse({ backup: { dir: '/x', readable: false, message: '读不到' }, database: { error: '读取数据库状态失败' } })
+    const components = [{ key: 'postgres', state: 'down', metrics: {}, message: '数据库不可达' }, { key: 'backup', state: 'unknown', metrics: {}, message: '读不到' }]
+    const res = systemStatusSchema.safeParse({ backup: { dir: '/x', readable: false, message: '读不到' }, database: { error: '读取数据库状态失败' }, state: 'degraded', components })
     expect(res.success).toBe(true)
+    // state / components 是 Go 必回的，缺了判为不符
+    expect(systemStatusSchema.safeParse({ backup: { dir: '/x', readable: false }, database: { error: 'x' } }).success).toBe(false)
   })
 })
 
@@ -346,5 +355,11 @@ describe('修订 R52：down / unknown 时 metrics 字段可缺', () => {
       ['sse', '2 ms'],
       ['backup', '最近一份 5 小时前'],
     ])
+  })
+  it('数据库状态读失败而 SELECT 1 成功：postgres ok，三项指标是 null（system_components.go 照抄 database 段）', () => {
+    const raw = { ...STATUS_BASE, database: { error: '读取数据库状态失败' }, components: [{ key: 'postgres', state: 'ok', latency_ms: 1, metrics: { size_bytes: null, connections: null, max_connections: null } }] }
+    const parsed = systemStatusSchema.safeParse(raw)
+    expect(parsed.success).toBe(true)
+    expect(systemRows(parsed.data!, ALL).rows.find((r) => r.key === 'postgres')?.meta).toBe('1 ms · 连接 —/—')
   })
 })

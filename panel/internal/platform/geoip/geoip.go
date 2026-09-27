@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 ip2region 的 xdb 离线库文件（路径由调用方从 platform/config 取来传入）
+// [OUTPUT]: 对外提供 Resolver、Open、ErrNoDatabase、Location、NetworkKind，及 Resolver 的 Lookup、Close
+// [POS]: platform 的 IP 画像：风控明细与节点接入自动填地区共用；自己不读环境变量，缺库由调用方决定降级
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package geoip 把 IP 解析成风控看得懂的画像：地理位置、运营商、网络性质。
 //
 // # 为什么用离线库而不是在线接口
@@ -19,7 +24,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
-	"os"
 	"strings"
 	"sync"
 
@@ -69,8 +73,8 @@ type Resolver struct {
 // 缺一个数据文件就不记了。
 var ErrNoDatabase = errors.New("geoip: 未配置 ip2region 数据库")
 
-// Open 加载 ip2region 的 xdb 文件。
-func Open(path string) (*Resolver, error) {
+// Open 加载 ip2region 的 xdb 文件；ipv6Path 可空，空则 IPv6 地址不标归属地。
+func Open(path, ipv6Path string) (*Resolver, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, ErrNoDatabase
 	}
@@ -80,7 +84,7 @@ func Open(path string) (*Resolver, error) {
 	}
 
 	r := &Resolver{ipv4Searcher: ipv4Searcher, cache: make(map[netip.Addr]Location)}
-	if ipv6Path := strings.TrimSpace(os.Getenv("AEGIS_GEOIP_IPV6_DB")); ipv6Path != "" {
+	if ipv6Path = strings.TrimSpace(ipv6Path); ipv6Path != "" {
 		r.ipv6Searcher, err = xdb.NewWithFileOnly(xdb.IPv6, ipv6Path)
 		if err != nil {
 			ipv4Searcher.Close()

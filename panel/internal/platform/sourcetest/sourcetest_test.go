@@ -82,3 +82,19 @@ func TestLookupFailsLoudly(t *testing.T) {
 	expectFatal(t, "not a function", func(tb testing.TB) { Load(tb, "testdata/fixture").FuncDecl("Box") })
 	expectFatal(t, "no non-test Go files", func(tb testing.TB) { Load(tb, "testdata") })
 }
+
+func TestRefsResolvesImportAliasesAndFunctionValues(t *testing.T) {
+	refs := Load(t, "testdata/fixture").Refs("os", "Getenv", "LookupEnv")
+	if len(refs) != 2 {
+		t.Fatalf("Refs = %+v, want the call and the function value in d.go", refs)
+	}
+	for _, r := range refs {
+		if r.File != "d.go" || r.Line != 7 {
+			t.Errorf("unexpected ref %+v", r)
+		}
+	}
+	if got := Load(t, "testdata/fixture").Refs("os", "Environ"); len(got) != 0 {
+		t.Errorf("Refs(Environ) = %+v, want none", got)
+	}
+	expectFatal(t, "dot-imports", func(tb testing.TB) { Load(tb, "testdata/dotimport").Refs("os", "Getenv") })
+}

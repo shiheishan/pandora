@@ -47,6 +47,8 @@ type Service struct {
 	// 自动填 servers.region，管理员不必手抄。可以为 nil：数据文件
 	// 缺失时地区留空，接入本身照常。
 	geoIP *geoip.Resolver
+	// release 是节点接入比对的发布绑定，nil 时拒绝一切接入提交（见 SetReleaseBinding）。
+	release *ReleaseBinding
 }
 
 func NewService(pool *db.Pool, signer *crypto.Signer) *Service {

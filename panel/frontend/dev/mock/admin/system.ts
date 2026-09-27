@@ -388,7 +388,7 @@ export const system: MockModule = {
       const d = await decode(ctx, { code: 'string', channel: 'string', subject: 'string', body: 'string' })
       if (!d.ok) return reply(ctx, d.result)
       const b = d.body
-      if (!str(b.code) || !str(b.channel)) return reply(ctx, err(400, 'bad_request', 'tenant, code and channel are required'))
+      if (!str(b.code) || !str(b.channel)) return reply(ctx, err(400, 'bad_request', '缺少租户、模板代码或渠道'))
       const t = find(str(b.code), str(b.channel))
       const s = str(b.subject).trim()
       const body = str(b.body).trim()

@@ -215,8 +215,6 @@ export const latePaymentsSchema = z.object({
   cases: z.array(lateCaseSchema),
   total: count,
   pending_amounts: byCurrency,
-  // 旧字段，各币种直接相加、没有单位：过渡期还在，前端不读（R3）
-  pending_amount: int.optional(),
 })
 export type LateCase = z.output<typeof lateCaseSchema>
 export type LatePayments = z.output<typeof latePaymentsSchema>

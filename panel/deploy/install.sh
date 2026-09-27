@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖 docker compose 数据基座、同目录 migrate.sh / bootstrap.sh / platform.sh、发布包二进制
-# [OUTPUT]: 在主机上安装或升级面板：生成 .env 机密与后台前缀、升级前全量备份、迁移、启动三网关
-# [POS]: deploy 安装链的入口（Docker 版），与 install-native.sh 并列；不替人造管理员，nginx 由 render-nginx.sh 另行渲染
+# [OUTPUT]: 在主机上安装或升级面板：首装生成 .env 机密与后台前缀并定为 AEGIS_ENV=production（要求 https 公网域名）、升级前全量备份、迁移、经 install-linux-binaries.sh 装二进制/单元/发布物绑定/logrotate、启动三网关
+# [POS]: deploy 安装链的入口（Docker 版），与 install-native.sh 并列；不替人造管理员，nginx 由 render-nginx.sh 另行渲染；升级不改现有 .env 的运行模式，只提示
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 潘多拉面板一键安装 / 升级。
 #
 #   首次安装：  sudo ./install.sh
 #   升级：      sudo ./install.sh          （检测到已装会自动走升级）
-#   无人值守：  sudo PANDORA_ASSUME_YES=1 ./install.sh
+#   无人值守：  sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名 ./install.sh
+#
+# 发布包装出来的就是生产：首装写 AEGIS_ENV=production。生产模式下网关启动时
+# 要求 AEGIS_PUBLIC_BASE_URL 是 https://公网域名（platform/config 的
+# CanonicalPublicOrigin），节点接入要求发布物的 SHA-256 与版本（deploy/
+# release-artifact.env，见 docs/RELEASE-ARTIFACT-BINDING.md）。所以首装必须先拿到
+# 域名：PANDORA_PUBLIC_BASE_URL 给出，或在终端里现场问；两者都没有就在动手前停下。
 #
 # 这个脚本把原先要手工串起来的七八步固化成一条命令：前置检查 → 生成配置
 # → 起数据基座 → 迁移 → 收窄数据库角色 → 安装二进制与 systemd 单元 →
@@ -74,7 +80,13 @@ while :; do
   [ "$probe" = / ] && break
   probe="$(dirname "$probe")"
 done
+[ -f "$RELEASE_ROOT/deploy/release-artifact.env" ] || die "发布目录缺少 deploy/release-artifact.env" \
+  "它由 build-release.sh 生成，记着节点端二进制的 SHA-256 与版本；没有它生产模式下节点接入全部被拒。"
 info "环境检查通过（$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") / $(uname -m)）"
+
+# 对外地址的校验与取值、.env 单键读取，与 install-native.sh 共用一份
+[ -f "$HERE/public-base-url.sh" ] || die "发布目录缺少 deploy/public-base-url.sh"
+. "$HERE/public-base-url.sh"
 
 #------------------------------------------------------------------------------
 # 2) 判断首装还是升级
@@ -85,8 +97,20 @@ step "运行模式：$([ "$MODE" = install ] && echo '首次安装' || echo '升
 
 if [ "$MODE" = upgrade ]; then
   info "检测到 $DEST/deploy/.env，将保留现有配置与数据"
+  # 升级不改运行模式：把别人的 development 悄悄改成 production，可能因为域名
+  # 不合规让三个网关起不来。只提示，由管理员自己决定。
+  current_env="$(pandora_env_file_value "$DEST/deploy/.env" AEGIS_ENV)"
+  if [ "${current_env,,}" != production ]; then
+    warn "现有 .env 的 AEGIS_ENV=${current_env:-（未设置，按 development）}，不是 production："
+    warn "  节点接入不会强制校验发布物的 SHA-256 与版本，支付回调、插件钩子也按开发模式放宽。"
+    warn "  这次升级不改它。要切到生产：确认 AEGIS_PUBLIC_BASE_URL 是 https://公网域名，"
+    warn "  把 AEGIS_ENV 改成 production，再 systemctl restart aegis-public aegis-admin aegis-node"
+  fi
 else
   info "全新安装到 $DEST"
+  PUBLIC_BASE_URL="$(pandora_resolve_public_base_url ./install.sh)" \
+    || die "首装需要合规的面板对外地址（原因见上）"
+  info "面板对外地址：$PUBLIC_BASE_URL（运行模式 production）"
 fi
 
 if [ "${PANDORA_ASSUME_YES:-}" != 1 ] && [ -t 0 ]; then
@@ -119,6 +143,8 @@ if [ "$MODE" = install ]; then
     -e "s|^AEGIS_DATABASE_URL=.*|AEGIS_DATABASE_URL=postgres://aegis_app:$APPPW@127.0.0.1:5433/aegis?sslmode=disable|" \
     -e "s|^AEGIS_REDIS_URL=.*|AEGIS_REDIS_URL=redis://:$VKPW@127.0.0.1:6380/0|" \
     -e "s|^AEGIS_ADMIN_PATH=.*|AEGIS_ADMIN_PATH=$ADMIN_PATH|" \
+    -e "s|^AEGIS_ENV=.*|AEGIS_ENV=production|" \
+    -e "s|^AEGIS_PUBLIC_BASE_URL=.*|AEGIS_PUBLIC_BASE_URL=$PUBLIC_BASE_URL|" \
     -e "s|^AEGIS_MASTER_KEY=.*|AEGIS_MASTER_KEY=$(openssl rand -base64 32)|" \
     -e "s|^AEGIS_JWT_PUBLIC_SECRET=.*|AEGIS_JWT_PUBLIC_SECRET=$(rand)|" \
     -e "s|^AEGIS_JWT_ADMIN_SECRET=.*|AEGIS_JWT_ADMIN_SECRET=$(rand)|" \
@@ -128,6 +154,9 @@ if [ "$MODE" = install ]; then
     -e "s|^AEGIS_BACKUP_AGE_IDENTITY=.*|AEGIS_BACKUP_AGE_IDENTITY=$DEST/secrets/backup-age.key|" \
     "$RELEASE_ROOT/deploy/.env.example" > "$DEST/deploy/.env"
   chmod 600 "$DEST/deploy/.env"
+  [ "$(pandora_env_file_value "$DEST/deploy/.env" AEGIS_ENV)" = production ] \
+    && [ "$(pandora_env_file_value "$DEST/deploy/.env" AEGIS_PUBLIC_BASE_URL)" = "$PUBLIC_BASE_URL" ] \
+    || die "生成的 .env 缺少 AEGIS_ENV=production 或 AEGIS_PUBLIC_BASE_URL" "检查发布包里的 deploy/.env.example 是否被改过。"
 
   remaining="$(grep -c 'CHANGE_ME' "$DEST/deploy/.env" || true)"
   if [ "$remaining" -gt 0 ]; then
@@ -355,8 +384,9 @@ fi
 step "安装完成"
 cat <<EOF
     三个网关只监听 127.0.0.1，公网访问需要在前面放一个反向代理并配好 TLS。
-    渲染 nginx 配置：先把 $DEST/deploy/.env 的 AEGIS_PUBLIC_BASE_URL 改成 https://你的域名，
-    再执行 $DEST/deploy/render-nginx.sh（server_name 与证书路径都从这个域名生成）
+    渲染 nginx 配置：$DEST/deploy/render-nginx.sh（server_name 与证书路径都从
+    .env 的 AEGIS_PUBLIC_BASE_URL 生成，当前为 ${AEGIS_PUBLIC_BASE_URL:-未设置}）
+    运行模式 AEGIS_ENV=${AEGIS_ENV:-development}；节点端发布物绑定在 $DEST/deploy/release-artifact.env，随每次升级覆盖
 
     管理后台路径（高熵，泄露等同暴露入口）：
       /$AEGIS_ADMIN_PATH/

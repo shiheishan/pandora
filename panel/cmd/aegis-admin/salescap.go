@@ -1,14 +1,9 @@
-// [INPUT]: 依赖进程环境变量 AEGIS_SALES_ENABLED
-// [OUTPUT]: 对外提供 envSalesCapability 与 salesCapabilityFromEnv，实现 adminops.SalesCapability
+// [INPUT]: 依赖 platform/config 的 Deployment.SalesEnabled（AEGIS_SALES_ENABLED 的解析在 config 里）
+// [OUTPUT]: 对外提供 salesCapability，实现 adminops.SalesCapability
 // [POS]: aegis-admin 的销售能力注入方，main.go 装配 adminops 服务时传入；定价与上架闸门的授权在启动时定死
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package main
-
-import (
-	"os"
-	"strings"
-)
 
 // 销售能力的注入方。
 //
@@ -23,21 +18,13 @@ import (
 // 这里补上缺失的注入方。原设计里它应当由发布校验器在绑定运行二进制、
 // 数据库身份与目录契约之后授予；那套东西仓库里并不存在，硬造一个假的
 // 「已校验」比现在更糟。所以退一步：把授权做成部署时的显式决定，
-// 由 .env 里的一个变量控制，默认仍然关闭。
+// 由 .env 里的一个变量（AEGIS_SALES_ENABLED，config 解析：只认 1 / true / yes，
+// 其余一律未授权，含糊的配置按拒绝处理）控制，默认仍然关闭。
 //
 //   - 它保留了原设计最要紧的那条性质：授权在进程启动时定死，
 //     任何请求都改不了自己的授权状态。
 //   - 它没有实现的是「绑定二进制与目录契约」那一层。等发布校验器真正
 //     做出来时，换掉这里的实现即可，闸门本身和调用方都不用动。
-type envSalesCapability struct{ allowed bool }
+type salesCapability struct{ allowed bool }
 
-func (c envSalesCapability) AllowsP0BSales() bool { return c.allowed }
-
-// salesCapabilityFromEnv 读取部署方对销售能力的显式授权。
-//
-// 只认 "1" / "true" / "yes"，其余一律视为未授权 —— 包括空值和拼错的值。
-// 含糊的配置按拒绝处理，这是这道闸门的本意。
-func salesCapabilityFromEnv() envSalesCapability {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("AEGIS_SALES_ENABLED")))
-	return envSalesCapability{allowed: v == "1" || v == "true" || v == "yes"}
-}
+func (c salesCapability) AllowsP0BSales() bool { return c.allowed }

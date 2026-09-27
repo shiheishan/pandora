@@ -5,11 +5,11 @@
 分层：schemas（zod，与后端对账的唯一防线）→ queries（react-query 读、权限、写失败统一处理、幂等键）→ logic（纯函数，单测守住）→ 组件。写接口的 reauth 由常驻对话框接管，取消时静默（R34）；要幂等的接口一次用户意图一个键，改了请求体换新键。
 权限：标签读权限由 Shell 判；页面内再按写权限（marketing.coupon.write / giftcard.write / withdrawal.approve / commission.write）隐藏按钮，兑换记录另要 billing.order.read，套餐名与套餐卡要 catalog.read（没有时退回「N 个套餐」、套餐卡不可编辑）。
 礼品卡明文只在两处出现（R17）：生码响应里的前 4 张样例与一次性导出的 CSV；列表、使用记录一律掩码。导出经 core/api 的 requestRaw 拿 CSV，重放不带 Content-Disposition，文件名按批次 id 前 8 位自拼。
-原待补·后端字段已由后端一上线（R67、R68）：gift-cards/stats 的 balance_issued、commission/overview 的 total_earned / invited_users / scope、commission/config 的 scope。schema 仍按可选写，缺字段时的降级保留作兜底：第四格退回「已兑出余额」、两格显示「—」、后端没回 scope 时计佣范围控件隐藏且请求不带（DisallowUnknownFields 会整单 400）。
+原待补·后端字段已由后端上线（R67、R68）并在 schema 收紧为必填：gift-cards/stats 的 balance_issued、commission/overview 的 total_earned / invited_users / scope（后端缺设置时兜底 every_order）；commission/config 恒带 scope。缺字段的降级分支（「已兑出余额」「—」、隐藏计佣范围）已删。
 
 成员清单
 index.tsx: 页面入口，按 tab 切 Coupons / Gifts / Commission，rest 交给礼品卡（#/marketing/gifts/<templates|batches|usages>[/<批次 id>]）
-schemas.ts: 全部接口的 zod schema 与类型；待补字段可选，Go 的 omitempty 可选，nil 切片 nullable 归一成 []
+schemas.ts: 全部接口的 zod schema 与类型；后端必回字段必填，Go 的 omitempty 可选，nil 切片 nullable 归一成 []
 queries.ts: 查询键前缀 MK、各读 hook（券与兑换记录挂 orders.changed，其余营销表没有变更通知）、useInvalidateMarketing（写后整前缀失效），并转出 admin/actions.ts 的 useCan / useFailure / useIntentKey
 logic.ts: 纯函数——元 / 百分比与分 / 万分比互转（多于两位小数判非法）、优惠与用量文案、券 / 卡码 / 提现状态映射、礼品卡面额与兑换内容、批次名 GB-MMDD-XXXX、四张表单到请求体的构建与前端校验（错误键与后端 fields 同名）
 Coupons.tsx: 优惠券标签：状态分段、六列列表、行内启停开关、点码展开兑换记录、批量生成结果弹窗与前端拼的 CSV

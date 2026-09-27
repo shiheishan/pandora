@@ -255,6 +255,7 @@
 - 设计：后台-01「邮件投递积压」卡与「系统状态 · 邮件投递」行；后台-09 SMTP 卡状态「已连接 · 重试 3 封」。映射：积压数←ready+scheduled，「重试中」←ready_retry+scheduled_retry，「失败」←failed_total，颜色←backlog_state。分渠道数字由 GET v1/system/status 的 components 提供（不改冻结 DTO）
 
 #### GET v1/system/status — 系统状态
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：补充 R52：postgres 组件 `SELECT 1` 成功但统计读取失败时，`state` 为 warn 并带中文 `message`，`size_bytes` / `connections` / `max_connections` 三个键都不出现（以前会写成 null，或把单条查询失败吞成 0 仍报 ok）；`SELECT 1` 失败为 down、metrics 为空；两者都成功为 ok、三个键齐全。（93b8210）
 - **修订 R54（2026-09-24，后端二 ⑤ 8cb4208、c2dd164）**：`state` / `components` 已实现。`payment_callbacks` 的数据源改为 `payment_events` 中 `processing_status` ∈ pending/failed 且收到超过 1 分钟的记录（原文的 `payment_webhook_receipts` 是无代码写入的孤儿表，读出来恒为 0）；`sse` 的连接数经 Valkey 跨进程汇总。
 - **修订 R52（2026-09-24，协调会话，后台前端一提出）**：`components[].metrics` 对象总是返回（可为 `{}`），但其中各字段只在 `state` 为 ok / warn 时保证齐全；`state` 为 down / unknown 时任何字段都可能缺失。前端把 metrics 的每个字段按可选解析，缺失显示「—」。
 - 状态：现有 `panel/internal/api/admin/system_status.go:36 systemStatus`；**components 待补·后端**；**backup 部分 待补·前端**
@@ -319,13 +320,14 @@
   - 待补·前端：`sla_breached` 为 true 时，等待时长显示为红色并加「SLA 超时」标记；分段筛选新增「SLA 超时」（对应 `breached=1`）
 
 #### GET v1/tickets/{id} — 工单详情（含内部备注）
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：`messages` 总是数组（没有消息时 `[]`）；队列行不带 `messages` 键（Go 拆出 `TicketDetail`，77e2ba6）。
 - 状态：现有 `handlers.go:577 ticketDetail`；待补·后端（字段）
 - 权限：`ops.ticket.read`｜reauth：否｜幂等：否
 - 请求：path `id: uuid`
 - 响应：200，结构是 Ticket 加 `messages: [{ id, author_kind: user|agent|system, author_name: string|null, body, internal_note?: true, created_at }]`，消息按时间升序
 - **修订 R114（2026-09-25，后端三 ⑤，合并见第 9 节）**：R75 已修：后台详情回 `related_order: { id, order_no } | null`（按工单关联订单联表），`message_count` 与 `last_reply_at` 与队列同口径（内部备注、系统消息都算，没有消息时取建单时间）。前端直接用这两个字段，不必再从 `messages` 推算。
 - **修订 R75（2026-09-24，后台前端一 ② 核对 support/service.go `GetForAgent`，协调会话核实）**：详情**不填** `last_reply_at`（回零值时间 `0001-01-01T00:00:00Z`）和 `message_count`（回 0），前端从 `messages` 自行推算，不要读这两个字段；后台队列与详情的 `related_order` 恒为 null（只有门户详情填，R60），后台详情暂不显示关联订单。后端补齐列入遗留，由后续后端会话处理。
-- 待补·后端（需迁移：否）：增加 `user_active_plan: string|null`，口径与用户列表的 `active_plan` 一致，取 status 为 active 或 trialing 的最新订阅的套餐名。设计稿的详情头要显示用户套餐，而客服角色不一定有 `iam.user.read` 权限，不能再去调用户接口
+- 待补·后端（需迁移：否）：增加 `user_active_plan: string|null`，口径与用户列表的 `active_plan` 一致，取 status 为 active 或 trialing 的最新订阅的套餐名。（R118 起口径改为后台-03「订阅态口径」：当前订阅在用时的套餐名，没有时不返回该键；队列与详情同）设计稿的详情头要显示用户套餐，而客服角色不一定有 `iam.user.read` 权限，不能再去调用户接口
 - 错误：not_found 404「工单不存在」（用的是 CodeNotFound，不是 NotFoundOrForbidden）
 - 设计：后台-02 右侧详情。映射：
   - `who` 取 `author_name ?? (author_kind==='user' ? user_email : '客服')`
@@ -420,6 +422,7 @@
 | anonymized | 已匿名（设计稿没有，灰色） |
 
 **订阅态口径**（本分段的待补项共用这一定义）
+- **修订 R118（2026-09-26，协调会话定案；已实现 backend b7571bb，合并 6a3fdd3）**：本节第一句（只认 active / trialing、按 created_at 取最新）作废，全后台统一为下面的口径。**在用**：status 为 active、trialing、grace、past_due（`adminops/users.go` 的 `liveSubscriptionStatusesSQL`）。**当前订阅**：在用的优先，其次到期最晚，再次最近创建，取一条（`currentSubscriptionSQL`；用户没有在用订阅时它可以是一条已结束的订阅）。`active_plan`（用户列表、风控聚类成员）与工单的 `user_active_plan` 一律取「当前订阅在用时它的套餐名」；没有时 `active_plan` 为 null，`user_active_plan` 整个键不返回（Go 是 `*string,omitempty`，前端按可缺省解析，不要改成 null，否则前端解析失败），所以同一行的 `active_plan` 与 `current_subscription` 不会再指向两条订阅。批量运营的 `has_active_sub` 等价于 `sub_state=active`（存在在用订阅），导出的订阅数列按在用计。`sub_state` 三值定义不变；仪表盘按单一状态分别计数的统计不在此列。
 - 当前订阅：status 为 active 或 trialing、按 created_at 取最新的一条。这与现有 `active_plan` 的口径一致（`panel/internal/domain/adminops/service.go:280`）
 - `sub_state=active`：存在当前订阅
 - `sub_state=expired`：不存在当前订阅，但存在任何一条状态为 expired、cancelled，或 `current_period_end < now()` 的订阅
@@ -429,6 +432,7 @@
 设计稿用户抽屉「订阅」tab 里的「订阅地址 + 复制」整块由前端删除，改为一行说明：「订阅地址仅用户本人可见；如疑似泄露，请点『更换订阅地址』后让用户在门户重新复制」。已核实，列表、详情、画像、导出这些接口都不返回令牌或订阅 URL。唯一的例外是换发接口会一次性回传新令牌，见 D-B-1。
 
 #### GET v1/users — 用户列表
+- **修订 R118（2026-09-26，协调会话定案；已实现 backend b7571bb，合并 6a3fdd3）**：`active_plan` 改按「订阅态口径」R118：当前订阅在用时取它的套餐名，否则 null（以前是 active / trialing 里最新创建的一条，宽限期、欠费中的用户会出现有当前订阅却没有套餐名）。
 - **修订说明（2026-09-26 文档对齐）**：待补·后端第 2–5 项已实现（`domain/adminops/users.go` ListUsers，第 1 项见 R22）：每行 `group_id`、`current_subscription`；筛选 `group_id`（uuid 或 none）、`sub_state`；`status` 接受逗号分隔多值、等值匹配；`q` 另按用户 uuid 精确匹配、按订阅令牌哈希反查（active / grace 凭据，粘贴整条订阅地址时取最后一段）。「当前订阅」的挑法以代码为准：优先 active / trialing / grace / past_due，其次到期最晚、最近创建（`currentSubscriptionSQL`）；`sub_state=expired` 指有过订阅但没有一条仍在用。
 - **修订 R22（2026-09-24，后端二 107de25）**：`group_name` 现在有值（缺陷 8）。
 - 状态：现有 `handlers.go:211 listUsers` → `adminops/service.go:243 ListUsers`；待补·后端（字段、筛选、缺陷修复）
@@ -610,7 +614,7 @@
 - **修订 R86（2026-09-24，后台前端一 ④ 核对 adminops/bulk_users.go、bulk_mail.go 与 router_users.go）**：本节「待补·后端」三件已实现：批量筛选的 `plan_id`、`expires_within_days`（1–365）、`sub_state` 与预览的 `sample_rows`；群发正文的 `$email`、`$plan`、`$expire` 变量替换；`POST v1/users/{id}/traffic-reset` 已挂 reauth。手动重置时用户 id 合法但用户不存在，回 422「这个用户没有生效中的订阅」而不是 404。
 - 状态：现有 `bulk_users.go:35 previewBulkUsers` → `adminops/bulk_users.go PreviewBulk`；待补·后端（筛选与字段）
 - 权限：`iam.user.read`｜reauth：否｜幂等：否
-- 请求（现有）：`{ status?: ""|pending|active|suspended|banned|deletion_scheduled, group_id?: uuid, query?: string（邮箱模糊匹配）, has_active_sub?: bool }`。注意 has_active_sub 只认 status 为 `active` 的订阅，不包括 trialing
+- 请求（现有）：`{ status?: ""|pending|active|suspended|banned|deletion_scheduled, group_id?: uuid, query?: string（邮箱模糊匹配）, has_active_sub?: bool }`。注意 has_active_sub 只认 status 为 `active` 的订阅，不包括 trialing（R118 起改为存在在用订阅：active / trialing / grace / past_due，与 `sub_state=active` 等价；导出与群发同一筛选）
 - 响应（现有）：200 `{ total: int, samples: [email] }`，samples 最多 10 条
 - 待补·后端（需迁移：否）：
   1. BulkFilter 增加 `plan_id?: uuid`（当前订阅的套餐）、`expires_within_days?: int(1–365)`（当前订阅在 N 天内到期）、`sub_state?: active|expired|none`。预览、导出、群发三处共用 buildFilterSQL，必须同步改；导出的 query 参数同名增加
@@ -749,6 +753,7 @@
 - `catalog.publish` 类写接口（新增价格、改价、发布）受一个默认关闭的销售开关控制（环境变量 `AEGIS_SALES_ENABLED=1`），开关没开时回 503 service_unavailable「服务暂时不可用」。前端对这个 503 要给出明确提示，不要让用户反复重试。
 
 #### GET v1/plans — 套餐列表（左栏卡片）
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：`active_subscriptions` 按后台-03「订阅态口径」的在用计数（active / trialing / grace / past_due），并补上租户条件（5f43f73）。
 - **修订 R100（2026-09-25，用户定案 D-E-3）**：每项加 `highlights: string[]`、`recommended: bool`，见 PUT v1/plans/{id} 的 R100。
 - 状态：现有 `panel/internal/api/admin/handlers.go:405 listPlans`
 - 权限：`catalog.read`｜reauth：否｜幂等：否
@@ -1005,6 +1010,7 @@
 - 设计：后台-05 抽屉「手工标记已支付」。输入框「渠道流水号 / 转账凭证」→ `reference`；待补·前端：补必填的「收款说明」→ `reason`。
 
 #### GET v1/late-payments — 挂账列表（设计里的「欠费单」）
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：过渡字段 `pending_amount` 已删除（R3 说的「保留一个版本」到期），响应为 `{ cases, total, pending_amounts }`；前端 schema 与 mock 同步删除（3e454ba）。
 - **修订 R117 补（2026-09-26）**：挂账页说明与空状态文案补上第三种来源：说明改为「订单取消后才到账、续费或变更时订阅已结束、或超额扣款的款项暂记在挂账科目。「转入余额」会把这笔钱记入用户余额（贷记），挂账随之关闭。」；空状态改为「订单取消后才到账、订阅已结束后才到账或多扣了款时，系统会把这笔钱记在这里，等你处理。」；`ineligible_subscription` 的原因列为「订阅已结束后到账 · {order_no}」。
 - **修订 R117（2026-09-26，后端四 ⑧ 8993672，合并 49f7ba9）**：`case_kind` 新增 `ineligible_subscription`（续费或变更单付款时订阅已结束），与 `released_order`、`excess_capture` 并列；「转入余额」对它同样适用。前端枚举与文案要同步（前端未改前出现这类行会整页解析失败；目前只有手工 SQL 能造出）。
 - **修订 R3（2026-09-24）**：响应新增 `pending_amounts`（按币种分开的待处理合计）；旧的 `pending_amount` 保留一个版本后删除，前端只用 `pending_amounts`。
@@ -1945,6 +1951,7 @@
 - 设计：后台-09「访问日志」（深色「实时尾随」终端：时间、方法、路径、状态码、耗时、IP；分段「全部 / 仅错误 / 管理端」）。映射（以后端为准）：这是**安全事件流**，不是 nginx 访问日志：方法列←category 徽标，路径列←action，状态列←outcome（非 success 标红），耗时列删除，IP 列←`ip · geo`，行 tooltip←user_email + user_agent；标题改「实时尾随 · 登录/注册/订阅拉取/管理动作」；「仅错误」←`outcome=error`，「管理端」←`category=admin`；「实时尾随」用 5 秒轮询 `offset=0` 实现（审计表不在 SSE 监听里）。待补·前端：加 IP、账号两个筛选框和「订阅拉取」「登录」「注册」分段
 
 #### GET v1/ip-clusters — 共享 IP 聚类
+- **修订 R118（2026-09-26，协调会话定案；已实现 backend b7571bb，合并 6a3fdd3）**：`users[].active_plan` 与用户列表同口径（后台-03「订阅态口径」）。
 - **修订 R40（2026-09-24，后端二 ae95dfd）**：已实现（迁移 00077）。字段按本条目补齐（key、归属地、网络类型、风险等级、成员账号、复核结论），新增 query `include_reviewed`；`first` / `last` 为 RFC3339。
 - 状态：现有 `profile.go:287 ipClusters`；**展示与处置字段 待补·后端**
 - 权限：`security.audit.read`｜reauth：否｜幂等：否
@@ -2424,6 +2431,7 @@
     - 其余 closed → 「已关闭」
 
 #### GET v1/support/tickets/{id} — 工单详情（含消息）
+- **修订 R119（2026-09-27，backend 后续，合并 f4ba506）**：`messages` 总是数组（没有消息时 `[]`）；「我的工单列表」的行不带 `messages` 键（77e2ba6）。
 - **修订说明（2026-09-26 文档对齐）**：已实现（R60）：详情带 `closed_reason` 与 `related_order: { id, order_no } | null`（`domain/support/user_tickets.go`）。
 - 状态：现有 `panel/internal/api/public/handlers.go:729 getTicket`；另有待补·后端（改形状）
 - 权限：登录用户｜reauth：否｜幂等：否
@@ -3364,3 +3372,5 @@
 | R115 | 2026-09-25 | 联调冒烟 | 客服非内部回复给提单人排 `ticket.replied` 通知（模板早已种下、代码从未排队） |
 | R116 | 2026-09-25 | 前端收尾 ⑤ | 前端已删英文→中文文案映射，4xx 响应里给用户看的 `message` 一律中文（`code` 与形状不变）；首例人工开单缺渠道的「unknown payment provider」；**已实现**（后端四 ⑥ cb1ac0c，合并 039bb12）：31 处改中文、降级开关按约束名给中文原因、源码契约测试 `TestUserFacingErrorMessagesAreChinese` 守住，节点网关与支付回调给机器看的文案不在此列；R116 遗留的节点状态报错已结案（后端四 ⑪ 33920d6）：三处只会撞到状态机触发器的中文报错，约束名翻译为兜底 |
 | R117 | 2026-09-26 | 后端四 | 结算时订阅已结束的续费 / 变更款隔离进挂账（新 case_kind `ineligible_subscription`，迁移 00095），回调回执成功；标记已付对此回 409、重复标记回 409；这类收款不阻止订单释放 |
+| R118 | 2026-09-26 | 协调会话定案 | 「当前订阅」全后台统一：在用 = active / trialing / grace / past_due；`active_plan`、`user_active_plan`、风控聚类成员套餐名 = 当前订阅在用时的套餐名，没有时 `active_plan` 为 null、`user_active_plan` 不返回；`has_active_sub` 与导出订阅数按在用计。已实现（backend b7571bb，合并 6a3fdd3，真相源 `domain/subscription/current.go`）；工单队列行此前漏返回 `user_active_plan`，一并补上 |
+| R119 | 2026-09-27 | backend 后续 | system/status 数据库统计读失败时 postgres 组件降为 warn、不写三项指标；工单详情（后台与门户）`messages` 总是数组；套餐列表 `active_subscriptions` 按在用计数；挂账列表删 `pending_amount`；节点网关签名心跳（本契约未收录该接口）的 metrics 越界回中文 400、整条心跳不落库（cpu_bp 0–10000，其余 int 0–2147483647，bigint 非负；f7c415a） |

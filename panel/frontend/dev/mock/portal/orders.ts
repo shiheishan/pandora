@@ -6,7 +6,7 @@
  */
 import type { MockModule } from '../types.ts'
 import { cancelOrder, isUuid, orderDetail, orderRow, sweepExpired } from './billing.ts'
-import { gate, portalState, scenario } from './fixtures.ts'
+import { gate, portalState } from './fixtures.ts'
 
 const STATUSES = new Set(['draft', 'pending_payment', 'processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'partially_refunded', 'refunded'])
 const COUNT_GROUPS = {
@@ -34,7 +34,7 @@ export const orders: MockModule = {
       ctx.send(200, {
         orders: all.slice(offset, offset + limit).map(orderRow),
         total: all.length,
-        ...(scenario() === 'legacy' ? {} : { counts: { open: count(COUNT_GROUPS.open), paid: count(COUNT_GROUPS.paid), closed: count(COUNT_GROUPS.closed), refunded: count(COUNT_GROUPS.refunded) } }),
+        counts: { open: count(COUNT_GROUPS.open), paid: count(COUNT_GROUPS.paid), closed: count(COUNT_GROUPS.closed), refunded: count(COUNT_GROUPS.refunded) },
       })
     },
 

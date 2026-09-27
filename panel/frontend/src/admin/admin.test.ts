@@ -137,8 +137,8 @@ describe('identityLabels', () => {
     expect(identityLabels({ ...me, display_name: null }).title).toBe('运维 · linzhou')
   })
 
-  it('falls back while the backend has not added the fields yet', () => {
-    expect(identityLabels({ user_id: 'abcdef12-3456', permissions: [], reauthed: false })).toEqual({ title: '管理员', subtitle: 'abcdef12', initial: '管' })
+  it('falls back to 管理员 when the account holds no role, and to empty before v1/me loads', () => {
+    expect(identityLabels({ user_id: 'abcdef12-3456', permissions: [], reauthed: false, email: 'ops@example.test', display_name: null, roles: [] })).toEqual({ title: '管理员 · ops', subtitle: 'ops@example.test', initial: '管' })
     expect(identityLabels(undefined).subtitle).toBe('')
   })
 })

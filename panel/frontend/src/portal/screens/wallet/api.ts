@@ -82,12 +82,12 @@ export function useRedeemGift() {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/me/gift-cards（修订 R68：行带 code_hint）
+// GET v1/me/gift-cards（修订 R68：行带 code_hint，Go 无 omitempty、恒在；奖励字段 Go 带 omitempty，为零时缺席）
 // ---------------------------------------------------------------------------
 export const redemptionSchema = z.object({
   template_name: z.string(),
   type: z.string(),
-  code_hint: z.string().optional(),
+  code_hint: z.string(),
   prize_label: z.string().optional(),
   balance: z.number().int().optional(),
   traffic_bytes: z.number().int().optional(),

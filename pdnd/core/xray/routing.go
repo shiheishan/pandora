@@ -39,7 +39,6 @@ import (
 	xrouting "github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/proxy/blackhole"
 	"github.com/xtls/xray-core/proxy/freedom"
-	"github.com/xtls/xray-core/transport/internet"
 	xhttp "github.com/xtls/xray-core/proxy/http"
 	"github.com/xtls/xray-core/proxy/shadowsocks"
 	"github.com/xtls/xray-core/proxy/socks"
@@ -48,6 +47,7 @@ import (
 	vlessout "github.com/xtls/xray-core/proxy/vless/outbound"
 	"github.com/xtls/xray-core/proxy/vmess"
 	vmessout "github.com/xtls/xray-core/proxy/vmess/outbound"
+	"github.com/xtls/xray-core/transport/internet"
 
 	"github.com/aegispanel/nodeagent/core"
 )

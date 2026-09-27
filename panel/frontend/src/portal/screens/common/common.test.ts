@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖同目录 traffic / orders / clients / subscriptions / intent 的纯函数与 schema，依赖 ../subs/labels
  * [OUTPUT]: 无（测试文件）
- * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、套餐限速文案、订单标题与期限、深链与协议名、主订阅选择、schema 对契约形状（含待补字段缺席）的收放、刚下待支付单的取回（已不可支付即 forget、按新请求下单）
+ * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、套餐限速文案、订单标题与期限、深链与协议名、主订阅选择、schema 对 Go 编码形状的收放（无 omitempty 必填、缺席拒收）、刚下待支付单的取回（已不可支付即 forget、按新请求下单）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -16,19 +16,28 @@ import { buildUsageBars, bytesParts, expiryInfo, pickTrafficQuota, projectUsage,
 const NOW = new Date('2026-09-24T12:00:00Z')
 const GIB = 1024 ** 3
 
+// 字段与 Go 的 mySubscriptionView 一一对应；renewable 同口径：生效状态即可续费
 function sub(over: Partial<Subscription> = {}): Subscription {
+  const status = over.status ?? 'active'
   return subscriptionSchema.parse({
     id: 's1',
     plan_id: 'p1',
     price_id: '',
     plan_name: '专业版',
     plan_version: 3,
-    status: 'active',
+    status,
     current_period_start: '2026-09-01T00:00:00Z',
     current_period_end: '2026-11-05T10:00:00Z',
     currency: 'CNY',
     amount: 5900,
-    quotas: [{ metric: 'traffic.bytes', limit: 500 * GIB, consumed: 312 * GIB, remaining: 188 * GIB }],
+    quotas: [{ metric: 'traffic.bytes', limit: 500 * GIB, consumed: 312 * GIB, remaining: 188 * GIB, period: 'cycle', period_start: '2026-09-01T00:00:00Z', period_end: null, granted_addon: 0, adjusted: 0 }],
+    device_limit: null,
+    online_devices: 0,
+    quota_reset_strategy: 'billing_cycle',
+    next_reset_at: null,
+    renewable: ['active', 'trialing', 'grace', 'past_due'].includes(status),
+    renewal_price: null,
+    pack_remaining_bytes: 0,
     ...over,
   })
 }
@@ -130,13 +139,13 @@ describe('orders', () => {
     expect(intervalLabel(undefined)).toBe('')
   })
 
-  it('标题按 kind 映射，待补字段缺席时退回 plan_name', () => {
-    expect(orderTitle({ kind: 'topup' })).toBe('余额充值')
-    expect(orderTitle({ kind: 'addon', plan_name: '100 GB' })).toBe('流量包 · 100 GB')
-    expect(orderTitle({ kind: 'new', plan_name: '专业版', interval: 'month', interval_count: 1 })).toBe('专业版 · 月付')
-    expect(orderTitle({ kind: 'new', plan_name: '专业版' })).toBe('专业版')
-    expect(orderTitle({ kind: 'renewal', plan_name: '专业版', interval: 'year', interval_count: 1 })).toBe('专业版 · 年付续费')
-    expect(orderTitle({ kind: 'upgrade', plan_name: '家庭版' })).toBe('家庭版 · 变更套餐')
+  it('标题按 kind 映射，周期缺席（omitempty）时只写套餐名', () => {
+    expect(orderTitle({ kind: 'topup', item_name: '' })).toBe('余额充值')
+    expect(orderTitle({ kind: 'addon', plan_name: '100 GB', item_name: '100 GB' })).toBe('流量包 · 100 GB')
+    expect(orderTitle({ kind: 'new', plan_name: '专业版', item_name: '专业版', interval: 'month', interval_count: 1 })).toBe('专业版 · 月付')
+    expect(orderTitle({ kind: 'new', plan_name: '专业版', item_name: '专业版' })).toBe('专业版')
+    expect(orderTitle({ kind: 'renewal', plan_name: '专业版', item_name: '专业版', interval: 'year', interval_count: 1 })).toBe('专业版 · 年付续费')
+    expect(orderTitle({ kind: 'upgrade', plan_name: '家庭版', item_name: '家庭版' })).toBe('家庭版 · 变更套餐')
   })
 
   it('待支付期限按 expires_at 倒数', () => {
@@ -145,19 +154,24 @@ describe('orders', () => {
     expect(expiryNote(undefined, NOW)).toBe('请尽快完成支付')
   })
 
-  it('订单行 schema：现有字段必填，待补字段可缺席，未知 kind 拒收', () => {
-    const row = { id: 'o', order_no: 'PD-1', kind: 'addon', status: 'pending_payment', currency: 'CNY', total_amount: 1, discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, refunded_amount: 0, cancellable: true, created_at: 'x' }
+  it('订单行 schema：无 omitempty 的字段必填，omitempty 的可缺席，未知 kind 拒收', () => {
+    const row = { id: 'o', order_no: 'PD-1', kind: 'addon', status: 'pending_payment', currency: 'CNY', total_amount: 1, discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, refunded_amount: 0, item_name: '', cancellable: true, created_at: 'x' }
     expect(orderRowSchema.safeParse(row).success).toBe(true)
     expect(orderRowSchema.safeParse({ ...row, kind: 'gift' }).success).toBe(false)
     const missing: Partial<typeof row> = { ...row }
     delete missing.cancellable
     expect(orderRowSchema.safeParse(missing).success).toBe(false)
+    const noItem: Partial<typeof row> = { ...row }
+    delete noItem.item_name
+    expect(orderRowSchema.safeParse(noItem).success).toBe(false)
   })
 })
 
 describe('subscriptions', () => {
-  it('现有形状可解析，待补字段缺席不报错；状态枚举外的值拒收', () => {
-    expect(sub().device_limit).toBeUndefined()
+  it('全字段可解析，扩展字段缺席即拒收（Go 无 omitempty）；状态枚举外的值拒收', () => {
+    const missing: Partial<Subscription> = { ...sub() }
+    delete missing.pack_remaining_bytes
+    expect(subscriptionSchema.safeParse(missing).success).toBe(false)
     expect(subscriptionSchema.safeParse({ ...sub(), status: 'weird' }).success).toBe(false)
     expect(subscriptionSchema.safeParse({ ...sub(), quotas: null }).success).toBe(false)
   })
@@ -172,7 +186,7 @@ describe('subscriptions', () => {
     expect(pickPrimary([sub({ status: 'cancelled' })])).toBeNull()
   })
 
-  it('续费入口：renewable 优先，缺席时按生效状态', () => {
+  it('续费入口：取服务端的 renewable', () => {
     expect(canRenew(sub())).toBe(true)
     expect(canRenew(sub({ renewable: false }))).toBe(false)
     expect(canRenew(sub({ status: 'paused' }))).toBe(false)
@@ -184,10 +198,10 @@ describe('subscriptions', () => {
     expect(usageReportSchema.safeParse({ ...ok, avg_daily_bytes: 1.5 }).success).toBe(false)
   })
 
-  it('头部元信息：待补字段缺席时省掉设备段', () => {
-    expect(metaLabel(sub(), NOW)).toBe('42 天后到期 · 2026-11-05')
+  it('头部元信息：设备上限 null 写「不限设备」', () => {
+    expect(metaLabel(sub(), NOW)).toBe('42 天后到期 · 2026-11-05 · 不限设备 · 当前在线 0')
     expect(metaLabel(sub({ device_limit: 5, online_devices: 3 }), NOW)).toBe('42 天后到期 · 2026-11-05 · 5 台设备 · 当前在线 3')
-    expect(metaLabel(sub({ current_period_end: null, device_limit: null }), NOW)).toBe('长期有效 · 不限设备')
+    expect(metaLabel(sub({ current_period_end: null, device_limit: null }), NOW)).toBe('长期有效 · 不限设备 · 当前在线 0')
   })
 
   it('拉取统计：相对时间加「前」，来源数超过设备上限提示泄露', () => {

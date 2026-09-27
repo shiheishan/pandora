@@ -110,7 +110,7 @@ export function commissionRecords(c: Commission): CommissionRecord[] {
       ...entryStatus(e),
     })
   })
-  for (const t of c.transfers ?? []) {
+  for (const t of c.transfers) {
     rows.push({ key: `t${t.ledger_txn_id}`, title: '转入余额', meta: shortDate(t.created_at), amount: -t.amount, currency: t.currency, status: '完成', tone: 'minus', at: t.created_at })
   }
   for (const w of c.withdrawals) {

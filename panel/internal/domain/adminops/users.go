@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/db 的租户事务、platform/crypto 的 HashToken（订阅令牌反查）、platform/httpx 的错误模型；读 users / user_groups / subscriptions / quota_balances / subscription_online_devices / orders / referrals / telegram_bindings；订单行复用 orderRowSelectSQL
+// [INPUT]: 依赖 domain/subscription 的订阅态口径片段（R118），依赖 platform/db 的租户事务、platform/crypto 的 HashToken（订阅令牌反查）、platform/httpx 的错误模型；读 users / user_groups / subscriptions / quota_balances / subscription_online_devices / orders / referrals / telegram_bindings；订单行复用 orderRowSelectSQL
 // [OUTPUT]: 对外提供 UserRow、UserCurrentSub、ListUsersInput、UserDetail、SubscriptionRow、QuotaRow、UserStats、UserRef、TelegramRef 与 Service.ListUsers / GetUser
 // [POS]: domain/adminops 的后台用户读模型（契约后台-03 GET v1/users 与 GET v1/users/{id}）：从 service.go 拆出，列表带当前订阅摘要与多条件筛选，详情带配额、设备、统计（实收按币种拆开）、邀请人与 Telegram
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -14,32 +14,28 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/subscription"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
-// liveSubscriptionStatusesSQL 是「还在用」的订阅状态：用户列表的 sub_state=active、
-// 当前订阅的挑选都以它为准。
-const liveSubscriptionStatusesSQL = `('active','trialing','grace','past_due')`
-
-// currentSubscriptionSQL 是用户 u「当前订阅」某一列的标量子查询：优先还在用的，
-// 其次到期最晚、最近创建的。用户列表的当前订阅摘要与批量筛选（套餐、到期）
+// currentSubscriptionSQL 是用户 u「当前订阅」某一列的标量子查询，口径在
+// subscription.CurrentSQL（R118）。用户列表的当前订阅摘要与批量筛选（套餐、到期）
 // 用同一个挑法，列表里看到的套餐就是筛选按的套餐。
 func currentSubscriptionSQL(col string) string {
-	return `(SELECT s.` + col + ` FROM subscriptions s
-	          WHERE s.tenant_id = u.tenant_id AND s.user_id = u.id
-	          ORDER BY (s.status IN ` + liveSubscriptionStatusesSQL + `) DESC,
-	                   s.current_period_end DESC NULLS LAST, s.created_at DESC
-	          LIMIT 1)`
+	return subscription.CurrentSQL("u.tenant_id", "u.id", col)
 }
+
+// hasLiveSubscriptionSQL 是用户 u「存在在用订阅」的条件：sub_state=active 与
+// 批量运营的 has_active_sub=true 同义。
+var hasLiveSubscriptionSQL = subscription.HasLiveSQL("u.tenant_id", "u.id")
 
 // subStateSQL 是 sub_state 筛选（active / expired / none）的条件，p 是承载取值的参数占位符。
 // expired 指有过订阅、但没有一条还在用。
 func subStateSQL(p string) string {
 	hasAny := `EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = u.tenant_id AND s.user_id = u.id)`
-	live := `EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = u.tenant_id AND s.user_id = u.id
-	           AND s.status IN ` + liveSubscriptionStatusesSQL + `)`
+	live := hasLiveSubscriptionSQL
 	return `((` + p + ` = 'active' AND ` + live + `) OR (` + p + ` = 'expired' AND ` + hasAny + ` AND NOT ` + live +
 		`) OR (` + p + ` = 'none' AND NOT ` + hasAny + `))`
 }
@@ -162,11 +158,8 @@ func (s *Service) ListUsers(ctx context.Context, tenantID string, in ListUsersIn
 		rows, err := tx.Query(ctx, `
 			SELECT u.id, u.email, u.display_name, u.status, u.risk_level,
 			       u.created_at, u.last_login_at,
-			       (SELECT count(*) FROM subscriptions s WHERE s.user_id = u.id),
-			       (SELECT pl.name FROM subscriptions s
-			          JOIN plans pl ON pl.id = s.plan_id
-			         WHERE s.user_id = u.id AND s.status IN ('active','trialing')
-			         ORDER BY s.created_at DESC LIMIT 1),
+			       (SELECT count(*) FROM subscriptions s WHERE s.tenant_id = u.tenant_id AND s.user_id = u.id),
+			       CASE WHEN cs.status IN `+subscription.LiveStatusesSQL+` THEN cs.plan_name END,
 			       coalesce((SELECT -la.balance_signed FROM ledger_accounts la
 			                  WHERE la.owner_user_id = u.id
 			                    AND la.account_type = 'user_balance' LIMIT 1), 0),
@@ -184,13 +177,12 @@ func (s *Service) ListUsers(ctx context.Context, tenantID string, in ListUsersIn
 			               coalesce(s.device_limit, pv.max_devices, 0) AS device_limit,
 			               coalesce(od.device_count, 0)::int AS online_devices
 			          FROM subscriptions s
-			          JOIN plans pl ON pl.id = s.plan_id
+			          LEFT JOIN plans pl ON pl.id = s.plan_id
 			          LEFT JOIN plan_versions pv ON pv.id = s.plan_version_id
 			          LEFT JOIN subscription_online_devices od
 			                 ON od.tenant_id = s.tenant_id AND od.subscription_id = s.id
 			         WHERE s.tenant_id = u.tenant_id AND s.user_id = u.id
-			         ORDER BY (s.status IN `+liveSubscriptionStatusesSQL+`) DESC,
-			                  s.current_period_end DESC NULLS LAST, s.created_at DESC
+			         ORDER BY `+subscription.CurrentOrderSQL+`
 			         LIMIT 1) cs ON true
 			  LEFT JOIN LATERAL (
 			        SELECT q.limit_value, q.consumed FROM quota_balances q
@@ -217,7 +209,10 @@ func (s *Service) ListUsers(ctx context.Context, tenantID string, in ListUsersIn
 				return err
 			}
 			if subID != nil {
-				cur.ID, cur.PlanName, cur.Status, cur.CurrentPeriodEnd = *subID, *planName, *subStatus, periodEnd
+				cur.ID, cur.Status, cur.CurrentPeriodEnd = *subID, *subStatus, periodEnd
+				if planName != nil {
+					cur.PlanName = *planName
+				}
 				r.CurrentSubscription = &cur
 			}
 			out = append(out, r)

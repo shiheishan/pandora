@@ -8,10 +8,10 @@ package xray
 // 协议细节在这一层解释，新增协议不必改上层任何代码。
 
 import (
-	"fmt"
-	"os"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
+	"os"
 	"strings"
 
 	xcore "github.com/xtls/xray-core/core"

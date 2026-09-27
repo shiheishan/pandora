@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 service.go 的 Service、视图、ReplyNotifier 与 prepareAtomicSuccess，依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成
+// [INPUT]: 依赖 domain/subscription 的 ActivePlanNameSQL（R118），依赖 service.go 的 Service、视图、ReplyNotifier 与 prepareAtomicSuccess，依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成
 // [OUTPUT]: 对外提供 ListFilter、Assignee、AgentReplyInput、Service 的 ListEligibleAssignees、ListForAgent、GetForAgent、ReplyAsAgent / ReplyAsAgentAtomic、Assign / AssignAtomic、SetStatus / SetStatusAtomic
-// [POS]: domain/support 的客服侧工单：负责人目录（查询时校验权限绑定）、队列与详情（R75 同口径计数）、回复与内部备注（非内部回复同事务排 ticket.replied，R115）、指派、改状态（closed_reason=agent_closed，重开清空）
+// [POS]: domain/support 的客服侧工单：负责人目录（查询时校验权限绑定）、队列与详情（R75 同口径计数；两处都带 user_active_plan，口径取 subscription.ActivePlanNameSQL，R118）、回复与内部备注（非内部回复同事务排 ticket.replied，R115）、指派、改状态（closed_reason=agent_closed，重开清空）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package support
@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/subscription"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
@@ -122,7 +123,8 @@ func (s *Service) ListForAgent(ctx context.Context, tenantID string, f ListFilte
 			       coalesce((SELECT m.author_kind FROM ticket_messages m
 			                  WHERE m.ticket_id = t.id AND NOT m.internal_note
 			                  ORDER BY m.created_at DESC, m.id DESC LIMIT 1), ''),
-			       t.closed_reason
+			       t.closed_reason,
+			       `+subscription.ActivePlanNameSQL("t.tenant_id", "t.user_id")+`
 			  FROM tickets t
 			  JOIN users u ON u.id = t.user_id
 			  LEFT JOIN users a ON a.id = t.assigned_to
@@ -145,7 +147,7 @@ func (s *Service) ListForAgent(ctx context.Context, tenantID string, f ListFilte
 				&t.UserID, &t.UserEmail, &t.AssignedTo, &t.AssigneeEmail,
 				&t.SLAFirstDue, &t.SLAResolutionDue, &t.FirstRespondedAt,
 				&t.EscalatedAt, &t.SLABreached, &t.MessageCount, &t.LastReplyAt,
-				&t.LastMessageAuthorKind, &t.ClosedReason); err != nil {
+				&t.LastMessageAuthorKind, &t.ClosedReason, &t.UserActivePlan); err != nil {
 				return err
 			}
 			out = append(out, t)
@@ -156,8 +158,9 @@ func (s *Service) ListForAgent(ctx context.Context, tenantID string, f ListFilte
 }
 
 // GetForAgent 返回完整工单，含内部备注。
-func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*Ticket, error) {
-	var t Ticket
+func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*TicketDetail, error) {
+	var d TicketDetail
+	t := &d.Ticket
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var orderID, orderNo *string
 		err := tx.QueryRow(ctx, `
@@ -168,12 +171,8 @@ func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*
 			       t.first_responded_at, t.escalated_at,
 			       (t.first_responded_at IS NULL AND t.sla_first_response_due < now()
 			        AND t.status NOT IN ('resolved','closed')),
-			       -- 与后台用户列表的 active_plan 同一口径
-			       (SELECT pl.name FROM subscriptions s
-			          JOIN plans pl ON pl.id = s.plan_id
-			         WHERE s.tenant_id = t.tenant_id AND s.user_id = t.user_id
-			           AND s.status IN ('active','trialing')
-			         ORDER BY s.created_at DESC LIMIT 1),
+			       -- 与后台用户列表的 active_plan 同一口径（R118）
+			       `+subscription.ActivePlanNameSQL("t.tenant_id", "t.user_id")+`,
 			       t.closed_reason, o.id::text, o.order_no
 			  FROM tickets t
 			  JOIN users u ON u.id = t.user_id
@@ -207,30 +206,30 @@ func (s *Service) GetForAgent(ctx context.Context, tenantID, ticketID string) (*
 			return err
 		}
 		defer rows.Close()
-		t.Messages = []Message{}
+		d.Messages = []Message{}
 		for rows.Next() {
 			var m Message
 			if err := rows.Scan(&m.ID, &m.AuthorKind, &m.AuthorName, &m.Body,
 				&m.InternalNote, &m.CreatedAt); err != nil {
 				return err
 			}
-			t.Messages = append(t.Messages, m)
+			d.Messages = append(d.Messages, m)
 		}
 		if err := rows.Err(); err != nil {
 			return err
 		}
 		// 与队列同口径：条数与最后时间都算内部备注和系统消息，没有消息时取建单时间
-		t.MessageCount = len(t.Messages)
+		t.MessageCount = len(d.Messages)
 		t.LastReplyAt = t.CreatedAt
-		if n := len(t.Messages); n > 0 {
-			t.LastReplyAt = t.Messages[n-1].CreatedAt
+		if n := len(d.Messages); n > 0 {
+			t.LastReplyAt = d.Messages[n-1].CreatedAt
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &t, nil
+	return &d, nil
 }
 
 type AgentReplyInput struct {

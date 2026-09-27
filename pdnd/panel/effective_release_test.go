@@ -24,10 +24,10 @@ func TestVerifyEffectiveConfigAndRejectTampering(t *testing.T) {
 	issued := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)
 	cfg := &SignedConfig{
 		ConfigContract: effectiveReleaseContract,
-		TenantID:             "11111111-1111-4111-8111-111111111111",
-		NodeID:               "22222222-2222-4222-8222-222222222222",
-		ReleaseID:            "33333333-3333-4333-8333-333333333333",
-		Generation:           7, Payload: payload, SourceManifest: manifest,
+		TenantID:       "11111111-1111-4111-8111-111111111111",
+		NodeID:         "22222222-2222-4222-8222-222222222222",
+		ReleaseID:      "33333333-3333-4333-8333-333333333333",
+		Generation:     7, Payload: payload, SourceManifest: manifest,
 		ContentSHA256:        base64.StdEncoding.EncodeToString(contentSum[:]),
 		SourceManifestSHA256: base64.StdEncoding.EncodeToString(manifestSum[:]),
 		KeyID:                keyID, IssuedAt: issued, ExpiresAt: issued.Add(10 * time.Minute),

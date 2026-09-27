@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖同目录 check-migrations-isolated-pg18.sh、../migrations 的 00001–00041 与 frozen-client-auth/00042_client_auth_expand.sql，docker/goose/openssl/install 用桩脚本代替
+# [OUTPUT]: 当前主序列 NOT_RUN 的钉子，以及在合成历史序列上的隔离预检全套用例（含空号、同号）
+# [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要数据库或 root
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Contract and dynamic mock test for check-migrations-isolated-pg18.sh.
 set -Eeuo pipefail
 umask 077
@@ -6,16 +10,25 @@ umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CHECK="$ROOT/deploy/check-migrations-isolated-pg18.sh"
 
-if [[ -f "$ROOT/migrations/00042_seed_registration_mode.sql" &&
-      ! -f "$ROOT/migrations/00042_client_auth_expand.sql" ]]; then
-  printf 'client_auth_00042_isolated_preflight=NOT_RUN reason=frozen_migration_boundary\n'
-  exit 77
-fi
+FROZEN_00042="$ROOT/migrations/frozen-client-auth/00042_client_auth_expand.sql"
 
+# 当前主序列的 00042 已换人，脚本对它以 NOT_RUN（77）拒绝运行；这条先钉住。
+set +e
+AEGIS_MIGRATIONS_DIR="$ROOT/migrations" "$CHECK" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 77 ] || { echo "current stream expected NOT_RUN 77, got $rc" >&2; exit 1; }
+
+# 其余用例跑在合成的历史序列上：主序列 00001–00041 加冻结的 00042_client_auth_expand.sql，
+# 即这道预检当年面对的形状。
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pandora-isolated-pg18-test.XXXXXX")"
 trap 'rm -rf -- "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/migrations"
-cp "$ROOT"/migrations/*.sql "$TMP/migrations/"
+for migration in "$ROOT"/migrations/000[0-3][0-9]_*.sql "$ROOT"/migrations/0004[01]_*.sql; do
+  cp "$migration" "$TMP/migrations/"
+done
+cp "$FROZEN_00042" "$TMP/migrations/"
+[ "$(ls "$TMP/migrations" | wc -l)" -eq 42 ] || { echo 'synthetic historical stream is not 42 files' >&2; exit 1; }
 SOURCE_CONTAINER_ID="$(printf '%064d' 2)"
 SOURCE_SYSTEM_IDENTIFIER=7777777777777777777
 POSTGRES_IMAGE_ID="sha256:$(printf '%064d' 0)"
@@ -100,7 +113,8 @@ if [ "${1:-}" = inspect ]; then
     printf '%064d\n' 2
   elif [[ "$joined" == *'pandora.manifest.source'* ]]; then
     printf '%064d|/%s|sha256:%064d|isolated-pg18-v1|%s|%s|trusted-disposable-client-auth-00042-v1|ffaf84b6e73eb0eef6794f5ca72859607b0c4c5bf313d9f7548dae120848dff5|true|true|%s\n' \
-      5 "$(cat "$mock_root/container.name")" 0 "$(cat "$mock_root/container.run")" \
+      5 "$(cat "$mock_root/container.name")" "$([ -e "$mock_root/fail_image_retag" ] && echo 9 || echo 0)" \
+      "$(cat "$mock_root/container.run")" \
       "$(cat "$mock_root/container.expires")" "$(cat "$mock_root/container.network")"
   elif [[ "$joined" == *'{{.Image}}'* ]]; then
     if [ -e "$mock_root/fail_image_retag" ]; then
@@ -306,7 +320,23 @@ after_source_42="$(sha256sum "$TMP/migrations/00042_client_auth_expand.sql" | aw
 grep -Fxq 'client_auth_00042_sha256=ffaf84b6e73eb0eef6794f5ca72859607b0c4c5bf313d9f7548dae120848dff5' \
   "$TMP/toctou.attestation"
 rm -f "$TMP/mutate_source"
-cp "$ROOT/migrations/00042_client_auth_expand.sql" "$TMP/migrations/00042_client_auth_expand.sql"
+cp "$FROZEN_00042" "$TMP/migrations/00042_client_auth_expand.sql"
+
+# 编号规则：严格递增、不重复，允许空号。空号照常签出证明，同号以 78 拒绝。
+mv "$TMP/migrations/00010_"*.sql "$TMP/"
+run_check >"$TMP/gap.attestation" 2>"$TMP/gap.stderr" \
+  || { echo 'gapped historical stream was rejected' >&2; cat "$TMP/gap.stderr" >&2; exit 1; }
+[ "$(grep -c '^migration_sha256=' "$TMP/gap.attestation")" -eq 41 ]
+mv "$TMP/00010_"*.sql "$TMP/migrations/"
+printf '%s\n' '-- +goose Up' 'SELECT 1;' >"$TMP/migrations/00041_duplicate.sql"
+set +e
+run_check >"$TMP/duplicate.out" 2>"$TMP/duplicate.err"
+rc=$?
+set -e
+[ "$rc" -eq 78 ] || { echo "duplicate version returned $rc, want 78" >&2; exit 1; }
+grep -Fq 'duplicate migration version: 00041_duplicate.sql' "$TMP/duplicate.err"
+[ ! -s "$TMP/duplicate.out" ]
+rm -f "$TMP/migrations/00041_duplicate.sql"
 
 # Explicit source identity mismatches fail before any source SELECT or
 # isolated network/container creation.

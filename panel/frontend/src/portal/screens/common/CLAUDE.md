@@ -2,12 +2,12 @@
 > L2 | 父级: /panel/frontend/src/portal/screens/CLAUDE.md
 
 门户多个页面共用的读模型与小块。只有一个页面用的东西仍放在那个页面自己的目录里；这里的东西若后台也要，就提升到 core/ 或 ui/，不在这里给后台用（字节换算已提升为 core/format 的 formatBytes，这里只包一层排版用的 bytesParts / compactBytes）。
-数据层一律 useApi + react-query，schema 按 api-contract.md 写全写严：「现有」字段必填，「待补·后端」字段可选，页面对缺席做降级而不是放宽 schema；实时失效只靠 meta.topics。同一接口与外框 queries.ts 共用查询键：订阅列表的全字段 schema 与查询住在 queries.ts，这里转出。
+数据层一律 useApi + react-query，schema 按 api-contract.md 写全写严、以 Go 实际编码为准：无 omitempty 的字段必填（指针 / 可空列为 nullable），只有 omitempty 的字段可选，页面对缺席做降级而不是放宽 schema；实时失效只靠 meta.topics。同一接口与外框 queries.ts 共用查询键：订阅列表的全字段 schema 与查询住在 queries.ts，这里转出。
 日期显示统一按按日用量接口回的切日时区（修订 R48 / R50），与用量柱同一口径；拿不到时退回浏览器本地时区。
 
 成员清单
 subscriptions.ts: 订阅数据层——转出外框的订阅列表查询与 pickPrimary / liveSubscriptions，自有 subscription-links、{id}/nodes、{id}/usage、GET v1/me/traffic-packs 的 schema 与查询，rotate 的 mutation（成功后先写回新地址再重拉统计）；canRenew，usePlanTraffic 汇总一条订阅的流量摘要、重置时刻与切日时区
-catalog-schema.ts: GET v1/plans 一行的纯 zod 形状（价格、额度、R69 可选四字段、R99 限速与 R100 卖点 / 推荐必填），catalog.ts 转出，tests 直接引用
+catalog-schema.ts: GET v1/plans 一行的纯 zod 形状（价格、额度、R69 重置策略与续费 / 变更开关、R99 限速与 R100 卖点 / 推荐，全部必回，重置日与限速可为 null），catalog.ts 转出，tests 直接引用
 catalog.ts: 商品目录——GET v1/plans（带令牌看组专属价）、GET v1/traffic-packs、GET v1/payment-methods（只留 CNY）的 schema 与查询；周期归档 periodOf（(month,3)|(quarter,1) 为季、(year,1)|(month,12) 为年）与文案、折合月价、省额与最小省幅、每 GB 单价、重置与额度周期文案
 orders.ts: 订单读模型——GET v1/orders 行 schema（kind / status 枚举）、概览待支付与订单页待支付卡片（draft / pending_payment / processing 多值）查询、按筛选分段加载的 useOrderPages（每页 6、offset 递增）、取消 mutation；契约门户-04 的标题、状态徽标、按月分组与已支付合计、展开区结果与事实行；GET v1/orders/{id} 明细 schema 与 useOrder（可轮询到终态）；四个下单接口同形的 201 schema；isPayable（draft / pending_payment 且未到 expires_at）与 useOrderPayable（重开刚下的单前取最新详情，4xx 答不能、断网与 5xx 答能）
 announcements.ts: GET v1/me/announcements 的 schema 与查询（published_at 可为 null，修订 R71）与级别文案 SEVERITY_LABEL；概览公告卡与消息页公告标签共用

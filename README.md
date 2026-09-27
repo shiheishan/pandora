@@ -55,7 +55,7 @@ aegis-public    aegis-admin     aegis-node
 | `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
 | `docs/` | 配置签名密钥轮换、发布物绑定 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
-| `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟） |
+| `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含两个安装脚本共用的首装对外地址闸门） |
 | `CLAUDE.md`（根目录及各模块目录） | GEB 分形文档地图：根为 L1 项目宪法，模块目录为 L2 成员清单，源文件头部为 L3 契约 |
 
 本地快照不含 `.env`、密钥、私钥和编译产物（二进制、`node_modules`、`dist`）。
@@ -237,10 +237,18 @@ cd panel && ./deploy/build-release.sh /tmp/dist
 
 ```bash
 scp -r /tmp/dist/pandora-panel_*_linux_amd64 root@目标机:/opt/pandora-release/rel
-ssh root@目标机 'cd /opt/pandora-release/rel/deploy && ./install.sh'
+ssh -t root@目标机 'cd /opt/pandora-release/rel/deploy && ./install.sh'
 ```
 
-无人值守加 `PANDORA_ASSUME_YES=1`。
+发布包装出来的就是生产：首装把 `.env` 定为 `AEGIS_ENV=production`。生产模式下网关要求
+`AEGIS_PUBLIC_BASE_URL` 是 `https://公网域名`，否则拒绝启动，所以首装会先问面板的对外地址
+（形如 `https://panel.example.com`，不能是 IP、不带端口与路径），不合规就在动手前停下。
+无人值守加 `PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名`。
+升级不改现有 `.env` 的运行模式；不是 production 时只打印提示和切换步骤。
+
+节点接入的发布物绑定（节点端两个架构的 SHA-256 与版本）随包生成在 `deploy/release-artifact.env`，
+安装到 `/opt/aegispanel/deploy/`，由 `aegis-node` 加载，每次升级随包覆盖；全过程见
+[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)。
 
 安装器拒绝从任何人可写的目录安装（防止有人塞一份假的进来），所以包要放在
 root 独占的目录下——直接拿 `/tmp` 里的构建产物去装会被挡住，那是它在正确工作。
@@ -259,9 +267,9 @@ root 独占的目录下——直接拿 `/tmp` 里的构建产物去装会被挡�
 
 ### 3. 装完
 
-三个网关只监听 `127.0.0.1`，公网访问要在前面放反向代理并配 TLS。先把 `/opt/aegispanel/deploy/.env` 里的
-`AEGIS_PUBLIC_BASE_URL` 改成 `https://你的域名`，再渲染 nginx 配置：`server_name` 和 Let's Encrypt 证书路径都从这个域名生成，
-没填、仍是示例值、不是 HTTPS 域名时脚本拒绝渲染。
+三个网关只监听 `127.0.0.1`，公网访问要在前面放反向代理并配 TLS。渲染 nginx 配置：`server_name` 和
+Let's Encrypt 证书路径都从 `.env` 的 `AEGIS_PUBLIC_BASE_URL`（首装时填的域名）生成，
+没填、仍是示例值、不是 HTTPS 域名时脚本拒绝渲染。公网只听 80（跳 443）与 443，另有本机回环运维入口 `127.0.0.1:9080`。
 
 ```bash
 /opt/aegispanel/deploy/render-nginx.sh
@@ -321,6 +329,7 @@ bash panel/deploy/test-install.sh <发布目录>
   - `check_native_panel_parity.py`（NativeCore、Panel Schema、serving allowlist 各 13 个协议一致）与 nodefabric 契约；
   - `panel-frontend`：新前端 lint / typecheck / vitest（对假后端）/ 双入口构建，再 `make frontend-embed` 用真实产物跑 web、webapp、api 的 Go 契约，占位页没被替换即失败。
 - **Panel frontend smoke**（`panel-smoke.yml`）：起一次性 PG18 + 真实网关，经真网关造数据，用前端页面自己的 zod schema 解析真实响应（读表先于写路径），再在同一栈上跑 `tests/` 下五个 e2e 脚本；任一失败即红。
+- **Panel deploy script contracts**（`panel-deploy.yml`，2026-09-26 新增）：改 `panel/deploy/**` 或 `panel/migrations/**` 即触发，逐个跑不需要数据库与 root 的 deploy 桩测试；迁移三件套（migrate.sh、check-migrations.sh、历史隔离预检）拿真实 `panel/migrations` 校验文件名与编号（严格递增、不重复，允许 00073、00091、00092 历史空号），拒绝真实目录即变红。在此之前 deploy 桩测试 CI 一个都不跑，其中两个对真实目录早已是红的。
 - **仓库守卫**（随 `go test ./...`）：panel 与 pdnd 两道 800 行守卫、表登记簿与权限字典契约。第 5 阶段拆分超长文件时，每步都用 `panel/tools/refactorcheck` 证明是纯挪动。
 - 2026-09-23 起 workflow 默认 `shell: bash`（`-eo pipefail`）。在此之前 `go test … | tee` 的失败会被 `tee` 吞掉，**那之前的 race 绿灯不能当证据**。
 
@@ -361,6 +370,10 @@ bash panel/deploy/test-install.sh <发布目录>
 ## 路线图
 
 待定。
+
+## 许可证
+
+整个仓库（panel 与 pdnd）按 GNU General Public License v3.0 发布，全文见根目录 [LICENSE](LICENSE)。pdnd 本来就必须如此：默认构建链接 GPL-3.0 的 mieru 与 sagernet/sing，compat 构建还链接 sing-box。fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`（MPL-2.0）与 `pdnd/internal/realityquic/`（MIT），见各目录的 LICENSE，两者都与 GPL-3.0 兼容。
 
 ## 相关文档
 

@@ -441,14 +441,13 @@ export function withdrawalState(status: string): { label: string; tone: Tone; ca
   }
 }
 
-/** 四个统计（契约设计映射）；total_earned / invited_users 是待补·后端，缺时显示「—」 */
+/** 四个统计（契约设计映射） */
 export function commissionStats(o: CommissionOverview): Array<{ label: string; value: string }> {
-  const money = (v: number | undefined) => (v === undefined ? '—' : formatMoney(v, 'CNY'))
   return [
-    { label: '累计佣金', value: money(o.total_earned) },
-    { label: '冻结中', value: money(o.pending) },
-    { label: '已提现', value: money(o.paid_out) },
-    { label: '邀请注册', value: o.invited_users === undefined ? '—' : o.invited_users.toLocaleString('zh-CN') },
+    { label: '累计佣金', value: formatMoney(o.total_earned, 'CNY') },
+    { label: '冻结中', value: formatMoney(o.pending, 'CNY') },
+    { label: '已提现', value: formatMoney(o.paid_out, 'CNY') },
+    { label: '邀请注册', value: o.invited_users.toLocaleString('zh-CN') },
   ]
 }
 
@@ -461,16 +460,13 @@ export interface CommissionForm {
 
 export const commissionToForm = (o: CommissionOverview): CommissionForm => ({
   rate: o.rate_percent,
-  scope: o.scope ?? 'every_order',
+  scope: o.scope,
   freezeDays: String(o.freeze_days),
   minWithdraw: minorToYuan(o.min_withdraw),
 })
 
-/**
- * 表单 → POST v1/commission/config。scope 只在后端 overview 回了 scope 时才发：
- * 计佣范围是待补·后端，后端解码 DisallowUnknownFields，没实现前多发这个字段会整单 400。
- */
-export function buildCommissionConfig(f: CommissionForm, supportsScope: boolean): Built<Record<string, unknown>> {
+/** 表单 → POST v1/commission/config（后端 DisallowUnknownFields，只发这四个字段） */
+export function buildCommissionConfig(f: CommissionForm): Built<Record<string, unknown>> {
   const errors: FieldErrors = {}
   if (!Number.isInteger(f.rate) || f.rate < 0 || f.rate > 50) errors.rate_percent = '佣金比例需在 0 到 50 之间'
   const freeze = parseCount(f.freezeDays)
@@ -478,5 +474,5 @@ export function buildCommissionConfig(f: CommissionForm, supportsScope: boolean)
   const min = yuanToMinor(f.minWithdraw)
   if (min === null) errors.min_withdraw = '填金额，最多两位小数'
   if (Object.keys(errors).length) return { ok: false, errors }
-  return { ok: true, body: { rate_percent: f.rate, freeze_days: freeze, min_withdraw: min, ...(supportsScope ? { scope: f.scope } : {}) } }
+  return { ok: true, body: { rate_percent: f.rate, freeze_days: freeze, min_withdraw: min, scope: f.scope } }
 }

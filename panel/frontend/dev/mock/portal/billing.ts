@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 AnonContext / Json / MockResult，依赖 ./catalog 的目录与优惠码，依赖 ./fixtures 的 PortalState / OrderFixture / makeSub / scenario
- * [OUTPUT]: 对外提供 BillingError、readStrict、isUuid、couponCheck、couponView、placeOrder、createdView、fulfill、moveBalance、cancelOrder、sweepExpired、assertNoOpenChange、changeQuote、orderRow、orderDetail
+ * [OUTPUT]: 对外提供 BillingError、readStrict、isUuid、couponCheck、couponFace、placeOrder、createdView、fulfill、moveBalance、cancelOrder、sweepExpired、assertNoOpenChange、changeQuote、orderRow、orderDetail
  * [POS]: dev/mock/portal 的计费逻辑（不是模块，不进登记表）：结账、订单、选购三个页面文件共用——请求体逐字段校验（后端 DisallowUnknownFields）、优惠码试算、下单时扣余额（记 balance_hold 流水）与 30 分钟过期或取消退回（balance_release）、履约（充值记 balance_topup）（新购开订阅、续费延期、变更原地换套餐并退余额、流量包加余量）、变更套餐折算（5.A D-E-2：剩余时间与剩余流量比取小）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -58,17 +58,11 @@ export function couponCheck(code: unknown, subtotal: number, priceId: string | n
   return Math.min(subtotal, c.type === 'percent' ? Math.floor((subtotal * c.value) / 10000) : c.value)
 }
 
-/** 券面对象（billing.CouponFace）：码为空或不认识时 null */
-function couponFace(code: unknown) {
+/** 券面对象（billing.CouponFace）：码为空或不认识时 null；优惠码试算与变更试算恒带 coupon 键（Go 无 omitempty） */
+export function couponFace(code: unknown) {
   const key = typeof code === 'string' ? code.trim().toUpperCase() : ''
   const c = key ? COUPONS[key] : undefined
   return c ? { code: key, discount_type: c.type, discount_value: c.value } : null
-}
-
-/** 修订 R69 的券面对象；legacy 场景不回 */
-export function couponView(code: unknown) {
-  if (scenario() === 'legacy' || typeof code !== 'string') return undefined
-  return couponFace(code)
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +256,8 @@ export function changeQuote(sub: SubFixture, plan: CatalogPlan, price: CatalogPr
 }
 
 // ---------------------------------------------------------------------------
-// 订单读形状（契约门户-04，含修订 R32、R69）；legacy 场景去掉修订 R69 的字段
+// 订单读形状（契约门户-04，含修订 R32、R69）；legacy 场景去掉 Go 带 omitempty 的可缺席字段
+// （周期、支付方式、优惠码、有效期至），无 omitempty 的 item_name / provider_name 恒在
 // ---------------------------------------------------------------------------
 const OPEN = new Set(['draft', 'pending_payment', 'processing'])
 
@@ -287,12 +282,8 @@ export function orderRow(o: OrderFixture) {
     ...(o.cancelled_at ? { cancelled_at: o.cancelled_at } : {}),
     ...(o.cancel_reason ? { cancel_reason: o.cancel_reason } : {}),
     ...(o.expires_at ? { expires_at: o.expires_at } : {}),
-    ...(legacy
-      ? {}
-      : {
-          ...(o.interval === undefined ? {} : { interval: o.interval, interval_count: o.interval_count ?? 1 }),
-          ...(o.item_name === undefined ? {} : { item_name: o.item_name }),
-        }),
+    ...(legacy || o.interval === undefined ? {} : { interval: o.interval, interval_count: o.interval_count ?? 1 }),
+    item_name: o.item_name ?? '',
   }
 }
 
@@ -305,7 +296,7 @@ export function orderDetail(state: PortalState, o: OrderFixture) {
       items: [{ name: o.item_name ?? o.plan_name ?? '余额充值', quantity: 1, unit_amount: o.subtotal, line_amount: o.subtotal }],
       payments:
         o.paid_at && o.payable_amount > 0
-          ? [{ status: 'succeeded', amount: o.paid_amount, currency: 'CNY', created_at: o.paid_at, ...(legacy ? {} : { method: o.payMethod, provider_name: o.payProvider === 'epay' ? '易支付' : o.payProvider }) }]
+          ? [{ status: 'succeeded', amount: o.paid_amount, currency: 'CNY', created_at: o.paid_at, provider_name: o.payProvider === 'epay' ? '易支付' : (o.payProvider ?? ''), ...(legacy ? {} : { method: o.payMethod }) }]
           : [],
       ...(!legacy && o.coupon_code ? { coupon_code: o.coupon_code } : {}),
       ...(!legacy && o.status === 'fulfilled' && sub ? { subscription_period_end: sub.current_period_end } : {}),

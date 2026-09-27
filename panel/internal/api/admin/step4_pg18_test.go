@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 announcement_pg18_test.go 的 openAnnouncementPG18、step3_pg18_test.go 的 step3Seed / step3Do / step3Nodes，依赖 risk.go、audit_log.go、node_admin.go、appearance.go 的处理器，依赖 platform/audit 与 crypto 写出带密文来源 IP 的审计样本
-// [OUTPUT]: 对外提供 TestIPClusterPG18、TestAuditLogPG18、TestNodeCountryAndCredentialsPG18、TestPluginDeliveryDurationPG18
-// [POS]: api/admin 的第 ④ 步 PG18 测试：风控聚类的复核与批量停用（M1）、审计认证强度与导出（M6）、节点国家与令牌签发记录（M8）、webhook 投递耗时（M7）
+// [OUTPUT]: 对外提供 TestIPClusterPG18（含 ipClusterActivePlans 的成员套餐名 R118 口径）、TestAuditLogPG18、TestNodeCountryAndCredentialsPG18、TestPluginDeliveryDurationPG18
+// [POS]: api/admin 的第 ④ 步 PG18 测试：风控聚类的复核与批量停用（M1）及成员 active_plan 的订阅态口径（R118）、审计认证强度与导出（M6）、节点国家与令牌签发记录（M8）、webhook 投递耗时（M7）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -20,11 +20,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	"github.com/aegispanel/aegis/internal/domain/plugin"
 	"github.com/aegispanel/aegis/internal/platform/audit"
+	"github.com/aegispanel/aegis/internal/platform/config"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -43,7 +45,9 @@ func step4Handlers(t *testing.T, app *platformdb.Pool) *handlers {
 		return sum[:]
 	}, func(plain []byte) ([]byte, error) { return env.Seal(plain, []byte("audit")) })
 	t.Cleanup(func() { audit.Configure(nil, nil) })
-	return &handlers{d: Deps{Pool: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	// 备份目录指向不存在的路径：系统状态按「读不到备份」降级，与 CI 主机上一致
+	cfg := &config.Config{Deployment: config.Deployment{BackupDir: t.TempDir() + "/no-backups"}}
+	return &handlers{d: Deps{Cfg: cfg, Pool: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Node: nodefabric.NewService(app, nil), Ops: adminops.NewService(app),
 		Plugin: plugin.New(app, nil, true), Envelope: env}}
 }
@@ -129,8 +133,11 @@ func TestIPClusterPG18(t *testing.T) {
 	type cluster struct {
 		Key, IP, Risk string
 		Accounts      int
-		Users         []struct{ ID, Email, Status string }
-		Review        *struct {
+		Users         []struct {
+			ID, Email, Status string
+			ActivePlan        *string `json:"active_plan"`
+		}
+		Review *struct {
 			Decision  string
 			ExpiresAt *time.Time `json:"expires_at"`
 		}
@@ -153,6 +160,13 @@ func TestIPClusterPG18(t *testing.T) {
 		got[1].Key != ipKey(quietIP) || got[1].Risk != "low" {
 		t.Fatalf("initial clusters: %+v", got)
 	}
+	ipClusterActivePlans(t, ctx, admin, tenant, plain1, plain2, plain3, func() map[string]*string {
+		plans := map[string]*string{}
+		for _, u := range list("")[0].Users {
+			plans[u.ID] = u.ActivePlan
+		}
+		return plans
+	})
 
 	// 标记为正常：默认列表里消失，include_reviewed=1 时带着结论回来
 	if w := step3Do(t, ctx, r, http.MethodPost, "/v1/ip-clusters/"+ipKey(quietIP)+"/review", `{"note":"同一家庭"}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"decision":"normal"`) {
@@ -220,6 +234,57 @@ func TestIPClusterPG18(t *testing.T) {
 		count(*) FILTER (WHERE action='risk.ip_cluster.disable' AND outcome='partial' AND auth_context='reauth')
 		FROM audit_events WHERE tenant_id=$1`, tenant).Scan(&changes, &clusterAudits); err != nil || changes != 2 || clusterAudits != 1 {
 		t.Fatalf("audit status_change=%d disable=%d err=%v", changes, clusterAudits, err)
+	}
+}
+
+// ipClusterActivePlans 核对聚类成员的 active_plan 按 R118 口径：宽限期的当前订阅
+// 算在用（哪怕有一条更新创建的已过期订阅），只有过期订阅为 null，别的租户里
+// 同一 user_id 的在用订阅不算。
+func ipClusterActivePlans(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant, grace, expired, plain string,
+	members func() map[string]*string) {
+	t.Helper()
+	const (
+		otherTenant = "82000000-0000-4000-8000-000000000002"
+		planPro     = "82000000-0000-4000-8000-000000000032"
+		planOld     = "82000000-0000-4000-8000-000000000033"
+		planOther   = "82000000-0000-4000-8000-000000000034"
+	)
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`SET LOCAL session_replication_role = replica`,
+		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('` + otherTenant + `','ip-cluster-other','Other','CNY')`,
+		// 一个产品只挂一个套餐（plans_tenant_product_unique），套餐 id 兼作产品 id
+		`INSERT INTO products(id,tenant_id,code,name,status) VALUES
+			('` + planPro + `','` + tenant + `','cluster-pro','Cluster Pro','active'),
+			('` + planOld + `','` + tenant + `','cluster-old','Cluster Old','active'),
+			('` + planOther + `','` + otherTenant + `','cluster-other','Cluster Other','active')`,
+		`INSERT INTO plans(id,tenant_id,product_id,code,name,status) VALUES
+			('` + planPro + `','` + tenant + `','` + planPro + `','pro','Pro 月付','active'),
+			('` + planOld + `','` + tenant + `','` + planOld + `','old','旧套餐','active'),
+			('` + planOther + `','` + otherTenant + `','` + planOther + `','other','别家套餐','active')`,
+		`INSERT INTO subscriptions(tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount,current_period_end,created_at) VALUES
+			('` + tenant + `','` + grace + `','` + planPro + `',gen_random_uuid(),'grace','CNY',0,now()+interval '2 days',now()-interval '40 days'),
+			('` + tenant + `','` + grace + `','` + planOld + `',gen_random_uuid(),'expired','CNY',0,now()-interval '1 day',now()-interval '1 day'),
+			('` + tenant + `','` + expired + `','` + planOld + `',gen_random_uuid(),'expired','CNY',0,now()-interval '3 days',now()-interval '33 days'),
+			('` + otherTenant + `','` + plain + `','` + planOther + `',gen_random_uuid(),'active','CNY',0,now()+interval '20 days',now())`,
+	} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("seed subscriptions: %v\nSQL: %s", err, sql)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := members()
+	if p := got[grace]; p == nil || *p != "Pro 月付" {
+		t.Fatalf("grace member active_plan = %v, want Pro 月付", p)
+	}
+	if got[expired] != nil || got[plain] != nil {
+		t.Fatalf("expired-only / other-tenant members active_plan = %v / %v, want null", got[expired], got[plain])
 	}
 }
 

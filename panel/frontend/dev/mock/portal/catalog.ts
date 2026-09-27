@@ -102,9 +102,9 @@ export const PLANS: readonly CatalogPlan[] = [
 export const findPlan = (id: unknown) => PLANS.find((p) => p.id === id)
 export const findPrice = (plan: CatalogPlan, id: unknown) => plan.prices.find((p) => p.id === id)
 
-/** 契约门户-03 GET v1/plans 的一行；legacy 场景只去掉修订 R69 的四个字段（R99 / R100 的字段照带） */
-export function planView(p: CatalogPlan, legacy: boolean) {
-  const base = {
+/** 契约门户-03 GET v1/plans 的一行；Go 的 planView 无 omitempty，各场景字段恒在（R69 / R99 / R100） */
+export function planView(p: CatalogPlan) {
+  return {
     id: p.id,
     code: p.code,
     name: p.name,
@@ -116,9 +116,11 @@ export function planView(p: CatalogPlan, legacy: boolean) {
     throttle_kbps: p.throttle_kbps,
     highlights: p.highlights,
     recommended: p.recommended,
+    quota_reset_strategy: p.quota_reset_strategy,
+    quota_reset_day: p.quota_reset_day,
+    allow_renewal: p.allow_renewal,
+    allow_upgrade: p.allow_upgrade,
   }
-  if (legacy) return base
-  return { ...base, quota_reset_strategy: p.quota_reset_strategy, quota_reset_day: p.quota_reset_day, allow_renewal: p.allow_renewal, allow_upgrade: p.allow_upgrade }
 }
 
 /** 价格周期折成月数，续费 / 新购延长订阅用 */

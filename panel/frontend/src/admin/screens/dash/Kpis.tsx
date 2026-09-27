@@ -54,7 +54,7 @@ function overviewTiles(o: Overview): Tile[] {
     key: 'subs',
     label: '有效订阅',
     value: formatCount(s.active),
-    sub: s.new_7_days !== undefined ? `本周新增 ${formatCount(s.new_7_days)}` : `试用中 ${formatCount(s.trialing)}`,
+    sub: `本周新增 ${formatCount(s.new_7_days)}`,
     tip: `试用中 ${formatCount(s.trialing)} · 7 天内到期 ${formatCount(s.expiring_7_days)} · 已过期 ${formatCount(s.expired)}`,
     target: { module: 'users', tab: 'list' },
   })

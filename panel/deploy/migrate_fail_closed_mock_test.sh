@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖同目录 migrate.sh、仓库真实的 ../migrations/*.sql，goose 用桩脚本代替
+# [OUTPUT]: migrate.sh 公开入口的拒绝矩阵，以及编号规则：真实目录能过、空号能过、同号与 00000 被拒
+# [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要数据库或 root
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -Eeuo pipefail
 umask 077
 
@@ -44,8 +48,36 @@ expect_78 oversized up-to 9999999999
 [ ! -s "$TMP/goose.exec" ] || { echo 'a rejected command reached goose' >&2; exit 1; }
 
 # Read-only commands remain available after the destructive surface is closed.
+# 这两条跑的是仓库里真实的 migrations/（上面整目录拷贝）：真实目录带着 00073、
+# 00091、00092 三个历史空号，脚本拒绝它就在这里变红。
 run_migrate status >/dev/null
 run_migrate version >/dev/null
 [ "$(grep -Ec '^(status|version)$' "$TMP/goose.exec")" -eq 2 ]
+
+# 编号规则：严格递增、不重复，允许空号。
+sequence_case() {
+  rm -rf -- "$TMP/seq"
+  mkdir -p "$TMP/seq"
+  local file
+  for file in "$@"; do
+    printf '%s\n' '-- +goose Up' 'SELECT 1;' >"$TMP/seq/$file"
+  done
+  : >"$TMP/goose.exec"
+  set +e
+  AEGIS_ENV_FILE="$TMP/env" AEGIS_MIGRATIONS_DIR="$TMP/seq" \
+    GOOSE_BIN="$TMP/bin/goose" bash "$MIGRATE" status >"$TMP/seq.out" 2>&1
+  SEQ_STATUS=$?
+  set -e
+}
+sequence_case 00001_a.sql 00003_c.sql 00007_g.sql
+[ "$SEQ_STATUS" -eq 0 ] || { echo "gapped sequence was rejected: $(cat "$TMP/seq.out")" >&2; exit 1; }
+grep -Fxq status "$TMP/goose.exec"
+sequence_case 00001_a.sql 00002_b.sql 00002_c.sql
+[ "$SEQ_STATUS" -eq 78 ] || { echo "duplicate version expected exit 78, got $SEQ_STATUS" >&2; exit 1; }
+grep -Fq 'duplicate migration version: 00002_c.sql' "$TMP/seq.out"
+[ ! -s "$TMP/goose.exec" ] || { echo 'a duplicate-version set reached goose' >&2; exit 1; }
+sequence_case 00000_zero.sql 00001_a.sql
+[ "$SEQ_STATUS" -eq 78 ] || { echo "version 00000 expected exit 78, got $SEQ_STATUS" >&2; exit 1; }
+[ ! -s "$TMP/goose.exec" ] || { echo 'a version-0 set reached goose' >&2; exit 1; }
 
 echo 'migrate public wrapper fail-closed matrix: PASS'

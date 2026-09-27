@@ -43,9 +43,9 @@ export interface PlanAction {
 export function planAction(plan: Plan, price: Price | undefined, primary: Subscription | null, period: PeriodKey, renewable: boolean): PlanAction {
   if (!price) return { label: `暂无${periodName(period)}`, href: null }
   if (primary && primary.plan_id === plan.id) {
-    if (plan.allow_renewal === false || !renewable) return { label: '不可续费', href: null }
+    if (!plan.allow_renewal || !renewable) return { label: '不可续费', href: null }
     return { label: '续费', href: href('/checkout', { renew: primary.id, price: price.id }) }
   }
-  if (primary && plan.allow_upgrade === false) return { label: '不支持变更', href: null }
+  if (primary && !plan.allow_upgrade) return { label: '不支持变更', href: null }
   return { label: `${primary ? '换成' : '选择'}${plan.name}`, href: href('/checkout', { plan: plan.id, price: price.id }) }
 }

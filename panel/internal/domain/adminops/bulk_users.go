@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 users.go 的 currentSubscriptionSQL / subStateSQL，依赖 platform 的 crypto/db/audit/httpx
+// [INPUT]: 依赖 users.go 的 currentSubscriptionSQL / hasLiveSubscriptionSQL / subStateSQL、domain/subscription 的 LiveStatusesSQL，依赖 platform 的 crypto/db/audit/httpx
 // [OUTPUT]: 对外提供 BulkFilter、BulkPreview、BulkSampleRow、ExportRow 与 Service.PreviewBulk / ExportUsers / GenerateUsers
 // [POS]: domain/adminops 的用户批量运营：预览、导出、群发共用 buildFilterSQL 圈人（含当前订阅的套餐、到期天数与订阅状态），批量生成账号
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/subscription"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
@@ -33,7 +34,7 @@ import (
 type BulkFilter struct {
 	Status       string // active / suspended / banned / pending
 	GroupID      string // 用户分组
-	HasActiveSub *bool  // 有无生效订阅
+	HasActiveSub *bool  // 有无在用订阅（active / trialing / grace / past_due，R118）
 	Query        string // 邮箱模糊匹配
 	// 以下三项按「当前订阅」判断，挑法与用户列表的 current_subscription 相同
 	PlanID            string // 当前订阅的套餐
@@ -62,12 +63,12 @@ func buildFilterSQL(f BulkFilter, args *[]any, tenantID string) string {
 		where += " AND lower(u.email::text) LIKE $" + itoa(len(*args))
 	}
 	if f.HasActiveSub != nil {
-		cond := "EXISTS"
+		// 有无在用订阅（R118）：与 sub_state=active 同一条件
+		cond := hasLiveSubscriptionSQL
 		if !*f.HasActiveSub {
-			cond = "NOT EXISTS"
+			cond = "NOT " + cond
 		}
-		where += " AND " + cond + " (SELECT 1 FROM subscriptions s" +
-			" WHERE s.tenant_id = u.tenant_id AND s.user_id = u.id AND s.status = 'active')"
+		where += " AND " + cond
 	}
 	if f.PlanID != "" {
 		*args = append(*args, f.PlanID)
@@ -229,7 +230,7 @@ func (s *Service) ExportUsers(ctx context.Context, tenantID string,
 		rows, err := tx.Query(ctx, `
 			SELECT u.email::text, u.status, coalesce(g.name,''),
 			       (SELECT count(*) FROM subscriptions s
-			         WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.status='active'),
+			         WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.status IN `+subscription.LiveStatusesSQL+`),
 			       (SELECT count(*) FROM orders o
 			         WHERE o.tenant_id=u.tenant_id AND o.user_id=u.id),
 			       (SELECT coalesce(sum(o.paid_amount),0) FROM orders o

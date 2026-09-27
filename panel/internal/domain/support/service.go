@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 platform 的 db/httpx；ReplyNotifier 由装配注入（notify.Service 实现）
-// [OUTPUT]: 对外提供 Service、NewService、ReplyNotifier 与 SetReplyNotifier、原子结果 AtomicResult / AtomicCreateResult / AtomicEscalateResult、Categories、视图 Message / Ticket / TicketOrderRef、TicketOwner
+// [OUTPUT]: 对外提供 Service、NewService、ReplyNotifier 与 SetReplyNotifier、原子结果 AtomicResult / AtomicCreateResult / AtomicEscalateResult、Categories、视图 Message / Ticket / TicketDetail / TicketOrderRef、TicketOwner
 // [POS]: domain/support 的服务骨架：依赖注入、SLA 截止计算、两侧共用的视图与预制响应、工单号生成；用例按角色分在 user_tickets.go（用户侧）、agent_tickets.go（客服侧）、escalation.go（超时升级）、withdraw.go（撤回）、macros.go（快捷回复）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -162,17 +162,24 @@ type Ticket struct {
 	// LastMessageAuthorKind 是最后一条非内部备注消息的作者类型（队列）：为 user 时
 	// 前端加粗，免得给每个客服建一张已读表
 	LastMessageAuthorKind string `json:"last_message_author_kind,omitempty"`
-	// UserActivePlan 是用户 active / trialing 最新订阅的套餐名（详情）：客服不一定
-	// 有 iam.user.read，不能再去调用户接口
+	// UserActivePlan 是用户当前订阅在用时的套餐名，否则为空（队列与详情，R118，
+	// 与后台用户列表的 active_plan 同一口径）：客服不一定有 iam.user.read，不能再去调用户接口
 	UserActivePlan *string `json:"user_active_plan,omitempty"`
 
 	MessageCount int       `json:"message_count"`
 	LastReplyAt  time.Time `json:"last_reply_at"`
-	Messages     []Message `json:"messages,omitempty"`
 	// ClosedReason 分辨「已撤回」与「已关闭」：user_closed / withdrawn / agent_closed，未关闭为 null
 	ClosedReason *string `json:"closed_reason"`
 	// RelatedOrder 只在详情里填（门户与后台详情头「关联订单」，队列不填）
 	RelatedOrder *TicketOrderRef `json:"related_order"`
+}
+
+// TicketDetail 是工单详情（门户与后台同形）：列表行加上消息列表。messages 总是
+// 数组，没有消息时为 []，不省略；列表行本来就不带消息，所以字段不放在 Ticket 上，
+// 免得队列每行多出一个 null。
+type TicketDetail struct {
+	Ticket
+	Messages []Message `json:"messages"`
 }
 
 type TicketOrderRef struct {
