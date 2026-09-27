@@ -1,6 +1,6 @@
 # Pandora Panel - Xboard 类代理订阅面板 + 自研 NativeCore 节点端
 
-Go 1.26 + PostgreSQL 18 + Valkey 8 + React/TypeScript/Vite 面板前端（panel/frontend，按设计稿重写，嵌入 panel/web 后在两个网关根 / 下发）
+Go 1.26 + PostgreSQL 18 + Valkey 8 + React/TypeScript/Vite 面板前端（panel/frontend，按设计稿重写完成，嵌入 panel/web 后在两个网关根 / 下发）
 
 <directory>
 panel/ - 面板：public/admin/node 三个 HTTP 网关（节点接入由 pdnd 的 pandora-native 两阶段承担，面板不带节点代理），计费账本、节点编排、审计、安装发布链 (9子目录: cmd, internal, migrations, deploy, frontend, web, docs, tests, tools)
@@ -14,7 +14,7 @@ ops-local/ - 按需创建，目前不存在：被 git 忽略、只在维护者�
 <config>
 README.md - 项目全貌：架构、功能、部署、验证状态、进度、路线图，给人看的唯一入口
 panel/go.mod、pdnd/go.mod - 两个独立 Go module，面板为 github.com/aegispanel/aegis，pdnd 沿用旧 module 名 github.com/aegispanel/nodeagent
-panel/Makefile - 本地开发入口：up/migrate/check-migrations/invariants/build/test/e2e/verify，CGO_ENABLED=0
+panel/Makefile - 本地开发入口：up/migrate/check-migrations/invariants/build/test/e2e/verify/frontend-check/frontend-embed，CGO_ENABLED=0
 panel/deploy/.env.example - 运行配置模板，敏感项 CHANGE_ME 由 install.sh 首装生成
 panel/deploy/docker-compose.yml - 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1:5433/6380
 panel/migrations/RESERVED-TABLES.md - 迁移留存但 Go 从不引用的 16 张表及锁定原因，platform/db 契约测试按 Up 段重放守同构
@@ -257,10 +257,10 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 
 # 本项目适配说明
 
-- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api（含 admin、public）/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric/billing/appearance/support/adminops/plugin/content、panel/internal/platform/pg18test、panel/internal/platform/sourcetest、panel/internal/platform/releasejournal、panel/internal/platform/clientauth/ca42runner、panel/internal/middleware、panel/tools/refactorcheck、panel/internal/platform/httpx、panel/internal/api/node、panel/cmd 下的 aegis-admin/aegis-adminctl/aegis-public/pandora-cic-journal、panel/web、panel/deploy、panel/frontend 及其 dev（含 dev/mock、dev/mock/admin、dev/mock/portal）与 src 下的 admin（含 admin/screens 及已做页面的模块目录 dash/tickets/marketing/users/nodes/content/plans/system/billing/security）/portal（含 portal/screens 及已做页面的 common/overview/subs/plans/checkout/orders/wallet/referral/tickets/messages/help/account）/shell/core/ui/styles/showcase、pdnd、pdnd/kernel、pdnd/core。其余目录按逆向流在进入时补建。
+- L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径。已播种：panel、panel/internal 及其 api（含 admin、public）/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric/billing/appearance/support/adminops/plugin/content、panel/internal/platform/pg18test、panel/internal/platform/sourcetest、panel/internal/platform/releasejournal、panel/internal/platform/clientauth/ca42runner、panel/internal/platform/crypto、panel/internal/platform/realtime、panel/internal/domain 下的 dbbackup/giftcard、panel/internal/middleware、panel/tools/refactorcheck、panel/tests、panel/internal/platform/httpx、panel/internal/api/node、panel/cmd 下的 aegis-admin/aegis-adminctl/aegis-public/pandora-cic-journal、panel/web、panel/deploy、panel/frontend 及其 dev（含 dev/mock、dev/mock/admin、dev/mock/portal）与 src 下的 admin（含 admin/screens 及已做页面的模块目录 dash/tickets/marketing/users/nodes/content/plans/system/billing/security）/portal（含 portal/screens 及已做页面的 common/overview/subs/plans/checkout/orders/wallet/referral/tickets/messages/help/account）/shell/core/ui/styles/showcase、panel/frontend/tests/smoke、pdnd、pdnd/kernel、pdnd/core、pdnd/cmd/pandora-h3-probe。其余目录按逆向流在进入时补建。
 - L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]；TS/TSX 用模板里的 `/** */`。Go 文件多已带中文设计注释，L3 加在其上方（中间空一行，不成为包文档），不改写原注释；带 `//go:build` 的文件，L3 放在构建约束与空行之后。
-- L3 按逆向流渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性播种（2026-09-23 实测：Go 1038 个、TS/TSX 102 个；已有 L3 头的 Go 19 个、TS/TSX 16 个）。
+- L3 按逆向流渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性播种。TS/TSX 已全部带 L3；Go 只有部分文件带，其余按逆向流补。
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。
-- 单文件 ≤800 行：第 5 阶段重构之后，豁免之外没有超限的 .go 文件（含测试）。豁免两类：① `pdnd/internal/reality/**`（fork 自 Go crypto/tls，34 个文件）与 `pdnd/internal/realityquic/**`（fork 自 quic-go，193 个文件）是 fork 来的第三方代码，保持上游的文件划分以便合上游，整目录豁免，目前其中 14 个文件超限（reality 8、realityquic 6）；② 两个只剩一个超长测试函数、纯挪动拆不开的 PG18 测试 `panel/internal/middleware/idempotency_pg18_test.go`、`panel/internal/domain/billing/order_release_pg18_test.go`，逐个登记，拆到 800 行以内即须移出。守卫：panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go` 随 `go test ./...` 扫描全部 .go，豁免外超限即红，豁免过期也红。守卫变红先按主题拆分（只挪代码，用 `panel/tools/refactorcheck` 自证），不要加豁免；改豁免表要用户授权。
+- 单文件 ≤800 行：第 5 阶段重构之后，豁免之外没有超限的 .go 文件（含测试）。豁免两类：① `pdnd/internal/reality/**`（fork 自 XTLS/REALITY，MPL-2.0，其本身基于 Go crypto/tls，见该目录 LICENSE；34 个文件）与 `pdnd/internal/realityquic/**`（fork 自 apernet/quic-go，见该目录 README；193 个文件）是 fork 来的第三方代码，保持上游的文件划分以便合上游，整目录豁免，目前其中 14 个文件超限（reality 8、realityquic 6）；② 两个只剩一个超长测试函数、纯挪动拆不开的 PG18 测试 `panel/internal/middleware/idempotency_pg18_test.go`、`panel/internal/domain/billing/order_release_pg18_test.go`，逐个登记，拆到 800 行以内即须移出。守卫：panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go` 随 `go test ./...` 扫描全部 .go，豁免外超限即红，豁免过期也红。守卫变红先按主题拆分（只挪代码，用 `panel/tools/refactorcheck` 自证），不要加豁免；改豁免表要用户授权。
 - entropy 段的范式映射到本仓库：日志用 platform/logging（log/slog），响应与错误用 platform/httpx，配置只经 platform/config，前端 HTTP 只经 src/core/api.ts。
 - 仓库公开，只放产品：不写入任何具体部署的值（服务器 IP、域名、后台路径前缀、密钥、从生产导出的数据）；测试夹具只用虚构数据，模板只含占位符。gitleaks 命中必须停下处理，扫描不得与提交、推送串在同一条命令里。

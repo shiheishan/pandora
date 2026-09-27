@@ -46,7 +46,7 @@ aegis-public    aegis-admin     aegis-node
 | `panel/tests/` | 数据层不变量 SQL 与端到端脚本 |
 | `panel/frontend/` | 面板前端，2026-09-23 起按设计稿从零重写、2026-09-26 完成（React + TypeScript + Vite，管理后台与用户门户双入口），构建后经 `make frontend-embed` 嵌入 `panel/web/` |
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
-| `panel/migrations/` | SQL 迁移，按序号递增，当前 00001–00067 共 67 个；00067 删除 21 张无依赖孤儿表（未在任何环境执行）；`RESERVED-TABLES.md` 登记其余 16 张 Go 从不引用的表及锁定原因 |
+| `panel/migrations/` | SQL 迁移，按序号递增，当前到 00095，共 92 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 16 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
 | `panel/docs/` | `redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿、ADR |
 | `pdnd/` | Pandora node（pdnd / pandora-native）：NativeCore 协议入站、认证、路由、用户与流量 |
@@ -55,7 +55,7 @@ aegis-public    aegis-admin     aegis-node
 | `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
 | `docs/` | 配置签名密钥轮换、发布物绑定 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
-| `.github/workflows/` | pdnd 的 Ubuntu race / vet 与双架构构建门禁；panel 的前端嵌入与根下发契约、表登记簿、权限字典契约测试；新前端的 typecheck / vitest / 构建任务随重写恢复 |
+| `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟） |
 | `CLAUDE.md`（根目录及各模块目录） | GEB 分形文档地图：根为 L1 项目宪法，模块目录为 L2 成员清单，源文件头部为 L3 契约 |
 
 本地快照不含 `.env`、密钥、私钥和编译产物（二进制、`node_modules`、`dist`）。
@@ -70,7 +70,7 @@ aegis-public    aegis-admin     aegis-node
 
 每一套部署自己的值都在安装时产生，不进仓库：域名由部署者写进 `.env`，主密钥、JWT 密钥、数据库口令和后台路径前缀由 `install.sh` 首装生成。
 
-维护者操作自己服务器的东西——一次性运维脚本、安装日志、真实服务器地址——放在被 git 忽略的 `ops-local/`，只存在于维护者本机；脚本要用的密钥从 1Password 读取，不写进任何文件。提交前的 gitleaks 钩子（见上表 `.githooks/`）会拦下密钥、服务器 IP、后台前缀这类内容，误写进源码也提交不上去。
+维护者操作自己服务器的东西——一次性运维脚本、安装日志、真实服务器地址——放在被 git 忽略的 `ops-local/`（按需创建，只存在于维护者本机）；脚本要用的密钥从 1Password 读取，不写进任何文件。提交前的 gitleaks 钩子（见上表 `.githooks/`）会拦下密钥、服务器 IP、后台前缀这类内容，误写进源码也提交不上去。
 
 ## panel：面板
 
@@ -135,7 +135,7 @@ make e2e               # 端到端链路：注册→下单→支付→账本→�
 make verify            # vet + check-migrations + invariants，提交前跑
 ```
 
-`make help` 列出全部目标。`panel/tests/` 下另有 admin、node、uniproxy、epay、support 的端到端脚本。
+`make help` 列出全部目标。`panel/tests/` 下另有 admin、uniproxy、epay、support 的端到端脚本（加上主链路 `e2e.sh` 共五个）。
 
 ### 端口
 
@@ -145,7 +145,7 @@ make verify            # vet + check-migrations + invariants，提交前跑
 |---|---|
 | 9000 | Public API |
 | 9001 | Admin API |
-| 9002 | Client API |
+| 9002 | 保留（`AEGIS_CLIENT_ADDR` 在配置里定义，当前没有进程监听） |
 | 9003 | Node API |
 | 5433 / 6380 | PostgreSQL / Valkey（docker compose 映射） |
 
@@ -213,7 +213,7 @@ Linux x64/ARM64 发布包使用 `pdnd/release/build.sh`，会生成带 SHA-256 �
 
 ### 1. 打包
 
-在有 Go 工具链的机器上（不需要是目标机器）：
+在有 Go 1.26+ 与 Node 22.12+/npm 的机器上（不需要是目标机器；`build-release.sh` 先跑 `make frontend-embed` 把前端嵌进网关，没有 npm 即失败）：
 
 ```bash
 cd panel && ./deploy/build-release.sh /tmp/dist
@@ -229,11 +229,11 @@ cd panel && ./deploy/build-release.sh /tmp/dist
 | `pdnd-dist/` | 节点端二进制 |
 | `SHA256SUMS` | 全量校验和 |
 
-同时构建两种架构：`PANDORA_VERSION=v1.0.0 ./deploy/build-release.sh /tmp/dist`。
+默认同时构建 amd64 与 arm64 两种架构；`PANDORA_VERSION` 只指定版本号，例如 `PANDORA_VERSION=v1.0.0 ./deploy/build-release.sh /tmp/dist`。
 
 ### 2. 丢过去装
 
-目标机器需要 Linux + root + docker，以及 `openssl sha256sum systemctl install awk sed curl`。
+目标机器需要 Linux + root + docker（含 `docker compose` 插件），以及 `openssl sha256sum systemctl install awk sed curl` 和备份加密用的 `age`。
 
 ```bash
 scp -r /tmp/dist/pandora-panel_*_linux_amd64 root@目标机:/opt/pandora-release/rel
@@ -310,7 +310,7 @@ bash panel/deploy/test-install.sh <发布目录>
 
 ### 已有证据（FACT）
 
-**CI 门禁（2026-09-26 在 `main` 上全绿：`36230330995` / `36230331009` / `36230331011`）**。三个 workflow 各有路径过滤，只改文档不触发。
+**CI 门禁（2026-09-26 在 `main` 上全绿：`36230330995` / `36230331009` / `36230331011`）**。三个 workflow 各有路径过滤：只改仓库根的文档不触发；改 `pdnd/**`、`panel/internal/**`、`panel/web/**`、`panel/frontend/**` 等被过滤目录里的任何文件（包括其中的 CLAUDE.md）都会触发对应 workflow。
 
 - **Panel PostgreSQL 18 gates**（`panel-pg18.yml`）：
   - `panel-unit` 跑 panel 全量 build / vet / go test，是 CI 上唯一跑 panel 全部单元测试的地方；
@@ -350,24 +350,13 @@ bash panel/deploy/test-install.sh <发布目录>
 
 | 项 | 状态 |
 |---|---|
-| 仓库基线 | 面板重构第 1–5 阶段全部合入 `main`（合并提交 `d04513e`、`d3ae3f8`） |
+| 仓库基线 | 面板重构第 1–5 阶段于 `d04513e` 合入 `main`，其后只有文档合并 |
 | CI | `main` 上三组全绿（`36230330995` / `36230331009` / `36230331011`）：PG18 集成门禁 234 PASS / 0 SKIP，NativeCore（含 race、原生 ARM64、interop），新前端对真实网关的联调冒烟 |
 | Xboard 功能验收 | PARTIAL，未 RELEASED |
 | 前端 | 旧的手写单页与 React 候选已删除，管理后台与用户门户按设计稿在 `panel/frontend` 重写完成并补齐后端缺口 |
 | 部署 | 这一版尚未在任何真实机器上部署或实测；真机测试待换新机器再做 |
 
-未收口的历史工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成）当时状态为 PARTIAL at INTEGRATED，目标是把快照推到 VERIFIED。之后的交接记录没有它完成的证据，相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
-
-r55 随 `f1390b3` 入库的内容：
-
-- 结算与安全：secure webhook、money retries、checkout、commission、coupon、topup、giftcard redeem；
-- 节点编排：nodefabric（enrollment、node/server admin、service）、plan_wizard_update；
-- 平台层：config 重构、geoip、quicklogin、invite；
-- 新增迁移：00064 nodes server delete silence、00065 gift cards tenant FK、00066 invite owner active unique、00067 drop orphan tables（21 张孤儿表，未在任何数据库执行）。
-
-既定路线：按固定 Xboard commit `4f48e61a2cbc6db5338872b6bdb45ef954ec1256` 与差异矩阵逐页验收，优先节点列表 / 创建 / 编辑 / 权限组，逐项证明保存及实际生效。保持 Go / PostgreSQL / NativeCore 不变。
-
-另有一个并行的 Rust 全量重构候选（pandora-rust，axum/sqlx），仅作技术 spike，不是当前生产形态。
+历史上还有一项未收口的工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成），当时状态为 PARTIAL at INTEGRATED，之后没有它完成的证据；相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
 
 ## 路线图
 
