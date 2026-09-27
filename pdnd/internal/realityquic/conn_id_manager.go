@@ -313,7 +313,7 @@ func (h *connIDManager) IsActiveStatelessResetToken(token protocol.StatelessRese
 // Using the connIDManager after it has been closed can have disastrous effects:
 // If the connection ID is rotated, a new entry would be inserted into the packet handler map,
 // leading to a memory leak of the connection struct.
-// See https://github.com/aegispanel/nodeagent/internal/realityquic/pull/4852 for more details.
+// See https://github.com/quic-go/quic-go/pull/4852 for more details.
 func (h *connIDManager) assertNotClosed() {
 	if h.closed {
 		panic("connection ID manager is closed")
