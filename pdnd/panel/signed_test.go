@@ -10,44 +10,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 )
-
-func TestBootstrapPersistsCompleteIdentity(t *testing.T) {
-	configPublic, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/nodes/bootstrap" || r.Method != http.MethodPost {
-			t.Fatalf("unexpected bootstrap request: %s %s", r.Method, r.URL.Path)
-		}
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"node_id": "node-1", "serial": 1,
-			"config_public_key": base64.StdEncoding.EncodeToString(configPublic),
-			"config_key_id": "key-1", "runtime_token": "runtime-secret",
-		})
-	}))
-	defer server.Close()
-
-	path := filepath.Join(t.TempDir(), "identity.json")
-	identity, err := Bootstrap(context.Background(), BootstrapOptions{
-		Server: server.URL, Token: "bootstrap-secret", Name: "node-1", Path: path,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := LoadIdentity(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if identity.NodeID != "node-1" || loaded.RuntimeToken != "runtime-secret" || loaded.ConfigKeyID != "key-1" {
-		t.Fatalf("persisted identity is incomplete: %+v", loaded)
-	}
-}
 
 func TestSignedClientUsesServerCanonicalRequest(t *testing.T) {
 	public, private, err := ed25519.GenerateKey(rand.Reader)
@@ -132,21 +97,6 @@ func TestEffectiveReportIDIsStablePerReleaseAndPhase(t *testing.T) {
 	}
 	if len(reportIDs) != 3 || reportIDs[0] != reportIDs[1] || reportIDs[0] == reportIDs[2] {
 		t.Fatalf("report IDs are not stable per release/phase: %v", reportIDs)
-	}
-}
-
-func TestBootstrapRejectsIncompleteResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"node_id":"node-1","serial":1}`))
-	}))
-	defer server.Close()
-
-	_, err := Bootstrap(context.Background(), BootstrapOptions{
-		Server: server.URL, Token: "bootstrap-secret", Name: "node-1", Path: filepath.Join(t.TempDir(), "identity.json"),
-	})
-	if err == nil {
-		t.Fatal("incomplete bootstrap response was accepted")
 	}
 }
 

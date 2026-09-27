@@ -11,7 +11,7 @@ kernel/: NativeCore 自研数据面，13 协议入站、传输、REALITY、能�
 core/: core.Core 抽象与兼容适配层（sing-box/xray/mieru/外部进程/multi 分派/流量计数/限速）；见 core/CLAUDE.md
 internal/: NativeCore 底层实现。nativewire/ 协议线格式（anytls/hysteria2/mkcp/shadowtls/tuic/udpmask）；reality/ fork 自 XTLS/REALITY（MPL-2.0，其本身基于 Go crypto/tls，目录内 LICENSE 与 LICENSE-Go 两份许可并存），承载 TLS 1.2 + 1.3 上的 REALITY 握手；realityquic/ fork 自 apernet/quic-go（自带上游 MIT LICENSE，见其 README），把 TLS 事件接到 reality/，193 文件；这两个 fork 目录保持上游文件划分，整目录豁免 800 行规则
 node/: node.go 把面板与内核粘起来：拉配置、同步用户、上报流量与心跳（资源占用只在兼容通道上报）
-panel/: 与面板通信层。client.go 基础客户端、enrollment.go 节点注册、signed.go Ed25519 节点身份与签名通道客户端（LoadIdentity / SaveIdentity、Heartbeat、Config、ReportConfig、VerifyConfig）、effective_release.go 生效发布版本、config_key_transition.go 配置签名密钥轮换、stream.go 面板 SSE 订阅、status.go + status_linux/other.go 主机状态采集
+panel/: 与面板通信层。client.go 基础客户端、enrollment.go 两阶段节点接入（begin → status → commit，带本地日志可续跑，是首装产生身份的唯一入口）、signed.go Ed25519 节点身份与签名通道客户端（LoadIdentity / SaveIdentity、Heartbeat、Config、ReportConfig、VerifyConfig）、effective_release.go 生效发布版本、config_key_transition.go 配置签名密钥轮换、stream.go 面板 SSE 订阅、status.go + status_linux/other.go 主机状态采集
 outbound/: 出站层。outbound.go 抽象与选择，direct.go 直连，shadowsocks.go 出站加密，relay_socks.go SOCKS 中继，tls.go/utls.go TLS 与指纹
 route/: rule.go 分流引擎
 release/: build.sh 双架构发布与 manifest、check_native_panel_parity.py 对齐检查、check_native_stdout.sh、runtime-acceptance.sh 与 staging-acceptance.sh 验收、verify.sh、pandora-native.service systemd 单元、README
