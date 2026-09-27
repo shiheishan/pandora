@@ -268,6 +268,10 @@ rm -f /tmp/configure-app-role.sql
 
 # ── 5. systemd ───────────────────────────────────────
 say "[5/6] 安装 systemd 服务"
+# 单元把日志 append 到 /var/log/aegis，目录不存在时 systemd 以 209/STDOUT 失败
+install -d -m 0750 /var/log/aegis
+[[ ! -d /etc/logrotate.d || ! -f "$SCRIPT_DIR/logrotate-aegis" ]] \
+  || install -m 0644 "$SCRIPT_DIR/logrotate-aegis" /etc/logrotate.d/aegis
 for s in "${SERVICES[@]}"; do
   sed "s|/opt/aegispanel|${INSTALL_DIR}|g" "$SCRIPT_DIR/systemd/${s}.service" > "/etc/systemd/system/${s}.service"
 done

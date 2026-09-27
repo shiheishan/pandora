@@ -153,6 +153,13 @@ for data_file in BACKUP.md backup-webdav.example.json .env.example \
                  docker-compose.yml configure-app-role.sql release-artifact.env; do
   stage_file "$RELEASE_DIR/deploy/$data_file" "/opt/aegispanel/deploy/$data_file" 0644
 done
+# 三个网关写 /var/log/aegis/*.log，轮转规则随包更新。没装 logrotate 的主机
+# 没有这个目录，不为它让整次安装失败，只提示。
+if [ -d /etc/logrotate.d ]; then
+  stage_file "$RELEASE_DIR/deploy/logrotate-aegis" /etc/logrotate.d/aegis 0644
+else
+  echo "installer: /etc/logrotate.d is missing; /var/log/aegis will not be rotated until logrotate is installed" >&2
+fi
 for unit in aegis-public.service aegis-admin.service aegis-node.service \
              aegis-backup.service aegis-backup.timer; do
   stage_file "$RELEASE_DIR/deploy/systemd/$unit" "/etc/systemd/system/$unit" 0644

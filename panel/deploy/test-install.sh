@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖一台一次性 Linux 验证机（root、docker、systemd）与一份发布目录
-# [OUTPUT]: 安装链回归：全新安装、升级、老式 .env、备份单元 failed 四种形态，含 production 模式、发布物绑定已装且进了 aegis-node 环境
+# [OUTPUT]: 安装链回归：全新安装、升级、老式 .env、备份单元 failed 四种形态，含 production 模式、发布物绑定已装且进了 aegis-node 环境、logrotate 规则已装且指向 /var/log/aegis
 # [POS]: deploy 的破坏性端到端测试，只在验证机上手工跑，CI 不跑；开头护栏挡着有真实用户的库
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 安装链回归测试：全新安装 与 存量升级 两种形态各跑一遍。
@@ -102,6 +102,9 @@ assert_healthy() {
   local node_pid; node_pid="$(systemctl show aegis-node --property=MainPID --value)"
   tr '\0' '\n' < "/proc/$node_pid/environ" 2>/dev/null | grep -q '^PANDORA_NATIVE_ARTIFACT_AMD64_SHA256=[0-9a-f]\{64\}$' \
     && ok "$label aegis-node 已加载发布物绑定" || bad "$label aegis-node 环境里没有发布物绑定"
+  grep -q '^/var/log/aegis/\*\.log {' /etc/logrotate.d/aegis 2>/dev/null \
+    && logrotate -d /etc/logrotate.d/aegis >/dev/null 2>&1 \
+    && ok "$label logrotate 规则已装且可解析" || bad "$label /etc/logrotate.d/aegis 缺失或无法解析"
 }
 
 run_install() {

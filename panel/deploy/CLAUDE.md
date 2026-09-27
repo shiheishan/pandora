@@ -14,7 +14,7 @@ migrate-to-new-host.sh: 新主机一键迁移：恢复 Age 密文备份、重建
 .env.example: 运行配置模板，机密与域名全是 CHANGE_ME 占位；AEGIS_ENV 默认 development 给本地开发，install.sh 首装改成 production
 docker-compose.yml: 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1
 systemd/: aegis-public/admin/node 三网关、备份 service+timer 单元；aegis-node 在 .env 之后再加载 release-artifact.env（节点接入的发布物绑定）
-logrotate-aegis: 三个服务的日志轮转
+logrotate-aegis: 三个网关的日志轮转，路径 /var/log/aegis/*.log 与 systemd 单元的 append: 一致，copytruncate；随发布包分发，install-linux-binaries.sh 装到 /etc/logrotate.d/aegis
 
 发布与切换
 build-release.sh: 打发布包，先以 PANDORA_RELEASE=$VERSION 跑 make frontend-embed（无 npm 即失败；版本号注入后台登录页与侧栏），拒绝占位前端进入发布物；迁移工具版本随包固定
@@ -51,6 +51,7 @@ client-auth-*、generate-client-auth-*、probe-client-auth-*、verify-client-aut
 client-auth-00044-verifier-gate.py / verify-client-auth-00044-evidence-vectors.ps1: 00044 证据信封与向量的独立生成与校验，不导入被测实现
 
 测试（只用虚构数据与一次性环境，不连任何真实部署）
+logrotate-aegis_static_test.sh: 轮转 glob 覆盖三个网关单元 append: 的全部日志文件，规则随包分发并装到 /etc/logrotate.d/aegis
 render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名、listen 只许 80/443 与回环 9080
 run-pg18-gates.sh: 一次跑完全部 PostgreSQL 18 集成门禁，CI 的 panel-pg18.yml 每次推送都跑；每域 go test -v，有用例跳过或一个都没跑同样判失败（缺环境变量的测试会 t.Skip 报 ok），同包两域靠精确 -run 过滤互不拉入；容器就绪经 TCP 探测（镜像初始化的临时实例只听 unix socket），60 秒不就绪即失败
 run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：up 起一次性 PG18 + Valkey，goose 迁移、configure-app-role.sql 配运行角色、aegis-adminctl 建管理员，配置用 openssl 现场生成，从源码起 aegis-public/admin/node 并以 readyz（node 为 healthz）与管理员真登录验收，入口写进状态目录的 smoke.env；库名 aegis_smoke_test（带 test 段，过 e2e 脚本的一次性库守卫），PG 容器名可由 PANDORA_SMOKE_PG_CONTAINER 覆盖（CI 设成 aegis-postgres 让 psql.sh 直接可用）；down 只拆自己记下的进程与容器
