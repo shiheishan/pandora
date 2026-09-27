@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 apt 系发行版的 PostgreSQL 18（PGDG）与 Valkey、发布包 bin/ migrations/ deploy/
-# [OUTPUT]: 无 Docker 的直装：/opt/pandora 布局、首装生成 .env（AEGIS_ENV=production）、迁移、收窄 aegis_app、装 systemd 单元（路径替换为 /opt/pandora）
-# [POS]: 与 install.sh 并列的另一条安装路径，共用 migrate.sh、configure-app-role.sql 与 release-artifact.env
+# [INPUT]: 依赖 apt 系发行版的 PostgreSQL 18（PGDG）与 Valkey、发布包 bin/ migrations/ deploy/、同目录 public-base-url.sh
+# [OUTPUT]: 无 Docker 的直装：/opt/pandora 布局；首装先取合规的对外地址再生成 .env（AEGIS_ENV=production），升级从现有 .env 读回口令、.env 不动；迁移、收窄 aegis_app、装 systemd 单元（路径替换为 /opt/pandora）
+# [POS]: 与 install.sh 并列的另一条安装路径，共用 public-base-url.sh（对外地址闸门）、migrate.sh、configure-app-role.sql 与 release-artifact.env
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Pandora Panel — 普通直接安装版（无 Docker）
 # 用法: sudo bash install-native.sh
+#       无人值守: sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名 bash install-native.sh
 # 信条: 目录简单、文件简单、不臃肿
 set -euo pipefail
 
@@ -23,6 +24,25 @@ need(){ command -v "$1" >/dev/null 2>&1 || die "缺少 $1"; }
 # ── 前置 ──────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || die "请用 root 运行: sudo bash install.sh"
 need openssl; need curl; need systemctl
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 首装还是升级：已有 .env 就是升级，.env 一字不动（里面是随机生成的口令与密钥，
+# 重写一次就连不上原来的数据库、解不开信封加密的字段）。首装在动手之前先拿到
+# 合规的对外地址——.env 定为 production，网关拿不到 https 公网域名会拒绝启动。
+[[ -f "$SCRIPT_DIR/public-base-url.sh" ]] || die "发布目录缺少 deploy/public-base-url.sh"
+. "$SCRIPT_DIR/public-base-url.sh"
+ENV_FILE="$INSTALL_DIR/deploy/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  MODE=upgrade
+  say "检测到 $ENV_FILE，按升级处理：保留现有配置与口令"
+  current_env="$(pandora_env_file_value "$ENV_FILE" AEGIS_ENV)"
+  [[ "${current_env,,}" = production ]] || say "  ! 现有 .env 的 AEGIS_ENV=${current_env:-（未设置，按 development）}，这次升级不改它"
+else
+  MODE=install
+  PUBLIC_BASE_URL="$(pandora_resolve_public_base_url 'bash install-native.sh')" \
+    || die "首装需要合规的面板对外地址（原因见上）"
+  say "面板对外地址：$PUBLIC_BASE_URL（运行模式 production）"
+fi
 
 # ── 0. 环境自愈（在安装开始前修复常见环境问题，避免装到一半炸）──────
 say "[0/6] 环境预检与自愈"
@@ -150,10 +170,22 @@ elif command -v redis-server >/dev/null 2>&1; then
   systemctl start redis-server 2>/dev/null || true
 fi
 
-# 生成凭据（一次性，写入 .env）
-DB_PASS="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=')"
-APP_PASS="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=')"
-VK_PASS="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=')"
+# 凭据：首装一次性生成并写入 .env；升级从现有 .env 读回，后面的建角色、改口令、
+# 迁移、收敛运行角色都拿同一套值，重跑是幂等的。
+if [[ "$MODE" = upgrade ]]; then
+  DB_PASS="$(pandora_env_file_value "$ENV_FILE" POSTGRES_PASSWORD)"
+  APP_PASS="$(pandora_env_file_value "$ENV_FILE" AEGIS_DB_APP_PASSWORD)"
+  VK_PASS="$(pandora_env_file_value "$ENV_FILE" VALKEY_PASSWORD)"
+  PG_SUPER_PASS="$(pandora_env_file_value "$ENV_FILE" POSTGRES_SUPER_PASSWORD)"
+  ADMIN_PATH="$(pandora_env_file_value "$ENV_FILE" AEGIS_ADMIN_PATH)"
+  [[ -n "$DB_PASS" && -n "$APP_PASS" && -n "$VK_PASS" && -n "$PG_SUPER_PASS" ]] \
+    || die "现有 $ENV_FILE 缺少 POSTGRES_PASSWORD / AEGIS_DB_APP_PASSWORD / VALKEY_PASSWORD / POSTGRES_SUPER_PASSWORD，不是 install-native.sh 生成的，拒绝升级"
+else
+  DB_PASS="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=')"
+  APP_PASS="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=')"
+  VK_PASS="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=')"
+  PG_SUPER_PASS="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=')"
+fi
 # Valkey/Redis 系统包默认 6379；探测实际监听端口，不写死。
 # 注意：不能用 grep|head 管道（head 提前退出会让 grep 收 SIGPIPE，
 # set -euo pipefail 下整体返回 141 导致脚本静默退出——实测踩过）。
@@ -162,7 +194,6 @@ VK_PORT="${VALKEY_PORT:-$(awk -F' ' '/^port /{print $2; exit}' /etc/valkey/valke
 
 # ── 3. 安装文件 ───────────────────────────────────────
 say "[3/6] 安装到 $INSTALL_DIR"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/migrations" "$INSTALL_DIR/deploy"
 cp -f "$SCRIPT_DIR"/../bin/* "$INSTALL_DIR/bin/"
 cp -f "$SCRIPT_DIR"/../migrations/*.sql "$INSTALL_DIR/migrations/"
@@ -176,7 +207,6 @@ chmod 0755 "$INSTALL_DIR/bin/"*
 say "[4/6] 初始化数据库 + 执行迁移"
 # postgres 超级用户密码（迁移需要 superuser 绕过 RLS；本地 peer 认证不用它，
 # 但 TCP 迁移 DSN 需要。生成随机密码写入 .env 供后续迁移/维护用）
-PG_SUPER_PASS="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=')"
 su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -c \"ALTER USER postgres PASSWORD '${PG_SUPER_PASS}'\"" 2>/dev/null || true
 su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE aegis LOGIN PASSWORD '${DB_PASS}'\"" 2>/dev/null || true
 su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE DATABASE aegis OWNER aegis\"" 2>/dev/null || true
@@ -185,7 +215,8 @@ su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE DATABASE aegis 
 su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -d aegis -c \"CREATE ROLE aegis_app LOGIN PASSWORD '${APP_PASS}' NOSUPERUSER NOBYPASSRLS\"" 2>/dev/null || true
 su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -d aegis -c 'GRANT CONNECT ON DATABASE aegis TO aegis_app'" 2>/dev/null || true
 
-# 生成应用密钥（base64 编码，32 字节）
+# 生成应用密钥并写 .env：只在首装
+if [[ "$MODE" = install ]]; then
 MASTER_KEY="$(openssl rand -base64 32)"
 JWT_PUBLIC_SECRET="$(openssl rand -base64 32)"
 JWT_ADMIN_SECRET="$(openssl rand -base64 32)"
@@ -220,10 +251,11 @@ AEGIS_JWT_PUBLIC_SECRET=${JWT_PUBLIC_SECRET}
 AEGIS_JWT_ADMIN_SECRET=${JWT_ADMIN_SECRET}
 AEGIS_JWT_CLIENT_SECRET=${JWT_CLIENT_SECRET}
 AEGIS_CONFIG_SIGNING_SEED=${CONFIG_SIGNING_SEED}
-AEGIS_PUBLIC_BASE_URL=https://CHANGE_ME_TO_YOUR_PANEL_DOMAIN
+AEGIS_PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
 PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes
 EOF
 chmod 0600 "$INSTALL_DIR/deploy/.env"
+fi
 
 # 给系统 Valkey/Redis 配置密码（普通安装版没有 Docker 隔离，密码落在系统配置里）
 if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]]; then
@@ -299,6 +331,6 @@ say "═════════════════════════
 say " Pandora 安装完成"
 say " 管理后台路径: /${ADMIN_PATH}"
 say " 配置文件:    ${INSTALL_DIR}/deploy/.env"
-say " 请修改 AEGIS_PUBLIC_BASE_URL 为你的域名"
+say " 对外地址:    $(pandora_env_file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)（渲染 nginx: ${INSTALL_DIR}/deploy/render-nginx.sh）"
 say "═══════════════════════════════════════════"
 [[ "$HEALTH_OK" == 1 ]] || die "部分服务未启动, 检查日志: journalctl -u aegis-public"
