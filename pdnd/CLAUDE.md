@@ -14,7 +14,7 @@ node/: node.go 把面板与内核粘起来：拉配置、同步用户、上报�
 panel/: 与面板通信层。client.go 基础客户端、enrollment.go 两阶段节点接入（begin → status → commit，带本地日志可续跑，是首装产生身份的唯一入口）、signed.go Ed25519 节点身份与签名通道客户端（LoadIdentity / SaveIdentity、Heartbeat、Config、ReportConfig、VerifyConfig）、effective_release.go 生效发布版本、config_key_transition.go 配置签名密钥轮换、stream.go 面板 SSE 订阅、status.go + status_linux/other.go 主机状态采集（兼容通道 /status 的字节口径）、heartbeat_metrics.go 把同一份采样加上 /proc 的负载、网络累计、TCP 连接数、开机时长换算成面板 nodefabric.Metrics 的整数口径并钳到库列范围，挂进签名心跳
 outbound/: 出站层。outbound.go 抽象与选择，direct.go 直连，shadowsocks.go 出站加密，relay_socks.go SOCKS 中继，tls.go/utls.go TLS 与指纹
 route/: rule.go 分流引擎
-release/: build.sh 双架构发布与 manifest、check_native_panel_parity.py 对齐检查、check_native_stdout.sh、runtime-acceptance.sh 与 staging-acceptance.sh 验收、verify.sh、pandora-native.service systemd 单元、README
+release/: build.sh 双架构发布与 manifest、check_native_panel_parity.py 对齐检查、check_native_stdout.sh、runtime-acceptance.sh（签名 / 兼容两种接入各冷启动两次，模拟面板是 acceptancepanel/ 的 Go 夹具，见 acceptancepanel/CLAUDE.md）与 staging-acceptance.sh 验收、verify.sh、pandora-native.service systemd 单元、README
 cmd/pandora-h3-probe/: 独立进程的 REALITY-over-HTTP/3 探针；见 cmd/pandora-h3-probe/CLAUDE.md
 tools/: vlesscheck / mierucheck / naivecheck / shadowtlscheck 最小客户端，验证入站真的在转发
 *_test.go: main_test.go 钉住配置缺省（省略 native_only 即 true、缺省配置路径与 release/pandora-native.service 一致、身份路径缺省值与可指向安装器的 /etc/pandora-native/identity.json、节点级覆盖、verify-identity 在联网前要求 node-id），runtime_*_test.go 覆盖默认与 compat 构建的运行时选择；linelimit_test.go 是全 module 的行数守卫：除 internal/reality、internal/realityquic 两个 fork 目录外，任何 .go 文件（含测试）超 800 行即红，豁免目录不存在了也红

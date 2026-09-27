@@ -104,12 +104,30 @@ CI 已覆盖的部分：`linux-race` job 在 x64 上跑全量 `go test -race` �
 CI 未覆盖、发布前需在真实 Linux 机器上补跑的：
 
 - 冷启动、SIGTERM 收尾、端口释放和重复启动：用 `release/runtime-acceptance.sh`。它在本机回环上起一个
-  模拟面板（Python）和指定的节点二进制，冷启动两次，每次等端口就绪后发 SIGTERM，确认进程退出且端口已释放，
-  成功时输出 `{"status":"ok",...}`；不写系统路径、不碰 systemd，需要 `python3`：
+  模拟面板（Go，`release/acceptancepanel`）和指定的节点二进制，按两种接入各冷启动两次：
+  - `signed`：安装器 enrollment 之后的生产形态——身份文件加 `signed_required: true`。配置来自签名的
+    effective release，要看到带 `metrics` 的签名心跳和 `health_passed` 配置上报，且全程没有碰 UniProxy
+    的配置与 `/status`、没有签名不合法的请求；
+  - `compat`：不带身份、只有 UniProxy 令牌的兼容接入，要看到经 UniProxy 拉配置与 `/status` 上报。
+
+  每次都等端口就绪、面板侧看到上述上报后发 SIGTERM，确认进程退出且端口已释放，成功时输出
+  `{"status":"ok",...}`；不写系统路径、不碰 systemd，需要 `python3` 和 `go`（用来编模拟面板）。验收机
+  没有 Go 时，在别处交叉编好再传进去：
 
   ```bash
   bash ./release/runtime-acceptance.sh ./release/dist/pandora-native-linux-amd64 /var/tmp/pandora-native-runtime
   ```
+
+  ```bash
+  GOOS=linux GOARCH=amd64 go build -o ./acceptancepanel ./release/acceptancepanel
+  ```
+
+  ```bash
+  ACCEPTANCE_PANEL=./acceptancepanel bash ./release/runtime-acceptance.sh ./release/dist/pandora-native-linux-amd64 /var/tmp/pandora-native-runtime
+  ```
+
+  模拟面板的签名原像按面板实现独立重写；`go test ./release/acceptancepanel` 用节点自己的签名客户端与它
+  对打，协议任一侧改了而另一侧没跟上，全量测试就会变红。
 
 - x64/ARM64 目标机上的协议互操作与回滚
 
