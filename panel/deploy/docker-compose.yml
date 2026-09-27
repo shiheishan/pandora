@@ -1,12 +1,12 @@
 # AegisPanel 数据基座。
 #
-# 该 compose 与宿主机上已有的 suwan-life-os / shared-browser 完全隔离：
+# 该 compose 与宿主机上的其他 compose 项目完全隔离：
 #   - 独立项目名 aegis（COMPOSE_PROJECT_NAME）
 #   - 独立 bridge 网络 aegis_data
 #   - 独立命名卷 aegis_pgdata / aegis_valkeydata
 #   - 宿主端口只绑 127.0.0.1，满足 ARC-003「数据面私有化」：外部扫描不可达
 #
-# 内存预算：宿主仅 1.9G 且已被占用，故两个服务都做了低内存调参。
+# 内存预算：按低内存主机调参，两个服务都压低了内存占用。
 name: aegis
 
 services:
@@ -24,7 +24,7 @@ services:
       PGTZ: UTC
     command:
       - postgres
-      # --- 低内存调参（宿主 1.9G）---
+      # --- 低内存主机调参 ---
       - -c
       - max_connections=60
       - -c

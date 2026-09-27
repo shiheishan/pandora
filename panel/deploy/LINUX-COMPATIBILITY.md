@@ -19,7 +19,9 @@ matrix has been tested.
 
 ## Build both architectures
 
-Run on a controlled builder with Go 1.26 or later:
+Run on a controlled builder with Go 1.26 or later, Node 22.12+ with npm (the
+script runs `make frontend-embed` first and fails without npm), and a full
+monorepo checkout so the sibling `../pdnd` source is present:
 
 ```bash
 bash deploy/build-release.sh

@@ -1,5 +1,10 @@
 //go:build !linux
 
+// [INPUT]: 无
+// [OUTPUT]: 对外提供非 Linux 平台的 main 桩，打印 NOT_RUN 并以 77 退出
+// [POS]: pandora-client-auth-00044-root-runner 的非 Linux 桩，与 main_linux.go 互斥
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (

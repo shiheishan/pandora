@@ -49,7 +49,9 @@ For a provable join, the classifier:
 Candidate fingerprints are grouped by `(tenant_id,fingerprint)`. Every member
 of a same-tenant collision becomes `unprovable_key` with no winner and no
 published trusted fingerprint. The same fingerprint in different tenants is
-allowed, matching the frozen 00045 uniqueness key.
+allowed, matching the frozen 00045 uniqueness key. ("00045" is the number
+from the CLIENT-AUTH freeze plan of that time; in the main migration series
+00045 is now the gift-card migration.)
 
 ## Root-only artifact and exact detached stdout
 

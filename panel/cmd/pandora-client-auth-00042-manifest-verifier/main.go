@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/clientauth/ca42manifest 的 Verify 与大小上限
+// [OUTPUT]: 对外提供 pandora-client-auth-00042-manifest-verifier 命令：stdin 读 manifest，校验通过向 stdout 写 JSON 回执，否则以 DENY 行与 sysexits 码退出
+// [POS]: panel/cmd 的 CLIENT-AUTH 00042 manifest 校验器，只读、fail closed；校验规则在 ca42manifest，这里只做 I/O 与退出码
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package main
 
 import (

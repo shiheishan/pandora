@@ -1,5 +1,10 @@
 //go:build linux && (amd64 || arm64)
 
+// [INPUT]: 依赖 Linux openat2/openat 与目录文件描述符，不跟随路径符号链接
+// [OUTPUT]: 对外提供 pandora-pathtrust 命令：check 校验发布物路径信任，exec 校验后按描述符执行
+// [POS]: panel/cmd 的发布物路径信任工具，只支持 Linux amd64/arm64；其他平台由 main_unsupported.go 拒绝
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // pandora-pathtrust verifies release artifacts without following pathname
 // symlinks. It is intentionally Linux-only because its security contract
 // depends on openat2(2)/openat(2), stable directory file descriptors, and
