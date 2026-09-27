@@ -133,3 +133,18 @@ func TestCollectHeartbeatMetricsOnHost(t *testing.T) {
 		t.Error("non-Linux host has no /proc and must report metrics_partial")
 	}
 }
+
+// 容量与心跳 metrics 同一口径：总量取自同一次换算，核数取自运行时。
+func TestHostCapacityMatchesHeartbeatMetrics(t *testing.T) {
+	m := HeartbeatMetrics{MemTotalMB: 4096, DiskTotalGB: 40, MemUsedMB: 1, DiskUsedGB: 1}
+	if c := capacityFrom(&m); c.CPUCores != runtime.NumCPU() || c.MemoryMB != 4096 || c.DiskGB != 40 {
+		t.Fatalf("capacity = %+v", c)
+	}
+	c := CollectHostCapacity()
+	if c.CPUCores <= 0 {
+		t.Errorf("cpu cores = %d", c.CPUCores)
+	}
+	if runtime.GOOS == "linux" && (c.MemoryMB == 0 || c.DiskGB == 0) {
+		t.Errorf("Linux host capacity has zero totals: %+v", c)
+	}
+}

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 crypto/ed25519 生成节点密钥并签 begin 与后续 enrollment 请求，依赖 heartbeat_metrics.go 的 CollectHostCapacity，依赖 signed.go 的 validateSignedServer / SaveIdentity
+// [OUTPUT]: 对外提供 EnrollmentJournal、EnrollmentEvidence、BeginEnrollment、EnrollmentStatus、CommitEnrollment、PromoteCommittedEnrollment、AbortEnrollment、LoadEnrollmentJournal、EnrollmentJournalPath
+// [POS]: pdnd/panel 的两阶段节点接入，首装产生身份的唯一入口：begin 在本地日志里先落盘再发请求，commit 前后都可续跑，提交后才把身份提升为 signed.go 读的 identity.json
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package panel
 
 import (
@@ -19,6 +24,9 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// collectEnrollmentCapacity 是 begin 请求的容量来源，测试替换成固定值。
+var collectEnrollmentCapacity = CollectHostCapacity
 
 const enrollmentBeginDomainV1 = "PANDORA-NODE-ENROLL-BEGIN-V1"
 const enrollmentRequestDomainV1 = "PANDORA-NODE-ENROLLMENT-V1"
@@ -175,12 +183,15 @@ func BeginEnrollment(ctx context.Context, opts BootstrapOptions) (*EnrollmentJou
 		runtimeToken := base64.RawURLEncoding.EncodeToString(runtimeRaw)
 		runtimeHash := sha256.Sum256([]byte(runtimeToken))
 		requestID := uuid.NewString()
+		// 容量与签名心跳同一份采集：面板在接入那一刻就有 CPU / 内存 / 磁盘，
+		// 不必等第一次心跳。只在首次生成请求时采一次，续跑重放的是同一个 body。
+		capacity := collectEnrollmentCapacity()
 		body, err := json.Marshal(map[string]any{
 			"token": opts.Token, "node_name": opts.Name, "request_id": requestID,
 			"public_key":           base64.StdEncoding.EncodeToString(pub),
 			"runtime_token_sha256": base64.StdEncoding.EncodeToString(runtimeHash[:]),
-			"agent_version":        "pandora-native", "hostname": hostname(), "cpu_cores": runtime.NumCPU(),
-			"memory_mb": 0, "disk_gb": 0, "public_ipv4": "",
+			"agent_version":        "pandora-native", "hostname": hostname(), "cpu_cores": capacity.CPUCores,
+			"memory_mb": capacity.MemoryMB, "disk_gb": capacity.DiskGB, "public_ipv4": "",
 		})
 		if err != nil {
 			return nil, err
