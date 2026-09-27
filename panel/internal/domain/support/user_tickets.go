@@ -276,12 +276,13 @@ func (s *Service) ListForUser(ctx context.Context, tenantID, userID string) ([]T
 }
 
 // GetForUser 返回工单详情。内部备注在 SQL 层就被排除。
-func (s *Service) GetForUser(ctx context.Context, tenantID, userID, ticketID string) (*Ticket, error) {
+func (s *Service) GetForUser(ctx context.Context, tenantID, userID, ticketID string) (*TicketDetail, error) {
 	// 非 uuid 与不存在同样 404：交给 SQL 会变成 500
 	if _, err := uuid.Parse(ticketID); err != nil {
 		return nil, httpx.NotFoundOrForbidden()
 	}
-	var t Ticket
+	var d TicketDetail
+	t := &d.Ticket
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
 		var orderID, orderNo *string
 		err := tx.QueryRow(ctx, `
@@ -317,7 +318,7 @@ func (s *Service) GetForUser(ctx context.Context, tenantID, userID, ticketID str
 			return err
 		}
 		defer rows.Close()
-		t.Messages = []Message{}
+		d.Messages = []Message{}
 		for rows.Next() {
 			var m Message
 			if err := rows.Scan(&m.ID, &m.AuthorKind, &m.AuthorName,
@@ -328,15 +329,15 @@ func (s *Service) GetForUser(ctx context.Context, tenantID, userID, ticketID str
 			if m.AuthorKind != "user" {
 				m.AuthorName = nil
 			}
-			t.Messages = append(t.Messages, m)
+			d.Messages = append(d.Messages, m)
 		}
-		t.MessageCount = len(t.Messages)
+		t.MessageCount = len(d.Messages)
 		return rows.Err()
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &t, nil
+	return &d, nil
 }
 
 // ReplyAsUser 追加用户回复，并把工单推回待客服处理。
