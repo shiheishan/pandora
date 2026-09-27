@@ -141,6 +141,9 @@ type HeartbeatInput struct {
 	MemoryMB             int    `json:"memory_mb"`
 	DiskGB               int    `json:"disk_gb"`
 	RuntimeStatus        string `json:"runtime_status"`
+	// Metrics 为空时面板不写 node_metrics；由 AttachHostMetrics 填
+	Metrics        *HeartbeatMetrics `json:"metrics,omitempty"`
+	MetricsPartial bool              `json:"metrics_partial,omitempty"`
 }
 
 type HeartbeatOutput struct {
