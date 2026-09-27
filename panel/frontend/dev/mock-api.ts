@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 vite 的 Plugin 与 Connect 中间件类型，依赖 node:crypto 的 randomUUID，依赖 node:http 的请求响应，依赖 ./mock/types 的上下文契约与路由匹配，依赖 ./mock/admin 与 ./mock/portal 的模块登记表，依赖 ./mock/admin/security 的 admin.writes 状态与开关切换通知，依赖 ./mock/quick-login 的令牌表
+ * [INPUT]: 依赖 vite 的 Plugin 类型，依赖 node:crypto 的 randomUUID，依赖 node:http 的请求响应，依赖 ./mock/types 的上下文契约与路由匹配，依赖 ./mock/admin 与 ./mock/portal 的模块登记表，依赖 ./mock/admin/security 的 admin.writes 状态与开关切换通知，依赖 ./mock/quick-login 的令牌表
  * [OUTPUT]: 对外提供 mockApi(app) 插件、MOCK_ACCOUNTS 演示账号
  * [POS]: panel/frontend 的开发期假后端外壳，只在 vite serve 且未设 PANDORA_API 时挂上，永不进产物：持有账号、会话、rat 与幂等表（与 Go 中间件一致：只重放 2xx，非 2xx 同 key 同请求重新执行，换请求 409），自己只答外壳接口（登录 / 退出 / me / reauth / 改密码 / SSE，门户再加注册、快捷登录消费、站点开关、外观）并守 admin.writes 只读门（与 middleware.AdminWritesGate 同一张豁免表，关闭时其余非 GET 回 503），其余按入口依次询问 mock/admin 或 mock/portal 的模块处理器
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -16,7 +16,7 @@ import { findRoute, type AnonContext, type Json, type MockApp, type MockContext,
 // ---------------------------------------------------------------------------
 // 形状以 panel/docs/redesign/api-contract.md 为准。这里只放外壳接口与共用设施：
 // 会话与 rat、reauth 窗口、幂等表、错误信封；模块接口写在 mock/<入口>/<模块>.ts，
-// 由各页面的会话各自维护。先外壳、后模块，未匹配的 v1/ 一律 404 信封。
+// 一个模块一个文件、各自维护。先外壳、后模块，未匹配的 v1/ 一律 404 信封。
 // POST /__mock/expire-reauth 让所有会话的 rat 立即过期，不必干等 15 分钟。
 // ---------------------------------------------------------------------------
 export const MOCK_ACCOUNTS = {

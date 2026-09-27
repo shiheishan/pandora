@@ -1,7 +1,7 @@
 # panel/frontend/dev/mock/portal/
 > L2 | 父级: /panel/frontend/dev/mock/CLAUDE.md
 
-门户十一个页面的假接口，一个页面一个文件、导出一个 MockModule，归门户前端会话。index.ts 的登记顺序即询问顺序，不再改动。外框顶栏读的余额、订阅、佣金、未读数按契约归属各页面，所以住在对应页面的文件里，页面会话扩充它们时外框照用。
+门户十一个页面的假接口，一个页面一个文件、导出一个 MockModule。index.ts 的登记顺序即询问顺序，不再改动。外框顶栏读的余额、订阅、佣金、未读数按契约归属各页面，所以住在对应页面的文件里，页面扩充它们时外框照用。
 
 成员清单
 index.ts: 登记表 PORTAL_MODULES

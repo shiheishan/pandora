@@ -15,7 +15,7 @@ z.config({ jitless: true })
 
 // ---------------------------------------------------------------------------
 // 错误：服务端信封 {"error":{code,message,fields?,request_id?}} 解析成 ApiError。
-// 码是 platform/httpx 的封闭列表（含第 ⑤ 步新增的 reauth_required）；另有两个
+// 码是 platform/httpx 的封闭列表（含 reauth_required）；另有两个
 // 只在前端产生的码：network_error（请求没到服务器）与 invalid_response（回来的
 // 不是约定的形状，含 nginx 错误页与 zod 校验失败）。页面按 code 分支、按 fields 标红。
 // ---------------------------------------------------------------------------

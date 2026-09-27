@@ -9,7 +9,7 @@ index.tsx: 页面组件——标签（通知带未读数）、全部已读、通
 api.ts: 数据层——站内信 schema 与查询，单条已读、全部已读
 model.ts: 纯映射——messageTab、notificationTarget
 Messages.module.css: 页面样式，取自设计稿门户-08
-messages.test.ts: 第 ⑤ 步消息的单元测试（schema、标签页、跳转目标）
+messages.test.ts: 消息的单元测试（schema、标签页、跳转目标）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

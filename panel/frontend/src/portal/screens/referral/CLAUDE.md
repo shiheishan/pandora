@@ -10,7 +10,7 @@ index.tsx: 页面组件——邀请横幅（复制链接 / 复制邀请码）、
 api.ts: 数据层——GET v1/me/invite 的 schema 与查询，转余额与申请提现的 mutation
 model.ts: 纯映射——inviteLink、headline、inviteUsage、parseWithdrawAmount（元转分与上下限）、withdrawBlock、commissionRecords（佣金 + 且订单号单列成 ref / 转入余额 − / 提现 −，冲销与驳回划掉，驳回附原因）
 Referral.module.css: 页面样式，取自设计稿门户-06（网格区域：宽屏右列佣金记录跨两行，< 640 单列）
-referral.test.ts: 第 ④ 步的单元测试（佣金与邀请 schema、横幅文案、提现金额与表单锁、记录合并与状态映射、common/intent 的复用与丢弃）
+referral.test.ts: 邀请返利的单元测试（佣金与邀请 schema、横幅文案、提现金额与表单锁、记录合并与状态映射、common/intent 的复用与丢弃）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -18,7 +18,7 @@ export const PK = ['admin', 'plans'] as const
 
 /**
  * 别的模块自己查 GET v1/plans（各收自己用得到的字段、各自一份 schema，出错范围只在那个模块）时用的键：
- * 挂在 PK 前缀下，套餐页写后 useInvalidatePlans 按前缀失效会一并刷新它们（第 4 阶段 ④）
+ * 挂在 PK 前缀下，套餐页写后 useInvalidatePlans 按前缀失效会一并刷新它们
  */
 export const planOptionsKey = (module: string) => [...PK, 'options', module] as const
 const topics = ['plans.changed'] as const

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../ui 的 Tag，依赖 ../../modules 的 Permissions，依赖 ./api 的 useSystemStatus，依赖 ./model 的 systemRows / SystemRow，依赖 ./BackupDrawer，依赖 ./parts，依赖 ./Dash.module.css
  * [OUTPUT]: 对外提供 SystemStatus
- * [POS]: 仪表盘「系统状态」面板：GET v1/system/status。总状态胶囊 + 7 行组件（components 待补·后端，未上之前只有数据库一行来自现有 database 字段）+ 待补·前端的第 8 行「数据库备份」，点开 BackupDrawer；邮件、Telegram、调度三行可点去对应模块
+ * [POS]: 仪表盘「系统状态」面板：GET v1/system/status。总状态胶囊 + 7 行组件（components 后端已实现；字段缺席时兜底为只有数据库一行，取自 database 字段）+ 待补·前端的第 8 行「数据库备份」，点开 BackupDrawer；邮件、Telegram、调度三行可点去对应模块
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'

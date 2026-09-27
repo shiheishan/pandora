@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../shell/runtime 的 useApi
  * [OUTPUT]: 对外提供 adminMeSchema、AdminMe、ME_QUERY_KEY、useAdminMe、identityLabels
- * [POS]: admin 的当前管理员身份：GET v1/me（契约后台外壳），侧栏账户块、权限判断与 reauth 状态都读它；email / display_name / roles 是待补·后端字段，按可选处理
+ * [POS]: admin 的当前管理员身份：GET v1/me（契约后台外壳），侧栏账户块、权限判断与 reauth 状态都读它；email / display_name / roles 后端已实现，schema 仍按可选、字段缺席时兜底
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useQuery } from '@tanstack/react-query'
@@ -15,7 +15,7 @@ export const adminMeSchema = z.object({
     .nullable()
     .transform((p) => p ?? []),
   reauthed: z.boolean(),
-  // 待补·后端：先按可选，后端补上即生效
+  // 后端已实现，字段缺席时兜底：仍按可选
   email: z.string().optional(),
   display_name: z.string().nullable().optional(),
   roles: z.array(z.object({ code: z.string(), name: z.string() })).optional(),

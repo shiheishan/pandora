@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖浏览器 location / history / sessionStorage（均可注入，便于测试）
+ * [INPUT]: 依赖 ../core/router 的 matchPath / parseHash，依赖浏览器 location / history / sessionStorage（均可注入，便于测试）
  * [OUTPUT]: 对外提供 INVITE_STORAGE_KEY、takeInviteFromUrl、readStoredInvite、quickLoginLink、quickLoginTokenFromHash、quickLoginTokenFromInput
  * [POS]: portal 入口页加载时的两类外来链接：邀请链接 /?invite=CODE（转大写存 sessionStorage 后抹掉查询串）与快捷登录 /#/quick-login/<token>（令牌在 hash 里，不进服务器与 nginx 日志）；账号安全页生成链接用同文件的 quickLoginLink，生成与识别同一格式
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

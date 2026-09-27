@@ -30,7 +30,7 @@ const here = (path: string) => fileURLToPath(new URL(path, import.meta.url))
 // 主题引导脚本：首帧前写好 <html data-theme>，否则深色用户每次打开都闪白。
 // CSP 禁止内联脚本，Vite 又只打包 module 脚本，所以由这个插件把它原样作为
 // 经典脚本输出到 assets/，文件名带内容哈希（webapp 对 assets/ 下发 immutable 缓存），
-// 并在 <head> 最前面注入 <script src>。
+// 并紧跟 <meta charset> 之后注入 <script src>。
 // ---------------------------------------------------------------------------
 const themeBootSource = readFileSync(here('./src/core/theme-boot.js'), 'utf8')
 export const themeBootFileName = `assets/theme-boot-${createHash('sha256')

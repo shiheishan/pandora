@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockModule / MockResult，依赖 ./billing-store 的订单 / 挂账 / 渠道 / 收入调整数据与视图，依赖 ./plans-store 的 plans，依赖 ./users 的 userStore
  * [OUTPUT]: 对外提供 billing 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「订单与收款（后台-05）」假接口，归后台前端一：订单列表（q、status 逗号多值白名单、user_id、from / to、limit / offset，R63）/ 详情 / 支付记录 / 取消（state_version CAS）/ 人工开单（grant / pending / offline，R64 / R74）/ 标记已支付、挂账列表与转入余额（R3）、渠道列表与启停（R66）、收入调整列表 / 登记 / 冲销。权限 → reauth → 幂等 scope 照 router_billing.go 与 router_dashboard.go，校验键名与文案照 Go（billing 域几处英文 message 原样保留，页面负责映射），按 DisallowUnknownFields 拒绝未知字段（apply-to-balance 例外，与后端的 json.NewDecoder 一致）
+ * [POS]: dev/mock/admin 的「订单与收款（后台-05）」假接口：订单列表（q、status 逗号多值白名单、user_id、from / to、limit / offset，R63）/ 详情 / 支付记录 / 取消（state_version CAS）/ 人工开单（grant / pending / offline，R64 / R74）/ 标记已支付、挂账列表与转入余额（R3）、渠道列表与启停（R66）、收入调整列表 / 登记 / 冲销。权限 → reauth → 幂等 scope 照 router_billing.go 与 router_dashboard.go，校验键名与文案照 Go（billing 域 message 已随 R114 改为中文），按 DisallowUnknownFields 拒绝未知字段（apply-to-balance 例外，与后端的 json.NewDecoder 一致）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -49,7 +49,7 @@ function referenceProblem(ref: string): Record<string, string> | null {
   return ref === '' || [...ref].length > 128 ? { reference: '请填写线下凭证号（银行流水号、收据编号等），最多 128 字' } : null
 }
 
-/** provider_payment_id 唯一：同一张凭证不能入账两次（另一张单用过回 409，文案后端是英文，R74） */
+/** provider_payment_id 唯一：同一张凭证不能入账两次（另一张单用过回 409，文案照 Go，R74） */
 function referenceOwner(ref: string): Order | undefined {
   return orders.find((o) => o.payments.some((p) => p.provider_payment_id === `offline:${ref}`))
 }
@@ -106,7 +106,7 @@ export const billing: MockModule = {
       ctx.send(200, orderHistory(o))
     },
 
-    // 取消：写权限 + 幂等，没挂 reauth（契约）；400 文案是 billing 域的英文原文
+    // 取消：写权限 + 幂等，没挂 reauth（契约）；400 / 409 文案照 billing 域的 Go 原文（中文，R114）
     'POST /v1/orders/:id/cancel': async (ctx) => {
       if (!ctx.requirePermission('billing.order.write')) return
       const body = await ctx.body()
