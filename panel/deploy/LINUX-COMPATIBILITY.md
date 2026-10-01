@@ -56,14 +56,19 @@ sudo env PANDORA_RELEASE_MANIFEST_SHA256='<trusted 64-hex digest>' \
 
 The installer refuses a mutable or non-root-owned release tree, verifies the
 out-of-band manifest digest and every packaged file before loading package code,
-and runs the Linux dependency preflight before writing. It serializes installs,
-stops the backup timer/service, stages the complete file set, preserves a
-verified rollback set, and restores the whole previous set if commit fails.
-Environment files and database data are never included in release archives.
-The timer remains disabled on a first install; configure and test the independent
-checkpoint hook before enabling it. This installer is only for a first install
-or a reviewed binary-only change. Any release that includes schema or writer
-contract changes must use the maintenance-window controller below.
+and runs the Linux dependency preflight before writing.
+
+It serializes installs, stops the backup timer/service, stages the complete file
+set, preserves a verified rollback set, and restores the whole previous set if
+commit fails.
+
+Environment files and database data are never included in release archives. The
+timer remains disabled on a first install; configure and test the independent
+checkpoint hook before enabling it.
+
+This installer is only for a first install or a reviewed binary-only change. Any
+release that includes schema or writer contract changes must use the
+maintenance-window controller below.
 
 ## Schema-changing production release
 
@@ -80,19 +85,24 @@ The controller verifies the release manifest (including migrations and release
 tools), copies it into a root-owned stage and verifies it again, takes an
 exclusive host lock, isolates nginx, stops `aegis-admin`, `aegis-public`, and
 the database-writing `aegis-node`, and proves their PIDs and loopback ports are
-gone before it changes the schema. It creates and validates an encrypted
-PostgreSQL backup, then
-starts the new writers behind the isolated ingress and requires both `healthz`
-and dependency-aware `readyz` before restoring traffic.
+gone before it changes the schema.
+
+It creates and validates an encrypted PostgreSQL backup, then starts the new
+writers behind the isolated ingress and requires both `healthz` and
+dependency-aware `readyz` before restoring traffic.
 
 Before migration starts, failures restore the previous binaries, migrations,
-release tools, services, and verified readiness. Once the migration command is
-attempted, automatic database downgrade is prohibited: goose may commit several
-migrations before a later one fails, so a generic `down-to` can itself leave a
-partially downgraded database. The system deliberately remains fail-closed with
-ingress and writers stopped; recovery uses the encrypted backup and the reviewed
-restore procedure. Once ingress restoration is attempted, the same prohibition
-continues because the new schema may already have served real traffic.
+release tools, services, and verified readiness.
+
+Once the migration command is attempted, automatic database downgrade is
+prohibited: goose may commit several migrations before a later one fails, so a
+generic `down-to` can itself leave a partially downgraded database.
+
+The system deliberately remains fail-closed with ingress and writers stopped;
+recovery uses the encrypted backup and the reviewed restore procedure.
+
+Once ingress restoration is attempted, the same prohibition continues because
+the new schema may already have served real traffic.
 
 Run the repository-side structural gate on Windows builders with:
 
