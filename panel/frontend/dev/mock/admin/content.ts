@@ -1,13 +1,14 @@
 /**
- * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockContext / MockModule / MockResult，依赖 ../../../src/styles/design-tokens 的 COLOR_TOKENS（内置主题的 43 个令牌）
- * [OUTPUT]: 对外提供 content 模块的假接口 MockModule
+ * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../appearance-share 的 shareActiveTheme，依赖 ../types 的 Json / MockContext / MockModule / MockResult，依赖 ../../../src/styles/design-tokens 的 COLOR_TOKENS（内置主题的 43 个令牌）
+ * [OUTPUT]: 对外提供 content 模块的假接口 MockModule 与 shareAppearance（后台假后端启动时把生效主题写给门户）
  * [POS]: dev/mock/admin 的「内容与外观（后台-08）」假接口；形状、错误码、reauth 与幂等照 api-contract.md（含 R19、R49）与 Go 的 announce.go、domain/content/service.go、appearance.go、site_settings.go：
  *        公告列表（到点的定时公告先转发布）、新建 / 编辑（全量覆盖、expected_version、撤回是终态、已发布不能退回草稿）、撤回；知识库每个版本一行、单版本含正文、保存为新版本（expected_latest_version，发布时归档同受众的旧发布版）、归档（重复归档回 already_archived）；
- *        主题只有生效的「默认 · 纸白」（主题写接口页面不调用，未模拟）；7 个插槽位（净化只模拟去掉 script / style / on* 并回 dropped，空内容 dropped 为 null）；站点时区（能被 Intl 加载的 IANA 名，拒绝空串与 Local）。按 DisallowUnknownFields 拒绝未知字段
+ *        主题：内置「默认 · 纸白」生效 + 自定义「夜海」，新建 / 编辑（create 撞已有 code 409、内置不可改、令牌与品牌按 Go 同规则逐字段 422）、激活、删除（生效中与内置 422），生效主题变化经 ../appearance-share 写给门户进程；7 个插槽位（净化只模拟去掉 script / style / on* 并回 dropped，空内容 dropped 为 null）；站点时区（能被 Intl 加载的 IANA 名，拒绝空串与 Local）。按 DisallowUnknownFields 拒绝未知字段
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import { COLOR_TOKENS } from '../../../src/styles/design-tokens.ts'
+import { shareActiveTheme } from '../appearance-share.ts'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 
 // ---------------------------------------------------------------------------
@@ -24,19 +25,20 @@ const at = (days: number, hours = 0) => new Date(Date.now() + days * 86_400_000 
 
 /** 请求体读成对象；非法 JSON、未知字段、类型不符分别按 httpx.DecodeJSON 回 400 */
 type Decoded = { ok: true; body: Json } | { ok: false; result: MockResult }
-async function decode(ctx: MockContext, shape: Record<string, 'string' | 'boolean' | 'number' | 'strings'>): Promise<Decoded> {
+async function decode(ctx: MockContext, shape: Record<string, 'string' | 'boolean' | 'number' | 'strings' | 'object'>): Promise<Decoded> {
   const bad = (message: string): Decoded => ({ ok: false, result: err(400, 'bad_request', message) })
   const body = await ctx.body()
   if (!body) return bad('请求体不是合法的 JSON')
   for (const [k, v] of Object.entries(body)) {
     const want = shape[k]
     if (!want) return bad(`请求体包含未知字段 "${k}"`)
-    const ok = want === 'strings' ? v === null || (Array.isArray(v) && v.every((x) => typeof x === 'string')) : v === null || typeof v === want
+    const ok = want === 'strings' ? v === null || (Array.isArray(v) && v.every((x) => typeof x === 'string')) : want === 'object' ? v === null || isObject(v) : v === null || typeof v === want
     if (!ok) return bad(`字段 "${k}" 类型不正确`)
   }
   return { ok: true, body }
 }
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const strs = (v: unknown) => (Array.isArray(v) ? (v as string[]) : [])
 
 /** 解析、去重、排序 uuid；有非法值返回 null */
@@ -424,7 +426,113 @@ async function archivePage(ctx: MockContext, rawId: string): Promise<MockResult>
 // 主题、插槽、站点时区（appearance.go、site_settings.go）
 // ---------------------------------------------------------------------------
 const tokenGroup = (mode: 'light' | 'dark') => Object.fromEntries(COLOR_TOKENS.map((t) => [t.name, t[mode]]))
-const PAPER = { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: tokenGroup('light'), dark: tokenGroup('dark') }, branding: { site_name: 'Pandora' }, custom_css: '' }
+interface MockTheme {
+  id: string
+  code: string
+  name: string
+  is_builtin: boolean
+  is_active: boolean
+  tokens: { light: Record<string, string>; dark: Record<string, string> }
+  branding: Record<string, string>
+  custom_css: string
+}
+// 种子：内置「默认 · 纸白」生效，另有一套自定义「夜海」演示切换（站点名不同）
+const themes: MockTheme[] = [
+  { id: randomUUID(), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: tokenGroup('light'), dark: tokenGroup('dark') }, branding: { site_name: 'Pandora' }, custom_css: '' },
+  {
+    id: randomUUID(),
+    code: 'night-sea',
+    name: '夜海',
+    is_builtin: false,
+    is_active: false,
+    tokens: {
+      light: { ...tokenGroup('light'), '--brand': '#2b6cb9', '--brand-hover': '#235a9c', '--brand-ink': '#1d4a80', '--brand-soft': '#dfeaf7', '--brand-tint': '#f1f6fc', '--bg': '#f2f5f8' },
+      dark: { ...tokenGroup('dark'), '--brand': '#5b9be4', '--brand-hover': '#79afea', '--brand-ink': '#a6c8f1', '--brand-soft': '#1b2a3d', '--brand-tint': '#141b24', '--bg': '#0f1216' },
+    },
+    branding: { site_name: '夜海加速', tagline: '一路畅通' },
+    custom_css: '',
+  },
+]
+
+// 与 Go appearance 同一套规则（tokens.go / branding.go）：错误标在 tokens.<组>.<键>、branding.<键> 上
+const TOKEN_NAMES = new Set(COLOR_TOKENS.map((t) => t.name))
+const TOKEN_BAD = /[;{}<>\\]/
+const LOGO = /^data:(image\/png|image\/jpeg|image\/webp|image\/svg\+xml);base64,([A-Za-z0-9+/]+={0,2})$/
+
+function checkTheme(body: Json, fields: Record<string, string>): { tokens: MockTheme['tokens']; branding: Record<string, string> } {
+  const tokens = { light: {}, dark: {} } as MockTheme['tokens']
+  const rawTokens = body.tokens ?? {}
+  if (!isObject(rawTokens)) fields.tokens = '必须是 {"light":{…},"dark":{…}} 形状的对象'
+  else
+    for (const [group, vals] of Object.entries(rawTokens)) {
+      if (group !== 'light' && group !== 'dark') {
+        fields.tokens = `只允许 light 与 dark 两组，不认识：${group}`
+        continue
+      }
+      if (!isObject(vals)) {
+        fields.tokens = `${group} 必须是对象`
+        continue
+      }
+      for (const [k, v] of Object.entries(vals)) {
+        const value = typeof v === 'string' ? v.trim() : ''
+        if (!TOKEN_NAMES.has(k)) fields.tokens = `${group}.${k} 不是设计稿的变量名`
+        else if (!value || value.length > 200 || TOKEN_BAD.test(value)) fields[`tokens.${group}.${k}`] = '取值不合法：须为 200 字符以内的非空字符串，不含 ; { } < > \\'
+        else tokens[group][k] = value
+      }
+    }
+  const branding: Record<string, string> = {}
+  const rawBranding = body.branding ?? {}
+  if (!isObject(rawBranding)) {
+    fields.branding = '必须是 JSON 对象'
+    return { tokens, branding }
+  }
+  for (const k of Object.keys(rawBranding)) if (!['site_name', 'tagline', 'logo'].includes(k)) fields.branding = `不认识的品牌字段：${k}（只允许站点名称、标语与 Logo）`
+  const site = str(rawBranding.site_name).trim()
+  if (!site) fields['branding.site_name'] = '站点名称必填：门户标题、邮件里的站点名与发件人名都取自生效主题'
+  else if (runes(site) > 40) fields['branding.site_name'] = '站点名称最多 40 个字'
+  else branding.site_name = site
+  const tagline = str(rawBranding.tagline).trim()
+  if (runes(tagline) > 80) fields['branding.tagline'] = '标语最多 80 个字'
+  else if (tagline) branding.tagline = tagline
+  const logo = str(rawBranding.logo).trim()
+  if (logo) {
+    const m = LOGO.exec(logo)
+    if (!logo.startsWith('data:')) fields['branding.logo'] = 'Logo 只能是上传的图片（data:image/… 形式），门户不加载外链图片'
+    else if (!m) fields['branding.logo'] = 'Logo 只支持 PNG、JPEG、WebP 或 SVG'
+    else if (Buffer.from(m[2]!, 'base64').length > 48 * 1024) fields['branding.logo'] = 'Logo 不能超过 48KB'
+    else branding.logo = logo
+  }
+  return { tokens, branding }
+}
+
+/** 门户读路径（Service.Public）：令牌与品牌已经过保存校验，custom_css 不下发 */
+export function shareAppearance(): void {
+  const active = themes.find((t) => t.is_active)
+  shareActiveTheme(active ? { ...active, custom_css: '' } : null)
+}
+
+async function saveTheme(ctx: MockContext): Promise<MockResult> {
+  const decoded = await decode(ctx, { code: 'string', name: 'string', create: 'boolean', tokens: 'object', branding: 'object', custom_css: 'string' })
+  if (!decoded.ok) return decoded.result
+  const body = decoded.body
+  const code = str(body.code).trim().toLowerCase()
+  const name = str(body.name).trim()
+  const fields: Record<string, string> = {}
+  if (!code) fields.code = '主题标识必填'
+  else if (!/^[a-z][a-z0-9_-]{1,38}$/.test(code)) fields.code = '主题标识须以小写字母开头，只含小写字母、数字、- 与 _，共 2–39 个字符'
+  if (!name || runes(name) > 60) fields.name = '主题名称必填，最多 60 个字'
+  if (str(body.custom_css).trim()) fields.custom_css = '自定义 CSS 本期停用，请留空'
+  const { tokens, branding } = checkTheme(body, fields)
+  if (Object.keys(fields).length > 0) return invalid(fields)
+  const existing = themes.find((t) => t.code === code)
+  if (existing?.is_builtin) return err(422, 'validation_failed', '内置主题不能直接改，请用另一个标识另存为自定义主题')
+  if (existing && body.create === true) return err(409, 'conflict', '主题标识已被占用', { code: `主题标识「${code}」已被占用，换一个` })
+  if (existing) Object.assign(existing, { name, tokens, branding })
+  else themes.push({ id: randomUUID(), code, name, is_builtin: false, is_active: false, tokens, branding, custom_css: '' })
+  themes.sort((a, b) => Number(b.is_builtin) - Number(a.is_builtin) || a.code.localeCompare(b.code))
+  if (existing?.is_active) shareAppearance()
+  return { status: 200, body: { saved: true, dropped: [] } }
+}
 
 const SLOT_CATALOG: ReadonlyArray<readonly [string, string, string]> = [
   ['portal.login.notice', '登录页提示', '登录框上方，未登录访客可见'],
@@ -522,7 +630,27 @@ export const content: MockModule = {
 
     'GET /v1/themes': (ctx) => {
       if (!ctx.requirePermission('platform.appearance.read')) return
-      ctx.send(200, { themes: [PAPER] })
+      ctx.send(200, { themes })
+    },
+    'POST /v1/themes': async (ctx) => {
+      if (!ctx.requirePermission('platform.appearance.write') || !ctx.requireReauth()) return
+      await ctx.idempotent('appearance_theme_save', () => saveTheme(ctx))
+    },
+    // 激活与删除：reauth、无幂等（router_appearance.go）；处理器不读请求体
+    'POST /v1/themes/:code/activate': (ctx) => {
+      if (!ctx.requirePermission('platform.appearance.write') || !ctx.requireReauth()) return
+      const target = themes.find((t) => t.code === ctx.params.code)
+      if (!target) return reply(ctx, err(404, 'not_found', '主题不存在'))
+      for (const t of themes) t.is_active = t === target
+      shareAppearance()
+      ctx.send(200, { activated: true })
+    },
+    'DELETE /v1/themes/:code': (ctx) => {
+      if (!ctx.requirePermission('platform.appearance.write') || !ctx.requireReauth()) return
+      const i = themes.findIndex((t) => t.code === ctx.params.code && !t.is_builtin && !t.is_active)
+      if (i < 0) return reply(ctx, err(422, 'validation_failed', '删不掉：内置主题和正在生效的主题都不能删'))
+      themes.splice(i, 1)
+      ctx.send(200, { deleted: true })
     },
     'GET /v1/slots': (ctx) => {
       if (!ctx.requirePermission('platform.appearance.read')) return

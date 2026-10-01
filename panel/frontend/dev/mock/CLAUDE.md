@@ -6,6 +6,7 @@
 
 成员清单
 types.ts: 处理器契约——MockUser、AnonContext / MockContext（请求体、send / sendRaw / fail、路径参数、三个守卫、otherSessions / revokeSession）、MockResult 可带 raw（CSV 等非 JSON 响应，幂等重放与后端一致只回 Content-Type 与 Cache-Control）、MockModule { anonymous?, routes? }（键为「METHOD /v1/路径」，:name 匹配一段），matchPattern / findRoute
+appearance-share.ts: 跨进程的生效主题：dev:admin 与 dev:portal 是两个 vite 进程，后台假接口改了生效主题就写进 node_modules/.cache/pandora-mock/appearance.json，门户外壳的 GET v1/appearance 每次读它（后台激活、门户刷新即生效）；后台假后端启动时按内存初值重写
 quick-login.ts: 快捷登录令牌表，签发在 portal/account.ts、消费在外壳的 POST v1/auth/quick-login，60 秒一次性，绑定签发会话、同会话重新生成作废旧令牌
 admin/: 后台十个模块的假接口，与 src/admin/screens 一一对应；见 admin/CLAUDE.md
 portal/: 门户十一个页面的假接口，与 src/portal/screens 一一对应；见 portal/CLAUDE.md

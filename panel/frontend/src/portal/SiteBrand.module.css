@@ -1,0 +1,35 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 的字重、字距与颜色令牌
+ * [OUTPUT]: 对外提供 SiteBrand.tsx 用到的类名
+ * [POS]: portal/SiteBrand 的样式：与 shell/Logo 同一排布（图标 + 字标，间距 9），标语在下方居中、caption 字号
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.img {
+  display: block;
+  flex: none;
+  width: auto;
+}
+
+.word {
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-wordmark);
+  white-space: nowrap;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.tagline {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}

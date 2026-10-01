@@ -119,7 +119,8 @@ func TestPaperThemePG18(t *testing.T) {
 	}
 	if _, err := svc.SaveTheme(ctx, tenant, SaveThemeInput{
 		Code: "night-ink", Name: "夜墨", ActorID: "00000000-0000-7000-8000-00000000abcd",
-		Tokens: json.RawMessage(`{"dark":{"--brand":"#e46e52"}}`)}); err != nil {
+		Tokens:   json.RawMessage(`{"dark":{"--brand":"#e46e52"}}`),
+		Branding: json.RawMessage(`{"site_name":"夜墨"}`)}); err != nil {
 		t.Fatalf("save custom theme: %v", err)
 	}
 

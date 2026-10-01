@@ -1,0 +1,466 @@
+/**
+ * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
+ * [OUTPUT]: 对外提供主题卡片操作区、主题编辑抽屉（左栏表单 | 右栏吸顶预览）与预览门户的类名
+ * [POS]: admin/screens/content 的主题样式（从 content.module.css 分出，那里留着卡片网格与插槽）。预览区 .preview 的子树只用 43 个颜色令牌本身（--bg、--brand…），不用 roles.css 的派生角色变量（--accent、--link…）：
+ *        派生变量在 :root 上已经算好，预览容器上改 --brand 影响不到它们；颜色经 ThemeEditor 写在 .preview 的 style 上，作用域就是这一棵子树
+ * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ */
+
+/* ---- 卡片 ---- */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.newCard {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-card);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.newCard:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+/* ---- 编辑器 ---- */
+.editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: var(--space-20);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+  min-width: 0;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.blockHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.blockTitle {
+  font-weight: var(--fw-semibold);
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+}
+
+.note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+.logo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.logoLabel {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+}
+
+.logoRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.logoBox {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.logoBox img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.upload {
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.upload:hover {
+  border-color: var(--border-hover);
+}
+
+.upload:has(+ .fileInput:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.sectionTitle {
+  margin-bottom: 4px;
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+}
+
+.token {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 220px);
+  gap: var(--space-12);
+  align-items: start;
+}
+
+.chip {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background-image: linear-gradient(45deg, var(--surface-3) 25%, transparent 25%, transparent 75%, var(--surface-3) 75%);
+  background-size: 8px 8px;
+}
+
+label.chip {
+  cursor: pointer;
+}
+
+.chipShadow {
+  background: var(--surface);
+}
+
+.picker {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.tokenText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tokenName {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.tokenUse {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewPane {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+/* ---- 预览：只用 43 个颜色令牌 ---- */
+.preview {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.pvHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--hdr);
+}
+
+.pvDot {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--text);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--brand);
+}
+
+.pvLogo {
+  max-width: 22px;
+  max-height: 22px;
+}
+
+.pvSite {
+  font-weight: var(--fw-semibold);
+}
+
+.pvTagline {
+  color: var(--text-3);
+}
+
+.pvSpacer {
+  flex: 1;
+}
+
+.pvNav {
+  color: var(--text-2);
+}
+
+.pvBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.pvBanner {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+}
+
+.pvCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.pvTitle {
+  font-weight: var(--fw-semibold);
+}
+
+.pvText {
+  color: var(--text-2);
+}
+
+.pvMeta {
+  color: var(--text-3);
+}
+
+.pvTrack {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--brand-soft);
+}
+
+.pvFill {
+  display: block;
+  width: 62%;
+  height: 100%;
+  background: var(--brand);
+}
+
+.pvRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pvPrimary,
+.pvSecondary,
+.pvDangerBtn,
+.pvInk {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.pvPrimary {
+  background: var(--brand);
+  color: var(--on-brand);
+}
+
+.pvSecondary {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+}
+
+.pvLink {
+  color: var(--brand);
+}
+
+.pvTag {
+  padding: 1px 6px;
+  border: 1px solid;
+  border-radius: var(--radius-tag);
+}
+
+.pvOk {
+  border-color: var(--ok-line);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.pvWarn {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.pvDanger {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.pvInfo {
+  border-color: var(--info-line);
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.pvDangerBtn {
+  margin-left: auto;
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.pvToast {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: var(--shadow);
+}
+
+.pvToastDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--toast-ok);
+}
+
+.pvAdmin {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  border-top: 1px solid var(--border);
+}
+
+.pvSidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 8px;
+  background: var(--sidebar);
+  color: var(--sidebar-text-2);
+}
+
+.pvSideBrand {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  color: var(--sidebar-text);
+  font-weight: var(--fw-semibold);
+}
+
+.pvSideDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--sidebar-brand);
+}
+
+.pvSideMark {
+  color: var(--sidebar-text-3);
+  font-size: 10px;
+}
+
+.pvSideItem {
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.pvSideActive {
+  background: var(--sidebar-active);
+  color: var(--sidebar-text);
+}
+
+.pvAdminMain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface-2);
+}
+
+.pvInk {
+  background: var(--text);
+  color: var(--on-ink);
+}

@@ -34,6 +34,7 @@ func (h *handlers) listThemes(w http.ResponseWriter, r *http.Request) {
 type saveThemeReq struct {
 	Code      string          `json:"code"`
 	Name      string          `json:"name"`
+	Create    bool            `json:"create"`
 	Tokens    json.RawMessage `json:"tokens"`
 	Branding  json.RawMessage `json:"branding"`
 	CustomCSS string          `json:"custom_css"`
@@ -48,7 +49,7 @@ func (h *handlers) saveTheme(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFrom(r.Context())
 	notes, err := h.d.Appearance.SaveTheme(r.Context(), httpx.TenantIDFrom(r.Context()),
 		appearance.SaveThemeInput{
-			Code: req.Code, Name: req.Name, Tokens: req.Tokens,
+			Code: req.Code, Name: req.Name, Create: req.Create, Tokens: req.Tokens,
 			Branding: req.Branding, CustomCSS: req.CustomCSS, ActorID: p.UserID,
 		})
 	if err != nil {
