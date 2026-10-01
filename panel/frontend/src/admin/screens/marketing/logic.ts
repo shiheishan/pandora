@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 formatMoney，依赖 ./schemas 的类型
- * [OUTPUT]: 对外提供营销页的纯函数：金额 / 百分比输入换算、优惠文案、券与卡码与提现的状态映射、礼品卡面额与兑换内容、批次显示名、兑换率，以及三张表单（优惠券、礼品卡模板、生码、佣金设置）到请求体的构建与前端校验
+ * [OUTPUT]: 对外提供营销页的纯函数：金额 / 百分比输入换算、优惠文案、券与卡码与提现的状态映射、礼品卡面额与兑换内容、批次显示名、卡码筛选查询串与掩码报表文件名、兑换率，以及三张表单（优惠券、礼品卡模板、生码、佣金设置）到请求体的构建与前端校验
  * [POS]: admin/screens/marketing 的逻辑层，组件只负责渲染与交互；映射全部取自 api-contract.md 后台-06 条目的「设计 / 映射」行，marketing.test.ts 逐条守住
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -240,6 +240,17 @@ export function batchLabel(b: Pick<Batch, 'id' | 'created_at'>): string {
   return `GB-${pad(t.getMonth() + 1)}${pad(t.getDate())}-${b.id.slice(0, 4).toUpperCase()}`
 }
 export const batchFileName = (id: string) => `gift-codes-${id.slice(0, 8)}.csv`
+
+/**
+ * 卡码列表的筛选：列表与「导出当前筛选」（GET v1/gift-cards/codes/export，掩码报表）共用一份，
+ * 空状态不进查询串——与后端 CodeFilter 同口径，导出的就是列表里看到的那些行
+ */
+export type CodeStatusFilter = '' | 'unused' | 'used' | 'disabled' | 'expired'
+export function codeFilterQuery(batchId: string, status: CodeStatusFilter): { batch_id: string; status?: string } {
+  return status ? { batch_id: batchId, status } : { batch_id: batchId }
+}
+/** 掩码报表的兜底文件名（服务端的 Content-Disposition 优先） */
+export const codesReportFileName = (batchId: string) => `gift-codes-report-${batchId.slice(0, 8)}.csv`
 
 export const CODE_STATUS: Readonly<Record<string, { label: string; tone: Tone }>> = {
   unused: { label: '可用', tone: 'ok' },

@@ -98,7 +98,7 @@ func TestGiftCardBatchesPG18(t *testing.T) {
 		}
 	}
 
-	codes, total, err := svc.ListCodes(ctx, tenantID, ListCodesInput{BatchID: gen.BatchID})
+	codes, total, err := svc.ListCodes(ctx, tenantID, ListCodesInput{CodeFilter: CodeFilter{BatchID: gen.BatchID}})
 	if err != nil || total != 6 || len(codes) != 6 {
 		t.Fatalf("list batch codes total=%d len=%d err=%v", total, len(codes), err)
 	}
