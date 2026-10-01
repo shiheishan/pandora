@@ -27,7 +27,9 @@ hash.
 1. **Generate.** `panel/deploy/build-release.sh` builds both
    `pandora-native-linux-{amd64,arm64}` into the bundle's `pdnd-dist/` with
    `-X main.buildVersion=$VERSION`, where `$VERSION` is `PANDORA_VERSION` (or
-   `git describe`). It then writes `deploy/release-artifact.env` with
+   `git describe`).
+
+   It then writes `deploy/release-artifact.env` with
    `PANDORA_NATIVE_RELEASE_VERSION=$VERSION` and the SHA-256 of the two files it
    just packaged. The file is listed in the bundle's `SHA256SUMS`, so the
    out-of-band manifest digest covers it. It deliberately does not set
@@ -36,11 +38,13 @@ hash.
    `install-linux-binaries.sh`, which verifies `SHA256SUMS` against the
    out-of-band digest and installs `release-artifact.env` to
    `/opt/aegispanel/deploy/release-artifact.env` in the same transaction as the
-   binaries (rolled back together on failure). `release-stop-the-world.sh`
-   re-checks the two digests against the bundle's `pdnd-dist/` and places the
-   file at the same path during a schema-changing release; it does not
-   install systemd units, so a host must have received the current
-   `aegis-node.service` through `install.sh` at least once.
+   binaries (rolled back together on failure).
+
+   `release-stop-the-world.sh` re-checks the two digests against the bundle's
+   `pdnd-dist/` and places the file at the same path during a schema-changing
+   release; it does not install systemd units, so a host must have received the
+   current `aegis-node.service` through `install.sh` at least once.
+
    `install-native.sh` copies it next to its `.env` under `/opt/pandora`.
 3. **Load.** `deploy/systemd/aegis-node.service` loads
    `EnvironmentFile=/opt/aegispanel/deploy/.env` and then

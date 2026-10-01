@@ -7,12 +7,14 @@ success receipt always contains `authorization=NONE`.
 ## Security boundary
 
 The runner requires Linux `amd64` or `arm64`, EUID 0, `openat2`, `/proc`, and a
-root-owned trust root whose complete ancestor chain is not group/world
-writable. The runner, classifier and verifier must be regular root-owned
-`0500` files with one hard link. Immutable inputs and 32-byte keys must be
-root-owned `0400` files with one hard link. The staging and publication roots
-must already exist beneath the trust root as separate root-owned `0700`
-directories on the same filesystem.
+root-owned trust root whose complete ancestor chain is not group/world writable.
+
+The runner, classifier and verifier must be regular root-owned `0500` files with
+one hard link. Immutable inputs and 32-byte keys must be root-owned `0400` files
+with one hard link.
+
+The staging and publication roots must already exist beneath the trust root as
+separate root-owned `0700` directories on the same filesystem.
 
 Configuration contains only paths, SHA-256 identities and bounded durations.
 Key bytes are never accepted through argv or the environment. The two key
@@ -71,11 +73,15 @@ recursive pathname deletion.
 
 An existing publication is accepted only when it is an exact five-file bundle
 whose artifact hash/length plus detached, expectations, signed release manifest
-and receipt bytes all match. Before an idempotent success receipt, the runner
-also fsyncs the existing bundle and publication parent so a retry repairs a
-previous rename-success/parent-fsync-failure window. A crash before publication
-leaves a private orphan; a crash after the directory rename leaves a complete
-verified bundle that must still pass this retry durability barrier.
+and receipt bytes all match.
+
+Before an idempotent success receipt, the runner also fsyncs the existing bundle
+and publication parent so a retry repairs a previous
+rename-success/parent-fsync-failure window.
+
+A crash before publication leaves a private orphan; a crash after the directory
+rename leaves a complete verified bundle that must still pass this retry
+durability barrier.
 
 ## Verification
 
