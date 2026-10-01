@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockModule / MockResult，依赖 ./billing-store 的订单 / 挂账 / 渠道 / 收入调整数据与视图，依赖 ./plans-store 的 plans，依赖 ./users 的 userStore
  * [OUTPUT]: 对外提供 billing 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「订单与收款（后台-05）」假接口：订单列表（q、status 逗号多值白名单、user_id、from / to、limit / offset，R63）/ 详情 / 支付记录 / 取消（state_version CAS）/ 人工开单（grant / pending / offline，R64 / R74）/ 标记已支付、挂账列表与转入余额（R3）、渠道列表与启停（R66）、收入调整列表 / 登记 / 冲销。权限 → reauth → 幂等 scope 照 router_billing.go 与 router_dashboard.go，校验键名与文案照 Go（billing 域 message 已随 R114 改为中文），按 DisallowUnknownFields 拒绝未知字段（apply-to-balance 例外，与后端的 json.NewDecoder 一致）
+ * [POS]: dev/mock/admin 的「订单与收款（后台-05）」假接口：订单列表（q、status 逗号多值白名单、user_id、from / to、limit / offset，R63）/ 详情 / 支付记录 / 取消（state_version CAS）/ 人工开单（grant / pending / offline，R64 / R74）/ 标记已支付 / 向渠道查单（PAY-009，写权限 + 幂等不挂 reauth，假渠道规则确定）、挂账列表与转入余额（R3）、渠道列表与启停（R66）、收入调整列表 / 登记 / 冲销。权限 → reauth → 幂等 scope 照 router_billing.go 与 router_dashboard.go，校验键名与文案照 Go（billing 域 message 已随 R114 改为中文），按 DisallowUnknownFields 拒绝未知字段（apply-to-balance 例外，与后端的 json.NewDecoder 一致）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -12,6 +12,7 @@ import {
   err,
   findOrder,
   fulfil,
+  intentFor,
   invalid,
   isUuid,
   lateCases,
@@ -264,6 +265,47 @@ export const billing: MockModule = {
         if (o.kind === 'topup') o.status = 'paid'
         else fulfil(o, at)
         return { status: 200, body: { processed: true, already_handled: false, payment_id: p.id, subscription_id: o.subscription_id ?? '', ledger_txn_id: randomUUID() } }
+      })
+    },
+
+    // 向渠道查单（PAY-009）：写权限 → 幂等，不挂 reauth（与取消同门槛，router_billing.go）。
+    // 假渠道的规则是确定的：走过 epay_backup 的单渠道查询失败（503），待支付超过 1 小时的单
+    // 像回调丢了、渠道答已付（补记：待支付的结清开通，已取消 / 过期的进挂账），其余答未付；
+    // 从没发起过支付回 409。文案与 Go 的 billing/payment_query.go 一致
+    'POST /v1/orders/:id/query': async (ctx) => {
+      if (!ctx.requirePermission('billing.order.write')) return
+      await ctx.idempotent('admin_order_query', () => {
+        const o = findOrder(ctx.params.id)
+        if (!o) return NOT_FOUND
+        const last = o.intents.at(-1)
+        if (!last) return err(409, 'conflict', '该订单从未发起过支付，无法向渠道查单')
+        if (o.intents.some((i) => i.provider_code === 'epay_backup')) return err(503, 'service_unavailable', '渠道查单失败，请稍后再试')
+        const view = (channel: 'paid' | 'unpaid', reconciled: boolean, already: boolean, quarantine?: string) => ({
+          status: 200,
+          body: { order_id: o.id, order_no: o.order_no, provider_code: last.provider_code, channel_status: channel, reconciled, already_recorded: already, ...(quarantine ? { quarantine_kind: quarantine } : {}), order_status: o.status },
+        })
+        const pending = o.status === 'pending_payment' || o.status === 'processing'
+        const ref = `${last.provider_code}:${o.order_no}`
+        if (o.payments.some((p) => p.provider_payment_id === ref)) return view('paid', false, true)
+        const lostCallback = Date.now() - Date.parse(o.created_at) > 60 * 60_000
+        if (!lostCallback) return view('unpaid', false, false)
+        const at = new Date().toISOString()
+        if (!pending) {
+          if (o.status !== 'cancelled' && o.status !== 'expired') return view('unpaid', false, false)
+          const p = paymentFor(o, last.provider_code, null, at, ref)
+          o.payments.push(p)
+          lateCases.unshift({ id: randomUUID(), case_kind: 'released_order', status: 'suspense', amount: o.payable_amount, currency: o.currency, order: o, received_at: at })
+          return view('paid', true, false, 'released_order')
+        }
+        const active = o.intents.find((i) => ['created', 'requires_action', 'processing'].includes(i.status))
+        const intent = active ?? intentFor(o, last.provider_code, 'succeeded', at)
+        if (active) Object.assign(active, { status: 'succeeded', updated_at: at })
+        else o.intents.push(intent)
+        o.payments.push(paymentFor(o, last.provider_code, intent, at, ref))
+        Object.assign(o, { paid_amount: o.payable_amount, paid_at: at, state_version: o.state_version + 2, updated_at: at })
+        if (o.kind === 'topup') o.status = 'paid'
+        else fulfil(o, at)
+        return view('paid', true, false)
       })
     },
 

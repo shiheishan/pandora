@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule / MockContext，依赖 ./catalog 的目录与支付方式，依赖 ./fixtures 的 portalState / gate，依赖 ./billing 的校验、下单、履约与变更折算
- * [OUTPUT]: 对外提供 checkout 模块的假接口 MockModule
- * [POS]: dev/mock/portal 的「确认订单（门户-03 结账）」假接口，归门户前端；形状、错误码与幂等照 api-contract.md（含修订 R8、R35–R37、R61）：支付方式、新购（order_create）、续费（subscription_renewal_create，门户-02 条目但由结账页调用）、变更套餐试算与下单（subscription_change_plan_create）、发起支付；另挂 dev 专用的假收银台（匿名）：GET v1/__mock/cashier 出一页 HTML，「模拟支付成功」履约后 302 回 return_url
+ * [OUTPUT]: 对外提供 checkout 模块的假接口 MockModule、channelIntent（订单最近的支付意图与渠道是否已收款）
+ * [POS]: dev/mock/portal 的「确认订单（门户-03 结账）」假接口，归门户前端；形状、错误码与幂等照 api-contract.md（含修订 R8、R35–R37、R61）：支付方式、新购（order_create）、续费（subscription_renewal_create，门户-02 条目但由结账页调用）、变更套餐试算与下单（subscription_change_plan_create）、发起支付；另挂 dev 专用的假收银台（匿名）：GET v1/__mock/cashier 出一页 HTML，「模拟支付成功」履约后 302 回 return_url，「模拟支付成功但回调丢失」只记下渠道已收款（channelIntent 供订单模块的查单读）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -38,8 +38,24 @@ function planAndPrice(planId: unknown, priceId: unknown) {
   return { plan, price }
 }
 
-// 收银台意图：intent → 订单与回跳地址；只在内存里
-const intents = new Map<string, { userId: string; orderId: string; returnUrl: string; provider: string; method: string }>()
+// 收银台意图：intent → 订单与回跳地址；只在内存里。channelPaid 是「渠道收到了钱、回调却丢了」：
+// 假收银台的「模拟支付成功但回调丢失」只置它不履约，留给「我已支付，刷新状态」去查单补记
+interface MockIntent {
+  userId: string
+  orderId: string
+  returnUrl: string
+  provider: string
+  method: string
+  channelPaid?: boolean
+}
+const intents = new Map<string, MockIntent>()
+
+/** 订单最近发起的支付意图（POST v1/orders/{id}/query 的假渠道用），没有发起过支付时为 undefined */
+export function channelIntent(userId: string, orderId: string): MockIntent | undefined {
+  let last: MockIntent | undefined
+  for (const it of intents.values()) if (it.userId === userId && it.orderId === orderId) last = it
+  return last
+}
 
 export const checkout: MockModule = {
   anonymous: {
@@ -48,12 +64,13 @@ export const checkout: MockModule = {
       if (!intent) return ctx.sendRaw(404, { contentType: 'text/html; charset=utf-8', text: '<p>收银台链接已失效</p>' })
       const order = portalState(intent.userId).orders.find((o) => o.id === intent.orderId)
       const done = `v1/__mock/cashier/complete?intent=${encodeURIComponent(ctx.query.get('intent')!)}`
+      const lost = `v1/__mock/cashier/lost-callback?intent=${encodeURIComponent(ctx.query.get('intent')!)}`
       ctx.sendRaw(200, {
         contentType: 'text/html; charset=utf-8',
         text: `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>假收银台</title>
 <body style="font-family:sans-serif;max-width:360px;margin:48px auto;padding:0 16px;line-height:1.8">
 <h3>假收银台（仅开发环境）</h3><p>订单 ${order?.order_no ?? '?'} · ¥${((order?.payable_amount ?? 0) / 100).toFixed(2)} · ${intent.method}</p>
-<p><a href="/${done}">模拟支付成功</a></p><p><a href="${intent.returnUrl}">取消并返回商户</a></p></body>`,
+<p><a href="/${done}">模拟支付成功</a></p><p><a href="/${lost}">模拟支付成功但回调丢失</a></p><p><a href="${intent.returnUrl}">取消并返回商户</a></p></body>`,
       })
     },
     'GET /v1/__mock/cashier/complete': (ctx) => {
@@ -62,6 +79,14 @@ export const checkout: MockModule = {
       const state = portalState(intent.userId)
       const order = state.orders.find((o) => o.id === intent.orderId)
       if (order && order.status === 'pending_payment') fulfill(state, order, { provider: intent.provider, method: intent.method })
+      ctx.res.statusCode = 302
+      ctx.res.setHeader('Location', intent.returnUrl)
+      ctx.res.end()
+    },
+    'GET /v1/__mock/cashier/lost-callback': (ctx) => {
+      const intent = intents.get(ctx.query.get('intent') ?? '')
+      if (!intent) return ctx.sendRaw(404, { contentType: 'text/html; charset=utf-8', text: '<p>收银台链接已失效</p>' })
+      intent.channelPaid = true
       ctx.res.statusCode = 302
       ctx.res.setHeader('Location', intent.returnUrl)
       ctx.res.end()
