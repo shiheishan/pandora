@@ -4,10 +4,12 @@
 
 Pandora NativeCore accepts VLESS `command=UDP` on every stream transport that
 already carries a VLESS request (TCP, WebSocket, HTTP Upgrade, gRPC, and XHTTP
-stream/packet modes). The request header selects the destination; subsequent
-datagrams use the native VLESS two-byte length framing and are routed through
-the same DataPlane policy and per-user traffic accounting as TCP. No
-compatibility kernel is started for this path.
+stream/packet modes).
+
+The request header selects the destination; subsequent datagrams use the native
+VLESS two-byte length framing and are routed through the same DataPlane policy
+and per-user traffic accounting as TCP. No compatibility kernel is started for
+this path.
 
 NativeCore also accepts Trojan UDP ASSOCIATE and forwards each address-bearing
 datagram using the Trojan length/CRLF framing, with per-destination DataPlane
@@ -168,32 +170,38 @@ systemctl show pandora-native -p ActiveState -p SubState
 
 ## External XHTTP/REALITY boundary
 
-The NativeCore implementation includes a native REALITY-over-H3 path and its
-own loopback probe. That probe is not a third-party interoperability result.
+The NativeCore implementation includes a native REALITY-over-H3 path and its own
+loopback probe. That probe is not a third-party interoperability result.
+
 The `interop_external` suite also contains independent sing-box (VLESS + TLS +
-Vision), Juicity and Naive client gates. Each gate requires an explicitly pinned external binary and a matching
-SHA-256 value; a missing binary is skipped and a missing or mismatched digest
-fails the test, so neither can be reported as an interoperability pass.
+Vision), Juicity and Naive client gates. Each gate requires an explicitly pinned
+external binary and a matching SHA-256 value; a missing binary is skipped and a
+missing or mismatched digest fails the test, so neither can be reported as an
+interoperability pass.
+
 The external interop gate therefore reports TLS + XHTTP/H3 and REALITY +
-XHTTP/H2 separately. Until an independent client completes a REALITY +
-XHTTP/H3 round trip, the capability matrix must continue to expose
+XHTTP/H2 separately. Until an independent client completes a REALITY + XHTTP/H3
+round trip, the capability matrix must continue to expose
 `external-reality-xhttp-h3-unverified`; release tooling must not silently
 delegate that combination to Xray or sing-box.
 
-The current pinned Xray dependency (`github.com/xtls/xray-core`)
-provides an auditable reason for this boundary: its XHTTP dialer selects
-HTTP/2 whenever a REALITY configuration is present, while its HTTP/3 branch
-is selected only for ordinary TLS with a single `h3` ALPN. Consequently, the
-checked-in Xray gates prove REALITY + XHTTP/H2 and TLS + XHTTP/H3 as separate
-combinations; they do not prove REALITY + XHTTP/H3. This is an explicit
-interop limitation, not a NativeCore fallback or a silently delegated
-compatibility path.
+The current pinned Xray dependency (`github.com/xtls/xray-core`) provides an
+auditable reason for this boundary: its XHTTP dialer selects HTTP/2 whenever a
+REALITY configuration is present, while its HTTP/3 branch is selected only for
+ordinary TLS with a single `h3` ALPN.
+
+Consequently, the checked-in Xray gates prove REALITY + XHTTP/H2 and TLS +
+XHTTP/H3 as separate combinations; they do not prove REALITY + XHTTP/H3. This is
+an explicit interop limitation, not a NativeCore fallback or a silently
+delegated compatibility path.
 
 The legacy REALITY `Show` field survives only in the forked `internal/reality`
-config struct; the panel-delivered node config does not decode it, so it
-cannot be switched on from the panel. Native production handshakes do not write per-flight debug traces or
-derived authentication material to stdout, so even that fork field
-cannot create an unbounded log stream or disclose client ShortIDs.
+config struct; the panel-delivered node config does not decode it, so it cannot
+be switched on from the panel.
+
+Native production handshakes do not write per-flight debug traces or derived
+authentication material to stdout, so even that fork field cannot create an
+unbounded log stream or disclose client ShortIDs.
 
 用 `pandora-native --version` 验证发布版本；用 `systemctl stop pandora-native` 后检查端口释放，再执行回滚。
 
