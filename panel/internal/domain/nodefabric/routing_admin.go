@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/audit"
@@ -97,17 +98,27 @@ func checkRouteRefs(routes []RoutingRule, visible ...map[string]bool) error {
 }
 
 //------------------------------------------------------------------------------
-// 范围读写：nodeID 为空即全局
+// 范围读写：全局（两个 ID 都空）/ 路由组 / 节点三选一，与 00096 的 CHECK 同构
 //------------------------------------------------------------------------------
+
+// routingScope 是 node_outbounds / node_routes 的一个范围。
+type routingScope struct{ NodeID, GroupID string }
+
+var globalScope = routingScope{}
+
+// scopeWhere 是按范围过滤的谓词，占位符固定为 $1 租户、$2 节点、$3 组。
+// IS NOT DISTINCT FROM 让空 ID 对上 NULL，一条 SQL 管三种范围。
+const scopeWhere = `tenant_id = $1 AND node_id IS NOT DISTINCT FROM nullif($2, '')::uuid
+		   AND group_id IS NOT DISTINCT FROM nullif($3, '')::uuid`
 
 // loadScopeRoutingTx 按存储顺序读一个范围的出站与全部规则（含停用的）。
 // jsonb 列取库里的文本形态，同一份存储值每次读出来都一样（全局 revision 依赖这点）。
-func loadScopeRoutingTx(ctx context.Context, tx pgx.Tx, tenantID, nodeID string) ([]RoutingOutbound, []RoutingRule, error) {
+func loadScopeRoutingTx(ctx context.Context, tx pgx.Tx, tenantID string, sc routingScope) ([]RoutingOutbound, []RoutingRule, error) {
 	outs := []RoutingOutbound{}
 	rows, err := tx.Query(ctx, `
 		SELECT tag, type, settings::text FROM node_outbounds
-		 WHERE tenant_id = $1 AND node_id IS NOT DISTINCT FROM nullif($2, '')::uuid
-		 ORDER BY sort_order, tag`, tenantID, nodeID)
+		 WHERE `+scopeWhere+`
+		 ORDER BY sort_order, tag`, tenantID, sc.NodeID, sc.GroupID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -129,8 +140,8 @@ func loadScopeRoutingTx(ctx context.Context, tx pgx.Tx, tenantID, nodeID string)
 	rrows, err := tx.Query(ctx, `
 		SELECT priority, matcher::text, outbound_tag, enabled, coalesce(note, '')
 		  FROM node_routes
-		 WHERE tenant_id = $1 AND node_id IS NOT DISTINCT FROM nullif($2, '')::uuid
-		 ORDER BY priority, created_at`, tenantID, nodeID)
+		 WHERE `+scopeWhere+`
+		 ORDER BY priority, created_at`, tenantID, sc.NodeID, sc.GroupID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -152,14 +163,12 @@ func loadScopeRoutingTx(ctx context.Context, tx pgx.Tx, tenantID, nodeID string)
 // 全量而非增量：分流规则是有顺序的整体，增量接口会让「调整顺序」
 // 这种最常见的操作变成一串难以原子化的增删。整体替换在一个事务里完成，
 // 要么全成要么全不成，也不会出现规则指向刚被删掉的出站这种中间态。
-func replaceScopeRoutingTx(ctx context.Context, tx pgx.Tx, tenantID, nodeID string,
+func replaceScopeRoutingTx(ctx context.Context, tx pgx.Tx, tenantID string, sc routingScope,
 	outbounds []RoutingOutbound, routes []RoutingRule) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM node_routes
-		WHERE tenant_id = $1 AND node_id IS NOT DISTINCT FROM nullif($2, '')::uuid`, tenantID, nodeID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM node_routes WHERE `+scopeWhere, tenantID, sc.NodeID, sc.GroupID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM node_outbounds
-		WHERE tenant_id = $1 AND node_id IS NOT DISTINCT FROM nullif($2, '')::uuid`, tenantID, nodeID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM node_outbounds WHERE `+scopeWhere, tenantID, sc.NodeID, sc.GroupID); err != nil {
 		return err
 	}
 	for i, o := range outbounds {
@@ -168,9 +177,9 @@ func replaceScopeRoutingTx(ctx context.Context, tx pgx.Tx, tenantID, nodeID stri
 			settings = json.RawMessage("{}")
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO node_outbounds (tenant_id, node_id, tag, type, settings, sort_order)
-			VALUES ($1, nullif($2, '')::uuid, $3, $4, $5, $6)`,
-			tenantID, nodeID, o.Tag, o.Type, settings, i*10); err != nil {
+			INSERT INTO node_outbounds (tenant_id, node_id, group_id, tag, type, settings, sort_order)
+			VALUES ($1, nullif($2, '')::uuid, nullif($3, '')::uuid, $4, $5, $6, $7)`,
+			tenantID, sc.NodeID, sc.GroupID, o.Tag, o.Type, settings, i*10); err != nil {
 			return err
 		}
 	}
@@ -184,31 +193,13 @@ func replaceScopeRoutingTx(ctx context.Context, tx pgx.Tx, tenantID, nodeID stri
 			pri = (i + 1) * 10
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO node_routes (tenant_id, node_id, priority, matcher, outbound_tag, enabled, note)
-			VALUES ($1, nullif($2, '')::uuid, $3, $4, $5, $6, nullif($7, ''))`,
-			tenantID, nodeID, pri, matcher, x.OutboundTag, x.Enabled, x.Note); err != nil {
+			INSERT INTO node_routes (tenant_id, node_id, group_id, priority, matcher, outbound_tag, enabled, note)
+			VALUES ($1, nullif($2, '')::uuid, nullif($3, '')::uuid, $4, $5, $6, $7, nullif($8, ''))`,
+			tenantID, sc.NodeID, sc.GroupID, pri, matcher, x.OutboundTag, x.Enabled, x.Note); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// loadOutboundTagsTx 取一个范围的出站 tag（小写）。
-func loadOutboundTagsTx(ctx context.Context, tx pgx.Tx, tenantID, nodeID string) (map[string]bool, error) {
-	rows, err := tx.Query(ctx, `SELECT lower(tag) FROM node_outbounds
-		WHERE tenant_id = $1 AND node_id IS NOT DISTINCT FROM nullif($2, '')::uuid`, tenantID, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	tags, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]bool, len(tags))
-	for _, t := range tags {
-		out[t] = true
-	}
-	return out, nil
 }
 
 //------------------------------------------------------------------------------
@@ -226,7 +217,7 @@ type GlobalRouting struct {
 // loadGlobalRoutingTx 读全局出站与规则，并算出 revision：按存储顺序的规范 JSON 的
 // sha256，空集也有值。
 func loadGlobalRoutingTx(ctx context.Context, tx pgx.Tx, tenantID string) (*GlobalRouting, error) {
-	outs, routes, err := loadScopeRoutingTx(ctx, tx, tenantID, "")
+	outs, routes, err := loadScopeRoutingTx(ctx, tx, tenantID, globalScope)
 	if err != nil {
 		return nil, err
 	}
@@ -305,37 +296,15 @@ func (s *Service) SetGlobalRouting(ctx context.Context, in SetGlobalRoutingInput
 			return &httpx.Error{Code: httpx.CodeConflict, Message: "全局路由已被其他管理员修改，请刷新后重试",
 				Fields: map[string]string{"expected_revision": "current=" + current.Revision}}
 		}
-		// 要删掉的全局出站如果还被某个节点的私有规则引用，拒绝并列出节点
-		keep := map[string]bool{}
-		for _, o := range in.Outbounds {
-			keep[strings.ToLower(o.Tag)] = true
+		// 要删掉的全局出站如果还被组或节点的规则引用，拒绝并列出引用方
+		before, err := danglingRefsTx(ctx, tx, in.TenantID)
+		if err != nil {
+			return err
 		}
-		var removed []string
-		for _, o := range current.Outbounds {
-			if !keep[strings.ToLower(o.Tag)] {
-				removed = append(removed, strings.ToLower(o.Tag))
-			}
+		if err := replaceScopeRoutingTx(ctx, tx, in.TenantID, globalScope, in.Outbounds, in.Routes); err != nil {
+			return err
 		}
-		if len(removed) > 0 {
-			var users []string
-			if err := tx.QueryRow(ctx, `
-				SELECT coalesce(array_agg(DISTINCT coalesce(n.display_name, n.name) ORDER BY coalesce(n.display_name, n.name)), '{}')
-				  FROM node_routes nr
-				  JOIN nodes n ON n.tenant_id = nr.tenant_id AND n.id = nr.node_id
-				 WHERE nr.tenant_id = $1 AND nr.node_id IS NOT NULL
-				   AND lower(nr.outbound_tag) = ANY($2::text[])
-				   AND NOT EXISTS (SELECT 1 FROM node_outbounds o WHERE o.tenant_id = nr.tenant_id
-				                    AND o.node_id = nr.node_id AND lower(o.tag) = lower(nr.outbound_tag))`,
-				in.TenantID, removed).Scan(&users); err != nil {
-				return err
-			}
-			if len(users) > 0 {
-				return &httpx.Error{Code: httpx.CodeConflict,
-					Message: "要删除的全局出站仍被节点规则引用：" + strings.Join(users, "、")}
-			}
-		}
-
-		if err := replaceScopeRoutingTx(ctx, tx, in.TenantID, "", in.Outbounds, in.Routes); err != nil {
+		if err := refuseNewDanglingTx(ctx, tx, in.TenantID, before, "要删除的全局出站仍被规则引用"); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
@@ -373,17 +342,23 @@ func (s *Service) SetGlobalRouting(ctx context.Context, in SetGlobalRoutingInput
 // 单节点路由（GET / PUT v1/nodes/{id}/routing）
 //------------------------------------------------------------------------------
 
-// NodeRouting 是某节点私有的出站与规则，RowVersion 为节点行版本。
+// NodeRouting 是某节点私有的出站与规则与它所在的路由组（按生效顺序），RowVersion 为节点行版本。
 type NodeRouting struct {
 	RowVersion int64             `json:"row_version"`
+	Groups     []RouteGroupRef   `json:"groups"`
 	Outbounds  []RoutingOutbound `json:"outbounds"`
 	Routes     []RoutingRule     `json:"routes"`
 }
 
-// GetNodeRouting 读取某节点的私有出站与分流。
+// GetNodeRouting 读取某节点的私有出站与分流，以及它所在的路由组。
 func (s *Service) GetNodeRouting(ctx context.Context, tenantID, nodeID string) (*NodeRouting, error) {
+	parsed, err := uuid.Parse(nodeID)
+	if err != nil {
+		return nil, httpx.NotFoundOrForbidden()
+	}
+	nodeID = parsed.String()
 	out := &NodeRouting{}
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT row_version FROM nodes
 			WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, nodeID).Scan(&out.RowVersion); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -392,7 +367,10 @@ func (s *Service) GetNodeRouting(ctx context.Context, tenantID, nodeID string) (
 			return err
 		}
 		var err error
-		out.Outbounds, out.Routes, err = loadScopeRoutingTx(ctx, tx, tenantID, nodeID)
+		if out.Groups, err = nodeRouteGroupsTx(ctx, tx, tenantID, nodeID); err != nil {
+			return err
+		}
+		out.Outbounds, out.Routes, err = loadScopeRoutingTx(ctx, tx, tenantID, routingScope{NodeID: nodeID})
 		return err
 	})
 	if err != nil {
@@ -419,7 +397,15 @@ func (s *Service) SetNodeRouting(ctx context.Context, in SetNodeRoutingInput) (i
 	if in.RowVersion <= 0 {
 		return 0, httpx.Invalid(map[string]string{"row_version": "必须提供正整数版本号"})
 	}
+	if _, err := uuid.Parse(in.NodeID); err != nil {
+		return 0, httpx.NotFoundOrForbidden()
+	}
 	err = s.pool.InTx(ctx, db.Scope{TenantID: in.TenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
+		// 引用校验要读所在组的出站：与改成员、改组内出站的写用同一把发布锁串行，
+		// 否则并发移出组后本节点规则会指向已看不见的出站
+		if err := lockLegacyConfigRelease(ctx, tx, in.TenantID); err != nil {
+			return err
+		}
 		// 空替换也必须落在真实节点上；锁节点行让路由替换与节点生命周期、移动串行
 		var currentVersion int64
 		if err := tx.QueryRow(ctx, `SELECT row_version FROM nodes
@@ -433,17 +419,17 @@ func (s *Service) SetNodeRouting(ctx context.Context, in SetNodeRoutingInput) (i
 			return &httpx.Error{Code: httpx.CodeConflict, Message: "节点已被其他管理员修改，请刷新后重试",
 				Fields: map[string]string{"row_version": fmt.Sprintf("current=%d", currentVersion)}}
 		}
-		// 规则可以指向 direct/block、本次提交的私有出站，也可以指向全局出站
-		// （node_id IS NULL）：下发时 LoadRouting 本来就把两者合在一起。
+		// 规则可以指向 direct/block、本次提交的私有出站，也可以指向本节点看得见的
+		// 全局出站与所在路由组的出站：下发时本来就把这几层合在一起。
 		// 原先只认前两类，单节点规则没法用「US-LAX-01」这种公共中转（缺陷 18）
-		globalTags, err := loadOutboundTagsTx(ctx, tx, in.TenantID, "")
+		visible, err := visibleOutboundTagsTx(ctx, tx, in.TenantID, in.NodeID)
 		if err != nil {
 			return err
 		}
-		if err := checkRouteRefs(in.Routes, tags, globalTags); err != nil {
+		if err := checkRouteRefs(in.Routes, tags, visible); err != nil {
 			return err
 		}
-		if err := replaceScopeRoutingTx(ctx, tx, in.TenantID, in.NodeID, in.Outbounds, in.Routes); err != nil {
+		if err := replaceScopeRoutingTx(ctx, tx, in.TenantID, routingScope{NodeID: in.NodeID}, in.Outbounds, in.Routes); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE nodes SET row_version=row_version+1,

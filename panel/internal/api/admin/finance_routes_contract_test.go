@@ -33,7 +33,7 @@ func loadRouteProtections(t *testing.T) map[string]routeProtection {
 			return true
 		}
 		method := strings.ToUpper(selector.Sel.Name)
-		if method != "GET" && method != "POST" && method != "PUT" && method != "DELETE" {
+		if method != "GET" && method != "POST" && method != "PUT" && method != "PATCH" && method != "DELETE" {
 			return true
 		}
 		path, ok := couponString(call.Args[0])

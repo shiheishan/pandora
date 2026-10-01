@@ -28,7 +28,7 @@ func TestNodeSetRoutingNotifiesNodeAfterCommit(t *testing.T) {
 
 // 路由处理器只做解析、守卫、调用服务与写响应：SQL 与事务在 nodefabric。
 func TestRoutingHandlersRunNoSQL(t *testing.T) {
-	for _, file := range []string{"node_routing.go"} {
+	for _, file := range []string{"node_routing.go", "route_groups.go"} {
 		src, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)

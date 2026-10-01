@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 node_admin.go 的 AdminNode、输入类型、校验与 lockServerCapacity，依赖 config_publish.go 的 lockLegacyConfigRelease / syncLegacyDesiredConfigVersion，依赖 platform 的 audit/db/httpx
 // [OUTPUT]: 对外提供 Service 的 CloneAdminNode、MoveAdminNode、ReorderAdminNodes
-// [POS]: domain/nodefabric 后台节点的摆放：从 node_admin.go 拆出。复制在发布锁下物化当前适用配置，移动与排序带 row_version 乐观锁并同事务审计
+// [POS]: domain/nodefabric 后台节点的摆放：从 node_admin.go 拆出。复制在发布锁下物化当前适用配置（带路由复制时私有出站、规则与所在路由组成员一起复制），移动与排序带 row_version 乐观锁并同事务审计
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -108,6 +108,12 @@ func (s *Service) CloneAdminNode(ctx context.Context, tenantID, id string, in Cl
 			if _, err := tx.Exec(ctx, `INSERT INTO node_routes
 				(tenant_id,node_id,priority,matcher,outbound_tag,enabled,note)
 				SELECT tenant_id,$3::uuid,priority,matcher,outbound_tag,enabled,note FROM node_routes
+				WHERE tenant_id=$1 AND node_id=$2::uuid`, tenantID, id, cloneID); err != nil {
+				return err
+			}
+			// 规则可能指向所在路由组的出站：副本跟着进同样的组，否则复制来的规则会悬空
+			if _, err := tx.Exec(ctx, `INSERT INTO route_group_members (tenant_id,group_id,node_id)
+				SELECT tenant_id,group_id,$3::uuid FROM route_group_members
 				WHERE tenant_id=$1 AND node_id=$2::uuid`, tenantID, id, cloneID); err != nil {
 				return err
 			}

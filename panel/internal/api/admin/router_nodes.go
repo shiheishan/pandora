@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
-// [OUTPUT]: 对外提供 registerNodePoolRoutes、registerNodeRoutes、nodeBatchStatusIdempotencyScope
-// [POS]: api/admin 路由表的「节点分组与套餐绑定、节点、服务器、令牌签发、身份吊销、配置发布、路由」段，由 NewRouter 按原注册顺序调用；处理器在 pools.go / node_admin.go / server.go / handlers.go
+// [OUTPUT]: 对外提供 registerNodePoolRoutes、registerNodeRoutes（末尾挂 registerRouteGroupRoutes）、nodeBatchStatusIdempotencyScope
+// [POS]: api/admin 路由表的「节点分组与套餐绑定、节点、服务器、令牌签发、身份吊销、配置发布、路由、路由组」段，由 NewRouter 按原注册顺序调用；处理器在 pools.go / node_admin.go / server.go / handlers.go / node_routing.go / route_groups.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -166,4 +166,44 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "node_server_token_issue", d.Log),
 	).Post("/nodes/{id}/server-token", h.nodeIssueServerToken)
+	registerRouteGroupRoutes(r, d, h)
+}
+
+// registerRouteGroupRoutes 是路由组（00096）的路由表，门槛照现有路由写操作：
+// 读挂 node.read；影响多个节点的写（改组内路由、改成员、删组、改组序）与全局发布同级，
+// 重认证 + 幂等；新建空组不影响节点，只要幂等；节点侧改所在组只影响一个节点，
+// 与单节点路由 PUT 同级，只要发布权限（行版本防并发覆盖）。
+func registerRouteGroupRoutes(r chi.Router, d Deps, h *handlers) {
+	r.With(middleware.RequirePermission("node.read", d.Log)).
+		Get("/route-groups", h.listRouteGroups)
+	r.With(
+		middleware.RequirePermission("node.config.publish", d.Log),
+		middleware.Idempotency(d.Pool, "route_group_create", d.Log),
+	).Post("/route-groups", h.createRouteGroup)
+	r.With(
+		middleware.RequirePermission("node.config.publish", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "route_group_update", d.Log),
+	).Patch("/route-groups/{id}", h.updateRouteGroup)
+	r.With(
+		middleware.RequirePermission("node.config.publish", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "route_group_delete", d.Log),
+	).Delete("/route-groups/{id}", h.deleteRouteGroup)
+	r.With(middleware.RequirePermission("node.read", d.Log)).
+		Get("/route-groups/{id}/routing", h.getRouteGroupRouting)
+	r.With(
+		middleware.RequirePermission("node.config.publish", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "route_group_routing_publish", d.Log),
+	).Put("/route-groups/{id}/routing", h.setRouteGroupRouting)
+	r.With(
+		middleware.RequirePermission("node.config.publish", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "route_group_members_update", d.Log),
+	).Put("/route-groups/{id}/members", h.setRouteGroupMembers)
+	r.With(middleware.RequirePermission("node.config.publish", d.Log)).
+		Put("/nodes/{id}/route-groups", h.setNodeRouteGroups)
+	r.With(middleware.RequirePermission("node.read", d.Log)).
+		Get("/nodes/{id}/routing/effective", h.nodeEffectiveRouting)
 }

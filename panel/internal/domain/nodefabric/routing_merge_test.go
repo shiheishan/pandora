@@ -58,3 +58,43 @@ func TestMergeRoutingEmpty(t *testing.T) {
 		t.Fatalf("empty layers must merge to nil, got %v %v", outs, routes)
 	}
 }
+
+// 三层：规则 节点 → 组（按组序）→ 全局；出站 全局 → 组（后排先铺、先排覆盖）→ 节点，同 tag 保位覆盖
+func TestMergeRoutingWithGroups(t *testing.T) {
+	layers := []RoutingLayer{
+		{Scope: "node", Outbounds: []NodeOutbound{ob("relay", "vless")}, Routes: []NodeRoute{rt("relay")}},
+		{Scope: "group", GroupID: "g1", GroupName: "香港", Outbounds: []NodeOutbound{ob("unlock", "trojan"), ob("hk", "socks")},
+			Routes: []NodeRoute{rt("unlock")}},
+		{Scope: "group", GroupID: "g2", GroupName: "日本", Outbounds: []NodeOutbound{ob("unlock", "http"), ob("jp", "socks")},
+			Routes: []NodeRoute{rt("jp")}},
+		{Scope: "global", Outbounds: []NodeOutbound{ob("relay", "socks"), ob("unlock", "shadowsocks"), ob("pub", "http")},
+			Routes: []NodeRoute{rt("pub"), rt("block")}},
+	}
+	outs, routes := MergeRouting(layers)
+	want := []string{"relay:vless", "unlock:trojan", "pub:http", "jp:socks", "hk:socks"}
+	if got := tagsOf(outs); !reflect.DeepEqual(got, want) {
+		t.Fatalf("outbounds = %v, want %v", got, want)
+	}
+	if got, want := routeTags(routes), []string{"relay", "unlock", "jp", "pub", "block"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("routes = %v, want %v", got, want)
+	}
+
+	// 带来源的合并：胜出的出站与每条规则都能追溯到层
+	m := mergeRoutingLayers(layers)
+	src := map[string]string{}
+	for _, o := range m.outbounds {
+		src[o.Tag] = layers[o.layer].Scope + "/" + layers[o.layer].GroupName
+	}
+	for tag, want := range map[string]string{"relay": "node/", "unlock": "group/香港", "pub": "global/", "jp": "group/日本", "hk": "group/香港"} {
+		if src[tag] != want {
+			t.Errorf("outbound %s source = %s, want %s", tag, src[tag], want)
+		}
+	}
+	var routeLayers []int
+	for _, r := range m.routes {
+		routeLayers = append(routeLayers, r.layer)
+	}
+	if !reflect.DeepEqual(routeLayers, []int{0, 1, 2, 3, 3}) {
+		t.Fatalf("route layers = %v", routeLayers)
+	}
+}
