@@ -11,7 +11,8 @@ config_delivery.go: 旧版配置签发 FetchConfig（全局 → 池 → 节点�
 config_publish.go: 旧版配置发布 PublishConfig：锁序为 node-config-release 发布锁 → 目标池 / 节点行 FOR SHARE → 受影响节点行 → 全租户版本分配 → 取代旧层 → 写新层；lockLegacyConfigRelease / syncLegacyDesiredConfigVersion 与接入、后台建节点、退役、上线共用
 enrollment.go: 两阶段接入 Begin/Commit：先占用令牌并落不可用的候选凭据，提交时才激活身份与 server_token（签发记录重置为无签发人）；提交比对 SetReleaseBinding 注入的发布绑定（产物摘要与版本），生产缺失即拒，未注入的 Service 一律拒
 uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写审计、记 server_token_issued_at/by、拒绝已退出服务的节点）、用户下发（只给套餐绑定了节点所在池的订阅，无池节点不下发任何人；池限定用户组时只给名单内组的用户，谓词 PoolAdmitsUserSQL 与订阅下载共用，R104；套餐用完但流量包有剩余的订阅继续下发）、在线与运行状态上报（在线数窗口按租户设置，DeviceWindowMinutes 为可选值，PurgeStaleAlive 截止 70 分钟，R103）
-uniproxy_config.go: UniProxy 配置组装与 ETag（LoadRouting 与 effective_release_service 的 loadEffectiveRoutingTx 同一口径：节点私有规则在前、全局规则在后），路由匹配条件翻成节点端 qnode 形状
+uniproxy_config.go: UniProxy 配置组装与 ETag（LoadRouting 只开事务，合并交给 routing_merge.go），路由匹配条件翻成节点端 qnode 形状
+routing_merge.go: 生效路由的唯一口径：loadNodeRoutingTx 按范围读层、MergeRouting 合并（层按优先级从高到低：规则按层顺序拼接，出站逆序铺开、同 tag 就地覆盖），UniProxy 下发、长连接推送与有效发布物三处共用
 uniproxy_traffic.go: 流量上报：按用户排序逐个记账，扣量先吃套餐本周期额度、再按先到先扣吃用户流量包（D-E-1），先锁配额行再锁流量包；逐用户记账委托 usage_daily.go
 usage_daily.go: 流量上报的单用户记账 chargeReportEntry：同一事务里扣量（chargeTraffic）并累加 subscription_usage_daily 当日行（00072，重试报文两边都不记）；UsageLocation / UsageDay 是按日流量唯一的日界口径（用户时区 → 租户时区 → UTC；用户为默认 UTC 时视同未设、跟随站点时区（R50）；内嵌 time/tzdata），subscription 的读接口共用
 node_admin.go: 后台节点新建、读取与 PATCH，协议白名单与稳定协议 SQL（stableProtocolTypes 必须留在本文件，协议对齐门按文件名读）；PATCH 的 protocol_config 整体替换，但请求里缺席的敏感键经 protocol_secrets 补回（R78）；country_code（00082）只在此写、只进管理端响应（保留规则 3）

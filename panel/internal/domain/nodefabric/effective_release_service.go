@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 routing_merge.go 的 loadNodeRoutingTx、uniproxy_config.go 的 BuildNodeConfig、effective_release_codec.go 的签名字段，依赖 platform/crypto 验旧版层签名
+// [OUTPUT]: 对外提供 Service 的 FetchEffectiveConfig；包内 lockEffectiveReleaseNodes、applyEffectiveLayersTx
+// [POS]: domain/nodefabric 的有效发布物生成：持节点行锁按 config_source_generation 物化不可变发布物，路由经 routing_merge.go 与 UniProxy 下发同一口径，旧版配置层按 全局 → 池 → 节点 叠加
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package nodefabric
 
 import (
@@ -110,7 +115,7 @@ func (s *Service) FetchEffectiveConfig(ctx context.Context, tenantID, nodeID str
 			return existingErr
 		}
 
-		outs, routes, err := loadEffectiveRoutingTx(ctx, tx, tenantID, nodeID)
+		outs, routes, err := loadNodeRoutingTx(ctx, tx, tenantID, nodeID)
 		if err != nil {
 			return err
 		}
@@ -242,52 +247,6 @@ func (s *Service) signEffectiveRelease(tenantID, nodeID, releaseID string, gener
 		ContentSHA256: fields.ContentHash, Hash: fields.ContentHash, SourceManifest: manifest,
 		SourceManifestSHA256: fields.SourceManifestHash, KeyID: keyID, IssuedAt: issued,
 		ExpiresAt: expires, Signature: signature}, nil
-}
-
-func loadEffectiveRoutingTx(ctx context.Context, tx pgx.Tx, tenantID, nodeID string) ([]NodeOutbound, []NodeRoute, error) {
-	var outs []NodeOutbound
-	rows, err := tx.Query(ctx, `SELECT tag,type,settings,(node_id IS NOT NULL) FROM node_outbounds
-		WHERE tenant_id=$1 AND (node_id IS NULL OR node_id=$2::uuid) ORDER BY (node_id IS NOT NULL),sort_order,tag`, tenantID, nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	idx := map[string]int{}
-	for rows.Next() {
-		var o NodeOutbound
-		var scoped bool
-		if err := rows.Scan(&o.Tag, &o.Type, &o.Settings, &scoped); err != nil {
-			rows.Close()
-			return nil, nil, err
-		}
-		if at, ok := idx[o.Tag]; ok {
-			outs[at] = o
-		} else {
-			idx[o.Tag] = len(outs)
-			outs = append(outs, o)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, nil, err
-	}
-	rows.Close()
-	var routes []NodeRoute
-	// 生效规则 = 节点私有规则在前、全局规则在后（节点规则覆盖全局）；与 LoadRouting 同一口径
-	rrows, err := tx.Query(ctx, `SELECT matcher,outbound_tag FROM node_routes
-		WHERE tenant_id=$1 AND (node_id=$2::uuid OR node_id IS NULL) AND enabled
-		ORDER BY (node_id IS NULL),priority,created_at`, tenantID, nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rrows.Close()
-	for rrows.Next() {
-		var r NodeRoute
-		if err := rrows.Scan(&r.Matcher, &r.OutboundTag); err != nil {
-			return nil, nil, err
-		}
-		routes = append(routes, r)
-	}
-	return outs, routes, rrows.Err()
 }
 
 func lockEffectiveReleaseNodes(ctx context.Context, tx pgx.Tx, tenantID, scope, scopeRef string) error {

@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 uniproxy.go 的 ServingNode，依赖 platform/db 读 node_outbounds / node_routes
+// [INPUT]: 依赖 uniproxy.go 的 ServingNode，依赖 routing_merge.go 的 loadNodeRoutingTx，依赖 platform/db 开事务
 // [OUTPUT]: 对外提供 NodeConfigResponse、NodeOutbound、NodeRoute、Service 的 LoadRouting、BuildNodeConfig、ValidateRoutingMatcher
-// [POS]: domain/nodefabric 的 UniProxy 配置组装（GET /api/v1/server/UniProxy/config）：从 uniproxy.go 拆出。LoadRouting 与 effective_release_service 的 loadEffectiveRoutingTx 同一口径（节点私有规则在前、全局规则在后）；BuildNodeConfig 产出配置字节与 ETag，路由匹配条件翻成节点端 qnode 形状
+// [POS]: domain/nodefabric 的 UniProxy 配置组装（GET /api/v1/server/UniProxy/config）：从 uniproxy.go 拆出。LoadRouting 只开事务、合并口径在 routing_merge.go（与有效发布物共用）；BuildNodeConfig 产出配置字节与 ETag，路由匹配条件翻成节点端 qnode 形状
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -89,7 +89,7 @@ type qnodeOutbound struct {
 	Settings json.RawMessage `json:"settings"`
 }
 
-// LoadRouting 取出该节点可用的出站与分流规则。
+// LoadRouting 取出该节点生效的出站与分流规则，口径见 routing_merge.go。
 //
 // 出站取「全局 + 本节点」两份：大多数出站（直连、拒绝、一条公共中转）
 // 本来就该全局共享，逐节点复制只会在改的时候漏掉几台。
@@ -98,56 +98,10 @@ type qnodeOutbound struct {
 func (s *Service) LoadRouting(ctx context.Context, tenantID, nodeID string) ([]NodeOutbound, []NodeRoute, error) {
 	var outs []NodeOutbound
 	var routes []NodeRoute
-
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT tag, type, settings, (node_id IS NOT NULL) AS scoped
-			  FROM node_outbounds
-			 WHERE tenant_id = $1 AND (node_id IS NULL OR node_id = $2::uuid)
-			 ORDER BY scoped, sort_order, tag`, tenantID, nodeID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		// 先全局后私有，同 tag 后者覆盖前者
-		idx := make(map[string]int)
-		for rows.Next() {
-			var o NodeOutbound
-			var scoped bool
-			if err := rows.Scan(&o.Tag, &o.Type, &o.Settings, &scoped); err != nil {
-				return err
-			}
-			if at, dup := idx[o.Tag]; dup {
-				outs[at] = o
-				continue
-			}
-			idx[o.Tag] = len(outs)
-			outs = append(outs, o)
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-
-		// 节点私有规则在前、全局规则在后：节点规则覆盖全局，私有兜底规则会遮住
-		// 全局规则（后台编辑器提示）。与 loadEffectiveRoutingTx 同一口径
-		rrows, err := tx.Query(ctx, `
-			SELECT matcher, outbound_tag
-			  FROM node_routes
-			 WHERE tenant_id = $1 AND (node_id = $2::uuid OR node_id IS NULL) AND enabled
-			 ORDER BY (node_id IS NULL), priority, created_at`, tenantID, nodeID)
-		if err != nil {
-			return err
-		}
-		defer rrows.Close()
-		for rrows.Next() {
-			var r NodeRoute
-			if err := rrows.Scan(&r.Matcher, &r.OutboundTag); err != nil {
-				return err
-			}
-			routes = append(routes, r)
-		}
-		return rrows.Err()
+		var err error
+		outs, routes, err = loadNodeRoutingTx(ctx, tx, tenantID, nodeID)
+		return err
 	})
 	return outs, routes, err
 }
