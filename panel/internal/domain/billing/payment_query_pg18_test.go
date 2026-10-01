@@ -61,7 +61,7 @@ func TestPaymentQueryPG18(t *testing.T) {
 	payments.Factory().RegisterAdapter("demo_hmac",
 		func(payment.ProviderRecord) (payment.Provider, error) { return stub, nil })
 
-	must := func(sql string, args ...any) {
+	must := func(t *testing.T, sql string, args ...any) {
 		t.Helper()
 		if _, err := admin.Exec(ctx, sql, args...); err != nil {
 			t.Fatalf("fixture: %v\nSQL: %s", err, sql)
@@ -85,18 +85,18 @@ func TestPaymentQueryPG18(t *testing.T) {
 		return status
 	}
 	// 每单一个新买家：套餐有每人限购，待支付单也占着限购预留
-	newBuyer := func(label string) string {
+	newBuyer := func(t *testing.T, label string) string {
 		t.Helper()
 		id := uuid.NewString()
-		must(`INSERT INTO users(id,tenant_id,email,display_name,status)
+		must(t, `INSERT INTO users(id,tenant_id,email,display_name,status)
 			VALUES($1,$2,$3,'Payment Query Buyer','active')`,
 			id, fx.tenant, "pq-"+label+"-"+id[:8]+"@example.test")
 		return id
 	}
 	type pendingOrder struct{ id, no, buyer string }
-	newOrder := func(label string, withIntent bool) pendingOrder {
+	newOrder := func(t *testing.T, label string, withIntent bool) pendingOrder {
 		t.Helper()
-		buyer := newBuyer(label)
+		buyer := newBuyer(t, label)
 		claim := orderReleasePG18Claim(t, ctx, admin, fx.tenant, buyer, CheckoutIdempotencyScope, "pq-"+label)
 		order, err := service.CreateOrder(ctx, fx.tenant, CreateOrderInput{
 			UserID: buyer, PlanID: fx.plan, PriceID: fx.price, Claim: claim,
@@ -136,7 +136,7 @@ func TestPaymentQueryPG18(t *testing.T) {
 	}
 
 	t.Run("paid order is reconciled once and a late callback is recognised", func(t *testing.T) {
-		o := newOrder("reconcile", true)
+		o := newOrder(t, "reconcile", true)
 		ref := "pq-trade-reconcile-" + fx.suffix
 		stub.answer(o.no, paid(ref, 1000, "CNY"), nil)
 		before := notifiedCount.Load()
@@ -176,7 +176,7 @@ func TestPaymentQueryPG18(t *testing.T) {
 	})
 
 	t.Run("callback first then query is not recorded again", func(t *testing.T) {
-		o := newOrder("callback-first", true)
+		o := newOrder(t, "callback-first", true)
 		ref := "pq-trade-callback-first-" + fx.suffix
 		if out, err := service.HandlePaymentWebhook(ctx, fx.tenant, PaymentWebhookInput{
 			ProviderCode: fx.providerCode, ProviderEventID: ref + ":TRADE_SUCCESS",
@@ -197,7 +197,7 @@ func TestPaymentQueryPG18(t *testing.T) {
 	})
 
 	t.Run("cancelled order found paid is quarantined, not fulfilled", func(t *testing.T) {
-		o := newOrder("cancelled", true)
+		o := newOrder(t, "cancelled", true)
 		if _, err := service.CancelOrder(ctx, fx.tenant, o.buyer, o.id); err != nil {
 			t.Fatalf("cancel: %v", err)
 		}
@@ -217,7 +217,7 @@ func TestPaymentQueryPG18(t *testing.T) {
 	})
 
 	t.Run("amount or currency mismatch is rejected and nothing is recorded", func(t *testing.T) {
-		o := newOrder("mismatch", true)
+		o := newOrder(t, "mismatch", true)
 		for _, res := range []*payment.QueryResult{
 			paid("pq-trade-short-"+fx.suffix, 999, "CNY"),
 			paid("pq-trade-usd-"+fx.suffix, 1000, "USD"),
@@ -238,7 +238,7 @@ func TestPaymentQueryPG18(t *testing.T) {
 	})
 
 	t.Run("unpaid, not found and channel failure leave the order alone", func(t *testing.T) {
-		o := newOrder("unpaid", true)
+		o := newOrder(t, "unpaid", true)
 		stub.answer(o.no, nil, nil)
 		if res, err := query(o); err != nil || res.ChannelStatus != ChannelNotFound ||
 			res.Reconciled || res.OrderStatus != "pending_payment" {
@@ -261,21 +261,21 @@ func TestPaymentQueryPG18(t *testing.T) {
 	})
 
 	t.Run("business errors", func(t *testing.T) {
-		noIntent := newOrder("no-intent", false)
+		noIntent := newOrder(t, "no-intent", false)
 		_, err := query(noIntent)
 		wantHTTPError(t, err, httpx.CodeConflict, "该订单从未发起过支付，无法向渠道查单")
 
-		withIntent := newOrder("foreign", true)
+		withIntent := newOrder(t, "foreign", true)
 		_, err = payments.QueryOrderPayment(ctx, fx.tenant, withIntent.id, noIntent.buyer)
 		wantHTTPError(t, err, httpx.CodeNotFound, "")
 		_, err = payments.QueryOrderPayment(ctx, fx.tenant, "not-a-uuid", "")
 		wantHTTPError(t, err, httpx.CodeNotFound, "")
 
-		must(`UPDATE payment_providers SET enabled=false WHERE id=$1`, fx.provider)
+		must(t, `UPDATE payment_providers SET enabled=false WHERE id=$1`, fx.provider)
 		payments.Factory().Invalidate(fx.tenant, fx.providerCode)
 		_, err = payments.QueryOrderPayment(ctx, fx.tenant, withIntent.id, "")
 		wantHTTPError(t, err, httpx.CodeUnavailable, "该支付渠道已停用，无法向渠道查单")
-		must(`UPDATE payment_providers SET enabled=true WHERE id=$1`, fx.provider)
+		must(t, `UPDATE payment_providers SET enabled=true WHERE id=$1`, fx.provider)
 		payments.Factory().Invalidate(fx.tenant, fx.providerCode)
 
 		stub.answer(withIntent.no, nil, payment.ErrNotSupported)
@@ -287,32 +287,54 @@ func TestPaymentQueryPG18(t *testing.T) {
 	})
 
 	t.Run("patrol claims only due intents and concurrent patrols never query one order twice", func(t *testing.T) {
+		exec := func(sql string, args ...any) {
+			t.Helper()
+			if _, err := admin.Exec(ctx, sql, args...); err != nil {
+				t.Fatalf("fixture: %v\nSQL: %s", err, sql)
+			}
+		}
+		// created_at 被支付意图守卫当作不可变列：夹具改它要临时关掉用户触发器，
+		// 与 orderReleasePG18Backdate 同一手法
 		backdate := func(orderID string) {
 			t.Helper()
-			must(`UPDATE payment_intents SET created_at=now()-interval '10 minutes'
-				WHERE order_id=$1::uuid AND status='requires_action'`, orderID)
+			tx, err := admin.Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin backdate: %v", err)
+			}
+			defer tx.Rollback(ctx)
+			if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role='replica'`); err != nil {
+				t.Fatalf("disable user triggers for fixture backdate: %v", err)
+			}
+			if tag, err := tx.Exec(ctx, `UPDATE payment_intents SET created_at=now()-interval '10 minutes'
+				WHERE order_id=$1::uuid AND status='requires_action'`, orderID); err != nil || tag.RowsAffected() != 1 {
+				t.Fatalf("backdate intent tag=%v err=%v", tag, err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatalf("commit backdate: %v", err)
+			}
 		}
 		var due []pendingOrder
 		for _, label := range []string{"due-a", "due-b", "due-c", "due-d"} {
-			o := newOrder(label, true)
+			o := newOrder(t, label, true)
 			backdate(o.id)
 			due = append(due, o)
 		}
 		stub.answer(due[0].no, paid("pq-trade-patrol-"+fx.suffix, 1000, "CNY"), nil)
-		unsupported := newOrder("due-unsupported", true)
+		unsupported := newOrder(t, "due-unsupported", true)
 		backdate(unsupported.id)
 		stub.answer(unsupported.no, nil, payment.ErrNotSupported)
 
 		// 不该被认领的：刚发起、次数已满、还没到下一次、订单已过期
-		fresh := newOrder("fresh", true)
-		exhausted := newOrder("exhausted", true)
+		fresh := newOrder(t, "fresh", true)
+		exhausted := newOrder(t, "exhausted", true)
 		backdate(exhausted.id)
-		must(`UPDATE payment_intents SET query_attempts=6 WHERE order_id=$1::uuid`, exhausted.id)
-		leased := newOrder("leased", true)
+		// 排程列走守卫的白名单（00097），夹具照常写得进去
+		exec(`UPDATE payment_intents SET query_attempts=6 WHERE order_id=$1::uuid`, exhausted.id)
+		leased := newOrder(t, "leased", true)
 		backdate(leased.id)
-		must(`UPDATE payment_intents SET query_attempts=1, next_query_at=now()+interval '3 minutes'
+		exec(`UPDATE payment_intents SET query_attempts=1, next_query_at=now()+interval '3 minutes'
 			WHERE order_id=$1::uuid`, leased.id)
-		expired := newOrder("expired", true)
+		expired := newOrder(t, "expired", true)
 		backdate(expired.id)
 		orderReleasePG18Backdate(t, ctx, admin, fx.tenant, expired.id)
 
