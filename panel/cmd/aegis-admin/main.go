@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/admin 的 NewRouter
 // [OUTPUT]: 对外提供 可执行入口 aegis-admin：装配管理控制台网关并启动工单超时升级、定时公告、配额周期滚动、佣金解冻等后台循环
-// [POS]: panel/cmd 的 admin 网关进程，与 aegis-public 分进程分端口；mark-paid 与人工开单履约后的节点通知经 nodefabric.NotifyUsersChanged 发出；客服回复通知经 support.SetReplyNotifier 接到 notify，只排队不派发；通知收件人哈希用 crypto.NotifyRecipientSalt（与 public 同盐）
+// [POS]: panel/cmd 的 admin 网关进程，与 aegis-public 分进程分端口；mark-paid、人工开单与后台「向渠道查单」补记履约后的节点通知经 nodefabric.NotifyUsersChanged 发出；客服回复通知经 support.SetReplyNotifier 接到 notify，只排队不派发；通知收件人哈希用 crypto.NotifyRecipientSalt（与 public 同盐）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Command aegis-admin 是管理控制台网关（Admin 域）。
@@ -139,6 +139,10 @@ func run() error {
 	// 管理员手动标记已付、人工开单走的也是同一条履约路径，同样要通知节点；
 	// 发布只经 nodefabric 的 NotifyUsersChanged 一处
 	billingSvc.SetUsersChangedNotifier(nodeSvc.NotifyUsersChanged)
+	// 后台「向渠道查单」要调渠道查询接口；查到已付交给上面这个结算服务补记。
+	// 管理端不建收银台，publicBaseURL 只是装配需要（拼回调地址），用不到
+	paymentSvc := billing.NewPaymentService(billingSvc, pool, envelope, cfg.MasterKey,
+		cfg.PublicBaseURL, !cfg.IsProduction())
 	// 管理端只用它把到点的定时公告转正、给工单回复排队，不投递任何消息，所以没有 sender
 	// 收件人哈希用通知专用盐，与 public 网关同一个，同一收件人两边算出同一个值
 	notifySvc := notify.New(pool, log, crypto.NotifyRecipientSalt(cfg.MasterKey))
@@ -171,6 +175,7 @@ func run() error {
 		Realtime:       rtHub,
 		Envelope:       envelope,
 		Billing:        billingSvc,
+		Payments:       paymentSvc,
 		Content:        contentSvc,
 		SMTPProvider:   smtpProvider,
 		Notify:         notifySvc,

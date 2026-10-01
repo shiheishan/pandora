@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/public 的 NewRouter
-// [OUTPUT]: 对外提供 可执行入口 aegis-public：装配用户门户网关并启动通知扫描、插件投递、预留过期等后台循环
+// [OUTPUT]: 对外提供 可执行入口 aegis-public：装配用户门户网关并启动通知扫描、插件投递、预留过期、主动查单巡检等后台循环
 // [POS]: panel/cmd 的 public 网关进程；履约后的节点通知经 nodefabric.NotifyUsersChanged 发出；identity 的注册验证码经这里接上 notify（SetVerificationMailer）；通知收件人哈希用 crypto.NotifyRecipientSalt（与 admin 同盐），订阅审计仍用 SubscriptionAuditSalt
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -94,7 +94,8 @@ func run() error {
 	// 礼品卡把「发什么」交回给计费域执行，自己只判断「该不该发」
 	giftCardSvc := giftcard.New(pool, log, billingSvc.GiftGranter())
 
-	paymentSvc := billing.NewPaymentService(pool, envelope, cfg.MasterKey, cfg.PublicBaseURL, !cfg.IsProduction())
+	// 主动查单查到已付要交给同一个结算服务补记，履约后的节点通知才接得上
+	paymentSvc := billing.NewPaymentService(billingSvc, pool, envelope, cfg.MasterKey, cfg.PublicBaseURL, !cfg.IsProduction())
 
 	// 审计日志里 IP/UA 的哈希盐。
 	//
@@ -153,6 +154,9 @@ func run() error {
 	plugin.New(pool, envelope, !cfg.IsProduction()).
 		StartScanner(ctx, middleware.DefaultTenantID, time.Minute)
 	waitReservationExpiry := startReservationExpiryWorker(ctx, billingSvc, log)
+	// 主动查单巡检挂在 public：支付意图在这里创建、回调在这里落地、查单要用的
+	// 渠道实例也在这里装配；多开几个 public 实例时靠认领的 SKIP LOCKED 分担
+	waitPaymentQuery := startPaymentQueryWorker(ctx, paymentSvc, log)
 	if err := notify.EnsureTelegramWebhookSecret(ctx, pool, envelope,
 		middleware.DefaultTenantID); err != nil {
 		return fmt.Errorf("初始化 Telegram webhook secret: %w", err)
@@ -185,11 +189,10 @@ func run() error {
 	// DB LISTEN goroutine must release its acquired connection before pool.Close.
 	stop()
 	waitReservationExpiry()
+	waitPaymentQuery()
 	return serverErr
 }
 
-// atoiOr 解析端口号，失败时用默认值。
-// 配置写错不该让整个服务起不来 —— 邮件发不出去是可降级的。
 func startReservationExpiryWorker(ctx context.Context, svc *billing.Service,
 	log *slog.Logger) func() {
 	var workers sync.WaitGroup
@@ -216,6 +219,42 @@ func startReservationExpiryWorker(ctx context.Context, svc *billing.Service,
 	return workers.Wait
 }
 
+// startPaymentQueryWorker 每分钟跑一轮主动查单巡检（PAY-009）：回调丢了的单，
+// 在订单过期前靠向渠道查单把钱补记上。一分钟一轮配 5 分钟首查与指数退避，
+// 节流参数见 billing.DefaultPaymentQueryPatrol；单轮上限 20 单、间隔 500ms，
+// 每单渠道查询最多 10 秒，故整轮给 50 秒，被截断的单下一轮接着排。
+func startPaymentQueryWorker(ctx context.Context, svc *billing.PaymentService,
+	log *slog.Logger) func() {
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
+				stats, err := svc.ReconcileDuePayments(runCtx, middleware.DefaultTenantID,
+					billing.DefaultPaymentQueryPatrol, log)
+				cancel()
+				switch {
+				case err != nil:
+					log.Error("主动查单巡检失败", "error", err.Error())
+				case stats.Queried > 0:
+					log.Info("主动查单巡检完成", "queried", stats.Queried,
+						"reconciled", stats.Reconciled, "failed", stats.Failed)
+				}
+			}
+		}
+	}()
+	return workers.Wait
+}
+
+// atoiOr 解析端口号，失败时用默认值。
+// 配置写错不该让整个服务起不来 —— 邮件发不出去是可降级的。
 func atoiOr(s string, def int) int {
 	n, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil || n <= 0 {
