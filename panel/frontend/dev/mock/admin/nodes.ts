@@ -1,13 +1,14 @@
 /**
- * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 MockModule / MockContext / MockResult / Json，依赖 ./nodes-infra 的服务器 / 节点池 / 全局路由数据、infraRoutes 与 validateRouting，依赖 ./node-schemas 的协议 schema 夹具
+ * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 MockModule / MockContext / MockResult / Json，依赖 ./nodes-infra 的服务器 / 节点池 / 全局路由数据、infraRoutes 与 validateRouting，依赖 ./route-groups 的路由组路由表与节点所在组 / 可见出站 / 复制成员，依赖 ./node-schemas 的协议 schema 夹具
  * [OUTPUT]: 对外提供 nodes 模块的假接口 MockModule，以及测试用的 storedProtocolConfig（读库里未抹敏的协议配置）
- * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」假接口。节点在这里：列表（含 R27 分页与 R46 国家、24h 流量、探针）、新建 / 编辑 / 复制 / 迁移（保留规则 5）/ 排序 / 批量改服务状态（合法边）/ 退役（R57）/ 上线（R108 / R113 activate：判断顺序与 409 文案照 nodefabric.ActivateNode，已 active 先于版本号回 200，服务器进 ready，无池或池没绑套餐时带 warnings、没有提示不出现这个键）/ 删除、列表的交付提示按 R105（先服务状态、再有没有池、再心跳）、PATCH 缺席的敏感键从库里补回（R106，mask_password 跟着 mask 开关走，R107）、协议 schema、REALITY 密钥、一键安装令牌、服务端令牌（R13）、吊销身份、发布配置、探针、单节点路由（R26，校验与全局共用 validateRouting）、节点身份（R46）；服务器、节点池、全局路由在 nodes-infra.ts，由 infraRoutes(store) 并入本模块，数据与节点共享。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器
+ * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」假接口。节点在这里：列表（含 R27 分页与 R46 国家、24h 流量、探针）、新建 / 编辑 / 复制 / 迁移（保留规则 5）/ 排序 / 批量改服务状态（合法边）/ 退役（R57）/ 上线（R108 / R113 activate：判断顺序与 409 文案照 nodefabric.ActivateNode，已 active 先于版本号回 200，服务器进 ready，无池或池没绑套餐时带 warnings、没有提示不出现这个键）/ 删除、列表的交付提示按 R105（先服务状态、再有没有池、再心跳）、PATCH 缺席的敏感键从库里补回（R106，mask_password 跟着 mask 开关走，R107）、协议 schema、REALITY 密钥、一键安装令牌、服务端令牌（R13）、吊销身份、发布配置、探针、单节点路由（R26，校验与全局共用 validateRouting，可指向全局与所在路由组的出站，读接口带所在组 groups；带路由复制时连组成员一起复制）、节点身份（R46）；服务器、节点池、全局路由在 nodes-infra.ts、路由组在 route-groups.ts，分别由 infraRoutes(store) / routeGroupRoutes(store) 并入本模块，数据与节点共享。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
-import { emptyBody, globalRouting, infraRoutes, keepAlive, pools, servers, validateRouting } from './nodes-infra.ts'
+import { emptyBody, infraRoutes, keepAlive, pools, servers, validateRouting } from './nodes-infra.ts'
 import { NODE_PROTOCOL_SCHEMAS } from './node-schemas.ts'
+import { copyMemberships, groupRefsOfNode, routeGroupRoutes, visibleTagsForNode } from './route-groups.ts'
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -301,6 +302,7 @@ const conflict = (n: Node) => err(409, 'conflict', '节点已被其他人修改�
 export const nodes: MockModule = {
   routes: {
     ...infraRoutes(store),
+    ...routeGroupRoutes(store),
     'GET /v1/node-protocol-schemas': (ctx) => {
       if (!ctx.requirePermission('node.read')) return
       ctx.send(200, NODE_PROTOCOL_SCHEMAS)
@@ -398,6 +400,7 @@ export const nodes: MockModule = {
         copy.server_id = target.id
         copy.sort_order = src.sort_order + 1
         copy.row_version = 1
+        if (body.copy_routing) copyMemberships(src.id, copy.id)
         store.push(copy)
         return { status: 201, body: adminNode(copy) }
       })
@@ -580,7 +583,7 @@ export const nodes: MockModule = {
       if (!ctx.requirePermission('node.read')) return
       const n = findNode(ctx.params.id)
       if (!n) return reply(ctx, notFound('节点不存在'))
-      ctx.send(200, { row_version: n.row_version, ...n.routing })
+      ctx.send(200, { row_version: n.row_version, groups: groupRefsOfNode(n.id), ...n.routing })
     },
     'PUT /v1/nodes/:id/routing': async (ctx) => {
       if (!ctx.requirePermission('node.config.publish')) return
@@ -591,7 +594,8 @@ export const nodes: MockModule = {
       if (body.row_version !== n.row_version) return reply(ctx, conflict(n))
       const outbounds = (Array.isArray(body.outbounds) ? body.outbounds : []) as Array<{ tag: string; type: string; settings?: unknown }>
       const routes = (Array.isArray(body.routes) ? body.routes : []) as Json[]
-      const bad = validateRouting(outbounds, routes, globalRouting.outbounds.map((o) => o.tag))
+      // 规则可以指向全局与所在路由组的出站（routing_refs.go 的 visibleOutboundTagsTx）
+      const bad = validateRouting(outbounds, routes, visibleTagsForNode(n.id))
       if (bad) return reply(ctx, bad)
       n.routing = { outbounds: outbounds.map((o) => ({ tag: o.tag, type: o.type, settings: o.settings ?? {} })), routes: routes.map((r, i) => ({ priority: int(r.priority) || (i + 1) * 10, matcher: r.matcher as Json, outbound_tag: text(r.outbound_tag), enabled: r.enabled === true, note: text(r.note) })) }
       touch(n)

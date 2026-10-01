@@ -1,11 +1,11 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 relativeTime，依赖 ./schemas 的类型
- * [OUTPUT]: 对外提供节点页的纯函数：状态映射与筛选搜索、心跳与地址文案、迁移资格（保留规则 5）、R108 上线资格（接入尾段的生命周期）与 R113 上线提示 activationHint、状态转换合法边与批量取舍、排序提交项、schema 驱动的协议表单模型（字段推导、拍平 / 还原、敏感字段：编辑时留空 = 不改、选填的可显式清空为 null（R106 / R107）、REALITY）、PATCH 差量、路由规则行与 matcher 互转、插入规则（兜底之前）、出站被引用计数与改名联动、出站行校验与互转（单节点与全局共用）、带宽分桶
+ * [OUTPUT]: 对外提供节点页的纯函数：状态映射与筛选搜索、心跳与地址文案、迁移资格（保留规则 5）、R108 上线资格（接入尾段的生命周期）与 R113 上线提示 activationHint、状态转换合法边与批量取舍、排序提交项、schema 驱动的协议表单模型（字段推导、拍平 / 还原、敏感字段：编辑时留空 = 不改、选填的可显式清空为 null（R106 / R107）、REALITY）、PATCH 差量、路由规则行与 matcher 互转、插入规则（兜底之前）、出站被引用计数与改名联动、出站行校验与互转（单节点、路由组与全局共用）、路由组表单校验 / 新建体 / PATCH 差量、成员比较、跨范围可引用出站与生效来源文案、带宽分桶
  * [POS]: admin/screens/nodes 的逻辑层：映射全部取自 api-contract.md 后台-07 · 节点条目的「设计 / 映射」行与 Go 校验器，nodes.test.ts 逐条守住；组件只负责渲染与交互
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { relativeTime } from '../../../core/format'
-import type { MetricPoint, NodeRow, ProtocolSchema, Route, ServingStatus } from './schemas'
+import type { MetricPoint, NodeRow, ProtocolSchema, Route, RoutingSource, ServingStatus } from './schemas'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
@@ -529,6 +529,67 @@ export function ruleSummary(r: Route): string {
   const row = routeToRow(r)
   return row.kind === 'fallback' ? '兜底（全部）' : `${MATCH_KINDS.find(([k]) => k === row.kind)?.[1]} ${row.value}`
 }
+
+// ---------------------------------------------------------------------------
+// 路由组（00096）：元信息表单、成员比较、可引用出站、生效来源文案
+// ---------------------------------------------------------------------------
+export interface GroupForm {
+  name: string
+  description: string
+  /** 输入框里的文本，提交时转整数 */
+  sortOrder: string
+}
+
+export const groupFormFrom = (g?: { name: string; description: string; sort_order: number }): GroupForm => ({ name: g?.name ?? '', description: g?.description ?? '', sortOrder: String(g?.sort_order ?? 0) })
+
+/** 与 nodefabric.normalizeRouteGroupFields 同口径：名称去空白后 1–64 字、说明 ≤ 500 字、排序为 ±1000000 内的整数 */
+export function groupFormErrors(f: GroupForm): Record<string, string> {
+  const errors: Record<string, string> = {}
+  const n = [...f.name.trim()].length
+  if (n < 1 || n > 64) errors.name = '名称为 1 到 64 个字符'
+  if ([...f.description.trim()].length > 500) errors.description = '说明最多 500 个字符'
+  const order = Number(f.sortOrder.trim())
+  if (!f.sortOrder.trim() || !Number.isInteger(order) || Math.abs(order) > 1_000_000) errors.sort_order = '排序是 -1000000 到 1000000 的整数'
+  return errors
+}
+
+/** 新建体：三个字段都带 */
+export const groupCreateBody = (f: GroupForm) => ({ name: f.name.trim(), description: f.description.trim(), sort_order: Number(f.sortOrder.trim()) })
+
+/** PATCH 差量：只带改了的字段（后端 nil = 不改）；没改任何东西返回 null */
+export function groupPatchBody(g: { name: string; description: string; sort_order: number; row_version: number }, f: GroupForm): Record<string, unknown> | null {
+  const next = groupCreateBody(f)
+  const body: Record<string, unknown> = {}
+  if (next.name !== g.name) body.name = next.name
+  if (next.description !== g.description) body.description = next.description
+  if (next.sort_order !== g.sort_order) body.sort_order = next.sort_order
+  return Object.keys(body).length ? { row_version: g.row_version, ...body } : null
+}
+
+/** 两组 id 是否同一集合（顺序无关）：成员没变就不发请求 */
+export const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join()
+
+/**
+ * 规则编辑器的「其他范围」出站下拉项：按传入顺序（越具体越先）去重，大小写不敏感、先到先得——
+ * 与生效合并里具体范围覆盖宽泛范围同名出站一致
+ */
+export function referenceOutbounds(scopes: ReadonlyArray<{ label: string; tags: readonly string[] }>, exclude: readonly string[] = []): Array<[string, string]> {
+  const seen = new Set(exclude.map((t) => t.trim().toLowerCase()))
+  const out: Array<[string, string]> = []
+  for (const s of scopes) {
+    for (const tag of s.tags) {
+      const key = tag.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push([tag, `${tag}（${s.label}）`])
+    }
+  }
+  return out
+}
+
+/** 生效预览里每条出站 / 规则的来源文字 */
+export const sourceLabel = (s: RoutingSource) => (s.scope === 'node' ? '本节点' : s.scope === 'global' ? '全局' : `路由组 · ${s.group_name ?? ''}`)
+export const sourceTone = (s: RoutingSource): Tone => (s.scope === 'node' ? 'info' : s.scope === 'group' ? 'ok' : 'neutral')
 
 // ---------------------------------------------------------------------------
 // 带宽：近 24 小时按整点分桶，每桶取 (rx+tx)×8/1e6 的均值（Mbps）
