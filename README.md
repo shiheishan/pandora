@@ -95,7 +95,9 @@ aegis-public    aegis-admin     aegis-node
 
 礼品卡、知识库、主题、插件、套餐、订单操作均已有真实代码；早期文档里“仅占位”的说法已过时。
 
-前端：2026-09-23 起，旧的两套前端（`/` 下的手写单页与 `/app/` 下的 React 候选）已整体删除，管理后台与用户门户按新设计稿在 `panel/frontend` 从零重写，同时让设计稿与后端双向对齐——设计有而后端没有的能力补后端，后端有而设计没有的能力补进前端。重写已完成：发布包构建时把前端嵌入网关，两个网关的 `/` 分别下发管理后台与用户门户；仓库里 `panel/web/` 只存占位入口，未嵌入真实产物时下发的是占位页。
+前端：2026-09-23 起，旧的两套前端（`/` 下的手写单页与 `/app/` 下的 React 候选）已整体删除，管理后台与用户门户按新设计稿在 `panel/frontend` 从零重写，同时让设计稿与后端双向对齐——设计有而后端没有的能力补后端，后端有而设计没有的能力补进前端。
+
+重写已完成：发布包构建时把前端嵌入网关，两个网关的 `/` 分别下发管理后台与用户门户；仓库里 `panel/web/` 只存占位入口，未嵌入真实产物时下发的是占位页。
 
 运维：WebDAV 自动备份、签名清单、保留策略、systemd timer/service 与恢复脚本已存在，见 [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)。真实远端恢复演练状态见“验证状态与门禁”。
 
@@ -318,7 +320,9 @@ bash panel/deploy/test-install.sh <发布目录>
 
 ### 已有证据（FACT）
 
-**CI 门禁（2026-09-26 在 `main` 上全绿：`36230330995` / `36230331009` / `36230331011`）**。三个 workflow 各有路径过滤：只改仓库根的文档不触发；改 `pdnd/**`、`panel/internal/**`、`panel/web/**`、`panel/frontend/**` 等被过滤目录里的任何文件（包括其中的 CLAUDE.md）都会触发对应 workflow。
+**CI 门禁（2026-09-26 在 `main` 上全绿：`36230330995` / `36230331009` / `36230331011`）**。
+
+三个 workflow 各有路径过滤：只改仓库根的文档不触发；改 `pdnd/**`、`panel/internal/**`、`panel/web/**`、`panel/frontend/**` 等被过滤目录里的任何文件（包括其中的 CLAUDE.md）都会触发对应 workflow。
 
 - **Panel PostgreSQL 18 gates**（`panel-pg18.yml`）：
   - `panel-unit` 跑 panel 全量 build / vet / go test，是 CI 上唯一跑 panel 全部单元测试的地方；
@@ -329,7 +333,9 @@ bash panel/deploy/test-install.sh <发布目录>
   - `check_native_panel_parity.py`（NativeCore、Panel Schema、serving allowlist 各 13 个协议一致）与 nodefabric 契约；
   - `panel-frontend`：新前端 lint / typecheck / vitest（对假后端）/ 双入口构建，再 `make frontend-embed` 用真实产物跑 web、webapp、api 的 Go 契约，占位页没被替换即失败。
 - **Panel frontend smoke**（`panel-smoke.yml`）：起一次性 PG18 + 真实网关，经真网关造数据，用前端页面自己的 zod schema 解析真实响应（读表先于写路径），再在同一栈上跑 `tests/` 下五个 e2e 脚本；任一失败即红。
-- **Panel deploy script contracts**（`panel-deploy.yml`，2026-09-26 新增）：改 `panel/deploy/**` 或 `panel/migrations/**` 即触发，逐个跑不需要数据库与 root 的 deploy 桩测试；迁移三件套（migrate.sh、check-migrations.sh、历史隔离预检）拿真实 `panel/migrations` 校验文件名与编号（严格递增、不重复，允许 00073、00091、00092 历史空号），拒绝真实目录即变红。在此之前 deploy 桩测试 CI 一个都不跑，其中两个对真实目录早已是红的。
+- **Panel deploy script contracts**（`panel-deploy.yml`，2026-09-26 新增）：改 `panel/deploy/**` 或 `panel/migrations/**` 即触发，逐个跑不需要数据库与 root 的 deploy 桩测试；迁移三件套（migrate.sh、check-migrations.sh、历史隔离预检）拿真实 `panel/migrations` 校验文件名与编号（严格递增、不重复，允许 00073、00091、00092 历史空号），拒绝真实目录即变红。
+
+  在此之前 deploy 桩测试 CI 一个都不跑，其中两个对真实目录早已是红的。
 - **仓库守卫**（随 `go test ./...`）：panel 与 pdnd 两道 800 行守卫、表登记簿与权限字典契约。第 5 阶段拆分超长文件时，每步都用 `panel/tools/refactorcheck` 证明是纯挪动。
 - 2026-09-23 起 workflow 默认 `shell: bash`（`-eo pipefail`）。在此之前 `go test … | tee` 的失败会被 `tee` 吞掉，**那之前的 race 绿灯不能当证据**。
 
@@ -373,7 +379,11 @@ bash panel/deploy/test-install.sh <发布目录>
 
 ## 许可证
 
-整个仓库（panel 与 pdnd）按 GNU General Public License v3.0 发布，全文见根目录 [LICENSE](LICENSE)。pdnd 本来就必须如此：默认构建链接 GPL-3.0 的 mieru 与 sagernet/sing，compat 构建还链接 sing-box。fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`（MPL-2.0）与 `pdnd/internal/realityquic/`（MIT），见各目录的 LICENSE，两者都与 GPL-3.0 兼容。
+整个仓库（panel 与 pdnd）按 GNU General Public License v3.0 发布，全文见根目录 [LICENSE](LICENSE)。
+
+pdnd 本来就必须如此：默认构建链接 GPL-3.0 的 mieru 与 sagernet/sing，compat 构建还链接 sing-box。
+
+fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`（MPL-2.0）与 `pdnd/internal/realityquic/`（MIT），见各目录的 LICENSE，两者都与 GPL-3.0 兼容。
 
 ## 相关文档
 
