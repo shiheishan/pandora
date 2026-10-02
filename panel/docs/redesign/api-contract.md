@@ -3806,6 +3806,10 @@
 
 #### GET v1/nodes/{id}/routing — 读单节点出站与分流
 
+- **修订 R123（2026-10-01，routegroups）**：
+  - 响应新增 `groups:[{id,name,sort_order}]`（所属路由组）。
+  - 不存在的节点或非法 id 回中性 404（原先 500）。
+  - 处理器里的 SQL 全部下沉到 `nodefabric/routing_admin.go`，守卫测试禁止路由 handler 文件再出现 SQL。
 - 状态：现有 `panel/internal/api/admin/handlers.go:1188 nodeGetRouting`；**待补·前端**（→ 抽屉新增「路由」tab）
 - 权限：`node.read`｜reauth：否｜幂等：否
 - 请求：无
@@ -3835,6 +3839,11 @@
 
 #### PUT v1/nodes/{id}/routing — 全量替换单节点出站与分流
 
+- **修订 R123（2026-10-01，routegroups）**：
+  - 规则可以引用全局出站与所在各组的出站。
+  - 写入持 `node-config-release` 锁，避免与改组成员并发留下悬空引用。
+  - 规则引用自定义出站按原样**精确匹配**（区分大小写、不去空白），与下发和 pdnd 一致；大小写不同或多了空白回 422。出站重名与占用 `direct` / `block` 仍按不分大小写拒绝。内置 `direct` / `block` 去空白、不分大小写接受，保存时与下发合并时都规范成小写。
+  - 只拒绝本次新造成的悬空引用，存量不拦。
 - **修订 R26（2026-09-24，后端二 107de25）**：
   - 路由规则可引用全局出站 tag（大小写不敏感）
   - 引用不存在的出站仍 422 且不写入
@@ -4283,6 +4292,10 @@
 
 #### PUT v1/nodes/routing — 保存并发布全局出站与分流到全部节点
 
+- **修订 R123（2026-10-01，routegroups）**：
+  - 删除仍被引用的全局出站时，409 文案改为「要删除的全局出站仍被规则引用：节点 X → tag、路由组 Y → tag」（原为「仍被节点规则引用：X」）。
+  - 规则引用自定义出站按原样**精确匹配**（区分大小写、不去空白），与下发和 pdnd 一致；大小写不同或多了空白回 422。出站重名与占用 `direct` / `block` 仍按不分大小写拒绝。内置 `direct` / `block` 去空白、不分大小写接受，保存时与下发合并时都规范成小写。
+  - 只拒绝本次新造成的悬空引用，存量不拦。
 - **修订 R56（2026-09-24，后端二 ⑤ dccfc0d）**：
   - 全局路由 GET/PUT 已实现
   - 节点下发时节点规则在前、全局规则在后。
@@ -4306,6 +4319,50 @@
     - 出站「直连」→ 内置 `direct`，「拦截」→ 内置 `block`，自定义出站如 US-LAX-01 → `{tag, type:"trojan", settings}`
     - 「代理 · selector」→ 不支持，见 D-D-1。
   - **待补·前端**：出站列表要能新增/编辑/删除（tag、type 下拉、settings JSON），设计只有只读列表。
+
+#### 路由组（修订 R123 新增）
+
+- **修订 R123（2026-10-01，routegroups e97d842、0553400、52570dc、fa726fb、761e1ea、df94056、4eb803e、fb80892）**：新增，已实现（迁移 00096）。
+- 模型：
+  - `route_groups`：名称（1–64 字，按租户不分大小写唯一）、说明（≤500 字）、排序（±1000000）、行版本。
+  - `route_group_members`：节点与组多对多，删组或删节点时成员行随之删除；已退役节点可以是成员，只是不推进、不通知。
+  - `node_outbounds` / `node_routes` 加 `group_id`，一行只能是全局、组、节点三者之一（CHECK）；删组时组内出站与规则一并删除。组内 tag 唯一。
+- 生效顺序：规则为「节点私有 → 所在各组（按 `sort_order`）→ 全局」；出站为「全局 → 组 → 节点」，同 tag 原位覆盖。合并只有 `nodefabric/routing_merge.go` 一处（`MergeRouting`），UniProxy 下发、长连接推送、有效发布物与生效预览共用。
+- 引用校验：节点规则可引用全局出站与所在各组出站；组规则可引用本组与全局出站。大小写规则同上文单节点 PUT 的 R123。每次写前后各算一次悬空引用，只拒绝本次新造成的。
+- 改动生效：所有路由写都持 `node-config-release` 锁，在同一事务里推进受影响节点的 `config_source_generation`，提交后通知节点。已生成有效发布物且 generation 未变的节点继续复用原发布物，下一次推进时才带上新的规范化。
+- 带路由复制节点时，组成员关系一并复制。
+- 权限码全部复用，无新增：
+
+| 接口 | 权限 | reauth | 幂等 scope |
+|---|---|---|---|
+| `GET v1/route-groups` | `node.read` | 否 | — |
+| `POST v1/route-groups` | `node.config.publish` | 否（空组不影响任何节点） | `route_group_create` |
+| `PATCH v1/route-groups/{id}` | `node.config.publish` | 是 | `route_group_update` |
+| `DELETE v1/route-groups/{id}` | `node.config.publish` | 是 | `route_group_delete` |
+| `GET v1/route-groups/{id}/routing` | `node.read` | 否 | — |
+| `PUT v1/route-groups/{id}/routing` | `node.config.publish` | 是 | `route_group_routing_publish` |
+| `PUT v1/route-groups/{id}/members` | `node.config.publish` | 是 | `route_group_members_update` |
+| `PUT v1/nodes/{id}/route-groups` | `node.config.publish` | 否 | 无 |
+| `GET v1/nodes/{id}/routing/effective` | `node.read` | 否 | — |
+
+- 请求与响应：
+  - 组对象：`{id, name, description, sort_order, row_version, outbound_count, rule_count, members:[{id,name}], created_at, updated_at}`
+  - 列表：`{groups:[组对象]}`，按 `sort_order, id` 排序。
+  - 新建：请求 `{name, description?, sort_order?}`，回 201 与组对象。
+  - 改信息：请求 `{row_version, name?, description?, sort_order?}`（不传不改），回 `{group, affected_nodes}`；只有排序变了才推进成员节点。
+  - 删组：请求体 `{row_version}`，回 `{deleted:true, affected_nodes}`。
+  - 读组内路由：`{row_version, outbounds, routes}`，形状同单节点路由。
+  - 改组内路由：请求 `{row_version, outbounds, routes}`，回 `{ok, row_version, affected_nodes}`。
+  - 组侧改成员：请求 `{row_version, node_ids}`，回 `{ok, row_version, affected_nodes}`；进出组的节点推进行版本与 generation。
+  - 节点侧改所在组：请求 `{row_version(节点的), group_ids}`，回 `{ok, row_version}`；进出的组推进行版本。
+  - 生效预览：`{groups:[{id,name,sort_order}], outbounds:[{tag,type,settings,source}], routes:[{matcher,outbound,source}]}`，`source = {scope: node|group|global, group_id?, group_name?}`。
+- 错误：
+  - 422：名称、说明、排序越界；id 无效或不存在；规则指向不存在的出站。
+  - 409 行版本冲突：`fields.row_version = "current=N"`。
+  - 409「路由组名称已存在」。
+  - 409 悬空引用，文案「前缀：节点 X → tag、路由组 Y → tag」，前缀按场景为：改组内路由「要删除的组内出站仍被成员节点的规则引用」；组侧改成员「移出组的节点仍有规则指向组内出站」；节点侧改所在组「本节点仍有规则指向要退出的组的出站」；删组「组内出站仍被成员节点的规则引用」。
+- 审计：`route_group.create`、`route_group.update`、`route_group.delete`、`route_group.members_update`、`node.routing.group_publish`、`node.route_groups_update`；访问日志归「管理端」（`route_group.` 前缀已加进分类表）。
+- 设计：后台-07「路由」标签改为「全局 + 路由组」范围切换条（选中的组记在地址里），全局与组共用规则编辑器；组面板可改信息、成员、删除、发布。节点抽屉的路由页可勾选所属组，私有路由的出站下拉含所在组出站，下方是生效结果预览并标出每条的来源。
 
 ### 后台-08 内容与外观 · 公告
 
@@ -8254,3 +8311,4 @@
 | R120 | 2026-10-01 | themegift | 推翻 D-D-4「只留一个主题」：后台可新建、编辑、激活、删除自定义主题（custom_css 仍停用）；`POST v1/themes` 加 `create`（撞 code 409）、branding 三键与站点名必填、Logo 只收 ≤48KB 的 data:image、逐字段 422；`GET v1/appearance` 的 branding 读时再过滤；门户品牌位跟随生效主题（用户同意偏离设计） |
 | R121 | 2026-10-01 | themegift | 新增 `GET v1/gift-cards/codes/report`：按列表同一筛选导出卡码**掩码**报表（read + ops.export + reauth，≤50000 行，审计 `gift_card.codes_report_exported`）；旧的明文导出路径 `codes/export` 继续下线 |
 | R122 | 2026-10-01 | payquery | 主动查单（PAY-009，迁移 00097）：后台 `POST v1/orders/{id}/query`（order.write + 幂等，不要 reauth，每次写 `order.payment_queried` 审计）、门户同路径（本人、每分钟 6 次）、aegis-public 定时巡检（退避、多实例 SKIP LOCKED）；补记走回调同一条结算主链；门户订单行与详情加 `has_payment_intent`；删除无调用方的 `QueryAndReconcile` |
+| R123 | 2026-10-01 | routegroups | 有名路由组（迁移 00096）：组的增删改、组内出站与规则、成员多对多、节点侧所属组、生效预览；生效顺序规则「节点 → 组 → 全局」、出站「全局 → 组 → 节点」，合并只在 `MergeRouting` 一处；路由 handler 的 SQL 下沉 nodefabric；出站引用改为精确匹配（与 pdnd 一致），内置 `direct` / `block` 保存与下发都规范成小写；全局删出站 409 文案变更；读不存在节点的路由 404 |
