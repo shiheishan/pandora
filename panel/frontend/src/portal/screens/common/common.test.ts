@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 vitest，依赖同目录 traffic / orders / clients / subscriptions / intent 的纯函数与 schema，依赖 ../subs/labels
+ * [INPUT]: 依赖 vitest，依赖 core/api 的 ApiError，依赖同目录 traffic / orders / order-query / clients / subscriptions / intent 的纯函数与 schema，依赖 ../subs/labels
  * [OUTPUT]: 无（测试文件）
- * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、套餐限速文案、订单标题与期限、深链与协议名、主订阅选择、schema 对 Go 编码形状的收放（无 omitempty 必填、缺席拒收）、刚下待支付单的取回（已不可支付即 forget、按新请求下单）
+ * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、套餐限速文案、订单标题与期限、深链与协议名、主订阅选择、schema 对 Go 编码形状的收放（无 omitempty 必填、缺席拒收）、刚下待支付单的取回（已不可支付即 forget、按新请求下单）、「我已支付，刷新状态」的响应形状与三种结果
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -9,6 +9,8 @@ import { fetchStats, metaLabel } from '../subs/labels'
 import { importClients, protocolLabel, rateLabel } from './clients'
 import { throttleNote } from './catalog'
 import { createPlacedOrder, recallPayable } from './intent'
+import { ApiError } from '../../../core/api'
+import { orderQuerySchema, queryFailure, queryOutcome } from './order-query'
 import { expiryNote, intervalLabel, isPayable, orderRowSchema, orderTitle } from './orders'
 import { canRenew, pickPrimary, subscriptionSchema, usageReportSchema, type Subscription } from './subscriptions'
 import { buildUsageBars, bytesParts, expiryInfo, pickTrafficQuota, projectUsage, resetAtOf, trafficSummary, usageLevel } from './traffic'
@@ -155,12 +157,16 @@ describe('orders', () => {
   })
 
   it('订单行 schema：无 omitempty 的字段必填，omitempty 的可缺席，未知 kind 拒收', () => {
-    const row = { id: 'o', order_no: 'PD-1', kind: 'addon', status: 'pending_payment', currency: 'CNY', total_amount: 1, discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, refunded_amount: 0, item_name: '', cancellable: true, created_at: 'x' }
+    const row = { id: 'o', order_no: 'PD-1', kind: 'addon', status: 'pending_payment', currency: 'CNY', total_amount: 1, discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, refunded_amount: 0, item_name: '', cancellable: true, has_payment_intent: false, created_at: 'x' }
     expect(orderRowSchema.safeParse(row).success).toBe(true)
     expect(orderRowSchema.safeParse({ ...row, kind: 'gift' }).success).toBe(false)
     const missing: Partial<typeof row> = { ...row }
     delete missing.cancellable
     expect(orderRowSchema.safeParse(missing).success).toBe(false)
+    // has_payment_intent 在 Go 无 omitempty：缺席即形状不符
+    const noIntent: Partial<typeof row> = { ...row }
+    delete noIntent.has_payment_intent
+    expect(orderRowSchema.safeParse(noIntent).success).toBe(false)
     const noItem: Partial<typeof row> = { ...row }
     delete noItem.item_name
     expect(orderRowSchema.safeParse(noItem).success).toBe(false)
@@ -270,5 +276,29 @@ describe('intent', () => {
     expect(isPayable({ status: 'draft', expires_at: undefined }, at)).toBe(true)
     expect(isPayable({ status: 'pending_payment', expires_at: '2026-09-24T11:59:59Z' }, at)).toBe(false)
     for (const status of ['processing', 'paid', 'fulfilled', 'cancelled', 'expired', 'refunded'] as const) expect(isPayable({ status, expires_at: undefined }, at)).toBe(false)
+  })
+})
+
+describe('order query (我已支付，刷新状态)', () => {
+  const base = { order_id: 'o', order_no: 'PD1', provider_code: 'epay', channel_status: 'paid', reconciled: true, already_recorded: false, order_status: 'fulfilled' }
+  it('reads the Go response shape; quarantine_kind is omitempty', () => {
+    expect(orderQuerySchema.parse(base).quarantine_kind).toBeUndefined()
+    expect(orderQuerySchema.safeParse({ ...base, reconciled: undefined }).success).toBe(false)
+    expect(orderQuerySchema.safeParse({ ...base, channel_status: 'failed' }).success).toBe(false)
+  })
+
+  it('sorts every answer into settled / pending / failed', () => {
+    const r = orderQuerySchema.parse(base)
+    expect(queryOutcome(r).kind).toBe('settled')
+    expect(queryOutcome({ ...r, reconciled: false, already_recorded: true, order_status: 'paid' }).kind).toBe('settled')
+    // 钱到了但订单已关闭：算到账，提示走工单
+    const late = queryOutcome({ ...r, quarantine_kind: 'released_order', order_status: 'cancelled' })
+    expect(late.kind).toBe('settled')
+    expect(late.text).toContain('工单')
+    expect(queryOutcome({ ...r, channel_status: 'unpaid', reconciled: false, order_status: 'pending_payment' }).kind).toBe('pending')
+    expect(queryOutcome({ ...r, channel_status: 'not_found', reconciled: false, order_status: 'pending_payment' }).kind).toBe('pending')
+    expect(queryFailure(new ApiError({ status: 409, code: 'conflict', message: '该订单从未发起过支付，无法向渠道查单' }))).toEqual({ kind: 'failed', text: '查询失败：该订单从未发起过支付，无法向渠道查单' })
+    expect(queryFailure(new ApiError({ status: 429, code: 'rate_limited', message: 'x' })).text).toContain('太频繁')
+    expect(queryFailure(new ApiError({ status: 0, code: 'network_error', message: 'x' })).text).toContain('网络')
   })
 })

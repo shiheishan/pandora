@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerGiftCardRoutes、registerCouponRoutes、registerCommissionRoutes
-// [POS]: api/admin 路由表的「礼品卡与批次导出、优惠券、分销与提现」段，由 NewRouter 按原注册顺序调用；处理器在 giftcard.go / coupon.go / coupon_batch.go / commission.go
+// [POS]: api/admin 路由表的「礼品卡与批次导出、掩码报表导出、优惠券、分销与提现」段，由 NewRouter 按原注册顺序调用；处理器在 giftcard.go / coupon.go / coupon_batch.go / commission.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -22,11 +22,18 @@ func registerGiftCardRoutes(r chi.Router, d Deps, h *handlers) {
 		Get("/gift-cards/stats", h.giftCardStats)
 	r.With(middleware.RequirePermission("marketing.giftcard.read", d.Log)).
 		Get("/gift-cards/codes", h.listGiftCodes)
+	// 按筛选导出掩码报表（运营对账）：与列表同筛选，只出掩码、不读明文。
+	// 照审计导出：读权限 + 导出权限 + 近期重认证；GET 无副作用可重放，不带幂等。
+	r.With(
+		middleware.RequirePermission("marketing.giftcard.read", d.Log),
+		middleware.RequirePermission("ops.export", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+	).Get("/gift-cards/codes/report", h.exportGiftCodesReport)
 	r.With(middleware.RequirePermission("marketing.giftcard.read", d.Log)).
 		Get("/gift-cards/batches", h.listGiftBatches)
 	// 明文卡码的唯一出口：每批只能导出一次，写权限 + 近期重认证 + 幂等键
 	// （同一个键的重试原样拿回同一份 CSV）。旧的 GET codes/export 可以
-	// 被只读权限无限次导出，已下线。
+	// 被只读权限无限次导出，已下线；上面的掩码报表刻意不复用那个路径。
 	r.With(
 		middleware.RequirePermission("marketing.giftcard.write", d.Log),
 		middleware.RequireRecentReauth(d.Log),

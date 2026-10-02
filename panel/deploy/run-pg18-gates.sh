@@ -125,6 +125,9 @@ DOMAINS=(
   # 变更套餐（00071）：同 traffic_pack，复用 order_release 的一次性租户夹具，独占一个库。
   # 订阅终态时的续费 / 变更结算进挂账（00095，R117）同属续费与变更的结算，并进这个库。
   "plan_change|pandora_plan_change_gate|./internal/domain/billing||||app_role|^(TestPlanChangePG18|TestIneligibleSubscriptionSettlementPG18)$"
+  # 主动查单（00097，PAY-009）：补记、补记与回调的去重、取消单进挂账、并发巡检。
+  # 复用 order_release 的一次性租户夹具；它会取消订单、置上 00040 的全局水位，独占一个库。
+  "payment_query|pandora_payment_query_gate|./internal/domain/billing||||app_role|^TestPaymentQueryPG18$"
   # 按日流量（00072）：写入与扣量同事务，写入测试并进 traffic_charge 的库；
   # 读模型在 subscription 包，与 node_preview 同包，两边过滤都写精确。
   "usage_daily|pandora_usage_daily_gate|./internal/domain/subscription||||app_role|^TestUsageDailyReadPG18$"
@@ -133,8 +136,8 @@ DOMAINS=(
   "audit|pandora_audit_gate|./internal/platform/audit|run_id|pandora_audit_test_marker|pandora-audit-pg18||"
   "notify|pandora_notify_gate|./internal/domain/notify|run_id|pandora_notify_test_marker|pandora-notify-pg18||"
   # 交付集合（R103、R104）：同一个库里对照节点用户列表、订阅下载、门户预览与后台
-  # 写接口的通知，含节点池限定用户组（00093）、设备识别窗口（00094）、节点一步上线（R108）与节点状态报错中文化（⑪）。跨两个包，过滤写精确，免得把两个包里别的域拉进来被算作跳过。
-  "delivery|pandora_delivery_gate|./internal/domain/subscription ./internal/api/admin|run_id|pandora_delivery_test_marker|pandora-delivery-pg18||^(TestDeliverySetPG18|TestDeliveryAdminPG18|TestPoolUserGroupsDeliveryPG18|TestPoolUserGroupsAdminPG18|TestDeviceWindowPG18|TestDeviceWindowAdminPG18|TestNodeActivatePG18|TestNodeStatusRefusalPG18)$"
+  # 写接口的通知，含节点池限定用户组（00093）、设备识别窗口（00094）、节点一步上线（R108）、节点状态报错中文化（⑪）与路由组（00096：改组后成员节点的有效发布物）。跨两个包，过滤写精确，免得把两个包里别的域拉进来被算作跳过。
+  "delivery|pandora_delivery_gate|./internal/domain/subscription ./internal/api/admin|run_id|pandora_delivery_test_marker|pandora-delivery-pg18||^(TestDeliverySetPG18|TestDeliveryAdminPG18|TestPoolUserGroupsDeliveryPG18|TestPoolUserGroupsAdminPG18|TestDeviceWindowPG18|TestDeviceWindowAdminPG18|TestNodeActivatePG18|TestNodeStatusRefusalPG18|TestRouteGroupsPG18)$"
 )
 
 selected() {

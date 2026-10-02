@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 state / effect，依赖 ../core/router 的 useHashLocation / navigate / href，依赖 ../core/theme，依赖 ../core/format 的 formatMoney，依赖 ../shell/runtime 的 useRuntime / useRealtime / signOut，依赖 ../shell/Logo 与 ../shell/ScreenFrame，依赖 ../ui 的 Menu / Tag / CountBadge / IconChevronDown，依赖 ./pages、./queries、./screens，依赖 ./Shell.module.css
+ * [INPUT]: 依赖 react 的 state / effect，依赖 ../core/router 的 useHashLocation / navigate / href，依赖 ../core/theme，依赖 ../core/format 的 formatMoney，依赖 ../shell/runtime 的 useRuntime / useRealtime / signOut，依赖 ../shell/ScreenFrame，依赖 ./SiteBrand（顶栏品牌位随生效主题的站点名与 Logo），依赖 ../ui 的 Menu / Tag / CountBadge / IconChevronDown，依赖 ./pages、./queries、./screens，依赖 ./Shell.module.css
  * [OUTPUT]: 对外提供 Shell
  * [POS]: portal 登录后的外框（用户门户.dc.html showApp）：粘性顶栏（字标、四项导航、余额胶囊、消息铃铛、头像菜单）、页头、内容区（按路由从 screens 登记表取懒加载页面，包在 ScreenFrame 里）、页脚；< 640 导航收进底部五格标签栏，「我的」打开头像菜单；门户的 SSE 在这里连上，只驱动查询失效
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -8,7 +8,6 @@ import { useEffect, useState } from 'react'
 import { formatMoney } from '../core/format'
 import { href, navigate, useHashLocation } from '../core/router'
 import { toggleTheme, useTheme } from '../core/theme'
-import { Logo } from '../shell/Logo'
 import { ScreenFrame } from '../shell/ScreenFrame'
 import { signOut, useRealtime, useRuntime } from '../shell/runtime'
 import { CountBadge, IconChevronDown, Menu, Tag } from '../ui'
@@ -16,6 +15,7 @@ import { MENU_PAGES, NAV_PAGES, PAGES, greeting, navLabel, navOwner, pagePath, r
 import { displayName, useActivePlanName, useBalance, useCommissionAvailable, usePortalMe, useUnreadCount } from './queries'
 import { SCREENS } from './screens'
 import css from './Shell.module.css'
+import { SiteBrand } from './SiteBrand'
 
 export function Shell() {
   const runtime = useRuntime()
@@ -59,7 +59,7 @@ export function Shell() {
       <header className={css.header}>
         <div className={css.bar}>
           <a href={href(pagePath('overview'))} className={css.home} aria-label="概览">
-            <Logo size={22} className={css.logo} />
+            <SiteBrand size={22} className={css.logo} />
           </a>
           <nav className={css.nav} aria-label="主导航">
             {NAV_PAGES.map((key) => (

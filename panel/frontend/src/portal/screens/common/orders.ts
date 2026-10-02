@@ -27,6 +27,8 @@ export const orderRowSchema = z.object({
   refunded_amount: z.number().int(),
   plan_name: z.string().optional(),
   cancellable: z.boolean(),
+  // 发起过支付（有过任何一条支付意图）；Go 无 omitempty，恒在。决定显示「我已支付，刷新状态」
+  has_payment_intent: z.boolean(),
   created_at: z.string(),
   paid_at: z.string().optional(),
   cancelled_at: z.string().optional(),

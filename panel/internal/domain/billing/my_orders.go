@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 orders / order_items / coupons / subscriptions / payments / payment_providers 表与 platform/db、platform/httpx
+// [INPUT]: 依赖 orders / order_items / payment_intents / coupons / subscriptions / payments / payment_providers 表与 platform/db、platform/httpx
 // [OUTPUT]: 对外提供 ListMyOrders（含 MyOrderCounts 筛选段计数）、MyOrderDetail 及其行类型，ParseOrderStatuses（门户与后台订单列表共用的状态筛选口径）
-// [POS]: billing 的门户订单读模型；myOrderSelectSQL 是列表与详情共用的唯一行形状，订单名取订单项套餐名，流量包订单没有套餐名时取商品名（流量包名）
+// [POS]: billing 的门户订单读模型；myOrderSelectSQL 是列表与详情共用的唯一行形状，订单名取订单项套餐名，流量包订单没有套餐名时取商品名（流量包名）；has_payment_intent 与查单接口「从没发起过支付回 409」同一口径（有无任何支付意图）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -42,15 +42,19 @@ type MyOrderRow struct {
 	PlanName       string `json:"plan_name,omitempty"`
 	// 首个订单项的周期与商品名快照：列表标题要写「专业版 · 季付」，
 	// 流量包订单要写「流量包 · 200 GB」（商品名就是流量包名）。
-	Interval      string     `json:"interval,omitempty"`
-	IntervalCount int        `json:"interval_count,omitempty"`
-	ItemName      string     `json:"item_name"`
-	Cancellable   bool       `json:"cancellable"`
-	CreatedAt     time.Time  `json:"created_at"`
-	PaidAt        *time.Time `json:"paid_at,omitempty"`
-	CancelledAt   *time.Time `json:"cancelled_at,omitempty"`
-	CancelReason  *string    `json:"cancel_reason,omitempty"`
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	Interval      string `json:"interval,omitempty"`
+	IntervalCount int    `json:"interval_count,omitempty"`
+	ItemName      string `json:"item_name"`
+	Cancellable   bool   `json:"cancellable"`
+	// HasPaymentIntent 表示这单发起过支付（有过任何一条支付意图，含已取消的）。
+	// 门户据此决定显示「我已支付，刷新状态」：没发起过支付的单，渠道那边无从查起，
+	// 查单接口对它回 409（payment_query.go）。
+	HasPaymentIntent bool       `json:"has_payment_intent"`
+	CreatedAt        time.Time  `json:"created_at"`
+	PaidAt           *time.Time `json:"paid_at,omitempty"`
+	CancelledAt      *time.Time `json:"cancelled_at,omitempty"`
+	CancelReason     *string    `json:"cancel_reason,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
 }
 
 // cancellableOrderStatuses 与 releaseOrderReservation 里允许释放的状态保持一致。
@@ -84,7 +88,9 @@ const myOrderSelectSQL = `
 			       COALESCE(it.name, ''), COALESCE(it.snapshot_interval, ''),
 			       COALESCE(it.snapshot_interval_count, 0), COALESCE(it.snapshot_product_name, ''),
 			       o.created_at, o.paid_at, o.cancelled_at, o.cancel_reason,
-			       o.expires_at
+			       o.expires_at,
+			       EXISTS (SELECT 1 FROM payment_intents pi
+			                WHERE pi.tenant_id = o.tenant_id AND pi.order_id = o.id)
 			  FROM orders o
 			  LEFT JOIN LATERAL (
 			    SELECT coalesce(oi.snapshot_plan_name, oi.snapshot_product_name) AS name,
@@ -100,7 +106,7 @@ func scanMyOrderRow(row pgx.Row, r *MyOrderRow) error {
 		&r.PayableAmount, &r.PaidAmount, &r.RefundedAmount,
 		&r.PlanName, &r.Interval, &r.IntervalCount, &r.ItemName,
 		&r.CreatedAt, &r.PaidAt, &r.CancelledAt, &r.CancelReason,
-		&r.ExpiresAt); err != nil {
+		&r.ExpiresAt, &r.HasPaymentIntent); err != nil {
 		return err
 	}
 	r.Cancellable = cancellableOrderStatuses[r.Status]

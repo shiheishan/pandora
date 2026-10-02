@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 orders/index.tsx 用到的类名
- * [POS]: portal/screens/orders 的样式，取自设计稿门户-04：待支付卡 --warn-line 描边、20 号金额；列表一张卡，月份分组头 --surface-2 底、行内边距 12/20、状态标签列 56 宽右对齐；展开区 --surface-2 底、标签列 72 宽；< 640 行内边距收到 16
+ * [POS]: portal/screens/orders 的样式，取自设计稿门户-04：待支付卡 --warn-line 描边、20 号金额，刷新状态的结果条按三种结果取 ok / warn / danger 底色；列表一张卡，月份分组头 --surface-2 底、行内边距 12/20、状态标签列 56 宽右对齐；展开区 --surface-2 底、标签列 72 宽；< 640 行内边距收到 16
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .page {
@@ -74,6 +74,39 @@
 
 .quiet:hover {
   color: var(--text);
+}
+
+/* 「我已支付，刷新状态」的结果条：占满卡片一整行，三种结果三种底色 */
+.queryNote {
+  flex-basis: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  font-size: 13px;
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.queryNote[data-kind='settled'] {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.queryNote[data-kind='failed'] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.quiet:disabled {
+  cursor: default;
+  color: var(--text-3);
+}
+
+.factActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-12);
+  margin-top: 10px;
 }
 
 /* ===========================================================================

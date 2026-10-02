@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./logic，依赖 ./schemas
  * [OUTPUT]: 无（测试文件）
- * [POS]: admin/screens/content 纯函数层与 schema 边界的单元测试：时间输入互转、公告文字 / 校验 / 请求体 / 按钮取舍、知识库聚合 / 分组 / 校验 / 请求体 / 受众改动、时区选项、插槽脏判断与过滤提示、主题预览；界面交互在浏览器里对 dev 假后端验收
+ * [POS]: admin/screens/content 纯函数层与 schema 边界的单元测试：时间输入互转、公告文字 / 校验 / 请求体 / 按钮取舍、知识库聚合 / 分组 / 校验 / 请求体 / 受众改动、时区选项、插槽脏判断与过滤提示（主题在 theme.test.ts）；界面交互在浏览器里对 dev 假后端验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -25,14 +25,13 @@ import {
   kbFormFrom,
   knownCategories,
   slotDirty,
-  themePreview,
   timezoneOptions,
   toLocalInput,
   utcOffsetLabel,
   validateAnn,
   validateKb,
 } from './logic'
-import { announcementsResponse, pageSchema, slotSaved, themesResponse, type Announcement, type Page } from './schemas'
+import { announcementsResponse, pageSchema, slotSaved, type Announcement, type Page } from './schemas'
 
 const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 
@@ -218,7 +217,7 @@ describe('site timezone', () => {
   })
 })
 
-describe('slots and theme', () => {
+describe('slots', () => {
   it('saves only real changes and reports dropped fragments', () => {
     expect(slotDirty(undefined, { content: 'a' })).toBe(false)
     expect(slotDirty('a', { content: 'a' })).toBe(false)
@@ -227,13 +226,5 @@ describe('slots and theme', () => {
     expect(droppedMessage([])).toBeNull()
     expect(droppedMessage(['<script> 元素已删除', '事件属性'])).toBe('部分内容已被过滤：<script> 元素已删除；事件属性')
     expect(slotSaved.parse({ saved: true, dropped: null }).dropped).toBeNull()
-  })
-
-  it('previews the light tokens and parses the R19 theme shape', () => {
-    const parsed = themesResponse.parse({ themes: [{ id: U(20), code: 'paper', name: '默认 · 纸白', is_builtin: true, is_active: true, tokens: { light: { '--bg': '#f5f4f0', '--text': '#1c1c1f', '--brand': '#b9442b' }, dark: {} }, branding: { site_name: 'Pandora' }, custom_css: '' }] })
-    expect(themePreview(parsed.themes![0]!)).toEqual({ bg: '#f5f4f0', fg: '#1c1c1f', accent: '#b9442b' })
-    expect(themePreview({ tokens: { light: {}, dark: {} } })).toEqual({ bg: 'var(--bg)', fg: 'var(--text)', accent: 'var(--brand)' })
-    expect(themesResponse.parse({ themes: null }).themes).toBeNull()
-    expect(() => themesResponse.parse({ themes: [{ ...parsed.themes![0]!, tokens: { '--bg': '#fff' } }] })).toThrow()
   })
 })

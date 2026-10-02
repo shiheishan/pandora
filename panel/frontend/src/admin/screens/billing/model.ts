@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 formatDateTime / formatMoney / relativeTime，依赖 ../users/model 的 ORDER_STATUS_VIEW / orderWhat / parseYuan / REASON_MIN / Tone（订单词汇与元转分同一口径），依赖 ../plans/model 的 periodLabel，依赖 ./schemas 的类型
- * [OUTPUT]: 对外提供订单（ORDER_FILTERS / OrderFilter / isOrderFilter / filterStatuses、ORDER_STATUS_VIEW、orderWhat、channelLabel、sourceLabel、canMarkPaid、canCancel、PayLine / paymentLines、orderFacts）、人工开单（Settlement / SETTLEMENTS / ManualForm / emptyManual / PriceChoice / priceChoices / manualProblems / manualBody）、通用校验（reasonProblem / referenceProblem、REASON_MAX / REFERENCE_MAX）、挂账（LATE_FILTERS / LateFilter / isLateFilter、LATE_STATUS_VIEW、lateReason、ageDays、pendingTotals）、渠道（isOffline、providerMode / ProviderMode、toggleBody、todayLabel、rateLabel、providerNote）、收入调整（AdjustForm / emptyAdjust / adjustProblems / adjustBody、adjustmentView、reverseReason、todayLocal、ADJUST_MAX）
+ * [OUTPUT]: 对外提供订单（ORDER_FILTERS / OrderFilter / isOrderFilter / filterStatuses、ORDER_STATUS_VIEW、orderWhat、channelLabel、sourceLabel、canMarkPaid、canQueryChannel、queriedView、canCancel、PayLine / paymentLines、orderFacts）、人工开单（Settlement / SETTLEMENTS / ManualForm / emptyManual / PriceChoice / priceChoices / manualProblems / manualBody）、通用校验（reasonProblem / referenceProblem、REASON_MAX / REFERENCE_MAX）、挂账（LATE_FILTERS / LateFilter / isLateFilter、LATE_STATUS_VIEW、lateReason、ageDays、pendingTotals）、渠道（isOffline、providerMode / ProviderMode、toggleBody、todayLabel、rateLabel、providerNote）、收入调整（AdjustForm / emptyAdjust / adjustProblems / adjustBody、adjustmentView、reverseReason、todayLocal、ADJUST_MAX）
  * [POS]: admin/screens/billing 的纯逻辑：契约后台-05 的状态分组与映射、渠道兜底（余额 / 人工）、支付记录「以支付尝试为行、有入账看入账」、挂账文案（保留规则 6：平台欠用户的钱）、渠道开关到 enabled / accepting_new 的映射（PAY-009）、各写接口的前端预检（与 Go 同规则、fields 键名同后端）；不碰 React 与网络，model.test.ts 覆盖
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -8,7 +8,7 @@ import { formatDateTime, formatMoney, relativeTime } from '../../../core/format'
 import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
-import type { Adjustment, Currency, LateCase, LateKind, LateStatus, OrderDetail, OrderRow, OrderStatus, PaymentHistory, Provider } from './schemas'
+import type { Adjustment, Currency, LateCase, LateKind, LateStatus, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Provider } from './schemas'
 
 export { ORDER_STATUS_VIEW, orderWhat, type Tone }
 
@@ -59,6 +59,25 @@ const PENDING: readonly OrderStatus[] = ['draft', 'pending_payment', 'processing
 /** 标记已支付：后端只收 pending_payment / processing，且应付大于 0 */
 export function canMarkPaid(o: Pick<OrderRow, 'status' | 'payable_amount'>): boolean {
   return (o.status === 'pending_payment' || o.status === 'processing') && o.payable_amount > 0
+}
+
+/**
+ * 向渠道查单（PAY-009）：只对发起过支付的未完结订单开放。待支付单没有入账，
+ * 列表行的 provider_code 就是最近一次支付尝试的渠道；为空说明从没发起过支付（后端回 409）
+ */
+export function canQueryChannel(o: Pick<OrderRow, 'status' | 'provider_code'>): boolean {
+  return (o.status === 'pending_payment' || o.status === 'processing') && !!o.provider_code && !isOffline({ code: o.provider_code })
+}
+
+/** 查单结果的一句话与色调：渠道怎么说、这次有没有补记、补记后订单是什么状态 */
+export function queriedView(r: OrderQueried): { tone: Tone; text: string } {
+  const status = ORDER_STATUS_VIEW[r.order_status].label
+  if (r.channel_status === 'not_found') return { tone: 'neutral', text: `渠道 ${r.provider_code} 没有这笔订单的付款记录，订单未变（${status}）。` }
+  if (r.channel_status === 'unpaid') return { tone: 'neutral', text: `渠道 ${r.provider_code} 显示尚未付款，订单未变（${status}）。` }
+  if (r.already_recorded) return { tone: 'info', text: `渠道确认已付款；这笔钱此前已经入账（回调或之前的查单），没有重复记账。订单：${status}。` }
+  if (r.quarantine_kind) return { tone: 'warn', text: `渠道确认已付款，但订单已${status}，款项已补记进挂账（${LATE_KIND_LABELS[r.quarantine_kind]}），可在「挂账」里处理。` }
+  if (r.reconciled) return { tone: 'ok', text: `渠道确认已付款，已按回调同一流程补记入账。订单：${status}。` }
+  return { tone: 'warn', text: `渠道确认已付款，但没有补记，订单：${status}。` }
 }
 
 /** 取消：只对还没支付的单开放；有入账的单后端也会回 409 */

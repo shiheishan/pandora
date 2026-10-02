@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./model 的纯函数，依赖 ./schemas 的 schema
  * [OUTPUT]: 对外提供订单与收款纯逻辑与 schema 的单元测试
- * [POS]: admin/screens/billing 的测试：状态分组到多值 status、渠道兜底与来源、可标记 / 可取消、支付记录合并、人工开单的价格选项 / 预检 / 提交体、挂账文案与合计、渠道开关映射与备注、收入调整预检 / 提交体 / 视图 / 冲销原因；schema 守住 omitempty、封闭枚举与 R2 / R3 形状
+ * [POS]: admin/screens/billing 的测试：状态分组到多值 status、渠道兜底与来源、可标记 / 可取消 / 可向渠道查单与查单结果文案、支付记录合并、人工开单的价格选项 / 预检 / 提交体、挂账文案与合计、渠道开关映射与备注、收入调整预检 / 提交体 / 视图 / 冲销原因；schema 守住 omitempty、封闭枚举与 R2 / R3 形状
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
@@ -13,6 +13,7 @@ import {
   ageDays,
   canCancel,
   canMarkPaid,
+  canQueryChannel,
   channelLabel,
   emptyAdjust,
   emptyManual,
@@ -26,6 +27,7 @@ import {
   pendingTotals,
   priceChoices,
   providerMode,
+  queriedView,
   providerNote,
   rateLabel,
   reasonProblem,
@@ -35,7 +37,7 @@ import {
   todayLocal,
   toggleBody,
 } from './model'
-import { adjustmentSchema, cancelledSchema, latePaymentsSchema, markedPaidSchema, orderDetailSchema, type OrderDetail, type PaymentHistory, type Provider } from './schemas'
+import { adjustmentSchema, cancelledSchema, latePaymentsSchema, markedPaidSchema, orderDetailSchema, orderQueriedSchema, type OrderDetail, type PaymentHistory, type Provider } from './schemas'
 
 const row = { provider_name: null, balance_applied: 0, total_amount: 2500 }
 
@@ -286,5 +288,32 @@ describe('schemas', () => {
   it('reads the snake_case mark-paid response (R2)', () => {
     expect(markedPaidSchema.safeParse({ processed: true, already_handled: false, payment_id: 'p', subscription_id: 's', ledger_txn_id: 'l' }).success).toBe(true)
     expect(markedPaidSchema.safeParse({ Processed: true, AlreadyHandled: false, PaymentID: 'p', SubscriptionID: 's', LedgerTxnID: 'l' }).success).toBe(false)
+  })
+})
+
+describe('channel query (PAY-009)', () => {
+  it('offers the query only on unfinished orders that went to a channel', () => {
+    expect(canQueryChannel({ status: 'pending_payment', provider_code: 'epay' })).toBe(true)
+    expect(canQueryChannel({ status: 'processing', provider_code: 'epay' })).toBe(true)
+    // 从没发起过支付（人工开的待支付单）、线下渠道、已完结的单都不给
+    expect(canQueryChannel({ status: 'pending_payment', provider_code: null })).toBe(false)
+    expect(canQueryChannel({ status: 'pending_payment', provider_code: 'offline' })).toBe(false)
+    for (const status of ['draft', 'paid', 'fulfilled', 'cancelled', 'expired'] as const) expect(canQueryChannel({ status, provider_code: 'epay' })).toBe(false)
+  })
+
+  it('reads the query response and says what happened', () => {
+    const base = { order_id: 'o', order_no: 'PD1', provider_code: 'epay', channel_status: 'paid', reconciled: true, already_recorded: false, order_status: 'fulfilled' }
+    const r = orderQueriedSchema.parse(base)
+    expect(r.quarantine_kind).toBeUndefined()
+    expect(queriedView(r)).toMatchObject({ tone: 'ok' })
+    expect(queriedView(r).text).toContain('补记')
+    expect(queriedView({ ...r, reconciled: false, already_recorded: true }).tone).toBe('info')
+    const late = orderQueriedSchema.parse({ ...base, quarantine_kind: 'released_order', order_status: 'cancelled' })
+    expect(queriedView(late)).toMatchObject({ tone: 'warn' })
+    expect(queriedView(late).text).toContain('挂账')
+    expect(queriedView({ ...r, channel_status: 'unpaid', reconciled: false, order_status: 'pending_payment' }).text).toContain('尚未付款')
+    expect(queriedView({ ...r, channel_status: 'not_found', reconciled: false, order_status: 'pending_payment' }).text).toContain('没有这笔订单的付款记录')
+    expect(orderQueriedSchema.safeParse({ ...base, channel_status: 'error' }).success).toBe(false)
+    expect(orderQueriedSchema.safeParse({ ...base, quarantine_kind: 'overdue' }).success).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 platform 的 db/audit/httpx，依赖同包 tokens.go 的令牌白名单与 sanitize.go 的 HTML 净化
+// [INPUT]: 依赖 platform 的 db/audit/httpx，依赖同包 tokens.go 的令牌白名单、branding.go 的品牌规则与 sanitize.go 的 HTML 净化
 // [OUTPUT]: 对外提供 Service、New、Theme、Slot、SlotCatalog、PublicAppearance、Public、ListThemes、SaveThemeInput、SaveTheme、ActivateTheme、DeleteTheme、ListSlots、SaveSlotInput、SaveSlot
-// [POS]: domain/appearance 的主服务：门户一次取齐外观（令牌过滤、custom_css 不下发），后台主题与插槽的读写
+// [POS]: domain/appearance 的主服务：门户一次取齐外观（令牌与品牌过滤、custom_css 不下发），后台主题与插槽的读写；新建（Create）撞已有 code 回 409，不覆盖
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package appearance
@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -100,9 +101,10 @@ func (s *Service) Public(ctx context.Context, tenantID string) (*PublicAppearanc
 		case err != nil:
 			return err
 		default:
-			// 门户只拿到设计稿白名单内的 token；custom_css 本期停用，一律不下发
+			// 门户只拿到设计稿白名单内的 token 与三个已知品牌键；custom_css 本期停用，一律不下发
 			// （CSP 没有 unsafe-inline，旧门户注入 <style> 的做法在新前端上本来就不生效）
 			t.Tokens = filterTokens(t.Tokens)
+			t.Branding = filterBranding(t.Branding)
 			t.CustomCSS = ""
 			out.Theme = &t
 		}
@@ -158,8 +160,11 @@ func (s *Service) ListThemes(ctx context.Context, tenantID string) ([]Theme, err
 }
 
 type SaveThemeInput struct {
-	Code      string
-	Name      string
+	Code string
+	Name string
+	// Create 为 true 表示「新建 / 另存为」：code 已被占用就回 409，
+	// 不把别人的主题悄悄覆盖掉。为 false 时按 code upsert（编辑已有主题）。
+	Create    bool
 	Tokens    json.RawMessage
 	Branding  json.RawMessage
 	CustomCSS string
@@ -170,10 +175,11 @@ type SaveThemeInput struct {
 // custom_css 停用后恒为空。
 //
 // 内置主题不允许原地改：它们是「回到已知可用状态」的退路。
-// 想基于内置改就复制一份 —— 复制在管理端是一次带新 code 的保存。
+// 想基于内置改就另存为 —— 一次带新 code、Create=true 的保存。
 //
-// 表上的 CHECK（code 格式、name 长度）在这里先校验一遍，tokens 按设计稿白名单校验：
-// 让违规变成带字段的 422，而不是撞约束变成 500（缺陷 20）。
+// 表上的 CHECK（code 格式、name 长度）在这里先校验一遍，tokens 按设计稿白名单、
+// branding 按 branding.go 的规则校验，全部问题合进一个带字段的 422 一次回给
+// 管理员，而不是撞约束变成 500（缺陷 20），也不是改一处报一处。
 func (s *Service) SaveTheme(ctx context.Context, tenantID string, in SaveThemeInput) ([]string, error) {
 	in.Code = strings.ToLower(strings.TrimSpace(in.Code))
 	in.Name = strings.TrimSpace(in.Name)
@@ -192,21 +198,14 @@ func (s *Service) SaveTheme(ctx context.Context, tenantID string, in SaveThemeIn
 	if strings.TrimSpace(in.CustomCSS) != "" {
 		fields["custom_css"] = "自定义 CSS 本期停用，请留空"
 	}
+	tokens, err := normalizeTokens(in.Tokens)
+	mergeFields(fields, err)
+	branding, err := normalizeBranding(in.Branding)
+	mergeFields(fields, err)
 	if len(fields) > 0 {
 		return nil, httpx.Invalid(fields)
 	}
-	tokens, err := normalizeTokens(in.Tokens)
-	if err != nil {
-		return nil, err
-	}
-	in.Tokens = tokens
-	if len(in.Branding) == 0 {
-		in.Branding = json.RawMessage(`{}`)
-	}
-	var branding map[string]any
-	if err := json.Unmarshal(in.Branding, &branding); err != nil || branding == nil {
-		return nil, httpx.Invalid(map[string]string{"branding": "必须是 JSON 对象"})
-	}
+	in.Tokens, in.Branding = tokens, branding
 	// custom_css 停用：写库恒为空串，dropped 恒为空数组（不是 null）
 	css := ""
 	notes := []string{}
@@ -224,6 +223,10 @@ func (s *Service) SaveTheme(ctx context.Context, tenantID string, in SaveThemeIn
 				return httpx.New(httpx.CodeValidationFailed,
 					"内置主题不能直接改，请用另一个标识另存为自定义主题")
 			}
+			if err == nil && in.Create {
+				return &httpx.Error{Code: httpx.CodeConflict, Message: "主题标识已被占用",
+					Fields: map[string]string{"code": "主题标识「" + in.Code + "」已被占用，换一个"}}
+			}
 
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO site_themes (tenant_id, code, name, tokens, branding, custom_css)
@@ -239,10 +242,23 @@ func (s *Service) SaveTheme(ctx context.Context, tenantID string, in SaveThemeIn
 				ActorKind: "admin", ActorID: &in.ActorID, Action: "appearance.theme.save",
 				ResourceType: "site_theme", APIDomain: "admin",
 				RequestID:   httpx.RequestIDFrom(ctx),
-				AfterDigest: map[string]any{"code": in.Code, "css_bytes": len(css)},
+				AfterDigest: map[string]any{"code": in.Code, "create": in.Create, "css_bytes": len(css)},
 			})
 		})
 	return notes, err
+}
+
+// mergeFields 把一个 422 的字段并进 fields；其它错误（不会发生）记在 tokens 名下兜底。
+func mergeFields(fields map[string]string, err error) {
+	if err == nil {
+		return
+	}
+	var he *httpx.Error
+	if errors.As(err, &he) && len(he.Fields) > 0 {
+		maps.Copy(fields, he.Fields)
+		return
+	}
+	fields["tokens"] = err.Error()
 }
 
 func (s *Service) ActivateTheme(ctx context.Context, tenantID, code, actorID string) error {

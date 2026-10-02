@@ -327,6 +327,17 @@ BEGIN
   END IF;
 END $$;
 GRANT UPDATE (status, provider_ref) ON payment_intents TO aegis_app;
+DO $$
+BEGIN
+  -- 主动查单的巡检排程列（00097）；回滚后列不在，跳过即可
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='payment_intents'
+       AND column_name='next_query_at'
+  ) THEN
+    EXECUTE 'GRANT UPDATE (query_attempts, next_query_at) ON public.payment_intents TO aegis_app';
+  END IF;
+END $$;
 
 -- Reservation and reconciliation rows are lifecycle evidence. Identity,
 -- amounts, legacy markers and generated versions remain immutable to the app;

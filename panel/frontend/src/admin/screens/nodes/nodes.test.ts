@@ -312,10 +312,12 @@ describe('routing rows', () => {
 
   it('counts and renames rules that point at an outbound', () => {
     const rows = [
-      { kind: 'domain' as const, value: 'a', outbound: 'us-lax-01', enabled: true, note: '' },
+      { kind: 'domain' as const, value: 'a', outbound: 'US-LAX-01', enabled: true, note: '' },
       { kind: 'fallback' as const, value: '', outbound: 'direct', enabled: true, note: '' },
     ]
+    // 按 tag 原样精确匹配（与后端 checkRouteRefs、下发和 pdnd 一致）
     expect(rulesUsing(rows, 'US-LAX-01')).toBe(1)
+    expect(rulesUsing(rows, 'us-lax-01')).toBe(0)
     expect(rulesUsing(rows, 'HK')).toBe(0)
     expect(renameOutbound(rows, 'US-LAX-01', ' US-SJC ').map((r) => r.outbound)).toEqual(['US-SJC', 'direct'])
     expect(renameOutbound(rows, '', 'x')).toEqual(rows)

@@ -1,5 +1,5 @@
 /**
- * [INPUT]: 依赖 react 的 state / FormEvent，依赖 zod，依赖 ../core/api 的 isApiError / ApiClient，依赖 ../core/token 的 TokenStore 类型，依赖 ../shell/runtime 的 useRuntime，依赖 ../shell/Logo，依赖 ../ui 的 Button / Input / Segmented / useToast，依赖 ./queries 的 useSiteConfig / useAppearance，依赖 ./entry-links 的 quickLoginTokenFromInput / readStoredInvite，依赖 ./AuthPage.module.css
+ * [INPUT]: 依赖 react 的 state / FormEvent，依赖 zod，依赖 ../core/api 的 isApiError / ApiClient，依赖 ../core/token 的 TokenStore 类型，依赖 ../shell/runtime 的 useRuntime，依赖 ./SiteBrand（品牌位与标语随生效主题），依赖 ../ui 的 Button / Input / Segmented / useToast，依赖 ./queries 的 useSiteConfig / useAppearance，依赖 ./entry-links 的 quickLoginTokenFromInput / readStoredInvite，依赖 ./AuthPage.module.css
  * [OUTPUT]: 对外提供 AuthPage、AuthTab、loginWithPassword 与 consumeQuickLogin（快捷登录令牌换访问令牌）
  * [POS]: portal 未登录时的整页（用户门户.dc.html showAuth）：登录 / 两步注册 / 快捷登录三个标签；注册按 site-config 的 registration_mode 决定邀请码必填、选填或整个隐藏，完成后自动登录；快捷登录只接受已登录设备生成的链接（保留规则 1）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -8,12 +8,12 @@ import { useState, type FormEvent } from 'react'
 import { z } from 'zod'
 import { isApiError, type ApiClient } from '../core/api'
 import type { TokenStore } from '../core/token'
-import { Logo } from '../shell/Logo'
 import { useRuntime } from '../shell/runtime'
 import { Button, Input, Segmented, useToast } from '../ui'
 import css from './AuthPage.module.css'
 import { quickLoginTokenFromInput, readStoredInvite } from './entry-links'
 import { useAppearance, useSiteConfig } from './queries'
+import { SiteBrand } from './SiteBrand'
 
 export type AuthTab = 'login' | 'reg' | 'quick'
 
@@ -46,6 +46,8 @@ export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?
   const [tab, setTab] = useState<AuthTab>(initialTab)
   const current: AuthTab = tab === 'reg' && mode === 'closed' ? 'login' : tab
   const loginNotice = appearance.data?.slots['portal.login.notice']
+  // 页脚的站点名随生效主题（与 document.title 同源），取不到时是 Pandora
+  const siteName = appearance.data?.theme?.branding.site_name?.trim() || 'Pandora'
 
   const options = [
     { value: 'login' as const, label: '登录' },
@@ -56,7 +58,7 @@ export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?
   return (
     <div className={css.page}>
       <div className={css.column}>
-        <Logo size={26} className={css.logo} />
+        <SiteBrand size={26} className={css.logo} withTagline />
         {loginNotice && (
           // 插槽 HTML 由服务端按白名单净化（契约 GET v1/appearance）
           <div className={css.notice} dangerouslySetInnerHTML={{ __html: loginNotice }} />
@@ -68,7 +70,7 @@ export function AuthPage({ initialTab = 'login', invite, notice }: { initialTab?
           {current === 'quick' && <QuickLoginForm initialError={notice ?? null} />}
         </div>
         <div className={css.footer}>
-          {mode === 'closed' ? 'Pandora · 注册已关闭' : mode === 'open' ? 'Pandora · 注册已开放' : mode === 'invite_only' ? 'Pandora · 注册已开放 · 需要邀请码' : 'Pandora'}
+          {mode === 'closed' ? `${siteName} · 注册已关闭` : mode === 'open' ? `${siteName} · 注册已开放` : mode === 'invite_only' ? `${siteName} · 注册已开放 · 需要邀请码` : siteName}
         </div>
       </div>
     </div>

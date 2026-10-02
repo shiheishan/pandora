@@ -69,7 +69,9 @@ type Deps struct {
 	GeoIP *geoip.Resolver
 	// Billing 只用到后台作业与提现打款的记账部分
 	Billing *billing.Service
-	Content *content.Service
+	// Payments 只用于「向渠道查单」（POST v1/orders/{id}/query）
+	Payments *billing.PaymentService
+	Content  *content.Service
 	// SMTPProvider 用来在保存邮件设置后让配置缓存立刻失效
 	SMTPProvider *notify.DBSMTPProvider
 	// Notify 用于通知模板的读写。模板表与渲染本来就在跑，

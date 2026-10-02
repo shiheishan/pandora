@@ -40,7 +40,8 @@ export function pastOrders(now: number, sub: SubFixture): OrderFixture[] {
   const pack = PACKS[1]!
   const renew = { kind: 'renewal' as const, plan_name: pro.name, item_name: pro.name, interval: month.billing_interval, interval_count: 1, subscription_id: sub.id, subtotal: month.unit_amount }
   return [
-    order(now, 0.02, { kind: 'topup', status: 'processing', subtotal: 5000, expires_at: new Date(now + 25 * 60_000).toISOString() }),
+    // 处理中：发起过支付、渠道结果未定；假收银台里没有它的意图，查单答「渠道查单失败」，用来看查询失败
+    order(now, 0.02, { kind: 'topup', status: 'processing', subtotal: 5000, expires_at: new Date(now + 25 * 60_000).toISOString(), hasIntent: true }),
     order(now, 3, { ...renew, status: 'fulfilled', coupon_code: 'AUTUMN26', discount_amount: 1180 }),
     order(now, 6, { kind: 'addon', status: 'fulfilled', plan_name: pack.name, item_name: pack.name, subtotal: pack.unit_amount, balance_applied: 2000 }),
     order(now, 9, { kind: 'topup', status: 'fulfilled', subtotal: 10000 }),

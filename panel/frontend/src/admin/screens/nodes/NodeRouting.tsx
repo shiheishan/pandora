@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的规则行互转，依赖 ./queries、./schemas，依赖 ./nodes.module.css
- * [OUTPUT]: 对外提供 NodeRouting（节点抽屉「路由」标签）与 RuleRows（规则行编辑器，全局路由标签 RoutingTab 复用）
- * [POS]: admin/screens/nodes 抽屉的单节点路由（契约待补·前端：后端有、设计缺）：GET / PUT v1/nodes/{id}/routing，全量替换本节点私有出站与规则；规则可以指向 direct / block、本节点私有出站与全局出站（R26，大小写不敏感）；匹配类型只放后端支持的（D-D-1），兜底必须是最后一条启用规则，新规则插在末尾兜底之前；出站行的校验与互转在 logic。保存要 node.config.publish，成功后后端通知节点
+ * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的规则行互转与来源文字，依赖 ./NodeRouteGroups 的所属组与生效预览，依赖 ./queries、./schemas，依赖 ./nodes.module.css
+ * [OUTPUT]: 对外提供 NodeRouting（节点抽屉「路由」标签）与 RuleRows（规则行编辑器，全局与路由组共用的 ScopeRoutingEditor 复用）
+ * [POS]: admin/screens/nodes 抽屉的单节点路由（契约待补·前端：后端有、设计缺）：GET / PUT v1/nodes/{id}/routing，全量替换本节点私有出站与规则；上方是所属路由组（NodeGroupMembership），下方是生效结果预览（EffectivePreview）；规则可以指向 direct / block、本节点私有出站、所在路由组与全局出站（R26 / 00096，按 tag 原样精确匹配，与下发和 pdnd 一致）；匹配类型只放后端支持的（D-D-1），兜底必须是最后一条启用规则，新规则插在末尾兜底之前；出站行的校验与互转在 logic。保存要 node.config.publish，成功后后端通知节点
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
@@ -9,16 +9,23 @@ import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, Empty, IconClose, Input, QueryView, Select, TextArea, useToast } from '../../../ui'
-import { MATCH_KINDS, OUTBOUND_TYPES, insertRule, outboundToRow, routeToRow, rowsToOutbounds, rowsToRoutes, type MatchKind, type OutboundRow, type RuleRow } from './logic'
+import { MATCH_KINDS, OUTBOUND_TYPES, insertRule, outboundToRow, routeToRow, rowsToOutbounds, rowsToRoutes, sourceLabel, type MatchKind, type OutboundRow, type RuleRow } from './logic'
+import { EffectivePreview, NodeGroupMembership } from './NodeRouteGroups'
 import css from './nodes.module.css'
-import { useCan, useFailure, useGlobalRouting, useInvalidateNodes, useNodeRouting } from './queries'
+import { useCan, useEffectiveRouting, useFailure, useGlobalRouting, useInvalidateNodes, useNodeRouting } from './queries'
 import { routingSaved, type NodeRouting as Routing } from './schemas'
 
 export function NodeRouting({ nodeId }: { nodeId: string }) {
   const routing = useNodeRouting(nodeId)
   return (
     <QueryView query={routing} rows={3} isEmpty={() => false} empty={null}>
-      {(data) => <RoutingEditor key={data.row_version} nodeId={nodeId} data={data} />}
+      {(data) => (
+        <div className={css.stackLg}>
+          <NodeGroupMembership key={`groups-${data.row_version}`} nodeId={nodeId} rowVersion={data.row_version} current={data.groups} />
+          <RoutingEditor key={data.row_version} nodeId={nodeId} data={data} />
+          <EffectivePreview nodeId={nodeId} />
+        </div>
+      )}
     </QueryView>
   )
 }
@@ -30,6 +37,7 @@ function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
   const fail = useFailure()
   const invalidate = useInvalidateNodes()
   const global = useGlobalRouting()
+  const effective = useEffectiveRouting(nodeId)
   const writable = can('node.config.publish')
   const [rules, setRules] = useState<RuleRow[]>(() => data.routes.map(routeToRow))
   const [outbounds, setOutbounds] = useState<OutboundRow[]>(() => data.outbounds.map(outboundToRow))
@@ -41,7 +49,8 @@ function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
     ['direct', '直连 direct'],
     ['block', '拦截 block'],
     ...outbounds.filter((o) => o.tag.trim()).map((o) => [o.tag.trim(), `${o.tag.trim()}（本节点）`]),
-    ...(global.data?.outbounds ?? []).map((o) => [o.tag, `${o.tag}（全局）`]),
+    // 本节点看得见的其他范围出站：所在路由组与全局（取生效预览里胜出的那条，标注来源）；预览还没回来时先列全局
+    ...(effective.data ? effective.data.outbounds.filter((o) => o.source.scope !== 'node').map((o) => [o.tag, `${o.tag}（${sourceLabel(o.source)}）`]) : (global.data?.outbounds ?? []).map((o) => [o.tag, `${o.tag}（全局）`])),
   ] as Array<[string, string]>
 
   const save = useMutation({
@@ -76,15 +85,15 @@ function RoutingEditor({ nodeId, data }: { nodeId: string; data: Routing }) {
       <section>
         <div className={css.sectionHead}>
           <h4 className={css.sectionTitle}>分流规则</h4>
-          <span className={css.faint}>本节点的规则排在全局规则之前，自上而下匹配，命中即停；这里的兜底规则会遮住全部全局规则</span>
+          <span className={css.faint}>本节点的规则排在所在路由组与全局规则之前，自上而下匹配，命中即停；这里的兜底规则会遮住组与全局的全部规则</span>
         </div>
-        <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={!writable || save.isPending} onChange={setRules} emptyHint="沿用全局规则。加一条规则只影响这个节点。" />
+        <RuleRows rows={rules} errors={ruleErrors} outbounds={tags} disabled={!writable || save.isPending} onChange={setRules} emptyHint="沿用路由组与全局规则。加一条规则只影响这个节点。" />
       </section>
 
       <section>
         <div className={css.sectionHead}>
           <h4 className={css.sectionTitle}>本节点私有出站</h4>
-          <span className={css.faint}>全局出站在「路由」标签统一管理，这里可以直接引用</span>
+          <span className={css.faint}>全局与路由组的出站在「路由」标签统一管理，这里可以直接引用；同名时本节点的覆盖它们</span>
         </div>
         <OutboundRows rows={outbounds} errors={outErrors} disabled={!writable || save.isPending} onChange={setOutbounds} emptyHint="没有私有出站。" />
       </section>

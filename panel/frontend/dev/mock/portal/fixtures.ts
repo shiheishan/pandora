@@ -115,6 +115,8 @@ export interface OrderFixture {
   expires_at?: string
   payMethod?: string
   payProvider?: string
+  /** 发起过支付（POST v1/orders/{id}/pay 过）；行上的 has_payment_intent 取它或已付渠道 */
+  hasIntent?: boolean
   effect: OrderEffect
 }
 

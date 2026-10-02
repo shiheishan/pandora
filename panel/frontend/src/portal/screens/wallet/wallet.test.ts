@@ -84,6 +84,7 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       plan_name: '专业版',
       item_name: '专业版',
       cancellable: false,
+      has_payment_intent: true,
       created_at: '2026-09-21T10:00:00Z',
       items: [{ name: '专业版', quantity: 1, unit_amount: 5900, line_amount: 5900 }],
       payments: [{ status: 'succeeded', amount: 4720, currency: 'CNY', created_at: '2026-09-21T10:01:00Z', method: 'alipay', provider_name: '易支付' }],

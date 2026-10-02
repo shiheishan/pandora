@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/marketing/schemas 的 giftStatsSchema / overviewSchema
  * [OUTPUT]: 对外提供营销（后台-06）假接口的测试
- * [POS]: tests 的营销假后端守卫：礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400、统计与佣金总览能被收紧后的 schema 解析
+ * [POS]: tests 的营销假后端守卫：礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、按筛选导出的掩码报表不含任何明文、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400、统计与佣金总览能被收紧后的 schema 解析
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -44,6 +44,19 @@ describe('mock api · admin marketing', () => {
     const again = await post(`/v1/gift-cards/batches/${made.batch_id}/export`, {}, 'exp-2')
     expect(again.status).toBe(409)
     expect(await again.json()).toMatchObject({ error: { code: 'conflict', message: '该批次已导出，完整卡码不可再次获取' } })
+
+    // 按筛选导出掩码报表：与列表同筛选、可重复导出、只有掩码（这批明文一张都不出现）
+    const report = await fetch(`${base}/v1/gift-cards/codes/report?batch_id=${made.batch_id}`, { headers: auth })
+    expect(report.status).toBe(200)
+    expect(report.headers.get('content-disposition')).toMatch(/^attachment; filename="gift-codes-report-\d{8}-\d{6}\.csv"$/)
+    const bytes = new Uint8Array(await report.arrayBuffer())
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
+    const masked = new TextDecoder().decode(bytes) // 默认解码会去掉 BOM
+    expect(masked.startsWith('卡密（掩码）,状态,模板,批次,有效期,生成时间,兑换人,兑换时间\n')).toBe(true)
+    expect(masked.split('\n').filter(Boolean)).toHaveLength(7)
+    for (const line of csv.split('\n').slice(1).filter(Boolean)) expect(masked).not.toContain(line.split(',')[0]!)
+    expect(await (await fetch(`${base}/v1/gift-cards/codes/report?batch_id=${made.batch_id}&status=used`, { headers: auth })).text()).toBe('卡密（掩码）,状态,模板,批次,有效期,生成时间,兑换人,兑换时间\n')
+    expect((await fetch(`${base}/v1/gift-cards/codes/report?status=nope`, { headers: auth })).status).toBe(400)
   })
 
   it('points coupons and plan cards at the plans module catalog (fixed plan ids)', async () => {

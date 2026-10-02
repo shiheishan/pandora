@@ -1,11 +1,11 @@
 /**
  * [INPUT]: 依赖 ../../../core/format 的 formatDateTime，依赖 ./schemas 的类型与枚举
- * [OUTPUT]: 对外提供公告（状态文字、列表时间与可见范围文字、表单模型与校验、请求体、按钮取舍）、知识库（按 slug 聚成文章、按分类分组、表单模型与校验、请求体、受众是否改动）、时间输入互转、站点时区选项、插槽的脏判断与过滤提示、主题预览色
+ * [OUTPUT]: 对外提供公告（状态文字、列表时间与可见范围文字、表单模型与校验、请求体、按钮取舍）、知识库（按 slug 聚成文章、按分类分组、表单模型与校验、请求体、受众是否改动）、时间输入互转、站点时区选项、插槽的脏判断与过滤提示（主题的纯函数在 theme.ts）
  * [POS]: admin/screens/content 的纯函数层，组件只做渲染与请求；content.test.ts 守住。校验文案与上下限照 Go 的 announce.go、domain/content/service.go
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatDateTime } from '../../../core/format'
-import type { Announcement, AnnStatus, Kind, Page, Platform, Severity, Slot, Theme, Visibility } from './schemas'
+import type { Announcement, AnnStatus, Kind, Page, Platform, Severity, Slot, Visibility } from './schemas'
 
 const runes = (s: string) => [...s.trim()].length
 
@@ -417,17 +417,4 @@ export function slotDirty(draft: string | undefined, slot: Pick<Slot, 'content'>
 /** 净化丢掉的标签 / 属性说明；null 或空 = 没丢东西 */
 export function droppedMessage(dropped: readonly string[] | null): string | null {
   return dropped && dropped.length > 0 ? `部分内容已被过滤：${dropped.join('；')}` : null
-}
-
-// ---------------------------------------------------------------------------
-// 主题卡片预览：取亮色一组的背景、正文、品牌色；缺键回退到当前令牌
-// ---------------------------------------------------------------------------
-export function themePreview(t: Pick<Theme, 'tokens'>): { bg: string; fg: string; accent: string } {
-  const light = t.tokens.light
-  return { bg: light['--bg'] ?? 'var(--bg)', fg: light['--text'] ?? 'var(--text)', accent: light['--brand'] ?? 'var(--brand)' }
-}
-
-export function siteName(t: Pick<Theme, 'branding'>): string | null {
-  const v = t.branding.site_name
-  return typeof v === 'string' && v.trim() ? v.trim() : null
 }

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/payment 的 Provider 接口与 ErrNotSupported，依赖 platform/crypto 的 HMACVerify
+// [OUTPUT]: 对外提供 Config、New、Provider（demo_hmac 适配器）
+// [POS]: domain/payment 的参考渠道，供集成测试、本地联调与新渠道照抄；背后没有真实渠道，主动查单 QueryPayment 明确回 ErrNotSupported，其余环节都有最小实现
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package demo 是一个用 HMAC-SHA256 验签的参考适配器。
 //
 // 用途有两个：
@@ -172,9 +177,12 @@ func (p *Provider) NotificationAck(in payment.AckInput) payment.AckOutput {
 	return payment.AckOutput{HTTPStatus: http.StatusOK, ContentType: ct, Body: body}
 }
 
+// QueryPayment 明确声明不支持。
+//
+// 背后没有真实渠道可查。回「未找到」看似无害，却会让主动查单把「查不了」
+// 当成「渠道说没付」报给后台与用户，巡检也会一遍遍白查（billing/payment_query.go）。
 func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (*payment.QueryResult, error) {
-	// 无真实渠道可查：明确返回未找到，而不是编造一个成功状态
-	return &payment.QueryResult{Found: false}, nil
+	return nil, fmt.Errorf("demo(%s): %w", p.cfg.Code, payment.ErrNotSupported)
 }
 
 func (p *Provider) Refund(ctx context.Context, req payment.RefundRequest) (*payment.RefundResult, error) {

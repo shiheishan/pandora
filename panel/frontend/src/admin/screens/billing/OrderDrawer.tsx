@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime / formatMoney / relativeTime，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / Drawer / Empty / Input / Modal / Skeleton / Tag / TextArea / useToast，依赖 ../../actions 的 useCan / useFailure / useIntentKey，依赖 ../users/api 的 useInvalidateUsers，依赖 ./api，依赖 ./model，依赖 ./Billing.module.css
  * [OUTPUT]: 对外提供 OrderDrawer
- * [POS]: 订单抽屉（480 宽，后台-05）：头部（订单号、状态、创建时间）、facts（用户可点到用户抽屉、内容、金额与应付、渠道、来源「人工开单 · 开单人」、支付截止与取消原因）、多项订单的订单项、支付记录（billing.payment.read 才请求，没有就整块不画）、待支付单的「手工标记已支付」（凭证号 + 收款说明，reauth + 幂等）与底部「取消订单」（取消原因必填，带 state_version，幂等）
+ * [POS]: 订单抽屉（480 宽，后台-05）：头部（订单号、状态、创建时间）、facts（用户可点到用户抽屉、内容、金额与应付、渠道、来源「人工开单 · 开单人」、支付截止与取消原因）、多项订单的订单项、支付记录（billing.payment.read 才请求，没有就整块不画）、发起过支付的待支付单的「向渠道查单」（写权限 + 幂等，结果留在框里，补记后整体失效重画）、待支付单的「手工标记已支付」（凭证号 + 收款说明，reauth + 幂等）与底部「取消订单」（取消原因必填，带 state_version，幂等）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -12,9 +12,9 @@ import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Drawer, Empty, Input, Modal, Skeleton, Tag, TextArea, useToast } from '../../../ui'
 import { useCan, useFailure, useIntentKey } from '../../actions'
 import { useInvalidateUsers } from '../users/api'
-import { cancelledSchema, markedPaidSchema, useInvalidateBilling, useOrder, useOrderPayments, type OrderDetail } from './api'
+import { cancelledSchema, markedPaidSchema, orderQueriedSchema, useInvalidateBilling, useOrder, useOrderPayments, type OrderDetail } from './api'
 import css from './Billing.module.css'
-import { canCancel, canMarkPaid, ORDER_STATUS_VIEW, orderFacts, paymentLines, reasonProblem, referenceProblem } from './model'
+import { canCancel, canMarkPaid, canQueryChannel, ORDER_STATUS_VIEW, orderFacts, paymentLines, queriedView, reasonProblem, referenceProblem } from './model'
 
 export function OrderDrawer({ id, onClose, now }: { id: string | null; onClose: () => void; now: Date }) {
   const q = useOrder(id)
@@ -108,6 +108,7 @@ function Body({ o }: { o: OrderDetail }) {
         </section>
       )}
       {can('billing.payment.read') && <Payments id={o.id} />}
+      {can('billing.order.write') && canQueryChannel(o) && <QueryChannel o={o} />}
       {can('billing.order.write') && canMarkPaid(o) && <MarkPaid o={o} />}
     </div>
   )
@@ -152,6 +153,58 @@ function Payments({ id }: { id: string }) {
         </ul>
       )}
     </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 向渠道查单：POST v1/orders/{id}/query（billing.order.write + 幂等，不挂 reauth）
+// 查到已付就按回调同一流程补记；结果留在框里，补记后详情与列表经整体失效重画
+// ---------------------------------------------------------------------------
+function QueryChannel({ o }: { o: OrderDetail }) {
+  const api = useApi()
+  const toast = useToast()
+  const fail = useFailure()
+  const intent = useIntentKey()
+  const invalidate = useInvalidateBilling()
+  const invalidateUsers = useInvalidateUsers()
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{ tone: string; text: string } | null>(null)
+
+  const run = async () => {
+    setBusy(true)
+    try {
+      const r = await api.post(`v1/orders/${encodeURIComponent(o.id)}/query`, orderQueriedSchema, { idempotencyKey: intent.keyFor([o.id, 'query']) })
+      intent.reset()
+      const view = queriedView(r)
+      setResult(view)
+      if (r.reconciled) {
+        // 补记后订单离开待支付，这个框随之卸下，结果改由 Toast 带出
+        toast(view.text)
+        void invalidate()
+        void invalidateUsers()
+      }
+    } catch (e) {
+      // 渠道停用 / 不支持查单 / 查询失败 / 金额不符：后端给中文原因，原样 Toast，框里也留一句
+      setResult({ tone: 'danger', text: e instanceof Error ? `查单失败：${e.message}` : '查单失败' })
+      fail(e, { intent })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={css.box}>
+      <h3 className={css.sectionTitle}>向渠道查单</h3>
+      <p className={css.boxText}>回调没到时用：向 {o.provider_name ?? o.provider_code} 查询这笔订单，渠道确认已付款就按回调同一流程补记，金额或币种不符会被拒绝。</p>
+      {result && (
+        <p className={`${css.boxText} ${css[`tone_${result.tone}`]}`} role="status">
+          {result.text}
+        </p>
+      )}
+      <Button size="sm" busy={busy} onClick={() => void run()}>
+        向渠道查单
+      </Button>
+    </div>
   )
 }
 
