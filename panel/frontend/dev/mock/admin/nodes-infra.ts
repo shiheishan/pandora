@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 createHash / randomBytes / randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute，依赖 ./users 的 GROUPS 与 setPoolSource（R104 名单登记回用户组）
- * [OUTPUT]: 对外提供服务器、节点池、全局路由的假数据（servers / pools / globalRouting）、路由校验 validateRouting（单节点与全局共用）、空体判断 emptyBody、心跳保活 keepAlive、按池统计在线节点数 activeNodesInPool（与节点池列表的 active_nodes 同口径，给套餐假后端用），以及 infraRoutes(节点存储) 返回的路由表
- * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」基础设施部分的假接口，由 nodes.ts 引入并入同一个 MockModule（登记表不动）：服务器列表 / 新建 / 详情 / 下属节点 / 编辑 / 改状态（合法边、进入 ready 要有可服务节点）/ 删除（仅草稿或已退役，名下节点级联静默）/ 安装令牌；节点池增删改（删除前查节点、套餐、未用令牌；R104「仅限用户组」名单：带字段要 reauth、校验格式 / 重复 / 上限 100 / 存在性，经 setPoolSource 登记回用户组）；全局出站与分流读写（revision 为规范 JSON 的 sha256，删除被节点规则引用的出站回 409，R56）。节点存储以参数传入而不 import nodes.ts，避免循环依赖。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 的 server.go、server_admin.go、pools.go、node_routing.go
+ * [OUTPUT]: 对外提供服务器、节点池、全局路由的假数据（servers / pools / globalRouting）、路由校验 validateRouting（单节点、路由组与全局共用）、悬空引用口径的登记点 setDanglingSource 与 RoutedNode 类型、空体判断 emptyBody、心跳保活 keepAlive、按池统计在线节点数 activeNodesInPool（与节点池列表的 active_nodes 同口径，给套餐假后端用），以及 infraRoutes(节点存储) 返回的路由表
+ * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」基础设施部分的假接口，由 nodes.ts 引入并入同一个 MockModule（登记表不动）：服务器列表 / 新建 / 详情 / 下属节点 / 编辑 / 改状态（合法边、进入 ready 要有可服务节点）/ 删除（仅草稿或已退役，名下节点级联静默）/ 安装令牌；节点池增删改（删除前查节点、套餐、未用令牌；R104「仅限用户组」名单：带字段要 reauth、校验格式 / 重复 / 上限 100 / 存在性，经 setPoolSource 登记回用户组）；全局出站与分流读写（revision 为规范 JSON 的 sha256，删除仍被组或节点规则引用的出站回 409、只拒新造成的悬空，R56 / 00096）。节点存储以参数传入而不 import nodes.ts，避免循环依赖。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 的 server.go、server_admin.go、pools.go、node_routing.go
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
@@ -58,6 +58,9 @@ export interface InfraNode {
   routing: { outbounds: Array<{ tag: string; type: string; settings: unknown }>; routes: Json[] }
   identityRevoked: boolean
 }
+
+/** 路由组假接口要推进成员节点的行版本（route-groups.ts），nodes.ts 的 Node 满足它 */
+export type RoutedNode = InfraNode & { row_version: number }
 
 // ---------------------------------------------------------------------------
 // 服务器
@@ -295,6 +298,26 @@ export function validateRouting(outbounds: ReadonlyArray<{ tag?: unknown; type?:
   return null
 }
 
+/**
+ * 全租户悬空引用（组与节点规则指向看不见的出站）。route-groups.ts 经 setDanglingSource 登记带组的口径；
+ * 没登记时只看节点私有规则对全局与私有出站，与 00096 之前一致。不 import route-groups.ts，避免循环依赖
+ */
+let danglingOf: (nodes: readonly InfraNode[]) => Set<string> = (nodes) => {
+  const out = new Set<string>()
+  const global = new Set(globalRouting.outbounds.map((o) => o.tag.toLowerCase()))
+  for (const n of nodes) {
+    if (n.status === 'destroyed') continue
+    for (const r of n.routing.routes) {
+      const tag = text(r.outbound_tag).trim().toLowerCase()
+      if (tag !== 'direct' && tag !== 'block' && !global.has(tag) && !n.routing.outbounds.some((o) => o.tag.toLowerCase() === tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
+    }
+  }
+  return out
+}
+export const setDanglingSource = (fn: () => Set<string>) => {
+  danglingOf = () => fn()
+}
+
 /** 规范 JSON 的 sha256（存储顺序，空集也有值） */
 const revisionOf = () => createHash('sha256').update(JSON.stringify({ outbounds: globalRouting.outbounds, routes: globalRouting.routes })).digest('hex')
 
@@ -329,15 +352,16 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
         if (bad) return bad
         const current = revisionOf()
         if (body.expected_revision !== current) return err(409, 'conflict', '全局路由已被其他管理员修改，请刷新后重试', { expected_revision: `current=${current}` })
-        const keep = new Set(outbounds.map((o) => o.tag.trim().toLowerCase()))
-        const removed = globalRouting.outbounds.map((o) => o.tag.toLowerCase()).filter((t) => !keep.has(t))
-        const users = live()
-          .filter((n) => n.routing.routes.some((r) => removed.includes(text(r.outbound_tag).toLowerCase()) && !n.routing.outbounds.some((o) => o.tag.toLowerCase() === text(r.outbound_tag).toLowerCase())))
-          .map((n) => n.display_name ?? n.name)
-          .sort()
-        if (users.length) return err(409, 'conflict', `要删除的全局出站仍被节点规则引用：${users.join('、')}`)
+        // 写之前与之后各取一次悬空引用，只拒这次新造成的（routing_refs.go），组规则与节点规则都算
+        const before = danglingOf(nodes)
+        const prev = { outbounds: globalRouting.outbounds, routes: globalRouting.routes }
         globalRouting.outbounds = outbounds.map((o) => ({ tag: o.tag.trim(), type: o.type.trim().toLowerCase(), settings: o.settings ?? {} }))
         globalRouting.routes = routes.map((r, i) => ({ priority: Number(r.priority) || (i + 1) * 10, matcher: (r.matcher as Json) ?? {}, outbound_tag: text(r.outbound_tag), enabled: r.enabled === true, note: text(r.note) }))
+        const fresh = [...danglingOf(nodes)].filter((d) => !before.has(d)).sort()
+        if (fresh.length) {
+          Object.assign(globalRouting, prev)
+          return err(409, 'conflict', `要删除的全局出站仍被规则引用：${fresh.join('、')}`)
+        }
         const affected = live().filter((n) => n.status !== 'retired' && n.serving_status !== 'retired').length
         return { status: 200, body: { ok: true, revision: revisionOf(), affected_nodes: affected } }
       })

@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 zod
- * [OUTPUT]: 对外提供节点与服务器页全部接口的 zod schema 与推导类型：节点列表行、AdminNode（写接口回的节点，上线另带可缺省的 warnings）、协议 schema、服务器与其下属节点、节点池（members / plan_names / R104 allowed_user_groups）、节点身份、探针、单节点与全局路由、各写操作的响应
- * [POS]: admin/screens/nodes 与后端对账的唯一防线：形状取自 api-contract.md 后台-07 的节点 / 服务器 / 节点池 / 路由四节（含 R10 R13 R26 R27 R46 R56 R57 R77–R79 R104 R105 R108 R110 R113）并与 Go json tag 核对；Go 指针字段没有 omitempty，缺值序列化成 null 而不是缺键，所以这些字段写 nullable；nil 切片写 nullable 并归一成 []
+ * [OUTPUT]: 对外提供节点与服务器页全部接口的 zod schema 与推导类型：节点列表行、AdminNode（写接口回的节点，上线另带可缺省的 warnings）、协议 schema、服务器与其下属节点、节点池（members / plan_names / R104 allowed_user_groups）、节点身份、探针、单节点与全局路由、路由组（列表、组内路由、节点生效预览）、各写操作的响应
+ * [POS]: admin/screens/nodes 与后端对账的唯一防线：形状取自 api-contract.md 后台-07 的节点 / 服务器 / 节点池 / 路由四节（含 R10 R13 R26 R27 R46 R56 R57 R77–R79 R104 R105 R108 R110 R113）并与 Go json tag 核对（路由组按 00096 与 nodefabric 的 RouteGroup / EffectiveRouting）；Go 指针字段没有 omitempty，缺值序列化成 null 而不是缺键，所以这些字段写 nullable；nil 切片写 nullable 并归一成 []
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
@@ -266,10 +266,42 @@ export const routeSchema = z.object({
 })
 export type Outbound = z.output<typeof outboundSchema>
 export type Route = z.output<typeof routeSchema>
-export const nodeRoutingSchema = z.object({ row_version: z.number(), outbounds: list(outboundSchema), routes: list(routeSchema) })
+/** 节点所在的路由组（00096），按生效顺序（sort_order 小的先） */
+export const routeGroupRefSchema = z.object({ id: uuid, name: z.string(), sort_order: z.number() })
+export type RouteGroupRef = z.output<typeof routeGroupRefSchema>
+export const nodeRoutingSchema = z.object({ row_version: z.number(), groups: list(routeGroupRefSchema), outbounds: list(outboundSchema), routes: list(routeSchema) })
 export type NodeRouting = z.output<typeof nodeRoutingSchema>
 export const globalRoutingSchema = z.object({ revision: z.string(), outbounds: list(outboundSchema), routes: list(routeSchema), online_nodes: z.number() })
 export type GlobalRouting = z.output<typeof globalRoutingSchema>
+
+// ---------------------------------------------------------------------------
+// 路由组（00096）：GET v1/route-groups、组内路由、节点生效预览
+// ---------------------------------------------------------------------------
+export const routeGroupSchema = z.object({
+  id: uuid,
+  name: z.string(),
+  description: z.string(),
+  sort_order: z.number(),
+  row_version: z.number(),
+  outbound_count: z.number(),
+  rule_count: z.number(),
+  members: z.array(z.object({ id: uuid, name: z.string() })),
+  created_at: iso,
+  updated_at: iso,
+})
+export type RouteGroup = z.output<typeof routeGroupSchema>
+export const routeGroupsResponse = z.object({ groups: z.array(routeGroupSchema) })
+export const groupRoutingSchema = z.object({ row_version: z.number(), outbounds: list(outboundSchema), routes: list(routeSchema) })
+export type GroupRouting = z.output<typeof groupRoutingSchema>
+/** 生效出站 / 规则的来源层；group_id / group_name 只在 scope = group 时出现（omitempty） */
+export const routingSourceSchema = z.object({ scope: z.enum(['node', 'group', 'global']), group_id: uuid.optional(), group_name: z.string().optional() })
+export type RoutingSource = z.output<typeof routingSourceSchema>
+export const effectiveRoutingSchema = z.object({
+  groups: z.array(routeGroupRefSchema),
+  outbounds: z.array(z.object({ tag: z.string(), type: z.string(), settings: z.unknown(), source: routingSourceSchema })),
+  routes: z.array(z.object({ matcher: z.record(z.string(), z.unknown()), outbound: z.string(), source: routingSourceSchema })),
+})
+export type EffectiveRouting = z.output<typeof effectiveRoutingSchema>
 
 // ---------------------------------------------------------------------------
 // 写操作的响应
@@ -288,4 +320,7 @@ export const poolCreated = z.object({ id: uuid })
 
 export const serverDeleted = z.object({ ok: z.literal(true), id: uuid })
 export const globalRoutingSaved = z.object({ ok: z.literal(true), revision: z.string(), affected_nodes: z.number() })
+export const routeGroupUpdated = z.object({ group: routeGroupSchema, affected_nodes: z.number() })
+export const groupRoutingSaved = z.object({ ok: z.literal(true), row_version: z.number(), affected_nodes: z.number() })
+export const routeGroupDeleted = z.object({ deleted: z.literal(true), affected_nodes: z.number() })
 export const deletedResponse = z.object({ deleted: z.literal(true) })

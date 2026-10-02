@@ -1,13 +1,13 @@
 /**
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient，依赖 react 的 useCallback，依赖 ../../../shell/runtime 的 useApi，依赖 ../../actions 的 endsIntent / useCan / useFailure / useIntentKey（转出），依赖 ./schemas
- * [OUTPUT]: 对外提供 NK 查询键前缀、节点与服务器页各读 hook（节点列表、协议 schema、服务器列表 / 详情 / 下属节点、节点池、身份、探针、单节点与全局路由）、useInvalidateNodes，并转出 endsIntent / useCan / useFailure / useIntentKey
+ * [OUTPUT]: 对外提供 NK 查询键前缀、节点与服务器页各读 hook（节点列表、协议 schema、服务器列表 / 详情 / 下属节点、节点池、身份、探针、单节点与全局路由、路由组列表 / 组内路由 / 节点生效预览）、useInvalidateNodes，并转出 endsIntent / useCan / useFailure / useIntentKey
  * [POS]: admin/screens/nodes 的数据层：读只经 react-query + core/api；节点列表与随节点变化的服务器、节点池计数挂 nodes.changed（只有 nodes 表有变更通知），其余读接口写后按 NK 前缀整体失效
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { globalRoutingSchema, identitySchema, metricsSchema, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, serverNodesResponse, serverSchema, serversResponse } from './schemas'
+import { effectiveRoutingSchema, globalRoutingSchema, groupRoutingSchema, identitySchema, metricsSchema, nodeRoutingSchema, nodesResponse, poolsResponse, protocolSchemasResponse, routeGroupsResponse, serverNodesResponse, serverSchema, serversResponse } from './schemas'
 
 export { endsIntent, useCan, useFailure, useIntentKey } from '../../actions'
 
@@ -99,6 +99,27 @@ export function useNodeRouting(id: string) {
 export function useGlobalRouting() {
   const api = useApi()
   return useQuery({ queryKey: [...NK, 'global-routing'], queryFn: ({ signal }) => api.get('v1/nodes/routing', globalRoutingSchema, { signal }) })
+}
+
+/** 路由组列表（00096）：路由标签的组切换条与节点抽屉的「所属路由组」都用它；成员名跟着节点变，挂 nodes.changed */
+export function useRouteGroups() {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...NK, 'route-groups'],
+    queryFn: ({ signal }) => api.get('v1/route-groups', routeGroupsResponse, { signal }).then((r) => r.groups),
+    meta: { topics: ['nodes.changed'] },
+  })
+}
+
+export function useGroupRouting(id: string) {
+  const api = useApi()
+  return useQuery({ queryKey: [...NK, 'group-routing', id], queryFn: ({ signal }) => api.get(`v1/route-groups/${id}/routing`, groupRoutingSchema, { signal }) })
+}
+
+/** 节点生效路由的只读预览：节点私有 → 所在各组 → 全局合并后的结果，与下发给节点的同一口径 */
+export function useEffectiveRouting(id: string) {
+  const api = useApi()
+  return useQuery({ queryKey: [...NK, 'effective-routing', id], queryFn: ({ signal }) => api.get(`v1/nodes/${id}/routing/effective`, effectiveRoutingSchema, { signal }) })
 }
 
 export function useInvalidateNodes() {
