@@ -157,12 +157,16 @@ describe('orders', () => {
   })
 
   it('订单行 schema：无 omitempty 的字段必填，omitempty 的可缺席，未知 kind 拒收', () => {
-    const row = { id: 'o', order_no: 'PD-1', kind: 'addon', status: 'pending_payment', currency: 'CNY', total_amount: 1, discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, refunded_amount: 0, item_name: '', cancellable: true, created_at: 'x' }
+    const row = { id: 'o', order_no: 'PD-1', kind: 'addon', status: 'pending_payment', currency: 'CNY', total_amount: 1, discount_amount: 0, balance_applied: 0, payable_amount: 1, paid_amount: 0, refunded_amount: 0, item_name: '', cancellable: true, has_payment_intent: false, created_at: 'x' }
     expect(orderRowSchema.safeParse(row).success).toBe(true)
     expect(orderRowSchema.safeParse({ ...row, kind: 'gift' }).success).toBe(false)
     const missing: Partial<typeof row> = { ...row }
     delete missing.cancellable
     expect(orderRowSchema.safeParse(missing).success).toBe(false)
+    // has_payment_intent 在 Go 无 omitempty：缺席即形状不符
+    const noIntent: Partial<typeof row> = { ...row }
+    delete noIntent.has_payment_intent
+    expect(orderRowSchema.safeParse(noIntent).success).toBe(false)
     const noItem: Partial<typeof row> = { ...row }
     delete noItem.item_name
     expect(orderRowSchema.safeParse(noItem).success).toBe(false)

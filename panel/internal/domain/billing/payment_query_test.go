@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 payment_query.go 的 queryProvider、payment_query_patrol.go 的 nextPaymentQueryAt 与 DefaultPaymentQueryPatrol，依赖 payment_query_stub_test.go 的渠道替身
-// [OUTPUT]: 对外提供 TestNextPaymentQueryAtBacksOffAndKeepsALastCall、TestQueryProviderTranslatesChannelFailures
-// [POS]: billing 主动查单的纯逻辑单测：退避与过期前最后一查；渠道停用、不支持、查询失败、缺流水号都在碰数据库之前翻成中文业务错误，订单不动
+// [OUTPUT]: 对外提供 TestNextPaymentQueryAtBacksOffAndKeepsALastCall、TestQueryProviderTranslatesChannelFailures、TestOrderQueryResultNamesEveryOutcome
+// [POS]: billing 主动查单的纯逻辑单测：退避与过期前最后一查；渠道停用、不支持、查询失败、缺流水号都在碰数据库之前翻成中文业务错误，订单不动；后台审计的 result 六种取值与 order. 前缀
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -93,5 +93,28 @@ func TestQueryProviderTranslatesChannelFailures(t *testing.T) {
 				t.Fatalf("errors.Is(ErrNotSupported)=%t, want %t", !tc.isNotSupported, tc.isNotSupported)
 			}
 		})
+	}
+}
+
+func TestOrderQueryResultNamesEveryOutcome(t *testing.T) {
+	cases := []struct {
+		res  *OrderPaymentQuery
+		err  error
+		want string
+	}{
+		{&OrderPaymentQuery{ChannelStatus: ChannelPaid, Reconciled: true}, nil, "reconciled"},
+		{&OrderPaymentQuery{ChannelStatus: ChannelPaid, AlreadyRecorded: true}, nil, "already_recorded"},
+		{&OrderPaymentQuery{ChannelStatus: ChannelPaid}, nil, "paid"},
+		{&OrderPaymentQuery{ChannelStatus: ChannelUnpaid}, nil, "unpaid"},
+		{&OrderPaymentQuery{ChannelStatus: ChannelNotFound}, nil, "not_found"},
+		{nil, httpx.New(httpx.CodeUnavailable, "渠道查单失败，请稍后再试"), "failed"},
+	}
+	for _, tc := range cases {
+		if got := orderQueryResult(tc.res, tc.err); got != tc.want {
+			t.Errorf("orderQueryResult(%+v, %v)=%q want %q", tc.res, tc.err, got, tc.want)
+		}
+	}
+	if OrderQueryAuditAction[:6] != "order." {
+		t.Fatalf("audit action %q must carry the order. prefix the access log groups by", OrderQueryAuditAction)
 	}
 }

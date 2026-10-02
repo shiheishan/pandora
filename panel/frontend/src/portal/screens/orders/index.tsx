@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../core/router 的 href / navigate / useHashLocation，依赖 ../../../ui 的 Button / ConfirmModal / Empty / QueryView / Segmented / Skeleton / Tag / useToast，依赖 ../common/orders 的订单读模型与映射，依赖 ../common/order-query 的 useQueryOrderPayment / queryOutcome / queryFailure，依赖 ../common/PayFlow 的 PaymentModal，依赖 ../common/Blocks 的 LoadError，依赖 ../index 的 PortalScreenProps
  * [OUTPUT]: 默认导出 Orders 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/orders 的入口：我的订单（门户-04）。顶部待支付卡片（取消 / 去支付 /「我已支付，刷新状态」，处理中只能刷新状态），「全部 / 已支付 / 已取消 / 已退款」筛选带计数，按月分组的列表（组内合计已支付金额）与「显示更早的订单」，行展开看明细（待支付的明细也带「我已支付，刷新状态」，末尾「提交工单」带 order 预填进 #/tickets/new）；#/orders/<订单 id> 即展开那一行（不在已加载列表里时单独成卡），带 ?paid=1 是收银台回跳，弹支付确认
+ * [POS]: portal/screens/orders 的入口：我的订单（门户-04）。顶部待支付卡片（取消 / 去支付 /「我已支付，刷新状态」——后者只给 has_payment_intent 的单，处理中只能刷新状态），「全部 / 已支付 / 已取消 / 已退款」筛选带计数，按月分组的列表（组内合计已支付金额）与「显示更早的订单」，行展开看明细（待支付的明细也带「我已支付，刷新状态」，末尾「提交工单」带 order 预填进 #/tickets/new）；#/orders/<订单 id> 即展开那一行（不在已加载列表里时单独成卡），带 ?paid=1 是收银台回跳，弹支付确认
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -95,7 +95,7 @@ function OpenOrders({ onPay }: { onPay: (s: PayState) => void }) {
                   取消订单
                 </button>
               )}
-              <PaymentRefresh orderId={o.id} onOutcome={(r) => setOutcomes((m) => ({ ...m, [o.id]: r }))} />
+              {o.has_payment_intent && <PaymentRefresh orderId={o.id} onOutcome={(r) => setOutcomes((m) => ({ ...m, [o.id]: r }))} />}
               {!processing && (
                 <Button variant="primary" size="sm" onClick={() => onPay({ phase: 'choose', orderId: o.id, orderNo: o.order_no, amount: o.payable_amount, currency: o.currency })}>
                   去支付
@@ -283,9 +283,9 @@ function Facts({ id }: { id: string }) {
               </div>
             ))}
           </dl>
-          {(detail.data.status === 'pending_payment' || detail.data.status === 'processing' || outcome) && (
+          {((detail.data.has_payment_intent && (detail.data.status === 'pending_payment' || detail.data.status === 'processing')) || outcome) && (
             <div className={css.factActions}>
-              {(detail.data.status === 'pending_payment' || detail.data.status === 'processing') && <PaymentRefresh orderId={id} onOutcome={setOutcome} />}
+              {detail.data.has_payment_intent && (detail.data.status === 'pending_payment' || detail.data.status === 'processing') && <PaymentRefresh orderId={id} onOutcome={setOutcome} />}
               <RefreshNote outcome={outcome} />
             </div>
           )}

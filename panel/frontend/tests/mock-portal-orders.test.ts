@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close / loginAs / bearer / mockFetch，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
  * [OUTPUT]: 对外提供门户「我已支付，刷新状态」假接口的测试
- * [POS]: tests 的门户查单假后端守卫（PAY-009）：响应带齐 Go OrderPaymentQuery 的字段（order-query.ts 依赖 tsx 进不了 node 侧类型检查，按字段断言；schema 本身在 common.test.ts 测）；发起支付没付答 unpaid，假收银台「回调丢失」之后查到已付并补记、订单变已履约，再查是 already_recorded；没发起过支付 409、非 UUID 404、每账号每分钟 6 次后 429
+ * [POS]: tests 的门户查单假后端守卫（PAY-009）：响应带齐 Go OrderPaymentQuery 的字段（order-query.ts 依赖 tsx 进不了 node 侧类型检查，按字段断言；schema 本身在 common.test.ts 测）；发起支付没付答 unpaid，假收银台「回调丢失」之后查到已付并补记、订单变已履约，再查是 already_recorded；没发起过支付 409、种子处理中单 503、非 UUID 404、每账号每分钟 6 次后 429；列表与明细的 has_payment_intent 一致、发起支付前 false 之后 true
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -38,6 +38,15 @@ describe('mock api · portal order query', () => {
     expect(placed.status).toBe(201)
     const { order_id } = (await placed.json()) as { order_id: string }
 
+    const intentFlag = async () => {
+      const detail = ((await (await mockFetch(base, auth, 'GET', `/v1/orders/${order_id}`)).json()) as { order: { has_payment_intent: boolean } }).order
+      const list = ((await (await mockFetch(base, auth, 'GET', '/v1/orders?status=pending_payment')).json()) as { orders: Array<{ id: string; has_payment_intent: boolean }> }).orders
+      const row = list.find((o) => o.id === order_id)!
+      expect(row.has_payment_intent).toBe(detail.has_payment_intent)
+      return detail.has_payment_intent
+    }
+    expect(await intentFlag()).toBe(false)
+
     // 没发起过支付：查不了
     const never = await query(order_id)
     expect(never.status).toBe(409)
@@ -46,6 +55,7 @@ describe('mock api · portal order query', () => {
     const pay = await mockFetch(base, auth, 'POST', `/v1/orders/${order_id}/pay`, { provider: 'epay', method: 'alipay' })
     expect(pay.status).toBe(201)
     const intent = new URL(((await pay.json()) as { redirect_url: string }).redirect_url).searchParams.get('intent')!
+    expect(await intentFlag()).toBe(true)
 
     const unpaid = await queried(await query(order_id))
     expect(unpaid).toMatchObject({ channel_status: 'unpaid', reconciled: false, order_status: 'pending_payment' })
@@ -65,8 +75,9 @@ describe('mock api · portal order query', () => {
   it('hides other orders and rate-limits per account', async () => {
     expect((await query('not-a-uuid')).status).toBe(404)
     expect((await query('00000000-0000-4000-8000-000000000000')).status).toBe(404)
-    // 每账号每分钟 6 次（404 前置拒绝不计）：连查 7 次一定撞上 429，此前是业务结果 409
-    const { orders } = (await (await mockFetch(base, auth, 'GET', '/v1/orders?status=processing')).json()) as { orders: Array<{ id: string }> }
+    // 每账号每分钟 6 次（404 前置拒绝不计）：连查 7 次一定撞上 429，此前是种子处理中单的 503（发起过支付、假渠道查不到）
+    const { orders } = (await (await mockFetch(base, auth, 'GET', '/v1/orders?status=processing')).json()) as { orders: Array<{ id: string; has_payment_intent: boolean }> }
+    expect(orders[0]!.has_payment_intent).toBe(true)
     const target = orders[0]!.id
     const statuses: number[] = []
     let limited: Response | undefined
@@ -76,7 +87,7 @@ describe('mock api · portal order query', () => {
       if (res.status === 429) limited = res
     }
     expect(limited).toBeDefined()
-    expect(statuses.slice(0, -1).every((s) => s === 409)).toBe(true)
+    expect(statuses.slice(0, -1).every((s) => s === 503)).toBe(true)
     expect(((await limited!.json()) as { error: { code: string } }).error.code).toBe('rate_limited')
   })
 })

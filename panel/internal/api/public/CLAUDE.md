@@ -13,7 +13,7 @@ helpers.go: 包内共用小工具（签名十六进制解析等）
 selfservice.go: 自助小接口：佣金转余额、会话列表与踢下线（只作用于门户会话）、工单撤回、快捷登录签发与消费
 subscribe.go: 订阅分发端点 /{prefix}/{token}，以及我的订阅链接、节点预览与自助换链接（rotate）
 my_orders.go / order_cancel.go: 我的订单列表（多值状态、筛选段计数 counts）与详情、取消待支付订单
-order_query.go: 「我已支付，刷新状态」POST v1/orders/{id}/query：只查本人订单（他人与不存在同一个 404），路由上按账号单独限流每分钟 6 次、不挂 checkout 开关，与后台共用 billing.QueryOrderPayment
+order_query.go: 「我已支付，刷新状态」POST v1/orders/{id}/query：只查本人订单（他人与不存在同一个 404），路由上按账号单独限流每分钟 6 次、不挂 checkout 开关，调 billing.QueryOrderPayment（不记审计；后台走 AdminQueryOrderPayment）；订单行的 has_payment_intent 决定门户是否显示这个按钮
 giftcard.go: 礼品卡预览与兑换、我的兑换记录
 my_subscriptions.go: 我的订阅（从 handlers.go 拆出）：设备上限与在线数、配额周期与追加 / 调整、重置策略与下次重置、可续费与续费价 available（与续费下单的价格检查同口径）、用户流量包余量
 subscription_usage.go: 本期按日用量（门户-02 柱状图，00072），只读、?days 1–93，切日口径见 nodefabric.UsageLocation；订阅不属于本人与不存在同一个 404
