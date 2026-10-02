@@ -627,7 +627,7 @@ func TestNodesStep5PG18(t *testing.T) {
 
 	// 节点私有规则引用了全局出站：删它 409，并点名节点
 	step3Seed(t, ctx, admin, `INSERT INTO node_routes(tenant_id,node_id,priority,matcher,outbound_tag,enabled)
-		VALUES('`+tenant+`','`+nodes[2]+`',10,'{"domain_suffix":"private.test"}','us-lax',true)`)
+		VALUES('`+tenant+`','`+nodes[2]+`',10,'{"domain_suffix":"private.test"}','US-LAX',true)`)
 	if b := do(http.MethodPut, "/v1/nodes/routing", `{"expected_revision":"`+put.Revision+`","outbounds":[],"routes":[]}`, http.StatusConflict, nil); !strings.Contains(b, "step3-node-3") {
 		t.Fatalf("referenced outbound delete body=%s", b)
 	}
