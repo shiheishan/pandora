@@ -253,9 +253,9 @@ var accessCategoryRules = []struct {
 	{"register", []string{"user.registered"}},
 	{"reset_password", []string{"user.password", "user.reset"}},
 	{"order", []string{"order."}},
-	// 管理侧动作：节点状态变更、后台引导、渠道开关这些。它们和用户行为
+	// 管理侧动作：节点状态变更、路由组（00096）、后台引导、渠道开关这些。它们和用户行为
 	// 混在一张表里，但风控看的是两回事，分开标出来才不会互相淹没。
-	{"admin", []string{"node.", "adminctl.", "server.", "plan.", "payment_provider."}},
+	{"admin", []string{"node.", "route_group.", "adminctl.", "server.", "plan.", "payment_provider."}},
 	{"payment", []string{"payment"}},
 	{"ticket", []string{"ticket."}},
 }

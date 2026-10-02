@@ -249,7 +249,7 @@ const CATEGORY_RULES: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['register', ['user.registered']],
   ['reset_password', ['user.password', 'user.reset']],
   ['order', ['order.']],
-  ['admin', ['node.', 'adminctl.', 'server.', 'plan.', 'payment_provider.']],
+  ['admin', ['node.', 'route_group.', 'adminctl.', 'server.', 'plan.', 'payment_provider.']],
   ['payment', ['payment']],
   ['ticket', ['ticket.']],
 ]

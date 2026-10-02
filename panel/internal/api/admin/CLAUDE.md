@@ -10,7 +10,7 @@ handlers.go: handlers 结构与核心处理器：登录、me（追加邮箱、�
 nodes.go: 节点处理器（从 handlers.go 拆出）：节点列表（含 country_code、在线人数与 IP 按租户设备识别窗口统计、近 24h 流量、控制节点探针的 CPU / 内存，按 sort_order, node_no 排序；心跳只在 Go 侧判定，下发状态交给 subscription.DeliveryState）、安装与服务端令牌、旧状态接口（退役 / 销毁先取发布锁再锁节点行、吊销身份，改状态报错按约束名翻译）、吊销身份、发布配置、改协议、协议 schema、指标、REALITY 密钥对、删除
 tickets.go: 客服工单处理器（从 handlers.go 拆出）：负责人目录、队列、详情、回复、指派、改状态、人工升级，写操作走 support 的 *Atomic 并写出预制响应
 helpers.go: 包内共用小工具：域常量、请求级超时
-access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两路归并，分类规则展示与筛选共用；outcome 筛选（error = 非 success）
+access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两路归并，分类规则展示与筛选共用（路由组的 route_group.* 与 node.* 一起归管理端）；outcome 筛选（error = 非 success）
 audit_log.go: 审计日志列表与 CSV 导出（security.audit.read + ops.export + reauth），导出日期区间格式错回 422，自由文本列做公式防护
 risk.go: 风控共享 IP 聚类：列表补明文 IP、归属地与 high/mid/low 分级，标记为正常，批量停用聚类内账号
 profile.go: IP 解密助手、用户风控画像（含注册 IP）、注册与活跃时序（含 active_users：成功拉取或有流量的去重用户）
