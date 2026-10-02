@@ -29,10 +29,10 @@ tests/mock-helpers.ts: 假后端测试共用辅助——serve 把 mockApi 挂到
 tests/mock-api.test.ts: 假后端外壳守卫——matchPattern；外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同键重新执行，条件改好即成功）（调账打在真实种子用户上，余额经详情接口核对、重放不再记账，种子外的 id 回 404）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码，503 后同键重新执行）
 tests/mock-admin-users.test.ts: 用户运营假接口（users-ops.ts）——流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验与 R103 识别窗口，设新密码不要原因（R101）
 tests/mock-admin-plans.test.ts: 套餐假接口——目录能被页面 schema 接住、向导单事务新建与幂等重放（限速、卖点与推荐）、编辑向导的 null = 不动与开新版本、R99 设备与限速三态、销售设置整体覆盖卖点与推荐、超额策略只收 suspend、草稿版本全流程、价格与销售开关 503、流量包 updated_at 乐观锁
-tests/mock-admin-marketing.test.ts: 营销假接口——礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400、统计与佣金总览能被收紧后的 schema 解析
+tests/mock-admin-marketing.test.ts: 营销假接口——礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、按筛选导出的掩码报表（BOM、同筛选、不含明文）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400、统计与佣金总览能被收紧后的 schema 解析
 tests/mock-admin-nodes.test.ts: 节点与服务器假接口——节点列表能被页面 schema 接住、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器 schema、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409（文案「要删除的全局出站仍被规则引用：节点 X → tag」与 Go 同文）、匹配类型校验与发布；节点池名单带字段才要 reauth 与四种 422、用户组 exclusive_pools 与被池引用时删组 409、无池节点的交付提示（R105）、PATCH 补回缺席密钥 / 显式 null 清空 / mask_password 跟着 mask（R106 R107）、上线一步到 active 与服务器就绪、重放与 409（R108）；上线回 AdminNode、warnings 缺省与两种提示（首次搭建的新池没绑套餐）、已 active 先于版本号（R113）
 tests/mock-admin-routegroups.test.ts: 路由组假接口（00096）——列表与组内路由能被页面 schema 接住、生效预览的顺序与来源、名称大小写不敏感唯一、组规则不能指向不存在的出站、行版本 409、成员两侧改且互推版本、私有规则能指向所在组出站、新造成的悬空 409（组侧 / 节点侧 / 删组 / 删全局出站）、删组后退回全局、只读账号能读不能写
-tests/mock-admin-content.test.ts: 内容与外观假接口——只读账号整块 404、公告状态机与版本冲突、知识库新版本归档同受众旧版与重复归档、内置主题 43 键、插槽净化与空内容 dropped 为 null、站点时区校验
+tests/mock-admin-content.test.ts: 内容与外观假接口——只读账号整块 404、公告状态机与版本冲突、知识库新版本归档同受众旧版与重复归档、内置主题 43 键、主题新建（逐字段 422、撞 code 409、内置不可改）/ 编辑 / 激活 / 删除守卫、插槽净化与空内容 dropped 为 null、站点时区校验
 tests/mock-admin-system.test.ts: 通知与插件假接口——只读账号只开放模板、SMTP 整体覆盖与密码保留 / 清空、注册校验、Telegram chat id 缺省不改与测试回落、模板变量白名单 / 预览 / 恢复默认 / 测试信要 reauth、钩子 upsert 一次性密钥、内网地址与未知事件 422、越界 500、投递记录 null、删除 404
 tests/mock-admin-security.test.ts: 安全与运维假接口——只读账号整块 404（停用先 404 不弹 reauth）；审计 schema、存量行、筛选与 limit 越界；导出先 reauth、日期 422、BOM 与防公式、导出记审计；访问日志分类表、未知分类与结果 422、仅错误、IP 与账号筛选；聚类默认不列标记正常的、机房判高风险、标记正常；批量停用 reauth、422、跳过后台账号 / 已停用 / 非成员、同键重放、用户模块看到已停用；开关八行（R102）、排序、核心项与缺原因 409 的中文原文（R116）、切换记审计
 tests/mock-portal.test.ts: 门户假接口——外框读接口来自各页面模块、套餐目录能被页面 schema 接住（R99 / R100）、快捷登录令牌一次性往返、同会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效

@@ -140,9 +140,23 @@ func TestNormalizeTokensRejectsOffWhitelist(t *testing.T) {
 		"数组":    `[]`,
 		"组不是对象": `{"light":"#fff"}`,
 	} {
-		if _, err := normalizeTokens(json.RawMessage(raw)); !isValidationOn(err, "tokens") {
-			t.Errorf("%s 应被拒（422 tokens），得到 %v", name, err)
+		if _, err := normalizeTokens(json.RawMessage(raw)); !isValidationUnder(err, "tokens") {
+			t.Errorf("%s 应被拒（422 tokens 或 tokens.<组>.<键>），得到 %v", name, err)
 		}
+	}
+}
+
+// 取值不合法的令牌逐个标在 tokens.<组>.<变量名> 上，后台据此标到对应输入框；
+// 形状与键名问题仍标在 tokens 上。
+func TestNormalizeTokensMarksEachBadValue(t *testing.T) {
+	_, err := normalizeTokens(json.RawMessage(`{"light":{"--bg":"#fff;x","--brand":"#b9442b"},"dark":{"--text":" "}}`))
+	var he *httpx.Error
+	if !errors.As(err, &he) || len(he.Fields) != 2 ||
+		he.Fields["tokens.light.--bg"] == "" || he.Fields["tokens.dark.--text"] == "" {
+		t.Fatalf("want fields tokens.light.--bg and tokens.dark.--text, got %v", err)
+	}
+	if _, err := normalizeTokens(json.RawMessage(`{"light":{"--nope":"#fff"}}`)); !isValidationOn(err, "tokens") {
+		t.Fatalf("unknown key must be marked on tokens, got %v", err)
 	}
 }
 
@@ -179,11 +193,26 @@ func TestSaveThemeValidatesBeforeTouchingTheDatabase(t *testing.T) {
 		"custom_css 停用": {SaveThemeInput{Code: "my-theme", Name: "x", CustomCSS: "body{}"}, "custom_css"},
 		"tokens 非法":     {SaveThemeInput{Code: "my-theme", Name: "x", Tokens: json.RawMessage(`{"brand":"#fff"}`)}, "tokens"},
 		"branding 非对象":  {SaveThemeInput{Code: "my-theme", Name: "x", Branding: json.RawMessage(`"Pandora"`)}, "branding"},
+		"站点名缺失":         {SaveThemeInput{Code: "my-theme", Name: "x", Branding: json.RawMessage(`{"tagline":"t"}`)}, "branding.site_name"},
 	} {
 		if _, err := s.SaveTheme(context.Background(), "t", tc.in); !isValidationOn(err, tc.field) {
 			t.Errorf("%s：得到 %v，want 422 fields.%s", name, err, tc.field)
 		}
 	}
+}
+
+// isValidationUnder：422 且某个字段是 prefix 本身或以 prefix. 开头。
+func isValidationUnder(err error, prefix string) bool {
+	var he *httpx.Error
+	if !errors.As(err, &he) || he.Code != httpx.CodeValidationFailed {
+		return false
+	}
+	for k := range he.Fields {
+		if k == prefix || strings.HasPrefix(k, prefix+".") {
+			return true
+		}
+	}
+	return false
 }
 
 func isValidationOn(err error, field string) bool {

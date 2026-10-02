@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/content/schemas 的公告 / 内容页 / 主题 / 插槽 / 站点时区 schema
  * [OUTPUT]: 对外提供内容与外观（后台-08）假接口的测试
- * [POS]: tests 的内容假后端守卫：对只读账号整块 404、公告草稿 → 定时 → 发布 → 撤回的状态机与版本冲突、知识库保存新版本归档同受众旧发布版与重复归档、内置主题 43 键、插槽净化与空内容 dropped 为 null、站点时区校验
+ * [POS]: tests 的内容假后端守卫：对只读账号整块 404、公告草稿 → 定时 → 发布 → 撤回的状态机与版本冲突、知识库保存新版本归档同受众旧发布版与重复归档、内置主题 43 键、主题新建（字段级 422、另存为撞 code 409、内置不可改）/ 编辑 / 激活 / 删除守卫、插槽净化与空内容 dropped 为 null、站点时区校验
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -85,7 +85,10 @@ describe('mock api · admin content', () => {
 
   it('serves the paper theme, sanitizes slots and validates the site timezone', async () => {
     const themes = themesResponse.parse(await (await call('GET', '/v1/themes')).json()).themes!
-    expect(themes).toHaveLength(1)
+    expect(themes.map((t) => [t.code, t.is_builtin, t.is_active])).toEqual([
+      ['paper', true, true],
+      ['night-sea', false, false],
+    ])
     expect(themes[0]).toMatchObject({ code: 'paper', is_active: true, custom_css: '' })
     expect(Object.keys(themes[0]!.tokens.light)).toHaveLength(43)
     expect(slotsResponse.parse(await (await call('GET', '/v1/slots')).json()).slots).toHaveLength(7)
@@ -97,5 +100,33 @@ describe('mock api · admin content', () => {
     expect(siteSettingsSchema.parse(await (await call('GET', '/v1/settings/site')).json()).timezone).toBe('Asia/Shanghai')
     for (const timezone of ['', 'Local', 'Mars/Base']) expect(await (await call('POST', '/v1/settings/site', { timezone })).json()).toMatchObject({ error: { fields: { timezone: '不是有效的时区' } } })
     expect(await (await call('POST', '/v1/settings/site', { timezone: 'Asia/Tokyo' })).json()).toEqual({ timezone: 'Asia/Tokyo' })
+  })
+
+  it('creates, edits, switches and deletes themes with the Go rules', async () => {
+    const list = async () => themesResponse.parse(await (await call('GET', '/v1/themes')).json()).themes!
+    const paper = (await list())[0]!
+    const body = { code: 'autumn', name: '秋', create: true, tokens: paper.tokens, branding: { site_name: '秋叶加速', tagline: '稳' } }
+    // 字段级 422：令牌逐键、品牌逐键，一次回齐
+    const bad = await (await call('POST', '/v1/themes', { ...body, name: '', tokens: { light: { '--bg': 'a{b' } }, branding: { site_name: '', logo: 'https://x.test/a.png' } }, 't-1')).json()
+    expect(bad).toMatchObject({ error: { code: 'validation_failed', fields: { name: expect.any(String), 'tokens.light.--bg': expect.any(String), 'branding.site_name': expect.any(String), 'branding.logo': expect.any(String) } } })
+    expect((await call('POST', '/v1/themes', { ...body, custom_css: 'body{}' }, 't-2')).status).toBe(422)
+    expect((await call('POST', '/v1/themes', { ...body, extra: 1 }, 't-3')).status).toBe(400)
+    expect((await call('POST', '/v1/themes', body)).status).toBe(400) // 没带幂等键
+    expect(await (await call('POST', '/v1/themes', body, 't-4')).json()).toEqual({ saved: true, dropped: [] })
+    // 另存为撞已有 code：409 标在 code 上，不覆盖
+    expect(await (await call('POST', '/v1/themes', { ...body, name: '冒名' }, 't-5')).json()).toMatchObject({ error: { code: 'conflict', fields: { code: expect.stringContaining('已被占用') } } })
+    // 内置主题不可原地改
+    expect(await (await call('POST', '/v1/themes', { ...body, code: 'paper', create: false }, 't-6')).json()).toMatchObject({ error: { message: '内置主题不能直接改，请用另一个标识另存为自定义主题' } })
+    expect((await call('POST', '/v1/themes', { ...body, create: false, name: '秋 · 改' }, 't-7')).status).toBe(200)
+    expect((await list()).find((t) => t.code === 'autumn')).toMatchObject({ name: '秋 · 改', is_active: false, branding: { site_name: '秋叶加速', tagline: '稳' } })
+
+    expect((await call('POST', '/v1/themes/nope/activate')).status).toBe(404)
+    expect(await (await call('POST', '/v1/themes/autumn/activate')).json()).toEqual({ activated: true })
+    expect((await list()).filter((t) => t.is_active).map((t) => t.code)).toEqual(['autumn'])
+    expect(await (await call('DELETE', '/v1/themes/autumn')).json()).toMatchObject({ error: { message: '删不掉：内置主题和正在生效的主题都不能删' } })
+    expect((await call('DELETE', '/v1/themes/paper')).status).toBe(422)
+    expect((await call('POST', '/v1/themes/paper/activate')).status).toBe(200)
+    expect(await (await call('DELETE', '/v1/themes/autumn')).json()).toEqual({ deleted: true })
+    expect((await list()).map((t) => t.code)).toEqual(['paper', 'night-sea'])
   })
 })

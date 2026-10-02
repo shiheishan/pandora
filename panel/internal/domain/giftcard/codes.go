@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 gift_card_codes / gift_card_redemptions / gift_card_templates 表与 batches.go 的 MaskCode，依赖 platform/audit、platform/db、platform/httpx
-// [OUTPUT]: 对外提供 Code、ListCodes、ToggleCode、Stats、Usage、ListUsages、CardPreview 与 PreviewCode
-// [POS]: giftcard 的卡码读模型与单码操作：后台列表与兑换记录只回掩码，统计含已兑出与已发行面额，门户预览按码查模板；批次与导出在 batches.go，兑换在 redeem.go
+// [OUTPUT]: 对外提供 Code、CodeFilter、ListCodesInput、ListCodes、ToggleCode、Stats、Usage、ListUsages、CardPreview 与 PreviewCode
+// [POS]: giftcard 的卡码读模型与单码操作：后台列表与兑换记录只回掩码，CodeFilter 是列表与 codes_export.go 掩码报表共用的筛选，统计含已兑出与已发行面额，门户预览按码查模板；批次与导出在 batches.go，兑换在 redeem.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package giftcard
@@ -33,12 +33,47 @@ type Code struct {
 	TemplateID string     `json:"template_id"`
 }
 
-type ListCodesInput struct {
+// CodeFilter 是卡码列表与掩码报表导出共用的筛选：两处口径必须一致，
+// 运营在列表里看到多少行，导出的就是那些行。
+type CodeFilter struct {
 	TemplateID string
 	Status     string
 	BatchID    string
-	Limit      int
-	Offset     int
+}
+
+// check 校验来自查询串的筛选值。状态走白名单：放任 % 进去会变成模糊匹配。
+func (f CodeFilter) check() error {
+	switch f.Status {
+	case "", "unused", "used", "disabled", "expired":
+	default:
+		return httpx.New(httpx.CodeBadRequest, "不支持的卡密状态")
+	}
+	for _, id := range []string{f.TemplateID, f.BatchID} {
+		if id != "" {
+			if _, err := uuid.Parse(id); err != nil {
+				return httpx.New(httpx.CodeBadRequest, "标识符格式不正确")
+			}
+		}
+	}
+	return nil
+}
+
+// codeFilterCond 是 CodeFilter 的 SQL 条件，参数固定为 $1 租户、$2 模板、$3 状态、$4 批次，
+// 表别名固定为 c。
+const codeFilterCond = `
+	 WHERE c.tenant_id=$1
+	   AND ($2='' OR c.template_id=$2::uuid)
+	   AND ($3='' OR c.status=$3)
+	   AND ($4='' OR c.batch_id=$4::uuid)`
+
+func (f CodeFilter) args(tenantID string) []any {
+	return []any{tenantID, f.TemplateID, f.Status, f.BatchID}
+}
+
+type ListCodesInput struct {
+	CodeFilter
+	Limit  int
+	Offset int
 }
 
 func (s *Service) ListCodes(ctx context.Context, tenantID string,
@@ -50,44 +85,25 @@ func (s *Service) ListCodes(ctx context.Context, tenantID string,
 	if in.Offset < 0 {
 		in.Offset = 0
 	}
-	// 状态走白名单：这个值来自查询串，放任 % 进去会变成模糊匹配。
-	switch in.Status {
-	case "", "unused", "used", "disabled", "expired":
-	default:
-		return nil, 0, httpx.New(httpx.CodeBadRequest, "不支持的卡密状态")
-	}
-	for _, id := range []string{in.TemplateID, in.BatchID} {
-		if id != "" {
-			if _, err := uuid.Parse(id); err != nil {
-				return nil, 0, httpx.New(httpx.CodeBadRequest, "标识符格式不正确")
-			}
-		}
+	if err := in.CodeFilter.check(); err != nil {
+		return nil, 0, err
 	}
 
 	out := []Code{}
 	var total int64
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM gift_card_codes
-			 WHERE tenant_id=$1
-			   AND ($2='' OR template_id=$2::uuid)
-			   AND ($3='' OR status=$3)
-			   AND ($4='' OR batch_id=$4::uuid)`,
-			tenantID, in.TemplateID, in.Status, in.BatchID).Scan(&total); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM gift_card_codes c`+codeFilterCond,
+			in.CodeFilter.args(tenantID)...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT c.id::text,c.code,c.status,c.batch_id::text,c.expires_at,
 			       coalesce(u.email::text,''),c.used_at,c.created_at,c.template_id::text
 			  FROM gift_card_codes c
-			  LEFT JOIN users u ON u.tenant_id=c.tenant_id AND u.id=c.used_by
-			 WHERE c.tenant_id=$1
-			   AND ($2='' OR c.template_id=$2::uuid)
-			   AND ($3='' OR c.status=$3)
-			   AND ($4='' OR c.batch_id=$4::uuid)
+			  LEFT JOIN users u ON u.tenant_id=c.tenant_id AND u.id=c.used_by`+codeFilterCond+`
 			 ORDER BY c.created_at DESC, c.code
 			 LIMIT $5 OFFSET $6`,
-			tenantID, in.TemplateID, in.Status, in.BatchID, in.Limit, in.Offset)
+			append(in.CodeFilter.args(tenantID), in.Limit, in.Offset)...)
 		if err != nil {
 			return err
 		}

@@ -1,6 +1,6 @@
 // [INPUT]: 依赖本包路由源码（router.go 与 router_<模块>.go，经 router_source_test.go 的 inspectRouterFiles）的 AST（r.With(...).Method(path, handler) 链）
 // [OUTPUT]: 对外提供 TestFinanceRouteProtectionContracts 契约测试
-// [POS]: admin 网关营销（礼品卡批次与导出、优惠券批量）与分销路由的保护契约：权限码、近期重认证与幂等域逐条钉死，旧的明文导出路由不得复活，与 coupon/catalog 两份路由契约测试互补
+// [POS]: admin 网关营销（礼品卡批次与导出、优惠券批量）与分销路由的保护契约：权限码、近期重认证与幂等域逐条钉死，旧的明文导出路由不得复活、掩码报表走 codes/report，与 coupon/catalog 两份路由契约测试互补
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -79,6 +79,9 @@ func TestFinanceRouteProtectionContracts(t *testing.T) {
 		// 礼品卡批次：列表只读；明文卡码的唯一出口是一次性导出。
 		"GET /gift-cards/batches": {handler: "h.listGiftBatches",
 			permissions: []string{"marketing.giftcard.read"}},
+		// 掩码报表：照审计导出，读 + 导出权限 + 近期重认证，GET 不带幂等。
+		"GET /gift-cards/codes/report": {handler: "h.exportGiftCodesReport",
+			permissions: []string{"marketing.giftcard.read", "ops.export"}, recentReauth: true},
 		"POST /gift-cards/batches/{id}/export": {handler: "h.exportGiftBatch",
 			permissions: []string{"marketing.giftcard.write"}, recentReauth: true,
 			idempotency: "giftcard_batch_export"},
@@ -98,7 +101,8 @@ func TestFinanceRouteProtectionContracts(t *testing.T) {
 		"POST /commission/config": {handler: "h.setCommissionConfig",
 			permissions: []string{"marketing.commission.write"}, recentReauth: true},
 	}
-	// 旧的明文导出只要读权限、可无限次导出，必须下线。
+	// 旧的明文导出只要读权限、可无限次导出，必须下线；掩码报表另走 codes/report，
+	// 不复用这个路径，免得旧脚本、旧文档与读审计的人以为这里还能拿到明文。
 	if _, exists := routes["GET /gift-cards/codes/export"]; exists {
 		t.Error("plaintext re-export route GET /gift-cards/codes/export must stay removed")
 	}

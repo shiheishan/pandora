@@ -82,7 +82,7 @@ export function useGiftBatches(params: { limit: number; offset: number }) {
   })
 }
 
-export function useGiftCodes(params: { batch_id: string | null; limit: number; offset: number }) {
+export function useGiftCodes(params: { batch_id: string | null; status?: string; limit: number; offset: number }) {
   const api = useApi()
   return useQuery({
     queryKey: [...MK, 'gift-codes', params],

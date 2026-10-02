@@ -1,30 +1,50 @@
 /**
- * [INPUT]: 依赖 react 的 useId / useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的主题 / 时区 / 插槽函数，依赖 ./queries，依赖 ./schemas，依赖 ./content.module.css
+ * [INPUT]: 依赖 react 的 useId / useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的时区 / 插槽函数，依赖 ./theme 的卡片色块、站点名与激活文案，依赖 ./ThemeEditor，依赖 ./queries，依赖 ./schemas，依赖 ./content.module.css 与 ./theme.module.css
  * [OUTPUT]: 对外提供 ThemeTab（内容与外观 · 主题与插槽标签）
- * [POS]: admin/screens/content 的主题与插槽（设计稿 t_theme）。按 5.A D-D-4 / D-E-4 只画生效的「默认 · 纸白」一张卡片（使用中，内置不可删不可停），「保存新主题」入口隐藏、custom_css 不出现；卡片旁补站点时区卡（R49，设计稿没有，按卡片风格补：读权限同邮件设置 security.audit.read，没有就不画；改要 platform.settings.write + reauth，无幂等）。
+ * [POS]: admin/screens/content 的主题与插槽（设计稿 t_theme）。主题卡片列出全部主题（用户推翻 5.A D-D-4 / D-E-4 的「只保留一个主题」，改为可新建、可切换）：生效的标「使用中」、内置的标「内置」；内置主题只能「另存为」，自定义主题可编辑、激活、删除（生效中的不给删，后端同样拒绝）；「＋ 新建主题」默认复制当前生效主题（含站点品牌）。
+ *        激活前的确认框写明站点名会随之改变（门户标题、邮件 {{site}} 与发件人名都取生效主题的站点名）；激活、删除要 reauth、无幂等；custom_css 继续停用、不出现。卡片旁补站点时区卡（R49，设计稿没有，按卡片风格补：读权限同邮件设置 security.audit.read，没有就不画；改要 platform.settings.write + reauth，无幂等）。
  *        前端插槽按接口返回的 7 个位（名称、key、位置说明）：失焦时内容真的变了才保存、开关带上当前内容（reauth + 每次新幂等键 appearance_slot_save），保存后回填净化后的内容，被过滤的标签逐条提示
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useId, useState, type CSSProperties } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, QueryView, Select, Skeleton, Switch, Tag, TextArea, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, QueryView, Select, Skeleton, Switch, Tag, TextArea, useToast } from '../../../ui'
 import css from './content.module.css'
-import { droppedMessage, siteName, slotDirty, themePreview, timezoneOptions } from './logic'
+import { droppedMessage, slotDirty, timezoneOptions } from './logic'
 import { useCan, useFailure, useIntentKey, useInvalidateContent, useSiteSettings, useSlots, useThemes } from './queries'
-import { siteSettingsSchema, slotSaved, type Slot, type Theme } from './schemas'
+import { siteSettingsSchema, slotSaved, themeActivated, themeDeleted, type Slot, type Theme } from './schemas'
+import { activateNotice, siteName, themeSwatches, type ThemeTarget } from './theme'
+import { ThemeEditor } from './ThemeEditor'
+import theme from './theme.module.css'
 
 export function ThemeTab() {
   const can = useCan()
   const themes = useThemes()
   const slots = useSlots()
   const writable = can('platform.appearance.write')
+  const [editing, setEditing] = useState<ThemeTarget | null>(null)
+  const [activating, setActivating] = useState<Theme | null>(null)
+  const [deleting, setDeleting] = useState<Theme | null>(null)
+  const list = themes.data ?? []
+  const active = list.find((t) => t.is_active)
 
   return (
     <div className={css.stack}>
       <div className={css.themeGrid}>
-        <QueryView query={themes} rows={2} isEmpty={(list) => !list.some((t) => t.is_active)} empty={<Empty bare title="没有生效的主题" description="门户按内置默认样式显示；主题由系统迁移维护，这里无需操作。" />}>
-          {(list) => list.filter((t) => t.is_active).map((t) => <ThemeCard key={t.id} theme={t} />)}
+        <QueryView query={themes} rows={2} isEmpty={(l) => l.length === 0 && !writable} empty={<Empty bare title="还没有主题" description="门户按内置默认样式显示；有外观写权限的同事可以在这里新建主题。" />}>
+          {(l) => (
+            <>
+              {l.map((t) => (
+                <ThemeCard key={t.id} theme={t} writable={writable} onEdit={() => setEditing(t.is_builtin ? { kind: 'create', from: t } : { kind: 'edit', theme: t })} onActivate={() => setActivating(t)} onDelete={() => setDeleting(t)} />
+              ))}
+              {writable && (
+                <button type="button" className={theme.newCard} onClick={() => setEditing({ kind: 'create', from: active ?? null })}>
+                  ＋ 新建主题{active ? `（复制「${active.name}」）` : ''}
+                </button>
+              )}
+            </>
+          )}
         </QueryView>
         {can('security.audit.read') && <TimezoneCard writable={can('platform.settings.write')} />}
       </div>
@@ -38,16 +58,19 @@ export function ThemeTab() {
           {(list) => list.map((s) => <SlotRow key={s.key} slot={s} writable={writable} />)}
         </QueryView>
       </section>
+
+      <ThemeEditor target={editing} onClose={() => setEditing(null)} />
+      <ThemeConfirms active={active} activating={activating} deleting={deleting} onDone={() => (setActivating(null), setDeleting(null))} />
     </div>
   )
 }
 
-function ThemeCard({ theme }: { theme: Theme }) {
-  const p = themePreview(theme)
+function ThemeCard({ theme: t, writable, onEdit, onActivate, onDelete }: { theme: Theme; writable: boolean; onEdit: () => void; onActivate: () => void; onDelete: () => void }) {
+  const p = themeSwatches(t)
   const vars = { '--pv-bg': p.bg, '--pv-fg': p.fg, '--pv-accent': p.accent } as CSSProperties
-  const name = siteName(theme)
+  const name = siteName(t)
   return (
-    <section className={css.themeCard} style={vars} aria-label={`主题 ${theme.name}`}>
+    <section className={css.themeCard} style={vars} aria-label={`主题 ${t.name}`}>
       <div className={css.preview} aria-hidden="true">
         <div className={css.previewLine} />
         <div className={css.previewLine} />
@@ -55,18 +78,85 @@ function ThemeCard({ theme }: { theme: Theme }) {
       </div>
       <div className={css.cardBody}>
         <div className={css.row}>
-          <span className={css.cardName}>{theme.name}</span>
-          {theme.is_builtin && <Tag tone="neutral">内置</Tag>}
-          <Tag tone="ok">使用中</Tag>
+          <span className={css.cardName}>{t.name}</span>
+          {t.is_builtin && <Tag tone="neutral">内置</Tag>}
+          {t.is_active && <Tag tone="ok">使用中</Tag>}
         </div>
         <div className={css.swatches} aria-hidden="true">
           <span className={`${css.swatch} ${css.swatchBg}`} />
           <span className={`${css.swatch} ${css.swatchFg}`} />
           <span className={`${css.swatch} ${css.swatchAccent}`} />
         </div>
-        <div className={css.faint}>{name ? `站点名称「${name}」，` : ''}明暗两套配色随用户的主题切换，门户所有用户看到的都是这一套。</div>
+        <div className={css.faint}>
+          <span className={css.mono}>{t.code}</span>
+          {name ? ` · 站点名称「${name}」` : ' · 未设站点名称'}
+          {t.is_active ? '。门户所有用户看到的都是这一套，明暗两组随用户切换。' : ''}
+        </div>
+        {writable && (
+          <div className={theme.actions}>
+            {t.is_builtin ? (
+              <Button size="xs" onClick={onEdit}>
+                另存为
+              </Button>
+            ) : (
+              <Button size="xs" onClick={onEdit}>
+                编辑
+              </Button>
+            )}
+            {!t.is_active && (
+              <Button size="xs" variant="primary" onClick={onActivate}>
+                激活
+              </Button>
+            )}
+            {!t.is_builtin && !t.is_active && (
+              <Button size="xs" variant="ghost" onClick={onDelete}>
+                删除
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     </section>
+  )
+}
+
+/** 激活与删除：都要 reauth（api 层弹框），不带幂等键（契约：路由上没有幂等中间件） */
+function ThemeConfirms({ active, activating, deleting, onDone }: { active: Theme | undefined; activating: Theme | null; deleting: Theme | null; onDone: () => void }) {
+  const api = useApi()
+  const toast = useToast()
+  const fail = useFailure()
+  const invalidate = useInvalidateContent()
+  const run = async (work: () => Promise<unknown>, ok: string) => {
+    try {
+      await work()
+      toast(ok)
+    } catch (e) {
+      fail(e)
+    } finally {
+      void invalidate('themes')
+      onDone()
+    }
+  }
+  return (
+    <>
+      <ConfirmModal
+        open={activating !== null}
+        title={activating ? `激活「${activating.name}」？` : ''}
+        body={activating ? activateNotice(active, activating) : ''}
+        confirmLabel="激活主题"
+        onConfirm={() => run(() => api.post(`v1/themes/${encodeURIComponent(activating!.code)}/activate`, themeActivated), `已激活「${activating!.name}」，门户刷新后生效`)}
+        onCancel={onDone}
+      />
+      <ConfirmModal
+        open={deleting !== null}
+        title={deleting ? `删除「${deleting.name}」？` : ''}
+        body="删除后无法恢复；正在使用的主题和内置主题不能删除。"
+        confirmLabel="删除主题"
+        tone="danger"
+        onConfirm={() => run(() => api.delete(`v1/themes/${encodeURIComponent(deleting!.code)}`, themeDeleted), `已删除「${deleting!.name}」`)}
+        onCancel={onDone}
+      />
+    </>
   )
 }
 

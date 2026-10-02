@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./GenerateCodes、./TemplateDrawer、./logic、./queries、./schemas，依赖 ./marketing.module.css 与 ./Gifts.module.css
  * [OUTPUT]: 对外提供 Gifts（营销 · 礼品卡标签）
- * [POS]: admin/screens/marketing 的礼品卡标签（设计稿 t_gifts）：四个统计、分段「模板 / 批次与卡码 / 使用记录」。子视图与选中批次记在 rest 里（#/marketing/gifts/batches/<批次 id>），刷新与分享都落在同一处。卡码全是掩码（R17），完整明文只有一次性导出
+ * [POS]: admin/screens/marketing 的礼品卡标签（设计稿 t_gifts）：四个统计、分段「模板 / 批次与卡码 / 使用记录」。子视图与选中批次记在 rest 里（#/marketing/gifts/batches/<批次 id>），刷新与分享都落在同一处。卡码全是掩码（R17），完整明文只有一次性导出；批次卡码可按状态筛选，「导出当前筛选」（marketing.giftcard.read + ops.export + reauth）只出掩码报表，确认框写明明文去处
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
@@ -10,10 +10,10 @@ import { formatMoney } from '../../../core/format'
 import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, ConfirmModal, Empty, Pager, QueryView, Segmented, Select, StatStrip, Tag, useToast } from '../../../ui'
-import { GenerateModal, OneTimeModal, useBatchExport } from './GenerateCodes'
+import { GenerateModal, OneTimeModal, useBatchExport, useCodesReport } from './GenerateCodes'
 import { TemplateDrawer } from './TemplateDrawer'
 import local from './Gifts.module.css'
-import { CODE_STATUS, batchLabel, formatDate, formatDateTime, grantedLabel, redeemRate, templateFace } from './logic'
+import { CODE_STATUS, batchLabel, codeFilterQuery, formatDate, formatDateTime, grantedLabel, redeemRate, templateFace, type CodeStatusFilter } from './logic'
 import css from './marketing.module.css'
 import { useCan, useFailure, useGiftBatches, useGiftCodes, useGiftStats, useGiftTemplates, useGiftUsages, useInvalidateMarketing, usePlanCatalog } from './queries'
 import { toggleResponse, type Batch, type CodesGenerated, type GiftCode, type GiftStats, type GiftTemplate } from './schemas'
@@ -184,13 +184,23 @@ function Batches({ selected }: { selected: string | null }) {
   )
 }
 
+const STATUS_OPTIONS: ReadonlyArray<{ value: CodeStatusFilter; label: string }> = [{ value: '', label: '全部状态' }, ...(['unused', 'used', 'disabled', 'expired'] as const).map((v) => ({ value: v, label: CODE_STATUS[v]!.label }))]
+
 function BatchCodes({ batch }: { batch: Batch }) {
   const can = useCan()
   const writable = can('marketing.giftcard.write')
+  // 掩码报表照审计导出：读权限 + 导出权限（ops.export），reauth 由 api 层弹框
+  const reportable = can('marketing.giftcard.read') && can('ops.export')
   const [offset, setOffset] = useState(0)
+  const [status, setStatus] = useState<CodeStatusFilter>('')
   const [confirm, setConfirm] = useState(false)
-  const codes = useGiftCodes({ batch_id: batch.id, limit: CODE_PAGE, offset })
+  const [reporting, setReporting] = useState(false)
+  const filter = codeFilterQuery(batch.id, status)
+  const codes = useGiftCodes({ ...filter, limit: CODE_PAGE, offset })
   const exporter = useBatchExport(() => setConfirm(false))
+  const report = useCodesReport(() => setReporting(false))
+  const total = codes.data?.total
+  const scope = `批次 ${batchLabel(batch)}${status ? ` · ${CODE_STATUS[status]!.label}` : ''}${total !== undefined ? ` · 共 ${total.toLocaleString('zh-CN')} 张` : ''}`
 
   return (
     <div className={css.panel}>
@@ -198,13 +208,28 @@ function BatchCodes({ batch }: { batch: Batch }) {
         <h3 className={css.panelTitle}>批次 {batchLabel(batch)} 的码</h3>
         {batch.expires_at && <span className={css.faint}>有效期至 {formatDate(batch.expires_at)}</span>}
         <span className={css.spacer} />
+        <Select
+          aria-label="按状态筛选卡码"
+          size="sm"
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value as CodeStatusFilter)
+            setOffset(0)
+          }}
+          options={STATUS_OPTIONS}
+        />
+        {reportable && (
+          <Button size="xs" disabled={total === 0} onClick={() => setReporting(true)}>
+            导出当前筛选
+          </Button>
+        )}
         {writable && (
           <Button size="xs" disabled={batch.exported_at !== null} onClick={() => setConfirm(true)}>
             {batch.exported_at ? '已导出过' : '一次性导出'}
           </Button>
         )}
       </div>
-      <QueryView query={codes} isEmpty={(d) => d.codes.length === 0} empty={<Empty bare title="这个批次没有码" />}>
+      <QueryView query={codes} isEmpty={(d) => d.codes.length === 0} empty={<Empty bare title={status ? '没有这个状态的码' : '这个批次没有码'} />}>
         {(data) => (
           <>
             {data.codes.map((c) => (
@@ -221,6 +246,14 @@ function BatchCodes({ batch }: { batch: Batch }) {
         confirmLabel="导出 CSV"
         onConfirm={() => exporter.mutateAsync(batch.id).catch(() => setConfirm(false))}
         onCancel={() => setConfirm(false)}
+      />
+      <ConfirmModal
+        open={reporting}
+        title="导出当前筛选的卡码报表？"
+        body={`按当前筛选（${scope}）导出对账用 CSV：卡码只有掩码，另含状态、模板、批次、有效期、生成时间、兑换人与兑换时间。完整卡码只在生成批次后的那一次导出里提供，这里拿不到明文。`}
+        confirmLabel="导出 CSV"
+        onConfirm={() => report.mutateAsync(filter).catch(() => setReporting(false))}
+        onCancel={() => setReporting(false)}
       />
     </div>
   )

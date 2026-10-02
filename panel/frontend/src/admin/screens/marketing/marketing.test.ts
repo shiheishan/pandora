@@ -14,6 +14,8 @@ import {
   buildCouponRequest,
   buildGenerateRequest,
   buildTemplateRequest,
+  codeFilterQuery,
+  codesReportFileName,
   commissionStats,
   commissionToForm,
   couponBatchLabel,
@@ -193,10 +195,16 @@ describe('gift cards', () => {
     expect(grantedLabel({ granted: { balance: 500 }, template_name: '盲盒', prize_label: '¥5 余额' })).toBe('¥5 余额（余额 +¥5.00）')
   })
 
+  it('shares one code filter between the list and the masked report export', () => {
+    expect(codeFilterQuery('b1', '')).toEqual({ batch_id: 'b1' })
+    expect(codeFilterQuery('b1', 'used')).toEqual({ batch_id: 'b1', status: 'used' })
+  })
+
   it('names batches and export files from the id', () => {
     const b = { id: '3f9a1c2b-0000-4000-8000-000000000000', created_at: new Date(2026, 8, 23, 12).toISOString() }
     expect(batchLabel(b)).toBe('GB-0923-3F9A')
     expect(batchFileName(b.id)).toBe('gift-codes-3f9a1c2b.csv')
+    expect(codesReportFileName(b.id)).toBe('gift-codes-report-3f9a1c2b.csv')
     expect(redeemRate(1287, 2040)).toBe('63.1%')
     expect(redeemRate(0, 0)).toBe('—')
   })

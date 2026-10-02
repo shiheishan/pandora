@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID / randomInt，依赖 ../types 的 MockModule / MockContext / MockResult / Json，依赖 ./users 的 PLAN_IDS 与 ./plans-store 的 plans（券的适用套餐与套餐卡用固定套餐 id 与种子价格，GET v1/plans 归套餐模块）
  * [OUTPUT]: 对外提供 marketing 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「营销（后台-06）」假接口：优惠券、礼品卡（模板 / 批次 / 掩码卡码 / 一次性导出 / 使用记录 / 统计）、佣金与提现。形状、权限、reauth、幂等 scope、校验文案照 api-contract.md（含 R4 R5 R6 R17）与 Go 处理器；请求体按后端 DisallowUnknownFields 拒绝未知字段
+ * [POS]: dev/mock/admin 的「营销（后台-06）」假接口：优惠券、礼品卡（模板 / 批次 / 掩码卡码 / 一次性导出 / 按筛选导出掩码报表 / 使用记录 / 统计）、佣金与提现。形状、权限、reauth、幂等 scope、校验文案照 api-contract.md（含 R4 R5 R6 R17）与 Go 处理器；请求体按后端 DisallowUnknownFields 拒绝未知字段
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomInt, randomUUID } from 'node:crypto'
@@ -474,6 +474,28 @@ export const marketing: MockModule = {
       const { limit, offset } = page(ctx.query, 50, 5000)
       const hit = codes.filter((c) => (!status || c.status === status) && (!templateId || c.template_id === templateId) && (!batchId || c.batch_id === batchId))
       ctx.send(200, { codes: hit.slice(offset, offset + limit).map(codeView), total: hit.length })
+    },
+    // 按筛选导出掩码报表（对账）：与列表同筛选，读 + ops.export + reauth，无幂等；只出掩码
+    'GET /v1/gift-cards/codes/report': (ctx) => {
+      if (!ctx.requirePermission('marketing.giftcard.read') || !ctx.requirePermission('ops.export') || !ctx.requireReauth()) return
+      const status = ctx.query.get('status') ?? ''
+      if (!['', 'unused', 'used', 'disabled', 'expired'].includes(status)) return ctx.fail(400, 'bad_request', '不支持的卡密状态')
+      const templateId = ctx.query.get('template_id') ?? ''
+      const batchId = ctx.query.get('batch_id') ?? ''
+      if ((templateId && !UUID.test(templateId)) || (batchId && !UUID.test(batchId))) return ctx.fail(400, 'bad_request', '标识符格式不正确')
+      const hit = codes.filter((c) => (!status || c.status === status) && (!templateId || c.template_id === templateId) && (!batchId || c.batch_id === batchId))
+      if (hit.length > 50_000) return ctx.fail(422, 'validation_failed', '超过 50000 行，请缩小筛选范围（按模板、批次或状态）')
+      const stamp = (v?: string | null) => (v ? v.slice(0, 16).replace('T', ' ') : '')
+      const safe = (v: string) => (/^[=+\-@\t\r]/.test(v) ? `'${v}` : v)
+      const rows = [...hit]
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .map((c) => [mask(c.code), c.status, safe(templates.find((t) => t.id === c.template_id)?.name ?? ''), c.batch_id, stamp(c.expires_at), stamp(c.created_at), safe(c.used_email ?? ''), stamp(c.used_at)].map(csvCell).join(','))
+      const now = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+      ctx.sendRaw(200, {
+        contentType: 'text/csv; charset=utf-8',
+        text: `\uFEFF${['卡密（掩码）,状态,模板,批次,有效期,生成时间,兑换人,兑换时间', ...rows].join('\n')}\n`,
+        headers: { 'Content-Disposition': `attachment; filename="gift-codes-report-${now}.csv"` },
+      })
     },
     'GET /v1/gift-cards/batches': (ctx) => {
       if (!ctx.requirePermission('marketing.giftcard.read')) return

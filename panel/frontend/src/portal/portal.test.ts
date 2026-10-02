@@ -1,11 +1,11 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ./pages、./entry-links、./appearance 的 pickThemeTokens、./queries 的 displayName
+ * [INPUT]: 依赖 vitest，依赖 ./pages、./entry-links、./appearance 的 pickThemeTokens / portalBranding、./queries 的 displayName
  * [OUTPUT]: 对外提供 portal 外框纯逻辑的单元测试
  * [POS]: portal 的单元测试：页面路由、rest 子路由与导航归属、邀请链接取码并抹掉查询串、快捷登录令牌识别、主题令牌白名单、用户名映射；界面交互在浏览器里对 dev/mock-api 验收
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it, vi } from 'vitest'
-import { pickThemeTokens } from './appearance'
+import { pickThemeTokens, portalBranding } from './appearance'
 import { quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
 import { greeting, navLabel, navOwner, resolvePage } from './pages'
 import { displayName } from './queries'
@@ -102,6 +102,19 @@ describe('pickThemeTokens', () => {
     expect(pickThemeTokens(appearance, 'dark')).toEqual([['--brand', '#e46e52']])
     expect(pickThemeTokens({ theme: null, slots: {} }, 'light')).toEqual([])
     expect(pickThemeTokens(undefined, 'dark')).toEqual([])
+  })
+})
+
+describe('portalBranding', () => {
+  const with_ = (branding: Record<string, string>) => ({ theme: { tokens: {}, branding }, slots: {} })
+  it('keeps the design wordmark for the default site name and follows a switched theme otherwise', () => {
+    expect(portalBranding(with_({ site_name: 'Pandora' }))).toEqual({ siteName: null, tagline: null, logo: null })
+    expect(portalBranding(undefined)).toEqual({ siteName: null, tagline: null, logo: null })
+    expect(portalBranding(with_({ site_name: ' 夜海加速 ', tagline: '一路畅通' }))).toEqual({ siteName: '夜海加速', tagline: '一路畅通', logo: null })
+    // 默认站点名但带了 Logo：照样画 Logo + 站点名
+    expect(portalBranding(with_({ site_name: 'Pandora', logo: 'data:image/png;base64,AAAA' })).siteName).toBe('Pandora')
+    // 外链 Logo 不认（CSP 只放 data: 图片）
+    expect(portalBranding(with_({ site_name: 'X', logo: 'https://evil.test/a.png' })).logo).toBeNull()
   })
 })
 

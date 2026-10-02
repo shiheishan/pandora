@@ -20,14 +20,14 @@ catalog.go: 套餐目录、向导一次建成 / 改完、版本与价格
 traffic_packs.go: 流量包目录管理（后台-04 流量包 tab）：列表、新建、修改、上下架，updated_at 作乐观锁由客户端原样传回
 manual_order.go / late_payment.go: 人工开单（settlement: grant 赠送 / pending 待用户支付 / offline 线下已收款，带 reference 当场结清）与标记线下已收款、挂账转余额
 order_query.go: 订单抽屉「向渠道查单」POST v1/orders/{id}/query（PAY-009）：订单写权限 + admin_order_query 幂等、不挂重认证（造不出钱，只按回调同一条主链记渠道确认过的那笔），经 Deps.Payments 调 billing.QueryOrderPayment
-coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id 非 UUID 回中性 404）、批量生券、礼品卡与批次一次性导出、分销（总览带累计佣金、邀请数与计佣范围 scope，参数缺行回退 billing.CommissionDefault*）、提现审批与余额调账 adjustBalance
+coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id 非 UUID 回中性 404）、批量生券、礼品卡与批次一次性导出、按筛选导出卡码掩码报表（GET gift-cards/codes/report，读 + ops.export + reauth，与列表共用 giftCodeFilter，自由文本列防公式）、分销（总览带累计佣金、邀请数与计佣范围 scope，参数缺行回退 billing.CommissionDefault*）、提现审批与余额调账 adjustBalance
 node_admin.go: 节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步上线 nodeActivate（R108，node.lifecycle + node_activate 幂等，不要求重认证；提交后通知该节点，服务器这次才进 ready 时再发租户级 node.users.changed）/ 一步退役 nodeRetire（node.lifecycle + 重认证 + node_retire 幂等），节点身份与令牌状态 nodeIdentity
 node_routing.go: 全局出站与分流 GET / PUT v1/nodes/routing 与单节点路由 nodeGetRouting / nodeSetRouting 的处理器：只解析请求、调 nodefabric（校验、revision / row_version 乐观并发、发布锁、推进 generation、审计都在 routing_admin.go）、提交后逐个通知节点、写响应；node_routing_notify_test.go 守住通知在提交之后、本文件与 route_groups.go 不跑 SQL
 route_groups.go: 路由组（00096）处理器：列表 / 新建 / 改元信息 / 删除、组内路由读写、组侧改成员、节点侧改所在组 PUT v1/nodes/{id}/route-groups、节点生效预览 GET v1/nodes/{id}/routing/effective；只解析与写响应，提交后经 notifyRoutingNodes 逐个通知 generation 被推进的节点；门槛见 route_groups_routes_test.go（影响多节点的写 node.config.publish + 重认证 + 幂等，新建只要幂等，节点侧与单节点路由 PUT 同级）
 server.go / pools.go: 服务器（物理宿主）读写与状态、节点分组（列表带组内节点 members、绑定套餐名 plan_names 与「仅限用户组」allowed_user_groups；新建 / 编辑带 allowed_user_group_ids 时经 pool_user_groups.go 处理；套餐版本换绑池、池名单变化提交后发租户级 node.users.changed）
 pool_user_groups.go: 节点池「仅限用户组」名单（R104，表 node_pool_user_groups）：请求带了字段才要求近期重认证（路由上的 reauth 中间件只能整条挂，这里按字段挂）、校验格式与租户内存在、整体替换、名单有变化时写 node_pool.user_groups_changed 前后对照审计
 announce.go / content.go: 公告（草稿 / 定时 / 撤回，按套餐与用户组定向）、知识库版本
-appearance.go: 主题、插槽、Webhook 钩子与投递记录（含 duration_ms）
+appearance.go: 主题（保存带 create 区分新建与编辑）、插槽、Webhook 钩子与投递记录（含 duration_ms）
 site_settings.go: 站点时区读写（R49），即 tenants.timezone，按日用量与收入趋势的切日口径；时区名须能被 time.LoadLocation 加载，拒绝空串与 Local，改动写审计
 mail.go / mail_template.go / telegram.go: 邮件与注册设置（全部 upsert，SMTP 密码行缺失也写得进，R94；邮箱验证缺行回退 identity.EmailVerificationDefault）、通知模板（列表带 has_default、草稿预览、草稿实发测试）、Telegram 配置（管理员群组 admin_chat_id 作测试默认目标），三个测试发送挂 ops.notification.write
 ticket_macros.go: 工单快捷回复的列表与增改删

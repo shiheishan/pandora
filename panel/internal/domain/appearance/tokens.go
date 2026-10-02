@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 pgx 的业务事务读取生效主题，依赖 platform/httpx 的校验错误
 // [OUTPUT]: 对外提供 DesignTokenKeys、TokenGroups、DefaultSiteName、SiteNameTx；包内提供 normalizeTokens、filterTokens
-// [POS]: domain/appearance 的主题令牌规则：后端这一侧的 token 白名单（照抄前端 design-tokens.ts，测试守一致）与 light/dark 分组，service.go 的保存与门户读取都经过这里
+// [POS]: domain/appearance 的主题令牌规则（品牌规则在兄弟文件 branding.go）：后端这一侧的 token 白名单（照抄前端 design-tokens.ts，测试守一致）与 light/dark 分组，service.go 的保存与门户读取都经过这里
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package appearance
@@ -64,6 +64,8 @@ const maxTokenValueLen = 200
 // 形状只能是 {"light":{键:值}, "dark":{键:值}}，两组都可省略；键必须在
 // DesignTokenKeys 里，值必须是不含危险字符的短字符串。不认识的一律拒绝而
 // 不是静默丢掉：管理员以为生效了、页面上却没有，是最难查的那种问题。
+// 取值不合法的逐个标在 tokens.<组>.<变量名> 上（后台据此标到对应输入框），
+// 形状与键名的问题标在 tokens 上。
 func normalizeTokens(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		return json.RawMessage(`{}`), nil
@@ -73,31 +75,36 @@ func normalizeTokens(raw json.RawMessage) (json.RawMessage, error) {
 		return nil, httpx.Invalid(map[string]string{
 			"tokens": `必须是 {"light":{…},"dark":{…}} 形状的对象`})
 	}
+	fields := map[string]string{}
 	out := map[string]map[string]string{}
 	for name, body := range groups {
 		if name != "light" && name != "dark" {
-			return nil, httpx.Invalid(map[string]string{
-				"tokens": "只允许 light 与 dark 两组，不认识：" + name})
+			fields["tokens"] = "只允许 light 与 dark 两组，不认识：" + name
+			continue
 		}
 		var vals map[string]any
 		if err := json.Unmarshal(body, &vals); err != nil || vals == nil {
-			return nil, httpx.Invalid(map[string]string{"tokens": name + " 必须是对象"})
+			fields["tokens"] = name + " 必须是对象"
+			continue
 		}
 		group := map[string]string{}
 		for k, v := range vals {
 			if !designTokenSet[k] {
-				return nil, httpx.Invalid(map[string]string{
-					"tokens": name + "." + k + " 不是设计稿的变量名"})
+				fields["tokens"] = name + "." + k + " 不是设计稿的变量名"
+				continue
 			}
 			s, ok := v.(string)
 			s = strings.TrimSpace(s)
 			if !ok || s == "" || len(s) > maxTokenValueLen || tokenValueBad.MatchString(s) {
-				return nil, httpx.Invalid(map[string]string{
-					"tokens": name + "." + k + " 的取值不合法（须为非空字符串，不含 ; { } < > \\）"})
+				fields["tokens."+name+"."+k] = "取值不合法：须为 200 字符以内的非空字符串，不含 ; { } < > \\"
+				continue
 			}
 			group[k] = s
 		}
 		out[name] = group
+	}
+	if len(fields) > 0 {
+		return nil, httpx.Invalid(fields)
 	}
 	b, err := json.Marshal(out)
 	return b, err

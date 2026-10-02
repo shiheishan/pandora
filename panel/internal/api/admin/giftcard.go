@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 domain/giftcard 的模板、生码、批次、导出、卡码与兑换记录用例，依赖 platform/httpx
-// [OUTPUT]: 对包内提供礼品卡处理器：模板列表与保存、生码、批次列表、一次性导出、卡码列表与启停、统计、兑换记录
-// [POS]: api/admin 后台-06 礼品卡 tab 的 HTTP 外壳；明文卡码只经生码样例与 exportGiftBatch 出站，权限与重认证在 router.go
+// [OUTPUT]: 对包内提供礼品卡处理器：模板列表与保存、生码、批次列表、一次性导出、卡码列表与启停、按筛选导出掩码报表、统计、兑换记录
+// [POS]: api/admin 后台-06 礼品卡 tab 的 HTTP 外壳；明文卡码只经生码样例与 exportGiftBatch 出站，exportGiftCodesReport 与列表同筛选、只出掩码；权限与重认证在 router_marketing.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -8,6 +8,7 @@ package admin
 import (
 	"encoding/csv"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -101,14 +102,65 @@ func (h *handlers) listGiftCodes(w http.ResponseWriter, r *http.Request) {
 	offset, _ := strconv.Atoi(q.Get("offset"))
 	codes, total, err := h.d.GiftCard.ListCodes(r.Context(),
 		httpx.TenantIDFrom(r.Context()), giftcard.ListCodesInput{
-			TemplateID: q.Get("template_id"), Status: q.Get("status"),
-			BatchID: q.Get("batch_id"), Limit: limit, Offset: offset,
+			CodeFilter: giftCodeFilter(q), Limit: limit, Offset: offset,
 		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	httpx.OK(w, map[string]any{"codes": codes, "total": total})
+}
+
+// giftCodeFilter 从查询串取卡码筛选：列表与掩码报表导出共用，口径一致。
+func giftCodeFilter(q url.Values) giftcard.CodeFilter {
+	return giftcard.CodeFilter{
+		TemplateID: q.Get("template_id"), Status: q.Get("status"), BatchID: q.Get("batch_id"),
+	}
+}
+
+// exportGiftCodesReport 按列表的筛选导出卡码掩码报表（CSV），给运营对账。
+//
+// 只有掩码：完整卡码只在生码样例与批次的一次性导出里出现，这里不读明文
+// （掩码在 SQL 里算好，见 domain/giftcard/codes_export.go）。整批读完、审计
+// 写进同一事务之后才开始输出；超过上限在领域层回 422。
+func (h *handlers) exportGiftCodesReport(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.d.GiftCard.ExportCodes(r.Context(), httpx.TenantIDFrom(r.Context()),
+		httpx.PrincipalFrom(r.Context()).UserID, giftCodeFilter(r.URL.Query()))
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	writeGiftCodesReportCSV(w, rows, time.Now())
+}
+
+func writeGiftCodesReportCSV(w http.ResponseWriter, rows []giftcard.CodeReportRow, now time.Time) {
+	name := "gift-codes-report-" + now.UTC().Format("20060102-150405") + ".csv"
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	// BOM：运营会用 Excel 打开，没有它中文是乱码（同批次导出与用户导出）
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+
+	stamp := func(t *time.Time) string {
+		if t == nil {
+			return ""
+		}
+		return t.Format("2006-01-02 15:04")
+	}
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+	_ = cw.Write([]string{"卡密（掩码）", "状态", "模板", "批次", "有效期", "生成时间", "兑换人", "兑换时间"})
+	for _, row := range rows {
+		batch := ""
+		if row.BatchID != nil {
+			batch = *row.BatchID
+		}
+		_ = cw.Write([]string{
+			row.CodeMasked, row.Status, csvSafe(row.TemplateName), batch,
+			stamp(row.ExpiresAt), stamp(&row.CreatedAt), csvSafe(row.UsedEmail), stamp(row.UsedAt),
+		})
+	}
 }
 
 func (h *handlers) listGiftBatches(w http.ResponseWriter, r *http.Request) {
