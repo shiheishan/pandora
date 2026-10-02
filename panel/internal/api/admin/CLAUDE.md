@@ -19,7 +19,7 @@ bulk_users.go / usergroup.go / devices.go / traffic_reset.go: 用户批量筛选
 catalog.go: 套餐目录、向导一次建成 / 改完、版本与价格
 traffic_packs.go: 流量包目录管理（后台-04 流量包 tab）：列表、新建、修改、上下架，updated_at 作乐观锁由客户端原样传回
 manual_order.go / late_payment.go: 人工开单（settlement: grant 赠送 / pending 待用户支付 / offline 线下已收款，带 reference 当场结清）与标记线下已收款、挂账转余额
-coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id 非 UUID 回中性 404）、批量生券、礼品卡与批次一次性导出、按筛选导出卡码掩码报表（GET gift-cards/codes/export，读 + ops.export + reauth，与列表共用 giftCodeFilter，自由文本列防公式）、分销（总览带累计佣金、邀请数与计佣范围 scope，参数缺行回退 billing.CommissionDefault*）、提现审批与余额调账 adjustBalance
+coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id 非 UUID 回中性 404）、批量生券、礼品卡与批次一次性导出、按筛选导出卡码掩码报表（GET gift-cards/codes/report，读 + ops.export + reauth，与列表共用 giftCodeFilter，自由文本列防公式）、分销（总览带累计佣金、邀请数与计佣范围 scope，参数缺行回退 billing.CommissionDefault*）、提现审批与余额调账 adjustBalance
 node_admin.go: 节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步上线 nodeActivate（R108，node.lifecycle + node_activate 幂等，不要求重认证；提交后通知该节点，服务器这次才进 ready 时再发租户级 node.users.changed）/ 一步退役 nodeRetire（node.lifecycle + 重认证 + node_retire 幂等），节点身份与令牌状态 nodeIdentity
 node_routing.go: 全局出站与分流 GET / PUT v1/nodes/routing（revision 乐观并发、持 node-config-release 锁、推进全部未退役节点并逐个通知）；validateRoutingPayload 是单节点与全局路由共用的校验；单节点路由 nodeGetRouting / nodeSetRouting 也在这里（从 handlers.go 挪来，保存在事务提交后才通知节点）
 server.go / pools.go: 服务器（物理宿主）读写与状态、节点分组（列表带组内节点 members、绑定套餐名 plan_names 与「仅限用户组」allowed_user_groups；新建 / 编辑带 allowed_user_group_ids 时经 pool_user_groups.go 处理；套餐版本换绑池、池名单变化提交后发租户级 node.users.changed）

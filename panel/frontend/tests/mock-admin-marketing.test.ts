@@ -46,7 +46,7 @@ describe('mock api · admin marketing', () => {
     expect(await again.json()).toMatchObject({ error: { code: 'conflict', message: '该批次已导出，完整卡码不可再次获取' } })
 
     // 按筛选导出掩码报表：与列表同筛选、可重复导出、只有掩码（这批明文一张都不出现）
-    const report = await fetch(`${base}/v1/gift-cards/codes/export?batch_id=${made.batch_id}`, { headers: auth })
+    const report = await fetch(`${base}/v1/gift-cards/codes/report?batch_id=${made.batch_id}`, { headers: auth })
     expect(report.status).toBe(200)
     expect(report.headers.get('content-disposition')).toMatch(/^attachment; filename="gift-codes-report-\d{8}-\d{6}\.csv"$/)
     const bytes = new Uint8Array(await report.arrayBuffer())
@@ -55,8 +55,8 @@ describe('mock api · admin marketing', () => {
     expect(masked.startsWith('卡密（掩码）,状态,模板,批次,有效期,生成时间,兑换人,兑换时间\n')).toBe(true)
     expect(masked.split('\n').filter(Boolean)).toHaveLength(7)
     for (const line of csv.split('\n').slice(1).filter(Boolean)) expect(masked).not.toContain(line.split(',')[0]!)
-    expect(await (await fetch(`${base}/v1/gift-cards/codes/export?batch_id=${made.batch_id}&status=used`, { headers: auth })).text()).toBe('卡密（掩码）,状态,模板,批次,有效期,生成时间,兑换人,兑换时间\n')
-    expect((await fetch(`${base}/v1/gift-cards/codes/export?status=nope`, { headers: auth })).status).toBe(400)
+    expect(await (await fetch(`${base}/v1/gift-cards/codes/report?batch_id=${made.batch_id}&status=used`, { headers: auth })).text()).toBe('卡密（掩码）,状态,模板,批次,有效期,生成时间,兑换人,兑换时间\n')
+    expect((await fetch(`${base}/v1/gift-cards/codes/report?status=nope`, { headers: auth })).status).toBe(400)
   })
 
   it('points coupons and plan cards at the plans module catalog (fixed plan ids)', async () => {

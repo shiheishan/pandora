@@ -476,7 +476,7 @@ export const marketing: MockModule = {
       ctx.send(200, { codes: hit.slice(offset, offset + limit).map(codeView), total: hit.length })
     },
     // 按筛选导出掩码报表（对账）：与列表同筛选，读 + ops.export + reauth，无幂等；只出掩码
-    'GET /v1/gift-cards/codes/export': (ctx) => {
+    'GET /v1/gift-cards/codes/report': (ctx) => {
       if (!ctx.requirePermission('marketing.giftcard.read') || !ctx.requirePermission('ops.export') || !ctx.requireReauth()) return
       const status = ctx.query.get('status') ?? ''
       if (!['', 'unused', 'used', 'disabled', 'expired'].includes(status)) return ctx.fail(400, 'bad_request', '不支持的卡密状态')

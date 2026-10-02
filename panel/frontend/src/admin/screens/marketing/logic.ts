@@ -242,7 +242,7 @@ export function batchLabel(b: Pick<Batch, 'id' | 'created_at'>): string {
 export const batchFileName = (id: string) => `gift-codes-${id.slice(0, 8)}.csv`
 
 /**
- * 卡码列表的筛选：列表与「导出当前筛选」（GET v1/gift-cards/codes/export，掩码报表）共用一份，
+ * 卡码列表的筛选：列表与「导出当前筛选」（GET v1/gift-cards/codes/report，掩码报表）共用一份，
  * 空状态不进查询串——与后端 CodeFilter 同口径，导出的就是列表里看到的那些行
  */
 export type CodeStatusFilter = '' | 'unused' | 'used' | 'disabled' | 'expired'

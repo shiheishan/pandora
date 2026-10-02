@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState / FormEvent，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/download 的 saveFile / filenameFromDisposition，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic、./queries、./schemas，依赖 ./marketing.module.css 与 ./Gifts.module.css
  * [OUTPUT]: 对外提供 useBatchExport（一次性导出）、useCodesReport（按筛选导出掩码报表）、GenerateModal（生成一批码）、OneTimeModal（「仅此一次可见」）
- * [POS]: admin/screens/marketing 礼品卡的生码与导出流程（R17）：生码 POST v1/gift-cards/{id}/codes（reauth + 幂等 giftcard_codes_generate）只回前 4 张明文；完整明文只能 POST v1/gift-cards/batches/{id}/export（reauth + 幂等 giftcard_batch_export）一次性导出，经 api.requestRaw 拿 CSV。重放不带 Content-Disposition，文件名按批次 id 前 8 位自拼；掩码报表走 GET v1/gift-cards/codes/export（读 + ops.export + reauth，无幂等），与列表同筛选
+ * [POS]: admin/screens/marketing 礼品卡的生码与导出流程（R17）：生码 POST v1/gift-cards/{id}/codes（reauth + 幂等 giftcard_codes_generate）只回前 4 张明文；完整明文只能 POST v1/gift-cards/batches/{id}/export（reauth + 幂等 giftcard_batch_export）一次性导出，经 api.requestRaw 拿 CSV。重放不带 Content-Disposition，文件名按批次 id 前 8 位自拼；掩码报表走 GET v1/gift-cards/codes/report（读 + ops.export + reauth，无幂等），与列表同筛选
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
@@ -41,7 +41,7 @@ export function useBatchExport(onDone?: () => void) {
 }
 
 /**
- * 按筛选导出掩码报表：GET v1/gift-cards/codes/export，与列表同一份查询串；只读、可重复导出，
+ * 按筛选导出掩码报表：GET v1/gift-cards/codes/report，与列表同一份查询串；只读、可重复导出，
  * 不带幂等键。reauth 由 api 层弹框后重放；超过 5 万行的 422 原样 Toast
  */
 export function useCodesReport(onDone?: () => void) {
@@ -50,7 +50,7 @@ export function useCodesReport(onDone?: () => void) {
   const fail = useFailure()
   return useMutation({
     mutationFn: async (query: ReturnType<typeof codeFilterQuery>) => {
-      const res = await api.requestRaw('v1/gift-cards/codes/export', { query })
+      const res = await api.requestRaw('v1/gift-cards/codes/report', { query })
       saveFile(await res.blob(), filenameFromDisposition(res.headers.get('Content-Disposition'), codesReportFileName(query.batch_id)))
     },
     onSuccess: () => {

@@ -28,12 +28,12 @@ func registerGiftCardRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequirePermission("marketing.giftcard.read", d.Log),
 		middleware.RequirePermission("ops.export", d.Log),
 		middleware.RequireRecentReauth(d.Log),
-	).Get("/gift-cards/codes/export", h.exportGiftCodesReport)
+	).Get("/gift-cards/codes/report", h.exportGiftCodesReport)
 	r.With(middleware.RequirePermission("marketing.giftcard.read", d.Log)).
 		Get("/gift-cards/batches", h.listGiftBatches)
 	// 明文卡码的唯一出口：每批只能导出一次，写权限 + 近期重认证 + 幂等键
-	// （同一个键的重试原样拿回同一份 CSV）。旧的 GET codes/export 导出明文、
-	// 只读权限即可无限次导出，早已下线；同一路径现在是上面的掩码报表。
+	// （同一个键的重试原样拿回同一份 CSV）。旧的 GET codes/export 可以
+	// 被只读权限无限次导出，已下线；上面的掩码报表刻意不复用那个路径。
 	r.With(
 		middleware.RequirePermission("marketing.giftcard.write", d.Log),
 		middleware.RequireRecentReauth(d.Log),
