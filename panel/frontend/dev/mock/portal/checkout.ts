@@ -211,6 +211,7 @@ export const checkout: MockModule = {
       const returnUrl = typeof body.return_url === 'string' && body.return_url.startsWith(`${origin}/`) ? body.return_url : `${origin}/#orders`
       const existing = [...intents.entries()].find(([, v]) => v.orderId === order.id && v.provider === channel.provider && v.method === channel.method)
       const intentId = existing?.[0] ?? randomUUID()
+      order.hasIntent = true
       intents.set(intentId, { userId: ctx.user.userId, orderId: order.id, returnUrl, provider: channel.provider, method: channel.method })
       ctx.send(201, {
         intent_id: intentId,

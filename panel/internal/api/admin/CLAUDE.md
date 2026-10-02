@@ -19,7 +19,7 @@ bulk_users.go / usergroup.go / devices.go / traffic_reset.go: 用户批量筛选
 catalog.go: 套餐目录、向导一次建成 / 改完、版本与价格
 traffic_packs.go: 流量包目录管理（后台-04 流量包 tab）：列表、新建、修改、上下架，updated_at 作乐观锁由客户端原样传回
 manual_order.go / late_payment.go: 人工开单（settlement: grant 赠送 / pending 待用户支付 / offline 线下已收款，带 reference 当场结清）与标记线下已收款、挂账转余额
-order_query.go: 订单抽屉「向渠道查单」POST v1/orders/{id}/query（PAY-009）：订单写权限 + admin_order_query 幂等、不挂重认证（造不出钱，只按回调同一条主链记渠道确认过的那笔），经 Deps.Payments 调 billing.QueryOrderPayment
+order_query.go: 订单抽屉「向渠道查单」POST v1/orders/{id}/query（PAY-009）：订单写权限 + admin_order_query 幂等、不挂重认证（造不出钱，只按回调同一条主链记渠道确认过的那笔），经 Deps.Payments 调 billing.AdminQueryOrderPayment（查单后写一条带操作人的 order.payment_queried 审计）
 coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id 非 UUID 回中性 404）、批量生券、礼品卡与批次一次性导出、分销（总览带累计佣金、邀请数与计佣范围 scope，参数缺行回退 billing.CommissionDefault*）、提现审批与余额调账 adjustBalance
 node_admin.go: 节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步上线 nodeActivate（R108，node.lifecycle + node_activate 幂等，不要求重认证；提交后通知该节点，服务器这次才进 ready 时再发租户级 node.users.changed）/ 一步退役 nodeRetire（node.lifecycle + 重认证 + node_retire 幂等），节点身份与令牌状态 nodeIdentity
 node_routing.go: 全局出站与分流 GET / PUT v1/nodes/routing 与单节点路由 nodeGetRouting / nodeSetRouting 的处理器：只解析请求、调 nodefabric（校验、revision / row_version 乐观并发、发布锁、推进 generation、审计都在 routing_admin.go）、提交后逐个通知节点、写响应；node_routing_notify_test.go 守住通知在提交之后、本文件与 route_groups.go 不跑 SQL

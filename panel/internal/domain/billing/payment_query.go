@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 payments.go 的 PaymentService（providerFor 取渠道、settle 共用结算服务）、settlement.go 的 HandlePaymentWebhook，依赖 domain/payment 的 QueryPayment / ErrNotSupported / ErrProviderDisabled，依赖 platform/db、platform/httpx
-// [OUTPUT]: 对外提供 OrderPaymentQuery 结果、ChannelPaid / ChannelUnpaid / ChannelNotFound、PaymentService.QueryOrderPayment（后台与门户共用）
+// [OUTPUT]: 对外提供 OrderPaymentQuery 结果、ChannelPaid / ChannelUnpaid / ChannelNotFound、PaymentService.QueryOrderPayment（门户直接用，后台经 payment_query_audit.go 包一层审计）；包内提供 queryOrderPayment 与 queryTarget
 // [POS]: billing 的「向渠道主动查单」用例（PAY-009 降级补偿）：回调丢了也能把钱补记上；查到已付交回 HandlePaymentWebhook，与回调同一条结算主链、同一套去重与挂账；定时巡检的认领与退避在兄弟文件 payment_query_patrol.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -59,10 +59,29 @@ type OrderPaymentQuery struct {
 // 任一渠道说已付就补记并返回。没有渠道说已付时，返回最近一个答上话的渠道的
 // 结果；所有渠道都没查成才返回错误。
 func (s *PaymentService) QueryOrderPayment(ctx context.Context, tenantID, orderID, ownerID string) (*OrderPaymentQuery, error) {
+	res, _, err := s.queryOrderPayment(ctx, tenantID, orderID, ownerID)
+	return res, err
+}
+
+// queryTarget 是查单前读到的订单号与渠道；后台审计要在查单失败时也写清查的是谁。
+type queryTarget struct {
+	OrderNo   string
+	Providers []string
+}
+
+// queryOrderPayment 是 QueryOrderPayment 的本体，另把查单对象带回来；
+// 订单不存在或无权访问时 target 为 nil。
+func (s *PaymentService) queryOrderPayment(ctx context.Context, tenantID, orderID, ownerID string) (*OrderPaymentQuery, *queryTarget, error) {
 	orderNo, providers, err := s.loadQueryTarget(ctx, tenantID, orderID, ownerID)
 	if err != nil {
-		return nil, err
+		var he *httpx.Error
+		if errors.As(err, &he) && he.Code == httpx.CodeConflict {
+			// 订单在，只是从没发起过支付：照样算一次有对象的查单
+			return nil, &queryTarget{OrderNo: orderNo}, err
+		}
+		return nil, nil, err
 	}
+	target := &queryTarget{OrderNo: orderNo, Providers: providers}
 
 	var answer *OrderPaymentQuery
 	var firstErr error
@@ -75,16 +94,16 @@ func (s *PaymentService) QueryOrderPayment(ctx context.Context, tenantID, orderI
 			continue
 		}
 		if res.ChannelStatus == ChannelPaid {
-			return res, nil
+			return res, target, nil
 		}
 		if answer == nil {
 			answer = res
 		}
 	}
 	if answer != nil {
-		return answer, nil
+		return answer, target, nil
 	}
-	return nil, firstErr
+	return nil, target, firstErr
 }
 
 // loadQueryTarget 读订单号与它发起过支付的渠道（最近发起的在前）。
@@ -128,7 +147,7 @@ func (s *PaymentService) loadQueryTarget(ctx context.Context, tenantID, orderID,
 		return "", nil, err
 	}
 	if len(providers) == 0 {
-		return "", nil, httpx.New(httpx.CodeConflict, "该订单从未发起过支付，无法向渠道查单")
+		return orderNo, nil, httpx.New(httpx.CodeConflict, "该订单从未发起过支付，无法向渠道查单")
 	}
 	return orderNo, providers, nil
 }

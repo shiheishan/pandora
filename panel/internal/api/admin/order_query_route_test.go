@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 router_billing.go 的 registerOrderRoutes，依赖 finance_routes_contract_test.go 的 loadRouteProtections 与 catalog_plan_update_route_test.go 的主体构造助手
-// [OUTPUT]: 对外提供 TestOrderQueryRouteContract、TestOrderQueryRouteNeedsWritePermissionAndKeyButNoReauth
-// [POS]: api/admin「向渠道查单」的保护契约：源码层钉死订单写权限、幂等域 admin_order_query、不挂重认证；运行层证明缺权限 404、未重认证也能到幂等中间件（缺键 400）
+// [INPUT]: 依赖 router_billing.go 的 registerOrderRoutes、order_query.go 的处理器源码（platform/sourcetest），依赖 finance_routes_contract_test.go 的 loadRouteProtections 与 catalog_plan_update_route_test.go 的主体构造助手
+// [OUTPUT]: 对外提供 TestOrderQueryRouteContract、TestOrderQueryRouteNeedsWritePermissionAndKeyButNoReauth、TestOrderQueryHandlerRecordsTheOperator
+// [POS]: api/admin「向渠道查单」的保护契约：源码层钉死订单写权限、幂等域 admin_order_query、不挂重认证；运行层证明缺权限 404、未重认证也能到幂等中间件（缺键 400）；处理器经 AdminQueryOrderPayment 记操作人审计
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
 func TestOrderQueryRouteContract(t *testing.T) {
@@ -54,5 +55,14 @@ func TestOrderQueryRouteNeedsWritePermissionAndKeyButNoReauth(t *testing.T) {
 	got := send(catalogRoutePrincipal("billing.order.write", false))
 	if got.Code != http.StatusBadRequest || !strings.Contains(got.Body.String(), "Idempotency-Key") {
 		t.Fatalf("writer without recent reauth status=%d body=%s, want the idempotency 400", got.Code, got.Body.String())
+	}
+}
+
+// 后台查单必须经带审计的入口、把操作人交下去（门户那条 QueryOrderPayment 不记审计）
+func TestOrderQueryHandlerRecordsTheOperator(t *testing.T) {
+	handler := sourcetest.Load(t, ".").Decl("handlers.queryOrderPayment")
+	if !strings.Contains(handler, "h.d.Payments.AdminQueryOrderPayment(") ||
+		!strings.Contains(handler, "httpx.PrincipalFrom(r.Context()).UserID") {
+		t.Fatal("admin order query must go through AdminQueryOrderPayment with the operator")
 	}
 }

@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 payment_query.go 的 QueryOrderPayment、payment_query_patrol.go 的 ReconcileDuePayments、settlement.go 的 HandlePaymentWebhook、checkout.go 的 CreateOrder、payments.go 的 CreatePaymentIntent、release.go 的 CancelOrder，复用 order_release_pg18_fixture_test.go 的一次性租户夹具与 payment_query_stub_test.go 的渠道替身，依赖迁移 00097
+// [INPUT]: 依赖 my_orders.go 的 ListMyOrders / MyOrderDetail，依赖 payment_query.go 的 QueryOrderPayment、payment_query_audit.go 的 AdminQueryOrderPayment、payment_query_patrol.go 的 ReconcileDuePayments、settlement.go 的 HandlePaymentWebhook、checkout.go 的 CreateOrder、payments.go 的 CreatePaymentIntent、release.go 的 CancelOrder，复用 order_release_pg18_fixture_test.go 的一次性租户夹具与 payment_query_stub_test.go 的渠道替身，依赖迁移 00097
 // [OUTPUT]: 对外提供 TestPaymentQueryPG18（run-pg18-gates.sh 的 payment_query 域）
-// [POS]: billing 主动查单（PAY-009）的 PG18 集成门禁：查到已付补记、补记与回调谁先谁后都只入账一次、已取消订单查到的钱进挂账、金额币种不符整笔拒绝、渠道没付或没查成订单不动、业务错误；巡检只认领到期的单，两个巡检并发时同一单只查一次，渠道不支持查单即停
+// [POS]: billing 主动查单（PAY-009）的 PG18 集成门禁：查到已付补记、补记与回调谁先谁后都只入账一次、已取消订单查到的钱进挂账、金额币种不符整笔拒绝、渠道没付或没查成订单不动、业务错误；门户订单行的 has_payment_intent（列表与详情、取消后仍为 true）；后台查单每次（含失败）记一条带操作人的 order.payment_queried 审计，订单不存在与门户查单不记；巡检只认领到期的单，两个巡检并发时同一单只查一次，渠道不支持查单即停
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -284,6 +284,127 @@ func TestPaymentQueryPG18(t *testing.T) {
 		if orderStatus(withIntent.id) != "pending_payment" {
 			t.Fatal("failed queries changed the order")
 		}
+	})
+
+	t.Run("portal order rows say whether a payment was ever started", func(t *testing.T) {
+		started := newOrder(t, "intent-flag-started", true)
+		fresh := newOrder(t, "intent-flag-fresh", false)
+		for _, c := range []struct {
+			o    pendingOrder
+			want bool
+		}{{started, true}, {fresh, false}} {
+			rows, _, _, err := service.ListMyOrders(ctx, fx.tenant, c.o.buyer, ListMyOrdersInput{Limit: 10})
+			if err != nil || len(rows) != 1 || rows[0].ID != c.o.id || rows[0].HasPaymentIntent != c.want {
+				t.Fatalf("list for %s rows=%+v err=%v, want has_payment_intent=%t", c.o.no, rows, err, c.want)
+			}
+			detail, err := service.MyOrderDetail(ctx, fx.tenant, c.o.buyer, c.o.id)
+			if err != nil || detail.HasPaymentIntent != c.want {
+				t.Fatalf("detail for %s=%+v err=%v, want has_payment_intent=%t", c.o.no, detail, err, c.want)
+			}
+		}
+		// 取消后意图跟着作废，但这单发起过支付——照样算，已取消的单查到钱要进挂账
+		if _, err := service.CancelOrder(ctx, fx.tenant, started.buyer, started.id); err != nil {
+			t.Fatalf("cancel: %v", err)
+		}
+		if detail, err := service.MyOrderDetail(ctx, fx.tenant, started.buyer, started.id); err != nil || !detail.HasPaymentIntent {
+			t.Fatalf("cancelled detail=%+v err=%v, want has_payment_intent", detail, err)
+		}
+	})
+
+	t.Run("admin queries are audited with the operator, portal queries are not", func(t *testing.T) {
+		operator := uuid.NewString()
+		must(t, `INSERT INTO users(id,tenant_id,email,display_name,status)
+			VALUES($1,$2,$3,'Payment Query Operator','active')`,
+			operator, fx.tenant, "pq-operator-"+operator[:8]+"@example.test")
+		type auditRow struct {
+			actorKind, actorID, outcome, errorCode, result, provider string
+		}
+		audits := func(orderID string) []auditRow {
+			t.Helper()
+			rows, err := admin.Query(ctx, `
+				SELECT actor_kind, coalesce(actor_id::text,''), coalesce(outcome,''), coalesce(error_code,''),
+				       coalesce(after_digest->>'result',''), coalesce(after_digest->>'provider_code','')
+				  FROM audit_events
+				 WHERE tenant_id=$1 AND action=$2 AND resource_type='order' AND resource_id=$3::uuid
+				 ORDER BY chain_seq`, fx.tenant, OrderQueryAuditAction, orderID)
+			if err != nil {
+				t.Fatalf("read audits: %v", err)
+			}
+			defer rows.Close()
+			var out []auditRow
+			for rows.Next() {
+				var r auditRow
+				if err := rows.Scan(&r.actorKind, &r.actorID, &r.outcome, &r.errorCode, &r.result, &r.provider); err != nil {
+					t.Fatalf("scan audit: %v", err)
+				}
+				out = append(out, r)
+			}
+			return out
+		}
+		want := func(got []auditRow, results ...string) {
+			t.Helper()
+			if len(got) != len(results) {
+				t.Fatalf("audits=%+v, want results %v", got, results)
+			}
+			for i, r := range got {
+				if r.actorKind != "admin" || r.actorID != operator || r.result != results[i] {
+					t.Fatalf("audit %d=%+v, want admin %s result %s", i, r, operator, results[i])
+				}
+			}
+		}
+
+		paidOrder := newOrder(t, "audit-paid", true)
+		stub.answer(paidOrder.no, paid("pq-trade-audit-"+fx.suffix, 1000, "CNY"), nil)
+		if res, err := payments.AdminQueryOrderPayment(ctx, fx.tenant, paidOrder.id, operator); err != nil || !res.Reconciled {
+			t.Fatalf("admin reconcile res=%+v err=%v", res, err)
+		}
+		if res, err := payments.AdminQueryOrderPayment(ctx, fx.tenant, paidOrder.id, operator); err != nil || !res.AlreadyRecorded {
+			t.Fatalf("admin repeat res=%+v err=%v", res, err)
+		}
+		got := audits(paidOrder.id)
+		want(got, "reconciled", "already_recorded")
+		if got[0].provider != fx.providerCode || got[0].outcome != "success" {
+			t.Fatalf("reconcile audit=%+v", got[0])
+		}
+
+		open := newOrder(t, "audit-open", true)
+		stub.answer(open.no, nil, nil)
+		if _, err := payments.AdminQueryOrderPayment(ctx, fx.tenant, open.id, operator); err != nil {
+			t.Fatalf("admin not-found query: %v", err)
+		}
+		stub.answer(open.no, &payment.QueryResult{Found: true, PaymentRef: "pq-open", Amount: 1000,
+			Currency: "CNY", Status: payment.StatusPending}, nil)
+		if _, err := payments.AdminQueryOrderPayment(ctx, fx.tenant, open.id, operator); err != nil {
+			t.Fatalf("admin unpaid query: %v", err)
+		}
+		stub.answer(open.no, nil, errors.New("epay: 查询返回 HTTP 502"))
+		_, err := payments.AdminQueryOrderPayment(ctx, fx.tenant, open.id, operator)
+		wantHTTPError(t, err, httpx.CodeUnavailable, "渠道查单失败，请稍后再试")
+		got = audits(open.id)
+		want(got, "not_found", "unpaid", "failed")
+		if got[2].outcome != "failure" || got[2].errorCode != string(httpx.CodeUnavailable) {
+			t.Fatalf("failed query audit=%+v", got[2])
+		}
+
+		// 从没发起过支付：有订单可归属，照样记 failed
+		never := newOrder(t, "audit-never", false)
+		_, err = payments.AdminQueryOrderPayment(ctx, fx.tenant, never.id, operator)
+		wantHTTPError(t, err, httpx.CodeConflict, "该订单从未发起过支付，无法向渠道查单")
+		want(audits(never.id), "failed")
+
+		// 订单不存在：没有可归属的对象，不记
+		ghost := uuid.NewString()
+		_, err = payments.AdminQueryOrderPayment(ctx, fx.tenant, ghost, operator)
+		wantHTTPError(t, err, httpx.CodeNotFound, "")
+		want(audits(ghost))
+
+		// 门户查单不记审计
+		portalOrder := newOrder(t, "audit-portal", true)
+		stub.answer(portalOrder.no, nil, nil)
+		if _, err := query(portalOrder); err != nil {
+			t.Fatalf("portal query: %v", err)
+		}
+		want(audits(portalOrder.id))
 	})
 
 	t.Run("patrol claims only due intents and concurrent patrols never query one order twice", func(t *testing.T) {

@@ -277,6 +277,8 @@ export function orderRow(o: OrderFixture) {
     refunded_amount: o.refunded_amount ?? 0,
     ...(o.plan_name === undefined ? {} : { plan_name: o.plan_name }),
     cancellable: OPEN.has(o.status),
+    // Go 无 omitempty，各场景恒在：发起过支付，或已经由渠道付清
+    has_payment_intent: !!(o.hasIntent || o.payProvider),
     created_at: o.created_at,
     ...(o.paid_at ? { paid_at: o.paid_at } : {}),
     ...(o.cancelled_at ? { cancelled_at: o.cancelled_at } : {}),
