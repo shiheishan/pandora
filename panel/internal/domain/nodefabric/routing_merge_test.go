@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 routing_merge.go 的 MergeRouting / RoutingLayer
 // [OUTPUT]: 对外提供 TestMergeRouting* 单元测试
-// [POS]: domain/nodefabric 生效路由合并口径的纯逻辑守卫：层序、出站同 tag 覆盖保位、规则拼接顺序
+// [POS]: domain/nodefabric 生效路由合并口径的纯逻辑守卫：层序、出站同 tag 覆盖保位、规则拼接顺序、内置出站引用规范成小写
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -96,5 +96,24 @@ func TestMergeRoutingWithGroups(t *testing.T) {
 	}
 	if !reflect.DeepEqual(routeLayers, []int{0, 1, 2, 3, 3}) {
 		t.Fatalf("route layers = %v", routeLayers)
+	}
+}
+
+// 内置出站引用在下发时规范成小写：库里已有的 " Direct " / "BLOCK" 旧行也能被 pdnd 认出；
+// 自定义出站原样不动（引用按原样精确匹配）
+func TestMergeRoutingCanonicalizesBuiltinRefs(t *testing.T) {
+	_, routes := MergeRouting([]RoutingLayer{
+		{Scope: "node", Routes: []NodeRoute{rt(" Direct "), rt("BLOCK"), rt("HK")}},
+		{Scope: "global", Routes: []NodeRoute{rt("direct")}},
+	})
+	if got, want := routeTags(routes), []string{"direct", "block", "HK", "direct"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("routes = %v, want %v", got, want)
+	}
+	m := mergeRoutingLayers([]RoutingLayer{{Scope: "node", Routes: []NodeRoute{rt(" Direct ")}}})
+	if m.routes[0].OutboundTag != "direct" {
+		t.Fatalf("preview path must canonicalize too, got %q", m.routes[0].OutboundTag)
+	}
+	if canonicalRouteTag("Directly") != "Directly" || canonicalRouteTag(" hk ") != " hk " {
+		t.Fatal("custom outbound tags must pass through unchanged")
 	}
 }

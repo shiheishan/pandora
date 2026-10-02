@@ -168,9 +168,15 @@ func TestNodeRoutingGlobalOutboundPG18(t *testing.T) {
 	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "nowhere") || routeCount() != 0 {
 		t.Fatalf("unknown outbound: status=%d body=%s routes=%d", w.Code, w.Body.String(), routeCount())
 	}
-	// 引用全局出站（大小写不敏感）：原先一律 422
+	// 引用按 tag 原样精确比较（与下发、pdnd 查表一致）：大小写不同仍 422，什么都不写
 	w = step3Do(t, ctx, r, http.MethodPut, path,
-		`{"row_version":1,"outbounds":[],"routes":[{"matcher":{"domain_suffix":"example.com"},"outbound_tag":"us-lax-01","enabled":true},{"matcher":{},"outbound_tag":"direct","enabled":true}]}`)
+		`{"row_version":1,"outbounds":[],"routes":[{"matcher":{"domain_suffix":"example.com"},"outbound_tag":"us-lax-01","enabled":true}]}`)
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "us-lax-01") || routeCount() != 0 {
+		t.Fatalf("case-different global reference: status=%d body=%s routes=%d", w.Code, w.Body.String(), routeCount())
+	}
+	// 引用全局出站：原先一律 422
+	w = step3Do(t, ctx, r, http.MethodPut, path,
+		`{"row_version":1,"outbounds":[],"routes":[{"matcher":{"domain_suffix":"example.com"},"outbound_tag":"US-LAX-01","enabled":true},{"matcher":{},"outbound_tag":"direct","enabled":true}]}`)
 	if w.Code != http.StatusOK || routeCount() != 2 {
 		t.Fatalf("global outbound reference: status=%d body=%s routes=%d", w.Code, w.Body.String(), routeCount())
 	}

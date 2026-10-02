@@ -514,14 +514,17 @@ export function rowsToOutbounds(rows: readonly OutboundRow[]): { outbounds: Arra
   return { outbounds, errors }
 }
 
-/** 指向某个出站的规则条数（大小写不敏感，与后端一致）：删出站前先拦，免得保存时才 422 */
-export const rulesUsing = (rows: readonly RuleRow[], tag: string) => rows.filter((r) => r.outbound.toLowerCase() === tag.trim().toLowerCase()).length
+/**
+ * 指向某个出站的规则条数：删出站前先拦，免得保存时才 422。引用按 tag 原样精确比较，
+ * 与后端 checkRouteRefs、下发和 pdnd 查表一致（出站 tag 存库前已去空白）
+ */
+export const rulesUsing = (rows: readonly RuleRow[], tag: string) => rows.filter((r) => r.outbound === tag.trim()).length
 
-/** 出站改名时，把指向旧名的规则一起改过去 */
+/** 出站改名时，把指向旧名的规则一起改过去（原样精确匹配） */
 export function renameOutbound(rows: readonly RuleRow[], from: string, to: string): RuleRow[] {
-  const key = from.trim().toLowerCase()
-  if (!key || key === to.trim().toLowerCase()) return [...rows]
-  return rows.map((r) => (r.outbound.toLowerCase() === key ? { ...r, outbound: to.trim() } : r))
+  const key = from.trim()
+  if (!key || key === to.trim()) return [...rows]
+  return rows.map((r) => (r.outbound === key ? { ...r, outbound: to.trim() } : r))
 }
 
 /** 规则的简短文字（抽屉只读列表） */
@@ -570,17 +573,16 @@ export function groupPatchBody(g: { name: string; description: string; sort_orde
 export const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join()
 
 /**
- * 规则编辑器的「其他范围」出站下拉项：按传入顺序（越具体越先）去重，大小写不敏感、先到先得——
- * 与生效合并里具体范围覆盖宽泛范围同名出站一致
+ * 规则编辑器的「其他范围」出站下拉项：按传入顺序（越具体越先）去重，按 tag 原样、先到先得——
+ * 与生效合并里具体范围覆盖宽泛范围同名出站一致（合并与引用校验都区分大小写）
  */
 export function referenceOutbounds(scopes: ReadonlyArray<{ label: string; tags: readonly string[] }>, exclude: readonly string[] = []): Array<[string, string]> {
-  const seen = new Set(exclude.map((t) => t.trim().toLowerCase()))
+  const seen = new Set(exclude.map((t) => t.trim()))
   const out: Array<[string, string]> = []
   for (const s of scopes) {
     for (const tag of s.tags) {
-      const key = tag.toLowerCase()
-      if (seen.has(key)) continue
-      seen.add(key)
+      if (seen.has(tag)) continue
+      seen.add(tag)
       out.push([tag, `${tag}（${s.label}）`])
     }
   }

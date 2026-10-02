@@ -6,7 +6,7 @@
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
-import { emptyBody, infraRoutes, keepAlive, pools, servers, validateRouting } from './nodes-infra.ts'
+import { canonicalTag, emptyBody, infraRoutes, keepAlive, pools, servers, validateRouting } from './nodes-infra.ts'
 import { NODE_PROTOCOL_SCHEMAS } from './node-schemas.ts'
 import { copyMemberships, groupRefsOfNode, routeGroupRoutes, visibleTagsForNode } from './route-groups.ts'
 
@@ -597,7 +597,7 @@ export const nodes: MockModule = {
       // 规则可以指向全局与所在路由组的出站（routing_refs.go 的 visibleOutboundTagsTx）
       const bad = validateRouting(outbounds, routes, visibleTagsForNode(n.id))
       if (bad) return reply(ctx, bad)
-      n.routing = { outbounds: outbounds.map((o) => ({ tag: o.tag, type: o.type, settings: o.settings ?? {} })), routes: routes.map((r, i) => ({ priority: int(r.priority) || (i + 1) * 10, matcher: r.matcher as Json, outbound_tag: text(r.outbound_tag), enabled: r.enabled === true, note: text(r.note) })) }
+      n.routing = { outbounds: outbounds.map((o) => ({ tag: o.tag, type: o.type, settings: o.settings ?? {} })), routes: routes.map((r, i) => ({ priority: int(r.priority) || (i + 1) * 10, matcher: r.matcher as Json, outbound_tag: canonicalTag(r.outbound_tag), enabled: r.enabled === true, note: text(r.note) })) }
       touch(n)
       ctx.send(200, { ok: true, row_version: n.row_version })
     },

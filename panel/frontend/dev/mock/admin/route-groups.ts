@@ -1,12 +1,12 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute，依赖 ./nodes-infra 的 globalRouting、validateRouting、emptyBody、setDanglingSource 与 RoutedNode
  * [OUTPUT]: 对外提供路由组假数据 routeGroups、groupsOfNode / visibleTagsForNode / copyMemberships（nodes.ts 的单节点路由与复制用）、悬空引用 danglingRefs，以及 routeGroupRoutes(节点存储) 返回的路由表
- * [POS]: dev/mock/admin 的「节点与服务器 · 路由组」（00096）假接口，由 nodes.ts 并入同一个 MockModule：组列表 / 新建 / 改元信息 / 删除、组内路由读写、组侧与节点侧改成员、节点生效预览。合并口径照 nodefabric/routing_merge.go（规则 节点 → 组按 sort_order → 全局；出站 全局 → 组 → 节点同 tag 保位覆盖），悬空引用照 routing_refs.go 只拒新造成的。权限 / reauth / 幂等 scope / 文案照 router_nodes.go 与 nodefabric
+ * [POS]: dev/mock/admin 的「节点与服务器 · 路由组」（00096）假接口，由 nodes.ts 并入同一个 MockModule：组列表 / 新建 / 改元信息 / 删除、组内路由读写、组侧与节点侧改成员、节点生效预览。合并口径照 nodefabric/routing_merge.go（规则 节点 → 组按 sort_order → 全局；出站 全局 → 组 → 节点同 tag 保位覆盖），内置出站引用在保存与预览两处规范成小写（canonicalTag）；悬空引用照 routing_refs.go 只拒新造成的。权限 / reauth / 幂等 scope / 文案照 router_nodes.go 与 nodefabric
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockResult, MockRoute } from '../types.ts'
-import { emptyBody, globalRouting, setDanglingSource, validateRouting, type RoutedNode } from './nodes-infra.ts'
+import { canonicalTag, emptyBody, globalRouting, isBuiltin, setDanglingSource, validateRouting, type RoutedNode } from './nodes-infra.ts'
 
 const err = (status: number, code: string, message: string, fields?: Record<string, string>): MockResult => ({ status, body: { error: { code, message, ...(fields ? { fields } : {}) } } })
 const invalid = (fields: Record<string, string>) => err(422, 'validation_failed', '请求参数校验未通过', fields)
@@ -15,8 +15,6 @@ const reply = (ctx: MockContext, r: MockResult) => ctx.send(r.status, r.body)
 const text = (v: unknown) => (typeof v === 'string' ? v : '')
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const unknownField = (body: Json, allowed: readonly string[]) => Object.keys(body).find((k) => !allowed.includes(k)) ?? null
-const lower = (v: unknown) => text(v).trim().toLowerCase()
-const BUILTIN = ['direct', 'block']
 
 type Outbound = { tag: string; type: string; settings: unknown }
 export interface RouteGroup {
@@ -59,23 +57,23 @@ export const visibleTagsForNode = (nodeId: string): string[] => [...globalRoutin
 /** 带路由复制节点时，副本跟着进源节点所在的组 */
 export const copyMemberships = (from: string, to: string) => routeGroups.forEach((g) => g.members.includes(from) && g.members.push(to))
 
-/** 全租户的悬空引用（含停用规则），标注与 Go 的 danglingRef.String 一致 */
+/** 全租户的悬空引用（含停用规则），自定义出站按 tag 原样精确比较，标注与 Go 的 danglingRef.String 一致 */
 export function danglingRefs(nodes: readonly RoutedNode[]): Set<string> {
   const out = new Set<string>()
-  const global = new Set(globalRouting.outbounds.map((o) => o.tag.toLowerCase()))
+  const global = new Set(globalRouting.outbounds.map((o) => o.tag))
   for (const g of routeGroups) {
-    const own = new Set(g.outbounds.map((o) => o.tag.toLowerCase()))
+    const own = new Set(g.outbounds.map((o) => o.tag))
     for (const r of g.routes) {
-      const tag = lower(r.outbound_tag)
-      if (!BUILTIN.includes(tag) && !global.has(tag) && !own.has(tag)) out.add(`路由组 ${g.name} → ${tag}`)
+      const tag = text(r.outbound_tag)
+      if (!isBuiltin(tag) && !global.has(tag) && !own.has(tag)) out.add(`路由组 ${g.name} → ${tag}`)
     }
   }
   for (const n of nodes) {
     if (n.status === 'destroyed') continue
-    const seen = new Set([...visibleTagsForNode(n.id), ...n.routing.outbounds.map((o) => o.tag)].map((t) => t.toLowerCase()))
+    const seen = new Set([...visibleTagsForNode(n.id), ...n.routing.outbounds.map((o) => o.tag)])
     for (const r of n.routing.routes) {
-      const tag = lower(r.outbound_tag)
-      if (!BUILTIN.includes(tag) && !seen.has(tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
+      const tag = text(r.outbound_tag)
+      if (!isBuiltin(tag) && !seen.has(tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
     }
   }
   return out
@@ -127,7 +125,7 @@ function normalizeIds(raw: unknown, field: string): string[] | MockResult {
   return [...new Set((ids as string[]).map((x) => x.toLowerCase()))].sort()
 }
 
-const parseRoutes = (routes: readonly Json[]) => routes.map((r, i) => ({ priority: Number(r.priority) || (i + 1) * 10, matcher: (r.matcher as Json) ?? {}, outbound_tag: text(r.outbound_tag), enabled: r.enabled === true, note: text(r.note) }))
+const parseRoutes = (routes: readonly Json[]) => routes.map((r, i) => ({ priority: Number(r.priority) || (i + 1) * 10, matcher: (r.matcher as Json) ?? {}, outbound_tag: canonicalTag(r.outbound_tag), enabled: r.enabled === true, note: text(r.note) }))
 const parseOutbounds = (outbounds: ReadonlyArray<{ tag: string; type: string; settings?: unknown }>) => outbounds.map((o) => ({ tag: o.tag.trim(), type: o.type.trim().toLowerCase(), settings: o.settings ?? {} }))
 
 /** 节点生效路由（routing_merge.go）：层 = 节点 → 所在各组 → 全局，带来源 */
@@ -147,7 +145,7 @@ function effective(n: RoutedNode) {
       else outbounds.push(row)
     }
   }
-  const routes = layers.flatMap((l) => l.routes.filter((r) => r.enabled).map((r) => ({ matcher: r.matcher, outbound: r.outbound_tag, source: l.source })))
+  const routes = layers.flatMap((l) => l.routes.filter((r) => r.enabled).map((r) => ({ matcher: r.matcher, outbound: canonicalTag(r.outbound_tag), source: l.source })))
   return { groups: groups.map(groupRef), outbounds, routes }
 }
 

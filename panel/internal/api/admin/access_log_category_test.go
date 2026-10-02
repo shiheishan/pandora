@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 access_log.go 的 accessCategoryRules / categoryFromAction / auditCategoryFilter
 // [OUTPUT]: 对外提供访问日志分类的单元测试
-// [POS]: api/admin 的缺陷 14 守卫：展示归类与 SQL 筛选出自同一张规则表，二者对任意 action 给出同一个答案
+// [POS]: api/admin 的缺陷 14 守卫：展示归类与 SQL 筛选出自同一张规则表，二者对任意 action 给出同一个答案；路由组的审计动作归管理端
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -32,6 +32,7 @@ func TestAccessLogCategoryFilterAgreesWithDisplay(t *testing.T) {
 		"user.login", "user.login.failed", "user.registered", "user.password.changed", "user.reset",
 		"order.created", "order.manual_created", "payment.captured", "payment_provider.toggle",
 		"ticket.close", "node.update", "server.status", "plan.publish", "adminctl.bootstrap",
+		"route_group.create", "route_group.members_update", "node.routing.group_publish", "node.route_groups_update",
 		"appearance.theme.save", "session.revoked_by_user", "",
 	}
 	categories := []string{"other"}
@@ -55,6 +56,13 @@ func TestAccessLogCategoryEdges(t *testing.T) {
 	// 后台改支付渠道是管理动作，不是用户支付
 	if got := categoryFromAction("payment_provider.toggle"); got != "admin" {
 		t.Fatalf("payment_provider.* = %s, want admin", got)
+	}
+	// 路由组（00096）的六个审计动作都是管理动作，不能落进 other
+	for _, a := range []string{"route_group.create", "route_group.update", "route_group.delete",
+		"route_group.members_update", "node.routing.group_publish", "node.route_groups_update"} {
+		if got := categoryFromAction(a); got != "admin" {
+			t.Fatalf("%s = %s, want admin", a, got)
+		}
 	}
 	if got := categoryFromAction("payment.captured"); got != "payment" {
 		t.Fatalf("payment.* = %s, want payment", got)

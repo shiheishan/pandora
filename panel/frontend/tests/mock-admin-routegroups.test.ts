@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/nodes/schemas 的节点列表 / 节点路由 / 路由组 / 组内路由 / 生效预览 schema
  * [OUTPUT]: 对外提供路由组（00096）假接口的测试
- * [POS]: tests 的路由组假后端守卫：列表与组内路由能被页面 schema 接住、名称大小写不敏感唯一、组规则不能指向节点私有出站、行版本冲突 409、成员从组侧与节点侧两边改且互相推版本、节点私有规则能指向所在组出站、生效预览的顺序与来源（节点 → 组按排序 → 全局，出站具体范围覆盖）、新造成的悬空引用 409、删组后成员退回全局、全局出站被组规则引用时删除 409、只读账号能读不能写（写接口 404）
+ * [POS]: tests 的路由组假后端守卫：列表与组内路由能被页面 schema 接住、名称大小写不敏感唯一、组规则不能指向节点私有出站、行版本冲突 409、成员从组侧与节点侧两边改且互相推版本、节点私有规则能指向所在组出站且按 tag 原样精确比较（大小写不同 422、内置名不分大小写，保存与预览都规范成小写）、生效预览的顺序与来源（节点 → 组按排序 → 全局，出站具体范围覆盖）、新造成的悬空引用 409、删组后成员退回全局、全局出站被组规则引用时删除 409、只读账号能读不能写（写接口 404）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
@@ -64,14 +64,21 @@ describe('mock api · admin route groups (00096)', () => {
     const target = (await nodes()).find((n) => n.name === '新加坡 02')!
     const joined = await call('PUT', `/v1/route-groups/${g.id}/members`, { row_version: g.row_version, node_ids: [target.id] }, 'rm-1')
     expect(await joined.json()).toMatchObject({ ok: true, row_version: g.row_version + 1, affected_nodes: 1 })
-    // 节点私有规则可以指向所在组的出站（大小写不敏感）
+    // 节点私有规则可以指向所在组的出站，按 tag 原样精确比较：大小写不同即 422，内置名不分大小写
     let r = await nodeRouting(target.id)
     expect(r.groups.map((x) => x.id)).toEqual([g.id])
-    const own = await call('PUT', `/v1/nodes/${target.id}/routing`, { row_version: r.row_version, outbounds: [], routes: [{ matcher: { port: [22] }, outbound_tag: 'sg-out', enabled: true }] })
+    const cased = await call('PUT', `/v1/nodes/${target.id}/routing`, { row_version: r.row_version, outbounds: [], routes: [{ matcher: { port: [22] }, outbound_tag: 'sg-out', enabled: true }] })
+    expect(await cased.json()).toMatchObject({ error: { fields: { routes: '第 1 条规则指向不存在的出站 "sg-out"' } } })
+    expect((await call('PUT', `/v1/nodes/${target.id}/routing`, { row_version: r.row_version, outbounds: [], routes: [{ matcher: { port: [22] }, outbound_tag: ' Direct ', enabled: true }] })).status).toBe(200)
+    // 内置出站引用在保存与下发（预览）两处都规范成小写
+    r = await nodeRouting(target.id)
+    expect(r.routes.map((x) => x.outbound_tag)).toEqual(['direct'])
+    expect((await effective(target.id)).routes[0]).toMatchObject({ outbound: 'direct', source: { scope: 'node' } })
+    const own = await call('PUT', `/v1/nodes/${target.id}/routing`, { row_version: r.row_version, outbounds: [], routes: [{ matcher: { port: [22] }, outbound_tag: 'SG-OUT', enabled: true }] })
     expect(own.status).toBe(200)
     // 退组会让那条规则悬空：组侧与节点侧都 409，原样不动
     const left = await call('PUT', `/v1/route-groups/${g.id}/members`, { row_version: g.row_version + 1, node_ids: [] }, 'rm-2')
-    expect(await left.json()).toMatchObject({ error: { code: 'conflict', message: '移出组的节点仍有规则指向组内出站：节点 新加坡 02 → sg-out' } })
+    expect(await left.json()).toMatchObject({ error: { code: 'conflict', message: '移出组的节点仍有规则指向组内出站：节点 新加坡 02 → SG-OUT' } })
     r = await nodeRouting(target.id)
     expect((await call('PUT', `/v1/nodes/${target.id}/route-groups`, { row_version: r.row_version, group_ids: [] })).status).toBe(409)
     expect((await call('DELETE', `/v1/route-groups/${g.id}`, { row_version: g.row_version + 1 }, 'rm-3')).status).toBe(409)
@@ -94,7 +101,7 @@ describe('mock api · admin route groups (00096)', () => {
     const hk = (await groups())[0]!
     await call('PUT', `/v1/route-groups/${hk.id}/routing`, { row_version: hk.row_version, outbounds: [], routes: [{ matcher: { port: [1] }, outbound_tag: 'HK-RELAY', enabled: true }] }, 'rx-1')
     const dropped = await call('PUT', '/v1/nodes/routing', { expected_revision: g.revision, outbounds: g.outbounds.filter((o) => o.tag !== 'HK-RELAY'), routes: g.routes.filter((x) => x.outbound_tag !== 'HK-RELAY') }, 'rx-2')
-    expect(await dropped.json()).toMatchObject({ error: { code: 'conflict', message: `要删除的全局出站仍被规则引用：路由组 ${hk.name} → hk-relay` } })
+    expect(await dropped.json()).toMatchObject({ error: { code: 'conflict', message: `要删除的全局出站仍被规则引用：路由组 ${hk.name} → HK-RELAY` } })
   })
 
   it('lets a read-only account (node.read) read but hides every write behind node.config.publish', async () => {

@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 createHash / randomBytes / randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute，依赖 ./users 的 GROUPS 与 setPoolSource（R104 名单登记回用户组）
- * [OUTPUT]: 对外提供服务器、节点池、全局路由的假数据（servers / pools / globalRouting）、路由校验 validateRouting（单节点、路由组与全局共用）、悬空引用口径的登记点 setDanglingSource 与 RoutedNode 类型、空体判断 emptyBody、心跳保活 keepAlive、按池统计在线节点数 activeNodesInPool（与节点池列表的 active_nodes 同口径，给套餐假后端用），以及 infraRoutes(节点存储) 返回的路由表
+ * [OUTPUT]: 对外提供内置出站判定 isBuiltin 与规范小写 canonicalTag，服务器、节点池、全局路由的假数据（servers / pools / globalRouting）、路由校验 validateRouting（单节点、路由组与全局共用）、悬空引用口径的登记点 setDanglingSource 与 RoutedNode 类型、空体判断 emptyBody、心跳保活 keepAlive、按池统计在线节点数 activeNodesInPool（与节点池列表的 active_nodes 同口径，给套餐假后端用），以及 infraRoutes(节点存储) 返回的路由表
  * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」基础设施部分的假接口，由 nodes.ts 引入并入同一个 MockModule（登记表不动）：服务器列表 / 新建 / 详情 / 下属节点 / 编辑 / 改状态（合法边、进入 ready 要有可服务节点）/ 删除（仅草稿或已退役，名下节点级联静默）/ 安装令牌；节点池增删改（删除前查节点、套餐、未用令牌；R104「仅限用户组」名单：带字段要 reauth、校验格式 / 重复 / 上限 100 / 存在性，经 setPoolSource 登记回用户组）；全局出站与分流读写（revision 为规范 JSON 的 sha256，删除仍被组或节点规则引用的出站回 409、只拒新造成的悬空，R56 / 00096）。节点存储以参数传入而不 import nodes.ts，避免循环依赖。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 的 server.go、server_admin.go、pools.go、node_routing.go
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
@@ -20,6 +20,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const ago = (sec: number) => new Date(Date.now() - sec * 1000).toISOString()
 const unknownField = (body: Json, allowed: readonly string[]) => Object.keys(body).find((k) => !allowed.includes(k)) ?? null
 const tooLong = (v: string, n: number) => [...v.trim()].length > n
+/** 规则指向内置 direct / block：去空白、不分大小写（routing_admin.go 的 isBuiltinOutbound） */
+export const isBuiltin = (v: unknown) => ['direct', 'block'].includes(text(v).trim().toLowerCase())
+/** 内置出站引用的规范小写，自定义出站原样（routing_merge.go 的 canonicalRouteTag）：保存与下发两处都用 */
+export const canonicalTag = (v: unknown) => (isBuiltin(v) ? text(v).trim().toLowerCase() : text(v))
 /** 请求没带体（DELETE 空体）：httpx.DecodeJSON 对空体回 400，而 ctx.body() 把空体读成 {}，只能看头 */
 export const emptyBody = (ctx: MockContext) => {
   const h = ctx.req.headers
@@ -293,8 +297,9 @@ export function validateRouting(outbounds: ReadonlyArray<{ tag?: unknown; type?:
     if (typeof m !== 'object' || Array.isArray(m) || Object.keys(m).some((k) => !MATCHER_KEYS.includes(k))) return invalid({ routes: `第 ${i + 1} 条规则无法跨内核下发：不支持的匹配类型` })
     if (Object.keys(m).length === 0 && r.enabled && i !== lastEnabled) return invalid({ routes: `第 ${i + 1} 条空匹配兜底规则必须放在最后` })
   }
-  for (const t of extraTags) tags.add(t.toLowerCase())
-  for (const [i, r] of routes.entries()) if (!tags.has(text(r.outbound_tag).trim().toLowerCase())) return invalid({ routes: `第 ${i + 1} 条规则指向不存在的出站 "${text(r.outbound_tag)}"` })
+  // 引用按 tag 原样精确比较（与 Go 的 checkRouteRefs、下发和 pdnd 查表一致），内置 direct / block 不分大小写
+  const exact = new Set([...outbounds.map((o) => text(o.tag).trim()), ...extraTags])
+  for (const [i, r] of routes.entries()) if (!isBuiltin(r.outbound_tag) && !exact.has(text(r.outbound_tag))) return invalid({ routes: `第 ${i + 1} 条规则指向不存在的出站 "${text(r.outbound_tag)}"` })
   return null
 }
 
@@ -304,12 +309,12 @@ export function validateRouting(outbounds: ReadonlyArray<{ tag?: unknown; type?:
  */
 let danglingOf: (nodes: readonly InfraNode[]) => Set<string> = (nodes) => {
   const out = new Set<string>()
-  const global = new Set(globalRouting.outbounds.map((o) => o.tag.toLowerCase()))
+  const global = new Set(globalRouting.outbounds.map((o) => o.tag))
   for (const n of nodes) {
     if (n.status === 'destroyed') continue
     for (const r of n.routing.routes) {
-      const tag = text(r.outbound_tag).trim().toLowerCase()
-      if (tag !== 'direct' && tag !== 'block' && !global.has(tag) && !n.routing.outbounds.some((o) => o.tag.toLowerCase() === tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
+      const tag = text(r.outbound_tag)
+      if (!isBuiltin(tag) && !global.has(tag) && !n.routing.outbounds.some((o) => o.tag === tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
     }
   }
   return out
@@ -356,7 +361,7 @@ export function infraRoutes(nodes: InfraNode[]): Record<string, MockRoute> {
         const before = danglingOf(nodes)
         const prev = { outbounds: globalRouting.outbounds, routes: globalRouting.routes }
         globalRouting.outbounds = outbounds.map((o) => ({ tag: o.tag.trim(), type: o.type.trim().toLowerCase(), settings: o.settings ?? {} }))
-        globalRouting.routes = routes.map((r, i) => ({ priority: Number(r.priority) || (i + 1) * 10, matcher: (r.matcher as Json) ?? {}, outbound_tag: text(r.outbound_tag), enabled: r.enabled === true, note: text(r.note) }))
+        globalRouting.routes = routes.map((r, i) => ({ priority: Number(r.priority) || (i + 1) * 10, matcher: (r.matcher as Json) ?? {}, outbound_tag: canonicalTag(r.outbound_tag), enabled: r.enabled === true, note: text(r.note) }))
         const fresh = [...danglingOf(nodes)].filter((d) => !before.has(d)).sort()
         if (fresh.length) {
           Object.assign(globalRouting, prev)
