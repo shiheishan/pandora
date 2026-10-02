@@ -60,8 +60,8 @@ export function ScopeRoutingEditor({
   const dirty = JSON.stringify({ rules, outbounds }) !== JSON.stringify(initial)
 
   const own = outbounds.filter((o) => o.tag.trim()).map((o): [string, string] => [o.tag.trim(), `${o.tag.trim()} · ${o.type}`])
-  const ownKeys = new Set(own.map(([t]) => t.toLowerCase()))
-  const tags: Array<readonly [string, string]> = [['direct', '直连 direct'], ['block', '拦截 block'], ...own, ...references.filter(([t]) => !ownKeys.has(t.toLowerCase()))]
+  const ownKeys = new Set(own.map(([t]) => t))
+  const tags: Array<readonly [string, string]> = [['direct', '直连 direct'], ['block', '拦截 block'], ...own, ...references.filter(([t]) => !ownKeys.has(t))]
 
   const submit = () => {
     const r = rowsToRoutes(rules)

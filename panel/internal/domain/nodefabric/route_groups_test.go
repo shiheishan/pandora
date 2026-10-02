@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 route_groups.go 的 normalizeRouteGroupFields / parseRouteGroupID，route_group_routing.go 的 normalizeIDs / symmetricDiff，routing_admin.go 的 checkRouteRefs / ValidateRoutingPayload，routing_refs.go 的 danglingRef
 // [OUTPUT]: 对外提供 TestRouteGroupFields、TestNormalizeIDs、TestSymmetricDiff、TestCheckRouteRefsAcrossScopes、TestDanglingRefLabel、TestRouteGroupMigrationShape
-// [POS]: domain/nodefabric 路由组的纯逻辑守卫：名称 / 说明 / 组序的边界、成员 id 规范化与变更集合、规则引用校验认得多个可见范围、悬空引用的中文标注，以及 00096 迁移的三选一约束与组内 tag 唯一索引不被改丢
+// [POS]: domain/nodefabric 路由组的纯逻辑守卫：名称 / 说明 / 组序的边界、成员 id 规范化与变更集合、规则引用校验认得多个可见范围且自定义出站按原样精确比较（大小写、空白不同即拒）、悬空引用的中文标注，以及 00096 迁移的三选一约束与组内 tag 唯一索引不被改丢
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -71,24 +71,37 @@ func TestSymmetricDiff(t *testing.T) {
 	}
 }
 
-// 规则可以指向任何一个可见范围的出站（大小写不敏感），都不在才拒
+// 规则可以指向任何一个可见范围的出站，自定义出站按原样精确比较（与下发、pdnd 查表一致）；
+// 内置 direct / block 沿用不分大小写
 func TestCheckRouteRefsAcrossScopes(t *testing.T) {
-	own, err := ValidateRoutingPayload([]RoutingOutbound{{Tag: "Mine", Type: "socks"}}, nil)
+	own, err := ValidateRoutingPayload([]RoutingOutbound{{Tag: " Mine ", Type: "socks"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !own["Mine"] || own["mine"] || own["direct"] {
+		t.Fatalf("payload tags must be the trimmed originals without builtins, got %v", own)
+	}
 	global := map[string]bool{"pub": true}
-	group := map[string]bool{"unlock": true}
+	group := map[string]bool{"UNLOCK": true}
 	rule := func(tag string) RoutingRule {
 		return RoutingRule{Matcher: json.RawMessage(`{"port":[443]}`), OutboundTag: tag, Enabled: true}
 	}
-	if err := checkRouteRefs([]RoutingRule{rule("mine"), rule("PUB"), rule("unlock"), rule("block")}, own, global, group); err != nil {
+	if err := checkRouteRefs([]RoutingRule{rule("Mine"), rule("pub"), rule("UNLOCK"), rule("block"), rule("Direct")}, own, global, group); err != nil {
 		t.Fatalf("visible refs rejected: %v", err)
 	}
-	err = checkRouteRefs([]RoutingRule{rule("direct"), rule("other")}, own, global)
-	var he *httpx.Error
-	if !errors.As(err, &he) || !strings.Contains(he.Fields["routes"], "第 2 条规则指向不存在的出站") {
-		t.Fatalf("missing ref err = %v", err)
+	for i, tag := range []string{"mine", "PUB", "unlock", "pub ", "other"} {
+		err := checkRouteRefs([]RoutingRule{rule("direct"), rule(tag)}, own, global, group)
+		var he *httpx.Error
+		if !errors.As(err, &he) || !strings.Contains(he.Fields["routes"], "第 2 条规则指向不存在的出站") {
+			t.Fatalf("case %d: ref %q must be rejected, err = %v", i, tag, err)
+		}
+	}
+	// 重名与占用内置名仍按不分大小写拒绝
+	if _, err := ValidateRoutingPayload([]RoutingOutbound{{Tag: "HK", Type: "socks"}, {Tag: "hk", Type: "socks"}}, nil); err == nil {
+		t.Fatal("case-only duplicate outbound tags must be rejected")
+	}
+	if _, err := ValidateRoutingPayload([]RoutingOutbound{{Tag: "Block", Type: "socks"}}, nil); err == nil {
+		t.Fatal("an outbound must not take a builtin name in any case")
 	}
 }
 

@@ -14,7 +14,7 @@ uniproxy.go: UniProxy 兼容数据面：节点鉴权、server-token 签发（写
 uniproxy_config.go: UniProxy 配置组装与 ETag（LoadRouting 只开事务，合并交给 routing_merge.go），路由匹配条件翻成节点端 qnode 形状
 routing_merge.go: 生效路由的唯一口径：loadNodeRoutingLayersTx 读三类层（节点私有 → 所在各路由组按 sort_order, id → 全局），MergeRouting 合并（规则按层顺序拼接，出站逆序铺开、同 tag 就地覆盖）；UniProxy 下发、长连接推送、有效发布物与后台生效预览四处共用，预览经 mergeRoutingLayers 带来源层
 routing_admin.go: 后台路由编辑（NODE-012）：ValidateRoutingPayload（全部范围共用的无库校验）、按范围读与整体替换（routingScope 全局 / 组 / 节点三选一，scopeWhere 用 IS NOT DISTINCT FROM 一条 SQL 管三种范围，与 00096 的 CHECK 同构）、全局 revision（规范 JSON 的 sha256）与发布到全部未退役节点、单节点按 row_version 替换（规则可指向全局与所在组的出站）；全部写都持 node-config-release 锁，返回受影响节点由 handler 提交后通知
-routing_refs.go: 规则 → 出站的引用校验：visibleOutboundTagsTx（节点看得见全局与所在组的出站，组只看得见全局的），danglingRefsTx / refuseNewDanglingTx 在写前后各取一次全租户悬空引用，只拒绝这次新造成的（存量不连坐），409 列出「路由组 / 节点 名称 → tag」
+routing_refs.go: 规则 → 出站的引用校验（自定义出站按 tag 原样精确比较，与合并下发和 pdnd 按原样查表一致；内置 direct / block 去空白不分大小写；出站重名与占内置名仍按不分大小写拒）：visibleOutboundTagsTx（节点看得见全局与所在组的出站，组只看得见全局的），danglingRefsTx / refuseNewDanglingTx 在写前后各取一次全租户悬空引用，只拒绝这次新造成的（存量不连坐），409 列出「路由组 / 节点 名称 → tag」
 route_groups.go: 路由组本身（00096）：列表（按生效顺序，带成员与出站 / 规则条数）、新建（空组不推节点）、改名称 / 说明 / 组序（组序变了推进成员节点）、删组（组内出站规则与成员经外键级联，成员节点推进 generation 与行版本，成员私有规则仍指向组内出站则 409）；bumpRoutingNodesTx 只给未退役节点推 generation 并回给调用方通知
 route_group_routing.go: 组内出站与规则的整体替换（只能指向内置、本组与全局出站）、组侧与节点侧两个入口改成员（都持发布锁，进出组的节点推行版本、节点侧进出的组推组行版本，两侧旧版本写都 409）、节点生效路由的只读预览 PreviewNodeRouting（每条带 scope / 组名来源）
 uniproxy_traffic.go: 流量上报：按用户排序逐个记账，扣量先吃套餐本周期额度、再按先到先扣吃用户流量包（D-E-1），先锁配额行再锁流量包；逐用户记账委托 usage_daily.go

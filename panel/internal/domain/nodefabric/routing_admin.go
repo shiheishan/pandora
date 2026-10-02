@@ -40,11 +40,13 @@ type RoutingRule struct {
 
 // ValidateRoutingPayload 做不依赖数据库的校验：出站 tag 与 type 必填、tag 不重复
 // 也不占内置名（direct / block）、每条匹配器能跨内核下发、空匹配兜底只能在最后。
-// 会就地规范化出站的 tag 与 type。返回可引用的出站 tag（小写，含内置两个）；
+// 会就地规范化出站的 tag 与 type。重名与占用内置名按大小写不敏感判（宁严勿松），
+// 返回的可引用 tag 却是原样的（不含内置两个）：引用校验与下发同一口径，见 checkRouteRefs。
 // 规则指向的出站是否存在还要连库里其他范围的出站一起看，由调用方在事务里查。
 // 各范围的保存入口共用它，规则永远一致。
 func ValidateRoutingPayload(outbounds []RoutingOutbound, routes []RoutingRule) (map[string]bool, error) {
-	tags := map[string]bool{"direct": true, "block": true}
+	seen := map[string]bool{"direct": true, "block": true}
+	tags := map[string]bool{}
 	for i := range outbounds {
 		o := &outbounds[i]
 		o.Tag = strings.TrimSpace(o.Tag)
@@ -53,10 +55,11 @@ func ValidateRoutingPayload(outbounds []RoutingOutbound, routes []RoutingRule) (
 			return nil, httpx.Invalid(map[string]string{"outbounds": "每条出站都要有 tag 和 type"})
 		}
 		tagKey := strings.ToLower(o.Tag)
-		if tags[tagKey] {
+		if seen[tagKey] {
 			return nil, httpx.Invalid(map[string]string{"outbounds": "出站 tag 重复或占用内置名称：" + o.Tag})
 		}
-		tags[tagKey] = true
+		seen[tagKey] = true
+		tags[o.Tag] = true
 	}
 	lastEnabled := -1
 	for i, x := range routes {
@@ -78,16 +81,23 @@ func ValidateRoutingPayload(outbounds []RoutingOutbound, routes []RoutingRule) (
 	return tags, nil
 }
 
-// checkRouteRefs 要求每条规则指向 visible 里的出站（小写比较）。
+// isBuiltinOutbound 判断规则是否指向内置的 direct / block（沿用原口径：去空白、不分大小写）。
+func isBuiltinOutbound(tag string) bool {
+	t := strings.ToLower(strings.TrimSpace(tag))
+	return t == "direct" || t == "block"
+}
+
+// checkRouteRefs 要求每条规则指向内置出站或 visible 里的出站。自定义出站按原样精确比较：
+// 合并下发（MergeRouting）与 pdnd 的路由引擎（route/rule.go、core/*/routing.go）都按 tag
+// 原样查表、不做规范化，大小写或空白不同的引用在节点上就是一条指向不存在出站的规则。
 func checkRouteRefs(routes []RoutingRule, visible ...map[string]bool) error {
 	for i, x := range routes {
-		tag := strings.ToLower(strings.TrimSpace(x.OutboundTag))
-		found := false
+		found := isBuiltinOutbound(x.OutboundTag)
 		for _, v := range visible {
-			if v[tag] {
-				found = true
+			if found {
 				break
 			}
+			found = v[x.OutboundTag]
 		}
 		if !found {
 			return httpx.Invalid(map[string]string{

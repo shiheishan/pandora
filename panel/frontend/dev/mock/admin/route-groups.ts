@@ -6,7 +6,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockResult, MockRoute } from '../types.ts'
-import { emptyBody, globalRouting, setDanglingSource, validateRouting, type RoutedNode } from './nodes-infra.ts'
+import { emptyBody, globalRouting, isBuiltin, setDanglingSource, validateRouting, type RoutedNode } from './nodes-infra.ts'
 
 const err = (status: number, code: string, message: string, fields?: Record<string, string>): MockResult => ({ status, body: { error: { code, message, ...(fields ? { fields } : {}) } } })
 const invalid = (fields: Record<string, string>) => err(422, 'validation_failed', '请求参数校验未通过', fields)
@@ -15,8 +15,6 @@ const reply = (ctx: MockContext, r: MockResult) => ctx.send(r.status, r.body)
 const text = (v: unknown) => (typeof v === 'string' ? v : '')
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const unknownField = (body: Json, allowed: readonly string[]) => Object.keys(body).find((k) => !allowed.includes(k)) ?? null
-const lower = (v: unknown) => text(v).trim().toLowerCase()
-const BUILTIN = ['direct', 'block']
 
 type Outbound = { tag: string; type: string; settings: unknown }
 export interface RouteGroup {
@@ -59,23 +57,23 @@ export const visibleTagsForNode = (nodeId: string): string[] => [...globalRoutin
 /** 带路由复制节点时，副本跟着进源节点所在的组 */
 export const copyMemberships = (from: string, to: string) => routeGroups.forEach((g) => g.members.includes(from) && g.members.push(to))
 
-/** 全租户的悬空引用（含停用规则），标注与 Go 的 danglingRef.String 一致 */
+/** 全租户的悬空引用（含停用规则），自定义出站按 tag 原样精确比较，标注与 Go 的 danglingRef.String 一致 */
 export function danglingRefs(nodes: readonly RoutedNode[]): Set<string> {
   const out = new Set<string>()
-  const global = new Set(globalRouting.outbounds.map((o) => o.tag.toLowerCase()))
+  const global = new Set(globalRouting.outbounds.map((o) => o.tag))
   for (const g of routeGroups) {
-    const own = new Set(g.outbounds.map((o) => o.tag.toLowerCase()))
+    const own = new Set(g.outbounds.map((o) => o.tag))
     for (const r of g.routes) {
-      const tag = lower(r.outbound_tag)
-      if (!BUILTIN.includes(tag) && !global.has(tag) && !own.has(tag)) out.add(`路由组 ${g.name} → ${tag}`)
+      const tag = text(r.outbound_tag)
+      if (!isBuiltin(tag) && !global.has(tag) && !own.has(tag)) out.add(`路由组 ${g.name} → ${tag}`)
     }
   }
   for (const n of nodes) {
     if (n.status === 'destroyed') continue
-    const seen = new Set([...visibleTagsForNode(n.id), ...n.routing.outbounds.map((o) => o.tag)].map((t) => t.toLowerCase()))
+    const seen = new Set([...visibleTagsForNode(n.id), ...n.routing.outbounds.map((o) => o.tag)])
     for (const r of n.routing.routes) {
-      const tag = lower(r.outbound_tag)
-      if (!BUILTIN.includes(tag) && !seen.has(tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
+      const tag = text(r.outbound_tag)
+      if (!isBuiltin(tag) && !seen.has(tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
     }
   }
   return out

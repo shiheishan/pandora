@@ -1,11 +1,11 @@
 /**
  * [INPUT]: 依赖 vitest，依赖 ./logic 的路由组纯函数（表单校验 / 新建体 / PATCH 差量、成员比较、可引用出站、来源文字），依赖 ./schemas 的路由组、节点路由与生效预览 schema
  * [OUTPUT]: 对外提供路由组（00096）前端纯逻辑与 schema 边界的单元测试
- * [POS]: admin/screens/nodes 的路由组单元测试：表单边界与 nodefabric.normalizeRouteGroupFields 同口径、PATCH 只带改了的字段、成员集合顺序无关、可引用出站按范围先到先得去重、生效来源文字；schema 接住 Go 的形状（RoutingSource 的 omitempty、节点路由的 groups 为 null 时归一）
+ * [POS]: admin/screens/nodes 的路由组单元测试：表单边界与 nodefabric.normalizeRouteGroupFields 同口径、PATCH 只带改了的字段、成员集合顺序无关、可引用出站按范围先到先得、按 tag 原样去重，引用计数与改名联动按原样精确匹配（与后端、pdnd 同口径）、生效来源文字；schema 接住 Go 的形状（RoutingSource 的 omitempty、节点路由的 groups 为 null 时归一）
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
-import { groupCreateBody, groupFormErrors, groupFormFrom, groupPatchBody, referenceOutbounds, sameIds, sourceLabel, sourceTone } from './logic'
+import { groupCreateBody, groupFormErrors, groupFormFrom, groupPatchBody, referenceOutbounds, renameOutbound, rulesUsing, sameIds, sourceLabel, sourceTone } from './logic'
 import { effectiveRoutingSchema, nodeRoutingSchema, routeGroupsResponse } from './schemas'
 
 const G = { id: '0199a000-0000-7000-8000-000000000001', name: '香港 · 解锁', description: '', sort_order: 10, row_version: 3 }
@@ -34,18 +34,28 @@ describe('route group form', () => {
 })
 
 describe('route group references and sources', () => {
-  it('lists referenceable outbounds, first scope wins, case-insensitive', () => {
+  it('lists referenceable outbounds, first scope wins, tags compared as-is', () => {
     const refs = referenceOutbounds(
       [
         { label: '路由组 · 香港', tags: ['UNLOCK', 'hk'] },
-        { label: '全局', tags: ['unlock', 'pub'] },
+        { label: '全局', tags: ['UNLOCK', 'unlock', 'pub'] },
       ],
-      ['HK'],
+      ['HK', 'pub'],
     )
     expect(refs).toEqual([
       ['UNLOCK', 'UNLOCK（路由组 · 香港）'],
-      ['pub', 'pub（全局）'],
+      ['hk', 'hk（路由组 · 香港）'],
+      ['unlock', 'unlock（全局）'],
     ])
+  })
+
+  it('counts and renames references exactly, like the backend and pdnd', () => {
+    const rows = [
+      { kind: 'port' as const, value: '1', outbound: 'HK', enabled: true, note: '' },
+      { kind: 'port' as const, value: '2', outbound: 'hk', enabled: true, note: '' },
+    ]
+    expect(rulesUsing(rows, ' HK ')).toBe(1)
+    expect(renameOutbound(rows, 'HK', 'HK-2').map((r) => r.outbound)).toEqual(['HK-2', 'hk'])
   })
 
   it('labels each effective source', () => {

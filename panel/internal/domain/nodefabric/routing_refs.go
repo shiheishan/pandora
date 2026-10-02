@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 pgx 在调用方事务里读 node_outbounds / node_routes / route_group_members / route_groups / nodes，依赖 platform/httpx 的冲突错误
 // [OUTPUT]: 包内 visibleOutboundTagsTx、danglingRefsTx、refuseNewDanglingTx、danglingRef
-// [POS]: domain/nodefabric 的规则 → 出站引用校验：一条规则能指向哪些出站，与 routing_merge.go 的生效层同构（节点看得见全局、所在各组与自己的出站，组看得见全局与自己的）；各路由写路径在写前后各取一次悬空引用，只拒绝「这次修改新造成的」悬空，存量不连坐
+// [POS]: domain/nodefabric 的规则 → 出站引用校验（自定义出站按 tag 原样精确比较，与合并下发、pdnd 查表同一口径；内置 direct / block 不分大小写）：一条规则能指向哪些出站，与 routing_merge.go 的生效层同构（节点看得见全局、所在各组与自己的出站，组看得见全局与自己的）；各路由写路径在写前后各取一次悬空引用，只拒绝「这次修改新造成的」悬空，存量不连坐
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
@@ -16,11 +16,11 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
-// visibleOutboundTagsTx 取某节点除自己私有出站外看得见的出站 tag（小写）：
+// visibleOutboundTagsTx 取某节点除自己私有出站外看得见的出站 tag（原样，与下发同一口径）：
 // 全局出站与它所在各路由组的出站。nodeID 为空时只剩全局，路由组的规则校验用它。
 func visibleOutboundTagsTx(ctx context.Context, tx pgx.Tx, tenantID, nodeID string) (map[string]bool, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT lower(o.tag) FROM node_outbounds o
+		SELECT o.tag FROM node_outbounds o
 		 WHERE o.tenant_id = $1 AND o.node_id IS NULL
 		   AND (o.group_id IS NULL OR o.group_id IN (
 		        SELECT m.group_id FROM route_group_members m
@@ -53,23 +53,24 @@ func (d danglingRef) String() string {
 }
 
 // danglingRefsTx 列出租户内全部悬空引用（含停用的规则：启用时不该突然失效）。
+// 自定义出站按 tag 原样精确比较（与下发、pdnd 一致），内置 direct / block 沿用不分大小写。
 // 全局规则的引用在保存时已对着本次提交校验，这里只看组与节点两种范围。
 func danglingRefsTx(ctx context.Context, tx pgx.Tx, tenantID string) (map[danglingRef]bool, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT 'group', g.name, lower(r.outbound_tag)
+		SELECT 'group', g.name, r.outbound_tag
 		  FROM node_routes r
 		  JOIN route_groups g ON g.tenant_id = r.tenant_id AND g.id = r.group_id
-		 WHERE r.tenant_id = $1 AND lower(r.outbound_tag) NOT IN ('direct', 'block')
+		 WHERE r.tenant_id = $1 AND lower(btrim(r.outbound_tag)) NOT IN ('direct', 'block')
 		   AND NOT EXISTS (SELECT 1 FROM node_outbounds o
-		                    WHERE o.tenant_id = r.tenant_id AND lower(o.tag) = lower(r.outbound_tag)
+		                    WHERE o.tenant_id = r.tenant_id AND o.tag = r.outbound_tag
 		                      AND o.node_id IS NULL AND (o.group_id IS NULL OR o.group_id = r.group_id))
 		UNION
-		SELECT 'node', coalesce(n.display_name, n.name), lower(r.outbound_tag)
+		SELECT 'node', coalesce(n.display_name, n.name), r.outbound_tag
 		  FROM node_routes r
 		  JOIN nodes n ON n.tenant_id = r.tenant_id AND n.id = r.node_id
-		 WHERE r.tenant_id = $1 AND lower(r.outbound_tag) NOT IN ('direct', 'block')
+		 WHERE r.tenant_id = $1 AND lower(btrim(r.outbound_tag)) NOT IN ('direct', 'block')
 		   AND NOT EXISTS (SELECT 1 FROM node_outbounds o
-		                    WHERE o.tenant_id = r.tenant_id AND lower(o.tag) = lower(r.outbound_tag)
+		                    WHERE o.tenant_id = r.tenant_id AND o.tag = r.outbound_tag
 		                      AND (o.node_id = r.node_id
 		                           OR (o.node_id IS NULL AND o.group_id IS NULL)
 		                           OR o.group_id IN (SELECT m.group_id FROM route_group_members m

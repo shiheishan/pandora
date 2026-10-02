@@ -20,6 +20,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const ago = (sec: number) => new Date(Date.now() - sec * 1000).toISOString()
 const unknownField = (body: Json, allowed: readonly string[]) => Object.keys(body).find((k) => !allowed.includes(k)) ?? null
 const tooLong = (v: string, n: number) => [...v.trim()].length > n
+/** 规则指向内置 direct / block：去空白、不分大小写（routing_admin.go 的 isBuiltinOutbound） */
+export const isBuiltin = (v: unknown) => ['direct', 'block'].includes(text(v).trim().toLowerCase())
 /** 请求没带体（DELETE 空体）：httpx.DecodeJSON 对空体回 400，而 ctx.body() 把空体读成 {}，只能看头 */
 export const emptyBody = (ctx: MockContext) => {
   const h = ctx.req.headers
@@ -293,8 +295,9 @@ export function validateRouting(outbounds: ReadonlyArray<{ tag?: unknown; type?:
     if (typeof m !== 'object' || Array.isArray(m) || Object.keys(m).some((k) => !MATCHER_KEYS.includes(k))) return invalid({ routes: `第 ${i + 1} 条规则无法跨内核下发：不支持的匹配类型` })
     if (Object.keys(m).length === 0 && r.enabled && i !== lastEnabled) return invalid({ routes: `第 ${i + 1} 条空匹配兜底规则必须放在最后` })
   }
-  for (const t of extraTags) tags.add(t.toLowerCase())
-  for (const [i, r] of routes.entries()) if (!tags.has(text(r.outbound_tag).trim().toLowerCase())) return invalid({ routes: `第 ${i + 1} 条规则指向不存在的出站 "${text(r.outbound_tag)}"` })
+  // 引用按 tag 原样精确比较（与 Go 的 checkRouteRefs、下发和 pdnd 查表一致），内置 direct / block 不分大小写
+  const exact = new Set([...outbounds.map((o) => text(o.tag).trim()), ...extraTags])
+  for (const [i, r] of routes.entries()) if (!isBuiltin(r.outbound_tag) && !exact.has(text(r.outbound_tag))) return invalid({ routes: `第 ${i + 1} 条规则指向不存在的出站 "${text(r.outbound_tag)}"` })
   return null
 }
 
@@ -304,12 +307,12 @@ export function validateRouting(outbounds: ReadonlyArray<{ tag?: unknown; type?:
  */
 let danglingOf: (nodes: readonly InfraNode[]) => Set<string> = (nodes) => {
   const out = new Set<string>()
-  const global = new Set(globalRouting.outbounds.map((o) => o.tag.toLowerCase()))
+  const global = new Set(globalRouting.outbounds.map((o) => o.tag))
   for (const n of nodes) {
     if (n.status === 'destroyed') continue
     for (const r of n.routing.routes) {
-      const tag = text(r.outbound_tag).trim().toLowerCase()
-      if (tag !== 'direct' && tag !== 'block' && !global.has(tag) && !n.routing.outbounds.some((o) => o.tag.toLowerCase() === tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
+      const tag = text(r.outbound_tag)
+      if (!isBuiltin(tag) && !global.has(tag) && !n.routing.outbounds.some((o) => o.tag === tag)) out.add(`节点 ${n.display_name ?? n.name} → ${tag}`)
     }
   }
   return out
