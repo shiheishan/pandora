@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 uniproxy_config.go 的 NodeOutbound / NodeRoute，依赖 pgx 在调用方事务里读 node_outbounds / node_routes / route_group_members / route_groups
-// [OUTPUT]: 对外提供 RoutingLayer、MergeRouting；包内 mergeRoutingLayers（带来源层）、groupOrder、loadNodeRoutingLayersTx、loadNodeRoutingTx
+// [OUTPUT]: 对外提供 RoutingLayer、MergeRouting；包内 canonicalRouteTag（内置出站引用的规范小写，保存与下发共用）、mergeRoutingLayers（带来源层）、groupOrder、loadNodeRoutingLayersTx、loadNodeRoutingTx
 // [POS]: domain/nodefabric 的生效路由唯一口径：UniProxy 下发（LoadRouting）、长连接推送与有效发布物（FetchEffectiveConfig）都经 loadNodeRoutingTx 读层、经 MergeRouting 合并，不再各写一份
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -7,6 +7,7 @@ package nodefabric
 
 import (
 	"context"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -19,7 +20,8 @@ import (
 //
 //   节点私有 → 所在各路由组（按 route_groups.sort_order）→ 全局
 //
-//   规则：按层顺序直接拼接 —— 具体范围的规则先匹配，能截住宽泛范围的同类流量。
+//   规则：按层顺序直接拼接 —— 具体范围的规则先匹配，能截住宽泛范围的同类流量；
+//         对内置出站的引用规范成小写 direct / block（canonicalRouteTag）。
 //   出站：按层逆序铺开、同 tag 后来者覆盖 —— 宽泛范围先占位，具体范围就地替换，
 //         被覆盖的出站保留原位置，下发顺序不因覆盖而跳动。即 全局 → 组（后排的组
 //         先铺、先排的组覆盖它）→ 节点。
@@ -67,6 +69,16 @@ type mergedRouting struct {
 	routes    []layeredRoute
 }
 
+// canonicalRouteTag 把规则对内置出站的引用规范成小写的 direct / block（去空白、不分大小写），
+// 自定义出站原样返回。保存（replaceScopeRoutingTx）与下发（mergeRoutingLayers）两处都用它：
+// pdnd 只认小写的内置名，库里已有的 "Direct" 这类旧行也在下发时规范，不用写迁移。
+func canonicalRouteTag(tag string) string {
+	if t := strings.ToLower(strings.TrimSpace(tag)); t == "direct" || t == "block" {
+		return t
+	}
+	return tag
+}
+
 func mergeRoutingLayers(layers []RoutingLayer) mergedRouting {
 	var m mergedRouting
 	idx := make(map[string]int)
@@ -82,6 +94,7 @@ func mergeRoutingLayers(layers []RoutingLayer) mergedRouting {
 	}
 	for i, l := range layers {
 		for _, r := range l.Routes {
+			r.OutboundTag = canonicalRouteTag(r.OutboundTag)
 			m.routes = append(m.routes, layeredRoute{r, i})
 		}
 	}

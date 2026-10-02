@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 delivery_pg18_test.go 的 openDeliveryPG18，依赖 route_groups.go 与 node_routing.go 的处理器，依赖 nodefabric 的 SetGlobalRouting / FetchEffectiveConfig，依赖 platform/realtime 的本机 Hub 与 platform/crypto 的签名器
 // [OUTPUT]: 对外提供 TestRouteGroupsPG18
-// [POS]: api/admin 的路由组 PG18 门禁（delivery 域，00096）：三选一 CHECK 与组内 tag 唯一、RLS 跨租户不可见不可写、改组内路由 / 成员后成员节点的有效发布物真的变了（generation 推进、合并顺序 节点 → 组 → 全局）、引用校验认得组出站、自定义出站按 tag 原样精确比较（大小写 / 空白不同即 422）且拒绝新造成的悬空、删组级联清掉组内出站规则与成员并推进、通知成员节点
+// [POS]: api/admin 的路由组 PG18 门禁（delivery 域，00096）：三选一 CHECK 与组内 tag 唯一、RLS 跨租户不可见不可写、改组内路由 / 成员后成员节点的有效发布物真的变了（generation 推进、合并顺序 节点 → 组 → 全局）、引用校验认得组出站、自定义出站按 tag 原样精确比较（大小写 / 空白不同即 422）、内置出站引用在保存与下发两处规范成小写（含库里的旧行）且拒绝新造成的悬空、删组级联清掉组内出站规则与成员并推进、通知成员节点
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -229,6 +229,21 @@ func TestRouteGroupsPG18(t *testing.T) {
 	do(http.MethodPut, hkPath+"/routing", `{"row_version":3,"outbounds":[{"tag":"unlock","type":"trojan","settings":{}},{"tag":"pub","type":"http","settings":{}}],
 		"routes":[{"matcher":{"port":[1]},"outbound_tag":"Unlock","enabled":true}]}`, http.StatusUnprocessableEntity, nil)
 	do(http.MethodPut, "/v1/nodes/"+nodeEtc+"/routing", `{"row_version":`+strconv.FormatInt(nodeVersion(nodeEtc), 10)+`,`+ruleTo("Direct"), http.StatusOK, nil)
+	// 内置出站引用在保存与下发两处都规范成小写：读回与有效发布物里都是 direct
+	var etcRouting nodefabric.NodeRouting
+	do(http.MethodGet, "/v1/nodes/"+nodeEtc+"/routing", "", http.StatusOK, &etcRouting)
+	if len(etcRouting.Routes) != 1 || etcRouting.Routes[0].OutboundTag != "direct" {
+		t.Fatalf("saved builtin ref = %+v, want direct", etcRouting.Routes)
+	}
+	if _, routes, _ := effective(nodeEtc); strings.Join(routes, ",") != "direct,pub" {
+		t.Fatalf("effective builtin ref = %v, want direct,pub", routes)
+	}
+	// 库里已有的大小写旧行（不经保存入口）在下发时同样规范，不用写迁移
+	must(`INSERT INTO node_routes(tenant_id,node_id,priority,matcher,outbound_tag,enabled) VALUES($1,$2,5,'{"port":[25]}',' BLOCK ',true)`, tenant, nodeEtc)
+	must(`UPDATE nodes SET config_source_generation=config_source_generation+1 WHERE id=$1`, nodeEtc)
+	if _, routes, _ := effective(nodeEtc); strings.Join(routes, ",") != "block,direct,pub" {
+		t.Fatalf("legacy builtin row delivered as %v, want block,direct,pub", routes)
+	}
 	do(http.MethodPut, "/v1/nodes/"+nodeEtc+"/routing", `{"row_version":`+strconv.FormatInt(nodeVersion(nodeEtc), 10)+`,"outbounds":[],"routes":[]}`, http.StatusOK, nil)
 	do(http.MethodPut, "/v1/nodes/"+nodeHK1+"/routing", `{"row_version":`+strconv.FormatInt(nodeVersion(nodeHK1), 10)+`,`+ruleTo("unlock"), http.StatusOK, nil)
 	do(http.MethodPut, "/v1/nodes/"+nodeEtc+"/routing", `{"row_version":`+strconv.FormatInt(nodeVersion(nodeEtc), 10)+`,`+ruleTo("unlock"), http.StatusUnprocessableEntity, nil)

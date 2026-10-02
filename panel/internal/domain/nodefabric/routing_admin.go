@@ -81,9 +81,9 @@ func ValidateRoutingPayload(outbounds []RoutingOutbound, routes []RoutingRule) (
 	return tags, nil
 }
 
-// isBuiltinOutbound 判断规则是否指向内置的 direct / block（沿用原口径：去空白、不分大小写）。
+// isBuiltinOutbound 判断规则是否指向内置的 direct / block（去空白、不分大小写，规范形见 canonicalRouteTag）。
 func isBuiltinOutbound(tag string) bool {
-	t := strings.ToLower(strings.TrimSpace(tag))
+	t := canonicalRouteTag(tag)
 	return t == "direct" || t == "block"
 }
 
@@ -205,7 +205,7 @@ func replaceScopeRoutingTx(ctx context.Context, tx pgx.Tx, tenantID string, sc r
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO node_routes (tenant_id, node_id, group_id, priority, matcher, outbound_tag, enabled, note)
 			VALUES ($1, nullif($2, '')::uuid, nullif($3, '')::uuid, $4, $5, $6, $7, nullif($8, ''))`,
-			tenantID, sc.NodeID, sc.GroupID, pri, matcher, x.OutboundTag, x.Enabled, x.Note); err != nil {
+			tenantID, sc.NodeID, sc.GroupID, pri, matcher, canonicalRouteTag(x.OutboundTag), x.Enabled, x.Note); err != nil {
 			return err
 		}
 	}
