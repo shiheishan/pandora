@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 domain/payment 的 Factory 与 epay/demo 适配器，依赖 platform/crypto 解密渠道凭据、platform/db、platform/httpx
-// [OUTPUT]: 对外提供 PaymentService：CreatePaymentIntent、ParseNotification、QueryAndReconcile 等渠道侧用例
-// [POS]: billing 里「送用户去收银台、把回调翻译成平台事件」的一侧；钱确认到账后一律交回 settlement.go 的 HandlePaymentWebhook
+// [OUTPUT]: 对外提供 PaymentService（NewPaymentService 注入共用的结算 Service）：CreatePaymentIntent、ParseNotification 等渠道侧用例
+// [POS]: billing 里「送用户去收银台、把回调翻译成平台事件」的一侧；钱确认到账后一律交回 settlement.go 的 HandlePaymentWebhook；主动查单在兄弟文件 payment_query.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
@@ -38,15 +38,21 @@ type PaymentService struct {
 	publicBaseURL string
 	devMode       bool
 	masterKey     []byte
+
+	// settle 是进程共用的结算服务：主动查单查到已付，交它走与回调同一条
+	// HandlePaymentWebhook。必须是装配时注入的那一个，而不是临时 NewService ——
+	// 后者没有挂节点通知，补记履约后节点要等下一轮轮询才知道新用户。
+	settle *Service
 }
 
-func NewPaymentService(pool *db.Pool, env *crypto.Envelope, masterKey []byte, publicBaseURL string, devMode bool) *PaymentService {
+func NewPaymentService(settle *Service, pool *db.Pool, env *crypto.Envelope, masterKey []byte, publicBaseURL string, devMode bool) *PaymentService {
 	s := &PaymentService{
 		pool:          pool,
 		env:           env,
 		masterKey:     masterKey,
 		publicBaseURL: strings.TrimRight(publicBaseURL, "/"),
 		devMode:       devMode,
+		settle:        settle,
 	}
 
 	s.factory = payment.NewFactory(s.loadProvider, 5*time.Minute)
@@ -428,43 +434,3 @@ func (s *PaymentService) ParseNotification(ctx context.Context, tenantID, provid
 		},
 	}, nil
 }
-
-// QueryAndReconcile 主动查询渠道并在确认已支付时补记业务结果。
-//
-// PAY-009 验收「渠道恢复后通过查询和对账完成补偿」的执行路径：
-// 回调可能永远不来（渠道故障、我方 502、防火墙拦截），
-// 此时靠这条路径把状态补齐，且因为走的是同一个 HandlePaymentWebhook，
-// 幂等性与账本正确性完全一致 —— 不会因为「补偿」而重复发放权益。
-func (s *PaymentService) QueryAndReconcile(ctx context.Context, tenantID, providerCode, orderNo string) (*PaymentWebhookOutput, error) {
-	prov, _, err := s.providerFor(ctx, tenantID, providerCode)
-	if err != nil {
-		return nil, err
-	}
-
-	res, err := prov.QueryPayment(ctx, orderNo)
-	if err != nil {
-		return nil, err
-	}
-	if !res.Found || res.Status != payment.StatusSucceeded {
-		return &PaymentWebhookOutput{Processed: false}, nil
-	}
-
-	return s.billing().HandlePaymentWebhook(ctx, tenantID, PaymentWebhookInput{
-		ProviderCode:      providerCode,
-		ProviderEventID:   res.PaymentRef + ":RECONCILED",
-		ProviderPaymentID: res.PaymentRef,
-		EventType:         "payment.succeeded",
-		OrderNo:           orderNo,
-		Amount:            res.Amount,
-		Currency:          res.Currency,
-		RawPayload:        map[string]any{"source": "active_query"},
-		// 查询走的是我方主动发起的 HTTPS 请求并带商户密钥，
-		// 可信度不低于回调验签，故标记为已验证
-		SignatureVerified: true,
-	})
-}
-
-// billing 返回同池的结算服务。
-// 拆成两个 struct 是为了让结算主链（settlement.go）完全不认识渠道概念，
-// 这里再把它们接回来。
-func (s *PaymentService) billing() *Service { return NewService(s.pool, s.env) }

@@ -194,6 +194,19 @@ export const markedPaidSchema = z.object({
   ledger_txn_id: z.string(),
 })
 
+// POST v1/orders/{id}/query：向渠道查单（PAY-009），Go billing.OrderPaymentQuery；quarantine_kind 带 omitempty
+export const orderQueriedSchema = z.object({
+  order_id: z.string(),
+  order_no: z.string(),
+  provider_code: z.string(),
+  channel_status: z.enum(['paid', 'unpaid', 'not_found']),
+  reconciled: z.boolean(),
+  already_recorded: z.boolean(),
+  quarantine_kind: z.enum(LATE_KINDS).optional(),
+  order_status: z.enum(ORDER_STATUSES),
+})
+export type OrderQueried = z.output<typeof orderQueriedSchema>
+
 // ---------------------------------------------------------------------------
 // GET v1/late-payments：挂账（保留规则 6，设计稿的「欠费单」）；R3 待处理合计按币种分开
 // ---------------------------------------------------------------------------

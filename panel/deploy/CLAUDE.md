@@ -56,7 +56,7 @@ migrate-to-new-host_mock_test.sh: 迁新主机的生产闸门：production + 源
 public-base-url_mock_test.sh: 对外地址闸门的规则矩阵、取值与报错、两个安装脚本共用一份、install-native.sh 不写示例值且 .env 只在首装写
 logrotate-aegis_static_test.sh: 轮转 glob 覆盖三个网关单元 append: 的全部日志文件，规则随包分发并装到 /etc/logrotate.d/aegis
 render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名、listen 只许 80/443 与回环 9080
-run-pg18-gates.sh: 一次跑完全部 PostgreSQL 18 集成门禁，CI 的 panel-pg18.yml 每次推送都跑；每域 go test -v，有用例跳过或一个都没跑同样判失败（缺环境变量的测试会 t.Skip 报 ok），同包两域靠精确 -run 过滤互不拉入；容器就绪经 TCP 探测（镜像初始化的临时实例只听 unix socket），60 秒不就绪即失败
+run-pg18-gates.sh: 一次跑完全部 PostgreSQL 18 集成门禁，CI 的 panel-pg18.yml 每次推送都跑；每域 go test -v，有用例跳过或一个都没跑同样判失败（缺环境变量的测试会 t.Skip 报 ok），同包两域靠精确 -run 过滤互不拉入（billing 包里另有 payment_query 域跑 TestPaymentQueryPG18）；容器就绪经 TCP 探测（镜像初始化的临时实例只听 unix socket），60 秒不就绪即失败
 run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：up 起一次性 PG18 + Valkey，goose 迁移、configure-app-role.sql 配运行角色、aegis-adminctl 建管理员，配置用 openssl 现场生成，从源码起 aegis-public/admin/node 并以 readyz（node 为 healthz）与管理员真登录验收，入口写进状态目录的 smoke.env；库名 aegis_smoke_test（带 test 段，过 e2e 脚本的一次性库守卫），PG 容器名可由 PANDORA_SMOKE_PG_CONTAINER 覆盖（CI 设成 aegis-postgres 让 psql.sh 直接可用）；down 只拆自己记下的进程与容器
 run-smoke-e2e.sh: 联调冒烟第 ⑤ 步（panel-smoke.yml 在读表与写路径之后调用）：在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，第 ⑥ 步起失败即变红；脚本一字不改，只把它们声明要的环境搭出来（/opt/aegispanel 布局链到仓库 deploy/、公开网关日志链到单元的实际路径 /var/log/aegis/public.log、deploy/.env 由网关配置加库超级账号拼成、aegis-payctl 编进 bin 并配易支付测试商户、两个一次性库确认变量），脚本之间空一个限流窗口；每个脚本一行写进 e2e-results.md（结果、OK/FAIL 数、首个失败的步骤与原文），全部跑完、表格写完后有任何失败就以 1 退出；只肯在 GitHub Actions 上跑
 test-*-pg18.sh: 各业务的 PG18 集成门禁，每次新建隔离容器与库、结束即删；口令为 *-test-only 字样

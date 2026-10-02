@@ -46,7 +46,7 @@ aegis-public    aegis-admin     aegis-node
 | `panel/tests/` | 数据层不变量 SQL 与端到端脚本 |
 | `panel/frontend/` | 面板前端，2026-09-23 起按设计稿从零重写、2026-09-26 完成（React + TypeScript + Vite，管理后台与用户门户双入口），构建后经 `make frontend-embed` 嵌入 `panel/web/` |
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
-| `panel/migrations/` | SQL 迁移，按序号递增，当前到 00096，共 93 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 16 张 Go 从不引用的表及锁定原因 |
+| `panel/migrations/` | SQL 迁移，按序号递增，当前到 00097，共 94 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 16 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
 | `panel/docs/` | `redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿、ADR |
 | `pdnd/` | Pandora node（pdnd / pandora-native）：NativeCore 协议入站、认证、路由、用户与流量 |

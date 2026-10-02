@@ -38,9 +38,10 @@ tests/mock-admin-security.test.ts: 安全与运维假接口——只读账号整
 tests/mock-portal.test.ts: 门户假接口——外框读接口来自各页面模块、套餐目录能被页面 schema 接住（R99 / R100）、快捷登录令牌一次性往返、同会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
 tests/mock-portal-checkout.test.ts: 门户结账假接口（R114）——变更套餐试算的 coupon 没用码为 null、用了码是与优惠码试算同形的券面
 tests/mock-portal-referral.test.ts: 门户邀请返利假接口（R114）——佣金概况带 summary.scope，默认 every_order、multi 场景 first_order、legacy 场景照回
+tests/mock-portal-orders.test.ts: 门户「我已支付，刷新状态」假接口（PAY-009）——响应带齐 Go 的字段（按字段断言），未付 unpaid、假收银台回调丢失后补记并履约、再查 already_recorded，没发起过支付 409、非 UUID 404、按账号限流 429
 tests/mock-portal-account.test.ts: 门户账号安全假接口（R114）——会话都带 last_seen_at 并按它倒序，当前会话排最前
 tests/mock-admin-tickets.test.ts: 工单假接口（R114）——队列 related_order 恒 null、详情联表出关联订单，详情的 message_count / last_reply_at 与队列同口径
-tests/mock-admin-billing.test.ts: 订单与收款假接口守卫（起服务与发请求用 mock-helpers，登录与 reauth 辅助留在文件内）：只读账号只看得到订单列表；仪表盘「超时未支付」与待支付筛选同一份数据；订单 schema、多值状态、user_id 与用户详情同一份；人工开单先 reauth、201 重放、三种结算与拒绝项；标记已支付开通；取消 CAS、重放与已支付拒绝（中文原文与 Go 同序，R114）；挂账按币种合计与只能转一次；渠道启停；收入调整登记、冲销与重复冲销 409
+tests/mock-admin-billing.test.ts: 订单与收款假接口守卫（起服务与发请求用 mock-helpers，登录与 reauth 辅助留在文件内）：只读账号只看得到订单列表；向渠道查单（写权限 + 幂等、不要 reauth，回调丢失的单补记、重放、未付 / 渠道失败 / 没发起过支付）；仪表盘「超时未支付」与待支付筛选同一份数据；订单 schema、多值状态、user_id 与用户详情同一份；人工开单先 reauth、201 重放、三种结算与拒绝项；标记已支付开通；取消 CAS、重放与已支付拒绝（中文原文与 Go 同序，R114）；挂账按币种合计与只能转一次；渠道启停；收入调整登记、冲销与重复冲销 409
 tests/smoke/: 对真实网关的联调冒烟（CI 的 panel-smoke.yml 专用，不进 make frontend-check）：造数据与用页面 zod schema 解析真响应；见 tests/smoke/CLAUDE.md
 tests/theme-boot.test.ts: 用 node:vm 执行引导脚本覆盖各种存储状态，核对它与 theme.ts 同键；vite 配置拒绝构建 showcase 与未知 mode、引导脚本带内容哈希、不内联资源、假后端只在 serve 时挂上
 

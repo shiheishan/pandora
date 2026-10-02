@@ -213,6 +213,13 @@ func NewRouter(d Deps) http.Handler {
 			// 用户连点两次会拿回同一个收银台而不是报幂等冲突。
 			r.With(checkout).Post("/orders/{id}/pay", h.payOrder)
 			r.Post("/orders/{id}/cancel", h.cancelOrder)
+			// 「我已支付，刷新状态」：向渠道查单，查到已付就补记（PAY-009）。
+			// 不挂 checkout 开关——那个开关停的是新支付，已发起支付的查询与回调不受影响；
+			// 每查一次都要打一次渠道接口，按账号单独收紧到每分钟 6 次。
+			// 查单天然幂等（同一笔钱只会记一次），不要求幂等键。
+			r.With(middleware.RateLimit(d.Redis, d.Log,
+				middleware.ByAccount("order_query", time.Minute, 6),
+			)).Post("/orders/{id}/query", h.queryMyOrderPayment)
 
 			// --- 礼品卡兑换 ---
 			// 兑换加幂等键：用户网络抖动重发不能变成两次兑换。码本身的行锁

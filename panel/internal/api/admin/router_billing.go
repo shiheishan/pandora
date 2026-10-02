@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerLatePaymentRoutes、registerOrderRoutes、registerPaymentProviderRoutes、registerBalanceAdjustRoutes
-// [POS]: api/admin 路由表的「挂账转余额、订单与人工单、支付渠道、余额人工调账」段，由 NewRouter 按原注册顺序调用；人工单与标记已支付都挂近期重认证，人工单的幂等 scope 取 billing.CheckoutIdempotencyScope
+// [POS]: api/admin 路由表的「挂账转余额、订单与人工单、支付渠道、余额人工调账」段，由 NewRouter 按原注册顺序调用；人工单与标记已支付都挂近期重认证，人工单的幂等 scope 取 billing.CheckoutIdempotencyScope；向渠道查单与取消同门槛（写权限 + 幂等，不挂重认证）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -54,6 +54,13 @@ func registerOrderRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "admin_order_mark_paid", d.Log),
 	).Post("/orders/{id}/mark-paid", h.markOrderPaid)
+	// 向渠道查单（PAY-009）：查到已付就按回调同一条主链补记。与取消同门槛——
+	// 写权限 + 幂等键，不挂重认证：它造不出钱，只把渠道用商户密钥确认过的
+	// 那笔照回调的结果记上，金额币种不符照样拒绝；回调本身也不要人输密码。
+	r.With(
+		middleware.RequirePermission("billing.order.write", d.Log),
+		middleware.Idempotency(d.Pool, "admin_order_query", d.Log),
+	).Post("/orders/{id}/query", h.queryOrderPayment)
 }
 
 func registerPaymentProviderRoutes(r chi.Router, d Deps, h *handlers) {

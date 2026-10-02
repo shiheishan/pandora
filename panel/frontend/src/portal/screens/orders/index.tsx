@@ -1,7 +1,7 @@
 /**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../core/router 的 href / navigate / useHashLocation，依赖 ../../../ui 的 Button / ConfirmModal / Empty / QueryView / Segmented / Skeleton / Tag / useToast，依赖 ../common/orders 的订单读模型与映射，依赖 ../common/PayFlow 的 PaymentModal，依赖 ../common/Blocks 的 LoadError，依赖 ../index 的 PortalScreenProps
+ * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../core/router 的 href / navigate / useHashLocation，依赖 ../../../ui 的 Button / ConfirmModal / Empty / QueryView / Segmented / Skeleton / Tag / useToast，依赖 ../common/orders 的订单读模型与映射，依赖 ../common/order-query 的 useQueryOrderPayment / queryOutcome / queryFailure，依赖 ../common/PayFlow 的 PaymentModal，依赖 ../common/Blocks 的 LoadError，依赖 ../index 的 PortalScreenProps
  * [OUTPUT]: 默认导出 Orders 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/orders 的入口：我的订单（门户-04）。顶部待支付卡片（取消 / 去支付，处理中只展示），「全部 / 已支付 / 已取消 / 已退款」筛选带计数，按月分组的列表（组内合计已支付金额）与「显示更早的订单」，行展开看明细（末尾「提交工单」带 order 预填进 #/tickets/new）；#/orders/<订单 id> 即展开那一行（不在已加载列表里时单独成卡），带 ?paid=1 是收银台回跳，弹支付确认
+ * [POS]: portal/screens/orders 的入口：我的订单（门户-04）。顶部待支付卡片（取消 / 去支付 /「我已支付，刷新状态」，处理中只能刷新状态），「全部 / 已支付 / 已取消 / 已退款」筛选带计数，按月分组的列表（组内合计已支付金额）与「显示更早的订单」，行展开看明细（待支付的明细也带「我已支付，刷新状态」，末尾「提交工单」带 order 预填进 #/tickets/new）；#/orders/<订单 id> 即展开那一行（不在已加载列表里时单独成卡），带 ?paid=1 是收银台回跳，弹支付确认
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -22,6 +22,7 @@ import {
   type OrderFilter,
   type OrderRow,
 } from '../common/orders'
+import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from '../common/order-query'
 import { PaymentModal, type PayState } from '../common/PayFlow'
 import type { PortalScreenProps } from '../index'
 import css from './Orders.module.css'
@@ -56,6 +57,7 @@ function OpenOrders({ onPay }: { onPay: (s: PayState) => void }) {
   const cancel = useCancelOrder()
   const toast = useToast()
   const [confirming, setConfirming] = useState<OrderRow | null>(null)
+  const [outcomes, setOutcomes] = useState<Record<string, QueryOutcome>>({})
 
   if (open.isPending) return null
   if (open.isError) return <LoadError error={open.error} onRetry={() => void open.refetch()} what="待支付订单" />
@@ -87,18 +89,20 @@ function OpenOrders({ onPay }: { onPay: (s: PayState) => void }) {
               </div>
             </div>
             <div className={css.pendingAmount}>{formatMoney(o.payable_amount, o.currency)}</div>
-            {!processing && (
-              <div className={css.pendingActions}>
-                {o.cancellable && (
-                  <button type="button" className={css.quiet} onClick={() => setConfirming(o)}>
-                    取消订单
-                  </button>
-                )}
+            <div className={css.pendingActions}>
+              {!processing && o.cancellable && (
+                <button type="button" className={css.quiet} onClick={() => setConfirming(o)}>
+                  取消订单
+                </button>
+              )}
+              <PaymentRefresh orderId={o.id} onOutcome={(r) => setOutcomes((m) => ({ ...m, [o.id]: r }))} />
+              {!processing && (
                 <Button variant="primary" size="sm" onClick={() => onPay({ phase: 'choose', orderId: o.id, orderNo: o.order_no, amount: o.payable_amount, currency: o.currency })}>
                   去支付
                 </Button>
-              </div>
-            )}
+              )}
+            </div>
+            <RefreshNote outcome={outcomes[o.id]} />
           </section>
         )
       })}
@@ -113,6 +117,39 @@ function OpenOrders({ onPay }: { onPay: (s: PayState) => void }) {
         onCancel={() => setConfirming(null)}
       />
     </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 「我已支付，刷新状态」：付完钱订单还挂着（回调丢了或还没到）时，让后端去渠道查一次。
+// 结果分三种显示在按钮旁的结果条里：已到账、渠道尚未确认、查询失败。
+// ---------------------------------------------------------------------------
+function PaymentRefresh({ orderId, onOutcome }: { orderId: string; onOutcome: (o: QueryOutcome) => void }) {
+  const query = useQueryOrderPayment()
+  const toast = useToast()
+  const run = async () => {
+    try {
+      const outcome = queryOutcome(await query.mutateAsync(orderId))
+      onOutcome(outcome)
+      // 到账后订单离开待支付，卡片与按钮随之消失，结果条可能来不及被看到：再弹一条
+      if (outcome.kind === 'settled') toast(outcome.text)
+    } catch (e) {
+      onOutcome(queryFailure(e))
+    }
+  }
+  return (
+    <button type="button" className={css.quiet} disabled={query.isPending} onClick={() => void run()}>
+      {query.isPending ? '正在向支付渠道查询…' : '我已支付，刷新状态'}
+    </button>
+  )
+}
+
+function RefreshNote({ outcome: o }: { outcome: QueryOutcome | undefined }) {
+  if (!o) return null
+  return (
+    <div className={css.queryNote} data-kind={o.kind} role="status">
+      {o.text}
+    </div>
   )
 }
 
@@ -229,6 +266,7 @@ function OrderLine({ order, open }: { order: OrderRow; open: boolean }) {
 
 function Facts({ id }: { id: string }) {
   const detail = useOrder(id)
+  const [outcome, setOutcome] = useState<QueryOutcome>()
   return (
     <div className={css.facts}>
       {detail.isPending ? (
@@ -245,6 +283,12 @@ function Facts({ id }: { id: string }) {
               </div>
             ))}
           </dl>
+          {(detail.data.status === 'pending_payment' || detail.data.status === 'processing' || outcome) && (
+            <div className={css.factActions}>
+              {(detail.data.status === 'pending_payment' || detail.data.status === 'processing') && <PaymentRefresh orderId={id} onOutcome={setOutcome} />}
+              <RefreshNote outcome={outcome} />
+            </div>
+          )}
           {/* 契约门户-07：订单页带 order_id 预填进新建工单 */}
           <a className={css.askLink} href={href('/tickets/new', { order: id })}>
             对这笔订单有疑问？提交工单 →

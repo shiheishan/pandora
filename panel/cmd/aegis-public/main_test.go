@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 startReservationExpiryWorker，依赖 platform/sourcetest 按名取 startReservationExpiryWorker 与 run 的源码
-// [OUTPUT]: 对外提供 TestReservationExpiryWorkerStopsAndJoinsOnCancellation、TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup、TestPublicNotifyUsesRecipientSalt
-// [POS]: cmd/aegis-public 的进程生命周期契约：预留过期循环可取消可 join，停机次序为取消、join、返回；通知收件人盐的装配
+// [INPUT]: 依赖 startReservationExpiryWorker、startPaymentQueryWorker，依赖 platform/sourcetest 按名取两个循环与 run 的源码
+// [OUTPUT]: 对外提供 TestReservationExpiryWorkerStopsAndJoinsOnCancellation、TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup、TestPaymentQueryWorkerStopsAndJoinsOnCancellation、TestPublicNotifyUsesRecipientSalt
+// [POS]: cmd/aegis-public 的进程生命周期契约：预留过期与主动查单两个循环可取消可 join，停机次序为取消、join、返回；通知收件人盐的装配
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package main
@@ -56,9 +56,41 @@ func TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup(t *testing.T) {
 	afterServer := source[runServer:]
 	stop := strings.Index(afterServer, "stop()")
 	wait := strings.Index(afterServer, "waitReservationExpiry()")
+	waitQuery := strings.Index(afterServer, "waitPaymentQuery()")
 	ret := strings.Index(afterServer, "return serverErr")
-	if stop < 0 || wait < 0 || ret < 0 || !(stop < wait && wait < ret) {
-		t.Fatal("public process must cancel, join expiry worker, then return for deferred cleanup")
+	if stop < 0 || wait < 0 || waitQuery < 0 || ret < 0 ||
+		!(stop < wait && wait < ret) || !(stop < waitQuery && waitQuery < ret) {
+		t.Fatal("public process must cancel, join expiry and payment-query workers, then return for deferred cleanup")
+	}
+}
+
+// 主动查单巡检与预留过期同一套生命周期：取消即退出，join 得回来
+func TestPaymentQueryWorkerStopsAndJoinsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	wait := startPaymentQueryWorker(ctx, nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("payment query worker did not stop and join after cancellation")
+	}
+	worker := sourcetest.Load(t, ".").Decl("startPaymentQueryWorker")
+	for _, required := range []string{
+		"case <-ctx.Done():",
+		"context.WithTimeout(ctx, 50*time.Second)",
+		"billing.DefaultPaymentQueryPatrol",
+		"return workers.Wait",
+	} {
+		if !strings.Contains(worker, required) {
+			t.Fatalf("payment query worker contract missing %q", required)
+		}
 	}
 }
 
