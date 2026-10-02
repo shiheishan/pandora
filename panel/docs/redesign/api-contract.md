@@ -2413,6 +2413,37 @@
   - 409 状态版本冲突或已有支付证据（有入账的单不能取消）
 - 设计：后台-05 抽屉「取消订单」确认框。待补·前端：设计确认框里没有理由输入框，要补一个必填的「取消原因」（5 字起）。
 
+#### POST v1/orders/{id}/query — 向渠道查单（后台）
+
+- **修订 R122（2026-10-01，payquery b028fb8、f6225fb、d810c84）**：新增，已实现（迁移 00097）。PAY-009 降级补偿：回调丢了（渠道故障、我方 502、防火墙拦截）时，主动问渠道这单付没付，查到已付就走与回调**同一条**结算主链补记（`HandlePaymentWebhook`），去重、金额币种校验、取消单进挂账都与回调一致；原先写好但没有调用方的 `QueryAndReconcile` 删除。
+- 状态：`panel/internal/api/admin/order_query.go` → `billing/payment_query_audit.go AdminQueryOrderPayment` → `billing/payment_query.go`
+- 权限：`billing.order.write`｜reauth：否（造不出钱，只记渠道用商户密钥确认过的那笔；与取消订单同级）｜幂等：是 `admin_order_query`
+- 请求：路径 id；无 body
+- 响应：200
+  ```
+  {
+    order_id, order_no, provider_code,
+    channel_status: "paid"|"unpaid"|"not_found",
+    reconciled: bool(本次补记了),
+    already_recorded: bool(此前已入账；与 reconciled 互斥),
+    quarantine_kind?: "released_order"|"excess_capture"|"ineligible_subscription"(只在补记进了挂账时出现),
+    order_status
+  }
+  ```
+  按订单发起过支付的渠道逐个查，最近发起的在前。
+- 错误：
+  - 400 缺幂等键
+  - 404 资源不存在或无权访问
+  - 409「该订单从未发起过支付，无法向渠道查单」
+  - 409「该支付渠道不支持主动查单」
+  - 409「支付币种或金额与订单不一致」
+  - 503「该支付渠道已停用，无法向渠道查单」
+  - 503「渠道查单失败，请稍后再试」
+  - 503「渠道查单结果缺少支付流水号，无法补记」
+- 审计：订单存在时每次调用（无论成败）写一条 `order.payment_queried`（访问日志归「订单」），带操作人、订单号、渠道、渠道状态、补记后的订单状态与 `result`（reconciled / already_recorded / paid / unpaid / not_found / failed）；失败时 outcome=failure 并带错误码与中文原因。审计写不进去回 500（钱已按主链记上，再查一次得 already_recorded 并补审计）。
+- 设计：后台-05 订单抽屉「向渠道查单」，只对发起过支付的未完结订单显示；结果留在框里，补记成功弹 Toast 并刷新详情与列表。
+- 巡检：aegis-public 每分钟一轮自动查单。对象是发起过支付、未到账、未过期的支付意图：发起后 5 分钟首查，之后 10、20 分钟指数退避，最多 6 次，订单过期前 90 秒再最后查一次；一轮最多 20 单、间隔 500ms。认领用 `FOR UPDATE SKIP LOCKED` 并把 `next_query_at` 推到未来，多实例不会同时查同一单，查渠道期间不占行锁；渠道不支持查单的直接停查。参数是代码常量。过期后的订单不补扫。
+
 #### POST v1/orders/manual — 人工开单
 
 - **修订 R64（2026-09-24，后端一 ⑥ 14f27cb，协调会话定）**：
@@ -6041,6 +6072,7 @@
 
 #### GET v1/orders — 我的订单列表
 
+- **修订 R122（2026-10-01，payquery d810c84）**：行新增 `has_payment_intent: bool`（恒有值）：这单是否有过任何一条支付意图，已取消订单的作废意图也算；与查单接口的 409「从未发起过支付」同一判断。
 - **修订 R69（2026-09-24，后端一 ⑥ 36f2fcd）**：
   - `status` 多值
   - 响应新增 `counts`，行新增 `interval` / `interval_count` / `item_name`。
@@ -6099,6 +6131,7 @@
 
 #### GET v1/orders/{id} — 订单详情
 
+- **修订 R122（2026-10-01，payquery d810c84）**：同列表，新增 `has_payment_intent: bool`。
 - **修订 R69（2026-09-24，后端一 ⑥ 36f2fcd）**：新增 `coupon_code`、`subscription_period_end`，支付记录带 `method` / `provider_name`。
 - 状态：
   - 现有 `panel/internal/api/public/my_orders.go:29 myOrderDetail`（domain `billing/my_orders.go:156`）
@@ -6159,6 +6192,14 @@
   - 同事务释放库存/限购预留、优惠码预留、余额冻结
 - 错误：400 非 UUID（注意与详情接口回 404 不一致）；404 不存在/不属于本人；409 已支付/已履约/已退款、已过期（expired）、存在已结算支付证据
 - 设计：订单页待支付卡片「取消订单」确认框（「取消后优惠码和已冻结的余额会立即退回」与后端语义一致）。
+
+#### POST v1/orders/{id}/query — 我已支付，刷新状态
+
+- **修订 R122（2026-10-01，payquery）**：新增，已实现。与后台查单共用 `billing.QueryOrderPayment`，响应与错误同后台那条（没有 400 缺幂等键），不记审计。
+- 状态：`panel/internal/api/public/order_query.go`
+- 权限：登录用户，只能查本人订单（他人订单与不存在都回 404）｜reauth：否｜幂等：否
+- 限流：按账号每分钟 6 次（`order_query`），超了 429 `rate_limited`；不挂 `billing.checkout` 开关。
+- 设计：门户-04 待支付 / 处理中卡片与订单明细里的「我已支付，刷新状态」，只在 `has_payment_intent` 为 true 时显示；结果三种：已到账（并弹 Toast，卡片随即消失）、渠道尚未确认、查询失败。
 
 ### 门户-05 钱包
 
@@ -8212,3 +8253,4 @@
 | R119 | 2026-09-27 | backend 后续 | system/status 数据库统计读失败时 postgres 组件降为 warn、不写三项指标；工单详情（后台与门户）`messages` 总是数组；套餐列表 `active_subscriptions` 按在用计数；挂账列表删 `pending_amount`；节点网关签名心跳（本契约未收录该接口）的 metrics 越界回中文 400、整条心跳不落库（cpu_bp 0–10000，其余 int 0–2147483647，bigint 非负；f7c415a） |
 | R120 | 2026-10-01 | themegift | 推翻 D-D-4「只留一个主题」：后台可新建、编辑、激活、删除自定义主题（custom_css 仍停用）；`POST v1/themes` 加 `create`（撞 code 409）、branding 三键与站点名必填、Logo 只收 ≤48KB 的 data:image、逐字段 422；`GET v1/appearance` 的 branding 读时再过滤；门户品牌位跟随生效主题（用户同意偏离设计） |
 | R121 | 2026-10-01 | themegift | 新增 `GET v1/gift-cards/codes/report`：按列表同一筛选导出卡码**掩码**报表（read + ops.export + reauth，≤50000 行，审计 `gift_card.codes_report_exported`）；旧的明文导出路径 `codes/export` 继续下线 |
+| R122 | 2026-10-01 | payquery | 主动查单（PAY-009，迁移 00097）：后台 `POST v1/orders/{id}/query`（order.write + 幂等，不要 reauth，每次写 `order.payment_queried` 审计）、门户同路径（本人、每分钟 6 次）、aegis-public 定时巡检（退避、多实例 SKIP LOCKED）；补记走回调同一条结算主链；门户订单行与详情加 `has_payment_intent`；删除无调用方的 `QueryAndReconcile` |
