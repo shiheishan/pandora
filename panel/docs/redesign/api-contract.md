@@ -2914,6 +2914,7 @@
 
 #### GET v1/gift-cards/codes/export — 导出卡码 CSV（现状：可反复导出明文）
 
+- **修订 R121（2026-10-01）**：这个路径保持下线，路由契约测试钉住它不得存在。按筛选导出改由下一条 `GET v1/gift-cards/codes/report` 承担，只出掩码。
 - **修订 R17（2026-09-24，后端一 0f83ca4）**：**已下线**，路由与处理器删除，由 `POST v1/gift-cards/batches/{id}/export` 取代。
 - 状态：
   - 现有 `panel/internal/api/admin/giftcard.go:113 exportGiftCodes`
@@ -2925,6 +2926,21 @@
   - 表头「卡密,状态,有效期,使用者,使用时间」，卡密是完整明文
 - 错误：400 同上
 - 设计：现有行为是任何有只读权限的管理员都能无限次导出全部明文码，没有重认证，也不写审计。这与设计「一次性导出、导出后只能看掩码」直接冲突。按设计改：新接口上线后这条路由删除（或固定回 404），前端不再调用。
+
+#### GET v1/gift-cards/codes/report — 按筛选导出卡码掩码报表
+
+- **修订 R121（2026-10-01，themegift f645bc7、312f7f2）**：新增，已实现。给运营对账，**只出掩码**：完整卡码只在生码样例与批次的一次性导出里出现（00069），这里不是第三个出口。
+- 状态：`panel/internal/api/admin/giftcard.go exportGiftCodesReport` → `domain/giftcard/codes_export.go ExportCodes`
+- 权限：`marketing.giftcard.read` + `ops.export`｜reauth：是｜幂等：否（GET 无副作用）
+- 请求：`template_id?, status?, batch_id?`，与 `GET v1/gift-cards/codes` 同一套筛选（共用 `CodeFilter`），不合法回 400，文案与列表相同。
+- 响应：
+  - 200 `text/csv; charset=utf-8`，带 UTF-8 BOM，`Content-Disposition: attachment; filename="gift-codes-report-YYYYMMDD-HHMMSS.csv"`，`Cache-Control: no-store`
+  - 表头「卡密（掩码）,状态,模板,批次,有效期,生成时间,兑换人,兑换时间」；掩码与列表的 `code_masked` 同规则（遮末尾 8 位），在 SQL 里算好，Go 侧读不到明文；状态是英文码，与批次导出一致；模板名与邮箱做公式防护。
+- 错误：
+  - 400 筛选不合法
+  - 422「超过 50000 行，请缩小筛选范围（按模板、批次或状态）」（先数后取，不截断）
+- 审计：每次导出写 `gift_card.codes_report_exported`，只记筛选条件与行数，不记任何码。
+- 设计：后台-06「批次与卡码」码列表加状态筛选与「导出当前筛选」（需 read + `ops.export` 才显示），确认框写明只出掩码、明文只在生成批次后的那一次导出里。时间区间筛选与跨批次入口本期不做。
 
 #### GET v1/gift-cards/batches — 批次列表
 
@@ -4467,6 +4483,10 @@
 
 #### GET v1/themes — 主题列表
 
+- **修订 R120（2026-10-01，themegift ccaf3d5，用户推翻 D-D-4 的「只留一个主题」）**：
+  - 后台列出全部主题卡片：生效的标「使用中」，内置的标「内置」；内置只能「另存为」，自定义的可编辑、激活、删除，生效中的不出删除。
+  - 本条下文「前端按 5.A 只展示这一张卡片」作废。
+  - 后台 schema 对 `tokens` 宽松接收：00075 之前的旧主题是扁平旧键，不能让整张列表解析失败。
 - **修订 R19（2026-09-24，后端二 e05fd9e）**：
   - 迁移 00075 后只剩内置主题 `paper`「默认 · 纸白」且生效
   - `tokens` 形状为 `{ light: {"--bg": …}, dark: {…} }`，键为 `panel/frontend/src/styles/design-tokens.ts` 的 43 个变量名
@@ -4508,6 +4528,17 @@
 
 #### POST v1/themes — 保存主题（新建或覆盖同 code 的自定义主题）
 
+- **修订 R120（2026-10-01，themegift ccaf3d5）**：
+  - 请求另加 `create?: bool`（缺省 false）。为 true 时撞上已有 code 回 409「主题标识已被占用」，带 `fields.code`；以前同 code 会被悄悄覆盖。
+  - `branding` 只允许三个键，未知键 422 `fields.branding`：
+    - `site_name` 必填，1–40 字，否则 422 `fields["branding.site_name"]`（站点名是门户标题、邮件 `{{site}}` 与发件人名的唯一来源，留空会让邮件悄悄退回 Pandora）；
+    - `tagline` ≤ 80 字，否则 422 `fields["branding.tagline"]`；
+    - `logo` 只收 `data:image/(png|jpeg|webp|svg+xml);base64,…`，解码后 ≤ 48KB，否则 422 `fields["branding.logo"]`；不收外链（CSP `img-src 'self' data:`），SVG 只经 `<img>` 渲染。
+  - 令牌取值不合法逐个报在 `fields["tokens.<light|dark>.<--变量名>"]`；形状、未知组或未知键仍报 `fields.tokens`。
+  - 名称、令牌、品牌的问题合并成一个 422 一次回齐。
+  - `custom_css` 仍停用（非空 422）。
+  - 存量旧主题若没有站点名，要先补上才能再保存（有意如此）。
+  - 本条下文请求里 `logo?: data URI 或 URL`、「同 code 即覆盖」与「待补·前端」作废，以本修订为准。
 - **修订 R19（2026-09-24，后端二 e05fd9e）**：
   - tokens 必须是 light/dark 两组、白名单内的键，否则 422 `fields.tokens`
   - code / name 不合规 422 `fields.code|name`
@@ -4545,6 +4576,7 @@
 
 #### POST v1/themes/{code}/activate — 激活主题
 
+- **修订 R120（2026-10-01，themegift ccaf3d5）**：接口不变。语义写明：激活会同时改掉门户站点名、邮件 `{{site}}` 与发件人名（都取生效主题的 `branding.site_name`），后台确认框照此提示。
 - 状态：现有 `panel/internal/api/admin/appearance.go:58 activateTheme` → `service.go:216 ActivateTheme`
 - 权限：`platform.appearance.write`｜reauth：是｜幂等：否
 - 请求：无请求体
@@ -4554,6 +4586,7 @@
 
 #### DELETE v1/themes/{code} — 删除主题
 
+- **修订 R120（2026-10-01，themegift 核实）**：后端本来就拒绝删内置与生效中的主题（422），前端对二者都不出删除。
 - 状态：现有 `panel/internal/api/admin/appearance.go:68 deleteTheme` → `service.go:244 DeleteTheme`
 - 权限：`platform.appearance.write`｜reauth：是｜幂等：否
 - 请求：无请求体
@@ -5369,6 +5402,9 @@
 
 #### GET v1/appearance — 主题与插槽
 
+- **修订 R120（2026-10-01，themegift ccaf3d5）**：
+  - `theme.branding` 只下发 `site_name`、`tagline`、`logo` 三个键，`logo` 只下发 `data:image/` 开头的值；与 tokens 一样是「存前严格校验、读时再过滤」两道防线。
+  - 门户顶栏与登录页的品牌位跟随生效主题：站点名为默认且无 Logo 时仍是设计稿字标；否则画「Logo 图（没有就画环）+ 站点名」，登录页另显示标语与页脚站点名（偏离设计稿，用户 2026-10-01 同意）。
 - **修订 R19（2026-09-24，后端二 e05fd9e）**：
   - `theme.tokens` 为 light/dark 两组、只含白名单内的键
   - `custom_css` 恒为 `""`。
@@ -6946,7 +6982,7 @@
 | D-C-2 | 方案 a：`POST v1/plans/complete` 与 `PUT v1/plans/{id}/complete` 改为 `catalog.publish` + RequireRecentReauth，与单独发布接口同门槛 |
 | D-C-4 | 方案 a：存量批次回填 `exported_at = 迁移时间`，存量码此后只显示掩码 |
 | D-D-1 | 方案 a：路由规则下拉只放后端支持的类型（domain / domain_suffix / ip_cidr / port / network / source / source_port），设计里的 geosite/geoip 示例换成等价写法，去掉 selector 出站；pdnd 支持 geosite/geoip 另行立项 |
-| D-D-4 / D-E-4 | **主题模块保留，只保留设计稿「默认 · 纸白」一个主题**：新迁移删除 00051 默认主题与 00055 stellar 两个内置主题，新建内置主题「默认 · 纸白」并激活，tokens 用设计稿变量名，分 light / dark 两组（切暗色不能被主题覆盖）；站点名称、标语、Logo 继续放在该主题的 branding。后台主题区只显示这一张卡片（使用中），不做「夜航」「国庆限定」，「保存新主题」入口隐藏（接口保留）。custom_css 本期停用。门户只认设计稿 token 白名单内的键 |
+| D-D-4 / D-E-4 | **主题模块保留，只保留设计稿「默认 · 纸白」一个主题**：新迁移删除 00051 默认主题与 00055 stellar 两个内置主题，新建内置主题「默认 · 纸白」并激活，tokens 用设计稿变量名，分 light / dark 两组（切暗色不能被主题覆盖）；站点名称、标语、Logo 继续放在该主题的 branding。后台主题区只显示这一张卡片（使用中），不做「夜航」「国庆限定」，「保存新主题」入口隐藏（接口保留）。custom_css 本期停用。门户只认设计稿 token 白名单内的键。**修订 R120（2026-10-01）用户推翻「只留一个主题、入口隐藏」：可新建、编辑、激活、删除自定义主题；custom_css 仍停用，令牌白名单不变** |
 | D-E-1 | **流量包挂在用户身上，永不过期，用完为止，可叠加**（剩 30G 再买 100G 即 130G）；每周期先扣套餐额度，扣完再扣流量包，流量包不随周期重置；订阅到期或续费余量保留；必须有生效订阅才能消耗（无订阅时可以买、留着）。礼品卡赠送流量并入同一余额，修掉现有 addon 每周期复用的问题；已发放未用完的 addon 一次性转入流量包余额。设计里「没有订阅也能买并单独使用（3 台设备、全部常规线路）」一条删去 |
 | D-E-2 | **修订 R39（2026-09-24 用户补充定案）**：「原订单实付」指**本周期全部付费单的实付合计**（提前续费会让一个周期由多张单拼成）；剩余时间比按「付费天数先用、赠送天数最后用」计，礼品卡加的天数折不成钱；流量比只看随整个周期走的流量配额（period 为 cycle / total），不限量视为 1；优惠码升降级都可用。<br>**升级、降级都允许**：剩余价值 = 原订单实付（现金 + 余额抵扣）× 剩余比例，**剩余比例取剩余时间比例与剩余流量比例中的较小者**，向下取整到分；新套餐价 > 剩余价值则补差价，< 则差额退入余额（账本记分录，余额不可提现）；新周期从当天按新套餐周期起算。赠送 / 礼品卡 / 0 元单实付为 0，降级不退 |
 | D-F-1 | 方案 a：可用佣金统一以账本为准（账本余额 − 在途提现），提现申请与转余额在同一把锁下按同一口径校验；授权修改计费域 |
@@ -8174,3 +8210,5 @@
 | R117 | 2026-09-26 | 后端四 | 结算时订阅已结束的续费 / 变更款隔离进挂账（新 case_kind `ineligible_subscription`，迁移 00095），回调回执成功；标记已付对此回 409、重复标记回 409；这类收款不阻止订单释放 |
 | R118 | 2026-09-26 | 协调会话定案 | 「当前订阅」全后台统一：在用 = active / trialing / grace / past_due；`active_plan`、`user_active_plan`、风控聚类成员套餐名 = 当前订阅在用时的套餐名，没有时 `active_plan` 为 null、`user_active_plan` 不返回；`has_active_sub` 与导出订阅数按在用计。已实现（backend b7571bb，合并 6a3fdd3，真相源 `domain/subscription/current.go`）；工单队列行此前漏返回 `user_active_plan`，一并补上 |
 | R119 | 2026-09-27 | backend 后续 | system/status 数据库统计读失败时 postgres 组件降为 warn、不写三项指标；工单详情（后台与门户）`messages` 总是数组；套餐列表 `active_subscriptions` 按在用计数；挂账列表删 `pending_amount`；节点网关签名心跳（本契约未收录该接口）的 metrics 越界回中文 400、整条心跳不落库（cpu_bp 0–10000，其余 int 0–2147483647，bigint 非负；f7c415a） |
+| R120 | 2026-10-01 | themegift | 推翻 D-D-4「只留一个主题」：后台可新建、编辑、激活、删除自定义主题（custom_css 仍停用）；`POST v1/themes` 加 `create`（撞 code 409）、branding 三键与站点名必填、Logo 只收 ≤48KB 的 data:image、逐字段 422；`GET v1/appearance` 的 branding 读时再过滤；门户品牌位跟随生效主题（用户同意偏离设计） |
+| R121 | 2026-10-01 | themegift | 新增 `GET v1/gift-cards/codes/report`：按列表同一筛选导出卡码**掩码**报表（read + ops.export + reauth，≤50000 行，审计 `gift_card.codes_report_exported`）；旧的明文导出路径 `codes/export` 继续下线 |
