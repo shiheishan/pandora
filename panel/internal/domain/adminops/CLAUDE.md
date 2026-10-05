@@ -21,6 +21,7 @@ revenue.go: 收入读模型与收入调整（列表、登记、冲销都带登�
 dashboard.go: 仪表盘读模型与流量排行、通知投递积压（scanNotificationBacklog 为唯一口径）
 dashboard_tasks.go: 「需要处理」汇总 DashboardTasks：六项各挂原读权限（提现挂 marketing.commission.read），调用方没权限的项不查也不出现；工单等待从用户最后一次发言算，离线节点口径同 GET v1/nodes 的 stale
 users.go: 用户列表与详情（从 service.go 拆出）：列表带组、当前订阅摘要（流量、生效设备上限、在线设备），状态多值 / 用户组 / 订阅状态 / q（邮箱、id、订阅令牌哈希反查）筛选；详情带配额、设备、统计（实收另按币种拆成 paid_totals，R80）、邀请人与 Telegram；currentSubscriptionSQL / hasLiveSubscriptionSQL / subStateSQL 把 subscription 包的订阅态口径（R118）套到别名 u 上，active_plan 从同一行当前订阅派生（在用时取其套餐名，否则 null）
+site_settings_store.go: 站点时区读写 SiteTimezone / SetSiteTimezone（R49，即 tenants.timezone，从 api/admin/site_settings.go 下沉）：改时区先 FOR UPDATE 锁租户行、同事务写 site.timezone_changed 前后对照审计；租户行不可见回中性 404，时区名校验留在 handler
 bulk_users.go / bulk_mail.go: 用户批量筛选、导出、生成与群发；筛选含当前订阅的套餐、到期天数与订阅状态，has_active_sub 即存在在用订阅（与 sub_state=active 同义），导出的订阅数列按在用计（R118），预览带 sample_rows，群发正文 $email / $plan / $expire 逐人替换
 *_test.go: 单元与契约测试；catalog_sales_pg18_test.go、plan_wizard_pg18_test.go、plan_wizard_update_pg18_test.go、finance_reads_pg18_test.go、users_pg18_test.go、users_filters_pg18_test.go、users_current_sub_pg18_test.go（订阅态口径 R118：宽限期、欠费、只有过期、两条在用、别的租户，及套餐列表的在用订阅数）、traffic_packs_pg18_test.go、plan_wizard_r92_pg18_test.go（向导继承与三态、限速解耦）与 plan_highlights_pg18_test.go（卖点与推荐）为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域，共用 openCatalogSalesPG18 夹具）
 
