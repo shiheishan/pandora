@@ -194,7 +194,7 @@ func (h *handlers) fetchConfigSigningKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if out == nil {
-		w.WriteHeader(http.StatusNoContent)
+		httpx.NoContent(w)
 		return
 	}
 	httpx.OK(w, out)
