@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 coupon.go 的 createCouponReq / normalizeCouponReq / couponSpec，依赖 domain/billing 的 AdminGenerateCoupons（随机出码、撞码重试与审计在 billing/coupon_admin.go），依赖 platform/httpx
+// [OUTPUT]: 对包内提供 generateCoupons 处理器与 generateCouponsReq、isSafeCouponPrefix
+// [POS]: api/admin 后台-06 批量生券的 HTTP 外壳：校验张数（1–1000）、前缀（大写字母数字、≤8 位）与必填的活动名，默认每张只能核销一次
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 批量生成优惠券。
@@ -16,14 +21,9 @@ package admin
 // 这个默认值弄反了是会直接亏钱的，所以不跟随单张创建的「不限」默认。
 
 import (
-	"crypto/rand"
 	"net/http"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-
-	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -33,31 +33,6 @@ type generateCouponsReq struct {
 	Count int `json:"count"`
 	// Prefix 券码前缀，便于一眼认出是哪次活动的券。可以留空。
 	Prefix string `json:"prefix"`
-}
-
-// couponCodeAlphabet 去掉了 I、L、O、0、1。
-//
-// 券码要印在物料上、贴进群公告、被用户手工敲进结账框。这几个字符在
-// 多数字体里几乎不可分辨，认错一次就是一张废券加一个工单。和礼品卡
-// 卡密用的是同一套字母表，理由相同。
-const couponCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-
-// newCouponCode 生成 10 位随机码。
-//
-// 31^10 ≈ 8.2e14，比礼品卡的 12 位短一些 —— 券码要人手输入，短两位
-// 是实打实的体验差别，而券本身有额度和有效期兜底，不像卡密那样等价
-// 于现金。撞码由数据库唯一约束兜住，撞了就换一个。
-func newCouponCode(prefix string) (string, error) {
-	const n = 10
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	out := make([]byte, n)
-	for i, v := range b {
-		out[i] = couponCodeAlphabet[int(v)%len(couponCodeAlphabet)]
-	}
-	return prefix + string(out), nil
 }
 
 func isSafeCouponPrefix(p string) bool {
@@ -121,54 +96,9 @@ func (h *handlers) generateCoupons(w http.ResponseWriter, r *http.Request) {
 		actorID = &id
 	}
 
-	codes := make([]string, 0, req.Count)
-	err = h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// attempts 给撞码重试封顶。31^10 的空间里撞码几乎不可能，但如果
-		// 真的进入了死循环（比如前缀被人塞成把空间压到很小的东西），
-		// 宁可报错也不能让一个事务无限持有锁。
-		attempts := 0
-		for len(codes) < req.Count {
-			attempts++
-			if attempts > req.Count*10+100 {
-				return httpx.New(httpx.CodeInternal, "生成券码时反复撞码，已中止；请换个前缀重试")
-			}
-			code, err := newCouponCode(req.Prefix)
-			if err != nil {
-				return err
-			}
-			tag, err := tx.Exec(r.Context(), `
-				INSERT INTO coupons (tenant_id, code, name, discount_type, discount_value,
-					currency, max_discount, min_order_amount, max_redemptions,
-					max_redemptions_per_user, applicable_plan_ids, valid_from, valid_until,
-					status, created_by)
-				VALUES ($1,$2,$3,$4,$5,$6::app.currency_code,$7,$8,$9,$10,$11::uuid[],$12,$13,
-					'active',$14::uuid)
-				ON CONFLICT (tenant_id, code) DO NOTHING`,
-				tenantID, code, req.Name, req.DiscountType, req.DiscountValue,
-				req.Currency, req.MaxDiscount, req.MinOrder, maxRedeem,
-				perUser, req.PlanIDs, from, until, actorID)
-			if err != nil {
-				return err
-			}
-			if tag.RowsAffected() == 1 {
-				codes = append(codes, code)
-			}
-		}
-
-		// 审计只记这一批的规格和数量，不把 1000 个券码塞进 digest ——
-		// 券码在 coupons 表里查得到，审计条目本身要保持可读。
-		return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-			ActorKind: "admin", ActorID: actorID,
-			Action: "coupon.batch_generated", ResourceType: "coupon",
-			APIDomain: "admin", Outcome: "success",
-			RequestID: httpx.RequestIDFrom(r.Context()),
-			AfterDigest: map[string]any{
-				"name": req.Name, "prefix": req.Prefix, "count": len(codes),
-				"type": req.DiscountType, "value": req.DiscountValue,
-				"max_redemptions": maxRedeem,
-			},
-		})
-	})
+	codes, err := h.d.Billing.AdminGenerateCoupons(r.Context(),
+		couponSpec(tenantID, actorID, &req.createCouponReq, from, until, perUser),
+		req.Prefix, req.Count, maxRedeem)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return

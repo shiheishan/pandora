@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 coupons / coupon_redemptions / users / orders 表，依赖 platform 的 db/httpx/audit、chi 的路径参数
-// [OUTPUT]: 对包内提供优惠券列表、新建、启停与兑换记录处理器
-// [POS]: api/admin 后台-06 优惠券的 HTTP 外壳与读写：券只停用不删除；路径 id 非 UUID 一律中性 404；批量生成在 coupon_batch.go
+// [INPUT]: 依赖 domain/billing 的 AdminListCoupons / AdminCreateCoupon / AdminSetCouponStatus / AdminCouponRedemptions 与 AdminCouponSpec（读写与审计在 billing/coupon_admin.go），依赖 platform/httpx、chi 的路径参数
+// [OUTPUT]: 对包内提供优惠券列表、新建、启停与兑换记录处理器，以及与批量生成共用的 normalizeCouponReq / couponSpec
+// [POS]: api/admin 后台-06 优惠券的 HTTP 外壳：规范化与校验请求、调 billing、写响应；券只停用不删除；路径 id 非 UUID 一律中性 404；批量生成在 coupon_batch.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -18,34 +18,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
-	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/db"
+	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
-
-type couponRow struct {
-	ID            string   `json:"id"`
-	Code          string   `json:"code"`
-	Name          string   `json:"name"`
-	DiscountType  string   `json:"discount_type"`
-	DiscountValue int64    `json:"discount_value"`
-	Currency      string   `json:"currency"`
-	MaxDiscount   *int64   `json:"max_discount"`
-	MinOrder      int64    `json:"min_order_amount"`
-	MaxRedeem     *int     `json:"max_redemptions"`
-	MaxPerUser    int      `json:"max_redemptions_per_user"`
-	Redeemed      int      `json:"redeemed_count"`
-	PlanIDs       []string `json:"applicable_plan_ids"`
-	ValidFrom     any      `json:"valid_from"`
-	ValidUntil    any      `json:"valid_until"`
-	Status        string   `json:"status"`
-	CreatedAt     any      `json:"created_at"`
-	// Discounted 是这张券实际减掉的总金额。列表里直接给出来，
-	// 免得管理员为了判断一张券值不值得续办还要自己去翻核销明细。
-	Discounted int64 `json:"discounted_total"`
-}
 
 // listCoupons 支持按券码/名称搜索、按状态筛选，并分页。
 //
@@ -72,47 +48,7 @@ func (h *handlers) listCoupons(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	out := []couponRow{}
-	var total int64
-
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		const cond = `
-			 WHERE c.tenant_id = $1
-			   AND (lower(c.code::text) LIKE $2 OR lower(c.name) LIKE $2)
-			   AND c.status LIKE $3`
-
-		if err := tx.QueryRow(r.Context(),
-			`SELECT count(*) FROM coupons c`+cond, tenantID, like, status).Scan(&total); err != nil {
-			return err
-		}
-
-		rows, err := tx.Query(r.Context(), `
-			SELECT c.id::text, c.code::text, c.name, c.discount_type, c.discount_value,
-			       COALESCE(c.currency::text,''), c.max_discount, c.min_order_amount,
-			       c.max_redemptions, c.max_redemptions_per_user, c.redeemed_count,
-			       c.applicable_plan_ids::text[], c.valid_from, c.valid_until,
-			       c.status, c.created_at,
-			       COALESCE((SELECT sum(rd.discount_amount) FROM coupon_redemptions rd
-			                  WHERE rd.coupon_id = c.id AND rd.reverted_at IS NULL), 0)
-			  FROM coupons c`+cond+`
-			 ORDER BY c.created_at DESC, c.code
-			 LIMIT $4 OFFSET $5`, tenantID, like, status, limit, offset)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var c couponRow
-			if err := rows.Scan(&c.ID, &c.Code, &c.Name, &c.DiscountType, &c.DiscountValue,
-				&c.Currency, &c.MaxDiscount, &c.MinOrder, &c.MaxRedeem, &c.MaxPerUser,
-				&c.Redeemed, &c.PlanIDs, &c.ValidFrom, &c.ValidUntil, &c.Status,
-				&c.CreatedAt, &c.Discounted); err != nil {
-				return err
-			}
-			out = append(out, c)
-		}
-		return rows.Err()
-	})
+	out, total, err := h.d.Billing.AdminListCoupons(r.Context(), tenantID, like, status, limit, offset)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -156,36 +92,9 @@ func (h *handlers) createCoupon(w http.ResponseWriter, r *http.Request) {
 		actorID = &id
 	}
 
-	var newID string
-	err = h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		err := tx.QueryRow(r.Context(), `
-			INSERT INTO coupons (tenant_id, code, name, discount_type, discount_value,
-				currency, max_discount, min_order_amount, max_redemptions,
-				max_redemptions_per_user, applicable_plan_ids, valid_from, valid_until,
-				status, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6::app.currency_code,$7,$8,$9,$10,$11::uuid[],$12,$13,
-				'active',$14::uuid)
-			RETURNING id::text`,
-			tenantID, req.Code, req.Name, req.DiscountType, req.DiscountValue,
-			req.Currency, req.MaxDiscount, req.MinOrder, req.MaxRedeem,
-			perUser, req.PlanIDs, from, until, actorID).Scan(&newID)
-		if err != nil {
-			return err
-		}
-		return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-			ActorKind: "admin", ActorID: actorID,
-			Action: "coupon.created", ResourceType: "coupon", ResourceID: &newID,
-			APIDomain: "admin", Outcome: "success",
-			RequestID: httpx.RequestIDFrom(r.Context()),
-			AfterDigest: map[string]any{
-				"code": req.Code, "type": req.DiscountType, "value": req.DiscountValue},
-		})
-	})
+	newID, err := h.d.Billing.AdminCreateCoupon(r.Context(),
+		couponSpec(tenantID, actorID, &req, from, until, perUser), req.Code, req.MaxRedeem)
 	if err != nil {
-		if db.IsUniqueViolation(err) {
-			httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeConflict, "这个优惠码已经存在"))
-			return
-		}
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
@@ -269,6 +178,17 @@ func normalizeCouponReq(req *createCouponReq, needCode bool) (*time.Time, *time.
 	return from, until, perUser, nil
 }
 
+// couponSpec 把规范化后的请求装成 billing 的券规格，单张创建与批量生成共用。
+func couponSpec(tenantID string, actorID *string, req *createCouponReq,
+	from, until *time.Time, perUser int) billing.AdminCouponSpec {
+	return billing.AdminCouponSpec{
+		TenantID: tenantID, ActorID: actorID,
+		Name: req.Name, DiscountType: req.DiscountType, DiscountValue: req.DiscountValue,
+		Currency: req.Currency, MaxDiscount: req.MaxDiscount, MinOrder: req.MinOrder,
+		PerUser: perUser, PlanIDs: req.PlanIDs, ValidFrom: from, ValidUntil: until,
+	}
+}
+
 // setCouponStatus 启用或停用一张券。
 func (h *handlers) setCouponStatus(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
@@ -292,29 +212,12 @@ func (h *handlers) setCouponStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(r.Context(), `
-			UPDATE coupons SET status = $3, updated_at = now()
-			 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, id, req.Status)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return httpx.NotFoundOrForbidden()
-		}
-		var actorID *string
-		if a := httpx.PrincipalFrom(r.Context()); a != nil && a.UserID != "" {
-			v := a.UserID
-			actorID = &v
-		}
-		return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-			ActorKind: "admin", ActorID: actorID,
-			Action: "coupon.status_change", ResourceType: "coupon", ResourceID: &id,
-			APIDomain: "admin", Outcome: "success",
-			RequestID:   httpx.RequestIDFrom(r.Context()),
-			AfterDigest: map[string]any{"status": req.Status},
-		})
-	})
+	var actorID *string
+	if a := httpx.PrincipalFrom(r.Context()); a != nil && a.UserID != "" {
+		v := a.UserID
+		actorID = &v
+	}
+	err := h.d.Billing.AdminSetCouponStatus(r.Context(), tenantID, actorID, id, req.Status)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -331,40 +234,7 @@ func (h *handlers) couponRedemptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type item struct {
-		Email    string `json:"email"`
-		OrderNo  string `json:"order_no"`
-		Discount int64  `json:"discount"`
-		Currency string `json:"currency"`
-		At       any    `json:"at"`
-		Reverted bool   `json:"reverted"`
-	}
-	out := []item{}
-
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(r.Context(), `
-			SELECT COALESCE(u.email::text,''), COALESCE(o.order_no,''),
-			       rd.discount_amount, COALESCE(rd.currency::text,''),
-			       rd.redeemed_at, rd.reverted_at IS NOT NULL
-			  FROM coupon_redemptions rd
-			  LEFT JOIN users u ON u.id = rd.user_id
-			  LEFT JOIN orders o ON o.id = rd.order_id
-			 WHERE rd.tenant_id = $1 AND rd.coupon_id = $2::uuid
-			 ORDER BY rd.redeemed_at DESC LIMIT 200`, tenantID, id)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var it item
-			if err := rows.Scan(&it.Email, &it.OrderNo, &it.Discount, &it.Currency,
-				&it.At, &it.Reverted); err != nil {
-				return err
-			}
-			out = append(out, it)
-		}
-		return rows.Err()
-	})
+	out, err := h.d.Billing.AdminCouponRedemptions(r.Context(), tenantID, id)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
