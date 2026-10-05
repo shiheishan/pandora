@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/billing 的 AdminListCoupons / AdminCreateCoupon / AdminSetCouponStatus / AdminCouponRedemptions 与 AdminCouponSpec（读写与审计在 billing/coupon_admin.go），依赖 platform/httpx、chi 的路径参数
-// [OUTPUT]: 对包内提供优惠券列表、新建、启停与兑换记录处理器，以及与批量生成共用的 normalizeCouponReq / couponSpec
+// [OUTPUT]: 对包内提供优惠券列表、新建、启停与兑换记录处理器，以及与批量生成共用的 normalizeCouponReq / couponSpec；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 后台-06 优惠券的 HTTP 外壳：规范化与校验请求、调 billing、写响应；券只停用不删除；路径 id 非 UUID 一律中性 404；批量生成在 coupon_batch.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -22,6 +22,11 @@ import (
 	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
+
+type listCouponsResponse struct {
+	Coupons []billing.AdminCoupon `json:"coupons"`
+	Total   int64                 `json:"total"`
+}
 
 // listCoupons 支持按券码/名称搜索、按状态筛选，并分页。
 //
@@ -53,7 +58,7 @@ func (h *handlers) listCoupons(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"coupons": out, "total": total})
+	httpx.OK(w, listCouponsResponse{Coupons: out, Total: total})
 }
 
 type createCouponReq struct {
@@ -69,6 +74,11 @@ type createCouponReq struct {
 	PlanIDs       []string `json:"applicable_plan_ids"`
 	ValidFrom     string   `json:"valid_from"`
 	ValidUntil    string   `json:"valid_until"`
+}
+
+type createCouponResponse struct {
+	Code string `json:"code"`
+	ID   string `json:"id"`
 }
 
 func (h *handlers) createCoupon(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +108,7 @@ func (h *handlers) createCoupon(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"id": newID, "code": req.Code})
+	httpx.OK(w, createCouponResponse{Code: req.Code, ID: newID})
 }
 
 // normalizeCouponReq 把券的公共字段规范化并校验一遍，返回解析后的
@@ -189,6 +199,10 @@ func couponSpec(tenantID string, actorID *string, req *createCouponReq,
 	}
 }
 
+type setCouponStatusResponse struct {
+	OK bool `json:"ok"`
+}
+
 // setCouponStatus 启用或停用一张券。
 func (h *handlers) setCouponStatus(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
@@ -222,7 +236,11 @@ func (h *handlers) setCouponStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, setCouponStatusResponse{OK: true})
+}
+
+type couponRedemptionsResponse struct {
+	Redemptions []billing.AdminCouponRedemption `json:"redemptions"`
 }
 
 // couponRedemptions 是单张券的核销明细，用于核对。
@@ -239,5 +257,5 @@ func (h *handlers) couponRedemptions(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"redemptions": out})
+	httpx.OK(w, couponRedemptionsResponse{Redemptions: out})
 }

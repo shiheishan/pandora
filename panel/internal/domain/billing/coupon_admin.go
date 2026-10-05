@@ -19,22 +19,22 @@ import (
 
 // AdminCoupon 是后台优惠券列表的一行。
 type AdminCoupon struct {
-	ID            string   `json:"id"`
-	Code          string   `json:"code"`
-	Name          string   `json:"name"`
-	DiscountType  string   `json:"discount_type"`
-	DiscountValue int64    `json:"discount_value"`
-	Currency      string   `json:"currency"`
-	MaxDiscount   *int64   `json:"max_discount"`
-	MinOrder      int64    `json:"min_order_amount"`
-	MaxRedeem     *int     `json:"max_redemptions"`
-	MaxPerUser    int      `json:"max_redemptions_per_user"`
-	Redeemed      int      `json:"redeemed_count"`
-	PlanIDs       []string `json:"applicable_plan_ids"`
-	ValidFrom     any      `json:"valid_from"`
-	ValidUntil    any      `json:"valid_until"`
-	Status        string   `json:"status"`
-	CreatedAt     any      `json:"created_at"`
+	ID            string     `json:"id"`
+	Code          string     `json:"code"`
+	Name          string     `json:"name"`
+	DiscountType  string     `json:"discount_type"`
+	DiscountValue int64      `json:"discount_value"`
+	Currency      string     `json:"currency"`
+	MaxDiscount   *int64     `json:"max_discount"`
+	MinOrder      int64      `json:"min_order_amount"`
+	MaxRedeem     *int       `json:"max_redemptions"`
+	MaxPerUser    int        `json:"max_redemptions_per_user"`
+	Redeemed      int        `json:"redeemed_count"`
+	PlanIDs       []string   `json:"applicable_plan_ids"`
+	ValidFrom     *time.Time `json:"valid_from"`
+	ValidUntil    *time.Time `json:"valid_until"`
+	Status        string     `json:"status"`
+	CreatedAt     *time.Time `json:"created_at"`
 	// Discounted 是这张券实际减掉的总金额。列表里直接给出来，
 	// 免得管理员为了判断一张券值不值得续办还要自己去翻核销明细。
 	Discounted int64 `json:"discounted_total"`
@@ -250,12 +250,12 @@ func (s *Service) AdminSetCouponStatus(ctx context.Context, tenantID string, act
 
 // AdminCouponRedemption 是单张券的一条核销记录。
 type AdminCouponRedemption struct {
-	Email    string `json:"email"`
-	OrderNo  string `json:"order_no"`
-	Discount int64  `json:"discount"`
-	Currency string `json:"currency"`
-	At       any    `json:"at"`
-	Reverted bool   `json:"reverted"`
+	Email    string     `json:"email"`
+	OrderNo  string     `json:"order_no"`
+	Discount int64      `json:"discount"`
+	Currency string     `json:"currency"`
+	At       *time.Time `json:"at"`
+	Reverted bool       `json:"reverted"`
 }
 
 // AdminCouponRedemptions 列单张券最近 200 条核销明细。
