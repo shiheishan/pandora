@@ -20,7 +20,7 @@ subscription_usage.go: 本期按日用量（门户-02 柱状图，00072），只
 payment_methods.go: 可用支付方式：启用且接受新支付的渠道按 config.methods（缺省 default_method）展开，常见方式给中文名
 traffic_packs.go: 流量包目录、下单（kind=addon，无订阅也能买）与我的流量包余额（D-E-1）
 plan_change.go: 变更套餐试算与下单（D-E-2，kind=upgrade，升降级同一接口），下单走独立幂等域 subscription_change_plan_create
-notifications.go: 站内信收件箱与已读（单条标已读的非 UUID id 回 404，R84）、通知偏好（按主键 upsert）
+notifications.go: 站内信收件箱与已读（单条标已读的非 UUID id 回 404，R84）、通知偏好（目录与锁定项在这里，读写经 notify/inbox.go，按主键 upsert）
 content.go: 帮助文章列表（q 全文包含、platform=any）、正文与「有帮助」反馈（反馈与详情共用可见性 query）
 telegram.go: Telegram 绑定状态、绑定码与解绑，Telegram webhook（/webhooks/telegram/{secret}），以及匿名的 /appearance 外观读取
 pdnd_install.go: NativeCore 一键安装脚本与二进制分发，产物目录取 Cfg.PdndDistDir

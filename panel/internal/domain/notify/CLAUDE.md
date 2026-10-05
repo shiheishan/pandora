@@ -9,6 +9,7 @@ address.go: 按地址入队 EnqueueToAddress（只排邮件、不查偏好、ded
 scan.go: 到期 / 流量 / 支付成功三类扫描入队，StartScanner 循环（Kick 只派发不扫描）；返回与日志的条数只数新排的行，重扫为 0；流量预警的可用量 = 套餐本期额度 + 用户流量包剩余（traffic_pack_grants）
 template_admin.go: 模板管理端读写与预览、变量白名单，defaultTemplates 与迁移种子逐字一致；草稿预览 PreviewDraft（列出白名单外变量）、草稿实发前校验 RenderDraftForTest、HasDefaultTemplate
 announce.go: 用户可见公告与定时发布
+inbox.go: 门户站内信读写面（从 api/public/notifications.go 下沉）：收件箱 Inbox 与未读数同一事务、按记录变量 Render 主题与正文，单条 / 全部标已读带 user_id 条件，偏好覆盖项 PreferenceOverrides 与按主键 upsert 的 SetPreference；偏好目录与锁定项仍在处理器
 mailcfg.go: 数据库里的 SMTP 设置（信封加密口令、短缓存）与按租户动态发信器；未设发件人名时用站点名
 smtp.go: 标准库 net/smtp 的邮件渠道
 telegram.go: Telegram 渠道与双向验证的账号绑定

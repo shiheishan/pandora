@@ -1,26 +1,18 @@
-// [INPUT]: 依赖 platform 的 db/httpx、同包 handlers.go 的 isUUID，依赖 notification_deliveries / notification_preferences 两张表
+// [INPUT]: 依赖 domain/notify 的 Inbox / MarkInboxRead / MarkAllInboxRead / PreferenceOverrides / SetPreference，依赖 platform/httpx、同包 handlers.go 的 isUUID
 // [OUTPUT]: 对外提供 handlers 的 listNotifications / markNotificationRead / markAllNotificationsRead / getNotificationPreferences / setNotificationPreference
-// [POS]: api/public 的站内信与通知偏好；单条标已读的非 UUID id 回 404（R84）；偏好按表主键 (user_id, category, channel) upsert
+// [POS]: api/public 的站内信与通知偏好；单条标已读的非 UUID id 回 404（R84）；偏好目录与锁定项在这里，SQL 在 notify/inbox.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 
-// 站内信与通知偏好。
-//
-// 站内信不是单独的一套东西，就是投递记录里 channel='inapp' 的那些。
-// 用户拉取即视为送达，读了才标 read_at —— 这两件事分开记，
-// 因为「收到了」和「看了」在运营上是不同的信号。
+// 站内信与通知偏好：读写都在 notify（inbox.go），这里只做参数、偏好目录与响应。
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -38,62 +30,7 @@ func (h *handlers) listNotifications(w http.ResponseWriter, r *http.Request) {
 	}
 	onlyUnread := r.URL.Query().Get("unread") == "1"
 
-	type item struct {
-		ID      string            `json:"id"`
-		Code    string            `json:"code"`
-		Subject string            `json:"subject"`
-		Body    string            `json:"body"`
-		Vars    map[string]string `json:"-"`
-		SentAt  any               `json:"sent_at"`
-		ReadAt  any               `json:"read_at"`
-	}
-	out := []item{}
-	unread := 0
-
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
-		func(tx pgx.Tx) error {
-			// 模板与投递记录一起查：正文要用记录里的变量渲染模板，
-			// 分两次查会让 N 条站内信变成 N+1 次查询
-			q := `
-				SELECT d.id::text, d.template_code,
-				       COALESCE(t.subject,''), COALESCE(t.body,''),
-				       COALESCE(d.payload,'{}'::jsonb), d.sent_at, d.read_at
-				  FROM notification_deliveries d
-				  LEFT JOIN notification_templates t
-				    ON t.tenant_id = d.tenant_id AND t.code = d.template_code
-				   AND t.channel = 'inapp' AND t.locale = 'zh-CN' AND t.status = 'active'
-				 WHERE d.tenant_id = $1 AND d.user_id = $2::uuid
-				   AND d.channel = 'inapp' AND d.status = 'sent'`
-			if onlyUnread {
-				q += ` AND d.read_at IS NULL`
-			}
-			q += ` ORDER BY d.created_at DESC LIMIT $3`
-
-			rows, err := tx.Query(r.Context(), q, p.TenantID, p.UserID, limit)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var it item
-				var vars map[string]any
-				if err := rows.Scan(&it.ID, &it.Code, &it.Subject, &it.Body,
-					&vars, &it.SentAt, &it.ReadAt); err != nil {
-					return err
-				}
-				it.Subject = renderVars(it.Subject, vars)
-				it.Body = renderVars(it.Body, vars)
-				out = append(out, it)
-			}
-			if err := rows.Err(); err != nil {
-				return err
-			}
-			return tx.QueryRow(r.Context(), `
-				SELECT count(*) FROM notification_deliveries
-				 WHERE tenant_id = $1 AND user_id = $2::uuid
-				   AND channel = 'inapp' AND status = 'sent' AND read_at IS NULL`,
-				p.TenantID, p.UserID).Scan(&unread)
-		})
+	out, unread, err := h.d.Notify.Inbox(r.Context(), p.TenantID, p.UserID, onlyUnread, limit)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -116,18 +53,7 @@ func (h *handlers) markNotificationRead(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
-		func(tx pgx.Tx) error {
-			// 条件里带 user_id：光凭 id 就能改的话，
-			// 拿到别人的通知 ID 就能替他标已读
-			_, err := tx.Exec(r.Context(), `
-				UPDATE notification_deliveries SET read_at = now()
-				 WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid
-				   AND channel = 'inapp' AND read_at IS NULL`,
-				p.TenantID, id, p.UserID)
-			return err
-		})
-	if err != nil {
+	if err := h.d.Notify.MarkInboxRead(r.Context(), p.TenantID, p.UserID, id); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
@@ -141,16 +67,7 @@ func (h *handlers) markAllNotificationsRead(w http.ResponseWriter, r *http.Reque
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
 		return
 	}
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
-		func(tx pgx.Tx) error {
-			_, err := tx.Exec(r.Context(), `
-				UPDATE notification_deliveries SET read_at = now()
-				 WHERE tenant_id = $1 AND user_id = $2::uuid
-				   AND channel = 'inapp' AND read_at IS NULL`,
-				p.TenantID, p.UserID)
-			return err
-		})
-	if err != nil {
+	if err := h.d.Notify.MarkAllInboxRead(r.Context(), p.TenantID, p.UserID); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
@@ -197,30 +114,14 @@ func (h *handlers) getNotificationPreferences(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	overrides := map[string]bool{}
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
-		func(tx pgx.Tx) error {
-			rows, err := tx.Query(r.Context(), `
-				SELECT category, channel, enabled
-				  FROM notification_preferences
-				 WHERE tenant_id = $1 AND user_id = $2::uuid`, p.TenantID, p.UserID)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var category, channel string
-				var enabled bool
-				if err := rows.Scan(&category, &channel, &enabled); err != nil {
-					return err
-				}
-				overrides[category+"\x00"+channel] = enabled
-			}
-			return rows.Err()
-		})
+	stored, err := h.d.Notify.PreferenceOverrides(r.Context(), p.TenantID, p.UserID)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
+	}
+	overrides := map[string]bool{}
+	for _, o := range stored {
+		overrides[o.Category+"\x00"+o.Channel] = o.Enabled
 	}
 
 	preferences := make([]notifyPreference, len(notifyPreferenceCatalog))
@@ -260,35 +161,10 @@ func (h *handlers) setNotificationPreference(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// 冲突目标必须与表主键 (user_id, category, channel) 一致（00008）：
-	// 多写一个 tenant_id 就没有匹配的唯一约束，PostgreSQL 直接拒绝这条语句（缺陷 7）。
-	// 用户只属于一个租户，按主键冲突不会跨租户误改。
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
-		func(tx pgx.Tx) error {
-			_, err := tx.Exec(r.Context(), `
-				INSERT INTO notification_preferences
-					(tenant_id, user_id, category, channel, enabled)
-				VALUES ($1,$2::uuid,$3,$4,$5)
-				ON CONFLICT (user_id, category, channel)
-				DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
-				p.TenantID, p.UserID, req.Category, req.Channel, req.Enabled)
-			return err
-		})
-	if err != nil {
+	if err := h.d.Notify.SetPreference(r.Context(), p.TenantID, p.UserID,
+		req.Category, req.Channel, req.Enabled); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	httpx.OK(w, map[string]any{"ok": true})
-}
-
-// renderVars 用记录里的变量填模板。
-func renderVars(tpl string, vars map[string]any) string {
-	if len(vars) == 0 {
-		return tpl
-	}
-	out := tpl
-	for k, v := range vars {
-		out = strings.ReplaceAll(out, "{{"+k+"}}", fmt.Sprint(v))
-	}
-	return out
 }
