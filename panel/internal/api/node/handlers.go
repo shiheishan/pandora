@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/nodefabric 的入网、心跳、配置下发与 UniProxy 用例，依赖 platform/httpx 的解码与响应出口，依赖同包 router.go 的 Deps 与验签中间件放进 context 的节点 ID
+// [OUTPUT]: 对外提供 handlers 的 bootstrap / legacyBootstrapDisabled、入网 begin/status/commit/abort、heartbeat、配置与签名密钥下发、reportConfig，UniProxy 的 uniConfig / uniUser / uniPush / uniAlive / uniStatus；包内 uniProxyToken、etagMatches
+// [POS]: api/node 的处理器：只做验签后的解码、调 nodefabric、写响应，不跑 SQL；旧 bootstrap 固定回 426 upgrade_required 信封；uniConfig 写出 nodefabric 预编码的配置字节，配置与用户列表靠弱 ETag 回 304
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package node
 
 import (
@@ -46,11 +51,11 @@ func (h *handlers) bootstrap(w http.ResponseWriter, r *http.Request) {
 	httpx.Created(w, out)
 }
 
+// legacyBootstrapDisabled 固定回 426 错误信封，提示换到两阶段入网；不读请求体、不消费令牌、不碰节点服务。
 func (h *handlers) legacyBootstrapDisabled(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusUpgradeRequired)
-	_, _ = w.Write([]byte(`{"error":"legacy bootstrap is disabled; use /v1/nodes/enrollments"}`))
+	httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUpgradeRequired,
+		"legacy bootstrap is disabled; use /v1/nodes/enrollments"))
 }
 
 type beginEnrollmentReq struct {
