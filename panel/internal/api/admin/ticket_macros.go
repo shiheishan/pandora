@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/support 的 ListMacros / SaveMacro / DeleteMacro，依赖 platform/httpx
-// [OUTPUT]: 对外提供 listTicketMacros、saveTicketMacro、deleteTicketMacro 三个处理器
+// [OUTPUT]: 对外提供 listTicketMacros、saveTicketMacro、deleteTicketMacro 三个处理器；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的工单快捷回复处理器（后台-02 回复框上方的标签与「管理」对话框），路由在 router.go 工单段
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -14,13 +14,21 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type listTicketMacrosResponse struct {
+	Macros []support.Macro `json:"macros"`
+}
+
 func (h *handlers) listTicketMacros(w http.ResponseWriter, r *http.Request) {
 	macros, err := h.d.Support.ListMacros(r.Context(), httpx.TenantIDFrom(r.Context()))
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"macros": macros})
+	httpx.OK(w, listTicketMacrosResponse{Macros: macros})
+}
+
+type saveTicketMacroResponse struct {
+	ID string `json:"id"`
 }
 
 // saveTicketMacro 同时服务新建（POST v1/ticket-macros）与编辑（POST v1/ticket-macros/{id}），
@@ -37,7 +45,11 @@ func (h *handlers) saveTicketMacro(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"id": id})
+	httpx.OK(w, saveTicketMacroResponse{ID: id})
+}
+
+type deleteTicketMacroResponse struct {
+	OK bool `json:"ok"`
 }
 
 func (h *handlers) deleteTicketMacro(w http.ResponseWriter, r *http.Request) {
@@ -46,5 +58,5 @@ func (h *handlers) deleteTicketMacro(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, deleteTicketMacroResponse{OK: true})
 }
