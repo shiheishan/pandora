@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/billing 的 ListLatePayments 与 ApplyLatePaymentToBalance，依赖 platform/httpx
-// [OUTPUT]: 对包内提供 listLatePayments、applyLatePayment 两个处理器
+// [OUTPUT]: 对包内提供 listLatePayments、applyLatePayment 两个处理器；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的挂账 tab：列表按币种返回待处理合计 pending_amounts（跨币种相加的旧字段 pending_amount 过渡期已满，已删），转入余额走 router.go 的重认证与幂等链
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -16,6 +16,12 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type listLatePaymentsResponse struct {
+	Cases          []billing.LatePaymentCase `json:"cases"`
+	PendingAmounts map[string]int64          `json:"pending_amounts"`
+	Total          int64                     `json:"total"`
+}
+
 func (h *handlers) listLatePayments(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
@@ -28,13 +34,17 @@ func (h *handlers) listLatePayments(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{
-		"cases": cases, "total": total, "pending_amounts": pending,
+	httpx.OK(w, listLatePaymentsResponse{
+		Cases: cases, Total: total, PendingAmounts: pending,
 	})
 }
 
 type applyLatePaymentReq struct {
 	Reason string `json:"reason"`
+}
+
+type applyLatePaymentResponse struct {
+	LedgerTxnID string `json:"ledger_txn_id"`
 }
 
 func (h *handlers) applyLatePayment(w http.ResponseWriter, r *http.Request) {
@@ -51,5 +61,5 @@ func (h *handlers) applyLatePayment(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ledger_txn_id": txnID})
+	httpx.OK(w, applyLatePaymentResponse{LedgerTxnID: txnID})
 }
