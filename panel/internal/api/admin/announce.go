@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/notify 的 ListAdminAnnouncements / SaveAdminAnnouncement / WithdrawAdminAnnouncement（读写、状态机、乐观并发与审计在 notify/announce_admin.go），依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 listAnnouncements / saveAnnouncement / withdrawAnnouncement 与入参校验助手 parseAnnounceTime、normalizeAnnouncePlanIDs、normalizeAnnounceIDs
+// [OUTPUT]: 对外提供 handlers 的 listAnnouncements / saveAnnouncement / withdrawAnnouncement 与入参校验助手 parseAnnounceTime、normalizeAnnouncePlanIDs、normalizeAnnounceIDs；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的公告（草稿 / 定时 / 撤回）HTTP 外壳：校验长度、级别、期望版本与时间，算出目标状态，再交给 notify；定向套餐与用户组属于本租户的校验在 notify 的事务里
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -19,6 +19,12 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type listAnnouncementsResponse struct {
+	Announcements []notify.AdminAnnouncement      `json:"announcements"`
+	Plans         []notify.AnnouncementPlanTarget `json:"plans"`
+	UserGroups    []notify.AnnouncementGroupRef   `json:"user_groups"`
+}
+
 func (h *handlers) listAnnouncements(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 	actorID := ""
@@ -30,7 +36,7 @@ func (h *handlers) listAnnouncements(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"announcements": list.Announcements, "plans": list.Plans, "user_groups": list.UserGroups})
+	httpx.OK(w, listAnnouncementsResponse{Announcements: list.Announcements, Plans: list.Plans, UserGroups: list.UserGroups})
 }
 
 type announceReq struct {
@@ -93,6 +99,12 @@ func announcementActor(r *http.Request) (string, error) {
 		return "", httpx.NotFoundOrForbidden()
 	}
 	return principal.UserID, nil
+}
+
+type saveAnnouncementResponse struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Version int    `json:"version"`
 }
 
 func (h *handlers) saveAnnouncement(w http.ResponseWriter, r *http.Request) {
@@ -200,7 +212,12 @@ func (h *handlers) saveAnnouncement(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"id": newID, "status": status, "version": newVersion})
+	httpx.OK(w, saveAnnouncementResponse{ID: newID, Status: status, Version: newVersion})
+}
+
+type withdrawAnnouncementResponse struct {
+	OK      bool `json:"ok"`
+	Version int  `json:"version"`
 }
 
 func (h *handlers) withdrawAnnouncement(w http.ResponseWriter, r *http.Request) {
@@ -229,5 +246,5 @@ func (h *handlers) withdrawAnnouncement(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "version": newVersion})
+	httpx.OK(w, withdrawAnnouncementResponse{OK: true, Version: newVersion})
 }
