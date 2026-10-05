@@ -7,7 +7,7 @@
 router.go: Deps 与 NewRouter：全局中间件链，/v1 挂 admin.writes 只读门（middleware.AdminWritesGate），根 / 与 /assets/* 经 webapp 下发后台前端，/v1 登录分组与已登录分组；已登录分组按拆分前的原顺序调用各 router_<模块>.go 的 register*Routes，顺序不要重排
 router_<模块>.go: 按模块分段的路由表，每个 register*Routes(r, d, h) 声明一段路由的权限、重认证与幂等 scope。dashboard 仪表盘与收入；appearance 主题、插槽、站点设置、插件钩子；notify Telegram、邮件设置、通知模板；users 批量运营、流量重置、用户状态、用户组、设备数；marketing 礼品卡、优惠券、分销；billing 挂账、订单（人工开单与标记已支付都挂重认证，向渠道查单不挂）、支付渠道、余额调账；catalog 套餐（含 registerCatalogPlanUpdate，套餐类新路由加这里）与流量包（registerTrafficPackRoutes，写接口 catalog.publish + 重认证 + 幂等）；security 审计、系统状态、访问日志、用户画像与时序、风控、降级开关；nodes 节点分组、节点、服务器（含 nodeBatchStatusIdempotencyScope）、路由组（registerRouteGroupRoutes，挂在 registerNodeRoutes 末尾）；content 公告与知识库；support 工单与快捷回复
 handlers.go: handlers 结构与核心处理器：登录、me（追加邮箱、显示名、角色）、用户（替用户重置密码的原因可选、限 500 字，R101）、订阅换链接、订单、套餐、支付渠道、降级开关（切换后向管理端频道发 switches.changed）
-nodes.go: 节点处理器（从 handlers.go 拆出）：节点列表（含 country_code、在线人数与 IP 按租户设备识别窗口统计、近 24h 流量、控制节点探针的 CPU / 内存，按 sort_order, node_no 排序；心跳只在 Go 侧判定，下发状态交给 subscription.DeliveryState）、安装与服务端令牌、旧状态接口（退役 / 销毁先取发布锁再锁节点行、吊销身份，改状态报错按约束名翻译）、吊销身份、发布配置、改协议、协议 schema、指标、REALITY 密钥对、删除
+nodes.go: 节点处理器（从 handlers.go 拆出，不跑 SQL）：节点列表（读模型在 nodefabric.ListAdminNodes；心跳只在 Go 侧判定，下发状态交给 subscription.DeliveryState，协议配置在这里脱敏）、安装与服务端令牌、旧状态接口（nodefabric.SetLegacyNodeStatus：退役 / 销毁先取发布锁再锁节点行、吊销身份，改状态报错按约束名翻译）、吊销身份、发布配置、改协议、协议 schema、指标、REALITY 密钥对、删除
 tickets.go: 客服工单处理器（从 handlers.go 拆出）：负责人目录、队列、详情、回复、指派、改状态、人工升级，写操作走 support 的 *Atomic 并写出预制响应
 helpers.go: 包内共用小工具：域常量、请求级超时
 access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两路归并，分类规则展示与筛选共用（路由组的 route_group.* 与 node.* 一起归管理端）；outcome 筛选（error = 非 success）

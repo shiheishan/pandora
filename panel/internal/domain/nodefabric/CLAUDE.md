@@ -22,6 +22,8 @@ usage_daily.go: 流量上报的单用户记账 chargeReportEntry：同一事务�
 node_admin.go: 后台节点新建、读取与 PATCH，协议白名单与稳定协议 SQL（stableProtocolTypes 必须留在本文件，协议对齐门按文件名读）；PATCH 的 protocol_config 整体替换，但请求里缺席的敏感键经 protocol_secrets 补回（R78）；country_code（00082）只在此写、只进管理端响应（保留规则 3）
 node_admin_placement.go: 后台节点复制（发布锁下物化当前适用配置）、移动到另一台服务器、排序，均带 row_version 乐观锁与审计
 node_admin_lifecycle.go: 服务状态迁移表（只在 Go 内强制）与批量改服务状态（先取发布锁再锁节点行，退役同事务清 desired_config_version、吊销有效身份）、删除节点的三道守卫
+node_list_admin.go: 后台节点列表读模型 ListAdminNodes（从 api/admin 下沉）：分页与筛选后真实总数（缺陷 21）、在线人数与 IP 按租户设备窗口 app.device_limit_window_minutes 统计、近 30 天 / 24h 流量、绑定套餐、控制节点探针；只扫事实，心跳新鲜度与下发状态由 handler 交给 subscription.DeliveryState（subscription 依赖本包，不能反调），协议配置的脱敏也在 handler
+node_status_legacy.go: 旧状态接口 SetLegacyNodeStatus 与手工吊销 RevokeNodeIdentity（从 api/admin 下沉）：退役 / 销毁先取 node-config-release 锁再 FOR UPDATE 锁节点行（nodeStatusLockSQL 带协议就绪判定），生命周期按 ProjectNodeLifecycle 投影、控制节点的服务器同事务改状态、终态吊销有效身份，撞状态机经 NodeStatusRefusal 翻中文
 node_retire.go: 一步退役 RetireNode：持 node-config-release 锁，生命周期按 node_transitions 合法边推进到 retired（active 等经 draining、canary 经 standby；draft 与接入失败态只改服务状态），服务状态 retired、清 desired_config_version、吊销有效身份、在途任务置 failed，拒绝在役服务器的控制节点
 node_activate.go: 一步上线 ActivateNode（R108，与 node_retire.go 对称）：持 node-config-release 锁，接入尾段（attesting 至 canary）按 node_transitions 合法边逐条推到 active（每步过触发器），服务状态按 ProjectNodeLifecycle 投影（旧状态接口同一份映射），服务器按服务器状态机同事务进 ready；前置条件为有效未过期身份、协议就绪、绑着未删除且能进 ready 的服务器，不满足回 409；已 active 幂等不改；返回 AdminNode 与无池 / 池未绑套餐的 warnings
 node_refusal.go: NodeStatusRefusal 改节点生命周期时数据库拒绝的统一翻译（后台改状态、一步上线、一步退役三处共用）：状态机触发器的中文原样透传，nodes 表 CHECK 按约束名译中文、认不出的写通用中文，英文原句只进日志；三处 UPDATE 实际只撞得到触发器，约束翻译是兜底（⑪）
@@ -37,7 +39,7 @@ config_key_transition.go: 配置签名密钥轮换的过渡声明与校验
 nodestream.go / nodestream_event.go: 节点长连接推送（内存 StreamHub）与事件定义；NotifyUsersChanged 发租户级 node.users.changed，供改变交付集合的后台写路径（套餐换绑池等）在提交后调
 userdelta.go: 用户列表增量下发
 testdata/: 生产协议配置样本与 VLESS 迁移往返样本
-*_test.go: 单元与契约测试（routing_merge_test.go 钉住 节点 → 组 → 全局 的规则顺序与出站保位覆盖、带来源合并；route_groups_test.go 钉住组字段边界、成员 id 规范化、跨范围引用校验与 00096 的三选一 CHECK / 组内 tag 唯一索引；heartbeat_metrics_test.go 钉住心跳探针的范围边界；pool_admission_test.go 钉住 PoolAdmitsUserSQL 的白名单与唯一用法；device_window_test.go 钉住设备窗口可选值与迁移 00094 一致、清理截止大于最大窗口、后台节点列表不写死窗口；node_activate_test.go 钉住上线路径只走 00005 的边且经 canary 进 active；node_refusal_test.go 钉住约束名翻译并守住全仓不再把 db.Message 直接塞进 httpx 错误）；*_pg18_test.go 为 PG18 集成测试（effective 与 enrollment 两个域，server_token_pg18_test.go 共用 enrollment 的 openEnrollmentPG18；traffic_charge_pg18_test.go 与 usage_daily_pg18_test.go 共用 traffic_charge 域）
+*_test.go: 单元与契约测试（routing_merge_test.go 钉住 节点 → 组 → 全局 的规则顺序与出站保位覆盖、带来源合并；route_groups_test.go 钉住组字段边界、成员 id 规范化、跨范围引用校验与 00096 的三选一 CHECK / 组内 tag 唯一索引；heartbeat_metrics_test.go 钉住心跳探针的范围边界；pool_admission_test.go 钉住 PoolAdmitsUserSQL 的白名单与唯一用法；device_window_test.go 钉住设备窗口可选值与迁移 00094 一致、清理截止大于最大窗口、后台节点列表不写死窗口；node_activate_test.go 钉住上线路径只走 00005 的边且经 canary 进 active；node_refusal_test.go 钉住约束名翻译并守住全仓不再把 db.Message 直接塞进 httpx 错误；node_status_legacy_test.go 钉住旧状态接口锁行 SQL 的括号、先发布锁后锁行、终态吊销与生命周期投影表）；*_pg18_test.go 为 PG18 集成测试（effective 与 enrollment 两个域，server_token_pg18_test.go 共用 enrollment 的 openEnrollmentPG18；traffic_charge_pg18_test.go 与 usage_daily_pg18_test.go 共用 traffic_charge 域）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
