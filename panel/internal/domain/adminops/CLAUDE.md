@@ -8,6 +8,7 @@ service.go: Service 与构造（SalesCapability 销售闸门注入）；概览�
 orders.go: 订单列表（从 service.go 拆出）：orderRowSelectSQL / scanOrderRow 是 OrderRow 的唯一形状，带余额抵扣、收款渠道（入账优先、其次最近一次支付尝试）与人工单标识 manual；状态多值走 billing.ParseOrderStatuses 白名单，可按 user_id 精确筛
 providers.go: 支付渠道卡（从 service.go 拆出）：租户时区今日分币种成交、近 24 小时成功率、最近回调时间，启停带审计
 switches.go: 降级开关读写（从 service.go 拆出），数据库拒绝切换时按约束名给中文原因，PG 原句只进日志（R116）
+access_log.go: 全站访问明细读模型 ListAccessLog（从 api/admin 的 access_log.go 下沉）：同一事务里审计表与订阅拉取日志各取 limit+offset 条，分类前缀、IP 哈希（两表盐不同）、账号与 outcome 筛选由 handler 算好传入；归并、切页、解密、归属地在 handler
 audit.go: 审计日志读模型与导出，auditRowSelect / auditCond 是列表、计数、导出共用的唯一形状；带对象可读名（含流量包名）、认证强度（00080）与来源 IP 密文，导出上限 50000 行并同事务记 audit.export
 plan_pools.go: 套餐版本 ↔ 节点分组绑定（从 api/admin 的 pools.go 下沉，与 plan_wizard 同为 plan_node_pools 的写入方）：PlanPools 有草稿给草稿、没有给当前发布版且 editable=false；SetPlanPools 只许改未冻结草稿（ValidateEditablePlanPoolVersion），FOR UPDATE OF pv 锁版本、按 id 顺序 FOR KEY SHARE 锁池防死锁、row_version 乐观锁，同事务写 plan_version.pools_changed 审计；节点通知由 handler 提交后发
 user_profile.go: 用户风控画像与行为时序读模型（从 api/admin 的 profile.go 下沉）：UserActivity（注册 IP、最近 80 条行为、按来源哈希归并的前 20 个 IP 与同 IP 账号）、UserPeers（关联账号邮箱）、UserFetches（最近 50 次订阅拉取与 7 天不同来源数）三次事务与原先一致，后两者出错时返回已读部分；ActivityTimeseries 补齐日期、活跃用户两路去重；只给密文，明文由 handler 按表 AAD 解
