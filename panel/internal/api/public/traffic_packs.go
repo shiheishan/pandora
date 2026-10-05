@@ -14,13 +14,17 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type trafficPacksResponse struct {
+	Packs []billing.TrafficPack `json:"packs"`
+}
+
 func (h *handlers) listTrafficPacks(w http.ResponseWriter, r *http.Request) {
 	packs, err := h.d.Billing.ListTrafficPacks(r.Context(), httpx.TenantIDFrom(r.Context()))
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"packs": packs})
+	httpx.OK(w, trafficPacksResponse{Packs: packs})
 }
 
 type trafficPackOrderReq struct {

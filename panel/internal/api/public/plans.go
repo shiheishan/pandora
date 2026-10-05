@@ -8,12 +8,17 @@ package public
 import (
 	"net/http"
 
+	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 //------------------------------------------------------------------------------
 // 目录与账户
 //------------------------------------------------------------------------------
+
+type plansResponse struct {
+	Plans []billing.CatalogPlan `json:"plans"`
+}
 
 func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -30,5 +35,5 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.OK(w, map[string]any{"plans": out})
+	httpx.OK(w, plansResponse{Plans: out})
 }

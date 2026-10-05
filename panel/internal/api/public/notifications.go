@@ -13,8 +13,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/notify"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
+
+type notificationsResponse struct {
+	Notifications []notify.InboxItem `json:"notifications"`
+	Unread        int                `json:"unread"`
+}
 
 // listNotifications 返回站内信收件箱。
 func (h *handlers) listNotifications(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +40,7 @@ func (h *handlers) listNotifications(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"notifications": out, "unread": unread})
+	httpx.OK(w, notificationsResponse{Notifications: out, Unread: unread})
 }
 
 // markNotificationRead 标记单条已读。
@@ -55,7 +61,7 @@ func (h *handlers) markNotificationRead(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, okResponse{OK: true})
 }
 
 // markAllRead 全部标记已读。
@@ -68,7 +74,7 @@ func (h *handlers) markAllNotificationsRead(w http.ResponseWriter, r *http.Reque
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, okResponse{OK: true})
 }
 
 type notifyPrefReq struct {
@@ -91,6 +97,10 @@ var notifyPreferenceCatalog = []notifyPreference{
 	{Category: "service", Channel: "telegram", Enabled: true},
 	{Category: "marketing", Channel: "email", Enabled: true},
 	{Category: "marketing", Channel: "telegram", Enabled: true},
+}
+
+type notificationPreferencesResponse struct {
+	Preferences []notifyPreference `json:"preferences"`
 }
 
 func validNotifyPreference(category, channel string) bool {
@@ -128,7 +138,7 @@ func (h *handlers) getNotificationPreferences(w http.ResponseWriter, r *http.Req
 			item.Enabled = enabled
 		}
 	}
-	httpx.OK(w, map[string]any{"preferences": preferences})
+	httpx.OK(w, notificationPreferencesResponse{Preferences: preferences})
 }
 
 // setNotificationPreference 改通知偏好。
@@ -161,5 +171,5 @@ func (h *handlers) setNotificationPreference(w http.ResponseWriter, r *http.Requ
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, okResponse{OK: true})
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/domain/identity"
+	"github.com/aegispanel/aegis/internal/domain/notify"
 	"github.com/aegispanel/aegis/internal/domain/payment"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
@@ -21,6 +22,11 @@ import (
 )
 
 type handlers struct{ d Deps }
+
+// okResponse 是只回 {"ok": true} 的写操作响应，门户几个文件共用。
+type okResponse struct {
+	OK bool `json:"ok"`
+}
 
 //------------------------------------------------------------------------------
 // 前端
@@ -38,10 +44,15 @@ type handlers struct{ d Deps }
 // 健康检查
 //------------------------------------------------------------------------------
 
+// probeResponse 是存活 / 就绪探针的响应：只有 ok / unavailable 两种。
+type probeResponse struct {
+	Status string `json:"status"`
+}
+
 // health 是存活探针：只报告进程还在，不碰任何依赖。
 // SEC-006 要求「公网无法获得堆栈和详细健康依赖」，所以这里不暴露组件明细。
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
-	httpx.OK(w, map[string]string{"status": "ok"})
+	httpx.OK(w, probeResponse{Status: "ok"})
 }
 
 // ready 是就绪探针：检查依赖，但对外只回 ok / unavailable 两种结果。
@@ -51,15 +62,15 @@ func (h *handlers) ready(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.d.Pool.Ping(ctx); err != nil {
 		h.d.Log.Error("就绪检查失败：数据库不可达", "error", err.Error())
-		httpx.JSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+		httpx.JSON(w, http.StatusServiceUnavailable, probeResponse{Status: "unavailable"})
 		return
 	}
 	if err := h.d.Redis.Ping(ctx).Err(); err != nil {
 		h.d.Log.Error("就绪检查失败：缓存不可达", "error", err.Error())
-		httpx.JSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+		httpx.JSON(w, http.StatusServiceUnavailable, probeResponse{Status: "unavailable"})
 		return
 	}
-	httpx.OK(w, map[string]string{"status": "ok"})
+	httpx.OK(w, probeResponse{Status: "ok"})
 }
 
 //------------------------------------------------------------------------------
@@ -69,6 +80,17 @@ func (h *handlers) ready(w http.ResponseWriter, r *http.Request) {
 type registerStartReq struct {
 	Email      string `json:"email"`
 	InviteCode string `json:"invite_code"`
+}
+
+// registerStartResponse 无论邮箱是否已注册，结构与内容都一致（IAM-006）。
+type registerStartResponse struct {
+	RegistrationToken string `json:"registration_token"`
+	// 前端据此决定要不要显示验证码输入框，不该自己猜
+	VerificationRequired bool   `json:"verification_required"`
+	ExpiresAt            string `json:"expires_at"`
+	Message              string `json:"message"`
+	// DevCode 只在开发模式回带验证码时出现，平时没有这个键
+	DevCode string `json:"dev_code,omitempty"`
 }
 
 func (h *handlers) registerStart(w http.ResponseWriter, r *http.Request) {
@@ -91,18 +113,14 @@ func (h *handlers) registerStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]any{
-		"registration_token": out.RegistrationToken,
-		// 前端据此决定要不要显示验证码输入框，不该自己猜
-		"verification_required": out.VerificationRequired,
-		"expires_at":            out.ExpiresAt.UTC().Format(time.RFC3339),
+	httpx.OK(w, registerStartResponse{
+		RegistrationToken:    out.RegistrationToken,
+		VerificationRequired: out.VerificationRequired,
+		ExpiresAt:            out.ExpiresAt.UTC().Format(time.RFC3339),
 		// 注意：无论邮箱是否已注册，响应结构与内容完全一致（IAM-006）
-		"message": "若该邮箱可用于注册，验证码已发送",
-	}
-	if out.DevCode != "" {
-		resp["dev_code"] = out.DevCode
-	}
-	httpx.OK(w, resp)
+		Message: "若该邮箱可用于注册，验证码已发送",
+		DevCode: out.DevCode,
+	})
 }
 
 type registerCompleteReq struct {
@@ -112,6 +130,11 @@ type registerCompleteReq struct {
 	// Deprecated compatibility field. Invite authorization is immutable at
 	// registration start and this value is intentionally ignored.
 	InviteCode string `json:"invite_code"`
+}
+
+type registerCompleteResponse struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
 }
 
 func (h *handlers) registerComplete(w http.ResponseWriter, r *http.Request) {
@@ -131,12 +154,20 @@ func (h *handlers) registerComplete(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.Created(w, map[string]any{"user_id": out.UserID, "email": out.Email})
+	httpx.Created(w, registerCompleteResponse{UserID: out.UserID, Email: out.Email})
 }
 
 type loginReq struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+}
+
+type loginResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	UserID       string `json:"user_id"`
 }
 
 func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
@@ -159,12 +190,12 @@ func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.OK(w, map[string]any{
-		"access_token":  out.AccessToken,
-		"refresh_token": out.RefreshToken,
-		"token_type":    "Bearer",
-		"expires_in":    out.ExpiresIn,
-		"user_id":       out.UserID,
+	httpx.OK(w, loginResponse{
+		AccessToken:  out.AccessToken,
+		RefreshToken: out.RefreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    out.ExpiresIn,
+		UserID:       out.UserID,
 	})
 }
 
@@ -181,6 +212,16 @@ func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
+// meResponse 的 user_id 与权限取自令牌，其余取 users 行。
+type meResponse struct {
+	UserID      string   `json:"user_id"`
+	Email       string   `json:"email"`
+	DisplayName *string  `json:"display_name"`
+	Status      string   `json:"status"`
+	CreatedAt   string   `json:"created_at"`
+	Permissions []string `json:"permissions"`
+}
+
 func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	p := httpx.PrincipalFrom(ctx)
@@ -191,13 +232,13 @@ func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.OK(w, map[string]any{
-		"user_id":      p.UserID,
-		"email":        prof.Email,
-		"display_name": prof.DisplayName,
-		"status":       prof.Status,
-		"created_at":   prof.CreatedAt.UTC().Format(time.RFC3339),
-		"permissions":  p.Permissions,
+	httpx.OK(w, meResponse{
+		UserID:      p.UserID,
+		Email:       prof.Email,
+		DisplayName: prof.DisplayName,
+		Status:      prof.Status,
+		CreatedAt:   prof.CreatedAt.UTC().Format(time.RFC3339),
+		Permissions: p.Permissions,
 	})
 }
 
@@ -275,6 +316,17 @@ type payOrderReq struct {
 	ReturnURL string `json:"return_url"`
 }
 
+// payOrderResponse 是收银台跳转信息：http_method + redirect_url（+ form_fields 表单提交）。
+type payOrderResponse struct {
+	IntentID    string            `json:"intent_id"`
+	HTTPMethod  string            `json:"http_method"`
+	RedirectURL string            `json:"redirect_url"`
+	FormFields  map[string]string `json:"form_fields"`
+	Amount      int64             `json:"amount"`
+	Currency    string            `json:"currency"`
+	Reused      bool              `json:"reused"`
+}
+
 // payOrder 为订单创建支付意图，返回收银台跳转信息。
 func (h *handlers) payOrder(w http.ResponseWriter, r *http.Request) {
 	orderID := chi.URLParam(r, "id")
@@ -303,14 +355,14 @@ func (h *handlers) payOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.Created(w, map[string]any{
-		"intent_id":    out.IntentID,
-		"http_method":  out.HTTPMethod,
-		"redirect_url": out.RedirectURL,
-		"form_fields":  out.FormFields,
-		"amount":       out.Amount,
-		"currency":     out.Currency,
-		"reused":       out.Reused,
+	httpx.Created(w, payOrderResponse{
+		IntentID:    out.IntentID,
+		HTTPMethod:  out.HTTPMethod,
+		RedirectURL: out.RedirectURL,
+		FormFields:  out.FormFields,
+		Amount:      out.Amount,
+		Currency:    out.Currency,
+		Reused:      out.Reused,
 	})
 }
 
@@ -460,6 +512,11 @@ func isUUID(s string) bool {
 	return true
 }
 
+type siteConfigResponse struct {
+	RegistrationMode  string `json:"registration_mode"`
+	EmailVerification bool   `json:"email_verification"`
+}
+
 // siteConfig 返回渲染登录/注册页需要的站点开关。
 //
 // 前端必须先知道要不要验证邮箱，才能决定注册表单长什么样。
@@ -472,9 +529,9 @@ func (h *handlers) siteConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{
-		"registration_mode":  policy.Mode,
-		"email_verification": policy.EmailVerification,
+	httpx.OK(w, siteConfigResponse{
+		RegistrationMode:  policy.Mode,
+		EmailVerification: policy.EmailVerification,
 	})
 }
 
@@ -516,12 +573,19 @@ func (h *handlers) changePassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, okResponse{OK: true})
 }
 
 //------------------------------------------------------------------------------
 // 余额
 //------------------------------------------------------------------------------
+
+// balanceResponse 的 history 是 billing 按行拼好的流水，原样透传。
+type balanceResponse struct {
+	Balance  int64            `json:"balance"`
+	Currency string           `json:"currency"`
+	History  []map[string]any `json:"history"`
+}
 
 func (h *handlers) myBalance(w http.ResponseWriter, r *http.Request) {
 	p, ok := httpx.RequireUser(w, r, h.d.Log)
@@ -539,9 +603,7 @@ func (h *handlers) myBalance(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{
-		"balance": amount, "currency": currency, "history": history,
-	})
+	httpx.OK(w, balanceResponse{Balance: amount, Currency: currency, History: history})
 }
 
 // createTopup 建一张充值订单，之后走与买套餐相同的支付流程。
@@ -624,6 +686,10 @@ func (h *handlers) createRenewal(w http.ResponseWriter, r *http.Request) {
 	httpx.WritePrepared(w, out.PreparedResponse())
 }
 
+type announcementsResponse struct {
+	Announcements []notify.Announcement `json:"announcements"`
+}
+
 // myAnnouncements 返回当前用户可见的公告。
 func (h *handlers) myAnnouncements(w http.ResponseWriter, r *http.Request) {
 	p, ok := httpx.RequireUser(w, r, h.d.Log)
@@ -635,5 +701,5 @@ func (h *handlers) myAnnouncements(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"announcements": list})
+	httpx.OK(w, announcementsResponse{Announcements: list})
 }

@@ -29,13 +29,16 @@ func (h *handlers) listTicketCategories(w http.ResponseWriter, r *http.Request) 
 	}
 	// 固定顺序输出：map 遍历顺序随机，会让前端下拉框每次刷新都换位置
 	order := []string{"general", "technical", "subscription", "billing", "account", "abuse"}
+	type categoriesResponse struct {
+		Categories []cat `json:"categories"`
+	}
 	out := make([]cat, 0, len(order))
 	for _, c := range order {
 		if n, ok := support.Categories[c]; ok {
 			out = append(out, cat{Code: c, Name: n})
 		}
 	}
-	httpx.OK(w, map[string]any{"categories": out})
+	httpx.OK(w, categoriesResponse{Categories: out})
 }
 
 type createTicketReq struct {
@@ -71,6 +74,10 @@ func (h *handlers) createTicket(w http.ResponseWriter, r *http.Request) {
 	httpx.WritePrepared(w, out.PreparedResponse())
 }
 
+type ticketsResponse struct {
+	Tickets []support.Ticket `json:"tickets"`
+}
+
 func (h *handlers) listTickets(w http.ResponseWriter, r *http.Request) {
 	ts, err := h.d.Support.ListForUser(r.Context(),
 		httpx.TenantIDFrom(r.Context()), httpx.PrincipalFrom(r.Context()).UserID)
@@ -78,7 +85,7 @@ func (h *handlers) listTickets(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"tickets": ts})
+	httpx.OK(w, ticketsResponse{Tickets: ts})
 }
 
 func (h *handlers) getTicket(w http.ResponseWriter, r *http.Request) {

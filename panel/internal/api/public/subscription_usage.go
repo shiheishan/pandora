@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -55,17 +56,25 @@ func (h *handlers) meSubscriptionUsage(w http.ResponseWriter, r *http.Request) {
 		Date  string `json:"date"`
 		Bytes int64  `json:"bytes"`
 	}
+	type usageResponse struct {
+		Timezone      string     `json:"timezone"`
+		PeriodStart   time.Time  `json:"period_start"`
+		PeriodEnd     *time.Time `json:"period_end"`
+		Days          []dayView  `json:"days"`
+		TodayBytes    int64      `json:"today_bytes"`
+		AvgDailyBytes int64      `json:"avg_daily_bytes"`
+	}
 	out := make([]dayView, 0, len(usage.Days))
 	for _, d := range usage.Days {
 		out = append(out, dayView{Date: d.Date, Bytes: d.Bytes})
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	httpx.OK(w, map[string]any{
-		"timezone":        usage.Timezone,
-		"period_start":    usage.PeriodStart,
-		"period_end":      usage.PeriodEnd,
-		"days":            out,
-		"today_bytes":     usage.TodayBytes,
-		"avg_daily_bytes": usage.AvgDailyBytes,
+	httpx.OK(w, usageResponse{
+		Timezone:      usage.Timezone,
+		PeriodStart:   usage.PeriodStart,
+		PeriodEnd:     usage.PeriodEnd,
+		Days:          out,
+		TodayBytes:    usage.TodayBytes,
+		AvgDailyBytes: usage.AvgDailyBytes,
 	})
 }

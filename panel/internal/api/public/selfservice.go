@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain 的 billing（佣金转余额）、identity（会话列表与吊销、快捷登录）、support（工单撤回），依赖 platform 的 crypto/httpx
+// [OUTPUT]: 对外提供 handlers 的 transferCommission / listMySessions / revokeMySession / withdrawTicket / issueQuickLogin / quickLogin
+// [POS]: api/public 的自助小接口集合：彼此无关，只是都属于「用户自己能做的事」；会话只作用于门户会话，快捷登录消费是匿名入口
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
@@ -5,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/identity"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -17,6 +23,30 @@ import (
 
 type transferCommissionReq struct {
 	Amount int64 `json:"amount"` // 最小货币单位
+}
+
+type transferCommissionResponse struct {
+	LedgerTxnID string `json:"ledger_txn_id"`
+	Amount      int64  `json:"amount"`
+}
+
+type mySessionsResponse struct {
+	Sessions []identity.SessionInfo `json:"sessions"`
+}
+
+type revokeSessionResponse struct {
+	Revoked bool `json:"revoked"`
+}
+
+type withdrawTicketResponse struct {
+	Withdrawn bool `json:"withdrawn"`
+}
+
+// quickLoginResponse 与登录响应不同：没有 token_type 与 user_id。
+type quickLoginResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
 }
 
 // transferCommission 把可提现佣金转成余额。
@@ -36,7 +66,7 @@ func (h *handlers) transferCommission(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ledger_txn_id": txnID, "amount": req.Amount})
+	httpx.OK(w, transferCommissionResponse{LedgerTxnID: txnID, Amount: req.Amount})
 }
 
 func (h *handlers) listMySessions(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +77,7 @@ func (h *handlers) listMySessions(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"sessions": rows})
+	httpx.OK(w, mySessionsResponse{Sessions: rows})
 }
 
 func (h *handlers) revokeMySession(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +88,7 @@ func (h *handlers) revokeMySession(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"revoked": true})
+	httpx.OK(w, revokeSessionResponse{Revoked: true})
 }
 
 type withdrawTicketReq struct {
@@ -82,7 +112,7 @@ func (h *handlers) withdrawTicket(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"withdrawn": true})
+	httpx.OK(w, withdrawTicketResponse{Withdrawn: true})
 }
 
 // issueQuickLogin 生成一条 60 秒有效的免密登录链接。
@@ -117,9 +147,9 @@ func (h *handlers) quickLogin(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{
-		"access_token":  out.AccessToken,
-		"refresh_token": out.RefreshToken,
-		"expires_in":    out.ExpiresIn,
+	httpx.OK(w, quickLoginResponse{
+		AccessToken:  out.AccessToken,
+		RefreshToken: out.RefreshToken,
+		ExpiresIn:    out.ExpiresIn,
 	})
 }

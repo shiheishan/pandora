@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/subscription 的凭据解析、渲染、链接列表、节点预览与 Rotate，依赖 platform/httpx 与 Deps.Cfg 的 PublicBaseURL
+// [OUTPUT]: 对外提供 handlers 的 subscribe（/{prefix}/{token} 订阅分发）/ meSubscriptionLinks / meSubscriptionNodes / rotateSubscriptionLink
+// [POS]: api/public 的订阅分发与我的订阅链接：分发端点直接写出渲染好的订阅正文，认证失败一律回同一个诱饵 404 页；其余三个是登录后的 JSON 接口
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 // 订阅分发端点。
@@ -184,6 +189,9 @@ func (h *handlers) meSubscriptionLinks(w http.ResponseWriter, r *http.Request) {
 		LastFetchedAt   any    `json:"last_fetched_at"`
 		DistinctSources int    `json:"distinct_sources_24h"`
 	}
+	type linksResponse struct {
+		Links []view `json:"links"`
+	}
 	out := make([]view, 0, len(links))
 	for _, l := range links {
 		out = append(out, view{
@@ -195,7 +203,7 @@ func (h *handlers) meSubscriptionLinks(w http.ResponseWriter, r *http.Request) {
 			DistinctSources: l.DistinctSources,
 		})
 	}
-	httpx.OK(w, map[string]any{"links": out})
+	httpx.OK(w, linksResponse{Links: out})
 }
 
 // meSubscriptionNodes 只返回面板展示所需的非敏感节点摘要。
@@ -221,6 +229,10 @@ func (h *handlers) meSubscriptionNodes(w http.ResponseWriter, r *http.Request) {
 		Protocol    string  `json:"protocol"`
 		TrafficRate float64 `json:"traffic_rate"`
 	}
+	type nodesResponse struct {
+		Count int        `json:"count"`
+		Nodes []nodeView `json:"nodes"`
+	}
 	out := make([]nodeView, 0, len(nodes))
 	for _, node := range nodes {
 		out = append(out, nodeView{
@@ -228,7 +240,11 @@ func (h *handlers) meSubscriptionNodes(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	httpx.OK(w, map[string]any{"count": len(out), "nodes": out})
+	httpx.OK(w, nodesResponse{Count: len(out), Nodes: out})
+}
+
+type rotateLinkResponse struct {
+	URL string `json:"url"`
 }
 
 // rotateSubscriptionLink 换一条新链接，旧的立即失效。
@@ -251,8 +267,8 @@ func (h *handlers) rotateSubscriptionLink(w http.ResponseWriter, r *http.Request
 
 	prefix, _ := h.d.Subscription.PathPrefix(r.Context(), p.TenantID)
 	h.d.Log.Info("用户轮换订阅链接", "subscription", subID, "user", p.UserID)
-	httpx.OK(w, map[string]any{
-		"url": h.d.Cfg.PublicBaseURL + "/" + prefix + "/" + token,
+	httpx.OK(w, rotateLinkResponse{
+		URL: h.d.Cfg.PublicBaseURL + "/" + prefix + "/" + token,
 	})
 }
 

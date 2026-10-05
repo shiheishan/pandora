@@ -25,6 +25,10 @@ type paymentMethod struct {
 	Currencies []string `json:"currencies"`
 }
 
+type paymentMethodsResponse struct {
+	Methods []paymentMethod `json:"methods"`
+}
+
 // listPaymentMethods 列出能用来下单的支付方式：启用且接受新支付的渠道
 // （人工单专用渠道 accepting_new=false，自然不在里面）。方式取渠道 config.methods，
 // 没配就用 default_method；两者都没有时渠道本身算一行，method 为空串由渠道决定。
@@ -46,5 +50,5 @@ func (h *handlers) listPaymentMethods(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, m)
 	}
-	httpx.OK(w, map[string]any{"methods": out})
+	httpx.OK(w, paymentMethodsResponse{Methods: out})
 }
