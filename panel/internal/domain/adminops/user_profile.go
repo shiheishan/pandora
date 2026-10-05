@@ -8,6 +8,7 @@ package adminops
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -27,14 +28,14 @@ type UserActivityEvent struct {
 	SourceIPEnc []byte
 	UA          string
 	Domain      string
-	At          any
+	At          time.Time
 }
 
 type UserActivityIP struct {
 	SourceIPEnc []byte
 	Count       int
-	First       any
-	Last        any
+	First       time.Time
+	Last        time.Time
 	// Accounts 是同一 IP 下的账号数（含本人），AccountIDs 是这些账号
 	Accounts   int
 	AccountIDs []string
@@ -53,7 +54,7 @@ type UserFetch struct {
 	Family string
 	Result string
 	Format string
-	At     any
+	At     time.Time
 }
 
 // UserActivity 读注册 IP、最近 80 条行为与前 20 个来源 IP 的归并统计。

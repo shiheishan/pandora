@@ -173,7 +173,11 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 		items[i].NetworkKind = string(loc.Kind)
 	}
 
-	httpx.OK(w, map[string]any{"items": items})
+	httpx.OK(w, accessLogListResponse{Items: items})
+}
+
+type accessLogListResponse struct {
+	Items []accessLogItem `json:"items"`
 }
 
 // accessCategoryRules 是审计动作到展示分类的唯一映射，按顺序匹配前缀，先命中者胜。

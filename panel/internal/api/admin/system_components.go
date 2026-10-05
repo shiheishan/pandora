@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/adminops 的 PingDatabase 与 SystemCounts（节点、payment_events 未处理的支付回调、通知投递）、Deps.Redis 的 PING、platform/realtime 的 SSEConnections，依赖 system_status.go 的 backupStatus 结果
-// [OUTPUT]: 对外提供 systemComponent、postgresComponent 与 handlers.systemComponents
+// [OUTPUT]: 对外提供 systemComponent、postgresComponent、statusDeref 与 handlers.systemComponents
 // [POS]: api/admin 系统状态的组件清单（契约后台-01 GET v1/system/status 的 state / components）：8 个组件各自 ok / warn / down / unknown，任一 warn 或 down 总状态即 degraded；postgres 在统计读失败时降为 warn 且不写 metrics 键（R52：ok 时 metrics 齐全）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -20,6 +20,15 @@ type systemComponent struct {
 	LatencyMS *float64       `json:"latency_ms,omitempty"`
 	Metrics   map[string]any `json:"metrics"`
 	Message   string         `json:"message,omitempty"`
+}
+
+// statusDeref 取指针指向的值，nil 给零值（与原先从 map 断言失败取零值同义）。
+func statusDeref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
 }
 
 func millis(d time.Duration) *float64 {
@@ -54,7 +63,7 @@ func postgresComponent(pingErr error, latency time.Duration, database map[string
 
 // systemComponents 逐项探测。任何一项失败只把那一项标成 down / unknown，
 // 不让整个接口报错：系统状态页恰恰要在部分组件坏掉时还能打开。
-func (h *handlers) systemComponents(r *http.Request, database map[string]any, backup map[string]any) (string, []systemComponent) {
+func (h *handlers) systemComponents(r *http.Request, database map[string]any, backup backupStatusView) (string, []systemComponent) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	tenantID := httpx.TenantIDFrom(r.Context())
@@ -124,19 +133,24 @@ func (h *handlers) systemComponents(r *http.Request, database map[string]any, ba
 
 	// --- backup：由备份目录的探测结果派生 ---
 	bk := systemComponent{Key: "backup", State: "unknown", Metrics: map[string]any{}}
-	if readable, _ := backup["readable"].(bool); readable {
-		stale, _ := backup["stale"].(bool)
-		identity, _ := backup["identity_configured"].(bool)
-		offsite, _ := backup["offsite_configured"].(bool)
-		missing, _ := backup["missing_checksum"].(int)
-		bk.Metrics = map[string]any{"latest_age_hours": backup["latest_age_hours"], "stale": stale,
+	if backup.Readable {
+		stale := statusDeref(backup.Stale)
+		identity := statusDeref(backup.IdentityConfigured)
+		offsite := statusDeref(backup.OffsiteConfigured)
+		missing := statusDeref(backup.MissingChecksum)
+		// 没有备份文件时 latest_age_hours 为 null（键在、值空）
+		var age any
+		if backup.LatestAgeHours != nil {
+			age = *backup.LatestAgeHours
+		}
+		bk.Metrics = map[string]any{"latest_age_hours": age, "stale": stale,
 			"identity_configured": identity, "offsite_configured": offsite}
 		bk.State = "ok"
 		if stale || !identity || !offsite || missing > 0 {
 			bk.State = "warn"
 		}
-	} else if msg, _ := backup["message"].(string); msg != "" {
-		bk.Message = msg
+	} else if backup.Message != "" {
+		bk.Message = backup.Message
 	}
 	out = append(out, bk)
 

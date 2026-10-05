@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/adminops 的 DatabaseStats 读数据库体积与连接数，经 Deps.Cfg 的 Deployment 取备份目录与解密私钥路径（环境变量只在 platform/config 读），依赖 system_components.go 的组件清单
-// [OUTPUT]: 对外提供 handlers.systemStatus、backupStatus
+// [OUTPUT]: 对外提供 handlers.systemStatus、backupStatus 与响应结构 systemStatusResponse / databaseStatus / backupStatusView、泛型助手 statusPtr
 // [POS]: api/admin 的系统状态（契约后台-01 GET v1/system/status）：备份、数据库与 state / components
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -36,28 +36,76 @@ type backupFile struct {
 	HasChecksum bool `json:"has_checksum"`
 }
 
-func (h *handlers) systemStatus(w http.ResponseWriter, r *http.Request) {
-	out := map[string]any{}
+// systemStatusResponse 是 GET v1/system/status 的响应。
+type systemStatusResponse struct {
+	Backup     backupStatusView  `json:"backup"`
+	Database   databaseStatus    `json:"database"`
+	State      string            `json:"state"`
+	Components []systemComponent `json:"components"`
+}
 
+// databaseStatus 是数据库统计：读失败时只有 error，读到了只有三个数（R52：不拿零值冒充）。
+type databaseStatus struct {
+	Error          string `json:"error,omitempty"`
+	SizeBytes      *int64 `json:"size_bytes,omitempty"`
+	Connections    *int   `json:"connections,omitempty"`
+	MaxConnections *int   `json:"max_connections,omitempty"`
+}
+
+// metrics 把读到的统计摊成 postgres 组件要的键值，缺的键不出现。
+func (d databaseStatus) metrics() map[string]any {
+	m := map[string]any{}
+	if d.SizeBytes != nil {
+		m["size_bytes"] = *d.SizeBytes
+	}
+	if d.Connections != nil {
+		m["connections"] = *d.Connections
+	}
+	if d.MaxConnections != nil {
+		m["max_connections"] = *d.MaxConnections
+	}
+	return m
+}
+
+// backupStatusView 是备份目录的探测结果。读不到目录时只有 dir / readable / message；
+// 读得到时 message 缺席，latest / latest_age_hours / missing_checksum 只在有备份文件时出现，
+// identity_hint 只在私钥没配好时出现。指针字段 nil 即键缺省。
+type backupStatusView struct {
+	Dir                string        `json:"dir"`
+	Readable           bool          `json:"readable"`
+	Message            string        `json:"message,omitempty"`
+	Count              *int          `json:"count,omitempty"`
+	TotalBytes         *int64        `json:"total_bytes,omitempty"`
+	Latest             *backupFile   `json:"latest,omitempty"`
+	LatestAgeHours     *int          `json:"latest_age_hours,omitempty"`
+	Stale              *bool         `json:"stale,omitempty"`
+	MissingChecksum    *int          `json:"missing_checksum,omitempty"`
+	Recent             *[]backupFile `json:"recent,omitempty"`
+	IdentityConfigured *bool         `json:"identity_configured,omitempty"`
+	IdentityHint       string        `json:"identity_hint,omitempty"`
+	OffsiteConfigured  *bool         `json:"offsite_configured,omitempty"`
+}
+
+func statusPtr[T any](v T) *T { return &v }
+
+func (h *handlers) systemStatus(w http.ResponseWriter, r *http.Request) {
 	backup := h.backupStatus()
-	out["backup"] = backup
 
 	// 数据库体积与连接数：扩容和排查慢查询时最先要看的两个数。
 	// 三个数要么一起读到，要么一个都不给：读失败时不能拿零值冒充（R52）。
-	database := map[string]any{"error": "读取数据库状态失败"}
+	database := databaseStatus{Error: "读取数据库状态失败"}
 	if stats, err := h.d.Ops.DatabaseStats(r.Context(), httpx.TenantIDFrom(r.Context())); err != nil {
 		h.d.Log.Warn("读取数据库统计失败", "err", err)
 	} else {
-		database = map[string]any{
-			"size_bytes":      stats.SizeBytes,
-			"connections":     stats.Connections,
-			"max_connections": stats.MaxConnections,
+		database = databaseStatus{
+			SizeBytes:      statusPtr(stats.SizeBytes),
+			Connections:    statusPtr(stats.Connections),
+			MaxConnections: statusPtr(stats.MaxConnections),
 		}
 	}
-	out["database"] = database
-	out["state"], out["components"] = h.systemComponents(r, database, backup)
+	state, components := h.systemComponents(r, database.metrics(), backup)
 
-	httpx.OK(w, out)
+	httpx.OK(w, systemStatusResponse{Backup: backup, Database: database, State: state, Components: components})
 }
 
 // backupStatus 直接看文件系统，不依赖任何状态表。
@@ -65,22 +113,22 @@ func (h *handlers) systemStatus(w http.ResponseWriter, r *http.Request) {
 // 备份是由 systemd timer 跑脚本产生的，面板并不参与。与其在库里记一份
 // 「我以为备份成功了」，不如去看真实产物 —— 定时器停了、磁盘满了、
 // 脚本改坏了，这里都会如实反映出来。
-func (h *handlers) backupStatus() map[string]any {
+func (h *handlers) backupStatus() backupStatusView {
 	dir := h.d.Cfg.BackupDir
 
-	st := map[string]any{"dir": dir}
+	st := backupStatusView{Dir: dir}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		// 读不到不等于没备份：目录权限或 systemd 的 ProtectSystem 都可能挡住。
 		// 如实说清楚是「看不到」而不是「没有」—— 这两件事的处置完全不同。
-		st["readable"] = false
-		st["message"] = "面板读不到备份目录（" + dir + "）。" +
+		st.Readable = false
+		st.Message = "面板读不到备份目录（" + dir + "）。" +
 			"可能是权限或 systemd 沙箱限制，不代表备份没在跑；" +
 			"用 systemctl status aegis-backup.service 直接确认。"
 		return st
 	}
-	st["readable"] = true
+	st.Readable = true
 
 	files := []backupFile{}
 	checksums := map[string]bool{}
@@ -111,28 +159,28 @@ func (h *handlers) backupStatus() map[string]any {
 		return files[i].ModTime.After(files[j].ModTime)
 	})
 
-	st["count"] = len(files)
-	st["total_bytes"] = total
+	st.Count = statusPtr(len(files))
+	st.TotalBytes = statusPtr(total)
 	if len(files) > 0 {
-		st["latest"] = files[0]
+		st.Latest = statusPtr(files[0])
 		age := time.Since(files[0].ModTime)
-		st["latest_age_hours"] = int(age.Hours())
+		st.LatestAgeHours = statusPtr(int(age.Hours()))
 		// 超过 48 小时没有新备份，多半是定时器出了问题 —— 正常是每天一次。
-		st["stale"] = age > 48*time.Hour
+		st.Stale = statusPtr(age > 48*time.Hour)
 		missing := 0
 		for _, f := range files {
 			if !f.HasChecksum {
 				missing++
 			}
 		}
-		st["missing_checksum"] = missing
+		st.MissingChecksum = statusPtr(missing)
 	} else {
-		st["stale"] = true
+		st.Stale = statusPtr(true)
 	}
 	if len(files) > 5 {
-		st["recent"] = files[:5]
+		st.Recent = statusPtr(files[:5])
 	} else {
-		st["recent"] = files
+		st.Recent = statusPtr(files)
 	}
 
 	// 能不能解开：verify-backup.sh 要 AEGIS_BACKUP_AGE_IDENTITY 指向私钥文件。
@@ -147,16 +195,16 @@ func (h *handlers) backupStatus() map[string]any {
 	identity := h.d.Cfg.BackupAgeIdentity
 	switch {
 	case identity == "":
-		st["identity_configured"] = false
-		st["identity_hint"] = "没有配置解密私钥（AEGIS_BACKUP_AGE_IDENTITY）。" +
+		st.IdentityConfigured = statusPtr(false)
+		st.IdentityHint = "没有配置解密私钥（AEGIS_BACKUP_AGE_IDENTITY）。" +
 			"备份还在照常加密写入，但没有任何人能解开它们，也跑不了恢复演练。"
 	default:
 		if _, err := os.Stat(identity); err != nil {
-			st["identity_configured"] = false
-			st["identity_hint"] = "配置的解密私钥文件读不到：" + identity +
+			st.IdentityConfigured = statusPtr(false)
+			st.IdentityHint = "配置的解密私钥文件读不到：" + identity +
 				"。这批备份目前无法验证，也无法恢复。"
 		} else {
-			st["identity_configured"] = true
+			st.IdentityConfigured = statusPtr(true)
 		}
 	}
 
@@ -171,7 +219,7 @@ func (h *handlers) backupStatus() map[string]any {
 			break
 		}
 	}
-	st["offsite_configured"] = offsite
+	st.OffsiteConfigured = statusPtr(offsite)
 
 	return st
 }

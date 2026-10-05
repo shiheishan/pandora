@@ -18,6 +18,7 @@ package admin
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -47,28 +48,51 @@ func (h *handlers) decryptWith(enc []byte, aad string) string {
 	return string(plain)
 }
 
+// userProfileEvent 是画像里的一条行为，IP 已解密。
+type userProfileEvent struct {
+	Action  string    `json:"action"`
+	Outcome string    `json:"outcome"`
+	IP      string    `json:"ip"`
+	UA      string    `json:"ua"`
+	Domain  string    `json:"domain"`
+	At      time.Time `json:"at"`
+}
+
+// userProfileIP 是按来源 IP 归并的统计。
+type userProfileIP struct {
+	IP    string    `json:"ip"`
+	Count int       `json:"count"`
+	First time.Time `json:"first"`
+	Last  time.Time `json:"last"`
+	// Accounts 是同一 IP 下的其它账号数。大于 1 就值得看一眼 ——
+	// 但共用出口 IP 在学校、公司、家庭网络里是常态，这只是线索。
+	Accounts int `json:"accounts"`
+}
+
+// userProfileFetch 是一次订阅拉取，IP 与 UA 已解密。
+type userProfileFetch struct {
+	IP     string    `json:"ip"`
+	UA     string    `json:"ua"`
+	Family string    `json:"family"`
+	Result string    `json:"result"`
+	Format string    `json:"format"`
+	At     time.Time `json:"at"`
+}
+
+// userProfileResponse 是 GET v1/users/{id}/profile 的响应；四个列表都非 nil。
+type userProfileResponse struct {
+	Events         []userProfileEvent  `json:"events"`
+	IPs            []userProfileIP     `json:"ips"`
+	Related        []adminops.UserPeer `json:"related"`
+	Fetches        []userProfileFetch  `json:"fetches"`
+	FetchSources7d int                 `json:"fetch_sources_7d"`
+	RegisteredIP   string              `json:"registered_ip"`
+}
+
 // userProfile 返回一个用户的行为画像。
 func (h *handlers) userProfile(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 	userID := chi.URLParam(r, "id")
-
-	type event struct {
-		Action  string `json:"action"`
-		Outcome string `json:"outcome"`
-		IP      string `json:"ip"`
-		UA      string `json:"ua"`
-		Domain  string `json:"domain"`
-		At      any    `json:"at"`
-	}
-	type ipStat struct {
-		IP    string `json:"ip"`
-		Count int    `json:"count"`
-		First any    `json:"first"`
-		Last  any    `json:"last"`
-		// Accounts 是同一 IP 下的其它账号数。大于 1 就值得看一眼 ——
-		// 但共用出口 IP 在学校、公司、家庭网络里是常态，这只是线索。
-		Accounts int `json:"accounts"`
-	}
 
 	activity, err := h.d.Ops.UserActivity(r.Context(), tenantID, userID)
 	if err != nil {
@@ -76,12 +100,12 @@ func (h *handlers) userProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	registeredIP := h.decryptIP(activity.RegisteredIPEnc)
-	events := make([]event, 0, len(activity.Events))
+	events := make([]userProfileEvent, 0, len(activity.Events))
 	for _, e := range activity.Events {
-		events = append(events, event{Action: e.Action, Outcome: e.Outcome, IP: h.decryptIP(e.SourceIPEnc),
+		events = append(events, userProfileEvent{Action: e.Action, Outcome: e.Outcome, IP: h.decryptIP(e.SourceIPEnc),
 			UA: e.UA, Domain: e.Domain, At: e.At})
 	}
-	ips := make([]ipStat, 0, len(activity.IPs))
+	ips := make([]userProfileIP, 0, len(activity.IPs))
 	related := map[string]bool{}
 	for _, st := range activity.IPs {
 		for _, a := range st.AccountIDs {
@@ -89,7 +113,7 @@ func (h *handlers) userProfile(w http.ResponseWriter, r *http.Request) {
 				related[a] = true
 			}
 		}
-		ips = append(ips, ipStat{IP: h.decryptIP(st.SourceIPEnc), Count: st.Count,
+		ips = append(ips, userProfileIP{IP: h.decryptIP(st.SourceIPEnc), Count: st.Count,
 			First: st.First, Last: st.Last, Accounts: st.Accounts})
 	}
 
@@ -104,25 +128,17 @@ func (h *handlers) userProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 订阅拉取记录单独查一遍（判断链接是否被分享出去的证据），读失败同样不拦整个画像
-	type fetch struct {
-		IP     string `json:"ip"`
-		UA     string `json:"ua"`
-		Family string `json:"family"`
-		Result string `json:"result"`
-		Format string `json:"format"`
-		At     any    `json:"at"`
-	}
 	rawFetches, fetchSources, _ := h.d.Ops.UserFetches(r.Context(), tenantID, userID)
-	fetches := make([]fetch, 0, len(rawFetches))
+	fetches := make([]userProfileFetch, 0, len(rawFetches))
 	for _, f := range rawFetches {
-		fetches = append(fetches, fetch{IP: h.decryptWith(f.IPEnc, "subfetch"), UA: h.decryptWith(f.UAEnc, "subfetch"),
+		fetches = append(fetches, userProfileFetch{IP: h.decryptWith(f.IPEnc, "subfetch"), UA: h.decryptWith(f.UAEnc, "subfetch"),
 			Family: f.Family, Result: f.Result, Format: f.Format, At: f.At})
 	}
 
-	httpx.OK(w, map[string]any{
-		"events": events, "ips": ips, "related": peers,
-		"fetches": fetches, "fetch_sources_7d": fetchSources,
-		"registered_ip": registeredIP,
+	httpx.OK(w, userProfileResponse{
+		Events: events, IPs: ips, Related: peers,
+		Fetches: fetches, FetchSources7d: fetchSources,
+		RegisteredIP: registeredIP,
 	})
 }
 
@@ -138,5 +154,9 @@ func (h *handlers) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"points": out})
+	httpx.OK(w, statsTimeseriesResponse{Points: out})
+}
+
+type statsTimeseriesResponse struct {
+	Points []adminops.TimeseriesPoint `json:"points"`
 }
