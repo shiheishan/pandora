@@ -29,6 +29,7 @@ manual_order.go: 管理员人工单与 mark-paid，复用下单与回调主链�
 my_orders.go: 门户订单读模型：myOrderSelectSQL 是列表与详情共用的行形状（首项周期与商品名快照、has_payment_intent 有无任何支付意图），列表带筛选段计数 counts，详情带优惠码、订阅到期与支付渠道名；ParseOrderStatuses 是门户与后台订单列表共用的状态白名单（逗号多值、精确匹配、未知回 400）
 coupon.go: 优惠券校验 applyCoupon、核销 redeemCoupon 与试算（套餐 PreviewForPrice、流量包 PreviewForTrafficPack 共用 previewCoupon 外壳，响应带券面）
 commission.go: 分销佣金计提、解冻、提现申请与打款记账；计佣范围 commission.scope（first_order 只给被推荐人第一笔计佣订单返佣，缺省 every_order），ValidCommissionScope 供后台校验；CommissionDefault* 是分销参数缺行时的唯一回退值（= 00028 / 00029 生效的种子：费率 0、冻结 3 天、最低提现 10000），计提与后台分销页共用
+commission_admin.go: 后台佣金与提现用例（从 api/admin/commission.go 下沉）：AdminListWithdrawals（收款信息只回密文，handler 解开）、AdminReviewWithdrawal 只审待处理的申请、AdminMarkWithdrawalPaid 锁行 → PostWithdrawalPayout 记账 → CAS 置 paid 同一事务、AdminCommissionOverview 汇总并按 CommissionDefault* 回退参数、AdminSetCommissionConfig 只 upsert 给出的参数且有改动才审计
 commission_available.go: 「可用佣金」唯一口径（D-F-1），提现与转余额共用
 commission_transfer.go: 佣金转入余额，与提现同一把科目锁；ListMyCommissionTransfers 列本人转出（门户佣金记录）
 giftgrant.go: 礼品卡的发放侧（余额、流量包余额、延期、重置、开套餐）

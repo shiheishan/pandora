@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 domain/billing 的提现打款记账、佣金口径与 CommissionScope* / ValidCommissionScope / CommissionDefault*，读写 commission_entries / withdrawals / referrals / system_settings，依赖 platform 的 db/httpx/audit
+// [INPUT]: 依赖 domain/billing 的 Admin* 佣金与提现用例（读写、记账、审计在 billing/commission_admin.go）、ValidCommissionScope 与 AdjustBalance，依赖 profile.go 的 decryptWith 解开收款信息，依赖 platform/httpx
 // [OUTPUT]: 对包内提供提现列表、审批、打款、分销总览、分销参数与余额调整处理器
-// [POS]: api/admin 后台-06 佣金与提现的 HTTP 外壳与读模型：总览带累计佣金、邀请注册数与计佣范围；分销参数的计佣范围以字符串 jsonb 存进 system_settings
+// [POS]: api/admin 后台-06 佣金与提现的 HTTP 外壳：校验入参、调 billing、写响应；总览带累计佣金、邀请注册数与计佣范围
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -18,11 +18,8 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/billing"
-	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -49,43 +46,20 @@ func (h *handlers) listWithdrawals(w http.ResponseWriter, r *http.Request) {
 		// 提现额远大于历史佣金说明哪里不对
 		Earned int64 `json:"earned_total"`
 	}
-	out := []row{}
-
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(r.Context(), `
-			SELECT wd.id::text, COALESCE(u.email::text,''), wd.user_id::text,
-			       wd.amount, wd.currency::text, wd.status,
-			       COALESCE(wd.payout_detail_encrypted, ''::bytea),
-			       COALESCE(wd.reject_reason,''), wd.requested_at, wd.completed_at,
-			       COALESCE((SELECT sum(ce.commission_amount) FROM commission_entries ce
-			                  WHERE ce.tenant_id = wd.tenant_id
-			                    AND ce.referrer_user_id = wd.user_id
-			                    AND ce.status <> 'reversed'), 0)
-			  FROM withdrawals wd
-			  LEFT JOIN users u ON u.id = wd.user_id
-			 WHERE wd.tenant_id = $1
-			   AND ($2 = '' OR wd.status = $2)
-			 ORDER BY wd.requested_at DESC LIMIT 200`, tenantID, status)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var rw row
-			var enc []byte
-			if err := rows.Scan(&rw.ID, &rw.Email, &rw.UserID, &rw.Amount, &rw.Currency,
-				&rw.Status, &enc, &rw.Reject, &rw.Requested, &rw.Completed,
-				&rw.Earned); err != nil {
-				return err
-			}
-			rw.Payout = h.decryptWith(enc, "payout")
-			out = append(out, rw)
-		}
-		return rows.Err()
-	})
+	rows, err := h.d.Billing.AdminListWithdrawals(r.Context(), tenantID, status)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
+	}
+	out := make([]row, 0, len(rows))
+	for _, wd := range rows {
+		out = append(out, row{
+			ID: wd.ID, Email: wd.Email, UserID: wd.UserID, Amount: wd.Amount,
+			Currency: wd.Currency, Status: wd.Status,
+			Payout: h.decryptWith(wd.PayoutEncrypted, "payout"),
+			Reject: wd.Reject, Requested: wd.Requested, Completed: wd.Completed,
+			Earned: wd.Earned,
+		})
 	}
 	httpx.OK(w, map[string]any{"withdrawals": out})
 }
@@ -133,30 +107,7 @@ func (h *handlers) reviewWithdrawal(w http.ResponseWriter, r *http.Request) {
 		actorID = &v
 	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 只有还在待处理状态的申请可以审批。已打款的再被「拒绝」
-		// 会让钱既出去了又记成拒绝
-		tag, err := tx.Exec(r.Context(), `
-			UPDATE withdrawals
-			   SET status = $3, reject_reason = $4, updated_at = now(),
-			       completed_at = CASE WHEN $3 = 'rejected' THEN now() ELSE completed_at END
-			 WHERE tenant_id = $1 AND id = $2::uuid
-			   AND status IN ('requested','reviewing')`,
-			tenantID, id, newStatus, nullIfBlank(req.Reason))
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return httpx.New(httpx.CodeConflict, "该提现申请已被处理过")
-		}
-		return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-			ActorKind: "admin", ActorID: actorID,
-			Action: "withdrawal." + req.Action, ResourceType: "withdrawal", ResourceID: &id,
-			APIDomain: "admin", Outcome: "success",
-			RequestID:   httpx.RequestIDFrom(r.Context()),
-			AfterDigest: map[string]any{"status": newStatus, "reason": req.Reason},
-		})
-	})
+	err := h.d.Billing.AdminReviewWithdrawal(r.Context(), tenantID, actorID, id, req.Action, newStatus, req.Reason)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -190,51 +141,7 @@ func (h *handlers) markWithdrawalPaid(w http.ResponseWriter, r *http.Request) {
 		actorID = &v
 	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var userID, currency string
-		var amount int64
-		err := tx.QueryRow(r.Context(), `
-			SELECT user_id::text, currency::text, amount
-			  FROM withdrawals
-			 WHERE tenant_id = $1 AND id = $2::uuid AND status = 'approved'
-			 FOR UPDATE`, tenantID, id).Scan(&userID, &currency, &amount)
-		if err == pgx.ErrNoRows {
-			return httpx.New(httpx.CodeConflict, "只有已批准的提现才能标记为已打款")
-		}
-		if err != nil {
-			return err
-		}
-
-		txnID, err := h.d.Billing.PostWithdrawalPayout(r.Context(), tx, tenantID,
-			userID, currency, amount, id)
-		if err != nil {
-			return err
-		}
-
-		tag, err := tx.Exec(r.Context(), `
-			UPDATE withdrawals
-			   SET status = 'paid', payout_reference = $3, payout_txn_id = $4::uuid,
-			       completed_at = now(), updated_at = now()
-			 WHERE tenant_id = $1 AND id = $2::uuid
-			   AND status = 'processing' AND payout_txn_id = $4::uuid`,
-			tenantID, id, req.Reference, txnID)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return httpx.New(httpx.CodeConflict, "提现状态已变化，请刷新后重试")
-		}
-
-		return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-			ActorKind: "admin", ActorID: actorID,
-			Action: "withdrawal.paid", ResourceType: "withdrawal", ResourceID: &id,
-			APIDomain: "admin", Outcome: "success",
-			RequestID: httpx.RequestIDFrom(r.Context()),
-			AfterDigest: map[string]any{
-				"amount": amount, "currency": currency, "reference": req.Reference,
-				"ledger_txn": txnID},
-		})
-	})
+	err := h.d.Billing.AdminMarkWithdrawalPaid(r.Context(), tenantID, actorID, id, req.Reference)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -256,73 +163,17 @@ func normalizePayoutReference(value string) string {
 func (h *handlers) commissionOverview(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 
-	out := map[string]any{}
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var pending, available, paidOut, thisMonth, totalEarned int64
-		var entries, reviewers, invited int
-		if err := tx.QueryRow(r.Context(), `
-			SELECT COALESCE(sum(commission_amount) FILTER (WHERE status='pending'),0),
-			       COALESCE(sum(commission_amount) FILTER (WHERE status='available'),0),
-			       COALESCE(sum(commission_amount) FILTER (
-			         WHERE created_at >= date_trunc('month', now())),0),
-			       COALESCE(sum(commission_amount) FILTER (
-			         WHERE status NOT IN ('reversed','rejected')),0),
-			       count(*),
-			       count(*) FILTER (WHERE review_required = true AND status = 'pending'),
-			       (SELECT count(*) FROM referrals WHERE tenant_id = $1)
-			  FROM commission_entries WHERE tenant_id = $1`,
-			tenantID).Scan(&pending, &available, &thisMonth, &totalEarned,
-			&entries, &reviewers, &invited); err != nil {
-			return err
-		}
-		if err := tx.QueryRow(r.Context(), `
-			SELECT COALESCE(sum(amount),0) FROM withdrawals
-			 WHERE tenant_id = $1 AND status = 'paid'`, tenantID).Scan(&paidOut); err != nil {
-			return err
-		}
-
-		var rate, freeze int
-		var minW int64
-		var scope string
-		if err := tx.QueryRow(r.Context(), `
-			SELECT COALESCE((SELECT (value #>> '{}')::int FROM system_settings
-			                  WHERE tenant_id=$1 AND key='commission.rate_percent'),$2::int),
-			       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
-			                  WHERE tenant_id=$1 AND key='commission.freeze_days'),$3::int),
-			       COALESCE((SELECT (value #>> '{}')::bigint FROM system_settings
-			                  WHERE tenant_id=$1 AND key='commission.min_withdraw'),$4::bigint),
-			       COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id=$1 AND key='commission.scope'),'')`,
-			// 缺行回退与计提同一组常量（billing.CommissionDefault*）
-			tenantID, billing.CommissionDefaultRatePercent, billing.CommissionDefaultFreezeDays,
-			billing.CommissionDefaultMinWithdraw).Scan(&rate, &freeze, &minW, &scope); err != nil {
-			return err
-		}
-		// 与计提同一个兜底：没有设置或值不认识都按每笔订单
-		if !billing.ValidCommissionScope(scope) {
-			scope = billing.CommissionScopeEveryOrder
-		}
-
-		var waiting int
-		if err := tx.QueryRow(r.Context(), `
-			SELECT count(*) FROM withdrawals
-			 WHERE tenant_id = $1 AND status IN ('requested','reviewing')`,
-			tenantID).Scan(&waiting); err != nil {
-			return err
-		}
-
-		out = map[string]any{
-			"pending": pending, "available": available, "paid_out": paidOut,
-			"this_month": thisMonth, "entries": entries,
-			"need_review": reviewers, "waiting_withdrawals": waiting,
-			"rate_percent": rate, "freeze_days": freeze, "min_withdraw": minW,
-			"total_earned": totalEarned, "invited_users": invited, "scope": scope,
-		}
-		return nil
-	})
+	st, err := h.d.Billing.AdminCommissionOverview(r.Context(), tenantID)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
+	}
+	out := map[string]any{
+		"pending": st.Pending, "available": st.Available, "paid_out": st.PaidOut,
+		"this_month": st.ThisMonth, "entries": st.Entries,
+		"need_review": st.NeedReview, "waiting_withdrawals": st.WaitingWithdrawals,
+		"rate_percent": st.RatePercent, "freeze_days": st.FreezeDays, "min_withdraw": st.MinWithdraw,
+		"total_earned": st.TotalEarned, "invited_users": st.InvitedUsers, "scope": st.Scope,
 	}
 	httpx.OK(w, out)
 }
@@ -366,69 +217,15 @@ func (h *handlers) setCommissionConfig(w http.ResponseWriter, r *http.Request) {
 		actorID = &v
 	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		set := func(key string, val any) error {
-			_, err := tx.Exec(r.Context(), `
-				INSERT INTO system_settings (tenant_id, key, value)
-				VALUES ($1, $2, to_jsonb($3::bigint))
-				ON CONFLICT (tenant_id, key)
-				DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-				tenantID, key, val)
-			return err
-		}
-		changed := map[string]any{}
-		if req.Scope != nil {
-			// 计佣范围是字符串，不能走上面按 bigint 写的 set
-			if _, err := tx.Exec(r.Context(), `
-				INSERT INTO system_settings (tenant_id, key, value)
-				VALUES ($1, 'commission.scope', to_jsonb($2::text))
-				ON CONFLICT (tenant_id, key)
-				DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-				tenantID, *req.Scope); err != nil {
-				return err
-			}
-			changed["scope"] = *req.Scope
-		}
-		if req.RatePercent != nil {
-			if err := set("commission.rate_percent", int64(*req.RatePercent)); err != nil {
-				return err
-			}
-			changed["rate_percent"] = *req.RatePercent
-		}
-		if req.FreezeDays != nil {
-			if err := set("commission.freeze_days", int64(*req.FreezeDays)); err != nil {
-				return err
-			}
-			changed["freeze_days"] = *req.FreezeDays
-		}
-		if req.MinWithdraw != nil {
-			if err := set("commission.min_withdraw", *req.MinWithdraw); err != nil {
-				return err
-			}
-			changed["min_withdraw"] = *req.MinWithdraw
-		}
-		if len(changed) == 0 {
-			return nil
-		}
-		return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-			ActorKind: "admin", ActorID: actorID,
-			Action: "commission.config_changed", ResourceType: "system_settings",
-			APIDomain: "admin", Outcome: "success",
-			RequestID: httpx.RequestIDFrom(r.Context()), AfterDigest: changed,
-		})
+	err := h.d.Billing.AdminSetCommissionConfig(r.Context(), tenantID, actorID, billing.CommissionConfigInput{
+		RatePercent: req.RatePercent, FreezeDays: req.FreezeDays,
+		MinWithdraw: req.MinWithdraw, Scope: req.Scope,
 	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	httpx.OK(w, map[string]any{"ok": true})
-}
-
-func nullIfBlank(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 // adjustBalance 由管理员直接增减用户余额。
