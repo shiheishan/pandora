@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/notify 的 SMTP 配置与发信器、MailSettings / SaveMailSettings（读写、upsert 与审计在 notify/mail_settings.go），domain/identity 的 EmailVerificationDefault 与注册模式常量，platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 getMailSettings / setMailSettings / testMailSettings
+// [OUTPUT]: 对外提供 handlers 的 getMailSettings / setMailSettings / testMailSettings；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的邮件与注册设置接口；全部设置项 upsert（SMTP 密码行缺失也能写入，R94）；发件人名缺省显示站点名，测试信主题带发件人名
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -20,6 +20,18 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type getMailSettingsResponse struct {
+	EmailVerification bool   `json:"email_verification"`
+	Encryption        string `json:"encryption"`
+	FromAddress       string `json:"from_address"`
+	FromName          string `json:"from_name"`
+	HasPassword       bool   `json:"has_password"`
+	RegistrationMode  string `json:"registration_mode"`
+	SMTPHost          string `json:"smtp_host"`
+	SMTPPort          int    `json:"smtp_port"`
+	SMTPUsername      string `json:"smtp_username"`
+}
+
 func (h *handlers) getMailSettings(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 
@@ -30,12 +42,12 @@ func (h *handlers) getMailSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.OK(w, map[string]any{
-		"smtp_host": st.SMTPHost, "smtp_port": st.SMTPPort, "encryption": st.Encryption,
-		"smtp_username": st.SMTPUsername, "has_password": st.HasPassword,
-		"from_address": st.FromAddress, "from_name": st.FromName,
-		"email_verification": st.EmailVerification,
-		"registration_mode":  st.RegistrationMode,
+	httpx.OK(w, getMailSettingsResponse{
+		SMTPHost: st.SMTPHost, SMTPPort: st.SMTPPort, Encryption: st.Encryption,
+		SMTPUsername: st.SMTPUsername, HasPassword: st.HasPassword,
+		FromAddress: st.FromAddress, FromName: st.FromName,
+		EmailVerification: st.EmailVerification,
+		RegistrationMode:  st.RegistrationMode,
 	})
 }
 
@@ -51,6 +63,10 @@ type mailSettingsReq struct {
 	FromName         string  `json:"from_name"`
 	EmailVerify      *bool   `json:"email_verification"`
 	RegistrationMode *string `json:"registration_mode"`
+}
+
+type setMailSettingsResponse struct {
+	OK bool `json:"ok"`
 }
 
 func (h *handlers) setMailSettings(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +125,12 @@ func (h *handlers) setMailSettings(w http.ResponseWriter, r *http.Request) {
 	if h.d.SMTPProvider != nil {
 		h.d.SMTPProvider.Invalidate()
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, setMailSettingsResponse{OK: true})
+}
+
+type testMailSettingsResponse struct {
+	OK bool   `json:"ok"`
+	To string `json:"to"`
 }
 
 // testMailSettings 用当前配置发一封测试邮件。
@@ -154,5 +175,5 @@ func (h *handlers) testMailSettings(w http.ResponseWriter, r *http.Request) {
 			"发送失败："+err.Error()))
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "to": req.To})
+	httpx.OK(w, testMailSettingsResponse{OK: true, To: req.To})
 }
