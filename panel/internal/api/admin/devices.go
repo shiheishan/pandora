@@ -29,7 +29,14 @@ func (h *handlers) listOnlineDevices(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"devices": out.Devices, "mode": out.Mode, "grace": out.Grace, "window_minutes": out.WindowMinutes})
+	httpx.OK(w, listOnlineDevicesResponse{Devices: out.Devices, Mode: out.Mode, Grace: out.Grace, WindowMinutes: out.WindowMinutes})
+}
+
+type listOnlineDevicesResponse struct {
+	Devices       []nodefabric.OnlineDevice `json:"devices"`
+	Mode          string                    `json:"mode"`
+	Grace         int                       `json:"grace"`
+	WindowMinutes int                       `json:"window_minutes"`
 }
 
 type deviceLimitReq struct {
@@ -63,7 +70,11 @@ func (h *handlers) setDeviceLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.d.Log.Info("管理员调整设备数限制", "subscription", subID, "limit", req.Limit)
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, setDeviceLimitResponse{OK: true})
+}
+
+type setDeviceLimitResponse struct {
+	OK bool `json:"ok"`
 }
 
 type deviceModeReq struct {
@@ -104,5 +115,9 @@ func (h *handlers) setDeviceMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.d.Log.Info("管理员切换设备限制模式", "mode", req.Mode, "window_minutes", req.WindowMinutes)
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, setDeviceModeResponse{OK: true})
+}
+
+type setDeviceModeResponse struct {
+	OK bool `json:"ok"`
 }

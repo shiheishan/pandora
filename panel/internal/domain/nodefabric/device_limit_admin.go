@@ -8,6 +8,7 @@ package nodefabric
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -18,15 +19,15 @@ import (
 
 // OnlineDevice 是在线设备概览的一行（一条在用订阅）。
 type OnlineDevice struct {
-	SubscriptionID string `json:"subscription_id"`
-	Email          string `json:"email"`
-	Plan           string `json:"plan"`
-	Limit          int    `json:"limit"`
-	Online         int    `json:"online"`
-	Nodes          int    `json:"nodes"`
-	Overridden     bool   `json:"overridden"`
-	Exceeded       bool   `json:"exceeded"`
-	LastSeenAt     any    `json:"last_seen_at"`
+	SubscriptionID string     `json:"subscription_id"`
+	Email          string     `json:"email"`
+	Plan           string     `json:"plan"`
+	Limit          int        `json:"limit"`
+	Online         int        `json:"online"`
+	Nodes          int        `json:"nodes"`
+	Overridden     bool       `json:"overridden"`
+	Exceeded       bool       `json:"exceeded"`
+	LastSeenAt     *time.Time `json:"last_seen_at"`
 }
 
 // DeviceOverview 是在线设备概览与当前生效的判定策略。

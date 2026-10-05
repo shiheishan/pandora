@@ -74,7 +74,13 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 		item.Protocol = nodefabric.RedactProtocolConfig(x.Protocol)
 		out = append(out, item)
 	}
-	httpx.OK(w, map[string]any{"nodes": out, "total": total})
+	httpx.OK(w, nodeListResponse{Nodes: out, Total: total})
+}
+
+// nodeListResponse 是 GET v1/nodes 的响应；Nodes 非 nil，空页编成 []。
+type nodeListResponse struct {
+	Nodes []nodeListItem `json:"nodes"`
+	Total int64          `json:"total"`
 }
 
 // nodeListPage 解析节点列表的分页参数。默认 500 条、最多 1000 条：前端按
@@ -196,7 +202,12 @@ func (h *handlers) nodeSetStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "row_version": req.RowVersion + 1})
+	httpx.OK(w, nodeSetStatusResponse{OK: true, RowVersion: req.RowVersion + 1})
+}
+
+type nodeSetStatusResponse struct {
+	OK         bool  `json:"ok"`
+	RowVersion int64 `json:"row_version"`
 }
 
 // nodeRevokeIdentity 吊销节点身份（NODE-014）。
@@ -207,7 +218,11 @@ func (h *handlers) nodeRevokeIdentity(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, nodeRevokeIdentityResponse{OK: true})
+}
+
+type nodeRevokeIdentityResponse struct {
+	OK bool `json:"ok"`
 }
 
 type publishCfgReq struct {
@@ -298,7 +313,11 @@ func (h *handlers) nodeSetProtocol(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) nodeProtocolSchemas(w http.ResponseWriter, r *http.Request) {
-	httpx.OK(w, map[string]any{"schemas": nodefabric.ProtocolSchemas()})
+	httpx.OK(w, nodeProtocolSchemasResponse{Schemas: nodefabric.ProtocolSchemas()})
+}
+
+type nodeProtocolSchemasResponse struct {
+	Schemas []nodefabric.ProtocolSchema `json:"schemas"`
 }
 
 // nodeIssueServerToken 签发 UniProxy 接入令牌，明文只返回一次。
@@ -321,13 +340,21 @@ func (h *handlers) nodeIssueServerToken(w http.ResponseWriter, r *http.Request) 
 	// 一并给出可直接粘贴的安装命令。令牌只显示这一次；命令本身通过
 	// 终端读取令牌，不把运行凭据嵌进 argv 或 shell history。
 	install := nodefabric.RenderLegacyInstallCommand(panelURL, nodeID, nodeType)
-	httpx.Created(w, map[string]any{
-		"token":           tok,
-		"node_type":       nodeType,
-		"panel_url":       panelURL,
-		"install_command": install,
-		"hint":            "该令牌只显示一次。重新签发会立即作废旧令牌——正在运行的节点会拉配置失败（401）直到用新令牌重装，请确认后再执行安装命令。",
+	httpx.Created(w, nodeIssueServerTokenResponse{
+		Token:          tok,
+		NodeType:       nodeType,
+		PanelURL:       panelURL,
+		InstallCommand: install,
+		Hint:           "该令牌只显示一次。重新签发会立即作废旧令牌——正在运行的节点会拉配置失败（401）直到用新令牌重装，请确认后再执行安装命令。",
 	})
+}
+
+type nodeIssueServerTokenResponse struct {
+	Token          string `json:"token"`
+	NodeType       string `json:"node_type"`
+	PanelURL       string `json:"panel_url"`
+	InstallCommand string `json:"install_command"`
+	Hint           string `json:"hint"`
 }
 
 func nullStrAdmin(s string) *string {
@@ -366,12 +393,19 @@ func (h *handlers) nodeRealityKeypair(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
 	}
-	httpx.OK(w, map[string]any{
-		"private_key": priv,
-		"public_key":  pub,
-		"short_id":    hex.EncodeToString(sid[:]),
-		"hint":        "私钥只在这一次返回，保存后无法再查看",
+	httpx.OK(w, nodeRealityKeypairResponse{
+		PrivateKey: priv,
+		PublicKey:  pub,
+		ShortID:    hex.EncodeToString(sid[:]),
+		Hint:       "私钥只在这一次返回，保存后无法再查看",
 	})
+}
+
+type nodeRealityKeypairResponse struct {
+	PrivateKey string `json:"private_key"`
+	PublicKey  string `json:"public_key"`
+	ShortID    string `json:"short_id"`
+	Hint       string `json:"hint"`
 }
 
 type nodeDeleteReq struct {
@@ -395,5 +429,9 @@ func (h *handlers) nodeDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"deleted": true})
+	httpx.OK(w, nodeDeleteResponse{Deleted: true})
+}
+
+type nodeDeleteResponse struct {
+	Deleted bool `json:"deleted"`
 }

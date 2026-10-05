@@ -37,7 +37,11 @@ func (h *handlers) listNodePools(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"pools": out})
+	httpx.OK(w, listNodePoolsResponse{Pools: out})
+}
+
+type listNodePoolsResponse struct {
+	Pools []nodefabric.NodePool `json:"pools"`
 }
 
 type poolReq struct {
@@ -100,7 +104,11 @@ func (h *handlers) createNodePool(w http.ResponseWriter, r *http.Request) {
 	if groupsChanged {
 		h.notifyNodeUsersChanged(r)
 	}
-	httpx.OK(w, map[string]any{"id": newID})
+	httpx.OK(w, createNodePoolResponse{ID: newID})
+}
+
+type createNodePoolResponse struct {
+	ID string `json:"id"`
 }
 
 func (h *handlers) updateNodePool(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +146,11 @@ func (h *handlers) updateNodePool(w http.ResponseWriter, r *http.Request) {
 	if groupsChanged {
 		h.notifyNodeUsersChanged(r)
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, updateNodePoolResponse{OK: true})
+}
+
+type updateNodePoolResponse struct {
+	OK bool `json:"ok"`
 }
 
 func (h *handlers) deleteNodePool(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +162,11 @@ func (h *handlers) deleteNodePool(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, deleteNodePoolResponse{OK: true})
+}
+
+type deleteNodePoolResponse struct {
+	OK bool `json:"ok"`
 }
 
 // assignNodePool 把一个节点归到某个分组。
@@ -183,7 +199,11 @@ func (h *handlers) assignNodePool(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, assignNodePoolResponse{OK: true})
+}
+
+type assignNodePoolResponse struct {
+	OK bool `json:"ok"`
 }
 
 // planPools returns the mutable draft bindings when a draft exists. Without a
@@ -201,10 +221,19 @@ func (h *handlers) planPools(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{
-		"version_id": out.VersionID, "version_status": out.VersionStatus,
-		"row_version": out.RowVersion, "editable": out.Editable, "pools": out.Pools,
+	httpx.OK(w, planPoolsResponse{
+		VersionID: out.VersionID, VersionStatus: out.VersionStatus,
+		RowVersion: out.RowVersion, Editable: out.Editable, Pools: out.Pools,
 	})
+}
+
+// planPoolsResponse 是 GET v1/plans/{id}/pools 的响应；没有任何版本时 version_id 为空串。
+type planPoolsResponse struct {
+	VersionID     string                    `json:"version_id"`
+	VersionStatus string                    `json:"version_status"`
+	RowVersion    int64                     `json:"row_version"`
+	Editable      bool                      `json:"editable"`
+	Pools         []adminops.PlanPoolOption `json:"pools"`
 }
 
 type setPlanPoolsReq struct {
@@ -265,9 +294,15 @@ func (h *handlers) setPlanPools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.notifyNodeUsersChanged(r)
-	httpx.OK(w, map[string]any{
-		"bound": len(poolIDs), "row_version": next, "version_id": req.VersionID,
+	httpx.OK(w, setPlanPoolsResponse{
+		Bound: len(poolIDs), RowVersion: next, VersionID: req.VersionID,
 	})
+}
+
+type setPlanPoolsResponse struct {
+	Bound      int    `json:"bound"`
+	RowVersion int64  `json:"row_version"`
+	VersionID  string `json:"version_id"`
 }
 
 // notifyNodeUsersChanged 在改变交付集合的写操作提交后，发一次租户级

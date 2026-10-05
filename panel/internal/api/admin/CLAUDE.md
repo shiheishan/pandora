@@ -1,7 +1,7 @@
 # panel/internal/api/admin/
 > L2 | 父级: /panel/internal/api/CLAUDE.md
 
-管理控制台 API：只做路由、鉴权链与 DTO，业务编排在 domain。每条路由的门槛逐条声明在 router_<模块>.go 里：RequirePermission（缺权限回 404，不暴露接口存在）→ RequireRecentReauth（高危写 15 分钟内输过密码）→ Idempotency（重试不重做），reauth 失败不消耗幂等键。来源 IP 在审计里只存密文，这一层用 Deps.Envelope 解开、用 Deps.GeoIP 翻成归属地——解密集中在 profile.go 的 decryptWith，按表区分 AAD。
+管理控制台 API：只做路由、鉴权链与 DTO，业务编排在 domain。每条路由的门槛逐条声明在 router_<模块>.go 里：RequirePermission（缺权限回 404，不暴露接口存在）→ RequireRecentReauth（高危写 15 分钟内输过密码）→ Idempotency（重试不重做），reauth 失败不消耗幂等键。网络 / 运维 / 安全这一半（netOpsHandlerFiles）的成功响应都是各自文件里的具名结构体（<处理器名>Response），键名照抄原 map，条件键用指针或 omitempty 还原「有时缺省」。来源 IP 在审计里只存密文，这一层用 Deps.Envelope 解开、用 Deps.GeoIP 翻成归属地——解密集中在 profile.go 的 decryptWith，按表区分 AAD。
 
 成员清单
 router.go: Deps 与 NewRouter：全局中间件链，/v1 挂 admin.writes 只读门（middleware.AdminWritesGate），根 / 与 /assets/* 经 webapp 下发后台前端，/v1 登录分组与已登录分组；已登录分组按拆分前的原顺序调用各 router_<模块>.go 的 register*Routes，顺序不要重排

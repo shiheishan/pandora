@@ -61,7 +61,12 @@ func (h *handlers) serverList(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"servers": out, "total": len(out)})
+	httpx.OK(w, serverListResponse{Servers: out, Total: len(out)})
+}
+
+type serverListResponse struct {
+	Servers []nodefabric.Server `json:"servers"`
+	Total   int                 `json:"total"`
 }
 
 func (h *handlers) serverCreate(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +181,12 @@ func (h *handlers) serverDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "id": id})
+	httpx.OK(w, serverDeleteResponse{OK: true, ID: id})
+}
+
+type serverDeleteResponse struct {
+	OK bool   `json:"ok"`
+	ID string `json:"id"`
 }
 
 func (h *handlers) serverNodes(w http.ResponseWriter, r *http.Request) {
@@ -190,5 +200,10 @@ func (h *handlers) serverNodes(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"nodes": out, "total": len(out)})
+	httpx.OK(w, serverNodesResponse{Nodes: out, Total: len(out)})
+}
+
+type serverNodesResponse struct {
+	Nodes []nodefabric.ServerNode `json:"nodes"`
+	Total int                     `json:"total"`
 }
