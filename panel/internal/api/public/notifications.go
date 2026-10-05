@@ -18,9 +18,8 @@ import (
 
 // listNotifications 返回站内信收件箱。
 func (h *handlers) listNotifications(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 
@@ -40,9 +39,8 @@ func (h *handlers) listNotifications(w http.ResponseWriter, r *http.Request) {
 
 // markNotificationRead 标记单条已读。
 func (h *handlers) markNotificationRead(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	id := chi.URLParam(r, "id")
@@ -62,9 +60,8 @@ func (h *handlers) markNotificationRead(w http.ResponseWriter, r *http.Request) 
 
 // markAllRead 全部标记已读。
 func (h *handlers) markAllNotificationsRead(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	if err := h.d.Notify.MarkAllInboxRead(r.Context(), p.TenantID, p.UserID); err != nil {
@@ -108,9 +105,8 @@ func validNotifyPreference(category, channel string) bool {
 // getNotificationPreferences 返回当前用户的有效通知偏好。数据库只保存覆盖项，
 // 未出现的组合沿用安全默认值；交易类始终开启且由数据库约束再次兜底。
 func (h *handlers) getNotificationPreferences(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 
@@ -137,9 +133,8 @@ func (h *handlers) getNotificationPreferences(w http.ResponseWriter, r *http.Req
 
 // setNotificationPreference 改通知偏好。
 func (h *handlers) setNotificationPreference(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	var req notifyPrefReq

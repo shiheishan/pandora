@@ -13,9 +13,8 @@ import (
 
 // myInviteCode 返回当前用户的邀请码与已邀请人数。
 func (h *handlers) myInviteCode(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	sum, err := h.d.Identity.MyInviteCode(r.Context(), p.TenantID, p.UserID)
@@ -36,9 +35,8 @@ func (h *handlers) myInviteCode(w http.ResponseWriter, r *http.Request) {
 //------------------------------------------------------------------------------
 
 func (h *handlers) myCommission(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	sum, err := h.d.Billing.CommissionSummary(r.Context(), p.TenantID, p.UserID)
@@ -67,9 +65,8 @@ func (h *handlers) myCommission(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) requestWithdrawal(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	var req struct {

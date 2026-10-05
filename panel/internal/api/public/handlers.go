@@ -213,9 +213,8 @@ type createOrderReq struct {
 }
 
 func (h *handlers) createOrder(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	claim, ok := middleware.IdempotencyClaimFrom(r.Context())
@@ -383,9 +382,8 @@ func (h *handlers) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 
 // previewCoupon 下单前试算优惠码。
 func (h *handlers) previewCoupon(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -485,9 +483,8 @@ func (h *handlers) siteConfig(w http.ResponseWriter, r *http.Request) {
 // 改完会把这个用户的其它会话全部踢掉，所以调用方拿到成功之后
 // 手上的令牌仍然有效（当前会话不在吊销范围内），别的设备则需要重新登录。
 func (h *handlers) changePassword(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -527,9 +524,8 @@ func (h *handlers) changePassword(w http.ResponseWriter, r *http.Request) {
 //------------------------------------------------------------------------------
 
 func (h *handlers) myBalance(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	const currency = "CNY"
@@ -550,9 +546,8 @@ func (h *handlers) myBalance(w http.ResponseWriter, r *http.Request) {
 
 // createTopup 建一张充值订单，之后走与买套餐相同的支付流程。
 func (h *handlers) createTopup(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	claim, ok := middleware.IdempotencyClaimFrom(r.Context())
@@ -591,9 +586,8 @@ func (h *handlers) createTopup(w http.ResponseWriter, r *http.Request) {
 // 与新购分开一个接口，是因为两者的输入本来就不同：
 // 新购要选套餐，续费只需要指明续哪一条订阅。
 func (h *handlers) createRenewal(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	claim, ok := middleware.IdempotencyClaimFrom(r.Context())
@@ -632,9 +626,8 @@ func (h *handlers) createRenewal(w http.ResponseWriter, r *http.Request) {
 
 // myAnnouncements 返回当前用户可见的公告。
 func (h *handlers) myAnnouncements(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	list, err := h.d.Notify.VisibleAnnouncements(r.Context(), p.TenantID, p.UserID)

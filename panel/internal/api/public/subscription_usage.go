@@ -33,9 +33,8 @@ func parseUsageDays(raw string) (int, error) {
 
 // meSubscriptionUsage 返回本人一条订阅的按日计费流量。
 func (h *handlers) meSubscriptionUsage(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	days, err := parseUsageDays(r.URL.Query().Get("days"))

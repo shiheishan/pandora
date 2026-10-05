@@ -1,7 +1,7 @@
 # panel/internal/api/public/
 > L2 | 父级: /panel/internal/api/CLAUDE.md
 
-用户门户 API：登录用户的自助接口、订阅分发、节点安装引导与回调入口。与 admin 的不同：没有权限码，边界是「只能动自己的东西」，所有权校验在 domain 查询里（WHERE user_id = 本人）；任何接口都不输出节点国家与负载（保留规则 3）。字面量路由（/assets、/pdnd、/v1）优先于订阅通配 /{prefix}/{token}。
+用户门户 API：登录用户的自助接口、订阅分发、节点安装引导与回调入口。与 admin 的不同：没有权限码，边界是「只能动自己的东西」，所有权校验在 domain 查询里（WHERE user_id = 本人），处理器开头的登录检查一律 httpx.RequireUser；任何接口都不输出节点国家与负载（保留规则 3）。字面量路由（/assets、/pdnd、/v1）优先于订阅通配 /{prefix}/{token}。
 
 成员清单
 router.go: Deps 与 NewRouter：匿名组（登录注册、站点配置、外观、回调）与需登录组，限流与幂等挂在各自路由上；新建订单 / 发起支付 / 充值 / 续费 / 变更套餐 / 流量包下单挂 billing.checkout、礼品卡兑换挂 marketing.giftcard.redeem 降级开关门（排在幂等之前，支付回调不挂）

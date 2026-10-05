@@ -165,9 +165,8 @@ func clientIP(r *http.Request) string {
 // 顺带回传近 24 小时的不同来源数：这条数字明显偏高，基本就意味着
 // 链接被分享出去了 —— 把判断依据摆在用户自己眼前，比我们替他猜要好。
 func (h *handlers) meSubscriptionLinks(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 
@@ -202,9 +201,8 @@ func (h *handlers) meSubscriptionLinks(w http.ResponseWriter, r *http.Request) {
 // meSubscriptionNodes 只返回面板展示所需的非敏感节点摘要。
 // 连接地址、端口与协议配置留在订阅分发边界内，不能经 JSON 泄露给页面。
 func (h *handlers) meSubscriptionNodes(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	nodes, err := h.d.Subscription.ListOwnedNodePreviews(
@@ -235,9 +233,8 @@ func (h *handlers) meSubscriptionNodes(w http.ResponseWriter, r *http.Request) {
 
 // rotateSubscriptionLink 换一条新链接，旧的立即失效。
 func (h *handlers) rotateSubscriptionLink(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	subID := chi.URLParam(r, "id")
