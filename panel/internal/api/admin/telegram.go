@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/notify 的 Telegram 配置读取与发信器、TelegramAdminChat / SaveTelegramSettings（telegram.* 键的读写在那里），依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 getTelegramSettings / setTelegramSettings / testTelegram
+// [OUTPUT]: 对外提供 handlers 的 getTelegramSettings / setTelegramSettings / testTelegram；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的 Telegram 渠道配置：Token 只进不出（信封加密），管理员群组 chat id 作测试发送的默认目标
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -21,6 +21,14 @@ func (h *handlers) loadTelegramAdminChat(r *http.Request) (*int64, error) {
 	return h.d.Notify.TelegramAdminChat(r.Context(), httpx.TenantIDFrom(r.Context()))
 }
 
+// getTelegramSettingsResponse 的 admin_chat_id 未设置时回 null，故不带 omitempty。
+type getTelegramSettingsResponse struct {
+	AdminChatID *int64 `json:"admin_chat_id"`
+	BotUsername string `json:"bot_username"`
+	Enabled     bool   `json:"enabled"`
+	HasToken    bool   `json:"has_token"`
+}
+
 func (h *handlers) getTelegramSettings(w http.ResponseWriter, r *http.Request) {
 	cfg, err := notify.LoadTelegramConfig(r.Context(), h.d.Pool, h.d.Envelope,
 		httpx.TenantIDFrom(r.Context()))
@@ -35,11 +43,11 @@ func (h *handlers) getTelegramSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	// Token 只回「配没配」，不回内容。回明文等于把它摊在任何能打开
 	// 后台的人面前，也会随着浏览器缓存和截图扩散出去。
-	httpx.OK(w, map[string]any{
-		"enabled":       cfg.Enabled,
-		"bot_username":  cfg.BotUsername,
-		"has_token":     cfg.BotToken != "",
-		"admin_chat_id": adminChat,
+	httpx.OK(w, getTelegramSettingsResponse{
+		Enabled:     cfg.Enabled,
+		BotUsername: cfg.BotUsername,
+		HasToken:    cfg.BotToken != "",
+		AdminChatID: adminChat,
 	})
 }
 
@@ -49,6 +57,11 @@ type telegramSettingsReq struct {
 	BotToken    string `json:"bot_token"` // 空表示不修改
 	// AdminChatID 缺省不修改，null 清空，数字（非 0 整数）保存
 	AdminChatID json.RawMessage `json:"admin_chat_id"`
+}
+
+type setTelegramSettingsResponse struct {
+	Enabled bool `json:"enabled"`
+	OK      bool `json:"ok"`
 }
 
 func (h *handlers) setTelegramSettings(w http.ResponseWriter, r *http.Request) {
@@ -96,12 +109,16 @@ func (h *handlers) setTelegramSettings(w http.ResponseWriter, r *http.Request) {
 	if h.d.TelegramSender != nil {
 		h.d.TelegramSender.Invalidate()
 	}
-	httpx.OK(w, map[string]any{"ok": true, "enabled": req.Enabled})
+	httpx.OK(w, setTelegramSettingsResponse{Enabled: req.Enabled, OK: true})
 }
 
 type telegramTestReq struct {
 	// ChatID 省略（或 0）时发往已保存的管理员群组
 	ChatID int64 `json:"chat_id"`
+}
+
+type testTelegramResponse struct {
+	Sent bool `json:"sent"`
 }
 
 // testTelegram 往指定 chat 发一条测试消息。
@@ -148,7 +165,7 @@ func (h *handlers) testTelegram(w http.ResponseWriter, r *http.Request) {
 			"发送失败："+err.Error()))
 		return
 	}
-	httpx.OK(w, map[string]any{"sent": true})
+	httpx.OK(w, testTelegramResponse{Sent: true})
 }
 
 func itoa64(n int64) string {
