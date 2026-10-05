@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 domain 的 billing/identity/payment 用例，依赖 platform 的 db/httpx/crypto 与 middleware
+// [INPUT]: 依赖 domain 的 billing/identity/payment 用例（me 的账户行经 identity.PortalProfile），依赖 Deps.Pool 的 Ping（就绪探针）、platform 的 httpx/crypto 与 middleware
 // [OUTPUT]: 对外提供 handlers 的核心门户处理器：探针、注册登录登出、me、改密、站点配置、优惠码试算、下单支付与回调、钱包充值、续费、我的公告；包内 isUUID
 // [POS]: api/public 的主处理器文件，其余按模块拆在同包兄弟文件里：套餐目录 plans.go、工单 tickets.go、邀请与佣金 referral.go 等
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -11,14 +11,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/domain/identity"
 	"github.com/aegispanel/aegis/internal/domain/payment"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -187,19 +185,7 @@ func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	p := httpx.PrincipalFrom(ctx)
 
-	var (
-		email       string
-		displayName *string
-		status      string
-		createdAt   time.Time
-	)
-	err := h.d.Pool.InTx(ctx, db.Scope{TenantID: p.TenantID, ActorID: p.UserID},
-		func(tx pgx.Tx) error {
-			return tx.QueryRow(ctx,
-				`SELECT email, display_name, status, created_at
-				   FROM users WHERE tenant_id = $1 AND id = $2`,
-				p.TenantID, p.UserID).Scan(&email, &displayName, &status, &createdAt)
-		})
+	prof, err := h.d.Identity.PortalProfile(ctx, p.TenantID, p.UserID)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
@@ -207,10 +193,10 @@ func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 
 	httpx.OK(w, map[string]any{
 		"user_id":      p.UserID,
-		"email":        email,
-		"display_name": displayName,
-		"status":       status,
-		"created_at":   createdAt.UTC().Format(time.RFC3339),
+		"email":        prof.Email,
+		"display_name": prof.DisplayName,
+		"status":       prof.Status,
+		"created_at":   prof.CreatedAt.UTC().Format(time.RFC3339),
 		"permissions":  p.Permissions,
 	})
 }

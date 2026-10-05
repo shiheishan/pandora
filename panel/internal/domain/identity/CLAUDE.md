@@ -10,6 +10,7 @@ invite.go: 邀请码绑定「谁邀请了谁」，不发奖励
 sessions.go: 门户自助会话列表与吊销，只触及 audience=public 的会话（后台会话不可见、不可踢）；last_seen_at 只读，写入点在认证中间件
 logout.go: 退出当前会话，会话与整条 refresh 链同事务吊销
 password.go: 自助改密，吊销既有凭据（门户保留当前会话与其 refresh 令牌，admin 全部吊销）；口令错误的审计先于事务错误提交；admin 域新密码至少 12 位（validatePasswordFor），门户仍 8 位
+portal_profile.go: 门户账户行 PortalProfile（门户 GET v1/me 的邮箱、显示名、状态与注册时间，从 api/public/handlers.go 下沉）；user_id 与权限取自令牌，不在这里
 admin_profile.go: 管理员展示信息 AdminProfile（GET v1/me 追加的邮箱、显示名与生效角色），角色过滤与 admin 登录展开权限一致
 admin_reset_password.go: 管理员替用户设新密码；原因可选（R101），给了才进审计摘要
 reauth.go: 用口令换一枚 rat 刷新过的令牌，供 RequireRecentReauth 保护的高危路由使用
