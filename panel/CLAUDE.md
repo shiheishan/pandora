@@ -11,7 +11,7 @@ deploy/: 发布包 build-release.sh（先 make frontend-embed，无 npm 即失�
 frontend/: 面板前端源码，React + TypeScript + Vite 一个工程两个入口（--mode admin|portal 分两次构建到 dist/{admin,portal}），按设计稿重写完成：底座、组件库、两边外框（登录态、reauth 对话框、实时事件、按权限隐藏入口）与全部模块页，模块页经 screens/ 登记表懒加载；本机无数据库时 dev 挂按模块拆分的假后端；见 frontend/CLAUDE.md
 web/: 面板前端的 go:embed 嵌入点 app.go，admin/、portal/ 两个目录由两个网关经 platform/webapp 挂在根 /（入口）与 /assets/*；仓库只存占位入口，真实产物由 make frontend-embed 从 frontend/ 构建覆盖（旧的手写单页与 React 候选已于 2026-09-23 删除）；见 web/CLAUDE.md
 docs/: redesign/api-contract.md 为现行前后端接口契约（被大量代码注释按节号与修订号 Rn 引用）；adr/0001 技术选型（文末补了后续变更）；DASH-01 冻结契约、CLIENT-AUTH-01 冻结契约及 R1 刷新重放附录、CLIENT-AUTH-00042 实现清单为历史冻结稿（只读；CLIENT-AUTH 三份的正文被测试解析或按 SHA-256 钉死，一字不改）
-tools/: 开发期工具，main 包只经 go run 使用，不进发布包、不被任何包 import；refactorcheck/ 为第 5 阶段重构的纯挪动 AST 比对（compare）与打散验证（shatter），另带全 module 的 800 行守卫测试（随 go test ./... 跑），见 tools/refactorcheck/CLAUDE.md
+tools/: 开发期工具，main 包只经 go run 使用，不进发布包、不被任何包 import；refactorcheck/ 为第 5 阶段重构的纯挪动 AST 比对（compare）、SQL 跨包下沉的字面量多重集合比对（sqlset）与打散验证（shatter），另带全 module 的 800 行守卫测试（随 go test ./... 跑），见 tools/refactorcheck/CLAUDE.md
 tests/: invariants.sql 数据层不变量（make invariants）；e2e.sh 注册→下单→支付→账本→订阅→配置主链路；admin/uniproxy/epay/support 各自的 e2e 脚本（节点接入由冒烟 seed.ts 的两阶段接入覆盖）；panel-smoke.yml 经 deploy/run-smoke-e2e.sh 在冒烟栈上逐个跑它们，任一失败即 job 变红；见 tests/CLAUDE.md
 Makefile: up/down/logs 数据基座、migrate/migrate-status/check-migrations、invariants、build/test/vet、e2e、release-linux、preflight-linux、settlement-pg18、verify、frontend-check（面板前端：npm ci + lint + typecheck + vitest + 构建）、frontend-embed（构建并同步 dist/{admin,portal} 到 web/{admin,portal}，release-linux 的前置）；CGO_ENABLED=0 产静态二进制
 go.mod / go.sum: Go 1.26 module
