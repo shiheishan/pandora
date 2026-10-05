@@ -26,6 +26,7 @@ payment_query_patrol.go: 定时巡检 ReconcileDuePayments：逐个认领到期�
 unexpected_payment.go: 已释放或已付清订单又来的钱、续费 / 变更单结算时订阅已不收的钱，按 case_kind（released_order / excess_capture / ineligible_subscription）隔离进挂账（late_payment_suspense）
 late_payment.go: 挂账的查看与转入余额，供后台消费
 manual_order.go: 管理员人工单与 mark-paid，复用下单与回调主链路；mark-paid 的钱进了挂账时入账与审计照写、回 409 说明去向，同一凭证重复标记回 409；人工单结算方式 grant（赠送当场履约，缺省）/ pending（建待支付单交给用户付，仍记开单人）/ offline（带凭证号，建单事务里按 offline 渠道结清，收入与佣金同 mark-paid，offlinePaymentInput 是两条路共用的回调形状），balance 暂不接受（D-C-3）
+portal_catalog.go: 门户套餐目录读模型 PortalCatalog（从 api/public/plans.go 下沉）：可见性（public / 登录后 authenticated / 组内 group）、已发布当前版本、有 CNY / USD 适用价格（含组价）才列，逐套餐带当前版本额度与适用价格；下单路径独立复查，这里不是唯一防线
 my_orders.go: 门户订单读模型：myOrderSelectSQL 是列表与详情共用的行形状（首项周期与商品名快照、has_payment_intent 有无任何支付意图），列表带筛选段计数 counts，详情带优惠码、订阅到期与支付渠道名；ParseOrderStatuses 是门户与后台订单列表共用的状态白名单（逗号多值、精确匹配、未知回 400）
 coupon.go: 优惠券校验 applyCoupon、核销 redeemCoupon 与试算（套餐 PreviewForPrice、流量包 PreviewForTrafficPack 共用 previewCoupon 外壳，响应带券面）
 commission.go: 分销佣金计提、解冻、提现申请与打款记账；计佣范围 commission.scope（first_order 只给被推荐人第一笔计佣订单返佣，缺省 every_order），ValidCommissionScope 供后台校验；CommissionDefault* 是分销参数缺行时的唯一回退值（= 00028 / 00029 生效的种子：费率 0、冻结 3 天、最低提现 10000），计提与后台分销页共用

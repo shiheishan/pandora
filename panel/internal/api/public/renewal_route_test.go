@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter、handlers.createRenewal 与 handlers.listPlans 的源码
+// [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter、handlers.createRenewal 与 domain/billing 的 Service.PortalCatalog（目录 SQL 下沉后所在）的源码
 // [OUTPUT]: 对外提供 TestRenewalRouteIsIdempotent、TestRenewalHandlerConsumesClaimAndWritesPreparedResponse、TestPublicCatalogRequiresApplicableAllowedCurrencyPrice
 // [POS]: api/public 续费的独立幂等域与预制响应、公开套餐目录只给可用币种的适用价格
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -45,7 +45,7 @@ func TestRenewalHandlerConsumesClaimAndWritesPreparedResponse(t *testing.T) {
 }
 
 func TestPublicCatalogRequiresApplicableAllowedCurrencyPrice(t *testing.T) {
-	src := sourcetest.Load(t, ".").Decl("handlers.listPlans")
+	src := sourcetest.Load(t, "../../domain/billing").Decl("Service.PortalCatalog")
 	for _, required := range []string{"offer.currency IN ('CNY','USD')", "pr.currency IN ('CNY','USD')", "offer.user_group_id IS NULL"} {
 		if !strings.Contains(src, required) {
 			t.Fatalf("public catalog guard missing %s", required)
