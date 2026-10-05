@@ -6,7 +6,7 @@
 成员清单
 router.go: Deps 与 NewRouter：匿名组（登录注册、站点配置、外观、回调）与需登录组，限流与幂等挂在各自路由上；新建订单 / 发起支付 / 充值 / 续费 / 变更套餐 / 流量包下单挂 billing.checkout、礼品卡兑换挂 marketing.giftcard.redeem 降级开关门（排在幂等之前，支付回调不挂）
 handlers.go: handlers 结构与核心处理器：探针、注册登录登出、me、改密（保留当前会话）、站点配置、优惠码试算（套餐 / 流量包二选一，回券面）、下单支付与支付回调、钱包充值、续费、我的公告
-plans.go: 套餐目录（从 handlers.go 拆出）：只列可见、已发布且有 CNY / USD 适用价格的套餐，带限速 throttle_kbps、卖点 highlights 与推荐 recommended、重置策略与续费、变更开关
+plans.go: 套餐目录（从 handlers.go 拆出，读模型在 billing/portal_catalog.go）：只列可见、已发布且有 CNY / USD 适用价格的套餐，带限速 throttle_kbps、卖点 highlights 与推荐 recommended、重置策略与续费、变更开关
 tickets.go: 工单（从 handlers.go 拆出）：分类、提单、列表与详情、回复、关闭，写操作走 support 的 *Atomic 并写出预制响应，成功后给本人推实时事件
 referral.go: 邀请与分销佣金（从 handlers.go 拆出）：邀请码、佣金概况（付费好友、累计佣金与转出记录）、提现申请
 helpers.go: 包内共用小工具（签名十六进制解析等）
@@ -15,9 +15,9 @@ subscribe.go: 订阅分发端点 /{prefix}/{token}，以及我的订阅链接、
 my_orders.go / order_cancel.go: 我的订单列表（多值状态、筛选段计数 counts）与详情、取消待支付订单
 order_query.go: 「我已支付，刷新状态」POST v1/orders/{id}/query：只查本人订单（他人与不存在同一个 404），路由上按账号单独限流每分钟 6 次、不挂 checkout 开关，调 billing.QueryOrderPayment（不记审计；后台走 AdminQueryOrderPayment）；订单行的 has_payment_intent 决定门户是否显示这个按钮
 giftcard.go: 礼品卡预览与兑换、我的兑换记录
-my_subscriptions.go: 我的订阅（从 handlers.go 拆出）：设备上限与在线数、配额周期与追加 / 调整、重置策略与下次重置、可续费与续费价 available（与续费下单的价格检查同口径）、用户流量包余量
+my_subscriptions.go: 我的订阅（从 handlers.go 拆出，读模型在 subscription/my_subscriptions.go）：设备上限与在线数、配额周期与追加 / 调整、重置策略与下次重置、可续费与续费价 available（与续费下单的价格检查同口径）、用户流量包余量
 subscription_usage.go: 本期按日用量（门户-02 柱状图，00072），只读、?days 1–93，切日口径见 nodefabric.UsageLocation；订阅不属于本人与不存在同一个 404
-payment_methods.go: 可用支付方式：启用且接受新支付的渠道按 config.methods（缺省 default_method）展开，常见方式给中文名
+payment_methods.go: 可用支付方式（读模型在 billing/payment_methods.go，中文名映射在这里）：启用且接受新支付的渠道按 config.methods（缺省 default_method）展开，常见方式给中文名
 traffic_packs.go: 流量包目录、下单（kind=addon，无订阅也能买）与我的流量包余额（D-E-1）
 plan_change.go: 变更套餐试算与下单（D-E-2，kind=upgrade，升降级同一接口），下单走独立幂等域 subscription_change_plan_create
 notifications.go: 站内信收件箱与已读（单条标已读的非 UUID id 回 404，R84）、通知偏好（目录与锁定项在这里，读写经 notify/inbox.go，按主键 upsert）
