@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 domain/notify 的 Telegram 配置读取与发信器，依赖 platform 的 db/httpx；读写 system_settings 的 telegram.* 键
+// [INPUT]: 依赖 domain/notify 的 Telegram 配置读取与发信器、TelegramAdminChat / SaveTelegramSettings（telegram.* 键的读写在那里），依赖 platform/httpx
 // [OUTPUT]: 对外提供 handlers 的 getTelegramSettings / setTelegramSettings / testTelegram
 // [POS]: api/admin 的 Telegram 渠道配置：Token 只进不出（信封加密），管理员群组 chat id 作测试发送的默认目标
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -7,34 +7,18 @@ package admin
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/aegispanel/aegis/internal/domain/notify"
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 // Telegram Bot 配置（对标 Xboard config/setTelegramWebhook）。
 
-// loadTelegramAdminChat 读管理员群组 chat id（system_settings 的 telegram.admin_chat_id）。
-// 目前只作测试发送的默认目标；推送管理告警见待决 D-A-4，未定前不做。
+// loadTelegramAdminChat 读管理员群组 chat id，目前只作测试发送的默认目标。
 func (h *handlers) loadTelegramAdminChat(r *http.Request) (*int64, error) {
-	var chat *int64
-	tenantID := httpx.TenantIDFrom(r.Context())
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		err := tx.QueryRow(r.Context(), `
-			SELECT (value #>> '{}')::bigint FROM system_settings
-			 WHERE tenant_id = $1 AND key = 'telegram.admin_chat_id'`, tenantID).Scan(&chat)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		return err
-	})
-	return chat, err
+	return h.d.Notify.TelegramAdminChat(r.Context(), httpx.TenantIDFrom(r.Context()))
 }
 
 func (h *handlers) getTelegramSettings(w http.ResponseWriter, r *http.Request) {
@@ -97,52 +81,11 @@ func (h *handlers) setTelegramSettings(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFrom(r.Context())
 	actor := p.UserID
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID, ActorID: actor},
-		func(tx pgx.Tx) error {
-			set := func(key string, val any) error {
-				raw, err := json.Marshal(val)
-				if err != nil {
-					return err
-				}
-				_, err = tx.Exec(r.Context(), `
-					INSERT INTO system_settings (tenant_id, key, value)
-					VALUES ($1,$2,$3::jsonb)
-					ON CONFLICT (tenant_id, key)
-					DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-					tenantID, key, string(raw))
-				return err
-			}
-			if err := set("telegram.enabled", req.Enabled); err != nil {
-				return err
-			}
-			if err := set("telegram.bot_username", req.BotUsername); err != nil {
-				return err
-			}
-			if setAdminChat {
-				if err := set("telegram.admin_chat_id", adminChat); err != nil {
-					return err
-				}
-			}
-			// 空 token 表示「不修改」—— 界面上不回显已有 token，
-			// 提交时留空就该保留原值，而不是把它清掉。
-			if req.BotToken != "" {
-				sealed, err := h.d.Envelope.Seal([]byte(req.BotToken), []byte("telegram"))
-				if err != nil {
-					return err
-				}
-				if _, err := tx.Exec(r.Context(), `
-					INSERT INTO system_settings
-						(tenant_id, key, value, is_secret, secret_encrypted)
-					VALUES ($1,'telegram.bot_token',to_jsonb(''::text),true,$2)
-					ON CONFLICT (tenant_id, key)
-					DO UPDATE SET secret_encrypted = EXCLUDED.secret_encrypted,
-					              is_secret = true, updated_at = now()`,
-					tenantID, sealed); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+	err := h.d.Notify.SaveTelegramSettings(r.Context(), notify.TelegramSettingsInput{
+		TenantID: tenantID, ActorID: actor,
+		Enabled: req.Enabled, BotUsername: req.BotUsername, BotToken: req.BotToken,
+		SetAdminChat: setAdminChat, AdminChat: adminChat, Envelope: h.d.Envelope,
+	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
