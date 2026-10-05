@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/nodefabric 的节点服务与事件流、middleware 的公共链、platform 的 config/db/httpx
+// [OUTPUT]: 对外提供 Deps、NewRouter；包内 requireEnrollmentSignature / requireNodeSignature 两道验签中间件与节点 ID 的 context 键
+// [POS]: api/node 的装配点：/healthz、UniProxy 兼容组、两阶段入网组与签名节点组；验签在这里，业务在 handlers.go，SSE 在 stream.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package node 实现 Node 域网关（EXT-001 令牌域之一）。
 //
 // 与其他三个域最大的不同：这里的调用方是机器不是人，因此没有会话、没有
@@ -38,6 +43,11 @@ type Deps struct {
 // 签名时间窗。太宽给重放留空间，太窄会被正常的时钟漂移误伤。
 const signatureSkew = nodefabric.SignedRequestAcceptanceWindow
 
+// healthResponse 是存活探针的响应，只报告进程还在。
+type healthResponse struct {
+	Status string `json:"status"`
+}
+
 func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
@@ -51,7 +61,7 @@ func NewRouter(d Deps) http.Handler {
 	h := &handlers{d: d}
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		httpx.OK(w, map[string]string{"status": "ok"})
+		httpx.OK(w, healthResponse{Status: "ok"})
 	})
 
 	// --- UniProxy：Xboard / V2board 兼容协议 ---

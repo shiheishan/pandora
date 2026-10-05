@@ -230,6 +230,10 @@ type reportReq struct {
 	Detail        string `json:"detail"`
 }
 
+type reportConfigResponse struct {
+	OK bool `json:"ok"`
+}
+
 func (h *handlers) reportConfig(w http.ResponseWriter, r *http.Request) {
 	var req reportReq
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -249,7 +253,7 @@ func (h *handlers) reportConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, reportConfigResponse{OK: true})
 }
 
 //------------------------------------------------------------------------------
@@ -336,6 +340,11 @@ func (h *handlers) uniConfig(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
+// uniUsersResponse 的字段名与结构必须与 UniProxy 一致，节点端按 users 数组解析。
+type uniUsersResponse struct {
+	Users []nodefabric.ProxyUser `json:"users"`
+}
+
 func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 	n, ok := h.authNode(w, r)
 	if !ok {
@@ -361,7 +370,22 @@ func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("ETag", etag)
 	// 字段名与结构必须与 UniProxy 一致，节点端按 users 数组解析
-	httpx.OK(w, map[string]any{"users": users})
+	httpx.OK(w, uniUsersResponse{Users: users})
+}
+
+// UniProxy 的上报回执：节点端只看 HTTP 状态码，返回体留给排查。
+type uniPushResponse struct {
+	Data     bool `json:"data"`
+	Accepted int  `json:"accepted"`
+}
+
+type uniAliveResponse struct {
+	Data bool `json:"data"`
+	IPs  int  `json:"ips"`
+}
+
+type uniStatusResponse struct {
+	Data bool `json:"data"`
 }
 
 func (h *handlers) uniPush(w http.ResponseWriter, r *http.Request) {
@@ -385,7 +409,7 @@ func (h *handlers) uniPush(w http.ResponseWriter, r *http.Request) {
 			"request_id", httpx.RequestIDFrom(r.Context()))
 	}
 	// 节点端只看 HTTP 状态码，返回体内容不影响它，但保留便于排查
-	httpx.OK(w, map[string]any{"data": true, "accepted": res.Accepted})
+	httpx.OK(w, uniPushResponse{Data: true, Accepted: res.Accepted})
 }
 
 func (h *handlers) uniAlive(w http.ResponseWriter, r *http.Request) {
@@ -403,7 +427,7 @@ func (h *handlers) uniAlive(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"data": true, "ips": cnt})
+	httpx.OK(w, uniAliveResponse{Data: true, IPs: cnt})
 }
 
 func (h *handlers) uniStatus(w http.ResponseWriter, r *http.Request) {
@@ -420,7 +444,7 @@ func (h *handlers) uniStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"data": true})
+	httpx.OK(w, uniStatusResponse{Data: true})
 }
 
 // etagMatches 按 RFC 7232 的弱比较判断 If-None-Match。
