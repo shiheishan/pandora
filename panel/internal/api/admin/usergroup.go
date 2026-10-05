@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/adminops 的 ListUserGroups / SaveUserGroup / DeleteUserGroup / AssignUserGroup（读写、引用计数、约束翻译与审计在 adminops/user_groups.go），依赖 pools.go 的 notifyNodeUsersChanged，依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 listUserGroups（每项带 exclusive_pools）/ saveUserGroup / deleteUserGroup（被节点池名单引用时 409 写明池名）/ assignUserGroup（提交后发租户级 node.users.changed）
+// [OUTPUT]: 对外提供 handlers 的 listUserGroups（每项带 exclusive_pools）/ saveUserGroup / deleteUserGroup（被节点池名单引用时 409 写明池名）/ assignUserGroup（提交后发租户级 node.users.changed）；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的用户分组：套餐可见、专属价格、优惠券限定、公告定向与节点池限定（R104）共用的分组实体；换组会改变用户能连的节点池，所以写路径要通知节点
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -26,8 +26,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
+
+type listUserGroupsResponse struct {
+	Groups []adminops.UserGroup `json:"groups"`
+}
 
 func (h *handlers) listUserGroups(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
@@ -36,13 +41,17 @@ func (h *handlers) listUserGroups(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"groups": out})
+	httpx.OK(w, listUserGroupsResponse{Groups: out})
 }
 
 type userGroupReq struct {
 	Code string `json:"code"`
 	Name string `json:"name"`
 	Desc string `json:"description"`
+}
+
+type saveUserGroupResponse struct {
+	ID string `json:"id"`
 }
 
 func (h *handlers) saveUserGroup(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +84,11 @@ func (h *handlers) saveUserGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"id": newID})
+	httpx.OK(w, saveUserGroupResponse{ID: newID})
+}
+
+type deleteUserGroupResponse struct {
+	OK bool `json:"ok"`
 }
 
 func (h *handlers) deleteUserGroup(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +110,11 @@ func (h *handlers) deleteUserGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, deleteUserGroupResponse{OK: true})
+}
+
+type assignUserGroupResponse struct {
+	OK bool `json:"ok"`
 }
 
 // assignUserGroup 把一个用户放进某个分组（传空则移出）。
@@ -125,7 +142,7 @@ func (h *handlers) assignUserGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	// 换组会改变这个用户能用的节点池（R104），让节点立即重拉用户
 	h.notifyNodeUsersChanged(r)
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, assignUserGroupResponse{OK: true})
 }
 
 func groupSlug(name string) string {
