@@ -26,7 +26,7 @@ node_routing.go: 全局出站与分流 GET / PUT v1/nodes/routing 与单节点�
 route_groups.go: 路由组（00096）处理器：列表 / 新建 / 改元信息 / 删除、组内路由读写、组侧改成员、节点侧改所在组 PUT v1/nodes/{id}/route-groups、节点生效预览 GET v1/nodes/{id}/routing/effective；只解析与写响应，提交后经 notifyRoutingNodes 逐个通知 generation 被推进的节点；门槛见 route_groups_routes_test.go（影响多节点的写 node.config.publish + 重认证 + 幂等，新建只要幂等，节点侧与单节点路由 PUT 同级）
 server.go / pools.go: 服务器（物理宿主）读写与状态、节点分组（列表带组内节点 members、绑定套餐名 plan_names 与「仅限用户组」allowed_user_groups；新建 / 编辑带 allowed_user_group_ids 时经 pool_user_groups.go 处理；套餐版本换绑池、池名单变化提交后发租户级 node.users.changed）
 pool_user_groups.go: 节点池「仅限用户组」名单（R104，表 node_pool_user_groups）：请求带了字段才要求近期重认证（路由上的 reauth 中间件只能整条挂，这里按字段挂）、校验格式与租户内存在、整体替换、名单有变化时写 node_pool.user_groups_changed 前后对照审计
-announce.go / content.go: 公告（草稿 / 定时 / 撤回，按套餐与用户组定向）、知识库版本
+announce.go / content.go: 公告（草稿 / 定时 / 撤回，按套餐与用户组定向；handler 只校验入参、算目标状态，读写与审计在 notify/announce_admin.go）、知识库版本
 appearance.go: 主题（保存带 create 区分新建与编辑）、插槽、Webhook 钩子与投递记录（含 duration_ms）
 site_settings.go: 站点时区读写（R49），即 tenants.timezone，按日用量与收入趋势的切日口径；时区名须能被 time.LoadLocation 加载，拒绝空串与 Local；读写、行锁与审计在 adminops/site_settings_store.go
 mail.go / mail_template.go / telegram.go: 邮件与注册设置（全部 upsert，SMTP 密码行缺失也写得进，R94；邮箱验证缺行回退 identity.EmailVerificationDefault；读写在 notify/mail_settings.go，Telegram 配置读写在 notify/telegram_settings.go）、通知模板（列表带 has_default、草稿预览、草稿实发测试）、Telegram 配置（管理员群组 admin_chat_id 作测试默认目标），三个测试发送挂 ops.notification.write
