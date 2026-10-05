@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 coupon.go 的 createCouponReq / normalizeCouponReq / couponSpec，依赖 domain/billing 的 AdminGenerateCoupons（随机出码、撞码重试与审计在 billing/coupon_admin.go），依赖 platform/httpx
-// [OUTPUT]: 对包内提供 generateCoupons 处理器与 generateCouponsReq、isSafeCouponPrefix
+// [OUTPUT]: 对包内提供 generateCoupons 处理器与 generateCouponsReq、isSafeCouponPrefix；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 后台-06 批量生券的 HTTP 外壳：校验张数（1–1000）、前缀（大写字母数字、≤8 位）与必填的活动名，默认每张只能核销一次
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -45,6 +45,12 @@ func isSafeCouponPrefix(p string) bool {
 		}
 	}
 	return true
+}
+
+type generateCouponsResponse struct {
+	Codes []string `json:"codes"`
+	Count int      `json:"count"`
+	Name  string   `json:"name"`
 }
 
 // generateCoupons 一次生成多张配置相同、券码不同的优惠券。
@@ -104,5 +110,5 @@ func (h *handlers) generateCoupons(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.OK(w, map[string]any{"count": len(codes), "codes": codes, "name": req.Name})
+	httpx.OK(w, generateCouponsResponse{Codes: codes, Count: len(codes), Name: req.Name})
 }
