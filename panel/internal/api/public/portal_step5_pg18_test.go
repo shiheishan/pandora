@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/pg18test 打开 public_api 域的一次性库（publicAPIFixture），依赖本包 my_subscriptions.go / payment_methods.go / content.go / handlers.go 的处理器，依赖 domain 的 support / content / identity 服务
+// [INPUT]: 依赖 platform/pg18test 打开 public_api 域的一次性库（publicAPIFixture），依赖本包 my_subscriptions.go / payment_methods.go / content.go / handlers.go 的处理器，依赖 domain 的 support / content / identity / billing 服务
 // [OUTPUT]: 对外提供 TestPortalStep5PG18
 // [POS]: api/public 第 ⑤ 步的 PG18 测试：我的订阅扩展字段与续费价可用性、工单 closed_reason 与关联订单、帮助 q 与 platform=any、改密保留当前会话、支付方式展开
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/domain/content"
 	"github.com/aegispanel/aegis/internal/domain/identity"
 	"github.com/aegispanel/aegis/internal/domain/support"
@@ -101,6 +102,7 @@ func TestPortalStep5PG18(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := &handlers{d: Deps{Pool: app, Log: log, Support: support.NewService(app), Content: content.New(app),
+		Billing: billing.NewService(app, nil),
 		Identity: identity.NewService(app, nil, time.Hour, []byte("portal5-salt"), false)}}
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
