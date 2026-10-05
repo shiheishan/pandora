@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -59,7 +60,7 @@ func newDeliveryHarness(t *testing.T, ctx context.Context, app *platformdb.Pool,
 	nodes := nodefabric.NewService(app, nil)
 	nodes.AttachRealtime(hub)
 
-	h := &handlers{d: Deps{Pool: app, Node: nodes, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	h := &handlers{d: Deps{Pool: app, Node: nodes, Ops: adminops.NewService(app), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 	d := &deliveryHarness{t: t, ctx: ctx, tenant: tenant, actor: actor, nodes: nodes, events: events, reauthed: true}
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {

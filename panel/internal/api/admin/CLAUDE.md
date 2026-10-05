@@ -24,8 +24,8 @@ coupon.go / coupon_batch.go / giftcard.go / commission.go: 优惠券（路径 id
 node_admin.go: 节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步上线 nodeActivate（R108，node.lifecycle + node_activate 幂等，不要求重认证；提交后通知该节点，服务器这次才进 ready 时再发租户级 node.users.changed）/ 一步退役 nodeRetire（node.lifecycle + 重认证 + node_retire 幂等），节点身份与令牌状态 nodeIdentity
 node_routing.go: 全局出站与分流 GET / PUT v1/nodes/routing 与单节点路由 nodeGetRouting / nodeSetRouting 的处理器：只解析请求、调 nodefabric（校验、revision / row_version 乐观并发、发布锁、推进 generation、审计都在 routing_admin.go）、提交后逐个通知节点、写响应；node_routing_notify_test.go 守住通知在提交之后、本文件与 route_groups.go 不跑 SQL
 route_groups.go: 路由组（00096）处理器：列表 / 新建 / 改元信息 / 删除、组内路由读写、组侧改成员、节点侧改所在组 PUT v1/nodes/{id}/route-groups、节点生效预览 GET v1/nodes/{id}/routing/effective；只解析与写响应，提交后经 notifyRoutingNodes 逐个通知 generation 被推进的节点；门槛见 route_groups_routes_test.go（影响多节点的写 node.config.publish + 重认证 + 幂等，新建只要幂等，节点侧与单节点路由 PUT 同级）
-server.go / pools.go: 服务器（物理宿主）读写与状态、节点分组（列表带组内节点 members、绑定套餐名 plan_names 与「仅限用户组」allowed_user_groups；新建 / 编辑带 allowed_user_group_ids 时经 pool_user_groups.go 处理；套餐版本换绑池、池名单变化提交后发租户级 node.users.changed）
-pool_user_groups.go: 节点池「仅限用户组」名单（R104，表 node_pool_user_groups）：请求带了字段才要求近期重认证（路由上的 reauth 中间件只能整条挂，这里按字段挂）、校验格式与租户内存在、整体替换、名单有变化时写 node_pool.user_groups_changed 前后对照审计
+server.go / pools.go: 服务器（物理宿主）读写与状态、节点分组（SQL 在 nodefabric 的 node_pools_admin.go，套餐版本绑池在 adminops 的 plan_pools.go；列表带组内节点 members、绑定套餐名 plan_names 与「仅限用户组」allowed_user_groups；新建 / 编辑带 allowed_user_group_ids 时经 pool_user_groups.go 校验；套餐版本换绑池、池名单变化提交后发租户级 node.users.changed；直接换池被冻结，冻结文案在 assignNodePool）
+pool_user_groups.go: 节点池「仅限用户组」名单（R104）：请求带了字段才要求近期重认证（路由上的 reauth 中间件只能整条挂，这里按字段挂）、校验格式；租户内存在性、整体替换与 node_pool.user_groups_changed 审计在 nodefabric 的 node_pool_user_groups.go；namedRef 也供 usergroup.go 用
 announce.go / content.go: 公告（草稿 / 定时 / 撤回，按套餐与用户组定向）、知识库版本
 appearance.go: 主题（保存带 create 区分新建与编辑）、插槽、Webhook 钩子与投递记录（含 duration_ms）
 site_settings.go: 站点时区读写（R49），即 tenants.timezone，按日用量与收入趋势的切日口径；时区名须能被 time.LoadLocation 加载，拒绝空串与 Local，改动写审计

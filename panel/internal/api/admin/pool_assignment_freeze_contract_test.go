@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取 handlers.assignNodePool 与 handlers.deleteNodePool 的源码
+// [INPUT]: 依赖 platform/sourcetest 按名取 handlers.assignNodePool 与 domain/nodefabric 的 Service.CheckNodePoolAssignment / Service.DeleteNodePool 的源码
 // [OUTPUT]: 对外提供 TestDirectPoolAssignmentIsFrozenUntilEffectiveReleases、TestPoolDeletionLocksParentBeforeDependencyCounts
-// [POS]: api/admin 节点池的并发契约：直接改分组被冻结到有效发布就绪、删池先锁父行再数依赖
+// [POS]: api/admin 节点池的并发契约：直接改分组被冻结到有效发布就绪（锁行比对在 nodefabric，冻结文案在 handler）、删池先锁父行再数依赖（SQL 在 nodefabric）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -13,14 +13,25 @@ import (
 )
 
 func TestDirectPoolAssignmentIsFrozenUntilEffectiveReleases(t *testing.T) {
-	src := sourcetest.Load(t, ".").Decl("handlers.assignNodePool")
+	nodes := sourcetest.Load(t, "../../domain/nodefabric")
+	check := nodes.Decl("Service.CheckNodePoolAssignment")
 	for _, needle := range []string{
 		`SELECT pool_id::text FROM nodes`,
 		`FOR UPDATE`,
-		`if currentID != req.PoolID`,
+		`if currentID != poolID`,
+		`return ErrNodePoolMoveFrozen`,
+		`same-pool idempotent replay`,
+	} {
+		if !strings.Contains(check, needle) {
+			t.Fatalf("pool assignment freeze contract missing %q", needle)
+		}
+	}
+	src := sourcetest.Load(t, ".").Decl("handlers.assignNodePool")
+	for _, needle := range []string{
+		`h.d.Node.CheckNodePoolAssignment(`,
+		`errors.Is(err, nodefabric.ErrNodePoolMoveFrozen)`,
 		`httpx.CodeConflict`,
 		`配置发布身份升级完成前暂不允许移动节点分组`,
-		`same-pool idempotent replay`,
 	} {
 		if !strings.Contains(src, needle) {
 			t.Fatalf("pool assignment freeze contract missing %q", needle)
@@ -29,7 +40,7 @@ func TestDirectPoolAssignmentIsFrozenUntilEffectiveReleases(t *testing.T) {
 }
 
 func TestPoolDeletionLocksParentBeforeDependencyCounts(t *testing.T) {
-	src := sourcetest.Load(t, ".").Decl("handlers.deleteNodePool")
+	src := sourcetest.Load(t, "../../domain/nodefabric").Decl("Service.DeleteNodePool")
 	advisoryAt := strings.Index(src, `"node-config-release/"+tenantID`)
 	lockAt := strings.Index(src, `SELECT id::text FROM node_pools`)
 	countAt := strings.Index(src, `SELECT (SELECT count(*) FROM nodes`)

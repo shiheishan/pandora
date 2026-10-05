@@ -9,6 +9,7 @@ orders.go: 订单列表（从 service.go 拆出）：orderRowSelectSQL / scanOrd
 providers.go: 支付渠道卡（从 service.go 拆出）：租户时区今日分币种成交、近 24 小时成功率、最近回调时间，启停带审计
 switches.go: 降级开关读写（从 service.go 拆出），数据库拒绝切换时按约束名给中文原因，PG 原句只进日志（R116）
 audit.go: 审计日志读模型与导出，auditRowSelect / auditCond 是列表、计数、导出共用的唯一形状；带对象可读名（含流量包名）、认证强度（00080）与来源 IP 密文，导出上限 50000 行并同事务记 audit.export
+plan_pools.go: 套餐版本 ↔ 节点分组绑定（从 api/admin 的 pools.go 下沉，与 plan_wizard 同为 plan_node_pools 的写入方）：PlanPools 有草稿给草稿、没有给当前发布版且 editable=false；SetPlanPools 只许改未冻结草稿（ValidateEditablePlanPoolVersion），FOR UPDATE OF pv 锁版本、按 id 顺序 FOR KEY SHARE 锁池防死锁、row_version 乐观锁，同事务写 plan_version.pools_changed 审计；节点通知由 handler 提交后发
 risk.go: 风控共享 IP 聚类：列聚类与成员（成员 active_plan 取 subscription.ActivePlanNameSQL，R118）、标记为正常（ip_cluster_reviews，30 天）、批量停用（suspended，跳过自己 / 持后台角色者 / 非成员 / 已停用，单事务、末尾核对有效管理员）
 catalog.go: 套餐目录读写：套餐资料带卖点 highlights 与推荐 recommended（R100，新建可选、改资料整体覆盖）、归档套餐，以及目录共用的输入输出类型与助手；每个用例拆成「事务外校验（prepare*Input / validate*）+ *Tx 事务体」，事务体只假定输入已校验、在调用方事务里执行，所以向导能把多步编排进一个事务；版本行带建版本人邮箱
 catalog_version.go: 版本生命周期（从 catalog.go 拆出）：建草稿、改版本语义（限速与超额策略解耦，新写入的策略只收 suspend，R99；旧 pool_ids 一律拒绝）、发布（套餐与版本双令牌、价格覆盖可见用户组、有池且有可服务节点、过 P0B 销售闸门）
