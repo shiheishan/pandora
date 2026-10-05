@@ -7,6 +7,7 @@ package billing
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -25,8 +26,8 @@ type AdminWithdrawal struct {
 	Status          string
 	PayoutEncrypted []byte
 	Reject          string
-	Requested       any
-	Completed       any
+	Requested       *time.Time
+	Completed       *time.Time
 	// Earned 是这个用户累计赚到的佣金，用来判断提现是否合理：
 	// 提现额远大于历史佣金说明哪里不对
 	Earned int64

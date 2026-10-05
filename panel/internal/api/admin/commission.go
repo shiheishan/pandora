@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/billing 的 Admin* 佣金与提现用例（读写、记账、审计在 billing/commission_admin.go）、ValidCommissionScope 与 AdjustBalance，依赖 profile.go 的 decryptWith 解开收款信息，依赖 platform/httpx
-// [OUTPUT]: 对包内提供提现列表、审批、打款、分销总览、分销参数与余额调整处理器
+// [OUTPUT]: 对包内提供提现列表、审批、打款、分销总览、分销参数与余额调整处理器；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 后台-06 佣金与提现的 HTTP 外壳：校验入参、调 billing、写响应；总览带累计佣金、邀请注册数与计佣范围
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -16,12 +16,34 @@ package admin
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
+
+// listWithdrawalsRow 是提现列表的一行（原为 listWithdrawals 内的局部类型，提到包级以便响应 DTO 引用）。
+type listWithdrawalsRow struct {
+	ID        string     `json:"id"`
+	Email     string     `json:"email"`
+	UserID    string     `json:"user_id"`
+	Amount    int64      `json:"amount"`
+	Currency  string     `json:"currency"`
+	Status    string     `json:"status"`
+	Payout    string     `json:"payout_detail"`
+	Reject    string     `json:"reject_reason"`
+	Requested *time.Time `json:"requested_at"`
+	Completed *time.Time `json:"completed_at"`
+	// Earned 是这个用户累计赚到的佣金，用来判断提现是否合理：
+	// 提现额远大于历史佣金说明哪里不对
+	Earned int64 `json:"earned_total"`
+}
+
+type listWithdrawalsResponse struct {
+	Withdrawals []listWithdrawalsRow `json:"withdrawals"`
+}
 
 // listWithdrawals 返回提现申请列表。
 //
@@ -31,29 +53,14 @@ func (h *handlers) listWithdrawals(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 	status := r.URL.Query().Get("status")
 
-	type row struct {
-		ID        string `json:"id"`
-		Email     string `json:"email"`
-		UserID    string `json:"user_id"`
-		Amount    int64  `json:"amount"`
-		Currency  string `json:"currency"`
-		Status    string `json:"status"`
-		Payout    string `json:"payout_detail"`
-		Reject    string `json:"reject_reason"`
-		Requested any    `json:"requested_at"`
-		Completed any    `json:"completed_at"`
-		// Earned 是这个用户累计赚到的佣金，用来判断提现是否合理：
-		// 提现额远大于历史佣金说明哪里不对
-		Earned int64 `json:"earned_total"`
-	}
 	rows, err := h.d.Billing.AdminListWithdrawals(r.Context(), tenantID, status)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	out := make([]row, 0, len(rows))
+	out := make([]listWithdrawalsRow, 0, len(rows))
 	for _, wd := range rows {
-		out = append(out, row{
+		out = append(out, listWithdrawalsRow{
 			ID: wd.ID, Email: wd.Email, UserID: wd.UserID, Amount: wd.Amount,
 			Currency: wd.Currency, Status: wd.Status,
 			Payout: h.decryptWith(wd.PayoutEncrypted, "payout"),
@@ -61,7 +68,11 @@ func (h *handlers) listWithdrawals(w http.ResponseWriter, r *http.Request) {
 			Earned: wd.Earned,
 		})
 	}
-	httpx.OK(w, map[string]any{"withdrawals": out})
+	httpx.OK(w, listWithdrawalsResponse{Withdrawals: out})
+}
+
+type reviewWithdrawalResponse struct {
+	Status string `json:"status"`
 }
 
 // reviewWithdrawal 批准或拒绝一笔提现。
@@ -112,7 +123,11 @@ func (h *handlers) reviewWithdrawal(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"status": newStatus})
+	httpx.OK(w, reviewWithdrawalResponse{Status: newStatus})
+}
+
+type markWithdrawalPaidResponse struct {
+	Status string `json:"status"`
 }
 
 // markWithdrawalPaid 记录一笔提现已实际打款。
@@ -146,7 +161,7 @@ func (h *handlers) markWithdrawalPaid(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"status": "paid"})
+	httpx.OK(w, markWithdrawalPaidResponse{Status: "paid"})
 }
 
 // Withdrawal free-text is canonicalized before validation and before any
@@ -159,6 +174,22 @@ func normalizePayoutReference(value string) string {
 	return strings.TrimSpace(value)
 }
 
+type commissionOverviewResponse struct {
+	Available          int64  `json:"available"`
+	Entries            int    `json:"entries"`
+	FreezeDays         int    `json:"freeze_days"`
+	InvitedUsers       int    `json:"invited_users"`
+	MinWithdraw        int64  `json:"min_withdraw"`
+	NeedReview         int    `json:"need_review"`
+	PaidOut            int64  `json:"paid_out"`
+	Pending            int64  `json:"pending"`
+	RatePercent        int    `json:"rate_percent"`
+	Scope              string `json:"scope"`
+	ThisMonth          int64  `json:"this_month"`
+	TotalEarned        int64  `json:"total_earned"`
+	WaitingWithdrawals int    `json:"waiting_withdrawals"`
+}
+
 // commissionOverview 是分销的整体情况，给管理员看的。
 func (h *handlers) commissionOverview(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
@@ -168,14 +199,18 @@ func (h *handlers) commissionOverview(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	out := map[string]any{
-		"pending": st.Pending, "available": st.Available, "paid_out": st.PaidOut,
-		"this_month": st.ThisMonth, "entries": st.Entries,
-		"need_review": st.NeedReview, "waiting_withdrawals": st.WaitingWithdrawals,
-		"rate_percent": st.RatePercent, "freeze_days": st.FreezeDays, "min_withdraw": st.MinWithdraw,
-		"total_earned": st.TotalEarned, "invited_users": st.InvitedUsers, "scope": st.Scope,
+	out := commissionOverviewResponse{
+		Pending: st.Pending, Available: st.Available, PaidOut: st.PaidOut,
+		ThisMonth: st.ThisMonth, Entries: st.Entries,
+		NeedReview: st.NeedReview, WaitingWithdrawals: st.WaitingWithdrawals,
+		RatePercent: st.RatePercent, FreezeDays: st.FreezeDays, MinWithdraw: st.MinWithdraw,
+		TotalEarned: st.TotalEarned, InvitedUsers: st.InvitedUsers, Scope: st.Scope,
 	}
 	httpx.OK(w, out)
+}
+
+type setCommissionConfigResponse struct {
+	OK bool `json:"ok"`
 }
 
 // setCommissionConfig 改分销参数。
@@ -225,7 +260,11 @@ func (h *handlers) setCommissionConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, setCommissionConfigResponse{OK: true})
+}
+
+type adjustBalanceResponse struct {
+	Balance int64 `json:"balance"`
 }
 
 // adjustBalance 由管理员直接增减用户余额。
@@ -261,5 +300,5 @@ func (h *handlers) adjustBalance(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"balance": after})
+	httpx.OK(w, adjustBalanceResponse{Balance: after})
 }
