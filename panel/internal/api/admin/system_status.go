@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/db 的租户事务读数据库体积与连接数，经 Deps.Cfg 的 Deployment 取备份目录与解密私钥路径（环境变量只在 platform/config 读），依赖 system_components.go 的组件清单
+// [INPUT]: 依赖 domain/adminops 的 DatabaseStats 读数据库体积与连接数，经 Deps.Cfg 的 Deployment 取备份目录与解密私钥路径（环境变量只在 platform/config 读），依赖 system_components.go 的组件清单
 // [OUTPUT]: 对外提供 handlers.systemStatus、backupStatus
 // [POS]: api/admin 的系统状态（契约后台-01 GET v1/system/status）：备份、数据库与 state / components
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -13,10 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/aegispanel/aegis/internal/platform/config"
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -48,33 +45,14 @@ func (h *handlers) systemStatus(w http.ResponseWriter, r *http.Request) {
 	// 数据库体积与连接数：扩容和排查慢查询时最先要看的两个数。
 	// 三个数要么一起读到，要么一个都不给：读失败时不能拿零值冒充（R52）。
 	database := map[string]any{"error": "读取数据库状态失败"}
-	if err := h.d.Pool.InTx(r.Context(),
-		db.Scope{TenantID: httpx.TenantIDFrom(r.Context())},
-		func(tx pgx.Tx) error {
-			var sizeBytes int64
-			var conns, maxConns int
-			if err := tx.QueryRow(r.Context(),
-				`SELECT pg_database_size(current_database())`).Scan(&sizeBytes); err != nil {
-				return err
-			}
-			if err := tx.QueryRow(r.Context(),
-				`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()`).
-				Scan(&conns); err != nil {
-				return err
-			}
-			if err := tx.QueryRow(r.Context(),
-				`SELECT setting::int FROM pg_settings WHERE name = 'max_connections'`).
-				Scan(&maxConns); err != nil {
-				return err
-			}
-			database = map[string]any{
-				"size_bytes":      sizeBytes,
-				"connections":     conns,
-				"max_connections": maxConns,
-			}
-			return nil
-		}); err != nil {
+	if stats, err := h.d.Ops.DatabaseStats(r.Context(), httpx.TenantIDFrom(r.Context())); err != nil {
 		h.d.Log.Warn("读取数据库统计失败", "err", err)
+	} else {
+		database = map[string]any{
+			"size_bytes":      stats.SizeBytes,
+			"connections":     stats.Connections,
+			"max_connections": stats.MaxConnections,
+		}
 	}
 	out["database"] = database
 	out["state"], out["components"] = h.systemComponents(r, database, backup)

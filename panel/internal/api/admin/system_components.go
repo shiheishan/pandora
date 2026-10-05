@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/db 的租户事务（节点、payment_events 未处理的支付回调、通知投递）、Deps.Redis 的 PING、platform/realtime 的 SSEConnections，依赖 system_status.go 的 backupStatus 结果
+// [INPUT]: 依赖 domain/adminops 的 PingDatabase 与 SystemCounts（节点、payment_events 未处理的支付回调、通知投递）、Deps.Redis 的 PING、platform/realtime 的 SSEConnections，依赖 system_status.go 的 backupStatus 结果
 // [OUTPUT]: 对外提供 systemComponent、postgresComponent 与 handlers.systemComponents
 // [POS]: api/admin 系统状态的组件清单（契约后台-01 GET v1/system/status 的 state / components）：8 个组件各自 ok / warn / down / unknown，任一 warn 或 down 总状态即 degraded；postgres 在统计读失败时降为 warn 且不写 metrics 键（R52：ok 时 metrics 齐全）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -10,9 +10,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
 )
@@ -65,8 +62,7 @@ func (h *handlers) systemComponents(r *http.Request, database map[string]any, ba
 
 	// --- postgres：一次 SELECT 1 的往返 ---
 	start := time.Now()
-	var one int
-	pingErr := h.d.Pool.QueryRow(ctx, `SELECT 1`).Scan(&one)
+	pingErr := h.d.Ops.PingDatabase(ctx)
 	out = append(out, postgresComponent(pingErr, time.Since(start), database))
 
 	// --- valkey：PING ---
@@ -88,54 +84,33 @@ func (h *handlers) systemComponents(r *http.Request, database map[string]any, ba
 		"email":    {Key: "mail", State: "unknown", Metrics: map[string]any{}},
 		"telegram": {Key: "telegram", State: "unknown", Metrics: map[string]any{}},
 	}
-	_ = h.d.Pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var total, online, lagging int64
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*),
-			       count(*) FILTER (WHERE last_heartbeat_at >= now() - interval '90 seconds'),
-			       count(*) FILTER (WHERE applied_config_version < desired_config_version)
-			  FROM nodes
-			 WHERE tenant_id = $1 AND status <> 'destroyed' AND serving_status <> 'retired'`,
-			tenantID).Scan(&total, &online, &lagging); err == nil {
-			nodes.Metrics = map[string]any{"total": total, "online": online, "config_lagging": lagging}
-			nodes.State = "ok"
-			if online < total || lagging > 0 {
-				nodes.State = "warn"
-			}
+	counts := h.d.Ops.SystemCounts(ctx, tenantID, []string{"email", "telegram"})
+	if n := counts.Nodes; n != nil {
+		nodes.Metrics = map[string]any{"total": n.Total, "online": n.Online, "config_lagging": n.Lagging}
+		nodes.State = "ok"
+		if n.Online < n.Total || n.Lagging > 0 {
+			nodes.State = "warn"
 		}
-		// 契约写的来源是 00036 建的回调收据表，没有任何代码写入、登记为孤儿表
-		// （RESERVED-TABLES.md），回调收据实际落在 payment_events：pending / failed
-		// 且收到超过 1 分钟仍未处理的，才是卡住的回调
-		var pending int64
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM payment_events
-			 WHERE tenant_id = $1 AND processing_status IN ('pending','failed')
-			   AND received_at < now() - interval '1 minute'`, tenantID).Scan(&pending); err == nil {
-			callbacks.Metrics = map[string]any{"pending": pending}
-			callbacks.State = "ok"
-			if pending > 0 {
-				callbacks.State = "warn"
-			}
+	}
+	if pending := counts.PendingCallbacks; pending != nil {
+		callbacks.Metrics = map[string]any{"pending": *pending}
+		callbacks.State = "ok"
+		if *pending > 0 {
+			callbacks.State = "warn"
 		}
-		for channel, c := range channels {
-			var queued, retrying, failed int64
-			if err := tx.QueryRow(ctx, `
-				SELECT count(*) FILTER (WHERE status = 'queued'),
-				       count(*) FILTER (WHERE status = 'queued' AND attempts > 0),
-				       count(*) FILTER (WHERE status = 'failed')
-				  FROM notification_deliveries WHERE tenant_id = $1 AND channel = $2`,
-				tenantID, channel).Scan(&queued, &retrying, &failed); err != nil {
-				continue
-			}
-			c.Metrics = map[string]any{"queued": queued, "retrying": retrying, "failed_total": failed}
-			// failed_total 是累计值，只拿「正在重试」判断眼下有没有投递问题
-			c.State = "ok"
-			if retrying > 0 {
-				c.State = "warn"
-			}
+	}
+	for channel, c := range channels {
+		d, ok := counts.Deliveries[channel]
+		if !ok {
+			continue
 		}
-		return nil
-	})
+		c.Metrics = map[string]any{"queued": d.Queued, "retrying": d.Retrying, "failed_total": d.Failed}
+		// failed_total 是累计值，只拿「正在重试」判断眼下有没有投递问题
+		c.State = "ok"
+		if d.Retrying > 0 {
+			c.State = "warn"
+		}
+	}
 	out = append(out, nodes, callbacks, *channels["email"], *channels["telegram"])
 
 	// --- sse：各网关进程上报到 Valkey 的连接数之和 ---
