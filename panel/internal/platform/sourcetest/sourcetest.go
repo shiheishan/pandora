@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 go/parser、go/ast 解析一个目录下的全部非测试 .go 源文件
-// [OUTPUT]: 对外提供 Package、Load、Ref，以及 Package 的 Source、Decl、DeclWithDoc、Decls、FuncDecl、Refs
+// [OUTPUT]: 对外提供 Package、Load、Ref、TopDecl，以及 Package 的 Source、Decl、DeclWithDoc、Decls、FuncDecl、Refs、TopDecls
 // [POS]: platform 的测试辅助包：源码契约测试按「包 + 声明名」取源码，而不是按文件名读，函数在包内换文件不影响断言；只被 *_test.go 引用，不进任何生产二进制
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -43,10 +43,11 @@ type parsedFile struct {
 }
 
 type decl struct {
-	file string
-	text string
-	doc  string // 文档注释原文（到声明起点为止），没有则为空
-	node ast.Decl
+	file   string
+	text   string
+	doc    string // 文档注释原文（到声明起点为止），没有则为空
+	node   ast.Decl
+	syntax ast.Node // text 对应的语法树：函数即 node，分组声明是各自那一项
 }
 
 // Load 解析 dir 下全部非测试 .go 文件；目录读不了、没有源文件或解析失败都直接失败。
@@ -98,7 +99,7 @@ func (p *Package) index(fset *token.FileSet, path string, src []byte, d ast.Decl
 		if doc != nil {
 			docText = string(src[fset.Position(doc.Pos()).Offset:fset.Position(n.Pos()).Offset])
 		}
-		p.decls[name] = append(p.decls[name], decl{file: filepath.Base(path), text: text(n), doc: docText, node: d})
+		p.decls[name] = append(p.decls[name], decl{file: filepath.Base(path), text: text(n), doc: docText, node: d, syntax: n})
 	}
 	switch x := d.(type) {
 	case *ast.FuncDecl:
@@ -240,6 +241,59 @@ func (p *Package) Refs(importPath string, names ...string) []Ref {
 		})
 	}
 	return refs
+}
+
+// TopDecl 是一个有名字的顶层声明，给逐声明扫描的守卫用（例如「哪些函数直接写响应体」，
+// 白名单按「文件 + 声明名」登记）。
+type TopDecl struct {
+	File string // 文件名，不含目录
+	Name string // 与 Decl 同一写法：函数名、接收者.方法、类型 / 变量 / 常量名
+	// Node 是声明的语法树：函数为 *ast.FuncDecl；单个 var / const / type 为整句，
+	// 分组声明为各自那一项（一项声明多个名字时每个名字各出现一次，Node 相同）
+	Node ast.Node
+	// Imports 是所在文件的导入名 → 导入路径（别名按别名），_ 导入不在里面
+	Imports map[string]string
+}
+
+// TopDecls 按文件名、再按源码位置返回全部有名字的顶层声明；var _ 这种无名声明不在其中。
+// 遇到点导入直接失败：选择子消失后按导入名识别调用的守卫会静默漏报。
+func (p *Package) TopDecls() []TopDecl {
+	p.t.Helper()
+	imports := map[string]map[string]string{}
+	for _, f := range p.files {
+		m := map[string]string{}
+		for _, imp := range f.ast.Imports {
+			path, _ := strconv.Unquote(imp.Path.Value)
+			local := filepath.Base(path)
+			if imp.Name != nil {
+				local = imp.Name.Name
+			}
+			switch local {
+			case "_":
+				continue
+			case ".":
+				p.t.Fatalf("sourcetest: %s dot-imports %s; TopDecls cannot attribute its members", f.name, path)
+			}
+			m[local] = path
+		}
+		imports[f.name] = m
+	}
+	var out []TopDecl
+	for name, found := range p.decls {
+		for _, d := range found {
+			out = append(out, TopDecl{File: d.file, Name: name, Node: d.syntax, Imports: imports[d.file]})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].File != out[j].File {
+			return out[i].File < out[j].File
+		}
+		if out[i].Node.Pos() != out[j].Node.Pos() {
+			return out[i].Node.Pos() < out[j].Node.Pos()
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 func (p *Package) lookup(name string) decl {
