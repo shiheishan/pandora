@@ -12,6 +12,7 @@ announce.go: 用户可见公告与定时发布
 mailcfg.go: 数据库里的 SMTP 设置（信封加密口令、短缓存）与按租户动态发信器；未设发件人名时用站点名
 smtp.go: 标准库 net/smtp 的邮件渠道
 telegram.go: Telegram 渠道与双向验证的账号绑定
+mail_settings.go: 邮件与注册设置后台存取（从 api/admin/mail.go 下沉）：MailSettings 读 mail.* 与 auth.registration_mode / auth.email_verification（发件人名缺省回退 appearance.SiteNameTx，邮箱验证缺行回退值由调用方传入 identity.EmailVerificationDefault——identity 依赖 notify，反向会成环）；SaveMailSettings 单事务全部 upsert（注册模式先于其他键，与注册流程同一加锁顺序；SMTP 密码行缺失也写得进，R94），同事务写不含凭据的 mail.settings_changed 审计
 telegram_settings.go: Telegram 后台配置存取（从 api/admin/telegram.go 下沉）：TelegramAdminChat 读管理员群组 chat id（缺行 nil）；SaveTelegramSettings 单事务 upsert telegram.* 键，admin_chat_id 按「缺省不动 / null 清空」三态写，Bot Token 非空才经信封密封写入
 *_test.go: 单元测试（address_test.go 守验证码模板种子与 Kick 不阻塞；tenant_seed_test.go 守建租户触发器种下的 12 个模板与 defaultTemplates 逐字一致）；scan_pg18_test.go、dispatch_pg18_test.go 由 run-pg18-gates.sh 的 notify 域跑
 
