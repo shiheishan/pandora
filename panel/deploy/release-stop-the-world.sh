@@ -39,7 +39,7 @@ MIGRATION_PGID=""
 SUCCESS=0
 ROLLBACK_RUNNING=0
 
-RELEASE_DEPLOY_FILES=(platform.sh check-migrations.sh migrate.sh release-stop-the-world.sh renewal-cutover.md)
+RELEASE_DEPLOY_FILES=(platform.sh check-migrations.sh migrate.sh release-stop-the-world.sh)
 RELEASE_DEPLOY_FILES+=(release-artifact.env)
 
 die() { echo "pandora-release: $*" >&2; exit 1; }
@@ -198,7 +198,6 @@ verify_release_manifest() {
   [ -x "$dir/deploy/migrate.sh" ] || die "release migrate.sh is not executable"
   [ -x "$dir/deploy/check-migrations.sh" ] || die "release check-migrations.sh is not executable"
   [ -x "$dir/deploy/platform.sh" ] || die "release platform.sh is not executable"
-  [ -r "$dir/deploy/renewal-cutover.md" ] || die "release renewal cutover procedure is missing"
   [ -x "$dir/bin/aegis-admin" ] || die "release is missing aegis-admin"
   [ -x "$dir/bin/aegis-public" ] || die "release is missing aegis-public"
   [ -x "$dir/bin/aegis-node" ] || die "release is missing aegis-node"

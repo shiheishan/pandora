@@ -147,7 +147,7 @@ done
 # 以 EnvironmentFile= 加载；和二进制同一事务替换，升级随包覆盖、失败随包回滚。
 # nginx-aegis.conf 是 render-nginx.sh 读的同目录模板：不装它，安装结束时提示的
 # $DEST/deploy/render-nginx.sh 会报 nginx template not found
-for data_file in BACKUP.md backup-webdav.example.json .env.example nginx-aegis.conf \
+for data_file in backup-webdav.example.json .env.example nginx-aegis.conf \
                  docker-compose.yml configure-app-role.sql release-artifact.env; do
   stage_file "$RELEASE_DIR/deploy/$data_file" "/opt/aegispanel/deploy/$data_file" 0644
 done

@@ -202,9 +202,7 @@ for arch in amd64 arm64; do
   for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh update-cloudflare-realip.sh; do
     cp "$ROOT/deploy/$script" "$target/deploy/$script"
   done
-  cp "$ROOT/deploy/renewal-cutover.md" "$target/deploy/renewal-cutover.md"
   cp "$ROOT/deploy/nginx-aegis.conf" "$target/deploy/nginx-aegis.conf" 2>/dev/null || true
-  cp "$ROOT/deploy/BACKUP.md" "$target/deploy/BACKUP.md"
   cp "$ROOT/deploy/.env.example" "$target/deploy/.env.example"
   cp "$ROOT/deploy/backup-webdav.example.json" "$target/deploy/backup-webdav.example.json"
   # 数据基座与应用角色收窄：少了这两个，装完的机器起不了 PostgreSQL/Valkey，
@@ -273,8 +271,6 @@ for arch in amd64 arm64; do
     release_scripts+=("$target_base/deploy/$script")
   done
   release_data=(
-    "$target_base/deploy/renewal-cutover.md"
-    "$target_base/deploy/BACKUP.md"
     "$target_base/deploy/.env.example"
     "$target_base/deploy/release-artifact.env"
     "$target_base/deploy/nginx-aegis.conf"

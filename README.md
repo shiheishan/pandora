@@ -53,7 +53,6 @@ aegis-public    aegis-admin     aegis-node
 | `pdnd/kernel/`、`pdnd/internal/` | NativeCore 自研数据面 |
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
 | `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
-| `docs/` | 配置签名密钥轮换、发布物绑定 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
 | `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含两个安装脚本共用的首装对外地址闸门） |
 | `CLAUDE.md`、`.claude/rules/`、`.claude/skills/` | 给 Claude Code 的说明：根 CLAUDE.md 是全局约定与红线，rules 是按路径自动加载的模块约定，skills 是验证流程 |
@@ -99,7 +98,7 @@ aegis-public    aegis-admin     aegis-node
 
 重写已完成：发布包构建时把前端嵌入网关，两个网关的 `/` 分别下发管理后台与用户门户；仓库里 `panel/web/` 只存占位入口，未嵌入真实产物时下发的是占位页。
 
-运维：WebDAV 自动备份、签名清单、保留策略、systemd timer/service 与恢复脚本已存在，见 [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)。真实远端恢复演练状态见“验证状态与门禁”。
+运维：WebDAV 自动备份、签名清单、保留策略、systemd timer/service 与恢复脚本已存在（`panel/deploy/backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`）。真实远端恢复演练状态见“验证状态与门禁”。
 
 ### 数据与迁移
 
@@ -248,8 +247,7 @@ ssh -t root@目标机 'cd /opt/pandora-release/rel/deploy && ./install.sh'
 升级不改现有 `.env` 的运行模式；不是 production 时只打印提示和切换步骤。
 
 节点接入的发布物绑定（节点端两个架构的 SHA-256 与版本）随包生成在 `deploy/release-artifact.env`，
-安装到 `/opt/aegispanel/deploy/`，由 `aegis-node` 加载，每次升级随包覆盖；全过程见
-[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)。
+安装到 `/opt/aegispanel/deploy/`，由 `aegis-node` 加载，每次升级随包覆盖。
 
 安装器拒绝从任何人可写的目录安装（防止有人塞一份假的进来），所以包要放在
 root 独占的目录下——直接拿 `/tmp` 里的构建产物去装会被挡住，那是它在正确工作。
@@ -395,7 +393,5 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 
 ## 相关文档
 
-- [docs/CONFIG-SIGNING-KEY-ROTATION.md](docs/CONFIG-SIGNING-KEY-ROTATION.md)、[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)：密钥轮换与发布物绑定。
-- [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)：备份与恢复。
 - [panel/docs/](panel/docs/)：`redesign/api-contract.md` 前后端接口契约（DASH / CLIENT-AUTH 历史冻结稿在 tag `archive/client-auth`）。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。

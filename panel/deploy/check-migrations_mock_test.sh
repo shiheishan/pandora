@@ -209,7 +209,7 @@ legacy_status=$?
 set -e
 [ "$legacy_status" -eq 78 ]
 grep -Fq 'active legacy renewals=2; release refused' "$TMP/legacy-renewal.out"
-grep -Fq 'follow deploy/renewal-cutover.md' "$TMP/legacy-renewal.out"
+grep -Fq 'cancel unpaid ones through the normal order-cancel flow' "$TMP/legacy-renewal.out"
 [ ! -e "$TMP/create.id" ] && [ ! -e "$TMP/drop.id" ]
 rm -f "$TMP/legacy-renewal.count"
 

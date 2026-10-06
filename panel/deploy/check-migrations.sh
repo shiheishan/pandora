@@ -246,7 +246,7 @@ if [ "$ORDERS_PRESENT" = t ]; then
     || { echo "migration precheck: invalid legacy renewal count" >&2; exit 78; }
   if [ "$LEGACY_ACTIVE_RENEWALS" -ne 0 ]; then
     echo "migration precheck: active legacy renewals=$LEGACY_ACTIVE_RENEWALS; release refused" >&2
-    echo "migration precheck: follow deploy/renewal-cutover.md, then rerun this gate" >&2
+    echo "migration precheck: cancel unpaid ones through the normal order-cancel flow, reconcile processing or paid ones order by order (never edit them with SQL), then rerun this gate" >&2
     exit 78
   fi
 fi

@@ -8,7 +8,7 @@
 # 发布包装出来的就是生产：首装写 AEGIS_ENV=production。生产模式下网关启动时
 # 要求 AEGIS_PUBLIC_BASE_URL 是 https://公网域名（platform/config 的
 # CanonicalPublicOrigin），节点接入要求发布物的 SHA-256 与版本（deploy/
-# release-artifact.env，见 docs/RELEASE-ARTIFACT-BINDING.md）。所以首装必须先拿到
+# release-artifact.env，随发布包生成）。所以首装必须先拿到
 # 域名：PANDORA_PUBLIC_BASE_URL 给出，或在终端里现场问；两者都没有就在动手前停下。
 #
 # 这个脚本把原先要手工串起来的七八步固化成一条命令：前置检查 → 生成配置

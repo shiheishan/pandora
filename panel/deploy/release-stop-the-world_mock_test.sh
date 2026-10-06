@@ -176,7 +176,6 @@ for script in check-migrations.sh migrate.sh; do
   printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/good-release/deploy/$script"
   chmod 0755 "$TMP/good-release/deploy/$script"
 done
-printf 'mock renewal procedure\n' >"$TMP/good-release/deploy/renewal-cutover.md"
 amd64_digest="$(sha256sum "$TMP/good-release/pdnd-dist/pandora-native-linux-amd64" | awk '{print $1}')"
 arm64_digest="$(sha256sum "$TMP/good-release/pdnd-dist/pandora-native-linux-arm64" | awk '{print $1}')"
 cat >"$TMP/good-release/deploy/release-artifact.env" <<ENV
