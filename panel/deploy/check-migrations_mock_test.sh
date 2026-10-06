@@ -285,8 +285,6 @@ grep -Fq 'PGOPTIONS=-c app.idempotency_writers_stopped=yes' "$TMP/goose.env"
 grep -Fq -- '-c app.allow_idempotency_schema37_up=yes' "$TMP/goose.env"
 grep -Fq -- '-c app.allow_idempotency_schema38_up=yes' "$TMP/goose.env"
 grep -Fq -- '-c app.allow_idempotency_schema39_up=yes' "$TMP/goose.env"
-grep -Fq -- '-c aegis.client_auth_00042_upgrade_approved=approved-v1' "$TMP/goose.env"
-grep -Fq -- '-c aegis.client_auth_writers_stopped=stopped-v1' "$TMP/goose.env"
 
 for fault in pg_dump restore goose; do
   touch "$TMP/fail_$fault"

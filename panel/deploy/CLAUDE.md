@@ -33,22 +33,17 @@ build-release.sh: 打发布包，先以 PANDORA_RELEASE=$VERSION 跑 make fronte
 release-stop-the-world.sh: 改表发布的停机切换控制器
 release-artifact.env.example: 发布物绑定样例；真实文件由 build-release.sh 按本包 pdnd-dist 生成（版本 + 两架构 SHA-256，不含 AEGIS_ENV），全链路见 docs/RELEASE-ARTIFACT-BINDING.md，release-artifact-binding_mock_test.sh 守
 renewal-cutover.md: 续费幂等切换闸门手册
-pandora-preflight-lease-registry.sh: 预检租约登记，防止并发发布
 
 数据库
 migrate.sh: 特权 goose 包装器，运行时服务永远拿不到迁移 DSN
-  - 迁移编号只要求严格递增、不重复（主序列有 00073、00091、00092 历史空号，同号拒绝），三个迁移脚本同一规则
+  - 迁移编号只要求严格递增、不重复（主序列有 00073、00091、00092 历史空号，同号拒绝），与 check-migrations.sh 同一规则
   - up 之前先调 check-migrations.sh 在克隆库演练
   - 拒绝 down/redo
 check-migrations.sh: 在一次性库克隆上证明精确的生产升级路径（make check-migrations 与 migrate.sh up 都走它）
-check-migrations-isolated-pg18.sh: CLIENT-AUTH-00042 那一代的历史隔离预检，钉死冻结迁移的 SHA-256
-  - 当前迁移序列的 00042 已换人，它会主动以 NOT_RUN（exit 77）拒绝运行
-  - 桩测试改在合成的历史序列（主序列 00001–00041 加冻结的 00042）上跑全套用例
 bootstrap.sh / configure-app-role.sql: 迁移后配置最小权限运行角色 aegis_app（NOSUPERUSER NOBYPASSRLS）
   - 末尾在「列级提升回表级」之后收回证据流水与守卫表的 UPDATE/DELETE（traffic_pack_grants、gift_card_batches 只收 DELETE，业务要 UPDATE），顺序由 platform/db 的契约测试守
 psql.sh: 从 .env 读凭据的 psql 封装，避免口令出现在命令行
 seed-catalog-cny.sql / seed-demo.sql: 确定性演示商品目录（schema 35+），本地与 E2E 用
-reap-isolated-pg18.sh: 清理隔离 PG18 残留容器，先全量校验候选再做第一次删除
 
 备份与恢复
 backup-postgres.sh / restore-postgres.sh / verify-backup.sh: 加密备份、恢复（校验和之外还做恢复演练防坏块）、备份校验
@@ -63,13 +58,6 @@ update-cloudflare-realip.sh: 刷新可信 Cloudflare 回源网段（模板 inclu
 巡检
 healthcheck.sh / aegis-health.service / aegis-health.timer: 面板健康巡检，错开整点运行，巡检自身有超时
 clear-ratelimit.sh: 清空限流计数，仅开发与集成测试用
-
-CLIENT-AUTH 发布门禁（00042–00044，未接生产路由）
-client-auth-*、generate-client-auth-*、probe-client-auth-*、verify-client-auth-*、run-client-auth-00043-indexes.sh: 冻结契约的清单生成、离线 Ed25519 证明、OID 无关目录探针与校验、可续跑索引执行器
-  - 各 README 说明输入输出
-  - 其中约 9 个脚本在运行时按 SHA-256 钉住或 grep 从未入库的 `.ai-company/handoffs/*.md` 交接稿（相对 panel/ 解析），新 clone 上只能 NOT_RUN（77）或失败，CI 不调它们
-  - 恢复 CLIENT-AUTH 前要先把这些交接稿入库
-client-auth-00044-verifier-gate.py / verify-client-auth-00044-evidence-vectors.ps1: 00044 证据信封与向量的独立生成与校验，不导入被测实现
 
 测试（只用虚构数据与一次性环境，不连任何真实部署）
 migrate-to-new-host_mock_test.sh: 迁新主机的生产闸门：production + 源码模式以中文原因拒绝，production + 发布包、development + 源码都放过
@@ -90,11 +78,14 @@ run-smoke-e2e.sh: 联调冒烟第 ⑤ 步（panel-smoke.yml 在读表与写路�
   - 每个脚本一行写进 e2e-results.md（结果、OK/FAIL 数、首个失败的步骤与原文），全部跑完、表格写完后有任何失败就以 1 退出
   - 只肯在 GitHub Actions 上跑
 test-*-pg18.sh: 各业务的 PG18 集成门禁，每次新建隔离容器与库、结束即删；口令为 *-test-only 字样
-test-install.sh / test-ca42-*-e2e.sh / test-client-auth-*: 安装链与 CLIENT-AUTH 端到端；test-install.sh 发现库里已有用户即拒绝执行
-*_mock_test.sh / *_static_test.sh / *_linux_test.sh / *_linux_fault_test.sh / release-stop-the-world_test.ps1: 对上面各脚本的桩测试与静态检查，不需要数据库
+test-install.sh: 安装链端到端，发现库里已有用户即拒绝执行
+*_mock_test.sh / *_static_test.sh / release-stop-the-world_test.ps1: 对上面各脚本的桩测试与静态检查，不需要数据库
   - CI 的 panel-deploy.yml 逐个点名跑其中与安装、迁移、nginx、发布物绑定相关的几个（清单在 workflow 里，新增相关桩测试要补进去）
-  - *_linux_* 与部分 mock 测试（pandora-cic-journal、pandora-pathtrust、release-stop-the-world、verify-backup_manifest、client-auth-00043-linux-wiring、test-client-auth-00044-verifier-linux-root）需要 Linux root
+  - 其中 release-stop-the-world、verify-backup_manifest 两个 mock 测试需要 Linux root
 fixtures/: billing、idempotency 两份 PG18 门禁种子数据
+
+已移出主线
+CLIENT-AUTH（00042–00044）的发布门禁、隔离 PG18 预检及其租约登记与残留清理、端到端与桩测试脚本已随代码一起删除，原样归档在 git 标签 archive/client-auth；冻结的两个迁移仍留在 ../migrations/frozen-client-auth/
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -64,7 +64,7 @@ if ! locale -a 2>/dev/null | grep -qE "en_US\.utf-?8"; then
 fi
 
 # 0.3 端口占用：检测 Pandora 需要的端口是否已被其他服务占用（Docker 旧部署残留等）
-for p in 5432 6379 9000 9001 9002 9003; do
+for p in 5432 6379 9000 9001 9003; do
   if ss -tlnp 2>/dev/null | grep -q ":$p "; then
     say "  端口 $p 已被占用，检查是否 Pandora 旧残留..."
   fi
@@ -220,7 +220,6 @@ if [[ "$MODE" = install ]]; then
 MASTER_KEY="$(openssl rand -base64 32)"
 JWT_PUBLIC_SECRET="$(openssl rand -base64 32)"
 JWT_ADMIN_SECRET="$(openssl rand -base64 32)"
-JWT_CLIENT_SECRET="$(openssl rand -base64 32)"
 CONFIG_SIGNING_SEED="$(openssl rand -base64 32)"
 
 # 写入 .env
@@ -243,13 +242,11 @@ AEGIS_ACCESS_TOKEN_TTL=720h
 AEGIS_REFRESH_TOKEN_TTL=720h
 AEGIS_PUBLIC_ADDR=127.0.0.1:9000
 AEGIS_ADMIN_ADDR=127.0.0.1:9001
-AEGIS_CLIENT_ADDR=127.0.0.1:9002
 AEGIS_NODE_ADDR=127.0.0.1:9003
 AEGIS_ADMIN_PATH=${ADMIN_PATH}
 AEGIS_MASTER_KEY=${MASTER_KEY}
 AEGIS_JWT_PUBLIC_SECRET=${JWT_PUBLIC_SECRET}
 AEGIS_JWT_ADMIN_SECRET=${JWT_ADMIN_SECRET}
-AEGIS_JWT_CLIENT_SECRET=${JWT_CLIENT_SECRET}
 AEGIS_CONFIG_SIGNING_SEED=${CONFIG_SIGNING_SEED}
 AEGIS_PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
 PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes
