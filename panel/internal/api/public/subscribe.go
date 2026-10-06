@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 domain/subscription 的凭据解析、渲染、链接列表、节点预览与 Rotate，依赖 platform/httpx 与 Deps.Cfg 的 PublicBaseURL
+// [INPUT]: 依赖 domain/subscription 的凭据解析、渲染、链接列表、节点预览与 Rotate，依赖 platform/httpx（含来源地址 ClientIP）与 Deps.Cfg 的 PublicBaseURL
 // [OUTPUT]: 对外提供 handlers 的 subscribe（/{prefix}/{token} 订阅分发）/ meSubscriptionLinks / meSubscriptionNodes / rotateSubscriptionLink
 // [POS]: api/public 的订阅分发与我的订阅链接：分发端点直接写出渲染好的订阅正文，认证失败一律回同一个诱饵 404 页；其余三个是登录后的 JSON 接口
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -17,7 +17,6 @@ package public
 
 import (
 	"errors"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -44,7 +43,10 @@ func (h *handlers) subscribe(w http.ResponseWriter, r *http.Request) {
 	rawToken := chi.URLParam(r, "token")
 
 	ua := r.UserAgent()
-	ip := clientIP(r)
+	// 来源地址与限流、审计同一口径（httpx.ClientIP）：只认 nginx 覆写的 X-Real-IP，
+	// 不采信客户端能任意填写的 X-Forwarded-For。这个 IP 进订阅拉取日志，风控靠它
+	// 按来源关联同一条链接的拉取
+	ip := httpx.ClientIP(r)
 	family := subscription.UAFamily(ua)
 
 	// 客户端常给链接加个扩展名让自己认得出格式，去掉再比对
@@ -135,29 +137,6 @@ func formatUserinfo(u subscription.Usage) string {
 		b.WriteString("; expire=" + strconv.FormatInt(u.Expire, 10))
 	}
 	return b.String()
-}
-
-// clientIP 取真实来源地址。
-//
-// 面板跑在 nginx 后面，RemoteAddr 永远是回环地址，
-// 不看转发头的话审计里所有请求都来自同一个「IP」，多来源检测直接失效。
-func clientIP(r *http.Request) string {
-	if v := r.Header.Get("X-Real-IP"); v != "" {
-		return v
-	}
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		// 取最左边那个：链路上每一跳都会往右追加，
-		// 最左边才是最初的客户端
-		if i := strings.IndexByte(v, ','); i > 0 {
-			return strings.TrimSpace(v[:i])
-		}
-		return strings.TrimSpace(v)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 //-----------------------------------------------------------------------------

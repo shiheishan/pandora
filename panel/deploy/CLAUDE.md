@@ -24,6 +24,7 @@ migrate-to-new-host.sh: 新主机一键迁移：
   - 第 5 步先拦下缺失的 AEGIS_PUBLIC_BASE_URL
   - 第 6 步源码模式先 make frontend-embed（无 npm 即停），两种模式都查 aegis-public/admin 二进制里没有前端占位标记
 .env.example: 运行配置模板，机密与域名全是 CHANGE_ME 占位；AEGIS_ENV 默认 development 给本地开发，install.sh 首装改成 production
+  - 三个 AEGIS_*_PPROF_ADDR 留空即关闭 pprof，打开只许回环 IP（校验在 platform/config）
 docker-compose.yml: 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1
 systemd/: aegis-public/admin/node 三网关、备份 service+timer 单元；aegis-node 在 .env 之后再加载 release-artifact.env（节点接入的发布物绑定）
 logrotate-aegis: 三个网关的日志轮转，路径 /var/log/aegis/*.log 与 systemd 单元的 append: 一致，copytruncate；随发布包分发，install-linux-binaries.sh 装到 /etc/logrotate.d/aegis

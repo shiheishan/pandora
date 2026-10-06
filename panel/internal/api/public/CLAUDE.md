@@ -16,6 +16,7 @@ referral.go: 邀请与分销佣金（从 handlers.go 拆出）：邀请码、佣
 helpers.go: 包内共用小工具（签名十六进制解析等）
 selfservice.go: 自助小接口：佣金转余额、会话列表与踢下线（只作用于门户会话）、工单撤回、快捷登录签发与消费
 subscribe.go: 订阅分发端点 /{prefix}/{token}，以及我的订阅链接、节点预览与自助换链接（rotate）
+  - 分发端点记进拉取日志的来源地址只经 httpx.ClientIP（只认 nginx 覆写的 X-Real-IP，不采信 X-Forwarded-For），与限流、审计同一口径
 my_orders.go / order_cancel.go: 我的订单列表（多值状态、筛选段计数 counts）与详情、取消待支付订单
 order_query.go: 「我已支付，刷新状态」POST v1/orders/{id}/query：
   - 只查本人订单（他人与不存在同一个 404），路由上按账号单独限流每分钟 6 次、不挂 checkout 开关，调 billing.QueryOrderPayment（不记审计；后台走 AdminQueryOrderPayment）
@@ -32,7 +33,7 @@ content.go: 帮助文章列表（q 全文包含、platform=any）、正文与「
 telegram.go: Telegram 绑定状态、绑定码与解绑，Telegram webhook（/webhooks/telegram/{secret}），以及匿名的 /appearance 外观读取
 pdnd_install.go: NativeCore 一键安装脚本与二进制分发，产物目录取 Cfg.PdndDistDir
 events.go: 门户 SSE，只推本人与全租户事件
-*_test.go: 路由契约（含反馈路由在需登录组、switch_routes_test 守降级开关门）、安全契约与处理器单测（notifications_read_test 不连库验非 UUID 回 404）
+*_test.go: 路由契约（含反馈路由在需登录组、switch_routes_test 守降级开关门）、安全契约（public_security_contract_test 另守订阅分发不自解析 X-Forwarded-For）与处理器单测（notifications_read_test 不连库验非 UUID 回 404）
   - notifications_pg18_test.go、portal_step5_pg18_test.go、commerce_reads_pg18_test.go 与 session_last_seen_pg18_test.go 为 PG18 集成测试（public_api 域；commerce_reads 经处理器驱动目录、试算、订单与佣金读模型，session_last_seen 经真实认证中间件验 last_seen_at 节流刷新）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
