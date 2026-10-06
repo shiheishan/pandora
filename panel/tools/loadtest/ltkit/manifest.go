@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 encoding/json 与 os 读写清单文件
-// [OUTPUT]: 对外提供 Manifest、ManifestUser、ManifestNode、LoadManifest、(*Manifest).Save
+// [OUTPUT]: 对外提供 Manifest、ManifestUser、ManifestNode、SeedTiming、LoadManifest、(*Manifest).Save
 // [POS]: tools/loadtest/ltkit 的造数清单：seed 写、nodes/users/burst 读，是四个子命令之间唯一的数据契约
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -31,6 +31,23 @@ type Manifest struct {
 	PlanIDs      []string       `json:"plan_ids"`
 	Users        []ManifestUser `json:"users"`
 	Nodes        []ManifestNode `json:"nodes"`
+
+	// RunID 是这一批造数的命名空间（邮箱、节点名、池与套餐代码里都带它），区分同一库里的多次 seed。
+	RunID string `json:"run_id,omitempty"`
+	// SubscribePathPrefix 是租户的订阅路径前缀：订阅拉取 URL = 公共网关根 + "/" + 前缀 + "/" + SubscribeToken。
+	SubscribePathPrefix string `json:"subscribe_path_prefix,omitempty"`
+	// PoolID / PlanVersionID 是这一批节点所在的池与用户订阅锁定的套餐版本（PlanIDs 里那个套餐的已发布版本）。
+	PoolID        string `json:"pool_id,omitempty"`
+	PlanVersionID string `json:"plan_version_id,omitempty"`
+	// SeedTimings 是 seed 各阶段的墙钟耗时，按执行顺序排列，最后一项是 total。
+	SeedTimings []SeedTiming `json:"seed_timings,omitempty"`
+}
+
+// SeedTiming 是 seed 一个阶段的耗时：Count 是该阶段处理的对象数（用户、节点、管理请求……）。
+type SeedTiming struct {
+	Phase   string  `json:"phase"`
+	Count   int     `json:"count"`
+	Seconds float64 `json:"seconds"`
 }
 
 type ManifestUser struct {
@@ -40,6 +57,9 @@ type ManifestUser struct {
 	SubscribeToken string `json:"subscribe_token"`
 	// RealIP 是这个模拟用户固定的来源地址，经 X-Real-IP 带给面板（虚构网段）。
 	RealIP string `json:"real_ip"`
+	// SubscriptionID / NodeUID 是这位用户唯一一条生效订阅的主键与对节点暴露的整数编号（UniProxy 用户列表的 id）。
+	SubscriptionID string `json:"subscription_id,omitempty"`
+	NodeUID        int64  `json:"node_uid,omitempty"`
 }
 
 type ManifestNode struct {
@@ -54,6 +74,9 @@ type ManifestNode struct {
 	// ConfigKeyID / ConfigPublicKey 是面板配置签名公钥，模拟节点按 pdnd 的做法验配置签名。
 	ConfigKeyID     string `json:"config_key_id"`
 	ConfigPublicKey string `json:"config_public_key"`
+	// Name 是节点名（带 seed 的命名空间），ServerID 是它所在的服务器。
+	Name     string `json:"name,omitempty"`
+	ServerID string `json:"server_id,omitempty"`
 }
 
 func LoadManifest(path string) (*Manifest, error) {
