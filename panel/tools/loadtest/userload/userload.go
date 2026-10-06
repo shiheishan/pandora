@@ -241,6 +241,7 @@ func runUsers(ctx context.Context, cfg usersConfig, m *ltkit.Manifest, stdout io
 		<-finished
 	}
 	<-done
+	rec.Stop()
 	interrupted := ctx.Err() != nil
 	if !lim.drain(cfg.timeout + 5*time.Second) {
 		fmt.Fprintf(stdout, "[users] %d requests still in flight after the drain grace; writing results anyway\n", lim.inflight())

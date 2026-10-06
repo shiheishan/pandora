@@ -35,13 +35,20 @@ type workload struct {
 	trafficMiB float64
 	total      int
 	ips        []string
+	// byUID 是订阅 node_uid → 该用户固定的来源 IP（清单带 node_uid 时）：
+	// 节点上报的在线 IP 与 users 子命令发出的 X-Real-IP 是同一个，风控按 IP 关联才对得上。
+	byUID map[int64]string
 }
 
 func newWorkload(m *ltkit.Manifest, total int, ratio, trafficMiB float64) *workload {
 	w := &workload{ratio: ratio, trafficMiB: trafficMiB, total: max(total, 1)}
+	w.byUID = make(map[int64]string, len(m.Users))
 	for _, u := range m.Users {
 		if u.RealIP != "" {
 			w.ips = append(w.ips, u.RealIP)
+			if u.NodeUID != 0 {
+				w.byUID[u.NodeUID] = u.RealIP
+			}
 		}
 	}
 	return w
@@ -87,8 +94,8 @@ func (w *workload) trafficFor(ids []int64, index int, rng *rand.Rand) (map[strin
 }
 
 // aliveFor 给本节点的在线用户各配一到两个来源 IP，格式即 UniProxy alive 的
-// {"<uid>": ["ip", ...]}。IP 取自清单里用户的虚构地址；清单没有时退到
-// 198.18.0.0/15（RFC 2544 基准测试网段，不会撞上真实地址）。
+// {"<uid>": ["ip", ...]}。第一个 IP 是该用户在清单里的固定地址（按 node_uid 对上），
+// 第二台设备从清单地址池里取；清单没有地址时退到 198.18.0.0/15（RFC 2544 基准测试网段）。
 func (w *workload) aliveFor(ids []int64, index int) map[string][]string {
 	out := map[string][]string{}
 	for _, id := range ids {
@@ -96,7 +103,11 @@ func (w *workload) aliveFor(ids []int64, index int) map[string][]string {
 			continue
 		}
 		h := mix(uint64(id) ^ 0x5bd1e995)
-		ips := []string{w.ip(h)}
+		first, ok := w.byUID[id]
+		if !ok {
+			first = w.ip(h)
+		}
+		ips := []string{first}
 		if h%5 == 0 { // 约两成用户同时有两个设备在线
 			ips = append(ips, w.ip(h>>17))
 		}

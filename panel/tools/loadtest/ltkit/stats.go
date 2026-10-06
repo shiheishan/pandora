@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 sync、math、time 与 encoding/json，只用标准库
-// [OUTPUT]: 对外提供 Recorder（NewRecorder、SetMeta、Observe、Snapshot、WriteFiles）、Observation、Report、EndpointStats、Window、WriteSummary
+// [OUTPUT]: 对外提供 Recorder（NewRecorder、SetMeta、Observe、Stop、Snapshot、WriteFiles）、Observation、Report、EndpointStats、Window、WriteSummary
 // [POS]: tools/loadtest/ltkit 的计量底座：nodes、users、burst 共用同一个记录器，保证三类场景的 QPS、分位数与错误码按同一口径计算
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -106,6 +106,7 @@ type Recorder struct {
 
 	mu        sync.Mutex
 	start     time.Time
+	stop      time.Time // 非零时 QPS 与时长按 [start, stop] 算，收尾排空的那几秒不摊薄 QPS
 	endpoints map[string]*endpointAcc
 	meta      map[string]any
 }
@@ -127,6 +128,16 @@ func NewRecorder(scenario string, window time.Duration) *Recorder {
 func (r *Recorder) SetMeta(key string, value any) {
 	r.mu.Lock()
 	r.meta[key] = value
+	r.mu.Unlock()
+}
+
+// Stop 标记压测窗口结束（只认第一次）。之后到达的观测（排空中的在途请求、
+// 节点退出前的最后一次上报）照常计数，但不再拉长分母。
+func (r *Recorder) Stop() {
+	r.mu.Lock()
+	if r.stop.IsZero() {
+		r.stop = time.Now()
+	}
 	r.mu.Unlock()
 }
 
@@ -218,7 +229,11 @@ type Window struct {
 func (r *Recorder) Snapshot() Report {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	elapsed := time.Since(r.start).Seconds()
+	end := time.Now()
+	if !r.stop.IsZero() {
+		end = r.stop
+	}
+	elapsed := end.Sub(r.start).Seconds()
 	rep := Report{
 		Scenario: r.Scenario, StartedAt: r.start, DurationS: elapsed,
 		WindowS: r.Window.Seconds(), Meta: map[string]any{},
@@ -334,9 +349,9 @@ func WriteSummary(w io.Writer, rep Report) {
 			fmt.Fprintf(w, "  %s = %v\n", k, rep.Meta[k])
 		}
 	}
-	fmt.Fprintf(w, "%-44s %9s %8s %8s %8s %8s %8s  %s\n", "endpoint", "count", "qps", "p50ms", "p95ms", "p99ms", "maxms", "non-2xx")
+	fmt.Fprintf(w, "%-56s %9s %8s %8s %8s %8s %8s  %s\n", "endpoint", "count", "qps", "p50ms", "p95ms", "p99ms", "maxms", "non-2xx")
 	for _, st := range append(rep.Endpoints, rep.Totals) {
-		fmt.Fprintf(w, "%-44s %9d %8.2f %8.1f %8.1f %8.1f %8.1f  %s\n",
+		fmt.Fprintf(w, "%-56s %9d %8.2f %8.1f %8.1f %8.1f %8.1f  %s\n",
 			st.Endpoint, st.Count, st.QPS, st.P50MS, st.P95MS, st.P99MS, st.MaxMS, oddCodes(st.Codes, st.Flags))
 	}
 }

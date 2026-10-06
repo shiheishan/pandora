@@ -215,6 +215,7 @@ func Run(ctx context.Context, m *ltkit.Manifest, opt Options, rec *ltkit.Recorde
 
 	<-ctx.Done()
 	end := time.Now()
+	rec.Stop()
 	// 和 pdnd 一样等各节点交完最后一轮流量，但不无限等
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
