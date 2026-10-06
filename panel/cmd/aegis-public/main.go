@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/public 的 NewRouter
+// [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/public 的 NewRouter、platform/profiling 的可选 pprof 诊断端口
 // [OUTPUT]: 对外提供 可执行入口 aegis-public：装配用户门户网关并启动通知扫描、插件投递、预留过期、主动查单巡检等后台循环
 // [POS]: panel/cmd 的 public 网关进程；履约后的节点通知经 nodefabric.NotifyUsersChanged 发出；identity 的注册验证码经这里接上 notify（SetVerificationMailer）；通知收件人哈希用 crypto.NotifyRecipientSalt（与 admin 同盐），订阅审计仍用 SubscriptionAuditSalt
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -37,6 +37,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/logging"
+	"github.com/aegispanel/aegis/internal/platform/profiling"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
 	"github.com/aegispanel/aegis/internal/platform/server"
 	"github.com/aegispanel/aegis/internal/platform/token"
@@ -178,6 +179,14 @@ func run() error {
 
 	// env 已由 logging.New 作为固定字段附加，此处不再重复
 	log.Info("AegisPanel Public 网关就绪", "addr", cfg.PublicAddr)
+
+	// pprof 诊断端口：默认关闭，AEGIS_PUBLIC_PPROF_ADDR 设了回环地址才开（独立端口，
+	// 不经 nginx、不挂业务路由），随网关停机关闭
+	pprofSrv, err := profiling.Start(cfg.PprofAddrs[config.DomainPublic], log)
+	if err != nil {
+		return err
+	}
+	defer pprofSrv.Close()
 
 	serverErr := server.RunContext(ctx, server.Options{
 		Addr:            cfg.PublicAddr,

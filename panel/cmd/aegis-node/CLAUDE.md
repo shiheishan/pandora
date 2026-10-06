@@ -7,8 +7,10 @@
   - 没有后台循环，用 server.Run 自带的信号处理停机。
 
 成员清单
-main.go: main / run 装配与生命周期
-*_test.go: main_test 经 platform/sourcetest 取本包与两个兄弟网关的 run，钉死三处 audit.Configure 都在开服之前且哈希与加密写法逐字相同
+main.go: main / run 装配与生命周期；开服前按 AEGIS_NODE_PPROF_ADDR 起可选的回环 pprof 诊断端口（platform/profiling），defer 随停机关闭
+*_test.go: main_test 经 platform/sourcetest 取本包与两个兄弟网关的 run，是三网关共同装配的唯一契约处：
+  - 三处 audit.Configure 都在开服之前且哈希与加密写法逐字相同
+  - 三处 pprof 各取本域的 config.PprofAddrs、开服之前起、defer 关闭，每个网关只有一个
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

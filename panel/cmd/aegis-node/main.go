@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/config、db、crypto、logging、server 的进程装配，audit 的来源信息注入（Configure），realtime 的跨进程事件 Hub，geoip 的可选库，domain/nodefabric 的节点服务、发布绑定注入与流 Hub
+// [INPUT]: 依赖 platform/config、db、crypto、logging、server 的进程装配，audit 的来源信息注入（Configure），profiling 的可选 pprof 诊断端口，realtime 的跨进程事件 Hub，geoip 的可选库，domain/nodefabric 的节点服务、发布绑定注入与流 Hub
 // [OUTPUT]: 对外提供 aegis-node 进程：Node 域 HTTP 网关（默认 127.0.0.1:9003）
 // [POS]: panel/cmd 的三个网关之一，只做装配，路由与处理在 internal/api/node；与 aegis-public、aegis-admin 并列，审计来源信息的哈希与加密装配与它们逐字相同
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -21,6 +21,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/geoip"
 	"github.com/aegispanel/aegis/internal/platform/logging"
+	"github.com/aegispanel/aegis/internal/platform/profiling"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
 	"github.com/aegispanel/aegis/internal/platform/server"
 )
@@ -120,6 +121,14 @@ func run() error {
 
 	log.Info("AegisPanel Node 控制面就绪",
 		"addr", cfg.NodeAddr, "config_key_id", signer.KeyID())
+
+	// pprof 诊断端口：默认关闭，AEGIS_NODE_PPROF_ADDR 设了回环地址才开（独立端口，
+	// 不经 nginx、不挂业务路由），随网关停机关闭
+	pprofSrv, err := profiling.Start(cfg.PprofAddrs[config.DomainNode], log)
+	if err != nil {
+		return err
+	}
+	defer pprofSrv.Close()
 
 	return server.Run(server.Options{
 		Addr:            cfg.NodeAddr,

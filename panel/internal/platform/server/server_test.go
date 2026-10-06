@@ -1,7 +1,13 @@
+// [INPUT]: 依赖 server.go 的 runContextWithListener、Options、errNilHandler
+// [OUTPUT]: 对外提供 TestRunContextCancelsActiveHandler、TestRunContextRefusesNilHandler
+// [POS]: platform/server 的生命周期测试：取消 context 释放长连接处理器后再优雅停机，nil Handler 在开服前即被拒绝
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -73,5 +79,21 @@ func TestRunContextCancelsActiveHandler(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("server did not return within 2s")
+	}
+}
+
+func TestRunContextRefusesNilHandler(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runContextWithListener(context.Background(), Options{
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}, listener)
+	if !errors.Is(err, errNilHandler) {
+		t.Fatalf("nil handler must be refused before serving DefaultServeMux, got %v", err)
+	}
+	if _, err := listener.Accept(); err == nil {
+		t.Fatal("listener must be closed when the handler is refused")
 	}
 }
