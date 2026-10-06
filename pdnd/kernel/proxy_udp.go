@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 proxy.go 的 proxyAdapter，依赖 vless_request.go 的 vlessDestination，依赖 DataPlane 的 UDP 路由
-// [OUTPUT]: 包内提供 handleSOCKSUDP、SOCKS5 UDP 数据报的解析与封装、proxyUDPEvent / proxyUDPRoute
-// [POS]: kernel 的 SOCKS5 UDP ASSOCIATE：从 proxy.go 拆出。控制连接存活期间转发数据报，每个目的地址一条经 DataPlane 路由的 PacketConn，按用户计量
+// [INPUT]: 依赖 proxy.go 的 proxyAdapter，依赖 vless_request.go 的 vlessDestination，依赖 DataPlane 的 UDP 路由，依赖 udp_relay.go 的 relayUDPDirections
+// [OUTPUT]: 包内提供 handleSOCKSUDP、SOCKS5 UDP 数据报的解析与封装、socksUDPAssociation / proxyUDPEvent / proxyUDPRoute
+// [POS]: kernel 的 SOCKS5 UDP ASSOCIATE：从 proxy.go 拆出。控制连接存活期间转发数据报，关联锁定首个来源，每个目的地址一条经 DataPlane 路由的 PacketConn，上下行各占一个 goroutine，按用户计量
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
@@ -14,7 +14,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
-	"time"
+	"sync/atomic"
 
 	M "github.com/sagernet/sing/common/metadata"
 
@@ -32,10 +32,25 @@ type proxyUDPRoute struct {
 	cancel context.CancelFunc
 }
 
+// socksUDPAssociation 是一次 UDP ASSOCIATE 的状态。routes 只由上行 goroutine
+// 读写，收尾时两个方向都已退出才遍历；client 由上行写一次、下行读，用原子指针。
+type socksUDPAssociation struct {
+	adapter  *proxyAdapter
+	user     core.User
+	sourceIP string
+	assoc    *net.UDPConn
+	events   chan proxyUDPEvent
+	routes   map[string]*proxyUDPRoute
+	client   atomic.Pointer[net.UDPAddr]
+}
+
 // handleSOCKSUDP implements RFC 1928 UDP ASSOCIATE. The association socket is
 // only an inbound rendezvous; destination sockets are created per route through
 // NativeCore DataPlane.ListenUDP, so policy selection and accounting remain
 // identical to TCP CONNECT.
+//
+// 上行（客户端 → 路由）与下行（路由 → 客户端）各占一个 goroutine，见 udp_relay.go。
+// 控制连接读到任何字节或出错、ctx 结束、关联套接字出错，任一发生即收尾。
 func (a *proxyAdapter) handleSOCKSUDP(ctx context.Context, control net.Conn, user core.User, reader *bufio.Reader, ip string) error {
 	assoc, err := net.ListenUDP("udp", nil)
 	if err != nil {
@@ -50,74 +65,97 @@ func (a *proxyAdapter) handleSOCKSUDP(ctx context.Context, control net.Conn, use
 		_, err := reader.ReadByte()
 		controlDone <- err
 	}()
-	events := make(chan proxyUDPEvent, 16)
-	routes := make(map[string]*proxyUDPRoute)
-	defer func() {
-		for _, r := range routes {
-			r.cancel()
-			_ = r.conn.Close()
-		}
-	}()
-	var clientAddr *net.UDPAddr
+	s := &socksUDPAssociation{
+		adapter: a, user: user, sourceIP: ip, assoc: assoc,
+		events: make(chan proxyUDPEvent, 16),
+		routes: make(map[string]*proxyUDPRoute),
+	}
+	defer s.closeRoutes()
+	return relayUDPDirections(ctx, controlDone, func() { _ = assoc.Close() }, s.uplink, s.downlink)
+}
+
+// uplink 阻塞读关联套接字。关联锁定第一个来源地址：此后只收同一 IP 的包（端口
+// 不比较），回包始终发往第一个来源的 IP:端口。
+func (s *socksUDPAssociation) uplink(ctx context.Context) error {
 	buf := make([]byte, 1<<16)
 	for {
-		_ = assoc.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
-		n, src, readErr := assoc.ReadFromUDP(buf)
-		if readErr == nil {
-			if clientAddr == nil {
-				clientAddr = src
-			} else if !src.IP.Equal(clientAddr.IP) {
-				continue
-			}
-			destination, payload, err := parseSOCKSUDPDatagram(buf[:n])
-			if err != nil {
-				continue
-			}
-			target, err := resolveProxyUDPAddr(ctx, destination)
-			if err != nil {
-				continue
-			}
-			dest := M.ParseSocksaddrHostPort(destination.Host, destination.Port)
-			key := dest.String()
-			r := routes[key]
-			if r == nil {
-				meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "udp", Protocol: "socks"}
-				if parsed, parseErr := netip.ParseAddr(ip); parseErr == nil {
-					meta.SourceIP = parsed
-				}
-				pc, openErr := a.plane.ListenUDP(ctx, meta, dest)
-				if openErr != nil {
-					continue
-				}
-				routeCtx, routeCancel := context.WithCancel(ctx)
-				r = &proxyUDPRoute{conn: pc, cancel: routeCancel}
-				routes[key] = r
-				go readProxyUDPRoute(routeCtx, pc, events)
-			}
-			if _, err := r.conn.WriteTo(payload, target); err != nil {
-				continue
-			}
-			a.addTraffic(user, int64(len(payload)), 0)
-		} else if ne, ok := readErr.(net.Error); !ok || !ne.Timeout() {
-			return readErr
+		n, src, err := s.assoc.ReadFromUDP(buf)
+		if err != nil {
+			return err
 		}
+		if client := s.client.Load(); client == nil {
+			s.client.Store(src)
+		} else if !src.IP.Equal(client.IP) {
+			continue
+		}
+		destination, payload, err := parseSOCKSUDPDatagram(buf[:n])
+		if err != nil {
+			continue
+		}
+		target, err := resolveProxyUDPAddr(ctx, destination)
+		if err != nil {
+			continue
+		}
+		r := s.route(ctx, destination)
+		if r == nil {
+			continue
+		}
+		if _, err := r.conn.WriteTo(payload, target); err != nil {
+			continue
+		}
+		s.adapter.addTraffic(s.user, int64(len(payload)), 0)
+	}
+}
+
+// route 取或建目的地址对应的路由 PacketConn，并为新路由起一个读协程把回包投进 events。
+func (s *socksUDPAssociation) route(ctx context.Context, destination vlessDestination) *proxyUDPRoute {
+	dest := M.ParseSocksaddrHostPort(destination.Host, destination.Port)
+	key := dest.String()
+	if r := s.routes[key]; r != nil {
+		return r
+	}
+	meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "udp", Protocol: "socks"}
+	if parsed, parseErr := netip.ParseAddr(s.sourceIP); parseErr == nil {
+		meta.SourceIP = parsed
+	}
+	pc, err := s.adapter.plane.ListenUDP(ctx, meta, dest)
+	if err != nil {
+		return nil
+	}
+	routeCtx, routeCancel := context.WithCancel(ctx)
+	r := &proxyUDPRoute{conn: pc, cancel: routeCancel}
+	s.routes[key] = r
+	go readProxyUDPRoute(routeCtx, pc, s.events)
+	return r
+}
+
+// downlink 把各路由的回包封成 SOCKS5 UDP 数据报发回锁定的客户端地址。
+// 客户端地址还没锁定时（理论上不会：路由只因上行而建）回包丢弃。
+func (s *socksUDPAssociation) downlink(ctx context.Context) error {
+	for {
 		select {
-		case event := <-events:
-			if clientAddr == nil {
+		case event := <-s.events:
+			client := s.client.Load()
+			if client == nil {
 				continue
 			}
 			packet, err := marshalSOCKSUDPDatagram(event.addr, event.payload)
-			if err == nil {
-				if _, err = assoc.WriteToUDP(packet, clientAddr); err == nil {
-					a.addTraffic(user, 0, int64(len(event.payload)))
-				}
+			if err != nil {
+				continue
 			}
-		case err := <-controlDone:
-			return err
+			if _, err := s.assoc.WriteToUDP(packet, client); err == nil {
+				s.adapter.addTraffic(s.user, 0, int64(len(event.payload)))
+			}
 		case <-ctx.Done():
-			return ctx.Err()
-		default:
+			return nil
 		}
+	}
+}
+
+func (s *socksUDPAssociation) closeRoutes() {
+	for _, r := range s.routes {
+		r.cancel()
+		_ = r.conn.Close()
 	}
 }
 
