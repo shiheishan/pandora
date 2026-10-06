@@ -66,7 +66,7 @@ func TestGoFilesStayWithinLineLimit(t *testing.T) {
 	}
 	sort.Strings(over)
 	for _, rel := range over {
-		t.Errorf("%s has %d lines, over the %d-line limit: split it by topic (see panel/tools/refactorcheck/CLAUDE.md)", rel, seen[rel], maxGoFileLines)
+		t.Errorf("%s has %d lines, over the %d-line limit: split it by topic and prove the pure move with panel/tools/refactorcheck (see the 800-line section of the root CLAUDE.md)", rel, seen[rel], maxGoFileLines)
 	}
 	for rel, why := range lineLimitExemptFiles {
 		lines, ok := seen[rel]

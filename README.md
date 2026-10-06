@@ -2,7 +2,7 @@
 
 Xboard 类代理订阅面板 + 自研节点端（Pandora NativeCore）。目标是提供 XBoard 级运营能力，并把协议、传输、路由与流量统计逐步收回单一自研内核。别名：AegisPanel / pandora-native。
 
-本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是 GEB 分形文档协议与 L1 地图，各模块目录的 CLAUDE.md 是 L2 成员清单，仓库公开、不写部署专属值的红线也写在根 CLAUDE.md 末尾。
+本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是给 Claude Code 的全局约定，仓库公开、不写部署专属值的红线在它的「红线：仓库公开」一节；按目录生效的模块约定在 [.claude/rules/](.claude/rules/)，验证流程与 CI 说明在 [.claude/skills/verify/](.claude/skills/verify/SKILL.md)。
 
 ## 架构
 
@@ -56,7 +56,7 @@ aegis-public    aegis-admin     aegis-node
 | `docs/` | 配置签名密钥轮换、发布物绑定 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
 | `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含两个安装脚本共用的首装对外地址闸门） |
-| `CLAUDE.md`（根目录及各模块目录） | GEB 分形文档地图：根为 L1 项目宪法，模块目录为 L2 成员清单，源文件头部为 L3 契约 |
+| `CLAUDE.md`、`.claude/rules/`、`.claude/skills/` | 给 Claude Code 的说明：根 CLAUDE.md 是全局约定与红线，rules 是按路径自动加载的模块约定，skills 是验证流程 |
 
 本地快照不含 `.env`、密钥、私钥和编译产物（二进制、`node_modules`、`dist`）。
 
@@ -330,7 +330,7 @@ bash panel/deploy/test-install.sh <发布目录>
 
 **CI 门禁（2026-09-26 在 `main` 上全绿：`36230330995` / `36230331009` / `36230331011`）**。
 
-三个 workflow 各有路径过滤：只改仓库根的文档不触发；改 `pdnd/**`、`panel/internal/**`、`panel/web/**`、`panel/frontend/**` 等被过滤目录里的任何文件（包括其中的 CLAUDE.md）都会触发对应 workflow。
+三个 workflow 各有路径过滤：只改仓库根的文档不触发；改 `pdnd/**`、`panel/internal/**`、`panel/web/**`、`panel/frontend/**` 等被过滤目录里的任何文件都会触发对应 workflow。
 
 - **Panel PostgreSQL 18 gates**（`panel-pg18.yml`）：
   - `panel-unit` 跑 panel 全量 build / vet / go test，是 CI 上唯一跑 panel 全部单元测试的地方；

@@ -1,6 +1,6 @@
 # 迁移建了、Go 代码从不引用的表
 
-> 登记簿 | 父级: /panel/CLAUDE.md | 守卫: internal/platform/db/schema_registry_test.go
+> 登记簿 | 守卫: internal/platform/db/schema_registry_test.go
 
 这些表由迁移创建并保留至今，非测试 Go 源码（internal/、cmd/、web/）里没有任何一处按名字引用它们。
 契约测试把三者绑在一起：按序号重放全部迁移的 goose Up 段（CREATE TABLE 加入、DROP TABLE 移出）之后

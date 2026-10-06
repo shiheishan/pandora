@@ -23,7 +23,7 @@ var lineLimitExemptDirs = map[string]string{
 func TestGoFilesStayWithinLineLimit(t *testing.T) {
 	for dir, why := range lineLimitExemptDirs {
 		if info, err := os.Stat(filepath.FromSlash(dir)); err != nil || !info.IsDir() {
-			t.Errorf("exempt directory %s (%s) no longer exists: remove it from lineLimitExemptDirs and the root CLAUDE.md", dir, why)
+			t.Errorf("exempt directory %s (%s) no longer exists: remove it from lineLimitExemptDirs and from the 800-line exemptions in the root CLAUDE.md", dir, why)
 		}
 	}
 	files := 0
