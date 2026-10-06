@@ -17,7 +17,7 @@ sing/: 基于 sing-box 的内核层
   - naive.go + naive_conn.go padding 连接 + naive_masquerade.go 伪装回落
   - quic.go TUIC 与 Hysteria v1
 xray/: 基于 xray-core 的内核层。xray.go 生命周期，registry.go 模块注册，protocols.go 协议配置构造，routing.go 出站与分流翻译
-mieru/mieru.go: mieru 协议入站。默认构建里也被链接：kernel/mieru.go 把它包成 NativeCore 适配器，经 SetTransport 注入的 Transport 让出站走 NativeCore 的 DataPlane 路由；未注入时（compat 构建经 core/multi）才直接拨号
+mieru/mieru.go: mieru 协议入站。默认构建里也被链接：kernel/mieru.go 把它包成 NativeCore 适配器，经 SetTransport 注入的 Transport 让出站走 NativeCore 的 DataPlane 路由，经 SetConnErrorHandler 把已认证连接的失败（ErrUserRevoked / ErrDeviceLimit / 拨号）交给 OnConnError；未注入时（compat 构建经 core/multi）才直接拨号。日志只记用户内部 ID，不记作口令用的 UUID
 external/juicity.go: 以独立进程托管的 juicity（AGPL，按许可证只能进程外运行、不能按用户计流量）
   - 配置目录缺省 DefaultJuicityWorkDir = /var/lib/pandora-native/juicity，落在 pandora-native.service 的可写目录里（ReadWritePaths 只有 /var/lib/pandora-native 与 /var/log/pandora-native）
 *_test.go: 适配器契约测试随包放置；external/juicity_test.go 钉住 juicity 缺省目录在 systemd 单元的 ReadWritePaths 之内

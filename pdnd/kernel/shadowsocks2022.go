@@ -1,5 +1,5 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 shadowsocks2022_stream.go 的密钥派生与 AEAD 流，依赖 core 的用户与 route 的路由
-// [OUTPUT]: 对外提供 ss2022Adapter（经 newSS2022Adapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 parseSS2022Spec、handleConn
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 shadowsocks2022_stream.go 的密钥派生与 AEAD 流，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 ss2022Adapter（经 newSS2022Adapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 parseSS2022Spec、handleConn（统一上报会话失败）/ serveConn
 // [POS]: kernel 的 Shadowsocks 2022 入站主体：方法解析、TCP 请求处理（多用户身份头逐层校验）与用户表；UDP 在 shadowsocks2022_udp.go，密钥与 TCP 流在 shadowsocks2022_stream.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -69,6 +69,7 @@ type ss2022Adapter struct {
 	online   map[int64]map[string]struct{}
 	listener net.Listener
 	plane    DataPlane
+	connErr  connErrorReporter
 	ctx      context.Context
 	cancel   context.CancelFunc
 	closed   bool
@@ -158,6 +159,7 @@ func (a *ss2022Adapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 		return fmt.Errorf("shadowsocks 2022 adapter already started or closed")
 	}
 	a.spec, a.plane = spec, hooks.DataPlane
+	a.connErr = newConnErrorReporter(hooks, spec, a.Protocol())
 	a.ctx, a.cancel = context.WithCancel(parent)
 	listen := spec.Config.Listen
 	if listen == "" {
@@ -219,7 +221,15 @@ func (a *ss2022Adapter) acceptLoop() {
 	}
 }
 
+// handleConn 是 TCP 会话入口，会话层失败在这里上报。协议名与注册表一致：
+// 2022 方法与经典 AEAD 在面板里是同一个协议，只是 method 不同。
 func (a *ss2022Adapter) handleConn(ctx context.Context, conn net.Conn) error {
+	err := a.serveConn(ctx, conn)
+	a.connErr.conn(StageSession, conn, err)
+	return err
+}
+
+func (a *ss2022Adapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	r := bufio.NewReaderSize(conn, 64*1024)
@@ -286,7 +296,7 @@ func (a *ss2022Adapter) handleConn(ctx context.Context, conn net.Conn) error {
 	}
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
-		return fmt.Errorf("shadowsocks 2022 device limit")
+		return deviceLimitError("shadowsocks 2022")
 	}
 	defer a.leaveDevice(user, ip)
 	sourceIP, _ := netip.ParseAddr(ip)

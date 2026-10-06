@@ -1,5 +1,5 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 grpc_stream.go / xhttp_server.go / native_transport_server.go / mkcp_transport.go 的承载与 vmess_xhttp_packet.go，依赖 core 的用户与 route 的路由
-// [OUTPUT]: 对外提供 vmessAdapter（经 newVMessAdapter 注册）的 Protocol、Validate、Start、Close；包内 acceptLoop、handleConn、handleUDP（上下行经 udp_relay.go 的 relayUDPDirections 解耦）、acceptAuthID
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 grpc_stream.go / xhttp_server.go / native_transport_server.go / mkcp_transport.go 的承载与 vmess_xhttp_packet.go，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 vmessAdapter（经 newVMessAdapter 注册）的 Protocol、Validate、Start、Close；包内 acceptLoop、handleConn（统一上报会话失败）/ serveConn、handleUDP（上下行经 udp_relay.go 的 relayUDPDirections 解耦）、acceptAuthID
 // [POS]: kernel 的 VMess 入站主体：TCP、mKCP、WebSocket、HTTP Upgrade、原生 gRPC（h2c、TLS+h2）、XHTTP stream 与 packet-up/reconnect 的监听与分派，AuthID 防重放，按命令转 TCP / UDP / mux；请求头解析在 vmess_request.go，正文编解码在 vmess_codec.go，mux 在 vmess_mux.go，用户表在 vmess_users.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -63,6 +63,7 @@ type vmessAdapter struct {
 	xhttpConfig   XHTTPConfig
 	tlsConfig     *tls.Config
 	plane         DataPlane
+	connErr       connErrorReporter
 	limiters      core.SpeedLimiters
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -138,7 +139,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Unlock()
 		return fmt.Errorf("vmess adapter already started or closed")
 	}
-	a.spec, a.plane = spec, hooks.DataPlane
+	a.spec, a.plane, a.connErr = spec, hooks.DataPlane, newConnErrorReporter(hooks, spec, "vmess")
 	a.ctx, a.cancel = context.WithCancel(parent)
 	if a.active == nil {
 		a.active = make(map[net.Conn]struct{})
@@ -390,6 +391,7 @@ func (a *vmessAdapter) acceptLoop() {
 			tlsConn := tls.Server(conn, tlsConfig.Clone())
 			_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 			if err := tlsConn.HandshakeContext(ctx); err != nil {
+				a.connErr.conn(StageTLSHandshake, conn, err)
 				_ = conn.Close()
 				continue
 			}
@@ -414,7 +416,15 @@ func (a *vmessAdapter) acceptLoop() {
 	}
 }
 
+// handleConn 是 TCP / mKCP / WS / HTTP Upgrade / gRPC / XHTTP 共同的会话入口，
+// 会话层失败在这里统一上报一次。lastErr 只留第一条给单测断言，不是观测出口。
 func (a *vmessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
+	err := a.serveConn(ctx, conn)
+	a.connErr.conn(StageSession, conn, err)
+	return err
+}
+
+func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	reader := bufio.NewReaderSize(conn, 64*1024)
@@ -428,7 +438,7 @@ func (a *vmessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
 	_ = conn.SetReadDeadline(time.Time{})
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
-		return fmt.Errorf("vmess device limit")
+		return deviceLimitError("vmess")
 	}
 	defer a.leaveDevice(user, ip)
 	bodyState, ok := body.(*vmessBodyReader)

@@ -1,5 +1,5 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
-// [OUTPUT]: 对外提供 shadowsocksAdapter（经 newShadowsocksAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 ssStream 与主密钥 / 子密钥派生
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 shadowsocksAdapter（经 newShadowsocksAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 handleConn（统一上报会话失败）/ serveConn、ssStream 与主密钥 / 子密钥派生
 // [POS]: kernel 的 Shadowsocks AEAD 入站主体：原生方法表、TCP 请求处理与按用户试解定位、AEAD 分块流；UDP 在 shadowsocks_udp.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -64,6 +64,7 @@ type shadowsocksAdapter struct {
 	traffic  map[int64]core.UserTraffic
 	online   map[int64]map[string]struct{}
 	plane    DataPlane
+	connErr  connErrorReporter
 	limiters core.SpeedLimiters
 	listener net.Listener
 	packet   net.PacketConn
@@ -133,7 +134,7 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 		a.mu.Unlock()
 		return fmt.Errorf("shadowsocks adapter already started or closed")
 	}
-	a.spec, a.plane = spec, hooks.DataPlane
+	a.spec, a.plane, a.connErr = spec, hooks.DataPlane, newConnErrorReporter(hooks, spec, a.protocol)
 	a.ctx, a.cancel = context.WithCancel(parent)
 	listenAddress := spec.Config.Listen
 	if listenAddress == "" {
@@ -191,7 +192,16 @@ func (a *shadowsocksAdapter) acceptLoop() {
 	}
 }
 
+// handleConn 是 TCP 会话入口，也是 shadowtls 解开外层后交进来的入口；会话
+// 层失败在这里统一上报。shadowtls 托管的内层实例 connErr 带的是 shadowtls
+// 的 tag 与协议名，日志里看到的是外层入站。
 func (a *shadowsocksAdapter) handleConn(ctx context.Context, conn net.Conn) error {
+	err := a.serveConn(ctx, conn)
+	a.connErr.conn(StageSession, conn, err)
+	return err
+}
+
+func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	user, stream, destination, err := a.readRequest(conn)
@@ -203,7 +213,7 @@ func (a *shadowsocksAdapter) handleConn(ctx context.Context, conn net.Conn) erro
 	}
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
-		return fmt.Errorf("shadowsocks device limit")
+		return deviceLimitError("shadowsocks")
 	}
 	defer a.leaveDevice(user, ip)
 	sourceIP, _ := netip.ParseAddr(ip)
@@ -274,7 +284,7 @@ func (a *shadowsocksAdapter) readRequest(conn net.Conn) (core.User, *ssStream, v
 		}
 	}
 	if selectedAEAD == nil {
-		return core.User{}, nil, destination, fmt.Errorf("shadowsocks user authentication failed")
+		return core.User{}, nil, destination, markConnError(connErrAuth, fmt.Errorf("shadowsocks user authentication failed"))
 	}
 	length := int(binary.BigEndian.Uint16(plainLength[:]))
 	first := make([]byte, length+selectedAEAD.Overhead())

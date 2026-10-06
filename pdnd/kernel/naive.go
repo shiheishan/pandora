@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 golang.org/x/net/http2 的 h2 服务端，依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 naiveAdapter（经 newNaiveAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 parseNaiveBasicAuth、parseNaiveDestination、handleStream
+// [POS]: kernel 的 Naive 入站：TLS + h2 上的带 Padding 头的 CONNECT，Basic 认证绑定面板下发的用户 UUID；非 naive 请求、认证失败、目的地址非法与转发失败都按 session 阶段上报（TLS 握手在 http.Server 内部，看不到）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
@@ -34,6 +39,7 @@ type naiveAdapter struct {
 	listener net.Listener
 	server   *http.Server
 	plane    DataPlane
+	connErr  connErrorReporter
 	limiters core.SpeedLimiters
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -98,7 +104,7 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		return err
 	}
 	ln = tls.NewListener(ln, tlsConfig)
-	a.spec, a.plane = spec, hooks.DataPlane
+	a.spec, a.plane, a.connErr = spec, hooks.DataPlane, newConnErrorReporter(hooks, spec, "naive")
 	a.ctx, a.cancel = context.WithCancel(parent)
 	server := &http.Server{Handler: http.HandlerFunc(a.serveHTTP), MaxHeaderBytes: 64 << 10, BaseContext: func(net.Listener) context.Context { return a.ctx }}
 	if err := http2.ConfigureServer(server, &http2.Server{}); err != nil {
@@ -116,18 +122,24 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 
 func (a *naiveAdapter) serveHTTP(w http.ResponseWriter, req *http.Request) {
 	if req == nil || req.Method != http.MethodConnect || strings.TrimSpace(req.Header.Get("Padding")) == "" || len(req.Header.Get("Padding")) > 1024 {
+		// 不是 naive 客户端的 CONNECT（探测、普通浏览器请求），按协议错误记。
+		if req != nil {
+			a.connErr.request(StageSession, req.RemoteAddr, fmt.Errorf("naive request is not a padded CONNECT"))
+		}
 		naiveReject(w, http.StatusBadRequest)
 		return
 	}
 	name, password, ok := parseNaiveBasicAuth(req.Header.Get("Proxy-Authorization"))
 	user, valid := a.lookupCredential(name, password)
 	if !ok || !valid {
+		a.connErr.request(StageSession, req.RemoteAddr, markConnError(connErrAuth, fmt.Errorf("naive credentials rejected")))
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Pandora"`)
 		naiveReject(w, http.StatusProxyAuthRequired)
 		return
 	}
 	destination, err := parseNaiveDestination(req)
 	if err != nil {
+		a.connErr.request(StageSession, req.RemoteAddr, err)
 		naiveReject(w, http.StatusBadRequest)
 		return
 	}
@@ -149,7 +161,9 @@ func (a *naiveAdapter) serveHTTP(w http.ResponseWriter, req *http.Request) {
 	a.mu.Unlock()
 	defer a.wg.Done()
 	defer a.removeActive(conn)
-	_ = a.handleStream(ctx, conn, user, destination)
+	if err := a.handleStream(ctx, conn, user, destination); err != nil {
+		a.connErr.request(StageSession, req.RemoteAddr, err)
+	}
 }
 
 func parseNaiveBasicAuth(value string) (string, string, bool) {
@@ -201,7 +215,7 @@ func (a *naiveAdapter) handleStream(ctx context.Context, conn net.Conn, user cor
 	defer conn.Close()
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
-		return fmt.Errorf("naive device limit")
+		return deviceLimitError("naive")
 	}
 	defer a.leaveDevice(user, ip)
 	sourceIP, _ := netip.ParseAddr(ip)

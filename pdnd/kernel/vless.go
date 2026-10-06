@@ -1,5 +1,5 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 reality_listener.go、vision.go、xhttp_server.go、websocket_netconn.go、grpc_stream.go、mkcp_transport.go 等承载，依赖 core 的用户与 route 的路由
-// [OUTPUT]: 对外提供 NewDefaultAdapterRegistry（全部原生协议的注册表）与 vlessAdapter 的 Protocol、Validate、Start、Close；包内 acceptLoop、handleConn、handleConnSession、remoteIP
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 reality_listener.go、vision.go、xhttp_server.go、websocket_netconn.go、grpc_stream.go、mkcp_transport.go 等承载，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 NewDefaultAdapterRegistry（全部原生协议的注册表）与 vlessAdapter 的 Protocol、Validate、Start、Close；包内 acceptLoop、handleConn、handleConnSession（统一上报会话失败）/ serveConnSession、remoteIP
 // [POS]: kernel 的 VLESS 入站主体：TCP / REALITY / WebSocket / HTTP Upgrade / gRPC / mKCP / XHTTP 的监听与分派、TCP 转发；请求头解析在 vless_request.go，flow 在 vless_flow.go，mux 在 vless_mux.go，UDP 在 vless_udp.go，XHTTP packet 模式在 vless_xhttp_packet.go，用户表在 vless_users.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -44,7 +44,7 @@ type vlessAdapter struct {
 	httpServer    *http.Server
 	h3Server      interface{ Close() error }
 	plane         DataPlane
-	onConnError   func(ConnError)
+	connErr       connErrorReporter
 	ctx           context.Context
 	cancel        context.CancelFunc
 	closed        bool
@@ -137,7 +137,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Unlock()
 		return fmt.Errorf("vless 适配器已启动或已关闭")
 	}
-	a.spec, a.plane, a.onConnError = spec, hooks.DataPlane, hooks.OnConnError
+	a.spec, a.plane, a.connErr = spec, hooks.DataPlane, newConnErrorReporter(hooks, spec, "vless")
 	security, _ := spec.Config.Raw["security"].(string)
 	a.reality = strings.EqualFold(security, "reality")
 	var tlsEnabled bool
@@ -235,15 +235,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			// REALITY 握手在 listener 内部完成，失败的连接根本到不了
 			// acceptLoop。不在这里接一道，adapter 上那个 OnConnError
 			// 永远看不到握手层的任何东西。
-			realityListener.SetHandshakeErrorHandler(func(remote net.Addr, hsErr error) {
-				if a.onConnError == nil {
-					return
-				}
-				a.onConnError(ConnError{
-					Tag: a.spec.Config.Tag, Protocol: "vless",
-					Stage: StageTLSHandshake, Remote: remote, Err: hsErr,
-				})
-			})
+			realityListener.SetHandshakeErrorHandler(a.connErr.realityHandshake)
 		}
 		listener, err = realityListener, realityErr
 	} else if isMKCPNetwork(network) {
@@ -515,9 +507,7 @@ func (a *vlessAdapter) acceptLoop() {
 				}
 				realitySession = &captured
 			}
-			if err := a.handleConnSession(a.ctx, conn, realitySession); err != nil {
-				a.reportConnError(StageSession, conn, err)
-			}
+			_ = a.handleConnSession(a.ctx, conn, realitySession)
 		}()
 	}
 }
@@ -530,9 +520,21 @@ func (a *vlessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
 // 正常关闭不算失败：io.EOF 和 net.ErrClosed 在每条连接结束时都会出现，
 // 报上去只会把真正的错误淹掉。
 func (a *vlessAdapter) reportConnError(stage string, conn net.Conn, err error) {
-	reportAdapterConnError(a.onConnError, a.spec.Config.Tag, "vless", stage, conn, err)
+	a.connErr.conn(stage, conn, err)
 }
+
+// handleConnSession 是所有承载（TCP / REALITY / WS / HTTP Upgrade / gRPC /
+// XHTTP）共同的会话入口，会话层失败在这里统一上报一次。
+//
+// 以前只有 TCP 的 acceptLoop 报，其余承载都是 `_ =` 丢掉——换个 network
+// 配置，同一个「用户未授权」就从日志里消失了。
 func (a *vlessAdapter) handleConnSession(ctx context.Context, conn net.Conn, realitySession *RealitySession) error {
+	err := a.serveConnSession(ctx, conn, realitySession)
+	a.reportConnError(StageSession, conn, err)
+	return err
+}
+
+func (a *vlessAdapter) serveConnSession(ctx context.Context, conn net.Conn, realitySession *RealitySession) error {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
@@ -551,7 +553,7 @@ func (a *vlessAdapter) handleConnSession(ctx context.Context, conn net.Conn, rea
 	}
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
-		return fmt.Errorf("vless device limit")
+		return deviceLimitError("vless")
 	}
 	defer a.leaveDevice(user, ip)
 	if _, err := conn.Write([]byte{vlessVersion, 0}); err != nil {

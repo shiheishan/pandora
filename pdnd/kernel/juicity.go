@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 apernet/quic-go 的 QUIC 监听，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 juicityAdapter（经 newJuicityAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 authenticate、handleStream 与 TCP / UDP 流转发
+// [POS]: kernel 的 Juicity 原生数据面：QUIC 握手后读认证单向流（UUID + 导出密钥材料 token），双向流按网络类型转 TCP 或逐包 UDP；认证、设备上限、流头解析与拨号失败按 session 阶段上报（QUIC 握手本身在 quic-go 内部，看不到）
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
@@ -43,6 +48,7 @@ type juicityAdapter struct {
 	traffic   map[int64]core.UserTraffic
 	online    map[int64]map[string]struct{}
 	plane     DataPlane
+	connErr   connErrorReporter
 	limiters  core.SpeedLimiters
 	packet    net.PacketConn
 	transport *quic.Transport
@@ -130,6 +136,7 @@ func (a *juicityAdapter) Start(parent context.Context, spec InboundSpec, hooks A
 		return fmt.Errorf("juicity adapter already started or closed")
 	}
 	a.spec, a.plane, a.packet, a.transport, a.listener, a.ctx, a.cancel = spec, hooks.DataPlane, packet, transport, listener, ctx, cancel
+	a.connErr = newConnErrorReporter(hooks, spec, "juicity")
 	a.wg.Add(1)
 	a.mu.Unlock()
 	go a.acceptLoop()
@@ -183,11 +190,13 @@ func (a *juicityAdapter) handleConn(conn *quic.Conn) {
 	uni, err := conn.AcceptUniStream(authCtx)
 	cancel()
 	if err != nil {
+		a.connErr.addr(StageSession, conn.RemoteAddr(), fmt.Errorf("juicity authentication stream: %w", err))
 		_ = conn.CloseWithError(0x100, "authentication stream required")
 		return
 	}
 	user, err := a.authenticate(conn, uni)
 	if err != nil {
+		a.connErr.addr(StageSession, conn.RemoteAddr(), err)
 		_ = conn.CloseWithError(0x101, "authentication failed")
 		return
 	}
@@ -197,6 +206,7 @@ func (a *juicityAdapter) handleConn(conn *quic.Conn) {
 	go func() { _, _ = io.Copy(io.Discard, uni) }()
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
+		a.connErr.addr(StageSession, conn.RemoteAddr(), deviceLimitError("juicity"))
 		_ = conn.CloseWithError(0x102, "device limit")
 		return
 	}
@@ -233,7 +243,7 @@ func (a *juicityAdapter) authenticate(conn *quic.Conn, stream *quic.ReceiveStrea
 	entry, ok := a.users[id.String()]
 	a.mu.RUnlock()
 	if !ok || !entry.active {
-		return core.User{}, fmt.Errorf("unknown juicity user")
+		return core.User{}, markConnError(connErrAuth, fmt.Errorf("unknown juicity user"))
 	}
 	state := conn.ConnectionState().TLS
 	token, err := state.ExportKeyingMaterial(string(auth[2:18]), []byte(entry.user.UUID), 32)
@@ -241,7 +251,7 @@ func (a *juicityAdapter) authenticate(conn *quic.Conn, stream *quic.ReceiveStrea
 		return core.User{}, err
 	}
 	if subtle.ConstantTimeCompare(token, auth[juicityAuthBytes-32:]) != 1 {
-		return core.User{}, fmt.Errorf("invalid juicity token")
+		return core.User{}, markConnError(connErrAuth, fmt.Errorf("invalid juicity token"))
 	}
 	return entry.user, nil
 }
@@ -249,10 +259,12 @@ func (a *juicityAdapter) authenticate(conn *quic.Conn, stream *quic.ReceiveStrea
 func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string) {
 	var network [1]byte
 	if _, err := io.ReadFull(stream, network[:]); err != nil {
+		a.connErr.addr(StageSession, conn.RemoteAddr(), err)
 		return
 	}
 	destination, err := readJuicityAddress(stream)
 	if err != nil {
+		a.connErr.addr(StageSession, conn.RemoteAddr(), err)
 		return
 	}
 	switch network[0] {
@@ -261,7 +273,7 @@ func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stre
 	case juicityNetworkUDP:
 		a.handleUDPStream(ctx, conn, stream, user, ip, destination)
 	default:
-		return
+		a.connErr.addr(StageSession, conn.RemoteAddr(), fmt.Errorf("juicity network %d unsupported", network[0]))
 	}
 }
 
@@ -270,6 +282,7 @@ func (a *juicityAdapter) handleTCPStream(ctx context.Context, conn *quic.Conn, s
 	meta := route.Meta{Domain: destination.domain(), IP: destination.ip(), Port: destination.Port, Network: "tcp", Protocol: "juicity", SourceIP: sourceIP, SourcePort: sourcePort}
 	upstream, err := a.plane.DialTCP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
 	if err != nil {
+		a.connErr.addr(StageSession, conn.RemoteAddr(), err)
 		return
 	}
 	defer upstream.Close()
@@ -330,6 +343,7 @@ func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, s
 			pc, openErr := a.plane.ListenUDP(streamCtx, meta, M.ParseSocksaddrHostPort(target.Host, target.Port))
 			if openErr != nil {
 				routesMu.Unlock()
+				a.connErr.addr(StageSession, conn.RemoteAddr(), openErr)
 				return
 			}
 			r = udpRoute{pc: pc, target: target}

@@ -1,7 +1,13 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 core/mieru 的 Inbound（SetTransport、SetConnErrorHandler 与失败哨兵）
+// [OUTPUT]: 对外提供 mieruAdapter（经 newMieruAdapter 注册）的 Protocol、Validate、Start、Close 与用户表方法；包内 mieruTransport、markMieruConnError
+// [POS]: kernel 的 mieru 薄层：线格式与认证留在 core/mieru，TCP / UDP 出站经 DataPlane 路由计量，已认证连接的失败经 SetConnErrorHandler 回到 OnConnError
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -51,6 +57,10 @@ func (a *mieruAdapter) Start(ctx context.Context, spec InboundSpec, hooks Adapte
 		return fmt.Errorf("native mieru start requires context and data plane")
 	}
 	a.inner.SetTransport(mieruTransport{plane: hooks.DataPlane})
+	connErr := newConnErrorReporter(hooks, spec, "mieru")
+	a.inner.SetConnErrorHandler(func(remote net.Addr, err error) {
+		connErr.addr(StageSession, remote, markMieruConnError(err))
+	})
 	localCtx, cancel := context.WithCancel(ctx)
 	a.cancel = cancel
 	go func() {
@@ -71,6 +81,18 @@ func (a *mieruAdapter) UpsertUsers(users []core.User) error          { return a.
 func (a *mieruAdapter) DelUsers(ids []string) error                  { return a.inner.DelUsers(ids) }
 func (a *mieruAdapter) SnapshotTraffic() ([]core.UserTraffic, error) { return a.inner.Traffic(), nil }
 func (a *mieruAdapter) OnlineIPs() map[int64][]string                { return a.inner.Online() }
+
+// markMieruConnError 把 core/mieru 的两个哨兵映射到 kernel 的分类；拨号失败
+// 已由 routedDataPlane 标成 upstream，经 %w 链保留下来。
+func markMieruConnError(err error) error {
+	switch {
+	case errors.Is(err, mieru.ErrUserRevoked):
+		return markConnError(connErrAuth, err)
+	case errors.Is(err, mieru.ErrDeviceLimit):
+		return markConnError(connErrLimit, err)
+	}
+	return err
+}
 
 type mieruTransport struct{ plane DataPlane }
 
