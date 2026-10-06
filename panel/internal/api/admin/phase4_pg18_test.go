@@ -232,6 +232,8 @@ func TestTenantSeedDefaultsPG18(t *testing.T) {
 
 	// 新租户在后台切得动开关（R97），SMTP 密码行缺失时也写得进去（R94）
 	h := step4Handlers(t, app)
+	// 邮件设置的读写在 notify 服务里
+	h.d.Notify = notify.New(app, h.d.Log, []byte("phase4-salt"))
 	r := step4Router(tenant, actor, h).(*chi.Mux)
 	r.Post("/v1/switches/{code}", h.setSwitch)
 	r.Post("/v1/settings/mail", h.setMailSettings)

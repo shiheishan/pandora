@@ -1,5 +1,5 @@
-// [INPUT]: 依赖 domain/notify 的 SMTP 配置与发信器、domain/appearance 的 SiteNameTx、domain/identity 的 EmailVerificationDefault、platform 的 db/audit/httpx
-// [OUTPUT]: 对外提供 handlers 的 getMailSettings / setMailSettings / testMailSettings
+// [INPUT]: 依赖 domain/notify 的 SMTP 配置与发信器、MailSettings / SaveMailSettings（读写、upsert 与审计在 notify/mail_settings.go），domain/identity 的 EmailVerificationDefault 与注册模式常量，platform/httpx
+// [OUTPUT]: 对外提供 handlers 的 getMailSettings / setMailSettings / testMailSettings；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的邮件与注册设置接口；全部设置项 upsert（SMTP 密码行缺失也能写入，R94）；发件人名缺省显示站点名，测试信主题带发件人名
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -13,68 +13,41 @@ package admin
 // 代价是自己的域名进黑名单。
 
 import (
-	"encoding/json"
 	"net/http"
 
-	"github.com/jackc/pgx/v5"
-
-	"github.com/aegispanel/aegis/internal/domain/appearance"
 	"github.com/aegispanel/aegis/internal/domain/identity"
 	"github.com/aegispanel/aegis/internal/domain/notify"
-	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
+
+type getMailSettingsResponse struct {
+	EmailVerification bool   `json:"email_verification"`
+	Encryption        string `json:"encryption"`
+	FromAddress       string `json:"from_address"`
+	FromName          string `json:"from_name"`
+	HasPassword       bool   `json:"has_password"`
+	RegistrationMode  string `json:"registration_mode"`
+	SMTPHost          string `json:"smtp_host"`
+	SMTPPort          int    `json:"smtp_port"`
+	SMTPUsername      string `json:"smtp_username"`
+}
 
 func (h *handlers) getMailSettings(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 
-	var host, encryption, username, from, fromName string
-	var port int
-	var hasPassword, emailVerify bool
-	var registrationMode string
-
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		err := tx.QueryRow(r.Context(), `
-			SELECT COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id=$1 AND key='mail.smtp_host'), ''),
-			       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
-			                  WHERE tenant_id=$1 AND key='mail.smtp_port'), 465),
-			       COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id=$1 AND key='mail.encryption'), 'ssl'),
-			       COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id=$1 AND key='mail.smtp_username'), ''),
-			       COALESCE((SELECT length(secret_encrypted) > 0 FROM system_settings
-			                  WHERE tenant_id=$1 AND key='mail.smtp_password'), false),
-			       COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id=$1 AND key='mail.from_address'), ''),
-			       COALESCE((SELECT btrim(value #>> '{}') FROM system_settings
-			                  WHERE tenant_id=$1 AND key='mail.from_name'), ''),
-			       COALESCE((SELECT (value #>> '{}')::boolean FROM system_settings
-			                  WHERE tenant_id=$1 AND key='auth.email_verification'), $2::boolean),
-			       COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id=$1 AND key='auth.registration_mode'), 'closed')`,
-			// 邮箱验证缺行时与注册流程同一个回退值
-			tenantID, identity.EmailVerificationDefault).Scan(&host, &port, &encryption, &username, &hasPassword,
-			&from, &fromName, &emailVerify, &registrationMode)
-		if err != nil || fromName != "" {
-			return err
-		}
-		// 没单独设发件人名时，显示实际发信会用的值：生效主题的站点名
-		fromName, err = appearance.SiteNameTx(r.Context(), tx, tenantID)
-		return err
-	})
+	// 邮箱验证缺行时与注册流程同一个回退值
+	st, err := h.d.Notify.MailSettings(r.Context(), tenantID, identity.EmailVerificationDefault)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 
-	httpx.OK(w, map[string]any{
-		"smtp_host": host, "smtp_port": port, "encryption": encryption,
-		"smtp_username": username, "has_password": hasPassword,
-		"from_address": from, "from_name": fromName,
-		"email_verification": emailVerify,
-		"registration_mode":  registrationMode,
+	httpx.OK(w, getMailSettingsResponse{
+		SMTPHost: st.SMTPHost, SMTPPort: st.SMTPPort, Encryption: st.Encryption,
+		SMTPUsername: st.SMTPUsername, HasPassword: st.HasPassword,
+		FromAddress: st.FromAddress, FromName: st.FromName,
+		EmailVerification: st.EmailVerification,
+		RegistrationMode:  st.RegistrationMode,
 	})
 }
 
@@ -90,6 +63,10 @@ type mailSettingsReq struct {
 	FromName         string  `json:"from_name"`
 	EmailVerify      *bool   `json:"email_verification"`
 	RegistrationMode *string `json:"registration_mode"`
+}
+
+type setMailSettingsResponse struct {
+	OK bool `json:"ok"`
 }
 
 func (h *handlers) setMailSettings(w http.ResponseWriter, r *http.Request) {
@@ -134,91 +111,12 @@ func (h *handlers) setMailSettings(w http.ResponseWriter, r *http.Request) {
 		actorID = &v
 	}
 
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 自己序列化成 JSON 文本再交给 ::jsonb。
-		//
-		// 不用 to_jsonb($3)：那样 PostgreSQL 无法推断参数类型，
-		// 报的是「could not determine data type」，而调用方看到的只是一个 500
-		set := func(key string, val any) error {
-			raw, err := json.Marshal(val)
-			if err != nil {
-				return err
-			}
-			_, err = tx.Exec(r.Context(), `
-				INSERT INTO system_settings (tenant_id, key, value)
-				VALUES ($1, $2, $3::jsonb)
-				ON CONFLICT (tenant_id, key)
-				DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-				tenantID, key, string(raw))
-			return err
-		}
-		// Registration reads mode before email verification. Acquire setting
-		// locks in the same order so an admin update cannot deadlock completion.
-		if req.RegistrationMode != nil {
-			if err := set("auth.registration_mode", *req.RegistrationMode); err != nil {
-				return err
-			}
-		}
-		if err := set("mail.smtp_host", req.Host); err != nil {
-			return err
-		}
-		if err := set("mail.smtp_port", req.Port); err != nil {
-			return err
-		}
-		if err := set("mail.encryption", req.Encryption); err != nil {
-			return err
-		}
-		if err := set("mail.smtp_username", req.Username); err != nil {
-			return err
-		}
-		if err := set("mail.from_address", req.From); err != nil {
-			return err
-		}
-		if err := set("mail.from_name", req.FromName); err != nil {
-			return err
-		}
-		if req.EmailVerify != nil {
-			if err := set("auth.email_verification", *req.EmailVerify); err != nil {
-				return err
-			}
-		}
-		if req.Password != "" {
-			plain := req.Password
-			if plain == "-" {
-				plain = "" // 显式清空
-			}
-			enc, err := notify.SealSMTPPassword(h.d.Envelope, plain)
-			if err != nil {
-				return err
-			}
-			if enc == nil {
-				enc = []byte{}
-			}
-			// upsert（R94）：以前只 UPDATE，缺这一行的租户密码会静默存不上。
-			// 新插入时行的形状照 00030 的种子：value 占位空串、带 schema、标为密文项。
-			if _, err := tx.Exec(r.Context(), `
-				INSERT INTO system_settings (tenant_id, key, value, value_schema, is_secret, secret_encrypted)
-				VALUES ($1, $2, '""'::jsonb, '{"type":"string","title":"密码"}'::jsonb, true, $3)
-				ON CONFLICT (tenant_id, key)
-				DO UPDATE SET secret_encrypted = EXCLUDED.secret_encrypted, updated_at = now()`,
-				tenantID, "mail.smtp_password", enc); err != nil {
-				return err
-			}
-		}
-
-		// 摘要里不放任何凭据，只记改了哪些项
-		return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-			ActorKind: "admin", ActorID: actorID,
-			Action: "mail.settings_changed", ResourceType: "system_settings",
-			APIDomain: "admin", Outcome: "success",
-			RequestID: httpx.RequestIDFrom(r.Context()),
-			AfterDigest: map[string]any{
-				"host": req.Host, "port": req.Port, "encryption": req.Encryption,
-				"from": req.From, "password_changed": req.Password != "",
-				"email_verification": req.EmailVerify,
-				"registration_mode":  req.RegistrationMode,
-			},
-		})
+	err := h.d.Notify.SaveMailSettings(r.Context(), notify.MailSettingsInput{
+		TenantID: tenantID, ActorID: actorID,
+		Host: req.Host, Port: req.Port, Encryption: req.Encryption, Username: req.Username,
+		Password: req.Password, From: req.From, FromName: req.FromName,
+		EmailVerify: req.EmailVerify, RegistrationMode: req.RegistrationMode,
+		Envelope: h.d.Envelope,
 	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
@@ -227,7 +125,12 @@ func (h *handlers) setMailSettings(w http.ResponseWriter, r *http.Request) {
 	if h.d.SMTPProvider != nil {
 		h.d.SMTPProvider.Invalidate()
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, setMailSettingsResponse{OK: true})
+}
+
+type testMailSettingsResponse struct {
+	OK bool   `json:"ok"`
+	To string `json:"to"`
 }
 
 // testMailSettings 用当前配置发一封测试邮件。
@@ -272,5 +175,5 @@ func (h *handlers) testMailSettings(w http.ResponseWriter, r *http.Request) {
 			"发送失败："+err.Error()))
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "to": req.To})
+	httpx.OK(w, testMailSettingsResponse{OK: true, To: req.To})
 }

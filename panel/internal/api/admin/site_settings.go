@@ -1,19 +1,14 @@
-// [INPUT]: 依赖 platform 的 db/audit/httpx，依赖 time 的 IANA 时区库（经 domain/nodefabric 内嵌 time/tzdata）
-// [OUTPUT]: 对外提供 handlers 的 getSiteSettings / setSiteSettings、validSiteTimezone
+// [INPUT]: 依赖 domain/adminops 的 SiteTimezone / SetSiteTimezone（读写、行锁与审计都在那里），依赖 platform/httpx，依赖 time 的 IANA 时区库（经 domain/nodefabric 内嵌 time/tzdata）
+// [OUTPUT]: 对外提供 handlers 的 getSiteSettings / setSiteSettings、validSiteTimezone；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的站点设置接口（契约后台-08，R49）：站点时区即 tenants.timezone，门户按日用量与后台收入趋势都按它切日
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 
 import (
-	"errors"
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
-	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -27,20 +22,21 @@ func validSiteTimezone(name string) bool {
 	return err == nil
 }
 
+type getSiteSettingsResponse struct {
+	Timezone string `json:"timezone"`
+}
+
 func (h *handlers) getSiteSettings(w http.ResponseWriter, r *http.Request) {
-	tenantID := httpx.TenantIDFrom(r.Context())
-	var tz string
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(r.Context(), `SELECT timezone FROM tenants WHERE id = $1`, tenantID).Scan(&tz)
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = httpx.NotFoundOrForbidden()
-	}
+	tz, err := h.d.Ops.SiteTimezone(r.Context(), httpx.TenantIDFrom(r.Context()))
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"timezone": tz})
+	httpx.OK(w, getSiteSettingsResponse{Timezone: tz})
+}
+
+type setSiteSettingsResponse struct {
+	Timezone string `json:"timezone"`
 }
 
 func (h *handlers) setSiteSettings(w http.ResponseWriter, r *http.Request) {
@@ -62,31 +58,9 @@ func (h *handlers) setSiteSettings(w http.ResponseWriter, r *http.Request) {
 		v := a.UserID
 		actorID = &v
 	}
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var old string
-		if err := tx.QueryRow(r.Context(),
-			`SELECT timezone FROM tenants WHERE id = $1 FOR UPDATE`, tenantID).Scan(&old); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(r.Context(), `
-			UPDATE tenants SET timezone = $2 WHERE id = $1`,
-			tenantID, req.Timezone); err != nil {
-			return err
-		}
-		return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-			ActorKind: "admin", ActorID: actorID,
-			Action: "site.timezone_changed", ResourceType: "tenant", ResourceID: &tenantID,
-			APIDomain: "admin", RequestID: httpx.RequestIDFrom(r.Context()),
-			BeforeDigest: map[string]any{"timezone": old},
-			AfterDigest:  map[string]any{"timezone": req.Timezone},
-		})
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = httpx.NotFoundOrForbidden()
-	}
-	if err != nil {
+	if err := h.d.Ops.SetSiteTimezone(r.Context(), tenantID, actorID, req.Timezone); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"timezone": req.Timezone})
+	httpx.OK(w, setSiteSettingsResponse{Timezone: req.Timezone})
 }

@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/adminops 的批量运营用例，依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 previewBulkUsers / exportUsers / generateUsers / sendBulkMail
+// [OUTPUT]: 对外提供 handlers 的 previewBulkUsers / exportUsers / generateUsers / sendBulkMail；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的用户批量运营处理器：三个动作共用 bulkFilterReq（导出用同名 query 参数），CSV 带 BOM
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -119,6 +119,12 @@ type generateUsersReq struct {
 	Reason      string `json:"reason"`
 }
 
+type generateUsersResponse struct {
+	Count   int                      `json:"count"`
+	Users   []adminops.GeneratedUser `json:"users"`
+	Warning string                   `json:"warning"`
+}
+
 // generateUsers 批量造账号，供经销商或线下渠道预制交付。
 //
 // 响应里带明文口令，且只有这一次 —— 库里存的是哈希，之后无从取回。
@@ -139,9 +145,9 @@ func (h *handlers) generateUsers(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{
-		"count": len(users), "users": users,
-		"warning": "口令只在这一次返回，关闭后无法再查。请立即保存。",
+	httpx.OK(w, generateUsersResponse{
+		Count: len(users), Users: users,
+		Warning: "口令只在这一次返回，关闭后无法再查。请立即保存。",
 	})
 }
 

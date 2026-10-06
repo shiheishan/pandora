@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain 的 adminops/billing/identity/subscription 服务、middleware、platform 的 crypto/httpx/realtime（降级开关切换后发 switches.changed）
-// [OUTPUT]: 对外提供 handlers 结构与探针、认证（登录、重认证、登出、me、改密）、仪表盘概览、用户（列表、详情、换订阅链接、重置密码、改状态）、订单、套餐、支付渠道、降级开关等核心处理器，adminRotateResponse 与日期 / 整数解析小工具
+// [OUTPUT]: 对外提供 handlers 结构与探针、认证（登录、重认证、登出、me、改密）、仪表盘概览、用户（列表、详情、换订阅链接、重置密码、改状态）、订单、套餐、支付渠道、降级开关等核心处理器，adminRotateResponse 与日期 / 整数解析小工具；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的核心处理器集合，被 router.go 装配；专题处理器分散在同包其它文件，节点在 nodes.go、单节点与全局路由在 node_routing.go、客服工单在 tickets.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -52,6 +52,12 @@ type reauthReq struct {
 	Password string `json:"password"`
 }
 
+type reauthResponse struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+	TokenType   string `json:"token_type"`
+}
+
 // reauth 用当前口令换一枚 rat 刷新过的令牌。
 //
 // 高危写路由（以 admin/router.go 为准）挂着 RequireRecentReauth，要求令牌里的 rat 在 15 分钟以内。
@@ -84,11 +90,19 @@ func (h *handlers) reauth(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{
-		"access_token": out.AccessToken,
-		"token_type":   "Bearer",
-		"expires_in":   out.ExpiresIn,
+	httpx.OK(w, reauthResponse{
+		AccessToken: out.AccessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   out.ExpiresIn,
 	})
+}
+
+type loginResponse struct {
+	AccessToken string   `json:"access_token"`
+	ExpiresIn   int      `json:"expires_in"`
+	Permissions []string `json:"permissions"`
+	TokenType   string   `json:"token_type"`
+	UserID      string   `json:"user_id"`
 }
 
 func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
@@ -114,13 +128,13 @@ func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.OK(w, map[string]any{
-		"access_token": out.AccessToken,
-		"token_type":   "Bearer",
-		"expires_in":   out.ExpiresIn,
-		"user_id":      out.UserID,
+	httpx.OK(w, loginResponse{
+		AccessToken: out.AccessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   out.ExpiresIn,
+		UserID:      out.UserID,
 		// 前端据此决定显示哪些菜单；真正的拦截在网关，这里只是体验
-		"permissions": out.Permissions,
+		Permissions: out.Permissions,
 	})
 }
 
@@ -137,6 +151,16 @@ func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
+type meResponse struct {
+	DisplayName *string            `json:"display_name"`
+	Email       string             `json:"email"`
+	Kind        string             `json:"kind"`
+	Permissions []string           `json:"permissions"`
+	Reauthed    bool               `json:"reauthed"`
+	Roles       []identity.RoleRef `json:"roles"`
+	UserID      string             `json:"user_id"`
+}
+
 func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFrom(r.Context())
 	// 令牌里的身份之外，补上侧栏账户块要的邮箱、显示名与角色（只读库，不改令牌）
@@ -145,15 +169,20 @@ func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{
-		"user_id":      p.UserID,
-		"kind":         p.Kind,
-		"permissions":  p.Permissions,
-		"reauthed":     p.ReauthedRecently,
-		"email":        prof.Email,
-		"display_name": prof.DisplayName,
-		"roles":        prof.Roles,
+	httpx.OK(w, meResponse{
+		UserID:      p.UserID,
+		Kind:        p.Kind,
+		Permissions: p.Permissions,
+		Reauthed:    p.ReauthedRecently,
+		Email:       prof.Email,
+		DisplayName: prof.DisplayName,
+		Roles:       prof.Roles,
 	})
+}
+
+type changePasswordResponse struct {
+	OK             bool `json:"ok"`
+	Reauthenticate bool `json:"reauthenticate"`
 }
 
 // changePassword rotates the currently authenticated administrator's password.
@@ -191,7 +220,7 @@ func (h *handlers) changePassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "reauthenticate": true})
+	httpx.OK(w, changePasswordResponse{OK: true, Reauthenticate: true})
 }
 
 //------------------------------------------------------------------------------
@@ -211,6 +240,11 @@ func (h *handlers) overview(w http.ResponseWriter, r *http.Request) {
 // 用户
 //------------------------------------------------------------------------------
 
+type listUsersResponse struct {
+	Total int64              `json:"total"`
+	Users []adminops.UserRow `json:"users"`
+}
+
 func (h *handlers) listUsers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rows, total, err := h.d.Ops.ListUsers(r.Context(), httpx.TenantIDFrom(r.Context()),
@@ -226,7 +260,7 @@ func (h *handlers) listUsers(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"users": rows, "total": total})
+	httpx.OK(w, listUsersResponse{Users: rows, Total: total})
 }
 
 func (h *handlers) getUser(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +279,11 @@ type setStatusReq struct {
 
 type rotateSubReq struct {
 	Reason string `json:"reason"`
+}
+
+type rotateSubscriptionLinkResponse struct {
+	OldRevoked bool   `json:"old_revoked"`
+	UserEmail  string `json:"user_email"`
 }
 
 // rotateSubscriptionLink 管理员替用户换一条订阅链接。
@@ -281,13 +320,18 @@ func (h *handlers) rotateSubscriptionLink(w http.ResponseWriter, r *http.Request
 }
 
 // adminRotateResponse 是换发订阅链接的完整响应形状，单独成函数好让测试锁住它。
-func adminRotateResponse(out *subscription.AdminRotateOutput) map[string]any {
-	return map[string]any{"user_email": out.UserEmail, "old_revoked": true}
+func adminRotateResponse(out *subscription.AdminRotateOutput) rotateSubscriptionLinkResponse {
+	return rotateSubscriptionLinkResponse{UserEmail: out.UserEmail, OldRevoked: true}
 }
 
 type adminResetPasswordReq struct {
 	NewPassword string `json:"new_password"`
 	Reason      string `json:"reason"`
+}
+
+type resetUserPasswordResponse struct {
+	OK              bool `json:"ok"`
+	SessionsRevoked bool `json:"sessions_revoked"`
 }
 
 // resetUserPassword 管理员替用户重置密码。
@@ -325,7 +369,12 @@ func (h *handlers) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	// 不回显新密码：管理员自己填的，本来就知道；写进响应体就会顺着
 	// 日志、浏览器历史、截图流出去。
-	httpx.OK(w, map[string]any{"ok": true, "sessions_revoked": true})
+	httpx.OK(w, resetUserPasswordResponse{OK: true, SessionsRevoked: true})
+}
+
+type setUserStatusResponse struct {
+	OK     bool   `json:"ok"`
+	Status string `json:"status"`
 }
 
 func (h *handlers) setUserStatus(w http.ResponseWriter, r *http.Request) {
@@ -341,12 +390,17 @@ func (h *handlers) setUserStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "status": req.Status})
+	httpx.OK(w, setUserStatusResponse{OK: true, Status: req.Status})
 }
 
 //------------------------------------------------------------------------------
 // 订单
 //------------------------------------------------------------------------------
+
+type listOrdersResponse struct {
+	Orders []adminops.OrderRow `json:"orders"`
+	Total  int64               `json:"total"`
+}
 
 func (h *handlers) listOrders(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -364,7 +418,11 @@ func (h *handlers) listOrders(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"orders": rows, "total": total})
+	httpx.OK(w, listOrdersResponse{Orders: rows, Total: total})
+}
+
+type getOrderResponse struct {
+	Order *adminops.OrderDetail `json:"order"`
 }
 
 func (h *handlers) getOrder(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +432,7 @@ func (h *handlers) getOrder(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"order": order})
+	httpx.OK(w, getOrderResponse{Order: order})
 }
 
 func (h *handlers) getOrderPayments(w http.ResponseWriter, r *http.Request) {
@@ -385,6 +443,11 @@ func (h *handlers) getOrderPayments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.OK(w, history)
+}
+
+type cancelOrderResponse struct {
+	AlreadyTerminal bool                        `json:"already_terminal"`
+	Order           *billing.ReleaseOrderOutput `json:"order"`
 }
 
 func (h *handlers) cancelOrder(w http.ResponseWriter, r *http.Request) {
@@ -405,12 +468,16 @@ func (h *handlers) cancelOrder(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"order": out, "already_terminal": out.AlreadyTerminal})
+	httpx.OK(w, cancelOrderResponse{Order: out, AlreadyTerminal: out.AlreadyTerminal})
 }
 
 //------------------------------------------------------------------------------
 // 套餐
 //------------------------------------------------------------------------------
+
+type listPlansResponse struct {
+	Plans []adminops.PlanRow `json:"plans"`
+}
 
 func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.d.Ops.ListPlans(r.Context(), httpx.TenantIDFrom(r.Context()))
@@ -418,12 +485,16 @@ func (h *handlers) listPlans(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"plans": rows})
+	httpx.OK(w, listPlansResponse{Plans: rows})
 }
 
 //------------------------------------------------------------------------------
 // 支付渠道
 //------------------------------------------------------------------------------
+
+type listProvidersResponse struct {
+	Providers []adminops.ProviderRow `json:"providers"`
+}
 
 func (h *handlers) listProviders(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.d.Ops.ListProviders(r.Context(), httpx.TenantIDFrom(r.Context()))
@@ -431,12 +502,16 @@ func (h *handlers) listProviders(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"providers": rows})
+	httpx.OK(w, listProvidersResponse{Providers: rows})
 }
 
 type toggleProviderReq struct {
 	Enabled      bool `json:"enabled"`
 	AcceptingNew bool `json:"accepting_new"`
+}
+
+type toggleProviderResponse struct {
+	OK bool `json:"ok"`
 }
 
 func (h *handlers) toggleProvider(w http.ResponseWriter, r *http.Request) {
@@ -452,12 +527,16 @@ func (h *handlers) toggleProvider(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, toggleProviderResponse{OK: true})
 }
 
 //------------------------------------------------------------------------------
 // 审计与开关
 //------------------------------------------------------------------------------
+
+type listSwitchesResponse struct {
+	Switches []adminops.SwitchRow `json:"switches"`
+}
 
 func (h *handlers) listSwitches(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.d.Ops.ListSwitches(r.Context(), httpx.TenantIDFrom(r.Context()))
@@ -465,12 +544,17 @@ func (h *handlers) listSwitches(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"switches": rows})
+	httpx.OK(w, listSwitchesResponse{Switches: rows})
 }
 
 type switchReq struct {
 	Enabled bool   `json:"enabled"`
 	Reason  string `json:"reason"`
+}
+
+type setSwitchResponse struct {
+	Enabled bool `json:"enabled"`
+	OK      bool `json:"ok"`
 }
 
 func (h *handlers) setSwitch(w http.ResponseWriter, r *http.Request) {
@@ -492,7 +576,7 @@ func (h *handlers) setSwitch(w http.ResponseWriter, r *http.Request) {
 		h.d.Realtime.Publish(r.Context(), realtime.ChannelAdmin(httpx.TenantIDFrom(r.Context())),
 			"switches.changed", map[string]any{"code": chi.URLParam(r, "code"), "enabled": req.Enabled})
 	}
-	httpx.OK(w, map[string]any{"ok": true, "enabled": req.Enabled})
+	httpx.OK(w, setSwitchResponse{OK: true, Enabled: req.Enabled})
 }
 
 //------------------------------------------------------------------------------

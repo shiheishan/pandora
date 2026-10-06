@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/support 的客服侧用例（*Atomic 版本）与负责人目录，依赖 platform/httpx 与 middleware 的幂等认领
-// [OUTPUT]: 对外提供 handlers 的 ticketAssignees、ticketQueue、ticketDetail、ticketReply、ticketAssign、ticketStatus、ticketEscalate
+// [OUTPUT]: 对外提供 handlers 的 ticketAssignees、ticketQueue、ticketDetail、ticketReply、ticketAssign、ticketStatus、ticketEscalate；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的客服工单（OPS-001）：从 handlers.go 拆出。负责人候选只来自专用的权限过滤查询；写操作消费幂等认领并写出事务内的预制响应；人工升级供演示与排障立即生效
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -22,6 +22,10 @@ import (
 // 工单（OPS-001）
 //------------------------------------------------------------------------------
 
+type ticketAssigneesResponse struct {
+	Assignees []support.Assignee `json:"assignees"`
+}
+
 // ticketAssignees 返回当前租户内可被指派工单的客服目录。
 // 候选人来源必须是专用权限过滤查询，不能从普通用户列表推断。
 func (h *handlers) ticketAssignees(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +35,12 @@ func (h *handlers) ticketAssignees(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"assignees": assignees})
+	httpx.OK(w, ticketAssigneesResponse{Assignees: assignees})
+}
+
+type ticketQueueResponse struct {
+	Tickets []support.Ticket `json:"tickets"`
+	Total   int              `json:"total"`
 }
 
 func (h *handlers) ticketQueue(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +60,7 @@ func (h *handlers) ticketQueue(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"tickets": ts, "total": total})
+	httpx.OK(w, ticketQueueResponse{Tickets: ts, Total: total})
 }
 
 func (h *handlers) ticketDetail(w http.ResponseWriter, r *http.Request) {

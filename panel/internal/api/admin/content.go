@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/content 的 ListAdmin / GetAdmin / PublishVersion / Archive，依赖 platform/httpx、chi 的路径参数
+// [OUTPUT]: 对包内提供知识库页面处理器 listContentPages、getContentPage、publishContentVersion、archiveContentPage；成功响应为具名 DTO（*Response）
+// [POS]: api/admin 知识库（内容页）版本的 HTTP 外壳，与 announce.go 同属内容段；路由与保护链在 router_content.go 的 registerContentPageRoutes
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -10,6 +15,10 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type listContentPagesResponse struct {
+	Pages []content.Page `json:"pages"`
+}
+
 func (h *handlers) listContentPages(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	pages, err := h.d.Content.ListAdmin(r.Context(), httpx.TenantIDFrom(r.Context()),
@@ -21,7 +30,11 @@ func (h *handlers) listContentPages(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"pages": pages})
+	httpx.OK(w, listContentPagesResponse{Pages: pages})
+}
+
+type getContentPageResponse struct {
+	Page *content.Page `json:"page"`
 }
 
 func (h *handlers) getContentPage(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +44,11 @@ func (h *handlers) getContentPage(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"page": page})
+	httpx.OK(w, getContentPageResponse{Page: page})
+}
+
+type publishContentVersionResponse struct {
+	Page *content.PublishResult `json:"page"`
 }
 
 func (h *handlers) publishContentVersion(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +63,11 @@ func (h *handlers) publishContentVersion(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, map[string]any{"page": out})
+	httpx.JSON(w, http.StatusCreated, publishContentVersionResponse{Page: out})
+}
+
+type archiveContentPageResponse struct {
+	Page *content.ArchiveResult `json:"page"`
 }
 
 func (h *handlers) archiveContentPage(w http.ResponseWriter, r *http.Request) {
@@ -64,5 +85,5 @@ func (h *handlers) archiveContentPage(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"page": out})
+	httpx.OK(w, archiveContentPageResponse{Page: out})
 }

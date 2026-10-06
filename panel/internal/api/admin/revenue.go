@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/adminops 的 RevenueTimeseries / ListRevenueAdjustments / CreateRevenueAdjustment / ReverseRevenueAdjustment，依赖 platform/httpx
+// [OUTPUT]: 对包内提供 revenueTimeseries、revenueAdjustments、createRevenueAdjustment、reverseRevenueAdjustment 四个处理器；成功响应为具名 DTO（*Response）
+// [POS]: api/admin 的仪表盘收入趋势（带上一区间合计 previous_total）与收入调整（新建 / 冲销带 Idempotency-Key），路由在 router_dashboard.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -11,6 +16,13 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type revenueTimeseriesResponse struct {
+	Currency      string                  `json:"currency"`
+	Days          int                     `json:"days"`
+	Points        []adminops.RevenuePoint `json:"points"`
+	PreviousTotal int64                   `json:"previous_total"`
+}
+
 func (h *handlers) revenueTimeseries(w http.ResponseWriter, r *http.Request) {
 	days, err := strconv.Atoi(r.URL.Query().Get("days"))
 	if err != nil {
@@ -21,8 +33,12 @@ func (h *handlers) revenueTimeseries(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"currency": strings.ToUpper(r.URL.Query().Get("currency")), "days": days,
-		"points": rows, "previous_total": previous})
+	httpx.OK(w, revenueTimeseriesResponse{Currency: strings.ToUpper(r.URL.Query().Get("currency")), Days: days,
+		Points: rows, PreviousTotal: previous})
+}
+
+type revenueAdjustmentsResponse struct {
+	Adjustments []adminops.RevenueAdjustment `json:"adjustments"`
 }
 
 func (h *handlers) revenueAdjustments(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +47,7 @@ func (h *handlers) revenueAdjustments(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"adjustments": rows})
+	httpx.OK(w, revenueAdjustmentsResponse{Adjustments: rows})
 }
 
 type revenueAdjustmentReq struct {
