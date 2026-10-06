@@ -49,7 +49,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 守卫与处理：
 
 - 守卫是 panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go`，随 `go test ./...` 扫描全部 .go；豁免外超限即红，豁免过期也红。
-- 守卫变红时先按主题拆分，只挪代码，用 `panel/tools/refactorcheck` 证明是纯挪动。不要加豁免。
+- 守卫变红时先按主题拆分，只挪代码，用 `panel/tools/refactorcheck` 证明是纯挪动（用法见 `.claude/rules/tools-refactorcheck.md`）。不要加豁免。
 - 改豁免表要用户授权。
 
 ## 红线：仓库公开
