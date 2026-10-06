@@ -1,6 +1,6 @@
 # Pandora Panel - Xboard 类代理订阅面板 + 自研 NativeCore 节点端
 
-Go 1.26 + PostgreSQL 18 + Valkey 8 + React/TypeScript/Vite 面板前端（panel/frontend，按设计稿重写完成，嵌入 panel/web 后在两个网关根 / 下发）
+Go 1.26 + PostgreSQL 18 + Valkey 8 + React/TypeScript/Vite 面板前端（panel/frontend，嵌入 panel/web 后在两个网关根 / 下发）
 
 <directory>
 panel/ - 面板：public/admin/node 三个 HTTP 网关（节点接入由 pdnd 的 pandora-native 两阶段承担，面板不带节点代理），计费账本、节点编排、审计、安装发布链 (9子目录: cmd, internal, migrations, deploy, frontend, web, docs, tests, tools)
@@ -8,16 +8,16 @@ pdnd/ - Pandora node：NativeCore 数据面，一个二进制承载 13 个协议
 docs/ - 全仓库级文档：配置签名密钥轮换、发布物绑定 (0子目录)
 .githooks/ - 提交前闸门 pre-commit：gitleaks 按 .gitleaks.toml 与本机可选的 ops-local/gitleaks-private.toml 扫暂存区，未装 gitleaks 也拒绝提交；clone 后执行 git config core.hooksPath .githooks 启用 (0子目录)
 ops-local/ - 被 git 忽略、只在维护者本机存在的私有运维资料：现有 memoh-ci/（CI 回放检查机的脚本与本机端 wait-status.sh、wait-github.sh，推送后用它们等结论）
-  - 以后放真实服务器 IP、域名、gitleaks 私有规则 gitleaks-private.toml 也在这里
+  - 真实服务器 IP、域名、gitleaks 私有规则 gitleaks-private.toml 也只放这里
   - 仓库公开，这些永不入库
   - pre-commit 钩子在该文件存在时才加载它
-.github/workflows/ - CI：默认 shell: bash（-eo pipefail，`| tee` 不再吞掉失败） (0子目录)
+.github/workflows/ - CI：默认 shell: bash（-eo pipefail，`| tee` 不会吞掉失败） (0子目录)
   - pdnd 的 Ubuntu race/vet、原生 ubuntu-24.04-arm 的 ARM64 race 门、-tags interop 的非 race 外部客户端门与 amd64/arm64 双架构构建门禁，release-manifest 任务对刚构建的 amd64 发布二进制跑 runtime-acceptance.sh（Go 模拟面板，signed 与 compat 两种接入各冷启动两次）
   - panel 的 nodefabric 契约、前端嵌入与根下发契约（占位入口）、表登记簿、权限字典
   - panel-frontend 任务对新前端跑 lint/typecheck/vitest/双入口构建，再 make frontend-embed 用真实产物跑 web、webapp、api 的 Go 契约，占位页未被替换即失败
   - PG18 集成门禁单独在 panel-pg18.yml（触发面是整棵 panel/internal 加 cmd 与 web 的 Go 源码，不拖 pdnd 的重任务），runner 自带 Docker 跑 run-pg18-gates.sh，goose 版本跟 build-release.sh
   - 同一 workflow 的 panel-unit 任务跑 panel 全量 build/vet/go test（PG18 用例在此跳过），这是 CI 上唯一跑 panel 全部单元测试的地方
-  - panel-smoke.yml 是新前端对真实网关的联调冒烟（面板重构第 4 阶段），触发面含 panel/frontend/src 与 panel/tests，经 deploy/run-smoke-stack.sh 起一次性 PG18 + 网关，读表先于写路径，最后经 deploy/run-smoke-e2e.sh 在同一栈上跑 tests 下的六个 e2e 脚本（含内鬼检测评估 risk_e2e.sh；全部跑完再判，任一失败即 job 变红），再用 panel/tools/loadtest 做一次 200 用户、5 节点、60 秒的压测工具试跑（零 5xx、零签名失败）
+  - panel-smoke.yml 是新前端对真实网关的联调冒烟，触发面含 panel/frontend/src 与 panel/tests，经 deploy/run-smoke-stack.sh 起一次性 PG18 + 网关，读表先于写路径，最后经 deploy/run-smoke-e2e.sh 在同一栈上跑 tests 下的六个 e2e 脚本（含内鬼检测评估 risk_e2e.sh；全部跑完再判，任一失败即 job 变红），再用 panel/tools/loadtest 做一次 200 用户、5 节点、60 秒的压测工具试跑（零 5xx、零签名失败）
   - panel-deploy.yml 按 panel/deploy 与 panel/migrations 路径触发，逐个点名跑无需数据库与 root 的 deploy 桩测试，迁移脚本拿真实迁移目录校验编号（严格递增、不重复、允许历史空号）
 </directory>
 
@@ -119,8 +119,8 @@ L3 格式（其他语言换成各自的注释语法，Go 的写法见下方适�
   - 带 `//go:build` 的文件，L3 放在构建约束与空行之后。
 - L3 渐进补齐：进入哪个目录、改哪个文件，就补那个目录和文件，不做全仓库一次性补齐。TS/TSX 已全部带 L3；Go 只有部分文件带，其余渐进补。
 - 测试文件在 L2 成员清单中按 `*_test.go` 合并为一行。
-- 单文件 ≤800 行：第 5 阶段重构之后，豁免之外没有超限的 .go 文件（含测试）
-  - 豁免两类：① `pdnd/internal/reality/**`（fork 自 XTLS/REALITY，MPL-2.0，其本身基于 Go crypto/tls，见该目录 LICENSE；34 个文件）与 `pdnd/internal/realityquic/**`（fork 自 apernet/quic-go，见该目录 README；193 个文件）是 fork 来的第三方代码，保持上游的文件划分以便合上游，整目录豁免，目前其中 14 个文件超限（reality 8、realityquic 6）
+- 单文件 ≤800 行：豁免之外不允许有超限的 .go 文件（含测试）
+  - 豁免两类：① `pdnd/internal/reality/**`（fork 自 XTLS/REALITY，MPL-2.0，其本身基于 Go crypto/tls，见该目录 LICENSE；34 个文件）与 `pdnd/internal/realityquic/**`（fork 自 apernet/quic-go，见该目录 README；193 个文件）是 fork 来的第三方代码，保持上游的文件划分以便合上游，整目录豁免，其中 14 个文件超限（reality 8、realityquic 6）
   - ② 两个只剩一个超长测试函数、纯挪动拆不开的 PG18 测试 `panel/internal/middleware/idempotency_pg18_test.go`、`panel/internal/domain/billing/order_release_pg18_test.go`，逐个登记，拆到 800 行以内即须移出
   - 守卫：panel 的 `tools/refactorcheck/linelimit_test.go` 与 pdnd 的 `linelimit_test.go` 随 `go test ./...` 扫描全部 .go，豁免外超限即红，豁免过期也红
   - 守卫变红先按主题拆分（只挪代码，用 `panel/tools/refactorcheck` 自证），不要加豁免
