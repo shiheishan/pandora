@@ -11,7 +11,7 @@
 
 成员清单
 main.go: 子命令分发 seed|nodes|users|burst
-README.md: Runbook：开机 → install.sh 生产模式装面板 → 观测开关（pprof、pg_stat_statements、nginx 真实 IP）→ 真 pdnd 接入 → 每档造数 → 空载 / 5k / 10k / 15k 各两次 30 分钟稳态加 burst → 15k 档 24 小时 → 结果对照及格线 → 删机；地址全是占位符
+README.md: Runbook（按总协调定案定稿）：开机 → install.sh 生产模式装面板 → 观测开关（pprof、pg_stat_statements、nginx 真实 IP 顶替，压测机直连源站）→ 每档重装数据基座、造数、真 pdnd 重新接入 → 空载 / 5k / 10k / 15k 各两次 30 分钟稳态加 burst → 15k 档 24 小时（订阅余量版 30m / 贴近真实版 6h）→ 四条及格线与 15k 必报的 nr_throttled 增量 → 撞上限才补放开上限的对照轮 → 删机；地址全是占位符
 ltkit/: 共享底座
   - manifest.go 造数清单：seed 写、其余读，含节点私钥与共用口令（虚构，0600 落盘）；另有订阅前缀、池与套餐版本、分阶段造数耗时，用户带订阅 id 与 node_uid，节点带名字与服务器
   - stats.go 计量：对数分桶直方图（2% 精度、常数内存，24 小时也不涨）出 QPS、p50/p95/p99、错误码（无响应归 transport:*）、自定义标签、按窗口时间线；Stop 冻结分母免得收尾排空摊薄 QPS；写 <场景>.json 与 .txt 一页摘要
@@ -43,6 +43,7 @@ scripts/: 压测期在面板主机上以 root 跑的采集脚本，scp 过去即
   - lt-common.sh 被 source 的公共段：找 .env、判定数据基座、超级用户 psql、带口令 valkey-cli、重启 PG
   - pgstat.sh pg_stat_statements 开启（ALTER SYSTEM + 重启 + CREATE EXTENSION）、清零、导出 top N 三份 CSV（总耗时、平均耗时、调用次数）、撤销
   - sample-procs.sh 三网关、postgres、valkey、nginx 与整机的 CPU 与 RSS/PSS 定时采样成 CSV
+  - sample-cgroup.sh 三网关 systemd 单元的 cgroup v2 cpu.stat（nr_throttled）与 memory.current/max/events 定时采样成 CSV：判「撞 CPUQuota / MemoryMax」与 15k 档必报的节流增量
   - snapshot-mem.sh PostgreSQL 内存参数、共享内存、连接与库计数，Valkey INFO memory/stats/clients 快照，压测前后各一次做差
   - grab-pprof.sh 从三网关的回环 pprof 端口并行抓 CPU profile，再取 heap/allocs/goroutine
   - nginx-loadtest-realip.conf / nginx-realip.sh 压测期间顶替 cloudflare-realip.conf（须已由 deploy/render-nginx.sh 生成），只对压测机采信 X-Real-IP；备份、nginx -t 失败回滚、disable 还原；随包 nginx-aegis.conf 不变
