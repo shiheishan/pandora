@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
+# [INPUT]: 依赖 curl 取 Cloudflare 官方的 ips-v4 / ips-v6 列表，依赖 python3 校验网段
+# [OUTPUT]: 原子写出 /etc/aegispanel/cloudflare-realip.conf：Cloudflare 全部网段的 set_real_ip_from + real_ip_header CF-Connecting-IP；列表为空、畸形、重复或过大时失败且不动旧文件
+# [POS]: deploy 安装链里「站点在 Cloudflare 后面」的显式启用步骤，随发布包装到 /opt/aegispanel/deploy；render-nginx.sh 只在该文件缺失时写不信任任何代理的默认版，两者分工：默认安全、启用显式
+# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Refresh the trusted Cloudflare proxy networks used by the Pandora edge.
+#
+# Run it only when the site is behind Cloudflare (orange cloud). On a site that
+# is not, trusting CF-Connecting-IP lets any client pick its own source address.
+# Re-run it to pick up Cloudflare range changes; then nginx -t && systemctl reload nginx.
+#
+#   update-cloudflare-realip.sh [target file]   (the argument exists for tests)
 set -euo pipefail
 umask 077
 
-TARGET_DIR=/etc/aegispanel
-TARGET_FILE="$TARGET_DIR/cloudflare-realip.conf"
+TARGET_FILE="${1:-/etc/aegispanel/cloudflare-realip.conf}"
+[[ "$TARGET_FILE" = /* ]] || { printf 'update-cloudflare-realip: target path must be absolute\n' >&2; exit 1; }
+TARGET_DIR="$(dirname -- "$TARGET_FILE")"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf -- "$WORK_DIR"' EXIT
 

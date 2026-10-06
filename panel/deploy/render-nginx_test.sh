@@ -21,7 +21,7 @@ path='ops_0123456789abcdef0123456789abcdef'
 domain='panel.example.test'
 base="AEGIS_PUBLIC_BASE_URL=https://$domain"
 printf 'AEGIS_ADMIN_PATH=%s\n%s\n' "$path" "$base" >"$TEST_DIR/valid.env"
-"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$TEST_DIR/aegis.conf" >/dev/null
+"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$TEST_DIR/aegis.conf" "$TEST_DIR/realip.conf" >/dev/null
 
 grep -Fq "location = /$path" "$TEST_DIR/aegis.conf"
 # 不带尾斜杠只能重定向：入口页的相对路径要以 /$path/ 为基准，直接下发会把请求打到公开网关
@@ -50,7 +50,7 @@ grep -Fq 'include /etc/aegispanel/cloudflare-realip.conf' "$TEST_DIR/aegis.conf"
 
 for invalid in short '../escape-path-0123456789' 'slash/path-0123456789abcdef' 'CHANGE_ME_TO_A_RANDOM_48_CHAR_PATH'; do
   printf 'AEGIS_ADMIN_PATH=%s\n%s\n' "$invalid" "$base" >"$TEST_DIR/invalid.env"
-  if "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/invalid.env" "$TEST_DIR/rejected.conf" >/dev/null 2>&1; then
+  if "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/invalid.env" "$TEST_DIR/rejected.conf" "$TEST_DIR/realip-rejected.conf" >/dev/null 2>&1; then
     printf 'expected invalid path to be rejected\n' >&2
     exit 1
   fi
@@ -60,7 +60,7 @@ done
 reject_base() {
   printf 'AEGIS_ADMIN_PATH=%s\n' "$path" >"$TEST_DIR/invalid.env"
   printf '%s' "$1" >>"$TEST_DIR/invalid.env"
-  if "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/invalid.env" "$TEST_DIR/rejected.conf" >/dev/null 2>&1; then
+  if "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/invalid.env" "$TEST_DIR/rejected.conf" "$TEST_DIR/realip-rejected.conf" >/dev/null 2>&1; then
     printf 'expected base URL case to be rejected: %q\n' "$1" >&2
     exit 1
   fi
@@ -77,7 +77,10 @@ reject_base $'AEGIS_PUBLIC_BASE_URL=https://evil.test;include/x\n'
 
 # 大写与结尾斜杠按同一个域名处理
 printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://Panel.Example.TEST/\n' "$path" >"$TEST_DIR/upper.env"
-"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/upper.env" "$TEST_DIR/upper.conf" >/dev/null
+"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/upper.env" "$TEST_DIR/upper.conf" "$TEST_DIR/realip.conf" >/dev/null
 grep -Fq "server_name $domain;" "$TEST_DIR/upper.conf"
+
+# 拒绝渲染时不留下任何东西（信任表也不建）
+[[ ! -e "$TEST_DIR/realip-rejected.conf" ]] || { printf 'rejected render created the real-IP file\n' >&2; exit 1; }
 
 printf 'render-nginx tests passed\n'

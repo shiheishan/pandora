@@ -45,7 +45,7 @@ scripts/: 压测期在面板主机上以 root 跑的采集脚本，scp 过去即
   - sample-procs.sh 三网关、postgres、valkey、nginx 与整机的 CPU 与 RSS/PSS 定时采样成 CSV
   - snapshot-mem.sh PostgreSQL 内存参数、共享内存、连接与库计数，Valkey INFO memory/stats/clients 快照，压测前后各一次做差
   - grab-pprof.sh 从三网关的回环 pprof 端口并行抓 CPU profile，再取 heap/allocs/goroutine
-  - nginx-loadtest-realip.conf / nginx-realip.sh 压测期间顶替 cloudflare-realip.conf，只对压测机采信 X-Real-IP；备份、nginx -t 失败回滚、disable 还原；随包 nginx-aegis.conf 不变
+  - nginx-loadtest-realip.conf / nginx-realip.sh 压测期间顶替 cloudflare-realip.conf（须已由 deploy/render-nginx.sh 生成），只对压测机采信 X-Real-IP；备份、nginx -t 失败回滚、disable 还原；随包 nginx-aegis.conf 不变
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

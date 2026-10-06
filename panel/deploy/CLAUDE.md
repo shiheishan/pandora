@@ -17,7 +17,7 @@ install.sh: 一键安装 / 升级（Docker 数据基座）
   - 升级前自动全量备份，不替人造管理员
 install-native.sh: 无 Docker 的直装版（/opt/pandora），首装先取合规的对外地址再生成 .env（全部机密随机、AEGIS_ENV=production）；已有 .env 即升级，从中读回口令，.env 一字不动
 public-base-url.sh: 两个安装脚本 source 的共用段：首装对外地址的取值（PANDORA_PUBLIC_BASE_URL 或终端现场问）与校验（与 render-nginx.sh 同一规则），不合规给中文原因与重跑命令；另带不 source 地读 .env 单键
-install-linux-binaries.sh: 按带外获得的 SHA-256 摘要校验后，以可回滚事务安装发布包二进制、运维脚本、systemd 单元与 release-artifact.env（到 /opt/aegispanel/deploy/）
+install-linux-binaries.sh: 按带外获得的 SHA-256 摘要校验后，以可回滚事务安装发布包二进制、运维脚本、systemd 单元与 release-artifact.env（到 /opt/aegispanel/deploy/）；render-nginx.sh 读的同目录模板 nginx-aegis.conf 与 update-cloudflare-realip.sh 一并装上
 platform.sh / preflight-linux.sh: 发行版与依赖探测（被其他脚本 source），装前环境预检
 migrate-to-new-host.sh: 新主机一键迁移：
   - 恢复 Age 密文备份、重建 aegis_app 角色、校验账本无漂移，目标 .env 为 AEGIS_ENV=production 时在动手之前拒绝源码模式（不产 pdnd-dist 与发布物绑定，节点接入会被拒），要 AEGIS_RELEASE_DIR 指向发布包
@@ -54,7 +54,8 @@ BACKUP.md / ADMIN-PASSWORD-RESET.md / LINUX-COMPATIBILITY.md: 备份恢复、管
 边缘入口
 nginx-aegis.conf: 统一边缘模板，公网只听 80（跳 443）与 443，另有本机回环运维入口 127.0.0.1:9080；只含占位符：后台前缀 __AEGIS_ADMIN_PATH__、域名 __AEGIS_DOMAIN__（server_name 与 Let's Encrypt 路径）
 render-nginx.sh: 只读解析 .env（不 source）的 AEGIS_ADMIN_PATH 与 AEGIS_PUBLIC_BASE_URL，校验后原子写出 nginx 配置；域名与面板拼链接用的是同一个值
-update-cloudflare-realip.sh: 刷新可信 Cloudflare 回源网段（模板 include 的 cloudflare-realip.conf）
+  - 模板 include 的 /etc/aegispanel/cloudflare-realip.conf 缺失时写一份只有注释、不信任任何代理的默认文件（全新安装 nginx -t 才过得去，且不在 Cloudflare 后面的站点不会误信客户端填的 CF-Connecting-IP）；已存在绝不覆盖，升级保留 Cloudflare 网段
+update-cloudflare-realip.sh: 站点在 Cloudflare 后面时的显式启用步骤：取官方 ips-v4/v6，校验后原子写成 set_real_ip_from + real_ip_header CF-Connecting-IP，坏列表不动旧文件；随发布包与两个安装脚本装到 deploy/，两个安装脚本收尾都提示它
 
 巡检
 healthcheck.sh / aegis-health.service / aegis-health.timer: 面板健康巡检，错开整点运行，巡检自身有超时
@@ -66,7 +67,8 @@ migrate-to-new-host_mock_test.sh: 迁新主机的生产闸门：production + 源
   - 越过闸门按 pandora-platform: 前缀认平台探测的任一失败，不依赖宿主有 systemd（无 systemd 的 Linux 容器上也通过）
 public-base-url_mock_test.sh: 对外地址闸门的规则矩阵、取值与报错、两个安装脚本共用一份、install-native.sh 不写示例值且 .env 只在首装写
 logrotate-aegis_static_test.sh: 轮转 glob 覆盖三个网关单元 append: 的全部日志文件，规则随包分发并装到 /etc/logrotate.d/aegis
-render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名、listen 只许 80/443 与回环 9080
+render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝（且不留下信任表）、模板不残留占位符或具体域名、listen 只许 80/443 与回环 9080
+cloudflare-realip_mock_test.sh: 真实来源 IP 信任表：模板、渲染器、更新脚本三处是同一路径；全新渲染写出无指令的默认文件（0644）、已有文件与 Cloudflare 网段重渲染不变；桩 curl 下更新脚本写出网段、坏列表失败且不动旧文件；更新脚本与模板随发布包和两个安装脚本落到 deploy/
 run-pg18-gates.sh: 一次跑完全部 PostgreSQL 18 集成门禁，CI 的 panel-pg18.yml 每次推送都跑
   - 每域 go test -v，有用例跳过或一个都没跑同样判失败（缺环境变量的测试会 t.Skip 报 ok），同包两域靠精确 -run 过滤互不拉入（billing 包里另有 payment_query 域跑 TestPaymentQueryPG18）
   - 容器就绪经 TCP 探测（镜像初始化的临时实例只听 unix socket），60 秒不就绪即失败
