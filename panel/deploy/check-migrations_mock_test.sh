@@ -187,11 +187,12 @@ run_check "$ROOT/migrations" >"$TMP/real.out" 2>&1 \
   || { echo 'the real migrations directory was rejected' >&2; cat "$TMP/real.out" >&2; exit 1; }
 grep -Fq 'migration precheck complete' "$TMP/real.out"
 
-# CLIENT-AUTH-00042 is intentionally frozen outside the runtime migration
-# directory. The precheck must not retain the old version-number guard, while
-# the current 00042 runtime migration remains part of the ordinary sequence.
+# CLIENT-AUTH-00042 lives only in the archive/client-auth tag, outside the
+# runtime migration directory. The precheck must not retain the old
+# version-number guard, while the current 00042 runtime migration remains part
+# of the ordinary sequence.
 [ -f "$ROOT/migrations/00042_seed_registration_mode.sql" ]
-[ -f "$ROOT/migrations/frozen-client-auth/00042_client_auth_expand.sql" ]
+[ ! -e "$ROOT/migrations/00042_client_auth_expand.sql" ]
 if grep -Fq 'CLIENT-AUTH-00042 is pending' "$CHECK"; then
   echo 'stale CLIENT-AUTH-00042 version guard remains in check-migrations.sh' >&2
   exit 1

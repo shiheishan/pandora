@@ -68,9 +68,8 @@ for migration in "${migration_files[@]}"; do
   fi
   MAX_MIGRATION_VERSION=$version
 done
-# CA42 客户端认证子系统冻结后，它的两个迁移已移出主序列，原样留在
-# migrations/frozen-client-auth/（见其 README），代码与发布门禁脚本归档在 git 标签
-# archive/client-auth。原先「版本号 ≥42 就必须存在 00042_client_auth_expand.sql
+# CA42 客户端认证子系统冻结后，它的两个迁移已移出主线，连同代码与发布门禁脚本
+# 存档在 git 标签 archive/client-auth（panel/migrations/frozen-client-auth/）。原先「版本号 ≥42 就必须存在 00042_client_auth_expand.sql
 # 且 SHA 匹配」的三处闸门随之删除。
 #
 # 这些闸门守的是 client-auth 迁移本身，却以版本号为触发条件，于是 42 号槽位

@@ -74,7 +74,7 @@ done
 
 # 这里原本钉死了「42 号槽位必须是 00042_client_auth_expand.sql，且 SHA 必须是
 # FFAF84B6…」。项目转为只做面板之后，CA42 客户端认证子系统冻结，它的两个迁移
-# 被移到 migrations/frozen-client-auth/（从未在任何环境应用过），42 号槽位改由
+# 移出了主线（从未在任何环境应用过，存档在 git 标签 archive/client-auth），42 号槽位改由
 # 00042_seed_registration_mode.sql 占用，这条校验会把每一次发布都拦下来。
 #
 # 把版本号和具体文件绑定本身就不牢靠 —— 任何一次重排号都会让它失效。真正要防的

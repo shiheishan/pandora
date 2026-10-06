@@ -6,7 +6,7 @@ Xboard 类代理订阅面板 + 自研节点端（Pandora NativeCore）。目标�
 
 ## 架构
 
-技术栈：**Go 1.26 + PostgreSQL 18 + Valkey 8（Redis 兼容）**，选型理由见 [ADR-0001](panel/docs/adr/0001-technology-stack.md)。
+技术栈：**Go 1.26 + PostgreSQL 18 + Valkey 8（Redis 兼容）**。Go 让面板与节点端都是无运行时依赖、可交叉编译的单文件，常驻内存小；PostgreSQL 18 内置 `uuidv7()`，租户隔离靠 FORCE RLS 由数据库强制，复式记账靠 DEFERRABLE 约束触发器在提交时配平；Valkey 协议兼容 Redis，许可证仍是 BSD。
 
 ```text
 用户浏览器 / 专属客户端
@@ -48,7 +48,7 @@ aegis-public    aegis-admin     aegis-node
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
 | `panel/migrations/` | SQL 迁移，按序号递增，当前到 00097，共 94 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 21 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
-| `panel/docs/` | `redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿（CLIENT-AUTH 的实现代码已移出主线，在 tag `archive/client-auth`）、ADR |
+| `panel/docs/` | `redesign/api-contract.md` 前后端接口契约；DASH / CLIENT-AUTH 历史冻结稿与客户端登录的代码、冻结迁移都已移出主线，在 tag `archive/client-auth` |
 | `pdnd/` | Pandora node（pdnd / pandora-native）：NativeCore 协议入站、认证、路由、用户与流量 |
 | `pdnd/kernel/`、`pdnd/internal/` | NativeCore 自研数据面 |
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
@@ -377,7 +377,7 @@ bash panel/deploy/test-install.sh <发布目录>
 | Xboard 功能验收 | PARTIAL，未 RELEASED |
 | 前端 | 旧的手写单页与 React 候选已删除，管理后台与用户门户按设计稿在 `panel/frontend` 重写完成并补齐后端缺口 |
 | 部署 | 这一版尚未在任何真实机器上部署或实测；真机测试待换新机器再做 |
-| 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿留在 `panel/docs/` 供以后做客户端参考；`frozen-client-auth/` 下的两个迁移从未应用，原样保留 |
+| 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿和 `frozen-client-auth/` 下两个从未应用的迁移也一并存档在该 tag，以后做客户端时从那里取 |
 
 历史上还有一项未收口的工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成），当时状态为 PARTIAL at INTEGRATED，之后没有它完成的证据；相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
 
@@ -397,6 +397,5 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 
 - [docs/CONFIG-SIGNING-KEY-ROTATION.md](docs/CONFIG-SIGNING-KEY-ROTATION.md)、[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)：密钥轮换与发布物绑定。
 - [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)：备份与恢复。
-- [panel/docs/](panel/docs/)：`redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿（CLIENT-AUTH 的实现代码在 tag `archive/client-auth`）、ADR。
+- [panel/docs/](panel/docs/)：`redesign/api-contract.md` 前后端接口契约（DASH / CLIENT-AUTH 历史冻结稿在 tag `archive/client-auth`）。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。
-- [panel/docs/adr/0001-technology-stack.md](panel/docs/adr/0001-technology-stack.md)：技术选型决策记录。

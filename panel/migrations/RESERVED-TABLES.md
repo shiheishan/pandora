@@ -19,15 +19,15 @@ configure-app-role.sql、在用表外键或冻结契约）本身就是需要用�
 
 | 表 | 建表迁移 | 状态 | 保留原因 |
 | --- | --- | --- | --- |
-| api_tokens | 00002_identity.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；CLIENT-AUTH-01 冻结契约规定迁移时撤销其中 audience=client 的 token |
+| api_tokens | 00002_identity.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；CLIENT-AUTH-01 冻结契约（同在该 tag）规定迁移时撤销其中 audience=client 的 token |
 | approval_decisions | 00009_security_audit.sql | 孤儿 | tests/invariants.sql 用它验证 SEC-013 申请人不能自批；configure-app-role.sql 与 00011 授权 |
 | approval_requests | 00009_security_audit.sql | 孤儿 | 00009 三张表外键指向它；tests/invariants.sql 引用 |
-| client_releases | 00007_client_delivery.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；CLIENT-AUTH-01 冻结契约列出其外键为保留项 |
+| client_releases | 00007_client_delivery.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；CLIENT-AUTH-01 冻结契约（同在该 tag）列出其外键为保留项 |
 | cloud_providers | 00005_node_fabric.sql | 孤儿 | 00005 四张在用表外键指向它 |
-| config_bundles | 00007_client_delivery.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；冻结的 frozen-client-auth/00042、00043 给它加列与索引 |
+| config_bundles | 00007_client_delivery.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；该 tag 里冻结的 00042、00043 给它加列与索引 |
 | credential_access_log | 00007_client_delivery.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；configure-app-role.sql 与 00011 授权 |
-| device_authorizations | 00007_client_delivery.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；冻结的 frozen-client-auth/00042、00043 改造它做设备码登录 |
-| device_tokens | 00007_client_delivery.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；冻结的 frozen-client-auth/00043 给它建索引 |
+| device_authorizations | 00007_client_delivery.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；该 tag 里冻结的 00042、00043 改造它做设备码登录 |
+| device_tokens | 00007_client_delivery.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；该 tag 里冻结的 00043 给它建索引 |
 | invoices | 00004_billing_ledger.sql | 孤儿 | 00036 加了证据守卫触发器与 orders 外键；configure-app-role.sql 授权 |
 | order_transitions | 00036_order_reservations.sql | 库内使用 | 订单状态机合法转换表：迁移种子写入，BEFORE UPDATE 守卫函数读取；configure-app-role.sql 授权 |
 | organizations | 00002_identity.sql | 孤儿 | 00002、00003、00004 的在用表外键指向它 |
@@ -36,7 +36,7 @@ configure-app-role.sql、在用表外键或冻结契约）本身就是需要用�
 | provisioning_steps | 00005_node_fabric.sql | 孤儿 | configure-app-role.sql 与 00011 授权 |
 | quota_adjustments | 00006_metering.sql | 孤儿 | configure-app-role.sql 与 00011 授权；配额调整走人工订单与流量重置 |
 | refund_requests | 00036_order_reservations.sql | 孤儿 | refunds.refund_request_id 的 NOT NULL 外键指向它；configure-app-role.sql 授权 |
-| risk_events | 00009_security_audit.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；CLIENT-AUTH-01 冻结契约规定设备授权各结果与 audit_events 同事务写它 |
+| risk_events | 00009_security_audit.sql | 孤儿 | 客户端登录方案已移出主线，代码见 tag archive/client-auth；CLIENT-AUTH-01 冻结契约（同在该 tag）规定设备授权各结果与 audit_events 同事务写它 |
 | subscription_transitions | 00003_catalog_subscription.sql | 库内使用 | 订阅状态机合法转换表：迁移种子写入，守卫函数读取；tests/invariants.sql 引用；configure-app-role.sql 授权 |
 | system_setting_revisions | 00009_security_audit.sql | 孤儿 | configure-app-role.sql 与 00011 授权；系统设置无修订历史 |
 | trial_grants | 00003_catalog_subscription.sql | 孤儿 | tests/invariants.sql 引用；试用套餐未实现 |
