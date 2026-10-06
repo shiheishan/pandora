@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/adminops 的 ListUserGroups / SaveUserGroup / DeleteUserGroup / AssignUserGroup（读写、引用计数、约束翻译与审计在 adminops/user_groups.go），依赖 pools.go 的 notifyNodeUsersChanged，依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 listUserGroups（每项带 exclusive_pools）/ saveUserGroup / deleteUserGroup（被节点池名单引用时 409 写明池名）/ assignUserGroup（提交后发租户级 node.users.changed）；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 的用户分组：套餐可见、专属价格、优惠券限定、公告定向与节点池限定（R104）共用的分组实体；换组会改变用户能连的节点池，所以写路径要通知节点
-
 package admin
 
 // 用户分组。

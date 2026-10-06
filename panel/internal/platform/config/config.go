@@ -1,7 +1,3 @@
-// [INPUT]: 依赖进程环境变量（本仓库唯一允许读环境变量的生产包，envaccess_test.go 守着）
-// [OUTPUT]: 对外提供 Config、Load、Domain 常量与 Config 的 IsProduction、CanonicalPublicOrigin
-// [POS]: platform/config 的主入口：三个网关与命令行工具共用的全套配置，缺一项拒绝启动；部署侧可缺省的项在 deployment.go，pprof 诊断端口在 pprof.go
-
 // Package config 从环境变量加载配置。
 //
 // 设计取舍：不引入配置框架。三个网关的配置项有限且必须在启动时全部校验通过，

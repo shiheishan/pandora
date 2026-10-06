@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/subscription 的订阅态口径片段（R118），依赖 platform/db 的租户事务、platform/crypto 的 HashToken（订阅令牌反查）、platform/httpx 的错误模型；读 users / user_groups / subscriptions / quota_balances / subscription_online_devices / orders / referrals / telegram_bindings；订单行复用 orderRowSelectSQL
-// [OUTPUT]: 对外提供 UserRow、UserCurrentSub、ListUsersInput、UserDetail、SubscriptionRow、QuotaRow、UserStats、UserRef、TelegramRef 与 Service.ListUsers / GetUser
-// [POS]: domain/adminops 的后台用户读模型（契约后台-03 GET v1/users 与 GET v1/users/{id}）：从 service.go 拆出，列表带当前订阅摘要与多条件筛选，详情带配额、设备、统计（实收按币种拆开）、邀请人与 Telegram
-
 package adminops
 
 import (

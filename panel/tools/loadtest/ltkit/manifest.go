@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 encoding/json 与 os 读写清单文件
-// [OUTPUT]: 对外提供 Manifest、ManifestUser、ManifestNode、SeedTiming、LoadManifest、(*Manifest).Save
-// [POS]: tools/loadtest/ltkit 的造数清单：seed 写、nodes/users/burst 读，是四个子命令之间唯一的数据契约
-
 package ltkit
 
 import (

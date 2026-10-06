@@ -1,7 +1,3 @@
-// [INPUT]: 依赖同包的 validatePassword，依赖 platform 的 crypto（口令哈希）、credentialrevocation（吊销会话与刷新令牌）、audit/db/httpx
-// [OUTPUT]: 对外提供 AdminResetPassword 与 AdminResetPasswordInput
-// [POS]: domain/identity 的管理员替用户设新密码：同事务改哈希、吊销该用户全部会话与刷新令牌并写审计；原因可选（R101）
-
 package identity
 
 import (

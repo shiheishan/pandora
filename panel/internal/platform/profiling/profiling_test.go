@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 profiling.go 的 Start、Server、requireLoopback、newMux，依赖 net/http 作客户端
-// [OUTPUT]: 对外提供 TestStartIsOffForEmptyAddr、TestStartRejectsNonLoopbackBind、TestStartServesPprofOnLoopback、TestDefaultServeMuxIsNotTheDiagnosticRouter
-// [POS]: platform/profiling 的行为测试：空地址不监听、非回环绑定被拒（直接验 requireLoopback，不真绑全部网卡）、回环端口能取到 /debug/pprof/ 且 Close 后端口释放
-
 package profiling
 
 import (

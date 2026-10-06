@@ -1,7 +1,3 @@
-// [INPUT]: 依赖调用方注入的 Loader（billing 从 payment_providers 读取并解密）与各适配器登记的 Builder
-// [OUTPUT]: 对外提供 Factory、NewFactory、ProviderRecord、Credentials、ErrProviderDisabled 与凭据、配置的编解码工具
-// [POS]: domain/payment 的渠道实例工厂与缓存，被 billing/payments.go 独占使用；本包不依赖数据库与 httpx，错误语义由 billing 翻译
-
 package payment
 
 import (

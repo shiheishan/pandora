@@ -1,7 +1,4 @@
 #!/bin/bash -p
-# [INPUT]: 依赖 .env 的 POSTGRES_*、docker 容器 aegis-postgres、goose、与 deploy/ 并排的 migrations/
-# [OUTPUT]: 在一次性克隆库上重放待应用迁移的预检：文件名/编号/Up 标记校验、源库水位不高于发布物、续费切换闸门
-# [POS]: migrate.sh up 与 make check-migrations 的前置闸门；桩测试 check-migrations_mock_test.sh
 # Prove the exact production upgrade path on a disposable database clone.
 #
 # A scratch database is not a faithful release probe once migrations create

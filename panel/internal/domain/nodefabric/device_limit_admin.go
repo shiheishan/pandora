@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 uniproxy.go 的 DeviceWindowMinutes，依赖 platform 的 audit/db/httpx，读写 system_settings 的 device_limit.*、subscriptions.device_limit，读 subscription_online_devices 视图与迁移 00094 的 app.device_limit_window_minutes
-// [OUTPUT]: 对外提供 OnlineDevice、DeviceOverview、DeviceLimitPolicyInput 与 Service 的 ListOnlineDevices / SetSubscriptionDeviceLimit / SetDeviceLimitPolicy
-// [POS]: domain/nodefabric 的设备数限制后台用例（从 api/admin 的 devices.go 下沉）：判定模式、宽容值与识别窗口的执行方就是本包的 UniProxy 用户下发，读写放在同一处；窗口只经库函数读（R103），两条写都同事务审计，订阅不存在回 404
-
 package nodefabric
 
 import (

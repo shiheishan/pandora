@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useEffect，依赖 ../core/theme 的 useTheme，依赖 ../styles/design-tokens 的 COLOR_TOKENS，依赖 ./queries 的 useAppearance
- * [OUTPUT]: 对外提供 THEMEABLE_TOKENS、pickThemeTokens、PortalBranding、portalBranding、useAppearanceTheme
- * [POS]: portal 的主题令牌应用：GET v1/appearance 的 theme.tokens 分 light / dark 两组，按当前明暗取一组经 CSSOM setProperty 写到 <html>，白名单外的键忽略；站点名写进 document.title；portalBranding 给 SiteBrand 取站点名、标语与 Logo
- */
 import { useEffect } from 'react'
 import { useTheme, type Theme } from '../core/theme'
 import { COLOR_TOKENS } from '../styles/design-tokens'

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/payment 的 Provider 接口与 QueryResult
-// [OUTPUT]: 对包内测试提供 queryStubProvider（可编排查单结果、记录查询次数的渠道替身）
-// [POS]: billing 主动查单测试的共用渠道替身，单测（payment_query_test.go）与 PG18（payment_query_pg18_test.go）共用；不打外网
-
 package billing
 
 import (

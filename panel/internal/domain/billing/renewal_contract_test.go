@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取续费与变更套餐各声明的源码，依赖 subscriptionAcceptsPaidChange，依赖迁移 00095 的挂账守卫
-// [OUTPUT]: 对外提供续费的源码契约测试（建单预留与幂等、零元单与履约锁序、配额周期独立）与订阅状态口径一致性测试
-// [POS]: billing 续费的源码契约门禁；可续费状态组在 Go 与 00095 守卫之间只许有一份口径
-
 package billing
 
 import (

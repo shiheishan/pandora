@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 heartbeat.go 的 Metrics.validate、platform/httpx 的错误码
-// [OUTPUT]: 对外提供 TestHeartbeatMetricsRange
-// [POS]: domain/nodefabric 的心跳探针范围单测：边界值放行，越界（cpu_bp、int4 列宽、负数）一律 400；落库与事务不回滚由 api/node 的 PG18 测试核对
-
 package nodefabric
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的 PublishConfig / FetchConfig / ReportConfigApplied / GetAdminNode，依赖 node_config_legacy_pg18_test.go 的夹具与共用发布、种数据、断言工具
-// [OUTPUT]: 包内提供 runNodeConfigPG18PublicationLimitBatch 与并发发布任务类型 nodeConfigPG18PublishJob / nodeConfigPG18PublishResult（主文件的 runNodeConfigPG18Publishes 用它们）
-// [POS]: TestNodeConfigLegacyPG18 的发布批次：并发发布与投影一致、租户与 RLS 隔离、上报归属（错作用域、被取代、池迁移、旧版本重复只追加）、过期 / 重复 / 畸形层拒绝与版本上限
-
 package admin
 
 import (

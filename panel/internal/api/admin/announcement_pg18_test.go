@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/notify 的公告服务与 platform/db，依赖一次性 PG18 库（run-pg18-gates.sh 的 announcement 域）
-// [OUTPUT]: 对外提供 TestAnnouncementPG18 与 openAnnouncementPG18（库护栏，devices_pg18_test.go 共用）
-// [POS]: api/admin 的 PG18 集成测试：公告定时发布、跨租户隔离与 RLS
-
 package admin
 
 import (

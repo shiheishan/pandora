@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/billing 的 ListTrafficResets / TrafficResetStats / ManualResetTraffic，依赖 platform/httpx
-// [OUTPUT]: 对包内提供 listTrafficResets、trafficResetStats、userTrafficResetHistory、manualResetTraffic 四个处理器；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 的流量重置日志、统计与人工重置，用户详情页的重置历史按用户过滤取最近 50 条，路由在 router_users.go
-
 package admin
 
 import (

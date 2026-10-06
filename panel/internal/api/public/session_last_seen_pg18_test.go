@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/pg18test 打开 public_api 域的一次性库（publicAPIFixture），依赖 middleware.Authenticate 的会话校验与 last_seen_at 节流刷新、本包 selfservice.go 的 listMySessions、domain/identity 的 ListActiveSessions、platform/token 的签发
-// [OUTPUT]: 对外提供 TestSessionLastSeenPG18
-// [POS]: api/public 的 PG18 测试（R62）：带令牌的请求经真实认证中间件刷新本会话的 last_seen_at，5 分钟内不重复写，别的会话不动，GET v1/me/sessions 读得到刷新后的值
-
 package public
 
 import (

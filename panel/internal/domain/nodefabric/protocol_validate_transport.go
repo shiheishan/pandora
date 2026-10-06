@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 protocol_validate.go 的 JSON 取整助手，依赖标准库 net
-// [OUTPUT]: 包内提供 validateNativeStreamConfig、validateHTTPTransportPath、XHTTP / Hysteria2 数值区间、AnyTLS padding、ShadowTLS 服务器与服务器名的分项校验
-// [POS]: domain/nodefabric 协议校验的传输层分项：从 protocol_schema.go 拆出，只被 ValidateProtocolConfig 调用
-
 package nodefabric
 
 import (

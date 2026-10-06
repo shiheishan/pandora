@@ -1,7 +1,3 @@
-// [INPUT]: 依赖同包 fakegw_test.go 的假网关，依赖 tools/loadtest/ltkit 的 Recorder 与 Manifest
-// [OUTPUT]: 对外提供 nodesim 的行为测试：签名全部验过、配置验签拒收外来公钥、无身份退兼容通道、用户 ETag/304 往返（坏响应的 ETag 不记）、流事件触发重拉与换版、节拍按 base_config 重置、启动错开、-strict 退出判定
-// [POS]: tools/loadtest/nodesim 的自证：每条断言对应 pdnd 的一段行为，节拍全部缩到秒级以内
-
 package nodesim
 
 import (

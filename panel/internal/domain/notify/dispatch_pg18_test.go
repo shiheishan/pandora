@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/pg18test 打开 notify 域的一次性库，依赖 notify.go 的 Enqueue 与 Dispatch
-// [OUTPUT]: 对外提供 TestDispatchHoldsEmailWhileSwitchedOffPG18
-// [POS]: domain/notify 的 PG18 测试：notify.email 降级开关关闭时派发跳过邮件渠道、邮件留在队列，站内信照常；恢复后邮件继续派发
-
 package notify
 
 import (

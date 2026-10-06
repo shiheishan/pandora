@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 public-base-url.sh，以及 install.sh、install-native.sh、build-release.sh 的源码
-# [OUTPUT]: 首装对外地址闸门的契约：合规/不合规的地址矩阵、环境变量与无人值守下的取值与中文报错、两个安装脚本都经这一份（不各写一份）、发布包带上它、install-native.sh 不再写示例值且升级不动 .env
-# [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要 root、终端或网络
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

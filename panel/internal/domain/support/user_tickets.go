@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 service.go 的 Service、视图与 prepareAtomicSuccess，依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成
-// [OUTPUT]: 对外提供 CreateInput、Service 的 Create / CreateAtomic、ListForUser、GetForUser、ReplyAsUser / ReplyAsUserAtomic、CloseByUser / CloseByUserAtomic
-// [POS]: domain/support 的用户侧工单：提单（标题可由正文推出）、只读自己的工单且 SQL 层排除内部备注、回复与关闭（closed_reason=user_closed）；撤回在 withdraw.go
-
 package support
 
 import (

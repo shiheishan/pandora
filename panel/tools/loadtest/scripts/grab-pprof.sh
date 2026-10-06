@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 lt-common.sh 的 lt_init_env / lt_env 读 .env 里三个网关的 AEGIS_*_PPROF_ADDR（platform/config 已保证只能是回环地址），依赖 curl
-# [OUTPUT]: DIR/<网关>-{cpu,heap,allocs,goroutine}-<UTC 时间>.pprof：三个网关并行各抓一份 CPU profile（缺省 30 秒），随后各取 heap（先 GC）、allocs 与 goroutine
-# [POS]: tools/loadtest/scripts 的 Go 进程画像采集，压测稳态时在面板主机上跑；产物用 go tool pprof 看
-#
 # 用法（面板主机，root 以读 0600 的 .env）：
 #   grab-pprof.sh DIR [CPU 采样秒数，缺省 30]
 # 也可在别处经 SSH 隧道跑，用环境变量直接给地址、跳过 .env：

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 uniProxyToken，依赖 platform/sourcetest 取 handlers.authNode 的 AST
-// [OUTPUT]: 对外提供 TestUniProxyTokenPrefersBearerAndKeepsLegacyFallback、TestAuthNodeDelegatesCredentialSelection
-// [POS]: api/node 的节点凭据选择：Bearer 优先、查询参数兜底、异常一律拒绝；authNode 不自己读请求头
-
 package node
 
 import (

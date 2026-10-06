@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 commission_available.go 的 withdrawableCommission 口径，依赖 reservations.go 的 prepareAndLockLedgerAccounts、ledger.go 的 Post，依赖 platform/audit 与 platform/httpx
-// [OUTPUT]: 对外提供 TransferCommissionToBalance、CommissionTransferIdempotencyScope、ErrCommissionTransferInsufficient、CommissionTransfer 与 ListMyCommissionTransfers（门户佣金记录的转出行）
-// [POS]: billing 佣金的「转入余额」出口，与 commission.go 的 RequestWithdrawal 共用同一把科目锁和同一「可用佣金」口径
-
 package billing
 
 import (

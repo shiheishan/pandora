@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供 adminMeSchema、AdminMe、ME_QUERY_KEY、useAdminMe、identityLabels
- * [POS]: admin 的当前管理员身份：GET v1/me（契约后台外壳），侧栏账户块、权限判断与 reauth 状态都读它；email / display_name / roles 恒在（api/admin handlers.me 的 map 字面量，display_name 可为 null，roles 至少是空数组）
- */
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../shell/runtime'

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 startReservationExpiryWorker、startPaymentQueryWorker，依赖 platform/sourcetest 按名取两个循环与 run 的源码
-// [OUTPUT]: 对外提供 TestReservationExpiryWorkerStopsAndJoinsOnCancellation、TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup、TestPaymentQueryWorkerStopsAndJoinsOnCancellation、TestPublicNotifyUsesRecipientSalt
-// [POS]: cmd/aegis-public 的进程生命周期契约：预留过期与主动查单两个循环可取消可 join，停机次序为取消、join、返回；通知收件人盐的装配
-
 package main
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/httpx 的 Invalid 字段错误
-// [OUTPUT]: 包内提供 normalizeHighlights 与 withHighlightFields：卖点列表的规整、逐条校验与和资料校验错误的合并
-// [POS]: adminops 套餐目录的卖点规则（R100）唯一出处，catalog.go 的新建 / 改资料与两个向导共用；数据库 00088 只兜条数与 NULL
-
 package adminops
 
 import (

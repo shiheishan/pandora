@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 subscription_events / orders / order_items / quota_balances 的只读查询，依赖 service.go 的 addInterval，math/big 做无溢出的有理数比较
-// [OUTPUT]: 对包内提供 prorationBasis、trafficAllowance、prorationCredit、loadProrationBasis
-// [POS]: billing 变更套餐（D-E-2）的剩余价值折算：plan_change.go 在下单与试算时调用，本文件只算数不写库
-
 package billing
 
 // 剩余价值 = 本周期付费合计 × min(剩余时间比例, 剩余流量比例)，向下取整到分。

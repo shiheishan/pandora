@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/db 的租户事务与 platform/httpx 的错误模型，读 node_traffic_reports / subscription 用量 / notification_deliveries
-// [OUTPUT]: 对外提供 DashboardTrafficQuery、DashboardNodeTraffic / DashboardUserTraffic 排行、DashboardNotificationBacklog 与对应 Service 方法
-// [POS]: domain/adminops 的仪表盘读模型：流量排行与通知投递积压；积压口径 scanNotificationBacklog 也被 dashboard_tasks.go 复用
-
 package adminops
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 gift_card_codes / gift_card_redemptions / gift_card_templates 表与 batches.go 的 MaskCode，依赖 platform/audit、platform/db、platform/httpx
-// [OUTPUT]: 对外提供 Code、CodeFilter、ListCodesInput、ListCodes、ToggleCode、Stats、Usage、ListUsages、CardPreview 与 PreviewCode
-// [POS]: giftcard 的卡码读模型与单码操作：后台列表与兑换记录只回掩码，CodeFilter 是列表与 codes_export.go 掩码报表共用的筛选，统计含已兑出与已发行面额，门户预览按码查模板；批次与导出在 batches.go，兑换在 redeem.go
-
 package giftcard
 
 import (

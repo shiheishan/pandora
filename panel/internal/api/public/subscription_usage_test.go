@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter 与 handlers.meSubscriptionUsage 的源码，依赖 parseUsageDays 与 platform/httpx 的错误码
-// [OUTPUT]: 对外提供 TestParseUsageDays、TestSubscriptionUsageRouteContract
-// [POS]: api/public 按日用量接口的单元与源码契约：days 取值边界、路由在登录分组内且不挂幂等、404 中性出口与契约字段名
-
 package public
 
 import (

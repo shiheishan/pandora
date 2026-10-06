@@ -1,10 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供主题卡片操作区、主题编辑抽屉（左栏表单 | 右栏吸顶预览）与预览门户的类名
- * [POS]: admin/screens/content 的主题样式（从 content.module.css 分出，那里留着卡片网格与插槽）。预览区 .preview 的子树只用 43 个颜色令牌本身（--bg、--brand…），不用 roles.css 的派生角色变量（--accent、--link…）：
- *        派生变量在 :root 上已经算好，预览容器上改 --brand 影响不到它们；颜色经 ThemeEditor 写在 .preview 的 style 上，作用域就是这一棵子树
- */
-
 /* ---- 卡片 ---- */
 .actions {
   display: flex;

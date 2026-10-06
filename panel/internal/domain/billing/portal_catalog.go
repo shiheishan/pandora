@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/db 的租户事务，读 plans / plan_versions / quota_definitions / prices 与看的人所在的用户组
-// [OUTPUT]: 对外提供 CatalogPlan、CatalogQuota、CatalogPrice、Service.PortalCatalog
-// [POS]: billing 的门户套餐目录读模型（门户 GET v1/plans），从 api/public/plans.go 下沉：只列可见、已发布且有可用币种（CNY / USD）适用价格的套餐；下单路径（checkout.go）独立复查可见性，这里不是唯一防线
-
 package billing
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 enfein/mieru 的 protocol.Mux（含 SetStreamListenerFactory 注入点）与 socks5 请求解码，依赖 listener.go 的 retryListenerFactory，依赖 core 的 User / 限速与 core/counter 的用户表、计量、在线设备，依赖 route 的 Meta 与 sing 的 M.Socksaddr
-// [OUTPUT]: 对外提供 Inbound（New、SetTransport、SetConnErrorHandler、Start、Close、AddUsers / UpsertUsers / DelUsers、Traffic、Online）与出站契约 Transport、失败哨兵 ErrUserRevoked / ErrDeviceLimit
-// [POS]: pdnd/core 的 mieru 入站：默认构建里被 kernel/mieru.go 包成 NativeCore 适配器并注入 DataPlane 作 Transport、经 SetConnErrorHandler 接上连接失败观测；compat 构建里由 core/multi 直接托管、未注入 Transport 时直接拨号；TCP 监听经 listener.go 包一层，Accept 暂时错误退避重试而不是让上游 mux 永久停止接客
-
 // Package mieru 用 mieru 协议提供入站。
 //
 // mieru 与 sing-box 系的协议差别很大，不能挂在 sing-box 的 inbound 注册表上：

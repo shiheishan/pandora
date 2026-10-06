@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取工单各写入口的源码与整包源码
-// [OUTPUT]: 对外提供 TestSupportAtomicMutationContracts、TestSchedulerEntryDoesNotRequireHTTPClaim
-// [POS]: support 工单写入的原子与审计契约：预制响应同事务提交、审计只记字数不记正文、定时升级不依赖 HTTP 认领
-
 package support
 
 import (

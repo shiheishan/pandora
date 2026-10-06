@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 logout_pg18_test.go 的 openLogoutPG18Fixture（一次性 PG18 库护栏），依赖 sessions.go 的 ListActiveSessions / RevokeSession
-// [OUTPUT]: 对外提供 TestSelfServiceSessionsPG18AudienceIsolation
-// [POS]: domain/identity 的 PG18 反向测试：门户自助会话管理看不到、也踢不掉同一用户的后台会话（缺陷 6）
-
 package identity
 
 import (

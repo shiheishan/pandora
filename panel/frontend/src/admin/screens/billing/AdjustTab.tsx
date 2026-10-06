@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 navigate / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / Empty / Input / Modal / QueryView / Select / TextArea / useToast，依赖 ../../actions 的 useCan / useFailure / useIntentKey，依赖 ./api，依赖 ./model，依赖 ./Billing.module.css
- * [OUTPUT]: 对外提供 AdjustTab
- * [POS]: 订单与收款「收入调整」标签（后台-05，报表口径、只追加）：币种筛选（?c=）、「登记调整」行内表单（币种、金额元转分可为负、原因、生效日可选且不晚于今天——设计缺、契约补）与确认、列表（原因与登记人 · 时间 R66 叠成一格、生效日、币种、金额、冲销 / 冲销单 / 已冲销；只有列表横向滚动）、冲销确认框（冲销原因必填，默认「冲销：原因」）。写接口 billing.adjustment.write + reauth + 幂等；最多 200 条、无分页
- */
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatMoney } from '../../../core/format'

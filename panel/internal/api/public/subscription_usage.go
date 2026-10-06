@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/subscription 的 DailyUsage / MaxUsageDays / ErrNotFound，依赖 platform/httpx、chi 的路径参数
-// [OUTPUT]: 对包内提供 meSubscriptionUsage 处理器
-// [POS]: api/public 门户-02 按日用量（概览「本期用量」柱状图）的 HTTP 外壳：只读、不要幂等键，订阅不属于本人与不存在同一个 404，路由在 router.go
-
 package public
 
 import (

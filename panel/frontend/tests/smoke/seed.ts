@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 run-smoke-stack.sh 写在状态目录的 smoke.env（网关地址、管理员账号、PG 容器名）与 gateway.env（主密钥，演示渠道验签用），依赖同目录 hook-receiver.ts（插件投递接收端），依赖 node:fs / node:child_process / node:crypto 与全局 fetch
- * [OUTPUT]: 命令行脚本 `node seed.ts <状态目录>`：经真实网关跑一条业务链，让后台与门户各列表都至少一条，把后续冒烟要用的 id、门户账号与节点运行令牌写进 <状态目录>/seed.json；任何一步状态码不符即退出 1
- * [POS]: tests/smoke 的造数据步骤，在 run-smoke-stack.sh up 之后、形状校验之前运行；只发请求不做形状断言（那是 *.smoke.ts 的事）。节点走真实的两段式接入与一步上线（R108 / R113）；两处 SQL 夹具（演示支付渠道、提现申请）都是产品接口造不出来的，各自写明原因
- */
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'

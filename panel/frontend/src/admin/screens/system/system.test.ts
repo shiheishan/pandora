@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./logic，依赖 ./schemas
- * [OUTPUT]: 无（测试文件）
- * [POS]: admin/screens/system 纯函数层与 schema 边界的单元测试：发件人拆拼、SMTP 与注册卡请求体（整体覆盖、带已保存字段）、Telegram 状态与 chat id、模板名称 / 状态标记 / 变量插入 / 长度校验、钩子成功率 / 状态点 / code 避让 / 全量请求体 / 范围校验 / 投递行；界面交互在浏览器里对 dev 假后端验收
- */
 import { describe, expect, it } from 'vitest'
 import {
   deliveryRow,

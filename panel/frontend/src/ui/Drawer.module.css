@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 Drawer.tsx 用到的类名
- * [POS]: ui/Drawer 的样式：<dialog> 铺满视口，面板贴右、全高；浮层只用一档 --shadow
- */
-
 .overlay {
   position: fixed;
   inset: 0;

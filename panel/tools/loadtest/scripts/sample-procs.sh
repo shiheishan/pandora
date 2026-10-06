@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 Linux 的 /proc（各进程的 stat、status、smaps_rollup 与整机的 /proc/stat、/proc/meminfo、/proc/vmstat）与 pgrep；不连数据库、不读 .env
-# [OUTPUT]: 按固定间隔把各进程组的 CPU 与内存写成 CSV：ts_utc,unix_s,proc,pids,cpu_pct,rss_kb,pss_kb,swap_total_kb,swap_free_kb,pswpin,pswpout
-# [POS]: tools/loadtest/scripts 的资源占用采样器，压测全程在面板主机上后台跑；与 snapshot-mem.sh（数据库与缓存内部视角）互补
-#
 # 用法（面板主机，root 以读到 postgres / valkey 等其他用户进程的 smaps_rollup）：
 #   sample-procs.sh OUT.csv [间隔秒，缺省 5] [总时长秒，缺省 0 = 直到 Ctrl-C / kill]
 #

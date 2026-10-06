@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useMutation，依赖 ../../../shell/runtime 的 useApi，依赖 ./logic 的 HookBody，依赖 ./queries 的 useFailure / useIntentKey / useInvalidateSystem，依赖 ./schemas 的 hookSaved
- * [OUTPUT]: 对外提供 useSaveHook
- * [POS]: admin/screens/system 钩子的保存写操作，新建条、卡片启停与编辑弹窗共用：POST v1/plugin-hooks 按 code upsert（reauth + 幂等 plugin_hook_save），成功后重拉列表并把响应里一次性的签名密钥交给调用方；失败交给 fail(e, { fields, intent })
- */
 import { useMutation } from '@tanstack/react-query'
 import { useApi } from '../../../shell/runtime'
 import type { HookBody } from './logic'

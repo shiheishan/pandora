@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 announcement 域的一次性库（openAnnouncementPG18）、step3/step4 的造数与请求辅助，依赖第 ⑤ 步的处理器
-// [OUTPUT]: 对外提供 step5Router 与 TestSiteSettingsPG18、TestDashboardTasksPG18、TestFeatureSwitchGatesPG18、TestAdminMeProfilePG18、TestUserProfileRegisteredIPPG18、TestDashboardReadModelsPG18、TestNodesStep5PG18、TestContentNotifyStep5PG18
-// [POS]: api/admin 第 ⑤ 步的 PG18 集成测试：站点时区的迁移默认值、读写、校验与审计，「需要处理」各项计数与按权限过滤，降级开关的种子、网关门与切换广播，GET v1/me 的邮箱、显示名与生效角色，风控画像的注册 IP，经营总览 / 收入上一区间 / 系统状态组件 / 日活，节点列表字段与排序、节点池成员、一步退役、全局路由，公告用户组定向、Telegram 管理员群组、模板草稿预览与测试、钩子统计、访问日志 outcome；由 run-pg18-gates.sh 的 announcement 域按精确名单跑
-
 package admin
 
 import (

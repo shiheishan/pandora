@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 Card.tsx 用到的类名
- * [POS]: ui/Card 的样式
- */
-
 .card {
   display: flex;
   flex-direction: column;

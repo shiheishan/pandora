@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 internal/reality 的 ServerHandoff 与 Conn，依赖 accept_loop.go 的 runAcceptLoop
-// [OUTPUT]: 对外提供 RealityListener（ListenReality、Accept、Addr、Close、Serve、SetHandshakeErrorHandler）、RealitySession、RealitySessionFromContext、InspectRealityConn、RealityDialContext
-// [POS]: kernel 的 REALITY 监听器：自己的 acceptHandoff 循环把每条原始连接交给独立的握手 worker（15 秒截止），通过认证的连接经 conns 交给 vless / trojan 适配器的 acceptLoop；握手失败经 SetHandshakeErrorHandler 上报，Close 会关掉握手中的原始连接
-
 package kernel
 
 import (

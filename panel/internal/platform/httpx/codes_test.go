@@ -1,7 +1,3 @@
-// [INPUT]: 依赖同包 httpx.go 的 statusByCode 与 Fail
-// [OUTPUT]: 对外提供 TestReauthRequiredIsA403WithItsOwnCode、TestUpgradeRequiredIsA426
-// [POS]: platform/httpx 的错误码状态映射测试：与别的码共用状态或用少见状态的码，各钉一条
-
 package httpx
 
 import (

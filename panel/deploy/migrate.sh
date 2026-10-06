@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 check-migrations.sh（up 前的克隆库预检）、.env 的迁移 DSN 或本机 PostgreSQL 凭据、与 deploy/ 并排的 migrations/、goose
-# [OUTPUT]: 特权迁移入口：迁移文件名与编号校验（严格递增、不重复、允许空号），拒绝 down/redo，以净化过的环境 exec goose
-# [POS]: deploy 迁移链的唯一公开入口，install.sh、install-native.sh、release-stop-the-world.sh 调它；桩测试 migrate_fail_closed_mock_test.sh、migrate-layout_mock_test.sh
 # Privileged goose wrapper. Runtime services never receive the migration DSN.
 set -Eeuo pipefail
 umask 077

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 golang.org/x/crypto/curve25519 生成与校验 X25519 密钥
-// [OUTPUT]: 对外提供 GenerateRealityKeypair；包内提供 validateRealityFields、checkX25519Key
-// [POS]: domain/nodefabric 协议校验的 REALITY 分项：从 protocol_schema.go 拆出。私钥留在面板并下发给节点、公钥进订阅链接；字段不齐或密钥非法在保存时拦下，不让「看起来配好了」的节点上线
-
 package nodefabric
 
 import (

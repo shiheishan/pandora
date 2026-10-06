@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./model 的钱包纯映射与 ./api 的 schema，依赖 ../common/orders 的订单页纯映射与 schema
- * [OUTPUT]: 无（测试文件）
- * [POS]: 订单与钱包的单元测试：充值金额元转分与上下限、流水类型名（挂账按保留规则 6）、礼品卡卡面 / 说明 / 获得列、兑换响应 summary 必为数组；订单状态徽标、按月分组与已支付合计、展开区「结果」与事实行、筛选的状态集合
- */
 import { describe, expect, it } from 'vitest'
 import { groupByMonth, ORDER_FILTERS, orderDetailSchema, orderFacts, orderResult, statusBadge, type OrderDetail } from '../common/orders'
 import { giftCardSchema, redeemResultSchema, type GiftCard } from './api'

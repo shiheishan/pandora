@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/adminops 的仪表盘读模型，依赖 platform/httpx 的主体与响应
-// [OUTPUT]: 对外提供 handlers 的 dashboardNodeTraffic / dashboardUserTraffic / dashboardNotificationBacklog / dashboardTasks
-// [POS]: api/admin 的仪表盘处理器：流量排行、通知积压与「需要处理」汇总（按调用方权限逐项过滤）
-
 package admin
 
 import (

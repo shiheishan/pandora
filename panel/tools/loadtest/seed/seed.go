@@ -1,9 +1,3 @@
-// [INPUT]: 依赖同包 options.go（参数）、naming.go（命名空间与地址）、retire.go、nodes.go、enroll.go、users.go、verify.go，
-//          依赖 platform/db 的 Pool（直接包一层 pgxpool，不走 db.Open 的运行角色检查，迁移账号也能用）、platform/crypto 的口令哈希与信封、middleware 的默认租户、ltkit 的 Manifest
-// [OUTPUT]: 对外提供 Main（go run ./tools/loadtest seed ...）
-// [POS]: tools/loadtest 的 seed 子命令：在已迁移的库里造一档压测数据并写 manifest。阶段顺序是 退役旧批次 → 池与套餐草稿 → 服务器 → 节点与接入令牌 →
-//        节点接入 → 一步上线 → 发布套餐 → 用户与订阅 → 核对，每段计时打印到 stdout 并进 manifest.SeedTimings
-
 package seed
 
 import (

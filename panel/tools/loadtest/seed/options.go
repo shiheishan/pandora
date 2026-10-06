@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 flag、regexp 与调用方传入的环境变量读取函数（Main 传 os.Getenv，测试传假表）
-// [OUTPUT]: 包内提供 options、parseOptions、firstNonEmpty、validBase 与各项默认值常量
-// [POS]: tools/loadtest/seed 的命令行：flag 优先、环境变量兜底（LOADTEST_* → 冒烟栈 smoke.env 的 SMOKE_* → 面板自己的 AEGIS_*），口令只从环境变量读、绝不进 argv；纯函数，单测钉住优先级与校验
-
 package seed
 
 import (

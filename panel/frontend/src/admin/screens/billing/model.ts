@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../core/format 的 formatDateTime / formatMoney / relativeTime，依赖 ../users/model 的 ORDER_STATUS_VIEW / orderWhat / parseYuan / REASON_MIN / Tone（订单词汇与元转分同一口径），依赖 ../plans/model 的 periodLabel，依赖 ./schemas 的类型
- * [OUTPUT]: 对外提供订单（ORDER_FILTERS / OrderFilter / isOrderFilter / filterStatuses、ORDER_STATUS_VIEW、orderWhat、channelLabel、sourceLabel、canMarkPaid、canQueryChannel、queriedView、canCancel、PayLine / paymentLines、orderFacts）、人工开单（Settlement / SETTLEMENTS / ManualForm / emptyManual / PriceChoice / priceChoices / manualProblems / manualBody）、通用校验（reasonProblem / referenceProblem、REASON_MAX / REFERENCE_MAX）、挂账（LATE_FILTERS / LateFilter / isLateFilter、LATE_STATUS_VIEW、lateReason、ageDays、pendingTotals）、渠道（isOffline、providerMode / ProviderMode、toggleBody、todayLabel、rateLabel、providerNote）、收入调整（AdjustForm / emptyAdjust / adjustProblems / adjustBody、adjustmentView、reverseReason、todayLocal、ADJUST_MAX）
- * [POS]: admin/screens/billing 的纯逻辑：契约后台-05 的状态分组与映射、渠道兜底（余额 / 人工）、支付记录「以支付尝试为行、有入账看入账」、挂账文案（保留规则 6：平台欠用户的钱）、渠道开关到 enabled / accepting_new 的映射（PAY-009）、各写接口的前端预检（与 Go 同规则、fields 键名同后端）；不碰 React 与网络，model.test.ts 覆盖
- */
 import { formatDateTime, formatMoney, relativeTime } from '../../../core/format'
 import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'

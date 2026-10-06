@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../core/router 的 navigate，依赖 ../../../ui 的 Button / Drawer / Empty / Skeleton / Tabs / Tag，依赖 ../../actions 的 useCan，依赖 ./api 的 useUser / useInvalidateUsers / UserDetail，依赖 ./dialogs，依赖 ./tabs，依赖 ./Resets 的 ResetHistory，依赖 ./RiskTab，依赖 ./model，依赖 ./Users.module.css
- * [OUTPUT]: 对外提供 UserDrawer、DRAWER_TABS、DrawerTab 与 isDrawerTab（地址段是否为合法抽屉标签）
- * [POS]: 用户详情抽屉（560 宽，设计稿后台-03）：头部（首字头像、邮箱、状态、封禁标注、#id · 注册于）、操作条（启用 / 停用、重置密码、调整余额、更换订阅地址、为其开单——跳订单页人工开单弹窗 #/billing/orders?new=<id>，各按权限出现）、行内调账表单、标签页（画像 / 订阅 / 设备 / 流量重置 / 订单 / 风控；流量重置要 metering.reset.read，风控要 security.audit.read）与三个对话框的开合；标签页在地址的第二段 #/users/list/<id>/<tab>，可深链
- */
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatDateTime } from '../../../core/format'

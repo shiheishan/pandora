@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的 NewService / PublishConfig / FetchConfig / ReportConfigApplied，依赖 platform/db 与 pgx 的双连接（夹具管理员 + aegis_app），依赖 platform/crypto 的确定性签名器
-// [OUTPUT]: 对外提供 TestNodeConfigLegacyPG18（run-pg18-gates.sh 的 node_config 域），包内提供一次性库夹具 nodeConfigPG18Fixture / seedNodeConfigPG18Fixture、库身份与运行角色护栏，以及各批次共用的发布、种数据与断言工具（runNodeConfigPG18Publishes、seedNodeConfigPG18*、assertNodeConfigPG18*）
-// [POS]: 节点配置发布链的 PG18 集成门禁主入口：先验库身份与 RLS，跑几个基础子测试，再按序调用 _publication / _cancel / _lifecycle / _bootstrap / _pool_delete / _materialize 与 _lock 各文件的批次
-
 package admin
 
 import (

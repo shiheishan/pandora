@@ -1,8 +1,3 @@
-// [INPUT]: 依赖 admin.go 的 adminClient（后台真实写接口）、enroll.go 的 nodeClient 与 nodeIdentity、naming.go 的 namespace，依赖 platform/db 读节点行版本
-// [OUTPUT]: 包内提供 seededNode、createCatalog、createServers、createNodes、enrollNodes、activateNodes、publishPlan
-// [POS]: tools/loadtest/seed 的节点与目录造数，照前端冒烟 frontend/tests/smoke/seed.ts 的真实流程：池与套餐草稿先行（草稿绑池）→ 服务器 →
-//        节点划进池 → 按节点签发接入令牌 → 节点两段式接入 → 一步上线 → 发布套餐版本；全程走网关，生命周期、审计与配置发布锁都由面板自己推进
-
 package seed
 
 import (

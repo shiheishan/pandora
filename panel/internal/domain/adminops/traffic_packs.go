@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx，依赖 catalog.go 的 catalogResult 错误翻译
-// [OUTPUT]: 对外提供 TrafficPackRow、TrafficPackInput、ListTrafficPacks、CreateTrafficPack、UpdateTrafficPack、SetTrafficPackStatus
-// [POS]: adminops 的流量包目录管理（后台-04 流量包 tab）：列表、新建、修改、上下架；与 catalog.go 的套餐目录并列，门户目录与下单在 billing/traffic_pack.go
-
 package adminops
 
 // 流量包是在售商品，改它等于改价（D-C-2 同门槛）：路由上挂 catalog.publish、

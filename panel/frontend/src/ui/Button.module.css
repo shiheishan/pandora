@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 Button.tsx 用到的类名
- * [POS]: ui/Button 的样式；只读令牌，不写色值
- */
-
 .button {
   --h: var(--h-control);
   --pad: var(--pad-button);

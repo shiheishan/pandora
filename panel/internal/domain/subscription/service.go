@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 subscription_credentials / subscriptions / quota_balances / traffic_pack_grants 表，依赖 platform/crypto、platform/db
-// [OUTPUT]: 对外提供 Service、New 与订阅分发用例：ListLinks、Rotate、Authenticate、ListNodes、ListOwnedNodePreviews（两者按订阅主人过滤限定了用户组的节点池，R104）、DeliveryState（后台节点列表对下发规则的复述，含无池节点）、LoadUsage、Log 等
-// [POS]: subscription 的订阅分发核心；LoadUsage 的总量 = 套餐本期额度 + 用户流量包剩余（D-E-1），供 Subscription-Userinfo
-
 // Package subscription 实现订阅分发。
 //
 // 这是整条链路的最后一环：用户付了钱、节点也跑起来了，但只有订阅链接

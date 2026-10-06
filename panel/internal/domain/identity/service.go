@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit/token、domain/plugin 的事件发射；验证码投递经 VerificationMailer 接口（notify 实现）
-// [OUTPUT]: 对外提供 Service、NewService、VerificationMailer、SetVerificationMailer，注册（StartRegistration / CompleteRegistration）与登录（Login），EmailVerificationDefault（邮箱验证缺行回退值）
-// [POS]: domain/identity 的主服务：注册、验证码、登录与会话签发；sessions.go、reauth.go 等同包文件扩展它
-
 // Package identity 实现注册、验证与登录。
 //
 // 对应 IAM-001..IAM-006。本包最需要小心的是 IAM-006：

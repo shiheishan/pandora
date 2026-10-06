@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter 与 handlers.createTopup 的源码
-// [OUTPUT]: 对外提供 TestTopupRouteHasIndependentIdempotencyMiddleware、TestTopupHandlerWritesTransactionPreparedResponse
-// [POS]: api/public 充值的独立幂等域与事务内预制响应
-
 package public
 
 import (

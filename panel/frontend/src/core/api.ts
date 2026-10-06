@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 zod 的 ZodType 校验响应，依赖 ./token 的 TokenStore 读写 Bearer，依赖浏览器 fetch / crypto.getRandomValues / document.baseURI（均可注入）
- * [OUTPUT]: 对外提供 ApiError、isApiError、SERVER_ERROR_CODES 与错误码类型、resolveApiUrl、newIdempotencyKey、createApiClient 与 ApiClient（request/get/post/put/delete/requestRaw/reauth/openStream）
- * [POS]: core 的唯一 HTTP 出口，页面与 hooks 只经它访问两个网关；sse.ts 经 openStream 建流，CSV 导出等非 JSON 响应经 requestRaw 取原始 Response，query.ts 按它抛出的 ApiError 决定重试
- */
 import type { ZodType } from 'zod'
 import { z } from 'zod'
 import type { TokenStore } from './token'

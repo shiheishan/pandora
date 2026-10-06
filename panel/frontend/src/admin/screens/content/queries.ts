@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient，依赖 react 的 useCallback，依赖 ../../../shell/runtime 的 useApi，依赖 ../plans/api 的 planOptionsKey（套餐名字的查询挂在套餐的键前缀下），依赖 ../../actions 的 useCan / useFailure / useIntentKey（转出），依赖 ./schemas
- * [OUTPUT]: 对外提供 CK 查询键前缀、内容与外观页各读 hook（公告、知识库列表与单版本、套餐目录、主题、插槽、站点时区）、useInvalidateContent，并转出 useCan / useFailure / useIntentKey
- * [POS]: admin/screens/content 的数据层：读只经 react-query + core/api；公告挂 announcements.changed（门户可见内容的唯一表变更通知），其余没有通知的接口写后按 CK 前缀整体失效
- */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 config.go 与 deployment.go 的包内解析函数
-// [OUTPUT]: 对外提供 令牌时长校验、严格时长解析、部署项变量名与缺省值的单元测试
-// [POS]: platform/config 的解析单测；源码守卫在 envaccess_test.go
-
 package config
 
 import (

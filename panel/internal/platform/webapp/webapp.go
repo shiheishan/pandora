@@ -1,7 +1,3 @@
-// [INPUT]: 依赖标准库 io/fs 读取调用方传入的构建产物目录（panel/web 的 AdminApp / PortalApp），依赖 net/http 的 ServeContent
-// [OUTPUT]: 对外提供 Handler(fsys) 只读下发一个 Vite 构建产物目录，Mount(r, fsys) 把它以 GET/HEAD 注册到网关根 / 与 /assets/*，Routes 为其最小路由接口
-// [POS]: platform 的静态前端托管器，无业务语义；admin 与 public 两个 router 各挂一次，面板前端就是网关的根入口
-
 // Package webapp 把面板前端的构建产物从二进制里下发，挂在网关根上。
 //
 // 为什么不用 http.FileServerFS：

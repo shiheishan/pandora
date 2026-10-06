@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
-// [OUTPUT]: 对外提供 registerDashboardRoutes
-// [POS]: api/admin 路由表的「仪表盘概览、收入趋势与调账、流量排行、通知积压、需要处理」段，由 NewRouter 按原注册顺序调用；处理器在 dashboard.go / revenue.go
-
 package admin
 
 import (

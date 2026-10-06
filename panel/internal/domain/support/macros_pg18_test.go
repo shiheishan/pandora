@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/pg18test 打开 support 域的一次性库，依赖 macros.go 的 ListMacros / SaveMacro / DeleteMacro
-// [OUTPUT]: 对外提供 TestTicketMacrosPG18
-// [POS]: domain/support 的 PG18 测试：快捷回复增改删、排序、租户隔离、审计与 00078 的长度约束
-
 package support
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 panel 的 Client（兼容通道 UniProxy）与 StreamEvent，依赖 core 的 Core 抽象，依赖 net/http/httptest 起一个只认 ETag 的假面板
-// [OUTPUT]: 对外提供 userTableCore、fakeUniProxy 两个夹具与入站重建后用户重同步、兼容通道停摆后配置重试的回归测试
-// [POS]: pdnd/node 的用户镜像不变式守卫：内核用户表被清空之后，下一次拉用户必须是无条件的全量，轮询、事件流、增量三条路都要守住；节点已停时配置 ETag 也不能把重试挡成 304；config_rollback_test.go 守的是回滚本身
-
 package node
 
 import (

@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖浏览器 localStorage 与 window 的 storage 事件（均可注入，便于测试）
- * [OUTPUT]: 对外提供 TokenStore 接口、createTokenStore、tokenStorageKey
- * [POS]: core 的访问令牌存储，api.ts 从这里读 Bearer、reauth 后换新、401 时清空；shell/runtime 的登录态（useSignedIn）订阅它
- */
-
 // ---------------------------------------------------------------------------
 // 令牌放 localStorage：刷新保持登录态，且两个网关同源——后台只是 nginx 前缀，
 // 所以键必须按入口区分，门户与后台的令牌互不覆盖（它们本来也互不通用）。

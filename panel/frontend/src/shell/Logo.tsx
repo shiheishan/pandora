@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ./Logo.module.css
- * [OUTPUT]: 对外提供 Logo（环形标记 + 可选 pandora 字标）
- * [POS]: shell 的品牌标记，后台登录页、侧栏与门户顶栏共用；环的颜色随上下文（currentColor），点固定朱砂
- */
 import css from './Logo.module.css'
 
 export function Logo({ size = 22, wordmark = true, className }: { size?: number; wordmark?: boolean; className?: string }) {

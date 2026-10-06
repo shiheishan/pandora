@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform 的 db/crypto，依赖 domain/appearance 的 SiteNameTx
-// [OUTPUT]: 对外提供 DBSMTPProvider、NewDBSMTPProvider、LoadSMTPConfig、SealSMTPPassword、NewDynamicSMTPSender
-// [POS]: domain/notify 的邮件配置：从 system_settings 读 SMTP 设置并短缓存，发件人名缺省取站点名
-
 package notify
 
 // 数据库里的邮件设置。

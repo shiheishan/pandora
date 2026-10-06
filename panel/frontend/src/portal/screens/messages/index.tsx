@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../core/format 的 relativeTime，依赖 ../../../core/router 的 navigate / useHashLocation，依赖 ../../../ui 的 Button / Card / CountBadge / Empty / QueryView / Segmented / Tag / useToast，依赖 ../common/announcements 的 SEVERITY_LABEL / useAnnouncements，依赖 ../common/traffic 的 shortDate，依赖 ./api 与 ./model
- * [OUTPUT]: 默认导出 Messages 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/messages 的入口：消息（门户-08）。「通知 / 公告」两个标签（?tab=announcements 直达公告），通知页签右上「全部标为已读」；通知点开先标已读、再按 code 跳页，未读有朱砂圆点与加粗；公告标题前按级别加色点（info 不加）、置顶加标签，正文直接展开
- */
 import { relativeTime } from '../../../core/format'
 import { navigate, useHashLocation } from '../../../core/router'
 import { Button, Card, CountBadge, Empty, QueryView, Segmented, Tag, useToast } from '../../../ui'

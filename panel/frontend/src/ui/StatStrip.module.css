@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 StatStrip.tsx 用到的类名
- * [POS]: ui/StatStrip 的样式：自动等分列、1px 缝用 --border 底色当分隔线、圆角随入口；格内边距 14/16，数字 20px 半粗等宽；< 960 两列
- */
-
 .strip {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);

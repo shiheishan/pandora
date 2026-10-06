@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 router_billing.go 的 registerOrderRoutes、order_query.go 的处理器源码（platform/sourcetest），依赖 finance_routes_contract_test.go 的 loadRouteProtections 与 catalog_plan_update_route_test.go 的主体构造助手
-// [OUTPUT]: 对外提供 TestOrderQueryRouteContract、TestOrderQueryRouteNeedsWritePermissionAndKeyButNoReauth、TestOrderQueryHandlerRecordsTheOperator
-// [POS]: api/admin「向渠道查单」的保护契约：源码层钉死订单写权限、幂等域 admin_order_query、不挂重认证；运行层证明缺权限 404、未重认证也能到幂等中间件（缺键 400）；处理器经 AdminQueryOrderPayment 记操作人审计
-
 package admin
 
 import (

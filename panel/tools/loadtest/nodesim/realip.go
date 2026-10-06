@@ -1,8 +1,3 @@
-// [INPUT]: 依赖 net/http 的 RoundTripper
-// [OUTPUT]: 包内提供 withRealIP：给一个模拟节点的全部请求带上它固定的 X-Real-IP
-// [POS]: tools/loadtest/nodesim 的来源地址接线，signed.go 与 uniproxy.go 的 Transport 都经它包一层；
-//        压测机经 nginx-realip.sh 被采信 X-Real-IP，nginx 的每 IP 限流与面板风控才按节点各算各的
-
 package nodesim
 
 import "net/http"

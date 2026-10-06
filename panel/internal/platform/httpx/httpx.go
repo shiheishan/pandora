@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 encoding/json 的编码、log/slog 的结构化日志、net/http 的响应写出
-// [OUTPUT]: 对外提供封闭错误码 Code 与状态映射（含节点专用的 426 upgrade_required）、Error 及其构造器（New/Invalid/NotFoundOrForbidden/Internal）、JSON/OK/Created/NoContent/Fail 响应出口、PrepareJSON/WritePrepared 幂等重放、DecodeJSON 严格解码
-// [POS]: platform 的唯一 HTTP 响应与错误模型，api 与 middleware 的所有错误都经 Fail 落成 {"error":{…}} 信封；context.go 是同包的请求上下文存取
-
 // Package httpx 提供统一的响应与错误模型。
 //
 // SEC-006 要求「错误响应不暴露框架版本、内部路径和对象存在性」。

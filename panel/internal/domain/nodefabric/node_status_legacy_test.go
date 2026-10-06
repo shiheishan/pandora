@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 node_status_legacy.go 的 nodeStatusLockSQL、node_activate.go 的 ProjectNodeLifecycle，依赖 platform/sourcetest 按名取 Service.SetLegacyNodeStatus 的源码
-// [OUTPUT]: 对外提供 TestNodeStatusLockSQLHasValidProtocolReadyCoalesce、TestLegacyTerminalNodeStatusRevokesDeliveryAndIdentity、TestProjectNodeLifecycle
-// [POS]: nodefabric 旧状态接口（随 SQL 从 api/admin 的 handlers_test.go 迁来）：锁行 SQL 括号配平、退役与销毁吊销下发与身份且先取发布锁、生命周期投影表
-
 package nodefabric
 
 import (

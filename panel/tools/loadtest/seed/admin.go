@@ -1,8 +1,3 @@
-// [INPUT]: 依赖 net/http 与 encoding/json，依赖 google/uuid 生成幂等键；对端是 aegis-admin 的 /v1 接口（登录、重认证与造数用到的后台写接口）
-// [OUTPUT]: 包内提供 adminClient（newAdminClient / login / call）、apiError、jsonObject 的取值助手 str / num
-// [POS]: tools/loadtest/seed 的后台网关客户端：像管理员在后台点按钮一样走真实接口，按 -admin-interval 自我节流以免撞后台每分钟 240 次的 IP 限流，
-//        429 按 Retry-After 等待重试、reauth_required 用口令重认证后重试；nodes.go 与 retire.go 共用
-
 package seed
 
 import (

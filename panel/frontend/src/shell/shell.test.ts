@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./ScreenFrame 的 isChunkLoadError
- * [OUTPUT]: 对外提供 shell 纯逻辑的单元测试
- * [POS]: shell 的单元测试：页面块加载失败的识别（三家浏览器的报错文案）；错误边界与 Suspense 的界面行为在浏览器里对假后端验收
- */
 import { describe, expect, it } from 'vitest'
 import { isChunkLoadError } from './ScreenFrame'
 

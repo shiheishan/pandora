@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ./useModalDialog、./icons 的 IconClose、./cx、./Drawer.module.css
- * [OUTPUT]: 对外提供 Drawer
- * [POS]: ui 的侧边抽屉：后台详情（用户 560、订单 480、节点）从右侧滑出，头部固定、内容滚动、底部可放操作；< 640 占满全宽
- */
 import { useId, type ReactNode } from 'react'
 import { cx } from './cx'
 import css from './Drawer.module.css'

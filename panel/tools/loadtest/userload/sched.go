@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 context / sync / time 做调度，依赖 ltkit.Recorder 的 Snapshot 算进度
-// [OUTPUT]: 对外提供 包内的 openLoop（开环定速调度）、limiter（在途上限与排空）、class（一类流量的速率与计数）、progress（每分钟一行进度）
-// [POS]: tools/loadtest/userload 的调度层：只管「何时发」，发什么由 traffic.go 决定；users 的四类流量各跑一个 openLoop，共用一个 limiter
-
 package userload
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取 handlers.assignNodePool 与 domain/nodefabric 的 Service.CheckNodePoolAssignment / Service.DeleteNodePool 的源码
-// [OUTPUT]: 对外提供 TestDirectPoolAssignmentIsFrozenUntilEffectiveReleases、TestPoolDeletionLocksParentBeforeDependencyCounts
-// [POS]: api/admin 节点池的并发契约：直接改分组被冻结到有效发布就绪（锁行比对在 nodefabric，冻结文案在 handler）、删池先锁父行再数依赖（SQL 在 nodefabric）
-
 package admin
 
 import (

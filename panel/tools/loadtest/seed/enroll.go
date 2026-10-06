@@ -1,9 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的接入与签名请求规范串（CanonicalEnrollmentBeginV1 / CanonicalEnrollmentRequestV1 / CanonicalPayloadV2），
-//          依赖 platform/crypto 的 NewSigner / NewToken / HashToken；对端是 aegis-node 的 /v1/nodes/enrollments 与签名节点接口
-// [OUTPUT]: 包内提供 nodeIdentity（newNodeIdentity）、nodeClient（enroll / signedGet / uniProxyGet）、enrollResult
-// [POS]: tools/loadtest/seed 的节点侧：扮演刚装好的 pdnd，本地生成 Ed25519 密钥与运行令牌，用接入令牌走两段式接入 begin → commit；
-//        签名规范串一律引用 nodefabric 的唯一实现，绝不在这里另抄一份；verify.go 用 signedGet 与 uniProxyGet 核对节点真能被服务
-
 package seed
 
 import (

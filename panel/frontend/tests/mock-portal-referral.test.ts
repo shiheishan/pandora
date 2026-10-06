@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close / loginAs / bearer / mockFetch，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
- * [OUTPUT]: 对外提供门户邀请返利假接口的测试
- * [POS]: tests 的门户邀请返利假后端守卫（R114）：佣金概况带 summary.scope（外框 queries.ts 带 tsx 依赖进不了 node 侧类型检查，按字段断言），默认场景 every_order、multi 场景 first_order，legacy 场景也照回
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

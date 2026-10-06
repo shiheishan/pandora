@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
-// [OUTPUT]: 对外提供 registerGiftCardRoutes、registerCouponRoutes、registerCommissionRoutes
-// [POS]: api/admin 路由表的「礼品卡与批次导出、掩码报表导出、优惠券、分销与提现」段，由 NewRouter 按原注册顺序调用；处理器在 giftcard.go / coupon.go / coupon_batch.go / commission.go
-
 package admin
 
 import (

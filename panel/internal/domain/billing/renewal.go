@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 reservations.go 的预留图与科目锁、ledger.go 的记账、traffic_reset.go 的 LogTrafficReset、middleware 幂等声明、platform/db
-// [OUTPUT]: 对外提供 CreateRenewal、RollQuotaPeriods；包内提供 fulfillRenewal / fulfillRenewalLocked，以及续费与变更套餐（plan_change.go）共用的 captureZeroPaySubscriptionOrder / lockOrderSubscriptionForSettlement（锁订阅并交回锁内读到的状态）/ subscriptionAcceptsPaidChange（可续费与可变更的订阅状态唯一口径，建单与结算复核共用，R117）
-// [POS]: billing 的续费：在原订阅上延长周期（旧周期已走完就从现在起算新周期）、重置 cycle 配额；流量包余额挂用户，续费不碰（D-E-1）
-
 package billing
 
 // 续费与周期滚动。

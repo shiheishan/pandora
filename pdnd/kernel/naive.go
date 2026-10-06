@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 golang.org/x/net/http2 的 h2 服务端，依赖 native_transport_server.go 的 newInboundHTTPServer（握手与请求头限时），依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
-// [OUTPUT]: 对外提供 naiveAdapter（经 newNaiveAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 parseNaiveBasicAuth、parseNaiveDestination、handleStream
-// [POS]: kernel 的 Naive 入站：TLS + h2 上的带 Padding 头的 CONNECT，Basic 认证绑定面板下发的用户 UUID；非 naive 请求、认证失败、目的地址非法与转发失败都按 session 阶段上报（TLS 握手在 http.Server 内部，看不到）
-
 package kernel
 
 import (

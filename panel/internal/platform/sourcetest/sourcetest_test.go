@@ -1,7 +1,3 @@
-// [INPUT]: 依赖本包 Load 与 testdata/fixture 假包
-// [OUTPUT]: 对外提供 TestDeclReturnsExactSourceWithoutDocComment（含 DeclWithDoc）、TestSourceCoversEveryNonTestFileRegardlessOfBuildTags、TestLookupFailsLoudly、TestRefsResolvesImportAliasesAndFunctionValues、TestTopDeclsListsEveryNamedDeclWithItsFileAndImports
-// [POS]: platform/sourcetest 的自测：取声明的原文精确、整包源码不漏构建约束文件也不含测试文件、名字缺失或重名一定让测试失败
-
 package sourcetest
 
 import (

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 QueryClient，依赖 ./api 的 ApiError / isApiError
- * [OUTPUT]: 对外提供 REALTIME_TOPICS 与 RealtimeTopic、createQueryClient、shouldRetryQuery、createRealtimeInvalidator；为 react-query 登记 ApiError 为默认错误类型、queryMeta.topics
- * [POS]: core 的服务端状态层：页面的读用 useQuery、写用 useMutation，都经 api.ts 取数；sse.ts 的事件经这里的失效器变成按 topic 的查询失效
- */
 import { QueryClient } from '@tanstack/react-query'
 import type { ApiError } from './api'
 import { isApiError } from './api'

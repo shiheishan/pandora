@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 decls.go 的 importName 与 fileNameTags，依赖 git ls-files 列出要复制的文件、go list 给出导入的真实包名
-// [OUTPUT]: 对外提供 runShatter、shatterFile
-// [POS]: tools/refactorcheck 的 shatter 子命令：在仓库副本里把每个顶层声明拆进随机命名的独立文件，声明先后随之打乱；副本上测试全绿即证明测试不依赖文件名与声明顺序
-
 package main
 
 import (

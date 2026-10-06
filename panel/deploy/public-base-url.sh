@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖调用方的 PANDORA_PUBLIC_BASE_URL、PANDORA_ASSUME_YES 与终端（stdin）
-# [OUTPUT]: 被 source 的函数：pandora_valid_public_base_url（校验）、pandora_resolve_public_base_url（取值并校验，打印到 stdout）、pandora_env_file_value（不 source 地读 .env 的单个键）
-# [POS]: deploy 两个安装脚本 install.sh 与 install-native.sh 共用的首装对外地址闸门；规则与 render-nginx.sh 相同，桩测试 public-base-url_mock_test.sh
-#
 # 发布包装出来的面板以 production 运行，网关启动时要求 AEGIS_PUBLIC_BASE_URL 是
 # https + 公网 Host（platform/config 的 CanonicalPublicOrigin），nginx 的 server_name
 # 与证书路径也从它生成。所以首装在动手之前就要拿到一个合规的域名。

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./download 的 saveFile / filenameFromDisposition / toCsv
- * [OUTPUT]: 对外提供 download.ts 的单元测试
- * [POS]: core/download 的单元测试：文件名取自响应头或回退、CSV 转义与防公式注入、对象 URL 用后回收
- */
 import { describe, expect, it, vi } from 'vitest'
 import { filenameFromDisposition, saveFile, toCsv } from './download'
 

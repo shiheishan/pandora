@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 release.go / release_locks.go、checkout.go / settlement.go、unexpected_payment.go、reservation_expiry.go 的释放、结算与挂账路径，依赖 order_release_pg18_fixture_test.go 的夹具与故障注入、order_release_pg18_assert_test.go 的共用断言，依赖迁移 00036 / 00040
-// [OUTPUT]: 对外提供 TestOrderReleasePG18（run-pg18-gates.sh 的 order_release 域）
-// [POS]: billing 订单释放与迟到收款隔离的 PG18 集成门禁：释放故障整图回滚、取消与过期的保守与幂等、两个过期工人、迟到收款隔离、佣金与提现、RLS。整个文件只有一个 832 行的测试函数，子测试共享同一组连接与夹具，纯挪动拆不开，由行数守卫单独豁免
-
 package billing
 
 import (

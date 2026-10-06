@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform 的 db/audit/httpx
-// [OUTPUT]: 对外提供 TemplateRow、TemplateDescription、ListTemplates、SaveTemplate、ResetTemplate、RenderPreview、HasDefaultTemplate、DraftPreview、PreviewDraft、RenderDraftForTest
-// [POS]: domain/notify 的模板管理端读写；defaultTemplates 与迁移种子逐字一致，恢复默认回到它
-
 package notify
 
 import (

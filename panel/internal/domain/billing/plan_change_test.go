@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 plan_change_quote.go 的 prorationCredit、reservations.go 的 orderTotal
-// [OUTPUT]: 对外提供 TestProrationCredit、TestOrderTotalWithProration
-// [POS]: billing 变更套餐折算的纯函数边界测试；真实 SQL 下的基数与履约在 plan_change_pg18_test.go
-
 package billing
 
 import (

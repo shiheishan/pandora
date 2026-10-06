@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 HTMLAttributes 与 ReactNode，依赖 ./cx 与 ./Card.module.css
- * [OUTPUT]: 对外提供 Card
- * [POS]: ui 的卡片：1px --border 描边、不加阴影；圆角与内边距随入口（门户 14/20、后台 12/16）；tint 是套餐卡的朱砂极浅底
- */
 import type { HTMLAttributes, ReactNode } from 'react'
 import { cx } from './cx'
 import css from './Card.module.css'

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 shadowsocks.go 的 ssStream、ssChunkLimit、newAESGCM、makeSSNonce
-// [OUTPUT]: 无导出；回归测试 Shadowsocks AEAD 分块上限 0x3FFF 在读写两侧都生效
-// [POS]: kernel 的 Shadowsocks AEAD 分块边界测试，与 shadowsocks_test.go 的回环测试互补（回环只走参考客户端能发出的小块）
-
 package kernel
 
 import (

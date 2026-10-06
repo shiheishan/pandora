@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 forwardRef 与按钮属性类型，依赖 ./cx 与 ./Button.module.css
- * [OUTPUT]: 对外提供 Button 组件与 ButtonVariant、ButtonSize 类型
- * [POS]: ui 的按钮，一套实现服务两个入口：强调色、高度、圆角、内边距全部来自角色令牌，门户是朱砂 40/9、后台是墨色 32/7
- */
 import { forwardRef, type ButtonHTMLAttributes } from 'react'
 import { cx } from './cx'
 import css from './Button.module.css'

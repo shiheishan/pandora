@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../core/router 的 navigate，依赖 ../../../ui 的 Drawer / Tabs / Tag，依赖 ./logic 的 addressLabel / heartbeatLabel / nodeState / protocolLabel，依赖 ./NodeForm、./NodeMonitor、./NodeRouting、./NodeIdentity、./NodeOps，依赖 ./schemas 的 NodeRow，依赖 ./nodes.module.css
- * [OUTPUT]: 对外提供 NodeDrawer、DRAWER_TABS、DrawerTab
- * [POS]: admin/screens/nodes 的节点详情抽屉（设计稿 aside）：头部国家、名称、状态、协议 · 服务器 · 心跳，delivered_to_users=false 时给出 delivery_note（契约待补·前端）；五个标签监控 / 协议参数 / 路由 / 身份与令牌 / 操作，标签记在地址 #/nodes/nodes/<节点 id>/<标签>，刷新与分享落在同一处
- */
 import { navigate } from '../../../core/router'
 import { Drawer, Tabs, Tag } from '../../../ui'
 import { addressLabel, heartbeatLabel, nodeState, protocolLabel } from './logic'

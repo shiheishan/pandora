@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./model 的纯函数，依赖 ./schemas 的 schema
- * [OUTPUT]: 对外提供订单与收款纯逻辑与 schema 的单元测试
- * [POS]: admin/screens/billing 的测试：状态分组到多值 status、渠道兜底与来源、可标记 / 可取消 / 可向渠道查单与查单结果文案、支付记录合并、人工开单的价格选项 / 预检 / 提交体、挂账文案与合计、渠道开关映射与备注、收入调整预检 / 提交体 / 视图 / 冲销原因；schema 守住 omitempty、封闭枚举与 R2 / R3 形状
- */
 import { describe, expect, it } from 'vitest'
 import type { PlanRow, PriceRow } from '../plans/schemas'
 import {

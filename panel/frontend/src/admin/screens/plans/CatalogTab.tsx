@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useEffect / useState，依赖 ../../../core/format 的 formatCount，依赖 ../../../core/router 的 href / navigate，依赖 ../../../ui 的 Button / Empty / QueryView / Tag，依赖 ../../actions 的 useCan，依赖 ./api 的 usePlans / PlanDetail / PlanRow，依赖 ./model 的 PLAN_STATUS_VIEW / planFacts，依赖 ./PlanDetail、./Wizard，依赖 ./Plans.module.css
- * [OUTPUT]: 对外提供 CatalogTab
- * [POS]: 套餐页「套餐」标签（#/plans/catalog/<套餐 id>）：左栏「＋ 新建套餐」与套餐卡片（名称 / 代码 / 状态 / 起价 / 流量·设备 / 订阅数，已归档半透明），右侧 PlanDetail；没选中时落到第一张卡。向导（新建 / 编辑）在这一层开合，新建成功后地址跳到新套餐。向导与所有改价、发布入口只对 catalog.publish 显示（5.A D-C-2）
- */
 import { useEffect, useState } from 'react'
 import { formatCount } from '../../../core/format'
 import { href, navigate } from '../../../core/router'

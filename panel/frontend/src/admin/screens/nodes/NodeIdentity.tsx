@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./queries、./schemas，依赖 ./nodes.module.css
- * [OUTPUT]: 对外提供 NodeIdentity（节点抽屉「身份与令牌」标签）、SecretModal（一次性令牌展示框）
- * [POS]: admin/screens/nodes 抽屉的身份页（设计稿 d_identity）：上半 GET v1/nodes/{id}/identity（R46：mTLS 身份、服务端令牌是否签发与签发人、待用安装令牌数；令牌只存哈希，显示不了 srv_•••1a2b 前缀）；下半三个动作——签发一键安装令牌（POST bootstrap-token，30 分钟，令牌与命令分两块显示：命令从终端读令牌，不进 argv / history）、重签服务端令牌（POST server-token，旧令牌立即失效）、吊销身份（POST revoke-identity，不改服务状态，心跳停后自然离线）。三者都要 reauth，签发类带幂等键
- */
 import { useMutation } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { formatDateTime } from '../../../core/format'

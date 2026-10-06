@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 tools/loadtest/ltkit 的 Manifest 与 Recorder，依赖同包 node.go 的 simNode、signed.go / uniproxy.go 的两个客户端、workload.go 的虚构负载、fleet.go 的计量接线
-// [OUTPUT]: 对外提供 Main（nodes 子命令入口）、Options、Run；包内 staggerOffsets、strictProblems
-// [POS]: tools/loadtest/nodesim 的入口与编排：解析 flag、按清单装出 M 个模拟 pdnd、在错开窗口内逐个起跑、每分钟打进度、到时或收到 SIGINT/SIGTERM 收尾写 nodes.json / nodes.txt，-strict 时按 5xx、验签失败与未起来的节点判退出码
-
 // Package nodesim 是 nodes 子命令：M 个模拟节点对着面板 node 网关跑，
 // 请求序列、节拍与失败处理逐段对齐 pdnd（pdnd/node/node.go 与 pdnd/panel/*），
 // 只把内核换成虚构负载。

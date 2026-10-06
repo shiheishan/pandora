@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 referral/index.tsx 用到的类名
- * [POS]: portal/screens/referral 的样式，取自设计稿门户-06：邀请横幅 --brand-tint 底、链接等宽字、两列（左列使用佣金 + 邀请记录，右列佣金记录跨两行，< 640 单列按使用 → 记录 → 邀请排）、记录行三列（事项 / 金额 / 状态）
- */
 .page {
   display: flex;
   flex-direction: column;

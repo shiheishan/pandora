@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule，依赖 ./fixtures 的 portalState / gate / scenario / PortalState，依赖 ./billing 的 isUuid
- * [OUTPUT]: 对外提供 messages 模块的假接口 MockModule
- * [POS]: dev/mock/portal 的「消息（门户-08）」假接口，归门户前端；形状照 api-contract.md（含修订 R71）。GET v1/me/notifications 同时供外框铃铛未读角标轮询（limit=1，形状不变）：limit 1–100 默认 30、unread=1 只看未读，unread 计数总是全量；单条已读对不存在或他人的 id 也回 200，非 UUID 回 500（照后端 $2::uuid 转换失败）；GET v1/me/announcements 供概览公告卡与消息页公告标签
- */
 import { randomUUID } from 'node:crypto'
 import type { MockModule } from '../types.ts'
 import { isUuid } from './billing.ts'

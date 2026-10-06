@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../dev/mock/admin/nodes-infra 的 activeNodesInPool，依赖 ../src/admin/screens/nodes/schemas 的节点 / 服务器 / 节点池 / 全局路由 schema
- * [OUTPUT]: 对外提供节点与服务器（后台-07）假接口的测试
- * [POS]: tests 的节点假后端守卫：节点列表能被页面 schema 接住、读不回敏感键、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验；服务器能被页面 schema 接住、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默名下节点、安装令牌幂等；节点池新建 / 编辑 / 删除守卫与按池在线数同口径；全局路由 revision 冲突、删除被引用出站 409（文案列出「节点 X → tag」，与 Go 的悬空引用口径同文）、匹配类型校验与发布；上线（R113）的 AdminNode 形状、warnings 缺省与已 active 先于版本号
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

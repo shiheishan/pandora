@@ -1,7 +1,3 @@
-// [INPUT]: 依赖同包 admin_rotate.go 的 AdminRotateOutput
-// [OUTPUT]: 对外提供 TestAdminRotateOutputHoldsNoToken
-// [POS]: domain/subscription 的单元测试：换发结果结构里没有能带令牌的字段（D-B-1）
-
 package subscription
 
 import (

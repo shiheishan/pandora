@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 的 --text-2
- * [OUTPUT]: 对外提供 ReauthDialog.tsx 用到的类名
- * [POS]: admin/ReauthDialog 的样式：说明文字与密码框之间 14
- */
 .lead {
   margin: 0 0 14px;
   color: var(--text-2);
