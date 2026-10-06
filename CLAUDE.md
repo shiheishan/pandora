@@ -27,7 +27,7 @@ panel/go.mod、pdnd/go.mod - 两个独立 Go module，面板为 github.com/aegis
 panel/Makefile - 本地开发入口：up/migrate/check-migrations/invariants/build/test/e2e/verify/frontend-check/frontend-embed，CGO_ENABLED=0
 panel/deploy/.env.example - 运行配置模板，敏感项 CHANGE_ME 由 install.sh 首装生成
 panel/deploy/docker-compose.yml - 本地数据基座 PostgreSQL 18 + Valkey 8，只绑 127.0.0.1:5433/6380
-panel/migrations/RESERVED-TABLES.md - 迁移留存但 Go 从不引用的 16 张表及锁定原因，platform/db 契约测试按 Up 段重放守同构
+panel/migrations/RESERVED-TABLES.md - 迁移留存但 Go 从不引用的 21 张表及锁定原因，platform/db 契约测试按 Up 段重放守同构
 pdnd/release/build.sh - Linux amd64/arm64 发布包与 SHA-256 manifest
 pdnd/release/check_native_panel_parity.py - NativeCore/Panel Schema/serving allowlist 13 协议静态对齐检查
 LICENSE - GPL-3.0 全文（GNU 官方 gpl-3.0.txt 原样），覆盖 panel 与 pdnd；fork 目录 pdnd/internal/reality、realityquic 保留各自的 LICENSE
@@ -269,7 +269,7 @@ Keep the map aligned with the terrain, or the terrain will be lost.
 # 本项目适配说明
 
 - L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径
-  - 已播种：panel、panel/internal 及其 api（含 admin、public）/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric/billing/appearance/support/adminops/plugin/content、panel/internal/platform/pg18test、panel/internal/platform/config、panel/internal/platform/sourcetest、panel/internal/platform/releasejournal、panel/internal/platform/clientauth/ca42runner、panel/internal/platform/crypto、panel/internal/platform/realtime、panel/internal/domain 下的 dbbackup/giftcard、panel/internal/middleware、panel/tools/refactorcheck、panel/tests、panel/internal/platform/httpx、panel/internal/api/node、panel/cmd 下的 aegis-admin/aegis-adminctl/aegis-public/pandora-cic-journal、panel/web、panel/deploy、panel/frontend 及其 dev（含 dev/mock、dev/mock/admin、dev/mock/portal）与 src 下的 admin（含 admin/screens 及已做页面的模块目录 dash/tickets/marketing/users/nodes/content/plans/system/billing/security）/portal（含 portal/screens 及已做页面的 common/overview/subs/plans/checkout/orders/wallet/referral/tickets/messages/help/account）/shell/core/ui/styles/showcase、panel/frontend/tests/smoke、pdnd、pdnd/kernel、pdnd/core、pdnd/cmd/pandora-h3-probe、pdnd/release/acceptancepanel
+  - 已播种：panel、panel/internal 及其 api（含 admin、public）/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric/billing/appearance/support/adminops/plugin/content、panel/internal/platform/pg18test、panel/internal/platform/config、panel/internal/platform/sourcetest、panel/internal/platform/crypto、panel/internal/platform/realtime、panel/internal/domain 下的 dbbackup/giftcard、panel/internal/middleware、panel/tools/refactorcheck、panel/tests、panel/internal/platform/httpx、panel/internal/api/node、panel/cmd 下的 aegis-admin/aegis-adminctl/aegis-public、panel/web、panel/deploy、panel/frontend 及其 dev（含 dev/mock、dev/mock/admin、dev/mock/portal）与 src 下的 admin（含 admin/screens 及已做页面的模块目录 dash/tickets/marketing/users/nodes/content/plans/system/billing/security）/portal（含 portal/screens 及已做页面的 common/overview/subs/plans/checkout/orders/wallet/referral/tickets/messages/help/account）/shell/core/ui/styles/showcase、panel/frontend/tests/smoke、pdnd、pdnd/kernel、pdnd/core、pdnd/cmd/pandora-h3-probe、pdnd/release/acceptancepanel
   - 其余目录按逆向流在进入时补建。
 - L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]
   - TS/TSX 用模板里的 `/** */`

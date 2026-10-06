@@ -5,10 +5,10 @@
   - 安全与财务不变量下沉到 PostgreSQL（RLS、追加写触发器、DEFERRABLE 配平、回调唯一约束），网关只是策略的执行者，不是策略的来源。
 
 成员清单
-cmd/: 14 个可执行入口（aegis-admin、aegis-adminctl、aegis-public、pandora-cic-journal 各带 CLAUDE.md）
+cmd/: 6 个可执行入口（aegis-admin、aegis-adminctl、aegis-public 各带 CLAUDE.md）
   - aegis-public/admin/node 三个 HTTP 网关（节点侧由 pdnd 的 pandora-native 走两阶段接入，面板不再带节点代理）
   - aegis-adminctl 后台账号与角色、aegis-payctl 支付渠道、aegis-backup-webdav 备份上传
-  - pandora-* 八个为 CLIENT-AUTH 校验器、root runner、journal、设备公钥分类器与路径信任工具，其中 cic-journal、00044-root-runner、device-key-classifier、pathtrust、release-journal 五个带 README
+  - 原先 8 个 CLIENT-AUTH 的 pandora-* 命令已于 2026-10-05 随客户端登录方案移出主线，代码见 tag archive/client-auth
 internal/: 全部业务与平台代码，四层 api → domain → platform，middleware 横切；见 internal/CLAUDE.md
 migrations/: goose SQL 迁移，按序号递增，数据库层的安全与财务不变量（RLS、追加写触发器、DEFERRABLE 配平、回调唯一约束）以触发器与约束落在这里
   - 现状到 00097，共 94 个 .sql
@@ -17,14 +17,13 @@ migrations/: goose SQL 迁移，按序号递增，数据库层的安全与财务
   - 00073、00091、00092 是历史压号留下的空号，不重编（已装的库记着其后的版本号）
   - deploy 的迁移脚本只要求编号严格递增、不重复，CI 的 panel-deploy.yml 拿真实目录跑这条校验
   - 00067 删除 21 张无依赖孤儿表且 Down 拒绝回滚
-  - RESERVED-TABLES.md 登记仍保留、Go 从不引用的 16 张表及各自的锁定原因，由 platform/db 的 schema 契约测试守住
-  - frozen-client-auth/ 为冻结的 CLIENT-AUTH 迁移，带 README
+  - RESERVED-TABLES.md 登记仍保留、Go 从不引用的 21 张表及各自的锁定原因，由 platform/db 的 schema 契约测试守住
+  - frozen-client-auth/ 为冻结的 CLIENT-AUTH 迁移（从未应用，原样保留），带 README；对应实现代码见 tag archive/client-auth
 deploy/: 发布包 build-release.sh（先 make frontend-embed，无 npm 即失败）
   - 安装链 install.sh/migrate.sh/render-nginx.sh（nginx-aegis.conf 模板只含占位符，后台前缀取 AEGIS_ADMIN_PATH、域名取 AEGIS_PUBLIC_BASE_URL）
   - 备份 backup-postgres.sh/restore-postgres.sh/verify-backup.sh + WebDAV 配置样例
   - systemd 单元与 logrotate
   - PG18 隔离门禁脚本群 test-*-pg18.sh
-  - client-auth 生成/校验/探针脚本群
   - BACKUP.md、LINUX-COMPATIBILITY.md、ADMIN-PASSWORD-RESET.md 为运维手册
   - 见 deploy/CLAUDE.md
 frontend/: 面板前端源码，React + TypeScript + Vite 一个工程两个入口（--mode admin|portal 分两次构建到 dist/{admin,portal}），按设计稿重写完成：
@@ -36,7 +35,7 @@ web/: 面板前端的 go:embed 嵌入点 app.go，admin/、portal/ 两个目录�
   - 见 web/CLAUDE.md
 docs/: redesign/api-contract.md 为现行前后端接口契约（被大量代码注释按节号与修订号 Rn 引用）
   - adr/0001 技术选型（文末补了后续变更）
-  - DASH-01 冻结契约、CLIENT-AUTH-01 冻结契约及 R1 刷新重放附录、CLIENT-AUTH-00042 实现清单为历史冻结稿（只读；CLIENT-AUTH 三份的正文被测试解析或按 SHA-256 钉死，一字不改）
+  - DASH-01 冻结契约、CLIENT-AUTH-01 冻结契约及 R1 刷新重放附录、CLIENT-AUTH-00042 实现清单为历史冻结稿（只读，保留作以后做客户端时的设计参考；CLIENT-AUTH 的实现代码已移出主线，见 tag archive/client-auth）
 tools/: 开发期工具，main 包只经 go run 使用，不进发布包、不被任何包 import
   - refactorcheck/ 为第 5 阶段重构的纯挪动 AST 比对（compare）、SQL 跨包下沉的字面量多重集合比对（sqlset）与打散验证（shatter），另带全 module 的 800 行守卫测试（随 go test ./... 跑），见 tools/refactorcheck/CLAUDE.md
 tests/: invariants.sql 数据层不变量（make invariants）

@@ -8,3 +8,6 @@
 
 要恢复 CA42 时：把文件移回 migrations/ 并按当时的最大编号重新排号，
 不要沿用 00042/00043 —— 这两个号已经被 00042_seed_registration_mode.sql 占用。
+
+2026-10-05 起客户端登录方案整体移出主线：使用这两个迁移的实现代码（clientauth、releasejournal、
+8 个 pandora-* 命令与 deploy 下的发布门禁脚本）只在 tag archive/client-auth 里，主线不再引用它们。

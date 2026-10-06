@@ -3,6 +3,7 @@
 
 无业务语义的基础设施层，被 api、domain、middleware 依赖，自身不 import 它们
   - 配置、连接池、加密、令牌、日志、HTTP 模型各只有一个实现，这是 entropy 段"统一范式"的落点：日志只走 logging，响应与错误只走 httpx，配置只走 config。
+  - 客户端登录（CLIENT-AUTH）的 clientauth 与 releasejournal 两个包已于 2026-10-05 移出主线，代码见 tag archive/client-auth
 
 成员清单
 audit/: 不可删审计记录写入（SEC-012）与哈希链
@@ -10,7 +11,6 @@ audit/: 不可删审计记录写入（SEC-012）与哈希链
   - auth_context（session / reauth）由 Write 从请求主体推出
   - chain.go 放两版口径与 VerifyChain：第一版存量行（chain_seq 为空）能复算的严格复算，带摘要而复算不出的只核对链接并计数
   - *_pg18_test.go 由 run-pg18-gates.sh 的 audit 域跑
-clientauth/: CLIENT-AUTH 的字节精确、无副作用原语，113 文件（ca42runner 带 CLAUDE.md）；子包 ca42admission、ca42controlv3、ca42execution 各带 README
 config/: 全 panel 唯一读环境变量的生产包，网关走 Load（缺一项拒绝启动，NFR-006），部署侧可缺省项在 Deployment，独立小二进制有各自的小加载函数；envaccess_test.go 守着这条边界；见 config/CLAUDE.md
 credentialrevocation/: 登录凭据的 fail-closed 集中吊销
 crypto/: 口令哈希、令牌生成、签名与信封加密，及从主密钥派生的用途专用盐（订阅审计、通知收件人）；见 crypto/CLAUDE.md
@@ -25,7 +25,6 @@ idempotencybind/: 数据库持有的唯一资源绑定器，幂等键与资源�
 logging/: 带脱敏的结构化日志，log/slog
 pg18test/: PG18 集成测试打开一次性库的公共护栏，只被 *_pg18_test.go 引用；见 pg18test/CLAUDE.md
 realtime/: 服务端推送 SSE，realtime.go 广播与订阅、listener.go 把数据库变更通知转成 topic（quota_balances 已移出监听，00076）、connections.go 经 Valkey 汇总各进程在线连接数；见 realtime/CLAUDE.md
-releasejournal/: 发布日志原语，16 个非测试文件：model / model_v3 / receipt / export 跨平台，store（v1 命令行，拆成 store / store_journal / store_fs）、session、v3 发布器与引导等为 linux 专用；见 releasejournal/CLAUDE.md
 server/: 全部网关共享的 HTTP server 生命周期
 sourcetest/: 源码契约测试按「包 + 声明名」取源码的测试辅助包，函数在包内换文件不影响断言，名字找不到即失败；只被 *_test.go 引用；见 sourcetest/CLAUDE.md
 token/: 访问令牌签发与校验，每域独立密钥
