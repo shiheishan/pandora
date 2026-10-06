@@ -6,7 +6,7 @@ NativeCore：协议无关的数据面运行时
   - 协议以 Adapter 注册进 AdapterRegistry，通过 DataPlane 拨号与监听，流量在此按用户计量
   - 能力矩阵是唯一事实源：--capabilities 打印它，selfcheck 校验它，面板拿它做编排前协商
   - 未在矩阵里的组合 fail closed，不回落到 core/ 的兼容内核。
-  - 接客骨架：TCP 类入站的 acceptLoop 都走 accept_loop.go 的 runAcceptLoop，循环里只登记连接、起 goroutine，握手（TLS 限时 10 秒、REALITY 15 秒）一律在连接自己的 goroutine 里；Accept 出错 5ms 起翻倍退避、封顶 1 秒。HTTP 承载靠 http.Server.Serve 自带的退避，QUIC 监听只在关闭时出错
+  - 接客骨架：TCP 类入站的 acceptLoop 都走 accept_loop.go 的 runAcceptLoop，循环里只登记连接、起 goroutine，握手（TLS 限时 10 秒、REALITY 15 秒）一律在连接自己的 goroutine 里；Accept 出错 5ms 起翻倍退避、封顶 1 秒。HTTP 承载靠 http.Server.Serve 自带的退避，QUIC 监听只在关闭时出错；mieru 的 TCP 监听在上游 mux 里，由 core/mieru/listener.go 以同参退避包装
   - 连接失败观测链：适配器在失败点经 connErrorReporter 调 OnConnError（adapter.go 的统一跳过规则）→ NativeCore 把它接到 connerror_log.go 的限流日志出口；分类、脱敏、地址截网段在 connerror.go，QUIC 上游库的 Error 日志经 connerror_sing.go 桥进来
 
 成员清单
