@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 adapter.go 的 AdapterRegistry/Adapter/InboundSpec，依赖 runtime.go 的 Runtime（每入站一代路由与出站），依赖 core 的 InboundConfig/Routing/User，依赖 route 的 Meta
+// [OUTPUT]: 对外提供 NativeCore（NewNativeCore、Type、Start、Close、AddInbound/ApplyInbound/DelInbound、AddUsers/UpsertUsers/DelUsers、GetTraffic、OnlineIPs、SetRouting、InboundReady、CapabilityReport），实现 core.Core 契约
+// [POS]: kernel 的控制面入口，被 pdnd 根的 runtime_native.go 与 core/multi 装配；按 tag 持有 nativeInbound，routedDataPlane 把适配器的拨号与监听接到当前一代 Runtime，swap 实现不重启热更新；已退役的入站一律以"入站 %q 已退役"拒绝后续操作
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
@@ -350,7 +355,7 @@ func (c *NativeCore) AddUsers(tag string, users []core.User) error {
 	in.mu.RLock()
 	if in.retired {
 		in.mu.RUnlock()
-		return fmt.Errorf("鍏ョ珯 %q 宸插�€閫€", tag)
+		return fmt.Errorf("入站 %q 已退役", tag)
 	}
 	err = in.adapter.AddUsers(users)
 	in.mu.RUnlock()
@@ -383,7 +388,7 @@ func (c *NativeCore) DelUsers(tag string, uuids []string) error {
 	in.mu.RLock()
 	if in.retired {
 		in.mu.RUnlock()
-		return fmt.Errorf("鍏ョ珯 %q 宸插�€閫€", tag)
+		return fmt.Errorf("入站 %q 已退役", tag)
 	}
 	err = in.adapter.DelUsers(uuids)
 	in.mu.RUnlock()
@@ -401,7 +406,7 @@ func (c *NativeCore) GetTraffic(tag string) ([]core.UserTraffic, error) {
 	in.mu.RLock()
 	defer in.mu.RUnlock()
 	if in.retired {
-		return nil, fmt.Errorf("鍏ョ珯 %q 宸插�€閫€", tag)
+		return nil, fmt.Errorf("入站 %q 已退役", tag)
 	}
 	return in.adapter.SnapshotTraffic()
 }
@@ -432,7 +437,7 @@ func (c *NativeCore) SetRouting(tag string, cfg *core.Routing) error {
 	if in.retired {
 		in.mu.Unlock()
 		_ = next.Close()
-		return fmt.Errorf("鍏ョ珯 %q 宸插�€閫€", tag)
+		return fmt.Errorf("入站 %q 已退役", tag)
 	}
 	old := in.plane.swap(next)
 	in.mu.Unlock()
