@@ -49,6 +49,10 @@ type Client struct {
 	// 上一次配置的 ETag。面板据此回 304，
 	// 省掉一次全量解析和可能的内核重建。
 	etag string
+
+	// streamWait 替换事件流重连前的等待，只给测试用：退避上限是 30 秒，
+	// 真等的话测不了「退避何时复位」。nil 即按真实时间等。
+	streamWait func(ctx context.Context, d time.Duration) bool
 }
 
 type Options struct {
