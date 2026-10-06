@@ -3,7 +3,7 @@
 
 新前端对真实网关的联调冒烟
   - 假后端只证明「页面按契约走得通」，这里证明「页面拿到真数据不会崩」：CI 的 panel-smoke.yml 先用 panel/deploy/run-smoke-stack.sh 起一次性 PG18 + Valkey + 三个网关，再在这里造数据、用页面自己的 zod schema 解析真响应
-  - 同一个栈最后还由 deploy/run-smoke-e2e.sh 跑一遍仓库现有的五个 e2e 脚本（全部跑完再判，任一失败即 job 变红）
+  - 同一个栈最后还由 deploy/run-smoke-e2e.sh 跑一遍仓库现有的五个 e2e 脚本（全部跑完再判，任一失败即 job 变红），再做一次 panel/tools/loadtest 的小规模试跑（它往库里加用户与节点，所以排在最后）
   - 不进 make frontend-check（本机没有数据库）
   - 发现形状不一致只报告，不在这里放宽断言
   - 入口一律读状态目录（smoke.env、gateway.env、seed.json），不含任何真实部署的值。

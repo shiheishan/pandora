@@ -5,7 +5,7 @@
   - 安全与财务不变量下沉到 PostgreSQL（RLS、追加写触发器、DEFERRABLE 配平、回调唯一约束），网关只是策略的执行者，不是策略的来源。
 
 成员清单
-cmd/: 14 个可执行入口（aegis-admin、aegis-adminctl、aegis-public、pandora-cic-journal 各带 CLAUDE.md）
+cmd/: 14 个可执行入口（aegis-admin、aegis-adminctl、aegis-node、aegis-public、pandora-cic-journal 各带 CLAUDE.md）
   - aegis-public/admin/node 三个 HTTP 网关（节点侧由 pdnd 的 pandora-native 走两阶段接入，面板不再带节点代理）
   - aegis-adminctl 后台账号与角色、aegis-payctl 支付渠道、aegis-backup-webdav 备份上传
   - pandora-* 八个为 CLIENT-AUTH 校验器、root runner、journal、设备公钥分类器与路径信任工具，其中 cic-journal、00044-root-runner、device-key-classifier、pathtrust、release-journal 五个带 README
@@ -39,6 +39,7 @@ docs/: redesign/api-contract.md 为现行前后端接口契约（被大量代码
   - DASH-01 冻结契约、CLIENT-AUTH-01 冻结契约及 R1 刷新重放附录、CLIENT-AUTH-00042 实现清单为历史冻结稿（只读；CLIENT-AUTH 三份的正文被测试解析或按 SHA-256 钉死，一字不改）
 tools/: 开发期工具，main 包只经 go run 使用，不进发布包、不被任何包 import
   - refactorcheck/ 为第 5 阶段重构的纯挪动 AST 比对（compare）、SQL 跨包下沉的字面量多重集合比对（sqlset）与打散验证（shatter），另带全 module 的 800 行守卫测试（随 go test ./... 跑），见 tools/refactorcheck/CLAUDE.md
+  - loadtest/ 为面板压测工具链：seed 造数、nodes 模拟 pdnd 节点、users 混合用户流量、burst 触发全量重拉，scripts/ 为面板主机上的采集脚本与压测专用 nginx 片段，README.md 是 Vultr 压测 runbook；panel-smoke.yml 在冒烟栈上小规模试跑它，见 tools/loadtest/CLAUDE.md
 tests/: invariants.sql 数据层不变量（make invariants）
   - e2e.sh 注册→下单→支付→账本→订阅→配置主链路
   - admin/uniproxy/epay/support 各自的 e2e 脚本（节点接入由冒烟 seed.ts 的两阶段接入覆盖）
