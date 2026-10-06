@@ -1,7 +1,9 @@
 # panel/internal/domain/dbbackup/
 > L2 | 父级: /panel/internal/domain/CLAUDE.md
 
-数据库备份的离机与保留：把本地「归档 + .sha256」配对签名成清单，经 WebDAV 上传并回读校验，再按保留策略逐步删除远端旧备份。所有私密输入（WebDAV 口令、清单签名种子、检查点、复制 Hook）都只能从 root 所有、0600、单硬链接、父目录 0700 且不经符号链接的路径读入；这组校验只在 Linux 生效，其他平台是空实现，所以 Linux 行为只能在 Linux 上验证（CI panel-unit 以非 root 跑，测试经 secureTempDir 把当前用户设为可信属主）。
+数据库备份的离机与保留：把本地「归档 + .sha256」配对签名成清单，经 WebDAV 上传并回读校验，再按保留策略逐步删除远端旧备份
+  - 所有私密输入（WebDAV 口令、清单签名种子、检查点、复制 Hook）都只能从 root 所有、0600、单硬链接、父目录 0700 且不经符号链接的路径读入
+  - 这组校验只在 Linux 生效，其他平台是空实现，所以 Linux 行为只能在 Linux 上验证（CI panel-unit 以非 root 跑，测试经 secureTempDir 把当前用户设为可信属主）。
 
 成员清单
 config.go: WebDAV 配置加载（路径由调用方传入，缺省值在 platform/config）与本地配对校验，openSecureRegular/validateSecureParent 是私密文件读取的唯一入口，先查父目录再查已打开的 fd，防 TOCTOU

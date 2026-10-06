@@ -1,7 +1,10 @@
 # panel/internal/platform/realtime/
 > L2 | 父级: /panel/internal/platform/CLAUDE.md
 
-服务端推送（SSE）。只推「什么变了」（topic + 定位 id），不推数据本身：权限过滤留给既有 REST 接口，丢一条通知由下一条拉取自愈，所以可靠性来自「真相在数据库」，不来自消息通道。多个网关进程经 Valkey Pub/Sub 互通；没有 Valkey 时退化为进程内广播（测试即如此）。
+服务端推送（SSE）
+  - 只推「什么变了」（topic + 定位 id），不推数据本身：权限过滤留给既有 REST 接口，丢一条通知由下一条拉取自愈，所以可靠性来自「真相在数据库」，不来自消息通道
+  - 多个网关进程经 Valkey Pub/Sub 互通
+  - 没有 Valkey 时退化为进程内广播（测试即如此）。
 
 成员清单
 realtime.go: Hub 与 NewHub：本机连接的订阅索引（按频道）、Publish / Subscribe / Count、频道名（ChannelPublic / User / Ticket / Admin / Node / NodeAll）与 FormatSSE；有 Valkey 时启动跨实例消费与连接数上报

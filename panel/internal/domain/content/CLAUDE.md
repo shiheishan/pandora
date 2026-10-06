@@ -1,7 +1,10 @@
 # panel/internal/domain/content/
 > L2 | 父级: /panel/internal/domain/CLAUDE.md
 
-版本化的知识库与自定义页面。每次保存生成新版本（乐观锁 expected_latest_version），同受众的旧发布版本自动归档；正文按纯文本 / Markdown 源码存取，两端都不渲染可信 HTML，从根上不设 XSS 边界。门户侧的可见性（状态、可见范围、平台、客户端版本、语言、限定套餐）全部在 visible 一处判定，详情与反馈共用。
+版本化的知识库与自定义页面
+  - 每次保存生成新版本（乐观锁 expected_latest_version），同受众的旧发布版本自动归档
+  - 正文按纯文本 / Markdown 源码存取，两端都不渲染可信 HTML，从根上不设 XSS 边界
+  - 门户侧的可见性（状态、可见范围、平台、客户端版本、语言、限定套餐）全部在 visible 一处判定，详情与反馈共用。
 
 成员清单
 service.go: Service 与 Page 模型（后台列表带版本作者 created_by / created_by_name；门户列表支持 q 全文包含与 platform=any）；后台 ListAdmin / GetAdmin / PublishVersion / Archive，门户 ListVisible / GetVisible 与唯一的可见性查询 visible
