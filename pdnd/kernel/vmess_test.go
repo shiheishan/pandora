@@ -193,19 +193,25 @@ func runVMessNativeUDPLoopback(t *testing.T, security string) {
 	if string(response[:n]) != "native-vmess-udp" {
 		t.Fatalf("response=%q", response[:n])
 	}
-	var traffic []core.UserTraffic
-	for i := 0; i < 100; i++ {
-		traffic, err = a.SnapshotTraffic()
+	// 上下行各在自己的 goroutine 里写完才计量，回包到客户端时下行可能还没记上；
+	// SnapshotTraffic 取走即清零，所以按用户累加多次快照，直到两个方向都出现。
+	sum := map[int64]core.UserTraffic{}
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		traffic, err := a.SnapshotTraffic()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(traffic) > 0 {
+		for _, tr := range traffic {
+			acc := sum[tr.ID]
+			acc.ID, acc.Upload, acc.Download = tr.ID, acc.Upload+tr.Upload, acc.Download+tr.Download
+			sum[tr.ID] = acc
+		}
+		if got := sum[92]; got.Upload != 0 && got.Download != 0 {
 			break
 		}
-		time.Sleep(time.Millisecond)
 	}
-	if len(traffic) != 1 || traffic[0].ID != 92 || traffic[0].Upload == 0 || traffic[0].Download == 0 {
-		t.Fatalf("traffic=%+v", traffic)
+	if got := sum[92]; len(sum) != 1 || got.Upload == 0 || got.Download == 0 {
+		t.Fatalf("traffic=%+v", sum)
 	}
 }
 
