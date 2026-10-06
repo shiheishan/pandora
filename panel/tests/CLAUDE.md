@@ -2,9 +2,9 @@
 > L2 | 父级: /panel/CLAUDE.md
 
 面板的数据层不变量与端到端脚本
-  - 节点接入与上线不在这里：旧的 node_e2e.sh 随面板自带的节点代理一起退役，两阶段接入由联调冒烟的 frontend/tests/smoke/seed.ts 用真实 Ed25519 签名覆盖
+  - 节点接入与上线不在这里：两阶段接入由联调冒烟的 frontend/tests/smoke/seed.ts 用真实 Ed25519 签名覆盖
   - 它们打真实网关与真实库，本机没有数据库时跑不了
-  - CI 的 panel-smoke.yml 经 deploy/run-smoke-e2e.sh 在一次性冒烟栈上逐个跑（联调冒烟第 ⑤ 步起），脚本假定的是 /opt/aegispanel 的 docker-compose 布局（deploy/.env、deploy/psql.sh、容器 aegis-postgres），runner 只把这套环境搭出来、不改脚本
+  - CI 的 panel-smoke.yml 经 deploy/run-smoke-e2e.sh 在一次性冒烟栈上逐个跑，脚本假定的是 /opt/aegispanel 的 docker-compose 布局（deploy/.env、deploy/psql.sh、容器 aegis-postgres），runner 只把这套环境搭出来、不改脚本
   - 会留下不可逆证据（审计、账本、订单）的脚本要求显式的一次性库确认变量。
 
 成员清单

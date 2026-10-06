@@ -8,7 +8,7 @@
 
 成员清单
 router.go: Deps 与 NewRouter：全局中间件链，/v1 挂 admin.writes 只读门（middleware.AdminWritesGate），根 / 与 /assets/* 经 webapp 下发后台前端，/v1 登录分组与已登录分组
-  - 已登录分组按拆分前的原顺序调用各 router_<模块>.go 的 register*Routes，顺序不要重排
+  - 已登录分组在 router.go 里逐个调用各 router_<模块>.go 的 register*Routes，调用顺序即注册顺序，不要重排
 router_<模块>.go: 按模块分段的路由表，每个 register*Routes(r, d, h) 声明一段路由的权限、重认证与幂等 scope
   - dashboard 仪表盘与收入
   - appearance 主题、插槽、站点设置、插件钩子
@@ -22,9 +22,9 @@ router_<模块>.go: 按模块分段的路由表，每个 register*Routes(r, d, h
   - content 公告与知识库
   - support 工单与快捷回复
 handlers.go: handlers 结构与核心处理器：登录、me（追加邮箱、显示名、角色）、用户（替用户重置密码的原因可选、限 500 字）、订阅换链接、订单、套餐、支付渠道、降级开关（切换后向管理端频道发 switches.changed）
-nodes.go: 节点处理器（从 handlers.go 拆出，不跑 SQL）：
+nodes.go: 节点处理器（不跑 SQL）：
   - 节点列表（读模型在 nodefabric.ListAdminNodes；心跳只在 Go 侧判定，下发状态交给 subscription.DeliveryState，协议配置在这里脱敏）、安装与服务端令牌、旧状态接口（nodefabric.SetLegacyNodeStatus：退役 / 销毁先取发布锁再锁节点行、吊销身份，改状态报错按约束名翻译）、吊销身份、发布配置、改协议、协议 schema、指标、REALITY 密钥对、删除
-tickets.go: 客服工单处理器（从 handlers.go 拆出）：负责人目录、队列、详情、回复、指派、改状态、人工升级，写操作走 support 的 *Atomic 并写出预制响应
+tickets.go: 客服工单处理器：负责人目录、队列、详情、回复、指派、改状态、人工升级，写操作走 support 的 *Atomic 并写出预制响应
 helpers.go: 包内共用小工具：域常量、请求级超时
 access_log.go: 安全事件明细，audit_events 与 subscription_fetch_log 两路（SQL 在 adminops 的 access_log.go）在这里归并，分类规则展示与筛选共用（路由组的 route_group.* 与 node.* 一起归管理端）；outcome 筛选（error = 非 success）
 audit_log.go: 审计日志列表与 CSV 导出（security.audit.read + ops.export + reauth），导出日期区间格式错回 422，自由文本列做公式防护
@@ -85,7 +85,7 @@ events.go: 管理端 SSE
   - pool_user_groups_pg18_test.go：池名单的字段级 reauth、校验、审计、通知、删组被拒与换组后的实际下发
   - device_window_pg18_test.go：窗口写入与审计、设备概览与节点列表在线统计同一口径
   - node_activate_pg18_test.go：新服务器 + 新节点一次上线即被下发、幂等、各前置条件 409、触发器逐步生效
-  - node_status_refusal_pg18_test.go：改状态撞状态机回触发器中文、nodes 表可造的 CHECK 都译成中文（⑪）
+  - node_status_refusal_pg18_test.go：改状态撞状态机回触发器中文、nodes 表可造的 CHECK 都译成中文
   - route_groups_pg18_test.go：00096 的三选一 CHECK、组内 tag 唯一、RLS、改组后成员节点有效发布物真的变了、悬空引用拒绝、删组级联与通知
   - 与 domain/subscription 同域）三个域同包，run-pg18-gates.sh 用精确 -run 过滤分开
   - node_config 域的主入口 TestNodeConfigLegacyPG18 在 node_config_legacy_pg18_test.go（夹具、库身份护栏与共用断言），各批次按主题分在 node_config_legacy_pg18_{publication,cancel,lifecycle,pool_delete,materialize,bootstrap,lock}_test.go，_cancel 兼作造锁等待的工具库

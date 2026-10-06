@@ -15,7 +15,7 @@ core/: core.Core 抽象与兼容适配层（sing-box/xray/mieru/外部进程/mul
 internal/: NativeCore 底层实现
   - nativewire/ 协议线格式（anytls/hysteria2/mkcp/shadowtls/tuic/udpmask）
   - reality/ fork 自 XTLS/REALITY（MPL-2.0，其本身基于 Go crypto/tls，目录内 LICENSE 与 LICENSE-Go 两份许可并存），承载 TLS 1.2 + 1.3 上的 REALITY 握手
-  - realityquic/ fork 自 apernet/quic-go（自带上游 MIT LICENSE，见其 README），把 TLS 事件接到 reality/，193 文件
+  - realityquic/ fork 自 apernet/quic-go（自带上游 MIT LICENSE，见其 README），把 TLS 事件接到 reality/
   - 这两个 fork 目录保持上游文件划分，整目录豁免 800 行规则
 node/: node.go 把面板与内核粘起来：拉配置、同步用户、上报流量与心跳（签名心跳带 metrics，兼容通道走 /status，两者都落面板 node_metrics）；入站重建即作废用户镜像与用户 ETag；见 node/CLAUDE.md
 panel/: 与面板通信层；见 panel/CLAUDE.md

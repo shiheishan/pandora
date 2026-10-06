@@ -2,7 +2,7 @@
 > L2 | 父级: /panel/frontend/src/portal/CLAUDE.md
 
 门户十一个页面（含结账）。Shell 只认 index.ts 这张登记表：按路由取出页面的懒加载组件，传入 { rest }，外面包 shell/ScreenFrame（Suspense 骨架 + 错误边界）；页头标题与副标题仍由 Shell 按 pages.ts 画，页面只管内容区。
-每个页面一个目录、构建出一个独立块；登记表不再改动，页面目录里加文件时补该目录的 L2。十一个页面全部接入，没有占位页。
+每个页面一个目录、构建出一个独立块；页面只改各自目录、不动登记表，目录里加文件时补该目录的 L2。
 rest 是页面之后剩下的路径段，已解码（如 #/orders/<订单 id>、#/tickets/<id>）；查询串（如 #/checkout?...）用 core/router 的 useHashLocation 读，外框规范化地址时保留查询串。
 页面之间的约定地址：#/subs?sub=<订阅 id>（我的订阅选中哪条）
   - #/plans?tab=packs（流量包标签）

@@ -20,7 +20,7 @@ uniproxy.go: UniProxy 兼容数据面：
   - 节点鉴权、server-token 签发（写审计、记 server_token_issued_at/by、拒绝已退出服务的节点）、
   - 用户下发（只给套餐绑定了节点所在池的订阅，无池节点不下发任何人；池限定用户组时只给名单内组的用户，谓词 PoolAdmitsUserSQL 与订阅下载共用；套餐用完但流量包有剩余的订阅继续下发）、
   - 在线与运行状态上报（在线数窗口按租户设置，DeviceWindowMinutes 为可选值，PurgeStaleAlive 截止 70 分钟）
-device_limit_admin.go: 设备数限制的后台用例（从 api/admin 的 devices.go 下沉；判定模式 / 宽容值 / 识别窗口的执行方就是本文件旁的 UniProxy 下发）：
+device_limit_admin.go: 设备数限制的后台用例（判定模式 / 宽容值 / 识别窗口的执行方就是本文件旁的 UniProxy 下发）：
   - 在线设备概览（订阅 LEFT JOIN subscription_online_devices，超限排前，回显库函数给的窗口）、单订阅覆盖（FOR UPDATE 读旧值，不存在回 404）、全局策略 upsert 三个 device_limit.* 键（改窗口才记改前生效值），两条写同事务审计
 uniproxy_config.go: UniProxy 配置组装与 ETag（LoadRouting 只开事务，合并交给 routing_merge.go），路由匹配条件翻成节点端 qnode 形状
 routing_merge.go: 生效路由的唯一口径：
@@ -43,12 +43,12 @@ node_admin.go: 后台节点新建、读取与 PATCH，协议白名单与稳定�
   - country_code（00082）只在此写、只进管理端响应（保留规则 3）
 node_admin_placement.go: 后台节点复制（发布锁下物化当前适用配置）、移动到另一台服务器、排序，均带 row_version 乐观锁与审计
 node_admin_lifecycle.go: 服务状态迁移表（只在 Go 内强制）与批量改服务状态（先取发布锁再锁节点行，退役同事务清 desired_config_version、吊销有效身份）、删除节点的三道守卫
-node_list_admin.go: 后台节点列表读模型 ListAdminNodes（从 api/admin 下沉）：
-  - 分页与筛选后真实总数（缺陷 21）、在线人数与 IP 按租户设备窗口 app.device_limit_window_minutes 统计、近 30 天 / 24h 流量、绑定套餐、控制节点探针
+node_list_admin.go: 后台节点列表读模型 ListAdminNodes：
+  - 分页与筛选后真实总数、在线人数与 IP 按租户设备窗口 app.device_limit_window_minutes 统计、近 30 天 / 24h 流量、绑定套餐、控制节点探针
   - 只扫事实，心跳新鲜度与下发状态由 handler 交给 subscription.DeliveryState（subscription 依赖本包，不能反调），协议配置的脱敏也在 handler
-node_status_legacy.go: 旧状态接口 SetLegacyNodeStatus 与手工吊销 RevokeNodeIdentity（从 api/admin 下沉）：
+node_status_legacy.go: 旧状态接口 SetLegacyNodeStatus 与手工吊销 RevokeNodeIdentity：
   - 退役 / 销毁先取 node-config-release 锁再 FOR UPDATE 锁节点行（nodeStatusLockSQL 带协议就绪判定），生命周期按 ProjectNodeLifecycle 投影、控制节点的服务器同事务改状态、终态吊销有效身份，撞状态机经 NodeStatusRefusal 翻中文
-node_pools_admin.go: 节点分组（从 api/admin 的 pools.go 下沉）：
+node_pools_admin.go: 节点分组：
   - 列表（组内节点 members、绑定套餐名、仅限用户组）、新建 / 编辑（带名单时同事务经 node_pool_user_groups.go 替换，返回名单是否变化给 handler 提交后通知）、
   - 删池（node-config-release 锁 → FOR UPDATE 锁池行 → 数节点 / 套餐 / 模板 / 配置 / 引导令牌五类依赖）、
   - CheckNodePoolAssignment（锁节点行比对所在池，换池回 ErrNodePoolMoveFrozen，冻结文案在 handler：本包的 node_admin_test 不许出现那句话）
@@ -61,7 +61,7 @@ node_activate.go: 一步上线 ActivateNode（与 node_retire.go 对称）：
   - 已 active 幂等不改
   - 返回 AdminNode 与无池 / 池未绑套餐的 warnings
 node_refusal.go: NodeStatusRefusal 改节点生命周期时数据库拒绝的统一翻译（后台改状态、一步上线、一步退役三处共用）：状态机触发器的中文原样透传，nodes 表 CHECK 按约束名译中文、认不出的写通用中文，英文原句只进日志
-  - 三处 UPDATE 实际只撞得到触发器，约束翻译是兜底（⑪）
+  - 三处 UPDATE 实际只撞得到触发器，约束翻译是兜底
 node_identity.go: 节点凭据只读视图 NodeCredentials：当前或最近一份 mTLS 身份、服务端令牌是否存在及签发时间与签发人、未用未过期的安装令牌数
 server_admin.go: 后台服务器（物理宿主）读写与状态机
 protocol_schema.go: 各协议的配置约束元数据与规范化节点类型
@@ -85,7 +85,7 @@ testdata/: 生产协议配置样本与 VLESS 迁移往返样本
   - pool_admission_test.go 钉住 PoolAdmitsUserSQL 的白名单与唯一用法
   - device_window_test.go 钉住设备窗口可选值与迁移 00094 一致、清理截止大于最大窗口、后台节点列表不写死窗口
   - node_activate_test.go 钉住上线路径只走 00005 的边且经 canary 进 active
-  - node_refusal_test.go 钉住约束名翻译并守住全仓不再把 db.Message 直接塞进 httpx 错误
+  - node_refusal_test.go 钉住约束名翻译并守住 panel/internal 不把 db.Message 直接塞进 httpx 错误
   - node_status_legacy_test.go 钉住旧状态接口锁行 SQL 的括号、先发布锁后锁行、终态吊销与生命周期投影表）
   - *_pg18_test.go 为 PG18 集成测试（effective 与 enrollment 两个域，server_token_pg18_test.go 共用 enrollment 的 openEnrollmentPG18；traffic_charge_pg18_test.go 与 usage_daily_pg18_test.go 共用 traffic_charge 域）
 

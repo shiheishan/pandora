@@ -9,7 +9,7 @@
 成员清单
 config.go: Load 与 Config：数据库、Valkey、三个网关地址（public / admin / node）与各网关的 pprof 地址（pprof.go）、对外地址、主密钥、public 与 admin 两域令牌密钥（互不相同）、配置签名种子与轮换中的旧种子、限流档位、令牌时长；CanonicalPublicOrigin 生产要求公网 HTTPS
 deployment.go: Config 内嵌的 Deployment（备份目录与解密私钥路径、pdnd 分发目录、GeoIP 两个库、NativeCore 按架构的产物摘要与发布版本），全部可缺省
-  - AdminGeoIPDB 给 aegis-admin 补缺省路径（aegis-node 没有缺省，历来如此）
+  - AdminGeoIPDB 给 aegis-admin 补缺省路径（aegis-node 没有缺省）
   - LoadBackupWebDAV 给 aegis-backup-webdav
   - DefaultBackupWebDAVConfigPath 也被系统状态页用来判断异地备份
 pprof.go: 三个网关各自的 pprof 诊断端口地址 AEGIS_{PUBLIC,ADMIN,NODE}_PPROF_ADDR（三个单元共用一份 .env，故按域分变量），缺省关闭

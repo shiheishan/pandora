@@ -4,18 +4,18 @@
 面板压测工具链：给 Vultr 上的资源占用实测提供「测得出、测得准」的造数、负载与采集，本身不做任何调优
   - main 包只经 `go run ./tools/loadtest`（或 go build 后拷到压测机）使用，不进发布包、不被任何包 import
   - 四个子命令 seed / nodes / users / burst 之间只经 ltkit 的造数清单（Manifest）交换数据，计量统一走 ltkit.Recorder，三类场景的 QPS、分位数与错误码同一口径
-  - 签名规范串、配置验签、线格式一律直接引用 domain/nodefabric 与 platform/crypto（同一 module），不再抄一份；pdnd 是另一个 module，引它要在 panel 的 go.mod 加 replace，故不引
+  - 签名规范串、配置验签、线格式一律直接引用 domain/nodefabric 与 platform/crypto（同一 module）；pdnd 是另一个 module，引它要在 panel 的 go.mod 加 replace，故不引
   - 模拟用户的来源 IP 全在 198.18.0.0/15（RFC 2544），轮流分到 512 个 /24，经 X-Real-IP 带给面板；邮箱只用 @loadtest.invalid，节点与目录名以 loadtest- 开头
   - CI：panel-smoke.yml 在冒烟栈上跑一次 200 用户、5 节点、60 秒的试跑（零 5xx、零签名失败），证明工具对着真网关是对的
   - 用法与 Vultr 压测流程见 README.md
 
 成员清单
 main.go: 子命令分发 seed|nodes|users|burst
-README.md: Runbook（按总协调定案定稿）：开机 → install.sh 生产模式装面板 → 观测开关（pprof、pg_stat_statements、nginx 真实 IP 顶替，压测机直连源站）→ 每档重装数据基座、造数、真 pdnd 重新接入 → 空载 / 5k / 10k / 15k 各两次 30 分钟稳态加 burst → 15k 档 24 小时（订阅余量版 30m / 贴近真实版 6h）→ 四条及格线与 15k 必报的 nr_throttled 增量 → 撞上限才补放开上限的对照轮 → 删机；地址全是占位符
+README.md: Runbook：开机 → install.sh 生产模式装面板 → 观测开关（pprof、pg_stat_statements、nginx 真实 IP 顶替，压测机直连源站）→ 每档重装数据基座、造数、真 pdnd 重新接入 → 空载 / 5k / 10k / 15k 各两次 30 分钟稳态加 burst → 15k 档 24 小时（订阅余量版 30m / 贴近真实版 6h）→ 四条及格线与 15k 必报的 nr_throttled 增量 → 撞上限才补放开上限的对照轮 → 删机；地址全是占位符
 ltkit/: 共享底座
   - manifest.go 造数清单：seed 写、其余读，含节点私钥与共用口令（虚构，0600 落盘）；另有订阅前缀、池与套餐版本、分阶段造数耗时，用户带订阅 id 与 node_uid，节点带名字与服务器
   - stats.go 计量：对数分桶直方图（2% 精度、常数内存，24 小时也不涨）出 QPS、p50/p95/p99、错误码（无响应归 transport:*）、自定义标签、按窗口时间线；Stop 冻结分母免得收尾排空摊薄 QPS；写 <场景>.json 与 .txt 一页摘要
-seed/: 造数：退役旧批次 → 池与套餐草稿 → 服务器 → 节点与接入令牌 → 两段式接入 → 一步上线 → 发布套餐 → 用户与订阅 → 核对，写 manifest 与分阶段耗时
+seed/: 造数，seed.go 的 Main 按序编排：退役旧批次 → 池与套餐草稿 → 服务器 → 节点与接入令牌 → 两段式接入 → 一步上线 → 发布套餐 → 用户与订阅 → 核对，写 manifest 与分阶段耗时
   - 节点与目录全走真实网关（admin.go 按后台每 IP 240/分节流、429 退避、reauth_required 自动重认证；enroll.go 本地生成 Ed25519 与运行令牌；nodes.go 照冒烟 seed.ts 的顺序）
   - users.go 用 unnest 多行 INSERT 按批一事务，经运行角色与租户上下文让 RLS 与触发器真起作用，镜像 adminops.GenerateUsers 与 billing 的开通（pending 经状态机转 active、开通事件、配额、哈希凭据），口令只哈希一次
   - retire.go 只圈 loadtest- 名字与 @loadtest.invalid 用户：节点经后台批量接口退役，订阅经状态机转 expired（追加写表连着它们，删不掉）

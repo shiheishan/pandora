@@ -2,7 +2,7 @@
 > L2 | 父级: /panel/frontend/dev/mock/CLAUDE.md
 
 门户十一个页面的假接口，一个页面一个文件、导出一个 MockModule
-  - index.ts 的登记顺序即询问顺序，不再改动
+  - index.ts 的登记顺序即询问顺序、先匹配先得，不要重排
   - 外框顶栏读的余额、订阅、佣金、未读数按契约归属各页面，所以住在对应页面的文件里，页面扩充它们时外框照用。
 
 成员清单
@@ -29,7 +29,7 @@ wallet.ts: 钱包（门户-05）；余额与流水（外框余额胶囊也读它
 referral.ts: 邀请返利（门户-06）
   - 自带按 PortalState 挂的佣金状态（WeakMap，切场景跟着重建）：
   - GET v1/me/invite（没有码时懒生成 8 位码）、
-  - GET v1/me/commission（summary.scope，multi 场景为 first_order；外框菜单的可用佣金提示也读它；可用 = 账本余额 − 未过账在途提现，5.A D-F-1；paid_invitees / total_earned / transfers 各场景恒在）、
+  - GET v1/me/commission（summary.scope，multi 场景为 first_order；外框菜单的可用佣金提示也读它；可用 = 账本余额 − 未过账在途提现；paid_invitees / total_earned / transfers 各场景恒在）、
   - 申请提现（commission_withdrawal_request，检查顺序照 RequestWithdrawal）、
   - 转余额（commission_transfer_to_balance，记进钱包余额与流水）
   - empty 无码无记录，multi 有一笔审核中提现且邀请码已用满

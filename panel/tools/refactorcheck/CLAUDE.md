@@ -11,7 +11,7 @@
 - 验收某个提交：`go run ./tools/refactorcheck compare -base <sha>^ -head <sha>`；拆测试文件时加 `-tests`
 - SQL 跨包下沉（handler → domain）：`go run ./tools/refactorcheck sqlset -base <起点> -head <终点>`（-head 省略即工作树，-root 默认 internal），SQL UNCHANGED 才算一字未改；DIFF 行逐条在报告里说明理由
 - pdnd（另一个 module）：`go run ./tools/refactorcheck compare -C ../pdnd -base <sha>^ -head <sha>`
-- 打散验证：`go run ./tools/refactorcheck shatter -out <新目录> [-skip '^internal/domain/billing$']`，再按输出提示在副本里跑 vet 与全量测试；③ 把 billing 的测试改成按声明名读之前，billing 要 -skip
+- 打散验证：`go run ./tools/refactorcheck shatter -out <新目录> [-skip <包目录正则>]`，再按输出提示在副本里跑 vet 与全量测试；按文件名读源码的测试所在包要 -skip
 
 成员清单
 main.go: 子命令分发与用法说明

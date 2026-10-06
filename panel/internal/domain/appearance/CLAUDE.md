@@ -14,7 +14,7 @@
 成员清单
 service.go: 主题与插槽读写
   - Public 一次取齐生效主题（tokens 与 branding 过滤、custom_css 置空）与启用插槽
-  - SaveTheme 先按表 CHECK、令牌白名单与品牌规则校验、全部字段错误合进一个 422 再入库（缺陷 20），Create 撞已有 code 409，内置主题不可原地改
+  - SaveTheme 先按表 CHECK、令牌白名单与品牌规则校验、全部字段错误合进一个 422 再入库，Create 撞已有 code 409，内置主题不可原地改
   - 激活、删除、插槽保存都写审计
 tokens.go: DesignTokenKeys 白名单与 light/dark 分组、normalizeTokens（保存校验，取值错误逐键标 tokens.<组>.<键>）与 filterTokens（读取过滤）、DefaultSiteName 与 SiteNameTx
 branding.go: BrandingKeys（site_name / tagline / logo）、normalizeBranding（站点名必填 ≤40、标语 ≤80、Logo 只收 48KB 内的 PNG / JPEG / WebP / SVG data URL，未知键拒绝）与 filterBranding（门户读取只放行三个已知键）

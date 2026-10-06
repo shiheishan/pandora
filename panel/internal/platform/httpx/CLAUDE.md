@@ -13,7 +13,7 @@ httpx.go: Code 封闭列表与状态映射（reauth_required 与 forbidden 同�
   - PrepareJSON / WritePrepared、
   - DecodeJSON 严格解码
 context.go: 请求 ID、主体 Principal、租户 ID 的 context 存取；ClientIP 是全部网关唯一的来源地址口径：只信反代覆写的 X-Real-IP，不解析 X-Forwarded-For，缺省回落 RemoteAddr
-require_user.go: 登录检查出口 RequireUser：主体缺失或 UserID 为空即 Fail 成 401 unauthorized「需要登录」并返回 false，处理器开头的唯一写法（门户 24 处已换；admin 的两处由总协调在三路合并后换）
+require_user.go: 登录检查出口 RequireUser：主体缺失或 UserID 为空即 Fail 成 401 unauthorized「需要登录」并返回 false，处理器开头的唯一写法
 *_test.go: codes_test 守 reauth_required 与 upgrade_required 的状态映射
   - require_user_test 守登录检查的四种拒绝与放行不写响应
   - prepared_test 守预制响应逐字节一致

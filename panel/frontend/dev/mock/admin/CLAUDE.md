@@ -1,7 +1,7 @@
 # panel/frontend/dev/mock/admin/
 > L2 | 父级: /panel/frontend/dev/mock/CLAUDE.md
 
-后台十个模块的假接口，一个模块一个文件、导出一个 MockModule，与 src/admin/screens 的十个模块一一对应。index.ts 的登记顺序即询问顺序，不再改动。模块状态放在文件内的模块级变量里，vite 重启即复原。
+后台十个模块的假接口，一个模块一个文件、导出一个 MockModule，与 src/admin/screens 的十个模块一一对应。index.ts 的登记顺序即询问顺序、先匹配先得，不要重排。模块状态放在文件内的模块级变量里，vite 重启即复原。
 
 成员清单
 index.ts: 登记表 ADMIN_MODULES
@@ -51,12 +51,12 @@ content.ts: 内容与外观（后台-08）：公告列表（读时把到点的�
   - 站点时区（Intl 能加载的 IANA 名）
   - 权限 / reauth / 幂等 scope / 文案照契约与 Go，按 DisallowUnknownFields 拒绝未知字段
 plans.ts: 套餐（后台-04）的路由与向导：
-  - 列表、详情、只建壳、向导新建（单事务，限速正常生效）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动，额度或线路变了开新版本并发布、价格只同步出现过的币种，按：保留时间窗、新版本继承当前版本全部设置、本来不限流量时再交 0 不滚版本，新建向导 max_devices 0 等同不限）、
+  - 列表、详情、只建壳、向导新建（单事务，限速正常生效）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动，额度或线路变了开新版本并发布、价格只同步出现过的币种，保留时间窗、新版本继承当前版本全部设置、本来不限流量时再交 0 不滚版本，新建向导 max_devices 0 等同不限）、
   - 销售设置（卖点与推荐整体覆盖）、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池候选与替换
   - 流量包路由从 plans-packs.ts 展开进来
 plans-store.ts: 套餐假接口的数据与规则：
   - 五个种子套餐（沿用 users.ts 的固定套餐 id 与用户组 id，节点池沿用 nodes-infra.ts 的池 id，在线节点数取 nodes-infra.ts 的 activeNodesInPool，与节点池列表同口径）、
-  - 列表行与详情形状（卖点与推荐；标准版 v1 是限速与超额策略解耦之前留下的「用完限速」存量行，专业版限速 300 Mbps 且标为推荐）、
+  - 列表行与详情形状（卖点与推荐；标准版 v1 是超额策略为 throttle 的「用完限速」存量行（读取照收），专业版限速 300 Mbps 且标为推荐）、
   - 与 Go 同键名同文案的校验（超额策略只收 suspend、卖点 5 条 40 字不重复）、发布前置条件、按 DisallowUnknownFields 拒绝未知字段
 plans-packs.ts: 流量包四接口：状态筛选与排序、新建即在售、updated_at 乐观锁 409、已是目标状态 409
 billing.ts: 订单与收款（后台-05）的路由（标记已付：订阅已结束的续费单入账进挂账回 409、同一凭证再标回 409）：
@@ -84,7 +84,7 @@ security.ts: 安全与运维（后台-09 后半）：
   - 审计（约 140 条确定性种子，10 天前的是无认证方式与来源 IP 的存量行；q / 动作前缀 / 操作者类型 / 结果、limit 越界回 50）与导出（security.audit.read + ops.export + reauth、日期 422、5 万行上限、BOM 与防公式、导出本身记审计）
   - 访问日志（审计与订阅拉取归并、分类表与 Go 同一张（route_group.* 归管理端）、未知分类与结果 422、IP 精确与账号 UUID / 邮箱片段、按前缀给归属地，每次读按流逝时间补新事件让实时尾随有动静）
   - IP 聚类（成员是 users.ts 的真实种子，含后台账号与已停用账号、标记正常未过期的默认不列、风险按 clusterRisk）、标记正常（note ≤ 500）、批量停用（reauth + 幂等 ip_cluster_disable，逐个跳过自己 / 非成员 / 后台账号 / 已停用，直接改同一份用户数组，一个都没停成不写结论）
-  - 降级开关（八行种子，删去三个未接入的；核心项与关闭缺原因回 409 带中文原因（与 switchRefusal 同文）、切换与处置都记审计；切换后经 onSwitchChanged 让外壳推 switches.changed，adminWritesEnabled 给外壳的只读门）
+  - 降级开关（八行种子；核心项与关闭缺原因回 409 带中文原因（与 switchRefusal 同文）、切换与处置都记审计；切换后经 onSwitchChanged 让外壳推 switches.changed，adminWritesEnabled 给外壳的只读门）
   - 按 DisallowUnknownFields 拒绝未知字段
 
 法则: 成员完整·一行一文件·父级链接·技术词前置

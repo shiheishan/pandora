@@ -5,7 +5,7 @@
   - 四个标签，状态都在地址上：「订单」#/billing/orders/<订单 id>?s=<分段>&q=&o=&user_id=&new=（列表 + 480 抽屉，?new=1 或 ?new=<用户 id> 打开人工开单弹窗，用户抽屉的「为其开单」与订单深链都落在这里）、「挂账」#/billing/arrears?s=&o=、「支付渠道」、「收入调整」#/billing/adjust?c=<币种>。
 数据流：schemas（纯 zod，订单列表行也是用户详情「最近订单」的形状，users/api.ts 从这里取）→ api（订单查询挂 orders.changed，写后按 BK 前缀整体失效，影响用户余额与订阅的写同时失效用户模块）→ model（纯函数，model.test.ts 守住）→ 组件
   - 订单词汇（ORDER_STATUS_VIEW、orderWhat）与元转分 parseYuan 沿用 users/model，周期文案沿用 plans/model
-  - 写失败直接走 actions.ts 的 useFailure：取消订单与凭证号重复的 message 已由后端给中文，原样 Toast。
+  - 写失败直接走 actions.ts 的 useFailure：取消订单与凭证号重复的 message 是后端的中文原文，原样 Toast。
 保留规则 6：设计稿的「欠费单」按后端「挂账」语义做——订单取消后才到账、续费或变更时订阅已结束或超额扣款、平台欠用户的钱，「转入余额」是贷记，合计按币种分开
   - 渠道开关按 PAY-009 只动 accepting_new（关 = 结账页不显示、回调照常），「完全停用」放「更多」菜单
   - 系统内置的 offline 只读。
@@ -17,7 +17,7 @@
   - billing.provider.write 才能启停渠道
   - reauth 由外框对话框接管，取消时静默
   - 幂等键按 actions.ts 的 endsIntent 去留。
-D-C-3 已决（5.A.2）：不提供「从余额扣除」，弹窗里说明先调账再赠送。契约缺口：列表行没有人工单标识，渠道列只能在详情里显示「人工」。
+不提供「从余额扣除」，弹窗里说明先调账再赠送。人工单在列表的订单号旁挂「人工」标识（行的 manual），开单人只在详情里。
 
 成员清单
 index.tsx: 页面入口，按标签分发到四个组件，相对时间与账龄的 now 每分钟走一次

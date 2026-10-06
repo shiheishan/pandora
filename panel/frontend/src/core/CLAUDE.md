@@ -32,7 +32,7 @@ query.ts: react-query 接入
   - Register 把默认错误登记为 ApiError、queryMeta 登记 topics
   - createRealtimeInvalidator 按 meta.topics 精确失效、同 topic 2 秒节流合并（节点上报会刷屏 subscriptions.changed）、重连时失效全部
   - REALTIME_TOPICS 对齐 platform/realtime/listener.go，另收 admin / public 的 tickets.go 发到用户频道的 ticket.updated 与管理端的 switches.changed
-intent.ts: 幂等键约定（契约 1.5 与），两个入口共用一份：createIntentKey / useIntentKey 按意图的 JSON 指纹给键（keyFor 取键、reset 丢弃），同一意图的重试与 reauth 重放复用、意图变了换新键
+intent.ts: 幂等键约定（契约 1.5），两个入口共用一份：createIntentKey / useIntentKey 按意图的 JSON 指纹给键（keyFor 取键、reset 丢弃），同一意图的重试与 reauth 重放复用、意图变了换新键
   - endsIntent 判定失败是否结束意图（4xx 结束，reauth_required、断网、5xx、回包解析失败保留）
   - 后台 admin/actions.ts 与门户 screens/common/intent.ts 原样转出
 intent.test.ts: intent.ts 的单元测试（同指纹同键、换键、reset、UUID v4、endsIntent 四种情形）

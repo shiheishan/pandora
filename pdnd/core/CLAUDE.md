@@ -3,8 +3,7 @@
 
 core.go 定义 core.Core 抽象（入站生命周期、UpsertUsers 用户热更新、流量读取），kernel/ 的 NativeCore 与这里的兼容适配器都实现它
   - multi/ 是过渡期分派器，生产 NativeCore-only 路径不经过它
-  - sing/ 与 xray/ 只在 -tags compat 构建里被链接
-  - 目录源自已删除的旧版 nodeagent/core。
+  - sing/ 与 xray/ 只在 -tags compat 构建里被链接。
 
 成员清单
 core.go: Core 接口与入站配置抽象，UpsertUsers 热更新契约

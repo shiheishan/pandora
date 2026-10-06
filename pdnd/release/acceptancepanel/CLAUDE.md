@@ -1,5 +1,5 @@
-# release/acceptancepanel/
-> L2 | 父级: pdnd/CLAUDE.md
+# pdnd/release/acceptancepanel/
+> L2 | 父级: /pdnd/CLAUDE.md
 
 runtime-acceptance.sh 的回环模拟面板。签名通道要 Ed25519，Python 标准库没有，所以用 Go 写；原像与校验按面板实现独立重写，不 import pdnd/panel，避免夹具与被测代码一起错时验收照样变绿。
 

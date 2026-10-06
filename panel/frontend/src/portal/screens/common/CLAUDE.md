@@ -3,7 +3,7 @@
 
 门户多个页面共用的读模型与小块
   - 只有一个页面用的东西仍放在那个页面自己的目录里
-  - 这里的东西若后台也要，就提升到 core/ 或 ui/，不在这里给后台用（字节换算已提升为 core/format 的 formatBytes，这里只包一层排版用的 bytesParts / compactBytes）。
+  - 这里的东西若后台也要，就提升到 core/ 或 ui/，不在这里给后台用（字节换算在 core/format 的 formatBytes，这里只包一层排版用的 bytesParts / compactBytes）。
 数据层一律 useApi + react-query，schema 按 api-contract.md 写全写严、以 Go 实际编码为准：无 omitempty 的字段必填（指针 / 可空列为 nullable），只有 omitempty 的字段可选，页面对缺席做降级而不是放宽 schema
   - 实时失效只靠 meta.topics
   - 同一接口与外框 queries.ts 共用查询键：订阅列表的全字段 schema 与查询住在 queries.ts，这里转出。

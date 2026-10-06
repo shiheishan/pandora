@@ -40,7 +40,7 @@ tests/entries.test.ts: 入口源文件契约——域标记正确、只有外链
 tests/tokens.test.ts: 令牌契约——tokens.css / roles.css 与设计稿逐值一致、明暗两组键相同、所有 var() 都有定义、样式不引用外部来源、字体文件都在包内
 tests/mock-helpers.ts: 假后端测试共用辅助——serve 把 mockApi 挂到本地 HTTP 服务（非 API 路径回 418 代表交给 vite）、close、loginAs、bearer、mockFetch（可选请求体与幂等键）；每个测试文件各起各的服务，模块假数据按文件隔离
 tests/mock-api.test.ts: 假后端外壳守卫——matchPattern
-  - 外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同键重新执行，条件改好即成功）（调账打在真实种子用户上，余额经详情接口核对、重放不再记账，种子外的 id 回 404）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码，503 后同键重新执行）
+  - 外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同键重新执行，条件改好即成功）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码，503 后同键重新执行）
 tests/mock-admin-users.test.ts: 用户运营假接口（users-ops.ts）——流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验与识别窗口，设新密码不要原因
 tests/mock-admin-plans.test.ts: 套餐假接口——
   - 目录能被页面 schema 接住、向导单事务新建与幂等重放（限速、卖点与推荐）、编辑向导的 null = 不动与开新版本、设备与限速三态、销售设置整体覆盖卖点与推荐、超额策略只收 suspend、草稿版本全流程、价格新增与归档、流量包上下架与 updated_at 乐观锁
@@ -49,7 +49,7 @@ tests/mock-admin-marketing.test.ts: 营销假接口——
 tests/mock-admin-nodes.test.ts: 节点与服务器假接口——节点列表能被页面 schema 接住、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验
   - 服务器 schema、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默、安装令牌幂等
   - 节点池新建 / 编辑 / 删除守卫与按池在线数同口径
-  - 全局路由 revision 冲突、删除被引用出站 409（文案「要删除的全局出站仍被规则引用：节点 X → tag」与 Go 同文）、匹配类型校验与发布
+  - 全局路由 revision 冲突、删除被引用出站 409（文案与 Go 同文）、匹配类型校验与发布
   - 节点池名单带字段才要 reauth 与四种 422、用户组 exclusive_pools 与被池引用时删组 409、无池节点的交付提示、PATCH 补回缺席密钥 / 显式 null 清空 / mask_password 跟着 mask、上线一步到 active 与服务器就绪、重放与 409
   - 上线回 AdminNode、warnings 缺省与两种提示（首次搭建的新池没绑套餐）、已 active 先于版本号
 tests/mock-admin-routegroups.test.ts: 路由组假接口（00096）——
