@@ -10,7 +10,7 @@ import { consumeQuickLogin } from './mock/quick-login.ts'
 import { findRoute, type AnonContext, type Json, type MockApp, type MockContext, type MockRaw, type MockResult, type MockUser } from './mock/types.ts'
 
 // ---------------------------------------------------------------------------
-// 形状以 panel/docs/redesign/api-contract.md 为准。这里只放外壳接口与共用设施：
+// 形状以 panel/internal/api 的 Go 处理器为准。这里只放外壳接口与共用设施：
 // 会话与 rat、reauth 窗口、幂等表、错误信封；模块接口写在 mock/<入口>/<模块>.ts，
 // 一个模块一个文件、各自维护。先外壳、后模块，未匹配的 v1/ 一律 404 信封。
 // POST /__mock/expire-reauth 让所有会话的 rat 立即过期，不必干等 15 分钟。
