@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖同目录全部组件模块
- * [OUTPUT]: 对外提供 ui 组件库的公开出口
- * [POS]: ui 的唯一入口，页面只从这里 import；cx、useModalDialog 与 Field / useFieldIds / hasError 属于内部实现，不导出
- */
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button'
 export { Card, type CardProps } from './Card'
 export { Checkbox, type CheckboxProps } from './Checkbox'

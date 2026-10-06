@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 ApiError，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../ui 的 Button / Card / ConfirmModal / Empty / Input / QueryView / Skeleton / StatStrip / useToast，依赖 ../../queries 的 useCommission / useSiteConfig，依赖 ../common 的 LoadError / copyText / useIntentKey / endsIntent，依赖 ./api 与 ./model
- * [OUTPUT]: 默认导出 Referral 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/referral 的入口：邀请返利（门户-06）。顶部邀请横幅（链接 /?invite= 与邀请码两个复制按钮），四格统计，左列「使用佣金」（全部转入余额 + 申请提现），右列「佣金记录」，左列下方补「邀请记录」（契约待补·前端，不展示 risk_flag）；可用佣金以账本为准（5.A D-F-1），两个写操作各一个幂等键
- */
 import { useState } from 'react'
 import { ApiError } from '../../../core/api'
 import { formatDateTime, formatMoney } from '../../../core/format'

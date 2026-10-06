@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 splitTrafficCharge、sortedReportEntries，依赖 platform/sourcetest 按名取节点用户列表、扣量与流量上报的源码
-// [OUTPUT]: 对外提供 TestSplitTrafficChargePlanFirstThenPacks、TestSortedReportEntriesOrdersAndMergesUIDs、TestUniProxyServesAndChargesTrafficPacks
-// [POS]: nodefabric 流量扣减先套餐后流量包、上报按确定顺序扣、有流量包剩余的订阅继续下发
-
 package nodefabric
 
 import (

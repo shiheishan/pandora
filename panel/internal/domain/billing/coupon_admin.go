@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform 的 db 租户事务与唯一约束判定、audit 同事务审计、httpx 的错误模型与请求 ID；读写 coupons，读 coupon_redemptions / users / orders
-// [OUTPUT]: 对外提供 Service.AdminListCoupons / AdminCreateCoupon / AdminGenerateCoupons / AdminSetCouponStatus / AdminCouponRedemptions 与 AdminCoupon、AdminCouponRedemption、AdminCouponSpec
-// [POS]: domain/billing 的后台优惠券用例（从 api/admin/coupon.go 与 coupon_batch.go 下沉）：券只停用不删除；批量生券在一个事务里随机出码、撞码由 (tenant_id, code) 唯一约束兜住后重试并封顶；与 coupon.go 的结账核销读同一张表；请求规范化与校验留在 handler
-
 package billing
 
 import (

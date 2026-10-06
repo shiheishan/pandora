@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
-// [OUTPUT]: 对外提供 registerUserBulkRoutes、registerTrafficResetRoutes、registerUserRoutes、registerUserGroupRoutes、registerDeviceLimitRoutes
-// [POS]: api/admin 路由表的「用户批量运营、流量重置、用户状态与改密换链、用户组、设备数限制」段，由 NewRouter 按原注册顺序调用；处理器在 bulk_users.go / traffic_reset.go / handlers.go / usergroup.go / devices.go
-
 package admin
 
 import (

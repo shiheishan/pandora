@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 decls.go 的 collectDecls 与 tagUniverse，依赖 git 命令读取指定版本的源码
-// [OUTPUT]: 对外提供 runCompare、compareFiles、compareResult
-// [POS]: tools/refactorcheck 的 compare 子命令：逐包比对两个版本的顶层声明多重集合，相同才是纯挪动；顺带打印两侧各文件行数，供重构报告填「新旧行数」
-
 package main
 
 import (

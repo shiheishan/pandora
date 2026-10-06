@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain 的 billing/identity/payment 用例（me 的账户行经 identity.PortalProfile），依赖 Deps.Pool 的 Ping（就绪探针）、platform 的 httpx/crypto 与 middleware
-// [OUTPUT]: 对外提供 handlers 的核心门户处理器：探针、注册登录登出、me、改密、站点配置、优惠码试算、下单支付与回调、钱包充值、续费、我的公告；包内 isUUID
-// [POS]: api/public 的主处理器文件，其余按模块拆在同包兄弟文件里：套餐目录 plans.go、工单 tickets.go、邀请与佣金 referral.go 等
-
 package public
 
 import (

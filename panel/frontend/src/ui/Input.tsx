@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 forwardRef 与表单元素属性类型，依赖 ./cx，依赖 ./Field 的 Field / useFieldIds / hasError / FieldControlProps，依赖 ./control.module.css
- * [OUTPUT]: 对外提供 Input 与 TextArea
- * [POS]: ui 的文本输入：受控与非受控都行，label / hint / error 由 Field 排版并接好无障碍属性；mono 用于邀请码、优惠码、IP 这类要逐字核对的输入
- */
 import { forwardRef, type InputHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { cx } from './cx'
 import { Field, hasError, useFieldIds, type FieldControlProps } from './Field'

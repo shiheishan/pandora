@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ./catalog-schema 的套餐 schema，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../core/format 的 formatMoney
- * [OUTPUT]: 对外提供套餐目录 / 流量包目录 / 支付方式的 schema、类型与查询（usePlans、usePackCatalog、usePaymentMethods），周期映射 periodOf / PERIODS / periodName / periodUnit，价格文案 monthlyNote / savingPercent / perGbNote，额度文案 trafficQuotaOf / resetNote / quotaPeriodNote / throttleNote，cnyPrices / priceFor / savingAmount / periodMonths / methodKey；plansSchema 为 tests/smoke 形状冒烟导出
- * [POS]: portal/screens/common 的商品目录层（契约门户-03 与外壳的 payment-methods）：选购页与结账页共用；只展示 CNY 价格（余额与 epay 只有 CNY），周期把 (month,3)|(quarter,1)、(year,1)|(month,12) 归成同一档；套餐行含 R99 限速与 R100 卖点 / 推荐
- */
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { formatMoney } from '../../../core/format'

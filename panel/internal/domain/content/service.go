@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform 的 db/audit/httpx，读写 content_pages，读 users（版本作者名）
-// [OUTPUT]: 对外提供 Page、ListFilter、PublishInput 与 Service 的后台列表 / 读取 / 发布 / 归档、门户可见性判定与读取
-// [POS]: domain/content 的主服务：版本化知识库与自定义页面，门户可见性一处判定（visible，支持 platform=any 与 q 全文包含）；后台列表带版本作者 created_by / created_by_name
-
 // Package content implements versioned knowledge-base and custom-page delivery.
 // Stored bodies are treated as plain text/Markdown source; neither API renders
 // trusted HTML. This keeps publication useful without creating an XSS boundary.

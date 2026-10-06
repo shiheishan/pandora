@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 service.go 的 Ticket 与 TicketDetail、encoding/json
-// [OUTPUT]: 对外提供 TestTicketDetailAlwaysCarriesMessagesArray
-// [POS]: domain/support 的响应形状单测：详情的 messages 总是数组（空时 []），列表行不带 messages 键
-
 package support
 
 import (

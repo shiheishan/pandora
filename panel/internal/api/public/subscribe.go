@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/subscription 的凭据解析、渲染、链接列表、节点预览与 Rotate，依赖 platform/httpx（含来源地址 ClientIP）与 Deps.Cfg 的 PublicBaseURL
-// [OUTPUT]: 对外提供 handlers 的 subscribe（/{prefix}/{token} 订阅分发）/ meSubscriptionLinks / meSubscriptionNodes / rotateSubscriptionLink
-// [POS]: api/public 的订阅分发与我的订阅链接：分发端点直接写出渲染好的订阅正文，认证失败一律回同一个诱饵 404 页；其余三个是登录后的 JSON 接口
-
 package public
 
 // 订阅分发端点。

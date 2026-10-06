@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/notify 的 Inbox / MarkInboxRead / MarkAllInboxRead / PreferenceOverrides / SetPreference，依赖 platform/httpx、同包 handlers.go 的 isUUID
-// [OUTPUT]: 对外提供 handlers 的 listNotifications / markNotificationRead / markAllNotificationsRead / getNotificationPreferences / setNotificationPreference
-// [POS]: api/public 的站内信与通知偏好；单条标已读的非 UUID id 回 404（R84）；偏好目录与锁定项在这里，SQL 在 notify/inbox.go
-
 package public
 
 // 站内信与通知偏好：读写都在 notify（inbox.go），这里只做参数、偏好目录与响应。

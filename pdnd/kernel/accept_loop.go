@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 net 的 Listener 语义与 net.ErrClosed，依赖 time 的定时器
-// [OUTPUT]: 包内提供 runAcceptLoop（TCP 类入站与 RealityListener 共用的 Accept 循环）、acceptBackoff 与 acceptBackoffMin / acceptBackoffMax
-// [POS]: kernel 的 Accept 循环骨架：vless / vmess / trojan / shadowsocks / ss2022 / shadowtls / socks·http / anytls 的 acceptLoop 与 reality_listener.go 的 acceptHandoff 都只提供「接到连接后交给谁」，出错退避与退出规则只在这里写一次；HTTP 承载的 http.Server.Serve 自带同样的退避，QUIC 监听只在关闭时出错，都不走这里；mieru 的 TCP 监听在上游 mux 里，由 core/mieru/listener.go 以同一套退避参数另行包装
-
 package kernel
 
 import (

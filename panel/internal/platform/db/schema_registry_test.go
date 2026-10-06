@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 migrations/*.sql goose Up 段里按序号重放的 CREATE / DROP TABLE、migrations/RESERVED-TABLES.md 登记簿，以及 internal/、cmd/、web/ 下的非测试 Go 源码
-// [OUTPUT]: 对外提供 TestSchemaTablesAreReferencedOrRegistered 契约测试
-// [POS]: platform/db 的 schema 同构守卫：迁移最终留下的表而 Go 从不引用的必须登记在 RESERVED-TABLES.md，登记了却被引用或已被后续迁移删除的必须删掉登记
-
 package db
 
 import (
@@ -70,7 +66,7 @@ func schemaRegistryRoot(t *testing.T) string {
 }
 
 // migrationTables 返回按序号跑完全部 Up 之后仍然存在的表。
-// 只看 migrations/ 顶层的 goose 文件，不含 frozen-client-auth/；只读 Up 段：
+// 只看 migrations/ 顶层的 goose 文件；只读 Up 段：
 // Down 里为回滚重建的表不是现行 schema。Glob 结果按文件名排序，即按迁移序号重放。
 func migrationTables(t *testing.T, root string) []string {
 	t.Helper()

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomInt / randomUUID，依赖 ../types 的 MockModule，依赖 ./fixtures 的 gate / portalState / scenario / PortalState，依赖 ./billing 的 BillingError / readStrict
- * [OUTPUT]: 对外提供 referral 模块的假接口 MockModule
- * [POS]: dev/mock/portal 的「邀请返利（门户-06）」假接口，归门户前端；形状照 api-contract.md（含修订 R5、R7、R69、R114 的 summary.scope（multi 场景为 first_order）与 5.A D-F-1）。GET v1/me/commission 同时供外框头像菜单的可用佣金提示使用；转余额写进钱包的余额与流水
- */
 import { randomInt, randomUUID } from 'node:crypto'
 import type { MockModule } from '../types.ts'
 import { BillingError, readStrict } from './billing.ts'

@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 无依赖；逐条转写自设计稿 设计规范.dc.html（02 颜色、03 字体、04 尺寸）与模块文件共用的 html:root 令牌块
- * [OUTPUT]: 对外提供 COLOR_TOKENS、TYPE_SCALE、SPACE_SCALE、RADIUS_SCALE、ROLE_TOKENS 与 normalizeCssValue
- * [POS]: styles 的设计稿核对表：tokens.css / roles.css 是实现，这里是设计稿原值；tests/tokens.test.ts 拿它逐条比对 CSS 文本，showcase 拿它比对浏览器里算出的值
- */
-
 export type TokenGroup = 'neutral' | 'brand' | 'status' | 'overlay' | 'supplement'
 
 export interface ColorToken {

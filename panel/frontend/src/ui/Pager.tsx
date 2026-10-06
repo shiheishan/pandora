@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ./Button，依赖 ./cx 与 ./Pager.module.css
- * [OUTPUT]: 对外提供 Pager、PagerProps
- * [POS]: ui 的分页条：「第 N / M 页 · 共 T 条」加上一页 / 下一页，按 offset / limit 翻页（与后端列表接口的分页参数同形）；总数不超过一页时不渲染。来自后台营销页，各列表共用
- */
 import { Button } from './Button'
 import { cx } from './cx'
 import css from './Pager.module.css'

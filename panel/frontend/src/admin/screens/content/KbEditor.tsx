@@ -1,10 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useId / useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的知识库函数，依赖 ./queries，依赖 ./schemas，依赖 ./content.module.css
- * [OUTPUT]: 对外提供 KbEditor（知识库文章编辑区）
- * [POS]: admin/screens/content 知识库的中栏：标题 + 分类（已有分类 + 自定义输入）、Markdown 正文，设计缺、契约待补·前端的新文章标识（slug）与「发布设置」折叠区（类型、摘要、语言、可见性、平台、客户端版本范围、限定套餐、复审日期）补齐。
- *        每次保存都是 POST v1/content-pages 生成新版本（reauth + 幂等 content_page_version_create，expected_latest_version = 当前最大版本）：「保存为 v{n}」发布、「保存草稿」留草稿；受众字段原样沿用上一版，改了会提示旧发布版不会被自动归档。
- *        「归档」对最新的已发布版本调用（reauth + 幂等 content_page_archive），「恢复」把已归档的最新版内容再发布成新版本。别人先保存出新版本时不覆盖输入，提示后可载入最新
- */
 import { useMutation } from '@tanstack/react-query'
 import { useId, useState } from 'react'
 import { isApiError } from '../../../core/api'

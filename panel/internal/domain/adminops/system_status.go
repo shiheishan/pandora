@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/db 的连接池与租户事务，读 pg_database_size / pg_stat_activity / pg_settings 与 nodes / payment_events / notification_deliveries 的计数
-// [OUTPUT]: 对外提供 DatabaseStats、NodeFabricCounts、DeliveryCounts、SystemCounts 与 Service 的 PingDatabase / DatabaseStats / SystemCounts
-// [POS]: adminops 的系统状态读模型（从 api/admin 的 system_status.go / system_components.go 下沉，契约后台-01 GET v1/system/status）：数据库三个统计在一个事务里要么全读到要么报错（R52）；组件计数在一个事务里逐项读，哪项失败哪项为 nil、不让整页报错；ok / warn / down 的判定与备份目录探测留在 handler
-
 package adminops
 
 import (

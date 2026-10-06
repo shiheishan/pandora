@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 sing 的 bufio.CopyConn / task.Group 做握手与诱饵中继，依赖 v1_server.go、v2_server.go、v3_server.go 的帧级握手状态机
-// [OUTPUT]: 对外提供 Service（NewService / NewConnection）、ServiceConfig、User、HandshakeConfig、WildcardSNI、DefaultHandshakeTimeout
-// [POS]: nativewire/shadowtls 的服务端入口：按版本走伪装握手、判定认证与否，认证流交给 Handler，未认证流回落到诱饵站点；判定前限时 HandshakeTimeout，判定后不限时；唯一调用方是 kernel/shadowtls.go
-
 package shadowtls
 
 import (

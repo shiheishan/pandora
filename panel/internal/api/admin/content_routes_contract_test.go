@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 router_source_test.go 的 routerSource，依赖 platform/sourcetest 按名取 domain/content 的发布、归档与 Page 的源码
-// [OUTPUT]: 对外提供 TestContentPageRouteContracts、TestContentWritesCarryTransactionalAudit
-// [POS]: api/admin 内容页面路由的权限与重认证门槛、内容写入与审计同事务
-
 package admin
 
 import (

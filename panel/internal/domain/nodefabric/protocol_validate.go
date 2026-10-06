@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 protocol_schema.go 的 ProtocolSchemas 与 CanonicalNodeType，依赖同包 protocol_validate_*.go 的分项校验，依赖标准库 encoding/json
-// [OUTPUT]: 对外提供 ValidateProtocolConfig；包内提供严格 JSON 解码（拒绝重复键、尾随内容）与取整数、查成员等小助手
-// [POS]: domain/nodefabric 协议配置的内核形状校验入口：从 protocol_schema.go 拆出。按协议逐字段校验并返回字段级中文错误，传输层、REALITY、mKCP 的分项校验在 protocol_validate_transport.go / protocol_validate_reality.go / protocol_validate_mkcp.go
-
 package nodefabric
 
 import (

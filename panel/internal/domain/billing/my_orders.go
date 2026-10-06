@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 orders / order_items / payment_intents / coupons / subscriptions / payments / payment_providers 表与 platform/db、platform/httpx
-// [OUTPUT]: 对外提供 ListMyOrders（含 MyOrderCounts 筛选段计数）、MyOrderDetail 及其行类型，ParseOrderStatuses（门户与后台订单列表共用的状态筛选口径）
-// [POS]: billing 的门户订单读模型；myOrderSelectSQL 是列表与详情共用的唯一行形状，订单名取订单项套餐名，流量包订单没有套餐名时取商品名（流量包名）；has_payment_intent 与查单接口「从没发起过支付回 409」同一口径（有无任何支付意图）
-
 package billing
 
 import (

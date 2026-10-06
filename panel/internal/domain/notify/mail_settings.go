@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/appearance 的 SiteNameTx（发件人名缺省回退站点名），依赖 platform 的 db 租户事务、audit 同事务审计、crypto 信封（经 SealSMTPPassword）、httpx 的请求 ID；读写 system_settings 的 mail.* 与 auth.registration_mode / auth.email_verification
-// [OUTPUT]: 对外提供 Service.MailSettings / Service.SaveMailSettings 与 MailSettings、MailSettingsInput
-// [POS]: domain/notify 的邮件与注册设置后台存取（从 api/admin/mail.go 下沉）：与 mailcfg.go 的 LoadSMTPConfig 读同一组 mail.* 键；全部设置项 upsert（SMTP 密码行缺失也写得进，R94）；邮箱验证缺行的回退值由调用方传入（identity.EmailVerificationDefault，notify 不能反向依赖 identity）
-
 package notify
 
 import (

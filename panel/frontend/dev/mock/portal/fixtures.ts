@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 AnonContext，依赖 ./catalog 的套餐与流量包目录，依赖 ./seeds 的历史订单、流水与兑换记录
- * [OUTPUT]: 对外提供 Scenario、SCENARIOS、setScenario、scenario、gate、portalState、subscriptionView、linkUrl、usageDays、makeSub、ARCHIVED_PRICE_ID、zoneMidnight、GIB、MOCK_TIMEZONE 与各夹具类型（含订单履约效果 OrderEffect、余额流水 LedgerEntry、兑换记录 RedemptionFixture）
- * [POS]: dev/mock/portal 的共享夹具：概览、我的订阅、订单、流量包、公告几个页面文件读同一份按用户建的内存状态（订阅挂在目录套餐上、ID 稳定、订阅地址可换发，另有余额与订单）；场景开关让浏览器实测空、多订阅、可缺席字段全缺席、错误与慢加载，只在 dev 存在
- */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { AnonContext } from '../types.ts'
 import { findPlan, findPrice, GIB, PACKS, PLANS } from './catalog.ts'

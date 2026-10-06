@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./logic 的全部纯函数，依赖 ./schemas 的 schema（核对契约形状的边界：nil 切片、可选的待补字段）
- * [OUTPUT]: 对外提供营销页纯逻辑的单元测试
- * [POS]: admin/screens/marketing 的单元测试：输入换算、优惠文案、券 / 卡码 / 提现的状态映射、面额与兑换内容、批次名、三张表单到请求体的构建与校验、待补·后端字段缺失时的降级；界面交互在浏览器里对 dev/mock/admin/marketing.ts 验收
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   GB,

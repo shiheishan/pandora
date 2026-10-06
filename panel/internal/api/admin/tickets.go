@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/support 的客服侧用例（*Atomic 版本）与负责人目录，依赖 platform/httpx 与 middleware 的幂等认领
-// [OUTPUT]: 对外提供 handlers 的 ticketAssignees、ticketQueue、ticketDetail、ticketReply、ticketAssign、ticketStatus、ticketEscalate；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 的客服工单（OPS-001）：从 handlers.go 拆出。负责人候选只来自专用的权限过滤查询；写操作消费幂等认领并写出事务内的预制响应；人工升级供演示与排障立即生效
-
 package admin
 
 import (

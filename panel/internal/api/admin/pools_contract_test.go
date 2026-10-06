@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 validateSetPlanPoolsRequest、domain/adminops 的 ValidateEditablePlanPoolVersion、platform/httpx 的错误码，依赖 platform/sourcetest 按名取套餐绑池处理器与 adminops.PlanPools / SetPlanPools、nodefabric.UpdateNodePool 的源码
-// [OUTPUT]: 对外提供 TestSetPlanPoolsRequestValidation、TestPlanPoolDraftAndConflictContract、TestPlanPoolHandlerSourceContract、TestPoolUpdatePreservesLifecycleLockContract
-// [POS]: api/admin 套餐绑池的校验、草稿与冲突语义、审计口径（SQL 与审计已下沉 adminops，这里跨包读源码），节点池更新保持生命周期锁（SQL 在 nodefabric）
-
 package admin
 
 import (

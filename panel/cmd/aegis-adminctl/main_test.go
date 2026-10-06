@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 upsertTenantRoleBinding、replacePasswordAndRevokeCredentials、readPasswordLine，依赖 platform/sourcetest 取本包全部源码
-// [OUTPUT]: 对外提供 TestUpsertTenantRoleBindingHandlesNullScopeWithoutOnConflict、TestReplacePasswordRevokesAllCredentialClasses、TestReplacePasswordFailsBeforeRevocationWhenPasswordRowIsAmbiguous、TestReadPasswordLinePreservesSpacesAndTrimsOnlyLineEnding、TestAdministratorPasswordCommandsRejectPasswordArguments
-// [POS]: cmd/aegis-adminctl 的单元与源码契约：角色绑定不用 ON CONFLICT、改密与吊销凭据的 SQL 次序、口令只经标准输入
-
 package main
 
 import (

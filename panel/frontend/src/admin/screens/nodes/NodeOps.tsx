@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState / ReactNode，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic、./queries、./schemas，依赖 ./nodes.module.css
- * [OUTPUT]: 对外提供 NodeOps（节点抽屉「操作」标签）
- * [POS]: admin/screens/nodes 抽屉的操作页（设计稿 d_ops，文案按契约改写）：发布配置（POST config/publish scope=node payload={}，等于强制重新下发）、复制节点（补目标服务器与复制路由两个选项，这也是已部署节点换机器的正确路径）、迁移（保留规则 5：只有从未部署过的草稿能迁移，409 时列出仍绑定的资产）、上线（R108 activate：生命周期在接入尾段 attesting 至 canary 时显示，一步推到 active 并让服务器就绪，409 原样显示原因、warnings 按 activationHint 用普通语气逐条提示下一步，R113）、启用 / 停用（status:batch 只放一项）、退役（R57 retire，不可逆）、删除（转终态 destroyed、名字可复用、历史保留）
- */
 import { useMutation } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { isApiError } from '../../../core/api'

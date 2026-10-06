@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ./catalog 的目录，依赖 ./fixtures 的夹具类型（仅类型）
- * [OUTPUT]: 对外提供 pastOrders、seedLedger、seedRedemptions
- * [POS]: dev/mock/portal 的历史数据种子（不是模块，不进登记表）：订单页要跨月分组、「显示更早」分页（多于 6 条）、已支付 / 已取消 / 超时 / 已退款 / 处理中各种状态，钱包要余额流水与礼品卡兑换记录；与 fixtures 分开放，免得夹具文件越写越长
- */
 import { randomUUID } from 'node:crypto'
 import { GIB, PACKS, PLANS } from './catalog.ts'
 import type { LedgerEntry, OrderFixture, RedemptionFixture, SubFixture } from './fixtures.ts'

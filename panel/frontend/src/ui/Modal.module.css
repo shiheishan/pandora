@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 Modal.tsx 与 Drawer.module.css 引用的类名
- * [POS]: ui/Modal 的样式：<dialog> 铺满视口当遮罩层，面板居中；< 640 贴底成为抽屉
- */
-
 .overlay {
   position: fixed;
   inset: 0;

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform 的 crypto/db/httpx/audit，依赖 service.go 的 validatePasswordFor
-// [OUTPUT]: 对外提供 ChangePasswordInput、Service.ChangePassword
-// [POS]: domain/identity 的改自己密码：校验旧密码、按网关域套长度规则（admin 至少 12 位）、同事务吊销会话与 refresh 令牌（门户保留当前会话，admin 全部吊销）并写审计
-
 package identity
 
 import (

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vite 的 Plugin 类型，依赖 node:crypto 的 randomUUID，依赖 node:http 的请求响应，依赖 ./mock/types 的上下文契约与路由匹配，依赖 ./mock/admin 与 ./mock/portal 的模块登记表，依赖 ./mock/admin/content 的 shareAppearance 与 ./mock/appearance-share 的 readSharedTheme（门户 appearance 取后台激活的主题），依赖 ./mock/admin/security 的 admin.writes 状态与开关切换通知，依赖 ./mock/quick-login 的令牌表
- * [OUTPUT]: 对外提供 mockApi(app) 插件、MOCK_ACCOUNTS 演示账号
- * [POS]: panel/frontend 的开发期假后端外壳，只在 vite serve 且未设 PANDORA_API 时挂上，永不进产物：持有账号、会话、rat 与幂等表（与 Go 中间件一致：只重放 2xx，非 2xx 同 key 同请求重新执行，换请求 409），自己只答外壳接口（登录 / 退出 / me / reauth / 改密码 / SSE，门户再加注册、快捷登录消费、站点开关、外观）并守 admin.writes 只读门（与 middleware.AdminWritesGate 同一张豁免表，关闭时其余非 GET 回 503），其余按入口依次询问 mock/admin 或 mock/portal 的模块处理器
- */
 import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin } from 'vite'

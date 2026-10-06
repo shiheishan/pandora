@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 zod
- * [OUTPUT]: 对外提供节点与服务器页全部接口的 zod schema 与推导类型：节点列表行、AdminNode（写接口回的节点，上线另带可缺省的 warnings）、协议 schema、服务器与其下属节点、节点池（members / plan_names / R104 allowed_user_groups）、节点身份、探针、单节点与全局路由、路由组（列表、组内路由、节点生效预览）、各写操作的响应
- * [POS]: admin/screens/nodes 与后端对账的唯一防线：形状取自 api-contract.md 后台-07 的节点 / 服务器 / 节点池 / 路由四节（含 R10 R13 R26 R27 R46 R56 R57 R77–R79 R104 R105 R108 R110 R113）并与 Go json tag 核对（路由组按 00096 与 nodefabric 的 RouteGroup / EffectiveRouting）；Go 指针字段没有 omitempty，缺值序列化成 null 而不是缺键，所以这些字段写 nullable；nil 切片写 nullable 并归一成 []
- */
 import { z } from 'zod'
 
 const iso = z.string()

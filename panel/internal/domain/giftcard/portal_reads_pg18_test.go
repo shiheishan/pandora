@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 codes.go 的 Stats / PreviewCode、redeem.go 的 MyRedemptions，依赖 batches_pg18_test.go 的 openGiftcardPG18 夹具
-// [OUTPUT]: 对外提供 TestGiftCardReadsPG18（run-pg18-gates.sh 的 giftcard 域）
-// [POS]: giftcard 读模型扩展的 PG18 集成门禁：已发行面额只算通用卡、门户预览不带运营数据并补套餐名与周期、兑换记录的卡码提示
-
 package giftcard
 
 import (

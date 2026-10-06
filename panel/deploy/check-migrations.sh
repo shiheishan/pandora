@@ -1,7 +1,4 @@
 #!/bin/bash -p
-# [INPUT]: 依赖 .env 的 POSTGRES_*、docker 容器 aegis-postgres、goose、与 deploy/ 并排的 migrations/
-# [OUTPUT]: 在一次性克隆库上重放待应用迁移的预检：文件名/编号/Up 标记校验、源库水位不高于发布物、续费切换闸门
-# [POS]: migrate.sh up 与 make check-migrations 的前置闸门；桩测试 check-migrations_mock_test.sh
 # Prove the exact production upgrade path on a disposable database clone.
 #
 # A scratch database is not a faithful release probe once migrations create
@@ -77,7 +74,7 @@ done
 
 # 这里原本钉死了「42 号槽位必须是 00042_client_auth_expand.sql，且 SHA 必须是
 # FFAF84B6…」。项目转为只做面板之后，CA42 客户端认证子系统冻结，它的两个迁移
-# 被移到 migrations/frozen-client-auth/（从未在任何环境应用过），42 号槽位改由
+# 移出了主线（从未在任何环境应用过，存档在 git 标签 archive/client-auth），42 号槽位改由
 # 00042_seed_registration_mode.sql 占用，这条校验会把每一次发布都拦下来。
 #
 # 把版本号和具体文件绑定本身就不牢靠 —— 任何一次重排号都会让它失效。真正要防的
@@ -249,7 +246,7 @@ if [ "$ORDERS_PRESENT" = t ]; then
     || { echo "migration precheck: invalid legacy renewal count" >&2; exit 78; }
   if [ "$LEGACY_ACTIVE_RENEWALS" -ne 0 ]; then
     echo "migration precheck: active legacy renewals=$LEGACY_ACTIVE_RENEWALS; release refused" >&2
-    echo "migration precheck: follow deploy/renewal-cutover.md, then rerun this gate" >&2
+    echo "migration precheck: cancel unpaid ones through the normal order-cancel flow, reconcile processing or paid ones order by order (never edit them with SQL), then rerun this gate" >&2
     exit 78
   fi
 fi

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../core/format 的 formatMoney，依赖 ../common/traffic 的 compactBytes，依赖 ../common/orders 的 intervalLabel，依赖 ./api 的 GiftCard / Redemption 类型
- * [OUTPUT]: 对外提供 TOPUP_PRESETS、parseTopupAmount、ledgerLabel、giftFace、giftNote、redemptionGain、normalizeGiftCode
- * [POS]: portal/screens/wallet 的纯映射：充值金额元 → 分与上下限校验（¥1–¥50000，契约门户-05）、余额流水的账本类型中文名（挂账按保留规则 6 称「挂账转入」）、礼品卡卡面与说明、兑换记录的「获得」列；有单元测试
- */
 import { formatMoney } from '../../../core/format'
 import { intervalLabel } from '../common/orders'
 import { compactBytes } from '../common/traffic'

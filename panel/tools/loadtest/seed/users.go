@@ -1,9 +1,3 @@
-// [INPUT]: 依赖 platform/db 的 InTx（租户上下文，RLS 生效）、platform/crypto 的 NewToken / HashToken / Envelope、platform/audit 的 Write，依赖 google/uuid 生成 v7 主键
-// [OUTPUT]: 包内提供 planTerms、loadPlanTerms、loadSubscribePrefix、userBatch、buildUserBatch、stmt 与各批量语句构造、seedUsers
-// [POS]: tools/loadtest/seed 的用户与订阅造数：15k 级别不能逐个走注册与下单，改用 unnest 数组的多行 INSERT，按批一个事务
-//        语句逐条镜像产品里的唯一实现——用户与口令照 adminops.GenerateUsers，订阅、开通事件、配额、订阅凭据照 billing/provision.go 的 provisionSubscription
-//        （先插 pending 再经状态机触发器 UPDATE 到 active）；口令哈希全批只算一次
-
 package seed
 
 import (

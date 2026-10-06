@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 file_owner_*_test.go 的 trustCurrentUserAsSecureOwner，依赖 checkpoint_hook.go 的 checkpointHookRoot
-// [OUTPUT]: 对外提供测试辅助 secureTempDir、withCheckpointHookRoot
-// [POS]: dbbackup 测试的公共夹具，给所有用到私密路径的用例造出能过安全校验的目录
-
 package dbbackup
 
 import (

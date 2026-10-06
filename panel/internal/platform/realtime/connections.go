@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 realtime.go 的 Hub（Count、ctx、rdb），依赖 go-redis 的 SET/SCAN/MGET/DEL
-// [OUTPUT]: 对外提供 SSEConnections；包内提供 Hub.reportConnections
-// [POS]: platform/realtime 的跨进程在线连接计数：每个网关进程定期把本机 SSE 连接数写进 Valkey 带 TTL 的键，后台系统状态求和（进程内 Count 只看得到本进程）
-
 package realtime
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 net/http 访问面板 UniProxy 端点（config / user / push / alive），依赖 core 的 User / UserTraffic 数据契约
-// [OUTPUT]: 对外提供 Client、Options、New，以及 Config / Users / Push / Alive / SetNodeType / SetUsersVersion / ForgetUsersVersion / ForgetConfigVersion
-// [POS]: pdnd/panel 的兼容通道客户端，持有配置与用户列表两份 ETag；stream.go 复用它的 Transport 与鉴权，signed.go 是并列的签名通道
-
 // Package panel 是节点端与面板之间的通信层。
 //
 // 走的是 UniProxy 协议（Xboard / V2board 兼容），而不是自定义协议：

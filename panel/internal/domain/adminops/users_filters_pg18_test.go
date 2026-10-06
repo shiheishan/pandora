@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/pg18test 打开 catalog_sales 域的一次性库，依赖 users.go 的 ListUsers / GetUser、bulk_users.go 的 PreviewBulk、bulk_mail.go 的 SendBulkMail，依赖 platform/crypto 的 HashToken
-// [OUTPUT]: 对外提供 TestAdminUsersFiltersAndFieldsPG18
-// [POS]: domain/adminops 的 PG18 测试（契约后台-03）：用户列表的状态多值、用户组、订阅状态与 q（id / 订阅令牌）筛选与当前订阅摘要，详情的配额、设备、统计（paid_totals 按币种拆开，R80）、邀请人与 Telegram；批量筛选的套餐、到期、订阅状态与样本行，群发正文变量替换
-
 package adminops
 
 import (

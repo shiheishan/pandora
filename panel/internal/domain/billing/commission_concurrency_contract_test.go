@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取佣金解冻、提现打款、提现申请、转余额与可用佣金口径各函数的源码，依赖 ErrWithdrawCurrencyAmbiguous
-// [OUTPUT]: 对外提供 TestCommissionMaturityPerEntryTransactionContract、TestCommissionMaturityLockBalanceAndCASContract、TestCommissionPayoutLockBalanceAndMonotonicStateContract、TestRequestWithdrawalUsesLedgerAvailabilityUnderSharedLock、TestCommissionTransferUsesSameLedgerAvailability、TestCommissionAvailabilityDeductsOnlyUnpostedWithdrawals、TestWithdrawCurrencyAmbiguousErrorIsStableConflict
-// [POS]: billing 分销佣金的并发源码契约：解冻逐笔一事务、先锁后校余额再 CAS 过账，打款与提现申请的锁序，可用佣金 = 账本余额 − 未过账在途提现（D-F-1）在提现、转余额与摘要三处同一口径
-
 package billing
 
 import (

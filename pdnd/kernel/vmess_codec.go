@@ -1,7 +1,3 @@
-// [INPUT]: 依赖标准库 crypto（aes / cipher / hmac / md5 / sha256）与 hash/fnv（头部 FNV-1a 校验），依赖 google/uuid（按用户 UUID 派生命令密钥），依赖 golang.org/x/crypto 的 chacha20poly1305 与 sha3
-// [OUTPUT]: 包内提供 VMess 正文的明文 / AEAD 分块读写器、vmessBodyAEAD、vmessCommandKey、vmessKDF、vmessOpen、vmessValidHash、vmessWriteResponse、aesGCM
-// [POS]: kernel 的 VMess 编解码：从 vmess.go 拆出。正文按安全类型分块加解密，密钥与 nonce 由 VMess AEAD KDF 派生，响应头按请求密钥加密写回
-
 package kernel
 
 import (

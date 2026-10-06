@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState / FormEvent，依赖 zod，依赖 ../core/api 的 isApiError，依赖 ../shell/runtime 的 useRuntime，依赖 ../shell/Logo，依赖 ../ui 的 Button / Input
- * [OUTPUT]: 对外提供 LoginPage
- * [POS]: admin 未登录时的整页：左侧深色品牌面板 + 右侧邮箱密码表单（管理后台.dc.html showLogin）；POST v1/auth/login 成功即写令牌，外框随登录态切换
- */
 import { useEffect, useState, type FormEvent } from 'react'
 import { z } from 'zod'
 import { isApiError } from '../core/api'

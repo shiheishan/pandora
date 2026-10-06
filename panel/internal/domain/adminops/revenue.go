@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 revenue_report_adjustments / orders / tenants / users 表，依赖 platform 的 db/httpx/audit
-// [OUTPUT]: 对外提供 RevenueTimeseries、RevenueAdjustment 与 List/Create/ReverseRevenueAdjustment
-// [POS]: domain/adminops 的收入读模型与收入调整：日界按租户时区，调整追加写、冲销另起反向记录，每条带登记人邮箱
-
 package adminops
 
 import (

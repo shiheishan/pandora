@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 enfein/mieru 的 apicommon.StreamListenerFactory（protocol.Mux 的监听注入点），依赖 net 的 Listener 语义与 net.ErrClosed，依赖 log/slog
-// [OUTPUT]: 包内提供 retryListenerFactory（把任一监听工厂产出的监听器包成 retryListener）、retryListener 与退避参数 acceptBackoffMin / acceptBackoffMax
-// [POS]: core/mieru 的 Accept 韧性层：mieru.go 的 Start 经 Mux.SetStreamListenerFactory 把它塞进上游 mux，上游 TCP Accept 循环因此看不到 EMFILE 这类暂时错误；退避参数与 kernel/accept_loop.go 同一套
-
 package mieru
 
 import (

@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 docker compose 数据基座、同目录 migrate.sh / bootstrap.sh / platform.sh、发布包二进制
-# [OUTPUT]: 在主机上安装或升级面板：首装生成 .env 机密与后台前缀并定为 AEGIS_ENV=production（要求 https 公网域名）、升级前全量备份、迁移、经 install-linux-binaries.sh 装二进制/单元/发布物绑定/logrotate、启动三网关
-# [POS]: deploy 安装链的入口（Docker 版），与 install-native.sh 并列；不替人造管理员，nginx 由 render-nginx.sh 另行渲染；升级不改现有 .env 的运行模式，只提示
 # 潘多拉面板一键安装 / 升级。
 #
 #   首次安装：  sudo ./install.sh
@@ -11,7 +8,7 @@
 # 发布包装出来的就是生产：首装写 AEGIS_ENV=production。生产模式下网关启动时
 # 要求 AEGIS_PUBLIC_BASE_URL 是 https://公网域名（platform/config 的
 # CanonicalPublicOrigin），节点接入要求发布物的 SHA-256 与版本（deploy/
-# release-artifact.env，见 docs/RELEASE-ARTIFACT-BINDING.md）。所以首装必须先拿到
+# release-artifact.env，随发布包生成）。所以首装必须先拿到
 # 域名：PANDORA_PUBLIC_BASE_URL 给出，或在终端里现场问；两者都没有就在动手前停下。
 #
 # 这个脚本把原先要手工串起来的七八步固化成一条命令：前置检查 → 生成配置

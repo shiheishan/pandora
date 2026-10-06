@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient，依赖 react 的 useCallback，依赖 ../../../shell/runtime 的 useApi，依赖 ../../actions 的 useCan / useFailure / useIntentKey（转出），依赖 ./schemas
- * [OUTPUT]: 对外提供 MK 查询键前缀、营销页各读接口的 hook（套餐目录、优惠券、兑换记录、礼品卡模板 / 统计 / 批次 / 卡码 / 使用记录、佣金总览、提现）、useInvalidateMarketing，并转出 admin/actions.ts 的 useCan / useFailure / useIntentKey
- * [POS]: admin/screens/marketing 的数据层：读只经 react-query + core/api；营销相关表没有变更通知，只有 orders.changed 与券的兑换、佣金的计提相关，挂在券列表与佣金总览上；写操作后按前缀整体失效
- */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'

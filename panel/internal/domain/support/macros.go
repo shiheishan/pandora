@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 ticket_macros 表（00078），依赖 platform 的 db/audit/httpx
-// [OUTPUT]: 对外提供 Macro、MacroInput、Service.ListMacros / SaveMacro / DeleteMacro
-// [POS]: domain/support 的快捷回复配置：租户共享的客服话术，与工单生命周期（service.go）无耦合，只被后台工单页读写
-
 package support
 
 import (

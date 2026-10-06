@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useId / useState / ChangeEvent / CSSProperties / FormEvent，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./theme 的表单、校验与预览函数，依赖 ./queries 的 useFailure / useIntentKey / useInvalidateContent，依赖 ./schemas 的 themeSaved / Theme，依赖 ./theme.module.css
- * [OUTPUT]: 对外提供 ThemeEditor（新建 / 另存为 / 编辑主题的抽屉）
- * [POS]: admin/screens/content 的主题编辑器：名称、code（新建时填、之后只读）、站点品牌（站点名必填、标语、Logo 上传成 data URL），light / dark 两组 43 个令牌按 design-tokens 分组（色值输入 + 色块，十六进制可点色块取色），右侧实时预览只作用于预览容器（CSS 变量挂在容器 style 上，不碰后台其它样式）。
- *        保存 POST v1/themes（reauth + 每次意图一把幂等键 appearance_theme_save，新建带 create: true，撞已有 code 回 409 标到 code 上）；后端 422 的 fields 逐个标回输入框，令牌错误在分段控件上计数并自动切到出错的那一组
- */
 import { useMutation } from '@tanstack/react-query'
 import { useId, useState, type ChangeEvent, type CSSProperties, type FormEvent } from 'react'
 import { useApi } from '../../../shell/runtime'

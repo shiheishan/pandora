@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 check-migrations.sh（up 前的克隆库预检）、.env 的迁移 DSN 或本机 PostgreSQL 凭据、与 deploy/ 并排的 migrations/、goose
-# [OUTPUT]: 特权迁移入口：迁移文件名与编号校验（严格递增、不重复、允许空号），拒绝 down/redo，以净化过的环境 exec goose
-# [POS]: deploy 迁移链的唯一公开入口，install.sh、install-native.sh、release-stop-the-world.sh 调它；桩测试 migrate_fail_closed_mock_test.sh、migrate-layout_mock_test.sh
 # Privileged goose wrapper. Runtime services never receive the migration DSN.
 set -Eeuo pipefail
 umask 077
@@ -71,9 +68,8 @@ for migration in "${migration_files[@]}"; do
   fi
   MAX_MIGRATION_VERSION=$version
 done
-# CA42 客户端认证子系统冻结后，它的两个迁移已移出主序列，原样留在
-# migrations/frozen-client-auth/（见其 README），代码与发布门禁脚本归档在 git 标签
-# archive/client-auth。原先「版本号 ≥42 就必须存在 00042_client_auth_expand.sql
+# CA42 客户端认证子系统冻结后，它的两个迁移已移出主线，连同代码与发布门禁脚本
+# 存档在 git 标签 archive/client-auth（panel/migrations/frozen-client-auth/）。原先「版本号 ≥42 就必须存在 00042_client_auth_expand.sql
 # 且 SHA 匹配」的三处闸门随之删除。
 #
 # 这些闸门守的是 client-auth 迁移本身，却以版本号为触发条件，于是 42 号槽位

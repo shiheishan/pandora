@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 gift_card_batches / gift_card_codes / gift_card_templates 三张表（迁移 00045、00069），依赖 platform/audit、platform/db、platform/httpx
-// [OUTPUT]: 对外提供 Batch、ListBatchesInput、ListBatches、BatchExport、ExportRow、ExportBatch、MaskCode
-// [POS]: giftcard 的批次视图与一次性导出：明文卡码只在生码响应的样例与这里的一次导出里出现，其余接口一律经 MaskCode 掩码；giftcard.go 的 GenerateCodes 在同一事务里写批次行
-
 package giftcard
 
 // 批次是「一次生成的一批码」。它存在的理由只有一个：记住这批码的明文

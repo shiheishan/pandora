@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的 GetGlobalRouting / SetGlobalRouting / GetNodeRouting / SetNodeRouting 与 NotifyNodeChanged，依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 nodeGetGlobalRouting / nodeSetGlobalRouting 与单节点的 nodeGetRouting / nodeSetRouting
-// [POS]: api/admin 的出站与分流（NODE-012）：全局路由（契约后台-07 GET / PUT v1/nodes/routing）与单节点路由只做解析、调用 nodefabric、提交后通知节点、写响应；校验、读写与审计在 nodefabric 的 routing_admin.go，生效口径在 routing_merge.go
-
 package admin
 
 import (

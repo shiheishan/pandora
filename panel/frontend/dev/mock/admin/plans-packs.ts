@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockResult / MockRoute
- * [OUTPUT]: 对外提供 packRoutes（由 plans.ts 展开进 plans 模块）
- * [POS]: dev/mock/admin 的「套餐（后台-04）· 流量包」四接口（修订 R73）：列表（status 筛选，在售在前再按 sort_order、创建时间）、新建（即在售）、修改（expected_updated_at 乐观锁，409 fields.updated_at = "current=<RFC3339Nano>"）、上下架（已是目标状态 409）。catalog.read / catalog.publish + reauth + 幂等 scope 照契约，校验键名与文案照 adminops/traffic_packs.go；按 DisallowUnknownFields 拒绝未知字段
- */
 import { randomUUID } from 'node:crypto'
 import type { Json, MockResult, MockRoute } from '../types.ts'
 

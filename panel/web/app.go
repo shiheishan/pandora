@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 admin/、portal/ 两个目录（make frontend-embed 从 frontend/dist 同步来的 Vite 产物，未构建时只有占位 index.html）
-// [OUTPUT]: 对外提供 AdminApp、PortalApp 两个 fs.FS，根即各自的 index.html 与 assets/
-// [POS]: web 的前端嵌入点，被 admin / public 两个 router 经 platform/webapp 挂到网关根 /
-
 package web
 
 import (

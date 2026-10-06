@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../types 的 MockModule，依赖 ./fixtures 的 portalState / subscriptionView / linkUrl / gate
- * [OUTPUT]: 对外提供 subs 模块的假接口 MockModule
- * [POS]: dev/mock/portal 的「我的订阅（门户-02）」假接口，归门户前端；形状照 api-contract.md（含修订 Rn）。GET v1/me/subscriptions 同时供外框头像菜单的套餐徽标使用（外框只读 plan_name / status，扩充字段不影响它）；订阅地址、拉取统计、节点摘要（保留规则 3：只有名称 / 协议 / 倍率）与换发
- */
 import { randomBytes } from 'node:crypto'
 import type { MockModule } from '../types.ts'
 import { gate, linkUrl, portalState, subscriptionView } from './fixtures.ts'

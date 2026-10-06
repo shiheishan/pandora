@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close / bearer / mockFetch，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/billing/schemas 的订单与收款 schema
- * [OUTPUT]: 对外提供订单与收款（后台-05）假接口的测试
- * [POS]: tests 的后台订单与收款假后端守卫：只读账号只看得到订单列表（支付记录、挂账、渠道、调整整块 404，人工开单先 404 不弹 reauth）；仪表盘「超时未支付」与待支付筛选同一份数据；订单列表能被页面 schema 接住、多值状态与未知状态 400、按 user_id 精确筛选且与用户详情的最近订单同一份数据；人工开单先 reauth、三种结算、201 重放、余额扣除 422、凭证号重复 409（中文原文，R114）；标记已支付开通订阅；向渠道查单（只读 404、缺键 400、不要 reauth，回调丢失的单补记开通、同键重放、换键 already_recorded，未付 / 渠道失败 503 / 没发起过支付 409）；取消的 state_version CAS、重放与已支付拒绝（与 Go 同序同文案，R114）；挂账按币种合计、转入余额记到用户余额且只能一次；订阅已结束的挂账能被页面 schema 解析并转入余额、订阅已结束的续费单标记已付回 409 且款项进挂账、同一凭证再标回 409（R117）；渠道启停；收入调整登记、生效日上限、冲销与重复冲销 409。起服务与发请求用 tests/mock-helpers.ts，登录与 reauth 辅助留在本文件（登录带状态断言）
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

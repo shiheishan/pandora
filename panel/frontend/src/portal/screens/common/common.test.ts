@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 core/api 的 ApiError，依赖同目录 traffic / orders / order-query / clients / subscriptions / intent 的纯函数与 schema，依赖 ../subs/labels
- * [OUTPUT]: 无（测试文件）
- * [POS]: portal/screens/common 与 subs 文案映射的单元测试：流量摘要与预测、用量柱、到期、套餐限速文案、订单标题与期限、深链与协议名、主订阅选择、schema 对 Go 编码形状的收放（无 omitempty 必填、缺席拒收）、刚下待支付单的取回（已不可支付即 forget、按新请求下单）、「我已支付，刷新状态」的响应形状与三种结果
- */
 import { describe, expect, it } from 'vitest'
 import { fetchStats, metaLabel } from '../subs/labels'
 import { importClients, protocolLabel, rateLabel } from './clients'

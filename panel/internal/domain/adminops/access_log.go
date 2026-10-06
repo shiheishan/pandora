@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/db 的租户事务，读 audit_events / users / subscription_fetch_log / subscriptions
-// [OUTPUT]: 对外提供 AccessLogQuery、AccessAuditRow、AccessFetchRow 与 Service.ListAccessLog
-// [POS]: adminops 的全站访问明细读模型（从 api/admin 的 access_log.go 下沉）：审计与订阅拉取两张表在同一个事务里各取够 limit+offset 条，归并、切页、解密与归属地都在 handler；分类前缀、IP 哈希与账号筛选由 handler 算好传进来
-
 package adminops
 
 import (

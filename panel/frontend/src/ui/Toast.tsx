@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 context、state、ref 与 effect，依赖 ./Toast.module.css
- * [OUTPUT]: 对外提供 ToastProvider、useToast 与 ToastTone 类型
- * [POS]: ui 的轻提示：反色底（浅色模式墨底、深色模式纸白底）+ 状态小圆点，底部居中，2.6 秒消失（设计稿外壳的时长）；容器是 popover，每条新提示都把它重新推到顶层，所以弹窗开着时也看得见
- */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import css from './Toast.module.css'
 

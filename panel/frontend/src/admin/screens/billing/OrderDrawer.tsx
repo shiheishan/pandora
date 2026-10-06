@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime / formatMoney / relativeTime，依赖 ../../../core/router 的 href，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / Drawer / Empty / Input / Modal / Skeleton / Tag / TextArea / useToast，依赖 ../../actions 的 useCan / useFailure / useIntentKey，依赖 ../users/api 的 useInvalidateUsers，依赖 ./api，依赖 ./model，依赖 ./Billing.module.css
- * [OUTPUT]: 对外提供 OrderDrawer
- * [POS]: 订单抽屉（480 宽，后台-05）：头部（订单号、状态、创建时间）、facts（用户可点到用户抽屉、内容、金额与应付、渠道、来源「人工开单 · 开单人」、支付截止与取消原因）、多项订单的订单项、支付记录（billing.payment.read 才请求，没有就整块不画）、发起过支付的待支付单的「向渠道查单」（写权限 + 幂等，结果留在框里，补记后整体失效重画）、待支付单的「手工标记已支付」（凭证号 + 收款说明，reauth + 幂等）与底部「取消订单」（取消原因必填，带 state_version，幂等）
- */
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatDateTime, formatMoney, relativeTime } from '../../../core/format'

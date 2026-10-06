@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 node_admin.go 的 AdminNode、输入类型、校验与 lockServerCapacity，依赖 config_publish.go 的 lockLegacyConfigRelease / syncLegacyDesiredConfigVersion，依赖 platform 的 audit/db/httpx
-// [OUTPUT]: 对外提供 Service 的 CloneAdminNode、MoveAdminNode、ReorderAdminNodes
-// [POS]: domain/nodefabric 后台节点的摆放：从 node_admin.go 拆出。复制在发布锁下物化当前适用配置（带路由复制时私有出站、规则与所在路由组成员一起复制），移动与排序带 row_version 乐观锁并同事务审计
-
 package nodefabric
 
 import (

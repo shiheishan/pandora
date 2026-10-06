@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 ./app.go 的 AdminApp / PortalApp
-// [OUTPUT]: 对外提供前端嵌入产物契约测试：入口存在且域标记正确；真实产物无内联脚本与内联样式、引用的资源全部在 assets/ 内
-// [POS]: web 的嵌入完整性守卫：占位页时只查入口，make frontend-embed 之后同一份测试会检查真实 Vite 产物，CI 两种形态都跑
-
 package web
 
 import (

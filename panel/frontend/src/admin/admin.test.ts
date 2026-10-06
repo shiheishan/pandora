@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ../core/api 的 ApiError，依赖 ./actions 的 canWith / createIntentKey / classifyFailure / handleFailure（幂等键本身的测试在 core/intent.test.ts），依赖 ./modules、./reauth、./me、./tasks 的 tasksSchema / taskCount、./ChangePasswordDialog 的 passwordStrength、./EventsCapsule 的 describeEvent
- * [OUTPUT]: 对外提供 admin 外框纯逻辑的单元测试
- * [POS]: admin 的单元测试：路由规范化、标签回落与 rest 子路由、读权限表与按权限取舍、⌘K 筛选与隐藏、reauth 桥的单次弹框与结算、身份文字的契约映射与回退、强度条、实时事件条目、「需要处理」计数的严格 schema 与徽标取数；界面交互在浏览器里对 dev/mock-api 验收
- */
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../core/api'
 import { canWith, classifyFailure, createIntentKey, handleFailure } from './actions'

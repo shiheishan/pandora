@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 ledger.go 的 normalBalance 与科目类型，读写 order_reservations 及其子资源表
-// [OUTPUT]: 对包内提供 orderTotal（金额恒等式）、reservationLockRequest、lockOrderReservationGraph、captureLockedReservation、prepareAndLockLedgerAccounts 与锁类型
-// [POS]: billing 结算与释放共用的预留图加锁与校验：按 kind 校验订单项形状（addon 的唯一一行指向流量包，upgrade 的总额扣掉剩余价值折算），统一 UUID 排序加锁避免死锁
-
 package billing
 
 import (

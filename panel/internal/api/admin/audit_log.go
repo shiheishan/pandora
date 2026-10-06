@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/adminops 的 ListAudit / ExportAudit，依赖同包 profile.go 的 decryptIP 解来源 IP 密文，依赖 platform/httpx
-// [OUTPUT]: 对外提供 listAudit、exportAudit 两个处理器与 auditExportRange 日期解析
-// [POS]: api/admin 的审计日志处理器（后台-09「审计日志」表格与导出按钮）；导出挂 security.audit.read + ops.export + reauth，路由在 router.go 审计段
-
 package admin
 
 import (

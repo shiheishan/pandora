@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ../../../core/api 的 ApiError，依赖 ./api 的 schema，依赖 ./model 的纯逻辑
- * [OUTPUT]: 无（测试）
- * [POS]: 账号安全的单元测试：会话 / Telegram / 偏好 schema（omitempty 缺席、枚举收紧）、设备名解析、会话排序、新密码本地校验（与后端同序）、改密错误落位（401 落当前密码、fields.password 落新密码）、倒计时与 t.me 深链
- */
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../../core/api'
 import { preferenceSchema, quickLoginSchema, sessionSchema, telegramSchema } from './api'

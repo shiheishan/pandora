@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/billing 的 CreateManualOrder / MarkOrderPaid，依赖 middleware 的幂等声明与 platform/httpx、chi 的路径参数
-// [OUTPUT]: 对包内提供 createManualOrder、markOrderPaid 两个处理器
-// [POS]: api/admin 后台-05 人工开单（settlement: grant | pending | offline）与标记线下已收款的 HTTP 外壳；人工单回放业务层预写的 201 响应，路由在 router_billing.go（两者都挂近期重认证）
-
 package admin
 
 import (

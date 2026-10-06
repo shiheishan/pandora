@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 panel 的 SignedClient（真实验签与上报）与 Client（用户走兼容通道），依赖 user_resync_test.go 的 userTableCore / fakeUniProxy 夹具，依赖 net/http/httptest 起一个按生效发布契约签名的假面板
-// [OUTPUT]: 对外提供 fakeSignedPanel、rejectingCore、preservingRejectCore 夹具与签名通道坏版本不重复应用、只报一次失败、节点已停时逐轮重试的回归测试
-// [POS]: pdnd/node 的签名通道失败台账守卫：同一份装不上的发布每轮都会被面板重新签发（issued_at / signature 变、内容不变），节点端必须认出它是同一版本；config_rollback_test.go 守单次回滚本身，user_resync_test.go 守兼容通道的同类重试
-
 package node
 
 import (

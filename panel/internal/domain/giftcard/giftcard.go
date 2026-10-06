@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 gift_card_templates / gift_card_codes / gift_card_batches 表，依赖 billing 经 Granter 接口注入的发放能力，依赖 platform/audit、platform/db、platform/httpx
-// [OUTPUT]: 对外提供 Service、New、Granter、模板用例（SaveTemplate/ListTemplates）、GenerateCodes 与 GenerateOutput、奖励与条件类型
-// [POS]: giftcard 的模板与生码核心：生码与批次行同一事务写入，响应只带明文样例；批次视图与一次性导出在 batches.go，读模型在 codes.go，兑换在 redeem.go
-
 // Package giftcard 实现礼品卡 / 卡密（对标 Xboard gift-card）。
 //
 // 三种卡型：

@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 Commission.tsx 用到的类名
- * [POS]: admin/screens/marketing 佣金与提现的样式（设计稿 t_commission）：提现列表与设置卡 2 : 1 自动换行（520 / 280 起），提现行 56 高、拒绝描边危险色、打款实心成功色；设置卡的比例滑块与两列输入
- */
-
 .columns {
   display: flex;
   flex-wrap: wrap;

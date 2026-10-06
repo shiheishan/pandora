@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/db 的租户事务，读 tickets / ticket_messages / withdrawals / nodes / orders / notification_deliveries 与 app.verify_ledger_all()；通知积压与 dashboard.go 共用 dashboardNotificationBacklogSQL
-// [OUTPUT]: 对外提供 DashboardTasks、DashboardTaskKinds 与各项结构、Service.DashboardTasks
-// [POS]: domain/adminops 的仪表盘「需要处理」汇总（契约后台-01 GET v1/dashboard/tasks）：一个事务里按调用方有权看的项逐项计数，没权限的项不查也不出现
-
 package adminops
 
 import (

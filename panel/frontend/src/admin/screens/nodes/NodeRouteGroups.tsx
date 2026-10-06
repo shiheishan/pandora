@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的 sameIds / ruleSummary / sourceLabel / sourceTone，依赖 ./queries、./schemas，依赖 ./nodes.module.css 与 ./infra.module.css
- * [OUTPUT]: 对外提供 NodeGroupMembership（节点所属路由组的勾选与保存）与 EffectivePreview（节点生效路由的只读预览）
- * [POS]: admin/screens/nodes 抽屉「路由」标签里与路由组（00096）有关的两块，被 NodeRouting 摆在私有路由编辑的上下：所属组按组的生效顺序列出、可勾选调整（PUT v1/nodes/{id}/route-groups 带节点 row_version，与单节点路由 PUT 同级，只要发布权限；退出组时本节点仍有规则指向该组出站会 409 原文提示）；预览取 GET v1/nodes/{id}/routing/effective，与下发给节点的同一口径，规则按匹配顺序、出站显示胜出的那条，每条标注来源（本节点 / 路由组 · 名称 / 全局）
- */
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'

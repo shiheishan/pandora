@@ -1,8 +1,3 @@
-// [INPUT]: 依赖 enroll.go 的 nodeClient（签名通道与 UniProxy 两套节点凭据）与 nodeIdentity，依赖 ltkit 的 ManifestUser；可选地对公共网关真拉一次订阅
-// [OUTPUT]: 包内提供 verifySeed、uniProxyUserIDs、checkUserSet
-// [POS]: tools/loadtest/seed 的收尾核对：造完数就以节点的身份把网关敲一遍，证明压测开跑时节点真能被服务——
-//        签名 GET /v1/nodes/effective-config 验签通过并下发配置，UniProxy config 用运行令牌拿得到，user 列表恰好是这一批造出的全部用户
-
 package seed
 
 import (

@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 subs/index.tsx 用到的类名
- * [POS]: portal/screens/subs 的样式，逐项取自设计稿门户-02：地址框 40 高 --bg 底等宽字、列表行 48 高 --surface-2 分隔、两卡按 minmax(min(100%,420px),1fr) 折行；节点行去掉国家与负载两列（保留规则 3），改为 名称 / 协议 / 倍率
- */
-
 .page {
   display: flex;
   flex-direction: column;

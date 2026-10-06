@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 go/ast、go/parser 解析 panel/internal 下的全部非测试源码
-// [OUTPUT]: 对外提供 TestUserFacingErrorMessagesAreChinese、TestNodeOnlyExemptionsStayOffUserGateways
-// [POS]: platform/httpx 的源码契约测试：4xx 文案给页面直接显示（前端已删英文→中文映射，R116），字面量不许是纯英文；节点端给机器看的文案按函数清单豁免
-
 package httpx
 
 import (

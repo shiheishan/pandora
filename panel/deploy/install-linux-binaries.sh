@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖带外获得的 PANDORA_RELEASE_MANIFEST_SHA256、发布目录的 SHA256SUMS、同包 platform.sh / preflight-linux.sh、systemctl
-# [OUTPUT]: 以可回滚事务把二进制、运维脚本、数据文件（含 release-artifact.env）、systemd 单元装进 /opt/aegispanel 与 /etc/systemd/system
-# [POS]: install.sh 第 8 步调用的事务安装器；只装文件不启服务，失败整体回滚，未完成的事务让下一次安装 fail closed
 set -Eeuo pipefail
 umask 022
 
@@ -150,7 +147,7 @@ done
 # 以 EnvironmentFile= 加载；和二进制同一事务替换，升级随包覆盖、失败随包回滚。
 # nginx-aegis.conf 是 render-nginx.sh 读的同目录模板：不装它，安装结束时提示的
 # $DEST/deploy/render-nginx.sh 会报 nginx template not found
-for data_file in BACKUP.md backup-webdav.example.json .env.example nginx-aegis.conf \
+for data_file in backup-webdav.example.json .env.example nginx-aegis.conf \
                  docker-compose.yml configure-app-role.sql release-artifact.env; do
   stage_file "$RELEASE_DIR/deploy/$data_file" "/opt/aegispanel/deploy/$data_file" 0644
 done

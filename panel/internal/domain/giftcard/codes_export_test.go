@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 codes_export.go 的 maskedCodeSQL、codesExportSelect、CodeReportRow，依赖 codes.go 的 codeFilterCond、CodeFilter.check 与 batches.go 的 MaskCode / maskedTail
-// [OUTPUT]: 对外提供 TestCodesExportSQLReadsOnlyTheMask、TestMaskedCodeSQLMirrorsMaskCode、TestCodeReportRowHasNoPlaintextField、TestExportCodesRejectsBadFilterBeforeTouchingTheDatabase
-// [POS]: giftcard 掩码报表导出的单元守卫：导出 SQL 除掩码表达式外不碰 code 列、SQL 掩码与 MaskCode 同形、报表行没有放明文的字段；逐行比对在 codes_export_pg18_test.go
-
 package giftcard
 
 import (

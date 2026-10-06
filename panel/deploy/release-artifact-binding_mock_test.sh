@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 build-release.sh、install-linux-binaries.sh、install.sh、install-native.sh、systemd/aegis-node.service、release-artifact.env.example
-# [OUTPUT]: 发布物绑定全链路的静态契约：生成（两个架构 SHA-256 + 版本，不含 AEGIS_ENV）→ 打包 → 事务安装到固定位置 → aegis-node 以 EnvironmentFile= 加载；首装定为 production
-# [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；只读源码，不构建、不需要 root；链路说明见 docs/RELEASE-ARTIFACT-BINDING.md
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

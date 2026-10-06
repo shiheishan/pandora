@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 traffic_packs.go 的 validateTrafficPackInput 与各用例的事务外校验，依赖 catalog_test.go 的 expectHTTPCode
-// [OUTPUT]: 对外提供 TestTrafficPackInputValidation、TestTrafficPackWritesFailClosedBeforeTouchingTheDatabase
-// [POS]: adminops 流量包目录管理的单元测试：输入边界与「没带乐观锁、状态不合法、id 不合法」都在进事务之前被拒
-
 package adminops
 
 import (

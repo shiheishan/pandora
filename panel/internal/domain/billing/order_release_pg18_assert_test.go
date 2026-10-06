@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 order_release_pg18_fixture_test.go 的 orderReleasePG18Fixture 与事务工具
-// [OUTPUT]: 包内提供释放、挂账与佣金的共用断言：orderReleasePG18AssertHeldResources / ReleasedResources / Released / OrderStatus / Quarantine / PaymentShape / CommissionCount / CommissionState
-// [POS]: 本包 PG18 测试的共用断言库，TestOrderReleasePG18、TestSettlementPG18 与各复用夹具的 PG18 测试共用
-
 package billing
 
 import (

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ../../queries 的 commissionSchema，依赖 ./api 的 inviteSchema，依赖 ./model 的纯映射
- * [OUTPUT]: 无（测试）
- * [POS]: 邀请返利的单元测试：佣金概况 schema（R69 字段必回、列表不收 null、状态枚举封闭）、邀请链接与横幅文案、邀请码用量、提现金额与表单锁、三类记录的合并与状态映射
- */
 import { describe, expect, it } from 'vitest'
 import { commissionSchema, type Commission } from '../../queries'
 import { inviteSchema } from './api'

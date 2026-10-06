@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 users.go 的 buildUserBatch 与各批量语句构造、retire.go 的 expireSubscriptionsSQL 与 retireBatches，依赖 platform/crypto 的 HashToken / Envelope
-// [OUTPUT]: 单测：一批的列数组等长且与命名一致、令牌前缀与哈希同面板口径、信封密文以订阅 ID 为 aad 能解开、每条语句的占位符与参数一一对应、退役只圈识别标记
-// [POS]: tools/loadtest/seed 的批量 SQL 构造测试，纯内存；真库上的约束、RLS 与触发器由 CI 冒烟栈上的小规模 seed 试跑覆盖
-
 package seed
 
 import (

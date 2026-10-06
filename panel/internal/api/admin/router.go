@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/* 各服务（经 Deps 注入）、middleware 的鉴权/限流/幂等/权限链、platform/webapp 的 Mount 与 web.AdminApp
-// [OUTPUT]: 对外提供 Deps、NewRouter：admin 网关的完整 chi 路由表
-// [POS]: api/admin 的装配点：全局中间件链、根 / 与 /assets/* 经 webapp 下发后台前端、/v1 登录与已登录分组；分组内的业务路由由 router_<模块>.go 的 register*Routes 按序注册
-
 // Package admin 实现管理控制台 API（Admin 域）。
 //
 // 与 Public 域的关键差异（ARC-002「管理面隔离」）：

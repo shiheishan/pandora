@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 render-nginx.sh 与 nginx-aegis.conf
-# [OUTPUT]: 渲染器契约测试：后台前缀与站点域名都来自 .env，模板不残留占位符或任何具体部署的域名，listen 只许 80/443 与回环 9080（无公网明文入口），非法输入拒绝渲染
-# [POS]: deploy 安装链的边缘入口测试，只用虚构域名 panel.example.test，不碰真实 nginx
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

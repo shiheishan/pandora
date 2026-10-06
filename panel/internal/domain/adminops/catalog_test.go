@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 catalog*.go 的校验函数与 platform/httpx 的错误码，依赖 platform/sourcetest 按名取版本语义更新链路的源码
-// [OUTPUT]: 对外提供 TestValidatePriceAuthoringPolicy、TestValidateVersionSafeReplacement、TestVersionUpdatePoolContract、TestVersionUpdatePoolFieldPresence、TestVersionUpdateCannotMutatePoolBindings、TestPublishPrerequisitesFailClosed、TestOptimisticConflictIs409、TestPublishGroupPriceCoverage；包内测试共用的 expectHTTPCode（traffic_packs 与 catalog_sales 的测试也用它断言错误码）
-// [POS]: adminops 套餐目录的单元与源码契约：定价策略、版本替换、旧 pool_ids 拒绝、发布前置与双令牌冲突
-
 package adminops
 
 import (

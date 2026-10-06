@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 ltkit 的 Manifest（用户邮箱、共用口令、订阅令牌、固定来源 IP、订阅前缀与订阅 id）与 Recorder，依赖 traffic.go 的四类流量、sched.go 的开环调度、preflight.go 的限流预估
-// [OUTPUT]: 对外提供 Main（users 子命令）与 BurstMain（burst 子命令，实现在 burst.go）
-// [POS]: tools/loadtest/userload 的 users 入口：解析参数、预热（登录活跃池与后台、取订阅前缀）、开环跑四类流量、写 users.json/.txt；被 tools/loadtest/main.go 分发
-
 // Package userload 模拟用户侧的混合流量（订阅拉取、门户页面、后台列表）与 burst（改一个用户让全部节点重拉用户表）。
 //
 // 每个模拟用户用 manifest 里固定的来源 IP，经 X-Real-IP 带给面板：压测机经 nginx 打面板时

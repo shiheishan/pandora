@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./token 的 createTokenStore / tokenStorageKey
- * [OUTPUT]: 对外提供 token.ts 的单元测试
- * [POS]: core/token 的单元测试：两个入口的键互不覆盖、存储不可用时退回内存、本页与跨标签页变化都通知订阅者
- */
 import { describe, expect, it, vi } from 'vitest'
 import { createTokenStore, tokenStorageKey } from './token'
 

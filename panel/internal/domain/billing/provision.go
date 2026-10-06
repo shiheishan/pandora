@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/db 与 platform/httpx，读套餐版本快照与配额定义
-// [OUTPUT]: 包内提供 provisionSpec、provisionSubscription、initQuotaBalances、grantPlanDirect
-// [POS]: billing 开订阅与建配额的唯一实现：从 checkout.go 拆出。下单履约（快照来自订单）与礼品卡套餐兑换（快照来自套餐当前版本）必须产出同样的订阅与凭据，所以共用这里
-
 package billing
 
 import (

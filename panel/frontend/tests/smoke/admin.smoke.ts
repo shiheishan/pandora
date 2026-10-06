@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ./harness 的 state / rawGet / runTable / Row，依赖后台各页面模块里页面实际使用的 zod schema（src/admin/**）
- * [OUTPUT]: 后台的形状冒烟：以平台管理员身份对后台前端调用的每个 GET 接口，用调用处的那个 schema 解析真实网关的响应；两个 CSV 导出与事件流只验状态与内容类型
- * [POS]: tests/smoke 的后台接口表，每个调用处一行（at 列记调用处所在的文件，只用于用例标题与结果表，不参与断言）；portal.smoke.ts 是门户的同构表
- */
 import { adminMeSchema } from '../../src/admin/me'
 import { tasksSchema } from '../../src/admin/tasks'
 import { adjustmentsSchema, latePaymentsSchema, orderResponseSchema, ordersSchema, paymentHistorySchema, providersSchema } from '../../src/admin/screens/billing/schemas'

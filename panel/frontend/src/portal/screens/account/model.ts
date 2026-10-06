@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../core/api 的 ApiError，依赖 ../../../core/format 的 relativeTime
- * [OUTPUT]: 对外提供 deviceName、lastSeenLabel、validateNewPassword、passwordErrors / PasswordErrors、PREF_CATEGORIES / PREF_CHANNELS / PREF_ROWS / PrefCategory / PrefChannel、secondsLeft、formatCountdown、shortUserId、telegramDeepLink、sortSessions
- * [POS]: portal/screens/account 的纯逻辑（契约门户-10）：会话设备名由 user_agent 推出「浏览器 / 客户端 · 系统」；改密的本地校验（≥ 8 字符、字母与数字、≤ 256 字节）与错误落位（401 当前密码不正确落到当前密码框，fields.password 落到新密码框）；通知偏好三行 × 两列；快捷登录与绑定码的倒计时；有单元测试
- */
 import { ApiError } from '../../../core/api'
 import { relativeTime } from '../../../core/format'
 

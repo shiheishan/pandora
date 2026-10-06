@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 Checkbox.tsx 用到的类名
- * [POS]: ui/Checkbox 的样式：未选 1.5px --border-strong 描边，选中填 --accent、勾用 --on-accent
- */
-
 .wrap {
   display: inline-flex;
   align-items: center;

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取 handlers.createOrder 的源码
-// [OUTPUT]: 对外提供 TestCreateOrderHandlerOwnsClaimAndPreparedResponse
-// [POS]: api/public 下单处理器自己消费幂等认领并写出预制响应，不重新编码
-
 package public
 
 import (

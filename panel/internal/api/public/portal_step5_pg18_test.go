@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/pg18test 打开 public_api 域的一次性库（publicAPIFixture），依赖本包 my_subscriptions.go / payment_methods.go / content.go / handlers.go 的处理器，依赖 domain 的 support / content / identity / billing / subscription 服务
-// [OUTPUT]: 对外提供 TestPortalStep5PG18
-// [POS]: api/public 第 ⑤ 步的 PG18 测试：我的订阅扩展字段与续费价可用性、工单 closed_reason 与关联订单、帮助 q 与 platform=any、改密保留当前会话、支付方式展开
-
 package public
 
 import (

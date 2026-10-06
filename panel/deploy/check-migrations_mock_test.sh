@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 check-migrations.sh、仓库真实的 ../migrations/，docker/goose/env 用桩脚本代替
-# [OUTPUT]: check-migrations.sh 的动态契约：编号规则、Up 标记、续费闸门、口令不进 argv、克隆库清理
-# [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要数据库或 root
 # Dynamic tests for strict migration extraction and password argv hygiene.
 set -Eeuo pipefail
 umask 077
@@ -190,11 +187,12 @@ run_check "$ROOT/migrations" >"$TMP/real.out" 2>&1 \
   || { echo 'the real migrations directory was rejected' >&2; cat "$TMP/real.out" >&2; exit 1; }
 grep -Fq 'migration precheck complete' "$TMP/real.out"
 
-# CLIENT-AUTH-00042 is intentionally frozen outside the runtime migration
-# directory. The precheck must not retain the old version-number guard, while
-# the current 00042 runtime migration remains part of the ordinary sequence.
+# CLIENT-AUTH-00042 lives only in the archive/client-auth tag, outside the
+# runtime migration directory. The precheck must not retain the old
+# version-number guard, while the current 00042 runtime migration remains part
+# of the ordinary sequence.
 [ -f "$ROOT/migrations/00042_seed_registration_mode.sql" ]
-[ -f "$ROOT/migrations/frozen-client-auth/00042_client_auth_expand.sql" ]
+[ ! -e "$ROOT/migrations/00042_client_auth_expand.sql" ]
 if grep -Fq 'CLIENT-AUTH-00042 is pending' "$CHECK"; then
   echo 'stale CLIENT-AUTH-00042 version guard remains in check-migrations.sh' >&2
   exit 1
@@ -211,7 +209,7 @@ legacy_status=$?
 set -e
 [ "$legacy_status" -eq 78 ]
 grep -Fq 'active legacy renewals=2; release refused' "$TMP/legacy-renewal.out"
-grep -Fq 'follow deploy/renewal-cutover.md' "$TMP/legacy-renewal.out"
+grep -Fq 'cancel unpaid ones through the normal order-cancel flow' "$TMP/legacy-renewal.out"
 [ ! -e "$TMP/create.id" ] && [ ! -e "$TMP/drop.id" ]
 rm -f "$TMP/legacy-renewal.count"
 

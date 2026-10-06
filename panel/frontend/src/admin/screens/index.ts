@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 lazy，依赖 ../modules 的 ModuleKey
- * [OUTPUT]: 对外提供 AdminScreenProps、AdminScreen、SCREENS
- * [POS]: admin 的页面登记表：十个模块各一个懒加载入口，Shell 的内容区按路由取组件渲染；每个模块一个目录、一个独立块，本文件不再改动
- */
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 import type { ModuleKey } from '../modules'
 

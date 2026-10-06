@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 migrate.sh、../migrations/*.sql，goose 用桩脚本代替
-# [OUTPUT]: 迁移目录定位契约：不设 AEGIS_MIGRATIONS_DIR 时只认与 deploy/ 并排的 migrations/
-# [POS]: deploy 的桩测试，与 migrate_fail_closed_mock_test.sh 并列；不需要数据库或 root
 set -Eeuo pipefail
 umask 077
 

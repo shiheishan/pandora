@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 codes_export.go 的 ExportCodes / CodesExportMax、codes.go 的 ListCodes 与 CodeFilter、giftcard.go 的 GenerateCodes、batches.go 的 ExportBatch / MaskCode，依赖 batches_pg18_test.go 的 openGiftcardPG18 夹具
-// [OUTPUT]: 对外提供 TestGiftCardCodesReportPG18（run-pg18-gates.sh 的 giftcard 域）
-// [POS]: giftcard 掩码报表导出的 PG18 集成门禁：与列表同筛选同行数、SQL 掩码与 MaskCode 逐行一致、任何明文都不出现、兑换人与时间、行数上限 422、每次导出一条不含码的审计、租户隔离；不影响批次的一次性明文导出
-
 package giftcard
 
 import (

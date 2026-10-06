@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close / loginAs / bearer / mockFetch，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
- * [OUTPUT]: 对外提供门户「我已支付，刷新状态」假接口的测试
- * [POS]: tests 的门户查单假后端守卫（PAY-009）：响应带齐 Go OrderPaymentQuery 的字段（order-query.ts 依赖 tsx 进不了 node 侧类型检查，按字段断言；schema 本身在 common.test.ts 测）；发起支付没付答 unpaid，假收银台「回调丢失」之后查到已付并补记、订单变已履约，再查是 already_recorded；没发起过支付 409、种子处理中单 503、非 UUID 404、每账号每分钟 6 次后 429；列表与明细的 has_payment_intent 一致、发起支付前 false 之后 true
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

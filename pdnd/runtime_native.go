@@ -1,9 +1,5 @@
 //go:build !compat
 
-// [INPUT]: 依赖 kernel 的 NewNativeCoreWithLogger，依赖 core 的 Core 契约与 main.go 传入的 *slog.Logger
-// [OUTPUT]: 包内提供 newRuntime（默认构建）与 runtimeNativeOnly=true
-// [POS]: pdnd 默认构建的运行时选择：只链接 NativeCore，native_only:false 直接拒绝；与 runtime_compat.go 按构建标签二选一
-
 package main
 
 import (

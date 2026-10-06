@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 sing-shadowtls v3 客户端与 sing-shadowsocks，命令行给出节点地址、-p ShadowTLS 密码、-u 内层密码
-// [OUTPUT]: 手工运维工具：连上节点、解开外壳后经内层发一次 HTTP 请求，证明转发真的通了
-// [POS]: pdnd/tools 的节点端连通性探针，不参与构建产物；两个密码都没有默认值，缺一个就退出
-
 // shadowtlscheck 是一个最小 ShadowTLS + Shadowsocks 客户端，
 // 验证外壳解开之后内层真的在转发。
 //

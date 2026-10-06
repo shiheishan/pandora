@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ./api 的 isApiError / newIdempotencyKey
- * [OUTPUT]: 对外提供 IntentKey、createIntentKey、useIntentKey、endsIntent
- * [POS]: core 的幂等键约定（契约 1.5 与 R85），两个入口共用一份：一次用户意图一把键，同一意图的重试与 reauth 重放复用它，意图变了换新键，动作结束后丢弃；后台 admin/actions.ts 原样转出，门户 portal/screens/common/intent.ts 在它之上加下单防重复
- */
 import { useState } from 'react'
 import { isApiError, newIdempotencyKey } from './api'
 

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 plugin_hooks / plugin_hook_deliveries（00051，00081 加 last_duration_ms），依赖 platform 的 audit/crypto/db/httpx
-// [OUTPUT]: 对外提供 EventInfo 与 Events 事件目录（小写 name / desc）、KnownEvent、Service、New，钩子增删查、Emit 入队、Dispatch / StartScanner 投递、Deliveries 投递记录、TestHook 同步测试
-// [POS]: domain/plugin 的主体：出站 webhook 的配置、签名投递与重试；超时与重试次数越界在保存时回 422（R93）；每次尝试记往返耗时（timedPost），emit.go 为各业务事件的薄封装
-
 package plugin
 
 import (

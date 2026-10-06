@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useRef 与 KeyboardEvent，依赖 ./cx 与 ./Tabs.module.css
- * [OUTPUT]: 对外提供 Tabs 与 TabItem 类型
- * [POS]: ui 的标签页导航：下划线样式，当前项 600 字重加 2px 强调色下划线（门户朱砂、后台墨色）；按 WAI-ARIA tabs 模式实现左右方向键、Home/End 切换与漫游 tabindex
- */
 import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { cx } from './cx'
 import css from './Tabs.module.css'

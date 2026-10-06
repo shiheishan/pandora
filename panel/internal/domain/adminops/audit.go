@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 audit_events（含 00080 的 auth_context 与 source_ip_enc 密文），按 resource_type 连 users / orders / nodes / plans / tickets / traffic_packs 取可读名，依赖 platform 的 db/audit/httpx
-// [OUTPUT]: 对外提供 AuditRow、AuditFilter、AuditExportMax、Service.ListAudit / ExportAudit
-// [POS]: adminops 的审计日志读模型（后台-09「审计日志」与导出）；列表与导出共用 auditRowSelect 与 auditCond 一份形状，来源 IP 只给密文，由 api 层用信封解密
-
 package adminops
 
 import (

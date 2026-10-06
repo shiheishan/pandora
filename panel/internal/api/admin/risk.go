@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/adminops 的 ListIPClusters / ReviewIPCluster / DisableIPClusterAccounts，依赖同包 profile.go 的 decryptIP 与 Deps.GeoIP 归属地，依赖 platform 的 geoip/httpx
-// [OUTPUT]: 对外提供 ipClusters、reviewIPCluster、disableIPClusterAccounts 三个处理器与 clusterRisk 风险分级
-// [POS]: api/admin 的风控聚类处理器（后台-09「风控」卡片）；明文 IP、归属地与风险等级在这一层补上，领域层只给密文与账号
-
 package admin
 
 import (

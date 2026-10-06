@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 router.go 的 NewRouter 与 router_nodes.go 的 nodeBatchStatusIdempotencyScope，依赖 chi.Routes 取出真实路由树上登记的处理器链，依赖 handlers.go 的 adminRotateResponse
-// [OUTPUT]: 对外提供第 3 阶段第 ① 步安全修复的反向测试：权限码、先权限后重认证、幂等 scope 统一、换发链接不回令牌
-// [POS]: api/admin 的路由守卫测试：不连库，直接驱动 NewRouter 注册出来的处理器链，拒绝路径在进入幂等与处理器之前就返回
-
 package admin
 
 import (

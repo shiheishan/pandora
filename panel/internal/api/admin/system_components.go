@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/adminops 的 PingDatabase 与 SystemCounts（节点、payment_events 未处理的支付回调、通知投递）、Deps.Redis 的 PING、platform/realtime 的 SSEConnections，依赖 system_status.go 的 backupStatus 结果
-// [OUTPUT]: 对外提供 systemComponent、postgresComponent、statusDeref 与 handlers.systemComponents
-// [POS]: api/admin 系统状态的组件清单（契约后台-01 GET v1/system/status 的 state / components）：8 个组件各自 ok / warn / down / unknown，任一 warn 或 down 总状态即 degraded；postgres 在统计读失败时降为 warn 且不写 metrics 键（R52：ok 时 metrics 齐全）
-
 package admin
 
 import (

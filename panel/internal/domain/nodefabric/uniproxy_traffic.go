@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 uniproxy.go 的 ServingNode，依赖 usage_daily.go 的 chargeReportEntry 逐用户记账，依赖 platform/db；读写 quota_balances 与 traffic_pack_grants（00070）
-// [OUTPUT]: 对外提供 PushResult、Service.ReportTraffic；包内提供 sortedReportEntries、splitTrafficCharge、chargeTraffic
-// [POS]: domain/nodefabric 的 UniProxy 流量上报（POST /api/v1/server/UniProxy/push）：从 uniproxy.go 拆出。按用户 ID 排序逐个记账（确定的加锁顺序）；扣量先吃套餐本周期额度、再按先到先扣吃流量包（D-E-1），先锁配额行再锁流量包
-
 package nodefabric
 
 import (

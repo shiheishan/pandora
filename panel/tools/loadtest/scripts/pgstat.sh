@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 lt-common.sh 的 lt_init / lt_psql / lt_pg_restart，依赖面板库的 PostgreSQL 超级用户
-# [OUTPUT]: pg_stat_statements 的开启（ALTER SYSTEM + 重启 + CREATE EXTENSION）、清零、导出 top N 三份 CSV（总耗时、平均耗时、调用次数），以及压测后的撤销
-# [POS]: tools/loadtest/scripts 的 SQL 画像采集，压测前 enable + reset、压测后 export、收尾 disable；在面板主机上以 root 运行
-#
 # 用法（面板主机，root）：
 #   pgstat.sh enable --yes        写 shared_preload_libraries 并重启 PostgreSQL（网关会有几秒连库失败），建扩展
 #   pgstat.sh reset               清零计数，压测开始前跑

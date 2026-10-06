@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/adminops 的 ListAccessLog，依赖 platform 的 crypto/httpx，依赖同包 profile.go 的 IP 解密与 Deps.GeoIP 归属地
-// [OUTPUT]: 对外提供 handlers 的 accessLogList；包内 accessCategoryRules、categoryFromAction、auditCategoryFilter
-// [POS]: api/admin 的安全事件明细：audit_events 与 subscription_fetch_log 两路（SQL 在 adminops 的 access_log.go）在这里归并、切页、解密、补归属地，分类规则是展示与筛选共用的唯一一张表；outcome 筛选（error = 非 success，订阅拉取 ok 以外都算 error）
-
 package admin
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的 CanonicalPayloadV2 / DecodeNodeRequestNonce / SignedRequestAcceptanceWindow（与 api/node requireNodeSignature 同一验签规则）、BuildNodeConfig / SignEffectiveRelease（真实的配置组装与有效发布物签名）、UserSetVersion 与事件流信封，依赖 platform/crypto 与 platform/httpx（同一解码与错误出口）
-// [OUTPUT]: 对外提供 包内测试夹具 fakeGateway（newFakeGateway、manifest、setUsers、pushUsersEvent、pushEvent、bumpGeneration、waitFor、read）
-// [POS]: tools/loadtest/nodesim 的假 node 网关（签名四个端点 + UniProxy 的 config/user/push/alive/status/stream）：本机没有数据库，api/node 的真 handler 依赖带库的 nodefabric.Service 起不来，所以按 router.go / handlers.go / stream.go 的规则用面板原语重搭一份，签名与验签不另抄规范串
-
 package nodesim
 
 import (

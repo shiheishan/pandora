@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient / keepPreviousData，依赖 react 的 useCallback，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../billing/schemas 的订单枚举与 orderRowSchema，依赖 ../plans/api 的 planOptionsKey（套餐下拉挂在套餐的键前缀下），依赖 ./model 的 exactEmail
- * [OUTPUT]: 对外提供用户模块的 zod schema 与类型（UserRow、UserDetail、SubscriptionRow、OrderRow、UserGroup、UserProfile、BulkFilter、BulkPreview、OnlineDevice、ResetLog、ResetReason 等）、读 hook（useUsers、useUser、useUserGroups、useUserProfile、useFindUserByEmail、usePlanOptions、useBulkPreview、useDevices、useTrafficResets、useResetStats、useUserResets）、UK 查询键前缀、useInvalidateUsers 与 useInvalidateResets、写接口的响应 schema；profileSchema / planOptionsSchema 为 tests/smoke 形状冒烟导出
- * [POS]: admin/screens/users 的数据层：形状照 api-contract.md 后台-03（含修订 R9 / R11 / R12 / R22 / R38 / R103 / R104），并按 domain/adminops/users.go、bulk_users.go、bulk_mail.go、api/admin/profile.go、usergroup.go、devices.go、domain/billing/traffic_reset.go 的 json tag 核对；按保留规则 2，没有任何字段携带订阅令牌或订阅地址
- */
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { z } from 'zod'

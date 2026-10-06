@@ -1,10 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 Json / MockContext / MockModule / MockResult
- * [OUTPUT]: 对外提供 system 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「通知与插件（后台-09 前半）」假接口；形状、权限、reauth、幂等与文案照 api-contract.md（含 R14 R20 R21 R45 R59）与 Go 的 mail.go、telegram.go、mail_template.go、notify/template_admin.go、plugin/hooks.go：
- *        邮件设置（SMTP 六字段整体覆盖、密码空不改 / "-" 清空、from_name 空时回站点名、开启邮箱验证要 host 与发件人）与测试发送（要已保存的 host + 发件人，收件地址含 fail 时模拟 SMTP 报错）；Telegram（Token 只进不出、admin_chat_id 缺省不改 / null 清空、测试缺 chat 回 fields.chat_id）；
- *        12 个模板（种子与 Go 一致：code / 渠道 / 变量白名单 / 有无内置默认），保存校验长度与变量白名单、恢复默认、草稿预览（示例值与 RenderPreview 同表）、测试信（reauth，只限邮件，可发草稿）；钩子按 code upsert（省略即零值、新建无密钥时生成 whsec_ 一次性回传、https 与内网地址校验、超时 / 次数越界模拟 DB CHECK 的 500）、删除、投递记录（无记录 null）、测试投递（地址含 fail 时对方回 503）。按 DisallowUnknownFields 拒绝未知字段
- */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 
