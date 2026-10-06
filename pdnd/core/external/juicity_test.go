@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 juicity.go 的 NewJuicity 与 DefaultJuicityWorkDir，读取 release/pandora-native.service 的 ReadWritePaths
-// [OUTPUT]: 对外提供 TestJuicityDefaultWorkDirIsWritableByService
-// [POS]: pdnd/core/external 的单元测试：配置不写 work_dir 时，缺省目录必须落在 systemd 单元允许写的路径里（⑫）
-
 package external
 
 import (

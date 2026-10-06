@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 docker（postgres:18-alpine、valkey/valkey:8-alpine）、goose、go、openssl、curl、python3，同目录 configure-app-role.sql，../migrations，../cmd 下的网关源码
-# [OUTPUT]: up 起一套一次性的真实面板栈（PG18 库 aegis_smoke_test + Valkey + aegis-public + aegis-admin + aegis-node + 一个平台管理员），把地址、账号、容器名与库名写进 <状态目录>/smoke.env；down 拆掉
-# [POS]: 第 4 阶段联调冒烟的底座，被 .github/workflows/panel-smoke.yml 调用，之后的造数据、frontend/tests/smoke 与 run-smoke-e2e.sh 都读 smoke.env；起库做法照 run-pg18-gates.sh，运行角色照 bootstrap.sh
-#
 # 起一套只活一次的真实面板，给前端冒烟用。
 #
 # 为什么不复用 docker-compose.yml：那是开发机的长期数据基座，固定端口、带数据卷、
 # 读 deploy/.env；冒烟要的是「每次从空库起、跑完就扔、配置现场生成」。
 #
 # 配置全部在这里用 openssl 现场生成，只活在 runner 上这一次：
-# 仓库是公开的，冒烟里不能出现任何真实部署的值（见根 CLAUDE.md「本项目适配说明」的公开仓库规则）。
+# 仓库是公开的，冒烟里不能出现任何真实部署的值（见根 CLAUDE.md「红线：仓库公开」）。
 #
 # 用法：
 #   run-smoke-stack.sh up   <panel 源码目录> <状态目录>

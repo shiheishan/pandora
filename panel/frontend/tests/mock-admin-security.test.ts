@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/security/schemas 的审计 / 访问日志 / 聚类 / 开关 schema
- * [OUTPUT]: 对外提供安全与运维（后台-09 后半）假接口的测试
- * [POS]: tests 的安全假后端守卫：只读账号整块 404（停用先 404 不弹 reauth）；审计能被页面 schema 接住、存量行无认证与 IP、q / 前缀 / 类型筛选与 limit 越界回 50；导出先 reauth、日期 422、BOM 与防公式、导出本身记审计；访问日志分类表（payment_provider 归管理端）、未知分类与结果 422、仅错误不含成功、IP 与账号筛选；聚类默认不列标记正常的、机房判高风险、标记正常 note 上限与坏 key 404；批量停用 reauth、422 字段、跳过后台账号 / 已停用 / 非成员、同键重放、用户模块看到已停用；开关八行（R102 删去三个未接入的）、排序、核心项与缺原因 409 数据库原文、切换记审计
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

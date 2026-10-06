@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/content/schemas 的公告 / 内容页 / 主题 / 插槽 / 站点时区 schema
- * [OUTPUT]: 对外提供内容与外观（后台-08）假接口的测试
- * [POS]: tests 的内容假后端守卫：对只读账号整块 404、公告草稿 → 定时 → 发布 → 撤回的状态机与版本冲突、知识库保存新版本归档同受众旧发布版与重复归档、内置主题 43 键、主题新建（字段级 422、另存为撞 code 409、内置不可改）/ 编辑 / 激活 / 删除守卫、插槽净化与空内容 dropped 为 null、站点时区校验
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

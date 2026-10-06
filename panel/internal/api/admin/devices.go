@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的 ListOnlineDevices / SetSubscriptionDeviceLimit / SetDeviceLimitPolicy 与 DeviceWindowMinutes，依赖 platform/httpx 的响应与错误
-// [OUTPUT]: 对外提供 handlers 的 listOnlineDevices（带 window_minutes）/ setDeviceLimit / setDeviceMode（可改设备识别窗口）三个处理器
-// [POS]: api/admin 的设备数限制接口：在线概览、单订阅覆盖、全局判定模式与设备识别窗口（R103，可选值取 nodefabric.DeviceWindowMinutes）；只校验请求与写响应，读写、窗口经库函数读与审计都在 nodefabric 的 device_limit_admin.go
-
 package admin
 
 // 设备数限制的管理接口。

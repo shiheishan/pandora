@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 无外部依赖（纯数据与纯函数）
- * [OUTPUT]: 对外提供 PageKey、PAGES、NAV_PAGES、NAV_LABELS、navLabel、MENU_PAGES、PortalRoute、resolvePage、pagePath、navOwner、greeting
- * [POS]: portal 的页面与路由表：顶部导航、底部标签栏、头像菜单、页脚链接与页头标题共用（取自 用户门户.dc.html 的 PAGES / NAV / MENU）
- */
 export type PageKey = 'overview' | 'subs' | 'plans' | 'checkout' | 'orders' | 'wallet' | 'referral' | 'tickets' | 'messages' | 'help' | 'account'
 
 // [标题, 副标题]；设计稿「按时间订阅，或按流量买流量包」等副标题原样保留

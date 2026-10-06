@@ -1,9 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的接入与签名请求规范串（CanonicalEnrollmentBeginV1 / CanonicalEnrollmentRequestV1 / CanonicalPayloadV2），
-//          依赖 platform/crypto 的 NewSigner / NewToken / HashToken；对端是 aegis-node 的 /v1/nodes/enrollments 与签名节点接口
-// [OUTPUT]: 包内提供 nodeIdentity（newNodeIdentity）、nodeClient（enroll / signedGet / uniProxyGet）、enrollResult
-// [POS]: tools/loadtest/seed 的节点侧：扮演刚装好的 pdnd，本地生成 Ed25519 密钥与运行令牌，用接入令牌走两段式接入 begin → commit；
-//        签名规范串一律引用 nodefabric 的唯一实现，绝不在这里另抄一份；verify.go 用 signedGet 与 uniProxyGet 核对节点真能被服务
-
 package seed
 
 import (
@@ -19,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -183,26 +178,41 @@ func (c *nodeClient) stamp() (string, string, error) {
 	return c.now().UTC().Format(time.RFC3339), nonce, nil
 }
 
+// edgeRetries 是节点侧请求撞边缘限流时的重试次数。nginx 对 /v1/nodes/ 按来源 IP 限 240 次/分、突发 60，
+// seed 在面板机上从一个地址并发接入两百个节点，必然撞上；被 nginx 挡下的请求没进应用，原样重放是安全的。
+const edgeRetries = 12
+
 func (c *nodeClient) do(ctx context.Context, method, pathAndQuery string, body []byte, headers map[string]string, want int) (jsonObject, error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.base+pathAndQuery, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req.Header.Set("User-Agent", "pandora-loadtest-seed")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
-	if err != nil {
-		return nil, err
+	var (
+		resp *http.Response
+		raw  []byte
+	)
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, method, c.base+pathAndQuery, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("User-Agent", "pandora-loadtest-seed")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		if resp, err = c.http.Do(req); err != nil {
+			return nil, err
+		}
+		raw, err = io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if !edgeLimited(resp) || attempt >= edgeRetries {
+			break
+		}
+		if err := sleepCtx(ctx, edgeBackoff(resp, attempt)); err != nil {
+			return nil, err
+		}
 	}
 	if resp.StatusCode != want {
 		return nil, newAPIError(method, pathAndQuery, resp.StatusCode, raw)
@@ -215,3 +225,21 @@ func (c *nodeClient) do(ctx context.Context, method, pathAndQuery string, body [
 }
 
 func placeholderDigest(c byte) string { return string(bytes.Repeat([]byte{c}, 64)) }
+
+// edgeLimited 判断响应是不是限流挡回来的：应用的 429，或 nginx limit_req 默认回的 503 HTML 页
+// （应用自己的错误一律是 JSON，不会被误判成可重放）。
+func edgeLimited(resp *http.Response) bool {
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return true
+	}
+	return resp.StatusCode == http.StatusServiceUnavailable &&
+		strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html")
+}
+
+// edgeBackoff 优先听 Retry-After，否则 0.5s 起翻倍、封顶 8s；限流桶按秒回填，等太久只是拖慢接入。
+func edgeBackoff(resp *http.Response, attempt int) time.Duration {
+	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
+		return time.Duration(s) * time.Second
+	}
+	return 500 * time.Millisecond << min(attempt, 4)
+}

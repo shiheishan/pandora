@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取 handlers.telegramUpdate、handlers.subscribe 与 NewRouter 的源码及全包声明
-// [OUTPUT]: 对外提供 TestTelegramWebhookValidatesPersistedSecret、TestCommissionTransferRequiresIdempotencyMiddleware、TestSubscribeTakesClientIPFromHTTPX
-// [POS]: api/public 的三条安全契约：Telegram 回调常量时间比对持久化密钥、佣金转余额挂幂等、订阅分发的来源地址只经 httpx.ClientIP
-
 package public
 
 import (

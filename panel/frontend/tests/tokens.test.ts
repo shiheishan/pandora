@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:fs 读取 src/styles/*.css，依赖 src/styles/design-tokens.ts 的设计稿原值
- * [OUTPUT]: 对外提供令牌契约测试
- * [POS]: tests 的样式守卫：tokens.css / roles.css 必须与设计稿逐值一致、明暗两组键相同、styles 与 ui 组件样式里所有 var() 都有定义、字体只引用包内文件
- */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {

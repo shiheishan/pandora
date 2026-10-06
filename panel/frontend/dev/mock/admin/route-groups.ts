@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute，依赖 ./nodes-infra 的 globalRouting、validateRouting、emptyBody、setDanglingSource 与 RoutedNode
- * [OUTPUT]: 对外提供路由组假数据 routeGroups、groupsOfNode / visibleTagsForNode / copyMemberships（nodes.ts 的单节点路由与复制用）、悬空引用 danglingRefs，以及 routeGroupRoutes(节点存储) 返回的路由表
- * [POS]: dev/mock/admin 的「节点与服务器 · 路由组」（00096）假接口，由 nodes.ts 并入同一个 MockModule：组列表 / 新建 / 改元信息 / 删除、组内路由读写、组侧与节点侧改成员、节点生效预览。合并口径照 nodefabric/routing_merge.go（规则 节点 → 组按 sort_order → 全局；出站 全局 → 组 → 节点同 tag 保位覆盖），内置出站引用在保存与预览两处规范成小写（canonicalTag）；悬空引用照 routing_refs.go 只拒新造成的。权限 / reauth / 幂等 scope / 文案照 router_nodes.go 与 nodefabric
- */
 import { randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockResult, MockRoute } from '../types.ts'
 import { canonicalTag, emptyBody, globalRouting, isBuiltin, setDanglingSource, validateRouting, type RoutedNode } from './nodes-infra.ts'

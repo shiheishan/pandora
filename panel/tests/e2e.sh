@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 deploy/.env（主密钥签演示渠道回调）与 deploy/psql.sh，依赖 public 网关（BASE）与 admin 网关（ADM，ADMIN_EMAIL / ADMIN_PASS 显式给出）
-# [OUTPUT]: 主链路端到端：注册（邮箱验证关闭的默认路径 + 临时开启后的验证码）→ 登录 → 自建带权益的套餐 → 下单与幂等 → 演示回调十连发 → 账本配平 → 订阅与配额 → 审计链 → 限流；退出时恢复邮件设置、归档自建套餐
-# [POS]: panel/tests 的主链路脚本（make e2e），与 invariants.sql 分工；联调冒烟第 ⑤ 步起由 deploy/run-smoke-e2e.sh 在冒烟栈上跑
 # 端到端链路测试：注册 → 登录 → 下单 → 支付 → 账本 → 订阅 → 配额 → 凭据
 #
 # 与 invariants.sql 的分工：

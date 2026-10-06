@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供通知与插件三个标签用到的类名
- * [POS]: admin/screens/system 的样式，取自 管理后台-09-通知与安全.dc.html：渠道卡网格（auto-fit 340）与卡片头 / 两列字段 / 浅底底栏，模板三栏（240 列表 | 编辑 | 预览，窄于 1180 预览移到编辑区下方），钩子新建条、卡片、投递记录四列（60 | 事件 | 70 | 110）；后台只支持 960 以上
- */
-
 .stack {
   display: flex;
   flex-direction: column;

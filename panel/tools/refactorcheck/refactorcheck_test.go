@@ -1,7 +1,3 @@
-// [INPUT]: 依赖本包 compareFiles、shatterFile
-// [OUTPUT]: 对外提供 TestCompareAcceptsPureMove、TestCompareRejectsBehaviourChanges、TestShatterIsAPureMove
-// [POS]: tools/refactorcheck 的自测：纯挪动（换文件、换顺序、换导入块、约束写法互换）判相同，改体、改文档注释、换约束、换导入路径、改名判不同；shatter 的输出经 compare 判为纯挪动
-
 package main
 
 import (

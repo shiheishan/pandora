@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/appearance 的主题与插槽服务、domain/plugin 的钩子服务，依赖 platform/httpx
-// [OUTPUT]: 对外提供主题（列表 / 保存 / 激活 / 删除）、插槽（列表 / 保存）与 Webhook 钩子（列表 / 保存 / 删除 / 投递记录 / 测试投递）处理器；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 的外观与插件处理器（后台-08 主题与插槽、后台-09 Webhook 钩子）；测试投递回 duration_ms
-
 package admin
 
 import (

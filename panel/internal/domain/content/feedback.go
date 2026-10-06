@@ -1,7 +1,3 @@
-// [INPUT]: 依赖同包 service.go 的 GetVisible 可见性判定与 slugPattern，依赖 content_page_feedback 表（00079），依赖 platform 的 db/httpx
-// [OUTPUT]: 对外提供 Service.SubmitFeedback
-// [POS]: domain/content 的门户「这篇文章有帮助吗」写入口，按（文章、版本、用户）覆盖写；后台统计尚未定形状，暂无读路径
-
 package content
 
 import (

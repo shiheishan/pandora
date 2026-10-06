@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 ltkit 的 Manifest（用户邮箱、共用口令、订阅令牌、固定来源 IP、订阅前缀与订阅 id）与 Recorder，依赖 traffic.go 的四类流量、sched.go 的开环调度、preflight.go 的限流预估
-// [OUTPUT]: 对外提供 Main（users 子命令）与 BurstMain（burst 子命令，实现在 burst.go）
-// [POS]: tools/loadtest/userload 的 users 入口：解析参数、预热（登录活跃池与后台、取订阅前缀）、开环跑四类流量、写 users.json/.txt；被 tools/loadtest/main.go 分发
-
 // Package userload 模拟用户侧的混合流量（订阅拉取、门户页面、后台列表）与 burst（改一个用户让全部节点重拉用户表）。
 //
 // 每个模拟用户用 manifest 里固定的来源 IP，经 X-Real-IP 带给面板：压测机经 nginx 打面板时
@@ -41,6 +37,8 @@ const (
 
 type usersConfig struct {
 	manifest        string
+	steadyStart     int64
+	steadyDur       time.Duration
 	publicURL       string
 	adminURL        string
 	admin           credentials
@@ -87,6 +85,8 @@ func parseUsersFlags(args []string) (usersConfig, error) {
 	var cfg usersConfig
 	fs := flag.NewFlagSet("users", flag.ContinueOnError)
 	fs.StringVar(&cfg.manifest, "manifest", "", "manifest written by seed (required)")
+	fs.Int64Var(&cfg.steadyStart, "steady-start", 0, "steady window start (unix seconds); with -steady-dur the report adds per-endpoint stats inside the window")
+	fs.DurationVar(&cfg.steadyDur, "steady-dur", 0, "steady window length")
 	fs.StringVar(&cfg.publicURL, "public-url", "", "public gateway base URL (portal API and subscription links)")
 	fs.StringVar(&cfg.adminURL, "admin-url", "", "admin gateway base URL including any secret path prefix (required when -admin-rate > 0)")
 	fs.StringVar(&cfg.admin.email, "admin-email", "", "admin email (default $"+envAdminEmail+")")
@@ -236,6 +236,9 @@ func runUsers(ctx context.Context, cfg usersConfig, m *ltkit.Manifest, stdout io
 	}
 
 	rec := ltkit.NewRecorder("users", cfg.window)
+	if cfg.steadyStart > 0 && cfg.steadyDur > 0 {
+		rec.SetSteady(time.Unix(cfg.steadyStart, 0), cfg.steadyDur)
+	}
 	t.rec = rec
 	classes := []*class{
 		{name: "sub", rate: cfg.subRate, fire: func(ctx context.Context) bool { t.pullSubscription(ctx); return true }},

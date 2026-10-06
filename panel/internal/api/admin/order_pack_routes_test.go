@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 router_billing.go 的 registerOrderRoutes、router_catalog.go 的 registerTrafficPackRoutes，依赖 finance_routes_contract_test.go 的 loadRouteProtections 与 catalog_plan_update_route_test.go 的主体构造助手
-// [OUTPUT]: 对外提供 TestManualOrderAndTrafficPackRouteContracts、TestManualOrderAndTrafficPackWritesRequireRecentReauth
-// [POS]: api/admin 人工开单（R64 改挂重认证，线下已收款因此开放）与流量包目录写接口的保护契约：源码层钉死权限、重认证与幂等域，运行层证明未重认证的请求到不了幂等与处理器
-
 package admin
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 go/parser、go/ast 解析一个目录下的全部非测试 .go 源文件
-// [OUTPUT]: 对外提供 Package、Load、Ref、TopDecl，以及 Package 的 Source、Decl、DeclWithDoc、Decls、FuncDecl、Refs、TopDecls
-// [POS]: platform 的测试辅助包：源码契约测试按「包 + 声明名」取源码，而不是按文件名读，函数在包内换文件不影响断言；只被 *_test.go 引用，不进任何生产二进制
-
 // Package sourcetest 给源码契约测试按声明名取源码。
 //
 // 这类测试断言「某函数里必须有 / 不许有某段代码」。过去它们按文件名读源码、

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/subscription 的 ActivePlanNameSQL（R118），依赖 service.go 的 Service、视图、ReplyNotifier 与 prepareAtomicSuccess，依赖 platform 的 db/audit/httpx、middleware 的幂等原子完成
-// [OUTPUT]: 对外提供 ListFilter、Assignee、AgentReplyInput、Service 的 ListEligibleAssignees、ListForAgent、GetForAgent、ReplyAsAgent / ReplyAsAgentAtomic、Assign / AssignAtomic、SetStatus / SetStatusAtomic
-// [POS]: domain/support 的客服侧工单：负责人目录（查询时校验权限绑定）、队列与详情（R75 同口径计数；两处都带 user_active_plan，口径取 subscription.ActivePlanNameSQL，R118）、回复与内部备注（非内部回复同事务排 ticket.replied，R115）、指派、改状态（closed_reason=agent_closed，重开清空）
-
 package support
 
 import (

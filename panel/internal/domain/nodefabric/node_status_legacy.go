@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 node_admin.go 的 StableProtocolReadySQL、node_activate.go 的 ProjectNodeLifecycle、node_refusal.go 的 NodeStatusRefusal，依赖 platform 的 audit/db/httpx
-// [OUTPUT]: 对外提供 LegacyNodeStatusInput、Service.SetLegacyNodeStatus、Service.RevokeNodeIdentity；包内 nodeStatusLockSQL
-// [POS]: domain/nodefabric 的旧状态接口与手工吊销身份（从 api/admin 的 nodes.go 下沉）：改退役 / 销毁时先取 node-config-release 发布锁再锁节点行、同事务吊销有效身份；生命周期投影与一步上线共用 ProjectNodeLifecycle
-
 package nodefabric
 
 import (

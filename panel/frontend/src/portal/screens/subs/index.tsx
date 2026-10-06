@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ./labels 的 metaLabel / fetchStats，依赖 ../../../core/router 的 href / navigate / useHashLocation，依赖 ../../../ui 的 Button / Card / ConfirmModal / Empty / Select / Skeleton / Tag / useToast，依赖 ../../queries 的 useAppearance，依赖 ../common 的订阅读模型、客户端导入映射、Slot / LoadError / UsageCard
- * [OUTPUT]: 默认导出 Subscriptions 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/subs 的入口：我的订阅（门户-02）。头部（套餐、到期与设备、多订阅切换、宽限 / 待续费徽标、更换订阅地址、续费）、订阅地址复制与拉取统计（泄露提示）、一键导入、可用节点（保留规则 3：无国家与负载）、本期用量；选中的订阅记在 #/subs?sub=<id>
- */
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { href, navigate, useHashLocation } from '../../../core/router'

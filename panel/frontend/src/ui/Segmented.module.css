@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 的令牌
- * [OUTPUT]: 对外提供 Segmented.tsx 用到的类名
- * [POS]: ui/Segmented 的样式：底 3px 内边距、圆角 9，选项高 30、圆角 7、13px（规范「选择」一行）
- */
-
 .group {
   display: inline-flex;
   /* 放进纵向 flex 容器时不被拉伸成整行 */

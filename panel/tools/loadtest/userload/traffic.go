@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 client.go 的 request / client.do，依赖 ltkit 的 Manifest 用户（邮箱、订阅令牌、固定来源 IP）
-// [OUTPUT]: 对外提供 包内的订阅客户端 UA 表 subscriptionUAs、门户与后台读接口表 portalReads / adminReads、模拟用户 actor 与后台会话 adminActor、四类流量的单次动作（pullSubscription / portalRead / adminRead / relogin）
-// [POS]: tools/loadtest/userload 的流量内容：选哪些接口、带什么 UA、路径怎么填都在这里，调度（何时发、发多快）在 sched.go，计量在 client.go
-
 package userload
 
 import (

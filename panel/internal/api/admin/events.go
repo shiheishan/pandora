@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/realtime 的租户 admin 频道订阅，依赖 platform/httpx 的主体与错误
-// [OUTPUT]: 对外提供 handlers.events 与保活间隔 sseHeartbeat
-// [POS]: api/admin 的管理端 SSE（GET v1/events，挂 ops.notification.read）：订阅整个租户的 admin 频道，按 sseHeartbeat 发注释帧保活；不跑 SQL
-
 package admin
 
 // 管理端 SSE。

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/notify 的 ListAdminAnnouncements / SaveAdminAnnouncement / WithdrawAdminAnnouncement（读写、状态机、乐观并发与审计在 notify/announce_admin.go），依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 listAnnouncements / saveAnnouncement / withdrawAnnouncement 与入参校验助手 parseAnnounceTime、normalizeAnnouncePlanIDs、normalizeAnnounceIDs；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 的公告（草稿 / 定时 / 撤回）HTTP 外壳：校验长度、级别、期望版本与时间，算出目标状态，再交给 notify；定向套餐与用户组属于本租户的校验在 notify 的事务里
-
 package admin
 
 import (

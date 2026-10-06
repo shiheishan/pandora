@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 tokens.go 的 DesignTokenKeys / normalizeTokens / filterTokens，依赖 service.go 的 SaveTheme 入参校验，读取 migrations/00075 与前端 design-tokens.ts
-// [OUTPUT]: 对外提供「默认 · 纸白」迁移、token 白名单与主题保存校验的单元测试
-// [POS]: domain/appearance 的契约测试：前端 design-tokens.ts 是令牌名单与取值的唯一来源，Go 白名单与迁移种子都必须与它逐条一致
-
 package appearance
 
 import (

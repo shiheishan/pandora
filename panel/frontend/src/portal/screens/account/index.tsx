@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState / FormEvent / ReactNode，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../shell/runtime 的 signOut / useRuntime，依赖 ../../../ui 的 Button / Card / Empty / Input / QueryView / Tag / useToast，依赖 ../../entry-links 的 quickLoginLink，依赖 ../../queries 的 usePortalMe，依赖 ../common/clients 的 copyText，依赖 ../common/traffic 的 formatDate，依赖 ./api、./clock、./model 与 ./Connections
- * [OUTPUT]: 默认导出 Account 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/account 的入口：账号安全（门户-10）。两列卡片流（宽屏各占一列、窄屏一列）：左列个人信息、修改密码、快捷登录；右列登录会话、Telegram 与通知偏好（Connections.tsx）、退出登录。快捷登录只在这台已登录的设备上签发，链接 60 秒后自动隐藏（保留规则 1）
- */
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { isApiError } from '../../../core/api'
 import { formatDateTime } from '../../../core/format'

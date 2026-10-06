@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供营销页各组件共用的类名：纵向栈、工具条、面板、等宽与弱化文字、进度条、表单网格
- * [POS]: admin/screens/marketing 的公共样式，取自 管理后台-06-营销.dc.html 的内联样式（卡片 10 圆角、行高 46、表头 36）；统计条、分页、三态容器已提升到 ui/；各块独有的布局写在同名 .module.css
- */
-
 .stack {
   display: flex;
   flex-direction: column;

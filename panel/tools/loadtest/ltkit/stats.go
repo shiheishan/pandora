@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 sync、math、time 与 encoding/json，只用标准库
-// [OUTPUT]: 对外提供 Recorder（NewRecorder、SetMeta、Observe、Stop、Snapshot、WriteFiles）、Observation、Report、EndpointStats、Window、WriteSummary
-// [POS]: tools/loadtest/ltkit 的计量底座：nodes、users、burst 共用同一个记录器，保证三类场景的 QPS、分位数与错误码按同一口径计算
-
 package ltkit
 
 import (
@@ -87,9 +83,15 @@ type Observation struct {
 
 type endpointAcc struct {
 	hist   histogram
+	steady *steadyAcc
 	codes  map[string]uint64
 	flags  map[string]uint64
 	window map[int64]*windowAcc
+}
+
+type steadyAcc struct {
+	hist  histogram
+	codes map[string]uint64
 }
 
 type windowAcc struct {
@@ -108,6 +110,9 @@ type Recorder struct {
 	stop      time.Time // 非零时 QPS 与时长按 [start, stop] 算，收尾排空的那几秒不摊薄 QPS
 	endpoints map[string]*endpointAcc
 	meta      map[string]any
+	// steadyFrom / steadyTo 非零时，落在 [from, to) 里的观测另记一份直方图：
+	// 全程分位数含起跑与收尾齐射，及格线要按稳态窗口判
+	steadyFrom, steadyTo time.Time
 }
 
 func NewRecorder(scenario string, window time.Duration) *Recorder {
@@ -121,6 +126,13 @@ func NewRecorder(scenario string, window time.Duration) *Recorder {
 		endpoints: map[string]*endpointAcc{},
 		meta:      map[string]any{},
 	}
+}
+
+// SetSteady 指定稳态窗口（绝对时间），报告里每个端点多出 steady 一段。
+func (r *Recorder) SetSteady(from time.Time, d time.Duration) {
+	r.mu.Lock()
+	r.steadyFrom, r.steadyTo = from, from.Add(d)
+	r.mu.Unlock()
 }
 
 // SetMeta 记录场景参数（档位、速率、节点数），原样进 JSON。
@@ -160,6 +172,13 @@ func (r *Recorder) Observe(o Observation) {
 	acc.codes[code]++
 	if o.Flag != "" {
 		acc.flags[o.Flag]++
+	}
+	if !r.steadyFrom.IsZero() && !now.Before(r.steadyFrom) && now.Before(r.steadyTo) {
+		if acc.steady == nil {
+			acc.steady = &steadyAcc{codes: map[string]uint64{}}
+		}
+		acc.steady.hist.add(o.Latency)
+		acc.steady.codes[code]++
 	}
 	slot := int64(now.Sub(r.start) / r.Window)
 	w := acc.window[slot]
@@ -215,7 +234,22 @@ type EndpointStats struct {
 	Codes    map[string]uint64 `json:"codes"`
 	Flags    map[string]uint64 `json:"flags,omitempty"`
 	Server5x uint64            `json:"server_5xx"`
+	Steady   *SteadyStats      `json:"steady,omitempty"`
 	Timeline []Window          `json:"timeline,omitempty"`
+}
+
+// SteadyStats 是稳态窗口内的同口径统计（窗口由 SetSteady 指定）。
+type SteadyStats struct {
+	From     time.Time         `json:"from"`
+	To       time.Time         `json:"to"`
+	Count    uint64            `json:"count"`
+	QPS      float64           `json:"qps"`
+	P50MS    float64           `json:"p50_ms"`
+	P95MS    float64           `json:"p95_ms"`
+	P99MS    float64           `json:"p99_ms"`
+	MaxMS    float64           `json:"max_ms"`
+	Codes    map[string]uint64 `json:"codes"`
+	Server5x uint64            `json:"server_5xx"`
 }
 
 type Window struct {
@@ -252,6 +286,12 @@ func (r *Recorder) Snapshot() Report {
 		st := statsOf(name, &acc.hist, elapsed)
 		st.Codes, st.Flags = copyCounts(acc.codes), copyCounts(acc.flags)
 		st.Server5x = count5xx(acc.codes)
+		if acc.steady != nil {
+			ss := statsOf(name, &acc.steady.hist, r.steadyTo.Sub(r.steadyFrom).Seconds())
+			st.Steady = &SteadyStats{From: r.steadyFrom, To: r.steadyTo, Count: ss.Count, QPS: ss.QPS,
+				P50MS: ss.P50MS, P95MS: ss.P95MS, P99MS: ss.P99MS, MaxMS: ss.MaxMS,
+				Codes: copyCounts(acc.steady.codes), Server5x: count5xx(acc.steady.codes)}
+		}
 		slots := make([]int64, 0, len(acc.window))
 		for s := range acc.window {
 			slots = append(slots, s)
@@ -352,6 +392,19 @@ func WriteSummary(w io.Writer, rep Report) {
 	for _, st := range append(rep.Endpoints, rep.Totals) {
 		fmt.Fprintf(w, "%-56s %9d %8.2f %8.1f %8.1f %8.1f %8.1f  %s\n",
 			st.Endpoint, st.Count, st.QPS, st.P50MS, st.P95MS, st.P99MS, st.MaxMS, oddCodes(st.Codes, st.Flags))
+	}
+	steadyHeader := false
+	for _, st := range rep.Endpoints {
+		s := st.Steady
+		if s == nil {
+			continue
+		}
+		if !steadyHeader {
+			fmt.Fprintf(w, "\nsteady window %s .. %s\n", s.From.UTC().Format(time.RFC3339), s.To.UTC().Format(time.RFC3339))
+			steadyHeader = true
+		}
+		fmt.Fprintf(w, "%-56s %9d %8.2f %8.1f %8.1f %8.1f %8.1f  %s\n",
+			st.Endpoint, s.Count, s.QPS, s.P50MS, s.P95MS, s.P99MS, s.MaxMS, oddCodes(s.Codes, nil))
 	}
 }
 

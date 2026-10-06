@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 的令牌
- * [OUTPUT]: 对外提供 Pager.tsx 用到的类名
- * [POS]: ui/Pager 的样式：右对齐、说明文字 --text-2 小号，按钮间距 8
- */
-
 .pager {
   display: flex;
   align-items: center;

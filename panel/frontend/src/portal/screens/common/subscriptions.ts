@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useMutation / useQueryClient，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../../queries 的订阅 schema 与共用查询，依赖 ./traffic 的额度摘要与重置日计算
- * [OUTPUT]: 对外提供（转出外框的）Subscription、subscriptionSchema、LIVE_STATUSES、isLive、pickPrimary、useSubscriptions，自有的 SubscriptionLink、UsageReport 等 schema 与 useSubscriptionLinks、useSubscriptionNodes、useSubscriptionUsage、useTrafficPacks、useRotateLink、usePlanTraffic / PlanTraffic、liveSubscriptions、canRenew；linksSchema / nodesSchema / trafficPacksSchema 为 tests/smoke 形状冒烟导出
- * [POS]: portal/screens/common 的订阅数据层（契约门户-01 / 门户-02，流量包余量属门户-03）：概览与我的订阅共用；订阅列表的 schema 与查询在外框 queries.ts（同键共用），这里转出；其余 schema 按契约写全写严；修订 R53–R62 的扩展字段已上线且必回，页面直接读、不再降级
- */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'

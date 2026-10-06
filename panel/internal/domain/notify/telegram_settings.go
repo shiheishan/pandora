@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform 的 db 租户事务与 crypto 信封（Bot Token 加密）；读写 system_settings 的 telegram.* 键
-// [OUTPUT]: 对外提供 Service.TelegramAdminChat、Service.SaveTelegramSettings 与入参 TelegramSettingsInput
-// [POS]: domain/notify 的 Telegram 渠道后台配置存取（从 api/admin/telegram.go 下沉）：与 telegram.go 的 LoadTelegramConfig 读同一组键；请求校验与发送器缓存失效留在 handler
-
 package notify
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 order_holds.go 的 insertHeldReservation、ledger.go 的记账、middleware 幂等声明、platform/idempotencybind
-// [OUTPUT]: 对外提供 CreateTopup 与输入输出、TopupIdempotencyScope、AdjustBalance、BalanceOf、ListBalanceHistory；包内提供 postTopupPaid
-// [POS]: billing 的余额入金：自助充值单（kind=topup，结算即履约）与管理员调账
-
 package billing
 
 // 余额充值与手动调账。

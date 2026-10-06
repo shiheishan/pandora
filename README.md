@@ -2,11 +2,11 @@
 
 Xboard 类代理订阅面板 + 自研节点端（Pandora NativeCore）。目标是提供 XBoard 级运营能力，并把协议、传输、路由与流量统计逐步收回单一自研内核。别名：AegisPanel / pandora-native。
 
-本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是 GEB 分形文档协议与 L1 地图，各模块目录的 CLAUDE.md 是 L2 成员清单，仓库公开、不写部署专属值的红线也写在根 CLAUDE.md 末尾。
+本文件是项目事实的唯一入口：架构、功能、构建、部署、验证状态、进度与路线图都在这里。AI 协作规则不在这里：根目录 [CLAUDE.md](CLAUDE.md) 是给 Claude Code 的全局约定，仓库公开、不写部署专属值的红线在它的「红线：仓库公开」一节；按目录生效的模块约定在 [.claude/rules/](.claude/rules/)，验证流程与 CI 说明在 [.claude/skills/verify/](.claude/skills/verify/SKILL.md)。
 
 ## 架构
 
-技术栈：**Go 1.26 + PostgreSQL 18 + Valkey 8（Redis 兼容）**，选型理由见 [ADR-0001](panel/docs/adr/0001-technology-stack.md)。
+技术栈：**Go 1.26 + PostgreSQL 18 + Valkey 8（Redis 兼容）**。Go 让面板与节点端都是无运行时依赖、可交叉编译的单文件，常驻内存小；PostgreSQL 18 内置 `uuidv7()`，租户隔离靠 FORCE RLS 由数据库强制，复式记账靠 DEFERRABLE 约束触发器在提交时配平；Valkey 协议兼容 Redis，许可证仍是 BSD。
 
 ```text
 用户浏览器 / 专属客户端
@@ -48,15 +48,13 @@ aegis-public    aegis-admin     aegis-node
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
 | `panel/migrations/` | SQL 迁移，按序号递增，当前到 00097，共 94 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 21 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
-| `panel/docs/` | `redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿（CLIENT-AUTH 的实现代码已移出主线，在 tag `archive/client-auth`）、ADR |
 | `pdnd/` | Pandora node（pdnd / pandora-native）：NativeCore 协议入站、认证、路由、用户与流量 |
 | `pdnd/kernel/`、`pdnd/internal/` | NativeCore 自研数据面 |
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
 | `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
-| `docs/` | 配置签名密钥轮换、发布物绑定 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
 | `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含两个安装脚本共用的首装对外地址闸门） |
-| `CLAUDE.md`（根目录及各模块目录） | GEB 分形文档地图：根为 L1 项目宪法，模块目录为 L2 成员清单，源文件头部为 L3 契约 |
+| `CLAUDE.md`、`.claude/rules/`、`.claude/skills/` | 给 Claude Code 的说明：根 CLAUDE.md 是全局约定与红线，rules 是按路径自动加载的模块约定，skills 是验证流程 |
 
 本地快照不含 `.env`、密钥、私钥和编译产物（二进制、`node_modules`、`dist`）。
 
@@ -99,7 +97,7 @@ aegis-public    aegis-admin     aegis-node
 
 重写已完成：发布包构建时把前端嵌入网关，两个网关的 `/` 分别下发管理后台与用户门户；仓库里 `panel/web/` 只存占位入口，未嵌入真实产物时下发的是占位页。
 
-运维：WebDAV 自动备份、签名清单、保留策略、systemd timer/service 与恢复脚本已存在，见 [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)。真实远端恢复演练状态见“验证状态与门禁”。
+运维：WebDAV 自动备份、签名清单、保留策略、systemd timer/service 与恢复脚本已存在（`panel/deploy/backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`）。真实远端恢复演练状态见“验证状态与门禁”。
 
 ### 数据与迁移
 
@@ -248,8 +246,7 @@ ssh -t root@目标机 'cd /opt/pandora-release/rel/deploy && ./install.sh'
 升级不改现有 `.env` 的运行模式；不是 production 时只打印提示和切换步骤。
 
 节点接入的发布物绑定（节点端两个架构的 SHA-256 与版本）随包生成在 `deploy/release-artifact.env`，
-安装到 `/opt/aegispanel/deploy/`，由 `aegis-node` 加载，每次升级随包覆盖；全过程见
-[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)。
+安装到 `/opt/aegispanel/deploy/`，由 `aegis-node` 加载，每次升级随包覆盖。
 
 安装器拒绝从任何人可写的目录安装（防止有人塞一份假的进来），所以包要放在
 root 独占的目录下——直接拿 `/tmp` 里的构建产物去装会被挡住，那是它在正确工作。
@@ -330,7 +327,7 @@ bash panel/deploy/test-install.sh <发布目录>
 
 **CI 门禁（2026-09-26 在 `main` 上全绿：`36230330995` / `36230331009` / `36230331011`）**。
 
-三个 workflow 各有路径过滤：只改仓库根的文档不触发；改 `pdnd/**`、`panel/internal/**`、`panel/web/**`、`panel/frontend/**` 等被过滤目录里的任何文件（包括其中的 CLAUDE.md）都会触发对应 workflow。
+三个 workflow 各有路径过滤：只改仓库根的文档不触发；改 `pdnd/**`、`panel/internal/**`、`panel/web/**`、`panel/frontend/**` 等被过滤目录里的任何文件都会触发对应 workflow。
 
 - **Panel PostgreSQL 18 gates**（`panel-pg18.yml`）：
   - `panel-unit` 跑 panel 全量 build / vet / go test，是 CI 上唯一跑 panel 全部单元测试的地方；
@@ -377,7 +374,7 @@ bash panel/deploy/test-install.sh <发布目录>
 | Xboard 功能验收 | PARTIAL，未 RELEASED |
 | 前端 | 旧的手写单页与 React 候选已删除，管理后台与用户门户按设计稿在 `panel/frontend` 重写完成并补齐后端缺口 |
 | 部署 | 这一版尚未在任何真实机器上部署或实测；真机测试待换新机器再做 |
-| 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿留在 `panel/docs/` 供以后做客户端参考；`frozen-client-auth/` 下的两个迁移从未应用，原样保留 |
+| 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿和 `frozen-client-auth/` 下两个从未应用的迁移也一并存档在该 tag，以后做客户端时从那里取 |
 
 历史上还有一项未收口的工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成），当时状态为 PARTIAL at INTEGRATED，之后没有它完成的证据；相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
 
@@ -395,8 +392,5 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 
 ## 相关文档
 
-- [docs/CONFIG-SIGNING-KEY-ROTATION.md](docs/CONFIG-SIGNING-KEY-ROTATION.md)、[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)：密钥轮换与发布物绑定。
-- [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)：备份与恢复。
-- [panel/docs/](panel/docs/)：`redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿（CLIENT-AUTH 的实现代码在 tag `archive/client-auth`）、ADR。
+- [docs/backlog.md](docs/backlog.md)：面板待办清单（重构接口契约删除前核对出的未完成项）；前后端接口以代码为准：后端看 `panel/internal/api` 的路由与处理器，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。
-- [panel/docs/adr/0001-technology-stack.md](panel/docs/adr/0001-technology-stack.md)：技术选型决策记录。

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/billing 的 PaymentService.AdminQueryOrderPayment（查单 + 操作人审计），依赖 platform/httpx、chi 的路径参数
-// [OUTPUT]: 对包内提供 queryOrderPayment 处理器
-// [POS]: api/admin 订单抽屉「向渠道查单」（PAY-009）的 HTTP 外壳；路由在 router_billing.go（订单写权限 + 幂等，不挂重认证），与门户 api/public/order_query.go 共用同一个查单用例，后台多一条带操作人的审计
-
 package admin
 
 import (

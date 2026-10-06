@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 delivery_pg18_test.go 的 openDeliveryPG18 与 deliveryHarness，依赖 node_admin.go 的 nodeActivate、nodefabric 的 ActivateNode / ListNodeUsers、subscription 的 ListNodes，依赖 00005 的 node_transitions 与状态机触发器
-// [OUTPUT]: 对外提供 TestNodeActivatePG18
-// [POS]: api/admin 的一步上线 PG18 门禁（delivery 域）：新服务器 + 新接入节点调一次即被下发用户、已上线幂等、每种前置条件 409 且不留痕、状态机触发器逐步生效（R108、R110）
-
 package admin
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 stream.go 的 Stream 与 client.go 的 streamWait 测试钩子，依赖 net/http/httptest 按脚本逐次回应的假面板
-// [OUTPUT]: 对外提供事件流重连退避的复位测试（健康连接后复位、接了就断不复位）
-// [POS]: pdnd/panel 的 SSE 退避守卫，与 stream_test.go 互补：那边用真实时间粗测「有退避」，这里替换等待函数、逐次核对每一档等待
-
 package panel
 
 import (

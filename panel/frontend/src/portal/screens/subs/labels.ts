@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../core/format 的 relativeTime，依赖 ../common/traffic 的 expiryInfo，依赖 ../common/subscriptions 的 Subscription / SubscriptionLink 类型
- * [OUTPUT]: 对外提供 metaLabel、fetchStats
- * [POS]: portal/screens/subs 的文案映射：头部元信息与订阅地址拉取统计（含泄露判定），纯函数、有单元测试，页面组件只负责摆放
- */
 import { relativeTime } from '../../../core/format'
 import type { Subscription, SubscriptionLink } from '../common/subscriptions'
 import { expiryInfo } from '../common/traffic'

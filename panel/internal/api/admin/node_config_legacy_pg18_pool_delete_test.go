@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的 PublishConfig / CreateAdminNode / CloneAdminNode，依赖 node_config_legacy_pg18_lifecycle_test.go 的调用结果与删池调用、node_config_legacy_pg18_cancel_test.go 的持锁工具、node_config_legacy_pg18_test.go 的夹具
-// [OUTPUT]: 包内提供 runNodeConfigPG18PoolDeleteRaceBatch
-// [POS]: TestNodeConfigLegacyPG18 的删池竞态批次（DEL-01 空池删除与发布、DEL-03 删除与发布先后、DEL-04 删除与建节点 / 克隆的串行化）
-
 package admin
 
 import (

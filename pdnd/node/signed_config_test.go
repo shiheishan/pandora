@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 signed_config.go 的 signedConfigKeyOf、reportDetail、reportSettled，依赖 panel 的 SignedConfig 与 StatusError
-// [OUTPUT]: 对外提供签名配置版本身份、上报详情截断与上报是否了结三处纯函数的单元测试
-// [POS]: pdnd/node 的签名配置台账纯函数守卫；端到端行为在 signed_failure_test.go
-
 package node
 
 import (

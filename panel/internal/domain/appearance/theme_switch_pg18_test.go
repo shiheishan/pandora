@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 service.go 的 SaveTheme（Create）/ ActivateTheme / DeleteTheme / ListThemes / Public、tokens.go 的 SiteNameTx，依赖一次性 PG18 库（run-pg18-gates.sh 的 appearance 域，夹具与 theme_pg18_test.go 相同）
-// [OUTPUT]: 对外提供 TestThemeSwitchPG18
-// [POS]: domain/appearance 多主题新建与切换的 PG18 集成测试：另存为不覆盖已有主题（409）、自定义主题可编辑、激活即换门户令牌与站点名（邮件 {{site}} 与发件人名同源）、生效中与内置主题删不掉、每个写操作一条审计
-
 package appearance
 
 import (

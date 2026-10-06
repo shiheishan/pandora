@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的 CanonicalPayloadV2（请求签名规范串）、SignedConfig / ConfigKeyTransition / HeartbeatOutput（线格式）、VerifyEffectiveReleaseSignature 与 VerifyConfigSignature（配置验签），依赖 platform/crypto 的 Signer，依赖 google/uuid 算回报 ID
-// [OUTPUT]: 对外提供 包内 signedClient（newSignedClient、do、config、verify、reportPhase、heartbeat）、heartbeatBody、canonicalServer
-// [POS]: tools/loadtest/nodesim 的签名通道，复刻 pdnd panel/signed.go + effective_release.go + config_key_transition.go 的请求序列与头部；签名与验签全部调面板侧原语，不另抄规范串
-
 package nodesim
 
 import (
@@ -88,7 +84,7 @@ func newSignedClient(base string, n ltkit.ManifestNode, verify bool, obs *observ
 	return &signedClient{
 		base: base, nodeID: n.ID, signer: signer,
 		configKeyID: n.ConfigKeyID, configPub: pub, verify: verify, obs: obs,
-		http: &http.Client{Timeout: signedTimeout, Transport: transport,
+		http: &http.Client{Timeout: signedTimeout, Transport: withRealIP(transport, n.RealIP),
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}, nil
 }

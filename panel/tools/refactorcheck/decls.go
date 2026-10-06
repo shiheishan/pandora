@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 go/parser、go/printer 解析与规范化打印，依赖 go/build/constraint 求构建约束
-// [OUTPUT]: 对外提供 srcFile、pkgDecls、collectDecls、tagUniverse、buildTagsOf、importName
-// [POS]: tools/refactorcheck 的声明指纹：把一个包的源文件折成「键 → 指纹」的多重集合，compare 比对它，shatter 的自测也用它证明自己是纯挪动
-
 package main
 
 import (

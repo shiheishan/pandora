@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 apt 系发行版的 PostgreSQL 18（PGDG）与 Valkey、发布包 bin/ migrations/ deploy/、同目录 public-base-url.sh
-# [OUTPUT]: 无 Docker 的直装：/opt/pandora 布局；首装先取合规的对外地址再生成 .env（AEGIS_ENV=production），升级从现有 .env 读回口令、.env 不动；迁移、收窄 aegis_app、装 systemd 单元（路径替换为 /opt/pandora）
-# [POS]: 与 install.sh 并列的另一条安装路径，共用 public-base-url.sh（对外地址闸门）、migrate.sh、configure-app-role.sql 与 release-artifact.env
 # Pandora Panel — 普通直接安装版（无 Docker）
 # 用法: sudo bash install-native.sh
 #       无人值守: sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名 bash install-native.sh

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的路由组服务（ListRouteGroups / CreateRouteGroup / UpdateRouteGroup / DeleteRouteGroup / GetGroupRouting / SetGroupRouting / SetRouteGroupMembers / SetNodeRouteGroups / PreviewNodeRouting）与 NotifyNodeChanged，依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 listRouteGroups / createRouteGroup / updateRouteGroup / deleteRouteGroup / getRouteGroupRouting / setRouteGroupRouting / setRouteGroupMembers / setNodeRouteGroups / nodeEffectiveRouting
-// [POS]: api/admin 的路由组（00096，NODE-012 第三个范围）：只解析请求、调 nodefabric、提交后逐个通知 generation 被推进的节点、写响应；不跑 SQL（node_routing_notify_test.go 守着）。路由门槛在 router_nodes.go 的 registerRouteGroupRoutes
-
 package admin
 
 import (

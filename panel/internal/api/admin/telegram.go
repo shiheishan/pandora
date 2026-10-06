@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/notify 的 Telegram 配置读取与发信器、TelegramAdminChat / SaveTelegramSettings（telegram.* 键的读写在那里），依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 getTelegramSettings / setTelegramSettings / testTelegram；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 的 Telegram 渠道配置：Token 只进不出（信封加密），管理员群组 chat id 作测试发送的默认目标
-
 package admin
 
 import (

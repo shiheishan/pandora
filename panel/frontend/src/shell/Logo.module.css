@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 的 --brand 与 --ls-wordmark
- * [OUTPUT]: 对外提供 Logo.tsx 用到的类名
- * [POS]: shell/Logo 的样式：环描边 8、缺口虚线，与设计稿 svg 逐值一致
- */
 .logo {
   display: inline-flex;
   align-items: center;

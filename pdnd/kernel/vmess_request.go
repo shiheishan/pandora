@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 vmess.go 的 vmessAdapter 与用户表，依赖 vmess_codec.go 的 KDF、AEAD 打开与头部校验，依赖 connerror.go 的 markConnError（AuthID 无人认领标为 auth）
-// [OUTPUT]: 包内提供 vmessDestination、vmessUserCandidate、readRequest、readVMessRequestWithCandidates、vmessDestinationUDPAddr
-// [POS]: kernel 的 VMess 请求头解析：从 vmess.go 拆出。按 AuthID 在候选用户里定位、解开 AEAD 请求头并校验，得到用户、目的地址、正文读取器与命令
-
 package kernel
 
 import (

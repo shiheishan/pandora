@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../ui 的 Button / Input / Switch，依赖 ./model 的 HIGHLIGHT_MAX / HIGHLIGHT_CHARS，依赖 ./Plans.module.css
- * [OUTPUT]: 对外提供 HighlightsField（卖点列表编辑 + 「标为推荐」开关）
- * [POS]: admin/screens/plans 的 R100 表单片段：向导第 1 步与「销售设置」抽屉共用一份，只管输入与错误显示；校验在 model.highlightProblems（键名 highlights / highlights.{i} 同后端），提交体各自由 model 拼
- */
 import { Button, Input, Switch } from '../../../ui'
 import { HIGHLIGHT_CHARS, HIGHLIGHT_MAX } from './model'
 import css from './Plans.module.css'

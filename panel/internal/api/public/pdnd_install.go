@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/config 的 CanonicalPublicOrigin 与 Deployment.PdndDistDir，依赖 chi 的路径参数
-// [OUTPUT]: 对外提供 handlers.pdndInstallScript、pdndBinary、pdndChecksum，安装脚本模板 pdndInstallTemplate、产物名白名单 pdndAllowedArtifact 与 pdndPanelBaseURL
-// [POS]: api/public 的 pdnd 一键安装分发：/pdnd 下的安装脚本、固定名发布产物与校验和，产物目录跟着发布走
-
 package public
 
 import (

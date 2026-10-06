@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 bootstrapTokenHash、nextLegacyConfigVersion 等校验函数，依赖 platform/sourcetest 按名取旧版发布、回报、下发、入网与生命周期的源码
-// [OUTPUT]: 对外提供 TestLegacyConfigPublishRiskReductionContract、TestNodeCreationMaterializesPublishedLegacyConfig、TestAdminPoolValidationFreezesLifecycleState、TestLegacyConfigReportFailsClosedOnAmbiguousIdentity、TestLegacyFetchUsesNeutralNotFoundForRLSMiss、TestLegacyRetirementClosesConfigDelivery、TestLegacyBootstrapLocksAndRejectsTerminalNodes、TestBootstrapTokenIssueValidatesPoolAndPreservesAuditAttribution、TestBootstrapTokenHashBindsTargetName、TestNextLegacyConfigVersion、TestValidateLegacyPublishScope、TestValidateLegacyConfigReport
-// [POS]: nodefabric 旧版配置链路的并发与终态契约：发布锁与版本分配、新节点物化、回报身份唯一、RLS 中性 404、退役关闭下发、bootstrap 锁序与终态拒绝
-
 package nodefabric
 
 import (

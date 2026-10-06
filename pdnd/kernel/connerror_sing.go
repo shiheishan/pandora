@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 connerror.go 的 connErrorReporter，依赖 sing 的 logger.Logger 接口，依赖 sagernet/quic-go 的 ApplicationError / IdleTimeoutError
-// [OUTPUT]: 包内提供 newSingConnErrorLogger（把 sing 系服务端的 Error 级日志转成 ConnError）
-// [POS]: kernel 连接失败观测链给 QUIC 协议的旁路：tuic.go、hysteria2.go 把它作为 nativewire 服务的 Logger，鉴权失败与会话异常就从上游库内部浮出来
-
 package kernel
 
 import (

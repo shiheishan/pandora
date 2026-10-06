@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/token 的令牌校验、platform/db 的租户事务、platform/httpx 的 Principal 与错误模型；读 sessions / role_bindings / roles / role_permissions，写 sessions.last_seen_at
-// [OUTPUT]: 对外提供 Authenticate（解析 Bearer 并装配 Principal）
-// [POS]: middleware 的认证入口：会话有效性、节流刷新 last_seen_at（R62，5 分钟一次）与实时权限在同一事务里取齐；是否必须登录交给 RequireAuth
-
 package middleware
 
 import (

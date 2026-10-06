@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 delivery_pg18_test.go 的 openDeliveryPG18，依赖 nodefabric 的 ListNodeUsers 与本包的 ListNodes / ListOwnedNodePreviews，依赖迁移 00093 的 node_pool_user_groups
-// [OUTPUT]: 对外提供 TestPoolUserGroupsDeliveryPG18
-// [POS]: domain/subscription 的节点池限定用户组 PG18 门禁（delivery 域）：同一份夹具上按用户对照节点用户列表、订阅下载、门户预览三处下发（R104）
-
 package subscription
 
 import (

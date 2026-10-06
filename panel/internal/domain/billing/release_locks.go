@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 release.go 的 releaseOrderRequest / releaseOrderShape / releaseIntentLock 与释放错误哨兵，依赖 reservations.go 的 lockOrderReservationGraph，依赖 platform/db
-// [OUTPUT]: 包内提供 lockReleaseOrder、lockActiveReleaseIntents、lockAndRejectSettledPaymentEvidence、lockReleaseReservationGraph、lockRenewalReservationForRelease、lockReleaseCoupon、lockReleaseBalance
-// [POS]: billing 订单释放的加锁步骤：从 release.go 拆出，被 releaseOrderReservation 按 订单 → 活跃支付意图 → 已结算收款证据 → 预留图 的顺序调用；预留图对续费单走 lockRenewalReservationForRelease（由它再锁券与余额冻结），其余 kind 共用 lockOrderReservationGraph；过期扫描以 SKIP LOCKED 取订单，任何已成功的收款证据都拒绝释放
-
 package billing
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖本包 router.go 与 router_<模块>.go 的源码，依赖 go/parser
-// [OUTPUT]: 对外提供 routerSourceFiles、routerSource、inspectRouterFiles 三个测试辅助
-// [POS]: api/admin 源码级路由契约测试的公共入口：路由表拆成多文件后，契约测试经它读全部路由源码，而不是只读 router.go
-
 package admin
 
 import (

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../core/format 的 formatDateTime / relativeTime，依赖 ../../../core/router 的 href，依赖 ../../../ui 的 Empty / QueryView / Table / Tag，依赖 ./api 的 useUserProfile / UserProfile，依赖 ./Users.module.css
- * [OUTPUT]: 对外提供 RiskTab 与 sharingHint
- * [POS]: 用户抽屉「风控」标签（待补·前端，只在持 security.audit.read 时出现）：GET v1/users/{id}/profile 的疑似分享提示（fetch_sources_7d）、IP 聚合（accounts > 1 高亮）、共用 IP 的关联账号（可点进对方抽屉）、订阅拉取记录与最近安全事件。明文 IP 与 UA 只在这里出现
- */
 import { formatDateTime, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
 import { Empty, QueryView, Table, Tag } from '../../../ui'

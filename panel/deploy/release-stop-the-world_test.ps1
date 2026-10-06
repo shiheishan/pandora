@@ -52,9 +52,7 @@ Assert-Contains $release 'read_env_value AEGIS_PUBLIC_ADDR' 'health ports must d
 Assert-Contains $release 'PANDORA_APP_DIR cannot be /' 'live application root must be protected'
 Assert-Contains $release 'release directory must be outside the live application directory' 'release source must not be nested under the live tree'
 Assert-Contains $release 'exec 9>>"$LOCK_FILE"' 'lock acquisition must not truncate an existing file'
-Assert-Contains $release 'release-stop-the-world.sh renewal-cutover.md' 'live deploy layout must retain the renewal cutover procedure'
 Assert-Contains $release '[ "${file##*.}" != md ] || mode=0644' 'release documentation must be installed non-executable'
-Assert-Contains $release 'release renewal cutover procedure is missing' 'release manifest preflight must require the cutover procedure'
 
 Assert-Order $release @(
     'verify_release_manifest "$RELEASE_DIR"',

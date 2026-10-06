@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/content 的 ListAdmin / GetAdmin / PublishVersion / Archive，依赖 platform/httpx、chi 的路径参数
-// [OUTPUT]: 对包内提供知识库页面处理器 listContentPages、getContentPage、publishContentVersion、archiveContentPage；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 知识库（内容页）版本的 HTTP 外壳，与 announce.go 同属内容段；路由与保护链在 router_content.go 的 registerContentPageRoutes
-
 package admin
 
 import (

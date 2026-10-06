@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useMemo / useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/format 的 formatBytes / formatCount，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic、./queries、./schemas、./NodeDrawer、./NodeForm，依赖 ./nodes.module.css
- * [OUTPUT]: 对外提供 NodesTab（节点与服务器 · 节点标签）
- * [POS]: admin/screens/nodes 的节点列表（设计稿 t_nodes）：搜索 + 状态分段（列表总带已退役，「全部」里前端藏掉，「已退役」单列）、勾选后批量启用 / 停用（status:batch，只提交状态允许的，其余计数提示）、调整排序（本地上下移，完成时 PUT v1/nodes/order 只交变了的项）、新建节点弹窗（契约待补·前端：一次收全基本信息与协议，建成草稿后打开抽屉）。行点击进抽屉，节点 id 与抽屉标签记在 rest
- */
 import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { formatBytes, formatCount } from '../../../core/format'

@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useEffect / useState，依赖 ../../../ui，依赖 ./logic 的访问日志函数，依赖 ./queries 的 useAccessLog，依赖 ./schemas 的 AccessItem，依赖 ./security.module.css
- * [OUTPUT]: 对外提供 AccessTab（安全与运维 · 访问日志标签）
- * [POS]: admin/screens/security 的访问日志（设计稿 t_access 的深色「实时尾随」终端）。以后端为准这是安全事件流而不是 nginx 访问日志（契约）：列改为时间、分类徽标（原「方法」）、动作（原「路径」）、结果（原「状态码」，非成功标红）、IP · 归属地，耗时列删掉，账号与客户端放在行提示里。
- *        分段「全部 / 仅错误 / 管理端」加契约待补·前端的「登录 / 注册 / 订阅拉取」，另有 IP（精确匹配，走哈希）与账号（邮箱片段或用户 ID）两个筛选框，停手 300ms 再查。实时尾随 = 第一页每 5 秒轮询（审计表不在 SSE 里），可暂停；接口没有 total，翻页按「这页满没满」给「更早」，翻到更早时自动停止尾随
- */
 import { useEffect, useState } from 'react'
 import { Button, Empty, Input, QueryView, Segmented } from '../../../ui'
 import { ACCESS_PAGE, ACCESS_VIEWS, accessKey, accessOutcomeLabel, accessTooltip, CATEGORY_LABEL, clockTime, EMPTY_ACCESS_FILTER, ipLabel, isAccessError, type AccessFilter, type AccessView } from './logic'

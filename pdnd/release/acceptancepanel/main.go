@@ -1,7 +1,3 @@
-// [INPUT]: 只依赖标准库（crypto/ed25519、net/http）；协议口径对齐 pdnd/panel 的 signed.go、effective_release.go 与面板 api/node 路由
-// [OUTPUT]: 可执行的回环模拟面板：UniProxy 兼容通道 + 签名通道（身份文件、effective release 签发、心跳、配置上报），并把观测写进状态文件
-// [POS]: pdnd/release 的验收夹具，只被 runtime-acceptance.sh 调用；main_test.go 用 pdnd 自己的签名客户端校验它签出的东西，保证夹具与节点协议不漂移
-
 // Command acceptancepanel 是 runtime-acceptance.sh 的模拟面板。
 //
 // 为什么是 Go 而不是 Python：签名通道要 Ed25519，Python 标准库没有；

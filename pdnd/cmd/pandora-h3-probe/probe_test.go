@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 kernel 的 ParseXHTTPConfig / XHTTPServer.ServeH3Reality 起服务端，go 工具链编译 main.go 为独立进程
-// [OUTPUT]: 对外提供 TestVLESSTCPHeader 与 TestProcessProbeRoundTrip（真实 OS 进程经 REALITY-over-HTTP/3 往返）
-// [POS]: pandora-h3-probe 的验收缝：先 go build（3 分钟上限）再以 20s 上限运行产物，CI 专用步骤 -count=3 复用构建缓存
-
 package main
 
 import (

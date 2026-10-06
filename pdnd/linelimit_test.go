@@ -1,7 +1,3 @@
-// [INPUT]: 依赖标准库 io/fs 从 module 根（本包目录）遍历全部 .go 文件，不依赖 git
-// [OUTPUT]: 对外提供 TestGoFilesStayWithinLineLimit
-// [POS]: pdnd 的行数守卫：第 5 阶段把 kernel 超 800 行的文件拆完之后，防止任何 .go 文件（含测试）再长回去；panel 在 tools/refactorcheck/linelimit_test.go 有同一道守卫
-
 package main
 
 import (
@@ -27,7 +23,7 @@ var lineLimitExemptDirs = map[string]string{
 func TestGoFilesStayWithinLineLimit(t *testing.T) {
 	for dir, why := range lineLimitExemptDirs {
 		if info, err := os.Stat(filepath.FromSlash(dir)); err != nil || !info.IsDir() {
-			t.Errorf("exempt directory %s (%s) no longer exists: remove it from lineLimitExemptDirs and the root CLAUDE.md", dir, why)
+			t.Errorf("exempt directory %s (%s) no longer exists: remove it from lineLimitExemptDirs and from the 800-line exemptions in the root CLAUDE.md", dir, why)
 		}
 	}
 	files := 0

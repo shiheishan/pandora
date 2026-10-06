@@ -35,7 +35,7 @@
 - `loadtest seed|nodes|users|burst`，每个子命令加 `-h` 看参数。
 - `scripts/`：在面板机上跑的采集脚本。
   - `pgstat.sh`：pg_stat_statements 开启、清零、导出、撤销
-  - `sample-procs.sh`：各进程与整机的 CPU、RSS/PSS
+  - `sample-procs.sh`：各进程与整机的 CPU、RSS/PSS，整机另记 swap 总量、余量与累计换入换出页数
   - `sample-cgroup.sh`：三个网关的 cgroup 节流与内存水位（`nr_throttled`、`memory.events`）
   - `snapshot-mem.sh`：PG 与 Valkey 内部的内存快照
   - `grab-pprof.sh`：三个网关的 CPU、heap、allocs、goroutine profile
@@ -132,6 +132,7 @@ sudo /root/lt/nginx-realip.sh status
 - 它整份顶替第 2 步生成的信任表，原文件备份成 `.loadtest-orig`。
 - `nginx -t` 通过才 reload，失败自动回滚。
 - 压测工具在每个请求里带该模拟用户固定的 `X-Real-IP`，地址取自 198.18.0.0/15，用户轮流分到 512 个 /24 里。
+- 模拟节点同样带 `X-Real-IP`：取自 seed 给它所在服务器登记的虚构公网地址（203.0.113.0/24，写在 manifest 的 `real_ip`）。nginx 对 `/v1/nodes/` 与 `/api/v1/server/UniProxy/` 按来源 IP 限 240 次/分（突发 60/120），不带的话 198 个节点共用压测机一个地址，大面积 503。
 - 开着它跨档也没关系：重装数据基座不动 nginx。
 - 随包模板 `deploy/nginx-aegis.conf` 不改。
 
@@ -226,17 +227,18 @@ export LOADTEST_ADMIN_PASSWORD='<管理员口令>'   # 只在这个 shell 里
 
 ```bash
 R=~/lt-results/5k-r1; M=~/lt-results/5k-seed/lt-manifest.json; mkdir -p $R
+T=<T 的 unix 秒>   # 两台机器约定的稳态起点；-steady-* 让报告另出 [T, T+30m) 内的分位数
 export LOADTEST_ADMIN_EMAIL=<ADMIN_EMAIL> LOADTEST_ADMIN_PASSWORD='<管理员口令>'
 
 # 198 个模拟节点：签名通道 + UniProxy + 每节点一条 SSE；-strict 让签名失败与 5xx 反映在退出码上
 ~/loadtest nodes -manifest $M -node-url https://<PANEL_DOMAIN> -stagger 60s -duration 37m \
-  -out $R -strict > $R/nodes.log 2>&1 &
+  -steady-start $T -steady-dur 30m -out $R -strict > $R/nodes.log 2>&1 &
 
 # 用户混合流量（T 时启动）。订阅每人每 30 分钟一次：-sub-interval 按 manifest 人数自动折成各档的总速率
 ~/loadtest users -manifest $M -public-url https://<PANEL_DOMAIN> \
   -admin-url https://<PANEL_DOMAIN>/<ADMIN_PATH> \
   -duration 30m -sub-interval 30m -portal-rate 5 -admin-rate 0.5 -login-rate 0.05 \
-  -portal-users 200 -out $R -strict > $R/users.log 2>&1 &
+  -portal-users 200 -steady-start $T -steady-dur 30m -out $R -strict > $R/users.log 2>&1 &
 
 # T+20m：改一个用户（设备数覆盖 + 换用户组），触发 200 个节点经事件流重拉
 ~/loadtest burst -manifest $M -admin-url https://<PANEL_DOMAIN>/<ADMIN_PATH> -count 1 -out $R
@@ -313,9 +315,9 @@ JSON 里每个端点都有 count、QPS、p50/p95/p99/max（毫秒）、错误码
 
 | 及格线 | 数据来源 | 怎么判 |
 |---|---|---|
-| 节点接口 p99 < 300ms | `nodes.json` 里每个 `node:` 端点的 `p99_ms` | 每个端点都要过，不只看合计 |
+| 节点接口 p99 < 300ms | `nodes.json` 里每个 `node:` 端点 `steady.p99_ms`（稳态窗口内；顶层 `p99_ms` 含起跑与收尾齐射，只作参考） | 每个端点都要过，不只看合计 |
 | 15k 档 CPU 平均 < 50% | `procs.csv` 的 `_system` 行：`cpu_pct` 平均 ÷（核数 × 100） | 只算 T 到 T+30m 的稳态 |
-| 整机内存留 25% 余量，24 小时内不持续上涨 | `procs.csv` 的 `_system` 行：`rss_kb` = MemTotal − MemAvailable；24h 档各进程 `pss_kb` 的趋势；pprof heap 对比 | 峰值 ≤ 75% MemTotal；24 小时的线性趋势不显著为正 |
+| 整机内存留 25% 余量，24 小时内不持续上涨 | `procs.csv` 的 `_system` 行：`rss_kb` = MemTotal − MemAvailable，`pswpin` / `pswpout`（累计换入换出页数）；24h 档各进程 `pss_kb` 的趋势；pprof heap 对比 | 峰值 ≤ 75% MemTotal；稳态内 Δpswpin 或 Δpswpout 持续增长（不是个位数的偶发）即不及格，与 MemTotal − MemAvailable 一起列；24 小时的线性趋势不显著为正 |
 | 零 5xx | nodes / users / burst 三份 JSON 的 `server_5xx`；nginx access log 里 status ≥ 500 的行数 | 都必须是 0；`transport:*`（连接错误、超时）单列说明 |
 
 ### 9.3 必报观测项（不是及格线）

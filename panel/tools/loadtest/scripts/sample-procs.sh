@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 Linux 的 /proc（各进程的 stat、status、smaps_rollup 与整机的 /proc/stat、/proc/meminfo）与 pgrep；不连数据库、不读 .env
-# [OUTPUT]: 按固定间隔把各进程组的 CPU 与内存写成 CSV：ts_utc,unix_s,proc,pids,cpu_pct,rss_kb,pss_kb
-# [POS]: tools/loadtest/scripts 的资源占用采样器，压测全程在面板主机上后台跑；与 snapshot-mem.sh（数据库与缓存内部视角）互补
-#
 # 用法（面板主机，root 以读到 postgres / valkey 等其他用户进程的 smaps_rollup）：
 #   sample-procs.sh OUT.csv [间隔秒，缺省 5] [总时长秒，缺省 0 = 直到 Ctrl-C / kill]
 #
@@ -15,6 +11,8 @@
 #            的 utime+stime 增量算；间隔内新出现的进程整段计入，间隔内退出的进程最后一段丢失（略低估）
 #   rss_kb   组内 VmRSS 之和；postgres 每个后端都把触碰过的 shared_buffers 算进自己的 RSS，求和会重复计
 #   pss_kb   组内 smaps_rollup 的 Pss 之和，共享页按进程数均摊，是该组真实占用的近似；读不到时为空
+#   swap_*   只在 _system 行填：/proc/meminfo 的 SwapTotal、SwapFree；pswpin / pswpout 是 /proc/vmstat 的
+#            开机以来累计换入、换出页数，按行做差看稳态内是否持续换页（有 swap 时内存吃紧会被它掩盖）
 #   第一行样本只建基线，从第二个间隔起才输出。
 set -euo pipefail
 export LC_ALL=C # EPOCHREALTIME 与 awk 的小数点不受区域设置影响
@@ -56,6 +54,11 @@ proc_kb() { # proc_kb PID FILE KEY
 
 system_busy_ticks() { awk '$1 == "cpu" { print $2 + $3 + $4 + $7 + $8 + $9; exit }' /proc/stat; }
 system_used_kb() { awk '$1 == "MemTotal:" { t = $2 } $1 == "MemAvailable:" { a = $2 } END { print t - a }' /proc/meminfo; }
+# system_swap：SwapTotal,SwapFree,pswpin,pswpout（逗号分隔，直接拼进 _system 行）
+system_swap() {
+  awk '$1 == "SwapTotal:" { t = $2 } $1 == "SwapFree:" { f = $2 } END { printf "%d,%d,", t, f }' /proc/meminfo
+  awk '$1 == "pswpin" { i = $2 } $1 == "pswpout" { o = $2 } END { printf "%d,%d", i, o }' /proc/vmstat
+}
 
 declare -A PREV_TICKS=()
 declare -A SEEN=()
@@ -93,14 +96,14 @@ sample() { # sample EMIT(0|1)
     if [[ "$emit" == 1 ]]; then
       awk -v ts="$ts" -v now="$now" -v g="$group" -v n="$count" -v t="$cpu_ticks" \
         -v hz="$CLK_TCK" -v iv="$elapsed" -v rss="$rss_sum" -v pss="$pss_sum" -v ok="$pss_ok" \
-        'BEGIN { printf "%s,%s,%s,%d,%.1f,%d,%s\n", ts, now, g, n, t * 100 / (hz * iv), rss, (ok ? pss : "") }' >> "$OUT"
+        'BEGIN { printf "%s,%s,%s,%d,%.1f,%d,%s,,,,\n", ts, now, g, n, t * 100 / (hz * iv), rss, (ok ? pss : "") }' >> "$OUT"
     fi
   done
   busy="$(system_busy_ticks)"
   if [[ "$emit" == 1 ]]; then
     awk -v ts="$ts" -v now="$now" -v t="$(( busy - ${PREV_SYSTEM:-busy} ))" -v hz="$CLK_TCK" -v iv="$elapsed" \
-      -v used="$(system_used_kb)" -v cpus="$(nproc)" \
-      'BEGIN { printf "%s,%s,_system,%d,%.1f,%d,\n", ts, now, cpus, t * 100 / (hz * iv), used }' >> "$OUT"
+      -v used="$(system_used_kb)" -v cpus="$(nproc)" -v swap="$(system_swap)" \
+      'BEGIN { printf "%s,%s,_system,%d,%.1f,%d,,%s\n", ts, now, cpus, t * 100 / (hz * iv), used, swap }' >> "$OUT"
   fi
   PREV_SYSTEM="$busy"
   PREV_CLOCK="$clock"
@@ -113,7 +116,7 @@ sample() { # sample EMIT(0|1)
 }
 
 mkdir -p -- "$(dirname -- "$OUT")"
-[[ -s "$OUT" ]] || echo 'ts_utc,unix_s,proc,pids,cpu_pct,rss_kb,pss_kb' > "$OUT"
+[[ -s "$OUT" ]] || echo 'ts_utc,unix_s,proc,pids,cpu_pct,rss_kb,pss_kb,swap_total_kb,swap_free_kb,pswpin,pswpout' > "$OUT"
 printf 'sample-procs: 每 %s 秒采样一次写入 %s（_system 行的 pids 列是 CPU 核数）\n' "$INTERVAL" "$OUT" >&2
 
 trap 'printf "sample-procs: 停止\n" >&2; exit 0' INT TERM

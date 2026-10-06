@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的节点列表 ListAdminNodes、旧状态接口 SetLegacyNodeStatus、吊销 RevokeNodeIdentity 与令牌、配置、协议、指标用例，依赖 domain/subscription 的 DeliveryState 与 HeartbeatFreshWindow，依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 nodeList、nodeIssueToken、serverIssueToken、nodeSetStatus、nodeRevokeIdentity、nodePublishConfig、nodeSetProtocol、nodeProtocolSchemas、nodeIssueServerToken、nodeMetrics、nodeRealityKeypair、nodeDelete
-// [POS]: api/admin 的节点处理器（NODE / AGT）：从 handlers.go 拆出，不跑 SQL（读写都在 nodefabric）。节点列表的心跳判定只在 Go 侧做（LastBeat 指针），下发状态交给 subscription.DeliveryState（nodefabric 不能反向依赖 subscription，所以留在这一层），协议配置在这里脱敏；单节点路由在 node_routing.go
-
 package admin
 
 import (

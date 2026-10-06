@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 order_holds.go 的预留父节点与余额冻结、coupon.go 的 applyCoupon/redeemCoupon、checkout.go 的 captureZeroPayOrder 与 CreateOrderOutput，依赖 middleware 幂等声明、platform/audit、platform/idempotencybind、domain/plugin
-// [OUTPUT]: 对外提供 TrafficPack、ListTrafficPacks、CreateTrafficPackOrderInput、CreateTrafficPackOrder、TrafficPackBalance、MyTrafficPacks、GrantTrafficPackTx；包内提供 fulfillTrafficPackOrder
-// [POS]: billing 的流量包（D-E-1）：目录、下单（kind='addon'）、履约成用户级余额、余额查询；礼品卡赠送流量经 giftgrant.go 落到同一余额，扣量在 nodefabric/uniproxy.go
-
 package billing
 
 // 流量包挂在用户身上，永不过期、用完为止、可叠加（D-E-1）。

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 state / effect / memo，依赖 ../core/router 的 useHashLocation / navigate，依赖 ../shell/ScreenFrame，依赖 ../ui 的 Tabs / Empty / Button，依赖 ./Sidebar、./EventsCapsule、./CommandPalette、./ChangePasswordDialog、./me、./modules、./screens，依赖 ./Shell.module.css
- * [OUTPUT]: 对外提供 Shell
- * [POS]: admin 登录后的外框（管理后台.dc.html showApp）：左侧 Sidebar，右侧粘性顶栏（面包屑 + 实时事件）、页头（标题 + 有权限的标签页）与模块内容区；内容区按路由从 screens 登记表取懒加载页面，包在 ScreenFrame 里，缺读权限的地址显示「无权限或不存在」
- */
 import { useEffect, useMemo, useState } from 'react'
 import { navigate, useHashLocation } from '../core/router'
 import { NotFoundScreen, ScreenFallback, ScreenFrame } from '../shell/ScreenFrame'

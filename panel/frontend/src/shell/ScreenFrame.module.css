@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 的间距令牌
- * [OUTPUT]: 对外提供 ScreenFrame.tsx 用到的类名
- * [POS]: shell/ScreenFrame 的样式：加载骨架纵向排列，间距 16
- */
-
 .fallback {
   display: flex;
   flex-direction: column;

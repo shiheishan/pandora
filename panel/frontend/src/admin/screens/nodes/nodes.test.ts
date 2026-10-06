@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./logic 的全部纯函数，依赖 ./schemas 的 schema（核对 Go 的 null 切片与指针字段），依赖 ../../../../dev/mock/admin/node-schemas 的真实 schema 夹具
- * [OUTPUT]: 对外提供节点页纯逻辑的单元测试
- * [POS]: admin/screens/nodes 的单元测试：状态映射与筛选搜索、心跳文案、迁移资格（保留规则 5）与 409 资产清单、R108 上线资格、R106 / R107 敏感字段留空不带与显式清空、合法状态边与批量取舍、排序提交项、协议表单（由真实 schema 推字段、拍平 / 还原、敏感字段、REALITY、422 键映射）、PATCH 差量不回写协议、路由规则互转与兜底校验、新规则插在兜底之前、出站行校验、带宽分桶；界面交互在浏览器里对 dev/mock/admin/nodes.ts 验收
- */
 import { describe, expect, it } from 'vitest'
 import { NODE_PROTOCOL_SCHEMAS } from '../../../../dev/mock/admin/node-schemas'
 import {

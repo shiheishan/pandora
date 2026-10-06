@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close / loginAs / bearer / mockFetch，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
- * [OUTPUT]: 对外提供门户账号安全假接口的测试
- * [POS]: tests 的门户账号安全假后端守卫（R114）：会话列表每条都带 last_seen_at（account/api.ts 带 tsx 依赖进不了 node 侧类型检查，按字段断言），并按最近活跃倒序（当前会话刚刷新，排最前）
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

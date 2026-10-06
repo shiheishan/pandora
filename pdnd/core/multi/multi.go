@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 core 的 Core 契约，依赖 core/sing、core/xray、core/mieru、core/external 的兼容内核，依赖 kernel 的 NewNativeCoreWithLogger
-// [OUTPUT]: 对外提供 Core（New、NewWithOptions 与 core.Core 全部方法）与 Options
-// [POS]: pdnd/core 的过渡期分派器：只在 -tags compat 构建经 runtime_compat.go 托管，按能力把入站分给 NativeCore 或兼容内核，进程 logger 同样交给 NativeCore
-
 // Package multi preserves the transitional core.Core dispatcher. Production
 // uses Pandora NativeCore directly; this package is retained only for an
 // explicit compatibility build while protocol coverage is migrated.

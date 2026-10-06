@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 forwardRef 与 input 属性类型，依赖 ./cx 与 ./Switch.module.css
- * [OUTPUT]: 对外提供 Switch
- * [POS]: ui 的开关：原生 checkbox 加 role="switch"，键盘空格切换与读屏都由浏览器负责；外观 32×18，选中底色随入口（门户朱砂、后台墨色）
- */
 import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react'
 import { cx } from './cx'
 import css from './Switch.module.css'

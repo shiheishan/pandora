@@ -1,9 +1,5 @@
 //go:build linux
 
-// [INPUT]: 依赖 file_owner_linux.go 的 secureFileOwnerUID/requireSecureFileOwner，依赖 config.go 的 readPrivateFile
-// [OUTPUT]: 对外提供测试辅助 trustCurrentUserAsSecureOwner/withSecureFileOwner，及非 root 属主被拒的反例测试
-// [POS]: dbbackup 属主校验的 Linux 测试面，secure_tempdir_test.go 经它让非 root 的 CI 也能走完私密路径校验
-
 package dbbackup
 
 import (

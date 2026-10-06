@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Checkbox / Input / Select，依赖 ./logic 的表单构建，依赖 ./queries、./schemas，依赖 ./marketing.module.css
- * [OUTPUT]: 对外提供 CouponForm（新建单张 / 批量生成共用的内联表单）
- * [POS]: admin/screens/marketing 优惠券标签的内联表单（设计稿 cpForm）：设计只有码 / 数量 / 类型 / 数值 / 每码可用次数，按契约补齐活动名称（批量必填）、每人限用、门槛、封顶、有效期至、适用套餐。单张 POST v1/coupons（reauth），批量 POST v1/coupons/batch（reauth + 幂等 coupon_batch_generate）
- */
 import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { isApiError } from '../../../core/api'

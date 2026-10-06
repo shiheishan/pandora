@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 encoding/json 与 os 读写清单文件
-// [OUTPUT]: 对外提供 Manifest、ManifestUser、ManifestNode、SeedTiming、LoadManifest、(*Manifest).Save
-// [POS]: tools/loadtest/ltkit 的造数清单：seed 写、nodes/users/burst 读，是四个子命令之间唯一的数据契约
-
 package ltkit
 
 import (
@@ -76,6 +72,9 @@ type ManifestNode struct {
 	// Name 是节点名（带 seed 的命名空间），ServerID 是它所在的服务器。
 	Name     string `json:"name,omitempty"`
 	ServerID string `json:"server_id,omitempty"`
+	// RealIP 是节点所在服务器登记的虚构公网地址（203.0.113.0/24），模拟节点经 X-Real-IP 带给面板：
+	// 生产里每个节点一个来源 IP，nginx 的每 IP 限流按节点各算各的；不带的话两百个节点挤在压测机一个地址上。
+	RealIP string `json:"real_ip,omitempty"`
 }
 
 func LoadManifest(path string) (*Manifest, error) {

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 net/http 发请求，依赖 ltkit.Recorder 记每一次请求的状态码、耗时与自定义标签
-// [OUTPUT]: 对外提供 包内的 gateway、request、response、client（newClient / do / login / reauth）、endpointName 与 errorCode
-// [POS]: tools/loadtest/userload 的 HTTP 出口：users 与 burst 的每个请求都经 do 发出并计量，固定来源 IP（X-Real-IP，可加 CF-Connecting-IP 等）、UA、Bearer 与幂等键只在这里落到请求头上
-
 package userload
 
 import (

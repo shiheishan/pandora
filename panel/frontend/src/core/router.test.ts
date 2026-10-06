@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./router 的 parseHash / href / matchPath / navigate / subscribeHash
- * [OUTPUT]: 对外提供 router.ts 的单元测试
- * [POS]: core/router 的单元测试：hash 解析与拼接互逆、模式匹配与解码、navigate 的 push/replace 两条路径；伪造 window.location
- */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { href, matchPath, navigate, parseHash, subscribeHash } from './router'
 

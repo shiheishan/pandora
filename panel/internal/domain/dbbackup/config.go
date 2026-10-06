@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 os 的文件描述符与 Stat 做私密文件检查，依赖 target.go 的 Resolver / Target 校验 WebDAV 端点
-// [OUTPUT]: 对外提供 WebDAVFileConfig、WebDAVRuntimeConfig、LoadWebDAVTarget、LoadWebDAVRuntimeConfig、LocalPair、VerifyLocalPair
-// [POS]: domain/dbbackup 的配置与本地配对校验：配置文件路径由调用方传入（缺省值在 platform/config），openSecureRegular / validateSecureParent 是私密文件读取的唯一入口
-
 package dbbackup
 
 import (

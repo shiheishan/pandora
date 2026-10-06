@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的后台节点编排与 NodeCredentials，依赖 platform/httpx
-// [OUTPUT]: 对外提供节点新建 / 编辑 / 复制 / 移动 / 排序 / 批量改状态 / 一步上线（nodeActivate，R108）/ 一步退役（nodeRetire）与身份令牌状态（nodeIdentity）处理器
-// [POS]: api/admin 的节点编排处理器（后台-07 节点 tab 与抽屉），路径 id 先做 UUID 校验回 404
-
 package admin
 
 import (

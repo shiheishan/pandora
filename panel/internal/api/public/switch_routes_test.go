@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取本包 NewRouter 的源码
-// [OUTPUT]: 对外提供 TestCheckoutAndRedeemRoutesAreSwitchGated
-// [POS]: api/public 的降级开关路由契约：新建订单、发起支付、充值与礼品卡兑换都挂开关门，且排在幂等之前
-
 package public
 
 import (

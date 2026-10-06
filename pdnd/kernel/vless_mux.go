@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 vless.go 的 vlessAdapter（经其 DataPlane 拨号 / 监听 UDP、addTraffic 计量），依赖 route 的 Meta，依赖 core 的 User，依赖 sing 的 M.Socksaddr 地址编解码
-// [OUTPUT]: 包内提供 handleVLESSMux、vlessMuxSession / vlessMuxStream、mux 帧读写 readVLESSMuxHeader / readVLESSMuxData 与 vlessDestinationUDPAddr
-// [POS]: kernel 的 VLESS 原生 XUDP/mux：从 vless.go 拆出，vless.go 在 mux 命令时分派到这里；mux 帧留在 NativeCore 内而不委托兼容内核，每条子流按 TCP / UDP 经 DataPlane 路由并计量；vmess_mux.go 是同一思路的 VMess 版本
-
 package kernel
 
 // Native VLESS XUDP/mux framing.

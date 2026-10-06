@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../ui，依赖 ./hookActions 的 useSaveHook，依赖 ./logic 的钩子表单函数，依赖 ./schemas 的 Hook / HookEvent，依赖 ./system.module.css
- * [OUTPUT]: 对外提供 EventPicker（订阅事件多选菜单）、HookModal（编辑钩子）、SecretModal（一次性签名密钥）
- * [POS]: admin/screens/system 钩子的弹层与选择器：EventPicker 按后端事件目录列开关（带中文说明），首项「全部事件」一次选满；HookModal 是契约待补·前端的编辑（名称、说明、地址、事件、超时 500–30000 毫秒、最多尝试 1–10 次、启用、更换密钥），按 code upsert 全字段回填——超时与次数后端只有 DB CHECK，越界会变 500，所以前端先拦；
- *        SecretModal 展示响应里一次性的签名密钥（库里只存密文，之后谁都读不回），可复制，关掉就再也看不到
- */
 import { useState } from 'react'
 import { Button, Checkbox, Input, Menu, Modal, Switch, useToast, type MenuEntry } from '../../../ui'
 import { useSaveHook } from './hookActions'

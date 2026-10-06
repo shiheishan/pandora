@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 node_admin.go 的 nodeVersionConflict 与输入类型，依赖 config_publish.go 的 lockLegacyConfigRelease，依赖 platform 的 audit/db/httpx
-// [OUTPUT]: 对外提供 DeleteNodeInput、ValidServingTransition，Service 的 BatchAdminNodeLifecycle、DeleteNode
-// [POS]: domain/nodefabric 后台节点的服务状态与删除：从 node_admin.go 拆出。服务状态迁移表只在 Go 内强制；批量改状态先取发布锁再锁节点行，退役同事务清 desired_config_version 并吊销有效身份；删除有三道「删了会立刻出事」的守卫
-
 package nodefabric
 
 import (

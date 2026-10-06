@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 service.go 的 emailVerifyEnabled 与 EmailVerificationDefault、registration_policy_test.go 的假事务，依赖迁移 00030 / 00042 的种子与 platform/sourcetest（读 api/admin 的 getMailSettings）
-// [OUTPUT]: 对外提供 TestEmailVerificationDefaultMatchesSeed
-// [POS]: identity 的单元测试：auth.email_verification 缺行时注册流程与后台邮件页用同一个回退值，且等于迁移种子（⑩）
-
 package identity
 
 import (

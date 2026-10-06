@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/notify 的模板读写、示例渲染与草稿校验、SMTP 配置与发信器，依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 listMailTemplates / saveMailTemplate / resetMailTemplate / previewMailTemplate / testMailTemplate；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 的通知模板：code 只能改不能建，列表带 has_default，草稿可预览、可直接实发测试
-
 package admin
 
 import (

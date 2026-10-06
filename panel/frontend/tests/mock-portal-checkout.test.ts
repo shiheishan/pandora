@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close / loginAs / bearer / mockFetch，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
- * [OUTPUT]: 对外提供门户结账（变更套餐试算）假接口的测试
- * [POS]: tests 的门户结账假后端守卫（R114）：变更套餐试算回 coupon——没用码为 null，用了码是与优惠码试算同形的券面
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

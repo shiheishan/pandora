@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 @tanstack/react-query 的 QueryClient，依赖 ./query 与 ./api 的 ApiError
- * [OUTPUT]: 对外提供 query.ts 的单元测试
- * [POS]: core/query 的单元测试：只对 5xx 补一次重试、实时失效按 meta.topics 精确命中、同 topic 2 秒节流合并、重连失效全部
- */
 import { QueryClient } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from './api'

@@ -1,6 +1,5 @@
 [Unit]
 Description=AegisPanel encrypted PostgreSQL backup
-Documentation=file:/opt/aegispanel/deploy/BACKUP.md
 Requires=docker.service
 After=docker.service
 

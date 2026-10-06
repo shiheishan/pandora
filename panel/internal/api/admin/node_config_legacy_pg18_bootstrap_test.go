@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/nodefabric 的 IssueBootstrapToken / Bootstrap / LookupIdentity / FetchConfig，依赖 node_config_legacy_pg18_test.go 的夹具与共用断言
-// [OUTPUT]: 包内提供 nodeConfigPG18BootstrapPublicKey（按标签派生确定性节点公钥，_materialize 与 _lock 共用）与 runNodeConfigPG18BootstrapSecurityBatch
-// [POS]: TestNodeConfigLegacyPG18 的引导安全批次：令牌与节点名绑定、旧令牌拒绝、名字规范化、停用池发证与用证拒绝、既有池绑定、终态节点与终态身份拒绝
-
 package admin
 
 import (

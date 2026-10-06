@@ -1,8 +1,3 @@
-// [INPUT]: 依赖 admin.go 的 adminClient（后台真实写接口）、enroll.go 的 nodeClient 与 nodeIdentity、naming.go 的 namespace，依赖 platform/db 读节点行版本
-// [OUTPUT]: 包内提供 seededNode、createCatalog、createServers、createNodes、enrollNodes、activateNodes、publishPlan
-// [POS]: tools/loadtest/seed 的节点与目录造数，照前端冒烟 frontend/tests/smoke/seed.ts 的真实流程：池与套餐草稿先行（草稿绑池）→ 服务器 →
-//        节点划进池 → 按节点签发接入令牌 → 节点两段式接入 → 一步上线 → 发布套餐版本；全程走网关，生命周期、审计与配置发布锁都由面板自己推进
-
 package seed
 
 import (
@@ -35,6 +30,7 @@ type seededNode struct {
 	Name     string
 	ID       string
 	ServerID string
+	RealIP   string
 	Port     int
 	token    string
 	Identity *nodeIdentity
@@ -99,7 +95,7 @@ func createServers(ctx context.Context, admin *adminClient, ns namespace, count,
 func createNodes(ctx context.Context, admin *adminClient, ns namespace, poolID string, serverIDs []string, count, perServer int) ([]*seededNode, error) {
 	nodes := make([]*seededNode, 0, count)
 	for i := 0; i < count; i++ {
-		n := &seededNode{Index: i, Name: ns.NodeName(i), ServerID: serverIDs[i/perServer], Port: seedBasePort + i}
+		n := &seededNode{Index: i, Name: ns.NodeName(i), ServerID: serverIDs[i/perServer], RealIP: serverIP(i / perServer), Port: seedBasePort + i}
 		out, err := admin.call(ctx, http.MethodPost, "/v1/nodes", jsonObject{
 			"name": n.Name, "server_id": n.ServerID, "pool_id": poolID, "node_type": seedNodeType,
 			"server_host": ns.NodeHost(i), "server_port": n.Port, "kernel": "auto", "traffic_rate": 1,
@@ -126,7 +122,8 @@ func createNodes(ctx context.Context, admin *adminClient, ns namespace, poolID s
 	return nodes, nil
 }
 
-// enrollNodes 并发跑节点侧接入；节点网关不限流，面板侧接入持租户级发布锁，并发只是把排队放进库里。
+// enrollNodes 并发跑节点侧接入；应用层的节点网关不限流，但 nginx 对 /v1/nodes/ 按来源 IP 限流（enroll.go 的 do 遇限流退避重放），
+// 面板侧接入持租户级发布锁，并发只是把排队放进库里。
 func enrollNodes(ctx context.Context, nc *nodeClient, nodes []*seededNode, workers int) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

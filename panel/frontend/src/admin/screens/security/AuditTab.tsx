@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useEffect / useState，依赖 ../../../core/download 的 saveFile / filenameFromDisposition，依赖 ../../../core/format 的 formatCount / formatDateTime，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的审计函数，依赖 ./queries（含导出后失效审计列表），依赖 ./schemas 的枚举，依赖 ./security.module.css
- * [OUTPUT]: 对外提供 AuditTab（安全与运维 · 审计日志标签）
- * [POS]: admin/screens/security 的审计日志（设计稿 t_audit）：搜索框「操作人、动作或对象」（300ms 防抖送 q）+ 契约待补·前端的三个筛选（动作前缀、操作者类型、结果），表格六列（时间、操作人、动作 + 非成功结果标签、对象 + 原因提示、来源 IP、认证方式；固定布局、最小 840，960 下面板内横滚），按 total 分页。
- *        导出（security.audit.read + ops.export + reauth，R44）：弹窗选可选的起止日期，与当前筛选一起送 GET v1/audit/export，经 requestRaw 取 CSV 存文件；日期先按后端同一套规则校验，超过 5 万行的 422 原样提示。存量行（00080 之前）没有认证方式与来源 IP，显示「—」
- */
 import { useEffect, useState } from 'react'
 import { filenameFromDisposition, saveFile } from '../../../core/download'
 import { formatCount, formatDateTime } from '../../../core/format'

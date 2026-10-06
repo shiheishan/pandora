@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 client.go 的 login / do，依赖 traffic.go 的 actor、adminActor、firstSubscriptionID、prefixFromLinks，依赖 ltkit.Recorder
-// [OUTPUT]: 对外提供 包内的 warmup：登录后台操作员与门户活跃池、manifest 没给时取每人的订阅 id 与租户订阅前缀
-// [POS]: tools/loadtest/userload 的预热段：在计时开始前把「登录一次」的贵活（Argon2）做完，正式运行只复用令牌；预热自己的计量写 users-warmup.json，登录哈希的耗时看这里
-
 package userload
 
 import (

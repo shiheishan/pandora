@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 AEGIS_EFFECTIVE_PG18_* 环境变量给出的一次性库、nodefabric 的接入与签名规范串，依赖 heartbeat_metrics_pg18_test.go 的 checkHeartbeatMetricsRange
-// [OUTPUT]: 对外提供 TestSignedNodeHTTPPG18 与 doSignedJSON / doEnrollmentSignedJSON / doJSON / mustJSON 等请求助手
-// [POS]: api/node 的 PG18 端到端测试（run-pg18-gates.sh 的 effective 域）：两阶段接入、签名配置拉取与回报、心跳（含 metrics 范围校验）、运行令牌的 UniProxy 数据面
-
 package node
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 Deps 注入的 identity（邀请码）与 billing（佣金、提现）用例，依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers 的 myInviteCode、myCommission、requestWithdrawal
-// [POS]: api/public 的邀请与分销佣金：从 handlers.go 拆出。邀请码与已邀请人数、佣金概况（付费好友、累计佣金与转出记录）、提现申请（路由挂独立幂等域，契约 7.3）；佣金转余额在 selfservice.go
-
 package public
 
 import (

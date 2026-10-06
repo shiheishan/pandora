@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 vless.go 的 vlessAdapter（DataPlane.ListenUDP、addTraffic），依赖 vless_request.go 的 vlessDestination，依赖 route 的 Meta 与 core 的 User
-// [OUTPUT]: 包内提供 handleVLESSUDP 与两字节长度帧的 readVLESSUDPPacket / writeVLESSUDPPacket
-// [POS]: kernel 的 VLESS command=UDP：从 vless.go 拆出，vless.go 在 UDP 命令时分派到这里；请求头给出首个目的地址，此后每个数据报按两字节大端长度帧收发，经 DataPlane 路由并按用户计量，不启动兼容内核
-
 package kernel
 
 import (

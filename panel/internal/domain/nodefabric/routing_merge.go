@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 uniproxy_config.go 的 NodeOutbound / NodeRoute，依赖 pgx 在调用方事务里读 node_outbounds / node_routes / route_group_members / route_groups
-// [OUTPUT]: 对外提供 RoutingLayer、MergeRouting；包内 canonicalRouteTag（内置出站引用的规范小写，保存与下发共用）、mergeRoutingLayers（带来源层）、groupOrder、loadNodeRoutingLayersTx、loadNodeRoutingTx
-// [POS]: domain/nodefabric 的生效路由唯一口径：UniProxy 下发（LoadRouting）、长连接推送与有效发布物（FetchEffectiveConfig）都经 loadNodeRoutingTx 读层、经 MergeRouting 合并，不再各写一份
-
 package nodefabric
 
 import (

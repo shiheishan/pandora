@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient，依赖 react 的 useCallback，依赖 ../../../shell/runtime 的 useApi，依赖 ../../actions 的 useCan / useFailure / useIntentKey（转出），依赖 ./schemas
- * [OUTPUT]: 对外提供 SK 查询键前缀、通知与插件页各读 hook（邮件设置、Telegram 设置、模板列表、钩子列表、投递记录）、useInvalidateSystem，并转出 useCan / useFailure / useIntentKey
- * [POS]: admin/screens/system 的数据层：读只经 react-query + core/api；这几张表都没有实时变更通知，写后按 SK 前缀失效
- */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 users.go 的 currentSubscriptionSQL / hasLiveSubscriptionSQL / subStateSQL、domain/subscription 的 LiveStatusesSQL，依赖 platform 的 crypto/db/audit/httpx
-// [OUTPUT]: 对外提供 BulkFilter、BulkPreview、BulkSampleRow、ExportRow 与 Service.PreviewBulk / ExportUsers / GenerateUsers
-// [POS]: domain/adminops 的用户批量运营：预览、导出、群发共用 buildFilterSQL 圈人（含当前订阅的套餐、到期天数与订阅状态），批量生成账号
-
 package adminops
 
 import (

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./infra 的服务器纯函数，依赖 ./logic 的 heartbeatLabel / protocolLabel，依赖 ./NodeIdentity 的 SecretModal，依赖 ./queries、./schemas、./serverActions，依赖 ./nodes.module.css 与 ./infra.module.css
- * [OUTPUT]: 对外提供 ServerDrawer、SERVER_TABS、ServerTab、ServerFields（新建弹窗与编辑共用的表单字段）、Meters（三条占用）
- * [POS]: admin/screens/nodes 的服务器详情抽屉（契约待补·前端：设计缺详情）：概览（规格、探针、状态、心跳、节点占用、从未心跳提示、备注）、节点（GET v1/servers/{id}/nodes，含已退役与已销毁，点行跳节点抽屉）、编辑（PATCH 只发改了的字段，"" 清空，容量不能低于占用）、操作（完整状态下拉按合法边、安装令牌、删除仅草稿或已退役）；标签记在 #/nodes/servers/<服务器 id>/<标签>
- */
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { isApiError } from '../../../core/api'

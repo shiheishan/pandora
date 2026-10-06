@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / keepPreviousData，依赖 zod，依赖 ../../../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供仪表盘七个读接口的 zod schema 与类型（Backlog、Overview、Revenue、NodeTraffic、UserTraffic、SystemStatus、Activity 等）及对应的 useXxx 查询 hook
- * [POS]: admin/screens/dash 的数据层：只经 core/api.ts 取数、只经 react-query 缓存；形状逐字照 api-contract.md 后台-01，并按 Go 实际编码收紧（后端必回的字段必填，只有按条件放键的备份段、R52 的组件 metrics 与 omitempty 的 latency_ms / message 保持可选，postgres 三项指标照抄 database 段、读失败时为 null），流量与积压三件照 DASH-01 冻结契约；第八个 GET v1/dashboard/tasks 与侧栏共用，在 ../../tasks.ts；model.ts 消费这里的类型，界面组件消费这里的 hook
- */
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'

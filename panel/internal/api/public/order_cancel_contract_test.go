@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 middleware.RequireAuth、platform/httpx、domain/billing 的 ReleaseOrderOutput，依赖 platform/sourcetest 按名取 NewRouter、handlers.cancelOrder 与 billing 的取消链路
-// [OUTPUT]: 对外提供 TestCancelOrderHTTPAuthTenantAndResponseContract、TestCancelOrderAuthMiddlewareRejectsAnonymous、TestCancelOrderAlreadyTerminalHTTPResponse
-// [POS]: api/public 用户取消订单的鉴权、租户与归属、响应形状契约
-
 package public
 
 import (

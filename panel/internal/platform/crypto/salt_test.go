@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 crypto.go 的 SubscriptionAuditSalt、NotifyRecipientSalt
-// [OUTPUT]: 对外提供 TestDerivedSaltsAreDomainSeparated
-// [POS]: platform/crypto 的派生盐单元测试：公式钉死（改了就与存量哈希对不上），且各用途、主密钥本身两两不同
-
 package crypto
 
 import (

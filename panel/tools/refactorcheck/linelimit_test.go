@@ -1,7 +1,3 @@
-// [INPUT]: 依赖标准库 io/fs 遍历 module 根目录（向上找 go.mod），不依赖 git
-// [OUTPUT]: 对外提供 TestGoFilesStayWithinLineLimit
-// [POS]: tools/refactorcheck 的行数守卫：第 5 阶段把超 800 行的文件拆完之后，防止任何 .go 文件（含测试）再长回去；pdnd 在 module 根的 linelimit_test.go 有同一道守卫
-
 package main
 
 import (
@@ -70,7 +66,7 @@ func TestGoFilesStayWithinLineLimit(t *testing.T) {
 	}
 	sort.Strings(over)
 	for _, rel := range over {
-		t.Errorf("%s has %d lines, over the %d-line limit: split it by topic (see panel/tools/refactorcheck/CLAUDE.md)", rel, seen[rel], maxGoFileLines)
+		t.Errorf("%s has %d lines, over the %d-line limit: split it by topic and prove the pure move with panel/tools/refactorcheck (see the 800-line section of the root CLAUDE.md)", rel, seen[rel], maxGoFileLines)
 	}
 	for rel, why := range lineLimitExemptFiles {
 		lines, ok := seen[rel]
