@@ -35,7 +35,7 @@
 - `loadtest seed|nodes|users|burst`，每个子命令加 `-h` 看参数。
 - `scripts/`：在面板机上跑的采集脚本。
   - `pgstat.sh`：pg_stat_statements 开启、清零、导出、撤销
-  - `sample-procs.sh`：各进程与整机的 CPU、RSS/PSS
+  - `sample-procs.sh`：各进程与整机的 CPU、RSS/PSS，整机另记 swap 总量、余量与累计换入换出页数
   - `sample-cgroup.sh`：三个网关的 cgroup 节流与内存水位（`nr_throttled`、`memory.events`）
   - `snapshot-mem.sh`：PG 与 Valkey 内部的内存快照
   - `grab-pprof.sh`：三个网关的 CPU、heap、allocs、goroutine profile
@@ -315,7 +315,7 @@ JSON 里每个端点都有 count、QPS、p50/p95/p99/max（毫秒）、错误码
 |---|---|---|
 | 节点接口 p99 < 300ms | `nodes.json` 里每个 `node:` 端点的 `p99_ms` | 每个端点都要过，不只看合计 |
 | 15k 档 CPU 平均 < 50% | `procs.csv` 的 `_system` 行：`cpu_pct` 平均 ÷（核数 × 100） | 只算 T 到 T+30m 的稳态 |
-| 整机内存留 25% 余量，24 小时内不持续上涨 | `procs.csv` 的 `_system` 行：`rss_kb` = MemTotal − MemAvailable；24h 档各进程 `pss_kb` 的趋势；pprof heap 对比 | 峰值 ≤ 75% MemTotal；24 小时的线性趋势不显著为正 |
+| 整机内存留 25% 余量，24 小时内不持续上涨 | `procs.csv` 的 `_system` 行：`rss_kb` = MemTotal − MemAvailable，`pswpin` / `pswpout`（累计换入换出页数）；24h 档各进程 `pss_kb` 的趋势；pprof heap 对比 | 峰值 ≤ 75% MemTotal；稳态内 Δpswpin 或 Δpswpout 持续增长（不是个位数的偶发）即不及格，与 MemTotal − MemAvailable 一起列；24 小时的线性趋势不显著为正 |
 | 零 5xx | nodes / users / burst 三份 JSON 的 `server_5xx`；nginx access log 里 status ≥ 500 的行数 | 都必须是 0；`transport:*`（连接错误、超时）单列说明 |
 
 ### 9.3 必报观测项（不是及格线）

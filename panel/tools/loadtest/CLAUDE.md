@@ -42,7 +42,7 @@ scripts/: 压测期在面板主机上以 root 跑的采集脚本，scp 过去即
   - 兼容 install.sh 的 Docker 数据基座（/opt/aegispanel，容器 aegis-postgres/aegis-valkey）与 install-native.sh 的直装布局；只读解析 .env、不 source，口令只经 PGPASSWORD/REDISCLI_AUTH 传给子进程
   - lt-common.sh 被 source 的公共段：找 .env、判定数据基座、超级用户 psql、带口令 valkey-cli、重启 PG
   - pgstat.sh pg_stat_statements 开启（ALTER SYSTEM + 重启 + CREATE EXTENSION）、清零、导出 top N 三份 CSV（总耗时、平均耗时、调用次数）、撤销
-  - sample-procs.sh 三网关、postgres、valkey、nginx 与整机的 CPU 与 RSS/PSS 定时采样成 CSV
+  - sample-procs.sh 三网关、postgres、valkey、nginx 与整机的 CPU 与 RSS/PSS 定时采样成 CSV，整机行另带 swap 余量与 pswpin/pswpout，有 swap 时靠它识别被换页掩盖的内存吃紧
   - sample-cgroup.sh 三网关 systemd 单元的 cgroup v2 cpu.stat（nr_throttled）与 memory.current/max/events 定时采样成 CSV：判「撞 CPUQuota / MemoryMax」与 15k 档必报的节流增量
   - snapshot-mem.sh PostgreSQL 内存参数、共享内存、连接与库计数，Valkey INFO memory/stats/clients 快照，压测前后各一次做差
   - grab-pprof.sh 从三网关的回环 pprof 端口并行抓 CPU profile，再取 heap/allocs/goroutine
