@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 internal/nativewire/shadowtls 的 v3 服务端，依赖 shadowsocks.go 的 shadowsocksAdapter 作内层解码
+// [OUTPUT]: 对外提供 shadowTLSAdapter（经 newShadowTLSAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close
+// [POS]: kernel 的 ShadowTLS 组合入站：外层 v3 伪装握手经 DataPlane 连诱饵服务器，认证后的内层流交给内嵌的 Shadowsocks 解码；外层握手失败按 tls-handshake 上报，内层会话失败也记在本入站名下
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
@@ -27,6 +32,7 @@ type shadowTLSAdapter struct {
 	service  *nativeShadowTLS.Service
 	listener net.Listener
 	plane    DataPlane
+	connErr  connErrorReporter
 	ctx      context.Context
 	cancel   context.CancelFunc
 	closed   bool
@@ -88,9 +94,12 @@ func (a *shadowTLSAdapter) Start(parent context.Context, spec InboundSpec, hooks
 		return err
 	}
 	a.spec, a.plane = spec, hooks.DataPlane
+	a.connErr = newConnErrorReporter(hooks, spec, "shadowtls")
 	a.ctx, a.cancel = context.WithCancel(parent)
 	a.inner.spec = InboundSpec{Config: core.InboundConfig{Protocol: "shadowsocks", Listen: listen, Port: spec.Config.Port, Raw: map[string]any{"method": shadowTLSMethod(spec.Config.Raw)}}}
 	a.inner.plane = hooks.DataPlane
+	// 内层 Shadowsocks 的会话失败记在外层 shadowtls 入站名下，运维按面板上的入站查。
+	a.inner.connErr = a.connErr
 	a.inner.ctx = a.ctx
 	service, err := nativeShadowTLS.NewService(nativeShadowTLS.ServiceConfig{
 		Version:     3,
@@ -141,7 +150,11 @@ func (a *shadowTLSAdapter) acceptLoop() {
 		go func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
-			_ = service.NewConnection(ctx, conn, M.SocksaddrFromNet(conn.RemoteAddr()), M.Socksaddr{}, nil)
+			// NewConnection 的错误都出在外层伪装握手（读 ClientHello、与诱饵
+			// 服务器中继、HMAC 校验），内层会话的失败由 inner.handleConn 自己报。
+			if err := service.NewConnection(ctx, conn, M.SocksaddrFromNet(conn.RemoteAddr()), M.Socksaddr{}, nil); err != nil {
+				a.connErr.conn(StageTLSHandshake, conn, err)
+			}
 			_ = conn.Close()
 		}()
 	}

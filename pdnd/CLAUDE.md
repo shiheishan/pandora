@@ -8,7 +8,7 @@ Pandora node 二进制（pandora-native / pdnd）
 
 成员清单
 main.go: 入口。子命令 bootstrap / enrollment / verify-identity / validate-install；flag -c 配置路径、-version、-capabilities 打印能力矩阵后退出、-self-check 校验能力注册表；装配 panel 客户端、node 循环与运行时
-runtime_native.go: go:build !compat，生产默认运行时，只链接 NativeCore
+runtime_native.go: go:build !compat，生产默认运行时，只链接 NativeCore，进程 logger 经 NewNativeCoreWithLogger 交给它记入站连接失败（限流、脱敏）
 runtime_compat.go: go:build compat，迁移构建专用，显式 native_only:false 时允许回落兼容内核
 kernel/: NativeCore 自研数据面，13 协议入站、传输、REALITY、能力矩阵；见 kernel/CLAUDE.md
 core/: core.Core 抽象与兼容适配层（sing-box/xray/mieru/外部进程/multi 分派/流量计数/限速）；见 core/CLAUDE.md

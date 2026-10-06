@@ -1,9 +1,15 @@
+// [INPUT]: 依赖 adapter.go 的 AdapterRegistry / AdapterHooks，依赖 runtime.go 的 Build 与 Runtime，依赖 connerror_log.go 的 connErrorLogSink，依赖 core 的 Core 契约与 log/slog
+// [OUTPUT]: 对外提供 NativeCore（NewNativeCore、NewNativeCoreWithLogger 与 core.Core 全部方法、InboundReady、CapabilityReport）；包内 nativeInbound、routedDataPlane、upstream 失败标记
+// [POS]: kernel 的控制面主体：按 InboundSpec 启动入站、热替换与回滚，把 DataPlane 接到路由与出站，把每个入站的 OnConnError 接到同一个限流日志出口；已退役的入站一律以"入站 %q 已退役"拒绝后续操作
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 
@@ -30,6 +36,8 @@ type NativeCore struct {
 	seq      uint64
 	applyMu  sync.Mutex
 	applyTag map[string]*sync.Mutex
+	// connErrors 是全部入站共用的连接失败日志出口，见 connerror_log.go。
+	connErrors *connErrorLogSink
 }
 
 type nativeInbound struct {
@@ -62,7 +70,8 @@ func (p *routedDataPlane) DialTCP(ctx context.Context, meta route.Meta, destinat
 	if r == nil {
 		return nil, fmt.Errorf("入站路由 runtime 尚未就绪")
 	}
-	return r.DialTCP(ctx, meta, destination)
+	conn, err := r.DialTCP(ctx, meta, destination)
+	return conn, markConnError(connErrUpstream, err)
 }
 
 func (p *routedDataPlane) ListenUDP(ctx context.Context, meta route.Meta, destination M.Socksaddr) (net.PacketConn, error) {
@@ -72,19 +81,37 @@ func (p *routedDataPlane) ListenUDP(ctx context.Context, meta route.Meta, destin
 	if r == nil {
 		return nil, fmt.Errorf("入站路由 runtime 尚未就绪")
 	}
-	return r.ListenUDP(ctx, meta, destination)
+	conn, err := r.ListenUDP(ctx, meta, destination)
+	return conn, markConnError(connErrUpstream, err)
 }
 
+// NewNativeCore 用 slog.Default() 记连接失败，给测试与不关心日志的调用方。
 func NewNativeCore(registry *AdapterRegistry) *NativeCore {
+	return NewNativeCoreWithLogger(registry, nil)
+}
+
+// NewNativeCoreWithLogger 是生产入口：main 的 newLogger 经 newRuntime 传进来，
+// 入站连接失败与进程其余日志同级别、同格式、同一个出口。log 为 nil 时用 slog.Default()。
+func NewNativeCoreWithLogger(registry *AdapterRegistry, log *slog.Logger) *NativeCore {
 	if registry == nil {
 		registry = NewDefaultAdapterRegistry()
 	}
-	return &NativeCore{
-		registry: registry,
-		inbounds: make(map[string]*nativeInbound),
-		desired:  make(map[string]uint64),
-		applyTag: make(map[string]*sync.Mutex),
+	if log == nil {
+		log = slog.Default()
 	}
+	return &NativeCore{
+		registry:   registry,
+		inbounds:   make(map[string]*nativeInbound),
+		desired:    make(map[string]uint64),
+		applyTag:   make(map[string]*sync.Mutex),
+		connErrors: newConnErrorLogSink(log, connErrorLogBurst, connErrorLogWindow),
+	}
+}
+
+// adapterHooks 是两处 adapter.Start（新起与回滚恢复）共用的钩子装配，
+// 保证恢复出来的旧入站同样有失败观测，不会因为走了回滚分支就重新变哑。
+func (c *NativeCore) adapterHooks(plane DataPlane) AdapterHooks {
+	return AdapterHooks{DataPlane: plane, OnConnError: c.connErrors.Report}
 }
 
 var _ core.Core = (*NativeCore)(nil)
@@ -163,6 +190,8 @@ func (c *NativeCore) Close() error {
 			first = err
 		}
 	}
+	// 入站全部关完再收日志出口，关闭过程中的最后几条失败也能进摘要。
+	c.connErrors.Close()
 	return first
 }
 
@@ -247,7 +276,7 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 	}
 
 	plane := &routedDataPlane{current: runtime}
-	if err := adapter.Start(ctx, spec, AdapterHooks{DataPlane: plane}); err != nil {
+	if err := adapter.Start(ctx, spec, c.adapterHooks(plane)); err != nil {
 		_ = runtime.Close()
 		_ = adapter.Close()
 		startErr := fmt.Errorf("启动原生协议 %s: %w", cfg.Protocol, err)
@@ -314,7 +343,7 @@ func (c *NativeCore) restoreInbound(ctx context.Context, previous *nativeInbound
 		return nil, err
 	}
 	plane := &routedDataPlane{current: runtime}
-	if err := adapter.Start(ctx, spec, AdapterHooks{DataPlane: plane}); err != nil {
+	if err := adapter.Start(ctx, spec, c.adapterHooks(plane)); err != nil {
 		_ = runtime.Close()
 		_ = adapter.Close()
 		return nil, err
@@ -350,7 +379,7 @@ func (c *NativeCore) AddUsers(tag string, users []core.User) error {
 	in.mu.RLock()
 	if in.retired {
 		in.mu.RUnlock()
-		return fmt.Errorf("鍏ョ珯 %q 宸插�€閫€", tag)
+		return fmt.Errorf("入站 %q 已退役", tag)
 	}
 	err = in.adapter.AddUsers(users)
 	in.mu.RUnlock()
@@ -383,7 +412,7 @@ func (c *NativeCore) DelUsers(tag string, uuids []string) error {
 	in.mu.RLock()
 	if in.retired {
 		in.mu.RUnlock()
-		return fmt.Errorf("鍏ョ珯 %q 宸插�€閫€", tag)
+		return fmt.Errorf("入站 %q 已退役", tag)
 	}
 	err = in.adapter.DelUsers(uuids)
 	in.mu.RUnlock()
@@ -401,7 +430,7 @@ func (c *NativeCore) GetTraffic(tag string) ([]core.UserTraffic, error) {
 	in.mu.RLock()
 	defer in.mu.RUnlock()
 	if in.retired {
-		return nil, fmt.Errorf("鍏ョ珯 %q 宸插�€閫€", tag)
+		return nil, fmt.Errorf("入站 %q 已退役", tag)
 	}
 	return in.adapter.SnapshotTraffic()
 }
@@ -432,7 +461,7 @@ func (c *NativeCore) SetRouting(tag string, cfg *core.Routing) error {
 	if in.retired {
 		in.mu.Unlock()
 		_ = next.Close()
-		return fmt.Errorf("鍏ョ珯 %q 宸插�€閫€", tag)
+		return fmt.Errorf("入站 %q 已退役", tag)
 	}
 	old := in.plane.swap(next)
 	in.mu.Unlock()

@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 enfein/mieru 的 protocol.Mux 与 socks5 请求解码，依赖 core 的 User / 限速与 core/counter 的用户表、计量、在线设备，依赖 route 的 Meta 与 sing 的 M.Socksaddr
-// [OUTPUT]: 对外提供 Inbound（New、SetTransport、Start、Close、AddUsers / UpsertUsers / DelUsers、Traffic、Online）与出站契约 Transport
-// [POS]: pdnd/core 的 mieru 入站：默认构建里被 kernel/mieru.go 包成 NativeCore 适配器并注入 DataPlane 作 Transport；compat 构建里由 core/multi 直接托管、未注入 Transport 时直接拨号
+// [OUTPUT]: 对外提供 Inbound（New、SetTransport、SetConnErrorHandler、Start、Close、AddUsers / UpsertUsers / DelUsers、Traffic、Online）与出站契约 Transport、失败哨兵 ErrUserRevoked / ErrDeviceLimit
+// [POS]: pdnd/core 的 mieru 入站：默认构建里被 kernel/mieru.go 包成 NativeCore 适配器并注入 DataPlane 作 Transport、经 SetConnErrorHandler 接上连接失败观测；compat 构建里由 core/multi 直接托管、未注入 Transport 时直接拨号
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package mieru 用 mieru 协议提供入站。
@@ -61,6 +61,13 @@ type Transport interface {
 	ListenUDP(context.Context, route.Meta, M.Socksaddr) (net.PacketConn, error)
 }
 
+// 已认证连接被拒的两种原因，经 SetConnErrorHandler 交出去。
+// kernel/mieru.go 据此把失败归到 auth / limit 两类。
+var (
+	ErrUserRevoked = errors.New("mieru user is no longer active")
+	ErrDeviceLimit = errors.New("mieru device limit")
+)
+
 // Inbound 是一个 mieru 入站。
 type Inbound struct {
 	tag    string
@@ -77,6 +84,7 @@ type Inbound struct {
 	mu        sync.Mutex
 	mux       *protocol.Mux
 	transport Transport
+	onConnErr func(net.Addr, error)
 	cancel    context.CancelFunc
 	started   bool
 }
@@ -85,6 +93,27 @@ func (h *Inbound) SetTransport(transport Transport) {
 	h.mu.Lock()
 	h.transport = transport
 	h.mu.Unlock()
+}
+
+// SetConnErrorHandler 注册已认证连接的失败出口：读请求失败、用户已失效、
+// 设备数到上限、命令不支持、拨目标失败。NativeCore 托管时由 kernel/mieru.go
+// 接到 AdapterHooks.OnConnError；compat 构建不注册，只走本包日志。
+//
+// 认证本身（首包解密）在 mieru 的 mux 内部，失败是静默丢弃，这是协议抗探测
+// 的设计，这里看不到。
+func (h *Inbound) SetConnErrorHandler(fn func(remote net.Addr, err error)) {
+	h.mu.Lock()
+	h.onConnErr = fn
+	h.mu.Unlock()
+}
+
+func (h *Inbound) reportConnError(remote net.Addr, err error) {
+	h.mu.Lock()
+	fn := h.onConnErr
+	h.mu.Unlock()
+	if fn != nil && err != nil {
+		fn(remote, err)
+	}
 }
 
 func New(tag string, port int, transport string, log *slog.Logger) *Inbound {
@@ -277,20 +306,24 @@ func (h *Inbound) handle(ctx context.Context, proxyConn net.Conn) {
 	mcommon.SetReadTimeout(proxyConn, 0)
 	if err != nil {
 		h.log.Debug("读取 socks5 请求失败", "err", err)
+		h.reportConnError(proxyConn.RemoteAddr(), fmt.Errorf("mieru socks5 request: %w", err))
 		return
 	}
 
+	// 用户名就是 UUID，也就是这条连接的口令：日志里只记内部 ID，不记它。
 	u, found := h.users.ByUUID(userCtx.UserName())
 	if !found {
 		// 用户刚被移除，而这条连接是更新之前建立的
-		h.log.Warn("mieru 用户已失效", "user", userCtx.UserName())
+		h.log.Warn("mieru 用户已失效")
+		h.reportConnError(proxyConn.RemoteAddr(), ErrUserRevoked)
 		return
 	}
 
 	// 设备数限制。mieru 不走 sing-box 的入站体系，这一步得自己做 ——
 	// 漏掉的话它就成了绕过限制的那个协议。
 	if !h.online.Admit(u.ID, proxyConn.RemoteAddr(), u.DeviceLimit) {
-		h.log.Info("拒绝连接：已达设备数上限", "user", u.UUID, "limit", u.DeviceLimit)
+		h.log.Info("拒绝连接：已达设备数上限", "user_id", u.ID, "limit", u.DeviceLimit)
+		h.reportConnError(proxyConn.RemoteAddr(), ErrDeviceLimit)
 		return
 	}
 	// mieru 的 UDP 走 packet-over-stream，与 TCP 共用这条 proxyConn，
@@ -310,6 +343,7 @@ func (h *Inbound) handle(ctx context.Context, proxyConn net.Conn) {
 		h.handleUDP(ctx, limited)
 	default:
 		h.log.Warn("不支持的 socks5 命令", "cmd", req.Command)
+		h.reportConnError(proxyConn.RemoteAddr(), fmt.Errorf("mieru socks5 command %d unsupported", req.Command))
 	}
 }
 
@@ -336,6 +370,7 @@ func (h *Inbound) handleTCP(ctx context.Context, conn net.Conn, req *model.Reque
 	}
 	if err != nil {
 		h.log.Debug("连接目标失败", "dst", req.DstAddr.String(), "err", err)
+		h.reportConnError(conn.RemoteAddr(), fmt.Errorf("mieru dial target: %w", err))
 		return
 	}
 	defer target.Close()

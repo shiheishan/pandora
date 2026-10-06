@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 internal/nativewire/anytls 的服务端会话，依赖 uot_bridge.go 的 UoT 桥，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 anyTLSAdapter（经 newAnyTLSAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close，以及 sing 的 NewConnectionEx 回调
+// [POS]: kernel 的 AnyTLS 入站：可选 TLS 外层、AnyTLS 会话与口令认证、子流 TCP 转发与 UoT；TLS 握手、会话认证、子流的设备上限与拨号失败分别上报
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package kernel
 
 import (
@@ -37,6 +42,7 @@ type anyTLSAdapter struct {
 	listener  net.Listener
 	tlsConfig *hysteria2TLSConfig
 	plane     DataPlane
+	connErr   connErrorReporter
 	limiters  core.SpeedLimiters
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -139,6 +145,7 @@ func (a *anyTLSAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 		return fmt.Errorf("anytls adapter already started or closed")
 	}
 	a.spec, a.plane, a.ctx, a.cancel, a.service, a.listener, a.tlsConfig = spec, hooks.DataPlane, ctx, cancel, service, listener, tlsConfig
+	a.connErr = newConnErrorReporter(hooks, spec, "anytls")
 	a.mu.Unlock()
 	if err := a.syncUsers(); err != nil {
 		_ = a.Close()
@@ -334,13 +341,21 @@ func (a *anyTLSAdapter) handleAccepted(conn net.Conn) {
 	a.mu.RUnlock()
 	if tlsConfig != nil {
 		wrapped, err := tlsConfig.Server(conn)
-		if err != nil || wrapped.HandshakeContext(ctx) != nil {
+		if err == nil {
+			err = wrapped.HandshakeContext(ctx)
+		}
+		if err != nil {
+			a.connErr.conn(StageTLSHandshake, conn, err)
 			return
 		}
 		conn = wrapped
 	}
 	source := M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap()
-	_ = service.NewConnection(ctx, conn, source, nil)
+	// NewConnection 的错误是 AnyTLS 会话层的：口令不对（"unknown user
+	// password"）、padding 帧读不全。通过认证的子流失败在 NewConnectionEx 里报。
+	if err := service.NewConnection(ctx, conn, source, nil); err != nil {
+		a.connErr.conn(StageSession, conn, err)
+	}
 }
 
 func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -358,24 +373,32 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 		if onClose != nil {
 			defer onClose(nil)
 		}
+		remote := source.TCPAddr()
 		name, ok := auth.UserFromContext[string](ctx)
 		if !ok {
+			a.connErr.addr(StageSession, remote, markConnError(connErrAuth, fmt.Errorf("anytls stream has no authenticated user")))
 			return
 		}
 		index, user, ok := a.lookupUser(name)
-		if !ok || !a.enterDevice(user, source.AddrString()) {
+		if !ok {
+			a.connErr.addr(StageSession, remote, markConnError(connErrAuth, fmt.Errorf("anytls user is no longer active")))
+			return
+		}
+		if !a.enterDevice(user, source.AddrString()) {
+			a.connErr.addr(StageSession, remote, deviceLimitError("anytls"))
 			return
 		}
 		defer a.leaveDevice(user, source.AddrString())
 		if destination.Fqdn == uot.MagicAddress || destination.Fqdn == uot.LegacyMagicAddress {
 			if err := a.handleUOT(ctx, conn, source, destination.Fqdn == uot.MagicAddress, index); err != nil {
-				return
+				a.connErr.addr(StageSession, remote, err)
 			}
 			return
 		}
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "anytls", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.DialTCP(ctx, meta, destination)
 		if err != nil {
+			a.connErr.addr(StageSession, remote, err)
 			return
 		}
 		defer upstream.Close()
