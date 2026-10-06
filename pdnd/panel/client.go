@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 net/http 访问面板 UniProxy 端点（config / user / push / alive），依赖 core 的 User / UserTraffic 数据契约
-// [OUTPUT]: 对外提供 Client、Options、New，以及 Config / Users / Push / Alive / SetNodeType / SetUsersVersion / ForgetUsersVersion
+// [OUTPUT]: 对外提供 Client、Options、New，以及 Config / Users / Push / Alive / SetNodeType / SetUsersVersion / ForgetUsersVersion / ForgetConfigVersion
 // [POS]: pdnd/panel 的兼容通道客户端，持有配置与用户列表两份 ETag；stream.go 复用它的 Transport 与鉴权，signed.go 是并列的签名通道
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -274,6 +274,16 @@ func (c *Client) post(ctx context.Context, path string, v any) error {
 func httpError(what string, resp *http.Response) error {
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	return fmt.Errorf("%s 失败：HTTP %d %s", what, resp.StatusCode, bytes.TrimSpace(snippet))
+}
+
+// ForgetConfigVersion 丢掉记下的配置 ETag，下一次 Config 必然拿回全量。
+//
+// 配置 ETag 在解析成功时就记下，与节点端应用成败无关——应用失败但旧配置
+// 还在服务时，这正是想要的：不必每轮都重试一份已知装不上的配置、反复
+// 重建入站。可一旦节点已不在服务（首次就没装上、回滚也失败），再拿它换
+// 304 就等于永不重试。由 node/ 在这种时候调用。
+func (c *Client) ForgetConfigVersion() {
+	c.etag = ""
 }
 
 // ForgetUsersVersion 丢掉记下的用户列表版本，下一次 Users 必然不带

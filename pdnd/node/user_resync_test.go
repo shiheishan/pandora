@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 panel 的 Client（兼容通道 UniProxy）与 StreamEvent，依赖 core 的 Core 抽象，依赖 net/http/httptest 起一个只认 ETag 的假面板
-// [OUTPUT]: 对外提供 userTableCore、fakeUniProxy 两个夹具与入站重建后用户重同步的回归测试
-// [POS]: pdnd/node 的用户镜像不变式守卫：内核用户表被清空之后，下一次拉用户必须是无条件的全量，轮询、事件流、增量三条路都要守住；config_rollback_test.go 守的是回滚本身
+// [OUTPUT]: 对外提供 userTableCore、fakeUniProxy 两个夹具与入站重建后用户重同步、兼容通道停摆后配置重试的回归测试
+// [POS]: pdnd/node 的用户镜像不变式守卫：内核用户表被清空之后，下一次拉用户必须是无条件的全量，轮询、事件流、增量三条路都要守住；节点已停时配置 ETag 也不能把重试挡成 304；config_rollback_test.go 守的是回滚本身
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package node
@@ -172,8 +172,8 @@ func (p *fakeUniProxy) lastUserIfNoneMatch() string {
 	return p.userIfNoneMatch[len(p.userIfNoneMatch)-1]
 }
 
-// newResyncFixture 起假面板与内核，并跑完第一轮同步：两个用户已在内核里。
-func newResyncFixture(t *testing.T) (*Node, *userTableCore, *fakeUniProxy) {
+// newResyncParts 起假面板（配置 cfg-1、两个用户）与内核，还没同步过。
+func newResyncParts(t *testing.T) (*Node, *userTableCore, *fakeUniProxy) {
 	t.Helper()
 	fake := &fakeUniProxy{}
 	fake.setConfig(18080, `"cfg-1"`)
@@ -183,7 +183,13 @@ func newResyncFixture(t *testing.T) (*Node, *userTableCore, *fakeUniProxy) {
 
 	kernel := newUserTableCore()
 	client := panel.New(panel.Options{BaseURL: srv.URL, NodeID: "n1", NodeType: "vless", Token: "token"})
-	n := New(client, kernel, testLogger())
+	return New(client, kernel, testLogger()), kernel, fake
+}
+
+// newResyncFixture 在 newResyncParts 之上跑完第一轮同步：两个用户已在内核里。
+func newResyncFixture(t *testing.T) (*Node, *userTableCore, *fakeUniProxy) {
+	t.Helper()
+	n, kernel, fake := newResyncParts(t)
 
 	n.syncOnce(context.Background())
 	assertKernelUsers(t, kernel, "首轮同步后", "user-a", "user-b")
@@ -286,4 +292,46 @@ func TestRollbackFailureResetsUserMirror(t *testing.T) {
 	if _, changed, err := n.client.Users(context.Background()); err != nil || !changed {
 		t.Fatalf("回滚失败后拉用户仍换回 304：changed=%v err=%v", changed, err)
 	}
+}
+
+// 兼容通道上回滚也失败之后，下一次轮询必须重新拉配置再试一次。
+//
+// 配置 ETag 在解析成功时就记下了，与应用成败无关。回滚失败后节点已停
+// （started=false），若还拿着这个 ETag 换回 304，syncConfig 当成「没变」
+// 返回，syncOnce 又因未启动而跳过用户——节点永久停摆，直到面板那边的
+// 配置恰好再变一次。签名通道每轮都全量拉配置，没有这个问题。
+func TestCompatRetriesConfigAfterRollbackFailure(t *testing.T) {
+	n, kernel, fake := newResyncFixture(t)
+
+	kernel.failSetRouting = 2 // 新配置被拒，恢复旧配置也被拒（例如端口暂时被占）
+	fake.setConfig(18081, `"cfg-2"`)
+	n.syncOnce(context.Background())
+	if n.started {
+		t.Fatal("回滚失败后节点仍标记为已启动")
+	}
+
+	// 故障已消失，配置没有再变：下一轮轮询应当重试同一份配置并恢复服务。
+	n.syncOnce(context.Background())
+	if !n.started {
+		t.Fatal("回滚失败后的下一轮轮询没有重试配置，节点仍处于停摆")
+	}
+	assertKernelUsers(t, kernel, "停摆后重试配置那一轮之后", "user-a", "user-b")
+}
+
+// 首次配置就没装上（没有上一版可回滚）也一样：下一轮必须重试，
+// 而不是拿着已记下的 ETag 换回 304、永远不启动。
+func TestCompatRetriesFirstConfigAfterApplyFailure(t *testing.T) {
+	n, kernel, fake := newResyncParts(t)
+
+	kernel.failSetRouting = 1
+	n.syncOnce(context.Background())
+	if n.started {
+		t.Fatal("首次配置被拒，节点却标记为已启动")
+	}
+
+	n.syncOnce(context.Background())
+	if !n.started {
+		t.Fatalf("首次配置失败后的下一轮没有重试（面板共回了 %d 次 200）", fake.configServed)
+	}
+	assertKernelUsers(t, kernel, "首次配置重试成功之后", "user-a", "user-b")
 }
