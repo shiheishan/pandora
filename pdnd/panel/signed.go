@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 crypto/ed25519 的节点签名与配置验签，依赖 net/http 访问面板 /v1/nodes/*
-// [OUTPUT]: 对外提供 Identity、BootstrapOptions、LoadIdentity / SaveIdentity、CanonicalSignedServer、SignedClient（Heartbeat、Config、ReportConfig、ReportEffectiveConfig、VerifyConfig、Do）
+// [OUTPUT]: 对外提供 Identity、BootstrapOptions、LoadIdentity / SaveIdentity、CanonicalSignedServer、SignedClient（Heartbeat、Config、ReportConfig、ReportEffectiveConfig、VerifyConfig、Do）、StatusError（面板回了非 2xx，与传输错误区分）
 // [POS]: pdnd/panel 的签名通道：节点身份的落盘格式与每个请求的 Ed25519 签名；身份由 enrollment.go 的两阶段接入产生，本文件只消费它（旧的一步式 /v1/nodes/bootstrap 面板已返回 426，客户端已删）
 
 package panel
@@ -252,6 +252,20 @@ func NewSignedClientAt(identity *Identity, identityPath string) (*SignedClient, 
 	return &SignedClient{identity: identity, identityPath: identityPath, private: ed25519.PrivateKey(raw), http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: rejectCredentialRedirect}}, nil
 }
 
+// StatusError 是面板对签名请求回了非 2xx：请求已送达、面板给了明确答复。
+// 与传输错误（*url.Error）分开，调用方才能区分「面板拒收」与「没送到」——
+// 前者重发同一份证据也只会再被拒，后者下一轮值得再发。
+type StatusError struct {
+	Method string
+	Path   string
+	Code   int
+	Body   string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s %s: HTTP %d: %s", e.Method, e.Path, e.Code, e.Body)
+}
+
 func (c *SignedClient) Do(ctx context.Context, method, path string, body []byte, out any) error {
 	ts := time.Now().UTC().Format(time.RFC3339)
 	nonceRaw := make([]byte, 16)
@@ -285,7 +299,7 @@ func (c *SignedClient) Do(ctx context.Context, method, path string, body []byte,
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return &StatusError{Method: method, Path: path, Code: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
 	}
 	if out != nil && len(raw) > 0 {
 		return json.Unmarshal(raw, out)

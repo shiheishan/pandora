@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 enfein/mieru 的 protocol.Mux 与 socks5 请求解码，依赖 core 的 User / 限速与 core/counter 的用户表、计量、在线设备，依赖 route 的 Meta 与 sing 的 M.Socksaddr
+// [INPUT]: 依赖 enfein/mieru 的 protocol.Mux（含 SetStreamListenerFactory 注入点）与 socks5 请求解码，依赖 listener.go 的 retryListenerFactory，依赖 core 的 User / 限速与 core/counter 的用户表、计量、在线设备，依赖 route 的 Meta 与 sing 的 M.Socksaddr
 // [OUTPUT]: 对外提供 Inbound（New、SetTransport、SetConnErrorHandler、Start、Close、AddUsers / UpsertUsers / DelUsers、Traffic、Online）与出站契约 Transport、失败哨兵 ErrUserRevoked / ErrDeviceLimit
-// [POS]: pdnd/core 的 mieru 入站：默认构建里被 kernel/mieru.go 包成 NativeCore 适配器并注入 DataPlane 作 Transport、经 SetConnErrorHandler 接上连接失败观测；compat 构建里由 core/multi 直接托管、未注入 Transport 时直接拨号
+// [POS]: pdnd/core 的 mieru 入站：默认构建里被 kernel/mieru.go 包成 NativeCore 适配器并注入 DataPlane 作 Transport、经 SetConnErrorHandler 接上连接失败观测；compat 构建里由 core/multi 直接托管、未注入 Transport 时直接拨号；TCP 监听经 listener.go 包一层，Accept 暂时错误退避重试而不是让上游 mux 永久停止接客
 
 // Package mieru 用 mieru 协议提供入站。
 //
@@ -43,6 +43,7 @@ import (
 	"github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
 	mcommon "github.com/enfein/mieru/v3/pkg/common"
 	"github.com/enfein/mieru/v3/pkg/protocol"
+	"github.com/enfein/mieru/v3/pkg/sockopts"
 	"github.com/enfein/mieru/v3/pkg/socks5"
 	"google.golang.org/protobuf/proto"
 
@@ -79,6 +80,10 @@ type Inbound struct {
 	// limiters 按用户限速。Mieru 的双向拷贝在上游库内部，插不进搬运层，
 	// 只能把连接包一层——和流量计数走的是同一条路子。
 	limiters core.SpeedLimiters
+	// listenFactory 是底层 TCP 监听工厂，缺省与上游 NewMux 内置的那一个
+	// 相同（net.ListenConfig + mieru 的 SO_REUSEADDR/PORT 控制）。Start 把它
+	// 包成 retryListenerFactory 再交给 mux；单测替换它来注入会报 EMFILE 的监听器。
+	listenFactory apicommon.StreamListenerFactory
 
 	mu        sync.Mutex
 	mux       *protocol.Mux
@@ -122,10 +127,11 @@ func New(tag string, port int, transport string, log *slog.Logger) *Inbound {
 	}
 	return &Inbound{
 		tag: tag, port: port, proto: p,
-		log:    log.With("inbound", tag, "protocol", "mieru"),
-		users:  counter.NewTable(),
-		stats:  counter.NewRegistry(),
-		online: counter.NewOnlineTracker(),
+		log:           log.With("inbound", tag, "protocol", "mieru"),
+		users:         counter.NewTable(),
+		stats:         counter.NewRegistry(),
+		online:        counter.NewOnlineTracker(),
+		listenFactory: &net.ListenConfig{Control: sockopts.DefaultListenerControl()},
 	}
 }
 
@@ -233,7 +239,8 @@ func (h *Inbound) Start() error {
 	mux := protocol.NewMux(false)
 	mux.SetTrafficPattern(pattern).
 		SetServerUsers(h.pbUsers()).
-		SetEndpoints(endpoints)
+		SetEndpoints(endpoints).
+		SetStreamListenerFactory(retryListenerFactory{inner: h.listenFactory, log: h.log})
 	if err := mux.Start(); err != nil {
 		return fmt.Errorf("启动 mieru: %w", err)
 	}
@@ -267,8 +274,10 @@ func (h *Inbound) acceptLoop(ctx context.Context, mux *protocol.Mux) {
 	for {
 		conn, err := mux.Accept()
 		if err != nil {
-			// mux 被关闭时 Accept 会立刻返回错误。用 ctx 区分
-			// 「正常收摊」和「真出错」，否则每次停服都会刷一条误导性日志。
+			// mux.Accept 只是读 mux 内部的会话通道，底层监听的 EMFILE 之类
+			// 到不了这里（由 listener.go 在 mux 之下退避重试）；它只在 mux
+			// 被关闭或启动失败时报错，两者都是终态，所以这里退出而不重试。
+			// 用 ctx 区分「正常收摊」和「真出错」，否则每次停服都会刷一条误导性日志。
 			select {
 			case <-ctx.Done():
 				return

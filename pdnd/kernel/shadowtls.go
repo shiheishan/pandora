@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 internal/nativewire/shadowtls 的 v3 服务端，依赖 shadowsocks.go 的 shadowsocksAdapter 作内层解码
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 inbound_tls.go 的 inboundHandshakeTimeout，依赖 internal/nativewire/shadowtls 的 v3 服务端，依赖 shadowsocks.go 的 shadowsocksAdapter 作内层解码
 // [OUTPUT]: 对外提供 shadowTLSAdapter（经 newShadowTLSAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close
-// [POS]: kernel 的 ShadowTLS 组合入站：外层 v3 伪装握手经 DataPlane 连诱饵服务器，认证后的内层流交给内嵌的 Shadowsocks 解码；外层握手失败按 tls-handshake 上报，内层会话失败也记在本入站名下
+// [POS]: kernel 的 ShadowTLS 组合入站：外层 v3 伪装握手经 DataPlane 连诱饵服务器，认证后的内层流交给内嵌的 Shadowsocks 解码；认证判定前按 inboundHandshakeTimeout 限时（判定后的诱饵中继不限时），外层握手失败（含超时）按 tls-handshake 上报，内层会话失败也记在本入站名下
 
 package kernel
 
@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aegispanel/nodeagent/core"
 	nativeShadowTLS "github.com/aegispanel/nodeagent/internal/nativewire/shadowtls"
@@ -37,6 +38,9 @@ type shadowTLSAdapter struct {
 	closed   bool
 	active   map[net.Conn]struct{}
 	wg       sync.WaitGroup
+	// handshakeTimeout 交给 nativewire 服务，限定认证判定之前等对端的时间。
+	// 生产恒为 inboundHandshakeTimeout，测试在 Start 之前改小。
+	handshakeTimeout time.Duration
 }
 
 func newShadowTLSAdapter(spec InboundSpec) (Adapter, error) {
@@ -45,7 +49,7 @@ func newShadowTLSAdapter(spec InboundSpec) (Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &shadowTLSAdapter{spec: spec, inner: innerValue.(*shadowsocksAdapter), active: make(map[net.Conn]struct{})}, nil
+	return &shadowTLSAdapter{spec: spec, inner: innerValue.(*shadowsocksAdapter), active: make(map[net.Conn]struct{}), handshakeTimeout: inboundHandshakeTimeout}, nil
 }
 
 func (a *shadowTLSAdapter) Protocol() string { return "shadowtls" }
@@ -108,6 +112,9 @@ func (a *shadowTLSAdapter) Start(parent context.Context, spec InboundSpec, hooks
 		WildcardSNI: shadowTLSWildcardSNI(spec.Config.Raw),
 		Handler:     shadowTLSHandler{adapter: a},
 		Logger:      logger.NOP(),
+		// 只限读 ClientHello 与和诱饵交换 ServerHello；超时错误带
+		// os.ErrDeadlineExceeded，经下面的 tls-handshake 上报归 timeout 类。
+		HandshakeTimeout: a.handshakeTimeout,
 	})
 	if err != nil {
 		_ = ln.Close()
