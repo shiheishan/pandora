@@ -1,6 +1,6 @@
 // [INPUT]: 依赖 panel 的 Client（兼容通道 UniProxy）与 SignedClient（签名通道），依赖 core 的 Core 抽象
 // [OUTPUT]: 对外提供 Node、New、NewWithSignedClient、Tag、Run
-// [POS]: pdnd/node 的唯一业务文件，面板与内核之间的闭环：按节拍拉配置（含协议切换与失败回滚）、同步用户、上报流量与心跳；签名通道在时优先走签名通道
+// [POS]: pdnd/node 的唯一业务文件，面板与内核之间的闭环：按节拍拉配置（含协议切换与失败回滚）、同步用户、上报流量与心跳；签名通道在时优先走签名通道；入站重建或回滚失败时经 resetUserMirror 把本地用户镜像、增量基准与客户端用户 ETag 一并作废；兼容通道上配置应用失败且节点已停时作废配置 ETag 以便下一轮重试
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package node 把面板与内核粘起来：拉配置、同步用户、上报流量。
@@ -194,6 +194,27 @@ func (n *Node) applyUsers(users []core.User) error {
 	return nil
 }
 
+// resetUserMirror 宣告「内核里的用户表已被清空」。
+//
+// 节点端对内核用户表的认知有三份：n.known（算 diff 用）、n.userVersion
+// （判断增量能不能打）、客户端里的用户 ETag（换 304 用）。三者说的是
+// 同一件事——「内核里已经是这一版了」——所以只能在这一处一起作废：
+// 漏掉 ETag，下一轮拉用户换回 304，内核一直是空表；漏掉 userVersion，
+// 基于旧版的增量会被打在空表上，只剩增量里新加的那几个人。
+func (n *Node) resetUserMirror() {
+	n.known = make(map[string]core.User)
+	n.userVersion = ""
+	n.client.ForgetUsersVersion()
+}
+
+// markInboundLost 在回滚也失败时调用：入站已不可用，内核用户表处于未知
+// 状态。下一次 applyConfig 成功前不同步用户（syncOnce 看 started），
+// 成功之后从无条件全量开始。
+func (n *Node) markInboundLost() {
+	n.started = false
+	n.resetUserMirror()
+}
+
 // applyStreamEvent 处理一条面板推来的事件。
 //
 // 在主循环的 select 里调用，和轮询是同一个 goroutine——这一点是有意的：
@@ -207,9 +228,11 @@ func (n *Node) applyStreamEvent(ctx context.Context, ev panel.StreamEvent) {
 		// 那条路上有签名校验、分流解析、端口合法性检查一整套，复制到
 		// 这里迟早会和 REST 那份走样。事件在这里只当一个「有变化了，
 		// 现在就去拉」的信号——省掉的是等待，不是那些校验。
-		if err := n.syncConfig(ctx); err != nil {
-			n.log.Error("按事件同步配置失败", "err", err)
-		}
+		//
+		// 拉完配置紧接着拉用户，和轮询走同一个 syncOnce：配置变了就意味着
+		// 入站重建、内核用户表已清空，等下一个轮询节拍再补，中间这段时间
+		// 谁也连不上。配置没变时这一下只是一次 304，不值得为省它另开分支。
+		n.syncOnce(ctx)
 
 	case panel.EventSyncUsers:
 		if err := n.applyUsers(ev.Users); err != nil {
@@ -424,7 +447,16 @@ func (n *Node) syncConfig(ctx context.Context) error {
 	if !changed {
 		return nil
 	}
-	return n.applyConfig(cfg)
+	if err := n.applyConfig(cfg); err != nil {
+		if !n.started {
+			// 节点已不在服务（首次就没装上，或回滚也失败了）：作废配置
+			// ETag，下一轮重拉重试，而不是换回 304 永远停摆。旧配置还在
+			// 服务时不作废，免得每轮都拿已知装不上的配置去重建入站。
+			n.client.ForgetConfigVersion()
+		}
+		return err
+	}
+	return nil
 }
 
 func (n *Node) signedConfigAlreadyApplied(cfg *panel.SignedConfig) bool {
@@ -486,7 +518,7 @@ func (n *Node) applyConfig(cfg map[string]any) error {
 		if errors.As(err, &applyErr) && applyErr.PreviousPreserved {
 			if len(previousUsers) > 0 {
 				if restoreErr := n.kernel.AddUsers(n.tag, previousUsers); restoreErr != nil {
-					n.started = false
+					n.markInboundLost()
 					return errors.Join(err, fmt.Errorf("restore previous users: %w", restoreErr))
 				}
 			}
@@ -496,12 +528,12 @@ func (n *Node) applyConfig(cfg map[string]any) error {
 			return err
 		}
 		if restoreErr := n.installConfig(previous); restoreErr != nil {
-			n.started = false
+			n.markInboundLost()
 			return errors.Join(err, fmt.Errorf("restore previous config: %w", restoreErr))
 		}
 		if len(previousUsers) > 0 {
 			if restoreErr := n.kernel.AddUsers(n.tag, previousUsers); restoreErr != nil {
-				n.started = false
+				n.markInboundLost()
 				return errors.Join(err, fmt.Errorf("restore previous users: %w", restoreErr))
 			}
 		}
@@ -510,9 +542,10 @@ func (n *Node) applyConfig(cfg map[string]any) error {
 	}
 
 	n.activeConfig = snapshot
-	// 入站重建会丢掉内核里的用户表，本地记录必须一并清空，
-	// 否则下一轮 diff 会认为「都已下发」，结果谁也连不上。
-	n.known = make(map[string]core.User)
+	// 入站重建会丢掉内核里的用户表，本地镜像与用户版本必须一并作废，
+	// 否则下一轮要么 diff 认为「都已下发」，要么拿旧 ETag 换回 304——
+	// 两种都是谁也连不上。
+	n.resetUserMirror()
 	n.started = true
 	n.log.Info("入站已就绪", "port", intFrom(cfg, "server_port"))
 	return nil

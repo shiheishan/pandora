@@ -1,5 +1,5 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 reality_listener.go / inbound_tls.go / websocket_netconn.go / httpupgrade_netconn.go / grpc_stream.go / mkcp_transport.go 的承载，依赖 core 的用户与 route 的路由
-// [OUTPUT]: 对外提供 trojanAdapter（经 newTrojanAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 readTrojanRequest、handleConn（统一上报会话失败）/ serveConn
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 reality_listener.go / inbound_tls.go / websocket_netconn.go / httpupgrade_netconn.go / grpc_stream.go / mkcp_transport.go 的承载，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 trojanAdapter（经 newTrojanAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 acceptLoop / serveAccepted（TLS 握手在每条连接自己的 goroutine 里）、readTrojanRequest、handleConn（统一上报会话失败）/ serveConn
 // [POS]: kernel 的 Trojan 入站 TCP 路径：TCP / TLS / REALITY / WS / HTTP Upgrade / gRPC / mKCP 的监听与分派，SHA-224 口令证明定位用户；UDP ASSOCIATE 在 trojan_udp.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -211,7 +211,7 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 				_ = a.handleConn(connCtx, conn, nil)
 			}()
 		})
-		server := &http.Server{Handler: handler, MaxHeaderBytes: 64 << 10}
+		server := newInboundHTTPServer(handler, 64<<10)
 		a.mu.Lock()
 		if a.closed {
 			a.mu.Unlock()
@@ -273,7 +273,7 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 				_ = a.handleConn(connCtx, conn, nil)
 			}()
 		})
-		server := &http.Server{Handler: handler, MaxHeaderBytes: 64 << 10}
+		server := newInboundHTTPServer(handler, 64<<10)
 		a.mu.Lock()
 		if a.closed {
 			a.mu.Unlock()
@@ -337,48 +337,48 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 
 func (a *trojanAdapter) acceptLoop() {
 	defer a.wg.Done()
-	for {
-		conn, err := a.listener.Accept()
-		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
+	runAcceptLoop(a.ctx.Done(), a.listener.Accept, a.serveAccepted)
+}
+
+// serveAccepted 只登记连接、起 goroutine，立刻返回；TLS 握手与 REALITY 会话
+// 检查都在连接自己的 goroutine 里做。登记的是原始连接，握手中的连接 Close
+// 也关得到。
+func (a *trojanAdapter) serveAccepted(conn net.Conn) {
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
+	a.active[conn] = struct{}{}
+	a.wg.Add(1)
+	ctx, tlsConfig := a.ctx, a.tlsConfig
+	a.mu.Unlock()
+	go func() {
+		defer a.wg.Done()
+		defer a.removeActive(conn)
+		session := conn
+		if tlsConfig != nil {
+			tlsConn, err := serverTLSHandshake(ctx, conn, tlsConfig, inboundHandshakeTimeout)
+			if err != nil {
+				a.connErr.conn(StageTLSHandshake, conn, err)
+				_ = conn.Close()
 				return
 			}
-			continue
+			session = tlsConn
 		}
-		a.mu.Lock()
-		a.active[conn] = struct{}{}
-		a.mu.Unlock()
-		a.wg.Add(1)
-		go func() {
-			defer a.wg.Done()
-			defer a.removeActive(conn)
-			if a.tlsConfig != nil {
-				tlsConn := tls.Server(conn, a.tlsConfig.Clone())
-				_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-				if err := tlsConn.HandshakeContext(a.ctx); err != nil {
-					a.connErr.conn(StageTLSHandshake, conn, err)
-					_ = conn.Close()
-					return
-				}
-				_ = conn.SetReadDeadline(time.Time{})
-				conn = tlsConn
+		var realitySession *RealitySession
+		if a.reality {
+			captured, ok := InspectRealityConn(session)
+			if !ok {
+				a.connErr.conn(StageRealityInspect, session, errors.New("连接上取不到 REALITY 会话信息"))
+				_ = session.Close()
+				return
 			}
-			var realitySession *RealitySession
-			if a.reality {
-				captured, ok := InspectRealityConn(conn)
-				if !ok {
-					a.connErr.conn(StageRealityInspect, conn, errors.New("连接上取不到 REALITY 会话信息"))
-					_ = conn.Close()
-					return
-				}
-				realitySession = &captured
-			}
-			_ = a.handleConn(a.ctx, conn, realitySession)
-		}()
-	}
+			realitySession = &captured
+		}
+		_ = a.handleConn(ctx, session, realitySession)
+	}()
 }
 
 // handleConn 是 TCP / REALITY / WS / HTTP Upgrade / gRPC 共同的会话入口，

@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 shadowsocksAdapter（经 newShadowsocksAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 handleConn（统一上报会话失败）/ serveConn、ssStream 与主密钥 / 子密钥派生
 // [POS]: kernel 的 Shadowsocks AEAD 入站主体：原生方法表、TCP 请求处理与按用户试解定位、AEAD 分块流；UDP 在 shadowsocks_udp.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -169,27 +169,23 @@ func (a *shadowsocksAdapter) Start(parent context.Context, spec InboundSpec, hoo
 
 func (a *shadowsocksAdapter) acceptLoop() {
 	defer a.wg.Done()
-	for {
-		conn, err := a.listener.Accept()
-		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
-				return
-			}
-			continue
-		}
+	runAcceptLoop(a.ctx.Done(), a.listener.Accept, func(conn net.Conn) {
 		a.mu.Lock()
+		if a.closed {
+			a.mu.Unlock()
+			_ = conn.Close()
+			return
+		}
 		a.active[conn] = struct{}{}
-		a.mu.Unlock()
 		a.wg.Add(1)
+		ctx := a.ctx
+		a.mu.Unlock()
 		go func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
-			_ = a.handleConn(a.ctx, conn)
+			_ = a.handleConn(ctx, conn)
 		}()
-	}
+	})
 }
 
 // handleConn 是 TCP 会话入口，也是 shadowtls 解开外层后交进来的入口；会话

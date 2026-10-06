@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 client.go 的 Client（Transport、鉴权、streamWait 测试钩子），依赖 core 的 User 数据契约
+// [OUTPUT]: 对外提供 StreamEvent、EventSyncConfig / EventSyncUsers / EventSyncUserDelta、Client.Stream
+// [POS]: pdnd/panel 的 SSE 订阅：自管重连与退避（健康连接后复位），把事件解析好交给 node/ 的主循环；只是加速通路，轮询兜底
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package panel
 
 import (
@@ -80,6 +85,10 @@ func (c *Client) Stream(ctx context.Context, out chan<- StreamEvent, onError fun
 	// 退避从 1 秒起，翻倍到 30 秒封顶。加随机抖动：面板重启时几十个节点
 	// 会同时断线，不抖的话它们会踩着同一个节拍一起重连，把刚起来的面板
 	// 再打一遍。
+	//
+	// 一次健康的连接之后退避回到 1 秒。不复位的话面板重启过几次就封顶在
+	// 30 秒，此后哪怕连接已经稳定挂了几天，下次断线也要等 30～45 秒才
+	// 重连。「健康」的口径见 streamOnce：回了 200 还不够，必须真读到过一帧。
 	const minBackoff, maxBackoff = time.Second, 30 * time.Second
 	backoff := minBackoff
 
@@ -87,18 +96,19 @@ func (c *Client) Stream(ctx context.Context, out chan<- StreamEvent, onError fun
 		if ctx.Err() != nil {
 			return
 		}
-		err := c.streamOnce(ctx, out)
+		healthy, err := c.streamOnce(ctx, out)
 		if ctx.Err() != nil {
 			return
 		}
 		if err != nil && onError != nil {
 			onError(err)
 		}
+		if healthy {
+			backoff = minBackoff
+		}
 		jitter := time.Duration(rand.Int63n(int64(backoff / 2)))
-		select {
-		case <-ctx.Done():
+		if !c.waitReconnect(ctx, backoff+jitter) {
 			return
-		case <-time.After(backoff + jitter):
 		}
 		if backoff *= 2; backoff > maxBackoff {
 			backoff = maxBackoff
@@ -106,11 +116,31 @@ func (c *Client) Stream(ctx context.Context, out chan<- StreamEvent, onError fun
 	}
 }
 
+// waitReconnect 等 d 再重连，ctx 先结束则返回 false。
+func (c *Client) waitReconnect(ctx context.Context, d time.Duration) bool {
+	if c.streamWait != nil {
+		return c.streamWait(ctx, d)
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // streamOnce 建一次连接，读到断开为止。
-func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) error {
+//
+// healthy 表示这条连接回了 200 并且至少完整读到过一行（事件或心跳注释）。
+// 心跳也算：空闲的面板只发心跳，那同样是一条正常工作的流。只回 200 不算：
+// 反代或刚起来又崩掉的面板会「接了就断」，把它算成健康会让退避永远停在
+// 最低档，每秒一次地敲同一扇门。
+func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) (healthy bool, err error) {
 	req, err := c.newRequest(ctx, http.MethodGet, "stream", nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
@@ -119,11 +149,11 @@ func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) error {
 	client := &http.Client{Transport: c.http.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return httpError("连接事件流", resp)
+		return false, httpError("连接事件流", resp)
 	}
 
 	reader := bufio.NewReaderSize(resp.Body, 64<<10)
@@ -131,10 +161,11 @@ func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) error {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				return nil // 面板正常关闭了流
+				return healthy, nil // 面板正常关闭了流
 			}
-			return err
+			return healthy, err
 		}
+		healthy = true
 		line = strings.TrimRight(line, "\r\n")
 		// 空行是事件分隔，冒号开头是注释（心跳），都跳过
 		if line == "" || strings.HasPrefix(line, ":") {
@@ -151,7 +182,7 @@ func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) error {
 		select {
 		case out <- event:
 		case <-ctx.Done():
-			return nil
+			return healthy, nil
 		}
 	}
 }
