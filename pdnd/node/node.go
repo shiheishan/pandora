@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 panel 的 Client（兼容通道 UniProxy）与 SignedClient（签名通道），依赖 core 的 Core 抽象
 // [OUTPUT]: 对外提供 Node、New、NewWithSignedClient、Tag、Run
-// [POS]: pdnd/node 的唯一业务文件，面板与内核之间的闭环：按节拍拉配置（含协议切换与失败回滚）、同步用户、上报流量与心跳；签名通道在时优先走签名通道；入站重建或回滚失败时经 resetUserMirror 把本地用户镜像、增量基准与客户端用户 ETag 一并作废；兼容通道上配置应用失败且节点已停时作废配置 ETag 以便下一轮重试
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+// [POS]: pdnd/node 的主编排文件，面板与内核之间的闭环：按节拍拉配置（含协议切换与失败回滚）、同步用户、上报流量与心跳；签名通道在时优先走签名通道，已应用版本的台账与生效回执在 signed_config.go；入站重建或回滚失败时经 resetUserMirror 把本地用户镜像、增量基准与客户端用户 ETag 一并作废；兼容通道上配置应用失败且节点已停时作废配置 ETag 以便下一轮重试
 
 // Package node 把面板与内核粘起来：拉配置、同步用户、上报流量。
 package node
@@ -19,8 +18,6 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/panel"
 )
-
-const effectiveHealthStabilityWindow = 5 * time.Second
 
 // Node 是一个受面板管理的入站。
 type Node struct {
@@ -457,47 +454,6 @@ func (n *Node) syncConfig(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-func (n *Node) signedConfigAlreadyApplied(cfg *panel.SignedConfig) bool {
-	if cfg.ConfigContract != "" {
-		return cfg.ReleaseID == n.appliedReleaseID && cfg.Generation == n.appliedGeneration &&
-			cfg.ContentSHA256 == n.appliedConfigHash
-	}
-	return cfg.Version == n.appliedConfigVersion && cfg.Hash == n.appliedConfigHash
-}
-
-func (n *Node) recordAppliedSignedConfig(cfg *panel.SignedConfig) {
-	n.appliedConfigHash = cfg.Hash
-	if cfg.ConfigContract != "" {
-		n.appliedReleaseID = cfg.ReleaseID
-		n.appliedGeneration = cfg.Generation
-		n.appliedConfigVersion = 0
-		n.appliedAt = time.Now()
-		return
-	}
-	n.appliedConfigVersion = cfg.Version
-	n.appliedReleaseID = ""
-	n.appliedGeneration = 0
-	n.appliedAt = time.Time{}
-}
-
-func (n *Node) effectiveHealthReady(now time.Time) bool {
-	if !n.started || n.appliedAt.IsZero() || now.Sub(n.appliedAt) < effectiveHealthStabilityWindow {
-		return false
-	}
-	probe, ok := n.kernel.(core.InboundReadiness)
-	return ok && probe.InboundReady(n.tag) == nil
-}
-
-func (n *Node) reportSignedConfigPhase(ctx context.Context, cfg *panel.SignedConfig, phase, detail string) error {
-	if cfg != nil && cfg.ConfigContract != "" {
-		return n.signed.ReportEffectiveConfig(ctx, cfg, phase, detail)
-	}
-	if cfg == nil {
-		return fmt.Errorf("signed config is required")
-	}
-	return n.signed.ReportConfig(ctx, cfg.Version, phase, detail)
 }
 
 func (n *Node) applyConfig(cfg map[string]any) error {

@@ -8,7 +8,8 @@
   - 用户镜像不变式：n.known、n.userVersion、客户端用户 ETag 三份说的是同一件事「内核里已是这一版」，内核用户表被清空（入站重建、回滚失败）时只能经 resetUserMirror 一起作废，下一次拉用户必然是无条件全量
 
 成员清单
-node.go: Node 主循环与全部编排。syncOnce = 拉配置后紧接着拉用户（轮询与 sync.config 事件共用）；applyConfig 先快照、失败按 ConfigApplyError.PreviousPreserved 选择只补用户或整版回滚，回滚也失败则 markInboundLost；兼容通道上应用失败且节点已停（首次未装上或回滚失败）时作废配置 ETag，下一轮重拉重试，旧配置仍在服务时不重试；applyUsers 以全量算 diff 落内核，applyUserDelta 只在 FromVersion 对得上时打补丁，否则回落全量；签名通道按 release/generation 幂等上报 switched 与 health_passed 两阶段；report 上报流量与在线 IP，reportStatus 发签名心跳或兼容 /status
+node.go: Node 主循环与编排（签名配置台账在 signed_config.go）。syncOnce = 拉配置后紧接着拉用户（轮询与 sync.config 事件共用）；applyConfig 先快照、失败按 ConfigApplyError.PreviousPreserved 选择只补用户或整版回滚，回滚也失败则 markInboundLost；兼容通道上应用失败且节点已停（首次未装上或回滚失败）时作废配置 ETag，下一轮重拉重试，旧配置仍在服务时不重试；applyUsers 以全量算 diff 落内核，applyUserDelta 只在 FromVersion 对得上时打补丁，否则回落全量；report 上报流量与在线 IP，reportStatus 发签名心跳或兼容 /status
+signed_config.go: 签名通道配置台账。已应用版本按契约认 release_id + generation + 内容哈希（旧式按 version + hash），重放同一版本只补报 switched / health_passed 不重装；health_passed 要等入站稳定窗口过后且内核 InboundReadiness 就绪；reportSignedConfigPhase 按有无 config_contract 选生效回执或旧式 ReportConfig
 *_test.go: config_rollback_test.go 守回滚（恢复旧入站与用户、回滚失败即停、PreviousPreserved 不重装）与生效健康窗口；user_resync_test.go 用会清空用户表的内核夹具与只认 ETag 的假面板守用户镜像不变式（纯轮询改配置、事件流改配置、重建后旧基准增量、回滚失败）以及节点停摆后兼容通道的配置重试；protocol_switch_test.go 守协议跟随面板；routing_test.go 守分流解析的缺省与显式空；status_report_test.go 守签名心跳携带 metrics
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
