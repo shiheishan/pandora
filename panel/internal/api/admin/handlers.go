@@ -189,9 +189,8 @@ type changePasswordResponse struct {
 // The identity service revokes every session and active refresh token in the
 // same transaction, including the current administrator session.
 func (h *handlers) changePassword(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	var req struct {

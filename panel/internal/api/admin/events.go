@@ -29,9 +29,8 @@ import (
 const sseHeartbeat = 25 * time.Second
 
 func (h *handlers) events(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	if h.d.Realtime == nil {
