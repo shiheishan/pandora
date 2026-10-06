@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 traffic_packs.go 的 validateTrafficPackInput 与各用例的事务外校验，依赖 catalog_sales_capability_test.go 的 requireCatalogErrorCode
+// [INPUT]: 依赖 traffic_packs.go 的 validateTrafficPackInput 与各用例的事务外校验，依赖 catalog_test.go 的 expectHTTPCode
 // [OUTPUT]: 对外提供 TestTrafficPackInputValidation、TestTrafficPackWritesFailClosedBeforeTouchingTheDatabase
-// [POS]: adminops 流量包目录管理的单元测试：输入边界与「没开销售闸门、没带乐观锁、id 不合法」都在进事务之前被拒
+// [POS]: adminops 流量包目录管理的单元测试：输入边界与「没带乐观锁、状态不合法、id 不合法」都在进事务之前被拒
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
@@ -62,25 +62,17 @@ func TestTrafficPackWritesFailClosedBeforeTouchingTheDatabase(t *testing.T) {
 	input := TrafficPackInput{ActorID: "actor", ExpectedUpdatedAt: &now,
 		Name: "100 GB", TrafficBytes: 100 << 30, Currency: "CNY", UnitAmount: 1500}
 
-	closed := NewService(nil)
-	_, err := closed.CreateTrafficPack(ctx, "tenant", input)
-	requireCatalogErrorCode(t, err, httpx.CodeUnavailable)
-	_, err = closed.UpdateTrafficPack(ctx, "tenant", packID, input)
-	requireCatalogErrorCode(t, err, httpx.CodeUnavailable)
-	_, err = closed.SetTrafficPackStatus(ctx, "tenant", packID, "actor", "active", &now)
-	requireCatalogErrorCode(t, err, httpx.CodeUnavailable)
-
-	open := NewService(nil, staticSalesCapability(true))
+	svc := NewService(nil)
 	noToken := input
 	noToken.ExpectedUpdatedAt = nil
-	_, err = open.UpdateTrafficPack(ctx, "tenant", packID, noToken)
-	requireCatalogErrorCode(t, err, httpx.CodeValidationFailed)
-	_, err = open.SetTrafficPackStatus(ctx, "tenant", packID, "actor", "archived", nil)
-	requireCatalogErrorCode(t, err, httpx.CodeValidationFailed)
-	_, err = open.SetTrafficPackStatus(ctx, "tenant", packID, "actor", "deleted", &now)
-	requireCatalogErrorCode(t, err, httpx.CodeValidationFailed)
-	_, err = open.UpdateTrafficPack(ctx, "tenant", "not-a-uuid", input)
-	requireCatalogErrorCode(t, err, httpx.CodeNotFound)
-	_, err = open.ListTrafficPacks(ctx, "tenant", "draft")
-	requireCatalogErrorCode(t, err, httpx.CodeValidationFailed)
+	_, err := svc.UpdateTrafficPack(ctx, "tenant", packID, noToken)
+	expectHTTPCode(t, err, httpx.CodeValidationFailed)
+	_, err = svc.SetTrafficPackStatus(ctx, "tenant", packID, "actor", "archived", nil)
+	expectHTTPCode(t, err, httpx.CodeValidationFailed)
+	_, err = svc.SetTrafficPackStatus(ctx, "tenant", packID, "actor", "deleted", &now)
+	expectHTTPCode(t, err, httpx.CodeValidationFailed)
+	_, err = svc.UpdateTrafficPack(ctx, "tenant", "not-a-uuid", input)
+	expectHTTPCode(t, err, httpx.CodeNotFound)
+	_, err = svc.ListTrafficPacks(ctx, "tenant", "draft")
+	expectHTTPCode(t, err, httpx.CodeValidationFailed)
 }

@@ -1,8 +1,12 @@
+// [INPUT]: 依赖 router_catalog.go 的 registerCatalogPlanUpdate 与 router*.go 的 NewRouter 源码（经 parseRouterFiles），依赖 middleware 的 Idempotency，依赖 platform/httpx 的 Principal 与响应
+// [OUTPUT]: 对外提供 PUT v1/plans/{id} 的路由守卫测试与 AST 契约：权限与近期重认证先于幂等与 handler、幂等头走生产校验、同键重放只进 handler 一次、生产路由表只经已登录分组注册一次
+// [POS]: api/admin 的套餐资料更新路由契约；同目录 catalog_routes 契约管其余目录写接口
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
 	"bytes"
-	"encoding/json"
 	"go/ast"
 	"io"
 	"log/slog"
@@ -13,7 +17,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -198,43 +201,6 @@ func TestCatalogPlanUpdateValidGuardsReachOnceAndReplay(t *testing.T) {
 	}
 	if handlerCalls != 1 || idempotencyCalls != 3 {
 		t.Fatalf("handler=%d idempotency=%d, want 1/3", handlerCalls, idempotencyCalls)
-	}
-}
-
-func TestCatalogPlanUpdateDefaultDenyReturnsNeutral503(t *testing.T) {
-	passThrough := func(_ *db.Pool, _ string, _ *slog.Logger) func(http.Handler) http.Handler {
-		return func(next http.Handler) http.Handler { return next }
-	}
-	router := catalogPlanUpdateTestRouter(
-		t,
-		catalogRoutePrincipal("catalog.publish", true),
-		passThrough,
-		func(w http.ResponseWriter, r *http.Request) {
-			_, err := adminops.NewService(nil).CreatePlanPrice(r.Context(), catalogRouteTenant, catalogRouteActor, adminops.CreatePriceInput{})
-			httpx.Fail(w, r, catalogRouteLogger(), err)
-		},
-	)
-	got := catalogRouteRequest(t, router, `{}`, "catalog-route-key")
-	if got.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", got.Code)
-	}
-	var body struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(got.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body.Error.Code != string(httpx.CodeUnavailable) || body.Error.Message != "服务暂时不可用，请稍后重试" {
-		t.Fatalf("non-neutral response code=%q message=%q", body.Error.Code, body.Error.Message)
-	}
-	lower := strings.ToLower(got.Body.String())
-	for _, forbidden := range []string{"p0b", "sales", "capability", "release"} {
-		if strings.Contains(lower, forbidden) {
-			t.Fatalf("response disclosed internal gate %q: %s", forbidden, got.Body.String())
-		}
 	}
 }
 

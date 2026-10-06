@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockResult / MockRoute
  * [OUTPUT]: 对外提供 packRoutes（由 plans.ts 展开进 plans 模块）
- * [POS]: dev/mock/admin 的「套餐（后台-04）· 流量包」四接口（修订 R73）：列表（status 筛选，在售在前再按 sort_order、创建时间）、新建（即在售）、修改（expected_updated_at 乐观锁，409 fields.updated_at = "current=<RFC3339Nano>"）、上下架（已是目标状态 409）。catalog.read / catalog.publish + reauth + 幂等 scope 照契约，校验键名与文案照 adminops/traffic_packs.go；新建、修改、上架受销售开关控制，下架不受；按 DisallowUnknownFields 拒绝未知字段
+ * [POS]: dev/mock/admin 的「套餐（后台-04）· 流量包」四接口（修订 R73）：列表（status 筛选，在售在前再按 sort_order、创建时间）、新建（即在售）、修改（expected_updated_at 乐观锁，409 fields.updated_at = "current=<RFC3339Nano>"）、上下架（已是目标状态 409）。catalog.read / catalog.publish + reauth + 幂等 scope 照契约，校验键名与文案照 adminops/traffic_packs.go；按 DisallowUnknownFields 拒绝未知字段
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -78,7 +78,6 @@ function unknownField(body: Json, allowed: readonly string[]): MockResult | null
 
 const invalid = (fields: Record<string, string>) => err(422, 'validation_failed', '请求参数校验未通过', fields)
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const SALES_OFF = err(503, 'service_unavailable', '服务暂时不可用')
 const NOT_FOUND = err(404, 'not_found', '资源不存在或无权访问')
 
 function findPack(id: string | undefined): Pack | null {
@@ -92,7 +91,7 @@ function staleCheck(p: Pack, b: Json): MockResult | null {
   return null
 }
 
-export function packRoutes(salesEnabled: () => boolean): Record<string, MockRoute> {
+export function packRoutes(): Record<string, MockRoute> {
   return {
     'GET /v1/traffic-packs': (ctx) => {
       if (!ctx.requirePermission('catalog.read')) return
@@ -113,7 +112,6 @@ export function packRoutes(salesEnabled: () => boolean): Record<string, MockRout
         if (bad) return bad
         const f = problems(body)
         if (Object.keys(f).length) return invalid(f)
-        if (!salesEnabled()) return SALES_OFF
         const at = stamp()
         const pack: Pack = {
           id: randomUUID(),
@@ -146,7 +144,6 @@ export function packRoutes(salesEnabled: () => boolean): Record<string, MockRout
         if (Object.keys(f).length) return invalid(f)
         const staleness = staleCheck(p, body)
         if (staleness) return staleness
-        if (!salesEnabled()) return SALES_OFF
         Object.assign(p, {
           name: String(body.name).trim(),
           traffic_bytes: body.traffic_bytes,
@@ -173,8 +170,6 @@ export function packRoutes(salesEnabled: () => boolean): Record<string, MockRout
         const staleness = staleCheck(p, body)
         if (staleness) return staleness
         if (p.status === body.status) return err(409, 'conflict', body.status === 'active' ? '流量包已经在售' : '流量包已经下架')
-        // 上架受销售开关控制，下架不受（与归档套餐一致）
-        if (body.status === 'active' && !salesEnabled()) return SALES_OFF
         p.status = body.status
         p.updated_at = stamp()
         return { status: 200, body: { pack: p } }

@@ -158,7 +158,7 @@ docker exec -i -e PGPASSWORD="$PG_SUPER_PW" -e AEGIS_DB_APP_PASSWORD="$APP_PW" "
   < "$PANEL_DIR/deploy/configure-app-role.sql" >/dev/null
 
 # ---------------------------------------------------------------------------
-# 网关配置：只有 config.Load 要的键，外加冒烟需要的两个开关
+# 网关配置：只有 config.Load 要的键，外加冒烟需要的一个开关（放宽登录限流）
 # ---------------------------------------------------------------------------
 cat > "$STATE/gateway.env" <<EOF
 AEGIS_ENV=test
@@ -171,9 +171,7 @@ AEGIS_PUBLIC_BASE_URL=http://$PUB_ADDR
 AEGIS_MASTER_KEY=$(rand_b64)
 AEGIS_JWT_PUBLIC_SECRET=$(rand_b64)
 AEGIS_JWT_ADMIN_SECRET=$(rand_b64)
-AEGIS_JWT_CLIENT_SECRET=$(rand_b64)
 AEGIS_CONFIG_SIGNING_SEED=$(rand_b64)
-AEGIS_SALES_ENABLED=1
 AEGIS_RL_AUTH_PER_MIN=1000
 EOF
 chmod 600 "$STATE/gateway.env"

@@ -34,7 +34,7 @@ var PprofAddrEnv = map[Domain]string{
 // pprof 能拿到堆里的一切（含解密后的密钥与令牌），绝不能因为一次手误监听到公网。
 // 主机名一律不收，localhost 也不收：它的解析结果取决于 /etc/hosts 与解析顺序，
 // 校验时是回环不代表监听时还是。端口 0（随机端口）也不收，运维找不到它。
-// gatewayAddrs 是四个业务端口，pprof 不许与它们或彼此撞车，撞了第二个进程会起不来。
+// gatewayAddrs 是三个网关的业务端口，pprof 不许与它们或彼此撞车，撞了第二个进程会起不来。
 func loadPprofAddrs(gatewayAddrs []string) (map[Domain]string, error) {
 	taken := map[string]string{}
 	for _, raw := range gatewayAddrs {

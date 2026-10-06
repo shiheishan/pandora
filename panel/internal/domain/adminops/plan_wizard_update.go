@@ -154,9 +154,6 @@ func (s *Service) UpdatePlanComplete(ctx context.Context, tenantID, planID strin
 		if wantPrices, err = preparePlanPrices(*in.Prices, in.ActorID); err != nil {
 			return nil, err
 		}
-		if err := s.requireP0BSales(); err != nil {
-			return nil, err
-		}
 	}
 
 	var out *CatalogPlanDetail
@@ -480,10 +477,6 @@ func syncPlanPricesTx(ctx context.Context, tx pgx.Tx, tenantID, planID, productI
 func (s *Service) rollPlanVersionTx(ctx context.Context, tx pgx.Tx, tenantID, planID string,
 	before *CatalogPlanDetail, in UpdatePlanCompleteInput) error {
 
-	// 发布受销售开关控制；在动任何版本之前就判掉。
-	if err := s.requireP0BSales(); err != nil {
-		return err
-	}
 	cur := currentVersion(before)
 
 	// 复用已有的 draft（每个套餐最多一个）；没有就建。套餐行已被本事务锁住，

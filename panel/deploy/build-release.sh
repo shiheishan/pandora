@@ -13,10 +13,7 @@ PREBUILT_ROOT="${PANDORA_PREBUILT_ROOT:-}"
 # 迁移工具版本随发布包固定，不跟 @latest 漂移。
 GOOSE_VERSION="${PANDORA_GOOSE_VERSION:-v3.26.0}"
 
-case " ${GOFLAGS:-} " in
-  *ca42e2e*) echo "release builds must not enable the ca42e2e build tag" >&2; exit 1 ;;
-esac
-command -v grep >/dev/null 2>&1 || { echo "missing grep for release trust-root validation" >&2; exit 1; }
+command -v grep >/dev/null 2>&1 || { echo "missing grep for release validation" >&2; exit 1; }
 
 if [[ ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]] || [ "$VERSION" = . ] || [ "$VERSION" = .. ]; then
   echo "PANDORA_VERSION must match [A-Za-z0-9._-]+ and cannot be . or .." >&2
@@ -36,10 +33,6 @@ if [ -n "$PREBUILT_ROOT" ]; then
   command -v readelf >/dev/null 2>&1 || { echo "missing readelf for prebuilt validation" >&2; exit 1; }
 else
   command -v go >/dev/null 2>&1 || { echo "missing Go 1.26+" >&2; exit 1; }
-  EFFECTIVE_GOFLAGS="$(go env GOFLAGS)"
-  case " $EFFECTIVE_GOFLAGS " in
-    *ca42e2e*) echo "release builds must not enable the ca42e2e build tag through Go environment configuration" >&2; exit 1 ;;
-  esac
 fi
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd -P)"
@@ -128,10 +121,6 @@ for arch in amd64 arm64; do
         go build -buildvcs=false -trimpath -ldflags="-s -w -buildid=" \
         -o "$target/bin/$binary" "$ROOT/cmd/$binary"
     fi
-    if LC_ALL=C grep -a -F -q 'pandora-ca42-e2e-roots-v1' "$target/bin/$binary"; then
-      echo "release binary contains CA42 E2E authority roots: linux/$arch $binary" >&2
-      exit 1
-    fi
   done
 
   # 迁移工具跟着发布包走。
@@ -204,10 +193,6 @@ for arch in amd64 arm64; do
     echo "empty node binary: linux/$node_arch $pdnd_name" >&2
     exit 1
     }
-    if LC_ALL=C grep -a -F -q 'pandora-ca42-e2e-roots-v1' "$target/pdnd-dist/$pdnd_name"; then
-    echo "release node binary contains CA42 E2E authority roots: linux/$node_arch $pdnd_name" >&2
-    exit 1
-    fi
   done
   # Cross-building from Windows does not preserve a Unix executable bit.
   # Normalize it before archiving so the same release package passes the

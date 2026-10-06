@@ -49,8 +49,8 @@ func TestPprofAcceptsLoopbackLiterals(t *testing.T) {
 			t.Fatalf("%s pprof addr = %q, want %q", d, got[d], addr)
 		}
 	}
-	if _, ok := got[DomainClient]; ok {
-		t.Fatal("the client domain has no gateway and must never get a pprof address")
+	if len(got) != len(want) {
+		t.Fatalf("pprof addrs = %v, want exactly the three gateways", got)
 	}
 }
 

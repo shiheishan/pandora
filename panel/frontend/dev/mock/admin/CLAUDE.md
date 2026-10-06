@@ -53,13 +53,12 @@ content.ts: 内容与外观（后台-08）：公告列表（读时把到点的�
 plans.ts: 套餐（后台-04）的路由与向导：
   - 列表、详情、只建壳、向导新建（单事务，限速正常生效）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动（R99 / R100），额度或线路变了开新版本并发布、价格只同步出现过的币种，按 R107：保留时间窗、新版本继承当前版本全部设置、本来不限流量时再交 0 不滚版本，新建向导 max_devices 0 等同不限）、
   - 销售设置（卖点与推荐整体覆盖）、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池候选与替换
-  - 转出 setSalesEnabled 给测试关销售开关验 503
   - 流量包路由从 plans-packs.ts 展开进来
 plans-store.ts: 套餐假接口的数据与规则：
   - 五个种子套餐（沿用 users.ts 的固定套餐 id 与用户组 id，节点池沿用 nodes-infra.ts 的池 id，在线节点数取 nodes-infra.ts 的 activeNodesInPool，与节点池列表同口径）、
   - 列表行与详情形状（含 R100 卖点与推荐；标准版 v1 是 R99 之前的「用完限速」存量行，专业版限速 300 Mbps 且标为推荐）、
-  - 与 Go 同键名同文案的校验（超额策略只收 suspend、卖点 5 条 40 字不重复）、发布前置条件、销售开关、按 DisallowUnknownFields 拒绝未知字段
-plans-packs.ts: 流量包四接口（R73）：状态筛选与排序、新建即在售、updated_at 乐观锁 409、已是目标状态 409、新建 / 修改 / 上架受销售开关控制而下架不受
+  - 与 Go 同键名同文案的校验（超额策略只收 suspend、卖点 5 条 40 字不重复）、发布前置条件、按 DisallowUnknownFields 拒绝未知字段
+plans-packs.ts: 流量包四接口（R73）：状态筛选与排序、新建即在售、updated_at 乐观锁 409、已是目标状态 409
 billing.ts: 订单与收款（后台-05）的路由（标记已付：订阅已结束的续费单入账进挂账回 409、同一凭证再标回 409，R117）：
   - 订单列表（q、status 逗号多值白名单、user_id、from / to、limit / offset）/ 详情 / 支付记录 / 取消（state_version CAS、400 / 409 文案与 Go 同为中文，R114）/
   - 人工开单（grant / pending / offline，reauth + order_create 幂等，201 重放，balance 422，凭证号重复 409，文案照 Go）/

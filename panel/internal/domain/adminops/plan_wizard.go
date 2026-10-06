@@ -132,12 +132,6 @@ func (s *Service) CreatePlanComplete(ctx context.Context, tenantID string,
 		}
 		prices = append(prices, price)
 	}
-	// 加价格与发布都受销售开关控制
-	if len(prices) > 0 || in.Publish {
-		if err := s.requireP0BSales(); err != nil {
-			return nil, err
-		}
-	}
 	semantics := wizardVersionSemantics(in)
 	if err := validateVersionSemantics(semantics); err != nil {
 		return nil, err

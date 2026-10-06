@@ -3,8 +3,8 @@
 
 套餐（管理后台-04-套餐.dc.html）。两个标签：「套餐」#/plans/catalog/<套餐 id> 是左栏卡片 + 右侧详情（没选中时落到第一张），「流量包」#/plans/packs?s=<状态> 是后端有、设计稿缺、按同一风格补的表格（修订 R73）。
 数据流：schemas（纯 zod，Go 的 nil 切片写 nullable 归一成 []，tests/mock-admin-plans.test.ts 也拿它核对假后端）→ api（读 hook 挂 plans.changed，写后按 PK 前缀整体失效）→ model（纯函数，model.test.ts 守住）→ 组件
-  - 写失败一律走 failure.ts 的 useCatalogFailure：503 是销售开关 AEGIS_SALES_ENABLED 没开，说清原因不劝重试
-  - 只有 422 的 fields 给表单（没有表单可标的确认框直接 Toast 出来），409 的 fields 是乐观锁现值，Toast 信封原文
+  - 写失败一律走 failure.ts 的 useCatalogFailure：只有 422 的 fields 给表单（没有表单可标的确认框直接 Toast 出来），409 的 fields 是乐观锁现值，Toast 信封原文
+  - 其余状态（含后台只读降级的 503）照 actions.ts 的通用失败口径
   - 幂等键去留仍由 actions.ts 的 endsIntent 定。
 权限分层：catalog.read 看全部；catalog.write 才能新建版本、改草稿；catalog.publish 才有向导（新建与编辑，5.A D-C-2）、销售设置、归档、价格增删、节点池绑定、发布、流量包写操作。reauth 由外框对话框接管，取消时静默。
 限速与卖点：限速是版本上的按用户速率、全程生效、留空不限，与超额策略无关（R99）——向导「用量与设备」一步与版本编辑都有常开的「限速 Mbps」，超额策略下拉已去掉，保存一律写 suspend 并固定说明「流量用完后停止服务」，存量的「用完限速」行读取照收
@@ -31,7 +31,7 @@ Wizard.tsx: 五步向导（基本资料 + 卖点与推荐 + 可见范围与排�
 SalesDrawer.tsx: 「销售设置」抽屉（PUT v1/plans/{id} 整体覆盖）：卖点与推荐、可见范围与可见用户组、上架时间窗、三个购买开关、每人限购、库存（显示已预留）、排序；导出向导也用的 GroupPicker 与 VISIBILITY_OPTIONS
 Highlights.tsx: HighlightsField：卖点列表（逐条输入、移除、最多 5 条）与「标为推荐」开关，向导与销售设置共用；只管输入与错误显示，校验在 model
 PacksTab.tsx: 「流量包」标签：状态分段（在地址上）、表格、新建 / 编辑抽屉（updated_at 乐观锁，409 时刷新）、上下架确认
-failure.ts: useCatalogFailure 与 SALES_OFF，见上文写失败口径
+failure.ts: useCatalogFailure，见上文写失败口径
 schemas.ts: 封闭枚举与 zod schema：列表行与详情（含 R100 highlights / recommended）、价格行、版本行（含 R66 created_by_email，R99 限速为 null 或正整数）、节点池候选、流量包行、各写响应（R65 向导新建返回完整详情）
 api.ts: 读 hook（usePlans、usePlan、usePlanPools、usePoolOptions、useTrafficPacks）、PK 查询键前缀、
   - planOptionsKey（用户、内容两个模块各自查 GET v1/plans 的键，挂在 PK 下，各自一份 schema，套餐页写后按前缀一并失效）、useInvalidatePlans

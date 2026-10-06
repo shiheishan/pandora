@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx，依赖 service.go 的 requireP0BSales 销售闸门与 catalog.go 的 catalogResult 错误翻译
+// [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx，依赖 catalog.go 的 catalogResult 错误翻译
 // [OUTPUT]: 对外提供 TrafficPackRow、TrafficPackInput、ListTrafficPacks、CreateTrafficPack、UpdateTrafficPack、SetTrafficPackStatus
 // [POS]: adminops 的流量包目录管理（后台-04 流量包 tab）：列表、新建、修改、上下架；与 catalog.go 的套餐目录并列，门户目录与下单在 billing/traffic_pack.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -6,8 +6,7 @@
 package adminops
 
 // 流量包是在售商品，改它等于改价（D-C-2 同门槛）：路由上挂 catalog.publish、
-// 近期重认证与幂等键，这里再过一道 P0B 销售闸门 —— 新建、修改、重新上架
-// 都会让一个价格对用户生效；下架只收窄销售面，与 ArchivePlan 一样不过闸门。
+// 近期重认证与幂等键；这一层只管输入校验、乐观锁与同事务审计。
 //
 // 已售出的不受影响：订单项在下单那一刻快照了名称、容量与金额，履约只认
 // 快照（billing/traffic_pack.go），所以这里可以放心改容量和价格。
@@ -184,9 +183,6 @@ func (s *Service) CreateTrafficPack(ctx context.Context, tenantID string, in Tra
 	if err := validateTrafficPackInput(&in); err != nil {
 		return nil, err
 	}
-	if err := s.requireP0BSales(); err != nil {
-		return nil, err
-	}
 	var out TrafficPackRow
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
 		var id string
@@ -219,9 +215,6 @@ func (s *Service) UpdateTrafficPack(ctx context.Context, tenantID, packID string
 		return nil, httpx.Invalid(map[string]string{"expected_updated_at": "必填：列表里读到的 updated_at"})
 	}
 	if err := validateTrafficPackInput(&in); err != nil {
-		return nil, err
-	}
-	if err := s.requireP0BSales(); err != nil {
 		return nil, err
 	}
 	var out TrafficPackRow
@@ -267,11 +260,6 @@ func (s *Service) SetTrafficPackStatus(ctx context.Context, tenantID, packID, ac
 	}
 	if len(fields) > 0 {
 		return nil, httpx.Invalid(fields)
-	}
-	if status == "active" {
-		if err := s.requireP0BSales(); err != nil {
-			return nil, err
-		}
 	}
 	var out TrafficPackRow
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actorID}, func(tx pgx.Tx) error {

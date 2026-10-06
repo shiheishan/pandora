@@ -43,7 +43,7 @@ tests/mock-api.test.ts: 假后端外壳守卫——matchPattern
   - 外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同键重新执行，条件改好即成功）（调账打在真实种子用户上，余额经详情接口核对、重放不再记账，种子外的 id 回 404）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码，503 后同键重新执行）
 tests/mock-admin-users.test.ts: 用户运营假接口（users-ops.ts）——流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验与 R103 识别窗口，设新密码不要原因（R101）
 tests/mock-admin-plans.test.ts: 套餐假接口——
-  - 目录能被页面 schema 接住、向导单事务新建与幂等重放（限速、卖点与推荐）、编辑向导的 null = 不动与开新版本、R99 设备与限速三态、销售设置整体覆盖卖点与推荐、超额策略只收 suspend、草稿版本全流程、价格与销售开关 503、流量包 updated_at 乐观锁
+  - 目录能被页面 schema 接住、向导单事务新建与幂等重放（限速、卖点与推荐）、编辑向导的 null = 不动与开新版本、R99 设备与限速三态、销售设置整体覆盖卖点与推荐、超额策略只收 suspend、草稿版本全流程、价格新增与归档、流量包上下架与 updated_at 乐观锁
 tests/mock-admin-marketing.test.ts: 营销假接口——
   - 礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、按筛选导出的掩码报表（BOM、同筛选、不含明文）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400、统计与佣金总览能被收紧后的 schema 解析
 tests/mock-admin-nodes.test.ts: 节点与服务器假接口——节点列表能被页面 schema 接住、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验

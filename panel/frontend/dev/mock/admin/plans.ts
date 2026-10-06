@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockContext / MockModule / MockResult / MockRoute，依赖 ./plans-store 的存储与规则，依赖 ./nodes-infra 的 pools（只读），依赖 ./plans-packs 的 packRoutes
- * [OUTPUT]: 对外提供 plans 模块的假接口 MockModule；转出 plans-store 的 setSalesEnabled 给测试用
- * [POS]: dev/mock/admin 的「套餐（后台-04）」假接口：列表、详情、只建壳、向导新建（单事务，R65）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动，R1 / R99 / R100；额度 / 线路变了开新版本并立即发布，价格只同步出现过的币种）、销售设置（含卖点与推荐整体覆盖）、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池绑定候选与替换；流量包四接口在 plans-packs.ts，数据与校验在 plans-store.ts。权限、reauth、幂等 scope、校验键名与文案照 api-contract.md 与 domain/adminops 的 catalog.go、plan_wizard*.go、api/admin/pools.go；按 DisallowUnknownFields 拒绝未知字段；销售开关关着时 catalog.publish 类写回 503。超额策略只收 suspend、限速与策略解耦（R99）。R107（R92 已修）：编辑向导保留上架时间窗、滚出的新版本继承当前版本全部设置，本来不限流量时再交 0 不滚版本
+ * [OUTPUT]: 对外提供 plans 模块的假接口 MockModule
+ * [POS]: dev/mock/admin 的「套餐（后台-04）」假接口：列表、详情、只建壳、向导新建（单事务，R65）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动，R1 / R99 / R100；额度 / 线路变了开新版本并立即发布，价格只同步出现过的币种）、销售设置（含卖点与推荐整体覆盖）、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池绑定候选与替换；流量包四接口在 plans-packs.ts，数据与校验在 plans-store.ts。权限、reauth、幂等 scope、校验键名与文案照 api-contract.md 与 domain/adminops 的 catalog.go、plan_wizard*.go、api/admin/pools.go；按 DisallowUnknownFields 拒绝未知字段。超额策略只收 suspend、限速与策略解耦（R99）。R107（R92 已修）：编辑向导保留上架时间窗、滚出的新版本继承当前版本全部设置，本来不限流量时再交 0 不滚版本
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
@@ -35,8 +35,6 @@ import {
   publish,
   publishProblems,
   quotasFor,
-  sales,
-  SALES_OFF,
   salesPointProblems,
   seedPlan,
   seedPrice,
@@ -50,8 +48,6 @@ import {
   wizardPriceProblems,
   type Plan,
 } from './plans-store.ts'
-
-export { setSalesEnabled } from './plans-store.ts'
 
 // ---------------------------------------------------------------------------
 // 向导
@@ -91,7 +87,6 @@ function createComplete(ctx: MockContext, b: Json): MockResult {
   if (b.max_devices != null && !(isInt(b.max_devices) && b.max_devices >= 0)) f.max_devices = '设备数不能是负数；不限请留空'
   Object.assign(f, salesPointProblems(b), wizardPriceProblems(priceList))
   if (Object.keys(f).length) return invalid(f)
-  if ((priceList.length || publishNow) && !sales()) return SALES_OFF
   // 之后是单事务里的各步（R65）：先全部算好、校验好，最后一次写入
   const basics = { ...b, visibility: str(b.visibility) || 'public' }
   const pf = planFieldProblems(basics)
@@ -141,7 +136,6 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
   if (priceList.length) {
     const f = wizardPriceProblems(priceList)
     if (Object.keys(f).length) return invalid(f)
-    if (!sales()) return SALES_OFF
   }
   // R99 三态：max_devices / throttle_kbps 缺省 = 不动、null = 清为不限、正整数 = 设置（traffic_gb 仍是 null = 不动、0 = 不限）
   const has = (k: string) => Object.prototype.hasOwnProperty.call(b, k)
@@ -160,8 +154,6 @@ function updateComplete(ctx: MockContext, p: Plan, b: Json): MockResult {
     const pp = poolProblems(poolsIn)
     if (pp) return invalid({ pool_ids: pp })
   }
-  if ((quotaChanged || poolsChanged) && !sales()) return SALES_OFF
-
   // 价格按「周期 + 币种」同步，只动清单里出现过的币种的在售公开价
   const snapshot = structuredClone(p)
   const changed = ['套餐资料已更新']
@@ -333,8 +325,6 @@ const routes: Record<string, MockRoute> = {
         const f = { ...planFieldProblems(b), ...salesPointProblems(full) }
         if (isInt(b.stock_total) && b.stock_total < p.stock_reserved) f.stock_total = '不能低于已预留库存'
         if (Object.keys(f).length) return invalid(f)
-        const reopened = (['allow_new_purchase', 'allow_renewal', 'allow_upgrade'] as const).some((k) => !p[k] && b[k] === true)
-        if (p.status === 'active' && reopened && !sales()) return SALES_OFF
         applyBasics(p, b)
         applySalesPoints(p, full)
         p.visible_from = (b.visible_from as string | null) ?? null
@@ -430,7 +420,6 @@ const routes: Record<string, MockRoute> = {
         if (bad) return bad
         const v = p.versions.find((x) => x.id === ctx.params.vid)
         if (!v) return NOT_FOUND
-        if (!sales()) return SALES_OFF
         if (p.status === 'archived') return err(409, 'conflict', '已归档套餐不能发布版本')
         if (v.status !== 'draft') return err(409, 'conflict', '只有草稿版本可以发布')
         if (b.expected_plan_row_version !== p.row_version) return stale(p.row_version)
@@ -453,7 +442,6 @@ const routes: Record<string, MockRoute> = {
         if (bad) return bad
         const f = priceProblems(b)
         if (Object.keys(f).length) return invalid(f)
-        if (!sales()) return SALES_OFF
         if (p.status === 'archived') return err(409, 'conflict', '已归档套餐不能新增价格')
         const group = (b.user_group_id as string | null) ?? null
         if (p.prices.some((x) => x.status === 'active' && priceKey(x) === priceKey(b) && x.user_group_id === group)) return DUP
@@ -531,7 +519,7 @@ const routes: Record<string, MockRoute> = {
     )
   },
 
-  ...packRoutes(sales),
+  ...packRoutes(),
 }
 
 export const plans_: MockModule = { routes }

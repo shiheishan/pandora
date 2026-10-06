@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatBytes / formatCount / formatMoney，依赖 ../../../core/router 的 navigate / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / ConfirmModal / Drawer / Empty / Input / QueryView / Segmented / Select / Switch / Table / Tag / useToast，依赖 ../../actions 的 endsIntent / useCan / useIntentKey，依赖 ./api 的 useTrafficPacks / useInvalidatePlans / packResponseSchema / TrafficPack / PackStatus，依赖 ./model 的 PackForm / packForm / packProblems / packBody / PACK_STATUS_VIEW，依赖 ./failure 的 useCatalogFailure，依赖 ./Plans.module.css
  * [OUTPUT]: 对外提供 PacksTab
- * [POS]: 套餐页「流量包」标签（#/plans/packs?s=<状态>，修订 R73；后端有、设计稿缺，按后台-04 的风格补）：状态分段、表格（名称与推荐、容量、价格、状态、已售、排序）、新建 / 编辑抽屉、上下架确认。乐观锁是列表里读到的 updated_at，409 时刷新到最新。写接口 catalog.publish + reauth + 幂等；新建、修改、上架受销售开关控制，下架不受
+ * [POS]: 套餐页「流量包」标签（#/plans/packs?s=<状态>，修订 R73；后端有、设计稿缺，按后台-04 的风格补）：状态分段、表格（名称与推荐、容量、价格、状态、已售、排序）、新建 / 编辑抽屉、上下架确认。乐观锁是列表里读到的 updated_at，409 时刷新到最新。写接口 catalog.publish + reauth + 幂等
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
@@ -214,7 +214,7 @@ function StatusDialog({ pack, onClose }: { pack: TrafficPack | null; onClose: ()
     <ConfirmModal
       open={pack !== null}
       title={off ? `下架「${pack?.name ?? ''}」？` : `重新上架「${pack?.name ?? ''}」？`}
-      body={off ? '门户不再展示，之后买不到；已经买了的流量包余量不受影响。' : '门户重新可以购买。上架受销售开关控制。'}
+      body={off ? '门户不再展示，之后买不到；已经买了的流量包余量不受影响。' : '门户重新可以购买。'}
       confirmLabel={off ? '下架' : '上架'}
       tone={off ? 'danger' : 'primary'}
       onCancel={onClose}

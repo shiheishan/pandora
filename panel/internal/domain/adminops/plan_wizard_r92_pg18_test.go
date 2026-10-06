@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 plan_wizard.go / plan_wizard_update.go 的向导用例、catalog_version.go 的 UpdatePlanVersion，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 与 catalog_sales_capability_test.go 的 staticSalesCapability
+// [INPUT]: 依赖 plan_wizard.go / plan_wizard_update.go 的向导用例、catalog_version.go 的 UpdatePlanVersion，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 夹具
 // [OUTPUT]: 对外提供 TestPlanWizardKeepsSettingsPG18、TestPlanThrottleDecoupledPG18（run-pg18-gates.sh 的 catalog_sales 域）
 // [POS]: adminops 第 4 阶段套餐修复的 PG18 门禁：向导编辑的三态与继承、上架时间窗保留（R92），限速与超额策略解耦（R99，迁移删掉 plan_versions_throttle_exact）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -72,7 +72,7 @@ func seedR92(t *testing.T, ctx context.Context, admin *pgxpool.Pool) (from, unti
 func TestPlanWizardKeepsSettingsPG18(t *testing.T) {
 	ctx, admin, app := openCatalogSalesPG18(t)
 	from, until := seedR92(t, ctx, admin)
-	svc := NewService(app, staticSalesCapability(true))
+	svc := NewService(app)
 
 	// 请求体走 JSON 解码，三态才是真实的三态：缺省、null、数字。
 	update := func(body string) *UpdatePlanCompleteOutput {
@@ -207,7 +207,7 @@ func TestPlanThrottleDecoupledPG18(t *testing.T) {
 			t.Fatalf("seed: %v", err)
 		}
 	}
-	svc := NewService(app, staticSalesCapability(true))
+	svc := NewService(app)
 
 	// 向导新建：限速正常生效（以前 suspend + 限速必定 422），设备 0 = 不限。
 	throttle, devices := 1000, 0

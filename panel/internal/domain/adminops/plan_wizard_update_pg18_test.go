@@ -108,7 +108,7 @@ func TestUpdatePlanCompleteAtomicPG18(t *testing.T) {
 		return v
 	}
 
-	svc := NewService(app, staticSalesCapability(true))
+	svc := NewService(app)
 
 	// 1) 只回传人民币公开价：同币种旧价归档换新，美元价与用户组价不动。
 	cnyOnly := []PlanPriceInput{{BillingInterval: "month", IntervalCount: 1, UnitAmount: 1200, Currency: "CNY"}}

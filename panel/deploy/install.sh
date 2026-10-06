@@ -148,7 +148,6 @@ if [ "$MODE" = install ]; then
     -e "s|^AEGIS_MASTER_KEY=.*|AEGIS_MASTER_KEY=$(openssl rand -base64 32)|" \
     -e "s|^AEGIS_JWT_PUBLIC_SECRET=.*|AEGIS_JWT_PUBLIC_SECRET=$(rand)|" \
     -e "s|^AEGIS_JWT_ADMIN_SECRET=.*|AEGIS_JWT_ADMIN_SECRET=$(rand)|" \
-    -e "s|^AEGIS_JWT_CLIENT_SECRET=.*|AEGIS_JWT_CLIENT_SECRET=$(rand)|" \
     -e "s|^AEGIS_CONFIG_SIGNING_SEED=.*|AEGIS_CONFIG_SIGNING_SEED=$(openssl rand -base64 32)|" \
     -e "s|^AEGIS_BACKUP_AGE_RECIPIENT=.*|AEGIS_BACKUP_AGE_RECIPIENT=$AGE_RECIPIENT|" \
     -e "s|^AEGIS_BACKUP_AGE_IDENTITY=.*|AEGIS_BACKUP_AGE_IDENTITY=$DEST/secrets/backup-age.key|" \
