@@ -32,6 +32,7 @@ pdnd/release/build.sh - Linux amd64/arm64 发布包与 SHA-256 manifest
 pdnd/release/check_native_panel_parity.py - NativeCore/Panel Schema/serving allowlist 13 协议静态对齐检查
 LICENSE - GPL-3.0 全文（GNU 官方 gpl-3.0.txt 原样），覆盖 panel 与 pdnd；fork 目录 pdnd/internal/reality、realityquic 保留各自的 LICENSE
 .gitattributes - 全仓库 LF，仅 *.ps1 CRLF
+.git-blame-ignore-revs - git blame 跳过的纯注释批量提交；clone 后执行 git config blame.ignoreRevsFile .git-blame-ignore-revs 启用
 .gitleaks.toml - 公开的泄露规则：gitleaks 内置规则 + Komari 密钥与后台隐藏前缀两种格式，误报按完整值放行；只写格式不写真实值
 </config>
 
