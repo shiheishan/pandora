@@ -37,10 +37,10 @@ type uniClient struct {
 	obs        *observer
 }
 
-func newUniClient(base, nodeID, nodeType, token string, timeout time.Duration, obs *observer) *uniClient {
+func newUniClient(base, nodeID, nodeType, token, realIP string, timeout time.Duration, obs *observer) *uniClient {
 	// pdnd 每个节点一个显式 Transport（MaxIdleConnsPerHost 4、空闲 90 秒），
 	// 事件流复用同一个 Transport、但不带总超时。
-	transport := &http.Transport{MaxIdleConnsPerHost: 4, IdleConnTimeout: 90 * time.Second}
+	transport := withRealIP(&http.Transport{MaxIdleConnsPerHost: 4, IdleConnTimeout: 90 * time.Second}, realIP)
 	c := &uniClient{
 		base: base, nodeID: nodeID, token: token, obs: obs,
 		http:   &http.Client{Timeout: timeout, Transport: transport},

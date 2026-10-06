@@ -88,7 +88,7 @@ func newSignedClient(base string, n ltkit.ManifestNode, verify bool, obs *observ
 	return &signedClient{
 		base: base, nodeID: n.ID, signer: signer,
 		configKeyID: n.ConfigKeyID, configPub: pub, verify: verify, obs: obs,
-		http: &http.Client{Timeout: signedTimeout, Transport: transport,
+		http: &http.Client{Timeout: signedTimeout, Transport: withRealIP(transport, n.RealIP),
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}, nil
 }

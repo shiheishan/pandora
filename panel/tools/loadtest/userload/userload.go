@@ -41,6 +41,8 @@ const (
 
 type usersConfig struct {
 	manifest        string
+	steadyStart     int64
+	steadyDur       time.Duration
 	publicURL       string
 	adminURL        string
 	admin           credentials
@@ -87,6 +89,8 @@ func parseUsersFlags(args []string) (usersConfig, error) {
 	var cfg usersConfig
 	fs := flag.NewFlagSet("users", flag.ContinueOnError)
 	fs.StringVar(&cfg.manifest, "manifest", "", "manifest written by seed (required)")
+	fs.Int64Var(&cfg.steadyStart, "steady-start", 0, "steady window start (unix seconds); with -steady-dur the report adds per-endpoint stats inside the window")
+	fs.DurationVar(&cfg.steadyDur, "steady-dur", 0, "steady window length")
 	fs.StringVar(&cfg.publicURL, "public-url", "", "public gateway base URL (portal API and subscription links)")
 	fs.StringVar(&cfg.adminURL, "admin-url", "", "admin gateway base URL including any secret path prefix (required when -admin-rate > 0)")
 	fs.StringVar(&cfg.admin.email, "admin-email", "", "admin email (default $"+envAdminEmail+")")
@@ -236,6 +240,9 @@ func runUsers(ctx context.Context, cfg usersConfig, m *ltkit.Manifest, stdout io
 	}
 
 	rec := ltkit.NewRecorder("users", cfg.window)
+	if cfg.steadyStart > 0 && cfg.steadyDur > 0 {
+		rec.SetSteady(time.Unix(cfg.steadyStart, 0), cfg.steadyDur)
+	}
 	t.rec = rec
 	classes := []*class{
 		{name: "sub", rate: cfg.subRate, fire: func(ctx context.Context) bool { t.pullSubscription(ctx); return true }},
