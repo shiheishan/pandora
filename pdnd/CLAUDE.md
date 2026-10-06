@@ -13,7 +13,7 @@ runtime_compat.go: go:build compat，迁移构建专用，显式 native_only:fal
 kernel/: NativeCore 自研数据面，13 协议入站、传输、REALITY、能力矩阵；见 kernel/CLAUDE.md
 core/: core.Core 抽象与兼容适配层（sing-box/xray/mieru/外部进程/multi 分派/流量计数/限速）；见 core/CLAUDE.md
 internal/: NativeCore 底层实现
-  - nativewire/ 协议线格式（anytls/hysteria2/mkcp/shadowtls/tuic/udpmask）
+  - nativewire/ 协议线格式（anytls/hysteria2/mkcp/shadowtls/tuic/udpmask）；shadowtls/ 见 internal/nativewire/shadowtls/CLAUDE.md
   - reality/ fork 自 XTLS/REALITY（MPL-2.0，其本身基于 Go crypto/tls，目录内 LICENSE 与 LICENSE-Go 两份许可并存），承载 TLS 1.2 + 1.3 上的 REALITY 握手
   - realityquic/ fork 自 apernet/quic-go（自带上游 MIT LICENSE，见其 README），把 TLS 事件接到 reality/，193 文件
   - 这两个 fork 目录保持上游文件划分，整目录豁免 800 行规则
