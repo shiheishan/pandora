@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 client.go 的 login / do，依赖 traffic.go 的 actor、adminActor、firstSubscriptionID、prefixFromLinks，依赖 ltkit.Recorder
-// [OUTPUT]: 对外提供 包内的 warmup：登录后台操作员与门户活跃池、取每人的订阅 id、取租户订阅前缀
+// [OUTPUT]: 对外提供 包内的 warmup：登录后台操作员与门户活跃池、manifest 没给时取每人的订阅 id 与租户订阅前缀
 // [POS]: tools/loadtest/userload 的预热段：在计时开始前把「登录一次」的贵活（Argon2）做完，正式运行只复用令牌；预热自己的计量写 users-warmup.json，登录哈希的耗时看这里
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -82,6 +82,9 @@ func loginPool(ctx context.Context, cfg usersConfig, t *traffic, rec *ltkit.Reco
 			}
 			a.setToken(tok)
 			nOK.Add(1)
+			if a.subID.Load() != nil {
+				return // manifest 已给出订阅 id
+			}
 			resp := t.c.do(ctx, rec, request{
 				gw: t.pub, method: http.MethodGet, path: "/v1/me/subscriptions", tmpl: "/v1/me/subscriptions",
 				ip: a.u.RealIP, ua: browserUA, token: tok,
@@ -95,8 +98,8 @@ func loginPool(ctx context.Context, cfg usersConfig, t *traffic, rec *ltkit.Reco
 	return int(nOK.Load()), int(nFail.Load())
 }
 
-// discoverPrefix 从一个已登录用户的订阅链接里读租户前缀（-sub-prefix 没给时）。
-// manifest 只有令牌没有前缀：前缀是租户级的部署值，不进 manifest 也不进报告。
+// discoverPrefix 从一个已登录用户的订阅链接里读租户前缀：-sub-prefix 与 manifest 的
+// subscribe_path_prefix 都没给时的回落。前缀不进报告（端点名里是 {prefix}）。
 func discoverPrefix(ctx context.Context, t *traffic, rec *ltkit.Recorder) (string, error) {
 	var a *actor
 	for _, p := range t.pool {

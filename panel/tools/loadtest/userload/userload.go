@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 ltkit 的 Manifest（用户邮箱、共用口令、订阅令牌、固定来源 IP）与 Recorder，依赖 traffic.go 的四类流量、sched.go 的开环调度、preflight.go 的限流预估
+// [INPUT]: 依赖 ltkit 的 Manifest（用户邮箱、共用口令、订阅令牌、固定来源 IP）与 Recorder，依赖 manifestx.go 的订阅前缀与订阅 id，依赖 traffic.go 的四类流量、sched.go 的开环调度、preflight.go 的限流预估
 // [OUTPUT]: 对外提供 Main（users 子命令）与 BurstMain（burst 子命令，实现在 burst.go）
 // [POS]: tools/loadtest/userload 的 users 入口：解析参数、预热（登录活跃池与后台、取订阅前缀）、开环跑四类流量、写 users.json/.txt；被 tools/loadtest/main.go 分发
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -99,7 +99,7 @@ func parseUsersFlags(args []string) (usersConfig, error) {
 	fs.Float64Var(&cfg.loginRate, "login-rate", 0.05, "portal re-logins per second during the run (Argon2 per login)")
 	fs.Float64Var(&cfg.warmupLoginRate, "warmup-login-rate", 10, "logins per second while logging in the active pool before the run")
 	fs.IntVar(&cfg.portalUsers, "portal-users", 200, "active portal pool: N manifest users spread evenly over the list log in once and reuse the token")
-	fs.StringVar(&cfg.subPrefix, "sub-prefix", "", "tenant subscription path prefix (default: read from a pool user's subscription link)")
+	fs.StringVar(&cfg.subPrefix, "sub-prefix", "", "tenant subscription path prefix (default: manifest subscribe_path_prefix, else read from a pool user's subscription link)")
 	fs.DurationVar(&cfg.duration, "duration", time.Minute, "measured run length (warm-up not included)")
 	fs.DurationVar(&cfg.timeout, "timeout", 30*time.Second, "per-request timeout")
 	fs.DurationVar(&cfg.window, "window", 10*time.Second, "timeline window in the report")
@@ -192,10 +192,26 @@ func runUsers(ctx context.Context, cfg usersConfig, m *ltkit.Manifest, stdout io
 		fmt.Fprintln(stdout, "  "+l)
 	}
 
+	// seed 后加的字段：订阅前缀与每人的订阅 id。前缀优先级 -sub-prefix > manifest > 门户探测
+	extras, err := readManifestExtras(cfg.manifest)
+	if err != nil {
+		return ltkit.Report{}, err
+	}
+	prefix := cfg.subPrefix
+	if prefix == "" {
+		prefix = extras.SubscribePathPrefix
+	}
+	subIDs := extras.subscriptionIDs()
+	for _, a := range users {
+		if id, ok := subIDs[a.u.ID]; ok {
+			a.subID.Store(&id)
+		}
+	}
+
 	c := newClient(cfg.maxInflight, cfg.timeout, cfg.ipHeaders)
 	t := &traffic{
 		c: c, pub: newGateway("public", cfg.publicURL), adm: newGateway("admin", cfg.adminURL),
-		prefix: cfg.subPrefix, users: users, pool: pool, pass: m.UserPassword,
+		prefix: prefix, users: users, pool: pool, pass: m.UserPassword,
 		portal: newPicker(portalReads), admin: newPicker(adminReads),
 	}
 
