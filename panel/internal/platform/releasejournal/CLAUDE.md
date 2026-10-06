@@ -1,7 +1,12 @@
 # panel/internal/platform/releasejournal/
 > L2 | 父级: /panel/internal/platform/CLAUDE.md
 
-发布控制器的持久化日志原语，只支持 Linux amd64 / arm64 与 root：只记录「已持久准备 / 已观察到」的事实，自己不能执行 SQL、Goose、systemd、shell、网络、删除、回滚或部署（deploy/pandora-release-journal_mock_test.sh 静态禁止这些能力）。模型与导出跨平台；落盘、会话与 v3 发布器是 linux 专用。v1 / v2 与 v3 两套模型刻意并行。文件系统原语与 cmd/pandora-cic-journal 的同名函数刻意各持一份，不合并（安全关键）。
+发布控制器的持久化日志原语，只支持 Linux amd64 / arm64 与 root：
+  - 只记录「已持久准备 / 已观察到」的事实，自己不能执行 SQL、Goose、systemd、shell、网络、删除、回滚或部署（deploy/pandora-release-journal_mock_test.sh 静态禁止这些能力）
+  - 模型与导出跨平台
+  - 落盘、会话与 v3 发布器是 linux 专用
+  - v1 / v2 与 v3 两套模型刻意并行
+  - 文件系统原语与 cmd/pandora-cic-journal 的同名函数刻意各持一份，不合并（安全关键）。
 
 成员清单
 model.go: v1 / v2 日志模型：记录文法、哈希链、状态机与恢复态（stateRecoveryRequired），终态之后不许有尾随字节

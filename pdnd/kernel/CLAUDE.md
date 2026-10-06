@@ -1,7 +1,11 @@
 # pdnd/kernel/
 > L2 | 父级: /pdnd/CLAUDE.md
 
-NativeCore：协议无关的数据面运行时。每个入站拥有一个 route engine 和一代 outbound；协议以 Adapter 注册进 AdapterRegistry，通过 DataPlane 拨号与监听，流量在此按用户计量。能力矩阵是唯一事实源：--capabilities 打印它，selfcheck 校验它，面板拿它做编排前协商。未在矩阵里的组合 fail closed，不回落到 core/ 的兼容内核。
+NativeCore：协议无关的数据面运行时
+  - 每个入站拥有一个 route engine 和一代 outbound
+  - 协议以 Adapter 注册进 AdapterRegistry，通过 DataPlane 拨号与监听，流量在此按用户计量
+  - 能力矩阵是唯一事实源：--capabilities 打印它，selfcheck 校验它，面板拿它做编排前协商
+  - 未在矩阵里的组合 fail closed，不回落到 core/ 的兼容内核。
 
 成员清单
 runtime.go: 包文档所在。协议无关运行时，持有每入站的 route engine 与 outbound 代
@@ -52,7 +56,11 @@ httpupgrade_netconn.go: HTTP Upgrade 承载的 net.Conn
 native_transport_server.go: WebSocket 与 HTTP Upgrade 的服务端分派
 mkcp_transport.go: mKCP 传输：配置与掩码解析、监听、MTU 校验、socket 缓冲调优
 uot_bridge.go: UDP-over-TCP 桥：把 uot 数据报接到路由后的 PacketConn
-*_test.go: 各协议单测，nativecore_test.go 跨协议契约测试，互操作门分三个构建标签，都不进默认套件：`interop`（xhttp_external、mkcp_external 的外部 Xray 客户端，与 anytls_client 的 sing-anytls 客户端——后者 v0.0.11/v0.0.13 内部自带 closeLocally/Write 数据竞争，所以移出默认 race 套件，CI 以非 race 方式跑）；`interop_mihomo`（mihomo_* 系列，需 MIHOMO_BIN 与 MIHOMO_SHA256）；`interop_external`（external_clients：sing-box VLESS TLS Vision、Juicity、Naive，各需钉住哈希的外部二进制）。CI 只跑 `interop` 里的 Xray XHTTP 与 AnyTLS 两组
+*_test.go: 各协议单测，nativecore_test.go 跨协议契约测试，互操作门分三个构建标签，都不进默认套件：
+  - `interop`（xhttp_external、mkcp_external 的外部 Xray 客户端，与 anytls_client 的 sing-anytls 客户端——后者 v0.0.11/v0.0.13 内部自带 closeLocally/Write 数据竞争，所以移出默认 race 套件，CI 以非 race 方式跑）
+  - `interop_mihomo`（mihomo_* 系列，需 MIHOMO_BIN 与 MIHOMO_SHA256）
+  - `interop_external`（external_clients：sing-box VLESS TLS Vision、Juicity、Naive，各需钉住哈希的外部二进制）
+  - CI 只跑 `interop` 里的 Xray XHTTP 与 AnyTLS 两组
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
