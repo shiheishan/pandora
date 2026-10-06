@@ -47,6 +47,7 @@ type usersConfig struct {
 	admin           credentials
 	adminIPs        []string
 	subRate         float64
+	subInterval     time.Duration // >0 时按「每人多久拉一次」折算 subRate，与档位无关
 	portalRate      float64
 	adminRate       float64
 	loginRate       float64
@@ -94,6 +95,7 @@ func parseUsersFlags(args []string) (usersConfig, error) {
 	adminIPs := fs.String("admin-ips", defaultAdminIP, "comma-separated fictitious source IPs for admin traffic, one admin session per IP")
 	ipHeaders := fs.String("ip-headers", defaultIPHeader, ipHeadersUsage)
 	fs.Float64Var(&cfg.subRate, "sub-rate", 2, "subscription pulls per second, round-robin over all manifest users")
+	fs.DurationVar(&cfg.subInterval, "sub-interval", 0, "per-user subscription pull interval (e.g. 30m to test headroom, 6h close to real clients); overrides -sub-rate with users/interval")
 	fs.Float64Var(&cfg.portalRate, "portal-rate", 2, "portal page reads per second, random user from the active pool")
 	fs.Float64Var(&cfg.adminRate, "admin-rate", 0.5, "admin list reads per second")
 	fs.Float64Var(&cfg.loginRate, "login-rate", 0.05, "portal re-logins per second during the run (Argon2 per login)")
@@ -152,6 +154,8 @@ func (cfg usersConfig) validate() error {
 		return errors.New("users: -manifest is required")
 	case cfg.subRate < 0 || cfg.portalRate < 0 || cfg.adminRate < 0 || cfg.loginRate < 0:
 		return errors.New("users: rates must be >= 0")
+	case cfg.subInterval < 0:
+		return errors.New("users: -sub-interval must be >= 0")
 	case cfg.publicURL == "" && cfg.subRate+cfg.portalRate+cfg.loginRate > 0:
 		return errors.New("users: -public-url is required for subscription and portal traffic")
 	case cfg.adminRate > 0 && cfg.adminURL == "":
@@ -185,6 +189,12 @@ func runUsers(ctx context.Context, cfg usersConfig, m *ltkit.Manifest, stdout io
 		return ltkit.Report{}, errors.New("users: portal traffic needs -portal-users > 0")
 	}
 	pool := spreadPool(users, poolN)
+
+	// 按每人间隔给速率：同一个 -sub-interval 在 5k / 10k / 15k 三档自动折成各自的总速率
+	if cfg.subInterval > 0 {
+		cfg.subRate = float64(len(users)) / cfg.subInterval.Seconds()
+		fmt.Fprintf(stdout, "[users] -sub-interval %s over %d users = %.2f subscription pulls/s\n", cfg.subInterval, len(users), cfg.subRate)
+	}
 
 	lines, warns := preflight(cfg, users, pool)
 	fmt.Fprintf(stdout, "[users] manifest %q: %d users, active pool %d; rate-limit preflight:\n", m.Label, len(users), len(pool))
@@ -319,6 +329,7 @@ func setUsersMeta(rec *ltkit.Recorder, cfg usersConfig, m *ltkit.Manifest, users
 	rec.SetMeta("portal_pool", pool)
 	rec.SetMeta("admin_ips", len(cfg.adminIPs))
 	rec.SetMeta("rate_sub", cfg.subRate)
+	rec.SetMeta("sub_interval_s", cfg.subInterval.Seconds())
 	rec.SetMeta("rate_portal", cfg.portalRate)
 	rec.SetMeta("rate_admin", cfg.adminRate)
 	rec.SetMeta("rate_login", cfg.loginRate)

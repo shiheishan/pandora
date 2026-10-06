@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 fakegw_test.go 的 fakePanel / testManifest，依赖 userload_test.go 的 baseConfig / endpointCount，依赖 ltkit.Manifest 的 SubscribePathPrefix 与 ManifestUser.SubscriptionID
-// [OUTPUT]: 单测：manifest 新增字段（subscribe_path_prefix、subscription_id）直接生效、不再经门户探测；按 seed 的地址规划（198.18.0.0/15 的 512 个 /24 轮流分配）四档缺省速率都不撞限流
+// [OUTPUT]: 单测：manifest 新增字段（subscribe_path_prefix、subscription_id）直接生效、不再经门户探测；-sub-interval 按清单人数折算订阅速率；按 seed 的地址规划（198.18.0.0/15 的 512 个 /24 轮流分配）四档缺省速率都不撞限流
 // [POS]: tools/loadtest/userload 中 userload.go 的清单读取与 preflight.go 对齐 seed 实际输出的测试
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -75,5 +75,29 @@ func TestUsersReadsPrefixAndSubscriptionIDsFromManifest(t *testing.T) {
 		if !strings.Contains(r.path, "/manifest-sub/") {
 			t.Fatalf("subscription id not from the manifest: %s", r.path)
 		}
+	}
+}
+
+// -sub-interval 按清单人数折算总速率：同一个「每人 6 小时一次」在各档自动给出各自的速率。
+func TestSubIntervalScalesWithManifestUsers(t *testing.T) {
+	m := testManifest(12)
+	f := newFakePanel(t, m)
+	cfg := baseConfig(f, t.TempDir())
+	cfg.subRate, cfg.subInterval = 999, 4*time.Second // 12 人 / 4 秒 = 3 次每秒，覆盖 -sub-rate
+	cfg.portalRate, cfg.adminRate, cfg.loginRate = 0, 0, 0
+	cfg.duration = time.Second
+	rep, err := runUsers(context.Background(), cfg, m, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.Meta["rate_sub"]; got != 3.0 {
+		t.Fatalf("rate_sub = %v, want 3 (12 users every 4s)", got)
+	}
+	if got := rep.Meta["sub_interval_s"]; got != 4.0 {
+		t.Fatalf("sub_interval_s = %v, want 4", got)
+	}
+	cfg.subInterval = -time.Second
+	if err := cfg.validate(); err == nil {
+		t.Fatal("negative -sub-interval accepted")
 	}
 }

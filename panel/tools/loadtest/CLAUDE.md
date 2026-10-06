@@ -30,7 +30,7 @@ nodesim/: nodes 子命令：M 个模拟 pdnd 对着 node 网关跑，请求序�
   - fleet.go 计量接线：请求进 Recorder，起跑 / 起来 / 流事件 / 验签失败等整机计数进 meta
   - *_test.go：fakegw_test.go 用面板原语搭的假网关（验签同 requireNodeSignature，配置由真 BuildNodeConfig + SignEffectiveRelease 产出，心跳严格解码）；nodesim_test.go 覆盖签名全验过、外来公钥拒收、无身份退兼容通道、ETag/304、流事件、节拍重置、起跑错开、-strict
 userload/: 用户侧流量（users）与全量重拉触发（burst）
-  - userload.go users 入口：四类速率逐类可配（订阅、门户读、后台读、重新登录），活跃池等间距挑选，订阅前缀与订阅 id 取自清单，写 users.json/.txt
+  - userload.go users 入口：四类速率逐类可配（订阅、门户读、后台读、重新登录；订阅也可用 -sub-interval 按「每人多久一次」给，三档自动折算），活跃池等间距挑选，订阅前缀与订阅 id 取自清单，写 users.json/.txt
   - warmup.go 计时前的预热：活跃池定速登录一次复用令牌（Argon2 不进正式窗口），计量写 users-warmup.json
   - traffic.go 流量内容：订阅客户端 UA 表（逐条对应 subscription.DetectFormat 的 clash / sing-box / URI 分支，按响应类型复核）、门户与后台读接口表（注明前端调用处）
   - sched.go 开环定速调度（不因响应慢降速，测得出排队）、在途上限（满则丢拍计数）、每分钟进度行
