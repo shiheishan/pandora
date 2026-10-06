@@ -152,7 +152,7 @@ func Run(ctx context.Context, m *ltkit.Manifest, opt Options, rec *ltkit.Recorde
 	sims := make([]*simNode, len(nodes))
 	var transports []func()
 	for i, n := range nodes {
-		uni := newUniClient(base, n.ID, n.NodeType, n.RuntimeToken, opt.Timeout, obs)
+		uni := newUniClient(base, n.ID, n.NodeType, n.RuntimeToken, n.RealIP, opt.Timeout, obs)
 		transports = append(transports, uni.http.CloseIdleConnections)
 		var signed *signedClient
 		if n.PrivateKey != "" {

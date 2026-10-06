@@ -132,6 +132,7 @@ sudo /root/lt/nginx-realip.sh status
 - 它整份顶替第 2 步生成的信任表，原文件备份成 `.loadtest-orig`。
 - `nginx -t` 通过才 reload，失败自动回滚。
 - 压测工具在每个请求里带该模拟用户固定的 `X-Real-IP`，地址取自 198.18.0.0/15，用户轮流分到 512 个 /24 里。
+- 模拟节点同样带 `X-Real-IP`：取自 seed 给它所在服务器登记的虚构公网地址（203.0.113.0/24，写在 manifest 的 `real_ip`）。nginx 对 `/v1/nodes/` 与 `/api/v1/server/UniProxy/` 按来源 IP 限 240 次/分（突发 60/120），不带的话 198 个节点共用压测机一个地址，大面积 503。
 - 开着它跨档也没关系：重装数据基座不动 nginx。
 - 随包模板 `deploy/nginx-aegis.conf` 不改。
 

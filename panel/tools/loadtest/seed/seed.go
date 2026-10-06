@@ -152,7 +152,7 @@ func run(ctx context.Context, o *options, out io.Writer) error {
 			ID: n.ID, NodeType: seedNodeType, RuntimeToken: n.Identity.RuntimeToken,
 			PrivateKey: base64.StdEncoding.EncodeToString(n.Identity.PrivateKey), Serial: n.Enroll.Serial,
 			ConfigKeyID: n.Enroll.ConfigKeyID, ConfigPublicKey: n.Enroll.ConfigPublicKey,
-			Name: n.Name, ServerID: n.ServerID,
+			Name: n.Name, ServerID: n.ServerID, RealIP: n.RealIP,
 		})
 	}
 
