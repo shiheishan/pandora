@@ -24,7 +24,7 @@ harness.ts: 形状校验的底座：读状态目录，两个身份各登录一�
   - runTable 每行一个用例，结果逐行写进状态目录的 smoke-results.md 供 CI 贴进 job summary，列表行另记条数与覆盖（验到行 / 只验到外层）和造数来源
   - pageClient 供写路径注入令牌与 requestReauth
   - 后台请求同样隔 300ms
-admin.smoke.ts: 后台接口表：前端 73 处后台 GET 调用逐一成行（at 列标调用处在 src/admin 下的文件，只用于用例标题与结果表，不参与断言，不参与断言），schema 从调用处的页面模块导入
+admin.smoke.ts: 后台接口表：前端 73 处后台 GET 调用逐一成行（at 列标调用处在 src/admin 下的文件，只用于用例标题与结果表，不参与断言），schema 从调用处的页面模块导入
   - 种子里没有的 id（知识库页版本、礼品卡批次）先原样取列表
   - 两个 CSV 导出与事件流只验状态与内容类型
 portal.smoke.ts: 门户接口表（at 列同样只标文件）：32 处门户 GET 调用与共享的事件流；调用处内联的外层 z.object 照原样重写、里面的行 schema 导入；通知只由定时扫描写入，等到非空或 8 分钟超时就标跳过

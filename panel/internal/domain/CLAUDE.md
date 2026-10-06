@@ -5,11 +5,11 @@
 
 成员清单
 adminops/: 管理后台的读写用例
-  - 24 文件（含审计读模型 audit.go、风控聚类 risk.go；后台访问明细 access_log.go、用户画像 user_profile.go、系统状态 system_status.go、套餐绑池 plan_pools.go 自 api/admin 下沉）
+  - 26 文件（含审计读模型 audit.go、风控聚类 risk.go；后台访问明细 access_log.go、用户画像 user_profile.go、系统状态 system_status.go、套餐绑池 plan_pools.go 自 api/admin 下沉）
   - 套餐目录用例拆成「事务外校验 + *Tx 事务体」，向导编辑 plan_wizard_update.go 把资料、价格、版本发布编排进同一事务
   - 见 adminops/CLAUDE.md
 appearance/: 主题与外观配置（多套主题、一套生效），service.go 读写、tokens.go 设计稿令牌白名单与站点名、branding.go 站点品牌规则、sanitize.go 清洗插槽 HTML；见 appearance/CLAUDE.md
-billing/: 订单、支付与复式账本，29 文件（结算主链在 settlement.go；主动查单、后台查单审计与定时巡检在 payment_query.go / payment_query_audit.go / payment_query_patrol.go）
+billing/: 订单、支付与复式账本，33 文件（结算主链在 settlement.go；主动查单、后台查单审计与定时巡检在 payment_query.go / payment_query_audit.go / payment_query_patrol.go）
   - traffic_pack.go 是流量包（D-E-1）目录、下单（kind=addon）与用户级余额，plan_change.go / plan_change_quote.go 是变更套餐（D-E-2，kind=upgrade）的剩余价值折算、下单与原地履约，order_holds.go 是各建单路径共用的预留父节点与余额冻结
   - 借贷配平与回调幂等在此编排
   - commission_available.go 是「可用佣金 = 账本余额 − 未过账在途提现」的唯一口径，提现申请与转余额在同一把科目锁下共用
