@@ -243,7 +243,8 @@ func marshalSOCKSUDPDatagram(addr net.Addr, payload []byte) ([]byte, error) {
 		return nil, err
 	}
 	var out bytes.Buffer
-	out.Write([]byte{5, 0, 0})
+	// RFC 1928 §7：RSV(0x0000) | FRAG(0) | ATYP。mihomo/Clash 系客户端校验 RSV 为零。
+	out.Write([]byte{0, 0, 0})
 	if ip.Is4() {
 		out.WriteByte(1)
 		v4 := ip.As4()

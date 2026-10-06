@@ -247,6 +247,21 @@ func TestSOCKS5UDPDownlinkBurstWithoutUplink(t *testing.T) {
 	assertUDPRelayTraffic(t, adapter.SnapshotTraffic, 61, int64(len("open")), udpBurstCount*udpBurstPayloadSize)
 }
 
+// 回包头必须是 RFC 1928 的 RSV(0x0000) FRAG(0)：曾写成 05 00 00，校验 RSV 的客户端整包丢弃。
+func TestSOCKS5UDPReplyHeaderIsRFC1928(t *testing.T) {
+	packet, err := marshalSOCKSUDPDatagram(&net.UDPAddr{IP: net.IPv4(192, 0, 2, 7), Port: 5353}, []byte("reply"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(packet[:4], []byte{0, 0, 0, 1}) {
+		t.Fatalf("reply header=%x want 00000001", packet[:4])
+	}
+	destination, payload, err := parseSOCKSUDPDatagram(packet)
+	if err != nil || destination.Host != "192.0.2.7" || destination.Port != 5353 || string(payload) != "reply" {
+		t.Fatalf("round trip destination=%+v payload=%q err=%v", destination, payload, err)
+	}
+}
+
 func TestSOCKS5UDPAssociateReleasesRoutes(t *testing.T) {
 	for _, closeBy := range []string{"control", "adapter"} {
 		t.Run(closeBy, func(t *testing.T) {
