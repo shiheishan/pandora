@@ -89,10 +89,11 @@ func TestUsersRunAgainstFakeGateway(t *testing.T) {
 	for i, u := range m.Users {
 		n := logins[u.Email]
 		totalLogins += n
-		if i < 10 && n < 1 {
+		inPool := i%3 == 0 // 30 人里等间距挑 10 个
+		if inPool && n < 1 {
 			t.Errorf("pool user %s never logged in", u.Email)
 		}
-		if i >= 10 && n > 0 {
+		if !inPool && n > 0 {
 			t.Errorf("non-pool user %s logged in %d times", u.Email, n)
 		}
 	}
@@ -222,7 +223,7 @@ func TestPreflightWarnsWhenUsersShareASlash24(t *testing.T) {
 	}
 	cfg := usersConfig{subRate: 50, portalRate: 50, loginRate: 1, warmupLoginRate: 10, duration: time.Hour,
 		limits: panelLimits{120, 300, 10, 60, 240}}
-	_, warns := preflight(cfg, users, users[:200])
+	_, warns := preflight(cfg, users, spreadPool(users, 200))
 	joined := strings.Join(warns, "\n")
 	for _, want := range []string{"pub_net", "auth_net", "sub "} {
 		if !strings.Contains(joined, want) {
@@ -234,7 +235,7 @@ func TestPreflightWarnsWhenUsersShareASlash24(t *testing.T) {
 	users, _ = actorsOf(spread)
 	cfg = usersConfig{subRate: 2, portalRate: 2, loginRate: 0.05, warmupLoginRate: 10, duration: time.Minute,
 		limits: panelLimits{120, 300, 10, 60, 240}}
-	if _, warns := preflight(cfg, users, users[:200]); len(warns) > 0 {
+	if _, warns := preflight(cfg, users, spreadPool(users, 200)); len(warns) > 0 {
 		t.Fatalf("CI-sized run should not warn: %v", warns)
 	}
 }

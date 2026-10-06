@@ -98,7 +98,7 @@ func parseUsersFlags(args []string) (usersConfig, error) {
 	fs.Float64Var(&cfg.adminRate, "admin-rate", 0.5, "admin list reads per second")
 	fs.Float64Var(&cfg.loginRate, "login-rate", 0.05, "portal re-logins per second during the run (Argon2 per login)")
 	fs.Float64Var(&cfg.warmupLoginRate, "warmup-login-rate", 10, "logins per second while logging in the active pool before the run")
-	fs.IntVar(&cfg.portalUsers, "portal-users", 200, "active portal pool: the first N manifest users log in once and reuse the token")
+	fs.IntVar(&cfg.portalUsers, "portal-users", 200, "active portal pool: N manifest users spread evenly over the list log in once and reuse the token")
 	fs.StringVar(&cfg.subPrefix, "sub-prefix", "", "tenant subscription path prefix (default: read from a pool user's subscription link)")
 	fs.DurationVar(&cfg.duration, "duration", time.Minute, "measured run length (warm-up not included)")
 	fs.DurationVar(&cfg.timeout, "timeout", 30*time.Second, "per-request timeout")
@@ -184,7 +184,7 @@ func runUsers(ctx context.Context, cfg usersConfig, m *ltkit.Manifest, stdout io
 	if cfg.portalRate+cfg.loginRate > 0 && poolN <= 0 {
 		return ltkit.Report{}, errors.New("users: portal traffic needs -portal-users > 0")
 	}
-	pool := users[:max(poolN, 0)]
+	pool := spreadPool(users, poolN)
 
 	lines, warns := preflight(cfg, users, pool)
 	fmt.Fprintf(stdout, "[users] manifest %q: %d users, active pool %d; rate-limit preflight:\n", m.Label, len(users), len(pool))
@@ -262,6 +262,19 @@ func runUsers(ctx context.Context, cfg usersConfig, m *ltkit.Manifest, stdout io
 		return rep, strictCheck(rep, classes)
 	}
 	return rep, nil
+}
+
+// spreadPool 按等间距从全体用户里挑活跃池，而不是取前 n 个：seed 多半按序分配来源地址，
+// 前 n 个会挤在同一两个 /24 里，把门户流量与预热登录全压到 pub_net / auth_net 的同一个桶上。
+func spreadPool(users []*actor, n int) []*actor {
+	if n <= 0 {
+		return nil
+	}
+	pool := make([]*actor, 0, n)
+	for i := range n {
+		pool = append(pool, users[i*len(users)/n])
+	}
+	return pool
 }
 
 func actorsOf(m *ltkit.Manifest) ([]*actor, error) {
