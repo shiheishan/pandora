@@ -29,7 +29,10 @@ import (
 	"github.com/aegispanel/nodeagent/route"
 )
 
-const ssChunkLimit = 16 * 1024
+// ssChunkLimit 是 AEAD 分块负载上限 0x3FFF（SIP004，与 ss2022MaxChunk 同值），读写两侧共用。
+// 曾写成 16*1024：上游一次读满 16384 字节（TLS 记录常见）就发出超长块，规范客户端判非法断开，
+// Vultr 实测表现为 HTTPS 大响应在 16KB 整数倍处截断。
+const ssChunkLimit = 16*1024 - 1
 
 type ssMethodSpec struct {
 	Name    string

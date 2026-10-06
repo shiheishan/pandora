@@ -43,7 +43,7 @@ trojan.go: Trojan 入站 TCP 路径
 trojan_udp.go: Trojan UDP ASSOCIATE：地址/长度/CRLF 帧按目的地址建路由 PacketConn，上下行解耦并计量
 udp_relay.go: UDP 中继收尾骨架 relayUDPDirections：上行、下行各一个 goroutine 阻塞读，任一方向结束即取消并关连接打断另一方向，SOCKS5、Trojan、VMess command=UDP 共用
   - 为何存在：下行若与上行同一循环轮询（等上行读超时或等上行来包），回程被限成几包每秒，游戏、语音、QUIC 卡死；udp_relay_test.go 用"只发一包、回 1000 包"的突发回归守住
-shadowsocks.go: Shadowsocks AEAD 入站：方法表、TCP 请求与按用户试解、AEAD 分块流
+shadowsocks.go: Shadowsocks AEAD 入站：方法表、TCP 请求与按用户试解、AEAD 分块流（分块负载上限 0x3FFF，读写共用）
 shadowsocks_udp.go: Shadowsocks AEAD UDP：逐包按用户主密钥试解定位用户，经 DataPlane 路由并计量
 shadowsocks2022.go: Shadowsocks 2022 入站：方法解析、TCP 请求（多用户身份头逐层校验）与用户表
 shadowsocks2022_udp.go: Shadowsocks 2022 UDP：按客户端会话 ID 维护会话并定期回收
@@ -69,7 +69,7 @@ httpupgrade_netconn.go: HTTP Upgrade 承载的 net.Conn
 native_transport_server.go: WebSocket 与 HTTP Upgrade 的服务端分派；newInboundHTTPServer 是全部 HTTP 承载（含 gRPC、XHTTP、Naive）共用的 http.Server 构造，ReadHeaderTimeout 给 TLS 握手与请求头限时
 mkcp_transport.go: mKCP 传输：配置与掩码解析、监听、MTU 校验、socket 缓冲调优
 uot_bridge.go: UDP-over-TCP 桥：把 uot 数据报接到路由后的 PacketConn
-*_test.go: 各协议单测，nativecore_test.go 跨协议契约测试；accept_loop_test.go 钉住退避序列、八个 TCP 类入站在 EMFILE 下不空转、RealityListener 在 EMFILE 后照常接客与 VMess over mKCP 能起能停，accept_silent_test.go 钉住静默连接不堵 vmess / vless / trojan 的 TLS 接客、Close 关掉握手中的连接与握手限时；shadowtls_test.go 钉住 v3 回环（含认证后静置超过握手超时仍可收发）、适配器取 inboundHandshakeTimeout、静默连接按 tls-handshake / timeout 关闭并上报；connerror_*_test.go 钉住分类 / 脱敏 / 限流、NativeCore 生产接线，以及 13 个协议各至少一条失败路径真的到达 OnConnError（client 文件用真实 QUIC / mieru 客户端）。互操作门分三个构建标签，都不进默认套件：
+*_test.go: 各协议单测，nativecore_test.go 跨协议契约测试；accept_loop_test.go 钉住退避序列、八个 TCP 类入站在 EMFILE 下不空转、RealityListener 在 EMFILE 后照常接客与 VMess over mKCP 能起能停，accept_silent_test.go 钉住静默连接不堵 vmess / vless / trojan 的 TLS 接客、Close 关掉握手中的连接与握手限时；shadowsocks_chunk_test.go 钉住 AEAD 分块读写两侧都不超 0x3FFF（超长块规范客户端会断连）；shadowtls_test.go 钉住 v3 回环（含认证后静置超过握手超时仍可收发）、适配器取 inboundHandshakeTimeout、静默连接按 tls-handshake / timeout 关闭并上报；connerror_*_test.go 钉住分类 / 脱敏 / 限流、NativeCore 生产接线，以及 13 个协议各至少一条失败路径真的到达 OnConnError（client 文件用真实 QUIC / mieru 客户端）。互操作门分三个构建标签，都不进默认套件：
   - `interop`（xhttp_external、mkcp_external 的外部 Xray 客户端，与 anytls_client 的 sing-anytls 客户端——后者内部自带 closeLocally/Write 数据竞争（版本见测试文件注释），所以不进 race 套件，CI 以非 race 方式跑）
   - `interop_mihomo`（mihomo_* 系列，需 MIHOMO_BIN 与 MIHOMO_SHA256）
   - `interop_external`（external_clients：sing-box VLESS TLS Vision、Juicity、Naive，各需钉住哈希的外部二进制）
