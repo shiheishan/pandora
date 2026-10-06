@@ -1,7 +1,7 @@
 # panel/frontend/src/portal/screens/tickets/
 > L2 | 父级: /panel/frontend/src/portal/screens/CLAUDE.md
 
-工单支持（用户门户-07-工单.dc.html；契约门户-07，修订 R25、R60；D-F-2 已决）
+工单支持（用户门户-07-工单.dc.html；契约门户-07；D-F-2 已决）
   - 地址驱动：#/tickets 列表（宽屏右侧显示第一张，一张都没有时直接给新建表单）、#/tickets/new[?order=<订单 id>]（订单页明细末尾的「提交工单」带 order 预填）、#/tickets/<id>
   - 宽屏左列 240–320 的列表 + 右列，< 640 列表与会话分屏，会话头有「全部工单」返回。
 状态按契约映射，closed 靠 closed_reason 分「已撤回」（半透明）与「已关闭」（closed_reason 恒在，未关闭为 null）

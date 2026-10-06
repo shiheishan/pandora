@@ -3,12 +3,12 @@
 
 内容与外观（后台-08）
   - 三个标签全部接入：公告、知识库、主题与插槽
-  - 视觉按 管理后台-08-内容与外观.dc.html，数据与规则按 api-contract.md 后台-08 三节（含 R19、R49）并对过 Go 的 announce.go、domain/content/service.go、appearance.go、site_settings.go
+  - 视觉按 管理后台-08-内容与外观.dc.html，数据与规则按 api-contract.md 后台-08 三节并对过 Go 的 announce.go、domain/content/service.go、appearance.go、site_settings.go
   - 设计缺、契约标「待补·前端」的都补上了：公告的级别、定时发布、自动下线、保存草稿与「套餐 + 用户组」多选可见范围，知识库的类型切换与搜索、新文章标识、发布设置折叠区、历史版本只读查看与恢复，主题区旁的站点时区卡。
 分层：schemas（zod；Go 指针字段 nullable、omitempty 字段 optional，插槽保存的 dropped 在空内容时为 null 按代码事实收）
   - → queries（读 hook，公告挂 announcements.changed，其余写后按 CK 前缀失效；转出 admin/actions.ts 的 useCan / useFailure / useIntentKey）
   - → logic（纯函数，content.test.ts 守住）→ 组件。
-  - 写操作的幂等键：成功后 reset，失败交给 fail(e, { intent })，4xx 业务拒绝在 actions.ts 里丢弃，reauth 取消与断网、5xx 保留——后端只重放 2xx，非 2xx 同键会重新执行或回 409，所以成功与业务拒绝都必须丢键（契约 1.5、R85）。
+  - 写操作的幂等键：成功后 reset，失败交给 fail(e, { intent })，4xx 业务拒绝在 actions.ts 里丢弃，reauth 取消与断网、5xx 保留——后端只重放 2xx，非 2xx 同键会重新执行或回 409，所以成功与业务拒绝都必须丢键（契约 1.5）。
 三条后端事实决定了编辑区写法：公告与知识库的写都是全量覆盖 / 追加新版本，所以表单记下「从哪一版载入」，版本变了而本地没改就换成最新、本地改了就提示「保存会覆盖 / 会在新版本之上再存」并可载入最新，而不是把用户的输入冲掉
   - 公告已撤回是终态、已发布不能退回草稿（D-D-3 已决（5.A.2）：已撤回只读，给「复制为新公告」）
   - 知识库发布只归档「同一受众组合」的旧发布版，受众字段默认沿用上一版，改了就提示旧版不会被自动归档。
@@ -26,7 +26,7 @@
 
 成员清单
 index.tsx: 页面入口，按标签分发：announce → AnnounceTab（rest = [公告 id | new]）、kb → KbTab（rest = [slug | new]）、theme → ThemeTab
-schemas.ts: 公告列表与写响应、内容页（列表行 / 单版本 / 保存 / 归档）、主题（R19 light / dark 两组令牌，旧数据按组宽松收）与主题写响应、插槽、站点时区、套餐目录子集的 zod schema 与枚举
+schemas.ts: 公告列表与写响应、内容页（列表行 / 单版本 / 保存 / 归档）、主题（light / dark 两组令牌，旧数据按组宽松收）与主题写响应、插槽、站点时区、套餐目录子集的 zod schema 与枚举
 queries.ts: 查询键前缀 CK、各读 hook（公告挂 announcements.changed
   - 内容页按类型取全部版本
   - 单版本同一篇文章换新版本时保留上一版数据免得编辑区卸载

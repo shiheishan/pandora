@@ -14,9 +14,9 @@ fixtures.ts: 共享夹具（不是模块，不进登记表）：
   - 切换即重建
 seeds.ts: 历史数据种子（不是模块）：跨四个月的 13 条订单（已支付 / 已取消 / 超时 / 已退款 / 处理中）、余额流水、礼品卡兑换记录
 catalog.ts: 商品目录夹具（不是模块）：
-  - 礼品卡（余额 / 流量 / 套餐 / 盲盒 / 需订阅的延期 / 限新用户）、三个套餐（专业版标为推荐、每个带卖点，家庭版 allow_upgrade=false 且限速 100 Mbps，R99 / R100）、四个流量包、覆盖各种拒绝的优惠码（AUTUMN26 / WELCOME / PROYEAR 限年付 / BIG50 有门槛 / EXPIRED / USED）、四种支付方式（含一个 POST 跳转渠道与一个只收 USD 的渠道）
+  - 礼品卡（余额 / 流量 / 套餐 / 盲盒 / 需订阅的延期 / 限新用户）、三个套餐（专业版标为推荐、每个带卖点，家庭版 allow_upgrade=false 且限速 100 Mbps）、四个流量包、覆盖各种拒绝的优惠码（AUTUMN26 / WELCOME / PROYEAR 限年付 / BIG50 有门槛 / EXPIRED / USED）、四种支付方式（含一个 POST 跳转渠道与一个只收 USD 的渠道）
 billing.ts: 计费逻辑（不是模块）：请求体拒绝多余字段、优惠码试算、下单即扣余额与 30 分钟过期或取消退回（全部记余额流水）、履约（新购开订阅、续费延期、变更原地换套餐并退余额、流量包加余量）、变更折算（剩余时间比与剩余流量比取小）、订单列表行与明细形状
-overview.ts: 概览（门户-01）；GET v1/me/subscriptions/{id}/usage（修订 R47：days 422、他人订阅 404、无数据补 0）与匿名的场景开关
+overview.ts: 概览（门户-01）；GET v1/me/subscriptions/{id}/usage（days 422、他人订阅 404、无数据补 0）与匿名的场景开关
 subs.ts: 我的订阅（门户-02）；GET v1/me/subscriptions（外框徽标与页面共用）、subscription-links、{id}/nodes（只对 active / trialing / grace 下发，否则 404）、{id}/rotate（无 body、不幂等、统计清零）
 plans.ts: 选购套餐（门户-03）；匿名的套餐目录与流量包目录、我的流量包余量、优惠码试算（套餐 + 价格或 pack_id）、购买流量包（order_create）
 checkout.ts: 确认订单（门户-03 结账）
@@ -29,7 +29,7 @@ wallet.ts: 钱包（门户-05）；余额与流水（外框余额胶囊也读它
 referral.ts: 邀请返利（门户-06）
   - 自带按 PortalState 挂的佣金状态（WeakMap，切场景跟着重建）：
   - GET v1/me/invite（没有码时懒生成 8 位码）、
-  - GET v1/me/commission（summary.scope 按 R114，multi 场景为 first_order；外框菜单的可用佣金提示也读它；可用 = 账本余额 − 未过账在途提现，5.A D-F-1；R69 的 paid_invitees / total_earned / transfers 各场景恒在）、
+  - GET v1/me/commission（summary.scope，multi 场景为 first_order；外框菜单的可用佣金提示也读它；可用 = 账本余额 − 未过账在途提现，5.A D-F-1；paid_invitees / total_earned / transfers 各场景恒在）、
   - 申请提现（commission_withdrawal_request，检查顺序照 RequestWithdrawal）、
   - 转余额（commission_transfer_to_balance，记进钱包余额与流水）
   - empty 无码无记录，multi 有一笔审核中提现且邀请码已用满
@@ -37,7 +37,7 @@ messages.ts: 消息（门户-08）
   - 按 PortalState 挂的站内信（WeakMap）：GET v1/me/notifications（外框铃铛未读数也轮询它；limit 1–100 默认 30、unread=1、unread 计数全量）、单条已读（他人或不存在也 200，非 UUID 500）、全部已读、GET v1/me/announcements（置顶优先，最多 20 条）
   - empty 无站内信
 account.ts: 账号安全（门户-10）
-  - 按 PortalState 挂的账号状态（WeakMap）：快捷登录签发、会话列表与吊销（当前会话与外壳里本账号的其它会话由 Bearer 令牌推出稳定 id，另有两条种子会话；last_seen_at 当前会话取现在、种子各有最近活跃、外壳会话取登录时间，列表按它倒序（R114）；下线外壳会话让那枚令牌立即失效，下线种子会话只改本模块的列表；下线当前会话 422）
+  - 按 PortalState 挂的账号状态（WeakMap）：快捷登录签发、会话列表与吊销（当前会话与外壳里本账号的其它会话由 Bearer 令牌推出稳定 id，另有两条种子会话；last_seen_at 当前会话取现在、种子各有最近活跃、外壳会话取登录时间，列表按它倒序；下线外壳会话让那枚令牌立即失效，下线种子会话只改本模块的列表；下线当前会话 422）
   - 快捷登录绑定签发会话，重新生成作废旧令牌、改密（与后端同序：空 422 两字段、旧密码错 401、新旧相同 400、规则 422 fields.password；成功改外壳账号口令并清掉其余会话）、
   - Telegram（default 未绑定、multi 已绑定、legacy 站点未启用；绑定码 8 位 10 分钟，发出 8 秒后视为已在 Telegram 发送 /start CODE；解绑未绑定 404）、
   - 通知偏好（3 类 × 2 渠道，交易类锁定开启、关它 422，非法组合 422 fields.preference）

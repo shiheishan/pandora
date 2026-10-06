@@ -9,7 +9,7 @@
 service.go: Service 骨架（从 checkout.go 拆出）：NewService、SetUsersChangedNotifier 注入，履约后经 onUsersChanged 在提交后发租户级节点通知，零元单（赠送、全额抵扣、零元续费与变更）由 notifyIfFulfilled 补发；包内共用小工具
 checkout.go: 新购下单 CreateOrder（目录校验、库存与限购预留、余额冻结、券核销、幂等绑定与预制响应）与零元单当场捕获履约 captureZeroPayOrder
 settlement.go: 支付回调结算主链，整条在一个文件：HandlePaymentWebhook → settlePaymentTx → postOrderPaid → fulfillOrder，回调按 kind 分派履约
-  - 续费 / 变更单锁住订阅后按建单同一口径复核订阅状态，不收（支付窗口里被改成终态）就把钱隔离进挂账、订单与订阅不动（R117）
+  - 续费 / 变更单锁住订阅后按建单同一口径复核订阅状态，不收（支付窗口里被改成终态）就把钱隔离进挂账、订单与订阅不动
   - settlePaymentTx 在调用方事务里执行，回调 / 标记已支付各开一个事务调它，人工单线下已收款在建单事务里调它
 provision.go: 开订阅 provisionSubscription 与建配额 initQuotaBalances 的唯一实现，下单履约与礼品卡套餐兑换（grantPlanDirect）共用
 order_holds.go: 各建单路径共用的预留父节点与余额冻结（insertHeldReservation / prepareBalanceHold / postBalanceHold）
@@ -17,7 +17,7 @@ reservations.go: 结算与释放共用的预留图加锁校验；orderTotal 是�
 release.go: 取消 / 过期释放，held 预留图整体转 released 并退回余额冻结
   - 订单上有收款就拒绝释放，订阅不收而进挂账的收款不算（否则冻结的余额永远退不回来）
   - 续费走专用分支，其余 kind 共用预留图锁
-  - 冲突原因用 releaseConflict 带中文文案（errors.Is 仍认作冲突哨兵，过期任务照旧空转），releaseHTTPError 是后台与门户取消共用的错误翻译（R95）
+  - 冲突原因用 releaseConflict 带中文文案（errors.Is 仍认作冲突哨兵，过期任务照旧空转），releaseHTTPError 是后台与门户取消共用的错误翻译
 release_locks.go: 释放的各加锁步骤（从 release.go 拆出）：订单（过期扫描 SKIP LOCKED）、活跃支付意图、已结算收款证据（有即拒绝）、预留图（续费单专用分支再锁券与余额冻结）
 reservation_expiry.go: 到期预留的批量释放扫描
 renewal.go: 续费 CreateRenewal 与周期滚动 RollQuotaPeriods

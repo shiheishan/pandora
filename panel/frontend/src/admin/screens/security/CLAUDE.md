@@ -3,7 +3,7 @@
 
 安全与运维（后台-09 后半）
   - 四个标签全部接入：审计日志、访问日志、风控、降级开关
-  - 视觉按 管理后台-09-通知与安全.dc.html，数据与规则按 api-contract.md 后台-09 · 安全与运维（含 R23 R40 R41 R44 R58），并对过 Go 的 audit_log.go + adminops/audit.go、access_log.go、risk.go + adminops/risk.go、handlers.go setSwitch + adminops.SetSwitch
+  - 视觉按 管理后台-09-通知与安全.dc.html，数据与规则按 api-contract.md 后台-09 · 安全与运维，并对过 Go 的 audit_log.go + adminops/audit.go、access_log.go、risk.go + adminops/risk.go、handlers.go setSwitch + adminops.SetSwitch
   - 契约里的待补·后端（审计 q / 来源 IP / 对象名 / auth_context 与导出、访问日志分类与 outcome 筛选、聚类字段与两种处置、开关 reauth 与四个新开关）主线都已实现，照实现写
   - 设计缺、契约标「待补·前端」的都补上了：审计的动作前缀 / 操作者 / 结果筛选与分页、访问日志的 IP 与账号筛选和「登录 / 注册 / 订阅拉取」分段、停用确认框的原因、开关确认框的原因。
 分层：schemas（zod）→ queries（读 hook，写后按 SK 前缀失效；转出 admin/actions.ts 的 useCan / useFailure / useIntentKey）→ logic（纯函数，security.test.ts 守住）→ 组件。
@@ -16,7 +16,7 @@
   - 标记正常 security.risk.review（无 reauth 无幂等），批量停用另要 iam.user.write + reauth + 幂等 ip_cluster_disable
   - 开关切换 platform.settings.write + reauth（无幂等）
   - 只读演示账号没有 security.audit.read，整个模块不可见。
-D-A-3 已决（5.A.2、R102）：「订阅下发使用缓存」不做
+D-A-3 已决（5.A.2）：「订阅下发使用缓存」不做
   - ops.bulk_export / ops.reports / node.autoscale 后端删行，字典与「未接入」灰显一并删掉（旧库残留的行按未知 code 显示、照后端极性可切）
   - admin.writes 的豁免清单按后端现状写在说明里
   - 开关查询按 meta.topics 接 switches.changed，别的管理员切换后即时刷新。

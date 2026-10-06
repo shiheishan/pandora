@@ -7,7 +7,7 @@
 
 成员清单
 hooks.go: 事件白名单 Events（EventInfo，小写 name / desc）、钩子列表带近 7 天 sent_count_7d、
-  - Service（钩子增删查，保存时 timeout_ms 500–30000 与 max_attempts 1–10 越界回 422（R93）、Dispatch / StartScanner 投递、Deliveries 投递记录、TestHook 同步测试）
+  - Service（钩子增删查，保存时 timeout_ms 500–30000 与 max_attempts 1–10 越界回 422、Dispatch / StartScanner 投递、Deliveries 投递记录、TestHook 同步测试）
   - 每次尝试经 timedPost 量往返耗时，落 plugin_hook_deliveries.last_duration_ms（00081），没发出去的尝试记 NULL
 emit.go: 各业务事件的发射薄封装（订单、订阅、注册、工单、礼品卡、流量），只拼载荷后交给 Emit
 *_test.go: deliver_test.go 用 httptest 复算签名、验超时、生产模式挡内网与耗时只记发出去的请求；hooks_save_test.go 验保存时的数值边界（不连库）

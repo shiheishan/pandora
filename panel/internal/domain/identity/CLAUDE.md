@@ -17,7 +17,7 @@ logout.go: 退出当前会话，会话与整条 refresh 链同事务吊销
 password.go: 自助改密，吊销既有凭据（门户保留当前会话与其 refresh 令牌，admin 全部吊销）；口令错误的审计先于事务错误提交；admin 域新密码至少 12 位（validatePasswordFor），门户仍 8 位
 portal_profile.go: 门户账户行 PortalProfile（门户 GET v1/me 的邮箱、显示名、状态与注册时间，从 api/public/handlers.go 下沉）；user_id 与权限取自令牌，不在这里
 admin_profile.go: 管理员展示信息 AdminProfile（GET v1/me 追加的邮箱、显示名与生效角色），角色过滤与 admin 登录展开权限一致
-admin_reset_password.go: 管理员替用户设新密码；原因可选（R101），给了才进审计摘要
+admin_reset_password.go: 管理员替用户设新密码；原因可选，给了才进审计摘要
 reauth.go: 用口令换一枚 rat 刷新过的令牌，供 RequireRecentReauth 保护的高危路由使用
 quicklogin.go: 已登录设备生成 60 秒一次性快捷登录链接
 *_test.go: 单元与契约测试；*_pg18_test.go 共用 logout_pg18_test.go 的 openLogoutPG18Fixture（run-pg18-gates.sh 的 logout 域），含会话 audience 隔离与注册验证码投递全链路；email_verify_default_test 钉住回退值 = 00030 / 00042 种子

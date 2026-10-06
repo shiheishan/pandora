@@ -3,7 +3,7 @@
 
 全部网关唯一的响应与错误模型
   - 错误分对外码与对内详情两层：对外只有封闭列表里的错误码与中性中文文案，详情只进日志（SEC-006）
-  - 前端 src/core/api.ts 按同一列表解析 {"error":{…}} 信封，message 由页面原样显示（R116）
+  - 前端 src/core/api.ts 按同一列表解析 {"error":{…}} 信封，message 由页面原样显示
   - 幂等重放靠 PrepareJSON / WritePrepared 写出与首次完全相同的字节。
 
 成员清单

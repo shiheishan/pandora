@@ -10,7 +10,7 @@
 
 成员清单
 seed.ts: 造数据，`node seed.ts <状态目录>`（SQL 夹具连 smoke.env 里的 SMOKE_PG_DB）（Node 22 原生剥类型）：
-  - 池与套餐先行（池绑在发布版本上）→ 新服务器 + 新节点 → 节点抽屉签发接入令牌 → Ed25519 两段式接入（begin / commit，与 pdnd 同一套规范串，运行令牌由「节点」生成）→ POST activate 一步上线（R108 / R113，不再逐级调旧 status）→ UniProxy 心跳
+  - 池与套餐先行（池绑在发布版本上）→ 新服务器 + 新节点 → 节点抽屉签发接入令牌 → Ed25519 两段式接入（begin / commit，与 pdnd 同一套规范串，运行令牌由「节点」生成）→ POST activate 一步上线（不再逐级调旧 status）→ UniProxy 心跳
   - 门户注册与邀请注册、下单经演示渠道付清、留一张待支付、被邀请人付一单造佣金明细、对已付单再送一笔回调造挂账
   - 全局与单节点路由各一条规则
   - 节点取用户列表后上报流量与在线 IP（流量排行、按日用量、在线设备都只由节点上报产生）
@@ -34,7 +34,7 @@ writes.smoke.ts: 写路径：以节点运行令牌取用户列表并在门户订
   - 工单回复验同键重放（Idempotency-Replayed）与换体 409
   - 用户、营销、节点、套餐、系统、安全、财务、门户各一个写操作，请求体用页面构造函数、响应用页面 schema
   - 插件接收端落盘里有带签名头的 ticket.created
-  - 工单回复后门户通知里出现 ticket.replied、正文带那张工单的标题（R115；admin 只排队，轮询等 public 网关的派发循环，6 分钟没有才算失败）
+  - 工单回复后门户通知里出现 ticket.replied、正文带那张工单的标题（admin 只排队，轮询等 public 网关的派发循环，6 分钟没有才算失败）
 vitest.config.ts: 冒烟专用配置：只收 *.smoke.ts（默认的 *.test.ts 收不到，所以不进 make frontend-check），node 环境、文件串行、单条 90 秒
   - 自带 sequencer（ReadsBeforeWrites）把 writes.smoke.ts 固定排在两张读表之后——写路径会改种子数据，顺序是冒烟自己的数据依赖，放在配置里而不是 workflow 里，本机单跑也成立
 tsconfig.json: 冒烟专用类型检查：继承浏览器侧 tsconfig（页面模块连带 .tsx 要 jsx），加 node 类型；tsconfig.node.json 因此排除 tests/smoke

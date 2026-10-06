@@ -18,7 +18,7 @@ dashboardmigration/: 只有 migration_contract_test.go，对 00041 dashboard 读
 db/: PostgreSQL 连接池与租户上下文，RLS 变量注入；schema_registry_test.go 按序号重放迁移 Up 段的 CREATE / DROP TABLE，守住现存表、Go 引用与 migrations/RESERVED-TABLES.md 登记簿三者同构
 geoip/: IP 画像：地理位置、运营商、网络性质，供风控与节点接入填地区；库路径（IPv4 必需、IPv6 可选）由调用方从 config 传入
 httpx/: 统一的响应与错误模型，错误码是封闭列表（新增 reauth_required 403，与 forbidden 同状态不同码），前端 src/core/api.ts 按同一列表解析信封
-  - message 由页面原样显示（前端不再做英文→中文映射，R116），message_zh_contract_test.go 扫全仓 httpx.New / httpx.Error{Message} / httpx.Invalid 字段值的字面量，不许纯英文，节点网关与只给节点、支付渠道用的函数按「包目录 + 函数名」清单豁免
+  - message 由页面原样显示（前端不再做英文→中文映射），message_zh_contract_test.go 扫全仓 httpx.New / httpx.Error{Message} / httpx.Invalid 字段值的字面量，不许纯英文，节点网关与只给节点、支付渠道用的函数按「包目录 + 函数名」清单豁免
   - 见 httpx/CLAUDE.md
 iamguard/: 租户范围的 IAM 不变量，HTTP 与 CLI 共用
 idempotencybind/: 数据库持有的唯一资源绑定器，幂等键与资源一一绑定

@@ -5,8 +5,8 @@
   - 状态全在地址上——#/tickets/<工单 id>?f=<筛选>&q=<搜索>，所以刷新、分享、前进后退都落在同一张工单同一个筛选上
   - 列表只拼链接，不持有选中态。
 权限分两级：ops.ticket.read 能进来看（外框先判），ops.ticket.write 才出现回复框、状态 / 指派可改、升级、SLA 扫描与快捷回复管理；没有写权限时整页只读。
-后端事实以 domain/support 为准（视图在 service.go，客服侧用例在 agent_tickets.go）（契约后台-02 + R25 / R42 / R60 / R114）：队列与详情是同一个 Go 结构，omitempty 的字段在 schema 里一律可选
-  - 队列的 related_order 恒为 null，详情按关联订单联表回 { id, order_no }，详情的 message_count / last_reply_at 与队列同口径（R114），页面直接用，不从 messages 推算
+后端事实以 domain/support 为准（视图在 service.go，客服侧用例在 agent_tickets.go）（契约后台-02 +）：队列与详情是同一个 Go 结构，omitempty 的字段在 schema 里一律可选
+  - 队列的 related_order 恒为 null，详情按关联订单联表回 { id, order_no }，详情的 message_count / last_reply_at 与队列同口径，页面直接用，不从 messages 推算
   - 写操作的权限判断、幂等键与失败处理取 src/admin/actions.ts
   - 写接口都带幂等键，一次用户意图一把键：「回复并解决」是先 reply 再 status 两把键，第二步失败重试时不再重发回复。
 

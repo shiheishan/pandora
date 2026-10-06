@@ -25,15 +25,15 @@ giftcard/: 礼品卡与卡密，对标 Xboard gift-card，5 文件
 identity/: 注册、验证与登录，10 文件；见 identity/CLAUDE.md
 nodefabric/: 节点接入与配置下发（PRD 第 8–9 章），42 文件（后台节点列表、旧状态接口、节点分组与池名单、设备数限制自 api/admin 下沉）
   - 路由三个范围（全局 / 路由组 / 节点，00096）的编辑在 routing_admin.go 与 route_group*.go、生效合并只有 routing_merge.go 一处
-  - protocol_secrets.go 让节点 PATCH 保留读接口抹掉的敏感键（R78）
-  - node_retire.go 一步退役、node_activate.go 一步上线（R108）
+  - protocol_secrets.go 让节点 PATCH 保留读接口抹掉的敏感键
+  - node_retire.go 一步退役、node_activate.go 一步上线
   - usage_daily.go 在流量上报事务内累加按日用量（00072）
   - enrollment、node/server admin、node_identity 凭据视图、service
   - 见 nodefabric/CLAUDE.md
 notify/: 站内信、邮件，以及到期与流量预警，8 文件；见 notify/CLAUDE.md
 payment/: 支付渠道适配器接口（PAY-002）与跨渠道通用的金额换算，3 文件，另含 demo/、epay/ 两个渠道子包；不依赖 httpx，渠道停用以 ErrProviderDisabled、不支持的操作以 ErrNotSupported 哨兵交给 billing 翻译（demo 不支持主动查单）
 plugin/: 出站 webhook 插件钩子 hooks.go 与事件发射 emit.go，投递记往返耗时；见 plugin/CLAUDE.md
-subscription/: 订阅分发与门户按日用量读模型，5 文件；current.go 是后台「当前订阅 / 在用」口径的唯一真相源（R118），adminops 与 support 引用；见 subscription/CLAUDE.md
+subscription/: 订阅分发与门户按日用量读模型，5 文件；current.go 是后台「当前订阅 / 在用」口径的唯一真相源，adminops 与 support 引用；见 subscription/CLAUDE.md
 support/: 工单（OPS-001）与客服快捷回复，6 文件（用户侧、客服侧、超时升级分文件）；见 support/CLAUDE.md
 *_test.go: 各域用例测试随包放置
 
