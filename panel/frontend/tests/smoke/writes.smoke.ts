@@ -75,7 +75,7 @@ function staleAdminToken(): string {
 }
 
 describe('reauth_required → reauth → 同键重放', () => {
-  writeCase('content/AnnounceEditor.tsx:63', 'v1/announcements/{id}', '过期的重认证由页面客户端补上并原键重放', async () => {
+  writeCase('content/AnnounceEditor.tsx AnnounceEditor', 'v1/announcements/{id}', '过期的重认证由页面客户端补上并原键重放', async () => {
     let asked = 0
     // 与后台外框常驻对话框同一个接口：用户输入口令后由对话框调 client.reauth
     const requestReauth = async () => {
@@ -102,7 +102,7 @@ describe('reauth_required → reauth → 同键重放', () => {
 // ============================================================================
 
 describe('幂等：2xx 同键重放与换请求体 409', () => {
-  writeCase('tickets/Composer.tsx:52', 'v1/tickets/{id}/reply', '同键重放不重做，换请求体 409 idempotency_key_reuse', async () => {
+  writeCase('tickets/Composer.tsx Composer', 'v1/tickets/{id}/reply', '同键重放不重做，换请求体 409 idempotency_key_reuse', async () => {
     const api = pageClient('admin')
     const before = (await api.get(`v1/tickets/${s.ticket_id}`, ticketDetailSchema)).messages.length
     const key = randomUUID()
@@ -129,11 +129,11 @@ describe('幂等：2xx 同键重放与换请求体 409', () => {
 // ============================================================================
 
 describe('各模块写操作的响应能被页面 schema 解析', () => {
-  writeCase('users/tabs.tsx:186', 'v1/subscriptions/{id}/device-limit', '用户：改设备上限', async () => {
+  writeCase('users/tabs.tsx DeviceLimit', 'v1/subscriptions/{id}/device-limit', '用户：改设备上限', async () => {
     await pageClient('admin').post(`v1/subscriptions/${s.subscription_id}/device-limit`, usersOk, { body: { limit: 5 } })
   })
 
-  writeCase('marketing/Gifts.tsx:237', 'v1/gift-cards/codes/{id}/toggle', '营销：停用再恢复一张礼品卡码', async () => {
+  writeCase('marketing/Gifts.tsx CodeRow', 'v1/gift-cards/codes/{id}/toggle', '营销：停用再恢复一张礼品卡码', async () => {
     const api = pageClient('admin')
     const batches = await api.get('v1/gift-cards/batches', batchesResponse, { query: { limit: 50, offset: 0 } })
     const codes = await api.get('v1/gift-cards/codes', codesResponse, { query: { batch_id: batches.items[0]!.id, limit: 50, offset: 0 } })
@@ -143,27 +143,27 @@ describe('各模块写操作的响应能被页面 schema 解析', () => {
     expect((await api.post(`v1/gift-cards/codes/${unused!.id}/toggle`, toggleResponse, { body: { disabled: false } })).disabled).toBe(false)
   })
 
-  writeCase('nodes/NodesTab.tsx:69', 'v1/nodes/order', '节点：保存排序', async () => {
+  writeCase('nodes/NodesTab.tsx NodesTab', 'v1/nodes/order', '节点：保存排序', async () => {
     const api = pageClient('admin')
     const nodes = await api.get('v1/nodes', nodesResponse, { query: { limit: 1000, include_retired: '1' } })
     await api.put('v1/nodes/order', okUpdated, { body: { items: orderItems(nodes.nodes) } })
   })
 
-  writeCase('plans/SalesDrawer.tsx:48', 'v1/plans/{id}', '套餐：原样保存销售设置', async () => {
+  writeCase('plans/SalesDrawer.tsx SalesBody', 'v1/plans/{id}', '套餐：原样保存销售设置', async () => {
     const api = pageClient('admin')
     const { plan } = await api.get(`v1/plans/${s.plan_id}`, planResponseSchema)
     const body = salesBody(salesForm(plan), plan)
     await api.put(`v1/plans/${s.plan_id}`, rowVersionSchema, { body, idempotencyKey: randomUUID() })
   })
 
-  writeCase('system/TemplatesTab.tsx:126', 'v1/mail/templates', '系统：原样保存一个通知模板', async () => {
+  writeCase('system/TemplatesTab.tsx TemplateEditor', 'v1/mail/templates', '系统：原样保存一个通知模板', async () => {
     const api = pageClient('admin')
     const t = (await api.get('v1/mail/templates', templatesResponse)).templates[0]
     expect(t, '没有任何通知模板').toBeDefined()
     await api.post('v1/mail/templates', templateSaved, { body: { code: t!.code, channel: t!.channel, subject: t!.subject, body: t!.body } })
   })
 
-  writeCase('security/SwitchesTab.tsx:90', 'v1/switches/{code}', '安全：关闭再打开礼品卡兑换开关', async () => {
+  writeCase('security/SwitchesTab.tsx ToggleModal', 'v1/switches/{code}', '安全：关闭再打开礼品卡兑换开关', async () => {
     const api = pageClient('admin')
     const sw = (await api.get('v1/switches', switchesResponse)).switches.find((x) => x.code === 'marketing.giftcard.redeem')
     expect(sw, '没有 marketing.giftcard.redeem 开关').toBeDefined()
@@ -171,11 +171,11 @@ describe('各模块写操作的响应能被页面 schema 解析', () => {
     expect((await api.post('v1/switches/marketing.giftcard.redeem', switchSaved, { body: { enabled: true, reason: '冒烟：写路径校验恢复' } })).enabled).toBe(true)
   })
 
-  writeCase('billing/ProvidersTab.tsx:116', 'v1/payment-providers/{code}/toggle', '财务：演示渠道设为收新单', async () => {
+  writeCase('billing/ProvidersTab.tsx ToggleDialog', 'v1/payment-providers/{code}/toggle', '财务：演示渠道设为收新单', async () => {
     await pageClient('admin').post('v1/payment-providers/demo/toggle', toggledSchema, { body: toggleBody('on') })
   })
 
-  writeCase('portal tickets/api.ts:135', 'v1/support/tickets/{id}/reply', '门户：回复自己的工单', async () => {
+  writeCase('portal tickets/api.ts useReplyTicket', 'v1/support/tickets/{id}/reply', '门户：回复自己的工单', async () => {
     await pageClient('portal').post(`v1/support/tickets/${s.ticket_id}/reply`, z.object({ ok: z.literal(true) }), {
       body: { body: '冒烟：门户补充一句' },
       idempotencyKey: randomUUID(),
@@ -188,7 +188,7 @@ describe('各模块写操作的响应能被页面 schema 解析', () => {
 // ============================================================================
 
 describe('插件钩子投递到本机接收端', () => {
-  writeCase('system/queries.ts:41', 'v1/plugin-hooks/{code}/deliveries', '接收端收到带签名头的 ticket.created', async () => {
+  writeCase('system/queries.ts useDeliveries', 'v1/plugin-hooks/{code}/deliveries', '接收端收到带签名头的 ticket.created', async () => {
     const file = join(state.dir, 'hook-received.jsonl')
     // 扫描器 20 秒后第一次、之后每 60 秒；读表那行已经等到 sent，这里再给 90 秒兜底
     const deadline = Date.now() + 90_000
@@ -212,7 +212,7 @@ const REPLY_NOTICE_WAIT_MS = 6 * 60_000
 const REPLY_NOTICE_POLL_MS = 15_000
 
 describe('工单回复与站内通知', () => {
-  writeCase('messages/api.ts:31', 'v1/me/notifications', '后台回复工单后门户通知里出现 ticket.replied，正文带工单标题', async () => {
+  writeCase('messages/api.ts useNotifications', 'v1/me/notifications', '后台回复工单后门户通知里出现 ticket.replied，正文带工单标题', async () => {
     const title = (await pageClient('admin').get(`v1/tickets/${s.ticket_id}`, ticketDetailSchema)).subject
     const portal = pageClient('portal')
     const listSchema = z.object({ notifications: z.array(notificationSchema), unread: z.number().int() })

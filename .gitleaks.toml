@@ -36,6 +36,7 @@ regexes = [
   '''^pandora\.idempotency\-00038\.run$''',
   '''^pandora\.idempotency\-00037\.run$''',
   '''^v1/me/withdrawals$''',
+  '''^v1/me/notifications$''',
   '''^eyJhbGciOiJIUzI1NiJ9\.eyJqdGkiOiJ0ZXN0In0\.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA$''',
   '''^eyJhbGciOiJIUzI1NiIsImtpZCI6ImNsand0XzAwMDAwMDAxIiwidHlwIjoiSldUIn0\.eyJpc3MiOiJodHRwczovL2NsaWVudC5leGFtcGxlLmNvbSIsInN1YiI6IjAwMTEyMjMzLTQ0NTUtNjY3Ny04ODk5LWFhYmJjY2RkZWVmZiIsImF1ZCI6ImNsaWVudCIsImlhdCI6MTc4NTM5ODQwMCwiZXhwIjoxNzg1Mzk5MDAwfQ\.VPI2EkLkKzIYZlXbPPHPyA6nIOP41LCHwCrqUgBHM34$''',
   '''^rt_test_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''',
