@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../../../shell/runtime 的 useApi
  * [OUTPUT]: 对外提供 announcementSchema、Announcement、AnnouncementSeverity、SEVERITY_LABEL、useAnnouncements，listSchema（tests/smoke 形状冒烟用）
  * [POS]: portal/screens/common 的公告读模型（契约门户-08 GET v1/me/announcements）：概览公告卡与顶部 critical 横幅、消息页的公告标签共用同一查询与级别文案
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'

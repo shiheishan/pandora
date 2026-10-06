@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 config.go 的 env 读取助手与进程环境变量
 // [OUTPUT]: 对外提供 Deployment（Config 内嵌的部署路径、GeoIP、NativeCore 发布绑定）、BackupWebDAV 与 LoadBackupWebDAV、DefaultBackupWebDAVConfigPath
 // [POS]: platform/config 的部署侧配置：全是「跟着发布产物与主机走、运营不改」的项，都可缺省，从不让 Load 多出必填项；独立小二进制用各自的小加载函数
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package config
 

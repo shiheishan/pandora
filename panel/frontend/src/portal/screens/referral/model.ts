@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../core/format 的 formatMoney，依赖 ../common/traffic 的 shortDate，依赖 ../../queries 的 Commission 类型，依赖 ./api 的 Invite 类型
  * [OUTPUT]: 对外提供 inviteLink、headline、inviteUsage、parseWithdrawAmount、withdrawBlock、CommissionRecord / RecordTone、commissionRecords
  * [POS]: portal/screens/referral 的纯映射（契约门户-06）：邀请链接 /?invite=、横幅文案（按 summary.scope，first_order 才写「首单」，R114）、邀请码用量、提现金额元 → 分与上下限、提现表单何时锁住、三类记录（佣金 / 转入余额 / 提现）合并成「佣金记录」；有单元测试
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatMoney } from '../../../core/format'
 import type { Commission } from '../../queries'

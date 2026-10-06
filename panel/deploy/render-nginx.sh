@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 .env 的 AEGIS_ADMIN_PATH 与 AEGIS_PUBLIC_BASE_URL（只读解析，不 source），依赖同目录 nginx-aegis.conf 模板
 # [OUTPUT]: 原子写出 /etc/nginx/conf.d/aegis.conf：填入后台隐藏前缀与站点域名；模板 include 的 /etc/aegispanel/cloudflare-realip.conf 不存在时写一份不信任任何代理的默认文件（已存在绝不覆盖）
 # [POS]: deploy 安装链的边缘入口渲染器，被 install.sh / install-native.sh 提示、migrate-to-new-host.sh 调用；模板里不含任何具体部署的值；Cloudflare 网段由 update-cloudflare-realip.sh 另行写入
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Render the unified edge config without sourcing the secret environment file.
 set -euo pipefail
 umask 077

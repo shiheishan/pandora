@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 service.go 的 Service 与 regionForIP（按公网 IP 取地区），依赖 platform 的 crypto（令牌与身份签发）、db、audit、httpx
 // [OUTPUT]: 对外提供 IssueTokenInput / IssueTokenOutput、BootstrapInput / BootstrapOutput、RenderLegacyInstallCommand，Service 的 IssueBootstrapToken、Bootstrap
 // [POS]: domain/nodefabric 的一次性 bootstrap 令牌（NODE-008）与旧版接入：从 service.go 拆出。令牌只存绑定节点名的哈希，接入命令模板占位符经 shellQuote 转义；旧版 Bootstrap 持 node-config-release 锁，令牌消费与身份签发同事务，退役 / 销毁节点只有服务器删除级联静默的才许同名重装；新接入走 enrollment.go 的两阶段
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

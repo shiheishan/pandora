@@ -13,4 +13,3 @@ main.go: main / run 装配与生命周期
 *_test.go: 预留过期与主动查单两个循环取消后能退出；经 platform/sourcetest 取 startReservationExpiryWorker 与 run 的源码，钉死取消、join、返回的次序，以及通知收件人哈希用 crypto.NotifyRecipientSalt
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

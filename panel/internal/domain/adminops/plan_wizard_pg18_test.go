@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 plan_wizard.go 的 CreatePlanComplete，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 夹具
 // [OUTPUT]: 对外提供 TestCreatePlanCompleteAtomicPG18（run-pg18-gates.sh 的 catalog_sales 域）
 // [POS]: adminops 向导新建的 PG18 集成门禁：发布失败时一行不留（旧实现留下已归档空壳），成功时返回建成后的详情与建版本人
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

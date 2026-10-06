@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 createHash / randomInt，依赖 ../types 的 MockModule / MockContext，依赖 ../quick-login 的 issueQuickLogin，依赖 ./fixtures 的 gate / portalState / scenario / PortalState，依赖 ./billing 的 isUuid / readStrict
  * [OUTPUT]: 对外提供 account 模块的假接口 MockModule
  * [POS]: dev/mock/portal 的「账号安全（门户-10）」假接口，归门户前端；形状照 api-contract.md（修订 R15、R28、R62、R114 的 last_seen_at 与按它排序）与 Go identity / notify / notifications.go。会话：当前会话与外壳里本账号的其它会话（ctx.otherSessions，如快捷登录新建的）都由 Bearer 令牌推出稳定 id，另有两条种子会话；下线外壳会话经 ctx.revokeSession 让那枚令牌立即失效，下线种子会话只从本模块的列表删除；改密校验与后端同序（空 422 两字段、旧密码错 401、新旧相同 400、规则 422 fields.password），成功改掉外壳账号的口令并清掉其余会话。Telegram：default 未绑定、multi 已绑定、legacy 站点未启用；获取绑定码 8 秒后视为用户已在 Telegram 发送 /start CODE，下一次读状态即已绑定。通知偏好 3 类 × 2 渠道，交易类锁定。签发快捷登录令牌在这里（绑定当前会话，重新生成作废旧令牌），消费端 POST v1/auth/quick-login 属外壳，两边经 quick-login.ts 共用令牌表
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHash, randomInt } from 'node:crypto'
 import { issueQuickLogin } from '../quick-login.ts'

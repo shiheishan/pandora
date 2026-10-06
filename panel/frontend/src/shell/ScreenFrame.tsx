@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 Component / Suspense，依赖 ../ui 的 Button / Empty / Skeleton，依赖 ./ScreenFrame.module.css
  * [OUTPUT]: 对外提供 ScreenFrame、ScreenFallback、NotFoundScreen、isChunkLoadError
  * [POS]: shell 的页面容器：两个外框的内容区都用它包住登记表里的懒加载页面——Suspense 以骨架兜底，错误边界把单个页面的崩溃关在内容区里，外框照常可用；另给出「无权限或不存在」的整页状态
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { Component, Suspense, type ReactNode } from 'react'
 import { Button, Empty, Skeleton } from '../ui'

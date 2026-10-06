@@ -76,7 +76,7 @@ run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：
   - up 起一次性 PG18 + Valkey，goose 迁移、configure-app-role.sql 配运行角色、aegis-adminctl 建管理员，配置用 openssl 现场生成，从源码起 aegis-public/admin/node 并以 readyz（node 为 healthz）与管理员真登录验收，入口写进状态目录的 smoke.env
   - 库名 aegis_smoke_test（带 test 段，过 e2e 脚本的一次性库守卫），PG 容器名可由 PANDORA_SMOKE_PG_CONTAINER 覆盖（CI 设成 aegis-postgres 让 psql.sh 直接可用）
   - down 只拆自己记下的进程与容器
-run-smoke-e2e.sh: 联调冒烟第 ⑤ 步（panel-smoke.yml 在读表与写路径之后调用）：在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，第 ⑥ 步起失败即变红
+run-smoke-e2e.sh: 联调冒烟的 e2e 门禁（panel-smoke.yml 在读表与写路径之后调用）：在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh
   - 脚本一字不改，只把它们声明要的环境搭出来（/opt/aegispanel 布局链到仓库 deploy/、公开网关日志链到单元的实际路径 /var/log/aegis/public.log、deploy/.env 由网关配置加库超级账号拼成、aegis-payctl 编进 bin 并配易支付测试商户、admin / uniproxy / risk 三组一次性库确认变量），脚本之间空一个限流窗口
   - 顺序 admin → epay → support → uniproxy → risk → e2e：e2e.sh 的限流探测会打满登录额度，放最后
   - 每个脚本一行写进 e2e-results.md（结果、OK/FAIL 数、首个失败的步骤与原文），全部跑完、表格写完后有任何失败就以 1 退出
@@ -88,8 +88,7 @@ test-install.sh: 安装链端到端，发现库里已有用户即拒绝执行
   - 其中 release-stop-the-world、verify-backup_manifest 两个 mock 测试需要 Linux root
 fixtures/: billing、idempotency 两份 PG18 门禁种子数据
 
-已移出主线
-CLIENT-AUTH（00042–00044）的发布门禁、隔离 PG18 预检及其租约登记与残留清理、端到端与桩测试脚本已随代码一起删除，原样归档在 git 标签 archive/client-auth；冻结的两个迁移仍留在 ../migrations/frozen-client-auth/
+不在主线
+CLIENT-AUTH 的发布门禁与测试脚本见 tag archive/client-auth；它的两个冻结迁移在 ../migrations/frozen-client-auth/，不在主序列
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

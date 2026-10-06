@@ -3,7 +3,6 @@
 // [INPUT]: 依赖 anytls.go 的 newAnyTLSAdapter，hysteria2_test.go 的 hysteriaEchoPlane，外部 github.com/anytls/sing-anytls 客户端
 // [OUTPUT]: 对外提供 TestAnyTLSNativeClientTCPAndUOTUDP：第三方 AnyTLS 客户端经 NativeCore 入站完成 TCP 回显、UoT UDP 回显、流量计量与错密码拒绝
 // [POS]: kernel 的 AnyTLS 互操作门，与 *_external_interop_test.go 同属 -tags interop 的非 race 选跑集
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

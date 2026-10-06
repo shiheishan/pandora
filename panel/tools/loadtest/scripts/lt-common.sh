@@ -2,7 +2,6 @@
 # [INPUT]: 依赖面板主机上安装链写下的 deploy/.env（只读解析，不 source），依赖 docker（install.sh 的 Docker 数据基座）或 runuser / systemctl（install-native.sh 的直装 PG18 与 Valkey）
 # [OUTPUT]: 被 source 的函数：lt_init（定下 LT_ENV_PATH 与 LT_MODE）、lt_init_env（只定 LT_ENV_PATH）、lt_env、lt_psql、lt_pg_restart、lt_valkey、lt_die、lt_say、lt_require_root、lt_require_linux、lt_stamp
 # [POS]: tools/loadtest/scripts 的公共段：找 .env、判定数据基座是 Docker 还是直装、给出以超级用户跑 psql 与带口令跑 valkey-cli 的统一入口；pgstat.sh、snapshot-mem.sh、grab-pprof.sh source 它
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 两种生产布局（与 deploy/ 的安装链一致）：
 #   docker  install.sh：/opt/aegispanel，容器 aegis-postgres / aegis-valkey，POSTGRES_USER 是

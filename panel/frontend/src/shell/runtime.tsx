@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 context / useSyncExternalStore / effect，依赖 @tanstack/react-query 的 QueryClientProvider，依赖 core 的 api / token / query / sse，依赖 ui 的 ToastProvider
  * [OUTPUT]: 对外提供 AppRuntime 类型、createAppRuntime、RuntimeProvider、useRuntime、useApi、useSignedIn、signOut、useRealtime 与 RealtimeStatus
  * [POS]: shell 的运行时：把 core 的无状态原语组装成每个入口一份的单例（令牌、api 客户端、QueryClient），经 context 交给外框与页面；登录态即「令牌是否存在」
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'

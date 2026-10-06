@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 Linux cgroup v2 下三个网关 systemd 单元的 cpu.stat、memory.current、memory.max、memory.events（根目录可由 LT_CGROUP_ROOT 覆盖，测试用）
 # [OUTPUT]: 按固定间隔把每个网关的 CPU 节流计数与内存水位写成 CSV：ts_utc,unix_s,unit,nr_periods,nr_throttled,throttled_usec,memory_current,memory_max,mem_high_events,mem_max_events,oom_kill
 # [POS]: tools/loadtest/scripts 的「撞没撞随包上限」采样器：CPUQuota 与 MemoryMax 是生产形态，结果要分清撞上限与机器不够；与 sample-procs.sh（进程视角）并行跑
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 用法（面板主机；cgroup 文件对所有用户可读，不必 root）：
 #   sample-cgroup.sh OUT.csv [间隔秒，缺省 60] [总时长秒，缺省 0 = 直到 Ctrl-C / kill]

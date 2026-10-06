@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 docker compose 数据基座、同目录 migrate.sh / bootstrap.sh / platform.sh、发布包二进制
 # [OUTPUT]: 在主机上安装或升级面板：首装生成 .env 机密与后台前缀并定为 AEGIS_ENV=production（要求 https 公网域名）、升级前全量备份、迁移、经 install-linux-binaries.sh 装二进制/单元/发布物绑定/logrotate、启动三网关
 # [POS]: deploy 安装链的入口（Docker 版），与 install-native.sh 并列；不替人造管理员，nginx 由 render-nginx.sh 另行渲染；升级不改现有 .env 的运行模式，只提示
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 潘多拉面板一键安装 / 升级。
 #
 #   首次安装：  sudo ./install.sh

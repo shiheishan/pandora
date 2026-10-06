@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerThemeRoutes（含站点时区 settings/site）、registerPluginHookRoutes
 // [POS]: api/admin 路由表的「主题与插槽、插件钩子（出站 webhook）」段，由 NewRouter 按原注册顺序调用；处理器在 appearance.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

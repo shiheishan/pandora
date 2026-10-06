@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 adapter.go 的 ConnError，依赖 connerror.go 的 classifyConnError / sanitizeConnErrorReason / maskRemoteAddr，依赖 log/slog
 // [OUTPUT]: 包内提供 connErrorLogSink（newConnErrorLogSink、Report、Close）与缺省限流参数 connErrorLogBurst / connErrorLogWindow
 // [POS]: kernel 连接失败观测链的出口：nativecore.go 每个 NativeCore 持有一个，把 Report 接到所有入站的 AdapterHooks.OnConnError，Close 时补打最后一轮抑制摘要
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

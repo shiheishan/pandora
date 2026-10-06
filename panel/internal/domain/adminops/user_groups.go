@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform 的 db 租户事务与约束判定（IsUniqueViolation / IsForeignKeyViolation）、audit 同事务审计、httpx 的错误模型与请求 ID；读写 user_groups 与 users.user_group_id，读 plans / prices / coupons 的组引用与 node_pool_user_groups（00093）
 // [OUTPUT]: 对外提供 Service.ListUserGroups / SaveUserGroup / DeleteUserGroup / AssignUserGroup 与 UserGroup、UserGroupPoolRef
 // [POS]: domain/adminops 的用户分组存取（从 api/admin/usergroup.go 下沉）：套餐可见、专属价格、优惠券限定、公告定向与节点池限定（R104）共用的分组实体；删组前逐项数引用并按「池名单 > 用户 > 套餐 > 价格 > 优惠券」给 409，换组后的 node.users.changed 通知仍由 handler 在提交后发
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

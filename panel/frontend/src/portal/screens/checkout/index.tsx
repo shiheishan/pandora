@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../common/intent 的 useIntentKey / usePlacedOrder / recallPayable / endsIntent，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 href / useHashLocation，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / Empty / Input / Skeleton / Switch，依赖 ../../queries 的 useBalance / useSubscriptions，依赖 ../common 的目录、订单、支付弹窗与 LoadError，依赖 ./model 的模式与预览逻辑
  * [OUTPUT]: 默认导出 Checkout 页面组件（登记表 React.lazy 的目标）
  * [POS]: portal/screens/checkout 的入口：确认订单（门户-03 结账页）。按地址参数进四种模式——新购、续费（含遇改价）、变更套餐（服务端试算折算与退余额）、流量包；左栏选周期 / 容量、优惠码、余额抵扣开关、支付方式，右栏订单预览与提交；下单后交给 common/PayFlow 的支付弹窗；幂等键成功或 4xx 后丢弃，刚下的待支付单记在 usePlacedOrder，同样的请求 30 分钟内再点先经 recallPayable 确认它还能付再重开支付，不下第二张；已取消、超时或付掉（含支付接口 409）就忘掉、按新请求下单
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'

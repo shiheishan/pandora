@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 delivery_pg18_test.go 的 openDeliveryPG18，依赖 route_groups.go 与 node_routing.go 的处理器，依赖 nodefabric 的 SetGlobalRouting / FetchEffectiveConfig，依赖 platform/realtime 的本机 Hub 与 platform/crypto 的签名器
 // [OUTPUT]: 对外提供 TestRouteGroupsPG18
 // [POS]: api/admin 的路由组 PG18 门禁（delivery 域，00096）：三选一 CHECK 与组内 tag 唯一、RLS 跨租户不可见不可写、改组内路由 / 成员后成员节点的有效发布物真的变了（generation 推进、合并顺序 节点 → 组 → 全局）、引用校验认得组出站、自定义出站按 tag 原样精确比较（大小写 / 空白不同即 422）、内置出站引用在保存与下发两处规范成小写（含库里的旧行）且拒绝新造成的悬空、删组级联清掉组内出站规则与成员并推进、通知成员节点
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

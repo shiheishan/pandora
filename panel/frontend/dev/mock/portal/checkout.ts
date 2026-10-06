@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule / MockContext，依赖 ./catalog 的目录与支付方式，依赖 ./fixtures 的 portalState / gate，依赖 ./billing 的校验、下单、履约与变更折算
  * [OUTPUT]: 对外提供 checkout 模块的假接口 MockModule、channelIntent（订单最近的支付意图与渠道是否已收款）
  * [POS]: dev/mock/portal 的「确认订单（门户-03 结账）」假接口，归门户前端；形状、错误码与幂等照 api-contract.md（含修订 R8、R35–R37、R61）：支付方式、新购（order_create）、续费（subscription_renewal_create，门户-02 条目但由结账页调用）、变更套餐试算与下单（subscription_change_plan_create）、发起支付；另挂 dev 专用的假收银台（匿名）：GET v1/__mock/cashier 出一页 HTML，「模拟支付成功」履约后 302 回 return_url，「模拟支付成功但回调丢失」只记下渠道已收款（channelIntent 供订单模块的查单读）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { MockContext, MockModule, MockResult } from '../types.ts'

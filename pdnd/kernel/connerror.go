@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 adapter.go 的 AdapterHooks / InboundSpec / ConnError 与 reportAdapterConnError(Addr)，依赖 crypto/tls、syscall 的错误类型做分类
 // [OUTPUT]: 包内提供 connErrorReporter（各适配器 Start 时绑定一次的上报出口）、markConnError / deviceLimitError（在失败点给错误打分类标记）、classifyConnError、sanitizeConnErrorReason、maskRemoteAddr 与 connErr* 分类常量
 // [POS]: kernel 连接失败观测链的中段：协议适配器在失败点调 reporter，connerror_log.go 的日志出口用这里的分类、脱敏与地址截断把 ConnError 变成可以落盘的字段
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

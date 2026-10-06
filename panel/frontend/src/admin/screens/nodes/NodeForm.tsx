@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useMemo / useState / FormEvent，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic、./queries、./schemas，依赖 ./nodes.module.css
  * [OUTPUT]: 对外提供 NodeForm（新建与编辑共用的节点表单）
  * [POS]: admin/screens/nodes 的节点表单：上半「基本信息」（后端可编辑字段全集：名称、展示名、服务器、资源池、协议、地址、端口、内核、倍率、国家），下半按 GET v1/node-protocol-schemas 渲染协议参数（必填、敏感、枚举 / 数字 / 布尔 / JSON）。新建 POST v1/nodes（幂等 node_create），编辑 PATCH v1/nodes/{id} 只发改了的字段；读接口不回显敏感值，编辑同一协议时敏感字段留空 = 不改（不带这个键，后端补回，R106），选填的敏感字段可点「清空」，保存前确认后显式发 null；换协议后端不补旧密钥，必填照常要填；mKCP 关掉掩码时 mask_password 本来就不带（R107）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState, type FormEvent } from 'react'

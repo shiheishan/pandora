@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 traffic_reset_logs / quota_balances 表与 platform/audit、platform/db、platform/httpx
 // [OUTPUT]: 对外提供 LogTrafficReset、ListTrafficResets、TrafficResetStats、ManualResetTraffic 及其类型
 // [POS]: billing 的流量重置：只清套餐配额的已用量并留痕；流量包余额挂用户，重置不碰（D-E-1）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

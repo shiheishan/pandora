@@ -1,7 +1,7 @@
 # panel/frontend/src/portal/screens/orders/
 > L2 | 父级: /panel/frontend/src/portal/screens/CLAUDE.md
 
-我的订单（用户门户-04-订单.dc.html；契约门户-04，修订 R69）
+我的订单（用户门户-04-订单.dc.html；契约门户-04）
   - 顶部待支付卡片取 draft / pending_payment / processing：待支付可取消（ConfirmModal，先说后果）与去支付（支付弹窗先选方式），处理中不能取消也不能再付
   - 发起过支付（行上 has_payment_intent）的两者都有「我已支付，刷新状态」（POST v1/orders/{id}/query，回调丢了也能让后端去渠道查单补记；没发起过支付的单不显示，渠道无从查起），结果条占卡片一整行，分已到账 / 渠道尚未确认 / 查询失败三种底色
   - 深链展开的待支付明细里也有同一个按钮
@@ -17,4 +17,3 @@ index.tsx: 页面组件——
 Orders.module.css: 页面样式，取自设计稿门户-04
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

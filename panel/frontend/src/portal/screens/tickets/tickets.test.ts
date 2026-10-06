@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./api 的 schema，依赖 ./model 的纯逻辑
  * [OUTPUT]: 无（测试）
  * [POS]: 工单的单元测试：列表与详情 schema（R60 字段必在、列表 related_order 恒 null、详情零值 last_reply_at）、子路由、状态文案（closed 按 closed_reason 分）、三个按钮的可见条件、作者名（D-F-2 已决）、消息时间、新建表单校验
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { ticketDetailSchema, ticketRowSchema, type TicketDetail } from './api'

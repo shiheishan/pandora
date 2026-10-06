@@ -3,7 +3,6 @@
 // [POS]: tools/loadtest/seed 的用户与订阅造数：15k 级别不能逐个走注册与下单，改用 unnest 数组的多行 INSERT，按批一个事务
 //        语句逐条镜像产品里的唯一实现——用户与口令照 adminops.GenerateUsers，订阅、开通事件、配额、订阅凭据照 billing/provision.go 的 provisionSubscription
 //        （先插 pending 再经状态机触发器 UPDATE 到 active）；口令哈希全批只算一次
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package seed
 

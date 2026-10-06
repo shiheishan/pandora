@@ -2,7 +2,6 @@
 # [INPUT]: 依赖同目录 render-nginx.sh、update-cloudflare-realip.sh、nginx-aegis.conf，以及 build-release.sh / install-linux-binaries.sh / install-native.sh 的文件清单；curl 由桩替身
 # [OUTPUT]: 真实来源 IP 信任表的桩测试：全新渲染写出不信任任何代理的默认文件、已有文件绝不覆盖、Cloudflare 更新脚本写出网段且坏列表不动旧文件、更新脚本与 nginx 模板随发布包与两个安装脚本落到 /opt/aegispanel/deploy
 # [POS]: deploy 安装链「全新安装 nginx -t 能过、默认不误信 CF-Connecting-IP、Cloudflare 显式启用、升级不覆盖」的回归测试，只用虚构域名与文档网段，不碰真实 nginx 与网络；panel-deploy.yml 点名跑它
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

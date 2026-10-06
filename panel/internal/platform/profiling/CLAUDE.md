@@ -12,4 +12,3 @@ profiling.go: Start（空地址返回 nil 即关闭；监听失败或非回环�
 *_test.go: 空地址不监听、非回环绑定被拒（直接验 requireLoopback，不真绑全部网卡）、回环端口取得到 /debug/pprof/ 与 heap 且别的路径 404、Close 后端口释放、诊断 mux 不是 DefaultServeMux
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

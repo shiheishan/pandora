@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 node_pools_admin.go 的 optionalActor，依赖 platform 的 audit/httpx，读写 node_pool_user_groups（00093），读 user_groups
 // [OUTPUT]: 包内提供 replacePoolUserGroupsTx
 // [POS]: domain/nodefabric 节点池「仅限用户组」名单的整体替换（R104，从 api/admin 的 pool_user_groups.go 下沉）：新建 / 编辑分组在同一事务里调；字段级 reauth 与格式校验仍在 handler，下发规则本身在 PoolAdmitsUserSQL
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的 Open 与租户事务，依赖 catalog.go 的 UpdatePlan，依赖 catalog_test.go 的 expectHTTPCode
 // [OUTPUT]: 对外提供 openCatalogSalesPG18 夹具（同包各 *_pg18_test.go 共用）与 TestUpdatePlanStaleVersionConflictPG18
 // [POS]: adminops 的 PG18 集成门禁入口（run-pg18-gates.sh 的 catalog_sales 域）：夹具逐项证明连的是一次性库且应用连接受 RLS 约束；本文件自带的用例证明过期 row_version 改套餐资料回 409 且不留写入与审计
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

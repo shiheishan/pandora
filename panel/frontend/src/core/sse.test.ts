@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./sse 的 createSseParser / openEventStream，依赖 ./api 与 ./token 做真实建流
  * [OUTPUT]: 对外提供 sse.ts 的单元测试
  * [POS]: core/sse 的验收测试：帧解析（任意块边界、CRLF、注释心跳、retry）、断线按 retry+抖动重连并标记 reconnected、4xx 停止、关闭即中断读取
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError, createApiClient } from './api'

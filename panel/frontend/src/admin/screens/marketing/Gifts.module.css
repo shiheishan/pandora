@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 Gifts.tsx、GenerateCodes.tsx、TemplateDrawer.tsx 用到的类名
  * [POS]: admin/screens/marketing 礼品卡的样式（设计稿 t_gifts / oneTime）：模板卡片网格 minmax(250px)、批次左栏 + 码右栏（1 : 1.6，< 960 上下叠）、码行 40 高四列、使用记录四列、「仅此一次可见」的样例块；模板抽屉里的分节与奖池行
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .cards {

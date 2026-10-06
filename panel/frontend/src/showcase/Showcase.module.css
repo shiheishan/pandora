@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 Showcase.tsx 用到的类名
  * [POS]: showcase 的页面样式，只在 dev 出现；排版照搬设计规范页（最宽 1120、区块标题带编号、白卡片 1px 描边）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .page {

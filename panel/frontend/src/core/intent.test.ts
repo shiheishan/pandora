@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./api 的 ApiError，依赖 ./intent 的 createIntentKey / endsIntent
  * [OUTPUT]: 对外提供幂等键约定的单元测试
  * [POS]: core/intent.ts 的测试：同指纹同键、改了换键、reset 后必换、默认 UUID v4；endsIntent 的四种情形（4xx 结束、reauth 取消保留、断网与 5xx 保留、非 ApiError 保留）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { ApiError } from './api'

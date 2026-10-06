@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/plans/schemas 的套餐与流量包 schema
  * [OUTPUT]: 对外提供套餐（后台-04）假接口的测试
  * [POS]: tests 的套餐假后端守卫：目录能被页面 schema 接住、向导单事务新建与幂等重放、编辑向导的 null = 不动与开新版本、R99 设备与限速三态、R100 卖点与推荐（向导缺省不动、销售设置整体覆盖）、超额策略只收 suspend、草稿版本全流程、价格新增与归档、流量包上下架与 updated_at 乐观锁
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 access_log.go 的 accessCategoryRules / categoryFromAction / auditCategoryFilter
 // [OUTPUT]: 对外提供访问日志分类的单元测试
 // [POS]: api/admin 的缺陷 14 守卫：展示归类与 SQL 筛选出自同一张规则表，二者对任意 action 给出同一个答案；路由组的审计动作归管理端
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

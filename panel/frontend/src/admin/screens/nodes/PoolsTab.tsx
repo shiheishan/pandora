@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation / useQueryClient，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./infra 的节点池纯函数，依赖 ./queries、./schemas，依赖 ../users/api 的 useUserGroups 与 UK（用户组候选、存后失效用户组列表），依赖 ./nodes.module.css 与 ./infra.module.css
  * [OUTPUT]: 对外提供 PoolsTab（节点与服务器 · 节点池标签）
  * [POS]: admin/screens/nodes 的节点池（设计稿 t_pools）：三栏卡片（名称 · 节点数 · 状态 | 组内节点标签，点标签跳节点抽屉 | 绑定套餐名「、」连接，限定了用户组时追加「仅用户组『…』」）；设计缺、契约待补·前端的新建 / 编辑 / 删除都补上：新建 POST v1/node-pools（code 留空由名字派生，回 200 { id }），编辑 POST v1/node-pools/{id}（空串 = 不改，名称与地区清不空），删除在有节点或套餐时直接禁用并说明，其余阻碍（节点模板、发布记录、未用令牌）靠 409 文案。R104「仅限用户组」：弹窗里多选（要 iam.user.read 才列得出组名），名单变了才带 allowed_user_group_ids，带了就要 reauth（由外框对话框接管，弹窗里先说明）；存后连用户组列表的「可用节点池」一起失效；节点归属不在这里改，走节点编辑的资源池
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'

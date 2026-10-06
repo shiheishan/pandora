@@ -4,7 +4,6 @@
  * [POS]: dev/mock/admin 的「内容与外观（后台-08）」假接口；形状、错误码、reauth 与幂等照 api-contract.md（含 R19、R49）与 Go 的 announce.go、domain/content/service.go、appearance.go、site_settings.go：
  *        公告列表（到点的定时公告先转发布）、新建 / 编辑（全量覆盖、expected_version、撤回是终态、已发布不能退回草稿）、撤回；知识库每个版本一行、单版本含正文、保存为新版本（expected_latest_version，发布时归档同受众的旧发布版）、归档（重复归档回 already_archived）；
  *        主题：内置「默认 · 纸白」生效 + 自定义「夜海」，新建 / 编辑（create 撞已有 code 409、内置不可改、令牌与品牌按 Go 同规则逐字段 422）、激活、删除（生效中与内置 422），生效主题变化经 ../appearance-share 写给门户进程；7 个插槽位（净化只模拟去掉 script / style / on* 并回 dropped，空内容 dropped 为 null）；站点时区（能被 Intl 加载的 IANA 名，拒绝空串与 Local）。按 DisallowUnknownFields 拒绝未知字段
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import { COLOR_TOKENS } from '../../../src/styles/design-tokens.ts'

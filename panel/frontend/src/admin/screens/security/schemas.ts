@@ -3,7 +3,6 @@
  * [OUTPUT]: 对外提供安全与运维页的 zod schema、类型与枚举：审计日志（行、列表响应、操作者类型、结果）、访问日志（安全事件行、分类）、共享 IP 聚类（成员、复核结论、风险、网络类型、标记正常与批量停用的响应、跳过原因）、降级开关（行、列表、切换响应）
  * [POS]: admin/screens/security 的数据边界：形状照 api-contract.md 后台-09 · 安全与运维（含 R23 R40 R41 R44 R58），并按 Go 的 audit_log.go + adminops/audit.go、access_log.go、risk.go + adminops/risk.go、handlers.go setSwitch 核对——
  *        审计行的可空字段都是无 omitempty 的指针（缺值 null），actor_kind 按迁移 00012 的 CHECK 含 node（契约漏写）；访问日志行除 category / occurred_at 外全是 omitempty（缺值即缺席），订阅拉取的 outcome 是原始 result（ok / not_found / revoked / expired / rate_limited），所以不收成枚举
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
 

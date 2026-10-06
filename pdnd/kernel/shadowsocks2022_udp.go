@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 shadowsocks2022.go 的 ss2022Adapter、ss2022UDPSession 与密钥派生，依赖 DataPlane 的 UDP 路由
 // [OUTPUT]: 包内提供 udpSessionGC、cleanupUDPSessions、udpLoop、handleUDPPacket、encodeSS2022UDPPacket
 // [POS]: kernel 的 Shadowsocks 2022 UDP：从 shadowsocks2022.go 拆出。按客户端会话 ID 维护会话并定期回收，逐包解密校验后经 DataPlane 路由并计量，回包按会话加密
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

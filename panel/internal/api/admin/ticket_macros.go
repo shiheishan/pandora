@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/support 的 ListMacros / SaveMacro / DeleteMacro，依赖 platform/httpx
 // [OUTPUT]: 对外提供 listTicketMacros、saveTicketMacro、deleteTicketMacro 三个处理器；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的工单快捷回复处理器（后台-02 回复框上方的标签与「管理」对话框），路由在 router.go 工单段
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

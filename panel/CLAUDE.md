@@ -5,15 +5,12 @@
   - 安全与财务不变量下沉到 PostgreSQL（RLS、追加写触发器、DEFERRABLE 配平、回调唯一约束），网关只是策略的执行者，不是策略的来源。
 
 成员清单
-cmd/: 6 个可执行入口（aegis-admin、aegis-adminctl、aegis-node、aegis-public 各带 CLAUDE.md）
-  - aegis-public/admin/node 三个 HTTP 网关（节点侧由 pdnd 的 pandora-native 走两阶段接入，面板不再带节点代理）
+cmd/: 可执行入口（aegis-admin、aegis-adminctl、aegis-node、aegis-public 各带 CLAUDE.md）
+  - aegis-public/admin/node 三个 HTTP 网关（节点侧由 pdnd 的 pandora-native 走两阶段接入，面板不带节点代理）
   - aegis-adminctl 后台账号与角色、aegis-payctl 支付渠道、aegis-backup-webdav 备份上传
-  - 原先 8 个 CLIENT-AUTH 的 pandora-* 命令已于 2026-10-05 随客户端登录方案移出主线，代码见 tag archive/client-auth
+  - CLIENT-AUTH 客户端登录的 pandora-* 命令不在主线，代码见 tag archive/client-auth
 internal/: 全部业务与平台代码，四层 api → domain → platform，middleware 横切；见 internal/CLAUDE.md
 migrations/: goose SQL 迁移，按序号递增，数据库层的安全与财务不变量（RLS、追加写触发器、DEFERRABLE 配平、回调唯一约束）以触发器与约束落在这里
-  - 现状到 00097，共 94 个 .sql
-  - 00096 路由组给 node_outbounds / node_routes 加第三个范围 group_id（全局 / 组 / 节点三选一 CHECK）
-  - 00097 给 payment_intents 加主动查单巡检的排程列，并把它们加进 app.guard_payment_intent 的可变列白名单
   - 00073、00091、00092 是历史压号留下的空号，不重编（已装的库记着其后的版本号）
   - deploy 的迁移脚本只要求编号严格递增、不重复，CI 的 panel-deploy.yml 拿真实目录跑这条校验
   - 00067 删除 21 张无依赖孤儿表且 Down 拒绝回滚
@@ -24,20 +21,20 @@ deploy/: 发布包 build-release.sh（先 make frontend-embed，无 npm 即失�
   - 备份 backup-postgres.sh/restore-postgres.sh/verify-backup.sh + WebDAV 配置样例
   - systemd 单元与 logrotate
   - PG18 隔离门禁脚本群 test-*-pg18.sh
-  - BACKUP.md、LINUX-COMPATIBILITY.md、ADMIN-PASSWORD-RESET.md 为运维手册
+  - 目录下 CLAUDE.md 之外的 *.md 为运维手册
   - 见 deploy/CLAUDE.md
 frontend/: 面板前端源码，React + TypeScript + Vite 一个工程两个入口（--mode admin|portal 分两次构建到 dist/{admin,portal}），按设计稿重写完成：
   - 底座、组件库、两边外框（登录态、reauth 对话框、实时事件、按权限隐藏入口）与全部模块页，模块页经 screens/ 登记表懒加载
   - 本机无数据库时 dev 挂按模块拆分的假后端
   - 见 frontend/CLAUDE.md
 web/: 面板前端的 go:embed 嵌入点 app.go，admin/、portal/ 两个目录由两个网关经 platform/webapp 挂在根 /（入口）与 /assets/*
-  - 仓库只存占位入口，真实产物由 make frontend-embed 从 frontend/ 构建覆盖（旧的手写单页与 React 候选已于 2026-09-23 删除）
+  - 仓库只存占位入口，真实产物由 make frontend-embed 从 frontend/ 构建覆盖
   - 见 web/CLAUDE.md
 docs/: redesign/api-contract.md 为现行前后端接口契约（被大量代码注释按节号与修订号 Rn 引用）
   - adr/0001 技术选型（文末补了后续变更）
-  - DASH-01 冻结契约、CLIENT-AUTH-01 冻结契约及 R1 刷新重放附录、CLIENT-AUTH-00042 实现清单为历史冻结稿（只读，保留作以后做客户端时的设计参考；CLIENT-AUTH 的实现代码已移出主线，见 tag archive/client-auth）
+  - DASH-01 冻结契约、CLIENT-AUTH-01 冻结契约及 R1 刷新重放附录、CLIENT-AUTH-00042 实现清单为历史冻结稿（只读，保留作以后做客户端时的设计参考；CLIENT-AUTH 的实现代码不在主线，见 tag archive/client-auth）
 tools/: 开发期工具，main 包只经 go run 使用，不进发布包、不被任何包 import
-  - refactorcheck/ 为第 5 阶段重构的纯挪动 AST 比对（compare）、SQL 跨包下沉的字面量多重集合比对（sqlset）与打散验证（shatter），另带全 module 的 800 行守卫测试（随 go test ./... 跑），见 tools/refactorcheck/CLAUDE.md
+  - refactorcheck/ 为纯挪动重构的 AST 比对（compare）、SQL 跨包下沉的字面量多重集合比对（sqlset）与打散验证（shatter），另带全 module 的 800 行守卫测试（随 go test ./... 跑），见 tools/refactorcheck/CLAUDE.md
   - loadtest/ 为面板压测工具链：seed 造数、nodes 模拟 pdnd 节点、users 混合用户流量、burst 触发全量重拉，scripts/ 为面板主机上的采集脚本与压测专用 nginx 片段，README.md 是 Vultr 压测 runbook；panel-smoke.yml 在冒烟栈上小规模试跑它，见 tools/loadtest/CLAUDE.md
 tests/: invariants.sql 数据层不变量（make invariants）
   - e2e.sh 注册→下单→支付→账本→订阅→配置主链路
@@ -50,6 +47,6 @@ Makefile: up/down/logs 数据基座、migrate/migrate-status/check-migrations、
   - frontend-embed（构建并同步 dist/{admin,portal} 到 web/{admin,portal}，release-linux 的前置）
   - CGO_ENABLED=0 产静态二进制
 go.mod / go.sum: Go 1.26 module
+.gitignore: 本 module 的忽略规则：deploy/.env 与私钥、构建出的二进制、vendor、node_modules 与 web/*/dist
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

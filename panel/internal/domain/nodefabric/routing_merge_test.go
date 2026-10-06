@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 routing_merge.go 的 MergeRouting / RoutingLayer
 // [OUTPUT]: 对外提供 TestMergeRouting* 单元测试
 // [POS]: domain/nodefabric 生效路由合并口径的纯逻辑守卫：层序、出站同 tag 覆盖保位、规则拼接顺序、内置出站引用规范成小写
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

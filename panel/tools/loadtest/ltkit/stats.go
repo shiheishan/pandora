@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 sync、math、time 与 encoding/json，只用标准库
 // [OUTPUT]: 对外提供 Recorder（NewRecorder、SetMeta、Observe、Stop、Snapshot、WriteFiles）、Observation、Report、EndpointStats、Window、WriteSummary
 // [POS]: tools/loadtest/ltkit 的计量底座：nodes、users、burst 共用同一个记录器，保证三类场景的 QPS、分位数与错误码按同一口径计算
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package ltkit
 

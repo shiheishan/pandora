@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 account/index.tsx 与 Connections.tsx 用到的类名
  * [POS]: portal/screens/account 的样式，取自设计稿门户-10：两列卡片流（每列最窄 420，放不下即一列）、个人信息 100px 标签列、快捷登录链接与绑定码的 --bg 底等宽块、会话行右侧危险描边「下线」、通知偏好三列网格（标签 / 邮件 70 / Telegram 80）、红字「退出登录」
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .grid {
   display: grid;

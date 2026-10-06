@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 reservations.go 的 prepareAndLockLedgerAccounts、ledger.go 的 Balance/Post 与科目类型
 // [OUTPUT]: 对包内提供 insertHeldReservation、prepareBalanceHold、postBalanceHold
 // [POS]: billing 各种建单路径（checkout.go 的新购、topup.go 的充值、traffic_pack.go 的流量包、plan_change.go 的变更套餐）共用的预留父节点与余额冻结步骤；零元单捕获仍在 checkout.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

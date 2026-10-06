@@ -3,8 +3,7 @@
 
 core.go 定义 core.Core 抽象（入站生命周期、UpsertUsers 用户热更新、流量读取），kernel/ 的 NativeCore 与这里的兼容适配器都实现它
   - multi/ 是过渡期分派器，生产 NativeCore-only 路径不经过它
-  - sing/ 与 xray/ 只在 -tags compat 构建里被链接
-  - 目录源自已删除的旧版 nodeagent/core。
+  - sing/ 与 xray/ 只在 -tags compat 构建里被链接。
 
 成员清单
 core.go: Core 接口与入站配置抽象，UpsertUsers 热更新契约
@@ -23,4 +22,3 @@ external/juicity.go: 以独立进程托管的 juicity（AGPL，按许可证只�
 *_test.go: 适配器契约测试随包放置；external/juicity_test.go 钉住 juicity 缺省目录在 systemd 单元的 ReadWritePaths 之内
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

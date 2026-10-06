@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../core/api 的 QueryParams 类型，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../ui 的 TagTone 类型，依赖 ./schemas 的类型与枚举
  * [OUTPUT]: 对外提供安全与运维页的纯函数与文案表：审计（筛选 → 查询串、导出查询串与日期校验、操作人 / 对象 / 认证 / 结果文字、时间）、访问日志（分段 → 分类与结果、查询串、行文字与是否错误、提示文字）、风控（风险与网络类型文字、复核状态、可停用成员、停用校验与结果摘要、写后缓存补丁）、降级开关（字典、行视图含缺行、切换请求与原因校验）
  * [POS]: admin/screens/security 的逻辑层，组件只做渲染与接线；security.test.ts 逐条守住。口径全部来自 Go：审计筛选与 auditCond 同键、访问日志分类表与 accessCategoryRules 同名、风险分级只展示后端给的 risk、开关极性 enabled = 可用（R58 缺行视为开启，auth.registration 反之）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { QueryParams } from '../../../core/api'
 import { formatDateTime } from '../../../core/format'

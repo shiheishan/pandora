@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 service.go 的 Service，依赖 platform 的 db、httpx
 // [OUTPUT]: 对外提供 Metrics、HeartbeatInput / HeartbeatOutput、MetricPoint、NodeMetrics，Service 的 Heartbeat、FetchMetrics、PurgeMetrics
 // [POS]: domain/nodefabric 的心跳与探针（AGT-004）：从 service.go 拆出。探针值写库前先做范围校验（越界回中文 400，不再撞 CHECK 或列宽回滚成 500）。指标全部是放大后的整数，避免浮点在存储与聚合时引入误差；后台按分钟窗口查询、定期按小时清理
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

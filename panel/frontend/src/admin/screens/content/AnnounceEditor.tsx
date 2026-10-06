@@ -4,7 +4,6 @@
  * [POS]: admin/screens/content 公告的右栏：标题、Markdown 正文，设计缺、契约待补·前端的「可见范围」（套餐 + 用户组多选，全不选 = 全部用户；「即将到期」按 D-D-2（已决，5.A.2）不提供）、级别、定时发布、自动下线补齐。
  *        保存与撤回都要 reauth + 幂等（announcement_save / announcement_withdraw）、带 expected_version；编辑是全量覆盖，没改的时间原样送回。已发布只能「保存修改」且发布时间锁定，定时可「撤回」（= 取消，不可恢复）或存回草稿，已撤回是终态（D-D-3 已决，5.A.2）：只读，给「复制为新公告」。
  *        别人改了这条（版本变了）而本地有未保存的修改时不覆盖输入，提示「保存会覆盖对方的修改」并可载入最新
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useId, useState } from 'react'

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../core/format 的 relativeTime，依赖 ./schemas 的类型
  * [OUTPUT]: 对外提供节点页的纯函数：状态映射与筛选搜索、心跳与地址文案、迁移资格（保留规则 5）、R108 上线资格（接入尾段的生命周期）与 R113 上线提示 activationHint、状态转换合法边与批量取舍、排序提交项、schema 驱动的协议表单模型（字段推导、拍平 / 还原、敏感字段：编辑时留空 = 不改、选填的可显式清空为 null（R106 / R107）、REALITY）、PATCH 差量、路由规则行与 matcher 互转、插入规则（兜底之前）、出站被引用计数与改名联动、出站行校验与互转（单节点、路由组与全局共用）、路由组表单校验 / 新建体 / PATCH 差量、成员比较、跨范围可引用出站与生效来源文案、带宽分桶
  * [POS]: admin/screens/nodes 的逻辑层：映射全部取自 api-contract.md 后台-07 · 节点条目的「设计 / 映射」行与 Go 校验器，nodes.test.ts 逐条守住；组件只负责渲染与交互
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { relativeTime } from '../../../core/format'
 import type { MetricPoint, NodeRow, ProtocolSchema, Route, RoutingSource, ServingStatus } from './schemas'

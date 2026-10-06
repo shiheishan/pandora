@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/billing 的 AdminListCoupons / AdminCreateCoupon / AdminSetCouponStatus / AdminCouponRedemptions 与 AdminCouponSpec（读写与审计在 billing/coupon_admin.go），依赖 platform/httpx、chi 的路径参数
 // [OUTPUT]: 对包内提供优惠券列表、新建、启停与兑换记录处理器，以及与批量生成共用的 normalizeCouponReq / couponSpec；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 后台-06 优惠券的 HTTP 外壳：规范化与校验请求、调 billing、写响应；券只停用不删除；路径 id 非 UUID 一律中性 404；批量生成在 coupon_batch.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

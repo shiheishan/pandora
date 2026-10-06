@@ -3,7 +3,6 @@
 # [POS]: 仓库的第一道泄露闸门；只写“格式”，不写任何真实值——具体的服务器 IP、
 #        域名这类私有特征放在被忽略的 ops-local/gitleaks-private.toml（ops-local/ 按需创建），
 #        文件存在时由同一个钩子加载
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 title = "pandora"
 

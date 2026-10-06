@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 node_pool_user_groups.go 的 replacePoolUserGroupsTx，依赖 platform 的 audit/db/httpx，读写 node_pools，读 nodes / plan_node_pools / plan_versions / plans / node_pool_user_groups / user_groups / node_templates / node_configs / bootstrap_tokens
 // [OUTPUT]: 对外提供 NodePool、NodePoolMember、NodePoolUserGroup、NodePoolInput、ErrNodePoolMoveFrozen 与 Service 的 ListNodePools / CreateNodePool / UpdateNodePool / DeleteNodePool / CheckNodePoolAssignment
 // [POS]: domain/nodefabric 的节点分组（从 api/admin 的 pools.go 下沉）：节点与套餐之间唯一的连接层的增删改查；删池先取 node-config-release 发布锁、再 FOR UPDATE 锁池行、再数依赖；直接改节点所在池在有效发布迁移完成前冻结，冻结的中文文案留在 handler（本包有守卫不许出现那句话）。名单替换在 node_pool_user_groups.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

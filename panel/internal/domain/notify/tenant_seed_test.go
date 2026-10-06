@@ -1,7 +1,6 @@
 // [INPUT]: 依赖同包 template_admin.go 的 defaultTemplates，读取 migrations 里最后一个定义 app.seed_tenant_defaults 的迁移
 // [OUTPUT]: 对外提供 TestTenantSeedTemplatesMatchDefaults
 // [POS]: domain/notify 的单元测试：建租户触发器种下的模板与「恢复默认」用的 defaultTemplates 逐字一致，12 个内置模板一个不少
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package notify
 

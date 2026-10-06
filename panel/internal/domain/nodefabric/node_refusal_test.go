@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 node_refusal.go 的 NodeStatusRefusal，依赖 pgconn.PgError 造数据库错误；扫描 panel/internal 非测试源码
 // [OUTPUT]: 对外提供 TestNodeStatusRefusalTranslates、TestNoRawDatabaseMessageInHTTPErrors
 // [POS]: nodefabric 的单元测试：节点状态报错按约束名译中文、触发器中文原样、英文原句只进日志；并守住全仓不再把 db.Message 直接塞进 httpx 错误（⑪）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

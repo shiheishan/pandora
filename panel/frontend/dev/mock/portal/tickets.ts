@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 randomBytes / randomUUID，依赖 ../types 的 MockModule / MockContext，依赖 ./fixtures 的 gate / portalState / scenario / PortalState，依赖 ./billing 的 BillingError / isUuid / readStrict
  * [OUTPUT]: 对外提供 tickets 模块的假接口 MockModule
  * [POS]: dev/mock/portal 的「工单支持（门户-07）」假接口，归门户前端；形状、错误文案与幂等照 api-contract.md（修订 R25、R60）与 domain/support：分类、列表（不带 messages，related_order 恒为 null）、详情（message_count 0、last_reply_at 零值、related_order）、新建（support_ticket_create，未结满 5 个 409，订单须是本人的）、回复（support_ticket_user_reply，resolved 重开、closed 409）、关闭（support_ticket_user_close，已关闭 404）、撤回（必须带 JSON 体、客服回复过 409）；closed_reason / related_order 各场景恒在（Go 无 omitempty，未关闭 / 无关联为 null）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { MockContext, MockModule } from '../types.ts'

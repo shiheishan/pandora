@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../types 的 MockModule，依赖 ./fixtures 的 portalState / gate / makeSub，依赖 ./billing 的校验、下单与余额流水，依赖 ./catalog 的礼品卡与目录
  * [OUTPUT]: 对外提供 wallet 模块的假接口 MockModule
  * [POS]: dev/mock/portal 的「钱包（门户-05）」假接口，归门户前端；形状照 api-contract.md（含修订 R31、R68）：余额与流水（外框余额胶囊也读它）、充值建单（幂等 balance_topup_create、200、金额 100–5000000 分）、礼品卡预览（不回发行量、套餐卡带套餐名与周期）与兑换（幂等 gift_card_redeem；流量进流量包余额，延期要有生效订阅）、我的兑换记录
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { MockModule } from '../types.ts'
 import { BillingError, moveBalance, placeOrder, readStrict } from './billing.ts'

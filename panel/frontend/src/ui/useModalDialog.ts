@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useEffect、useRef 与事件类型
  * [OUTPUT]: 对外提供 useModalDialog：把受控的 open 同步到原生 <dialog> 的 showModal() / close()，把 Esc 与点遮罩统一成 onClose，并决定打开时的初始焦点
  * [POS]: ui 的弹层内核，Modal 与 Drawer 共用；用原生 <dialog> 是为了让浏览器负责顶层渲染、焦点圈定与背景 inert，不自己写焦点陷阱
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useRef, type MouseEvent, type SyntheticEvent } from 'react'
 

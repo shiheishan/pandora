@@ -3,7 +3,6 @@
  * [OUTPUT]: 对外提供 RiskTab（安全与运维 · 风控标签）
  * [POS]: admin/screens/security 的风控（设计稿 t_risk）：共享 IP 聚类卡片（IP、归属地 · 网络类型 · 最近时间、后端给的风险徽标、账号 + 当前套餐列表可跳用户详情），「显示已标记正常的」勾选即 include_reviewed=1（R40）。
  *        标记为正常：security.risk.review、无 reauth 无幂等，30 天内不再提示；禁用 N 个账号：security.risk.review + iam.user.write + reauth + 幂等 ip_cluster_disable（R41），弹窗默认全选可停用的成员、原因 5–500 字必填，后台账号由后端跳过。两种处置成功后把结论就地补进缓存，卡片按设计稿留在原位显示结果行，下次重拉（默认列表不含已标记正常的）才消失；停用还让用户模块的查询失效
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖标准库 crypto/*（argon2 来自 x/crypto）与 encoding
 // [OUTPUT]: 对外提供口令哈希（HashPassword/VerifyPassword/DummyVerify）、令牌与验证码（NewToken/HashToken/NewNumericCode）、标识哈希（HashIdentifier/HashRaw）、Ed25519 Signer/Verify、信封加密 Envelope、HMACSign/HMACVerify，以及从主密钥确定性派生的用途专用盐 SubscriptionAuditSalt、NotifyRecipientSalt
 // [POS]: platform/crypto 的唯一实现文件，全仓库落库秘密的哈希与加密都经这里；password_policy.go 放口令强度规则
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package crypto 提供平台统一的口令哈希、令牌生成、签名与信封加密。
 //

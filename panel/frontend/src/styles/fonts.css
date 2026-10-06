@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ./fonts/ 下随包自带的 Geist / Geist Mono 可变字体 woff2 子集（OFL，见 fonts/OFL.txt）
  * [OUTPUT]: 对外提供 font-family "Geist" 与 "Geist Mono" 两个字族，字重 400–600 由同一个可变字体文件覆盖
  * [POS]: styles 的字体层，被 index.css 最先引入；tokens.css 的 --font-sans / --font-mono 以它为首选字族
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 /* ---------------------------------------------------------------------------

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 AuthPage.tsx 用到的类名
  * [POS]: portal/AuthPage 的样式：整页居中、最宽 400；字标 26 / 18px；活动横幅朱砂浅底；卡片圆角 14、内边距 24、字段间距 16
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .page {
   min-height: 100vh;

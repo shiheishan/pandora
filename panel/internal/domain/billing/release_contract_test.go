@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取 AdminCancelOrder、releaseOrderReservation 及释放链路各锁函数、ExpireDueReservations 的源码
 // [OUTPUT]: 对外提供 TestAdminCancellationAddsCASWithoutWeakeningTerminalIdempotency、TestReleaseTransactionSourceContract、TestReleasePaymentEvidenceSourceContract、TestReleaseResourceAndEvidenceSourceContract、TestReservationExpiryWorkerSourceContract
 // [POS]: billing 取消与过期释放的源码契约：后台取消加 state_version CAS 而不削弱同终态幂等、释放事务的锁序、已结算收款证据的有序锁、资源回退形状、过期扫描的 SKIP LOCKED 与同步钩子次序
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

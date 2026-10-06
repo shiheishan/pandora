@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain 的 adminops/billing/identity/subscription 服务、middleware、platform 的 crypto/httpx/realtime（降级开关切换后发 switches.changed）
 // [OUTPUT]: 对外提供 handlers 结构与探针、认证（登录、重认证、登出、me、改密）、仪表盘概览、用户（列表、详情、换订阅链接、重置密码、改状态）、订单、套餐、支付渠道、降级开关等核心处理器，adminRotateResponse 与日期 / 整数解析小工具；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的核心处理器集合，被 router.go 装配；专题处理器分散在同包其它文件，节点在 nodes.go、单节点与全局路由在 node_routing.go、客服工单在 tickets.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

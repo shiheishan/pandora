@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/nodefabric 的 CreateAdminNode / CloneAdminNode / IssueBootstrapToken / Bootstrap / PublishConfig，依赖 node_config_legacy_pg18_bootstrap_test.go 的 nodeConfigPG18BootstrapPublicKey、_lifecycle 的调用结果、_cancel 的持锁工具、主文件的夹具
 // [OUTPUT]: 包内提供 runNodeConfigPG18NewMaterializationRaceBatch 与它收尾调用的 runNodeConfigPG18BootstrapPublicationRaces
 // [POS]: TestNodeConfigLegacyPG18 的新节点物化竞态批次：建节点 / 克隆与发布的串行化（NEW-02、NEW-03）、引导注册与发布交错
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

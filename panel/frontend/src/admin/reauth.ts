@@ -2,7 +2,6 @@
  * [INPUT]: 无外部依赖
  * [OUTPUT]: 对外提供 ReauthController 与 createReauthController
  * [POS]: admin 的重新验证桥：api.ts 在 403 reauth_required 时调 request()，ReauthDialog 订阅 pending 状态弹框、验证成功 resolve(true)、取消 resolve(false)
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 // ---------------------------------------------------------------------------

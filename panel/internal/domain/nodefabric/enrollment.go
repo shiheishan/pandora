@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 node_enrollments / node_identities / bootstrap_tokens / nodes，依赖 platform 的 audit/crypto/db/httpx
 // [OUTPUT]: 对外提供接入签名规范串（CanonicalEnrollment*）、LookupEnrollmentCredential、两段式接入 BeginEnrollment / GetEnrollment / CommitEnrollment / AbortEnrollment
 // [POS]: domain/nodefabric 的节点两段式接入：候选身份与运行令牌在提交时一次落定，服务端令牌签发记录随之重置为「接入所得、无签发人」
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

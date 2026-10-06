@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 catalog.go 的 CreatePriceInput、catalogResult / rowConflict，依赖 platform/db、audit、httpx
 // [OUTPUT]: 对外提供 Service 的 CreatePlanPrice、ArchivePlanPrice；包内提供 validatePrice 与 createPlanPriceTx（供向导在同一事务里编排）
 // [POS]: adminops 套餐目录的价格：从 catalog.go 拆出。价格没有修改入口，只有新建与归档；新建与归档都只受路由上的权限、近期重认证与幂等约束，归档另带 row_version 乐观锁，两者都同事务审计
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/adminops 的 DatabaseStats 读数据库体积与连接数，经 Deps.Cfg 的 Deployment 取备份目录与解密私钥路径（环境变量只在 platform/config 读），依赖 system_components.go 的组件清单
 // [OUTPUT]: 对外提供 handlers.systemStatus、backupStatus 与响应结构 systemStatusResponse / databaseStatus / backupStatusView、泛型助手 statusPtr
 // [POS]: api/admin 的系统状态（契约后台-01 GET v1/system/status）：备份、数据库与 state / components
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

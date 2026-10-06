@@ -19,7 +19,7 @@ connerror.go: 连接失败的中段：connErrorReporter（适配器 Start 时绑
 connerror_log.go: connErrorLogSink：按 (入站, 协议, 阶段, 分类) 固定窗口限流，缺省每分钟逐条 5 条，其余计数，到点 time.AfterFunc 打「已限流」摘要；无失败时不挂定时器，锁内只计数、日志写在锁外
 connerror_sing.go: sing logger.Logger 桥：TUIC / Hysteria2 的 nativewire 服务端只会 logger.Error，桥接成 ConnError，滤掉错误码 0 的 QUIC 应用层关闭与空闲超时
 accept_loop.go: runAcceptLoop 与 acceptBackoff，各 TCP 类入站与 RealityListener 共用的 Accept 循环
-  - 为何存在：握手曾在 vmess 的循环里同步跑，一条只连不说话的连接让整个入站 10 秒接不进新连接；Accept 出错（EMFILE）时各循环空转跑满一核，RealityListener 则直接永久停止接客
+  - 为何存在：握手若在 Accept 循环里同步跑，一条只连不说话的连接让整个入站 10 秒接不进新连接；Accept 出错（EMFILE）不退避则空转跑满一核，出错即退则 RealityListener 永久停止接客
   - 规则：handle 必须立刻返回；done 关或 net.ErrClosed 即退出，其余错误一律退避重试，不区分 Temporary
 capabilities.go: 能力矩阵：Capability、NativeCapabilities、NativeCapabilityFor、NativeProtocolNames、NativeCapabilityReport(For)；CI capability smoke 按字面量守 reality-h3-experimental 与 external-reality-xhttp-h3-unverified
 selfcheck.go: 启动自检：ValidateNativeCapabilityMatrix 对照默认注册表，不开监听
@@ -70,10 +70,9 @@ native_transport_server.go: WebSocket 与 HTTP Upgrade 的服务端分派；newI
 mkcp_transport.go: mKCP 传输：配置与掩码解析、监听、MTU 校验、socket 缓冲调优
 uot_bridge.go: UDP-over-TCP 桥：把 uot 数据报接到路由后的 PacketConn
 *_test.go: 各协议单测，nativecore_test.go 跨协议契约测试；accept_loop_test.go 钉住退避序列、八个 TCP 类入站在 EMFILE 下不空转、RealityListener 在 EMFILE 后照常接客与 VMess over mKCP 能起能停，accept_silent_test.go 钉住静默连接不堵 vmess / vless / trojan 的 TLS 接客、Close 关掉握手中的连接与握手限时；connerror_*_test.go 钉住分类 / 脱敏 / 限流、NativeCore 生产接线，以及 13 个协议各至少一条失败路径真的到达 OnConnError（client 文件用真实 QUIC / mieru 客户端）。互操作门分三个构建标签，都不进默认套件：
-  - `interop`（xhttp_external、mkcp_external 的外部 Xray 客户端，与 anytls_client 的 sing-anytls 客户端——后者 v0.0.11/v0.0.13 内部自带 closeLocally/Write 数据竞争，所以移出默认 race 套件，CI 以非 race 方式跑）
+  - `interop`（xhttp_external、mkcp_external 的外部 Xray 客户端，与 anytls_client 的 sing-anytls 客户端——后者内部自带 closeLocally/Write 数据竞争（版本见测试文件注释），所以不进 race 套件，CI 以非 race 方式跑）
   - `interop_mihomo`（mihomo_* 系列，需 MIHOMO_BIN 与 MIHOMO_SHA256）
   - `interop_external`（external_clients：sing-box VLESS TLS Vision、Juicity、Naive，各需钉住哈希的外部二进制）
   - CI 只跑 `interop` 里的 Xray XHTTP 与 AnyTLS 两组
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

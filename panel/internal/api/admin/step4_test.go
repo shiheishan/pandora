@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 security_guards_test.go 的 adminRouteChain / serveGuarded / guardPrincipal，依赖 risk.go 的 clusterRisk、audit_log.go 的 auditExportRange 与 csvSafe
 // [OUTPUT]: 对外提供第 ④ 步新接口的路由守卫反向测试与纯函数单测
 // [POS]: api/admin 的第 ④ 步不连库测试：缺任一权限 404、未重认证 403，风险分级、导出日期区间与 CSV 公式防护
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

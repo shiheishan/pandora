@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 giftcard.go 的 writeGiftBatchCSV 与 writeGiftCodesReportCSV，依赖 domain/giftcard 的 BatchExport / CodeReportRow
 // [OUTPUT]: 对外提供 TestGiftBatchCSVShape、TestGiftCodesReportCSVShape
 // [POS]: api/admin 礼品卡两种 CSV 的形状测试：批次一次性导出（明文）与按筛选的掩码报表（BOM、no-store、列序、防公式）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

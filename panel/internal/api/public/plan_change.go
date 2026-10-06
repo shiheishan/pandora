@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/billing 的 PreviewPlanChange / CreatePlanChange，依赖 middleware 的幂等声明与 platform/httpx、chi 的路径参数
 // [OUTPUT]: 对包内提供 previewPlanChange、createPlanChange 两个处理器
 // [POS]: api/public 门户-03 变更套餐（D-E-2）的 HTTP 外壳：试算不落库、不要幂等键；下单走独立幂等域 subscription_change_plan_create，路由在 router.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

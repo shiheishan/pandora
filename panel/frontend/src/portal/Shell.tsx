@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 state / effect，依赖 ../core/router 的 useHashLocation / navigate / href，依赖 ../core/theme，依赖 ../core/format 的 formatMoney，依赖 ../shell/runtime 的 useRuntime / useRealtime / signOut，依赖 ../shell/ScreenFrame，依赖 ./SiteBrand（顶栏品牌位随生效主题的站点名与 Logo），依赖 ../ui 的 Menu / Tag / CountBadge / IconChevronDown，依赖 ./pages、./queries、./screens，依赖 ./Shell.module.css
  * [OUTPUT]: 对外提供 Shell
  * [POS]: portal 登录后的外框（用户门户.dc.html showApp）：粘性顶栏（字标、四项导航、余额胶囊、消息铃铛、头像菜单）、页头、内容区（按路由从 screens 登记表取懒加载页面，包在 ScreenFrame 里）、页脚；< 640 导航收进底部五格标签栏，「我的」打开头像菜单；门户的 SSE 在这里连上，只驱动查询失效
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useState } from 'react'
 import { formatMoney } from '../core/format'

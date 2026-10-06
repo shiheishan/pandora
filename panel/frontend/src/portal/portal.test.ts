@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./pages、./entry-links、./appearance 的 pickThemeTokens / portalBranding、./queries 的 displayName
  * [OUTPUT]: 对外提供 portal 外框纯逻辑的单元测试
  * [POS]: portal 的单元测试：页面路由、rest 子路由与导航归属、邀请链接取码并抹掉查询串、快捷登录令牌识别、主题令牌白名单、用户名映射；界面交互在浏览器里对 dev/mock-api 验收
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it, vi } from 'vitest'
 import { pickThemeTokens, portalBranding } from './appearance'

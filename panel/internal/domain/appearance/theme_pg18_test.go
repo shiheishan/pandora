@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 service.go 的 Public / SaveTheme、tokens.go 的 SiteNameTx 与 DesignTokenKeys，读取 migrations/00075 的 Down 段，依赖一次性 PG18 库（run-pg18-gates.sh 的 appearance 域）
 // [OUTPUT]: 对外提供 TestPaperThemePG18
 // [POS]: domain/appearance 的 PG18 集成测试：迁移后的主题状态、门户只拿到白名单 token、内置主题不可改、Down 能恢复旧内置主题
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package appearance
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 pgxpool 的 LISTEN 连接与本包 Hub
 // [OUTPUT]: 对外提供 StartDBListener；包内提供 topicFor 表名到前端主题的映射
 // [POS]: platform/realtime 的数据库变更监听：notify_change 触发器的负载转成前端主题（traffic_pack_grants → subscriptions.changed，traffic_packs → plans.changed）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package realtime
 

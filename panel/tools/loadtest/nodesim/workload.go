@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 tools/loadtest/ltkit 的 Manifest（用户的虚构来源 IP），依赖 domain/nodefabric 的 Metrics（签名心跳的指标口径），math/rand/v2
 // [OUTPUT]: 对外提供 包内 workload（newWorkload、onlineOn、trafficFor、aliveFor）、hostState（metrics、status）
 // [POS]: tools/loadtest/nodesim 的虚构负载：代替 pdnd 内核的 GetTraffic / OnlineIPs 与 /proc 采样，只造面板看得见的那部分（流量增量、在线 IP、主机指标），全部是虚构值
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodesim
 

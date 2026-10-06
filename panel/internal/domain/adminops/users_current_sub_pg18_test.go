@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/pg18test 打开 catalog_sales 域的一次性库，依赖 users.go 的 ListUsers、bulk_users.go 的 PreviewBulk / ExportUsers、service.go 的 ListPlans
 // [OUTPUT]: 对外提供 TestCurrentSubscriptionContractPG18
 // [POS]: domain/adminops 的 PG18 测试（契约后台-03 订阅态口径 R118）：宽限期、欠费、只有过期、两条在用、别的租户五种用户在列表 active_plan 与 current_subscription、sub_state、批量 has_active_sub、导出订阅数与套餐列表 active_subscriptions 上口径一致
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform 的 crypto/db/httpx/realtime/geoip
 // [OUTPUT]: 对外提供 Service、NewService、SetGeoIP、SetPreviousConfigSigner，身份 Identity / LookupIdentity、签名请求 CanonicalPayload / CanonicalPayloadV2 / DecodeNodeRequestNonce / ClaimSignedRequest；包内提供 canonicalJSON 等共用助手
 // [POS]: domain/nodefabric 的主服务：构造与注入、节点身份校验（NODE-014，吊销即失效）与签名请求防重放；用例按专题分在同包文件：bootstrap.go（令牌与旧版接入）、heartbeat.go（心跳与探针）、config_delivery.go / config_publish.go（旧版配置签发、回报与发布）、enrollment.go、uniproxy.go、node_admin.go 等
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package nodefabric 实现节点接入与配置下发（PRD 第 8–9 章）。
 //

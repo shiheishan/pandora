@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 route_groups.go 的 normalizeRouteGroupFields / parseRouteGroupID，route_group_routing.go 的 normalizeIDs / symmetricDiff，routing_admin.go 的 checkRouteRefs / ValidateRoutingPayload，routing_refs.go 的 danglingRef
 // [OUTPUT]: 对外提供 TestRouteGroupFields、TestNormalizeIDs、TestSymmetricDiff、TestCheckRouteRefsAcrossScopes、TestDanglingRefLabel、TestRouteGroupMigrationShape
 // [POS]: domain/nodefabric 路由组的纯逻辑守卫：名称 / 说明 / 组序的边界、成员 id 规范化与变更集合、规则引用校验认得多个可见范围且自定义出站按原样精确比较（大小写、空白不同即拒）、悬空引用的中文标注，以及 00096 迁移的三选一约束与组内 tag 唯一索引不被改丢
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

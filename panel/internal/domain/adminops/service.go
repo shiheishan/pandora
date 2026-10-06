@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 domain/subscription 的在用口径（套餐的 active_subscriptions，R118）
 // [OUTPUT]: 对外提供 Service、NewService，概览 Overview、改用户状态 SetUserStatus、套餐列表 ListPlans（带卖点与推荐，R100）
 // [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它；订单列表在 orders.go、支付渠道在 providers.go、降级开关在 switches.go，套餐目录在 catalog*.go / plan_wizard*.go，订单详情在 order_detail.go，审计在 audit.go；revokeUserLogins 是停用账号即下线的唯一实现，改状态与 risk.go 的批量停用共用
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package adminops 实现管理后台的读写用例。
 //

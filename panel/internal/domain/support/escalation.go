@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 service.go 的 Service 与 AtomicEscalateResult，依赖 platform 的 db/audit、middleware 的幂等原子完成
 // [OUTPUT]: 对外提供 Service 的 EscalateOverdue、EscalateOverdueAsAdminAtomic
 // [POS]: domain/support 的 SLA 超时升级：定时任务以 system 身份幂等扫描（不依赖 HTTP 认领），后台人工升级走原子版本并把优先级提到至少 high
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package support
 

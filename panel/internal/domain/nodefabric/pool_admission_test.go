@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 PoolAdmitsUserSQL，依赖 platform/sourcetest 按名取 Service.ListNodeUsers 与整包源码
 // [OUTPUT]: 对外提供 TestPoolAdmitsUserSQLIsTheOnlyAdmissionRule
 // [POS]: nodefabric 节点池用户组准入只有 PoolAdmitsUserSQL 一个出处，节点用户列表恰好用一次，无池节点不当公开（R104）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

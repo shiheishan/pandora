@@ -13,4 +13,3 @@ labels.ts: 纯函数 metaLabel（「N 天后到期 · 日期 · M 台设备 · �
 Subs.module.css: 页面样式，取自设计稿门户-02，节点行改为三列
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

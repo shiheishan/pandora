@@ -2,7 +2,6 @@
 # [INPUT]: 会创建 /opt/aegispanel 与 /var/log/aegis（已存在即拒绝）；依赖 run-smoke-stack.sh 写在状态目录的 smoke.env 与 gateway.env，依赖同目录 psql.sh（仓库自带、写死容器 aegis-postgres），依赖 ../tests 下的 e2e 脚本、../cmd 下的 aegis-payctl 源码，依赖 sudo、go、python3、timeout
 # [OUTPUT]: 在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，每个脚本一行写进 <状态目录>/e2e-results.md（通过 / 失败 / 超时、OK 与 FAIL 计数、首个失败所在的步骤与原文），各自完整输出在 logs/e2e-*.log；跑产品代码的准备步骤（编译 payctl 并用它配渠道）失败不中断、记一行；六个脚本全部跑完、表格写完后，有任何脚本或准备步骤失败就以 1 退出，让 job 变红
 # [POS]: 第 4 阶段联调冒烟第 ⑤ 步起的 e2e 门禁，被 .github/workflows/panel-smoke.yml 在读表与写路径之后调用；⑥ 起各脚本都已跟上现行接口，失败即变红，免得它们再悄悄过时；risk_e2e.sh（内鬼检测评估）排在 e2e.sh 之前
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 这些 e2e 脚本是给「装在 /opt/aegispanel 的 docker-compose 部署」写的：
 # psql 走 /opt/aegispanel/deploy/psql.sh 或仓库的 deploy/psql.sh（读 deploy/.env、

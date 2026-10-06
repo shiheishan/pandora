@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 net/http/pprof 的 Index/Cmdline/Profile/Symbol/Trace（挂自建 mux，从不经 DefaultServeMux 对外），依赖 log/slog
 // [OUTPUT]: 对外提供 Start、Server（Addr、Close）
 // [POS]: platform 的 pprof 诊断端口：三个网关按 config.PprofAddrs 各自在独立的回环端口上暴露 /debug/pprof/，与业务网关不共用 listener、路由与中间件；地址校验在 platform/config，这里只对实际绑定的地址再验一次
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package profiling 在独立的回环端口上提供 net/http/pprof。
 //

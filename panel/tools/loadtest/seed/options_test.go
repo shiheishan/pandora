@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 options.go 的 parseOptions，用假环境变量表代替进程环境
 // [OUTPUT]: 单测：flag 优先于环境变量、LOADTEST_* 优先于冒烟栈的 SMOKE_*、口令只从环境变量来、各项校验拒绝坏值
 // [POS]: tools/loadtest/seed 的参数契约测试，保证 CI 冒烟能只靠 smoke.env 与 gateway.env 调起 seed
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package seed
 

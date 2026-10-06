@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vite / vitest 的 defineConfig 与 Plugin 类型，依赖 @vitejs/plugin-react 的 JSX 变换，依赖 src/core/theme-boot.js 的源码，依赖 dev/mock-api.ts 的开发期假后端
  * [OUTPUT]: 对外提供按 mode 切换的构建配置：--mode admin|portal 各出一份独立产物，showcase 只允许 dev，vitest 的 test mode 以工程根为根；dev 下 v1/ 请求走 PANDORA_API 代理或假后端；__APP_RELEASE__ 取 PANDORA_RELEASE；导出 themeBootFileName 供测试核对
  * [POS]: panel/frontend 的唯一构建入口，产物由 panel/Makefile 的 frontend-embed 同步进 panel/web/{admin,portal}
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import react from '@vitejs/plugin-react'
 import { createHash } from 'node:crypto'

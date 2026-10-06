@@ -40,18 +40,18 @@ tests/entries.test.ts: 入口源文件契约——域标记正确、只有外链
 tests/tokens.test.ts: 令牌契约——tokens.css / roles.css 与设计稿逐值一致、明暗两组键相同、所有 var() 都有定义、样式不引用外部来源、字体文件都在包内
 tests/mock-helpers.ts: 假后端测试共用辅助——serve 把 mockApi 挂到本地 HTTP 服务（非 API 路径回 418 代表交给 vite）、close、loginAs、bearer、mockFetch（可选请求体与幂等键）；每个测试文件各起各的服务，模块假数据按文件隔离
 tests/mock-api.test.ts: 假后端外壳守卫——matchPattern
-  - 外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同键重新执行，条件改好即成功）（调账打在真实种子用户上，余额经详情接口核对、重放不再记账，种子外的 id 回 404）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码，503 后同键重新执行）
-tests/mock-admin-users.test.ts: 用户运营假接口（users-ops.ts）——流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验与 R103 识别窗口，设新密码不要原因（R101）
+  - 外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同键重新执行，条件改好即成功）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码，503 后同键重新执行）
+tests/mock-admin-users.test.ts: 用户运营假接口（users-ops.ts）——流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验与识别窗口，设新密码不要原因
 tests/mock-admin-plans.test.ts: 套餐假接口——
-  - 目录能被页面 schema 接住、向导单事务新建与幂等重放（限速、卖点与推荐）、编辑向导的 null = 不动与开新版本、R99 设备与限速三态、销售设置整体覆盖卖点与推荐、超额策略只收 suspend、草稿版本全流程、价格新增与归档、流量包上下架与 updated_at 乐观锁
+  - 目录能被页面 schema 接住、向导单事务新建与幂等重放（限速、卖点与推荐）、编辑向导的 null = 不动与开新版本、设备与限速三态、销售设置整体覆盖卖点与推荐、超额策略只收 suspend、草稿版本全流程、价格新增与归档、流量包上下架与 updated_at 乐观锁
 tests/mock-admin-marketing.test.ts: 营销假接口——
   - 礼品卡掩码、一次性导出（非 JSON 重放不带 Content-Disposition）、按筛选导出的掩码报表（BOM、同筛选、不含明文）、券与套餐卡指向套餐模块的固定套餐 id、未知字段 400、统计与佣金总览能被收紧后的 schema 解析
 tests/mock-admin-nodes.test.ts: 节点与服务器假接口——节点列表能被页面 schema 接住、复制出新节点、非法状态边与已部署节点迁移回 409、协议按 schema 校验
   - 服务器 schema、状态机与进入 ready 的前提、PATCH 清空与容量下限、删除仅草稿或已退役并级联静默、安装令牌幂等
   - 节点池新建 / 编辑 / 删除守卫与按池在线数同口径
-  - 全局路由 revision 冲突、删除被引用出站 409（文案「要删除的全局出站仍被规则引用：节点 X → tag」与 Go 同文）、匹配类型校验与发布
-  - 节点池名单带字段才要 reauth 与四种 422、用户组 exclusive_pools 与被池引用时删组 409、无池节点的交付提示（R105）、PATCH 补回缺席密钥 / 显式 null 清空 / mask_password 跟着 mask（R106 R107）、上线一步到 active 与服务器就绪、重放与 409（R108）
-  - 上线回 AdminNode、warnings 缺省与两种提示（首次搭建的新池没绑套餐）、已 active 先于版本号（R113）
+  - 全局路由 revision 冲突、删除被引用出站 409（文案与 Go 同文）、匹配类型校验与发布
+  - 节点池名单带字段才要 reauth 与四种 422、用户组 exclusive_pools 与被池引用时删组 409、无池节点的交付提示、PATCH 补回缺席密钥 / 显式 null 清空 / mask_password 跟着 mask、上线一步到 active 与服务器就绪、重放与 409
+  - 上线回 AdminNode、warnings 缺省与两种提示（首次搭建的新池没绑套餐）、已 active 先于版本号
 tests/mock-admin-routegroups.test.ts: 路由组假接口（00096）——
   - 列表与组内路由能被页面 schema 接住、生效预览的顺序与来源、名称大小写不敏感唯一、组规则不能指向不存在的出站、行版本 409、成员两侧改且互推版本、私有规则能指向所在组出站、新造成的悬空 409（组侧 / 节点侧 / 删组 / 删全局出站）、删组后退回全局、只读账号能读不能写
 tests/mock-admin-content.test.ts: 内容与外观假接口——
@@ -64,22 +64,22 @@ tests/mock-admin-security.test.ts: 安全与运维假接口——只读账号整
   - 访问日志分类表、未知分类与结果 422、仅错误、IP 与账号筛选
   - 聚类默认不列标记正常的、机房判高风险、标记正常
   - 批量停用 reauth、422、跳过后台账号 / 已停用 / 非成员、同键重放、用户模块看到已停用
-  - 开关八行（R102）、排序、核心项与缺原因 409 的中文原文（R116）、切换记审计
-tests/mock-portal.test.ts: 门户假接口——外框读接口来自各页面模块、套餐目录能被页面 schema 接住（R99 / R100）、快捷登录令牌一次性往返、同会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
-tests/mock-portal-checkout.test.ts: 门户结账假接口（R114）——变更套餐试算的 coupon 没用码为 null、用了码是与优惠码试算同形的券面
-tests/mock-portal-referral.test.ts: 门户邀请返利假接口（R114）——佣金概况带 summary.scope，默认 every_order、multi 场景 first_order、legacy 场景照回
+  - 开关八行、排序、核心项与缺原因 409 的中文原文、切换记审计
+tests/mock-portal.test.ts: 门户假接口——外框读接口来自各页面模块、套餐目录能被页面 schema 接住、快捷登录令牌一次性往返、同会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
+tests/mock-portal-checkout.test.ts: 门户结账假接口——变更套餐试算的 coupon 没用码为 null、用了码是与优惠码试算同形的券面
+tests/mock-portal-referral.test.ts: 门户邀请返利假接口——佣金概况带 summary.scope，默认 every_order、multi 场景 first_order、legacy 场景照回
 tests/mock-portal-orders.test.ts: 门户「我已支付，刷新状态」假接口（PAY-009）——
   - 响应带齐 Go 的字段（按字段断言），未付 unpaid、假收银台回调丢失后补记并履约、再查 already_recorded，没发起过支付 409、种子处理中单 503、非 UUID 404、按账号限流 429
   - 列表与明细的 has_payment_intent 一致、发起支付前后由 false 变 true
-tests/mock-portal-account.test.ts: 门户账号安全假接口（R114）——会话都带 last_seen_at 并按它倒序，当前会话排最前
-tests/mock-admin-tickets.test.ts: 工单假接口（R114）——队列 related_order 恒 null、详情联表出关联订单，详情的 message_count / last_reply_at 与队列同口径
+tests/mock-portal-account.test.ts: 门户账号安全假接口——会话都带 last_seen_at 并按它倒序，当前会话排最前
+tests/mock-admin-tickets.test.ts: 工单假接口——队列 related_order 恒 null、详情联表出关联订单，详情的 message_count / last_reply_at 与队列同口径
 tests/mock-admin-billing.test.ts: 订单与收款假接口守卫（起服务与发请求用 mock-helpers，登录与 reauth 辅助留在文件内）：只读账号只看得到订单列表
   - 向渠道查单（写权限 + 幂等、不要 reauth，回调丢失的单补记、重放、未付 / 渠道失败 / 没发起过支付）
   - 仪表盘「超时未支付」与待支付筛选同一份数据
   - 订单 schema、多值状态、user_id 与用户详情同一份
   - 人工开单先 reauth、201 重放、三种结算与拒绝项
   - 标记已支付开通
-  - 取消 CAS、重放与已支付拒绝（中文原文与 Go 同序，R114）
+  - 取消 CAS、重放与已支付拒绝（中文原文与 Go 同序）
   - 挂账按币种合计与只能转一次
   - 渠道启停
   - 收入调整登记、冲销与重复冲销 409
@@ -87,4 +87,3 @@ tests/smoke/: 对真实网关的联调冒烟（CI 的 panel-smoke.yml 专用，�
 tests/theme-boot.test.ts: 用 node:vm 执行引导脚本覆盖各种存储状态，核对它与 theme.ts 同键；vite 配置拒绝构建 showcase 与未知 mode、引导脚本带内容哈希、不内联资源、假后端只在 serve 时挂上
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

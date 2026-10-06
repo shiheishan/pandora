@@ -2,7 +2,6 @@
 // [OUTPUT]: 包内提供 seededNode、createCatalog、createServers、createNodes、enrollNodes、activateNodes、publishPlan
 // [POS]: tools/loadtest/seed 的节点与目录造数，照前端冒烟 frontend/tests/smoke/seed.ts 的真实流程：池与套餐草稿先行（草稿绑池）→ 服务器 →
 //        节点划进池 → 按节点签发接入令牌 → 节点两段式接入 → 一步上线 → 发布套餐版本；全程走网关，生命周期、审计与配置发布锁都由面板自己推进
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package seed
 

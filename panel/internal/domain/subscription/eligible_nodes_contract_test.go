@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 Service 的预览与轮换入口，依赖 platform/sourcetest 按名取节点列表、预览、共用资格查询与订阅链接的源码
 // [OUTPUT]: 对外提供 TestNodePreviewCannotCarryConnectionSecrets、TestInvalidSubscriptionPreviewIDIsNeutralNotFound、TestInvalidSubscriptionRotationIDIsNeutralNotFound、TestSubscriptionAndPreviewShareOneEligibilityQuery
 // [POS]: subscription 订阅与节点预览共用一个资格查询，协议可用与池准入谓词只出现在那里，预览不带连接密钥
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package subscription
 

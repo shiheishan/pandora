@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter 与 connerror_sing.go 的日志桥，依赖 internal/nativewire/tuic 的 QUIC 服务端，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 tuicAdapter（经 newTUICAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close，以及 sing 的 NewConnectionEx / NewPacketConnectionEx 回调；包内 markTUICAuthError
 // [POS]: kernel 的 TUIC 入站（QUIC）：UUID + token 认证、TCP 流与 UDP 会话经 DataPlane 转发并计量；认证失败经日志桥从上游库内部上报，子流的入场与拨号失败在回调里上报
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

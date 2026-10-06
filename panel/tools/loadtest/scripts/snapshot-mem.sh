@@ -2,7 +2,6 @@
 # [INPUT]: 依赖同目录 lt-common.sh 的 lt_init / lt_psql / lt_valkey，依赖面板库的 PostgreSQL 超级用户与 .env 的 VALKEY_PASSWORD
 # [OUTPUT]: DIR/pg-memory-<标签>-<UTC 时间>.txt（内存参数、共享内存分配、连接按状态与角色、本库的命中与临时文件计数、库大小）与 DIR/valkey-<标签>-<UTC 时间>.txt（INFO memory / stats / clients 与 DBSIZE）
 # [POS]: tools/loadtest/scripts 的数据库与缓存内部视角快照，压测前后各打一次做差；进程级 RSS/CPU 由 sample-procs.sh 采
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 用法（面板主机，root）：
 #   snapshot-mem.sh DIR [标签，缺省 snap]      例如压测前 before、压测后 after

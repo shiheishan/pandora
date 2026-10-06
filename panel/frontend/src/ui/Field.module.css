@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 Field.tsx 与 control.module.css 共用的字段排版类名
  * [POS]: ui/Field 的样式：标签、说明、错误三行，间距 6
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .field {

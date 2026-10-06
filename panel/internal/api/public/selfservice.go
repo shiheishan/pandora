@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain 的 billing（佣金转余额）、identity（会话列表与吊销、快捷登录）、support（工单撤回），依赖 platform 的 crypto/httpx
 // [OUTPUT]: 对外提供 handlers 的 transferCommission / listMySessions / revokeMySession / withdrawTicket / issueQuickLogin / quickLogin
 // [POS]: api/public 的自助小接口集合：彼此无关，只是都属于「用户自己能做的事」；会话只作用于门户会话，快捷登录消费是匿名入口
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

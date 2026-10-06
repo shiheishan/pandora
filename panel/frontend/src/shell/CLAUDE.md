@@ -19,4 +19,3 @@ ScreenFrame.module.css: 加载骨架的纵向间距
 shell.test.ts: 页面块加载失败识别（isChunkLoadError）的单元测试；边界与 Suspense 的界面行为在浏览器里验收
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

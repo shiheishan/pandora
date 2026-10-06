@@ -1,7 +1,6 @@
 // [INPUT]: 读取 migrations 里最后一个定义 app.seed_tenant_defaults 的迁移，扫描 internal 下非测试 Go 源码里读降级开关的三种写法（FeatureSwitch、switchEnabled、feature_switches 的 SQL 字面量）
 // [OUTPUT]: 对外提供 TestTenantSeedSwitchesMatchCode
 // [POS]: middleware 的单元测试：建租户触发器种下的降级开关与代码真正读取的开关一一对上——代码读了却没种（新租户缺行）、种了却没人读（R102 那种未接入开关）、essential 名单变了，都会报出
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

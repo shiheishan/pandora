@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的 Open（运行时角色连接池）、pgxpool 的管理连接，依赖 run-pg18-gates.sh 按域注入的 AEGIS_<域>_PG18_* 环境变量
 // [OUTPUT]: 对外提供 Fixture、Open
 // [POS]: platform 的测试辅助包：PG18 集成测试打开一次性库的统一护栏，只被 *_pg18_test.go 引用，不进任何生产二进制
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package pg18test 打开 run-pg18-gates.sh 为某个域准备的一次性 PostgreSQL 18 库。
 //

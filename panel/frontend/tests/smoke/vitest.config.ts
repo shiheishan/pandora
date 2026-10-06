@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest/config 的 defineConfig，依赖 vitest/node 的 BaseSequencer，依赖 @vitejs/plugin-react（页面模块里可能连带 .tsx）
  * [OUTPUT]: 冒烟专用的 vitest 配置：只收 tests/smoke/*.smoke.ts，node 环境、串行、单条 90 秒，文件顺序固定为读表在前、写路径（writes.smoke.ts）最后
  * [POS]: tests/smoke 的运行配置，CI 的 panel-smoke.yml 以 `npx vitest run -c tests/smoke/vitest.config.ts` 调用；与工程的 vite.config.ts 分开，文件后缀 .smoke.ts 也不落进默认的 *.test.ts，所以不进 make frontend-check
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 client.go 的 login / reauth / do，依赖 ltkit 的 Manifest 与 Recorder
 // [OUTPUT]: 对外提供 BurstMain（burst 子命令）与包内的 burstConfig、runBurst、burstFile / burstTrigger / burstWrite（burst.json 的形状）
 // [POS]: tools/loadtest/userload 的 burst：像运维一样经后台 API 改一个用户，让面板给全部在线节点重算并推送用户表；写 burst.json 供与 nodes 的时间线对齐，HTTP 计量写 burst-http.json/.txt
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package userload
 

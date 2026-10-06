@@ -12,4 +12,3 @@ ComponentsDemo.tsx: 组件演示区，按规范 05「组件」顺序列出每个
 Showcase.module.css: 演示页排版，照搬设计规范页的版式，只用令牌；< 640 时演示行改单列
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

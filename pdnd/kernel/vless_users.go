@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 vless.go 的 vlessAdapter，依赖 core 的 User / UserTraffic
 // [OUTPUT]: 对外提供 vlessAdapter 的 AddUsers、UpsertUsers、DelUsers、SnapshotTraffic、OnlineIPs；包内 snapshotUUIDs、lookupUser、enterDevice、leaveDevice、addTraffic
 // [POS]: kernel 的 VLESS 用户表与计量：从 vless.go 拆出。热更新用户表，设备数按 IP 进出计数，流量按用户累加后由快照取走
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

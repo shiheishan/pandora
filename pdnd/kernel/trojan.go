@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 reality_listener.go / inbound_tls.go / websocket_netconn.go / httpupgrade_netconn.go / grpc_stream.go / mkcp_transport.go 的承载，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 trojanAdapter（经 newTrojanAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 acceptLoop / serveAccepted（TLS 握手在每条连接自己的 goroutine 里）、readTrojanRequest、handleConn（统一上报会话失败）/ serveConn
 // [POS]: kernel 的 Trojan 入站 TCP 路径：TCP / TLS / REALITY / WS / HTTP Upgrade / gRPC / mKCP 的监听与分派，SHA-224 口令证明定位用户；UDP ASSOCIATE 在 trojan_udp.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

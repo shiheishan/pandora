@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 inbound_tls.go 的 withHandshakeDeadline（TLS 握手限时），依赖 connerror.go 的 connErrorReporter，依赖 internal/nativewire/anytls 的服务端会话，依赖 uot_bridge.go 的 UoT 桥，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 anyTLSAdapter（经 newAnyTLSAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close，以及 sing 的 NewConnectionEx 回调
 // [POS]: kernel 的 AnyTLS 入站：可选 TLS 外层、AnyTLS 会话与口令认证、子流 TCP 转发与 UoT；TLS 握手、会话认证、子流的设备上限与拨号失败分别上报
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖本包 toKernelConfig 与 testdata/production_protocol_configs.json（生产结构 + 虚构机密）
 // [OUTPUT]: xboard 字段名迁移（00062）与下发翻译互逆的契约测试
 // [POS]: nodefabric 改名工程的安全网，与 vless_roundtrip_test.go 共用同一批虚构 REALITY 密钥对
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

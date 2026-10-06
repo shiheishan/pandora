@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 config.go 的 Domain 常量，依赖 deployment.go 的 trimmedEnv 读环境变量，依赖 net/netip 解析地址
 // [OUTPUT]: 对外提供 PprofAddrEnv（各网关的 pprof 地址变量名）；包内 loadPprofAddrs 供 Load 调用
 // [POS]: platform/config 的诊断端口配置：三个网关各一个可缺省的 pprof 监听地址，只许回环 IP 字面量，非法即让 Load 拒绝启动；监听本身在 platform/profiling
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package config
 

@@ -1,7 +1,7 @@
 # panel/frontend/src/portal/screens/messages/
 > L2 | 父级: /panel/frontend/src/portal/screens/CLAUDE.md
 
-消息（用户门户-08-消息.dc.html；契约门户-08，修订 R71）
+消息（用户门户-08-消息.dc.html；契约门户-08）
   - 「通知 / 公告」两个标签，#/messages?tab=announcements 直达公告（概览公告卡入口）
   - 通知一次取 100 条（接口上限、无游标），点开先标已读、再按 code 跳页（order.paid → 订单、ticket.replied → 工单、subscription.expiring / quota.warning → 我的订阅，其余只标已读）
   - 「全部标为已读」只在通知页签，没有未读时置灰。
@@ -17,4 +17,3 @@ Messages.module.css: 页面样式，取自设计稿门户-08
 messages.test.ts: 消息的单元测试（schema、标签页、跳转目标）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

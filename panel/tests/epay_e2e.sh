@@ -2,7 +2,6 @@
 # [INPUT]: 依赖真实的 aegis-public / aegis-admin 网关、deploy/psql.sh（读 deploy/.env，容器 aegis-postgres）、已启用的 epay 渠道（测试商户 1001），公开网关日志 /var/log/aegis/public.log（可由 AEGIS_PUBLIC_LOG 覆盖）
 # [OUTPUT]: 易支付链路的端到端断言：收银台参数与签名、金额换算、回调幂等、防篡改、复式记账、凭据不明文落库也不进日志
 # [POS]: panel/tests 的 e2e 脚本之一，CI 由 deploy/run-smoke-e2e.sh 在冒烟栈上调用（它把公开网关日志链到 /var/log/aegis/public.log）
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 易支付端到端测试。
 #
 # 覆盖：

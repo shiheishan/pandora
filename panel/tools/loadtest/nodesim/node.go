@@ -1,7 +1,6 @@
 // [INPUT]: 依赖同包 signed.go 的 signedClient、uniproxy.go 的 uniClient 与 streamEvent、workload.go 的虚构负载，依赖 domain/nodefabric 的 SignedConfig / ProxyUser 与事件常量
 // [OUTPUT]: 对外提供 包内 simNode（newSimNode、run）
 // [POS]: tools/loadtest/nodesim 的单节点循环，逐段复刻 pdnd node/node.go 的 Run：启动顺序、三条节拍与按 base_config 重置、签名配置的 switched / health_passed 回报、用户全量与增量、退出前最后一次上报；内核换成 workload 的虚构负载
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodesim
 

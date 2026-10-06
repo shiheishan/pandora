@@ -1,7 +1,6 @@
 // [INPUT]: 依赖同包 protocol_schema / protocol_validate / xboard_validate 的协议校验、protocol_secrets 的敏感键保全与 nodestream.go 的 notifyNodeChanged，依赖 config_publish.go 的发布锁与期望版本物化，依赖 platform 的 audit/db/httpx
 // [OUTPUT]: 对外提供 AdminNode 与各输入类型、StableProtocol* 服务协议白名单、Service 的 CreateAdminNode、GetAdminNode、PatchAdminNode
 // [POS]: domain/nodefabric 的后台节点编排：乐观锁 row_version、服务器容量锁、协议 schema 校验；PATCH 缺席的敏感键保留原值（R78）；国家代码（00082）只在这里写、只进管理端；复制 / 移动 / 排序在 node_admin_placement.go，批量服务状态与删除在 node_admin_lifecycle.go；stableProtocolTypes 必须留在本文件（check_native_panel_parity.py 按文件名读）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

@@ -3,7 +3,6 @@
  * [OUTPUT]: 对外提供 KbTab（内容与外观 · 知识库标签）
  * [POS]: admin/screens/content 的知识库（设计稿 t_kb）：左栏按分类分组的文章目录（v{最新版本}，已归档淡显）与底部「＋ 新文章」，顶部补了类型切换与搜索（契约待补·前端）；中栏 KbEditor；右栏版本历史（v{n} · 当前、状态、作者 · 日期），点历史行在中栏只读查看那一版，可「以此版本恢复」为新版本、可单独归档仍在发布的旧版。
  *        选中文章在地址上（rest[0] = slug 或 new），没选时落在目录第一篇；列表一次取该类型全部版本，按 slug 聚合、前端搜索
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'

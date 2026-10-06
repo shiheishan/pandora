@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 HTMLAttributes，依赖 ./cx 与 ./Tag.module.css
  * [OUTPUT]: 对外提供 Tag、TagTone 类型与 CountBadge
  * [POS]: ui 的标签与角标：标签统一 12px、圆角 5（规范：统一方角，不用胶囊）；状态色只表达状态，危险和错误必须同时有文字；角标用朱砂，不用深红
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { HTMLAttributes } from 'react'
 import { cx } from './cx'

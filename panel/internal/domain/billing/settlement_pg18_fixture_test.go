@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 middleware 幂等声明与 platform/db 事务，依赖 settlement.go 的 HandlePaymentWebhook（并发回调）
 // [OUTPUT]: 包内提供固定的租户、用户、套餐、价格、认领与订单 ID 常量（settlementPG18*）、幂等认领 settlementPG18Claim / ClaimFor / InsertClaim、并发与竞态回调 settlementPG18RunConcurrentWebhooks / RunWebhookRace、死锁判定、时间与事务工具，以及运行角色 ACL 与强制 RLS 的断言 settlementPG18AssertRuntimeACL
 // [POS]: TestSettlementPG18 的夹具与护栏
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

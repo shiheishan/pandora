@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取本包与两个兄弟网关（../aegis-public、../aegis-admin）run 的源码
 // [OUTPUT]: 对外提供 TestGatewaysConfigureAuditSourceIdentically、TestGatewaysStartPprofFromTheirOwnVariable
 // [POS]: cmd/aegis-node 的三网关装配契约（放在最后补齐的这个网关里，另两个网关的测试不重复）：开服之前注入审计来源信息的哈希与加密且写法逐字相同；pprof 各取本域地址、在开服之前起、随停机关闭
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package main
 

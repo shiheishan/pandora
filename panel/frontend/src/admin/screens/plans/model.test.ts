@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 @tanstack/react-query 的 QueryClient（核对查询键前缀），依赖 ./api 的 schema，依赖 ./model 的纯函数
  * [OUTPUT]: 无（测试文件）
  * [POS]: admin/screens/plans 的单元测试：schema 归一与封闭枚举、周期与金额、版本表单与 quotas 同步（R99 限速与 suspend）、卖点、向导两种提交体（编辑三态）与校验、销售设置、新增价格、流量包；界面交互在浏览器里对 dev/mock-api 验收
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { QueryClient } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'

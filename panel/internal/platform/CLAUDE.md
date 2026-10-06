@@ -1,9 +1,8 @@
 # panel/internal/platform/
 > L2 | 父级: /panel/internal/CLAUDE.md
 
-无业务语义的基础设施层，被 api、domain、middleware 依赖，自身不 import 它们
+无业务语义的基础设施层，被 api、domain、middleware 依赖，自身不 import api 与 domain；唯一例外是 idempotencybind 引用 middleware 的 IdempotencyClaim
   - 配置、连接池、加密、令牌、日志、HTTP 模型各只有一个实现，这是 entropy 段"统一范式"的落点：日志只走 logging，响应与错误只走 httpx，配置只走 config。
-  - 客户端登录（CLIENT-AUTH）的 clientauth 与 releasejournal 两个包已于 2026-10-05 移出主线，代码见 tag archive/client-auth
 
 成员清单
 audit/: 不可删审计记录写入（SEC-012）与哈希链
@@ -17,15 +16,15 @@ crypto/: 口令哈希、令牌生成、签名与信封加密，及从主密钥�
 dashboardmigration/: 只有 migration_contract_test.go，对 00041 dashboard 读模型迁移做字面子句契约，无非测试代码
 db/: PostgreSQL 连接池与租户上下文，RLS 变量注入；schema_registry_test.go 按序号重放迁移 Up 段的 CREATE / DROP TABLE，守住现存表、Go 引用与 migrations/RESERVED-TABLES.md 登记簿三者同构
 geoip/: IP 画像：地理位置、运营商、网络性质，供风控与节点接入填地区；库路径（IPv4 必需、IPv6 可选）由调用方从 config 传入
-httpx/: 统一的响应与错误模型，错误码是封闭列表（新增 reauth_required 403，与 forbidden 同状态不同码），前端 src/core/api.ts 按同一列表解析信封
-  - message 由页面原样显示（前端不再做英文→中文映射，R116），message_zh_contract_test.go 扫全仓 httpx.New / httpx.Error{Message} / httpx.Invalid 字段值的字面量，不许纯英文，节点网关与只给节点、支付渠道用的函数按「包目录 + 函数名」清单豁免
+httpx/: 统一的响应与错误模型，错误码是封闭列表（reauth_required 403 与 forbidden 同状态不同码），前端 src/core/api.ts 按同一列表解析信封
+  - message 由页面原样显示（前端不做文案映射），message_zh_contract_test.go 扫 panel/internal 非测试源码里 httpx.New / httpx.Error{Message} / httpx.Invalid 字段值的字面量，不许纯英文，节点网关与只给节点、支付渠道用的函数按「包目录 + 函数名」清单豁免
   - 见 httpx/CLAUDE.md
 iamguard/: 租户范围的 IAM 不变量，HTTP 与 CLI 共用
 idempotencybind/: 数据库持有的唯一资源绑定器，幂等键与资源一一绑定
 logging/: 带脱敏的结构化日志，log/slog
 pg18test/: PG18 集成测试打开一次性库的公共护栏，只被 *_pg18_test.go 引用；见 pg18test/CLAUDE.md
 profiling/: pprof 诊断端口：Start 在独立回环端口上以自建 mux 挂 net/http/pprof，绑定后再验一次实际地址是回环，Close 随网关停机；地址只来自 config.PprofAddrs；见 profiling/CLAUDE.md
-realtime/: 服务端推送 SSE，realtime.go 广播与订阅、listener.go 把数据库变更通知转成 topic（quota_balances 已移出监听，00076）、connections.go 经 Valkey 汇总各进程在线连接数；见 realtime/CLAUDE.md
+realtime/: 服务端推送 SSE，realtime.go 广播与订阅、listener.go 把数据库变更通知转成 topic（高频写入的 quota_balances 不监听，00076）、connections.go 经 Valkey 汇总各进程在线连接数；见 realtime/CLAUDE.md
 server/: 全部网关共享的 HTTP server 生命周期（超时、BaseContext、优雅停机），拒绝 nil Handler 以免落到挂着 pprof 的 DefaultServeMux；见 server/CLAUDE.md
 sourcetest/: 源码契约测试按「包 + 声明名」取源码的测试辅助包，函数在包内换文件不影响断言，名字找不到即失败；只被 *_test.go 引用；见 sourcetest/CLAUDE.md
 token/: 访问令牌签发与校验，每域独立密钥
@@ -36,4 +35,3 @@ webapp/: 面板前端的静态下发器，Mount 把 go:embed 的 Vite 产物以 
 *_test.go: 各包测试随包放置
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

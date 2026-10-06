@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 zod，依赖 ./api 的 createApiClient 等全部导出，依赖 ./token 的 createTokenStore
  * [OUTPUT]: 对外提供 api.ts 的单元测试
  * [POS]: core/api 的验收测试：前缀下相对路径解析、Bearer、错误信封、zod 校验、幂等键在重试间复用、reauth 后以原键重放、401 登出与口令接口例外；用伪造的 fetch 记录每一次请求
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'

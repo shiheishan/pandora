@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 payment_query.go 的 queryProvider、payment_query_patrol.go 的 nextPaymentQueryAt 与 DefaultPaymentQueryPatrol，依赖 payment_query_stub_test.go 的渠道替身
 // [OUTPUT]: 对外提供 TestNextPaymentQueryAtBacksOffAndKeepsALastCall、TestQueryProviderTranslatesChannelFailures、TestOrderQueryResultNamesEveryOutcome
 // [POS]: billing 主动查单的纯逻辑单测：退避与过期前最后一查；渠道停用、不支持、查询失败、缺流水号都在碰数据库之前翻成中文业务错误，订单不动；后台审计的 result 六种取值与 order. 前缀
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

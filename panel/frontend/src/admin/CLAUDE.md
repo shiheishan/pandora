@@ -14,21 +14,21 @@ reauth 的接线是本入口独有的：
 index.html: 入口页，pandora-app=admin 标记、<html data-app="admin">（角色令牌切到墨色中性）
 main.tsx: 建运行时与 ReauthController 并挂载 App；仅 DEV 把运行时挂到 window.__pandora 供浏览器里对假后端验证 reauth 重放，构建时整段裁掉
 App.tsx: RuntimeProvider 包住 Root（按 useSignedIn 切 LoginPage / Shell）与常驻 ReauthDialog
-modules.ts: 十个模块的标题、分组、标签（「欠费单」按保留规则 6 叫「挂账」；套餐分「套餐 / 流量包」，流量包是设计稿缺、按 R73 补的标签）与读权限码（取自契约各模块主列表接口，含修订 R6），侧栏六组，⌘K 深链
+modules.ts: 十个模块的标题、分组、标签（「欠费单」按保留规则 6 叫「挂账」；套餐分「套餐 / 流量包」，流量包是设计稿没有、后端有的标签）与读权限码（取自契约各模块主列表接口），侧栏六组，⌘K 深链
   - canRead / visibleTabs / canReadModule 判权限，resolveRoute 拆出 module / tab / rest 并给规范地址，modulePath 拼链接，paletteItems 按权限筛选
 reauth.ts: createReauthController：api 在 React 外、对话框在 React 内，用可订阅的小仓库接起来；并发请求共用一个待决 Promise
 actions.ts: 各模块页写操作共用的三件：
-  - useCan（按 GET v1/me 的权限码）、useIntentKey（一次用户意图一把幂等键，意图变了换新键、成功后 reset；实现在 core/intent.ts，这里原样转出，导出名与签名不变）、useFailure（reauth 取消静默、fields 标表单、其它 Toast；第二参数传 { fields, intent } 时 4xx 业务拒绝在此丢弃幂等键，断网与 5xx 保留，契约 1.5 与 R85）
+  - useCan（按 GET v1/me 的权限码）、useIntentKey（一次用户意图一把幂等键，意图变了换新键、成功后 reset；实现在 core/intent.ts，这里原样转出）、useFailure（reauth 取消静默、fields 标表单、其它 Toast；第二参数传 { fields, intent } 时 4xx 业务拒绝在此丢弃幂等键，断网与 5xx 保留，契约 1.5）
   - 自己先处理 4xx 分支、不经 useFailure 的写操作直接用 endsIntent
   - 逻辑在纯函数 canWith / classifyFailure / handleFailure 里（createIntentKey / endsIntent 在 core/intent）
-tasks.ts: GET v1/dashboard/tasks（后端已实现，R51）的严格 schema（按 kind 区分，未知 kind 判为不符）、共用查询键与 useDashboardTasks、taskCount；侧栏徽标与仪表盘「需要处理」共用一条查询、一种缓存形状
+tasks.ts: GET v1/dashboard/tasks 的严格 schema（按 kind 区分，未知 kind 判为不符）、共用查询键与 useDashboardTasks、taskCount；侧栏徽标与仪表盘「需要处理」共用一条查询、一种缓存形状
 me.ts: GET v1/me 的 schema 与 useAdminMe（permissions 为 null 时归一为空数组；email / display_name / roles 恒在，display_name 可为 null、roles 可为空数组）；identityLabels 按契约映射侧栏账户块文字，没有角色时退回「管理员」
 LoginPage.tsx: 两栏登录页，左栏侧栏深底（< 960 收起），POST v1/auth/login（auth:false）成功写令牌，401 在密码框下内联显示
 Shell.tsx: 外框编排：Sidebar、顶栏面包屑与 EventsCapsule、页头标题与可读的 ui/Tabs、内容区（按权限渲染 screens 登记的页面或「无权限或不存在」，me 读取失败给重试）
   - ⌘K 全局快捷键、规范地址 replace（等 me 回来、保留查询串）、document.title
 Sidebar.tsx: 字标与构建版本号（__APP_RELEASE__）、⌘K 入口、六组导航（只列可读模块，整组不可读就不画组名；工单 / 营销徽标取 tasks.ts 的共用查询，只在有 ops.dashboard.read 时请求）、向上弹出的账户菜单（主题、改密码、打开门户 ../、退出）
 EventsCapsule.tsx: 顶栏「实时事件」：持有后台唯一的 SSE 连接（需 ops.notification.read，4xx 时整块不渲染），事件同时驱动查询失效
-  - D-A-1 已决（5.A.2）：按 topic + op 生成通用条目（switches.changed 写开关 code 与方向），点击跳对应模块
+  - 按 topic + op 生成通用条目（switches.changed 写开关 code 与方向），点击跳对应模块
   - describeEvent 为纯函数
 CommandPalette.tsx: ⌘K 命令面板，原生 <dialog>，combobox + listbox，↑↓ / ↵ / Esc；只列当前权限可读的条目
 ChangePasswordDialog.tsx: 修改我的密码：
@@ -41,4 +41,3 @@ admin.test.ts: 路由规范化与 rest 子路由、读权限表、⌘K 筛选与
   - 界面交互在浏览器里对 dev/mock-api 验收
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

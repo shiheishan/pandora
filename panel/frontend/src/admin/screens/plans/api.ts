@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useQueryClient，依赖 react 的 useCallback，依赖 ../../../shell/runtime 的 useApi，依赖 ./schemas 的 schema
  * [OUTPUT]: 对外提供读 hook（usePlans、usePlan、usePlanPools、usePoolOptions、useTrafficPacks）、PK 查询键前缀、给别的模块用的 planOptionsKey 与 useInvalidatePlans，并转出 ./schemas 的全部 schema 与类型
  * [POS]: admin/screens/plans 的数据层：读只经 react-query + core/api，目录相关查询挂 plans.changed（plans / plan_versions / prices，R33 起含流量包），写后按 PK 前缀整体失效；页面只从这里取 schema 与 hook
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'

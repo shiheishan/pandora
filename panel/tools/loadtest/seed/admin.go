@@ -2,7 +2,6 @@
 // [OUTPUT]: 包内提供 adminClient（newAdminClient / login / call）、apiError、jsonObject 的取值助手 str / num
 // [POS]: tools/loadtest/seed 的后台网关客户端：像管理员在后台点按钮一样走真实接口，按 -admin-interval 自我节流以免撞后台每分钟 240 次的 IP 限流，
 //        429 按 Retry-After 等待重试、reauth_required 用口令重认证后重试；nodes.go 与 retire.go 共用
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package seed
 

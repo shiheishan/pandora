@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 catalogGroupAllowed、catalogPriceCurrentlyValid，依赖 platform/sourcetest 按名取 Service.CreateOrder 与 Service.CreateRenewal 的源码
 // [OUTPUT]: 对外提供 TestCatalogGroupAuthorization、TestPurchaseSQLRestrictsCatalogCurrencies、TestCatalogPriceValidityWindow
 // [POS]: billing 购买目录的授权与价格窗口：用户组白名单、价格生效区间（止于边界不含）、新购与续费的 SQL 只收 CNY / USD
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

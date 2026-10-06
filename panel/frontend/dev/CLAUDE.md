@@ -8,7 +8,7 @@
 
 成员清单
 mock-api.ts: 假后端外壳 mockApi(app)：
-  - 持有账号、会话与 rat、幂等表（只重放 2xx，非 2xx 同键重新执行，R85）
+  - 持有账号、会话与 rat、幂等表（只重放 2xx，非 2xx 同键重新执行）
   - 答外壳接口（admin：login / logout / me / reauth / 改密码 / events；portal：login / logout / me / site-config / appearance（取 mock/appearance-share 里后台写下的生效主题，没开过后台时用内置默认）/ 注册两步 / 快捷登录消费 / events）
   - admin 另守 admin.writes 只读门（豁免表与 middleware.AdminWritesGate 相同，关闭时其余非 GET 先于认证回 503）并在开关切换后向 SSE 推 switches.changed
   - 其余按入口依次询问 mock/admin 或 mock/portal，未匹配回 404 信封
@@ -19,4 +19,3 @@ mock-api.ts: 假后端外壳 mockApi(app)：
 mock/: 处理器契约 types.ts 与按入口拆分的模块假接口；见 mock/CLAUDE.md
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

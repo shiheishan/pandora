@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 useToast，依赖 ./queries 的 useFailure / useIntentKey / useInvalidateNodes，依赖 ./schemas
  * [OUTPUT]: 对外提供 useIssueServerToken、useSetServerStatus、useDeleteServer 三个写操作 hook 与 InstallSecret 类型
  * [POS]: admin/screens/nodes 服务器的写操作，卡片（ServersTab）与详情抽屉（ServerDrawer）共用同一套请求与失败处理：安装令牌要 reauth + 幂等 server_bootstrap_token_issue、固定传 ttl_minutes 30（设计「30 分钟内有效」，后端缺省 20）；改状态与删除带 row_version，版本冲突后刷新；删除要 reauth、必须带 JSON 体
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { isApiError } from '../../../core/api'

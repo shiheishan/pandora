@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter 与 connerror_sing.go 的日志桥，依赖 internal/nativewire/hysteria2 的 QUIC 服务端，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 hysteria2Adapter（经 newHysteria2Adapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close，以及 sing 的 NewConnectionEx / NewPacketConnectionEx 回调；包内 hysteria2RejectHandler
 // [POS]: kernel 的 Hysteria2 入站（QUIC）：口令认证与伪装、TCP 流与 UDP 会话经 DataPlane 转发并计量；口令拒绝经伪装处理器上报，上游库的 Error 日志经日志桥上报，子流的入场与拨号失败在回调里上报
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

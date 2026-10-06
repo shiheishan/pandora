@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务，读 users
 // [OUTPUT]: 对外提供 PortalProfile、Service.PortalProfile
 // [POS]: domain/identity 的门户账户行（门户 GET v1/me），从 api/public/handlers.go 下沉；管理员那一份在 admin_profile.go，两者口径不同（门户不带角色）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package identity
 

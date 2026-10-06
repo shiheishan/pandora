@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../shell/runtime 的 useApi
  * [OUTPUT]: 对外提供 giftCardSchema / GiftCard、redemptionSchema / Redemption、redeemResultSchema、useTopup、useGiftPreview、useRedeemGift、useMyGiftCards
  * [POS]: portal/screens/wallet 的数据层（契约门户-05，含修订 R31、R68）：充值建单（幂等 balance_topup_create，响应 200）、礼品卡预览与兑换（幂等 gift_card_redeem）、我的兑换记录；余额与流水在外框 queries.ts（与顶栏同键）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'

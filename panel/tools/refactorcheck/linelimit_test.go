@@ -1,7 +1,6 @@
 // [INPUT]: 依赖标准库 io/fs 遍历 module 根目录（向上找 go.mod），不依赖 git
 // [OUTPUT]: 对外提供 TestGoFilesStayWithinLineLimit
 // [POS]: tools/refactorcheck 的行数守卫：第 5 阶段把超 800 行的文件拆完之后，防止任何 .go 文件（含测试）再长回去；pdnd 在 module 根的 linelimit_test.go 有同一道守卫
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package main
 

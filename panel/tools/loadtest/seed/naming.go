@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 crypto/rand、encoding/hex 与 net/netip，只用标准库
 // [OUTPUT]: 包内提供 namespace（newNamespace / Email / NodeName / ServerName / NodeHost / PoolCode / PlanCode）、userIP、serverIP、newRunID、newUserPassword 与识别造数数据的 loadtestEmailDomain / loadtestNodePrefix
 // [POS]: tools/loadtest/seed 的命名与地址分配：全部虚构数据的名字从这里出，users.go、nodes.go、retire.go 共用；纯函数，单测钉住格式与边界
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package seed
 

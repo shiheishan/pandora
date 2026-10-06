@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/billing 的幂等域常量，依赖 platform/sourcetest 按名取 NewRouter 的源码
 // [OUTPUT]: 对外提供 TestWithdrawalRouteRequiresIdempotency
 // [POS]: api/public 提现申请挂独立幂等域，与转余额不共用
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 href，依赖 ../common/catalog 的周期与价格函数，依赖 ../../queries 的 Subscription 类型
  * [OUTPUT]: 对外提供 availablePeriods、fromPrice、planAction、PlanAction
  * [POS]: portal/screens/plans 的纯逻辑：周期分段有哪几档（按设计稿三档排序、年付标出最小省幅）、标签页上的「¥X 起 / 月」、每张套餐卡的入口（续费 / 变更 / 新购 / 不可用）；有单元测试
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatMoney } from '../../../core/format'
 import { href } from '../../../core/router'

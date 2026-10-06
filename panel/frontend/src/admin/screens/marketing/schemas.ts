@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 zod
  * [OUTPUT]: 对外提供营销页全部接口的 zod schema 与推导类型：优惠券、兑换记录、礼品卡模板 / 统计 / 批次 / 卡码 / 使用记录 / 生码结果、佣金总览、提现，以及营销页用到的套餐目录子集
  * [POS]: admin/screens/marketing 与后端对账的唯一防线：形状逐字取自 api-contract.md 后台-06（含 R4 R5 R6 R17）并与 Go 处理器的 json tag 核对过；Go 的 omitempty 字段标可选，后端必回的字段一律必填（原待补·后端字段 R67 R68 已上线并收紧），nil 切片可能序列化成 null 的标 nullable
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
 

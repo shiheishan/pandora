@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ./logic 的 Tone 与 protocolLabel，依赖 ./schemas 的 Server / ServerStatus / Pool / PoolStatus / NodeRow 类型
  * [OUTPUT]: 对外提供服务器与节点池的纯函数：服务器圆点与状态文字、CPU / 内存 / 磁盘三条占用、卡片上的快捷状态切换、合法状态边、删除资格与后果文案、按服务器分组节点、服务器表单模型（校验、新建体、PATCH 差量、容量冲突解析）；节点池状态文字、删除资格、绑定套餐文字、R104「仅用户组」文字与名单是否改动、表单新建体与编辑差量
  * [POS]: admin/screens/nodes 服务器与节点池的逻辑层（logic.ts 管节点与路由，这里管服务器与节点池）：映射全部取自 api-contract.md 后台-07 · 服务器 / 节点池 两节的「设计 / 映射」行与 Go 的 server_admin.go、pools.go 校验器，infra.test.ts 逐条守住
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { protocolLabel, type Tone } from './logic'
 import type { NodeRow, Pool, PoolStatus, Server, ServerStatus } from './schemas'

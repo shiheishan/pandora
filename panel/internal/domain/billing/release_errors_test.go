@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 release.go 的 releaseConflict / releaseHTTPError 与三个释放哨兵错误，依赖 platform/httpx 的错误模型
 // [OUTPUT]: 对外提供 TestReleaseHTTPErrorSpeaksChinese
 // [POS]: billing 释放错误的单元测试（R95）：取消接口回中文 message 与原状态码，过期任务仍能用 errors.Is 认出冲突
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

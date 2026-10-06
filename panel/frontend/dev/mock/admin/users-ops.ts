@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 randomInt / randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute，依赖 ./users 的 User / Sub / Group 类型（只取类型，运行时不回引）
  * [OUTPUT]: 对外提供 opsRoutes(store)：用户模块运营类（用户组、批量运营、设备策略、流量重置）的假接口，由 users.ts 展开进同一个 MockModule
  * [POS]: dev/mock/admin 的「用户（后台-03）」其余四个标签：用户组增删改（删组先看节点池限定名单，R104）、批量运营（预览 / 导出 CSV / 批量生成 / 群发）、设备策略（在线订阅与全局模式，含 R103 设备识别窗口）、流量重置（日志、统计、单用户历史、手动重置）。形状、权限、reauth、幂等 scope、校验顺序与文案照 api-contract.md 后台-03（含 R9 / R12 / R38）与 Go 处理器（usergroup.go、bulk_users.go、adminops/bulk_*.go、devices.go、billing/traffic_reset.go）；请求体按 DisallowUnknownFields 拒绝未知字段。与 users.ts 共用同一份用户数组，生成的账号、重置清掉的用量在列表和详情里立即可见
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomInt, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockResult, MockRoute } from '../types.ts'

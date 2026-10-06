@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取本包 run 的源码，依赖 waitForAdminWorkers、errAdminWorkerDrainTimeout
 // [OUTPUT]: 对外提供 TestAdminWorkersShareSignalContextAndJoinBeforeCleanup、TestWaitForAdminWorkersCompletes、TestWaitForAdminWorkersTimesOut、TestAdminWiresTicketReplyNotifier、TestAdminNotifyUsesRecipientSalt
 // [POS]: cmd/aegis-admin 的进程生命周期契约：四个后台循环挂信号 context、停机先取消再限时等待、超时不关资源，外加工单回复通知与通知收件人盐的装配
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package main
 

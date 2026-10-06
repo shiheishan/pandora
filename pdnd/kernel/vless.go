@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 inbound_tls.go 的 serverTLSHandshake，依赖 connerror.go 的 connErrorReporter，依赖 reality_listener.go、vision.go、xhttp_server.go、websocket_netconn.go、grpc_stream.go、mkcp_transport.go 等承载，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 NewDefaultAdapterRegistry（全部原生协议的注册表）与 vlessAdapter 的 Protocol、Validate、Start、Close；包内 acceptLoop / serveAccepted（TLS 握手在每条连接自己的 goroutine 里）、handleConn、handleConnSession（统一上报会话失败）/ serveConnSession、remoteIP
 // [POS]: kernel 的 VLESS 入站主体：TCP / REALITY / WebSocket / HTTP Upgrade / gRPC / mKCP / XHTTP 的监听与分派、TCP 转发；请求头解析在 vless_request.go，flow 在 vless_flow.go，mux 在 vless_mux.go，UDP 在 vless_udp.go，XHTTP packet 模式在 vless_xhttp_packet.go，用户表在 vless_users.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

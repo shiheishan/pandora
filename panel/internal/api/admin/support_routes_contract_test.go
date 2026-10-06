@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 router_source_test.go 的 routerSource，依赖 platform/sourcetest 按名取工单处理器的源码
 // [OUTPUT]: 对外提供 TestAdminSupportAssigneeCatalogIsReadProtectedAndPrecedesIDRoute、TestAdminSupportAssigneeCatalogUsesDedicatedDomainQuery、TestAdminSupportWritesRequirePermissionThenIdempotency、TestAdminSupportHandlersUseAtomicPreparedResponses
 // [POS]: api/admin 工单路由：负责人目录的权限与注册顺序、写路由先权限后幂等、处理器走原子预制响应
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

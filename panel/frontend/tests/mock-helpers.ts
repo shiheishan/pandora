@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:http 的 createServer，依赖 ../dev/mock-api 的 mockApi
  * [OUTPUT]: 对外提供 serve、close、loginAs、bearer、mockFetch 与 MockAccount 类型
  * [POS]: tests 下各假后端测试文件共用的辅助：把 mockApi 的中间件挂到真实的本地 HTTP 服务上（未匹配的非 API 路径回 418 代表「交给 vite」），登录拿令牌，按「方法 + 路径 + 可选请求体 + 可选幂等键」发请求。每个测试文件各起各的服务，模块假数据按文件隔离
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'

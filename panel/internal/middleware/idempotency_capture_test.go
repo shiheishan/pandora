@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 idempotency.go 的 Idempotency 与 maxIdempotencyResponseBytes、idempotency_recorder.go 的录制器、idempotency_replay.go 的存储编码与重放
 // [OUTPUT]: 包内提供 networkResponse / exerciseRecorderNetwork（同一处理器分别经真实 HTTP 服务器与录制器 + 重放跑一遍）与 shortResponseWriter、failingResponseWriter
 // [POS]: 录制器的捕获边界单测：与真实 net/http 服务器逐字节对齐、1 MiB 上限与分块跨界、下游写失败与短写一律作废留存
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

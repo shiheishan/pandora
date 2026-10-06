@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/public 的 NewRouter、platform/profiling 的可选 pprof 诊断端口
 // [OUTPUT]: 对外提供 可执行入口 aegis-public：装配用户门户网关并启动通知扫描、插件投递、预留过期、主动查单巡检等后台循环
 // [POS]: panel/cmd 的 public 网关进程；履约后的节点通知经 nodefabric.NotifyUsersChanged 发出；identity 的注册验证码经这里接上 notify（SetVerificationMailer）；通知收件人哈希用 crypto.NotifyRecipientSalt（与 admin 同盐），订阅审计仍用 SubscriptionAuditSalt
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Command aegis-public 是用户门户 API 网关（Public 域）。
 package main

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 core 的 InboundConfig / User / UserTraffic，依赖 route 的 Meta 与 sing 的 M.Socksaddr
 // [OUTPUT]: 对外提供 InboundSpec、DataPlane、AdapterHooks、ConnError 与 Stage 常量、Adapter / AdapterFactory / AdapterRegistry；包内 reportAdapterConnError / reportAdapterConnErrorAddr（统一的「哪些错误不上报」规则）
 // [POS]: kernel 的协议适配器契约：nativecore.go 按它装配入站并把 OnConnError 接到 connerror_log.go 的日志出口，各协议适配器经 connerror.go 的 connErrorReporter 调这里的上报函数
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

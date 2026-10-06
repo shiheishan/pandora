@@ -21,4 +21,3 @@ status_other.go: go:build !linux，磁盘指标报零，只为开发机能编译
 *_test.go: users_etag_test.go 守 304 不等于清空、解析失败不记 ETag；stream_test.go 守 SSE 帧解析、增量版本区间、未知事件跳过与退避；stream_backoff_test.go 替换等待函数逐档核对退避的翻倍与复位；signed_test.go / auth_test.go 守签名规范请求、key_id 钉扎、令牌不进 URL、远端明文拒绝；enrollment_test.go、effective_release_test.go、config_key_transition_test.go、heartbeat_metrics_test.go、status_test.go 各守同名文件的契约
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

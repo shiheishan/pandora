@@ -12,4 +12,3 @@ feedback.go: 门户「这篇文章有帮助吗」SubmitFeedback：先按详情�
 *_test.go: service_test.go 单元测试；content_pg18_test.go、feedback_pg18_test.go 与 created_by_pg18_test.go 为 PG18 集成测试（run-pg18-gates.sh 的 content 域）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

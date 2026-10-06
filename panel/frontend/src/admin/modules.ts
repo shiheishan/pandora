@@ -2,7 +2,6 @@
  * [INPUT]: 无外部依赖（纯数据与纯函数）
  * [OUTPUT]: 对外提供 ModuleKey、MODULES、NAV_GROUPS、PALETTE_EXTRAS、Permissions、canRead、visibleTabs、canReadModule、resolveRoute、modulePath、PaletteItem 与 paletteItems
  * [POS]: admin 的模块与路由表：侧栏分组、顶栏面包屑、页头标签页、⌘K 命令面板与内容区的权限判断共用这一份数据（取自 管理后台.dc.html 的 MODS / NAV / EXTRA，读权限码取自 api-contract.md 各模块条目）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 export type ModuleKey = 'dash' | 'tickets' | 'users' | 'plans' | 'billing' | 'marketing' | 'nodes' | 'content' | 'system' | 'security'
 

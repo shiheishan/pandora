@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 vmess.go 的 vmessAdapter 与 vmessUser，依赖 core 的 User / UserTraffic
 // [OUTPUT]: 对外提供 vmessAdapter 的 AddUsers、UpsertUsers、DelUsers、SnapshotTraffic、OnlineIPs；包内 enterDevice、leaveDevice、addTraffic
 // [POS]: kernel 的 VMess 用户表与计量：从 vmess.go 拆出。热更新用户时重算命令密钥，设备数按 IP 进出计数，流量按用户累加后由快照取走
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

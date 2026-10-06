@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 00026 的 audit_ip_clusters 视图、00077 的 ip_cluster_reviews，依赖同包 service.go 的 revokeUserLogins、domain/subscription 的 ActivePlanNameSQL，依赖 platform 的 db/audit/httpx/iamguard
 // [OUTPUT]: 对外提供 IPCluster、IPClusterUser、IPClusterReview、DisableClusterResult、ParseClusterKey、Service.ListIPClusters / ReviewIPCluster / DisableIPClusterAccounts
 // [POS]: adminops 的风控聚类用例（后台-09「风控」卡片）：读聚类与复核结论、标记正常、批量停用；停用逐个复用改用户状态的语义，全部在一个事务里
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

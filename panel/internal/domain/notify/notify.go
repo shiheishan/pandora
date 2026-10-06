@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务与 pgx
 // [OUTPUT]: 对外提供 Channel、Sender、ErrChannelNotConfigured、Service、New、Enqueue、Render、Dispatch
 // [POS]: domain/notify 的队列核心：按用户入队（Enqueue 返回实际插入行数，撞去重键不计）与统一派发（notify.email 降级开关关闭时派发跳过邮件渠道）；按地址入队在 address.go，扫描循环在 scan.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package notify 实现通知：站内信、邮件，以及到期与流量预警。
 //

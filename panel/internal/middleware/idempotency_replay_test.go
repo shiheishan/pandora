@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 idempotency_replay.go 的 decideIdempotencyReplay / decideIdempotencyRecord / serveIdempotencyReplayDecision 与存储编码，依赖 idempotency.go 的 idempotencyRecord / idempotencyCompletion
 // [OUTPUT]: 包内提供 intPointer
 // [POS]: 重放判定单测：成功记录空正文不再调用处理器、两种旧格式（原始 JSON 与 null）仍可重放、新格式字节精确且不解释旧哨兵、未知 / 不可用 / 资源绑定记录与非法状态、非终态记录一律不当重放
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

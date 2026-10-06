@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 fakegw_test.go 的 fakePanel / testManifest，依赖 userload_test.go 的 baseConfig / endpointCount，依赖 ltkit.Manifest 的 SubscribePathPrefix 与 ManifestUser.SubscriptionID
 // [OUTPUT]: 单测：manifest 新增字段（subscribe_path_prefix、subscription_id）直接生效、不再经门户探测；-sub-interval 按清单人数折算订阅速率；按 seed 的地址规划（198.18.0.0/15 的 512 个 /24 轮流分配）四档缺省速率都不撞限流
 // [POS]: tools/loadtest/userload 中 userload.go 的清单读取与 preflight.go 对齐 seed 实际输出的测试
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package userload
 

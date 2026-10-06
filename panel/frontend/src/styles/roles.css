@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 tokens.css 的语义色与尺度令牌，依赖入口 index.html 上的 <html data-app="admin|portal">
  * [OUTPUT]: 对外提供角色令牌：--accent / --on-accent / --accent-hover / --focus-ring / --focus-halo / --link*、正文字号行高、控件三档高度与水平内边距、弹窗按钮高度、开关选中时圆钮色、控件与卡片圆角
  * [POS]: styles 的角色层，把规范里「门户用朱砂、后台用墨色」的差异收成同名变量，让一套组件同时服务两个入口；base.css 与组件只读角色令牌
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 /* ===========================================================================

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 client.go 的 Client（Transport、鉴权、streamWait 测试钩子），依赖 core 的 User 数据契约
 // [OUTPUT]: 对外提供 StreamEvent、EventSyncConfig / EventSyncUsers / EventSyncUserDelta、Client.Stream
 // [POS]: pdnd/panel 的 SSE 订阅：自管重连与退避（健康连接后复位），把事件解析好交给 node/ 的主循环；只是加速通路，轮询兜底
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package panel
 

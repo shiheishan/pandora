@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 logout_pg18_test.go 的 openLogoutPG18Fixture，依赖 service.go 的 StartRegistration，依赖 domain/notify 的 Service（真实入队与派发）
 // [OUTPUT]: 对外提供 TestRegistrationVerificationMailPG18
 // [POS]: domain/identity 的 PG18 集成测试：注册验证码从入队、派发到清空 payload 的全链路（缺陷 1 / 迁移 00074）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package identity
 

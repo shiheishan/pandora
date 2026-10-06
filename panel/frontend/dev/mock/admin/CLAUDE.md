@@ -1,21 +1,21 @@
 # panel/frontend/dev/mock/admin/
 > L2 | 父级: /panel/frontend/dev/mock/CLAUDE.md
 
-后台十个模块的假接口，一个模块一个文件、导出一个 MockModule，与 src/admin/screens 的十个模块一一对应。index.ts 的登记顺序即询问顺序，不再改动。模块状态放在文件内的模块级变量里，vite 重启即复原。
+后台十个模块的假接口，一个模块一个文件、导出一个 MockModule，与 src/admin/screens 的十个模块一一对应。index.ts 的登记顺序即询问顺序、先匹配先得，不要重排。模块状态放在文件内的模块级变量里，vite 重启即复原。
 
 成员清单
 index.ts: 登记表 ADMIN_MODULES
 users.ts: 用户（后台-03）：48 个确定性种子用户（前 6 个 id 与仪表盘流量排行一致）
   - 列表（q 按邮箱 / 显示名 / 用户 id / 订阅令牌反查，status 逗号多值，group_id 含 none，sub_state，limit/offset）、
   - 详情、启停封禁、设新密码、换发订阅链接（不回令牌）、人工调账（reauth + 幂等；不在种子里的 id 回 404，tests/mock-api.test.ts 用真实种子 id 与种子余额）、
-  - 分配用户组、用户组列表（R104 exclusive_pools 取 nodes-infra.ts 经 setPoolSource 登记的名单）、单订阅设备上限、风控画像
+  - 分配用户组、用户组列表（exclusive_pools 取 nodes-infra.ts 经 setPoolSource 登记的名单）、单订阅设备上限、风控画像
   - 订阅令牌只在内存里用于反查
   - 套餐 id 固定（批量按 plan_id 筛），并导出 PLAN_IDS、GROUPS 与 activeSubscriptions（active / trialing 计数）给 plans-store.ts，导出 userStore（同一份用户数组）、seedOrders（每条订阅一张种子订单，确定性 id）与 setOrderSource 给 billing-store.ts——订单表归 billing，详情的最近订单与统计取它登记的那一份
   - 用户组、批量运营、设备策略与流量重置的接口在 users-ops.ts，按同一份用户数组展开进本模块
 users-ops.ts: 用户运营：
-  - 用户组增删改（删除先看节点池名单（R104，message 写池名），再按成员 / 套餐 / 价格 / 优惠券回 409）、
+  - 用户组增删改（删除先看节点池名单（message 写池名），再按成员 / 套餐 / 价格 / 优惠券回 409）、
   - 批量预览 / 导出 CSV / 生成 / 群发（筛选与 buildFilterSQL 同口径，导出与生成 reauth、生成与群发幂等，生成的账号进同一份用户数组）、
-  - 在线设备与全局模式（grace 参与 exceeded，R103 识别窗口 5 / 10 / 30 / 60、省略不改）、
+  - 在线设备与全局模式（grace 参与 exceeded，识别窗口 5 / 10 / 30 / 60、省略不改）、
   - 流量重置日志 / 统计 / 单用户历史 / 手动重置（72 条确定性种子，omitempty 键省略，重置清零真实种子订阅的本期用量）
   - 按 DisallowUnknownFields 拒绝未知字段
 dash.ts: 仪表盘（后台-01）八个只读接口
@@ -27,9 +27,9 @@ marketing.ts: 营销（后台-06）
   - 优惠券、礼品卡（模板 / 统计 / 批次 / 掩码卡码 / 一次性导出 CSV / 按筛选导出掩码报表（读 + ops.export + reauth、5 万行上限、防公式）/ 使用记录）、佣金总览与提现、分销参数，权限 / reauth / 幂等 scope / 校验文案照契约与 Go 处理器，按 DisallowUnknownFields 拒绝未知字段
   - 券的适用套餐用 users.ts 的固定套餐 id、套餐卡取 plans-store.ts 的种子价格（GET v1/plans 归套餐模块）
 tickets.ts: 工单（后台-02）：队列（逗号分隔多状态、指派人、q、breached、limit/offset、后端同款排序）、详情、回复与内部备注、指派、改状态（人工升级提到 high、closed_reason）、SLA 扫描、可指派目录（固定三位客服 + 当前管理员）、快捷回复四接口
-  - 写接口照契约用幂等 scope，omitempty 字段为空时省略，队列 related_order 恒 null，详情按关联订单联表、last_reply_at 与队列同口径（R114；4818 关联一张待支付订单）
-nodes.ts: 节点与服务器（后台-07）的节点全套接口（列表（交付提示按 R105，含一个无池在役节点）、新建 / 编辑（PATCH 补回缺席的敏感键，R106 / R107）/ 复制 / 迁移 / 排序 / 批量改状态 /
-  - 上线（R108 / R113，判断顺序与文案照 nodefabric.ActivateNode；大阪草稿服务器上有两个待上线节点，其一在还没绑套餐的新池「关西新线路」里，模拟首次搭建）/
+  - 写接口照契约用幂等 scope，omitempty 字段为空时省略，队列 related_order 恒 null，详情按关联订单联表、last_reply_at 与队列同口径（4818 关联一张待支付订单）
+nodes.ts: 节点与服务器（后台-07）的节点全套接口（列表（带交付提示，含一个无池在役节点）、新建 / 编辑（PATCH 补回缺席的敏感键）/ 复制 / 迁移 / 排序 / 批量改状态 /
+  - 上线（判断顺序与文案照 nodefabric.ActivateNode；大阪草稿服务器上有两个待上线节点，其一在还没绑套餐的新池「关西新线路」里，模拟首次搭建）/
   - 退役 / 删除、REALITY、一键安装令牌、服务端令牌、吊销身份、发布配置、探针、单节点路由、身份）
   - 按合法状态边、保留规则 5、协议 schema 与 DisallowUnknownFields 校验，读接口按名字抹掉敏感键
   - 导出测试用的 storedProtocolConfig
@@ -37,7 +37,7 @@ nodes.ts: 节点与服务器（后台-07）的节点全套接口（列表（交�
   - 单节点路由读接口带所在组、规则可指向所在组出站、带路由复制时连组成员一起复制
 nodes-infra.ts: 节点与服务器（后台-07）的基础设施部分：
   - 服务器（列表 status / q、新建、详情、下属节点、PATCH 清空与容量下限、合法边改状态与进入 ready 的前提、删除仅草稿或已退役并级联静默名下节点、安装令牌 reauth + 幂等）、
-  - 节点池增删改（删除按节点 / 套餐 / 未用令牌 409；R104「仅限用户组」名单：带字段要 reauth、格式 / 重复 / 上限 100 / 存在性 422，经 users.ts 的 setPoolSource 登记回用户组；种子：灰度池限 VIP、企业专线限企业客户）、
+  - 节点池增删改（删除按节点 / 套餐 / 未用令牌 409；「仅限用户组」名单：带字段要 reauth、格式 / 重复 / 上限 100 / 存在性 422，经 users.ts 的 setPoolSource 登记回用户组；种子：灰度池限 VIP、企业专线限企业客户）、
   - 全局出站与分流（revision 为规范 JSON 的 sha256、reauth + 幂等、删除仍被组或节点规则引用的出站 409，只拒新造成的悬空，口径经 setDanglingSource 由 route-groups.ts 登记）
   - 导出与单节点路由、路由组共用的 validateRouting（引用按 tag 原样精确比较、内置名不分大小写，isBuiltin 与内置引用的规范小写 canonicalTag 也导出，三处保存都用它）、空体判断 emptyBody、心跳保活 keepAlive（种子里在线的行每 10 秒刷新心跳，定时器 unref）、按池统计在线节点数 activeNodesInPool（与节点池列表的 active_nodes 同口径，plans-store.ts 用它）
 route-groups.ts: 路由组（00096）：
@@ -51,16 +51,16 @@ content.ts: 内容与外观（后台-08）：公告列表（读时把到点的�
   - 站点时区（Intl 能加载的 IANA 名）
   - 权限 / reauth / 幂等 scope / 文案照契约与 Go，按 DisallowUnknownFields 拒绝未知字段
 plans.ts: 套餐（后台-04）的路由与向导：
-  - 列表、详情、只建壳、向导新建（单事务，限速正常生效）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动（R99 / R100），额度或线路变了开新版本并发布、价格只同步出现过的币种，按 R107：保留时间窗、新版本继承当前版本全部设置、本来不限流量时再交 0 不滚版本，新建向导 max_devices 0 等同不限）、
+  - 列表、详情、只建壳、向导新建（单事务，限速正常生效）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动，额度或线路变了开新版本并发布、价格只同步出现过的币种，保留时间窗、新版本继承当前版本全部设置、本来不限流量时再交 0 不滚版本，新建向导 max_devices 0 等同不限）、
   - 销售设置（卖点与推荐整体覆盖）、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池候选与替换
   - 流量包路由从 plans-packs.ts 展开进来
 plans-store.ts: 套餐假接口的数据与规则：
   - 五个种子套餐（沿用 users.ts 的固定套餐 id 与用户组 id，节点池沿用 nodes-infra.ts 的池 id，在线节点数取 nodes-infra.ts 的 activeNodesInPool，与节点池列表同口径）、
-  - 列表行与详情形状（含 R100 卖点与推荐；标准版 v1 是 R99 之前的「用完限速」存量行，专业版限速 300 Mbps 且标为推荐）、
+  - 列表行与详情形状（卖点与推荐；标准版 v1 是超额策略为 throttle 的「用完限速」存量行（读取照收），专业版限速 300 Mbps 且标为推荐）、
   - 与 Go 同键名同文案的校验（超额策略只收 suspend、卖点 5 条 40 字不重复）、发布前置条件、按 DisallowUnknownFields 拒绝未知字段
-plans-packs.ts: 流量包四接口（R73）：状态筛选与排序、新建即在售、updated_at 乐观锁 409、已是目标状态 409
-billing.ts: 订单与收款（后台-05）的路由（标记已付：订阅已结束的续费单入账进挂账回 409、同一凭证再标回 409，R117）：
-  - 订单列表（q、status 逗号多值白名单、user_id、from / to、limit / offset）/ 详情 / 支付记录 / 取消（state_version CAS、400 / 409 文案与 Go 同为中文，R114）/
+plans-packs.ts: 流量包四接口：状态筛选与排序、新建即在售、updated_at 乐观锁 409、已是目标状态 409
+billing.ts: 订单与收款（后台-05）的路由（标记已付：订阅已结束的续费单入账进挂账回 409、同一凭证再标回 409）：
+  - 订单列表（q、status 逗号多值白名单、user_id、from / to、limit / offset）/ 详情 / 支付记录 / 取消（state_version CAS、400 / 409 文案与 Go 同为中文）/
   - 人工开单（grant / pending / offline，reauth + order_create 幂等，201 重放，balance 422，凭证号重复 409，文案照 Go）/
   - 标记已支付（金额从订单读、同凭证已入账 already_handled）/
   - 向渠道查单（写权限 + admin_order_query 幂等、不挂 reauth；假渠道：走过 epay_backup 的 503，待支付超 1 小时的像回调丢了答已付并补记——待支付的结清开通、取消 / 过期的进挂账，其余答未付，没发起过支付 409）、
@@ -68,7 +68,7 @@ billing.ts: 订单与收款（后台-05）的路由（标记已付：订阅已�
   - 渠道列表与启停（reauth、无幂等）、
   - 收入调整列表 / 登记（生效日不晚于今天）/ 冲销（已冲销与反向记录 409）
   - 按 DisallowUnknownFields 拒绝未知字段
-billing-store.ts: 订单与收款的数据与视图（挂账种子含一条 ineligible_subscription，subscriptionEnded 列出订阅已结束的待支付续费单，R117）：
+billing-store.ts: 订单与收款的数据与视图（挂账种子含一条 ineligible_subscription，subscriptionEnded 列出订阅已结束的待支付续费单）：
   - 订单表以 users.ts 的种子订单（同 id）为底，补齐待支付（含两张超过 30 分钟的超时未支付，stalePendingCount 给仪表盘数）/ 处理中 / 余额付 / 美元 / 流量包 / 多项 / 充值 / 人工赠送与线下 / 已取消 / 已过期 / 退款各情形，并登记为 users.ts 的订单来源
   - 渠道只有 epay / demo 适配器与内置 offline
   - 挂账与收入调整是种子
@@ -84,8 +84,7 @@ security.ts: 安全与运维（后台-09 后半）：
   - 审计（约 140 条确定性种子，10 天前的是无认证方式与来源 IP 的存量行；q / 动作前缀 / 操作者类型 / 结果、limit 越界回 50）与导出（security.audit.read + ops.export + reauth、日期 422、5 万行上限、BOM 与防公式、导出本身记审计）
   - 访问日志（审计与订阅拉取归并、分类表与 Go 同一张（route_group.* 归管理端）、未知分类与结果 422、IP 精确与账号 UUID / 邮箱片段、按前缀给归属地，每次读按流逝时间补新事件让实时尾随有动静）
   - IP 聚类（成员是 users.ts 的真实种子，含后台账号与已停用账号、标记正常未过期的默认不列、风险按 clusterRisk）、标记正常（note ≤ 500）、批量停用（reauth + 幂等 ip_cluster_disable，逐个跳过自己 / 非成员 / 后台账号 / 已停用，直接改同一份用户数组，一个都没停成不写结论）
-  - 降级开关（八行种子，R102 删去三个未接入的；核心项与关闭缺原因回 409 带中文原因（R116，与 switchRefusal 同文）、切换与处置都记审计；切换后经 onSwitchChanged 让外壳推 switches.changed，adminWritesEnabled 给外壳的只读门）
+  - 降级开关（八行种子；核心项与关闭缺原因回 409 带中文原因（与 switchRefusal 同文）、切换与处置都记审计；切换后经 onSwitchChanged 让外壳推 switches.changed，adminWritesEnabled 给外壳的只读门）
   - 按 DisallowUnknownFields 拒绝未知字段
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
