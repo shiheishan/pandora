@@ -5,7 +5,7 @@ paths:
 
 # 面板前端：CSP、相对路径与依赖
 
-- 接口形状以 `panel/docs/redesign/api-contract.md` 为准，后端行为以 Go 代码为准；两者对不上时照 Go 写
+- 接口形状与后端行为都以 Go 代码为准（`panel/internal/api` 的路由与处理器），前端只经 `src/core/api.ts` 发请求
 - 网关的 CSP（`panel/internal/platform/webapp/webapp.go` 的 `indexCSP`）是 `script-src 'self'`、`style-src 'self'`，没有 unsafe-inline，也没有 unsafe-eval；`font-src 'self'`，`img-src 'self' data:`。违反了也能本地跑通，上线却会白屏，所以：
   - `index.html` 里不写内联 `<script>`、`<style>` 或 `style=""`。守卫：`tests/entries.test.ts`，以及嵌入后由 `panel/web/app_test.go` 的 `TestEmbeddedAppsHaveEntryForTheirDomain` 检查
   - 不用 CSS-in-JS，也不在运行时注入 `<style>`。样式只写 `.css` 或 CSS Modules。运行时要改样式就走 CSSOM（`element.style` / `setProperty`，React 的 `style` 属性也算），它不受 style-src 约束，先例是 `src/portal/appearance.ts` 的 `useAppearanceTheme`

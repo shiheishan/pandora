@@ -48,7 +48,6 @@ aegis-public    aegis-admin     aegis-node
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
 | `panel/migrations/` | SQL 迁移，按序号递增，当前到 00097，共 94 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 21 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
-| `panel/docs/` | `redesign/api-contract.md` 前后端接口契约；DASH / CLIENT-AUTH 历史冻结稿与客户端登录的代码、冻结迁移都已移出主线，在 tag `archive/client-auth` |
 | `pdnd/` | Pandora node（pdnd / pandora-native）：NativeCore 协议入站、认证、路由、用户与流量 |
 | `pdnd/kernel/`、`pdnd/internal/` | NativeCore 自研数据面 |
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
@@ -393,5 +392,5 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 
 ## 相关文档
 
-- [panel/docs/](panel/docs/)：`redesign/api-contract.md` 前后端接口契约（DASH / CLIENT-AUTH 历史冻结稿在 tag `archive/client-auth`）。
+- [docs/backlog.md](docs/backlog.md)：面板待办清单（重构接口契约删除前核对出的未完成项）；前后端接口以代码为准：后端看 `panel/internal/api` 的路由与处理器，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。

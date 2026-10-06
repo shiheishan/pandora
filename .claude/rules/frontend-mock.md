@@ -9,7 +9,7 @@ paths:
 - 假后端只在 `vite serve` 时挂上，永不进产物（守卫：`tests/theme-boot.test.ts` 的 "mounts the dev mock API only while serving…"）
   - 设了 `PANDORA_API` 时 `/v1` 改为代理到真实网关，假后端不挂
 - 假后端的价值在于「页面在它上面走通 = 按契约走通」
-  - 形状、错误码、`fields` 键名、中文文案都照 `panel/docs/redesign/api-contract.md` 与 Go 处理器写
+  - 形状、错误码、`fields` 键名、中文文案都照 `panel/internal/api` 的 Go 处理器写
   - 只有 Go 带 omitempty 的字段才可以缺席
   - 不要为了让页面好写而偏离 Go
 - 写接口按 Go 中间件的顺序调用 `types.ts` 里的三个守卫：

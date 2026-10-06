@@ -16,4 +16,4 @@ paths:
   - 运行时只以 `aegis_app`（NOSUPERUSER NOBYPASSRLS，见 `panel/deploy/configure-app-role.sql`）连库，不要为了绕开触发器或 RLS 换成特权连接
 - 产品只有一个租户：`middleware.Tenant` 恒定注入 `DefaultTenantID`。产品代码里出现建租户就会让 `panel/internal/middleware/tenant_guard_test.go` 的 `TestSingleTenantAssumptionGuard` 失败；要做多租户，先扩 `app.seed_tenant_defaults`
 - 客户端登录（CLIENT-AUTH）不在主线：实现代码、冻结设计稿和两份从未应用的冻结迁移都只在 tag `archive/client-auth`，不要在主线里补它的代码或迁移
-- 前后端接口契约以 `panel/docs/redesign/api-contract.md` 为准，改接口形状时同步改它
+- 前后端接口以代码为准：改接口形状时同步改后端处理器与前端对应的 zod schema，没有单独的契约文档
