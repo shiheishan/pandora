@@ -25,4 +25,3 @@ sanitize.go: 插槽 HTML 白名单净化；SanitizeCSS 随 custom_css 停用暂�
   - theme_pg18_test.go（迁移后状态、内置不可改、Down）与 theme_switch_pg18_test.go（另存为不覆盖 409、编辑、激活换门户令牌与 SiteNameTx、删除守卫、审计）为 PG18 集成测试（run-pg18-gates.sh 的 appearance 域，不带 -run 过滤，包内全跑）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -24,4 +24,3 @@ idempotency_recorder.go: 响应录制器：透传的同时留存状态码、白�
   - idempotency_pg18_test.go 由 run-pg18-gates.sh 跑
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

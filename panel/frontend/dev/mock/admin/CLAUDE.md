@@ -88,4 +88,3 @@ security.ts: 安全与运维（后台-09 后半）：
   - 按 DisallowUnknownFields 拒绝未知字段
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

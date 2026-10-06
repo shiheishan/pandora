@@ -21,4 +21,3 @@ retention_executor.go: 每次至多执行一次远端删除，意图存储与远
 *_test.go: 单元测试；secure_tempdir_test.go 是公共夹具，file_owner_linux_test.go 提供可信属主注入并证明非 root 所有的私密文件在生产默认下被拒
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -35,4 +35,3 @@ webapp/: 面板前端的静态下发器，Mount 把 go:embed 的 Vite 产物以 
 *_test.go: 各包测试随包放置
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -93,4 +93,3 @@ events.go: 管理端 SSE
   - reset_password_reason_test.go 守重置密码原因只限长度
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

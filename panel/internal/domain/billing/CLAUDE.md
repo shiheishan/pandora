@@ -78,4 +78,3 @@ ledger.go: 科目类型与余额方向、EnsureAccount、Post 记账与 Balance
   - settlement_pg18_test.go 被 deploy/test-settlement-runner_static_test.sh 按文件名 grep，门禁字面量留在它里面）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

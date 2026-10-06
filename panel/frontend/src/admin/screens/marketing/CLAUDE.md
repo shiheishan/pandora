@@ -34,4 +34,3 @@ Coupons.module.css / Gifts.module.css / Commission.module.css: 各标签独有�
 marketing.test.ts: logic 与 schema 边界的单元测试
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

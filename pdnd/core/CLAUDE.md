@@ -22,4 +22,3 @@ external/juicity.go: 以独立进程托管的 juicity（AGPL，按许可证只�
 *_test.go: 适配器契约测试随包放置；external/juicity_test.go 钉住 juicity 缺省目录在 systemd 单元的 ReadWritePaths 之内
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

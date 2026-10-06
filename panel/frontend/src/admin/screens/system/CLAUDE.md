@@ -35,4 +35,3 @@ system.module.css: 渠道卡网格与卡片、模板三栏（窄于 1180 预览�
 system.test.ts: logic 与 schema 边界的单元测试
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

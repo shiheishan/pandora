@@ -10,4 +10,3 @@ PG18 集成测试的公共护栏：按 run-pg18-gates.sh 注入的 AEGIS_<域>_P
 pg18test.go: Fixture 描述一个域的库身份，Open 返回带超时的 ctx、管理连接与运行时角色连接池，释放挂在 t.Cleanup 上
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

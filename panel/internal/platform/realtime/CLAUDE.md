@@ -13,4 +13,3 @@ connections.go: 跨进程在线连接数：每个进程每 30 秒把 Count 写�
 *_test.go: realtime_integration_test.go 为进程内广播与订阅索引的集成测试
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

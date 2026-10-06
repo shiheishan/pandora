@@ -50,4 +50,3 @@ go.mod / go.sum: Go 1.26 module
 .gitignore: 本 module 的忽略规则：deploy/.env 与私钥、构建出的二进制、vendor、node_modules 与 web/*/dist
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

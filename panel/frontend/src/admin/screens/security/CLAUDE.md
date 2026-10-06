@@ -38,4 +38,3 @@ security.module.css: 工具条（换行时导出仍贴右）与表格面板（�
 security.test.ts: logic 与 schema 边界的单元测试
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

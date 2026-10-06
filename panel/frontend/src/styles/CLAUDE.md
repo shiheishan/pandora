@@ -21,4 +21,3 @@ base.css: 盒模型、页面底色与正文、表单控件继承字体、链接�
 design-tokens.ts: 设计稿原值的 TS 转写（COLOR_TOKENS / TYPE_SCALE / SPACE_SCALE / RADIUS_SCALE / ROLE_TOKENS）与 normalizeCssValue；tests/tokens.test.ts 用它逐值核对 CSS 文本，showcase 用它核对浏览器计算值——改令牌要两边一起改，测试会拦住只改一边
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

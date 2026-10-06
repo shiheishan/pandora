@@ -11,4 +11,3 @@ server.go: Options、Run（自带 SIGINT/SIGTERM）、RunContext 与可注入 li
 *_test.go: 取消 context 释放活动的长连接处理器并停机；nil Handler 在开服前被拒且 listener 被关闭
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -17,4 +17,3 @@ Messages.module.css: 页面样式，取自设计稿门户-08
 messages.test.ts: 消息的单元测试（schema、标签页、跳转目标）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

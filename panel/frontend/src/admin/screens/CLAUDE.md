@@ -23,4 +23,3 @@ security/: 安全与运维（后台-09 后半）四个标签：审计日志（�
   - 见 security/CLAUDE.md
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

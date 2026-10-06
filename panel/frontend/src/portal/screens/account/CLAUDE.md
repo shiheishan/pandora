@@ -26,4 +26,3 @@ Account.module.css: 页面样式，取自设计稿门户-10
 account.test.ts: 账号安全的单元测试（schema、设备名、排序、密码校验与错误落位、倒计时与深链）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -43,4 +43,3 @@ model.test.ts: schema 归一与封闭枚举、周期与金额、版本表单（�
 Plans.module.css: 唯一样式表，数值取自设计稿；详情栏开 container query，960 宽时版本行与表单改紧凑排布
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

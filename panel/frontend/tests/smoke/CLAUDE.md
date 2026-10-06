@@ -40,4 +40,3 @@ vitest.config.ts: 冒烟专用配置：只收 *.smoke.ts（默认的 *.test.ts �
 tsconfig.json: 冒烟专用类型检查：继承浏览器侧 tsconfig（页面模块连带 .tsx 要 jsx），加 node 类型；tsconfig.node.json 因此排除 tests/smoke
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

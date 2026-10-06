@@ -19,4 +19,3 @@ mock-api.ts: 假后端外壳 mockApi(app)：
 mock/: 处理器契约 types.ts 与按入口拆分的模块假接口；见 mock/CLAUDE.md
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

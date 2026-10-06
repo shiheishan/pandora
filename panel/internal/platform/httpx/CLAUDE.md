@@ -21,4 +21,3 @@ require_user.go: 登录检查出口 RequireUser：主体缺失或 UserID 为空�
   - message_zh_contract_test 扫 panel/internal 全部非测试源码里 httpx.New / Error{Message} / Invalid 的字面量不许纯英文，节点网关整包豁免、与面板共包的节点与支付回调函数按「包目录 + 函数名」豁免，豁免项找不到即失败
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

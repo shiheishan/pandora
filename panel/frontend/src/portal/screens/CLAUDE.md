@@ -29,4 +29,3 @@ help/: 帮助中心（门户-09）；见 help/CLAUDE.md
 account/: 账号安全（门户-10）；见 account/CLAUDE.md
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

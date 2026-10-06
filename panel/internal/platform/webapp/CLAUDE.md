@@ -14,4 +14,3 @@ webapp.go: Routes 最小路由接口、Mount 注册、Handler 下发器；入口
 webapp_test.go: fstest.MapFS 模拟产物，覆盖入口 CSP（禁 'unsafe-inline'）与 304、资源 MIME 与 immutable、HEAD、根下非产物/隐藏/穿越路径 404 且保持 no-store、入口缺失不 panic、Mount 只注册读方法
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

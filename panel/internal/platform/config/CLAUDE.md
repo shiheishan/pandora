@@ -20,4 +20,3 @@ envaccess_test.go: 源码守卫：config 之外出现 os/syscall/unix 的 Getenv
 *_test.go: 令牌时长、严格时长解析、部署项变量名与缺省值、pprof 地址校验（缺省关闭、非回环让 Load 失败、判重）的单测
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

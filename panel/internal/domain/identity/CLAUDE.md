@@ -23,4 +23,3 @@ quicklogin.go: 已登录设备生成 60 秒一次性快捷登录链接
 *_test.go: 单元与契约测试；*_pg18_test.go 共用 logout_pg18_test.go 的 openLogoutPG18Fixture（run-pg18-gates.sh 的 logout 域），含会话 audience 隔离与注册验证码投递全链路；email_verify_default_test 钉住回退值 = 00030 / 00042 种子
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

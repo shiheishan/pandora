@@ -12,4 +12,3 @@ middleware/: 认证（auth.go）、门槛与限流（middleware.go）、降级�
 platform/: 基础设施包，pg18test 与 sourcetest 只供测试用（客户端登录的 clientauth、releasejournal 不在主线，见 tag archive/client-auth）；webapp 为 admin/public 两个网关在根 / 下发面板前端；见 platform/CLAUDE.md
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

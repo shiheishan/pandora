@@ -29,4 +29,3 @@ telegram_settings.go: Telegram 后台配置存取：TelegramAdminChat 读管理�
   - scan_pg18_test.go、dispatch_pg18_test.go 由 run-pg18-gates.sh 的 notify 域跑
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -38,4 +38,3 @@ tools/: vlesscheck / mierucheck / naivecheck / shadowtlscheck 最小客户端，
 go.mod / go.sum: Go 1.26.5 module
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

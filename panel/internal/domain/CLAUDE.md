@@ -37,4 +37,3 @@ subscription/: 订阅分发与门户按日用量读模型；current.go 是后台
 support/: 工单（OPS-001）与客服快捷回复（用户侧、客服侧、超时升级分文件）；见 support/CLAUDE.md
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

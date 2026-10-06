@@ -30,4 +30,3 @@ sqlset_test.go: SQL 从 handler 挪进 domain、换缩进、拼接片段原样�
 其余 *_test.go: 纯挪动判相同、改体 / 改文档注释 / 换约束 / 换导入路径 / 改名 / 丢一个 init 判不同；shatter 的输出经 compare 判为纯挪动
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

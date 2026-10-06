@@ -8,4 +8,3 @@ main.go: 可执行夹具。UniProxy 兼容通道（config / user / status 等）
 main_test.go: 用 pdnd/panel 的 SignedClient 与夹具对打（验签发的 effective release、签名心跳带 metrics、配置上报），伪造签名被拒并计数，node-id 必须是规范 UUID
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

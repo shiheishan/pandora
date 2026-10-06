@@ -40,4 +40,3 @@ common.module.css: 插槽与用量卡样式
 common.test.ts: traffic / orders / order-query / clients / subscriptions schema、subs/labels 与下单防重复（待支付单取回与不可支付时忘掉、isPayable；幂等键本身在 core/intent.test.ts）的单元测试，跨时区稳定（UTC、洛杉矶、上海、奥克兰实测）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

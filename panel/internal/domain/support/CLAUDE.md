@@ -20,4 +20,3 @@ macros.go: 客服快捷回复 ticket_macros（00078）的列表与增改删，�
   - support_pg18_test.go、closed_reason_pg18_test.go、macros_pg18_test.go、agent_queue_pg18_test.go、active_plan_pg18_test.go（队列与详情的 user_active_plan 对照 adminops.ListUsers）与 reply_notify_pg18_test.go（回复通知：回滚不排、同键重放不多排、内部备注不排、关掉 service 不排）为 PG18 集成测试（run-pg18-gates.sh 的 support 域）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

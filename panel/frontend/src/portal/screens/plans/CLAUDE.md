@@ -15,4 +15,3 @@ labels.ts: 纯函数 availablePeriods（有哪几档周期及文案）、fromPri
 Plans.module.css: 页面样式，取自设计稿门户-03；入口是做成按钮外观的链接
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

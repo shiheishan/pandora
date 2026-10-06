@@ -12,4 +12,3 @@ node.go: Node 主循环与全部编排。syncOnce = 拉配置后紧接着拉用�
 *_test.go: config_rollback_test.go 守回滚（恢复旧入站与用户、回滚失败即停、PreviousPreserved 不重装）与生效健康窗口；user_resync_test.go 用会清空用户表的内核夹具与只认 ETag 的假面板守用户镜像不变式（纯轮询改配置、事件流改配置、重建后旧基准增量、回滚失败）以及节点停摆后兼容通道的配置重试；protocol_switch_test.go 守协议跟随面板；routing_test.go 守分流解析的缺省与显式空；status_report_test.go 守签名心跳携带 metrics
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

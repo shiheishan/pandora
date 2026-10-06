@@ -19,4 +19,3 @@ admin/: 后台十个模块的假接口，与 src/admin/screens 一一对应；�
 portal/: 门户十一个页面的假接口，与 src/portal/screens 一一对应；见 portal/CLAUDE.md
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -61,4 +61,3 @@ bulk_users.go / bulk_mail.go: 用户批量筛选、导出、生成与群发
   - catalog_sales_pg18_test.go（夹具 openCatalogSalesPG18 与过期 row_version 改资料回 409 不留痕）、plan_wizard_pg18_test.go、plan_wizard_update_pg18_test.go、finance_reads_pg18_test.go、users_pg18_test.go、users_filters_pg18_test.go、users_current_sub_pg18_test.go（订阅态口径：宽限期、欠费、只有过期、两条在用、别的租户，及套餐列表的在用订阅数）、traffic_packs_pg18_test.go、plan_wizard_r92_pg18_test.go（向导继承与三态、限速解耦）与 plan_highlights_pg18_test.go（卖点与推荐）为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域，共用 openCatalogSalesPG18 夹具）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

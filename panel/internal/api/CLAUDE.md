@@ -33,4 +33,3 @@ handler_sql_guard_test.go: admin、public、node 三个包整包「处理器不�
   - admin 的五份 AST 契约测试（catalog_routes、catalog_plan_update_route、coupon_routes_contract、dashboard_routes、finance_routes_contract，经 router_source_test.go 读全部路由文件）逐条钉死套餐、优惠券、礼品卡、分销与仪表盘路由的权限码、重认证与幂等域
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

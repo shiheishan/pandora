@@ -13,4 +13,3 @@ main.go: main / run 装配与生命周期；开服前按 AEGIS_NODE_PPROF_ADDR �
   - 三处 pprof 各取本域的 config.PprofAddrs、开服之前起、defer 关闭，每个网关只有一个
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

@@ -17,4 +17,3 @@ password_policy.go: ValidatePassword 产品口令规则：至少 8 位、同时�
 *_test.go: 口令规则边界；派生盐的公式、确定性与互不相同
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

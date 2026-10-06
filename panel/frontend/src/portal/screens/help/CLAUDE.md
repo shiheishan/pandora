@@ -17,4 +17,3 @@ Help.module.css: 页面样式，取自设计稿门户-09
 help.test.ts: 帮助中心的单元测试（schema、分组、正文拆块）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

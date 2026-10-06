@@ -76,4 +76,3 @@ uot_bridge.go: UDP-over-TCP 桥：把 uot 数据报接到路由后的 PacketConn
   - CI 只跑 `interop` 里的 Xray XHTTP 与 AnyTLS 两组
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

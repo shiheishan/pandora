@@ -16,4 +16,3 @@ testdata/dotimport/: 点导入 os 的假包，验证 Refs 拒绝而不是报 0 �
 *_test.go: 用会 panic 的假 TB 断言查找失败确实让测试失败
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

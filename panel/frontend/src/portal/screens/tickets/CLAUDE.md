@@ -25,4 +25,3 @@ Tickets.module.css: 页面样式，取自设计稿门户-07（< 640 按 data-vie
 tickets.test.ts: 工单的单元测试（schema、子路由、状态与按钮、作者、消息时间、表单校验）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

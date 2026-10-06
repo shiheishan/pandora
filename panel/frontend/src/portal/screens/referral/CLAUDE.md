@@ -21,4 +21,3 @@ Referral.module.css: 页面样式，取自设计稿门户-06（网格区域：�
 referral.test.ts: 邀请返利的单元测试（佣金与邀请 schema、横幅文案、提现金额与表单锁、记录合并与状态映射、common/intent 的复用与丢弃）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

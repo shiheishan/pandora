@@ -13,4 +13,3 @@ emit.go: 各业务事件的发射薄封装（订单、订阅、注册、工单�
 *_test.go: deliver_test.go 用 httptest 复算签名、验超时、生产模式挡内网与耗时只记发出去的请求；hooks_save_test.go 验保存时的数值边界（不连库）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

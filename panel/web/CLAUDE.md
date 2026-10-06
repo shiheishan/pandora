@@ -13,4 +13,3 @@ admin/、portal/: 两个域的嵌入目录；仓库只有占位 index.html，其
 app_test.go: 嵌入完整性契约：入口存在且 pandora-app 域标记正确；嵌入真实产物时再查无内联脚本与内联样式（配合 webapp 的 script-src/style-src 'self'）、入口引用的 ./ 资源全部在 assets/ 下且在包内、.vite 元数据未嵌入
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

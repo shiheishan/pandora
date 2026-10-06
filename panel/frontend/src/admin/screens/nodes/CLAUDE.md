@@ -76,4 +76,3 @@ routegroups.test.ts: 路由组纯逻辑（表单边界与 Go 同口径、PATCH �
 infra.test.ts: infra 与服务器 / 节点池 schema 边界的单元测试
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

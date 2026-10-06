@@ -46,4 +46,3 @@ router.ts: hash 路由原语，parseHash / href / navigate（push 或 replace）
 *.test.ts: api / token / sse / query / router / format / download 的单元测试，node 环境下伪造 fetch、流、location 与计时器，不引入 DOM 测试库；覆盖幂等键跨重试复用、reauth 后重放、SSE 断线重连、前缀下相对路径解析
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

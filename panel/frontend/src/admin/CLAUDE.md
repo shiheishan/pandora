@@ -41,4 +41,3 @@ admin.test.ts: 路由规范化与 rest 子路由、读权限表、⌘K 筛选与
   - 界面交互在浏览器里对 dev/mock-api 验收
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
