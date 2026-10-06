@@ -698,6 +698,7 @@
 后端 `tickets.status` 有 6 个值（`migrations/00008_ops_marketing.sql:280`）：`open`、`pending_user`、`pending_agent`、`escalated`、`resolved`、`closed`。
 
 客服能直接设置的只有 `resolved`、`closed`、`escalated`、`pending_agent`（`panel/internal/domain/support/service.go:1002 agentSettableStatus`）。
+
 | 后端 | 设计标签 / 色 | 能否在「状态」下拉里设置 |
 |---|---|---|
 | open | 待处理 open | 否（新建时的初始状态），下拉项置灰 |
@@ -914,6 +915,7 @@
 
 **用户状态映射**
 后端 `users.status` 有 6 个值（`migrations/00002_identity.sql:23`）：`pending`、`active`、`suspended`、`banned`、`deletion_scheduled`、`anonymized`。设计稿的「已过期」不是账号状态，而是订阅状态，按下面的订阅态口径处理。
+
 | 后端 | 设计标签 |
 |---|---|
 | active | 正常 |
