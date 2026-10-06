@@ -154,11 +154,11 @@ func (a *juicityAdapter) acceptLoop() {
 		}
 		conn, err := listener.Accept(ctx)
 		if err != nil {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
+			// 出错即退出是对的，不要改成退避重试：quic-go 的 Accept 只在 ctx
+			// 结束或监听器关闭（Close 或底层 UDP socket 坏掉，closeErr 不会再
+			// 变）时报错，之后每次调用都立刻返回同一个错误，重试只会空转。
+			// 瞬时的 UDP 读错误由 quic-go 的 Transport 自己吞掉重读，到不了
+			// 这里；TCP 类入站的退避在 accept_loop.go。
 			return
 		}
 		a.mu.Lock()

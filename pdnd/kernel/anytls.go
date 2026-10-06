@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 internal/nativewire/anytls 的服务端会话，依赖 uot_bridge.go 的 UoT 桥，依赖 core 的用户与 route 的路由
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 inbound_tls.go 的 withHandshakeDeadline（TLS 握手限时），依赖 connerror.go 的 connErrorReporter，依赖 internal/nativewire/anytls 的服务端会话，依赖 uot_bridge.go 的 UoT 桥，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 anyTLSAdapter（经 newAnyTLSAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close，以及 sing 的 NewConnectionEx 回调
 // [POS]: kernel 的 AnyTLS 入站：可选 TLS 外层、AnyTLS 会话与口令认证、子流 TCP 转发与 UoT；TLS 握手、会话认证、子流的设备上限与拨号失败分别上报
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -307,29 +307,21 @@ func (a *anyTLSAdapter) OnlineIPs() map[int64][]string {
 
 func (a *anyTLSAdapter) acceptLoop() {
 	defer a.wg.Done()
-	for {
-		conn, err := a.listener.Accept()
-		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			ctx := a.ctx
-			a.mu.RUnlock()
-			if closed || ctx == nil || ctx.Err() != nil {
-				return
-			}
-			continue
-		}
+	a.mu.RLock()
+	ctx, listener := a.ctx, a.listener
+	a.mu.RUnlock()
+	runAcceptLoop(ctx.Done(), listener.Accept, func(conn net.Conn) {
 		a.mu.Lock()
 		if a.closed {
 			a.mu.Unlock()
 			_ = conn.Close()
-			continue
+			return
 		}
 		a.wg.Add(1)
 		a.active[conn] = struct{}{}
 		a.mu.Unlock()
 		go a.handleAccepted(conn)
-	}
+	})
 }
 
 func (a *anyTLSAdapter) handleAccepted(conn net.Conn) {
@@ -342,7 +334,11 @@ func (a *anyTLSAdapter) handleAccepted(conn net.Conn) {
 	if tlsConfig != nil {
 		wrapped, err := tlsConfig.Server(conn)
 		if err == nil {
-			err = wrapped.HandshakeContext(ctx)
+			// 握手限时，与 vless / vmess / trojan 的 serverTLSHandshake 同一口径。
+			// 握手之后的口令认证仍由 sing-anytls 自己读、不限时：它把会话循环
+			// 跑在同一次 NewConnection 里，这里没有清截止时间的落点，而客户端
+			// 预建的空闲会话本来就会长时间不发数据。
+			err = withHandshakeDeadline(conn, inboundHandshakeTimeout, func() error { return wrapped.HandshakeContext(ctx) })
 		}
 		if err != nil {
 			a.connErr.conn(StageTLSHandshake, conn, err)

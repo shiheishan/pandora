@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 shadowsocks2022_stream.go 的密钥派生与 AEAD 流，依赖 core 的用户与 route 的路由
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 shadowsocks2022_stream.go 的密钥派生与 AEAD 流，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 ss2022Adapter（经 newSS2022Adapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 parseSS2022Spec、handleConn（统一上报会话失败）/ serveConn
 // [POS]: kernel 的 Shadowsocks 2022 入站主体：方法解析、TCP 请求处理（多用户身份头逐层校验）与用户表；UDP 在 shadowsocks2022_udp.go，密钥与 TCP 流在 shadowsocks2022_stream.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -196,29 +196,25 @@ func (a *ss2022Adapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 
 func (a *ss2022Adapter) acceptLoop() {
 	defer a.wg.Done()
-	for {
-		conn, err := a.listener.Accept()
-		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
-				return
-			}
-			continue
-		}
+	runAcceptLoop(a.ctx.Done(), a.listener.Accept, func(conn net.Conn) {
 		a.mu.Lock()
+		if a.closed {
+			a.mu.Unlock()
+			_ = conn.Close()
+			return
+		}
 		a.active[conn] = struct{}{}
-		a.mu.Unlock()
 		a.wg.Add(1)
+		ctx := a.ctx
+		a.mu.Unlock()
 		go func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
-			if err := a.handleConn(a.ctx, conn); err != nil {
+			if err := a.handleConn(ctx, conn); err != nil {
 				a.recordError(err)
 			}
 		}()
-	}
+	})
 }
 
 // handleConn 是 TCP 会话入口，会话层失败在这里上报。协议名与注册表一致：

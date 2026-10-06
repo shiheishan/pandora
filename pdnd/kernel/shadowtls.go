@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 internal/nativewire/shadowtls 的 v3 服务端，依赖 shadowsocks.go 的 shadowsocksAdapter 作内层解码
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 internal/nativewire/shadowtls 的 v3 服务端，依赖 shadowsocks.go 的 shadowsocksAdapter 作内层解码
 // [OUTPUT]: 对外提供 shadowTLSAdapter（经 newShadowTLSAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close
 // [POS]: kernel 的 ShadowTLS 组合入站：外层 v3 伪装握手经 DataPlane 连诱饵服务器，认证后的内层流交给内嵌的 Shadowsocks 解码；外层握手失败按 tls-handshake 上报，内层会话失败也记在本入站名下
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -125,22 +125,12 @@ func (a *shadowTLSAdapter) Start(parent context.Context, spec InboundSpec, hooks
 
 func (a *shadowTLSAdapter) acceptLoop() {
 	defer a.wg.Done()
-	for {
-		conn, err := a.listener.Accept()
-		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
-				return
-			}
-			continue
-		}
+	runAcceptLoop(a.ctx.Done(), a.listener.Accept, func(conn net.Conn) {
 		a.mu.Lock()
 		if a.closed {
 			a.mu.Unlock()
 			_ = conn.Close()
-			continue
+			return
 		}
 		a.active[conn] = struct{}{}
 		a.wg.Add(1)
@@ -157,7 +147,7 @@ func (a *shadowTLSAdapter) acceptLoop() {
 			}
 			_ = conn.Close()
 		}()
-	}
+	})
 }
 
 type shadowTLSHandler struct{ adapter *shadowTLSAdapter }
