@@ -40,7 +40,10 @@ type Options struct {
 	Progress     time.Duration
 	Seed         uint64
 	// 以下四个是 pdnd 写死的值，暴露出来只为测试缩短节拍。
-	PullInterval   time.Duration
+	PullInterval time.Duration
+	// SteadyStart / SteadyDur 指定稳态窗口（unix 秒、时长），报告另出窗口内分位数
+	SteadyStart    int64
+	SteadyDur      time.Duration
 	PushInterval   time.Duration
 	StatusInterval time.Duration
 	HealthWindow   time.Duration
@@ -77,6 +80,8 @@ func Main(args []string) error {
 	fs.Float64Var(&opt.OnlineRatio, "online-ratio", opt.OnlineRatio, "全体用户中同时在线的比例，每个在线用户落在一个模拟节点上")
 	fs.Float64Var(&opt.TrafficMiB, "traffic-mib", opt.TrafficMiB, "每个在线用户每个上报周期的下行均值（MiB），上行取八分之一")
 	fs.DurationVar(&opt.Progress, "progress", opt.Progress, "进度行间隔")
+	fs.Int64Var(&opt.SteadyStart, "steady-start", 0, "稳态窗口起点（unix 秒）；与 -steady-dur 一起给出时，报告每个端点另出窗口内的分位数")
+	fs.DurationVar(&opt.SteadyDur, "steady-dur", 0, "稳态窗口长度")
 	fs.Uint64Var(&opt.Seed, "seed", 0, "随机种子，0 取当前时间")
 	fs.DurationVar(&opt.PullInterval, "pull-default", opt.PullInterval, "拿到 base_config 前的拉取间隔（pdnd 写死，只为测试改）")
 	fs.DurationVar(&opt.PushInterval, "push-default", opt.PushInterval, "拿到 base_config 前的上报间隔（pdnd 写死，只为测试改）")
@@ -104,6 +109,9 @@ func Main(args []string) error {
 		defer cancel()
 	}
 	rec := ltkit.NewRecorder("nodes", 10*time.Second)
+	if opt.SteadyStart > 0 && opt.SteadyDur > 0 {
+		rec.SetSteady(time.Unix(opt.SteadyStart, 0), opt.SteadyDur)
+	}
 	summary, err := Run(ctx, m, opt, rec)
 	if err != nil {
 		return err

@@ -227,17 +227,18 @@ export LOADTEST_ADMIN_PASSWORD='<管理员口令>'   # 只在这个 shell 里
 
 ```bash
 R=~/lt-results/5k-r1; M=~/lt-results/5k-seed/lt-manifest.json; mkdir -p $R
+T=<T 的 unix 秒>   # 两台机器约定的稳态起点；-steady-* 让报告另出 [T, T+30m) 内的分位数
 export LOADTEST_ADMIN_EMAIL=<ADMIN_EMAIL> LOADTEST_ADMIN_PASSWORD='<管理员口令>'
 
 # 198 个模拟节点：签名通道 + UniProxy + 每节点一条 SSE；-strict 让签名失败与 5xx 反映在退出码上
 ~/loadtest nodes -manifest $M -node-url https://<PANEL_DOMAIN> -stagger 60s -duration 37m \
-  -out $R -strict > $R/nodes.log 2>&1 &
+  -steady-start $T -steady-dur 30m -out $R -strict > $R/nodes.log 2>&1 &
 
 # 用户混合流量（T 时启动）。订阅每人每 30 分钟一次：-sub-interval 按 manifest 人数自动折成各档的总速率
 ~/loadtest users -manifest $M -public-url https://<PANEL_DOMAIN> \
   -admin-url https://<PANEL_DOMAIN>/<ADMIN_PATH> \
   -duration 30m -sub-interval 30m -portal-rate 5 -admin-rate 0.5 -login-rate 0.05 \
-  -portal-users 200 -out $R -strict > $R/users.log 2>&1 &
+  -portal-users 200 -steady-start $T -steady-dur 30m -out $R -strict > $R/users.log 2>&1 &
 
 # T+20m：改一个用户（设备数覆盖 + 换用户组），触发 200 个节点经事件流重拉
 ~/loadtest burst -manifest $M -admin-url https://<PANEL_DOMAIN>/<ADMIN_PATH> -count 1 -out $R
@@ -314,7 +315,7 @@ JSON 里每个端点都有 count、QPS、p50/p95/p99/max（毫秒）、错误码
 
 | 及格线 | 数据来源 | 怎么判 |
 |---|---|---|
-| 节点接口 p99 < 300ms | `nodes.json` 里每个 `node:` 端点的 `p99_ms` | 每个端点都要过，不只看合计 |
+| 节点接口 p99 < 300ms | `nodes.json` 里每个 `node:` 端点 `steady.p99_ms`（稳态窗口内；顶层 `p99_ms` 含起跑与收尾齐射，只作参考） | 每个端点都要过，不只看合计 |
 | 15k 档 CPU 平均 < 50% | `procs.csv` 的 `_system` 行：`cpu_pct` 平均 ÷（核数 × 100） | 只算 T 到 T+30m 的稳态 |
 | 整机内存留 25% 余量，24 小时内不持续上涨 | `procs.csv` 的 `_system` 行：`rss_kb` = MemTotal − MemAvailable，`pswpin` / `pswpout`（累计换入换出页数）；24h 档各进程 `pss_kb` 的趋势；pprof heap 对比 | 峰值 ≤ 75% MemTotal；稳态内 Δpswpin 或 Δpswpout 持续增长（不是个位数的偶发）即不及格，与 MemTotal − MemAvailable 一起列；24 小时的线性趋势不显著为正 |
 | 零 5xx | nodes / users / burst 三份 JSON 的 `server_5xx`；nginx access log 里 status ≥ 500 的行数 | 都必须是 0；`transport:*`（连接错误、超时）单列说明 |
