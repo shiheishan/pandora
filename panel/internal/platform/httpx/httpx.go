@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 encoding/json 的编码、log/slog 的结构化日志、net/http 的响应写出
-// [OUTPUT]: 对外提供封闭错误码 Code 与状态映射、Error 及其构造器（New/Invalid/NotFoundOrForbidden/Internal）、JSON/OK/Created/NoContent/Fail 响应出口、PrepareJSON/WritePrepared 幂等重放、DecodeJSON 严格解码
+// [OUTPUT]: 对外提供封闭错误码 Code 与状态映射（含节点专用的 426 upgrade_required）、Error 及其构造器（New/Invalid/NotFoundOrForbidden/Internal）、JSON/OK/Created/NoContent/Fail 响应出口、PrepareJSON/WritePrepared 幂等重放、DecodeJSON 严格解码
 // [POS]: platform 的唯一 HTTP 响应与错误模型，api 与 middleware 的所有错误都经 Fail 落成 {"error":{…}} 信封；context.go 是同包的请求上下文存取
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -39,6 +39,11 @@ const (
 	// CodeReauthRequired 与 forbidden 同为 403，但单独成码：前端据它弹「重新验证身份」
 	// 并用原 Idempotency-Key 重放请求；与其它 403 混用时前端无从区分（SEC-009）。
 	CodeReauthRequired Code = "reauth_required"
+
+	// CodeUpgradeRequired 是 426：调用方用的协议已下线，必须换到文案里指明的新接口。
+	// 目前只有节点网关的旧 bootstrap 用它，调用方是节点不是页面，
+	// 所以前端 core/api.ts 的 SERVER_ERROR_CODES 不登记它。
+	CodeUpgradeRequired Code = "upgrade_required"
 )
 
 var statusByCode = map[Code]int{
@@ -53,6 +58,7 @@ var statusByCode = map[Code]int{
 	CodeUnavailable:      http.StatusServiceUnavailable,
 	CodeInternal:         http.StatusInternalServerError,
 	CodeReauthRequired:   http.StatusForbidden,
+	CodeUpgradeRequired:  http.StatusUpgradeRequired,
 }
 
 // Error 同时承载对外与对内两份信息。

@@ -14,13 +14,17 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type trafficPacksResponse struct {
+	Packs []billing.TrafficPack `json:"packs"`
+}
+
 func (h *handlers) listTrafficPacks(w http.ResponseWriter, r *http.Request) {
 	packs, err := h.d.Billing.ListTrafficPacks(r.Context(), httpx.TenantIDFrom(r.Context()))
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"packs": packs})
+	httpx.OK(w, trafficPacksResponse{Packs: packs})
 }
 
 type trafficPackOrderReq struct {
@@ -30,9 +34,8 @@ type trafficPackOrderReq struct {
 }
 
 func (h *handlers) createTrafficPackOrder(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	claim, ok := middleware.IdempotencyClaimFrom(r.Context())
@@ -63,9 +66,8 @@ func (h *handlers) createTrafficPackOrder(w http.ResponseWriter, r *http.Request
 }
 
 func (h *handlers) myTrafficPacks(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	out, err := h.d.Billing.MyTrafficPacks(r.Context(), p.TenantID, p.UserID)

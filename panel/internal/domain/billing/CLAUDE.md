@@ -20,12 +20,14 @@ traffic_pack.go: 流量包（D-E-1）目录、下单（kind=addon）、履约成
 traffic_reset.go: 流量重置日志与后台手动重置；只清套餐已用量，不碰流量包
 topup.go: 自助充值单（kind=topup，结算即履约）与管理员调账
 payments.go: 发起支付取收银台、渠道回调翻译成平台事件，确认到账后交回 HandlePaymentWebhook；NewPaymentService 注入进程共用的结算 Service（补记履约才接得上节点通知）
+payment_methods.go: 门户可用支付方式读模型 PaymentMethods（从 api/public/payment_methods.go 下沉）：启用且接受新支付的渠道按 config.methods（缺省 default_method，都没有时渠道本身一行、method 为空串）展开；中文名与空币种补 [] 在处理器
 payment_query.go: 向渠道主动查单 QueryOrderPayment（PAY-009，后台与门户共用）：按订单发起过支付的渠道逐个查，查到已付以 PaymentRef + ":RECONCILED" 为事件号交回 HandlePaymentWebhook——去重靠结算主链按渠道流水号认出已记过的那笔，回调先到后到都只入账一次；取消 / 过期单查到的钱照回调进挂账，金额币种不符整笔 409；渠道停用 / 不支持 / 查询失败都翻成中文错误、订单不动；从未发起支付回 409
 payment_query_audit.go: 后台查单入口 AdminQueryOrderPayment：照常查单后另开事务写一条 order.payment_queried 审计（操作人、订单、渠道、result = reconciled / already_recorded / paid / unpaid / not_found / failed，失败带错误码），订单不存在不记；审计写不进去回 500，不假装成功；门户查单不经过这里
 payment_query_patrol.go: 定时巡检 ReconcileDuePayments：逐个认领到期的在途支付意图（短事务 + FOR UPDATE SKIP LOCKED + 把 next_query_at 推到未来，多实例不会并发查同一单，查单不占行锁），DefaultPaymentQueryPatrol 为 5 分钟首查、指数退避、最多 6 次、订单过期前 90 秒最后一查、一轮 20 单间隔 500ms；渠道不支持查单即把次数拉满不再查（列见迁移 00097）
 unexpected_payment.go: 已释放或已付清订单又来的钱、续费 / 变更单结算时订阅已不收的钱，按 case_kind（released_order / excess_capture / ineligible_subscription）隔离进挂账（late_payment_suspense）
 late_payment.go: 挂账的查看与转入余额，供后台消费
 manual_order.go: 管理员人工单与 mark-paid，复用下单与回调主链路；mark-paid 的钱进了挂账时入账与审计照写、回 409 说明去向，同一凭证重复标记回 409；人工单结算方式 grant（赠送当场履约，缺省）/ pending（建待支付单交给用户付，仍记开单人）/ offline（带凭证号，建单事务里按 offline 渠道结清，收入与佣金同 mark-paid，offlinePaymentInput 是两条路共用的回调形状），balance 暂不接受（D-C-3）
+portal_catalog.go: 门户套餐目录读模型 PortalCatalog（从 api/public/plans.go 下沉）：可见性（public / 登录后 authenticated / 组内 group）、已发布当前版本、有 CNY / USD 适用价格（含组价）才列，逐套餐带当前版本额度与适用价格；下单路径独立复查，这里不是唯一防线
 my_orders.go: 门户订单读模型：myOrderSelectSQL 是列表与详情共用的行形状（首项周期与商品名快照、has_payment_intent 有无任何支付意图），列表带筛选段计数 counts，详情带优惠码、订阅到期与支付渠道名；ParseOrderStatuses 是门户与后台订单列表共用的状态白名单（逗号多值、精确匹配、未知回 400）
 coupon.go: 优惠券校验 applyCoupon、核销 redeemCoupon 与试算（套餐 PreviewForPrice、流量包 PreviewForTrafficPack 共用 previewCoupon 外壳，响应带券面）
 commission.go: 分销佣金计提、解冻、提现申请与打款记账；计佣范围 commission.scope（first_order 只给被推荐人第一笔计佣订单返佣，缺省 every_order），ValidCommissionScope 供后台校验；CommissionDefault* 是分销参数缺行时的唯一回退值（= 00028 / 00029 生效的种子：费率 0、冻结 3 天、最低提现 10000），计提与后台分销页共用

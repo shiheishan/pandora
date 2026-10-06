@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/pg18test 打开 public_api 域的一次性库，依赖 notifications.go 的 setNotificationPreference，依赖迁移 00076 的触发器状态
+// [INPUT]: 依赖 platform/pg18test 打开 public_api 域的一次性库，依赖 notifications.go 的 setNotificationPreference 与 domain/notify 的 New，依赖迁移 00076 的触发器状态
 // [OUTPUT]: 对外提供 TestNotificationPreferencePG18、TestQuotaBalancesNotBroadcastPG18
 // [POS]: api/public 的 PG18 测试：门户通知偏好可以反复保存（缺陷 7），流量余额的写入不再向全租户广播（缺陷 15）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/domain/notify"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 	"github.com/aegispanel/aegis/internal/platform/pg18test"
 )
@@ -38,7 +39,8 @@ func TestNotificationPreferencePG18(t *testing.T) {
 		}
 	}
 
-	h := &handlers{d: Deps{Pool: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := &handlers{d: Deps{Pool: app, Log: log, Notify: notify.New(app, log, []byte("notify-pref-salt"))}}
 	put := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPut, "/v1/me/notification-preferences", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")

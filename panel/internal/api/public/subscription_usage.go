@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -33,9 +34,8 @@ func parseUsageDays(raw string) (int, error) {
 
 // meSubscriptionUsage 返回本人一条订阅的按日计费流量。
 func (h *handlers) meSubscriptionUsage(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	days, err := parseUsageDays(r.URL.Query().Get("days"))
@@ -56,17 +56,25 @@ func (h *handlers) meSubscriptionUsage(w http.ResponseWriter, r *http.Request) {
 		Date  string `json:"date"`
 		Bytes int64  `json:"bytes"`
 	}
+	type usageResponse struct {
+		Timezone      string     `json:"timezone"`
+		PeriodStart   time.Time  `json:"period_start"`
+		PeriodEnd     *time.Time `json:"period_end"`
+		Days          []dayView  `json:"days"`
+		TodayBytes    int64      `json:"today_bytes"`
+		AvgDailyBytes int64      `json:"avg_daily_bytes"`
+	}
 	out := make([]dayView, 0, len(usage.Days))
 	for _, d := range usage.Days {
 		out = append(out, dayView{Date: d.Date, Bytes: d.Bytes})
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	httpx.OK(w, map[string]any{
-		"timezone":        usage.Timezone,
-		"period_start":    usage.PeriodStart,
-		"period_end":      usage.PeriodEnd,
-		"days":            out,
-		"today_bytes":     usage.TodayBytes,
-		"avg_daily_bytes": usage.AvgDailyBytes,
+	httpx.OK(w, usageResponse{
+		Timezone:      usage.Timezone,
+		PeriodStart:   usage.PeriodStart,
+		PeriodEnd:     usage.PeriodEnd,
+		Days:          out,
+		TodayBytes:    usage.TodayBytes,
+		AvgDailyBytes: usage.AvgDailyBytes,
 	})
 }
