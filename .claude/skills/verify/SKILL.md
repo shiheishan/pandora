@@ -1,35 +1,52 @@
 ---
 name: verify
-description: pandora 改完代码后怎么验证、推送前跑什么、推送后怎么等 CI 结论，以及每个 CI job 各管什么。改了 Go、前端、迁移、部署脚本或 workflow，要跑测试、准备提交或推送、CI 变红要找原因时使用。
+description: pandora 改完代码后本地跑什么、推送后必须等哪个 CI 结论才算完成，以及每个 CI job 各管什么。改了 Go、前端、迁移、部署脚本或 workflow，要验证、准备推送、等 CI 或查 CI 为什么变红时使用。
 ---
 
 # 验证 pandora 的改动
 
-## 按改动选检查
+原则：本地轻、远端重。
 
-| 改了什么 | 本机至少跑 |
+- 本地只跑秒级到几分钟、不起 Docker、不做完整构建的检查。
+- 全量测试、race、集成门禁交给检查机和 GitHub。
+- **推送后检查机全量通过，才算完成。**
+
+## 本地层：改了什么 → 本地跑什么
+
+| 改了什么 | 本地跑 |
 |---|---|
-| panel 的 Go 代码 | 在 `panel/`：`go vet ./...`、`go test ./...`（`make test` 带 `-race`） |
-| pdnd 的 Go 代码 | 在 `pdnd/`：`go vet ./...`、`go test ./...` |
-| 面板前端 | 在 `panel/frontend/`：`npm ci` 后 `npm run check`（lint、typecheck、vitest、admin 与 portal 两次构建）；动了接口形状或嵌入，再在 `panel/` 跑 `make frontend-embed` 和 `go test ./web/... ./internal/platform/webapp/... ./internal/api/...` |
-| 迁移或 SQL | `make check-migrations`（临时库演练）；PG18 用例要 Docker，跑 `panel/deploy/run-pg18-gates.sh` |
-| 部署脚本 | `panel/deploy/` 下对应的 `*_mock_test.sh` / `*_static_test.sh` / `*_test.sh` |
-| pdnd 协议或发布 | `python3 pdnd/release/check_native_panel_parity.py`；发布链看 `pdnd/release/build.sh` 与 `runtime-acceptance.sh` |
+| panel 的 Go 代码 | 在 `panel/` 对改到的文件跑 `gofmt -l`；对改到的包跑 `go vet` 和 `go test`，例如 `go test ./internal/domain/billing/...` |
+| 动了 SQL 字符串、表名、路由、权限码 | 除改到的包外，加跑整包扫描的源码契约：`go test ./internal/platform/db/ ./internal/api/...`。注释里写到表名也会触发 schema 契约测试 |
+| pdnd 的 Go 代码 | 在 `pdnd/` 对改到的文件跑 `gofmt -l`，对改到的包跑 `go vet` 和 `go test` |
+| pdnd 的协议、能力矩阵，或面板的协议 schema | `python3 pdnd/release/check_native_panel_parity.py` |
+| 面板前端 | 在 `panel/frontend/` 跑 `npm run lint`、`npm run typecheck`、`npm run test`（依赖变了先 `npm ci`），不构建 |
+| 部署脚本 | 在 `panel/deploy/` 跑对应的 `*_mock_test.sh` / `*_static_test.sh` / `*_test.sh` |
+| 迁移文件 | `bash panel/deploy/check-migrations_mock_test.sh`（编号与 Up 标记），外加改到的 Go 包 |
+
+本地跑不了的：
+- `release-stop-the-world_mock_test.sh` 要 root。
+- `release-stop-the-world_test.ps1` 要 PowerShell。
+- `build-release.sh` 要 GNU tar。
+
+## 远端层：改了什么 → 推送后必须等哪个结论
+
+两个等待脚本在维护者本机主目录的 `ops-local/memoh-ci/`（不入库，worktree 里没有）。推送后用它们等，不要手写轮询循环。
+
+- `wait-status.sh <提交>`：等检查机回放。退出 0 通过，1 失败，2 检查机没接单或超时（改看 GitHub）。手动重跑同一提交时设 `MEMOH_FRESH=1`。
+- `wait-github.sh <提交>`：等 GitHub Actions 全部结束，并从日志核对 PG18 没有 SKIP。退出 0 才算过。
+
+| 改了什么 | 推送后必须等到 |
+|---|---|
+| 任何改动 | `wait-status.sh` 通过。检查机跑 panel 与 pdnd 全量测试、race、vet，以及除 ARM64 外的 pandora-native job、panel-unit、deploy 桩测试 |
+| panel/internal 数据层、SQL、迁移 | 再等 `wait-github.sh`：PG18 集成门禁和 check-migrations 临时库演练只在 GitHub 跑 |
+| 前端 `src/`、`panel/tests` | 再等 `wait-github.sh`：冒烟栈、e2e 脚本、压测工具试跑、前端双入口构建与嵌入契约 |
+| pdnd 内核或协议 | 再等 `wait-github.sh`：ARM64 race、interop、runtime-acceptance |
+| 合进 main | 一律等 `wait-github.sh` |
 
 ## 坑
 
-- `go build` / `go test` 别和 `npm ci` 同时跑：`node_modules` 里带 Go 包，并发时 Go 会假失败。
-- 推送前对最后一个提交跑全量，不要只跑改到的包：注释里写到表名也会触发 schema 契约测试，SQL 字符串、路由表、权限字典都有整包扫描的源码契约。
-- PG18 用例在没有 Docker 的地方会跳过，跳过不等于通过；只有 GitHub 的 panel-pg18 job 真跑。
-
-## 推送后等结论
-
-维护者本机主目录的 `ops-local/memoh-ci/`（不入库，worktree 里没有）提供两个等待脚本，推送后用它们，不要手写轮询循环：
-
-- `wait-status.sh <提交>`：等检查机回放 CI，比 GitHub 早几分钟出结论。退出 0 通过，1 失败，2 检查机没接单或超时（改看 GitHub）。手动重跑同一提交时设 `MEMOH_FRESH=1`。
-- `wait-github.sh <提交>`：等 GitHub Actions 全部结束，并从日志核对 PG18 没有 SKIP。合进 main，或改动涉及迁移、SQL、panel/internal 数据层时，必须等它退出 0。
-
-检查机跑不了 ARM64、PG18 和 smoke，这三项只以 GitHub 为准。
+- `go build` / `go test` 不要和 `npm ci` 同时跑：`node_modules` 里带 Go 包，并发时 Go 会假失败。
+- PG18 用例在没有 Docker 的地方会跳过，跳过不等于通过。只有 GitHub 的 panel-pg18 job 真跑，`wait-github.sh` 会把 SKIP 判为失败。
 
 ## CI 各 job 管什么
 
