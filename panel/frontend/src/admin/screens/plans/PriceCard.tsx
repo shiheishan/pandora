@@ -1,7 +1,7 @@
 /**
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/format 的 formatDateTime / formatMoney，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / ConfirmModal / Input / Select / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ../users/api 的 useUserGroups，依赖 ./api 的 priceCreatedSchema / rowVersionSchema / useInvalidatePlans / PlanDetail / PriceRow，依赖 ./model 的 PERIOD_OPTIONS / CUSTOM_UNITS / periodLabel / emptyPriceForm / priceProblems / priceBody / PriceForm，依赖 ./failure 的 useCatalogFailure，依赖 ./Plans.module.css
  * [OUTPUT]: 对外提供 PriceCard
- * [POS]: 套餐详情的「价格」卡（后台-04）：在售价在前、已归档淡显在后，行上注明试用、用户组专属与时间窗；归档（ConfirmModal，不可逆）与底部「币种 + 金额 + 周期 + 新增价格」，周期多一个「自定义」，「高级」折叠里是试用天数、用户组专属价与生效时间窗（契约「后端有、设计缺」表）。写接口 catalog.publish + reauth + 幂等，503 走销售开关提示
+ * [POS]: 套餐详情的「价格」卡（后台-04）：在售价在前、已归档淡显在后，行上注明试用、用户组专属与时间窗；归档（ConfirmModal，不可逆）与底部「币种 + 金额 + 周期 + 新增价格」，周期多一个「自定义」，「高级」折叠里是试用天数、用户组专属价与生效时间窗（契约「后端有、设计缺」表）。写接口 catalog.publish + reauth + 幂等
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'

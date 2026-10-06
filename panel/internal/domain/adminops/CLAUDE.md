@@ -6,7 +6,7 @@
   - 同一种行（订单行、用户行）只有一份查询形状，列表与详情复用它，避免「一处补了字段、另一处漏了」。
 
 成员清单
-service.go: Service 与构造（SalesCapability 销售闸门注入）
+service.go: Service 与构造 NewService(pool)
   - 概览（含昨日收入、近 7 天新订阅、节点在线数）、改用户状态（revokeUserLogins 吊销会话与 refresh，与批量停用共用）、套餐列表（active_subscriptions 按 subscription.LiveStatusesSQL 在用计，R118）
 orders.go: 订单列表（从 service.go 拆出）：orderRowSelectSQL / scanOrderRow 是 OrderRow 的唯一形状，带余额抵扣、收款渠道（入账优先、其次最近一次支付尝试）与人工单标识 manual
   - 状态多值走 billing.ParseOrderStatuses 白名单，可按 user_id 精确筛
@@ -30,11 +30,10 @@ risk.go: 风控共享 IP 聚类：
 catalog.go: 套餐目录读写：套餐资料带卖点 highlights 与推荐 recommended（R100，新建可选、改资料整体覆盖）、归档套餐，以及目录共用的输入输出类型与助手
   - 每个用例拆成「事务外校验（prepare*Input / validate*）+ *Tx 事务体」，事务体只假定输入已校验、在调用方事务里执行，所以向导能把多步编排进一个事务
   - 版本行带建版本人邮箱
-catalog_version.go: 版本生命周期（从 catalog.go 拆出）：建草稿、改版本语义（限速与超额策略解耦，新写入的策略只收 suspend，R99；旧 pool_ids 一律拒绝）、发布（套餐与版本双令牌、价格覆盖可见用户组、有池且有可服务节点、过 P0B 销售闸门）
-catalog_price.go: 价格（从 catalog.go 拆出）：只有新建与归档，新建过 P0B 销售闸门，归档带乐观锁；createPlanPriceTx 供向导编排
+catalog_version.go: 版本生命周期（从 catalog.go 拆出）：建草稿、改版本语义（限速与超额策略解耦，新写入的策略只收 suspend，R99；旧 pool_ids 一律拒绝）、发布（套餐与版本双令牌、价格覆盖可见用户组、有池且有可服务节点）
+catalog_price.go: 价格（从 catalog.go 拆出）：只有新建与归档，归档带乐观锁；createPlanPriceTx 供向导编排
 traffic_packs.go: 流量包目录管理（后台-04 流量包 tab）：列表（带已售单数）、新建、修改、上下架
   - 表没有 row_version，乐观锁用触发器维护的 updated_at
-  - 新建、修改、上架过 P0B 销售闸门，下架不过
   - 每个写操作同事务记 traffic_pack.* 审计
 plan_highlights.go: 卖点规则（R100）唯一出处：去首尾空白、最多 5 条、每条 1–40 字、不空不重，字段键 highlights / highlights.{i}，与资料校验错误合并成一次 422；新建、改资料与两个向导共用，数据库 00088 只兜条数与 NULL
 plan_wizard.go / plan_wizard_update.go: 一次建成 / 一次改完一个可售套餐，都是单事务（缺陷 12 及其同类）：任一步失败库里不留半成品，新建成功返回建成后的详情
@@ -58,7 +57,8 @@ user_groups.go: 用户分组存取（从 api/admin/usergroup.go 下沉）：列�
 bulk_users.go / bulk_mail.go: 用户批量筛选、导出、生成与群发
   - 筛选含当前订阅的套餐、到期天数与订阅状态，has_active_sub 即存在在用订阅（与 sub_state=active 同义），导出的订阅数列按在用计（R118），预览带 sample_rows，群发正文 $email / $plan / $expire 逐人替换
 *_test.go: 单元与契约测试
-  - catalog_sales_pg18_test.go、plan_wizard_pg18_test.go、plan_wizard_update_pg18_test.go、finance_reads_pg18_test.go、users_pg18_test.go、users_filters_pg18_test.go、users_current_sub_pg18_test.go（订阅态口径 R118：宽限期、欠费、只有过期、两条在用、别的租户，及套餐列表的在用订阅数）、traffic_packs_pg18_test.go、plan_wizard_r92_pg18_test.go（向导继承与三态、限速解耦）与 plan_highlights_pg18_test.go（卖点与推荐）为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域，共用 openCatalogSalesPG18 夹具）
+  - catalog_test.go 的 expectHTTPCode 是包内测试共用的错误码断言
+  - catalog_sales_pg18_test.go（夹具 openCatalogSalesPG18 与过期 row_version 改资料回 409 不留痕）、plan_wizard_pg18_test.go、plan_wizard_update_pg18_test.go、finance_reads_pg18_test.go、users_pg18_test.go、users_filters_pg18_test.go、users_current_sub_pg18_test.go（订阅态口径 R118：宽限期、欠费、只有过期、两条在用、别的租户，及套餐列表的在用订阅数）、traffic_packs_pg18_test.go、plan_wizard_r92_pg18_test.go（向导继承与三态、限速解耦）与 plan_highlights_pg18_test.go（卖点与推荐）为 PG18 集成测试（run-pg18-gates.sh 的 catalog_sales 域，共用 openCatalogSalesPG18 夹具）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

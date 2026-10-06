@@ -455,9 +455,8 @@ func (s *Service) updatePlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID 
 	var next int64
 	var current int64
 	var status, productID string
-	var beforeNewPurchase, beforeRenewal, beforeUpgrade bool
 	var reserved int
-	if err := tx.QueryRow(ctx, `SELECT row_version,status,product_id,stock_reserved,allow_new_purchase,allow_renewal,allow_upgrade FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&current, &status, &productID, &reserved, &beforeNewPurchase, &beforeRenewal, &beforeUpgrade); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT row_version,status,product_id,stock_reserved FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&current, &status, &productID, &reserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, httpx.NotFoundOrForbidden()
 		}
@@ -465,11 +464,6 @@ func (s *Service) updatePlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID 
 	}
 	if status == "archived" {
 		return 0, httpx.New(httpx.CodeConflict, "已归档套餐不能恢复或编辑")
-	}
-	if requiresP0BSalesResume(status, beforeNewPurchase, beforeRenewal, beforeUpgrade, in) {
-		if err := s.requireP0BSales(); err != nil {
-			return 0, err
-		}
 	}
 	if current != in.ExpectedRowVersion {
 		return 0, rowConflict("套餐", current)
@@ -492,13 +486,6 @@ func (s *Service) updatePlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID 
 	}
 	next = current + 1
 	return next, audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "plan.update", ResourceType: "plan", ResourceID: &planID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), BeforeDigest: map[string]any{"row_version": current}, AfterDigest: map[string]any{"row_version": next, "code": in.Code}})
-}
-
-func requiresP0BSalesResume(status string, beforeNewPurchase, beforeRenewal, beforeUpgrade bool, in UpdatePlanInput) bool {
-	return status == "active" &&
-		((!beforeNewPurchase && in.AllowNewPurchase) ||
-			(!beforeRenewal && in.AllowRenewal) ||
-			(!beforeUpgrade && in.AllowUpgrade))
 }
 
 func (s *Service) ArchivePlan(ctx context.Context, tenantID, planID, actorID string, expected int64) (int64, error) {

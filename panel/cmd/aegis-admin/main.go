@@ -94,14 +94,7 @@ func run() error {
 		cfg.JWTSecrets[config.DomainAdmin], cfg.AccessTokenTTL)
 
 	identitySvc := identity.NewService(pool, issuer, cfg.RefreshTokenTTL, cfg.MasterKey, !cfg.IsProduction())
-	// 销售能力必须显式授权，默认关闭（详见 salescap.go）。
-	// 不注入的话定价与上架会一直 503 —— 这正是它上线以来的状态。
-	salesCap := salesCapability{allowed: cfg.SalesEnabled}
-	if !salesCap.AllowsP0BSales() {
-		log.Warn("销售能力未授权：定价与套餐上架将返回 503。" +
-			"如需启用，在 .env 里设置 AEGIS_SALES_ENABLED=1 后重启 aegis-admin")
-	}
-	opsSvc := adminops.NewService(pool, salesCap)
+	opsSvc := adminops.NewService(pool)
 	contentSvc := content.New(pool)
 	supportSvc := support.NewService(pool)
 	nodeSigner, err := crypto.NewSigner(cfg.ConfigSigningSeed)
