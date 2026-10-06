@@ -66,19 +66,24 @@ func (n namespace) PlanCode() string { return loadtestNodePrefix + n.base() }
 // 地址分配
 // ---------------------------------------------------------------------------
 
-// userNet 是 RFC 2544 的基准测试网段 198.18.0.0/15，共 131072 个地址。
-// 第 i 个用户拿网段起点之后第 i+1 个地址：跳过全零的网络地址，同一序号每次都同一个 IP，
-// 两档压测之间能对上号。
+// userNet 是 RFC 2544 的基准测试网段 198.18.0.0/15，共 512 个 /24。
+// 用户按序号轮流落进这 512 个 /24（第 i 个用户在第 i%512 个 /24 的 .(i/512+1)）：
+// 面板门户有按 /24 聚合的限流（middleware.ByIPPrefix，登录默认每 /24 十分钟 60 次），
+// 顺序分配会让 254 个模拟用户挤在同一个 /24 里撞上真实用户撞不上的网段限流，
+// 也会让风控的网段聚类失真。15k 用户时每个 /24 约 30 人。
+// 同一序号每次都同一个 IP，两档压测之间能对上号。
 var userNet = netip.MustParsePrefix("198.18.0.0/15")
 
-// maxUsers 是 userNet 能分配的用户数上限（去掉网络地址与广播地址）。
-const maxUsers = 1<<17 - 2
+const userNets = 512 // userNet 里 /24 的个数
+
+// maxUsers 是 userNet 能分配的用户数上限：每个 /24 用 .1–.254。
+const maxUsers = userNets * 254
 
 func userIP(i int) (string, error) {
 	if i < 0 || i >= maxUsers {
 		return "", fmt.Errorf("user index %d outside 0..%d", i, maxUsers-1)
 	}
-	return offsetAddr(userNet.Addr(), uint32(i+1)).String(), nil
+	return offsetAddr(userNet.Addr(), uint32(i%userNets)<<8|uint32(i/userNets+1)).String(), nil
 }
 
 // serverIP 给第 j 台服务器一个 TEST-NET-3（203.0.113.0/24）里的地址，循环使用 .1–.254。

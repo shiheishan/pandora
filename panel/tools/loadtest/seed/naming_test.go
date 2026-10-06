@@ -65,7 +65,7 @@ func TestLoadtestMarkersIdentifyEverySeededName(t *testing.T) {
 }
 
 func TestUserIPIsDeterministicInsideBenchmarkNet(t *testing.T) {
-	cases := map[int]string{0: "198.18.0.1", 254: "198.18.0.255", 255: "198.18.1.0", 14999: "198.18.58.152", maxUsers - 1: "198.19.255.254"}
+	cases := map[int]string{0: "198.18.0.1", 1: "198.18.1.1", 255: "198.18.255.1", 256: "198.19.0.1", 511: "198.19.255.1", 512: "198.18.0.2", 14999: "198.18.151.30", maxUsers - 1: "198.19.255.254"}
 	for i, want := range cases {
 		got, err := userIP(i)
 		if err != nil || got != want {
@@ -73,6 +73,17 @@ func TestUserIPIsDeterministicInsideBenchmarkNet(t *testing.T) {
 		}
 		if !userNet.Contains(netip.MustParseAddr(got)) {
 			t.Fatalf("userIP(%d) = %s escapes %s", i, got, userNet)
+		}
+	}
+	// 15k 档每个 /24 不超过 30 人
+	per := map[string]int{}
+	for i := 0; i < 15000; i++ {
+		ip, _ := userIP(i)
+		per[ip[:strings.LastIndex(ip, ".")]]++
+	}
+	for net, n := range per {
+		if n > 30 {
+			t.Fatalf("%s.0/24 holds %d users, want at most 30", net, n)
 		}
 	}
 	for _, bad := range []int{-1, maxUsers} {
