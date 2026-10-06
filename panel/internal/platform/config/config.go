@@ -1,6 +1,6 @@
 // [INPUT]: 依赖进程环境变量（本仓库唯一允许读环境变量的生产包，envaccess_test.go 守着）
 // [OUTPUT]: 对外提供 Config、Load、Domain 常量与 Config 的 IsProduction、CanonicalPublicOrigin
-// [POS]: platform/config 的主入口：三个网关与命令行工具共用的全套配置，缺一项拒绝启动；部署侧可缺省的项在 deployment.go
+// [POS]: platform/config 的主入口：三个网关与命令行工具共用的全套配置，缺一项拒绝启动；部署侧可缺省的项在 deployment.go，pprof 诊断端口在 pprof.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package config 从环境变量加载配置。
@@ -74,6 +74,10 @@ type Config struct {
 
 	ShutdownTimeout time.Duration
 
+	// PprofAddrs 是各网关 pprof 诊断端口的监听地址（见 pprof.go），键为网关所属的域；
+	// 未出现的网关不开 pprof。值已校验为回环 IP 字面量并规范化。
+	PprofAddrs map[Domain]string
+
 	// Deployment 是部署侧可缺省的项（备份目录、GeoIP、销售授权、NativeCore 发布绑定）。
 	Deployment
 }
@@ -130,6 +134,9 @@ func Load() (*Config, error) {
 		RateLimitAuthPerMinute:       rateLimitAuth,
 
 		Deployment: loadDeployment(),
+	}
+	if c.PprofAddrs, err = loadPprofAddrs([]string{c.PublicAddr, c.AdminAddr, c.ClientAddr, c.NodeAddr}); err != nil {
+		return nil, err
 	}
 	if c.IsProduction() {
 		if _, err := c.CanonicalPublicOrigin(); err != nil {
