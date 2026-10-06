@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 DeviceWindowMinutes、staleAliveRetentionMinutes 与迁移 00094，依赖 platform/sourcetest 取 api/admin 的 handlers.nodeList 与两个包的全部源码
+// [INPUT]: 依赖 DeviceWindowMinutes、staleAliveRetentionMinutes 与迁移 00094，依赖 platform/sourcetest 取本包的 Service.ListAdminNodes（后台节点列表，原在 api/admin 的 handlers.nodeList）与两个包的全部源码
 // [OUTPUT]: 对外提供 TestDeviceWindowHasOneSource
 // [POS]: nodefabric 设备识别窗口（R103）只有迁移一个出处，Go 可选值、清理截止与后台在线统计都跟它走
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -47,7 +47,7 @@ func TestDeviceWindowHasOneSource(t *testing.T) {
 	}
 
 	admin := sourcetest.Load(t, filepath.Join("..", "..", "api", "admin"))
-	if !strings.Contains(admin.Decl("handlers.nodeList"), "app.device_limit_window_minutes($1)") {
+	if !strings.Contains(sourcetest.Load(t, ".").Decl("Service.ListAdminNodes"), "app.device_limit_window_minutes($1)") {
 		t.Error("admin node list online stats must use the tenant device window")
 	}
 	for dir, pkg := range map[string]*sourcetest.Package{"nodefabric": sourcetest.Load(t, "."), "api/admin": admin} {

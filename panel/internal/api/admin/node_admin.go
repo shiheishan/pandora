@@ -108,7 +108,12 @@ func (h *handlers) reorderAdminNodes(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "updated": len(in.Items)})
+	httpx.OK(w, reorderAdminNodesResponse{OK: true, Updated: len(in.Items)})
+}
+
+type reorderAdminNodesResponse struct {
+	OK      bool `json:"ok"`
+	Updated int  `json:"updated"`
 }
 
 func (h *handlers) batchAdminNodeStatus(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +127,13 @@ func (h *handlers) batchAdminNodeStatus(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "updated": len(in.Items), "serving_status": in.ServingStatus})
+	httpx.OK(w, batchAdminNodeStatusResponse{OK: true, Updated: len(in.Items), ServingStatus: in.ServingStatus})
+}
+
+type batchAdminNodeStatusResponse struct {
+	OK            bool   `json:"ok"`
+	Updated       int    `json:"updated"`
+	ServingStatus string `json:"serving_status"`
 }
 
 // nodeIdentity 返回节点身份与令牌状态（后台节点抽屉「身份与令牌」）。

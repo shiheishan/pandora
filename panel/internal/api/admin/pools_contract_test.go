@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 validateSetPlanPoolsRequest、validateEditablePlanPoolVersion、platform/httpx 的错误码，依赖 platform/sourcetest 按名取节点池与套餐绑池处理器的源码
+// [INPUT]: 依赖 validateSetPlanPoolsRequest、domain/adminops 的 ValidateEditablePlanPoolVersion、platform/httpx 的错误码，依赖 platform/sourcetest 按名取套餐绑池处理器与 adminops.PlanPools / SetPlanPools、nodefabric.UpdateNodePool 的源码
 // [OUTPUT]: 对外提供 TestSetPlanPoolsRequestValidation、TestPlanPoolDraftAndConflictContract、TestPlanPoolHandlerSourceContract、TestPoolUpdatePreservesLifecycleLockContract
-// [POS]: api/admin 套餐绑池的校验、草稿与冲突语义、审计口径，节点池更新保持生命周期锁
+// [POS]: api/admin 套餐绑池的校验、草稿与冲突语义、审计口径（SQL 与审计已下沉 adminops，这里跨包读源码），节点池更新保持生命周期锁（SQL 在 nodefabric）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
@@ -62,7 +63,7 @@ func mustSetPlanPoolsValidationError(planID string, req setPlanPoolsReq) error {
 }
 
 func TestPlanPoolDraftAndConflictContract(t *testing.T) {
-	if err := validateEditablePlanPoolVersion("draft", false, 4, 4); err != nil {
+	if err := adminops.ValidateEditablePlanPoolVersion("draft", false, 4, 4); err != nil {
 		t.Fatalf("editable draft rejected: %v", err)
 	}
 	for _, tc := range []struct {
@@ -77,7 +78,7 @@ func TestPlanPoolDraftAndConflictContract(t *testing.T) {
 		{name: "stale", status: "draft", current: 5, expect: 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			he := catalogPoolError(t, validateEditablePlanPoolVersion(tc.status, tc.frozen, tc.current, tc.expect))
+			he := catalogPoolError(t, adminops.ValidateEditablePlanPoolVersion(tc.status, tc.frozen, tc.current, tc.expect))
 			if he.Code != httpx.CodeConflict {
 				t.Fatalf("code=%s, want conflict", he.Code)
 			}
@@ -90,7 +91,8 @@ func TestPlanPoolDraftAndConflictContract(t *testing.T) {
 
 func TestPlanPoolHandlerSourceContract(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
-	src := pkg.Decls("handlers.planPools", "handlers.setPlanPools")
+	ops := sourcetest.Load(t, "../../domain/adminops")
+	src := ops.Decls("Service.PlanPools", "Service.SetPlanPools")
 	for _, required := range []string{
 		"status='draft' AND frozen_at IS NULL",
 		"FOR UPDATE OF pv",
@@ -101,21 +103,26 @@ func TestPlanPoolHandlerSourceContract(t *testing.T) {
 		`db.Scope{TenantID: tenantID, ActorID: actorID}`,
 		`BeforeDigest: map[string]any{"row_version": current, "pool_ids": before}`,
 		`AfterDigest:  map[string]any{"row_version": next, "pool_ids": poolIDs, "plan_id": planID}`,
-		`"version_status": versionStatus`,
-		`"row_version": versionRowVersion`,
-		`"editable": editable`,
 	} {
 		if !strings.Contains(src, required) {
 			t.Fatalf("plan pool contract missing %q", required)
 		}
 	}
-	if strings.Contains(pkg.Source(), `Action: "plan.pools_changed"`) {
-		t.Fatal("legacy published-plan pool mutation audit action returned")
+	handler := pkg.Decl("handlers.planPools")
+	for _, required := range []string{"out.VersionStatus", "out.RowVersion", "out.Editable"} {
+		if !strings.Contains(handler, required) {
+			t.Fatalf("plan pool response missing %q", required)
+		}
+	}
+	for _, p := range []*sourcetest.Package{pkg, ops} {
+		if strings.Contains(p.Source(), `Action: "plan.pools_changed"`) {
+			t.Fatal("legacy published-plan pool mutation audit action returned")
+		}
 	}
 }
 
 func TestPoolUpdatePreservesLifecycleLockContract(t *testing.T) {
-	block := sourcetest.Load(t, ".").Decl("handlers.updateNodePool")
+	block := sourcetest.Load(t, "../../domain/nodefabric").Decl("Service.UpdateNodePool")
 	updateAt := strings.Index(block, `UPDATE node_pools`)
 	auditAt := strings.Index(block, `"node_pool.updated"`)
 	if updateAt < 0 || auditAt <= updateAt {
@@ -126,7 +133,7 @@ func TestPoolUpdatePreservesLifecycleLockContract(t *testing.T) {
 		`WHERE tenant_id = $1 AND id = $2::uuid`,
 		`if tag.RowsAffected() == 0`,
 		`httpx.NotFoundOrForbidden()`,
-		`map[string]any{"name": req.Name, "status": req.Status}`,
+		`map[string]any{"name": in.Name, "status": in.Status}`,
 	} {
 		if !strings.Contains(block, required) {
 			t.Fatalf("pool lifecycle update contract missing %q", required)

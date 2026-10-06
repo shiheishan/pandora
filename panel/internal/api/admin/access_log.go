@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 platform 的 db/crypto/httpx，依赖同包 profile.go 的 IP 解密与 Deps.GeoIP 归属地
+// [INPUT]: 依赖 domain/adminops 的 ListAccessLog，依赖 platform 的 crypto/httpx，依赖同包 profile.go 的 IP 解密与 Deps.GeoIP 归属地
 // [OUTPUT]: 对外提供 handlers 的 accessLogList；包内 accessCategoryRules、categoryFromAction、auditCategoryFilter
-// [POS]: api/admin 的安全事件明细：audit_events 与 subscription_fetch_log 两路归并，分类规则是展示与筛选共用的唯一一张表；outcome 筛选（error = 非 success，订阅拉取 ok 以外都算 error）
+// [POS]: api/admin 的安全事件明细：audit_events 与 subscription_fetch_log 两路（SQL 在 adminops 的 access_log.go）在这里归并、切页、解密、补归属地，分类规则是展示与筛选共用的唯一一张表；outcome 筛选（error = 非 success，订阅拉取 ok 以外都算 error）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aegispanel/aegis/internal/platform/crypto"
-	"github.com/aegispanel/aegis/internal/platform/db"
-	"github.com/aegispanel/aegis/internal/platform/httpx"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+
+	"github.com/aegispanel/aegis/internal/domain/adminops"
+	"github.com/aegispanel/aegis/internal/platform/crypto"
+	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 // 全站访问明细。
@@ -109,108 +109,47 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items := make([]accessLogItem, 0, limit)
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 两张表结构不同，先各自取够 limit+offset 条，在应用层归并。
-		//
-		// 为什么不在 SQL 里 UNION：两边的时间列、结果列、关联用户的方式
-		// 都不一样，UNION 要写一长串 CAST 和 COALESCE，而且加了筛选条件
-		// 之后查询计划很难预测。分别查、各走各的索引，反而稳定。
-		if category == "" || category != "subscribe" {
-			rows, err := tx.Query(r.Context(), `
-				SELECT a.action, a.outcome, COALESCE(a.source_ip_enc, ''::bytea),
-				       COALESCE(a.user_agent, ''), a.actor_id, COALESCE(u.email, ''),
-				       a.occurred_at
-				  FROM audit_events a
-				  LEFT JOIN users u ON u.tenant_id = a.tenant_id AND u.id = a.actor_id
-				 WHERE a.tenant_id = $1
-				   AND (NOT $7::bool
-				        OR ((cardinality($2::text[]) = 0
-				             OR EXISTS (SELECT 1 FROM unnest($2::text[]) p WHERE starts_with(a.action, p)))
-				            AND NOT EXISTS (SELECT 1 FROM unnest($8::text[]) p WHERE starts_with(a.action, p))))
-				   AND ($3::bytea IS NULL OR a.source_ip_hash = $3)
-				   AND ($4::uuid IS NULL OR a.actor_id = $4)
-				   AND ($5::text IS NULL OR lower(u.email) LIKE $5)
-				   AND ($9::text = '' OR ($9 = 'error' AND a.outcome <> 'success') OR a.outcome = $9)
-				 ORDER BY a.occurred_at DESC
-				 LIMIT $6`, tenantID, nonNilStrings(include),
-				auditIPHash, actorID, emailLike, limit+offset, filterByCategory, nonNilStrings(exclude), outcome)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var (
-					it      accessLogItem
-					enc     []byte
-					actorID *string
-				)
-				if err := rows.Scan(&it.Action, &it.Outcome, &enc, &it.UserAgent,
-					&actorID, &it.UserEmail, &it.OccurredAt); err != nil {
-					return err
-				}
-				if actorID != nil {
-					it.UserID = *actorID
-				}
-				it.Category = categoryFromAction(it.Action)
-				it.IP = h.decryptIP(enc)
-				items = append(items, it)
-			}
-			if err := rows.Err(); err != nil {
-				return err
-			}
-		}
-
-		if (category == "" || category == "subscribe") && includeFetches {
-			rows, err := tx.Query(r.Context(), `
-				SELECT COALESCE(f.ip_enc, ''::bytea), COALESCE(f.ua_enc, ''::bytea),
-				       COALESCE(f.result, ''), s.user_id, COALESCE(u.email, ''),
-				       f.fetched_at
-				  FROM subscription_fetch_log f
-				  LEFT JOIN subscriptions s
-				         ON s.tenant_id = f.tenant_id AND s.id = f.subscription_id
-				  LEFT JOIN users u ON u.tenant_id = f.tenant_id AND u.id = s.user_id
-				 WHERE f.tenant_id = $1
-				   AND ($2::bytea IS NULL OR f.ip_hash = $2)
-				   AND ($3::uuid IS NULL OR s.user_id = $3)
-				   AND ($4::text IS NULL OR lower(u.email) LIKE $4)
-				   AND ($6::text = '' OR ($6 = 'success' AND f.result = 'ok') OR ($6 = 'error' AND f.result <> 'ok'))
-				 ORDER BY f.fetched_at DESC
-				 LIMIT $5`, tenantID, fetchIPHash, actorID, emailLike, limit+offset, outcome)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var (
-					it           accessLogItem
-					ipEnc, uaEnc []byte
-					userID       *string
-				)
-				if err := rows.Scan(&ipEnc, &uaEnc, &it.Outcome, &userID,
-					&it.UserEmail, &it.OccurredAt); err != nil {
-					return err
-				}
-				if userID != nil {
-					it.UserID = *userID
-				}
-				it.Category = "subscribe"
-				it.Action = "subscription.fetch"
-				// 订阅日志用自己的 AAD："subfetch"。用错 AAD 会解密失败而
-				// 不是给出错值，密文被跨表挪动时能立刻发现。
-				it.IP = h.decryptWith(ipEnc, "subfetch")
-				it.UserAgent = h.decryptWith(uaEnc, "subfetch")
-				items = append(items, it)
-			}
-			if err := rows.Err(); err != nil {
-				return err
-			}
-		}
-		return nil
+	audits, fetches, err := h.d.Ops.ListAccessLog(r.Context(), tenantID, adminops.AccessLogQuery{
+		QueryAudit:       category == "" || category != "subscribe",
+		QueryFetches:     (category == "" || category == "subscribe") && includeFetches,
+		FilterByCategory: filterByCategory,
+		Include:          nonNilStrings(include),
+		Exclude:          nonNilStrings(exclude),
+		AuditIPHash:      auditIPHash,
+		FetchIPHash:      fetchIPHash,
+		ActorID:          actorID,
+		EmailLike:        emailLike,
+		Outcome:          outcome,
+		// 两张表结构不同，先各自取够 limit+offset 条，在应用层归并
+		Limit: limit + offset,
 	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
+	}
+	items := make([]accessLogItem, 0, limit)
+	for _, a := range audits {
+		it := accessLogItem{Action: a.Action, Outcome: a.Outcome, UserAgent: a.UserAgent,
+			UserEmail: a.UserEmail, OccurredAt: a.OccurredAt}
+		if a.ActorID != nil {
+			it.UserID = *a.ActorID
+		}
+		it.Category = categoryFromAction(it.Action)
+		it.IP = h.decryptIP(a.SourceIPEnc)
+		items = append(items, it)
+	}
+	for _, f := range fetches {
+		it := accessLogItem{Outcome: f.Result, UserEmail: f.UserEmail, OccurredAt: f.FetchedAt}
+		if f.UserID != nil {
+			it.UserID = *f.UserID
+		}
+		it.Category = "subscribe"
+		it.Action = "subscription.fetch"
+		// 订阅日志用自己的 AAD："subfetch"。用错 AAD 会解密失败而
+		// 不是给出错值，密文被跨表挪动时能立刻发现。
+		it.IP = h.decryptWith(f.IPEnc, "subfetch")
+		it.UserAgent = h.decryptWith(f.UAEnc, "subfetch")
+		items = append(items, it)
 	}
 
 	// 两路结果按时间归并后再切页。
@@ -234,7 +173,11 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 		items[i].NetworkKind = string(loc.Kind)
 	}
 
-	httpx.OK(w, map[string]any{"items": items})
+	httpx.OK(w, accessLogListResponse{Items: items})
+}
+
+type accessLogListResponse struct {
+	Items []accessLogItem `json:"items"`
 }
 
 // accessCategoryRules 是审计动作到展示分类的唯一映射，按顺序匹配前缀，先命中者胜。

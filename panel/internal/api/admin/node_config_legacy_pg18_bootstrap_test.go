@@ -447,7 +447,7 @@ func runNodeConfigPG18BootstrapSecurityBatch(t *testing.T, ctx context.Context,
 		if err != nil || out == nil {
 			t.Fatalf("bootstrap terminal identity node out=%+v err=%v", out, err)
 		}
-		h := &handlers{d: Deps{Pool: appPool, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+		h := &handlers{d: Deps{Pool: appPool, Node: service, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 		setStatus := func(next string) {
 			t.Helper()
 			var rowVersion int64

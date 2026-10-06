@@ -157,7 +157,7 @@ func seedNodeConfigPG18LockFixture(t *testing.T, ctx context.Context, admin *pgx
 
 func callNodeConfigPG18DisablePool(ctx context.Context, pool *platformdb.Pool,
 	fx nodeConfigPG18Fixture, poolID, requestID string) nodeConfigPG18HTTPCallResult {
-	h := &handlers{d: Deps{Pool: pool, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	h := &handlers{d: Deps{Pool: pool, Node: nodefabric.NewService(pool, nil), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/node-pools/"+poolID, strings.NewReader(`{"status":"disabled"}`))
 	req.Header.Set("Content-Type", "application/json")
 	route := chi.NewRouteContext()

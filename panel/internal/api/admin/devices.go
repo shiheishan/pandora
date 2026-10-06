@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 platform/db 的租户事务、platform/audit 的审计写入、platform/httpx 的响应与错误、domain/nodefabric 的 DeviceWindowMinutes，依赖迁移 00094 的 app.device_limit_window_minutes
+// [INPUT]: 依赖 domain/nodefabric 的 ListOnlineDevices / SetSubscriptionDeviceLimit / SetDeviceLimitPolicy 与 DeviceWindowMinutes，依赖 platform/httpx 的响应与错误
 // [OUTPUT]: 对外提供 handlers 的 listOnlineDevices（带 window_minutes）/ setDeviceLimit / setDeviceMode（可改设备识别窗口）三个处理器
-// [POS]: api/admin 的设备数限制接口：在线概览、单订阅覆盖、全局判定模式与设备识别窗口（R103，窗口只经库函数 app.device_limit_window_minutes 读，可选值取 nodefabric.DeviceWindowMinutes）；两条写接口都写审计，订阅不存在回 404
+// [POS]: api/admin 的设备数限制接口：在线概览、单订阅覆盖、全局判定模式与设备识别窗口（R103，可选值取 nodefabric.DeviceWindowMinutes）；只校验请求与写响应，读写、窗口经库函数读与审计都在 nodefabric 的 device_limit_admin.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -10,17 +10,13 @@ package admin
 // 三件事：看谁超了、调某条订阅的额度、切换判定模式。
 
 import (
-	"errors"
 	"net/http"
 	"slices"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
-	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -28,73 +24,19 @@ import (
 func (h *handlers) listOnlineDevices(w http.ResponseWriter, r *http.Request) {
 	tenantID := httpx.TenantIDFrom(r.Context())
 
-	type row struct {
-		SubscriptionID string `json:"subscription_id"`
-		Email          string `json:"email"`
-		Plan           string `json:"plan"`
-		Limit          int    `json:"limit"`
-		Online         int    `json:"online"`
-		Nodes          int    `json:"nodes"`
-		Overridden     bool   `json:"overridden"`
-		Exceeded       bool   `json:"exceeded"`
-		LastSeenAt     any    `json:"last_seen_at"`
-	}
-	out := []row{}
-	mode := "loose"
-	grace := 1
-	window := nodefabric.DeviceWindowMinutes[0]
-
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		_ = tx.QueryRow(r.Context(), `
-			SELECT COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id = $1 AND key = 'device_limit.mode'), 'loose'),
-			       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
-			                  WHERE tenant_id = $1 AND key = 'device_limit.grace'), 1)`,
-			tenantID).Scan(&mode, &grace)
-		// 窗口取库里的同一个函数：视图按它算在线数，这里回显的就是在线数实际用的窗口。
-		// 函数自己把缺行与非法值折成 5，读不出来只可能是库坏了，照实报错。
-		if err := tx.QueryRow(r.Context(),
-			`SELECT app.device_limit_window_minutes($1)`, tenantID).Scan(&window); err != nil {
-			return err
-		}
-
-		// 用 LEFT JOIN 而不是从视图出发：没有人在线的订阅也要能看到，
-		// 否则「这个用户到底几台设备」这个问题在他离线时就查不了了
-		rows, err := tx.Query(r.Context(), `
-			SELECT s.id::text, COALESCE(u.email,''), COALESCE(p.name,''),
-			       COALESCE(s.device_limit, pv.max_devices, 0),
-			       COALESCE(d.device_count, 0), COALESCE(d.node_count, 0),
-			       (s.device_limit IS NOT NULL),
-			       d.last_seen_at
-			  FROM subscriptions s
-			  JOIN plan_versions pv ON pv.id = s.plan_version_id
-			  LEFT JOIN plans p ON p.id = s.plan_id
-			  LEFT JOIN users u ON u.id = s.user_id
-			  LEFT JOIN subscription_online_devices d ON d.subscription_id = s.id
-			 WHERE s.tenant_id = $1
-			   AND s.status IN ('active','trialing','grace')
-			 ORDER BY COALESCE(d.device_count,0) DESC, s.created_at DESC
-			 LIMIT 200`, tenantID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var it row
-			if err := rows.Scan(&it.SubscriptionID, &it.Email, &it.Plan,
-				&it.Limit, &it.Online, &it.Nodes, &it.Overridden, &it.LastSeenAt); err != nil {
-				return err
-			}
-			it.Exceeded = it.Limit > 0 && it.Online > it.Limit+grace
-			out = append(out, it)
-		}
-		return rows.Err()
-	})
+	out, err := h.d.Node.ListOnlineDevices(r.Context(), tenantID)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"devices": out, "mode": mode, "grace": grace, "window_minutes": window})
+	httpx.OK(w, listOnlineDevicesResponse{Devices: out.Devices, Mode: out.Mode, Grace: out.Grace, WindowMinutes: out.WindowMinutes})
+}
+
+type listOnlineDevicesResponse struct {
+	Devices       []nodefabric.OnlineDevice `json:"devices"`
+	Mode          string                    `json:"mode"`
+	Grace         int                       `json:"grace"`
+	WindowMinutes int                       `json:"window_minutes"`
 }
 
 type deviceLimitReq struct {
@@ -121,45 +63,18 @@ func (h *handlers) setDeviceLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actor := httpx.PrincipalFrom(r.Context()).UserID
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID, ActorID: actor},
-		func(tx pgx.Tx) error {
-			// 先锁住读出旧值：订阅不存在要回 404（原先 UPDATE 影响 0 行也回 200），
-			// 审计也要记下改之前是多少。
-			var before *int
-			if err := tx.QueryRow(r.Context(), `
-				SELECT device_limit FROM subscriptions
-				 WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE`,
-				tenantID, subID).Scan(&before); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					return httpx.NotFoundOrForbidden()
-				}
-				return err
-			}
-			// 传 nil 就把覆盖清掉，回到套餐规定。
-			// 用一个单独的「恢复默认」语义而不是让管理员手填套餐值：
-			// 套餐额度日后调整时，手填的那些不会跟着变，会悄悄变成过期配置。
-			if _, err := tx.Exec(r.Context(), `
-				UPDATE subscriptions SET device_limit = $3
-				 WHERE tenant_id = $1 AND id = $2::uuid`,
-				tenantID, subID, req.Limit); err != nil {
-				return err
-			}
-			return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-				ActorKind: "admin", ActorID: &actor,
-				Action: "subscription.device_limit_changed", ResourceType: "subscription",
-				ResourceID: &subID, APIDomain: "admin", Outcome: "success",
-				RequestID:    httpx.RequestIDFrom(r.Context()),
-				BeforeDigest: map[string]any{"device_limit": before},
-				AfterDigest:  map[string]any{"device_limit": req.Limit},
-			})
-		})
+	err := h.d.Node.SetSubscriptionDeviceLimit(r.Context(), tenantID,
+		httpx.PrincipalFrom(r.Context()).UserID, subID, req.Limit)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	h.d.Log.Info("管理员调整设备数限制", "subscription", subID, "limit", req.Limit)
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, setDeviceLimitResponse{OK: true})
+}
+
+type setDeviceLimitResponse struct {
+	OK bool `json:"ok"`
 }
 
 type deviceModeReq struct {
@@ -191,70 +106,18 @@ func (h *handlers) setDeviceMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actor := httpx.PrincipalFrom(r.Context()).UserID
-	err := h.d.Pool.InTx(r.Context(), db.Scope{TenantID: tenantID, ActorID: actor},
-		func(tx pgx.Tx) error {
-			if _, err := tx.Exec(r.Context(), `
-				INSERT INTO system_settings (tenant_id, key, value, updated_by)
-				VALUES ($1, 'device_limit.mode', to_jsonb($2::text), $3::uuid)
-				ON CONFLICT (tenant_id, key)
-				DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by,
-				              version = system_settings.version + 1, updated_at = now()`,
-				tenantID, req.Mode, actor); err != nil {
-				return err
-			}
-			if req.Grace != nil {
-				if _, err := tx.Exec(r.Context(), `
-					INSERT INTO system_settings (tenant_id, key, value, updated_by)
-					VALUES ($1, 'device_limit.grace', to_jsonb($2::int), $3::uuid)
-					ON CONFLICT (tenant_id, key)
-					DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by,
-					              version = system_settings.version + 1, updated_at = now()`,
-					tenantID, *req.Grace, actor); err != nil {
-					return err
-				}
-			}
-			var windowBefore int
-			if req.WindowMinutes != nil {
-				// 窗口决定 strict 模式下谁被当成超限，和模式同级：一起审计、一起挂 reauth
-				if err := tx.QueryRow(r.Context(),
-					`SELECT app.device_limit_window_minutes($1)`, tenantID).Scan(&windowBefore); err != nil {
-					return err
-				}
-				if _, err := tx.Exec(r.Context(), `
-					INSERT INTO system_settings (tenant_id, key, value, value_schema, updated_by)
-					VALUES ($1, 'device_limit.window_minutes', to_jsonb($2::int),
-					        '{"enum":[5,10,30,60]}'::jsonb, $3::uuid)
-					ON CONFLICT (tenant_id, key)
-					DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by,
-					              version = system_settings.version + 1, updated_at = now()`,
-					tenantID, *req.WindowMinutes, actor); err != nil {
-					return err
-				}
-			}
-			// 模式切换影响全租户能否连上，必须留下是谁在什么时候切的
-			return audit.Write(r.Context(), tx, tenantID, audit.Entry{
-				ActorKind: "admin", ActorID: &actor,
-				Action: "device_limit.mode_changed", ResourceType: "system_settings",
-				APIDomain: "admin", Outcome: "success",
-				RequestID:    httpx.RequestIDFrom(r.Context()),
-				BeforeDigest: deviceWindowBefore(req.WindowMinutes, windowBefore),
-				AfterDigest: map[string]any{"mode": req.Mode, "grace": req.Grace,
-					"window_minutes": req.WindowMinutes},
-			})
-		})
+	err := h.d.Node.SetDeviceLimitPolicy(r.Context(), tenantID, nodefabric.DeviceLimitPolicyInput{
+		ActorID: httpx.PrincipalFrom(r.Context()).UserID,
+		Mode:    req.Mode, Grace: req.Grace, WindowMinutes: req.WindowMinutes,
+	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	h.d.Log.Info("管理员切换设备限制模式", "mode", req.Mode, "window_minutes", req.WindowMinutes)
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, setDeviceModeResponse{OK: true})
 }
 
-// deviceWindowBefore 只在这次改了窗口时记下改之前的生效值（缺行即 5）。
-func deviceWindowBefore(requested *int, before int) any {
-	if requested == nil {
-		return nil
-	}
-	return map[string]any{"window_minutes": before}
+type setDeviceModeResponse struct {
+	OK bool `json:"ok"`
 }

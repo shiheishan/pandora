@@ -1,9 +1,9 @@
-// [INPUT]: 依赖 nodeStatusLockSQL、projectNodeLifecycle，依赖 platform/sourcetest 按名取 handlers.nodeSetStatus 的源码
+// [INPUT]: 依赖 node_status_legacy.go 的 nodeStatusLockSQL、node_activate.go 的 ProjectNodeLifecycle，依赖 platform/sourcetest 按名取 Service.SetLegacyNodeStatus 的源码
 // [OUTPUT]: 对外提供 TestNodeStatusLockSQLHasValidProtocolReadyCoalesce、TestLegacyTerminalNodeStatusRevokesDeliveryAndIdentity、TestProjectNodeLifecycle
-// [POS]: api/admin 节点状态处理：锁行 SQL 括号配平、退役与销毁吊销下发与身份且先取发布锁、生命周期投影表
+// [POS]: nodefabric 旧状态接口（随 SQL 从 api/admin 的 handlers_test.go 迁来）：锁行 SQL 括号配平、退役与销毁吊销下发与身份且先取发布锁、生命周期投影表
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
-package admin
+package nodefabric
 
 import (
 	"strings"
@@ -38,9 +38,9 @@ func TestNodeStatusLockSQLHasValidProtocolReadyCoalesce(t *testing.T) {
 }
 
 func TestLegacyTerminalNodeStatusRevokesDeliveryAndIdentity(t *testing.T) {
-	block := sourcetest.Load(t, ".").Decl("handlers.nodeSetStatus")
+	block := sourcetest.Load(t, ".").Decl("Service.SetLegacyNodeStatus")
 	for _, needle := range []string{
-		`terminal := req.Status == "retired" || req.Status == "destroyed"`,
+		`terminal := in.Status == "retired" || in.Status == "destroyed"`,
 		`pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`,
 		`"node-config-release/"+tenantID`,
 		`desired_config_version=CASE WHEN $4='retired' THEN NULL ELSE desired_config_version END`,
@@ -78,9 +78,9 @@ func TestProjectNodeLifecycle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.node, func(t *testing.T) {
-			serving, server := projectNodeLifecycle(tt.node, tt.ready)
+			serving, server := ProjectNodeLifecycle(tt.node, tt.ready)
 			if serving != tt.serving || server != tt.server {
-				t.Fatalf("projectNodeLifecycle(%q)=(%q,%q), want (%q,%q)",
+				t.Fatalf("ProjectNodeLifecycle(%q)=(%q,%q), want (%q,%q)",
 					tt.node, serving, server, tt.serving, tt.server)
 			}
 		})
