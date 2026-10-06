@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/nodefabric 的服务器用例（ListServers / CreateServer / GetServer / PatchServer / SetServerStatus / DeleteServer / ListServerNodes）与 ValidServerStatus，依赖 platform/httpx
+// [OUTPUT]: 对外提供 handlers 的 serverList / serverCreate / serverGet / serverPatch / serverSetStatus / serverDelete / serverNodes 与 parseServerListQuery、validateServerID、validateServerTextLimits
+// [POS]: api/admin 的服务器（物理宿主）处理器（后台-07 服务器 tab）：路径 id 先做 UUID 校验回中性 404、自由文本按字段限长，读写与状态机在 nodefabric 的 server_admin.go；不跑 SQL
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -61,7 +66,12 @@ func (h *handlers) serverList(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"servers": out, "total": len(out)})
+	httpx.OK(w, serverListResponse{Servers: out, Total: len(out)})
+}
+
+type serverListResponse struct {
+	Servers []nodefabric.Server `json:"servers"`
+	Total   int                 `json:"total"`
 }
 
 func (h *handlers) serverCreate(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +186,12 @@ func (h *handlers) serverDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "id": id})
+	httpx.OK(w, serverDeleteResponse{OK: true, ID: id})
+}
+
+type serverDeleteResponse struct {
+	OK bool   `json:"ok"`
+	ID string `json:"id"`
 }
 
 func (h *handlers) serverNodes(w http.ResponseWriter, r *http.Request) {
@@ -190,5 +205,10 @@ func (h *handlers) serverNodes(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"nodes": out, "total": len(out)})
+	httpx.OK(w, serverNodesResponse{Nodes: out, Total: len(out)})
+}
+
+type serverNodesResponse struct {
+	Nodes []nodefabric.ServerNode `json:"nodes"`
+	Total int                     `json:"total"`
 }

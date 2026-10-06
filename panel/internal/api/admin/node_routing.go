@@ -49,7 +49,13 @@ func (h *handlers) nodeSetGlobalRouting(w http.ResponseWriter, r *http.Request) 
 	for _, id := range res.NodeIDs {
 		h.d.Node.NotifyNodeChanged(r.Context(), tenantID, id)
 	}
-	httpx.OK(w, map[string]any{"ok": true, "revision": res.Revision, "affected_nodes": len(res.NodeIDs)})
+	httpx.OK(w, nodeSetGlobalRoutingResponse{OK: true, Revision: res.Revision, AffectedNodes: len(res.NodeIDs)})
+}
+
+type nodeSetGlobalRoutingResponse struct {
+	OK            bool   `json:"ok"`
+	Revision      string `json:"revision"`
+	AffectedNodes int    `json:"affected_nodes"`
 }
 
 type routingPayload struct {
@@ -88,5 +94,10 @@ func (h *handlers) nodeSetRouting(w http.ResponseWriter, r *http.Request) {
 	// 提交之后通知节点：原先只递增 config_source_generation，在线节点要等
 	// 下一轮轮询才生效，长连接推送形同虚设（缺陷 18）
 	h.d.Node.NotifyNodeChanged(r.Context(), tenantID, id)
-	httpx.OK(w, map[string]any{"ok": true, "row_version": rowVersion})
+	httpx.OK(w, nodeSetRoutingResponse{OK: true, RowVersion: rowVersion})
+}
+
+type nodeSetRoutingResponse struct {
+	OK         bool  `json:"ok"`
+	RowVersion int64 `json:"row_version"`
 }

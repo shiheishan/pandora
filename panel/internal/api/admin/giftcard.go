@@ -1,5 +1,5 @@
 // [INPUT]: 依赖 domain/giftcard 的模板、生码、批次、导出、卡码与兑换记录用例，依赖 platform/httpx
-// [OUTPUT]: 对包内提供礼品卡处理器：模板列表与保存、生码、批次列表、一次性导出、卡码列表与启停、按筛选导出掩码报表、统计、兑换记录
+// [OUTPUT]: 对包内提供礼品卡处理器：模板列表与保存、生码、批次列表、一次性导出、卡码列表与启停、按筛选导出掩码报表、统计、兑换记录；JSON 成功响应为具名 DTO（*Response），生码与统计直接回领域层结构
 // [POS]: api/admin 后台-06 礼品卡 tab 的 HTTP 外壳；明文卡码只经生码样例与 exportGiftBatch 出站，exportGiftCodesReport 与列表同筛选、只出掩码；权限与重认证在 router_marketing.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -18,13 +18,17 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type listGiftTemplatesResponse struct {
+	Templates []giftcard.Template `json:"templates"`
+}
+
 func (h *handlers) listGiftTemplates(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.d.GiftCard.ListTemplates(r.Context(), httpx.TenantIDFrom(r.Context()))
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"templates": rows})
+	httpx.OK(w, listGiftTemplatesResponse{Templates: rows})
 }
 
 type giftTemplateReq struct {
@@ -37,6 +41,10 @@ type giftTemplateReq struct {
 	Conditions  giftcard.Conditions `json:"conditions"`
 	Limits      giftcard.Limits     `json:"limits"`
 	ThemeColor  string              `json:"theme_color"`
+}
+
+type saveGiftTemplateResponse struct {
+	Template *giftcard.Template `json:"template"`
 }
 
 func (h *handlers) saveGiftTemplate(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +65,7 @@ func (h *handlers) saveGiftTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"template": t})
+	httpx.OK(w, saveGiftTemplateResponse{Template: t})
 }
 
 type generateCodesReq struct {
@@ -96,6 +104,11 @@ func (h *handlers) generateGiftCodes(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, out)
 }
 
+type listGiftCodesResponse struct {
+	Codes []giftcard.Code `json:"codes"`
+	Total int64           `json:"total"`
+}
+
 func (h *handlers) listGiftCodes(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
@@ -108,7 +121,7 @@ func (h *handlers) listGiftCodes(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"codes": codes, "total": total})
+	httpx.OK(w, listGiftCodesResponse{Codes: codes, Total: total})
 }
 
 // giftCodeFilter 从查询串取卡码筛选：列表与掩码报表导出共用，口径一致。
@@ -163,6 +176,11 @@ func writeGiftCodesReportCSV(w http.ResponseWriter, rows []giftcard.CodeReportRo
 	}
 }
 
+type listGiftBatchesResponse struct {
+	Items []giftcard.Batch `json:"items"`
+	Total int              `json:"total"`
+}
+
 func (h *handlers) listGiftBatches(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
@@ -175,7 +193,7 @@ func (h *handlers) listGiftBatches(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"items": items, "total": total})
+	httpx.OK(w, listGiftBatchesResponse{Items: items, Total: total})
 }
 
 // exportGiftBatch 一次性导出一个批次的明文卡码（CSV）。
@@ -230,6 +248,10 @@ type toggleCodeReq struct {
 	Disabled bool `json:"disabled"`
 }
 
+type toggleGiftCodeResponse struct {
+	Disabled bool `json:"disabled"`
+}
+
 func (h *handlers) toggleGiftCode(w http.ResponseWriter, r *http.Request) {
 	var req toggleCodeReq
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -242,7 +264,7 @@ func (h *handlers) toggleGiftCode(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"disabled": req.Disabled})
+	httpx.OK(w, toggleGiftCodeResponse{Disabled: req.Disabled})
 }
 
 func (h *handlers) giftCardStats(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +276,10 @@ func (h *handlers) giftCardStats(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, stats)
 }
 
+type listGiftUsagesResponse struct {
+	Usages []giftcard.Usage `json:"usages"`
+}
+
 func (h *handlers) listGiftUsages(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.d.GiftCard.ListUsages(r.Context(), httpx.TenantIDFrom(r.Context()),
 		r.URL.Query().Get("template_id"))
@@ -261,5 +287,5 @@ func (h *handlers) listGiftUsages(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"usages": rows})
+	httpx.OK(w, listGiftUsagesResponse{Usages: rows})
 }

@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/nodefabric 的入网、心跳、配置下发与 UniProxy 用例，依赖 platform/httpx 的解码与响应出口，依赖同包 router.go 的 Deps 与验签中间件放进 context 的节点 ID
+// [OUTPUT]: 对外提供 handlers 的 bootstrap / legacyBootstrapDisabled、入网 begin/status/commit/abort、heartbeat、配置与签名密钥下发、reportConfig，UniProxy 的 uniConfig / uniUser / uniPush / uniAlive / uniStatus；包内 uniProxyToken、etagMatches
+// [POS]: api/node 的处理器：只做验签后的解码、调 nodefabric、写响应，不跑 SQL；旧 bootstrap 固定回 426 upgrade_required 信封；uniConfig 写出 nodefabric 预编码的配置字节，配置与用户列表靠弱 ETag 回 304
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package node
 
 import (
@@ -46,11 +51,11 @@ func (h *handlers) bootstrap(w http.ResponseWriter, r *http.Request) {
 	httpx.Created(w, out)
 }
 
+// legacyBootstrapDisabled 固定回 426 错误信封，提示换到两阶段入网；不读请求体、不消费令牌、不碰节点服务。
 func (h *handlers) legacyBootstrapDisabled(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusUpgradeRequired)
-	_, _ = w.Write([]byte(`{"error":"legacy bootstrap is disabled; use /v1/nodes/enrollments"}`))
+	httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUpgradeRequired,
+		"legacy bootstrap is disabled; use /v1/nodes/enrollments"))
 }
 
 type beginEnrollmentReq struct {
@@ -189,7 +194,7 @@ func (h *handlers) fetchConfigSigningKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if out == nil {
-		w.WriteHeader(http.StatusNoContent)
+		httpx.NoContent(w)
 		return
 	}
 	httpx.OK(w, out)
@@ -225,6 +230,10 @@ type reportReq struct {
 	Detail        string `json:"detail"`
 }
 
+type reportConfigResponse struct {
+	OK bool `json:"ok"`
+}
+
 func (h *handlers) reportConfig(w http.ResponseWriter, r *http.Request) {
 	var req reportReq
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -244,7 +253,7 @@ func (h *handlers) reportConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, reportConfigResponse{OK: true})
 }
 
 //------------------------------------------------------------------------------
@@ -331,6 +340,11 @@ func (h *handlers) uniConfig(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
+// uniUsersResponse 的字段名与结构必须与 UniProxy 一致，节点端按 users 数组解析。
+type uniUsersResponse struct {
+	Users []nodefabric.ProxyUser `json:"users"`
+}
+
 func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 	n, ok := h.authNode(w, r)
 	if !ok {
@@ -356,7 +370,22 @@ func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("ETag", etag)
 	// 字段名与结构必须与 UniProxy 一致，节点端按 users 数组解析
-	httpx.OK(w, map[string]any{"users": users})
+	httpx.OK(w, uniUsersResponse{Users: users})
+}
+
+// UniProxy 的上报回执：节点端只看 HTTP 状态码，返回体留给排查。
+type uniPushResponse struct {
+	Data     bool `json:"data"`
+	Accepted int  `json:"accepted"`
+}
+
+type uniAliveResponse struct {
+	Data bool `json:"data"`
+	IPs  int  `json:"ips"`
+}
+
+type uniStatusResponse struct {
+	Data bool `json:"data"`
 }
 
 func (h *handlers) uniPush(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +409,7 @@ func (h *handlers) uniPush(w http.ResponseWriter, r *http.Request) {
 			"request_id", httpx.RequestIDFrom(r.Context()))
 	}
 	// 节点端只看 HTTP 状态码，返回体内容不影响它，但保留便于排查
-	httpx.OK(w, map[string]any{"data": true, "accepted": res.Accepted})
+	httpx.OK(w, uniPushResponse{Data: true, Accepted: res.Accepted})
 }
 
 func (h *handlers) uniAlive(w http.ResponseWriter, r *http.Request) {
@@ -398,7 +427,7 @@ func (h *handlers) uniAlive(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"data": true, "ips": cnt})
+	httpx.OK(w, uniAliveResponse{Data: true, IPs: cnt})
 }
 
 func (h *handlers) uniStatus(w http.ResponseWriter, r *http.Request) {
@@ -415,7 +444,7 @@ func (h *handlers) uniStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"data": true})
+	httpx.OK(w, uniStatusResponse{Data: true})
 }
 
 // etagMatches 按 RFC 7232 的弱比较判断 If-None-Match。

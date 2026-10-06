@@ -1,5 +1,5 @@
 // [INPUT]: 依赖本包 Load 与 testdata/fixture 假包
-// [OUTPUT]: 对外提供 TestDeclReturnsExactSourceWithoutDocComment（含 DeclWithDoc）、TestSourceCoversEveryNonTestFileRegardlessOfBuildTags、TestLookupFailsLoudly
+// [OUTPUT]: 对外提供 TestDeclReturnsExactSourceWithoutDocComment（含 DeclWithDoc）、TestSourceCoversEveryNonTestFileRegardlessOfBuildTags、TestLookupFailsLoudly、TestRefsResolvesImportAliasesAndFunctionValues、TestTopDeclsListsEveryNamedDeclWithItsFileAndImports
 // [POS]: platform/sourcetest 的自测：取声明的原文精确、整包源码不漏构建约束文件也不含测试文件、名字缺失或重名一定让测试失败
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -7,6 +7,7 @@ package sourcetest
 
 import (
 	"fmt"
+	"go/ast"
 	"strings"
 	"testing"
 )
@@ -97,4 +98,28 @@ func TestRefsResolvesImportAliasesAndFunctionValues(t *testing.T) {
 		t.Errorf("Refs(Environ) = %+v, want none", got)
 	}
 	expectFatal(t, "dot-imports", func(tb testing.TB) { Load(tb, "testdata/dotimport").Refs("os", "Getenv") })
+}
+
+func TestTopDeclsListsEveryNamedDeclWithItsFileAndImports(t *testing.T) {
+	var got []string
+	for _, d := range Load(t, "testdata/fixture").TopDecls() {
+		got = append(got, d.File+" "+d.Name)
+		if d.Name == "Aliased" {
+			if _, ok := d.Node.(*ast.FuncDecl); !ok || d.Imports["osx"] != "os" {
+				t.Errorf("Aliased: node %T imports %v, want *ast.FuncDecl with osx → os", d.Node, d.Imports)
+			}
+		}
+		if d.Name == "First" {
+			if _, ok := d.Node.(*ast.ValueSpec); !ok {
+				t.Errorf("First: node %T, want the grouped *ast.ValueSpec", d.Node)
+			}
+		}
+	}
+	// 文件名有序、文件内按位置；_test.go 里的 TestOnly 不在其中，两份 Twin 各算一次
+	want := "a.go Plain|a.go Box|a.go Box.Get|a.go First|a.go Second|a.go Single|"
+	if joined := strings.Join(got, "|"); !strings.HasPrefix(joined, want) ||
+		strings.Contains(joined, "TestOnly") || strings.Count(joined, " Twin") != 2 || !strings.Contains(joined, "d.go Aliased") {
+		t.Fatalf("TopDecls = %s", joined)
+	}
+	expectFatal(t, "dot-imports", func(tb testing.TB) { Load(tb, "testdata/dotimport").TopDecls() })
 }

@@ -35,7 +35,7 @@ func TestOrderDetailAndCancellationRoutesArePermissionGuarded(t *testing.T) {
 		`h.d.Billing.AdminCancelOrder(`,
 		`ExpectedStateVersion: req.ExpectedStateVersion`,
 		`chi.URLParam(r, "id")`,
-		`map[string]any{"order": order}`,
+		`getOrderResponse{Order: order}`,
 	} {
 		if !strings.Contains(r+h, want) {
 			t.Fatalf("order detail HTTP contract is missing %q", want)

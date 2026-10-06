@@ -44,7 +44,12 @@ func (h *handlers) listAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.withSourceIPs(rows)
-	httpx.OK(w, map[string]any{"events": rows, "total": total})
+	httpx.OK(w, listAuditResponse{Events: rows, Total: total})
+}
+
+type listAuditResponse struct {
+	Events []adminops.AuditRow `json:"events"`
+	Total  int64               `json:"total"`
 }
 
 // auditExportRange 解析导出的日期区间：YYYY-MM-DD，半开区间 [from, to+1 天)。

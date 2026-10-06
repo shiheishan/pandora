@@ -15,6 +15,13 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+// myOrdersResponse 的 counts 是各筛选段的计数，不随 status 筛选变。
+type myOrdersResponse struct {
+	Orders []billing.MyOrderRow  `json:"orders"`
+	Total  int64                 `json:"total"`
+	Counts billing.MyOrderCounts `json:"counts"`
+}
+
 func (h *handlers) listMyOrders(w http.ResponseWriter, r *http.Request) {
 	principal := httpx.PrincipalFrom(r.Context())
 	q := r.URL.Query()
@@ -28,7 +35,11 @@ func (h *handlers) listMyOrders(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"orders": orders, "total": total, "counts": counts})
+	httpx.OK(w, myOrdersResponse{Orders: orders, Total: total, Counts: counts})
+}
+
+type myOrderDetailResponse struct {
+	Order *billing.MyOrderDetail `json:"order"`
 }
 
 func (h *handlers) myOrderDetail(w http.ResponseWriter, r *http.Request) {
@@ -39,5 +50,5 @@ func (h *handlers) myOrderDetail(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"order": out})
+	httpx.OK(w, myOrderDetailResponse{Order: out})
 }

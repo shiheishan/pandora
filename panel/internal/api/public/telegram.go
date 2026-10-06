@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/notify 的绑定状态、绑定码、解绑与 LoadTelegramConfig，依赖 domain/appearance 的公开外观，依赖 platform/httpx
+// [OUTPUT]: 对外提供 handlers 的 telegramInfo / telegramBindCode / telegramUnbind / telegramUpdate（webhook）/ appearance
+// [POS]: api/public 的 Telegram 绑定与 webhook（/webhooks/telegram/{secret}，密钥恒定时间比较，回执固定 {"ok":true}），以及匿名的 /appearance 外观读取
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package public
 
 import (
@@ -38,6 +43,10 @@ func (h *handlers) telegramBindCode(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, out)
 }
 
+type telegramUnbindResponse struct {
+	Unbound bool `json:"unbound"`
+}
+
 func (h *handlers) telegramUnbind(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFrom(r.Context())
 	if err := h.d.Notify.Unbind(r.Context(),
@@ -45,7 +54,7 @@ func (h *handlers) telegramUnbind(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"unbound": true})
+	httpx.OK(w, telegramUnbindResponse{Unbound: true})
 }
 
 // telegramUpdate 是 Bot 的 webhook 入口。

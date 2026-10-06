@@ -227,7 +227,7 @@ func TestNodeConfigLegacyPG18(t *testing.T) {
 		assertNodeConfigPG18AppVisible(t, ctx, appPool, fx.tenant, poolID, published.ConfigID)
 
 		log := slog.New(slog.NewTextHandler(io.Discard, nil))
-		h := &handlers{d: Deps{Pool: appPool, Log: log}}
+		h := &handlers{d: Deps{Pool: appPool, Node: service, Log: log}}
 		req := httptest.NewRequest(http.MethodDelete, "/v1/node-pools/"+poolID, nil)
 		route := chi.NewRouteContext()
 		route.URLParams.Add("id", poolID)

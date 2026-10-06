@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 domain/adminops 的套餐目录用例（详情 / 新建 / 向导一次建成与改完 / 资料 / 版本 / 发布 / 价格 / 归档），依赖 platform/httpx、chi 的路径参数
+// [OUTPUT]: 对包内提供套餐目录处理器 getPlan、createPlan、createPlanComplete、updatePlanComplete、updatePlan、createPlanVersion、updatePlanVersion、publishPlanVersion、createPlanPrice、archivePlanPrice、archivePlan；成功响应为具名 DTO（*Response）
+// [POS]: api/admin 套餐目录（含版本与价格）的 HTTP 外壳；向导两个处理器直接回领域层的输出结构，路由与保护链在 router_catalog.go
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 import (
@@ -9,13 +14,21 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+type getPlanResponse struct {
+	Plan *adminops.CatalogPlanDetail `json:"plan"`
+}
+
 func (h *handlers) getPlan(w http.ResponseWriter, r *http.Request) {
 	out, err := h.d.Ops.GetPlan(r.Context(), httpx.TenantIDFrom(r.Context()), chi.URLParam(r, "id"))
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"plan": out})
+	httpx.OK(w, getPlanResponse{Plan: out})
+}
+
+type createPlanResponse struct {
+	Plan *adminops.CatalogPlanDetail `json:"plan"`
 }
 
 func (h *handlers) createPlan(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +43,7 @@ func (h *handlers) createPlan(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, map[string]any{"plan": out})
+	httpx.JSON(w, http.StatusCreated, createPlanResponse{Plan: out})
 }
 
 // createPlanComplete 一次建成一个能卖的套餐。
@@ -77,6 +90,11 @@ func (h *handlers) updatePlanComplete(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, out)
 }
 
+type updatePlanResponse struct {
+	OK         bool  `json:"ok"`
+	RowVersion int64 `json:"row_version"`
+}
+
 func (h *handlers) updatePlan(w http.ResponseWriter, r *http.Request) {
 	var in adminops.UpdatePlanInput
 	if err := httpx.DecodeJSON(w, r, &in); err != nil {
@@ -89,7 +107,11 @@ func (h *handlers) updatePlan(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "row_version": next})
+	httpx.OK(w, updatePlanResponse{OK: true, RowVersion: next})
+}
+
+type createPlanVersionResponse struct {
+	Version *adminops.VersionRow `json:"version"`
 }
 
 func (h *handlers) createPlanVersion(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +121,12 @@ func (h *handlers) createPlanVersion(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, map[string]any{"version": out})
+	httpx.JSON(w, http.StatusCreated, createPlanVersionResponse{Version: out})
+}
+
+type updatePlanVersionResponse struct {
+	OK         bool  `json:"ok"`
+	RowVersion int64 `json:"row_version"`
 }
 
 func (h *handlers) updatePlanVersion(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +141,13 @@ func (h *handlers) updatePlanVersion(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "row_version": next})
+	httpx.OK(w, updatePlanVersionResponse{OK: true, RowVersion: next})
+}
+
+type publishPlanVersionResponse struct {
+	OK                bool  `json:"ok"`
+	PlanRowVersion    int64 `json:"plan_row_version"`
+	VersionRowVersion int64 `json:"version_row_version"`
 }
 
 func (h *handlers) publishPlanVersion(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +165,11 @@ func (h *handlers) publishPlanVersion(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "plan_row_version": planNext, "version_row_version": versionNext})
+	httpx.OK(w, publishPlanVersionResponse{OK: true, PlanRowVersion: planNext, VersionRowVersion: versionNext})
+}
+
+type createPlanPriceResponse struct {
+	Price *adminops.PriceRow `json:"price"`
 }
 
 func (h *handlers) createPlanPrice(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +184,12 @@ func (h *handlers) createPlanPrice(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, map[string]any{"price": out})
+	httpx.JSON(w, http.StatusCreated, createPlanPriceResponse{Price: out})
+}
+
+type archivePlanPriceResponse struct {
+	OK         bool  `json:"ok"`
+	RowVersion int64 `json:"row_version"`
 }
 
 func (h *handlers) archivePlanPrice(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +206,12 @@ func (h *handlers) archivePlanPrice(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "row_version": next})
+	httpx.OK(w, archivePlanPriceResponse{OK: true, RowVersion: next})
+}
+
+type archivePlanResponse struct {
+	OK         bool  `json:"ok"`
+	RowVersion int64 `json:"row_version"`
 }
 
 func (h *handlers) archivePlan(w http.ResponseWriter, r *http.Request) {
@@ -181,5 +228,5 @@ func (h *handlers) archivePlan(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true, "row_version": next})
+	httpx.OK(w, archivePlanResponse{OK: true, RowVersion: next})
 }

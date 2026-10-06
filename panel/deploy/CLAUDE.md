@@ -52,7 +52,7 @@ client-auth-*、generate-client-auth-*、probe-client-auth-*、verify-client-aut
 client-auth-00044-verifier-gate.py / verify-client-auth-00044-evidence-vectors.ps1: 00044 证据信封与向量的独立生成与校验，不导入被测实现
 
 测试（只用虚构数据与一次性环境，不连任何真实部署）
-migrate-to-new-host_mock_test.sh: 迁新主机的生产闸门：production + 源码模式以中文原因拒绝，production + 发布包、development + 源码都放过；docker compose 桩保证不走到第 2 步
+migrate-to-new-host_mock_test.sh: 迁新主机的生产闸门：production + 源码模式以中文原因拒绝，production + 发布包、development + 源码都放过；docker compose 桩保证不走到第 2 步；越过闸门按 pandora-platform: 前缀认平台探测的任一失败，不依赖宿主有 systemd（无 systemd 的 Linux 容器上也通过）
 public-base-url_mock_test.sh: 对外地址闸门的规则矩阵、取值与报错、两个安装脚本共用一份、install-native.sh 不写示例值且 .env 只在首装写
 logrotate-aegis_static_test.sh: 轮转 glob 覆盖三个网关单元 append: 的全部日志文件，规则随包分发并装到 /etc/logrotate.d/aegis
 render-nginx_test.sh: 渲染器契约：虚构域名 panel.example.test 填入正确、后台前缀不带尾斜杠只做 301、非法 AEGIS_PUBLIC_BASE_URL 全部拒绝、模板不残留占位符或具体域名、listen 只许 80/443 与回环 9080

@@ -57,7 +57,11 @@ func (h *handlers) ipClusters(w http.ResponseWriter, r *http.Request) {
 		v.Risk = clusterRisk(c.Accounts, loc.Kind)
 		out = append(out, v)
 	}
-	httpx.OK(w, map[string]any{"clusters": out})
+	httpx.OK(w, ipClustersResponse{Clusters: out})
+}
+
+type ipClustersResponse struct {
+	Clusters []ipClusterView `json:"clusters"`
 }
 
 func (h *handlers) reviewIPCluster(w http.ResponseWriter, r *http.Request) {
@@ -75,8 +79,14 @@ func (h *handlers) reviewIPCluster(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"key": key, "decision": "normal",
-		"expires_at": expires.Format(time.RFC3339)})
+	httpx.OK(w, reviewIPClusterResponse{Key: key, Decision: "normal",
+		ExpiresAt: expires.Format(time.RFC3339)})
+}
+
+type reviewIPClusterResponse struct {
+	Key       string `json:"key"`
+	Decision  string `json:"decision"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 func (h *handlers) disableIPClusterAccounts(w http.ResponseWriter, r *http.Request) {

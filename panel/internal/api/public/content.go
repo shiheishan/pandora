@@ -65,7 +65,7 @@ func (h *handlers) listContentPages(w http.ResponseWriter, r *http.Request) {
 	for _, page := range pages {
 		out = append(out, deliveryPage(page))
 	}
-	httpx.OK(w, map[string]any{"pages": out})
+	httpx.OK(w, contentPagesResponse{Pages: out})
 }
 
 func (h *handlers) getContentPage(w http.ResponseWriter, r *http.Request) {
@@ -77,7 +77,15 @@ func (h *handlers) getContentPage(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"page": deliveryPage(*page)})
+	httpx.OK(w, contentPageDetailResponse{Page: deliveryPage(*page)})
+}
+
+type contentPagesResponse struct {
+	Pages []contentPageResponse `json:"pages"`
+}
+
+type contentPageDetailResponse struct {
+	Page contentPageResponse `json:"page"`
 }
 
 // contentFeedbackRequest 的 helpful 用指针：漏传时不能默认成「没帮助」。
@@ -104,5 +112,5 @@ func (h *handlers) submitContentFeedback(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"ok": true})
+	httpx.OK(w, okResponse{OK: true})
 }

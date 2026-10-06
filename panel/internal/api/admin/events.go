@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 platform/realtime 的租户 admin 频道订阅，依赖 platform/httpx 的主体与错误
+// [OUTPUT]: 对外提供 handlers.events 与保活间隔 sseHeartbeat
+// [POS]: api/admin 的管理端 SSE（GET v1/events，挂 ops.notification.read）：订阅整个租户的 admin 频道，按 sseHeartbeat 发注释帧保活；不跑 SQL
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 package admin
 
 // 管理端 SSE。
@@ -24,9 +29,8 @@ import (
 const sseHeartbeat = 25 * time.Second
 
 func (h *handlers) events(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFrom(r.Context())
-	if p == nil || p.UserID == "" {
-		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeUnauthorized, "需要登录"))
+	p, ok := httpx.RequireUser(w, r, h.d.Log)
+	if !ok {
 		return
 	}
 	if h.d.Realtime == nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
@@ -62,7 +63,7 @@ func step3Seed(t *testing.T, ctx context.Context, admin *pgxpool.Pool, sqls ...s
 
 func step3Handlers(app *platformdb.Pool) *handlers {
 	return &handlers{d: Deps{Pool: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Node: nodefabric.NewService(app, nil)}}
+		Node: nodefabric.NewService(app, nil), Ops: adminops.NewService(app)}}
 }
 
 func TestAccessLogCategoryPG18(t *testing.T) {

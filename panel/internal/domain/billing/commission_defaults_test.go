@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 commission.go 的 CommissionDefault* 常量，依赖迁移 00028 / 00029 的种子与 platform/sourcetest（读本包 loadCommissionConfig 与 api/admin 的 commissionOverview）
+// [INPUT]: 依赖 commission.go 的 CommissionDefault* 常量，依赖迁移 00028 / 00029 的种子与 platform/sourcetest（读本包 loadCommissionConfig 与后台分销总览 Service.AdminCommissionOverview）
 // [OUTPUT]: 对外提供 TestCommissionDefaultsMatchSeed
 // [POS]: billing 的单元测试：分销参数缺行时计提与后台分销页用同一组回退值，且等于迁移里生效的种子（⑩）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -47,8 +47,8 @@ func TestCommissionDefaultsMatchSeed(t *testing.T) {
 
 	// 两个读取点都用这组常量，不再各写一份字面量
 	for name, src := range map[string]string{
-		"loadCommissionConfig":     sourcetest.Load(t, ".").Decl("loadCommissionConfig"),
-		"admin commissionOverview": sourcetest.Load(t, filepath.Join("..", "..", "api", "admin")).Decl("handlers.commissionOverview"),
+		"loadCommissionConfig":    sourcetest.Load(t, ".").Decl("loadCommissionConfig"),
+		"AdminCommissionOverview": sourcetest.Load(t, ".").Decl("Service.AdminCommissionOverview"),
 	} {
 		for _, want := range []string{"CommissionDefaultRatePercent", "CommissionDefaultFreezeDays",
 			"CommissionDefaultMinWithdraw"} {

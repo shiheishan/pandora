@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖同目录 migrate-to-new-host.sh（及它 source 的 platform.sh、public-base-url.sh）；备份、代码包、密钥 .env 都是临时目录里的虚构文件
 # [OUTPUT]: 迁新主机的生产闸门契约：目标 .env 为 production 且没给 AEGIS_RELEASE_DIR 时，在动手之前以中文原因拒绝源码模式；development 或给了发布包则放过这一关
-# [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要 root，只跑到闸门为止，之后的步骤（平台探测、依赖）自然失败，不碰 /opt
+# [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要 root，只跑到闸门为止，之后的步骤（平台探测、依赖）自然失败，不碰 /opt；不依赖宿主有 systemd，macOS、Ubuntu、无 systemd 的容器上都应通过
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -euo pipefail
 
@@ -60,9 +60,11 @@ run_case prod-release production "$TMP/release"
 if grep -Fq "$GATE" "$TMP/prod-release.out"; then fail 'release mode was refused'; fi
 run_case dev-source development ''
 if grep -Fq "$GATE" "$TMP/dev-source.out"; then fail 'development source mode was refused'; fi
-# 闸门之后的失败（平台、依赖或 docker compose 桩）证明脚本确实往下走了，而不是在更早的输入校验上停下
+# 闸门之后的失败（平台、依赖或 docker compose 桩）证明脚本确实往下走了，而不是在更早的输入校验上停下。
+# 平台探测按前缀认：它在闸门之后，停在哪一项取决于宿主（macOS 停在「仅支持 Linux」、
+# 无 systemd 的 Linux 容器停在「需要 systemd」），逐条列举会让测试暗中依赖宿主有 systemd
 for label in prod-release dev-source; do
-  grep -Eq '仅支持 Linux|缺少依赖|Docker Compose' "$TMP/$label.out" \
+  grep -Eq 'pandora-platform:|缺少依赖|Docker Compose' "$TMP/$label.out" \
     || fail "$label did not get past the input checks: $(cat "$TMP/$label.out")"
 done
 

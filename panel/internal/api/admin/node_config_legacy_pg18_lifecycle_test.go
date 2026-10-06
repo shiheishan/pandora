@@ -49,7 +49,7 @@ type nodeConfigPG18BootstrapCallResult struct {
 func callNodeConfigPG18DeletePool(ctx context.Context, pool *platformdb.Pool,
 	fx nodeConfigPG18Fixture, poolID, requestID string) nodeConfigPG18HTTPCallResult {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := &handlers{d: Deps{Pool: pool, Log: log}}
+	h := &handlers{d: Deps{Pool: pool, Node: nodefabric.NewService(pool, nil), Log: log}}
 	req := httptest.NewRequest(http.MethodDelete, "/v1/node-pools/"+poolID, nil)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("id", poolID)

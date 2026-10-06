@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -50,7 +51,7 @@ func TestDeviceLimitWritesPG18(t *testing.T) {
 		}
 	}
 
-	h := &handlers{d: Deps{Pool: app, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	h := &handlers{d: Deps{Pool: app, Node: nodefabric.NewService(app, nil), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 platform/pg18test 的一次性库护栏（run-pg18-gates.sh 的 delivery 域），依赖 pools.go 的 setPlanPools、nodes.go 的 nodeList，依赖 nodefabric 的 ListNodeUsers / NotifyUsersChanged 与 platform/realtime 的本机 Hub
+// [INPUT]: 依赖 platform/pg18test 的一次性库护栏（run-pg18-gates.sh 的 delivery 域），依赖 pools.go 的 setPlanPools、nodes.go 的 nodeList，依赖 nodefabric 的 ListNodeUsers / NotifyUsersChanged、adminops 的用户组存取（usergroup.go 的处理器经 Deps.Ops 调用）与 platform/realtime 的本机 Hub
 // [OUTPUT]: 对外提供 TestDeliveryAdminPG18、openDeliveryPG18
 // [POS]: api/admin 的交付集合 PG18 门禁：改变交付集合的后台写接口提交后通知节点、失败不通知；节点列表的 delivered_to_users 与节点实际拉到的用户同口径（R104）
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -59,7 +60,7 @@ func newDeliveryHarness(t *testing.T, ctx context.Context, app *platformdb.Pool,
 	nodes := nodefabric.NewService(app, nil)
 	nodes.AttachRealtime(hub)
 
-	h := &handlers{d: Deps{Pool: app, Node: nodes, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	h := &handlers{d: Deps{Pool: app, Node: nodes, Ops: adminops.NewService(app), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 	d := &deliveryHarness{t: t, ctx: ctx, tenant: tenant, actor: actor, nodes: nodes, events: events, reauthed: true}
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {

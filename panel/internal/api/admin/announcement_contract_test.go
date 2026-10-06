@@ -1,6 +1,6 @@
-// [INPUT]: 依赖 router_source_test.go 的 routerSource，依赖 platform/sourcetest 按名取公告保存、撤回与 notify 定时发布的源码，依赖 platform/httpx 的错误码
-// [OUTPUT]: 对外提供 TestAnnouncementRouteContracts、TestAnnouncementWritesCarryAtomicAuditAndCAS、TestAnnouncementLifecycleCannotBypassWithdrawal、TestParseAnnounceTimeRequiresTimezoneAndNormalizesUTC、TestNormalizeAnnouncePlanIDsRejectsInvalidAndCanonicalizes
-// [POS]: api/admin 公告的路由门槛、写入审计与乐观锁、状态机与入参规范化
+// [INPUT]: 依赖 router_source_test.go 的 routerSource，依赖 platform/sourcetest 按名取公告 handler、notify 里公告保存 / 撤回事务体与定时发布的源码，依赖 platform/httpx 的错误码
+// [OUTPUT]: 对外提供 TestAnnouncementRouteContracts、TestAnnouncementWritesCarryAtomicAuditAndCAS、TestParseAnnounceTimeRequiresTimezoneAndNormalizesUTC、TestNormalizeAnnouncePlanIDsRejectsInvalidAndCanonicalizes
+// [POS]: api/admin 公告的路由门槛、写入审计与乐观锁（事务体在 notify）、入参规范化；状态机单测随实现在 notify/announce_admin_test.go
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
@@ -67,15 +67,23 @@ func assertAnnouncementRouteGuards(t *testing.T, router, route string, guards []
 }
 
 func TestAnnouncementWritesCarryAtomicAuditAndCAS(t *testing.T) {
-	pkg := sourcetest.Load(t, ".")
-	body := pkg.Decls("handlers.saveAnnouncement", "handlers.withdrawAnnouncement")
+	// 写路径的事务体在 notify（announce_admin.go）；handler 只把校验过的入参交过去
+	handlers := sourcetest.Load(t, ".").Decls("handlers.saveAnnouncement", "handlers.withdrawAnnouncement")
+	for _, want := range []string{"h.d.Notify.SaveAdminAnnouncement(", "h.d.Notify.WithdrawAdminAnnouncement("} {
+		if !strings.Contains(handlers, want) {
+			t.Fatalf("announcement handlers must delegate to notify, missing %q", want)
+		}
+	}
+	pkg := sourcetest.Load(t, "../../domain/notify")
+	body := pkg.Decls("Service.SaveAdminAnnouncement", "Service.WithdrawAdminAnnouncement")
 	for _, want := range []string{
 		`Action: "announcement.saved"`,
 		`Action: "announcement.withdrawn"`,
-		`return audit.Write(r.Context(), tx, tenantID`,
+		`return audit.Write(ctx, tx, tenantID`,
 		`FOR UPDATE`,
 		`version=version+1`,
-		`newVersion != req.ExpectedVersion`,
+		`newVersion != in.ExpectedVersion`,
+		`newVersion != expectedVersion`,
 		`validateAnnouncementTransition(currentStatus, status)`,
 		`announcementAuditSnapshot(currentContent`,
 		`validateAnnouncementPlansContext`,
@@ -89,7 +97,7 @@ func TestAnnouncementWritesCarryAtomicAuditAndCAS(t *testing.T) {
 		t.Fatal("announcement update must not erase withdrawal evidence")
 	}
 
-	notifyBody := sourcetest.Load(t, "../../domain/notify").Decl("Service.PublishDueAnnouncements")
+	notifyBody := pkg.Decl("Service.PublishDueAnnouncements")
 	for _, want := range []string{
 		`RETURNING id::text, version`,
 		`Action: "announcement.published"`,
@@ -98,29 +106,6 @@ func TestAnnouncementWritesCarryAtomicAuditAndCAS(t *testing.T) {
 		if !strings.Contains(notifyBody, want) {
 			t.Fatalf("scheduled publication audit contract missing %q", want)
 		}
-	}
-}
-
-func TestAnnouncementLifecycleCannotBypassWithdrawal(t *testing.T) {
-	for name, tc := range map[string]struct {
-		current string
-		next    string
-		ok      bool
-	}{
-		"draft-to-published":     {"draft", "published", true},
-		"scheduled-to-draft":     {"scheduled", "draft", true},
-		"published-edit":         {"published", "published", true},
-		"published-to-draft":     {"published", "draft", false},
-		"published-to-scheduled": {"published", "scheduled", false},
-		"withdrawn-to-published": {"withdrawn", "published", false},
-		"withdrawn-to-draft":     {"withdrawn", "draft", false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			err := validateAnnouncementTransition(tc.current, tc.next)
-			if (err == nil) != tc.ok {
-				t.Fatalf("transition %s -> %s err=%v, ok=%v", tc.current, tc.next, err, tc.ok)
-			}
-		})
 	}
 }
 

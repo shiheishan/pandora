@@ -111,7 +111,7 @@ func TestAnnouncementPG18(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := &handlers{d: Deps{Pool: app, Log: logger}}
+	h := &handlers{d: Deps{Pool: app, Log: logger, Notify: notify.New(app, logger, []byte("announcement-salt"))}}
 	create := callAnnouncementHandler(t, h.saveAnnouncement, tenantA, actorA, "", map[string]any{
 		"title": "Draft announcement", "body": "Draft body", "severity": "info",
 		"target_plan_ids": []string{planA}, "publish": false, "expected_version": 0,

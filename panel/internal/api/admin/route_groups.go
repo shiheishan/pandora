@@ -28,7 +28,11 @@ func (h *handlers) listRouteGroups(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, map[string]any{"groups": groups})
+	httpx.OK(w, listRouteGroupsResponse{Groups: groups})
+}
+
+type listRouteGroupsResponse struct {
+	Groups []nodefabric.RouteGroup `json:"groups"`
 }
 
 type routeGroupCreateReq struct {
@@ -77,7 +81,12 @@ func (h *handlers) updateRouteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.notifyRoutingNodes(r, nodeIDs)
-	httpx.OK(w, map[string]any{"group": out, "affected_nodes": len(nodeIDs)})
+	httpx.OK(w, updateRouteGroupResponse{Group: out, AffectedNodes: len(nodeIDs)})
+}
+
+type updateRouteGroupResponse struct {
+	Group         *nodefabric.RouteGroup `json:"group"`
+	AffectedNodes int                    `json:"affected_nodes"`
 }
 
 type routeGroupVersionReq struct {
@@ -99,7 +108,12 @@ func (h *handlers) deleteRouteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.notifyRoutingNodes(r, nodeIDs)
-	httpx.OK(w, map[string]any{"deleted": true, "affected_nodes": len(nodeIDs)})
+	httpx.OK(w, deleteRouteGroupResponse{Deleted: true, AffectedNodes: len(nodeIDs)})
+}
+
+type deleteRouteGroupResponse struct {
+	Deleted       bool `json:"deleted"`
+	AffectedNodes int  `json:"affected_nodes"`
 }
 
 func (h *handlers) getRouteGroupRouting(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +140,14 @@ func (h *handlers) setRouteGroupRouting(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.notifyRoutingNodes(r, res.NodeIDs)
-	httpx.OK(w, map[string]any{"ok": true, "row_version": res.RowVersion, "affected_nodes": len(res.NodeIDs)})
+	httpx.OK(w, routeGroupWriteResponse{OK: true, RowVersion: res.RowVersion, AffectedNodes: len(res.NodeIDs)})
+}
+
+// routeGroupWriteResponse 是组内路由与组侧成员两个写接口共用的同形响应。
+type routeGroupWriteResponse struct {
+	OK            bool  `json:"ok"`
+	RowVersion    int64 `json:"row_version"`
+	AffectedNodes int   `json:"affected_nodes"`
 }
 
 type routeGroupMembersReq struct {
@@ -149,7 +170,7 @@ func (h *handlers) setRouteGroupMembers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.notifyRoutingNodes(r, res.NodeIDs)
-	httpx.OK(w, map[string]any{"ok": true, "row_version": res.RowVersion, "affected_nodes": len(res.NodeIDs)})
+	httpx.OK(w, routeGroupWriteResponse{OK: true, RowVersion: res.RowVersion, AffectedNodes: len(res.NodeIDs)})
 }
 
 type nodeRouteGroupsReq struct {
@@ -172,7 +193,12 @@ func (h *handlers) setNodeRouteGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.notifyRoutingNodes(r, res.NodeIDs)
-	httpx.OK(w, map[string]any{"ok": true, "row_version": res.RowVersion})
+	httpx.OK(w, setNodeRouteGroupsResponse{OK: true, RowVersion: res.RowVersion})
+}
+
+type setNodeRouteGroupsResponse struct {
+	OK         bool  `json:"ok"`
+	RowVersion int64 `json:"row_version"`
 }
 
 func (h *handlers) nodeEffectiveRouting(w http.ResponseWriter, r *http.Request) {

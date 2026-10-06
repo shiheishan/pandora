@@ -95,7 +95,7 @@
 {"error":{"code":"…","message":"…","fields?":{"字段":"原因"},"request_id?":"…"}}
 ```
 
-错误码是 `platform/httpx/httpx.go` 的封闭列表：bad_request 400、unauthorized 401、forbidden 403、not_found 404、conflict 409、validation_failed 422（带 fields）、rate_limited 429、idempotency_key_reuse 409、service_unavailable 503、internal_error 500、**reauth_required 403**（修订 R29 已实现）。
+错误码是 `platform/httpx/httpx.go` 的封闭列表：bad_request 400、unauthorized 401、forbidden 403、not_found 404、conflict 409、validation_failed 422（带 fields）、rate_limited 429、idempotency_key_reuse 409、service_unavailable 503、internal_error 500、**reauth_required 403**（修订 R29 已实现）、upgrade_required 426（修订 R124：仅节点网关的旧 `POST /v1/nodes/bootstrap` 使用，文案指明换到 `/v1/nodes/enrollments`；调用方是节点不是页面，前端 `SERVER_ERROR_CODES` 不登记）。
 
 - `message` 是可直接展示的中文
   - 前端按 `code` 分支，按 `fields` 标红表单项。
@@ -8312,3 +8312,4 @@
 | R121 | 2026-10-01 | themegift | 新增 `GET v1/gift-cards/codes/report`：按列表同一筛选导出卡码**掩码**报表（read + ops.export + reauth，≤50000 行，审计 `gift_card.codes_report_exported`）；旧的明文导出路径 `codes/export` 继续下线 |
 | R122 | 2026-10-01 | payquery | 主动查单（PAY-009，迁移 00097）：后台 `POST v1/orders/{id}/query`（order.write + 幂等，不要 reauth，每次写 `order.payment_queried` 审计）、门户同路径（本人、每分钟 6 次）、aegis-public 定时巡检（退避、多实例 SKIP LOCKED）；补记走回调同一条结算主链；门户订单行与详情加 `has_payment_intent`；删除无调用方的 `QueryAndReconcile` |
 | R123 | 2026-10-01 | routegroups | 有名路由组（迁移 00096）：组的增删改、组内出站与规则、成员多对多、节点侧所属组、生效预览；生效顺序规则「节点 → 组 → 全局」、出站「全局 → 组 → 节点」，合并只在 `MergeRouting` 一处；路由 handler 的 SQL 下沉 nodefabric；出站引用改为精确匹配（与 pdnd 一致），内置 `direct` / `block` 保存与下发都规范成小写；全局删出站 409 文案变更；读不存在节点的路由 404 |
+| R124 | 2026-10-05 | apipub（第二波 api 卫生） | 错误码封闭列表加 `upgrade_required` 426：节点网关已下线的一步式 `POST /v1/nodes/bootstrap` 从手写的 `{"error":"…"}` 字符串改回标准错误信封（状态码仍 426、`Cache-Control: no-store`，文案仍指明 `/v1/nodes/enrollments`）。同一波把 admin / public / node 处理器里的 SQL 原样下沉到各 domain 服务、成功响应改成具名结构体，对外 JSON 与其余错误不变，契约无其他改动 |
