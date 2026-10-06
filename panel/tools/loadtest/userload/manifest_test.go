@@ -1,13 +1,12 @@
-// [INPUT]: 依赖 fakegw_test.go 的 fakePanel / testManifest，依赖 userload_test.go 的 baseConfig / endpointCount
+// [INPUT]: 依赖 fakegw_test.go 的 fakePanel / testManifest，依赖 userload_test.go 的 baseConfig / endpointCount，依赖 ltkit.Manifest 的 SubscribePathPrefix 与 ManifestUser.SubscriptionID
 // [OUTPUT]: 单测：manifest 新增字段（subscribe_path_prefix、subscription_id）直接生效、不再经门户探测；按 seed 的地址规划（198.18.0.0/15 的 512 个 /24 轮流分配）四档缺省速率都不撞限流
-// [POS]: tools/loadtest/userload 中 manifestx.go 与 preflight.go 对齐 seed 实际输出的测试
+// [POS]: tools/loadtest/userload 中 userload.go 的清单读取与 preflight.go 对齐 seed 实际输出的测试
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package userload
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -47,31 +46,13 @@ func TestPreflightWithSeedAddressPlan(t *testing.T) {
 func TestUsersReadsPrefixAndSubscriptionIDsFromManifest(t *testing.T) {
 	m := testManifest(12)
 	f := newFakePanel(t, m)
-	path := filepath.Join(t.TempDir(), "lt-manifest.json")
-	if err := m.Save(path); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	doc["subscribe_path_prefix"] = fakePrefix
-	for _, u := range doc["users"].([]any) {
-		u.(map[string]any)["subscription_id"] = "manifest-sub"
-	}
-	if raw, err = json.Marshal(doc); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
+	m.SubscribePathPrefix = fakePrefix
+	for i := range m.Users {
+		m.Users[i].SubscriptionID = "manifest-sub"
 	}
 
 	cfg := baseConfig(f, t.TempDir())
-	cfg.manifest, cfg.adminRate, cfg.loginRate, cfg.portalUsers = path, 0, 0, 4
+	cfg.adminRate, cfg.loginRate, cfg.portalUsers = 0, 0, 4
 	cfg.duration = time.Second
 	rep, err := runUsers(context.Background(), cfg, m, io.Discard)
 	if err != nil {

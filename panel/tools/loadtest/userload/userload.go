@@ -1,4 +1,4 @@
-// [INPUT]: 依赖 ltkit 的 Manifest（用户邮箱、共用口令、订阅令牌、固定来源 IP）与 Recorder，依赖 manifestx.go 的订阅前缀与订阅 id，依赖 traffic.go 的四类流量、sched.go 的开环调度、preflight.go 的限流预估
+// [INPUT]: 依赖 ltkit 的 Manifest（用户邮箱、共用口令、订阅令牌、固定来源 IP、订阅前缀与订阅 id）与 Recorder，依赖 traffic.go 的四类流量、sched.go 的开环调度、preflight.go 的限流预估
 // [OUTPUT]: 对外提供 Main（users 子命令）与 BurstMain（burst 子命令，实现在 burst.go）
 // [POS]: tools/loadtest/userload 的 users 入口：解析参数、预热（登录活跃池与后台、取订阅前缀）、开环跑四类流量、写 users.json/.txt；被 tools/loadtest/main.go 分发
 // [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -192,16 +192,18 @@ func runUsers(ctx context.Context, cfg usersConfig, m *ltkit.Manifest, stdout io
 		fmt.Fprintln(stdout, "  "+l)
 	}
 
-	// seed 后加的字段：订阅前缀与每人的订阅 id。前缀优先级 -sub-prefix > manifest > 门户探测
-	extras, err := readManifestExtras(cfg.manifest)
-	if err != nil {
-		return ltkit.Report{}, err
-	}
+	// seed 写进清单的订阅前缀与每人的订阅 id：前缀优先级 -sub-prefix > manifest > 门户探测，
+	// 订阅 id 有就不在预热里再查
 	prefix := cfg.subPrefix
 	if prefix == "" {
-		prefix = extras.SubscribePathPrefix
+		prefix = m.SubscribePathPrefix
 	}
-	subIDs := extras.subscriptionIDs()
+	subIDs := make(map[string]string, len(m.Users))
+	for _, u := range m.Users {
+		if u.SubscriptionID != "" {
+			subIDs[u.ID] = u.SubscriptionID
+		}
+	}
 	for _, a := range users {
 		if id, ok := subIDs[a.u.ID]; ok {
 			a.subID.Store(&id)
