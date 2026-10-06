@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockContext / MockModule / MockResult / MockRoute，依赖 ./plans-store 的存储与规则，依赖 ./nodes-infra 的 pools（只读），依赖 ./plans-packs 的 packRoutes
- * [OUTPUT]: 对外提供 plans 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「套餐（后台-04）」假接口：列表、详情、只建壳、向导新建（单事务，R65）与编辑（流量 / 价格 / 线路 null = 不动，设备与限速三态、卖点与推荐缺省不动，R1 / R99 / R100；额度 / 线路变了开新版本并立即发布，价格只同步出现过的币种）、销售设置（含卖点与推荐整体覆盖）、版本新建 / 编辑 / 发布、价格新增 / 归档、归档套餐、节点池绑定候选与替换；流量包四接口在 plans-packs.ts，数据与校验在 plans-store.ts。权限、reauth、幂等 scope、校验键名与文案照 api-contract.md 与 domain/adminops 的 catalog.go、plan_wizard*.go、api/admin/pools.go；按 DisallowUnknownFields 拒绝未知字段。超额策略只收 suspend、限速与策略解耦（R99）。R107（R92 已修）：编辑向导保留上架时间窗、滚出的新版本继承当前版本全部设置，本来不限流量时再交 0 不滚版本
- */
 import { randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult, MockRoute } from '../types.ts'
 import { pools } from './nodes-infra.ts'

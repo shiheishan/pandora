@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomUUID / randomInt，依赖 ../types 的 MockModule / MockContext / MockResult / Json，依赖 ./users 的 PLAN_IDS 与 ./plans-store 的 plans（券的适用套餐与套餐卡用固定套餐 id 与种子价格，GET v1/plans 归套餐模块）
- * [OUTPUT]: 对外提供 marketing 模块的假接口 MockModule
- * [POS]: dev/mock/admin 的「营销（后台-06）」假接口：优惠券、礼品卡（模板 / 批次 / 掩码卡码 / 一次性导出 / 按筛选导出掩码报表 / 使用记录 / 统计）、佣金与提现。形状、权限、reauth、幂等 scope、校验文案照 api-contract.md（含 R4 R5 R6 R17）与 Go 处理器；请求体按后端 DisallowUnknownFields 拒绝未知字段
- */
 import { randomInt, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'
 import { plans } from './plans-store.ts'

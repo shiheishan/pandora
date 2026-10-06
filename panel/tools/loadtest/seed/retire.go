@@ -1,9 +1,3 @@
-// [INPUT]: 依赖 admin.go 的 adminClient（后台批量改服务状态接口 /v1/nodes/status:batch）、platform/db 的 InTx，依赖 naming.go 的两个识别标记
-// [OUTPUT]: 包内提供 retireResult、retirePrevious、expireSubscriptionsSQL、retireBatches
-// [POS]: tools/loadtest/seed 的「先停用旧批次再造新批次」：压测库里删不掉旧数据（订阅事件、拉取日志、有效发布物、审计都是追加写，
-//        订阅连着它们），所以旧批次只做状态迁移——节点经后台接口退役（active 先 draining 再 retired，过服务状态机），
-//        订阅经状态机触发器转 expired、凭据随之失效；只圈 loadtest- 名字与 @loadtest.invalid 邮箱，绝不碰别的数据
-
 package seed
 
 import (

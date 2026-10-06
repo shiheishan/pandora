@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取 GiftGranter.GrantTraffic、续费与流量重置的全部声明、CreateTrafficPackOrder 与 fulfillTrafficPackOrder 的源码
-// [OUTPUT]: 对外提供 TestGiftTrafficBecomesATrafficPackGrant、TestTrafficPackOrderShapeAndFulfilment
-// [POS]: billing 流量包（D-E-1）的源码契约：礼品卡流量发成流量包余额、续费与流量重置不碰流量包，流量包订单的建单形状与按快照履约的次序
-
 package billing
 
 import (

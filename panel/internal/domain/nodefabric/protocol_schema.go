@@ -1,7 +1,3 @@
-// [INPUT]: 依赖标准库 encoding/json
-// [OUTPUT]: 对外提供 ProtocolSchema 与 ProtocolSchemas 协议约束元数据、CanonicalNodeType、RedactProtocolConfig 抹敏
-// [POS]: domain/nodefabric 的协议约束中心：schema 元数据与抹敏；内核形状校验在 protocol_validate*.go（xboard_validate 先翻译再调它），protocol_secrets 是抹敏的逆运算；sensitiveProtocolKey 必须覆盖每个 schema 的 SensitiveProperties（单测守住）
-
 package nodefabric
 
 import (

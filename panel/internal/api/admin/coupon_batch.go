@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 coupon.go 的 createCouponReq / normalizeCouponReq / couponSpec，依赖 domain/billing 的 AdminGenerateCoupons（随机出码、撞码重试与审计在 billing/coupon_admin.go），依赖 platform/httpx
-// [OUTPUT]: 对包内提供 generateCoupons 处理器与 generateCouponsReq、isSafeCouponPrefix；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 后台-06 批量生券的 HTTP 外壳：校验张数（1–1000）、前缀（大写字母数字、≤8 位）与必填的活动名，默认每张只能核销一次
-
 package admin
 
 // 批量生成优惠券。

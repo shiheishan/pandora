@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 state / ref / effect，依赖 zod，依赖 ../core/format 的 relativeTime，依赖 ../core/sse 的 SseEvent，依赖 ../shell/runtime 的 useRealtime，依赖 ./modules 的 ModuleKey，依赖 ./EventsCapsule.module.css
- * [OUTPUT]: 对外提供 EventsCapsule 与 describeEvent
- * [POS]: admin 顶栏的「实时事件」胶囊与下拉（管理后台.dc.html toggleEv）：持有后台唯一一条 SSE 连接，事件同时驱动 react-query 失效；没有 ops.notification.read 或流返回 4xx 时整个胶囊不渲染
- */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import { relativeTime } from '../core/format'

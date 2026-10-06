@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 service.go 的 Service、canonicalJSON，依赖 effective_release_service.go 的 lockEffectiveReleaseNodes，依赖 platform 的 db、audit、httpx
-// [OUTPUT]: 对外提供 PublishInput / PublishOutput、Service.PublishConfig；包内提供 lockLegacyConfigRelease、syncLegacyDesiredConfigVersion、validateLegacyPublishScope、nextLegacyConfigVersion
-// [POS]: domain/nodefabric 的旧版配置发布：从 service.go 拆出。锁序为 node-config-release 发布锁 → 目标池 / 节点行 FOR SHARE → 受影响节点行 → 全租户版本分配 → 取代旧层 → 写新层；lockLegacyConfigRelease 与 syncLegacyDesiredConfigVersion 也被接入与后台建节点共用
-
 package nodefabric
 
 import (

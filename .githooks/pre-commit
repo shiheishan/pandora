@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 gitleaks、仓库根的 .gitleaks.toml、可选的 ops-local/gitleaks-private.toml
-# [OUTPUT]: 暂存区含密钥或私有基础设施特征时拒绝提交
-# [POS]: 仓库唯一的提交前闸门，经 git config core.hooksPath .githooks 启用；fail-closed——没装 gitleaks 也拒绝
 set -euo pipefail
 
 if ! command -v gitleaks >/dev/null 2>&1; then

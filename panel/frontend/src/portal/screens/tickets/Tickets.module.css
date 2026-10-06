@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供 tickets/index.tsx 用到的类名
- * [POS]: portal/screens/tickets 的样式，取自设计稿门户-07：左列 240–320 宽的列表、右列会话（消息区 --surface-2 底、我的气泡 --brand-soft 靠右、客服白底靠左、系统居中灰字）与新建表单（分类胶囊）；< 640 按 data-view 只显示列表或会话之一，「全部工单」返回只在窄屏出现
- */
 .layout {
   display: grid;
   grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);

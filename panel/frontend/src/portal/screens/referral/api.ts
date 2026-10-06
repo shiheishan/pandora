@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../../queries 的 COMMISSION_KEY
- * [OUTPUT]: 对外提供 inviteSchema / Invite、useInvite、useTransferCommission、useRequestWithdrawal
- * [POS]: portal/screens/referral 的数据层（契约门户-06，含修订 R5、R7）：我的邀请码与被邀请人、佣金转余额（幂等 commission_transfer_to_balance）、申请提现（幂等 commission_withdrawal_request）；佣金概况在外框 queries.ts（与头像菜单同键）
- */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../../../shell/runtime'

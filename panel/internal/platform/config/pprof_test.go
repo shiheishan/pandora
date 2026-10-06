@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 pprof.go 的 loadPprofAddrs、PprofAddrEnv，依赖 config.go 的 Load
-// [OUTPUT]: 对外提供 pprof 诊断端口配置的单元测试：缺省关闭、只收回环 IP 字面量、端口判重、非回环让 Load 失败
-// [POS]: platform/config 的 pprof 配置单测，与 config_test.go 并列；监听行为的测试在 platform/profiling
-
 package config
 
 import (

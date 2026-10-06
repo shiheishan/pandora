@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖 curl 取 Cloudflare 官方的 ips-v4 / ips-v6 列表，依赖 python3 校验网段
-# [OUTPUT]: 原子写出 /etc/aegispanel/cloudflare-realip.conf：Cloudflare 全部网段的 set_real_ip_from + real_ip_header CF-Connecting-IP；列表为空、畸形、重复或过大时失败且不动旧文件
-# [POS]: deploy 安装链里「站点在 Cloudflare 后面」的显式启用步骤，随发布包装到 /opt/aegispanel/deploy；render-nginx.sh 只在该文件缺失时写不信任任何代理的默认版，两者分工：默认安全、启用显式
 # Refresh the trusted Cloudflare proxy networks used by the Pandora edge.
 #
 # Run it only when the site is behind Cloudflare (orange cloud). On a site that

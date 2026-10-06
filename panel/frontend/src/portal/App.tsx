@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 state / effect，依赖 ../core/api 的 isApiError，依赖 ../core/router 的 navigate，依赖 ../shell/runtime 的 RuntimeProvider / useRuntime / useSignedIn / AppRuntime，依赖 ./AuthPage、./Shell、./appearance、./entry-links
- * [OUTPUT]: 对外提供 App 组件
- * [POS]: 用户门户的根组件：装配运行时与主题令牌，入口页带 #/quick-login/<token> 时先消费令牌并抹掉 hash，再按登录态在 AuthPage 与 Shell 之间切换；邀请链接让登录页直接落在注册标签
- */
 import { useEffect, useRef, useState } from 'react'
 import { isApiError } from '../core/api'
 import { navigate } from '../core/router'

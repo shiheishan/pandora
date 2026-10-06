@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 forwardRef、useEffect、useId、useRef 与 input 属性类型，依赖 ./cx、./icons 的 IconCheck、./Checkbox.module.css
- * [OUTPUT]: 对外提供 Checkbox
- * [POS]: ui 的复选框：原生 checkbox 换外观（16px、圆角 4，选中填强调色），支持 indeterminate（表格表头「部分选中」）；外层 <label> 用 htmlFor 显式指向 input 的 id（调用方给了 id 就用调用方的），标签文字是 label 的直接文字，检查工具与读屏读到的都是「基础版」而不是 value「on」
- */
 import { forwardRef, useEffect, useId, useImperativeHandle, useRef, type InputHTMLAttributes, type ReactNode } from 'react'
 import { cx } from './cx'
 import { IconCheck } from './icons'

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 fakegw_test.go 的 fakePanel / testManifest，依赖 domain/subscription 的 DetectFormat 核对 UA 表
-// [OUTPUT]: users 子命令的单测：UA 分支、固定来源 IP、登录一次复用令牌、开环速率、端点名规范化、429 分来源、-strict 判定、限流预估
-// [POS]: tools/loadtest/userload 的 users 测试，不连库，全部打 httptest 假网关；burst 的测试在 burst_test.go
-
 package userload
 
 import (

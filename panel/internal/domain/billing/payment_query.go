@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 payments.go 的 PaymentService（providerFor 取渠道、settle 共用结算服务）、settlement.go 的 HandlePaymentWebhook，依赖 domain/payment 的 QueryPayment / ErrNotSupported / ErrProviderDisabled，依赖 platform/db、platform/httpx
-// [OUTPUT]: 对外提供 OrderPaymentQuery 结果、ChannelPaid / ChannelUnpaid / ChannelNotFound、PaymentService.QueryOrderPayment（门户直接用，后台经 payment_query_audit.go 包一层审计）；包内提供 queryOrderPayment 与 queryTarget
-// [POS]: billing 的「向渠道主动查单」用例（PAY-009 降级补偿）：回调丢了也能把钱补记上；查到已付交回 HandlePaymentWebhook，与回调同一条结算主链、同一套去重与挂账；定时巡检的认领与退避在兄弟文件 payment_query_patrol.go
-
 package billing
 
 import (

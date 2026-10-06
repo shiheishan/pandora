@@ -1,7 +1,3 @@
-// [INPUT]: 只依赖标准库 context
-// [OUTPUT]: 包内提供 relayUDPDirections：UDP 中继上行、下行各占一个 goroutine 的收尾骨架
-// [POS]: kernel 的 UDP 中继公共骨架，被 proxy_udp.go（SOCKS5）、trojan_udp.go、vmess.go 的 handleUDP 共用；vless_udp.go 与 QUIC 系协议各自内联同一思路
-
 package kernel
 
 import "context"

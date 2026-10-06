@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 apernet/quic-go 的 QUIC 监听，依赖 core 的用户与 route 的路由
-// [OUTPUT]: 对外提供 juicityAdapter（经 newJuicityAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 authenticate、handleStream 与 TCP / UDP 流转发
-// [POS]: kernel 的 Juicity 原生数据面：QUIC 握手后读认证单向流（UUID + 导出密钥材料 token），双向流按网络类型转 TCP 或逐包 UDP；认证、设备上限、流头解析与拨号失败按 session 阶段上报（QUIC 握手本身在 quic-go 内部，看不到）
-
 package kernel
 
 import (

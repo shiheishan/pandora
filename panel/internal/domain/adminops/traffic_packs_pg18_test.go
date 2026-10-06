@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 traffic_packs.go 的流量包目录用例，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 夹具与 catalog_test.go 的 expectHTTPCode
-// [OUTPUT]: 对外提供 TestTrafficPackAdminPG18（run-pg18-gates.sh 的 catalog_sales 域）
-// [POS]: adminops 流量包目录管理的 PG18 集成门禁：新建、改价、上下架各写一条审计，updated_at 乐观锁拦住过期修改，重复下架 409、不存在的 id 中性 404
-
 package adminops
 
 import (

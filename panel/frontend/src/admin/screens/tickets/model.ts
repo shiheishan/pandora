@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ./api 的 Ticket / TicketDetail / Message / Assignee 类型与 QueueParams
- * [OUTPUT]: 对外提供 FILTERS 与 QueueFilter、queueParams、STATUS_VIEW / statusView、STATUS_OPTIONS、PRIORITY_VIEW、CATEGORY_LABELS、CLOSED_REASON_LABELS、isOpenStatus、waitLabel、slaLines、messageView、messageTime、assigneeOptions、systemText、MESSAGE_MAX
- * [POS]: admin/screens/tickets 的纯逻辑：契约后台-02 的状态 / 优先级 / 分类映射表、分段筛选到后端 query 的映射、等待时长与 SLA 文案、消息气泡的角色判定；不碰 React 与网络，model.test.ts 覆盖
- */
 import type { Assignee, Message, QueueParams, Ticket, TicketCategory, TicketDetail, TicketPriority, TicketStatus } from './api'
 
 /** 回复与备注的长度上限（后端 trim 后 1–5000 字） */

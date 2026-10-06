@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useCallback，依赖 ../../../core/api 的 isApiError，依赖 ../../../ui 的 useToast，依赖 ../../actions 的 useFailure / Fail / FailureOptions
- * [OUTPUT]: 对外提供 useCatalogFailure
- * [POS]: admin/screens/plans 的写失败处理：在 actions.ts 的 useFailure 外面加一层：只有 422 的 fields 交给表单，调用方没有表单可标时（如发布前置条件）直接 Toast 出来而不是信封里笼统的「请求参数校验未通过」；409 的 fields 是乐观锁现值，一律 Toast 信封原文；其余状态（含后台只读降级的 503）照 useFailure 的通用口径，reauth 取消与幂等键去留也由它定
- */
 import { useCallback } from 'react'
 import { isApiError } from '../../../core/api'
 import { useToast } from '../../../ui'

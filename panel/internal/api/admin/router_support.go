@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
-// [OUTPUT]: 对外提供 registerTicketRoutes
-// [POS]: api/admin 路由表的「工单队列、处理、指派、升级与快捷回复」段，由 NewRouter 按原注册顺序调用；幂等 scope 取 support 包常量，处理器在 handlers.go / ticket_macros.go
-
 package admin
 
 import (

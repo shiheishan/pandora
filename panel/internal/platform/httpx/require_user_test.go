@@ -1,7 +1,3 @@
-// [INPUT]: 依赖同包 require_user.go 的 RequireUser、context.go 的 WithPrincipal
-// [OUTPUT]: 对外提供 TestRequireUserRejectsMissingOrNonUserPrincipal、TestRequireUserReturnsLoggedInUser
-// [POS]: platform/httpx 登录检查出口的单测：没有主体、匿名主体、UserID 为空都回 401 unauthorized「需要登录」信封，登录用户原样返回且不写响应
-
 package httpx
 
 import (

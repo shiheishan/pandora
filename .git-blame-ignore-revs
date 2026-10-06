@@ -3,3 +3,6 @@
 
 # 删掉 L3 头部的 [PROTOCOL] 提示行
 385f77c018e64ef33221725c8ca3e46941981dfa
+
+# 删掉全部 GEB L3 头注释（INPUT / OUTPUT / POS 三个字段）
+733f840847def60e3b5f1ca0fef46d18bc74e2cb

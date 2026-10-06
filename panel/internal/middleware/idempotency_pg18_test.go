@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 idempotency.go 的 Idempotency 与 IdempotencyClaimFrom，依赖 idempotency_pg18_fixture_test.go 的连接、请求与锁等待观测工具，依赖 deploy/fixtures/idempotency-pg18-seed.sql 与迁移 00037
-// [OUTPUT]: 对外提供 TestIdempotencyMiddlewarePG18（run-pg18-gates.sh 的 idempotency 域）
-// [POS]: 幂等中间件的 PG18 集成门禁：双连接池下的认领、真锁争用、过期不接管、哈希冲突、actor 隔离、完成代际、bytea 重放、旧格式转换与封锁、RLS 与列 ACL。整个文件只有一个 983 行的测试函数，子测试共享同一组连接与上下文，纯挪动拆不开，由行数守卫单独豁免
-
 package middleware
 
 import (

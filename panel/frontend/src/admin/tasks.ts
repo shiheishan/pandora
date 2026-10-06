@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 @tanstack/react-query 的 useQuery，依赖 zod，依赖 ../shell/runtime 的 useApi
- * [OUTPUT]: 对外提供 tasksSchema、TaskItem、Tasks、TASKS_QUERY_KEY、useDashboardTasks、taskCount
- * [POS]: admin 的「需要处理」计数：GET v1/dashboard/tasks（后端已实现，ops.dashboard.read，契约后台-01 含修订 R51）。侧栏徽标与仪表盘「需要处理」卡片共用这一个查询键、这一份严格 schema，同一页只发一次请求、缓存里只有一种形状
- */
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useApi } from '../shell/runtime'

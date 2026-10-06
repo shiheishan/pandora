@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 orders.go 的 ListOrders、providers.go 的 ListProviders、order_detail.go 的 GetOrder、revenue.go 的 ListRevenueAdjustments，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 夹具
-// [OUTPUT]: 对外提供 TestAdminFinanceReadsPG18（run-pg18-gates.sh 的 catalog_sales 域）
-// [POS]: adminops 后台-05 读模型扩展的 PG18 集成门禁：订单状态多值白名单与按用户筛、收款渠道回退、人工单标识、详情复用列表行与开单人、渠道卡统计、收入调整登记人
-
 package adminops
 
 import (

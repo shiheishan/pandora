@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ./schemas 的类型与枚举
- * [OUTPUT]: 对外提供邮件（发件人拆拼、SMTP 表单模型 / 校验 / 请求体、注册卡请求体、状态文字）、Telegram（状态文字、chat id 解析、表单请求体）、模板（名称、状态标记、变量插入、草稿键）、钩子（成功率、状态点、新建 code 与名称、全量请求体、表单校验、投递行文字）
- * [POS]: admin/screens/system 的纯函数层，组件只做渲染与请求；system.test.ts 守住。请求体按 Go 的整体覆盖语义拼全字段：SMTP 六个字段每次都写、钩子按 code upsert 省略即清零
- */
 import type { Channel, Delivery, Encryption, Hook, MailSettings, RegistrationMode, TelegramSettings, Template } from './schemas'
 
 export type Tone = 'ok' | 'warn' | 'muted'

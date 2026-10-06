@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Card / QueryView / useToast，依赖 ../../actions 的 useCan / useIntentKey，依赖 ./api 的 usePlanPools / useInvalidatePlans / poolsBoundSchema / planUpdatedSchema / PlanDetail / PlanPools，依赖 ./model 的 wizardFromPlan / updateBody，依赖 ./failure 的 useCatalogFailure，依赖 ./Plans.module.css
- * [OUTPUT]: 对外提供 PoolCard，以及向导也用的 PoolChips
- * [POS]: 套餐详情的「线路 · 节点池」卡（后台-04）：chip 取 GET v1/plans/{id}/pools（名称 + 在线节点数）。有草稿时改的是草稿的绑定（POST v1/plans/{id}/pools，发布后生效）；没有草稿时按契约推荐的做法走 PUT v1/plans/{id}/complete 只带 pool_ids（基本资料原样回填），后端开新版本并立即发布，符合设计「保存即生效」，toast 原样展示 changed。都要 catalog.publish + reauth + 幂等
- */
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { Button, Card, QueryView, useToast } from '../../../ui'

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 middleware.go 的 Tenant 与 DefaultTenantID，依赖 platform/sourcetest 与 platform/httpx；扫描 panel 的 internal、cmd 非测试 Go 源码与 deploy 下非 test-* 的 shell 脚本
-// [OUTPUT]: 对外提供 TestSingleTenantAssumptionGuard
-// [POS]: middleware 的守卫单测：产品当前只有一个租户，新租户只有 app.seed_tenant_defaults 种下的行；一旦出现建租户的产品代码，或网关不再恒定注入默认租户，就逼人先把种子补全（⑩）
-
 package middleware
 
 import (

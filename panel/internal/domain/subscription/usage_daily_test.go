@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 usage_daily.go 的 usageWindow / fillUsageDays
-// [OUTPUT]: 对外提供 TestUsageWindow、TestFillUsageDays
-// [POS]: domain/subscription 按日用量读模型的单元测试：窗口边界与补零、今天、日均；真实 SQL 见 usage_daily_pg18_test.go
-
 package subscription
 
 import (

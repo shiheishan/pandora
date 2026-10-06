@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/adminops 的 UserActivity / UserPeers / UserFetches / ActivityTimeseries，依赖 Deps.Envelope 解密来源 IP，依赖 platform/httpx
-// [OUTPUT]: 对外提供 decryptIP / decryptWith 解密助手、userProfile 风控画像（含注册 IP registered_ip）、statsTimeseries 注册与活跃时序
-// [POS]: api/admin 的用户画像与风控统计：读模型在 adminops 的 user_profile.go（只给密文），这里按表 AAD 解开明文；解密助手被 access_log.go、audit_log.go、risk.go、commission.go 共用，共享 IP 聚类在 risk.go
-
 package admin
 
 // 用户画像与风控统计。

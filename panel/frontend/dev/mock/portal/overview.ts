@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../types 的 MockModule，依赖 ./fixtures 的 portalState / gate / setScenario / SCENARIOS / MOCK_TIMEZONE / zoneMidnight
- * [OUTPUT]: 对外提供 overview 模块的假接口 MockModule
- * [POS]: dev/mock/portal 的「概览（门户-01）」假接口，归门户前端；形状、错误码照 api-contract.md（含修订 R47 / R48 / R50）：本期按日用量；另挂 dev 专用的场景开关 POST v1/__mock/portal-scenario（匿名），切换后全部门户页面的夹具重建
- */
 import type { MockModule } from '../types.ts'
 import { gate, MOCK_TIMEZONE, portalState, SCENARIOS, setScenario, zoneMidnight } from './fixtures.ts'
 

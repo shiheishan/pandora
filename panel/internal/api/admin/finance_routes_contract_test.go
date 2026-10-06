@@ -1,7 +1,3 @@
-// [INPUT]: 依赖本包路由源码（router.go 与 router_<模块>.go，经 router_source_test.go 的 inspectRouterFiles）的 AST（r.With(...).Method(path, handler) 链）
-// [OUTPUT]: 对外提供 TestFinanceRouteProtectionContracts 契约测试
-// [POS]: admin 网关营销（礼品卡批次与导出、优惠券批量）与分销路由的保护契约：权限码、近期重认证与幂等域逐条钉死，旧的明文导出路由不得复活、掩码报表走 codes/report，与 coupon/catalog 两份路由契约测试互补
-
 package admin
 
 import (

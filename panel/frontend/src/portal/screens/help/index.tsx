@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useEffect / useState，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/router 的 href / navigate，依赖 ../../../ui 的 Button / Card / Empty / Input / QueryView / useToast，依赖 ../common/traffic 的 formatDate，依赖 ../index 的 PortalScreenProps，依赖 ./api 与 ./model
- * [OUTPUT]: 默认导出 Help 页面组件（登记表 React.lazy 的目标）
- * [POS]: portal/screens/help 的入口：帮助中心（门户-09）。地址驱动：#/help 宽屏左列目录 + 右列第一篇，#/help/<slug> 打开指定文章；< 640 目录与文章分屏，文章头有「全部文章」返回。左列搜索框 300 毫秒防抖后交给后端 q；文章底部「有帮助」反馈（每篇每版只发一次）与「仍未解决，提交工单」（直接去 #/tickets/new，不调接口）
- */
 import { useEffect, useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { href, navigate } from '../../../core/router'

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter 与用户侧工单处理器的源码
-// [OUTPUT]: 对外提供 TestSupportWriteRoutesRequireStableIdempotency、TestSupportHandlersCommitPreparedResponses
-// [POS]: api/public 工单写路由先限流后幂等、处理器走原子预制响应
-
 package public
 
 import (

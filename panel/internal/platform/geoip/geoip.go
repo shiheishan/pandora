@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 ip2region 的 xdb 离线库文件（路径由调用方从 platform/config 取来传入）
-// [OUTPUT]: 对外提供 Resolver、Open、ErrNoDatabase、Location、NetworkKind，及 Resolver 的 Lookup、Close
-// [POS]: platform 的 IP 画像：风控明细与节点接入自动填地区共用；自己不读环境变量，缺库由调用方决定降级
-
 // Package geoip 把 IP 解析成风控看得懂的画像：地理位置、运营商、网络性质。
 //
 // # 为什么用离线库而不是在线接口

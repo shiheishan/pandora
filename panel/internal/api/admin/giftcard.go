@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/giftcard 的模板、生码、批次、导出、卡码与兑换记录用例，依赖 platform/httpx
-// [OUTPUT]: 对包内提供礼品卡处理器：模板列表与保存、生码、批次列表、一次性导出、卡码列表与启停、按筛选导出掩码报表、统计、兑换记录；JSON 成功响应为具名 DTO（*Response），生码与统计直接回领域层结构
-// [POS]: api/admin 后台-06 礼品卡 tab 的 HTTP 外壳；明文卡码只经生码样例与 exportGiftBatch 出站，exportGiftCodesReport 与列表同筛选、只出掩码；权限与重认证在 router_marketing.go
-
 package admin
 
 import (

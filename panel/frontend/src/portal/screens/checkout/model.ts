@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../common/catalog 的 Plan / Pack / Price / cnyPrices / periodOf / PERIODS，依赖 ../../queries 的 Subscription / pickPrimary / isLive
- * [OUTPUT]: 对外提供 CheckoutMode、resolveMode、periodOptions、defaultPriceId、isRepriced、Quote、buildQuote、orderRequest、couponPreviewBody、couponNote、normalizeCoupon
- * [POS]: portal/screens/checkout 的纯逻辑：由地址参数和目录决定结账模式（契约门户-03：没有订阅走新购，同套餐走续费，换套餐走变更），列周期选项、算订单预览、拼四种下单请求体；页面只负责摆放与请求，这里全部有单元测试
- */
 import { isLive, pickPrimary, type Subscription } from '../../queries'
 import { cnyPrices, periodOf, PERIODS, type Pack, type Plan, type Price } from '../common/catalog'
 

@@ -1,9 +1,3 @@
-/**
- * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
- * [OUTPUT]: 对外提供节点页各组件用到的类名
- * [POS]: admin/screens/nodes 的样式，取自 管理后台-07-节点与服务器.dc.html：列表八列网格（勾选 / 节点 / 协议 / 服务器 / 在线 / 负载 / 24h 流量 / 状态）行高 50、表头 36、负载条三档色；抽屉里的 KPI 四格、24 根带宽柱、事实表、动作行、规则行与一次性令牌块。后台只支持 960 以上，窄于此在面板里横向滚动
- */
-
 .stack {
   display: flex;
   flex-direction: column;

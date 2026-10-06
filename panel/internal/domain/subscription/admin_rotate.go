@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform 的 db/audit/httpx，依赖同包 service.go 的 Rotate
-// [OUTPUT]: 对外提供 AdminRotateInput、AdminRotateOutput（不含令牌）、AdminRotate
-// [POS]: domain/subscription 的管理员代换订阅链接：旧链接立即失效、写审计，新令牌明文不交给管理员
-
 package subscription
 
 import (

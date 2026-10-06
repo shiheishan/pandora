@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 manual_order.go 的 CreateManualOrder、offlinePaymentInput 与 ManualSettlement*
-// [OUTPUT]: 对外提供 TestManualOrderSettlementValidatedBeforeCheckout、TestOfflinePaymentInputShape、TestMarkPaidQuarantinedConflict
-// [POS]: billing 人工单的单元测试：结算方式与凭证号在进下单事务之前被拒；两条线下收款路径（标记已支付、人工单线下已收款）共用同一个回调形状
-
 package billing
 
 import (

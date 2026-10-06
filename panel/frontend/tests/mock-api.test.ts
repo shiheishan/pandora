@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../dev/mock/types 的 matchPattern
- * [OUTPUT]: 对外提供假后端外壳与模块分发的测试
- * [POS]: tests 的假后端外壳守卫：matchPattern 的段匹配；外壳接口、模块分发、权限 404 先于 reauth、reauth 不消耗幂等键、同键重放与换请求 409、只重放 2xx（4xx 后同 key 重新执行、条件改好后成功，R85）、admin.writes 关闭后写接口 503（豁免切开关、auth 与改自己密码）——调账用 users 假后端的真实种子用户，余额经详情接口核对，种子外的 id 回 404；各页面会话往 dev/mock/ 里加接口时都依赖这几条行为。各模块的假接口测试在同目录的 mock-admin-*.test.ts 与 mock-portal.test.ts
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

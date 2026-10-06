@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState / FormEvent，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/format 的 formatMoney，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic、./queries、./schemas，依赖 ./marketing.module.css 与 ./Gifts.module.css
- * [OUTPUT]: 对外提供 TemplateDrawer（新建 / 编辑礼品卡模板）
- * [POS]: admin/screens/marketing 礼品卡的模板编辑抽屉（契约「待补·前端」：设计点一下就建固定占位模板，后端必须有真实奖励才能保存）：类型、名称、说明、奖励（通用 / 套餐 + 价格 / 盲盒奖池）、领取条件、限制、主题色、状态。POST v1/gift-cards（R4：reauth），编辑时卡型锁定（改卡型后端 409）
- */
 import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { formatMoney } from '../../../core/format'

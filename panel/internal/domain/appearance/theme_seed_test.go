@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 migrations/ 下文件名含 theme 的迁移文本
-// [OUTPUT]: 对外提供 TestBuiltinThemeTokensPassFrontendValidation、TestStellarThemeOverridesSurfaceColors、TestThemeMigrationDownDoesNotDropActiveTheme 与迁移文本解析助手
-// [POS]: domain/appearance 的历史种子测试：00051/00055 的扁平 tokens 与 00075 的 light/dark 分组都过得了取值校验
-
 package appearance
 
 import (

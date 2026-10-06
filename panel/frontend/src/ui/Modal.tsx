@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ./useModalDialog、./Button、./cx、./Modal.module.css
- * [OUTPUT]: 对外提供 Modal 与 ConfirmModal
- * [POS]: ui 的弹窗：宽 400、圆角随入口（门户 14、后台 12）、内边距 22；< 640 时变成底部抽屉（贴底通栏、上圆角 16、按钮通栏），即 brief 里的 Modal/Sheet
- */
 import { useId, useState, type ReactNode } from 'react'
 import { Button } from './Button'
 import { cx } from './cx'

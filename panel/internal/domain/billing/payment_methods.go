@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/db 的租户事务，只读 payment_providers
-// [OUTPUT]: 对外提供 PaymentMethodRow、Service.PaymentMethods
-// [POS]: billing 的门户可用支付方式读模型（门户 GET v1/payment-methods），从 api/public/payment_methods.go 下沉：只列启用且接受新支付的渠道，按 config.methods（缺省 default_method）展开成多行；中文名映射与空币种补 [] 留在处理器
-
 package billing
 
 import (

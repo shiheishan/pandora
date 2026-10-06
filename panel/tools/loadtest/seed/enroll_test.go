@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 enroll.go 的 nodeIdentity 与 nodeClient、verify.go 的 uniProxyUserIDs / checkUserSet，依赖 nodefabric 的规范串与 platform/crypto 的 Verify，httptest 扮演节点网关
-// [OUTPUT]: 单测：两段式接入与签名 GET 的签名按 api/node 的验签口径能通过、运行令牌只以 sha256 交出、manifest 私钥与登记公钥配对；UniProxy 用户列表两种响应形状与集合核对
-// [POS]: tools/loadtest/seed 的节点侧测试：假网关的验签逻辑逐条照 api/node/router.go 与 handlers.go，签名一处对不上就红
-
 package seed
 
 import (

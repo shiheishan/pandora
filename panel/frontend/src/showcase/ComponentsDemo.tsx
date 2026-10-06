@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../ui 的全部组件与 useToast，依赖 ../core/theme 的 useTheme / setTheme，依赖 ./Showcase.module.css
- * [OUTPUT]: 对外提供 ComponentsDemo
- * [POS]: showcase 的组件演示区，按设计规范 05「组件」的顺序排列；每个组件的全部变体都在这里，可以切主题、切入口、调窗口宽度逐一对照
- */
 import { useState, type Key, type ReactNode } from 'react'
 import { setTheme, useTheme } from '../core/theme'
 import {

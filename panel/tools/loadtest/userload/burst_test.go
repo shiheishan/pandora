@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 fakegw_test.go 的 fakePanel / testManifest
-// [OUTPUT]: burst 子命令的单测：请求形状（X-Real-IP 与可选的 CF-Connecting-IP、Content-Type、无幂等键、Bearer）、reauth_required 后重认证并重放、来回切换回到原状、burst.json 内容、拒绝动别的分组
-// [POS]: tools/loadtest/userload 的 burst 测试，打 httptest 假后台；users 的测试在 userload_test.go
-
 package userload
 
 import (

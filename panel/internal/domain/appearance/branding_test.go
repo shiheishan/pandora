@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 branding.go 的 normalizeBranding / filterBranding / MaxLogoBytes，依赖 service.go 的 SaveTheme 入参校验，依赖 paper_theme_test.go 的 isValidationOn
-// [OUTPUT]: 对外提供 TestNormalizeBrandingRules、TestFilterBrandingKeepsOnlyKnownKeys、TestSaveThemeReportsAllFieldsAtOnce
-// [POS]: domain/appearance 站点品牌规则的单元测试：站点名必填与长度、标语长度、Logo 只收小体积 data:image、未知键拒绝；门户读取只放行三个已知键；保存一次回齐全部字段错误
-
 package appearance
 
 import (

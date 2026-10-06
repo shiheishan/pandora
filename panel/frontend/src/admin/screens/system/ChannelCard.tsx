@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 ReactNode，依赖 ./logic 的 Tone，依赖 ./system.module.css
- * [OUTPUT]: 对外提供 ChannelCard（通知渠道卡片外壳）
- * [POS]: admin/screens/system 通知渠道三张卡共用的外壳（设计稿 channels）：标题栏名称 + 状态圆点，两列字段区，浅底底栏放测试与保存
- */
 import type { ReactNode } from 'react'
 import type { Tone } from './logic'
 import css from './system.module.css'

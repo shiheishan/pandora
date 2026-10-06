@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 crypto/ed25519 生成节点密钥并签 begin 与后续 enrollment 请求，依赖 heartbeat_metrics.go 的 CollectHostCapacity，依赖 signed.go 的 validateSignedServer / SaveIdentity
-// [OUTPUT]: 对外提供 EnrollmentJournal、EnrollmentEvidence、BeginEnrollment、EnrollmentStatus、CommitEnrollment、PromoteCommittedEnrollment、AbortEnrollment、LoadEnrollmentJournal、EnrollmentJournalPath
-// [POS]: pdnd/panel 的两阶段节点接入，首装产生身份的唯一入口：begin 在本地日志里先落盘再发请求，commit 前后都可续跑，提交后才把身份提升为 signed.go 读的 identity.json
-
 package panel
 
 import (

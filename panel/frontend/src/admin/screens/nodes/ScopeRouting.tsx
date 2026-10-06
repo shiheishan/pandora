@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../ui，依赖 ./logic 的规则行与出站行纯函数，依赖 ./NodeRouting 的 RuleRows，依赖 ./schemas 的 Outbound / Route，依赖 ./nodes.module.css 与 ./infra.module.css
- * [OUTPUT]: 对外提供 ScopeRoutingEditor（全局与路由组共用的两栏路由编辑器）与 RoutingPayload
- * [POS]: admin/screens/nodes 的「一个范围」的出站与分流编辑（设计稿 t_routing 的两栏）：左栏 RuleRows 规则（下拉 = 内置 + 本范围出站 + 调用方给的其他范围出站），右栏内置 direct / block 与本范围自定义出站（弹窗增改、被本范围规则引用先拦、改名时规则跟着改），底部发布按钮；编辑在本地，校验过了才把 { outbounds, routes } 交给调用方去确认与发请求。全局（RoutingTab）与路由组（RouteGroupPanel）共用这一份，规则编辑器不另写
- */
 import { useState, type ReactNode } from 'react'
 import { Button, Input, Modal, Select, Tag, TextArea, useToast } from '../../../ui'
 import { OUTBOUND_TYPES, outboundToRow, renameOutbound, routeToRow, rowsToOutbounds, rowsToRoutes, rulesUsing, type OutboundRow, type RuleRow } from './logic'

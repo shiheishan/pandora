@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/pg18test 的一次性库护栏（run-pg18-gates.sh 的 delivery 域），依赖 nodefabric 的 ListNodeUsers 与本包的 ListNodes / ListOwnedNodePreviews
-// [OUTPUT]: 对外提供 TestDeliverySetPG18、openDeliveryPG18
-// [POS]: domain/subscription 的交付集合 PG18 门禁：同一份夹具上对照节点用户列表、订阅下载、门户预览三处下发口径（R104）
-
 package subscription
 
 import (

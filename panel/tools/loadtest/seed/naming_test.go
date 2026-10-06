@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 naming.go 的命名空间、地址分配与随机量，依赖 options.go 的 labelPattern
-// [OUTPUT]: 单测：名字与代码满足面板的字段规则、识别标记稳定、IP 分配确定且不越界、run ID 与口令的形状
-// [POS]: tools/loadtest/seed 的命名契约测试，纯函数，不连库不连网
-
 package seed
 
 import (

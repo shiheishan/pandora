@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/billing 的 Admin* 佣金与提现用例（读写、记账、审计在 billing/commission_admin.go）、ValidCommissionScope 与 AdjustBalance，依赖 profile.go 的 decryptWith 解开收款信息，依赖 platform/httpx
-// [OUTPUT]: 对包内提供提现列表、审批、打款、分销总览、分销参数与余额调整处理器；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 后台-06 佣金与提现的 HTTP 外壳：校验入参、调 billing、写响应；总览带累计佣金、邀请注册数与计佣范围
-
 package admin
 
 // 提现审批与打款。

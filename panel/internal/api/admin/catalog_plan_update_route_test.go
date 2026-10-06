@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 router_catalog.go 的 registerCatalogPlanUpdate 与 router*.go 的 NewRouter 源码（经 parseRouterFiles），依赖 middleware 的 Idempotency，依赖 platform/httpx 的 Principal 与响应
-// [OUTPUT]: 对外提供 PUT v1/plans/{id} 的路由守卫测试与 AST 契约：权限与近期重认证先于幂等与 handler、幂等头走生产校验、同键重放只进 handler 一次、生产路由表只经已登录分组注册一次
-// [POS]: api/admin 的套餐资料更新路由契约；同目录 catalog_routes 契约管其余目录写接口
-
 package admin
 
 import (

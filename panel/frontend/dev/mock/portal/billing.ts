@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 AnonContext / Json / MockResult，依赖 ./catalog 的目录与优惠码，依赖 ./fixtures 的 PortalState / OrderFixture / makeSub / scenario
- * [OUTPUT]: 对外提供 BillingError、readStrict、isUuid、couponCheck、couponFace、placeOrder、createdView、fulfill、moveBalance、cancelOrder、sweepExpired、assertNoOpenChange、changeQuote、orderRow、orderDetail
- * [POS]: dev/mock/portal 的计费逻辑（不是模块，不进登记表）：结账、订单、选购三个页面文件共用——请求体逐字段校验（后端 DisallowUnknownFields）、优惠码试算、下单时扣余额（记 balance_hold 流水）与 30 分钟过期或取消退回（balance_release）、履约（充值记 balance_topup）（新购开订阅、续费延期、变更原地换套餐并退余额、流量包加余量）、变更套餐折算（5.A D-E-2：剩余时间与剩余流量比取小）
- */
 import { randomUUID } from 'node:crypto'
 import type { AnonContext, Json, MockResult } from '../types.ts'
 import { COUPONS, findPlan, intervalMonths, type CatalogPlan, type CatalogPrice } from './catalog.ts'

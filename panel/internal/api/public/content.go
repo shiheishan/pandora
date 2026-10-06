@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/content 的 ListVisible / GetVisible / SubmitFeedback，依赖 platform/httpx
-// [OUTPUT]: 对外提供 listContentPages、getContentPage、submitContentFeedback 处理器与 contentPageResponse 投递形状
-// [POS]: api/public 的帮助中心处理器（门户-09）：只投递给用户该看的字段，反馈与详情共用同一套可见性 query
-
 package public
 
 import (

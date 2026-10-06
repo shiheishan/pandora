@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../ui 的 Button / Empty，依赖 ../../../core/api 的 isApiError，依赖 ../../queries 的 useAppearance，依赖 ./common.module.css
- * [OUTPUT]: 对外提供 Slot、LoadError
- * [POS]: portal/screens/common 的两个页面小块：外观插槽（服务端已白名单净化的 HTML，空则不占位）与卡片内的加载失败态（一句现状 + 重试）
- */
 import { isApiError } from '../../../core/api'
 import { Button, Empty } from '../../../ui'
 import { useAppearance } from '../../queries'

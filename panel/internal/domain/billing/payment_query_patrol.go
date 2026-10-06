@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 payment_query.go 的 QueryOrderPayment、domain/payment 的 ErrNotSupported，依赖迁移 00097 在 payment_intents 上加的 query_attempts / next_query_at，依赖 platform/db、log/slog
-// [OUTPUT]: 对外提供 PaymentQueryPatrol 节流参数与 DefaultPaymentQueryPatrol、PaymentQueryPatrolStats、PaymentService.ReconcileDuePayments；包内提供 nextPaymentQueryAt 退避计算
-// [POS]: billing 主动查单的定时巡检（PAY-009 降级补偿的核心）：aegis-public 每轮调一次，逐个认领到期的在途支付意图去渠道查单；认领是短事务 + FOR UPDATE SKIP LOCKED + 把 next_query_at 推到未来，多实例并发也不会同时查同一单，查单本身不占行锁
-
 package billing
 
 import (

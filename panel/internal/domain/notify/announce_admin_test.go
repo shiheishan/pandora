@@ -1,7 +1,3 @@
-// [INPUT]: 依赖本包 announce_admin.go 的 validateAnnouncementTransition
-// [OUTPUT]: 对外提供 TestAnnouncementLifecycleCannotBypassWithdrawal
-// [POS]: domain/notify 公告后台写路径的状态机单测（随实现从 api/admin/announcement_contract_test.go 迁来）
-
 package notify
 
 import "testing"

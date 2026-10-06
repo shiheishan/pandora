@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/billing 的 PaymentMethods（只读 payment_providers 的 SQL 在那里），依赖 platform/httpx
-// [OUTPUT]: 对外提供 handlers.listPaymentMethods
-// [POS]: api/public 的可用支付方式（契约门户外壳 GET v1/payment-methods）：结账页与充值下拉的选项，一个渠道按 config.methods 展开成多行
-
 package public
 
 import (

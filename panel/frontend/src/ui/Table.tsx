@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 ReactNode、Key 与 KeyboardEvent，依赖 ./Checkbox、./Empty、./Skeleton、./cx、./Table.module.css
- * [OUTPUT]: 对外提供 Table 组件与 TableColumn、TableProps 类型
- * [POS]: ui 的数据表：语义化 <table>，列由 columns 描述；可选行勾选（表头三态）、行点击（行可聚焦，Enter / 空格走同一回调）、加载骨架与空状态；窄屏横向滚动而不是挤压列
- */
 import type { Key, KeyboardEvent, ReactNode } from 'react'
 import { Checkbox } from './Checkbox'
 import { cx } from './cx'

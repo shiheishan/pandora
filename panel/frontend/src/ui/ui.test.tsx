@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react-dom/server 的 renderToStaticMarkup，依赖 ../core/api 的 ApiError，依赖 ./index 的全部组件
- * [OUTPUT]: 对外提供组件库的无障碍与结构测试
- * [POS]: ui 的单元测试：不引入 DOM 库，用服务端渲染核对角色、aria 属性与关键结构，Table 行的 Enter / 空格激活直接调用组件取元素树喂假按键事件；交互（方向键、弹层开合、焦点）在 showcase 里用浏览器验收
- */
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'

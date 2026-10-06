@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/adminops 的 RevenueTimeseries / ListRevenueAdjustments / CreateRevenueAdjustment / ReverseRevenueAdjustment，依赖 platform/httpx
-// [OUTPUT]: 对包内提供 revenueTimeseries、revenueAdjustments、createRevenueAdjustment、reverseRevenueAdjustment 四个处理器；成功响应为具名 DTO（*Response）
-// [POS]: api/admin 的仪表盘收入趋势（带上一区间合计 previous_total）与收入调整（新建 / 冲销带 Idempotency-Key），路由在 router_dashboard.go
-
 package admin
 
 import (

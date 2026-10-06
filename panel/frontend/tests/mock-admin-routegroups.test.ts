@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/nodes/schemas 的节点列表 / 节点路由 / 路由组 / 组内路由 / 生效预览 schema
- * [OUTPUT]: 对外提供路由组（00096）假接口的测试
- * [POS]: tests 的路由组假后端守卫：列表与组内路由能被页面 schema 接住、名称大小写不敏感唯一、组规则不能指向节点私有出站、行版本冲突 409、成员从组侧与节点侧两边改且互相推版本、节点私有规则能指向所在组出站且按 tag 原样精确比较（大小写不同 422、内置名不分大小写，保存与预览都规范成小写）、生效预览的顺序与来源（节点 → 组按排序 → 全局，出站具体范围覆盖）、新造成的悬空引用 409、删组后成员退回全局、全局出站被组规则引用时删除 409、只读账号能读不能写（写接口 404）
- */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'

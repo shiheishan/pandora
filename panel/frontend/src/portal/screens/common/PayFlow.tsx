@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useEffect / useRef / useState，依赖 @tanstack/react-query 的 useMutation / useQueryClient，依赖 zod，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/format 的 formatMoney，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 Button / Modal / Skeleton，依赖 ./orders 的 useOrder / PAID_STATUSES / OrderDetail，依赖 ./catalog 的 PaymentMethod / usePaymentMethods / methodKey，依赖 ./traffic 的 formatDate
- * [OUTPUT]: 对外提供 PayState、PaymentModal、payReturnUrl、paySuccessText
- * [POS]: portal/screens/common 的支付弹窗（用户门户.dc.html 外壳的支付弹窗，契约门户-03 支付条目）：结账页下单后打开它去收银台，0 元订单直接显示成功；支付接口回 409（订单已不可支付）时经 onUnpayable 通知调用方忘掉记下的待支付单、不给无效的「重试」；订单页的「去支付」用 choose 态先选支付方式；订单页收到收银台回跳（#/orders/<id>?paid=1）时用它轮询确认。无二维码：拿到 GET 跳转就顶层导航，POST 跳转按「暂不可用」处理（CSP form-action 'self' 会拦自动提交表单）
- */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { z } from 'zod'

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 vitest，依赖 ./model 的纯函数，依赖 ./api 的 schema，依赖 ./RiskTab 的 sharingHint
- * [OUTPUT]: 用户模块映射与 schema 的单元测试
- * [POS]: admin/screens/users 的纯逻辑测试：状态分段到后端 query、到期 / 流量 / 设备三列文案、设备上限显示值、当前订阅挑法、订单「买了什么」、调账元转分、密码策略预检、分享提示；schema 守住封闭枚举与保留规则 2（换发响应带令牌即判为不符约定）
- */
 import { describe, expect, it } from 'vitest'
 import { rotatedSchema, usersSchema } from './api'
 import {

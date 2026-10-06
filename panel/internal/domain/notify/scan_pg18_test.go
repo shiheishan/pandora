@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/pg18test 打开 notify 域的一次性库，依赖 scan.go 的 ScanQuota / ScanExpiring / ScanPaidOrders
-// [OUTPUT]: 对外提供 TestScanQuotaCountsTrafficPacksPG18、TestScanCountsOnlyInsertedRowsPG18
-// [POS]: domain/notify 的 PG18 测试：流量预警把用户流量包剩余算进可用量，有余量的用户不再收到「流量即将用尽」；三个扫描只数实际新排的行，同一批数据扫第二遍返回 0
-
 package notify
 
 import (

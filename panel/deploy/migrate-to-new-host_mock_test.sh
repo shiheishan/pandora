@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# [INPUT]: 依赖同目录 migrate-to-new-host.sh（及它 source 的 platform.sh、public-base-url.sh）；备份、代码包、密钥 .env 都是临时目录里的虚构文件
-# [OUTPUT]: 迁新主机的生产闸门契约：目标 .env 为 production 且没给 AEGIS_RELEASE_DIR 时，在动手之前以中文原因拒绝源码模式；development 或给了发布包则放过这一关
-# [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要 root，只跑到闸门为止，之后的步骤（平台探测、依赖）自然失败，不碰 /opt；不依赖宿主有 systemd，macOS、Ubuntu、无 systemd 的容器上都应通过
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

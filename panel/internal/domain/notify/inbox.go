@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 platform/db 的租户事务，依赖同包 notify.go 的 Render；读写 notification_deliveries（inapp 渠道）、notification_templates、notification_preferences
-// [OUTPUT]: 对外提供 InboxItem、PreferenceOverride，以及 Service 的 Inbox / MarkInboxRead / MarkAllInboxRead / PreferenceOverrides / SetPreference
-// [POS]: notify 的门户读写面：站内信收件箱、已读标记与通知偏好覆盖项，从 api/public/notifications.go 下沉；偏好目录、锁定项与参数校验仍在处理器
-
 package notify
 
 import (

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 coupons / coupon_redemptions / prices / plans / traffic_packs 表，依赖 platform/db、platform/httpx
-// [OUTPUT]: 对外提供 PreviewForPrice、PreviewForTrafficPack（试算，响应带券面 coupon）与券面类型 CouponFace（变更套餐试算同形，R76）；包内提供 applyCoupon / redeemCoupon 与 couponMatch（face 取券面）
-// [POS]: billing 的优惠券校验与核销：下单、续费、变更套餐、流量包与两种试算共用 applyCoupon 这一个口径
-
 package billing
 
 // 优惠券。

@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 adapter.go 的 AdapterRegistry / AdapterHooks，依赖 runtime.go 的 Build 与 Runtime，依赖 connerror_log.go 的 connErrorLogSink，依赖 core 的 Core 契约与 log/slog
-// [OUTPUT]: 对外提供 NativeCore（NewNativeCore、NewNativeCoreWithLogger 与 core.Core 全部方法、InboundReady、CapabilityReport）；包内 nativeInbound、routedDataPlane、upstream 失败标记
-// [POS]: kernel 的控制面主体：按 InboundSpec 启动入站、热替换与回滚，把 DataPlane 接到路由与出站，把每个入站的 OnConnError 接到同一个限流日志出口；已退役的入站一律以"入站 %q 已退役"拒绝后续操作
-
 package kernel
 
 import (

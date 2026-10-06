@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 tools/loadtest/ltkit 的 Recorder 与 Observation，sync/atomic
-// [OUTPUT]: 对外提供 包内 observer（record、sample）、fleetStats（streamOpened、countEvent、snapshot）、fleetSummary、progressLine
-// [POS]: tools/loadtest/nodesim 的计量接线：请求进 ltkit.Recorder（同一口径的延迟与错误码），Recorder 装不下的整机状态（在线流数、事件计数、验签失败、未起来的节点）进 fleetStats，最后作为 meta 写进 nodes.json
-
 package nodesim
 
 import (

@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ./Skeleton，依赖 ./cx 与 ./StatStrip.module.css
- * [OUTPUT]: 对外提供 StatStrip、StatItem
- * [POS]: ui 的统计条：一排等宽统计格（标签 + 大号等宽数字），格间 1px 缝当分隔线；items 为 undefined 时画同数量的骨架格。来自后台营销页，仪表盘与各模块的汇总行共用；< 960 两列
- */
 import type { ReactNode } from 'react'
 import { cx } from './cx'
 import { Skeleton } from './Skeleton'

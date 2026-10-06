@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter，依赖 core/mieru 的 Inbound（SetTransport、SetConnErrorHandler 与失败哨兵）
-// [OUTPUT]: 对外提供 mieruAdapter（经 newMieruAdapter 注册）的 Protocol、Validate、Start、Close 与用户表方法；包内 mieruTransport、markMieruConnError
-// [POS]: kernel 的 mieru 薄层：线格式与认证留在 core/mieru，TCP / UDP 出站经 DataPlane 路由计量，已认证连接的失败经 SetConnErrorHandler 回到 OnConnError
-
 package kernel
 
 import (

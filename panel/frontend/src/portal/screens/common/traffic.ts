@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 ../../../core/format 的 formatBytes（纯函数）
- * [OUTPUT]: 对外提供 compactBytes、bytesParts、daysUntil、formatDate、shortDate、expiryInfo、usageLevel、TRAFFIC_METRIC、pickTrafficQuota、trafficSummary、resetAtOf、projectUsage、buildUsageBars 与相关类型
- * [POS]: portal/screens/common 的流量与期限计算：概览主卡、我的订阅头部、本期用量图共用；只做数字到文案的映射，不碰请求与组件，全部有单元测试
- */
 import { formatBytes } from '../../../core/format'
 
 const DAY_MS = 86_400_000

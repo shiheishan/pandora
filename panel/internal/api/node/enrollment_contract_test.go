@@ -1,7 +1,3 @@
-// [INPUT]: 依赖同包 handlers.go 的 legacyBootstrapDisabled，依赖 net/http/httptest 驱动处理器
-// [OUTPUT]: 对外提供 TestLegacyBootstrapFailsClosedWithoutTouchingNodeService
-// [POS]: api/node 旧 bootstrap 的关闭契约：Deps 里没有节点服务也能回 426 httpx 错误信封（upgrade_required），文案指明 /v1/nodes/enrollments
-
 package node
 
 import (

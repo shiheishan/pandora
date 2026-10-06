@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 routing_merge.go 的 loadNodeRoutingTx、uniproxy_config.go 的 BuildNodeConfig、effective_release_codec.go 的签名字段，依赖 platform/crypto 验旧版层签名
-// [OUTPUT]: 对外提供 Service 的 FetchEffectiveConfig；包内 lockEffectiveReleaseNodes、applyEffectiveLayersTx
-// [POS]: domain/nodefabric 的有效发布物生成：持节点行锁按 config_source_generation 物化不可变发布物，路由经 routing_merge.go 与 UniProxy 下发同一口径，旧版配置层按 全局 → 池 → 节点 叠加
-
 package nodefabric
 
 import (

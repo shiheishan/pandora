@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/intent 的幂等键（转出）
- * [OUTPUT]: 对外提供 usePlacedOrder、createPlacedOrder、PlacedOrder、recallPayable；转出 core/intent 的 useIntentKey、createIntentKey、IntentKey、endsIntent
- * [POS]: portal/screens/common 的写操作约定：幂等键实现在 core/intent（按请求指纹给键，keyFor 取键、成功或 4xx 业务拒绝后 reset，与后台同一份），这里转出并加下单防重复。下单类动作成功后键已丢弃，usePlacedOrder 记住刚下的待支付单，同样的请求在有效期内再点就重开这张单的支付，不再下第二张（否则余额抵扣会冻结两次）；重开前经 recallPayable 问一次它还能不能付，已取消、超时或已支付就 forget() 并按新请求下单
- */
 import { useState } from 'react'
 
 // 幂等键本身收在 core/intent（两个入口共用一份），门户各页照旧从这里取

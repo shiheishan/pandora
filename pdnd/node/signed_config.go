@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 panel 的 SignedClient（Config / VerifyConfig / ReportConfig / ReportEffectiveConfig）、SignedConfig 与 StatusError，依赖 core 的 InboundReadiness，依赖 node.go 的 applyConfig 与 started
-// [OUTPUT]: 对内提供 syncSignedConfig、signedConfigKeyOf、signedApplyFailure、signedConfigAlreadyApplied、recordAppliedSignedConfig、effectiveHealthReady、reportSignedConfigPhase、reportDetail 与生效健康窗口常量
-// [POS]: pdnd/node 的签名通道配置台账：拉取验签后按版本身份分流——已应用的只补报 switched / health_passed，已知装不上且旧配置仍在服务的不再试装、只补报一次 failed，其余交给 node.go 的 applyConfig；主循环与兼容通道的 syncConfig 在 node.go
-
 package node
 
 import (

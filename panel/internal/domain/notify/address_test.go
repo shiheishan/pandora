@@ -1,7 +1,3 @@
-// [INPUT]: 依赖同包 address.go 的 Kick、template_admin.go 的 defaultTemplates，读取 migrations/00074
-// [OUTPUT]: 对外提供 TestEmailVerifySeedMatchesDefaultTemplate、TestKickNeverBlocks
-// [POS]: domain/notify 的单元测试：验证码模板种子与默认模板一致、Kick 不阻塞
-
 package notify
 
 import (

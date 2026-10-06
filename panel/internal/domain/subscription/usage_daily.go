@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 subscription_usage_daily（迁移 00072，由 nodefabric 流量上报写入）、subscriptions / users / tenants / quota_balances，依赖 nodefabric 的 UsageLocation / UsageDay 日界口径，依赖 platform/db
-// [OUTPUT]: 对外提供 DailyUsage、UsageDayPoint、MaxUsageDays 与 Service.DailyUsage
-// [POS]: subscription 的门户按日用量读模型（门户-02 `GET v1/me/subscriptions/{id}/usage`），与 service.go 的订阅分发并列；只读不写
-
 package subscription
 
 import (

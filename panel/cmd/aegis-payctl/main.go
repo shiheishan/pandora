@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 domain/payment 的渠道模型，platform/crypto 的信封加密（AAD 绑定渠道行 ID），platform/config 与 db
-// [OUTPUT]: 对外提供 aegis-payctl 命令：upsert-epay、list
-// [POS]: panel/cmd 的支付渠道运维工具，随发布包分发；凭据只能加密后入库，所以不能用纯 SQL 代替
-
 // Command aegis-payctl 配置支付渠道。
 //
 // 渠道凭据（易支付的商户号与密钥）必须信封加密后入库（SEC-010），

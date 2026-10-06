@@ -1,7 +1,3 @@
-// [INPUT]: 依赖 ./webapp.go 的 Handler / Mount，依赖 testing/fstest 的 MapFS 模拟构建产物
-// [OUTPUT]: 对外提供 webapp 下发契约测试：入口缓存与 CSP、资源 immutable 与 MIME、根下非产物路径与隐藏/穿越路径 404、挂载只注册读方法
-// [POS]: platform/webapp 的行为守卫，不依赖真实 Vite 产物；真实产物的可嵌入性由 panel/web 的 app_test.go 守
-
 package webapp
 
 import (

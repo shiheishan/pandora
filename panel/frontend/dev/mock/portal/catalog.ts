@@ -1,8 +1,3 @@
-/**
- * [INPUT]: 无外部依赖（静态夹具）
- * [OUTPUT]: 对外提供 CatalogPlan / CatalogPrice / CatalogPack / CatalogCoupon / PayMethod / GiftTemplate 类型与 PLANS、PACKS、COUPONS、PAY_METHODS、GIFT_CARDS、findPlan、findPrice、findPack、planView、GIB、intervalMonths
- * [POS]: dev/mock/portal 的商品目录夹具（不是模块，不进登记表）：选购页、结账页与订阅夹具共用同一批套餐 / 价格 / 流量包 / 优惠码 / 支付方式，形状照契约门户-03（含修订 R30、R61、R69、R99、R100）；专业版标为推荐、家庭版 allow_upgrade=false 且限速 100 Mbps、优惠码覆盖各种错误、一个 POST 跳转渠道，便于浏览器实测每条分支
- */
 export const GIB = 1024 ** 3
 
 export interface CatalogPrice {
