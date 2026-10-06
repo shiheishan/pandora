@@ -385,6 +385,8 @@ cat <<EOF
     三个网关只监听 127.0.0.1，公网访问需要在前面放一个反向代理并配好 TLS。
     渲染 nginx 配置：$DEST/deploy/render-nginx.sh（server_name 与证书路径都从
     .env 的 AEGIS_PUBLIC_BASE_URL 生成，当前为 ${AEGIS_PUBLIC_BASE_URL:-未设置}）
+    站点在 Cloudflare 后面时，渲染后再跑 $DEST/deploy/update-cloudflare-realip.sh
+    写入 Cloudflare 网段（默认的信任表不信任任何代理，升级不会覆盖它）
     运行模式 AEGIS_ENV=${AEGIS_ENV:-development}；节点端发布物绑定在 $DEST/deploy/release-artifact.env，随每次升级覆盖
 
     管理后台路径（高熵，泄露等同暴露入口）：

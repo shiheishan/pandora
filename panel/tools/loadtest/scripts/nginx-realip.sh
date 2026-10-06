@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖同目录 nginx-loadtest-realip.conf 模板，依赖 nginx、systemctl 与 python3（校验 IP，与 deploy/update-cloudflare-realip.sh 同一前提）
-# [OUTPUT]: 压测期间用模板顶替 /etc/aegispanel/cloudflare-realip.conf（原文件备份为 .loadtest-orig），nginx -t 通过才 reload、失败自动回滚；disable 还原
+# [OUTPUT]: 压测期间用模板顶替 /etc/aegispanel/cloudflare-realip.conf（须已由 deploy/render-nginx.sh 生成；原文件备份为 .loadtest-orig），nginx -t 通过才 reload、失败自动回滚；disable 还原
 # [POS]: tools/loadtest/scripts 的 nginx 真实 IP 开关，压测前 enable、压测后 disable；为什么要顶替而不是追加见模板注释
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
@@ -16,7 +16,6 @@ TEMPLATE="$SCRIPT_DIR/nginx-loadtest-realip.conf"
 TARGET="${LT_REALIP_TARGET:-/etc/aegispanel/cloudflare-realip.conf}"
 BACKUP="$TARGET.loadtest-orig"
 # 原文件本来就不存在时留这个标记，disable 据此删掉而不是还原
-ABSENT="$TARGET.loadtest-absent"
 
 die() { printf 'nginx-realip: %s\n' "$*" >&2; exit 1; }
 say() { printf '==> %s\n' "$*" >&2; }
@@ -29,7 +28,9 @@ reload_nginx() {
 cmd_enable() {
   (( $# > 0 )) || die "用法：nginx-realip.sh enable <压测机 IP> [更多 IP...]"
   [[ -f "$TEMPLATE" ]] || die "找不到模板 $TEMPLATE"
-  [[ ! -e "$BACKUP" && ! -e "$ABSENT" ]] || die "已处于压测模式（有 $BACKUP 或 $ABSENT），先 disable"
+  [[ ! -e "$BACKUP" ]] || die "已处于压测模式（有 $BACKUP），先 disable"
+  # render-nginx.sh 在信任表缺失时会写一份默认文件；没有它说明 nginx 还没按 deploy 渲染过
+  [[ -f "$TARGET" ]] || die "找不到 $TARGET：先跑 /opt/aegispanel/deploy/render-nginx.sh"
   # 只收单个地址，不收网段：可信来源越宽，能伪造来源 IP 的人越多
   python3 - "$@" <<'PY' || die "压测机地址必须是单个 IPv4 / IPv6 地址，且不能是 0.0.0.0、:: 或回环"
 import ipaddress, sys
@@ -48,11 +49,7 @@ PY
   } > "$tmp"
   chmod 0644 "$tmp"
 
-  if [[ -e "$TARGET" ]]; then
-    cp -p -- "$TARGET" "$BACKUP"
-  else
-    : > "$ABSENT"
-  fi
+  cp -p -- "$TARGET" "$BACKUP"
   mv -f -- "$tmp" "$TARGET"
   trap - EXIT
   if ! reload_nginx; then
@@ -65,22 +62,19 @@ PY
 }
 
 restore() {
-  if [[ -e "$BACKUP" ]]; then
-    mv -f -- "$BACKUP" "$TARGET"
-  elif [[ -e "$ABSENT" ]]; then
-    rm -f -- "$TARGET" "$ABSENT"
-  fi
+  [[ -e "$BACKUP" ]] && mv -f -- "$BACKUP" "$TARGET"
+  return 0
 }
 
 cmd_disable() {
-  [[ -e "$BACKUP" || -e "$ABSENT" ]] || die "不在压测模式（没有 $BACKUP），无需撤销"
+  [[ -e "$BACKUP" ]] || die "不在压测模式（没有 $BACKUP），无需撤销"
   restore
-  reload_nginx || die "还原后 nginx -t 未通过，请检查 $TARGET（可跑 deploy/update-cloudflare-realip.sh 重新生成）"
+  reload_nginx || die "还原后 nginx -t 未通过，请检查 $TARGET（删掉它再跑 deploy/render-nginx.sh 会写回不信任任何代理的默认文件；站点在 Cloudflare 后面则跑 deploy/update-cloudflare-realip.sh）"
   say "已撤销：$TARGET 还原为压测前的内容并已 reload"
 }
 
 cmd_status() {
-  if [[ -e "$BACKUP" || -e "$ABSENT" ]]; then
+  if [[ -e "$BACKUP" ]]; then
     printf '压测模式：开启\n'
     grep '^set_real_ip_from\|^real_ip_header' "$TARGET" || true
   else

@@ -276,6 +276,15 @@ Let's Encrypt 证书路径都从 `.env` 的 `AEGIS_PUBLIC_BASE_URL`（首装时�
 /opt/aegispanel/deploy/render-nginx.sh
 ```
 
+模板 include 的真实来源 IP 信任表 `/etc/aegispanel/cloudflare-realip.conf` 不存在时，渲染器会写一份
+**不信任任何代理**的默认文件：nginx 只认 TCP 对端，客户端自己填的 `CF-Connecting-IP` / `X-Real-IP`
+一律不采信。站点在 Cloudflare 后面（橙色云）时，渲染后再写入 Cloudflare 的官方网段并重载；
+升级重新渲染不会覆盖这个文件，Cloudflare 调整网段时重跑同一条命令即可：
+
+```bash
+/opt/aegispanel/deploy/update-cloudflare-realip.sh && nginx -t && systemctl reload nginx
+```
+
 管理后台路径是安装时生成的高熵串，装完会打印一次（泄露等同暴露入口）。
 
 ```bash

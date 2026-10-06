@@ -203,7 +203,7 @@ for arch in amd64 arm64; do
   # unit.  Shipping only binaries makes it possible to run new code against an
   # old schema (or vice versa), which is not a supported rollout mode.
   cp "$ROOT"/migrations/*.sql "$target/migrations/"
-  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh; do
+  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh update-cloudflare-realip.sh; do
     cp "$ROOT/deploy/$script" "$target/deploy/$script"
   done
   cp "$ROOT/deploy/renewal-cutover.md" "$target/deploy/renewal-cutover.md"
@@ -273,7 +273,7 @@ for arch in amd64 arm64; do
   rm -f "$archive" "$archive_tar"
   target_base="$(basename "$target")"
   release_scripts=()
-  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh; do
+  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh update-cloudflare-realip.sh; do
     release_scripts+=("$target_base/deploy/$script")
   done
   release_data=(

@@ -266,8 +266,8 @@ if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]]; then
 fi
 
 # 迁移（用官方 migrate.sh, 它带 PGOPTIONS 保护参数；migrate.sh 在包内 deploy/ 下）
-cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$INSTALL_DIR/deploy/" 2>/dev/null || true
-chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" 2>/dev/null || true
+cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/update-cloudflare-realip.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$INSTALL_DIR/deploy/" 2>/dev/null || true
+chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" "$INSTALL_DIR/deploy/render-nginx.sh" "$INSTALL_DIR/deploy/update-cloudflare-realip.sh" 2>/dev/null || true
 export AEGIS_ENV_FILE="$INSTALL_DIR/deploy/.env"
 export AEGIS_MIGRATIONS_DIR="$INSTALL_DIR/migrations"
 export AEGIS_MIGRATION_DATABASE_URL="postgres://postgres:${PG_SUPER_PASS}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable"
@@ -329,5 +329,6 @@ say " Pandora 安装完成"
 say " 管理后台路径: /${ADMIN_PATH}"
 say " 配置文件:    ${INSTALL_DIR}/deploy/.env"
 say " 对外地址:    $(pandora_env_file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)（渲染 nginx: ${INSTALL_DIR}/deploy/render-nginx.sh）"
+say " Cloudflare:  站点在 Cloudflare 后面时再跑 ${INSTALL_DIR}/deploy/update-cloudflare-realip.sh（默认不信任任何代理）"
 say "═══════════════════════════════════════════"
 [[ "$HEALTH_OK" == 1 ]] || die "部分服务未启动, 检查日志: journalctl -u aegis-public"
