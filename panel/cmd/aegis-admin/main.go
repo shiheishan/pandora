@@ -1,7 +1,6 @@
-// [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/admin 的 NewRouter
+// [INPUT]: 依赖 platform/config 的配置、domain/* 各服务的构造与后台循环、api/admin 的 NewRouter、platform/profiling 的可选 pprof 诊断端口
 // [OUTPUT]: 对外提供 可执行入口 aegis-admin：装配管理控制台网关并启动工单超时升级、定时公告、配额周期滚动、佣金解冻等后台循环
 // [POS]: panel/cmd 的 admin 网关进程，与 aegis-public 分进程分端口；mark-paid、人工开单与后台「向渠道查单」补记履约后的节点通知经 nodefabric.NotifyUsersChanged 发出；客服回复通知经 support.SetReplyNotifier 接到 notify，只排队不派发；通知收件人哈希用 crypto.NotifyRecipientSalt（与 public 同盐）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Command aegis-admin 是管理控制台网关（Admin 域）。
 //
@@ -40,6 +39,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/geoip"
 	"github.com/aegispanel/aegis/internal/platform/logging"
+	"github.com/aegispanel/aegis/internal/platform/profiling"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
 	"github.com/aegispanel/aegis/internal/platform/server"
 	"github.com/aegispanel/aegis/internal/platform/token"
@@ -94,14 +94,7 @@ func run() error {
 		cfg.JWTSecrets[config.DomainAdmin], cfg.AccessTokenTTL)
 
 	identitySvc := identity.NewService(pool, issuer, cfg.RefreshTokenTTL, cfg.MasterKey, !cfg.IsProduction())
-	// 销售能力必须显式授权，默认关闭（详见 salescap.go）。
-	// 不注入的话定价与上架会一直 503 —— 这正是它上线以来的状态。
-	salesCap := salesCapability{allowed: cfg.SalesEnabled}
-	if !salesCap.AllowsP0BSales() {
-		log.Warn("销售能力未授权：定价与套餐上架将返回 503。" +
-			"如需启用，在 .env 里设置 AEGIS_SALES_ENABLED=1 后重启 aegis-admin")
-	}
-	opsSvc := adminops.NewService(pool, salesCap)
+	opsSvc := adminops.NewService(pool)
 	contentSvc := content.New(pool)
 	supportSvc := support.NewService(pool)
 	nodeSigner, err := crypto.NewSigner(cfg.ConfigSigningSeed)
@@ -299,6 +292,14 @@ func run() error {
 			}
 		}
 	}()
+
+	// pprof 诊断端口：默认关闭，AEGIS_ADMIN_PPROF_ADDR 设了回环地址才开（独立端口，
+	// 不经 nginx、不挂业务路由），随网关停机关闭
+	pprofSrv, err := profiling.Start(cfg.PprofAddrs[config.DomainAdmin], log)
+	if err != nil {
+		return err
+	}
+	defer pprofSrv.Close()
 
 	serverErr := server.RunContext(ctx, server.Options{
 		Addr:            cfg.AdminAddr,

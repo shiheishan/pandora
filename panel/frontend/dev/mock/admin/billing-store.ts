@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockResult，依赖 ./users 的 userStore / seedOrders / setOrderSource / Sub / User，依赖 ./plans-store 的 plans / currentOf / trafficOf
  * [OUTPUT]: 对外提供订单表 orders 与 Order 类型、findOrder、nextOrderNo、intentFor / paymentFor（造支付尝试与入账）、orderRow / orderDetail / orderHistory 视图、fulfil（开订阅）、渠道 providers / Provider / providerView、挂账 lateCases / LateCase / lateView（三种成因，含 R117 的 ineligible_subscription）、订阅已结束的待支付续费单名单 subscriptionEnded、超时未支付计数 stalePendingCount（给仪表盘）、收入调整 adjustments / Adjustment / adjustmentView、todayLocal、err / invalid / NOT_FOUND、isUuid
  * [POS]: dev/mock/admin 的「订单与收款（后台-05）」数据层，由 billing.ts 的路由使用：订单表以 users.ts 的种子订单（同 id）为底，再补齐设计稿要看的各种情形（待支付、处理中、余额付、人工赠送 / 线下、充值、流量包、退款、美元、多项），并把自己登记为 users.ts 的订单来源，让用户抽屉「订单」与订单页同一份数据；渠道只有后端真有的 epay / demo 适配器与内置 offline；挂账与收入调整是确定性种子。视图字段与 Go 的 json tag 一一对应
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { MockResult } from '../types.ts'

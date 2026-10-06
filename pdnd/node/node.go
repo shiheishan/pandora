@@ -1,13 +1,11 @@
 // [INPUT]: 依赖 panel 的 Client（兼容通道 UniProxy）与 SignedClient（签名通道），依赖 core 的 Core 抽象
 // [OUTPUT]: 对外提供 Node、New、NewWithSignedClient、Tag、Run
-// [POS]: pdnd/node 的唯一业务文件，面板与内核之间的闭环：按节拍拉配置（含协议切换与失败回滚）、同步用户、上报流量与心跳；签名通道在时优先走签名通道
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+// [POS]: pdnd/node 的主编排文件，面板与内核之间的闭环：按节拍拉配置（含协议切换与失败回滚）、同步用户、上报流量与心跳；签名通道在时优先走签名通道，其配置同步、已应用与已知失败版本的台账、生效回执在 signed_config.go；整版回滚成功即恢复 started；入站重建或回滚失败时经 resetUserMirror 把本地用户镜像、增量基准与客户端用户 ETag 一并作废；兼容通道上配置应用失败且节点已停时作废配置 ETag 以便下一轮重试
 
 // Package node 把面板与内核粘起来：拉配置、同步用户、上报流量。
 package node
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,8 +17,6 @@ import (
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/aegispanel/nodeagent/panel"
 )
-
-const effectiveHealthStabilityWindow = 5 * time.Second
 
 // Node 是一个受面板管理的入站。
 type Node struct {
@@ -51,6 +47,9 @@ type Node struct {
 	appliedReleaseID     string
 	appliedGeneration    uint64
 	appliedAt            time.Time
+	// failedSigned 记下最近一个装不上的签名配置版本，旧配置仍在服务时不再试装它；
+	// 只在进程内存里，重启后的节点本就没有旧配置可保，见 signed_config.go。
+	failedSigned *signedApplyFailure
 }
 
 func New(client *panel.Client, kernel core.Core, log *slog.Logger) *Node {
@@ -194,6 +193,27 @@ func (n *Node) applyUsers(users []core.User) error {
 	return nil
 }
 
+// resetUserMirror 宣告「内核里的用户表已被清空」。
+//
+// 节点端对内核用户表的认知有三份：n.known（算 diff 用）、n.userVersion
+// （判断增量能不能打）、客户端里的用户 ETag（换 304 用）。三者说的是
+// 同一件事——「内核里已经是这一版了」——所以只能在这一处一起作废：
+// 漏掉 ETag，下一轮拉用户换回 304，内核一直是空表；漏掉 userVersion，
+// 基于旧版的增量会被打在空表上，只剩增量里新加的那几个人。
+func (n *Node) resetUserMirror() {
+	n.known = make(map[string]core.User)
+	n.userVersion = ""
+	n.client.ForgetUsersVersion()
+}
+
+// markInboundLost 在回滚也失败时调用：入站已不可用，内核用户表处于未知
+// 状态。下一次 applyConfig 成功前不同步用户（syncOnce 看 started），
+// 成功之后从无条件全量开始。
+func (n *Node) markInboundLost() {
+	n.started = false
+	n.resetUserMirror()
+}
+
 // applyStreamEvent 处理一条面板推来的事件。
 //
 // 在主循环的 select 里调用，和轮询是同一个 goroutine——这一点是有意的：
@@ -207,9 +227,11 @@ func (n *Node) applyStreamEvent(ctx context.Context, ev panel.StreamEvent) {
 		// 那条路上有签名校验、分流解析、端口合法性检查一整套，复制到
 		// 这里迟早会和 REST 那份走样。事件在这里只当一个「有变化了，
 		// 现在就去拉」的信号——省掉的是等待，不是那些校验。
-		if err := n.syncConfig(ctx); err != nil {
-			n.log.Error("按事件同步配置失败", "err", err)
-		}
+		//
+		// 拉完配置紧接着拉用户，和轮询走同一个 syncOnce：配置变了就意味着
+		// 入站重建、内核用户表已清空，等下一个轮询节拍再补，中间这段时间
+		// 谁也连不上。配置没变时这一下只是一次 304，不值得为省它另开分支。
+		n.syncOnce(ctx)
 
 	case panel.EventSyncUsers:
 		if err := n.applyUsers(ev.Users); err != nil {
@@ -378,44 +400,7 @@ func (n *Node) syncOnce(ctx context.Context) {
 
 func (n *Node) syncConfig(ctx context.Context) error {
 	if n.signed != nil {
-		cfg, err := n.signed.Config(ctx)
-		if err != nil {
-			return err
-		}
-		if err := n.signed.VerifyConfig(cfg); err != nil {
-			n.reportSignedConfigPhase(ctx, cfg, "failed", err.Error())
-			return err
-		}
-		if n.started && n.signedConfigAlreadyApplied(cfg) {
-			// Reports use a deterministic id per release and phase, so replaying
-			// both phases safely repairs a response lost after the local switch.
-			if err := n.reportSignedConfigPhase(ctx, cfg, "switched", ""); err != nil {
-				return fmt.Errorf("retry effective config switched report: %w", err)
-			}
-			if !n.effectiveHealthReady(time.Now()) {
-				return nil
-			}
-			if err := n.reportSignedConfigPhase(ctx, cfg, "health_passed", ""); err != nil {
-				return fmt.Errorf("retry effective config health report: %w", err)
-			}
-			return nil
-		}
-		var raw map[string]any
-		decoder := json.NewDecoder(bytes.NewReader(cfg.Payload))
-		decoder.UseNumber()
-		if err := decoder.Decode(&raw); err != nil {
-			n.reportSignedConfigPhase(ctx, cfg, "failed", err.Error())
-			return err
-		}
-		if err := n.applyConfig(raw); err != nil {
-			n.reportSignedConfigPhase(ctx, cfg, "failed", err.Error())
-			return err
-		}
-		n.recordAppliedSignedConfig(cfg)
-		if err := n.reportSignedConfigPhase(ctx, cfg, "switched", ""); err != nil {
-			n.log.Warn("配置已应用但切换上报失败", "release_id", cfg.ReleaseID, "generation", cfg.Generation, "err", err)
-		}
-		return nil
+		return n.syncSignedConfig(ctx)
 	}
 	cfg, changed, err := n.client.Config(ctx)
 	if err != nil {
@@ -424,48 +409,16 @@ func (n *Node) syncConfig(ctx context.Context) error {
 	if !changed {
 		return nil
 	}
-	return n.applyConfig(cfg)
-}
-
-func (n *Node) signedConfigAlreadyApplied(cfg *panel.SignedConfig) bool {
-	if cfg.ConfigContract != "" {
-		return cfg.ReleaseID == n.appliedReleaseID && cfg.Generation == n.appliedGeneration &&
-			cfg.ContentSHA256 == n.appliedConfigHash
+	if err := n.applyConfig(cfg); err != nil {
+		if !n.started {
+			// 节点已不在服务（首次就没装上，或回滚也失败了）：作废配置
+			// ETag，下一轮重拉重试，而不是换回 304 永远停摆。旧配置还在
+			// 服务时不作废，免得每轮都拿已知装不上的配置去重建入站。
+			n.client.ForgetConfigVersion()
+		}
+		return err
 	}
-	return cfg.Version == n.appliedConfigVersion && cfg.Hash == n.appliedConfigHash
-}
-
-func (n *Node) recordAppliedSignedConfig(cfg *panel.SignedConfig) {
-	n.appliedConfigHash = cfg.Hash
-	if cfg.ConfigContract != "" {
-		n.appliedReleaseID = cfg.ReleaseID
-		n.appliedGeneration = cfg.Generation
-		n.appliedConfigVersion = 0
-		n.appliedAt = time.Now()
-		return
-	}
-	n.appliedConfigVersion = cfg.Version
-	n.appliedReleaseID = ""
-	n.appliedGeneration = 0
-	n.appliedAt = time.Time{}
-}
-
-func (n *Node) effectiveHealthReady(now time.Time) bool {
-	if !n.started || n.appliedAt.IsZero() || now.Sub(n.appliedAt) < effectiveHealthStabilityWindow {
-		return false
-	}
-	probe, ok := n.kernel.(core.InboundReadiness)
-	return ok && probe.InboundReady(n.tag) == nil
-}
-
-func (n *Node) reportSignedConfigPhase(ctx context.Context, cfg *panel.SignedConfig, phase, detail string) error {
-	if cfg != nil && cfg.ConfigContract != "" {
-		return n.signed.ReportEffectiveConfig(ctx, cfg, phase, detail)
-	}
-	if cfg == nil {
-		return fmt.Errorf("signed config is required")
-	}
-	return n.signed.ReportConfig(ctx, cfg.Version, phase, detail)
+	return nil
 }
 
 func (n *Node) applyConfig(cfg map[string]any) error {
@@ -486,7 +439,7 @@ func (n *Node) applyConfig(cfg map[string]any) error {
 		if errors.As(err, &applyErr) && applyErr.PreviousPreserved {
 			if len(previousUsers) > 0 {
 				if restoreErr := n.kernel.AddUsers(n.tag, previousUsers); restoreErr != nil {
-					n.started = false
+					n.markInboundLost()
 					return errors.Join(err, fmt.Errorf("restore previous users: %w", restoreErr))
 				}
 			}
@@ -496,23 +449,28 @@ func (n *Node) applyConfig(cfg map[string]any) error {
 			return err
 		}
 		if restoreErr := n.installConfig(previous); restoreErr != nil {
-			n.started = false
+			n.markInboundLost()
 			return errors.Join(err, fmt.Errorf("restore previous config: %w", restoreErr))
 		}
 		if len(previousUsers) > 0 {
 			if restoreErr := n.kernel.AddUsers(n.tag, previousUsers); restoreErr != nil {
-				n.started = false
+				n.markInboundLost()
 				return errors.Join(err, fmt.Errorf("restore previous users: %w", restoreErr))
 			}
 		}
+		// 旧入站已装回、正在服务。节点此前可能因回滚失败被标成已停：不在这里
+		// 恢复 started，用户就一直不同步，下一轮还会把同一份坏配置当成「节点
+		// 已停、该重试」再重建两次入站。用户镜像若已作废，下一轮自会全量补回。
+		n.started = true
 		n.log.Warn("新配置应用失败，已恢复上一版本", "err", err)
 		return err
 	}
 
 	n.activeConfig = snapshot
-	// 入站重建会丢掉内核里的用户表，本地记录必须一并清空，
-	// 否则下一轮 diff 会认为「都已下发」，结果谁也连不上。
-	n.known = make(map[string]core.User)
+	// 入站重建会丢掉内核里的用户表，本地镜像与用户版本必须一并作废，
+	// 否则下一轮要么 diff 认为「都已下发」，要么拿旧 ETag 换回 304——
+	// 两种都是谁也连不上。
+	n.resetUserMirror()
 	n.started = true
 	n.log.Info("入站已就绪", "port", intFrom(cfg, "server_port"))
 	return nil

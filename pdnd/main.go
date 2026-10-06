@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 panel 的 Client / SignedClient / 身份与 enrollment，依赖 node 的 Node 循环，依赖 kernel 的能力矩阵与自检，依赖 runtime_native.go / runtime_compat.go 按构建标签提供的 newRuntime
 // [OUTPUT]: 可执行入口 main；子命令 bootstrap / enrollment / verify-identity / validate-install；包内 config 及其 nativeOnly、identityPath 缺省规则
 // [POS]: pdnd 的进程入口：解析配置与 flag，决定签名通道还是兼容通道，把 panel 客户端、运行时与每个节点的 node 循环装配起来；运行时选择交给两个构建标签文件，自己不链接兼容内核
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // pandora-native 是 AegisPanel 的自研节点端（module 沿用旧名 aegispanel/nodeagent）。
 //

@@ -1,7 +1,6 @@
-// [INPUT]: 依赖 core 的 User，依赖 vless_flow.go 的 addons 解码
+// [INPUT]: 依赖 core 的 User，依赖 vless_flow.go 的 addons 解码，依赖 connerror.go 的 markConnError（UUID 未授权标为 auth）
 // [OUTPUT]: 包内提供 vlessDestination（各协议入站共用的目的地址）与 readVLESSRequest
 // [POS]: kernel 的 VLESS 请求头解析：从 vless.go 拆出。读版本、UUID（经 lookup 定位用户）、addons、命令与目的地址；vlessDestination 也被 Trojan、Shadowsocks（含 2022）、socks / http 与 naive 入站复用
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 
@@ -44,7 +43,7 @@ func readVLESSRequest(conn net.Conn, lookup func(string) (core.User, bool)) (cor
 	}
 	user, ok := lookup(uuid.UUID(id).String())
 	if !ok {
-		return core.User{}, out, fmt.Errorf("vless 用户未授权")
+		return core.User{}, out, markConnError(connErrAuth, fmt.Errorf("vless 用户未授权"))
 	}
 	out.RawUUID = id
 	var addonLen [1]byte

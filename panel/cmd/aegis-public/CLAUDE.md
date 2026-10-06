@@ -9,7 +9,7 @@
 main.go: main / run 装配与生命周期
   - startReservationExpiryWorker 按周期释放过期预留，startPaymentQueryWorker 每分钟一轮主动查单巡检（billing.ReconcileDuePayments，节流取 DefaultPaymentQueryPatrol），两者都返回等待函数供停机时 join
   - PaymentService 注入共用的 billingSvc，补记履约才接得上节点通知
+  - 开服前按 AEGIS_PUBLIC_PPROF_ADDR 起可选的回环 pprof 诊断端口（platform/profiling），defer 随停机关闭
 *_test.go: 预留过期与主动查单两个循环取消后能退出；经 platform/sourcetest 取 startReservationExpiryWorker 与 run 的源码，钉死取消、join、返回的次序，以及通知收件人哈希用 crypto.NotifyRecipientSalt
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

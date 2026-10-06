@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 usage_daily.go 的 UsageLocation / UsageDay
 // [OUTPUT]: 对外提供 TestUsageLocationFallsBack、TestUsageDayCutsAtLocalMidnight
 // [POS]: domain/nodefabric 按日流量日界口径的单元测试，与 usage_daily_pg18_test.go 的真实 SQL 门禁互补
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

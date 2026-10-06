@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 的侧栏深色、字号、间距令牌
  * [OUTPUT]: 对外提供 LoginPage.tsx 用到的类名
  * [POS]: admin/LoginPage 的样式：两栏各半，左栏在两种主题下都是侧栏深底；< 960 收起左栏只留表单；表单控件 38、登录按钮 40（外壳登录页的尺寸，不同于后台 32 档）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .page {
   min-height: 100vh;

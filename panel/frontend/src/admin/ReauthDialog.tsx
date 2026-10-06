@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useState / useSyncExternalStore / FormEvent，依赖 @tanstack/react-query 的 useQueryClient，依赖 ../core/api 的 isApiError，依赖 ../shell/runtime 的 useApi，依赖 ./reauth 的 ReauthController，依赖 ./me 的 ME_QUERY_KEY，依赖 ../ui 的 Modal / Button / Input
  * [OUTPUT]: 对外提供 ReauthDialog
  * [POS]: admin 的「敏感操作 · 需要重新认证」对话框（管理后台.dc.html ask({reauth:true})）：由 api.ts 的 reauth_required 经 ReauthController 唤起，POST v1/auth/reauth 换新令牌后 resolve(true)，api.ts 随即用原幂等键重放被拦下的请求
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useQueryClient } from '@tanstack/react-query'
 import { useState, useSyncExternalStore, type FormEvent } from 'react'

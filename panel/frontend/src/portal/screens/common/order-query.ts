@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 @tanstack/react-query 的 useMutation / useQueryClient，依赖 zod，依赖 ../../../core/api 的 ApiError / isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ./orders 的 ORDER_STATUSES / PAID_STATUSES
  * [OUTPUT]: 对外提供 orderQuerySchema / OrderQueryResult、QueryOutcome、queryOutcome、queryFailure、useQueryOrderPayment
  * [POS]: portal/screens/common 的「我已支付，刷新状态」数据层（POST v1/orders/{id}/query，与后台同一个领域用例）：结果归成三种——已到账、渠道尚未确认、查询失败——由纯函数映射文案，有单元测试；订单页的待支付卡片与明细消费
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'

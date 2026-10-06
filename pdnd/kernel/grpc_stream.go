@@ -1,3 +1,7 @@
+// [INPUT]: 依赖 net/http 与 golang.org/x/net/http2(h2c) 的 h2 服务端，依赖 native_transport_server.go 的 newInboundHTTPServer，依赖 xhttp_server.go 的 xhttpAddr
+// [OUTPUT]: 包内提供 grpcDuplexConn（newGRPCDuplexConn / newGRPCDuplexConnWithEncoding）、parseGRPCPath、serveNativeGRPC
+// [POS]: kernel 的原生 gRPC 承载：把 gun 风格的 /Service/Tun 双向流包成 net.Conn 交给 vless / vmess / trojan，h2c 与 TLS+h2 两种模式；接受 gzip 请求、以 identity 帧响应
+
 package kernel
 
 import (
@@ -161,7 +165,7 @@ func serveNativeGRPC(listener net.Listener, path, host string, maxFrame uint32, 
 		onConn(req.Context(), newGRPCDuplexConnWithEncoding(req.Context(), req.Body, w, maxFrame, encoding))
 		w.Header().Set("grpc-status", "0")
 	})
-	server := &http.Server{Handler: handler, MaxHeaderBytes: 64 << 10}
+	server := newInboundHTTPServer(handler, 64<<10)
 	if h2cMode {
 		server.Handler = h2c.NewHandler(handler, &http2.Server{})
 	} else {

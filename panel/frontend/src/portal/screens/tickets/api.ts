@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 @tanstack/react-query 的 useMutation / useQuery / useQueryClient，依赖 zod，依赖 ../../../shell/runtime 的 useApi，依赖 ../common/orders 的 ordersPageSchema
  * [OUTPUT]: 对外提供 TICKET_STATUSES、ticketRowSchema / TicketRow、ticketDetailSchema / TicketDetail、ticketMessageSchema / TicketMessage、useCategories、useTickets、useTicket、useRecentOrders、useCreateTicket、useReplyTicket、useCloseTicket、useWithdrawTicket
  * [POS]: portal/screens/tickets 的数据层（契约门户-07，修订 R25、R60）：分类、列表、详情（含消息）、新建（幂等 support_ticket_create，201）、回复（幂等 support_ticket_user_reply）、关闭（幂等 support_ticket_user_close，无请求体）、撤回（不幂等、必须带 JSON 体）；实时 ticket.updated / tickets.changed 失效列表与详情；新建表单的「关联订单」取最近 20 张订单
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'

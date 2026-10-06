@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 reservations.go 的预留图加锁与捕获、ledger.go 的记账、unexpected_payment.go 的挂账隔离、renewal.go / plan_change.go 的订阅锁与履约、provision.go 的开订阅，依赖 platform/db、platform/audit、platform/httpx
 // [OUTPUT]: 对外提供 PaymentWebhookInput / PaymentWebhookOutput、Service.HandlePaymentWebhook；包内提供 settlePaymentTx、postOrderPaid、fulfillOrder
 // [POS]: billing 的结算主链，整条放在一个文件：HandlePaymentWebhook 开事务调 settlePaymentTx（mark-paid 与人工单线下收款在各自事务里复用它），锁序为 支付事件判重 → 订单 → 续费 / 变更单的订阅（复核订阅状态，不收即隔离进挂账，R117）→ 支付意图 → 预留图 → 账本科目，捕获预留后按 kind 分派履约，审计后强制延迟约束
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

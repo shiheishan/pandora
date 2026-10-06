@@ -1,7 +1,6 @@
 // [INPUT]: 无（纯 SQL 片段，调用方拼进自己的查询；依赖 subscriptions / plans 两张表的列名）
 // [OUTPUT]: 对外提供 LiveStatusesSQL、CurrentOrderSQL、CurrentSQL、ActivePlanNameSQL、HasLiveSQL
 // [POS]: domain/subscription 的「当前订阅」口径（契约后台-03 订阅态口径 R118）唯一真相源：adminops（用户列表、批量运营、风控聚类）与 support（工单队列与详情）都从这里取，两者互不依赖
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package subscription
 

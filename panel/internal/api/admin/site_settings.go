@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/adminops 的 SiteTimezone / SetSiteTimezone（读写、行锁与审计都在那里），依赖 platform/httpx，依赖 time 的 IANA 时区库（经 domain/nodefabric 内嵌 time/tzdata）
 // [OUTPUT]: 对外提供 handlers 的 getSiteSettings / setSiteSettings、validSiteTimezone；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的站点设置接口（契约后台-08，R49）：站点时区即 tenants.timezone，门户按日用量与后台收入趋势都按它切日
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

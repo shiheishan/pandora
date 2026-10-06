@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 decls.go 的声明指纹、compare.go、sqlset.go 与 shatter.go 的三个子命令
 // [OUTPUT]: 对外提供 可执行入口 refactorcheck（go run ./tools/refactorcheck compare|sqlset|shatter）
 // [POS]: tools/refactorcheck 的命令分发：第 5 阶段超长文件重构的自证工具，只在开发机与验收时用，不进发布包、不被任何包 import
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Command refactorcheck 为「只挪代码、不改行为」的重构提供三道机器证据。
 //

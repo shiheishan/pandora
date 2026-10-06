@@ -1,0 +1,5 @@
+# 只删注释、不改行为的全仓库批量提交，git blame 跳过它们
+# 用法: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# 删掉 L3 头部的 [PROTOCOL] 提示行
+385f77c018e64ef33221725c8ca3e46941981dfa

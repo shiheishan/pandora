@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 Card.tsx 用到的类名
  * [POS]: ui/Card 的样式
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .card {

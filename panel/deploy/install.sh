@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 docker compose 数据基座、同目录 migrate.sh / bootstrap.sh / platform.sh、发布包二进制
 # [OUTPUT]: 在主机上安装或升级面板：首装生成 .env 机密与后台前缀并定为 AEGIS_ENV=production（要求 https 公网域名）、升级前全量备份、迁移、经 install-linux-binaries.sh 装二进制/单元/发布物绑定/logrotate、启动三网关
 # [POS]: deploy 安装链的入口（Docker 版），与 install-native.sh 并列；不替人造管理员，nginx 由 render-nginx.sh 另行渲染；升级不改现有 .env 的运行模式，只提示
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 潘多拉面板一键安装 / 升级。
 #
 #   首次安装：  sudo ./install.sh
@@ -148,7 +147,6 @@ if [ "$MODE" = install ]; then
     -e "s|^AEGIS_MASTER_KEY=.*|AEGIS_MASTER_KEY=$(openssl rand -base64 32)|" \
     -e "s|^AEGIS_JWT_PUBLIC_SECRET=.*|AEGIS_JWT_PUBLIC_SECRET=$(rand)|" \
     -e "s|^AEGIS_JWT_ADMIN_SECRET=.*|AEGIS_JWT_ADMIN_SECRET=$(rand)|" \
-    -e "s|^AEGIS_JWT_CLIENT_SECRET=.*|AEGIS_JWT_CLIENT_SECRET=$(rand)|" \
     -e "s|^AEGIS_CONFIG_SIGNING_SEED=.*|AEGIS_CONFIG_SIGNING_SEED=$(openssl rand -base64 32)|" \
     -e "s|^AEGIS_BACKUP_AGE_RECIPIENT=.*|AEGIS_BACKUP_AGE_RECIPIENT=$AGE_RECIPIENT|" \
     -e "s|^AEGIS_BACKUP_AGE_IDENTITY=.*|AEGIS_BACKUP_AGE_IDENTITY=$DEST/secrets/backup-age.key|" \
@@ -386,6 +384,8 @@ cat <<EOF
     三个网关只监听 127.0.0.1，公网访问需要在前面放一个反向代理并配好 TLS。
     渲染 nginx 配置：$DEST/deploy/render-nginx.sh（server_name 与证书路径都从
     .env 的 AEGIS_PUBLIC_BASE_URL 生成，当前为 ${AEGIS_PUBLIC_BASE_URL:-未设置}）
+    站点在 Cloudflare 后面时，渲染后再跑 $DEST/deploy/update-cloudflare-realip.sh
+    写入 Cloudflare 网段（默认的信任表不信任任何代理，升级不会覆盖它）
     运行模式 AEGIS_ENV=${AEGIS_ENV:-development}；节点端发布物绑定在 $DEST/deploy/release-artifact.env，随每次升级覆盖
 
     管理后台路径（高熵，泄露等同暴露入口）：

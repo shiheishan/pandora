@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter、内容下发各声明与 domain/content 的可见性查询
 // [OUTPUT]: 对外提供 TestContentDeliveryIsAuthenticatedAndNonCacheable
 // [POS]: api/public 内容下发：在登录分组内、不可缓存、DTO 不露内部字段、没有伪匿名公开分支
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

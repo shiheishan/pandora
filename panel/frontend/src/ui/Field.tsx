@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useId 与 ReactNode，依赖 ./cx 与 ./Field.module.css
  * [OUTPUT]: 对外提供 Field 组件、FieldControlProps 类型、useFieldIds 与 hasError
  * [POS]: ui 的表单字段外壳：标签 12px 在上、说明或错误 12px 在下；Input / TextArea / Select 都包在它里面，并由它生成 id 把 label、aria-describedby、aria-invalid 接好；「算不算错误」只由 hasError 一处判定（空串、false 不算），各控件的 aria-invalid 与这里的错误行同口径
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useId, type ReactNode } from 'react'
 import { cx } from './cx'

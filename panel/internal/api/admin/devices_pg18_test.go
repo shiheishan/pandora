@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 announcement_pg18_test.go 的 openAnnouncementPG18（一次性 PG18 库护栏），依赖 devices.go 的 setDeviceLimit / setDeviceMode
 // [OUTPUT]: 对外提供 TestDeviceLimitWritesPG18
 // [POS]: api/admin 的 PG18 测试：设备上限两条写接口写审计，订阅不存在或 id 非法回 404 且不留痕（第 7.3 节）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

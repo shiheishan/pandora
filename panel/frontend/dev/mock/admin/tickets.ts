@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule / MockContext / MockResult，依赖 ./billing-store 的 orders（详情的关联订单）
  * [OUTPUT]: 对外提供 tickets 模块的假接口 MockModule
  * [POS]: dev/mock/admin 的「工单（后台-02）」假接口；队列（多状态、指派人、q、breached、分页、后端的排序）、详情、客服回复与内部备注、指派、改状态（含人工升级提优先级、closed_reason）、SLA 扫描、可指派目录、快捷回复四接口，形状与副作用照 api-contract.md 后台-02（含修订 R25 / R42 / R60 / R114：详情 related_order 联表、message_count 与 last_reply_at 与队列同口径）与 domain/support/service.go
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { MockContext, MockModule, MockResult } from '../types.ts'

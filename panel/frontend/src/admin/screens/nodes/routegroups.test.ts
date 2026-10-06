@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./logic 的路由组纯函数（表单校验 / 新建体 / PATCH 差量、成员比较、可引用出站、来源文字），依赖 ./schemas 的路由组、节点路由与生效预览 schema
  * [OUTPUT]: 对外提供路由组（00096）前端纯逻辑与 schema 边界的单元测试
  * [POS]: admin/screens/nodes 的路由组单元测试：表单边界与 nodefabric.normalizeRouteGroupFields 同口径、PATCH 只带改了的字段、成员集合顺序无关、可引用出站按范围先到先得、按 tag 原样去重，引用计数与改名联动按原样精确匹配（与后端、pdnd 同口径）、生效来源文字；schema 接住 Go 的形状（RoutingSource 的 omitempty、节点路由的 groups 为 null 时归一）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { groupCreateBody, groupFormErrors, groupFormFrom, groupPatchBody, referenceOutbounds, renameOutbound, rulesUsing, sameIds, sourceLabel, sourceTone } from './logic'

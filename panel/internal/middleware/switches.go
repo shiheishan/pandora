@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务读 feature_switches，依赖 platform/httpx 的租户、错误模型，依赖 chi 的 RouteContext 取挂载点内的相对路径
 // [OUTPUT]: 对外提供 FeatureSwitch、AdminWritesGate
 // [POS]: middleware 的降级开关门（NFR-008，契约后台-09 POST v1/switches/{code}）：开关关闭时在网关层回 503，业务代码不用各自读开关
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

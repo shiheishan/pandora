@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 uniproxy_config.go 的 ValidateRoutingMatcher，依赖 config_publish.go 的 lockLegacyConfigRelease，依赖 platform 的 db/audit/httpx；读写 node_outbounds / node_routes
 // [OUTPUT]: 对外提供 RoutingOutbound / RoutingRule、ValidateRoutingPayload，Service 的 GetGlobalRouting / SetGlobalRouting / GetNodeRouting / SetNodeRouting 及其输入输出类型
 // [POS]: domain/nodefabric 的后台路由编辑（NODE-012）：全局与单节点两个范围的读、校验、整体替换、推进 generation 与审计都在这里；api/admin/node_routing.go 只做解析与写响应，提交后由 handler 通知节点；生效合并口径在 routing_merge.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

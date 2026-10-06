@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 与 pgx 的双连接（夹具管理员 + aegis_app），依赖 middleware 幂等声明，依赖迁移 00040 的 app.order_release_00040_meta 水位
 // [OUTPUT]: 包内提供库身份护栏 orderReleasePG18AssertRuntimeTarget、一次性租户夹具 orderReleasePG18Fixture / orderReleasePG18Seed、幂等认领 orderReleasePG18Claim、回拨时间、释放故障注入与重试证据、业务快照、充值、事务工具 orderReleasePG18InTx / InTxAs、指纹与 SQLSTATE 判定
 // [POS]: 本包 PG18 测试的夹具库：TestOrderReleasePG18 及挂在它上面的佣金、手工订单子用例，以及 plan_change、traffic_pack、ineligible_settlement 等域都从这里取夹具
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

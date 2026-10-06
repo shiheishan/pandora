@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../core/theme 的 useTheme / toggleTheme，依赖 ../core/router 的 href，依赖 ../shell/runtime 的 useRuntime / signOut，依赖 ../shell/Logo，依赖 ../ui 的 Menu，依赖 ./me、./modules 与 ./tasks 的 useDashboardTasks / taskCount，依赖 ./Sidebar.module.css
  * [OUTPUT]: 对外提供 Sidebar
  * [POS]: admin 外框的深色侧栏（管理后台.dc.html aside）：字标与版本号、⌘K 入口、六组导航（只列有读权限的模块，整组没有就不显示组名；工单 / 营销徽标取 GET v1/dashboard/tasks）、底部账户块与向上弹出的账户菜单（主题、改密码、打开门户、退出）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { href } from '../core/router'
 import { toggleTheme, useTheme } from '../core/theme'

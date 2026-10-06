@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 signed_e2e_pg18_test.go 的 doSignedJSON / mustJSON 与已接入节点的签名凭据，依赖 pgxpool 直查 node_metrics 与 nodes
 // [OUTPUT]: 对外提供 checkHeartbeatMetricsRange（由 TestSignedNodeHTTPPG18 调用，随 run-pg18-gates.sh 的 effective 域跑）
 // [POS]: api/node 的 PG18 断言：签名心跳的 metrics 越界回中文 400、整条心跳不落库（不写探针点、不刷新 last_heartbeat_at），合法值照常写一行
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package node
 

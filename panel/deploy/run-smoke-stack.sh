@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 docker（postgres:18-alpine、valkey/valkey:8-alpine）、goose、go、openssl、curl、python3，同目录 configure-app-role.sql，../migrations，../cmd 下的网关源码
 # [OUTPUT]: up 起一套一次性的真实面板栈（PG18 库 aegis_smoke_test + Valkey + aegis-public + aegis-admin + aegis-node + 一个平台管理员），把地址、账号、容器名与库名写进 <状态目录>/smoke.env；down 拆掉
 # [POS]: 第 4 阶段联调冒烟的底座，被 .github/workflows/panel-smoke.yml 调用，之后的造数据、frontend/tests/smoke 与 run-smoke-e2e.sh 都读 smoke.env；起库做法照 run-pg18-gates.sh，运行角色照 bootstrap.sh
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 起一套只活一次的真实面板，给前端冒烟用。
 #
@@ -158,7 +157,7 @@ docker exec -i -e PGPASSWORD="$PG_SUPER_PW" -e AEGIS_DB_APP_PASSWORD="$APP_PW" "
   < "$PANEL_DIR/deploy/configure-app-role.sql" >/dev/null
 
 # ---------------------------------------------------------------------------
-# 网关配置：只有 config.Load 要的键，外加冒烟需要的两个开关
+# 网关配置：只有 config.Load 要的键，外加冒烟需要的一个开关（放宽登录限流）
 # ---------------------------------------------------------------------------
 cat > "$STATE/gateway.env" <<EOF
 AEGIS_ENV=test
@@ -171,9 +170,7 @@ AEGIS_PUBLIC_BASE_URL=http://$PUB_ADDR
 AEGIS_MASTER_KEY=$(rand_b64)
 AEGIS_JWT_PUBLIC_SECRET=$(rand_b64)
 AEGIS_JWT_ADMIN_SECRET=$(rand_b64)
-AEGIS_JWT_CLIENT_SECRET=$(rand_b64)
 AEGIS_CONFIG_SIGNING_SEED=$(rand_b64)
-AEGIS_SALES_ENABLED=1
 AEGIS_RL_AUTH_PER_MIN=1000
 EOF
 chmod 600 "$STATE/gateway.env"

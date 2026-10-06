@@ -1,7 +1,6 @@
 // [INPUT]: 依赖标准库 encoding/json
 // [OUTPUT]: 包内提供 validateMKCPConfig、validateMKCPMask 与 MTU 边界常量
 // [POS]: domain/nodefabric 协议校验的 mKCP 分项：从 protocol_schema.go 拆出。MTU 边界与掩码开销和节点端 kernel/mkcp_transport.go 保持一致，两边对不上会出现「面板存进去了、节点起不来」
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

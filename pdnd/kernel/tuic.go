@@ -1,3 +1,7 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter 与 connerror_sing.go 的日志桥，依赖 internal/nativewire/tuic 的 QUIC 服务端，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 tuicAdapter（经 newTUICAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close，以及 sing 的 NewConnectionEx / NewPacketConnectionEx 回调；包内 markTUICAuthError
+// [POS]: kernel 的 TUIC 入站（QUIC）：UUID + token 认证、TCP 流与 UDP 会话经 DataPlane 转发并计量；认证失败经日志桥从上游库内部上报，子流的入场与拨号失败在回调里上报
+
 package kernel
 
 import (
@@ -16,7 +20,6 @@ import (
 	"github.com/gofrs/uuid/v5"
 	"github.com/sagernet/sing/common/auth"
 	"github.com/sagernet/sing/common/buf"
-	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -38,6 +41,7 @@ type tuicAdapter struct {
 	service   *tuic.Service[int]
 	packet    net.PacketConn
 	plane     DataPlane
+	connErr   connErrorReporter
 	limiters  core.SpeedLimiters
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -171,8 +175,9 @@ func (a *tuicAdapter) Start(parent context.Context, spec InboundSpec, hooks Adap
 			return fmt.Errorf("tuic udp_timeout: %w", err)
 		}
 	}
+	connErr := newConnErrorReporter(hooks, spec, "tuic")
 	service, err := tuic.NewService[int](tuic.ServiceOptions{
-		Context: ctx, Logger: logger.NOP(), TLSConfig: tlsConfig,
+		Context: ctx, Logger: newSingConnErrorLogger(connErr, markTUICAuthError), TLSConfig: tlsConfig,
 		CongestionControl: congestionControl, AuthTimeout: authTimeout,
 		ZeroRTTHandshake: zeroRTT, Heartbeat: heartbeat, UDPTimeout: udpTimeout, Handler: a,
 	})
@@ -197,6 +202,7 @@ func (a *tuicAdapter) Start(parent context.Context, spec InboundSpec, hooks Adap
 		return fmt.Errorf("tuic adapter already started or closed")
 	}
 	a.spec, a.plane, a.ctx, a.cancel, a.service, a.packet = spec, hooks.DataPlane, ctx, cancel, service, packet
+	a.connErr = connErr
 	a.mu.Unlock()
 	if err := a.syncUsers(); err != nil {
 		_ = a.Close()
@@ -207,6 +213,18 @@ func (a *tuicAdapter) Start(parent context.Context, spec InboundSpec, hooks Adap
 		return fmt.Errorf("tuic listen: %w", err)
 	}
 	return nil
+}
+
+// markTUICAuthError 把 nativewire/tuic 认证流里的两种凭据错误归到 auth。
+//
+// 上游只给字符串错误（E.New），没有类型可认；两句文本出自仓库内的 fork
+// （internal/nativewire/tuic/service.go 的 handleUniStream），改动时一并改这里。
+func markTUICAuthError(err error) error {
+	msg := err.Error()
+	if strings.Contains(msg, "authentication: unknown user") || strings.Contains(msg, "authentication: token mismatch") {
+		return markConnError(connErrAuth, err)
+	}
+	return err
 }
 
 func (a *tuicAdapter) syncUsers() error {
@@ -359,13 +377,15 @@ func (a *tuicAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, source
 			defer onClose(nil)
 		}
 		index, user, ok := a.userFromContext(ctx)
-		if !ok || !a.enterDevice(user, source.AddrString()) {
+		if admitErr := admissionError("tuic", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
 		defer a.leaveDevice(user, source.AddrString())
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "tuic", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.DialTCP(ctx, meta, destination)
 		if err != nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), err)
 			return
 		}
 		defer upstream.Close()
@@ -407,13 +427,15 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 			defer onClose(nil)
 		}
 		index, user, ok := a.userFromContext(ctx)
-		if !ok || !a.enterDevice(user, source.AddrString()) {
+		if admitErr := admissionError("tuic", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
 		defer a.leaveDevice(user, source.AddrString())
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "udp", Protocol: "tuic", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.ListenUDP(ctx, meta, destination)
 		if err != nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), err)
 			return
 		}
 		defer upstream.Close()

@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 apt 系发行版的 PostgreSQL 18（PGDG）与 Valkey、发布包 bin/ migrations/ deploy/、同目录 public-base-url.sh
 # [OUTPUT]: 无 Docker 的直装：/opt/pandora 布局；首装先取合规的对外地址再生成 .env（AEGIS_ENV=production），升级从现有 .env 读回口令、.env 不动；迁移、收窄 aegis_app、装 systemd 单元（路径替换为 /opt/pandora）
 # [POS]: 与 install.sh 并列的另一条安装路径，共用 public-base-url.sh（对外地址闸门）、migrate.sh、configure-app-role.sql 与 release-artifact.env
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Pandora Panel — 普通直接安装版（无 Docker）
 # 用法: sudo bash install-native.sh
 #       无人值守: sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名 bash install-native.sh
@@ -64,7 +63,7 @@ if ! locale -a 2>/dev/null | grep -qE "en_US\.utf-?8"; then
 fi
 
 # 0.3 端口占用：检测 Pandora 需要的端口是否已被其他服务占用（Docker 旧部署残留等）
-for p in 5432 6379 9000 9001 9002 9003; do
+for p in 5432 6379 9000 9001 9003; do
   if ss -tlnp 2>/dev/null | grep -q ":$p "; then
     say "  端口 $p 已被占用，检查是否 Pandora 旧残留..."
   fi
@@ -220,7 +219,6 @@ if [[ "$MODE" = install ]]; then
 MASTER_KEY="$(openssl rand -base64 32)"
 JWT_PUBLIC_SECRET="$(openssl rand -base64 32)"
 JWT_ADMIN_SECRET="$(openssl rand -base64 32)"
-JWT_CLIENT_SECRET="$(openssl rand -base64 32)"
 CONFIG_SIGNING_SEED="$(openssl rand -base64 32)"
 
 # 写入 .env
@@ -243,13 +241,11 @@ AEGIS_ACCESS_TOKEN_TTL=720h
 AEGIS_REFRESH_TOKEN_TTL=720h
 AEGIS_PUBLIC_ADDR=127.0.0.1:9000
 AEGIS_ADMIN_ADDR=127.0.0.1:9001
-AEGIS_CLIENT_ADDR=127.0.0.1:9002
 AEGIS_NODE_ADDR=127.0.0.1:9003
 AEGIS_ADMIN_PATH=${ADMIN_PATH}
 AEGIS_MASTER_KEY=${MASTER_KEY}
 AEGIS_JWT_PUBLIC_SECRET=${JWT_PUBLIC_SECRET}
 AEGIS_JWT_ADMIN_SECRET=${JWT_ADMIN_SECRET}
-AEGIS_JWT_CLIENT_SECRET=${JWT_CLIENT_SECRET}
 AEGIS_CONFIG_SIGNING_SEED=${CONFIG_SIGNING_SEED}
 AEGIS_PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
 PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes
@@ -269,8 +265,8 @@ if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]]; then
 fi
 
 # 迁移（用官方 migrate.sh, 它带 PGOPTIONS 保护参数；migrate.sh 在包内 deploy/ 下）
-cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$INSTALL_DIR/deploy/" 2>/dev/null || true
-chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" 2>/dev/null || true
+cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/update-cloudflare-realip.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$INSTALL_DIR/deploy/" 2>/dev/null || true
+chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" "$INSTALL_DIR/deploy/render-nginx.sh" "$INSTALL_DIR/deploy/update-cloudflare-realip.sh" 2>/dev/null || true
 export AEGIS_ENV_FILE="$INSTALL_DIR/deploy/.env"
 export AEGIS_MIGRATIONS_DIR="$INSTALL_DIR/migrations"
 export AEGIS_MIGRATION_DATABASE_URL="postgres://postgres:${PG_SUPER_PASS}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable"
@@ -332,5 +328,6 @@ say " Pandora 安装完成"
 say " 管理后台路径: /${ADMIN_PATH}"
 say " 配置文件:    ${INSTALL_DIR}/deploy/.env"
 say " 对外地址:    $(pandora_env_file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)（渲染 nginx: ${INSTALL_DIR}/deploy/render-nginx.sh）"
+say " Cloudflare:  站点在 Cloudflare 后面时再跑 ${INSTALL_DIR}/deploy/update-cloudflare-realip.sh（默认不信任任何代理）"
 say "═══════════════════════════════════════════"
 [[ "$HEALTH_OK" == 1 ]] || die "部分服务未启动, 检查日志: journalctl -u aegis-public"

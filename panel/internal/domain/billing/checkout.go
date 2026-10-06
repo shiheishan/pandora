@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 order_holds.go 的预留父节点与余额冻结、coupon.go 的券校验与核销、reservations.go 的资源预留、settlement.go 的 settlePaymentTx 与 fulfillOrder（零元单当场履约），依赖 platform/db、platform/httpx、middleware 与 idempotencybind 的幂等声明与绑定
 // [OUTPUT]: 对外提供 CreateOrderInput / CreateOrderOutput、CheckoutIdempotencyScope、Service.CreateOrder；包内提供 catalogGroupAllowed、catalogPriceCurrentlyValid、captureZeroPayOrder
 // [POS]: billing 的新购下单：一个事务里校验目录（用户组、价格窗口、只收 CNY / USD）、预留库存与限购、冻结余额、核销券、绑定幂等键并写出预制响应；零元单（赠送、全额抵扣）建单即捕获并履约。服务骨架在 service.go，结算主链在 settlement.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

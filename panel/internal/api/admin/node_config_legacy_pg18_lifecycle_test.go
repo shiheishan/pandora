@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/nodefabric 的 PublishConfig / BatchAdminNodeLifecycle，依赖 pools.go 的 deleteNodePool 处理器，依赖 node_config_legacy_pg18_cancel_test.go 的持锁工具、node_config_legacy_pg18_test.go 的夹具与共用断言
 // [OUTPUT]: 包内提供并发调用结果类型（nodeConfigPG18Publish / HTTP / AdminNode / BootstrapCallResult）、callNodeConfigPG18DeletePool 与 await / assert 工具，以及 runNodeConfigPG18LifecycleRaceBatch、runNodeConfigPG18PoolLifecycleRaceBatch、runNodeConfigPG18GlobalPoolRetirementRaceBatch
 // [POS]: TestNodeConfigLegacyPG18 的生命周期竞态批次（发布与节点退役、池停用、全局与池配置遇退役），调用结果类型与删池调用被 _pool_delete / _materialize / _lock 复用
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

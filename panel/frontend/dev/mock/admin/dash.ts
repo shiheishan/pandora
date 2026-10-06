@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../types 的 MockModule / MockContext，依赖 ./billing-store 的 stalePendingCount
  * [OUTPUT]: 对外提供 dash 模块的假接口 MockModule
  * [POS]: dev/mock/admin 的「仪表盘（后台-01）」假接口；八个只读接口，形状、权限、参数校验与错误码照 api-contract.md 后台-01 与 DASH-01 冻结契约，字段与 Go 必回的集合一致（收紧后的 dash/api.ts schema 全部必填项都给）。数据按日期确定性生成，概览的今日 / 昨日与收入趋势的最后两天是同一组数；「超时未支付订单」从订单假后端实时数（billing-store 的 stalePendingCount），点进订单页待支付筛选能对上
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { MockContext, MockModule } from '../types.ts'
 import { stalePendingCount } from './billing-store.ts'

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter 与 handlers.meSubscriptionNodes 的源码
 // [OUTPUT]: 对外提供 TestSubscriptionNodePreviewRouteIsAuthenticatedGET、TestSubscriptionNodePreviewHandlerHasSafeResponseBoundary
 // [POS]: api/public 订阅节点预览：只读、在登录分组内、404 中性出口、响应不露连接信息
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

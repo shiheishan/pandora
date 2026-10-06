@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 state、ref、effect、id 与键盘事件，依赖 ./cx 与 ./Menu.module.css
  * [OUTPUT]: 对外提供 Menu 与 MenuEntry 类型
  * [POS]: ui 的下拉菜单（门户头像菜单、后台账户与行内「更多」），自己渲染触发按钮、调用方只给按钮内容与样式：宽 248、圆角 12、内边距 6，菜单项圆角 7、高随入口；按 WAI-ARIA menu button 模式实现方向键、Home/End、Esc 回到触发按钮、点外面关闭；可受控（门户底部标签栏「我的」要从外面打开它），可向上弹出（后台侧栏底部的账户菜单）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { cx } from './cx'

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui 的 ConfirmModal / Empty / Menu / QueryView / Switch / Tag / useToast，依赖 ../../actions 的 useCan / useFailure，依赖 ./api 的 useProviders / toggledSchema / useInvalidateBilling / Provider，依赖 ./model，依赖 ./Billing.module.css
  * [OUTPUT]: 对外提供 ProvidersTab
  * [POS]: 订单与收款「支付渠道」标签（后台-05）：渠道卡（首字、名称、code、开关、今日成交按币种 / 24 小时成功率 / 币种三格、备注：停收新单或完全停用、未配置凭据、最近回调，R66）。开关按 PAY-009 只动 accepting_new（关 = 结账页不显示、进行中的支付仍回调）；「完全停用（回调也不处理）」放在「更多」菜单并二次确认；系统内置的 offline 只读展示。写接口 billing.provider.write + reauth，没有幂等
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'

@@ -1,7 +1,6 @@
-// [INPUT]: 依赖 traffic_packs.go 的流量包目录用例，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 夹具与 catalog_sales_capability_test.go 的 staticSalesCapability / requireCatalogErrorCode
+// [INPUT]: 依赖 traffic_packs.go 的流量包目录用例，依赖 catalog_sales_pg18_test.go 的 openCatalogSalesPG18 夹具与 catalog_test.go 的 expectHTTPCode
 // [OUTPUT]: 对外提供 TestTrafficPackAdminPG18（run-pg18-gates.sh 的 catalog_sales 域）
-// [POS]: adminops 流量包目录管理的 PG18 集成门禁：新建、改价、上下架各写一条审计，updated_at 乐观锁拦住过期修改，销售闸门关着时只能下架
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+// [POS]: adminops 流量包目录管理的 PG18 集成门禁：新建、改价、上下架各写一条审计，updated_at 乐观锁拦住过期修改，重复下架 409、不存在的 id 中性 404
 
 package adminops
 
@@ -40,7 +39,7 @@ func TestTrafficPackAdminPG18(t *testing.T) {
 		}
 		return n
 	}
-	svc := NewService(app, staticSalesCapability(true))
+	svc := NewService(app)
 
 	// 1) 新建：在售、销量 0、名称去首尾空白，写一条 create 审计。
 	created, err := svc.CreateTrafficPack(ctx, tenantID, TrafficPackInput{
@@ -75,35 +74,26 @@ func TestTrafficPackAdminPG18(t *testing.T) {
 		t.Fatalf("updated pack=%+v update audits=%d", updated, audits("traffic_pack.update"))
 	}
 	_, err = svc.UpdateTrafficPack(ctx, tenantID, created.ID, update)
-	requireCatalogErrorCode(t, err, httpx.CodeConflict)
+	expectHTTPCode(t, err, httpx.CodeConflict)
 	if audits("traffic_pack.update") != 1 {
 		t.Fatal("stale update wrote an audit row")
 	}
 	t.Log("marker=traffic_pack_admin_update_optimistic_lock_ok")
 
-	// 3) 销售闸门关着：改价与上架被拒（503），下架照常可以。
-	closed := NewService(app, staticSalesCapability(false))
+	// 3) 下架：写一条 archive 审计，退出在售列表。
 	current := updated.UpdatedAt
-	_, err = closed.UpdateTrafficPack(ctx, tenantID, created.ID, TrafficPackInput{
-		ActorID: actorID, ExpectedUpdatedAt: &current, Name: "x",
-		TrafficBytes: 1, Currency: "CNY", UnitAmount: 1,
-	})
-	requireCatalogErrorCode(t, err, httpx.CodeUnavailable)
-	archived, err := closed.SetTrafficPackStatus(ctx, tenantID, created.ID, actorID, "archived", &current)
+	archived, err := svc.SetTrafficPackStatus(ctx, tenantID, created.ID, actorID, "archived", &current)
 	if err != nil || archived.Status != "archived" || audits("traffic_pack.archive") != 1 {
-		t.Fatalf("archive with closed sales gate pack=%+v err=%v audits=%d",
-			archived, err, audits("traffic_pack.archive"))
+		t.Fatalf("archive pack=%+v err=%v audits=%d", archived, err, audits("traffic_pack.archive"))
 	}
 	if active, err := svc.ListTrafficPacks(ctx, tenantID, "active"); err != nil || len(active) != 0 {
 		t.Fatalf("active list after archive=%+v err=%v", active, err)
 	}
-	_, err = closed.SetTrafficPackStatus(ctx, tenantID, created.ID, actorID, "active", &archived.UpdatedAt)
-	requireCatalogErrorCode(t, err, httpx.CodeUnavailable)
-	t.Log("marker=traffic_pack_admin_sales_gate_ok")
+	t.Log("marker=traffic_pack_admin_archive_ok")
 
 	// 4) 重复下架 409；重新上架写 restore 审计，回到在售列表。
 	_, err = svc.SetTrafficPackStatus(ctx, tenantID, created.ID, actorID, "archived", &archived.UpdatedAt)
-	requireCatalogErrorCode(t, err, httpx.CodeConflict)
+	expectHTTPCode(t, err, httpx.CodeConflict)
 	restored, err := svc.SetTrafficPackStatus(ctx, tenantID, created.ID, actorID, "active", &archived.UpdatedAt)
 	if err != nil || restored.Status != "active" || audits("traffic_pack.restore") != 1 {
 		t.Fatalf("restore pack=%+v err=%v audits=%d", restored, err, audits("traffic_pack.restore"))
@@ -117,7 +107,7 @@ func TestTrafficPackAdminPG18(t *testing.T) {
 	now := time.Now()
 	for _, id := range []string{"73300000-0000-7000-8000-000000000099", "not-a-uuid"} {
 		_, err = svc.SetTrafficPackStatus(ctx, tenantID, id, actorID, "archived", &now)
-		requireCatalogErrorCode(t, err, httpx.CodeNotFound)
+		expectHTTPCode(t, err, httpx.CodeNotFound)
 	}
 	t.Log("marker=traffic_pack_admin_not_found_ok")
 }

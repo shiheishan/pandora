@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 idempotency_recorder.go 的 newIdempotencyRecorder（WriteHeader / Write / finish）、idempotency_replay.go 的存储编码与重放出口
 // [OUTPUT]: 包内提供 commitTrackingWriter / newCommitTrackingWriter（记录下游提交时刻的 ResponseWriter，idempotency_pg18_fixture_test.go 的 pg18ServeTracking 共用）
 // [POS]: 录制器的提交语义单测：显式与隐式提交只发生一次、1xx 不提交、状态码校验对齐 net/http、提交后改头不改证据、Content-Type 嗅探与缺省 / 显式空的区分、编码头证据不合规即作废
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

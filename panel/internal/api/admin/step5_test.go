@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 finance_routes_contract_test.go 的 loadRouteProtections（读全部 router*.go 的 AST），依赖 site_settings.go 的 validSiteTimezone
 // [OUTPUT]: 对外提供 TestStep5RouteProtections、TestValidSiteTimezone
 // [POS]: api/admin 第 ⑤ 步新增与改动路由的保护契约（权限码、重认证、幂等域逐条钉死）与处理器纯函数单测
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./format 的 formatMoney / formatCount / formatBytes / relativeTime / formatDateTime
  * [OUTPUT]: 对外提供 format.ts 的单元测试
  * [POS]: core/format 的单元测试：分转元、千分位、负数、币种符号；计数千分位；字节单位与 BigInt 安全；相对时间各档；绝对时间与无法解析的输入
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { formatBytes, formatCount, formatDateTime, formatMoney, relativeTime } from './format'

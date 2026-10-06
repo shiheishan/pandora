@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/billing 的 ListTrafficPacks / CreateTrafficPackOrder / MyTrafficPacks，依赖 middleware 的幂等声明与 platform/httpx
 // [OUTPUT]: 对包内提供 listTrafficPacks、createTrafficPackOrder、myTrafficPacks 三个处理器
 // [POS]: api/public 门户-03 流量包的 HTTP 外壳：目录公开可读，下单与余额要登录；下单与新购共用 order_create 幂等域，路由在 router.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

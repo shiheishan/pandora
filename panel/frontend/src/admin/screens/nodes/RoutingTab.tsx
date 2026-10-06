@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./ScopeRouting 的 ScopeRoutingEditor，依赖 ./RouteGroupPanel 的 RouteGroupPanel 与 GroupFormModal，依赖 ./queries、./schemas，依赖 ./nodes.module.css
  * [OUTPUT]: 对外提供 RoutingTab（节点与服务器 · 路由标签：全局 + 路由组）
  * [POS]: admin/screens/nodes 的路由标签（设计稿 t_routing；契约 GET / PUT v1/nodes/routing，R56；路由组 00096）：顶部范围切换条「全局 · 各路由组（按生效顺序）· ＋ 新建路由组」，选中的组记在地址 #/nodes/routing/<组 id>；全局用 ScopeRoutingEditor，「发布到全部节点」确认框「N 条规则会下发到 M 个在线节点」，一次 PUT 带 expected_revision、reauth、幂等 node_routing_global_publish，revision 冲突刷新、删除仍被组或节点规则引用的出站回 409 就地提示；组的编辑在 RouteGroupPanel。编辑是本地的，发布才生效
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'

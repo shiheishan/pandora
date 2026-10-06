@@ -1,3 +1,7 @@
+// [INPUT]: 依赖 core 的 InboundConfig / User / UserTraffic，依赖 route 的 Meta 与 sing 的 M.Socksaddr
+// [OUTPUT]: 对外提供 InboundSpec、DataPlane、AdapterHooks、ConnError 与 Stage 常量、Adapter / AdapterFactory / AdapterRegistry；包内 reportAdapterConnError / reportAdapterConnErrorAddr（统一的「哪些错误不上报」规则）
+// [POS]: kernel 的协议适配器契约：nativecore.go 按它装配入站并把 OnConnError 接到 connerror_log.go 的日志出口，各协议适配器经 connerror.go 的 connErrorReporter 调这里的上报函数
+
 package kernel
 
 import (
@@ -150,17 +154,24 @@ func (r *AdapterRegistry) Types() []string {
 // 返回值直接 `_ =` 掉，结果互操作失败时服务端一行日志都没有，只能靠猜。
 //
 // io.EOF 和 net.ErrClosed 每条连接正常结束时都会出现，报上去只会把真正
-// 的错误淹掉。
+// 的错误淹掉。context.Canceled 只在入站被关闭、热替换时出现，那是我们
+// 自己收摊，不是连接失败。
 func reportAdapterConnError(hook func(ConnError), tag, protocol, stage string, conn net.Conn, err error) {
-	if hook == nil || err == nil {
-		return
-	}
-	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
-		return
-	}
 	var remote net.Addr
 	if conn != nil {
 		remote = conn.RemoteAddr()
+	}
+	reportAdapterConnErrorAddr(hook, tag, protocol, stage, remote, err)
+}
+
+// reportAdapterConnErrorAddr 是给拿不到 net.Conn 的失败点用的：QUIC 连接、
+// HTTP 层的伪装回落、上游库的日志桥，手上只有对端地址甚至连地址都没有。
+func reportAdapterConnErrorAddr(hook func(ConnError), tag, protocol, stage string, remote net.Addr, err error) {
+	if hook == nil || err == nil {
+		return
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) {
+		return
 	}
 	hook(ConnError{Tag: tag, Protocol: protocol, Stage: stage, Remote: remote, Err: err})
 }

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../styles/design-tokens 的 COLOR_TOKENS / ColorToken / TokenGroup（令牌名单、分组与默认值的唯一来源），依赖 ./schemas 的 Theme 类型
  * [OUTPUT]: 对外提供主题编辑的纯函数：ThemeMode / THEME_MODES、TOKEN_SECTIONS、ThemeForm / ThemeTarget / ThemeErrors、themeToForm、tokenValueError、logoProblem、LOGO_MAX_BYTES、validateThemeForm、buildThemeRequest、modeErrorCount、firstErrorMode、previewVars、isShadowToken、themeSwatches、siteName、activateNotice
  * [POS]: admin/screens/content 的主题逻辑层（从 logic.ts 分出）：表单与 POST v1/themes 请求体互转、与 Go 的 appearance.normalizeTokens / normalizeBranding 同规则的前端校验（fields 键与后端 422 一致：code、name、branding.<键>、tokens.<组>.<变量名>），以及预览变量与切换确认文案；ThemeTab / ThemeEditor 只负责渲染，theme.test.ts 守住
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { COLOR_TOKENS, type ColorToken, type TokenGroup } from '../../../styles/design-tokens'
 import type { Theme } from './schemas'

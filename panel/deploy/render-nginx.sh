@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # [INPUT]: 依赖 .env 的 AEGIS_ADMIN_PATH 与 AEGIS_PUBLIC_BASE_URL（只读解析，不 source），依赖同目录 nginx-aegis.conf 模板
-# [OUTPUT]: 原子写出 /etc/nginx/conf.d/aegis.conf：填入后台隐藏前缀与站点域名
-# [POS]: deploy 安装链的边缘入口渲染器，被 install.sh 提示、migrate-to-new-host.sh 调用；模板里不含任何具体部署的值
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+# [OUTPUT]: 原子写出 /etc/nginx/conf.d/aegis.conf：填入后台隐藏前缀与站点域名；模板 include 的 /etc/aegispanel/cloudflare-realip.conf 不存在时写一份不信任任何代理的默认文件（已存在绝不覆盖）
+# [POS]: deploy 安装链的边缘入口渲染器，被 install.sh / install-native.sh 提示、migrate-to-new-host.sh 调用；模板里不含任何具体部署的值；Cloudflare 网段由 update-cloudflare-realip.sh 另行写入
 # Render the unified edge config without sourcing the secret environment file.
 set -euo pipefail
 umask 077
@@ -10,6 +9,8 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${1:-$SCRIPT_DIR/.env}"
 OUTPUT_FILE="${2:-/etc/nginx/conf.d/aegis.conf}"
+# 第三个参数只给测试用：模板里 include 的路径是写死的，生产上永远是这个默认值
+REALIP_FILE="${3:-/etc/aegispanel/cloudflare-realip.conf}"
 TEMPLATE_FILE="$SCRIPT_DIR/nginx-aegis.conf"
 
 die() { printf 'render-nginx: %s\n' "$*" >&2; exit 1; }
@@ -17,6 +18,7 @@ die() { printf 'render-nginx: %s\n' "$*" >&2; exit 1; }
 [[ -f "$ENV_FILE" ]] || die "environment file not found"
 [[ -f "$TEMPLATE_FILE" ]] || die "nginx template not found"
 [[ "$OUTPUT_FILE" = /* ]] || die "output path must be absolute"
+[[ "$REALIP_FILE" = /* ]] || die "real-IP include path must be absolute"
 
 # Read KEY=value lines with awk instead of sourcing: the file holds secrets and
 # must never be executed. Each key must appear exactly once.
@@ -60,6 +62,39 @@ domain="${BASH_REMATCH[1],,}"
 for placeholder in __AEGIS_ADMIN_PATH__ __AEGIS_DOMAIN__; do
   grep -q "$placeholder" "$TEMPLATE_FILE" || die "template placeholder $placeholder is missing"
 done
+
+# ---------------------------------------------------------------------------
+# 真实来源 IP 的信任表：模板在 server 块里 include 它，文件缺了 nginx -t 就失败
+# ---------------------------------------------------------------------------
+# 两个安装脚本都不生成它，全新安装后第一次渲染就会撞上。这里只在它不存在时写一份
+# 「不信任任何代理」的默认文件：没有 set_real_ip_from，nginx 就只认 TCP 对端，
+# 客户端自己填的 CF-Connecting-IP / X-Real-IP 一律不采信——站点不在 Cloudflare
+# 后面时，信任 Cloudflare 的头等于让任何人伪造来源 IP，绕过按 IP 的限流与风控。
+# 已存在就不碰：在 Cloudflare 后面的站点由 update-cloudflare-realip.sh 写入网段，
+# 升级时重新渲染不能把它冲掉。
+ensure_realip_default() {
+  [[ -e "$REALIP_FILE" ]] && return 0
+  local dir tmp
+  dir="$(dirname -- "$REALIP_FILE")"
+  install -d -m 0755 "$dir"
+  tmp="$(mktemp "${REALIP_FILE}.tmp.XXXXXX")"
+  cat >"$tmp" <<'REALIP'
+# Pandora edge real-IP trust list, created by render-nginx.sh because none existed.
+#
+# Empty on purpose: no proxy is trusted, so nginx keeps the TCP peer as the
+# client address and ignores any CF-Connecting-IP or X-Real-IP a client sends.
+#
+# Behind Cloudflare, replace this file with Cloudflare's published networks:
+#   /opt/aegispanel/deploy/update-cloudflare-realip.sh
+#   nginx -t && systemctl reload nginx
+#
+# render-nginx.sh never overwrites this file; upgrades keep whatever is here.
+REALIP
+  chmod 0644 "$tmp"
+  mv -f -- "$tmp" "$REALIP_FILE"
+  printf 'render-nginx: created %s (trusts no proxy; run update-cloudflare-realip.sh if the site is behind Cloudflare)\n' "$REALIP_FILE"
+}
+ensure_realip_default
 
 output_dir="$(dirname -- "$OUTPUT_FILE")"
 [[ -d "$output_dir" ]] || die "output directory does not exist"

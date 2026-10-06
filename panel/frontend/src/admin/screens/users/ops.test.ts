@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./model 的运营类纯函数，依赖 ./api 的运营类 schema
  * [OUTPUT]: 用户组 / 批量运营 / 设备策略 / 流量重置的纯逻辑与 schema 单元测试
  * [POS]: admin/screens/users 运营类四个标签（用户组、批量运营、设备策略、流量重置）的测试，与 model.test.ts（列表与抽屉）并列：用户组删除拦截（R104 节点池名单优先）、「可用节点池」与「被引用」、设备策略请求体与 R103 识别窗口、批量筛选表单到 BulkFilter 与导出 query、批量生成的前端校验（与 adminops.GenerateUsers 同规则）、接近上限与在线格、重置日志的操作人文案、重置原因、手动重置挑哪条订阅、按邮箱精确匹配；schema 守住 omitempty 键、封闭枚举与「口令只回一次」的形状
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { bulkPreviewSchema, devicesSchema, generatedSchema, resetDoneSchema, resetLogsSchema, resetStatsSchema, userGroupsSchema, type OnlineDevice } from './api'

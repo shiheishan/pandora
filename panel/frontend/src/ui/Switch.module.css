@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 Switch.tsx 用到的类名
  * [POS]: ui/Switch 的样式：轨道 32×18、圆钮 14，关闭态用 --border-hover
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .wrap {

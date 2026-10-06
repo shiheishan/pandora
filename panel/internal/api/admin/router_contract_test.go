@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 ./router.go 的 NewRouter，依赖 chi.Walk 遍历注册表
 // [OUTPUT]: 对外提供 admin 路由契约测试与 assertAdminRouteContract 断言助手
 // [POS]: api/admin 的路由存在性守卫：账户操作与根上的前端挂载（/、/assets/*）必须注册在预期方法上
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

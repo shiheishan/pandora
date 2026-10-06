@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerNodePoolRoutes、registerNodeRoutes（末尾挂 registerRouteGroupRoutes）、nodeBatchStatusIdempotencyScope
 // [POS]: api/admin 路由表的「节点分组与套餐绑定、节点、服务器、令牌签发、身份吊销、配置发布、路由、路由组」段，由 NewRouter 按原注册顺序调用；处理器在 pools.go / node_admin.go / server.go / handlers.go / node_routing.go / route_groups.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

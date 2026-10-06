@@ -2,7 +2,6 @@
 # [INPUT]: 依赖同目录 check-migrations.sh（up 前的克隆库预检）、.env 的迁移 DSN 或本机 PostgreSQL 凭据、与 deploy/ 并排的 migrations/、goose
 # [OUTPUT]: 特权迁移入口：迁移文件名与编号校验（严格递增、不重复、允许空号），拒绝 down/redo，以净化过的环境 exec goose
 # [POS]: deploy 迁移链的唯一公开入口，install.sh、install-native.sh、release-stop-the-world.sh 调它；桩测试 migrate_fail_closed_mock_test.sh、migrate-layout_mock_test.sh
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Privileged goose wrapper. Runtime services never receive the migration DSN.
 set -Eeuo pipefail
 umask 077
@@ -72,9 +71,10 @@ for migration in "${migration_files[@]}"; do
   fi
   MAX_MIGRATION_VERSION=$version
 done
-# CA42 客户端认证子系统冻结后，它的迁移已移出主序列（见
-# migrations/frozen-client-auth/README.md），原先「版本号 ≥42 就必须存在
-# 00042_client_auth_expand.sql 且 SHA 匹配」的三处闸门随之失效。
+# CA42 客户端认证子系统冻结后，它的两个迁移已移出主序列，原样留在
+# migrations/frozen-client-auth/（见其 README），代码与发布门禁脚本归档在 git 标签
+# archive/client-auth。原先「版本号 ≥42 就必须存在 00042_client_auth_expand.sql
+# 且 SHA 匹配」的三处闸门随之删除。
 #
 # 这些闸门守的是 client-auth 迁移本身，却以版本号为触发条件，于是 42 号槽位
 # 一旦换人就会把所有后续发布全部拦死。恢复 CA42 时请以「该文件是否在序列中」
@@ -113,7 +113,8 @@ if [ "$UPGRADE_APPROVED" = yes ]; then
   # options through the privileged migration wrapper.
   # 00040 的订单释放迁移同样是 fail-closed。生产早就过了那一版所以一直没
   # 暴露，但全新库从 0 装起会被它拦下——一键安装正是这种场景。
-  MIGRATION_PGOPTIONS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes -c app.order_release_writers_stopped=yes -c aegis.client_auth_00042_upgrade_approved=approved-v1 -c aegis.client_auth_writers_stopped=stopped-v1'
+  # 冻结迁移要的两个 aegis.client_auth_* 开关随它移出主序列，不再下发。
+  MIGRATION_PGOPTIONS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes -c app.order_release_writers_stopped=yes'
 fi
 
 GOOSE_BASE_ENV=(env -i PATH="$PATH" HOME="${HOME:-/root}"
@@ -122,9 +123,10 @@ GOOSE_BASE_ENV=(env -i PATH="$PATH" HOME="${HOME:-/root}"
 [ -z "$MIGRATION_PGPASSWORD" ] || GOOSE_BASE_ENV+=(PGPASSWORD="$MIGRATION_PGPASSWORD")
 
 # 这里原本整块都是 CLIENT-AUTH-00042 的隔离认证闸门：版本号一旦到 42，
-# up / up-to / up-by-one / redo 全部拒绝，必须先跑 check-migrations-isolated-pg18.sh
-# 换一张 attestation。CA42 冻结、迁移移出主序列后，这套闸门只剩下
-# 「任何 42 号以后的迁移都发不出去」这一个效果。
+# up / up-to / up-by-one / redo 全部拒绝，必须先跑一次隔离 PG18 预检换一张
+# attestation（那个预检脚本随 CLIENT-AUTH 归档在标签 archive/client-auth）。
+# CA42 冻结、迁移移出主序列后，这套闸门只剩下「任何 42 号以后的迁移都发不出去」
+# 这一个效果，所以删掉了。
 #
 # 参数校验本身是有价值的，所以留下并改成无条件执行 —— 原先只在 ≥42 时才校验，
 # 反而是版本号越小越宽松。

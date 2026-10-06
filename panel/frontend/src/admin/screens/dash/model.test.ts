@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./model 的全部纯函数，依赖 ./api 的 zod schema
  * [OUTPUT]: 仪表盘数据映射与 schema 的单元测试
  * [POS]: admin/screens/dash 的纯逻辑测试：字节 BigInt 安全、百分比与时长文案、按权限取舍卡片与链接、上一期为 0 时的退化、系统状态行与备份摘要、流量排行与未归属告警；schema 守住契约形状（后端必回字段缺了判为不符、字节必须是字符串、R52 metrics 可缺、未知 kind 判为不符）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import type { TaskItem } from '../../tasks'

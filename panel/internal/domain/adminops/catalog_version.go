@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 catalog.go 的输入类型、loadPlanTx 与 catalogResult / rowConflict，依赖 domain/nodefabric 的 StableProtocolReadySQL 判定可服务节点，依赖 platform/db、audit、httpx
 // [OUTPUT]: 对外提供 Service 的 CreatePlanVersion、UpdatePlanVersion、PublishPlanVersion；包内提供版本语义与发布前置的校验函数、createPlanVersionTx / updatePlanVersionTx / publishPlanVersionTx 事务体
-// [POS]: adminops 套餐目录的版本生命周期：从 catalog.go 拆出。建草稿版本、改版本语义（限速与超额策略解耦、新写入只收 suspend，R99；旧 pool_ids 字段一律拒绝，绑池只走 setPlanPools）、发布（套餐与版本双令牌、价格覆盖可见用户组、有池与可服务节点才放行，过 P0B 销售闸门）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+// [POS]: adminops 套餐目录的版本生命周期：从 catalog.go 拆出。建草稿版本、改版本语义（限速与超额策略解耦、新写入只收 suspend，R99；旧 pool_ids 字段一律拒绝，绑池只走 setPlanPools）、发布（套餐与版本双令牌、价格覆盖可见用户组、有池与可服务节点才放行）
 
 package adminops
 
@@ -258,9 +257,6 @@ func (s *Service) updatePlanVersionTx(ctx context.Context, tx pgx.Tx, tenantID, 
 }
 
 func (s *Service) PublishPlanVersion(ctx context.Context, tenantID, planID, versionID, actorID string, expectedPlan, expectedVersion int64) (int64, int64, error) {
-	if err := s.requireP0BSales(); err != nil {
-		return 0, 0, err
-	}
 	if !validCatalogIDs(planID, versionID) {
 		return 0, 0, httpx.NotFoundOrForbidden()
 	}

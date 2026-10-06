@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 的 --sidebar* 令牌与尺度令牌
  * [OUTPUT]: 对外提供 Sidebar.tsx 用到的类名
  * [POS]: admin/Sidebar 的样式：宽 224、明暗两种主题下都是深底；侧栏内重定义 --surface / --border / --text 等令牌，让 ui/Menu 在深底上直接可用
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 /* 侧栏内的中性层次取自 管理后台.dc.html 外壳（规范只收了 --sidebar* 五个令牌），

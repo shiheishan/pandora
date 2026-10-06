@@ -10,4 +10,3 @@ main.go: create / reset-password / grant / revoke / list / roles 子命令；改
 *_test.go: 假事务驱动 SQL 路径与顺序；经 platform/sourcetest 取整包源码，断言没有 --password 参数、两个改密命令都只收 --password-stdin
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

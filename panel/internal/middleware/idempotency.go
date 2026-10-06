@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务与 idempotency_keys 表（00037 运行期加固），依赖 platform/httpx 的 Principal、错误模型与 PreparedResponse
 // [OUTPUT]: 对外提供 Idempotency 中间件、IdempotencyClaim 与 IdempotencyClaimFrom / ValidateIdempotencyClaim、CompleteSuccessJSONInTx、ErrIdempotencyClaimLost
 // [POS]: middleware 的幂等键：数据库持有的执行认领（INSERT 新占、SELECT FOR UPDATE 加条件 UPDATE 接管可重试的旧认领），业务处理器用 CompleteSuccessJSONInTx 把业务写入与认领完成放进同一事务；作用域按主体隔离；重放判定与响应头在 idempotency_replay.go，响应录制在 idempotency_recorder.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

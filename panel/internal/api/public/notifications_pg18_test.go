@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/pg18test 打开 public_api 域的一次性库，依赖 notifications.go 的 setNotificationPreference 与 domain/notify 的 New，依赖迁移 00076 的触发器状态
 // [OUTPUT]: 对外提供 TestNotificationPreferencePG18、TestQuotaBalancesNotBroadcastPG18
 // [POS]: api/public 的 PG18 测试：门户通知偏好可以反复保存（缺陷 7），流量余额的写入不再向全租户广播（缺陷 15）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

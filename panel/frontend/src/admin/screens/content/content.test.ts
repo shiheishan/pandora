@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./logic，依赖 ./schemas
  * [OUTPUT]: 无（测试文件）
  * [POS]: admin/screens/content 纯函数层与 schema 边界的单元测试：时间输入互转、公告文字 / 校验 / 请求体 / 按钮取舍、知识库聚合 / 分组 / 校验 / 请求体 / 受众改动、时区选项、插槽脏判断与过滤提示（主题在 theme.test.ts）；界面交互在浏览器里对 dev 假后端验收
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import {

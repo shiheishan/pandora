@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 my_orders.go 的 ListMyOrders / MyOrderDetail，依赖 payment_query.go 的 QueryOrderPayment、payment_query_audit.go 的 AdminQueryOrderPayment、payment_query_patrol.go 的 ReconcileDuePayments、settlement.go 的 HandlePaymentWebhook、checkout.go 的 CreateOrder、payments.go 的 CreatePaymentIntent、release.go 的 CancelOrder，复用 order_release_pg18_fixture_test.go 的一次性租户夹具与 payment_query_stub_test.go 的渠道替身，依赖迁移 00097
 // [OUTPUT]: 对外提供 TestPaymentQueryPG18（run-pg18-gates.sh 的 payment_query 域）
 // [POS]: billing 主动查单（PAY-009）的 PG18 集成门禁：查到已付补记、补记与回调谁先谁后都只入账一次、已取消订单查到的钱进挂账、金额币种不符整笔拒绝、渠道没付或没查成订单不动、业务错误；门户订单行的 has_payment_intent（列表与详情、取消后仍为 true）；后台查单每次（含失败）记一条带操作人的 order.payment_queried 审计，订单不存在与门户查单不记；巡检只认领到期的单，两个巡检并发时同一单只查一次，渠道不支持查单即停
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

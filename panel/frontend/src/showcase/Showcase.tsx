@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../core/theme 的 useTheme / setTheme，依赖 ../styles/design-tokens 的设计稿原值与 normalizeCssValue，依赖 ../ui 的 Segmented，依赖 ./ComponentsDemo 与 ./Showcase.module.css
  * [OUTPUT]: 对外提供 Showcase 组件
  * [POS]: showcase 的页面本体：按设计规范 02 颜色、03 字体、04 尺寸的顺序铺开令牌，并在浏览器里把算出的值与设计稿逐条核对；05 角色令牌，06 组件演示（ComponentsDemo）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState, type ReactNode } from 'react'
 import { setTheme, useTheme, type Theme } from '../core/theme'

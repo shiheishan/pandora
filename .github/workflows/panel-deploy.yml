@@ -4,7 +4,8 @@ name: Panel deploy script contracts
 # 按发布包安装会卡在迁移，而 CI 的迁移直接调 goose，一直没人发现。这里只跑不需要
 # 数据库、不需要 root 的桩测试，几秒跑完，所以单独成一个 workflow、只按 deploy 与
 # migrations 的路径触发，不拖 PG18 门禁和前端构建。
-# 迁移三件套的桩测试会拿仓库里真实的 panel/migrations 跑校验：脚本拒绝真实目录即变红。
+# 两个迁移脚本（migrate.sh、check-migrations.sh）的桩测试会拿仓库里真实的
+# panel/migrations 跑校验：脚本拒绝真实目录即变红。
 
 on:
   workflow_dispatch:
@@ -44,8 +45,8 @@ jobs:
             migrate_fail_closed_mock_test.sh
             migrate-layout_mock_test.sh
             check-migrations_mock_test.sh
-            check-migrations-isolated-pg18_mock_test.sh
             render-nginx_test.sh
+            cloudflare-realip_mock_test.sh
             release-artifact-binding_mock_test.sh
             logrotate-aegis_static_test.sh
             public-base-url_mock_test.sh

@@ -8,17 +8,17 @@ Pandora node 二进制（pandora-native / pdnd）
 
 成员清单
 main.go: 入口。子命令 bootstrap / enrollment / verify-identity / validate-install；flag -c 配置路径、-version、-capabilities 打印能力矩阵后退出、-self-check 校验能力注册表；装配 panel 客户端、node 循环与运行时
-runtime_native.go: go:build !compat，生产默认运行时，只链接 NativeCore
+runtime_native.go: go:build !compat，生产默认运行时，只链接 NativeCore，进程 logger 经 NewNativeCoreWithLogger 交给它记入站连接失败（限流、脱敏）
 runtime_compat.go: go:build compat，迁移构建专用，显式 native_only:false 时允许回落兼容内核
 kernel/: NativeCore 自研数据面，13 协议入站、传输、REALITY、能力矩阵；见 kernel/CLAUDE.md
 core/: core.Core 抽象与兼容适配层（sing-box/xray/mieru/外部进程/multi 分派/流量计数/限速）；见 core/CLAUDE.md
 internal/: NativeCore 底层实现
-  - nativewire/ 协议线格式（anytls/hysteria2/mkcp/shadowtls/tuic/udpmask）
+  - nativewire/ 协议线格式（anytls/hysteria2/mkcp/shadowtls/tuic/udpmask）；shadowtls/ 见 internal/nativewire/shadowtls/CLAUDE.md
   - reality/ fork 自 XTLS/REALITY（MPL-2.0，其本身基于 Go crypto/tls，目录内 LICENSE 与 LICENSE-Go 两份许可并存），承载 TLS 1.2 + 1.3 上的 REALITY 握手
-  - realityquic/ fork 自 apernet/quic-go（自带上游 MIT LICENSE，见其 README），把 TLS 事件接到 reality/，193 文件
+  - realityquic/ fork 自 apernet/quic-go（自带上游 MIT LICENSE，见其 README），把 TLS 事件接到 reality/
   - 这两个 fork 目录保持上游文件划分，整目录豁免 800 行规则
-node/: node.go 把面板与内核粘起来：拉配置、同步用户、上报流量与心跳（签名心跳带 metrics，兼容通道走 /status，两者都落面板 node_metrics）
-panel/: 与面板通信层
+node/: node.go 把面板与内核粘起来：拉配置、同步用户、上报流量与心跳（签名心跳带 metrics，兼容通道走 /status，两者都落面板 node_metrics）；入站重建即作废用户镜像与用户 ETag；签名通道上装不上的版本在旧配置仍服务时只试装一次、failed 只报一次；见 node/CLAUDE.md
+panel/: 与面板通信层；见 panel/CLAUDE.md
   - client.go 基础客户端、enrollment.go 两阶段节点接入（begin → status → commit，带本地日志可续跑，是首装产生身份的唯一入口）、
   - signed.go Ed25519 节点身份与签名通道客户端（LoadIdentity / SaveIdentity、Heartbeat、Config、ReportConfig、VerifyConfig）、
   - effective_release.go 生效发布版本、config_key_transition.go 配置签名密钥轮换、
@@ -38,4 +38,3 @@ tools/: vlesscheck / mierucheck / naivecheck / shadowtlscheck 最小客户端，
 go.mod / go.sum: Go 1.26.5 module
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

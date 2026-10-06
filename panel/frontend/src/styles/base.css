@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供元素默认样式（盒模型、页面底色与正文、表单继承字体、链接、选区、键盘焦点）与两个工具类 .mono / .num
  * [POS]: styles 的基础层，被 index.css 在令牌之后引入；组件样式（CSS Modules）叠在它上面
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 *,

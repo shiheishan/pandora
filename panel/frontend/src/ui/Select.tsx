@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 forwardRef 与 select 属性类型，依赖 ./cx，依赖 ./Field 的 Field / useFieldIds / hasError / FieldControlProps，依赖 ./icons 的 IconChevronDown，依赖 ./control.module.css
  * [OUTPUT]: 对外提供 Select 与 SelectOption 类型
  * [POS]: ui 的下拉选择：用原生 <select>（设计稿各模块也是原生 select），键盘、读屏与移动端滚轮选择器都由浏览器负责；只换掉系统箭头并套上输入框外观。两种空值：placeholder 是「还没选、必须选」（disabled，选过就回不去），emptyOption 是「不限 / 全部」这类可选回去的空值项
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { forwardRef, type SelectHTMLAttributes } from 'react'
 import { cx } from './cx'

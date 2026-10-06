@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 service.go 的 Service、canonicalJSON 与共用助手，依赖 platform 的 crypto（Ed25519 签名）、db、httpx
 // [OUTPUT]: 对外提供 SignedConfig、EffectiveConfigReportInput、VerifyConfigSignature，Service 的 FetchConfig、ReportConfigApplied、ReportEffectiveConfigApplied
 // [POS]: domain/nodefabric 的旧版配置签发与回报（AGT-006/007）：从 service.go 拆出。FetchConfig 按全局 → 池 → 节点分层合并后规范化签名，RLS 未命中回中性 404，退役节点拒绝下发；回报要求唯一匹配的已发布配置，零匹配与多匹配都拒绝；有效发布物的回报也在这里
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../core/format 的 formatBytes / formatCount / formatDateTime，依赖 ../../../ui 的 QueryView / Tag，依赖 ./logic 的 bandwidthBuckets / heartbeatLabel / ruleSummary，依赖 ./queries 的 useNodeMetrics / useNodeRouting，依赖 ./schemas 的 NodeRow，依赖 ./nodes.module.css
  * [OUTPUT]: 对外提供 NodeMonitor（节点抽屉「监控」标签）
  * [POS]: admin/screens/nodes 抽屉的监控页（设计稿 d_metrics）：四个 KPI（在线用户悬停看在线 IP、CPU、内存、24h 流量）、近 24 小时带宽柱（GET v1/nodes/{id}/metrics?minutes=1440 按整点分桶，手写，不引图表库）、运行信息（契约待补·前端：health_score、applied/desired 配置版本、agent_version、资源池、授权套餐）、单节点路由只读摘要。节点自身没有探针时 CPU / 内存回退到列表里所在服务器的数据
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatBytes, formatCount, formatDateTime } from '../../../core/format'
 import { QueryView, Tag } from '../../../ui'

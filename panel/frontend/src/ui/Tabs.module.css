@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 Tabs.tsx 用到的类名
  * [POS]: ui/Tabs 的样式：高 36、项间 2、底部 1px --border，窄屏横向滚动
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .tabs {

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ./harness 的 state / runTable / Row，依赖门户各页面模块里页面实际使用的 zod schema（src/portal/**）
  * [OUTPUT]: 门户的形状冒烟：以种子门户用户身份对门户前端调用的每个 GET 接口，用调用处的那个 schema 解析真实网关的响应；事件流只验状态与内容类型
  * [POS]: tests/smoke 的门户接口表，与 admin.smoke.ts 同构；调用处内联的外层 z.object 在这里照原样写一遍，里面的行 schema 一律从页面模块导入
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
 import { appearanceSchema, balanceSchema, commissionSchema, meSchema, notificationsSchema, siteConfigSchema, subscriptionsSchema } from '../../src/portal/queries'

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/nodefabric 的服务器用例（ListServers / CreateServer / GetServer / PatchServer / SetServerStatus / DeleteServer / ListServerNodes）与 ValidServerStatus，依赖 platform/httpx
 // [OUTPUT]: 对外提供 handlers 的 serverList / serverCreate / serverGet / serverPatch / serverSetStatus / serverDelete / serverNodes 与 parseServerListQuery、validateServerID、validateServerTextLimits
 // [POS]: api/admin 的服务器（物理宿主）处理器（后台-07 服务器 tab）：路径 id 先做 UUID 校验回中性 404、自由文本按字段限长，读写与状态机在 nodefabric 的 server_admin.go；不跑 SQL
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/payment 的 Provider 接口与 ErrNotSupported，依赖 platform/crypto 的 HMACVerify
 // [OUTPUT]: 对外提供 Config、New、Provider（demo_hmac 适配器）
 // [POS]: domain/payment 的参考渠道，供集成测试、本地联调与新渠道照抄；背后没有真实渠道，主动查单 QueryPayment 明确回 ErrNotSupported，其余环节都有最小实现
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package demo 是一个用 HMAC-SHA256 验签的参考适配器。
 //

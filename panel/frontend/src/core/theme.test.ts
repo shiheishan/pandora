@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ./theme 的全部导出，依赖 vitest 的 vi.stubGlobal 伪造 document / window
  * [OUTPUT]: 对外提供主题状态的单元测试
  * [POS]: core/theme.ts 的测试，与 tests/theme-boot.test.ts 一起覆盖首帧前后两段主题逻辑
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { THEME_STORAGE_KEY, currentTheme, parseTheme, setTheme, subscribeTheme, toggleTheme } from './theme'

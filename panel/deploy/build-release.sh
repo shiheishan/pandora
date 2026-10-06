@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 go、npm（make frontend-embed）、../cmd 下的面板入口、../../pdnd、../migrations、同目录的安装脚本与 systemd 单元
 # [OUTPUT]: 每个架构一份发布包目录与 tar.gz：bin/（含钉版本的 goose）、pdnd-dist/、migrations/、deploy/（含现场生成的 release-artifact.env）、SHA256SUMS 及两个 sidecar 摘要
 # [POS]: deploy 发布链的起点，产物由 install.sh / install-linux-binaries.sh / release-stop-the-world.sh 消费；panel-pg18.yml 从这里读 goose 版本
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,10 +12,7 @@ PREBUILT_ROOT="${PANDORA_PREBUILT_ROOT:-}"
 # 迁移工具版本随发布包固定，不跟 @latest 漂移。
 GOOSE_VERSION="${PANDORA_GOOSE_VERSION:-v3.26.0}"
 
-case " ${GOFLAGS:-} " in
-  *ca42e2e*) echo "release builds must not enable the ca42e2e build tag" >&2; exit 1 ;;
-esac
-command -v grep >/dev/null 2>&1 || { echo "missing grep for release trust-root validation" >&2; exit 1; }
+command -v grep >/dev/null 2>&1 || { echo "missing grep for release validation" >&2; exit 1; }
 
 if [[ ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]] || [ "$VERSION" = . ] || [ "$VERSION" = .. ]; then
   echo "PANDORA_VERSION must match [A-Za-z0-9._-]+ and cannot be . or .." >&2
@@ -36,10 +32,6 @@ if [ -n "$PREBUILT_ROOT" ]; then
   command -v readelf >/dev/null 2>&1 || { echo "missing readelf for prebuilt validation" >&2; exit 1; }
 else
   command -v go >/dev/null 2>&1 || { echo "missing Go 1.26+" >&2; exit 1; }
-  EFFECTIVE_GOFLAGS="$(go env GOFLAGS)"
-  case " $EFFECTIVE_GOFLAGS " in
-    *ca42e2e*) echo "release builds must not enable the ca42e2e build tag through Go environment configuration" >&2; exit 1 ;;
-  esac
 fi
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd -P)"
@@ -128,10 +120,6 @@ for arch in amd64 arm64; do
         go build -buildvcs=false -trimpath -ldflags="-s -w -buildid=" \
         -o "$target/bin/$binary" "$ROOT/cmd/$binary"
     fi
-    if LC_ALL=C grep -a -F -q 'pandora-ca42-e2e-roots-v1' "$target/bin/$binary"; then
-      echo "release binary contains CA42 E2E authority roots: linux/$arch $binary" >&2
-      exit 1
-    fi
   done
 
   # 迁移工具跟着发布包走。
@@ -204,10 +192,6 @@ for arch in amd64 arm64; do
     echo "empty node binary: linux/$node_arch $pdnd_name" >&2
     exit 1
     }
-    if LC_ALL=C grep -a -F -q 'pandora-ca42-e2e-roots-v1' "$target/pdnd-dist/$pdnd_name"; then
-    echo "release node binary contains CA42 E2E authority roots: linux/$node_arch $pdnd_name" >&2
-    exit 1
-    fi
   done
   # Cross-building from Windows does not preserve a Unix executable bit.
   # Normalize it before archiving so the same release package passes the
@@ -218,7 +202,7 @@ for arch in amd64 arm64; do
   # unit.  Shipping only binaries makes it possible to run new code against an
   # old schema (or vice versa), which is not a supported rollout mode.
   cp "$ROOT"/migrations/*.sql "$target/migrations/"
-  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh; do
+  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh update-cloudflare-realip.sh; do
     cp "$ROOT/deploy/$script" "$target/deploy/$script"
   done
   cp "$ROOT/deploy/renewal-cutover.md" "$target/deploy/renewal-cutover.md"
@@ -288,7 +272,7 @@ for arch in amd64 arm64; do
   rm -f "$archive" "$archive_tar"
   target_base="$(basename "$target")"
   release_scripts=()
-  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh; do
+  for script in install.sh install-native.sh public-base-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh update-cloudflare-realip.sh; do
     release_scripts+=("$target_base/deploy/$script")
   done
   release_data=(

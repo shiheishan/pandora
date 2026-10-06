@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取同包 handlers.nodeSetRouting 的源码
 // [OUTPUT]: 对外提供 TestNodeSetRoutingNotifiesNodeAfterCommit
 // [POS]: api/admin 的路由处理器守卫：单节点路由保存要通知节点且只能在服务调用成功之后（回滚了的配置不能推出去，缺陷 18）；admin 整包不跑 SQL 由 api/handler_sql_guard_test.go 守
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

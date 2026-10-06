@@ -29,6 +29,7 @@ on:
       - "panel/tests/*.sh"
       - "panel/deploy/configure-app-role.sql"
       - "panel/deploy/build-release.sh"
+      - "panel/tools/loadtest/**"
       - ".github/workflows/panel-smoke.yml"
   pull_request:
     paths:
@@ -47,6 +48,7 @@ on:
       - "panel/tests/*.sh"
       - "panel/deploy/configure-app-role.sql"
       - "panel/deploy/build-release.sh"
+      - "panel/tools/loadtest/**"
       - ".github/workflows/panel-smoke.yml"
 
 permissions:
@@ -105,11 +107,60 @@ jobs:
         run: npx vitest run -c tests/smoke/vitest.config.ts
       # 仓库现有的 tests/*_e2e.sh 与 tests/e2e.sh 在同一个栈上逐个跑：
       # 放在读表与写路径之后，免得它们造的数据搅乱条数；脚本失败只进下面那张表，
-      # 失败即让 job 变红，但 run-smoke-e2e.sh 先把五个都跑完、表格写完再给退出码。
+      # 失败即让 job 变红，但 run-smoke-e2e.sh 先把全部脚本跑完、表格写完再给退出码。
       # 前面哪步红了照样跑，只要栈起来了
       - name: Run the e2e scripts against the stack
         if: always() && steps.stack.outcome == 'success'
         run: bash panel/deploy/run-smoke-e2e.sh panel "$RUNNER_TEMP/smoke"
+      # 压测工具链对真网关的小规模试跑：证明 seed 造出的节点身份与订阅能被网关接受、
+      # 模拟节点的签名全部验过、用户流量与 burst 的请求形状对，不是测性能。
+      # 放在 e2e 之后：seed 往库里加 200 个用户和 5 个节点，不能搅乱前面各表的条数。
+      # 判据（各子命令的 -strict）：零 5xx、零签名失败、零令牌 401、每个节点都拿到配置
+      - name: Load-test tool trial (200 users, 5 nodes, 60s)
+        if: always() && steps.stack.outcome == 'success'
+        timeout-minutes: 5
+        working-directory: panel
+        run: |
+          S="$RUNNER_TEMP/smoke"
+          LT="$S/loadtest"
+          mkdir -p "$LT"
+          set -a; . "$S/smoke.env"; . "$S/gateway.env"; set +a
+          export LOADTEST_ADMIN_EMAIL="$SMOKE_ADMIN_EMAIL" LOADTEST_ADMIN_PASSWORD="$SMOKE_ADMIN_PASSWORD"
+          go build -o "$S/bin/loadtest" ./tools/loadtest
+          start=$(date +%s)
+          "$S/bin/loadtest" seed -database-url "$AEGIS_DATABASE_URL" -admin-base "$SMOKE_ADMIN_BASE" \
+            -node-base "$SMOKE_NODE_BASE" -public-base "$SMOKE_PUBLIC_BASE" -admin-email "$SMOKE_ADMIN_EMAIL" \
+            -users 200 -nodes 5 -label ci -out "$S/lt-manifest.json"
+          echo "seed took $(( $(date +%s) - start ))s"
+          "$S/bin/loadtest" nodes -manifest "$S/lt-manifest.json" -node-url "$SMOKE_NODE_BASE" \
+            -nodes 5 -duration 60s -stagger 10s -progress 20s -out "$LT" -strict > "$LT/nodes.log" 2>&1 &
+          nodes_pid=$!
+          "$S/bin/loadtest" users -manifest "$S/lt-manifest.json" \
+            -public-url "$SMOKE_PUBLIC_BASE" -admin-url "$SMOKE_ADMIN_BASE" \
+            -duration 60s -sub-rate 2 -portal-rate 2 -admin-rate 0.5 -login-rate 0.05 \
+            -portal-users 200 -warmup-login-rate 10 -progress 20s \
+            -rl-auth-per-min 1000 -out "$LT" -strict > "$LT/users.log" 2>&1 &
+          users_pid=$!
+          # 节点起跑窗口 10 秒、首轮配置之后再改用户，节点侧应各收到一次流推送的全量用户表
+          sleep 25
+          burst_rc=0
+          "$S/bin/loadtest" burst -manifest "$S/lt-manifest.json" -admin-url "$SMOKE_ADMIN_BASE" \
+            -count 2 -interval 10s -out "$LT" > "$LT/burst.log" 2>&1 || burst_rc=$?
+          nodes_rc=0; users_rc=0
+          wait "$nodes_pid" || nodes_rc=$?
+          wait "$users_pid" || users_rc=$?
+          for f in burst.log nodes.log users.log; do echo "::group::$f"; cat "$LT/$f"; echo "::endgroup::"; done
+          {
+            echo "### 压测工具试跑（200 用户、5 节点、60 秒）"
+            echo
+            echo "nodes=$nodes_rc users=$users_rc burst=$burst_rc，总耗时 $(( $(date +%s) - start ))s"
+            for f in nodes users burst-http; do
+              [ -f "$LT/$f.txt" ] || continue
+              echo; echo '```'; cat "$LT/$f.txt"; echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "nodes=$nodes_rc users=$users_rc burst=$burst_rc"
+          [ "$nodes_rc" = 0 ] && [ "$users_rc" = 0 ] && [ "$burst_rc" = 0 ]
       - name: Shape table
         if: always()
         run: |

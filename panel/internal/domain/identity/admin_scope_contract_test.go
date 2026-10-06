@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取 Service.Login 的源码
 // [OUTPUT]: 对外提供 TestAdminLoginPermissionExpansionRequiresTenantScope
 // [POS]: identity 管理员登录展开权限时只取租户级、无作用域的角色绑定
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package identity
 

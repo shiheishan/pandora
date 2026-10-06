@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/httpx 的来源信息与调用主体（ClientIPFrom / UserAgentFrom / PrincipalFrom），依赖 pgx 事务
 // [OUTPUT]: 对外提供 Entry、Configure、Write
 // [POS]: platform 的审计写入唯一入口，全部领域的审计都经 Write 进 audit_events；auth_context（00080）在这里从主体推出；链序号与第二版哈希（00086）在同租户 advisory lock 内取定，口径与校验在 chain.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package audit 写入不可删审计记录（SEC-012）。
 //

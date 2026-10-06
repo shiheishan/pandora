@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 的令牌
  * [OUTPUT]: 对外提供 Skeleton.tsx 用到的类名
  * [POS]: ui/Skeleton 的样式：先透明，300ms 后显现并缓慢呼吸
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .skeleton {

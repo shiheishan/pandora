@@ -1,3 +1,7 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 connerror.go 的 connErrorReporter 与 connerror_sing.go 的日志桥，依赖 internal/nativewire/hysteria2 的 QUIC 服务端，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 hysteria2Adapter（经 newHysteria2Adapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close，以及 sing 的 NewConnectionEx / NewPacketConnectionEx 回调；包内 hysteria2RejectHandler
+// [POS]: kernel 的 Hysteria2 入站（QUIC）：口令认证与伪装、TCP 流与 UDP 会话经 DataPlane 转发并计量；口令拒绝经伪装处理器上报，上游库的 Error 日志经日志桥上报，子流的入场与拨号失败在回调里上报
+
 package kernel
 
 import (
@@ -5,6 +9,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,7 +21,6 @@ import (
 	"github.com/sagernet/sing-quic/hysteria"
 	"github.com/sagernet/sing/common/auth"
 	"github.com/sagernet/sing/common/buf"
-	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
@@ -68,6 +72,7 @@ type hysteria2Adapter struct {
 	service   *hy2.Service[int]
 	packet    net.PacketConn
 	plane     DataPlane
+	connErr   connErrorReporter
 	limiters  core.SpeedLimiters
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -153,6 +158,7 @@ func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks
 	stdTLS := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
 	tlsConfig := &hysteria2TLSConfig{std: stdTLS}
 	ctx, cancel := context.WithCancel(parent)
+	connErr := newConnErrorReporter(hooks, spec, "hysteria2")
 
 	var salamander string
 	if obj, ok := spec.Config.Raw["obfs"].(map[string]any); ok {
@@ -172,9 +178,10 @@ func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks
 		}
 	}
 	service, err := hy2.NewService[int](hy2.ServiceOptions{
-		Context: ctx, Logger: logger.NOP(), SendBPS: uint64(up) * hysteria.MbpsToBps,
+		Context: ctx, Logger: newSingConnErrorLogger(connErr, nil), SendBPS: uint64(up) * hysteria.MbpsToBps,
 		ReceiveBPS: uint64(down) * hysteria.MbpsToBps, SalamanderPassword: salamander,
 		TLSConfig: tlsConfig, UDPTimeout: udpTimeout, Handler: a,
+		MasqueradeHandler: hysteria2RejectHandler(connErr),
 	})
 	if err != nil {
 		cancel()
@@ -197,6 +204,7 @@ func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks
 		return fmt.Errorf("hysteria2 adapter already started or closed")
 	}
 	a.spec, a.plane, a.ctx, a.cancel, a.service, a.packet = spec, hooks.DataPlane, ctx, cancel, service, packet
+	a.connErr = connErr
 	a.salamander, a.upBPS, a.downBPS, a.udpTimeout = salamander, uint64(up)*hysteria.MbpsToBps, uint64(down)*hysteria.MbpsToBps, udpTimeout
 	a.mu.Unlock()
 	if err := a.syncUsers(); err != nil {
@@ -208,6 +216,24 @@ func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks
 		return fmt.Errorf("hysteria2 listen: %w", err)
 	}
 	return nil
+}
+
+// hysteria2RejectHandler 替换 nativewire 缺省的 404 伪装处理器：响应照旧是
+// 404（对探测者不暴露任何差别），只是先把这次拒绝上报出去。
+//
+// Hysteria2 的口令校验失败不报错、不打日志，直接交给伪装处理器——这是协议
+// 抗探测的设计，代价是节点端对「密码不对」完全无感。伪装处理器因此是唯一
+// 能看到它的地方。POST https://hysteria/auth 是认证请求（常量在 nativewire
+// 的 internal 包里，引用不到，按协议线格式写死），其余都是探测。
+func hysteria2RejectHandler(connErr connErrorReporter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.Host == "hysteria" && r.URL != nil && r.URL.Path == "/auth" {
+			connErr.request(StageSession, r.RemoteAddr, markConnError(connErrAuth, fmt.Errorf("hysteria2 auth rejected")))
+		} else {
+			connErr.request(StageSession, r.RemoteAddr, fmt.Errorf("hysteria2 non-auth HTTP/3 request"))
+		}
+		http.NotFound(w, r)
+	})
 }
 
 func (a *hysteria2Adapter) syncUsers() error {
@@ -354,7 +380,8 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 			defer onClose(nil)
 		}
 		index, user, ok := a.userFromContext(ctx)
-		if !ok || !a.enterDevice(user, source.AddrString()) {
+		if admitErr := admissionError("hysteria2", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			if hs, ok := conn.(N.HandshakeFailure); ok {
 				_ = hs.HandshakeFailure(fmt.Errorf("hysteria2 user is not authorized"))
 			}
@@ -364,6 +391,7 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "hysteria2", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.DialTCP(ctx, meta, destination)
 		if err != nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), err)
 			if hs, ok := conn.(N.HandshakeFailure); ok {
 				_ = hs.HandshakeFailure(err)
 			}
@@ -413,13 +441,15 @@ func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.Pac
 			defer onClose(nil)
 		}
 		index, user, ok := a.userFromContext(ctx)
-		if !ok || !a.enterDevice(user, source.AddrString()) {
+		if admitErr := admissionError("hysteria2", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
 		defer a.leaveDevice(user, source.AddrString())
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "udp", Protocol: "hysteria2", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.ListenUDP(ctx, meta, destination)
 		if err != nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), err)
 			return
 		}
 		defer upstream.Close()

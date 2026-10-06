@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供内容与外观三个标签用到的类名
  * [POS]: admin/screens/content 的样式，取自 管理后台-08-内容与外观.dc.html：公告两栏（320 列表 | 编辑区）、知识库三栏（300 目录 | 编辑区 | 220 版本历史）、主题卡片网格（auto-fill 240）与插槽三列行（180 | 内容 | 开关）；后台只支持 960 以上，知识库三栏在窄于 1180 时把版本历史移到下方
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .stack {

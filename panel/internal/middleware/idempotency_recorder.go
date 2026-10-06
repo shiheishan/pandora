@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 idempotency.go 的 idempotencyCompletion 与 idempotency_replay.go 的响应头捕获
 // [OUTPUT]: 包内提供 recorder 与 newIdempotencyRecorder，以及状态码与 Content-Type 的准入判断
 // [POS]: middleware 幂等键的响应录制器：从 idempotency.go 拆出。把业务处理器写出的状态码、白名单响应头与正文同时透传给客户端并留存，供事务内完成认领；响应头不合规、带 Content-Encoding / Transfer-Encoding 时作废留存（照常透传），重复 WriteHeader 忽略，状态码越界直接 panic
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

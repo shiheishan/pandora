@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 的 Load / Refs 逐包找读环境变量的引用
 // [OUTPUT]: 对外提供 TestEnvironmentIsReadOnlyThroughConfig 与豁免表 envAccessExemptions
 // [POS]: platform/config 的源码守卫：panel/internal 与 panel/cmd 下非测试 Go 文件只有本包能读进程环境，豁免逐文件登记、失效即红
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package config
 
@@ -32,12 +31,7 @@ var envReaders = map[string][]string{
 // 只收测试基础设施与「原样转交子进程」的环境，不收业务配置；文件不再读环境或已删除时
 // 守卫同样变红，逼着把豁免一起删掉。
 var envAccessExemptions = map[string]string{
-	"internal/platform/pg18test/pg18test.go":                            "PG18 集成测试的一次性库 DSN（AEGIS_<域>_PG18_*），只被 *_pg18_test.go 引用，不进生产二进制",
-	"internal/platform/releasejournal/ca42e2e_fixture_linux.go":         "CA42 e2e 夹具只在隔离容器里以 root 运行，PANDORA_CA42_E2E_ISOLATED 是它的保险栓",
-	"internal/platform/clientauth/ca42runner/roots_ca42e2e.go":          "同上，CA42 e2e 构建标签下的夹具保险栓",
-	"internal/platform/clientauth/ca42storage/ca42e2e_fixture_linux.go": "同上，CA42 e2e 夹具保险栓",
-	"cmd/pandora-client-auth-00044-artifact-verifier/fd_linux.go":       "扫描整份环境（os.Environ），确认签名密钥没有经环境泄露（keyMaterialExposed），不读任何配置项",
-	"cmd/pandora-pathtrust/main_linux.go":                               "先经 trustedChildEnv 过滤再交给子进程（os.Environ），不读任何配置项",
+	"internal/platform/pg18test/pg18test.go": "PG18 集成测试的一次性库 DSN（AEGIS_<域>_PG18_*），只被 *_pg18_test.go 引用，不进生产二进制",
 }
 
 func TestEnvironmentIsReadOnlyThroughConfig(t *testing.T) {

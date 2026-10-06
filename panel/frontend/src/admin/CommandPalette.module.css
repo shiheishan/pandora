@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 的表面、描边、文字、圆角令牌
  * [OUTPUT]: 对外提供 CommandPalette.tsx 用到的类名
  * [POS]: admin/CommandPalette 的样式：<dialog> 铺满视口作遮罩，面板距顶 12vh、宽 560、圆角 12；输入框 50 高 15px，列表项 38 高，底部等宽快捷键提示
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .overlay {
   width: 100vw;

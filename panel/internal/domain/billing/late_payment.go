@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 ledger.go 的 late_payment_suspense 与 user_balance 科目记账，依赖 platform/audit、platform/db、platform/httpx
 // [OUTPUT]: 对外提供 LatePaymentCase、ListLatePayments（待处理合计按币种分开）、ApplyLatePaymentToBalance 及其输入类型
 // [POS]: billing 的挂账出口：unexpected_payment.go 负责写入 case，这里负责查看与转入余额，被 api/admin/late_payment.go 消费
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

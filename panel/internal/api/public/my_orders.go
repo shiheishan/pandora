@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/billing 的 ListMyOrders / MyOrderDetail，依赖 platform/httpx、chi 的路径参数
 // [OUTPUT]: 对包内提供 listMyOrders、myOrderDetail 两个处理器
 // [POS]: api/public 门户-04 订单的 HTTP 外壳：列表带筛选段计数 counts，status 接受逗号分隔多值；详情不存在与非本人同一个 404
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 anytls.go 的 anyTLSAdapter.Validate，core 的 InboundConfig
 // [OUTPUT]: 对外提供 AnyTLS 入站配置校验单测
 // [POS]: kernel 的 AnyTLS 默认单测；第三方客户端往返在 anytls_client_interop_test.go（-tags interop）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

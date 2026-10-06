@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 config.go 的 env 读取助手与进程环境变量
-// [OUTPUT]: 对外提供 Deployment（Config 内嵌的部署路径、GeoIP、销售授权、NativeCore 发布绑定）、BackupWebDAV 与 LoadBackupWebDAV、DefaultBackupWebDAVConfigPath
+// [OUTPUT]: 对外提供 Deployment（Config 内嵌的部署路径、GeoIP、NativeCore 发布绑定）、BackupWebDAV 与 LoadBackupWebDAV、DefaultBackupWebDAVConfigPath
 // [POS]: platform/config 的部署侧配置：全是「跟着发布产物与主机走、运营不改」的项，都可缺省，从不让 Load 多出必填项；独立小二进制用各自的小加载函数
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package config
 
@@ -24,8 +23,7 @@ const (
 )
 
 // Deployment 是部署决定、运营不改的配置。它们为什么走环境变量而不进配置表：
-// 路径跟着发布产物走，销售授权与 NativeCore 绑定必须在进程启动时定死，任何请求
-// 都改不了。
+// 路径跟着发布产物走，NativeCore 绑定必须在进程启动时定死，任何请求都改不了。
 type Deployment struct {
 	// BackupDir 是备份产物目录，系统状态页直接看这里的文件（AEGIS_BACKUP_DIR）。
 	BackupDir string
@@ -38,9 +36,6 @@ type Deployment struct {
 	GeoIPDB string
 	// GeoIPIPv6DB 是可选的 IPv6 库（AEGIS_GEOIP_IPV6_DB），空则只查 IPv4。
 	GeoIPIPv6DB string
-	// SalesEnabled 是部署方对定价与上架的显式授权（AEGIS_SALES_ENABLED）：
-	// 只认 1 / true / yes，其余一律未授权，含糊按拒绝处理。
-	SalesEnabled bool
 	// NativeArtifactSHA256 是本次发布钉死的 NativeCore 二进制摘要，键为架构
 	// amd64 / arm64，值为小写十六进制，未设置的架构不出现
 	// （PANDORA_NATIVE_ARTIFACT_<ARCH>_SHA256）。
@@ -62,10 +57,6 @@ func loadDeployment() Deployment {
 		GeoIPIPv6DB:          trimmedEnv("AEGIS_GEOIP_IPV6_DB", ""),
 		NativeArtifactSHA256: map[string]string{},
 		NativeReleaseVersion: trimmedEnv("PANDORA_NATIVE_RELEASE_VERSION", ""),
-	}
-	switch strings.ToLower(trimmedEnv("AEGIS_SALES_ENABLED", "")) {
-	case "1", "true", "yes":
-		d.SalesEnabled = true
 	}
 	for _, arch := range nativeArchitectures {
 		name := "PANDORA_NATIVE_ARTIFACT_" + strings.ToUpper(arch) + "_SHA256"

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务、platform/audit、platform/httpx，依赖同包 plan_highlights.go 的卖点校验
 // [OUTPUT]: 对外提供套餐资料用例（套餐资料带卖点 highlights 与推荐 recommended，R100）GetPlan/CreatePlan/UpdatePlan/ArchivePlan 与目录全部输入输出类型（VersionRow 带建版本人邮箱）；包内提供 loadPlanTx、prepare*PlanInput、createPlanTx / updatePlanTx 与 catalogResult / rowConflict 等共用助手
 // [POS]: adminops 的套餐目录核心：套餐资料与目录共用的类型、校验和助手；版本生命周期在 catalog_version.go，价格在 catalog_price.go。每个用例是「事务外校验 + 事务体」两段，事务体可被 plan_wizard.go / plan_wizard_update.go 在同一事务里编排
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 
@@ -455,9 +454,8 @@ func (s *Service) updatePlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID 
 	var next int64
 	var current int64
 	var status, productID string
-	var beforeNewPurchase, beforeRenewal, beforeUpgrade bool
 	var reserved int
-	if err := tx.QueryRow(ctx, `SELECT row_version,status,product_id,stock_reserved,allow_new_purchase,allow_renewal,allow_upgrade FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&current, &status, &productID, &reserved, &beforeNewPurchase, &beforeRenewal, &beforeUpgrade); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT row_version,status,product_id,stock_reserved FROM plans WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, planID).Scan(&current, &status, &productID, &reserved); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, httpx.NotFoundOrForbidden()
 		}
@@ -465,11 +463,6 @@ func (s *Service) updatePlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID 
 	}
 	if status == "archived" {
 		return 0, httpx.New(httpx.CodeConflict, "已归档套餐不能恢复或编辑")
-	}
-	if requiresP0BSalesResume(status, beforeNewPurchase, beforeRenewal, beforeUpgrade, in) {
-		if err := s.requireP0BSales(); err != nil {
-			return 0, err
-		}
 	}
 	if current != in.ExpectedRowVersion {
 		return 0, rowConflict("套餐", current)
@@ -492,13 +485,6 @@ func (s *Service) updatePlanTx(ctx context.Context, tx pgx.Tx, tenantID, planID 
 	}
 	next = current + 1
 	return next, audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID, Action: "plan.update", ResourceType: "plan", ResourceID: &planID, APIDomain: "admin", Outcome: "success", RequestID: httpx.RequestIDFrom(ctx), BeforeDigest: map[string]any{"row_version": current}, AfterDigest: map[string]any{"row_version": next, "code": in.Code}})
-}
-
-func requiresP0BSalesResume(status string, beforeNewPurchase, beforeRenewal, beforeUpgrade bool, in UpdatePlanInput) bool {
-	return status == "active" &&
-		((!beforeNewPurchase && in.AllowNewPurchase) ||
-			(!beforeRenewal && in.AllowRenewal) ||
-			(!beforeUpgrade && in.AllowUpgrade))
 }
 
 func (s *Service) ArchivePlan(ctx context.Context, tenantID, planID, actorID string, expected int64) (int64, error) {

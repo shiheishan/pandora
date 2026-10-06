@@ -46,9 +46,9 @@ aegis-public    aegis-admin     aegis-node
 | `panel/tests/` | 数据层不变量 SQL 与端到端脚本 |
 | `panel/frontend/` | 面板前端，2026-09-23 起按设计稿从零重写、2026-09-26 完成（React + TypeScript + Vite，管理后台与用户门户双入口），构建后经 `make frontend-embed` 嵌入 `panel/web/` |
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
-| `panel/migrations/` | SQL 迁移，按序号递增，当前到 00097，共 94 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 16 张 Go 从不引用的表及锁定原因 |
+| `panel/migrations/` | SQL 迁移，按序号递增，当前到 00097，共 94 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 21 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
-| `panel/docs/` | `redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿、ADR |
+| `panel/docs/` | `redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿（CLIENT-AUTH 的实现代码已移出主线，在 tag `archive/client-auth`）、ADR |
 | `pdnd/` | Pandora node（pdnd / pandora-native）：NativeCore 协议入站、认证、路由、用户与流量 |
 | `pdnd/kernel/`、`pdnd/internal/` | NativeCore 自研数据面 |
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
@@ -147,7 +147,6 @@ make verify            # vet + check-migrations + invariants，提交前跑
 |---|---|
 | 9000 | Public API |
 | 9001 | Admin API |
-| 9002 | 保留（`AEGIS_CLIENT_ADDR` 在配置里定义，当前没有进程监听） |
 | 9003 | Node API |
 | 5433 / 6380 | PostgreSQL / Valkey（docker compose 映射） |
 
@@ -277,6 +276,15 @@ Let's Encrypt 证书路径都从 `.env` 的 `AEGIS_PUBLIC_BASE_URL`（首装时�
 /opt/aegispanel/deploy/render-nginx.sh
 ```
 
+模板 include 的真实来源 IP 信任表 `/etc/aegispanel/cloudflare-realip.conf` 不存在时，渲染器会写一份
+**不信任任何代理**的默认文件：nginx 只认 TCP 对端，客户端自己填的 `CF-Connecting-IP` / `X-Real-IP`
+一律不采信。站点在 Cloudflare 后面（橙色云）时，渲染后再写入 Cloudflare 的官方网段并重载；
+升级重新渲染不会覆盖这个文件，Cloudflare 调整网段时重跑同一条命令即可：
+
+```bash
+/opt/aegispanel/deploy/update-cloudflare-realip.sh && nginx -t && systemctl reload nginx
+```
+
 管理后台路径是安装时生成的高熵串，装完会打印一次（泄露等同暴露入口）。
 
 ```bash
@@ -333,7 +341,7 @@ bash panel/deploy/test-install.sh <发布目录>
   - `check_native_panel_parity.py`（NativeCore、Panel Schema、serving allowlist 各 13 个协议一致）与 nodefabric 契约；
   - `panel-frontend`：新前端 lint / typecheck / vitest（对假后端）/ 双入口构建，再 `make frontend-embed` 用真实产物跑 web、webapp、api 的 Go 契约，占位页没被替换即失败。
 - **Panel frontend smoke**（`panel-smoke.yml`）：起一次性 PG18 + 真实网关，经真网关造数据，用前端页面自己的 zod schema 解析真实响应（读表先于写路径），再在同一栈上跑 `tests/` 下五个 e2e 脚本；任一失败即红。
-- **Panel deploy script contracts**（`panel-deploy.yml`，2026-09-26 新增）：改 `panel/deploy/**` 或 `panel/migrations/**` 即触发，逐个跑不需要数据库与 root 的 deploy 桩测试；迁移三件套（migrate.sh、check-migrations.sh、历史隔离预检）拿真实 `panel/migrations` 校验文件名与编号（严格递增、不重复，允许 00073、00091、00092 历史空号），拒绝真实目录即变红。
+- **Panel deploy script contracts**（`panel-deploy.yml`，2026-09-26 新增）：改 `panel/deploy/**` 或 `panel/migrations/**` 即触发，逐个跑不需要数据库与 root 的 deploy 桩测试；两个迁移脚本（migrate.sh、check-migrations.sh）拿真实 `panel/migrations` 校验文件名与编号（严格递增、不重复，允许 00073、00091、00092 历史空号），拒绝真实目录即变红。
 
   在此之前 deploy 桩测试 CI 一个都不跑，其中两个对真实目录早已是红的。
 - **仓库守卫**（随 `go test ./...`）：panel 与 pdnd 两道 800 行守卫、表登记簿与权限字典契约。第 5 阶段拆分超长文件时，每步都用 `panel/tools/refactorcheck` 证明是纯挪动。
@@ -356,7 +364,6 @@ bash panel/deploy/test-install.sh <发布目录>
 - 跨进程 SSE：租户 / 节点隔离、Redis 重连、重复信号、watcher 生命周期、慢消费者不阻塞。
 - 真实支付、退款、通知外发的独立验收。
 - WebDAV 在当前 `main` 上的真实远端恢复演练。
-- CLIENT-AUTH：正式路由未接通，外部 manifest 仍为 `PLACEHOLDER_NO_GO`；历史 CA42 / CA43 辅助门缺少当前 handoff，不得误报通过。
 - 冷启动与回滚；G0 release intent 尚未授权。
 
 ## 当前进度
@@ -370,6 +377,7 @@ bash panel/deploy/test-install.sh <发布目录>
 | Xboard 功能验收 | PARTIAL，未 RELEASED |
 | 前端 | 旧的手写单页与 React 候选已删除，管理后台与用户门户按设计稿在 `panel/frontend` 重写完成并补齐后端缺口 |
 | 部署 | 这一版尚未在任何真实机器上部署或实测；真机测试待换新机器再做 |
+| 客户端登录（CLIENT-AUTH） | 2026-10-05 移出主线，专心做面板：设备码登录与设备签名的实现代码、发布门禁脚本和 8 个 `pandora-*` 命令在 tag `archive/client-auth`；三份冻结设计稿留在 `panel/docs/` 供以后做客户端参考；`frozen-client-auth/` 下的两个迁移从未应用，原样保留 |
 
 历史上还有一项未收口的工作：2026-08-09 起的 H-001（验证并收口当时未提交的 SSE / Redis / Node / Portal / NativeCore 集成），当时状态为 PARTIAL at INTEGRATED，之后没有它完成的证据；相关门禁仍列在上文“未关闭的门禁”里的跨进程 SSE 一项。
 
@@ -389,6 +397,6 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 
 - [docs/CONFIG-SIGNING-KEY-ROTATION.md](docs/CONFIG-SIGNING-KEY-ROTATION.md)、[docs/RELEASE-ARTIFACT-BINDING.md](docs/RELEASE-ARTIFACT-BINDING.md)：密钥轮换与发布物绑定。
 - [panel/deploy/BACKUP.md](panel/deploy/BACKUP.md)：备份与恢复。
-- [panel/docs/](panel/docs/)：`redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿、ADR。
+- [panel/docs/](panel/docs/)：`redesign/api-contract.md` 前后端接口契约、DASH / CLIENT-AUTH 历史冻结稿（CLIENT-AUTH 的实现代码在 tag `archive/client-auth`）、ADR。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。
 - [panel/docs/adr/0001-technology-stack.md](panel/docs/adr/0001-technology-stack.md)：技术选型决策记录。

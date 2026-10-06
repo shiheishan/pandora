@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取下单、结算、券、预留图与账本科目各声明的源码
 // [OUTPUT]: 对外提供结账与结算的源码契约测试（下单原子性、券预留、结算锁序与三条挂账隔离分支）
 // [POS]: billing 的源码契约门禁：钉住数据库执行不到本机时也必须成立的锁序与分支顺序，PG18 测试证明它们在真实 SQL 下的效果
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

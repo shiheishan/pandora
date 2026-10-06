@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 preferFreshNodes、DeliveryState，依赖 platform/sourcetest 按名取 listEligibleNodesTx、api/admin 的 handlers.nodeList 与两个包的全部源码
 // [OUTPUT]: 对外提供 TestPreferFreshNodes、TestDeliveryStateMatchesEligibilitySQL、TestAdminDoesNotComputeHeartbeatInSQL
 // [POS]: subscription 心跳分层下发与后台 DeliveryState 不漂移；后台节点列表不在 SQL 里算心跳，否定检查先确认目标函数存在、再覆盖整个包
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package subscription
 

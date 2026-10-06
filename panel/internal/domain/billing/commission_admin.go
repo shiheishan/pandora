@@ -1,7 +1,6 @@
 // [INPUT]: 依赖本包 commission.go 的 PostWithdrawalPayout（打款记账）、CommissionDefault* 与 ValidCommissionScope / CommissionScopeEveryOrder，依赖 platform 的 db 租户事务、audit 同事务审计、httpx 的错误模型与请求 ID；读写 withdrawals / system_settings 的 commission.*，读 commission_entries / referrals / users
 // [OUTPUT]: 对外提供 Service.AdminListWithdrawals / AdminReviewWithdrawal / AdminMarkWithdrawalPaid / AdminCommissionOverview / AdminSetCommissionConfig 与 AdminWithdrawal、AdminCommissionStats、CommissionConfigInput
 // [POS]: domain/billing 的后台佣金与提现用例（从 api/admin/commission.go 下沉）：申请 → 审批 → 打款三步只有打款动账本（同事务调 PostWithdrawalPayout 再 CAS 置 paid）；总览的参数缺行回退与计提同一组 CommissionDefault*；收款信息只回密文，由 handler 用信封解开
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/config 的 LoadBackupWebDAV（配置文件路径），依赖 domain/dbbackup 的本地备份对校验、manifest 签名事务、WebDAV 上传与检查点复制，要求 root 运行
 // [OUTPUT]: 对外提供 aegis-backup-webdav 命令：默认上传一对备份文件（归档 + 校验和），另有 init-signing-key、verify-manifest 子命令
 // [POS]: panel/cmd 的异地备份上传入口，由 deploy/verify-backup.sh 在校验通过后调用；业务逻辑全在 dbbackup，这里只分派参数
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package main
 

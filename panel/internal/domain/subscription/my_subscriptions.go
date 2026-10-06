@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务；读 subscriptions / plans / plan_versions / prices / users / quota_balances / subscription_online_devices / traffic_pack_grants
 // [OUTPUT]: 对外提供 MyQuota、MyRenewalPrice、MySubscription、Service.MySubscriptions
 // [POS]: subscription 的门户「我的订阅」读模型（契约门户-02 GET v1/me/subscriptions），从 api/public/my_subscriptions.go 下沉：订阅带设备、配额周期、重置、可续费与续费价、流量包余量，全在一个租户事务里读
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package subscription
 

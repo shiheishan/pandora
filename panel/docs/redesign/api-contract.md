@@ -1567,7 +1567,7 @@
 - 乐观锁：
   - 写操作都要带从 GET 拿到的 `row_version`
   - 版本号对不上时回 409 conflict，`fields.row_version = "current=N"`。
-- `catalog.publish` 类写接口（新增价格、改价、发布）受一个默认关闭的销售开关控制（环境变量 `AEGIS_SALES_ENABLED=1`），开关没开时回 503 service_unavailable「服务暂时不可用」。前端对这个 503 要给出明确提示，不要让用户反复重试。
+- `catalog.publish` 类写接口（新增价格、改价、发布）受权限、近期重认证与幂等键约束（修订 R125：部署级销售开关 `AEGIS_SALES_ENABLED` 已删除，不再因它回 503）。
 
 #### GET v1/plans — 套餐列表（左栏卡片）
 
@@ -1787,7 +1787,6 @@
   - 发布前置条件不满足（`prices`：没有当前有效价格；`pool_ids`：没有池或池里没有可服务节点；`visibility`：invite_only 禁止发布）。
   - 中途任何一步失败都会自动归档已建出的套餐并返回那一步的错误
   - 回滚本身也失败时回 500，message 写明要手工归档哪个套餐。
-  - 503 销售开关未开。
   - **`throttle_kbps` 非空时必定 422**（向导把 overage_policy 写死为 suspend），见 D-C-5
 - 设计：
   - 后台-04「新建套餐」向导 5 步。
@@ -1856,7 +1855,6 @@
   - 409 row_version 冲突
   - 409「已归档套餐不能恢复或编辑」
   - 422 同 PUT v1/plans/{id} 的字段校验与价格校验
-  - 503 销售开关未开。
   - **不是原子操作**：资料先提交，额度 / 线路再开新版本**并立即发布**，价格最后同步，后面任一步失败时前面已生效的部分不会回滚
 - 设计：后台-04「用向导编辑」。映射与限制：
   - 额度或线路变了 → 后端自动开新版本并立即发布（设计 toast 写的是「额度变更请新建版本」，实际并不需要手动新建版本；文案改成直接展示 `changed`）。
@@ -1914,7 +1912,6 @@
 - 错误：
   - 409 row_version 冲突 / 已归档
   - 422 字段校验，另有 `stock_total`「不能低于已预留库存」
-  - active 套餐把某个 allow_* 从 false 改回 true 时受销售开关控制（503）
 - 设计：
   - 设计没有独立入口。
   - 待补·前端 → 在后台-04 详情顶部「用向导编辑」旁补一个「销售设置」抽屉（可见性 / 可见用户组 / 上架时间窗 / 三个购买开关 / 限购 / 库存 / 排序），用这个接口
@@ -1990,7 +1987,6 @@
 - 错误：
   - 409 已归档 / 不是草稿 / 任一 row_version 冲突
   - 422 前置条件：`prices`（没有覆盖可见范围的当前有效 CNY / USD 价格）、`pool_ids`（没有启用的节点池，或池里没有可服务节点）、`visibility`（invite_only 禁止发布）
-  - 503 销售开关未开
 - 设计：
   - 后台-04 版本行「发布」确认框。
   - 发布后套餐 status 从 draft 变为 active
@@ -2014,7 +2010,7 @@
   }
   ```
 - 响应：201 `{ price: PriceRow }`
-- 错误：404；409 已归档套餐 / 同一产品下活动报价冲突（唯一约束）；422 字段校验，`user_group_id`「用户组不存在」；503 销售开关未开
+- 错误：404；409 已归档套餐 / 同一产品下活动报价冲突（唯一约束）；422 字段校验，`user_group_id`「用户组不存在」
 - 设计：后台-04 价格卡底部「币种 + 金额 + 周期 + 新增价格」，周期映射见上文。
 
 #### POST v1/plans/{id}/prices/{priceID}/archive — 归档价格
@@ -2118,7 +2114,7 @@
 - **修订 R73（2026-09-24，后端一 ⑥ 9b4aaab）**：
   - 新增以下四个接口，路由在 `router_catalog.go` 的 `registerTrafficPackRoutes`，业务在 `adminops/traffic_packs.go`。
   - 乐观锁用 `updated_at`（traffic_packs 没有 row_version；触发器在每次 UPDATE 时改写它），客户端把列表里读到的 `updated_at` 原样作为 `expected_updated_at` 传回。
-  - 新建、修改、上架受销售开关 `AEGIS_SALES_ENABLED` 控制（关时 503），下架不受（与归档套餐一致）。
+  - 新建、修改、上架、下架只受 `catalog.publish`、近期重认证与幂等约束（修订 R125：原销售开关 `AEGIS_SALES_ENABLED` 已删除）。
   - 每次写操作同事务写审计，动作 `traffic_pack.create` / `update` / `archive` / `restore`，审计列表 `resource_label` 为流量包名
   - 目录变化沿用 R33 推 `plans.changed`。
 - 行形状：
@@ -2162,7 +2158,7 @@
   }
   ```
 - 响应：201 `{ pack: 行 }`，新建即在售
-- 错误：422 各字段；503 销售开关关闭
+- 错误：422 各字段
 
 ##### PUT v1/traffic-packs/{id} — 修改流量包
 
@@ -2173,14 +2169,13 @@
   - 404 id 不存在或非 UUID
   - 409 `fields.updated_at = "current=<RFC3339Nano>"`（已被别人改过，前端提示刷新）
   - 422
-  - 503
 
 ##### POST v1/traffic-packs/{id}/status — 上架 / 下架
 
 - 权限：`catalog.publish`｜reauth：是｜幂等：是 `catalog_traffic_pack_status`
 - 请求：`{ status:"active"|"archived", expected_updated_at }`
 - 响应：200 `{ pack: 行 }`
-- 错误：404；409 `updated_at` 过期，或已经是目标状态；422；503（仅上架）
+- 错误：404；409 `updated_at` 过期，或已经是目标状态；422
 - 设计：后台-04 流量包 tab：列表（容量、价格、推荐、状态、已售）、新建 / 编辑抽屉、上下架用 `ConfirmModal`。下架只影响之后的购买，已买的流量包余量不受影响。
 
 ### 后台-05 订单与收款（tab：订单 / 挂账 / 支付渠道 / 收入调整）
@@ -8315,3 +8310,4 @@
 | R122 | 2026-10-01 | payquery | 主动查单（PAY-009，迁移 00097）：后台 `POST v1/orders/{id}/query`（order.write + 幂等，不要 reauth，每次写 `order.payment_queried` 审计）、门户同路径（本人、每分钟 6 次）、aegis-public 定时巡检（退避、多实例 SKIP LOCKED）；补记走回调同一条结算主链；门户订单行与详情加 `has_payment_intent`；删除无调用方的 `QueryAndReconcile` |
 | R123 | 2026-10-01 | routegroups | 有名路由组（迁移 00096）：组的增删改、组内出站与规则、成员多对多、节点侧所属组、生效预览；生效顺序规则「节点 → 组 → 全局」、出站「全局 → 组 → 节点」，合并只在 `MergeRouting` 一处；路由 handler 的 SQL 下沉 nodefabric；出站引用改为精确匹配（与 pdnd 一致），内置 `direct` / `block` 保存与下发都规范成小写；全局删出站 409 文案变更；读不存在节点的路由 404 |
 | R124 | 2026-10-05 | apipub（第二波 api 卫生） | 错误码封闭列表加 `upgrade_required` 426：节点网关已下线的一步式 `POST /v1/nodes/bootstrap` 从手写的 `{"error":"…"}` 字符串改回标准错误信封（状态码仍 426、`Cache-Control: no-store`，文案仍指明 `/v1/nodes/enrollments`）。同一波把 admin / public / node 处理器里的 SQL 原样下沉到各 domain 服务、成功响应改成具名结构体，对外 JSON 与其余错误不变，契约无其他改动 |
+| R125 | 2026-10-05 | caout（CLIENT-AUTH 移出主线） | 删除 P0B 销售闸门：价格、发布、套餐恢复购买开关、流量包新建 / 修改 / 上架不再因部署开关 `AEGIS_SALES_ENABLED` 回 503，只受 `catalog.publish`、近期重认证与幂等约束；前端不再把目录写接口的 503 一律提示为销售开关（只读降级的 503 仍走通用提示）。CLIENT-AUTH 冻结链代码移出主线（见 tag `archive/client-auth`），对外接口无其他改动 |

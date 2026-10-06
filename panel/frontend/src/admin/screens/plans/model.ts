@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../core/format 的 formatBytes / formatDateTime / formatMoney，依赖 ./api 的类型与枚举
  * [OUTPUT]: 对外提供 GiB、Tone、状态与可见性文案（PLAN_STATUS_VIEW、VISIBILITY_LABELS、RESET_LABELS、versionView、versionNote）、周期（PERIOD_OPTIONS、periodKey、parsePeriod、periodLabel）、金额与数字（parseAmount、parseCount、parseKbps）、列表与详情文案（priceFrom、quotaLabel、trafficOf、versionSummary、publishBlockers）、版本表单（VersionForm、versionForm、versionProblems、versionBody）、卖点（HIGHLIGHT_MAX、HIGHLIGHT_CHARS、highlightProblems、cleanHighlights）、向导（WizardForm、WizardPrice、emptyWizard、wizardFromPlan、wizardProblems、createBody、updateBody、removedCurrencies、stepOfField、WIZARD_STEPS）、销售设置（SalesForm、salesForm、salesProblems、salesBody）、新增价格（PriceForm、emptyPriceForm、priceProblems、priceBody）、流量包（PackForm、packForm、packProblems、packBody、PACK_STATUS_VIEW）、时间输入互转（toLocalInput、fromLocalInput）
  * [POS]: admin/screens/plans 的纯逻辑：契约后台-04 的状态 / 版本 / 周期映射，额度在版本 quotas 里的读写（traffic.bytes 与 devices.active 同步维护、其余条目原样回填），限速全程生效且超额策略只写 suspend（R99），卖点与推荐（R100），向导两种提交体（新建 POST complete、编辑 PUT complete：流量与价格 / 线路「null = 不动」，设备、限速、卖点、推荐「缺省 = 不动」的三态，只同步出现过的币种），销售设置的整体覆盖（含卖点与推荐），流量包 GB ↔ 字节；各校验与后端 Go 同规则、fields 键名与后端一致，页面把后端 422 与前端预检标在同一处。不碰 React 与网络，model.test.ts 覆盖
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatBytes, formatDateTime, formatMoney } from '../../../core/format'
 import type { BillingInterval, Currency, PlanDetail, PlanRow, PlanStatus, PriceRow, Quota, ResetStrategy, TrafficPack, VersionRow, Visibility } from './api'

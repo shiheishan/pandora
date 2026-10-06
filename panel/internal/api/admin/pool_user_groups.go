@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/httpx 的主体与错误、google/uuid
 // [OUTPUT]: 对外提供 handlers 内部用的 namedRef（usergroup.go 也用）、requirePoolGroupsReauth、normalizePoolUserGroupIDs
 // [POS]: api/admin 节点分组的「仅限用户组」名单（R104）：pools.go 的新建 / 编辑在请求带了 allowed_user_group_ids 时经这里做字段级 reauth 与格式校验；租户内存在性、整体替换与审计在 nodefabric 的 node_pool_user_groups.go，下发规则本身在 nodefabric.PoolAdmitsUserSQL
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

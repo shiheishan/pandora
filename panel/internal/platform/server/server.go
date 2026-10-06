@@ -1,3 +1,7 @@
+// [INPUT]: 依赖 net/http 的 Server、log/slog，依赖 os/signal 的停机信号
+// [OUTPUT]: 对外提供 Options、Run、RunContext
+// [POS]: platform 的网关 HTTP 生命周期：三个网关共用的超时、BaseContext 与优雅停机；拒绝 nil Handler，免得落到 DefaultServeMux（net/http/pprof 经 platform/profiling 链进网关后，那里挂着 /debug/pprof/）
+
 // Package server provides the shared HTTP server lifecycle for all gateways.
 package server
 
@@ -12,6 +16,8 @@ import (
 	"syscall"
 	"time"
 )
+
+var errNilHandler = errors.New("server: nil Handler would serve http.DefaultServeMux")
 
 type Options struct {
 	Addr            string
@@ -43,6 +49,13 @@ func RunContext(ctx context.Context, opts Options) error {
 }
 
 func runContextWithListener(ctx context.Context, opts Options, listener net.Listener) error {
+	// nil Handler 会让 http.Server 落到 DefaultServeMux。网关二进制链着
+	// net/http/pprof（platform/profiling），它在 init 里往 DefaultServeMux 注册了
+	// /debug/pprof/——忘传路由的那一刻，pprof 就挂在了对外端口上。
+	if opts.Handler == nil {
+		_ = listener.Close()
+		return errNilHandler
+	}
 	if opts.ShutdownTimeout == 0 {
 		opts.ShutdownTimeout = 20 * time.Second
 	}

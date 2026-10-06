@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务，读 nodes / servers / node_pools / node_identities / node_alive_ips / node_traffic_reports / plan_node_pools / plan_versions / plans / node_metrics，依赖迁移 00094 的 app.device_limit_window_minutes
 // [OUTPUT]: 对外提供 AdminNodeListRow 与 Service.ListAdminNodes
 // [POS]: domain/nodefabric 的后台节点列表读模型（从 api/admin 的 nodes.go 下沉）：只把库里的事实扫出来，心跳新鲜度与下发状态由 handler 交给 subscription.DeliveryState 在 Go 侧判定（subscription 依赖本包，反过来调不了），协议配置的脱敏也在 handler
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

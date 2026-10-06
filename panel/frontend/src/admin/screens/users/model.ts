@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../core/format 的 formatBytes / formatMoney，依赖 ./api 的类型与枚举
  * [OUTPUT]: 对外提供 STATUS_FILTERS / StatusFilter / isStatusFilter、listParams、USER_STATUS_VIEW、SUB_STATUS_VIEW、ORDER_STATUS_VIEW、RISK_VIEW、INTERVAL_LABELS、paidTotalsLabel、orderWhat、initial、shortId、expiryView、trafficView、deviceView、deviceLimitLabel、trafficQuota、currentSubscription、liveSubscriptions、isLiveSub、parseYuan、passwordProblem、REASON_MIN、Tone；④ 的 groupBlocker / groupRefs、R104 的 exclusivePoolsLabel / EXCLUSIVE_NONE_HINT、R103 的 devicePolicyBody、BULK_STATUS / BULK_EXPIRY / BulkForm / bulkFilter / exportQuery / MAIL_MAX、GenerateForm / generateProblems / generatedRows、nearLimit / pips、RESET_REASON_VIEW / resetActor / noteProblem / NOTE_MAX / resettableSub / exactEmail
  * [POS]: admin/screens/users 的纯逻辑：契约后台-03 的账号状态 / 订阅态 / 订单状态映射、状态分段到后端 query、「套餐 · 到期」「本期流量」「设备」三列的文案与色、当前订阅的挑法（与后端 currentSubscriptionSQL 同一口径）、调账金额（元 → 分）与密码策略的前端预检；④ 的用户组删除拦截（R104 先看节点池名单）与「可用节点池」文案、批量筛选表单到 BulkFilter、批量生成的前端校验（与 adminops.GenerateUsers 同规则）、接近上限的订阅、重置日志的方式与操作人文案、手动重置挑哪条订阅（与 billing.ManualResetTraffic 同口径）、按邮箱精确匹配；不碰 React 与网络，model.test.ts 覆盖
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatBytes, formatMoney } from '../../../core/format'
 import type { BulkFilter, PaidTotal, OnlineDevice, OrderRow, OrderStatus, Quota, ResetLog, ResetReason, RiskLevel, SubscriptionRow, SubStatus, UserGroup, UserRow, UserStatus, UsersParams } from './api'

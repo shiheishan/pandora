@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/pg18test 打开 audit 域的一次性库，依赖 audit.go 的 Write 与 chain.go 的 VerifyChain、chainHashV1
 // [OUTPUT]: 对外提供 TestAuditChainPG18、TestAuditChainLegacyPG18
 // [POS]: platform/audit 的 PG18 测试：第二版口径的带摘要多行链能验过，改摘要 / auth_context / 时间、删中间行、抹链序号都能指出断点；第一版存量行按 VerifyChain 的规则处理
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package audit
 

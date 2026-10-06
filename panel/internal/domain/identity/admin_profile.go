@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务，读 users 与 role_bindings→roles
 // [OUTPUT]: 对外提供 AdminProfile、RoleRef、Service.AdminProfile
 // [POS]: domain/identity 的管理员身份展示（契约后台外壳 GET v1/me 追加字段）：邮箱、显示名与当前生效的角色，角色过滤与 Login 展开权限时一致
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package identity
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform 的 db/httpx；ReplyNotifier 由装配注入（notify.Service 实现）
 // [OUTPUT]: 对外提供 Service、NewService、ReplyNotifier 与 SetReplyNotifier、原子结果 AtomicResult / AtomicCreateResult / AtomicEscalateResult、Categories、视图 Message / Ticket / TicketDetail / TicketOrderRef、TicketOwner
 // [POS]: domain/support 的服务骨架：依赖注入、SLA 截止计算、两侧共用的视图与预制响应、工单号生成；用例按角色分在 user_tickets.go（用户侧）、agent_tickets.go（客服侧）、escalation.go（超时升级）、withdraw.go（撤回）、macros.go（快捷回复）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package support 实现工单（OPS-001）。
 //

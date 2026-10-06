@@ -1,7 +1,6 @@
-// [INPUT]: 依赖 vmess.go 的 vmessAdapter 与用户表，依赖 vmess_codec.go 的 KDF、AEAD 打开与头部校验
+// [INPUT]: 依赖 vmess.go 的 vmessAdapter 与用户表，依赖 vmess_codec.go 的 KDF、AEAD 打开与头部校验，依赖 connerror.go 的 markConnError（AuthID 无人认领标为 auth）
 // [OUTPUT]: 包内提供 vmessDestination、vmessUserCandidate、readRequest、readVMessRequestWithCandidates、vmessDestinationUDPAddr
 // [POS]: kernel 的 VMess 请求头解析：从 vmess.go 拆出。按 AuthID 在候选用户里定位、解开 AEAD 请求头并校验，得到用户、目的地址、正文读取器与命令
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 
@@ -85,7 +84,7 @@ func readVMessRequestWithCandidates(r *bufio.Reader, candidates []vmessUserCandi
 		break
 	}
 	if !found {
-		return core.User{}, out, nil, 0, fmt.Errorf("vmess auth id rejected")
+		return core.User{}, out, nil, 0, markConnError(connErrAuth, fmt.Errorf("vmess auth id rejected"))
 	}
 	var lenCipher [18]byte
 	if _, err := io.ReadFull(r, lenCipher[:]); err != nil {

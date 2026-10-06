@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db、audit、httpx
 // [OUTPUT]: 对外提供 SwitchRow、Service 的 ListSwitches、SetSwitch
 // [POS]: adminops 的降级开关读写：从 service.go 拆出。数据库拒绝切换时按约束名给中文原因（switchRefusal），PG 原句只进日志（R116）；开关门本身在 middleware/switches.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

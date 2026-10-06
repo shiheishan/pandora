@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 commission_available.go 的可用佣金口径与科目锁，依赖 ledger.go / reservations.go 的记账与加锁原语，依赖 domain/payment 的 MulDiv
 // [OUTPUT]: 对外提供 CommissionSummary、ListMyCommissions、RequestWithdrawal、ListMyWithdrawals、PostWithdrawalPayout、SettleMatured、CommissionWithdrawalIdempotencyScope、CommissionScope* 与 ValidCommissionScope、CommissionDefault*（分销参数缺行回退值，后台共用）、提现错误
 // [POS]: billing 分销佣金的计提（计佣范围 first_order 时被推荐人只计第一笔；门户概况回 scope，R81）、解冻、提现申请与打款记账；转余额在 commission_transfer.go，两者共用同一口径
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

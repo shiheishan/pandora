@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./theme 的全部纯函数，依赖 ./schemas 的 themesResponse，依赖 ../../../styles/design-tokens 的 COLOR_TOKENS
  * [OUTPUT]: 无（测试文件）
  * [POS]: admin/screens/content 主题逻辑的单元测试：旧数据宽松解析、另存为 / 编辑的表单初值（补满 43 键、丢白名单外）、与 Go 同规则的校验与 fields 键、请求体、分组错误计数、预览变量只放合法令牌、激活确认文案；界面交互在浏览器里对 dev 假后端验收
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { COLOR_TOKENS } from '../../../styles/design-tokens'

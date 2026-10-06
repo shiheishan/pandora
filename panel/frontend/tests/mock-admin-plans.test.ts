@@ -1,13 +1,11 @@
 /**
- * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../dev/mock/admin/plans 的 setSalesEnabled，依赖 ../src/admin/screens/plans/schemas 的套餐与流量包 schema
+ * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/plans/schemas 的套餐与流量包 schema
  * [OUTPUT]: 对外提供套餐（后台-04）假接口的测试
- * [POS]: tests 的套餐假后端守卫：目录能被页面 schema 接住、向导单事务新建与幂等重放、编辑向导的 null = 不动与开新版本、R99 设备与限速三态、R100 卖点与推荐（向导缺省不动、销售设置整体覆盖）、超额策略只收 suspend、草稿版本全流程、价格与销售开关 503、流量包 updated_at 乐观锁
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+ * [POS]: tests 的套餐假后端守卫：目录能被页面 schema 接住、向导单事务新建与幂等重放、编辑向导的 null = 不动与开新版本、R99 设备与限速三态、R100 卖点与推荐（向导缺省不动、销售设置整体覆盖）、超额策略只收 suspend、草稿版本全流程、价格新增与归档、流量包上下架与 updated_at 乐观锁
  */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
-import { setSalesEnabled } from '../dev/mock/admin/plans'
 import { packResponseSchema, packsSchema, planCreatedSchema, planPoolsSchema, planResponseSchema, plansSchema, planUpdatedSchema, priceCreatedSchema, versionCreatedSchema } from '../src/admin/screens/plans/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
@@ -19,10 +17,7 @@ describe('mock api · admin plans', () => {
     ;({ server, base } = await serve('admin'))
     auth = bearer((await loginAs(base, MOCK_ACCOUNTS.admin)).access_token)
   })
-  afterAll(() => {
-    setSalesEnabled(true)
-    return close(server)
-  })
+  afterAll(() => close(server))
 
   // users 假后端的固定套餐 id：标准版，批量筛选按套餐能命中
   const STD = '9c0e1a2b-3333-4b00-8000-000000000001'
@@ -189,7 +184,7 @@ describe('mock api · admin plans', () => {
     expect((await detailOf(STD)).current_version_id).toBe(v.id)
   })
 
-  it('adds and archives prices, and answers 503 for catalog.publish writes while sales are off', async () => {
+  it('adds and archives prices, and takes a traffic pack down and back up', async () => {
     const add = { currency: 'USD', unit_amount: 3000, billing_interval: 'year', interval_count: 1 }
     const created = priceCreatedSchema.parse(await (await send('POST', `/v1/plans/${STD}/prices`, add, 'price-1')).json()).price
     expect((await send('POST', `/v1/plans/${STD}/prices`, add, 'price-2')).status).toBe(409)
@@ -198,16 +193,10 @@ describe('mock api · admin plans', () => {
     expect((await archive('arch-1')).status).toBe(200)
     expect(await (await archive('arch-2')).json()).toMatchObject({ error: { message: '价格已经归档' } })
 
-    setSalesEnabled(false)
-    const off = await send('POST', `/v1/plans/${STD}/prices`, { ...add, billing_interval: 'month' }, 'price-4')
-    expect(off.status).toBe(503)
-    expect(await off.json()).toMatchObject({ error: { code: 'service_unavailable' } })
     const pack = packsSchema.parse(await (await get('/v1/traffic-packs?status=active')).json()).packs[0]!
-    const down = await send('POST', `/v1/traffic-packs/${pack.id}/status`, { status: 'archived', expected_updated_at: pack.updated_at }, 'pack-off')
+    const down = await send('POST', `/v1/traffic-packs/${pack.id}/status`, { status: 'archived', expected_updated_at: pack.updated_at }, 'pack-down')
     const archived = packResponseSchema.parse(await down.json()).pack
-    expect((await send('POST', `/v1/traffic-packs/${pack.id}/status`, { status: 'active', expected_updated_at: archived.updated_at }, 'pack-on')).status).toBe(503)
-    setSalesEnabled(true)
-    expect((await send('POST', `/v1/traffic-packs/${pack.id}/status`, { status: 'active', expected_updated_at: archived.updated_at }, 'pack-on')).status).toBe(200)
+    expect((await send('POST', `/v1/traffic-packs/${pack.id}/status`, { status: 'active', expected_updated_at: archived.updated_at }, 'pack-up')).status).toBe(200)
   })
 
   it('creates and edits traffic packs with the updated_at lock and rejects unknown fields', async () => {

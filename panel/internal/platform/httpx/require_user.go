@@ -1,7 +1,6 @@
 // [INPUT]: 依赖同包 context.go 的 PrincipalFrom 与 httpx.go 的 Fail / New / CodeUnauthorized
 // [OUTPUT]: 对外提供 RequireUser
 // [POS]: platform/httpx 的登录检查出口：处理器开头「没有登录用户就回 401 需要登录」的唯一写法，门户各处理器共用；鉴权中间件已挡掉匿名请求，这里是处理器自己的第二道防线
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package httpx
 

@@ -1,3 +1,7 @@
+// [INPUT]: 依赖 internal/reality 的 ServerHandoff 与 Conn，依赖 accept_loop.go 的 runAcceptLoop
+// [OUTPUT]: 对外提供 RealityListener（ListenReality、Accept、Addr、Close、Serve、SetHandshakeErrorHandler）、RealitySession、RealitySessionFromContext、InspectRealityConn、RealityDialContext
+// [POS]: kernel 的 REALITY 监听器：自己的 acceptHandoff 循环把每条原始连接交给独立的握手 worker（15 秒截止），通过认证的连接经 conns 交给 vless / trojan 适配器的 acceptLoop；握手失败经 SetHandshakeErrorHandler 上报，Close 会关掉握手中的原始连接
+
 package kernel
 
 import (
@@ -27,6 +31,10 @@ type RealityListener struct {
 	once    sync.Once
 	mu      sync.RWMutex
 	err     error
+	// handshaking 是握手 worker 手里还没交出去的原始连接。Close 要关掉它们：
+	// 不关的话 Close 之后 acceptHandoff 还得等每条连接的 15 秒截止时间自己
+	// 到点，适配器 Close 跟着卡住。
+	handshaking map[net.Conn]struct{}
 
 	onHandshakeError func(net.Addr, error)
 }
@@ -167,41 +175,74 @@ func ListenReality(network, address string, spec RealityServerConfig, dial Reali
 	return listener, nil
 }
 
+// acceptHandoff 是 REALITY 监听器自己的 Accept 循环。以前任何一次 Accept
+// 出错（包括 EMFILE 这种过一会儿就好的）都会关掉 conns，整个入站永久停止
+// 接客直到重启；现在走 runAcceptLoop 的退避，只有 Close 或底层监听器已关
+// 才退出。
 func (l *RealityListener) acceptHandoff() {
-	for {
+	var lastErr error
+	runAcceptLoop(l.done, func() (net.Conn, error) {
 		raw, err := l.inner.Accept()
-		if err != nil {
-			l.workers.Wait()
+		lastErr = err
+		return raw, err
+	}, l.startHandshake)
+	l.workers.Wait()
+	l.mu.Lock()
+	if lastErr != nil {
+		l.err = lastErr
+	}
+	l.mu.Unlock()
+	close(l.conns)
+}
+
+// startHandshake 登记原始连接并起握手 worker，立刻返回。
+func (l *RealityListener) startHandshake(raw net.Conn) {
+	l.mu.Lock()
+	select {
+	case <-l.done:
+		l.mu.Unlock()
+		_ = raw.Close()
+		return
+	default:
+	}
+	if l.handshaking == nil {
+		l.handshaking = make(map[net.Conn]struct{})
+	}
+	l.handshaking[raw] = struct{}{}
+	l.workers.Add(1)
+	l.mu.Unlock()
+	go func(raw net.Conn) {
+		defer l.workers.Done()
+		defer func() {
 			l.mu.Lock()
-			l.err = err
+			delete(l.handshaking, raw)
 			l.mu.Unlock()
-			close(l.conns)
+		}()
+		// Scanner connections must not pin a handshake worker forever. The
+		// deadline is cleared only after the authenticated handoff succeeds.
+		_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
+		remote := raw.RemoteAddr()
+		conn, err := reality.ServerHandoff(context.Background(), raw, l.config)
+		if err != nil {
+			// 原来这里是光秃秃一个 return：错误丢掉，raw 也不关。
+			// 前者让「客户端连不上」变成无从查起，后者在被扫描时
+			// 每条连接都要占满 15 秒 deadline 才释放。
+			// Close 关掉握手中的连接不算握手失败，不上报。
+			select {
+			case <-l.done:
+			default:
+				l.reportHandshakeError(remote, err)
+			}
+			_ = raw.Close()
 			return
 		}
-		l.workers.Add(1)
-		go func(raw net.Conn) {
-			defer l.workers.Done()
-			// Scanner connections must not pin a handshake worker forever. The
-			// deadline is cleared only after the authenticated handoff succeeds.
-			_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
-			remote := raw.RemoteAddr()
-			conn, err := reality.ServerHandoff(context.Background(), raw, l.config)
-			if err != nil {
-				// 原来这里是光秃秃一个 return：错误丢掉，raw 也不关。
-				// 前者让「客户端连不上」变成无从查起，后者在被扫描时
-				// 每条连接都要占满 15 秒 deadline 才释放。
-				l.reportHandshakeError(remote, err)
-				_ = raw.Close()
-				return
-			}
-			_ = conn.SetDeadline(time.Time{})
-			select {
-			case l.conns <- conn:
-			case <-l.done:
-				_ = conn.Close()
-			}
-		}(raw)
-	}
+		_ = conn.SetDeadline(time.Time{})
+		select {
+		case l.conns <- conn:
+		case <-l.done:
+			_ = conn.Close()
+		}
+	}(raw)
 }
 
 func validateRealityServerConfig(spec RealityServerConfig) error {
@@ -259,12 +300,23 @@ func (l *RealityListener) Close() error {
 		return nil
 	}
 	l.once.Do(func() {
+		// done 与 handshaking 的快照在同一把锁里：startHandshake 要么在这之前
+		// 登记（被这里关掉），要么在这之后看到 done 已关（自己关掉）。
+		l.mu.Lock()
 		close(l.done)
+		handshaking := make([]net.Conn, 0, len(l.handshaking))
+		for raw := range l.handshaking {
+			handshaking = append(handshaking, raw)
+		}
+		l.mu.Unlock()
 		if l.inner != nil {
 			err := l.inner.Close()
 			l.mu.Lock()
 			l.err = err
 			l.mu.Unlock()
+		}
+		for _, raw := range handshaking {
+			_ = raw.Close()
 		}
 	})
 	return nil

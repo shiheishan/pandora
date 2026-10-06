@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerAnnouncementRoutes、registerContentPageRoutes
 // [POS]: api/admin 路由表的「公告（草稿 / 定时 / 撤回）与知识库版本」段，由 NewRouter 按原注册顺序调用；处理器在 announce.go / content.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

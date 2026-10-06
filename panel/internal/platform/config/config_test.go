@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 config.go 与 deployment.go 的包内解析函数
 // [OUTPUT]: 对外提供 令牌时长校验、严格时长解析、部署项变量名与缺省值的单元测试
 // [POS]: platform/config 的解析单测；源码守卫在 envaccess_test.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package config
 
@@ -42,13 +41,13 @@ func TestStrictEnvDurationRejectsInvalidValue(t *testing.T) {
 // 部署项的变量名、缺省值与解析口径是 deploy 的 EnvironmentFile 依赖的契约，改动即红。
 func TestLoadDeploymentKeepsNamesAndDefaults(t *testing.T) {
 	for _, k := range []string{"AEGIS_BACKUP_DIR", "AEGIS_BACKUP_AGE_IDENTITY", "PANDORA_PDND_DIST_DIR",
-		"AEGIS_GEOIP_DB", "AEGIS_GEOIP_IPV6_DB", "AEGIS_SALES_ENABLED", "PANDORA_NATIVE_RELEASE_VERSION",
+		"AEGIS_GEOIP_DB", "AEGIS_GEOIP_IPV6_DB", "PANDORA_NATIVE_RELEASE_VERSION",
 		"PANDORA_NATIVE_ARTIFACT_AMD64_SHA256", "PANDORA_NATIVE_ARTIFACT_ARM64_SHA256", "AEGIS_BACKUP_WEBDAV_CONFIG"} {
 		t.Setenv(k, "")
 	}
 	d := loadDeployment()
 	if d.BackupDir != "/var/backups/aegispanel" || d.PdndDistDir != "/opt/aegispanel/pdnd-dist" ||
-		d.BackupAgeIdentity != "" || d.GeoIPDB != "" || d.GeoIPIPv6DB != "" || d.SalesEnabled ||
+		d.BackupAgeIdentity != "" || d.GeoIPDB != "" || d.GeoIPIPv6DB != "" ||
 		d.NativeReleaseVersion != "" || len(d.NativeArtifactSHA256) != 0 {
 		t.Fatalf("defaults = %+v", d)
 	}
@@ -69,12 +68,5 @@ func TestLoadDeploymentKeepsNamesAndDefaults(t *testing.T) {
 		d.NativeReleaseVersion != "pandora-native-test" || d.NativeArtifactSHA256["arm64"] != "abcdef" ||
 		d.NativeArtifactSHA256["amd64"] != "" || LoadBackupWebDAV().ConfigPath != "/srv/webdav.json" {
 		t.Fatalf("overrides = %+v", d)
-	}
-
-	for raw, want := range map[string]bool{"1": true, "TRUE": true, " yes ": true, "on": false, "0": false, "ture": false} {
-		t.Setenv("AEGIS_SALES_ENABLED", raw)
-		if got := loadDeployment().SalesEnabled; got != want {
-			t.Errorf("AEGIS_SALES_ENABLED=%q → %v, want %v", raw, got, want)
-		}
 	}
 }

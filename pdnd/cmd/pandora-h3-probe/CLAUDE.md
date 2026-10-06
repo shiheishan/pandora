@@ -11,4 +11,3 @@ main.go: 探针入口。flag -addr/-server-name/-public-key/-short-id/-path/-pay
 *_test.go: probe_test.go 覆盖 VLESS 头编码，以及在测试进程内起 ServeH3Reality、把探针编译成独立二进制再运行的往返测试（编译 3 分钟上限与运行 20s 上限分开计时）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

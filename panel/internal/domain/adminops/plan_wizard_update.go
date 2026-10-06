@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 catalog.go 的 loadPlanTx、prepare*Input 校验与 updatePlanTx，catalog_version.go 的 createPlanVersionTx/updatePlanVersionTx/publishPlanVersionTx 事务体，依赖 plan_wizard.go 的 bindPoolsTx，依赖 platform/audit、platform/db、platform/httpx
 // [OUTPUT]: 对外提供 UpdatePlanComplete、UpdatePlanCompleteInput/Output 与三态 OptionalInt；包内 inheritVersionSemantics
 // [POS]: adminops 套餐向导的「一次改完」：把资料、价格、额度与线路编排进同一个事务；设备数与限速三态、新版本继承当前版本全部高级设置、资料写入保留上架时间窗（R92）；plan_wizard.go 是它的「一次建成」兄弟
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 
@@ -152,9 +151,6 @@ func (s *Service) UpdatePlanComplete(ctx context.Context, tenantID, planID strin
 	if in.Prices != nil && len(*in.Prices) > 0 {
 		var err error
 		if wantPrices, err = preparePlanPrices(*in.Prices, in.ActorID); err != nil {
-			return nil, err
-		}
-		if err := s.requireP0BSales(); err != nil {
 			return nil, err
 		}
 	}
@@ -480,10 +476,6 @@ func syncPlanPricesTx(ctx context.Context, tx pgx.Tx, tenantID, planID, productI
 func (s *Service) rollPlanVersionTx(ctx context.Context, tx pgx.Tx, tenantID, planID string,
 	before *CatalogPlanDetail, in UpdatePlanCompleteInput) error {
 
-	// 发布受销售开关控制；在动任何版本之前就判掉。
-	if err := s.requireP0BSales(); err != nil {
-		return err
-	}
 	cur := currentVersion(before)
 
 	// 复用已有的 draft（每个套餐最多一个）；没有就建。套餐行已被本事务锁住，

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/adminops 的批量运营用例，依赖 platform/httpx
 // [OUTPUT]: 对外提供 handlers 的 previewBulkUsers / exportUsers / generateUsers / sendBulkMail；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的用户批量运营处理器：三个动作共用 bulkFilterReq（导出用同名 query 参数），CSV 带 BOM
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

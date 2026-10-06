@@ -1,7 +1,6 @@
-// [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 billing 的销售能力注入，依赖 domain/subscription 的在用口径（套餐的 active_subscriptions，R118）
-// [OUTPUT]: 对外提供 Service、NewService、SalesCapability，概览 Overview、改用户状态 SetUserStatus、套餐列表 ListPlans（带卖点与推荐，R100）
+// [INPUT]: 依赖 platform 的 db/httpx/audit，依赖 domain/subscription 的在用口径（套餐的 active_subscriptions，R118）
+// [OUTPUT]: 对外提供 Service、NewService，概览 Overview、改用户状态 SetUserStatus、套餐列表 ListPlans（带卖点与推荐，R100）
 // [POS]: domain/adminops 的主服务：后台读写用例的入口，其余同包文件按专题扩展它；订单列表在 orders.go、支付渠道在 providers.go、降级开关在 switches.go，套餐目录在 catalog*.go / plan_wizard*.go，订单详情在 order_detail.go，审计在 audit.go；revokeUserLogins 是停用账号即下线的唯一实现，改状态与 risk.go 的批量停用共用
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package adminops 实现管理后台的读写用例。
 //
@@ -15,7 +14,6 @@ package adminops
 import (
 	"context"
 	"errors"
-	"reflect"
 	"strings"
 	"time"
 
@@ -28,59 +26,12 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/iamguard"
 )
 
-// SalesCapability is an immutable process-start decision supplied by the
-// authenticated release verifier. Requests cannot choose a receipt, expected
-// digest or database identity and therefore cannot self-authorize sales.
-type SalesCapability interface {
-	AllowsP0BSales() bool
-}
-
 type Service struct {
-	pool            *db.Pool
-	salesCapability SalesCapability
+	pool *db.Pool
 }
 
-// NewService defaults sales-authorizing mutations to denied. A release
-// verifier may inject exactly one immutable capability after binding the
-// running binary, database identity and catalog contract. Nil, zero or extra
-// values remain denied.
-func NewService(pool *db.Pool, capabilities ...SalesCapability) *Service {
-	var capability SalesCapability
-	if len(capabilities) == 1 && !nilSalesCapability(capabilities[0]) {
-		capability = capabilities[0]
-	}
-	return &Service{pool: pool, salesCapability: capability}
-}
-
-func (s *Service) requireP0BSales() error {
-	if s == nil || nilSalesCapability(s.salesCapability) || !s.salesCapability.AllowsP0BSales() {
-		// 这句会直接出现在管理员面前。原先只说「服务暂时不可用，请稍后重试」，
-		// 于是加价格、上架套餐一按就失败，重试多少次都一样，也没人猜得到
-		// 是一个默认关闭的开关 —— 这两个功能就这么一直是死的。
-		// 对外必须保持中性：这道闸门的存在本身不该被探测出来
-		// （catalog_plan_update_route_test 明确断言响应里不出现
-		// p0b / sales / capability / release 这些词）。
-		//
-		// 但管理员总得知道为什么用不了 —— 所以详情走日志，不走响应体。
-		// 启动时那条 Warn 也会写清楚该设哪个变量。
-		return httpx.New(httpx.CodeUnavailable, "服务暂时不可用，请稍后重试").
-			WithInternal(errors.New(
-				"P0B 销售能力未授权：在 .env 设置 AEGIS_SALES_ENABLED=1 后重启 aegis-admin"))
-	}
-	return nil
-}
-
-func nilSalesCapability(capability SalesCapability) bool {
-	if capability == nil {
-		return true
-	}
-	value := reflect.ValueOf(capability)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
+func NewService(pool *db.Pool) *Service {
+	return &Service{pool: pool}
 }
 
 //==============================================================================

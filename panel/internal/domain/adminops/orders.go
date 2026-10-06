@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db、httpx，依赖 domain/billing 的 ParseOrderStatuses 订单状态白名单
 // [OUTPUT]: 对外提供 OrderRow、ListOrdersInput、Service.ListOrders；包内提供 orderRowSelectSQL / scanOrderRow
 // [POS]: adminops 的后台订单列表：从 service.go 拆出。orderRowSelectSQL / scanOrderRow 是 OrderRow 的唯一查询形状，users.go 与 order_detail.go 复用；带余额抵扣、收款渠道（入账优先、其次最近一次支付尝试）与人工单标识，流量包订单的品名取订单项商品名
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

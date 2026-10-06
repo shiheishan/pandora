@@ -16,4 +16,3 @@ stream.go: 节点 SSE，推配置与用户变动，20 秒注释帧保活；是�
   - signed_e2e_pg18_test.go 由 run-pg18-gates.sh（effective 域）跑签名链路端到端，心跳一步调用 heartbeat_metrics_pg18_test.go 的 checkHeartbeatMetricsRange：越界 metrics 回中文 400 且整条心跳不落库，边界合法值照常写一行
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

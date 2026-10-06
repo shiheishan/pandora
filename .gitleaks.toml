@@ -3,7 +3,6 @@
 # [POS]: 仓库的第一道泄露闸门；只写“格式”，不写任何真实值——具体的服务器 IP、
 #        域名这类私有特征放在被忽略的 ops-local/gitleaks-private.toml（ops-local/ 按需创建），
 #        文件存在时由同一个钩子加载
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 title = "pandora"
 
@@ -30,7 +29,7 @@ keywords = ["ops_"]
 
 # ---------------------------------------------------------------------------
 # 已逐条核实的误报，按完整值放行（不放行整个文件：同一文件里将来出现的真密钥照样拦）。
-# 冻结迁移的 SHA-256、幂等标签、接口路径、协议常量名、CLIENT-AUTH 测试向量
+# 幂等标签、接口路径、协议常量名、CLIENT-AUTH-01 冻结契约文档（panel/docs）里的测试向量
 # （0x00..0x3f 递增字节的 base64、签发方为 client.example.com 的 JWT）。
 # 新增一条前先确认它不是机密。nodefabric/testdata 夹具曾带着生产节点的真实 REALITY 私钥，
 # 2026-09-22 已换成新生成的假密钥对（见 xboard_field_names_test.go 注释），下面只放行这几个假值；
@@ -40,7 +39,6 @@ keywords = ["ops_"]
 description = "verified non-secret literals"
 regexTarget = "secret"
 regexes = [
-  '''^ffaf84b6e73eb0eef6794f5ca72859607b0c4c5bf313d9f7548dae120848dff5$''',
   '''^pandora\.idempotency\-00038\.run$''',
   '''^pandora\.idempotency\-00037\.run$''',
   '''^v1/me/withdrawals$''',
@@ -49,12 +47,15 @@ regexes = [
   '''^rt_test_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''',
   '''^ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8$''',
   '''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''',
-  '''^opaque\-bytes\-v1$''',
-  '''^00042_wrong\.sql$''',
-  '''^vector\.ATHB64U$''',
   '''^X25519MLKEM768$''',
   '''^hkdfLabelKeyV1$''',
   '''^hkdfLabelKeyV2$''',
+  # 冻结迁移 00042 的 SHA-256 与三个 CLIENT-AUTH 测试常量：主线已不含，但历史提交与 git 标签
+  # archive/client-auth 里还在，留着让 gitleaks git 全历史扫描保持干净
+  '''^ffaf84b6e73eb0eef6794f5ca72859607b0c4c5bf313d9f7548dae120848dff5$''',
+  '''^opaque\-bytes\-v1$''',
+  '''^00042_wrong\.sql$''',
+  '''^vector\.ATHB64U$''',
   # nodefabric 夹具的虚构 REALITY 私钥 ×3 与虚构 ShadowTLS server_key（base64 of fake-server-key-019）
   '''^sHZ\-Gh_Ua_QIytpLJZnHtGoCZAwmNhH_\-zha9wro_Vc$''',
   '''^ZmFrZS1zZXJ2ZXIta2V5LTAxOQ==$''',

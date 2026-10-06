@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 zod
  * [OUTPUT]: 对外提供内容与外观页的 zod schema 与类型：公告（列表、保存、撤回）、知识库内容页（列表行、单版本、保存、归档）、主题、插槽、站点时区、套餐目录子集
  * [POS]: admin/screens/content 的数据边界，与后端对账的唯一防线：形状照 api-contract.md 后台-08（含 R19、R49）并按 Go 处理器核对——Go 指针字段写 nullable、omitempty 字段写 optional、只在特定分支为 null 的切片写 nullable 后归一
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
 

@@ -1,7 +1,6 @@
-// [INPUT]: 依赖 platform/config、db、crypto、logging、server 的进程装配，realtime 的跨进程事件 Hub，geoip 的可选库，domain/nodefabric 的节点服务、发布绑定注入与流 Hub
+// [INPUT]: 依赖 platform/config、db、crypto、logging、server 的进程装配，audit 的来源信息注入（Configure），profiling 的可选 pprof 诊断端口，realtime 的跨进程事件 Hub，geoip 的可选库，domain/nodefabric 的节点服务、发布绑定注入与流 Hub
 // [OUTPUT]: 对外提供 aegis-node 进程：Node 域 HTTP 网关（默认 127.0.0.1:9003）
-// [POS]: panel/cmd 的三个网关之一，只做装配，路由与处理在 internal/api/node；与 aegis-public、aegis-admin 并列
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+// [POS]: panel/cmd 的三个网关之一，只做装配，路由与处理在 internal/api/node；与 aegis-public、aegis-admin 并列，审计来源信息的哈希与加密装配与它们逐字相同
 
 // Command aegis-node 是节点控制面网关（Node 域）。
 package main
@@ -15,11 +14,13 @@ import (
 
 	"github.com/aegispanel/aegis/internal/api/node"
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
+	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/config"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/geoip"
 	"github.com/aegispanel/aegis/internal/platform/logging"
+	"github.com/aegispanel/aegis/internal/platform/profiling"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
 	"github.com/aegispanel/aegis/internal/platform/server"
 )
@@ -64,6 +65,20 @@ func run() error {
 		return fmt.Errorf("初始化配置签名器: %w", err)
 	}
 
+	// 信封加密器：只给审计里的来源 IP 加密用
+	envelope, err := crypto.NewEnvelope(cfg.MasterKey)
+	if err != nil {
+		return fmt.Errorf("初始化信封加密: %w", err)
+	}
+	// 审计里的来源信息：哈希用于关联分析，密文供后台查看。与 public、admin 两个
+	// 网关逐字相同。不注入时 audit.Write 从 context 拿到了来源 IP 却既不算哈希
+	// 也不加密，节点入网这类记录的 source_ip_hash 与 source_ip_enc 都为空，
+	// 按 IP 反查时节点侧整段缺席。
+	audit.Configure(
+		func(ip string) []byte { return crypto.HashIdentifier(cfg.MasterKey, ip) },
+		func(b []byte) ([]byte, error) { return envelope.Seal(b, []byte("audit")) },
+	)
+
 	nodeService := nodefabric.NewService(pool, signer)
 	// 节点首次接入把公网 IP 自动识别成地区填 servers.region。
 	// 缺库不致命：自动识别降级为空，接入照常。
@@ -105,6 +120,14 @@ func run() error {
 
 	log.Info("AegisPanel Node 控制面就绪",
 		"addr", cfg.NodeAddr, "config_key_id", signer.KeyID())
+
+	// pprof 诊断端口：默认关闭，AEGIS_NODE_PPROF_ADDR 设了回环地址才开（独立端口，
+	// 不经 nginx、不挂业务路由），随网关停机关闭
+	pprofSrv, err := profiling.Start(cfg.PprofAddrs[config.DomainNode], log)
+	if err != nil {
+		return err
+	}
+	defer pprofSrv.Close()
 
 	return server.Run(server.Options{
 		Addr:            cfg.NodeAddr,

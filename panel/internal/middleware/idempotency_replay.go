@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 idempotency.go 的 idempotencyRecord、storedResponseEnvelope 与 idempotencyReplayHeaders，依赖 platform/httpx 的错误模型
 // [OUTPUT]: 包内提供 decideIdempotencyRecord / decideIdempotencyReplay 重放判定、存储响应的编解码、serveIdempotencyReplayDecision 重放出口，以及重放响应头的复制、比对、校验与写回
 // [POS]: middleware 幂等键的重放半边：从 idempotency.go 拆出。按认领记录的状态（in_flight / succeeded / failed，状态与响应码不自洽即报错）和存储格式（bytes 与两种旧格式）决定重放什么；只保存并重放白名单里的五个业务响应头（Content-Type、Location、ETag、Cache-Control、Content-Language），写回前校验长度与控制字符
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

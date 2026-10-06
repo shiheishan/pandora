@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # [INPUT]: 会创建 /opt/aegispanel 与 /var/log/aegis（已存在即拒绝）；依赖 run-smoke-stack.sh 写在状态目录的 smoke.env 与 gateway.env，依赖同目录 psql.sh（仓库自带、写死容器 aegis-postgres），依赖 ../tests 下的 e2e 脚本、../cmd 下的 aegis-payctl 源码，依赖 sudo、go、python3、timeout
-# [OUTPUT]: 在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，每个脚本一行写进 <状态目录>/e2e-results.md（通过 / 失败 / 超时、OK 与 FAIL 计数、首个失败所在的步骤与原文），各自完整输出在 logs/e2e-*.log；跑产品代码的准备步骤（编译 payctl 并用它配渠道）失败不中断、记一行；五个脚本全部跑完、表格写完后，有任何脚本或准备步骤失败就以 1 退出，让 job 变红
-# [POS]: 第 4 阶段联调冒烟第 ⑤ 步起的 e2e 门禁，被 .github/workflows/panel-smoke.yml 在读表与写路径之后调用；⑥ 起五个脚本都已跟上现行接口，失败即变红，免得它们再悄悄过时
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+# [OUTPUT]: 在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，每个脚本一行写进 <状态目录>/e2e-results.md（通过 / 失败 / 超时、OK 与 FAIL 计数、首个失败所在的步骤与原文），各自完整输出在 logs/e2e-*.log；跑产品代码的准备步骤（编译 payctl 并用它配渠道）失败不中断、记一行；六个脚本全部跑完、表格写完后，有任何脚本或准备步骤失败就以 1 退出，让 job 变红
+# [POS]: 第 4 阶段联调冒烟第 ⑤ 步起的 e2e 门禁，被 .github/workflows/panel-smoke.yml 在读表与写路径之后调用；⑥ 起各脚本都已跟上现行接口，失败即变红，免得它们再悄悄过时；risk_e2e.sh（内鬼检测评估）排在 e2e.sh 之前
 #
 # 这些 e2e 脚本是给「装在 /opt/aegispanel 的 docker-compose 部署」写的：
 # psql 走 /opt/aegispanel/deploy/psql.sh 或仓库的 deploy/psql.sh（读 deploy/.env、
@@ -14,7 +13,7 @@
 #   - 起栈时容器名已设成 aegis-postgres、库名带 test 段（admin / uniproxy 的一次性库守卫）；
 #   - 公开网关日志链到单元的实际路径 /var/log/aegis/public.log（epay_e2e.sh 查密钥不落日志）；
 #   - 易支付渠道用产品工具 aegis-payctl 配好（脚本里写死的测试商户 1001 与测试密钥）；
-#   - 两个一次性库守卫要的确认变量照实给出：冒烟库本来就是跑完即扔的。
+#   - 三个一次性库守卫（admin / uniproxy / risk）要的确认变量照实给出：冒烟库本来就是跑完即扔的。
 # 这一步要往 /opt 与 /var/log 写东西、要写 deploy/.env，所以只肯在 GitHub Actions 的一次性 runner 上跑。
 #
 # 用法：run-smoke-e2e.sh <panel 源码目录> <状态目录>
@@ -100,12 +99,13 @@ export BASE="$SMOKE_PUBLIC_BASE" AEGIS_BASE="$SMOKE_PUBLIC_BASE"
 export ADMIN_EMAIL="$SMOKE_ADMIN_EMAIL" ADMIN_PASS="$SMOKE_ADMIN_PASSWORD"
 export ADMIN_E2E_DISPOSABLE=YES_DELETE_FIXTURES ADMIN_E2E_DATABASE="$SMOKE_PG_DB" ADMIN_E2E_TENANT_ID="$TENANT"
 export UNIPROXY_E2E_DISPOSABLE=YES_DELETE_FIXTURES UNIPROXY_E2E_DATABASE="$SMOKE_PG_DB" UNIPROXY_E2E_TENANT_ID="$TENANT"
+export RISK_E2E_DISPOSABLE=YES_DELETE_FIXTURES RISK_E2E_DATABASE="$SMOKE_PG_DB" RISK_E2E_TENANT_ID="$TENANT"
 export EPAY_KEY="$EPAY_TEST_KEY" EPAY_PID="$EPAY_TEST_PID"
 # 冒烟栈把认证限流放宽到每分钟 $AUTH_PER_MIN 次，e2e.sh 要多探几次才碰得到 429
 export RL_PROBE=$(( ${AUTH_PER_MIN:-14} + 10 ))
 
-# e2e.sh 放最后：它的限流探测会把登录额度打满
-SCRIPTS=(admin_e2e.sh epay_e2e.sh support_e2e.sh uniproxy_e2e.sh e2e.sh)
+# e2e.sh 放最后：它的限流探测会把登录额度打满；risk_e2e.sh 要用模拟来源登录与注册，排在它前面
+SCRIPTS=(admin_e2e.sh epay_e2e.sh support_e2e.sh uniproxy_e2e.sh risk_e2e.sh e2e.sh)
 # 从一份输出里取：OK 数、FAIL 数、首个失败所在的步骤、首个失败原文（连同下一行细节）
 summarize() {
   python3 - "$1" <<'PY'

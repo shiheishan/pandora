@@ -4,7 +4,6 @@
  * [POS]: admin/screens/system 的通知渠道（设计稿 t_notify）：邮件 · SMTP 卡（设计缺的加密方式下拉、清除已存密码补上）、契约待补·前端的「注册与验证」卡（注册模式 + 邮箱验证，注明还受降级开关控制）、Telegram 卡在 TelegramCard.tsx。
  *        保存都是 platform.settings.write、无 reauth 无幂等；SMTP 六个字段每次整体覆盖，注册卡用同一接口、带「已保存」的 SMTP 字段而不是 SMTP 卡里没保存的输入。测试发送（ops.notification.write）用的是已保存的配置，有未保存的修改时先禁用并提示保存。
  *        表单草稿为 null 时跟着服务端数据走，保存成功后置回 null
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'

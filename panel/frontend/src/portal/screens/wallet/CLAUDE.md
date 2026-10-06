@@ -1,7 +1,7 @@
 # panel/frontend/src/portal/screens/wallet/
 > L2 | 父级: /panel/frontend/src/portal/screens/CLAUDE.md
 
-钱包（用户门户-05-钱包.dc.html；契约门户-05，修订 R31、R68）
+钱包（用户门户-05-钱包.dc.html；契约门户-05）
   - 余额与流水读外框 queries.ts 的 useBalance（与顶栏余额胶囊同键，schema 已写全）
   - 充值先 POST v1/me/topups 建单（响应 200 不是 201），再走 common/PayFlow 的支付弹窗去收银台
   - 礼品卡先预览卡面再兑换，兑换后失效整个门户前缀（余额、订阅、流量包都可能变，且都没有推送）。
@@ -15,4 +15,3 @@ Wallet.module.css: 页面样式，取自设计稿门户-05（网格区域：宽�
 wallet.test.ts: 钱包与订单页的单元测试（钱包映射与订单页映射）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

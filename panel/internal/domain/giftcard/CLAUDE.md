@@ -17,4 +17,3 @@ redeem.go: 兑换：锁码、校验条件与限制、按卡型经 Granter 发放
   - batches_pg18_test.go、portal_reads_pg18_test.go 与 codes_export_pg18_test.go（掩码逐行一致、无明文、与列表同口径、上限 422、审计、租户隔离）为 PG18 集成测试（run-pg18-gates.sh 的 giftcard 域，共用 openGiftcardPG18 夹具）
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

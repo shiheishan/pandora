@@ -1,3 +1,7 @@
+// [INPUT]: 依赖 platform/db 的 Open 与租户事务，依赖 catalog.go 的 UpdatePlan，依赖 catalog_test.go 的 expectHTTPCode
+// [OUTPUT]: 对外提供 openCatalogSalesPG18 夹具（同包各 *_pg18_test.go 共用）与 TestUpdatePlanStaleVersionConflictPG18
+// [POS]: adminops 的 PG18 集成门禁入口（run-pg18-gates.sh 的 catalog_sales 域）：夹具逐项证明连的是一次性库且应用连接受 RLS 约束；本文件自带的用例证明过期 row_version 改套餐资料回 409 且不留写入与审计
+
 package adminops
 
 import (
@@ -116,7 +120,10 @@ func openCatalogSalesPG18(t *testing.T) (context.Context, *pgxpool.Pool, *platfo
 	return ctx, admin, app
 }
 
-func TestUpdatePlanP0BSalesGateOrderPG18(t *testing.T) {
+// TestUpdatePlanStaleVersionConflictPG18 在真实 aegis_app 连接（RLS 生效）上
+// 证明：带过期 row_version 改套餐资料回 409 并给出当前版本，库里的套餐、
+// 商品与审计一行都不动。
+func TestUpdatePlanStaleVersionConflictPG18(t *testing.T) {
 	ctx, admin, app := openCatalogSalesPG18(t)
 
 	const (
@@ -203,30 +210,17 @@ func TestUpdatePlanP0BSalesGateOrderPG18(t *testing.T) {
 	}
 
 	if _, err := NewService(app).UpdatePlan(ctx, tenantID, planID, input); err == nil {
-		t.Fatal("default-deny catalog update unexpectedly succeeded")
+		t.Fatal("stale catalog update unexpectedly succeeded")
 	} else {
-		requireCatalogErrorCode(t, err, httpx.CodeUnavailable)
-		var denied *httpx.Error
-		if !errors.As(err, &denied) || denied.Message != "服务暂时不可用，请稍后重试" {
-			t.Fatalf("default denial is not neutral: %v", err)
-		}
-	}
-	if afterDenied := readSnapshot(); afterDenied != before {
-		t.Fatalf("denied stale update changed persisted state before=%+v after=%+v", before, afterDenied)
-	}
-
-	if _, err := NewService(app, staticSalesCapability(true)).UpdatePlan(ctx, tenantID, planID, input); err == nil {
-		t.Fatal("authorized stale catalog update unexpectedly succeeded")
-	} else {
-		requireCatalogErrorCode(t, err, httpx.CodeConflict)
+		expectHTTPCode(t, err, httpx.CodeConflict)
 		var conflict *httpx.Error
 		if !errors.As(err, &conflict) || conflict.Fields["row_version"] != "current=7" {
-			t.Fatalf("authorized stale response did not expose current version: %v", err)
+			t.Fatalf("stale response did not expose current version: %v", err)
 		}
 	}
 	if afterConflict := readSnapshot(); afterConflict != before {
-		t.Fatalf("authorized stale conflict changed persisted state before=%+v after=%+v", before, afterConflict)
+		t.Fatalf("stale conflict changed persisted state before=%+v after=%+v", before, afterConflict)
 	}
 
-	t.Log("catalog_sales_pg18_business=ok unavailable_before_stale=true denied_writes=0 denied_audits=0 allowed_stale=conflict role=aegis_app rls=on schema=41")
+	t.Log("catalog_sales_pg18_business=ok stale=conflict stale_writes=0 stale_audits=0 role=aegis_app rls=on schema=41")
 }

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/notify 的绑定状态、绑定码、解绑与 LoadTelegramConfig，依赖 domain/appearance 的公开外观，依赖 platform/httpx
 // [OUTPUT]: 对外提供 handlers 的 telegramInfo / telegramBindCode / telegramUnbind / telegramUpdate（webhook）/ appearance
 // [POS]: api/public 的 Telegram 绑定与 webhook（/webhooks/telegram/{secret}，密钥恒定时间比较，回执固定 {"ok":true}），以及匿名的 /appearance 外观读取
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

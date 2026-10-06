@@ -2,7 +2,6 @@
 # [INPUT]: 依赖同目录 check-migrations.sh、仓库真实的 ../migrations/，docker/goose/env 用桩脚本代替
 # [OUTPUT]: check-migrations.sh 的动态契约：编号规则、Up 标记、续费闸门、口令不进 argv、克隆库清理
 # [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要数据库或 root
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Dynamic tests for strict migration extraction and password argv hygiene.
 set -Eeuo pipefail
 umask 077
@@ -285,8 +284,6 @@ grep -Fq 'PGOPTIONS=-c app.idempotency_writers_stopped=yes' "$TMP/goose.env"
 grep -Fq -- '-c app.allow_idempotency_schema37_up=yes' "$TMP/goose.env"
 grep -Fq -- '-c app.allow_idempotency_schema38_up=yes' "$TMP/goose.env"
 grep -Fq -- '-c app.allow_idempotency_schema39_up=yes' "$TMP/goose.env"
-grep -Fq -- '-c aegis.client_auth_00042_upgrade_approved=approved-v1' "$TMP/goose.env"
-grep -Fq -- '-c aegis.client_auth_writers_stopped=stopped-v1' "$TMP/goose.env"
 
 for fault in pg_dump restore goose; do
   touch "$TMP/fail_$fault"

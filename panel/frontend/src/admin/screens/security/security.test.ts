@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./logic，依赖 ./schemas
  * [OUTPUT]: 无（测试文件）
  * [POS]: admin/screens/security 纯函数层与 schema 边界的单元测试：审计查询串 / 导出日期校验 / 操作人 · 对象 · 认证文字、访问日志分段与结果文字、聚类复核状态 / 可停用成员 / 停用校验与摘要 / 写后缓存补丁、降级开关视图（极性、核心项、缺行、R102 删掉的开关不在字典）与切换请求；界面交互在浏览器里对 dev 假后端验收
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import {

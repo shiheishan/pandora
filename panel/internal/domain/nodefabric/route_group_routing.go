@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 routing_admin.go 的范围读写与 ValidateRoutingPayload，依赖 routing_refs.go 的引用校验，依赖 routing_merge.go 的分层读与带来源合并，依赖 route_groups.go 的组锁与 bumpRoutingNodesTx，依赖 platform 的 db/audit/httpx
 // [OUTPUT]: 对外提供 GroupRouting、EffectiveRouting / EffectiveOutbound / EffectiveRoute / RoutingSource，Service 的 GetGroupRouting / SetGroupRouting / SetRouteGroupMembers / SetNodeRouteGroups / PreviewNodeRouting 及其输入类型；包内 nodeRouteGroupsTx
 // [POS]: domain/nodefabric 的路由组内容与成员：组内出站与规则的整体替换、从组侧与从节点侧改成员（两侧都持 node-config-release 锁，组行与节点行版本互相推进）、节点生效结果的只读预览；每次写都在同事务推进受影响节点的 generation 并拒绝新造成的悬空引用
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

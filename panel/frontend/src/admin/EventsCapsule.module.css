@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 的表面、描边、文字、状态色令牌
  * [OUTPUT]: 对外提供 EventsCapsule.tsx 用到的类名
  * [POS]: admin/EventsCapsule 的样式：30 高胶囊（圆角 15）、脉冲绿点、墨底未读数；下拉宽 360、圆角 10、列表最高 340
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .root {
   position: relative;

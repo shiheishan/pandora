@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 orders/index.tsx 用到的类名
  * [POS]: portal/screens/orders 的样式，取自设计稿门户-04：待支付卡 --warn-line 描边、20 号金额，刷新状态的结果条按三种结果取 ok / warn / danger 底色；列表一张卡，月份分组头 --surface-2 底、行内边距 12/20、状态标签列 56 宽右对齐；展开区 --surface-2 底、标签列 72 宽；< 640 行内边距收到 16
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .page {
   display: flex;

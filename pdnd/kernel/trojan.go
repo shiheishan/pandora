@@ -1,3 +1,7 @@
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 reality_listener.go / inbound_tls.go / websocket_netconn.go / httpupgrade_netconn.go / grpc_stream.go / mkcp_transport.go 的承载，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 trojanAdapter（经 newTrojanAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 acceptLoop / serveAccepted（TLS 握手在每条连接自己的 goroutine 里）、readTrojanRequest、handleConn（统一上报会话失败）/ serveConn
+// [POS]: kernel 的 Trojan 入站 TCP 路径：TCP / TLS / REALITY / WS / HTTP Upgrade / gRPC / mKCP 的监听与分派，SHA-224 口令证明定位用户；UDP ASSOCIATE 在 trojan_udp.go
+
 package kernel
 
 import (
@@ -6,6 +10,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,23 +31,23 @@ import (
 // the Trojan password; only the SHA-224 password proof is kept in the lookup
 // table so plaintext credentials do not remain in the adapter state.
 type trojanAdapter struct {
-	spec        InboundSpec
-	mu          sync.RWMutex
-	users       map[string]trojanUser
-	traffic     map[int64]core.UserTraffic
-	online      map[int64]map[string]struct{}
-	listener    net.Listener
-	httpServer  *http.Server
-	plane       DataPlane
-	ctx         context.Context
-	cancel      context.CancelFunc
-	closed      bool
-	reality     bool
-	onConnError func(ConnError)
-	limiters    core.SpeedLimiters
-	tlsConfig   *tls.Config
-	active      map[net.Conn]struct{}
-	wg          sync.WaitGroup
+	spec       InboundSpec
+	mu         sync.RWMutex
+	users      map[string]trojanUser
+	traffic    map[int64]core.UserTraffic
+	online     map[int64]map[string]struct{}
+	listener   net.Listener
+	httpServer *http.Server
+	plane      DataPlane
+	ctx        context.Context
+	cancel     context.CancelFunc
+	closed     bool
+	reality    bool
+	connErr    connErrorReporter
+	limiters   core.SpeedLimiters
+	tlsConfig  *tls.Config
+	active     map[net.Conn]struct{}
+	wg         sync.WaitGroup
 }
 
 type trojanUser struct {
@@ -117,7 +122,7 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 	security, _ := spec.Config.Raw["security"].(string)
 	network, _ := spec.Config.Raw["network"].(string)
 	a.spec, a.plane, a.reality = spec, hooks.DataPlane, strings.EqualFold(security, "reality")
-	a.onConnError = hooks.OnConnError
+	a.connErr = newConnErrorReporter(hooks, spec, "trojan")
 	var err error
 	if !a.reality {
 		var tlsEnabled bool
@@ -141,7 +146,12 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			a.mu.Unlock()
 			return parseErr
 		}
-		listener, err = ListenReality("tcp", address, realitySpec, nil)
+		var realityListener *RealityListener
+		realityListener, err = ListenReality("tcp", address, realitySpec, nil)
+		if realityListener != nil {
+			realityListener.SetHandshakeErrorHandler(a.connErr.realityHandshake)
+			listener = realityListener
+		}
 	} else if isMKCPNetwork(network) {
 		// mKCP 跑在 UDP 上，但对上层就是个 net.Listener——下面 TLS、
 		// 分片读写那些代码一行都不用改。
@@ -200,7 +210,7 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 				_ = a.handleConn(connCtx, conn, nil)
 			}()
 		})
-		server := &http.Server{Handler: handler, MaxHeaderBytes: 64 << 10}
+		server := newInboundHTTPServer(handler, 64<<10)
 		a.mu.Lock()
 		if a.closed {
 			a.mu.Unlock()
@@ -262,7 +272,7 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 				_ = a.handleConn(connCtx, conn, nil)
 			}()
 		})
-		server := &http.Server{Handler: handler, MaxHeaderBytes: 64 << 10}
+		server := newInboundHTTPServer(handler, 64<<10)
 		a.mu.Lock()
 		if a.closed {
 			a.mu.Unlock()
@@ -326,51 +336,59 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 
 func (a *trojanAdapter) acceptLoop() {
 	defer a.wg.Done()
-	for {
-		conn, err := a.listener.Accept()
-		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
-				return
-			}
-			continue
-		}
-		a.mu.Lock()
-		a.active[conn] = struct{}{}
-		a.mu.Unlock()
-		a.wg.Add(1)
-		go func() {
-			defer a.wg.Done()
-			defer a.removeActive(conn)
-			if a.tlsConfig != nil {
-				tlsConn := tls.Server(conn, a.tlsConfig.Clone())
-				_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-				if err := tlsConn.HandshakeContext(a.ctx); err != nil {
-					_ = conn.Close()
-					return
-				}
-				_ = conn.SetReadDeadline(time.Time{})
-				conn = tlsConn
-			}
-			var realitySession *RealitySession
-			if a.reality {
-				captured, ok := InspectRealityConn(conn)
-				if !ok {
-					_ = conn.Close()
-					return
-				}
-				realitySession = &captured
-			}
-			if err := a.handleConn(a.ctx, conn, realitySession); err != nil {
-				reportAdapterConnError(a.onConnError, a.spec.Config.Tag, "trojan", "session", conn, err)
-			}
-		}()
-	}
+	runAcceptLoop(a.ctx.Done(), a.listener.Accept, a.serveAccepted)
 }
 
+// serveAccepted 只登记连接、起 goroutine，立刻返回；TLS 握手与 REALITY 会话
+// 检查都在连接自己的 goroutine 里做。登记的是原始连接，握手中的连接 Close
+// 也关得到。
+func (a *trojanAdapter) serveAccepted(conn net.Conn) {
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		_ = conn.Close()
+		return
+	}
+	a.active[conn] = struct{}{}
+	a.wg.Add(1)
+	ctx, tlsConfig := a.ctx, a.tlsConfig
+	a.mu.Unlock()
+	go func() {
+		defer a.wg.Done()
+		defer a.removeActive(conn)
+		session := conn
+		if tlsConfig != nil {
+			tlsConn, err := serverTLSHandshake(ctx, conn, tlsConfig, inboundHandshakeTimeout)
+			if err != nil {
+				a.connErr.conn(StageTLSHandshake, conn, err)
+				_ = conn.Close()
+				return
+			}
+			session = tlsConn
+		}
+		var realitySession *RealitySession
+		if a.reality {
+			captured, ok := InspectRealityConn(session)
+			if !ok {
+				a.connErr.conn(StageRealityInspect, session, errors.New("连接上取不到 REALITY 会话信息"))
+				_ = session.Close()
+				return
+			}
+			realitySession = &captured
+		}
+		_ = a.handleConn(ctx, session, realitySession)
+	}()
+}
+
+// handleConn 是 TCP / REALITY / WS / HTTP Upgrade / gRPC 共同的会话入口，
+// 会话层失败在这里统一上报一次，换承载不会让失败从日志里消失。
 func (a *trojanAdapter) handleConn(ctx context.Context, conn net.Conn, realitySession *RealitySession) error {
+	err := a.serveConn(ctx, conn, realitySession)
+	a.connErr.conn(StageSession, conn, err)
+	return err
+}
+
+func (a *trojanAdapter) serveConn(ctx context.Context, conn net.Conn, realitySession *RealitySession) error {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	user, destination, err := readTrojanRequest(conn, a.lookupUser)
@@ -382,7 +400,7 @@ func (a *trojanAdapter) handleConn(ctx context.Context, conn net.Conn, realitySe
 	}
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
-		return fmt.Errorf("trojan device limit")
+		return deviceLimitError("trojan")
 	}
 	defer a.leaveDevice(user, ip)
 	if destination.Command == trojanCommandUDP {
@@ -446,7 +464,7 @@ func readTrojanRequest(conn net.Conn, lookup func(string) (core.User, bool)) (co
 	}
 	user, ok := lookup(string(proof[:]))
 	if !ok {
-		return core.User{}, destination, fmt.Errorf("trojan user proof rejected")
+		return core.User{}, destination, markConnError(connErrAuth, fmt.Errorf("trojan user proof rejected"))
 	}
 	// Trojan 请求头是 CMD | ATYP | DST.ADDR | DST.PORT，没有 SOCKS5 那个
 	// VER 字节，也没有 RSV。这里一度按 SOCKS5 的四字节头解析，把 CMD 当

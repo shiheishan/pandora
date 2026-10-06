@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useRef 与 KeyboardEvent，依赖 ./cx 与 ./Segmented.module.css
  * [OUTPUT]: 对外提供 Segmented 与 SegmentedOption 类型
  * [POS]: ui 的分段控件：--surface-3 底上浮起一块 --surface（带唯一一档非浮层阴影）；语义是单选组，方向键在选项间移动并即时选中
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { cx } from './cx'

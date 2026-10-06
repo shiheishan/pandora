@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/config、db、crypto 的连库与密码哈希，platform/audit 记审计，credentialrevocation 改密后吊销会话，iamguard 与 middleware 的角色约束
 // [OUTPUT]: 对外提供 aegis-adminctl 命令：create、reset-password、grant、revoke、list、roles
 // [POS]: panel/cmd 的后台账号 bootstrap 工具，只在服务器本地跑；安装器装完提示用它建第一个管理员，冒烟栈也用它建平台管理员
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Command aegis-adminctl 管理后台账号与角色。
 //

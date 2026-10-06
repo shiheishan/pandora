@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 Blocks.tsx 与 UsageCard.tsx 用到的类名
  * [POS]: portal/screens/common 的样式：外观插槽、本期用量卡（设计稿门户-01：柱高 120、间距 3、今天朱砂、未到灰色矮柱）；断点只用规范的 640
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 /* 插槽：服务端净化过的 HTML，样式与登录页公告条一致 */

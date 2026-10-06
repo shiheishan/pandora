@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../types 的 MockModule / MockContext，依赖 ./billing 的 readStrict，依赖 ./fixtures 的 gate / scenario
  * [OUTPUT]: 对外提供 help 模块的假接口 MockModule
  * [POS]: dev/mock/portal 的「帮助中心（门户-09）」假接口，归门户前端；形状照 api-contract.md（修订 R43）与 Go api/public/content.go、domain/content：列表不带正文、按 published_at 倒序、q 对标题 / 摘要 / 正文不区分大小写包含匹配（> 100 字 422）、platform 为空时隐藏限定了平台的教程、any 不过滤；正文 slug 非法或不可见 404，空正文省略 body；反馈 helpful 必填（422 fields.helpful）、版本不存在 422 fields.version、可见性按同一组参数判定、多余字段 400。empty 场景没有文章
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { MockContext, MockModule } from '../types.ts'
 import { readStrict } from './billing.ts'

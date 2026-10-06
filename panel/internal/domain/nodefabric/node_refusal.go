@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的 ConstraintName / Message，依赖 platform/httpx 的 Error 与 WithInternal
 // [OUTPUT]: 对外提供 NodeStatusRefusal
 // [POS]: domain/nodefabric 改节点生命周期时数据库拒绝的统一翻译：后台改状态（api/admin 的 nodeSetStatus）、一步上线（node_activate.go）、一步退役（node_retire.go）三处共用，照 adminops 的 switchRefusal 写法
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

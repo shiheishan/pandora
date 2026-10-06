@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 settlement_pg18_fixture_test.go 的常量与 settlementPG18InTx
 // [OUTPUT]: 包内提供订单状态快照 settlementPG18OrderState / OrderStateOf、键 / 订阅 / 订单 / 释放图 / 资源指纹、支付事件计数与状态、捕获事件、外部 / 充值 / 混合账本与佣金断言
 // [POS]: TestSettlementPG18 的断言库：用指纹证明重放与回滚没有改动任何业务行
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

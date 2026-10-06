@@ -1,7 +1,6 @@
-// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
-// [OUTPUT]: 对外提供 proxyAdapter（经 newSOCKSAdapter / newHTTPProxyAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close
+// [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
+// [OUTPUT]: 对外提供 proxyAdapter（经 newSOCKSAdapter / newHTTPProxyAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 handleConn（统一上报会话与延迟 TLS 握手失败）/ serveConn
 // [POS]: kernel 的 socks 与 http 入站共用适配器：SOCKS4/4a/5 CONNECT、HTTP CONNECT 与正向 GET，认证绑定面板下发的用户 UUID；SOCKS5 UDP ASSOCIATE 在 proxy_udp.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 
@@ -38,6 +37,7 @@ type proxyAdapter struct {
 	online   map[int64]map[string]struct{}
 	listener net.Listener
 	plane    DataPlane
+	connErr  connErrorReporter
 	limiters core.SpeedLimiters
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -117,6 +117,7 @@ func (a *proxyAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		ln = tls.NewListener(ln, tlsConfig.Clone())
 	}
 	a.spec, a.plane, a.tls = spec, hooks.DataPlane, tlsConfig
+	a.connErr = newConnErrorReporter(hooks, spec, a.protocol)
 	a.ctx, a.cancel = context.WithCancel(parent)
 	a.listener = ln
 	a.mu.Unlock()
@@ -127,22 +128,12 @@ func (a *proxyAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 
 func (a *proxyAdapter) acceptLoop() {
 	defer a.wg.Done()
-	for {
-		conn, err := a.listener.Accept()
-		if err != nil {
-			a.mu.RLock()
-			closed := a.closed
-			a.mu.RUnlock()
-			if closed || a.ctx.Err() != nil {
-				return
-			}
-			continue
-		}
+	runAcceptLoop(a.ctx.Done(), a.listener.Accept, func(conn net.Conn) {
 		a.mu.Lock()
 		if a.closed {
 			a.mu.Unlock()
 			_ = conn.Close()
-			continue
+			return
 		}
 		a.active[conn] = struct{}{}
 		a.wg.Add(1)
@@ -153,10 +144,22 @@ func (a *proxyAdapter) acceptLoop() {
 			defer a.removeActive(conn)
 			_ = a.handleConn(ctx, conn)
 		}()
-	}
+	})
 }
 
+// handleConn 是会话入口，失败在这里统一上报。启用 TLS 时握手由 tls.Listener
+// 推迟到第一次读，所以握手失败也从这里冒出来：按连接上的握手状态区分阶段。
 func (a *proxyAdapter) handleConn(ctx context.Context, conn net.Conn) error {
+	err := a.serveConn(ctx, conn)
+	stage := StageSession
+	if tlsConn, ok := conn.(*tls.Conn); ok && !tlsConn.ConnectionState().HandshakeComplete {
+		stage = StageTLSHandshake
+	}
+	a.connErr.conn(stage, conn, err)
+	return err
+}
+
+func (a *proxyAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	reader := bufio.NewReaderSize(conn, 32<<10)
@@ -179,7 +182,7 @@ func (a *proxyAdapter) handleConn(ctx context.Context, conn net.Conn) error {
 	}
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
-		return fmt.Errorf("%s device limit", a.protocol)
+		return deviceLimitError(a.protocol)
 	}
 	defer a.leaveDevice(user, ip)
 	if a.protocol == "socks" && command == 3 {
@@ -277,7 +280,7 @@ func (a *proxyAdapter) readSOCKS(reader *bufio.Reader, conn net.Conn) (core.User
 	}
 	if !found {
 		_, _ = conn.Write([]byte{5, 0xff})
-		return core.User{}, out, 0, 0, fmt.Errorf("socks5 authentication method rejected")
+		return core.User{}, out, 0, 0, markConnError(connErrAuth, fmt.Errorf("socks5 authentication method rejected"))
 	}
 	if _, err := conn.Write([]byte{5, auth}); err != nil {
 		return core.User{}, out, 0, 0, err
@@ -303,7 +306,7 @@ func (a *proxyAdapter) readSOCKS(reader *bufio.Reader, conn net.Conn) (core.User
 		user, ok = a.lookupCredential(string(name), string(password))
 		if !ok {
 			_, _ = conn.Write([]byte{1, 1})
-			return core.User{}, out, 0, 0, fmt.Errorf("socks5 credentials rejected")
+			return core.User{}, out, 0, 0, markConnError(connErrAuth, fmt.Errorf("socks5 credentials rejected"))
 		}
 		if _, err := conn.Write([]byte{1, 0}); err != nil {
 			return core.User{}, out, 0, 0, err
@@ -359,7 +362,7 @@ func (a *proxyAdapter) readSOCKS4(reader *bufio.Reader, conn net.Conn) (core.Use
 		user, ok := a.lookupCredential(name, name)
 		if !ok {
 			_ = writeSOCKS4Reply(conn, 93, out)
-			return core.User{}, out, 0, fmt.Errorf("socks4 credentials rejected")
+			return core.User{}, out, 0, markConnError(connErrAuth, fmt.Errorf("socks4 credentials rejected"))
 		}
 		return user, out, 1, nil
 	}
@@ -372,7 +375,7 @@ func (a *proxyAdapter) readSOCKS4(reader *bufio.Reader, conn net.Conn) (core.Use
 	user, ok := a.lookupCredential(name, name)
 	if !ok {
 		_ = writeSOCKS4Reply(conn, 93, out)
-		return core.User{}, out, 0, fmt.Errorf("socks4 credentials rejected")
+		return core.User{}, out, 0, markConnError(connErrAuth, fmt.Errorf("socks4 credentials rejected"))
 	}
 	return user, out, 1, nil
 }
@@ -432,13 +435,13 @@ func (a *proxyAdapter) readHTTP(reader *bufio.Reader, conn net.Conn) (core.User,
 	}
 	if !ok {
 		_, _ = io.WriteString(conn, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=Pandora\r\nConnection: close\r\n\r\n")
-		return core.User{}, out, nil, fmt.Errorf("http proxy authentication required")
+		return core.User{}, out, nil, markConnError(connErrAuth, fmt.Errorf("http proxy authentication required"))
 	}
 	if user, valid := a.lookupCredential(name, password); valid {
 		return user, out, req, nil
 	}
 	_, _ = io.WriteString(conn, "HTTP/1.1 407 Proxy Authentication Required\r\nConnection: close\r\n\r\n")
-	return core.User{}, out, nil, fmt.Errorf("http proxy credentials rejected")
+	return core.User{}, out, nil, markConnError(connErrAuth, fmt.Errorf("http proxy credentials rejected"))
 }
 
 func proxyHostPort(raw string, getDefault bool) (string, string, error) {

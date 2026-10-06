@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/notify 的 SMTP 配置与发信器、MailSettings / SaveMailSettings（读写、upsert 与审计在 notify/mail_settings.go），domain/identity 的 EmailVerificationDefault 与注册模式常量，platform/httpx
 // [OUTPUT]: 对外提供 handlers 的 getMailSettings / setMailSettings / testMailSettings；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 的邮件与注册设置接口；全部设置项 upsert（SMTP 密码行缺失也能写入，R94）；发件人名缺省显示站点名，测试信主题带发件人名
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

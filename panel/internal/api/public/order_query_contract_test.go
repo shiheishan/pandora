@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter 与 handlers.queryMyOrderPayment
 // [OUTPUT]: 对外提供 TestOrderQueryRouteAuthRateLimitAndOwnership
 // [POS]: api/public「我已支付，刷新状态」的路由契约：在登录分组里、按账号单独限流、不挂 checkout 开关、处理器把本人 ID 交给领域层做归属校验
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

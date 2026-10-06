@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 .env 的 POSTGRES_*、docker 容器 aegis-postgres、goose、与 deploy/ 并排的 migrations/
 # [OUTPUT]: 在一次性克隆库上重放待应用迁移的预检：文件名/编号/Up 标记校验、源库水位不高于发布物、续费切换闸门
 # [POS]: migrate.sh up 与 make check-migrations 的前置闸门；桩测试 check-migrations_mock_test.sh
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Prove the exact production upgrade path on a disposable database clone.
 #
 # A scratch database is not a faithful release probe once migrations create
@@ -83,7 +82,8 @@ done
 #
 # 把版本号和具体文件绑定本身就不牢靠 —— 任何一次重排号都会让它失效。真正要防的
 # 「迁移文件被篡改」应该对整个 migrations/ 目录做校验，而不是挑一个文件钉死。
-# 恢复 CA42 时如果还需要这类保护，按目录整体校验重做，不要再钉单个版本号。
+# 恢复 CA42（代码与发布门禁脚本在 git 标签 archive/client-auth）时如果还需要
+# 这类保护，按目录整体校验重做，不要再钉单个版本号。
 
 TEMP_ROOT="${TMPDIR:-/tmp}"
 [ -d "$TEMP_ROOT" ] || { echo "migration precheck: temporary root is missing" >&2; exit 1; }
@@ -273,7 +273,8 @@ echo "migration precheck database clone created"
 
 MIGRATION_PGOPTIONS=""
 if [ "${PANDORA_STOPPED_WRITER_UPGRADE_APPROVED:-}" = yes ]; then
-  MIGRATION_PGOPTIONS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes -c aegis.client_auth_00042_upgrade_approved=approved-v1 -c aegis.client_auth_writers_stopped=stopped-v1'
+  # 冻结迁移要的两个 aegis.client_auth_* 开关随它移出主序列，不再下发。
+  MIGRATION_PGOPTIONS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes'
 fi
 GOOSE_DBSTRING="host=127.0.0.1 port=$POSTGRES_PORT user=$POSTGRES_USER dbname=$DB sslmode=disable"
 run_clean_goose() (

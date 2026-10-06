@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 PayFlow.tsx 用到的类名
  * [POS]: portal/screens/common 支付弹窗的样式，取自用户门户.dc.html 的支付弹窗：居中排版、26 号金额、48 圆形对勾；去掉二维码块（epay 是收银台跳转）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .modal {
   text-align: center;

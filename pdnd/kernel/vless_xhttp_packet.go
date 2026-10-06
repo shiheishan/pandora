@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 xhttp_packet.go 的 XHTTPPacketBroker / XHTTPPacketDuplex / XHTTPPacketQueue，依赖 xhttp_server.go 的 XHTTPSession，依赖 reality_listener.go 的 RealitySession，依赖 vless.go 的 vlessAdapter.handleConnSession
 // [OUTPUT]: 包内提供 xhttpPacketConn / newXHTTPPacketConn（把上下行包队列拼成 net.Conn，vmess_xhttp_packet.go 也复用），vlessAdapter 的 startXHTTPPacketSession 与 xhttpPacketHandler
 // [POS]: kernel 的 VLESS XHTTP packet 模式：从 vless.go 拆出。GET 请求拉下行、带序号的 POST 推上行，同一会话 ID 只起一个工作协程把拼出的连接交回 VLESS 主流程；工作协程在适配器锁内登记，关闭时不会漏等
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 的 Load、Source 与 TopDecls 读 admin、public、node 三个包的全部非测试源码
 // [OUTPUT]: 对外提供 TestHandlersRunNoSQL
 // [POS]: api 的跨包守卫（本目录只有测试文件）：后台、门户与节点网关三个包整包不许跑 SQL、不许直接拿连接池查询，读写一律经 domain 服务（第二波 api 卫生收口）；与 response_writes_guard_test.go 并列
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package api
 
