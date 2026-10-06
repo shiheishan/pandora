@@ -42,6 +42,7 @@ tools/: 开发期工具，main 包只经 go run 使用，不进发布包、不�
 tests/: invariants.sql 数据层不变量（make invariants）
   - e2e.sh 注册→下单→支付→账本→订阅→配置主链路
   - admin/uniproxy/epay/support 各自的 e2e 脚本（节点接入由冒烟 seed.ts 的两阶段接入覆盖）
+  - risk_e2e.sh 内鬼检测（用户侧风控）的带标签效果评估，误判只记评估、不判红
   - panel-smoke.yml 经 deploy/run-smoke-e2e.sh 在冒烟栈上逐个跑它们，任一失败即 job 变红
   - 见 tests/CLAUDE.md
 Makefile: up/down/logs 数据基座、migrate/migrate-status/check-migrations、invariants、build/test/vet、e2e、release-linux、preflight-linux、settlement-pg18、verify、

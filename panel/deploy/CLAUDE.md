@@ -86,7 +86,8 @@ run-smoke-stack.sh: 前端联调冒烟的底座（panel-smoke.yml 调用）：
   - 库名 aegis_smoke_test（带 test 段，过 e2e 脚本的一次性库守卫），PG 容器名可由 PANDORA_SMOKE_PG_CONTAINER 覆盖（CI 设成 aegis-postgres 让 psql.sh 直接可用）
   - down 只拆自己记下的进程与容器
 run-smoke-e2e.sh: 联调冒烟第 ⑤ 步（panel-smoke.yml 在读表与写路径之后调用）：在冒烟栈上逐个跑 tests/*_e2e.sh 与 tests/e2e.sh，第 ⑥ 步起失败即变红
-  - 脚本一字不改，只把它们声明要的环境搭出来（/opt/aegispanel 布局链到仓库 deploy/、公开网关日志链到单元的实际路径 /var/log/aegis/public.log、deploy/.env 由网关配置加库超级账号拼成、aegis-payctl 编进 bin 并配易支付测试商户、两个一次性库确认变量），脚本之间空一个限流窗口
+  - 脚本一字不改，只把它们声明要的环境搭出来（/opt/aegispanel 布局链到仓库 deploy/、公开网关日志链到单元的实际路径 /var/log/aegis/public.log、deploy/.env 由网关配置加库超级账号拼成、aegis-payctl 编进 bin 并配易支付测试商户、admin / uniproxy / risk 三组一次性库确认变量），脚本之间空一个限流窗口
+  - 顺序 admin → epay → support → uniproxy → risk → e2e：e2e.sh 的限流探测会打满登录额度，放最后
   - 每个脚本一行写进 e2e-results.md（结果、OK/FAIL 数、首个失败的步骤与原文），全部跑完、表格写完后有任何失败就以 1 退出
   - 只肯在 GitHub Actions 上跑
 test-*-pg18.sh: 各业务的 PG18 集成门禁，每次新建隔离容器与库、结束即删；口令为 *-test-only 字样

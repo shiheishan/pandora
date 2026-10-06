@@ -15,6 +15,10 @@ epay_e2e.sh: 易支付：收银台参数与签名、金额换算、回调幂等�
   - 需要启用的 epay 渠道（测试商户 1001）
 support_e2e.sh: 工单：内部备注绝不外泄、SLA 升级幂等、越权隔离、状态流转、未结工单上限
 uniproxy_e2e.sh: UniProxy 数据面契约，SQL 夹具造 serving 节点：认证、配置 ETag、资格与池隔离、流量去重与倍率、在线上报；要求 UNIPROXY_E2E_DISPOSABLE 等确认变量
+risk_e2e.sh: 内鬼检测（用户侧风控）的带标签效果评估，bash 外壳 + 内嵌 python 驱动：门户分享提示（24h 来源 > 设备上限）、后台画像 7 天来源、共享 IP 聚类、设备超限四路各一族用例，用 X-Real-IP 扮来源；要求 RISK_E2E_DISPOSABLE 等确认变量
+  - 机制断言（计数与造数一致、复核与停用、strict 摘掉超限订阅、两轮一致）记 [ OK ] / [FAIL]；误判只记 [EVAL] 不判红，末行 RISK_E2E_JSON 是机读结果
+  - 「过去几天」的拉取先经真实端点拉、再在一次性库里用 session_replication_role = replica 挪 fetched_at；审计是哈希链不改时间，聚类只测窗口内
+  - 用例分调参组 / 留出组，阈值只按调参组的 Youden 指数选，留出组验证
 
 法则: 成员完整·一行一文件·父级链接·技术词前置
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

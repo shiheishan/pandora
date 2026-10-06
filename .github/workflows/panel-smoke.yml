@@ -105,7 +105,7 @@ jobs:
         run: npx vitest run -c tests/smoke/vitest.config.ts
       # 仓库现有的 tests/*_e2e.sh 与 tests/e2e.sh 在同一个栈上逐个跑：
       # 放在读表与写路径之后，免得它们造的数据搅乱条数；脚本失败只进下面那张表，
-      # 失败即让 job 变红，但 run-smoke-e2e.sh 先把五个都跑完、表格写完再给退出码。
+      # 失败即让 job 变红，但 run-smoke-e2e.sh 先把全部脚本跑完、表格写完再给退出码。
       # 前面哪步红了照样跑，只要栈起来了
       - name: Run the e2e scripts against the stack
         if: always() && steps.stack.outcome == 'success'

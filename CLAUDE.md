@@ -17,7 +17,7 @@ ops-local/ - 被 git 忽略、只在维护者本机存在的私有运维资料�
   - panel-frontend 任务对新前端跑 lint/typecheck/vitest/双入口构建，再 make frontend-embed 用真实产物跑 web、webapp、api 的 Go 契约，占位页未被替换即失败
   - PG18 集成门禁单独在 panel-pg18.yml（触发面是整棵 panel/internal 加 cmd 与 web 的 Go 源码，不拖 pdnd 的重任务），runner 自带 Docker 跑 run-pg18-gates.sh，goose 版本跟 build-release.sh
   - 同一 workflow 的 panel-unit 任务跑 panel 全量 build/vet/go test（PG18 用例在此跳过），这是 CI 上唯一跑 panel 全部单元测试的地方
-  - panel-smoke.yml 是新前端对真实网关的联调冒烟（面板重构第 4 阶段），触发面含 panel/frontend/src 与 panel/tests，经 deploy/run-smoke-stack.sh 起一次性 PG18 + 网关，读表先于写路径，最后经 deploy/run-smoke-e2e.sh 在同一栈上跑 tests 下的五个 e2e 脚本（全部跑完再判，任一失败即 job 变红）
+  - panel-smoke.yml 是新前端对真实网关的联调冒烟（面板重构第 4 阶段），触发面含 panel/frontend/src 与 panel/tests，经 deploy/run-smoke-stack.sh 起一次性 PG18 + 网关，读表先于写路径，最后经 deploy/run-smoke-e2e.sh 在同一栈上跑 tests 下的六个 e2e 脚本（含内鬼检测评估 risk_e2e.sh；全部跑完再判，任一失败即 job 变红）
   - panel-deploy.yml 按 panel/deploy 与 panel/migrations 路径触发，逐个点名跑无需数据库与 root 的 deploy 桩测试，迁移脚本拿真实迁移目录校验编号（严格递增、不重复、允许历史空号）
 </directory>
 
