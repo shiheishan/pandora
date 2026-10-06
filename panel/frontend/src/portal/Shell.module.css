@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌（--content-max、--gutter、--topbar-h、--tabbar-h 等）
  * [OUTPUT]: 对外提供 Shell.tsx 用到的类名
  * [POS]: portal/Shell 的样式：顶栏 58、内容最宽 1160；断点只用规范的两个——< 960 收起余额胶囊，< 640 隐藏顶部导航与用户名、出现 56 高底部标签栏、页脚垫高 80 让出标签栏
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .app {
   min-height: 100vh;

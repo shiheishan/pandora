@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的路由组表单 / 成员比较 / 可引用出站 / 节点状态，依赖 ./ScopeRouting 的 ScopeRoutingEditor，依赖 ./queries、./schemas，依赖 ./nodes.module.css 与 ./infra.module.css
  * [OUTPUT]: 对外提供 RouteGroupPanel（路由标签里选中一个组时的内容）与 GroupFormModal（新建 / 编辑组信息，RoutingTab 的「＋ 新建路由组」也用）
  * [POS]: admin/screens/nodes 的路由组（00096）：头部卡片（名称、说明、排序、成员标签点了跳节点抽屉的路由页）带「编辑信息 / 成员 / 删除」，下面是复用 ScopeRoutingEditor 的组内出站与规则（规则还可指向全局出站），「发布到组内 N 个节点」确认后 PUT v1/route-groups/{id}/routing 带 row_version；改信息 PATCH（只带改了的字段）、成员 PUT .../members（勾选未退役节点）、删除 DELETE 带 { row_version }。这些写都影响多个节点，要 reauth（外框对话框接管）与幂等键；新建只要幂等键。行版本冲突刷新到最新，引用冲突 409 原文就地提示
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'

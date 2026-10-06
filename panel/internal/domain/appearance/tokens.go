@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 pgx 的业务事务读取生效主题，依赖 platform/httpx 的校验错误
 // [OUTPUT]: 对外提供 DesignTokenKeys、TokenGroups、DefaultSiteName、SiteNameTx；包内提供 normalizeTokens、filterTokens
 // [POS]: domain/appearance 的主题令牌规则（品牌规则在兄弟文件 branding.go）：后端这一侧的 token 白名单（照抄前端 design-tokens.ts，测试守一致）与 light/dark 分组，service.go 的保存与门户读取都经过这里
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package appearance
 

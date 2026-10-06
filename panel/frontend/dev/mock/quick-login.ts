@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 randomUUID
  * [OUTPUT]: 对外提供 issueQuickLogin、consumeQuickLogin
  * [POS]: dev/mock 的快捷登录令牌表：签发在 portal/account.ts（账号安全），消费在 mock-api.ts 的外壳接口 POST v1/auth/quick-login，两处共用这一份内存状态；60 秒有效、一次性；与 identity/quicklogin.go 一样绑定签发会话，同一会话重新生成即作废旧令牌
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 

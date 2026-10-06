@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform 的 db 租户事务（带操作人）、audit 同事务审计、httpx 的错误模型与请求 ID；读写 announcements，读 plans / user_groups 做定向校验与展示
 // [OUTPUT]: 对外提供 Service.ListAdminAnnouncements / SaveAdminAnnouncement / WithdrawAdminAnnouncement 与 AdminAnnouncement、AnnouncementPlanTarget、AnnouncementGroupRef、AdminAnnouncementList、SaveAnnouncementInput
 // [POS]: domain/notify 的公告后台读写（从 api/admin/announce.go 下沉）：草稿 / 定时 / 发布 / 撤回的状态机、乐观并发（FOR UPDATE + version CAS）与事务内审计都在这里；与 announce.go 的门户可见口径、定时发布读同一张表；请求校验与时间解析留在 handler
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package notify
 

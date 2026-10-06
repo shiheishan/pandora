@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 messages/index.tsx 用到的类名
  * [POS]: portal/screens/messages 的样式，取自设计稿门户-08：顶部分段标签 + 右侧「全部标为已读」，一张卡片里的三列行（圆点 / 标题与正文 / 时间），未读朱砂圆点加粗，公告圆点按级别取 --info / --warn / --danger
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .page {
   display: flex;

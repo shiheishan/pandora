@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useMemo，依赖 ../../../ui 的 Empty，依赖 ../../me 的 useAdminMe，依赖 ./api 的 useOverview / useNodeTraffic，依赖 ./model 的 dashboardAccess，依赖同目录各卡片组件与 ./Dash.module.css
  * [OUTPUT]: 默认导出 Dash 页面组件（登记表 React.lazy 的目标）
  * [POS]: admin/screens/dash 的入口：仪表盘（后台-01）。登录即可进（modules.ts 里 read 为 null），每张卡按自己接口的权限决定发不发请求、画不画；卡片各自加载、各自失败，互不牵连（DASH-01 局部失败）。概览与节点流量两条查询在这里取一次，KPI 与排行共用
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMemo } from 'react'
 import { Empty } from '../../../ui'

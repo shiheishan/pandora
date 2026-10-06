@@ -2,7 +2,6 @@
  * [INPUT]: 依赖浏览器 URL.createObjectURL / document.createElement（可注入，便于测试）
  * [OUTPUT]: 对外提供 saveFile、filenameFromDisposition、toCsv
  * [POS]: core 的文件下载原语：导出接口经 api.requestRaw 拿到 Response 后由这里存成文件；前端自己拼的 CSV（如批量生成的优惠码）也走这里。blob: 地址只用于 <a download>，不涉及 CSP 的 script-src / style-src
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 interface DownloadEnv {

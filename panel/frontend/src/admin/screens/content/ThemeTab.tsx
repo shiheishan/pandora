@@ -4,7 +4,6 @@
  * [POS]: admin/screens/content 的主题与插槽（设计稿 t_theme）。主题卡片列出全部主题（用户推翻 5.A D-D-4 / D-E-4 的「只保留一个主题」，改为可新建、可切换）：生效的标「使用中」、内置的标「内置」；内置主题只能「另存为」，自定义主题可编辑、激活、删除（生效中的不给删，后端同样拒绝）；「＋ 新建主题」默认复制当前生效主题（含站点品牌）。
  *        激活前的确认框写明站点名会随之改变（门户标题、邮件 {{site}} 与发件人名都取生效主题的站点名）；激活、删除要 reauth、无幂等；custom_css 继续停用、不出现。卡片旁补站点时区卡（R49，设计稿没有，按卡片风格补：读权限同邮件设置 security.audit.read，没有就不画；改要 platform.settings.write + reauth，无幂等）。
  *        前端插槽按接口返回的 7 个位（名称、key、位置说明）：失焦时内容真的变了才保存、开关带上当前内容（reauth + 每次新幂等键 appearance_slot_save），保存后回填净化后的内容，被过滤的标签逐条提示
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useId, useState, type CSSProperties } from 'react'

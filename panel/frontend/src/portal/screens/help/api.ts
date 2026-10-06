@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 @tanstack/react-query 的 keepPreviousData / useMutation / useQuery，依赖 zod，依赖 ../../../shell/runtime 的 useApi
  * [OUTPUT]: 对外提供 CONTENT_KINDS、contentPageSchema / ContentPage、contentDetailSchema、HELP_QUERY、useHelpPages、useHelpPage、useHelpFeedback
  * [POS]: portal/screens/help 的数据层（契约门户-09，修订 R43）：文章列表（不带正文，q 由后端对标题 / 摘要 / 正文做包含匹配）、正文、「有帮助」反馈。三处都带同一组可见性参数 HELP_QUERY（platform=any 看全部平台的教程），反馈的可见性与读正文按同一套规则判定，参数不一致会 404
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { z } from 'zod'

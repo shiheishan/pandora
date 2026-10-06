@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 net/http 的 Server 与 Hijacker，依赖 gorilla/websocket 的 Upgrader，依赖 websocket_netconn.go / httpupgrade_netconn.go 的 net.Conn 包装，依赖 inbound_tls.go 的 inboundHandshakeTimeout
 // [OUTPUT]: 包内提供 newInboundHTTPServer（各 HTTP 承载共用的 http.Server 构造）、serveNativeWebSocket、serveNativeHTTPUpgrade
 // [POS]: kernel 的 HTTP 承载前端：WebSocket 与 HTTP Upgrade 的服务端分派；newInboundHTTPServer 也被 grpc_stream.go、xhttp_server.go、naive.go 与 vless / trojan 的 ws·httpupgrade 分支使用，HTTP 承载的 Accept 退避由 http.Server.Serve 自带，不走 accept_loop.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

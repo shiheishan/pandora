@@ -3,7 +3,6 @@
 // [OUTPUT]: 对外提供 Main（go run ./tools/loadtest seed ...）
 // [POS]: tools/loadtest 的 seed 子命令：在已迁移的库里造一档压测数据并写 manifest。阶段顺序是 退役旧批次 → 池与套餐草稿 → 服务器 → 节点与接入令牌 →
 //        节点接入 → 一步上线 → 发布套餐 → 用户与订阅 → 核对，每段计时打印到 stdout 并进 manifest.SeedTimings
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package seed
 

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 checkout/index.tsx 用到的类名
  * [POS]: portal/screens/checkout 的样式，取自设计稿门户-03 结账部分：两卡按 minmax(min(100%,380px),1fr) 折行、选项行选中为 --brand 边与 --brand-tint 底、圆点 5px 实心边、应付 28 号数字、支付方式两列；设计稿的「余额」格改为抵扣开关，USDT 删除
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .grid {
   display: grid;

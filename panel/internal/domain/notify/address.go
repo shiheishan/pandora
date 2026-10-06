@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 notify.go 的 Service（模板表、投递表、收件人哈希），依赖 pgx 的业务事务，依赖 domain/appearance 的 SiteNameTx
 // [OUTPUT]: 对外提供 EnqueueToAddress、Kick；包内提供 recipientPayloadKey、scrubAddressPayloadSQL、withSite
 // [POS]: domain/notify 的「按地址投递」分支：收件人还不是用户（注册验证码）时走这里，派发仍由 notify.go 的 Dispatch/deliver 统一完成
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package notify
 

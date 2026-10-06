@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 router_source_test.go 的 inspectRouterFiles 读路由 AST，依赖 platform/sourcetest 按名取套餐版本处理器的源码
 // [OUTPUT]: 对外提供 TestCatalogWriteRouteContracts、TestPublishContractUsesDualTokens、TestLegacyVersionUpdateCannotBypassPoolWriteRoute
 // [POS]: api/admin 套餐目录写路由的权限码、重认证与幂等域契约，发布走双令牌、旧版本更新不绕道节点池写入
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

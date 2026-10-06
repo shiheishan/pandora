@@ -1,7 +1,6 @@
 // [INPUT]: 依赖本包 context.go 的 ClientIP，依赖 net/http/httptest 造请求
 // [OUTPUT]: 对外提供 TestClientIPTrustsOnlyXRealIP
 // [POS]: platform/httpx 的来源地址口径：只信反代覆写的 X-Real-IP，X-Forwarded-For 一律不看，缺省回落到 RemoteAddr 的主机部分
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package httpx
 

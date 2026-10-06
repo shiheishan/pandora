@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db，依赖一次性 PG18 库（run-pg18-gates.sh 的 node_preview 域）
 // [OUTPUT]: 对外提供 TestNodePreviewPG18
 // [POS]: domain/subscription 的 PG18 集成测试：订阅可拿到的节点集合与门户节点预览的资格规则
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package subscription
 

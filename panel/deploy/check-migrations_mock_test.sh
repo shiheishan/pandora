@@ -2,7 +2,6 @@
 # [INPUT]: 依赖同目录 check-migrations.sh、仓库真实的 ../migrations/，docker/goose/env 用桩脚本代替
 # [OUTPUT]: check-migrations.sh 的动态契约：编号规则、Up 标记、续费闸门、口令不进 argv、克隆库清理
 # [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要数据库或 root
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # Dynamic tests for strict migration extraction and password argv hygiene.
 set -Eeuo pipefail
 umask 077

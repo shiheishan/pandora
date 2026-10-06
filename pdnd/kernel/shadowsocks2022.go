@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 shadowsocks2022_stream.go 的密钥派生与 AEAD 流，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 ss2022Adapter（经 newSS2022Adapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 parseSS2022Spec、handleConn（统一上报会话失败）/ serveConn
 // [POS]: kernel 的 Shadowsocks 2022 入站主体：方法解析、TCP 请求处理（多用户身份头逐层校验）与用户表；UDP 在 shadowsocks2022_udp.go，密钥与 TCP 流在 shadowsocks2022_stream.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

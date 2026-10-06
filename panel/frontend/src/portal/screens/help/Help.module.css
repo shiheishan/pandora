@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 help/index.tsx 用到的类名
  * [POS]: portal/screens/help 的样式，取自设计稿门户-09：左列 220–280 的搜索框 + 分组目录（当前篇 --brand-tint 底加粗），右列最宽 760 的文章卡（15px 正文、1.8 行高、16px 小标题、底部反馈条）；< 640 按 data-view 只显示目录或文章之一，「全部文章」返回只在窄屏出现
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 .layout {
   display: grid;

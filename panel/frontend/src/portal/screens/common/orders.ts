@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 @tanstack/react-query 的 useQuery / useInfiniteQuery / useMutation / useQueryClient，依赖 zod，依赖 ../../../core/format 的 formatMoney / formatDateTime，依赖 ../../../shell/runtime 的 useApi，依赖 ./intent 的 endsIntent
  * [OUTPUT]: 对外提供 ORDER_KINDS、ORDER_STATUSES、OPEN_STATUSES、ORDER_FILTERS / OrderFilter、ORDER_PAGE_SIZE、useOrderPages、useOpenOrders、useCancelOrder、statusBadge、groupByMonth、orderResult、orderFacts、orderRowSchema、OrderRow、intervalLabel、orderTitle、expiryNote、usePendingOrders、orderDetailSchema / OrderDetail / orderKey / useOrder、orderCreatedSchema / OrderCreated、PAID_STATUSES / SETTLED_STATUSES、PAYABLE_STATUSES / isPayable / useOrderPayable
  * [POS]: portal/screens/common 的订单读模型（契约门户-04 GET v1/orders）：概览待支付条、支付结果确认、订单页与重开刚下的单前的可支付判定共用；标题与期限文案是纯函数、有单元测试
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'

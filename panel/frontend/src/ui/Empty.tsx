@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 ReactNode，依赖 ./cx 与 ./Empty.module.css
  * [OUTPUT]: 对外提供 Empty
  * [POS]: ui 的空状态：一句现状 + 一句能做什么 + 最多一个次按钮，不放插画（规范「空状态」）；bare 用于已经在卡片或表格里的场合
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { ReactNode } from 'react'
 import { cx } from './cx'

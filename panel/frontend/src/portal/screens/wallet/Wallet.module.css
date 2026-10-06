@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 wallet/index.tsx 用到的类名
  * [POS]: portal/screens/wallet 的样式，取自设计稿门户-05：两列（右列礼品卡跨两行，< 640 单列且礼品卡在明细前）、余额 34 号数字、充值金额四格等宽字、礼品卡卡面 --brand-tint 底 20 号字、我的礼品卡三列；左列在余额卡下补「余额明细」卡
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 /* 宽屏：左列余额 + 明细，右列礼品卡跨两行；< 640 单列，礼品卡提到明细前面（明细可能很长） */
 .grid {

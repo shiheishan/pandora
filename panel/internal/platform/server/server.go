@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 net/http 的 Server、log/slog，依赖 os/signal 的停机信号
 // [OUTPUT]: 对外提供 Options、Run、RunContext
 // [POS]: platform 的网关 HTTP 生命周期：三个网关共用的超时、BaseContext 与优雅停机；拒绝 nil Handler，免得落到 DefaultServeMux（net/http/pprof 经 platform/profiling 链进网关后，那里挂着 /debug/pprof/）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package server provides the shared HTTP server lifecycle for all gateways.
 package server

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 giftcard.go 的模板与 Granter 接口（billing 注入）、domain/plugin 事件、platform/audit
 // [OUTPUT]: 对外提供 Redeem、RedeemResult、MyRedemptions、MyRedemption
 // [POS]: giftcard 的兑换：锁码、校验条件与限制、按卡型发放（流量奖励经 Granter 发成一码一笔的流量包余额）、写兑换流水；门户兑换记录带卡码前 12 位提示
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package giftcard
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform 的 db/audit/httpx，依赖同包 tokens.go 的令牌白名单、branding.go 的品牌规则与 sanitize.go 的 HTML 净化
 // [OUTPUT]: 对外提供 Service、New、Theme、Slot、SlotCatalog、PublicAppearance、Public、ListThemes、SaveThemeInput、SaveTheme、ActivateTheme、DeleteTheme、ListSlots、SaveSlotInput、SaveSlot
 // [POS]: domain/appearance 的主服务：门户一次取齐外观（令牌与品牌过滤、custom_css 不下发），后台主题与插槽的读写；新建（Create）撞已有 code 回 409，不覆盖
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package appearance
 

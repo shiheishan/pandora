@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/crypto 与 platform/db，依赖一次性 PG18 库（run-pg18-gates.sh 的 enrollment 域）
 // [OUTPUT]: 对外提供 TestNodeEnrollmentPG18 与 openEnrollmentPG18（库护栏，server_token_pg18_test.go 共用）
 // [POS]: domain/nodefabric 的 PG18 集成测试：节点两阶段接入的幂等与凭据激活
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

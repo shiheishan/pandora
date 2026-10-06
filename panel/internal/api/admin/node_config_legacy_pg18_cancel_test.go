@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/nodefabric 的 PublishConfig / ReportConfigApplied，依赖 pgxpool 与 pg_stat_activity 观测锁等待，依赖 node_config_legacy_pg18_test.go 的夹具与共用断言
 // [OUTPUT]: 包内提供持锁者 nodeConfigPG18LockHolder / beginNodeConfigPG18LockHolder、等待与取消观测（waitNodeConfigPG18BlockedPID、awaitNodeConfigPG18Cancellation、assertNodeConfigPG18WaiterClean）、按 application_name 开池的 openNodeConfigPG18NamedPool，以及 runNodeConfigPG18CancellationRollbackBatch
 // [POS]: TestNodeConfigLegacyPG18 的取消回滚批次（发布在咨询锁与期望配置锁上等待时取消、上报等待时取消），也是本组造锁等待的工具库，被 _lifecycle / _pool_delete / _materialize / _lock 复用
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

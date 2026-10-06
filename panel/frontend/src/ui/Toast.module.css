@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 的令牌
  * [OUTPUT]: 对外提供 Toast.tsx 用到的类名
  * [POS]: ui/Toast 的样式：抵消 popover 的默认样式，底部居中；门户 < 640 时抬到底部标签栏之上
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .host {

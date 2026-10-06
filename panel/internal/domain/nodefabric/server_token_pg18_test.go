@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 enrollment_pg18_test.go 的 openEnrollmentPG18（一次性 PG18 库护栏），依赖 uniproxy.go 的 IssueServerToken
 // [OUTPUT]: 对外提供 TestIssueServerTokenPG18
 // [POS]: domain/nodefabric 的 PG18 测试：server-token 签发拒绝已退出服务的节点、非法 id 回 404、成功签发写审计且不记令牌
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

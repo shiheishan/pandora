@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 delivery_pg18_test.go 的 openDeliveryPG18，依赖 nodefabric 的 ListNodeUsers / PurgeStaleAlive，依赖迁移 00094 的 app.device_limit_window_minutes 与 subscription_online_devices
 // [OUTPUT]: 对外提供 TestDeviceWindowPG18
 // [POS]: domain/subscription 的设备识别窗口 PG18 门禁（delivery 域）：同一批在线记录在 5 与 30 分钟窗口下在线数不同，strict 判定与下发给节点的用户跟着变；清理截止不删窗口内的行（R103）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package subscription
 

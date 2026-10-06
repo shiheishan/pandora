@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/pg18test 打开 content 域的一次性库，依赖 service.go 的 PublishVersion 与 feedback.go 的 SubmitFeedback
 // [OUTPUT]: 对外提供 TestContentFeedbackPG18
 // [POS]: domain/content 的 PG18 测试：反馈按（文章、版本、用户）覆盖写，看不到的文章 404，不存在的版本 422
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package content
 

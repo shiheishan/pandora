@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 proxy.go 的 proxyAdapter，依赖 vless_request.go 的 vlessDestination，依赖 DataPlane 的 UDP 路由，依赖 udp_relay.go 的 relayUDPDirections
 // [OUTPUT]: 包内提供 handleSOCKSUDP、SOCKS5 UDP 数据报的解析与封装、socksUDPAssociation / proxyUDPEvent / proxyUDPRoute
 // [POS]: kernel 的 SOCKS5 UDP ASSOCIATE：从 proxy.go 拆出。控制连接存活期间转发数据报，关联锁定首个来源，每个目的地址一条经 DataPlane 路由的 PacketConn，上下行各占一个 goroutine，按用户计量
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

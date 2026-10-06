@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../core/format 的 formatMoney，依赖 ./schemas 的类型
  * [OUTPUT]: 对外提供营销页的纯函数：金额 / 百分比输入换算、优惠文案、券与卡码与提现的状态映射、礼品卡面额与兑换内容、批次显示名、卡码筛选查询串与掩码报表文件名、兑换率，以及三张表单（优惠券、礼品卡模板、生码、佣金设置）到请求体的构建与前端校验
  * [POS]: admin/screens/marketing 的逻辑层，组件只负责渲染与交互；映射全部取自 api-contract.md 后台-06 条目的「设计 / 映射」行，marketing.test.ts 逐条守住
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatMoney } from '../../../core/format'
 import type { Batch, CommissionOverview, Coupon, GiftTemplate, Plan, Rewards, Usage } from './schemas'

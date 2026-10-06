@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 的 Load 与 TopDecls 逐声明取 admin、public、node 三个包非测试源码的语法树与导入名表
 // [OUTPUT]: 对外提供 TestAPIHandlersWriteResponsesOnlyThroughHttpx
 // [POS]: api 的跨包守卫（本目录只有测试文件）：处理器不许绕开 platform/httpx 直接写响应，确有理由的按「包目录 + 文件 + 声明名」进白名单，白名单项失效同样变红；与 handler_sql_guard_test.go 并列
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package api
 

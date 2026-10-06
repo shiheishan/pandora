@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 createHash / randomBytes / randomUUID，依赖 ../types 的 Json / MockContext / MockResult / MockRoute，依赖 ./users 的 GROUPS 与 setPoolSource（R104 名单登记回用户组）
  * [OUTPUT]: 对外提供内置出站判定 isBuiltin 与规范小写 canonicalTag，服务器、节点池、全局路由的假数据（servers / pools / globalRouting）、路由校验 validateRouting（单节点、路由组与全局共用）、悬空引用口径的登记点 setDanglingSource 与 RoutedNode 类型、空体判断 emptyBody、心跳保活 keepAlive、按池统计在线节点数 activeNodesInPool（与节点池列表的 active_nodes 同口径，给套餐假后端用），以及 infraRoutes(节点存储) 返回的路由表
  * [POS]: dev/mock/admin 的「节点与服务器（后台-07）」基础设施部分的假接口，由 nodes.ts 引入并入同一个 MockModule（登记表不动）：服务器列表 / 新建 / 详情 / 下属节点 / 编辑 / 改状态（合法边、进入 ready 要有可服务节点）/ 删除（仅草稿或已退役，名下节点级联静默）/ 安装令牌；节点池增删改（删除前查节点、套餐、未用令牌；R104「仅限用户组」名单：带字段要 reauth、校验格式 / 重复 / 上限 100 / 存在性，经 setPoolSource 登记回用户组）；全局出站与分流读写（revision 为规范 JSON 的 sha256，删除仍被组或节点规则引用的出站回 409、只拒新造成的悬空，R56 / 00096）。节点存储以参数传入而不 import nodes.ts，避免循环依赖。权限 / reauth / 幂等 scope / 校验文案照契约与 Go 的 server.go、server_admin.go、pools.go、node_routing.go
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockResult, MockRoute } from '../types.ts'

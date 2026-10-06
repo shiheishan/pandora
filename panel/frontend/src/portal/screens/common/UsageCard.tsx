@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ../../../core/router 的 href，依赖 ../../../ui 的 Card / Skeleton / Empty，依赖 ./subscriptions 的 useSubscriptionUsage，依赖 ./traffic 的 buildUsageBars / projectUsage / bytesParts / TrafficSummary，依赖 ../../../core/format 的 formatBytes，依赖 ./Blocks 的 LoadError
  * [OUTPUT]: 对外提供 UsageCard
  * [POS]: portal/screens/common 的「本期用量」卡（门户-01 设计稿）：按日柱状图 + 日均 / 今天 + 「按目前的速度…」预测，不够用时给「买流量包 →」；概览放在主卡下方，我的订阅放在页尾看选中那条订阅
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { formatBytes } from '../../../core/format'
 import { href } from '../../../core/router'

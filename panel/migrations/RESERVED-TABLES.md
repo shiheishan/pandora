@@ -40,5 +40,3 @@ configure-app-role.sql、在用表外键或冻结契约）本身就是需要用�
 | subscription_transitions | 00003_catalog_subscription.sql | 库内使用 | 订阅状态机合法转换表：迁移种子写入，守卫函数读取；tests/invariants.sql 引用；configure-app-role.sql 授权 |
 | system_setting_revisions | 00009_security_audit.sql | 孤儿 | configure-app-role.sql 与 00011 授权；系统设置无修订历史 |
 | trial_grants | 00003_catalog_subscription.sql | 孤儿 | tests/invariants.sql 引用；试用套餐未实现 |
-
-[PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

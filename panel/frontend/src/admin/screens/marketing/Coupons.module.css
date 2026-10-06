@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 的令牌
  * [OUTPUT]: 对外提供 Coupons.tsx 用到的类名
  * [POS]: admin/screens/marketing 优惠券列表的网格（设计稿六列：优惠码 / 优惠 / 适用套餐 / 使用 / 有效期至 / 启用），行高 46、表头 36、展开区左缩进 32；最窄 720，窄屏在面板里横向滚动
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .grid {

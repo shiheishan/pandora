@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 zod
  * [OUTPUT]: 对外提供 RESET_STRATEGIES、priceSchema / Price、planSchema / Plan
  * [POS]: portal/screens/common 的套餐目录形状层（纯 zod，不碰 React）：契约门户-03 GET v1/plans 的一行（含修订 R69、R99、R100）；catalog.ts 转出并在其上建查询与文案，tests/mock-portal.test.ts 直接拿它核对假后端
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
 

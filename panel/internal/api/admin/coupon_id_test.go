@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 coupon.go 的 setCouponStatus / couponRedemptions，依赖 chi 路由上下文与 platform/httpx
 // [OUTPUT]: 对外提供 TestCouponHandlersRejectMalformedIDsAsNotFound
 // [POS]: api/admin 优惠券处理器的单元测试：路径 id 不是 UUID 时在碰数据库之前回中性 404（以前是 500）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

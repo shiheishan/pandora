@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useState，依赖 ../../../core/router 的 navigate，依赖 ../../../ui，依赖 ./AnnounceEditor，依赖 ./logic 的公告展示函数，依赖 ./queries 的 useAnnouncements，依赖 ./schemas 的类型，依赖 ./content.module.css
  * [OUTPUT]: 对外提供 AnnounceTab（内容与外观 · 公告标签）
  * [POS]: admin/screens/content 的公告（设计稿 t_announce）：左栏「＋ 新建公告」与公告卡片（置顶、级别、状态彩字、可见范围 · 时间，已撤回淡显），右栏 AnnounceEditor。选中项在地址上（rest[0] = 公告 id 或 new），没选时落在第一条；新建只是本地草稿，首次「保存草稿 / 发布」才 POST，建成后地址换成新 id。已撤回公告「复制为新公告」把标题正文与设置带进新建
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState } from 'react'
 import { navigate } from '../../../core/router'

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform 的 crypto/db/httpx/audit；读 node_pool_user_groups（00093）与 users.user_group_id
 // [OUTPUT]: 对外提供 ServingNode、AuthenticateNode、IssueServerToken、ListNodeUsers、PoolAdmitsUserSQL（池限定用户组的唯一谓词）、DeviceWindowMinutes 与 PurgeStaleAlive（清理截止 70 分钟，不小于最大设备窗口，R103）、ReportAlive / ReportRuntimeStatus
 // [POS]: domain/nodefabric 的 UniProxy 兼容数据面：节点鉴权、令牌签发（写审计、记签发时间与签发人、拒绝已退出服务的节点）、用户下发（只下发给套餐绑定了本节点所在池的订阅，无池节点不下发任何人；池限定了用户组时只给名单内组的用户，R104）、在线与运行状态上报；配置组装在 uniproxy_config.go，流量上报与扣量在 uniproxy_traffic.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

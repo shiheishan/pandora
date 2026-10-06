@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 shadowsocks.go 的 shadowsocksAdapter、主密钥与子密钥派生，依赖 vless_request.go 的 vlessDestination，依赖 DataPlane 的 UDP 路由
 // [OUTPUT]: 包内提供 packetLoop、handlePacket、decodeUDPPacket / encodeUDPPacket、userMasterKey 与目的地址的转换与序列化
 // [POS]: kernel 的 Shadowsocks AEAD UDP：从 shadowsocks.go 拆出。逐包按用户主密钥试解定位用户，经 DataPlane 路由并计量，回包用同一用户的密钥加密
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

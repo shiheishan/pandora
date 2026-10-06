@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的连接池与 platform/crypto 的信封加密
 // [OUTPUT]: 对外提供 Service、NewService、SetUsersChangedNotifier；包内提供 notifyUsersChanged / notifyIfFulfilled 与 addInterval、newOrderNo、jsonAgg、couponID、orderKindFor、nullIfEmpty 等共用小工具
 // [POS]: billing 的服务骨架：从 checkout.go 拆出。履约改变交付集合后经注入的 onUsersChanged 在提交后发租户级节点通知，零元单由 notifyIfFulfilled 补发；下单、结算、续费、变更等用例分在同包各文件
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

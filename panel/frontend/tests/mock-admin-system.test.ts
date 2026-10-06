@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/admin/screens/system/schemas 的邮件 / Telegram / 模板 / 钩子 schema
  * [OUTPUT]: 对外提供通知与插件（后台-09 前半）假接口的测试
  * [POS]: tests 的通知假后端守卫：只读账号只开放模板、SMTP 整体覆盖与密码保留 / 清空、注册校验、Telegram chat id 缺省不改与测试回落、模板变量白名单 / 预览 / 恢复默认 / 测试信要 reauth、钩子 upsert 一次性密钥、内网地址与未知事件 422、越界 500、投递记录 null、删除 404
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:fs / node:vm 执行 src/core/theme-boot.js，依赖 src/core/theme.ts 的 THEME_STORAGE_KEY，依赖 vite.config.ts 的配置函数与 themeBootFileName
  * [OUTPUT]: 对外提供主题引导脚本与构建配置的测试
  * [POS]: tests 的首帧守卫：引导脚本在各种存储状态下都写出合法主题、与 theme.ts 用同一个键；showcase 与 dev/mock-api 都不可能被构建进产物
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'

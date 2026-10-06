@@ -4,7 +4,6 @@
  * [POS]: dev/mock/admin 的「安全与运维（后台-09 后半）」假接口；形状、权限、reauth、幂等与文案照 api-contract.md（含 R23 R40 R41 R44 R58）与 Go 的 audit_log.go + adminops/audit.go、access_log.go、risk.go + adminops/risk.go、handlers.go setSwitch + adminops SetSwitch：
  *        审计（q / action 前缀 / actor_kind / outcome、limit 越界回 50、存量行无 auth_context 与来源 IP）与导出（两个权限 + reauth、日期 422、5 万行上限、BOM 与防公式、导出本身记审计）；访问日志（审计与订阅拉取两路归并、分类表与 Go 同一张、category / outcome 未知 422、IP 精确、账号 UUID 或邮箱片段，每次读按流逝时间补几条新事件让「实时尾随」有动静）；
  *        IP 聚类（成员取真实种子用户、风险按 Go 的 clusterRisk、标记正常 30 天内默认不列）、标记正常（note ≤ 500）、批量停用（两个权限 + reauth + 幂等 ip_cluster_disable，逐个跳过自己 / 非成员 / 后台账号 / 已停用，一个都没停成不写结论）；降级开关（八行种子（R102 删去三个未接入的）、核心项与关闭不给原因回 409 数据库原文、切换记审计）。按 DisallowUnknownFields 拒绝未知字段
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { createHash, randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult } from '../types.ts'

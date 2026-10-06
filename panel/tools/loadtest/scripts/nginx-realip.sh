@@ -2,7 +2,6 @@
 # [INPUT]: 依赖同目录 nginx-loadtest-realip.conf 模板，依赖 nginx、systemctl 与 python3（校验 IP，与 deploy/update-cloudflare-realip.sh 同一前提）
 # [OUTPUT]: 压测期间用模板顶替 /etc/aegispanel/cloudflare-realip.conf（须已由 deploy/render-nginx.sh 生成；原文件备份为 .loadtest-orig），nginx -t 通过才 reload、失败自动回滚；disable 还原
 # [POS]: tools/loadtest/scripts 的 nginx 真实 IP 开关，压测前 enable、压测后 disable；为什么要顶替而不是追加见模板注释
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 用法（面板主机，root）：
 #   nginx-realip.sh enable <压测机 IP> [更多 IP...]

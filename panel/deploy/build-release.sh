@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 go、npm（make frontend-embed）、../cmd 下的面板入口、../../pdnd、../migrations、同目录的安装脚本与 systemd 单元
 # [OUTPUT]: 每个架构一份发布包目录与 tar.gz：bin/（含钉版本的 goose）、pdnd-dist/、migrations/、deploy/（含现场生成的 release-artifact.env）、SHA256SUMS 及两个 sidecar 摘要
 # [POS]: deploy 发布链的起点，产物由 install.sh / install-linux-binaries.sh / release-stop-the-world.sh 消费；panel-pg18.yml 从这里读 goose 版本
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

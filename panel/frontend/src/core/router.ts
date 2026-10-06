@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useMemo / useSyncExternalStore，依赖浏览器 window.location 与 hashchange 事件
  * [OUTPUT]: 对外提供 HashLocation、parseHash、href、navigate、matchPath、subscribeHash、useHashLocation
  * [POS]: core 的 hash 路由原语，两个入口的外框与页面据它切页、拼链接；不含路由表，路由表属于各入口
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMemo, useSyncExternalStore } from 'react'
 

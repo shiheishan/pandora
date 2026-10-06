@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 commission.go 的 CommissionDefault* 常量，依赖迁移 00028 / 00029 的种子与 platform/sourcetest（读本包 loadCommissionConfig 与后台分销总览 Service.AdminCommissionOverview）
 // [OUTPUT]: 对外提供 TestCommissionDefaultsMatchSeed
 // [POS]: billing 的单元测试：分销参数缺行时计提与后台分销页用同一组回退值，且等于迁移里生效的种子（⑩）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

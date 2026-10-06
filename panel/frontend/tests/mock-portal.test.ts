@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers 的 serve / close，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS，依赖 ../src/portal/screens/common/catalog-schema 的 planSchema
  * [OUTPUT]: 对外提供门户假接口的测试
  * [POS]: tests 的门户假后端守卫：外框读接口来自各页面模块、套餐目录能被页面 schema 接住（R99 / R100）、快捷登录令牌一次性往返、同一会话重新生成作废旧令牌、下线外壳会话让那枚令牌失效
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

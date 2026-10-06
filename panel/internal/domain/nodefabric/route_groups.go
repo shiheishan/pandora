@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 config_publish.go 的 lockLegacyConfigRelease，依赖 routing_refs.go 的悬空引用校验，依赖 routing_merge.go 的 groupOrder，依赖 platform 的 db/audit/httpx；读写 route_groups / route_group_members / nodes（00096）
 // [OUTPUT]: 对外提供 RouteGroup / RouteGroupMember / RouteGroupRef、RouteGroupWrite，Service 的 ListRouteGroups / CreateRouteGroup / UpdateRouteGroup / DeleteRouteGroup 及其输入类型；包内 lockRouteGroupTx、bumpRoutingNodesTx、parseRouteGroupID
 // [POS]: domain/nodefabric 的路由组本身（元信息、列表、增删改）：组是 node_outbounds / node_routes 的第三个范围，组内路由与成员的写在 route_group_routing.go；凡改变成员节点生效配置的写（改组序、删组）都持 node-config-release 锁、同事务推进成员节点 generation，返回节点由 handler 提交后通知
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

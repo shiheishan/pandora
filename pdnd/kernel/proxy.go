@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 adapter.go 的 Adapter 契约与 DataPlane，依赖 accept_loop.go 的 runAcceptLoop，依赖 connerror.go 的 connErrorReporter，依赖 vless_request.go 的 vlessDestination，依赖 core 的用户与 route 的路由
 // [OUTPUT]: 对外提供 proxyAdapter（经 newSOCKSAdapter / newHTTPProxyAdapter 注册）的 Protocol、Validate、Start、用户表与计量方法、Close；包内 handleConn（统一上报会话与延迟 TLS 握手失败）/ serveConn
 // [POS]: kernel 的 socks 与 http 入站共用适配器：SOCKS4/4a/5 CONNECT、HTTP CONNECT 与正向 GET，认证绑定面板下发的用户 UUID；SOCKS5 UDP ASSOCIATE 在 proxy_udp.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

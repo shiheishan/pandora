@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 panel 的 Client（兼容通道 UniProxy）与 SignedClient（签名通道），依赖 core 的 Core 抽象
 // [OUTPUT]: 对外提供 Node、New、NewWithSignedClient、Tag、Run
 // [POS]: pdnd/node 的唯一业务文件，面板与内核之间的闭环：按节拍拉配置（含协议切换与失败回滚）、同步用户、上报流量与心跳；签名通道在时优先走签名通道；入站重建或回滚失败时经 resetUserMirror 把本地用户镜像、增量基准与客户端用户 ETag 一并作废；兼容通道上配置应用失败且节点已停时作废配置 ETag 以便下一轮重试
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package node 把面板与内核粘起来：拉配置、同步用户、上报流量。
 package node

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 net/http/httptest 起假网关，依赖 domain/subscription 的 DetectFormat 决定假订阅回哪种 Content-Type，依赖 ltkit 的 Manifest
 // [OUTPUT]: 对外提供 测试用的 fakePanel（public 与 admin 两个假网关、请求记录与 burst 用的用户状态）与 testManifest
 // [POS]: tools/loadtest/userload 测试的假面板：只模拟 users / burst 用到的路由与形状，顺带核对每个请求的 X-Real-IP 是否是该用户固定的地址
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package userload
 

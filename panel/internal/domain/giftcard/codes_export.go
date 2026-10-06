@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 codes.go 的 CodeFilter 与 codeFilterCond（与列表同一筛选口径），依赖 gift_card_codes / gift_card_templates / users 表，依赖 platform/audit、platform/db、platform/httpx
 // [OUTPUT]: 对外提供 CodesExportMax、CodeReportRow、ExportCodes
 // [POS]: giftcard 的掩码报表导出（运营对账用）：按卡码列表的筛选整批取出，掩码在 SQL 里算好，明文列的值从不离开数据库；与 batches.go 的一次性明文导出是两条互不相干的出口
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package giftcard
 

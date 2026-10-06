@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 crypto/ed25519 的节点签名与配置验签，依赖 net/http 访问面板 /v1/nodes/*
 // [OUTPUT]: 对外提供 Identity、BootstrapOptions、LoadIdentity / SaveIdentity、CanonicalSignedServer、SignedClient（Heartbeat、Config、ReportConfig、ReportEffectiveConfig、VerifyConfig、Do）
 // [POS]: pdnd/panel 的签名通道：节点身份的落盘格式与每个请求的 Ed25519 签名；身份由 enrollment.go 的两阶段接入产生，本文件只消费它（旧的一步式 /v1/nodes/bootstrap 面板已返回 426，客户端已删）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package panel
 

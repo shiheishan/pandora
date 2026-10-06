@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 go-redis 的 Pub/Sub 与 log/slog
 // [OUTPUT]: 对外提供 Event、Hub、NewHub、ChannelAdmin / ChannelUser 等频道名、Publish、Subscribe、Count、FormatSSE
 // [POS]: platform/realtime 的核心：本机 SSE 连接的订阅索引与跨实例广播；有 Valkey 时同时启动消费与连接数上报（connections.go）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package realtime 提供服务端推送，让页面不刷新也能跟上数据变化。
 //

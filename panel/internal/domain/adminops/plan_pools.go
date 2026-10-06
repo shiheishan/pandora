@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform 的 audit/db/httpx，读写 plan_node_pools、plan_versions.row_version，读 plans / node_pools / nodes
 // [OUTPUT]: 对外提供 PlanPoolOption、PlanPoolBindings、SetPlanPoolsInput、ValidateEditablePlanPoolVersion 与 Service 的 PlanPools / SetPlanPools
 // [POS]: adminops 套餐目录的「套餐版本 ↔ 节点分组」绑定（从 api/admin 的 pools.go 下沉，与 plan_wizard 同为 plan_node_pools 的写入方）：读取时有草稿给草稿、没有就给当前发布版且只读；替换只许改未冻结草稿，FOR UPDATE OF pv 锁版本、按 id 顺序 FOR KEY SHARE 锁池防死锁、row_version 乐观锁并同事务审计；交付集合变化的通知由 handler 在提交后发
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

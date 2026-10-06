@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 MaskCode、读模型 Code / Usage 与 generateSampleSize，依赖 platform/sourcetest 按名取 Service.GenerateCodes 与 Service.ExportBatch 的源码
 // [OUTPUT]: 对外提供 TestMaskCodeShowsPrefixAndFourRandomCharacters、TestGiftCardReadModelsCarryOnlyMaskedCodes、TestGenerateCodesKeepsOnlyASmallPlaintextSample、TestExportBatchMarksReadsAndAuditsInOneTransaction
 // [POS]: giftcard 礼品卡码的脱敏、生成只回少量明文样本、一次性导出在一个事务里且审计不带码
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package giftcard
 

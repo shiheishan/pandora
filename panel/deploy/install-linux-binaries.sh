@@ -2,7 +2,6 @@
 # [INPUT]: 依赖带外获得的 PANDORA_RELEASE_MANIFEST_SHA256、发布目录的 SHA256SUMS、同包 platform.sh / preflight-linux.sh、systemctl
 # [OUTPUT]: 以可回滚事务把二进制、运维脚本、数据文件（含 release-artifact.env）、systemd 单元装进 /opt/aegispanel 与 /etc/systemd/system
 # [POS]: install.sh 第 8 步调用的事务安装器；只装文件不启服务，失败整体回滚，未完成的事务让下一次安装 fail closed
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -Eeuo pipefail
 umask 022
 

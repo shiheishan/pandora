@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:fs 读取 src/{admin,portal}/index.html 源文件
  * [OUTPUT]: 对外提供入口源文件契约测试
  * [POS]: 构建前的快速守卫，与 panel/web/app_test.go 对真实产物的检查同一组部署前提；后者是最终裁决，这里只让错误在 npm test 就暴露
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'

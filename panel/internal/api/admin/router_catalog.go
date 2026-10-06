@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerPlanRoutes、registerTrafficPackRoutes、registerCatalogPlanUpdate、catalogIdempotencyFactory
 // [POS]: api/admin 路由表的「套餐目录、向导、版本与价格，以及流量包目录；PUT /plans/{id} 经 registerCatalogPlanUpdate 注册，便于测试注入幂等中间件」段，由 NewRouter 按原注册顺序调用；处理器在 catalog.go 与 traffic_packs.go；套餐绑节点分组的两条路由在 router_nodes.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 userload.go 的 usersConfig（各类速率与面板限流档位），依赖 traffic.go 的 actor（固定来源 IP）
 // [OUTPUT]: 对外提供 包内的 panelLimits、preflight（按配置速率预估每个限流维度的峰值并给出告警）、netKey（与 middleware.ByIPPrefix 同口径的网段键）
 // [POS]: tools/loadtest/userload 的开跑前自检：压测要测的是面板而不是限流，速率会撞上哪一道闸门在开跑前就说清楚，结果里的 429 才分得清是预期还是意外
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package userload
 

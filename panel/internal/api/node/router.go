@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/nodefabric 的节点服务与事件流、middleware 的公共链、platform 的 config/db/httpx
 // [OUTPUT]: 对外提供 Deps、NewRouter；包内 requireEnrollmentSignature / requireNodeSignature 两道验签中间件与节点 ID 的 context 键
 // [POS]: api/node 的装配点：/healthz、UniProxy 兼容组、两阶段入网组与签名节点组；验签在这里，业务在 handlers.go，SSE 在 stream.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package node 实现 Node 域网关（EXT-001 令牌域之一）。
 //

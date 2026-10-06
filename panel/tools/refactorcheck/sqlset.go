@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 compare.go 的 git、wantFile、multisetDiff，依赖 go/parser 读字符串字面量
 // [OUTPUT]: 对外提供 runSQLSet、collectSQL、looksLikeSQL、normalizeSQL
 // [POS]: tools/refactorcheck 的 sqlset 子命令：SQL 跨包下沉（handler → domain）时 compare 按目录比声明证明不了，这里改为比整棵目录树里 SQL 字符串字面量的多重集合，相同即「SQL 一字未改、只换了地方」
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package main
 

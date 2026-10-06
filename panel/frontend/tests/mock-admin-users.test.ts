@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./mock-helpers，依赖 ../dev/mock-api 的 MOCK_ACCOUNTS
  * [OUTPUT]: 对外提供用户（后台-03）运营类假接口（users-ops.ts）的测试
  * [POS]: tests 的用户运营假后端守卫：流量重置先 reauth、清零与日志、重放、无生效订阅 422，批量预览 / 导出 / 生成同一份名单，用户组删除 409，设备模式校验与 R103 识别窗口，设新密码不要原因（R101）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 announcement_pg18_test.go 的 openAnnouncementPG18、step3_pg18_test.go 的 step3Seed / step3Do / step3Nodes，依赖 risk.go、audit_log.go、node_admin.go、appearance.go 的处理器，依赖 platform/audit 与 crypto 写出带密文来源 IP 的审计样本
 // [OUTPUT]: 对外提供 TestIPClusterPG18（含 ipClusterActivePlans 的成员套餐名 R118 口径）、TestAuditLogPG18、TestNodeCountryAndCredentialsPG18、TestPluginDeliveryDurationPG18
 // [POS]: api/admin 的第 ④ 步 PG18 测试：风控聚类的复核与批量停用（M1）及成员 active_plan 的订阅态口径（R118）、审计认证强度与导出（M6）、节点国家与令牌签发记录（M8）、webhook 投递耗时（M7）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

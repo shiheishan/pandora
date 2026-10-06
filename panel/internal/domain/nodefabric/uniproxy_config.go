@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 uniproxy.go 的 ServingNode，依赖 routing_merge.go 的 loadNodeRoutingTx，依赖 platform/db 开事务
 // [OUTPUT]: 对外提供 NodeConfigResponse、NodeOutbound、NodeRoute、Service 的 LoadRouting、BuildNodeConfig、ValidateRoutingMatcher
 // [POS]: domain/nodefabric 的 UniProxy 配置组装（GET /api/v1/server/UniProxy/config）：从 uniproxy.go 拆出。LoadRouting 只开事务、合并口径在 routing_merge.go（与有效发布物共用）；BuildNodeConfig 产出配置字节与 ETag，路由匹配条件翻成节点端 qnode 形状
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

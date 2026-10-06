@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/support 的用户侧工单用例（*Atomic 版本），依赖 platform 的 httpx/realtime 与 middleware 的幂等认领
 // [OUTPUT]: 对外提供 handlers 的 listTicketCategories、createTicket、listTickets、getTicket、replyTicket、closeTicket；包内 publishTicket
 // [POS]: api/public 的工单（OPS-001）：从 handlers.go 拆出。写操作消费幂等认领并写出事务内的预制响应；成功后经 publishTicket 给本人推实时事件；撤回在 selfservice.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

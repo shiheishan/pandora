@@ -2,7 +2,6 @@
  * [INPUT]: 无
  * [OUTPUT]: 对外提供 HELP_KINDS、HelpGroup / helpGroups、ArticleBlock / articleBlocks、SEARCH_MAX
  * [POS]: portal/screens/help 的纯映射（契约门户-09）：列表只留 kb_article / tutorial 并按 category 出现顺序分组（空分类归「其他」、排最后），正文按行拆成段落与「## 」小标题，交给页面渲染成纯文本节点（不用 innerHTML）；有单元测试
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 /** 帮助中心只收这两类；legal 与 page 不进来（契约门户-09 列表映射） */

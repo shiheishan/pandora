@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useCallback / useEffect / useState，依赖 ../../../core/router 的 href / navigate / useHashLocation，依赖 ../../actions 的 useCan，依赖 ../index 的 AdminScreenProps，依赖 ./UserList、./UserDrawer、./GroupsTab、./BulkTab、./DevicePolicy、./Resets，依赖 ./model 的 isStatusFilter
  * [OUTPUT]: 默认导出 Users 页面组件（登记表 React.lazy 的目标）
  * [POS]: admin/screens/users 的入口：用户（后台-03），按标签分发。「用户列表」是列表 + 抽屉：#/users/list/<用户 id>/<抽屉标签>?f=&g=&q=&o=，筛选、翻页、打开的用户与标签全在地址上；用户组、批量运营、设备策略、流量重置各是一个组件，流量重置的原因筛选与翻页同样在地址上（?r=&o=）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useCallback, useEffect, useState } from 'react'
 import { href, navigate, useHashLocation } from '../../../core/router'

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useEffect / useState，依赖 zod 的类型推导，依赖 ../../../core/api 的 isApiError，依赖 ../../../ui 的 Button / Card / ConfirmModal / QueryView / Switch / Tag / useToast，依赖 ./api 的 Telegram 与通知偏好读写，依赖 ./clock 的 useNow，依赖 ./model 的偏好行与倒计时
  * [OUTPUT]: 对外提供 TelegramCard、NotificationPrefsCard
  * [POS]: portal/screens/account 的外部通知渠道两张卡（契约门户-10）：Telegram 卡按「站点未启用 / 已绑定 / 展示绑定码 / 未绑定」四态，绑定码指令是 /start CODE（不是设计稿的 /bind）、10 分钟倒计时、展示期间 3 秒轮询绑定状态并给 t.me 深链；通知偏好三行 × 邮件 / Telegram 两列，交易类锁定开启，Telegram 列在未绑定或站点未启用时置灰。两卡共用 ['portal','account','telegram'] 一个查询
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useEffect, useState } from 'react'
 import type { z } from 'zod'

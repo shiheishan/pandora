@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的 Open（按 application_name 开池）、pg_stat_activity 观测锁等待，依赖 idempotency_recorder_test.go 的 commitTrackingWriter
 // [OUTPUT]: 包内提供 pg18OpenPool、pg18AssertRuntimeRole、pg18Serve* 请求工具、pg18WaitForBlockedActivity 等锁等待观测、pg18InTx，以及照线上契约独立重写（不调用生产实现）的期望请求哈希与 actor 作用域
 // [POS]: TestIdempotencyMiddlewarePG18 的夹具与工具，与门禁主体分开放
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

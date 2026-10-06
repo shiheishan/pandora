@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/adminops 的套餐目录用例（详情 / 新建 / 向导一次建成与改完 / 资料 / 版本 / 发布 / 价格 / 归档），依赖 platform/httpx、chi 的路径参数
 // [OUTPUT]: 对包内提供套餐目录处理器 getPlan、createPlan、createPlanComplete、updatePlanComplete、updatePlan、createPlanVersion、updatePlanVersion、publishPlanVersion、createPlanPrice、archivePlanPrice、archivePlan；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 套餐目录（含版本与价格）的 HTTP 外壳；向导两个处理器直接回领域层的输出结构，路由与保护链在 router_catalog.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

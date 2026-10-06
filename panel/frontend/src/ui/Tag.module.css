@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 的令牌
  * [OUTPUT]: 对外提供 Tag.tsx 用到的类名
  * [POS]: ui/Tag 的样式：七种配色对应规范「标签」一行
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .tag {

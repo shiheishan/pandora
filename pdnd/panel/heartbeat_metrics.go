@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 status.go 的 CollectRuntimeStatus（CPU / 内存 / 磁盘），依赖 /proc 的 loadavg、uptime、net/dev、net/sockstat(6)
 // [OUTPUT]: 对外提供 HeartbeatMetrics、CollectHeartbeatMetrics、HeartbeatInput.AttachHostMetrics、HostCapacity、CollectHostCapacity
 // [POS]: pdnd/panel 的签名通道资源指标：把本机采样换算成面板 nodefabric.Metrics 的整数口径，挂进 signed.go 的 HeartbeatInput，容量部分也供 enrollment.go 的 begin 请求；与 status.go（兼容通道 /status 的字节口径）共用同一份采样
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package panel
 

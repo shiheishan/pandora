@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerAuditRoutes、registerRiskRoutes、registerSwitchRoutes
 // [POS]: api/admin 路由表的「审计与导出、系统状态、风控画像与 IP 聚类处置、降级开关」段，由 NewRouter 按原注册顺序调用；处理器在 audit_log.go / system_status.go / profile.go / access_log.go / risk.go / handlers.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

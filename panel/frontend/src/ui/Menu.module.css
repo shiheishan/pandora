@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 styles/tokens.css 与 roles.css 的令牌
  * [OUTPUT]: 对外提供 Menu.tsx 用到的类名
  * [POS]: ui/Menu 的样式（规范「头像菜单」）：浮层用 --shadow，菜单项悬停与当前页用 --surface-3
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 .root {

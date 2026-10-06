@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 preparePlanPrices、priceSyncCurrencies，依赖 platform/sourcetest 按名取向导编辑及其辅助函数的源码
 // [OUTPUT]: 对外提供 TestUpdatePlanCompleteRunsInOneTransaction、TestPriceSyncScopeIsSubmittedCurrenciesPublicOffersOnly、TestPreparePlanPricesRejectsInvalidTierBeforeTransaction
 // [POS]: adminops 套餐向导编辑（缺陷 12）：一个事务、不调自带事务的公开用例、价格同步只动提交的币种的公开报价
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

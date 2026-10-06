@@ -1,7 +1,6 @@
 // [INPUT]: 依赖标准库 crypto/cipher，依赖 lukechampine.com/blake3 等密钥派生，依赖 connerror.go 的 markConnError（身份头与 AEAD 校验失败标为 auth）
 // [OUTPUT]: 包内提供 ss2022Key、ss2022SessionKey、ss2022ValidateIdentityHeaders、ss2022IdentitySubkey、ss2022Stream 与分块读写、ss2022IncNonce
 // [POS]: kernel 的 Shadowsocks 2022 密钥与 TCP 流：从 shadowsocks2022.go 拆出。会话密钥由 PSK 与 salt 派生，多用户时逐层校验身份头，TCP 正文按 AEAD 分块加解密
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

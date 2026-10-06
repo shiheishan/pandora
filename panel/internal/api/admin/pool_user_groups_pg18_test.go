@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 delivery_pg18_test.go 的 openDeliveryPG18 与 deliveryHarness，依赖 pools.go / pool_user_groups.go / usergroup.go 的处理器与 nodefabric.ListNodeUsers
 // [OUTPUT]: 对外提供 TestPoolUserGroupsAdminPG18
 // [POS]: api/admin 的节点池限定用户组 PG18 门禁（delivery 域）：名单读写的字段级 reauth、校验、审计与通知，删组被拒，换组后节点实际拉到的用户跟着变（R104）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

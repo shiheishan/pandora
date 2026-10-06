@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useCallback，依赖 ../core/api 的 isApiError，依赖 ../core/intent 的幂等键（转出），依赖 ../ui 的 useToast，依赖 ./me 的 useAdminMe
  * [OUTPUT]: 对外提供 useCan、useIntentKey、useFailure，以及纯函数内核 canWith、classifyFailure、handleFailure 与 FailureAction / FailureOptions / Fail 类型；转出 core/intent 的 useIntentKey、createIntentKey、endsIntent 与 IntentKey
  * [POS]: admin 各模块页写操作共用的三件小工具：按权限码判断、一次用户意图一把幂等键（实现在 core/intent，这里转出）、写失败的统一处理（reauth 取消静默、有 fields 标表单、其它 Toast；传了 intent 时 4xx 业务拒绝在这里丢弃幂等键）。hook 只是薄壳，逻辑在纯函数里，admin.test.ts 覆盖
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useCallback } from 'react'
 import { isApiError } from '../core/api'

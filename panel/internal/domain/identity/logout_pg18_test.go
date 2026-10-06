@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 middleware、platform/db、platform/token，依赖一次性 PG18 库（run-pg18-gates.sh 的 logout 域）
 // [OUTPUT]: 对外提供 TestLogoutCurrentSessionPG18ConcurrentSingleTransition 与 openLogoutPG18Fixture（库护栏，同包其它 PG18 用例共用）
 // [POS]: domain/identity 的 PG18 集成测试：并发退出只发生一次状态跃迁
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package identity
 

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:http 的 IncomingMessage / ServerResponse 类型
  * [OUTPUT]: 对外提供 Json、MockApp、MockUser、MockRaw、MockResult、AnonContext、MockContext、AnonRoute、MockRoute、MockModule、matchPattern、findRoute
  * [POS]: dev/mock 的处理器契约：mock-api.ts 为每个请求造一份上下文，按入口依次询问 admin/ 或 portal/ 下的模块处理器；模块文件只依赖这里，不碰会话、令牌、幂等表的实现（门户账号安全要列出与吊销外壳会话，经 otherSessions / revokeSession 两个方法）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 

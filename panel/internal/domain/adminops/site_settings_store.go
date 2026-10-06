@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform 的 db 租户事务、audit 同事务审计、httpx 的错误模型与请求 ID；读写 tenants.timezone
 // [OUTPUT]: 对外提供 Service.SiteTimezone / Service.SetSiteTimezone
 // [POS]: domain/adminops 的站点设置存取（R49）：站点时区即 tenants.timezone，门户按日用量与后台收入趋势都按它切日；时区名校验留在 api/admin（只做请求形状），这里只管读写、行锁与审计
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

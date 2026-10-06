@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 seed、nodesim、userload 三个子包的 Main
 // [OUTPUT]: 对外提供 可执行入口 loadtest（go run ./tools/loadtest seed|nodes|users|burst）
 // [POS]: tools/loadtest 的命令分发：面板压测工具链，只在压测机与 CI 冒烟上跑，不进发布包、不被任何包 import
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Command loadtest 给面板做资源占用实测：造数、模拟节点、模拟用户流量、触发全量重拉。
 //

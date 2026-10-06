@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 router_source_test.go 的 routerSource，依赖 platform/sourcetest 按名取公告 handler、notify 里公告保存 / 撤回事务体与定时发布的源码，依赖 platform/httpx 的错误码
 // [OUTPUT]: 对外提供 TestAnnouncementRouteContracts、TestAnnouncementWritesCarryAtomicAuditAndCAS、TestParseAnnounceTimeRequiresTimezoneAndNormalizesUTC、TestNormalizeAnnouncePlanIDsRejectsInvalidAndCanonicalizes
 // [POS]: api/admin 公告的路由门槛、写入审计与乐观锁（事务体在 notify）、入参规范化；状态机单测随实现在 notify/announce_admin_test.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

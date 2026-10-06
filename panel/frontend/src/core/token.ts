@@ -2,7 +2,6 @@
  * [INPUT]: 依赖浏览器 localStorage 与 window 的 storage 事件（均可注入，便于测试）
  * [OUTPUT]: 对外提供 TokenStore 接口、createTokenStore、tokenStorageKey
  * [POS]: core 的访问令牌存储，api.ts 从这里读 Bearer、reauth 后换新、401 时清空；shell/runtime 的登录态（useSignedIn）订阅它
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 // ---------------------------------------------------------------------------

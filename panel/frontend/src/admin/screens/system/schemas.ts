@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 zod
  * [OUTPUT]: 对外提供通知与插件页的 zod schema 与类型：邮件与注册设置、Telegram 设置、三个测试发送响应、通知模板（列表行、保存 / 恢复 / 草稿预览响应）、Webhook 钩子（列表与事件目录、保存、投递记录、测试投递）
  * [POS]: admin/screens/system 的数据边界：形状照 api-contract.md 后台-09 · 通知与插件（含 R14 R20 R21 R45 R59）并按 Go 的 mail.go、telegram.go、mail_template.go、notify/template_admin.go、plugin/hooks.go 核对——admin_chat_id 是无 omitempty 的指针（缺值 null），投递记录无数据时是 null，last_sent_at 为 omitempty
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { z } from 'zod'
 

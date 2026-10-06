@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 xhttp.go 的 XHTTPConfig 与请求元数据解析，依赖 native_transport_server.go 的 newInboundHTTPServer，依赖 reality_listener.go 的 REALITY 会话上下文，依赖 apernet/quic-go/http3 与 internal/realityquic/http3 的 HTTP/3 服务端
 // [OUTPUT]: 对外提供 XHTTPSession、XHTTPHandler、XHTTPServer（ServeHTTP、Serve、ServeH3、ServeH3Reality）；包内 newXHTTPDuplexConn、xhttpAddr
 // [POS]: kernel 的 XHTTP 服务端：HTTP/1、h2c、HTTP/3（含 REALITY QUIC）承载上的会话分派与双工连接，协议解码交给 vless / vmess 注入的 Handler；packet 模式的队列在 xhttp_packet.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

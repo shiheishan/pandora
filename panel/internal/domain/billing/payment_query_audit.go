@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 payment_query.go 的 queryOrderPayment / queryTarget，依赖 platform/audit 的 Write、platform/db、platform/httpx
 // [OUTPUT]: 对外提供 OrderQueryAuditAction、PaymentService.AdminQueryOrderPayment；包内提供 orderQueryResult
 // [POS]: billing 后台「向渠道查单」的审计外壳：查单本身与门户共用 payment_query.go，这里只在其后补一条带操作人的 order.payment_queried 审计；门户查单不经过这里
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./model 的全部纯函数，依赖 ./api 的 queueSchema
  * [OUTPUT]: 工单映射与 schema 的单元测试
  * [POS]: admin/screens/tickets 的纯逻辑测试：分段筛选到后端 query、状态下拉的可设与置灰、等待时长与 SLA 文案、消息气泡角色与发言人、消息时间、指派下拉；schema 守住后端 omitempty 与封闭枚举
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { queueSchema } from './api'

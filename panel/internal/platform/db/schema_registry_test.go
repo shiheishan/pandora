@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 migrations/*.sql goose Up 段里按序号重放的 CREATE / DROP TABLE、migrations/RESERVED-TABLES.md 登记簿，以及 internal/、cmd/、web/ 下的非测试 Go 源码
 // [OUTPUT]: 对外提供 TestSchemaTablesAreReferencedOrRegistered 契约测试
 // [POS]: platform/db 的 schema 同构守卫：迁移最终留下的表而 Go 从不引用的必须登记在 RESERVED-TABLES.md，登记了却被引用或已被后续迁移删除的必须删掉登记
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package db
 

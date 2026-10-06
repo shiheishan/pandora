@@ -2,7 +2,6 @@
 # [INPUT]: 依赖同目录 logrotate-aegis、systemd/ 下三个网关单元、build-release.sh、install-linux-binaries.sh
 # [OUTPUT]: 日志轮转的静态契约：轮转的 glob 覆盖三个网关单元 append: 写的每个日志文件，规则随发布包分发并装到 /etc/logrotate.d/aegis
 # [POS]: deploy 的静态测试，CI panel-deploy.yml 必跑；只读源码，不需要 root；曾经轮转 /opt/aegispanel/logs 而单元写 /var/log/aegis，谁也没发现
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

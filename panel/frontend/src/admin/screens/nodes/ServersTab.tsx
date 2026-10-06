@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useMemo / useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/format 的 formatDateTime，依赖 ../../../core/router 的 navigate，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./infra 的服务器纯函数，依赖 ./queries、./schemas、./serverActions，依赖 ./ServerDrawer 的 ServerDrawer / ServerFields / Meters，依赖 ./nodes.module.css 与 ./infra.module.css
  * [OUTPUT]: 对外提供 ServersTab（节点与服务器 · 服务器标签）
  * [POS]: admin/screens/nodes 的服务器卡片网格（设计稿 t_servers）：圆点（ready 且有心跳绿、心跳断红、其余灰）、名称 / 地区 · IP / agent、CPU · 内存 · 磁盘三条占用、节点标签（GET v1/nodes 按 server_id 分组）、在役 / 容量与从未心跳提示（契约待补·前端）；卡片三个动作：安装令牌（顶部深色命令条，令牌与命令分开、仅此一次）、标记维护 / 恢复服务 / 投入服务（映射到合法边）、删除（仅草稿或已退役，文案按后端级联静默改写）。「添加服务器」改为弹窗收名称、容量、备注，建成后紧接着签发安装令牌。点卡片名进详情抽屉，服务器 id 与抽屉标签记在 rest
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'

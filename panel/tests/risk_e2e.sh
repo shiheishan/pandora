@@ -2,7 +2,6 @@
 # [INPUT]: 依赖 PSQL（默认 /opt/aegispanel/deploy/psql.sh，库超级账号）、admin / public / node 三个网关（ADM / PUB / NODE，须是带端口的数字回环地址）、ADMIN_EMAIL / ADMIN_PASS，依赖三个一次性库确认变量，依赖 python3
 # [OUTPUT]: 内鬼检测（用户侧风控）的带标签端到端评估：门户分享提示、后台画像 7 天来源、共享 IP 聚类、设备超限四路检测各跑一族用例，机制断言记 [ OK ] / [FAIL]，误判只记 [EVAL] 不判红；同一用例集跑两轮比对一致性，按调参组扫阈值、留出组验证，最后一行 RISK_E2E_JSON 是整份机读结果
 # [POS]: panel/tests 的风控评估脚本，由 deploy/run-smoke-e2e.sh 在冒烟栈上跑（排在 e2e.sh 之前）；被测实现在 domain/adminops 的 risk.go / user_profile.go、domain/subscription 的 DistinctSources、nodefabric 的设备上限，判定阈值与前端 portal/screens/subs/labels.ts、admin/screens/users/RiskTab.tsx 一致
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 #
 # 评估「内鬼检测能不能正常运行」：这里的内鬼指用户侧的滥用——订阅被分享、批量刷号、
 # 一条订阅多人同时在线。审计哈希链不在本脚本范围。

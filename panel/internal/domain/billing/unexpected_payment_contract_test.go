@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取 Service.quarantineUnexpectedPayment 的源码
 // [OUTPUT]: 对外提供异常收款隔离的源码契约测试（重放分支、挂账证据形状、case_kind 白名单）
 // [POS]: billing 的源码契约门禁，与 00040 / 00095 的挂账守卫对照；真实 SQL 下的效果由 order_release 与 plan_change 两个 PG18 域证明
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

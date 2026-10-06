@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 router.go 的 Deps 与 NewRouter 里已挂 RequireAuth 的 /v1 分组，依赖 middleware 的权限/重认证/幂等链
 // [OUTPUT]: 对外提供 registerTelegramRoutes、registerMailSettingsRoutes、registerMailTemplateRoutes
 // [POS]: api/admin 路由表的「Telegram 配置、邮件设置、通知模板及三个测试发送」段，由 NewRouter 按原注册顺序调用；处理器在 telegram.go / mail.go / mail_template.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

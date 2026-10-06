@@ -1,7 +1,6 @@
 // [INPUT]: 只依赖标准库 context，不反向依赖任何内核实现
 // [OUTPUT]: 对外提供 Core 接口、ConfigApplier / InboundReadiness 可选能力、User / UserTraffic / InboundConfig / Outbound / Route / Routing 数据契约与 ConfigApplyError
 // [POS]: pdnd/core 的抽象根：kernel/ 的 NativeCore 与 core/ 下的兼容适配器都实现 Core，node/ 只面向它编程；ratelimit.go 与 counter/ 是同包 / 子包的共用件
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 // Package core 定义内核抽象。
 //

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/nodefabric 的节点分组用例（ListNodePools / CreateNodePool / UpdateNodePool / DeleteNodePool / CheckNodePoolAssignment）与 NotifyUsersChanged，依赖 domain/adminops 的套餐绑池 PlanPools / SetPlanPools，依赖 pool_user_groups.go 的名单校验，依赖 platform 的 db/httpx
 // [OUTPUT]: 对外提供 handlers 的 listNodePools / createNodePool / updateNodePool / deleteNodePool / assignNodePool / planPools / setPlanPools（提交后发租户级 node.users.changed，R104）与 notifyNodeUsersChanged、poolActorID
 // [POS]: api/admin 的节点分组：节点与套餐之间唯一的连接层；只解析与校验请求、调服务、提交后通知、写响应，不跑 SQL（分组在 nodefabric，套餐版本绑池随 plan_node_pools 的其他写入方在 adminops）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

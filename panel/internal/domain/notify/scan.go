@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db、domain/plugin 的事件发射，流量预警读 traffic_pack_grants 的剩余（00070）
 // [OUTPUT]: 对外提供 ScanExpiring、ScanQuota、ScanPaidOrders、StartScanner
 // [POS]: domain/notify 的后台循环：定时扫描入队并派发，Kick 触发只派发不扫描；扫描返回与日志的条数是 Enqueue 实际插入的行数，撞去重键的不计
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package notify
 

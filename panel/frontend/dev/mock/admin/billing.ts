@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 Json / MockModule / MockResult，依赖 ./billing-store 的订单 / 挂账 / 渠道 / 收入调整数据与视图，依赖 ./plans-store 的 plans，依赖 ./users 的 userStore
  * [OUTPUT]: 对外提供 billing 模块的假接口 MockModule
  * [POS]: dev/mock/admin 的「订单与收款（后台-05）」假接口：订单列表（q、status 逗号多值白名单、user_id、from / to、limit / offset，R63）/ 详情 / 支付记录 / 取消（state_version CAS）/ 人工开单（grant / pending / offline，R64 / R74）/ 标记已支付 / 向渠道查单（PAY-009，写权限 + 幂等不挂 reauth，假渠道规则确定）、挂账列表与转入余额（R3）、渠道列表与启停（R66）、收入调整列表 / 登记 / 冲销。权限 → reauth → 幂等 scope 照 router_billing.go 与 router_dashboard.go，校验键名与文案照 Go（billing 域 message 已随 R114 改为中文），按 DisallowUnknownFields 拒绝未知字段（apply-to-balance 例外，与后端的 json.NewDecoder 一致）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { Json, MockModule, MockResult } from '../types.ts'

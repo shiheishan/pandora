@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/nodefabric 的 ProxyUser 与事件流信封（StreamMessage、SyncUsersPayload、SyncUserDeltaPayload、SyncConfigPayload、Event* 常量），net/http
 // [OUTPUT]: 对外提供 包内 uniClient（newUniClient、users、config、push、alive、status、streamLoop）、streamEvent
 // [POS]: tools/loadtest/nodesim 的 UniProxy 兼容通道与 SSE，复刻 pdnd panel/client.go + stream.go：Bearer 鉴权、查询参数 node_id/node_type、ETag 只在解析成功后更新、流断开指数退避加抖动
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodesim
 

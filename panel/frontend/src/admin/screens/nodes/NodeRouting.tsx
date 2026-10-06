@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useState，依赖 @tanstack/react-query 的 useMutation，依赖 ../../../core/api 的 isApiError，依赖 ../../../shell/runtime 的 useApi，依赖 ../../../ui，依赖 ./logic 的规则行互转与来源文字，依赖 ./NodeRouteGroups 的所属组与生效预览，依赖 ./queries、./schemas，依赖 ./nodes.module.css
  * [OUTPUT]: 对外提供 NodeRouting（节点抽屉「路由」标签）与 RuleRows（规则行编辑器，全局与路由组共用的 ScopeRoutingEditor 复用）
  * [POS]: admin/screens/nodes 抽屉的单节点路由（契约待补·前端：后端有、设计缺）：GET / PUT v1/nodes/{id}/routing，全量替换本节点私有出站与规则；上方是所属路由组（NodeGroupMembership），下方是生效结果预览（EffectivePreview）；规则可以指向 direct / block、本节点私有出站、所在路由组与全局出站（R26 / 00096，按 tag 原样精确匹配，与下发和 pdnd 一致）；匹配类型只放后端支持的（D-D-1），兜底必须是最后一条启用规则，新规则插在末尾兜底之前；出站行的校验与互转在 logic。保存要 node.config.publish，成功后后端通知节点
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'

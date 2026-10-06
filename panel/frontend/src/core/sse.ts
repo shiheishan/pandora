@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 ./api 的 isApiError 判定不可恢复的失败，依赖浏览器 ReadableStream / TextDecoder / setTimeout
  * [OUTPUT]: 对外提供 SseEvent 类型、createSseParser、EventStreamOptions、openEventStream
  * [POS]: core 的实时事件流：fetch 流读 text/event-stream（Bearer 头，不能用 EventSource），断线按 retry 加抖动重连；连接由 api.openStream 提供，事件交给 query.ts 做失效
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { isApiError } from './api'
 

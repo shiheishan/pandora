@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 ./router.go 的 NewRouter，依赖 chi.Walk / Routes.Match 解析注册表
 // [OUTPUT]: 对外提供 public 路由契约测试与 assertRouteContract 断言助手
 // [POS]: api/public 的路由存在性守卫：登出、通知偏好、帮助文章反馈、根上的前端挂载，以及 /assets/* 与订阅通配互不抢路由
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

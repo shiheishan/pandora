@@ -1,7 +1,6 @@
 // [INPUT]: 依赖本包 collectSQL、multisetDiff
 // [OUTPUT]: 对外提供 TestSQLSetSurvivesMoveAcrossPackages、TestSQLSetCatchesEditedSQL
 // [POS]: tools/refactorcheck 的 sqlset 自测：SQL 从 handler 挪到 domain、换缩进、拼接片段原样保留判相同；改一个字、struct 标签不算 SQL
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package main
 

@@ -2,7 +2,6 @@
  * [INPUT]: 无外部依赖（纯函数；base64 用浏览器与 node 都有的 btoa）
  * [OUTPUT]: 对外提供 ClientApp、importClients、protocolLabel、rateLabel、copyText
  * [POS]: portal/screens/common 的客户端导入与节点展示映射：我的订阅「一键导入」深链、「可用节点」协议名与倍率；copyText 是概览与我的订阅复制订阅地址共用的剪贴板封装
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 // ---------------------------------------------------------------------------

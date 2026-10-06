@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useState / FormEvent，依赖 zod，依赖 ../core/api 的 isApiError，依赖 ../shell/runtime 的 useRuntime，依赖 ../ui 的 Modal / Button / Input / useToast，依赖 ./ChangePasswordDialog.module.css
  * [OUTPUT]: 对外提供 ChangePasswordDialog 与 passwordStrength
  * [POS]: admin 账户菜单「修改我的密码」（管理后台.dc.html pwd 对话框）：POST v1/me/password，成功后后端吊销全部会话（保留规则 4），这里随即清令牌回登录页
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useState, type FormEvent } from 'react'
 import { z } from 'zod'

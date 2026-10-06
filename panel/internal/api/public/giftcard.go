@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/giftcard 的 PreviewCode / Redeem / MyRedemptions，依赖 platform/httpx
 // [OUTPUT]: 对外提供 handlers 的 previewGiftCard / redeemGiftCard / myGiftRedemptions
 // [POS]: api/public 的礼品卡：预览卡面、兑换（路由上挂 marketing.giftcard.redeem 开关与幂等）、我的兑换记录；判断该不该发在 giftcard，怎么发交回 billing
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 

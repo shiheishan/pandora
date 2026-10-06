@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 domain/adminops 的 ListTrafficPacks / CreateTrafficPack / UpdateTrafficPack / SetTrafficPackStatus，依赖 platform/httpx、chi 的路径参数
 // [OUTPUT]: 对包内提供 listTrafficPacks、createTrafficPack、updateTrafficPack、setTrafficPackStatus 四个处理器；成功响应为具名 DTO（*Response）
 // [POS]: api/admin 后台-04 流量包 tab 的 HTTP 外壳；路由与保护链（catalog.publish + 重认证 + 幂等）在 router_catalog.go 的 registerTrafficPackRoutes
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

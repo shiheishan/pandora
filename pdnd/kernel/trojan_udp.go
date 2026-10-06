@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 trojan.go 的 trojanAdapter（DataPlane.ListenUDP、addTraffic）与 readTrojanAddress，依赖 vless_request.go 的 vlessDestination，依赖 udp_relay.go 的 relayUDPDirections
 // [OUTPUT]: 包内提供 handleTrojanUDP、Trojan UDP 帧（地址 | 长度 | CRLF | 负载）的 readTrojanUDPPacket / writeTrojanUDPPacket 与地址序列化
 // [POS]: kernel 的 Trojan UDP ASSOCIATE：trojan.go 在 UDP 命令时分派到这里。每个目的地址一条经 DataPlane 路由的 PacketConn，上下行各占一个 goroutine，按用户计量
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

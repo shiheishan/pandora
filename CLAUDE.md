@@ -79,11 +79,10 @@ L3 格式（其他语言换成各自的注释语法，Go 的写法见下方适�
  * [INPUT]: 依赖 {模块/文件} 的 {具体能力}
  * [OUTPUT]: 对外提供 {导出的函数/组件/类型/常量}
  * [POS]: {所属模块} 的 {角色定位}，{与兄弟文件的关系}
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 ```
 
-L2、L3 都带上面这行 `[PROTOCOL]`，写法固定不变。
+L2 末行带上面这行 `[PROTOCOL]`，写法固定不变；L3 不带。
 
 ## 怎么写 L2 / L3
 
@@ -116,7 +115,7 @@ L2、L3 都带上面这行 `[PROTOCOL]`，写法固定不变。
 - L2 是各模块目录的 CLAUDE.md，父级链接用仓库根相对路径
   - 已播种：panel、panel/internal 及其 api（含 admin、public）/domain/platform、panel/internal/platform/webapp、panel/internal/domain 下的 identity/notify/subscription/nodefabric/billing/appearance/support/adminops/plugin/content、panel/internal/platform/pg18test、panel/internal/platform/config、panel/internal/platform/sourcetest、panel/internal/platform/crypto、panel/internal/platform/realtime、panel/internal/platform/profiling、panel/internal/platform/server、panel/internal/domain 下的 dbbackup/giftcard、panel/internal/middleware、panel/tools/refactorcheck、panel/tools/loadtest、panel/tests、panel/internal/platform/httpx、panel/internal/api/node、panel/cmd 下的 aegis-admin/aegis-adminctl/aegis-node/aegis-public、panel/web、panel/deploy、panel/frontend 及其 dev（含 dev/mock、dev/mock/admin、dev/mock/portal）与 src 下的 admin（含 admin/screens 及已做页面的模块目录 dash/tickets/marketing/users/nodes/content/plans/system/billing/security）/portal（含 portal/screens 及已做页面的 common/overview/subs/plans/checkout/orders/wallet/referral/tickets/messages/help/account）/shell/core/ui/styles/showcase、panel/frontend/tests/smoke、pdnd、pdnd/kernel、pdnd/core、pdnd/node、pdnd/panel、pdnd/cmd/pandora-h3-probe、pdnd/release/acceptancepanel
   - 其余目录在进入时补建。
-- L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，四行 [INPUT]/[OUTPUT]/[POS]/[PROTOCOL]
+- L3 在 Go 文件里写成 package 子句之前的 `//` 注释块，三行 [INPUT]/[OUTPUT]/[POS]
   - TS/TSX 用模板里的 `/** */`
   - Go 文件多已带中文设计注释，L3 加在其上方（中间空一行，不成为包文档），不改写原注释
   - 带 `//go:build` 的文件，L3 放在构建约束与空行之后。

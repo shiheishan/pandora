@@ -2,7 +2,6 @@
 # [INPUT]: 依赖一台一次性 Linux 验证机（root、docker、systemd）与一份发布目录
 # [OUTPUT]: 安装链回归：全新安装、升级、老式 .env、备份单元 failed 四种形态，含 production 模式、发布物绑定已装且进了 aegis-node 环境、logrotate 规则已装且指向 /var/log/aegis
 # [POS]: deploy 的破坏性端到端测试，只在验证机上手工跑，CI 不跑；开头护栏挡着有真实用户的库
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 # 安装链回归测试：全新安装 与 存量升级 两种形态各跑一遍。
 #
 #   bash deploy/test-install.sh <发布目录>

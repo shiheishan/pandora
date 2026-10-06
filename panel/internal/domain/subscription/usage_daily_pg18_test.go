@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 usage_daily.go 的 Service.DailyUsage，依赖 nodefabric 的 UsageLocation / UsageDay，依赖迁移 00072 的 subscription_usage_daily
 // [OUTPUT]: 对外提供 TestUsageDailyReadPG18（run-pg18-gates.sh 的 usage_daily 域）
 // [POS]: domain/subscription 按日用量读模型的 PG18 集成门禁：本期窗口、补零、今天与日均、显式天数、无周期缺省、归属 404；写入路径见 nodefabric/usage_daily_pg18_test.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package subscription
 

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 SVGProps 类型
  * [OUTPUT]: 对外提供 IconCheck、IconChevronDown、IconClose 三个 16px 线性图标
  * [POS]: ui 的图标集，组件内部与页面共用；规范要求「图标只用线性单色」，所以只画 currentColor 描边，不填色
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import type { ReactNode, SVGProps } from 'react'
 

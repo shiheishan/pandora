@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 bulk_users.go 的 BulkFilter / buildFilterSQL、users.go 的 currentSubscriptionSQL，依赖 platform 的 db/audit/httpx
 // [OUTPUT]: 对外提供 BulkMailInput、BulkMailResult、Service.SendBulkMail
 // [POS]: domain/adminops 的群发邮件：按共用筛选一条 INSERT…SELECT 入队（营销偏好在 SQL 里过滤），正文 $email / $plan / $expire 逐人替换，写审计
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

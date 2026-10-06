@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db、audit、httpx
 // [OUTPUT]: 对外提供 ProviderRow、Service 的 ListProviders、SetProviderEnabled
 // [POS]: adminops 的支付渠道卡：从 service.go 拆出。卡片带租户时区今日分币种成交、近 24 小时成功率与最近回调时间；启停带审计
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

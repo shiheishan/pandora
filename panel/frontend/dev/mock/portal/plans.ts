@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 node:crypto 的 randomUUID，依赖 ../types 的 MockModule，依赖 ./catalog 的目录，依赖 ./fixtures 的 portalState / gate，依赖 ./billing 的校验、优惠码与下单
  * [OUTPUT]: 对外提供 plans 模块的假接口 MockModule
  * [POS]: dev/mock/portal 的「选购套餐（门户-03）」假接口，归门户前端；形状照 api-contract.md（含修订 R30、R69）：套餐目录与流量包目录（匿名）、我的流量包余量、优惠码试算（套餐 + 价格或 pack_id 两种形态）、购买流量包（幂等 scope order_create）
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { randomUUID } from 'node:crypto'
 import type { MockModule } from '../types.ts'

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/pg18test 打开 content 域的一次性库，依赖 service.go 的 PublishVersion / ListAdmin
 // [OUTPUT]: 对外提供 TestContentAdminListCreatedByPG18
 // [POS]: domain/content 的 PG18 测试（契约后台-08）：后台列表每个版本带作者 created_by 与 created_by_name（显示名，缺省邮箱）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package content
 

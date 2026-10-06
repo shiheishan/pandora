@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 system_components.go 的 postgresComponent
 // [OUTPUT]: 对外提供 TestPostgresComponentStates
 // [POS]: api/admin 系统状态 postgres 组件的状态判定单测：down / warn（统计读失败不写 metrics 键）/ ok（三个键齐全），对齐契约 R52
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

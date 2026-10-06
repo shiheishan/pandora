@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/pg18test 打开 support 域的一次性库，依赖 user_tickets.go 的 Create、agent_tickets.go 的 ListForAgent / GetForAgent，依赖 domain/adminops 的 ListUsers 作对照
 // [OUTPUT]: 对外提供 TestTicketUserActivePlanMatchesUserListPG18
 // [POS]: domain/support 的 PG18 测试（契约后台-02 / 后台-03 订阅态口径 R118）：工单队列与详情的 user_active_plan 与后台用户列表的 active_plan 逐人一致（宽限期、只有过期、另一租户的订阅）
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package support
 

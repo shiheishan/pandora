@@ -2,7 +2,6 @@
 # [INPUT]: 依赖同目录 migrate.sh、仓库真实的 ../migrations/*.sql，goose 用桩脚本代替
 # [OUTPUT]: migrate.sh 公开入口的拒绝矩阵，以及编号规则：真实目录能过、空号能过、同号与 00000 被拒
 # [POS]: deploy 的桩测试，CI panel-deploy.yml 必跑；不需要数据库或 root
-# [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 set -Eeuo pipefail
 umask 077
 

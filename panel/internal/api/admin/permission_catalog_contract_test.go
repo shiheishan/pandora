@@ -1,7 +1,6 @@
 // [INPUT]: 依赖本包非测试源码里的 RequirePermission 声明与 migrations/*.sql 里 INSERT INTO permissions 的权限字典
 // [OUTPUT]: 对外提供 TestRoutePermissionsExistInCatalog 契约测试
 // [POS]: admin 网关的权限字典守卫：00010_seed_rbac.sql 头部承诺“路由声明的权限码必须都在字典里”，运行时并没有那个启动核对，这里用源码契约测试落实它
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package admin
 

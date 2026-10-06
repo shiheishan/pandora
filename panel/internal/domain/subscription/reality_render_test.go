@@ -1,7 +1,6 @@
 // [INPUT]: 依赖本包的订阅渲染，节点配置用虚构 REALITY 公钥（与 nodefabric 夹具同一批假密钥对）
 // [OUTPUT]: REALITY 节点在 URI、Clash、sing-box 三种订阅格式里的参数渲染契约测试（pbk / sid / sni 齐全、单字符串 server_names、不波及普通节点）
 // [POS]: subscription 的 REALITY 输出守卫；只断言公开字段，私钥永不出现在订阅里
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package subscription
 

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/db 的租户事务，读 audit_events / audit_ip_clusters / users / subscription_fetch_log / subscription_credentials / subscriptions / subscription_usage_daily
 // [OUTPUT]: 对外提供 UserActivity、UserActivityEvent、UserActivityIP、UserPeer、UserFetch、TimeseriesPoint 与 Service 的 UserActivity / UserPeers / UserFetches / ActivityTimeseries
 // [POS]: adminops 的用户风控画像与行为时序读模型（从 api/admin 的 profile.go 下沉，与 audit.go / risk.go 同读审计表）：只给密文与哈希聚合，明文 IP 由 handler 用 Envelope 按表 AAD 解开；画像分三次事务读（行为与 IP、关联账号邮箱、订阅拉取），后两次失败时调用方照旧忽略、用已读到的部分
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package adminops
 

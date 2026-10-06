@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 ledger.go 的 Balance 与 AccountUserCommissionAvailable，依赖 reservations.go 的 prepareAndLockLedgerAccounts，读 withdrawals 的在途金额
 // [OUTPUT]: 对包内提供 lockUserCommissionAccounts、withdrawableCommission、commissionAvailableSnapshot
 // [POS]: billing 佣金「可用」的唯一口径（D-F-1），被 commission.go 的 RequestWithdrawal / CommissionSummary 与 commission_transfer.go 的 TransferCommissionToBalance 共用
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package billing
 

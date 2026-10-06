@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 idempotency.go 的 Idempotency 中间件、认领上下文（IdempotencyClaimFrom、newOwnedIdempotencyClaim）、请求哈希与目标、作用域与各段 SQL 常量
 // [OUTPUT]: 无导出；认领、键校验、作用域与 SQL 契约的单测
 // [POS]: middleware 幂等测试的入口文件：进库之前就失败的路径（缺主体、非法键、非法 actor UUID、基础作用域）、认领上下文的类型与拷贝、SQL 契约、完成探针分类；录制器、捕获边界与重放判定分在 idempotency_{recorder,capture,replay}_test.go
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package middleware
 

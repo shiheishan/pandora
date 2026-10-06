@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 的 Load / Refs 逐包找读环境变量的引用
 // [OUTPUT]: 对外提供 TestEnvironmentIsReadOnlyThroughConfig 与豁免表 envAccessExemptions
 // [POS]: platform/config 的源码守卫：panel/internal 与 panel/cmd 下非测试 Go 文件只有本包能读进程环境，豁免逐文件登记、失效即红
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package config
 

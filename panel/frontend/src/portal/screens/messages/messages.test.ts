@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 vitest，依赖 ./api 的 notificationSchema，依赖 ./model 的纯映射
  * [OUTPUT]: 无（测试）
  * [POS]: 消息的单元测试：通知 schema（sent_at / read_at 可空）、标签页取自查询串、通知 code 的跳转目标
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { describe, expect, it } from 'vitest'
 import { notificationSchema } from './api'

@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 encoding/base64、encoding/json，依赖 platform/httpx 的校验错误
 // [OUTPUT]: 对外提供 BrandingKeys、MaxSiteNameRunes、MaxTaglineRunes、MaxLogoBytes；包内提供 normalizeBranding（保存校验）与 filterBranding（门户读取过滤）
 // [POS]: domain/appearance 的站点品牌规则：主题的 branding 只有站点名、标语、Logo 三个键，service.go 的保存与门户读取都经过这里；与 tokens.go 的令牌白名单是同一种「存前严格校验、读时再过滤」的两道防线
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package appearance
 

@@ -2,7 +2,6 @@
  * [INPUT]: 无
  * [OUTPUT]: 对外提供 NODE_PROTOCOL_SCHEMAS（GET v1/node-protocol-schemas 的完整响应）
  * [POS]: dev/mock/admin 的协议 schema 夹具：由 Go 的 nodefabric.ProtocolSchemas() 在 9a6ce9f 上原样导出（json.Marshal），含 13 个 stable 协议与 2 个 legacy-read-compatible（v2ray / hysteria）；Go 的 nil 切片序列化成 null，这里照留，页面的 zod 必须接得住。后端改 schema 时按同样方法重新导出
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
 // prettier-ignore

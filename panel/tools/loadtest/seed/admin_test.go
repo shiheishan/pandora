@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 admin.go 的 adminClient、retryAfter、str / num，httptest 扮演后台网关
 // [OUTPUT]: 单测：429 按 Retry-After 退避后用同一个幂等键重试、reauth_required 走口令重认证后换新令牌重试、错误信封的 code 被解析、节流间隔生效、取值助手对缺字段报错
 // [POS]: tools/loadtest/seed 的后台客户端测试，不连真网关
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package seed
 

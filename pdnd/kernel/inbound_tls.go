@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 crypto/tls 的证书加载与服务端握手，依赖 rawString 读 raw 配置
 // [OUTPUT]: 包内提供 loadInboundTLSConfig（vless / vmess / trojan / socks·http / naive 共用的证书加载）、inboundHandshakeTimeout、withHandshakeDeadline、serverTLSHandshake
 // [POS]: kernel 的普通 TLS 入站边界：证书加载，以及「在连接自己的 goroutine 里、限时」的服务端握手；accept_loop.go 只管接连接，握手由各适配器为每条连接起的 goroutine 调这里完成
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package kernel
 

@@ -2,7 +2,6 @@
  * [INPUT]: 依赖 react 的 useSyncExternalStore，依赖浏览器 localStorage 与 document.documentElement
  * [OUTPUT]: 对外提供 Theme 类型、THEME_STORAGE_KEY、parseTheme、currentTheme、setTheme、toggleTheme、subscribeTheme、useTheme
  * [POS]: core 的主题状态，接管 theme-boot.js 在首帧前写好的 <html data-theme>；门户头像菜单与后台顶栏的「深色模式」开关都调它
- * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 import { useSyncExternalStore } from 'react'
 

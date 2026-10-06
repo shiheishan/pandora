@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 pgx 在调用方事务里读 node_outbounds / node_routes / route_group_members / route_groups / nodes，依赖 platform/httpx 的冲突错误
 // [OUTPUT]: 包内 visibleOutboundTagsTx、danglingRefsTx、refuseNewDanglingTx、danglingRef
 // [POS]: domain/nodefabric 的规则 → 出站引用校验（自定义出站按 tag 原样精确比较，与合并下发、pdnd 查表同一口径；内置 direct / block 不分大小写）：一条规则能指向哪些出站，与 routing_merge.go 的生效层同构（节点看得见全局、所在各组与自己的出站，组看得见全局与自己的）；各路由写路径在写前后各取一次悬空引用，只拒绝「这次修改新造成的」悬空，存量不连坐
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package nodefabric
 

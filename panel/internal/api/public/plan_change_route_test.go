@@ -1,7 +1,6 @@
 // [INPUT]: 依赖 platform/sourcetest 按名取 NewRouter 与 handlers.createPlanChange 的源码
 // [OUTPUT]: 对外提供 TestPlanChangeRoutes
 // [POS]: api/public 变更套餐路由的源码契约：下单挂独立幂等域并回放预制响应，试算不挂幂等
-// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
 package public
 
