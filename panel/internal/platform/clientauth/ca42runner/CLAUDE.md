@@ -1,7 +1,10 @@
 # panel/internal/platform/clientauth/ca42runner/
 > L2 | 父级: /panel/internal/platform/CLAUDE.md（clientauth/ 一行）
 
-CA42（CLIENT-AUTH 00042）的只读校验运行器：在 Linux amd64 / arm64 上保留授权、发布、执行计划、信任胶囊、外部清单与制品的全部描述符（文件须 root 所有），逐项复核身份与哈希后只算出下一条账本记录（RunReadOnlyVerification）。设计原则是「能力即类型」：生产组合只接受生产类型，测试缝返回刻意不同的类型，拿不到生产来源；对外 API 不暴露根密钥、描述符或可信时间。其余平台一律 fail closed（*_other.go、roots_unprovisioned.go）。
+CA42（CLIENT-AUTH 00042）的只读校验运行器：在 Linux amd64 / arm64 上保留授权、发布、执行计划、信任胶囊、外部清单与制品的全部描述符（文件须 root 所有），逐项复核身份与哈希后只算出下一条账本记录（RunReadOnlyVerification）
+  - 设计原则是「能力即类型」：生产组合只接受生产类型，测试缝返回刻意不同的类型，拿不到生产来源
+  - 对外 API 不暴露根密钥、描述符或可信时间
+  - 其余平台一律 fail closed（*_other.go、roots_unprovisioned.go）。
 
 成员清单
 cli.go / config.go: ParseCLI 只让调用方控制一个值，根、路径、身份、超时与执行策略全部编译期固定
