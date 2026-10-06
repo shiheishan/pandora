@@ -1,3 +1,8 @@
+// [INPUT]: 依赖 net/http 访问面板 UniProxy 端点（config / user / push / alive），依赖 core 的 User / UserTraffic 数据契约
+// [OUTPUT]: 对外提供 Client、Options、New，以及 Config / Users / Push / Alive / SetNodeType / SetUsersVersion / ForgetUsersVersion
+// [POS]: pdnd/panel 的兼容通道客户端，持有配置与用户列表两份 ETag；stream.go 复用它的 Transport 与鉴权，signed.go 是并列的签名通道
+// [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
+
 // Package panel 是节点端与面板之间的通信层。
 //
 // 走的是 UniProxy 协议（Xboard / V2board 兼容），而不是自定义协议：
@@ -265,6 +270,17 @@ func (c *Client) post(ctx context.Context, path string, v any) error {
 func httpError(what string, resp *http.Response) error {
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	return fmt.Errorf("%s 失败：HTTP %d %s", what, resp.StatusCode, bytes.TrimSpace(snippet))
+}
+
+// ForgetUsersVersion 丢掉记下的用户列表版本，下一次 Users 必然不带
+// If-None-Match、拿回全量。
+//
+// ETag 的语义是「内核里已经有这一版了」。内核的用户表一旦被清空（入站
+// 重建、回滚失败），这句话就不再成立；还拿着它去换 304，面板会如实回答
+// 「没变」，节点就带着一张空表一直跑下去。调用方在清空本地用户镜像的
+// 同一处调用它，两份状态才不会走散。
+func (c *Client) ForgetUsersVersion() {
+	c.usersETag.Store("")
 }
 
 // SetUsersVersion 记下当前的用户列表版本。
