@@ -137,4 +137,8 @@ func TestDeviceWindowPG18(t *testing.T) {
 		t.Fatalf("alive rows after purge = %v, want 01 02 03", left)
 	}
 	t.Log("device_window_pg18 default=5 w5_online=1 w30_online=2 strict_follows_window=yes invalid=5 purge_cutoff=70m")
+
+	// 00098 重写了在线设备视图：与 00094 逐行比对、窗口只算一次、按订阅走索引，
+	// 以及三个调用点的输出（delivery 域的 -run 过滤只认顶层函数名，故挂在这里）
+	t.Run("online_devices_view_00098", func(t *testing.T) { testOnlineDevicesViewPG18(t, ctx, admin, app) })
 }

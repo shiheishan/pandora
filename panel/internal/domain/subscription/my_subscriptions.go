@@ -61,53 +61,70 @@ type MySubscription struct {
 	PackRemainingBytes int64 `json:"pack_remaining_bytes"`
 }
 
+// mySubscriptionsSQL 是「我的订阅」的主查询，$1 租户、$2 本人。
+//
+// 在线设备数按订阅走 LATERAL：od.subscription_id = s.id 在子查询里是外层参数，
+// 一定会被推进视图，每条订阅只探 idx_node_alive_recent 里自己那一段。原先是
+// LEFT JOIN 整个视图，PostgreSQL 不把 JOIN 条件推进带聚合的视图，只看一个人的
+// 订阅也要把全站在线记录聚合一遍（5000 用户实测 3.38s/次）。
+//
+// 流量包余量挂在用户上、与订阅无关，写成不相关子查询，整条语句只算一次。
+const mySubscriptionsSQL = `
+	SELECT s.id, s.plan_id::text, COALESCE(s.price_id::text, ''),
+	       pl.name, pv.version, s.status,
+	       s.current_period_start, s.current_period_end,
+	       s.snapshot_currency, s.snapshot_amount,
+	       coalesce(s.device_limit, pv.max_devices),
+	       coalesce(od.device_count, 0)::int,
+	       pv.quota_reset_strategy,
+	       (SELECT q.period_end FROM quota_balances q
+	         WHERE q.tenant_id = s.tenant_id AND q.subscription_id = s.id
+	           AND q.metric = 'traffic.bytes'
+	         ORDER BY q.period_start DESC LIMIT 1),
+	       s.status IN ('active','trialing','grace','past_due') AND pl.allow_renewal,
+	       pr.id::text, pr.currency::text, pr.unit_amount, pr.billing_interval, pr.interval_count,
+	       coalesce(pr.status = 'active' AND pr.currency IN ('CNY','USD')
+	                AND pr.product_id = pl.product_id
+	                AND (pr.user_group_id IS NULL OR pr.user_group_id = u.user_group_id)
+	                AND (pr.valid_from IS NULL OR pr.valid_from <= now())
+	                AND (pr.valid_until IS NULL OR pr.valid_until > now()), false),
+	       (SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
+	          FROM traffic_pack_grants g
+	         WHERE g.tenant_id = $1 AND g.user_id = $2 AND g.consumed_bytes < g.granted_bytes)
+	  FROM subscriptions s
+	  JOIN plans pl         ON pl.id = s.plan_id
+	  JOIN plan_versions pv ON pv.id = s.plan_version_id
+	  JOIN users u          ON u.tenant_id = s.tenant_id AND u.id = s.user_id
+	  LEFT JOIN prices pr   ON pr.tenant_id = s.tenant_id AND pr.id = s.price_id
+	  LEFT JOIN LATERAL (
+	        SELECT od.device_count
+	          FROM subscription_online_devices od
+	         WHERE od.tenant_id = s.tenant_id AND od.subscription_id = s.id
+	  ) od ON true
+	 WHERE s.tenant_id = $1 AND s.user_id = $2
+	 ORDER BY s.created_at DESC`
+
+// myQuotasSQL 一次取齐这些订阅的全部配额行（原先每条订阅各查一次），
+// 每条订阅内部的顺序与原来相同：按指标、周期起点倒序。
+const myQuotasSQL = `
+	SELECT subscription_id::text, metric, limit_value, consumed, remaining,
+	       period, period_start, period_end, granted_addon, adjusted
+	  FROM quota_balances
+	 WHERE tenant_id = $1 AND subscription_id = ANY($2::uuid[])
+	 ORDER BY subscription_id, metric, period_start DESC`
+
 // MySubscriptions 列出本人的全部订阅（新建在前）。列表为空时返回 []MySubscription{}。
 func (s *Service) MySubscriptions(ctx context.Context, tenantID, userID string) ([]MySubscription, error) {
 	out := []MySubscription{}
 
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID},
 		func(tx pgx.Tx) error {
-			var packRemaining int64
-			if err := tx.QueryRow(ctx, `
-				SELECT coalesce(sum(granted_bytes - consumed_bytes), 0)::bigint FROM traffic_pack_grants
-				 WHERE tenant_id = $1 AND user_id = $2 AND consumed_bytes < granted_bytes`,
-				tenantID, userID).Scan(&packRemaining); err != nil {
-				return err
-			}
-			rows, err := tx.Query(ctx, `
-				SELECT s.id, s.plan_id::text, COALESCE(s.price_id::text, ''),
-				       pl.name, pv.version, s.status,
-				       s.current_period_start, s.current_period_end,
-				       s.snapshot_currency, s.snapshot_amount,
-				       coalesce(s.device_limit, pv.max_devices),
-				       coalesce(od.device_count, 0)::int,
-				       pv.quota_reset_strategy,
-				       (SELECT q.period_end FROM quota_balances q
-				         WHERE q.tenant_id = s.tenant_id AND q.subscription_id = s.id
-				           AND q.metric = 'traffic.bytes'
-				         ORDER BY q.period_start DESC LIMIT 1),
-				       s.status IN ('active','trialing','grace','past_due') AND pl.allow_renewal,
-				       pr.id::text, pr.currency::text, pr.unit_amount, pr.billing_interval, pr.interval_count,
-				       coalesce(pr.status = 'active' AND pr.currency IN ('CNY','USD')
-				                AND pr.product_id = pl.product_id
-				                AND (pr.user_group_id IS NULL OR pr.user_group_id = u.user_group_id)
-				                AND (pr.valid_from IS NULL OR pr.valid_from <= now())
-				                AND (pr.valid_until IS NULL OR pr.valid_until > now()), false)
-				  FROM subscriptions s
-				  JOIN plans pl         ON pl.id = s.plan_id
-				  JOIN plan_versions pv ON pv.id = s.plan_version_id
-				  JOIN users u          ON u.tenant_id = s.tenant_id AND u.id = s.user_id
-				  LEFT JOIN prices pr   ON pr.tenant_id = s.tenant_id AND pr.id = s.price_id
-				  LEFT JOIN subscription_online_devices od
-				         ON od.tenant_id = s.tenant_id AND od.subscription_id = s.id
-				 WHERE s.tenant_id = $1 AND s.user_id = $2
-				 ORDER BY s.created_at DESC`,
-				tenantID, userID)
+			rows, err := tx.Query(ctx, mySubscriptionsSQL, tenantID, userID)
 			if err != nil {
 				return err
 			}
 			for rows.Next() {
-				v := MySubscription{Quotas: []MyQuota{}, PackRemainingBytes: packRemaining}
+				v := MySubscription{Quotas: []MyQuota{}}
 				var priceID, priceCurrency, interval *string
 				var unitAmount *int64
 				var intervalCount *int
@@ -117,7 +134,7 @@ func (s *Service) MySubscriptions(ctx context.Context, tenantID, userID string) 
 					&v.PeriodStart, &v.PeriodEnd, &v.Currency, &v.Amount,
 					&v.DeviceLimit, &v.OnlineDevices, &v.QuotaResetStrategy, &v.NextResetAt,
 					&v.Renewable, &priceID, &priceCurrency, &unitAmount, &interval, &intervalCount,
-					&available); err != nil {
+					&available, &v.PackRemainingBytes); err != nil {
 					rows.Close()
 					return err
 				}
@@ -132,25 +149,33 @@ func (s *Service) MySubscriptions(ctx context.Context, tenantID, userID string) 
 			if err := rows.Err(); err != nil {
 				return err
 			}
-
-			for i := range out {
-				qrows, err := tx.Query(ctx, `
-					SELECT metric, limit_value, consumed, remaining,
-					       period, period_start, period_end, granted_addon, adjusted
-					  FROM quota_balances
-					 WHERE tenant_id = $1 AND subscription_id = $2
-					 ORDER BY metric, period_start DESC`,
-					tenantID, out[i].ID)
-				if err != nil {
-					return err
-				}
-				quotas, err := pgx.CollectRows(qrows, pgx.RowToStructByPos[MyQuota])
-				if err != nil {
-					return err
-				}
-				out[i].Quotas = append(out[i].Quotas, quotas...)
+			if len(out) == 0 {
+				return nil
 			}
-			return nil
+
+			ids := make([]string, len(out))
+			index := make(map[string]int, len(out))
+			for i := range out {
+				ids[i] = out[i].ID
+				index[out[i].ID] = i
+			}
+			qrows, err := tx.Query(ctx, myQuotasSQL, tenantID, ids)
+			if err != nil {
+				return err
+			}
+			defer qrows.Close()
+			for qrows.Next() {
+				var subID string
+				var q MyQuota
+				if err := qrows.Scan(&subID, &q.Metric, &q.Limit, &q.Consumed, &q.Remaining,
+					&q.Period, &q.PeriodStart, &q.PeriodEnd, &q.GrantedAddon, &q.Adjusted); err != nil {
+					return err
+				}
+				if i, ok := index[subID]; ok {
+					out[i].Quotas = append(out[i].Quotas, q)
+				}
+			}
+			return qrows.Err()
 		})
 	if err != nil {
 		return nil, err

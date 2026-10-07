@@ -50,10 +50,21 @@ type Service struct {
 	ipSalt []byte
 	// envelope 用于还原订阅 token 原文（面板展示、轮换后回显）
 	envelope *crypto.Envelope
+
+	// 以下三样只服务订阅拉取（LoadPull），全在进程内、有上限、有 TTL：
+	// prefixes 缓存租户的订阅路径前缀；nodes 按（套餐版本, 用户组）缓存可下发节点，
+	// 收到节点变更信号即失效（AttachRealtime）；failures 给未认证失败的落库采样。
+	prefixes *prefixCache
+	nodes    *nodeCache
+	failures *failureSampler
 }
 
 func New(pool *db.Pool, ipSalt []byte, envelope *crypto.Envelope) *Service {
-	return &Service{pool: pool, ipSalt: ipSalt, envelope: envelope}
+	return &Service{pool: pool, ipSalt: ipSalt, envelope: envelope,
+		prefixes: newPrefixCache(prefixCacheTTL),
+		nodes:    newNodeCache(nodeCacheTTL, nodeCacheMaxEntries),
+		failures: newFailureSampler(failureSampleWindow, failureSamplesPerWindow),
+	}
 }
 
 // Link 是一条可展示给用户的订阅链接信息。
@@ -70,20 +81,28 @@ type Link struct {
 	DistinctSources int
 }
 
+// linkSourceWindow 是「近期不同来源数」的统计窗口：门户上显示为近 24 小时。
+const linkSourceWindow = "24 hours"
+
 // ListLinks 返回某个用户全部有效的订阅链接。
+//
+// 路径前缀与每条链接近 24 小时的不同来源数都在同一条语句里取：来源数原先是
+// 每条链接另开一个事务各算一次（N+1），现在是按凭据走
+// subscription_fetch_log_cred_idx 的相关子查询。
 func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Link, error) {
-	var prefix string
 	var out []Link
 
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx,
-			`SELECT COALESCE(sub_path_prefix, '') FROM tenants WHERE id = $1`,
-			tenantID).Scan(&prefix); err != nil {
-			return err
-		}
 		rows, err := tx.Query(ctx, `
 			SELECT sc.id, sc.subscription_id, sc.token_encrypted, sc.expires_at,
-			       sc.fetch_count, sc.last_fetched_at
+			       sc.fetch_count, sc.last_fetched_at,
+			       (SELECT COALESCE(t.sub_path_prefix, '') FROM tenants t WHERE t.id = sc.tenant_id),
+			       -- 按凭据 ID 统计（每条链接是独立的凭据）。之前误传 SubscriptionID，
+			       -- 导致永远查不到来源、恒为 0
+			       (SELECT count(DISTINCT f.ip_hash)::int FROM subscription_fetch_log f
+			         WHERE f.tenant_id = sc.tenant_id AND f.credential_id = sc.id
+			           AND f.result = 'ok'
+			           AND f.fetched_at > now() - interval '`+linkSourceWindow+`')
 			  FROM subscription_credentials sc
 			 WHERE sc.tenant_id = $1 AND sc.user_id = $2::uuid
 			   AND sc.status = 'active' AND sc.scope = 'subscription'
@@ -99,12 +118,11 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 			var sealed []byte
 			var l Link
 			if err := rows.Scan(&id, &subID, &sealed, &l.ExpiresAt,
-				&l.FetchCount, &l.LastFetchedAt); err != nil {
+				&l.FetchCount, &l.LastFetchedAt, &l.PathPrefix, &l.DistinctSources); err != nil {
 				return err
 			}
 			l.SubscriptionID = subID
 			l.CredentialID = id
-			l.PathPrefix = prefix
 			if len(sealed) > 0 && s.envelope != nil {
 				plain, err := s.envelope.Open(sealed, []byte(subID))
 				if err != nil {
@@ -124,11 +142,6 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 	})
 	if err != nil {
 		return nil, err
-	}
-	for i := range out {
-		// DistinctSources 按凭据 ID 统计（每条链接是独立的凭据）。
-		// 之前误传 SubscriptionID，导致永远查不到来源、恒为 0。
-		out[i].DistinctSources = s.DistinctSources(ctx, tenantID, out[i].CredentialID, 24*time.Hour)
 	}
 	return out, nil
 }
@@ -200,15 +213,14 @@ func (s *Service) Rotate(ctx context.Context, tenantID, userID, subID string) (s
 // 前缀本身不是密钥（它会出现在每个用户的链接里，谈不上保密），
 // 作用是把「按固定路径全网扫」这条最省力的路堵死：
 // 所有部署都用 /sub/ 的话，扫描器试一个路径就能把同类站点一网打尽。
+//
+// 租户的前缀读自进程内缓存（prefixCacheTTL）：每次拉取都读一遍 tenants
+// 对扫描流量就是白白的库负载，而前缀只在迁移 00018 里生成一次、代码从不改它。
 func (s *Service) MatchPrefix(ctx context.Context, tenantID, prefix string) (bool, error) {
 	if prefix == "" {
 		return false, nil
 	}
-	var want string
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx,
-			`SELECT COALESCE(sub_path_prefix, '') FROM tenants WHERE id = $1`, tenantID).Scan(&want)
-	})
+	want, err := s.PathPrefix(ctx, tenantID)
 	if err != nil {
 		return false, err
 	}
@@ -220,14 +232,21 @@ func (s *Service) MatchPrefix(ctx context.Context, tenantID, prefix string) (boo
 	return hmac.Equal([]byte(want), []byte(prefix)), nil
 }
 
-// PathPrefix 返回该租户的订阅路径前缀。
+// PathPrefix 返回该租户的订阅路径前缀（经进程内缓存）。
 func (s *Service) PathPrefix(ctx context.Context, tenantID string) (string, error) {
+	if prefix, ok := s.prefixes.get(tenantID); ok {
+		return prefix, nil
+	}
 	var prefix string
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
 			`SELECT COALESCE(sub_path_prefix, '') FROM tenants WHERE id = $1`, tenantID).Scan(&prefix)
 	})
-	return prefix, err
+	if err != nil {
+		return "", err
+	}
+	s.prefixes.put(tenantID, prefix)
+	return prefix, nil
 }
 
 // Credential 是一次成功认证的结果。
@@ -241,6 +260,9 @@ type Credential struct {
 	Status         string
 	PeriodEnd      *time.Time
 	RateLimit      int
+	// UserGroupID 是订阅主人所在的用户组（默认组为空串）。节点池可以限定用户组，
+	// 同一套餐版本下可下发的节点只随它变，所以它是节点缓存键的一部分
+	UserGroupID string
 }
 
 // Node 是下发给客户端的一个节点。
@@ -274,136 +296,8 @@ type Usage struct {
 	Expire   int64 // Unix 秒，0 表示不过期
 }
 
-// Authenticate 用 token 换取订阅凭据。
-//
-// 认证与鉴权分两步：这里只确认「token 有效且订阅可用」，
-// 具体能看到哪些节点由 ListNodes 决定。
-func (s *Service) Authenticate(ctx context.Context, tenantID, token string) (*Credential, error) {
-	if len(token) < 16 {
-		// 长度都不对，连查库都不必 —— 扫描器的绝大多数试探止于此
-		return nil, ErrNotFound
-	}
-
-	var c Credential
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 先用前缀缩小范围，再用哈希做定时安全比对。
-		//
-		// 只靠前缀查不安全（前缀会碰撞），只靠哈希查则无法走索引 ——
-		// 每次拉取都全表扫在订阅这种高频接口上不可接受。
-		rows, err := tx.Query(ctx, `
-			SELECT sc.id, sc.token_hash, sc.subscription_id, sc.user_id, sc.status,
-			       sc.expires_at, sc.grace_until, sc.rate_limit_per_hour,
-			       s.plan_version_id, s.proxy_uuid, s.node_uid, s.status, s.current_period_end
-			  FROM subscription_credentials sc
-			  JOIN subscriptions s ON s.id = sc.subscription_id AND s.tenant_id = sc.tenant_id
-			 WHERE sc.tenant_id = $1 AND sc.token_prefix = $2`,
-			tenantID, token[:8])
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		want := crypto.HashToken(token)
-		found := false
-		for rows.Next() {
-			var (
-				id, subID, userID, credStatus string
-				hash                          []byte
-				expiresAt, graceUntil, perEnd *time.Time
-				rate                          int
-				planVersionID, proxyUUID      string
-				nodeUID                       int64
-				subStatus                     string
-			)
-			if err := rows.Scan(&id, &hash, &subID, &userID, &credStatus,
-				&expiresAt, &graceUntil, &rate,
-				&planVersionID, &proxyUUID, &nodeUID, &subStatus, &perEnd); err != nil {
-				return err
-			}
-			// 定时安全比较，避免按字节比对泄露信息
-			if !hmac.Equal(hash, want) {
-				continue
-			}
-			found = true
-
-			if credStatus != "active" && credStatus != "grace" {
-				return ErrNotFound
-			}
-			// 宽限期内仍然放行：付费用户续费晚了几小时就完全断连，
-			// 换来的是客服工单而不是收入。grace 状态与 active 一样
-			// 按最终截止时间（expires_at 与 grace_until 取大者）判定。
-			deadline := expiresAt
-			if graceUntil != nil && (deadline == nil || graceUntil.After(*deadline)) {
-				deadline = graceUntil
-			}
-			if deadline != nil && time.Now().After(*deadline) {
-				return ErrNotFound
-			}
-			switch subStatus {
-			case "active", "trialing", "grace":
-			default:
-				return ErrNotFound
-			}
-
-			c = Credential{
-				ID: id, SubscriptionID: subID, UserID: userID,
-				PlanVersionID: planVersionID, ProxyUUID: proxyUUID,
-				NodeUID: nodeUID, Status: subStatus,
-				PeriodEnd: perEnd, RateLimit: rate,
-			}
-			break
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if !found {
-			return ErrNotFound
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-// RecordSuccessfulFetch 在同一事务里检查限流并记下本次成功拉取。
-// 凭据行锁会把同一凭据的并发请求串行化，避免“先查后写”一起越过上限。
-func (s *Service) RecordSuccessfulFetch(ctx context.Context, tenantID, credID, subID,
-	format, ip, ua, uaFamily string, nodeCount, bytesSent, limit int) error {
-	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var lockedID string
-		if err := tx.QueryRow(ctx, `
-			SELECT id::text FROM subscription_credentials
-			 WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, tenantID, credID).
-			Scan(&lockedID); err != nil {
-			return err
-		}
-		if limit > 0 {
-			var n int
-			if err := tx.QueryRow(ctx, `
-				SELECT count(*) FROM subscription_fetch_log
-				 WHERE tenant_id=$1 AND credential_id=$2::uuid
-				   AND fetched_at > now() - interval '1 hour'
-				   AND result='ok'`, tenantID, credID).Scan(&n); err != nil {
-				return err
-			}
-			if n >= limit {
-				return ErrRateLimited
-			}
-		}
-		_, err := tx.Exec(ctx, `
-			INSERT INTO subscription_fetch_log
-				(tenant_id, credential_id, subscription_id, ip_hash, ua_hash,
-				 ua_family, result, format, node_count, bytes_sent, ip_enc, ua_enc)
-			VALUES ($1,$2::uuid,$3::uuid,$4,$5,$6,'ok',$7,$8,$9,$10,$11)`,
-			tenantID, credID, subID, s.hash(ip), s.hash(ua), uaFamily,
-			nullIfEmpty(format), nodeCount, bytesSent, s.seal(ip), s.seal(ua))
-		return err
-	})
-}
-
-// ListNodes 返回该订阅可用的节点。
+// ListNodes 返回该订阅可用的节点，每次都现查（不经节点缓存）。
+// 订阅拉取走 LoadPull 里的缓存；后台核对与测试要的是此刻的真实答案。
 func (s *Service) ListNodes(ctx context.Context, tenantID string, c *Credential) ([]Node, error) {
 	var out []Node
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
@@ -594,45 +488,6 @@ func preferFreshNodes(nodes []Node) []Node {
 	return fresh
 }
 
-// LoadUsage 取出该订阅的流量用量，用于 Subscription-Userinfo。
-func (s *Service) LoadUsage(ctx context.Context, tenantID string, c *Credential) (Usage, error) {
-	var u Usage
-	if c.PeriodEnd != nil {
-		u.Expire = c.PeriodEnd.Unix()
-	}
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var granted, consumed int64
-		err := tx.QueryRow(ctx, `
-			SELECT COALESCE(limit_value, 0) + COALESCE(granted_addon, 0) + COALESCE(adjusted, 0),
-			       COALESCE(consumed, 0)
-			  FROM quota_balances
-			 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND metric = 'traffic.bytes'
-			 ORDER BY period_end DESC NULLS LAST
-			 LIMIT 1`, tenantID, c.SubscriptionID).Scan(&granted, &consumed)
-		if err != nil {
-			return err
-		}
-		// 流量包余额（D-E-1）挂在用户身上，套餐额度用完后接着用：客户端显示的
-		// 总量 = 套餐本期额度 + 流量包剩余，已用量只算套餐部分，剩余正好是两者之和。
-		var packRemaining int64
-		if err := tx.QueryRow(ctx, `
-			SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
-			  FROM traffic_pack_grants g
-			  JOIN subscriptions s ON s.tenant_id = g.tenant_id AND s.user_id = g.user_id
-			 WHERE g.tenant_id = $1 AND s.id = $2::uuid`,
-			tenantID, c.SubscriptionID).Scan(&packRemaining); err != nil {
-			return err
-		}
-		u.Total = granted + packRemaining
-		// 客户端把 upload+download 相加当作已用量。
-		// 我们只记总量，全部计入 download 而不是对半分 ——
-		// 编造一个看似合理的上下行比例，会让用户在客户端里看到假数据。
-		u.Download = consumed
-		return nil
-	})
-	return u, err
-}
-
 // Log 记一条审计。失败不影响主流程。
 func (s *Service) Log(ctx context.Context, tenantID, credID, subID, result, format,
 	ip, ua, uaFamily string, nodeCount, bytesSent int) {
@@ -658,37 +513,6 @@ func (s *Service) Log(ctx context.Context, tenantID, credID, subID, result, form
 			s.seal(ip), s.seal(ua))
 		return err
 	})
-}
-
-// TouchCredential 更新凭据上的最后拉取信息。
-func (s *Service) TouchCredential(ctx context.Context, tenantID, credID, ip string) {
-	_ = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
-			UPDATE subscription_credentials
-			   SET fetch_count = fetch_count + 1,
-			       last_fetched_at = now(),
-			       last_fetch_ip_hash = $3
-			 WHERE tenant_id = $1 AND id = $2::uuid`,
-			tenantID, credID, s.hash(ip))
-		return err
-	})
-}
-
-// DistinctSources 返回最近一段时间内拉取过该凭据的不同来源数。
-//
-// 这是发现「链接被分享」最直接的信号：正常用户就算多设备，
-// 出口 IP 也集中在少数几个；一条被挂到群里的链接，来源数会迅速发散。
-func (s *Service) DistinctSources(ctx context.Context, tenantID, credID string, within time.Duration) int {
-	var n int
-	_ = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, fmt.Sprintf(`
-			SELECT count(DISTINCT ip_hash) FROM subscription_fetch_log
-			 WHERE tenant_id = $1 AND credential_id = $2::uuid
-			   AND result = 'ok'
-			   AND fetched_at > now() - interval '%d seconds'`, int(within.Seconds())),
-			tenantID, credID).Scan(&n)
-	})
-	return n
 }
 
 // seal 加密一条来源信息。
