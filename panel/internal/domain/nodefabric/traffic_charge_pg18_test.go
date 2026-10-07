@@ -161,6 +161,7 @@ func TestTrafficChargePG18(t *testing.T) {
 	t.Log("marker=traffic_charge_pg18_charges_do_not_notify_ok")
 
 	batchChargeScenario(t, ctx, admin, app)
+	retentionScenario(t, ctx, admin, app)
 }
 
 // batchChargeScenario 证明整份上报批量记账与逐笔记账同一结果：同一用户的两条订阅
