@@ -26,8 +26,8 @@ func realityNode() Node {
 			"security":     "reality",
 			"dest":         "www.apple.com:443",
 			"server_names": []any{"www.apple.com"},
-			"public_key":   "g6JP7noZPAfVjuXKL2xmTnKG-2xRwlt65iUksUaGGio",
-			"short_ids":    []any{"b5301d06"},
+			"public_key":   "4AivfVM4IIPkDufX8shD0J5tViX9CYc_3yKZ9Vn_HyM",
+			"short_ids":    []any{"0a1b2c3d"},
 			"fingerprint":  "chrome",
 		},
 	}
@@ -45,8 +45,8 @@ func TestReality_URI里参数齐全(t *testing.T) {
 	uri := string(raw)
 	for _, want := range []string{
 		"security=reality",
-		"pbk=g6JP7noZPAfVjuXKL2xmTnKG-2xRwlt65iUksUaGGio",
-		"sid=b5301d06",
+		"pbk=4AivfVM4IIPkDufX8shD0J5tViX9CYc_3yKZ9Vn_HyM",
+		"sid=0a1b2c3d",
 		"fp=chrome",
 		"sni=www.apple.com",
 	} {
@@ -110,7 +110,7 @@ func TestReality_Singbox里参数齐全(t *testing.T) {
 	if !ok {
 		t.Fatalf("没有 tls.reality 段\n%s", body)
 	}
-	if r["enabled"] != true || r["public_key"] == "" || r["short_id"] != "b5301d06" {
+	if r["enabled"] != true || r["public_key"] == "" || r["short_id"] != "0a1b2c3d" {
 		t.Errorf("reality 段不完整: %v", r)
 	}
 	// utls 不开的话，客户端用的是 Go 自己的 TLS 指纹，
@@ -148,7 +148,7 @@ func TestReality_不影响普通节点(t *testing.T) {
 func TestReality_单字符串的server_names(t *testing.T) {
 	n := realityNode()
 	n.Config["server_names"] = "www.apple.com"
-	n.Config["short_ids"] = "b5301d06"
+	n.Config["short_ids"] = "0a1b2c3d"
 
 	body, _, _ := Render(FormatClash, []Node{n}, "u-1")
 	if !strings.Contains(string(body), "www.apple.com") {
