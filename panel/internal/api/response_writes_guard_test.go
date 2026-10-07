@@ -28,8 +28,9 @@ var directWriteAllowed = map[string]string{
 	"node/stream.go handlers.uniStream": "节点 SSE",
 	"node/stream.go writeStreamFrame":   "节点 SSE 逐帧写出共享的已编码名单（不拷贝）并 Flush",
 	// 订阅输出：客户端按 Content-Type 解析 YAML / JSON / base64，失败一律回同一个诱饵 HTML 404
-	"public/subscribe.go handlers.subscribe": "订阅正文输出与 429 纯文本",
-	"public/subscribe.go writeDecoy":         "订阅失败的诱饵 HTML 404 页",
+	"public/subscribe.go handlers.subscribe":                "订阅正文输出与 429 纯文本",
+	"public/subscribe.go writeDecoy":                        "订阅失败的诱饵 HTML 404 页",
+	"public/subscribe.go handlers.writeExpiredSubscription": "过期订阅的提示配置（YAML / JSON / base64）与 429 纯文本",
 	// pdnd 安装引导：shell 脚本、二进制与校验和，给 curl 用的纯文本 / 字节流
 	"public/pdnd_install.go handlers.pdndInstallScript": "pdnd 安装脚本",
 	"public/pdnd_install.go handlers.pdndBinary":        "pdnd 二进制分发（ServeContent 支持断点续传）与纯文本 404",

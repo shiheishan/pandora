@@ -7,8 +7,12 @@ package public
 // 拿到的响应都必须与「这个路径压根不存在」无法区分。
 //
 // 具体来说，下面这些情况回的是同一个响应：路径前缀不对、token 不存在、
-// token 已吊销、订阅已过期。它们内部当然有区别，但把区别透出去
+// token 已吊销（含过期满 30 天被关窗吊销的）。它们内部当然有区别，但把区别透出去
 // 等于告诉探测者「你猜对了一半」—— 猜中前缀、或者猜中一个真实 token。
+//
+// 唯一的例外是「令牌有效、订阅已过期」（用户 2026-10-07 规则 1）：回 200，只含一条
+// 「已于 X 到期，续费后更新订阅即可恢复」的提示节点。持有有效令牌的人本来就知道链接
+// 是真的，告诉他过期了不泄露新信息；伪装 404 只会让他以为站点挂了。
 
 import (
 	"errors"
@@ -78,6 +82,10 @@ func (h *handlers) subscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cred := pull.Cred
+	if pull.Expired != nil {
+		h.writeExpiredSubscription(w, r, pull, format, ip, ua, family)
+		return
+	}
 
 	body, contentType, count := subscription.Render(format, pull.Nodes, cred.ProxyUUID)
 
@@ -108,6 +116,49 @@ func (h *handlers) subscribe(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", subscription.ContentDisposition(h.d.Subscription.SiteName(ctx, tenantID)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// writeExpiredSubscription 回过期订阅的提示配置（规则 1）。
+//
+// 拉取日志记 expired，与扫描器的 not_found 分开；限流与成功拉取同一套。
+// Subscription-Userinfo 的 expire 是已经过去的到期时刻，客户端会把它标成已过期；
+// profile-web-page-url 指向门户的续费页；更新间隔压到 1 小时，续费后客户端很快就
+// 能把真实节点拉回来。
+func (h *handlers) writeExpiredSubscription(w http.ResponseWriter, r *http.Request,
+	pull *subscription.Pull, format subscription.Format, ip, ua, family string) {
+	ctx := r.Context()
+	tenantID := httpx.TenantIDFrom(ctx)
+	cred := pull.Cred
+	notice := subscription.ExpiredNotice(pull.Expired.PeriodEnd, pull.Expired.Location)
+	body, contentType := subscription.RenderExpired(format, notice)
+	if err := h.d.Subscription.RecordExpiredFetch(ctx, tenantID, cred.ID, cred.SubscriptionID,
+		string(format), ip, ua, family, len(body), cred.RateLimit); err != nil {
+		if errors.Is(err, subscription.ErrRateLimited) {
+			h.d.Subscription.Log(ctx, tenantID, cred.ID, cred.SubscriptionID,
+				"rate_limited", string(format), ip, ua, family, 0, 0)
+			w.Header().Set("Retry-After", "3600")
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+		h.d.Log.Error("过期订阅拉取记录失败", slog.String("request_id", httpx.RequestIDFrom(ctx)),
+			"subscription", cred.SubscriptionID, "err", err)
+		writeDecoy(w)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Subscription-Userinfo", formatUserinfo(pull.Usage))
+	w.Header().Set("Profile-Update-Interval", "1")
+	w.Header().Set("Profile-Web-Page-Url", renewalPageURL(h.d.Cfg.PublicBaseURL, cred.SubscriptionID))
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Content-Disposition", subscription.ContentDisposition(h.d.Subscription.SiteName(ctx, tenantID)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// renewalPageURL 是门户里这条订阅的续费页（门户由网关在根 / 下发，页面地址见
+// .claude/rules/screens-portal.md 的约定地址）。
+func renewalPageURL(base, subscriptionID string) string {
+	return strings.TrimRight(base, "/") + "/#/checkout?renew=" + subscriptionID
 }
 
 func writeDecoy(w http.ResponseWriter) {
@@ -157,6 +208,8 @@ func (h *handlers) meSubscriptionLinks(w http.ResponseWriter, r *http.Request) {
 		FetchCount      int64  `json:"fetch_count"`
 		LastFetchedAt   any    `json:"last_fetched_at"`
 		DistinctSources int    `json:"distinct_sources_24h"`
+		// Expired：订阅已过期、链接暂停，续费后原链接自动恢复（门户只读展示）
+		Expired bool `json:"expired"`
 	}
 	type linksResponse struct {
 		Links []view `json:"links"`
@@ -170,6 +223,7 @@ func (h *handlers) meSubscriptionLinks(w http.ResponseWriter, r *http.Request) {
 			FetchCount:      l.FetchCount,
 			LastFetchedAt:   l.LastFetchedAt,
 			DistinctSources: l.DistinctSources,
+			Expired:         l.Expired,
 		})
 	}
 	httpx.OK(w, linksResponse{Links: out})
@@ -228,6 +282,10 @@ func (h *handlers) rotateSubscriptionLink(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		if errors.Is(err, subscription.ErrNotFound) {
 			httpx.Fail(w, r, h.d.Log, httpx.NotFoundOrForbidden())
+			return
+		}
+		if errors.Is(err, subscription.ErrRotateWhileExpired) {
+			httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeConflict, err.Error()))
 			return
 		}
 		httpx.Fail(w, r, h.d.Log, err)
