@@ -63,6 +63,24 @@ type signedClient struct {
 	verify      bool
 	http        *http.Client
 	obs         *observer
+	// 换钥检查节拍（current，对应 pdnd keyCheckedAt / keyCheckWait）：keyCheckEvery 为 0
+	// 时每次拉配置前都问（legacy）；keyJitter 给每次的间隔加抖动，nil 表示不抖。
+	keyCheckEvery time.Duration
+	keyCheckedAt  time.Time
+	keyCheckWait  time.Duration
+	keyJitter     func(time.Duration) time.Duration
+}
+
+// statusError 是签名请求的非 2xx 应答，对应 pdnd panel.StatusError：current 按状态码
+// 判断回执是被面板收下、明确拒收，还是暂时没送到（reportSettled）。
+type statusError struct {
+	method, path string
+	code         int
+	body         string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("%s %s: HTTP %d: %s", e.method, e.path, e.code, e.body)
 }
 
 func newSignedClient(base string, n ltkit.ManifestNode, verify bool, obs *observer) (*signedClient, error) {
@@ -92,12 +110,19 @@ func newSignedClient(base string, n ltkit.ManifestNode, verify bool, obs *observ
 // do 发一个签名请求，口径与 pdnd SignedClient.Do 一致：
 // 秒级 UTC 时间戳、16 字节随机 nonce（base64url 无填充）、请求体 SHA-256，
 // 规范串由 nodefabric.CanonicalPayloadV2 生成，Ed25519 签名。
-// 状态码 ≥ 300 一律算失败；401 记 sig_fail。
+// 状态码 ≥ 300 一律算失败（*statusError）；401 记 sig_fail。
 func (c *signedClient) do(ctx context.Context, method, path string, body []byte, out any, flag string) error {
+	_, err := c.send(ctx, method, path, body, nil, out, flag)
+	return err
+}
+
+// send 是 do 的本体，另返回 2xx 的状态码；headers 是额外的请求头，与 pdnd 一样不进
+// 签名原像。生效配置回 204 记 unchanged_204。
+func (c *signedClient) send(ctx context.Context, method, path string, body []byte, headers map[string]string, out any, flag string) (int, error) {
 	ts := time.Now().UTC().Format(time.RFC3339)
 	nonceRaw := make([]byte, 16)
 	if _, err := rand.Read(nonceRaw); err != nil {
-		return fmt.Errorf("generate request nonce: %w", err)
+		return 0, fmt.Errorf("generate request nonce: %w", err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(nonceRaw)
 	sum := sha256.Sum256(body)
@@ -108,7 +133,7 @@ func (c *signedClient) do(ctx context.Context, method, path string, body []byte,
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, reader)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Node-Id", c.nodeID)
@@ -118,29 +143,35 @@ func (c *signedClient) do(ctx context.Context, method, path string, body []byte,
 	if path == pathConfigKey {
 		req.Header.Set("X-Config-Key-Id", c.configKeyID)
 	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	endpoint := "node:" + method + " " + path
 	start := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		c.obs.record(ctx, endpoint, 0, time.Since(start), err, flag)
-		return err
+		return 0, err
 	}
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized {
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized:
 		flag = flagSigFail
+	case resp.StatusCode == http.StatusNoContent && path == pathEffectiveConfig:
+		flag = flagUnchanged
 	}
 	c.obs.record(ctx, endpoint, resp.StatusCode, time.Since(start), nil, flag)
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return resp.StatusCode, &statusError{method: method, path: path, code: resp.StatusCode, body: strings.TrimSpace(string(raw))}
 	}
 	if out != nil && len(raw) > 0 {
-		return json.Unmarshal(raw, out)
+		return resp.StatusCode, json.Unmarshal(raw, out)
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
-// config 复刻 pdnd SignedClient.Config：每次先问一遍密钥轮换，再拉有效配置。
+// config 复刻老 pdnd SignedClient.Config（legacy）：每次先问一遍密钥轮换，再拉全量有效配置。
 func (c *signedClient) config(ctx context.Context, flag string) (*nodefabric.SignedConfig, error) {
 	if err := c.refreshConfigKey(ctx, flag); err != nil {
 		return nil, err
@@ -150,6 +181,50 @@ func (c *signedClient) config(ctx context.Context, flag string) (*nodefabric.Sig
 		return nil, err
 	}
 	return &out, nil
+}
+
+// configSince 复刻新 pdnd SignedClient.ConfigSince（current）：换钥检查到点才做；
+// applied（"<release_id>/<generation>"）非空时带 X-Applied-Effective-Release，
+// 面板回 204 即仍是当前版，返回 unchanged=true、cfg 为 nil。没带这个头却回 204
+// 是面板出错，与 pdnd 一样报错。
+func (c *signedClient) configSince(ctx context.Context, applied, flag string) (cfg *nodefabric.SignedConfig, unchanged bool, err error) {
+	if err := c.refreshConfigKeyIfDue(ctx, flag); err != nil {
+		return nil, false, err
+	}
+	var headers map[string]string
+	if applied != "" {
+		headers = map[string]string{nodefabric.AppliedEffectiveReleaseHeader: applied}
+	}
+	var out nodefabric.SignedConfig
+	status, err := c.send(ctx, http.MethodGet, pathEffectiveConfig, nil, headers, &out, flag)
+	if err != nil {
+		return nil, false, err
+	}
+	if status == http.StatusNoContent {
+		if headers == nil {
+			return nil, false, errors.New("panel returned no effective config")
+		}
+		return nil, true, nil
+	}
+	return &out, false, nil
+}
+
+// refreshConfigKeyIfDue 对应 pdnd refreshConfigSigningKeyIfDue：上次成功检查之后
+// 不满 keyCheckWait 就不问。keyCheckEvery 为 0（legacy）时每次都问。
+func (c *signedClient) refreshConfigKeyIfDue(ctx context.Context, flag string) error {
+	if c.keyCheckEvery > 0 && !c.keyCheckedAt.IsZero() && time.Since(c.keyCheckedAt) < c.keyCheckWait {
+		return nil
+	}
+	return c.refreshConfigKey(ctx, flag)
+}
+
+// markConfigKeyChecked 记下一次成功的换钥检查，下一次的间隔带抖动（pdnd markConfigKeyChecked）。
+func (c *signedClient) markConfigKeyChecked() {
+	c.keyCheckedAt = time.Now()
+	c.keyCheckWait = c.keyCheckEvery
+	if c.keyJitter != nil {
+		c.keyCheckWait = c.keyJitter(c.keyCheckEvery)
+	}
 }
 
 // refreshConfigKey 面板回 204 表示钉住的公钥仍是当前公钥；回了过渡声明就换钥。
@@ -163,6 +238,7 @@ func (c *signedClient) refreshConfigKey(ctx context.Context, flag string) error 
 		return fmt.Errorf("refresh config signing key: %w", err)
 	}
 	if t.Contract == "" {
+		c.markConfigKeyChecked()
 		return nil
 	}
 	c.obs.fleet.keyTransitions.Add(1)
@@ -174,6 +250,7 @@ func (c *signedClient) refreshConfigKey(ctx context.Context, flag string) error 
 		return errors.New("config key transition carries an invalid public key")
 	}
 	c.configKeyID, c.configPub = t.ToKeyID, pub
+	c.markConfigKeyChecked()
 	return nil
 }
 

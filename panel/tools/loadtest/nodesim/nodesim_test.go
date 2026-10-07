@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -69,8 +70,17 @@ func endpoint(rep ltkit.Report, name string) ltkit.EndpointStats {
 }
 
 func TestSignedChannelVerifiedEndToEnd(t *testing.T) {
+	for _, behavior := range []string{BehaviorCurrent, BehaviorLegacy} {
+		t.Run(behavior, func(t *testing.T) { testSignedChannelVerifiedEndToEnd(t, behavior) })
+	}
+}
+
+func testSignedChannelVerifiedEndToEnd(t *testing.T, behavior string) {
 	g := newFakeGateway(t, 3, 20, 1, 1)
-	s, rep := runFor(t, g, testOptions(g.srv.URL), 2600*time.Millisecond, nil)
+	opt := testOptions(g.srv.URL)
+	opt.Behavior = behavior
+	s, rep := runFor(t, g, opt, 2600*time.Millisecond, nil)
+	eff := endpoint(rep, "node:GET /v1/nodes/effective-config")
 
 	g.read(func() {
 		if g.sigFail != 0 || g.authFail != 0 || g.sigOK == 0 {
@@ -95,9 +105,40 @@ func TestSignedChannelVerifiedEndToEnd(t *testing.T) {
 		if applied < 3 {
 			t.Fatalf("only %d heartbeats carried the applied release", applied)
 		}
-		// pdnd 每次拉配置之前先问一遍签名密钥
-		if g.hits["GET /v1/nodes/config-signing-key"] != g.hits["GET /v1/nodes/effective-config"] {
-			t.Fatalf("key refresh %d vs effective-config %d", g.hits["GET /v1/nodes/config-signing-key"], g.hits["GET /v1/nodes/effective-config"])
+		keys, effs := g.hits["GET /v1/nodes/config-signing-key"], g.hits["GET /v1/nodes/effective-config"]
+		if behavior == BehaviorLegacy {
+			// 老 pdnd 每次拉配置之前先问一遍签名密钥，拉的总是全量，回执每轮重报
+			if keys != effs || eff.Codes["204"] != 0 || g.phases["switched"] < effs-3 {
+				t.Fatalf("legacy: key refresh %d, effective-config %d (%v), phases %v", keys, effs, eff.Codes, g.phases)
+			}
+			for _, h := range g.appliedHdr {
+				if h != "" {
+					t.Fatalf("legacy sent %s: %q", nodefabric.AppliedEffectiveReleaseHeader, h)
+				}
+			}
+			return
+		}
+		// 新 pdnd：换钥十分钟一查（这里只有起跑那一次），回执收下即停，
+		// 之后每轮带已应用版本、换回 204
+		if keys != 3 || g.phases["switched"] != 3 || g.phases["health_passed"] != 3 {
+			t.Fatalf("current: key refresh %d, phases %v", keys, g.phases)
+		}
+		if eff.Codes["200"] != 3 || eff.Codes["204"] == 0 || eff.Flags[flagUnchanged] != eff.Codes["204"] || effs < 3*2 {
+			t.Fatalf("current: effective-config hits %d codes %v flags %v", effs, eff.Codes, eff.Flags)
+		}
+		sent := 0
+		for i, h := range g.appliedHdr {
+			if h == "" {
+				continue
+			}
+			sent++
+			id, gen, ok := nodefabric.ParseAppliedEffectiveRelease(h)
+			if !ok || gen != 1 || g.effCodes[i] != 204 || uuid.MustParse(id).String() != id {
+				t.Fatalf("applied header %q answered %d", h, g.effCodes[i])
+			}
+		}
+		if sent != effs-3 {
+			t.Fatalf("applied header sent %d times over %d fetches", sent, effs)
 		}
 	})
 	if s.Started != 3 || s.VerifyFailures != 0 {
@@ -182,8 +223,15 @@ func TestUsersETagRoundTrip(t *testing.T) {
 }
 
 func TestStreamEventsDriveRepullAnd304(t *testing.T) {
+	for _, behavior := range []string{BehaviorCurrent, BehaviorLegacy} {
+		t.Run(behavior, func(t *testing.T) { testStreamEventsDriveRepullAnd304(t, behavior) })
+	}
+}
+
+func testStreamEventsDriveRepullAnd304(t *testing.T, behavior string) {
 	g := newFakeGateway(t, 1, 10, 30, 60) // 轮询拉长到 30 秒：期间的请求只能由事件触发
 	opt := testOptions(g.srv.URL)
+	opt.Behavior = behavior
 	opt.Stream = true
 	opt.Stagger = 0
 	nodeID := g.order[0]
@@ -202,7 +250,8 @@ func TestStreamEventsDriveRepullAnd304(t *testing.T) {
 			FromVersion: `"u1-stale"`, ToVersion: `"u1-next"`})
 		g.waitFor("delta re-pull", 2*time.Second, func() bool { return len(g.userINM) == 2 })
 
-		// 3. 配置事件只当信号：回头走一遍签名拉取
+		// 3. 配置事件只当信号：回头走一遍签名拉取（current 照 pdnd 走 syncOnce，
+		//    装上新版后用户 ETag 已作废，紧接着全量拉一次用户）
 		g.bumpGeneration(nodeID)
 		before := 0
 		g.read(func() { before = g.hits["GET /v1/nodes/effective-config"] })
@@ -211,21 +260,23 @@ func TestStreamEventsDriveRepullAnd304(t *testing.T) {
 			return g.hits["GET /v1/nodes/effective-config"] == before+1 && g.phases["switched"] == 2
 		})
 
-		// 4. 基准对得上的增量就地打上，不发请求
+		// 4. legacy：基准对得上的增量就地打上，不发请求。current：装新版时用户版本已
+		//    作废（pdnd resetUserMirror），同一条增量对不上基准，改拉全量换 304
 		g.pushEvent(nodeID, nodefabric.EventSyncUserDelta, nodefabric.SyncUserDeltaPayload{
 			Delta:       nodefabric.UserDelta{Added: []nodefabric.ProxyUser{{ID: 9002, UUID: uuid.NewString()}}},
 			FromVersion: v1, ToVersion: `"u1-after"`})
 	})
 
+	wantINM, wantCodes, wantMismatches := []string{"", v1}, []int{200, 304}, int64(1)
+	if behavior == BehaviorCurrent {
+		wantINM, wantCodes, wantMismatches = []string{"", v1, "", v1}, []int{200, 304, 200, 304}, 2
+	}
 	g.read(func() {
-		if g.userINM[1] != v1 || g.userCodes[1] != 304 {
-			t.Fatalf("delta re-pull sent %q got %d, want %q / 304", g.userINM[1], g.userCodes[1], v1)
-		}
-		if len(g.userINM) != 2 {
-			t.Fatalf("unexpected user pulls %q", g.userINM)
+		if !slices.Equal(g.userINM, wantINM) || !slices.Equal(g.userCodes, wantCodes) {
+			t.Fatalf("user pulls sent %q got %v, want %q / %v", g.userINM, g.userCodes, wantINM, wantCodes)
 		}
 	})
-	if s.DeltaMismatches != 1 || s.StreamEvents[nodefabric.EventSyncUsers] < 2 || s.StreamEvents[nodefabric.EventSyncConfig] != 1 ||
+	if s.DeltaMismatches != wantMismatches || s.StreamEvents[nodefabric.EventSyncUsers] < 2 || s.StreamEvents[nodefabric.EventSyncConfig] != 1 ||
 		s.StreamsPeak != 1 {
 		t.Fatalf("summary %+v", s)
 	}

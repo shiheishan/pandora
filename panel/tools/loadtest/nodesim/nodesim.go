@@ -1,6 +1,10 @@
 // Package nodesim 是 nodes 子命令：M 个模拟节点对着面板 node 网关跑，
 // 请求序列、节拍与失败处理逐段对齐 pdnd（pdnd/node/node.go 与 pdnd/panel/*），
 // 只把内核换成虚构负载。
+//
+// -node-behavior 选模拟哪一代 pdnd：current（缺省）是带已应用版本拉配置、回执收下
+// 即停、换钥十分钟一查、节拍 ±10% 抖动的新 pdnd；legacy 原样保留改版前的模拟器，
+// 只为和此前的实测数据（如 5k-r1）对照，不再跟 pdnd 的后续改动。
 package nodesim
 
 import (
@@ -20,8 +24,16 @@ import (
 	"github.com/aegispanel/aegis/tools/loadtest/ltkit"
 )
 
+// 两代 pdnd 的请求节拍，见包注释。
+const (
+	BehaviorCurrent = "current"
+	BehaviorLegacy  = "legacy"
+)
+
 // Options 是一次运行的全部参数；Main 从 flag 填，测试直接构造。
 type Options struct {
+	// Behavior 是 BehaviorCurrent 或 BehaviorLegacy；空串按 current。
+	Behavior string
 	NodeURL  string
 	Nodes    int
 	Duration time.Duration
@@ -43,6 +55,9 @@ type Options struct {
 	PushInterval   time.Duration
 	StatusInterval time.Duration
 	HealthWindow   time.Duration
+	// KeyCheckInterval 是 current 下主动问面板换钥的间隔（pdnd 写死 10 分钟，每次
+	// 另带 ±10% 抖动）；legacy 每次拉配置前都问，不看它。
+	KeyCheckInterval time.Duration
 
 	ErrorSamples int64
 	Stdout       io.Writer
@@ -52,12 +67,16 @@ type Options struct {
 // DefaultOptions 是 pdnd 的缺省节拍与一组适合 Vultr 实测的负载参数。
 func DefaultOptions() Options {
 	return Options{
-		Nodes: 0, Duration: 10 * time.Minute, Stagger: time.Minute, Timeout: 15 * time.Second,
+		Behavior: BehaviorCurrent,
+		Nodes:    0, Duration: 10 * time.Minute, Stagger: time.Minute, Timeout: 15 * time.Second,
 		Stream: true, VerifyConfig: true, OnlineRatio: 0.3, TrafficMiB: 8, Progress: time.Minute,
 		PullInterval: 60 * time.Second, PushInterval: 60 * time.Second, StatusInterval: 30 * time.Second,
-		HealthWindow: 5 * time.Second, ErrorSamples: 20,
+		HealthWindow: 5 * time.Second, KeyCheckInterval: 10 * time.Minute, ErrorSamples: 20,
 	}
 }
+
+// legacy 表示按改版前的 pdnd 节拍跑。
+func (o *Options) legacy() bool { return o.Behavior == BehaviorLegacy }
 
 // Main 是 nodes 子命令的入口。
 func Main(args []string) error {
@@ -67,6 +86,7 @@ func Main(args []string) error {
 	out := fs.String("out", "", "结果目录，写 nodes.json 与 nodes.txt（必填）")
 	strict := fs.Bool("strict", false, "出现 5xx、签名或令牌 401、配置验签失败、起跑后迟迟没拿到配置的节点即退出码非 0（CI 用）")
 	fs.StringVar(&opt.NodeURL, "node-url", "", "node 网关基址：https 公网域名，或回环上的 http（必填）")
+	fs.StringVar(&opt.Behavior, "node-behavior", opt.Behavior, "模拟哪一代 pdnd：current（带已应用版本拉配置、回执收下即停、换钥 10 分钟一查、节拍 ±10% 抖动）或 legacy（改版前的节拍，只为和旧数据对照）")
 	fs.IntVar(&opt.Nodes, "nodes", opt.Nodes, "取清单前 N 个节点，0 表示全部")
 	fs.DurationVar(&opt.Duration, "duration", opt.Duration, "运行时长，0 表示一直跑到 SIGINT/SIGTERM")
 	fs.DurationVar(&opt.Stagger, "stagger", opt.Stagger, "节点起跑在这个窗口内随机错开（纳秒级，不整秒齐射）")
@@ -83,6 +103,7 @@ func Main(args []string) error {
 	fs.DurationVar(&opt.PushInterval, "push-default", opt.PushInterval, "拿到 base_config 前的上报间隔（pdnd 写死，只为测试改）")
 	fs.DurationVar(&opt.StatusInterval, "status-interval", opt.StatusInterval, "心跳间隔（pdnd 写死 30 秒，只为测试改）")
 	fs.DurationVar(&opt.HealthWindow, "health-window", opt.HealthWindow, "switched 之后多久报 health_passed（pdnd 写死 5 秒）")
+	fs.DurationVar(&opt.KeyCheckInterval, "key-check-interval", opt.KeyCheckInterval, "current 下主动换钥检查的间隔（pdnd 写死 10 分钟，只为测试改）；legacy 每轮都查")
 	fs.Int64Var(&opt.ErrorSamples, "error-samples", opt.ErrorSamples, "节点侧错误最多往 stderr 打几条样本")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -145,6 +166,17 @@ func Run(ctx context.Context, m *ltkit.Manifest, opt Options, rec *ltkit.Recorde
 	if opt.Duration > 0 && opt.Stagger >= opt.Duration {
 		return fleetSummary{}, errors.New("-stagger must be shorter than -duration")
 	}
+	switch opt.Behavior {
+	case "":
+		opt.Behavior = BehaviorCurrent
+	case BehaviorCurrent, BehaviorLegacy:
+	default:
+		return fleetSummary{}, fmt.Errorf("-node-behavior must be %q or %q, got %q", BehaviorCurrent, BehaviorLegacy, opt.Behavior)
+	}
+	if opt.PullInterval <= 0 || opt.PushInterval <= 0 || opt.StatusInterval <= 0 ||
+		(!opt.legacy() && opt.KeyCheckInterval <= 0) {
+		return fleetSummary{}, errors.New("-pull-default, -push-default, -status-interval and -key-check-interval must be positive")
+	}
 	if opt.Seed == 0 {
 		opt.Seed = uint64(time.Now().UnixNano())
 	}
@@ -166,12 +198,17 @@ func Run(ctx context.Context, m *ltkit.Manifest, opt Options, rec *ltkit.Recorde
 			transports = append(transports, signed.http.CloseIdleConnections)
 		}
 		rng := rand.New(rand.NewPCG(opt.Seed, uint64(i)+1))
-		sims[i] = newSimNode(n.ID, i, &opt, uni, signed, obs, work, rng)
+		sims[i] = newSimNode(n.ID, i, &opt, uni, signed, obs, work, rng, newJitterSource(opt.Seed, i))
 	}
 	offsets := staggerOffsets(len(nodes), opt.Stagger, rand.New(rand.NewPCG(opt.Seed, 0)))
 
 	rec.SetMeta("label", m.Label)
+	rec.SetMeta("node_behavior", opt.Behavior)
+	if !opt.legacy() {
+		rec.SetMeta("key_check_interval_s", opt.KeyCheckInterval.Seconds())
+	}
 	rec.SetMeta("nodes", len(nodes))
+	rec.SetPerUnit("node", len(nodes))
 	rec.SetMeta("manifest_users", len(m.Users))
 	rec.SetMeta("stagger_s", opt.Stagger.Seconds())
 	rec.SetMeta("stream", opt.Stream)

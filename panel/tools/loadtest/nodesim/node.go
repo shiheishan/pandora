@@ -22,6 +22,8 @@ const (
 	flagAuthFail = "auth_fail"
 	flagETag304  = "etag_304"
 	flagStream   = "trigger:stream"
+	// flagUnchanged 标生效配置的 204：节点报的已应用版本仍是当前版（current 才会出现）
+	flagUnchanged = "unchanged_204"
 )
 
 type simNode struct {
@@ -34,6 +36,7 @@ type simNode struct {
 	work   *workload
 	host   *hostState
 	rng    *rand.Rand // 只在主循环里用
+	jit    jitterSource
 
 	pullInterval   time.Duration
 	pushInterval   time.Duration
@@ -52,12 +55,23 @@ type simNode struct {
 	appliedReleaseID     string
 	appliedGeneration    uint64
 	appliedAt            time.Time
+	// 以下三项只在 current 用（pdnd 的 appliedSigned / switchedSettled / healthSettled）：
+	// 已应用的那份签名配置，与它的两个阶段回执是否已被面板收下（或明确拒收）。
+	appliedSigned   *nodefabric.SignedConfig
+	switchedSettled bool
+	healthSettled   bool
 }
 
-func newSimNode(id string, index int, opt *Options, uni *uniClient, signed *signedClient, obs *observer, work *workload, rng *rand.Rand) *simNode {
+func newSimNode(id string, index int, opt *Options, uni *uniClient, signed *signedClient, obs *observer, work *workload,
+	rng *rand.Rand, jit jitterSource) *simNode {
+	if signed != nil && !opt.legacy() {
+		// pdnd 的换钥检查节拍在 SignedClient 里，间隔每次带抖动
+		signed.keyCheckEvery = opt.KeyCheckInterval
+		signed.keyJitter = func(d time.Duration) time.Duration { return jitter(jit.key, d) }
+	}
 	return &simNode{
 		id: id, index: index, opt: opt, uni: uni, signed: signed, obs: obs, work: work,
-		host: newHostState(rng), rng: rng,
+		host: newHostState(rng), rng: rng, jit: jit,
 		// pdnd 的兜底节拍：面板下发 base_config 之前用它
 		pullInterval:   opt.PullInterval,
 		pushInterval:   opt.PushInterval,
@@ -71,12 +85,14 @@ func (n *simNode) run(ctx context.Context) {
 	// 先同步一次再进循环
 	n.syncOnce(ctx, "")
 
-	pull := time.NewTicker(n.pullInterval)
-	push := time.NewTicker(n.pushInterval)
-	status := time.NewTicker(n.statusInterval)
-	defer pull.Stop()
-	defer push.Stop()
-	defer status.Stop()
+	// current 三条节拍都是带抖动的定时器，legacy 是 ticker（beat.go）
+	legacy := n.opt.legacy()
+	pull := newBeat(n.pullInterval, legacy, n.jit.pull)
+	push := newBeat(n.pushInterval, legacy, n.jit.push)
+	status := newBeat(n.statusInterval, legacy, n.jit.status)
+	defer pull.stop()
+	defer push.stop()
+	defer status.stop()
 	curPull, curPush := n.pullInterval, n.pushInterval
 
 	// 同步之后立刻报一次状态
@@ -93,22 +109,25 @@ func (n *simNode) run(ctx context.Context) {
 			// 退出前把最后一段流量交上去
 			n.report(context.WithoutCancel(ctx))
 			return
-		case <-pull.C:
+		case <-pull.C():
 			n.syncOnce(ctx, "")
-		case <-push.C:
+			pull.fired(n.pullInterval)
+		case <-push.C():
 			n.report(ctx)
-		case <-status.C:
+			push.fired(n.pushInterval)
+		case <-status.C():
 			n.reportStatus(ctx)
+			status.fired(n.statusInterval)
 		case ev := <-n.events:
 			n.applyStreamEvent(ctx, ev)
 		}
-		// 面板在 base_config 里改了节拍就重置 ticker（status 节拍 pdnd 写死，不跟）
+		// 面板在 base_config 里改了节拍就重排（status 节拍 pdnd 写死，不跟）
 		if n.pullInterval != curPull && n.pullInterval > 0 {
-			pull.Reset(n.pullInterval)
+			pull.reset(n.pullInterval)
 			curPull = n.pullInterval
 		}
 		if n.pushInterval != curPush && n.pushInterval > 0 {
-			push.Reset(n.pushInterval)
+			push.reset(n.pushInterval)
 			curPush = n.pushInterval
 		}
 	}
@@ -122,14 +141,13 @@ func (n *simNode) syncOnce(ctx context.Context, flag string) {
 	if !n.started.Load() {
 		return
 	}
-	if err := n.syncUsers(ctx, ""); err != nil {
+	if err := n.syncUsers(ctx, flag); err != nil {
 		n.obs.sample("sync users", n.id, err)
 	}
 }
 
-// syncConfig 复刻 pdnd 的签名配置流程：拉取 → 验签（失败回报 failed）→
-// 已应用则重放 switched、稳定窗口过后再报 health_passed → 否则解码、应用、
-// 记账、报 switched。兼容通道走 /config 的 ETag。
+// syncConfig 是一轮配置同步。兼容通道走 /config 的 ETag；签名通道 current 见
+// signed_sync.go，legacy 是改版前的 syncSignedLegacy。
 func (n *simNode) syncConfig(ctx context.Context, flag string) error {
 	if n.signed == nil {
 		cfg, changed, err := n.uni.config(ctx)
@@ -138,6 +156,16 @@ func (n *simNode) syncConfig(ctx context.Context, flag string) error {
 		}
 		return n.applyConfig(cfg)
 	}
+	if n.opt.legacy() {
+		return n.syncSignedLegacy(ctx, flag)
+	}
+	return n.syncSigned(ctx, flag)
+}
+
+// syncSignedLegacy 复刻老 pdnd 的签名配置流程：每轮先问换钥 → 拉全量 → 验签
+// （失败回报 failed）→ 已应用则重放 switched、稳定窗口过后再报 health_passed →
+// 否则解码、应用、记账、报 switched。
+func (n *simNode) syncSignedLegacy(ctx context.Context, flag string) error {
 	cfg, err := n.signed.config(ctx, flag)
 	if err != nil {
 		return err
@@ -186,6 +214,8 @@ func (n *simNode) alreadyApplied(cfg *nodefabric.SignedConfig) bool {
 }
 
 func (n *simNode) recordApplied(cfg *nodefabric.SignedConfig) {
+	n.appliedSigned = cfg
+	n.switchedSettled, n.healthSettled = false, false
 	n.appliedConfigHash = cfg.Hash
 	if cfg.ConfigContract != "" {
 		n.appliedReleaseID, n.appliedGeneration = cfg.ReleaseID, cfg.Generation
@@ -204,7 +234,9 @@ func (n *simNode) healthReady(now time.Time) bool {
 
 // applyConfig 复刻 pdnd applyConfig + installConfig 里面板看得见的部分：
 // 端口合法性、协议跟随下发、base_config 的两个节拍；成功后清空已下发用户
-// （pdnd 重建入站会丢掉内核用户表，n.known 随之清空）。
+// （pdnd 重建入站会丢掉内核用户表，n.known 随之清空）。current 另照 pdnd
+// resetUserMirror 一并作废用户版本与 ETag，下一次拉用户拿全量而不是 304；
+// legacy 保留改版前只清 id 的做法。
 // 分流的形状校验不做：它只影响 pdnd 本地，不产生面板请求。
 func (n *simNode) applyConfig(cfg map[string]any) error {
 	port := intFrom(cfg, "server_port")
@@ -223,6 +255,10 @@ func (n *simNode) applyConfig(cfg map[string]any) error {
 		}
 	}
 	n.userIDs = nil
+	if !n.opt.legacy() {
+		n.userVersion = ""
+		n.uni.forgetUsersVersion()
+	}
 	if !n.started.Swap(true) {
 		n.obs.fleet.started.Add(1)
 	}
@@ -260,7 +296,12 @@ func (n *simNode) applyUsers(users []nodefabric.ProxyUser) {
 func (n *simNode) applyStreamEvent(ctx context.Context, ev streamEvent) {
 	switch ev.Type {
 	case nodefabric.EventSyncConfig:
-		// 事件只当信号，回头走一遍完整的签名拉取
+		// 事件只当信号，回头走一遍完整的签名拉取。current 照 pdnd 走 syncOnce
+		// （配置之后紧接着拉用户）；legacy 保留改版前只拉配置的做法。
+		if !n.opt.legacy() {
+			n.syncOnce(ctx, flagStream)
+			return
+		}
 		if err := n.syncConfig(ctx, flagStream); err != nil {
 			n.obs.sample("stream sync config", n.id, err)
 		}
