@@ -199,9 +199,9 @@ func run() error {
 	// 多一个常驻进程的代价大于收益；而 EscalateOverdue 本身是幂等的，
 	// 将来拆成独立 worker 或换成 cron 也不需要改动业务代码。
 	//
-	// 五个循环都经 newLoopPacer 定节拍：首轮随机延迟、之后每轮 ±10% 抖动（pacer.go）。
+	// 六个循环都经 newLoopPacer 定节拍：首轮随机延迟、之后每轮 ±10% 抖动（pacer.go）。
 	var workers sync.WaitGroup
-	workers.Add(5)
+	workers.Add(6)
 	go func() {
 		defer workers.Done()
 		pace := newLoopPacer(5 * time.Minute)
@@ -350,6 +350,30 @@ func run() error {
 			if alive > 0 || metrics > 0 || rollups > 0 || activityPurged > 0 {
 				log.Info("保留期清理完成", "alive_ips", alive, "node_metrics", metrics, "traffic_rollups", rollups,
 					"activity_daily", activityPurged)
+			}
+		}
+	}()
+
+	// 批量生成账号的后台任务（w5account）：POST v1/users/bulk/generate 只登记任务，这里逐个
+	// 生成。一次只占 1 个 Argon2 名额、名额排不上就等，不挡登录；每 3 秒找一次活（每轮至多
+	// 做完一个任务），顺带清掉超过 24 小时的结果密文。多实例时靠租约与 SKIP LOCKED 分活，
+	// 停机或挂掉的任务租约一过就被接着做。
+	go func() {
+		defer workers.Done()
+		gen := opsSvc.NewUserGenerationWorker(envelope, log)
+		pace := newLoopPacer(3 * time.Second)
+		defer pace.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
+			sctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			_, err := gen.RunOnce(sctx, middleware.DefaultTenantID)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				log.Error("批量生成账号任务失败", "error", err.Error())
 			}
 		}
 	}()

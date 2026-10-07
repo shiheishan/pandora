@@ -18,10 +18,11 @@ import (
 // 能不能表达；不能，再写清楚为什么。
 var directWriteAllowed = map[string]string{
 	// CSV 导出：带 BOM 的 text/csv 流，不是 JSON
-	"admin/audit_log.go handlers.exportAudit":   "审计日志 CSV 导出",
-	"admin/bulk_users.go handlers.exportUsers":  "用户 CSV 导出",
-	"admin/giftcard.go writeGiftCodesReportCSV": "礼品卡卡密报表 CSV（掩码）",
-	"admin/giftcard.go writeGiftBatchCSV":       "礼品卡批次 CSV（生成后一次性的明文卡密下载）",
+	"admin/audit_log.go handlers.exportAudit":                   "审计日志 CSV 导出",
+	"admin/bulk_users.go handlers.exportUsers":                  "用户 CSV 导出",
+	"admin/bulk_users.go handlers.downloadUserGenerationResult": "批量生成账号的结果 CSV（邮箱 + 初始口令，24 小时内可下）",
+	"admin/giftcard.go writeGiftCodesReportCSV":                 "礼品卡卡密报表 CSV（掩码）",
+	"admin/giftcard.go writeGiftBatchCSV":                       "礼品卡批次 CSV（生成后一次性的明文卡密下载）",
 	// SSE：text/event-stream 长连接逐帧写出并 Flush
 	"admin/events.go handlers.events":   "管理端 SSE",
 	"public/events.go handlers.events":  "门户 SSE",
