@@ -41,5 +41,6 @@ description: pandora 总协调把工作派给任务会话或实现型子 agent�
 - worktree 里没有 `ops-local/`：证据和等待脚本都给主目录的绝对路径。pre-commit 在 worktree 里加载不到私有 gitleaks 规则（已知缺口），仓库公开红线要在 brief 里写明。
 - 主线在任务进行中前进了，检查机按全部 job 回放，旧基点会误红：brief 里要求交付前 `git merge feat/panel-redesign`。
 - 性能任务：留出评测集的规模与细节不要写进 brief，防止实现方对着评测调参（见 bench 流程）。
-- 报告走 worktree 的 `.claude/report.md`，不用跨会话消息（要用户手动批准，常过期送不到）。
+- 报告：用户开的任务会话写 worktree 的 `.claude/report.md`；**Agent 工具派的子 agent 写不了报告文件**（环境拦截，要求以文本返回），它的最终消息就是报告，总协调代存到 `.claude/report.md`。都不用跨会话消息（要用户手动批准，常过期送不到）。
+- 子 agent 在沙箱里连不上 1Password SSH agent，推送报签名失败；要么关沙箱重试，要么由总协调代推，不改走 HTTPS。
 - 推送任务分支是长期授权（`feat/panel-redesign` 开头只为跑 CI）；推 main、删 worktree、删远端分支都要另外问用户。
