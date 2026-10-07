@@ -214,4 +214,16 @@ func TestEffectiveReleasePG18(t *testing.T) {
 			t.Fatalf("unexpected reused release identity: %#v", cfg)
 		}
 	})
+
+	t.Run("nonce_second_claim_rejected_and_purge_keeps_live_claims", func(t *testing.T) {
+		testNonceReplayAndPurgePG18(t, ctx, admin, svc, tenantA, nodeA, tenantB, nodeB)
+	})
+
+	t.Run("unchanged_effective_release_skips_lock_and_write", func(t *testing.T) {
+		testEffectiveUnchangedPG18(t, ctx, admin, svc)
+	})
+
+	t.Run("alive_report_is_one_batched_upsert", func(t *testing.T) {
+		testReportAliveBatchPG18(t, ctx, admin, app, svc)
+	})
 }
