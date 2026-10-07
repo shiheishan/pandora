@@ -53,6 +53,7 @@ type fleetStats struct {
 	configApplied    atomic.Int64
 	verifyFailures   atomic.Int64
 	keyTransitions   atomic.Int64
+	forcedKeyChecks  atomic.Int64
 	userListsApplied atomic.Int64
 	deltaMismatches  atomic.Int64
 	nodeErrors       atomic.Int64
@@ -93,6 +94,7 @@ type fleetSummary struct {
 	ConfigApplied    int64            `json:"config_applied"`
 	VerifyFailures   int64            `json:"config_verify_failures"`
 	KeyTransitions   int64            `json:"config_key_transitions"`
+	ForcedKeyChecks  int64            `json:"config_key_forced_checks"`
 	UserListsApplied int64            `json:"user_lists_applied"`
 	DeltaMismatches  int64            `json:"delta_mismatches"`
 	NodeErrors       int64            `json:"node_errors"`
@@ -109,18 +111,19 @@ func (f *fleetStats) snapshot() fleetSummary {
 		Launched: f.launched.Load(), Started: f.started.Load(),
 		StreamsOpen: f.streamsOpen.Load(), StreamsPeak: f.streamsPeak.Load(), StreamDrops: f.streamDrops.Load(), StreamEvents: events,
 		ConfigApplied: f.configApplied.Load(), VerifyFailures: f.verifyFailures.Load(),
-		KeyTransitions: f.keyTransitions.Load(), UserListsApplied: f.userListsApplied.Load(),
-		DeltaMismatches: f.deltaMismatches.Load(), NodeErrors: f.nodeErrors.Load(),
+		KeyTransitions: f.keyTransitions.Load(), ForcedKeyChecks: f.forcedKeyChecks.Load(),
+		UserListsApplied: f.userListsApplied.Load(), DeltaMismatches: f.deltaMismatches.Load(),
+		NodeErrors: f.nodeErrors.Load(),
 	}
 }
 
 // progressLine 是每分钟打到 stdout 的一行。
 func progressLine(elapsed time.Duration, total int, rep ltkit.Report, s fleetSummary) string {
 	t := rep.Totals
-	return fmt.Sprintf("nodes t=%s launched=%d/%d started=%d streams=%d req=%d qps=%.1f p99=%.1fms 5xx=%d sig_fail=%d auth_fail=%d 304=%d transport=%d verify_fail=%d events=%v",
+	return fmt.Sprintf("nodes t=%s launched=%d/%d started=%d streams=%d req=%d qps=%.1f p99=%.1fms 5xx=%d sig_fail=%d auth_fail=%d 304=%d cfg204=%d transport=%d verify_fail=%d events=%v",
 		elapsed.Round(time.Second), s.Launched, total, s.Started, s.StreamsOpen, t.Count, t.QPS, t.P99MS,
-		t.Server5x, t.Flags[flagSigFail], t.Flags[flagAuthFail], t.Flags[flagETag304], transportErrors(t.Codes),
-		s.VerifyFailures, s.StreamEvents)
+		t.Server5x, t.Flags[flagSigFail], t.Flags[flagAuthFail], t.Flags[flagETag304], t.Flags[flagUnchanged],
+		transportErrors(t.Codes), s.VerifyFailures, s.StreamEvents)
 }
 
 func transportErrors(codes map[string]uint64) uint64 {

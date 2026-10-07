@@ -36,9 +36,10 @@ type fakeNode struct {
 
 // fakeGateway 的计数都在 mu 下；测试读之前先 snapshot。
 type fakeGateway struct {
-	t       testing.TB
-	srv     *httptest.Server
-	tenant  string
+	t      testing.TB
+	srv    *httptest.Server
+	tenant string
+	// signer / svc 可被 rotateConfigKey 换掉，请求处理里经 keys() 在锁下取
 	signer  *crypto.Signer
 	svc     *nodefabric.Service
 	log     *slog.Logger
@@ -58,7 +59,13 @@ type fakeGateway struct {
 	userINM   []string
 	userCodes []int
 	configINM []string
-	phases    map[string]int
+	// appliedHdr 是每次拉生效配置带的 X-Applied-Effective-Release（没带记空串），
+	// effCodes 是对应的应答码（200 / 204）
+	appliedHdr []string
+	effCodes   []int
+	phases     map[string]int
+	// reject409 里的阶段一律回 409（面板明确拒收）
+	reject409 map[string]bool
 	beats     []nodefabric.HeartbeatInput
 	pushes    int
 	alives    int
@@ -78,6 +85,7 @@ func newFakeGateway(t testing.TB, nodes, users, pullSec, pushSec int) *fakeGatew
 		log: slog.New(slog.DiscardHandler), pullSec: pullSec, pushSec: pushSec, done: make(chan struct{}),
 		nodes: map[string]*fakeNode{}, nonces: map[string]bool{}, hits: map[string]int{},
 		phases: map[string]int{}, firstSeen: map[string]time.Time{}, fail500: map[string]bool{},
+		reject409: map[string]bool{},
 	}
 	for i := range nodes {
 		seed := sha256.Sum256([]byte(fmt.Sprintf("fake-node-%d", i)))
@@ -201,32 +209,77 @@ func (g *fakeGateway) signed(next func(http.ResponseWriter, *http.Request, *fake
 	}
 }
 
-func (g *fakeGateway) configKey(w http.ResponseWriter, r *http.Request, _ *fakeNode) {
-	if r.Header.Get("X-Config-Key-Id") != g.signer.KeyID() {
-		httpx.Fail(w, r, g.log, httpx.New(httpx.CodeConflict, "no trusted config signing key transition is available"))
+// keys 在锁下取当前的配置签名钥与面板服务（rotateConfigKey 会换掉它们）。
+func (g *fakeGateway) keys() (*crypto.Signer, *nodefabric.Service) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.signer, g.svc
+}
+
+// rotateConfigKey 照面板的密钥轮换：换新签名钥，旧钥只用来给新公钥签过渡声明。
+func (g *fakeGateway) rotateConfigKey() {
+	next, err := crypto.NewSigner(bytes.Repeat([]byte{8}, 32))
+	if err != nil {
+		g.t.Fatal(err)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	svc := nodefabric.NewService(nil, next)
+	if err := svc.SetPreviousConfigSigner(g.signer); err != nil {
+		g.t.Fatal(err)
+	}
+	g.signer, g.svc = next, svc
+}
+
+// configKey 照 api/node：钉住的就是当前钥回 204，钉的是上一把钥回过渡声明，否则 409。
+func (g *fakeGateway) configKey(w http.ResponseWriter, r *http.Request, n *fakeNode) {
+	_, svc := g.keys()
+	t, err := svc.ConfigSigningKeyTransition(n.id, r.Header.Get("X-Config-Key-Id"), time.Now())
+	if err != nil {
+		httpx.Fail(w, r, g.log, err)
 		return
 	}
-	httpx.NoContent(w)
+	if t == nil {
+		httpx.NoContent(w)
+		return
+	}
+	httpx.OK(w, t)
 }
 
 // effectiveConfig 用面板真实的 BuildNodeConfig 组装载荷、SignEffectiveRelease 签名；
 // 只把 base_config 改成测试用的短节拍（真面板固定 pull 15 / push 60）。
+// 节点带的已应用版本（面板同一个解析函数）仍是当前版时照 api/node 回 204。
 func (g *fakeGateway) effectiveConfig(w http.ResponseWriter, r *http.Request, n *fakeNode) {
+	hdr := r.Header.Get(nodefabric.AppliedEffectiveReleaseHeader)
+	appliedID, appliedGen, ok := nodefabric.ParseAppliedEffectiveRelease(hdr)
 	g.mu.Lock()
 	if n.releaseID == "" {
 		n.releaseID, n.generation = uuid.NewString(), 1
 	}
 	releaseID, generation := n.releaseID, n.generation
+	unchanged := ok && appliedID == releaseID && appliedGen == generation
+	g.appliedHdr = append(g.appliedHdr, hdr)
+	if unchanged {
+		g.effCodes = append(g.effCodes, http.StatusNoContent)
+	} else {
+		g.effCodes = append(g.effCodes, http.StatusOK)
+	}
 	g.mu.Unlock()
+	if unchanged {
+		w.Header().Set("Cache-Control", "no-store")
+		httpx.NoContent(w)
+		return
+	}
+	signer, _ := g.keys()
 	payload := g.nodeConfig(n)
 	manifest, _ := json.Marshal(map[string]any{"node": map[string]any{"id": n.id, "generation": generation}})
 	content, msum := sha256.Sum256(payload), sha256.Sum256(manifest)
 	issued := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
 	fields := nodefabric.EffectiveReleaseSignatureFields{TenantID: g.tenant, NodeID: n.id, ReleaseID: releaseID,
 		Generation: generation, ContentHash: base64.StdEncoding.EncodeToString(content[:]),
-		SourceManifestHash: base64.StdEncoding.EncodeToString(msum[:]), KeyID: g.signer.KeyID(),
+		SourceManifestHash: base64.StdEncoding.EncodeToString(msum[:]), KeyID: signer.KeyID(),
 		IssuedAt: issued, ExpiresAt: issued.Add(nodefabric.EffectiveReleaseMaxDeliveryWindow)}
-	sig, err := nodefabric.SignEffectiveRelease(g.signer, fields)
+	sig, err := nodefabric.SignEffectiveRelease(signer, fields)
 	if err != nil {
 		g.t.Error(err)
 		return
@@ -240,7 +293,8 @@ func (g *fakeGateway) effectiveConfig(w http.ResponseWriter, r *http.Request, n 
 
 // nodeConfig 是面板真实的 BuildNodeConfig 产物，只把 base_config 换成测试节拍。
 func (g *fakeGateway) nodeConfig(n *fakeNode) []byte {
-	body, _, err := g.svc.BuildNodeConfig(&nodefabric.ServingNode{ID: n.id, Name: "lt-node", NodeType: "vless", ServerPort: 443, Kernel: "auto"})
+	_, svc := g.keys()
+	body, _, err := svc.BuildNodeConfig(&nodefabric.ServingNode{ID: n.id, Name: "lt-node", NodeType: "vless", ServerPort: 443, Kernel: "auto"})
 	if err != nil {
 		g.t.Fatal(err)
 	}
@@ -295,7 +349,8 @@ func (g *fakeGateway) report(w http.ResponseWriter, r *http.Request, n *fakeNode
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if in.ReleaseID != n.releaseID || in.ReportID != uuid.NewSHA1(uuid.MustParse(in.ReleaseID), []byte(in.Phase)).String() ||
+	if g.reject409[in.Phase] || in.ReleaseID != n.releaseID ||
+		in.ReportID != uuid.NewSHA1(uuid.MustParse(in.ReleaseID), []byte(in.Phase)).String() ||
 		(in.Phase == "health_passed" && !n.switched[in.ReleaseID]) {
 		httpx.Fail(w, r, g.log, httpx.New(httpx.CodeConflict, "report evidence mismatch"))
 		return

@@ -62,6 +62,10 @@ func (c *uniClient) setUsersVersion(v string) {
 	}
 }
 
+// forgetUsersVersion 对应 pdnd ForgetUsersVersion：入站重建后内核用户表已清空，
+// 下一轮拉用户不能再拿旧 ETag 换 304。
+func (c *uniClient) forgetUsersVersion() { c.usersETag.Store("") }
+
 func (c *uniClient) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
 	q := url.Values{}
 	q.Set("node_id", c.nodeID)
