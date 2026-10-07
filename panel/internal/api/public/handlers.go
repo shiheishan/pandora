@@ -512,6 +512,8 @@ func isUUID(s string) bool {
 type siteConfigResponse struct {
 	RegistrationMode  string `json:"registration_mode"`
 	EmailVerification bool   `json:"email_verification"`
+	// PasswordReset 为 false 时门户隐藏「忘记密码」（没配邮件服务，验证码发不出去）
+	PasswordReset bool `json:"password_reset"`
 }
 
 // siteConfig 返回渲染登录/注册页需要的站点开关。
@@ -529,6 +531,7 @@ func (h *handlers) siteConfig(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, siteConfigResponse{
 		RegistrationMode:  policy.Mode,
 		EmailVerification: policy.EmailVerification,
+		PasswordReset:     h.d.Identity.PasswordResetAvailable(r.Context(), tenantID),
 	})
 }
 

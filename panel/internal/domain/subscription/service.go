@@ -170,6 +170,25 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 // 删不掉也不该删 —— 泄露之后最需要回答的问题正是「旧链接被谁用过」，
 // 把记录抹掉等于把唯一的线索也一起丢了。
 func (s *Service) Rotate(ctx context.Context, tenantID, userID, subID string) (string, error) {
+	if _, err := uuid.Parse(subID); err != nil {
+		return "", ErrNotFound
+	}
+	var token string
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
+		var err error
+		token, err = s.rotateInTx(ctx, tx, tenantID, userID, subID, true)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// rotateInTx 在调用方事务里换发订阅凭据：作废现有 active 凭据、写一条新的，返回新令牌明文。
+// 后台替用户换发（AdminRotate）在同一个事务里接着写审计。
+func (s *Service) rotateInTx(ctx context.Context, tx pgx.Tx, tenantID, userID, subID string,
+	refuseExpired bool) (string, error) {
 	parsedSubID, err := uuid.Parse(subID)
 	if err != nil {
 		return "", ErrNotFound
@@ -186,49 +205,46 @@ func (s *Service) Rotate(ctx context.Context, tenantID, userID, subID string) (s
 		}
 	}
 
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
-		// 确认这条订阅确实属于该用户，避免拿别人的 subID 来换；锁住订阅行，与续费
-		// 救回（同样先锁订阅）串行，判定「过期没过期」与换发之间状态不会变
-		var owner, status string
-		var lapsed bool
-		if err := tx.QueryRow(ctx, `
-			SELECT user_id::text, status,
-			       current_period_end IS NOT NULL AND current_period_end <= now()
-			  FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid
-			 FOR UPDATE`,
-			tenantID, subID).Scan(&owner, &status, &lapsed); err != nil {
-			return ErrNotFound
-		}
-		if owner != userID {
-			return ErrNotFound
-		}
-		if status == "expired" || lapsed {
-			return ErrRotateWhileExpired
-		}
+	// 确认这条订阅确实属于该用户，避免拿别人的 subID 来换；锁住订阅行，与续费
+	// 救回（同样先锁订阅）串行，判定「过期没过期」与换发之间状态不会变
+	var owner, status string
+	var lapsed bool
+	if err := tx.QueryRow(ctx, `
+		SELECT user_id::text, status,
+		       current_period_end IS NOT NULL AND current_period_end <= now()
+		  FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid
+		 FOR UPDATE`,
+		tenantID, subID).Scan(&owner, &status, &lapsed); err != nil {
+		return "", ErrNotFound
+	}
+	if owner != userID {
+		return "", ErrNotFound
+	}
+	// 过期期间只禁用户自己换（链接只读、续费后恢复原链接）；后台替用户换发不拦
+	if refuseExpired && (status == "expired" || lapsed) {
+		return "", ErrRotateWhileExpired
+	}
 
-		if _, err := tx.Exec(ctx, `
-			UPDATE subscription_credentials
-			   SET status = 'revoked', revoked_at = now(), revoked_reason = 'rotated',
-			       rotated_count = rotated_count + 1, rotated_at = now()
-			 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND status = 'active'`,
-			tenantID, subID); err != nil {
-			return err
-		}
+	if _, err := tx.Exec(ctx, `
+		UPDATE subscription_credentials
+		   SET status = 'revoked', revoked_at = now(), revoked_reason = 'rotated',
+		       rotated_count = rotated_count + 1, rotated_at = now()
+		 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND status = 'active'`,
+		tenantID, subID); err != nil {
+		return "", err
+	}
 
-		var expires *time.Time
-		_ = tx.QueryRow(ctx,
-			`SELECT current_period_end FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`,
-			tenantID, subID).Scan(&expires)
+	var expires *time.Time
+	_ = tx.QueryRow(ctx,
+		`SELECT current_period_end FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`,
+		tenantID, subID).Scan(&expires)
 
-		_, err := tx.Exec(ctx, `
-			INSERT INTO subscription_credentials
-				(tenant_id, subscription_id, user_id, token_hash, token_prefix,
-				 scope, expires_at, token_encrypted)
-			VALUES ($1,$2,$3::uuid,$4,$5,'subscription',$6,$7)`,
-			tenantID, subID, userID, crypto.HashToken(token), token[:8], expires, sealed)
-		return err
-	})
-	if err != nil {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO subscription_credentials
+			(tenant_id, subscription_id, user_id, token_hash, token_prefix,
+			 scope, expires_at, token_encrypted)
+		VALUES ($1,$2,$3::uuid,$4,$5,'subscription',$6,$7)`,
+		tenantID, subID, userID, crypto.HashToken(token), token[:8], expires, sealed); err != nil {
 		return "", err
 	}
 	return token, nil

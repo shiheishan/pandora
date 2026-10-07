@@ -284,7 +284,7 @@ export interface GenerateForm {
   reason: string
 }
 
-/** 与 adminops.GenerateUsers 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
+/** 与 adminops.normalizeGenerateUsers 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
 export function generateProblems(f: GenerateForm): Record<string, string> {
   const out: Record<string, string> = {}
   const n = Number(f.count.trim())
@@ -295,11 +295,6 @@ export function generateProblems(f: GenerateForm): Record<string, string> {
   const r = [...f.reason.trim()].length
   if (r < 5 || r > 500) out.reason = '请写清生成原因，5 到 500 个字'
   return out
-}
-
-/** 生成结果的本地 CSV（契约：「下载」不再请求服务器） */
-export function generatedRows(users: ReadonlyArray<{ email: string; password: string }>): string[][] {
-  return [['邮箱', '初始密码'], ...users.map((u) => [u.email, u.password])]
 }
 
 // ===========================================================================

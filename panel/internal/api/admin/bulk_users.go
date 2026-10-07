@@ -2,8 +2,13 @@ package admin
 
 import (
 	"encoding/csv"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -73,7 +78,7 @@ func (h *handlers) exportUsers(w http.ResponseWriter, r *http.Request) {
 		expires = n
 	}
 	rows, err := h.d.Ops.ExportUsers(r.Context(), httpx.TenantIDFrom(r.Context()),
-		adminops.BulkFilter{
+		httpx.PrincipalFrom(r.Context()).UserID, adminops.BulkFilter{
 			Status: q.Get("status"), GroupID: q.Get("group_id"),
 			Query: q.Get("query"), HasActiveSub: hasSub, PlanID: q.Get("plan_id"),
 			ExpiresWithinDays: expires, SubState: q.Get("sub_state"),
@@ -114,15 +119,12 @@ type generateUsersReq struct {
 	Reason      string `json:"reason"`
 }
 
-type generateUsersResponse struct {
-	Count   int                      `json:"count"`
-	Users   []adminops.GeneratedUser `json:"users"`
-	Warning string                   `json:"warning"`
-}
-
-// generateUsers 批量造账号，供经销商或线下渠道预制交付。
+// generateUsers 登记一个批量生成账号的后台任务：POST v1/users/bulk/generate，回 202 与任务。
 //
-// 响应里带明文口令，且只有这一次 —— 库里存的是哈希，之后无从取回。
+// 口令由 aegis-admin 的 worker 逐个生成（一次只占 1 个 Argon2 名额），界面轮询
+// GET v1/users/bulk/generate/jobs/{id} 看进度，完成后从 …/result 下载 CSV。
+// 门槛在 router_users.go：iam.user.write → 近期重认证 → 幂等（中间件在响应后记下，
+// 同一个键重放回同一个任务）。
 func (h *handlers) generateUsers(w http.ResponseWriter, r *http.Request) {
 	var req generateUsersReq
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -130,7 +132,7 @@ func (h *handlers) generateUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := httpx.PrincipalFrom(r.Context())
-	users, err := h.d.Ops.GenerateUsers(r.Context(), httpx.TenantIDFrom(r.Context()),
+	job, err := h.d.Ops.SubmitGenerateUsers(r.Context(), httpx.TenantIDFrom(r.Context()),
 		adminops.GenerateUsersInput{
 			Count: req.Count, EmailPrefix: req.EmailPrefix,
 			EmailDomain: req.EmailDomain, GroupID: req.GroupID,
@@ -140,10 +142,69 @@ func (h *handlers) generateUsers(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	httpx.OK(w, generateUsersResponse{
-		Count: len(users), Users: users,
-		Warning: "口令只在这一次返回，关闭后无法再查。请立即保存。",
-	})
+	httpx.JSON(w, http.StatusAccepted, job)
+}
+
+type userGenerationJobsResponse struct {
+	Jobs []adminops.UserGenerationJob `json:"jobs"`
+}
+
+// listUserGenerationJobs 列最近的批量生成任务（不含结果）。
+func (h *handlers) listUserGenerationJobs(w http.ResponseWriter, r *http.Request) {
+	jobs, err := h.d.Ops.ListUserGenerationJobs(r.Context(), httpx.TenantIDFrom(r.Context()))
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	httpx.OK(w, userGenerationJobsResponse{Jobs: jobs})
+}
+
+// getUserGenerationJob 读一个任务的进度，界面据此画进度条。
+func (h *handlers) getUserGenerationJob(w http.ResponseWriter, r *http.Request) {
+	job, err := h.d.Ops.GetUserGenerationJob(r.Context(), httpx.TenantIDFrom(r.Context()), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	httpx.OK(w, job)
+}
+
+// downloadUserGenerationResult 下载任务结果（邮箱 + 初始口令）的 CSV。
+//
+// 只有提交任务的管理员能下，要近期重认证；导出审计与读取密文在同一个事务里写。
+// 密文按任务 id 作 AAD 在这里解开，明文只出现在这个响应里，不进日志、不缓存。
+func (h *handlers) downloadUserGenerationResult(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "id")
+	sealed, _, err := h.d.Ops.UserGenerationResult(r.Context(), httpx.TenantIDFrom(r.Context()),
+		jobID, httpx.PrincipalFrom(r.Context()).UserID)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	if h.d.Envelope == nil {
+		httpx.Fail(w, r, h.d.Log, httpx.Internal(errors.New("envelope not configured")))
+		return
+	}
+	plain, err := h.d.Envelope.Open(sealed, adminops.UserGenerationResultAAD(jobID))
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.Internal(fmt.Errorf("open user generation result: %w", err)))
+		return
+	}
+	var users []adminops.GeneratedUser
+	if err := json.Unmarshal(plain, &users); err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.Internal(fmt.Errorf("decode user generation result: %w", err)))
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="generated-users.csv"`)
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+	_ = cw.Write([]string{"邮箱", "初始密码"})
+	for _, u := range users {
+		_ = cw.Write([]string{u.Email, u.Password})
+	}
 }
 
 type bulkMailReq struct {

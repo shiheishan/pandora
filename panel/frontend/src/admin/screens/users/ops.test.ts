@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { bulkPreviewSchema, devicesSchema, generatedSchema, resetDoneSchema, resetLogsSchema, resetStatsSchema, userGroupsSchema, type OnlineDevice } from './api'
+import { jobFilename, jobFinished, jobPercent } from './jobs'
+import { grantReasonProblem, parseGrantGB } from './trafficPack'
+import { bulkPreviewSchema, devicesSchema, generationJobSchema, resetDoneSchema, resetLogsSchema, resetStatsSchema, trafficGrantedSchema, userGroupsSchema, type OnlineDevice } from './api'
 import {
   bulkFilter,
   devicePolicyBody,
   exclusivePoolsLabel,
   exactEmail,
   exportQuery,
-  generatedRows,
   generateProblems,
   groupBlocker,
   groupRefs,
@@ -83,11 +84,13 @@ describe('批量生成', () => {
     expect(generateProblems({ ...ok, reason: '原'.repeat(501) }).reason).toBeDefined()
   })
 
-  it('本地 CSV 第一行是表头', () => {
-    expect(generatedRows([{ email: 'a@x.io', password: 'p' }])).toEqual([
-      ['邮箱', '初始密码'],
-      ['a@x.io', 'p'],
-    ])
+  it('任务进度：百分比取整、结束即停轮询、文件名带前缀与日期', () => {
+    expect(jobPercent({ total: 3, completed: 1 })).toBe(33)
+    expect(jobPercent({ total: 3, completed: 3 })).toBe(100)
+    expect(jobPercent({ total: 0, completed: 0 })).toBe(0)
+    expect(jobFinished({ status: 'running' })).toBe(false)
+    expect(jobFinished({ status: 'failed' })).toBe(true)
+    expect(jobFilename({ email_prefix: 'dealer', created_at: '2026-10-07T08:00:00Z' })).toBe('users-dealer-2026-10-07.csv')
   })
 })
 
@@ -154,6 +157,26 @@ describe('schema', () => {
   it('批量预览要 sample_rows；生成结果是邮箱 + 口令数组', () => {
     expect(bulkPreviewSchema.safeParse({ total: 1, samples: ['a@b.c'], sample_rows: [{ email: 'a@b.c', plan_name: null, current_period_end: null }] }).success).toBe(true)
     expect(bulkPreviewSchema.safeParse({ total: 1, samples: ['a@b.c'] }).success).toBe(false)
-    expect(generatedSchema.safeParse({ count: 1, users: [{ email: 'a@b.c', password: 'x' }], warning: '只显示一次' }).success).toBe(true)
+    const job = {
+      id: 'j1', actor_id: 'a1', status: 'running', total: 3, completed: 1, failed: 0, email_prefix: 'dealer', email_domain: 'example.com',
+      group_id: null, reason: '线下渠道预制', error: null, result_available: true, result_expires_at: null,
+      created_at: '2026-10-07T08:00:00Z', started_at: '2026-10-07T08:00:01Z', finished_at: null,
+    }
+    expect(generationJobSchema.safeParse(job).success).toBe(true)
+    // 后端没有 omitempty：缺字段即判不符
+    expect(generationJobSchema.safeParse({ ...job, finished_at: undefined }).success).toBe(false)
+    expect(generationJobSchema.safeParse({ ...job, status: 'done' }).success).toBe(false)
+  })
+
+  it('加流量包：GB 换字节、上限 10240 GB、原因 5 到 500 字', () => {
+    expect(parseGrantGB('10')).toBe(10 * 1024 ** 3)
+    expect(parseGrantGB('10240')).toBe(10240 * 1024 ** 3)
+    for (const bad of ['0', '10241', '1.5', '-1', '', 'abc']) expect(parseGrantGB(bad)).toBeNull()
+    expect(grantReasonProblem('短')).not.toBeNull()
+    expect(grantReasonProblem('补偿线路故障')).toBeNull()
+    expect(grantReasonProblem('原'.repeat(501))).not.toBeNull()
+    expect(
+      trafficGrantedSchema.safeParse({ subscription_id: 's', user_id: 'u', user_email: 'a@b.c', grant_id: 'g', granted_bytes: 1, remaining_bytes_total: 1 }).success,
+    ).toBe(true)
   })
 })

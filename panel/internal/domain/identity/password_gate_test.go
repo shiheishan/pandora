@@ -22,7 +22,7 @@ func TestPasswordSlotIsAcquiredBeforeTransactions(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
 	for _, name := range []string{
 		"Service.Login", "Service.CompleteRegistration", "Service.ChangePassword",
-		"Service.Reauth", "Service.AdminResetPassword",
+		"Service.Reauth", "Service.AdminResetPassword", "Service.CompletePasswordReset",
 	} {
 		body := pkg.Decl(name)
 		acquire := strings.Index(body, "acquirePasswordSlot(ctx)")

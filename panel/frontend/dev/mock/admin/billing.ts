@@ -37,7 +37,8 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '')
 const BAD_JSON = err(400, 'bad_request', '请求体不是合法的 JSON')
 
 // ---- 支付渠道写入：照 billing/provider_admin.go 的 normalizeProviderSettings ----
-const EPAY_METHODS = ['alipay', 'wxpay', 'qqpay']
+// 用户 2026-10-07 定：易支付只出支付宝和微信
+const EPAY_METHODS = ['alipay', 'wxpay']
 const PROVIDER_SETTINGS = ['display_name', 'base_url', 'submit_path', 'api_path', 'methods', 'default_method', 'allow_private_host', 'merchant_id', 'key'] as const
 const PROVIDER_PATH = /^\/[A-Za-z0-9._~/-]{0,127}$/
 const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/
@@ -73,7 +74,7 @@ function providerSettings(body: Json): { ok: ProviderSettings } | { fields: Reco
   const raw = Array.isArray(body.methods) ? body.methods.map((m) => str(m).trim()) : []
   const methods: string[] = []
   for (const m of raw) {
-    if (!EPAY_METHODS.includes(m)) f.methods = '支付方式只能从支付宝、微信支付、QQ 钱包中选'
+    if (!EPAY_METHODS.includes(m)) f.methods = '支付方式只能从支付宝、微信支付中选'
     else if (!methods.includes(m)) methods.push(m)
   }
   if (methods.length === 0 && !f.methods) f.methods = '至少选一种支付方式'

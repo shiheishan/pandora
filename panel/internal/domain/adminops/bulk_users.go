@@ -13,7 +13,6 @@ import (
 
 	"github.com/aegispanel/aegis/internal/domain/subscription"
 	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -208,7 +207,10 @@ type ExportRow struct {
 // 刻意不导出任何可以直接拿来登录或联系的东西之外的隐私字段：
 // 没有 IP、没有设备、没有订阅凭据。一份用户导出表最常见的去处是
 // 某个人的桌面，然后是某个群 —— 少一个字段就少一分风险。
-func (s *Service) ExportUsers(ctx context.Context, tenantID string,
+//
+// 一次最多带走 5 万行邮箱：谁、按什么条件、导出了多少行，在同一个事务里写审计
+// （审计台账 2.3 第 1 条）。审计写不进去就整个失败，不交出名单。
+func (s *Service) ExportUsers(ctx context.Context, tenantID, actorID string,
 	f BulkFilter, limit int) ([]ExportRow, error) {
 
 	if err := f.validate(); err != nil {
@@ -247,9 +249,41 @@ func (s *Service) ExportUsers(ctx context.Context, tenantID string,
 			}
 			out = append(out, r)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+		return audit.Write(ctx, tx, tenantID, audit.Entry{
+			ActorKind: "admin", ActorID: &actorID,
+			Action: "user.bulk_exported", ResourceType: "user",
+			AfterDigest: map[string]any{"rows": len(out), "limit": limit, "filter": bulkFilterDigest(f)},
+			APIDomain:   "admin", RequestID: httpx.RequestIDFrom(ctx),
+		})
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// bulkFilterDigest 是审计里的圈人条件：只记非空的项。
+func bulkFilterDigest(f BulkFilter) map[string]any {
+	d := map[string]any{}
+	for k, v := range map[string]string{
+		"status": f.Status, "group_id": f.GroupID, "query": strings.TrimSpace(f.Query),
+		"plan_id": f.PlanID, "sub_state": f.SubState,
+	} {
+		if v != "" {
+			d[k] = v
+		}
+	}
+	if f.HasActiveSub != nil {
+		d["has_active_sub"] = *f.HasActiveSub
+	}
+	if f.ExpiresWithinDays > 0 {
+		d["expires_within_days"] = f.ExpiresWithinDays
+	}
+	return d
 }
 
 //-----------------------------------------------------------------------------
@@ -270,123 +304,44 @@ type GeneratedUser struct {
 	Password string `json:"password"`
 }
 
-// GenerateUsers 批量造账号。
+// normalizeGenerateUsers 规整并校验批量生成的参数（提交任务时调用）。
 //
-// 用途是给经销商或线下渠道预制一批可以直接交付的账号。
-//
-// 密码只在这一次返回，之后无从取回 —— 库里存的是哈希。
-// 所以调用方必须当场保存，界面上也会强调这一点。
-func (s *Service) GenerateUsers(ctx context.Context, tenantID string,
-	in GenerateUsersInput) ([]GeneratedUser, error) {
-
+// 批量生成改成了后台任务（user_generation_jobs.go）：请求只登记任务，口令由 aegis-admin
+// 的 worker 逐个生成，结果加密保留 24 小时供下载。
+func normalizeGenerateUsers(in GenerateUsersInput) (GenerateUsersInput, error) {
 	in.EmailPrefix = strings.ToLower(strings.TrimSpace(in.EmailPrefix))
 	in.EmailDomain = strings.ToLower(strings.TrimSpace(in.EmailDomain))
 	in.Reason = strings.TrimSpace(in.Reason)
+	in.GroupID = strings.TrimSpace(in.GroupID)
 
 	if in.Count < 1 || in.Count > 500 {
-		return nil, httpx.Invalid(map[string]string{
-			"count": "一次生成 1 到 500 个。更多请分批 —— 单次几千个会把事务拖很久"})
+		return in, httpx.Invalid(map[string]string{
+			"count": "一次生成 1 到 500 个。更多请分批提交"})
 	}
 	if !isSafeSlug(in.EmailPrefix) {
-		return nil, httpx.Invalid(map[string]string{
+		return in, httpx.Invalid(map[string]string{
 			"email_prefix": "前缀只能用小写字母、数字和短横线，1 到 20 位"})
 	}
 	if !isSafeDomain(in.EmailDomain) {
-		return nil, httpx.Invalid(map[string]string{
+		return in, httpx.Invalid(map[string]string{
 			"email_domain": "域名格式不正确"})
 	}
 	if n := utf8.RuneCountInString(in.Reason); n < 5 || n > 500 {
-		return nil, httpx.Invalid(map[string]string{
+		return in, httpx.Invalid(map[string]string{
 			"reason": "请写清生成原因，5 到 500 个字"})
 	}
-	if in.GroupID != "" && validateUUID(in.GroupID) != nil {
-		return nil, httpx.Invalid(map[string]string{"group_id": "分组标识格式不正确"})
-	}
-
-	// Argon2 在事务外先算好（每个 19MiB、t=2，单核几十毫秒，500 个就是十几秒）：
-	// 原来在事务里逐个算，整段时间占着一条库连接并持有已插入行的锁，会撞
-	// statement_timeout 与网关超时。哈希失败或请求取消时什么都还没写。
-	creds, err := hashGeneratedPasswords(ctx, in.Count)
-	if err != nil {
-		return nil, err
-	}
-
-	var out []GeneratedUser
-	actor := in.ActorID
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor}, func(tx pgx.Tx) error {
-		var group any
-		if in.GroupID != "" {
-			var exists bool
-			if err := tx.QueryRow(ctx, `
-				SELECT EXISTS(SELECT 1 FROM user_groups
-				               WHERE tenant_id=$1 AND id=$2::uuid)`,
-				tenantID, in.GroupID).Scan(&exists); err != nil {
-				return err
-			}
-			if !exists {
-				return httpx.Invalid(map[string]string{"group_id": "分组不存在"})
-			}
-			group = in.GroupID
+	if in.GroupID != "" {
+		if _, err := uuid.Parse(in.GroupID); err != nil {
+			return in, httpx.Invalid(map[string]string{"group_id": "分组标识格式不正确"})
 		}
-
-		users, err := insertGeneratedUsers(ctx, tx, tenantID, group, in.EmailPrefix, in.EmailDomain, creds,
-			func() (string, error) { return randomSlug(8) })
-		if err != nil {
-			return err
-		}
-		out = users
-
-		return audit.Write(ctx, tx, tenantID, audit.Entry{
-			ActorKind: "admin", ActorID: &actor,
-			Action: "user.bulk_generated", ResourceType: "user",
-			AfterDigest: map[string]any{
-				"count": in.Count, "prefix": in.EmailPrefix,
-				"domain": in.EmailDomain, "group_id": in.GroupID, "reason": in.Reason,
-			},
-			APIDomain: "admin", RequestID: httpx.RequestIDFrom(ctx),
-		})
-	})
-	if err != nil {
-		return nil, err
 	}
-	return out, nil
+	return in, nil
 }
 
 // generatedCredential 是事务外先算好的一份随机口令与它的 PHC 哈希。
 type generatedCredential struct {
 	password string
 	phc      string
-}
-
-// hashGeneratedPasswords 逐个生成随机口令并算 Argon2 哈希，全部在事务外。
-//
-// 顺序算、一次一个：全局 Argon2 并发上限（登录、改密共用）只占一个名额，不把登录挤出去。
-// 合并 w1plat 的 crypto.AcquirePasswordSlot 时，接在每次 crypto.HashPassword 之前取槽、
-// 算完即还；取槽超时就整批失败返回（此时库里什么都没写）。
-func hashGeneratedPasswords(ctx context.Context, n int) ([]generatedCredential, error) {
-	out := make([]generatedCredential, 0, n)
-	for len(out) < n {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		password, err := randomPassword()
-		if err != nil {
-			return nil, err
-		}
-		// 一次只占一个全局哈希名额、算完即还，不把登录挤出去；排不上名额就整批放弃，
-		// 这时库里还没写任何东西
-		slot, err := crypto.AcquirePasswordSlot(ctx)
-		if err != nil {
-			return nil, httpx.New(httpx.CodeUnavailable, "当前请求较多，请稍后重试").WithInternal(err)
-		}
-		phc, err := slot.Hash(password, crypto.DefaultArgon2Params())
-		slot.Release()
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, generatedCredential{password: password, phc: phc})
-	}
-	return out, nil
 }
 
 // generatedEmailRounds 是撞邮箱换后缀重试的轮数上限：8 位随机后缀撞车概率极低，

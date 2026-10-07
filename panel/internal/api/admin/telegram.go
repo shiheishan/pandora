@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/domain/notify"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -150,6 +151,12 @@ func (h *handlers) testTelegram(w http.ResponseWriter, r *http.Request) {
 	sender := notify.NewTelegramSender(cfg.BotToken)
 	if sender == nil {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeValidationFailed, "Bot Token 无效"))
+		return
+	}
+	// chat id 可以随便填：发之前先留痕（审计台账 2.3 第 5 条），写不进去就不发
+	if err := h.d.Ops.RecordTestSend(r.Context(), httpx.TenantIDFrom(r.Context()),
+		httpx.PrincipalFrom(r.Context()).UserID, adminops.TestSendTelegram, itoa64(req.ChatID), nil); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	if err := sender.Send(r.Context(), itoa64(req.ChatID), "配置测试",

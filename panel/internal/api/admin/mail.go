@@ -10,6 +10,7 @@ package admin
 import (
 	"net/http"
 
+	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/domain/identity"
 	"github.com/aegispanel/aegis/internal/domain/notify"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -160,6 +161,12 @@ func (h *handlers) testMailSettings(w http.ResponseWriter, r *http.Request) {
 	sender := notify.NewSMTPSender(cfg)
 	if sender == nil {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeValidationFailed, "SMTP 配置不完整"))
+		return
+	}
+	// 收件地址可以随便填：发之前先留痕（审计台账 2.3 第 5 条），写不进去就不发
+	if err := h.d.Ops.RecordTestSend(r.Context(), tenantID, httpx.PrincipalFrom(r.Context()).UserID,
+		adminops.TestSendMailSettings, req.To, nil); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	if err := sender.Send(r.Context(), req.To, cfg.FromName+" 邮件配置测试",

@@ -106,6 +106,14 @@ func TestAccessLogCategoryPG18(t *testing.T) {
 				want++
 			}
 		}
+		// 每次查看明细都会记一条 security.source_ip_viewed（归 other），不算进样本
+		items := body.Items[:0]
+		for _, it := range body.Items {
+			if it.Action != "security.source_ip_viewed" {
+				items = append(items, it)
+			}
+		}
+		body.Items = items
 		if len(body.Items) != want {
 			t.Fatalf("category=%s returned %d items, want %d: %+v", cat, len(body.Items), want, body.Items)
 		}
@@ -117,6 +125,13 @@ func TestAccessLogCategoryPG18(t *testing.T) {
 	}
 	if w := step3Do(t, ctx, r, http.MethodGet, "/v1/access-log?category=bogus", ""); w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("unknown category: status=%d, want 422", w.Code)
+	}
+	// 明文来源 IP 的查看留痕（审计台账 2.3 第 6 条）：五次成功的查看各一条，被拒的那次没有
+	var views int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE tenant_id=$1
+		AND action='security.source_ip_viewed' AND actor_id=$2 AND after_digest->>'view'='access_log'`,
+		tenant, actor).Scan(&views); err != nil || views != 5 {
+		t.Fatalf("access-log view audits=%d err=%v, want 5", views, err)
 	}
 }
 

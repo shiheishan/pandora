@@ -519,4 +519,11 @@ func TestPluginDeliveryDurationPG18(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &test); err != nil || !test.Sent || test.DurationMS == nil || *test.DurationMS < 20 {
 		t.Fatalf("test hook: status=%d body=%s", w.Code, w.Body.String())
 	}
+	// 往外真发一次的测试接口留痕（审计台账 2.3 第 5 条）
+	var sentAudits int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE tenant_id=$1
+		AND action='notify.test_sent' AND after_digest->>'kind'='plugin_hook' AND after_digest->>'target'='timing'`,
+		tenant).Scan(&sentAudits); err != nil || sentAudits != 1 {
+		t.Fatalf("plugin hook test audits=%d err=%v, want 1", sentAudits, err)
+	}
 }

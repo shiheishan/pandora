@@ -172,8 +172,52 @@ function seedLogs(users: readonly User[]): ResetLog[] {
 // ---------------------------------------------------------------------------
 // 路由
 // ---------------------------------------------------------------------------
+// 批量生成任务（adminops.UserGenerationJob）：进度按时间往前走，结果 24 小时后清除
+interface GenerationJob {
+  id: string
+  actor_id: string
+  total: number
+  email_prefix: string
+  email_domain: string
+  group_id: string | null
+  reason: string
+  created: number
+  users: Array<{ email: string; password: string }>
+}
+const JOB_STEP_MS = 60
+const RESULT_TTL_MS = DAY
+
+function jobView(j: GenerationJob) {
+  const elapsed = Date.now() - j.created
+  const completed = Math.min(j.total, Math.floor(elapsed / JOB_STEP_MS))
+  const done = completed === j.total
+  const finishedAt = done ? j.created + j.total * JOB_STEP_MS : null
+  const expires = finishedAt === null ? null : finishedAt + RESULT_TTL_MS
+  return {
+    id: j.id,
+    actor_id: j.actor_id,
+    status: done ? 'succeeded' : completed > 0 ? 'running' : 'queued',
+    total: j.total,
+    completed,
+    failed: 0,
+    email_prefix: j.email_prefix,
+    email_domain: j.email_domain,
+    group_id: j.group_id,
+    reason: j.reason,
+    error: null,
+    result_available: completed > 0 && (expires === null || Date.now() < expires),
+    result_expires_at: expires === null ? null : new Date(expires).toISOString(),
+    created_at: new Date(j.created).toISOString(),
+    started_at: completed > 0 ? new Date(j.created).toISOString() : null,
+    finished_at: finishedAt === null ? null : new Date(finishedAt).toISOString(),
+  }
+}
+
 export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
   const { users, groups } = store
+  const generationJobs: GenerationJob[] = []
+  // 后台发的流量包余额（按用户累加）
+  const packBytes = new Map<string, number>()
   const logs = seedLogs(users)
   // window_minutes：R103 设备识别窗口（5 / 10 / 30 / 60，缺省 5）
   const device = { mode: 'loose' as 'loose' | 'strict', grace: 1, window_minutes: 5 }
@@ -289,7 +333,8 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.sendRaw(200, { contentType: 'text/csv; charset=utf-8', text, headers: { 'Content-Disposition': 'attachment; filename="users.csv"' } })
     },
 
-    // 批量生成：iam.user.write + reauth（R9）+ 幂等 user_bulk_generate；口令明文只回这一次
+    // 批量生成：iam.user.write + reauth（R9）+ 幂等 user_bulk_generate。是后台任务（adminops
+    // SubmitGenerateUsers）：回 202 与任务；账号在这里一次建好，进度按时间往前走（每 60ms 一个）
     'POST /v1/users/bulk/generate': async (ctx) => {
       if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
       const body = await ctx.body()
@@ -301,13 +346,13 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         const prefix = typeof body.email_prefix === 'string' ? body.email_prefix.trim().toLowerCase() : ''
         const domain = typeof body.email_domain === 'string' ? body.email_domain.trim().toLowerCase() : ''
         const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
-        const groupId = typeof body.group_id === 'string' ? body.group_id : ''
+        const groupId = typeof body.group_id === 'string' ? body.group_id.trim() : ''
         const invalid = (fields: Record<string, string>) => err(422, 'validation_failed', '请求参数校验未通过', fields)
-        if (!Number.isInteger(count) || count < 1 || count > 500) return invalid({ count: '一次生成 1 到 500 个。更多请分批 —— 单次几千个会把事务拖很久' })
+        if (!Number.isInteger(count) || count < 1 || count > 500) return invalid({ count: '一次生成 1 到 500 个。更多请分批提交' })
         if (!/^[a-z0-9-]{1,20}$/.test(prefix)) return invalid({ email_prefix: '前缀只能用小写字母、数字和短横线，1 到 20 位' })
         if (domain.length < 4 || domain.length > 63 || !domain.includes('.') || !/^[a-z0-9.-]+$/.test(domain)) return invalid({ email_domain: '域名格式不正确' })
         if (runes(reason) < 5 || runes(reason) > 500) return invalid({ reason: '请写清生成原因，5 到 500 个字' })
-        if (groupId && groupId.length !== 36) return invalid({ group_id: '分组标识格式不正确' })
+        if (groupId && !UUID.test(groupId)) return invalid({ group_id: '分组标识格式不正确' })
         if (groupId && !groups.some((g) => g.id === groupId)) return invalid({ group_id: '分组不存在' })
         const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789'
         const pick = (n: number, from: string) => Array.from({ length: n }, () => from[randomInt(from.length)]).join('')
@@ -315,7 +360,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         while (made.length < count) {
           const email = `${prefix}-${pick(8, alphabet)}@${domain}`
           if (users.some((u) => u.email === email)) continue
-          const password = pick(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#%')
+          const password = pick(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789@#%+=')
           users.push({
             id: randomUUID(),
             email,
@@ -335,11 +380,42 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
           })
           made.push({ email, password })
         }
-        return { status: 200, body: { count: made.length, users: made, warning: '口令只在这一次返回，关闭后无法再查。请立即保存。' } }
+        const job: GenerationJob = {
+          id: randomUUID(),
+          actor_id: ctx.user.userId,
+          total: count,
+          email_prefix: prefix,
+          email_domain: domain,
+          group_id: groupId || null,
+          reason,
+          created: Date.now(),
+          users: made,
+        }
+        generationJobs.unshift(job)
+        return { status: 202, body: jobView(job) }
       })
     },
-
-    // 群发：ops.notification.write + reauth（R9）+ 幂等 user_bulk_mail；筛选字段在请求体顶层
+    'GET /v1/users/bulk/generate/jobs': (ctx) => {
+      if (!ctx.requirePermission('iam.user.write')) return
+      ctx.send(200, { jobs: generationJobs.slice(0, 20).map(jobView) })
+    },
+    'GET /v1/users/bulk/generate/jobs/:id/result': (ctx) => {
+      if (!ctx.requirePermission('iam.user.write') || !ctx.requireReauth()) return
+      const job = generationJobs.find((j) => j.id === ctx.params.id)
+      // 别人的任务与不存在的任务同一个 404（只有提交人能下载）
+      if (!job || job.actor_id !== ctx.user.userId) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
+      const view = jobView(job)
+      if (!view.result_available) return ctx.fail(409, 'conflict', '结果不可下载：任务还没生成出账号，或结果已超过 24 小时被清除')
+      const lines = job.users.slice(0, view.completed).map((u) => csvLine([u.email, u.password]))
+      const text = '\uFEFF' + [csvLine(['邮箱', '初始密码']), ...lines].join('\n') + '\n'
+      ctx.sendRaw(200, { contentType: 'text/csv; charset=utf-8', text, headers: { 'Content-Disposition': 'attachment; filename="generated-users.csv"' } })
+    },
+    'GET /v1/users/bulk/generate/jobs/:id': (ctx) => {
+      if (!ctx.requirePermission('iam.user.write')) return
+      const job = generationJobs.find((j) => j.id === ctx.params.id)
+      if (!job) return ctx.fail(404, 'not_found', '资源不存在或无权访问')
+      ctx.send(200, jobView(job))
+    },
     'POST /v1/users/bulk/mail': async (ctx) => {
       if (!ctx.requirePermission('ops.notification.write') || !ctx.requireReauth()) return
       const body = await ctx.body()
@@ -499,6 +575,31 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         const end = new Date(Math.max(Date.parse(previous), Date.now()) + days * DAY).toISOString()
         sub.current_period_end = end
         return { status: 200, body: { subscription_id: sub.id, user_email: owner.email, days, previous_end: previous, period_end: end } }
+      })
+    },
+    // 加流量包：billing.adjustment.write + reauth + 幂等 subscription_admin_traffic_grant；
+    // 发到订阅所属用户的流量包余额里（billing.GrantTrafficPackAsAdmin）
+    'POST /v1/subscriptions/:id/traffic-pack': async (ctx) => {
+      if (!ctx.requirePermission('billing.adjustment.write') || !ctx.requireReauth()) return
+      const body = await ctx.body()
+      await ctx.idempotent('subscription_admin_traffic_grant', () => {
+        if (!body) return err(400, 'bad_request', '请求体不是合法的 JSON')
+        const extra = unknownField(body, ['bytes', 'reason'])
+        if (extra) return err(400, 'bad_request', `请求体包含未知字段 "${extra}"`)
+        const bytes = typeof body.bytes === 'number' && Number.isInteger(body.bytes) ? body.bytes : 0
+        const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+        const fields: Record<string, string> = {}
+        if (bytes < 1 || bytes > 10 * 1024 * GiB) fields.bytes = '流量要大于 0，一次最多 10240 GB'
+        if (runes(reason) < 5 || runes(reason) > 500) fields.reason = '请写清加流量的原因，5 到 500 个字。这条会进审计'
+        if (Object.keys(fields).length) return err(422, 'validation_failed', '请求参数校验未通过', fields)
+        const owner = UUID.test(ctx.params.id!) ? users.find((u) => u.subs.some((s) => s.id === ctx.params.id)) : undefined
+        if (!owner) return err(404, 'not_found', '资源不存在或无权访问')
+        const total = (packBytes.get(owner.id) ?? 0) + bytes
+        packBytes.set(owner.id, total)
+        return {
+          status: 200,
+          body: { subscription_id: ctx.params.id!, user_id: owner.id, user_email: owner.email, grant_id: randomUUID(), granted_bytes: bytes, remaining_bytes_total: total },
+        }
       })
     },
   } satisfies Record<string, (ctx: MockContext) => void | Promise<void>>

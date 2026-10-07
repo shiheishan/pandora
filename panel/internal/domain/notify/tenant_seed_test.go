@@ -24,7 +24,7 @@ func TestTenantSeedTemplatesMatchDefaults(t *testing.T) {
 			t.Errorf("tenant seed text for %s drifted from defaultTemplates", key)
 		}
 	}
-	// defaultTemplates 不含 Telegram 与群发，这里单独点名，凑齐 18 个
+	// defaultTemplates 不含 Telegram 与群发，这里单独点名，凑齐 19 个（00126 加了到期与召回，00128 加了找回密码）
 	for _, key := range []string{
 		"subscription.expiring|telegram", "quota.warning|telegram", "order.paid|telegram",
 		"ticket.replied|telegram", "admin.broadcast|email",
@@ -35,7 +35,7 @@ func TestTenantSeedTemplatesMatchDefaults(t *testing.T) {
 			t.Errorf("tenant seed lacks %s", key)
 		}
 	}
-	if n := len(defaultTemplates) + 7; n != 18 {
+	if n := len(defaultTemplates) + 7; n != 19 {
 		t.Fatalf("built-in template count=%d; update the seed trigger and this test together", n)
 	}
 }

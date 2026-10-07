@@ -23,6 +23,16 @@ func registerUserBulkRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "user_bulk_generate", d.Log),
 	).Post("/users/bulk/generate", h.generateUsers)
+	// 批量生成是后台任务（w5account）：看进度与列表要写权限（任务里有生成原因与前缀）；
+	// 下载结果带明文初始口令，再要近期重认证，且只有提交任务的人能下（领域层校验）
+	r.With(middleware.RequirePermission("iam.user.write", d.Log)).
+		Get("/users/bulk/generate/jobs", h.listUserGenerationJobs)
+	r.With(middleware.RequirePermission("iam.user.write", d.Log)).
+		Get("/users/bulk/generate/jobs/{id}", h.getUserGenerationJob)
+	r.With(
+		middleware.RequirePermission("iam.user.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+	).Get("/users/bulk/generate/jobs/{id}/result", h.downloadUserGenerationResult)
 	r.With(
 		middleware.RequirePermission("ops.notification.write", d.Log),
 		middleware.RequireRecentReauth(d.Log),
@@ -77,6 +87,13 @@ func registerUserRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, billing.SubscriptionExtendIdempotencyScope, d.Log),
 	).Post("/subscriptions/{id}/extend", h.extendSubscription)
+	// 加流量包（w5account）：凭空给用户一笔不过期的流量，与加时长同权限码同门槛；
+	// 每执行一次多一笔，所以同样要独立的幂等 scope
+	r.With(
+		middleware.RequirePermission("billing.adjustment.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, billing.SubscriptionTrafficGrantIdempotencyScope, d.Log),
+	).Post("/subscriptions/{id}/traffic-pack", h.grantSubscriptionTraffic)
 }
 
 func registerUserGroupRoutes(r chi.Router, d Deps, h *handlers) {

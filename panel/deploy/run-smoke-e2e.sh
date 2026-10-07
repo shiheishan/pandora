@@ -97,13 +97,15 @@ export ADMIN_E2E_DISPOSABLE=YES_DELETE_FIXTURES ADMIN_E2E_DATABASE="$SMOKE_PG_DB
 export UNIPROXY_E2E_DISPOSABLE=YES_DELETE_FIXTURES UNIPROXY_E2E_DATABASE="$SMOKE_PG_DB" UNIPROXY_E2E_TENANT_ID="$TENANT"
 export RISK_E2E_DISPOSABLE=YES_DELETE_FIXTURES RISK_E2E_DATABASE="$SMOKE_PG_DB" RISK_E2E_TENANT_ID="$TENANT"
 export EXPIRY_E2E_DISPOSABLE=YES_DELETE_FIXTURES EXPIRY_E2E_DATABASE="$SMOKE_PG_DB" EXPIRY_E2E_TENANT_ID="$TENANT"
+export PASSWORD_RESET_E2E_DISPOSABLE=YES_DELETE_FIXTURES PORTAL_STAFF_E2E_DISPOSABLE=YES_DELETE_FIXTURES
 export EPAY_KEY="$EPAY_TEST_KEY" EPAY_PID="$EPAY_TEST_PID"
 # 冒烟栈把认证限流放宽到每分钟 $AUTH_PER_MIN 次，e2e.sh 要多探几次才碰得到 429
 export RL_PROBE=$(( ${AUTH_PER_MIN:-14} + 10 ))
 
-# e2e.sh 放最后：它的限流探测会把登录额度打满；risk_e2e.sh 要用模拟来源登录与注册，排在它前面
-# expiry_e2e.sh 要等 aegis-admin 的过期扫描循环（一分钟一轮）接手，最多等 3 分钟
-SCRIPTS=(admin_e2e.sh epay_e2e.sh support_e2e.sh uniproxy_e2e.sh expiry_e2e.sh risk_e2e.sh e2e.sh)
+# e2e.sh 放最后：它的限流探测会把登录额度打满；risk_e2e.sh 要用模拟来源登录与注册，排在它前面。
+# expiry_e2e.sh 要等 aegis-admin 的过期扫描循环（一分钟一轮）接手，最多等 3 分钟。
+# 找回密码（临时配 SMTP，退出时恢复）与门户禁登管理员排在 risk 之前，都要登录与注册
+SCRIPTS=(admin_e2e.sh epay_e2e.sh support_e2e.sh uniproxy_e2e.sh expiry_e2e.sh password_reset_e2e.sh portal_staff_e2e.sh risk_e2e.sh e2e.sh)
 # 从一份输出里取：OK 数、FAIL 数、首个失败所在的步骤、首个失败原文（连同下一行细节）
 summarize() {
   python3 - "$1" <<'PY'

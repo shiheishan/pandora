@@ -11,6 +11,7 @@ import { extendableSubscriptions, initial, shortId, USER_STATUS_VIEW } from './m
 import { ResetHistory } from './Resets'
 import { RiskTab } from './RiskTab'
 import { DevicesTab, OrdersTab, ProfileTab, SubscriptionsTab } from './tabs'
+import { TrafficPackDialog } from './TrafficPackDialog'
 import css from './Users.module.css'
 
 export const DRAWER_TABS = [
@@ -80,7 +81,7 @@ function DrawerTitle({ d }: { d: UserDetail }) {
   )
 }
 
-type Dialog = 'status' | 'password' | 'rotate' | 'extend' | null
+type Dialog = 'status' | 'password' | 'rotate' | 'extend' | 'traffic' | null
 
 function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t: DrawerTab) => void; now: Date }) {
   const can = useCan()
@@ -97,7 +98,9 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
   const toggleable = d.status === 'active' || disabled
   // 只读账号一个操作都没有时，不留空的操作条
   const canExtend = can('billing.adjustment.write') && extendableSubscriptions(d.subscriptions).length > 0
-  const hasActions = canWrite || canExtend || can('billing.provider.write') || can('billing.order.write')
+  // 加流量包：与加时长同权限码；任何状态的订阅都行（余额在用户身上）
+  const canGrantTraffic = can('billing.adjustment.write') && d.subscriptions.length > 0
+  const hasActions = canWrite || canExtend || canGrantTraffic || can('billing.provider.write') || can('billing.order.write')
 
   return (
     <div className={css.drawerBody}>
@@ -128,6 +131,11 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
               加时长
             </Button>
           )}
+          {canGrantTraffic && (
+            <Button size="sm" onClick={() => setDialog('traffic')}>
+              加流量包
+            </Button>
+          )}
           {can('billing.order.write') && (
             <Button size="sm" onClick={() => navigate('/billing/orders', { query: { new: d.id } })}>
               为其开单
@@ -149,6 +157,7 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
       <ResetPasswordDialog user={d} open={dialog === 'password'} onClose={() => setDialog(null)} />
       <RotateDialog user={d} open={dialog === 'rotate'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
       <ExtendDialog user={d} open={dialog === 'extend'} onClose={() => setDialog(null)} onDone={() => void invalidate()} now={now} />
+      <TrafficPackDialog user={d} open={dialog === 'traffic'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
     </div>
   )
 }

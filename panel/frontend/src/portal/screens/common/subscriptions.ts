@@ -120,7 +120,7 @@ export const trafficPacksSchema = z.object({
   packs: z.array(
     z.object({
       id: z.string(),
-      source: z.enum(['order', 'gift_card', 'migration']),
+      source: z.enum(['order', 'gift_card', 'migration', 'admin']),
       order_id: z.string().nullable(),
       granted_bytes: z.number().int(),
       consumed_bytes: z.number().int(),

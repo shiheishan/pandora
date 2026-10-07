@@ -147,6 +147,23 @@ func NewRouter(d Deps) http.Handler {
 				strings.TrimSpace),
 		)).Post("/auth/register/complete", h.registerComplete)
 
+		// 自助找回密码（w5account）：与注册同样 fail-closed 的严格限流，按 IP（ByRoute 带
+		// 客户端 IP）、网段、租户与账号（邮箱哈希，不进 Redis 明文）四个维度。第 1 步每个
+		// 邮箱 15 分钟只许 3 次，免得被拿来轰炸别人的邮箱；第 2 步每个邮箱 15 分钟 10 次，
+		// 单枚验证码另有 5 次错误上限（identity.passwordResetMaxAttempts）
+		pwResetEmail := func(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
+		r.With(middleware.RateLimitStrict(d.Redis, d.Log,
+			middleware.ByRoute("pwreset_start_ip", time.Minute, d.Cfg.RateLimitAuthPerMinute),
+			middleware.ByIPPrefix("pwreset_start_net", 10*time.Minute, d.Cfg.RateLimitAuthPerMinute*6),
+			middleware.ByTenant("pwreset_tenant", time.Hour, d.Cfg.RateLimitAuthPerMinute*20),
+			middleware.ByJSONFieldHash("pwreset_email", "email", 15*time.Minute, 3, pwResetEmail),
+		)).Post("/auth/password-reset/start", h.passwordResetStart)
+		r.With(middleware.RateLimitStrict(d.Redis, d.Log,
+			middleware.ByRoute("pwreset_complete_ip", time.Minute, d.Cfg.RateLimitAuthPerMinute),
+			middleware.ByIPPrefix("pwreset_complete_net", 10*time.Minute, d.Cfg.RateLimitAuthPerMinute*6),
+			middleware.ByJSONFieldHash("pwreset_complete_email", "email", 15*time.Minute, 10, pwResetEmail),
+		)).Post("/auth/password-reset/complete", h.passwordResetComplete)
+
 		// --- 公开目录 ---
 		r.Get("/site-config", h.siteConfig)
 		// 外观免鉴权：登录页本身就要按主题渲染，而这里没有任何

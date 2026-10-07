@@ -141,7 +141,7 @@ func TestCurrentSubscriptionContractPG18(t *testing.T) {
 	}
 
 	// 导出的订阅数按在用计：两条在用的算 2，宽限期里带一条过期的算 1
-	export, err := svc.ExportUsers(ctx, tenant, BulkFilter{}, 100)
+	export, err := svc.ExportUsers(ctx, tenant, never, BulkFilter{}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}

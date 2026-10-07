@@ -11,8 +11,10 @@ func registerTelegramRoutes(r chi.Router, d Deps, h *handlers) {
 	// Bot Token 走信封加密，读接口只回「配没配」不回明文。
 	r.With(middleware.RequirePermission("security.audit.read", d.Log)).
 		Get("/settings/telegram", h.getTelegramSettings)
+	// 换 bot、改告警接收群组：要近期重认证（审计台账 2.3 第 2 条），写入与审计同一事务
 	r.With(
 		middleware.RequirePermission("platform.settings.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
 	).Post("/settings/telegram", h.setTelegramSettings)
 	// 测试发送（Telegram / SMTP / 模板）统一用通知写权限：它们是
 	// 「往外真发一条」，与支付渠道无关，原先挂的 billing.provider.write 是错位。

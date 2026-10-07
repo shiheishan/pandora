@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/domain/appearance"
 	"github.com/aegispanel/aegis/internal/domain/plugin"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -240,6 +241,12 @@ type testHookResponse struct {
 }
 
 func (h *handlers) testHook(w http.ResponseWriter, r *http.Request) {
+	// 钩子会往插件配置的地址真发一次：发之前先留痕（审计台账 2.3 第 5 条），写不进去就不发
+	if err := h.d.Ops.RecordTestSend(r.Context(), httpx.TenantIDFrom(r.Context()),
+		httpx.PrincipalFrom(r.Context()).UserID, adminops.TestSendPluginHook, chi.URLParam(r, "code"), nil); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
 	code, durationMS, err := h.d.Plugin.TestHook(r.Context(), httpx.TenantIDFrom(r.Context()),
 		chi.URLParam(r, "code"))
 	if err != nil {
