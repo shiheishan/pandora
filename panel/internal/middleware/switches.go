@@ -14,27 +14,42 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
+// switchQuerier 是开关读取对数据库的全部要求（*db.Pool 的 QueryRowScoped，一次往返）。
+type switchQuerier interface {
+	QueryRowScoped(ctx context.Context, s db.Scope, sql string, args []any, dest ...any) error
+}
+
+const featureSwitchSQL = `SELECT enabled FROM feature_switches WHERE tenant_id = $1 AND code = $2`
+
 // switchEnabled 读一个降级开关。enabled=true 表示功能可用。
 //
 // 缺行视为开启（fail open）：这几个开关是运维手里的「急停」，迁移只给当时已有的
 // 租户插了行，之后新建的租户没有行；把缺行当关闭，新租户会一上来就不能下单。
 // auth.registration 是反例（缺行即关闭），那是注册策略自己的规则，不走这里。
-func switchEnabled(ctx context.Context, pool *db.Pool, tenantID, code string) (bool, error) {
+//
+// 读到的值在进程内缓存 switchCacheTTL（见 switch_cache.go）：管理端每个写请求、
+// 门户每次下单都要过一道开关，以前每次一个完整事务（四次往返 + 归还清理）。
+// 读库出错不缓存，照旧回 500。
+func switchEnabled(ctx context.Context, pool switchQuerier, tenantID, code string) (bool, error) {
+	if enabled, ok := switches.get(tenantID, code); ok {
+		return enabled, nil
+	}
 	enabled := true
-	err := pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT enabled FROM feature_switches WHERE tenant_id = $1 AND code = $2`,
-			tenantID, code).Scan(&enabled)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		return err
-	})
-	return enabled, err
+	err := pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, featureSwitchSQL,
+		[]any{tenantID, code}, &enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		enabled, err = true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	switches.put(tenantID, code, enabled)
+	return enabled, nil
 }
 
 // FeatureSwitch 在开关 code 关闭时拒绝请求，回 503 service_unavailable。
 // 挂在 Idempotency 之前：被拒的请求不消耗幂等键，开关恢复后用原键重试即可。
-func FeatureSwitch(pool *db.Pool, code, message string, log *slog.Logger) func(http.Handler) http.Handler {
+func FeatureSwitch(pool switchQuerier, code, message string, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			enabled, err := switchEnabled(r.Context(), pool, httpx.TenantIDFrom(r.Context()), code)
@@ -56,10 +71,18 @@ func FeatureSwitch(pool *db.Pool, code, message string, log *slog.Logger) func(h
 //
 // 挂在 /v1 子路由上，按挂载点内的相对路径判断豁免——网关前面是否还有路径前缀
 // （AEGIS_ADMIN_PATH）不影响判断。
-func AdminWritesGate(pool *db.Pool, log *slog.Logger) func(http.Handler) http.Handler {
+//
+// 与 FeatureSwitch 共用同一份开关缓存。切开关（POST /switches/{code}）也从这里过，
+// 处理完就清空本进程的缓存：管理员关掉 admin.writes 后，本网关的下一个写请求立刻
+// 按新值判断。其它网关进程（门户的下单、礼品卡开关）最长滞后 switchCacheTTL。
+func AdminWritesGate(pool switchQuerier, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if adminWriteExempt(r.Method, routePath(r)) {
+			path := routePath(r)
+			if isSwitchWrite(r.Method, path) {
+				defer InvalidateFeatureSwitches()
+			}
+			if adminWriteExempt(r.Method, path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -84,8 +107,13 @@ func adminWriteExempt(method, path string) bool {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return true
 	}
-	return (method == http.MethodPost && strings.HasPrefix(path, "/switches/")) ||
+	return isSwitchWrite(method, path) ||
 		strings.HasPrefix(path, "/auth/") || path == "/me/password"
+}
+
+// isSwitchWrite 是切开关的请求（POST v1/switches/{code}）。
+func isSwitchWrite(method, path string) bool {
+	return method == http.MethodPost && strings.HasPrefix(path, "/switches/")
 }
 
 func routePath(r *http.Request) string {

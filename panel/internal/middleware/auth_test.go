@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -39,103 +39,91 @@ func TestSessionValidityQueryFailsClosedAcrossPrincipalBoundaries(t *testing.T) 
 	}
 }
 
-type authFakeRunner struct {
-	tx    *authFakeTx
-	calls int
+type authFakeQuerier struct {
+	revoked     bool
+	permissions []string
+	err         error
+	calls       int
+	scope       db.Scope
+	sql         string
+	args        []any
 }
 
-func (r *authFakeRunner) InTx(ctx context.Context, _ db.Scope, fn func(pgx.Tx) error) error {
-	r.calls++
-	return fn(r.tx)
-}
-
-type authFakeTx struct {
-	pgx.Tx
-	revoked         bool
-	sessionErr      error
-	permissionQuery string
-	permissionArgs  []any
-	execs           []string
-}
-
-func (tx *authFakeTx) Exec(_ context.Context, query string, _ ...any) (pgconn.CommandTag, error) {
-	tx.execs = append(tx.execs, query)
-	return pgconn.CommandTag{}, nil
-}
-
-func (tx *authFakeTx) QueryRow(context.Context, string, ...any) pgx.Row {
-	return authFakeRow{revoked: tx.revoked, err: tx.sessionErr}
-}
-
-func (tx *authFakeTx) Query(_ context.Context, query string, args ...any) (pgx.Rows, error) {
-	tx.permissionQuery = query
-	tx.permissionArgs = args
-	return &authEmptyRows{}, nil
-}
-
-type authEmptyRows struct{}
-
-func (*authEmptyRows) Close()                                       {}
-func (*authEmptyRows) Err() error                                   { return nil }
-func (*authEmptyRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
-func (*authEmptyRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
-func (*authEmptyRows) Next() bool                                   { return false }
-func (*authEmptyRows) Scan(...any) error                            { return nil }
-func (*authEmptyRows) Values() ([]any, error)                       { return nil, nil }
-func (*authEmptyRows) RawValues() [][]byte                          { return nil }
-func (*authEmptyRows) Conn() *pgx.Conn                              { return nil }
-
-type authFakeRow struct {
-	revoked bool
-	err     error
-}
-
-func (r authFakeRow) Scan(dest ...any) error {
-	if r.err != nil {
-		return r.err
+func (q *authFakeQuerier) QueryRowScoped(_ context.Context, s db.Scope, sql string, args []any, dest ...any) error {
+	q.calls++
+	q.scope, q.sql, q.args = s, sql, args
+	if q.err != nil {
+		return q.err
 	}
-	*(dest[0].(*bool)) = r.revoked
+	*(dest[0].(*bool)) = q.revoked
+	*(dest[1].(*[]string)) = q.permissions
 	return nil
 }
 
-func TestAuthenticateRejectsRevokedSessionToken(t *testing.T) {
-	runner := &authFakeRunner{tx: &authFakeTx{revoked: true}}
-	issuer := token.NewIssuer("public", []byte("01234567890123456789012345678901"), 30*24*time.Hour)
+func authRequest(t *testing.T, audience, tenant string) *http.Request {
+	t.Helper()
+	issuer := token.NewIssuer(audience, []byte("01234567890123456789012345678901"), time.Hour)
 	raw, err := issuer.Issue(token.Claims{
-		Subject: authTestUser, TenantID: authTestTenant, SessionID: authTestSession,
-		Kind: "user",
+		Subject: authTestUser, TenantID: authTestTenant, SessionID: authTestSession, Kind: "user",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	return req.WithContext(httpx.WithTenantID(req.Context(), tenant))
+}
 
+func authIssuer(audience string) *token.Issuer {
+	return token.NewIssuer(audience, []byte("01234567890123456789012345678901"), time.Hour)
+}
+
+func TestAuthenticateRejectsRevokedSessionToken(t *testing.T) {
+	q := &authFakeQuerier{revoked: true}
 	nextCalled := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { nextCalled = true })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := Authenticate(runner, issuer, log)(next)
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer "+raw)
-	req = req.WithContext(httpx.WithTenantID(req.Context(), authTestTenant))
 	res := httptest.NewRecorder()
-
-	handler.ServeHTTP(res, req)
+	Authenticate(q, authIssuer("public"), log)(next).ServeHTTP(res, authRequest(t, "public", authTestTenant))
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", res.Code, res.Body.String())
-	}
-	if len(runner.tx.execs) != 0 {
-		t.Fatalf("revoked session was touched: %q", runner.tx.execs)
 	}
 	if nextCalled {
 		t.Fatal("revoked token reached protected handler")
 	}
-	if runner.calls != 1 {
-		t.Fatalf("transaction calls = %d, want 1", runner.calls)
+	if q.calls != 1 {
+		t.Fatalf("database round trips = %d, want 1", q.calls)
+	}
+}
+
+// 会话行不存在（被删、属于别的用户或别的 audience）与已吊销同样拒绝。
+func TestAuthenticateRejectsMissingSessionRow(t *testing.T) {
+	q := &authFakeQuerier{err: pgx.ErrNoRows}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	res := httptest.NewRecorder()
+	Authenticate(q, authIssuer("public"), log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("token without a session row reached protected handler")
+	})).ServeHTTP(res, authRequest(t, "public", authTestTenant))
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", res.Code)
+	}
+}
+
+func TestAuthenticateFailsClosedOnDatabaseError(t *testing.T) {
+	q := &authFakeQuerier{err: errors.New("connection reset")}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	res := httptest.NewRecorder()
+	Authenticate(q, authIssuer("admin"), log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("request reached handler without a verified session")
+	})).ServeHTTP(res, authRequest(t, "admin", authTestTenant))
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", res.Code)
 	}
 }
 
 func TestAuthenticateRejectsSignedTokenWithoutSessionBeforeDatabase(t *testing.T) {
-	runner := &authFakeRunner{tx: &authFakeTx{}}
-	issuer := token.NewIssuer("admin", []byte("01234567890123456789012345678901"), 30*24*time.Hour)
+	q := &authFakeQuerier{}
+	issuer := authIssuer("admin")
 	raw, err := issuer.Issue(token.Claims{
 		Subject: authTestUser, TenantID: authTestTenant, Kind: "user",
 	})
@@ -144,7 +132,7 @@ func TestAuthenticateRejectsSignedTokenWithoutSessionBeforeDatabase(t *testing.T
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := Authenticate(runner, issuer, log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	handler := Authenticate(q, issuer, log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("sessionless token reached protected handler")
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/me", nil)
@@ -156,66 +144,49 @@ func TestAuthenticateRejectsSignedTokenWithoutSessionBeforeDatabase(t *testing.T
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body=%s", res.Code, res.Body.String())
 	}
-	if runner.calls != 0 {
-		t.Fatalf("database transaction calls = %d, want 0", runner.calls)
+	if q.calls != 0 {
+		t.Fatalf("database calls = %d, want 0", q.calls)
 	}
 }
 
 func TestAuthenticateRejectsCrossTenantClaimsBeforeDatabase(t *testing.T) {
-	runner := &authFakeRunner{tx: &authFakeTx{}}
-	issuer := token.NewIssuer("public", []byte("01234567890123456789012345678901"), time.Hour)
-	raw, err := issuer.Issue(token.Claims{
-		Subject: authTestUser, TenantID: authTestTenant, SessionID: authTestSession, Kind: "user",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	q := &authFakeQuerier{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := Authenticate(runner, issuer, log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("cross-tenant token reached protected handler")
-	}))
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer "+raw)
-	req = req.WithContext(httpx.WithTenantID(req.Context(), "44444444-4444-4444-8444-444444444444"))
 	res := httptest.NewRecorder()
-
-	handler.ServeHTTP(res, req)
-	if res.Code != http.StatusUnauthorized || runner.calls != 0 {
-		t.Fatalf("cross-tenant result status=%d db_calls=%d", res.Code, runner.calls)
+	Authenticate(q, authIssuer("public"), log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("cross-tenant token reached protected handler")
+	})).ServeHTTP(res, authRequest(t, "public", "44444444-4444-4444-8444-444444444444"))
+	if res.Code != http.StatusUnauthorized || q.calls != 0 {
+		t.Fatalf("cross-tenant result status=%d db_calls=%d", res.Code, q.calls)
 	}
 }
 
 func TestAuthenticateAcceptsActiveTenantBoundSession(t *testing.T) {
-	runner := &authFakeRunner{tx: &authFakeTx{revoked: false}}
-	issuer := token.NewIssuer("public", []byte("01234567890123456789012345678901"), time.Hour)
-	raw, err := issuer.Issue(token.Claims{
-		Subject: authTestUser, TenantID: authTestTenant, SessionID: authTestSession, Kind: "user",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	q := &authFakeQuerier{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	nextCalled := false
-	handler := Authenticate(runner, issuer, log)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	handler := Authenticate(q, authIssuer("public"), log)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		nextCalled = true
 		principal := httpx.PrincipalFrom(r.Context())
 		if principal.UserID != authTestUser || principal.SessionID != authTestSession || principal.TenantID != authTestTenant {
 			t.Fatalf("unexpected principal: %+v", principal)
 		}
+		if principal.Permissions != nil {
+			t.Fatalf("portal principal carries permissions: %v", principal.Permissions)
+		}
 	}))
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer "+raw)
-	req = req.WithContext(httpx.WithTenantID(req.Context(), authTestTenant))
 	res := httptest.NewRecorder()
-	handler.ServeHTTP(res, req)
-	if !nextCalled || res.Code != http.StatusOK || runner.calls != 1 {
-		t.Fatalf("active session result next=%v status=%d db_calls=%d", nextCalled, res.Code, runner.calls)
+	handler.ServeHTTP(res, authRequest(t, "public", authTestTenant))
+	if !nextCalled || res.Code != http.StatusOK || q.calls != 1 {
+		t.Fatalf("active session result next=%v status=%d db_calls=%d", nextCalled, res.Code, q.calls)
 	}
-	// 有效会话在同一事务里节流刷新 last_seen_at（R62）
-	if len(runner.tx.execs) != 1 || runner.tx.execs[0] != sessionTouchSQL {
-		t.Fatalf("active session execs=%q, want one last_seen_at touch", runner.tx.execs)
+	// 有效性、节流刷新（R62）与权限展开在同一条语句、同一次往返里
+	if q.sql != sessionAuthSQL || q.scope != (db.Scope{TenantID: authTestTenant, ActorID: authTestUser}) {
+		t.Fatalf("auth query scope=%+v sql=%q", q.scope, q.sql)
+	}
+	if len(q.args) != 4 || q.args[0] != authTestTenant || q.args[1] != authTestSession ||
+		q.args[2] != authTestUser || q.args[3] != "public" {
+		t.Fatalf("auth query args=%#v", q.args)
 	}
 }
 
@@ -225,35 +196,44 @@ func TestSessionTouchIsThrottledAndScoped(t *testing.T) {
 		"tenant_id = $1",
 		"id = $2::uuid",
 		"last_seen_at < now() - interval '5 minutes'",
+		// 只刷新仍有效的会话
+		"EXISTS (SELECT 1 FROM sess WHERE NOT sess.revoked)",
 	} {
 		if !strings.Contains(sessionTouchSQL, clause) {
 			t.Fatalf("session touch is missing %q: %s", clause, sessionTouchSQL)
 		}
 	}
+	// 数据修改 CTE 必须在同一条语句里（PostgreSQL 保证它执行），而不是一条被跳过的独立语句
+	if !strings.Contains(sessionAuthSQL, "touch AS ("+sessionTouchSQL) ||
+		!strings.Contains(sessionAuthSQL, "WITH sess AS ("+sessionValiditySQL) {
+		t.Fatal("validity and touch must be CTEs of the single auth statement")
+	}
 }
 
 func TestAdminPermissionExpansionRequiresTenantScope(t *testing.T) {
-	tx := &authFakeTx{}
-	runner := &authFakeRunner{tx: tx}
-	issuer := token.NewIssuer("admin", []byte("01234567890123456789012345678901"), time.Hour)
-	raw, err := issuer.Issue(token.Claims{
-		Subject: authTestUser, TenantID: authTestTenant, SessionID: authTestSession, Kind: "user",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := Authenticate(runner, issuer, slog.New(slog.NewTextHandler(io.Discard, nil)))(
-		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	req := httptest.NewRequest(http.MethodGet, "/v1/admin/me", nil)
-	req.Header.Set("Authorization", "Bearer "+raw)
-	req = req.WithContext(httpx.WithTenantID(req.Context(), authTestTenant))
-	handler.ServeHTTP(httptest.NewRecorder(), req)
-	for _, want := range []string{"JOIN roles r", "scope_type = 'tenant'", "scope_id IS NULL", "$3::text <> 'admin'"} {
-		if !strings.Contains(tx.permissionQuery, want) {
-			t.Fatalf("admin permission query missing %q: %s", want, tx.permissionQuery)
+	for _, want := range []string{"JOIN roles r ON r.id = rb.role_id AND r.tenant_id = rb.tenant_id",
+		"rb.scope_type = 'tenant'", "rb.scope_id IS NULL", "rb.expires_at > now()", "rb.user_id = $3::uuid"} {
+		if !strings.Contains(adminPermissionsSQL, want) {
+			t.Fatalf("admin permission query missing %q: %s", want, adminPermissionsSQL)
 		}
 	}
-	if len(tx.permissionArgs) != 3 || tx.permissionArgs[2] != "admin" {
-		t.Fatalf("permission args=%#v, want admin audience", tx.permissionArgs)
+	// 只有后台、且会话有效时才展开；门户不展开
+	if !strings.Contains(sessionAuthSQL, "CASE WHEN $4 = 'admin' AND NOT sess.revoked") ||
+		!strings.Contains(sessionAuthSQL, "THEN ARRAY("+adminPermissionsSQL+")") {
+		t.Fatalf("permission expansion must be gated on admin audience: %s", sessionAuthSQL)
+	}
+
+	q := &authFakeQuerier{permissions: []string{"iam.user.read", "node.read"}}
+	var got []string
+	handler := Authenticate(q, authIssuer("admin"), slog.New(slog.NewTextHandler(io.Discard, nil)))(
+		http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			got = httpx.PrincipalFrom(r.Context()).Permissions
+		}))
+	handler.ServeHTTP(httptest.NewRecorder(), authRequest(t, "admin", authTestTenant))
+	if len(q.args) != 4 || q.args[3] != "admin" {
+		t.Fatalf("permission args=%#v, want admin audience", q.args)
+	}
+	if strings.Join(got, ",") != "iam.user.read,node.read" {
+		t.Fatalf("admin principal permissions = %v", got)
 	}
 }
