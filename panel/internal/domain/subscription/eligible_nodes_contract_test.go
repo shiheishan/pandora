@@ -45,8 +45,9 @@ func TestSubscriptionAndPreviewShareOneEligibilityQuery(t *testing.T) {
 	listNodes := pkg.Decl("Service.ListNodes")
 	// 原窗口从 ListOwnedNodePreviews 到 listEligibleNodesTx，中间夹着 HeartbeatFreshWindow 与 DeliveryState
 	owned := pkg.Decls("Service.ListOwnedNodePreviews", "HeartbeatFreshWindow", "DeliveryState")
-	// 原窗口从 listEligibleNodesTx 到 LoadUsage，中间夹着 preferFreshNodes
-	eligible := pkg.Decls("listEligibleNodesTx", "preferFreshNodes")
+	// 原窗口从 listEligibleNodesTx 到 LoadUsage，中间夹着 preferFreshNodes；
+	// 与用户无关的节点条件抽在 DeliverableNodeSQL，资格查询的原文按三者拼起来看
+	eligible := pkg.Decls("listEligibleNodesTx", "DeliverableNodeSQL", "preferFreshNodes")
 	links := pkg.Decl("Service.ListLinks")
 	for name, function := range map[string]string{"ListNodes": listNodes, "ListOwnedNodePreviews": owned} {
 		if strings.Count(function, "listEligibleNodesTx(") != 1 || strings.Contains(function, "FROM nodes") {
