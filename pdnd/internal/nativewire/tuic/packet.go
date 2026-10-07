@@ -1,13 +1,13 @@
 package tuic
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"io"
 	"math"
 	"net"
+	"net/netip"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -16,7 +16,6 @@ import (
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
-	"github.com/sagernet/sing/common/cache"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -66,20 +65,127 @@ func (m *udpMessage) releaseMessage() {
 	m.release()
 }
 
-func (m *udpMessage) pack() *buf.Buffer {
-	buffer := buf.NewSize(m.headerSize() + m.data.Len())
-	common.Must(
-		buffer.WriteByte(Version),
-		buffer.WriteByte(CommandPacket),
-		binary.Write(buffer, binary.BigEndian, m.sessionID),
-		binary.Write(buffer, binary.BigEndian, m.packetID),
-		binary.Write(buffer, binary.BigEndian, m.fragmentTotal),
-		binary.Write(buffer, binary.BigEndian, m.fragmentID),
-		binary.Write(buffer, binary.BigEndian, uint16(m.data.Len())),
-		AddressSerializer.WriteAddrPort(buffer, m.destination),
-		common.Error(buffer.Write(m.data.Bytes())),
-	)
-	return buffer
+// appendTo 把消息按 TUIC 线格式编码追加到 dst（Pandora 改动）：VER CMD ASSOC_ID
+// PKT_ID FRAG_TOTAL FRAG_ID SIZE ADDR DATA，与原 pack（binary.Write +
+// AddressSerializer）逐字节一致，但不经反射、不逐包分配缓冲。域名超过 255 字节
+// 时返回错误（原 pack 在这里 panic）。
+func (m *udpMessage) appendTo(dst []byte) ([]byte, error) {
+	dst = append(dst, Version, CommandPacket)
+	dst = binary.BigEndian.AppendUint16(dst, m.sessionID)
+	dst = binary.BigEndian.AppendUint16(dst, m.packetID)
+	dst = append(dst, m.fragmentTotal, m.fragmentID)
+	dst = binary.BigEndian.AppendUint16(dst, uint16(m.data.Len()))
+	dst, err := appendAddrPort(dst, m.destination)
+	if err != nil {
+		return nil, err
+	}
+	return append(dst, m.data.Bytes()...), nil
+}
+
+// TUIC 地址类型字节（与 AddressSerializer 的登记一致）。
+const (
+	addressTypeFqdn = 0x00
+	addressTypeIPv4 = 0x01
+	addressTypeIPv6 = 0x02
+	addressTypeNone = 0xff
+)
+
+var errFqdnTooLong = errors.New("fqdn too long")
+
+// appendAddrPort 与 AddressSerializer.WriteAddrPort 同格式：类型、地址，地址有效
+// 时再跟 2 字节端口（无地址只有类型字节）。
+func appendAddrPort(dst []byte, destination M.Socksaddr) ([]byte, error) {
+	switch {
+	case !destination.IsValid():
+		return append(dst, addressTypeNone), nil
+	case destination.IsIPv4():
+		ip := destination.Addr.As4()
+		dst = append(append(dst, addressTypeIPv4), ip[:]...)
+	case destination.IsIPv6():
+		ip := destination.Addr.As16()
+		dst = append(append(dst, addressTypeIPv6), ip[:]...)
+	default:
+		if len(destination.Fqdn) > 255 {
+			return nil, errFqdnTooLong
+		}
+		dst = append(dst, addressTypeFqdn, byte(len(destination.Fqdn)))
+		dst = append(dst, destination.Fqdn...)
+	}
+	return binary.BigEndian.AppendUint16(dst, destination.Port), nil
+}
+
+// addrPortLen 返回 data 开头一个地址（含端口）的编码长度，并校验类型与长度。
+func addrPortLen(data []byte) (int, error) {
+	if len(data) < 1 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	var n int
+	switch data[0] {
+	case addressTypeNone:
+		return 1, nil
+	case addressTypeIPv4:
+		n = 1 + 4
+	case addressTypeIPv6:
+		n = 1 + 16
+	case addressTypeFqdn:
+		if len(data) < 2 {
+			return 0, io.ErrUnexpectedEOF
+		}
+		n = 2 + int(data[1])
+	default:
+		return 0, E.New("unknown address family: ", data[0])
+	}
+	if data[0] == addressTypeFqdn && n == 2 {
+		// 空域名等于无效地址，原实现不读端口。
+		return n, nil
+	}
+	if len(data) < n+2 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	return n + 2, nil
+}
+
+// parseAddrPort 解析 addrPortLen 校验过的一段地址，结果与
+// AddressSerializer.ReadAddrPort 相同（IPv6 里的 4in6 拆成 IPv4，域名按字面
+// 是 IP 的话解析成 IP）。
+func parseAddrPort(raw []byte) M.Socksaddr {
+	var addr M.Socksaddr
+	switch raw[0] {
+	case addressTypeNone:
+		return M.Socksaddr{}
+	case addressTypeIPv4:
+		addr = M.Socksaddr{Addr: netip.AddrFrom4([4]byte(raw[1:5]))}
+		raw = raw[5:]
+	case addressTypeIPv6:
+		addr = M.Socksaddr{Addr: netip.AddrFrom16([16]byte(raw[1:17]))}.Unwrap()
+		raw = raw[17:]
+	default:
+		length := int(raw[1])
+		addr = M.ParseSocksaddrHostPort(string(raw[2:2+length]), 0)
+		raw = raw[2+length:]
+	}
+	if addr.IsValid() {
+		addr.Port = binary.BigEndian.Uint16(raw)
+	}
+	return addr
+}
+
+// destinationCache 记住上一条消息的目标编码：同一会话的包通常发往同一目标，
+// 域名目标不必逐包分配字符串、重新解析。只能在单个 goroutine 里用（服务端的
+// datagram 收包循环）。
+type destinationCache struct {
+	raw  string
+	addr M.Socksaddr
+	set  bool
+}
+
+func (d *destinationCache) lookup(raw []byte) M.Socksaddr {
+	if !d.set || d.raw != string(raw) {
+		d.raw = string(raw)
+		d.addr = parseAddrPort(raw)
+		d.set = true
+	}
+	return d.addr
 }
 
 func (m *udpMessage) headerSize() int {
@@ -121,6 +227,12 @@ var (
 	_ N.PacketReadWaiter = (*udpPacketConn)(nil)
 )
 
+// DefaultUDPQueueSize 是每个 UDP 会话「已收到、待转发」的消息队列长度
+// （Pandora 改动，同 nativewire/hysteria2）。上游写死 64，转发 goroutine 稍一
+// 停顿就整批丢；放大到 512，非正值的 ServiceOptions.UDPQueueSize 用它。
+// 队列满仍然丢包（UDP 语义），不阻塞 QUIC 收包循环。
+const DefaultUDPQueueSize = 512
+
 type udpPacketConn struct {
 	ctx             context.Context
 	cancel          common.ContextCancelCauseFunc
@@ -136,15 +248,22 @@ type udpPacketConn struct {
 	onDestroy       func()
 	readWaitOptions N.ReadWaitOptions
 	readDeadline    pipe.Deadline
+	// dropped 统计因队列满丢弃的消息数，供测试与诊断。
+	dropped atomic.Uint64
+	// 空闲超时由连接自己维护（实现 canceler.PacketConn），见 idle.go。
+	idle idleTimeout
 }
 
-func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, udpStream bool, isServer bool, onDestroy func()) *udpPacketConn {
+func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, udpStream bool, isServer bool, onDestroy func(), queueSize int) *udpPacketConn {
 	ctx, cancel := common.ContextWithCancelCause(ctx)
+	if queueSize <= 0 {
+		queueSize = DefaultUDPQueueSize
+	}
 	return &udpPacketConn{
 		ctx:          ctx,
 		cancel:       cancel,
 		quicConn:     quicConn,
-		data:         make(chan *udpMessage, 64),
+		data:         make(chan *udpMessage, queueSize),
 		udpStream:    udpStream,
 		isServer:     isServer,
 		defragger:    newUDPDefragger(),
@@ -154,12 +273,31 @@ func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, udpStream bool, 
 	}
 }
 
+// Dropped 返回因接收队列满而丢弃的消息数。
+func (c *udpPacketConn) Dropped() uint64 { return c.dropped.Load() }
+
+// TryReadPacket 非阻塞地取一条已到达的消息，没有就返回 false。转发方先阻塞读
+// 一条，再用它把队列里积压的消息一并取走，凑批发给上游（Pandora 改动）。
+func (c *udpPacketConn) TryReadPacket(buffer *buf.Buffer) (destination M.Socksaddr, ok bool) {
+	select {
+	case p := <-c.data:
+		_, _ = buffer.ReadOnceFrom(p.data)
+		destination = p.destination
+		p.releaseMessage()
+		c.idle.touch()
+		return destination, true
+	default:
+		return M.Socksaddr{}, false
+	}
+}
+
 func (c *udpPacketConn) ReadPacket(buffer *buf.Buffer) (destination M.Socksaddr, err error) {
 	select {
 	case p := <-c.data:
 		_, err = buffer.ReadOnceFrom(p.data)
 		destination = p.destination
 		p.releaseMessage()
+		c.idle.touch()
 		return
 	case <-c.ctx.Done():
 		return M.Socksaddr{}, io.ErrClosedPipe
@@ -172,6 +310,7 @@ func (c *udpPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	select {
 	case pkt := <-c.data:
 		n = copy(p, pkt.data.Bytes())
+		c.idle.touch()
 		if pkt.destination.IsFqdn() {
 			addr = pkt.destination
 		} else {
@@ -209,6 +348,7 @@ func (c *udpPacketConn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr)
 		data:          buffer,
 	}
 	defer message.releaseMessage()
+	c.idle.touch()
 	var err error
 	if !c.udpStream && buffer.Len() > c.udpMTU-message.headerSize() {
 		err = c.writePackets(fragUDPMessage(message, c.udpMTU))
@@ -248,6 +388,7 @@ func (c *udpPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 		destination:   destination,
 		data:          buf.As(p),
 	}
+	c.idle.touch()
 	if !c.udpStream && len(p) > c.udpMTU-message.headerSize() {
 		err = c.writePackets(fragUDPMessage(message, c.udpMTU))
 		if err == nil {
@@ -272,19 +413,18 @@ func (c *udpPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 }
 
 func (c *udpPacketConn) inputPacket(message *udpMessage) {
-	if message.fragmentTotal <= 1 {
-		select {
-		case c.data <- message:
-		default:
+	if message.fragmentTotal > 1 {
+		message = c.defragger.feed(message)
+		if message == nil {
+			return
 		}
-	} else {
-		newMessage := c.defragger.feed(message)
-		if newMessage != nil {
-			select {
-			case c.data <- newMessage:
-			default:
-			}
-		}
+	}
+	select {
+	case c.data <- message:
+	default:
+		// 队列满：丢弃并归还缓冲（上游这里直接丢掉引用，池里的对象就漏了）。
+		c.dropped.Add(1)
+		message.releaseMessage()
 	}
 }
 
@@ -301,30 +441,30 @@ func (c *udpPacketConn) writePackets(messages []*udpMessage) error {
 
 func (c *udpPacketConn) writePacket(message *udpMessage) error {
 	if !c.udpStream {
-		buffer := message.pack()
-		err := c.quicConn.SendDatagram(buffer.Bytes())
-		buffer.Release()
+		// SendDatagram 会自己复制一份，编码缓冲放栈上即可（分片后单条不超过
+		// MTU；万一超过，append 自己会挪到堆上）。
+		var scratch [1536]byte
+		packet, err := message.appendTo(scratch[:0])
 		if err != nil {
 			return err
 		}
-	} else {
-		stream, err := c.quicConn.OpenUniStream()
-		if err != nil {
-			return err
-		}
-		buffer := message.pack()
-		_, err = stream.Write(buffer.Bytes())
-		buffer.Release()
-		stream.Close()
-		if err != nil {
-			return err
-		}
+		return c.quicConn.SendDatagram(packet)
 	}
-	return nil
+	stream, err := c.quicConn.OpenUniStream()
+	if err != nil {
+		return err
+	}
+	packet, err := message.appendTo(make([]byte, 0, message.headerSize()+message.data.Len()))
+	if err == nil {
+		_, err = stream.Write(packet)
+	}
+	stream.Close()
+	return err
 }
 
 func (c *udpPacketConn) Close() error {
 	c.closeOnce.Do(func() {
+		c.idle.stop()
 		c.closeWithError(os.ErrClosed)
 		c.onDestroy()
 	})
@@ -365,26 +505,60 @@ func (c *udpPacketConn) SetWriteDeadline(t time.Time) error {
 	return os.ErrInvalid
 }
 
+// defragSlots 是每个会话同时重组中的分片包上限。
+const defragSlots = 16
+
+// udpDefragger 重组分片消息（Pandora 改动，同 nativewire/hysteria2）。上游用 10 秒
+// 寿命的 LRU，每个分片都要 LoadOrStore、分配表项和链表节点；同一会话的分片几乎
+// 总是紧挨着到达，这里改成按 packetID 线性查找的小环：最多同时重组 defragSlots
+// 个包，新包挤掉最旧的未完成包。内存因此按会话有界，乱发 packetID 也撑不大。
+// datagram 与 uni stream 两条收包路径会并发喂它，所以带锁。
 type udpDefragger struct {
-	packetMap *cache.LruCache[uint16, *packetItem]
+	mu    sync.Mutex
+	slots [defragSlots]defragSlot
+	next  int
 }
 
-func newUDPDefragger() *udpDefragger {
-	return &udpDefragger{
-		packetMap: cache.New(
-			cache.WithAge[uint16, *packetItem](10),
-			cache.WithUpdateAgeOnGet[uint16, *packetItem](),
-			cache.WithEvict[uint16, *packetItem](func(key uint16, value *packetItem) {
-				releaseMessages(value.messages)
-			}),
-		),
+type defragSlot struct {
+	used     bool
+	packetID uint16
+	count    uint8
+	messages []*udpMessage
+}
+
+func (s *defragSlot) clear() {
+	releaseMessageData(s.messages)
+	for i := range s.messages {
+		s.messages[i] = nil
+	}
+	s.messages = s.messages[:0]
+	s.used, s.count = false, 0
+}
+
+// releaseMessageData 连同负载缓冲一起归还（分片各自持有从池里取的缓冲）。
+func releaseMessageData(messages []*udpMessage) {
+	for _, message := range messages {
+		if message != nil {
+			message.releaseMessage()
+		}
 	}
 }
 
-type packetItem struct {
-	access   sync.Mutex
-	messages []*udpMessage
-	count    uint8
+func newUDPDefragger() *udpDefragger {
+	return &udpDefragger{}
+}
+
+func (d *udpDefragger) slotFor(packetID uint16) *defragSlot {
+	for i := range d.slots {
+		if d.slots[i].used && d.slots[i].packetID == packetID {
+			return &d.slots[i]
+		}
+	}
+	slot := &d.slots[d.next]
+	d.next = (d.next + 1) % defragSlots
+	slot.clear()
+	slot.used, slot.packetID = true, packetID
+	return slot
 }
 
 func (d *udpDefragger) feed(m *udpMessage) *udpMessage {
@@ -392,52 +566,50 @@ func (d *udpDefragger) feed(m *udpMessage) *udpMessage {
 		return m
 	}
 	if m.fragmentID >= m.fragmentTotal {
+		m.releaseMessage()
 		return nil
 	}
-	item, _ := d.packetMap.LoadOrStore(m.packetID, newPacketItem)
-	item.access.Lock()
-	defer item.access.Unlock()
-	if int(m.fragmentTotal) != len(item.messages) {
-		releaseMessages(item.messages)
-		item.messages = make([]*udpMessage, m.fragmentTotal)
-		item.count = 1
-		item.messages[m.fragmentID] = m
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	slot := d.slotFor(m.packetID)
+	if int(m.fragmentTotal) != len(slot.messages) {
+		releaseMessageData(slot.messages)
+		if cap(slot.messages) >= int(m.fragmentTotal) {
+			slot.messages = slot.messages[:m.fragmentTotal]
+			for i := range slot.messages {
+				slot.messages[i] = nil
+			}
+		} else {
+			slot.messages = make([]*udpMessage, m.fragmentTotal)
+		}
+		slot.count = 0
+	}
+	if slot.messages[m.fragmentID] != nil {
+		m.releaseMessage()
 		return nil
 	}
-	if item.messages[m.fragmentID] != nil {
+	slot.messages[m.fragmentID] = m
+	slot.count++
+	if int(slot.count) != len(slot.messages) {
 		return nil
 	}
-	item.messages[m.fragmentID] = m
-	item.count++
-	if int(item.count) != len(item.messages) {
+	var finalLength int
+	for _, message := range slot.messages {
+		finalLength += message.data.Len()
+	}
+	if finalLength == 0 {
+		slot.clear()
 		return nil
 	}
 	newMessage := allocMessage()
-	*newMessage = *item.messages[0]
-	var dataLength uint16
-	for _, message := range item.messages {
-		dataLength += uint16(message.data.Len())
+	*newMessage = *slot.messages[0]
+	newMessage.referenced = true
+	newMessage.data = buf.NewSize(finalLength)
+	for _, message := range slot.messages {
+		_, _ = newMessage.data.Write(message.data.Bytes())
 	}
-	if dataLength > 0 {
-		newMessage.data = buf.NewSize(int(dataLength))
-		for _, message := range item.messages {
-			common.Must1(newMessage.data.Write(message.data.Bytes()))
-			message.releaseMessage()
-		}
-		item.messages = nil
-		return newMessage
-	} else {
-		newMessage.releaseMessage()
-		for _, message := range item.messages {
-			message.releaseMessage()
-		}
-	}
-	item.messages = nil
-	return nil
-}
-
-func newPacketItem() *packetItem {
-	return new(packetItem)
+	slot.clear()
+	return newMessage
 }
 
 func readUDPMessage(message *udpMessage, reader io.Reader) error {
@@ -474,36 +646,32 @@ func readUDPMessage(message *udpMessage, reader io.Reader) error {
 	return nil
 }
 
-func decodeUDPMessage(message *udpMessage, data []byte) error {
-	reader := bytes.NewReader(data)
-	err := binary.Read(reader, binary.BigEndian, &message.sessionID)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(reader, binary.BigEndian, &message.packetID)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(reader, binary.BigEndian, &message.fragmentTotal)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(reader, binary.BigEndian, &message.fragmentID)
-	if err != nil {
-		return err
-	}
-	var dataLength uint16
-	err = binary.Read(reader, binary.BigEndian, &dataLength)
-	if err != nil {
-		return err
-	}
-	message.destination, err = AddressSerializer.ReadAddrPort(reader)
-	if err != nil {
-		return err
-	}
-	if reader.Len() != int(dataLength) {
+// decodeUDPMessage 解析一条 datagram 里的 UDP 消息（data 已去掉 VER、CMD）。
+// 手写解析代替 bytes.Reader + binary.Read（Pandora 改动，线格式与校验不变：
+// SIZE 必须与剩余负载长度相等）；destCache 非 nil 时（服务端单 goroutine 收包
+// 循环）同一目标复用上一包的解析结果。
+func decodeUDPMessage(message *udpMessage, data []byte, destCache *destinationCache) error {
+	if len(data) < 8 {
 		return io.ErrUnexpectedEOF
 	}
-	message.data = buf.As(data[len(data)-reader.Len():])
+	message.sessionID = binary.BigEndian.Uint16(data[0:2])
+	message.packetID = binary.BigEndian.Uint16(data[2:4])
+	message.fragmentTotal = data[4]
+	message.fragmentID = data[5]
+	dataLength := int(binary.BigEndian.Uint16(data[6:8]))
+	rest := data[8:]
+	addrLen, err := addrPortLen(rest)
+	if err != nil {
+		return err
+	}
+	if destCache != nil {
+		message.destination = destCache.lookup(rest[:addrLen])
+	} else {
+		message.destination = parseAddrPort(rest[:addrLen])
+	}
+	if len(rest)-addrLen != dataLength {
+		return io.ErrUnexpectedEOF
+	}
+	message.data = buf.As(rest[addrLen:])
 	return nil
 }

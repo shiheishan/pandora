@@ -35,7 +35,7 @@ func (c *Client) handleMessage(conn *clientQUICConnection, data []byte) error {
 	switch data[1] {
 	case CommandPacket:
 		message := allocMessage()
-		err := decodeUDPMessage(message, data[2:])
+		err := decodeUDPMessage(message, data[2:], nil)
 		if err != nil {
 			message.release()
 			return E.Cause(err, "decode UDP message")
