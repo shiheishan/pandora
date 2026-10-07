@@ -7,33 +7,9 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
-func TestDirectPoolAssignmentIsFrozenUntilEffectiveReleases(t *testing.T) {
-	nodes := sourcetest.Load(t, "../../domain/nodefabric")
-	check := nodes.Decl("Service.CheckNodePoolAssignment")
-	for _, needle := range []string{
-		`SELECT pool_id::text FROM nodes`,
-		`FOR UPDATE`,
-		`if currentID != poolID`,
-		`return ErrNodePoolMoveFrozen`,
-		`same-pool idempotent replay`,
-	} {
-		if !strings.Contains(check, needle) {
-			t.Fatalf("pool assignment freeze contract missing %q", needle)
-		}
-	}
-	src := sourcetest.Load(t, ".").Decl("handlers.assignNodePool")
-	for _, needle := range []string{
-		`h.d.Node.CheckNodePoolAssignment(`,
-		`errors.Is(err, nodefabric.ErrNodePoolMoveFrozen)`,
-		`httpx.CodeConflict`,
-		`配置发布身份升级完成前暂不允许移动节点分组`,
-	} {
-		if !strings.Contains(src, needle) {
-			t.Fatalf("pool assignment freeze contract missing %q", needle)
-		}
-	}
-}
-
+// 换池冻结接口（assignNodePool / CheckNodePoolAssignment）已删（用户定：允许在后台换池，
+// 走 PATCH /nodes/{id} 的 pool_id，锁序见 nodefabric 的 TestPatchAdminNodePoolMoveMaterializesUnderReleaseLock）。
+// 这里只钉删池的锁序。
 func TestPoolDeletionLocksParentBeforeDependencyCounts(t *testing.T) {
 	src := sourcetest.Load(t, "../../domain/nodefabric").Decl("Service.DeleteNodePool")
 	advisoryAt := strings.Index(src, `"node-config-release/"+tenantID`)
