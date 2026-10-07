@@ -125,11 +125,13 @@ services:
       - FLUSHDB
       - ""
       # 宿主机 run/valkey/valkey.sock：挂在 /data 下，入口脚本每次启动把 /data 整棵 chown 给
-      # valkey，socket 目录因此总是可写；770 让本机其他用户连不上（网关以 root 运行）
+      # valkey，socket 目录因此总是可写。权限 700 只给属主：容器里 valkey 组的 gid（1000）在宿主上
+      # 往往就是第一个普通用户的组（Vultr 的 linuxuser），770 等于让那个宿主用户也连得上（5k-r4
+      # 看到 ls 显示属组 linuxuser）。网关以 root 运行，不靠组权限也连得上
       - --unixsocket
       - /data/sock/valkey.sock
       - --unixsocketperm
-      - "770"
+      - "700"
     ports:
       - "127.0.0.1:${VALKEY_PORT:-6380}:6379"
     volumes:

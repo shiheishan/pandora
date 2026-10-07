@@ -133,18 +133,35 @@ calls | grep -q -- '--email ops@example.test' || fail 'email not passed to certb
 
 # --- ③ 渲染 → nginx -t → reload；失败换回原配置 -----------------------------------
 printf 'AEGIS_ADMIN_PATH=ops_0123456789abcdef0123456789abcdef\nAEGIS_PUBLIC_BASE_URL=https://%s\n' "$domain" >"$T/edge.env"
+# 发行版主配置：worker_connections 768（5k-r4 撞上的上限），渲染时一并抬到 8192
+stock_main='user www-data;
+worker_processes auto;
+
+events {
+	worker_connections 768;
+}
+
+http {
+	include /etc/nginx/conf.d/*.conf;
+}'
+printf '%s\n' "$stock_main" >"$T/nginx/nginx.conf"
 reset_calls
 apply_edge_config "$DEPLOY/render-nginx.sh" "$T/edge.env" >/dev/null || fail "apply failed: $(calls)"
 grep -Fq "server_name $domain;" "$T/nginx/conf.d/aegis.conf" || fail 'aegis.conf not rendered'
 grep -Eq '^[[:space:]]*http2 on;' "$T/nginx/conf.d/aegis.conf" || fail 'rendered without http2 on'
 calls | grep -qx 'nginx -t' && calls | grep -qx 'systemctl reload nginx' || fail "no nginx -t + reload: $(calls)"
-# 已有配置：先备份；nginx -t 失败就一字不差地换回去，不 reload
+grep -Eq '^[[:space:]]*worker_connections 8192;' "$T/nginx/nginx.conf" && grep -Fq 'worker_rlimit_nofile 65536;' "$T/nginx/nginx.conf" \
+  || fail 'install did not raise nginx worker_connections / worker_rlimit_nofile'
+# 已有配置：先备份；nginx -t 失败就一字不差地换回去（站点文件与主配置都换回），不 reload
 echo '# previous good config' >"$T/nginx/conf.d/aegis.conf"
+printf '%s\n' "$stock_main" >"$T/nginx/nginx.conf"
 reset_calls
 if NGINX_T_FAIL=1 apply_edge_config "$DEPLOY/render-nginx.sh" "$T/edge.env" >/dev/null 2>&1; then fail 'nginx -t failure not reported'; fi
 [ "$(cat "$T/nginx/conf.d/aegis.conf")" = '# previous good config' ] || fail 'previous config not restored'
+[ "$(cat "$T/nginx/nginx.conf")" = "$stock_main" ] || fail 'nginx.conf not restored after nginx -t failure'
 refute -q 'reload' "$T/calls.log"
 ls "$T/backups"/nginx-aegis.conf.* >/dev/null 2>&1 || fail 'previous config was not backed up'
+ls "$T/backups"/nginx-main.conf.* >/dev/null 2>&1 || fail 'nginx.conf was not backed up'
 # 原来没有配置、nginx -t 失败：新文件删掉
 rm -f "$T/nginx/conf.d/aegis.conf"
 if NGINX_T_FAIL=1 apply_edge_config "$DEPLOY/render-nginx.sh" "$T/edge.env" >/dev/null 2>&1; then fail 'nginx -t failure not reported'; fi
@@ -170,12 +187,22 @@ compose="$DEPLOY/docker-compose.yml"
 grep -Fq -- '- ./run/postgresql:/var/run/postgresql' "$compose" || fail 'compose does not expose the PG socket under run/'
 grep -Fq -- '- ./run/valkey:/data/sock' "$compose" || fail 'compose does not expose the Valkey socket under run/'
 grep -Fq -- '- /data/sock/valkey.sock' "$compose" || fail 'Valkey does not listen on /data/sock/valkey.sock'
+# valkey.sock 只给属主（容器里的 valkey）：容器里 valkey 组的 gid 在宿主上常是第一个普通用户的组
+# （Vultr 的 linuxuser 是 1000），770 等于让那个宿主用户连得上；网关以 root 运行，不靠组权限
+awk '/--unixsocketperm/ { getline; print; exit }' "$compose" | grep -Fq '"700"' || fail 'valkey.sock must be 700, not group-accessible'
+refute -Eq -- '--unixsocketperm[[:space:]]+"?7[1-7]' "$compose"
 grep -Fq 'PG_SOCKET_DIR="$DEST/deploy/run/postgresql"' "$inst" && grep -Fq 'VK_SOCKET="$DEST/deploy/run/valkey/valkey.sock"' "$inst" \
   || fail 'install.sh socket paths drifted from compose'
 grep -Fq ':/var/run/postgresql"' "$DEPLOY/run-smoke-stack.sh" && grep -Fq -- '--unixsocket /data/sock/valkey.sock' "$DEPLOY/run-smoke-stack.sh" \
   || fail 'smoke stack does not exercise the socket mounts'
 grep -Fq 'AEGIS_REDIS_URL=unix://' "$DEPLOY/run-smoke-stack.sh" && grep -Fq '?host=${SOCK_PG_DIR}' "$DEPLOY/run-smoke-stack.sh" \
   || fail 'smoke gateways do not connect over the sockets'
+
+# 三个网关的停机都是「等在途请求 + join 后台循环」两段，各限 AEGIS_SHUTDOWN_TIMEOUT（缺省 20 秒）：
+# TimeoutStopSec 一律 45 秒（5k-r4：aegis-node 还停在 30 秒）
+for unit in aegis-public aegis-admin aegis-node; do
+  grep -qx 'TimeoutStopSec=45' "$DEPLOY/systemd/$unit.service" || fail "$unit.service must stop within TimeoutStopSec=45"
+done
 
 # install-native.sh：收敛失败即停，不再兜底 GRANT；只有全新库才跳过预检；升级前 pg_dump
 native="$DEPLOY/install-native.sh"
