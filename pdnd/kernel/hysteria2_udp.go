@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aegispanel/nodeagent/outbound"
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -26,8 +27,11 @@ import (
 //   - 流量直接原子累加到会话所属用户的计数器（userSession），不抢适配器的锁；
 //   - 上游 socket 收发缓冲调大（受系统 rmem_max / wmem_max 上限约束）。
 //
-// 上游能不能批量（hy2UDPUpstream）：出站明确交出裸 *net.UDPConn（RawUDPConn）时
-// 直接批量，否则逐包 WriteTo / ReadFrom。
+// 上游能不能批量（hy2UDPUpstream）：
+//   - 出站明确交出裸 *net.UDPConn（RawUDPConn，私网目标放开时的直连）：直接批量；
+//   - 出站给出带检查的批量接口（outbound.UDPBatchProvider，默认拦私网时的直连）：
+//     经它批量，私网目标在它的 WriteBatch 里逐条剔除，裸 socket 不出 outbound 包；
+//   - 都没有（加密、封装类出站）：逐包 WriteTo / ReadFrom。
 
 const (
 	// hy2UDPBatch 是一次批量收发的最大包数。
@@ -59,7 +63,8 @@ func rawUDPConnOf(conn net.PacketConn) *net.UDPConn {
 	return nil
 }
 
-// hy2UDPBatchIO 是上游的批量收发（裸 socket 时是 ipv4.PacketConn）。
+// hy2UDPBatchIO 是上游的批量收发：裸 socket 时是 ipv4.PacketConn，默认拦私网时
+// 是出站给的 outbound.UDPBatchConn（WriteBatch 里逐条把关）。
 type hy2UDPBatchIO interface {
 	ReadBatch(ms []ipv4.Message, flags int) (int, error)
 	WriteBatch(ms []ipv4.Message, flags int) (int, error)
@@ -82,6 +87,20 @@ func newHy2UDPUpstream(upstream net.PacketConn) hy2UDPUpstream {
 		if hy2UDPBatchSupported && isIPv4Local(u.raw.LocalAddr()) {
 			u.batch = ipv4.NewPacketConn(u.raw)
 		}
+		return u
+	}
+	provider, ok := upstream.(outbound.UDPBatchProvider)
+	if !ok {
+		return u
+	}
+	checked := provider.UDPBatch()
+	if checked == nil {
+		return u
+	}
+	_ = checked.SetReadBuffer(hy2UDPSocketBuffer)
+	_ = checked.SetWriteBuffer(hy2UDPSocketBuffer)
+	if hy2UDPBatchSupported && isIPv4Local(checked.LocalAddr()) {
+		u.batch = checked
 	}
 	return u
 }
