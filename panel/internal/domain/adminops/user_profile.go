@@ -221,60 +221,15 @@ type TimeseriesPoint struct {
 // ActivityTimeseries 返回最近 days 天按天聚合的行为统计。
 //
 // 全程只用哈希与计数，不解密任何来源信息 —— 画趋势不需要知道是谁。
+//
+// 已结束且已定稿的日子读按天汇总（00107 的 activity_daily，由保留期任务重算），今天、昨天与
+// 缺行的日子实时算；两边经同一个口径函数 app.activity_daily_compute（按会话时区切日，没有数据的
+// 日子补 0，不让折线图把「那天没人注册」画成数据缺失），见 activity_rollup.go。
 func (s *Service) ActivityTimeseries(ctx context.Context, tenantID string, days int) ([]TimeseriesPoint, error) {
-	out := []TimeseriesPoint{}
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// generate_series 补齐没有数据的日子。
-		// 不补的话折线图会把「那天没人注册」画成一条直接跳过去的线，
-		// 看起来像是数据缺失而不是真的没人。
-		rows, err := tx.Query(ctx, `
-			WITH d AS (
-			  SELECT generate_series(
-			    date_trunc('day', now()) - make_interval(days => $2 - 1),
-			    date_trunc('day', now()), '1 day')::date AS day
-			), active AS (
-			  -- 两路来源去重：成功的订阅拉取（按会话时区切日，与本接口其余列一致），
-			  -- 与按日流量（00072，按用户 / 站点时区记的日）
-			  SELECT day, count(DISTINCT user_id)::int AS n FROM (
-			    SELECT date_trunc('day', f.fetched_at)::date AS day, s.user_id
-			      FROM subscription_fetch_log f
-			      JOIN subscriptions s ON s.tenant_id = f.tenant_id AND s.id = f.subscription_id
-			     WHERE f.tenant_id = $1 AND f.result = 'ok'
-			       AND f.fetched_at >= date_trunc('day', now()) - make_interval(days => $2 - 1)
-			    UNION
-			    SELECT u.day, s.user_id
-			      FROM subscription_usage_daily u
-			      JOIN subscriptions s ON s.tenant_id = u.tenant_id AND s.id = u.subscription_id
-			     WHERE u.tenant_id = $1 AND u.bytes > 0
-			       AND u.day >= (date_trunc('day', now()) - make_interval(days => $2 - 1))::date
-			  ) x GROUP BY day
-			)
-			SELECT to_char(d.day, 'MM-DD'),
-			  count(*) FILTER (WHERE a.action = 'user.registered'),
-			  count(*) FILTER (WHERE a.action = 'user.login' AND a.outcome = 'success'),
-			  count(*) FILTER (WHERE a.action = 'order.created'),
-			  count(DISTINCT a.source_ip_hash),
-			  coalesce(max(ac.n), 0)
-			  FROM d
-			  LEFT JOIN active ac ON ac.day = d.day
-			  -- occurred_at 的下界与 d 的第一天同一个日界（会话时区），不改变能连上的行，
-			  -- 只让它走时间索引；原来只有按天相等的条件，要扫这个租户的全部审计
-			  LEFT JOIN audit_events a
-			    ON a.tenant_id = $1 AND date_trunc('day', a.occurred_at)::date = d.day
-			   AND a.occurred_at >= date_trunc('day', now()) - make_interval(days => $2 - 1)
-			 GROUP BY d.day ORDER BY d.day`, tenantID, days)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var p TimeseriesPoint
-			if err := rows.Scan(&p.Day, &p.Registered, &p.Logins, &p.Orders, &p.UniqueIPs, &p.ActiveUsers); err != nil {
-				return err
-			}
-			out = append(out, p)
-		}
-		return rows.Err()
+	var out []TimeseriesPoint
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) (err error) {
+		out, err = activityTimeseriesTx(ctx, tx, tenantID, days)
+		return err
 	})
 	if err != nil {
 		return nil, err
