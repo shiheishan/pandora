@@ -15,7 +15,7 @@ func TestAdminWorkersShareSignalContextAndJoinBeforeCleanup(t *testing.T) {
 	for _, required := range []string{
 		"signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)",
 		"serverErr := server.RunContext(ctx",
-		"workers.Add(4)",
+		"workers.Add(5)",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("admin process lifecycle contract missing %q", required)
@@ -28,14 +28,14 @@ func TestAdminWorkersShareSignalContextAndJoinBeforeCleanup(t *testing.T) {
 		t.Fatal("admin worker/server lifecycle region is malformed")
 	}
 	workers := source[workersAt:serverAt]
-	if got := strings.Count(workers, "defer workers.Done()"); got != 4 {
-		t.Fatalf("worker Done count=%d want=4", got)
+	if got := strings.Count(workers, "defer workers.Done()"); got != 5 {
+		t.Fatalf("worker Done count=%d want=5", got)
 	}
-	if got := strings.Count(workers, "context.WithTimeout(ctx,"); got != 4 {
-		t.Fatalf("worker child-context count=%d want=4", got)
+	if got := strings.Count(workers, "context.WithTimeout(ctx,"); got != 5 {
+		t.Fatalf("worker child-context count=%d want=5", got)
 	}
-	if got := strings.Count(workers, "case <-ctx.Done():"); got != 4 {
-		t.Fatalf("worker cancellation branch count=%d want=4", got)
+	if got := strings.Count(workers, "case <-ctx.Done():"); got != 5 {
+		t.Fatalf("worker cancellation branch count=%d want=5", got)
 	}
 	if strings.Contains(workers, "context.Background()") {
 		t.Fatal("admin workers must not detach from the signal context")
@@ -114,5 +114,19 @@ func TestAdminNotifyUsesRecipientSalt(t *testing.T) {
 	}
 	if strings.Contains(run, "notify.New(pool, log, cfg.MasterKey") {
 		t.Fatal("admin gateway must not use the master key itself as the notification salt")
+	}
+}
+
+// 保留期清理（w1admin）：在线记录、探针点与流量小时汇总必须有定时清理接在 admin 网关的工作循环里
+func TestAdminWiresRetentionPurge(t *testing.T) {
+	run := sourcetest.Load(t, ".").Decl("run")
+	for _, want := range []string{
+		"nodeSvc.PurgeStaleAlive(sctx, middleware.DefaultTenantID)",
+		"nodeSvc.PurgeMetrics(sctx, middleware.DefaultTenantID, nodefabric.MetricsRetentionHours)",
+		"nodeSvc.PurgeTrafficRollups(sctx, middleware.DefaultTenantID)",
+	} {
+		if !strings.Contains(run, want) {
+			t.Fatalf("admin gateway retention worker missing %q", want)
+		}
 	}
 }

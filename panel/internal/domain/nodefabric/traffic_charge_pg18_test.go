@@ -159,4 +159,95 @@ func TestTrafficChargePG18(t *testing.T) {
 	}
 	t.Log("marker=traffic_charge_pg18_plan_first_then_packs_ok")
 	t.Log("marker=traffic_charge_pg18_charges_do_not_notify_ok")
+
+	batchChargeScenario(t, ctx, admin, app)
+	retentionScenario(t, ctx, admin, app)
+}
+
+// batchChargeScenario 证明整份上报批量记账与逐笔记账同一结果：同一用户的两条订阅
+// 按 uid 升序依次决定怎么分，前一条扣掉的流量包后一条看得见；找不到订阅的 uid 不计；
+// 10 秒内重发的同一报文只留档不记账。
+func batchChargeScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app *platformdb.Pool) {
+	t.Helper()
+	const (
+		tenantID = "75100000-0000-7000-8000-000000000001"
+		userID   = "75100000-0000-7000-8000-000000000011"
+		subA     = "75100000-0000-7000-8000-000000000021"
+		subB     = "75100000-0000-7000-8000-000000000022"
+		packOld  = "75100000-0000-7000-8000-000000000031"
+		packNew  = "75100000-0000-7000-8000-000000000032"
+		nodeID   = "75100000-0000-7000-8000-000000000041"
+	)
+	must := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("fixture: %v\nSQL: %s", err, sql)
+		}
+	}
+	must(`INSERT INTO tenants (id, slug, display_name, default_currency)
+		VALUES ($1, 'traffic-batch-pg18', 'Traffic Batch PG18', 'CNY')`, tenantID)
+	must(`INSERT INTO users (id, tenant_id, email, display_name, status)
+		VALUES ($1, $2, 'traffic-batch@example.test', 'Traffic Batch', 'active')`, userID, tenantID)
+	must(`INSERT INTO nodes (id, tenant_id, name, status) VALUES ($1, $2, 'batch-node', 'active')`, nodeID, tenantID)
+	must(`SET session_replication_role = replica`)
+	must(`INSERT INTO subscriptions (id, tenant_id, user_id, plan_id, plan_version_id,
+			status, snapshot_currency, snapshot_amount, current_period_end, node_uid)
+		VALUES ($1, $3, $4, gen_random_uuid(), gen_random_uuid(), 'active', 'CNY', 0, now() + interval '30 days', 7510001),
+		       ($2, $3, $4, gen_random_uuid(), gen_random_uuid(), 'active', 'CNY', 0, now() + interval '30 days', 7510002)`,
+		subA, subB, tenantID, userID)
+	must(`SET session_replication_role = origin`)
+	must(`INSERT INTO quota_balances (tenant_id, subscription_id, metric, period,
+			period_start, period_end, granted, limit_value)
+		VALUES ($1, $2, 'traffic.bytes', 'cycle', now() - interval '1 day', now() + interval '30 days', 100, 100),
+		       ($1, $3, 'traffic.bytes', 'cycle', now() - interval '1 day', now() + interval '30 days', 50, 50)`,
+		tenantID, subA, subB)
+	must(`INSERT INTO traffic_pack_grants (id, tenant_id, user_id, source, source_id,
+			granted_bytes, created_at)
+		VALUES ($1, $3, $4, 'migration', gen_random_uuid(), 40, now() - interval '2 hours'),
+		       ($2, $3, $4, 'migration', gen_random_uuid(), 100, now() - interval '1 hour')`,
+		packOld, packNew, tenantID, userID)
+
+	svc := NewService(app, nil)
+	node := &ServingNode{ID: nodeID, TrafficRate: 1}
+	report := func(payload string) *PushResult {
+		t.Helper()
+		res, err := svc.ReportTraffic(ctx, tenantID, node, []byte(payload))
+		if err != nil {
+			t.Fatalf("report %s: %v", payload, err)
+		}
+		return res
+	}
+	expect := func(step string, a, b, pOld, pNew, usageA, usageB int64) {
+		t.Helper()
+		var gotA, gotB, gotOld, gotNew, gotUA, gotUB int64
+		if err := admin.QueryRow(ctx, `
+			SELECT (SELECT consumed FROM quota_balances WHERE subscription_id = $1),
+			       (SELECT consumed FROM quota_balances WHERE subscription_id = $2),
+			       (SELECT consumed_bytes FROM traffic_pack_grants WHERE id = $3),
+			       (SELECT consumed_bytes FROM traffic_pack_grants WHERE id = $4),
+			       (SELECT coalesce(sum(bytes), 0) FROM subscription_usage_daily WHERE subscription_id = $1),
+			       (SELECT coalesce(sum(bytes), 0) FROM subscription_usage_daily WHERE subscription_id = $2)`,
+			subA, subB, packOld, packNew).Scan(&gotA, &gotB, &gotOld, &gotNew, &gotUA, &gotUB); err != nil {
+			t.Fatalf("%s: read state: %v", step, err)
+		}
+		if gotA != a || gotB != b || gotOld != pOld || gotNew != pNew || gotUA != usageA || gotUB != usageB {
+			t.Fatalf("%s: plans=%d/%d packs=%d/%d usage=%d/%d want %d/%d %d/%d %d/%d",
+				step, gotA, gotB, gotOld, gotNew, gotUA, gotUB, a, b, pOld, pNew, usageA, usageB)
+		}
+	}
+
+	// uid 7510001 先记：超出 100 的 50 从流量包扣（旧包 40 扣光、新包扣 10）；
+	// uid 7510002 再记：超出 50 的 30 从新包剩下的 90 里扣。未知 uid 不计。
+	first := `{"7510002":[0,80],"7510001":[150,0],"7519999":[5,5]}`
+	if res := report(first); res.Duplicate || res.Accepted != 2 {
+		t.Fatalf("batch report = %+v, want 2 accepted", res)
+	}
+	expect("two subscriptions share packs in uid order", 100, 50, 40, 40, 150, 80)
+	if res := report(first); !res.Duplicate || res.Accepted != 0 {
+		t.Fatalf("resent batch report = %+v, want a duplicate", res)
+	}
+	expect("duplicate report charges nothing", 100, 50, 40, 40, 150, 80)
+	report(`{"7510001":[0,10]}`)
+	expect("exhausted plan keeps draining the newer pack", 100, 50, 40, 50, 160, 80)
+	t.Log("marker=traffic_charge_pg18_batch_matches_sequential_ok")
 }

@@ -65,11 +65,16 @@ func TestUniProxyServesAndChargesTrafficPacks(t *testing.T) {
 			t.Errorf("node user list eligibility missing %q", needle)
 		}
 	}
-	charge := pkg.Decl("chargeTraffic")
+	// 批量记账（applyTrafficCharges）：一次锁全部配额行（按 id），再锁流量包（按用户、先到先扣）
+	charge := pkg.Decl("applyTrafficCharges")
 	quotaLock := strings.Index(charge, "ORDER BY id FOR UPDATE")
-	packLock := strings.Index(charge, "ORDER BY created_at, id FOR UPDATE")
+	packLock := strings.Index(charge, "ORDER BY user_id, created_at, id FOR UPDATE")
 	if quotaLock < 0 || packLock < 0 || quotaLock > packLock {
-		t.Fatal("chargeTraffic must lock quota rows before traffic pack grants, packs oldest first")
+		t.Fatal("applyTrafficCharges must lock quota rows before traffic pack grants, packs oldest first")
+	}
+	if !strings.Contains(pkg.Decl("chargeTraffic"), "applyTrafficCharges(") ||
+		!strings.Contains(pkg.Decl("chargeReportEntries"), "applyTrafficCharges(") {
+		t.Fatal("single and batch charges must share one charging core")
 	}
 	if !strings.Contains(pkg.Decl("Service.ReportTraffic"), "for _, entry := range sortedReportEntries(report)") {
 		t.Fatal("ReportTraffic must charge users in a deterministic order")

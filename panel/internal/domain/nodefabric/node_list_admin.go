@@ -82,34 +82,33 @@ func (s *Service) ListAdminNodes(ctx context.Context, tenantID string, includeRe
 	var total int64
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID},
 		func(tx pgx.Tx) error {
-			// total 用与列表相同的筛选单独数一次：翻过最后一页时列表为空，
-			// 窗口函数就取不到总数了
-			if err := tx.QueryRow(ctx, `
-				SELECT count(*) FROM nodes n
-				 WHERE n.tenant_id = $1 AND n.status <> 'destroyed'
-				   AND ($2::boolean OR n.serving_status <> 'retired')`,
-				tenantID, includeRetired).Scan(&total); err != nil {
-				return err
-			}
 			// 在线数与流量先各自聚合成一张小表再 JOIN，而不是给每个节点
 			// 挂相关子查询：后者会把同一个时间窗扫 200 遍。
+			//
+			// 在线窗口在 win 里只算一次再代入（原来写在 WHERE 里，每扫一行在线记录就调一次
+			// 窗口函数、读一次站点设置）；流量读小时汇总（00099），不再对 30 天的上报求和；
+			// 总数随页一起用窗口函数带回，只有翻过最后一页（本页为空）才单独数一次。
 			rows, err := tx.Query(ctx, `
-				WITH alive AS (
+				WITH win AS MATERIALIZED (
+				  -- 与在线设备视图同一个窗口（按租户设置，R103），不另写字面量
+				  SELECT now() - make_interval(mins => app.device_limit_window_minutes($1)) AS since
+				), alive AS (
 				  SELECT node_id,
 				         count(DISTINCT subscription_id)::int AS users,
 				         count(*)::int AS ips
 				    FROM node_alive_ips
-				   -- 与在线设备视图同一个窗口（按租户设置，R103），不另写字面量
 				   WHERE tenant_id = $1
-				     AND last_seen_at > now() - make_interval(mins => app.device_limit_window_minutes($1))
+				     AND last_seen_at > (SELECT since FROM win)
 				   GROUP BY node_id
 				), traffic AS (
-				  SELECT node_id, sum(total_upload + total_download)::bigint AS bytes,
-				         coalesce(sum(total_upload + total_download)
-				           FILTER (WHERE received_at > now() - interval '24 hours'), 0)::bigint AS bytes_24h
-				    FROM node_traffic_reports
-				   WHERE tenant_id = $1 AND duplicate_of IS NULL
-				     AND received_at > now() - interval '30 days'
+				  -- 原始量（Go 端合计、未乘倍率、不含重复上报），按整点桶：桶起点落在
+				  -- 近 30 天 / 近 24 小时内的才算，窗口最旧的不足一小时不计
+				  SELECT node_id, sum(raw_bytes)::bigint AS bytes,
+				         coalesce(sum(raw_bytes)
+				           FILTER (WHERE hour_start >= now() - interval '24 hours'), 0)::bigint AS bytes_24h
+				    FROM node_traffic_hourly
+				   WHERE tenant_id = $1
+				     AND hour_start >= now() - interval '30 days'
 				   GROUP BY node_id
 				), grants AS (
 				  SELECT pnp.pool_id, array_agg(DISTINCT pl.name) AS plans
@@ -136,7 +135,8 @@ func (s *Service) ListAdminNodes(ctx context.Context, tenantID string, includeRe
 				       coalesce(g.plans, '{}'), coalesce(t.bytes_24h,0),
 				       m.cpu_bp / 100.0,
 				       CASE WHEN m.mem_total_mb > 0 THEN round(m.mem_used_mb * 100.0 / m.mem_total_mb, 1) END,
-				       m.recorded_at
+				       m.recorded_at,
+				       count(*) OVER ()
 				  FROM nodes n
 				  LEFT JOIN node_pools p ON p.id = n.pool_id
 				  LEFT JOIN servers s ON s.id=n.server_id AND s.tenant_id=n.tenant_id
@@ -170,12 +170,25 @@ func (s *Service) ListAdminNodes(ctx context.Context, tenantID string, includeRe
 					&x.TrafficRate, &x.DisplayName, &x.CountryCode, &x.Kernel, &x.Protocol,
 					&x.ProtocolSchemaVersion, &x.ConfigValidatedAt, &x.SortOrder, &x.NodeNo,
 					&x.OnlineUsers, &x.OnlineIPs, &x.TrafficBytes,
-					&x.GrantedPlans, &x.TrafficBytes24h, &x.CPUPercent, &x.MemPercent, &x.MetricsAt); err != nil {
+					&x.GrantedPlans, &x.TrafficBytes24h, &x.CPUPercent, &x.MemPercent, &x.MetricsAt,
+					&total); err != nil {
 					return err
 				}
 				out = append(out, x)
 			}
-			return rows.Err()
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			rows.Close()
+			if len(out) > 0 || offset <= 0 {
+				return nil
+			}
+			// 翻过最后一页：窗口函数没有行可带，按同样的筛选单独数一次
+			return tx.QueryRow(ctx, `
+				SELECT count(*) FROM nodes n
+				 WHERE n.tenant_id = $1 AND n.status <> 'destroyed'
+				   AND ($2::boolean OR n.serving_status <> 'retired')`,
+				tenantID, includeRetired).Scan(&total)
 		})
 	if err != nil {
 		return nil, 0, err

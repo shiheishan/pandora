@@ -53,15 +53,16 @@ type DashboardNodeTrafficRanking struct {
 }
 
 type DashboardNodeTraffic struct {
-	Range      string                      `json:"range"`
-	SnapshotAt string                      `json:"snapshot_at"`
-	From       string                      `json:"from"`
-	To         string                      `json:"to"`
-	Basis      string                      `json:"basis"`
-	Items      []DashboardNodeTrafficItem  `json:"items"`
-	Totals     DashboardTrafficTotals      `json:"totals"`
-	Ranking    DashboardNodeTrafficRanking `json:"ranking"`
-	Quality    DashboardTrafficQuality     `json:"quality"`
+	Range      string `json:"range"`
+	SnapshotAt string `json:"snapshot_at"`
+	// From 是实际计入的下界：snapshot_at 减区间后向上取整到整点（读的是小时汇总）
+	From    string                      `json:"from"`
+	To      string                      `json:"to"`
+	Basis   string                      `json:"basis"`
+	Items   []DashboardNodeTrafficItem  `json:"items"`
+	Totals  DashboardTrafficTotals      `json:"totals"`
+	Ranking DashboardNodeTrafficRanking `json:"ranking"`
+	Quality DashboardTrafficQuality     `json:"quality"`
 }
 
 type DashboardUserTrafficItem struct {
@@ -81,15 +82,16 @@ type DashboardUserTrafficRanking struct {
 }
 
 type DashboardUserTraffic struct {
-	Range      string                      `json:"range"`
-	SnapshotAt string                      `json:"snapshot_at"`
-	From       string                      `json:"from"`
-	To         string                      `json:"to"`
-	Basis      string                      `json:"basis"`
-	Items      []DashboardUserTrafficItem  `json:"items"`
-	Totals     DashboardTrafficTotals      `json:"totals"`
-	Ranking    DashboardUserTrafficRanking `json:"ranking"`
-	Quality    DashboardTrafficQuality     `json:"quality"`
+	Range      string `json:"range"`
+	SnapshotAt string `json:"snapshot_at"`
+	// From 同 DashboardNodeTraffic.From
+	From    string                      `json:"from"`
+	To      string                      `json:"to"`
+	Basis   string                      `json:"basis"`
+	Items   []DashboardUserTrafficItem  `json:"items"`
+	Totals  DashboardTrafficTotals      `json:"totals"`
+	Ranking DashboardUserTrafficRanking `json:"ranking"`
+	Quality DashboardTrafficQuality     `json:"quality"`
 }
 
 type DashboardNotificationCounts struct {
@@ -183,17 +185,24 @@ func resolveDashboardWindow(ctx context.Context, tx pgx.Tx, in DashboardTrafficQ
 		    FROM clock
 		), bounds AS (
 		  SELECT snapshot_at,
-		         (snapshot_at - $2::interval)::timestamptz(6) AS from_at,
+		         (snapshot_at - $2::interval)::timestamptz(6) AS exact_from_at,
 		         snapshot_at AS to_at
 		    FROM requested
 		   WHERE snapshot_at <= now_at
 		     AND snapshot_at >= now_at - interval '31 days'
+		), aligned AS (
+		  -- 汇总按整点桶：起点向上取整到整点（UTC），报出来的 from 就是实际计入的下界
+		  SELECT snapshot_at, to_at,
+		         CASE WHEN date_trunc('hour', exact_from_at, 'UTC') = exact_from_at THEN exact_from_at
+		              ELSE date_trunc('hour', exact_from_at, 'UTC') + interval '1 hour'
+		         END AS from_at
+		    FROM bounds
 		)
 		SELECT snapshot_at, from_at, to_at,
 		       to_char(snapshot_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
 		       to_char(from_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
 		       to_char(to_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
-		  FROM bounds`, requested, dashboardRangeInterval(in.Range)).Scan(
+		  FROM aligned`, requested, dashboardRangeInterval(in.Range)).Scan(
 		&out.snapshot, &out.from, &out.to, &out.snapshotText, &out.fromText, &out.toText)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, httpx.New(httpx.CodeValidationFailed, "snapshot_at 超出允许范围")
@@ -201,118 +210,69 @@ func resolveDashboardWindow(ctx context.Context, tx pgx.Tx, in DashboardTrafficQ
 	return out, err
 }
 
-// dashboardTrafficClassificationCTE is the single SQL source of truth consumed
-// by both node and user rankings. Every cast is fed only a bounded/type-checked
-// value so arbitrary historical JSONB cannot turn a dashboard read into a 500.
-const dashboardTrafficClassificationCTE = `
-duplicate_quality AS (
-  SELECT count(*)::bigint AS duplicate_report_count
-    FROM node_traffic_reports
-   WHERE tenant_id=$1 AND received_at >= $2 AND received_at < $3
-     AND duplicate_of IS NOT NULL
+// dashboardTrafficWindowCTE 是节点排行与用户排行共用的窗口读数，只读小时汇总
+// （迁移 00099），不再回到上报留档逐条展开 raw_payload。
+//
+// 校验口径没有变：汇总表是入库时按 app.node_traffic_payload_entries 分类累加的，
+// 那个函数就是原来这里 strict_entries CTE 的原文（键 [+-]?数字、归一后不超过 19 位、
+// 落在 int64 内；值为两个 JSON 整数、落在 [0, int64 最大值]）。重复上报只进
+// duplicate_report_count；非法上报 = 根不是对象或含非法项的非重复上报。归属仍在读时
+// 按 subscriptions.node_uid 连，订阅不在了就算未归属。PG18 测试拿原 SQL 对同一批
+// 上报逐项比对（dashboard_traffic_pg18_test.go）。
+//
+// 窗口按整点桶取：桶起点 hour_start 落在 [$2, $3) 的桶整桶计入。$2 由
+// resolveDashboardWindow 向上取整到整点，最旧不足一小时的那段不计；最新的桶是
+// 当前小时，snapshot_at 取现在时它正好截到现在。
+const dashboardTrafficWindowCTE = `
+node_hours AS MATERIALIZED (
+  SELECT h.node_id,
+         sum(h.upload_bytes) AS upload_bytes,
+         sum(h.download_bytes) AS download_bytes,
+         sum(h.positive_entry_count)::bigint AS contributing_entry_count,
+         sum(h.positive_report_count)::bigint AS report_count,
+         max(h.last_positive_report_at) AS last_report_at,
+         sum(h.duplicate_report_count) AS duplicate_report_count,
+         sum(h.invalid_report_count) AS invalid_report_count,
+         sum(h.invalid_entry_count) AS invalid_entry_count
+    FROM node_traffic_hourly h
+   WHERE h.tenant_id=$1 AND h.hour_start >= $2 AND h.hour_start < $3
+   GROUP BY h.node_id
 ),
-report_shape AS MATERIALIZED (
-  SELECT id AS report_id, tenant_id, node_id, received_at, raw_payload,
-         jsonb_typeof(raw_payload)='object' AS root_is_object
-    FROM node_traffic_reports
-   WHERE tenant_id=$1 AND received_at >= $2 AND received_at < $3
-     AND duplicate_of IS NULL
-),
-strict_entries AS MATERIALIZED (
-  SELECT r.report_id, r.tenant_id, r.node_id, r.received_at,
-         parsed.parsed_uid_numeric, numbers.upload_numeric, numbers.download_numeric,
-         coalesce(
-           parsed.parsed_uid_numeric IS NOT NULL AND components.shape_ok IS TRUE
-           AND numbers.upload_numeric=trunc(numbers.upload_numeric)
-           AND numbers.download_numeric=trunc(numbers.download_numeric)
-           AND numbers.upload_numeric BETWEEN 0 AND 9223372036854775807::numeric
-           AND numbers.download_numeric BETWEEN 0 AND 9223372036854775807::numeric,
-           false
-         ) AS is_valid
-    FROM report_shape r
-    CROSS JOIN LATERAL jsonb_each(
-      CASE WHEN r.root_is_object IS TRUE THEN r.raw_payload ELSE '{}'::jsonb END
-    ) entry(key_text,value_json)
-    CROSS JOIN LATERAL (
-      SELECT entry.key_text ~ '^[+-]?[0-9]+$' AS key_syntax_ok,
-             CASE WHEN entry.key_text ~ '^[+-]?[0-9]+$' THEN
-               CASE WHEN left(entry.key_text,1)='-' THEN '-' ELSE '' END ||
-               coalesce(nullif(regexp_replace(ltrim(entry.key_text,'+-'), '^0+', ''), ''), '0')
-             END AS normalized_key_text
-    ) key_lex
-    CROSS JOIN LATERAL (
-      SELECT CASE WHEN key_lex.key_syntax_ok IS TRUE
-                       AND length(ltrim(key_lex.normalized_key_text,'-')) <= 19
-                  THEN key_lex.normalized_key_text END AS bounded_key_text
-    ) key_bound
-    CROSS JOIN LATERAL (
-      SELECT CASE WHEN key_bound.bounded_key_text IS NOT NULL
-                       AND key_bound.bounded_key_text::numeric BETWEEN
-                           -9223372036854775808::numeric AND 9223372036854775807::numeric
-                  THEN key_bound.bounded_key_text::numeric END AS parsed_uid_numeric
-    ) parsed
-    CROSS JOIN LATERAL (
-      SELECT CASE WHEN jsonb_typeof(entry.value_json)='array'
-                  THEN jsonb_array_length(entry.value_json) END AS array_len
-    ) value_shape
-    CROSS JOIN LATERAL (
-      SELECT value_shape.array_len=2 AS shape_ok,
-             CASE WHEN value_shape.array_len=2 THEN entry.value_json->0 END AS upload_json,
-             CASE WHEN value_shape.array_len=2 THEN entry.value_json->1 END AS download_json
-    ) components
-    CROSS JOIN LATERAL (
-      SELECT CASE WHEN jsonb_typeof(components.upload_json)='number'
-                  THEN (components.upload_json #>> '{}')::numeric END AS upload_numeric,
-             CASE WHEN jsonb_typeof(components.download_json)='number'
-                  THEN (components.download_json #>> '{}')::numeric END AS download_numeric
-    ) numbers
-),
-entry_report_quality AS (
-  SELECT report_id,
-         count(*) FILTER (WHERE is_valid IS NOT TRUE)::bigint AS invalid_entry_count,
-         bool_or(is_valid IS NOT TRUE) AS has_invalid_entry
-    FROM strict_entries GROUP BY report_id
-),
-report_quality AS (
-  SELECT count(*) FILTER (
-           WHERE r.root_is_object IS NOT TRUE
-              OR coalesce(eq.has_invalid_entry,false)
-         )::bigint AS invalid_report_count,
-         coalesce(sum(eq.invalid_entry_count),0)::bigint AS invalid_entry_count
-    FROM report_shape r
-    LEFT JOIN entry_report_quality eq ON eq.report_id=r.report_id
+quality AS (
+  SELECT coalesce(sum(duplicate_report_count),0)::bigint AS duplicate_report_count,
+         coalesce(sum(invalid_report_count),0)::bigint AS invalid_report_count,
+         coalesce(sum(invalid_entry_count),0)::bigint AS invalid_entry_count,
+         coalesce(sum(upload_bytes+download_bytes),0)::numeric AS reported_bytes
+    FROM node_hours
 ),
 attributed AS MATERIALIZED (
-  SELECT s.report_id, s.tenant_id, s.node_id, s.received_at,
-         sub.id AS subscription_id, sub.user_id,
-         trunc(s.upload_numeric) AS valid_upload,
-         trunc(s.download_numeric) AS valid_download
-    FROM strict_entries s
-    LEFT JOIN subscriptions sub
-      ON sub.tenant_id=s.tenant_id
-     AND sub.node_uid=s.parsed_uid_numeric::bigint
-   WHERE s.is_valid IS TRUE
+  SELECT sub.id AS subscription_id, sub.user_id,
+         t.upload_bytes, t.download_bytes, t.entry_count, t.last_report_at
+    FROM node_user_traffic_hourly t
+    JOIN subscriptions sub
+      ON sub.tenant_id=t.tenant_id
+     AND sub.node_uid=t.node_uid
+   WHERE t.tenant_id=$1 AND t.hour_start >= $2 AND t.hour_start < $3
+     AND sub.user_id IS NOT NULL
 ),
 traffic_totals AS (
-  SELECT coalesce(sum(valid_upload+valid_download),0)::numeric AS reported_bytes,
-         coalesce(sum(valid_upload+valid_download) FILTER (WHERE subscription_id IS NOT NULL AND user_id IS NOT NULL),0)::numeric AS attributed_bytes
-    FROM attributed
+  SELECT q.reported_bytes,
+         (SELECT coalesce(sum(upload_bytes+download_bytes),0) FROM attributed)::numeric AS attributed_bytes
+    FROM quality q
 )
 `
 
-const dashboardNodeTrafficSQL = `WITH ` + dashboardTrafficClassificationCTE + `,
+const dashboardNodeTrafficSQL = `WITH ` + dashboardTrafficWindowCTE + `,
 node_groups AS (
-  SELECT a.node_id, n.name, n.display_name,
-         sum(a.valid_upload)::numeric AS upload_bytes,
-         sum(a.valid_download)::numeric AS download_bytes,
-         sum(a.valid_upload+a.valid_download)::numeric AS total_bytes,
-         count(*)::bigint AS contributing_entry_count,
-         count(DISTINCT a.report_id)::bigint AS report_count,
-         max(a.received_at)::timestamptz(6) AS last_report_at
-    FROM attributed a
-    JOIN nodes n ON n.tenant_id=a.tenant_id AND n.id=a.node_id
-   WHERE a.valid_upload+a.valid_download > 0
-   GROUP BY a.node_id,n.name,n.display_name
+  SELECT g.node_id, n.name, n.display_name,
+         g.upload_bytes::numeric AS upload_bytes,
+         g.download_bytes::numeric AS download_bytes,
+         (g.upload_bytes+g.download_bytes)::numeric AS total_bytes,
+         g.contributing_entry_count, g.report_count,
+         g.last_report_at::timestamptz(6) AS last_report_at
+    FROM node_hours g
+    JOIN nodes n ON n.tenant_id=$1 AND n.id=g.node_id
+   WHERE g.upload_bytes+g.download_bytes > 0
 ),
 ranked AS MATERIALIZED (
   SELECT * FROM node_groups ORDER BY total_bytes DESC,node_id ASC LIMIT $4
@@ -332,23 +292,20 @@ SELECT coalesce((
        trim_scale(t.reported_bytes)::text,trim_scale(t.attributed_bytes)::text,
        trim_scale(t.reported_bytes-t.attributed_bytes)::text,
        trim_scale(r.returned_bytes)::text,trim_scale(t.reported_bytes-r.returned_bytes)::text,
-       d.duplicate_report_count,q.invalid_report_count,q.invalid_entry_count
-  FROM traffic_totals t CROSS JOIN ranking r
-  CROSS JOIN duplicate_quality d CROSS JOIN report_quality q`
+       q.duplicate_report_count,q.invalid_report_count,q.invalid_entry_count
+  FROM traffic_totals t CROSS JOIN ranking r CROSS JOIN quality q`
 
-const dashboardUserTrafficSQL = `WITH ` + dashboardTrafficClassificationCTE + `,
+const dashboardUserTrafficSQL = `WITH ` + dashboardTrafficWindowCTE + `,
 user_groups AS (
   SELECT a.user_id,u.email::text AS email,
-         sum(a.valid_upload)::numeric AS upload_bytes,
-         sum(a.valid_download)::numeric AS download_bytes,
-         sum(a.valid_upload+a.valid_download)::numeric AS total_bytes,
+         sum(a.upload_bytes)::numeric AS upload_bytes,
+         sum(a.download_bytes)::numeric AS download_bytes,
+         sum(a.upload_bytes+a.download_bytes)::numeric AS total_bytes,
          count(DISTINCT a.subscription_id)::bigint AS subscription_count,
-         count(*)::bigint AS contributing_entry_count,
-         max(a.received_at)::timestamptz(6) AS last_report_at
+         sum(a.entry_count)::bigint AS contributing_entry_count,
+         max(a.last_report_at)::timestamptz(6) AS last_report_at
     FROM attributed a
-    JOIN users u ON u.tenant_id=a.tenant_id AND u.id=a.user_id
-   WHERE a.subscription_id IS NOT NULL
-     AND a.user_id IS NOT NULL AND a.valid_upload+a.valid_download > 0
+    JOIN users u ON u.tenant_id=$1 AND u.id=a.user_id
    GROUP BY a.user_id,u.email
 ),
 ranked AS MATERIALIZED (
@@ -371,9 +328,8 @@ SELECT coalesce((
        trim_scale(t.reported_bytes)::text,trim_scale(t.attributed_bytes)::text,
        trim_scale(t.reported_bytes-t.attributed_bytes)::text,
        trim_scale(r.returned_bytes)::text,trim_scale(t.attributed_bytes-r.returned_bytes)::text,
-       d.duplicate_report_count,q.invalid_report_count,q.invalid_entry_count
-  FROM traffic_totals t CROSS JOIN ranking r
-  CROSS JOIN duplicate_quality d CROSS JOIN report_quality q`
+       q.duplicate_report_count,q.invalid_report_count,q.invalid_entry_count
+  FROM traffic_totals t CROSS JOIN ranking r CROSS JOIN quality q`
 
 func (s *Service) DashboardNodeTraffic(ctx context.Context, tenantID string, input DashboardTrafficQuery) (*DashboardNodeTraffic, error) {
 	in, parsed, err := validateDashboardTrafficQuery(input)
@@ -387,14 +343,7 @@ func (s *Service) DashboardNodeTraffic(ctx context.Context, tenantID string, inp
 			return err
 		}
 		out.SnapshotAt, out.From, out.To = window.snapshotText, window.fromText, window.toText
-		var raw json.RawMessage
-		if err := tx.QueryRow(ctx, dashboardNodeTrafficSQL, tenantID, window.from, window.to, in.Limit).Scan(
-			&raw, &out.Totals.ReportedBytes, &out.Totals.AttributedBytes, &out.Totals.UnattributedBytes,
-			&out.Ranking.ReturnedBytes, &out.Ranking.OtherNodeBytes,
-			&out.Quality.DuplicateReportCount, &out.Quality.InvalidReportCount, &out.Quality.InvalidEntryCount); err != nil {
-			return err
-		}
-		return json.Unmarshal(raw, &out.Items)
+		return scanDashboardNodeTraffic(ctx, tx, dashboardNodeTrafficSQL, tenantID, window.from, window.to, in.Limit, out)
 	})
 	if err != nil {
 		var he *httpx.Error
@@ -418,14 +367,7 @@ func (s *Service) DashboardUserTraffic(ctx context.Context, tenantID string, inp
 			return err
 		}
 		out.SnapshotAt, out.From, out.To = window.snapshotText, window.fromText, window.toText
-		var raw json.RawMessage
-		if err := tx.QueryRow(ctx, dashboardUserTrafficSQL, tenantID, window.from, window.to, in.Limit).Scan(
-			&raw, &out.Totals.ReportedBytes, &out.Totals.AttributedBytes, &out.Totals.UnattributedBytes,
-			&out.Ranking.ReturnedBytes, &out.Ranking.OtherUserBytes,
-			&out.Quality.DuplicateReportCount, &out.Quality.InvalidReportCount, &out.Quality.InvalidEntryCount); err != nil {
-			return err
-		}
-		return json.Unmarshal(raw, &out.Items)
+		return scanDashboardUserTraffic(ctx, tx, dashboardUserTrafficSQL, tenantID, window.from, window.to, in.Limit, out)
 	})
 	if err != nil {
 		var he *httpx.Error
@@ -435,6 +377,31 @@ func (s *Service) DashboardUserTraffic(ctx context.Context, tenantID string, inp
 		return nil, httpx.Internal(err)
 	}
 	return out, nil
+}
+
+// scanDashboardNodeTraffic 执行节点排行查询并填进 out（排行、合计、质量）。查询文本
+// 由调用方给：服务用 dashboardNodeTrafficSQL，PG18 对照测试拿同样的列形状跑原 SQL。
+func scanDashboardNodeTraffic(ctx context.Context, tx pgx.Tx, query, tenantID string, from, to time.Time, limit int, out *DashboardNodeTraffic) error {
+	var raw json.RawMessage
+	if err := tx.QueryRow(ctx, query, tenantID, from, to, limit).Scan(
+		&raw, &out.Totals.ReportedBytes, &out.Totals.AttributedBytes, &out.Totals.UnattributedBytes,
+		&out.Ranking.ReturnedBytes, &out.Ranking.OtherNodeBytes,
+		&out.Quality.DuplicateReportCount, &out.Quality.InvalidReportCount, &out.Quality.InvalidEntryCount); err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, &out.Items)
+}
+
+// scanDashboardUserTraffic 同 scanDashboardNodeTraffic，用户排行。
+func scanDashboardUserTraffic(ctx context.Context, tx pgx.Tx, query, tenantID string, from, to time.Time, limit int, out *DashboardUserTraffic) error {
+	var raw json.RawMessage
+	if err := tx.QueryRow(ctx, query, tenantID, from, to, limit).Scan(
+		&raw, &out.Totals.ReportedBytes, &out.Totals.AttributedBytes, &out.Totals.UnattributedBytes,
+		&out.Ranking.ReturnedBytes, &out.Ranking.OtherUserBytes,
+		&out.Quality.DuplicateReportCount, &out.Quality.InvalidReportCount, &out.Quality.InvalidEntryCount); err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, &out.Items)
 }
 
 const dashboardNotificationBacklogSQL = `
