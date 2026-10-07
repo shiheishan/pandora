@@ -37,6 +37,8 @@ type NativeCore struct {
 	// 入站当前名下的那一个键。都由 mu 保护，见 port_claims.go。
 	ports    map[portKey]string
 	tagPorts map[string]portKey
+	// owners 记每个入站属于哪个面板的哪个节点，只用于冲突文案（SetInboundOwner）。
+	owners map[string]inboundOwner
 	// retiredTraffic 是已退场入站（换代、删除、关停）还没交出去的流量，按 tag 记，
 	// 下一次 GetTraffic 一并取走。由 mu 保护。
 	retiredTraffic map[string][]core.UserTraffic
@@ -109,6 +111,7 @@ func NewNativeCoreWithLogger(registry *AdapterRegistry, log *slog.Logger) *Nativ
 		connErrors: newConnErrorLogSink(log, connErrorLogBurst, connErrorLogWindow),
 		ports:      make(map[portKey]string),
 		tagPorts:   make(map[string]portKey),
+		owners:     make(map[string]inboundOwner),
 
 		retiredTraffic: make(map[string][]core.UserTraffic),
 	}
@@ -216,13 +219,13 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 	key := inboundPortKey(cfg)
 	c.mu.RLock()
 	_, previousExists := c.inbounds[cfg.Tag]
-	owner := c.portOwnerLocked(key)
+	var conflict *PortInUseError
+	if owner := c.portOwnerLocked(key); owner != "" && owner != cfg.Tag {
+		conflict = c.portConflictLocked(key, cfg.Tag, owner)
+	}
 	c.mu.RUnlock()
-	if owner != "" && owner != cfg.Tag {
-		return &core.ConfigApplyError{
-			Err:               &PortInUseError{Port: key.port, L4: key.l4, Owner: owner},
-			PreviousPreserved: previousExists,
-		}
+	if conflict != nil {
+		return &core.ConfigApplyError{Err: conflict, PreviousPreserved: previousExists}
 	}
 
 	// Validate the entire candidate before advancing desired. Otherwise a
@@ -248,13 +251,11 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 	}
 	// 再查一次并登记：上面查表到这里之间，别的入站可能抢先登记了同一个键。
 	if owner := c.portOwnerLocked(key); owner != "" && owner != cfg.Tag {
+		conflict := c.portConflictLocked(key, cfg.Tag, owner)
 		c.mu.Unlock()
 		_ = runtime.Close()
 		_ = adapter.Close()
-		return &core.ConfigApplyError{
-			Err:               &PortInUseError{Port: key.port, L4: key.l4, Owner: owner},
-			PreviousPreserved: previousExists,
-		}
+		return &core.ConfigApplyError{Err: conflict, PreviousPreserved: previousExists}
 	}
 	// 先登记新端口，起来之后才释放旧端口（换端口时旧端口在新入站就绪前仍归本入站）。
 	oldKey, hadOldKey := c.tagPorts[cfg.Tag]

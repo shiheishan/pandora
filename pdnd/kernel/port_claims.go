@@ -71,37 +71,71 @@ func inboundPortKey(cfg *core.InboundConfig) portKey {
 	return key
 }
 
-// PortInUseError 是「端口已被占用」：Owner 是占着它的入站 tag（<协议>-<节点 ID>），
-// 为空表示占用者不是本进程的入站（bind 返回 EADDRINUSE）。
+// PortInUseError 是「端口已被占用」。
+//
+// 错误文案会经 failed 回执与 degraded 心跳交给面板，所以不能泄露别的面板的
+// 东西：占用者与申请者属于同一个面板（同一 panel URL 加同一租户，见
+// SetInboundOwner）时才写出对方的节点 ID（OwnerNodeID）；属于别的面板、身份
+// 不明、或是本机其他进程（bind 返回 EADDRINUSE），一律只说「本机其他服务」。
 type PortInUseError struct {
-	Port  int
-	L4    string // "tcp" / "udp"
-	Owner string
+	Port int
+	L4   string // "tcp" / "udp"
+	// OwnerNodeID 只在同一面板时填。
+	OwnerNodeID string
+	// owner 是占用者的入站 tag，只留给本进程诊断与测试，不进任何文案。
+	owner string
 	Err   error // 外部占用时 bind 的原始错误
 }
 
 func (e *PortInUseError) Error() string {
 	key := portKey{port: e.Port, l4: e.L4}.String()
-	if e.Owner == "" {
-		return "端口 " + key + " 已被本机其他进程占用"
+	if e.OwnerNodeID == "" {
+		return "端口 " + key + " 已被本机其他服务占用"
 	}
-	return "端口 " + key + " 已被节点 " + e.Owner + " 占用"
+	return "端口 " + key + " 已被节点 " + e.OwnerNodeID + " 占用"
 }
 
 func (e *PortInUseError) Unwrap() error { return e.Err }
 
 // RuntimeReason 是给面板的机器可读原因（纯 ASCII，可放进请求头）：
 //
-//	port_in_use:<端口>/<tcp|udp>:<占用者 tag>   占用者是同进程的另一个入站
-//	port_in_use:<端口>/<tcp|udp>:external      占用者是本机其他进程
+//	port_in_use:<端口>/<tcp|udp>:<节点 ID>   占用者是同一面板的另一个节点
+//	port_in_use:<端口>/<tcp|udp>:other       其余情况（别的面板、其他进程）
 //
 // 节点端经 errors.As 取这个方法（不 import kernel），随 degraded 心跳上报。
 func (e *PortInUseError) RuntimeReason() string {
-	owner := e.Owner
+	owner := e.OwnerNodeID
 	if owner == "" {
-		owner = "external"
+		owner = "other"
 	}
 	return fmt.Sprintf("port_in_use:%d/%s:%s", e.Port, e.L4, owner)
+}
+
+// inboundOwner 是一个入站属于哪个面板、哪个节点。scope 是面板标识（节点端
+// 给的不透明串：panel URL 与租户的哈希），为空表示不明。
+type inboundOwner struct {
+	scope  string
+	nodeID string
+}
+
+// SetInboundOwner 登记 tag 属于哪个面板（scope）的哪个节点。节点端在每次应用
+// 配置前调用；登记只影响端口冲突时的文案，不影响谁占端口。scope 为空表示
+// 不明（例如兼容通道拿不到租户），这样的入站之间互不透露节点 ID。
+func (c *NativeCore) SetInboundOwner(tag, scope, nodeID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.owners[tag] = inboundOwner{scope: scope, nodeID: nodeID}
+}
+
+// portConflictLocked 构造「key 被 ownerTag 占着」的错误，按同面板与否决定能
+// 不能写出对方节点 ID；调用方持有 c.mu。
+func (c *NativeCore) portConflictLocked(key portKey, requesterTag, ownerTag string) *PortInUseError {
+	err := &PortInUseError{Port: key.port, L4: key.l4, owner: ownerTag}
+	requester, owner := c.owners[requesterTag], c.owners[ownerTag]
+	if requester.scope != "" && requester.scope == owner.scope && owner.nodeID != "" {
+		err.OwnerNodeID = owner.nodeID
+	}
+	return err
 }
 
 // asExternalPortInUse 把 bind 的 EADDRINUSE 包成 PortInUseError；其它错误原样返回。

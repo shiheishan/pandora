@@ -24,7 +24,7 @@ func assertPortInUse(t *testing.T, err error, port int, l4, owner string, preser
 	if !errors.As(err, &inUse) {
 		t.Fatalf("期望端口占用错误，得到 %v", err)
 	}
-	if inUse.Port != port || inUse.L4 != l4 || inUse.Owner != owner {
+	if inUse.Port != port || inUse.L4 != l4 || inUse.owner != owner {
 		t.Fatalf("占用错误 = %+v，期望 %d/%s 被 %q 占用", inUse, port, l4, owner)
 	}
 	var applyErr *core.ConfigApplyError
@@ -47,14 +47,9 @@ func TestPortClaimFirstComerKeepsPort(t *testing.T) {
 
 	err := c.ApplyInbound(vlessInbound("vless-b", port, "tcp"), nil)
 	assertPortInUse(t, err, port, "tcp", "vless-a", false)
-	want := "端口 " + strconv.Itoa(port) + "/TCP 已被节点 vless-a 占用"
-	if err.Error() != want {
-		t.Fatalf("错误文案 = %q，期望 %q", err.Error(), want)
-	}
-	var reason interface{ RuntimeReason() string }
-	if !errors.As(err, &reason) || reason.RuntimeReason() != "port_in_use:"+strconv.Itoa(port)+"/tcp:vless-a" {
-		t.Fatalf("机器可读原因不对：%v", err)
-	}
+	// 没登记归属：不知道对方是不是同一面板，文案不透露它。
+	assertConflictText(t, err, "端口 "+strconv.Itoa(port)+"/TCP 已被本机其他服务占用",
+		"port_in_use:"+strconv.Itoa(port)+"/tcp:other")
 	c.mu.RLock()
 	still := c.inbounds["vless-a"]
 	_, loserPublished := c.inbounds["vless-b"]
@@ -138,10 +133,8 @@ func TestPortClaimExternalOccupantThenRelease(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	err = c.ApplyInbound(vlessInbound("vless-a", port, "tcp"), nil)
 	assertPortInUse(t, err, port, "tcp", "", false)
-	var reason interface{ RuntimeReason() string }
-	if !errors.As(err, &reason) || reason.RuntimeReason() != "port_in_use:"+strconv.Itoa(port)+"/tcp:external" {
-		t.Fatalf("外部占用的机器可读原因不对：%v", err)
-	}
+	assertConflictText(t, err, "启动原生协议 vless: 端口 "+strconv.Itoa(port)+"/TCP 已被本机其他服务占用",
+		"port_in_use:"+strconv.Itoa(port)+"/tcp:other")
 	if c.PortOwner(port, "tcp") != "" {
 		t.Fatal("没起来的入站在登记表里留了名")
 	}
@@ -183,6 +176,39 @@ func TestPortClaimConcurrentApplyHasSingleWinner(t *testing.T) {
 	if winners != 1 {
 		t.Fatalf("赢家 %d 个，期望恰好 1 个：%v", winners, errs)
 	}
+}
+
+func assertConflictText(t *testing.T, err error, text, reason string) {
+	t.Helper()
+	if err.Error() != text {
+		t.Fatalf("错误文案 = %q，期望 %q", err.Error(), text)
+	}
+	var r interface{ RuntimeReason() string }
+	if !errors.As(err, &r) || r.RuntimeReason() != reason {
+		t.Fatalf("机器可读原因不对：%v，期望 %s", err, reason)
+	}
+}
+
+// 冲突文案只对同一面板（同 scope）写出对方节点 ID；别的面板一律「本机其他服务」。
+func TestPortClaimConflictTextDoesNotLeakOtherPanels(t *testing.T) {
+	c := newTestNativeCore(t)
+	port := reserveTCPPort(t)
+	p := strconv.Itoa(port)
+	c.SetInboundOwner("vless-a", "panel-1", "node-a")
+	c.SetInboundOwner("vless-b", "panel-1", "node-b")
+	c.SetInboundOwner("vless-x", "panel-2", "node-x")
+	if err := c.ApplyInbound(vlessInbound("vless-a", port, "tcp"), nil); err != nil {
+		t.Fatal(err)
+	}
+	err := c.ApplyInbound(vlessInbound("vless-b", port, "tcp"), nil)
+	assertConflictText(t, err, "端口 "+p+"/TCP 已被节点 node-a 占用", "port_in_use:"+p+"/tcp:node-a")
+	err = c.ApplyInbound(vlessInbound("vless-x", port, "tcp"), nil)
+	assertConflictText(t, err, "端口 "+p+"/TCP 已被本机其他服务占用", "port_in_use:"+p+"/tcp:other")
+	// scope 都为空（身份不明）也不透露
+	c.SetInboundOwner("vless-a", "", "node-a")
+	c.SetInboundOwner("vless-c", "", "node-c")
+	err = c.ApplyInbound(vlessInbound("vless-c", port, "tcp"), nil)
+	assertConflictText(t, err, "端口 "+p+"/TCP 已被本机其他服务占用", "port_in_use:"+p+"/tcp:other")
 }
 
 func TestInboundPortKeyDerivation(t *testing.T) {
