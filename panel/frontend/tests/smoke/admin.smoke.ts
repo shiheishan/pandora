@@ -19,6 +19,7 @@ import {
   globalRoutingSchema,
   identitySchema,
   metricsSchema,
+  nodeDetailResponse,
   nodeRoutingSchema,
   nodesResponse,
   poolsResponse,
@@ -88,6 +89,9 @@ const rows: Row[] = [
 
   // ---- 节点 ----
   { at: 'nodes/queries.ts', seed: '接入 + POST activate', path: 'v1/nodes', query: { limit: 1000, include_retired: '1' }, schema: nodesResponse },
+  // 节点超过一页时 NodesTab 走服务端筛选与搜索（useNodePage）；抽屉与协议表单按 id 单取（useNodeDetail）
+  { at: 'nodes/queries.ts', seed: '接入 + POST activate', path: 'v1/nodes', query: { limit: 1000, offset: 0, state: 'all', q: 'smoke' }, schema: nodesResponse },
+  { at: 'nodes/queries.ts', seed: '接入 + POST activate', path: 'v1/nodes', query: { id: s.node_id, include_retired: '1' }, schema: nodeDetailResponse },
   { at: 'nodes/queries.ts', path: 'v1/node-protocol-schemas', schema: protocolSchemasResponse },
   { at: 'nodes/queries.ts', seed: '后台 POST servers', path: 'v1/servers', schema: serversResponse },
   // useServer 目前没有调用处（死 hook），接口仍验一遍

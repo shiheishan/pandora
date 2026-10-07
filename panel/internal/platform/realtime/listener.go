@@ -126,18 +126,37 @@ func listenOnce(ctx context.Context, pool *pgxpool.Pool, hub *Hub, log *slog.Log
 		if c.ID != "" {
 			payload["id"] = c.ID
 		}
-
-		// 有归属的变更只推给本人，没有的推给整个租户。
-		//
-		// 这个判断是权限边界：把一条带 user_id 的变更误推成全租户广播，
-		// 等于告诉所有人「某某刚下了单」。所以宁可判断得保守 ——
-		// 只要行里有 user_id，就只发给他一个人。
-		if c.User != "" {
-			hub.Publish(ctx, ChannelUser(c.Tenant, c.User), topic, payload)
-		} else {
-			hub.Publish(ctx, ChannelPublic(c.Tenant), topic, payload)
+		for _, channel := range channelsFor(c) {
+			hub.Publish(ctx, channel, topic, payload)
 		}
-		// 管理端另抄一份：后台要看到租户内所有人的动静
-		hub.Publish(ctx, ChannelAdmin(c.Tenant), topic, payload)
+	}
+}
+
+// adminOnlyTables 是变更只推管理端、不推门户公共频道的表。
+//
+// nodes：门户只在「我的订阅」里列出可用节点（名称 / 协议 / 倍率），改为每 60 秒定时
+// 重拉（portal/screens/common/subscriptions.ts 的 useSubscriptionNodes），不再听
+// nodes.changed。原先节点行没有 user_id，每一次节点写入都广播给全租户每一条门户连接，
+// 连同节点 UUID 一起——门户用户本不该知道套餐外节点的存在与变动时刻。只推管理端，
+// 门户的扇出与订阅页的重拉风暴一起消失。
+var adminOnlyTables = map[string]bool{"nodes": true}
+
+// channelsFor 决定一条变更推到哪些频道。
+//
+// 有归属的变更只推给本人，没有的推给整个租户（adminOnlyTables 里的表除外）。
+//
+// 这个判断是权限边界：把一条带 user_id 的变更误推成全租户广播，
+// 等于告诉所有人「某某刚下了单」。所以宁可判断得保守 ——
+// 只要行里有 user_id，就只发给他一个人。
+//
+// 管理端另抄一份：后台要看到租户内所有人的动静。
+func channelsFor(c change) []string {
+	switch {
+	case c.User != "":
+		return []string{ChannelUser(c.Tenant, c.User), ChannelAdmin(c.Tenant)}
+	case adminOnlyTables[c.Table]:
+		return []string{ChannelAdmin(c.Tenant)}
+	default:
+		return []string{ChannelPublic(c.Tenant), ChannelAdmin(c.Tenant)}
 	}
 }

@@ -70,6 +70,9 @@
 .line {
   min-height: 50px;
   border-bottom: 1px solid var(--border);
+  /* 1000 行的列表：视口外的行跳过样式、布局与绘制；没渲染过的行先按 50px 占位，渲染过的记住实际高度 */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 50px;
 }
 
 .line:last-of-type {

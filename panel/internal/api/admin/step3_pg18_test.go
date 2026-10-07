@@ -186,7 +186,7 @@ func TestNodeListPagingPG18(t *testing.T) {
 	)
 	step3Seed(t, ctx, admin,
 		`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES('`+tenant+`','node-list-pg18','Node List','CNY')`)
-	step3Nodes(t, ctx, admin, tenant, "7e000000-0000-4000-8000-", 3)
+	nodes := step3Nodes(t, ctx, admin, tenant, "7e000000-0000-4000-8000-", 3)
 	r := step3Router(tenant, actor, step3Handlers(app))
 
 	page := func(query string) (int, int64) {
@@ -214,4 +214,5 @@ func TestNodeListPagingPG18(t *testing.T) {
 			t.Fatalf("node list %q: nodes=%d total=%d, want %d/%d", query, n, total, want[0], want[1])
 		}
 	}
+	nodeListFiltersPG18(t, ctx, admin, r, nodes)
 }

@@ -1,5 +1,5 @@
 import { navigate } from '../../../core/router'
-import { Drawer, Tabs, Tag } from '../../../ui'
+import { Drawer, Empty, QueryView, Tabs, Tag, type QueryLike } from '../../../ui'
 import { addressLabel, heartbeatLabel, nodeState, protocolLabel } from './logic'
 import { NodeForm } from './NodeForm'
 import { NodeIdentity } from './NodeIdentity'
@@ -7,7 +7,7 @@ import { NodeMonitor } from './NodeMonitor'
 import { NodeOps } from './NodeOps'
 import { NodeRouting } from './NodeRouting'
 import css from './nodes.module.css'
-import type { NodeRow } from './schemas'
+import type { NodeDetail, NodeRow } from './schemas'
 
 export const DRAWER_TABS = [
   ['metrics', '监控'],
@@ -18,7 +18,11 @@ export const DRAWER_TABS = [
 ] as const
 export type DrawerTab = (typeof DRAWER_TABS)[number][0]
 
-export function NodeDrawer({ node, tab, onClose }: { node: NodeRow | null; tab: DrawerTab; onClose: () => void }) {
+/**
+ * node 是列表行（或列表没加载到时的单取结果）；detail 是同一个节点的单取查询（GET v1/nodes?id=），
+ * 带着列表不回的编辑字段，协议表单要等它到了再画
+ */
+export function NodeDrawer({ node, detail, tab, onClose }: { node: NodeRow | null; detail: QueryLike<NodeDetail | null>; tab: DrawerTab; onClose: () => void }) {
   const state = node ? nodeState(node) : null
   return (
     <Drawer
@@ -55,7 +59,11 @@ export function NodeDrawer({ node, tab, onClose }: { node: NodeRow | null; tab: 
       {node && (
         <div key={`${node.id}-${tab}`}>
           {tab === 'metrics' && <NodeMonitor node={node} />}
-          {tab === 'proto' && <NodeForm key={node.row_version} node={node} onSaved={() => undefined} />}
+          {tab === 'proto' && (
+            <QueryView query={detail} rows={4} isEmpty={(d) => d === null} empty={<Empty bare title="节点不存在" description="它可能刚被删除，关掉抽屉刷新列表看看。" />}>
+              {(d) => d && <NodeForm key={d.row_version} node={d} onSaved={() => undefined} />}
+            </QueryView>
+          )}
           {tab === 'routing' && <NodeRouting nodeId={node.id} />}
           {tab === 'identity' && <NodeIdentity node={node} />}
           {tab === 'ops' && <NodeOps node={node} onGone={onClose} />}

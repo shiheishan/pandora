@@ -42,7 +42,7 @@ func TestDeviceWindowHasOneSource(t *testing.T) {
 	}
 
 	admin := sourcetest.Load(t, filepath.Join("..", "..", "api", "admin"))
-	if !strings.Contains(sourcetest.Load(t, ".").Decl("Service.ListAdminNodes"), "app.device_limit_window_minutes($1)") {
+	if !strings.Contains(sourcetest.Load(t, ".").Decl("Service.queryAdminNodes"), "app.device_limit_window_minutes($1)") {
 		t.Error("admin node list online stats must use the tenant device window")
 	}
 	for dir, pkg := range map[string]*sourcetest.Package{"nodefabric": sourcetest.Load(t, "."), "api/admin": admin} {
