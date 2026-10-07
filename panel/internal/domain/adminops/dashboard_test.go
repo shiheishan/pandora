@@ -62,11 +62,25 @@ func TestDashboardTrafficQueriesReadHourlyRollups(t *testing.T) {
 			"FROM node_user_traffic_hourly t",
 			"h.hour_start >= $2 AND h.hour_start < $3",
 			"t.hour_start >= $2 AND t.hour_start < $3",
-			"sub.node_uid=t.node_uid",
+			// 被最终 SELECT 引用三次，不物化就按引用次数重算「已归属字节」
+			"traffic_totals AS MATERIALIZED",
 		} {
 			if !strings.Contains(query, guard) {
 				t.Fatalf("%s missing %q", name, guard)
 			}
+		}
+		// 归属不逐小时行连订阅：节点排行对订阅半连接，用户排行先按 uid 聚合再连
+		attribution := map[string][]string{
+			"nodes": {"AND EXISTS (SELECT 1 FROM subscriptions sub", "sub.node_uid=t.node_uid"},
+			"users": {"GROUP BY t.node_uid", "FROM uid_hours g", "sub.node_uid=g.node_uid", "count(*)::bigint AS subscription_count"},
+		}[name]
+		for _, guard := range attribution {
+			if !strings.Contains(query, guard) {
+				t.Fatalf("%s missing %q", name, guard)
+			}
+		}
+		if strings.Contains(query, "count(DISTINCT") {
+			t.Fatalf("%s must not sort per group for count(DISTINCT)", name)
 		}
 		if strings.Count(query, "trim_scale(") < 7 {
 			t.Fatalf("%s does not canonicalize every byte field", name)
