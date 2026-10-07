@@ -6,6 +6,8 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -173,8 +175,19 @@ func (h *handlers) heartbeat(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	out, err := h.d.Node.Heartbeat(r.Context(),
-		httpx.TenantIDFrom(r.Context()), nodeIDFrom(r.Context()), in)
+	tenantID, nodeID := httpx.TenantIDFrom(r.Context()), nodeIDFrom(r.Context())
+	var out *nodefabric.HeartbeatOutput
+	var err error
+	if signed := signedNodeFrom(r.Context()); signed != nil && signed.pending {
+		// 身份复核并进心跳写入本身：三条写都以这把公钥仍是有效身份为门槛，一次往返。
+		out, err = h.d.Node.HeartbeatSigned(r.Context(), tenantID, nodeID, in, signed.check)
+		if errors.Is(err, nodefabric.ErrNodeIdentityInvalid) {
+			h.failNodeAuth(w, r, nodeID, err)
+			return
+		}
+	} else {
+		out, err = h.d.Node.Heartbeat(r.Context(), tenantID, nodeID, in)
+	}
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -212,11 +225,17 @@ func (h *handlers) fetchConfig(w http.ResponseWriter, r *http.Request) {
 // 不规范就照旧走全量路径——老节点不受影响。
 func (h *handlers) fetchEffectiveConfig(w http.ResponseWriter, r *http.Request) {
 	tenantID, nodeID := httpx.TenantIDFrom(r.Context()), nodeIDFrom(r.Context())
+	signed := signedNodeFrom(r.Context())
 	if releaseID, generation, ok := nodefabric.ParseAppliedEffectiveRelease(
 		r.Header.Get(nodefabric.AppliedEffectiveReleaseHeader)); ok {
-		unchanged, err := h.d.Node.EffectiveConfigUnchanged(r.Context(), tenantID, nodeID, releaseID, generation)
+		// 只读判断与缓存身份的纪元复核合成一次往返；复核通过之前不回任何东西。
+		unchanged, epoch, err := h.d.Node.EffectiveConfigUnchangedAt(r.Context(), tenantID, nodeID, releaseID, generation)
 		if err != nil {
-			httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
+			h.failNodeAuth(w, r, nodeID, fmt.Errorf("%w: %w", nodefabric.ErrNodeAuthUnavailable, err))
+			return
+		}
+		if err := signed.confirm(r.Context(), h.d.Node, epoch); err != nil {
+			h.failNodeAuth(w, r, nodeID, err)
 			return
 		}
 		if unchanged {
@@ -224,6 +243,11 @@ func (h *handlers) fetchEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 			httpx.NoContent(w)
 			return
 		}
+	}
+	// 全量路径会写库、签名：先把身份复核做完（上面已复核过就是空操作）。
+	if err := signed.confirmNow(r.Context(), h.d.Node); err != nil {
+		h.failNodeAuth(w, r, nodeID, err)
+		return
 	}
 	cfg, err := h.d.Node.FetchEffectiveConfig(r.Context(), tenantID, nodeID)
 	if err != nil {

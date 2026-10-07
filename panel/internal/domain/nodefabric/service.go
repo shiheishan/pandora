@@ -11,7 +11,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -50,6 +49,8 @@ type Service struct {
 	releaseMemo releaseMemo
 	// pullInterval 是下发给节点的拉取间隔，零值按 defaultNodePullInterval（见 uniproxy_config.go）。
 	pullInterval time.Duration
+	// nonces 是签名请求 nonce 的 Valkey 认领与回落（nonce_guard.go）；nil 时只用 PG。
+	nonces *nonceGuard
 }
 
 func NewService(pool *db.Pool, signer *crypto.Signer) *Service {
@@ -99,23 +100,28 @@ type Identity struct {
 	Status    string
 	// epoch 是查出这份身份时的下发纪元（与身份同一条查询读出，见 nodecache.go）。
 	epoch int64
+	// expiresAt 是身份自己的到期时刻；缓存寿命不超过它。
+	expiresAt time.Time
 }
+
+// activeIdentitySQL 是「节点有一份有效身份」的唯一口径：身份 active 且未过期，
+// 节点没有退役或销毁。LookupIdentity 按它取身份，心跳按它给写入加门槛
+// （heartbeatIdentityGateSQL），两处不能各写一份。参数：$1 租户、$2 节点。
+const activeIdentitySQL = `
+		  FROM node_identities i
+		  JOIN nodes n ON n.tenant_id=i.tenant_id AND n.id=i.node_id
+		 WHERE i.tenant_id=$1 AND i.node_id=$2 AND i.status='active' AND i.expires_at > now()
+		   AND n.status NOT IN ('destroyed','retired') AND n.serving_status<>'retired'`
 
 // LookupIdentity 取节点当前有效身份。只返回 active 的那一份 ——
 // 吊销、过期、被更高 serial 取代的身份一律查不到，旧 Agent 立刻失去访问。
-// 总是查库；缓存在 VerifyNodeRequestSignature / ConfirmNodeIdentity 那一层。
+// 总是查库（一次往返）；缓存在 VerifyNodeRequestSignature / ConfirmNodeIdentity 那一层。
 func (s *Service) LookupIdentity(ctx context.Context, tenantID, nodeID string) (*Identity, error) {
 	var id Identity
 	var pub []byte
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
-			SELECT i.node_id, i.serial, i.public_key, i.status, `+deliveryEpochSQL+`
-			  FROM node_identities i
-			  JOIN nodes n ON n.tenant_id=i.tenant_id AND n.id=i.node_id
-			 WHERE i.tenant_id=$1 AND i.node_id=$2 AND i.status='active' AND i.expires_at > now()
-			   AND n.status NOT IN ('destroyed','retired') AND n.serving_status<>'retired'`,
-			tenantID, nodeID).Scan(&id.NodeID, &id.Serial, &pub, &id.Status, &id.epoch)
-	})
+	err := s.pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, `
+			SELECT i.node_id, i.serial, i.public_key, i.status, i.expires_at, `+deliveryEpochSQL+activeIdentitySQL,
+		[]any{tenantID, nodeID}, &id.NodeID, &id.Serial, &pub, &id.Status, &id.expiresAt, &id.epoch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, httpx.New(httpx.CodeUnauthorized, "节点身份无效")
 	}
@@ -126,24 +132,39 @@ func (s *Service) LookupIdentity(ctx context.Context, tenantID, nodeID string) (
 	return &id, nil
 }
 
-// 节点请求验签的两种失败。handler 用它们区分日志原因，对外一律同一个 401。
+// 节点请求验签的三种失败。handler 用它们区分日志原因与状态码：身份无效与签名不匹配
+// 对外一律同一个 401；后端（数据库、Valkey）暂时不可用回 503——pdnd 把 401 当作
+// 永久失败（回执作罢），把一次库抖动说成「身份已吊销」会让回执永久丢失。
 var (
 	ErrNodeIdentityInvalid   = errors.New("node identity is missing or revoked")
 	ErrNodeSignatureMismatch = errors.New("node request signature mismatch")
+	ErrNodeAuthUnavailable   = errors.New("node authentication backend unavailable")
 )
 
-// NodeSignatureCheck 记着一次验签用的是哪个纪元的身份，交给 ConfirmNodeIdentity 复核。
-type NodeSignatureCheck struct {
-	epoch  int64
-	cached bool
+// identityLookupError 把取身份的错误归成「身份无效」（查无此身份）或「后端不可用」。
+func identityLookupError(err error) error {
+	var apiErr *httpx.Error
+	if errors.As(err, &apiErr) && apiErr.Code == httpx.CodeUnauthorized {
+		return fmt.Errorf("%w: %w", ErrNodeIdentityInvalid, err)
+	}
+	return fmt.Errorf("%w: %w", ErrNodeAuthUnavailable, err)
 }
+
+// NodeSignatureCheck 记着一次验签用的是哪个纪元的哪把公钥，交给 ConfirmNodeIdentity 复核。
+type NodeSignatureCheck struct {
+	epoch     int64
+	cached    bool
+	publicKey ed25519.PublicKey
+}
+
+// NeedsEpoch 报告这次验签用的是缓存里的身份、要拿当前纪元复核。直接查库验的不必。
+func (c NodeSignatureCheck) NeedsEpoch() bool { return c.cached }
 
 // VerifyNodeRequestSignature 用节点有效身份验请求签名。
 //
-// 缓存开着时身份取自按（租户, 节点）的缓存：每个签名请求本来就要跑 nonce 认领，
-// 认领顺手读出当前下发纪元，由 ConfirmNodeIdentity 复核——身份签发、吊销、节点
-// 退役或改服务状态都会推进纪元（迁移 00101），纪元前进了就回库重验，所以吊销
-// 下一次请求就生效，缓存省掉的是「什么都没变」时那一次身份查询。
+// 缓存开着时身份取自按（租户, 节点）的缓存，之后由 ConfirmNodeIdentity 拿当前下发纪元
+// 复核——身份签发、吊销、节点退役或改服务状态都会推进纪元（迁移 00101），纪元前进了
+// 就回库重验，所以吊销下一次请求就生效，缓存省掉的是「什么都没变」时那一次身份查询。
 //
 // 缓存里的公钥验不过，可能是节点刚重新接入换了一把钥匙：丢掉这一条回库取最新
 // 身份再验一次。没开缓存时第一次拿到的已经是库里的最新值，不再重查。签名错的
@@ -153,33 +174,33 @@ func (s *Service) VerifyNodeRequestSignature(ctx context.Context, tenantID, node
 	if c == nil {
 		id, err := s.LookupIdentity(ctx, tenantID, nodeID)
 		if err != nil {
-			return NodeSignatureCheck{}, fmt.Errorf("%w: %w", ErrNodeIdentityInvalid, err)
+			return NodeSignatureCheck{}, identityLookupError(err)
 		}
 		if !crypto.Verify(id.PublicKey, payload, signature) {
 			return NodeSignatureCheck{}, ErrNodeSignatureMismatch
 		}
-		return NodeSignatureCheck{epoch: id.epoch}, nil
+		return NodeSignatureCheck{epoch: id.epoch, publicKey: id.PublicKey}, nil
 	}
 	id, err := s.cachedIdentity(ctx, tenantID, nodeID, 0)
 	if err != nil {
-		return NodeSignatureCheck{}, fmt.Errorf("%w: %w", ErrNodeIdentityInvalid, err)
+		return NodeSignatureCheck{}, identityLookupError(err)
 	}
 	if crypto.Verify(id.PublicKey, payload, signature) {
-		return NodeSignatureCheck{epoch: id.epoch, cached: true}, nil
+		return NodeSignatureCheck{epoch: id.epoch, cached: true, publicKey: id.PublicKey}, nil
 	}
 	c.identity.drop(identityCacheKey(tenantID, nodeID))
 	id, err = s.cachedIdentity(ctx, tenantID, nodeID, 0)
 	if err != nil {
-		return NodeSignatureCheck{}, fmt.Errorf("%w: %w", ErrNodeIdentityInvalid, err)
+		return NodeSignatureCheck{}, identityLookupError(err)
 	}
 	if !crypto.Verify(id.PublicKey, payload, signature) {
 		return NodeSignatureCheck{}, ErrNodeSignatureMismatch
 	}
-	return NodeSignatureCheck{epoch: id.epoch, cached: true}, nil
+	return NodeSignatureCheck{epoch: id.epoch, cached: true, publicKey: id.PublicKey}, nil
 }
 
-// ConfirmNodeIdentity 在 nonce 认领之后复核验签用的身份：认领时读到的纪元比身份
-// 的纪元新，说明期间有身份或节点状态的改动，回库取不旧于该纪元的身份重验。
+// ConfirmNodeIdentity 复核验签用的身份：当前纪元比身份的纪元新，说明期间有身份或
+// 节点状态的改动，回库取不旧于该纪元的身份重验。
 func (s *Service) ConfirmNodeIdentity(ctx context.Context, tenantID, nodeID string, check NodeSignatureCheck,
 	currentEpoch int64, payload, signature []byte) error {
 	if !check.cached || currentEpoch <= check.epoch {
@@ -187,12 +208,22 @@ func (s *Service) ConfirmNodeIdentity(ctx context.Context, tenantID, nodeID stri
 	}
 	id, err := s.cachedIdentity(ctx, tenantID, nodeID, currentEpoch)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrNodeIdentityInvalid, err)
+		return identityLookupError(err)
 	}
 	if !crypto.Verify(id.PublicKey, payload, signature) {
 		return ErrNodeSignatureMismatch
 	}
 	return nil
+}
+
+// CurrentDeliveryEpoch 读出当前下发纪元（一次往返），给没有别的查询可搭的签名请求
+// 复核缓存身份用。读失败归为后端不可用。
+func (s *Service) CurrentDeliveryEpoch(ctx context.Context, tenantID string) (int64, error) {
+	var epoch int64
+	if err := s.pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, `SELECT `+deliveryEpochSQL, nil, &epoch); err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrNodeAuthUnavailable, err)
+	}
+	return epoch, nil
 }
 
 // cachedIdentity 从缓存取身份；缓存里那份的纪元不到 minEpoch 就回库。
@@ -245,44 +276,32 @@ func CanonicalPayloadV2(method, path, nodeID, ts, nonce string, bodyHash []byte)
 // ClaimSignedRequest atomically consumes a signed request nonce. Handler
 // failures deliberately do not release it; a retry must use a fresh nonce.
 func (s *Service) ClaimSignedRequest(ctx context.Context, tenantID, nodeID string, nonce, fingerprint []byte, requestTS time.Time) error {
-	_, err := s.ClaimSignedRequestEpoch(ctx, tenantID, nodeID, nonce, fingerprint, requestTS)
+	_, _, err := s.ClaimSignedRequestNonce(ctx, tenantID, nodeID, nonce, fingerprint, requestTS)
 	return err
 }
 
-// ClaimSignedRequestEpoch 认领 nonce，并在同一条语句里读出当前下发纪元（供
-// ConfirmNodeIdentity 复核缓存的身份，不多一次往返）。
+// claimNonceInDatabase 在 PG 里认领 nonce，并在同一条语句里读出当前下发纪元（一次往返）。
 //
 // 防重放只靠主键冲突：同一（租户, 节点, nonce）第二次插入一定 DO NOTHING、回 401。
-// 过期行的清理不在这里做——原先每个请求顺手删「最老 32 条」，200 个节点每秒十几个
-// 请求同时去删同一批行，互相等行锁；现在由 aegis-node 的后台定时调
-// PurgeExpiredNonces。清理只删已过期的行，不影响这里的判定：签名时间戳只接受
-// ±5 分钟，而每条 nonce 至少留到请求时间戳 +5 分钟、入库时间 +11 分钟之后。
-func (s *Service) ClaimSignedRequestEpoch(ctx context.Context, tenantID, nodeID string, nonce, fingerprint []byte, requestTS time.Time) (int64, error) {
-	if len(nonce) != 16 || len(fingerprint) != sha256.Size {
-		return 0, httpx.New(httpx.CodeUnauthorized, "节点身份校验失败")
-	}
+// 过期行的清理不在这里做，由 aegis-node 的后台定时调 PurgeExpiredNonces。清理只删
+// 已过期的行，不影响这里的判定：签名时间戳只接受 ±5 分钟，而每条 nonce 至少留到
+// 请求时间戳 +5 分钟、入库时间 +11 分钟之后。
+func (s *Service) claimNonceInDatabase(ctx context.Context, tenantID, nodeID string, nonce, fingerprint []byte, requestTS time.Time) (int64, error) {
 	var epoch int64
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `
+	err := s.pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, `
 			INSERT INTO node_request_nonces
 				(tenant_id, node_id, nonce, request_fingerprint, request_ts, expires_at)
 			VALUES ($1,$2,$3,$4,$5::timestamptz,
 				GREATEST($5::timestamptz + INTERVAL '5 minutes', now() + INTERVAL '11 minutes'))
 			ON CONFLICT (tenant_id, node_id, nonce) DO NOTHING
-			RETURNING `+deliveryEpochSQL, tenantID, nodeID, nonce, fingerprint, requestTS).Scan(&epoch)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.New(httpx.CodeUnauthorized, "节点身份校验失败")
-		}
-		return err
-	})
-	if err == nil {
-		return epoch, nil
+			RETURNING `+deliveryEpochSQL, []any{tenantID, nodeID, nonce, fingerprint, requestTS}, &epoch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, errNonceReplayed
 	}
-	var apiErr *httpx.Error
-	if errors.As(err, &apiErr) {
-		return 0, apiErr
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrNodeAuthUnavailable, err)
 	}
-	return 0, httpx.New(httpx.CodeUnavailable, "节点认证服务暂不可用").WithInternal(err)
+	return epoch, nil
 }
 
 // nonceGCBatch 是后台清理每个事务删除的上限：事务短，不长时间占着连接与锁。
@@ -302,6 +321,10 @@ func (s *Service) PurgeExpiredNonces(ctx context.Context, tenantID string) (int6
 	for i := 0; i < nonceGCMaxBatches; i++ {
 		var n int64
 		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			// 清理是遥测级的写：异步提交，不让每分钟一次的批量删除去等刷盘
+			if _, err := tx.Exec(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
+				return err
+			}
 			tag, err := tx.Exec(ctx, `
 				WITH expired AS (
 					SELECT tenant_id, node_id, nonce

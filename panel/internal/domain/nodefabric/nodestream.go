@@ -9,8 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
 )
@@ -337,8 +335,7 @@ func (s *Service) NotifyUsersChanged(ctx context.Context, tenantID string) {
 func (s *Service) loadServingNodeForPush(ctx context.Context, tenantID, nodeID string) (*ServingNode, error) {
 	var n ServingNode
 	var proto []byte
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
+	err := s.pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, `
 			SELECT n.id, n.name, coalesce(n.node_type,''), coalesce(n.server_host,''),
 			       coalesce(n.server_port,0), n.traffic_rate, n.protocol_config, n.pool_id,
 			       n.status, coalesce(n.kernel,'auto'), s.status, n.serving_status, `+deliveryEpochSQL+`
@@ -351,11 +348,10 @@ func (s *Service) loadServingNodeForPush(ctx context.Context, tenantID, nodeID s
 			   AND n.node_type IS NOT NULL
 			   AND n.server_port BETWEEN 1 AND 65535
 			   AND `+StableProtocolReadySQL("n"),
-			tenantID, nodeID,
-		).Scan(&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
-			&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
-			&n.ServerStatus, &n.ServingStatus, &n.deliveryEpoch)
-	})
+		[]any{tenantID, nodeID},
+		&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
+		&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
+		&n.ServerStatus, &n.ServingStatus, &n.deliveryEpoch)
 	if err != nil {
 		return nil, err
 	}

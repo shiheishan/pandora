@@ -200,8 +200,7 @@ func (s *Service) pushTenantUsers(ctx context.Context, tenantID string, skip map
 // loadServingNodeForPush（也就是 AuthenticateNode）相同，不满足的节点不推。
 func (s *Service) loadServingNodesForPush(ctx context.Context, tenantID string, nodeIDs []string) ([]ServingNode, error) {
 	var out []ServingNode
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
+	err := s.pool.QueryScoped(ctx, db.Scope{TenantID: tenantID}, `
 			SELECT n.id::text, n.pool_id::text, `+deliveryEpochSQL+`
 			  FROM nodes n
 			  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
@@ -212,20 +211,14 @@ func (s *Service) loadServingNodesForPush(ctx context.Context, tenantID string, 
 			   AND n.node_type IS NOT NULL
 			   AND n.server_port BETWEEN 1 AND 65535
 			   AND `+StableProtocolReadySQL("n")+`
-			 ORDER BY n.id`, tenantID, nodeIDs)
-		if err != nil {
+			 ORDER BY n.id`, []any{tenantID, nodeIDs}, func(rows pgx.Rows) error {
+		var n ServingNode
+		if err := rows.Scan(&n.ID, &n.PoolID, &n.deliveryEpoch); err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var n ServingNode
-			if err := rows.Scan(&n.ID, &n.PoolID, &n.deliveryEpoch); err != nil {
-				return err
-			}
-			n.epochKnown = true
-			out = append(out, n)
-		}
-		return rows.Err()
+		n.epochKnown = true
+		out = append(out, n)
+		return nil
 	})
 	return out, err
 }
