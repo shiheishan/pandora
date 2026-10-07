@@ -48,6 +48,8 @@ type Service struct {
 	caches *nodeCaches
 	// releaseMemo 记着已校验过的不可变发布物的规范字节（见 effective_release_fast.go）。
 	releaseMemo releaseMemo
+	// pullInterval 是下发给节点的拉取间隔，零值按 defaultNodePullInterval（见 uniproxy_config.go）。
+	pullInterval time.Duration
 }
 
 func NewService(pool *db.Pool, signer *crypto.Signer) *Service {
