@@ -78,17 +78,17 @@ func legacyEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, pla
 //  3. 没填 server_host 的节点回落到 host(public_ipv4)，订阅地址不带 /32。
 func runDeliverableExtractionPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool, app *platformdb.Pool) {
 	const (
-		tenant   = "93000000-0000-4000-8000-000000000201"
-		user     = "93000000-0000-4000-8000-000000000211"
-		product  = "93000000-0000-4000-8000-000000000221"
-		plan     = "93000000-0000-4000-8000-000000000231"
-		planVer  = "93000000-0000-4000-8000-000000000241"
-		pool     = "93000000-0000-4000-8000-000000000251"
-		unbound  = "93000000-0000-4000-8000-000000000252"
-		ready    = "93000000-0000-4000-8000-000000000261"
-		draftSrv = "93000000-0000-4000-8000-000000000262"
-		ctlBad   = "93000000-0000-4000-8000-000000000263"
-		ctlOK    = "93000000-0000-4000-8000-000000000264"
+		tenant   = "93000000-0000-4000-8000-000000000801"
+		user     = "93000000-0000-4000-8000-000000000811"
+		product  = "93000000-0000-4000-8000-000000000821"
+		plan     = "93000000-0000-4000-8000-000000000831"
+		planVer  = "93000000-0000-4000-8000-000000000841"
+		pool     = "93000000-0000-4000-8000-000000000851"
+		unbound  = "93000000-0000-4000-8000-000000000852"
+		ready    = "93000000-0000-4000-8000-000000000861"
+		draftSrv = "93000000-0000-4000-8000-000000000862"
+		ctlBad   = "93000000-0000-4000-8000-000000000863"
+		ctlOK    = "93000000-0000-4000-8000-000000000864"
 	)
 	must := func(sql string, args ...any) {
 		t.Helper()
@@ -116,6 +116,7 @@ func runDeliverableExtractionPG18(t *testing.T, ctx context.Context, admin *pgxp
 	}
 
 	// 每个节点从同一个「能下发」的基线出发，只改一列。期望 want 是手算的结论。
+	// 夹具 id 用 8xx 段：delivery 域各用例共用一个库，段不能与别的用例重叠。
 	type variant struct {
 		id, name string
 		want     bool
@@ -135,7 +136,7 @@ func runDeliverableExtractionPG18(t *testing.T, ctx context.Context, admin *pgxp
 		return variant{id: id, name: name, want: want, pool: pool, server: ready, status: "active", serving: "active",
 			nodeType: "vless", host: name + ".deliverable.invalid", port: 443, schema: 1, valid: true, beat: "now()"}
 	}
-	id := func(n int) string { return fmt.Sprintf("93000000-0000-4000-8000-0000000003%02d", n) }
+	id := func(n int) string { return fmt.Sprintf("93000000-0000-4000-8000-000000000%03d", 870+n) }
 	variants := []variant{
 		base(id(1), "ok", true),
 		func() variant { v := base(id(2), "stale", true); v.beat = "now() - interval '1 day'"; return v }(),
