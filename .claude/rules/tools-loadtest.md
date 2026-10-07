@@ -15,7 +15,7 @@ paths:
 
 ## 与被测对象保持同步（对方改了，这里要跟）
 
-- nodesim 的请求序列、节拍、ETag 与失败处理逐段对齐 `pdnd/node/node.go` 与 `pdnd/panel/*`，只把内核换成虚构负载；pdnd 的节拍、退避、签名流程、用户同步语义变了，同步改 `nodesim/`。
+- nodesim 的请求序列、节拍、ETag 与失败处理逐段对齐 `pdnd/node/node.go` 与 `pdnd/panel/*`，只把内核换成虚构负载；pdnd 的节拍、退避、签名流程、用户同步语义变了，同步改 `nodesim/`。`-node-behavior=current`（缺省）跟 pdnd 走；`legacy` 冻结为 2026-10-06 改版前的节拍，只为和 5k-r1 旧数据对照，pdnd 再改时不跟。
 - `seed/users.go` 镜像 `adminops.GenerateUsers` 与 billing 的开通（订阅先建 pending、经状态机触发器转 active、开通事件、配额、哈希凭据）；面板开通流程变了要同步。
 - `userload/traffic.go` 的 UA 表逐条对应 `subscription.DetectFormat` 的一个分支（`TestSubscriptionUAsHitEveryFormatBranch`）；门户与后台读接口表取自前端调用处，接口改名要同步。
 - `userload/preflight.go` 的 `panelLimits` 镜像面板限流缺省：`AEGIS_RL_*`（platform/config）、订阅凭据 `rate_limit_per_hour` 缺省、后台每 IP 240 次/分（`api/admin/router.go` 写死）；面板改缺省要同步，`seed/options.go` 的后台请求间隔也按 240 次/分定。
