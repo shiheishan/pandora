@@ -33,6 +33,10 @@ type PushResult struct {
 // 周期（节点每 60 秒报一次，按 120 秒算）约 30 GB。超过它的值不可能来自一个正常的节点。
 const maxTrafficEntryBytes int64 = 30_000_000_000
 
+// rolloverGraceSQL 是「结束了但还没滚动」的周期行仍照扣的时长。滚动每 10 分钟一次
+// （跳过被锁的行时顺延到下一轮），一天足够覆盖滚动空窗。
+const rolloverGraceSQL = "1 day"
+
 // pushRetryAttempts 是记账事务遇到死锁或序列化失败时的总尝试次数。整个事务已回滚，
 // 重放是安全的；节点不重试上报，失败一次这一分钟的流量就丢了。
 const pushRetryAttempts = 3
@@ -274,10 +278,11 @@ func applyTrafficCharges(ctx context.Context, tx pgx.Tx, tenantID string, charge
 	// 本周期流量配额：全部锁上（含不限量行，与下面的 UPDATE 同一集合），剩余额度取限量行里最紧的。
 	//
 	// 「本周期」= 已开始（period_start <= now()）且没结束的行，外加每种周期（period）里
-	// 开始得最晚的那一行——哪怕它的 period_end 已过。后者是滚动空窗：period_end 到了而
+	// 开始得最晚、且结束不到 rolloverGraceSQL 的那一行。后者是滚动空窗：period_end 到了而
 	// RollQuotaPeriods（aegis-admin 每 10 分钟）还没把它推进到下一期，原先这段时间选不到
 	// 任何行，按「不限量」处理，流量既不进旧周期也不进新周期。现在照扣在这一行上，
-	// 滚动时随 consumed 一起结转（滚动先锁行，与这里同一锁序：按 id）。
+	// 滚动时随 consumed 一起结转（滚动先锁行，与这里同一锁序：按 id）。结束更久的行不是
+	// 滚动空窗，而是没跟着订阅对齐的旧数据（00102 修的那一类），照旧不扣。
 	// 已开始的旧周期行一并锁上再在 Go 里挑（FOR UPDATE 不能和窗口函数同用）；按原地
 	// 推进的写法，每种周期通常只有一行。
 	type quotaRow struct {
@@ -291,11 +296,13 @@ func applyTrafficCharges(ctx context.Context, tx pgx.Tx, tenantID string, charge
 		kind    string
 		start   time.Time
 		current bool
+		lapsed  bool // 已结束但不到 rolloverGraceSQL
 	}
 	var candidates []candidate
 	lockRows, err := tx.Query(ctx, `
 		SELECT id::text, subscription_id::text, period, period_start,
 		       period_end IS NULL OR period_end > now(),
+		       period_end > now() - interval '`+rolloverGraceSQL+`',
 		       CASE WHEN limit_value IS NOT NULL THEN limit_value + adjusted - consumed END
 		  FROM quota_balances
 		 WHERE tenant_id = $1 AND subscription_id = ANY($2::uuid[])
@@ -307,10 +314,12 @@ func applyTrafficCharges(ctx context.Context, tx pgx.Tx, tenantID string, charge
 	}
 	for lockRows.Next() {
 		var c candidate
-		if err := lockRows.Scan(&c.id, &c.sub, &c.kind, &c.start, &c.current, &c.room); err != nil {
+		var recent *bool
+		if err := lockRows.Scan(&c.id, &c.sub, &c.kind, &c.start, &c.current, &recent, &c.room); err != nil {
 			lockRows.Close()
 			return err
 		}
+		c.lapsed = recent != nil && *recent
 		if key := c.sub + "\x00" + c.kind; c.start.After(latest[key]) {
 			latest[key] = c.start
 		}
@@ -322,8 +331,8 @@ func applyTrafficCharges(ctx context.Context, tx pgx.Tx, tenantID string, charge
 	}
 	planRoom := map[string]*int64{}
 	for _, c := range candidates {
-		if !c.current && !c.start.Equal(latest[c.sub+"\x00"+c.kind]) {
-			continue // 已经滚动过去的旧周期
+		if !c.current && !(c.lapsed && c.start.Equal(latest[c.sub+"\x00"+c.kind])) {
+			continue // 已经滚动过去的旧周期，或结束太久、不是滚动空窗
 		}
 		rows = append(rows, c.quotaRow)
 		if _, seen := planRoom[c.sub]; !seen {

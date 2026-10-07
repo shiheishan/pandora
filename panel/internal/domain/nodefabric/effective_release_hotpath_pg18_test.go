@@ -173,24 +173,34 @@ func testReportAliveBatchPG18(t *testing.T, ctx context.Context, admin *pgxpool.
 	}
 	raw := []byte(fmt.Sprintf(`{"%d":["198.51.100.7","198.51.100.7","198.51.100.8"],"0%d":["198.51.100.7"],"-5":["198.51.100.9"],"x":["198.51.100.10"]}`, uid, uid))
 	n := &ServingNode{ID: node.String()}
-	// 第一次插 2 行；两分钟内再报不改写已有行（非 HOT 写减半）；落后超过两分钟才刷新
-	for round, want := range []int{2, 0} {
-		got, err := svc.ReportAlive(ctx, tenant.String(), n, raw)
-		if err != nil || got != want {
-			t.Fatalf("round %d: ReportAlive = %d, %v; want %d rows", round, got, err, want)
+	// 两轮都认下 2 条；第二轮在两分钟内，不改写已有行（非 HOT 写减半）；落后超过两分钟才刷新
+	for round := 0; round < 2; round++ {
+		if got, err := svc.ReportAlive(ctx, tenant.String(), n, raw); err != nil || got != 2 {
+			t.Fatalf("round %d: ReportAlive = %d, %v; want 2 rows", round, got, err)
 		}
 	}
-	if _, err := admin.Exec(ctx, `UPDATE node_alive_ips SET last_seen_at = now() - interval '3 minutes'
-		WHERE tenant_id=$1 AND node_id=$2`, tenant, node); err != nil {
-		t.Fatal(err)
+	backdate := func(age string) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, `UPDATE node_alive_ips SET last_seen_at = now() - $3::interval
+			WHERE tenant_id=$1 AND node_id=$2`, tenant, node, age); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if got, err := svc.ReportAlive(ctx, tenant.String(), n, raw); err != nil || got != 2 {
-		t.Fatalf("stale rows: ReportAlive = %d, %v; want 2 refreshed", got, err)
+	refreshed := func() (n int) {
+		t.Helper()
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM node_alive_ips WHERE tenant_id=$1 AND node_id=$2
+			AND last_seen_at > now() - interval '30 seconds'`, tenant, node).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
 	}
-	var stale int
-	if err := admin.QueryRow(ctx, `SELECT count(*) FROM node_alive_ips WHERE tenant_id=$1 AND node_id=$2
-		AND last_seen_at < now() - interval '1 minute'`, tenant, node).Scan(&stale); err != nil || stale != 0 {
-		t.Fatalf("stale alive rows after refresh = %d, %v", stale, err)
+	backdate("1 minute")
+	if got, err := svc.ReportAlive(ctx, tenant.String(), n, raw); err != nil || got != 2 || refreshed() != 0 {
+		t.Fatalf("fresh rows were rewritten: got=%d err=%v refreshed=%d", got, err, refreshed())
+	}
+	backdate("3 minutes")
+	if got, err := svc.ReportAlive(ctx, tenant.String(), n, raw); err != nil || got != 2 || refreshed() != 2 {
+		t.Fatalf("stale rows were not refreshed: got=%d err=%v refreshed=%d", got, err, refreshed())
 	}
 	var rows int
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM node_alive_ips WHERE tenant_id=$1 AND node_id=$2 AND subscription_id=$3`,

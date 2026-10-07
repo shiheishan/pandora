@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
@@ -442,18 +441,24 @@ func (s *Service) ReportAlive(ctx context.Context, tenantID string, n *ServingNo
 	count := 0
 	b := &pgx.Batch{}
 	// 按（订阅, 哈希）排序插入：同一节点两份上报并发时加锁顺序一致，不互等成死锁。
+	// 回执里的 ips 是认下的（找得到订阅的）条数，不是实际改写的行数。
 	b.Queue(`
-			INSERT INTO node_alive_ips (tenant_id, node_id, subscription_id, ip_hash)
-			SELECT s.tenant_id, $2::uuid, s.id, a.ip_hash
-			  FROM unnest($3::bigint[], $4::bytea[]) AS a(node_uid, ip_hash)
-			  JOIN subscriptions s ON s.tenant_id = $1::uuid AND s.node_uid = a.node_uid
-			 ORDER BY s.id, a.ip_hash
-			ON CONFLICT (node_id, subscription_id, ip_hash)
-			DO UPDATE SET last_seen_at = now()
-			 WHERE node_alive_ips.last_seen_at < now() - interval '`+aliveRefresh+`'`,
-		tenantID, n.ID, uids, hashes).Exec(func(tag pgconn.CommandTag) error {
-		count = int(tag.RowsAffected())
-		return nil
+			WITH src AS (
+				SELECT s.tenant_id, s.id AS subscription_id, a.ip_hash
+				  FROM unnest($3::bigint[], $4::bytea[]) AS a(node_uid, ip_hash)
+				  JOIN subscriptions s ON s.tenant_id = $1::uuid AND s.node_uid = a.node_uid
+			), upsert AS (
+				INSERT INTO node_alive_ips (tenant_id, node_id, subscription_id, ip_hash)
+				SELECT tenant_id, $2::uuid, subscription_id, ip_hash
+				  FROM src
+				 ORDER BY subscription_id, ip_hash
+				ON CONFLICT (node_id, subscription_id, ip_hash)
+				DO UPDATE SET last_seen_at = now()
+				 WHERE node_alive_ips.last_seen_at < now() - interval '`+aliveRefresh+`'
+			)
+			SELECT count(*) FROM src`,
+		tenantID, n.ID, uids, hashes).QueryRow(func(row pgx.Row) error {
+		return row.Scan(&count)
 	})
 	err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b)
 	return count, err
