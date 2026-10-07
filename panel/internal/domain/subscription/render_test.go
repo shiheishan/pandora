@@ -17,13 +17,20 @@ func TestSupportedRenderersProduceAllAdvertisedFormats(t *testing.T) {
 		singboxType string
 		uriPrefix   string
 	}{
-		{"shadowsocks", "shadowsocks", map[string]any{"method": "aes-256-gcm"}, "ss", "shadowsocks", "ss://"},
-		{"vless", "vless", map[string]any{"network": "tcp", "tls": false}, "vless", "vless", "vless://"},
-		{"vmess", "vmess", map[string]any{"network": "tcp", "tls": false}, "vmess", "vmess", "vmess://"},
-		{"trojan", "trojan", map[string]any{"network": "tcp", "server_name": "edge.example.com"}, "trojan", "trojan", "trojan://"},
-		{"hysteria2", "hysteria2", map[string]any{"server_name": "edge.example.com"}, "hysteria2", "hysteria2", "hysteria2://"},
-		{"tuic", "tuic", map[string]any{"server_name": "edge.example.com", "congestion_control": "bbr"}, "tuic", "tuic", "tuic://"},
-		{"anytls", "anytls", map[string]any{"server_name": "edge.example.com"}, "anytls", "anytls", "anytls://"},
+		// 表单形状（xboard）：后台存进库的就是这个样子
+		{"shadowsocks", "shadowsocks", map[string]any{"cipher": "aes-256-gcm"}, "ss", "shadowsocks", "ss://"},
+		{"vless", "vless", map[string]any{"network": "tcp", "tls": float64(0)}, "vless", "vless", "vless://"},
+		{"vmess", "vmess", map[string]any{"network": "tcp", "tls": float64(0)}, "vmess", "vmess", "vmess://"},
+		{"trojan", "trojan", map[string]any{"network": "tcp", "tls": float64(1), "cert_path": "/c.pem", "key_path": "/k.pem",
+			"tls_settings": map[string]any{"server_name": "edge.example.com"}}, "trojan", "trojan", "trojan://"},
+		{"hysteria2", "hysteria2", map[string]any{"cert_path": "/c.pem", "key_path": "/k.pem",
+			"tls_settings": map[string]any{"server_name": "edge.example.com"}}, "hysteria2", "hysteria2", "hysteria2://"},
+		{"tuic", "tuic", map[string]any{"cert_path": "/c.pem", "key_path": "/k.pem", "congestion_control": "bbr",
+			"tls_settings": map[string]any{"server_name": "edge.example.com"}}, "tuic", "tuic", "tuic://"},
+		{"anytls", "anytls", map[string]any{"tls": true, "cert_path": "/c.pem", "key_path": "/k.pem",
+			"tls_settings": map[string]any{"server_name": "edge.example.com"}}, "anytls", "anytls", "anytls://"},
+		{"socks", "socks", map[string]any{"network": "tcp"}, "socks5", "socks", "socks5://"},
+		{"http", "http", map[string]any{}, "http", "http", "http://"},
 	}
 
 	for _, tt := range tests {
@@ -69,15 +76,16 @@ func TestSupportedRenderersProduceAllAdvertisedFormats(t *testing.T) {
 	}
 }
 
-func TestLegacyProtocolWithoutPortableRepresentationIsSkipped(t *testing.T) {
-	node := Node{Name: "legacy-naive", Type: "naive", Host: "203.0.113.10", Port: 443, Config: map[string]any{}}
+func TestProtocolWithoutPortableURIIsSkipped(t *testing.T) {
+	// mieru 没有通行的分享链接写法：编一个出来只会让客户端解析失败
+	node := Node{Name: "mieru", Type: "mieru", Host: "203.0.113.10", Port: 443, Config: map[string]any{"transport": "TCP"}}
 	body, _, count := Render(FormatURI, []Node{node}, "019f9f00-1111-7222-8333-444444444444")
 	if count != 0 {
-		t.Fatalf("legacy protocol falsely rendered, count=%d", count)
+		t.Fatalf("protocol without URI form falsely rendered, count=%d", count)
 	}
 	plain, err := base64.StdEncoding.DecodeString(string(body))
 	if err != nil || len(plain) != 0 {
-		t.Fatalf("unexpected legacy URI body=%q err=%v", plain, err)
+		t.Fatalf("unexpected URI body=%q err=%v", plain, err)
 	}
 }
 
@@ -110,11 +118,11 @@ func TestSingboxRenderUsesCurrentRouteSchemaAndHandlesEmptyNodes(t *testing.T) {
 
 func TestRenderDeduplicatesDisplayNames(t *testing.T) {
 	nodes := []Node{
-		{Name: "香港", Type: "shadowsocks", Host: "203.0.113.1", Port: 8388, Config: map[string]any{"method": "aes-128-gcm"}},
-		{Name: "香港", Type: "shadowsocks", Host: "203.0.113.2", Port: 8388, Config: map[string]any{"method": "aes-128-gcm"}},
-		{Name: "香港 · 1", Type: "shadowsocks", Host: "203.0.113.3", Port: 8388, Config: map[string]any{"method": "aes-128-gcm"}},
-		{Name: "direct", Type: "shadowsocks", Host: "203.0.113.4", Port: 8388, Config: map[string]any{"method": "aes-128-gcm"}},
-		{Name: "自动选择", Type: "shadowsocks", Host: "203.0.113.5", Port: 8388, Config: map[string]any{"method": "aes-128-gcm"}},
+		{Name: "香港", Type: "shadowsocks", Host: "203.0.113.1", Port: 8388, Config: map[string]any{"cipher": "aes-128-gcm"}},
+		{Name: "香港", Type: "shadowsocks", Host: "203.0.113.2", Port: 8388, Config: map[string]any{"cipher": "aes-128-gcm"}},
+		{Name: "香港 · 1", Type: "shadowsocks", Host: "203.0.113.3", Port: 8388, Config: map[string]any{"cipher": "aes-128-gcm"}},
+		{Name: "direct", Type: "shadowsocks", Host: "203.0.113.4", Port: 8388, Config: map[string]any{"cipher": "aes-128-gcm"}},
+		{Name: "自动选择", Type: "shadowsocks", Host: "203.0.113.5", Port: 8388, Config: map[string]any{"cipher": "aes-128-gcm"}},
 	}
 	body, _, count := Render(FormatSingbox, nodes, "019f9f00-1111-7222-8333-444444444444")
 	if count != len(nodes) {
@@ -159,14 +167,23 @@ func TestDetectFormatCoversCommonClients(t *testing.T) {
 		"SFM/1.9.0":           FormatSingbox,
 		"HiddifyNext/2.0.5":   FormatSingbox,
 		"Karing/1.0.0":        FormatSingbox,
-		// Clash 内核系
-		"clash-verge/v1.7.7":      FormatClash,
-		"ClashforWindows/0.20.39": FormatClash,
-		"ClashX/1.118.0":          FormatClash,
-		"mihomo/1.19.10":          FormatClash,
-		"Stash/2.5.0":             FormatClash,
-		"FlClash/0.8.60":          FormatClash,
-		"clash-nyanpasu/1.5.1":    FormatClash,
+		// Clash Meta（mihomo）系
+		"clash-verge/v1.7.7":              FormatClash,
+		"mihomo/1.19.10":                  FormatClash,
+		"Stash/2.5.0":                     FormatClash,
+		"FlClash/0.8.60":                  FormatClash,
+		"clash-nyanpasu/1.5.1":            FormatClash,
+		"ClashMetaForAndroid/2.11.5.Meta": FormatClash,
+		"ClashX Meta/1.4.0":               FormatClash,
+		"Clash.Meta":                      FormatClash,
+		"mihomo.party/v1.5.0":             FormatClash,
+		"OpenClash":                       FormatClash,
+		// Clash Premium 系：不认 vless / hysteria2 / tuic / anytls / mieru
+		"ClashforWindows/0.20.39": FormatClashPremium,
+		"ClashX/1.118.0":          FormatClashPremium,
+		"ClashX Pro/1.118.0":      FormatClashPremium,
+		"ClashForAndroid/2.5.12":  FormatClashPremium,
+		"clash":                   FormatClashPremium,
 		// 只吃 URI / base64 的
 		"v2rayN/6.23":           FormatURI,
 		"v2rayNG/1.8.19":        FormatURI,
@@ -198,6 +215,16 @@ func TestDetectFormatExplicitOverridesUA(t *testing.T) {
 	if got := DetectFormat("v2rayN/6.23", "clash"); got != FormatClash {
 		t.Errorf("显式 clash 没盖过 UA：%s", got)
 	}
+	// Xboard 迁来的 flag=clash：Premium 客户端仍给 Premium，Meta 客户端给 Meta
+	if got := DetectFormat("ClashX/1.118.0", "clash"); got != FormatClashPremium {
+		t.Errorf("Premium 客户端带 flag=clash 应给 Premium：%s", got)
+	}
+	if got := DetectFormat("ClashX/1.118.0", "meta"); got != FormatClash {
+		t.Errorf("显式 meta 应给 Meta：%s", got)
+	}
+	if got := DetectFormat("curl/8.14.1", "premium"); got != FormatClashPremium {
+		t.Errorf("显式 premium 没生效：%s", got)
+	}
 	if got := DetectFormat("curl/8.14.1", "sing-box"); got != FormatSingbox {
 		t.Errorf("显式 sing-box 没生效：%s", got)
 	}
@@ -218,9 +245,9 @@ func TestRenderSingboxSkipsMKCPNodes(t *testing.T) {
 	credential := "019f9f00-4444-7555-8666-777777777777"
 	nodes := []Node{
 		{Name: "kcp-node", Type: "vless", Host: "203.0.113.31", Port: 2096,
-			Config: map[string]any{"network": "mkcp"}},
+			Config: map[string]any{"network": "mkcp", "tls": float64(0)}},
 		{Name: "tcp-node", Type: "vless", Host: "203.0.113.32", Port: 443,
-			Config: map[string]any{"network": "tcp", "tls": true}},
+			Config: map[string]any{"network": "tcp", "tls": float64(0)}},
 	}
 	body, _, count := Render(FormatSingbox, nodes, credential)
 	if count != 1 {
@@ -247,12 +274,12 @@ func TestRenderSkipsMKCPNodesWithMask(t *testing.T) {
 	masked := Node{
 		Name: "masked-kcp", Type: "vless", Host: "203.0.113.41", Port: 2096,
 		Config: map[string]any{
-			"network": "mkcp", "mask": "mkcp-aes128gcm", "mask_password": "secret",
+			"tls": float64(0), "network": "mkcp", "mask": "mkcp-aes128gcm", "mask_password": "secret",
 		},
 	}
 	plain := Node{
 		Name: "plain-tcp", Type: "vless", Host: "203.0.113.42", Port: 443,
-		Config: map[string]any{"network": "tcp", "tls": true},
+		Config: map[string]any{"network": "tcp", "tls": float64(0)},
 	}
 
 	for _, format := range []Format{FormatURI, FormatClash, FormatSingbox} {
@@ -278,7 +305,7 @@ func TestRenderSkipsMKCPNodesWithMask(t *testing.T) {
 func TestRenderKeepsUnmaskedMKCPInURI(t *testing.T) {
 	credential := "019f9f00-6666-7777-8888-999999999999"
 	for _, mask := range []any{nil, "", "none", "mkcp-original"} {
-		cfg := map[string]any{"network": "mkcp"}
+		cfg := map[string]any{"network": "mkcp", "tls": float64(0)}
 		if mask != nil {
 			cfg["mask"] = mask
 		}
