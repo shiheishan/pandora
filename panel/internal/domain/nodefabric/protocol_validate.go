@@ -464,10 +464,8 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 			} else if security != "" && !containsString([]string{"none", "zero", "aes-128-gcm", "chacha20-poly1305", "auto"}, security) {
 				fields["protocol_config.security"] = "VMess 仅支持 none、zero、aes-128-gcm、chacha20-poly1305 或 auto"
 			}
-			if _, taken := fields["protocol_config.tls"]; !taken {
-				// VMess 没有 TLS 可选：除了挂 CDN 的 HTTP 类传输，全是明文
-				validatePlaintextStream(fields, cfg.Network)
-			}
+			// VMess 自带加密：裸 tcp 不算明文，放行，只在读接口给特征明显的提示
+			// （ProtocolConfigWarnings，用户 2026-10-07 定）。
 			if strings.TrimSpace(cfg.Flow) != "" {
 				fields["protocol_config.flow"] = "VMess 没有流控，请留空"
 			}

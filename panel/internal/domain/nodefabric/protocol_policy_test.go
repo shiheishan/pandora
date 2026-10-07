@@ -65,6 +65,14 @@ func TestFallbackAcceptsPublicHostPort(t *testing.T) {
 	expectAccepted(t, "anytls", `{"tls":true,`+policyCert+`,"fallback":""}`)
 }
 
+func TestFallbackAllowsLocalLoopback(t *testing.T) {
+	// 用户 2026-10-07 定：回落到本机 nginx 是常见部署，本机回环放行
+	for _, fallback := range []string{"127.0.0.1:80", "[::1]:80", "localhost:8080", "[::ffff:127.0.0.1]:80"} {
+		expectAccepted(t, "trojan", `{"tls":1,"network":"tcp",`+policyCert+`,"fallback":"`+fallback+`"}`)
+		expectAccepted(t, "anytls", `{"tls":true,`+policyCert+`,"fallback":"`+fallback+`"}`)
+	}
+}
+
 func TestFallbackRejectsURLsPathsAndInternalTargets(t *testing.T) {
 	cases := map[string]string{
 		"http://www.example.com:80": "http://",
@@ -73,9 +81,6 @@ func TestFallbackRejectsURLsPathsAndInternalTargets(t *testing.T) {
 		"www.example.com":           "host:port",
 		"www.example.com:0":         "端口",
 		"www.example.com:70000":     "端口",
-		"127.0.0.1:80":              "回环",
-		"[::1]:80":                  "回环",
-		"localhost:80":              "localhost",
 		"web.localhost:80":          "localhost",
 		"nas.local:80":              "local",
 		"10.0.0.5:80":               "私网",
@@ -86,7 +91,6 @@ func TestFallbackRejectsURLsPathsAndInternalTargets(t *testing.T) {
 		"169.254.169.254:80":        "链路本地",
 		"[fe80::1]:80":              "链路本地",
 		"0.0.0.0:80":                "0.0.0.0",
-		"[::ffff:127.0.0.1]:80":     "回环",
 		"nginx:80":                  "单个标签",
 		"router.home.arpa:80":       "home.arpa",
 		"svc.cluster.internal:80":   "internal",
@@ -132,10 +136,19 @@ func TestFallbackIsDeliveredVerbatim(t *testing.T) {
 }
 
 func TestPlaintextTCPIsRejectedButCDNTransportsStay(t *testing.T) {
+	expectRejected(t, "vless", `{"tls":0,"network":"tcp"}`, "protocol_config.network", "明文")
+	expectRejected(t, "vless", `{"tls":0}`, "protocol_config.network", "明文")
+	expectRejected(t, "vless", `{}`, "protocol_config.network", "明文")
+	// VMess 自带加密：裸 tcp 放行，读接口给提示（用户 2026-10-07 定）
+	expectAccepted(t, "vmess", `{"tls":0,"network":"tcp"}`)
+	expectAccepted(t, "vmess", `{}`)
+	if w := ProtocolConfigWarnings("vmess", json.RawMessage(`{"network":"tcp"}`)); len(w) != 1 || !strings.Contains(w[0], "容易被识别") {
+		t.Fatalf("vmess 裸 tcp 应有提示，得到 %v", w)
+	}
+	if w := ProtocolConfigWarnings("vmess", json.RawMessage(`{"network":"ws"}`)); len(w) != 0 {
+		t.Fatalf("vmess ws 不应提示，得到 %v", w)
+	}
 	for _, nodeType := range []string{"vless", "vmess"} {
-		expectRejected(t, nodeType, `{"tls":0,"network":"tcp"}`, "protocol_config.network", "明文")
-		expectRejected(t, nodeType, `{"tls":0}`, "protocol_config.network", "明文")
-		expectRejected(t, nodeType, `{}`, "protocol_config.network", "明文")
 		for _, network := range []string{"ws", "httpupgrade", "grpc", "xhttp", "mkcp"} {
 			expectAccepted(t, nodeType, `{"tls":0,"network":"`+network+`"}`)
 		}
