@@ -11,9 +11,11 @@ package notify
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	"github.com/aegispanel/aegis/internal/domain/plugin"
 	"github.com/aegispanel/aegis/internal/platform/db"
 )
@@ -43,50 +45,71 @@ var expiryWindows = []struct {
 // 不设 50% 这类早期阈值：那时用户无从判断快慢，通知只会被当噪音。
 var quotaThresholds = []int{80, 95}
 
-// ScanExpiring 扫出即将到期的订阅并排队提醒。
+// 过期后的通知（用户 2026-10-07）：到期当时一条，过期后第 1 天、第 7 天各一条召回，
+// 之后不再打扰。都按订阅 status = 'expired' 扫（过期扫描在 aegis-admin 上把它写进库，
+// billing/expire.go），窗口连续不留空洞，停机跨过窗口后恢复扫描照样补上；每条靠
+// dedupe_key 只发一次，键里带周期末：续费恢复后再次到期是新的一次。
+//
+// 召回只发给原地续费窗口还开着（过期不满 30 天）、而且名下没有别的在用订阅的用户：
+// 已经换了别的套餐的人不该再被催续费。
+var expiredNotices = []struct {
+	code  string
+	label int    // 过期第几天（到期当时为 0）
+	lower string // 已过期时长 >= lower
+	upper string // 已过期时长 < upper
+}{
+	{code: "subscription.expired", label: 0, lower: "0 days", upper: "1 day"},
+	{code: "subscription.recall", label: 1, lower: "1 day", upper: "7 days"},
+	{code: "subscription.recall", label: 7, lower: "7 days", upper: "30 days"},
+}
+
+// noticeTime 把通知里的时刻显示到分钟，时区同按日流量的切日口径（nodefabric.UsageLocation：
+// 用户时区，未设跟随站点时区）。
+func noticeTime(t time.Time, userTZ, tenantTZ string) string {
+	return t.In(nodefabric.UsageLocation(userTZ, tenantTZ)).Format("2006-01-02 15:04")
+}
+
+// ScanExpiring 扫出即将到期的订阅并排队提醒，同一事务里接着排过期通知与召回
+// （scanExpiredNotices）。返回真正新排的行数。
+//
+// 原先这里带着 s.auto_renew = false：这一列默认 true、没有任何代码改它（也没有真正的
+// 自动扣款），7 / 3 / 1 天的提醒一条都发不出去。去掉。
 func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error) {
 	queued := 0
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		for _, win := range expiryWindows {
 			rows, err := tx.Query(ctx, `
-				SELECT s.id::text, s.user_id::text, p.name,
-				       to_char(s.current_period_end, 'YYYY-MM-DD')
+				SELECT s.id::text, s.user_id::text, p.name, s.current_period_end,
+				       u.timezone, t.timezone
 				  FROM subscriptions s
 				  JOIN plans p ON p.id = s.plan_id
+				  JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id
+				  JOIN tenants t ON t.id = s.tenant_id
 				 WHERE s.tenant_id = $1
 				   AND s.status IN ('active','trialing')
 				   AND s.current_period_end IS NOT NULL
-				   AND s.auto_renew = false
 				   AND s.current_period_end >  now() + make_interval(days => $2)
 				   AND s.current_period_end <= now() + make_interval(days => $3)`,
 				tenantID, win.lower, win.upper)
 			if err != nil {
 				return err
 			}
-			type item struct{ subID, userID, plan, endAt string }
-			var items []item
-			for rows.Next() {
-				var it item
-				if err := rows.Scan(&it.subID, &it.userID, &it.plan, &it.endAt); err != nil {
-					rows.Close()
-					return err
-				}
-				items = append(items, it)
-			}
-			rows.Close()
-			if err := rows.Err(); err != nil {
+			items, err := collectSubscriptionNotices(rows)
+			if err != nil {
 				return err
 			}
 
 			for _, it := range items {
+				endAt := noticeTime(it.periodEnd, it.userTZ, it.tenantTZ)
 				vars := map[string]string{
 					"plan":       it.plan,
 					"days":       fmt.Sprint(win.label),
-					"expires_at": it.endAt,
+					"expires_at": endAt,
 				}
 				// 键里带区间标签：进入下一个更紧急的区间时会再提醒一次，
-				// 而同一个区间内反复扫描只发一条
-				key := fmt.Sprintf("expiring:%s:%dd", it.subID, win.label)
+				// 而同一个区间内反复扫描只发一条。带上周期末：去重键永久唯一，
+				// 不带的话续费之后的下一个周期再也收不到这一档提醒
+				key := fmt.Sprintf("expiring:%s:%dd:%d", it.subID, win.label, it.periodEnd.Unix())
 				n, err := s.Enqueue(ctx, tx, tenantID, it.userID,
 					"subscription.expiring", vars, key)
 				if err != nil {
@@ -95,15 +118,87 @@ func (s *Service) ScanExpiring(ctx context.Context, tenantID string) (int, error
 				// 插件复用同一个 dedupe 键：到期提醒的分档规则在这里，
 				// 让插件那边再算一遍只会两边不一致。
 				if err := plugin.EmitSubscriptionExpiring(ctx, tx, tenantID, key,
-					it.subID, it.userID, it.plan, it.endAt, win.label); err != nil {
+					it.subID, it.userID, it.plan, endAt, win.label); err != nil {
 					return err
 				}
 				queued += n
 			}
 		}
-		return nil
+		n, err := s.scanExpiredNotices(ctx, tx, tenantID)
+		queued += n
+		return err
 	})
 	return queued, err
+}
+
+// subscriptionNotice 是到期类通知扫到的一条订阅。
+type subscriptionNotice struct {
+	subID, userID, plan string
+	periodEnd           time.Time
+	userTZ, tenantTZ    string
+}
+
+func collectSubscriptionNotices(rows pgx.Rows) ([]subscriptionNotice, error) {
+	defer rows.Close()
+	var items []subscriptionNotice
+	for rows.Next() {
+		var it subscriptionNotice
+		if err := rows.Scan(&it.subID, &it.userID, &it.plan, &it.periodEnd,
+			&it.userTZ, &it.tenantTZ); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+// scanExpiredNotices 排到期当时的通知与过期后的召回（见 expiredNotices）。
+func (s *Service) scanExpiredNotices(ctx context.Context, tx pgx.Tx, tenantID string) (int, error) {
+	queued := 0
+	for _, win := range expiredNotices {
+		rows, err := tx.Query(ctx, `
+			SELECT s.id::text, s.user_id::text, p.name, s.current_period_end,
+			       u.timezone, t.timezone
+			  FROM subscriptions s
+			  JOIN plans p ON p.id = s.plan_id
+			  JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id
+			  JOIN tenants t ON t.id = s.tenant_id
+			 WHERE s.tenant_id = $1
+			   AND s.status = 'expired' AND s.renewal_closed_at IS NULL
+			   AND s.current_period_end <= now() - $2::interval
+			   AND s.current_period_end >  now() - $3::interval
+			   AND ($4 = 0 OR NOT EXISTS (
+			         SELECT 1 FROM subscriptions o
+			          WHERE o.tenant_id = s.tenant_id AND o.user_id = s.user_id
+			            AND o.id <> s.id
+			            AND o.status IN ('active','trialing','grace','past_due')
+			            AND (o.current_period_end IS NULL OR o.current_period_end > now())))`,
+			tenantID, win.lower, win.upper, win.label)
+		if err != nil {
+			return queued, err
+		}
+		items, err := collectSubscriptionNotices(rows)
+		if err != nil {
+			return queued, err
+		}
+		for _, it := range items {
+			vars := map[string]string{
+				"plan":       it.plan,
+				"expired_at": noticeTime(it.periodEnd, it.userTZ, it.tenantTZ),
+			}
+			key := fmt.Sprintf("expired:%s:%d", it.subID, it.periodEnd.Unix())
+			if win.label > 0 {
+				vars["days"] = fmt.Sprint(win.label)
+				key = fmt.Sprintf("recall:%s:%dd:%d", it.subID, win.label, it.periodEnd.Unix())
+			}
+			n, err := s.Enqueue(ctx, tx, tenantID, it.userID, win.code, vars, key)
+			if err != nil {
+				return queued, err
+			}
+			queued += n
+		}
+	}
+	return queued, nil
 }
 
 // ScanQuota 扫出流量接近用尽的订阅。
