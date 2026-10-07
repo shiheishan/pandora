@@ -145,8 +145,9 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeRow | null; on
             <Input label="服务器（换机器用「操作」里的迁移或复制）" value={node.server_name ?? '未绑定'} disabled readOnly />
           )}
           <Select
-            label="资源池（可选）"
-            placeholder="不加入资源池"
+            label="资源池"
+            placeholder={pools.data && pools.data.length === 0 ? '还没有资源池，先到「节点池」新建' : '选择资源池'}
+            hint="必选：节点只服务所在资源池绑定的套餐，不在任何池里就不服务任何用户"
             value={basic.poolId}
             onChange={(e) => set('poolId', e.target.value)}
             error={errors.pool_id}

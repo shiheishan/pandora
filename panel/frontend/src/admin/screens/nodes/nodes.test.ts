@@ -32,6 +32,7 @@ import {
   toFormValues,
   toProtocolConfig,
   validateBasic,
+  NO_POOL_HINT,
 } from './logic'
 import { nodeRowSchema, protocolSchemasResponse, type NodeRow } from './schemas'
 
@@ -257,7 +258,14 @@ describe('protocol form', () => {
 describe('basic info and PATCH', () => {
   it('validates basic fields', () => {
     const e = validateBasic({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '70000', kernel: 'auto', rate: '0', country: 'CHN' }, true)
-    expect(Object.keys(e).sort()).toEqual(['country_code', 'name', 'node_type', 'server_host', 'server_id', 'server_port', 'traffic_rate'])
+    expect(Object.keys(e).sort()).toEqual(['country_code', 'name', 'node_type', 'pool_id', 'server_host', 'server_id', 'server_port', 'traffic_rate'])
+  })
+
+  it('requires a pool on create and edit, since a pool-less node serves nobody', () => {
+    const filled = { name: 'A', displayName: '', serverId: 's', poolId: '', nodeType: 'shadowsocks', host: 'h', port: '8388', kernel: 'auto', rate: '1', country: '' }
+    expect(validateBasic(filled, true)).toEqual({ pool_id: NO_POOL_HINT })
+    expect(validateBasic(filled, false)).toEqual({ pool_id: NO_POOL_HINT })
+    expect(validateBasic({ ...filled, poolId: 'p1' }, true)).toEqual({})
   })
 
   it('creates with only filled optionals, uppercasing the country', () => {

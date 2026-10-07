@@ -280,4 +280,21 @@ describe('mock api · admin nodes · phase 4 step 3 (R104 R105 R106 R107 R108)',
     const early = await call('POST', `/v1/nodes/${pending.id}/activate`, { row_version: pending.row_version }, 'act-7')
     expect(((await early.json()) as { error: { message: string } }).error.message).toContain('还没完成接入')
   })
+
+  it('W2: delivery notes follow the subscription rule, and a serving node cannot drop its pool', async () => {
+    // R108 的用例已把大阪 02 推上线：在役、有心跳、服务器已就绪，但池没绑任何套餐
+    const unbound = (await list()).find((x) => x.name === '大阪 02（新池待上线）')!
+    expect(unbound).toMatchObject({ serving_status: 'active', delivered_to_users: false, delivery_note: '所在节点池没有绑定任何套餐，暂时不服务任何用户' })
+    const serving = (await list()).find((x) => x.name === '香港 01 · 原生')!
+    const refused = await call('PATCH', `/v1/nodes/${serving.id}`, { row_version: serving.row_version, pool_id: null })
+    expect(refused.status).toBe(422)
+    expect(await refused.json()).toMatchObject({ error: { fields: { pool_id: expect.stringContaining('在役节点必须属于一个节点池') } } })
+    // 草稿可以无池
+    const draft = (await list()).find((x) => x.name === '新加坡 03（草稿）')!
+    const cleared = await call('PATCH', `/v1/nodes/${draft.id}`, { row_version: draft.row_version, pool_id: null })
+    expect(cleared.status).toBe(200)
+    const after = adminNodeSchema.parse(await cleared.json())
+    expect(after.pool_id).toBeNull()
+    expect((await call('PATCH', `/v1/nodes/${draft.id}`, { row_version: after.row_version, pool_id: draft.pool_id })).status).toBe(200)
+  })
 })

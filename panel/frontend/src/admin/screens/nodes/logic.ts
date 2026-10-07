@@ -311,6 +311,9 @@ export const KERNELS = [
   ['xray-core', 'Xray-core'],
 ] as const
 
+/** 资源池必填的说明：下拉的提示与校验文案同一句 */
+export const NO_POOL_HINT = '选择资源池：不在任何资源池里的节点不服务任何用户'
+
 export const emptyBasic = (): BasicForm => ({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '', kernel: 'auto', rate: '1', country: '' })
 
 export function basicFromRow(n: NodeRow): BasicForm {
@@ -332,6 +335,8 @@ export function validateBasic(b: BasicForm, creating: boolean): Record<string, s
   const e: Record<string, string> = {}
   if (!b.name.trim() || [...b.name.trim()].length > 120) e.name = '名称必填，不超过 120 字'
   if (creating && !b.serverId) e.server_id = '选择承载的服务器'
+  // 没划进节点池的节点不服务任何用户（R104）；后端只拒绝清空在役节点的池，表单一律要求选
+  if (!b.poolId) e.pool_id = NO_POOL_HINT
   if (!b.nodeType) e.node_type = '选择协议'
   if (!b.host.trim()) e.server_host = '填 IP 或主机名'
   const port = Number(b.port)
