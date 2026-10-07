@@ -75,6 +75,7 @@ func TestNodesChangeNotifyPG18(t *testing.T) {
 		pool2  = "7f710000-0000-4000-8000-0000000000a2"
 		server = "7f710000-0000-4000-8000-0000000000b1"
 		node   = "7f710000-0000-4000-8000-0000000000c1"
+		draft  = "7f710000-0000-4000-8000-0000000000c2" // 从未心跳的草稿：删除用它（心跳过的节点留有追加写的配置回执，删不掉）
 	)
 	must := func(sql string, args ...any) {
 		t.Helper()
@@ -137,8 +138,14 @@ func TestNodesChangeNotifyPG18(t *testing.T) {
 	expect("protocol type", 1)
 	must(`UPDATE nodes SET serving_status='disabled' WHERE id=$1`, node)
 	expect("serving status", 1)
-	must(`DELETE FROM nodes WHERE id=$1`, node)
-	expect("delete", 1)
+
+	// 新建与删除照发
+	must(`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,server_id,serving_status)
+		VALUES($1,$2,'nn-draft',$3,'draft','vless','nn.invalid',443,$4,'draft')`, draft, tenant, pool, server)
+	must(`DELETE FROM nodes WHERE id=$1`, draft)
+	if got := listener.drain(); got[draft] != 2 || len(got) != 1 {
+		t.Fatalf("insert + delete of a draft: notices=%v, want 2 for the draft", got)
+	}
 }
 
 // 在线巡检：心跳跨过 90 秒（离线）或 10 分钟（下发新鲜窗口）的节点各通知一次，再巡一轮不重发。
