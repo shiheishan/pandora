@@ -32,10 +32,18 @@ func TestAliveRowsDeduplicatesAndSorts(t *testing.T) {
 
 func TestReportAliveIsOneStatement(t *testing.T) {
 	src := sourcetest.Load(t, ".").Decl("Service.ReportAlive")
-	if strings.Count(src, "tx.Exec(") != 1 || strings.Contains(src, "tx.QueryRow(") || strings.Contains(src, "for ") {
+	if strings.Count(src, "b.Queue(") != 1 || strings.Contains(src, "tx.") || strings.Contains(src, "for ") {
 		t.Fatal("ReportAlive must write the whole report with one batched statement")
 	}
 	if !strings.Contains(src, "unnest($3::bigint[], $4::bytea[])") {
 		t.Fatal("ReportAlive no longer batches through unnest")
+	}
+	// 已有行只在落后超过刷新粒度时才改写（非 HOT 写减半），且粒度远小于最短设备窗口
+	if !strings.Contains(src, "WHERE node_alive_ips.last_seen_at < now() - interval '`+aliveRefresh+`'") ||
+		aliveRefresh != "2 minutes" || DeviceWindowMinutes[0] < 5 {
+		t.Fatal("ReportAlive must only refresh rows older than the refresh step")
+	}
+	if !strings.Contains(src, "AsyncCommit: true") {
+		t.Fatal("alive is telemetry and commits asynchronously")
 	}
 }

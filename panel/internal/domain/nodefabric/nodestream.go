@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
@@ -23,16 +22,26 @@ import (
 //
 // 换句话说，WS 是一条「快车道」，不是唯一通路。它断了、丢了、推不到，
 // 系统都还能按原来的节奏工作——这是设计前提，不是妥协。
+//
+// 锁序：先 h.mu 后 StreamConn.mu 的路径不存在——持 h.mu 时只复制连接列表，
+// 放开之后才逐条拿连接自己的锁；持连接锁时可以调 Remove（拿 h.mu）。
 type StreamHub struct {
 	mu           sync.RWMutex
 	conns        map[string]map[*StreamConn]struct{} // tenantID + nodeID -> 连接集合
 	tenantCounts map[string]int
+	// pulls 是各节点正在进行中的 REST 拉用户请求数（见 BeginUsersPull）。
+	pulls map[string]int
+
+	// users 是用户名单的版本历史与编码缓存（nodestream_users.go）。
+	users *userPayloads
 }
 
 func NewStreamHub() *StreamHub {
 	return &StreamHub{
 		conns:        make(map[string]map[*StreamConn]struct{}),
 		tenantCounts: make(map[string]int),
+		pulls:        make(map[string]int),
+		users:        newUserPayloads(),
 	}
 }
 
@@ -45,14 +54,25 @@ func streamKey(tenantID, nodeID string) string { return tenantID + "\x00" + node
 type StreamConn struct {
 	TenantID string
 	NodeID   string
-	// Send 是待发送队列。带缓冲，满了就丢弃并断开（见 push）。
+	// Send 是待发送队列。带缓冲，满了就断开这条连接（见 pushOne）。
+	//
+	// 它从不关闭：关闭只关 closed。推送方与断开方并发时，「往已关闭的通道发送」
+	// 会直接 panic 打崩整个 aegis-node（审计实测 2000 次里 988 次）；只关 closed
+	// 的话，晚到的那条消息落进一个没人再读的缓冲里，随连接一起被回收。
+	// 写协程以 Closed() 为退出信号，不靠 Send 关闭。
 	Send chan []byte
-	// Version 是这条连接上次收到的用户列表版本，用来算增量。
-	// 只由 hub 在持锁时读写。
-	Version string
 
 	closeOnce sync.Once
 	closed    chan struct{}
+
+	// mu 串行化这条连接上的用户推送：读版本 → 选全量或增量 → 入队 → 记版本，
+	// 四步必须是一体的，否则两个推送方并发时版本会乱序。
+	mu sync.Mutex
+	// version 是这条连接上最后入队的用户名单版本，增量从它算起。
+	version string
+	// stale 表示这个节点经 REST 拿过与 version 不同的名单（见 BeginUsersPull）：
+	// 它手上的名单不再一定是 version，下一次只能推全量。
+	stale bool
 }
 
 func NewStreamConn(tenantID, nodeID string, buffer int) *StreamConn {
@@ -67,16 +87,20 @@ func NewStreamConn(tenantID, nodeID string, buffer int) *StreamConn {
 	}
 }
 
-// Close 关闭这条连接的发送侧。可重复调用。
+// Close 标记这条连接已关闭。可重复调用、可与推送并发调用。
 func (c *StreamConn) Close() {
-	c.closeOnce.Do(func() {
-		close(c.closed)
-		close(c.Send)
-	})
+	c.closeOnce.Do(func() { close(c.closed) })
 }
 
-// Closed 在连接关闭后返回一个已关闭的通道。
+// Closed 在连接关闭后返回一个已关闭的通道。写协程用它退出。
 func (c *StreamConn) Closed() <-chan struct{} { return c.closed }
+
+// UsersVersion 是这条连接上最后入队的用户名单版本。给日志与测试用。
+func (c *StreamConn) UsersVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.version
+}
 
 func (h *StreamHub) Add(c *StreamConn) bool {
 	h.mu.Lock()
@@ -154,133 +178,74 @@ func (h *StreamHub) Total() int {
 	return n
 }
 
+// targets 复制出某个节点当前的连接列表，复制完即放锁。
+func (h *StreamHub) targets(tenantID, nodeID string) []*StreamConn {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	set := h.conns[streamKey(tenantID, nodeID)]
+	out := make([]*StreamConn, 0, len(set))
+	for c := range set {
+		out = append(out, c)
+	}
+	return out
+}
+
 // PushConfig 把配置变更推给这个节点的所有连接。
 func (h *StreamHub) PushConfig(tenantID, nodeID string, config json.RawMessage, etag string) {
 	payload, err := json.Marshal(SyncConfigPayload{Config: config, ETag: etag})
 	if err != nil {
 		return
 	}
-	h.push(tenantID, nodeID, EventSyncConfig, payload, nil)
-}
-
-// PushUsers 把用户列表推给这个节点。
-//
-// 每条连接各自算：手上版本对得上就发增量，对不上（新连接、断过、版本
-// 太旧）就发全量。这是长连接相比轮询的关键优势——服务端知道每条连接
-// 处在哪一版。
-func (h *StreamHub) PushUsers(tenantID, nodeID string, users []ProxyUser, previous map[string][]ProxyUser) {
-	h.pushUsers(tenantID, nodeID, users, UserSetVersion(users), previous, nil)
-}
-
-// fullUsersPayloads 在一次扇出里按版本记住已编码的全量载荷：同池的节点拿到的是同一
-// 份列表，几千个用户的 JSON 只编一次，不必每个节点各编一遍。只在扇出的单个
-// goroutine 里用。
-type fullUsersPayloads map[string][]byte
-
-// pushUsers 是 PushUsers 的实现；version 由调用方给（缓存里算好的可以直接用），
-// shared 非空时全量载荷按版本复用。
-func (h *StreamHub) pushUsers(tenantID, nodeID string, users []ProxyUser, version string,
-	previous map[string][]ProxyUser, shared fullUsersPayloads) {
-
-	h.mu.Lock()
-	set := h.conns[streamKey(tenantID, nodeID)]
-	targets := make([]*StreamConn, 0, len(set))
-	for c := range set {
-		targets = append(targets, c)
-	}
-	h.mu.Unlock()
-
-	for _, c := range targets {
-		h.mu.RLock()
-		from := c.Version
-		h.mu.RUnlock()
-
-		if from == version {
-			continue // 这条连接已经是最新的
-		}
-
-		var data []byte
-		var err error
-		event := EventSyncUsers
-
-		if old, ok := previous[from]; ok && from != "" {
-			delta := DiffUsers(old, users)
-			// 增量比全量还大就没必要发增量——批量改动时常有这种情况。
-			// 判据用条数而不是字节数：字节数要先序列化两遍才知道。
-			if len(delta.Added)+len(delta.Removed) < len(users) {
-				event = EventSyncUserDelta
-				data, err = json.Marshal(SyncUserDeltaPayload{
-					Delta: delta, FromVersion: from, ToVersion: version,
-				})
-			}
-		}
-		if event == EventSyncUsers {
-			if cached, ok := shared[version]; ok {
-				data = cached
-			} else {
-				data, err = json.Marshal(SyncUsersPayload{Users: users, Version: version})
-				if err == nil && shared != nil {
-					shared[version] = data
-				}
-			}
-		}
-		if err != nil {
-			continue
-		}
-		h.pushOne(c, event, data, version)
+	msg := encodeStreamMessage(EventSyncConfig, payload, time.Now().UnixMilli())
+	for _, c := range h.targets(tenantID, nodeID) {
+		h.pushOne(c, msg)
 	}
 }
 
-// push 给某个节点的所有连接发同一条消息。
-func (h *StreamHub) push(tenantID, nodeID, event string, data json.RawMessage, versionAfter *string) {
-	h.mu.RLock()
-	targets := make([]*StreamConn, 0, len(h.conns[streamKey(tenantID, nodeID)]))
-	for c := range h.conns[streamKey(tenantID, nodeID)] {
-		targets = append(targets, c)
-	}
-	h.mu.RUnlock()
-
-	for _, c := range targets {
-		v := ""
-		if versionAfter != nil {
-			v = *versionAfter
-		}
-		h.pushOne(c, event, data, v)
-	}
-}
-
-// pushOne 往一条连接的队列里塞一条消息。
+// pushOne 往一条连接的队列里塞一条已编码的消息，报告是否入队。
 //
 // 队列满了就断开这条连接，而不是阻塞等它。慢消费者拖住推送方是长连接
 // 服务最经典的死法：一个卡住的节点能让所有推送排队，最后拖垮整个面板。
 // 断开的代价很小——节点端会重连，重连时走全量同步，不丢数据。
-func (h *StreamHub) pushOne(c *StreamConn, event string, data json.RawMessage, versionAfter string) {
-	msg, err := json.Marshal(StreamMessage{
-		Event: event, Data: data, Timestamp: time.Now().UnixMilli(),
-	})
-	if err != nil {
-		return
+//
+// 连接已关闭时什么也不做。Send 从不关闭，所以这里与 Close 任意并发都不会 panic。
+// msg 可能被多条连接共享（同一版本的全量名单只编码一次），只读。
+func (h *StreamHub) pushOne(c *StreamConn, msg []byte) bool {
+	select {
+	case <-c.closed:
+		return false
+	default:
 	}
 	select {
-	case <-c.Closed():
-		return
 	case c.Send <- msg:
-		if versionAfter != "" {
-			h.mu.Lock()
-			c.Version = versionAfter
-			h.mu.Unlock()
-		}
+		return true
 	default:
 		// 塞不进去 = 这条连接消费不过来。断了它，让它重连后重新同步。
 		h.Remove(c)
+		return false
 	}
 }
 
-// SetVersion 记下某条连接当前的用户列表版本。
-func (h *StreamHub) SetVersion(c *StreamConn, version string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	c.Version = version
+// encodeStreamMessage 按 StreamMessage 的线格式拼出消息字节，与
+// json.Marshal(StreamMessage{...}) 逐字节相同（守卫 TestEncodeStreamMessageMatchesMarshal）。
+//
+// 直接拼而不 Marshal 信封：信封里的 data 是几百 KB 的已编码名单，json.Marshal 会把
+// RawMessage 再校验、压缩、拷贝一遍。event 只会是本包的常量，data 来自 json.Marshal
+// （合法且紧凑），拼接安全。
+func encodeStreamMessage(event string, data []byte, timestamp int64) []byte {
+	eventJSON, _ := json.Marshal(event)
+	out := make([]byte, 0, len(data)+len(eventJSON)+48)
+	out = append(out, `{"event":`...)
+	out = append(out, eventJSON...)
+	if len(data) > 0 {
+		out = append(out, `,"data":`...)
+		out = append(out, data...)
+	}
+	if timestamp != 0 {
+		out = append(out, `,"timestamp":`...)
+		out = strconv.AppendInt(out, timestamp, 10)
+	}
+	return append(out, '}')
 }
 
 // AttachStream 把事件流注册表挂到服务上。
@@ -339,10 +304,9 @@ func (s *Service) notifyNodeChanged(ctx context.Context, tenantID, nodeID string
 	}
 
 	// 用户列表也可能因为这次改动变了（换了节点池就换了授权范围）。
-	// previous 传 nil：这里拿不到「每条连接手上是哪一版」对应的旧列表，
-	// 推全量。hub 自己会跳过已经是最新版的连接。
-	if users, uerr := s.ListNodeUsers(ctx, tenantID, n); uerr == nil {
-		s.stream.PushUsers(tenantID, nodeID, users, nil)
+	// hub 按每条连接手上的版本决定全量还是增量，已是最新版的连接跳过。
+	if users, version, uerr := s.NodeUserSet(ctx, tenantID, n); uerr == nil {
+		s.stream.PushUsers(tenantID, nodeID, users, version)
 	}
 }
 
@@ -371,8 +335,7 @@ func (s *Service) NotifyUsersChanged(ctx context.Context, tenantID string) {
 func (s *Service) loadServingNodeForPush(ctx context.Context, tenantID, nodeID string) (*ServingNode, error) {
 	var n ServingNode
 	var proto []byte
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
+	err := s.pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, `
 			SELECT n.id, n.name, coalesce(n.node_type,''), coalesce(n.server_host,''),
 			       coalesce(n.server_port,0), n.traffic_rate, n.protocol_config, n.pool_id,
 			       n.status, coalesce(n.kernel,'auto'), s.status, n.serving_status, `+deliveryEpochSQL+`
@@ -385,11 +348,10 @@ func (s *Service) loadServingNodeForPush(ctx context.Context, tenantID, nodeID s
 			   AND n.node_type IS NOT NULL
 			   AND n.server_port BETWEEN 1 AND 65535
 			   AND `+StableProtocolReadySQL("n"),
-			tenantID, nodeID,
-		).Scan(&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
-			&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
-			&n.ServerStatus, &n.ServingStatus, &n.deliveryEpoch)
-	})
+		[]any{tenantID, nodeID},
+		&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
+		&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
+		&n.ServerStatus, &n.ServingStatus, &n.deliveryEpoch)
 	if err != nil {
 		return nil, err
 	}
@@ -519,8 +481,8 @@ func (s *Service) pushNodeSnapshot(ctx context.Context, tenantID, nodeID string,
 			s.stream.PushConfig(tenantID, nodeID, body, etag)
 		}
 	}
-	if users, uerr := s.ListNodeUsers(ctx, tenantID, n); uerr == nil {
-		s.stream.PushUsers(tenantID, nodeID, users, nil)
+	if users, version, uerr := s.NodeUserSet(ctx, tenantID, n); uerr == nil {
+		s.stream.PushUsers(tenantID, nodeID, users, version)
 	}
 	if log != nil {
 		log.Info("已按变更信号推送节点配置", "node", nodeID)

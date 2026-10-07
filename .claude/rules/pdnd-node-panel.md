@@ -38,3 +38,14 @@ paths:
 - `panel/heartbeat_metrics.go` 把采样换算成面板 `nodefabric.Metrics` 的整数口径并钳到库列范围；面板改 Metrics 字段或单位要同步（`TestHeartbeatMetricsJSONMatchesPanelContract`）。`HostCapacity` 同时填进 enrollment begin 请求。
 - 兼容通道 `/status` 只报机器级指标，不带任何用户信息。
 - 面板的压测模拟节点 `panel/tools/loadtest/nodesim` 逐段对齐这里的节拍、ETag、退避与签名流程；改这里的行为要同步那边。
+
+## 面板侧节点网关（api/node、nodefabric 的推送与签名，2026-10 w3node）
+
+- `StreamConn.Send` 从不关闭，关闭只关 `closed`；写协程以 `Closed()` 退出。往已关闭通道发送曾让 aegis-node 整个崩溃（守卫 `nodestream_race_test.go`）
+- 用户名单推送按版本共享编码（`nodestream_users.go`）：全量按版本、增量按（起点, 终点）只编码一次，帧直接写共享字节，每帧有写期限。增量只在面板确知节点手上是起点版本时发：REST `/user` 拉取在途或送出过别的版本（`BeginUsersPull`）一律改推全量——pdnd 收增量只核对流版本、不核对内核名单
+- 重连带 `X-Users-Version`（与 ETag 同源）且等于当前版时不推首个全量，但连接标脏，下一次变更推全量；首帧 `retry:` 给 0–10 秒随机重连建议（pdnd 第 4 波再用）
+- 签名请求：nonce 先在 Valkey `SET NX PX` 认领，出错回落 PG；进程内近期集与「PG 活跃窗口」补两个存储之间的缝（`nonce_guard.go`）。后端不可用（库、Valkey、超时）回 503，身份无效、签名错、重放才回 401
+- 缓存身份的纪元复核：心跳与拉生效配置并进自己的那一次查询（心跳写入在 SQL 里以 `activeIdentitySQL` + 公钥为门槛），其余签名端点在中间件里复核。新端点默认放中间件组（守卫 `TestDeferredIdentityConfirmationIsLimitedToHandlersThatConfirm`）
+- 遥测写（心跳、探针点、在线 IP、nonce 清理）走 `db.BatchOptions{AsyncCommit: true}` 或 `SET LOCAL synchronous_commit = off`；记账、身份、配置一律同步提交
+- nodes 上不要再加含心跳类列的索引（00116 删了 idx_nodes_heartbeat 换 HOT 更新）；给 nodes 加列要同步加进 `zz_notify_nodes_update` 的列清单（PG18 守卫对照 information_schema）
+- aegis-node 启动不强依赖 Valkey：连不上只告警

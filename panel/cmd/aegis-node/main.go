@@ -63,9 +63,15 @@ func run() error {
 	}
 	rdb := redis.NewClient(redisOpt)
 	defer rdb.Close()
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		return fmt.Errorf("Redis unavailable: %w", err)
+	// Valkey 不是节点网关的硬依赖：节点的 REST 路径不用它（nonce 认领出错回落 PG），
+	// 事件流的跨进程信号断了也只是退回轮询。启动时连不上只告警、照常起服务，
+	// 否则 Valkey 一挂、aegis-node 一重启，所有节点都拿 502。
+	pingCtx, cancelPing := context.WithTimeout(ctx, 3*time.Second)
+	if err := rdb.Ping(pingCtx).Err(); err != nil {
+		log.Warn("Valkey 暂不可用，节点网关降级启动：nonce 认领走 PG，配置推送退回轮询",
+			"error", err.Error())
 	}
+	cancelPing()
 	rtHub := realtime.NewHub(rdb, log)
 	defer rtHub.Close()
 
@@ -91,6 +97,12 @@ func run() error {
 	)
 
 	nodeService := nodefabric.NewService(pool, signer)
+	// 签名请求的 nonce 先在 Valkey 认领（SET NX PX），出错回落 PG。PG 里还有未过期的
+	// nonce（上次运行回落过）时，保留期内两边都认领，重放照样被拦下。
+	nodeService.SetNonceStore(valkeyNonceStore{rdb: rdb}, log)
+	primeCtx, cancelPrime := context.WithTimeout(ctx, 5*time.Second)
+	nodeService.PrimeNonceFallback(primeCtx, middleware.DefaultTenantID)
+	cancelPrime()
 	// 下发给节点的拉用户节拍（AEGIS_NODE_PULL_INTERVAL，缺省 15 秒）
 	if err := nodeService.SetNodePullInterval(cfg.NodePullInterval); err != nil {
 		return err
@@ -170,6 +182,13 @@ func run() error {
 			"error", drainErr.Error())
 	}
 	return errors.Join(serverErr, drainErr)
+}
+
+// valkeyNonceStore 把签名请求的 nonce 认领交给 Valkey：SET key 1 NX PX ttl。
+type valkeyNonceStore struct{ rdb *redis.Client }
+
+func (v valkeyNonceStore) ClaimNonce(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	return v.rdb.SetNX(ctx, key, "1", ttl).Result()
 }
 
 // noncePurgeInterval 是过期 nonce 的清理节拍。每条 nonce 至少留 11 分钟，一分钟

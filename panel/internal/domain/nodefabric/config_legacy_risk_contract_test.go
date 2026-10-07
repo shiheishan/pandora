@@ -159,6 +159,10 @@ func TestLegacyRetirementClosesConfigDelivery(t *testing.T) {
 		}
 	}
 	identityBlock := pkg.Decl("Service.LookupIdentity")
+	if !strings.Contains(identityBlock, "activeIdentitySQL") {
+		t.Fatal("LookupIdentity no longer uses the shared active-identity predicate")
+	}
+	identityBlock = activeIdentitySQL // 口径只有这一份，心跳门槛也用它
 	for _, needle := range []string{
 		`JOIN nodes n ON n.tenant_id=i.tenant_id AND n.id=i.node_id`,
 		`n.status NOT IN ('destroyed','retired') AND n.serving_status<>'retired'`,

@@ -26,6 +26,7 @@ var directWriteAllowed = map[string]string{
 	"admin/events.go handlers.events":   "管理端 SSE",
 	"public/events.go handlers.events":  "门户 SSE",
 	"node/stream.go handlers.uniStream": "节点 SSE",
+	"node/stream.go writeStreamFrame":   "节点 SSE 逐帧写出共享的已编码名单（不拷贝）并 Flush",
 	// 订阅输出：客户端按 Content-Type 解析 YAML / JSON / base64，失败一律回同一个诱饵 HTML 404
 	"public/subscribe.go handlers.subscribe": "订阅正文输出与 429 纯文本",
 	"public/subscribe.go writeDecoy":         "订阅失败的诱饵 HTML 404 页",

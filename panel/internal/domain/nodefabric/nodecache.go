@@ -27,11 +27,17 @@ import (
 
 const (
 	// nodeUsersCacheTTL 是用户集缓存的寿命上限。到期与 strict 模式下的在线设备变化
-	// 没有纪元，最坏延迟 = 这个 TTL + 节点拉取间隔。
+	// 没有纪元，最坏延迟 = 这个 TTL + nodeUsersStaleGrace + 节点拉取间隔。
 	nodeUsersCacheTTL = 5 * time.Second
-	// nodeIdentityCacheTTL 是签名身份缓存的寿命上限。吊销会推进纪元、下一次请求就
-	// 回库，这个 TTL 只兜提交缝。
-	nodeIdentityCacheTTL = 30 * time.Second
+	// nodeUsersStaleGrace 是用户集过了 TTL 之后还能先回旧值的窗口：先回旧值、后台单飞
+	// 重算（stale-while-revalidate），请求不再每 5 秒同步等一次 30 多毫秒的名单查询。
+	// 只对「TTL 到了」生效；纪元前进（任何已提交的下发相关改动）照旧同步重算。
+	// 超过这个窗口还没人来取的旧值不再回，下一次请求同步重算。
+	nodeUsersStaleGrace = 10 * time.Second
+	// nodeIdentityCacheTTL 是签名身份缓存的寿命上限，且不超过身份自己的 expires_at。
+	// 吊销、重新接入、节点退役或改服务状态都会推进纪元、下一次请求就回库，这个 TTL
+	// 只兜「纪元已推进、数据还没提交可见」那道提交缝。
+	nodeIdentityCacheTTL = 10 * time.Minute
 
 	nodeUsersCacheMax    = 1024 // 条目按（租户, 池）计
 	nodeIdentityCacheMax = 8192 // 条目按（租户, 节点）计
@@ -65,6 +71,13 @@ type ttlCache[V any] struct {
 	max int
 	now func() time.Time
 
+	// expiry 给条目一个自己的到期时刻（如身份的 expires_at），与 ttl 取早者；可为 nil。
+	expiry func(V) time.Time
+	// staleGrace > 0 时，TTL 到期但 valid 仍认可的条目在这个窗口里先回旧值、后台重算。
+	staleGrace time.Duration
+	// rank 是条目的新旧（纪元）；晚完成的旧加载不覆盖已存的新条目。可为 nil。
+	rank func(V) int64
+
 	mu      sync.Mutex
 	entries map[string]ttlEntry[V]
 	flights map[string]*ttlFlight[V]
@@ -82,12 +95,25 @@ func newTTLCache[V any](ttl time.Duration, max int, now func() time.Time) *ttlCa
 // flight 区分「要多新」：要求更新的请求不去搭为较旧要求发起的那趟车。
 func (c *ttlCache[V]) get(ctx context.Context, key, flight string, valid func(V) bool,
 	load func(context.Context) (V, error)) (V, error) {
-	c.mu.Lock()
-	if e, ok := c.entries[key]; ok && c.now().Before(e.expires) && valid(e.value) {
-		c.mu.Unlock()
-		return e.value, nil
-	}
 	flightKey := key + "\x00" + flight
+	c.mu.Lock()
+	if e, ok := c.entries[key]; ok && valid(e.value) {
+		now := c.now()
+		if now.Before(e.expires) {
+			c.mu.Unlock()
+			return e.value, nil
+		}
+		if c.staleGrace > 0 && now.Before(e.expires.Add(c.staleGrace)) {
+			// 先回旧值；没有同标签的加载在跑就起一个后台加载，跑完替换条目。
+			if _, busy := c.flights[flightKey]; !busy {
+				f := &ttlFlight[V]{done: make(chan struct{})}
+				c.flights[flightKey] = f
+				go c.run(context.Background(), key, flightKey, f, load)
+			}
+			c.mu.Unlock()
+			return e.value, nil
+		}
+	}
 	if f, ok := c.flights[flightKey]; ok {
 		c.mu.Unlock()
 		select {
@@ -101,7 +127,13 @@ func (c *ttlCache[V]) get(ctx context.Context, key, flight string, valid func(V)
 	f := &ttlFlight[V]{done: make(chan struct{})}
 	c.flights[flightKey] = f
 	c.mu.Unlock()
+	c.run(ctx, key, flightKey, f, load)
+	return f.value, f.err
+}
 
+// run 执行一趟已登记的加载，结束后放行排队的人并按需存下结果。
+func (c *ttlCache[V]) run(ctx context.Context, key, flightKey string, f *ttlFlight[V],
+	load func(context.Context) (V, error)) {
 	// 加载 panic 也要放行排队的人，不能让他们挂到各自的超时。
 	defer func() {
 		c.mu.Lock()
@@ -116,7 +148,6 @@ func (c *ttlCache[V]) get(ctx context.Context, key, flight string, valid func(V)
 	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeCacheLoadTimeout)
 	defer cancel()
 	f.value, f.err = load(loadCtx)
-	return f.value, f.err
 }
 
 func (c *ttlCache[V]) storeLocked(key string, value V) {
@@ -139,7 +170,16 @@ func (c *ttlCache[V]) storeLocked(key string, value V) {
 			delete(c.entries, oldestKey)
 		}
 	}
-	c.entries[key] = ttlEntry[V]{value: value, expires: now.Add(c.ttl)}
+	if old, ok := c.entries[key]; ok && c.rank != nil && c.rank(old.value) > c.rank(value) {
+		return // 一趟起得早、完成得晚的加载，不能把已存的较新条目换回旧的
+	}
+	expires := now.Add(c.ttl)
+	if c.expiry != nil {
+		if at := c.expiry(value); !at.IsZero() && at.Before(expires) {
+			expires = at
+		}
+	}
+	c.entries[key] = ttlEntry[V]{value: value, expires: expires}
 }
 
 // peek 只读缓存，不触发加载。
@@ -190,10 +230,13 @@ type nodeCaches struct {
 }
 
 func newNodeCaches(now func() time.Time) *nodeCaches {
-	return &nodeCaches{
-		users:    newTTLCache[nodeUserSet](nodeUsersCacheTTL, nodeUsersCacheMax, now),
-		identity: newTTLCache[Identity](nodeIdentityCacheTTL, nodeIdentityCacheMax, now),
-	}
+	users := newTTLCache[nodeUserSet](nodeUsersCacheTTL, nodeUsersCacheMax, now)
+	users.staleGrace = nodeUsersStaleGrace
+	users.rank = func(set nodeUserSet) int64 { return set.epoch }
+	identity := newTTLCache[Identity](nodeIdentityCacheTTL, nodeIdentityCacheMax, now)
+	identity.expiry = func(id Identity) time.Time { return id.expiresAt }
+	identity.rank = func(id Identity) int64 { return id.epoch }
+	return &nodeCaches{users: users, identity: identity}
 }
 
 // EnableNodeCaches 打开节点链路缓存。装配时调用一次（aegis-node）；其他进程不开，

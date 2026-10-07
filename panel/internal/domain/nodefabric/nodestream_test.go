@@ -31,7 +31,7 @@ func TestPushUsersSendsFullToFreshConn(t *testing.T) {
 	h.Add(c)
 
 	users := []ProxyUser{{ID: 1, UUID: "u1"}, {ID: 2, UUID: "u2"}}
-	h.PushUsers("tenant-a", "n1", users, nil)
+	h.PushUsers("tenant-a", "n1", users, UserSetVersion(users))
 
 	m := drain(t, c)
 	if m.Event != EventSyncUsers {
@@ -45,25 +45,30 @@ func TestPushUsersSendsFullToFreshConn(t *testing.T) {
 		t.Errorf("载荷不完整：%+v", p)
 	}
 	// 推完要记住这条连接到了哪一版，否则下次还发全量
-	if c.Version != UserSetVersion(users) {
-		t.Errorf("连接版本 = %q，没有记住", c.Version)
+	if c.UsersVersion() != UserSetVersion(users) {
+		t.Errorf("连接版本 = %q，没有记住", c.UsersVersion())
 	}
 }
 
-// 版本对得上就发增量。
+// pushVersion 推一版名单并取走这条消息，返回版本。
+func pushVersion(t *testing.T, h *StreamHub, c *StreamConn, users []ProxyUser) (string, StreamMessage) {
+	t.Helper()
+	v := UserSetVersion(users)
+	h.PushUsers(c.TenantID, c.NodeID, users, v)
+	return v, drain(t, c)
+}
+
+// 版本对得上就发增量：起点是这条连接上一次推到的版本。
 func TestPushUsersSendsDeltaWhenVersionKnown(t *testing.T) {
 	h := NewStreamHub()
 	c := NewStreamConn("tenant-a", "n1", 4)
 	h.Add(c)
 
 	old := []ProxyUser{{ID: 1, UUID: "u1"}, {ID: 2, UUID: "u2"}, {ID: 3, UUID: "u3"}}
-	oldVersion := UserSetVersion(old)
-	h.SetVersion(c, oldVersion)
+	oldVersion, _ := pushVersion(t, h, c, old)
 
 	now := []ProxyUser{{ID: 1, UUID: "u1"}, {ID: 2, UUID: "u2"}, {ID: 4, UUID: "u4"}}
-	h.PushUsers("tenant-a", "n1", now, map[string][]ProxyUser{oldVersion: old})
-
-	m := drain(t, c)
+	_, m := pushVersion(t, h, c, now)
 	if m.Event != EventSyncUserDelta {
 		t.Fatalf("事件 = %s，期望增量", m.Event)
 	}
@@ -71,8 +76,8 @@ func TestPushUsersSendsDeltaWhenVersionKnown(t *testing.T) {
 	if err := json.Unmarshal(m.Data, &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.FromVersion != oldVersion {
-		t.Errorf("FromVersion = %q，期望 %q", p.FromVersion, oldVersion)
+	if p.FromVersion != oldVersion || p.ToVersion != UserSetVersion(now) {
+		t.Errorf("版本 = %q→%q，期望 %q→%q", p.FromVersion, p.ToVersion, oldVersion, UserSetVersion(now))
 	}
 	if len(p.Delta.Added) != 1 || p.Delta.Added[0].ID != 4 {
 		t.Errorf("Added = %+v，期望只有 4", p.Delta.Added)
@@ -89,8 +94,8 @@ func TestPushUsersSkipsUpToDateConn(t *testing.T) {
 	h.Add(c)
 
 	users := []ProxyUser{{ID: 1, UUID: "u1"}}
-	h.SetVersion(c, UserSetVersion(users))
-	h.PushUsers("tenant-a", "n1", users, nil)
+	pushVersion(t, h, c, users)
+	h.PushUsers("tenant-a", "n1", users, UserSetVersion(users))
 
 	select {
 	case <-c.Send:
@@ -105,16 +110,125 @@ func TestPushUsersPrefersFullWhenDeltaIsLarger(t *testing.T) {
 	c := NewStreamConn("tenant-a", "n1", 4)
 	h.Add(c)
 
-	old := []ProxyUser{{ID: 1}, {ID: 2}, {ID: 3}}
-	oldVersion := UserSetVersion(old)
-	h.SetVersion(c, oldVersion)
-
+	pushVersion(t, h, c, []ProxyUser{{ID: 1}, {ID: 2}, {ID: 3}})
 	// 全换一批：3 删 3 增 = 6 条，比全量的 3 条还多
-	now := []ProxyUser{{ID: 7}, {ID: 8}, {ID: 9}}
-	h.PushUsers("tenant-a", "n1", now, map[string][]ProxyUser{oldVersion: old})
-
-	if m := drain(t, c); m.Event != EventSyncUsers {
+	if _, m := pushVersion(t, h, c, []ProxyUser{{ID: 7}, {ID: 8}, {ID: 9}}); m.Event != EventSyncUsers {
 		t.Errorf("事件 = %s，这种情况该发全量", m.Event)
+	}
+}
+
+// 节点经 REST 拿过别的版本之后，事件流不能再从旧版本算增量：pdnd 只核对流版本，
+// 不核对内核里实际的名单，增量会打在一份不一样的名单上。
+func TestPushUsersFallsBackToFullAfterRESTDeliveredAnotherVersion(t *testing.T) {
+	h := NewStreamHub()
+	c := NewStreamConn("tenant-a", "n1", 4)
+	h.Add(c)
+	v1 := []ProxyUser{{ID: 1, UUID: "u1"}, {ID: 2, UUID: "u2"}, {ID: 3, UUID: "u3"}}
+	v2 := append(append([]ProxyUser{}, v1...), ProxyUser{ID: 4, UUID: "u4"})
+	v3 := []ProxyUser{{ID: 1, UUID: "u1"}, {ID: 2, UUID: "u2"}, {ID: 3, UUID: "u3"}, {ID: 5, UUID: "u5"}}
+	pushVersion(t, h, c, v1)
+
+	// REST 送出了 v2（节点装上了含 4 号的名单），流还记着 v1
+	h.BeginUsersPull("tenant-a", "n1")(UserSetVersion(v2), true)
+	if _, m := pushVersion(t, h, c, v3); m.Event != EventSyncUsers {
+		t.Fatalf("REST 送过别的版本后事件 = %s，必须是全量（否则 4 号留在节点上）", m.Event)
+	}
+	// 全量之后节点手上就是 v3，下一次可以增量
+	v4 := append(append([]ProxyUser{}, v3...), ProxyUser{ID: 6, UUID: "u6"})
+	if _, m := pushVersion(t, h, c, v4); m.Event != EventSyncUserDelta {
+		t.Fatalf("全量之后事件 = %s，应恢复增量", m.Event)
+	}
+	// REST 送的就是流记着的那一版、或回了 304：不标脏
+	h.BeginUsersPull("tenant-a", "n1")(UserSetVersion(v4), true)
+	h.BeginUsersPull("tenant-a", "n1")("", false)
+	if _, m := pushVersion(t, h, c, v3); m.Event != EventSyncUserDelta {
+		t.Fatalf("REST 送的是同一版后事件 = %s，应仍是增量", m.Event)
+	}
+}
+
+// REST 拉取在途时只推全量：它送达的名单可能晚于增量被应用。
+func TestPushUsersSendsFullWhileRESTPullInFlight(t *testing.T) {
+	h := NewStreamHub()
+	c := NewStreamConn("tenant-a", "n1", 4)
+	h.Add(c)
+	v1 := []ProxyUser{{ID: 1, UUID: "u1"}, {ID: 2, UUID: "u2"}, {ID: 3, UUID: "u3"}}
+	pushVersion(t, h, c, v1)
+
+	done := h.BeginUsersPull("tenant-a", "n1")
+	v2 := append(append([]ProxyUser{}, v1...), ProxyUser{ID: 4, UUID: "u4"})
+	if _, m := pushVersion(t, h, c, v2); m.Event != EventSyncUsers {
+		t.Fatalf("拉取在途时事件 = %s，必须是全量", m.Event)
+	}
+	done("", false)
+	v3 := append(append([]ProxyUser{}, v2...), ProxyUser{ID: 5, UUID: "u5"})
+	if _, m := pushVersion(t, h, c, v3); m.Event != EventSyncUserDelta {
+		t.Fatalf("拉取结束后事件 = %s，应恢复增量", m.Event)
+	}
+}
+
+// 重连时节点报的版本就是当前版：不推首个全量；但下一次变更推全量（报的可能只是流版本）。
+func TestPushInitialUsersSkipsClaimedCurrentVersion(t *testing.T) {
+	h := NewStreamHub()
+	c := NewStreamConn("tenant-a", "n1", 4)
+	h.Add(c)
+	v1 := []ProxyUser{{ID: 1, UUID: "u1"}, {ID: 2, UUID: "u2"}, {ID: 3, UUID: "u3"}}
+	h.PushInitialUsers(c, v1, UserSetVersion(v1), UserSetVersion(v1))
+	select {
+	case m := <-c.Send:
+		t.Fatalf("节点已是当前版，仍推了 %s", m)
+	default:
+	}
+	v2 := append(append([]ProxyUser{}, v1...), ProxyUser{ID: 4, UUID: "u4"})
+	if _, m := pushVersion(t, h, c, v2); m.Event != EventSyncUsers {
+		t.Fatalf("跳过首推后的第一次变更 = %s，应为全量", m.Event)
+	}
+
+	// 报的版本不是当前版（或没报）：照常推全量
+	d := NewStreamConn("tenant-a", "n2", 4)
+	h.Add(d)
+	h.PushInitialUsers(d, v2, UserSetVersion(v2), UserSetVersion(v1))
+	if m := drain(t, d); m.Event != EventSyncUsers {
+		t.Fatalf("版本过期的重连首推 = %s，应为全量", m.Event)
+	}
+}
+
+// 同一版本的全量、同一对版本的增量只编码一次：所有连接拿到的是同一份字节。
+func TestPushUsersSharesEncodedBytesAcrossConns(t *testing.T) {
+	h := NewStreamHub()
+	a := NewStreamConn("t1", "n1", 4)
+	b := NewStreamConn("t1", "n2", 4)
+	h.Add(a)
+	h.Add(b)
+	v1 := []ProxyUser{{ID: 1, UUID: "u1"}, {ID: 2, UUID: "u2"}, {ID: 3, UUID: "u3"}}
+	h.PushUsers("t1", "n1", v1, UserSetVersion(v1))
+	h.PushUsers("t1", "n2", v1, UserSetVersion(v1))
+	fa, fb := <-a.Send, <-b.Send
+	if &fa[0] != &fb[0] {
+		t.Fatal("同一版本的全量给两条连接各编码了一份")
+	}
+	v2 := append(append([]ProxyUser{}, v1...), ProxyUser{ID: 4, UUID: "u4"})
+	h.PushUsers("t1", "n1", v2, UserSetVersion(v2))
+	h.PushUsers("t1", "n2", v2, UserSetVersion(v2))
+	da, db := <-a.Send, <-b.Send
+	if &da[0] != &db[0] {
+		t.Fatal("同一对版本的增量给两条连接各编码了一份")
+	}
+}
+
+func TestEncodeStreamMessageMatchesMarshal(t *testing.T) {
+	data, _ := json.Marshal(SyncUsersPayload{Users: []ProxyUser{{ID: 1, UUID: "<u&1>"}}, Version: `"u1-x"`})
+	for _, m := range []StreamMessage{
+		{Event: EventSyncUsers, Data: data, Timestamp: 1700000000123},
+		{Event: EventSyncConfig, Data: json.RawMessage(`{"config":{},"etag":"e"}`)},
+		{Event: EventPing},
+	} {
+		want, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := encodeStreamMessage(m.Event, m.Data, m.Timestamp); string(got) != string(want) {
+			t.Fatalf("encodeStreamMessage = %s\nwant %s", got, want)
+		}
 	}
 }
 
