@@ -19,10 +19,17 @@ var ErrNotEffectiveAdministrator = httpx.New(httpx.CodeForbidden,
 // LockLastAdministrator serializes every mutation that could change the set of
 // effective tenant administrators. A real tenant row is the common lock anchor
 // for application paths and the future database trigger defense.
+//
+// 锁强度用 FOR NO KEY UPDATE 而不是 FOR UPDATE：两者在持锁者之间同样互斥
+// （所有改管理员集合的路径都经这里取锁），区别只在是否挡外键检查。外键检查
+// 对被引用行取 FOR KEY SHARE，几乎每张业务表都以 tenant_id 引用这一行；
+// FOR UPDATE 会让本事务存续期间全租户的插入（登录建会话、写审计、下单……）
+// 全部排队，一次批量停用几十个账号就是一次全站停顿。外键检查不会改变管理员
+// 集合（新建的行要么不是角色绑定，要么经 adminctl 并先取本锁），放过它们不削弱守卫。
 func LockLastAdministrator(ctx context.Context, tx pgx.Tx, tenantID string) error {
 	var lockedTenant string
 	return tx.QueryRow(ctx,
-		`SELECT id::text FROM tenants WHERE id = $1 FOR UPDATE`, tenantID).Scan(&lockedTenant)
+		`SELECT id::text FROM tenants WHERE id = $1 FOR NO KEY UPDATE`, tenantID).Scan(&lockedTenant)
 }
 
 // RequireEffectiveAdministrator checks the post-mutation state while the

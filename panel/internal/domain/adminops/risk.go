@@ -301,13 +301,10 @@ func (s *Service) DisableIPClusterAccounts(ctx context.Context, tenantID, actorI
 				continue
 			}
 			var before string
-			var staff bool
 			err := tx.QueryRow(ctx, `
-				SELECT u.status::text,
-				       EXISTS (SELECT 1 FROM role_bindings rb
-				                WHERE rb.tenant_id = u.tenant_id AND rb.user_id = u.id)
+				SELECT u.status::text
 				  FROM users u WHERE u.tenant_id = $1 AND u.id = $2::uuid
-				   FOR UPDATE OF u`, tenantID, id).Scan(&before, &staff)
+				   FOR UPDATE OF u`, tenantID, id).Scan(&before)
 			if errors.Is(err, pgx.ErrNoRows) {
 				skip(id, SkipNotMember)
 				continue
@@ -315,9 +312,15 @@ func (s *Service) DisableIPClusterAccounts(ctx context.Context, tenantID, actorI
 			if err != nil {
 				return err
 			}
-			if staff {
+			// 越级闸与「后台人员」的定义都取自 iamguard。风控批量停用比单个改状态更严：
+			// 后台人员一律跳过（哪怕操作者管得了），管不了的当然也跳过；只停普通用户
+			authority, err := iamguard.CanManage(ctx, tx, tenantID, actorID, id)
+			if errors.Is(err, iamguard.ErrTargetOutranksActor) || (err == nil && authority.Staff) {
 				skip(id, SkipAdministrator)
 				continue
+			}
+			if err != nil {
+				return err
 			}
 			if before == "suspended" || before == "banned" {
 				skip(id, SkipAlreadyDisabled)
