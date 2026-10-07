@@ -84,6 +84,8 @@ export const nodeDetailSchema = nodeRowSchema.extend({
   protocol_schema_version: z.number(),
   config_validated_at: iso.nullable(),
   traffic_bytes: z.number().int(),
+  // 存量协议配置不满足现行规则的提示（nodefabric.ProtocolConfigWarnings）；Go 是 omitempty
+  warnings: z.array(z.string()).min(1).optional(),
 })
 export const nodeDetailResponse = z.object({ nodes: list(nodeDetailSchema), total: z.number() })
 export type NodeDetail = z.output<typeof nodeDetailSchema>

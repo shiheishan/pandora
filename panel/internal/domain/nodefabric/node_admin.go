@@ -402,6 +402,8 @@ func (s *Service) GetAdminNode(ctx context.Context, tenantID, id string) (*Admin
 		return nil, httpx.NotFoundOrForbidden()
 	}
 	if err == nil && out != nil {
+		// 存量配置不满足现行规则（如证书路径不在约定目录）时照常读出，只附提示，后台据此显示
+		out.Warnings = append(out.Warnings, ProtocolConfigWarnings(value(out.NodeType), out.ProtocolConfig)...)
 		out.ProtocolConfig = RedactProtocolConfig(out.ProtocolConfig)
 	}
 	return out, err

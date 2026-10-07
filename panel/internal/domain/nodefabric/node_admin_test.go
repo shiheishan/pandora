@@ -192,3 +192,17 @@ func TestNormalizeCountryCode(t *testing.T) {
 		}
 	}
 }
+
+// 存量节点的不合规配置（如证书路径不在约定目录）在读接口上附提示：写接口读回的 AdminNode
+// 与后台单取（?id=）的详情都要带上，否则管理员看不到哪些老节点要改。提示必须在抹敏感键之前算。
+func TestAdminNodeReadsCarryProtocolConfigWarnings(t *testing.T) {
+	pkg := sourcetest.Load(t, ".")
+	get := pkg.Decl("Service.GetAdminNode")
+	warn, redact := strings.Index(get, "ProtocolConfigWarnings("), strings.Index(get, "RedactProtocolConfig(")
+	if warn < 0 || redact < 0 || warn > redact {
+		t.Fatal("GetAdminNode must append ProtocolConfigWarnings before redacting the config")
+	}
+	if !strings.Contains(pkg.Decl("Service.queryAdminNodes"), "x.Warnings = ProtocolConfigWarnings(") {
+		t.Fatal("the node detail read must carry ProtocolConfigWarnings")
+	}
+}

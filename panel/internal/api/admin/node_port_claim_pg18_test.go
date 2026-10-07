@@ -90,7 +90,7 @@ func runNodeConfigPG18PortClaimBatch(t *testing.T, ctx context.Context, admin *p
 		go func(name string) {
 			defer wg.Done()
 			<-start
-			n, err := create(name, "vless", port, `{}`)
+			n, err := create(name, "vless", port, `{"network":"ws"}`)
 			results <- result{n, err}
 		}(name)
 	}
@@ -135,7 +135,7 @@ func runNodeConfigPG18PortClaimBatch(t *testing.T, ctx context.Context, admin *p
 	}
 
 	// 5. 改端口撞上别人；原样带回协议字段不推进代际
-	mover, err := create("mover", "vless", port+1, `{}`)
+	mover, err := create("mover", "vless", port+1, `{"network":"ws"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func runNodeConfigPG18PortClaimBatch(t *testing.T, ctx context.Context, admin *p
 	before := generation(mover.ID)
 	same := port + 1
 	host, nodeType, kernel := "claims.example.test", "vless", "auto"
-	raw := json.RawMessage(`{ }`)
+	raw := json.RawMessage(`{ "network" : "ws" }`)
 	patched, err := service.PatchAdminNode(ctx, fx.tenant, mover.ID, nodefabric.PatchAdminNodeInput{
 		ActorID: fx.actor, RowVersion: mover.RowVersion, ServerPort: &same, ServerHost: &host,
 		NodeType: &nodeType, Kernel: &kernel, ProtocolConfig: &raw})
@@ -181,12 +181,12 @@ func runNodeConfigPG18PortClaimBatch(t *testing.T, ctx context.Context, admin *p
 		ActorID: fx.actor, RowVersion: reuse.RowVersion, Name: "reuse-copy-" + fx.suffix, ServerPort: &copyPort}); err != nil {
 		t.Fatalf("copy with a new port: %v", err)
 	}
-	_, err = create("ssh", "vless", 22, `{}`)
+	_, err = create("ssh", "vless", 22, `{"network":"ws"}`)
 	var he *httpx.Error
 	if !errors.As(err, &he) || he.Code != httpx.CodeValidationFailed || he.Fields["server_port"] == "" {
 		t.Fatalf("reserved port 22: err=%v, want 422 on server_port", err)
 	}
-	https, err := create("https", "vless", 443, `{}`)
+	https, err := create("https", "vless", 443, `{"network":"ws"}`)
 	if err != nil || len(https.Warnings) == 0 {
 		t.Fatalf("panel port 443 on an unknown host: node=%v err=%v, want created with a warning", https, err)
 	}

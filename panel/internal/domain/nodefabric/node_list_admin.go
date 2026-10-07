@@ -91,6 +91,9 @@ type AdminNodeDetail struct {
 	// 不做全量累计：node_traffic_reports 每节点每分钟一条，全表 SUM 会随运行时长线性变慢。
 	// 列表只要 24 小时那一列，30 天的只在单取时算。
 	TrafficBytes int64 `json:"traffic_bytes"`
+	// Warnings 是存量协议配置不满足现行规则的提示（ProtocolConfigWarnings，如证书路径不在约定目录）；
+	// 只在单取时算，没有提示时不出现
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // AdminNodeQuery 是后台节点列表的筛选与分页。
@@ -299,6 +302,9 @@ func (s *Service) queryAdminNodes(ctx context.Context, tenantID string, q AdminN
 				}
 				if schemaVer != nil {
 					x.ProtocolSchemaVersion = *schemaVer
+				}
+				if detail {
+					x.Warnings = ProtocolConfigWarnings(value(x.NodeType), x.Protocol)
 				}
 				out = append(out, x)
 			}
