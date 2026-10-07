@@ -89,18 +89,36 @@ func (g *GiftGranter) GrantTraffic(ctx context.Context, tx pgx.Tx,
 	return err
 }
 
-// ExtendExpiry 把用户当前生效订阅的到期时间往后推。
+// extendableSubscription 取用户可以加时长的那条订阅：生效中、试用中优先，其次是
+// 过期 30 天内（原地续费窗口没关）的，各自按到期最晚。口径与 subscriptionExtendable 一致。
+func extendableSubscription(ctx context.Context, tx pgx.Tx, tenantID, userID string) (string, error) {
+	var subID string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text FROM subscriptions
+		 WHERE tenant_id=$1 AND user_id=$2::uuid
+		   AND (status IN ('active','trialing')
+		        OR (status = 'expired' AND renewal_closed_at IS NULL))
+		 ORDER BY (status <> 'expired') DESC, current_period_end DESC NULLS LAST
+		 LIMIT 1 FOR UPDATE`, tenantID, userID).Scan(&subID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", httpx.New(httpx.CodeValidationFailed,
+			"你当前没有可以延长的订阅（生效中，或过期不满 30 天），这类奖励需要先有一个套餐")
+	}
+	return subID, err
+}
+
+// ExtendExpiry 把用户订阅的到期时间往后推；已过期 30 天内或试用中的订阅会被救回。
 //
-// 走 extendSubscriptionTx：订阅周期末、本周期 cycle 配额行、active 凭据一起推。
-// 原先只改订阅一行，过了原到期日订阅拉取 404、门户链接消失、流量不再计入本周期。
-// 基准取「现在」和「原到期时间」里更晚的那个，规则见 extendSubscriptionTx。
+// 走 extendSubscriptionTx：订阅周期末、本周期 cycle 配额行、active 凭据一起推，
+// 救回时状态回到 active、流量按天数折算（规则 2）。基准取「现在」和「原到期时间」
+// 里更晚的那个，规则见 extendSubscriptionTx。
 func (g *GiftGranter) ExtendExpiry(ctx context.Context, tx pgx.Tx,
 	tenantID, userID string, days int) error {
 
 	if days <= 0 {
 		return errors.New("gift expire days must be positive")
 	}
-	subID, err := activeSubscription(ctx, tx, tenantID, userID)
+	subID, err := extendableSubscription(ctx, tx, tenantID, userID)
 	if err != nil {
 		return err
 	}
@@ -151,23 +169,34 @@ func (g *GiftGranter) ResetQuota(ctx context.Context, tx pgx.Tx,
 		"traffic.bytes", "gift_card", before, nil, "")
 }
 
-// GrantPlan 兑换套餐卡。
+// GrantPlan 兑换套餐卡，返回订阅 ID 与是否落成了续费。
+//
+// 用户已有同一套餐的订阅（生效中，或过期 30 天内）时，不再新开订阅、换链接，而是在
+// 原订阅上续一期（规则 3）：周期与流量和付费续费完全一样（renewSubscriptionTx），
+// 沿用原订阅的套餐版本，链接不变。没有同套餐订阅时照旧开通一条新订阅。
 //
 // 这里没有复用 CreateManualOrder：那个方法自己开事务，而兑换必须
 // 和标记码已用在同一个事务里。硬凑会得到一个「订单建好了但码没作废」
 // 的窗口 —— 对卡密来说这等于无限复制。
-//
-// 所以走的是 fulfillOrder 这条已经把订阅、配额、凭据都做对的路径，
-// 只是不建订单：兑换流水本身就是这次发放的凭证。
 func (g *GiftGranter) GrantPlan(ctx context.Context, tx pgx.Tx,
-	tenantID, userID, planID, priceID, reason string) (string, error) {
+	tenantID, userID, planID, priceID, reason string) (string, bool, error) {
 
 	if planID == "" {
-		return "", errors.New("gift plan id is required")
+		return "", false, errors.New("gift plan id is required")
 	}
-	subID, err := g.s.grantPlanDirect(ctx, tx, tenantID, userID, planID, priceID)
+	subID, err := renewableSamePlanSubscription(ctx, tx, tenantID, userID, planID, true)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return subID, nil
+	if subID != "" {
+		if err := g.s.grantPlanRenewal(ctx, tx, tenantID, userID, subID, planID, priceID); err != nil {
+			return "", false, err
+		}
+		return subID, true, nil
+	}
+	subID, err = g.s.grantPlanDirect(ctx, tx, tenantID, userID, planID, priceID)
+	if err != nil {
+		return "", false, err
+	}
+	return subID, false, nil
 }

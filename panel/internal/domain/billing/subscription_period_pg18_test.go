@@ -309,7 +309,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	var controlSub string
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, control, func(tx pgx.Tx) error {
 		var err error
-		controlSub, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, control, planA, priceA, "fixture")
+		controlSub, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, control, planA, priceA, "fixture")
 		return err
 	})
 	controlToken := p.rotate(control, controlSub)
@@ -440,7 +440,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	var pausedSub string
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, buyer, func(tx pgx.Tx) error {
 		var err error
-		pausedSub, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, buyer, planA, priceA, "fixture")
+		pausedSub, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, buyer, planA, priceA, "fixture")
 		return err
 	})
 	p.must(`UPDATE subscriptions SET status='paused' WHERE id=$1::uuid`, pausedSub)

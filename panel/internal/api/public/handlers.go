@@ -292,6 +292,8 @@ func (h *handlers) createOrder(w http.ResponseWriter, r *http.Request) {
 		UseBalance: req.UseBalance,
 		CouponCode: req.CouponCode,
 		Claim:      claim,
+		// 同套餐只续不新开（规则 3）：已有可原地续费的同套餐订阅时回 409，门户改走续费
+		RejectSamePlan: true,
 	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)

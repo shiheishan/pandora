@@ -110,20 +110,26 @@ func quotePlanChange(ctx context.Context, tx pgx.Tx, tenantID string,
 		curPlanID              string
 		status                 string
 		periodStart, periodEnd *time.Time
+		renewalClosed          bool
 	)
 	err := tx.QueryRow(ctx, `
-		SELECT plan_id::text, status, current_period_start, current_period_end
+		SELECT plan_id::text, status, current_period_start, current_period_end,
+		       renewal_closed_at IS NOT NULL
 		  FROM subscriptions
 		 WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid
 		 FOR UPDATE`, tenantID, in.SubscriptionID, in.UserID).
-		Scan(&curPlanID, &status, &periodStart, &periodEnd)
+		Scan(&curPlanID, &status, &periodStart, &periodEnd, &renewalClosed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, httpx.NotFoundOrForbidden()
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !subscriptionAcceptsPaidChange(status) {
+	// 过期 30 天内的订阅同样可以在原订阅上改套餐（规则 3、4），链接不变
+	if !subscriptionAcceptsPaidChange(status, renewalClosed) {
+		if status == "expired" {
+			return nil, ErrRenewalWindowClosed
+		}
 		return nil, ErrPlanChangeSubStatus
 	}
 	if in.PlanID == curPlanID {

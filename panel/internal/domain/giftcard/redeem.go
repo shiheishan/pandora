@@ -217,15 +217,19 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 	}
 
 	if t.Type == "plan" {
-		orderID, err := s.grant.GrantPlan(ctx, tx, tenantID, userID,
+		subID, renewed, err := s.grant.GrantPlan(ctx, tx, tenantID, userID,
 			r.PlanID, r.PriceID, "礼品卡兑换："+t.Name)
 		if err != nil {
 			return g, err
 		}
 		g.PlanID = r.PlanID
-		g.OrderID = orderID
+		g.OrderID = subID
 		out.PlanGranted = t.Name
-		out.Summary = append(out.Summary, "已为你开通「"+t.Name+"」")
+		if renewed {
+			out.Summary = append(out.Summary, "已为你续费「"+t.Name+"」，订阅链接不变")
+		} else {
+			out.Summary = append(out.Summary, "已为你开通「"+t.Name+"」")
+		}
 		return g, nil
 	}
 
@@ -328,7 +332,9 @@ func (s *Service) checkConditions(ctx context.Context, tx pgx.Tx,
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1 FROM subscriptions
-				 WHERE tenant_id=$1 AND user_id=$2::uuid AND status='active'
+				 WHERE tenant_id=$1 AND user_id=$2::uuid
+				   AND (status IN ('active','trialing')
+				        OR (status = 'expired' AND renewal_closed_at IS NULL))
 				   AND plan_id::text = ANY($3))`,
 			tenantID, userID, c.AllowedPlanID).Scan(&ok); err != nil {
 			return err

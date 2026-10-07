@@ -136,6 +136,24 @@ func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
 		return nil, httpx.Invalid(map[string]string{"settlement": "结算方式只能是 grant、pending 或 offline"})
 	}
 
+	// 用户已有同一套餐的订阅（生效中，或过期 30 天内）：在原订阅上开续费单，不新开、
+	// 不换链接（规则 3）。续费单的审计在建单事务里写（CreateRenewal）。
+	samePlanSub, err := s.SamePlanSubscription(ctx, tenantID, in.UserID, in.PlanID)
+	if err != nil {
+		return nil, httpx.Internal(err)
+	}
+	if samePlanSub != "" {
+		if in.PriceID == "" {
+			return nil, httpx.Invalid(map[string]string{"price_id": "请选择续费的价格档"})
+		}
+		return s.CreateRenewal(ctx, tenantID, CreateRenewalInput{
+			UserID: in.UserID, SubscriptionID: samePlanSub, PriceID: in.PriceID,
+			Claim:       in.Claim,
+			ManualGrant: in.Settlement == ManualSettlementGrant, ManualReason: in.Reason,
+			ManualActor: in.ActorID, Offline: offline, ManualSettlement: in.Settlement,
+		})
+	}
+
 	out, err := s.CreateOrder(ctx, tenantID, CreateOrderInput{
 		UserID: in.UserID, PlanID: in.PlanID, PriceID: in.PriceID, Claim: in.Claim,
 		ManualGrant:  in.Settlement == ManualSettlementGrant,
@@ -212,11 +230,22 @@ func (s *Service) MarkOrderPaid(ctx context.Context, tenantID string,
 		return nil, err
 	}
 
-	// 先读订单：金额必须由服务端从库里取，不能让调用方传 ——
-	// 否则「标记已支付」就成了一个可以任意填金额的入账接口。
-	var orderNo, status, currency string
-	var payable int64
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+	// 读单、结算、审计在同一个事务里（审计报告 2.3 第 4 条）：原先结算提交之后另开
+	// 事务写审计，审计写失败时这笔钱已经入账、却查不到是哪个管理员标记的。现在审计
+	// 写不进去，整笔回滚，管理员重试即可（同一凭证号由渠道唯一约束去重）。
+	var (
+		out             PaymentWebhookOutput
+		orderNo, status string
+		currency        string
+		payable         int64
+		alreadyHandled  bool
+	)
+	actor := in.ActorID
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor}, func(tx pgx.Tx) error {
+		out = PaymentWebhookOutput{}
+		alreadyHandled = false
+		// 先读订单：金额必须由服务端从库里取，不能让调用方传 ——
+		// 否则「标记已支付」就成了一个可以任意填金额的入账接口。
 		err := tx.QueryRow(ctx, `
 			SELECT order_no, status, currency::text, payable_amount
 			  FROM orders WHERE tenant_id = $1 AND id = $2::uuid`,
@@ -224,61 +253,67 @@ func (s *Service) MarkOrderPaid(ctx context.Context, tenantID string,
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFoundOrForbidden()
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		if status != "pending_payment" && status != "processing" {
+			return httpx.New(httpx.CodeConflict,
+				"只有待支付的订单可以标记为已支付，当前状态："+status)
+		}
+		if payable <= 0 {
+			return httpx.New(httpx.CodeConflict, "这张订单不需要支付")
+		}
+
+		if err := s.settlePaymentTx(ctx, tx, tenantID, offlinePaymentInput(
+			in.OrderID, currency, payable, in.ActorID,
+			OfflineReceipt{Reference: in.Reference, Reason: in.Reason}), &out); err != nil {
+			return err
+		}
+		// 同一张凭证的事件号已经落过库：上一次这笔钱进了挂账（订单没结，才会又
+		// 走到这里），或者并发的另一次标记刚刚结清。这次什么都没有新发生，不写审计。
+		if out.AlreadyHandled {
+			alreadyHandled = true
+			return nil
+		}
+
+		digest := map[string]any{
+			"order_no": orderNo, "amount": payable, "currency": currency,
+			"reference": in.Reference, "reason": in.Reason,
+			"payment_id": out.PaymentID, "ledger_txn": out.LedgerTxnID,
+		}
+		if out.QuarantineKind != "" {
+			digest["quarantined"] = out.QuarantineKind
+		}
+		return audit.Write(ctx, tx, tenantID, audit.Entry{
+			ActorKind: "admin", ActorID: &actor,
+			Action: "order.marked_paid", ResourceType: "order",
+			ResourceID:   &in.OrderID,
+			BeforeDigest: map[string]any{"status": status},
+			AfterDigest:  digest,
+			APIDomain:    "admin", RequestID: httpx.RequestIDFrom(ctx),
+		})
 	})
 	if err != nil {
-		return nil, err
+		var he *httpx.Error
+		if errors.As(err, &he) {
+			return nil, he
+		}
+		return nil, httpx.Internal(err)
 	}
-	if status != "pending_payment" && status != "processing" {
-		return nil, httpx.New(httpx.CodeConflict,
-			"只有待支付的订单可以标记为已支付，当前状态："+status)
-	}
-	if payable <= 0 {
-		return nil, httpx.New(httpx.CodeConflict, "这张订单不需要支付")
-	}
-
-	out, err := s.HandlePaymentWebhook(ctx, tenantID, offlinePaymentInput(
-		in.OrderID, currency, payable, in.ActorID,
-		OfflineReceipt{Reference: in.Reference, Reason: in.Reason}))
-	if err != nil {
-		return nil, err
-	}
-	// 同一张凭证的事件号已经落过库：上一次这笔钱进了挂账（订单没结，才会又
-	// 走到这里），或者并发的另一次标记刚刚结清。这次什么都没有新发生，不写审计。
-	if out.AlreadyHandled {
+	if alreadyHandled {
 		return nil, httpx.New(httpx.CodeConflict,
 			"凭证号 "+in.Reference+" 已经入过账，不能重复标记")
 	}
-
-	digest := map[string]any{
-		"order_no": orderNo, "amount": payable, "currency": currency,
-		"reference": in.Reference, "reason": in.Reason,
-		"payment_id": out.PaymentID, "ledger_txn": out.LedgerTxnID,
-	}
-	if out.QuarantineKind != "" {
-		digest["quarantined"] = out.QuarantineKind
-	}
-	actor := in.ActorID
-	if err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor},
-		func(tx pgx.Tx) error {
-			return audit.Write(ctx, tx, tenantID, audit.Entry{
-				ActorKind: "admin", ActorID: &actor,
-				Action: "order.marked_paid", ResourceType: "order",
-				ResourceID:   &in.OrderID,
-				BeforeDigest: map[string]any{"status": status},
-				AfterDigest:  digest,
-				APIDomain:    "admin", RequestID: httpx.RequestIDFrom(ctx),
-			})
-		}); err != nil {
-		return out, httpx.New(httpx.CodeInternal,
-			"订单 "+orderNo+" 已入账，但审计写入失败，请立即联系运维核对："+err.Error())
+	// 事务已提交：确实开了或续了订阅才通知节点（与 HandlePaymentWebhook 同口径）
+	if out.SubscriptionID != "" {
+		s.notifyUsersChanged(ctx, tenantID)
 	}
 	// 钱已如实入账，但订单没有结清（R117）：回 409 让管理员知道款项去了挂账，
 	// 要在挂账里转入用户余额，而不是以为续费或变更已经生效。
 	if out.QuarantineKind != "" {
 		return nil, markPaidQuarantined(out.QuarantineKind)
 	}
-	return out, nil
+	return &out, nil
 }
 
 // markPaidQuarantined 是标记已付的钱进了挂账时回给后台的 409。

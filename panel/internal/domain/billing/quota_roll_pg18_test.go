@@ -35,7 +35,7 @@ func checkQuotaRollPG18(t *testing.T, p *subPeriodPG18) {
 		var sub string
 		orderReleasePG18InTxAs(t, ctx, p.app, p.fx.tenant, user, func(tx pgx.Tx) error {
 			var err error
-			sub, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, user, plan, priceID, "quota-roll")
+			sub, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, user, plan, priceID, "quota-roll")
 			return err
 		})
 		return sub
