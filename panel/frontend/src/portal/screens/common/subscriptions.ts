@@ -70,13 +70,21 @@ export const nodePreviewSchema = z.object({ name: z.string(), protocol: z.string
 export type NodePreview = z.output<typeof nodePreviewSchema>
 export const nodesSchema = z.object({ count: z.number().int(), nodes: z.array(nodePreviewSchema) })
 
+/**
+ * 节点变更不再推到门户（realtime.channelsFor 只推管理端）：原先每个节点每次心跳都给全站每条门户连接
+ * 推一条，订阅页因此每 2 秒重拉。节点的名称、协议、倍率很少变，改成 60 秒定时重拉（页面不可见时暂停）；
+ * 订阅本身变了（续费、换套餐）仍随 subscriptions.changed 立刻刷新
+ */
+export const SUBSCRIPTION_NODES_REFRESH_MS = 60_000
+
 export function useSubscriptionNodes(subscriptionId: string | undefined) {
   const api = useApi()
   return useQuery({
     queryKey: ['portal', 'subscriptions', subscriptionId, 'nodes'],
     queryFn: ({ signal }) => api.get(`v1/me/subscriptions/${encodeURIComponent(subscriptionId!)}/nodes`, nodesSchema, { signal }),
     enabled: subscriptionId !== undefined,
-    meta: { topics: ['nodes.changed', 'subscriptions.changed'] },
+    meta: { topics: ['subscriptions.changed'] },
+    refetchInterval: SUBSCRIPTION_NODES_REFRESH_MS,
   })
 }
 
