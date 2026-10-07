@@ -373,6 +373,19 @@ func (c *leasedPacketConn) Close() error {
 	return err
 }
 
+// RawUDPConn 交出租约包着的裸 *net.UDPConn，供 hy2 的 sendmmsg/recvmmsg 批量收发与
+// 调 socket 缓冲；底层不是裸 UDP socket 时返回 nil。
+//
+// 租约本身不改写负载，可以透出；但只透出「直接就是 *net.UDPConn」的底层——
+// 加密、封装类出站（shadowsocks 等）返回的是它们自己的包装，绝不能被穿透，
+// 否则批量路径会绕过它们直接把明文发出去。所以这里不做任何递归解包。
+func (c *leasedPacketConn) RawUDPConn() *net.UDPConn {
+	if raw, ok := c.PacketConn.(*net.UDPConn); ok {
+		return raw
+	}
+	return nil
+}
+
 // Tags 返回当前所有出站标签，供分流引擎校验规则引用。
 func (s *Set) Tags() map[string]bool {
 	s.mu.RLock()

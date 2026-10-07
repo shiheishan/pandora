@@ -57,3 +57,44 @@ func TestLeasedConnForwardsHalfClose(t *testing.T) {
 		t.Fatal("Close 应释放租约")
 	}
 }
+
+// leasedPacketConn 只对「底层直接就是裸 UDP socket」透出 RawUDPConn。会改写负载的
+// 包装（这里用一个加密壳模拟）即使内部也是 *net.UDPConn，也绝不能被穿透：
+// 批量收发路径拿到裸 socket 就会绕过它直接发明文。
+func TestLeasedPacketConnRawUDPOnlyForBareSocket(t *testing.T) {
+	bare, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bare.Close()
+	leased := &leasedPacketConn{PacketConn: bare, release: func() {}}
+	if got := leased.RawUDPConn(); got != bare {
+		t.Fatalf("裸 UDP socket 应透出，got %v", got)
+	}
+
+	inner, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inner.Close()
+	wrapped := &leasedPacketConn{PacketConn: &encryptingPacketConn{UDPConn: inner}, release: func() {}}
+	if got := wrapped.RawUDPConn(); got != nil {
+		t.Fatal("改写负载的包装不能被穿透成裸 socket")
+	}
+	// 包装本身也不该自称透明。
+	var pc net.PacketConn = &encryptingPacketConn{UDPConn: inner}
+	if _, ok := pc.(interface{ RawUDPConn() *net.UDPConn }); ok {
+		t.Fatal("测试夹具不应实现 RawUDPConn")
+	}
+}
+
+// encryptingPacketConn 模拟加密类出站的包装：内嵌 *net.UDPConn，但改写负载。
+type encryptingPacketConn struct{ *net.UDPConn }
+
+func (c *encryptingPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	out := make([]byte, len(p))
+	for i, b := range p {
+		out[i] = b ^ 0x5a
+	}
+	return c.UDPConn.WriteTo(out, addr)
+}
