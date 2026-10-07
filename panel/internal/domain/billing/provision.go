@@ -110,6 +110,8 @@ func (s *Service) provisionSubscription(ctx context.Context, tx pgx.Tx,
 // 指标同周期的行跳过。新开订阅从这里建整套；变更套餐（plan_change.go）先原地
 // 重置已有的行，再从这里补上新套餐多出来的指标。
 //
+// 周期末按 quotaPeriodEndSQL：cycle 取订阅周期末，day / month 是起点加一天 / 一个月。
+//
 // 注意 $4 必须显式转型：在 CASE 的一个分支是裸 NULL 时，
 // PostgreSQL 无从推断参数类型，会退化成 text 并与 timestamptz 列冲突。
 func initQuotaBalances(ctx context.Context, tx pgx.Tx, tenantID, subID,
@@ -119,9 +121,7 @@ func initQuotaBalances(ctx context.Context, tx pgx.Tx, tenantID, subID,
 			(tenant_id, subscription_id, metric, period, period_start, period_end,
 			 granted, limit_value)
 		SELECT $1, $2, qd.metric, qd.period, $3::timestamptz,
-		       CASE WHEN qd.period = 'total'
-		            THEN NULL::timestamptz
-		            ELSE $4::timestamptz END,
+		       `+quotaPeriodEndSQL("qd.period", "$3::timestamptz", "$4::timestamptz")+`,
 		       coalesce(qd.limit_value, 0), qd.limit_value
 		  FROM quota_definitions qd
 		 WHERE qd.plan_version_id = $5
