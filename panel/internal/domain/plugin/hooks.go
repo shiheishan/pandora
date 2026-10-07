@@ -412,16 +412,34 @@ func (s *Service) Dispatch(ctx context.Context, tenantID string, limit int) (int
 	}
 	var batch []dueDelivery
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		// 认领带租约：SKIP LOCKED 选出到期的行，同一条语句把 next_retry_at 推到租约末。
+		// 原先只在选的那个事务里 FOR UPDATE，提交后锁就没了、状态还是 queued，而 POST
+		// 在事务外逐个发，另一个实例扫到同一批就会重复投递。租约（dispatchLease）内别的
+		// 实例看它「还没到期」；发完由 deliverOne 改成 sent 或按退避排下次；中途挂了，
+		// 租约一过任一实例重新认领。租约长于一轮派发的上限（dispatchRoundTimeout）。
 		rows, err := tx.Query(ctx, `
-			SELECT d.id, d.hook_id, d.event, d.payload, d.attempts, d.max_attempts,
+			WITH due AS (
+				SELECT d.id
+				  FROM plugin_hook_deliveries d
+				  JOIN plugin_hooks h ON h.tenant_id=d.tenant_id AND h.id=d.hook_id
+				 WHERE d.tenant_id=$1 AND d.status='queued'
+				   AND d.next_retry_at <= now() AND h.enabled
+				 ORDER BY d.next_retry_at
+				 LIMIT $2
+				 FOR UPDATE OF d SKIP LOCKED
+			), claimed AS (
+				UPDATE plugin_hook_deliveries d
+				   SET next_retry_at = now() + $3::interval
+				  FROM due
+				 WHERE d.id = due.id
+				RETURNING d.id, d.hook_id, d.event, d.payload, d.attempts, d.max_attempts,
+				          d.created_at
+			)
+			SELECT c.id, c.hook_id, c.event, c.payload, c.attempts, c.max_attempts,
 			       h.endpoint_url, h.timeout_ms, h.code, h.secret_encrypted
-			  FROM plugin_hook_deliveries d
-			  JOIN plugin_hooks h ON h.tenant_id=d.tenant_id AND h.id=d.hook_id
-			 WHERE d.tenant_id=$1 AND d.status='queued'
-			   AND d.next_retry_at <= now() AND h.enabled
-			 ORDER BY d.next_retry_at
-			 LIMIT $2
-			 FOR UPDATE OF d SKIP LOCKED`, tenantID, limit)
+			  FROM claimed c
+			  JOIN plugin_hooks h ON h.tenant_id=$1 AND h.id=c.hook_id
+			 ORDER BY c.created_at`, tenantID, limit, dispatchLeaseSQL)
 		if err != nil {
 			return err
 		}
@@ -564,9 +582,22 @@ func (s *Service) send(ctx context.Context, d dueDelivery, secret string) (int, 
 	return resp.StatusCode, nil
 }
 
-// StartScanner 起一个后台循环，定期发送到期的投递。
-func (s *Service) StartScanner(ctx context.Context, tenantID string, every time.Duration) {
+// 派发节拍：每轮一批一批认领，循环到队列空、批数用完或本轮超时。
+const (
+	dispatchBatch      = 10
+	dispatchMaxBatches = 50
+	// dispatchRoundTimeout 必须短于认领租约：一轮里认领到的行要么发完、要么随本轮
+	// 超时放弃，放弃的等租约过期再被认领，不会两个实例同时在发同一条
+	dispatchRoundTimeout = 4 * time.Minute
+	// dispatchLeaseSQL 是认领租约（单个钩子超时至多 30 秒，一批 10 条也在 5 分钟内）
+	dispatchLeaseSQL = "10 minutes"
+)
+
+// StartScanner 起一个后台循环，定期发送到期的投递；返回等它退出的函数（ctx 取消后调用）。
+func (s *Service) StartScanner(ctx context.Context, tenantID string, every time.Duration) (wait func()) {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		// 错开启动：服务刚起来时数据库连接池还在预热，
 		// 这时候扑上去发一批只会和正常请求抢连接。
 		select {
@@ -577,10 +608,7 @@ func (s *Service) StartScanner(ctx context.Context, tenantID string, every time.
 		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
-			if _, err := s.Dispatch(ctx, tenantID, 50); err != nil {
-				// 扫描器不该因为一次失败就退出：下一轮再来。
-				_ = err
-			}
+			s.dispatchRound(ctx, tenantID)
 			select {
 			case <-t.C:
 			case <-ctx.Done():
@@ -588,6 +616,19 @@ func (s *Service) StartScanner(ctx context.Context, tenantID string, every time.
 			}
 		}
 	}()
+	return func() { <-done }
+}
+
+func (s *Service) dispatchRound(ctx context.Context, tenantID string) {
+	ctx, cancel := context.WithTimeout(ctx, dispatchRoundTimeout)
+	defer cancel()
+	for i := 0; i < dispatchMaxBatches; i++ {
+		n, err := s.Dispatch(ctx, tenantID, dispatchBatch)
+		if err != nil || n < dispatchBatch {
+			// 失败下一轮再来：扫描器不该因为一次失败就退出
+			return
+		}
+	}
 }
 
 // Deliveries 返回某个钩子最近的投递记录，供后台排查。
