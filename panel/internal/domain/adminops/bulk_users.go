@@ -373,7 +373,14 @@ func hashGeneratedPasswords(ctx context.Context, n int) ([]generatedCredential, 
 		if err != nil {
 			return nil, err
 		}
-		phc, err := crypto.HashPassword(password, crypto.DefaultArgon2Params())
+		// 一次只占一个全局哈希名额、算完即还，不把登录挤出去；排不上名额就整批放弃，
+		// 这时库里还没写任何东西
+		slot, err := crypto.AcquirePasswordSlot(ctx)
+		if err != nil {
+			return nil, httpx.New(httpx.CodeUnavailable, "当前请求较多，请稍后重试").WithInternal(err)
+		}
+		phc, err := slot.Hash(password, crypto.DefaultArgon2Params())
+		slot.Release()
 		if err != nil {
 			return nil, err
 		}

@@ -13,6 +13,7 @@ func clearRuntimeEnv(t *testing.T) {
 	}
 	t.Setenv(PasswordHashConcurrencyEnv, "")
 	t.Setenv(PasswordHashQueueTimeoutEnv, "")
+	t.Setenv(NodePullIntervalEnv, "")
 }
 
 // 缺省值按 compose 的 max_connections=60 算：3 条超级用户保留 + 11 条维护余量 +
@@ -37,6 +38,9 @@ func TestRuntimeDefaultsFitComposeConnectionBudget(t *testing.T) {
 	if r.PasswordHashConcurrency != 2 || r.PasswordHashQueueTimeout != 5*time.Second {
 		t.Fatalf("password hash defaults = %d / %s", r.PasswordHashConcurrency, r.PasswordHashQueueTimeout)
 	}
+	if r.NodePullInterval != 15*time.Second {
+		t.Fatalf("node pull interval default = %s, want 15s", r.NodePullInterval)
+	}
 }
 
 func TestRuntimeOverridesArePerGatewayAndBounded(t *testing.T) {
@@ -44,6 +48,7 @@ func TestRuntimeOverridesArePerGatewayAndBounded(t *testing.T) {
 	t.Setenv("AEGIS_NODE_DB_MAX_CONNS", " 24 ")
 	t.Setenv(PasswordHashConcurrencyEnv, "4")
 	t.Setenv(PasswordHashQueueTimeoutEnv, "3s")
+	t.Setenv(NodePullIntervalEnv, "60")
 	r, err := loadRuntime()
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +58,9 @@ func TestRuntimeOverridesArePerGatewayAndBounded(t *testing.T) {
 	}
 	if r.PasswordHashConcurrency != 4 || r.PasswordHashQueueTimeout != 3*time.Second {
 		t.Fatalf("password hash overrides = %d / %s", r.PasswordHashConcurrency, r.PasswordHashQueueTimeout)
+	}
+	if r.NodePullInterval != time.Minute {
+		t.Fatalf("node pull interval override = %s, want 1m", r.NodePullInterval)
 	}
 
 	for _, tc := range []struct{ key, value, want string }{
@@ -64,6 +72,9 @@ func TestRuntimeOverridesArePerGatewayAndBounded(t *testing.T) {
 		{PasswordHashQueueTimeoutEnv, "0s", PasswordHashQueueTimeoutEnv},
 		{PasswordHashQueueTimeoutEnv, "30s", PasswordHashQueueTimeoutEnv},
 		{PasswordHashQueueTimeoutEnv, "soon", PasswordHashQueueTimeoutEnv},
+		{NodePullIntervalEnv, "4", NodePullIntervalEnv},
+		{NodePullIntervalEnv, "301", NodePullIntervalEnv},
+		{NodePullIntervalEnv, "15s", NodePullIntervalEnv},
 	} {
 		clearRuntimeEnv(t)
 		t.Setenv(tc.key, tc.value)

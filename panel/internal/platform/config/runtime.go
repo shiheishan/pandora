@@ -71,6 +71,17 @@ const (
 	maxPasswordHashQueueTimeout = 15 * time.Second
 )
 
+// 节点拉用户名单的节拍（下发给节点的 pull_interval，整秒）。缺省 15 秒：第三方
+// UniProxy 节点端不连事件流，到期、配额用尽只能靠轮询收口；名单已按池缓存，
+// 拉一次命中缓存不碰库，这个频率不再是库的负担。范围与 nodefabric.SetNodePullInterval 一致。
+const (
+	NodePullIntervalEnv     = "AEGIS_NODE_PULL_INTERVAL"
+	DefaultNodePullInterval = 15 * time.Second
+
+	minNodePullIntervalSeconds = 5
+	maxNodePullIntervalSeconds = 300
+)
+
 // Runtime 是进程级的资源上限，缺省即用默认值，设了就严格校验。
 type Runtime struct {
 	// DBMaxConns 是各网关连接池上限，三个域都有值。
@@ -79,6 +90,8 @@ type Runtime struct {
 	PasswordHashConcurrency int
 	// PasswordHashQueueTimeout 是等一个哈希名额的最长时间，超时回 503。
 	PasswordHashQueueTimeout time.Duration
+	// NodePullInterval 是下发给节点的拉用户节拍，只有 aegis-node 用。
+	NodePullInterval time.Duration
 }
 
 func loadRuntime() (Runtime, error) {
@@ -105,6 +118,12 @@ func loadRuntime() (Runtime, error) {
 			PasswordHashQueueTimeoutEnv, maxPasswordHashQueueTimeout)
 	}
 	r.PasswordHashQueueTimeout = wait
+	secs, err := boundedEnvInt(NodePullIntervalEnv, int(DefaultNodePullInterval/time.Second),
+		minNodePullIntervalSeconds, maxNodePullIntervalSeconds)
+	if err != nil {
+		return Runtime{}, err
+	}
+	r.NodePullInterval = time.Duration(secs) * time.Second
 	return r, nil
 }
 

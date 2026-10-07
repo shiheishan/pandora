@@ -69,6 +69,10 @@ func run() error {
 		}
 	}()
 
+	// 口令哈希（Argon2id 19 MiB/次）全局并发上限：后台登录、重认证、改密、替人重置、
+	// 批量生成用户都在这个网关上，与 aegis-public 用同一组配置
+	crypto.ConfigurePasswordHashing(cfg.PasswordHashConcurrency, cfg.PasswordHashQueueTimeout)
+
 	redisOpt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("解析 Redis 连接串: %w", err)

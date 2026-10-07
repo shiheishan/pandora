@@ -91,6 +91,10 @@ func run() error {
 	)
 
 	nodeService := nodefabric.NewService(pool, signer)
+	// 下发给节点的拉用户节拍（AEGIS_NODE_PULL_INTERVAL，缺省 15 秒）
+	if err := nodeService.SetNodePullInterval(cfg.NodePullInterval); err != nil {
+		return err
+	}
 	// 节点首次接入把公网 IP 自动识别成地区填 servers.region。
 	// 缺库不致命：自动识别降级为空，接入照常。
 	// 与 aegis-admin 不同，这里 AEGIS_GEOIP_DB 没有缺省路径：未设置就不开。
