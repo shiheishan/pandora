@@ -280,6 +280,9 @@ type Node struct {
 	// HeartbeatFresh 表示这个节点近期上报过心跳。
 	// 只在 listEligibleNodesTx 内部用于分层，不出现在任何对外结构里。
 	HeartbeatFresh bool
+	// Degraded 表示节点自己报告或回执表明入站没按期望在服务（nodefabric.RuntimeFailingSQL：
+	// 端口被占、入站没起来、期望版本生效失败）。同样只用于分层（preferFreshNodes）。
+	Degraded bool
 }
 
 // NodePreview 是用户面板可见的最小节点信息。
@@ -411,6 +414,11 @@ func DeliveryState(servingStatus string, pooled, everSeen, beatFresh bool) (bool
 	return true, ""
 }
 
+// DegradedNote 是降级节点（nodefabric.RuntimeFailingSQL）在后台「是否下发」里的说明：
+// 它仍在资格集合里，只是 preferFreshNodes 先摘掉它。由 handler 在 DeliveryState 之后套上。
+const DegradedNote = "节点报告运行异常（端口被占、入站没起来或配置生效失败），" +
+	"只有当套餐里没有其他可用节点时才会下发它"
+
 // listEligibleNodesTx 是订阅下发和面板预览共用的唯一资格查询。
 // 任何维护状态、协议稳定性或套餐资源池规则都只能在这里修改，避免两处漂移。
 // 与用户、套餐都无关的节点自身条件抽在 DeliverableNodeSQL，套餐页的可下发节点数
@@ -438,7 +446,8 @@ func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planV
 			       COALESCE(n.server_port, 0),
 			       `+config+`,
 			       COALESCE(n.traffic_rate, 1.0),
-			       (n.last_heartbeat_at >= now() - $3::interval) AS heartbeat_fresh
+			       (n.last_heartbeat_at >= now() - $3::interval) AS heartbeat_fresh,
+			       `+nodefabric.RuntimeFailingSQL("n")+` AS degraded
 			  FROM plan_node_pools p
 			  JOIN nodes n
 			    ON p.pool_id = n.pool_id AND p.tenant_id = n.tenant_id
@@ -460,7 +469,7 @@ func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planV
 		var n Node
 		var raw []byte
 		if err := rows.Scan(&n.Name, &n.Type, &n.Host, &n.Port, &raw, &n.TrafficRate,
-			&n.HeartbeatFresh); err != nil {
+			&n.HeartbeatFresh, &n.Degraded); err != nil {
 			return nil, err
 		}
 		if withConfig && len(raw) > 0 {
@@ -491,7 +500,21 @@ func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planV
 // 心跳失联往往是面板侧的观测问题（agent 崩了、上报链路被挡），
 // 节点本身还在转发。所以这里的规则是「有新鲜的就只给新鲜的，
 // 没有就把手上的都给出去」，而不是「不新鲜就一律不给」。
+//
+// 降级节点（Degraded：端口被占、入站没起来、期望版本生效失败）先摘：节点自己说了这条线路
+// 不通，比「心跳超时、可能还在转发」更确定。规则同样是「有别的就不给它，没有就照给」，
+// 套餐里全是降级节点时整份照发，不给空订阅。先摘降级再分新鲜：心跳超时但没报降级的节点
+// 排在报了降级的节点前面。
 func preferFreshNodes(nodes []Node) []Node {
+	healthy := make([]Node, 0, len(nodes))
+	for _, n := range nodes {
+		if !n.Degraded {
+			healthy = append(healthy, n)
+		}
+	}
+	if len(healthy) > 0 {
+		nodes = healthy
+	}
 	fresh := make([]Node, 0, len(nodes))
 	for _, n := range nodes {
 		if n.HeartbeatFresh {

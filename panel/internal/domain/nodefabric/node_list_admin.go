@@ -69,6 +69,9 @@ type AdminNodeListRow struct {
 	// 对应 xboard 的「权限组」——回答「谁能用上这个节点」。
 	GrantedPlans []string `json:"granted_plans"`
 
+	// 下发与运行的真实状态（node_runtime_view.go）
+	NodeRuntimeView
+
 	// AdminNodeDetail 只在单取时填；列表响应不编出它（json:"-"），由 handler 在单取时另外嵌入
 	AdminNodeDetail `json:"-"`
 }
@@ -244,7 +247,8 @@ func (s *Service) queryAdminNodes(ctx context.Context, tenantID string, q AdminN
 				       CASE WHEN $8::boolean THEN n.protocol_config END,
 				       CASE WHEN $8::boolean THEN n.protocol_schema_version END,
 				       CASE WHEN $8::boolean THEN n.config_validated_at END,
-				       coalesce(t.bytes,0)
+				       coalesce(t.bytes,0),
+				       `+nodeRuntimeViewColumns+`
 				  FROM page pg
 				  JOIN nodes n ON n.tenant_id = $1 AND n.id = pg.id
 				  LEFT JOIN node_pools p ON p.id = n.pool_id
@@ -258,6 +262,7 @@ func (s *Service) queryAdminNodes(ctx context.Context, tenantID string, q AdminN
 				          FROM node_metrics nm
 				         WHERE nm.tenant_id = s.tenant_id AND nm.node_id = s.control_node_id
 				         ORDER BY nm.recorded_at DESC LIMIT 1) m ON true
+				  `+nodeRuntimeViewJoins+`
 				 ORDER BY pg.sort_order, pg.node_no, pg.id`,
 				tenantID, q.IncludeRetired, q.State, q.Search, id, q.Limit, q.Offset, detail)
 			if err != nil {
@@ -269,7 +274,8 @@ func (s *Service) queryAdminNodes(ctx context.Context, tenantID string, q AdminN
 				var rate *float64
 				var kernel *string
 				var schemaVer *int
-				if err := rows.Scan(&x.ID, &x.RowVersion, &x.Name, &x.Status, &x.ServingStatus,
+				var rv nodeRuntimeViewScan
+				dest := []any{&x.ID, &x.RowVersion, &x.Name, &x.Status, &x.ServingStatus,
 					&x.ServerID, &x.ServerName, &x.PoolID, &x.PoolName, &x.AgentVer,
 					&x.Hostname, &x.PublicIP, &x.CPUCores, &x.MemoryMB, &x.DiskGB,
 					&x.HealthScore, &x.AppliedVer, &x.DesiredVer, &x.LastBeat,
@@ -280,9 +286,11 @@ func (s *Service) queryAdminNodes(ctx context.Context, tenantID string, q AdminN
 					&x.GrantedPlans, &x.TrafficBytes24h, &x.CPUPercent, &x.MemPercent, &x.MetricsAt,
 					&total,
 					&rate, &kernel, &x.Protocol, &schemaVer, &x.ConfigValidatedAt,
-					&x.TrafficBytes); err != nil {
+					&x.TrafficBytes}
+				if err := rows.Scan(append(dest, rv.dest()...)...); err != nil {
 					return err
 				}
+				x.NodeRuntimeView = rv.view()
 				if rate != nil {
 					x.TrafficRate = *rate
 				}
