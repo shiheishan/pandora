@@ -113,6 +113,9 @@ type Recorder struct {
 	// steadyFrom / steadyTo 非零时，落在 [from, to) 里的观测另记一份直方图：
 	// 全程分位数含起跑与收尾齐射，及格线要按稳态窗口判
 	steadyFrom, steadyTo time.Time
+	// perUnit / perUnits 非零时，报告另出「每单位每分钟」的请求数（见 PerUnit）
+	perUnit  string
+	perUnits int
 }
 
 func NewRecorder(scenario string, window time.Duration) *Recorder {
@@ -132,6 +135,14 @@ func NewRecorder(scenario string, window time.Duration) *Recorder {
 func (r *Recorder) SetSteady(from time.Time, d time.Duration) {
 	r.mu.Lock()
 	r.steadyFrom, r.steadyTo = from, from.Add(d)
+	r.mu.Unlock()
+}
+
+// SetPerUnit 让报告把请求数折成「每单位每分钟」，例如 nodes 场景按节点数折成
+// 每节点每分钟各端点几次，便于和单节点的估算表逐项核对。
+func (r *Recorder) SetPerUnit(unit string, n int) {
+	r.mu.Lock()
+	r.perUnit, r.perUnits = unit, n
 	r.mu.Unlock()
 }
 
@@ -218,8 +229,19 @@ type Report struct {
 	DurationS float64         `json:"duration_s"`
 	WindowS   float64         `json:"window_s"`
 	Meta      map[string]any  `json:"meta"`
+	PerUnit   *PerUnit        `json:"per_unit,omitempty"`
 	Endpoints []EndpointStats `json:"endpoints"`
 	Totals    EndpointStats   `json:"totals"`
+}
+
+// PerUnit 是「每单位每分钟」的折算口径（SetPerUnit 打开）。给了稳态窗口就只数窗口内
+// 的请求，分母取窗口与运行区间的交集；没给窗口（或窗口与运行区间不相交）就按整个
+// 运行区间折，含起跑错开与收尾，只作参考。
+type PerUnit struct {
+	Unit    string  `json:"unit"`
+	Units   int     `json:"units"`
+	Window  string  `json:"window"` // "steady" 或 "run"
+	Minutes float64 `json:"minutes"`
 }
 
 type EndpointStats struct {
@@ -235,7 +257,11 @@ type EndpointStats struct {
 	Flags    map[string]uint64 `json:"flags,omitempty"`
 	Server5x uint64            `json:"server_5xx"`
 	Steady   *SteadyStats      `json:"steady,omitempty"`
-	Timeline []Window          `json:"timeline,omitempty"`
+	// PerUnitPerMin 是按 Report.PerUnit 折出的每单位每分钟请求数，ByCode 按状态码再拆
+	// （例如生效配置的 200 与 204 分开）。
+	PerUnitPerMin       float64            `json:"per_unit_per_min,omitempty"`
+	PerUnitPerMinByCode map[string]float64 `json:"per_unit_per_min_by_code,omitempty"`
+	Timeline            []Window           `json:"timeline,omitempty"`
 }
 
 // SteadyStats 是稳态窗口内的同口径统计（窗口由 SetSteady 指定）。
@@ -274,6 +300,10 @@ func (r *Recorder) Snapshot() Report {
 	for k, v := range r.meta {
 		rep.Meta[k] = v
 	}
+	var useSteady bool
+	rep.PerUnit, useSteady = r.perUnitWindow(end)
+	var unitCount uint64
+	unitCodes := map[string]uint64{}
 	var all histogram
 	totals := EndpointStats{Endpoint: "TOTAL", Codes: map[string]uint64{}, Flags: map[string]uint64{}}
 	names := make([]string, 0, len(r.endpoints))
@@ -291,6 +321,20 @@ func (r *Recorder) Snapshot() Report {
 			st.Steady = &SteadyStats{From: r.steadyFrom, To: r.steadyTo, Count: ss.Count, QPS: ss.QPS,
 				P50MS: ss.P50MS, P95MS: ss.P95MS, P99MS: ss.P99MS, MaxMS: ss.MaxMS,
 				Codes: copyCounts(acc.steady.codes), Server5x: count5xx(acc.steady.codes)}
+		}
+		if rep.PerUnit != nil {
+			count, codes := acc.hist.total, acc.codes
+			if useSteady {
+				count, codes = 0, nil
+				if acc.steady != nil {
+					count, codes = acc.steady.hist.total, acc.steady.codes
+				}
+			}
+			st.PerUnitPerMin, st.PerUnitPerMinByCode = perUnitRates(count, codes, rep.PerUnit)
+			unitCount += count
+			for k, v := range codes {
+				unitCodes[k] += v
+			}
 		}
 		slots := make([]int64, 0, len(acc.window))
 		for s := range acc.window {
@@ -319,9 +363,54 @@ func (r *Recorder) Snapshot() Report {
 	}
 	t := statsOf("TOTAL", &all, elapsed)
 	t.Codes, t.Flags, t.Server5x = totals.Codes, totals.Flags, count5xx(totals.Codes)
+	if rep.PerUnit != nil {
+		t.PerUnitPerMin, t.PerUnitPerMinByCode = perUnitRates(unitCount, unitCodes, rep.PerUnit)
+	}
 	rep.Totals = t
 	return rep
 }
+
+// perUnitWindow 定「每单位每分钟」的分母，useSteady 表示只数稳态窗口内的请求。
+// 调用方持锁。
+func (r *Recorder) perUnitWindow(end time.Time) (pu *PerUnit, useSteady bool) {
+	if r.perUnits <= 0 {
+		return nil, false
+	}
+	if !r.steadyFrom.IsZero() {
+		from, to := r.steadyFrom, r.steadyTo
+		if from.Before(r.start) {
+			from = r.start
+		}
+		if to.After(end) {
+			to = end
+		}
+		if m := to.Sub(from).Minutes(); m > 0 {
+			return &PerUnit{Unit: r.perUnit, Units: r.perUnits, Window: "steady", Minutes: round3(m)}, true
+		}
+	}
+	if m := end.Sub(r.start).Minutes(); m > 0 {
+		return &PerUnit{Unit: r.perUnit, Units: r.perUnits, Window: "run", Minutes: round3(m)}, false
+	}
+	return nil, false
+}
+
+// perUnitRates 把一个端点的请求数（及按状态码的拆分）折成每单位每分钟。
+func perUnitRates(count uint64, codes map[string]uint64, pu *PerUnit) (float64, map[string]float64) {
+	per := float64(pu.Units) * pu.Minutes
+	if per <= 0 {
+		return 0, nil
+	}
+	var by map[string]float64
+	if len(codes) > 0 {
+		by = make(map[string]float64, len(codes))
+		for k, v := range codes {
+			by[k] = round3(float64(v) / per)
+		}
+	}
+	return round3(float64(count) / per), by
+}
+
+func round3(x float64) float64 { return math.Round(x*1000) / 1000 }
 
 func statsOf(name string, h *histogram, elapsed float64) EndpointStats {
 	st := EndpointStats{Endpoint: name, Count: h.total, MaxMS: h.maxUS / 1000}
@@ -406,6 +495,27 @@ func WriteSummary(w io.Writer, rep Report) {
 		fmt.Fprintf(w, "%-56s %9d %8.2f %8.1f %8.1f %8.1f %8.1f  %s\n",
 			st.Endpoint, s.Count, s.QPS, s.P50MS, s.P95MS, s.P99MS, s.MaxMS, oddCodes(s.Codes, nil))
 	}
+	if pu := rep.PerUnit; pu != nil {
+		fmt.Fprintf(w, "\nper %s per minute (%s window, %.2f min, %d %ss)\n", pu.Unit, pu.Window, pu.Minutes, pu.Units, pu.Unit)
+		fmt.Fprintf(w, "%-56s %9s  %s\n", "endpoint", "req/min", "by status")
+		for _, st := range append(rep.Endpoints, rep.Totals) {
+			fmt.Fprintf(w, "%-56s %9.2f  %s\n", st.Endpoint, st.PerUnitPerMin, rateCodes(st.PerUnitPerMinByCode))
+		}
+	}
+}
+
+// rateCodes 把按状态码拆开的速率排成一列，例如 "200=0.03 204=3.97"。
+func rateCodes(by map[string]float64) string {
+	keys := make([]string, 0, len(by))
+	for k := range by {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	s := ""
+	for _, k := range keys {
+		s += fmt.Sprintf("%s=%.2f ", k, by[k])
+	}
+	return s
 }
 
 func oddCodes(codes, flags map[string]uint64) string {
