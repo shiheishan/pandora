@@ -55,11 +55,19 @@ func run() error {
 	}
 
 	log := logging.New(cfg.Env, "aegis-admin")
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	// ctx 是启动阶段与后台循环的生命周期。开服前收到信号立即取消（中止启动）；
+	// 开服后改由停机顺序决定：RunContext 先停接新请求、等在途请求跑完，
+	// 返回之后才 stop()，后台循环这时才退出。
+	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
+	stopOnEarlySignal := context.AfterFunc(sigCtx, stop)
 	closeResourcesOnReturn := true
 
-	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{MaxConns: cfg.DBMaxConns[config.DomainAdmin]})
+	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{
+		MaxConns: cfg.DBMaxConns[config.DomainAdmin], MinConns: cfg.DBMinConns[config.DomainAdmin], StatsLog: log,
+	})
 	if err != nil {
 		return err
 	}
@@ -190,14 +198,20 @@ func run() error {
 	// 放在 admin 网关而不是单独的 worker 进程：面向低配单机部署，
 	// 多一个常驻进程的代价大于收益；而 EscalateOverdue 本身是幂等的，
 	// 将来拆成独立 worker 或换成 cron 也不需要改动业务代码。
+	//
+	// 五个循环都经 newLoopPacer 定节拍：首轮随机延迟、之后每轮 ±10% 抖动（pacer.go）。
 	var workers sync.WaitGroup
 	workers.Add(5)
 	go func() {
 		defer workers.Done()
-		t := time.NewTicker(5 * time.Minute)
-		defer t.Stop()
+		pace := newLoopPacer(5 * time.Minute)
+		defer pace.Stop()
 		for {
-			// 启动后先跑一次，不必等第一个 tick
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
 			sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			n, err := supportSvc.EscalateOverdue(sctx, middleware.DefaultTenantID)
 			cancel()
@@ -206,11 +220,6 @@ func run() error {
 				log.Error("工单 SLA 扫描失败", "error", err.Error())
 			case n > 0:
 				log.Warn("工单因首次响应超时被自动升级", "count", n)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
 			}
 		}
 	}()
@@ -221,9 +230,14 @@ func run() error {
 	// 周二早上的维护通知，实际上它一直没发出去。
 	go func() {
 		defer workers.Done()
-		t := time.NewTicker(time.Minute)
-		defer t.Stop()
+		pace := newLoopPacer(time.Minute)
+		defer pace.Stop()
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
 			sctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			n, err := notifySvc.PublishDueAnnouncements(sctx, middleware.DefaultTenantID)
 			cancel()
@@ -232,11 +246,6 @@ func run() error {
 				log.Error("定时公告发布失败", "error", err.Error())
 			case n > 0:
 				log.Info("定时公告已发布", "count", n)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
 			}
 		}
 	}()
@@ -247,9 +256,14 @@ func run() error {
 	// 会在月初到点后最长等一小时才恢复 —— 那一小时里用户是断网的。
 	go func() {
 		defer workers.Done()
-		t := time.NewTicker(10 * time.Minute)
-		defer t.Stop()
+		pace := newLoopPacer(10 * time.Minute)
+		defer pace.Stop()
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
 			sctx, cancel := context.WithTimeout(ctx, time.Minute)
 			n, err := billingSvc.RollQuotaPeriods(sctx, middleware.DefaultTenantID)
 			cancel()
@@ -260,11 +274,6 @@ func run() error {
 				log.Info("配额已滚入新周期", "count", n)
 			}
 			nodeSvc.EnsureLivenessPatrol(ctx, middleware.DefaultTenantID, log) // 节点在线巡检（30 秒一轮，只起一次）
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-			}
 		}
 	}()
 
@@ -274,9 +283,14 @@ func run() error {
 	// 跑得太勤只是让一个纯写事务反复抢锁，对谁都没好处。
 	go func() {
 		defer workers.Done()
-		t := time.NewTicker(time.Hour)
-		defer t.Stop()
+		pace := newLoopPacer(time.Hour)
+		defer pace.Stop()
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
 			sctx, cancel := context.WithTimeout(ctx, time.Minute)
 			n, err := billingSvc.SettleMatured(sctx, middleware.DefaultTenantID)
 			cancel()
@@ -285,11 +299,6 @@ func run() error {
 				log.Error("佣金解冻失败", "error", err.Error())
 			case n > 0:
 				log.Info("佣金已解冻", "count", n)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
 			}
 		}
 	}()
@@ -304,9 +313,14 @@ func run() error {
 	// （它们的保留方案待定，读路径已不依赖它们的大小）。
 	go func() {
 		defer workers.Done()
-		t := time.NewTicker(10 * time.Minute)
-		defer t.Stop()
+		pace := newLoopPacer(10 * time.Minute)
+		defer pace.Stop()
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
 			sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			alive, aliveErr := nodeSvc.PurgeStaleAlive(sctx, middleware.DefaultTenantID)
 			metrics, metricsErr := nodeSvc.PurgeMetrics(sctx, middleware.DefaultTenantID, nodefabric.MetricsRetentionHours)
@@ -324,11 +338,6 @@ func run() error {
 			if alive > 0 || metrics > 0 || rollups > 0 {
 				log.Info("保留期清理完成", "alive_ips", alive, "node_metrics", metrics, "traffic_rollups", rollups)
 			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-			}
 		}
 	}()
 
@@ -340,7 +349,8 @@ func run() error {
 	}
 	defer pprofSrv.Close()
 
-	serverErr := server.RunContext(ctx, server.Options{
+	stopOnEarlySignal()
+	serverErr := server.RunContext(sigCtx, server.Options{
 		Addr:            cfg.AdminAddr,
 		Handler:         handler,
 		Log:             log,

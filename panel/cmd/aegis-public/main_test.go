@@ -44,9 +44,16 @@ func TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup(t *testing.T) {
 	}
 
 	source := pkg.Decl("run")
-	runServer := strings.Index(source, "serverErr := server.RunContext(ctx")
+	runServer := strings.Index(source, "serverErr := server.RunContext(sigCtx")
 	if runServer < 0 {
 		t.Fatal("public process must run the server with the signal context")
+	}
+	// 优雅关停：开服前解除「信号即取消后台」，HTTP 停完（在途请求跑完）才取消后台循环
+	if !strings.Contains(source, "stopOnEarlySignal := context.AfterFunc(sigCtx, stop)") {
+		t.Fatal("public process must cancel startup on an early signal")
+	}
+	if early := strings.Index(source, "stopOnEarlySignal()"); early < 0 || early > runServer {
+		t.Fatal("public process must hand worker cancellation to the shutdown order before serving")
 	}
 	afterServer := source[runServer:]
 	stop := strings.Index(afterServer, "stop()")

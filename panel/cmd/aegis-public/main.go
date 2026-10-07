@@ -52,11 +52,19 @@ func run() error {
 	}
 
 	log := logging.New(cfg.Env, "aegis-public")
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	// ctx 是启动阶段与后台循环（LISTEN、扫描、派发、巡检）的生命周期。开服前收到
+	// 信号立即取消（中止启动）；开服后改由停机顺序决定：RunContext 先停接
+	// 新请求、等在途请求（下单、支付回调）跑完，返回之后才 stop()。
+	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
+	stopOnEarlySignal := context.AfterFunc(sigCtx, stop)
 
 	// 连接池上限按网关取（config.DefaultDBMaxConns 的算式），含常驻 LISTEN 那一条
-	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{MaxConns: cfg.DBMaxConns[config.DomainPublic]})
+	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{
+		MaxConns: cfg.DBMaxConns[config.DomainPublic], MinConns: cfg.DBMinConns[config.DomainPublic], StatsLog: log,
+	})
 	if err != nil {
 		return err
 	}
@@ -189,7 +197,8 @@ func run() error {
 	}
 	defer pprofSrv.Close()
 
-	serverErr := server.RunContext(ctx, server.Options{
+	stopOnEarlySignal()
+	serverErr := server.RunContext(sigCtx, server.Options{
 		Addr:            cfg.PublicAddr,
 		Handler:         handler,
 		Log:             log,
