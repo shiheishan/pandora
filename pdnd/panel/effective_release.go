@@ -64,7 +64,7 @@ func effectiveReleasePreimage(cfg *SignedConfig) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
-func (c *SignedClient) verifyEffectiveConfig(cfg *SignedConfig) error {
+func (c *SignedClient) verifyEffectiveConfig(cfg *SignedConfig, checkWindow bool) error {
 	if c.identity.ConfigKeyID == "" || cfg.KeyID != c.identity.ConfigKeyID {
 		return errors.New("config key id mismatch")
 	}
@@ -95,6 +95,9 @@ func (c *SignedClient) verifyEffectiveConfig(cfg *SignedConfig) error {
 	if err != nil || len(sig) != ed25519.SignatureSize || base64.StdEncoding.EncodeToString(sig) != cfg.Signature ||
 		!ed25519.Verify(ed25519.PublicKey(pub), preimage, sig) {
 		return errors.New("effective config signature invalid")
+	}
+	if !checkWindow {
+		return nil
 	}
 	now := time.Now().UTC()
 	if now.Before(cfg.IssuedAt.UTC()) {

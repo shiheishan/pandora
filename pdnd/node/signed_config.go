@@ -48,6 +48,9 @@ func signedConfigKeyOf(cfg *panel.SignedConfig) signedConfigKey {
 // 只占一个槽：面板发了新版本就覆盖，任何版本装上就清掉。
 type signedApplyFailure struct {
 	key signedConfigKey
+	// attempts / nextRetry 是旧配置仍在服务时的退避重试节拍（applyRetryDelay）。
+	attempts  int
+	nextRetry time.Time
 	// detail 是首次失败的原因，补报时原样重发：生效回执按 report_id 去重，
 	// 同一 report_id 带不同 detail 会被面板当成冲突的证据拒收。
 	detail string
@@ -58,13 +61,14 @@ type signedApplyFailure struct {
 // syncSignedConfig 是签名通道的一轮配置同步。
 //
 // 同一个装不上的版本分两种处境：
-//   - 旧配置仍在服务（整版回滚成功，或内核 PreviousPreserved）：不再试装。
-//     整版回滚的内核每试一次就是两次入站重建，全部在线连接断两次；代际内核
-//     也是白做一轮预检。返回 nil，让 syncOnce 照常同步用户——坏版本挂着期间
-//     用户变更不能跟着停。
+//   - 旧配置仍在服务（整版回滚成功，或内核 PreviousPreserved）：按退避重试
+//     （1、2、4 分钟，封顶 5 分钟，applyRetryDelay），没到点就不试。整版回滚的
+//     内核每试一次就是两次入站重建，全部在线连接断两次，不能每轮都试；但也不能
+//     永不重试——端口一度被占、随后释放这类故障（审计 E2）要能自己恢复。没到点
+//     时返回 nil；用户同步不受配置成败影响（syncOnceErr）。
 //   - 节点已停（首个配置就没装上、回滚也失败、或进程刚重启）：每轮都重试。
 //     没有旧配置可保，重试没有代价；端口暂被占用这类故障一消失就该恢复。
-//     节拍就是拉取间隔，不另加退避，与兼容通道作废配置 ETag 的语义一致。
+//     节拍就是拉取间隔，与兼容通道作废配置 ETag 的语义一致。
 //
 // 失败对每个版本只报一次（送不到就随后的拉取补报，面板明确拒收就作罢）；
 // 面板另从心跳的 applied_effective_* 看出节点仍停在旧版本。
@@ -88,18 +92,25 @@ func (n *Node) syncSignedConfig(ctx context.Context) error {
 	}
 	key := signedConfigKeyOf(cfg)
 	if failed := n.failedSigned; n.started && failed != nil && failed.key == key {
-		n.reportSignedFailure(ctx, cfg)
-		return nil
+		if n.clock().Before(failed.nextRetry) {
+			n.reportSignedFailure(ctx, cfg)
+			return nil
+		}
+		n.log.Info("重试之前装不上的配置", "release_id", cfg.ReleaseID, "generation", cfg.Generation,
+			"第几次", failed.attempts+1)
 	}
 	if err := n.applySignedConfig(cfg); err != nil {
 		if n.failedSigned == nil || n.failedSigned.key != key {
 			n.failedSigned = &signedApplyFailure{key: key, detail: err.Error()}
 		}
+		n.failedSigned.attempts++
+		n.failedSigned.nextRetry = n.clock().Add(applyRetryDelay(n.failedSigned.attempts))
 		n.reportSignedFailure(ctx, cfg)
 		return err
 	}
 	n.failedSigned = nil
 	n.recordAppliedSignedConfig(cfg)
+	n.saveSignedConfigCache(cfg)
 	err = n.reportSignedConfigPhase(ctx, cfg, "switched", "")
 	n.switchedSettled = reportSettled(err)
 	if err != nil {
@@ -164,6 +175,9 @@ func (n *Node) settleAppliedReports(ctx context.Context) error {
 // applySignedConfig 解出已验签的 payload 交给 applyConfig。解析失败与应用失败
 // 一样是这一版本身的问题，同一内容再解一次结果不会变。
 func (n *Node) applySignedConfig(cfg *panel.SignedConfig) error {
+	if cfg.TenantID != "" {
+		n.tenantID = cfg.TenantID
+	}
 	var raw map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(cfg.Payload))
 	decoder.UseNumber()

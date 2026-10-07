@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
@@ -73,9 +75,25 @@ type wireConfig struct {
 	ETag string `json:"etag"`
 }
 
+// streamHealthyAfter 是一条连接「健康」所需的最短存活时间：面板每 20 秒发一次
+// 心跳，活过两个心跳才算。原先读到一行就算健康，而面板每次连上都先推一行全量
+// 用户——反代读超时小于 20 秒、面板崩溃循环、hub 溢出踢连接时，节点每次都
+// 「健康地」断开、退避永远复位到 1 秒，实测每节点每分钟重连约 48 次。
+const streamHealthyAfter = 40 * time.Second
+
+// streamIdleTimeout 是读空闲上限：每读到一行续一次。面板活着但不说话（假死、
+// 中间设备半开）时，没有它连接会永远挂着，推送加速静默失效。
+const streamIdleTimeout = 60 * time.Second
+
+// ErrStreamUnsupported 表示面板不提供事件流（第三方面板回 404），Stream 已停止，
+// 节点只走轮询。
+var ErrStreamUnsupported = errors.New("面板不支持事件流（HTTP 404），改为只走轮询")
+
 // Stream 连上面板的事件流，把收到的事件送进 out，直到 ctx 结束。
 //
-// 自己负责重连，不返回错误——调用方起一个 goroutine 跑它就行。
+// 自己负责重连，不返回错误——调用方起一个 goroutine 跑它就行。唯一的例外是
+// 面板回 404：对接 Xboard 这类不支持事件流的面板时再连也是 404，onError 收到
+// ErrStreamUnsupported 后就此停止，轮询照旧。
 func (c *Client) Stream(ctx context.Context, out chan<- StreamEvent, onError func(error)) {
 	// 退避从 1 秒起，翻倍到 30 秒封顶。加随机抖动：面板重启时几十个节点
 	// 会同时断线，不抖的话它们会踩着同一个节拍一起重连，把刚起来的面板
@@ -83,7 +101,7 @@ func (c *Client) Stream(ctx context.Context, out chan<- StreamEvent, onError fun
 	//
 	// 一次健康的连接之后退避回到 1 秒。不复位的话面板重启过几次就封顶在
 	// 30 秒，此后哪怕连接已经稳定挂了几天，下次断线也要等 30～45 秒才
-	// 重连。「健康」的口径见 streamOnce：回了 200 还不够，必须真读到过一帧。
+	// 重连。「健康」的口径见 streamOnce：读到过帧、并且活过 streamHealthyAfter。
 	const minBackoff, maxBackoff = time.Second, 30 * time.Second
 	backoff := minBackoff
 
@@ -93,6 +111,13 @@ func (c *Client) Stream(ctx context.Context, out chan<- StreamEvent, onError fun
 		}
 		healthy, err := c.streamOnce(ctx, out)
 		if ctx.Err() != nil {
+			return
+		}
+		var status *StatusError
+		if errors.As(err, &status) && status.Code == http.StatusNotFound {
+			if onError != nil {
+				onError(ErrStreamUnsupported)
+			}
 			return
 		}
 		if err != nil && onError != nil {
@@ -126,14 +151,38 @@ func (c *Client) waitReconnect(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+func (c *Client) streamClock() time.Time {
+	if c.streamNow != nil {
+		return c.streamNow()
+	}
+	return time.Now()
+}
+
 // streamOnce 建一次连接，读到断开为止。
 //
-// healthy 表示这条连接回了 200 并且至少完整读到过一行（事件或心跳注释）。
-// 心跳也算：空闲的面板只发心跳，那同样是一条正常工作的流。只回 200 不算：
-// 反代或刚起来又崩掉的面板会「接了就断」，把它算成健康会让退避永远停在
-// 最低档，每秒一次地敲同一扇门。
+// healthy 表示这条连接至少完整读到过一行（事件或心跳注释），并且从发起到断开
+// 活过了 streamHealthyAfter。心跳也算一行：空闲的面板只发心跳，那同样是一条
+// 正常工作的流。只回 200 不算，读到一行就断也不算：「接了就断」「回一行就断」
+// 的上游会让退避永远停在最低档，每秒一次地敲同一扇门。
 func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) (healthy bool, err error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "stream", nil)
+	started := c.streamClock()
+	var gotLine bool
+	defer func() {
+		healthy = gotLine && c.streamClock().Sub(started) >= streamHealthyAfter
+	}()
+
+	// 读期限：响应头与之后每一行都要在 idle 之内到达，否则掐断这条连接。
+	// 用取消 context 实现，读阻塞在 Body.Read 上也能被打断。
+	idle := c.streamIdle
+	if idle <= 0 {
+		idle = streamIdleTimeout
+	}
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	idleTimer := time.AfterFunc(idle, cancel)
+	defer idleTimer.Stop()
+
+	req, err := c.newRequest(streamCtx, http.MethodGet, "stream", nil)
 	if err != nil {
 		return false, err
 	}
@@ -144,7 +193,7 @@ func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) (health
 	client := &http.Client{Transport: c.http.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, err
+		return false, idleError(ctx, streamCtx, idle, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -156,11 +205,12 @@ func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) (health
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				return healthy, nil // 面板正常关闭了流
+				return false, nil // 面板正常关闭了流
 			}
-			return healthy, err
+			return false, idleError(ctx, streamCtx, idle, err)
 		}
-		healthy = true
+		gotLine = true
+		idleTimer.Reset(idle)
 		line = strings.TrimRight(line, "\r\n")
 		// 空行是事件分隔，冒号开头是注释（心跳），都跳过
 		if line == "" || strings.HasPrefix(line, ":") {
@@ -177,9 +227,17 @@ func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) (health
 		select {
 		case out <- event:
 		case <-ctx.Done():
-			return healthy, nil
+			return false, nil
 		}
 	}
+}
+
+// idleError 把「读期限到点、连接被掐」与其它读错误区分开，日志里看得出是面板不说话。
+func idleError(parent, stream context.Context, idle time.Duration, err error) error {
+	if parent.Err() == nil && stream.Err() != nil {
+		return fmt.Errorf("事件流 %s 内没有任何数据，已断开重连: %w", idle, err)
+	}
+	return err
 }
 
 // parseStreamEvent 把一条 data 行解析成事件。

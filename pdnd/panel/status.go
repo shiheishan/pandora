@@ -32,6 +32,11 @@ type RuntimeStatus struct {
 	Mem  ResourcePair `json:"mem"`
 	Swap ResourcePair `json:"swap"`
 	Disk ResourcePair `json:"disk"`
+	// Status / Reason 与签名心跳的 runtime_status 同义：入站没起来或新配置装
+	// 不上时为 degraded 并带原因。面板与 Xboard 解码 /status 都不拒未知字段，
+	// 不认这两个字段的面板照旧只看资源指标。
+	Status string `json:"runtime_status,omitempty"`
+	Reason string `json:"runtime_status_reason,omitempty"`
 }
 
 // Status 上报一次运行状态。

@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aegispanel/nodeagent/core"
 	nativekernel "github.com/aegispanel/nodeagent/kernel"
 	"github.com/aegispanel/nodeagent/node"
 	"github.com/aegispanel/nodeagent/panel"
@@ -35,7 +36,11 @@ type config struct {
 	// NativeCore-only default) and an explicit false migration override in a
 	// separately built compat binary.
 	NativeOnly *bool `json:"native_only"`
-	Panel      struct {
+	// CacheDir 是状态目录：落盘缓存（最后一份装上的配置与用户名单）与迁出只读
+	// 目录的身份文件都放在 <cache_dir>/panel-<面板哈希>/<节点 ID>/ 下。缺省
+	// /var/lib/pandora-native，与 systemd 单元的 StateDirectory 一致。
+	CacheDir string `json:"cache_dir"`
+	Panel    struct {
 		URL string `json:"url"`
 		// IdentityPath is the Ed25519 node identity created by bootstrap.
 		// Keep it configurable so packaged installations and custom layouts
@@ -357,8 +362,11 @@ func main() {
 	defer kernel.Close()
 	log.Info("内核已启动", "kernel", kernel.Type(), "version", buildVersion, "节点数", len(cfg.Nodes))
 
-	var wg sync.WaitGroup
-	for _, nc := range cfg.Nodes {
+	stateDir := cfg.stateDir()
+	// 冷启动按 nodes[] 顺序首装入站：同机端口先到先得，赢家不随 goroutine 竞速变。
+	order := node.NewStartupOrder(len(cfg.Nodes))
+	var nodes []runningNode
+	for index, nc := range cfg.Nodes {
 		client := panel.New(panel.Options{
 			BaseURL:  cfg.Panel.URL,
 			NodeID:   nc.NodeID,
@@ -368,6 +376,14 @@ func main() {
 		})
 		var signed *panel.SignedClient
 		identityPath := cfg.identityPath(nc.IdentityPath)
+		// 身份文件所在目录对服务不可写（安装脚本放在 /etc 下）时迁到状态目录，
+		// 否则面板轮换配置签名密钥时新公钥写不回去，节点从此验签失败。
+		if resolved, resolveErr := panel.ResolveIdentityPath(identityPath, stateDir, cfg.Panel.URL, nc.NodeID); resolveErr != nil {
+			log.Warn("身份文件不能迁到状态目录，配置签名密钥轮换将无法持久化", "node", nc.NodeID, "identity", identityPath, "err", resolveErr)
+		} else if resolved != identityPath {
+			log.Info("身份文件所在目录不可写，改用状态目录里的副本（原文件保留作回退）", "node", nc.NodeID, "from", identityPath, "to", resolved)
+			identityPath = resolved
+		}
 		identity, identityErr := panel.LoadIdentity(identityPath)
 		if identityErr == nil && identity.NodeID != nc.NodeID {
 			identityErr = fmt.Errorf("identity node %s does not match configured node %s", identity.NodeID, nc.NodeID)
@@ -383,25 +399,91 @@ func main() {
 			log.Warn("签名客户端不可用，使用兼容通道", "node", nc.NodeID, "identity", identityPath, "err", identityErr)
 		}
 		n := node.NewWithSignedClient(client, kernel, log, signed)
-		wg.Add(1)
+		n.SetCacheDir(stateDir)
+		n.SetStartupOrder(order, index)
+		running := runningNode{n: n, done: make(chan struct{})}
+		nodes = append(nodes, running)
 		go func() {
-			defer wg.Done()
+			defer close(running.done)
 			n.Run(ctx)
 		}()
 	}
 
 	<-ctx.Done()
 	log.Info("收到退出信号，正在收尾")
+	shutdown(log, kernel, nodes)
+}
 
-	// 等各节点上报完最后一轮流量再退出。给足时限但不无限等 ——
-	// 面板不可达时死等会让 systemd 最终强杀，反而更糟。
+// runningNode 是一个在跑的节点与它主循环结束的信号。
+type runningNode struct {
+	n    *node.Node
+	done chan struct{}
+}
+
+// trafficDrainer 是内核「先关停、再交出最后一轮流量」的可选契约（NativeCore 实现）。
+type trafficDrainer interface {
+	CloseAndDrainTraffic() (map[string][]core.UserTraffic, error)
+}
+
+// shutdown 是退出顺序：等各节点主循环停下 → 关内核（在途 TCP 连接此时把流量
+// 入账）→ 各节点把最后一轮流量与积压的待报流量交给面板。
+//
+// 原先是各节点先报、main 的 defer 再关内核，在途连接的流量每次重启都丢。给足
+// 时限但不无限等：面板不可达时死等会让 systemd 最终强杀（TimeoutStopSec=20s）。
+func shutdown(log *slog.Logger, kernel core.Core, nodes []runningNode) {
+	stopped := make([]bool, len(nodes))
+	loopDeadline := time.After(5 * time.Second)
+	for i, item := range nodes {
+		select {
+		case <-item.done:
+			stopped[i] = true
+		case <-loopDeadline:
+		}
+	}
+
+	drained := map[string][]core.UserTraffic{}
+	haveDrained := false
+	if d, ok := kernel.(trafficDrainer); ok {
+		var err error
+		if drained, err = d.CloseAndDrainTraffic(); err != nil {
+			log.Warn("关停内核时有入站没关干净", "err", err)
+		}
+		haveDrained = true
+	}
+
+	finalCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	for i, item := range nodes {
+		n := item.n
+		if !stopped[i] {
+			// 主循环还没停（卡在某个内核调用里），不能和它并发动节点状态。
+			log.Warn("节点主循环未在时限内停下，跳过最后一次上报", "node", n.Tag())
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			n.Shutdown(finalCtx, drained[n.Tag()], haveDrained)
+		}()
+	}
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-finalCtx.Done():
 		log.Warn("收尾超时，强制退出")
 	}
+	if !haveDrained {
+		_ = kernel.Close()
+	}
+}
+
+func (c *config) stateDir() string {
+	if c == nil || strings.TrimSpace(c.CacheDir) == "" {
+		return node.DefaultCacheDir
+	}
+	return c.CacheDir
 }
 
 func (c *config) nativeOnly() bool {
