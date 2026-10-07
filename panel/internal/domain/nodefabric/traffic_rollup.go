@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/aegispanel/aegis/internal/platform/db"
 )
 
 // trafficRollupSQL 把刚写入的一行上报累加进两张小时汇总表（迁移 00099）。
@@ -89,4 +91,56 @@ ON CONFLICT (tenant_id, hour_start, node_id, node_uid) DO UPDATE SET
 func rollupTrafficReport(ctx context.Context, tx pgx.Tx, tenantID, reportID string) error {
 	_, err := tx.Exec(ctx, trafficRollupSQL, tenantID, reportID)
 	return err
+}
+
+// TrafficRollupRetentionDays 是小时汇总的保留期：读得最远的是看板（snapshot_at 不早于
+// 31 天前、区间最长 30 天，即 61 天前），节点列表 30 天；留 70 天给余量。更早的桶
+// 没有任何读路径会读到，汇总也能从上报留档重算。
+const TrafficRollupRetentionDays = 70
+
+// rollupPurgeBatch 是每个短事务最多删的行数，rollupPurgeMaxBatches 是一次调用每张表最多
+// 跑几批；积压由下一轮继续清。
+const (
+	rollupPurgeBatch      = 5000
+	rollupPurgeMaxBatches = 200
+)
+
+// PurgeTrafficRollups 删除超出保留期的小时汇总（先节点×uid 表，再节点表）。由 aegis-admin 的
+// 保留期任务定时调用，幂等；分批删，每批一个短事务。
+func (s *Service) PurgeTrafficRollups(ctx context.Context, tenantID string) (int64, error) {
+	var total int64
+	for _, sql := range []string{`
+		DELETE FROM node_user_traffic_hourly t
+		 USING (SELECT tenant_id, hour_start, node_id, node_uid
+		          FROM node_user_traffic_hourly
+		         WHERE tenant_id = $1 AND hour_start < now() - make_interval(days => $2)
+		         ORDER BY hour_start
+		         LIMIT $3) d
+		 WHERE t.tenant_id = d.tenant_id AND t.hour_start = d.hour_start
+		   AND t.node_id = d.node_id AND t.node_uid = d.node_uid`, `
+		DELETE FROM node_traffic_hourly t
+		 USING (SELECT tenant_id, hour_start, node_id
+		          FROM node_traffic_hourly
+		         WHERE tenant_id = $1 AND hour_start < now() - make_interval(days => $2)
+		         ORDER BY hour_start
+		         LIMIT $3) d
+		 WHERE t.tenant_id = d.tenant_id AND t.hour_start = d.hour_start AND t.node_id = d.node_id`,
+	} {
+		for range rollupPurgeMaxBatches {
+			var n int64
+			err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+				ct, err := tx.Exec(ctx, sql, tenantID, TrafficRollupRetentionDays, rollupPurgeBatch)
+				n = ct.RowsAffected()
+				return err
+			})
+			total += n
+			if err != nil {
+				return total, err
+			}
+			if n < rollupPurgeBatch {
+				break
+			}
+		}
+	}
+	return total, nil
 }

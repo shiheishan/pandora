@@ -117,12 +117,13 @@ func TestAdminNotifyUsesRecipientSalt(t *testing.T) {
 	}
 }
 
-// 保留期清理（w1admin）：在线记录与探针点两张高频表必须有定时清理接在 admin 网关的工作循环里
+// 保留期清理（w1admin）：在线记录、探针点与流量小时汇总必须有定时清理接在 admin 网关的工作循环里
 func TestAdminWiresRetentionPurge(t *testing.T) {
 	run := sourcetest.Load(t, ".").Decl("run")
 	for _, want := range []string{
 		"nodeSvc.PurgeStaleAlive(sctx, middleware.DefaultTenantID)",
 		"nodeSvc.PurgeMetrics(sctx, middleware.DefaultTenantID, nodefabric.MetricsRetentionHours)",
+		"nodeSvc.PurgeTrafficRollups(sctx, middleware.DefaultTenantID)",
 	} {
 		if !strings.Contains(run, want) {
 			t.Fatalf("admin gateway retention worker missing %q", want)

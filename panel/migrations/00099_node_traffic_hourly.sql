@@ -36,6 +36,8 @@
 -- 回填与入库不会交错。
 --
 -- 两张表是派生读数，不是证据：证据仍是 node_traffic_reports，汇总丢了可以从它重算。
+-- 保留 70 天（nodefabric.TrafficRollupRetentionDays，比读路径最远的 61 天多留余量），
+-- 由保留期任务分批删除；要更长的趋势另做按日汇总，不要靠延长这里的保留期。
 -- 不挂 zz_notify 触发器：写入频率就是上报频率（同 00072 的理由）。
 
 -- +goose Up
@@ -150,9 +152,10 @@ CREATE TABLE node_user_traffic_hourly (
 SELECT app.enable_tenant_rls('node_traffic_hourly');
 SELECT app.enable_tenant_rls('node_user_traffic_hourly');
 
--- 应用只累加、只读：不删行、不清表
-GRANT SELECT, INSERT, UPDATE ON node_traffic_hourly, node_user_traffic_hourly TO aegis_app;
-REVOKE DELETE, TRUNCATE ON node_traffic_hourly, node_user_traffic_hourly FROM aegis_app;
+-- 应用累加、读，并由 aegis-admin 的保留期任务按批删 70 天以前的桶（读路径最远 61 天）；
+-- 不清表
+GRANT SELECT, INSERT, UPDATE, DELETE ON node_traffic_hourly, node_user_traffic_hourly TO aegis_app;
+REVOKE TRUNCATE ON node_traffic_hourly, node_user_traffic_hourly FROM aegis_app;
 
 COMMENT ON TABLE node_traffic_hourly IS
   '节点流量按小时汇总（节点级）。入库时与上报同事务累加，看板与节点列表只读它。派生读数，证据在 node_traffic_reports。';

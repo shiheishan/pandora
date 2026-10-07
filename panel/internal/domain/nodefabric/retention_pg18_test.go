@@ -14,7 +14,8 @@ import (
 //   - PurgeMetrics 经 app.purge_node_metrics 删本租户 48 小时以前的探针点，近期的点与
 //     别的租户的点不动；保留期传小了按 48 小时算，函数本身拒收小于 48 的保留期；
 //   - 追加写保护不变：运行角色直接 DELETE node_metrics 仍被拒绝；
-//   - PurgeStaleAlive 删 70 分钟以前的在线记录，窗口内的与别的租户的不动。
+//   - PurgeStaleAlive 删 70 分钟以前的在线记录，窗口内的与别的租户的不动；
+//   - PurgeTrafficRollups 删 70 天以前的小时汇总，近期的与别的租户的不动。
 //
 // 挂在 TestTrafficChargePG18 里跑：traffic_charge 是 nodefabric 唯一套了 configure-app-role
 // （运行角色收窄、node_metrics 的 DELETE 已收回）的 PG18 库。
@@ -98,6 +99,34 @@ func retentionScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app *
 	}
 	if aliveA != 1 || aliveB != 1 {
 		t.Fatalf("node_alive_ips left tenantA=%d tenantB=%d, want the in-window row and the other tenant untouched", aliveA, aliveB)
+	}
+
+	// 流量小时汇总：本租户 70 天以前的桶（两张表各一行）删掉，近期的与别的租户的不动
+	must(`INSERT INTO node_traffic_hourly (tenant_id, hour_start, node_id, report_count)
+		VALUES ($1, date_trunc('hour', now() - interval '71 days', 'UTC'), $2, 1),
+		       ($1, date_trunc('hour', now() - interval '1 day', 'UTC'), $2, 1),
+		       ($3, date_trunc('hour', now() - interval '90 days', 'UTC'), $4, 1)`, tenantA, nodeA, tenantB, nodeB)
+	must(`INSERT INTO node_user_traffic_hourly (tenant_id, hour_start, node_id, node_uid,
+			upload_bytes, download_bytes, entry_count, last_report_at)
+		VALUES ($1, date_trunc('hour', now() - interval '71 days', 'UTC'), $2, 7530001, 1, 1, 1, now() - interval '71 days'),
+		       ($1, date_trunc('hour', now() - interval '1 day', 'UTC'), $2, 7530001, 1, 1, 1, now() - interval '1 day'),
+		       ($3, date_trunc('hour', now() - interval '90 days', 'UTC'), $4, 7530002, 1, 1, 1, now() - interval '90 days')`,
+		tenantA, nodeA, tenantB, nodeB)
+	if n, err := svc.PurgeTrafficRollups(ctx, tenantA); err != nil || n != 2 {
+		t.Fatalf("PurgeTrafficRollups deleted=%d err=%v, want one old bucket from each rollup table", n, err)
+	}
+	var hoursA, hoursB, usersA, usersB int
+	if err := admin.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM node_traffic_hourly WHERE tenant_id = $1),
+		       (SELECT count(*) FROM node_traffic_hourly WHERE tenant_id = $2),
+		       (SELECT count(*) FROM node_user_traffic_hourly WHERE tenant_id = $1),
+		       (SELECT count(*) FROM node_user_traffic_hourly WHERE tenant_id = $2)`,
+		tenantA, tenantB).Scan(&hoursA, &hoursB, &usersA, &usersB); err != nil {
+		t.Fatal(err)
+	}
+	if hoursA != 1 || hoursB != 1 || usersA != 1 || usersB != 1 {
+		t.Fatalf("rollups left node %d/%d uid %d/%d, want the recent buckets and the other tenant untouched",
+			hoursA, hoursB, usersA, usersB)
 	}
 	t.Log("marker=retention_pg18_metrics_and_alive_purged_ok")
 }
