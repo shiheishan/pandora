@@ -547,7 +547,8 @@ func closeNativeInbound(in *nativeInbound) error {
 	}
 	in.retired = true
 	var first error
-	if err := in.adapter.Close(); err != nil {
+	// 限时：转发挂住的连接不能让换配置、停机卡死在旧适配器的 WaitGroup 上。
+	if err := closeAdapterBounded(in.adapter); err != nil {
 		first = err
 	}
 	if err := in.runtime.Close(); err != nil && first == nil {
