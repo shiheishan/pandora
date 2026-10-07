@@ -19,3 +19,4 @@ paths:
 - 发布包装出来的就是生产：install.sh 首装写 `AEGIS_ENV=production`；升级不改现有运行模式，升级前自动全量备份，不替人造管理员
 - 桩测试与静态检查（`*_mock_test.sh`、`*_static_test.sh`）不需要数据库；与安装、迁移、nginx、发布物绑定相关的，CI 的 `.github/workflows/panel-deploy.yml` 逐个点名跑，新增这类测试要补进那份清单
   - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root
+- nginx 的节点路径（`/api/v1/server/UniProxy/`、`/v1/nodes/`）用自己的限速区：`aegis_node` 按「来源 IP + 节点标识」分桶（签名通道 `X-Node-Id` 头、兼容通道 query `node_id`，只认 UUID 形状，否则退回按 IP 一个桶），外加宽松的每 IP 总上限 `aegis_node_ip`；`limit_conn` 在这两个 location 单独写（`aegis_node_conn`），server 层的 64 不再作用于节点。一台机器 60 个节点约 810 次/分、60 条事件流。守卫：`render-nginx_test.sh`
