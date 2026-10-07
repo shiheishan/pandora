@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -83,6 +84,12 @@ func TestPDNDInstallerRunsAsHardenedUnprivilegedUser(t *testing.T) {
 		if !strings.Contains(pdndInstallTemplate, fragment) {
 			t.Fatalf("installer service hardening missing %q", fragment)
 		}
+	}
+	// pdnd 运行期要写状态目录：落盘缓存，以及身份文件从只读的配置目录迁出后
+	// 的那一份（配置签名密钥轮换要写回）。ProtectSystem=strict 下只有这里可写。
+	if value, count := unitValue(installerUnitLines(pdndInstallTemplate), "ReadWritePaths"); count != 1 ||
+		!slices.Contains(strings.Fields(value), "/var/lib/pandora-native") {
+		t.Fatalf("installer unit must keep the pdnd state directory writable: %q", value)
 	}
 	if strings.Contains(pdndInstallTemplate, "Documentation=${PANEL}") {
 		t.Fatal("installer unit must use the canonical packaged unit contract")

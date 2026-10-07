@@ -48,6 +48,10 @@ type Client struct {
 	// streamWait 替换事件流重连前的等待，只给测试用：退避上限是 30 秒，
 	// 真等的话测不了「退避何时复位」。nil 即按真实时间等。
 	streamWait func(ctx context.Context, d time.Duration) bool
+	// streamNow / streamIdle 只给测试用：健康口径要求连接活过 40 秒、读空闲
+	// 上限 60 秒，真等的话测不了。nil / 0 即真实时钟与缺省值。
+	streamNow  func() time.Time
+	streamIdle time.Duration
 }
 
 type Options struct {
@@ -83,6 +87,9 @@ func New(o Options) *Client {
 }
 
 func (c *Client) NodeID() string { return c.nodeID }
+
+// BaseURL 是面板地址（config.json 的 panel.url）。
+func (c *Client) BaseURL() string { return c.base }
 func (c *Client) NodeType() string {
 	v, _ := c.nodeType.Load().(string)
 	return v
@@ -214,8 +221,14 @@ func (c *Client) Users(ctx context.Context) ([]core.User, bool, error) {
 	return users, true, nil
 }
 
-// Push 上报流量增量。格式为 {"<uid>": [upload, download]}。
-func (c *Client) Push(ctx context.Context, traffic []core.UserTraffic) error {
+// ReportIDHeader 是流量上报的幂等键。放在请求头而不是报文里：报文是
+// {"<uid>": [up, down]}，加任何非 uid 的键都会让现有面板解析失败；未知请求头
+// 现有面板（含 Xboard）一律忽略。同一份报文重发时带同一个 ID，面板据此去重。
+const ReportIDHeader = "X-Report-Id"
+
+// Push 上报流量增量。格式为 {"<uid>": [upload, download]}。reportID 非空时带上
+// ReportIDHeader。
+func (c *Client) Push(ctx context.Context, traffic []core.UserTraffic, reportID string) error {
 	if len(traffic) == 0 {
 		return nil
 	}
@@ -228,7 +241,11 @@ func (c *Client) Push(ctx context.Context, traffic []core.UserTraffic) error {
 		cur := payload[key]
 		payload[key] = [2]int64{cur[0] + t.Upload, cur[1] + t.Download}
 	}
-	return c.post(ctx, "push", payload)
+	var headers map[string]string
+	if reportID != "" {
+		headers = map[string]string{ReportIDHeader: reportID}
+	}
+	return c.postWith(ctx, "push", payload, headers)
 }
 
 // Alive 上报各用户的在线来源 IP，供设备数限制使用。
@@ -244,6 +261,10 @@ func (c *Client) Alive(ctx context.Context, online map[int64][]string) error {
 }
 
 func (c *Client) post(ctx context.Context, path string, v any) error {
+	return c.postWith(ctx, path, v, nil)
+}
+
+func (c *Client) postWith(ctx context.Context, path string, v any, headers map[string]string) error {
 	body, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -253,6 +274,9 @@ func (c *Client) post(ctx context.Context, path string, v any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -266,9 +290,18 @@ func (c *Client) post(ctx context.Context, path string, v any) error {
 	return nil
 }
 
+// httpError 把面板的非 2xx 答复包成 *StatusError：调用方据此区分「面板明确拒绝」
+// （4xx）与「没送到 / 暂时不可用」，比如启动时只在后者才用落盘缓存起服务。
 func httpError(what string, resp *http.Response) error {
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-	return fmt.Errorf("%s 失败：HTTP %d %s", what, resp.StatusCode, bytes.TrimSpace(snippet))
+	out := &StatusError{What: what, Code: resp.StatusCode, Body: string(bytes.TrimSpace(snippet))}
+	if resp.Request != nil {
+		out.Method = resp.Request.Method
+		if resp.Request.URL != nil {
+			out.Path = resp.Request.URL.Path
+		}
+	}
+	return out
 }
 
 // ForgetConfigVersion 丢掉记下的配置 ETag，下一次 Config 必然拿回全量。
@@ -279,6 +312,19 @@ func httpError(what string, resp *http.Response) error {
 // 304 就等于永不重试。由 node/ 在这种时候调用。
 func (c *Client) ForgetConfigVersion() {
 	c.etag = ""
+}
+
+// ConfigVersion 返回记下的配置 ETag（落盘缓存与它一起存）。
+func (c *Client) ConfigVersion() string { return c.etag }
+
+// SetConfigVersion 记下配置 ETag。只在节点把同一份配置从落盘缓存装上之后调用：
+// 面板仍是这一版就回 304，不必再拉全量、重建一次入站。
+func (c *Client) SetConfigVersion(v string) { c.etag = v }
+
+// UsersVersion 返回记下的用户列表 ETag。
+func (c *Client) UsersVersion() string {
+	v, _ := c.usersETag.Load().(string)
+	return v
 }
 
 // ForgetUsersVersion 丢掉记下的用户列表版本，下一次 Users 必然不带

@@ -116,6 +116,9 @@ CI 已覆盖的部分：`linux-race` job 在 x64 上跑全量 `go test -race` �
     的配置与 `/status`、没有签名不合法的请求；
   - `compat`：不带身份、只有 UniProxy 令牌的兼容接入，要看到经 UniProxy 拉配置与 `/status` 上报。
 
+  两次冷启动之后停掉模拟面板，再冷启动一次：节点必须用落盘缓存（`cache_dir` 下 0600 的 `config.json`
+  与 `users.json`，签名模式的配置重新验签）把入站起来，同样查 SIGTERM 与端口释放。
+
   每次都等端口就绪、面板侧看到上述上报后发 SIGTERM，确认进程退出且端口已释放；每个模式通过后输出一行
   `{"mode_passed":...}`，全部通过时输出 `{"status":"ok",...}`；不写系统路径、不碰 systemd，需要 `python3` 和 `go`（用来编模拟面板）。验收机
   没有 Go 时，在别处交叉编好再传进去：

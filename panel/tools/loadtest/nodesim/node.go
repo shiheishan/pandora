@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 )
 
@@ -60,6 +62,11 @@ type simNode struct {
 	appliedSigned   *nodefabric.SignedConfig
 	switchedSettled bool
 	healthSettled   bool
+	// pushInflight / pushPending 是 pdnd 的待报缓冲（current）：没送到的那份原样
+	// 重发、带同一个 report_id，期间的新流量按 uid 合并，见 pdnd node/report.go。
+	pushInflight   map[string][2]int64
+	pushInflightID string
+	pushPending    map[string][2]int64
 }
 
 func newSimNode(id string, index int, opt *Options, uni *uniClient, signed *signedClient, obs *observer, work *workload,
@@ -136,7 +143,10 @@ func (n *simNode) run(ctx context.Context) {
 func (n *simNode) syncOnce(ctx context.Context, flag string) {
 	if err := n.syncConfig(ctx, flag); err != nil {
 		n.obs.sample("sync config", n.id, err)
-		return
+		// legacy：配置一出错就不拉用户；current 照 pdnd，入站在服务就照常拉。
+		if n.opt.legacy() {
+			return
+		}
 	}
 	if !n.started.Load() {
 		return
@@ -343,7 +353,8 @@ func (n *simNode) applyUserDelta(ev streamEvent) {
 	n.userIDs = ids
 }
 
-// report 复刻 pdnd report：先 push 后 alive，各自为空就不发，失败只记一笔。
+// report 复刻 pdnd report：先 push 后 alive，各自为空就不发。legacy 失败只记一笔；
+// current 照 pdnd 留待报缓冲（flushPush）。
 func (n *simNode) report(ctx context.Context) {
 	if !n.started.Load() {
 		return
@@ -351,9 +362,15 @@ func (n *simNode) report(ctx context.Context) {
 	traffic, total := n.work.trafficFor(n.userIDs, n.index, n.rng)
 	if len(traffic) > 0 {
 		n.host.addTraffic(total)
-		if err := n.uni.push(ctx, traffic); err != nil {
-			n.obs.sample("push", n.id, err)
+	}
+	if n.opt.legacy() {
+		if len(traffic) > 0 {
+			if err := n.uni.push(ctx, traffic, ""); err != nil {
+				n.obs.sample("push", n.id, err)
+			}
 		}
+	} else {
+		n.flushPush(ctx, traffic)
 	}
 	if online := n.work.aliveFor(n.userIDs, n.index); len(online) > 0 {
 		if err := n.uni.alive(ctx, online); err != nil {
@@ -401,4 +418,33 @@ func intFrom(m map[string]any, key string) int {
 		return int(i)
 	}
 	return 0
+}
+
+// flushPush 是 pdnd flushTraffic 的模拟：新流量按 uid 并入 pending；先原样重发
+// 没送到的 inflight（同一个 report_id），收下后再把 pending 封成新的一份发出，
+// 一轮最多两次请求。面板明确拒收（4xx，408 / 429 除外）的那份丢弃。
+func (n *simNode) flushPush(ctx context.Context, traffic map[string][2]int64) {
+	if len(traffic) > 0 && n.pushPending == nil {
+		n.pushPending = make(map[string][2]int64, len(traffic))
+	}
+	for uid, v := range traffic {
+		cur := n.pushPending[uid]
+		n.pushPending[uid] = [2]int64{cur[0] + v[0], cur[1] + v[1]}
+	}
+	for i := 0; i < 2; i++ {
+		if n.pushInflight == nil {
+			if len(n.pushPending) == 0 {
+				return
+			}
+			n.pushInflight, n.pushInflightID, n.pushPending = n.pushPending, uuid.NewString(), nil
+		}
+		err := n.uni.push(ctx, n.pushInflight, n.pushInflightID)
+		if err != nil {
+			n.obs.sample("push", n.id, err)
+			if !reportSettled(err) {
+				return
+			}
+		}
+		n.pushInflight, n.pushInflightID = nil, ""
+	}
 }
