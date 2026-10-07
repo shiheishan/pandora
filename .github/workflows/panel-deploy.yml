@@ -44,6 +44,7 @@ jobs:
           tests=(
             migrate_fail_closed_mock_test.sh
             migrate-layout_mock_test.sh
+            migrate-rollback_mock_test.sh
             check-migrations_mock_test.sh
             render-nginx_test.sh
             cloudflare-realip_mock_test.sh
@@ -64,3 +65,29 @@ jobs:
             exit 1
           fi
           echo "deploy mock tests: ${#tests[@]} passed"
+
+  # 发布控制器的桩测试要 Linux root（systemd、flock、/proc 的桩都按 root 写）。GitHub runner
+  # 有免密 sudo，在这里必跑；它证明「完整预检在停服之前、停服后只做只读核对」的顺序。
+  # 检查机回放时没有 root 也没有免密 sudo 就明说跳过，以 GitHub 的结论为准。
+  deploy-root-mock-tests:
+    name: Deploy controller mock tests (root)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: panel/deploy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run release-stop-the-world mock test as root
+        run: |
+          t=release-stop-the-world_mock_test.sh
+          if [ "$(id -u)" -eq 0 ]; then
+            bash "$t"
+          elif sudo -n true 2>/dev/null; then
+            sudo -n env "PATH=$PATH" bash "$t"
+          elif [ "${GITHUB_ACTIONS:-}" = true ]; then
+            echo "GitHub runner 上没有免密 sudo，无法跑 $t" >&2
+            exit 1
+          else
+            echo "本机没有 root 或免密 sudo，跳过 $t（GitHub 上必跑）"
+          fi

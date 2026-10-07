@@ -165,10 +165,10 @@ printf '%s\n' '-- +goose Up' 'SELECT 1;' '-- +goose Down' 'SELECT 1;' \
 # 编号规则：严格递增、不重复，允许空号。同号在碰数据库之前就以 78 拒绝。
 mkdir -p "$TMP/gapped" "$TMP/duplicate"
 for file in 00001_a.sql 00003_c.sql; do
-  printf '%s\n' '-- +goose Up' 'SELECT 1;' >"$TMP/gapped/$file"
+  printf '%s\n' '-- +goose Up' 'SELECT 1;' '-- +goose Down' 'SELECT 1;' >"$TMP/gapped/$file"
 done
 for file in 00001_a.sql 00002_b.sql 00002_c.sql; do
-  printf '%s\n' '-- +goose Up' 'SELECT 1;' >"$TMP/duplicate/$file"
+  printf '%s\n' '-- +goose Up' 'SELECT 1;' '-- +goose Down' 'SELECT 1;' >"$TMP/duplicate/$file"
 done
 run_check "$TMP/gapped" >"$TMP/gapped.out" 2>&1 \
   || { echo 'gapped migration sequence was rejected' >&2; cat "$TMP/gapped.out" >&2; exit 1; }
@@ -307,5 +307,124 @@ if run_check "$TMP/valid" >"$TMP/fail-drop.out" 2>&1; then
 fi
 rm -f "$TMP/fail_drop"
 grep -Fq 'disposable database cleanup failed' "$TMP/fail-drop.out"
+
+# 每个迁移要有 Down 段或文件头的 irreversible 标记，缺了在碰数据库之前就拒绝。
+mkdir -p "$TMP/no-down" "$TMP/irreversible"
+printf '%s\n' '-- +goose Up' 'SELECT 1;' '-- +goose Down' 'SELECT 1;' >"$TMP/no-down/00001_a.sql"
+printf '%s\n' '-- +goose Up' 'SELECT 1;' >"$TMP/no-down/00002_b.sql"
+: >"$TMP/docker.argv"
+if run_check "$TMP/no-down" >"$TMP/no-down.out" 2>&1; then
+  echo 'migration without Down section was accepted' >&2
+  exit 1
+fi
+grep -Fq '00002_b.sql must contain a goose Down section or an irreversible header' "$TMP/no-down.out"
+[ ! -s "$TMP/docker.argv" ] || { echo 'missing-Down rejection touched docker' >&2; exit 1; }
+# 不在文件头（Up 之后）的 irreversible 字样不算标记
+printf '%s\n' '-- +goose Up' '-- irreversible: too late' 'SELECT 1;' >"$TMP/no-down/00002_b.sql"
+if run_check "$TMP/no-down" >"$TMP/no-down2.out" 2>&1; then
+  echo 'irreversible marker after the Up marker was accepted' >&2
+  exit 1
+fi
+printf '%s\n' '-- irreversible: seed only' '-- forward-fix: edit settings' '-- +goose Up' 'SELECT 1;' \
+  >"$TMP/irreversible/00001_a.sql"
+run_check "$TMP/irreversible" >"$TMP/irreversible.out" 2>&1 \
+  || { echo 'irreversible header was rejected' >&2; cat "$TMP/irreversible.out" >&2; exit 1; }
+
+# ---- 预检凭据：停服前完整预检写凭据，停服后只读核对 ----
+ATT="$TMP/attest/precheck.attestation"
+mkdir -p "$TMP/attest"
+mkdir -p "$TMP/attest-migrations"
+cp "$TMP/valid/00001_valid.sql" "$TMP/attest-migrations/"
+touch "$TMP/source-goose.exists"
+printf '%s\n' 1 >"$TMP/source-goose.version"
+: >"$TMP/goose.env"
+PANDORA_PRECHECK_ATTESTATION_OUT="$ATT" PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER=yes \
+  run_check "$TMP/attest-migrations" >"$TMP/attest-write.out" 2>&1 \
+  || { echo 'attested precheck failed' >&2; cat "$TMP/attest-write.out" >&2; exit 1; }
+grep -Fq 'migration precheck attestation written' "$TMP/attest-write.out"
+grep -Fxq 'format=pandora-precheck-v1' "$ATT"
+grep -Fxq 'database=aegis_live' "$ATT"
+grep -Fxq 'source_goose_version=1' "$ATT"
+grep -Fxq 'release_max_version=1' "$ATT"
+grep -Fxq 'rehearsed_stopped_writer=yes' "$ATT"
+grep -Eq '^migrations_sha256=[0-9a-f]{64}$' "$ATT"
+# 停服前的演练给克隆库带上停写闸门，但凭据不是「线上写入者已停」的声明
+grep -Fq 'PGOPTIONS=-c app.idempotency_writers_stopped=yes' "$TMP/goose.env"
+if grep -Fq 'argv-secret-sentinel' "$ATT"; then echo 'password leaked into attestation' >&2; exit 1; fi
+
+# 凭据路径已存在、或不是绝对路径：拒绝，不覆盖
+for bad in "$ATT" "relative.attestation"; do
+  set +e
+  PANDORA_PRECHECK_ATTESTATION_OUT="$bad" run_check "$TMP/attest-migrations" >"$TMP/attest-bad.out" 2>&1
+  bad_status=$?
+  set -e
+  [ "$bad_status" -eq 78 ] || { echo "bad attestation path $bad expected 78, got $bad_status" >&2; exit 1; }
+done
+
+verify_check() {
+  PATH="$TMP/bin:$PATH" GOOSE_BIN="$TMP/bin/goose" \
+    AEGIS_ENV_FILE="$TMP/env" AEGIS_MIGRATIONS_DIR="$TMP/attest-migrations" \
+    "$CHECK" --verify-attestation "$1"
+}
+# 用法：expect_verify_refusal <标签> <期望报错> <停写批准 yes|no> <凭据>
+expect_verify_refusal() {
+  local label="$1" needle="$2" approved="$3" file="$4" status
+  rm -f "$TMP/create.id" "$TMP/goose.id"
+  set +e
+  if [ "$approved" = yes ]; then
+    PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes verify_check "$file" >"$TMP/verify-$label.out" 2>&1
+  else
+    verify_check "$file" >"$TMP/verify-$label.out" 2>&1
+  fi
+  status=$?
+  set -e
+  [ "$status" -eq 78 ] || { echo "verify $label expected 78, got $status" >&2; cat "$TMP/verify-$label.out" >&2; exit 1; }
+  grep -Fq "$needle" "$TMP/verify-$label.out" \
+    || { echo "verify $label: missing '$needle'" >&2; cat "$TMP/verify-$label.out" >&2; exit 1; }
+  [ ! -e "$TMP/create.id" ] && [ ! -e "$TMP/goose.id" ] \
+    || { echo "verify $label cloned or migrated" >&2; exit 1; }
+}
+
+# 匹配的凭据：只读核对通过，不建克隆库、不跑 goose
+rm -f "$TMP/create.id" "$TMP/goose.id"
+PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes verify_check "$ATT" >"$TMP/verify-ok.out" 2>&1 \
+  || { echo 'matching attestation was refused' >&2; cat "$TMP/verify-ok.out" >&2; exit 1; }
+grep -Fq 'migration precheck attestation verified: source=1 release=1' "$TMP/verify-ok.out"
+grep -Fq 'renewal cutover active_legacy=0' "$TMP/verify-ok.out"
+[ ! -e "$TMP/create.id" ] && [ ! -e "$TMP/goose.id" ]
+
+# 停服后续费闸门照样生效
+printf '%s\n' 3 >"$TMP/legacy-renewal.count"
+expect_verify_refusal renewal 'active legacy renewals=3' yes "$ATT"
+printf '%s\n' 0 >"$TMP/legacy-renewal.count"
+# 中间有人迁移过：水位对不上
+printf '%s\n' 0 >"$TMP/source-goose.version"
+expect_verify_refusal waterline 'waterline does not match the database' yes "$ATT"
+printf '%s\n' 1 >"$TMP/source-goose.version"
+# 演练与正式运行的停写闸门不一致
+expect_verify_refusal rehearsal 'rehearsed a different stopped-writer approval' no "$ATT"
+# 迁移目录换过
+printf '%s\n' '-- changed' >>"$TMP/attest-migrations/00001_valid.sql"
+expect_verify_refusal digest 'different migration directory' yes "$ATT"
+cp "$TMP/valid/00001_valid.sql" "$TMP/attest-migrations/00001_valid.sql"
+# 换了库、凭据太旧、凭据被篡改成组可写、符号链接、缺失
+sed 's/^database=.*/database=other_db/' "$ATT" >"$TMP/attest/other-db"
+expect_verify_refusal database 'made for another database' yes "$TMP/attest/other-db"
+sed 's/^created_epoch=.*/created_epoch=1000/' "$ATT" >"$TMP/attest/stale"
+expect_verify_refusal stale 'older than six hours' yes "$TMP/attest/stale"
+cp "$ATT" "$TMP/attest/writable"
+chmod 0664 "$TMP/attest/writable"
+expect_verify_refusal writable 'group- or world-writable' yes "$TMP/attest/writable"
+ln -s "$ATT" "$TMP/attest/link"
+expect_verify_refusal symlink 'missing or not a regular file' yes "$TMP/attest/link"
+expect_verify_refusal missing 'missing or not a regular file' yes "$TMP/attest/none"
+set +e
+"$CHECK" --verify-attestation >"$TMP/usage.out" 2>&1
+usage_status=$?
+"$CHECK" --bogus x >>"$TMP/usage.out" 2>&1
+bogus_status=$?
+set -e
+[ "$usage_status" -eq 78 ] && [ "$bogus_status" -eq 78 ]
+rm -f "$TMP/source-goose.exists" "$TMP/source-goose.version"
 
 echo "check-migrations dynamic gate: PASS"

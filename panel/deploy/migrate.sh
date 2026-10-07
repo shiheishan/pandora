@@ -30,9 +30,10 @@ done
 case "$COMMAND" in
   down|redo)
     echo "migration: destructive down/redo is not available through the public wrapper" >&2
+    echo "migration: to return to an earlier version use the confirmed 'rollback-to <version>' (see MIGRATION-RUNBOOK.md)" >&2
     exit 78
     ;;
-  up|up-to|up-by-one|status|version) ;;
+  up|up-to|up-by-one|status|version|rollback-to) ;;
   *)
     echo "migration: unsupported command" >&2
     exit 78
@@ -144,7 +145,126 @@ case "$COMMAND" in
       exit 78
     fi
     ;;
+  rollback-to)
+    if [ "$#" -ne 1 ] || [[ "$1" != 0 && "$1" =~ ^0 ]] || [[ ! "$1" =~ ^[0-9]{1,10}$ ]]; then
+      echo "migration: rollback-to requires one canonical non-negative version" >&2
+      exit 78
+    fi
+    TARGET_VERSION=$((10#$1))
+    ;;
 esac
+
+# rollback-to <版本>：带确认地逐个执行 Down，回到指定版本。公开入口仍然拒绝 down/redo，
+# 回滚只走这里。顺序固定为：
+#   1. 写入者已停（显式声明，有 systemd 时再核实三个单元都不在运行）；
+#   2. 指向一份刚做的备份（回滚会删列删表，备份是退路）；
+#   3. 读当前版本，列出 (目标, 当前] 之间要撤的迁移；
+#   4. 预扫描：其中有文件头标了 irreversible 的，一个都不执行，直接拒绝并说明最多能回到哪；
+#   5. 确认短语与当前、目标版本绑定（PANDORA_ROLLBACK_CONFIRM 或终端输入）；
+#   6. 从高到低逐个 goose down，每步核对版本；某个 Down 失败或拒绝（goose 单迁移事务回滚，
+#      库停在它之前的版本）就停下，不再往下，提示走备份恢复。
+# 不下发任何 PGOPTIONS：00037–00040 的 Down 要逐版本批准，这里不替人批准，到那里会被拒绝。
+# 流程与三种情形见 MIGRATION-RUNBOOK.md。
+if [ "$COMMAND" = rollback-to ]; then
+  rollback_refuse() { echo "migration rollback: $*" >&2; exit 78; }
+  goose_current_version() {
+    local out
+    out="$("${GOOSE_BASE_ENV[@]}" "$GOOSE" version 2>&1)" || { printf '%s\n' "$out" | tail -5 >&2; return 1; }
+    printf '%s\n' "$out" | sed -n 's/.*goose: version \([0-9][0-9]*\)[[:space:]]*$/\1/p' | tail -n1
+  }
+
+  [ "${PANDORA_ROLLBACK_WRITERS_STOPPED:-}" = yes ] \
+    || rollback_refuse "stop aegis-admin, aegis-public and aegis-node first, then set PANDORA_ROLLBACK_WRITERS_STOPPED=yes"
+  if command -v systemctl >/dev/null 2>&1; then
+    for unit in aegis-admin.service aegis-public.service aegis-node.service; do
+      if systemctl is-active --quiet "$unit" 2>/dev/null; then
+        rollback_refuse "$unit is still active; stop every writer before rolling back"
+      fi
+    done
+  fi
+  ROLLBACK_BACKUP="${PANDORA_ROLLBACK_BACKUP:-}"
+  [ -n "$ROLLBACK_BACKUP" ] && [ -f "$ROLLBACK_BACKUP" ] && [ ! -L "$ROLLBACK_BACKUP" ] && [ -s "$ROLLBACK_BACKUP" ] \
+    || rollback_refuse "PANDORA_ROLLBACK_BACKUP must name the non-empty backup file taken right before this rollback"
+
+  CURRENT_VERSION="$(goose_current_version)" || { echo "migration rollback: cannot read the current version" >&2; exit 1; }
+  [[ "$CURRENT_VERSION" =~ ^[0-9]+$ ]] || { echo "migration rollback: cannot parse the current version" >&2; exit 1; }
+  [ "$TARGET_VERSION" -lt "$CURRENT_VERSION" ] \
+    || rollback_refuse "target $TARGET_VERSION must be below the current version $CURRENT_VERSION"
+
+  ROLLBACK_PLAN=()        # 要撤的文件，从高到低
+  ROLLBACK_EXPECT=()      # 撤完每一个之后应处的版本
+  TARGET_FOUND=0; CURRENT_FOUND=0
+  for (( index=${#migration_files[@]} - 1; index >= 0; index-- )); do
+    name="${migration_files[$index]##*/}"
+    version=$((10#${name%%_*}))
+    [ "$version" -eq "$TARGET_VERSION" ] && TARGET_FOUND=1
+    [ "$version" -eq "$CURRENT_VERSION" ] && CURRENT_FOUND=1
+    if [ "$version" -gt "$TARGET_VERSION" ] && [ "$version" -le "$CURRENT_VERSION" ]; then
+      ROLLBACK_PLAN+=("${migration_files[$index]}")
+    fi
+  done
+  [ "$CURRENT_FOUND" -eq 1 ] \
+    || rollback_refuse "the database is at $CURRENT_VERSION but this release has no migration file for it"
+  [ "$TARGET_VERSION" -eq 0 ] || [ "$TARGET_FOUND" -eq 1 ] \
+    || rollback_refuse "target $TARGET_VERSION is not a migration version in this release"
+  for (( index=1; index < ${#ROLLBACK_PLAN[@]}; index++ )); do
+    name="${ROLLBACK_PLAN[$index]##*/}"
+    ROLLBACK_EXPECT+=("$((10#${name%%_*}))")
+  done
+  ROLLBACK_EXPECT+=("$TARGET_VERSION")
+
+  BLOCKERS=()
+  for migration in "${ROLLBACK_PLAN[@]}"; do
+    if awk '/^-- \+goose Up/ { exit } /^-- irreversible:[[:space:]]*[^[:space:]]/ { found=1 } END { exit !found }' "$migration"; then
+      BLOCKERS+=("${migration##*/}")
+    fi
+  done
+  if [ "${#BLOCKERS[@]}" -gt 0 ]; then
+    # 计划从高到低排，第一个阻塞者版本最高：最多只能回到它自己
+    furthest=$((10#${BLOCKERS[0]%%_*}))
+    echo "migration rollback: irreversible migrations in range: ${BLOCKERS[*]}" >&2
+    if [ "$furthest" -lt "$CURRENT_VERSION" ]; then
+      echo "migration rollback: the furthest this tool can go is version $furthest; anything earlier needs the pre-upgrade backup (MIGRATION-RUNBOOK.md, section 3)" >&2
+    else
+      echo "migration rollback: the current migration itself is irreversible; restore the pre-upgrade backup (MIGRATION-RUNBOOK.md, section 3)" >&2
+    fi
+    echo "migration rollback: nothing was executed" >&2
+    exit 78
+  fi
+
+  CONFIRM_PHRASE="rollback $CURRENT_VERSION to $TARGET_VERSION"
+  echo "migration rollback plan: $CURRENT_VERSION -> $TARGET_VERSION (${#ROLLBACK_PLAN[@]} migration(s), highest first; backup: $ROLLBACK_BACKUP)"
+  for migration in "${ROLLBACK_PLAN[@]}"; do echo "  down ${migration##*/}"; done
+  if [ -n "${PANDORA_ROLLBACK_CONFIRM+x}" ]; then
+    [ "$PANDORA_ROLLBACK_CONFIRM" = "$CONFIRM_PHRASE" ] \
+      || rollback_refuse "confirmation does not match; expected exactly: $CONFIRM_PHRASE"
+  elif [ -t 0 ]; then
+    printf 'Type "%s" to proceed: ' "$CONFIRM_PHRASE" >&2
+    IFS= read -r answer || answer=""
+    [ "$answer" = "$CONFIRM_PHRASE" ] || rollback_refuse "not confirmed; nothing was executed"
+  else
+    rollback_refuse "confirmation required: set PANDORA_ROLLBACK_CONFIRM='$CONFIRM_PHRASE'"
+  fi
+
+  for index in "${!ROLLBACK_PLAN[@]}"; do
+    name="${ROLLBACK_PLAN[$index]##*/}"
+    expected="${ROLLBACK_EXPECT[$index]}"
+    if ! "${GOOSE_BASE_ENV[@]}" "$GOOSE" down; then
+      now="$(goose_current_version || true)"
+      echo "migration rollback: STOPPED: the Down of $name failed or refused (see above); the database is at version ${now:-unknown}" >&2
+      echo "migration rollback: nothing below it was attempted; to go further back restore $ROLLBACK_BACKUP (MIGRATION-RUNBOOK.md, section 3)" >&2
+      exit 1
+    fi
+    now="$(goose_current_version)" || { echo "migration rollback: cannot read the version after $name" >&2; exit 1; }
+    if [ "$now" != "$expected" ]; then
+      echo "migration rollback: STOPPED: after $name the database is at version $now, expected $expected" >&2
+      exit 1
+    fi
+    echo "migration rollback: undid $name; now at version $now"
+  done
+  echo "migration rollback complete: $CURRENT_VERSION -> $TARGET_VERSION"
+  exit 0
+fi
 
 # 全新库可以跳过预检——它要保护的数据还不存在。
 #
@@ -158,6 +278,35 @@ PRECHECK_ENABLED=1
 if [ "${PANDORA_SKIP_PRECHECK_FRESH_DB:-}" = "yes-empty-database" ]; then
   PRECHECK_ENABLED=0
   echo "migration: 调用方声明这是全新库，跳过一次性数据库预检"
+fi
+
+# 停服前已做过完整预检的调用方（发布控制器）递交那次预检的凭据：这里只做停服后的
+# 只读核对（迁移目录摘要、源库水位、续费闸门、停写演练一致、六小时内），不再克隆演练。
+# 核对不过同样不碰正式库。没有凭据就照旧完整预检——up 永远不会在两者都没有时执行。
+PRECHECK_ATTESTATION="${PANDORA_PRECHECK_ATTESTATION:-}"
+if [ "$COMMAND" = up ] && [ "$PRECHECK_ENABLED" -eq 1 ] && [ -n "$PRECHECK_ATTESTATION" ]; then
+  PRECHECK_LOG="$(mktemp "${TMPDIR:-/tmp}/pandora-precheck.XXXXXX")"
+  cleanup_precheck() { rm -f -- "$PRECHECK_LOG"; }
+  trap cleanup_precheck EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if env -i PATH="$PATH" HOME="${HOME:-/root}" \
+      AEGIS_ENV_FILE="$ENV_FILE" AEGIS_MIGRATIONS_DIR="$MIGRATIONS_DIR" \
+      PANDORA_STOPPED_WRITER_UPGRADE_APPROVED="$UPGRADE_APPROVED" \
+      ${GOOSE_BIN:+GOOSE_BIN="$GOOSE_BIN"} \
+      "$DEPLOY_DIR/check-migrations.sh" --verify-attestation "$PRECHECK_ATTESTATION" >"$PRECHECK_LOG" 2>&1; then
+    PRECHECK_STATUS=0
+  else
+    PRECHECK_STATUS=$?
+    echo "migration: precheck attestation was not accepted; production is unchanged" >&2
+    tail -20 "$PRECHECK_LOG" >&2
+    if [ "$PRECHECK_STATUS" -eq 78 ]; then exit 78; fi
+    exit 1
+  fi
+  cleanup_precheck
+  trap - EXIT INT TERM
+  PRECHECK_ENABLED=0
+  echo "migration precheck=attested"
 fi
 
 if [ "$COMMAND" = up ] && [ "$PRECHECK_ENABLED" -eq 1 ]; then
