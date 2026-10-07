@@ -338,14 +338,36 @@ func (s *Service) FetchMetrics(ctx context.Context, tenantID, nodeID string, min
 	return out, nil
 }
 
-// PurgeMetrics 清理超出保留期的探针点。幂等。
+// MetricsRetentionHours 是探针点的保留期：后台读得最远的是 FetchMetrics 的 24 小时
+// 曲线（minutes 上限 1440），节点 / 服务器列表只取最近一点；留 48 小时（00015 的保留
+// 策略，也是 app.purge_node_metrics 接受的下限）给事后排查多一天余量。
+const MetricsRetentionHours = 48
+
+// metricsPurgeBatch 是每个短事务最多删的行数，metricsPurgeMaxBatches 是一次调用最多
+// 跑几批；积压由下一轮继续清。
+const (
+	metricsPurgeBatch      = 5000
+	metricsPurgeMaxBatches = 200
+)
+
+// PurgeMetrics 清理超出保留期的探针点。由 aegis-admin 的保留期任务定时调用，幂等。
+//
+// node_metrics 是追加写表，运行角色不能直接删；删除只经 app.purge_node_metrics
+// （00100：定义者权限、只删当前租户、保留期不少于 48 小时、每次最多一批）。这里按批循环，
+// 每批一个短事务。keepHours 小于保留期时按保留期算。
 func (s *Service) PurgeMetrics(ctx context.Context, tenantID string, keepHours int) (int64, error) {
-	if keepHours <= 0 {
-		keepHours = 48
+	keepHours = max(keepHours, MetricsRetentionHours)
+	var total int64
+	for range metricsPurgeMaxBatches {
+		var n int64
+		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT app.purge_node_metrics($1, $2)`,
+				keepHours, metricsPurgeBatch).Scan(&n)
+		})
+		total += n
+		if err != nil || n < metricsPurgeBatch {
+			return total, err
+		}
 	}
-	var n int64
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT app.purge_node_metrics($1)`, keepHours).Scan(&n)
-	})
-	return n, err
+	return total, nil
 }

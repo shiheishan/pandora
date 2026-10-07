@@ -458,21 +458,49 @@ func (s *Service) ReportRuntimeStatus(ctx context.Context, tenantID string, n *S
 var DeviceWindowMinutes = [...]int{5, 10, 30, 60}
 
 // staleAliveRetentionMinutes 是在线记录的清理截止：不小于最大窗口再留 10 分钟
-// 余量，清理任务无论何时跑都不会删掉仍在某个租户窗口内的行（R103）。
+// 余量，清理任务无论何时跑都不会删掉仍在某个租户窗口内的行（R103）。读在线记录的
+// 地方（在线设备视图、uniproxy 的 strict 判定、后台节点列表）都只看最近一个窗口
+// （至多 60 分钟），70 分钟以前的行对任何读数都没有贡献。
 const staleAliveRetentionMinutes = 70
 
-// PurgeStaleAlive 清理过期的在线记录。由定时任务调用，幂等；目前还没有调用方。
+// staleAliveBatch 是每个短事务最多删的行数，staleAliveMaxBatches 是一次调用最多跑几批：
+// 单批锁的行有上限，一次调用的总量也有上限，积压由下一轮继续清。
+const (
+	staleAliveBatch      = 5000
+	staleAliveMaxBatches = 200
+)
+
+// PurgeStaleAlive 清理过期的在线记录。由 aegis-admin 的保留期任务定时调用，幂等。
+//
+// 分批删：每批一个短事务，先按截止时间挑出至多 staleAliveBatch 行（SKIP LOCKED，
+// 正被 alive 上报刷新的行跳过、下一轮再看），再按主键删。被挑中后又被刷新的行
+// 由 FOR UPDATE 重新核对截止条件，不会误删；删除后同一 IP 再上报会重新插入。
 func (s *Service) PurgeStaleAlive(ctx context.Context, tenantID string) (int64, error) {
-	var n int64
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		ct, err := tx.Exec(ctx,
-			`DELETE FROM node_alive_ips WHERE last_seen_at < now() - make_interval(mins => $1)`,
-			staleAliveRetentionMinutes)
-		if err != nil {
-			return err
+	var total int64
+	for range staleAliveMaxBatches {
+		var n int64
+		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			ct, err := tx.Exec(ctx, `
+				DELETE FROM node_alive_ips a
+				 USING (SELECT node_id, subscription_id, ip_hash
+				          FROM node_alive_ips
+				         WHERE tenant_id = $1
+				           AND last_seen_at < now() - make_interval(mins => $2)
+				         LIMIT $3
+				         FOR UPDATE SKIP LOCKED) d
+				 WHERE a.node_id = d.node_id AND a.subscription_id = d.subscription_id
+				   AND a.ip_hash = d.ip_hash`,
+				tenantID, staleAliveRetentionMinutes, staleAliveBatch)
+			if err != nil {
+				return err
+			}
+			n = ct.RowsAffected()
+			return nil
+		})
+		total += n
+		if err != nil || n < staleAliveBatch {
+			return total, err
 		}
-		n = ct.RowsAffected()
-		return nil
-	})
-	return n, err
+	}
+	return total, nil
 }

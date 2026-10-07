@@ -187,7 +187,7 @@ func run() error {
 	// 多一个常驻进程的代价大于收益；而 EscalateOverdue 本身是幂等的，
 	// 将来拆成独立 worker 或换成 cron 也不需要改动业务代码。
 	var workers sync.WaitGroup
-	workers.Add(4)
+	workers.Add(5)
 	go func() {
 		defer workers.Done()
 		t := time.NewTicker(5 * time.Minute)
@@ -280,6 +280,39 @@ func run() error {
 				log.Error("佣金解冻失败", "error", err.Error())
 			case n > 0:
 				log.Info("佣金已解冻", "count", n)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+
+	// 保留期清理：过期的在线记录（node_alive_ips，70 分钟前）与探针点（node_metrics，
+	// 48 小时前）。两张表都随节点上报增长，不清就让在线统计与节点列表一天比一天慢。
+	//
+	// 分批删：PurgeStaleAlive / PurgeMetrics 每批一个短事务、每批行数与单次调用的批数
+	// 都有上限，积压由下一轮接着清，不会一次删几十万行长时间持锁。十分钟一次：在线
+	// 记录 70 分钟才过期，再勤只是空转。追加写的上报留档与订阅拉取日志不在这里删
+	// （它们的保留方案待定，读路径已不依赖它们的大小）。
+	go func() {
+		defer workers.Done()
+		t := time.NewTicker(10 * time.Minute)
+		defer t.Stop()
+		for {
+			sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			alive, aliveErr := nodeSvc.PurgeStaleAlive(sctx, middleware.DefaultTenantID)
+			metrics, metricsErr := nodeSvc.PurgeMetrics(sctx, middleware.DefaultTenantID, nodefabric.MetricsRetentionHours)
+			cancel()
+			if aliveErr != nil {
+				log.Error("在线记录清理失败", "error", aliveErr.Error(), "deleted", alive)
+			}
+			if metricsErr != nil {
+				log.Error("探针点清理失败", "error", metricsErr.Error(), "deleted", metrics)
+			}
+			if alive > 0 || metrics > 0 {
+				log.Info("保留期清理完成", "alive_ips", alive, "node_metrics", metrics)
 			}
 			select {
 			case <-ctx.Done():
