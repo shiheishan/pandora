@@ -34,6 +34,7 @@ description: pandora 总协调把工作派给任务会话或实现型子 agent�
 
 ## 启动
 
+- Agent 调用显式传 `model`，口径见根 CLAUDE.md「大任务拆子 agent」：实现型任务（跨模块，或涉及钱、权限、认证、迁移、节点内核）用 `opus`；照 skill 跑命令收数字的复测、纯挪动、文档整理用 `sonnet`。在 `.claude/TASKS.md` 登记时写上模型。
 - 子 agent 用 `templates/agent-prompt.md`（替换 `<名字>`、`<一句话范围>`），后台运行，给 worktree 的绝对路径。模板已写明：推送设 dangerouslyDisableSandbox、最终消息就是报告、go 不与 npm ci 并发。
 - 要读主目录里的长文档（规划、审计、评估），先把子 agent 的结论存成主目录 `.claude/<主题>.md`（git 忽略），brief 里给绝对路径，别把几千字贴进 prompt。
 - 用户自己开会话时，给一段「发给新会话」的原话，内容同 agent-prompt。

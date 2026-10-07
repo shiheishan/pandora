@@ -177,7 +177,7 @@ func TestTenantSeedDefaultsPG18(t *testing.T) {
 		}
 		return out
 	}
-	want := seeded{offline: true, templates: 18, switches: 8, essential: 3}
+	want := seeded{offline: true, templates: 19, switches: 8, essential: 3}
 	if got := read(tenant); got != want {
 		t.Fatalf("seeded tenant=%+v want %+v", got, want)
 	}

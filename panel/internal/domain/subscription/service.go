@@ -112,7 +112,7 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 			       (SELECT count(DISTINCT f.ip_hash)::int FROM subscription_fetch_log f
 			         WHERE f.tenant_id = sc.tenant_id AND f.credential_id = sc.id
 			           AND f.result = 'ok'
-			           AND f.fetched_at > now() - interval '`+linkSourceWindow+`')
+			           AND f.fetched_at > now() - interval '`+linkSourceWindow+`'),
 			       sc.expires_at IS NOT NULL AND GREATEST(sc.expires_at, sc.grace_until) <= now()
 			  FROM subscription_credentials sc
 			 WHERE sc.tenant_id = $1 AND sc.user_id = $2::uuid

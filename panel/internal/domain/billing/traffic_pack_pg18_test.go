@@ -208,7 +208,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	}
 	var claimStatus string
 	if err := admin.QueryRow(ctx, `SELECT status FROM idempotency_keys
-		WHERE tenant_id=$1 AND id=$2::uuid`, fx.tenant, lastClaim).Scan(&claimStatus); err != nil || claimStatus != "completed" {
+		WHERE tenant_id=$1 AND id=$2::uuid`, fx.tenant, lastClaim).Scan(&claimStatus); err != nil || claimStatus != "succeeded" {
 		t.Fatalf("admin grant idempotency status=%q err=%v", claimStatus, err)
 	}
 	var adminSource string

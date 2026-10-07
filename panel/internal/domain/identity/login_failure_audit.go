@@ -75,12 +75,16 @@ func (s *Service) recordLoginFailure(ctx context.Context, tenantID string, f log
 			"login_failed_audit:"+tenantID); err != nil {
 			return err
 		}
-		var seen bool
-		if err := tx.QueryRow(ctx, loginFailureSeenSQL, tenantID, ipHashes, emailHash).Scan(&seen); err != nil {
-			return err
-		}
-		if seen {
-			return nil
+		// 门户禁登不参与聚合：口令已经对上，不是爆破，攻击者也造不出这条；每次都记，
+		// 免得同一来源先前的口令错误把它吞掉，事后查不到「管理员试过登门户」
+		if f.Reason != loginFailureStaffPortal {
+			var seen bool
+			if err := tx.QueryRow(ctx, loginFailureSeenSQL, tenantID, ipHashes, emailHash).Scan(&seen); err != nil {
+				return err
+			}
+			if seen {
+				return nil
+			}
 		}
 		entry := audit.Entry{
 			ActorKind: "anonymous", Action: loginFailureAuditAction,
