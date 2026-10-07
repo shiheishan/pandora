@@ -10,7 +10,7 @@
 
 **文件归属**：只改上面「归属」里列出的文件（及你新建的文件）。需要动别人归属的文件时不要改，写进报告「需要别的路配合」。
 
-**迁移号**：只用分配给你的号段，没用到就空着。每个迁移写 `-- +goose Up` 和 `-- +goose Down`（能逆就逆，不能逆的 Down 里明确 RAISE 拒绝并写原因）。迁移注释里不要写 `panel/migrations/RESERVED-TABLES.md` 登记的保留表名（会触发契约测试）。
+**迁移号**：只用分配给你的号段，没用到就空着。每个迁移写 `-- +goose Up` 和 `-- +goose Down`（能逆就逆，不能逆的 Down 里明确 RAISE 拒绝并写原因）。Go 源码（含注释、含从迁移抄进 Go 的 SQL）里不要写 `panel/migrations/RESERVED-TABLES.md` 登记的保留表名（表登记簿测试会把它算作引用而变红；迁移 .sql 本身不参与匹配）。
 
 **代码约定**：注释中文；日志 platform/logging（slog）；响应与错误 platform/httpx；配置只经 platform/config；单文件 ≤800 行（超了按主题拆，不加豁免）；行为改动配测试，需要真库的按现有 PG18 测试写法（`platform/pg18test`）；新用例尽量挂成已登记顶层测试的子测试，免改 `deploy/run-pg18-gates.sh`；夹具租户 id 先 grep 主线确认没人用（同域共库，撞号是最常见的 CI 红）。保持 RLS、租户、审计、追加写等数据库不变量；不削弱任何安全检查来换性能。不引入新依赖（确有必要先写进报告）。
 
