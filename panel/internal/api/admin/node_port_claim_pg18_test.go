@@ -252,3 +252,7 @@ func fmtHTTPError(err error) string {
 	}
 	return ""
 }
+
+// nodeConfigPG18Port 给复制节点另配端口：副本复制到同一台服务器时不能沿用原节点端口
+// （同机端口门禁，00122），node_config 各批的复制用例都经它取。
+func nodeConfigPG18Port(port int) *int { return &port }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -129,8 +130,9 @@ func step3Nodes(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant, 
 	var ids []string
 	for i := 0; i < n; i++ {
 		id := prefix + "0000000000b" + string(rune('1'+i))
+		// 同一台服务器上的节点端口各不相同（同机端口门禁的唯一索引，00122）
 		step3Seed(t, ctx, admin, `INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,server_id,serving_status)
-			VALUES('`+id+`','`+tenant+`','step3-node-`+string(rune('1'+i))+`','`+pool+`','active','vless','n.invalid',443,'`+server+`','active')`)
+			VALUES('`+id+`','`+tenant+`','step3-node-`+string(rune('1'+i))+`','`+pool+`','active','vless','n.invalid',`+strconv.Itoa(20001+i)+`,'`+server+`','active')`)
 		ids = append(ids, id)
 	}
 	return ids

@@ -188,7 +188,7 @@ func runNodeConfigPG18LockOp(ctx context.Context, op, other nodeConfigPG18LockOp
 	case nodeConfigPG18LockClone:
 		result.node, result.err = service.CloneAdminNode(callCtx, fx.base.tenant, fx.sourceID, nodefabric.CloneAdminNodeInput{
 			ActorID: fx.base.actor, Name: "lock-clone-" + fx.base.suffix, RowVersion: 1,
-			TargetServerID: fx.base.server, PoolID: fx.base.pool})
+			TargetServerID: fx.base.server, PoolID: fx.base.pool, ServerPort: nodeConfigPG18Port(22002)})
 	case nodeConfigPG18LockBootstrap:
 		result.bootstrap, result.err = service.Bootstrap(callCtx, fx.base.tenant, nodefabric.BootstrapInput{
 			Token: fx.bootstrap.Token, NodeName: "lock-bootstrap-" + fx.base.suffix,

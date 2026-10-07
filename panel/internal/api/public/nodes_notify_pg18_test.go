@@ -176,14 +176,16 @@ func TestNodeLivenessPatrolPG18(t *testing.T) {
 	must(`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES($1,'node-liveness-pg18','Node Liveness','CNY')`, tenant)
 	must(`INSERT INTO node_pools(id,tenant_id,code,name,status) VALUES($1,$2,'nl','NL','active')`, pool, tenant)
 	must(`INSERT INTO servers(id,tenant_id,name,status) VALUES($1,$2,'nl-server','ready')`, server, tenant)
+	port := 20000 // 同一台服务器上的节点端口各不相同（同机端口门禁的唯一索引，00122）
 	for id, ago := range map[string]string{offline: "95 seconds", expiring: "605 seconds", quiet: "200 seconds", fresh: "10 seconds", retired: "95 seconds"} {
 		serving := "active"
 		if id == retired {
 			serving = "retired"
 		}
+		port++
 		must(`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,server_id,serving_status,last_heartbeat_at)
-			VALUES($1,$2,$7,$3,'active','vless','nl.invalid',443,$4,$5,now() - $6::interval)`,
-			id, tenant, pool, server, serving, ago, "nl-"+id[len(id)-2:])
+			VALUES($1,$2,$7,$3,'active','vless','nl.invalid',$8,$4,$5,now() - $6::interval)`,
+			id, tenant, pool, server, serving, ago, "nl-"+id[len(id)-2:], port)
 	}
 	listener := listenNodeNotices(t, ctx, admin)
 
