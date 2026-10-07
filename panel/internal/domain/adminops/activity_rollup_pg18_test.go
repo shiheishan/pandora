@@ -69,8 +69,8 @@ func TestActivityDailyRollupPG18(t *testing.T) {
 		MarkerTable: "pandora_catalog_sales_test_marker", CommentTag: "pandora-catalog-sales-pg18",
 	})
 	const (
-		tenant = "7e000000-0000-4000-8000-000000000001"
-		other  = "7e000000-0000-4000-8000-000000000002"
+		tenant = "7c000000-0000-4000-8000-000000000001"
+		other  = "7c000000-0000-4000-8000-000000000002"
 	)
 	seedActivity(t, ctx, admin, tenant, other)
 	svc := NewService(app)
@@ -271,11 +271,11 @@ func activeOn(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant str
 
 // 两个租户的用户与订阅 id 按租户 id 的末两位错开，主键不撞
 func activityUser(tenant string, i int) string {
-	return fmt.Sprintf("7e0000%s-0000-4000-8000-%012d", tenant[len(tenant)-2:], 100+i)
+	return fmt.Sprintf("7c0000%s-0000-4000-8000-%012d", tenant[len(tenant)-2:], 100+i)
 }
 
 func activitySub(tenant string, i int) string {
-	return fmt.Sprintf("7e0000%s-0000-4000-8000-%012d", tenant[len(tenant)-2:], 200+i)
+	return fmt.Sprintf("7c0000%s-0000-4000-8000-%012d", tenant[len(tenant)-2:], 200+i)
 }
 
 // seedActivity 造两个租户的审计、订阅拉取与按日流量：各种动作与结果、日界两侧（零点整与前一刻）、
