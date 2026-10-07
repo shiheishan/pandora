@@ -47,7 +47,9 @@ func run() error {
 	defer stop()
 	closeResourcesOnReturn := true
 
-	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{MaxConns: cfg.DBMaxConns[config.DomainNode]})
+	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{
+		MaxConns: cfg.DBMaxConns[config.DomainNode], MinConns: cfg.DBMinConns[config.DomainNode], StatsLog: log,
+	})
 	if err != nil {
 		return err
 	}

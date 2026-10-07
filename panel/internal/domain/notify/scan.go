@@ -11,7 +11,6 @@ package notify
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -252,75 +251,6 @@ func (s *Service) ScanPaidOrders(ctx context.Context, tenantID string) (int, err
 		return nil
 	})
 	return queued, err
-}
-
-// StartScanner 起一个后台循环，定期扫描并派发。
-func (s *Service) StartScanner(ctx context.Context, tenantID string, every time.Duration) {
-	go func() {
-		// 启动后先等一会儿再扫：进程刚起来时连接池、缓存都还没热，
-		// 立刻压一轮全表扫描没必要
-		// 预热期间来的 Kick 只发不扫：有人在等验证码，不该陪预热一起等。
-		warm := time.After(30 * time.Second)
-	warmup:
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-s.kick:
-				s.dispatchOnce(ctx, tenantID)
-			case <-warm:
-				break warmup
-			}
-		}
-
-		t := time.NewTicker(every)
-		defer t.Stop()
-		for {
-			s.runOnce(ctx, tenantID)
-		wait:
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					break wait
-				case <-s.kick:
-					// Kick 只提前派发，不提前扫描：扫描是全表的，没有理由跟着
-					// 每一次注册跑一遍。派发完继续等下一个周期。
-					s.dispatchOnce(ctx, tenantID)
-				}
-			}
-		}
-	}()
-}
-
-func (s *Service) runOnce(ctx context.Context, tenantID string) {
-	if n, err := s.ScanExpiring(ctx, tenantID); err != nil {
-		s.log.Warn("到期扫描失败", "err", err)
-	} else if n > 0 {
-		s.log.Info("到期提醒已排队", "条数", n)
-	}
-	if n, err := s.ScanQuota(ctx, tenantID); err != nil {
-		s.log.Warn("流量扫描失败", "err", err)
-	} else if n > 0 {
-		s.log.Info("流量预警已排队", "条数", n)
-	}
-	if n, err := s.ScanPaidOrders(ctx, tenantID); err != nil {
-		s.log.Warn("支付通知扫描失败", "err", err)
-	} else if n > 0 {
-		s.log.Info("支付通知已排队", "条数", n)
-	}
-	// 派发放在扫描之后：刚排的队这一轮就能发出去，
-	// 而不必等到下一个周期
-	s.dispatchOnce(ctx, tenantID)
-}
-
-func (s *Service) dispatchOnce(ctx context.Context, tenantID string) {
-	if n, err := s.Dispatch(ctx, tenantID, 100); err != nil {
-		s.log.Warn("通知派发失败", "err", err)
-	} else if n > 0 {
-		s.log.Info("通知已派发", "条数", n)
-	}
 }
 
 func humanBytes(b int64) string {

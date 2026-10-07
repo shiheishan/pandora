@@ -573,8 +573,7 @@ func (s *Service) fulfillPlanChangeLocked(ctx context.Context, tx pgx.Tx, tenant
 		       granted = coalesce(qd.limit_value, 0),
 		       consumed = 0,
 		       period_start = $4,
-		       period_end = CASE WHEN qb.period = 'total' THEN NULL::timestamptz
-		                         ELSE $5::timestamptz END,
+		       period_end = `+quotaPeriodEndSQL("qb.period", "$4::timestamptz", "$5::timestamptz")+`,
 		       notified_thresholds = '{}',
 		       overage_applied_at = NULL,
 		       updated_at = now()

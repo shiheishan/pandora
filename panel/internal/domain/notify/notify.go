@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -174,39 +175,54 @@ func (s *Service) hash(v string) []byte {
 	return m.Sum(nil)
 }
 
-// Dispatch 处理一批待投递的通知。返回处理条数。
+// dispatchLease 是派发认领的租约：认领到的行在这段时间里对别的实例不可见。
+// 必须长于一轮派发的上限（dispatchRoundTimeout）。
+const dispatchLeaseSQL = "10 minutes"
+
+// Dispatch 认领并处理一批待投递的通知。返回处理条数。
 //
 // 站内信在这里直接标记为已送达：它的「送达」就是写进表，
 // 用户拉收件箱时自然会看到。
 func (s *Service) Dispatch(ctx context.Context, tenantID string, limit int) (int, error) {
 	type job struct {
-		id       string
-		userID   string
-		code     string
-		channel  string
-		payload  map[string]any
-		attempts int
-		maxTry   int
+		id        string
+		userID    string
+		code      string
+		channel   string
+		payload   map[string]any
+		attempts  int
+		maxTry    int
+		createdAt time.Time
 	}
 	var jobs []job
 
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// FOR UPDATE SKIP LOCKED：多个实例可以同时跑派发而不会互相抢同一条。
-		// 没有它的话要么加分布式锁（多一个依赖），要么只能单实例跑。
+		// 认领带租约：SKIP LOCKED 选出到期的行，同一条语句把 next_retry_at 推到租约末。
+		// 原先只在选的那个事务里 FOR UPDATE，事务一提交锁就没了、状态还是 queued，
+		// 投递要在事务外逐封发信，另一个实例这时扫到同一批就会重复发送。现在租约内
+		// 别的实例看它「还没到期」；发完改成 sent / 按退避排下次；本实例中途挂了，
+		// 租约一过任一实例重新认领。租约（dispatchLease）长于一轮派发的上限。
 		rows, err := tx.Query(ctx, `
-			SELECT id, COALESCE(user_id::text, ''), template_code, channel,
-			       COALESCE(payload,'{}'::jsonb), attempts, max_attempts
-			  FROM notification_deliveries
-			 WHERE tenant_id = $1 AND status = 'queued'
-			   AND (next_retry_at IS NULL OR next_retry_at <= now())
-			   -- notify.email 关闭时跳过邮件渠道：留在队列里，恢复后按原顺序投递。
-			   -- 缺行视为开启（与网关的降级开关门同一口径）
-			   AND (channel <> 'email' OR COALESCE(
-			         (SELECT f.enabled FROM feature_switches f
-			           WHERE f.tenant_id = $1 AND f.code = 'notify.email'), true))
-			 ORDER BY created_at
-			 LIMIT $2
-			 FOR UPDATE SKIP LOCKED`, tenantID, limit)
+			WITH due AS (
+				SELECT id FROM notification_deliveries
+				 WHERE tenant_id = $1 AND status = 'queued'
+				   AND (next_retry_at IS NULL OR next_retry_at <= now())
+				   -- notify.email 关闭时跳过邮件渠道：留在队列里，恢复后按原顺序投递。
+				   -- 缺行视为开启（与网关的降级开关门同一口径）
+				   AND (channel <> 'email' OR COALESCE(
+				         (SELECT f.enabled FROM feature_switches f
+				           WHERE f.tenant_id = $1 AND f.code = 'notify.email'), true))
+				 ORDER BY created_at
+				 LIMIT $2
+				 FOR UPDATE SKIP LOCKED
+			)
+			UPDATE notification_deliveries d
+			   SET next_retry_at = now() + $3::interval
+			  FROM due
+			 WHERE d.id = due.id
+			RETURNING d.id, COALESCE(d.user_id::text, ''), d.template_code, d.channel,
+			          COALESCE(d.payload,'{}'::jsonb), d.attempts, d.max_attempts, d.created_at`,
+			tenantID, limit, dispatchLeaseSQL)
 		if err != nil {
 			return err
 		}
@@ -214,13 +230,15 @@ func (s *Service) Dispatch(ctx context.Context, tenantID string, limit int) (int
 		for rows.Next() {
 			var j job
 			if err := rows.Scan(&j.id, &j.userID, &j.code, &j.channel,
-				&j.payload, &j.attempts, &j.maxTry); err != nil {
+				&j.payload, &j.attempts, &j.maxTry, &j.createdAt); err != nil {
 				return err
 			}
 			jobs = append(jobs, j)
 		}
 		return rows.Err()
 	})
+	// RETURNING 不保证顺序：按排队先后投递
+	slices.SortFunc(jobs, func(a, b job) int { return a.createdAt.Compare(b.createdAt) })
 	if err != nil || len(jobs) == 0 {
 		return 0, err
 	}

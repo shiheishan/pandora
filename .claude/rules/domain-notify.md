@@ -13,3 +13,5 @@ paths:
 - `notify.email` 降级开关关闭时，Dispatch 跳过邮件渠道、留在队列里，恢复后按原顺序投递；缺行视为开启
 - `SaveMailSettings` 先写 `auth.registration_mode` 再写其它键，与注册流程读设置的加锁顺序一致，避免死锁
 - 公告的版本状态机：已撤回不可再编辑，已发布只能保持发布；写入按 version CAS，审计里正文只记 sha256（守卫 `announce_admin_test.go:TestAnnouncementLifecycleCannotBypassWithdrawal`）
+- 派发认领带租约：`Dispatch` 用一条 `WITH due AS (… FOR UPDATE SKIP LOCKED) UPDATE … SET next_retry_at = now() + 租约 RETURNING` 认领，状态仍是 queued；发完改 sent 或按退避排下次，中途挂了租约一过任一实例重领。插件投递（`plugin.Dispatch`）同一写法。租约（10 分钟）必须长于一轮派发的上限（`dispatchRoundTimeout` 4 分钟）
+- 扫描与派发是两个 goroutine（`loops.go`）：扫描每 5 分钟、派发每 30 秒一轮并循环到队列空（有批数上限），`Kick` 只催派发。`StartScanner` 返回 join 函数，public 网关停机时在关资源之前调用

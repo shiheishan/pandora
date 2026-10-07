@@ -63,8 +63,11 @@ services:
       - log_min_duration_statement=500
       - -c
       - log_lock_waits=on
+      # 检查点打日志（PG15 起缺省就是 on，这里原先显式关掉了）：每次检查点一行，
+      # 写了多少缓冲、同步耗时多久。5k-r3 的 08:43 尖峰（iowait 37%）没法核实是不是
+      # 检查点同步造成的，就是因为它被关着；一小时十几行，量可忽略。
       - -c
-      - log_checkpoints=off
+      - log_checkpoints=on
       # --- 强制 UTC，账期换算全部在应用层按租户时区做（SUB-010）---
       - -c
       - timezone=UTC

@@ -65,6 +65,10 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, body string) error {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	// 派发一轮超时或进程停机时 ctx 取消：立刻断开，不等满 30 秒的读写期限，
+	// 停机时派发循环才能在宽限期内退出（这一封留在队列里，租约过后重发）
+	stopOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopOnCancel()
 
 	c, err := smtp.NewClient(conn, s.cfg.Host)
 	if err != nil {

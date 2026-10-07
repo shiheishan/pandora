@@ -169,16 +169,15 @@ func TestUnsubscribeStopsDelivery(t *testing.T) {
 	h := newTestHub(t, "")
 	ch, unsub := h.Subscribe([]string{"rt:t1:public"})
 	unsub()
+	// 注销可重复调用，不 panic
+	unsub()
 
-	// 注销后发布，通道应已关闭
+	// 注销后发布：通道不再收到事件（通道本身不关闭，见 subscriber 的说明）
 	h.Publish(context.Background(), "rt:t1:public", "late", nil)
 	select {
-	case _, ok := <-ch:
-		if ok {
-			t.Fatal("注销后仍收到事件")
-		}
-	case <-time.After(300 * time.Millisecond):
-		t.Fatal("注销后通道未关闭")
+	case ev := <-ch:
+		t.Fatalf("注销后仍收到事件：%+v", ev)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

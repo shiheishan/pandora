@@ -18,7 +18,7 @@ import (
 // 匿名页换出又换入（约 900 MB），持连接的事务推进极慢，连接池周转停摆，后来的
 // 请求全卡在「开启事务」——登录 504、订阅被伪装成 404。
 //
-// 闸门把同时进行的哈希压到一个小常数（缺省 2，可配），排队尊重请求 ctx，
+// 闸门把同时进行的哈希压到一个小常数（缺省 1，可配；理由见 config.DefaultPasswordHashConcurrency），排队尊重请求 ctx，
 // 等不到名额就返回 ErrPasswordHashBusy，由调用方翻成 503。
 //
 // 用法分两种：
@@ -34,7 +34,7 @@ var ErrPasswordHashBusy = errors.New("口令校验繁忙，请稍后重试")
 
 // 缺省值与 platform/config 的缺省一致；网关启动时用配置覆盖（ConfigurePasswordHashing）。
 const (
-	defaultPasswordHashConcurrency  = 2
+	defaultPasswordHashConcurrency  = 1
 	defaultPasswordHashQueueTimeout = 5 * time.Second
 )
 
