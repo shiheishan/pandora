@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -378,9 +379,12 @@ func checkNodeHotPathPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 			if err := rows.Scan(&col); err != nil {
 				t.Fatal(err)
 			}
-			// 行比较被解析成逐列的 (old.c IS DISTINCT FROM new.c) OR …
-			listed := strings.Contains(lower, "old."+col+" is distinct from new."+col)
-			if heartbeatColumns[col] && listed {
+			// 行比较被解析成逐列的 (old.c IS DISTINCT FROM new.c) OR …；域类型的列会带上
+			// 类型转换（(old.c)::bigint），所以按词边界找 old.c 与 new.c 各出现过
+			oldRef := regexp.MustCompile(`\bold\.` + regexp.QuoteMeta(col) + `\b`)
+			newRef := regexp.MustCompile(`\bnew\.` + regexp.QuoteMeta(col) + `\b`)
+			listed := oldRef.MatchString(lower) && newRef.MatchString(lower)
+			if heartbeatColumns[col] && col != "last_heartbeat_at" && (oldRef.MatchString(lower) || newRef.MatchString(lower)) {
 				t.Errorf("heartbeat column %s is compared by the notify trigger", col)
 			}
 			if !heartbeatColumns[col] && !listed {

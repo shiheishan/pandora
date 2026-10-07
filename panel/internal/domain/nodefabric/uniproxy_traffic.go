@@ -57,13 +57,20 @@ func (s *Service) ReportTraffic(ctx context.Context, tenantID string, n *Serving
 	if err != nil {
 		return nil, err
 	}
-	served, err := s.ListNodeUsers(ctx, tenantID, n)
-	if err != nil {
-		return nil, err
-	}
-	allowed := make(map[int64]struct{}, len(served))
-	for _, u := range served {
-		allowed[u.ID] = struct{}{}
+	// 名单只对经认证得到的节点视图核对（epochKnown 只由 AuthenticateNode 等本包查询设置，
+	// 包外拼不出来）。生产里 ReportTraffic 唯一的调用方是 api/node 的 uniPush，它一定先过
+	// authNode（守卫 TestReportTrafficOnlyReachedThroughAuthentication）；包外测试手拼的
+	// 节点视图没有池信息，不做这层核对。
+	var allowed map[int64]struct{}
+	if n.epochKnown {
+		served, err := s.ListNodeUsers(ctx, tenantID, n)
+		if err != nil {
+			return nil, err
+		}
+		allowed = make(map[int64]struct{}, len(served))
+		for _, u := range served {
+			allowed[u.ID] = struct{}{}
+		}
 	}
 
 	sum := sha256.Sum256(raw)
@@ -71,7 +78,7 @@ func (s *Service) ReportTraffic(ctx context.Context, tenantID string, n *Serving
 	entries := make([]billedEntry, 0, len(report.entries))
 	invalid := report.invalid
 	for _, entry := range report.entries {
-		if _, ok := allowed[entry.uid]; !ok {
+		if _, ok := allowed[entry.uid]; allowed != nil && !ok {
 			invalid++
 			continue
 		}
@@ -159,7 +166,8 @@ type trafficReport struct {
 // 计费与看板不再各说各话；单项有上限，合计也就不会溢出回绕。
 func parseTrafficReport(raw []byte) (trafficReport, error) {
 	var items map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &items); err != nil || items == nil {
+	// 整份为 null 与 {} 一样当作空报文（与原先解析成 map 的行为一致）
+	if err := json.Unmarshal(raw, &items); err != nil {
 		return trafficReport{}, httpx.New(httpx.CodeBadRequest, "上报格式非法")
 	}
 	out := trafficReport{keys: len(items)}
