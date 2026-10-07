@@ -169,7 +169,18 @@ func (h *StreamHub) PushConfig(tenantID, nodeID string, config json.RawMessage, 
 // 太旧）就发全量。这是长连接相比轮询的关键优势——服务端知道每条连接
 // 处在哪一版。
 func (h *StreamHub) PushUsers(tenantID, nodeID string, users []ProxyUser, previous map[string][]ProxyUser) {
-	version := UserSetVersion(users)
+	h.pushUsers(tenantID, nodeID, users, UserSetVersion(users), previous, nil)
+}
+
+// fullUsersPayloads 在一次扇出里按版本记住已编码的全量载荷：同池的节点拿到的是同一
+// 份列表，几千个用户的 JSON 只编一次，不必每个节点各编一遍。只在扇出的单个
+// goroutine 里用。
+type fullUsersPayloads map[string][]byte
+
+// pushUsers 是 PushUsers 的实现；version 由调用方给（缓存里算好的可以直接用），
+// shared 非空时全量载荷按版本复用。
+func (h *StreamHub) pushUsers(tenantID, nodeID string, users []ProxyUser, version string,
+	previous map[string][]ProxyUser, shared fullUsersPayloads) {
 
 	h.mu.Lock()
 	set := h.conns[streamKey(tenantID, nodeID)]
@@ -204,7 +215,14 @@ func (h *StreamHub) PushUsers(tenantID, nodeID string, users []ProxyUser, previo
 			}
 		}
 		if event == EventSyncUsers {
-			data, err = json.Marshal(SyncUsersPayload{Users: users, Version: version})
+			if cached, ok := shared[version]; ok {
+				data = cached
+			} else {
+				data, err = json.Marshal(SyncUsersPayload{Users: users, Version: version})
+				if err == nil && shared != nil {
+					shared[version] = data
+				}
+			}
 		}
 		if err != nil {
 			continue
@@ -436,6 +454,11 @@ func (s *Service) nodeChangeWatcherCount() int {
 //
 // 在 aegis-node 进程里起一个 goroutine 跑它。信号里只有 node_id，配置内容
 // 由这里自己查——那套签名和分流拼装逻辑只应该有一份。
+//
+// 读事件的循环只登记「谁要推」，真正查库、推送交给 streamPushQueue 的 worker
+// 有上限地并发去做（nodestream_fanout.go）。原先在这个循环里逐节点串行重算：一次
+// 付款事件要给 200 个节点各查三遍库，几秒钟里事件循环不读，realtime 的 32 条缓冲
+// 一满，后面的配置变更就被丢了。
 func (s *Service) WatchNodeChanges(ctx context.Context, tenantID string, log *slog.Logger) {
 	if s.realtime == nil || s.stream == nil {
 		return
@@ -444,6 +467,14 @@ func (s *Service) WatchNodeChanges(ctx context.Context, tenantID string, log *sl
 	// 暴露，所以退一步：用一个租户级频道，消息里带 node_id。
 	events, unsubscribe := s.realtime.Subscribe([]string{realtime.ChannelNodeAll(tenantID)})
 	defer unsubscribe()
+
+	queue := newStreamPushQueue()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.runStreamPushQueue(ctx, tenantID, queue, log)
+	}()
+	defer func() { <-done }()
 
 	for {
 		select {
@@ -456,22 +487,22 @@ func (s *Service) WatchNodeChanges(ctx context.Context, tenantID string, log *sl
 			nodeID, _ := ev.Payload["node_id"].(string)
 			if nodeID == "" {
 				// 不带 node_id 的是租户级事件——目前是「可服务用户集合变了」，
-				// 由付款履约触发。该租户下每个节点的用户列表都要重算，
-				// 所以推给本进程上连着的全部节点。
-				ids := s.stream.NodesOf(tenantID)
+				// 由付款履约与 R104 三处写路径触发。先作废用户集缓存（缓存的作废
+				// 订阅也会收到同一条，但两边谁先处理没有保证），再交给 worker 按池
+				// 重算、推给本进程上连着的全部节点。只推用户：配置没变，推 sync.config
+				// 会让每个节点白白重拉一遍配置。
+				s.invalidateNodeUsers(tenantID)
+				queue.addAllUsers()
 				// 这条日志是排障的锚点：事件到没到、落到几个节点上，
 				// 一眼可见。付款后节点迟迟不认新用户时先看它。
 				log.Info("收到租户级节点事件", "topic", ev.Topic,
-					"tenant_id", tenantID, "本进程节点数", len(ids))
-				for _, id := range ids {
-					s.pushNodeSnapshot(ctx, tenantID, id, log)
-				}
+					"tenant_id", tenantID, "本进程节点数", len(s.stream.NodesOf(tenantID)))
 				continue
 			}
 			if s.stream.Count(tenantID, nodeID) == 0 {
 				continue // 这个节点没连在本进程上
 			}
-			s.pushNodeSnapshot(ctx, tenantID, nodeID, log)
+			queue.addNode(nodeID)
 		}
 	}
 }
