@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,6 +19,16 @@ import (
 
 type Pool struct {
 	*pgxpool.Pool
+	// stopStats 停掉周期统计日志（Options.StatsLog 非空时才有）
+	stopStats func()
+}
+
+// Close 先停周期统计日志，再关连接池。
+func (p *Pool) Close() {
+	if p.stopStats != nil {
+		p.stopStats()
+	}
+	p.Pool.Close()
 }
 
 // Options 是连接池的可调参数。零值字段沿用 Open 的缺省值。
@@ -25,7 +36,25 @@ type Options struct {
 	// MaxConns 是本进程连接池的上限；0 表示缺省 DefaultMaxConns。
 	// 网关从 platform/config 取每网关各自的值（见 config.DBMaxConns 的算式）。
 	MaxConns int32
+	// MinConns 是常驻连接数；0 表示缺省 1，超过 MaxConns 时取 MaxConns。
+	// 网关从 platform/config 的 DBMinConns 取值（node 缺省 8）。
+	MinConns int32
+	// StatsLog 非空时每 PoolStatsInterval 打一行连接池统计（见 poolstats.go），
+	// 连接池关闭时停止。网关传自己的 logger，命令行工具与测试不传。
+	StatsLog *slog.Logger
 }
+
+// 连接寿命：基础 2 小时，再随机加 0–2 小时（每条连接各自抽）。
+//
+// 原先是固定 1 小时、无抖动。一次停顿让池子扩容时同时建出来的一批连接，正好
+// 1 小时后同时到期、同时重建（重做 SCRAM 认证、新起后端进程、语句缓存全冷）；
+// 重建若再撞上主机抖动，又生出下一批同龄连接，尖峰就按小时自我维持（5k-r3 的
+// 08:43 与 09:00 两次尖峰，恰在 r2 某次扩池之后 59 分 58 秒）。抖动把同一批
+// 连接的到期时刻摊开到两小时里，寿命拉长也让重建本身少一半。
+const (
+	poolMaxConnLifetime       = 2 * time.Hour
+	poolMaxConnLifetimeJitter = 2 * time.Hour
+)
 
 // DefaultMaxConns 是 Open 的连接池上限：命令行工具（adminctl、payctl）与测试用它。
 // 三个网关经 OpenWithOptions 按配置取值，不走这个缺省。
@@ -65,7 +94,11 @@ func OpenWithOptions(ctx context.Context, dsn string, o Options) (*Pool, error) 
 		cfg.MaxConns = o.MaxConns
 	}
 	cfg.MinConns = 1
-	cfg.MaxConnLifetime = time.Hour
+	if o.MinConns > 0 {
+		cfg.MinConns = min(o.MinConns, cfg.MaxConns)
+	}
+	cfg.MaxConnLifetime = poolMaxConnLifetime
+	cfg.MaxConnLifetimeJitter = poolMaxConnLifetimeJitter
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
 	cfg.AfterRelease = afterRelease
@@ -82,7 +115,11 @@ func OpenWithOptions(ctx context.Context, dsn string, o Options) (*Pool, error) 
 		pool.Close()
 		return nil, err
 	}
-	return &Pool{pool}, nil
+	p := &Pool{Pool: pool}
+	if o.StatsLog != nil {
+		p.stopStats = startPoolStatsLog(pool, o.StatsLog, PoolStatsInterval)
+	}
+	return p, nil
 }
 
 // queryRower is deliberately smaller than pgxpool.Pool so the security check

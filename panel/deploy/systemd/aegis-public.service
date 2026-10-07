@@ -12,7 +12,9 @@ ExecStart=/opt/aegispanel/bin/aegis-public
 
 # NFR-001：优雅退出，让在途的支付回调与下单事务跑完再退
 KillSignal=SIGTERM
-TimeoutStopSec=30
+# 停机两段各限 AEGIS_SHUTDOWN_TIMEOUT（缺省 20 秒）：先等在途请求跑完，再 join 后台循环。
+# 45 秒留够两段之和，免得在途事务还没提交就被 SIGKILL。
+TimeoutStopSec=45
 Restart=on-failure
 RestartSec=5
 
@@ -43,6 +45,11 @@ SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
 # 给网关设硬上限，避免与同机服务互相挤占
 MemoryMax=256M
 CPUQuota=60%
+# 配额按 20ms 一个周期结算（缺省 100ms）：额度用完时整个进程被停到周期末，
+# 周期越短单次停摆越短。0.6 核时单次停摆上限从 40–70ms 降到 8–14ms
+# （5k-r3 预热登录那一分钟 public 被节流 14 秒）。systemd 242 起支持，更老的版本
+# 只告警忽略这一行。
+CPUQuotaPeriodSec=20ms
 # Go 运行时的软上限取 MemoryMax 的 80%：逼近时 GC 加紧回收，而不是一路长到 cgroup
 # 上限、被内核拿自己的匿名页去换页。口令哈希另有全局并发上限
 # （AEGIS_PASSWORD_HASH_CONCURRENCY），两者一起才压得住登录潮。
