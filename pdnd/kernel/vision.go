@@ -208,10 +208,11 @@ func NewVisionConnFor(conn net.Conn, candidates [][]byte) (*VisionConn, error) {
 			return nil, errors.New("vision: 候选 UUID 必须是 16 字节")
 		}
 	}
+	// scratch 按需借：Vision 只在前几个包里剥填充、认 TLS，之后读写直通，
+	// 常驻一份 8KB 读缓冲在 10 万连接上就是 800MB。
 	return &VisionConn{
-		Conn:    conn,
-		state:   newVisionState(candidates),
-		scratch: make([]byte, visionBufferSize),
+		Conn:  conn,
+		state: newVisionState(candidates),
 	}, nil
 }
 
@@ -236,11 +237,32 @@ func (c *VisionConn) Read(p []byte) (int, error) {
 	c.readMu.Lock()
 	defer c.readMu.Unlock()
 
+	if c.readBuf.Len() == 0 && len(c.pending) == 0 && c.readPassthrough() {
+		// 剥填充与 TLS 识别都已结束：下面那套循环对字节不做任何事，只是经
+		// scratch 与 readBuf 绕一圈。直接读进调用方的缓冲，scratch 与 readBuf
+		// 一并放掉，空闲连接不再常驻读缓冲。
+		if c.scratch != nil {
+			putVisionScratch(c.scratch)
+			c.scratch = nil
+			c.readBuf = bytes.Buffer{}
+		}
+		return c.Conn.Read(p)
+	}
+	// 读进调用方的缓冲：剥出来的内容随后拷进 readBuf，再从 readBuf 交回调用方，
+	// 中间不再引用这块内存。只有调用方给的缓冲太小时才借 scratch——阻塞读期间
+	// 一直拿着 8KB scratch，正是每连接常驻内存的来源之一。
+	buf := p
+	if len(buf) < visionMinDirectRead {
+		if c.scratch == nil {
+			c.scratch = getVisionScratch()
+		}
+		buf = c.scratch
+	}
 	for c.readBuf.Len() == 0 {
-		n, err := c.Conn.Read(c.scratch)
+		n, err := c.Conn.Read(buf)
 		visionTracef("read n=%d err=%v", n, err)
 		if n > 0 {
-			chunk := c.scratch[:n]
+			chunk := buf[:n]
 			c.state.mu.Lock()
 			direct := c.state.readerDirect
 			needUnpad := !direct && (c.state.withinPaddingBuffers || c.state.packetsToFilter > 0)
@@ -287,8 +309,38 @@ func (c *VisionConn) Read(p []byte) (int, error) {
 			return 0, err
 		}
 	}
-	return c.readBuf.Read(p)
+	n, err := c.readBuf.Read(p)
+	if c.readBuf.Len() == 0 && c.readBuf.Cap() > visionBufferSize {
+		// 读空了就放掉大块底层数组，空闲连接不常驻它。
+		c.readBuf = bytes.Buffer{}
+	}
+	return n, err
 }
+
+// readPassthrough 判断读侧是否已无事可做：不再剥填充、不再识别 TLS。
+// 与 Read 循环里 needUnpad / packetsToFilter 的判断同一口径。
+func (c *VisionConn) readPassthrough() bool {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	needUnpad := !c.state.readerDirect && (c.state.withinPaddingBuffers || c.state.packetsToFilter > 0)
+	return !needUnpad && c.state.packetsToFilter == 0
+}
+
+// CloseWrite 把半关闭转给底层（REALITY / TLS 连接发 close_notify）。VisionConn
+// 内嵌的是接口，不转的话转发对它的半关闭断言失败，客户端收不到上游已结束。
+func (c *VisionConn) CloseWrite() error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return closeWriteOf(c.Conn)
+}
+
+// visionMinDirectRead：调用方缓冲不小于它就直接读进去（转发的小缓冲是 2KB）。
+const visionMinDirectRead = 1 << 10
+
+var visionScratchPool = sync.Pool{New: func() any { return make([]byte, visionBufferSize) }}
+
+func getVisionScratch() []byte  { return visionScratchPool.Get().([]byte) }
+func putVisionScratch(b []byte) { visionScratchPool.Put(b) } //nolint:staticcheck // 切片头分配可接受，频率是每连接一次
 
 // Write 给下行数据加填充。
 //

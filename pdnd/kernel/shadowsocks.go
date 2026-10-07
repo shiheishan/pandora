@@ -70,17 +70,18 @@ type shadowsocksAdapter struct {
 	snapshot   atomic.Pointer[ssUserSnapshot]
 	reordering atomic.Bool
 	hints      ssSourceHints
-	traffic    map[int64]core.UserTraffic
-	online     map[int64]map[string]struct{}
-	plane      DataPlane
-	connErr    connErrorReporter
-	limiters   core.SpeedLimiters
-	listener   net.Listener
-	packet     net.PacketConn
-	ctx        context.Context
-	cancel     context.CancelFunc
-	closed     bool
-	active     map[net.Conn]struct{}
+	// sessions 是按用户的在途连接表与原子流量计数（user_sessions.go）。
+	sessions userSessions
+	online   map[int64]map[string]struct{}
+	plane    DataPlane
+	connErr  connErrorReporter
+	limiters core.SpeedLimiters
+	listener net.Listener
+	packet   net.PacketConn
+	ctx      context.Context
+	cancel   context.CancelFunc
+	closed   bool
+	active   map[net.Conn]struct{}
 	// salts 是 TCP 请求 salt 的防重放表（认证通过才记），见 replayFilter。
 	salts *replayFilter
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
@@ -107,7 +108,7 @@ func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 	}
 	return &shadowsocksAdapter{
 		protocol: strings.ToLower(strings.TrimSpace(spec.Config.Protocol)), spec: spec, method: methodSpec,
-		users: make(map[string]*ssUser), traffic: make(map[int64]core.UserTraffic),
+		users:  make(map[string]*ssUser),
 		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
 		salts: newReplayFilter(ssSaltReplayPeriod, ssSaltReplayKeep, replayFilterMaxPerGen),
 	}, nil
@@ -202,11 +203,11 @@ func (a *shadowsocksAdapter) acceptLoop() {
 		a.wg.Add(1)
 		ctx := a.ctx
 		a.mu.Unlock()
-		go func() {
+		goGuarded(conn, func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
 			_ = a.handleConn(ctx, conn)
-		}()
+		})
 	})
 }
 
@@ -221,6 +222,7 @@ func (a *shadowsocksAdapter) handleConn(ctx context.Context, conn net.Conn) erro
 
 func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
+	epoch := a.sessions.epoch()
 	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
 	user, stream, destination, err := a.readRequest(conn)
 	if err != nil {
@@ -232,6 +234,11 @@ func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
+	sess := a.sessions.open(user, epoch, conn)
+	if sess == nil {
+		return errSessionRevoked
+	}
+	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
 		return deviceLimitError("shadowsocks")
@@ -244,25 +251,8 @@ func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error
 		return err
 	}
 	defer upstream.Close()
-	var copyWG sync.WaitGroup
-	copyWG.Add(2)
-	go func() {
-		n, _ := core.SpeedLimitedCopy(upstream, stream, a.limiters.For(user))
-		a.addTraffic(user, n, 0)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		copyWG.Done()
-	}()
-	go func() {
-		n, _ := core.SpeedLimitedCopy(stream, upstream, a.limiters.For(user))
-		a.addTraffic(user, 0, n)
-		// 上游关掉写端时，这个关闭要传给客户端，否则它收不到 EOF，
-		// 会一直等到自己超时——连接也就一直不释放。
-		_ = stream.CloseWrite()
-		copyWG.Done()
-	}()
-	copyWG.Wait()
+	// ssStream 自带 CloseWrite（把半关闭转给底层），转发据此把上游结束传给客户端。
+	sess.relay(stream, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
 	return nil
 }
 
@@ -377,21 +367,49 @@ type ssStream struct {
 	writeAEAD  cipher.AEAD
 	readNonce  uint64
 	writeNonce uint64
-	pending    []byte
-	writeMu    sync.Mutex
+	// pending 是已解密、调用方还没取走的明文；pendingBuf 非空时它指向池里的
+	// 那块缓冲，取完即还。
+	pending       []byte
+	pendingBuf    *[]byte
+	nonce         [12]byte
+	writeMu       sync.Mutex
+	writeNonceBuf [12]byte
+}
+
+// 数据路径不再逐块分配（1c1g 实测 ss 下行分配加 GC 约占 CPU 35%）：长度头在栈上
+// 原地解密；调用方缓冲装得下整块时直接读进去原地解密，装不下才借池里的块缓冲；
+// 写方向在池里的缓冲上原地封装长度头与正文，一次写出。
+
+// ssFrameBufSize 是一个完整加密块（长度头 2+16 加正文上限 0x3FFF+16）的上界。
+const ssFrameBufSize = 2 + 16 + ssChunkLimit + 16
+
+var ssFramePool = sync.Pool{New: func() any { b := make([]byte, ssFrameBufSize); return &b }}
+
+// fillSSNonce 把计数写成 12 字节小端 nonce（与 makeSSNonce 同一口径），不分配。
+func fillSSNonce(nonce *[12]byte, value uint64) []byte {
+	*nonce = [12]byte{}
+	for i := 0; i < len(nonce) && value != 0; i++ {
+		nonce[i] = byte(value)
+		value >>= 8
+	}
+	return nonce[:]
 }
 
 func (s *ssStream) Read(p []byte) (int, error) {
 	if len(s.pending) > 0 {
 		n := copy(p, s.pending)
 		s.pending = s.pending[n:]
+		if len(s.pending) == 0 && s.pendingBuf != nil {
+			ssFramePool.Put(s.pendingBuf)
+			s.pendingBuf, s.pending = nil, nil
+		}
 		return n, nil
 	}
 	var encryptedLength [2 + 16]byte
 	if _, err := io.ReadFull(s.conn, encryptedLength[:]); err != nil {
 		return 0, err
 	}
-	plainLength, err := s.aead.Open(nil, makeSSNonce(s.readNonce), encryptedLength[:], nil)
+	plainLength, err := s.aead.Open(encryptedLength[:0], fillSSNonce(&s.nonce, s.readNonce), encryptedLength[:], nil)
 	s.readNonce++
 	if err != nil || len(plainLength) != 2 {
 		return 0, fmt.Errorf("shadowsocks frame length authentication failed")
@@ -400,18 +418,36 @@ func (s *ssStream) Read(p []byte) (int, error) {
 	if length == 0 || length > ssChunkLimit {
 		return 0, fmt.Errorf("shadowsocks frame length invalid")
 	}
-	frame := make([]byte, length+s.aead.Overhead())
+	frameLen := length + s.aead.Overhead()
+	if len(p) >= frameLen {
+		// 调用方缓冲装得下整块：读进去原地解密，零分配零拷贝。
+		if _, err := io.ReadFull(s.conn, p[:frameLen]); err != nil {
+			return 0, err
+		}
+		plain, err := s.aead.Open(p[:0], fillSSNonce(&s.nonce, s.readNonce), p[:frameLen], nil)
+		s.readNonce++
+		if err != nil {
+			return 0, fmt.Errorf("shadowsocks frame authentication failed")
+		}
+		return len(plain), nil
+	}
+	bp := ssFramePool.Get().(*[]byte)
+	frame := (*bp)[:frameLen]
 	if _, err := io.ReadFull(s.conn, frame); err != nil {
+		ssFramePool.Put(bp)
 		return 0, err
 	}
-	plain, err := s.aead.Open(nil, makeSSNonce(s.readNonce), frame, nil)
+	plain, err := s.aead.Open(frame[:0], fillSSNonce(&s.nonce, s.readNonce), frame, nil)
 	s.readNonce++
 	if err != nil {
+		ssFramePool.Put(bp)
 		return 0, fmt.Errorf("shadowsocks frame authentication failed")
 	}
 	n := copy(p, plain)
 	if n < len(plain) {
-		s.pending = append(s.pending, plain[n:]...)
+		s.pending, s.pendingBuf = plain[n:], bp
+	} else {
+		ssFramePool.Put(bp)
 	}
 	return n, nil
 }
@@ -423,6 +459,8 @@ func (s *ssStream) Write(p []byte) (int, error) {
 	if aead == nil {
 		aead = s.aead
 	}
+	bp := ssFramePool.Get().(*[]byte)
+	defer ssFramePool.Put(bp)
 	written := 0
 	for len(p) > 0 {
 		chunk := p
@@ -430,11 +468,11 @@ func (s *ssStream) Write(p []byte) (int, error) {
 			chunk = chunk[:ssChunkLimit]
 		}
 		length := [2]byte{byte(len(chunk) >> 8), byte(len(chunk))}
-		header := aead.Seal(nil, makeSSNonce(s.writeNonce), length[:], nil)
+		out := aead.Seal((*bp)[:0], fillSSNonce(&s.writeNonceBuf, s.writeNonce), length[:], nil)
 		s.writeNonce++
-		body := aead.Seal(nil, makeSSNonce(s.writeNonce), chunk, nil)
+		out = aead.Seal(out, fillSSNonce(&s.writeNonceBuf, s.writeNonce), chunk, nil)
 		s.writeNonce++
-		if _, err := s.conn.Write(append(header, body...)); err != nil {
+		if _, err := s.conn.Write(out); err != nil {
 			return written, err
 		}
 		written += len(chunk)
@@ -556,31 +594,26 @@ func (a *shadowsocksAdapter) UpsertUsers(users []core.User) error {
 
 func (a *shadowsocksAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	for _, password := range ids {
 		key := hex.EncodeToString(deriveSSMasterKey(password, a.method.KeyLen))
 		// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着，map 只增不减。
 		if entry, ok := a.users[key]; ok {
 			a.limiters.Remove(entry.ID)
 			entry.retired.Store(true)
+			removed = append(removed, entry.ID)
 		}
 		delete(a.users, key)
 	}
 	a.publishUsersLocked()
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关）：已有的长连接随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 
 func (a *shadowsocksAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
 func (a *shadowsocksAdapter) OnlineIPs() map[int64][]string {
@@ -622,13 +655,7 @@ func (a *shadowsocksAdapter) leaveDevice(user core.User, ip string) {
 }
 
 func (a *shadowsocksAdapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	traffic := a.traffic[user.ID]
-	traffic.ID = user.ID
-	traffic.Upload += upload
-	traffic.Download += download
-	a.traffic[user.ID] = traffic
-	a.mu.Unlock()
+	a.sessions.add(user.ID, upload, download)
 }
 
 func (a *shadowsocksAdapter) Close() error {

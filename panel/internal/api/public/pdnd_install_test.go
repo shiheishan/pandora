@@ -72,7 +72,7 @@ func TestPDNDInstallerRunsAsHardenedUnprivilegedUser(t *testing.T) {
 		"PrivateDevices=true",
 		"RestrictNamespaces=true",
 		"KillSignal=SIGTERM",
-		"TimeoutStopSec=20s",
+		"TimeoutStopSec=30s",
 		"RestartSec=5s",
 		"Description=Pandora NativeCore node agent",
 		"LimitNOFILE=1048576",
@@ -112,6 +112,7 @@ func TestPDNDInstallerUnitMatchesPackagedContract(t *testing.T) {
 	for _, key := range []string{
 		"Description",
 		"RestartSec",
+		"TimeoutStopSec",
 		"NoNewPrivileges",
 		"LimitNOFILE",
 		"AmbientCapabilities",

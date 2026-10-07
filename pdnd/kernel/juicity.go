@@ -40,7 +40,7 @@ type juicityAdapter struct {
 
 	mu        sync.RWMutex
 	users     map[string]juicityUser
-	traffic   map[int64]core.UserTraffic
+	sessions  userSessions
 	online    map[int64]map[string]struct{}
 	plane     DataPlane
 	connErr   connErrorReporter
@@ -59,11 +59,11 @@ var _ Adapter = (*juicityAdapter)(nil)
 
 func newJuicityAdapter(spec InboundSpec) (Adapter, error) {
 	return &juicityAdapter{
-		spec:    spec,
-		users:   make(map[string]juicityUser),
-		traffic: make(map[int64]core.UserTraffic),
-		online:  make(map[int64]map[string]struct{}),
-		active:  make(map[*quic.Conn]struct{}),
+		spec:  spec,
+		users: make(map[string]juicityUser),
+
+		online: make(map[int64]map[string]struct{}),
+		active: make(map[*quic.Conn]struct{}),
 	}, nil
 }
 
@@ -165,11 +165,11 @@ func (a *juicityAdapter) acceptLoop() {
 		a.active[conn] = struct{}{}
 		a.wg.Add(1)
 		a.mu.Unlock()
-		go func() {
+		goGuarded(nil, func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
 			a.handleConn(conn)
-		}()
+		})
 	}
 }
 
@@ -189,6 +189,7 @@ func (a *juicityAdapter) handleConn(conn *quic.Conn) {
 		_ = conn.CloseWithError(0x100, "authentication stream required")
 		return
 	}
+	epoch := a.sessions.epoch()
 	user, err := a.authenticate(conn, uni)
 	if err != nil {
 		a.connErr.addr(StageSession, conn.RemoteAddr(), err)
@@ -206,6 +207,16 @@ func (a *juicityAdapter) handleConn(conn *quic.Conn) {
 		return
 	}
 	defer a.leaveDevice(user, ip)
+	// 整条 QUIC 连接属于一个用户：登记它，用户被移出名单时连同其上的流一起断。
+	sess := a.sessions.open(user, epoch, closerFunc(func() error {
+		return conn.CloseWithError(0x103, "user removed")
+	}))
+	if sess == nil {
+		a.connErr.addr(StageSession, conn.RemoteAddr(), errSessionRevoked)
+		_ = conn.CloseWithError(0x103, "user removed")
+		return
+	}
+	defer sess.close()
 	for {
 		stream, err := conn.AcceptStream(ctx)
 		if err != nil {
@@ -214,11 +225,11 @@ func (a *juicityAdapter) handleConn(conn *quic.Conn) {
 		a.mu.Lock()
 		a.wg.Add(1)
 		a.mu.Unlock()
-		go func() {
+		goGuarded(stream, func() {
 			defer a.wg.Done()
 			defer stream.Close()
-			a.handleStream(ctx, conn, stream, user, ip)
-		}()
+			a.handleStream(ctx, conn, stream, user, ip, sess)
+		})
 	}
 }
 
@@ -251,7 +262,7 @@ func (a *juicityAdapter) authenticate(conn *quic.Conn, stream *quic.ReceiveStrea
 	return entry.user, nil
 }
 
-func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string) {
+func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string, sess *userSession) {
 	var network [1]byte
 	if _, err := io.ReadFull(stream, network[:]); err != nil {
 		a.connErr.addr(StageSession, conn.RemoteAddr(), err)
@@ -264,7 +275,7 @@ func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stre
 	}
 	switch network[0] {
 	case juicityNetworkTCP:
-		a.handleTCPStream(ctx, conn, stream, user, ip, destination)
+		a.handleTCPStream(ctx, conn, stream, user, destination, sess)
 	case juicityNetworkUDP:
 		a.handleUDPStream(ctx, conn, stream, user, ip, destination)
 	default:
@@ -272,7 +283,7 @@ func (a *juicityAdapter) handleStream(ctx context.Context, conn *quic.Conn, stre
 	}
 }
 
-func (a *juicityAdapter) handleTCPStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string, destination juicityAddress) {
+func (a *juicityAdapter) handleTCPStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, destination juicityAddress, sess *userSession) {
 	sourceIP, sourcePort := sourceFromAddr(conn.RemoteAddr())
 	meta := route.Meta{Domain: destination.domain(), IP: destination.ip(), Port: destination.Port, Network: "tcp", Protocol: "juicity", SourceIP: sourceIP, SourcePort: sourcePort}
 	upstream, err := a.plane.DialTCP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
@@ -281,25 +292,13 @@ func (a *juicityAdapter) handleTCPStream(ctx context.Context, conn *quic.Conn, s
 		return
 	}
 	defer upstream.Close()
-	var wg sync.WaitGroup
-	wg.Add(2)
-	done := make(chan struct{}, 2)
-	go func() {
-		defer wg.Done()
-		n, _ := core.SpeedLimitedCopy(upstream, stream, a.limiters.For(user))
-		a.addTraffic(user, n, 0)
-		done <- struct{}{}
-	}()
-	go func() {
-		defer wg.Done()
-		n, _ := core.SpeedLimitedCopy(stream, upstream, a.limiters.For(user))
-		a.addTraffic(user, 0, n)
-		done <- struct{}{}
-	}()
-	<-done
-	_ = upstream.Close()
-	_ = stream.Close()
-	wg.Wait()
+	// QUIC 流的 Close 只关写方向，沿用「一侧结束即两端全关」。
+	// 收尾时连读方向一起取消，否则另一方向会一直阻塞在读这条流上。
+	client := &core.SplitStream{R: stream, W: stream, C: closerFunc(func() error {
+		stream.CancelRead(0)
+		return stream.Close()
+	})}
+	sess.relay(client, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
 }
 
 func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string, initial juicityAddress) {
@@ -440,31 +439,26 @@ func (a *juicityAdapter) UpsertUsers(users []core.User) error {
 
 func (a *juicityAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	for _, id := range ids {
 		if parsed, err := uuid.Parse(strings.TrimSpace(id)); err == nil {
 			key := parsed.String()
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			if entry, ok := a.users[key]; ok {
 				a.limiters.Remove(entry.user.ID)
+				removed = append(removed, entry.user.ID)
 			}
 			delete(a.users, key)
 		}
 	}
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关）：已有的长连接、mux / QUIC 会话随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 
 func (a *juicityAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
 func (a *juicityAdapter) OnlineIPs() map[int64][]string {
@@ -506,10 +500,7 @@ func (a *juicityAdapter) leaveDevice(user core.User, ip string) {
 }
 
 func (a *juicityAdapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	current := a.traffic[user.ID]
-	a.traffic[user.ID] = core.UserTraffic{ID: user.ID, Upload: current.Upload + upload, Download: current.Download + download}
-	a.mu.Unlock()
+	a.sessions.add(user.ID, upload, download)
 }
 
 func (a *juicityAdapter) removeActive(conn *quic.Conn) {

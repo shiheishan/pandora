@@ -196,9 +196,7 @@ func TestVLESSAdapterRealityXrayInterop(t *testing.T) {
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		adapter.mu.RLock()
-		observed := adapter.traffic[903]
-		adapter.mu.RUnlock()
+		observed := adapter.sessions.peek(903)
 		if observed.Upload > 0 && observed.Download > 0 {
 			break
 		}
@@ -612,7 +610,7 @@ func TestVLESSAdapterLoopbackTCPAndTraffic(t *testing.T) {
 	port := reserved.Addr().(*net.TCPAddr).Port
 	_ = reserved.Close()
 
-	adapter := &vlessAdapter{users: make(map[string]core.User), traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{})}
+	adapter := &vlessAdapter{users: make(map[string]core.User), online: make(map[int64]map[string]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vless", Listen: "127.0.0.1", Port: port}}
 	if err := adapter.Validate(spec); err != nil {
 		t.Fatal(err)
@@ -677,7 +675,7 @@ func TestVLESSAdapterLoopbackTCPAndTraffic(t *testing.T) {
 }
 
 func TestVLESSAdapterXHTTPH1Bridge(t *testing.T) {
-	adapter := &vlessAdapter{users: make(map[string]core.User), traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{})}
+	adapter := &vlessAdapter{users: make(map[string]core.User), online: make(map[int64]map[string]struct{})}
 	id := uuid.New()
 	if err := adapter.AddUsers([]core.User{{ID: 77, UUID: id.String()}}); err != nil {
 		t.Fatal(err)

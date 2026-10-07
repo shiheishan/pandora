@@ -130,6 +130,14 @@ func (c *Conn) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// CloseWrite 把半关闭转给底层（内嵌接口不会提升底层的 CloseWrite）。
+func (c *Conn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return net.ErrClosed
+}
+
 // Upstream 让 sing 的 bufio 优化链能穿透这层包装。
 // 不实现它的话，splice / sendfile 之类的零拷贝路径会被这层挡掉，
 // 转发性能会有可观的下降。
