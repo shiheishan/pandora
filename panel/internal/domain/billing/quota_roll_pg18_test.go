@@ -14,7 +14,6 @@ import (
 // 重置日志记下清零前的用量。挂在 TestSubscriptionPeriodPG18 下，用同一个租户。
 func checkQuotaRollPG18(t *testing.T, p *subPeriodPG18) {
 	ctx := p.ctx
-	user := p.fx.commissionBuyer
 
 	// 年付套餐：每月 1000、每日 100
 	product, plan, version, priceID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
@@ -31,8 +30,13 @@ func checkQuotaRollPG18(t *testing.T, p *subPeriodPG18) {
 	p.must(`INSERT INTO prices(id,tenant_id,product_id,currency,unit_amount,billing_interval,
 		interval_count,status) VALUES($1,$2,$3,'CNY',12000,'year',1,'active')`, priceID, p.fx.tenant, product)
 
+	// 每次开通用一个新用户：同一用户再兑同一套餐的卡会在原订阅上续费（w5expiry 规则 3），
+	// 而这里要的是三条各自独立的订阅
 	grant := func() string {
 		var sub string
+		user := uuid.NewString()
+		p.must(`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES($1,$2,$3,'Quota Roll','active')`,
+			user, p.fx.tenant, "quota-roll-"+user[:8]+"@example.test")
 		orderReleasePG18InTxAs(t, ctx, p.app, p.fx.tenant, user, func(tx pgx.Tx) error {
 			var err error
 			sub, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, user, plan, priceID, "quota-roll")
