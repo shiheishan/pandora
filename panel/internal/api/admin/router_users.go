@@ -77,6 +77,13 @@ func registerUserRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, billing.SubscriptionExtendIdempotencyScope, d.Log),
 	).Post("/subscriptions/{id}/extend", h.extendSubscription)
+	// 加流量包（w5account）：凭空给用户一笔不过期的流量，与加时长同权限码同门槛；
+	// 每执行一次多一笔，所以同样要独立的幂等 scope
+	r.With(
+		middleware.RequirePermission("billing.adjustment.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, billing.SubscriptionTrafficGrantIdempotencyScope, d.Log),
+	).Post("/subscriptions/{id}/traffic-pack", h.grantSubscriptionTraffic)
 }
 
 func registerUserGroupRoutes(r chi.Router, d Deps, h *handlers) {

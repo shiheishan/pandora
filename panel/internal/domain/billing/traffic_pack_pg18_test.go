@@ -168,6 +168,70 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	}
 	t.Log("marker=traffic_pack_pg18_gift_card_grant_ok")
 
+	// 5b) 后台给订阅加流量包（w5account，00129）：发到订阅所属用户的同一余额里，来源 admin，
+	// 审计与幂等完成在同一事务；原因太短、订阅不存在都不发。
+	var subID string
+	if err := pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
+		var err error
+		subID, err = service.GiftGranter().GrantPlan(ctx, tx, fx.tenant, fx.buyer, fx.plan, fx.price, "pg18 admin traffic")
+		return err
+	}); err != nil {
+		t.Fatalf("seed a subscription for the admin grant: %v", err)
+	}
+	var notified int
+	service.SetUsersChangedNotifier(func(context.Context, string) { notified++ })
+	completed := 0
+	grantAdmin := func(sub string, bytes int64, reason string) (*AdminTrafficGrantOutput, error) {
+		return service.GrantTrafficPackAsAdmin(ctx, fx.tenant, AdminTrafficGrantInput{
+			SubscriptionID: sub, ActorID: fx.referrer, Bytes: bytes, Reason: reason,
+			Complete: func(_ context.Context, tx pgx.Tx, resp httpx.PreparedResponse) error {
+				completed++
+				if resp.StatusCode() != 200 {
+					t.Errorf("prepared response status=%d", resp.StatusCode())
+				}
+				return nil
+			},
+		})
+	}
+	if _, err := grantAdmin(subID, 4096, "短"); !errors.As(err, &he) || he.Fields["reason"] == "" {
+		t.Fatalf("short reason err=%v", err)
+	}
+	if _, err := grantAdmin(uuid.NewString(), 4096, "补偿线路故障"); !errors.As(err, &he) || he.Code != httpx.CodeNotFound {
+		t.Fatalf("unknown subscription err=%v", err)
+	}
+	granted, err := grantAdmin(subID, 4096, "补偿线路故障")
+	if err != nil {
+		t.Fatalf("admin traffic grant: %v", err)
+	}
+	if granted.UserID != fx.buyer || granted.GrantedBytes != 4096 || granted.RemainingBytesTotal != 1750+4096 ||
+		completed != 1 || notified != 1 {
+		t.Fatalf("admin grant out=%+v completed=%d notified=%d", granted, completed, notified)
+	}
+	var adminSource string
+	var auditRows int
+	if err := admin.QueryRow(ctx, `SELECT source FROM traffic_pack_grants WHERE id=$1::uuid`, granted.GrantID).Scan(&adminSource); err != nil || adminSource != "admin" {
+		t.Fatalf("admin grant source=%q err=%v", adminSource, err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE tenant_id=$1
+		AND action='subscription.traffic_granted' AND resource_id=$2::uuid AND actor_id=$3::uuid
+		AND after_digest->>'reason'='补偿线路故障' AND (after_digest->>'granted_bytes')::bigint=4096`,
+		fx.tenant, subID, fx.referrer).Scan(&auditRows); err != nil || auditRows != 1 {
+		t.Fatalf("admin grant audit rows=%d err=%v", auditRows, err)
+	}
+	// 幂等完成失败时整笔回滚：余额、审计都不留
+	_, err = service.GrantTrafficPackAsAdmin(ctx, fx.tenant, AdminTrafficGrantInput{
+		SubscriptionID: subID, ActorID: fx.referrer, Bytes: 1, Reason: "补偿线路故障",
+		Complete: func(context.Context, pgx.Tx, httpx.PreparedResponse) error { return errors.New("claim lost") },
+	})
+	if err == nil {
+		t.Fatal("a failed idempotency completion must fail the grant")
+	}
+	if remaining, _ := grants(t); remaining != 1750+4096 {
+		t.Fatalf("rolled-back admin grant changed the balance, remaining=%d", remaining)
+	}
+	service.SetUsersChangedNotifier(nil)
+	t.Log("marker=traffic_pack_pg18_admin_grant_ok")
+
 	// 6) 数据库守卫：伪造订单来源的余额、改容量、删除都被拒绝。
 	forged := pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
 		if _, err := GrantTrafficPackTx(ctx, tx, fx.tenant, fx.buyer, "order", uuid.NewString(), 999); err != nil {
