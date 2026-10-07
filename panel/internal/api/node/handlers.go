@@ -363,8 +363,16 @@ func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenantID := httpx.TenantIDFrom(r.Context())
+	// 拉取在途、以及送出的名单与事件流记着的版本不同，都要让事件流下一次推全量
+	// 而不是增量（StreamHub.BeginUsersPull）。登记要早于读名单。
+	pulled := func(string, bool) {}
+	if h.d.NodeStream != nil {
+		pulled = h.d.NodeStream.BeginUsersPull(tenantID, n.ID)
+	}
+	defer pulled("", false)
 	// 用户集按（租户, 池）缓存，版本随缓存一起算好（nodefabric.NodeUserSet）。
-	users, etag, err := h.d.Node.NodeUserSet(r.Context(), httpx.TenantIDFrom(r.Context()), n)
+	users, etag, err := h.d.Node.NodeUserSet(r.Context(), tenantID, n)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
@@ -382,6 +390,7 @@ func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("ETag", etag)
+	pulled(etag, true) // 在写出之前：节点可能一收到就装上
 	// 字段名与结构必须与 UniProxy 一致，节点端按 users 数组解析
 	httpx.OK(w, uniUsersResponse{Users: users})
 }
