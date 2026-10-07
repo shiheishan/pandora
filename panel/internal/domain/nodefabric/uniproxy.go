@@ -63,43 +63,72 @@ type ServingNode struct {
 //
 // token 在库里只有哈希。node_id 走的是节点 UUID，而不是协议里常见的自增整数 ——
 // 节点数量有限，用 UUID 不会给节点端造成困扰，却省掉一套自增 ID 映射。
+//
+// 成功结果按（租户, 节点, 令牌哈希）缓存 30 秒（nodecache.go）：节点行一变（状态、
+// 服务状态、令牌、协议、换池都会触发 nodes 变更通知）就作废，收不到通知时 TTL
+// 兜底——吊销或退役之后最多再放行一个 TTL。认证失败从不缓存。
 func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token, nodeType string) (*ServingNode, error) {
 	if nodeID == "" || token == "" {
 		return nil, httpx.New(httpx.CodeUnauthorized, "缺少 node_id 或 token")
 	}
+	tokenHash := crypto.HashToken(token)
 
-	var n ServingNode
-	var proto []byte
-	var isControlNode bool
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
-			SELECT n.id, n.name, coalesce(n.node_type,''), coalesce(n.server_host,''),
-			       coalesce(n.server_port,0), n.traffic_rate, n.protocol_config, n.pool_id,
-			       n.status, coalesce(n.kernel,'auto'), s.status, n.serving_status,
-			       coalesce(s.control_node_id=n.id,false)
-			  FROM nodes n
-			  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
-			 WHERE n.tenant_id = $1 AND n.id = $2::uuid
-			   AND n.server_token_hash = $3
-			   AND s.deleted_at IS NULL
-			   AND s.status IN ('ready','draining')
-			   AND n.serving_status IN ('active','draining')
-			   AND n.node_type IS NOT NULL
-			   AND n.server_port BETWEEN 1 AND 65535
-			   AND `+StableProtocolReadySQL("n"),
-			tenantID, nodeID, crypto.HashToken(token),
-		).Scan(&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
-			&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
-			&n.ServerStatus, &n.ServingStatus, &isControlNode)
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		// 节点不存在与 token 不对返回同一种错误
-		return nil, httpx.New(httpx.CodeUnauthorized, "节点认证失败")
+	load := func(ctx context.Context) (ServingNode, error) {
+		var n ServingNode
+		var proto []byte
+		var isControlNode bool
+		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `
+				SELECT n.id, n.name, coalesce(n.node_type,''), coalesce(n.server_host,''),
+				       coalesce(n.server_port,0), n.traffic_rate, n.protocol_config, n.pool_id,
+				       n.status, coalesce(n.kernel,'auto'), s.status, n.serving_status,
+				       coalesce(s.control_node_id=n.id,false)
+				  FROM nodes n
+				  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
+				 WHERE n.tenant_id = $1 AND n.id = $2::uuid
+				   AND n.server_token_hash = $3
+				   AND s.deleted_at IS NULL
+				   AND s.status IN ('ready','draining')
+				   AND n.serving_status IN ('active','draining')
+				   AND n.node_type IS NOT NULL
+				   AND n.server_port BETWEEN 1 AND 65535
+				   AND `+StableProtocolReadySQL("n"),
+				tenantID, nodeID, tokenHash,
+			).Scan(&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
+				&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
+				&n.ServerStatus, &n.ServingStatus, &isControlNode)
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			// 节点不存在与 token 不对返回同一种错误
+			return ServingNode{}, httpx.New(httpx.CodeUnauthorized, "节点认证失败")
+		}
+		if err != nil {
+			return ServingNode{}, err
+		}
+		// 只有正式在役的节点能拉用户。standby/canary 阶段的节点若也能拉，
+		// 灰度就失去意义了 —— 用户会被分配到还没验证完的机器上（NODE-010）。
+		if !legacyNodeStatusAllowsServing(isControlNode, n.Status) {
+			return ServingNode{}, httpx.New(httpx.CodeForbidden, "节点当前状态不可提供服务")
+		}
+		n.NodeType = CanonicalNodeType(n.NodeType)
+		n.Protocol = proto
+		return n, nil
+	}
+
+	var cached ServingNode
+	var err error
+	if c := s.nodeCachesFor(tenantID); c != nil {
+		cached, err = c.auth.get(ctx, authCacheKey(tenantID, nodeID, tokenHash), nodeCacheGroup(tenantID, nodeID), load)
+	} else {
+		cached, err = load(ctx)
 	}
 	if err != nil {
 		return nil, err
 	}
-	n.NodeType = CanonicalNodeType(n.NodeType)
+	// 缓存里那份被多个请求共用：交出去的是副本，调用方往上挂分流、记协议漂移都不串。
+	n := cached
+	n.Protocol = append(json.RawMessage(nil), cached.Protocol...)
+	n.Outbounds, n.Routes, n.DeclaredType = nil, nil, ""
 	// 节点端声明的协议和库里不一致时，以库为准，不再拒绝认证。
 	//
 	// 原先这里直接返回 401。它看着像一道安全检查，其实不是：能走到这行
@@ -121,13 +150,6 @@ func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token,
 	if requestedType := CanonicalNodeType(nodeType); requestedType != "" && requestedType != n.NodeType {
 		n.DeclaredType = requestedType
 	}
-
-	// 只有正式在役的节点能拉用户。standby/canary 阶段的节点若也能拉，
-	// 灰度就失去意义了 —— 用户会被分配到还没验证完的机器上（NODE-010）。
-	if !legacyNodeStatusAllowsServing(isControlNode, n.Status) {
-		return nil, httpx.New(httpx.CodeForbidden, "节点当前状态不可提供服务")
-	}
-	n.Protocol = proto
 	return &n, nil
 }
 
@@ -240,104 +262,151 @@ type ProxyUser struct {
 //   - 流量必须没跑超（USE-007 超额停用）
 //
 // 任何一条漏掉，都会变成免费用或该用用不了，两种都是事故。
+//
+// 结果只取决于（租户, 节点池）加两条租户设置（设备限制模式与余量），与节点本身
+// 无关——除了「这个节点此刻能不能服务」那道门槛，而它与 AuthenticateNode、
+// loadServingNodeForPush 的 WHERE 是同一组条件，每个调用方拿到 n 之前都验过了。
+// 所以缓存开着时按（租户, 池）缓存、查询不带节点门槛：同池 200 个节点合成一次查询。
+// 缓存没开（没有作废订阅的进程、测试）时照旧带门槛直查。返回的切片只读。
 func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *ServingNode) ([]ProxyUser, error) {
-	users := []ProxyUser{}
+	// query 是唯一的下发查询。gateNodeID 非空时带上节点门槛（直查路径）；缓存路径
+	// 按池共享结果，门槛由调用方的认证保证，见上。
+	query := func(ctx context.Context, gateNodeID string) ([]ProxyUser, error) {
+		users := []ProxyUser{}
+		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			// 节点必须划进节点池，且订阅的套餐版本绑定了这个池。没划进池的节点
+			// 不服务任何订阅（R104，fail closed）：$2 为 NULL 时等式求值为 NULL，
+			// EXISTS 为假，列表为空。这与订阅下载、门户预览里的
+			// JOIN plan_node_pools 是同一口径；过去这里把无池节点当成对所有有效
+			// 订阅开放的公共节点，节点就成了绕过套餐授权的后门。
+			//
+			// 池限定了用户组时，还要用户所在的组在名单里（R104）。
+			poolFilter := `
+				AND EXISTS (SELECT 1 FROM plan_node_pools pnp
+				             WHERE pnp.tenant_id = s.tenant_id
+				               AND pnp.plan_version_id = s.plan_version_id
+				               AND pnp.pool_id = $2::uuid)
+				AND ` + PoolAdmitsUserSQL("s.tenant_id", "$2::uuid", "s.user_id")
 
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 节点必须划进节点池，且订阅的套餐版本绑定了这个池。没划进池的节点
-		// 不服务任何订阅（R104，fail closed）：$2 为 NULL 时等式求值为 NULL，
-		// EXISTS 为假，列表为空。这与订阅下载、门户预览里的
-		// JOIN plan_node_pools 是同一口径；过去这里把无池节点当成对所有有效
-		// 订阅开放的公共节点，节点就成了绕过套餐授权的后门。
-		//
-		// 池限定了用户组时，还要用户所在的组在名单里（R104）。
-		poolFilter := `
-			AND EXISTS (SELECT 1 FROM plan_node_pools pnp
-			             WHERE pnp.tenant_id = s.tenant_id
-			               AND pnp.plan_version_id = s.plan_version_id
-			               AND pnp.pool_id = $2::uuid)
-			AND ` + PoolAdmitsUserSQL("s.tenant_id", "$2::uuid", "s.user_id")
+			// 设备限制的判定模式。读设置失败时按 loose 走 ——
+			// 配置读不出来不该导致所有人被当成超限踢下线。
+			var mode string
+			var grace int
+			_ = tx.QueryRow(ctx, `
+				SELECT COALESCE((SELECT value #>> '{}' FROM system_settings
+				                  WHERE tenant_id = $1 AND key = 'device_limit.mode'), 'loose'),
+				       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
+				                  WHERE tenant_id = $1 AND key = 'device_limit.grace'), 1)`,
+				tenantID).Scan(&mode, &grace)
+			strict := mode == "strict"
 
-		// 设备限制的判定模式。读设置失败时按 loose 走 ——
-		// 配置读不出来不该导致所有人被当成超限踢下线。
-		var mode string
-		var grace int
-		_ = tx.QueryRow(ctx, `
-			SELECT COALESCE((SELECT value #>> '{}' FROM system_settings
-			                  WHERE tenant_id = $1 AND key = 'device_limit.mode'), 'loose'),
-			       COALESCE((SELECT (value #>> '{}')::int FROM system_settings
-			                  WHERE tenant_id = $1 AND key = 'device_limit.grace'), 1)`,
-			tenantID).Scan(&mode, &grace)
-		strict := mode == "strict"
+			args := []any{tenantID, n.PoolID, strict, grace}
+			nodeGate := ""
+			if gateNodeID != "" {
+				args = append(args, gateNodeID)
+				nodeGate = `
+				   AND EXISTS (
+				       SELECT 1
+				         FROM nodes gate_node
+				         JOIN servers gate_server
+				           ON gate_server.tenant_id=gate_node.tenant_id
+				          AND gate_server.id=gate_node.server_id
+				        WHERE gate_node.tenant_id=$1
+				          AND gate_node.id=$5::uuid
+				          AND gate_node.serving_status IN ('active','draining')
+				          AND gate_server.status IN ('ready','draining')
+				          AND gate_server.deleted_at IS NULL
+				          AND gate_node.node_type IS NOT NULL
+				          AND gate_node.server_port BETWEEN 1 AND 65535
+				          AND ` + StableProtocolReadySQL("gate_node") + `)`
+			}
 
-		rows, err := tx.Query(ctx, `
-			SELECT s.node_uid, s.proxy_uuid::text,
-			       coalesce(pv.throttle_kbps, 0),
-			       -- 管理员在订阅上的覆盖优先于套餐规定
-			       coalesce(s.device_limit, pv.max_devices, 0)
-			  FROM subscriptions s
-			  JOIN plan_versions pv ON pv.id = s.plan_version_id
-			 WHERE s.tenant_id = $1
-			   -- strict 模式：跨节点去重后仍然超限的，本轮不下发到任何节点。
-			   --
-			   -- 这是与 loose 唯一的区别。loose 下每个节点各判各的，
-			   -- 用户在 N 个节点上能连出 N 倍的设备；strict 则把他整条订阅摘掉，
-			   -- 直到在线数掉回限额以内。
-			   --
-			   -- grace 留出的余量用来吸收 IP 抖动：手机切换网络会让同一台设备
-			   -- 短暂占两个 IP，卡得太死会让通勤路上的用户反复掉线。
-			   AND ( $3::bool = false
-			      OR coalesce(s.device_limit, pv.max_devices, 0) <= 0
-			      OR NOT EXISTS (
-			           SELECT 1 FROM subscription_online_devices d
-			            WHERE d.subscription_id = s.id
-			              AND d.device_count > coalesce(s.device_limit, pv.max_devices, 0) + $4 ) )
-			   AND s.status IN ('active', 'trialing', 'grace')
-			   AND (s.current_period_end IS NULL OR s.current_period_end > now())
-			   AND EXISTS (
-			       SELECT 1
-			         FROM nodes gate_node
-			         JOIN servers gate_server
-			           ON gate_server.tenant_id=gate_node.tenant_id
-			          AND gate_server.id=gate_node.server_id
-			        WHERE gate_node.tenant_id=$1
-			          AND gate_node.id=$5::uuid
-			          AND gate_node.serving_status IN ('active','draining')
-			          AND gate_server.status IN ('ready','draining')
-			          AND gate_server.deleted_at IS NULL
-			          AND gate_node.node_type IS NOT NULL
-			          AND gate_node.server_port BETWEEN 1 AND 65535
-			          AND `+StableProtocolReadySQL("gate_node")+`)
-			   -- 流量耗尽的订阅不下发到节点（USE-007）：套餐额度用完、
-			   -- 而且用户名下的流量包也没有剩余（D-E-1 先扣套餐再扣流量包）
-			   AND ( NOT EXISTS (
-			           SELECT 1 FROM quota_balances qb
-			            WHERE qb.subscription_id = s.id
-			              AND qb.metric = 'traffic.bytes'
-			              AND qb.remaining IS NOT NULL
-			              AND qb.remaining <= 0)
-			      OR EXISTS (
-			           SELECT 1 FROM traffic_pack_grants g
-			            WHERE g.tenant_id = s.tenant_id AND g.user_id = s.user_id
-			              AND g.consumed_bytes < g.granted_bytes) )
-			`+poolFilter+`
-			 ORDER BY s.node_uid`,
-			tenantID, n.PoolID, strict, grace, n.ID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var u ProxyUser
-			if err := rows.Scan(&u.ID, &u.UUID, &u.SpeedLimit, &u.DeviceLimit); err != nil {
+			rows, err := tx.Query(ctx, `
+				SELECT s.node_uid, s.proxy_uuid::text,
+				       coalesce(pv.throttle_kbps, 0),
+				       -- 管理员在订阅上的覆盖优先于套餐规定
+				       coalesce(s.device_limit, pv.max_devices, 0)
+				  FROM subscriptions s
+				  JOIN plan_versions pv ON pv.id = s.plan_version_id
+				 WHERE s.tenant_id = $1
+				   -- strict 模式：跨节点去重后仍然超限的，本轮不下发到任何节点。
+				   --
+				   -- 这是与 loose 唯一的区别。loose 下每个节点各判各的，
+				   -- 用户在 N 个节点上能连出 N 倍的设备；strict 则把他整条订阅摘掉，
+				   -- 直到在线数掉回限额以内。
+				   --
+				   -- grace 留出的余量用来吸收 IP 抖动：手机切换网络会让同一台设备
+				   -- 短暂占两个 IP，卡得太死会让通勤路上的用户反复掉线。
+				   AND ( $3::bool = false
+				      OR coalesce(s.device_limit, pv.max_devices, 0) <= 0
+				      OR NOT EXISTS (
+				           SELECT 1 FROM subscription_online_devices d
+				            WHERE d.subscription_id = s.id
+				              AND d.device_count > coalesce(s.device_limit, pv.max_devices, 0) + $4 ) )
+				   AND s.status IN ('active', 'trialing', 'grace')
+				   AND (s.current_period_end IS NULL OR s.current_period_end > now())`+nodeGate+`
+				   -- 流量耗尽的订阅不下发到节点（USE-007）：套餐额度用完、
+				   -- 而且用户名下的流量包也没有剩余（D-E-1 先扣套餐再扣流量包）
+				   AND ( NOT EXISTS (
+				           SELECT 1 FROM quota_balances qb
+				            WHERE qb.tenant_id = s.tenant_id
+				              AND qb.subscription_id = s.id
+				              AND qb.metric = 'traffic.bytes'
+				              AND qb.remaining IS NOT NULL
+				              AND qb.remaining <= 0)
+				      OR EXISTS (
+				           SELECT 1 FROM traffic_pack_grants g
+				            WHERE g.tenant_id = s.tenant_id AND g.user_id = s.user_id
+				              AND g.consumed_bytes < g.granted_bytes) )
+				`+poolFilter+`
+				 ORDER BY s.node_uid`, args...)
+			if err != nil {
 				return err
 			}
-			users = append(users, u)
-		}
-		return rows.Err()
-	})
-	return users, err
+			defer rows.Close()
+
+			for rows.Next() {
+				var u ProxyUser
+				if err := rows.Scan(&u.ID, &u.UUID, &u.SpeedLimit, &u.DeviceLimit); err != nil {
+					return err
+				}
+				users = append(users, u)
+			}
+			return rows.Err()
+		})
+		return users, err
+	}
+
+	c := s.nodeCachesFor(tenantID)
+	if c == nil {
+		return query(ctx, n.ID)
+	}
+	if n.PoolID == nil {
+		// 与直查路径的「$2 为 NULL 时列表为空」同一结论，不必为它查库
+		return []ProxyUser{}, nil
+	}
+	set, err := c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), tenantID,
+		func(ctx context.Context) (nodeUserSet, error) {
+			users, err := query(ctx, "")
+			if err != nil {
+				return nodeUserSet{}, err
+			}
+			return nodeUserSet{users: users, version: UserSetVersion(users)}, nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return set.users, nil
+}
+
+// NodeUserSet 返回节点该放行的用户与版本（UniProxy 的 ETag）。缓存命中时版本是
+// 算好的，handler 先拿它比 If-None-Match，没变就回 304，不必序列化也不必再算哈希。
+func (s *Service) NodeUserSet(ctx context.Context, tenantID string, n *ServingNode) ([]ProxyUser, string, error) {
+	users, err := s.ListNodeUsers(ctx, tenantID, n)
+	if err != nil {
+		return nil, "", err
+	}
+	return users, s.userSetVersionOf(tenantID, n, users), nil
 }
 
 //------------------------------------------------------------------------------

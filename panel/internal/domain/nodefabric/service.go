@@ -44,6 +44,8 @@ type Service struct {
 	geoIP *geoip.Resolver
 	// release 是节点接入比对的发布绑定，nil 时拒绝一切接入提交（见 SetReleaseBinding）。
 	release *ReleaseBinding
+	// caches 是节点链路的进程内缓存，只在 aegis-node 里开（见 nodecache.go）。
+	caches *nodeCaches
 }
 
 func NewService(pool *db.Pool, signer *crypto.Signer) *Service {
@@ -95,26 +97,77 @@ type Identity struct {
 
 // LookupIdentity 取节点当前有效身份。只返回 active 的那一份 ——
 // 吊销、过期、被更高 serial 取代的身份一律查不到，旧 Agent 立刻失去访问。
+//
+// 缓存开着时按（租户, 节点）缓存 30 秒：节点行变化（退役、状态切换、删除服务器
+// 静默探针都会改节点行）经 nodes 变更通知立即作废；只改 node_identities 的手工
+// 吊销没有通知，最坏再放行一个 TTL。换了新身份（重新接入）的节点用新私钥签名，
+// 缓存里的旧公钥验不过时 VerifyNodeRequestSignature 会回库再验一次。
 func (s *Service) LookupIdentity(ctx context.Context, tenantID, nodeID string) (*Identity, error) {
+	load := func(ctx context.Context) (Identity, error) {
+		var id Identity
+		var pub []byte
+		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `
+				SELECT i.node_id, i.serial, i.public_key, i.status
+				  FROM node_identities i
+				  JOIN nodes n ON n.tenant_id=i.tenant_id AND n.id=i.node_id
+				 WHERE i.tenant_id=$1 AND i.node_id=$2 AND i.status='active' AND i.expires_at > now()
+				   AND n.status NOT IN ('destroyed','retired') AND n.serving_status<>'retired'`,
+				tenantID, nodeID).Scan(&id.NodeID, &id.Serial, &pub, &id.Status)
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Identity{}, httpx.New(httpx.CodeUnauthorized, "节点身份无效")
+		}
+		if err != nil {
+			return Identity{}, err
+		}
+		id.PublicKey = pub
+		return id, nil
+	}
 	var id Identity
-	var pub []byte
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
-			SELECT i.node_id, i.serial, i.public_key, i.status
-			  FROM node_identities i
-			  JOIN nodes n ON n.tenant_id=i.tenant_id AND n.id=i.node_id
-			 WHERE i.tenant_id=$1 AND i.node_id=$2 AND i.status='active' AND i.expires_at > now()
-			   AND n.status NOT IN ('destroyed','retired') AND n.serving_status<>'retired'`,
-			tenantID, nodeID).Scan(&id.NodeID, &id.Serial, &pub, &id.Status)
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, httpx.New(httpx.CodeUnauthorized, "节点身份无效")
+	var err error
+	if c := s.nodeCachesFor(tenantID); c != nil {
+		id, err = c.identity.get(ctx, nodeCacheGroup(tenantID, nodeID), nodeCacheGroup(tenantID, nodeID), load)
+	} else {
+		id, err = load(ctx)
 	}
 	if err != nil {
 		return nil, err
 	}
-	id.PublicKey = pub
 	return &id, nil
+}
+
+// 节点请求验签的两种失败。handler 用它们区分日志原因，对外一律同一个 401。
+var (
+	ErrNodeIdentityInvalid   = errors.New("node identity is missing or revoked")
+	ErrNodeSignatureMismatch = errors.New("node request signature mismatch")
+)
+
+// VerifyNodeRequestSignature 用节点当前有效身份验请求签名。
+//
+// 缓存里的公钥验不过，可能是节点刚重新接入换了一把钥匙：丢掉这一条回库取最新
+// 身份再验一次。没开缓存时第一次拿到的已经是库里的最新值，不再重查。签名错的
+// 请求因此最多多一次查库，和不缓存时一样。
+func (s *Service) VerifyNodeRequestSignature(ctx context.Context, tenantID, nodeID string, payload, signature []byte) error {
+	id, err := s.LookupIdentity(ctx, tenantID, nodeID)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrNodeIdentityInvalid, err)
+	}
+	if crypto.Verify(id.PublicKey, payload, signature) {
+		return nil
+	}
+	c := s.nodeCachesFor(tenantID)
+	if c == nil || !c.identity.drop(nodeCacheGroup(tenantID, nodeID)) {
+		return ErrNodeSignatureMismatch
+	}
+	id, err = s.LookupIdentity(ctx, tenantID, nodeID)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrNodeIdentityInvalid, err)
+	}
+	if !crypto.Verify(id.PublicKey, payload, signature) {
+		return ErrNodeSignatureMismatch
+	}
+	return nil
 }
 
 // CanonicalPayload 构造待签名串。Agent 与服务端必须用完全一致的规则，

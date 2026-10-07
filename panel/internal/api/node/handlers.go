@@ -345,7 +345,8 @@ func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	users, err := h.d.Node.ListNodeUsers(r.Context(), httpx.TenantIDFrom(r.Context()), n)
+	// 用户集按（租户, 池）缓存，版本随缓存一起算好（nodefabric.NodeUserSet）。
+	users, etag, err := h.d.Node.NodeUserSet(r.Context(), httpx.TenantIDFrom(r.Context()), n)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
@@ -357,7 +358,6 @@ func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 	//
 	// 和 /config 用同一套弱比较——中间的 nginx 一旦压缩响应就会把 ETag
 	// 改写成 W/"..." 形式，字符串相等会永远不匹配。
-	etag := nodefabric.UserSetVersion(users)
 	if etagMatches(r.Header.Get("If-None-Match"), etag) {
 		w.Header().Set("ETag", etag)
 		w.WriteHeader(http.StatusNotModified)

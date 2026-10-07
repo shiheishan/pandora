@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -221,20 +222,21 @@ func (h *handlers) requireNodeSignature(next http.Handler) http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(body)) // 供后续 handler 再读一次
 		sum := sha256.Sum256(body)
 
-		id, err := h.d.Node.LookupIdentity(r.Context(), httpx.TenantIDFrom(r.Context()), nodeID)
-		if err != nil {
-			fail("身份不存在或已吊销")
-			return
-		}
-
 		raw, err := base64.StdEncoding.DecodeString(sig)
 		if err != nil {
 			fail("签名不是合法 base64")
 			return
 		}
+		// 身份（公钥）按节点缓存 30 秒；缓存里的旧公钥验不过时 domain 会回库再验
+		// 一次，刚重新接入、换了钥匙的节点不会被挡在 TTL 外面。
 		payload := nodefabric.CanonicalPayloadV2(r.Method, r.URL.Path, nodeID, ts, nonce, sum[:])
-		if !crypto.Verify(id.PublicKey, payload, raw) {
-			fail("签名不匹配")
+		if err := h.d.Node.VerifyNodeRequestSignature(r.Context(), httpx.TenantIDFrom(r.Context()),
+			nodeID, payload, raw); err != nil {
+			if errors.Is(err, nodefabric.ErrNodeSignatureMismatch) {
+				fail("签名不匹配")
+			} else {
+				fail("身份不存在或已吊销")
+			}
 			return
 		}
 		fingerprint := sha256.Sum256(payload)

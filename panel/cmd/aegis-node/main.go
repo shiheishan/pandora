@@ -3,13 +3,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/aegispanel/aegis/internal/api/node"
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
+	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/config"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
@@ -34,13 +40,21 @@ func run() error {
 		return err
 	}
 	log := logging.New(cfg.Env, "aegis-node")
-	ctx := context.Background()
+	// 信号 context：后台循环（缓存作废订阅）挂在它上面，停机时先取消、
+	// 限时 join，再交给 defer 关资源。
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	closeResourcesOnReturn := true
 
 	pool, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
+	defer func() {
+		if closeResourcesOnReturn {
+			pool.Close()
+		}
+	}()
 
 	redisOpt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
@@ -107,6 +121,15 @@ func run() error {
 	stream := nodefabric.NewStreamHub()
 	nodeService.AttachStream(stream)
 	nodeService.AttachRealtime(rtHub)
+	// 节点链路缓存（用户集、令牌认证、签名身份）：只在作废订阅跑着的租户上生效。
+	nodeService.EnableNodeCaches()
+
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		nodeService.RunNodeCacheInvalidation(ctx, middleware.DefaultTenantID, log)
+	}()
 
 	handler := node.NewRouter(node.Deps{
 		Cfg: cfg, Pool: pool, Log: log,
@@ -125,10 +148,40 @@ func run() error {
 	}
 	defer pprofSrv.Close()
 
-	return server.Run(server.Options{
+	serverErr := server.RunContext(ctx, server.Options{
 		Addr:            cfg.NodeAddr,
 		Handler:         handler,
 		Log:             log,
 		ShutdownTimeout: cfg.ShutdownTimeout,
 	})
+	stop()
+	drainErr := waitForNodeWorkers(&workers, cfg.ShutdownTimeout)
+	if drainErr != nil {
+		// 没退出的后台循环可能还拿着库连接：不和它抢着关连接池，交给进程退出回收。
+		closeResourcesOnReturn = false
+		log.Error("node background workers did not stop before shutdown deadline",
+			"error", drainErr.Error())
+	}
+	return errors.Join(serverErr, drainErr)
+}
+
+var errNodeWorkerDrainTimeout = errors.New("node worker drain timed out")
+
+func waitForNodeWorkers(workers *sync.WaitGroup, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	done := make(chan struct{})
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("%w after %s", errNodeWorkerDrainTimeout, timeout)
+	}
 }
