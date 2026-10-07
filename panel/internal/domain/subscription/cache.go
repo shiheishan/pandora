@@ -129,13 +129,19 @@ func newNodeCache(ttl time.Duration, max int) *nodeCache {
 // 名单、用户换组、付款履约后发 node.users.changed，都在租户级频道
 // realtime.ChannelNodeAll 上；收到任何一条就清掉该租户的全部条目。只有做订阅
 // 拉取的进程（public 网关）需要调它；没调时缓存只靠 TTL 过期。
+// 门户节点预览的缓存（previews）同样挂上。
 func (s *Service) AttachRealtime(hub *realtime.Hub) {
-	if s.nodes == nil || hub == nil {
+	if hub == nil {
 		return
 	}
-	s.nodes.mu.Lock()
-	s.nodes.hub = hub
-	s.nodes.mu.Unlock()
+	for _, c := range []*nodeCache{s.nodes, s.previews} {
+		if c == nil {
+			continue
+		}
+		c.mu.Lock()
+		c.hub = hub
+		c.mu.Unlock()
+	}
 }
 
 // load 取一个键的节点：命中直接返回；未命中由第一个请求现查并写回，同键的并发

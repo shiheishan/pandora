@@ -63,9 +63,14 @@ func TestSubscriptionAndPreviewShareOneEligibilityQuery(t *testing.T) {
 		strings.Count(body, `nodefabric.PoolAdmitsUserSQL(`) != 1 {
 		t.Fatal("pool user-group admission must exist only in the shared query")
 	}
-	if !strings.Contains(listNodes, `listEligibleNodesTx(ctx, tx, tenantID, c.UserID, c.PlanVersionID)`) ||
-		!strings.Contains(owned, `listEligibleNodesTx(ctx, tx, tenantID, userID, planVersionID)`) {
+	// 订阅下载取协议配置，门户预览不取（预览只给名称、协议、倍率）
+	if !strings.Contains(listNodes, `listEligibleNodesTx(ctx, tx, tenantID, c.UserID, c.PlanVersionID, true)`) ||
+		!strings.Contains(owned, `listEligibleNodesTx(ctx, tx, tenantID, userID, planVersionID, false)`) {
 		t.Fatal("both callers must pass the subscription owner into the shared query")
+	}
+	// 预览的节点列表走自己的缓存（键与订阅拉取相同），不与带协议配置的 nodes 缓存混用
+	if !strings.Contains(owned, "s.previews.load(ctx, key,") || strings.Contains(owned, "s.nodes.") {
+		t.Fatal("owned node previews must be cached in s.previews, never in the pull cache")
 	}
 	for _, want := range []string{
 		`db.Scope{TenantID: tenantID, ActorID: userID}`,
@@ -75,7 +80,7 @@ func TestSubscriptionAndPreviewShareOneEligibilityQuery(t *testing.T) {
 		`(sc.expires_at IS NULL AND sc.grace_until IS NULL)`,
 		`GREATEST(sc.expires_at,sc.grace_until) > now()`,
 		`if errors.Is(err, pgx.ErrNoRows)`,
-		`return ErrNotFound`,
+		`return nil, ErrNotFound`,
 	} {
 		if !strings.Contains(owned, want) {
 			t.Fatalf("owned node preview contract missing %q", want)

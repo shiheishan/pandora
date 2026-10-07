@@ -2,7 +2,9 @@ package nodefabric
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -16,11 +18,11 @@ import (
 // 租户级事件（付款、R104 的池与用户组变化）要落到本进程上连着的每个节点。原先
 // 逐节点串行「查节点 → 查分流 → 查用户」：200 个节点就是 600 个事务，且每个节点
 // 各跑一遍同一个池的用户查询。现在一条查询取出全部在线节点所在的池（连同当前下发
-// 纪元），每个池只算一次用户集（有缓存时至多一次缓存重算），全量载荷按版本只编码一次，再推给池里
-// 的每个节点；查库的那部分并发有上限，不把连接池抽干。
+// 纪元），每个池只算一次用户集（有缓存时至多一次缓存重算），再推给池里的每个节点：连接手上的
+// 版本还在历史里就推增量，否则推全量，全量与增量都按版本只编码一次；查库的那部分并发有上限，
+// 不把连接池抽干。
 
-// nodeFanoutConcurrency 是扇出里同时查库的上限。aegis-node 的连接池只有 8 条，
-// 留一半给节点的正常请求。
+// nodeFanoutConcurrency 是扇出里同时查库的上限，给节点的正常请求留出大半个连接池。
 const nodeFanoutConcurrency = 4
 
 // nodeFanoutTimeout 是一轮扇出的总时限。推送只是快车道，超时就放弃，节点有轮询兜底。
@@ -83,8 +85,20 @@ func (s *Service) runStreamPushQueue(ctx context.Context, tenantID string, q *st
 		}
 		nodes, allUsers := q.take()
 		runCtx, cancel := context.WithTimeout(ctx, nodeFanoutTimeout)
-		s.processStreamPushes(runCtx, tenantID, nodes, allUsers, log)
+		func() {
+			defer recoverStreamPush(log, tenantID)
+			s.processStreamPushes(runCtx, tenantID, nodes, allUsers, log)
+		}()
 		cancel()
+	}
+}
+
+// recoverStreamPush 兜住推送路径上的 panic：推送只是快车道，它的任何 bug 都不能让
+// 整个 aegis-node 崩溃、断掉全部连接（节点会走轮询兜底）。只记日志，不吞掉线索。
+func recoverStreamPush(log *slog.Logger, tenantID string) {
+	if v := recover(); v != nil && log != nil {
+		log.Error("节点推送 panic，已兜住；本轮推送放弃，节点走轮询兜底",
+			"tenant_id", tenantID, "panic", fmt.Sprint(v), "stack", string(debug.Stack()))
 	}
 }
 
@@ -164,7 +178,8 @@ func (s *Service) pushTenantUsers(ctx context.Context, tenantID string, skip map
 	}
 	wg.Wait()
 
-	shared := fullUsersPayloads{}
+	// 推送本身不查库：每条连接按自己手上的版本拿增量或全量，同一版本的全量、
+	// 同一对版本的增量都只编码一次（nodestream_users.go）。
 	pushed := 0
 	for key, members := range byPool {
 		r := results[key]
@@ -172,7 +187,7 @@ func (s *Service) pushTenantUsers(ctx context.Context, tenantID string, skip map
 			continue // 这个池算失败就不推，节点轮询兜底
 		}
 		for _, n := range members {
-			s.stream.pushUsers(tenantID, n.ID, r.users, r.version, nil, shared)
+			s.stream.PushUsers(tenantID, n.ID, r.users, r.version)
 			pushed++
 		}
 	}
@@ -185,8 +200,7 @@ func (s *Service) pushTenantUsers(ctx context.Context, tenantID string, skip map
 // loadServingNodeForPush（也就是 AuthenticateNode）相同，不满足的节点不推。
 func (s *Service) loadServingNodesForPush(ctx context.Context, tenantID string, nodeIDs []string) ([]ServingNode, error) {
 	var out []ServingNode
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
+	err := s.pool.QueryScoped(ctx, db.Scope{TenantID: tenantID}, `
 			SELECT n.id::text, n.pool_id::text, `+deliveryEpochSQL+`
 			  FROM nodes n
 			  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
@@ -197,20 +211,14 @@ func (s *Service) loadServingNodesForPush(ctx context.Context, tenantID string, 
 			   AND n.node_type IS NOT NULL
 			   AND n.server_port BETWEEN 1 AND 65535
 			   AND `+StableProtocolReadySQL("n")+`
-			 ORDER BY n.id`, tenantID, nodeIDs)
-		if err != nil {
+			 ORDER BY n.id`, []any{tenantID, nodeIDs}, func(rows pgx.Rows) error {
+		var n ServingNode
+		if err := rows.Scan(&n.ID, &n.PoolID, &n.deliveryEpoch); err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var n ServingNode
-			if err := rows.Scan(&n.ID, &n.PoolID, &n.deliveryEpoch); err != nil {
-				return err
-			}
-			n.epochKnown = true
-			out = append(out, n)
-		}
-		return rows.Err()
+		n.epochKnown = true
+		out = append(out, n)
+		return nil
 	})
 	return out, err
 }

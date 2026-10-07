@@ -116,6 +116,9 @@ func TestPoolUserGroupsDeliveryPG18(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListNodes(%s): %v", key, err)
 		}
+		// 每一步都改了池的用户组限定：生产上由 node.users.changed 让预览缓存失效，
+		// 这里没有挂 realtime，手动失效，比的是此刻的资格答案
+		svc.previews.invalidate(tenant)
 		previews, err := svc.ListOwnedNodePreviews(ctx, tenant, h.user, h.sub)
 		if err != nil {
 			t.Fatalf("ListOwnedNodePreviews(%s): %v", key, err)

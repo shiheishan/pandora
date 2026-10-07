@@ -151,9 +151,7 @@ func (s *Service) StartRegistration(ctx context.Context, tenantID string, in Sta
 		if err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM users WHERE tenant_id = $1 AND email = $2)`,
-			tenantID, email).Scan(&alreadyExists); err != nil {
+		if err := tx.QueryRow(ctx, registrationEmailTakenSQL, tenantID, email).Scan(&alreadyExists); err != nil {
 			return err
 		}
 
@@ -472,12 +470,7 @@ func (s *Service) Login(ctx context.Context, tenantID string, in LoginInput) (*L
 	)
 
 	err := s.pool.InTx(ctx, scope, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `
-			SELECT u.id, u.status, p.phc
-			  FROM users u
-			  JOIN user_passwords p ON p.user_id = u.id
-			 WHERE u.tenant_id = $1 AND u.email = $2`,
-			tenantID, email).Scan(&userID, &status, &phc)
+		err := tx.QueryRow(ctx, loginCredentialSQL, tenantID, email).Scan(&userID, &status, &phc)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil // found 保持 false，稍后统一处理
 		}

@@ -193,7 +193,7 @@ func TestConfirmNodeIdentitySkipsOnlyWhenNothingChanged(t *testing.T) {
 func TestDeliveryEpochIsReadAlongsideEveryCachedInput(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
 	for _, decl := range []string{"Service.AuthenticateNode", "Service.LookupIdentity",
-		"Service.ClaimSignedRequestEpoch", "Service.loadServingNodeForPush",
+		"Service.claimNonceInDatabase", "Service.EffectiveConfigUnchangedAt", "Service.CurrentDeliveryEpoch", "Service.loadServingNodeForPush",
 		"Service.loadServingNodesForPush", "Service.ListNodeUsers"} {
 		if !strings.Contains(pkg.Decl(decl), "deliveryEpochSQL") {
 			t.Errorf("%s no longer reads the delivery epoch", decl)
@@ -201,5 +201,94 @@ func TestDeliveryEpochIsReadAlongsideEveryCachedInput(t *testing.T) {
 	}
 	if strings.Contains(pkg.Decl("Service.AuthenticateNode"), "caches") {
 		t.Error("UniProxy token authentication must not be cached")
+	}
+}
+
+// 用户集过了 TTL：宽限期内先回旧值、后台重算一次；过了宽限期同步重算；纪元落后照旧同步。
+func TestTTLCacheServesStaleWhileRevalidating(t *testing.T) {
+	clock := newFakeClock()
+	c := newTTLCache[nodeUserSet](5*time.Second, 8, clock.Now)
+	c.staleGrace = 10 * time.Second
+	c.rank = func(s nodeUserSet) int64 { return s.epoch }
+	var loads atomic.Int64
+	release := make(chan struct{})
+	load := func(context.Context) (nodeUserSet, error) {
+		n := loads.Add(1)
+		if n == 2 {
+			<-release // 后台那一趟卡住，证明前台没在等它
+		}
+		return nodeUserSet{version: "v" + string(rune('0'+n)), epoch: 7}, nil
+	}
+	ctx := context.Background()
+	valid := func(s nodeUserSet) bool { return s.epoch >= 7 }
+	if v, _ := c.get(ctx, "k", "7", valid, load); v.version != "v1" {
+		t.Fatalf("first load = %+v", v)
+	}
+	clock.Advance(6 * time.Second)
+	if v, err := c.get(ctx, "k", "7", valid, load); err != nil || v.version != "v1" {
+		t.Fatalf("stale entry not served while revalidating: %+v %v", v, err)
+	}
+	for start := time.Now(); loads.Load() < 2; time.Sleep(time.Millisecond) {
+		if time.Since(start) > 2*time.Second {
+			t.Fatal("no background refresh started")
+		}
+	}
+	if v, _ := c.get(ctx, "k", "7", valid, load); v.version != "v1" || loads.Load() != 2 {
+		t.Fatalf("second stale read started another refresh: loads=%d", loads.Load())
+	}
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if e, ok := c.peek("k"); ok && e.version == "v2" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background refresh never replaced the entry")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// 过了宽限期：同步重算
+	clock.Advance(20 * time.Second)
+	if v, _ := c.get(ctx, "k", "7", valid, load); v.version != "v3" {
+		t.Fatalf("entry past the grace window was served: %+v", v)
+	}
+	// 纪元前进：即使在 TTL 内也同步重算，不回旧值
+	if v, _ := c.get(ctx, "k", "9", func(s nodeUserSet) bool { return s.epoch >= 9 }, func(context.Context) (nodeUserSet, error) {
+		return nodeUserSet{version: "v9", epoch: 9}, nil
+	}); v.version != "v9" {
+		t.Fatalf("advanced epoch served a stale entry: %+v", v)
+	}
+	// 晚完成的旧纪元加载不把新条目换回去
+	c.mu.Lock()
+	c.storeLocked("k", nodeUserSet{version: "old", epoch: 3})
+	c.mu.Unlock()
+	if e, _ := c.peek("k"); e.version != "v9" {
+		t.Fatalf("older load overwrote a newer entry: %+v", e)
+	}
+}
+
+// 身份缓存的寿命不超过身份自己的 expires_at。
+func TestIdentityCacheNeverOutlivesIdentityExpiry(t *testing.T) {
+	clock := newFakeClock()
+	caches := newNodeCaches(clock.Now)
+	expires := clock.Now().Add(time.Minute)
+	loads := 0
+	load := func(context.Context) (Identity, error) {
+		loads++
+		return Identity{NodeID: "n", epoch: 1, expiresAt: expires}, nil
+	}
+	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], load)
+	clock.Advance(59 * time.Second)
+	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], load)
+	if loads != 1 {
+		t.Fatalf("identity reloaded before its expiry: %d", loads)
+	}
+	clock.Advance(time.Second)
+	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], load)
+	if loads != 2 {
+		t.Fatal("identity served past its expires_at")
+	}
+	if nodeIdentityCacheTTL != 10*time.Minute || caches.identity.staleGrace != 0 {
+		t.Fatal("identity cache: TTL is min(expires_at, 10 minutes) and never serves stale entries")
 	}
 }

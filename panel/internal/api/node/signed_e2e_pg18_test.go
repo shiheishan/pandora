@@ -44,7 +44,7 @@ func TestSignedNodeHTTPPG18(t *testing.T) {
 		t.Skip("effective PG18 DSNs and expected database are required")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	admin, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
@@ -202,6 +202,7 @@ func TestSignedNodeHTTPPG18(t *testing.T) {
 	checkSignedReplayRejected(t, privateKey, bootstrap.NodeID, server.URL+"/v1/nodes/heartbeat",
 		mustJSON(t, map[string]any{"agent_version": "e2e-test", "runtime_version": "native-e2e"}))
 	checkEffectiveConfigUnchanged(t, privateKey, bootstrap.NodeID, server.URL+"/v1/nodes/effective-config", cfg)
+	checkNodeHotPathPG18(t, ctx, admin, appDSN, signer, privateKey, tenantID, bootstrap.NodeID, runtimeToken, cfg)
 	checkCachedGatewayFollowsEpoch(t, ctx, admin, app, signer, privateKey, tenantID, bootstrap.NodeID, runtimeToken)
 }
 

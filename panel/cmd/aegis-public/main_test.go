@@ -44,15 +44,28 @@ func TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup(t *testing.T) {
 	}
 
 	source := pkg.Decl("run")
-	runServer := strings.Index(source, "serverErr := server.RunContext(ctx")
+	runServer := strings.Index(source, "serverErr := server.RunContext(sigCtx")
 	if runServer < 0 {
 		t.Fatal("public process must run the server with the signal context")
+	}
+	// 优雅关停：开服前解除「信号即取消后台」，HTTP 停完（在途请求跑完）才取消后台循环
+	if !strings.Contains(source, "stopOnEarlySignal := context.AfterFunc(sigCtx, stop)") {
+		t.Fatal("public process must cancel startup on an early signal")
+	}
+	if early := strings.Index(source, "stopOnEarlySignal()"); early < 0 || early > runServer {
+		t.Fatal("public process must hand worker cancellation to the shutdown order before serving")
 	}
 	afterServer := source[runServer:]
 	stop := strings.Index(afterServer, "stop()")
 	wait := strings.Index(afterServer, "waitReservationExpiry()")
 	waitQuery := strings.Index(afterServer, "waitPaymentQuery()")
 	ret := strings.Index(afterServer, "return serverErr")
+	// 通知扫描 / 派发与插件投递的循环同样在关资源之前 join
+	for _, join := range []string{"waitNotifyLoops()", "waitPluginLoop()"} {
+		if at := strings.Index(afterServer, join); at < 0 || at < stop || at > ret {
+			t.Fatalf("public process must join %s after cancelling and before returning", join)
+		}
+	}
 	if stop < 0 || wait < 0 || waitQuery < 0 || ret < 0 ||
 		!(stop < wait && wait < ret) || !(stop < waitQuery && waitQuery < ret) {
 		t.Fatal("public process must cancel, join expiry and payment-query workers, then return for deferred cleanup")

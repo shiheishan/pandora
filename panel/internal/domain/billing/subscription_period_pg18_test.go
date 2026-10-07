@@ -461,4 +461,10 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 		t.Fatalf("refused extensions wrote %d events err=%v", refusedEvents, err)
 	}
 	t.Log("marker=sub_period_pg18_refusals_ok")
+
+	// 配额滚动（w3core）：年付套餐的月 / 日配额按自然周期起算与滚动，SKIP LOCKED 分批
+	t.Run("quota periods roll on their own cycle", func(t *testing.T) {
+		p.t = t
+		checkQuotaRollPG18(t, p)
+	})
 }

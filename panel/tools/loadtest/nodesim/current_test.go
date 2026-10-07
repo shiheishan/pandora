@@ -12,7 +12,8 @@ import (
 	"github.com/aegispanel/aegis/tools/loadtest/ltkit"
 )
 
-// 回执送不到（5xx）时留给下一轮补报，且这一轮跳过用户同步；收下之后不再重报。
+// 回执送不到（5xx）时留给下一轮补报，用户同步照常（pdnd：回执失败不再冻结名单）；
+// 收下之后不再重报。
 func TestCurrentReportsRetryUntilSettled(t *testing.T) {
 	g := newFakeGateway(t, 1, 5, 1, 60)
 	g.fail500["POST /v1/nodes/config/report"] = true
@@ -31,8 +32,8 @@ func TestCurrentReportsRetryUntilSettled(t *testing.T) {
 			t.Fatalf("report hits %d phases %v", g.hits[reportKey], g.phases)
 		}
 		effs, users := g.hits["GET /v1/nodes/effective-config"], g.hits["GET /api/v1/server/UniProxy/user"]
-		if effs < 4 || users > effs-1 {
-			// 补报失败的那一轮与 pdnd 一样不同步用户
+		if effs < 4 || users < effs-1 {
+			// 补报失败的那几轮与 pdnd 一样照常同步用户（最后一轮可能被收尾截断）
 			t.Fatalf("effective-config %d user pulls %d", effs, users)
 		}
 	})

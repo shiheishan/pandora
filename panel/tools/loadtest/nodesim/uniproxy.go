@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -33,6 +34,10 @@ type uniClient struct {
 	obs        *observer
 	// streamWait 只给测试替换事件流的重连等待；nil 时真等
 	streamWait func(ctx context.Context, d time.Duration) bool
+	// streamNow / streamIdle 只给测试用：健康口径要求连接活过 40 秒、读空闲上限
+	// 60 秒（照 pdnd），真等的话测不了。nil / 0 即真实时钟与缺省值。
+	streamNow  func() time.Time
+	streamIdle time.Duration
 }
 
 func newUniClient(base, nodeID, nodeType, token, realIP string, timeout time.Duration, obs *observer) *uniClient {
@@ -168,11 +173,20 @@ func (c *uniClient) config(ctx context.Context) (map[string]any, bool, error) {
 	return cfg, true, nil
 }
 
-func (c *uniClient) push(ctx context.Context, traffic map[string][2]int64) error {
+// reportIDHeader 与 pdnd panel.ReportIDHeader 同名：流量上报的幂等键走请求头，
+// 报文本身仍是 {"<uid>": [up, down]}。
+const reportIDHeader = "X-Report-Id"
+
+// push 上报流量；reportID 非空时带 X-Report-Id（current 照 pdnd 每份一个，legacy 不带）。
+func (c *uniClient) push(ctx context.Context, traffic map[string][2]int64, reportID string) error {
 	if len(traffic) == 0 {
 		return nil
 	}
-	return c.post(ctx, "push", traffic)
+	var headers map[string]string
+	if reportID != "" {
+		headers = map[string]string{reportIDHeader: reportID}
+	}
+	return c.postWith(ctx, "push", traffic, headers)
 }
 
 func (c *uniClient) alive(ctx context.Context, online map[string][]string) error {
@@ -187,6 +201,10 @@ func (c *uniClient) status(ctx context.Context, s compatStatus) error {
 }
 
 func (c *uniClient) post(ctx context.Context, path string, v any) error {
+	return c.postWith(ctx, path, v, nil)
+}
+
+func (c *uniClient) postWith(ctx context.Context, path string, v any, headers map[string]string) error {
 	body, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -196,6 +214,9 @@ func (c *uniClient) post(ctx context.Context, path string, v any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	start := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -211,9 +232,11 @@ func (c *uniClient) post(ctx context.Context, path string, v any) error {
 	return nil
 }
 
+// httpError 与 pdnd 一样返回带状态码的错误（statusError），上报据此区分「面板
+// 明确拒收」与「没送到」。
 func httpError(what string, resp *http.Response) error {
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-	return fmt.Errorf("%s 失败：HTTP %d %s", what, resp.StatusCode, bytes.TrimSpace(snippet))
+	return &statusError{method: what, path: "", code: resp.StatusCode, body: string(bytes.TrimSpace(snippet))}
 }
 
 //------------------------------------------------------------------------------
@@ -232,11 +255,14 @@ type streamEvent struct {
 }
 
 // 退避参数与 pdnd 相同：1 秒起翻倍、30 秒封顶，再加 [0, backoff/2) 的抖动。
-// current 照 pdnd panel/stream.go：一次健康连接（回 200 且至少完整读到一行，心跳注释
-// 也算）之后退避回到 1 秒；legacy 冻结为改版前的模拟器，退避从不复位。
+// current 照 pdnd panel/stream.go：一次健康连接（至少完整读到一行、心跳注释也算，
+// 并且活过 40 秒）之后退避回到 1 秒；每读到一行续 60 秒读期限；面板回 404 就停流。
+// legacy 冻结为改版前的模拟器，退避从不复位、没有读期限。
 const (
-	streamMinBackoff = time.Second
-	streamMaxBackoff = 30 * time.Second
+	streamMinBackoff   = time.Second
+	streamMaxBackoff   = 30 * time.Second
+	streamHealthyAfter = 40 * time.Second
+	streamIdleTimeout  = 60 * time.Second
 )
 
 // streamLoop 复刻 pdnd Client.Stream：自己重连，不返回错误。
@@ -247,11 +273,17 @@ func (c *uniClient) streamLoop(ctx context.Context, out chan<- streamEvent, rese
 		if ctx.Err() != nil {
 			return
 		}
-		healthy, err := c.streamOnce(ctx, out)
+		healthy, err := c.streamOnce(ctx, out, resetOnHealthy)
 		if ctx.Err() != nil {
 			return
 		}
 		c.obs.fleet.streamDrops.Add(1)
+		if resetOnHealthy && errors.Is(err, errStreamNotFound) {
+			if onError != nil {
+				onError(err)
+			}
+			return
+		}
 		if err != nil && onError != nil {
 			onError(err)
 		}
@@ -283,11 +315,40 @@ func (c *uniClient) waitReconnect(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// errStreamNotFound 是面板回 404（不支持事件流）：current 照 pdnd 停流只走轮询。
+var errStreamNotFound = errors.New("面板不支持事件流（HTTP 404）")
+
+func (c *uniClient) streamClock() time.Time {
+	if c.streamNow != nil {
+		return c.streamNow()
+	}
+	return time.Now()
+}
+
 // streamOnce 建一次连接读到断开。只把建连（拿到响应头）记成一次请求，
-// 长连接活了多久不是延迟；事件按类型计数进 fleet。healthy 与 pdnd 同口径：
-// 回了 200 并且至少完整读到过一行；只回 200 就断的「接了就断」不算。
-func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent) (healthy bool, err error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "stream", nil)
+// 长连接活了多久不是延迟；事件按类型计数进 fleet。
+//
+// current（与 pdnd 同口径）：healthy 要求至少完整读到过一行并且活过 40 秒，
+// 「接了就断」「回一行就断」都不算；每读到一行续一次 60 秒读期限。
+// legacy：读到一行即健康（流循环里也不复位），没有读期限。
+func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent, current bool) (healthy bool, err error) {
+	started := c.streamClock()
+	var gotLine bool
+	defer func() {
+		healthy = gotLine && (!current || c.streamClock().Sub(started) >= streamHealthyAfter)
+	}()
+	idle := c.streamIdle
+	if idle <= 0 {
+		idle = streamIdleTimeout
+	}
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var idleTimer *time.Timer
+	if current {
+		idleTimer = time.AfterFunc(idle, cancel)
+		defer idleTimer.Stop()
+	}
+	req, err := c.newRequest(streamCtx, http.MethodGet, "stream", nil)
 	if err != nil {
 		return false, err
 	}
@@ -300,6 +361,9 @@ func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent) (hea
 	}
 	defer resp.Body.Close()
 	c.finish(ctx, "stream", resp, start, "")
+	if resp.StatusCode == http.StatusNotFound {
+		return false, errStreamNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		return false, httpError("连接事件流", resp)
 	}
@@ -311,11 +375,14 @@ func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent) (hea
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				return healthy, nil
+				return false, nil
 			}
-			return healthy, err
+			return false, err
 		}
-		healthy = true
+		gotLine = true
+		if idleTimer != nil {
+			idleTimer.Reset(idle)
+		}
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue
@@ -333,7 +400,7 @@ func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent) (hea
 		select {
 		case out <- ev:
 		case <-ctx.Done():
-			return healthy, nil
+			return false, nil
 		}
 	}
 }

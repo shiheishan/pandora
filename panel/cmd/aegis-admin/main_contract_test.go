@@ -14,7 +14,8 @@ func TestAdminWorkersShareSignalContextAndJoinBeforeCleanup(t *testing.T) {
 	source := sourcetest.Load(t, ".").Decl("run")
 	for _, required := range []string{
 		"signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)",
-		"serverErr := server.RunContext(ctx",
+		"serverErr := server.RunContext(sigCtx",
+		"stopOnEarlySignal := context.AfterFunc(sigCtx, stop)",
 		"workers.Add(5)",
 	} {
 		if !strings.Contains(source, required) {
@@ -23,7 +24,7 @@ func TestAdminWorkersShareSignalContextAndJoinBeforeCleanup(t *testing.T) {
 	}
 
 	workersAt := strings.Index(source, "var workers sync.WaitGroup")
-	serverAt := strings.Index(source, "serverErr := server.RunContext(ctx")
+	serverAt := strings.Index(source, "serverErr := server.RunContext(sigCtx")
 	if workersAt < 0 || serverAt <= workersAt {
 		t.Fatal("admin worker/server lifecycle region is malformed")
 	}
@@ -41,6 +42,10 @@ func TestAdminWorkersShareSignalContextAndJoinBeforeCleanup(t *testing.T) {
 		t.Fatal("admin workers must not detach from the signal context")
 	}
 
+	// 优雅关停：开服前解除「信号即取消后台」，HTTP 停完（在途请求跑完）才取消后台循环
+	if early := strings.Index(source, "stopOnEarlySignal()"); early < 0 || early > serverAt {
+		t.Fatal("admin process must hand worker cancellation to the shutdown order before serving")
+	}
 	afterServer := source[serverAt:]
 	stop := strings.Index(afterServer, "stop()")
 	wait := strings.Index(afterServer, "drainErr := waitForAdminWorkers(&workers, cfg.ShutdownTimeout)")

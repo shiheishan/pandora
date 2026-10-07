@@ -2,7 +2,10 @@ package kernel
 
 import (
 	"errors"
+	"log/slog"
 	"net"
+	"runtime/debug"
+	"sync/atomic"
 	"time"
 )
 
@@ -70,7 +73,7 @@ func runAcceptLoopWith(done <-chan struct{}, accept func() (net.Conn, error), ha
 		conn, err := accept()
 		if err == nil {
 			backoff.reset()
-			handle(conn)
+			guardConnHandler(conn, handle)
 			continue
 		}
 		if isClosedChan(done) || errors.Is(err, net.ErrClosed) {
@@ -101,4 +104,55 @@ func isClosedChan(done <-chan struct{}) bool {
 	default:
 		return false
 	}
+}
+
+// ============================================================
+//  连接处理的 panic 兜底
+// ============================================================
+
+// connHandlerPanics 累计被兜住的连接处理 panic 次数，进程级。
+var connHandlerPanics atomic.Int64
+
+// ConnHandlerPanics 返回进程启动以来被兜住的连接处理 panic 次数。
+func ConnHandlerPanics() int64 { return connHandlerPanics.Load() }
+
+// guardConnHandler 在 recover 保护下把一条连接交给 handle。
+//
+// 一个进程承载这台机器上的全部节点：任何一个协议解析器被畸形报文打出 panic，
+// 不兜住就是整机所有节点一起掉线、等 systemd 拉起。兜住之后只关掉这一条
+// 连接、记日志、计数，Accept 循环照常接下一条。
+//
+// 注意边界：handle 按契约只登记连接、起 goroutine 就返回，真正的协议处理跑在
+// 它自己起的 goroutine 里，那里的 panic 这一层够不着——要用 goGuardedConn
+// 起那个 goroutine（各适配器改用它是另一项改动）。
+func guardConnHandler(conn net.Conn, handle func(net.Conn)) {
+	defer recoverConnPanic(conn)
+	handle(conn)
+}
+
+// goGuardedConn 起一条连接的处理 goroutine，fn 里的 panic 只断这一条连接。
+//
+// fn 自己 defer 的收尾（wg.Done、removeActive）在 panic 展开时照常执行，
+// 再由这里 recover，所以适配器的计数与关停等待不会因此卡住。
+func goGuardedConn(conn net.Conn, fn func()) {
+	go func() {
+		defer recoverConnPanic(conn)
+		fn()
+	}()
+}
+
+// recoverConnPanic 必须直接 defer 调用（recover 只在被 defer 的函数里生效）。
+func recoverConnPanic(conn net.Conn) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	connHandlerPanics.Add(1)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	// 日志不带对端地址：用户 IP 不落盘（见 maskRemoteAddr 的口径），panic 现场
+	// 定位靠调用栈就够。
+	slog.Error("连接处理发生 panic，已断开该连接", "panic", r, "累计", connHandlerPanics.Load(),
+		"stack", string(debug.Stack()))
 }

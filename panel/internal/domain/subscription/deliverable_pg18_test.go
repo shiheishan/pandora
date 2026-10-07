@@ -190,7 +190,7 @@ func runDeliverableExtractionPG18(t *testing.T, ctx context.Context, admin *pgxp
 		var got, legacy []Node
 		if err := app.InTx(ctx, platformdb.Scope{TenantID: tenant, ActorID: user}, func(tx pgx.Tx) error {
 			var err error
-			if got, err = listEligibleNodesTx(ctx, tx, tenant, user, planVer); err != nil {
+			if got, err = listEligibleNodesTx(ctx, tx, tenant, user, planVer, true); err != nil {
 				return err
 			}
 			legacy, err = legacyEligibleNodesTx(ctx, tx, tenant, user, planVer)

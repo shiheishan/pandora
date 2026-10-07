@@ -132,7 +132,8 @@ func TestUsageDailyWritePG18(t *testing.T) {
 
 	// --- 真实上报路径：倍率、未知 uid、去重、累加 ---
 	svc := NewService(app, nil)
-	node := &ServingNode{ID: nodeID, TrafficRate: 1.5}
+	// 7529999 在节点名单里但没有订阅：留档、不计（Accepted 不含它）
+	node := servingNodeWithUsers(svc, tenantID, nodeID, 1.5, uidNY, uidBad, uidUTC, 7529999)
 	report := func(payload map[string][2]int64) *PushResult {
 		t.Helper()
 		raw, _ := json.Marshal(payload)

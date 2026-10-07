@@ -82,8 +82,8 @@ func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token,
 	var n ServingNode
 	var proto []byte
 	var isControlNode bool
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
+	// 一次往返（QueryRowScoped）：节点每个 UniProxy 请求都先过这里。
+	err := s.pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, `
 			SELECT n.id, n.name, coalesce(n.node_type,''), coalesce(n.server_host,''),
 			       coalesce(n.server_port,0), n.traffic_rate, n.protocol_config, n.pool_id,
 			       n.status, coalesce(n.kernel,'auto'), s.status, n.serving_status,
@@ -98,11 +98,10 @@ func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token,
 			   AND n.node_type IS NOT NULL
 			   AND n.server_port BETWEEN 1 AND 65535
 			   AND `+StableProtocolReadySQL("n"),
-			tenantID, nodeID, crypto.HashToken(token),
-		).Scan(&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
-			&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
-			&n.ServerStatus, &n.ServingStatus, &isControlNode, &n.deliveryEpoch)
-	})
+		[]any{tenantID, nodeID, crypto.HashToken(token)},
+		&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
+		&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
+		&n.ServerStatus, &n.ServingStatus, &isControlNode, &n.deliveryEpoch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// 节点不存在与 token 不对返回同一种错误
 		return nil, httpx.New(httpx.CodeUnauthorized, "节点认证失败")
@@ -432,26 +431,42 @@ func (s *Service) ReportAlive(ctx context.Context, tenantID string, n *ServingNo
 		return 0, nil
 	}
 
+	// 一次往返、异步提交（遥测，丢最后几百毫秒无妨，下一分钟就补上）。
+	//
+	// 已有的行只在 last_seen_at 落后超过 aliveRefresh 才刷新：节点每分钟报一次，原先
+	// 每次都把全部在线行重写一遍，而 idx_node_alive_recent 含 last_seen_at，每次都是
+	// 非 HOT 更新（r3：每 30 分钟 5.7 万行、24 MB WAL）。最短的设备识别窗口是 5 分钟，
+	// 时间戳最多落后 2 分钟再加一个上报间隔，仍在窗口内；代价只是离线设备最多早
+	// 2 分钟从在线数里掉出去（偏宽松，不会误判超限）。
 	count := 0
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 按（订阅, 哈希）排序插入：同一节点两份上报并发时加锁顺序一致，不互等成死锁。
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO node_alive_ips (tenant_id, node_id, subscription_id, ip_hash)
-			SELECT s.tenant_id, $2::uuid, s.id, a.ip_hash
-			  FROM unnest($3::bigint[], $4::bytea[]) AS a(node_uid, ip_hash)
-			  JOIN subscriptions s ON s.tenant_id = $1::uuid AND s.node_uid = a.node_uid
-			 ORDER BY s.id, a.ip_hash
-			ON CONFLICT (node_id, subscription_id, ip_hash)
-			DO UPDATE SET last_seen_at = now()`,
-			tenantID, n.ID, uids, hashes)
-		if err != nil {
-			return err
-		}
-		count = int(tag.RowsAffected())
-		return nil
+	b := &pgx.Batch{}
+	// 按（订阅, 哈希）排序插入：同一节点两份上报并发时加锁顺序一致，不互等成死锁。
+	// 回执里的 ips 是认下的（找得到订阅的）条数，不是实际改写的行数。
+	b.Queue(`
+			WITH src AS (
+				SELECT s.tenant_id, s.id AS subscription_id, a.ip_hash
+				  FROM unnest($3::bigint[], $4::bytea[]) AS a(node_uid, ip_hash)
+				  JOIN subscriptions s ON s.tenant_id = $1::uuid AND s.node_uid = a.node_uid
+			), upsert AS (
+				INSERT INTO node_alive_ips (tenant_id, node_id, subscription_id, ip_hash)
+				SELECT tenant_id, $2::uuid, subscription_id, ip_hash
+				  FROM src
+				 ORDER BY subscription_id, ip_hash
+				ON CONFLICT (node_id, subscription_id, ip_hash)
+				DO UPDATE SET last_seen_at = now()
+				 WHERE node_alive_ips.last_seen_at < now() - interval '`+aliveRefresh+`'
+			)
+			SELECT count(*) FROM src`,
+		tenantID, n.ID, uids, hashes).QueryRow(func(row pgx.Row) error {
+		return row.Scan(&count)
 	})
+	err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b)
 	return count, err
 }
+
+// aliveRefresh 是在线记录 last_seen_at 的刷新粒度，见 ReportAlive。必须远小于最短的
+// 设备识别窗口（DeviceWindowMinutes 的 5 分钟）。
+const aliveRefresh = "2 minutes"
 
 // aliveRows 把上报摊平成（node_uid, IP 哈希）两列，去重并排序。
 //
@@ -532,30 +547,39 @@ func (s *Service) ReportRuntimeStatus(ctx context.Context, tenantID string, n *S
 	diskUsed := metricUnit(status.Disk.Used, 1024*1024*1024)
 	diskTotal := metricUnit(status.Disk.Total, 1024*1024*1024)
 
-	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `
+	// 一次往返、异步提交（遥测）。节点行的心跳类列不触发变更通知、是 HOT 更新（00116）；
+	// 服务器行按 serverHeartbeatRefresh 节流，与签名心跳同一口径。节点刚在同一请求里
+	// 认证过，查不到行只会是认证之后被删，回 404。
+	found := false
+	b := &pgx.Batch{}
+	b.Queue(`
+			UPDATE nodes SET last_heartbeat_at=now(), health_score=90
+			 WHERE tenant_id=$1 AND id=$2
+			RETURNING server_id`, tenantID, n.ID).Query(func(rows pgx.Rows) error {
+		for rows.Next() {
+			found = true
+		}
+		return rows.Err()
+	})
+	b.Queue(`
 			INSERT INTO node_metrics
 				(tenant_id,node_id,cpu_bp,mem_used_mb,mem_total_mb,disk_used_gb,disk_total_gb)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)
+			SELECT $1::uuid, $2::uuid, $3::int, $4::int, $5::int, $6::int, $7::int
+			 WHERE EXISTS (SELECT 1 FROM nodes WHERE tenant_id = $1::uuid AND id = $2::uuid)
 			ON CONFLICT (node_id,recorded_at) DO NOTHING`,
-			tenantID, n.ID, cpuBP, memUsed, memTotal, diskUsed, diskTotal); err != nil {
-			return err
-		}
-		command, err := tx.Exec(ctx, `
-			UPDATE nodes SET last_heartbeat_at=now(), health_score=90
-			 WHERE tenant_id=$1 AND id=$2`, tenantID, n.ID)
-		if err != nil {
-			return err
-		}
-		if command.RowsAffected() != 1 {
-			return httpx.New(httpx.CodeNotFound, "节点不存在")
-		}
-		_, err = tx.Exec(ctx, `
+		tenantID, n.ID, cpuBP, memUsed, memTotal, diskUsed, diskTotal)
+	b.Queue(`
 			UPDATE servers SET last_heartbeat_at=now()
-			 WHERE tenant_id=$1 AND id=(SELECT server_id FROM nodes WHERE tenant_id=$1 AND id=$2)`,
-			tenantID, n.ID)
+			 WHERE tenant_id=$1 AND id=(SELECT server_id FROM nodes WHERE tenant_id=$1 AND id=$2)
+			   AND (last_heartbeat_at IS NULL OR last_heartbeat_at < now() - interval '`+serverHeartbeatRefresh+`')`,
+		tenantID, n.ID)
+	if err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b); err != nil {
 		return err
-	})
+	}
+	if !found {
+		return httpx.New(httpx.CodeNotFound, "节点不存在")
+	}
+	return nil
 }
 
 // DeviceWindowMinutes 是设备识别窗口的可选值（R103），与迁移 00094 的

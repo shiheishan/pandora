@@ -16,6 +16,12 @@ import (
 const scopeSetConfigSQL = `SELECT set_config('app.tenant_id', $1, true),
 		        set_config('app.actor_id',  $2, true)`
 
+// scopeSetConfigAsyncSQL 在注入租户上下文的同时把这一批的提交改成异步
+// （synchronous_commit=off，事务级）。只给遥测类写入用，见 BatchOptions.AsyncCommit。
+const scopeSetConfigAsyncSQL = `SELECT set_config('app.tenant_id', $1, true),
+		        set_config('app.actor_id',  $2, true),
+		        set_config('synchronous_commit', 'off', true)`
+
 // errMissingTenant 是 DATA-002 的入口闸：没有租户就不发任何语句。
 var errMissingTenant = errors.New("db: 缺少 tenant_id，拒绝执行（DATA-002）")
 
@@ -161,4 +167,63 @@ func (p *Pool) QueryRowScoped(ctx context.Context, s Scope, sql string, args []a
 	}
 	defer releaseScoped(conn)
 	return conn.SendBatch(ctx, b).Close()
+}
+
+// BatchOptions 是 BatchScoped 的可选项。
+type BatchOptions struct {
+	// AsyncCommit 让这一批的隐式事务异步提交：提交时不等 WAL 刷盘就返回。
+	//
+	// 只给丢了也无妨的遥测写入用（心跳、探针点、在线 IP）：数据库崩溃时最多丢掉
+	// 最后几百毫秒已确认的写入，而它们下一个节拍就会被新值覆盖。主机的 fsync 抖动
+	// 因此不再直接变成节点端点的尾延迟。记账（流量、扣量）、身份、配置一律不用它。
+	AsyncCommit bool
+}
+
+// BatchScoped 在一次网络往返内注入租户上下文并执行一批语句。
+//
+// 和 QueryRowScoped 同一个机制：注入语句排在最前，整批共用末尾一个 Sync，
+// PostgreSQL 把它当一个隐式事务执行——全部成功才一起提交，任一条出错整批回滚，
+// set_config(..., true) 对后面每一条都生效、Sync 之后失效。
+//
+// 调用方用 b.Queue(...) 排语句，并经 QueuedQuery 的 Exec / QueryRow / Query 挂回调
+// 读结果。要注意的一点：回调在整批已经在服务端执行完之后才跑，回调里返回错误
+// 不能撤销已经提交的写入。所以「查无此行就不写」这类分支要写进 SQL 本身
+// （WHERE EXISTS、INSERT … SELECT … WHERE），不能靠回调判断。需要按中间结果
+// 分支的，仍用 InTx。
+//
+// b 只读取不修改；同一个 b 不要并发复用。
+func (p *Pool) BatchScoped(ctx context.Context, s Scope, opts BatchOptions, b *pgx.Batch) error {
+	if s.TenantID == "" {
+		return errMissingTenant
+	}
+	full := &pgx.Batch{QueuedQueries: make([]*pgx.QueuedQuery, 0, len(b.QueuedQueries)+1)}
+	inject := scopeSetConfigSQL
+	if opts.AsyncCommit {
+		inject = scopeSetConfigAsyncSQL
+	}
+	full.Queue(inject, s.TenantID, s.ActorID)
+	full.QueuedQueries = append(full.QueuedQueries, b.QueuedQueries...)
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseScoped(conn)
+	return conn.SendBatch(ctx, full).Close()
+}
+
+// QueryScoped 在一次网络往返内注入租户上下文并执行一条多行查询，逐行交给 scan。
+//
+// 是 BatchScoped 只排一条查询的简写；只读查询用它，代替「InTx 里跑一条 Query」
+// 的三次往返（BEGIN + 注入、查询、COMMIT）。scan 返回错误即中止并原样返回。
+func (p *Pool) QueryScoped(ctx context.Context, s Scope, sql string, args []any, scan func(pgx.Rows) error) error {
+	b := &pgx.Batch{}
+	b.Queue(sql, args...).Query(func(rows pgx.Rows) error {
+		for rows.Next() {
+			if err := scan(rows); err != nil {
+				return err
+			}
+		}
+		return rows.Err()
+	})
+	return p.BatchScoped(ctx, s, BatchOptions{}, b)
 }

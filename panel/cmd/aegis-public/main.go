@@ -52,11 +52,19 @@ func run() error {
 	}
 
 	log := logging.New(cfg.Env, "aegis-public")
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	// ctx 是启动阶段与后台循环（LISTEN、扫描、派发、巡检）的生命周期。开服前收到
+	// 信号立即取消（中止启动）；开服后改由停机顺序决定：RunContext 先停接
+	// 新请求、等在途请求（下单、支付回调）跑完，返回之后才 stop()。
+	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
+	stopOnEarlySignal := context.AfterFunc(sigCtx, stop)
 
 	// 连接池上限按网关取（config.DefaultDBMaxConns 的算式），含常驻 LISTEN 那一条
-	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{MaxConns: cfg.DBMaxConns[config.DomainPublic]})
+	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{
+		MaxConns: cfg.DBMaxConns[config.DomainPublic], MinConns: cfg.DBMinConns[config.DomainPublic], StatsLog: log,
+	})
 	if err != nil {
 		return err
 	}
@@ -149,11 +157,12 @@ func run() error {
 	appearanceSvc := appearance.New(pool)
 	// 扫描间隔 5 分钟：到期提醒按天计，流量预警的阈值也不会分钟级跨越，
 	// 扫太密只是白白压库。
-	notifySvc.StartScanner(ctx, middleware.DefaultTenantID, 5*time.Minute)
+	// 扫描与派发是两个循环（派发 30 秒一轮，验证码等 Kick 提前），停机时一起 join。
+	waitNotifyLoops := notifySvc.StartScanner(ctx, middleware.DefaultTenantID, 5*time.Minute)
 	// 插件投递也放在 public：事件几乎都在这个进程里产生，
 	// 派发跟着一起跑省得两个服务抢同一批队列行。
 	// 一分钟一轮 —— 插件多半是记账、同步这类事，比通知更该及时。
-	plugin.New(pool, envelope, !cfg.IsProduction()).
+	waitPluginLoop := plugin.New(pool, envelope, !cfg.IsProduction()).
 		StartScanner(ctx, middleware.DefaultTenantID, time.Minute)
 	waitReservationExpiry := startReservationExpiryWorker(ctx, billingSvc, log)
 	// 主动查单巡检挂在 public：支付意图在这里创建、回调在这里落地、查单要用的
@@ -189,7 +198,8 @@ func run() error {
 	}
 	defer pprofSrv.Close()
 
-	serverErr := server.RunContext(ctx, server.Options{
+	stopOnEarlySignal()
+	serverErr := server.RunContext(sigCtx, server.Options{
 		Addr:            cfg.PublicAddr,
 		Handler:         handler,
 		Log:             log,
@@ -201,6 +211,8 @@ func run() error {
 	waitReservationExpiry()
 	waitPaymentQuery()
 	waitSwitchWatch()
+	waitNotifyLoops()
+	waitPluginLoop()
 	return serverErr
 }
 

@@ -43,33 +43,65 @@ type DeviceLimitPolicyInput struct {
 	WindowMinutes *int
 }
 
-// onlineDevicesSQL 是在线设备概览的主查询，$1 租户。
+// onlineDevicesSQL 是在线设备概览的主查询，$1 租户：在用订阅按在线设备数从多到少、
+// 同数按创建时间从新到旧，取前 200 条。
 //
-// 用 LEFT JOIN 而不是从视图出发：没有人在线的订阅也要能看到，
-// 否则「这个用户到底几台设备」这个问题在他离线时就查不了了。
+// 先聚合、取前 200，最后才对这 200 行拼用户与套餐。原先从全部在用订阅出发，每条订阅
+// 走一次在线设备视图的 LATERAL，再按 LATERAL 算出来的设备数排序取 200：排序键是聚合
+// 结果，「先按索引取一页 id」套不上，5000 条在用订阅要先全部算一遍（每次约 2.3 万个
+// 缓冲块，5k-r3 p50 171ms）。现在：
+//   - online：窗口内的在线记录按订阅一次 GROUP BY（全租户只扫一遍 node_alive_ips）；
+//   - ranked：有在线记录的在用订阅（至多几百条），并上「没有在线记录」的在用订阅按
+//     创建时间取前 200 条补齐——设备数都是 0，排在有在线记录的后面，同数按创建时间，
+//     与原来的全量排序一致；补齐那一支走 00120 的部分索引，取够 200 条就停；
+//   - page：合并后取前 200，最后才 JOIN 套餐版本、套餐与用户。
 //
-// 在线数按订阅走 LATERAL：od.subscription_id = s.id 在子查询里是外层参数，
-// 一定被推进视图，每条订阅只探 idx_node_alive_recent 里自己那一段。原先 LEFT JOIN
-// 整个视图，要把全站在线记录聚合一遍、逐行重算窗口（5000 用户实测 3.9s/次）。
+// 口径与在线设备视图（00098）相同：窗口取 app.device_limit_window_minutes（标量子查询，
+// 整条语句只算一次），按 IP 去重计设备、按节点去重计节点。
 const onlineDevicesSQL = `
-	SELECT s.id::text, s.user_id::text, COALESCE(u.email,''), COALESCE(p.name,''),
-	       COALESCE(s.device_limit, pv.max_devices, 0),
-	       COALESCE(d.device_count, 0), COALESCE(d.node_count, 0),
-	       (s.device_limit IS NOT NULL),
-	       d.last_seen_at
-	  FROM subscriptions s
-	  JOIN plan_versions pv ON pv.id = s.plan_version_id
-	  LEFT JOIN plans p ON p.id = s.plan_id
-	  LEFT JOIN users u ON u.id = s.user_id
-	  LEFT JOIN LATERAL (
-	        SELECT od.device_count, od.node_count, od.last_seen_at
-	          FROM subscription_online_devices od
-	         WHERE od.tenant_id = s.tenant_id AND od.subscription_id = s.id
-	  ) d ON true
-	 WHERE s.tenant_id = $1
-	   AND s.status IN ('active','trialing','grace')
-	 ORDER BY COALESCE(d.device_count,0) DESC, s.created_at DESC
-	 LIMIT 200`
+	WITH online AS MATERIALIZED (
+	        SELECT x.subscription_id,
+	               count(DISTINCT x.ip_hash) AS device_count,
+	               count(DISTINCT x.node_id) AS node_count,
+	               max(x.last_seen_at)       AS last_seen_at
+	          FROM node_alive_ips x
+	         WHERE x.tenant_id = $1
+	           AND x.last_seen_at > now() - make_interval(mins =>
+	                 (SELECT app.device_limit_window_minutes($1)))
+	         GROUP BY x.subscription_id
+	), ranked AS (
+	        SELECT s.id, s.user_id, s.plan_id, s.plan_version_id, s.device_limit, s.created_at,
+	               o.device_count, o.node_count, o.last_seen_at
+	          FROM online o
+	          JOIN subscriptions s ON s.tenant_id = $1 AND s.id = o.subscription_id
+	         WHERE s.status IN ('active','trialing','grace')
+	        UNION ALL
+	        (SELECT s.id, s.user_id, s.plan_id, s.plan_version_id, s.device_limit, s.created_at,
+	                0::bigint, 0::bigint, NULL::timestamptz
+	           FROM subscriptions s
+	          WHERE s.tenant_id = $1
+	            AND s.status IN ('active','trialing','grace')
+	            AND NOT EXISTS (SELECT 1 FROM online o WHERE o.subscription_id = s.id)
+	          ORDER BY s.created_at DESC
+	          LIMIT 200)
+	), page AS (
+	        SELECT * FROM ranked
+	         ORDER BY device_count DESC, created_at DESC
+	         LIMIT 200
+	)
+	SELECT page.id::text, page.user_id::text, COALESCE(u.email,''), COALESCE(p.name,''),
+	       COALESCE(page.device_limit, pv.max_devices, 0),
+	       page.device_count, page.node_count,
+	       (page.device_limit IS NOT NULL),
+	       page.last_seen_at
+	  FROM page
+	  JOIN plan_versions pv ON pv.id = page.plan_version_id
+	  LEFT JOIN plans p ON p.id = page.plan_id
+	  LEFT JOIN users u ON u.id = page.user_id
+	 ORDER BY page.device_count DESC, page.created_at DESC`
+
+// OnlineDevicesOverviewSQL 返回概览主查询原文（$1 租户），供 PG18 对照用例 EXPLAIN。
+func OnlineDevicesOverviewSQL() string { return onlineDevicesSQL }
 
 // ListOnlineDevices 返回当前在线设备概览，超限的排在前面。
 func (s *Service) ListOnlineDevices(ctx context.Context, tenantID string) (*DeviceOverview, error) {

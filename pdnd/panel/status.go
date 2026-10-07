@@ -32,11 +32,28 @@ type RuntimeStatus struct {
 	Mem  ResourcePair `json:"mem"`
 	Swap ResourcePair `json:"swap"`
 	Disk ResourcePair `json:"disk"`
+	// Status / Reason 与签名心跳的 runtime_status 同义：入站没起来或新配置装
+	// 不上时为 degraded 并带原因。走请求头（RuntimeStatusHeader /
+	// RuntimeReasonHeader）不进正文：/status 的结构里没有这两个字段，往正文
+	// 加字段在按 DisallowUnknownFields 解码的面板上会整条 400。面板侧接住之前
+	// 它们只是被忽略。
+	Status string `json:"-"`
+	Reason string `json:"-"`
 }
+
+// RuntimeStatusHeader 带兼容通道 /status 的运行状态（running / degraded）。
+const RuntimeStatusHeader = "X-Node-Runtime-Status"
 
 // Status 上报一次运行状态。
 func (c *Client) Status(ctx context.Context, s RuntimeStatus) error {
-	return c.post(ctx, "status", s)
+	headers := map[string]string{}
+	if s.Status != "" {
+		headers[RuntimeStatusHeader] = s.Status
+	}
+	if s.Reason != "" {
+		headers[RuntimeReasonHeader] = s.Reason
+	}
+	return c.postWith(ctx, "status", s, headers)
 }
 
 // CollectRuntimeStatus 采集本机的资源占用。

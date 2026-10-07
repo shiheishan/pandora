@@ -1,0 +1,28 @@
+{
+  "contract": "pandora-node-certificate-bundle-v1",
+  "note": "fictional fixtures only; keys are derived from fixed labels in golden_test.go and are not stored here",
+  "signature": {
+    "tenant_id": "0193f0a0-aaaa-7000-8000-0000000000a1",
+    "server_id": "0193f0a0-bbbb-7000-8000-0000000000b2",
+    "node_id": "0193f0a0-cccc-7000-8000-0000000000c3",
+    "epoch": 42,
+    "enc_key_id": "cR2jaIJhLus",
+    "content_sha256": "ABymgWamzE5J//qcdCVYXju/EQWV+14m826W1iE/nCQ=",
+    "key_id": "BrvSW2W4GBI",
+    "issued_at": "2026-10-07T08:00:00.123456Z",
+    "expires_at": "2026-10-07T08:10:00.123456Z",
+    "preimage": "pandora-node-certificate-bundle-v1\ntenant_id=0193f0a0-aaaa-7000-8000-0000000000a1\nserver_id=0193f0a0-bbbb-7000-8000-0000000000b2\nnode_id=0193f0a0-cccc-7000-8000-0000000000c3\nepoch=42\nenc_key_id=cR2jaIJhLus\ncontent_sha256=ABymgWamzE5J//qcdCVYXju/EQWV+14m826W1iE/nCQ=\nkey_id=BrvSW2W4GBI\nissued_at=2026-10-07T08:00:00.123456Z\nexpires_at=2026-10-07T08:10:00.123456Z\n",
+    "signature": "LJzzz4yDPzL3P4Vn/rW590xGos0mHYf2Bu7XiS0CX4yPvBbXYx3QnxZBa3/bGJYfjy9JBcSTcq/vJZbuHhvFAA=="
+  },
+  "sealing": {
+    "alg": "hpke-x25519-hkdfsha256-aes256gcm",
+    "tenant_id": "0193f0a0-aaaa-7000-8000-0000000000a1",
+    "server_id": "0193f0a0-bbbb-7000-8000-0000000000b2",
+    "cert_id": "0193f0a0-dddd-7000-8000-0000000000d4",
+    "version": 3,
+    "chain_sha256": "z4BfHG72UNBp7IHMFcV+8c4d8gQ33KmuSt0Ol8JM1bw=",
+    "info": "pandora-cert-key-v1\n0193f0a0-aaaa-7000-8000-0000000000a1\n0193f0a0-bbbb-7000-8000-0000000000b2\n0193f0a0-dddd-7000-8000-0000000000d4\n3\nz4BfHG72UNBp7IHMFcV+8c4d8gQ33KmuSt0Ol8JM1bw=",
+    "plaintext_sha256": "1ZGi3/NrWuu+nOof98+D1R1A1Z8VHO5Uq3W0w/9Nubg=",
+    "sealed": "w4rzAjh1H2U3ygBRO6YwUYRfz9CG9A9/oLKJSAMvNSsbsf/Bdwln7i8XUZqXV78OxaDYHbSkuJRuEOr01bkQ+UBE1U/5TZwIn3g3C7r21aep8+ykXqSD1oKIjCh5lmNUTvqVuuF0nmXurJldjGo88cy+IftI+y60s6CBtjsNon1QmTuYDhO6gkYUKNmNimVaaJzjE+rPJne+kWHyxoqY8IrrRu6iqq444cs5g4WhSvrnKTL7Y0FePN4H"
+  }
+}

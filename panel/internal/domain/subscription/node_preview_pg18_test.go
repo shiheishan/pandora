@@ -204,6 +204,11 @@ func TestNodePreviewPG18(t *testing.T) {
 		t.Fatalf("node preview FORCE RLS proof failed forced=%v err=%v", forced, err)
 	}
 	t.Log("node_preview_pg18_business=ok role=aegis_app rls=on schema=40 expiry=5/5 owner=ok neutral=outsider,cross-tenant,unknown eligible=1")
+
+	// 预览缓存：200 → 1000 节点时命中耗时近似不变（独立租户，见 node_preview_scale_pg18_test.go）
+	t.Run("cached preview does not scale with node count", func(t *testing.T) {
+		checkNodePreviewScales(t, ctx, admin, app)
+	})
 }
 
 func ptrTime(value time.Time) *time.Time { return &value }

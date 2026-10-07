@@ -5,7 +5,8 @@ set -Eeuo pipefail
 # Usage: runtime-acceptance.sh <pandora-native-binary> <stage-dir>
 #
 # Runs two panel access modes against a loopback mock panel, two cold starts
-# each, with SIGTERM and port release checked every time:
+# each, then a third cold start with the panel down (the node must serve from
+# its disk cache), with SIGTERM and port release checked every time:
 #   signed - what the installer writes after enrollment: identity file plus
 #            signed_required=true. Config comes from a signed effective
 #            release; heartbeats (with host metrics) and config reports go
@@ -108,10 +109,56 @@ s=socket.socket(); s.bind(('127.0.0.1',int(sys.argv[1]))); s.close()
 PY
 }
 
+# run_offline：面板已停，节点冷启动必须用落盘缓存把入站起来，SIGTERM 后让出端口。
+run_offline() {
+  local mode="$1" dir="$2" node_port="$3"
+  local cached
+  for cached in config.json users.json; do
+    local found
+    found="$(find "${dir}/cache" -name "${cached}" -type f | head -n 1)"
+    [[ -n "${found}" ]] || { echo "${mode}: no ${cached} in the disk cache after cold starts" >&2; return 1; }
+    [[ "$(stat -c %a "${found}" 2>/dev/null || stat -f %Lp "${found}")" == 600 ]] || {
+      echo "${mode}: cached ${cached} is not mode 0600" >&2; return 1; }
+  done
+  "${BINARY}" -c "${dir}/config.json" >"${dir}/node-offline.log" 2>&1 &
+  node_pid=$!
+  local ready=0
+  for _ in $(seq 1 100); do
+    if ! kill -0 "${node_pid}" 2>/dev/null; then
+      wait "${node_pid}" || true
+      echo "${mode}: node exited while the panel was down" >&2
+      return 1
+    fi
+    if port_open "${node_port}"; then ready=1; break; fi
+    sleep .05
+  done
+  [[ "${ready}" == 1 ]] || {
+    echo "${mode}: node did not serve from its disk cache with the panel down" >&2
+    cat "${dir}/node-offline.log" >&2
+    return 1
+  }
+  kill -TERM "${node_pid}"
+  for _ in $(seq 1 100); do
+    kill -0 "${node_pid}" 2>/dev/null || break
+    sleep .05
+  done
+  if kill -0 "${node_pid}" 2>/dev/null; then
+    echo "${mode}: node did not stop after SIGTERM (panel down)" >&2
+    return 1
+  fi
+  wait "${node_pid}"
+  node_pid=""
+  python3 - "${node_port}" <<'PY'
+import socket,sys
+s=socket.socket(); s.bind(('127.0.0.1',int(sys.argv[1]))); s.close()
+PY
+}
+
 run_mode() {
   local mode="$1" dir="${STAGE}/$1"
   mkdir -p "${dir}"
   rm -f "${dir}/state.json" "${dir}/identity.json"
+  rm -rf "${dir}/cache"
   local panel_port node_port
   read -r panel_port node_port < <(python3 - <<'PY'
 import socket
@@ -144,18 +191,22 @@ PY
   # 兼容模式也显式给一个不存在的身份路径：落到缺省 /var/lib/... 的话，在装过
   # 节点的机器上会读到真身份，验的就不是兼容通道了。
   cat > "${dir}/config.json" <<JSON
-{"log_level":"info","panel":{"url":"http://127.0.0.1:${panel_port}","timeout_seconds":2,"identity_path":"${dir}/identity.json","signed_required":${signed_required}},"nodes":[{"node_id":"${node_id}","node_type":"socks","token":"acceptance-only"}]}
+{"log_level":"info","cache_dir":"${dir}/cache","panel":{"url":"http://127.0.0.1:${panel_port}","timeout_seconds":2,"identity_path":"${dir}/identity.json","signed_required":${signed_required}},"nodes":[{"node_id":"${node_id}","node_type":"socks","token":"acceptance-only"}]}
 JSON
 
   run_once "${mode}" 1 "${dir}" "${node_port}" "${expect}"
   run_once "${mode}" 2 "${dir}" "${node_port}" "${expect}"
-  # 每个模式一行面板侧观测，CI 日志里能直接看出两种接入都真跑了。
-  printf '{"mode_passed":"%s","cold_starts":2,"panel_observed":%s}\n' "${mode}" "$(cat "${dir}/state.json")"
+  local observed
+  observed="$(cat "${dir}/state.json")"
   kill -TERM "${panel_pid}" 2>/dev/null || true
   wait "${panel_pid}" 2>/dev/null || true
   panel_pid=""
+  # 面板停了再冷启动一次：入站必须靠落盘缓存照常起来。
+  run_offline "${mode}" "${dir}" "${node_port}"
+  # 每个模式一行面板侧观测，CI 日志里能直接看出两种接入都真跑了。
+  printf '{"mode_passed":"%s","cold_starts":2,"offline_cold_starts":1,"panel_observed":%s}\n' "${mode}" "${observed}"
 }
 
 run_mode signed
 run_mode compat
-printf '{"status":"ok","modes":["signed","compat"],"cold_starts_per_mode":2,"sigterm":"clean","port_released":true}\n'
+printf '{"status":"ok","modes":["signed","compat"],"cold_starts_per_mode":2,"offline_cold_starts_per_mode":1,"sigterm":"clean","port_released":true}\n'

@@ -53,10 +53,32 @@ var DefaultDBMaxConns = map[Domain]int32{
 	DomainNode:   defaultGatewayDBConns,
 }
 
+// DBMinConnsEnv 是各网关连接池常驻连接数（pgxpool MinConns）的环境变量名。
+var DBMinConnsEnv = map[Domain]string{
+	DomainPublic: "AEGIS_PUBLIC_DB_MIN_CONNS",
+	DomainAdmin:  "AEGIS_ADMIN_DB_MIN_CONNS",
+	DomainNode:   "AEGIS_NODE_DB_MIN_CONNS",
+}
+
+// DefaultDBMinConns 是常驻连接数的缺省值。
+//
+// node 缺省 8：300 个节点每分钟约 70 次请求/节点，池子常年有 8 条以上在用
+// （5k-r3 实测已建连接 8→15）。常驻连接少了，空闲回收后的下一波请求要现建连接：
+// 重做 SCRAM 认证、新起后端进程、语句缓存全冷，正是尾延迟的来源。public、admin
+// 的请求量小一个数量级，保持 1。常驻连接不突破 MaxConns，不改变连接预算。
+var DefaultDBMinConns = map[Domain]int32{
+	DomainPublic: 1,
+	DomainAdmin:  1,
+	DomainNode:   8,
+}
+
 // 口令哈希（Argon2id，每次 19 MiB）的全局并发上限与排队超时。
 //
-// 并发缺省 2：public 网关的 CPUQuota 是 60%，两个并发已经能吃满这点 CPU，
-// 再多只会让每个哈希都变慢、同时把内存翻倍（4 个就是 76 MiB 常驻工作集）。
+// 并发缺省 1：public 网关的 CPUQuota 是 60%（0.6 核），而 Go 运行时的 GOMAXPROCS
+// 是 2。两个 Argon2 同时算会占满 2 核，约 30ms 就耗光 100ms 周期里 60ms 的额度，
+// 随后整个进程被节流停摆约 70ms，所有请求一起受牵连（5k-r3 预热那一分钟节流
+// 14 秒）。并发 1 时吞吐不变（都受配额约束），单次停摆上限降一半、内存少 19 MiB；
+// 单元文件再配 CPUQuotaPeriodSec=20ms，单次停摆压到十几毫秒。
 // 排队缺省 5 秒：远小于 nginx 认证入口 20 秒的读超时与网关 25 秒的请求超时，
 // 排不上就回 503 让客户端稍后重试，而不是在队里耗到上游超时。排队不占数据库
 // 连接，也不占内存，只是一个等待中的 goroutine。
@@ -64,7 +86,7 @@ const (
 	PasswordHashConcurrencyEnv  = "AEGIS_PASSWORD_HASH_CONCURRENCY"
 	PasswordHashQueueTimeoutEnv = "AEGIS_PASSWORD_HASH_QUEUE_TIMEOUT"
 
-	DefaultPasswordHashConcurrency  = 2
+	DefaultPasswordHashConcurrency  = 1
 	DefaultPasswordHashQueueTimeout = 5 * time.Second
 
 	maxPasswordHashConcurrency  = 16
@@ -86,6 +108,8 @@ const (
 type Runtime struct {
 	// DBMaxConns 是各网关连接池上限，三个域都有值。
 	DBMaxConns map[Domain]int32
+	// DBMinConns 是各网关连接池常驻连接数，三个域都有值，不超过对应的 DBMaxConns。
+	DBMinConns map[Domain]int32
 	// PasswordHashConcurrency 是同时进行的 Argon2 计算上限。
 	PasswordHashConcurrency int
 	// PasswordHashQueueTimeout 是等一个哈希名额的最长时间，超时回 503。
@@ -95,7 +119,7 @@ type Runtime struct {
 }
 
 func loadRuntime() (Runtime, error) {
-	r := Runtime{DBMaxConns: map[Domain]int32{}}
+	r := Runtime{DBMaxConns: map[Domain]int32{}, DBMinConns: map[Domain]int32{}}
 	for _, d := range []Domain{DomainPublic, DomainAdmin, DomainNode} {
 		name := DBMaxConnsEnv[d]
 		n, err := boundedEnvInt(name, int(DefaultDBMaxConns[d]), minDBMaxConns, maxDBMaxConns)
@@ -103,6 +127,13 @@ func loadRuntime() (Runtime, error) {
 			return Runtime{}, err
 		}
 		r.DBMaxConns[d] = int32(n)
+		// 常驻数缺省值随上限收：只调小了上限的部署不必再去调常驻数
+		minDefault := min(int(DefaultDBMinConns[d]), n)
+		m, err := boundedEnvInt(DBMinConnsEnv[d], minDefault, 0, n)
+		if err != nil {
+			return Runtime{}, fmt.Errorf("%w（不能超过 %s）", err, name)
+		}
+		r.DBMinConns[d] = int32(m)
 	}
 	n, err := boundedEnvInt(PasswordHashConcurrencyEnv, DefaultPasswordHashConcurrency, 1, maxPasswordHashConcurrency)
 	if err != nil {

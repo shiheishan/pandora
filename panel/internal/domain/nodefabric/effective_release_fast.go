@@ -58,12 +58,20 @@ func ParseAppliedEffectiveRelease(value string) (releaseID string, generation ui
 // 只读、不加锁。与并发的来源写入撞上时最多晚一轮：写入提交后下一次拉取（或
 // 长连接推下来的 sync.config）就会看到新代际。
 func (s *Service) EffectiveConfigUnchanged(ctx context.Context, tenantID, nodeID, releaseID string, generation uint64) (bool, error) {
+	unchanged, _, err := s.EffectiveConfigUnchangedAt(ctx, tenantID, nodeID, releaseID, generation)
+	return unchanged, err
+}
+
+// EffectiveConfigUnchangedAt 同 EffectiveConfigUnchanged，并在同一条语句里读出当前下发
+// 纪元：签名中间件把缓存身份的复核交给这里（一次往返做完两件事），handler 拿纪元复核
+// 通过之后才回 204。
+func (s *Service) EffectiveConfigUnchangedAt(ctx context.Context, tenantID, nodeID, releaseID string,
+	generation uint64) (unchanged bool, epoch int64, err error) {
 	if generation == 0 || generation > math.MaxInt64 {
-		return false, nil
+		epoch, err = s.CurrentDeliveryEpoch(ctx, tenantID)
+		return false, epoch, err
 	}
-	var unchanged bool
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
+	err = s.pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, `
 			SELECT EXISTS (
 				SELECT 1
 				  FROM nodes n
@@ -74,10 +82,9 @@ func (s *Service) EffectiveConfigUnchanged(ctx context.Context, tenantID, nodeID
 				   AND n.node_type IS NOT NULL AND n.server_port BETWEEN 1 AND 65535
 				   AND n.config_source_generation=$4
 				   AND n.desired_effective_release_id=$3::uuid AND n.desired_effective_generation=$4
-				   AND r.id=$3::uuid AND r.key_id=$5)`,
-			tenantID, nodeID, releaseID, int64(generation), s.signer.KeyID()).Scan(&unchanged)
-	})
-	return unchanged, err
+				   AND r.id=$3::uuid AND r.key_id=$5), `+deliveryEpochSQL,
+		[]any{tenantID, nodeID, releaseID, int64(generation), s.signer.KeyID()}, &unchanged, &epoch)
+	return unchanged, epoch, err
 }
 
 // reusableEffectiveRelease 是无锁读到的「当前代际已有、且是当前密钥签的」发布物。

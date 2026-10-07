@@ -1,6 +1,9 @@
 package nodefabric
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,17 +41,32 @@ func TestSplitTrafficChargePlanFirstThenPacks(t *testing.T) {
 	}
 }
 
-func TestSortedReportEntriesOrdersAndMergesUIDs(t *testing.T) {
-	got := sortedReportEntries(map[string][2]int64{
-		"30": {1, 2}, "7": {10, 0}, "007": {0, 5}, "bad": {99, 99}, "12": {0, 4},
-	})
+func TestParseTrafficReportOrdersMergesAndValidates(t *testing.T) {
+	got, err := parseTrafficReport([]byte(`{"30":[1,2],"7":[10,0],"007":[0,5],"bad":[99,99],"12":[0,4],
+		"40":[-5000000000,6000000000],"41":[100],"42":[100,200,300],"43":[9223372036854775807,1],
+		"44":[30000000001,0],"45":[1.5,0],"46":null,"47":{"up":1},"48":[0,99999999999999999999]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []reportEntry{{7, 15}, {12, 4}, {30, 3}}
-	if len(got) != len(want) {
-		t.Fatalf("entries=%v want %v", got, want)
+	if len(got.entries) != len(want) {
+		t.Fatalf("entries=%v want %v", got.entries, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("entries=%v want %v", got, want)
+		if got.entries[i] != want[i] {
+			t.Fatalf("entries=%v want %v", got.entries, want)
+		}
+	}
+	// 非整数 uid、负数、错长度、超上限、小数、null、对象、超出 int64：逐项计 invalid，不拒整份
+	if got.invalid != 10 || got.keys != 14 || got.upload != 11 || got.download != 11 {
+		t.Fatalf("invalid=%d keys=%d up=%d down=%d", got.invalid, got.keys, got.upload, got.download)
+	}
+	if empty, err := parseTrafficReport([]byte(`null`)); err != nil || empty.keys != 0 {
+		t.Fatalf("null report = %+v, %v; want an empty report", empty, err)
+	}
+	for _, bad := range []string{`[]`, `"x"`, `{`} {
+		if _, err := parseTrafficReport([]byte(bad)); err == nil {
+			t.Fatalf("non-object report %s accepted", bad)
 		}
 	}
 }
@@ -76,7 +94,52 @@ func TestUniProxyServesAndChargesTrafficPacks(t *testing.T) {
 		!strings.Contains(pkg.Decl("chargeReportEntries"), "applyTrafficCharges(") {
 		t.Fatal("single and batch charges must share one charging core")
 	}
-	if !strings.Contains(pkg.Decl("Service.ReportTraffic"), "for _, entry := range sortedReportEntries(report)") {
+	report := pkg.Decl("Service.ReportTraffic")
+	if !strings.Contains(report, "for _, entry := range report.entries") ||
+		!strings.Contains(pkg.Decl("parseTrafficReport"), "slices.SortFunc(out.entries") {
 		t.Fatal("ReportTraffic must charge users in a deterministic order")
+	}
+	// 节点只能扣自己放行名单里的用户（审计 N2）
+	if !strings.Contains(report, "s.ListNodeUsers(ctx, tenantID, n)") || !strings.Contains(report, "allowed[entry.uid]") ||
+		!strings.Contains(report, "if n.epochKnown {") {
+		t.Fatal("ReportTraffic must only charge users the node currently serves")
+	}
+	// 死锁 / 序列化失败整笔重来（审计 N4）
+	if !strings.Contains(report, "db.IsSerializationFailure(err)") || pushRetryAttempts < 2 {
+		t.Fatal("ReportTraffic must retry deadlocked charges")
+	}
+	// 滚动空窗照扣（审计 N1）：不再要求 period_end > now()
+	if strings.Contains(charge, "period_end > now()))") || !strings.Contains(charge, "period_start <= now()") {
+		t.Fatal("applyTrafficCharges must charge the latest started period even after its period_end")
+	}
+}
+
+// ReportTraffic 只核对经认证的节点视图的放行名单：生产里唯一的调用方必须是先过 authNode
+// 的 uniPush，否则「包外拼的视图不核对」就成了绕过名单的口子。
+func TestReportTrafficOnlyReachedThroughAuthentication(t *testing.T) {
+	root := filepath.Join("..", "..")
+	var callers []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(body), ".ReportTraffic(") {
+			callers = append(callers, filepath.ToSlash(path))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 1 || !strings.HasSuffix(callers[0], "api/node/handlers.go") {
+		t.Fatalf("ReportTraffic non-test callers = %v, want only api/node/handlers.go", callers)
+	}
+	handler := sourcetest.Load(t, filepath.Join(root, "api", "node")).Decl("handlers.uniPush")
+	if auth, report := strings.Index(handler, "h.authNode(w, r)"), strings.Index(handler, ".ReportTraffic("); auth < 0 || report < auth {
+		t.Fatal("uniPush must authenticate the node before reporting traffic")
 	}
 }

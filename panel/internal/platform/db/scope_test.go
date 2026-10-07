@@ -60,11 +60,22 @@ func TestScopedEntryPointsRefuseMissingTenant(t *testing.T) {
 	if err := p.QueryRowScoped(ctx, Scope{}, `SELECT 1`, nil, &v); !errors.Is(err, errMissingTenant) {
 		t.Fatalf("QueryRowScoped without tenant = %v", err)
 	}
+	if err := p.BatchScoped(ctx, Scope{}, BatchOptions{AsyncCommit: true}, &pgx.Batch{}); !errors.Is(err, errMissingTenant) {
+		t.Fatalf("BatchScoped without tenant = %v", err)
+	}
+	if err := p.QueryScoped(ctx, Scope{}, `SELECT 1`, nil, func(pgx.Rows) error { return nil }); !errors.Is(err, errMissingTenant) {
+		t.Fatalf("QueryScoped without tenant = %v", err)
+	}
 }
 
 // 注入语句本身也守住事务级：第三个参数是 true。
 func TestScopeSetConfigIsTransactionLocal(t *testing.T) {
 	if strings.Count(scopeSetConfigSQL, ", true)") != 2 || strings.Contains(scopeSetConfigSQL, "false") {
 		t.Fatalf("scope injection must be transaction-local: %s", scopeSetConfigSQL)
+	}
+	// 异步提交的注入也全是事务级：批次结束即失效，不会把 synchronous_commit=off 带回池里
+	if strings.Count(scopeSetConfigAsyncSQL, ", true)") != 3 || strings.Contains(scopeSetConfigAsyncSQL, "false") ||
+		!strings.Contains(scopeSetConfigAsyncSQL, "set_config('synchronous_commit', 'off', true)") {
+		t.Fatalf("async scope injection must be transaction-local: %s", scopeSetConfigAsyncSQL)
 	}
 }

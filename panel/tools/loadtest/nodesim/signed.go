@@ -188,8 +188,9 @@ func (c *signedClient) config(ctx context.Context, flag string) (*nodefabric.Sig
 // 面板回 204 即仍是当前版，返回 unchanged=true、cfg 为 nil。没带这个头却回 204
 // 是面板出错，与 pdnd 一样报错。
 func (c *signedClient) configSince(ctx context.Context, applied, flag string) (cfg *nodefabric.SignedConfig, unchanged bool, err error) {
+	// pdnd：例行换钥检查失败不挡这一轮拉配置（验签不过时另会强制再查）。
 	if err := c.refreshConfigKeyIfDue(ctx, flag); err != nil {
-		return nil, false, err
+		c.obs.sample("key check", c.nodeID, err)
 	}
 	var headers map[string]string
 	if applied != "" {

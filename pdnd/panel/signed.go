@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -101,7 +102,13 @@ type signedClient struct {
 	// 极少轮换，不必每轮拉配置都问一次（见 refreshConfigSigningKeyIfDue）。
 	keyCheckedAt time.Time
 	keyCheckWait time.Duration
+	// onKeyCheckError 收例行换钥检查的失败。检查失败不挡拉配置（见 ConfigSince），
+	// 但要让调用方记日志。
+	onKeyCheckError func(error)
 }
+
+// OnKeyCheckError 设置例行换钥检查失败时的回调（节点端用来记日志）。
+func (c *SignedClient) OnKeyCheckError(fn func(error)) { c.onKeyCheckError = fn }
 
 type SignedClient = signedClient
 
@@ -141,6 +148,10 @@ type HeartbeatInput struct {
 	MemoryMB             int    `json:"memory_mb"`
 	DiskGB               int    `json:"disk_gb"`
 	RuntimeStatus        string `json:"runtime_status"`
+	// RuntimeReason 是 RuntimeStatus 不是 running 时的机器可读原因（纯 ASCII），
+	// 走请求头 RuntimeReasonHeader 而不进 JSON：面板心跳按 DisallowUnknownFields
+	// 解码，多一个字段整条心跳就 400。面板侧接住之前它只是被忽略。
+	RuntimeReason string `json:"-"`
 	// Metrics 为空时面板不写 node_metrics；由 AttachHostMetrics 填
 	Metrics        *HeartbeatMetrics `json:"metrics,omitempty"`
 	MetricsPartial bool              `json:"metrics_partial,omitempty"`
@@ -154,14 +165,28 @@ type HeartbeatOutput struct {
 	IntervalSeconds      int    `json:"interval_seconds"`
 }
 
+// RuntimeReasonHeader 带心跳的 degraded 原因，见 HeartbeatInput.RuntimeReason。
+// 不进签名原像：它只是给人看的诊断信息，状态本身（runtime_status）在签名正文里。
+const RuntimeReasonHeader = "X-Node-Runtime-Reason"
+
 func (c *SignedClient) Heartbeat(ctx context.Context, in HeartbeatInput) (*HeartbeatOutput, error) {
 	body, err := json.Marshal(in)
 	if err != nil {
 		return nil, err
 	}
-	var out HeartbeatOutput
-	if err := c.Do(ctx, http.MethodPost, "/v1/nodes/heartbeat", body, &out); err != nil {
+	var headers map[string]string
+	if in.RuntimeReason != "" {
+		headers = map[string]string{RuntimeReasonHeader: in.RuntimeReason}
+	}
+	_, raw, err := c.do(ctx, http.MethodPost, "/v1/nodes/heartbeat", body, headers)
+	if err != nil {
 		return nil, err
+	}
+	var out HeartbeatOutput
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil, err
+		}
 	}
 	return &out, nil
 }
@@ -186,9 +211,13 @@ const AppliedEffectiveReleaseHeader = "X-Applied-Effective-Release"
 //
 // 兼容：老面板不认这个头，照旧回 200 全量，调用方按「已应用」处理即可；新面板
 // 只在收到这个头时才可能回 204，老节点不带它，不受影响。
+//
+// 例行换钥检查失败不挡这一次拉取：拿到的配置照样用钉住的公钥验签，验不过时
+// 调用方会强制再查一次（fail-closed 不变）。原先检查一失败整轮配置同步就返回
+// 错误，节点端连带不再拉用户名单，名单因此冻结。
 func (c *SignedClient) ConfigSince(ctx context.Context, applied *AppliedRelease) (cfg *SignedConfig, unchanged bool, err error) {
-	if err := c.refreshConfigSigningKeyIfDue(ctx); err != nil {
-		return nil, false, err
+	if err := c.refreshConfigSigningKeyIfDue(ctx); err != nil && c.onKeyCheckError != nil {
+		c.onKeyCheckError(err)
 	}
 	var headers map[string]string
 	if applied != nil && applied.ReleaseID != "" && applied.Generation > 0 {
@@ -261,11 +290,25 @@ func (c *SignedClient) ReportEffectiveConfig(ctx context.Context, cfg *SignedCon
 }
 
 func (c *SignedClient) VerifyConfig(cfg *SignedConfig) error {
+	return c.verifyConfig(cfg, true)
+}
+
+// VerifyCachedConfig 校验从落盘缓存读回的签名配置：签名、内容哈希、节点身份、
+// 钉住的公钥全部照验，只不查投递窗口（issued_at / expires_at）。
+//
+// 投递窗口防的是网络上重放旧签名；缓存是本节点曾经验过、装过的那一份，落在
+// 只有服务账号可写的状态目录里，启动时面板不可达才会用到，面板一回来就被
+// 当前版本替换。签名或身份对不上（篡改、换钥、换了节点）一律拒绝，fail-closed。
+func (c *SignedClient) VerifyCachedConfig(cfg *SignedConfig) error {
+	return c.verifyConfig(cfg, false)
+}
+
+func (c *SignedClient) verifyConfig(cfg *SignedConfig, checkWindow bool) error {
 	if cfg == nil || len(cfg.Payload) == 0 {
 		return fmt.Errorf("empty signed config")
 	}
 	if cfg.ConfigContract != "" {
-		return c.verifyEffectiveConfig(cfg)
+		return c.verifyEffectiveConfig(cfg, checkWindow)
 	}
 	if c.identity.ConfigKeyID == "" || cfg.KeyID != c.identity.ConfigKeyID {
 		return fmt.Errorf("config key id mismatch")
@@ -282,7 +325,7 @@ func (c *SignedClient) VerifyConfig(cfg *SignedConfig) error {
 	if err != nil || !ed25519.Verify(ed25519.PublicKey(pubRaw), append(sum[:], []byte(cfg.ExpiresAt.UTC().Format(time.RFC3339))...), sig) {
 		return fmt.Errorf("config signature invalid")
 	}
-	if time.Now().After(cfg.ExpiresAt) {
+	if checkWindow && time.Now().After(cfg.ExpiresAt) {
 		return fmt.Errorf("config expired")
 	}
 	return nil
@@ -312,6 +355,8 @@ func NewSignedClientAt(identity *Identity, identityPath string) (*SignedClient, 
 // 与传输错误（*url.Error）分开，调用方才能区分「面板拒收」与「没送到」——
 // 前者重发同一份证据也只会再被拒，后者下一轮值得再发。
 type StatusError struct {
+	// What 是兼容通道的动作描述（「拉取配置」之类），签名通道为空。
+	What   string
 	Method string
 	Path   string
 	Code   int
@@ -319,7 +364,24 @@ type StatusError struct {
 }
 
 func (e *StatusError) Error() string {
+	if e.What != "" {
+		return fmt.Sprintf("%s 失败：HTTP %d %s", e.What, e.Code, e.Body)
+	}
 	return fmt.Sprintf("%s %s: HTTP %d: %s", e.Method, e.Path, e.Code, e.Body)
+}
+
+// IsRejection 判断 err 是不是面板的明确拒绝：4xx（408 / 429 除外）。
+//
+// 请求送到了、面板给了答复，重发同一份东西只会再被拒；与之相对的传输错误、
+// 5xx、408、429 都是「暂时没送到」。节点端据此决定回执要不要补报、启动时
+// 能不能用落盘缓存（面板明确拒绝这个节点时不该拿缓存绕过去）。
+func IsRejection(err error) bool {
+	var status *StatusError
+	if !errors.As(err, &status) {
+		return false
+	}
+	return status.Code >= 400 && status.Code < 500 &&
+		status.Code != http.StatusRequestTimeout && status.Code != http.StatusTooManyRequests
 }
 
 func (c *SignedClient) Do(ctx context.Context, method, path string, body []byte, out any) error {

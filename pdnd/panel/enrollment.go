@@ -85,11 +85,18 @@ func saveEnrollmentJournal(path string, journal *EnrollmentJournal) error {
 	return writeFileAtomic(path, body, 0600)
 }
 
+// WriteFileAtomic 原子写文件：同目录临时文件写入、fsync、rename，再 fsync 目录。
+// 读者要么看到旧文件、要么看到完整的新文件，断电也不会留下半截。节点端的
+// 身份、接入日志与落盘缓存都走它。
+func WriteFileAtomic(path string, body []byte, mode os.FileMode) error {
+	return writeFileAtomic(path, body, mode)
+}
+
 func writeFileAtomic(path string, body []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".enrollment-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".pandora-*.tmp")
 	if err != nil {
 		return err
 	}

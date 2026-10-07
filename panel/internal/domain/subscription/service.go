@@ -57,6 +57,9 @@ type Service struct {
 	prefixes *prefixCache
 	nodes    *nodeCache
 	failures *failureSampler
+	// previews 是门户节点预览的缓存：键与 nodes 相同，存的是不带协议配置的节点，
+	// 不能与 nodes 共用（订阅拉取要协议配置）
+	previews *nodeCache
 }
 
 func New(pool *db.Pool, ipSalt []byte, envelope *crypto.Envelope) *Service {
@@ -64,6 +67,7 @@ func New(pool *db.Pool, ipSalt []byte, envelope *crypto.Envelope) *Service {
 		prefixes: newPrefixCache(prefixCacheTTL),
 		nodes:    newNodeCache(nodeCacheTTL, nodeCacheMaxEntries),
 		failures: newFailureSampler(failureSampleWindow, failureSamplesPerWindow),
+		previews: newNodeCache(nodeCacheTTL, nodeCacheMaxEntries),
 	}
 }
 
@@ -302,7 +306,7 @@ func (s *Service) ListNodes(ctx context.Context, tenantID string, c *Credential)
 	var out []Node
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var err error
-		out, err = listEligibleNodesTx(ctx, tx, tenantID, c.UserID, c.PlanVersionID)
+		out, err = listEligibleNodesTx(ctx, tx, tenantID, c.UserID, c.PlanVersionID, true)
 		return err
 	})
 	return out, err
@@ -310,18 +314,24 @@ func (s *Service) ListNodes(ctx context.Context, tenantID string, c *Credential)
 
 // ListOwnedNodePreviews 返回当前用户一条可用订阅对应的安全节点摘要。
 // 不存在、跨租户、非本人和不可用状态都折叠成同一个 ErrNotFound。
+//
+// 归属与状态每次现查（一次往返的 QueryRowScoped）：停用、到期、吊销链接要立刻生效。
+// 节点列表经 previews 缓存，键与订阅拉取相同（租户, 套餐版本, 用户组），随节点变更
+// 信号失效、TTL 兜底（cache.go）；未命中时现查也不取 protocol_config——预览只要
+// 名称、协议、倍率。原先每次请求都把全部节点连同协议配置读出来、逐个反序列化
+// （5k-r3 门户 p50 71.7ms，且随节点数超线性增长）。
 func (s *Service) ListOwnedNodePreviews(ctx context.Context, tenantID, userID, rawSubscriptionID string) ([]NodePreview, error) {
 	subscriptionID, err := uuid.Parse(rawSubscriptionID)
 	if err != nil {
 		return nil, ErrNotFound
 	}
 
-	out := []NodePreview{}
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
-		var planVersionID string
-		if err := tx.QueryRow(ctx, `
-			SELECT plan_version_id::text
+	scope := db.Scope{TenantID: tenantID, ActorID: userID}
+	var planVersionID, userGroupID string
+	if err := s.pool.QueryRowScoped(ctx, scope, `
+			SELECT s.plan_version_id::text, COALESCE(u.user_group_id::text, '')
 			  FROM subscriptions s
+			  JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id
 			 WHERE s.tenant_id=$1 AND s.id=$2::uuid AND s.user_id=$3::uuid
 			   AND s.status IN ('active','trialing','grace')
 			   AND EXISTS (
@@ -332,25 +342,33 @@ func (s *Service) ListOwnedNodePreviews(ctx context.Context, tenantID, userID, r
 			        AND ((sc.expires_at IS NULL AND sc.grace_until IS NULL)
 			             OR GREATEST(sc.expires_at,sc.grace_until) > now())
 			   )`,
-			tenantID, subscriptionID.String(), userID).Scan(&planVersionID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
+		[]any{tenantID, subscriptionID.String(), userID}, &planVersionID, &userGroupID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	key := nodeCacheKey{tenant: tenantID, planVersion: planVersionID, userGroup: userGroupID}
+	nodes, err := s.previews.load(ctx, key, func(ctx context.Context) ([]Node, error) {
+		var nodes []Node
+		err := s.pool.InTx(ctx, scope, func(tx pgx.Tx) error {
+			var err error
+			nodes, err = listEligibleNodesTx(ctx, tx, tenantID, userID, planVersionID, false)
 			return err
-		}
-		nodes, err := listEligibleNodesTx(ctx, tx, tenantID, userID, planVersionID)
-		if err != nil {
-			return err
-		}
-		out = make([]NodePreview, 0, len(nodes))
-		for _, node := range nodes {
-			out = append(out, NodePreview{
-				Name: node.Name, Protocol: node.Type, TrafficRate: node.TrafficRate,
-			})
-		}
-		return nil
+		})
+		return nodes, err
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NodePreview, 0, len(nodes))
+	for _, node := range nodes {
+		out = append(out, NodePreview{
+			Name: node.Name, Protocol: node.Type, TrafficRate: node.TrafficRate,
+		})
+	}
+	return out, nil
 }
 
 // HeartbeatFreshWindow 是判定节点心跳「新鲜」的窗口。
@@ -401,23 +419,34 @@ func DeliveryState(servingStatus string, pooled, everSeen, beatFresh bool) (bool
 // 要带上用户：节点池可以限定用户组（R104），同一个套餐版本下不同组的用户
 // 拿到的节点可能不同。谓词与节点拉用户（nodefabric.ListNodeUsers）共用
 // nodefabric.PoolAdmitsUserSQL。userID 必须是订阅的主人。
-func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planVersionID string) ([]Node, error) {
+//
+// withConfig 只决定第五列取不取 protocol_config，条件一字不差：门户预览只用名称、
+// 协议与倍率，不取（Node.Config 为空 map），省掉读出与逐个反序列化协议配置。
+//
+// 从套餐版本绑的池出发，按池取节点（00121 的 (tenant_id, pool_id) 部分索引）：池远少于
+// 节点，节点表再大，每次也只碰这几个池里的节点。
+func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planVersionID string, withConfig bool) ([]Node, error) {
+	config := `'{}'::jsonb`
+	if withConfig {
+		config = `COALESCE(n.protocol_config, '{}'::jsonb)`
+	}
 	out := []Node{}
 	rows, err := tx.Query(ctx, `
 			SELECT COALESCE(NULLIF(n.display_name, ''), n.name),
 			       n.node_type,
 			       `+nodeHostSQL+`,
 			       COALESCE(n.server_port, 0),
-			       COALESCE(n.protocol_config, '{}'::jsonb),
+			       `+config+`,
 			       COALESCE(n.traffic_rate, 1.0),
 			       (n.last_heartbeat_at >= now() - $3::interval) AS heartbeat_fresh
-			  FROM nodes n
+			  FROM plan_node_pools p
+			  JOIN nodes n
+			    ON p.pool_id = n.pool_id AND p.tenant_id = n.tenant_id
 			  JOIN servers s
 			    ON s.id = n.server_id AND s.tenant_id = n.tenant_id
-			  JOIN plan_node_pools p
-			    ON p.pool_id = n.pool_id AND p.tenant_id = n.tenant_id
-			 WHERE n.tenant_id = $1
+			 WHERE p.tenant_id = $1
 			   AND p.plan_version_id = $2::uuid
+			   AND n.tenant_id = $1
 			   AND `+DeliverableNodeSQL()+`
 			   -- 池限定了用户组时，订阅的主人必须在名单内的组里（R104）
 			   AND `+nodefabric.PoolAdmitsUserSQL("n.tenant_id", "n.pool_id", "$4::uuid")+`
@@ -434,7 +463,7 @@ func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planV
 			&n.HeartbeatFresh); err != nil {
 			return nil, err
 		}
-		if len(raw) > 0 {
+		if withConfig && len(raw) > 0 {
 			_ = json.Unmarshal(raw, &n.Config)
 		}
 		if n.Config == nil {
