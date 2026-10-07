@@ -42,8 +42,11 @@ type trojanAdapter struct {
 	connErr    connErrorReporter
 	limiters   core.SpeedLimiters
 	tlsConfig  *tls.Config
-	active     map[net.Conn]struct{}
-	wg         sync.WaitGroup
+	// fallback 是认证失败时的回落目标（raw `fallback`，"host:port"）；空串时
+	// 由中性页面接住。只作用于 TCP / TLS / REALITY / mKCP 直连承载。
+	fallback *probeFallback
+	active   map[net.Conn]struct{}
+	wg       sync.WaitGroup
 }
 
 type trojanUser struct {
@@ -103,6 +106,9 @@ func (a *trojanAdapter) Validate(spec InboundSpec) error {
 			return err
 		}
 	}
+	if _, err := parseProbeFallback(spec.Config.Raw); err != nil {
+		return fmt.Errorf("trojan %w", err)
+	}
 	return nil
 }
 
@@ -120,6 +126,12 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 	a.spec, a.plane, a.reality = spec, hooks.DataPlane, strings.EqualFold(security, "reality")
 	a.connErr = newConnErrorReporter(hooks, spec, "trojan")
 	var err error
+	fallbackAddr, err := parseProbeFallback(spec.Config.Raw)
+	if err != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("trojan %w", err)
+	}
+	a.fallback = newProbeFallback(fallbackAddr)
 	if !a.reality {
 		var tlsEnabled bool
 		a.tlsConfig, tlsEnabled, err = loadInboundTLSConfig(spec.Config.Raw)
@@ -372,23 +384,39 @@ func (a *trojanAdapter) serveAccepted(conn net.Conn) {
 			}
 			realitySession = &captured
 		}
-		_ = a.handleConn(ctx, session, realitySession)
+		err := a.serveConn(ctx, session, realitySession, true)
+		a.connErr.conn(StageSession, session, err)
 	}()
 }
 
 // handleConn 是 TCP / REALITY / WS / HTTP Upgrade / gRPC 共同的会话入口，
 // 会话层失败在这里统一上报一次，换承载不会让失败从日志里消失。
+// WS / HTTP Upgrade / gRPC 承载在 HTTP 层已经对错路径回 404，这里不再回落。
 func (a *trojanAdapter) handleConn(ctx context.Context, conn net.Conn, realitySession *RealitySession) error {
-	err := a.serveConn(ctx, conn, realitySession)
+	err := a.serveConn(ctx, conn, realitySession, false)
 	a.connErr.conn(StageSession, conn, err)
 	return err
 }
 
-func (a *trojanAdapter) serveConn(ctx context.Context, conn net.Conn, realitySession *RealitySession) error {
+// serveConn 跑一条 Trojan 会话。probe 为真（TCP 直连类承载）时，认证判定
+// 之前读到的字节被记下，认证失败就交给回落或中性页面，而不是立刻断开。
+func (a *trojanAdapter) serveConn(ctx context.Context, conn net.Conn, realitySession *RealitySession, probe bool) error {
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	user, destination, err := readTrojanRequest(conn, a.lookupUser)
+	var reader io.Reader = conn
+	var recorder *trojanPreAuthRecorder
+	if probe {
+		recorder = &trojanPreAuthRecorder{r: conn}
+		reader = recorder
+	}
+	user, destination, err := readTrojanRequest(reader, a.lookupUser)
 	if err != nil {
+		if recorder != nil && recorder.rejected(err) {
+			a.mu.RLock()
+			fallback := a.fallback
+			a.mu.RUnlock()
+			fallback.serveConn(ctx, conn, recorder.buf, negotiatedH2(conn))
+		}
 		return err
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
@@ -445,22 +473,18 @@ func (a *trojanAdapter) serveConn(ctx context.Context, conn net.Conn, realitySes
 	return nil
 }
 
-func readTrojanRequest(conn net.Conn, lookup func(string) (core.User, bool)) (core.User, vlessDestination, error) {
+func readTrojanRequest(conn io.Reader, lookup func(string) (core.User, bool)) (core.User, vlessDestination, error) {
 	var destination vlessDestination
-	var proof [56]byte
-	if _, err := io.ReadFull(conn, proof[:]); err != nil {
-		return core.User{}, destination, fmt.Errorf("trojan password proof: %w", err)
-	}
-	var proofTrailer [2]byte
-	if _, err := io.ReadFull(conn, proofTrailer[:]); err != nil {
+	var proof [trojanProofLen]byte
+	if err := readTrojanProof(conn, &proof); err != nil {
 		return core.User{}, destination, err
 	}
-	if proofTrailer != [2]byte{'\r', '\n'} {
-		return core.User{}, destination, fmt.Errorf("trojan password proof terminator invalid")
-	}
-	user, ok := lookup(string(proof[:]))
+	user, ok := lookup(string(proof[:56]))
 	if !ok {
-		return core.User{}, destination, markConnError(connErrAuth, fmt.Errorf("trojan user proof rejected"))
+		return core.User{}, destination, markConnError(connErrAuth, errTrojanUserRejected)
+	}
+	if recorder, ok := conn.(*trojanPreAuthRecorder); ok {
+		recorder.authenticated()
 	}
 	// Trojan 请求头是 CMD | ATYP | DST.ADDR | DST.PORT，没有 SOCKS5 那个
 	// VER 字节，也没有 RSV。这里一度按 SOCKS5 的四字节头解析，把 CMD 当

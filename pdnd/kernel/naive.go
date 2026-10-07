@@ -39,6 +39,9 @@ type naiveAdapter struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	closed   bool
+	// fallback 接住非 CONNECT 请求与认证失败：配了 raw `fallback` 时反代到
+	// 那里，否则是中性 404。
+	fallback *probeFallback
 	active   map[net.Conn]struct{}
 	wg       sync.WaitGroup
 }
@@ -70,6 +73,9 @@ func (a *naiveAdapter) Validate(spec InboundSpec) error {
 	if _, _, err := loadInboundTLSConfig(spec.Config.Raw); err != nil {
 		return err
 	}
+	if _, err := parseProbeFallback(spec.Config.Raw); err != nil {
+		return fmt.Errorf("naive %w", err)
+	}
 	return nil
 }
 
@@ -87,8 +93,15 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Unlock()
 		return err
 	}
+	fallbackAddr, err := parseProbeFallback(spec.Config.Raw)
+	if err != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("naive %w", err)
+	}
 	tlsConfig = tlsConfig.Clone()
-	tlsConfig.NextProtos = []string{http2.NextProtoTLS}
+	// 与真 Web 服务器一样同时宣告 h2 与 http/1.1；只给 h2 时 http/1.1 客户端
+	// 握完 TLS 就被关，是一眼可辨的特征。naive 客户端只用 h2。
+	tlsConfig.NextProtos = []string{http2.NextProtoTLS, "http/1.1"}
 	listen := spec.Config.Listen
 	if listen == "" {
 		listen = "0.0.0.0"
@@ -100,6 +113,7 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 	}
 	ln = tls.NewListener(ln, tlsConfig)
 	a.spec, a.plane, a.connErr = spec, hooks.DataPlane, newConnErrorReporter(hooks, spec, "naive")
+	a.fallback = newProbeFallback(fallbackAddr)
 	a.ctx, a.cancel = context.WithCancel(parent)
 	server := newInboundHTTPServer(http.HandlerFunc(a.serveHTTP), 64<<10)
 	server.BaseContext = func(net.Listener) context.Context { return a.ctx }
@@ -117,20 +131,24 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 }
 
 func (a *naiveAdapter) serveHTTP(w http.ResponseWriter, req *http.Request) {
-	if req == nil || req.Method != http.MethodConnect || strings.TrimSpace(req.Header.Get("Padding")) == "" || len(req.Header.Get("Padding")) > 1024 {
-		// 不是 naive 客户端的 CONNECT（探测、普通浏览器请求），按协议错误记。
-		if req != nil {
-			a.connErr.request(StageSession, req.RemoteAddr, fmt.Errorf("naive request is not a padded CONNECT"))
-		}
-		naiveReject(w, http.StatusBadRequest)
+	if req == nil {
+		return
+	}
+	if req.Method != http.MethodConnect || strings.TrimSpace(req.Header.Get("Padding")) == "" || len(req.Header.Get("Padding")) > 1024 {
+		// 不是 naive 客户端的 CONNECT（探测、普通浏览器请求），按协议错误记，
+		// 交给回落：对外就是一个普通网站。
+		a.connErr.request(StageSession, req.RemoteAddr, fmt.Errorf("naive request is not a padded CONNECT"))
+		a.fallback.ServeHTTP(w, req)
 		return
 	}
 	name, password, ok := parseNaiveBasicAuth(req.Header.Get("Proxy-Authorization"))
 	user, valid := a.lookupCredential(name, password)
 	if !ok || !valid {
+		// 认证失败也交给回落，不回 407：407 加 Proxy-Authenticate 就是在
+		// 告诉探测方「这里是代理」（Caddy forwardproxy 的 probe_resistance
+		// 同样把它当普通请求交给下一个 handler）。
 		a.connErr.request(StageSession, req.RemoteAddr, markConnError(connErrAuth, fmt.Errorf("naive credentials rejected")))
-		w.Header().Set("Proxy-Authenticate", `Basic realm="Pandora"`)
-		naiveReject(w, http.StatusProxyAuthRequired)
+		a.fallback.ServeHTTP(w, req)
 		return
 	}
 	destination, err := parseNaiveDestination(req)
@@ -409,7 +427,32 @@ func naiveReject(w http.ResponseWriter, status int) {
 	}
 	w.WriteHeader(status)
 }
-func naivePaddingHeader() string { return "~pandora-native-naive-padding~" }
+
+// naivePaddingHeader 生成响应头 Padding 的值，按 NaiveProxy 服务端
+// （klzgrad/forwardproxy）的做法：长度在 [30, 62) 内随机，前 16 个字符取自
+// 不会被 HPACK Huffman 压缩的 16 个符号（每个 4 比特随机选），其余补 '~'。
+// 以前是固定串，长度与内容在 HPACK 之后都是常量，成了可被动识别的特征。
+func naivePaddingHeader() string {
+	var seed [9]byte
+	_, _ = rand.Read(seed[:])
+	length := naivePaddingMinLen + int(seed[8])%naivePaddingSpan
+	bits := binary.BigEndian.Uint64(seed[:8])
+	out := make([]byte, length)
+	for i := 0; i < 16; i++ {
+		out[i] = naivePaddingSymbols[bits&15]
+		bits >>= 4
+	}
+	for i := 16; i < length; i++ {
+		out[i] = '~'
+	}
+	return string(out)
+}
+
+const (
+	naivePaddingMinLen  = 30
+	naivePaddingSpan    = 32
+	naivePaddingSymbols = "!#$()+<>?@[]^`{}"
+)
 
 type naiveStreamConn struct {
 	reader  io.ReadCloser
