@@ -139,7 +139,7 @@ func TestValidateProtocolConfigAcceptsNativeAnyTLS(t *testing.T) {
 func TestValidateProtocolConfigAcceptsNativeTrojanTLSAndReality(t *testing.T) {
 	tests := []string{
 		`{"network":"grpc","tls":true,"grpc_path":"/pandora.Trojan","grpc_service_name":"Proxy","cert_path":"/etc/pandora/cert.pem","key_path":"/etc/pandora/key.pem"}`,
-		`{"network":"tcp","tls":false,"security":"reality","dest":"www.example.com:443","server_names":["www.example.com"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short_ids":["0123456789abcdef"]}`,
+		`{"network":"tcp","tls":false,"security":"reality","dest":"www.example.com:443","server_names":["www.example.com"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","public_key":"L-V9o0fNYkMVKNqsX7spBzD_9oSvxM_C7ZCZX1jLO3Q","short_ids":["0123456789abcdef"]}`,
 	}
 	for _, raw := range tests {
 		if version, fields := ValidateProtocolConfig("trojan", "pandora-native", 443, json.RawMessage(raw)); version != 1 || len(fields) != 0 {

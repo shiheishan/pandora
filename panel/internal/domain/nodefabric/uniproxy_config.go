@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -195,6 +196,14 @@ func (s *Service) BuildNodeConfig(n *ServingNode) ([]byte, string, error) {
 			}
 		}
 		extra := toKernelConfig(CanonicalNodeType(n.NodeType), stored)
+		// host 是 WS / HTTP Upgrade / gRPC / XHTTP 入站要求的 Host 头。后台在
+		// network_settings.headers.Host 里显式配了（走 CDN 时常见）就下发它，
+		// 否则保持 server_host——订阅里写出的 Host 与这里同一口径。以前 base 里
+		// 的 server_host 总是占住 host，后台填的 Host 永远到不了节点，经 CDN 的
+		// 请求一律被节点 404。
+		if host, _ := extra["host"].(string); strings.TrimSpace(host) != "" {
+			base["host"] = strings.TrimSpace(host)
+		}
 		for k, v := range extra {
 			// 不允许协议配置覆盖 server_port 等基础字段：
 			// 那会让管理端两处配置打架，且排查时极难发现

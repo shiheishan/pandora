@@ -1,5 +1,11 @@
 package nodefabric
 
+import (
+	"net"
+	"strconv"
+	"strings"
+)
+
 // 管理端用 xboard 的字段名，内核继续用它原来认识的那套，中间隔一层翻译。
 //
 // 起因很直接：后台的协议参数得和 xboard 长得一样，运维照着别处的教程和
@@ -35,6 +41,9 @@ var xboardRename = map[string]map[string]string{
 		// 展平后是 bandwidth_up / bandwidth_down，内核要的是 up_mbps / down_mbps。
 		"bandwidth_up":   "up_mbps",
 		"bandwidth_down": "down_mbps",
+		// 客户端 TLS 提示，见 xboardClientTLSRename。
+		"tls_settings_server_name":    "server_name",
+		"tls_settings_allow_insecure": "allow_insecure",
 		// obfs 不在这里：我们的内核本来就收 {type, password} 对象，
 		// 和 xboard 的形状一模一样，不需要任何转换。一开始我按「xboard 是
 		// 对象、内核是字符串」写了个 obfs_password → obfs 的映射，查了
@@ -45,14 +54,27 @@ var xboardRename = map[string]map[string]string{
 	"vmess":   xboardStreamRename,
 	"trojan":  xboardStreamRename,
 	"mieru":   {},
-	"tuic":    {},
-	"anytls":  {},
+	"tuic":    xboardClientTLSRename,
+	"anytls":  xboardClientTLSRename,
 	"juicity": {},
 	"socks":   {},
 	"http":    {},
-	"naive":   {},
+	"naive":   xboardClientTLSRename,
 	// shadowtls 不在 xboard 的协议表里，保持我们自己的字段名。
 	"shadowtls": {},
+}
+
+// xboardClientTLSRename 是 TLS 类协议（tuic、anytls、naive，以及 hysteria2
+// 里那两条）的客户端提示：SNI 与「跳过证书校验」。
+//
+// 它们只给订阅渲染用，节点端不读：server_name 在 BuildNodeConfig 里被基础字段
+// 占住，allow_insecure 节点端没有对应开关。名字跟 vless / trojan 的
+// tls_settings.* 同一套，渲染器只认一个 server_name / allow_insecure。
+// 内核校验器是严格解码，这两个键在 ValidateAdminProtocolConfig 里先剥离、
+// 单独校验，再把其余部分交给它（见 xboard_validate.go）。
+var xboardClientTLSRename = map[string]string{
+	"tls_settings_server_name":    "server_name",
+	"tls_settings_allow_insecure": "allow_insecure",
 }
 
 // xboardStreamRename 是 vless / vmess / trojan 共用的传输层重命名。
@@ -122,6 +144,17 @@ func flattenXboardConfig(prefix string, in map[string]any, out map[string]any) {
 		}
 		out[key] = v
 	}
+}
+
+// KernelConfig 是 toKernelConfig 的导出版，给订阅渲染用。
+//
+// 库里存的是后台表单写出的 xboard 形状（tls:2、reality_settings.*、cipher、
+// network_settings.*），渲染器读的是内核字段名。两边必须经同一张映射表，
+// 否则下发给节点的和发给客户端的就是两份不同的配置——节点按 REALITY 起，
+// 客户端却拿到普通 TLS。nodeType 在这里统一规范化，调用方传库里的原值即可。
+// 已经是内核扁平形状的旧数据原样通过（映射只认 xboard 的键）。
+func KernelConfig(nodeType string, cfg map[string]any) map[string]any {
+	return toKernelConfig(CanonicalNodeType(nodeType), cfg)
 }
 
 // toKernelConfig 把管理端存的 xboard 形状翻译成内核认识的扁平配置。
@@ -225,6 +258,22 @@ func applyKernelShapeFixups(nodeType string, cfg map[string]any) {
 				cfg["server_names"] = asStringSlice(v)
 			}
 		}
+	case "shadowtls":
+		// 握手目标的端口折进 server（host:port）。节点端拿 server（其次
+		// handshake_server）当握手目标，没带端口时补 raw 里的 server_port——
+		// 而下发时 server_port 被 BuildNodeConfig 的基础字段（入站监听端口）占住，
+		// 协议里填的握手端口到不了节点：监听在 4443 的节点会去连握手站点的
+		// 4443，握手失败、所有客户端连不上。折进 server 之后与监听端口无关。
+		// 已经带端口的、IPv6 字面量（含冒号）原样不动。
+		//
+		// 只在表单显式填了 server_port 时折：没填的存量配置（迁移前的形状）
+		// 下发字节必须一字不变（TestMigratedConfigsTranslateBackToOriginalKernelShape），
+		// 它们仍按节点端的老规则取端口，见报告遗留。
+		target := strings.TrimSpace(firstString(cfg["server"], cfg["handshake_server"]))
+		raw, hasPort := cfg["server_port"]
+		if target != "" && !strings.Contains(target, ":") && hasPort && isNumeric(raw) && asInt(raw) > 0 {
+			cfg["server"] = net.JoinHostPort(target, strconv.Itoa(asInt(raw)))
+		}
 	case "mieru":
 		// xboard 的 transport 是大写 TCP/UDP，内核要小写。
 		if v, ok := cfg["transport"].(string); ok {
@@ -280,6 +329,16 @@ func asStringSlice(v any) []string {
 		return out
 	}
 	return []string{}
+}
+
+// firstString 返回第一个非空字符串值。
+func firstString(values ...any) string {
+	for _, v := range values {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func lowerASCII(s string) string {

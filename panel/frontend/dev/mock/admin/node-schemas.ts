@@ -33,7 +33,9 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "obfs.password",
         "bandwidth.up",
         "bandwidth.down",
-        "udp_timeout"
+        "udp_timeout",
+        "tls_settings.server_name",
+        "tls_settings.allow_insecure"
       ],
       "enums": {
         "network": [
@@ -45,7 +47,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
       },
       "property_types": {
         "bandwidth.down": "number",
-        "bandwidth.up": "number"
+        "bandwidth.up": "number",
+        "tls_settings.allow_insecure": "boolean"
       },
       "sensitive_properties": [
         "obfs.password"
@@ -139,7 +142,9 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "tls",
         "cert_path",
         "key_path",
-        "security"
+        "security",
+        "tls_settings.server_name",
+        "tls_settings.allow_insecure"
       ],
       "enums": {
         "network": [
@@ -150,7 +155,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
         ]
       },
       "property_types": {
-        "tls": "boolean"
+        "tls": "boolean",
+        "tls_settings.allow_insecure": "boolean"
       }
     },
     {
@@ -226,7 +232,9 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "auth_timeout",
         "heartbeat",
         "udp_timeout",
-        "zero_rtt"
+        "zero_rtt",
+        "tls_settings.server_name",
+        "tls_settings.allow_insecure"
       ],
       "enums": {
         "congestion_control": [
@@ -239,6 +247,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         ]
       },
       "property_types": {
+        "tls_settings.allow_insecure": "boolean",
         "zero_rtt": "boolean"
       }
     },
@@ -246,13 +255,18 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "node_type": "anytls",
       "version": 1,
       "status": "stable",
-      "required": null,
+      "required": [
+        "cert_path",
+        "key_path"
+      ],
       "allowed_properties": [
         "network",
         "tls",
         "cert_path",
         "key_path",
-        "padding_scheme"
+        "padding_scheme",
+        "tls_settings.server_name",
+        "tls_settings.allow_insecure"
       ],
       "enums": {
         "network": [
@@ -261,7 +275,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
       },
       "property_types": {
         "padding_scheme": "json",
-        "tls": "boolean"
+        "tls": "boolean",
+        "tls_settings.allow_insecure": "boolean"
       }
     },
     {
@@ -289,6 +304,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "reality_settings.public_key",
         "reality_settings.short_id",
         "flow",
+        "tls_settings.server_name",
+        "tls_settings.allow_insecure",
         "mtu",
         "tti",
         "uplink_capacity",
@@ -318,6 +335,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "mtu": "number",
         "read_buffer_size": "number",
         "tls": "number",
+        "tls_settings.allow_insecure": "boolean",
         "tti": "number",
         "uplink_capacity": "number",
         "write_buffer_size": "number"
