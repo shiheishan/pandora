@@ -1,7 +1,6 @@
 package public
 
 import (
-	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,23 +13,9 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/config"
 )
 
-// strictCountingRedis 在 countingRedis 之外也接住严格限流用的 EVAL（回 1，永不触发），
-// 两种计数合在一起数
+// strictCountingRedis 与 countingRedis 相同：两种限流现在都是一层一次 EVALSHA（ratelimit.go），
+// countingRedis 已按脚本的键数计维度、回「放行」，这里不必另接
 type strictCountingRedis struct{ countingRedis }
-
-func (c *strictCountingRedis) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
-	base := c.countingRedis.ProcessHook(next)
-	return func(ctx context.Context, cmd redis.Cmder) error {
-		if v, ok := cmd.(*redis.Cmd); ok && (cmd.Name() == "eval" || cmd.Name() == "evalsha") {
-			c.mu.Lock()
-			c.incrs++
-			c.mu.Unlock()
-			v.SetVal(int64(1))
-			return nil
-		}
-		return base(ctx, cmd)
-	}
-}
 
 // 找回密码两步都在免鉴权区，按 IP、网段、（第 1 步）租户与邮箱哈希严格限流：
 // 每个请求在基础限流（pub_ip + pub_net）之外，第 1 步再计 4 次、第 2 步再计 3 次。

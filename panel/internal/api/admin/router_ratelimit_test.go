@@ -15,10 +15,12 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/config"
 )
 
-// countingRedis 截住全部命令、不连网络：INCR 恒回 1（永不触发限流），只数限流打了几次 Valkey
+// countingRedis 截住全部命令、不连网络：限流脚本恒回「放行」，数限流计了几个维度（incrs）、
+// 打了几次 Valkey（trips）
 type countingRedis struct {
 	mu    sync.Mutex
 	incrs int
+	trips int
 }
 
 func (c *countingRedis) DialHook(next redis.DialHook) redis.DialHook {
@@ -29,11 +31,18 @@ func (c *countingRedis) DialHook(next redis.DialHook) redis.DialHook {
 
 func (c *countingRedis) ProcessHook(redis.ProcessHook) redis.ProcessHook {
 	return func(_ context.Context, cmd redis.Cmder) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.trips++
 		switch v := cmd.(type) {
+		case *redis.Cmd:
+			// EVALSHA / EVAL：参数是 命令、脚本、键数、键…、参数…
+			if keys, ok := v.Args()[2].(int); ok {
+				c.incrs += keys
+			}
+			v.SetVal([]any{int64(0), int64(0)})
 		case *redis.IntCmd:
-			c.mu.Lock()
 			c.incrs++
-			c.mu.Unlock()
 			v.SetVal(1)
 		case *redis.BoolCmd:
 			v.SetVal(true)
@@ -51,6 +60,15 @@ func (c *countingRedis) take() int {
 	defer c.mu.Unlock()
 	n := c.incrs
 	c.incrs = 0
+	return n
+}
+
+// takeTrips 返回并清零 Valkey 往返次数。
+func (c *countingRedis) takeTrips() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := c.trips
+	c.trips = 0
 	return n
 }
 
@@ -87,6 +105,9 @@ func TestAdminStaticAppBypassesRateLimitButRoutesDoNot(t *testing.T) {
 		serve(http.MethodGet, path)
 		if n := counter.take(); n != 1 {
 			t.Fatalf("GET %s counted %d times, want 1 (adm_ip)", path, n)
+		}
+		if n := counter.takeTrips(); n != 1 {
+			t.Fatalf("GET %s took %d Valkey round trips, want 1", path, n)
 		}
 	}
 	for _, req := range [][2]string{

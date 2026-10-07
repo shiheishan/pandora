@@ -2,7 +2,8 @@ package adminops
 
 import (
 	"context"
-	"errors"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,31 +155,66 @@ func listUsersArgs(tenantID string, in ListUsersInput) (ListUsersInput, []any, e
 	return in, []any{tenantID, pattern, exactID, tokenHash, statuses, in.GroupID, in.SubState}, nil
 }
 
-// listUsersWhereSQL 是用户列表的筛选（参数见 listUsersArgs），总数与取页共用。
+// listUsersWhere 是用户列表的筛选，总数与取页共用。a 是 listUsersArgs 规整好的 $1–$7
+// （租户、LIKE 模式、精确 id、令牌哈希、状态、用户组、订阅状态），返回只含用到的条件的
+// WHERE 与它的参数（$1 恒为租户）。
 //
-// 令牌反查写成不相关子查询：整条查询只按哈希查一次凭据（唯一索引），而不是每个
-// 用户各探一次。u.tenant_id = $1 已在最前，与按 u.tenant_id 关联等价。
-var listUsersWhereSQL = `u.tenant_id = $1
-		AND ($2 = '' OR lower(u.email) LIKE $2 OR lower(coalesce(u.display_name,'')) LIKE $2
-		     OR u.id::text = $3
-		     OR u.id IN (SELECT sc.user_id FROM subscription_credentials sc
+// 不写「$2 为空串或命中」这类万能条件：pgx 缓存语句后 PostgreSQL 改用通用计划，万能条件的
+// 选择率只能按缺省值估，也没法按实际取值裁掉不用的分支（审计 P12）。每种筛选组合是一条
+// 单独的语句文本，各自缓存。语义与原来逐条相同：
+//   - q 依次按邮箱 / 显示名片段、用户 id 精确、订阅令牌反查；原来的 u.id::text = 精确值
+//     只可能命中规范小写 uuid，所以只在精确值是规范 uuid 时才拼 u.id = 精确值（能走主键）；
+//   - 令牌反查写成不相关子查询：整条查询只按哈希查一次凭据（唯一索引），而不是每个
+//     用户各探一次。
+func listUsersWhere(a []any) (string, []any) {
+	pattern, exactID, tokenHash := a[1].(string), a[2].(string), a[3].([]byte)
+	statuses, groupID, subState := a[4].([]string), a[5].(string), a[6].(string)
+	args := []any{a[0]}
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	var b strings.Builder
+	b.WriteString("u.tenant_id = $1")
+	if pattern != "" {
+		p := arg(pattern)
+		b.WriteString(" AND (lower(u.email) LIKE " + p + " OR lower(coalesce(u.display_name,'')) LIKE " + p)
+		if id, err := uuid.Parse(exactID); err == nil && id.String() == exactID {
+			b.WriteString(" OR u.id = " + arg(exactID) + "::uuid")
+		}
+		b.WriteString(` OR u.id IN (SELECT sc.user_id FROM subscription_credentials sc
 		                  WHERE sc.tenant_id = $1
-		                    AND sc.token_hash = $4 AND sc.status IN ('active','grace')))
-		AND (cardinality($5::text[]) = 0 OR u.status::text = ANY($5::text[]))
-		AND ($6 = '' OR ($6 = 'none' AND u.user_group_id IS NULL) OR u.user_group_id::text = $6)
-		AND ($7 = '' OR ` + subStateSQL("$7") + `)`
+		                    AND sc.token_hash = ` + arg(tokenHash) + ` AND sc.status IN ('active','grace')))`)
+	}
+	if len(statuses) > 0 {
+		b.WriteString(" AND u.status::text = ANY(" + arg(statuses) + "::text[])")
+	}
+	switch groupID {
+	case "":
+	case "none":
+		b.WriteString(" AND u.user_group_id IS NULL")
+	default:
+		b.WriteString(" AND u.user_group_id::text = " + arg(groupID))
+	}
+	if subState != "" {
+		b.WriteString(" AND " + subStateSQL(arg(subState)))
+	}
+	return b.String(), args
+}
 
 // listUsersPageSQL 先按筛选与排序只取一页 id（page，走 00100 的
 // (tenant_id, created_at DESC, id DESC) 索引），再只对这一页拼当前订阅、配额、余额与
 // 在线设备。原来这些 LATERAL 挂在 Sort / LIMIT 之下，要对全部用户算完才取 25 条
-// （5k 用户 470s）。同一时刻批量建的用户按 id 定序，翻页不重不漏。$8 / $9 是 LIMIT / OFFSET。
-var listUsersPageSQL = `
+// （5k 用户 470s）。同一时刻批量建的用户按 id 定序，翻页不重不漏。where 与 limit / offset 的
+// 占位符由 listUsersWhere 与调用方给出。
+func listUsersPageSQL(where, limit, offset string) string {
+	return `
 	WITH page AS MATERIALIZED (
 	  SELECT u.id, u.created_at
 	    FROM users u
-	   WHERE ` + listUsersWhereSQL + `
+	   WHERE ` + where + `
 	   ORDER BY u.created_at DESC, u.id DESC
-	   LIMIT $8 OFFSET $9
+	   LIMIT ` + limit + ` OFFSET ` + offset + `
 	), win AS MATERIALIZED (
 	  SELECT ` + onlineSinceSQL("$1") + ` AS since
 	)
@@ -216,6 +252,7 @@ var listUsersPageSQL = `
 	           AND q.metric = 'traffic.bytes'
 	         ORDER BY q.period_start DESC LIMIT 1) tq ON true
 	 ORDER BY p.created_at DESC, p.id DESC`
+}
 
 // scanUserRows 读列表行（列形状见 listUsersPageSQL）。
 func scanUserRows(rows pgx.Rows) ([]UserRow, error) {
@@ -250,20 +287,21 @@ func (s *Service) ListUsers(ctx context.Context, tenantID string, in ListUsersIn
 	if err != nil {
 		return nil, 0, err
 	}
+	// 总数只数 users 本表（不拼读模型），与取页同一份筛选；两条排进一个批次，一次往返
+	where, wargs := listUsersWhere(args)
+	pageArgs := append(slices.Clone(wargs), in.Limit, in.Offset)
+	pageSQL := listUsersPageSQL(where, "$"+strconv.Itoa(len(wargs)+1), "$"+strconv.Itoa(len(wargs)+2))
 	var out []UserRow
 	var total int64
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 总数只数 users 本表（不拼读模型），与取页同一份筛选
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM users u WHERE `+listUsersWhereSQL, args...).Scan(&total); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, listUsersPageSQL, append(args, in.Limit, in.Offset)...)
-		if err != nil {
-			return err
-		}
+	b := &pgx.Batch{}
+	b.Queue(`SELECT count(*) FROM users u WHERE `+where, wargs...).
+		QueryRow(func(row pgx.Row) error { return row.Scan(&total) })
+	b.Queue(pageSQL, pageArgs...).Query(func(rows pgx.Rows) error {
+		var err error
 		out, err = scanUserRows(rows)
 		return err
 	})
+	err = s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{}, b)
 	if err != nil {
 		return nil, 0, httpx.Internal(err)
 	}
@@ -323,186 +361,4 @@ type UserRef struct {
 type TelegramRef struct {
 	Username string    `json:"username"`
 	BoundAt  time.Time `json:"bound_at"`
-}
-
-func (s *Service) GetUser(ctx context.Context, tenantID, userID string) (*UserDetail, error) {
-	// 非 uuid 的 id 与不存在同样 404：交给 SQL 会变成 500
-	if _, err := uuid.Parse(userID); err != nil {
-		return nil, httpx.NotFoundOrForbidden()
-	}
-	var d UserDetail
-
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var verifiedAt *time.Time
-		err := tx.QueryRow(ctx, `
-			SELECT u.id, u.email, u.display_name, u.status, u.risk_level,
-			       u.created_at, u.last_login_at, u.email_verified_at,
-			       coalesce((SELECT -la.balance_signed FROM ledger_accounts la
-			                  WHERE la.owner_user_id = u.id
-			                    AND la.account_type = 'user_balance' LIMIT 1), 0),
-			       coalesce((SELECT la.currency FROM ledger_accounts la
-			                  WHERE la.owner_user_id = u.id
-			                    AND la.account_type = 'user_balance' LIMIT 1), 'CNY'),
-			       coalesce((SELECT g.name FROM user_groups g
-			                  WHERE g.id = u.user_group_id), ''),
-			       u.user_group_id::text,
-			       coalesce((SELECT sum(o.paid_amount) FROM orders o WHERE o.tenant_id = u.tenant_id
-			                  AND o.user_id = u.id AND o.status IN ('paid','fulfilled')), 0)::bigint,
-			       (SELECT count(*) FROM orders o WHERE o.tenant_id = u.tenant_id AND o.user_id = u.id)::int,
-			       (SELECT count(*) FROM referrals rf WHERE rf.tenant_id = u.tenant_id
-			                  AND rf.referrer_user_id = u.id)::int
-			  FROM users u WHERE u.tenant_id = $1 AND u.id = $2`,
-			tenantID, userID,
-		).Scan(&d.ID, &d.Email, &d.DisplayName, &d.Status, &d.RiskLevel,
-			&d.CreatedAt, &d.LastLoginAt, &verifiedAt, &d.Balance, &d.Currency,
-			&d.GroupName, &d.GroupID, &d.Stats.PaidTotal, &d.Stats.OrderCount, &d.Stats.ReferralCount)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.NotFoundOrForbidden()
-		}
-		if err != nil {
-			return err
-		}
-		d.EmailVerified = verifiedAt != nil
-
-		rows, err := tx.Query(ctx, `
-			SELECT currency, sum(paid_amount)::bigint FROM orders
-			 WHERE tenant_id = $1 AND user_id = $2 AND status IN ('paid','fulfilled')
-			 GROUP BY currency HAVING sum(paid_amount) > 0
-			 ORDER BY currency`, tenantID, userID)
-		if err != nil {
-			return err
-		}
-		d.Stats.PaidTotals, err = pgx.CollectRows(rows, pgx.RowToStructByPos[CurrencyAmount])
-		if err != nil {
-			return err
-		}
-		if d.Stats.PaidTotals == nil {
-			d.Stats.PaidTotals = []CurrencyAmount{}
-		}
-
-		var ref UserRef
-		switch err := tx.QueryRow(ctx, `
-			SELECT r.id::text, r.email::text FROM referrals rf
-			  JOIN users r ON r.tenant_id = rf.tenant_id AND r.id = rf.referrer_user_id
-			 WHERE rf.tenant_id = $1 AND rf.referee_user_id = $2`, tenantID, userID).Scan(&ref.ID, &ref.Email); {
-		case err == nil:
-			d.Referrer = &ref
-		case !errors.Is(err, pgx.ErrNoRows):
-			return err
-		}
-		var tg TelegramRef
-		switch err := tx.QueryRow(ctx, `
-			SELECT username, bound_at FROM telegram_bindings
-			 WHERE tenant_id = $1 AND user_id = $2
-			 ORDER BY bound_at DESC LIMIT 1`, tenantID, userID).Scan(&tg.Username, &tg.BoundAt); {
-		case err == nil:
-			d.Telegram = &tg
-		case !errors.Is(err, pgx.ErrNoRows):
-			return err
-		}
-
-		d.Subscriptions = []SubscriptionRow{}
-		// 在线设备按单条订阅计（onlineDevicesSQL），窗口起点只算一次
-		srows, err := tx.Query(ctx, `
-			WITH win AS MATERIALIZED (SELECT `+onlineSinceSQL("$1")+` AS since)
-			SELECT s.id, pl.name, pv.version, s.status, s.current_period_start, s.current_period_end,
-			       s.snapshot_amount, s.snapshot_currency, s.auto_renew,
-			       s.device_limit, pv.max_devices, coalesce(od.device_count, 0)::int
-			  FROM subscriptions s
-			  JOIN plans pl ON pl.id = s.plan_id
-			  JOIN plan_versions pv ON pv.id = s.plan_version_id
-			  CROSS JOIN win
-			  LEFT JOIN LATERAL (`+onlineDevicesSQL("s.tenant_id", "s.id", "win.since")+`) od ON true
-			 WHERE s.tenant_id = $1 AND s.user_id = $2
-			 ORDER BY s.created_at DESC`, tenantID, userID)
-		if err != nil {
-			return err
-		}
-		for srows.Next() {
-			r := SubscriptionRow{Quotas: []QuotaRow{}}
-			if err := srows.Scan(&r.ID, &r.PlanName, &r.PlanVersion, &r.Status,
-				&r.CurrentPeriodStart, &r.PeriodEnd, &r.Amount, &r.Currency, &r.AutoRenew,
-				&r.DeviceLimitOverride, &r.PlanMaxDevices, &r.OnlineDevices); err != nil {
-				srows.Close()
-				return err
-			}
-			d.Subscriptions = append(d.Subscriptions, r)
-		}
-		srows.Close()
-		if err := srows.Err(); err != nil {
-			return err
-		}
-		// 全部订阅的配额一次读完（原来每条订阅各查一次），每条订阅内的顺序不变
-		if len(d.Subscriptions) > 0 {
-			bySub := make(map[string]int, len(d.Subscriptions))
-			subIDs := make([]string, len(d.Subscriptions))
-			for i, sub := range d.Subscriptions {
-				bySub[sub.ID], subIDs[i] = i, sub.ID
-			}
-			qrows, err := tx.Query(ctx, `
-				SELECT subscription_id::text, metric, limit_value, consumed, remaining FROM quota_balances
-				 WHERE tenant_id = $1 AND subscription_id = ANY($2::uuid[])
-				 ORDER BY subscription_id, metric, period_start DESC`, tenantID, subIDs)
-			if err != nil {
-				return err
-			}
-			for qrows.Next() {
-				var sub string
-				var q QuotaRow
-				if err := qrows.Scan(&sub, &q.Metric, &q.Limit, &q.Consumed, &q.Remaining); err != nil {
-					qrows.Close()
-					return err
-				}
-				if i, ok := bySub[sub]; ok {
-					d.Subscriptions[i].Quotas = append(d.Subscriptions[i].Quotas, q)
-				}
-			}
-			qrows.Close()
-			if err := qrows.Err(); err != nil {
-				return err
-			}
-		}
-
-		d.Orders = []OrderRow{}
-		// 与订单列表同一份查询：原先这里自己写了一遍 SELECT，漏了首项快照，
-		// plan_name / interval / interval_count / item_count 恒为零值（缺陷 9）
-		orows, err := tx.Query(ctx, orderRowSelectSQL+`
-			 WHERE o.tenant_id = $1 AND o.user_id = $2
-			 ORDER BY o.created_at DESC LIMIT 20`, tenantID, userID)
-		if err != nil {
-			return err
-		}
-		for orows.Next() {
-			r, err := scanOrderRow(orows)
-			if err != nil {
-				orows.Close()
-				return err
-			}
-			d.Orders = append(d.Orders, r)
-		}
-		orows.Close()
-		if err := orows.Err(); err != nil {
-			return err
-		}
-
-		d.Roles = []string{}
-		rrows, err := tx.Query(ctx, `
-			SELECT r.code FROM role_bindings rb JOIN roles r ON r.id = rb.role_id
-			 WHERE rb.tenant_id = $1 AND rb.user_id = $2
-			   AND (rb.expires_at IS NULL OR rb.expires_at > now())
-			 ORDER BY r.code`, tenantID, userID)
-		if err != nil {
-			return err
-		}
-		roles, err := pgx.CollectRows(rrows, pgx.RowTo[string])
-		d.Roles = append(d.Roles, roles...)
-		return err
-	})
-	if err != nil {
-		if httpErr := new(httpx.Error); errors.As(err, &httpErr) {
-			return nil, err
-		}
-		return nil, httpx.Internal(err)
-	}
-	return &d, nil
 }

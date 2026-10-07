@@ -2,6 +2,8 @@ package adminops
 
 import (
 	"context"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,51 +133,60 @@ func (s *Service) ListOrders(ctx context.Context, tenantID string, in ListOrders
 	out := []OrderRow{}
 	var total int64
 
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		q := "%" + strings.ToLower(strings.TrimSpace(in.Query)) + "%"
-		if strings.TrimSpace(in.Query) == "" {
-			q = "%"
-		}
-		const where = `
-			 WHERE o.tenant_id = $1
-			   AND (lower(o.order_no) LIKE $2 OR lower(u.email) LIKE $2)
-			   AND ($3::text[] IS NULL OR o.status::text = ANY($3))
-			   AND ($4::timestamptz IS NULL OR o.created_at >= $4)
-			   AND ($5::timestamptz IS NULL OR o.created_at < $5)
-			   AND ($6::uuid IS NULL OR o.user_id = $6)`
+	// 只拼用到的筛选（理由同 listUsersWhere：万能条件在通用计划下没法裁剪、估行失真）。
+	args := []any{tenantID}
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	where := `
+			 WHERE o.tenant_id = $1`
+	if query := strings.ToLower(strings.TrimSpace(in.Query)); query != "" {
+		p := arg("%" + query + "%")
+		where += ` AND (lower(o.order_no) LIKE ` + p + ` OR lower(u.email) LIKE ` + p + `)`
+	}
+	if statuses != nil {
+		where += ` AND o.status::text = ANY(` + arg(statuses) + `::text[])`
+	}
+	if in.From != nil {
+		where += ` AND o.created_at >= ` + arg(*in.From) + `::timestamptz`
+	}
+	if in.To != nil {
+		where += ` AND o.created_at < ` + arg(*in.To) + `::timestamptz`
+	}
+	if userID != nil {
+		where += ` AND o.user_id = ` + arg(*userID) + `::uuid`
+	}
+	countArgs := slices.Clone(args)
+	limitP, offsetP := arg(in.Limit), arg(in.Offset)
 
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM orders o JOIN users u ON u.id = o.user_id`+where,
-			tenantID, q, statuses, in.From, in.To, userID).Scan(&total); err != nil {
-			return err
-		}
-
-		// 先按筛选与排序只取一页订单 id（走 00100 的 (tenant_id, created_at, id) 索引），
-		// 再只对这一页拼支付渠道与首项快照；原来两个 LATERAL 挂在 Sort / LIMIT 之下，
-		// 订单越多越慢。并列的 created_at 按 id 定序，翻页稳定。
-		rows, err := tx.Query(ctx, `
+	// 总数与取页排进一个批次，一次往返（原来 InTx：BEGIN + 注入、两条、COMMIT 共 4 次）。
+	// 取页先按筛选与排序只取一页订单 id（走 00100 的 (tenant_id, created_at, id) 索引），
+	// 再只对这一页拼支付渠道与首项快照；原来两个 LATERAL 挂在 Sort / LIMIT 之下，
+	// 订单越多越慢。并列的 created_at 按 id 定序，翻页稳定。
+	b := &pgx.Batch{}
+	b.Queue(`
+			SELECT count(*) FROM orders o JOIN users u ON u.id = o.user_id`+where, countArgs...).
+		QueryRow(func(row pgx.Row) error { return row.Scan(&total) })
+	b.Queue(`
 			WITH page AS MATERIALIZED (
 			  SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id`+where+`
 			   ORDER BY o.created_at DESC, o.id DESC
-			   LIMIT $7 OFFSET $8
+			   LIMIT `+limitP+` OFFSET `+offsetP+`
 			)`+orderRowSelectSQL+`
 			 WHERE o.tenant_id = $1 AND o.id IN (SELECT id FROM page)
-			 ORDER BY o.created_at DESC, o.id DESC`,
-			tenantID, q, statuses, in.From, in.To, userID, in.Limit, in.Offset)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			r, err := scanOrderRow(rows)
-			if err != nil {
-				return err
+			 ORDER BY o.created_at DESC, o.id DESC`, args...).
+		Query(func(rows pgx.Rows) error {
+			for rows.Next() {
+				r, err := scanOrderRow(rows)
+				if err != nil {
+					return err
+				}
+				out = append(out, r)
 			}
-			out = append(out, r)
-		}
-		return rows.Err()
-	})
+			return rows.Err()
+		})
+	err = s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{}, b)
 	if err != nil {
 		return nil, 0, httpx.Internal(err)
 	}

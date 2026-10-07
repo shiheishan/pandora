@@ -23,29 +23,31 @@ type AdminProfile struct {
 
 // AdminProfile 读管理员的展示信息。角色只算租户级、未过期的绑定——与 admin 域
 // 登录展开权限用的过滤相同，否则侧栏显示的角色和实际能做的事会对不上。
+//
+// 两条读互不依赖，经 readBatch 一次往返发出（注入租户与两条查询同批），不再开 BEGIN / COMMIT。
 func (s *Service) AdminProfile(ctx context.Context, tenantID, userID string) (*AdminProfile, error) {
 	out := &AdminProfile{Roles: []RoleRef{}}
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
+	b := &pgx.Batch{}
+	b.Queue(`
 			SELECT email::text, nullif(btrim(display_name), '') FROM users
 			 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, userID).
-			Scan(&out.Email, &out.DisplayName); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, `
+		QueryRow(func(row pgx.Row) error { return row.Scan(&out.Email, &out.DisplayName) })
+	b.Queue(`
 			SELECT DISTINCT r.code, r.name
 			  FROM role_bindings rb
 			  JOIN roles r ON r.id = rb.role_id AND r.tenant_id = rb.tenant_id
 			 WHERE rb.tenant_id = $1 AND rb.user_id = $2::uuid
 			   AND (rb.expires_at IS NULL OR rb.expires_at > now())
 			   AND rb.scope_type = 'tenant' AND rb.scope_id IS NULL
-			 ORDER BY r.name, r.code`, tenantID, userID)
-		if err != nil {
+			 ORDER BY r.name, r.code`, tenantID, userID).
+		Query(func(rows pgx.Rows) error {
+			roles, err := pgx.CollectRows(rows, pgx.RowToStructByPos[RoleRef])
+			if err == nil && roles != nil {
+				out.Roles = roles
+			}
 			return err
-		}
-		out.Roles, err = pgx.CollectRows(rows, pgx.RowToStructByPos[RoleRef])
-		return err
-	})
+		})
+	err := s.readBatch(ctx, db.Scope{TenantID: tenantID}, b)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, httpx.New(httpx.CodeUnauthorized, "需要登录")
 	}

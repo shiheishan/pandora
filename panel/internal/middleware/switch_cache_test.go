@@ -34,7 +34,7 @@ func (q *switchFakeQuerier) QueryRowScoped(_ context.Context, s db.Scope, sql st
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.calls++
-	if s.TenantID != switchTestTenant || sql != featureSwitchSQL || len(args) != 2 || args[0] != switchTestTenant {
+	if s.TenantID != switchTestTenant || !strings.Contains(sql, "FROM feature_switches WHERE tenant_id = $1 AND code = $2") || len(args) != 2 || args[0] != switchTestTenant {
 		return errors.New("unexpected switch query")
 	}
 	if q.err != nil {

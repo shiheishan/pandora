@@ -170,6 +170,11 @@ func TestTrafficChargePG18(t *testing.T) {
 	billedBytesScenario(t, ctx, admin, app)
 	trafficDailyScenario(t, ctx, admin, app)
 	migrationRoundTripScenario(t, ctx, admin)
+
+	// 后台节点列表的通用计划门禁借这个库跑（node_list_admin_pg18_test.go），免改 gates 脚本的过滤
+	t.Run("admin_node_list_generic_plan", func(t *testing.T) {
+		adminNodeListGenericPlanPG18(t, admin, appDSN)
+	})
 }
 
 // rolloverAndForeignUIDScenario 证明审计 N1、N2、N3：
