@@ -222,8 +222,8 @@ type TimeseriesPoint struct {
 //
 // 全程只用哈希与计数，不解密任何来源信息 —— 画趋势不需要知道是谁。
 //
-// 已结束且已定稿的日子读按天汇总（00107 的 activity_daily，由保留期任务重算），今天、昨天与
-// 缺行的日子实时算；两边经同一个口径函数 app.activity_daily_compute（按会话时区切日，没有数据的
+// 已结束且可用的日子读按天汇总（00107 的 activity_daily，由保留期任务重算），今天与缺行或
+// 不可用的日子实时算；两边经同一个口径函数 app.activity_daily_compute（按会话时区切日，没有数据的
 // 日子补 0，不让折线图把「那天没人注册」画成数据缺失），见 activity_rollup.go。
 func (s *Service) ActivityTimeseries(ctx context.Context, tenantID string, days int) ([]TimeseriesPoint, error) {
 	var out []TimeseriesPoint

@@ -61,7 +61,8 @@ const legacyActivityTimeseriesSQL = `
 //
 //  1. 没有汇总行时全部实时算，与原 SQL 逐天相同（1、2、3、7、14、90 天）；
 //  2. 跑迁移原文的回填段后，定稿行被读到（篡改一行，输出跟着变），结果仍与原 SQL 相同；
-//     未定稿的行、别的会话时区算的行都不用，回到实时算；
+//     未定稿的行、别的会话时区算的行都不用，回到实时算；昨天的行在零点 10 分钟后算、且按日流量
+//     此后没被写过时可用，否则实时算；
 //  3. 换会话时区（上海、洛杉矶）切日跟着会话时区走，与原 SQL 在同一时区下相同；
 //  4. 定时重算写最近 2 个已结束日并吸收迟到写入；400 天以前的行被清理；
 //  5. 口径函数被内联（不是逐行调用的 Function Scan）。
@@ -161,6 +162,31 @@ func TestActivityDailyRollupPG18(t *testing.T) {
 	mustAdmin(`UPDATE activity_daily SET logins = logins - 1000, tz = current_setting('TimeZone')
 		WHERE tenant_id = $1 AND day = current_date - 10`, tenant)
 	compare("restored", "", 14)
+
+	// 昨天：算于零点 10 分钟之后、且这一天的按日流量此后没被写过的行可用（稳态下只有今天实时算）
+	mustAdmin(`UPDATE subscription_usage_daily SET updated_at = now() - interval '1 hour' WHERE tenant_id = $1`, tenant)
+	mustAdmin(`UPDATE activity_daily
+		  SET computed_at = greatest(now(), current_date::timestamptz + interval '10 minutes'), logins = logins + 1000
+		WHERE tenant_id = $1 AND tz = current_setting('TimeZone') AND day = current_date - 1`, tenant)
+	recent, err := svc.ActivityTimeseries(ctx, tenant, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recent[1].Logins != full[len(full)-2].Logins+1000 {
+		t.Fatalf("yesterday's quiet rollup row was not read: got %+v, live %+v", recent[1], full[len(full)-2])
+	}
+	// 昨天的按日流量在算它之后又被写了一次（用户时区晚于会话时区时的迟到写入）：不用，回到实时算
+	mustAdmin(`UPDATE subscription_usage_daily SET updated_at = now()
+		WHERE tenant_id = $1 AND day = current_date - 1 AND subscription_id = $2`, tenant, activitySub(tenant, 0))
+	compare("yesterday with late usage write", "", 3)
+	// 算于零点 10 分钟之内：同样不用
+	mustAdmin(`UPDATE subscription_usage_daily SET updated_at = now() - interval '1 hour' WHERE tenant_id = $1`, tenant)
+	mustAdmin(`UPDATE activity_daily SET computed_at = current_date::timestamptz + interval '9 minutes'
+		WHERE tenant_id = $1 AND tz = current_setting('TimeZone') AND day = current_date - 1`, tenant)
+	compare("yesterday computed right after midnight", "", 3)
+	mustAdmin(`UPDATE activity_daily SET logins = logins - 1000
+		WHERE tenant_id = $1 AND tz = current_setting('TimeZone') AND day = current_date - 1`, tenant)
+	compare("yesterday restored", "", 3)
 
 	// 3. 会话时区：切日跟着会话时区走；UTC 的汇总行不被别的时区借用
 	for _, tz := range []string{"Asia/Shanghai", "America/Los_Angeles"} {

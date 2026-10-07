@@ -13,8 +13,9 @@ import (
 //
 // 逐天口径只有一个出处：app.activity_daily_compute(租户, 起日, 止日)，它是原
 // ActivityTimeseries 请求 SQL 的原文（按会话时区切日）。activity_daily 只存已结束的日子，
-// 并记下算它时的会话时区；读路径只用 tz 等于当前会话时区、且已定稿的行，其余日子实时经
-// 同一个函数算，所以数字与原来逐天现场聚合相同（PG18 对照：activity_rollup_pg18_test.go）。
+// 并记下算它时的会话时区；读路径只用 tz 等于当前会话时区、且可用（定稿，或昨天且没有迟到写入，
+// 判据见迁移 00107 文件头）的行，其余日子实时经同一个函数算，所以数字与原来逐天现场聚合相同
+// （PG18 对照：activity_rollup_pg18_test.go）。
 
 // ActivityDailyRetentionDays 是按天汇总的保留期。读路径最远 90 天（接口上限），留长是为了
 // 以后的长周期趋势；更早的行由保留期任务删除。
@@ -24,7 +25,8 @@ const ActivityDailyRetentionDays = 400
 const activityDailyPurgeBatch = 1000
 
 // refreshActivityDailySQL 重算最近 2 个已结束日（会话时区的昨天与前天）并覆盖写入。
-// 前天那一行在当天第一次运行后即定稿（computed_at 不早于 day + 2 的零点）。
+// 前天那一行在当天第一次运行后即定稿（computed_at 不早于 day + 2 的零点）；昨天那一行在零点
+// 10 分钟之后、按日流量停写之后的那一轮起可用。
 const refreshActivityDailySQL = `
 INSERT INTO activity_daily AS a
   (tenant_id, tz, day, registered, logins, orders, unique_ips, active_users, computed_at)
@@ -48,8 +50,12 @@ DELETE FROM activity_daily a
          LIMIT $3) d
  WHERE a.tenant_id = d.tenant_id AND a.tz = d.tz AND a.day = d.day`
 
-// activityDailyFinalSQL 读窗口内已定稿的汇总行。第一列是窗口第一天（与原 SQL 的
-// generate_series 起点同一个日界），没有任何定稿行时只返回这一列有值的一行。
+// activityDailyFinalSQL 读窗口内可用的汇总行。第一列是窗口第一天（与原 SQL 的
+// generate_series 起点同一个日界），没有任何可用行时只返回这一列有值的一行。
+//
+// 可用 = 定稿（算于该日结束整一天之后），或算于该日结束 10 分钟之后、且这一天的按日流量在
+// 算它之前 5 分钟以来没被写过（00106 的 (tenant_id, day) 索引让这个判断只读这一天的行）。
+// 稳态下只有今天要实时算。
 const activityDailyFinalSQL = `
 WITH w AS MATERIALIZED (
   SELECT (date_trunc('day', now()) - make_interval(days => $2 - 1))::date AS first_day
@@ -59,10 +65,15 @@ SELECT w.first_day, a.day, a.registered, a.logins, a.orders, a.unique_ips, a.act
   LEFT JOIN activity_daily a
     ON a.tenant_id = $1 AND a.tz = current_setting('TimeZone')
    AND a.day >= w.first_day AND a.day < current_date
-   AND a.computed_at >= (a.day + 2)::timestamptz
+   AND (a.computed_at >= (a.day + 2)::timestamptz
+        OR (a.computed_at >= (a.day + 1)::timestamptz + interval '10 minutes'
+            AND NOT EXISTS (
+              SELECT 1 FROM subscription_usage_daily u
+               WHERE u.tenant_id = $1 AND u.day = a.day
+                 AND u.updated_at > a.computed_at - interval '5 minutes')))
  ORDER BY a.day`
 
-// activityLiveSQL 实时算 [$2, 今天] 的每一天（今天、昨天与缺定稿行的日子）。
+// activityLiveSQL 实时算 [$2, 今天] 的每一天（今天，以及缺行或不可用的日子）。
 const activityLiveSQL = `
 SELECT to_char(f.day, 'MM-DD'), f.registered, f.logins, f.orders, f.unique_ips, f.active_users
   FROM app.activity_daily_compute($1, $2::date, current_date) f
@@ -91,8 +102,8 @@ func (s *Service) PurgeActivityDaily(ctx context.Context, tenantID string) (int6
 	return n, err
 }
 
-// activityTimeseriesTx 在调用方事务里拼出最近 days 天的趋势：从窗口第一天起连续的定稿行直接用，
-// 第一个缺口（最晚是昨天）及之后的日子实时算。两条语句在同一事务里，now() 相同，日界一致。
+// activityTimeseriesTx 在调用方事务里拼出最近 days 天的趋势：从窗口第一天起连续的可用行直接用，
+// 第一个缺口（最晚是今天）及之后的日子实时算。两条语句在同一事务里，now() 相同，日界一致。
 func activityTimeseriesTx(ctx context.Context, tx pgx.Tx, tenantID string, days int) ([]TimeseriesPoint, error) {
 	out := []TimeseriesPoint{}
 	rows, err := tx.Query(ctx, activityDailyFinalSQL, tenantID, days)

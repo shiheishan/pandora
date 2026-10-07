@@ -8,7 +8,7 @@ import (
 )
 
 // 行为趋势按天汇总（00107）：重算最近 2 个已结束日与 400 天保留期清理挂在保留期清理循环里，
-// 不另起循环。读路径只用定稿行，这一步断了趋势图仍然正确（回到实时算），只是变慢——所以要钉住。
+// 不另起循环。读路径只用可用行，这一步断了趋势图仍然正确（回到实时算），只是变慢——所以要钉住。
 func TestAdminWiresActivityDailyRollup(t *testing.T) {
 	run := sourcetest.Load(t, ".").Decl("run")
 	purge := strings.Index(run, "nodeSvc.PurgeTrafficRollups(sctx, middleware.DefaultTenantID)")
