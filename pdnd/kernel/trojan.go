@@ -178,10 +178,10 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			return pathErr
 		}
 		upgrader := websocket.Upgrader{ReadBufferSize: 32 * 1024, WriteBufferSize: 32 * 1024, CheckOrigin: func(req *http.Request) bool {
-			return host == "" || strings.EqualFold(strings.TrimSpace(req.Host), host)
+			return requestHostMatches(req.Host, host)
 		}}
 		handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if req.URL == nil || req.URL.Path != path || (host != "" && !strings.EqualFold(strings.TrimSpace(req.Host), host)) {
+			if req.URL == nil || req.URL.Path != path || !requestHostMatches(req.Host, host) {
 				http.NotFound(w, req)
 				return
 			}
