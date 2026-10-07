@@ -41,3 +41,12 @@ $$;
 -- 清掉上一版按错名字建的（如果建成功过）
 DROP TRIGGER IF EXISTS zz_notify_support_tickets ON public.tickets;
 -- +goose StatementEnd
+
+-- +goose Down
+-- 回到 00020：只拆掉这一版新挂上的三个触发器（工单、工单消息、价格）。
+-- 其余表的触发器在 00020 就有，这一版只是原样重建，回滚时保留。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+DROP TRIGGER IF EXISTS zz_notify_tickets ON public.tickets;
+DROP TRIGGER IF EXISTS zz_notify_ticket_messages ON public.ticket_messages;
+DROP TRIGGER IF EXISTS zz_notify_prices ON public.prices;

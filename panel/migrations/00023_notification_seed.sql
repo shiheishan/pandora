@@ -80,3 +80,15 @@ SELECT t.id, v.code, v.channel, 'zh-CN', 1, v.subject, v.body, v.vars, v.categor
     WHERE x.tenant_id = t.id AND x.code = v.code AND x.channel = v.channel
       AND x.locale = 'zh-CN'
  );
+
+-- +goose Down
+-- 回到 00022：去掉已读列和两条索引。
+--
+-- 内置模板行保留不删：它们可能已被管理员改过文案、被投递记录引用；
+-- 00022 的代码不读这些行，留着无害。再次 Up 时 INSERT 带 NOT EXISTS，不会重复插入。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+DROP INDEX IF EXISTS notification_deliveries_pending_idx;
+DROP INDEX IF EXISTS notification_deliveries_inbox_idx;
+ALTER TABLE notification_deliveries
+  DROP COLUMN IF EXISTS read_at;

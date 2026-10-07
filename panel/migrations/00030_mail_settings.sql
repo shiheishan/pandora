@@ -1,3 +1,5 @@
+-- irreversible: 纯种子数据。这一版只插入邮件与注册验证的设置行，没有结构可回退；删掉这些行会连带删掉管理员已填的 SMTP 配置与加密后的发信密码，不删则 Down 什么也没做，两者都不是真正的回退。
+-- forward-fix: 这些设置行对 00029 的代码无害，回到 00029 不需要处理它们；某项设置有误就在后台「系统设置」里改。要整体回到 00030 之前，走升级前备份恢复（panel/deploy/MIGRATION-RUNBOOK.md 第 3 节）。
 -- +goose Up
 -- 邮件与注册验证的设置项。
 --
@@ -37,3 +39,13 @@ SELECT t.id, v.key, v.value, v.schema, v.secret,
   ) AS v(key, value, schema, secret)
  WHERE NOT EXISTS (
    SELECT 1 FROM system_settings s WHERE s.tenant_id = t.id AND s.key = v.key);
+
+-- +goose Down
+-- +goose StatementBegin
+DO $$
+BEGIN
+  RAISE EXCEPTION
+    'rollback refused (00030 mail settings seed): deleting the seeded rows would also delete operator-entered SMTP settings and the encrypted password; fix settings forward in the admin panel, or restore the pre-upgrade backup';
+END
+$$;
+-- +goose StatementEnd

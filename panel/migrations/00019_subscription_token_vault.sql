@@ -17,3 +17,11 @@ ALTER TABLE subscription_credentials
 
 COMMENT ON COLUMN subscription_credentials.token_encrypted IS
   '信封加密后的 token 原文，供面板展示。主密钥不在数据库内；备份时切勿与配置文件打包在一起。';
+
+-- +goose Down
+-- 回到 00018：去掉 token 密文列。验证用的 token_hash 不受影响，
+-- 但面板再也读不回已签发 token 的原文。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+ALTER TABLE subscription_credentials
+  DROP COLUMN IF EXISTS token_encrypted;
