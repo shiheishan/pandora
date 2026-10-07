@@ -346,7 +346,7 @@ func (s *Service) CreateRenewal(ctx context.Context, tenantID string,
 				SubtotalAmount: subtotal, DiscountAmount: discount,
 				TotalAmount: total, BalanceApplied: balanceApplied,
 				CouponID: renewalCouponID, HoldAccountID: holdAccountID,
-				RevenueAccountID: revenueAccountID,
+				RevenueAccountID: revenueAccountID, ManualGrant: in.ManualGrant,
 			}); err != nil {
 				return err
 			}
@@ -455,6 +455,8 @@ type zeroPaySubscriptionCapture struct {
 	HoldAccountID     string
 	RevenueAccountID  string
 	ProrationCredit   int64
+	// ManualGrant：后台人工开单赠送的续费（全额减免，见 reservationLockRequest.ManualGrant）
+	ManualGrant bool
 }
 
 // captureZeroPaySubscriptionOrder captures the complete held renewal or plan
@@ -471,6 +473,7 @@ func (s *Service) captureZeroPaySubscriptionOrder(ctx context.Context, tx pgx.Tx
 		SubtotalAmount: in.SubtotalAmount, DiscountAmount: in.DiscountAmount,
 		TotalAmount: in.TotalAmount, PayableAmount: 0,
 		BalanceAmount: in.BalanceApplied, ProrationCredit: in.ProrationCredit,
+		ManualGrant: in.ManualGrant,
 	})
 	if err != nil {
 		return err
