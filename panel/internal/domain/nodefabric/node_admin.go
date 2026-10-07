@@ -407,6 +407,14 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 		}
 	}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
+		// 请求要动池时先拿配置发布锁、再锁节点行，与发布、新建、退役同一锁序：
+		// 换池改变节点适用的 pool 层配置，desired 版本要在锁内按新池重新物化
+		// （见下方 syncLegacyDesiredConfigVersion），否则并发发布会和它错过彼此。
+		if in.PoolID.Set {
+			if err := lockLegacyConfigRelease(ctx, tx, tenantID); err != nil {
+				return err
+			}
+		}
 		before, err := scanAdminNode(tx.QueryRow(ctx, adminNodeSelect+` WHERE n.tenant_id=$1 AND n.id=$2::uuid FOR UPDATE`, tenantID, id))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFoundOrForbidden()
@@ -461,6 +469,13 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 			if in.PoolID.Value != nil {
 				poolID = strings.TrimSpace(*in.PoolID.Value)
 			}
+			// 在役节点不许移出所有池：没有池的节点不服务任何用户（R104），
+			// 一次保存就把正在用的线路从全部订阅里摘掉。草稿、停用等未在役的节点仍可无池。
+			if poolID == "" && before.ServingStatus == "active" {
+				return httpx.Invalid(map[string]string{
+					"pool_id": "在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出",
+				})
+			}
 			if err := validatePool(ctx, tx, tenantID, poolID); err != nil {
 				return err
 			}
@@ -497,6 +512,12 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 		}
 		if ct.RowsAffected() == 0 {
 			return nodeVersionConflict(before.RowVersion)
+		}
+		// 换了池，适用的 pool 层配置跟着换：按新池重算 desired 版本（发布锁在事务开头已拿）
+		if poolChanged {
+			if err := syncLegacyDesiredConfigVersion(ctx, tx, tenantID, id); err != nil {
+				return err
+			}
 		}
 		return audit.Write(ctx, tx, tenantID, audit.Entry{ActorKind: "admin", ActorID: &in.ActorID,
 			Action: "node.update", ResourceType: "node", ResourceID: &id, APIDomain: "admin",

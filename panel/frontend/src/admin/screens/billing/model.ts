@@ -358,6 +358,134 @@ export function providerNote(p: Provider, now: Date): { text: string; tone: Tone
 }
 
 // ===========================================================================
+// 支付渠道的新建与编辑（w2pay）：只有易支付能在后台建 / 改；code 与类型建后不可改；
+// 商户号与密钥只写不读，编辑时留空 = 不改。规则照 billing/provider_admin.go 的
+// normalizeProviderSettings，后端仍是最终裁判（字段错误原样标回表单）。
+// ===========================================================================
+export const EPAY_METHODS = [
+  { value: 'alipay', label: '支付宝' },
+  { value: 'wxpay', label: '微信支付' },
+  { value: 'qqpay', label: 'QQ 钱包' },
+] as const
+
+/** 与门户 paymentMethodLabels 同一张表；不认识的方式原样显示 */
+export function methodLabel(method: string): string {
+  return EPAY_METHODS.find((m) => m.value === method)?.label ?? method
+}
+
+/** 门户实际会列出的方式：config.methods 非空用它，否则 default_method（与 PaymentMethods 的 SQL 同口径） */
+export function effectiveMethods(p: Pick<Provider, 'methods' | 'default_method'>): string[] {
+  if (p.methods.length > 0) return p.methods
+  return p.default_method ? [p.default_method] : []
+}
+
+export const isEditableProvider = (p: Pick<Provider, 'adapter' | 'code'>) => p.adapter === 'epay' && !isOffline(p)
+
+export interface ProviderForm {
+  code: string
+  display_name: string
+  base_url: string
+  submit_path: string
+  api_path: string
+  methods: string[]
+  default_method: string
+  allow_private_host: boolean
+  merchant_id: string
+  key: string
+}
+
+export const emptyProviderForm = (): ProviderForm => ({
+  code: '',
+  display_name: '易支付',
+  base_url: '',
+  submit_path: '/submit.php',
+  api_path: '/api.php',
+  methods: ['alipay', 'wxpay'],
+  default_method: 'alipay',
+  allow_private_host: false,
+  merchant_id: '',
+  key: '',
+})
+
+/** 编辑回填：凭据一律空（只写不读）；旧渠道没有 methods 时用 default_method 起步 */
+export function providerFormFrom(p: Provider): ProviderForm {
+  const methods = effectiveMethods(p).filter((m) => EPAY_METHODS.some((x) => x.value === m))
+  const picked = methods.length ? methods : ['alipay']
+  return {
+    code: p.code,
+    display_name: p.display_name,
+    base_url: p.base_url,
+    submit_path: p.submit_path || '/submit.php',
+    api_path: p.api_path || '/api.php',
+    methods: picked,
+    default_method: picked.includes(p.default_method) ? p.default_method : picked[0]!,
+    allow_private_host: p.allow_private_host,
+    merchant_id: '',
+    key: '',
+  }
+}
+
+/** 勾选 / 取消一种方式；默认方式被取消时改成剩下的第一个 */
+export function toggleMethod(f: ProviderForm, method: string, on: boolean): ProviderForm {
+  const methods = on ? EPAY_METHODS.map((m) => m.value).filter((m) => m === method || f.methods.includes(m)) : f.methods.filter((m) => m !== method)
+  const default_method = methods.includes(f.default_method) ? f.default_method : (methods[0] ?? '')
+  return { ...f, methods, default_method }
+}
+
+/** 解析失败或空串回 null */
+function parseURL(raw: string): URL | null {
+  if (!raw) return null
+  try {
+    return new URL(raw)
+  } catch {
+    return null
+  }
+}
+
+const PROVIDER_CODE = /^[a-z][a-z0-9_-]{1,31}$/
+const PROVIDER_PATH = /^\/[A-Za-z0-9._~/-]{0,127}$/
+
+export function providerProblems(f: ProviderForm, mode: 'create' | 'edit', hasCredentials = false): Fields {
+  const out: Fields = {}
+  if (mode === 'create') {
+    if (!PROVIDER_CODE.test(f.code.trim())) out.code = '编码需为 2–32 位小写字母、数字、- 或 _，以字母开头'
+    else if (f.code.trim() === 'offline') out.code = 'offline 是系统内置渠道的编码'
+  }
+  const name = chars(f.display_name)
+  if (name < 1 || name > 40) out.display_name = '名称需为 1–40 个字'
+  const base = f.base_url.trim()
+  const url = parseURL(base)
+  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) out.base_url = '请填写完整的站点地址，如 https://pay.example.com'
+  else if (url.protocol !== 'https:' && !f.allow_private_host) out.base_url = '站点地址必须使用 https'
+  for (const key of ['submit_path', 'api_path'] as const) {
+    const v = f[key].trim()
+    if (v && (!PROVIDER_PATH.test(v) || v.startsWith('//'))) out[key] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
+  }
+  if (f.methods.length === 0) out.methods = '至少选一种支付方式'
+  else if (!f.methods.includes(f.default_method)) out.default_method = '默认方式必须是已勾选的方式之一'
+  const needCreds = mode === 'create' || !hasCredentials
+  if (needCreds && !f.merchant_id.trim()) out.merchant_id = mode === 'create' ? '必填' : '该渠道还没有商户号，需填写'
+  if (needCreds && !f.key.trim()) out.key = mode === 'create' ? '必填' : '该渠道还没有密钥，需填写'
+  return out
+}
+
+/** PUT 的请求体没有 code / adapter（后端不收，建后不可改）；凭据留空原样发空串 = 不改 */
+export function providerBody(f: ProviderForm, mode: 'create' | 'edit') {
+  const settings = {
+    display_name: f.display_name.trim(),
+    base_url: f.base_url.trim(),
+    submit_path: f.submit_path.trim(),
+    api_path: f.api_path.trim(),
+    methods: [...f.methods],
+    default_method: f.default_method,
+    allow_private_host: f.allow_private_host,
+    merchant_id: f.merchant_id.trim(),
+    key: f.key.trim(),
+  }
+  return mode === 'create' ? { code: f.code.trim(), adapter: 'epay', ...settings } : settings
+}
+
+// ===========================================================================
 // 收入调整（报表口径，只追加）
 // ===========================================================================
 export const ADJUST_MAX = 1_000_000_000_000

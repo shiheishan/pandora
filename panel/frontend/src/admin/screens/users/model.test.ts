@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { rotatedSchema, usersSchema } from './api'
+import { extendedSchema, rotatedSchema, usersSchema } from './api'
 import {
   currentSubscription,
   deviceLimitLabel,
   deviceView,
   expiryView,
+  extendableSubscriptions,
+  extendedEnd,
+  extendReasonProblem,
   initial,
   listParams,
   liveSubscriptions,
   orderWhat,
   paidTotalsLabel,
+  parseExtendDays,
   parseYuan,
   passwordProblem,
   shortId,
@@ -79,6 +83,29 @@ describe('当前订阅（与后端 currentSubscriptionSQL 同口径）', () => {
   })
 })
 
+describe('加时长（与后端 subscriptionExtendable / validateAdminExtend 同口径）', () => {
+  const s = (status: 'active' | 'trialing' | 'expired', end: number | null, id: string) => ({ id, status, current_period_end: end === null ? null : days(end) })
+
+  it('只有生效中且有到期时间的订阅能加时长', () => {
+    expect(extendableSubscriptions([s('active', 5, 'a'), s('trialing', 5, 'b'), s('expired', -1, 'c'), s('active', null, 'd')]).map((x) => x.id)).toEqual(['a'])
+    expect(extendableSubscriptions([s('expired', -1, 'c')])).toEqual([])
+  })
+
+  it('天数 1–3650 的整数，原因 5–500 字', () => {
+    expect(parseExtendDays(' 30 ')).toBe(30)
+    expect(parseExtendDays('3650')).toBe(3650)
+    for (const bad of ['', '0', '3651', '7.5', '-1', '1e2', 'abc']) expect(parseExtendDays(bad)).toBeNull()
+    expect(extendReasonProblem('补偿线路故障')).toBeNull()
+    expect(extendReasonProblem(' 补偿 ')).toContain('至少 5 个字')
+    expect(extendReasonProblem('长'.repeat(501))).toContain('500')
+  })
+
+  it('预计新到期从「原到期」与「现在」里更晚的那个起算', () => {
+    expect(extendedEnd(days(10), 7, NOW).toISOString()).toBe(new Date(Date.parse(days(17))).toISOString())
+    expect(extendedEnd(days(-3), 7, NOW).toISOString()).toBe(new Date(NOW.getTime() + 7 * 86_400_000).toISOString())
+  })
+})
+
 describe('订单与输入', () => {
   it('订单「买了什么」', () => {
     expect(orderWhat({ kind: 'new', plan_name: '标准版', interval: 'month', interval_count: 1, item_count: 1 })).toBe('标准版 · 月付')
@@ -121,6 +148,13 @@ describe('schema', () => {
   it('保留规则 2：换发响应带令牌就判为不符约定', () => {
     expect(rotatedSchema.safeParse({ user_email: 'a@b.c', old_revoked: true }).success).toBe(true)
     expect(rotatedSchema.safeParse({ user_email: 'a@b.c', old_revoked: true, token: 'secret' }).success).toBe(false)
+  })
+
+  it('加时长响应：五个键都必填，天数为正', () => {
+    const ok = { subscription_id: 's', user_email: 'a@b.c', days: 7, previous_end: days(1), period_end: days(8) }
+    expect(extendedSchema.safeParse(ok).success).toBe(true)
+    expect(extendedSchema.safeParse({ ...ok, days: 0 }).success).toBe(false)
+    expect(extendedSchema.safeParse({ ...ok, period_end: undefined }).success).toBe(false)
   })
 
   it('列表行：未知账号状态判为不符；current_subscription 可为 null', () => {

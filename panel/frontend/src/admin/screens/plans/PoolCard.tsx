@@ -61,9 +61,18 @@ function Binding({ plan, data }: { plan: PlanDetail; data: PlanPools }) {
     }
   }
 
+  const warning = poolBindingWarning(data.pools, picked)
+
   return (
     <>
       <PoolChips pools={data.pools} picked={picked} onChange={setPicked} disabled={!writable} />
+      {warning && (
+        <div className={css.cardPad}>
+          <p className={css.note} role="status">
+            {warning}
+          </p>
+        </div>
+      )}
       {writable && (
         <div className={css.cardFoot}>
           <span className={css.small}>
@@ -81,7 +90,19 @@ function Binding({ plan, data }: { plan: PlanDetail; data: PlanPools }) {
   )
 }
 
-/** 节点池 chip 组：aria-pressed 表示选中，数字是在线节点数（没给就不画） */
+/**
+ * 按所选节点池的可下发节点数给出「0 节点」提示，没问题时返回 null。
+ * 可下发数与订阅下载同一口径（后端 subscription.DeliverableNodeSQL）；池限定了用户组时，
+ * 组外用户实际拿到的更少，这里不细分。
+ */
+export function poolBindingWarning(pools: ReadonlyArray<{ id: string; deliverable_nodes: number }>, picked: readonly string[]): string | null {
+  if (picked.length === 0) return '还没绑定节点池：此套餐的订阅里将是 0 个节点。'
+  const total = pools.filter((p) => picked.includes(p.id)).reduce((sum, p) => sum + p.deliverable_nodes, 0)
+  if (total > 0) return null
+  return '所选节点池里没有可下发的节点：此套餐的订阅里将是 0 个节点。检查池里的节点是否在役、上报过心跳、服务器已就绪、协议与地址已配好。'
+}
+
+/** 节点池 chip 组：aria-pressed 表示选中；数字优先是可下发节点数，没给就用在线节点数，都没给不画 */
 export function PoolChips({
   pools,
   picked,
@@ -89,7 +110,7 @@ export function PoolChips({
   disabled = false,
   inline = false,
 }: {
-  pools: ReadonlyArray<{ id: string; name: string; active_nodes?: number }>
+  pools: ReadonlyArray<{ id: string; name: string; active_nodes?: number; deliverable_nodes?: number }>
   picked: readonly string[]
   onChange: (next: string[]) => void
   disabled?: boolean
@@ -102,10 +123,16 @@ export function PoolChips({
         <button key={p.id} type="button" className={css.chip} aria-pressed={picked.includes(p.id)} disabled={disabled} onClick={() => toggle(p.id)}>
           <span className={css.chipBox} aria-hidden="true" />
           {p.name}
-          {p.active_nodes !== undefined && (
-            <span className={css.chipCount} title="在线节点数">
-              {p.active_nodes}
+          {p.deliverable_nodes !== undefined ? (
+            <span className={css.chipCount} title="可下发节点数：能写进订阅的节点">
+              {p.deliverable_nodes}
             </span>
+          ) : (
+            p.active_nodes !== undefined && (
+              <span className={css.chipCount} title="在线节点数">
+                {p.active_nodes}
+              </span>
+            )
           )}
         </button>
       ))}

@@ -6,17 +6,24 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/subscription"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 // PlanPoolOption 是绑池选择器里的一个分组。
+//
+// Active 是生命周期 active 且定了协议的节点数，与节点池列表的 active_nodes 同口径；
+// Deliverable 是其中真能写进订阅的节点数（subscription.DeliverableNodeSQL：服务器就绪、
+// 服务状态 active、见过心跳、协议稳定、有可连地址），套餐页按它提示「0 节点」。
+// 池限定用户组时，组外用户实际拿到的比 Deliverable 少，这一半与用户有关，不在这里算。
 type PlanPoolOption struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Active int    `json:"active_nodes"`
-	Bound  bool   `json:"bound"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Active      int    `json:"active_nodes"`
+	Deliverable int    `json:"deliverable_nodes"`
+	Bound       bool   `json:"bound"`
 }
 
 // PlanPoolBindings 是一个套餐当前可编辑（或只读展示）的版本及其绑池情况。
@@ -87,6 +94,10 @@ func (s *Service) PlanPools(ctx context.Context, tenantID, planID string) (*Plan
 			SELECT p.id::text, p.name,
 			       (SELECT count(*) FROM nodes n
 			         WHERE n.pool_id=p.id AND n.status='active' AND n.node_type IS NOT NULL),
+			       (SELECT count(*) FROM nodes n
+			          JOIN servers s ON s.id = n.server_id AND s.tenant_id = n.tenant_id
+			         WHERE n.tenant_id=p.tenant_id AND n.pool_id=p.id
+			           AND `+subscription.DeliverableNodeSQL()+`),
 			       EXISTS (SELECT 1 FROM plan_node_pools pnp
 			                WHERE pnp.tenant_id=$1 AND pnp.pool_id=p.id
 			                  AND pnp.plan_version_id=$2::uuid)
@@ -99,7 +110,7 @@ func (s *Service) PlanPools(ctx context.Context, tenantID, planID string) (*Plan
 		defer rows.Close()
 		for rows.Next() {
 			var o PlanPoolOption
-			if err := rows.Scan(&o.ID, &o.Name, &o.Active, &o.Bound); err != nil {
+			if err := rows.Scan(&o.ID, &o.Name, &o.Active, &o.Deliverable, &o.Bound); err != nil {
 				return err
 			}
 			out = append(out, o)

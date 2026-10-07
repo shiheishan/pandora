@@ -13,6 +13,7 @@ import {
   ordersSchema,
   paymentHistorySchema,
   providersSchema,
+  providerWrittenSchema,
 } from '../src/admin/screens/billing/schemas'
 import { bearer, close, mockFetch, serve } from './mock-helpers'
 
@@ -35,6 +36,7 @@ describe('mock api · admin billing', () => {
   }
   const get = (token: string, path: string) => mockFetch(base, bearer(token), 'GET', `/v1/${path}`)
   const post = (token: string, path: string, body: unknown, key?: string) => mockFetch(base, bearer(token), 'POST', `/v1/${path}`, body, key)
+  const put = (token: string, path: string, body: unknown, key?: string) => mockFetch(base, bearer(token), 'PUT', `/v1/${path}`, body, key)
   const json = async <T>(res: Response) => (await res.json()) as T
 
   // dev/mock/admin/users.ts 的第 3 个种子用户（id 固定）
@@ -232,6 +234,40 @@ describe('mock api · admin billing', () => {
     expect((await post(admin, 'payment-providers/epay/toggle', { enabled: true })).status).toBe(200)
     const epay = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'epay')!
     expect(epay).toMatchObject({ enabled: true, accepting_new: false })
+  })
+
+  it('creates and edits an epay provider; secrets are write-only (w2pay)', async () => {
+    const settings = { display_name: '易支付 · 新', base_url: 'https://pay3.example.com', submit_path: '', api_path: '', methods: ['wxpay', 'alipay'], default_method: '', allow_private_host: false }
+    // 只读财务看得到渠道，建不了
+    expect((await post(viewer, 'payment-providers', { code: 'epay3', adapter: 'epay', ...settings, merchant_id: '2001', key: 'k' }, 'prov-v')).status).toBe(404)
+    expect(await json(await post(admin, 'payment-providers', { code: 'offline', adapter: 'demo', ...settings, methods: ['paypal'], merchant_id: '', key: '' }, 'prov-0'))).toMatchObject({
+      error: { code: 'validation_failed', fields: { code: expect.any(String), adapter: expect.any(String), methods: expect.any(String), merchant_id: '必填', key: '必填' } },
+    })
+    const created = await post(admin, 'payment-providers', { code: 'epay3', adapter: 'epay', ...settings, merchant_id: '2001', key: 'secret-2001' }, 'prov-1')
+    expect(created.status).toBe(201)
+    expect(providerWrittenSchema.parse(await json(created))).toMatchObject({ code: 'epay3', credentials_changed: true })
+    expect((await post(admin, 'payment-providers', { code: 'epay3', adapter: 'epay', ...settings, merchant_id: '2001', key: 'x' }, 'prov-2')).status).toBe(409)
+
+    const listed = await get(admin, 'payment-providers')
+    const raw = await listed.text()
+    expect(raw).not.toContain('secret-2001')
+    expect(raw).not.toContain('"merchant_id"')
+    const epay3 = providersSchema.parse(JSON.parse(raw)).providers.find((p) => p.code === 'epay3')!
+    expect(epay3).toMatchObject({ enabled: true, accepting_new: false, has_credentials: true, methods: ['wxpay', 'alipay'], default_method: 'wxpay', submit_path: '/submit.php' })
+
+    // 编辑：不收 code / adapter；凭据留空 = 不改
+    expect((await put(admin, 'payment-providers/epay3', { code: 'other', ...settings, merchant_id: '', key: '' }, 'prov-3')).status).toBe(400)
+    const kept = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, methods: ['alipay', 'qqpay'], default_method: 'qqpay', merchant_id: '', key: '' }, 'prov-4')))
+    expect(kept.credentials_changed).toBe(false)
+    const rotated = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, merchant_id: '', key: 'secret-rotated' }, 'prov-5')))
+    expect(rotated.credentials_changed).toBe(true)
+    // 没有凭据的旧渠道编辑时必须补齐；offline 与演示渠道只读
+    expect(await json(await put(admin, 'payment-providers/epay_backup', { ...settings, merchant_id: '', key: '' }, 'prov-6'))).toMatchObject({
+      error: { fields: { merchant_id: expect.any(String), key: expect.any(String) } },
+    })
+    expect((await put(admin, 'payment-providers/offline', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-7')).status).toBe(409)
+    expect((await put(admin, 'payment-providers/demo', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-8')).status).toBe(409)
+    expect((await put(admin, 'payment-providers/nope', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-9')).status).toBe(404)
   })
 
   it('records, lists and reverses revenue adjustments once', async () => {

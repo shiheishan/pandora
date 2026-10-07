@@ -66,6 +66,18 @@ func registerPaymentProviderRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequirePermission("billing.provider.write", d.Log),
 		middleware.RequireRecentReauth(d.Log),
 	).Post("/payment-providers/{code}/toggle", h.toggleProvider)
+	// 新建与编辑渠道（w2pay）：写的是收款去向与商户密钥，钱往哪里进由它决定。
+	// 写权限 + 近期重认证 + 幂等键，重认证排在幂等之前（403 时键还没被占）。
+	r.With(
+		middleware.RequirePermission("billing.provider.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "payment_provider_create", d.Log),
+	).Post("/payment-providers", h.createProvider)
+	r.With(
+		middleware.RequirePermission("billing.provider.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "payment_provider_update", d.Log),
+	).Put("/payment-providers/{code}", h.updateProvider)
 }
 
 func registerBalanceAdjustRoutes(r chi.Router, d Deps, h *handlers) {

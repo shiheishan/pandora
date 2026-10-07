@@ -367,7 +367,8 @@ const HeartbeatFreshWindow = 10 * time.Minute
 // 并在不会时说明原因。
 //
 // 下发规则本身写在 listEligibleNodesTx 的 SQL 里，这个函数是它面向
-// 管理后台的复述。两处必须同步 —— 有一条契约测试锁着这件事，
+// 管理后台的复述；服务器、协议、地址、池绑套餐这几条由 NodeDeliveryFacts.Refine
+// 按同一个 DeliverableNodeSQL 补齐。两处必须同步 —— 有一条契约测试锁着这件事，
 // 因为「同一个规则写在两处、改了一处」正是这类问题最常见的死法。
 //
 // pooled    = 划进了节点池（pool_id IS NOT NULL；SQL 里是 JOIN plan_node_pools）
@@ -394,6 +395,8 @@ func DeliveryState(servingStatus string, pooled, everSeen, beatFresh bool) (bool
 
 // listEligibleNodesTx 是订阅下发和面板预览共用的唯一资格查询。
 // 任何维护状态、协议稳定性或套餐资源池规则都只能在这里修改，避免两处漂移。
+// 与用户、套餐都无关的节点自身条件抽在 DeliverableNodeSQL，套餐页的可下发节点数
+// 与后台节点列表的下发说明共用它；这里只在其上加套餐版本绑池与池的用户组限定。
 //
 // 要带上用户：节点池可以限定用户组（R104），同一个套餐版本下不同组的用户
 // 拿到的节点可能不同。谓词与节点拉用户（nodefabric.ListNodeUsers）共用
@@ -403,7 +406,7 @@ func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planV
 	rows, err := tx.Query(ctx, `
 			SELECT COALESCE(NULLIF(n.display_name, ''), n.name),
 			       n.node_type,
-			       COALESCE(NULLIF(n.server_host, ''), n.public_ipv4::text, n.hostname, ''),
+			       `+nodeHostSQL+`,
 			       COALESCE(n.server_port, 0),
 			       COALESCE(n.protocol_config, '{}'::jsonb),
 			       COALESCE(n.traffic_rate, 1.0),
@@ -415,23 +418,7 @@ func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planV
 			    ON p.pool_id = n.pool_id AND p.tenant_id = n.tenant_id
 			 WHERE n.tenant_id = $1
 			   AND p.plan_version_id = $2::uuid
-			   -- Logical service Nodes are governed by serving_status. A Server's
-			   -- control/Agent Node additionally remains gated by the legacy state.
-			   AND (s.control_node_id IS DISTINCT FROM n.id OR n.status = 'active')
-			   AND n.node_type IS NOT NULL
-			   AND n.server_port BETWEEN 1 AND 65535
-			   AND s.status = 'ready' AND s.deleted_at IS NULL
-			   AND n.serving_status = 'active'
-			   -- 从未心跳过的节点不下发。它从来没接进来过 —— 多半是
-			   -- 建了没装 agent，或是测试留下的记录。发给客户端就是
-			   -- 一条必然连不上的线路，和下面「没有可连地址」是同一类。
-			   --
-			   -- 心跳「超时」不在这里排除：心跳走 agent → 面板的 HTTPS，
-			   -- 代理走 用户 → 节点，两条独立链路。agent 挂了而 xray 还在
-			   -- 跑是常见情况，在 SQL 里一刀切会把还能用的节点也踢掉。
-			   -- 超时的降级处理放在下面 Go 侧。
-			   AND n.last_heartbeat_at IS NOT NULL
-			   AND `+nodefabric.StableProtocolReadySQL("n")+`
+			   AND `+DeliverableNodeSQL()+`
 			   -- 池限定了用户组时，订阅的主人必须在名单内的组里（R104）
 			   AND `+nodefabric.PoolAdmitsUserSQL("n.tenant_id", "n.pool_id", "$4::uuid")+`
 			 ORDER BY n.sort_order, n.id`,
@@ -453,8 +440,8 @@ func listEligibleNodesTx(ctx context.Context, tx pgx.Tx, tenantID, userID, planV
 		if n.Config == nil {
 			n.Config = map[string]any{}
 		}
-		// 没有可连地址的节点直接跳过：发给客户端只会变成一条连不上的线路，
-		// 用户看到的是「你们家节点坏了」
+		// 没有可连地址的节点 SQL 已经排除（DeliverableNodeSQL），这里兜底：
+		// 发给客户端只会变成一条连不上的线路，用户看到的是「你们家节点坏了」
 		if n.Host == "" || n.Port == 0 {
 			continue
 		}

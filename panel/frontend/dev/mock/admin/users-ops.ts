@@ -474,5 +474,32 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         return { status: 200, body: { reset: true, freed_bytes: freed } }
       })
     },
+
+    // 加时长：billing.adjustment.write + reauth + 幂等 subscription_admin_extend（billing.ExtendSubscriptionAsAdmin）。
+    // 先解码（多余字段 400），再校验天数与原因（422 带 fields），再找订阅（404）、判状态（409）与到期时间（422 无 fields）
+    'POST /v1/subscriptions/:id/extend': async (ctx) => {
+      if (!ctx.requirePermission('billing.adjustment.write') || !ctx.requireReauth()) return
+      const body = await ctx.body()
+      await ctx.idempotent('subscription_admin_extend', () => {
+        if (!body) return err(400, 'bad_request', '请求体不是合法的 JSON')
+        const extra = unknownField(body, ['days', 'reason'])
+        if (extra) return err(400, 'bad_request', '请求体不是合法的 JSON')
+        const days = typeof body.days === 'number' && Number.isInteger(body.days) ? body.days : 0
+        const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+        const fields: Record<string, string> = {}
+        if (days < 1 || days > 3650) fields.days = '天数是 1 到 3650 之间的整数'
+        if (runes(reason) < 5 || runes(reason) > 500) fields.reason = '请写清加时长的原因，5 到 500 个字。这条会进审计'
+        if (Object.keys(fields).length) return err(422, 'validation_failed', '请求参数校验未通过', fields)
+        const owner = UUID.test(ctx.params.id!) ? users.find((u) => u.subs.some((s) => s.id === ctx.params.id)) : undefined
+        const sub = owner?.subs.find((s) => s.id === ctx.params.id)
+        if (!owner || !sub) return err(404, 'not_found', '资源不存在或无权访问')
+        if (sub.status !== 'active') return err(409, 'conflict', '只有生效中的订阅可以延长时长')
+        if (!sub.current_period_end) return err(422, 'validation_failed', '这条订阅没有到期时间，不需要延长')
+        const previous = sub.current_period_end
+        const end = new Date(Math.max(Date.parse(previous), Date.now()) + days * DAY).toISOString()
+        sub.current_period_end = end
+        return { status: 200, body: { subscription_id: sub.id, user_email: owner.email, days, previous_end: previous, period_end: end } }
+      })
+    },
   } satisfies Record<string, (ctx: MockContext) => void | Promise<void>>
 }

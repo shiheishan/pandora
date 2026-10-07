@@ -26,6 +26,13 @@ type ProviderRow struct {
 	HasCreds     bool     `json:"has_credentials"`
 	BaseURL      string   `json:"base_url"`
 	Currencies   []string `json:"currencies"`
+	// 编辑表单回填用的非机密配置（w2pay）。商户号与密钥只写不读，这里只有 has_credentials。
+	// Methods 是 config.methods 原样（没配为空数组），门户按它出方式，空时退回 default_method。
+	SubmitPath       string   `json:"submit_path"`
+	APIPath          string   `json:"api_path"`
+	Methods          []string `json:"methods"`
+	DefaultMethod    string   `json:"default_method"`
+	AllowPrivateHost bool     `json:"allow_private_host"`
 	// 渠道卡统计（后台-05）。Today 是租户时区今天成功入账的金额，按币种分开
 	// ——与挂账合计同一个理由，分和美分不能相加。SuccessRate24h 是近 24 小时
 	// 进入终态的支付尝试里成功的比例，没有样本为 nil；LastCallbackAt 是最近
@@ -43,6 +50,13 @@ func (s *Service) ListProviders(ctx context.Context, tenantID string) ([]Provide
 			       pp.credentials_encrypted IS NOT NULL,
 			       coalesce(pp.config->>'base_url', ''),
 			       coalesce(pp.supported_currencies, '{}'),
+			       coalesce(pp.config->>'submit_path', ''),
+			       coalesce(pp.config->>'api_path', ''),
+			       CASE WHEN jsonb_typeof(pp.config->'methods') = 'array'
+			            THEN ARRAY(SELECT jsonb_array_elements_text(pp.config->'methods'))
+			            ELSE '{}'::text[] END,
+			       coalesce(pp.config->>'default_method', ''),
+			       coalesce(pp.config->'allow_private_host' = 'true'::jsonb, false),
 			       coalesce((SELECT jsonb_object_agg(d.currency, d.amount)
 			                   FROM (SELECT p.currency::text AS currency, sum(p.amount) AS amount
 			                           FROM payments p
@@ -70,8 +84,12 @@ func (s *Service) ListProviders(ctx context.Context, tenantID string) ([]Provide
 			var p ProviderRow
 			if err := rows.Scan(&p.ID, &p.Code, &p.Adapter, &p.DisplayName,
 				&p.Enabled, &p.AcceptingNew, &p.HasCreds, &p.BaseURL,
-				&p.Currencies, &p.Today, &p.SuccessRate24h, &p.LastCallbackAt); err != nil {
+				&p.Currencies, &p.SubmitPath, &p.APIPath, &p.Methods, &p.DefaultMethod,
+				&p.AllowPrivateHost, &p.Today, &p.SuccessRate24h, &p.LastCallbackAt); err != nil {
 				return err
+			}
+			if p.Methods == nil {
+				p.Methods = []string{}
 			}
 			out = append(out, p)
 		}
