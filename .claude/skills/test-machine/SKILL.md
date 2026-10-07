@@ -37,8 +37,9 @@ Vultr 新加坡，Shared CPU，Debian 13 x64（与生产同版），开机时用
 
 - 刚开机头一次 ssh 常报 `Connection timed out during banner exchange`，隔 15 秒重试即可，不是密钥问题。
 - 镜像自带约 7.7G 的 `/swapfile`（磁盘上来就用掉 11G）。压测必须记录 swap 换页（runbook 的 sample-procs 已带），否则看不出「内存没撑爆但在换页」。
-- 镜像开着 ufw 时，安装脚本不放行端口：面板机要 80/443，节点机要协议端口（约定 20000–20099 的 tcp 与 udp）。
-- Debian 自带的 nginx 默认站点会和 aegis.conf 抢 80 端口的 default_server；安装链目前不申请证书。在安装链修好之前：趁默认站点还占着 80，先用 certbot webroot 申请证书，再删默认站点、执行 install.sh。没有域名就用 sslip.io；撞上 Let's Encrypt 限额就停下报告。
+- 镜像开着 ufw：面板机的 install.sh（e65faec 起）在 ufw active 时自动放行 80/443；节点机的协议端口（约定 20000–20099 的 tcp 与 udp）仍要手工放行。
+- 证书与 Debian 默认站点：install.sh（e65faec 起）加 `PANDORA_CERTBOT=1` 时自己用 webroot 申请证书、只停用发行版原样的 default 链接、渲染并 `nginx -t` 后 reload。没有域名就用 sslip.io；撞上 Let's Encrypt 限额就停下报告。装 e65faec 之前的发布包仍要手工：趁默认站点占着 80 先 certbot webroot，再删默认站点、执行 install.sh。
+- e65faec 起网关经 unix socket 连 PG 与 Valkey（`deploy/run/`）：复测时用 `SELECT client_addr IS NULL AS unix, count(*) FROM pg_stat_activity WHERE usename='aegis_app' GROUP BY 1` 确认；回退到更早的发布包前先把 `.env` 两条连接串改回回环。
 - `build-release.sh` 只能在 Linux 上跑（GNU tar、sha256sum），要在 `panel/` 目录下执行；它的 `git describe` 会取到 `archive/` 开头的标签，导致版本号被拒，要显式传版本号。
 - 压测机经 nginx 压面板时，所有请求的来源 IP 相同，会撞上按 IP 限流（每分钟 240 次）和 IP 聚类：要让面板信任压测机并由压测机带 X-Real-IP（runbook 第 4 节，loadtest 已支持）。
 - 1Password SSH agent 锁着时 ssh 会签名失败；子 agent 的沙箱连不到 agent，需要关掉沙箱或由主会话来执行。
