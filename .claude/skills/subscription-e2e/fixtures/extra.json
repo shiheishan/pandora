@@ -1,0 +1,33 @@
+[
+ {
+  "id": "legacy-flat-vless-reality",
+  "type": "vless",
+  "port": 446,
+  "config": {
+   "network": "tcp",
+   "security": "reality",
+   "dest": "www.example.com:443",
+   "server_names": ["www.example.com"],
+   "private_key": "@REALITY_PRIVATE@",
+   "public_key": "@REALITY_PUBLIC@",
+   "short_ids": ["0a1b2c3d"],
+   "fingerprint": "chrome",
+   "flow": "xtls-rprx-vision"
+  }
+ },
+ {
+  "id": "anytls-nocert",
+  "type": "anytls",
+  "port": 6444,
+  "config": {}
+ },
+ {
+  "id": "ss-cipher-method-conflict",
+  "type": "shadowsocks",
+  "port": 8390,
+  "config": {
+   "cipher": "aes-128-gcm",
+   "method": "chacha20-ietf-poly1305"
+  }
+ }
+]
