@@ -257,8 +257,11 @@ func (s *Service) ActivityTimeseries(ctx context.Context, tenantID string, days 
 			  coalesce(max(ac.n), 0)
 			  FROM d
 			  LEFT JOIN active ac ON ac.day = d.day
+			  -- occurred_at 的下界与 d 的第一天同一个日界（会话时区），不改变能连上的行，
+			  -- 只让它走时间索引；原来只有按天相等的条件，要扫这个租户的全部审计
 			  LEFT JOIN audit_events a
 			    ON a.tenant_id = $1 AND date_trunc('day', a.occurred_at)::date = d.day
+			   AND a.occurred_at >= date_trunc('day', now()) - make_interval(days => $2 - 1)
 			 GROUP BY d.day ORDER BY d.day`, tenantID, days)
 		if err != nil {
 			return err
