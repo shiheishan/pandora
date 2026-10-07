@@ -70,20 +70,28 @@ type Link struct {
 	DistinctSources int
 }
 
+// linkSourceWindow 是「近期不同来源数」的统计窗口：门户上显示为近 24 小时。
+const linkSourceWindow = "24 hours"
+
 // ListLinks 返回某个用户全部有效的订阅链接。
+//
+// 路径前缀与每条链接近 24 小时的不同来源数都在同一条语句里取：来源数原先是
+// 每条链接另开一个事务各算一次（N+1），现在是按凭据走
+// subscription_fetch_log_cred_idx 的相关子查询。
 func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Link, error) {
-	var prefix string
 	var out []Link
 
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx,
-			`SELECT COALESCE(sub_path_prefix, '') FROM tenants WHERE id = $1`,
-			tenantID).Scan(&prefix); err != nil {
-			return err
-		}
 		rows, err := tx.Query(ctx, `
 			SELECT sc.id, sc.subscription_id, sc.token_encrypted, sc.expires_at,
-			       sc.fetch_count, sc.last_fetched_at
+			       sc.fetch_count, sc.last_fetched_at,
+			       (SELECT COALESCE(t.sub_path_prefix, '') FROM tenants t WHERE t.id = sc.tenant_id),
+			       -- 按凭据 ID 统计（每条链接是独立的凭据）。之前误传 SubscriptionID，
+			       -- 导致永远查不到来源、恒为 0
+			       (SELECT count(DISTINCT f.ip_hash)::int FROM subscription_fetch_log f
+			         WHERE f.tenant_id = sc.tenant_id AND f.credential_id = sc.id
+			           AND f.result = 'ok'
+			           AND f.fetched_at > now() - interval '`+linkSourceWindow+`')
 			  FROM subscription_credentials sc
 			 WHERE sc.tenant_id = $1 AND sc.user_id = $2::uuid
 			   AND sc.status = 'active' AND sc.scope = 'subscription'
@@ -99,12 +107,11 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 			var sealed []byte
 			var l Link
 			if err := rows.Scan(&id, &subID, &sealed, &l.ExpiresAt,
-				&l.FetchCount, &l.LastFetchedAt); err != nil {
+				&l.FetchCount, &l.LastFetchedAt, &l.PathPrefix, &l.DistinctSources); err != nil {
 				return err
 			}
 			l.SubscriptionID = subID
 			l.CredentialID = id
-			l.PathPrefix = prefix
 			if len(sealed) > 0 && s.envelope != nil {
 				plain, err := s.envelope.Open(sealed, []byte(subID))
 				if err != nil {
@@ -124,11 +131,6 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 	})
 	if err != nil {
 		return nil, err
-	}
-	for i := range out {
-		// DistinctSources 按凭据 ID 统计（每条链接是独立的凭据）。
-		// 之前误传 SubscriptionID，导致永远查不到来源、恒为 0。
-		out[i].DistinctSources = s.DistinctSources(ctx, tenantID, out[i].CredentialID, 24*time.Hour)
 	}
 	return out, nil
 }
@@ -672,23 +674,6 @@ func (s *Service) TouchCredential(ctx context.Context, tenantID, credID, ip stri
 			tenantID, credID, s.hash(ip))
 		return err
 	})
-}
-
-// DistinctSources 返回最近一段时间内拉取过该凭据的不同来源数。
-//
-// 这是发现「链接被分享」最直接的信号：正常用户就算多设备，
-// 出口 IP 也集中在少数几个；一条被挂到群里的链接，来源数会迅速发散。
-func (s *Service) DistinctSources(ctx context.Context, tenantID, credID string, within time.Duration) int {
-	var n int
-	_ = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, fmt.Sprintf(`
-			SELECT count(DISTINCT ip_hash) FROM subscription_fetch_log
-			 WHERE tenant_id = $1 AND credential_id = $2::uuid
-			   AND result = 'ok'
-			   AND fetched_at > now() - interval '%d seconds'`, int(within.Seconds())),
-			tenantID, credID).Scan(&n)
-	})
-	return n
 }
 
 // seal 加密一条来源信息。
