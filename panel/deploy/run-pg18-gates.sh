@@ -131,6 +131,9 @@ DOMAINS=(
   # 后台建 / 改支付渠道与易支付多方式（w2pay）：凭据加密往返、编辑留空不改、换方式拿新收银台。
   # 复用 order_release 的一次性租户夹具（下单要套餐与价格），走 pg18test 护栏，独占一个库。
   "payment_provider|pandora_payment_provider_gate|./internal/domain/billing|run_id|pandora_payment_provider_test_marker|pandora-payment-provider-pg18|app_role|^TestPaymentProviderAdminPG18$"
+  # 订阅周期（第 2 波 w2sub）：礼品卡延期、后台加时长、续费、变更套餐四条路径的周期末与凭据到期、
+  # 本周期配额一致，并以迁移角色执行 00102 的存量修复。复用 order_release 的一次性租户夹具，独占一个库。
+  "sub_period|pandora_sub_period_gate|./internal/domain/billing|run_id|pandora_sub_period_test_marker|pandora-sub-period-pg18|app_role|^TestSubscriptionPeriodPG18$"
   # 按日流量（00072）：写入与扣量同事务，写入测试并进 traffic_charge 的库；
   # 读模型在 subscription 包，与 node_preview 同包，两边过滤都写精确。
   "usage_daily|pandora_usage_daily_gate|./internal/domain/subscription||||app_role|^TestUsageDailyReadPG18$"

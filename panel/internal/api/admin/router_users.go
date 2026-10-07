@@ -3,6 +3,7 @@ package admin
 import (
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/middleware"
 )
 
@@ -69,6 +70,13 @@ func registerUserRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequirePermission("iam.user.write", d.Log),
 		middleware.RequireRecentReauth(d.Log),
 	).Post("/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
+	// 加时长直接改用户的到期时间，与人工调账同权限码；不是天然幂等的
+	// （每执行一次多 N 天），所以重认证之后还要独立的幂等 scope。
+	r.With(
+		middleware.RequirePermission("billing.adjustment.write", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, billing.SubscriptionExtendIdempotencyScope, d.Log),
+	).Post("/subscriptions/{id}/extend", h.extendSubscription)
 }
 
 func registerUserGroupRoutes(r chi.Router, d Deps, h *handlers) {
