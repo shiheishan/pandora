@@ -76,7 +76,7 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 
 	switch n.Type {
 	case "vless", "vmess", "trojan":
-		o := parseStream(n)
+		o := parseStream(n, uuid)
 		if reason := clashStreamUnsupported(n, o); reason != "" {
 			return nil, reason
 		}
@@ -102,6 +102,10 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 		p["type"] = "ss"
 		p["password"] = uuid
 		p["cipher"] = ssMethod(n.Config)
+		// 节点端的 Shadowsocks 只监听 TCP（pdnd kernel/shadowsocks.go:Start，
+		// 面板也不许配 network=udp）。写 udp:true 的话客户端会把 DNS、游戏这些
+		// UDP 发到一个没人听的端口，静默失败；写 false 让客户端走别的路。
+		p["udp"] = false
 
 	case "hysteria2":
 		p["type"] = "hysteria2"
@@ -127,6 +131,7 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 		p["type"] = "anytls"
 		p["password"] = uuid
 		setClashTLSHints(p, parseTLSHints(n.Config))
+		p["client-fingerprint"] = anyTLSFingerprint(n.Config)
 
 	case "mieru":
 		// mihomo 原生支持 mieru；transport 必须与服务端一致（TCP / UDP）
@@ -142,6 +147,8 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 		p["type"] = "ss"
 		p["password"] = uuid
 		p["cipher"] = ssMethod(n.Config)
+		// ShadowTLS 只有 TCP，内层 Shadowsocks 也只听 TCP（同上）
+		p["udp"] = false
 		// plugin-opts 的字段名按 mihomo 的 shadowTLSOption（obfs: tag）核对：
 		// password / host / version / alpn 等，没有 enable —— 多给一个未知字段
 		// 会让 mihomo 解析这条代理时报错，整份订阅跟着导入失败。
@@ -189,7 +196,7 @@ func clashPremiumUnsupported(n Node) string {
 	case "shadowsocks", "socks", "http":
 		return ""
 	case "vmess", "trojan":
-		o := parseStream(n)
+		o := parseStream(n, "")
 		if o.Reality {
 			return "Clash Premium 不支持 REALITY"
 		}

@@ -39,12 +39,12 @@ func renderMatrix() map[string]matrixRow {
 	realityURI := []string{"security=reality", "pbk=" + fixtureRealityPub, "sid=0a1b2c3d", "sni=www.example.com"}
 	return map[string]matrixRow{
 		"ss-aes128": {
-			clash: has(`type: "ss"`, `cipher: "aes-128-gcm"`), premium: has(`cipher: "aes-128-gcm"`),
-			singbox: has(`"method":"aes-128-gcm"`), uri: has(ssB64("aes-128-gcm")),
+			clash: has(`type: "ss"`, `cipher: "aes-128-gcm"`, `udp: false`), premium: has(`cipher: "aes-128-gcm"`, `udp: false`),
+			singbox: has(`"method":"aes-128-gcm"`, `"network":"tcp"`), uri: has(ssB64("aes-128-gcm")),
 		},
 		"ss-chacha": {
-			clash: has(`cipher: "chacha20-ietf-poly1305"`), premium: has(`cipher: "chacha20-ietf-poly1305"`),
-			singbox: has(`"method":"chacha20-ietf-poly1305"`), uri: has(ssB64("chacha20-ietf-poly1305")),
+			clash: has(`cipher: "chacha20-ietf-poly1305"`, `udp: false`), premium: has(`cipher: "chacha20-ietf-poly1305"`),
+			singbox: has(`"method":"chacha20-ietf-poly1305"`, `"network":"tcp"`), uri: has(ssB64("chacha20-ietf-poly1305")),
 		},
 		"hy2-obfs": {
 			clash:   has(`obfs: "salamander"`, `obfs-password: "obfs-pass-1"`, `sni: "sni.example.com"`, `skip-cert-verify: true`),
@@ -62,9 +62,9 @@ func renderMatrix() map[string]matrixRow {
 			uri:     has("tuic://"+uu+"@", "congestion_control=cubic", "sni=sni.example.com", "alpn=h3"),
 		},
 		"anytls": {
-			clash: has(`type: "anytls"`, `sni: "sni.example.com"`, `skip-cert-verify: true`), premium: skip("Premium"),
-			singbox: has(`"type":"anytls"`, `"insecure":true`, `"server_name":"sni.example.com"`),
-			uri:     has("anytls://", "sni=sni.example.com", "insecure=1"),
+			clash: has(`type: "anytls"`, `sni: "sni.example.com"`, `skip-cert-verify: true`, `client-fingerprint: "chrome"`), premium: skip("Premium"),
+			singbox: has(`"type":"anytls"`, `"insecure":true`, `"server_name":"sni.example.com"`, `"utls":{"enabled":true,"fingerprint":"chrome"}`),
+			uri:     has("anytls://", "sni=sni.example.com", "insecure=1", "fp=chrome"),
 		},
 		"naive": {
 			clash: skip("naive"), premium: skip("Premium"),
@@ -106,10 +106,10 @@ func renderMatrix() map[string]matrixRow {
 			clash: has(`transport: "UDP"`), premium: skip("Premium"), singbox: skip("mieru"), uri: skip("mieru"),
 		},
 		"shadowtls": {
-			clash: has(`type: "ss"`, `plugin: "shadow-tls"`, `client-fingerprint: "chrome"`, `cipher: "aes-128-gcm"`,
+			clash: has(`type: "ss"`, `plugin: "shadow-tls"`, `client-fingerprint: "chrome"`, `cipher: "aes-128-gcm"`, `udp: false`,
 				`plugin-opts: {host: "www.example.com", password: "stls-pass-1", version: 3}`),
 			premium: skip("Premium"),
-			singbox: has(`"type":"shadowsocks"`, `"method":"aes-128-gcm"`, `"detour":"shadowtls · shadowtls"`),
+			singbox: has(`"type":"shadowsocks"`, `"method":"aes-128-gcm"`, `"detour":"shadowtls · shadowtls"`, `"network":"tcp"`),
 			uri:     skip("shadowtls"),
 		},
 		"trojan-tls-tcp": {
@@ -119,10 +119,10 @@ func renderMatrix() map[string]matrixRow {
 			uri:     has("trojan://", "security=tls", "sni=sni.example.com", "fp=firefox", "allowInsecure=1", "type=tcp"),
 		},
 		"trojan-tls-ws": {
-			clash:   has(`network: "ws"`, `ws-opts: {headers: {Host: "cdn.example.com"}, path: "/tw"}`),
-			premium: has(`network: "ws"`, `Host: "cdn.example.com"`),
-			singbox: has(`"transport":{"headers":{"Host":"cdn.example.com"},"path":"/tw","type":"ws"}`),
-			uri:     has("type=ws", "path=%2Ftw", "host=cdn.example.com", "security=tls"),
+			clash:   has(`network: "ws"`, `ws-opts: {headers: {Host: "cdn.example.com"}, path: "/tw"}`, `client-fingerprint: "chrome"`),
+			premium: has(`network: "ws"`, `Host: "cdn.example.com"`).without("client-fingerprint"),
+			singbox: has(`"transport":{"headers":{"Host":"cdn.example.com"},"path":"/tw","type":"ws"}`, `"utls":{"enabled":true,"fingerprint":"chrome"}`),
+			uri:     has("type=ws", "path=%2Ftw", "host=cdn.example.com", "security=tls", "fp=chrome"),
 		},
 		"trojan-tls-grpc": {
 			clash: has(`network: "grpc"`, `grpc-opts: {grpc-service-name: "tgrpc"}`), premium: has(`grpc-service-name: "tgrpc"`),
@@ -151,6 +151,12 @@ func renderMatrix() map[string]matrixRow {
 			premium: skip("Premium"),
 			singbox: has(realitySingbox, `"flow":"xtls-rprx-vision"`, `"fingerprint":"chrome"`),
 			uri:     has(append(realityURI, "flow=xtls-rprx-vision", "fp=chrome", "type=tcp")...).without("security=tls"),
+		},
+		"vless-reality-multi": {
+			clash:   has(`reality-opts: {public-key: "`+fixtureRealityPub+`", short-id: "`, `servername: "`, `flow: "xtls-rprx-vision"`, `client-fingerprint: "chrome"`),
+			premium: skip("Premium"),
+			singbox: has(`"reality":{"enabled":true,"public_key":"`+fixtureRealityPub+`","short_id":"`, `"server_name":"`, `"flow":"xtls-rprx-vision"`),
+			uri:     has("security=reality", "pbk="+fixtureRealityPub, "sid=", "sni=", "flow=xtls-rprx-vision"),
 		},
 		"vless-reality-grpc": {
 			clash: has(append(realityClash, `grpc-service-name: "vgrpc"`, `client-fingerprint: "safari"`)...), premium: skip("Premium"),

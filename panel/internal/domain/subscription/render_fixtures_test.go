@@ -38,6 +38,12 @@ func realitySettings() string {
 
 const certPaths = `"cert_path":"/etc/pdnd/c.pem","key_path":"/etc/pdnd/k.pem"`
 
+// realityMultiSettings 配了两个 server name、三个 short id：订阅按用户分散。
+func realityMultiSettings() string {
+	return `"reality_settings":{"dest":"www.example.com:443","server_name":["www.example.com","static.example.com"],` +
+		`"private_key":"` + fixtureRealityPri + `","public_key":"` + fixtureRealityPub + `","short_id":["0a1b2c3d","4e5f","6a7b8c9d0e1f2a3b"]}`
+}
+
 func formFixtures() []formFixture {
 	return []formFixture{
 		{"ss-aes128", "shadowsocks", 8388, `{"cipher":"aes-128-gcm"}`},
@@ -64,6 +70,7 @@ func formFixtures() []formFixture {
 		{"trojan-tls-httpupgrade", "trojan", 7447, `{"tls":1,"network":"httpupgrade",` + certPaths + `,"network_settings":{"path":"/tu"}}`},
 		{"trojan-reality", "trojan", 7446, `{"tls":2,"network":"tcp","utls":"firefox",` + realitySettings() + `}`},
 		{"vless-reality-vision", "vless", 443, `{"tls":2,"network":"tcp","flow":"xtls-rprx-vision","utls":"chrome",` + realitySettings() + `}`},
+		{"vless-reality-multi", "vless", 449, `{"tls":2,"network":"tcp","flow":"xtls-rprx-vision",` + realityMultiSettings() + `}`},
 		{"vless-reality-grpc", "vless", 444, `{"tls":2,"network":"grpc","utls":"safari","network_settings":{"serviceName":"vgrpc"},` + realitySettings() + `}`},
 		{"vless-reality-xhttp", "vless", 445, `{"tls":2,"network":"xhttp","network_settings":{"path":"/xh","mode":"auto"},` + realitySettings() + `}`},
 		{"vless-xhttp-header", "vless", 447, `{"tls":2,"network":"xhttp","session_placement":"header","network_settings":{"path":"/xh"},` + realitySettings() + `}`},
