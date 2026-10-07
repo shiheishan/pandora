@@ -48,6 +48,7 @@ var templateDescription = map[string]string{
 	"order.paid":            "订单支付成功后发给下单用户",
 	"ticket.replied":        "工单被管理员回复后通知提单人",
 	"auth.email_verify":     "注册第 1 步发给注册邮箱的验证码（开启邮箱验证时；邮箱已注册则不发）",
+	"auth.password_reset":   "找回密码第 1 步发给账号邮箱的验证码（邮箱不存在或是后台人员时不发）",
 }
 
 func TemplateDescription(code string) string { return templateDescription[code] }
@@ -349,6 +350,21 @@ var defaultTemplates = map[string]defaultTemplate{
 {{code}}
 
 验证码 {{minutes}} 分钟内有效。如果这不是你本人的操作，忽略这封邮件即可。
+
+{{site}}`,
+	},
+	// 与迁移 00128 的种子逐字一致（找回密码第 1 步发给账号邮箱）
+	"auth.password_reset|email": {
+		Subject: "【{{site}}】重置密码验证码 {{code}}",
+		Body: `你好，
+
+你正在重置 {{site}} 的登录密码，验证码是：
+
+{{code}}
+
+验证码 {{minutes}} 分钟内有效。重置成功后，这个账号在所有设备上的登录都会失效，需要用新密码重新登录。
+
+如果这不是你本人的操作，忽略这封邮件即可，你的密码不会改变。
 
 {{site}}`,
 	},

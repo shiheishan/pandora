@@ -147,6 +147,14 @@ func (s *Service) ConsumeQuickLogin(ctx context.Context, tenantID, rawToken,
 		if status != "active" {
 			return httpx.New(httpx.CodeForbidden, "账号当前不可登录")
 		}
+		// 持有后台角色的账号不能登录门户（portal_staff.go）：链接可能是授角色之前签的
+		staff, err := holdsAdminRole(ctx, tx, tenantID, userID)
+		if err != nil {
+			return err
+		}
+		if staff {
+			return ErrStaffPortalLogin
+		}
 
 		now := time.Now().UTC()
 		var sessionID string

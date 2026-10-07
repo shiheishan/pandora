@@ -42,17 +42,19 @@ func NewService(pool *db.Pool, issuer *token.Issuer, refreshTTL time.Duration, h
 	return &Service{pool: pool, issuer: issuer, refreshTTL: refreshTTL, hashSalt: hashSalt, devMode: devMode}
 }
 
-// VerificationMailer 是注册验证码的投递出口，由 notify.Service 实现。
+// VerificationMailer 是注册与找回密码验证码的投递出口，由 notify.Service 实现。
 //
 // 放一个接口而不是直接依赖 notify：identity 是最底层的域，只需要「在我的
-// 事务里排一封信」和「提交后催一下」这两件事。
+// 事务里排一封信」「提交后催一下」和「现在发不发得出邮件」这三件事。
 type VerificationMailer interface {
 	EnqueueToAddress(ctx context.Context, tx pgx.Tx, tenantID, code, address string,
 		vars map[string]string, dedupeKey string) error
 	Kick()
+	// EmailConfigured 为 false 时找回密码整体关闭（入口隐藏、接口拒绝）
+	EmailConfigured(ctx context.Context, tenantID string) bool
 }
 
-// SetVerificationMailer 接上验证码投递。承载注册的 public 网关必须调用它。
+// SetVerificationMailer 接上验证码投递。承载注册与找回密码的 public 网关必须调用它。
 func (s *Service) SetVerificationMailer(m VerificationMailer) { s.mailer = m }
 
 // 注册验证码的模板与有效期。有效期同时决定 verification_codes.expires_at
@@ -467,6 +469,8 @@ func (s *Service) Login(ctx context.Context, tenantID string, in LoginInput) (*L
 		found       bool
 		needsHash   bool
 		permissions []string
+		// staff：持有后台角色（portalStaffSQL），门户登录要拦
+		staff bool
 	)
 
 	err := s.pool.InTx(ctx, scope, func(tx pgx.Tx) error {
@@ -501,13 +505,34 @@ func (s *Service) Login(ctx context.Context, tenantID string, in LoginInput) (*L
 			}
 			permissions = append(permissions, code)
 		}
-		return prows.Err()
+		if err := prows.Err(); err != nil {
+			return err
+		}
+		prows.Close()
+		if audience == "public" {
+			staff, err = holdsAdminRole(ctx, tx, tenantID, userID)
+		}
+		return err
 	})
 	if err != nil {
 		return nil, httpx.Internal(err)
 	}
 
 	invalid := httpx.New(httpx.CodeUnauthorized, "邮箱或密码不正确")
+	// fail 记一条（按 IP 与账号限频的）登录失败审计，再把对外的错误原样交回。
+	// 先还哈希名额：审计要开一个事务，不该拿着 Argon2 名额等数据库
+	fail := func(slot *crypto.PasswordSlot, reason string, out *httpx.Error) (*LoginOutput, error) {
+		slot.Release()
+		var uid string
+		if found {
+			uid = userID
+		}
+		s.recordLoginFailure(ctx, tenantID, loginFailure{
+			Email: email, UserID: uid, Audience: audience, Reason: reason,
+			IP: in.IP, IPHash: in.IPHash, UserAgent: in.UserAgent,
+		})
+		return nil, out
+	}
 
 	// 口令计算在两个事务之间、经全局哈希名额进行：不占连接排队，名额只罩住计算。
 	// 账号存在与否都排同一个队，排不上同样回 503（IAM-006）。
@@ -520,21 +545,29 @@ func (s *Service) Login(ctx context.Context, tenantID string, in LoginInput) (*L
 	if !found {
 		// 关键：不提前返回，先付出与真实校验相同的计算代价
 		slot.DummyVerify(in.Password)
-		return nil, invalid
+		return fail(slot, loginFailureInvalid, invalid)
 	}
 
 	ok, rehash, err := slot.Verify(in.Password, phc)
 	if err != nil {
 		return nil, httpx.Internal(err)
 	}
-	if !ok || status != "active" {
-		return nil, invalid
+	if !ok {
+		return fail(slot, loginFailureInvalid, invalid)
+	}
+	if status != "active" {
+		return fail(slot, loginFailureInactive, invalid)
 	}
 	// 管理域要求账号确实被授过权。口令正确但无任何角色时，
 	// 对外仍返回与口令错误完全一致的响应（IAM-006），
 	// 不让攻击者借此枚举出「哪些邮箱是管理员」。
 	if audience == "admin" && len(permissions) == 0 {
-		return nil, invalid
+		return fail(slot, loginFailureNoAdminRole, invalid)
+	}
+	// 持有后台角色的账号不能登录门户（portal_staff.go）。口令已经对上才回这条，
+	// 提示不带后台路径
+	if audience == "public" && staff {
+		return fail(slot, loginFailureStaffPortal, ErrStaffPortalLogin)
 	}
 	needsHash = rehash
 	// 参数被调强后，趁用户输入明文时静默升级。在事务外、名额内算好，

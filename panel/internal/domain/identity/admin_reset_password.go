@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/credentialrevocation"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -121,23 +120,9 @@ func (s *Service) AdminResetPassword(ctx context.Context, tenantID string,
 				return err
 			}
 
-			// 下面三步和用户自己改密码完全一致。少任何一步，旧凭据都还能用。
-			if _, err := tx.Exec(ctx, `
-				UPDATE sessions
-				   SET revoked_at = now(), revoked_reason = 'password_reset_by_admin'
-				 WHERE tenant_id = $1 AND user_id = $2::uuid AND revoked_at IS NULL`,
-				tenantID, target); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `
-				UPDATE refresh_tokens
-				   SET status = 'revoked'
-				 WHERE tenant_id = $1 AND user_id = $2::uuid AND status = 'active'`,
-				tenantID, target); err != nil {
-				return err
-			}
-			if _, err := credentialrevocation.RevokeRefreshFamilies(
-				ctx, tx, tenantID, target); err != nil {
+			// 会话、刷新令牌、令牌家族一起吊销（与自助找回密码同一份实现）。
+			// 少任何一步，旧凭据都还能用。
+			if err := revokeAllLogins(ctx, tx, tenantID, target, "password_reset_by_admin"); err != nil {
 				return err
 			}
 
