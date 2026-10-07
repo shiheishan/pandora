@@ -259,6 +259,7 @@ func run() error {
 			case n > 0:
 				log.Info("配额已滚入新周期", "count", n)
 			}
+			nodeSvc.EnsureLivenessPatrol(ctx, middleware.DefaultTenantID, log) // 节点在线巡检（30 秒一轮，只起一次）
 			select {
 			case <-ctx.Done():
 				return
