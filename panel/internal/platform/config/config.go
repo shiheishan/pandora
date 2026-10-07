@@ -72,6 +72,9 @@ type Config struct {
 
 	// Deployment 是部署侧可缺省的项（备份目录、GeoIP、NativeCore 发布绑定）。
 	Deployment
+
+	// Runtime 是进程级资源上限（连接池、口令哈希并发），见 runtime.go。
+	Runtime
 }
 
 func Load() (*Config, error) {
@@ -127,6 +130,9 @@ func Load() (*Config, error) {
 		Deployment: loadDeployment(),
 	}
 	if c.PprofAddrs, err = loadPprofAddrs([]string{c.PublicAddr, c.AdminAddr, c.NodeAddr}); err != nil {
+		return nil, err
+	}
+	if c.Runtime, err = loadRuntime(); err != nil {
 		return nil, err
 	}
 	if c.IsProduction() {
