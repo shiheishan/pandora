@@ -89,18 +89,38 @@ func (s *Service) UserActivity(ctx context.Context, tenantID, userID string) (*U
 
 		// 按 IP 归并，并算出每个 IP 上还有多少别的账号。
 		// 用哈希做 JOIN，明文只在最后展示时解一次。
+		//
+		// 先只取这个用户最常用的 20 个来源（mine），再逐个按哈希数同源账号。原来 LEFT JOIN
+		// 视图 audit_ip_clusters，规划器要先把全租户 90 天的审计按 IP 整个 GROUP BY 一遍；
+		// 这里的 LATERAL 与视图同一口径（近 90 天、用户事件、actor_id 非空、多于一个账号才
+		// 算同源），只走 audit_events_ip_idx 查这 20 个哈希。并列时按最近出现、再按哈希排，
+		// 结果稳定（原来并列的先后未定义）。
 		irows, err := tx.Query(ctx, `
-			SELECT COALESCE((array_agg(a.source_ip_enc ORDER BY a.occurred_at DESC))[1], ''::bytea),
-			       count(*), min(a.occurred_at), max(a.occurred_at),
+			WITH mine AS MATERIALIZED (
+			  SELECT a.source_ip_hash,
+			         COALESCE((array_agg(a.source_ip_enc ORDER BY a.occurred_at DESC))[1], ''::bytea) AS ip_enc,
+			         count(*) AS n, min(a.occurred_at) AS first_at, max(a.occurred_at) AS last_at
+			    FROM audit_events a
+			   WHERE a.tenant_id = $1 AND a.actor_id = $2::uuid
+			     AND a.source_ip_hash IS NOT NULL
+			   GROUP BY a.source_ip_hash
+			   ORDER BY count(*) DESC, max(a.occurred_at) DESC, a.source_ip_hash
+			   LIMIT 20
+			)
+			SELECT m.ip_enc, m.n, m.first_at, m.last_at,
 			       COALESCE(c.account_count, 1),
 			       COALESCE(c.accounts, ARRAY[]::text[])
-			  FROM audit_events a
-			  LEFT JOIN audit_ip_clusters c
-			    ON c.tenant_id = a.tenant_id AND c.source_ip_hash = a.source_ip_hash
-			 WHERE a.tenant_id = $1 AND a.actor_id = $2::uuid
-			   AND a.source_ip_hash IS NOT NULL
-			 GROUP BY a.source_ip_hash, c.account_count, c.accounts
-			 ORDER BY count(*) DESC LIMIT 20`, tenantID, userID)
+			  FROM mine m
+			  LEFT JOIN LATERAL (
+			        SELECT count(DISTINCT e.actor_id) AS account_count,
+			               array_agg(DISTINCT e.actor_id::text) AS accounts
+			          FROM audit_events e
+			         WHERE e.tenant_id = $1
+			           AND e.source_ip_hash IS NOT NULL AND e.source_ip_hash = m.source_ip_hash
+			           AND e.actor_kind = 'user' AND e.actor_id IS NOT NULL
+			           AND e.occurred_at > now() - interval '90 days'
+			        HAVING count(DISTINCT e.actor_id) > 1) c ON true
+			 ORDER BY m.n DESC, m.last_at DESC, m.source_ip_hash`, tenantID, userID)
 		if err != nil {
 			return err
 		}
