@@ -2,6 +2,7 @@ package nodefabric
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // 校验也走翻译，不重写校验器。
@@ -45,13 +46,86 @@ func ValidateAdminProtocolConfig(nodeType, kernel string, port int,
 		return 0, map[string]string{"protocol_config": "协议配置必须是 JSON 对象"}
 	}
 
-	kernelRaw, err := json.Marshal(toKernelConfig(canonical, stored))
+	kernelShape := toKernelConfig(canonical, stored)
+	// 客户端提示（SNI、跳过证书校验）不归内核校验器管：它是严格解码，见到
+	// 不认识的键就拒。先剥出来单独校验，剩下的再交给它。
+	hintFields := takeClientTLSHints(canonical, kernelShape)
+	kernelRaw, err := json.Marshal(kernelShape)
 	if err != nil {
 		return 0, map[string]string{"protocol_config": "协议配置无法序列化"}
 	}
 
 	version, fields := ValidateProtocolConfig(nodeType, kernel, port, kernelRaw)
-	return version, renameErrorFieldsToXboard(canonical, fields)
+	fields = renameErrorFieldsToXboard(canonical, fields)
+	if len(hintFields) > 0 || canonical == "anytls" {
+		if fields == nil {
+			fields = map[string]string{}
+		}
+		for key, msg := range hintFields {
+			fields[key] = msg
+		}
+		requireAnyTLSCertificate(canonical, kernelShape, fields)
+	}
+	return version, fields
+}
+
+// clientTLSHintProtocols 是 schema 里开放了 tls_settings.server_name /
+// tls_settings.allow_insecure 的协议。vless / vmess 不在里面：它们的普通 TLS
+// 还没开放（tls 只能选 0 或 2），REALITY 的 SNI 走 reality_settings.server_name。
+var clientTLSHintProtocols = map[string]bool{
+	"trojan": true, "hysteria2": true, "tuic": true, "anytls": true, "naive": true,
+}
+
+// takeClientTLSHints 从内核形状里取走客户端 TLS 提示并校验，返回错误字段。
+//
+// 错误键直接用表单路径（tls_settings.*）：这两个键不在内核校验器的字段表里，
+// 走不了 renameErrorFieldsToXboard 的逆向映射。
+func takeClientTLSHints(nodeType string, kernelShape map[string]any) map[string]string {
+	if !clientTLSHintProtocols[nodeType] {
+		return nil
+	}
+	fields := map[string]string{}
+	if raw, ok := kernelShape["server_name"]; ok {
+		delete(kernelShape, "server_name")
+		name, isString := raw.(string)
+		switch {
+		case !isString:
+			fields["protocol_config.tls_settings.server_name"] = "SNI 必须是字符串"
+		case name == "":
+		case len(name) > 253 || strings.TrimSpace(name) != name || !validServerName(name):
+			fields["protocol_config.tls_settings.server_name"] = "SNI 必须是有效的 IP 或 ASCII 主机名"
+		}
+	}
+	if raw, ok := kernelShape["allow_insecure"]; ok {
+		delete(kernelShape, "allow_insecure")
+		if _, isBool := raw.(bool); !isBool {
+			fields["protocol_config.tls_settings.allow_insecure"] = "必须是 true 或 false"
+		}
+	}
+	return fields
+}
+
+// requireAnyTLSCertificate 要求 AnyTLS 必须配证书。
+//
+// 节点端在没有 cert_path 时以明文起 AnyTLS（pdnd/kernel/anytls.go），而
+// mihomo、sing-box 等所有客户端都强制 TLS：这样的节点存得进去、起得来，
+// 却谁都连不上。在保存时拦住，比让用户对着「超时」排查强。
+func requireAnyTLSCertificate(nodeType string, kernelShape map[string]any, fields map[string]string) {
+	if nodeType != "anytls" {
+		return
+	}
+	cert, _ := kernelShape["cert_path"].(string)
+	key, _ := kernelShape["key_path"].(string)
+	if strings.TrimSpace(cert) == "" {
+		if _, taken := fields["protocol_config.cert_path"]; !taken {
+			fields["protocol_config.cert_path"] = "AnyTLS 必须提供证书：客户端一律强制 TLS，明文 AnyTLS 谁都连不上"
+		}
+	}
+	if strings.TrimSpace(key) == "" {
+		if _, taken := fields["protocol_config.key_path"]; !taken {
+			fields["protocol_config.key_path"] = "AnyTLS 必须提供私钥路径"
+		}
+	}
 }
 
 // kernelToXboardField 是 xboardRename 的逆表，按协议缓存。

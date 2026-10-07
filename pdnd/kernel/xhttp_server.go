@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	realitytls "github.com/aegispanel/nodeagent/internal/reality"
@@ -91,7 +90,7 @@ func (s XHTTPServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "xhttp handler unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if s.Config.Host != "" && !strings.EqualFold(req.Host, s.Config.Host) {
+	if !requestHostMatches(req.Host, s.Config.Host) {
 		http.Error(w, "host mismatch", http.StatusNotFound)
 		return
 	}

@@ -2,6 +2,7 @@ package nodefabric
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -47,13 +48,20 @@ func validateRealityFields(fields map[string]string, dest string,
 		}
 	}
 
-	if err := checkX25519Key(privKey); err != nil {
-		fields["protocol_config.private_key"] = "私钥" + err.Error()
+	privErr := checkX25519Key(privKey)
+	if privErr != nil {
+		fields["protocol_config.private_key"] = "私钥" + privErr.Error()
 	}
 	// 公钥不参与服务端握手，但订阅链接要发给客户端。
 	// 缺了它节点能起来、用户却连不上，是最难查的一类问题。
-	if err := checkX25519Key(pubKey); err != nil {
-		fields["protocol_config.public_key"] = "公钥" + err.Error() + "（客户端要用它，不能省）"
+	pubErr := checkX25519Key(pubKey)
+	if pubErr != nil {
+		fields["protocol_config.public_key"] = "公钥" + pubErr.Error() + "（客户端要用它，不能省）"
+	}
+	// 两把钥匙各自合法还不够，必须是一对：节点按私钥握手，客户端按订阅里的
+	// 公钥验证。配错了节点照样起得来，只是谁都连不上，而且报错只有「超时」。
+	if privErr == nil && pubErr == nil && !realityKeysPaired(privKey, pubKey) {
+		fields["protocol_config.public_key"] = "公钥和私钥不是一对：请用「生成」按钮重新生成，或填私钥对应的公钥"
 	}
 
 	for _, s := range shortIDs {
@@ -70,6 +78,40 @@ func validateRealityFields(fields map[string]string, dest string,
 			break
 		}
 	}
+}
+
+// realityKeysPaired 判断公钥是不是由这把私钥推出来的。两者都已通过
+// checkX25519Key。X25519 内部会做 RFC 7748 的 clamping，未 clamp 的私钥
+// （xray x25519 生成的就是 clamp 过的，手填的未必）推出的公钥与节点端一致。
+func realityKeysPaired(privKey, pubKey string) bool {
+	priv, err := decodeX25519Key(privKey)
+	if err != nil {
+		return false
+	}
+	pub, err := decodeX25519Key(pubKey)
+	if err != nil {
+		return false
+	}
+	derived, err := curve25519.X25519(priv, curve25519.Basepoint)
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare(derived, pub) == 1
+}
+
+func decodeX25519Key(s string) ([]byte, error) {
+	s = strings.TrimSpace(s)
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		b, err = base64.StdEncoding.DecodeString(s)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(b) != 32 {
+		return nil, fmt.Errorf("key length %d", len(b))
+	}
+	return b, nil
 }
 
 func checkX25519Key(s string) error {

@@ -18,7 +18,16 @@ import (
 	"golang.org/x/net/http2"
 )
 
+// encodeGunHunk 按 gun 传输把数据包成一条 Hunk（客户端视角，测试用）。
+func encodeGunHunk(payload []byte) []byte {
+	var header [1 + binary.MaxVarintLen64]byte
+	header[0] = gunHunkTag
+	n := 1 + binary.PutUvarint(header[1:], uint64(len(payload)))
+	return append(header[:n:n], payload...)
+}
+
 func writeGRPCFrame(w io.Writer, payload []byte) error {
+	payload = encodeGunHunk(payload)
 	frame := make([]byte, 5+len(payload))
 	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
 	copy(frame[5:], payload)
@@ -34,15 +43,17 @@ func readGRPCFrame(r io.Reader) ([]byte, error) {
 	if header[0] != 0 {
 		return nil, fmt.Errorf("compressed grpc frame")
 	}
-	payload := make([]byte, binary.BigEndian.Uint32(header[1:]))
-	_, err := io.ReadFull(r, payload)
-	return payload, err
+	message := make([]byte, binary.BigEndian.Uint32(header[1:]))
+	if _, err := io.ReadFull(r, message); err != nil {
+		return nil, err
+	}
+	return decodeGunHunk(message)
 }
 
 func writeCompressedGRPCFrame(w io.Writer, payload []byte) error {
 	var compressed bytes.Buffer
 	writer := gzip.NewWriter(&compressed)
-	if _, err := writer.Write(payload); err != nil {
+	if _, err := writer.Write(encodeGunHunk(payload)); err != nil {
 		return err
 	}
 	if err := writer.Close(); err != nil {

@@ -9,6 +9,10 @@ import (
 
 // REALITY 节点必须在三种格式里都带全参数。
 //
+// 这一组刻意保留旧的内核扁平形状（security、public_key、server_names…）：
+// 迁移前写进库的存量节点就是这个形状，翻译层对它必须原样放行。表单形状的
+// REALITY 见 render_matrix_test.go。
+//
 // 这组测试是补出来的：第一版只改了 URI 渲染器，Clash 和 sing-box 漏了，
 // 结果是 Clash 用户导入后拿到一条没有 reality-opts 的 vless，
 // 客户端安静地按明文去连，超时，而用户看到的只是「节点不可用」。

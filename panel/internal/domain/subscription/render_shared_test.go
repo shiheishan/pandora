@@ -15,14 +15,18 @@ func TestRenderLeavesCachedNodesUntouched(t *testing.T) {
 	raw := []struct {
 		name, typ, config string
 	}{
-		{"香港", "vless", `{"network":"tcp","security":"reality","public_key":"pk","server_names":["a.example.com","b.example.com"],"short_ids":["01ab"],"flow":"xtls-rprx-vision"}`},
-		{"香港", "vmess", `{"network":"ws","tls":true,"server_name":"edge.example.com","path":"/ws","host":"edge.example.com"}`},
-		{"自动选择", "trojan", `{"network":"tcp","server_name":"edge.example.com"}`},
-		{"", "hysteria2", `{"server_name":"edge.example.com","obfs_password":"secret"}`},
-		{"东京", "shadowsocks", `{"method":"2022-blake3-aes-128-gcm"}`},
-		{"东京", "tuic", `{"server_name":"edge.example.com","congestion_control":"bbr"}`},
-		{"新加坡", "vless", `{"network":"mkcp","mask":"wechat-video","mask_password":"x"}`},
-		{"首尔", "anytls", `{"server_name":"edge.example.com"}`},
+		// 表单形状（xboard）：嵌套对象正是最容易被误改的地方
+		{"香港", "vless", `{"tls":2,"network":"grpc","utls":"chrome","network_settings":{"serviceName":"svc"},"reality_settings":{"dest":"www.example.com:443","server_name":"a.example.com","private_key":"k","public_key":"pk","short_id":"01ab"}}`},
+		{"香港", "vmess", `{"tls":0,"network":"ws","network_settings":{"path":"/ws","headers":{"Host":"edge.example.com"}}}`},
+		{"自动选择", "trojan", `{"tls":1,"network":"tcp","cert_path":"/c","key_path":"/k","tls_settings":{"server_name":"edge.example.com","allow_insecure":true}}`},
+		{"", "hysteria2", `{"cert_path":"/c","key_path":"/k","obfs":{"type":"salamander","password":"secret"},"bandwidth":{"up":10,"down":20}}`},
+		{"东京", "shadowsocks", `{"cipher":"aes-128-gcm"}`},
+		{"东京", "tuic", `{"cert_path":"/c","key_path":"/k","congestion_control":"bbr"}`},
+		{"新加坡", "vless", `{"tls":0,"network":"mkcp","mask":"wechat-video","mask_password":"x"}`},
+		{"首尔", "anytls", `{"tls":true,"cert_path":"/c","key_path":"/k"}`},
+		{"首尔", "shadowtls", `{"password":"p","handshake_server":"www.example.com","server_port":443,"version":3}`},
+		// 旧扁平形状一条，确认翻译对它也不改原值
+		{"旧", "vless", `{"network":"tcp","security":"reality","public_key":"pk","server_names":["a.example.com","b.example.com"],"short_ids":["01ab"],"flow":"xtls-rprx-vision"}`},
 	}
 	nodes := make([]Node, 0, len(raw))
 	for i, r := range raw {
@@ -35,7 +39,7 @@ func TestRenderLeavesCachedNodesUntouched(t *testing.T) {
 	}
 	snapshot := deepCopyNodes(t, nodes)
 
-	formats := []Format{FormatClash, FormatSingbox, FormatURI}
+	formats := []Format{FormatClash, FormatClashPremium, FormatSingbox, FormatURI}
 	want := map[Format][]byte{}
 	for _, f := range formats {
 		body, _, _ := Render(f, nodes, credential)

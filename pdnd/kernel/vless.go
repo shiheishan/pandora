@@ -264,11 +264,11 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			ReadBufferSize:  32 * 1024,
 			WriteBufferSize: 32 * 1024,
 			CheckOrigin: func(req *http.Request) bool {
-				return host == "" || strings.EqualFold(strings.TrimSpace(req.Host), host)
+				return requestHostMatches(req.Host, host)
 			},
 		}
 		handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if req.URL == nil || req.URL.Path != path || (host != "" && !strings.EqualFold(strings.TrimSpace(req.Host), host)) {
+			if req.URL == nil || req.URL.Path != path || !requestHostMatches(req.Host, host) {
 				http.NotFound(w, req)
 				return
 			}
@@ -395,7 +395,16 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			defer a.removeActive(conn)
 			_ = a.handleConnSession(connCtx, conn, nil)
 		}
-		server, serveErr := serveNativeGRPC(listener, path, host, 16<<20, h2cMode, onConn)
+		hosts := []string{host}
+		if a.reality && strings.TrimSpace(host) != "" {
+			// REALITY 下客户端的 :authority 是 REALITY server name（见 serveNativeGRPCHosts）
+			if realitySpec, err := ParseRealityServerConfig(spec.Config.Raw); err == nil {
+				for name := range realitySpec.ServerNames {
+					hosts = append(hosts, name)
+				}
+			}
+		}
+		server, serveErr := serveNativeGRPCHosts(listener, path, hosts, 16<<20, h2cMode, onConn)
 		if serveErr != nil {
 			_ = listener.Close()
 			a.cancel()
