@@ -2,7 +2,9 @@
 //
 // 渠道凭据（易支付的商户号与密钥）必须信封加密后入库（SEC-010），
 // 而密文的 AAD 绑定渠道行 ID，所以「插入行」与「加密凭据」有先后依赖，
-// 纯 SQL 脚本做不到。管理端 UI 落地前，由这个工具承担。
+// 纯 SQL 脚本做不到。后台「支付渠道」页也能建与改；两边调的是 billing 里
+// 同一份写入（CreateProvider / UpdateProvider），口径一致、都写审计。
+// 已存在的渠道按更新处理：商户号与密钥留空表示沿用库里的那一份。
 //
 // 用法：
 //
@@ -10,26 +12,28 @@
 //	  --tenant <tenant-id> --code epay --name "易支付" \
 //	  --base-url https://pay.example.com \
 //	  --merchant 1001 --key <商户密钥> \
-//	  [--default-method alipay] [--enable] [--allow-private-host]
+//	  [--methods alipay,wxpay] [--default-method alipay] [--enable] [--allow-private-host]
 //
 //	aegis-payctl list --tenant <tenant-id>
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/aegispanel/aegis/internal/domain/payment"
+	"github.com/aegispanel/aegis/internal/domain/billing"
 	"github.com/aegispanel/aegis/internal/platform/config"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
+	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 func main() {
@@ -75,11 +79,12 @@ func upsertEpay(ctx context.Context, pool *db.Pool, cfg *config.Config) error {
 		code          = fs.String("code", "epay", "渠道编码")
 		name          = fs.String("name", "易支付", "展示名")
 		baseURL       = fs.String("base-url", "", "易支付站点地址，如 https://pay.example.com（必填）")
-		merchant      = fs.String("merchant", "", "商户号 pid（必填）")
-		key           = fs.String("key", "", "商户密钥（必填）")
+		merchant      = fs.String("merchant", "", "商户号 pid（新建必填；更新时留空 = 不改）")
+		key           = fs.String("key", "", "商户密钥（新建必填；更新时留空 = 不改）")
 		submitPath    = fs.String("submit-path", "/submit.php", "下单路径")
 		apiPath       = fs.String("api-path", "/api.php", "查询接口路径")
-		defaultMethod = fs.String("default-method", "alipay", "默认支付方式")
+		methods       = fs.String("methods", "alipay", "支付方式，逗号分隔，取值 alipay / wxpay / qqpay")
+		defaultMethod = fs.String("default-method", "", "默认支付方式（留空取 --methods 的第一个）")
 		enable        = fs.Bool("enable", false, "是否启用")
 		allowPrivate  = fs.Bool("allow-private-host", false, "允许内网地址（仅开发环境）")
 	)
@@ -87,9 +92,7 @@ func upsertEpay(ctx context.Context, pool *db.Pool, cfg *config.Config) error {
 		return err
 	}
 
-	for n, v := range map[string]string{
-		"tenant": *tenant, "base-url": *baseURL, "merchant": *merchant, "key": *key,
-	} {
+	for n, v := range map[string]string{"tenant": *tenant, "base-url": *baseURL} {
 		if v == "" {
 			return fmt.Errorf("--%s 必填", n)
 		}
@@ -103,61 +106,66 @@ func upsertEpay(ctx context.Context, pool *db.Pool, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	// 与后台同一份写入：先落行、再按 id 作 AAD 加密，保存前用适配器试构造，并写审计。
+	// 只用到渠道写入，不需要结算服务。
+	svc := billing.NewPaymentService(nil, pool, env, cfg.MasterKey, cfg.PublicBaseURL, !cfg.IsProduction())
+	settings := billing.ProviderSettings{
+		DisplayName: *name, BaseURL: *baseURL, SubmitPath: *submitPath, APIPath: *apiPath,
+		Methods: splitMethods(*methods), DefaultMethod: *defaultMethod,
+		AllowPrivateHost: *allowPrivate, MerchantID: *merchant, Key: *key,
+	}
+	actor := billing.ProviderActor{Kind: "system"}
 
-	providerConfig, _ := json.Marshal(map[string]any{
-		"base_url":           *baseURL,
-		"submit_path":        *submitPath,
-		"api_path":           *apiPath,
-		"default_method":     *defaultMethod,
-		"allow_private_host": *allowPrivate,
+	action := "已更新"
+	out, err := svc.UpdateProvider(ctx, *tenant, actor, billing.UpdateProviderInput{
+		Code: *code, ProviderSettings: settings, Enabled: enable,
 	})
-
-	creds, err := payment.EncodeCredentials(payment.Credentials{
-		MerchantID: *merchant,
-		Key:        *key,
-	})
+	if httpErr := new(httpx.Error); errors.As(err, &httpErr) && httpErr.Code == httpx.CodeNotFound {
+		action = "已新建"
+		out, err = svc.CreateProvider(ctx, *tenant, actor, billing.CreateProviderInput{
+			Code: *code, Adapter: "epay", ProviderSettings: settings,
+			Enabled: *enable, AcceptingNew: true,
+		})
+	}
 	if err != nil {
-		return err
+		return describeError(err)
 	}
 
-	var providerID string
-	err = pool.InTx(ctx, db.Scope{TenantID: *tenant}, func(tx pgx.Tx) error {
-		// 先落行拿到 ID —— 凭据密文的 AAD 要绑定它
-		err := tx.QueryRow(ctx, `
-			INSERT INTO payment_providers
-				(tenant_id, code, adapter, display_name, supported_currencies,
-				 config, enabled, accepting_new)
-			VALUES ($1, $2, 'epay', $3, ARRAY['CNY']::app.currency_code[], $4, $5, true)
-			ON CONFLICT (tenant_id, code) DO UPDATE
-			   SET display_name = EXCLUDED.display_name,
-			       config       = EXCLUDED.config,
-			       enabled      = EXCLUDED.enabled
-			RETURNING id`,
-			*tenant, *code, *name, providerConfig, *enable,
-		).Scan(&providerID)
-		if err != nil {
-			return err
-		}
-
-		// AAD 绑定渠道 ID：把密文搬到另一条渠道记录上会解不开
-		sealed, err := env.Seal(creds, []byte("payment_provider:"+providerID))
-		if err != nil {
-			return err
-		}
-
-		_, err = tx.Exec(ctx,
-			`UPDATE payment_providers SET credentials_encrypted = $1, key_version = 1
-			  WHERE id = $2`, sealed, providerID)
-		return err
-	})
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("已配置易支付渠道\n  provider_id = %s\n  code        = %s\n  base_url    = %s\n  merchant    = %s\n  enabled     = %v\n",
-		providerID, *code, *baseURL, *merchant, *enable)
+	fmt.Printf("%s易支付渠道\n  provider_id = %s\n  code        = %s\n  base_url    = %s\n  methods     = %s\n  enabled     = %v\n  凭据变更    = %v\n",
+		action, out.ID, out.Code, *baseURL, *methods, *enable, out.CredentialsChanged)
 	fmt.Println("  凭据已信封加密入库，明文不落库、不落日志")
 	return nil
+}
+
+func splitMethods(raw string) []string {
+	var out []string
+	for _, m := range strings.Split(raw, ",") {
+		if m = strings.TrimSpace(m); m != "" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// describeError 把校验错误的逐字段原因摊开：命令行没有表单可以标红。
+func describeError(err error) error {
+	httpErr := new(httpx.Error)
+	if !errors.As(err, &httpErr) {
+		return err
+	}
+	if len(httpErr.Fields) == 0 {
+		return errors.New(httpErr.Message)
+	}
+	keys := make([]string, 0, len(httpErr.Fields))
+	for k := range httpErr.Fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+": "+httpErr.Fields[k])
+	}
+	return fmt.Errorf("%s（%s）", httpErr.Message, strings.Join(parts, "；"))
 }
 
 func list(ctx context.Context, pool *db.Pool) error {

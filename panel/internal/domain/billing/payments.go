@@ -185,6 +185,13 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 		return nil, httpx.New(httpx.CodeUnavailable, "该支付渠道暂停收单，请稍后再试或更换渠道")
 	}
 
+	// 所选方式必须在渠道配置的方式里；没选时规整成渠道默认，
+	// 复用在途意图时按规整后的方式比对（见下方「复用在途意图」）
+	method, err := resolvePaymentMethod(rec.Config, in.Method)
+	if err != nil {
+		return nil, err
+	}
+
 	var (
 		out       CreateIntentOutput
 		orderNo   string
@@ -231,29 +238,29 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 		// 用户连点两次「去支付」应该回到同一个收银台，而不是产生两笔待付款。
 		var existingID, existingStatus string
 		var existingPayload []byte
+		var samePro bool
 		err = tx.QueryRow(ctx, `
-			SELECT id, status, action_payload
+			SELECT id, status, action_payload, provider_id = $3
 			  FROM payment_intents
 			 WHERE tenant_id = $1 AND order_id = $2
 			   AND status IN ('created', 'requires_action', 'processing')
 			 LIMIT 1`,
-			tenantID, in.OrderID,
-		).Scan(&existingID, &existingStatus, &existingPayload)
+			tenantID, in.OrderID, rec.ID,
+		).Scan(&existingID, &existingStatus, &existingPayload, &samePro)
 
 		if err == nil {
-			// 同渠道同金额才复用；换渠道时先作废旧意图
-			var samePro bool
-			_ = tx.QueryRow(ctx,
-				`SELECT provider_id = $1 FROM payment_intents WHERE id = $2`,
-				rec.ID, existingID).Scan(&samePro)
-
+			// 同渠道、同方式才复用；换渠道或换方式（先支付宝、退出、再选微信）时
+			// 先作废旧意图再重建，否则用户拿到的还是上一次的收银台。
+			// 方式记在 action_payload.method；此前建的意图没有这个键，按「方式不同」重建。
 			if samePro && len(existingPayload) > 0 {
 				var payload struct {
 					HTTPMethod  string            `json:"http_method"`
 					RedirectURL string            `json:"redirect_url"`
 					FormFields  map[string]string `json:"form_fields"`
+					Method      *string           `json:"method"`
 				}
-				if json.Unmarshal(existingPayload, &payload) == nil && payload.RedirectURL != "" {
+				if json.Unmarshal(existingPayload, &payload) == nil && payload.RedirectURL != "" &&
+					payload.Method != nil && *payload.Method == method {
 					out = CreateIntentOutput{
 						IntentID:    existingID,
 						HTTPMethod:  payload.HTTPMethod,
@@ -267,7 +274,7 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 				}
 			}
 
-			// 换渠道或旧意图无跳转信息：作废后重建
+			// 换渠道、换方式或旧意图无跳转信息：作废后重建
 			if _, err := tx.Exec(ctx,
 				`UPDATE payment_intents SET status = 'cancelled' WHERE id = $1`,
 				existingID); err != nil {
@@ -299,7 +306,7 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 			Amount:     payable,
 			Currency:   currency,
 			Subject:    subject,
-			Method:     in.Method,
+			Method:     method,
 			NotifyURL:  s.notifyURL(in.ProviderCode),
 			ReturnURL:  s.returnURL(in.ReturnURL),
 			ClientIP:   in.ClientIP,
@@ -312,6 +319,7 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 			"http_method":  resp.HTTPMethod,
 			"redirect_url": resp.RedirectURL,
 			"form_fields":  resp.FormFields,
+			"method":       method,
 		})
 
 		var intentID string

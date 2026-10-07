@@ -541,3 +541,11 @@
   color: var(--text-3);
   cursor: default;
 }
+
+/* 支付渠道表单：支付方式勾选组 */
+.fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}

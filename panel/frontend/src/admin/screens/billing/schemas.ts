@@ -240,6 +240,12 @@ const providerSchema = z.object({
   has_credentials: z.boolean(),
   base_url: z.string(),
   currencies: z.array(z.string()),
+  // 编辑表单回填用的非机密配置（w2pay）；商户号与密钥只写不读，只有 has_credentials
+  submit_path: z.string(),
+  api_path: z.string(),
+  methods: z.array(z.string()),
+  default_method: z.string(),
+  allow_private_host: z.boolean(),
   today: byCurrency,
   success_rate_24h: z.number().min(0).max(1).nullable(),
   last_callback_at: time.nullable(),
@@ -247,6 +253,8 @@ const providerSchema = z.object({
 export const providersSchema = z.object({ providers: z.array(providerSchema) })
 export type Provider = z.output<typeof providerSchema>
 export const toggledSchema = z.object({ ok: z.literal(true) })
+// POST v1/payment-providers（201）与 PUT v1/payment-providers/{code}（200）同形；只回凭据是否变更
+export const providerWrittenSchema = z.object({ id: z.string(), code: z.string(), credentials_changed: z.boolean() })
 
 // ---------------------------------------------------------------------------
 // 收入调整（报表口径，只追加）：列表、登记与冲销同形；reversal_of 是 omitempty，R66 登记人

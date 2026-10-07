@@ -117,6 +117,16 @@ func (f *Factory) Get(ctx context.Context, tenantID, code string) (Provider, *Pr
 	return p, rec, nil
 }
 
+// Build 用已登记的适配器把一条渠道记录试构造成实例，不进缓存、不看 Enabled。
+// 后台保存渠道前用它校验：与运行时走同一个构造函数，校验口径不会两样。
+func (f *Factory) Build(rec ProviderRecord) (Provider, error) {
+	build, ok := f.builders[rec.Adapter]
+	if !ok {
+		return nil, fmt.Errorf("未知的支付适配器 %q", rec.Adapter)
+	}
+	return build(rec)
+}
+
 // Invalidate 在管理员修改渠道配置后立即清除缓存。
 func (f *Factory) Invalidate(tenantID, code string) {
 	f.mu.Lock()
