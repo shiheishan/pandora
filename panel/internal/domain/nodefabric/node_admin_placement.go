@@ -24,8 +24,12 @@ func (s *Service) CloneAdminNode(ctx context.Context, tenantID, id string, in Cl
 	if err := validateAdminUUID("pool_id", in.PoolID, false); err != nil {
 		return nil, err
 	}
+	if in.ServerPort != nil && (*in.ServerPort < 1 || *in.ServerPort > 65535) {
+		return nil, httpx.Invalid(map[string]string{"server_port": "端口必须在 1 到 65535 之间"})
+	}
 	var cloneID string
 	var legacyProtocol bool
+	var warnings []string
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
 		if err := lockLegacyConfigRelease(ctx, tx, tenantID); err != nil {
 			return err
@@ -50,6 +54,19 @@ func (s *Service) CloneAdminNode(ctx context.Context, tenantID, id string, in Cl
 		}
 		if err := s.lockServerCapacity(ctx, tx, tenantID, targetServerID); err != nil {
 			return err
+		}
+		// 副本照抄原节点的端口与协议（可用 server_port 另给端口），同样过同机端口门禁：
+		// 复制到同一台服务器又不换端口，就是和原节点抢同一个端口。legacy v0 不复制协议与端口，不查。
+		port := intValue(before.ServerPort)
+		if in.ServerPort != nil {
+			port = *in.ServerPort
+		}
+		l4 := ListenL4(value(before.NodeType), before.ProtocolConfig)
+		if !legacyProtocol {
+			if warnings, err = s.checkNodePortClaim(ctx, tx, tenantID, nodePortClaim{ServerID: targetServerID,
+				Port: port, L4: l4, Host: value(before.ServerHost), CheckReserved: true}); err != nil {
+				return err
+			}
 		}
 		poolID := value(before.PoolID)
 		if in.PoolID != "" {
@@ -76,16 +93,16 @@ func (s *Service) CloneAdminNode(ctx context.Context, tenantID, id string, in Cl
 			SELECT tenant_id,$3,$4::uuid,nullif($5,'')::uuid,'draft','draft',
 			 CASE WHEN protocol_schema_version=0 THEN NULL ELSE node_type END,
 			 CASE WHEN protocol_schema_version=0 THEN NULL ELSE server_host END,
-			 CASE WHEN protocol_schema_version=0 THEN NULL ELSE server_port END,
+			 CASE WHEN protocol_schema_version=0 THEN NULL ELSE coalesce($7::int, server_port) END,
 			 kernel,traffic_rate,display_name,
 			 CASE WHEN protocol_schema_version=0 THEN '{}'::jsonb ELSE protocol_config END,
 			 protocol_schema_version,
 			 CASE WHEN protocol_schema_version=0 THEN NULL ELSE config_validated_at END,
 			 $6,1,country_code
 			FROM nodes WHERE tenant_id=$1 AND id=$2::uuid RETURNING id`,
-			tenantID, id, name, targetServerID, poolID, sortOrder).Scan(&cloneID)
-		if db.IsUniqueViolation(err) {
-			return httpx.New(httpx.CodeConflict, "节点名称已存在")
+			tenantID, id, name, targetServerID, poolID, sortOrder, in.ServerPort).Scan(&cloneID)
+		if conflict := nodeUniqueViolation(err, port, l4); conflict != nil {
+			return conflict
 		}
 		if err != nil {
 			return err
@@ -122,7 +139,7 @@ func (s *Service) CloneAdminNode(ctx context.Context, tenantID, id string, in Cl
 	if err != nil {
 		return nil, err
 	}
-	out, err := s.GetAdminNode(ctx, tenantID, cloneID)
+	out, err := s.getAdminNodeWithWarnings(ctx, tenantID, cloneID, warnings)
 	if err == nil && legacyProtocol {
 		out.Warnings = []string{"源节点为 legacy v0 协议；副本未复制协议配置，请选择已开放的稳定协议后再启用"}
 	}
@@ -139,6 +156,7 @@ func (s *Service) MoveAdminNode(ctx context.Context, tenantID, id string, in Mov
 	if len([]rune(strings.TrimSpace(in.Reason))) > 500 {
 		return nil, httpx.Invalid(map[string]string{"reason": "最多 500 个字符"})
 	}
+	var warnings []string
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
 		before, err := scanAdminNode(tx.QueryRow(ctx, adminNodeSelect+` WHERE n.tenant_id=$1 AND n.id=$2::uuid FOR UPDATE`, tenantID, id))
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -189,8 +207,17 @@ func (s *Service) MoveAdminNode(ctx context.Context, tenantID, id string, in Mov
 		if err := s.lockServerCapacity(ctx, tx, tenantID, in.ServerID); err != nil {
 			return err
 		}
+		// 迁到新服务器：在目标服务器的行锁内过同机端口门禁
+		port, l4 := intValue(before.ServerPort), ListenL4(value(before.NodeType), before.ProtocolConfig)
+		if warnings, err = s.checkNodePortClaim(ctx, tx, tenantID, nodePortClaim{ServerID: in.ServerID,
+			ExcludeNodeID: id, Port: port, L4: l4, Host: value(before.ServerHost), CheckReserved: true}); err != nil {
+			return err
+		}
 		ct, err := tx.Exec(ctx, `UPDATE nodes SET server_id=$4::uuid,row_version=row_version+1 WHERE tenant_id=$1 AND id=$2::uuid
 			AND row_version=$3`, tenantID, id, in.RowVersion, in.ServerID)
+		if conflict := nodeUniqueViolation(err, port, l4); conflict != nil {
+			return conflict
+		}
 		if err != nil {
 			return err
 		}
@@ -205,7 +232,7 @@ func (s *Service) MoveAdminNode(ctx context.Context, tenantID, id string, in Mov
 	if err != nil {
 		return nil, err
 	}
-	return s.GetAdminNode(ctx, tenantID, id)
+	return s.getAdminNodeWithWarnings(ctx, tenantID, id, warnings)
 }
 
 func (s *Service) ReorderAdminNodes(ctx context.Context, tenantID string, in ReorderNodesInput) error {

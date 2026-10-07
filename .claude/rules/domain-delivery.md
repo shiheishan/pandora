@@ -16,6 +16,7 @@ paths:
 - 没划进节点池的节点不服务任何人（fail closed），不能当成对所有订阅开放的公共节点
 - 节点池限定用户组的谓词只有 `nodefabric.PoolAdmitsUserSQL` 一份，参数只接受两个调用方写死的列表达式（白名单外直接 panic），不要另写变体（守卫 `pool_admission_test.go:TestPoolAdmitsUserSQLIsTheOnlyAdmissionRule`）。默认组（user_group_id 为空）的用户进不了任何限定了组的池
 - 心跳超时不在 SQL 里排除（agent 挂了而代理还在跑很常见），降级在 Go 侧做；从没心跳过的节点则不下发
+- 节点报告运行异常（`nodefabric.RuntimeFailingSQL`：端口被占、没起来、期望版本生效失败）同样不排除、只降级：`preferFreshNodes` 先摘降级节点再分新鲜，全是降级节点时照发，不给空订阅。后台「是否下发」对它显示 `subscription.DegradedNote`
 - 改变交付集合的后台写（套餐换绑池、池的用户组名单、用户换组），提交后调 `nodefabric.Service.NotifyUsersChanged` 发租户级 `node.users.changed`
 
 ## 「当前订阅」口径
@@ -38,3 +39,5 @@ paths:
 - 节点只能扣自己当前放行名单（`ListNodeUsers`）里的 uid；名单外与不合规条目（非整数 uid、不是恰好两个 0–30GB 的整数）照样留档，不扣费，计入 `PushResult.Invalid`，不拒整份报文
 - 扣配额取「已开始且没结束」的行，外加每种周期里开始得最晚、结束不到 1 天的那一行（滚动空窗照扣，RollQuotaPeriods 结转时一并带走；结束更久的是没对齐的旧数据，不扣）；consumed 与当日用量用饱和加法
 - 记账事务遇 40P01 / 40001 整笔重试，最多 3 次
+- 幂等：带 `X-Report-Id`（`NormalizeTrafficReportID` 校验，1–64 个 `[A-Za-z0-9._:-]`）的上报按 (节点, 编号) 去重，`INSERT … ON CONFLICT (node_id, client_report_id) DO NOTHING`（00123 唯一部分索引），冲突了另记一行不带编号的重复件（duplicate_of 指向第一份），只留档不扣费；不论隔多久、是否并发。不带或编号不合规走原来的 10 秒内容哈希去重（不拒收：拒收会让 pdnd 丢掉这份流量）
+- 入口两个：`ReportTraffic`（无编号）与 `ReportTrafficWithID`，都只许 `api/node` 的 uniPush 调（守卫 `TestReportTrafficOnlyReachedThroughAuthentication`），共用 `reportTraffic`

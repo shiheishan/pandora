@@ -54,6 +54,21 @@ export const nodeRowSchema = z.object({
   mem_percent: z.number().nullable(),
   metrics_at: iso.nullable(),
   granted_plans: strs,
+  // 下发与运行的真实状态（nodefabric.NodeRuntimeView，w4deliver）。后端总是给；开发期假后端
+  // 还没跟上时按「没有这项信息」处理，不让整张列表解析失败
+  desired_effective_generation: z.number().nullish().transform((v) => v ?? null),
+  applied_effective_generation: z.number().nullish().transform((v) => v ?? null),
+  effective_state: z.enum(['', 'applied', 'pending', 'failed']).catch(''),
+  last_apply_failure: z
+    .object({ phase: z.string(), detail: z.string(), at: iso, generation: z.number().nullable() })
+    .nullish()
+    .transform((v) => v ?? null),
+  runtime_status: z.string().nullish().transform((v) => v ?? null),
+  runtime_reason: z.string().nullish().transform((v) => v ?? null),
+  runtime_state_at: iso.nullish().transform((v) => v ?? null),
+  runtime_reason_node: z.string().nullish().transform((v) => v ?? null),
+  port_conflict_node: z.string().nullish().transform((v) => v ?? null),
+  delivery_degraded: z.boolean().catch(false),
 })
 export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.number() })
 export type NodeRow = z.output<typeof nodeRowSchema>
@@ -69,6 +84,8 @@ export const nodeDetailSchema = nodeRowSchema.extend({
   protocol_schema_version: z.number(),
   config_validated_at: iso.nullable(),
   traffic_bytes: z.number().int(),
+  // 存量协议配置不满足现行规则的提示（nodefabric.ProtocolConfigWarnings）；Go 是 omitempty
+  warnings: z.array(z.string()).min(1).optional(),
 })
 export const nodeDetailResponse = z.object({ nodes: list(nodeDetailSchema), total: z.number() })
 export type NodeDetail = z.output<typeof nodeDetailSchema>
@@ -94,7 +111,8 @@ export const adminNodeSchema = z.object({
   sort_order: z.number(),
   created_at: iso,
   updated_at: iso,
-  // 只有上线（R108 activate）会带：Go 是 omitempty，没有提示时不出现这个键，出现就至少一条（R113）
+  // 上线（R108 activate）与建、改、复制、迁移（保留端口提示）会带：Go 是 omitempty，没有提示时
+  // 不出现这个键，出现就至少一条（R113）
   warnings: z.array(z.string()).min(1).optional(),
 })
 export type AdminNode = z.output<typeof adminNodeSchema>

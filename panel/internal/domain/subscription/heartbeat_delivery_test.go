@@ -22,6 +22,9 @@ import (
 func TestPreferFreshNodes(t *testing.T) {
 	fresh := func(name string) Node { return Node{Name: name, HeartbeatFresh: true} }
 	stale := func(name string) Node { return Node{Name: name, HeartbeatFresh: false} }
+	broken := func(name string, beatFresh bool) Node {
+		return Node{Name: name, HeartbeatFresh: beatFresh, Degraded: true}
+	}
 
 	for _, tc := range []struct {
 		name string
@@ -39,6 +42,11 @@ func TestPreferFreshNodes(t *testing.T) {
 			[]string{"a", "b"},
 		},
 		{"本来就没有节点", []Node{}, []string{}},
+		// 降级（端口被占、入站没起来、生效失败）：有别的节点就不给它
+		{"降级的新鲜节点让位给健康节点", []Node{broken("a", true), fresh("b")}, []string{"b"}},
+		{"降级节点排在心跳超时的健康节点后面", []Node{broken("a", true), stale("b")}, []string{"b"}},
+		{"全是降级节点时照发，不给空订阅", []Node{broken("a", true), broken("b", false)}, []string{"a"}},
+		{"全降级且全超时时整份照发", []Node{broken("a", false), broken("b", false)}, []string{"a", "b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := preferFreshNodes(tc.in)

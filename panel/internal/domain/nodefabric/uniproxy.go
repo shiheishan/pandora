@@ -532,7 +532,9 @@ func metricUnit(value, divisor uint64) int64 {
 
 // ReportRuntimeStatus accepts QNode's UniProxy resource report. It deliberately
 // stores only coarse infrastructure metrics and never raw user or address data.
-func (s *Service) ReportRuntimeStatus(ctx context.Context, tenantID string, n *ServingNode, raw []byte) error {
+// runtime 来自请求头 X-Node-Runtime-Status / X-Node-Runtime-Reason（NormalizeRuntimeState 规整过）：
+// 健康分按它给，老节点不带头时照旧 90。
+func (s *Service) ReportRuntimeStatus(ctx context.Context, tenantID string, n *ServingNode, raw []byte, runtime RuntimeState) error {
 	var status uniProxyStatus
 	if err := json.Unmarshal(raw, &status); err != nil {
 		return httpx.New(httpx.CodeBadRequest, "状态上报格式非法")
@@ -553,9 +555,10 @@ func (s *Service) ReportRuntimeStatus(ctx context.Context, tenantID string, n *S
 	found := false
 	b := &pgx.Batch{}
 	b.Queue(`
-			UPDATE nodes SET last_heartbeat_at=now(), health_score=90
+			UPDATE nodes SET last_heartbeat_at=now(), health_score=$3,
+			       `+runtimeStateSetSQL("$4", "$5")+`
 			 WHERE tenant_id=$1 AND id=$2
-			RETURNING server_id`, tenantID, n.ID).Query(func(rows pgx.Rows) error {
+			RETURNING server_id`, tenantID, n.ID, runtime.HealthScore(), runtime.Status, runtime.Reason).Query(func(rows pgx.Rows) error {
 		for rows.Next() {
 			found = true
 		}

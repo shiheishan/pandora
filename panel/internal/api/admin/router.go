@@ -109,6 +109,7 @@ func NewRouter(d Deps) http.Handler {
 	))
 
 	h := &handlers{d: d}
+	configureNodePortPolicy(d)
 
 	r.Get("/healthz", h.health)
 	r.Get("/readyz", h.ready)

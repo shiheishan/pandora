@@ -15,7 +15,7 @@ type DatabaseStats struct {
 	MaxConnections int
 }
 
-// NodeFabricCounts 是未退役节点的总数、90 秒内有心跳的数量与配置落后的数量。
+// NodeFabricCounts 是未退役节点的总数、90 秒内有心跳的数量与配置落后的数量（落后按生效版本算，见 SystemCounts）。
 type NodeFabricCounts struct {
 	Total, Online, Lagging int64
 }
@@ -80,7 +80,14 @@ func (s *Service) SystemCounts(ctx context.Context, tenantID string, channels []
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*),
 			       count(*) FILTER (WHERE last_heartbeat_at >= now() - interval '90 seconds'),
-			       count(*) FILTER (WHERE applied_config_version < desired_config_version)
+			       -- 配置落后：拉过生效配置的节点（签名通道）按生效版本比，期望与已应用不同即落后；
+			       -- 没有生效版本的老节点仍按旧的整数版本比。原先只看整数版本，签名节点报的是 0、
+			       -- 存成 NULL，永远算不落后
+			       count(*) FILTER (WHERE CASE
+			         WHEN desired_effective_generation IS NOT NULL THEN
+			           (desired_effective_release_id, desired_effective_generation)
+			             IS DISTINCT FROM (applied_effective_release_id, applied_effective_generation)
+			         ELSE applied_config_version < desired_config_version END)
 			  FROM nodes
 			 WHERE tenant_id = $1 AND status <> 'destroyed' AND serving_status <> 'retired'`,
 			tenantID).Scan(&total, &online, &lagging); err == nil {

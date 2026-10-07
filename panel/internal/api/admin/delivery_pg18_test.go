@@ -152,17 +152,19 @@ func TestDeliveryAdminPG18(t *testing.T) {
 	must(`UPDATE plans SET current_version_id=$2,status='active' WHERE tenant_id=$1 AND id=$3`, tenant, published, plan)
 	must(`INSERT INTO plan_versions(id,tenant_id,plan_id,version,created_by) VALUES($3,$1,$2,2,$4)`, tenant, plan, draft, actor)
 	must(`INSERT INTO servers(id,tenant_id,name,status) VALUES($2,$1,'delivery-admin-server','ready')`, tenant, server)
+	// 同一台服务器上的节点端口各不相同：同机端口门禁的唯一部分索引（00122）不允许同端口同 L4
 	for _, node := range []struct {
 		id, name, host string
 		pool           any
+		port           int
 	}{
-		{pooled, "delivery-admin-pooled", "pooled.delivery-admin.invalid", pool},
-		{noPool, "delivery-admin-no-pool", "nopool.delivery-admin.invalid", nil},
+		{pooled, "delivery-admin-pooled", "pooled.delivery-admin.invalid", pool, 443},
+		{noPool, "delivery-admin-no-pool", "nopool.delivery-admin.invalid", nil, 8443},
 	} {
 		must(`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 				server_id,serving_status,protocol_schema_version,config_validated_at,last_heartbeat_at)
-			  VALUES($2,$1,$3,$4,'active','vless',$5,443,$6,'active',1,now(),now())`,
-			tenant, node.id, node.name, node.pool, node.host, server)
+			  VALUES($2,$1,$3,$4,'active','vless',$5,$7,$6,'active',1,now(),now())`,
+			tenant, node.id, node.name, node.pool, node.host, server, node.port)
 	}
 	must(`INSERT INTO subscriptions(id,tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount)
 		  VALUES($1,$2,$3,$4,$5,'active','USD',100)`, sub, tenant, owner, plan, published)

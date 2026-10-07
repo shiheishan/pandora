@@ -15,9 +15,26 @@ func TestPoolMoveBumpsEffectiveReleaseGeneration(t *testing.T) {
 	src := pkg.Decl("Service.PatchAdminNode")
 	if strings.Contains(pkg.Source(), `配置发布身份升级完成前暂不允许移动节点分组`) ||
 		!strings.Contains(src, `poolChanged := false`) ||
-		!strings.Contains(src, `configSourceTouched := protocolTouched || poolChanged`) ||
+		!strings.Contains(src, `configSourceTouched := protocolChanged || poolChanged`) ||
 		!strings.Contains(src, `config_source_generation=config_source_generation + CASE WHEN $15 THEN 1 ELSE 0 END`) {
 		t.Fatal("PatchAdminNode does not rematerialize effective config after a pool move")
+	}
+}
+
+// 协议字段只是原样带回（API 直调常见）时不推进代际：节点为每次推进重建入站、断开全部在线连接。
+// 推进只看「内容真变了」的 protocolChanged，它必须比较全部生效输入（类型、地址、端口、内核、
+// schema 版本、协议配置），少比一项就会漏推。
+func TestPatchBumpsGenerationOnlyWhenProtocolChanges(t *testing.T) {
+	src := sourcetest.Load(t, ".").Decl("Service.PatchAdminNode")
+	for _, want := range []string{
+		`nodeType != value(before.NodeType)`, `host != value(before.ServerHost)`,
+		`port != intValue(before.ServerPort)`, `kernel != before.Kernel`,
+		`version != before.ProtocolSchemaVersion`, `!sameProtocolJSON(raw, before.ProtocolConfig)`,
+		`protocolChanged, configSourceTouched,`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("PatchAdminNode lost %q from the protocol change check", want)
+		}
 	}
 }
 
@@ -173,5 +190,19 @@ func TestNormalizeCountryCode(t *testing.T) {
 		if !errors.As(err, &httpErr) || httpErr.Fields["country_code"] == "" {
 			t.Errorf("%q: want 422 fields.country_code, got %v", raw, err)
 		}
+	}
+}
+
+// 存量节点的不合规配置（如证书路径不在约定目录）在读接口上附提示：写接口读回的 AdminNode
+// 与后台单取（?id=）的详情都要带上，否则管理员看不到哪些老节点要改。提示必须在抹敏感键之前算。
+func TestAdminNodeReadsCarryProtocolConfigWarnings(t *testing.T) {
+	pkg := sourcetest.Load(t, ".")
+	get := pkg.Decl("Service.GetAdminNode")
+	warn, redact := strings.Index(get, "ProtocolConfigWarnings("), strings.Index(get, "RedactProtocolConfig(")
+	if warn < 0 || redact < 0 || warn > redact {
+		t.Fatal("GetAdminNode must append ProtocolConfigWarnings before redacting the config")
+	}
+	if !strings.Contains(pkg.Decl("Service.queryAdminNodes"), "x.Warnings = ProtocolConfigWarnings(") {
+		t.Fatal("the node detail read must carry ProtocolConfigWarnings")
 	}
 }
