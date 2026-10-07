@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,6 +97,10 @@ type signedClient struct {
 	identityPath string
 	private      ed25519.PrivateKey
 	http         *http.Client
+	// keyCheckedAt 是上一次成功问过面板「配置签名密钥换了没有」的时间。签名密钥
+	// 极少轮换，不必每轮拉配置都问一次（见 refreshConfigSigningKeyIfDue）。
+	keyCheckedAt time.Time
+	keyCheckWait time.Duration
 }
 
 type SignedClient = signedClient
@@ -161,15 +166,70 @@ func (c *SignedClient) Heartbeat(ctx context.Context, in HeartbeatInput) (*Heart
 	return &out, nil
 }
 
+// Config 拉一份完整的生效配置（不带已应用版本，面板总是回全量）。
 func (c *SignedClient) Config(ctx context.Context) (*SignedConfig, error) {
-	if err := c.RefreshConfigSigningKey(ctx); err != nil {
-		return nil, err
+	cfg, _, err := c.ConfigSince(ctx, nil)
+	return cfg, err
+}
+
+// AppliedRelease 是节点手上已应用的生效发布版本。
+type AppliedRelease struct {
+	ReleaseID  string
+	Generation uint64
+}
+
+// AppliedEffectiveReleaseHeader 与面板 nodefabric.AppliedEffectiveReleaseHeader 同名同格式。
+const AppliedEffectiveReleaseHeader = "X-Applied-Effective-Release"
+
+// ConfigSince 拉生效配置。applied 非空时把它报给面板：仍是当前版的话面板回 204，
+// 这里返回 unchanged=true、cfg 为 nil——没有新东西要验、要装。
+//
+// 兼容：老面板不认这个头，照旧回 200 全量，调用方按「已应用」处理即可；新面板
+// 只在收到这个头时才可能回 204，老节点不带它，不受影响。
+func (c *SignedClient) ConfigSince(ctx context.Context, applied *AppliedRelease) (cfg *SignedConfig, unchanged bool, err error) {
+	if err := c.refreshConfigSigningKeyIfDue(ctx); err != nil {
+		return nil, false, err
+	}
+	var headers map[string]string
+	if applied != nil && applied.ReleaseID != "" && applied.Generation > 0 {
+		headers = map[string]string{AppliedEffectiveReleaseHeader: applied.ReleaseID + "/" +
+			strconv.FormatUint(applied.Generation, 10)}
+	}
+	status, raw, err := c.do(ctx, http.MethodGet, "/v1/nodes/effective-config", nil, headers)
+	if err != nil {
+		return nil, false, err
+	}
+	if status == http.StatusNoContent {
+		if headers == nil {
+			return nil, false, fmt.Errorf("panel returned no effective config")
+		}
+		return nil, true, nil
 	}
 	var out SignedConfig
-	if err := c.Do(ctx, http.MethodGet, "/v1/nodes/effective-config", nil, &out); err != nil {
-		return nil, err
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, false, err
 	}
-	return &out, nil
+	return &out, false, nil
+}
+
+// configKeyCheckInterval 是主动问面板「签名密钥换了没有」的间隔。密钥轮换时面板
+// 签出的过渡证明有效 15 分钟（configKeyTransitionWindow），10 分钟问一次足够在窗口
+// 内拿到；而配置验签失败时调用方会立刻强制再问一次，轮换不必等这个间隔。
+const configKeyCheckInterval = 10 * time.Minute
+
+// refreshConfigSigningKeyIfDue 只在到点时才问面板换钥。原先每轮拉配置前都问一次，
+// 200 个节点 15 秒一轮，这个几乎总回 204 的请求占了节点请求量的六分之一。
+func (c *SignedClient) refreshConfigSigningKeyIfDue(ctx context.Context) error {
+	if !c.keyCheckedAt.IsZero() && time.Since(c.keyCheckedAt) < c.keyCheckWait {
+		return nil
+	}
+	return c.RefreshConfigSigningKey(ctx)
+}
+
+// markConfigKeyChecked 记下一次成功的换钥检查，下次检查的间隔带 ±10% 抖动。
+func (c *SignedClient) markConfigKeyChecked() {
+	c.keyCheckedAt = time.Now()
+	c.keyCheckWait = Jitter(configKeyCheckInterval)
 }
 
 func (c *SignedClient) ReportConfig(ctx context.Context, version int, phase, detail string) error {
@@ -263,10 +323,23 @@ func (e *StatusError) Error() string {
 }
 
 func (c *SignedClient) Do(ctx context.Context, method, path string, body []byte, out any) error {
+	_, raw, err := c.do(ctx, method, path, body, nil)
+	if err != nil {
+		return err
+	}
+	if out != nil && len(raw) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// do 发一个签名请求，返回 2xx 的状态码与正文；非 2xx 返回 *StatusError。headers 是
+// 额外的请求头，不进签名原像（原像只认方法、路径、节点、时间、nonce 与正文）。
+func (c *SignedClient) do(ctx context.Context, method, path string, body []byte, headers map[string]string) (int, []byte, error) {
 	ts := time.Now().UTC().Format(time.RFC3339)
 	nonceRaw := make([]byte, 16)
 	if _, err := rand.Read(nonceRaw); err != nil {
-		return fmt.Errorf("generate request nonce: %w", err)
+		return 0, nil, fmt.Errorf("generate request nonce: %w", err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(nonceRaw)
 	sum := sha256.Sum256(body)
@@ -278,7 +351,7 @@ func (c *SignedClient) Do(ctx context.Context, method, path string, body []byte,
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.identity.Server, "/")+path, reader)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Node-Id", c.identity.NodeID)
@@ -288,19 +361,19 @@ func (c *SignedClient) Do(ctx context.Context, method, path string, body []byte,
 	if path == "/v1/nodes/config-signing-key" {
 		req.Header.Set("X-Config-Key-Id", c.identity.ConfigKeyID)
 	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode >= 300 {
-		return &StatusError{Method: method, Path: path, Code: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
+		return resp.StatusCode, nil, &StatusError{Method: method, Path: path, Code: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
 	}
-	if out != nil && len(raw) > 0 {
-		return json.Unmarshal(raw, out)
-	}
-	return nil
+	return resp.StatusCode, raw, nil
 }
 
 func hostname() string { h, _ := os.Hostname(); return h }
