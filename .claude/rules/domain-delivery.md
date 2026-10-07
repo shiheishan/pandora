@@ -34,6 +34,8 @@ paths:
 - node_alive_ips 由 aegis-admin 的保留期任务清理（保留 70 分钟 > 最大设备窗口 60 分钟），清理截止不能小于最大窗口
 - 订阅拉取：令牌按 `token_hash`（唯一索引）查；读在一个只读事务里一条语句取齐，写（凭据计数、拉取日志、限流）合成一个事务；未认证的失败按来源采样写日志，不每次落库；非「不存在」的错误对外仍伪装 404、对内打 ERROR
 - 订阅里的节点列表按（租户, 套餐版本, 用户组）进程内缓存 20 秒，`node.*` 信号失效；认证、用量、限流一律现查，不缓存
+- 过期订阅（2026-10-07 规则 1，w5expiry）：令牌有效、凭据 active、订阅已过期（status=expired 且窗口没关，或 active 但走过截止）时 `checkCredential` 回 ErrExpired，`LoadPull` 返回 `Pull.Expired`、不取节点；handler 回 200 只含一条提示节点（render_expired.go，「已于 X 到期，续费后更新订阅即可恢复」，X 用用户时区到分钟），Subscription-Userinfo 的 expire 是过去时刻，带 profile-web-page-url（门户续费页），更新间隔 1 小时，拉取日志记 expired。令牌不存在、已吊销（含关窗吊销）仍是伪装 404
+- 门户链接列表照常列出过期 30 天内订阅的链接（`Link.Expired` 只读）；过期期间用户换链接回 409（`ErrRotateWhileExpired`）；`mySubscriptionsSQL` 的 renewable 与 `subscriptionAcceptsPaidChange` 同口径（含窗口内的 expired）
 
 ## 流量上报记账（uniproxy_traffic.go，2026-10 w3node）
 - 节点只能扣自己当前放行名单（`ListNodeUsers`）里的 uid；名单外与不合规条目（非整数 uid、不是恰好两个 0–30GB 的整数）照样留档，不扣费，计入 `PushResult.Invalid`，不拒整份报文
