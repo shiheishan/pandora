@@ -81,6 +81,10 @@ type Inbound struct {
 	// 包成 retryListenerFactory 再交给 mux；单测替换它来注入会报 EMFILE 的监听器。
 	listenFactory apicommon.StreamListenerFactory
 
+	// live 是按用户（UUID）登记的在途连接：用户被移出名单时逐条关掉。
+	liveMu sync.Mutex
+	live   map[string]map[net.Conn]struct{}
+
 	mu        sync.Mutex
 	mux       *protocol.Mux
 	transport Transport
@@ -163,17 +167,61 @@ func (h *Inbound) UpsertUsers(users []core.User) error {
 }
 
 func (h *Inbound) DelUsers(uuids []string) error {
-	if gone := h.users.Del(uuids); len(gone) == 0 {
+	gone := h.users.Del(uuids)
+	if len(gone) == 0 {
 		return nil
 	}
-	return h.applyUsers()
+	err := h.applyUsers()
+	// 先删表、再踢线：已有会话随之断开（删用户即断线）。
+	h.kick(gone)
+	return err
+}
+
+// track 登记一条已认证连接；返回的函数注销它。
+func (h *Inbound) track(uuid string, conn net.Conn) func() {
+	h.liveMu.Lock()
+	if h.live == nil {
+		h.live = make(map[string]map[net.Conn]struct{})
+	}
+	set := h.live[uuid]
+	if set == nil {
+		set = make(map[net.Conn]struct{})
+		h.live[uuid] = set
+	}
+	set[conn] = struct{}{}
+	h.liveMu.Unlock()
+	return func() {
+		h.liveMu.Lock()
+		if set := h.live[uuid]; set != nil {
+			delete(set, conn)
+			if len(set) == 0 {
+				delete(h.live, uuid)
+			}
+		}
+		h.liveMu.Unlock()
+	}
+}
+
+// kick 关掉这些用户的全部在途连接（锁外关）。
+func (h *Inbound) kick(uuids []string) {
+	var victims []net.Conn
+	h.liveMu.Lock()
+	for _, uuid := range uuids {
+		for conn := range h.live[uuid] {
+			victims = append(victims, conn)
+		}
+		delete(h.live, uuid)
+	}
+	h.liveMu.Unlock()
+	for _, conn := range victims {
+		_ = conn.Close()
+	}
 }
 
 // applyUsers 把当前用户表推给 mux。
 //
-// 注意语义：被删掉的用户不会被立刻踢下线 —— mux 只更新用户表，
-// 已建立的 TCP 会话继续跑到自然结束。这是 mieru 的设计，也是合理的：
-// 结算周期本来就有容差，为了立刻断掉一个人而抖动全部连接不划算。
+// mux 只更新用户表；被删用户已建立的会话由 DelUsers 里的 kick 逐条关掉
+// （用户定的「到期立即停」），不抖动其他人的连接。
 func (h *Inbound) applyUsers() error {
 	h.mu.Lock()
 	if h.mux == nil {
@@ -315,7 +363,14 @@ func (h *Inbound) handle(ctx context.Context, proxyConn net.Conn) {
 	}
 
 	// 用户名就是 UUID，也就是这条连接的口令：日志里只记内部 ID，不记它。
-	u, found := h.users.ByUUID(userCtx.UserName())
+	name := userCtx.UserName()
+	u, found := h.users.ByUUID(name)
+	if found {
+		// 先登记再复核：查到用户之后、登记之前被删的连接，复核时就会发现；
+		// 登记之后才被删的，由 DelUsers 的 kick 关掉。
+		defer h.track(name, proxyConn)()
+		_, found = h.users.ByUUID(name)
+	}
 	if !found {
 		// 用户刚被移除，而这条连接是更新之前建立的
 		h.log.Warn("mieru 用户已失效")

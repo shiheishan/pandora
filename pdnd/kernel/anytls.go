@@ -31,7 +31,7 @@ type anyTLSAdapter struct {
 	mu        sync.RWMutex
 	users     map[string]int
 	slots     []anyTLSSlot
-	traffic   map[int64]core.UserTraffic
+	sessions  userSessions
 	online    map[int64]map[string]struct{}
 	service   *anytls.Service
 	listener  net.Listener
@@ -55,7 +55,7 @@ var _ N.TCPConnectionHandlerEx = (*anyTLSAdapter)(nil)
 
 func newAnyTLSAdapter(spec InboundSpec) (Adapter, error) {
 	return &anyTLSAdapter{
-		spec: spec, users: make(map[string]int), traffic: make(map[int64]core.UserTraffic),
+		spec: spec, users: make(map[string]int),
 		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
 	}, nil
 }
@@ -275,30 +275,26 @@ func (a *anyTLSAdapter) UpsertUsers(users []core.User) error {
 
 func (a *anyTLSAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
+	var removed []int64
 	for _, id := range ids {
 		password := strings.TrimSpace(id)
 		if index, ok := a.users[password]; ok {
 			a.slots[index].active = false
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			a.limiters.Remove(a.slots[index].user.ID)
+			removed = append(removed, a.slots[index].user.ID)
 			delete(a.users, password)
 		}
 	}
 	a.mu.Unlock()
-	return a.syncUsers()
+	err := a.syncUsers()
+	// 先删表、再踢线（锁外关）：已有的 QUIC / AnyTLS 会话里属于他的流随之断开。
+	a.sessions.revoke(removed)
+	return err
 }
 
 func (a *anyTLSAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
 func (a *anyTLSAdapter) OnlineIPs() map[int64][]string {
@@ -328,7 +324,7 @@ func (a *anyTLSAdapter) acceptLoop() {
 		a.wg.Add(1)
 		a.active[conn] = struct{}{}
 		a.mu.Unlock()
-		go a.handleAccepted(conn)
+		goGuardedConn(conn, func() { a.handleAccepted(conn) })
 	})
 }
 
@@ -356,6 +352,7 @@ func (a *anyTLSAdapter) handleAccepted(conn net.Conn) {
 		ctx = context.WithValue(ctx, anyTLSNegotiatedH2{}, wrapped.ConnectionState().NegotiatedProtocol == "h2")
 	}
 	source := M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap()
+	ctx = context.WithValue(ctx, anyTLSOuterConnKey{}, conn)
 	// NewConnection 的错误是 AnyTLS 会话层的：口令不对（"unknown user
 	// password"）、padding 帧读不全。通过认证的子流失败在 NewConnectionEx 里报。
 	if err := service.NewConnection(ctx, conn, source, nil); err != nil {
@@ -372,13 +369,14 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 	}
 	a.wg.Add(1)
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
 		}
 		remote := source.TCPAddr()
+		epoch := a.sessions.epoch()
 		name, ok := auth.UserFromContext[string](ctx)
 		if !ok {
 			a.connErr.addr(StageSession, remote, markConnError(connErrAuth, fmt.Errorf("anytls stream has no authenticated user")))
@@ -389,6 +387,13 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 			a.connErr.addr(StageSession, remote, markConnError(connErrAuth, fmt.Errorf("anytls user is no longer active")))
 			return
 		}
+		// 登记子流与它所在的外层会话：用户被移出名单时整条 AnyTLS 会话断开。
+		sess := a.sessions.open(user, epoch, conn, anyTLSOuterConn(ctx))
+		if sess == nil {
+			a.connErr.addr(StageSession, remote, errSessionRevoked)
+			return
+		}
+		defer sess.close()
 		if !a.enterDevice(user, source.AddrString()) {
 			a.connErr.addr(StageSession, remote, deviceLimitError("anytls"))
 			return
@@ -407,26 +412,10 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 			return
 		}
 		defer upstream.Close()
-		var copyWG sync.WaitGroup
-		copyWG.Add(2)
-		copyDone := make(chan struct{}, 2)
-		go func() {
-			n, _ := core.SpeedLimitedCopy(upstream, conn, a.limiters.For(user))
-			a.addTraffic(index, n, 0)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		go func() {
-			n, _ := core.SpeedLimitedCopy(conn, upstream, a.limiters.For(user))
-			a.addTraffic(index, 0, n)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		<-copyDone
-		_ = conn.Close()
-		_ = upstream.Close()
-		copyWG.Wait()
-	}()
+		// 子流的 Close 语义与 TCP 半关闭不同：沿用「一侧结束即两端全关」。
+		sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
+		_ = index
+	})
 }
 
 func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.Socksaddr, version2 bool, index int) error {
@@ -503,16 +492,16 @@ func (a *anyTLSAdapter) leaveDevice(user core.User, ip string) {
 }
 
 func (a *anyTLSAdapter) addTraffic(index int, upload, download int64) {
-	a.mu.Lock()
-	if index >= 0 && index < len(a.slots) {
-		id := a.slots[index].user.ID
-		current := a.traffic[id]
-		current.ID = id
-		current.Upload += upload
-		current.Download += download
-		a.traffic[id] = current
+	a.mu.RLock()
+	var id int64
+	ok := index >= 0 && index < len(a.slots)
+	if ok {
+		id = a.slots[index].user.ID
 	}
-	a.mu.Unlock()
+	a.mu.RUnlock()
+	if ok {
+		a.sessions.add(id, upload, download)
+	}
 }
 
 func (a *anyTLSAdapter) removeActive(conn net.Conn) {
@@ -542,5 +531,17 @@ func (a *anyTLSAdapter) Close() error {
 		}
 	})
 	a.wg.Wait()
+	return nil
+}
+
+// anyTLSOuterConnKey 把外层会话连接挂进 ctx，子流登记时一并登记它：踢人要断整条
+// 会话，否则客户端还能在同一会话上开新流（新流会被 lookupUser 拒，但已开的流
+// 只关子流不够干净）。
+type anyTLSOuterConnKey struct{}
+
+func anyTLSOuterConn(ctx context.Context) io.Closer {
+	if conn, ok := ctx.Value(anyTLSOuterConnKey{}).(net.Conn); ok {
+		return conn
+	}
 	return nil
 }

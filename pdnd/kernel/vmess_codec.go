@@ -94,13 +94,19 @@ func (w *vmessPlainChunkWriter) Write(p []byte) (int, error) {
 	return w.upstream.Write(p)
 }
 
+// VMess 分块的数据路径不再逐块分配（1c1g 实测 vmess 的加解密每个数据块都要
+// 分配）：调用方缓冲装得下整块时读进去原地解密；装不下才借池里的块缓冲，
+// 剩余明文留在借来的缓冲里、取完即还。写方向在池里的缓冲上原地封装，长度头
+// 与密文一次写出（原先两次 Write，TLS 上就是两个记录）。
+
 type vmessAEADReader struct {
-	upstream *bufio.Reader
-	gcm      cipher.AEAD
-	mask     sha3.ShakeHash
-	nonce    [12]byte
-	count    uint16
-	pending  []byte
+	upstream   *bufio.Reader
+	gcm        cipher.AEAD
+	mask       sha3.ShakeHash
+	nonce      [12]byte
+	count      uint16
+	pending    []byte
+	pendingBuf *[]byte
 }
 
 func newVMessAEADReader(upstream *bufio.Reader, aead cipher.AEAD, nonce []byte, option byte) *vmessAEADReader {
@@ -114,10 +120,23 @@ func newVMessAEADReader(upstream *bufio.Reader, aead cipher.AEAD, nonce []byte, 
 	return &vmessAEADReader{upstream: upstream, gcm: aead, mask: mask, nonce: base}
 }
 
+// nextMask 取下一个 16 位长度掩码（不经 binary.Read，免一次分配）。
+func nextVMessMask(mask sha3.ShakeHash) (uint16, error) {
+	var b [2]byte
+	if _, err := io.ReadFull(mask, b[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint16(b[:]), nil
+}
+
 func (r *vmessAEADReader) Read(p []byte) (int, error) {
 	if len(r.pending) > 0 {
 		n := copy(p, r.pending)
 		r.pending = r.pending[n:]
+		if len(r.pending) == 0 && r.pendingBuf != nil {
+			putFrameBuf(r.pendingBuf)
+			r.pendingBuf, r.pending = nil, nil
+		}
 		return n, nil
 	}
 	var rawLen [2]byte
@@ -126,8 +145,8 @@ func (r *vmessAEADReader) Read(p []byte) (int, error) {
 	}
 	length := binary.BigEndian.Uint16(rawLen[:])
 	if r.mask != nil {
-		var maskCode uint16
-		if err := binary.Read(r.mask, binary.BigEndian, &maskCode); err != nil {
+		maskCode, err := nextVMessMask(r.mask)
+		if err != nil {
 			return 0, err
 		}
 		length ^= maskCode
@@ -135,22 +154,41 @@ func (r *vmessAEADReader) Read(p []byte) (int, error) {
 	if length < 16 || length > 65535 {
 		return 0, fmt.Errorf("vmess AES chunk length %d invalid", length)
 	}
-	ciphertext := make([]byte, length)
+	var bp *[]byte
+	ciphertext := p
+	if len(p) < int(length) {
+		bp, ciphertext = getFrameBuf(int(length))
+	}
+	ciphertext = ciphertext[:length]
 	if _, err := io.ReadFull(r.upstream, ciphertext); err != nil {
+		if bp != nil {
+			putFrameBuf(bp)
+		}
 		return 0, err
 	}
 	binary.BigEndian.PutUint16(r.nonce[:2], r.count)
 	r.count++
-	plaintext, err := r.gcm.Open(nil, r.nonce[:], ciphertext, nil)
+	plaintext, err := r.gcm.Open(ciphertext[:0], r.nonce[:], ciphertext, nil)
 	if err != nil {
+		if bp != nil {
+			putFrameBuf(bp)
+		}
 		return 0, fmt.Errorf("vmess AES chunk authentication failed: %w", err)
 	}
 	if len(plaintext) == 0 {
+		if bp != nil {
+			putFrameBuf(bp)
+		}
 		return 0, io.EOF
+	}
+	if bp == nil {
+		return len(plaintext), nil
 	}
 	n := copy(p, plaintext)
 	if n < len(plaintext) {
-		r.pending = append(r.pending, plaintext[n:]...)
+		r.pending, r.pendingBuf = plaintext[n:], bp
+	} else {
+		putFrameBuf(bp)
 	}
 	return n, nil
 }
@@ -178,6 +216,8 @@ func newVMessAEADWriter(upstream io.Writer, aead cipher.AEAD, nonce []byte, opti
 func (w *vmessAEADWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	bp, _ := getFrameBuf(2 + 15000 + 16)
+	defer putFrameBuf(bp)
 	written := 0
 	for len(p) > 0 {
 		chunk := p
@@ -186,21 +226,17 @@ func (w *vmessAEADWriter) Write(p []byte) (int, error) {
 		}
 		binary.BigEndian.PutUint16(w.nonce[:2], w.count)
 		w.count++
-		ciphertext := w.gcm.Seal(nil, w.nonce[:], chunk, nil)
-		length := uint16(len(ciphertext))
+		out := w.gcm.Seal((*bp)[:2], w.nonce[:], chunk, nil)
+		length := uint16(len(out) - 2)
 		if w.mask != nil {
-			var maskCode uint16
-			if err := binary.Read(w.mask, binary.BigEndian, &maskCode); err != nil {
+			maskCode, err := nextVMessMask(w.mask)
+			if err != nil {
 				return written, err
 			}
 			length ^= maskCode
 		}
-		var header [2]byte
-		binary.BigEndian.PutUint16(header[:], length)
-		if _, err := w.upstream.Write(header[:]); err != nil {
-			return written, err
-		}
-		if _, err := w.upstream.Write(ciphertext); err != nil {
+		binary.BigEndian.PutUint16(out[:2], length)
+		if _, err := w.upstream.Write(out); err != nil {
 			return written, err
 		}
 		written += len(chunk)

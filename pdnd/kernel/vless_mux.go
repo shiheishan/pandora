@@ -140,10 +140,10 @@ func (s *vlessMuxSession) newStream(id uint16, network byte, destination M.Socks
 	s.mu.Unlock()
 	if network == vlessMuxNetworkTCP {
 		s.wg.Add(1)
-		go func() {
+		goGuarded(nil, func() {
 			defer s.wg.Done()
 			s.forwardTCP(stream, remoteIPValue, reality)
-		}()
+		})
 	}
 	return stream
 }
@@ -169,18 +169,8 @@ func (s *vlessMuxSession) forwardTCP(stream *vlessMuxStream, remoteIPValue strin
 	}
 	defer upstream.Close()
 	client := &vlessMuxTCPConn{stream: stream, session: s}
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		_, _ = core.SpeedLimitedCopy(upstream, stream.pipeR, s.adapter.limiters.For(s.user))
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		wg.Done()
-	}()
-	go func() { _, _ = core.SpeedLimitedCopy(client, upstream, s.adapter.limiters.For(s.user)); wg.Done() }()
-	wg.Wait()
-	_ = s.writeClose(stream.sessionID, false)
+	relayMuxTCP(&s.adapter.sessions, s.user, core.RelayOptions{Limiter: s.adapter.limiters.For(s.user)},
+		stream.pipeR, client, func() error { return s.writeClose(stream.sessionID, false) }, upstream)
 	s.removeStream(stream.sessionID, false)
 }
 

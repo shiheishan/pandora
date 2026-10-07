@@ -51,7 +51,9 @@ type config struct {
 		// 比拉取间隔小才有意义，否则请求会互相堆叠。
 		TimeoutSeconds int `json:"timeout_seconds"`
 	} `json:"panel"`
-	Nodes []struct {
+	// Runtime 是可选的连接回收、停机排空与内存上限调优，见 runtime_tuning.go。
+	Runtime runtimeTuning `json:"runtime"`
+	Nodes   []struct {
 		NodeID       string `json:"node_id"`
 		NodeType     string `json:"node_type"`
 		Token        string `json:"token"`
@@ -347,6 +349,7 @@ func main() {
 	}
 
 	log := newLogger(cfg.LogLevel)
+	cfg.Runtime.apply(log)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -431,8 +434,29 @@ type trafficDrainer interface {
 // 入账）→ 各节点把最后一轮流量与积压的待报流量交给面板。
 //
 // 原先是各节点先报、main 的 defer 再关内核，在途连接的流量每次重启都丢。给足
-// 时限但不无限等：面板不可达时死等会让 systemd 最终强杀（TimeoutStopSec=20s）。
+// 时限但不无限等：面板不可达时死等会让 systemd 最终强杀（TimeoutStopSec=30s：
+// 内核排空 5 秒 + 强制关闭至多 3 秒 + 最后一次上报至多 10 秒，留出余量）。
 func shutdown(log *slog.Logger, kernel core.Core, nodes []runningNode) {
+	// 内核关停（停 accept → 排空 → 强制关）与等各节点主循环停下并行：排空要等
+	// 几秒，没必要排在主循环后面，总时长才压得进 TimeoutStopSec。内核关停不碰
+	// 节点状态；主循环此刻若还在调内核，只会拿到「已关闭」错误。
+	drained := map[string][]core.UserTraffic{}
+	haveDrained := false
+	drainDone := make(chan struct{})
+	if d, ok := kernel.(trafficDrainer); ok {
+		haveDrained = true
+		go func() {
+			defer close(drainDone)
+			out, err := d.CloseAndDrainTraffic()
+			if err != nil {
+				log.Warn("关停内核时有入站没关干净", "err", err)
+			}
+			drained = out
+		}()
+	} else {
+		close(drainDone)
+	}
+
 	stopped := make([]bool, len(nodes))
 	loopDeadline := time.After(5 * time.Second)
 	for i, item := range nodes {
@@ -442,16 +466,7 @@ func shutdown(log *slog.Logger, kernel core.Core, nodes []runningNode) {
 		case <-loopDeadline:
 		}
 	}
-
-	drained := map[string][]core.UserTraffic{}
-	haveDrained := false
-	if d, ok := kernel.(trafficDrainer); ok {
-		var err error
-		if drained, err = d.CloseAndDrainTraffic(); err != nil {
-			log.Warn("关停内核时有入站没关干净", "err", err)
-		}
-		haveDrained = true
-	}
+	<-drainDone
 
 	finalCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -526,6 +541,9 @@ func loadConfig(path string) (*config, error) {
 		if n.NodeID == "" || n.NodeType == "" || n.Token == "" {
 			return nil, fmt.Errorf("节点 #%d 缺少 node_id / node_type / token", i+1)
 		}
+	}
+	if err := cfg.Runtime.validate(); err != nil {
+		return nil, err
 	}
 	return &cfg, nil
 }

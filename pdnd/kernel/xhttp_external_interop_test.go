@@ -198,9 +198,7 @@ func TestExternalXrayVLESSXHTTPH3Interop(t *testing.T) {
 	}
 	trafficDeadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(trafficDeadline) {
-		adapter.mu.RLock()
-		current := adapter.traffic[7001]
-		adapter.mu.RUnlock()
+		current := adapter.sessions.peek(7001)
 		if current.Upload > 0 && current.Download > 0 {
 			break
 		}
@@ -472,9 +470,7 @@ func TestExternalXrayVLESSXHTTPRealityH2Interop(t *testing.T) {
 	_ = conn.Close()
 	trafficDeadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(trafficDeadline) {
-		adapter.mu.RLock()
-		current := adapter.traffic[7002]
-		adapter.mu.RUnlock()
+		current := adapter.sessions.peek(7002)
 		if current.Upload > 0 && current.Download > 0 {
 			break
 		}

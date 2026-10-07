@@ -2,7 +2,6 @@ package kernel
 
 import (
 	"bufio"
-	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
 	"fmt"
@@ -12,8 +11,6 @@ import (
 	"net/netip"
 	"strconv"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/aegispanel/nodeagent/core"
 )
@@ -38,19 +35,10 @@ type vmessUserCandidate struct {
 }
 
 func (a *vmessAdapter) readRequest(r *bufio.Reader) (core.User, vmessDestination, io.Reader, byte, error) {
-	a.mu.RLock()
-	candidates := make([]vmessUserCandidate, 0, len(a.users))
-	for id, u := range a.users {
-		_, err := uuid.Parse(id)
-		if err != nil {
-			continue
-		}
-		block, err := aes.NewCipher(vmessKDF(u.key[:], "AES Auth ID Encryption")[:16])
-		if err == nil {
-			candidates = append(candidates, vmessUserCandidate{user: core.User{ID: u.ID, UUID: id, DeviceLimit: u.DeviceLimit, SpeedLimit: u.SpeedLimit}, key: u.key, keyBlock: block})
-		}
+	var candidates []vmessUserCandidate
+	if snapshot := a.authCandidates.Load(); snapshot != nil {
+		candidates = *snapshot
 	}
-	a.mu.RUnlock()
 	return readVMessRequestWithCandidates(r, candidates)
 }
 
@@ -65,14 +53,14 @@ func readVMessRequestWithCandidates(r *bufio.Reader, candidates []vmessUserCandi
 	var user core.User
 	var key [16]byte
 	found := false
+	now := time.Now().Unix()
+	var plain [16]byte
 	for _, candidate := range candidates {
-		plain := make([]byte, 16)
-		candidate.keyBlock.Decrypt(plain, auth[:])
+		candidate.keyBlock.Decrypt(plain[:], auth[:])
 		if binary.BigEndian.Uint32(plain[12:]) != crc32.ChecksumIEEE(plain[:12]) {
 			continue
 		}
 		ts := int64(binary.BigEndian.Uint64(plain[:8]))
-		now := time.Now().Unix()
 		if ts < now-120 || ts > now+120 {
 			continue
 		}

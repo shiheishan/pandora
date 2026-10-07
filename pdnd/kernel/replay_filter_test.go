@@ -199,7 +199,7 @@ func newTestVMess(t *testing.T, headerTimeout time.Duration) (string, string) {
 	t.Helper()
 	port := reserveTCPPort(t)
 	id := uuid.New().String()
-	a := &vmessAdapter{users: make(map[string]vmessUser), traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), headerTimeout: headerTimeout}
+	a := &vmessAdapter{users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), headerTimeout: headerTimeout}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vmess", Listen: "127.0.0.1", Port: port, Raw: map[string]any{}}}
 	if err := a.Validate(spec); err != nil {
 		t.Fatal(err)

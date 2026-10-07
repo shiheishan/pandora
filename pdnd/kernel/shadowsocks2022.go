@@ -60,7 +60,8 @@ type ss2022Adapter struct {
 	mu       sync.RWMutex
 	user     core.User
 	hasUser  bool
-	traffic  map[int64]core.UserTraffic
+	sessions userSessions
+	limiters core.SpeedLimiters
 	online   map[int64]map[string]struct{}
 	listener net.Listener
 	plane    DataPlane
@@ -117,7 +118,7 @@ func newSS2022Adapter(spec InboundSpec) (Adapter, error) {
 	if len(psks) == 0 {
 		return nil, fmt.Errorf("shadowsocks 2022 requires at least one PSK")
 	}
-	return &ss2022Adapter{spec: spec, method: parsed, psk: psks[len(psks)-1], psks: psks, traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), udp: make(map[string]*ss2022UDPSession)}, nil
+	return &ss2022Adapter{spec: spec, method: parsed, psk: psks[len(psks)-1], psks: psks, online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), udp: make(map[string]*ss2022UDPSession)}, nil
 }
 
 func (a *ss2022Adapter) Protocol() string {
@@ -202,13 +203,13 @@ func (a *ss2022Adapter) acceptLoop() {
 		a.wg.Add(1)
 		ctx := a.ctx
 		a.mu.Unlock()
-		go func() {
+		goGuarded(conn, func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
 			if err := a.handleConn(ctx, conn); err != nil {
 				a.recordError(err)
 			}
-		}()
+		})
 	})
 }
 
@@ -222,8 +223,11 @@ func (a *ss2022Adapter) handleConn(ctx context.Context, conn net.Conn) error {
 
 func (a *ss2022Adapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
+	epoch := a.sessions.epoch()
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	r := bufio.NewReaderSize(conn, 64*1024)
+	// 读缓冲只给请求头用：之后转发每次读 2KB 小块走它、32KB 大块直接读底层
+	// （bufio 对不小于缓冲的读直通）。原先 64KB 常驻，是每连接内存的大头之一。
+	r := bufio.NewReaderSize(conn, ssHeaderReadBuffer)
 	keyLen := a.method.keyLen
 	salt := make([]byte, keyLen)
 	if _, err := io.ReadFull(r, salt); err != nil {
@@ -285,6 +289,11 @@ func (a *ss2022Adapter) serveConn(ctx context.Context, conn net.Conn) error {
 	if !hasUser {
 		return fmt.Errorf("shadowsocks 2022 has no configured user")
 	}
+	sess := a.sessions.open(user, epoch, conn)
+	if sess == nil {
+		return errSessionRevoked
+	}
+	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
 		return deviceLimitError("shadowsocks 2022")
@@ -334,28 +343,8 @@ func (a *ss2022Adapter) serveConn(ctx context.Context, conn net.Conn) error {
 	}
 	ss2022IncNonce(writeNonce)
 	responseStream := &ss2022Stream{writer: conn, writeAEAD: writeAEAD, writeNonce: writeNonce}
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		n, copyErr := io.Copy(upstream, stream)
-		if copyErr != nil && !isConnClosedError(copyErr) {
-			a.recordError(copyErr)
-		}
-		a.addTraffic(user, n, 0)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		wg.Done()
-	}()
-	go func() {
-		n, copyErr := io.Copy(responseStream, upstream)
-		if copyErr != nil && !isConnClosedError(copyErr) {
-			a.recordError(copyErr)
-		}
-		a.addTraffic(user, 0, n)
-		wg.Done()
-	}()
-	wg.Wait()
+	client := &core.SplitStream{R: stream, W: responseStream, C: conn}
+	sess.relay(client, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
 	return nil
 }
 
@@ -406,28 +395,23 @@ func (a *ss2022Adapter) UpsertUsers(users []core.User) error {
 
 func (a *ss2022Adapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	if a.hasUser {
 		for _, id := range ids {
 			if id == a.user.UUID {
 				a.hasUser = false
+				removed = append(removed, a.user.ID)
 				break
 			}
 		}
 	}
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关）：已有的长连接、mux / QUIC 会话随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 func (a *ss2022Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, t := range a.traffic {
-		if t.Upload != 0 || t.Download != 0 {
-			out = append(out, t)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 func (a *ss2022Adapter) OnlineIPs() map[int64][]string {
 	a.mu.RLock()
@@ -465,13 +449,7 @@ func (a *ss2022Adapter) leaveDevice(user core.User, ip string) {
 	}
 }
 func (a *ss2022Adapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	t := a.traffic[user.ID]
-	t.ID = user.ID
-	t.Upload += upload
-	t.Download += download
-	a.traffic[user.ID] = t
-	a.mu.Unlock()
+	a.sessions.add(user.ID, upload, download)
 }
 func (a *ss2022Adapter) Close() error {
 	a.mu.Lock()

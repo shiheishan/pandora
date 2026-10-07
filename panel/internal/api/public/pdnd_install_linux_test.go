@@ -50,6 +50,8 @@ case "$1" in
 esac
 `)
 	writeExecutable(t, filepath.Join(fakeBin, "sleep"), "#!/bin/sh\nexit 0\n")
+	// 系统参数那一段不能碰跑测试的这台机器（检查机可能是 root）：桩 sysctl、临时目录。
+	writeExecutable(t, filepath.Join(fakeBin, "sysctl"), "#!/bin/sh\nexit 0\n")
 
 	script := filepath.Join(root, "install.sh")
 	if err := os.WriteFile(script, []byte(strings.ReplaceAll(pdndInstallTemplate, "@@PANEL@@", "https://panel.invalid")), 0o700); err != nil {
@@ -61,6 +63,9 @@ esac
 		"PANDORA_INSTALL_DIR="+installDir,
 		"PANDORA_CONFIG_DIR="+configDir,
 		"PANDORA_UNIT_DIR="+unitDir,
+		"PANDORA_SYSCTL_DIR="+filepath.Join(root, "sysctl.d"),
+		"PANDORA_MODPROBE_DIR="+filepath.Join(root, "modprobe.d"),
+		"PANDORA_CONNTRACK_HASHSIZE_PATH="+filepath.Join(root, "hashsize"),
 	)
 	if out, err := cmd.CombinedOutput(); err == nil {
 		t.Fatalf("installer unexpectedly succeeded: %s", out)

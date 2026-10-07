@@ -91,7 +91,11 @@ func (n *Node) startup(ctx context.Context) {
 			n.log.Warn("面板明确拒绝了这个节点，不用落盘缓存起服务", "err", cfgErr)
 			return
 		}
-		if err := n.loadConfigFromCache(); err != nil {
+		// 面板不可达：装入站时直接用落盘的名单，不再多等一次面板超时。
+		n.offlineStart = true
+		err := n.loadConfigFromCache()
+		n.offlineStart = false
+		if err != nil {
 			n.log.Warn("没能用落盘缓存起服务", "err", err)
 			return
 		}
