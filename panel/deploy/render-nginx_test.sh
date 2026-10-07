@@ -55,6 +55,28 @@ grep -Eq '^[[:space:]]*gzip_comp_level 5;' "$TEST_DIR/aegis.conf"
 # HTTP/2 下每个并发请求都计入 limit_conn，24 会把冷加载的资源 503 掉
 grep -Eq '^[[:space:]]*limit_conn aegis_conn 64;' "$TEST_DIR/aegis.conf"
 
+# 节点网关单独限速：按「来源 IP + 节点标识」分桶，外加每 IP 总上限；limit_conn 单独放宽。
+# 一台机器挂 60 个节点约 810 次/分、60 条事件流，按每 IP 的 aegis_api 与 limit_conn 64 会被 503
+grep -Eq '^limit_req_zone "\$binary_remote_addr\$aegis_signed_node\$aegis_compat_node" zone=aegis_node:[0-9]+m rate=[0-9]+r/m;' "$TEST_DIR/aegis.conf"
+grep -Eq '^limit_req_zone \$binary_remote_addr zone=aegis_node_ip:[0-9]+m rate=[0-9]+r/m;' "$TEST_DIR/aegis.conf"
+grep -Eq '^limit_conn_zone \$binary_remote_addr zone=aegis_node_conn:[0-9]+m;' "$TEST_DIR/aegis.conf"
+grep -Fq 'map $http_x_node_id $aegis_signed_node {' "$TEST_DIR/aegis.conf"
+grep -Fq 'map $arg_node_id $aegis_compat_node {' "$TEST_DIR/aegis.conf"
+node_location() {
+  # 打印某个 location 块（从 location 行到下一个只有 } 的行）
+  awk -v want="$1" 'index($0, want) { on = 1 } on { print } on && /^    }$/ { exit }' "$TEST_DIR/aegis.conf"
+}
+for loc in 'location ^~ /api/v1/server/UniProxy/ {' 'location ^~ /v1/nodes/ {'; do
+  block="$(node_location "$loc")"
+  [[ -n "$block" ]] || { printf 'missing %s\n' "$loc" >&2; exit 1; }
+  grep -Eq 'limit_req zone=aegis_node burst=[0-9]+ nodelay;' <<<"$block" || { printf '%s: no per-node limit\n' "$loc" >&2; exit 1; }
+  grep -Eq 'limit_req zone=aegis_node_ip burst=[0-9]+ nodelay;' <<<"$block" || { printf '%s: no per-IP cap\n' "$loc" >&2; exit 1; }
+  grep -Eq 'limit_conn aegis_node_conn [0-9]+;' <<<"$block" || { printf '%s: no node limit_conn\n' "$loc" >&2; exit 1; }
+  if grep -Fq 'zone=aegis_api' <<<"$block"; then printf '%s still uses the per-IP aegis_api zone\n' "$loc" >&2; exit 1; fi
+  conns="$(grep -Eo 'limit_conn aegis_node_conn [0-9]+;' <<<"$block" | grep -Eo '[0-9]+')"
+  (( conns >= 128 )) || { printf '%s: limit_conn %s too low for 60 node event streams\n' "$loc" "$conns" >&2; exit 1; }
+done
+
 # HTTP/2 按 nginx 版本渲染：1.25.1 起 http2 on;，更老或探不到版本用 listen ... ssl http2
 render_http2() {
   PANDORA_NGINX_VERSION="$1" "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$TEST_DIR/h2.raw" "$TEST_DIR/realip.conf" >/dev/null

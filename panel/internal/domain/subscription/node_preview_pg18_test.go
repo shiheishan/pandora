@@ -100,25 +100,25 @@ func TestNodePreviewPG18(t *testing.T) {
 		{`INSERT INTO servers(id,tenant_id,name,status) VALUES($2,$1,'down-server','maintenance')`, []any{tenantA, serverDown}},
 		{`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,traffic_rate,
 			server_id,serving_status,protocol_schema_version,config_validated_at,display_name)
-		  VALUES($2,$1,'good-node',$3,'active','vless','good.invalid',443,1.50,$4,'active',1,now(),'Good Node')`, []any{tenantA, goodNode, poolA, serverA}},
+		  VALUES($2,$1,'good-node',$3,'active','vless','good.invalid',4431,1.50,$4,'active',1,now(),'Good Node')`, []any{tenantA, goodNode, poolA, serverA}},
 		{`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 			server_id,serving_status,protocol_schema_version,config_validated_at)
-		  VALUES('74000000-0000-4000-8000-000000000072',$1,'disabled-node',$2,'active','vless','disabled.invalid',443,$3,'disabled',1,now())`, []any{tenantA, poolA, serverA}},
+		  VALUES('74000000-0000-4000-8000-000000000072',$1,'disabled-node',$2,'active','vless','disabled.invalid',4432,$3,'disabled',1,now())`, []any{tenantA, poolA, serverA}},
 		{`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 			server_id,serving_status,protocol_schema_version,config_validated_at)
-		  VALUES('74000000-0000-4000-8000-000000000073',$1,'maintenance-node',$2,'active','vless','maintenance.invalid',443,$3,'active',1,now())`, []any{tenantA, poolA, serverDown}},
+		  VALUES('74000000-0000-4000-8000-000000000073',$1,'maintenance-node',$2,'active','vless','maintenance.invalid',4433,$3,'active',1,now())`, []any{tenantA, poolA, serverDown}},
 		{`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 			server_id,serving_status,protocol_schema_version,config_validated_at)
-		  VALUES('74000000-0000-4000-8000-000000000074',$1,'other-pool-node',$2,'active','vless','other.invalid',443,$3,'active',1,now())`, []any{tenantA, otherPool, serverA}},
+		  VALUES('74000000-0000-4000-8000-000000000074',$1,'other-pool-node',$2,'active','vless','other.invalid',4434,$3,'active',1,now())`, []any{tenantA, otherPool, serverA}},
 		{`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 			server_id,serving_status,protocol_schema_version,config_validated_at)
-		  VALUES('74000000-0000-4000-8000-000000000075',$1,'schema-zero-node',$2,'active','vless','schema0.invalid',443,$3,'active',0,now())`, []any{tenantA, poolA, serverA}},
+		  VALUES('74000000-0000-4000-8000-000000000075',$1,'schema-zero-node',$2,'active','vless','schema0.invalid',4435,$3,'active',0,now())`, []any{tenantA, poolA, serverA}},
 		{`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 			server_id,serving_status,protocol_schema_version,config_validated_at)
-		  VALUES('74000000-0000-4000-8000-000000000076',$1,'unvalidated-node',$2,'active','vless','unvalidated.invalid',443,$3,'active',1,NULL)`, []any{tenantA, poolA, serverA}},
+		  VALUES('74000000-0000-4000-8000-000000000076',$1,'unvalidated-node',$2,'active','vless','unvalidated.invalid',4436,$3,'active',1,NULL)`, []any{tenantA, poolA, serverA}},
 		{`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 			server_id,serving_status,protocol_schema_version,config_validated_at)
-		  VALUES('74000000-0000-4000-8000-000000000077',$1,'empty-host-node',$2,'active','vless','',443,$3,'active',1,now())`, []any{tenantA, poolA, serverA}},
+		  VALUES('74000000-0000-4000-8000-000000000077',$1,'empty-host-node',$2,'active','vless','',4437,$3,'active',1,now())`, []any{tenantA, poolA, serverA}},
 	}
 	for _, row := range seed {
 		if _, err := admin.Exec(ctx, row.sql, row.args...); err != nil {
@@ -133,7 +133,7 @@ func TestNodePreviewPG18(t *testing.T) {
 	}
 	if _, err := admin.Exec(ctx, `INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 			server_id,serving_status,protocol_schema_version,config_validated_at)
-		  VALUES('74000000-0000-4000-8000-000000000078',$1,'never-seen-node',$2,'active','vless','neverseen.invalid',443,$3,'active',1,now())`,
+		  VALUES('74000000-0000-4000-8000-000000000078',$1,'never-seen-node',$2,'active','vless','neverseen.invalid',4438,$3,'active',1,now())`,
 		tenantA, poolA, serverA); err != nil {
 		t.Fatalf("seed never-seen node: %v", err)
 	}

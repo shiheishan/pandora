@@ -175,6 +175,7 @@ func runNodeConfigPG18NewMaterializationRaceBatch(t *testing.T, ctx context.Cont
 						out, err := cloneService.CloneAdminNode(ctx, fx.tenant, source.ID, nodefabric.CloneAdminNodeInput{
 							ActorID: fx.actor, Name: fmt.Sprintf("new03-clone-%s-%02d-%s", order, round, fx.suffix),
 							RowVersion: source.RowVersion, TargetServerID: fx.server, PoolID: fx.pool,
+							ServerPort: nodeConfigPG18Port(23000 + round),
 						})
 						cloneResult <- nodeConfigPG18AdminNodeCallResult{out: out, err: err}
 					}

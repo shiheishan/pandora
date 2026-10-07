@@ -94,7 +94,7 @@ func TestUniProxyServesAndChargesTrafficPacks(t *testing.T) {
 		!strings.Contains(pkg.Decl("chargeReportEntries"), "applyTrafficCharges(") {
 		t.Fatal("single and batch charges must share one charging core")
 	}
-	report := pkg.Decl("Service.ReportTraffic")
+	report := pkg.Decl("Service.reportTraffic")
 	if !strings.Contains(report, "for _, entry := range report.entries") ||
 		!strings.Contains(pkg.Decl("parseTrafficReport"), "slices.SortFunc(out.entries") {
 		t.Fatal("ReportTraffic must charge users in a deterministic order")
@@ -127,7 +127,8 @@ func TestReportTrafficOnlyReachedThroughAuthentication(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(body), ".ReportTraffic(") {
+		// 带与不带上报编号的两个入口都只许 uniPush 调（ReportTrafficWithID 是带 X-Report-Id 的那个）
+		if strings.Contains(string(body), ".ReportTraffic(") || strings.Contains(string(body), ".ReportTrafficWithID(") {
 			callers = append(callers, filepath.ToSlash(path))
 		}
 		return nil
@@ -139,7 +140,7 @@ func TestReportTrafficOnlyReachedThroughAuthentication(t *testing.T) {
 		t.Fatalf("ReportTraffic non-test callers = %v, want only api/node/handlers.go", callers)
 	}
 	handler := sourcetest.Load(t, filepath.Join(root, "api", "node")).Decl("handlers.uniPush")
-	if auth, report := strings.Index(handler, "h.authNode(w, r)"), strings.Index(handler, ".ReportTraffic("); auth < 0 || report < auth {
+	if auth, report := strings.Index(handler, "h.authNode(w, r)"), strings.Index(handler, ".ReportTrafficWithID("); auth < 0 || report < auth {
 		t.Fatal("uniPush must authenticate the node before reporting traffic")
 	}
 }

@@ -59,10 +59,11 @@ func TestNodeActivatePG18(t *testing.T) {
 		if !ready {
 			validated = "NULL"
 		}
+		// 端口按编号错开：同一台服务器上同端口同 L4 撞同机端口门禁的唯一索引（00122）
 		must(`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 				server_id,protocol_schema_version,config_validated_at,last_heartbeat_at)
-			  VALUES($2,$1,$3,$4,$5,'vless',$3 || '.invalid',443,$6,1,`+validated+`,now())`,
-			tenant, id, "activate-node-"+strconv.Itoa(n), pool, status, server)
+			  VALUES($2,$1,$3,$4,$5,'vless',$3 || '.invalid',$7,$6,1,`+validated+`,now())`,
+			tenant, id, "activate-node-"+strconv.Itoa(n), pool, status, server, 20000+n)
 		if identity != "" {
 			serial++
 			expires := "now() + interval '90 days'"

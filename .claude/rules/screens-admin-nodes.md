@@ -10,6 +10,9 @@ paths:
 - `protocol_config` 写入是整体替换（普通键缺席即删除）；读接口按名字在任意深度抹掉敏感键（`password`、`private_key`、`psk`、`mask_password`…，见 `logic.ts` 的 `REDACTED_KEYS`），PATCH 里缺席的敏感键后端按原路径补回。所以 PATCH 只在协议字段真的改了（或换了协议）才带 `protocol_config`。
 - 编辑同一协议时敏感字段留空 = 不改、不带这个键（必填的也不算缺）；选填的敏感字段可点「清空」，保存前确认后显式发 `null`；换协议后端不补旧密钥，必填照常要填。
 - 协议 schema 由后端 `GET v1/node-protocol-schemas` 给出（stable 可选，legacy-read-compatible 只读兼容），表单按 `allowed_properties` 渲染、点号路径展开成嵌套对象；422 的 `protocol_config.<键>` 先按路径再按叶子名落回字段。不要在前端硬编码协议字段。
+- 字段说明来自 schema 的 `hints`（回落、证书目录、REALITY 多值等），不在前端写死；`property_types` 的 `list`（REALITY 的 server_name / short_id）按逗号分隔录入，一个值存字符串、多个存数组。zod 里 `property_types` 是闭合枚举，后端加新类型要同步改 `schemas.ts`，否则整份 schema 解析失败。
+- 联动默认值只有一处：`logic.withProtocolDefaults`（VLESS + REALITY + tcp 默认 `xtls-rprx-vision`，离开该组合清掉 Vision）；表单顶部提示在 `protocolNotices`（不加密的 CDN 传输要套 CDN 或 TLS、裸 tcp 会被拒）。
+- 内核只给 auto / pandora-native；存量 sing-box / xray-core 载入显示为自动，只在这次保存会重新校验协议（改协议、地址、端口）时随 PATCH 带上新值，只改名字不带（`patchBody`）。
 
 生命周期与服务器：
 
@@ -21,3 +24,10 @@ paths:
 - 服务器状态机 ready 不能直达 maintenance：卡片「标记维护」发 `draining`（显示「维护中」），完整状态走详情里的合法边下拉（`infra.ts` 的状态边表与后端一致）。
 - 服务器删除只许草稿或已退役；名下节点不拒绝而是级联静默（身份吊销、摘掉 `server_id`），文案按此改写了设计稿的「先迁移或删除」。
 - 安装令牌固定传 `ttl_minutes: 30`（后端缺省 20）。
+
+运行状态与端口（w4deliver）：
+
+- 节点行与详情的运行状态由 `runtime.ts` 的 `runState` 算：生效失败（回执失败或节点报端口被占、没起来、新配置装不上）→ 降级：用缓存服务 → 待生效 → 运行中；列表只标非「运行中」的三种。原因码中文化在 `runtimeReasonText`，端口冲突的占用者名字由后端 `runtime_reason_node` 给，前端不按 id 另查
+- 详情的版本行：有 `desired_effective_generation` 时显示生效版本（签名节点），否则仍是旧的整数配置版本
+- 同机端口门禁的 409 带 `fields.server_port`，表单与复制弹窗都标到端口框；复制弹窗可另给端口（留空沿用原节点），复制到同一台服务器必须换端口
+- 新加的运行状态字段在 `schemas.ts` 里带缺省（`catch` / `nullish`）：开发期假后端（`panel/frontend/dev/`）还没有这些字段，补上后可以收紧

@@ -429,7 +429,7 @@ func runNodeConfigPG18PoolDeleteRaceBatch(t *testing.T, ctx context.Context,
 			out, err := service.CloneAdminNode(httpx.WithRequestID(opCtx, "nodecfg-pg18-del04-clone-loser"),
 				fx.tenant, sourceID, nodefabric.CloneAdminNodeInput{
 					ActorID: fx.actor, Name: "del04-clone-loser-" + fx.suffix,
-					RowVersion: source.RowVersion, PoolID: fx.pool,
+					RowVersion: source.RowVersion, PoolID: fx.pool, ServerPort: nodeConfigPG18Port(19413),
 				})
 			cloneResult <- nodeConfigPG18AdminNodeCallResult{out: out, err: err}
 		}()
@@ -492,7 +492,7 @@ func runNodeConfigPG18PoolDeleteRaceBatch(t *testing.T, ctx context.Context,
 			out, err := service.CloneAdminNode(httpx.WithRequestID(opCtx, "nodecfg-pg18-del04-clone-winner"),
 				fx.tenant, sourceID, nodefabric.CloneAdminNodeInput{
 					ActorID: fx.actor, Name: "del04-clone-winner-" + fx.suffix,
-					RowVersion: source.RowVersion, PoolID: fx.pool,
+					RowVersion: source.RowVersion, PoolID: fx.pool, ServerPort: nodeConfigPG18Port(19414),
 				})
 			cloneResult <- nodeConfigPG18AdminNodeCallResult{out: out, err: err}
 		}()

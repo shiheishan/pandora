@@ -98,6 +98,10 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 			time.Since(*x.LastBeat) < subscription.HeartbeatFreshWindow
 		item.Delivered, item.DeliveryNote = facts[x.ID].Refine(subscription.DeliveryState(
 			x.ServingStatus, x.PoolID != nil, everSeen, beatFresh))
+		// 降级节点（与订阅的 preferFreshNodes 同一口径）仍在资格集合里，只是有别的节点时不给
+		if item.Delivered && x.DeliveryDegraded {
+			item.DeliveryNote = subscription.DegradedNote
+		}
 		out = append(out, item)
 	}
 	if q.ID == "" {

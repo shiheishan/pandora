@@ -25,7 +25,8 @@ func (s *serverSession[U]) loopMessages() {
 
 func (s *serverSession[U]) handleMessage(data []byte) error {
 	message := allocMessage()
-	err := decodeUDPMessage(message, data)
+	// loopMessages 是本连接唯一的收包 goroutine，目标缓存不用加锁。
+	err := decodeUDPMessage(message, data, &s.destCache)
 	if err != nil {
 		message.release()
 		return E.Cause(err, "decode UDP message")
@@ -43,7 +44,7 @@ func (s *serverSession[U]) handleUDPMessage(message *udpMessage) {
 			s.udpAccess.Lock()
 			delete(s.udpConnMap, message.sessionID)
 			s.udpAccess.Unlock()
-		})
+		}, s.udpQueueSize)
 		udpConn.sessionID = message.sessionID
 		s.udpAccess.Lock()
 		s.udpConnMap[message.sessionID] = udpConn

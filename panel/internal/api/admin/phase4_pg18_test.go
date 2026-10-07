@@ -29,7 +29,7 @@ func TestNodePatchKeepsSecretsPG18(t *testing.T) {
 	nodes := step3Nodes(t, ctx, admin, tenant, "8b000000-0000-4000-8000-", 2)
 	hy2, stls := nodes[0], nodes[1]
 	step3Seed(t, ctx, admin,
-		`UPDATE nodes SET node_type='hysteria2', protocol_config='{"network":"udp","cert_path":"/etc/pandora/cert.pem","key_path":"/etc/pandora/key.pem","obfs":{"type":"salamander","password":"fixture-obfs"}}' WHERE id='`+hy2+`'`,
+		`UPDATE nodes SET node_type='hysteria2', protocol_config='{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/cert.pem","key_path":"/etc/pandora-native/certs/example.com/key.pem","obfs":{"type":"salamander","password":"fixture-obfs"}}' WHERE id='`+hy2+`'`,
 		`UPDATE nodes SET node_type='shadowtls', protocol_config='{"network":"tcp","version":3,"password":"fixture-outer","server":"a.example.com:443","method":"aes-256-gcm","strict":true}' WHERE id='`+stls+`'`)
 	r := step4Router(tenant, actor, step4Handlers(t, app))
 
@@ -59,12 +59,12 @@ func TestNodePatchKeepsSecretsPG18(t *testing.T) {
 	}
 
 	// 嵌套的 obfs.password：以前会被悄悄清空。响应仍然抹敏。
-	body := patch(hy2, `"protocol_config":{"network":"udp","cert_path":"/etc/pandora/cert2.pem","key_path":"/etc/pandora/key.pem","obfs":{"type":"salamander"}}`, http.StatusOK)
+	body := patch(hy2, `"protocol_config":{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/cert2.pem","key_path":"/etc/pandora-native/certs/example.com/key.pem","obfs":{"type":"salamander"}}`, http.StatusOK)
 	if strings.Contains(body, "fixture-obfs") {
 		t.Fatalf("response leaked secret: %s", body)
 	}
 	got := stored(hy2)
-	if got["cert_path"] != "/etc/pandora/cert2.pem" || got["obfs"].(map[string]any)["password"] != "fixture-obfs" {
+	if got["cert_path"] != "/etc/pandora-native/certs/example.com/cert2.pem" || got["obfs"].(map[string]any)["password"] != "fixture-obfs" {
 		t.Fatalf("nested secret not kept: %+v", got)
 	}
 	// 只改名字、不带 protocol_config：原样不动。
@@ -73,7 +73,7 @@ func TestNodePatchKeepsSecretsPG18(t *testing.T) {
 		t.Fatalf("rename touched secret: %+v", stored(hy2))
 	}
 	// 显式给新值才覆盖。
-	patch(hy2, `"protocol_config":{"network":"udp","cert_path":"/etc/pandora/cert2.pem","key_path":"/etc/pandora/key.pem","obfs":{"type":"salamander","password":"obfs-two"}}`, http.StatusOK)
+	patch(hy2, `"protocol_config":{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/cert2.pem","key_path":"/etc/pandora-native/certs/example.com/key.pem","obfs":{"type":"salamander","password":"obfs-two"}}`, http.StatusOK)
 	if stored(hy2)["obfs"].(map[string]any)["password"] != "obfs-two" {
 		t.Fatalf("explicit secret not applied: %+v", stored(hy2))
 	}

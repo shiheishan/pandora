@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
+	"github.com/aegispanel/aegis/internal/platform/config"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -202,4 +203,25 @@ func (h *handlers) nodeRetire(w http.ResponseWriter, r *http.Request) {
 	}
 	h.d.Node.NotifyNodeChanged(r.Context(), tenantID, id)
 	httpx.OK(w, out)
+}
+
+// configureNodePortPolicy 把 platform/config 的节点端口保留表交给 nodefabric（后台建、改、
+// 复制、迁移节点时按它拒绝或提示）。没有节点服务、或配置不是经 config.Load 读出来的
+// （两张表都是 nil，测试手拼的 Config）时不注入，nodefabric 用缺省表，保留端口不会因此失效。
+func configureNodePortPolicy(d Deps) {
+	if d.Node == nil || d.Cfg == nil || (d.Cfg.NodePorts.Reserved == nil && d.Cfg.NodePorts.PanelReserved == nil) {
+		return
+	}
+	convert := func(in []config.PortRange) []nodefabric.PortRange {
+		out := make([]nodefabric.PortRange, 0, len(in))
+		for _, r := range in {
+			out = append(out, nodefabric.PortRange{From: r.From, To: r.To})
+		}
+		return out
+	}
+	d.Node.SetPortPolicy(nodefabric.PortPolicy{
+		Reserved:      convert(d.Cfg.NodePorts.Reserved),
+		PanelReserved: convert(d.Cfg.NodePorts.PanelReserved),
+		PanelHosts:    d.Cfg.NodePorts.PanelHosts,
+	})
 }

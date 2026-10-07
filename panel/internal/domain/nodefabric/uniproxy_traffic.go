@@ -56,7 +56,22 @@ const pushRetryAttempts = 3
 // 可以挨个枚举，一个泄露的节点令牌原先能把全站用户的额度扣成负数、全部停发。名单外与
 // 数值不合规的条目照样留档，不扣费，计入 Invalid；不因为一条坏值拒收整份报文。
 // 代价：用户刚被摘出名单（到期、用尽、换池）之后才报上来的最后一点流量不再计费。
+//
+// 不带上报编号，等同 ReportTrafficWithID(…, "")：老节点与测试夹具走这条。
 func (s *Service) ReportTraffic(ctx context.Context, tenantID string, n *ServingNode, raw []byte) (*PushResult, error) {
+	return s.reportTraffic(ctx, tenantID, n, raw, "")
+}
+
+// ReportTrafficWithID 是带幂等键的 ReportTraffic（w4deliver，审计 ledger N5）：pdnd 给每份
+// 上报一个编号（请求头 X-Report-Id，经 NormalizeTrafficReportID 校验），结果不确定时原样
+// 重发、带同一个编号。带编号的上报按 (节点, 编号) 去重：第一份入账；同一编号再来只留档一行
+// 重复件、不扣费，不论隔了多久、是不是并发到达（迁移 00123 的唯一部分索引）。reportID 为空
+// （老节点、编号不合规）照旧走 10 秒内容哈希去重。
+func (s *Service) ReportTrafficWithID(ctx context.Context, tenantID string, n *ServingNode, raw []byte, reportID string) (*PushResult, error) {
+	return s.reportTraffic(ctx, tenantID, n, raw, reportID)
+}
+
+func (s *Service) reportTraffic(ctx context.Context, tenantID string, n *ServingNode, raw []byte, reportID string) (*PushResult, error) {
 	report, err := parseTrafficReport(raw)
 	if err != nil {
 		return nil, err
@@ -97,26 +112,14 @@ func (s *Service) ReportTraffic(ctx context.Context, tenantID string, n *Serving
 	for attempt := 1; ; attempt++ {
 		out = &PushResult{TotalBytes: report.upload + report.download, Invalid: invalid}
 		err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-			// 留档与近似去重合成一条语句：同一节点 10 秒内的同一报文记为重复
-			var reportID string
-			if err := tx.QueryRow(ctx, `
-				INSERT INTO node_traffic_reports
-					(tenant_id, node_id, user_count, total_upload, total_download,
-					 traffic_rate, raw_payload, content_hash, duplicate_of)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
-					(SELECT d.id FROM node_traffic_reports d
-					  WHERE d.node_id = $2 AND d.content_hash = $8
-					    AND d.received_at > now() - interval '10 seconds'
-					  ORDER BY d.received_at DESC LIMIT 1))
-				RETURNING id, duplicate_of IS NOT NULL`,
-				tenantID, n.ID, report.keys, report.upload, report.download,
-				n.TrafficRate, raw, sum[:],
-			).Scan(&reportID, &out.Duplicate); err != nil {
+			rowID, duplicate, err := recordTrafficReport(ctx, tx, tenantID, n, report, raw, sum[:], reportID)
+			if err != nil {
 				return err
 			}
+			out.Duplicate = duplicate
 
 			// --- 小时汇总（00099）：与留档同一事务，重复上报只计重复数 ---
-			if err := rollupTrafficReport(ctx, tx, tenantID, reportID); err != nil {
+			if err := rollupTrafficReport(ctx, tx, tenantID, rowID); err != nil {
 				return err
 			}
 			if out.Duplicate {

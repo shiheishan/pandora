@@ -61,7 +61,18 @@ export function NodeDrawer({ node, detail, tab, onClose }: { node: NodeRow | nul
           {tab === 'metrics' && <NodeMonitor node={node} />}
           {tab === 'proto' && (
             <QueryView query={detail} rows={4} isEmpty={(d) => d === null} empty={<Empty bare title="节点不存在" description="它可能刚被删除，关掉抽屉刷新列表看看。" />}>
-              {(d) => d && <NodeForm key={d.row_version} node={d} onSaved={() => undefined} />}
+              {(d) =>
+                d && (
+                  <>
+                    {d.warnings?.map((w) => (
+                      <div key={w} className={css.configWarning}>
+                        <Tag tone="warn">配置提示</Tag> {w}
+                      </div>
+                    ))}
+                    <NodeForm key={d.row_version} node={d} onSaved={() => undefined} />
+                  </>
+                )
+              }
             </QueryView>
           )}
           {tab === 'routing' && <NodeRouting nodeId={node.id} />}

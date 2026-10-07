@@ -97,14 +97,18 @@ func TestSubscribePullPG18(t *testing.T) {
 	must(`UPDATE plan_versions SET frozen_at=now() WHERE tenant_id=$1 AND id=$2`, tenant, planVer)
 	must(`UPDATE plans SET current_version_id=$2,status='active' WHERE tenant_id=$1 AND id=$3`, tenant, planVer, plan)
 	must(`INSERT INTO servers(id,tenant_id,name,status) VALUES($2,$1,'pull-server','ready')`, tenant, server)
-	for _, n := range []struct{ id, name, host, pool string }{
-		{openNode, "Open Line", "open.pull.invalid", openPool},
-		{vipNode, "VIP Line", "vip.pull.invalid", vipPool},
+	// 同一台服务器上的节点端口各不相同（同机端口门禁的唯一索引，00122）
+	for _, n := range []struct {
+		id, name, host, pool string
+		port                 int
+	}{
+		{openNode, "Open Line", "open.pull.invalid", openPool, 443},
+		{vipNode, "VIP Line", "vip.pull.invalid", vipPool, 8443},
 	} {
 		must(`INSERT INTO nodes(id,tenant_id,name,display_name,pool_id,status,node_type,server_host,server_port,
 				server_id,serving_status,protocol_schema_version,config_validated_at,last_heartbeat_at,sort_order)
-			  VALUES($2,$1,$3,$3,$4,'active','vless',$5,443,$6,'active',1,now(),now(),0)`,
-			tenant, n.id, n.name, n.pool, n.host, server)
+			  VALUES($2,$1,$3,$3,$4,'active','vless',$5,$7,$6,'active',1,now(),now(),0)`,
+			tenant, n.id, n.name, n.pool, n.host, server, n.port)
 	}
 	for _, s := range []struct{ id, user, token string }{
 		{vipSub, vipUser, vipTok}, {plainSub, plainUser, plainTok}, {lostSub, lostUser, lostTok},

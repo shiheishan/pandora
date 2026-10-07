@@ -38,14 +38,18 @@ func runDeliverableAdminPG18(t *testing.T, ctx context.Context, admin *pgxpool.P
 	}
 	must(`INSERT INTO servers(id,tenant_id,name,status) VALUES($2,$1,'delivery-admin-draft-server','draft')`, tenant, draftServer)
 	must(`INSERT INTO node_pools(id,tenant_id,code,name,status) VALUES($2,$1,'delivery-admin-other','Delivery Admin Other','active')`, tenant, otherPool)
-	for _, node := range []struct{ id, name, pool, server string }{
-		{onDraftSrv, "delivery-admin-draft-server-node", pool, draftServer},
-		{inOtherPool, "delivery-admin-unbound-pool-node", otherPool, readyServer},
+	// readyServer 上已有 TestDeliveryAdminPG18 的节点（443、8443）：端口错开，免撞同机端口门禁的唯一索引（00122）
+	for _, node := range []struct {
+		id, name, pool, server string
+		port                   int
+	}{
+		{onDraftSrv, "delivery-admin-draft-server-node", pool, draftServer, 443},
+		{inOtherPool, "delivery-admin-unbound-pool-node", otherPool, readyServer, 9443},
 	} {
 		must(`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,
 				server_id,serving_status,protocol_schema_version,config_validated_at,last_heartbeat_at)
-			  VALUES($2,$1,$3,$4,'active','vless',$5,443,$6,'active',1,now(),now())`,
-			tenant, node.id, node.name, node.pool, node.name+".invalid", node.server)
+			  VALUES($2,$1,$3,$4,'active','vless',$5,$7,$6,'active',1,now(),now())`,
+			tenant, node.id, node.name, node.pool, node.name+".invalid", node.server, node.port)
 	}
 
 	// 节点列表：两条新说明，原有两条不变

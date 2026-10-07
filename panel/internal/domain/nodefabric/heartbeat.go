@@ -70,21 +70,24 @@ func (m *Metrics) validate() error {
 }
 
 type HeartbeatInput struct {
-	AgentVersion         string   `json:"agent_version"`
-	RuntimeVersion       string   `json:"runtime_version"`
-	ConfigSigningKeyID   string   `json:"config_signing_key_id"`
-	ConfigVersion        int      `json:"applied_config_version"`
-	ConfigHash           string   `json:"applied_config_hash"`
-	AppliedReleaseID     string   `json:"applied_effective_release_id"`
-	AppliedGeneration    uint64   `json:"applied_effective_generation"`
-	AppliedContentSHA256 string   `json:"applied_effective_content_sha256"`
-	CPUCores             int      `json:"cpu_cores"`
-	MemoryMB             int      `json:"memory_mb"`
-	DiskGB               int      `json:"disk_gb"`
-	LoadPercent          int      `json:"load_percent"`
-	RuntimeStatus        string   `json:"runtime_status"`
-	Metrics              *Metrics `json:"metrics"`
-	MetricsPartial       bool     `json:"metrics_partial"`
+	AgentVersion         string `json:"agent_version"`
+	RuntimeVersion       string `json:"runtime_version"`
+	ConfigSigningKeyID   string `json:"config_signing_key_id"`
+	ConfigVersion        int    `json:"applied_config_version"`
+	ConfigHash           string `json:"applied_config_hash"`
+	AppliedReleaseID     string `json:"applied_effective_release_id"`
+	AppliedGeneration    uint64 `json:"applied_effective_generation"`
+	AppliedContentSHA256 string `json:"applied_effective_content_sha256"`
+	CPUCores             int    `json:"cpu_cores"`
+	MemoryMB             int    `json:"memory_mb"`
+	DiskGB               int    `json:"disk_gb"`
+	LoadPercent          int    `json:"load_percent"`
+	RuntimeStatus        string `json:"runtime_status"`
+	// RuntimeReason 是 degraded 的机器可读原因，来自请求头 X-Node-Runtime-Reason（不在正文：
+	// 正文按 DisallowUnknownFields 解码），由 handler 填
+	RuntimeReason  string   `json:"-"`
+	Metrics        *Metrics `json:"metrics"`
+	MetricsPartial bool     `json:"metrics_partial"`
 }
 
 type HeartbeatOutput struct {
@@ -117,8 +120,8 @@ func (s *Service) HeartbeatSigned(ctx context.Context, tenantID, nodeID string, 
 const serverHeartbeatRefresh = "45 seconds"
 
 // heartbeat 一次往返写完心跳（BatchScoped，异步提交）：
-//   - 节点行：只改心跳类列；去掉 idx_nodes_heartbeat、fillfactor 85（迁移 00116）之后是
-//     HOT 更新，也不触发变更通知（00110 / 00116 的 WHEN）；
+//   - 节点行：只改心跳类列与运行状态；去掉 idx_nodes_heartbeat、fillfactor 85（迁移 00116）之后是
+//     HOT 更新，也不触发变更通知（00110 / 00116 的 WHEN）；运行状态或原因真变了才通知（00122）；
 //   - 探针点：追加一行；
 //   - 服务器行：两阶段接入建的服务器 id 就是控制节点 id（enrollment.go），后台服务器
 //     列表的在线状态读它，所以不能删；只在过了刷新间隔或版本、资产变了时才写。
@@ -144,12 +147,9 @@ func (s *Service) heartbeat(ctx context.Context, tenantID, nodeID string, in Hea
 	if in.ConfigHash != "" {
 		hash, _ = base64.StdEncoding.DecodeString(in.ConfigHash)
 	}
-	// 健康分先给一个可解释的粗粒度值：能上报即 90，运行时异常降到 40。
-	// POOL-004 的多维评分留到调度实装时再细化。
-	score := 90
-	if in.RuntimeStatus != "" && in.RuntimeStatus != "running" {
-		score = 40
-	}
+	// 健康分先给一个可解释的粗粒度值：能上报即 90，运行时异常降到 40（RuntimeState.HealthScore）。
+	runtime := NormalizeRuntimeState(in.RuntimeStatus, in.RuntimeReason)
+	score := runtime.HealthScore()
 
 	gate, gateArgs := "", []any{}
 	if gateKey != nil {
@@ -180,12 +180,14 @@ func (s *Service) heartbeat(ctx context.Context, tenantID, nodeID string, in Hea
 			       cpu_cores = coalesce(nullif($7,0), cpu_cores),
 			       memory_mb = coalesce(nullif($8,0), memory_mb),
 			       disk_gb   = coalesce(nullif($9,0), disk_gb),
-			       health_score = $10
-			 WHERE tenant_id = $1 AND id = $2`+gated(12)+`
+			       health_score = $10,
+			       `+runtimeStateSetSQL("$12", "$13")+`
+			 WHERE tenant_id = $1 AND id = $2`+gated(14)+`
 			RETURNING status, coalesce(desired_config_version, 0),
 			          desired_effective_release_id::text, desired_effective_generation`,
 		append([]any{tenantID, nodeID, in.AgentVersion, in.RuntimeVersion,
-			in.ConfigVersion, hash, in.CPUCores, in.MemoryMB, in.DiskGB, score, in.ConfigSigningKeyID}, gateArgs...)...,
+			in.ConfigVersion, hash, in.CPUCores, in.MemoryMB, in.DiskGB, score, in.ConfigSigningKeyID,
+			runtime.Status, runtime.Reason}, gateArgs...)...,
 	).Query(func(rows pgx.Rows) error {
 		for rows.Next() {
 			found = true
