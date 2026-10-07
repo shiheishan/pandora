@@ -20,6 +20,8 @@ Vultr 新加坡，Shared CPU，Debian 13 x64（与生产同版），开机时用
 
 ## 开通
 
+一条命令做完 1–2 和 chrony：`bash .claude/skills/test-machine/scripts/register.sh <别名> <IP> <套餐> "<用途一句话>"`（必须 bash 跑；ssh 需要 1Password agent，在沙箱里要关沙箱）。同名目录已存在就换序号——删过的旧机目录保留作记录（如 node1/node2 已删，新开的叫 node3/node4）。下面是它做的事，手工补救时照这个：
+
 1. 首次连接：`ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes root@<IP> true`。
 2. 登记三处，缺一不可（一次性机不建 1Password 条目，用户定的）：
    - `~/.ssh/config` 末尾追加 Host 块（别名、HostName、`User root`）；
@@ -40,5 +42,7 @@ Vultr 新加坡，Shared CPU，Debian 13 x64（与生产同版），开机时用
 - `build-release.sh` 只能在 Linux 上跑（GNU tar、sha256sum），要在 `panel/` 目录下执行；它的 `git describe` 会取到 `archive/` 开头的标签，导致版本号被拒，要显式传版本号。
 - 压测机经 nginx 压面板时，所有请求的来源 IP 相同，会撞上按 IP 限流（每分钟 240 次）和 IP 聚类：要让面板信任压测机并由压测机带 X-Real-IP（runbook 第 4 节，loadtest 已支持）。
 - 1Password SSH agent 锁着时 ssh 会签名失败；子 agent 的沙箱连不到 agent，需要关掉沙箱或由主会话来执行。
+- 从本机用 ssh 在测试机上起后台脚本（`nohup … &`）会挂住 ssh 会话、拖住后面的命令：用 `ssh -n <别名> 'setsid nohup <脚本> >log 2>&1 < /dev/null &'`。两轮复测都因为这个把压测机起跑推迟了 1.5 分钟。
+- 在 zsh 里写循环处理「别名 IP」成对参数时，`set -- $pair` 不按空格拆，会把整串当成一个参数（曾建出名为「别名 IP」的目录）；脚本一律 bash，或用 `${pair%% *}` / `${pair##* }`。
 - 同一个 IP 重装系统后主机密钥会变，要先 `ssh-keygen -R <IP>` 再连。
 - 真实 IP 只能出现在 `~/.ssh/config`、`~/ai/servers/`、`ops-local/` 里；报告和仓库里一律写别名或 `<PANEL_IP>` 这类占位符。

@@ -11,6 +11,8 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
 
 用户会把报告贴错会话或重复贴。先 `git log --oneline feat/panel-redesign..<分支>` 和主目录 `.claude/TASKS.md` 对一下。
 
+后台子 agent 交回时，先存报告：`scripts/save-report.sh <通知里的 output-file> ../pandora-<名字>/.claude/report.md`（取转录里最后一条带文字的消息；agent 中途「还在等 CI」的临时通知不是终稿，等 `end_turn` 的那次再存）。
+
 ## 要核的东西
 
 1. **范围**：`git diff --stat <基点>..<分支>`；`scripts/check-ownership.sh <基点> <分支> <归属清单文件>` 列出归属外的改动。越界的要么有报告里的理由、要么退回。
@@ -21,7 +23,7 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
    - 只改注释或文字：`scripts/comment-only.sh <base> <head>` 必须为空；
    - 声称没改 SQL：`go run ./tools/refactorcheck sqlset -base <base> -head <head>` 必须 UNCHANGED；
    - 改了 SQL 的性能项：用评测集判分（训练集与留出集都不变差、改前改后结果一致；只训练集变好算过拟合，退回）。
-5. **CI**：`ops-local/memoh-ci/wait-status.sh <分支头 sha>`；动了数据层、SQL、迁移、前端或 pdnd 内核，再 `wait-github.sh <sha>`。PG18 必须 0 SKIP；grep 新增测试名，确认真跑了。
+5. **CI**：先 `scripts/ci-status.sh <分支>` 看一眼检查机与各 workflow 的现状（只读不等）；还没出结论再用 `ops-local/memoh-ci/wait-status.sh <分支头 sha>`；动了数据层、SQL、迁移、前端或 pdnd 内核，再 `wait-github.sh <sha>`。PG18 必须 0 SKIP；grep 新增测试名，确认真跑了。
 
 ## 合并
 
@@ -44,3 +46,6 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
 - 检查机红而 GitHub 绿，先怀疑容器环境（`/dev/fd`、apt 包随重启丢失），不要直接改代码。
 - 只改仓库根文档不触发任何 workflow；被路径过滤的目录里的任何文件（含规则文件）都会触发对应 workflow。
 - 推送走 SSH，1Password agent 锁着会签名失败：请用户解锁，不要改走 HTTPS。
+- 几路同时新增 PG18 域时，`panel/deploy/run-pg18-gates.sh` 的 DOMAINS 列表会在相邻行冲突：两行都留，合完跑 `go build` 和 deploy 桩测试。各路的 `-run` 过滤都是精确正则，不会重复跑。
+- 同一个 PG18 域库里各用例共用一个库，**夹具租户 id 撞号**是这一波最常见的 CI 红（w1sub、w2node 的 …0201、w2dash 的 7e 前缀各撞过一次）：报告里出现「PG18 首推失败、改夹具 id 后绿」属正常，但合并前 grep 一下新夹具的 id 前缀在主线上没有别人在用。
+- 子 agent 常把「为新 PG18 域在 run-pg18-gates.sh 加一行」「为新方法改同包的一个小文件」列为越界：只要是登记性的一两行就接受，记进 TASKS 结论。
