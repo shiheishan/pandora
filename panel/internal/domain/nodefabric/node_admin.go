@@ -1,10 +1,12 @@
 package nodefabric
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -100,6 +102,8 @@ type CloneAdminNodeInput struct {
 	PoolID         string `json:"pool_id"`
 	CopyRouting    bool   `json:"copy_routing"`
 	SortOrder      *int   `json:"sort_order"`
+	// ServerPort 给副本另配端口（缺省沿用原节点）：复制到同一台服务器时必须换端口，否则撞同机端口门禁
+	ServerPort *int `json:"server_port"`
 }
 
 type MoveAdminNodeInput struct {
@@ -331,6 +335,8 @@ func (s *Service) CreateAdminNode(ctx context.Context, tenantID string, in Creat
 		return nil, err
 	}
 	var id string
+	var warnings []string
+	l4 := ListenL4(in.NodeType, in.ProtocolConfig)
 	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
 		if err := lockLegacyConfigRelease(ctx, tx, tenantID); err != nil {
 			return err
@@ -338,10 +344,16 @@ func (s *Service) CreateAdminNode(ctx context.Context, tenantID string, in Creat
 		if err := s.lockServerCapacity(ctx, tx, tenantID, in.ServerID); err != nil {
 			return err
 		}
+		// 同机端口门禁在服务器行锁内查：并发建同端口的两个节点在这把锁上排队，后到的看见先到的
+		var err error
+		if warnings, err = s.checkNodePortClaim(ctx, tx, tenantID, nodePortClaim{ServerID: in.ServerID,
+			Port: in.ServerPort, L4: l4, Host: in.ServerHost, CheckReserved: true}); err != nil {
+			return err
+		}
 		if err := validatePool(ctx, tx, tenantID, in.PoolID); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `INSERT INTO nodes
+		err = tx.QueryRow(ctx, `INSERT INTO nodes
 			(tenant_id,name,server_id,pool_id,status,serving_status,node_type,server_host,
 			 server_port,kernel,traffic_rate,display_name,protocol_config,
 			 protocol_schema_version,config_validated_at,sort_order,row_version,country_code)
@@ -350,8 +362,8 @@ func (s *Service) CreateAdminNode(ctx context.Context, tenantID string, in Creat
 			tenantID, in.Name, in.ServerID, in.PoolID, in.NodeType, in.ServerHost,
 			in.ServerPort, in.Kernel, in.TrafficRate, in.DisplayName,
 			in.ProtocolConfig, version, in.SortOrder, country).Scan(&id)
-		if db.IsUniqueViolation(err) {
-			return httpx.New(httpx.CodeConflict, "节点名称已存在")
+		if conflict := nodeUniqueViolation(err, in.ServerPort, l4); conflict != nil {
+			return conflict
 		}
 		if err != nil {
 			return err
@@ -367,7 +379,16 @@ func (s *Service) CreateAdminNode(ctx context.Context, tenantID string, in Creat
 	if err != nil {
 		return nil, err
 	}
-	return s.GetAdminNode(ctx, tenantID, id)
+	return s.getAdminNodeWithWarnings(ctx, tenantID, id, warnings)
+}
+
+// getAdminNodeWithWarnings 读回节点并带上写入时的提示（保留端口警告等）。
+func (s *Service) getAdminNodeWithWarnings(ctx context.Context, tenantID, id string, warnings []string) (*AdminNode, error) {
+	out, err := s.GetAdminNode(ctx, tenantID, id)
+	if err == nil && len(warnings) > 0 {
+		out.Warnings = append(out.Warnings, warnings...)
+	}
+	return out, err
 }
 
 func (s *Service) GetAdminNode(ctx context.Context, tenantID, id string) (*AdminNode, error) {
@@ -406,6 +427,7 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 			return nil, err
 		}
 	}
+	var warnings []string
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: in.ActorID}, func(tx pgx.Tx) error {
 		// 请求要动池时先拿配置发布锁、再锁节点行，与发布、新建、退役同一锁序：
 		// 换池改变节点适用的 pool 层配置，desired 版本要在锁内按新池重新物化
@@ -484,12 +506,29 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 		if rate <= 0 {
 			return httpx.Invalid(map[string]string{"traffic_rate": "必须大于 0"})
 		}
+		// 请求带了协议字段就照常校验；但只有内容真变了才推进 config_source_generation。
+		// 直调 API 时常常整份带上原值，原先一律 +1，节点为此重建入站、断开全部在线连接。
 		protocolTouched := in.NodeType != nil || in.ServerHost != nil || in.ServerPort != nil || in.Kernel != nil || in.ProtocolConfig != nil
-		configSourceTouched := protocolTouched || poolChanged
 		version := before.ProtocolSchemaVersion
 		if protocolTouched {
 			version, err = validateNewNodeProtocol(nodeType, kernel, host, port, raw)
 			if err != nil {
+				return err
+			}
+		}
+		protocolChanged := protocolTouched && (nodeType != value(before.NodeType) || host != value(before.ServerHost) ||
+			port != intValue(before.ServerPort) || kernel != before.Kernel ||
+			version != before.ProtocolSchemaVersion || !sameProtocolJSON(raw, before.ProtocolConfig))
+		configSourceTouched := protocolChanged || poolChanged
+		// 端口或 L4 变了：在节点所在服务器的行锁内过同机端口门禁（锁序同复制、迁移：节点行 → 服务器行）
+		l4 := ListenL4(nodeType, raw)
+		portChanged := port != intValue(before.ServerPort)
+		if before.ServerID != nil && port > 0 && (portChanged || l4 != ListenL4(value(before.NodeType), before.ProtocolConfig)) {
+			if err := lockServerRow(ctx, tx, tenantID, *before.ServerID); err != nil {
+				return err
+			}
+			if warnings, err = s.checkNodePortClaim(ctx, tx, tenantID, nodePortClaim{ServerID: *before.ServerID,
+				ExcludeNodeID: id, Port: port, L4: l4, Host: host, CheckReserved: portChanged}); err != nil {
 				return err
 			}
 		}
@@ -502,10 +541,10 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 			country_code=nullif($16,''),
 			row_version=row_version+1
 			WHERE tenant_id=$1 AND id=$2::uuid AND row_version=$3`, tenantID, id,
-			in.RowVersion, name, poolID, nodeType, host, port, kernel, rate, display, raw, version, protocolTouched, configSourceTouched,
+			in.RowVersion, name, poolID, nodeType, host, port, kernel, rate, display, raw, version, protocolChanged, configSourceTouched,
 			country)
-		if db.IsUniqueViolation(err) {
-			return httpx.New(httpx.CodeConflict, "节点名称已存在")
+		if conflict := nodeUniqueViolation(err, port, l4); conflict != nil {
+			return conflict
 		}
 		if err != nil {
 			return err
@@ -530,7 +569,23 @@ func (s *Service) PatchAdminNode(ctx context.Context, tenantID, id string, in Pa
 	// 事务提交之后再推。放在事务里的话，回滚了节点却已经收到一份不存在
 	// 的配置——那种不一致没有任何机制能自动纠正，只能等下一次有人改配置。
 	s.notifyNodeChanged(ctx, tenantID, id)
-	return s.GetAdminNode(ctx, tenantID, id)
+	return s.getAdminNodeWithWarnings(ctx, tenantID, id, warnings)
+}
+
+// sameProtocolJSON 判断两份 JSON 语义相同（键序、空白不计；数字按原文比较，1 与 1.0 算不同，宁可多推一次代际）。
+func sameProtocolJSON(a, b []byte) bool {
+	decode := func(raw []byte) (any, bool) {
+		d := json.NewDecoder(bytes.NewReader(raw))
+		d.UseNumber()
+		var v any
+		if err := d.Decode(&v); err != nil {
+			return nil, false
+		}
+		return v, true
+	}
+	va, okA := decode(a)
+	vb, okB := decode(b)
+	return okA && okB && reflect.DeepEqual(va, vb)
 }
 
 func nodeVersionConflict(current int64) error {

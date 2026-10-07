@@ -51,6 +51,8 @@ type Service struct {
 	pullInterval time.Duration
 	// nonces 是签名请求 nonce 的 Valkey 认领与回落（nonce_guard.go）；nil 时只用 PG。
 	nonces *nonceGuard
+	// ports 是节点端口的保留表（node_port_gate.go）；nil 时用 DefaultPortPolicy。
+	ports *PortPolicy
 }
 
 func NewService(pool *db.Pool, signer *crypto.Signer) *Service {
