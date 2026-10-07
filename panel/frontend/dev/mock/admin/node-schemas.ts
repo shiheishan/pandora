@@ -457,7 +457,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "reality_settings.private_key",
         "reality_settings.public_key",
         "reality_settings.short_id",
-        "flow"
+        "flow",
+        "fallback"
       ],
       "enums": {
         "flow": [
@@ -543,6 +544,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
       ],
       "hints": {
         "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "fallback": "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，让节点看起来像个普通网站；可以填本机（如 127.0.0.1:80 的本机 nginx），不能填内网地址。留空时回一个中性的 404 页面。只在 tcp 传输上生效。",
         "flow": "REALITY + tcp 时用 xtls-rprx-vision（默认）；其它传输必须留空。",
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
         "reality_settings.dest": "借用握手的真实公网站点，域名:端口，例如 www.example.com:443；不能填 IP、localhost 或内网域名。",

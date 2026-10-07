@@ -62,25 +62,21 @@ type hysteria2Adapter struct {
 	mu    sync.RWMutex
 	users map[string]int
 	slots []hysteria2Slot
-	// traffic 是 UDP 路径的流量（主线 hysteria2_udp.go 的口径）；TCP 子流走
-	// sessions 的原子计数（user_sessions.go），SnapshotTraffic 时两边合并。
-	traffic  map[int64]core.UserTraffic
-	sessions userSessions
-	// udpTraffic 是活跃 UDP 会话的流量计数，SnapshotTraffic 时并入 traffic。
-	udpTraffic map[*hy2Traffic]struct{}
-	online     map[int64]map[string]struct{}
-	service    *hy2.Service[int]
-	packet     net.PacketConn
-	plane      DataPlane
-	connErr    connErrorReporter
-	limiters   core.SpeedLimiters
-	ctx        context.Context
-	cancel     context.CancelFunc
-	closed     bool
-	active     map[net.Conn]struct{}
-	closeOnce  sync.Once
-	wg         sync.WaitGroup
-	updateMu   sync.Mutex
+	// sessions 登记 TCP 子流与 UDP 会话（删用户即断），流量也随搬随记在这里。
+	sessions  userSessions
+	online    map[int64]map[string]struct{}
+	service   *hy2.Service[int]
+	packet    net.PacketConn
+	plane     DataPlane
+	connErr   connErrorReporter
+	limiters  core.SpeedLimiters
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closed    bool
+	active    map[net.Conn]struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
+	updateMu  sync.Mutex
 
 	salamander string
 	upBPS      uint64
@@ -94,7 +90,7 @@ var _ N.UDPConnectionHandlerEx = (*hysteria2Adapter)(nil)
 
 func newHysteria2Adapter(spec InboundSpec) (Adapter, error) {
 	return &hysteria2Adapter{
-		spec: spec, users: make(map[string]int), traffic: make(map[int64]core.UserTraffic),
+		spec: spec, users: make(map[string]int),
 		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
 	}, nil
 }
@@ -371,19 +367,7 @@ func (a *hysteria2Adapter) DelUsers(ids []string) error {
 }
 
 func (a *hysteria2Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for traffic := range a.udpTraffic {
-		a.collectUDPTrafficLocked(traffic)
-	}
-	out := a.sessions.snapshot()
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
 func (a *hysteria2Adapter) OnlineIPs() map[int64][]string {
@@ -467,7 +451,9 @@ func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.Pac
 		if onClose != nil {
 			defer onClose(nil)
 		}
-		index, user, ok := a.userFromContext(ctx)
+		// epoch 要在查用户之前取，见 userSessions 的竞态说明。
+		epoch := a.sessions.epoch()
+		_, user, ok := a.userFromContext(ctx)
 		if admitErr := admissionError("hysteria2", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
@@ -480,7 +466,15 @@ func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.Pac
 			return
 		}
 		defer upstream.Close()
-		a.relayHy2UDP(ctx, conn, upstream, destination, index)
+		// UDP 会话同样登记进用户连接表：删用户时关掉会话与上游 socket，两个方向
+		// 的阻塞读立即返回，不必等空闲超时。
+		sess := a.sessions.open(user, epoch, conn, upstream)
+		if sess == nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
+			return
+		}
+		defer sess.close()
+		relayHy2UDP(ctx, conn, upstream, destination, sess.up(), sess.down())
 	}()
 }
 
@@ -520,23 +514,6 @@ func (a *hysteria2Adapter) leaveDevice(user core.User, ip string) {
 		if len(set) == 0 {
 			delete(a.online, user.ID)
 		}
-	}
-}
-
-func (a *hysteria2Adapter) addTraffic(index int, upload, download int64) {
-	a.mu.Lock()
-	a.addTrafficLocked(index, upload, download)
-	a.mu.Unlock()
-}
-
-func (a *hysteria2Adapter) addTrafficLocked(index int, upload, download int64) {
-	if index >= 0 && index < len(a.slots) {
-		id := a.slots[index].user.ID
-		current := a.traffic[id]
-		current.ID = id
-		current.Upload += upload
-		current.Download += download
-		a.traffic[id] = current
 	}
 }
 

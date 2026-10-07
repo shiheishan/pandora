@@ -35,7 +35,10 @@ type ServiceOptions struct {
 	ZeroRTTHandshake  bool
 	Heartbeat         time.Duration
 	UDPTimeout        time.Duration
-	Handler           ServiceHandler
+	// UDPQueueSize 是每个 UDP 会话的接收队列长度，非正值用 DefaultUDPQueueSize
+	// （Pandora 改动）。
+	UDPQueueSize int
+	Handler      ServiceHandler
 }
 
 type ServiceHandler interface {
@@ -55,6 +58,7 @@ type Service[U comparable] struct {
 	congestionControl string
 	authTimeout       time.Duration
 	udpTimeout        time.Duration
+	udpQueueSize      int
 	handler           ServiceHandler
 
 	quicListener io.Closer
@@ -92,6 +96,7 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		congestionControl: options.CongestionControl,
 		authTimeout:       options.AuthTimeout,
 		udpTimeout:        options.UDPTimeout,
+		udpQueueSize:      options.UDPQueueSize,
 		handler:           options.Handler,
 	}, nil
 }
@@ -184,6 +189,8 @@ type serverSession[U comparable] struct {
 	authUser   U
 	udpAccess  sync.RWMutex
 	udpConnMap map[uint16]*udpPacketConn
+	// destCache 只在 loopMessages 里用（Pandora 改动）。
+	destCache destinationCache
 }
 
 func (s *serverSession[U]) handle() {

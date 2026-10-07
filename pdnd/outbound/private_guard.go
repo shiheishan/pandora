@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/netip"
 	"sync/atomic"
+
+	"golang.org/x/net/ipv4"
 )
 
 // 默认拒绝私网目标（相当于 Xray 的 geoip:private block）。
@@ -70,7 +72,7 @@ func destinationBlocked(addr netip.Addr) bool {
 // 只内嵌 net.PacketConn 接口，不内嵌 *net.UDPConn：WriteToUDP、SyscallConn、
 // File 这些能绕过逐包检查的方法一个都不透出；也绝不能实现 RawUDPConn——批量
 // 收发路径拿到裸 socket 就绕过了这道检查。私网目标放开时 ListenUDP 不套这层，
-// 裸 socket 照常透出。
+// 裸 socket 照常透出。批量收发改经 UDPBatch 交出的带检查接口（见下）。
 type guardedPacketConn struct {
 	net.PacketConn
 }
@@ -97,3 +99,90 @@ func packetDestinationIP(addr net.Addr) (netip.Addr, bool) {
 	}
 	return netip.Addr{}, false
 }
+
+// UDPBatchConn 是直连 UDP 的批量收发（Linux 上 WriteBatch / ReadBatch 即
+// sendmmsg / recvmmsg），给 hy2、TUIC 这类单连接几万包/秒的 UDP 转发用。
+//
+// 它不交出裸 socket：拿到它的人只能经这几个方法收发、调缓冲。私网拦截在
+// WriteBatch 里逐条按目标把关，与 guardedPacketConn.WriteTo 同一个判定、同一种
+// 语义（被拦的包静默丢弃、照常计为已发出）；收方向与 ReadFrom 一样不过滤。
+type UDPBatchConn interface {
+	// WriteBatch 依次发出 ms，返回已处理的条数（被拦的也算已处理，N 记为负载
+	// 长度）；少于 len(ms) 且 err 为 nil 时，调用方从返回处接着发。
+	WriteBatch(ms []ipv4.Message, flags int) (int, error)
+	// ReadBatch 一次收多包，语义同 ipv4.PacketConn.ReadBatch。
+	ReadBatch(ms []ipv4.Message, flags int) (int, error)
+	LocalAddr() net.Addr
+	SetReadBuffer(bytes int) error
+	SetWriteBuffer(bytes int) error
+}
+
+// UDPBatchProvider 由能提供带检查批量收发的 UDP 连接实现；不支持时返回 nil。
+type UDPBatchProvider interface {
+	UDPBatch() UDPBatchConn
+}
+
+// UDPBatch 给 guardedPacketConn 开一个带检查的批量接口；底层不是裸 UDP socket
+// 时返回 nil，调用方退回逐包。
+func (c *guardedPacketConn) UDPBatch() UDPBatchConn {
+	raw, ok := c.PacketConn.(*net.UDPConn)
+	if !ok {
+		return nil
+	}
+	return &guardedUDPBatch{raw: raw, batch: ipv4.NewPacketConn(raw)}
+}
+
+// guardedUDPBatch 的字段都不导出、类型本身也不导出：包外拿不到 raw。
+type guardedUDPBatch struct {
+	raw   *net.UDPConn
+	batch *ipv4.PacketConn
+}
+
+// messageBlocked 是一条消息的目标是否被私网策略拒绝。目标取不出 IP（nil 等）
+// 的交给内核去报错，与 WriteTo 一致。
+func messageBlocked(m *ipv4.Message) bool {
+	if m.Addr == nil {
+		return false
+	}
+	ip, ok := packetDestinationIP(m.Addr)
+	return ok && destinationBlocked(ip)
+}
+
+func (b *guardedUDPBatch) WriteBatch(ms []ipv4.Message, flags int) (int, error) {
+	done := 0
+	for done < len(ms) {
+		if messageBlocked(&ms[done]) {
+			// 被拦：从批里剔除、静默丢弃，按已发出记（与逐包 WriteTo 同语义）。
+			n := 0
+			for _, payload := range ms[done].Buffers {
+				n += len(payload)
+			}
+			ms[done].N = n
+			done++
+			continue
+		}
+		// 一段连续放行的消息一次交给内核；全是公网目标时就是整批一次。
+		start, end := done, done+1
+		for end < len(ms) && !messageBlocked(&ms[end]) {
+			end++
+		}
+		n, err := b.batch.WriteBatch(ms[start:end], flags)
+		done = start + n
+		if err != nil {
+			return done, err
+		}
+		if done < end {
+			// 内核只收了一部分（发送缓冲满），交还调用方决定是否续发。
+			return done, nil
+		}
+	}
+	return done, nil
+}
+
+func (b *guardedUDPBatch) ReadBatch(ms []ipv4.Message, flags int) (int, error) {
+	return b.batch.ReadBatch(ms, flags)
+}
+
+func (b *guardedUDPBatch) LocalAddr() net.Addr            { return b.raw.LocalAddr() }
+func (b *guardedUDPBatch) SetReadBuffer(bytes int) error  { return b.raw.SetReadBuffer(bytes) }
+func (b *guardedUDPBatch) SetWriteBuffer(bytes int) error { return b.raw.SetWriteBuffer(bytes) }

@@ -3,7 +3,7 @@ module github.com/aegispanel/nodeagent
 go 1.26.5
 
 require (
-	github.com/anytls/sing-anytls v0.0.11
+	github.com/anytls/sing-anytls v0.0.13
 	github.com/daeuniverse/outbound v0.0.0-20250219135309-c607702d1c85
 	github.com/enfein/mieru/v3 v3.34.1
 	github.com/gofrs/uuid/v5 v5.4.0

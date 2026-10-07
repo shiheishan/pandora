@@ -61,6 +61,11 @@ func TestFallbackAcceptsPublicHostPort(t *testing.T) {
 	}
 	// REALITY 的 Trojan 也能配：REALITY 层认证过了、Trojan 口令不对时回落
 	expectAccepted(t, "trojan", `{"tls":2,"network":"tcp",`+policyReality(t, "")+`,"fallback":"www.example.com:80"}`)
+	// VLESS REALITY + tcp（w4kernel 起 pdnd 读 fallback）：UUID 不对时回落
+	for _, fallback := range []string{"www.example.com:80", "203.0.113.10:8080", "127.0.0.1:80"} {
+		expectAccepted(t, "vless", `{"tls":2,"network":"tcp","flow":"xtls-rprx-vision",`+policyReality(t, "")+`,"fallback":"`+fallback+`"}`)
+	}
+	expectAccepted(t, "vless", `{"tls":2,"network":"tcp",`+policyReality(t, "")+`,"fallback":""}`)
 	// 空串等于没配
 	expectAccepted(t, "anytls", `{"tls":true,`+policyCert+`,"fallback":""}`)
 }
@@ -101,6 +106,7 @@ func TestFallbackRejectsURLsPathsAndInternalTargets(t *testing.T) {
 			expectRejected(t, "trojan", `{"tls":1,"network":"tcp",`+policyCert+`,"fallback":"`+fallback+`"}`, "protocol_config.fallback", mention)
 			expectRejected(t, "anytls", `{"tls":true,`+policyCert+`,"fallback":"`+fallback+`"}`, "protocol_config.fallback", mention)
 			expectRejected(t, "naive", `{"tls":true,`+policyCert+`,"fallback":"`+fallback+`"}`, "protocol_config.fallback", mention)
+			expectRejected(t, "vless", `{"tls":2,"network":"tcp",`+policyReality(t, "")+`,"fallback":"`+fallback+`"}`, "protocol_config.fallback", mention)
 		})
 	}
 }
@@ -111,10 +117,13 @@ func TestFallbackOnlyWhereNodeAgentHonoursIt(t *testing.T) {
 	// 其它协议没有回落：socks / http 是同一个校验分支，要单独拒
 	expectRejected(t, "socks", `{"network":"tcp","fallback":"www.example.com:80"}`, "protocol_config.fallback", "")
 	expectRejected(t, "http", `{"fallback":"www.example.com:80"}`, "protocol_config.fallback", "")
-	// 严格解码的协议直接按未知字段拒
-	if fields := adminFields(t, "vless", "pandora-native", `{"tls":0,"network":"ws","fallback":"www.example.com:80"}`); len(fields) == 0 {
-		t.Error("vless accepted a fallback the node agent never reads")
+	// VLESS 同 Trojan：只在 tcp 承载上回落，ws / grpc / xhttp 上 pdnd 不读
+	for _, network := range []string{"ws", "grpc", "xhttp"} {
+		expectRejected(t, "vless", `{"tls":2,"network":"`+network+`",`+policyReality(t, "")+`,"fallback":"www.example.com:80"}`, "protocol_config.fallback", "tcp")
 	}
+	expectRejected(t, "vless", `{"tls":0,"network":"ws","fallback":"www.example.com:80"}`, "protocol_config.fallback", "tcp")
+	// VMess 没有回落
+	expectRejected(t, "vmess", `{"tls":0,"network":"ws","fallback":"www.example.com:80"}`, "protocol_config.fallback", "VMess")
 }
 
 func TestFallbackIsDeliveredVerbatim(t *testing.T) {
@@ -132,6 +141,21 @@ func TestFallbackIsDeliveredVerbatim(t *testing.T) {
 	}
 	if got["fallback"] != "www.example.com:80" {
 		t.Fatalf("fallback = %#v, want the host:port as configured", got["fallback"])
+	}
+	// VLESS 同样原样下发给节点（pdnd vless.go 用 parseProbeFallback 读）
+	body, _, err = svc.BuildNodeConfig(&ServingNode{
+		Name: "v", NodeType: "vless", ServerPort: 443, Kernel: "auto",
+		Protocol: json.RawMessage(`{"tls":2,"network":"tcp","flow":"xtls-rprx-vision",` + policyReality(t, "") + `,"fallback":"127.0.0.1:80"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["fallback"] != "127.0.0.1:80" {
+		t.Fatalf("vless fallback = %#v, want the host:port as configured", got["fallback"])
 	}
 }
 
@@ -324,7 +348,7 @@ func TestSchemaEnumsMatchPolicyLists(t *testing.T) {
 	if got := byType["vless"].Enums["flow"]; strings.Join(got, ",") != strings.Join(vlessFlows, ",") {
 		t.Errorf("vless flow enum = %v", got)
 	}
-	for _, nodeType := range []string{"trojan", "anytls", "naive"} {
+	for _, nodeType := range []string{"trojan", "anytls", "naive", "vless"} {
 		schema := byType[nodeType]
 		if !containsString(schema.AllowedProperties, "fallback") || !strings.Contains(schema.Hints["fallback"], "明文 HTTP 站点") {
 			t.Errorf("%s: fallback missing from schema or hint: %v / %q", nodeType, schema.AllowedProperties, schema.Hints["fallback"])

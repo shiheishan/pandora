@@ -85,7 +85,7 @@ func (s *Session) Run() {
 
 	settings := util.StringMap{
 		"v":           "2",
-		"client":      util.Verison,
+		"client":      util.Version,
 		"padding-md5": s.padding.Load().Md5,
 	}
 	f := newFrame(cmdSettings, 0)
@@ -110,6 +110,9 @@ func (s *Session) IsClosed() bool {
 func (s *Session) Close() error {
 	var once bool
 	s.dieOnce.Do(func() {
+		// 同步上游 v0.0.13：先把底层连接的截止时间设到现在，卡在写（对端不读）
+		// 或读上的 goroutine 立刻返回，不必等 conn.Close。
+		_ = s.conn.SetDeadline(time.Now())
 		close(s.die)
 		once = true
 	})
@@ -369,23 +372,44 @@ func (s *Session) streamClosed(sid uint32) error {
 	return err
 }
 
+// maxFrameDataLen 是一个数据帧的最大负载：线格式的长度字段是 uint16，单帧装不下
+// 超过 65535 字节。同步上游 sing-anytls v0.0.13：更长的写拆成多帧，整串帧在
+// 一次 writeConn 里发出，一次 Stream.Write 相对其它流 / 控制帧仍是连续的。
+// 原先长度直接截成 uint16 而负载照写，线上就成了乱帧，对端读挂。
+const maxFrameDataLen = 0xFFFF
+
 func (s *Session) writeDataFrame(sid uint32, data []byte) (int, error) {
 	dataLen := len(data)
-
-	buffer := buf.NewSize(dataLen + headerOverHeadSize)
-	buffer.WriteByte(cmdPSH)
-	binary.BigEndian.PutUint32(buffer.Extend(4), sid)
-	binary.BigEndian.PutUint16(buffer.Extend(2), uint16(dataLen))
-	buffer.Write(data)
-	_, err := s.writeConn(buffer.Bytes())
-	buffer.Release()
-	if err != nil {
+	if dataLen == 0 {
+		return 0, nil
+	}
+	frameCount := (dataLen + maxFrameDataLen - 1) / maxFrameDataLen
+	buffer := buf.NewSize(dataLen + frameCount*headerOverHeadSize)
+	defer buffer.Release()
+	for written := 0; written < dataLen; {
+		chunk := min(dataLen-written, maxFrameDataLen)
+		buffer.WriteByte(cmdPSH)
+		binary.BigEndian.PutUint32(buffer.Extend(4), sid)
+		binary.BigEndian.PutUint16(buffer.Extend(2), uint16(chunk))
+		buffer.Write(data[written : written+chunk])
+		written += chunk
+	}
+	if _, err := s.writeConn(buffer.Bytes()); err != nil {
 		return 0, err
 	}
-
 	return dataLen, nil
 }
 
+// controlFrameWriteTimeout 是控制帧的写截止时间。
+const controlFrameWriteTimeout = 5 * time.Second
+
+// writeControlFrame 发一个控制帧，限时 controlFrameWriteTimeout，超时即关会话。
+//
+// Pandora 改动：先抢 connLock、再设写截止时间。上游是先设截止时间再去抢锁，
+// 截止时间落在共用的底层连接上：另一条流正在锁里写大块数据（对端读得慢、
+// 写阻塞在 TCP 背压上）时，这 5 秒算到了那次数据写头上，写超时就把整个会话
+// 断了（1c1g 实测 AnyTLS 大流量单向被断）。现在截止时间只覆盖控制帧自己的写，
+// 写完在锁内清掉。
 func (s *Session) writeControlFrame(frame frame) (int, error) {
 	dataLen := len(frame.data)
 
@@ -395,24 +419,27 @@ func (s *Session) writeControlFrame(frame frame) (int, error) {
 	binary.BigEndian.PutUint16(buffer.Extend(2), uint16(dataLen))
 	buffer.Write(frame.data)
 
-	s.conn.SetWriteDeadline(time.Now().Add(time.Second * 5))
-
-	_, err := s.writeConn(buffer.Bytes())
+	s.connLock.Lock()
+	_ = s.conn.SetWriteDeadline(time.Now().Add(controlFrameWriteTimeout))
+	_, err := s.writeConnLocked(buffer.Bytes())
+	_ = s.conn.SetWriteDeadline(time.Time{})
+	s.connLock.Unlock()
 	buffer.Release()
 	if err != nil {
 		s.Close()
 		return 0, err
 	}
-
-	s.conn.SetWriteDeadline(time.Time{})
-
 	return dataLen, nil
 }
 
 func (s *Session) writeConn(b []byte) (n int, err error) {
 	s.connLock.Lock()
 	defer s.connLock.Unlock()
+	return s.writeConnLocked(b)
+}
 
+// writeConnLocked 是 writeConn 的本体，调用方持有 connLock。
+func (s *Session) writeConnLocked(b []byte) (n int, err error) {
 	if s.buffering {
 		s.buffer = slices.Concat(s.buffer, b)
 		return len(b), nil

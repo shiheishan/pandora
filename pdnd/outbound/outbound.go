@@ -386,6 +386,16 @@ func (c *leasedPacketConn) RawUDPConn() *net.UDPConn {
 	return nil
 }
 
+// UDPBatch 转交底层连接自己给出的带检查批量接口（UDPBatchProvider，目前只有直连
+// 的私网拦截包装实现）；底层不提供时返回 nil。与 RawUDPConn 一样不做递归解包：
+// 只认底层明确交出的接口，加密、封装类出站不实现它，批量路径就碰不到它们。
+func (c *leasedPacketConn) UDPBatch() UDPBatchConn {
+	if p, ok := c.PacketConn.(UDPBatchProvider); ok {
+		return p.UDPBatch()
+	}
+	return nil
+}
+
 // Tags 返回当前所有出站标签，供分流引擎校验规则引用。
 func (s *Set) Tags() map[string]bool {
 	s.mu.RLock()
