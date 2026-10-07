@@ -116,4 +116,9 @@ func TestDeviceLimitWritesPG18(t *testing.T) {
 	if mode != "strict" {
 		t.Fatalf("device mode audit mode=%q", mode)
 	}
+
+	// 在线设备概览改写后与改前逐行一致（独立租户，见 devices_overview_pg18_test.go）
+	t.Run("online devices overview matches legacy", func(t *testing.T) {
+		checkOnlineDevicesOverviewMatchesLegacy(t, ctx, adminDB, app)
+	})
 }
