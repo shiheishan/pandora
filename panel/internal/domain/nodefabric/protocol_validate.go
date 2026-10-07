@@ -79,7 +79,7 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 		}
 		if cfg.Fallback != nil {
 			if nodeType != "naive" {
-				fields["protocol_config.fallback"] = "只有 Naive、Trojan、AnyTLS 支持回落"
+				fields["protocol_config.fallback"] = "只有 Naive、Trojan、AnyTLS、VLESS 支持回落"
 			} else {
 				validateProbeFallback(fields, *cfg.Fallback)
 			}
@@ -418,6 +418,10 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 			WriteBufferSize  json.RawMessage `json:"write_buffer_size"`
 			Mask             string          `json:"mask"`
 			MaskPassword     string          `json:"mask_password"`
+
+			// 认证失败的回落目标：只有 VLESS 有（pdnd vless.go 在 tcp 承载上读），
+			// VMess 没有。
+			Fallback string `json:"fallback"`
 		}
 		// xboard 的 tls 三态里 0 / 2 已在翻译时换成 security；走到这里还是数字的
 		// 只可能是 1（普通 TLS）或乱填的值。先拦下来给一句看得懂的话，否则严格
@@ -469,9 +473,15 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 			if strings.TrimSpace(cfg.Flow) != "" {
 				fields["protocol_config.flow"] = "VMess 没有流控，请留空"
 			}
+			if strings.TrimSpace(cfg.Fallback) != "" {
+				fields["protocol_config.fallback"] = "VMess 没有回落，请留空"
+			}
 			break
 		}
 		validateVLESSFlow(fields, cfg.Flow, cfg.Network, security)
+		// 回落：形状与本机/内网规则同 Trojan，也只在 tcp 承载上生效。
+		validateProbeFallback(fields, cfg.Fallback)
+		validateTrojanFallbackNetwork(fields, cfg.Fallback, cfg.Network)
 		switch security {
 		case "", "none":
 			if cfg.TLS {

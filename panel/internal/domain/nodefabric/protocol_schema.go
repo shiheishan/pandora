@@ -197,7 +197,9 @@ func ProtocolSchemas() []ProtocolSchema {
 			AllowedProperties: append(append([]string(nil), streamProperties...),
 				"reality_settings.dest", "reality_settings.server_name",
 				"reality_settings.private_key", "reality_settings.public_key",
-				"reality_settings.short_id", "flow"),
+				"reality_settings.short_id", "flow",
+				// 认证失败的回落目标；pdnd 只在 tcp 承载（REALITY / TLS / 明文）上读。
+				"fallback"),
 			Enums: map[string][]string{
 				"network": append([]string(nil), streamNetworks...),
 				// xboard 的三态。1（普通 TLS）暂时不给选：校验器那边写死了
@@ -217,8 +219,9 @@ func ProtocolSchemas() []ProtocolSchema {
 			// 后台只能写不能回显 —— 和其它密钥一个待遇。
 			SensitiveProperties: []string{"private_key", "mask_password"},
 			Hints: withCertHints(withRealityHints(map[string]string{
-				"flow": "REALITY + tcp 时用 xtls-rprx-vision（默认）；其它传输必须留空。",
-				"utls": utlsHint,
+				"flow":     "REALITY + tcp 时用 xtls-rprx-vision（默认）；其它传输必须留空。",
+				"utls":     utlsHint,
+				"fallback": fallbackHint + "只在 tcp 传输上生效。",
 			}))},
 		{NodeType: "vmess", Version: 1, Status: "stable",
 			AllowedProperties: append([]string(nil), append(streamProperties,
