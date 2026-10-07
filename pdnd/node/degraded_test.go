@@ -43,13 +43,17 @@ func TestSignedHeartbeatReportsDegradedWithReason(t *testing.T) {
 	}
 }
 
-// 兼容通道 /status 正文带上 runtime_status 与原因（面板与 Xboard 都不拒未知字段）。
+// 兼容通道 /status 的运行状态与原因走请求头，正文仍是原来的资源指标结构
+// （往正文加字段，按 DisallowUnknownFields 解码的面板会整条 400）。
 func TestCompatStatusCarriesRuntimeStatus(t *testing.T) {
-	var got map[string]any
+	var body map[string]any
+	var status, reason string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/server/UniProxy/status" {
 			raw, _ := io.ReadAll(r.Body)
-			_ = json.Unmarshal(raw, &got)
+			body = nil
+			_ = json.Unmarshal(raw, &body)
+			status, reason = r.Header.Get(panel.RuntimeStatusHeader), r.Header.Get(panel.RuntimeReasonHeader)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -58,17 +62,20 @@ func TestCompatStatusCarriesRuntimeStatus(t *testing.T) {
 	n := New(client, newUserTableCore(), testLogger())
 
 	n.reportStatus(context.Background())
-	if got["runtime_status"] != runtimeDegraded || got["runtime_status_reason"] != reasonNotStarted {
-		t.Fatalf("未启动时 /status = %v", got)
+	if status != runtimeDegraded || reason != reasonNotStarted {
+		t.Fatalf("未启动时 /status 头 = %q / %q", status, reason)
+	}
+	for key := range body {
+		switch key {
+		case "cpu", "mem", "swap", "disk":
+		default:
+			t.Fatalf("/status 正文多了字段 %q：%v", key, body)
+		}
 	}
 	n.started = true
-	got = nil
 	n.reportStatus(context.Background())
-	if got["runtime_status"] != runtimeRunning {
-		t.Fatalf("正常时 /status = %v", got)
-	}
-	if _, ok := got["runtime_status_reason"]; ok {
-		t.Fatal("running 时不该带原因")
+	if status != runtimeRunning || reason != "" {
+		t.Fatalf("正常时 /status 头 = %q / %q", status, reason)
 	}
 }
 

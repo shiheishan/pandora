@@ -79,8 +79,10 @@ func asciiReason(s string) string {
 // 签名通道随 Heartbeat 带 metrics（另含负载、网络累计、TCP 连接数、开机
 // 时长），兼容通道走 /status，只有 CPU、内存、磁盘。
 //
-// 原因在签名通道走请求头（心跳正文按 DisallowUnknownFields 解码，加字段会
-// 整条 400），兼容通道放进 /status 正文（面板与 Xboard 都不拒未知字段）。
+// 状态只用已有字段：签名心跳的 runtime_status 本来就有；原因（以及兼容通道
+// 的状态）走请求头 X-Node-Runtime-Reason / X-Node-Runtime-Status，不进正文——
+// 面板按 DisallowUnknownFields 解码，正文多一个字段整条 400。面板侧接住之前
+// 这两个头只是被忽略。
 //
 // 失败只记日志不重试：下一个节拍会再来一次，而卡在这里重试会挤掉同一个
 // 循环里的配置同步和流量上报——那两件比状态上报重要。
