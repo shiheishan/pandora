@@ -112,6 +112,89 @@ REALIP
 }
 ensure_realip_default
 
+# ---------------------------------------------------------------------------
+# 主配置的连接上限：worker_connections 与 worker_rlimit_nofile 只能写在 nginx.conf 的
+# events / main 段，conf.d 里的站点文件管不到。Debian 缺省 768 × worker_processes auto（2 核
+# 两个 worker）：每条 SSE、每条节点事件流各占一个客户端连接加一个上游连接，约一千条就顶满，
+# 新连接（含节点请求）一律被拒（5k-r4 复测：1000 人 SSE 时节点请求报 500）。这里把每个 worker
+# 抬到至少 8192 条，文件描述符上限配套抬到 65536（一条代理连接两个 fd）；已经更高的不动。
+# 主配置的位置：PANDORA_NGINX_MAIN_CONF 显式指定（none 表示不碰），否则只在输出文件位于
+# <nginx 目录>/conf.d/ 下时取 <nginx 目录>/nginx.conf；文件不存在就跳过。
+# 改动只涉及这两个数，结构不认识（events 写在一行里、没有 events 段）时不改、只提示。
+# ---------------------------------------------------------------------------
+NGINX_WORKER_CONNECTIONS=8192
+NGINX_RLIMIT_NOFILE=65536
+
+nginx_main_conf() {
+  if [[ -n "${PANDORA_NGINX_MAIN_CONF:-}" ]]; then
+    [[ "$PANDORA_NGINX_MAIN_CONF" = none ]] || printf '%s' "$PANDORA_NGINX_MAIN_CONF"
+    return 0
+  fi
+  local dir
+  dir="$(dirname -- "$OUTPUT_FILE")"
+  [[ "$(basename -- "$dir")" = conf.d ]] && printf '%s/nginx.conf' "$(dirname -- "$dir")"
+  return 0
+}
+
+tune_nginx_main() {
+  local conf="$1" tmp rc=0
+  [[ -f "$conf" ]] || { printf 'render-nginx: %s not found; worker_connections left as is\n' "$conf"; return 0; }
+  tmp="$(mktemp "${conf}.tmp.XXXXXX")"
+  # 两遍：第一遍只看主段有没有 worker_rlimit_nofile，第二遍改写
+  awk -v wc="$NGINX_WORKER_CONNECTIONS" -v nofile="$NGINX_RLIMIT_NOFILE" '
+    function lead(s) { match(s, /^[[:space:]]*/); return substr(s, 1, RLENGTH) }
+    function num(s) { sub(/^[^0-9]*/, "", s); sub(/[^0-9].*$/, "", s); return s + 0 }
+    {
+      code = $0; sub(/#.*/, "", code)
+      opens = gsub(/\{/, "{", code); closes = gsub(/\}/, "}", code)
+    }
+    NR == FNR {
+      if (depth == 0 && code ~ /^[[:space:]]*worker_rlimit_nofile[[:space:]]+[0-9]+[[:space:]]*;/) have_rlimit = 1
+      depth += opens - closes
+      next
+    }
+    FNR == 1 { depth = 0 }
+    {
+      line = $0
+      if (depth == 0 && code ~ /^[[:space:]]*worker_rlimit_nofile[[:space:]]+[0-9]+[[:space:]]*;/ && num(code) < nofile)
+        line = lead($0) "worker_rlimit_nofile " nofile ";"
+      if (depth == 0 && code ~ /^[[:space:]]*events[[:space:]]*\{/) {
+        if (opens != closes + 1) exit 4
+        events = 1; in_events = 1
+        if (!have_rlimit) { print "worker_rlimit_nofile " nofile ";"; have_rlimit = 1 }
+      }
+      if (in_events && depth == 1 && code ~ /^[[:space:]]*worker_connections[[:space:]]+[0-9]+[[:space:]]*;/) {
+        saw_wc = 1
+        if (num(code) < wc) line = lead($0) "worker_connections " wc ";"
+      }
+      if (in_events && depth == 1 && opens == 0 && closes == 1 && code ~ /^[[:space:]]*\}[[:space:]]*$/) {
+        if (!saw_wc) print "    worker_connections " wc ";"
+        in_events = 0
+      }
+      depth += opens - closes
+      print line
+    }
+    END { if (!events) exit 3 }
+  ' "$conf" "$conf" >"$tmp" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    rm -f -- "$tmp"
+    printf 'render-nginx: %s has no events block this script understands; set worker_connections >= %s by hand\n' \
+      "$conf" "$NGINX_WORKER_CONNECTIONS" >&2
+    return 0
+  fi
+  if cmp -s -- "$tmp" "$conf"; then
+    rm -f -- "$tmp"
+    return 0
+  fi
+  chmod --reference="$conf" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+  mv -f -- "$tmp" "$conf"
+  printf 'render-nginx: %s now has worker_connections >= %s and worker_rlimit_nofile >= %s\n' \
+    "$conf" "$NGINX_WORKER_CONNECTIONS" "$NGINX_RLIMIT_NOFILE"
+}
+
+main_conf="$(nginx_main_conf)"
+[[ -z "$main_conf" ]] || tune_nginx_main "$main_conf"
+
 output_dir="$(dirname -- "$OUTPUT_FILE")"
 [[ -d "$output_dir" ]] || die "output directory does not exist"
 tmp_file="$(mktemp "${OUTPUT_FILE}.tmp.XXXXXX")"

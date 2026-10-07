@@ -122,6 +122,19 @@ func (h *handlers) accessLogList(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
 	}
+	// 下面要把来源 IP 解成明文交出去：先留痕（审计台账 2.3 第 6 条），写不进去就不给
+	filter := map[string]any{"limit": limit, "offset": offset}
+	for k, v := range map[string]string{"category": category, "outcome": outcome,
+		"ip": strings.TrimSpace(q.Get("ip")), "user": userFilter} {
+		if v != "" {
+			filter[k] = v
+		}
+	}
+	if err := h.d.Ops.RecordSourceIPView(r.Context(), tenantID, httpx.PrincipalFrom(r.Context()).UserID,
+		adminops.SourceIPViewAccessLog, "", filter); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
 	items := make([]accessLogItem, 0, limit)
 	for _, a := range audits {
 		it := accessLogItem{Action: a.Action, Outcome: a.Outcome, UserAgent: a.UserAgent,

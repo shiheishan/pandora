@@ -45,3 +45,42 @@ func TestKickNeverBlocks(t *testing.T) {
 	var zero Service
 	zero.Kick() // 字面量构造、没有 kick 通道时同样不阻塞
 }
+
+// 找回密码模板：迁移 00128 的种子与「恢复默认」逐字一致，只许 site/code/minutes。
+func TestPasswordResetSeedMatchesDefaultTemplate(t *testing.T) {
+	raw, err := os.ReadFile("../../../migrations/00128_auth_password_reset_template.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := string(raw)
+	d, ok := defaultTemplates["auth.password_reset|email"]
+	if !ok {
+		t.Fatal("defaultTemplates lacks auth.password_reset|email")
+	}
+	if !strings.Contains(seed, "'"+d.Subject+"'") || !strings.Contains(seed, "'"+d.Body+"'") {
+		t.Fatal("migration 00128 seed drifted from defaultTemplates")
+	}
+	for _, v := range []string{"site", "code", "minutes"} {
+		if !strings.Contains(d.Subject+d.Body, "{{"+v+"}}") {
+			t.Fatalf("template does not use variable %s", v)
+		}
+	}
+	if !strings.Contains(seed, "ARRAY['site','code','minutes'], 'transactional'") {
+		t.Fatal("seed must whitelist exactly site/code/minutes and be transactional")
+	}
+}
+
+// 没装邮件发信器时找回密码必须关着；静态发信器只在配置齐全时才构造得出来。
+func TestEmailConfiguredFollowsSender(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if New(nil, log, nil).EmailConfigured(t.Context(), "") {
+		t.Fatal("no email sender must not count as configured")
+	}
+	if New(nil, log, nil, NewSMTPSender(SMTPConfig{})).EmailConfigured(t.Context(), "") {
+		t.Fatal("an incomplete static config yields no sender and must not count as configured")
+	}
+	full := NewSMTPSender(SMTPConfig{Host: "smtp.example.test", Port: 465, From: "noreply@example.test"})
+	if !New(nil, log, nil, full).EmailConfigured(t.Context(), "") {
+		t.Fatal("a complete static config must count as configured")
+	}
+}

@@ -118,8 +118,12 @@ func (s *Service) reportTraffic(ctx context.Context, tenantID string, n *Serving
 			}
 			out.Duplicate = duplicate
 
-			// --- 小时汇总（00099）：与留档同一事务，重复上报只计重复数 ---
-			if err := rollupTrafficReport(ctx, tx, tenantID, rowID); err != nil {
+			// --- 小时汇总（00099）：与留档同一事务，重复上报只计重复数、不计 billed_bytes ---
+			billed := entries
+			if duplicate {
+				billed = nil
+			}
+			if err := rollupTrafficReport(ctx, tx, tenantID, rowID, billed); err != nil {
 				return err
 			}
 			if out.Duplicate {

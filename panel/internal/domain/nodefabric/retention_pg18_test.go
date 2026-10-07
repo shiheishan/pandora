@@ -15,7 +15,8 @@ import (
 //     别的租户的点不动；保留期传小了按 48 小时算，函数本身拒收小于 48 的保留期；
 //   - 追加写保护不变：运行角色直接 DELETE node_metrics 仍被拒绝；
 //   - PurgeStaleAlive 删 70 分钟以前的在线记录，窗口内的与别的租户的不动；
-//   - PurgeTrafficRollups 删 70 天以前的小时汇总，近期的与别的租户的不动。
+//   - PurgeTrafficRollups 删 70 天以前的节点 × uid 小时汇总与 400 天以前的节点小时汇总，
+//     近期的与别的租户的不动（按天表与保留期细节见 traffic_retention_pg18_test.go）。
 //
 // 挂在 TestTrafficChargePG18 里跑：traffic_charge 是 nodefabric 唯一套了 configure-app-role
 // （运行角色收窄、node_metrics 的 DELETE 已收回）的 PG18 库。
@@ -101,9 +102,10 @@ func retentionScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app *
 		t.Fatalf("node_alive_ips left tenantA=%d tenantB=%d, want the in-window row and the other tenant untouched", aliveA, aliveB)
 	}
 
-	// 流量小时汇总：本租户 70 天以前的桶（两张表各一行）删掉，近期的与别的租户的不动
+	// 流量小时汇总：本租户超出保留期的桶（节点 × uid 表 71 天、节点表 401 天各一行）删掉，
+	// 近期的与别的租户的不动
 	must(`INSERT INTO node_traffic_hourly (tenant_id, hour_start, node_id, report_count)
-		VALUES ($1, date_trunc('hour', now() - interval '71 days', 'UTC'), $2, 1),
+		VALUES ($1, date_trunc('hour', now() - interval '401 days', 'UTC'), $2, 1),
 		       ($1, date_trunc('hour', now() - interval '1 day', 'UTC'), $2, 1),
 		       ($3, date_trunc('hour', now() - interval '90 days', 'UTC'), $4, 1)`, tenantA, nodeA, tenantB, nodeB)
 	must(`INSERT INTO node_user_traffic_hourly (tenant_id, hour_start, node_id, node_uid,

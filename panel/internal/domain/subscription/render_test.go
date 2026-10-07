@@ -111,8 +111,17 @@ func TestSingboxRenderUsesCurrentRouteSchemaAndHandlesEmptyNodes(t *testing.T) {
 	if strings.Contains(encoded, `"geoip"`) || strings.Contains(encoded, `"type": "block"`) {
 		t.Fatalf("removed sing-box fields returned: %s", body)
 	}
-	if len(config.Route.Rules) != 1 || config.Route.Rules[0]["action"] != "route" || config.Route.Rules[0]["ip_is_private"] != true {
+	// 私网直连规则仍在（模板的其余规则见 render_singbox_template_test.go）
+	private := false
+	for _, rule := range config.Route.Rules {
+		private = private || (rule["action"] == "route" && rule["ip_is_private"] == true && rule["outbound"] == "direct")
+	}
+	if !private {
 		t.Fatalf("modern route action missing: %s", body)
+	}
+	// 没有节点时不能有任何地方指向不存在的「节点选择」
+	if strings.Contains(encoded, "节点选择") {
+		t.Fatalf("empty subscription references the missing selector: %s", body)
 	}
 }
 

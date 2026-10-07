@@ -202,3 +202,127 @@ func TestScanCountsOnlyInsertedRowsPG18(t *testing.T) {
 	}
 	t.Log("marker=notify_rescan_counts_zero_ok")
 }
+
+// TestScanExpiryNoticesPG18 钉住到期类通知（w5expiry，用户 2026-10-07）：
+//   - 7/3/1 天到期提醒不再被 auto_renew 挡掉（这一列默认 true、没人改过）；
+//   - 到期当时一条 subscription.expired，过期第 1 天、第 7 天各一条召回；
+//   - 名下另有在用订阅的用户不召回，原地续费窗口已关的不召回；
+//   - 时刻按用户时区显示到分钟；重扫不重复。
+func TestScanExpiryNoticesPG18(t *testing.T) {
+	ctx, admin, app := pg18test.Open(t, pg18test.Fixture{
+		Domain: "NOTIFY", DatabasePrefix: "pandora_notify_",
+		MarkerTable: "pandora_notify_test_marker", CommentTag: "pandora-notify-pg18",
+	})
+	const (
+		tenant  = "e7e10000-0000-4000-8000-000000000001"
+		product = "e7e10000-0000-4000-8000-000000000002"
+		plan    = "e7e10000-0000-4000-8000-000000000003"
+		prefix  = "e7e10000-0000-4000-8000-0000000001"
+	)
+	// 每个用户一条订阅：状态、周期末相对现在的偏移、是否关窗；other 另给一条在用订阅
+	cases := []struct {
+		key, status, end string
+		closed, other    bool
+	}{
+		{"expiring", "active", "now() + interval '5 days'", false, false}, // 7 天档提醒
+		{"justexpired", "expired", "now() - interval '2 hours'", false, false},
+		{"day1", "expired", "now() - interval '3 days'", false, false},
+		{"day7", "expired", "now() - interval '10 days'", false, false},
+		{"switched", "expired", "now() - interval '3 days'", false, true}, // 已换了别的在用订阅
+		{"closed", "expired", "now() - interval '40 days'", true, false},
+	}
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := []string{
+		`INSERT INTO tenants(id,slug,display_name,default_currency,timezone) VALUES('` + tenant + `','notify-expiry-pg18','Expiry','CNY','Asia/Shanghai')`,
+		`SET LOCAL session_replication_role = replica`,
+		`INSERT INTO products(id,tenant_id,code,name,status) VALUES('` + product + `','` + tenant + `','expiry-product','Expiry','active')`,
+		`INSERT INTO plans(id,tenant_id,product_id,code,name,status) VALUES('` + plan + `','` + tenant + `','` + product + `','expiry-plan','Expiry Plan','draft')`,
+	}
+	for i, c := range cases {
+		user := prefix + "1" + string(rune('0'+i))
+		sub := prefix + "2" + string(rune('0'+i))
+		closed := "NULL"
+		if c.closed {
+			closed = "now()"
+		}
+		seed = append(seed,
+			`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES('`+user+`','`+tenant+`','`+c.key+`@notify-expiry.invalid','`+c.key+`','active')`,
+			`INSERT INTO subscriptions(id,tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount,
+				current_period_start,current_period_end,renewal_closed_at)
+			 VALUES('`+sub+`','`+tenant+`','`+user+`','`+plan+`',gen_random_uuid(),'`+c.status+`','CNY',0,
+				`+c.end+` - interval '30 days',`+c.end+`,`+closed+`)`)
+		if c.other {
+			seed = append(seed, `INSERT INTO subscriptions(tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,
+				snapshot_amount,current_period_start,current_period_end)
+			 VALUES('`+tenant+`','`+user+`','`+plan+`',gen_random_uuid(),'active','CNY',0,now(),now()+interval '30 days')`)
+		}
+	}
+	for _, sql := range seed {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("seed: %v\nSQL: %s", err, sql)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(app, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte("notify-expiry-salt"))
+	first, err := svc.ScanExpiring(ctx, tenant)
+	if err != nil || first == 0 {
+		t.Fatalf("expiry scan queued=%d err=%v", first, err)
+	}
+	rows, err := admin.Query(ctx, `SELECT d.template_code, u.display_name, d.dedupe_key, d.payload
+		FROM notification_deliveries d JOIN users u ON u.id = d.user_id
+		WHERE d.tenant_id=$1 AND d.channel='inapp' ORDER BY u.display_name`, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type delivery struct {
+		code, user, key string
+		payload         map[string]any
+	}
+	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (delivery, error) {
+		var d delivery
+		return d, r.Scan(&d.code, &d.user, &d.key, &d.payload)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byUser := map[string]delivery{}
+	for _, d := range got {
+		if _, dup := byUser[d.user]; dup {
+			t.Fatalf("user %s got more than one in-app notice: %+v", d.user, got)
+		}
+		byUser[d.user] = d
+	}
+	want := map[string]string{
+		"expiring": "subscription.expiring", "justexpired": "subscription.expired",
+		"day1": "subscription.recall", "day7": "subscription.recall",
+	}
+	if len(byUser) != len(want) {
+		t.Fatalf("in-app notices=%+v want users %v", got, want)
+	}
+	for user, code := range want {
+		d, ok := byUser[user]
+		if !ok || d.code != code {
+			t.Fatalf("user %s notice=%+v want %s", user, d, code)
+		}
+	}
+	// 站点时区 Asia/Shanghai，到分钟：形如 2026-10-07 14:32
+	at, _ := byUser["justexpired"].payload["expired_at"].(string)
+	if len(at) != len("2006-01-02 15:04") || byUser["day1"].payload["days"] != "1" || byUser["day7"].payload["days"] != "7" ||
+		!strings.HasPrefix(byUser["day7"].key, "recall:") || !strings.Contains(byUser["day7"].key, ":7d:") {
+		t.Fatalf("notice payloads=%+v", byUser)
+	}
+	if at, _ := byUser["expiring"].payload["expires_at"].(string); len(at) != len("2006-01-02 15:04") {
+		t.Fatalf("expiring reminder time=%q, want minutes", at)
+	}
+	if again, err := svc.ScanExpiring(ctx, tenant); err != nil || again != 0 {
+		t.Fatalf("rescan queued=%d err=%v, want 0", again, err)
+	}
+	t.Log("marker=notify_expiry_notices_ok")
+}

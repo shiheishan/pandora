@@ -61,31 +61,36 @@ func TestCheckCredential(t *testing.T) {
 	past, future := now.Add(-time.Hour), now.Add(time.Hour)
 	hash := []byte("0123456789abcdef0123456789abcdef")
 	other := []byte("fedcba9876543210fedcba9876543210")
+	// want：nil 可用；ErrExpired 回提示节点（规则 1）；ErrNotFound 回伪装 404
 	for _, tc := range []struct {
 		name          string
 		hash          []byte
 		cred, sub     string
 		expires, grac *time.Time
-		ok            bool
+		closed        bool
+		want          error
 	}{
-		{"active", hash, "active", "active", nil, nil, true},
-		{"trialing subscription", hash, "active", "trialing", nil, nil, true},
-		{"grace subscription", hash, "grace", "grace", nil, nil, true},
-		{"hash mismatch", other, "active", "active", nil, nil, false},
-		{"revoked credential", hash, "revoked", "active", nil, nil, false},
-		{"expired credential", hash, "expired", "active", nil, nil, false},
-		{"past deadline", hash, "active", "active", &past, nil, false},
-		{"grace extends deadline", hash, "active", "active", &past, &future, true},
-		{"grace also past", hash, "grace", "active", &past, &past, false},
-		{"past_due subscription", hash, "active", "past_due", nil, nil, false},
-		{"cancelled subscription", hash, "active", "cancelled", &future, nil, false},
+		{"active", hash, "active", "active", nil, nil, false, nil},
+		{"trialing subscription", hash, "active", "trialing", nil, nil, false, nil},
+		{"grace subscription", hash, "grace", "grace", nil, nil, false, nil},
+		{"hash mismatch", other, "active", "active", nil, nil, false, ErrNotFound},
+		{"revoked credential", hash, "revoked", "active", nil, nil, false, ErrNotFound},
+		{"expired credential", hash, "expired", "active", nil, nil, false, ErrNotFound},
+		{"past deadline, status not yet flipped", hash, "active", "active", &past, nil, false, ErrExpired},
+		{"grace extends deadline", hash, "active", "active", &past, &future, false, nil},
+		{"rotated grace credential past", hash, "grace", "active", &past, &past, false, ErrNotFound},
+		{"past_due subscription", hash, "active", "past_due", nil, nil, false, ErrNotFound},
+		{"cancelled subscription", hash, "active", "cancelled", &future, nil, false, ErrNotFound},
+		{"expired subscription", hash, "active", "expired", &past, nil, false, ErrExpired},
+		{"expired, renewal window closed", hash, "active", "expired", &past, nil, true, ErrNotFound},
+		{"expired, hash mismatch", other, "active", "expired", &past, nil, false, ErrNotFound},
 	} {
-		err := checkCredential(tc.hash, hash, tc.cred, tc.expires, tc.grac, tc.sub, now)
-		if tc.ok && err != nil {
+		err := checkCredential(tc.hash, hash, tc.cred, tc.expires, tc.grac, tc.sub, tc.closed, now)
+		if tc.want == nil && err != nil {
 			t.Errorf("%s: err=%v, want ok", tc.name, err)
 		}
-		if !tc.ok && !errors.Is(err, ErrNotFound) {
-			t.Errorf("%s: err=%v, want ErrNotFound", tc.name, err)
+		if tc.want != nil && !errors.Is(err, tc.want) {
+			t.Errorf("%s: err=%v, want %v", tc.name, err, tc.want)
 		}
 	}
 }
@@ -110,7 +115,7 @@ func TestPullUsesHashLookupAndSharedEligibility(t *testing.T) {
 		t.Fatal("node cache must fill through ListNodes, the shared eligibility query")
 	}
 	// 写路径：限流计数与日志在拿到凭据行锁之后，同一事务
-	rec := pkg.Decl("Service.RecordSuccessfulFetch")
+	rec := pkg.Decl("Service.recordFetch")
 	lock := strings.Index(rec, "UPDATE subscription_credentials")
 	insert := strings.Index(rec, "INSERT INTO subscription_fetch_log")
 	if lock < 0 || insert < lock || strings.Count(rec, "s.pool.InTx(") != 1 ||

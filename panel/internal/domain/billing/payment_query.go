@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,38 +51,49 @@ type OrderPaymentQuery struct {
 // ownerID 非空时只许查本人订单（门户），他人订单与不存在同一个 404；
 // 后台传空串。订单从没发起过支付（没有任何支付意图）回 409。
 //
-// 用户中途换过渠道时，订单名下会有多条意图：按最近发起的渠道在前逐个查，
-// 任一渠道说已付就补记并返回。没有渠道说已付时，返回最近一个答上话的渠道的
-// 结果；所有渠道都没查成才返回错误。
+// 用户中途换过渠道或方式时，订单名下会有多条意图，各有各的对外单号（易支付换方式时是
+// 「订单号-序号」，见 payments.go）：按最近发起的在前逐个查，任一笔说已付就补记并返回。
+// 没有一笔说已付时，返回最近一个答上话的结果；所有都没查成才返回错误。
 func (s *PaymentService) QueryOrderPayment(ctx context.Context, tenantID, orderID, ownerID string) (*OrderPaymentQuery, error) {
-	res, _, err := s.queryOrderPayment(ctx, tenantID, orderID, ownerID)
+	res, _, err := s.queryOrderPayment(ctx, tenantID, orderID, ownerID, nil)
 	return res, err
 }
 
-// queryTarget 是查单前读到的订单号与渠道；后台审计要在查单失败时也写清查的是谁。
+// queryTarget 是查单前读到的订单号与对外单号；后台审计要在查单失败时也写清查的是谁。
 type queryTarget struct {
 	OrderNo   string
 	Providers []string
+	Refs      []queryRef
 }
 
+// queryRef 是一次要查的「渠道 + 对外单号」。
+type queryRef struct {
+	Code       string
+	OutTradeNo string
+}
+
+// settleHook 在查单补记的结算事务里、结算之后执行（后台查单在这里写审计，与补记同生共死）。
+type settleHook func(ctx context.Context, tx pgx.Tx, res *OrderPaymentQuery) error
+
 // queryOrderPayment 是 QueryOrderPayment 的本体，另把查单对象带回来；
-// 订单不存在或无权访问时 target 为 nil。
-func (s *PaymentService) queryOrderPayment(ctx context.Context, tenantID, orderID, ownerID string) (*OrderPaymentQuery, *queryTarget, error) {
-	orderNo, providers, err := s.loadQueryTarget(ctx, tenantID, orderID, ownerID)
+// 订单不存在或无权访问时 target 为 nil。hook 只在渠道说已付、走了结算事务时调用。
+func (s *PaymentService) queryOrderPayment(ctx context.Context, tenantID, orderID, ownerID string,
+	hook settleHook) (*OrderPaymentQuery, *queryTarget, error) {
+
+	target, err := s.loadQueryTarget(ctx, tenantID, orderID, ownerID)
 	if err != nil {
 		var he *httpx.Error
-		if errors.As(err, &he) && he.Code == httpx.CodeConflict {
+		if target != nil && errors.As(err, &he) && he.Code == httpx.CodeConflict {
 			// 订单在，只是从没发起过支付：照样算一次有对象的查单
-			return nil, &queryTarget{OrderNo: orderNo}, err
+			return nil, target, err
 		}
 		return nil, nil, err
 	}
-	target := &queryTarget{OrderNo: orderNo, Providers: providers}
 
 	var answer *OrderPaymentQuery
 	var firstErr error
-	for _, code := range providers {
-		res, err := s.queryProvider(ctx, tenantID, orderID, orderNo, code)
+	for _, ref := range target.Refs {
+		res, err := s.queryProvider(ctx, tenantID, orderID, target.OrderNo, ref, hook)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -101,19 +113,20 @@ func (s *PaymentService) queryOrderPayment(ctx context.Context, tenantID, orderI
 	return nil, target, firstErr
 }
 
-// loadQueryTarget 读订单号与它发起过支付的渠道（最近发起的在前）。
-func (s *PaymentService) loadQueryTarget(ctx context.Context, tenantID, orderID, ownerID string) (string, []string, error) {
+// loadQueryTarget 读订单号与它发起过的每一笔支付（渠道 + 对外单号，最近发起的在前）。
+//
+// 对外单号取意图 action_payload 里记的 out_trade_no；在记它之前建的意图一律用的是订单号。
+func (s *PaymentService) loadQueryTarget(ctx context.Context, tenantID, orderID, ownerID string) (*queryTarget, error) {
 	if _, err := uuid.Parse(orderID); err != nil {
-		return "", nil, httpx.NotFoundOrForbidden()
+		return nil, httpx.NotFoundOrForbidden()
 	}
-	var orderNo string
-	var providers []string
+	var target queryTarget
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: ownerID}, func(tx pgx.Tx) error {
 		var owner string
 		err := tx.QueryRow(ctx, `
 			SELECT order_no, user_id::text FROM orders
 			 WHERE tenant_id = $1 AND id = $2::uuid`,
-			tenantID, orderID).Scan(&orderNo, &owner)
+			tenantID, orderID).Scan(&target.OrderNo, &owner)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFoundOrForbidden()
 		}
@@ -124,32 +137,43 @@ func (s *PaymentService) loadQueryTarget(ctx context.Context, tenantID, orderID,
 			return httpx.NotFoundOrForbidden()
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT pp.code
+			SELECT pp.code, coalesce(pi.action_payload->>'out_trade_no', $3) AS out_trade_no
 			  FROM payment_intents pi
 			  JOIN payment_providers pp
 			    ON pp.tenant_id = pi.tenant_id AND pp.id = pi.provider_id
 			 WHERE pi.tenant_id = $1 AND pi.order_id = $2::uuid
-			 GROUP BY pp.code
-			 ORDER BY max(pi.created_at) DESC, pp.code`,
-			tenantID, orderID)
+			 GROUP BY pp.code, out_trade_no
+			 ORDER BY max(pi.created_at) DESC, pp.code, out_trade_no`,
+			tenantID, orderID, target.OrderNo)
 		if err != nil {
 			return err
 		}
-		providers, err = pgx.CollectRows(rows, pgx.RowTo[string])
+		target.Refs, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (queryRef, error) {
+			var r queryRef
+			err := row.Scan(&r.Code, &r.OutTradeNo)
+			return r, err
+		})
 		return err
 	})
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	if len(providers) == 0 {
-		return orderNo, nil, httpx.New(httpx.CodeConflict, "该订单从未发起过支付，无法向渠道查单")
+	for _, r := range target.Refs {
+		if !slices.Contains(target.Providers, r.Code) {
+			target.Providers = append(target.Providers, r.Code)
+		}
 	}
-	return orderNo, providers, nil
+	if len(target.Refs) == 0 {
+		return &target, httpx.New(httpx.CodeConflict, "该订单从未发起过支付，无法向渠道查单")
+	}
+	return &target, nil
 }
 
-// queryProvider 向一个渠道查单；查到已付就补记，答上话的结果连同订单现状返回。
-func (s *PaymentService) queryProvider(ctx context.Context, tenantID, orderID, orderNo, code string) (*OrderPaymentQuery, error) {
-	prov, _, err := s.factory.Get(ctx, tenantID, code)
+// queryProvider 按一笔支付的对外单号向渠道查单；查到已付就补记，答上话的结果连同订单现状返回。
+func (s *PaymentService) queryProvider(ctx context.Context, tenantID, orderID, orderNo string,
+	ref queryRef, hook settleHook) (*OrderPaymentQuery, error) {
+
+	prov, _, err := s.factory.Get(ctx, tenantID, ref.Code)
 	if errors.Is(err, payment.ErrProviderDisabled) {
 		return nil, httpx.New(httpx.CodeUnavailable, "该支付渠道已停用，无法向渠道查单").WithInternal(err)
 	}
@@ -158,7 +182,7 @@ func (s *PaymentService) queryProvider(ctx context.Context, tenantID, orderID, o
 	}
 
 	qctx, cancel := context.WithTimeout(ctx, channelQueryTimeout)
-	res, err := prov.QueryPayment(qctx, orderNo)
+	res, err := prov.QueryPayment(qctx, ref.OutTradeNo)
 	cancel()
 	if errors.Is(err, payment.ErrNotSupported) {
 		return nil, httpx.New(httpx.CodeConflict, "该支付渠道不支持主动查单").WithInternal(err)
@@ -168,7 +192,7 @@ func (s *PaymentService) queryProvider(ctx context.Context, tenantID, orderID, o
 		return nil, httpx.New(httpx.CodeUnavailable, "渠道查单失败，请稍后再试").WithInternal(err)
 	}
 
-	out := &OrderPaymentQuery{OrderID: orderID, OrderNo: orderNo, ProviderCode: code}
+	out := &OrderPaymentQuery{OrderID: orderID, OrderNo: orderNo, ProviderCode: ref.Code}
 	switch {
 	case !res.Found:
 		out.ChannelStatus = ChannelNotFound
@@ -176,13 +200,10 @@ func (s *PaymentService) queryProvider(ctx context.Context, tenantID, orderID, o
 		out.ChannelStatus = ChannelUnpaid
 	default:
 		out.ChannelStatus = ChannelPaid
-		settled, err := s.reconcileQueried(ctx, tenantID, code, orderNo, res)
-		if err != nil {
+		if err := s.reconcileQueried(ctx, tenantID, ref.Code, res, out, hook); err != nil {
 			return nil, err
 		}
-		out.Reconciled = settled.Processed
-		out.AlreadyRecorded = settled.AlreadyHandled
-		out.QuarantineKind = settled.QuarantineKind
+		return out, nil
 	}
 
 	out.OrderStatus, err = s.orderStatus(ctx, tenantID, orderID)
@@ -192,8 +213,10 @@ func (s *PaymentService) queryProvider(ctx context.Context, tenantID, orderID, o
 	return out, nil
 }
 
-// reconcileQueried 把渠道确认的已付交给与回调同一条结算主链。
+// reconcileQueried 把渠道确认的已付交给与回调同一条结算主链（settlePaymentTx），
+// 在自己的事务里执行；hook（后台查单的审计）与结算在同一个事务里写。
 //
+// 按订单 id 定位，不按渠道回来的单号：换过方式的订单，对外单号是「订单号-序号」。
 // 去重靠的是结算主链本身，不是事件号：事件号 PaymentRef + ":RECONCILED" 只让
 // 「同一笔反复查单」在 payment_events 唯一约束上直接短路；真实回调晚到时事件号
 // 不同，但它带着同一个渠道流水号，订单已结清，走进 quarantineUnexpectedPayment
@@ -202,16 +225,18 @@ func (s *PaymentService) queryProvider(ctx context.Context, tenantID, orderID, o
 //
 // 订单已取消或已过期时查到的钱照回调一样进挂账（released_order）；金额或币种
 // 与订单不符照回调一样整笔拒绝（409），订单不动。
-func (s *PaymentService) reconcileQueried(ctx context.Context, tenantID, code, orderNo string, res *payment.QueryResult) (*PaymentWebhookOutput, error) {
+func (s *PaymentService) reconcileQueried(ctx context.Context, tenantID, code string,
+	res *payment.QueryResult, out *OrderPaymentQuery, hook settleHook) error {
+
 	if res.PaymentRef == "" {
-		return nil, httpx.New(httpx.CodeUnavailable, "渠道查单结果缺少支付流水号，无法补记")
+		return httpx.New(httpx.CodeUnavailable, "渠道查单结果缺少支付流水号，无法补记")
 	}
-	return s.settle.HandlePaymentWebhook(ctx, tenantID, PaymentWebhookInput{
+	in := PaymentWebhookInput{
 		ProviderCode:      code,
 		ProviderEventID:   res.PaymentRef + ":RECONCILED",
 		ProviderPaymentID: res.PaymentRef,
 		EventType:         "payment.succeeded",
-		OrderNo:           orderNo,
+		OrderID:           out.OrderID,
 		Amount:            res.Amount,
 		Currency:          res.Currency,
 		RawPayload: map[string]any{
@@ -220,7 +245,38 @@ func (s *PaymentService) reconcileQueried(ctx context.Context, tenantID, code, o
 		// 查询是我方主动发起、带商户密钥的请求，渠道地址受 SEC-007 约束，
 		// 可信度不低于回调验签，故标记为已验证
 		SignatureVerified: true,
+	}
+	var settled PaymentWebhookOutput
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		settled = PaymentWebhookOutput{}
+		if err := s.settle.settlePaymentTx(ctx, tx, tenantID, in, &settled); err != nil {
+			return err
+		}
+		out.Reconciled = settled.Processed
+		out.AlreadyRecorded = settled.AlreadyHandled
+		out.QuarantineKind = settled.QuarantineKind
+		if err := tx.QueryRow(ctx, `SELECT status FROM orders WHERE tenant_id = $1 AND id = $2::uuid`,
+			tenantID, out.OrderID).Scan(&out.OrderStatus); err != nil {
+			return err
+		}
+		if hook == nil {
+			return nil
+		}
+		return hook(ctx, tx, out)
 	})
+	if err != nil {
+		out.Reconciled, out.AlreadyRecorded, out.QuarantineKind, out.OrderStatus = false, false, "", ""
+		var he *httpx.Error
+		if errors.As(err, &he) {
+			return he
+		}
+		return httpx.Internal(err)
+	}
+	// 事务已提交，这时通知才对应一个真实存在的变更（同 HandlePaymentWebhook）
+	if settled.SubscriptionID != "" {
+		s.settle.notifyUsersChanged(ctx, tenantID)
+	}
+	return nil
 }
 
 func (s *PaymentService) orderStatus(ctx context.Context, tenantID, orderID string) (string, error) {

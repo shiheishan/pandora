@@ -63,6 +63,9 @@ type MySubscription struct {
 
 // mySubscriptionsSQL 是「我的订阅」的主查询，$1 租户、$2 本人。
 //
+// renewable 与续费建单（billing.subscriptionAcceptsPaidChange）同口径：生效中的四种状态，
+// 外加过期 30 天内、原地续费窗口没关的（规则 4），且套餐允许续费。
+//
 // 在线设备数按订阅走 LATERAL：od.subscription_id = s.id 在子查询里是外层参数，
 // 一定会被推进视图，每条订阅只探 idx_node_alive_recent 里自己那一段。原先是
 // LEFT JOIN 整个视图，PostgreSQL 不把 JOIN 条件推进带聚合的视图，只看一个人的
@@ -81,7 +84,8 @@ const mySubscriptionsSQL = `
 	         WHERE q.tenant_id = s.tenant_id AND q.subscription_id = s.id
 	           AND q.metric = 'traffic.bytes'
 	         ORDER BY q.period_start DESC LIMIT 1),
-	       s.status IN ('active','trialing','grace','past_due') AND pl.allow_renewal,
+	       (s.status IN ('active','trialing','grace','past_due')
+	        OR (s.status = 'expired' AND s.renewal_closed_at IS NULL)) AND pl.allow_renewal,
 	       pr.id::text, pr.currency::text, pr.unit_amount, pr.billing_interval, pr.interval_count,
 	       coalesce(pr.status = 'active' AND pr.currency IN ('CNY','USD')
 	                AND pr.product_id = pl.product_id

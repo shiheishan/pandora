@@ -164,6 +164,12 @@ func TestTrafficChargePG18(t *testing.T) {
 	rolloverAndForeignUIDScenario(t, ctx, admin, app)
 	retentionScenario(t, ctx, admin, app)
 	reportIDScenario(t, ctx, admin, app)
+	// w5retain：31 天留档清理、删掉的索引无依赖、billed_bytes、按天汇总（traffic_retention_pg18_test.go）
+	reportRetentionScenario(t, ctx, admin, app)
+	droppedIndexScenario(t, ctx, admin)
+	billedBytesScenario(t, ctx, admin, app)
+	trafficDailyScenario(t, ctx, admin, app)
+	migrationRoundTripScenario(t, ctx, admin)
 
 	// 后台节点列表的通用计划门禁借这个库跑（node_list_admin_pg18_test.go），免改 gates 脚本的过滤
 	t.Run("admin_node_list_generic_plan", func(t *testing.T) {

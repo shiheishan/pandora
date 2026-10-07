@@ -18,18 +18,20 @@ import (
 // 能不能表达；不能，再写清楚为什么。
 var directWriteAllowed = map[string]string{
 	// CSV 导出：带 BOM 的 text/csv 流，不是 JSON
-	"admin/audit_log.go handlers.exportAudit":   "审计日志 CSV 导出",
-	"admin/bulk_users.go handlers.exportUsers":  "用户 CSV 导出",
-	"admin/giftcard.go writeGiftCodesReportCSV": "礼品卡卡密报表 CSV（掩码）",
-	"admin/giftcard.go writeGiftBatchCSV":       "礼品卡批次 CSV（生成后一次性的明文卡密下载）",
+	"admin/audit_log.go handlers.exportAudit":                   "审计日志 CSV 导出",
+	"admin/bulk_users.go handlers.exportUsers":                  "用户 CSV 导出",
+	"admin/bulk_users.go handlers.downloadUserGenerationResult": "批量生成账号的结果 CSV（邮箱 + 初始口令，24 小时内可下）",
+	"admin/giftcard.go writeGiftCodesReportCSV":                 "礼品卡卡密报表 CSV（掩码）",
+	"admin/giftcard.go writeGiftBatchCSV":                       "礼品卡批次 CSV（生成后一次性的明文卡密下载）",
 	// SSE：text/event-stream 长连接逐帧写出并 Flush
 	"admin/events.go handlers.events":   "管理端 SSE",
 	"public/events.go handlers.events":  "门户 SSE",
 	"node/stream.go handlers.uniStream": "节点 SSE",
 	"node/stream.go writeStreamFrame":   "节点 SSE 逐帧写出共享的已编码名单（不拷贝）并 Flush",
 	// 订阅输出：客户端按 Content-Type 解析 YAML / JSON / base64，失败一律回同一个诱饵 HTML 404
-	"public/subscribe.go handlers.subscribe": "订阅正文输出与 429 纯文本",
-	"public/subscribe.go writeDecoy":         "订阅失败的诱饵 HTML 404 页",
+	"public/subscribe.go handlers.subscribe":                "订阅正文输出与 429 纯文本",
+	"public/subscribe.go writeDecoy":                        "订阅失败的诱饵 HTML 404 页",
+	"public/subscribe.go handlers.writeExpiredSubscription": "过期订阅的提示配置（YAML / JSON / base64）与 429 纯文本",
 	// pdnd 安装引导：shell 脚本、二进制与校验和，给 curl 用的纯文本 / 字节流
 	"public/pdnd_install.go handlers.pdndInstallScript": "pdnd 安装脚本",
 	"public/pdnd_install.go handlers.pdndBinary":        "pdnd 二进制分发（ServeContent 支持断点续传）与纯文本 404",

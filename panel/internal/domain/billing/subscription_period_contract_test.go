@@ -145,7 +145,7 @@ func TestSubscriptionPeriodWritersSyncCredentials(t *testing.T) {
 	// 并确认它对齐了本周期配额行（见 extendSubscriptionTx 的注释）。
 	want := []string{
 		"internal/domain/billing/plan_change.go:fulfillPlanChangeLocked",
-		"internal/domain/billing/renewal.go:fulfillRenewalLocked",
+		"internal/domain/billing/renewal_fulfill.go:renewSubscriptionTx",
 		"internal/domain/billing/subscription_period.go:extendSubscriptionTx",
 	}
 	slices.Sort(got)
@@ -168,12 +168,14 @@ func TestExtensionPathsShareExtendSubscriptionTx(t *testing.T) {
 			t.Errorf("%s must not write subscription period SQL itself", name)
 		}
 	}
-	// 本周期配额行只改等于旧周期末的 cycle 行；已用量与周期起点不动
+	// 本周期配额行只改等于旧周期末的 cycle 行；已用量不动（规则 6：已用量沿用）
 	ext := pkg.Decl("extendSubscriptionTx")
 	for _, needle := range []string{
 		"FOR UPDATE",
-		"subscriptionExtendable(change.Status)",
+		"subscriptionExtendable(change.Status, renewalClosed)",
 		"AND period = 'cycle' AND period_end = $4",
+		"if change.Rescued {",
+		"rescueQuotaTx(ctx, tx, ext, change.PeriodEnd, lapsed, now)",
 		"syncCredentialExpiryTx(ctx, tx, ext.TenantID, ext.SubscriptionID, change.PeriodEnd)",
 		"'extended'",
 	} {
@@ -181,8 +183,18 @@ func TestExtensionPathsShareExtendSubscriptionTx(t *testing.T) {
 			t.Errorf("extendSubscriptionTx missing %q", needle)
 		}
 	}
-	if strings.Contains(ext, "consumed") || strings.Contains(ext, "period_start") {
-		t.Error("extendSubscriptionTx must not reset consumed traffic or move the cycle start")
+	if strings.Contains(ext, "consumed") {
+		t.Error("extendSubscriptionTx must not reset consumed traffic")
+	}
+	// 救回只给 cycle 行加折算额度（不清已用量）；清零只发生在 day / month 的自然周期对齐
+	rescue := pkg.Decl("rescueQuotaTx")
+	for _, needle := range []string{
+		"SET limit_value = limit_value + $2",
+		"AND qb.period IN ('day', 'month')",
+	} {
+		if !strings.Contains(rescue, needle) {
+			t.Errorf("rescueQuotaTx missing %q", needle)
+		}
 	}
 }
 

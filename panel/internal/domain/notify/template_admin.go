@@ -44,10 +44,13 @@ type TemplateRow struct {
 // 否则管理员不敢改。
 var templateDescription = map[string]string{
 	"subscription.expiring": "套餐到期前提醒（由定时扫描触发，每个订阅每个提醒窗口只发一次）",
+	"subscription.expired":  "套餐到期当时的通知（订阅被过期扫描标成已过期后触发，每次到期只发一次）",
+	"subscription.recall":   "过期后的续费召回（过期第 1 天、第 7 天各一次；已有别的在用订阅或过期满 30 天不发）",
 	"quota.warning":         "流量用量预警（用量越过阈值时触发）",
 	"order.paid":            "订单支付成功后发给下单用户",
 	"ticket.replied":        "工单被管理员回复后通知提单人",
 	"auth.email_verify":     "注册第 1 步发给注册邮箱的验证码（开启邮箱验证时；邮箱已注册则不发）",
+	"auth.password_reset":   "找回密码第 1 步发给账号邮箱的验证码（邮箱不存在或是后台人员时不发）",
 }
 
 func TemplateDescription(code string) string { return templateDescription[code] }
@@ -318,6 +321,33 @@ var defaultTemplates = map[string]defaultTemplate{
 
 {{site}}`,
 	},
+	"subscription.expired|inapp": {
+		Subject: "套餐已到期",
+		Body:    "你的「{{plan}}」已于 {{expired_at}} 到期，节点已停止服务。续费后在客户端里更新订阅即可恢复，订阅链接不变。",
+	},
+	"subscription.expired|email": {
+		Subject: "【{{site}}】你的套餐已到期",
+		Body: `你好，
+
+你的「{{plan}}」已于 {{expired_at}} 到期，节点已停止服务。
+续费后在客户端里更新一次订阅即可恢复，订阅链接不变，无需重新导入。
+过期满 30 天后将不能再原地续费，只能重新购买并更换订阅链接。
+
+{{site}}`,
+	},
+	"subscription.recall|inapp": {
+		Subject: "套餐已过期 {{days}} 天",
+		Body:    "你的「{{plan}}」已于 {{expired_at}} 到期。现在续费，原订阅链接自动恢复，无需重新导入；过期满 30 天后只能重新购买。",
+	},
+	"subscription.recall|email": {
+		Subject: "【{{site}}】你的套餐已过期 {{days}} 天",
+		Body: `你好，
+
+你的「{{plan}}」已于 {{expired_at}} 到期，至今已 {{days}} 天。
+现在续费，原订阅链接自动恢复，无需重新导入；过期满 30 天后只能重新购买，并需要更换订阅链接。
+
+{{site}}`,
+	},
 	"quota.warning|inapp": {
 		Subject: "流量即将用尽",
 		Body:    "你的「{{plan}}」已使用 {{percent}}% 流量（剩余 {{remaining}}）。用尽后将无法连接节点。",
@@ -349,6 +379,21 @@ var defaultTemplates = map[string]defaultTemplate{
 {{code}}
 
 验证码 {{minutes}} 分钟内有效。如果这不是你本人的操作，忽略这封邮件即可。
+
+{{site}}`,
+	},
+	// 与迁移 00128 的种子逐字一致（找回密码第 1 步发给账号邮箱）
+	"auth.password_reset|email": {
+		Subject: "【{{site}}】重置密码验证码 {{code}}",
+		Body: `你好，
+
+你正在重置 {{site}} 的登录密码，验证码是：
+
+{{code}}
+
+验证码 {{minutes}} 分钟内有效。重置成功后，这个账号在所有设备上的登录都会失效，需要用新密码重新登录。
+
+如果这不是你本人的操作，忽略这封邮件即可，你的密码不会改变。
 
 {{site}}`,
 	},

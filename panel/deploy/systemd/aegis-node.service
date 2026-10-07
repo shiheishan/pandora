@@ -13,7 +13,9 @@ EnvironmentFile=/opt/aegispanel/deploy/.env
 EnvironmentFile=-/opt/aegispanel/deploy/release-artifact.env
 ExecStart=/opt/aegispanel/bin/aegis-node
 KillSignal=SIGTERM
-TimeoutStopSec=30
+# 停机两段各限 AEGIS_SHUTDOWN_TIMEOUT（缺省 20 秒）：先等在途请求跑完，再 join 后台循环
+# （nonce 清理）。与 public / admin 一样留 45 秒，免得流量上报事务还没提交就被 SIGKILL。
+TimeoutStopSec=45
 Restart=on-failure
 RestartSec=5
 User=root

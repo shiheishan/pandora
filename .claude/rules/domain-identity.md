@@ -14,3 +14,9 @@ paths:
 - 越级：替人重置密码、改账号状态、批量停用同源账号前都过 `iamguard.CanManage`——操作者当前生效的租户级权限必须覆盖目标的全部生效权限，否则 403；批量停用一律跳过后台人员
 - Argon2 一律经全局名额：本包先 `acquirePasswordSlot`（排不上回 503）再开事务，事务里用名额的 Hash/Verify；不调 crypto 的包级 HashPassword / VerifyPassword（守卫 `password_gate_test.go`）。改密失败计数复用审计记录：同一账号 15 分钟内旧口令错 5 次回 429
 - 按邮箱找人（登录查口令、注册查重，`email_lookup.go`）写 `email_lower = lower($2::text) AND email = $2::citext`，不写裸的 `email = $2`：citext 等号不是 LEAKPROOF，RLS 下不能当索引条件，会把整个租户的用户逐行比一遍。`email_lower` 是 00119 的存储型生成列，索引 `(tenant_id, email_lower)`；附加的 `::citext` 不能省（citext = text 会被解析成区分大小写的 text 等号）。守卫 `email_lookup_pg18_test.go` 断言计划走这个索引
+- 找回密码（password_reset.go，用户 2026-10-07 定）：邮件验证码，`verification_codes` 的 purpose=password_reset，只存哈希、10 分钟、同一枚最多错 5 次（错误次数先提交再返回）、只认最新一枚；投递走 `VerificationMailer.EnqueueToAddress`（payload 终态清空），模板 `auth.password_reset`（00128，种子与 `notify.defaultTemplates` 逐字一致）
+  - 没配邮件服务（`VerificationMailer.EmailConfigured` 为 false）时整体关闭：site-config 的 `password_reset=false`，两步接口都回 403
+  - 第 1 步对不存在、非 active、后台人员（有生效角色绑定）的邮箱回同样的响应但不写码不发信；后台人员不走自助找回
+  - 成功后经 `revokeAllLogins` 吊销全部会话、刷新令牌与令牌家族；后台替人重置也用它，不再各写一份
+- 门户禁登后台人员（portal_staff.go）：「持有后台角色」= 有任何未过期的角色绑定（不论范围，`portalStaffSQL`）；口令登录（audience=public）在口令核对通过之后才判，快捷登录换会话也判；提示 `ErrStaffPortalLogin` 不带任何路径。已存在的门户会话不在这里收（中间件不归本包）
+- 登录失败审计（login_failure_audit.go）：action `user.login_failed`、主体 anonymous、error_code 记原因；同一来源 IP 或同一邮箱哈希 10 分钟内只记一条（事务级 advisory 锁串行「先查后写」），写在登录事务之外、尽力而为，不改变对外响应

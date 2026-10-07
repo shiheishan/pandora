@@ -284,7 +284,7 @@ export interface GenerateForm {
   reason: string
 }
 
-/** 与 adminops.GenerateUsers 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
+/** 与 adminops.normalizeGenerateUsers 同一套规则（后端先 trim、转小写再校验），返回按字段的问题 */
 export function generateProblems(f: GenerateForm): Record<string, string> {
   const out: Record<string, string> = {}
   const n = Number(f.count.trim())
@@ -295,11 +295,6 @@ export function generateProblems(f: GenerateForm): Record<string, string> {
   const r = [...f.reason.trim()].length
   if (r < 5 || r > 500) out.reason = '请写清生成原因，5 到 500 个字'
   return out
-}
-
-/** 生成结果的本地 CSV（契约：「下载」不再请求服务器） */
-export function generatedRows(users: ReadonlyArray<{ email: string; password: string }>): string[][] {
-  return [['邮箱', '初始密码'], ...users.map((u) => [u.email, u.password])]
 }
 
 // ===========================================================================
@@ -368,9 +363,33 @@ export function exactEmail<T extends Pick<UserRow, 'email'>>(users: readonly T[]
 export const EXTEND_DAYS_MAX = 3650
 export const EXTEND_PRESETS = [7, 30, 90] as const
 
-/** 能加时长的订阅：只有生效中（active）且有到期时间的；别的状态后端回 409，没有到期时间回 422 */
-export function extendableSubscriptions<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T[] {
-  return subs.filter((s) => s.status === 'active' && s.current_period_end !== null)
+/** 原地续费窗口（后端过期扫描在过期满 30 天时关窗，billing/expire.go） */
+export const RENEWAL_WINDOW_DAYS = 30
+
+/** 已过期整天数（周期末已过才有，否则 null） */
+export function expiredDays(periodEnd: string | null, now: Date): number | null {
+  if (!periodEnd) return null
+  const ms = now.getTime() - new Date(periodEnd).getTime()
+  return ms >= 0 ? Math.floor(ms / DAY) : null
+}
+
+/**
+ * 能加时长的订阅（w5expiry）：生效中、试用中，或已过期不满 30 天（救回：状态回到 active、流量按天数折算、
+ * 旧链接恢复可用）；都要有到期时间。别的状态后端回 409，没有到期时间回 422。后台列表不带关窗时刻，
+ * 按周期末推算（关窗由过期扫描一分钟内写上）。
+ */
+export function extendableSubscriptions<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[], now: Date = new Date()): T[] {
+  return subs.filter((s) => {
+    if (s.current_period_end === null) return false
+    if (s.status === 'active' || s.status === 'trialing') return true
+    const d = expiredDays(s.current_period_end, now)
+    return s.status === 'expired' && d !== null && d < RENEWAL_WINDOW_DAYS
+  })
+}
+
+/** 这次加时长是不是「救回」：已过期（状态或周期末）或试用中，要二次确认 */
+export function isRescue<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(s: T, now: Date): boolean {
+  return s.status === 'expired' || s.status === 'trialing' || expiredDays(s.current_period_end, now) !== null
 }
 
 /** 天数：1 到 3650 的整数，否则 null（后端 fields.days） */

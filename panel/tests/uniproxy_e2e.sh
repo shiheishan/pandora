@@ -557,7 +557,8 @@ UPDATED=$(db_scalar integer "WITH u AS (UPDATE subscriptions SET current_period_
 assert_eq "$UPDATED" 1 "subscription expiry fixture updated exactly one row"
 expect_http 200 GET "$UNI/user?$Q" -H "$NAH"
 json_check "$HTTP_BODY" "not any(str(u['id']) == '$NODE_UID' for u in d['users'])" "expired user is withheld"
-UPDATED=$(db_scalar integer "WITH u AS (UPDATE subscriptions SET current_period_start=now()-interval '1 day',
+# 两次 UPDATE 之间 aegis-admin 的过期扫描可能已把状态改成 expired（w5expiry），一并改回 active
+UPDATED=$(db_scalar integer "WITH u AS (UPDATE subscriptions SET status='active', current_period_start=now()-interval '1 day',
   current_period_end=now()+interval '30 days' WHERE id='$SUB_ID' RETURNING 1) SELECT count(*) FROM u")
 assert_eq "$UPDATED" 1 "subscription period restored exactly one row"
 

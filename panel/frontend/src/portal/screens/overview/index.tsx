@@ -151,7 +151,7 @@ function PlanCard({ sub }: { sub: Subscription }) {
         <div className={css.planBadges}>
           {sub.status === 'grace' && <Tag tone="warn">宽限期</Tag>}
           {sub.status === 'past_due' && <Tag tone="danger">待续费</Tag>}
-          {expiry && <Tag tone={expiry.urgent ? 'warn' : 'ok'}>{expiry.urgent ? `${expiry.days} 天后到期` : `${expiry.days} 天后到期 · ${expiry.date.slice(5)}`}</Tag>}
+          {expiry && <Tag tone={expiry.expired ? 'danger' : expiry.urgent ? 'warn' : 'ok'}>{expiry.expired ? '已过期' : expiry.urgent ? expiry.label : `${expiry.label} · ${expiry.date.slice(5)}`}</Tag>}
           {!expiry && <Tag tone="ok">长期有效</Tag>}
           {renewHref && !expiry?.urgent && (
             <a className={css.textLink} href={renewHref}>
@@ -205,6 +205,7 @@ function PlanCard({ sub }: { sub: Subscription }) {
         <div className={css.caption}>这个套餐没有流量额度记录。</div>
       )}
 
+      {expiry?.expired && <div className={css.caption}>{expiry.label}，节点已暂停。续费后原订阅地址自动恢复，无需重新导入。</div>}
       <div className={css.planActions}>
         <a className={css.primaryAction} href={href('/subs', { sub: sub.id })}>
           导入到客户端

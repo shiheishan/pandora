@@ -13,11 +13,12 @@ export const subs: MockModule = {
       ctx.send(200, { subscriptions: state.subs.map((s) => subscriptionView(s, state.packBytes)) })
     },
 
-    // 只含有可用凭据的订阅；拉取统计是凭据维度的
+    // 只含有可用凭据的订阅；拉取统计是凭据维度的。过期 30 天内的照常列出、标 expired（只读）
     'GET /v1/me/subscription-links': async (ctx) => {
       if (!(await gate(ctx))) return
+      const closedBefore = Date.now() - 30 * 86_400_000
       const links = portalState(ctx.user.userId)
-        .subs.filter((s) => s.token !== null && s.status !== 'expired')
+        .subs.filter((s) => s.token !== null && (s.status !== 'expired' || new Date(s.current_period_end).getTime() > closedBefore))
         .map((s) => ({
           subscription_id: s.id,
           url: linkUrl(s.token!),
@@ -25,6 +26,7 @@ export const subs: MockModule = {
           fetch_count: s.fetchCount,
           last_fetched_at: s.lastFetchedAt,
           distinct_sources_24h: s.sources24h,
+          expired: s.status === 'expired' || new Date(s.current_period_end).getTime() <= Date.now(),
         }))
       ctx.send(200, { links })
     },
@@ -42,6 +44,10 @@ export const subs: MockModule = {
     'POST /v1/me/subscriptions/:id/rotate': (ctx) => {
       const sub = portalState(ctx.user.userId).subs.find((s) => s.id === ctx.params.id)
       if (!sub) return ctx.fail(404, 'not_found', '资源不存在')
+      // 过期期间不许换（subscription.ErrRotateWhileExpired）
+      if (sub.status === 'expired' || new Date(sub.current_period_end).getTime() <= Date.now()) {
+        return ctx.fail(409, 'conflict', '订阅已过期，续费后原链接会自动恢复；过期期间不能更换订阅链接')
+      }
       sub.token = randomBytes(18).toString('base64url')
       sub.fetchCount = 0
       sub.lastFetchedAt = null

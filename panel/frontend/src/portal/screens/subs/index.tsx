@@ -5,9 +5,9 @@ import { Button, Card, ConfirmModal, Empty, Select, Skeleton, Tag, useToast } fr
 import { useAppearance } from '../../queries'
 import { LoadError, Slot } from '../common/Blocks'
 import { copyText, importClients, protocolLabel, rateLabel, type ClientApp } from '../common/clients'
-import { canRenew, liveSubscriptions, usePlanTraffic, useRotateLink, useSubscriptionLinks, useSubscriptionNodes, useSubscriptions, type Subscription, type SubscriptionLink } from '../common/subscriptions'
+import { canRenew, liveSubscriptions, renewableExpired, usePlanTraffic, useRotateLink, useSubscriptionLinks, useSubscriptionNodes, useSubscriptions, type Subscription, type SubscriptionLink } from '../common/subscriptions'
 import { UsageCard } from '../common/UsageCard'
-import { fetchStats, metaLabel } from './labels'
+import { fetchStats, isExpiredView, metaLabel } from './labels'
 import css from './Subs.module.css'
 
 export default function Subscriptions() {
@@ -40,7 +40,9 @@ export default function Subscriptions() {
     )
   }
 
-  const live = liveSubscriptions(subs.data)
+  // 没有生效订阅时回落到能原地续费的已过期订阅：照常列出链接（只读）与续费入口（w5expiry）
+  const liveNow = liveSubscriptions(subs.data)
+  const live = liveNow.length > 0 ? liveNow : renewableExpired(subs.data)
   if (live.length === 0) {
     return (
       <div className={css.page}>
@@ -118,10 +120,11 @@ function Header({ sub, live, hasLink, timeZone }: { sub: Subscription; live: Sub
         )}
         {sub.status === 'grace' && <Tag tone="warn">宽限期</Tag>}
         {sub.status === 'past_due' && <Tag tone="danger">待续费</Tag>}
+        {isExpiredView(sub) && <Tag tone="danger">已过期</Tag>}
         <span className={css.meta}>{metaLabel(sub, new Date(), timeZone)}</span>
       </div>
       <div className={css.headActions}>
-        {hasLink && (
+        {hasLink && !isExpiredView(sub) && (
           <button type="button" className={css.quietAction} disabled={rotate.isPending} onClick={() => setConfirming(true)}>
             更换订阅地址
           </button>
@@ -166,6 +169,7 @@ function LinkBox({ sub, link, loading, error, onRetry }: { sub: Subscription; li
   }
 
   const stats = link ? fetchStats(link, sub.device_limit) : null
+  const expired = isExpiredView(sub) || link?.expired === true
   return (
     <div className={css.linkBox}>
       <div className={css.label}>订阅地址</div>
@@ -177,13 +181,17 @@ function LinkBox({ sub, link, loading, error, onRetry }: { sub: Subscription; li
           <Button variant="primary" className={css.copy} onClick={() => void copy(link.url)}>
             复制
           </Button>
-        ) : (
+        ) : expired ? null : (
           <Button variant="primary" className={css.copy} busy={rotate.isPending} onClick={() => void regenerate()}>
             重新生成
           </Button>
         )}
       </div>
-      <div className={css.hint}>订阅地址请勿分享。泄露后点击「更换订阅地址」，旧地址会立即失效。</div>
+      {expired ? (
+        <div className={css.hint}>订阅已过期，节点暂停服务。续费后此链接自动恢复，无需重新导入；过期期间不能更换订阅地址。</div>
+      ) : (
+        <div className={css.hint}>订阅地址请勿分享。泄露后点击「更换订阅地址」，旧地址会立即失效。</div>
+      )}
       {stats && (
         <div className={css.stats} data-leak={stats.leak ? '' : undefined}>
           {stats.text}

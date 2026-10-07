@@ -41,6 +41,9 @@ var (
 	ErrNotFound = errors.New("订阅不可用")
 	// ErrRateLimited 单独区分，因为它需要回 429 而不是伪装内容。
 	ErrRateLimited = errors.New("请求过于频繁")
+	// ErrRotateWhileExpired：订阅过期期间不许用户自己换链接（规则 1 的配套）。续费后
+	// 原链接自动恢复，这时换掉它，所有设备上的旧链接在续费后都会失效。
+	ErrRotateWhileExpired = errors.New("订阅已过期，续费后原链接会自动恢复；过期期间不能更换订阅链接")
 )
 
 type Service struct {
@@ -83,12 +86,15 @@ type Link struct {
 	// DistinctSources 是近 24 小时内的不同来源数。
 	// 明显偏高就意味着这条链接很可能被分享出去了。
 	DistinctSources int
+	// Expired 表示订阅已过期、链接暂停（只读展示，续费后自动恢复，过期期间不能换发）
+	Expired bool
 }
 
 // linkSourceWindow 是「近期不同来源数」的统计窗口：门户上显示为近 24 小时。
 const linkSourceWindow = "24 hours"
 
-// ListLinks 返回某个用户全部有效的订阅链接。
+// ListLinks 返回某个用户全部有效的订阅链接，含过期 30 天内（原地续费窗口没关）
+// 那些订阅的链接（Expired 为真，只读）。
 //
 // 路径前缀与每条链接近 24 小时的不同来源数都在同一条语句里取：来源数原先是
 // 每条链接另开一个事务各算一次（N+1），现在是按凭据走
@@ -107,11 +113,18 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 			         WHERE f.tenant_id = sc.tenant_id AND f.credential_id = sc.id
 			           AND f.result = 'ok'
 			           AND f.fetched_at > now() - interval '`+linkSourceWindow+`')
+			       sc.expires_at IS NOT NULL AND GREATEST(sc.expires_at, sc.grace_until) <= now()
 			  FROM subscription_credentials sc
 			 WHERE sc.tenant_id = $1 AND sc.user_id = $2::uuid
 			   AND sc.status = 'active' AND sc.scope = 'subscription'
 			   AND ((sc.expires_at IS NULL AND sc.grace_until IS NULL)
-			        OR GREATEST(sc.expires_at, sc.grace_until) > now())
+			        OR GREATEST(sc.expires_at, sc.grace_until) > now()
+			        -- 过期 30 天内（原地续费窗口没关）的订阅照常列出链接，只读：续费后原链接
+			        -- 自动恢复（规则 1 的配套）。关窗时凭据已被吊销，自然不再列出
+			        OR EXISTS (SELECT 1 FROM subscriptions s
+			                    WHERE s.tenant_id = sc.tenant_id AND s.id = sc.subscription_id
+			                      AND s.renewal_closed_at IS NULL
+			                      AND s.status IN ('active','trialing','grace','expired')))
 			 ORDER BY sc.created_at DESC`, tenantID, userID)
 		if err != nil {
 			return err
@@ -122,7 +135,8 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 			var sealed []byte
 			var l Link
 			if err := rows.Scan(&id, &subID, &sealed, &l.ExpiresAt,
-				&l.FetchCount, &l.LastFetchedAt, &l.PathPrefix, &l.DistinctSources); err != nil {
+				&l.FetchCount, &l.LastFetchedAt, &l.PathPrefix, &l.DistinctSources,
+				&l.Expired); err != nil {
 				return err
 			}
 			l.SubscriptionID = subID
@@ -156,6 +170,25 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 // 删不掉也不该删 —— 泄露之后最需要回答的问题正是「旧链接被谁用过」，
 // 把记录抹掉等于把唯一的线索也一起丢了。
 func (s *Service) Rotate(ctx context.Context, tenantID, userID, subID string) (string, error) {
+	if _, err := uuid.Parse(subID); err != nil {
+		return "", ErrNotFound
+	}
+	var token string
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
+		var err error
+		token, err = s.rotateInTx(ctx, tx, tenantID, userID, subID, true)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// rotateInTx 在调用方事务里换发订阅凭据：作废现有 active 凭据、写一条新的，返回新令牌明文。
+// 后台替用户换发（AdminRotate）在同一个事务里接着写审计。
+func (s *Service) rotateInTx(ctx context.Context, tx pgx.Tx, tenantID, userID, subID string,
+	refuseExpired bool) (string, error) {
 	parsedSubID, err := uuid.Parse(subID)
 	if err != nil {
 		return "", ErrNotFound
@@ -172,41 +205,46 @@ func (s *Service) Rotate(ctx context.Context, tenantID, userID, subID string) (s
 		}
 	}
 
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
-		// 确认这条订阅确实属于该用户，避免拿别人的 subID 来换
-		var owner string
-		if err := tx.QueryRow(ctx,
-			`SELECT user_id::text FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`,
-			tenantID, subID).Scan(&owner); err != nil {
-			return ErrNotFound
-		}
-		if owner != userID {
-			return ErrNotFound
-		}
+	// 确认这条订阅确实属于该用户，避免拿别人的 subID 来换；锁住订阅行，与续费
+	// 救回（同样先锁订阅）串行，判定「过期没过期」与换发之间状态不会变
+	var owner, status string
+	var lapsed bool
+	if err := tx.QueryRow(ctx, `
+		SELECT user_id::text, status,
+		       current_period_end IS NOT NULL AND current_period_end <= now()
+		  FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid
+		 FOR UPDATE`,
+		tenantID, subID).Scan(&owner, &status, &lapsed); err != nil {
+		return "", ErrNotFound
+	}
+	if owner != userID {
+		return "", ErrNotFound
+	}
+	// 过期期间只禁用户自己换（链接只读、续费后恢复原链接）；后台替用户换发不拦
+	if refuseExpired && (status == "expired" || lapsed) {
+		return "", ErrRotateWhileExpired
+	}
 
-		if _, err := tx.Exec(ctx, `
-			UPDATE subscription_credentials
-			   SET status = 'revoked', revoked_at = now(), revoked_reason = 'rotated',
-			       rotated_count = rotated_count + 1, rotated_at = now()
-			 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND status = 'active'`,
-			tenantID, subID); err != nil {
-			return err
-		}
+	if _, err := tx.Exec(ctx, `
+		UPDATE subscription_credentials
+		   SET status = 'revoked', revoked_at = now(), revoked_reason = 'rotated',
+		       rotated_count = rotated_count + 1, rotated_at = now()
+		 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND status = 'active'`,
+		tenantID, subID); err != nil {
+		return "", err
+	}
 
-		var expires *time.Time
-		_ = tx.QueryRow(ctx,
-			`SELECT current_period_end FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`,
-			tenantID, subID).Scan(&expires)
+	var expires *time.Time
+	_ = tx.QueryRow(ctx,
+		`SELECT current_period_end FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`,
+		tenantID, subID).Scan(&expires)
 
-		_, err := tx.Exec(ctx, `
-			INSERT INTO subscription_credentials
-				(tenant_id, subscription_id, user_id, token_hash, token_prefix,
-				 scope, expires_at, token_encrypted)
-			VALUES ($1,$2,$3::uuid,$4,$5,'subscription',$6,$7)`,
-			tenantID, subID, userID, crypto.HashToken(token), token[:8], expires, sealed)
-		return err
-	})
-	if err != nil {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO subscription_credentials
+			(tenant_id, subscription_id, user_id, token_hash, token_prefix,
+			 scope, expires_at, token_encrypted)
+		VALUES ($1,$2,$3::uuid,$4,$5,'subscription',$6,$7)`,
+		tenantID, subID, userID, crypto.HashToken(token), token[:8], expires, sealed); err != nil {
 		return "", err
 	}
 	return token, nil

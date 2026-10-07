@@ -365,7 +365,6 @@ export function providerNote(p: Provider, now: Date): { text: string; tone: Tone
 export const EPAY_METHODS = [
   { value: 'alipay', label: '支付宝' },
   { value: 'wxpay', label: '微信支付' },
-  { value: 'qqpay', label: 'QQ 钱包' },
 ] as const
 
 /** 与门户 paymentMethodLabels 同一张表；不认识的方式原样显示 */

@@ -191,6 +191,12 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 	if err != nil {
 		return nil, err
 	}
+	// 易支付只出支付宝和微信（用户 2026-10-07 定）：渠道配置里一种可用方式都没有时
+	// （例如存量配置只勾了 QQ 钱包），不交给渠道默认值兜底，直接拒绝
+	if rec.Adapter == "epay" && method == "" && len(providerMethods(rec.Config)) == 0 &&
+		payment.ConfigString(rec.Config, "default_method") != "" {
+		return nil, httpx.Invalid(map[string]string{"method": "该渠道没有可用的支付方式"})
+	}
 
 	var (
 		out       CreateIntentOutput
@@ -301,8 +307,14 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 		// --- 调渠道生成收银台 ---
 		// out_trade_no 用对外短单号而非内部 UUID：
 		// 渠道后台、对账单、客服沟通全用它，且不泄露内部 ID 规模（DATA-001）。
+		// 同一订单再次发起支付（换方式、换渠道、旧意图作废）时用「订单号-序号」：很多易支付
+		// 站点拒绝重复的商户单号，而且旧单号那一笔作废后仍可能被付，两笔必须分得开。
+		outTradeNo, err := nextOutTradeNo(ctx, tx, tenantID, in.OrderID, orderNo)
+		if err != nil {
+			return err
+		}
 		resp, err := prov.CreatePayment(ctx, payment.CreateRequest{
-			OutTradeNo: orderNo,
+			OutTradeNo: outTradeNo,
 			Amount:     payable,
 			Currency:   currency,
 			Subject:    subject,
@@ -320,7 +332,14 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 			"redirect_url": resp.RedirectURL,
 			"form_fields":  resp.FormFields,
 			"method":       method,
+			"out_trade_no": outTradeNo,
 		})
+		// provider_ref 记这笔支付在渠道侧的标识：渠道建单时没给（易支付就不给），就记对外单号。
+		// 回调与查单先按它定位到意图与订单（(tenant, provider, provider_ref) 唯一）
+		providerRef := resp.ProviderRef
+		if providerRef == "" {
+			providerRef = outTradeNo
+		}
 
 		var intentID string
 		err = tx.QueryRow(ctx, `
@@ -330,7 +349,7 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 			VALUES ($1, $2, $3, $4, $5, 'requires_action', $6, $7, $8)
 			RETURNING id`,
 			tenantID, in.OrderID, rec.ID, currency, payable,
-			nullStr(resp.ProviderRef), payload, expiresAt,
+			providerRef, payload, expiresAt,
 		).Scan(&intentID)
 		if err != nil {
 			return err
@@ -362,6 +381,22 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 	return &out, nil
 }
 
+// nextOutTradeNo 给订单的下一次支付取对外单号：第一次就是订单号（与改动之前一致），
+// 之后是「订单号-序号」，序号 = 这张订单已有的意图数 + 1。调用方已锁住订单行，同一订单的
+// 建意图排成一队，序号不会撞。
+func nextOutTradeNo(ctx context.Context, tx pgx.Tx, tenantID, orderID, orderNo string) (string, error) {
+	var prior int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM payment_intents WHERE tenant_id = $1 AND order_id = $2`,
+		tenantID, orderID).Scan(&prior); err != nil {
+		return "", err
+	}
+	if prior == 0 {
+		return orderNo, nil
+	}
+	return fmt.Sprintf("%s-%d", orderNo, prior+1), nil
+}
+
 func (s *PaymentService) notifyURL(providerCode string) string {
 	return s.publicBaseURL + "/v1/webhooks/payments/" + providerCode
 }
@@ -390,7 +425,7 @@ type ParsedNotification struct {
 
 // ParseNotification 找到渠道适配器并解析回调。
 func (s *PaymentService) ParseNotification(ctx context.Context, tenantID, providerCode string, r *http.Request) (*ParsedNotification, error) {
-	prov, _, err := s.providerFor(ctx, tenantID, providerCode)
+	prov, rec, err := s.providerFor(ctx, tenantID, providerCode)
 	if err != nil {
 		return nil, err
 	}
@@ -398,6 +433,14 @@ func (s *PaymentService) ParseNotification(ctx context.Context, tenantID, provid
 	n, err := prov.ParseNotification(ctx, r)
 	if err != nil {
 		return nil, httpx.New(httpx.CodeBadRequest, "回调格式无法解析")
+	}
+	// 先按 provider_ref 找到发起这笔支付的意图与订单：换过方式的订单，回调带的是
+	// 「订单号-序号」，按订单号找不到。找不到（这个改动之前建的意图）再按订单号定位
+	orderID := n.OrderID
+	if orderID == "" && n.OutTradeNo != "" {
+		if orderID, err = s.orderIDByProviderRef(ctx, tenantID, rec.ID, n.OutTradeNo); err != nil {
+			return nil, err
+		}
 	}
 
 	eventType := "payment.unknown"
@@ -427,7 +470,7 @@ func (s *PaymentService) ParseNotification(ctx context.Context, tenantID, provid
 			ProviderEventID:   n.EventID,
 			ProviderPaymentID: n.PaymentRef,
 			EventType:         eventType,
-			OrderID:           n.OrderID,
+			OrderID:           orderID,
 			OrderNo:           n.OutTradeNo,
 			Amount:            n.Amount,
 			FeeAmount:         n.FeeAmount,
@@ -436,4 +479,20 @@ func (s *PaymentService) ParseNotification(ctx context.Context, tenantID, provid
 			SignatureVerified: n.SignatureVerified,
 		},
 	}, nil
+}
+
+// orderIDByProviderRef 按渠道与 provider_ref 找意图所属的订单；没有这样的意图返回空串。
+func (s *PaymentService) orderIDByProviderRef(ctx context.Context, tenantID, providerID, ref string) (string, error) {
+	var orderID string
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `
+			SELECT order_id::text FROM payment_intents
+			 WHERE tenant_id = $1 AND provider_id = $2::uuid AND provider_ref = $3`,
+			tenantID, providerID, ref).Scan(&orderID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	return orderID, err
 }

@@ -1,6 +1,7 @@
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
+import { generationJobSchema, generationJobsSchema, trafficGrantedSchema } from '../src/admin/screens/users/opsSchemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin users ops', () => {
@@ -70,14 +71,42 @@ describe('mock api · admin users ops', () => {
     expect(text.split('\n')[0]).toBe('邮箱,状态,分组,生效订阅,订单数,累计实付,注册时间,最近登录')
     expect(text.trim().split('\n')).toHaveLength(preview.total + 1)
 
+    // 批量生成是后台任务：202 回任务，进度轮询，完成后下载结果 CSV（只有提交人能下）
     const made = await send('POST', '/v1/users/bulk/generate', { count: 3, email_prefix: 'dealer', email_domain: 'example.com', reason: '线下渠道预制' }, 'gen-1')
-    const body = (await made.json()) as { count: number; users: Array<{ email: string; password: string }> }
-    expect(body.count).toBe(3)
-    expect(body.users[0]!.email).toMatch(/^dealer-[a-z0-9]{8}@example\.com$/)
+    expect(made.status).toBe(202)
+    const job = generationJobSchema.parse(await made.json())
+    expect(job).toMatchObject({ total: 3, email_prefix: 'dealer', email_domain: 'example.com' })
+    let progress = job
+    for (let i = 0; i < 50 && progress.status !== 'succeeded'; i++) {
+      await new Promise((r) => setTimeout(r, 20))
+      progress = generationJobSchema.parse(await (await get(`/v1/users/bulk/generate/jobs/${job.id}`)).json())
+    }
+    expect(progress).toMatchObject({ status: 'succeeded', completed: 3, result_available: true })
+    expect(generationJobsSchema.parse(await (await get('/v1/users/bulk/generate/jobs')).json()).jobs[0]!.id).toBe(job.id)
+    const result = await get(`/v1/users/bulk/generate/jobs/${job.id}/result`)
+    expect(result.headers.get('Content-Disposition')).toContain('generated-users.csv')
+    const rows = new TextDecoder().decode(new Uint8Array(await result.arrayBuffer())).trim().split('\n')
+    expect(rows[0]).toBe('邮箱,初始密码')
+    expect(rows).toHaveLength(4)
+    expect(rows[1]).toMatch(/^dealer-[a-z0-9]{8}@example\.com,/)
     const listed = (await (await get('/v1/users?q=dealer-')).json()) as { total: number }
     expect(listed.total).toBe(3)
     const bad = await send('POST', '/v1/users/bulk/generate', { count: 3, email_prefix: 'dealer', email_domain: 'example.com', reason: '线下渠道预制', group_id: '9c0e1a2b-2222-4b00-8000-00000000000f' }, 'gen-2')
     expect(await bad.json()).toMatchObject({ error: { fields: { group_id: '分组不存在' } } })
+  })
+
+  it('grants a non-expiring traffic pack to the subscription owner', async () => {
+    const d = (await (await get(`/v1/users/${SEED_USER}`)).json()) as { subscriptions: Array<{ id: string }> }
+    const sub = d.subscriptions[0]!.id
+    const short = await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 1024, reason: '短' }, 'tp-0')
+    expect(short.status).toBe(422)
+    expect(await short.json()).toMatchObject({ error: { fields: { reason: expect.any(String) } } })
+    const granted = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 10 * 1024 ** 3, reason: '补偿线路故障' }, 'tp-1')).json())
+    expect(granted).toMatchObject({ user_id: SEED_USER, granted_bytes: 10 * 1024 ** 3, remaining_bytes_total: 10 * 1024 ** 3 })
+    // 同键重放回同一份结果，不再发一笔
+    const replay = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 10 * 1024 ** 3, reason: '补偿线路故障' }, 'tp-1')).json())
+    expect(replay.grant_id).toBe(granted.grant_id)
+    expect((await send('POST', '/v1/subscriptions/00000000-0000-4000-8000-000000000000/traffic-pack', { bytes: 1, reason: '补偿线路故障' }, 'tp-2')).status).toBe(404)
   })
 
   it('refuses to delete a group that still has members, deletes an empty one', async () => {

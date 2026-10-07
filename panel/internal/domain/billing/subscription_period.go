@@ -63,28 +63,37 @@ type subscriptionPeriodChange struct {
 	Status      string
 	PreviousEnd time.Time
 	PeriodEnd   time.Time
+	// Rescued 表示这次延期把已过期或试用中的订阅救回了 active（规则 2）
+	Rescued bool
 }
 
-// subscriptionExtendable 是「能不能延期」的唯一判定。
+// subscriptionExtendable 是「能不能延期」的唯一判定（礼品卡加时长、后台加时长共用）。
 //
-// 现在只收 active，与礼品卡原先的 activeSubscription 同口径。试用中、宽限期、
-// 已过期的订阅能不能靠礼品卡或后台加时长救回来，是待拍板的产品决定（第 2 波
-// 规划第四节第 4 条）；放开时只改这里，并决定是否顺带把状态恢复为 active
-// （那要走订阅状态机并写状态变更事件，不能只在这里加一个状态值）。
-func subscriptionExtendable(status string) bool {
-	return status == "active"
+// 生效中照常延；试用中、已过期（原地续费窗口没关，过期不满 30 天）可以被救回 active
+// （用户 2026-10-07 规则 2、4）。已过期超过 30 天的只能新购；已取消暂不放开；
+// 宽限、欠费、暂停、待开通不收。
+func subscriptionExtendable(status string, renewalClosed bool) bool {
+	switch status {
+	case "active", "trialing":
+		return true
+	case "expired":
+		return !renewalClosed
+	}
+	return false
 }
 
 // extendSubscriptionTx 把订阅周期末往后推 Days 天，并一次对齐本周期 cycle 配额行与
 // active 凭据，写一条 extended 订阅事件。调用方提供事务；本函数自己锁订阅行。
 //
-// 基准取「现在」和「原到期时间」里更晚的那个：已经走过到期日（状态仍是 active，
-// 代码里还没有过期扫描）的订阅从现在起算，未到期的接着原到期日往后 —— 否则给
-// 还有 20 天的用户送 7 天，他反而只剩 7 天了。
+// 基准取「现在」和「原到期时间」里更晚的那个：已经走过到期日的订阅从现在起算，
+// 未到期的接着原到期日往后 —— 否则给还有 20 天的用户送 7 天，他反而只剩 7 天了。
 //
-// 配额行只改 period_end 等于旧周期末的 cycle 行：那正是本周期的行。已用量不清零、
-// 周期起点不动 —— 延期是给更多时间，不是开新周期发新一轮流量。day / month 行有
-// 自己的滚动边界，total 行没有边界，都不碰。
+// 生效中、没到期的订阅只给时间：配额行只改 period_end 等于旧周期末的 cycle 行，
+// 已用量不清零、周期起点不动。
+//
+// 救回（已过期、走过到期日、或试用中，规则 2）：状态经状态机回到 active（expired ->
+// active 由 00124 放开），流量按「延长天数 ÷ 套餐周期天数」折算加进本周期 cycle 配额，
+// 已用量沿用（规则 6），见 rescueQuotaTx。只有付费续费给满额。
 //
 // 没有到期时间（current_period_end 为空）的订阅拒绝延期：原先的写法会把它从
 // 「永不过期」变成「从今天起 N 天」，等于把时长缩短。
@@ -96,18 +105,23 @@ func extendSubscriptionTx(ctx context.Context, tx pgx.Tx,
 		return change, errors.New("subscription extension days must be positive")
 	}
 	var oldEnd *time.Time
+	var renewalClosed bool
 	err := tx.QueryRow(ctx, `
-		SELECT status, current_period_end FROM subscriptions
+		SELECT status, current_period_end, renewal_closed_at IS NOT NULL FROM subscriptions
 		 WHERE tenant_id = $1 AND id = $2::uuid
-		 FOR UPDATE`, ext.TenantID, ext.SubscriptionID).Scan(&change.Status, &oldEnd)
+		 FOR UPDATE`, ext.TenantID, ext.SubscriptionID).Scan(&change.Status, &oldEnd, &renewalClosed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return change, httpx.NotFoundOrForbidden()
 	}
 	if err != nil {
 		return change, err
 	}
-	if !subscriptionExtendable(change.Status) {
-		return change, httpx.New(httpx.CodeConflict, "只有生效中的订阅可以延长时长")
+	if !subscriptionExtendable(change.Status, renewalClosed) {
+		if change.Status == "expired" {
+			return change, httpx.New(httpx.CodeConflict,
+				"这条订阅已过期超过 30 天，不能再延长，只能重新购买（会换新的订阅链接）")
+		}
+		return change, httpx.New(httpx.CodeConflict, "只有生效中、试用中或过期 30 天内的订阅可以延长时长")
 	}
 	if oldEnd == nil {
 		return change, httpx.New(httpx.CodeValidationFailed, "这条订阅没有到期时间，不需要延长")
@@ -115,20 +129,27 @@ func extendSubscriptionTx(ctx context.Context, tx pgx.Tx,
 	change.PreviousEnd = *oldEnd
 
 	// 按 UTC 加天数：一天恒为 24 小时，不随进程时区的夏令时漂移
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	lapsed := !oldEnd.After(now)
 	base := now
-	if oldEnd.After(now) {
+	if !lapsed {
 		base = oldEnd.UTC()
 	}
+	change.Rescued = lapsed || change.Status == "expired" || change.Status == "trialing"
 	// 库里存到微秒：先截断，三处写入与返回给调用方的是同一个值
 	change.PeriodEnd = base.AddDate(0, 0, ext.Days).Truncate(time.Microsecond)
 
-	// 带上旧值做比较：锁住之后不该再变，变了说明有人绕过了行锁
+	// 带上旧值做比较：锁住之后不该再变，变了说明有人绕过了行锁。
+	// 救回时状态回到 active；走过到期日的从今天开新周期（周期起点 = 现在）
 	tag, err := tx.Exec(ctx, `
 		UPDATE subscriptions
-		   SET current_period_end = $3, updated_at = now()
+		   SET current_period_end = $3,
+		       status = CASE WHEN $5 THEN 'active' ELSE status END,
+		       current_period_start = CASE WHEN $6 THEN $7 ELSE current_period_start END,
+		       updated_at = now()
 		 WHERE tenant_id = $1 AND id = $2::uuid AND current_period_end = $4`,
-		ext.TenantID, ext.SubscriptionID, change.PeriodEnd, change.PreviousEnd)
+		ext.TenantID, ext.SubscriptionID, change.PeriodEnd, change.PreviousEnd,
+		change.Rescued, lapsed, now)
 	if err != nil {
 		return change, fmt.Errorf("延长订阅周期: %w", err)
 	}
@@ -147,6 +168,13 @@ func extendSubscriptionTx(ctx context.Context, tx pgx.Tx,
 	}
 	quotaRows := tag.RowsAffected()
 
+	var prorated map[string]int64
+	if change.Rescued {
+		if prorated, err = rescueQuotaTx(ctx, tx, ext, change.PeriodEnd, lapsed, now); err != nil {
+			return change, err
+		}
+	}
+
 	credentials, err := syncCredentialExpiryTx(ctx, tx, ext.TenantID, ext.SubscriptionID, change.PeriodEnd)
 	if err != nil {
 		return change, err
@@ -156,16 +184,25 @@ func extendSubscriptionTx(ctx context.Context, tx pgx.Tx,
 		"source": ext.Source, "days": ext.Days,
 		"previous_end": change.PreviousEnd, "period_end": change.PeriodEnd,
 		"cycle_quota_rows": quotaRows, "credentials": credentials,
+		// restart：走过到期日的救回从今天重开周期，变更套餐的折算据此认出周期起点
+		"rescued": change.Rescued, "restart": lapsed,
+	}
+	if len(prorated) > 0 {
+		payload["prorated"] = prorated
 	}
 	if ext.Reason != "" {
 		payload["reason"] = ext.Reason
+	}
+	toStatus := change.Status
+	if change.Rescued {
+		toStatus = "active"
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO subscription_events
 			(tenant_id, subscription_id, event_type, from_status, to_status,
 			 actor_kind, actor_id, payload)
-		VALUES ($1, $2::uuid, 'extended', $3, $3, $4, $5::uuid, $6)`,
-		ext.TenantID, ext.SubscriptionID, change.Status, ext.ActorKind, ext.ActorID,
+		VALUES ($1, $2::uuid, 'extended', $3, $4, $5, $6::uuid, $7)`,
+		ext.TenantID, ext.SubscriptionID, change.Status, toStatus, ext.ActorKind, ext.ActorID,
 		payload); err != nil {
 		return change, fmt.Errorf("记录订阅延期: %w", err)
 	}

@@ -292,6 +292,8 @@ func (h *handlers) createOrder(w http.ResponseWriter, r *http.Request) {
 		UseBalance: req.UseBalance,
 		CouponCode: req.CouponCode,
 		Claim:      claim,
+		// 同套餐只续不新开（规则 3）：已有可原地续费的同套餐订阅时回 409，门户改走续费
+		RejectSamePlan: true,
 	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
@@ -510,6 +512,8 @@ func isUUID(s string) bool {
 type siteConfigResponse struct {
 	RegistrationMode  string `json:"registration_mode"`
 	EmailVerification bool   `json:"email_verification"`
+	// PasswordReset 为 false 时门户隐藏「忘记密码」（没配邮件服务，验证码发不出去）
+	PasswordReset bool `json:"password_reset"`
 }
 
 // siteConfig 返回渲染登录/注册页需要的站点开关。
@@ -527,6 +531,7 @@ func (h *handlers) siteConfig(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, siteConfigResponse{
 		RegistrationMode:  policy.Mode,
 		EmailVerification: policy.EmailVerification,
+		PasswordReset:     h.d.Identity.PasswordResetAvailable(r.Context(), tenantID),
 	})
 }
 

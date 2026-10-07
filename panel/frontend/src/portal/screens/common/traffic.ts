@@ -39,18 +39,48 @@ export function formatDate(at: string | Date, timeZone?: string): string {
 export const shortDate = (at: string | Date, timeZone?: string) => formatDate(at, timeZone).slice(5)
 
 // ---------------------------------------------------------------------------
-// 到期：设计稿 7 天内转警示色并给「立即续费」主按钮
+// 到期：设计稿 7 天内转警示色并给「立即续费」主按钮。到期时刻精确到分钟、最后 24 小时
+// 显示「还剩 X 小时」（用户 2026-10-07：不设宽限期，到点就停，日期不够用户判断）
 // ---------------------------------------------------------------------------
+const HOUR_MS = 3_600_000
+
+/** 时刻 YYYY-MM-DD HH:mm，时区口径同 formatDate（切日时区，拿不到退回浏览器本地时区）。 */
+export function formatMinute(at: string | Date, timeZone?: string): string {
+  const d = typeof at === 'string' ? new Date(at) : at
+  if (timeZone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d)
+      const get = (t: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === t)?.value ?? ''
+      return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
+    } catch {
+      // 落到本地时区
+    }
+  }
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 export interface ExpiryInfo {
   days: number
+  /** 剩余小时，向上取整；已到期为 0 */
+  hours: number
+  /** 到期时刻 YYYY-MM-DD HH:mm */
   date: string
+  /** 已到期或 7 天内到期 */
   urgent: boolean
+  expired: boolean
+  /** 「N 天后到期」/ 最后 24 小时「还剩 X 小时」/ 「已于 … 到期」 */
+  label: string
 }
 
 export function expiryInfo(periodEnd: string | null, now: Date = new Date(), timeZone?: string): ExpiryInfo | null {
   if (!periodEnd) return null
+  const ms = new Date(periodEnd).getTime() - now.getTime()
   const days = daysUntil(periodEnd, now)
-  return { days, date: formatDate(periodEnd, timeZone), urgent: days <= 7 }
+  const date = formatMinute(periodEnd, timeZone)
+  const expired = ms <= 0
+  const hours = expired ? 0 : Math.ceil(ms / HOUR_MS)
+  const label = expired ? `已于 ${date} 到期` : ms < DAY_MS ? `还剩 ${hours} 小时` : `${days} 天后到期`
+  return { days, hours, date, urgent: expired || days <= 7, expired, label }
 }
 
 export type UsageLevel = 'ok' | 'warn' | 'danger'

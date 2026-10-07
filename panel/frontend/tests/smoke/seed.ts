@@ -384,9 +384,9 @@ step('演示渠道支付：发起支付意图，再送签名回调')
 await call(PUB, `/v1/orders/${orderId}/pay`, { token: user, body: { provider: 'demo' }, expect: [200, 201] })
 const subscriptionId = str(await demoWebhook(orderId, amount, currency), 'subscription_id')
 
-step('第二张订单留在待支付')
+step('第二张订单留在待支付（同套餐只续不新开：在刚开出的订阅上建一张续费单）')
 const pendingOrderId = str(
-  await call(PUB, '/v1/orders', { token: user, idem: true, body: { plan_id: planId, price_id: priceId, use_balance: 0 }, expect: [200, 201] }),
+  await call(PUB, `/v1/me/subscriptions/${subscriptionId}/renew`, { token: user, idem: true, body: { price_id: priceId, use_balance: 0 }, expect: [200, 201] }),
   'order_id',
 )
 
@@ -394,7 +394,10 @@ step('被邀请人下单并付清：推荐人的佣金明细不空')
 // 佣金只在被邀请人付款时记一笔；同 IP 会被标待复核、不会解冻，但明细照样有这一行
 const invitee = await portalLogin(inviteeEmail, inviteePassword)
 const inviteeOrder = await call(PUB, '/v1/orders', { token: invitee, idem: true, body: { plan_id: planId, price_id: priceId, use_balance: 0 }, expect: [200, 201] })
-await demoWebhook(str(inviteeOrder, 'order_id'), num(inviteeOrder, 'payable_amount'), str(inviteeOrder, 'currency'))
+const inviteeSubscriptionId = str(
+  await demoWebhook(str(inviteeOrder, 'order_id'), num(inviteeOrder, 'payable_amount'), str(inviteeOrder, 'currency')),
+  'subscription_id',
+)
 
 step('挂账：对已付清的订单再送一笔新的回调（新 event_id / payment_id），落进 excess_capture')
 // 挂账只由支付回调产生（已付或已取消的订单又收到钱），没有后台新建接口；这是最便宜的真实路径
@@ -484,13 +487,13 @@ const giftCode = (codes.sample as string[] | undefined)?.[0]
 if (!giftCode) throw new Error(`礼品卡批次没有回样例码：${JSON.stringify(codes).slice(0, 300)}`)
 await call(PUB, '/v1/gift-cards/redeem', { token: user, idem: true, body: { code: giftCode }, expect: [200, 201] })
 
-step('优惠券，并用它下一张单（兑换记录在下单时落定，不必付款）')
+step('优惠券，并用它下一张单（兑换记录在下单时落定，不必付款；被邀请人已有这个套餐，用续费单）')
 const couponId = str(
   await call(ADM, '/v1/coupons', { token: admin, body: { code: 'SMOKE10', discount_type: 'percent', discount_value: 1000, currency: 'CNY' }, expect: [200, 201] }),
   'id',
 )
 const couponOrderId = str(
-  await call(PUB, '/v1/orders', { token: user, idem: true, body: { plan_id: planId, price_id: priceId, coupon_code: 'SMOKE10', use_balance: 0 }, expect: [200, 201] }),
+  await call(PUB, `/v1/me/subscriptions/${inviteeSubscriptionId}/renew`, { token: invitee, idem: true, body: { price_id: priceId, coupon_code: 'SMOKE10', use_balance: 0 }, expect: [200, 201] }),
   'order_id',
 )
 

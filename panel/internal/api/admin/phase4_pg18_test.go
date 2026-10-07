@@ -177,7 +177,7 @@ func TestTenantSeedDefaultsPG18(t *testing.T) {
 		}
 		return out
 	}
-	want := seeded{offline: true, templates: 12, switches: 8, essential: 3}
+	want := seeded{offline: true, templates: 18, switches: 8, essential: 3}
 	if got := read(tenant); got != want {
 		t.Fatalf("seeded tenant=%+v want %+v", got, want)
 	}
@@ -186,7 +186,7 @@ func TestTenantSeedDefaultsPG18(t *testing.T) {
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM feature_switches WHERE tenant_id='00000000-0000-7000-8000-000000000001'`).Scan(&defaultRows); err != nil || defaultRows != 8 {
 		t.Fatalf("default tenant switch rows=%d err=%v", defaultRows, err)
 	}
-	if got := read("00000000-0000-7000-8000-000000000001"); got.templates < 12 || !got.offline || got.essential != 3 {
+	if got := read("00000000-0000-7000-8000-000000000001"); got.templates < 18 || !got.offline || got.essential != 3 {
 		t.Fatalf("default tenant=%+v", got)
 	}
 	// 存量迁移种出来的开关与触发器种的逐项一致（code 与 essential），两条路不会分叉

@@ -199,9 +199,9 @@ func run() error {
 	// 多一个常驻进程的代价大于收益；而 EscalateOverdue 本身是幂等的，
 	// 将来拆成独立 worker 或换成 cron 也不需要改动业务代码。
 	//
-	// 五个循环都经 newLoopPacer 定节拍：首轮随机延迟、之后每轮 ±10% 抖动（pacer.go）。
+	// 六个循环都经 newLoopPacer 定节拍：首轮随机延迟、之后每轮 ±10% 抖动（pacer.go）。
 	var workers sync.WaitGroup
-	workers.Add(5)
+	workers.Add(7)
 	go func() {
 		defer workers.Done()
 		pace := newLoopPacer(5 * time.Minute)
@@ -304,13 +304,13 @@ func run() error {
 	}()
 
 	// 保留期清理：过期的在线记录（node_alive_ips，70 分钟前）、探针点（node_metrics，
-	// 48 小时前）与流量小时汇总（70 天前）。它们都随节点上报增长，不清就让在线统计、
-	// 节点列表与看板一天比一天慢。
+	// 48 小时前）与流量汇总（节点 × uid 小时表 70 天、节点小时表与按天表 400 天）。它们都随
+	// 节点上报增长，不清就让在线统计、节点列表与看板一天比一天慢。追加写的上报留档与订阅
+	// 拉取日志保留 31 天（用户定），经各自的定义者函数分批删（00131）。
 	//
 	// 分批删：三个 Purge 每批一个短事务、每批行数与单次调用的批数
 	// 都有上限，积压由下一轮接着清，不会一次删几十万行长时间持锁。十分钟一次：在线
-	// 记录 70 分钟才过期，再勤只是空转。追加写的上报留档与订阅拉取日志不在这里删
-	// （它们的保留方案待定，读路径已不依赖它们的大小）。
+	// 记录 70 分钟才过期，再勤只是空转。
 	//
 	// 同一轮里顺带维护行为趋势的按天汇总（00114）：重算最近 2 个已结束日（吸收迟到写入，
 	// 读路径只用其中可用的行），并删 400 天以前的行。
@@ -331,7 +331,25 @@ func run() error {
 			// 每轮固定重算 2 行，行数不记日志
 			_, activityErr := opsSvc.RefreshActivityDaily(sctx, middleware.DefaultTenantID)
 			activityPurged, activityPurgeErr := opsSvc.PurgeActivityDaily(sctx, middleware.DefaultTenantID)
+			// 追加写表的 31 天保留期与节点 × uid 按天汇总（w5retain，00131 / 00133）：排在上面几项
+			// 之后，清积压占满本轮时限时不挤掉在线记录与探针点的清理
+			trafficDaily, trafficDailyErr := nodeSvc.RefreshTrafficDaily(sctx, middleware.DefaultTenantID)
+			reports, reportsErr := nodeSvc.PurgeTrafficReports(sctx, middleware.DefaultTenantID)
+			fetchLogs, fetchLogsErr := subscription.PurgeFetchLog(sctx, pool, middleware.DefaultTenantID)
 			cancel()
+			if trafficDailyErr != nil {
+				log.Error("流量按天汇总失败", "error", trafficDailyErr.Error(), "written", trafficDaily)
+			}
+			if reportsErr != nil {
+				log.Error("流量上报留档清理失败", "error", reportsErr.Error(), "deleted", reports)
+			}
+			if fetchLogsErr != nil {
+				log.Error("订阅拉取日志清理失败", "error", fetchLogsErr.Error(), "deleted", fetchLogs)
+			}
+			if reports > 0 || fetchLogs > 0 || trafficDaily > 0 {
+				log.Info("追加写表保留期清理完成", "traffic_reports", reports, "fetch_logs", fetchLogs,
+					"traffic_daily_rows", trafficDaily)
+			}
 			if aliveErr != nil {
 				log.Error("在线记录清理失败", "error", aliveErr.Error(), "deleted", alive)
 			}
@@ -350,6 +368,59 @@ func run() error {
 			if alive > 0 || metrics > 0 || rollups > 0 || activityPurged > 0 {
 				log.Info("保留期清理完成", "alive_ips", alive, "node_metrics", metrics, "traffic_rollups", rollups,
 					"activity_daily", activityPurged)
+			}
+		}
+	}()
+
+	// 订阅过期扫描（w5expiry）：到期的订阅改成 expired、写过期事件与 subscription.expired
+	// 钩子；过期满 30 天的关闭原地续费窗口并吊销凭据（billing/expire.go）。停发不靠它
+	// （节点名单与订阅拉取按周期末现算），它管的是状态、事件和之后的续费口径；到期通知
+	// 与召回由 public 网关的通知扫描按 expired 状态发。一分钟一轮：门户「已过期」与
+	// 续费入口最多晚一分钟。
+	go func() {
+		defer workers.Done()
+		pace := newLoopPacer(time.Minute)
+		defer pace.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
+			sctx, cancel := context.WithTimeout(ctx, time.Minute)
+			res, err := billingSvc.ScanExpiredSubscriptions(sctx, middleware.DefaultTenantID)
+			cancel()
+			switch {
+			case err != nil:
+				log.Error("订阅过期扫描失败", "error", err.Error(),
+					"expired", res.Expired, "closed", res.Closed)
+			case res.Expired > 0 || res.Closed > 0:
+				log.Info("订阅过期扫描完成", "expired", res.Expired,
+					"renewal_closed", res.Closed, "revoked_credentials", res.RevokedCredentials)
+			}
+		}
+	}()
+
+	// 批量生成账号的后台任务（w5account）：POST v1/users/bulk/generate 只登记任务，这里逐个
+	// 生成。一次只占 1 个 Argon2 名额、名额排不上就等，不挡登录；每 3 秒找一次活（每轮至多
+	// 做完一个任务），顺带清掉超过 24 小时的结果密文。多实例时靠租约与 SKIP LOCKED 分活，
+	// 停机或挂掉的任务租约一过就被接着做。
+	go func() {
+		defer workers.Done()
+		gen := opsSvc.NewUserGenerationWorker(envelope, log)
+		pace := newLoopPacer(3 * time.Second)
+		defer pace.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
+			sctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			_, err := gen.RunOnce(sctx, middleware.DefaultTenantID)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				log.Error("批量生成账号任务失败", "error", err.Error())
 			}
 		}
 	}()
