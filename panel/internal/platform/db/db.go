@@ -20,28 +20,49 @@ type Pool struct {
 	*pgxpool.Pool
 }
 
+// Options 是连接池的可调参数。零值字段沿用 Open 的缺省值。
+type Options struct {
+	// MaxConns 是本进程连接池的上限；0 表示缺省 DefaultMaxConns。
+	// 网关从 platform/config 取每网关各自的值（见 config.DBMaxConns 的算式）。
+	MaxConns int32
+}
+
+// DefaultMaxConns 是 Open 的连接池上限：命令行工具（adminctl、payctl）与测试用它。
+// 三个网关经 OpenWithOptions 按配置取值，不走这个缺省。
+const DefaultMaxConns int32 = 8
+
+// Open 以缺省参数打开连接池（上限 DefaultMaxConns），语义与以往一致。
 func Open(ctx context.Context, dsn string) (*Pool, error) {
+	return OpenWithOptions(ctx, dsn, Options{})
+}
+
+// OpenWithOptions 打开连接池并校验运行时角色。
+//
+// 归还连接时不再做任何清理（以前的 AfterRelease 每次归还多一次往返，把
+// app.tenant_id / app.actor_id 重置为空）。不需要它的理由有三条，缺一条都要把它加回来：
+//   - 租户上下文只经 InTx / InTxSerializable / QueryRowScoped 注入，三者都用
+//     set_config(..., true)：事务级，提交或回滚即失效。守卫
+//     session_state_guard_test.go 扫 panel 全部非测试 Go 源码，出现会话级写法即红；
+//   - 迁移里唯一的 set_config（app.seed_tenant_defaults）同样是事务级；
+//   - pgxpool 归还时连接不在空闲状态（事务没结束、正忙、已关）就直接销毁，
+//     事务级设置不可能跟着连接回到池里。
+//
+// RLS 经 app.current_tenant_id() 读租户（空串先经 NULLIF 变成 NULL 再转 uuid）：
+// 事务外读到空串或 NULL，都按「没有租户」处理、返回空集，与以前重置成空串等价。
+func OpenWithOptions(ctx context.Context, dsn string, o Options) (*Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("解析数据库连接串: %w", err)
 	}
 
-	// 1 vCPU / 2G 内存的宿主，且 PG 侧 max_connections=60。
-	// 四个网关进程 + worker 共享，单进程留 8 条足够，避免连接耗尽。
-	cfg.MaxConns = 8
+	cfg.MaxConns = DefaultMaxConns
+	if o.MaxConns > 0 {
+		cfg.MaxConns = o.MaxConns
+	}
 	cfg.MinConns = 1
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
-
-	// 归还连接前清掉会话级 GUC，杜绝租户上下文串到下一个使用者身上。
-	cfg.AfterRelease = func(c *pgx.Conn) bool {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_, err := c.Exec(ctx, `SELECT set_config('app.tenant_id', '', false),
-		                              set_config('app.actor_id', '', false)`)
-		return err == nil
-	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -146,33 +167,10 @@ func rollbackForCleanup(tx transactionRollbacker) {
 
 // InTx 在事务中执行 fn，并在事务开始时注入租户上下文。
 //
-// 用 SET LOCAL 而非 SET：GUC 随事务结束自动失效，
+// 用 set_config(..., true) 而非会话级设置：GUC 随事务结束自动失效，
 // 即使连接被复用也不会带着上一个租户的身份。
 func (p *Pool) InTx(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
-	if s.TenantID == "" {
-		return errors.New("db: 缺少 tenant_id，拒绝执行（DATA-002）")
-	}
-
-	tx, err := p.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("开启事务: %w", err)
-	}
-	defer rollbackForCleanup(tx)
-
-	if _, err := tx.Exec(ctx,
-		`SELECT set_config('app.tenant_id', $1, true),
-		        set_config('app.actor_id',  $2, true)`,
-		s.TenantID, s.ActorID); err != nil {
-		return fmt.Errorf("注入租户上下文: %w", err)
-	}
-
-	if err := fn(tx); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("提交事务: %w", err)
-	}
-	return nil
+	return p.runScoped(ctx, s, pgx.TxOptions{}, "开启事务", true, fn)
 }
 
 // InTxSerializableRetry 是 InTxSerializable 加上对 40001 的自动重试。
@@ -209,27 +207,7 @@ func (p *Pool) InTxSerializableRetry(ctx context.Context, s Scope, fn func(pgx.T
 // InTxSerializable 用于必须防写偏斜的场景：库存扣减、配额扣减、优惠券兑换。
 // 需要自动消化 40001 的场景请用 InTxSerializableRetry。
 func (p *Pool) InTxSerializable(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
-	if s.TenantID == "" {
-		return errors.New("db: 缺少 tenant_id，拒绝执行（DATA-002）")
-	}
-
-	tx, err := p.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
-	if err != nil {
-		return fmt.Errorf("开启序列化事务: %w", err)
-	}
-	defer rollbackForCleanup(tx)
-
-	if _, err := tx.Exec(ctx,
-		`SELECT set_config('app.tenant_id', $1, true),
-		        set_config('app.actor_id',  $2, true)`,
-		s.TenantID, s.ActorID); err != nil {
-		return fmt.Errorf("注入租户上下文: %w", err)
-	}
-
-	if err := fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return p.runScoped(ctx, s, pgx.TxOptions{IsoLevel: pgx.Serializable}, "开启序列化事务", false, fn)
 }
 
 // --- 错误分类：让上层不必到处写 pgconn 类型断言 ---

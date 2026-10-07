@@ -36,7 +36,7 @@ func run() error {
 	log := logging.New(cfg.Env, "aegis-node")
 	ctx := context.Background()
 
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{MaxConns: cfg.DBMaxConns[config.DomainNode]})
 	if err != nil {
 		return err
 	}
