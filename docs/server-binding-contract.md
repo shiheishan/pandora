@@ -156,6 +156,10 @@
 | `token` | 只有兼容绑定才有 |
 
 - 每个绑定一套独立的密钥：两个面板拿到的是不同的公钥，无法凭公钥判断它们共用一台机器（IP 相同属于无法避免的部分）。
+- 与已落地目录的关系：
+  - 托管证书仍由 `pdnd/certstore` 存在 `<state_dir>/panels/<server_id>/certs/`（见 `docs/node-certificates.md`），按签过名的 `server_id` 分命名空间，不搬进 `bindings/<id>/`；
+  - X25519 私钥按本节放在 `bindings/<id>/enc.key`，取代证书设计稿里 `panels/<绑定>/enc.key` 的草案路径；
+  - legacy 节点的落盘缓存与迁移后的身份在 `<state_dir>/panel-<面板哈希>/<节点ID>/`（w4pdnd），升级为服务器绑定（§14）之后随 legacy 条目一起清理。
 
 ### 1.5 进程级约束
 
@@ -374,7 +378,7 @@ node node_id=<uuid> protocol=<协议> port=<端口> l4=<tcp|udp> pool_id=<uuid �
 - 只有**验签通过**的墓碑才触发清理：
   1. 停掉本绑定名下的全部入站；
   2. 最后一次上报流量；
-  3. 删除 `<state_dir>/bindings/<id>/`；
+  3. 删除 `<state_dir>/bindings/<id>/` 和该服务器的托管证书目录 `<state_dir>/panels/<server_id>/`；
   4. 删除绑定文件。服务进程写不了 `/etc` 时，写一个 `revoked` 标记，以后忽略这个绑定，由下一次 CLI 调用清掉文件。
 - 未签名的 401 或 404、验签失败、身份不符，**一律不触发清理**：只告警，沿用缓存继续服务。这样明文或被劫持的链路伪造不了解绑。
 - 墓碑同样受 `request_nonce` 和 `serial` 约束，不能拿旧身份时期的墓碑去注销重新绑定后的新身份。
