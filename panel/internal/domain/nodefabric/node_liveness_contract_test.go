@@ -34,7 +34,7 @@ func TestLivenessWindowsMatchListAndDelivery(t *testing.T) {
 		t.Error("migration 00110 must notify the offline → online flip at the stale window")
 	}
 	pkg := sourcetest.Load(t, ".")
-	if list := pkg.Decl("Service.queryAdminNodes"); !strings.Contains(list, "n.last_heartbeat_at < now() - "+literal) {
+	if list := pkg.Decl("adminNodeListSQL"); !strings.Contains(list, "n.last_heartbeat_at < now() - "+literal) {
 		t.Error("admin node list stale column must use the stale window")
 	}
 	if filter := pkg.Decl("adminNodeFilterSQL"); strings.Count(filter, literal) != 2 {
