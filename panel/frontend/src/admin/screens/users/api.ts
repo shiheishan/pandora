@@ -137,6 +137,14 @@ export const passwordResetSchema = z.object({ ok: z.literal(true), sessions_revo
 // R11 / 5.A D-B-1：换发后不回令牌，只有用户邮箱与旧链接已吊销
 export const rotatedSchema = z.object({ user_email: z.string(), old_revoked: z.literal(true) }).strict()
 export const balanceSchema = z.object({ balance: int })
+// POST v1/subscriptions/{id}/extend：billing.AdminExtendOutput（无 omitempty）
+export const extendedSchema = z.object({
+  subscription_id: z.string(),
+  user_email: z.string(),
+  days: int.positive(),
+  previous_end: time,
+  period_end: time,
+})
 
 export const groupSavedSchema = z.object({ id: z.string() })
 
