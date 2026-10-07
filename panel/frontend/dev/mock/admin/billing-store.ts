@@ -37,13 +37,26 @@ export interface Provider {
   has_credentials: boolean
   base_url: string
   currencies: string[]
+  // 非机密配置（w2pay，Go 无 omitempty）：methods 是 config.methods 原样，没配为空数组
+  submit_path: string
+  api_path: string
+  methods: string[]
+  default_method: string
+  allow_private_host: boolean
 }
+const epayPaths = { submit_path: '/submit.php', api_path: '/api.php', allow_private_host: false }
+const noConfig = { submit_path: '', api_path: '', methods: [], default_method: '', allow_private_host: false }
 export const providers: Provider[] = [
-  { id: randomUUID(), code: 'demo', adapter: 'demo', display_name: '演示渠道', enabled: false, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'] },
-  { id: randomUUID(), code: 'epay', adapter: 'epay', display_name: '聚合收银台', enabled: true, accepting_new: true, has_credentials: true, base_url: 'https://pay.example.com', currencies: ['CNY'] },
-  { id: randomUUID(), code: 'epay_backup', adapter: 'epay', display_name: '易支付 · 备用', enabled: true, accepting_new: false, has_credentials: false, base_url: 'https://pay2.example.com', currencies: ['CNY', 'USD'] },
-  { id: randomUUID(), code: 'offline', adapter: 'offline', display_name: '线下收款', enabled: true, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'] },
+  { id: randomUUID(), code: 'demo', adapter: 'demo', display_name: '演示渠道', enabled: false, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'], ...noConfig },
+  { id: randomUUID(), code: 'epay', adapter: 'epay', display_name: '聚合收银台', enabled: true, accepting_new: true, has_credentials: true, base_url: 'https://pay.example.com', currencies: ['CNY'], ...epayPaths, methods: ['alipay', 'wxpay'], default_method: 'alipay' },
+  // payctl 早期建的渠道：只有 default_method、没有 methods
+  { id: randomUUID(), code: 'epay_backup', adapter: 'epay', display_name: '易支付 · 备用', enabled: true, accepting_new: false, has_credentials: false, base_url: 'https://pay2.example.com', currencies: ['CNY', 'USD'], ...epayPaths, methods: [], default_method: 'alipay' },
+  { id: randomUUID(), code: 'offline', adapter: 'offline', display_name: '线下收款', enabled: true, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'], ...noConfig },
 ]
+/** 凭据只写不读：单独存，providerView 展开 Provider 时带不出去（与 Go 的列表只给 has_credentials 一致） */
+export const providerSecrets = new Map<string, { merchant_id: string; key: string }>([
+  [providers[1]!.id, { merchant_id: '1001', key: 'mock-key-epay' }],
+])
 const providerName = (code: string) => providers.find((p) => p.code === code)?.display_name ?? code
 
 // ===========================================================================

@@ -9,9 +9,12 @@ import {
   canMarkPaid,
   canQueryChannel,
   channelLabel,
+  effectiveMethods,
   emptyAdjust,
   emptyManual,
+  emptyProviderForm,
   filterStatuses,
+  isEditableProvider,
   isOrderFilter,
   lateReason,
   manualBody,
@@ -20,7 +23,10 @@ import {
   paymentLines,
   pendingTotals,
   priceChoices,
+  providerBody,
+  providerFormFrom,
   providerMode,
+  providerProblems,
   queriedView,
   providerNote,
   rateLabel,
@@ -30,6 +36,7 @@ import {
   todayLabel,
   todayLocal,
   toggleBody,
+  toggleMethod,
 } from './model'
 import { adjustmentSchema, cancelledSchema, latePaymentsSchema, markedPaidSchema, orderDetailSchema, orderQueriedSchema, type OrderDetail, type PaymentHistory, type Provider } from './schemas'
 
@@ -231,6 +238,11 @@ describe('late payments, providers and adjustments', () => {
     has_credentials: true,
     base_url: '',
     currencies: ['CNY'],
+    submit_path: '/submit.php',
+    api_path: '/api.php',
+    methods: ['alipay', 'wxpay'],
+    default_method: 'alipay',
+    allow_private_host: false,
     today: {},
     success_rate_24h: null,
     last_callback_at: null,
@@ -256,6 +268,45 @@ describe('late payments, providers and adjustments', () => {
     expect(providerNote(provider({ last_callback_at: '2026-09-24T11:50:00Z' }), now)).toEqual({ text: '最近回调 10 分钟前', tone: 'neutral' })
     expect(providerNote(provider({ enabled: false }), now).tone).toBe('danger')
     expect(providerNote(provider({ code: 'offline' }), now).text).toContain('系统内置')
+  })
+
+  it('prefills the provider form without secrets and falls back to default_method (w2pay)', () => {
+    expect(effectiveMethods(provider({ methods: [], default_method: 'alipay' }))).toEqual(['alipay'])
+    expect(effectiveMethods(provider({ methods: [], default_method: '' }))).toEqual([])
+    expect(isEditableProvider(provider({}))).toBe(true)
+    expect(isEditableProvider(provider({ code: 'offline', adapter: 'offline' }))).toBe(false)
+    expect(isEditableProvider(provider({ code: 'demo', adapter: 'demo_hmac' }))).toBe(false)
+    const legacy = providerFormFrom(provider({ methods: [], default_method: 'wxpay', submit_path: '', base_url: 'https://pay.example.com' }))
+    expect(legacy).toMatchObject({ methods: ['wxpay'], default_method: 'wxpay', submit_path: '/submit.php', merchant_id: '', key: '' })
+  })
+
+  it('keeps methods in canonical order and moves the default off an unticked method', () => {
+    const f = { ...emptyProviderForm(), methods: ['wxpay'], default_method: 'wxpay' }
+    expect(toggleMethod(f, 'alipay', true)).toMatchObject({ methods: ['alipay', 'wxpay'], default_method: 'wxpay' })
+    expect(toggleMethod(f, 'wxpay', false)).toMatchObject({ methods: [], default_method: '' })
+    expect(toggleMethod({ ...f, methods: ['alipay', 'wxpay'] }, 'wxpay', false)).toMatchObject({ methods: ['alipay'], default_method: 'alipay' })
+  })
+
+  it('validates the provider form like the backend and leaves blank secrets blank', () => {
+    const good = { ...emptyProviderForm(), code: 'epay2', base_url: 'https://pay.example.com', merchant_id: '1001', key: 'k' }
+    expect(providerProblems(good, 'create')).toEqual({})
+    expect(providerProblems({ ...good, code: 'offline' }, 'create').code).toBeDefined()
+    expect(providerProblems({ ...good, code: 'A b' }, 'create').code).toBeDefined()
+    expect(providerProblems({ ...good, base_url: 'http://pay.example.com' }, 'create').base_url).toBe('站点地址必须使用 https')
+    expect(providerProblems({ ...good, base_url: 'http://127.0.0.1:8080', allow_private_host: true }, 'create')).toEqual({})
+    expect(providerProblems({ ...good, base_url: 'https://pay.example.com?a=1' }, 'create').base_url).toBeDefined()
+    expect(providerProblems({ ...good, submit_path: '//evil.example.com/x' }, 'create').submit_path).toBeDefined()
+    expect(providerProblems({ ...good, methods: [] }, 'create').methods).toBe('至少选一种支付方式')
+    expect(providerProblems({ ...good, merchant_id: '', key: '' }, 'create')).toMatchObject({ merchant_id: '必填', key: '必填' })
+    // 编辑：已有凭据时留空 = 不改；没有凭据时必须补齐
+    expect(providerProblems({ ...good, merchant_id: '', key: '' }, 'edit', true)).toEqual({})
+    expect(Object.keys(providerProblems({ ...good, merchant_id: '', key: '' }, 'edit', false))).toEqual(['merchant_id', 'key'])
+
+    expect(providerBody(good, 'create')).toMatchObject({ code: 'epay2', adapter: 'epay', merchant_id: '1001' })
+    const edit = providerBody({ ...good, merchant_id: ' ', key: '' }, 'edit')
+    expect(edit).not.toHaveProperty('code')
+    expect(edit).not.toHaveProperty('adapter')
+    expect(edit).toMatchObject({ merchant_id: '', key: '', methods: ['alipay', 'wxpay'] })
   })
 
   it('shows adjustments and defaults the reversal reason', () => {
