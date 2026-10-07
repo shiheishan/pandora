@@ -14,6 +14,7 @@ func TestApplyInboundWithUsersAuthorizesFromFirstAccept(t *testing.T) {
 	for _, p := range lifecycleProtos() {
 		t.Run(p.name, func(t *testing.T) {
 			echo := startLifecycleEcho(t, false)
+			allowLoopbackTargets(t)
 			reserved, _ := net.Listen("tcp", "127.0.0.1:0")
 			port := reserved.Addr().(*net.TCPAddr).Port
 			_ = reserved.Close()

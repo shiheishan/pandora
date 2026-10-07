@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/outbound"
 )
 
 func writeFile(t *testing.T, path, body string) {
@@ -98,4 +99,12 @@ func TestRuntimeTuningValidateAndApply(t *testing.T) {
 	if gotIdle != 120*time.Second || gotHalf != 2*time.Second {
 		t.Fatalf("idle=%s half=%s", gotIdle, gotHalf)
 	}
+	if !outbound.BlockPrivateDestinations() {
+		t.Fatal("默认应拒绝私网目标")
+	}
+	runtimeTuning{AllowPrivateDestinations: true, MemoryLimitPercent: &off}.apply(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if outbound.BlockPrivateDestinations() {
+		t.Fatal("allow_private_destinations=true 应放开")
+	}
+	outbound.SetBlockPrivateDestinations(true)
 }

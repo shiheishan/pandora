@@ -22,6 +22,7 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 
 	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/outbound"
 )
 
 // lifecycleProto 描述一个协议怎么配、怎么当客户端连上来。
@@ -208,6 +209,7 @@ func (e *lifecycleEcho) addr() *net.TCPAddr { return e.ln.Addr().(*net.TCPAddr) 
 // startLifecycleCore 起一个只有这一个入站的 NativeCore（直连出站），返回内核、端口、tag。
 func startLifecycleCore(t testing.TB, p lifecycleProto, users []core.User) (*NativeCore, int, string) {
 	t.Helper()
+	allowLoopbackTargets(t)
 	reserved, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -290,5 +292,14 @@ func waitFor(timeout time.Duration, cond func() (bool, string)) (bool, string) {
 
 func goroutines() int { return runtime.NumGoroutine() }
 
-// lifecycleAllowLoopback 是测试用的分流：放行回环目标（上游回显就在本机）。
+// lifecycleAllowLoopback 是测试用的分流（直连）。上游回显就在本机，私网目标的
+// 默认拒绝由 allowLoopbackTargets 在测试期间放开。
 func lifecycleAllowLoopback() *core.Routing { return nil }
+
+// allowLoopbackTargets 在本测试期间放开私网目标（outbound 默认拒绝回环）。
+func allowLoopbackTargets(t testing.TB) {
+	t.Helper()
+	prev := outbound.BlockPrivateDestinations()
+	outbound.SetBlockPrivateDestinations(false)
+	t.Cleanup(func() { outbound.SetBlockPrivateDestinations(prev) })
+}

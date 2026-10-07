@@ -13,6 +13,7 @@ import (
 
 	"github.com/aegispanel/nodeagent/core"
 	nativekernel "github.com/aegispanel/nodeagent/kernel"
+	"github.com/aegispanel/nodeagent/outbound"
 )
 
 // runtimeTuning 是 config.json 里可选的 "runtime" 段：连接回收、停机排空与内存上限。
@@ -27,6 +28,9 @@ type runtimeTuning struct {
 	// MemoryLimitPercent：没设环境变量 GOMEMLIMIT 时，按 cgroup 或物理内存的这个
 	// 百分比设置 Go 的软内存上限，默认 70；0 关闭自动设置。
 	MemoryLimitPercent *int `json:"memory_limit_percent"`
+	// AllowPrivateDestinations：放开用户访问回环、内网、链路本地等私网目标。
+	// 默认拒绝（相当于 Xray 的 geoip:private block），见 outbound/private_guard.go。
+	AllowPrivateDestinations bool `json:"allow_private_destinations"`
 }
 
 const defaultMemoryLimitPercent = 70
@@ -65,6 +69,12 @@ func (t runtimeTuning) apply(log *slog.Logger) {
 	core.SetRelayTimeouts(idle, halfClose)
 	nativekernel.SetShutdownDrain(drain)
 	log.Info("连接回收与停机参数", "空闲回收", idle, "单向收尾", halfClose, "停机排空", drain)
+	outbound.SetBlockPrivateDestinations(!t.AllowPrivateDestinations)
+	if t.AllowPrivateDestinations {
+		log.Warn("已放开私网目标：用户可经本节点访问回环、内网与链路本地地址")
+	} else {
+		log.Info("私网目标默认拒绝（回环、内网、链路本地、保留段）")
+	}
 
 	percent := defaultMemoryLimitPercent
 	if t.MemoryLimitPercent != nil {
