@@ -43,6 +43,15 @@ SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
 # 给网关设硬上限，避免与同机服务互相挤占
 MemoryMax=256M
 CPUQuota=60%
+# Go 运行时的软上限取 MemoryMax 的 80%：逼近时 GC 加紧回收，而不是一路长到 cgroup
+# 上限、被内核拿自己的匿名页去换页。口令哈希另有全局并发上限
+# （AEGIS_PASSWORD_HASH_CONCURRENCY），两者一起才压得住登录潮。
+# EnvironmentFile 里同名变量会覆盖这里，要调就改 .env。
+Environment=GOMEMLIMIT=204MiB
+# 撞上 MemoryMax 时不许换出到 swap：宁可被 OOM 杀掉、5 秒后由 systemd 拉起，
+# 也不进入换页抖动。抖动期间进程活着却几乎不推进，持连接的事务卡住连接池，
+# 实测是 2–3 分钟的登录 504 与订阅伪 404；重启只丢在途请求，事务由库回滚。
+MemorySwapMax=0
 
 StandardOutput=append:/var/log/aegis/public.log
 StandardError=append:/var/log/aegis/public.log

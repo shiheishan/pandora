@@ -63,3 +63,39 @@ func TestConfigureAppRoleRevokesDeleteOnGuardedTablesLast(t *testing.T) {
 		}
 	}
 }
+
+// 运行角色的查询护栏：关 JIT、语句超时低于网关与 nginx 的超时；与 search_path 一样
+// 按库设置，不许集群级 ALTER ROLE（一次性预检库与源库共享集群角色）。
+// 数据基座 compose 另对整个实例关 JIT，两处一起钉住。
+func TestConfigureAppRolePinsQueryGuards(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate contract test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", ".."))
+	body, err := os.ReadFile(filepath.Join(root, "deploy", "configure-app-role.sql"))
+	if err != nil {
+		t.Fatalf("read configure-app-role.sql: %v", err)
+	}
+	normalized := strings.Join(strings.Fields(string(body)), " ")
+	for _, required := range []string{
+		"'ALTER ROLE aegis_app IN DATABASE %I SET jit = off', v_database",
+		"'ALTER ROLE aegis_app IN DATABASE %I SET statement_timeout = %L', v_database, '15s'",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Fatalf("configure-app-role.sql is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"ALTER ROLE aegis_app SET jit", "ALTER ROLE aegis_app SET statement_timeout"} {
+		if strings.Contains(normalized, forbidden) {
+			t.Fatalf("%q must be database-scoped", forbidden)
+		}
+	}
+	compose, err := os.ReadFile(filepath.Join(root, "deploy", "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("read docker-compose.yml: %v", err)
+	}
+	if !strings.Contains(string(compose), "- jit=off") {
+		t.Fatal("docker-compose.yml must start PostgreSQL with -c jit=off")
+	}
+}

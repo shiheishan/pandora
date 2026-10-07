@@ -35,6 +35,15 @@ services:
       - work_mem=4MB
       - -c
       - maintenance_work_mem=48MB
+      # --- 关 JIT：PG18 缺省 jit=on、jit_above_cost=100000，带每行子计划的查询
+      #     （如节点拉用户列表）代价估计轻易越线，编译耗时远超执行本身。5k 用户
+      #     实测 JIT 吃掉约 78% 的库执行时间（节点用户列表 1269ms → 关后 234ms）。
+      #     这里关的是整个实例（含迁移与维护用的超级用户）；configure-app-role.sql
+      #     另对运行角色 aegis_app 按库设 jit=off，覆盖不经这份 compose 的原生安装。
+      #     两处都关是有意的：命令行参数压过 postgresql.conf 与 ALTER SYSTEM，
+      #     角色级设置又压过命令行，任何一处被改回都不会让应用重新开 JIT。
+      - -c
+      - jit=off
       # --- 可靠性 / NFR-003 时间点恢复的前提 ---
       - -c
       - wal_level=replica
