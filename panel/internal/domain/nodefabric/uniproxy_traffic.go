@@ -80,29 +80,34 @@ func (s *Service) ReportTraffic(ctx context.Context, tenantID string, n *Serving
 
 		out.TotalBytes = totalUp + totalDown
 		out.Duplicate = isDup
+
+		// --- 小时汇总（00099）：与留档同一事务，重复上报只计重复数 ---
+		if err := rollupTrafficReport(ctx, tx, tenantID, reportID); err != nil {
+			return err
+		}
 		if isDup {
 			// 留了档但不扣量
 			return nil
 		}
 
 		// --- 扣减配额 ---
-		// 按 uid 排序逐个处理：并发的两份上报以同一顺序锁配额行、流量包与
-		// 当日用量行，不会交叉死锁（map 迭代顺序是随机的）。
+		// 整份上报批量记账（chargeReportEntries）：按 uid 升序整理，一次查订阅、一次锁全部
+		// 配额行（按 id 排序加锁）、必要时一次锁流量包，再各用一条语句写回。并发的两份
+		// 上报以同一顺序加锁，不会交叉死锁（map 迭代顺序是随机的，所以先排序）。
 		now := time.Now()
+		entries := make([]billedEntry, 0, len(report))
 		for _, entry := range sortedReportEntries(report) {
 			if entry.used <= 0 {
 				continue
 			}
 			// 按节点倍率折算后计费
-			billed := int64(float64(entry.used) * n.TrafficRate)
-			accepted, err := chargeReportEntry(ctx, tx, tenantID, entry.uid, billed, now)
-			if err != nil {
-				return err
-			}
-			if accepted { // 订阅已删除的 uid 忽略
-				out.Accepted++
-			}
+			entries = append(entries, billedEntry{uid: entry.uid, billed: int64(float64(entry.used) * n.TrafficRate)})
 		}
+		accepted, err := chargeReportEntries(ctx, tx, tenantID, entries, now)
+		if err != nil {
+			return err
+		}
+		out.Accepted = accepted // 订阅已删除的 uid 不计
 		return nil
 	})
 	if err != nil {
@@ -154,79 +159,184 @@ func splitTrafficCharge(billed int64, planRoom *int64, packRemaining int64) (int
 	return billed - fromPacks, fromPacks
 }
 
-// chargeTraffic 把一笔已计费的用量记到订阅配额与用户的流量包上（D-E-1）。
-//
-// 锁顺序：先锁本周期的流量配额行，再按先到先扣的顺序锁流量包。所有上报走同一
-// 顺序。套餐剩余额度取本周期所有限量流量行里最紧的一条；没有限量行就是不限量，
-// 不动流量包。
+// trafficCharge 是一笔已经找到订阅的计费用量。
+type trafficCharge struct {
+	subID  string
+	userID string
+	billed int64
+}
+
+// chargeTraffic 把一笔已计费的用量记到订阅配额与用户的流量包上（D-E-1），
+// 是 applyTrafficCharges 的单笔形式。
 func chargeTraffic(ctx context.Context, tx pgx.Tx, tenantID, subID, userID string, billed int64) error {
-	var planRoom *int64
-	if err := tx.QueryRow(ctx, `
-		SELECT min(limit_value + adjusted - consumed)
-		  FROM (SELECT limit_value, adjusted, consumed FROM quota_balances
-		         WHERE tenant_id = $1 AND subscription_id = $2::uuid
+	return applyTrafficCharges(ctx, tx, tenantID, []trafficCharge{{subID: subID, userID: userID, billed: billed}})
+}
+
+// applyTrafficCharges 在调用方事务里把一批计费用量记到配额与流量包上（D-E-1）。
+//
+// 口径与逐笔记账完全相同，按 charges 的顺序（上报按 uid 升序）依次决定每笔怎么分：
+// 先吃该订阅本周期剩余额度（取本周期所有限量流量行里最紧的一条；没有限量行就是
+// 不限量，不动流量包），超出的部分按先到先扣从该用户的流量包里扣，两者都不够的
+// 那部分仍记在套餐上（配额变负、下一轮停止下发）。同一用户的多条订阅共用流量包，
+// 前一笔扣掉的后一笔看得见。
+//
+// 语句数与条数无关：一次锁全部配额行（ORDER BY id FOR UPDATE），有超额时再一次锁
+// 涉及用户的流量包（按用户、先到先扣的顺序 FOR UPDATE），然后配额与流量包各一条
+// UPDATE。所有上报走同一锁序：先配额行（按 id），再流量包，并发两份上报不会交叉
+// 死锁；锁从第一条语句起只持有到本批写完，不再随条数线性拉长。
+func applyTrafficCharges(ctx context.Context, tx pgx.Tx, tenantID string, charges []trafficCharge) error {
+	subIDs := make([]string, 0, len(charges))
+	seen := map[string]bool{}
+	for _, c := range charges {
+		if c.billed > 0 && !seen[c.subID] {
+			seen[c.subID] = true
+			subIDs = append(subIDs, c.subID)
+		}
+	}
+	if len(subIDs) == 0 {
+		return nil
+	}
+
+	// 本周期流量配额：全部锁上（含不限量行，与下面的 UPDATE 同一集合），剩余额度取限量行里最紧的
+	planRoom := map[string]*int64{}
+	rows, err := tx.Query(ctx, `
+		SELECT q.subscription_id::text,
+		       min(q.limit_value + q.adjusted - q.consumed) FILTER (WHERE q.limit_value IS NOT NULL)
+		  FROM (SELECT subscription_id, limit_value, adjusted, consumed FROM quota_balances
+		         WHERE tenant_id = $1 AND subscription_id = ANY($2::uuid[])
 		           AND metric = 'traffic.bytes'
 		           AND period_start <= now()
 		           AND (period_end IS NULL OR period_end > now())
 		         ORDER BY id FOR UPDATE) q
-		 WHERE limit_value IS NOT NULL`, tenantID, subID).Scan(&planRoom); err != nil {
+		 GROUP BY q.subscription_id`, tenantID, subIDs)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var sub string
+		var room *int64
+		if err := rows.Scan(&sub, &room); err != nil {
+			rows.Close()
+			return err
+		}
+		planRoom[sub] = room
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
 		return err
 	}
 
-	fromPacks := int64(0)
-	if planRoom != nil && billed > max(*planRoom, 0) {
-		type openGrant struct {
-			id   string
-			left int64
+	// 只有超出套餐剩余额度的用户才需要流量包
+	var packUsers []string
+	needPacks := map[string]bool{}
+	for _, c := range charges {
+		if room := planRoom[c.subID]; c.billed > 0 && room != nil && c.billed > max(*room, 0) && !needPacks[c.userID] {
+			needPacks[c.userID] = true
+			packUsers = append(packUsers, c.userID)
 		}
-		var grants []openGrant
-		var packRemaining int64
+	}
+	type openGrant struct {
+		id   string
+		left int64
+	}
+	grants := map[string][]*openGrant{} // 用户 → 按先到先扣排好的流量包
+	if len(packUsers) > 0 {
 		rows, err := tx.Query(ctx, `
-			SELECT id::text, granted_bytes - consumed_bytes
+			SELECT id::text, user_id::text, granted_bytes - consumed_bytes
 			  FROM traffic_pack_grants
-			 WHERE tenant_id = $1 AND user_id = $2::uuid
+			 WHERE tenant_id = $1 AND user_id = ANY($2::uuid[])
 			   AND consumed_bytes < granted_bytes
-			 ORDER BY created_at, id FOR UPDATE`, tenantID, userID)
+			 ORDER BY user_id, created_at, id FOR UPDATE`, tenantID, packUsers)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var g openGrant
-			if err := rows.Scan(&g.id, &g.left); err != nil {
+			var user string
+			if err := rows.Scan(&g.id, &user, &g.left); err != nil {
 				rows.Close()
 				return err
 			}
-			grants = append(grants, g)
-			packRemaining += g.left
+			grants[user] = append(grants[user], &g)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		_, fromPacks = splitTrafficCharge(billed, planRoom, packRemaining)
-		left := fromPacks
-		for _, g := range grants {
-			if left == 0 {
-				break
+	}
+
+	// 逐笔决定怎么分，只在内存里算；写回各一条语句
+	planCharge := map[string]int64{}
+	var planSubs []string
+	packTake := map[string]int64{}
+	var packIDs []string
+	for _, c := range charges {
+		if c.billed <= 0 {
+			continue
+		}
+		room := planRoom[c.subID]
+		fromPacks := int64(0)
+		if room != nil && c.billed > max(*room, 0) {
+			var packRemaining int64
+			for _, g := range grants[c.userID] {
+				packRemaining += g.left
 			}
-			take := min(left, g.left)
-			if _, err := tx.Exec(ctx, `
-				UPDATE traffic_pack_grants SET consumed_bytes = consumed_bytes + $3
-				 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, g.id, take); err != nil {
-				return err
+			_, fromPacks = splitTrafficCharge(c.billed, room, packRemaining)
+			left := fromPacks
+			for _, g := range grants[c.userID] {
+				if left == 0 {
+					break
+				}
+				take := min(left, g.left)
+				if take == 0 {
+					continue
+				}
+				if _, ok := packTake[g.id]; !ok {
+					packIDs = append(packIDs, g.id)
+				}
+				packTake[g.id] += take
+				g.left -= take
+				left -= take
 			}
-			left -= take
+		}
+		if charge := c.billed - fromPacks; charge > 0 {
+			if _, ok := planCharge[c.subID]; !ok {
+				planSubs = append(planSubs, c.subID)
+			}
+			planCharge[c.subID] += charge
+			// 同一订阅再来一笔时，剩余额度已经扣掉这一笔（与逐笔记账重读配额一致）
+			if room != nil {
+				left := *room - charge
+				planRoom[c.subID] = &left
+			}
 		}
 	}
 
-	if planCharge := billed - fromPacks; planCharge > 0 {
+	if len(packIDs) > 0 {
+		takes := make([]int64, len(packIDs))
+		for i, id := range packIDs {
+			takes[i] = packTake[id]
+		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE quota_balances
-			   SET consumed = consumed + $3
-			 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND metric = 'traffic.bytes'
-			   AND period_start <= now()
-			   AND (period_end IS NULL OR period_end > now())`,
-			tenantID, subID, planCharge); err != nil {
+			UPDATE traffic_pack_grants g SET consumed_bytes = g.consumed_bytes + c.take
+			  FROM unnest($2::uuid[], $3::bigint[]) AS c(id, take)
+			 WHERE g.tenant_id = $1 AND g.id = c.id`, tenantID, packIDs, takes); err != nil {
+			return err
+		}
+	}
+	if len(planSubs) > 0 {
+		amounts := make([]int64, len(planSubs))
+		for i, sub := range planSubs {
+			amounts[i] = planCharge[sub]
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE quota_balances q SET consumed = q.consumed + c.amount
+			  FROM unnest($2::uuid[], $3::bigint[]) AS c(subscription_id, amount)
+			 WHERE q.tenant_id = $1 AND q.subscription_id = c.subscription_id
+			   AND q.metric = 'traffic.bytes'
+			   AND q.period_start <= now()
+			   AND (q.period_end IS NULL OR q.period_end > now())`,
+			tenantID, planSubs, amounts); err != nil {
 			return err
 		}
 	}

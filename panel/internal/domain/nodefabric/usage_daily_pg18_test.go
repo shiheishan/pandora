@@ -175,10 +175,10 @@ func TestUsageDailyWritePG18(t *testing.T) {
 	// --- 日界：同一时刻，纽约还是 24 日，上海（租户回退）已是 25 日 ---
 	at := time.Date(2030, 9, 24, 17, 30, 0, 0, time.UTC)
 	if err := app.InTx(ctx, platformdb.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		for _, uid := range []int64{uidNY, uidBad, uidUTC} {
-			if ok, err := chargeReportEntry(ctx, tx, tenantID, uid, 7, at); err != nil || !ok {
-				t.Errorf("charge uid %d at %v: ok=%v err=%v", uid, at, ok, err)
-			}
+		// 一份报文里的三个用户同一批记账，各按各的时区切日
+		entries := []billedEntry{{uid: uidNY, billed: 7}, {uid: uidBad, billed: 7}, {uid: uidUTC, billed: 7}}
+		if n, err := chargeReportEntries(ctx, tx, tenantID, entries, at); err != nil || n != 3 {
+			t.Errorf("charge three uids at %v: accepted=%d err=%v", at, n, err)
 		}
 		return nil
 	}); err != nil {

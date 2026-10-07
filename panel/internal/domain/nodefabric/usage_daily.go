@@ -2,7 +2,6 @@ package nodefabric
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 	// 日界必须与主机装没装 tzdata 无关：发布的是 CGO_ENABLED=0 的静态二进制，
@@ -63,42 +62,107 @@ func UsageDay(t time.Time, loc *time.Location) time.Time {
 }
 
 //------------------------------------------------------------------------------
-// 单用户记账
+// 整份上报记账
 //------------------------------------------------------------------------------
 
-// chargeReportEntry 把一个 uid 的一笔计费用量记账：扣套餐额度与流量包，
-// 再把同一笔量累加进这条订阅当天的用量行。两件事在调用方的同一个事务里，
-// 柱状图与配额读数不会互相漂移。uid 找不到订阅（已删除）时返回 false。
+// billedEntry 是上报里一个 uid 的一笔计费用量（已按节点倍率折算）。
+type billedEntry struct {
+	uid    int64
+	billed int64
+}
+
+// chargeReportEntries 把一份上报里各 uid 的计费用量记账：扣套餐额度与流量包
+// （applyTrafficCharges），再把同一笔量累加进各订阅当天的用量行。两件事在调用方的
+// 同一个事务里，柱状图与配额读数不会互相漂移。返回找到订阅的 uid 数（已删除的
+// 订阅忽略）。
 //
+// entries 按 uid 升序传入（同一 uid 已合并），记账按这个顺序决定流量包怎么扣。
 // now 由调用方对整份上报取一次：同一份报文里的所有用户按同一时刻切日。
-func chargeReportEntry(ctx context.Context, tx pgx.Tx, tenantID string, uid, billed int64, now time.Time) (bool, error) {
-	var subID, userID, userTZ, tenantTZ string
-	if err := tx.QueryRow(ctx, `
-		SELECT s.id::text, s.user_id::text, u.timezone, t.timezone
+//
+// 原来每个 uid 四条语句（查订阅、锁配额、扣配额、写当日用量），第一条配额行锁一直
+// 持有到整份上报处理完；现在与条数无关：一次查订阅，记账见 applyTrafficCharges，
+// 当日用量一条 upsert（按订阅排序写入，并发上报同序加锁）。
+func chargeReportEntries(ctx context.Context, tx pgx.Tx, tenantID string, entries []billedEntry, now time.Time) (int, error) {
+	if len(entries) == 0 {
+		return 0, nil
+	}
+	uids := make([]int64, len(entries))
+	for i, e := range entries {
+		uids[i] = e.uid
+	}
+	type owner struct {
+		subID, userID, userTZ, tenantTZ string
+	}
+	owners := map[int64]owner{}
+	rows, err := tx.Query(ctx, `
+		SELECT s.node_uid, s.id::text, s.user_id::text, u.timezone, t.timezone
 		  FROM subscriptions s
 		  JOIN users u   ON u.tenant_id = s.tenant_id AND u.id = s.user_id
 		  JOIN tenants t ON t.id = s.tenant_id
-		 WHERE s.tenant_id = $1 AND s.node_uid = $2`,
-		tenantID, uid).Scan(&subID, &userID, &userTZ, &tenantTZ); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+		 WHERE s.tenant_id = $1 AND s.node_uid = ANY($2::bigint[])`,
+		tenantID, uids)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var uid int64
+		var o owner
+		if err := rows.Scan(&uid, &o.subID, &o.userID, &o.userTZ, &o.tenantTZ); err != nil {
+			rows.Close()
+			return 0, err
 		}
-		return false, err
+		owners[uid] = o
 	}
-	if err := chargeTraffic(ctx, tx, tenantID, subID, userID, billed); err != nil {
-		return false, err
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
 	}
-	if billed > 0 {
-		day := UsageDay(now, UsageLocation(userTZ, tenantTZ))
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO subscription_usage_daily (tenant_id, subscription_id, day, bytes)
-			VALUES ($1, $2::uuid, $3::date, $4)
-			ON CONFLICT (tenant_id, subscription_id, day) DO UPDATE
-			   SET bytes = subscription_usage_daily.bytes + EXCLUDED.bytes,
-			       updated_at = now()`,
-			tenantID, subID, day, billed); err != nil {
-			return false, err
+
+	accepted := 0
+	charges := make([]trafficCharge, 0, len(entries))
+	type usageKey struct {
+		subID string
+		day   string
+	}
+	usage := map[usageKey]int64{}
+	var usageKeys []usageKey
+	for _, e := range entries {
+		o, ok := owners[e.uid]
+		if !ok {
+			continue
+		}
+		accepted++
+		charges = append(charges, trafficCharge{subID: o.subID, userID: o.userID, billed: e.billed})
+		if e.billed > 0 {
+			k := usageKey{o.subID, UsageDay(now, UsageLocation(o.userTZ, o.tenantTZ)).Format(time.DateOnly)}
+			if _, ok := usage[k]; !ok {
+				usageKeys = append(usageKeys, k)
+			}
+			usage[k] += e.billed
 		}
 	}
-	return true, nil
+	if err := applyTrafficCharges(ctx, tx, tenantID, charges); err != nil {
+		return 0, err
+	}
+	if len(usageKeys) == 0 {
+		return accepted, nil
+	}
+	subs := make([]string, len(usageKeys))
+	days := make([]string, len(usageKeys))
+	bytes := make([]int64, len(usageKeys))
+	for i, k := range usageKeys {
+		subs[i], days[i], bytes[i] = k.subID, k.day, usage[k]
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO subscription_usage_daily (tenant_id, subscription_id, day, bytes)
+		SELECT $1, v.subscription_id, v.day::date, v.bytes
+		  FROM unnest($2::uuid[], $3::text[], $4::bigint[]) AS v(subscription_id, day, bytes)
+		 ORDER BY v.subscription_id, v.day
+		ON CONFLICT (tenant_id, subscription_id, day) DO UPDATE
+		   SET bytes = subscription_usage_daily.bytes + EXCLUDED.bytes,
+		       updated_at = now()`,
+		tenantID, subs, days, bytes); err != nil {
+		return 0, err
+	}
+	return accepted, nil
 }
