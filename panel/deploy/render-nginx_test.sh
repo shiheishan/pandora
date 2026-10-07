@@ -17,6 +17,8 @@ path='ops_0123456789abcdef0123456789abcdef'
 domain='panel.example.test'
 base="AEGIS_PUBLIC_BASE_URL=https://$domain"
 printf 'AEGIS_ADMIN_PATH=%s\n%s\n' "$path" "$base" >"$TEST_DIR/valid.env"
+# 渲染结果随本机 nginx 版本变（HTTP/2 写法），测试一律显式指定版本，不受 runner 上装没装 nginx 影响
+export PANDORA_NGINX_VERSION=1.26.3
 "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$TEST_DIR/aegis.conf" "$TEST_DIR/realip.conf" >/dev/null
 
 grep -Fq "location = /$path" "$TEST_DIR/aegis.conf"
@@ -30,7 +32,7 @@ refute -Fq 'listen 127.0.0.1:9081' "$TEST_DIR/aegis.conf"
 grep -Fq 'listen 127.0.0.1:9080;' "$TEST_DIR/aegis.conf"
 refute -Fq '7001' "$TEST_DIR/aegis.conf"
 stray_listen="$(grep -vE '^[[:space:]]*#' "$TEST_DIR/aegis.conf" | grep -oE 'listen[[:space:]]+[^;]*;' \
-  | grep -vxE 'listen[[:space:]]+(127\.0\.0\.1:9080|0\.0\.0\.0:80( default_server)?|\[::\]:80( default_server)?|0\.0\.0\.0:443 ssl|\[::\]:443 ssl);' || true)"
+  | grep -vxE 'listen[[:space:]]+(127\.0\.0\.1:9080|0\.0\.0\.0:80( default_server)?|\[::\]:80( default_server)?|0\.0\.0\.0:443 ssl( http2)?|\[::\]:443 ssl( http2)?);' || true)"
 [[ -z "$stray_listen" ]] || { printf 'unexpected listen: %s\n' "$stray_listen" >&2; exit 1; }
 grep -Fq 'listen 0.0.0.0:80 default_server' "$TEST_DIR/aegis.conf"
 grep -Fq "server_name $domain;" "$TEST_DIR/aegis.conf"
@@ -43,6 +45,35 @@ stray="$(grep -vE '^[[:space:]]*#' "$TEST_DIR/aegis.conf" | grep -oE 'server_nam
   | grep -vxE "server_name[[:space:]]+(_|${domain//./\\.});" || true)"
 [[ -z "$stray" ]] || { printf 'unexpected server_name: %s\n' "$stray" >&2; exit 1; }
 grep -Fq 'include /etc/aegispanel/cloudflare-realip.conf' "$TEST_DIR/aegis.conf"
+
+# 压缩：网关给 JS 发 text/javascript，必须在 gzip_types 里；级别 5
+gzip_types="$(grep -E '^[[:space:]]*gzip_types ' "$TEST_DIR/aegis.conf")"
+for type in text/css text/javascript application/javascript application/json image/svg+xml; do
+  grep -Fqw "$type" <<<"$gzip_types" || { printf 'gzip_types misses %s\n' "$type" >&2; exit 1; }
+done
+grep -Eq '^[[:space:]]*gzip_comp_level 5;' "$TEST_DIR/aegis.conf"
+# HTTP/2 下每个并发请求都计入 limit_conn，24 会把冷加载的资源 503 掉
+grep -Eq '^[[:space:]]*limit_conn aegis_conn 64;' "$TEST_DIR/aegis.conf"
+
+# HTTP/2 按 nginx 版本渲染：1.25.1 起 http2 on;，更老或探不到版本用 listen ... ssl http2
+render_http2() {
+  PANDORA_NGINX_VERSION="$1" "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$TEST_DIR/h2.raw" "$TEST_DIR/realip.conf" >/dev/null
+  # 只看指令，不看注释
+  grep -vE '^[[:space:]]*#' "$TEST_DIR/h2.raw" >"$TEST_DIR/h2.conf" || true
+}
+expect_modern() {
+  [[ "$(grep -cE '^[[:space:]]*http2 on;' "$TEST_DIR/h2.conf")" -eq 1 ]] || { printf 'nginx %s: want one http2 on;\n' "$1" >&2; exit 1; }
+  refute -Eq 'listen[^;]*http2' "$TEST_DIR/h2.conf"
+}
+expect_legacy() {
+  refute -Eq '^[[:space:]]*http2 on;' "$TEST_DIR/h2.conf"
+  grep -Fq 'listen 0.0.0.0:443 ssl http2;' "$TEST_DIR/h2.conf"
+  grep -Fq 'listen [::]:443 ssl http2;' "$TEST_DIR/h2.conf"
+  # 只有 443 走 HTTP/2：80 与回环 9080 不带
+  [[ "$(grep -cE 'listen[^;]*http2' "$TEST_DIR/h2.conf")" -eq 2 ]] || { printf 'nginx %s: http2 leaked onto a non-443 listen\n' "$1" >&2; exit 1; }
+}
+for v in 1.25.1 1.26.3 1.27.4 'nginx version: nginx/1.29.0 (Debian)' 2.0.0; do render_http2 "$v"; expect_modern "$v"; done
+for v in 1.25.0 1.24.0 1.22.1 1.18.0 'nginx version: openresty/1.21.4.1' garbage; do render_http2 "$v"; expect_legacy "$v"; done
 
 for invalid in short '../escape-path-0123456789' 'slash/path-0123456789abcdef' 'CHANGE_ME_TO_A_RANDOM_48_CHAR_PATH'; do
   printf 'AEGIS_ADMIN_PATH=%s\n%s\n' "$invalid" "$base" >"$TEST_DIR/invalid.env"

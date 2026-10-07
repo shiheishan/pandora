@@ -61,6 +61,25 @@ for placeholder in __AEGIS_ADMIN_PATH__ __AEGIS_DOMAIN__; do
 done
 
 # ---------------------------------------------------------------------------
+# HTTP/2 的写法随 nginx 版本：1.25.1 起是独立的 http2 on;（listen 的 http2 参数已弃用、只告警），
+# 更老的版本不认识 http2 指令，nginx -t 直接失败。模板按新写法写，这里按本机 nginx 版本取舍：
+# 探不到版本（没装 nginx、在别处渲染）时用旧写法——它在新版本上也能用，只多一条弃用告警。
+# PANDORA_NGINX_VERSION 可显式指定（测试与异机渲染用），形如 1.26.3
+# ---------------------------------------------------------------------------
+nginx_version="${PANDORA_NGINX_VERSION:-}"
+if [[ -z "$nginx_version" ]] && command -v nginx >/dev/null 2>&1; then
+  nginx_version="$(nginx -v 2>&1 || true)"
+fi
+http2_directive=0
+if [[ "$nginx_version" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+  v_major="${BASH_REMATCH[1]}" v_minor="${BASH_REMATCH[2]}" v_patch="${BASH_REMATCH[3]}"
+  if (( v_major > 1 || (v_major == 1 && (v_minor > 25 || (v_minor == 25 && v_patch >= 1))) )); then
+    http2_directive=1
+  fi
+fi
+[[ "$(grep -cE '^[[:space:]]*http2 on;' "$TEMPLATE_FILE")" -eq 1 ]] || die "template must hold exactly one 'http2 on;' line"
+
+# ---------------------------------------------------------------------------
 # 真实来源 IP 的信任表：模板在 server 块里 include 它，文件缺了 nginx -t 就失败
 # ---------------------------------------------------------------------------
 # 两个安装脚本都不生成它，全新安装后第一次渲染就会撞上。这里只在它不存在时写一份
@@ -98,10 +117,15 @@ output_dir="$(dirname -- "$OUTPUT_FILE")"
 tmp_file="$(mktemp "${OUTPUT_FILE}.tmp.XXXXXX")"
 trap 'rm -f -- "$tmp_file"' EXIT
 
+http2_edit=()
+if [[ "$http2_directive" -eq 0 ]]; then
+  http2_edit=(-e '/^[[:space:]]*http2 on;/d' -e 's/^\([[:space:]]*listen [^;]*:443 ssl\);/\1 http2;/')
+fi
 sed -e "s/__AEGIS_ADMIN_PATH__/${admin_path}/g" -e "s/__AEGIS_DOMAIN__/${domain}/g" \
-  "$TEMPLATE_FILE" >"$tmp_file"
+  ${http2_edit[@]+"${http2_edit[@]}"} "$TEMPLATE_FILE" >"$tmp_file"
 chmod 0644 "$tmp_file"
 mv -f -- "$tmp_file" "$OUTPUT_FILE"
 trap - EXIT
 
-printf 'render-nginx: unified edge config rendered for %s (admin path redacted)\n' "$domain"
+if [[ "$http2_directive" -eq 1 ]]; then http2_form='http2 on'; else http2_form='listen ... http2'; fi
+printf 'render-nginx: unified edge config rendered for %s (admin path redacted, HTTP/2 via %s)\n' "$domain" "$http2_form"
