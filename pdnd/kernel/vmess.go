@@ -3,6 +3,7 @@ package kernel
 import (
 	"bufio"
 	"context"
+	"crypto/cipher"
 	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
@@ -46,27 +48,30 @@ var vmessAddressSerializer = M.NewSerializer(
 )
 
 type vmessAdapter struct {
-	spec        InboundSpec
-	mu          sync.RWMutex
-	users       map[string]vmessUser
-	sessions    userSessions
-	online      map[int64]map[string]struct{}
-	listener    net.Listener
-	packet      net.PacketConn
-	httpServer  *http.Server
-	h3Server    interface{ Close() error }
-	xhttpConfig XHTTPConfig
-	tlsConfig   *tls.Config
-	plane       DataPlane
-	connErr     connErrorReporter
-	limiters    core.SpeedLimiters
-	ctx         context.Context
-	cancel      context.CancelFunc
-	closed      bool
-	lastErr     error
-	active      map[net.Conn]struct{}
-	replay      *replayFilter
-	replayOnce  sync.Once
+	spec  InboundSpec
+	mu    sync.RWMutex
+	users map[string]vmessUser
+	// authCandidates 是认证用的只读快照（vmess_auth.go），每次用户变更后重建；
+	// 握手直接读它，不加锁、不复制、不再逐用户重做 KDF 与 aes.NewCipher。
+	authCandidates atomic.Pointer[[]vmessUserCandidate]
+	sessions       userSessions
+	online         map[int64]map[string]struct{}
+	listener       net.Listener
+	packet         net.PacketConn
+	httpServer     *http.Server
+	h3Server       interface{ Close() error }
+	xhttpConfig    XHTTPConfig
+	tlsConfig      *tls.Config
+	plane          DataPlane
+	connErr        connErrorReporter
+	limiters       core.SpeedLimiters
+	ctx            context.Context
+	cancel         context.CancelFunc
+	closed         bool
+	lastErr        error
+	active         map[net.Conn]struct{}
+	replay         *replayFilter
+	replayOnce     sync.Once
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
 	headerTimeout time.Duration
 	xhttpBroker   *XHTTPPacketBroker
@@ -80,6 +85,8 @@ type vmessUser struct {
 	// SpeedLimit 之前没存，面板下发的限速到这里就丢了。
 	SpeedLimit int
 	key        [16]byte
+	// authBlock 是 AuthID 的 AES 解密块，加用户时算好（KDF + aes.NewCipher）。
+	authBlock cipher.Block
 }
 
 func newVMessAdapter(spec InboundSpec) (Adapter, error) {
