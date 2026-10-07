@@ -87,6 +87,8 @@ func formFixtures() []formFixture {
 		{"vless-mkcp", "vless", 10083, `{"tls":0,"network":"mkcp"}`},
 		{"vless-mkcp-mask", "vless", 10086, `{"tls":0,"network":"mkcp","mask":"mkcp-aes128gcm","mask_password":"mask-pass-1"}`},
 		{"vmess-ws", "vmess", 10091, `{"tls":0,"network":"ws","network_settings":{"path":"/mw","headers":{"Host":"cdn.example.com"}}}`},
+		// VMess 自带加密：裸 tcp 放行，读接口提示特征明显（用户 2026-10-07 定）
+		{"vmess-tcp", "vmess", 10090, `{"tls":0,"network":"tcp"}`},
 		{"vmess-grpc", "vmess", 10092, `{"tls":0,"network":"grpc","network_settings":{"serviceName":"mg"}}`},
 		{"vmess-httpupgrade", "vmess", 10093, `{"tls":0,"network":"httpupgrade","network_settings":{"path":"/mu"}}`},
 		{"vmess-xhttp", "vmess", 10094, `{"tls":0,"network":"xhttp","network_settings":{"path":"/mx"}}`},
@@ -99,8 +101,7 @@ func formFixtures() []formFixture {
 // 「渲染照旧」。
 func legacyFixtures() []formFixture {
 	return []formFixture{
-		// 裸 tcp 不加密：明文代理，2026-10 起拒绝新写入
-		{"vmess-tcp", "vmess", 10090, `{"tls":0,"network":"tcp"}`},
+		// VLESS 裸 tcp 不加密：明文代理，2026-10 起拒绝新写入（VMess 自带加密，放行）
 		{"vless-tcp-plain", "vless", 10087, `{"tls":0,"network":"tcp"}`},
 		// REALITY 只许 tcp / grpc / xhttp；QUIC 版 REALITY 三种格式本来就都跳过
 		{"vless-reality-xhttp-h3", "vless", 448, `{"tls":2,"network":"xhttp-h3","network_settings":{"path":"/h3"},` + realitySettings() + `}`},
