@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // 注入租户上下文的语句。两个参数：租户、操作者（可为空串）。
@@ -16,6 +18,38 @@ const scopeSetConfigSQL = `SELECT set_config('app.tenant_id', $1, true),
 
 // errMissingTenant 是 DATA-002 的入口闸：没有租户就不发任何语句。
 var errMissingTenant = errors.New("db: 缺少 tenant_id，拒绝执行（DATA-002）")
+
+// scopedReleaseKey 是受控路径归还连接前打的标记（存在连接自带的 CustomData 里），
+// afterRelease 见到它就跳过会话清理。见 OpenWithOptions 的说明。
+const scopedReleaseKey = "aegis.db.scoped_release"
+
+// sessionResetSQL 是不受控路径归还时的会话清理（会话级，故意为之）。
+const sessionResetSQL = `SELECT set_config('app.tenant_id', '', false),
+		                              set_config('app.actor_id', '', false)`
+
+// afterRelease 是连接池的归还钩子：受控路径用过的连接直接回池；其余连接清掉
+// 会话级的租户上下文再回池，清理失败就销毁。pgxpool 在归还后的协程里调用它，
+// 不在请求的关键路径上，但这条连接在清理完成之前不可用、库里多执行一条语句。
+func afterRelease(c *pgx.Conn) bool {
+	data := c.PgConn().CustomData()
+	if data[scopedReleaseKey] == true {
+		delete(data, scopedReleaseKey)
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := c.Exec(ctx, sessionResetSQL)
+	return err == nil
+}
+
+// releaseScoped 归还受控路径用过的连接：回到空闲状态的才打标记，其余交给
+// pgxpool 销毁（它对非空闲连接一律销毁，不会调用 afterRelease）。
+func releaseScoped(c *pgxpool.Conn) {
+	if pc := c.Conn().PgConn(); !pc.IsClosed() && !pc.IsBusy() && pc.TxStatus() == 'I' {
+		pc.CustomData()[scopedReleaseKey] = true
+	}
+	c.Release()
+}
 
 // runScoped 是 InTx 与 InTxSerializable 的共同实现。
 //
@@ -38,7 +72,13 @@ func (p *Pool) runScoped(ctx context.Context, s Scope, opts pgx.TxOptions, begin
 		opts.BeginQuery = begin
 		inlined = true
 	}
-	tx, err := p.BeginTx(ctx, opts)
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("%s: %w", beginLabel, err)
+	}
+	// 先回滚（事务已提交时是空操作）、再归还：defer 后进先出
+	defer releaseScoped(conn)
+	tx, err := conn.BeginTx(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("%s: %w", beginLabel, err)
 	}
@@ -115,5 +155,10 @@ func (p *Pool) QueryRowScoped(ctx context.Context, s Scope, sql string, args []a
 	b := &pgx.Batch{}
 	b.Queue(scopeSetConfigSQL, s.TenantID, s.ActorID)
 	b.Queue(sql, args...).QueryRow(func(row pgx.Row) error { return row.Scan(dest...) })
-	return p.SendBatch(ctx, b).Close()
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseScoped(conn)
+	return conn.SendBatch(ctx, b).Close()
 }

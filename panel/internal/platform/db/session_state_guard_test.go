@@ -16,12 +16,13 @@ import (
 
 // 连接池归还时不做清理（见 OpenWithOptions），前提是没有任何代码往连接上留会话级状态。
 // 这条守卫扫 panel/internal 与 panel/cmd 的全部非测试 Go 源码里的字符串字面量（注释不算）：
-//   - set_config 的第三个参数必须是 true（事务级）；认不出写法的也算违规，逼着改成可判定的形式；
+//   - set_config 的第三个参数必须是 true（事务级）；唯一例外是把值清成空串的会话级写法
+//     （归还钩子的纵深防御清理，只会清掉、不会留下租户）；认不出写法的也算违规；
 //   - 不许出现会话级 SET / RESET 业务变量、会话级 advisory 锁；
 //   - LISTEN 只许出现在 platform/realtime（它独占一条连接，用完销毁，不还回池里）。
 var (
 	setConfigCall      = regexp.MustCompile(`set_config\(`)
-	setConfigLocalForm = regexp.MustCompile(`set_config\(\s*'app\.[a-z_]+'\s*,\s*(?:\$\d+|'[^']*'|[a-z_.]+(?:::[a-z]+)?)\s*,\s*true\s*\)`)
+	setConfigLocalForm = regexp.MustCompile(`set_config\(\s*'app\.[a-z_]+'\s*,\s*(?:(?:\$\d+|'[^']*'|[a-z_.]+(?:::[a-z]+)?)\s*,\s*true|''\s*,\s*false)\s*\)`)
 	sessionLevelState  = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\bSET\s+(?:SESSION\s+)?app\.`),
 		regexp.MustCompile(`(?i)\bRESET\s+(?:ALL|app\.)`),
@@ -93,9 +94,13 @@ func TestSessionStateGuardPatterns(t *testing.T) {
 			t.Errorf("transaction-local form not recognized: %s", ok)
 		}
 	}
+	// 清成空串的会话级写法放行：它只会清掉租户，不会留下租户
+	if !setConfigLocalForm.MatchString(`set_config('app.tenant_id', '', false)`) {
+		t.Error("session-level clearing form not recognized")
+	}
 	for _, bad := range []string{
 		`SELECT set_config('app.tenant_id', $1, false)`,
-		`set_config('app.tenant_id', '', false)`,
+		`set_config('app.tenant_id', 'x', false)`,
 		`set_config('app.tenant_id', $1, $3)`,
 	} {
 		if setConfigLocalForm.MatchString(bad) {

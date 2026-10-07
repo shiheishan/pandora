@@ -20,9 +20,11 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/token"
 )
 
-// 连接池归还时不再清理（db.OpenWithOptions 去掉了 AfterRelease）。这条用例用只有一条
-// 连接的池，证明同一条后端连接被复用时，上一个事务 / 批次的租户与操作者不会留到下一个使用者：
-// 事务外读到的都是空，RLS 表返回空集。三种注入路径都验：BEGIN 内联、参数化回退、单次往返批次。
+// 受控路径（InTx / InTxSerializable / QueryRowScoped）归还连接时跳过会话清理
+// （见 db.OpenWithOptions）。这条用例用只有一条连接的池，证明同一条后端连接被复用时，
+// 上一个事务 / 批次的租户与操作者不会留到下一个使用者：事务外读到的都是空，RLS 表返回
+// 空集。三种注入路径都验：BEGIN 内联、参数化回退、单次往返批次；最后验不受控的原始连接
+// 留下的会话级租户仍被归还钩子清掉。
 func TestPooledTenantContextDoesNotLeakPG18(t *testing.T) {
 	ctx, admin, _ := pg18test.Open(t, identityPG18Fixture)
 	const (
@@ -140,6 +142,20 @@ func TestPooledTenantContextDoesNotLeakPG18(t *testing.T) {
 		t.Fatalf("empty scoped result err=%v, want pgx.ErrNoRows", err)
 	}
 	assertClean("after scoped writes")
+
+	// 不受控的用法（借原始连接自己设会话级租户）：归还钩子照旧清掉，纵深防御还在
+	raw, err := single.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(ctx, `SELECT set_config('app.tenant_id', $1, false), set_config('app.actor_id', $2, false)`,
+		tenant, user); err != nil {
+		raw.Release()
+		t.Fatal(err)
+	}
+	raw.Release()
+	// 清理在归还后的协程里做完才回池；单连接的池上，下一次借用等它完成
+	assertClean("after raw session-level pollution")
 	t.Log("marker=pooled_tenant_context_isolated_ok")
 }
 

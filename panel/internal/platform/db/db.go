@@ -38,17 +38,22 @@ func Open(ctx context.Context, dsn string) (*Pool, error) {
 
 // OpenWithOptions 打开连接池并校验运行时角色。
 //
-// 归还连接时不再做任何清理（以前的 AfterRelease 每次归还多一次往返，把
-// app.tenant_id / app.actor_id 重置为空）。不需要它的理由有三条，缺一条都要把它加回来：
-//   - 租户上下文只经 InTx / InTxSerializable / QueryRowScoped 注入，三者都用
-//     set_config(..., true)：事务级，提交或回滚即失效。守卫
-//     session_state_guard_test.go 扫 panel 全部非测试 Go 源码，出现会话级写法即红；
+// 归还连接时的会话清理（把 app.tenant_id / app.actor_id 重置为空）只对「不受控」的
+// 使用保留：直接在池上查询、Acquire 原始连接等，这些路径上谁也不知道连接里留了
+// 什么，照旧多一次往返清掉，作为纵深防御。
+//
+// 受控路径（InTx / InTxSerializable / QueryRowScoped，几乎全部业务查询）在归还前
+// 给连接打上 scopedReleaseKey 标记，跳过这次往返。跳过的前提有三条，缺一条都要把
+// 清理加回来：
+//   - 这三条路径只用 set_config(..., true)：事务级，提交或回滚即失效。守卫
+//     session_state_guard_test.go 扫 panel 全部非测试 Go 源码的字符串字面量，
+//     出现会话级写法即红；
 //   - 迁移里唯一的 set_config（app.seed_tenant_defaults）同样是事务级；
-//   - pgxpool 归还时连接不在空闲状态（事务没结束、正忙、已关）就直接销毁，
-//     事务级设置不可能跟着连接回到池里。
+//   - 只在连接回到空闲状态时打标记；事务没结束、正忙、已关的连接，pgxpool 归还时
+//     直接销毁，事务级设置不可能跟着连接回到池里。
 //
 // RLS 经 app.current_tenant_id() 读租户（空串先经 NULLIF 变成 NULL 再转 uuid）：
-// 事务外读到空串或 NULL，都按「没有租户」处理、返回空集，与以前重置成空串等价。
+// 事务外读到空串或 NULL，都按「没有租户」处理、返回空集，与重置成空串等价。
 func OpenWithOptions(ctx context.Context, dsn string, o Options) (*Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -63,6 +68,7 @@ func OpenWithOptions(ctx context.Context, dsn string, o Options) (*Pool, error) 
 	cfg.MaxConnLifetime = time.Hour
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
+	cfg.AfterRelease = afterRelease
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
