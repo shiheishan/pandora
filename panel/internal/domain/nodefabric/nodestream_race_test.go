@@ -181,3 +181,43 @@ func TestInitialPushHerdSharesOneEncoding(t *testing.T) {
 		t.Fatalf("首推后堆增长 %.1f MB，超过 64 MB：编码没有共享", float64(grew)/1e6)
 	}
 }
+
+// 300 个节点、每池 5000 人，一次付款只多出一个用户：原先给每个节点推一份全量
+// （pushTenantUsers 传 previous=nil），约 300 × 0.44 MB。现在连接手上的版本在历史里，
+// 推增量。这里量出一次变更实际入队的字节数（含 SSE 帧头尾）。
+func TestTenantUserChangePushesDeltaBytes(t *testing.T) {
+	const nodes, userCount = 300, 5000
+	users := make([]ProxyUser, userCount)
+	for i := range users {
+		users[i] = ProxyUser{ID: int64(i + 1), UUID: fmt.Sprintf("%08x-0000-4000-8000-%012x", i, i), DeviceLimit: 3}
+	}
+	hub := NewStreamHub()
+	conns := make([]*StreamConn, nodes)
+	v1 := UserSetVersion(users)
+	for i := range conns {
+		conns[i] = NewStreamConn("t", fmt.Sprintf("n%d", i), 4)
+		hub.Add(conns[i])
+		hub.PushInitialUsers(conns[i], users, v1, "")
+		<-conns[i].Send
+	}
+	changed := append(append([]ProxyUser{}, users...), ProxyUser{ID: userCount + 1, UUID: "ffffffff-0000-4000-8000-000000000001", DeviceLimit: 3})
+	v2 := UserSetVersion(changed)
+	for i := range conns {
+		hub.PushUsers("t", conns[i].NodeID, changed, v2)
+	}
+	var total int
+	for _, c := range conns {
+		msg := <-c.Send
+		total += len("data: ") + len(msg) + len("\n\n")
+		var m StreamMessage
+		if err := json.Unmarshal(msg, &m); err != nil || m.Event != EventSyncUserDelta {
+			t.Fatalf("event = %q err=%v, want a delta", m.Event, err)
+		}
+	}
+	full, _ := hub.users.fullMessage(hub.users.lookup(v2))
+	t.Logf("%d 节点 × %d 用户，新增 1 人：本次推送 %d 字节（每节点 %d）；全量每节点 %d 字节，全推合计 %d",
+		nodes, userCount, total, total/nodes, len(full)+8, (len(full)+8)*nodes)
+	if total > nodes*1024 {
+		t.Fatalf("单人变更推了 %d 字节，增量没有生效", total)
+	}
+}
