@@ -146,4 +146,7 @@ func TestUsageDailyReadPG18(t *testing.T) {
 		}
 	}
 	t.Log("marker=usage_daily_read_pg18_period_window_ok")
+
+	// w5retain：拉取日志 31 天清理（00131）。同库同域，挂成子测试，免改 PG18 门禁过滤
+	t.Run("FetchLogRetention", func(t *testing.T) { fetchLogRetentionScenario(t, ctx, admin, app) })
 }

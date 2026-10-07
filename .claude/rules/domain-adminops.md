@@ -8,7 +8,8 @@ paths:
 - 分工：账本配平、会话吊销这类业务不变量留在 billing / identity，本包只拼后台读模型、把后台写操作编排成带审计的事务。本包不写账本分录：动钱的后台用例（提现打款、调账、人工单）放在 billing 包里
 - 同一种行只有一份查询形状，列表、详情、导出复用它，免得一处补了字段另一处漏了：订单行 `orderRowSelectSQL` / `scanOrderRow`（详情 order_detail.go 也复用）、审计 `auditRowSelect` / `auditCond`、通知积压 `scanNotificationBacklog`。订单状态筛选走 `billing.ParseOrderStatuses` 白名单（精确匹配，不当 LIKE）
 - 套餐目录用例一律拆成两段：事务外的 `prepare*Input` / `validate*` 负责规整和校验，`*Tx` 事务体假定输入已校验、在调用方事务里执行。新增目录用例照这个拆法，向导（plan_wizard.go、plan_wizard_update.go）才能把多步编排进同一个事务，任一步失败库里不留半成品
-- `plan_node_pools` 有两个写入方：`SetPlanPools`（只许改未冻结草稿，`FOR UPDATE OF pv` 锁版本，按 id 顺序 `FOR KEY SHARE` 锁池防死锁，row_version 乐观锁，节点通知由 handler 在提交后发）与向导的 `bindPoolsTx`（只校验池存在且未停用，不锁池行）。改绑池逻辑时两处一起看
+- `plan_node_pools` 有两个写入方：`SetPlanPools`（只许改未冻结草稿，`FOR UPDATE OF pv` 锁版本，按 id 顺序 `FOR KEY SHARE` 锁池防死锁，row_version 乐观锁，节点通知由 handler 在提交后发）与向导的 `bindPoolsTx`（按 id 排序后逐个 `FOR SHARE` 锁池行并校验存在且未停用：并发删池与停用池都被挡住，回干净的 422）。两处锁法不同：`SetPlanPools` 的 `FOR KEY SHARE` 只挡删池、挡不住同时停用池（要不要统一成 `FOR SHARE` 待定）。改绑池逻辑时两处一起看
+- 套餐页绑池选择器（`PlanPools`）每个池给两个数：`active_nodes`（生命周期 active 且定了协议，与节点池列表同口径）与 `deliverable_nodes`（其中真能写进订阅的，经 `subscription.DeliverableNodeSQL`）。「0 节点」提示只看后者；池限定用户组时组外用户拿到的更少，这一半与用户有关、不在这里算
 - 版本语义：新写入的超额策略只收 suspend（throttle / metered_billing 从没实现过），限速与策略解耦；版本更新请求里带旧的 `pool_ids` 一律拒绝，绑池只走专用端点
 - 「一次改完」向导里，设备数与限速是三态 `OptionalInt`（缺省不动、null 不限）；卖点与推荐缺省等于不动；滚出的新版本经 `inheritVersionSemantics` 继承当前版本的全部高级设置；资料整体写入时要带上现有的上架时间窗，否则窗口会被清掉
 - 卖点规则只有 plan_highlights.go 一处（去首尾空白、最多 5 条、每条 1–40 字、不空不重），新建、改资料、两个向导共用；数据库 00088 只兜条数与 NULL。切片永不为 nil（pgx 会把 nil 写成 NULL，撞上 NOT NULL）

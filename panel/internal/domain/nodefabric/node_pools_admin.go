@@ -2,7 +2,6 @@ package nodefabric
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -56,10 +55,6 @@ type NodePoolInput struct {
 	WithUserGroups bool
 	UserGroupIDs   []string
 }
-
-// ErrNodePoolMoveFrozen 表示请求要把节点挪到另一个池：配置发布身份升级完成前不允许，
-// handler 翻成 409。
-var ErrNodePoolMoveFrozen = errors.New("nodefabric: direct node pool move is frozen")
 
 func (s *Service) ListNodePools(ctx context.Context, tenantID string) ([]NodePool, error) {
 	out := []NodePool{}
@@ -230,31 +225,6 @@ func (s *Service) DeleteNodePool(ctx context.Context, tenantID, actorID, id stri
 			return httpx.NotFoundOrForbidden()
 		}
 		return auditPool(ctx, tx, tenantID, actorID, "node_pool.deleted", id, nil)
-	})
-}
-
-// CheckNodePoolAssignment 锁住节点行，确认它已经在 poolID 这个池（空串 = 无池）：
-// 同池是幂等重放，不同池回 ErrNodePoolMoveFrozen。什么都不写。
-func (s *Service) CheckNodePoolAssignment(ctx context.Context, tenantID, nodeID, poolID string) error {
-	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var current *string
-		if err := tx.QueryRow(ctx, `
-			SELECT pool_id::text FROM nodes
-			 WHERE tenant_id=$1 AND id=$2::uuid
-			 FOR UPDATE`, tenantID, nodeID).Scan(&current); err != nil {
-			if err == pgx.ErrNoRows {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-		currentID := ""
-		if current != nil {
-			currentID = *current
-		}
-		if currentID != poolID {
-			return ErrNodePoolMoveFrozen
-		}
-		return nil // same-pool idempotent replay
 	})
 }
 

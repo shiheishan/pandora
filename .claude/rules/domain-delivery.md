@@ -13,6 +13,7 @@ paths:
 
 ## 谁能连哪些节点（三处必须同口径）
 - 交付集合由三处共同决定：节点拉用户 `nodefabric.ListNodeUsers`、订阅下载与门户节点预览共用的 `subscription.listEligibleNodesTx`、后台「是否下发」的复述 `subscription.DeliveryState`。改资格条件要三处一起改。守卫 `subscription/eligible_nodes_contract_test.go:TestSubscriptionAndPreviewShareOneEligibilityQuery`、`heartbeat_delivery_test.go:TestDeliveryStateMatchesEligibilitySQL`，PG18 的 delivery 域在同一份夹具上对照三处
+- 其中与用户、套餐都无关的那一半（节点自己能不能被发出去：服务器 ready 未删、服务状态 active、见过心跳、协议稳定、端口合法、有可连地址）只有 `subscription.DeliverableNodeSQL()` 一份，三个调用方：`listEligibleNodesTx`（再叠加套餐绑池与池的用户组限定）、套餐页每个池的 `deliverable_nodes`（`adminops.PlanPools`）、后台节点列表的「是否下发」（`NodeDeliverability` → `NodeDeliveryFacts.Refine`，在 `DeliveryState` 判「下发」之后补齐服务器未就绪、协议不完整、池没绑套餐三种说明）。改节点侧条件只改这一处
 - 没划进节点池的节点不服务任何人（fail closed），不能当成对所有订阅开放的公共节点
 - 节点池限定用户组的谓词只有 `nodefabric.PoolAdmitsUserSQL` 一份，参数只接受两个调用方写死的列表达式（白名单外直接 panic），不要另写变体（守卫 `pool_admission_test.go:TestPoolAdmitsUserSQLIsTheOnlyAdmissionRule`）。默认组（user_group_id 为空）的用户进不了任何限定了组的池
 - 心跳超时不在 SQL 里排除（agent 挂了而代理还在跑很常见），降级在 Go 侧做；从没心跳过的节点则不下发

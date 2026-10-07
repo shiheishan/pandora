@@ -78,6 +78,9 @@ type Config struct {
 
 	// NodePorts 是节点端口的保留表（node_ports.go）。
 	NodePorts NodePorts
+
+	// SingboxTemplate 是 sing-box 订阅模板的可配项（subscription_template.go）。
+	SingboxTemplate SingboxTemplate
 }
 
 func Load() (*Config, error) {
@@ -139,6 +142,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if c.NodePorts, err = loadNodePorts(c.PublicBaseURL); err != nil {
+		return nil, err
+	}
+	if c.SingboxTemplate, err = loadSingboxTemplate(); err != nil {
 		return nil, err
 	}
 	if c.IsProduction() {

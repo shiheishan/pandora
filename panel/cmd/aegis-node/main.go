@@ -41,10 +41,14 @@ func run() error {
 		return err
 	}
 	log := logging.New(cfg.Env, "aegis-node")
-	// 信号 context：后台循环（nonce 清理）挂在它上面，停机时先取消、
-	// 限时 join，再交给 defer 关资源。
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	// ctx 是启动阶段与后台循环（nonce 清理）的生命周期，写法与 public / admin 相同：开服前收到
+	// 信号立即取消（中止启动）；开服后改由停机顺序决定：RunContext 先停接新请求、等在途请求
+	// （流量上报、配置拉取）跑完，返回之后才 stop()，再限时 join 后台循环、交给 defer 关资源。
+	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
+	stopOnEarlySignal := context.AfterFunc(sigCtx, stop)
 	closeResourcesOnReturn := true
 
 	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{
@@ -169,7 +173,8 @@ func run() error {
 	}
 	defer pprofSrv.Close()
 
-	serverErr := server.RunContext(ctx, server.Options{
+	stopOnEarlySignal()
+	serverErr := server.RunContext(sigCtx, server.Options{
 		Addr:            cfg.NodeAddr,
 		Handler:         handler,
 		Log:             log,

@@ -38,7 +38,7 @@ paths:
 - 成员关系是节点的属性：组侧改成员要推进出组节点的行版本，节点侧改所属组要推进出组的组行版本，两侧拿旧版本写都回 409
 
 ## 其它
-- 节点池换池暂时冻结（`CheckNodePoolAssignment` 回 `ErrNodePoolMoveFrozen`）；中文文案只在 `api/admin` 的 handler 里，本包源码不许出现那句话（`TestPoolMoveBumpsEffectiveReleaseGeneration` 检查）
+- 后台换池只走 `PatchAdminNode` 的 `pool_id`（用户 2026-10-07 定：允许换池；原冻结接口 `assignNodePool` / `CheckNodePoolAssignment` 已删）：先拿配置发布锁、再锁节点行、UPDATE 后在锁内 `syncLegacyDesiredConfigVersion`，并推进 `config_source_generation`（守卫 `TestPatchAdminNodePoolMoveMaterializesUnderReleaseLock`、`TestPoolMoveBumpsEffectiveReleaseGeneration`）。不要再加只查不写的换池入口
 - 两阶段接入在提交时比对 `SetReleaseBinding` 注入的发布绑定（产物摘要与版本）；没注入的 Service 一律拒绝，不要为测试方便放行
 
 ## 生效配置的热路径与下发纪元

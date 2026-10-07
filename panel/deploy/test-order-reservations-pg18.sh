@@ -1857,16 +1857,16 @@ DECLARE
   v_ledger_credit uuid;
   v_ledger_txn uuid;
 BEGIN
-  IF has_function_privilege(
-       'aegis_app','app.purge_subscription_fetch_log(interval)','EXECUTE') THEN
-    RAISE EXCEPTION 'app can execute cross-tenant audit retention maintenance';
+  -- 00131：不限租户的旧签名已删；新签名只删本租户、拒收短于 31 天的保留期
+  IF to_regprocedure('app.purge_subscription_fetch_log(interval)') IS NOT NULL THEN
+    RAISE EXCEPTION 'cross-tenant audit retention maintenance still exists';
   END IF;
   BEGIN
-    PERFORM app.purge_subscription_fetch_log(interval '30 days');
-  EXCEPTION WHEN insufficient_privilege THEN v_caught := true;
+    PERFORM app.purge_subscription_fetch_log(1, 10);
+  EXCEPTION WHEN invalid_parameter_value THEN v_caught := true;
   END;
   IF NOT v_caught THEN
-    RAISE EXCEPTION 'app executed cross-tenant audit retention maintenance';
+    RAISE EXCEPTION 'app purged audit rows younger than the retention floor';
   END IF;
   v_caught := false;
   IF NOT has_column_privilege('aegis_app','orders','tenant_id','INSERT')

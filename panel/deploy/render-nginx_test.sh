@@ -132,4 +132,59 @@ grep -Fq "server_name $domain;" "$TEST_DIR/upper.conf"
 # 拒绝渲染时不留下任何东西（信任表也不建）
 [[ ! -e "$TEST_DIR/realip-rejected.conf" ]] || { printf 'rejected render created the real-IP file\n' >&2; exit 1; }
 
+# error_log：不能是 /dev/null（连接数顶满时「worker_connections are not enough」只在这里），留 crit 写文件
+refute -Eq '^[[:space:]]*error_log[[:space:]]+/dev/null' "$TEST_DIR/aegis.conf"
+[[ "$(grep -cE '^[[:space:]]*error_log /var/log/nginx/aegis-error\.log crit;' "$TEST_DIR/aegis.conf")" -eq 2 ]] \
+  || { printf 'both servers must log crit to /var/log/nginx/aegis-error.log\n' >&2; exit 1; }
+
+# 主配置的连接上限（5k-r4：Debian 缺省 768 × 2 个 worker，约一千条 SSE 就把节点请求挤成 500）。
+# 输出在 <dir>/conf.d/ 下时改 <dir>/nginx.conf：worker_connections 至少 8192、worker_rlimit_nofile 至少 65536
+NGX="$TEST_DIR/etc-nginx"
+mkdir -p "$NGX/conf.d"
+debian_main() {
+  printf 'user www-data;\nworker_processes auto;\npid /run/nginx.pid;\ninclude /etc/nginx/modules-enabled/*.conf;\n\nevents {\n\tworker_connections 768;\n\t# multi_accept on;\n}\n\nhttp {\n\tinclude /etc/nginx/conf.d/*.conf;\n}\n' >"$NGX/nginx.conf"
+}
+render_into_confd() { "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$NGX/conf.d/aegis.conf" "$TEST_DIR/realip.conf" >/dev/null; }
+debian_main
+render_into_confd
+grep -Eq '^[[:space:]]*worker_connections 8192;' "$NGX/nginx.conf"
+[[ "$(grep -c 'worker_rlimit_nofile 65536;' "$NGX/nginx.conf")" -eq 1 ]]
+# worker_rlimit_nofile 在主段（events 之前），worker_connections 在 events 里
+awk '/worker_rlimit_nofile/ { r = NR } /^events/ { e = NR } /worker_connections/ { w = NR } /^}/ && e && !c { c = NR }
+  END { exit !(r && e && w && r < e && e < w && w < c) }' "$NGX/nginx.conf" \
+  || { printf 'tuned directives landed in the wrong blocks:\n' >&2; cat "$NGX/nginx.conf" >&2; exit 1; }
+grep -Fq '# multi_accept on;' "$NGX/nginx.conf"
+grep -Fq 'include /etc/nginx/conf.d/*.conf;' "$NGX/nginx.conf"
+# 幂等
+cp "$NGX/nginx.conf" "$TEST_DIR/main.once"
+render_into_confd
+cmp -s "$TEST_DIR/main.once" "$NGX/nginx.conf" || { printf 'second render changed nginx.conf again\n' >&2; exit 1; }
+# 已经更高的不降；更低的 rlimit 抬上去；events 里没写 worker_connections 就补一行
+printf 'worker_processes 4;\nworker_rlimit_nofile 100000;\nevents {\n    worker_connections 20000;\n}\nhttp {\n}\n' >"$NGX/nginx.conf"
+render_into_confd
+grep -Fq 'worker_rlimit_nofile 100000;' "$NGX/nginx.conf" && grep -Fq 'worker_connections 20000;' "$NGX/nginx.conf" \
+  || { printf 'higher limits were lowered\n' >&2; exit 1; }
+printf 'worker_processes 2;\nworker_rlimit_nofile 1024;\nevents {\n    use epoll;\n}\nhttp {\n}\n' >"$NGX/nginx.conf"
+render_into_confd
+[[ "$(grep -c 'worker_rlimit_nofile' "$NGX/nginx.conf")" -eq 1 ]] && grep -Fq 'worker_rlimit_nofile 65536;' "$NGX/nginx.conf" \
+  && grep -Eq '^[[:space:]]*worker_connections 8192;' "$NGX/nginx.conf" \
+  || { printf 'missing worker_connections / low rlimit not fixed:\n' >&2; cat "$NGX/nginx.conf" >&2; exit 1; }
+# 认不出的结构（events 写在一行里）不改，渲染照常完成
+printf 'events { worker_connections 512; }\nhttp {\n}\n' >"$NGX/nginx.conf"
+cp "$NGX/nginx.conf" "$TEST_DIR/main.oneline"
+"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$NGX/conf.d/aegis.conf" "$TEST_DIR/realip.conf" >/dev/null 2>&1
+cmp -s "$TEST_DIR/main.oneline" "$NGX/nginx.conf" || { printf 'unrecognised layout was rewritten\n' >&2; exit 1; }
+# 显式 none：不碰；渲染被拒：不碰
+debian_main
+cp "$NGX/nginx.conf" "$TEST_DIR/main.debian"
+PANDORA_NGINX_MAIN_CONF=none render_into_confd
+cmp -s "$TEST_DIR/main.debian" "$NGX/nginx.conf" || { printf 'PANDORA_NGINX_MAIN_CONF=none still tuned nginx.conf\n' >&2; exit 1; }
+printf 'AEGIS_ADMIN_PATH=short\n%s\n' "$base" >"$TEST_DIR/invalid.env"
+if "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/invalid.env" "$NGX/conf.d/aegis.conf" "$TEST_DIR/realip.conf" >/dev/null 2>&1; then
+  printf 'expected invalid path to be rejected\n' >&2; exit 1
+fi
+cmp -s "$TEST_DIR/main.debian" "$NGX/nginx.conf" || { printf 'rejected render tuned nginx.conf\n' >&2; exit 1; }
+# 输出不在 conf.d 下（其余用例都是）：不去找主配置
+[[ ! -e "$TEST_DIR/nginx.conf" ]]
+
 printf 'render-nginx tests passed\n'

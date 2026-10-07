@@ -26,6 +26,7 @@ paths:
   - 属主：用户与订阅归 `admin/users.ts`（`userStore`），订单归 `admin/billing-store.ts`，节点池与出站归 `admin/nodes-infra.ts`
   - 被依赖的一方要反过来取数时，经 `setOrderSource` / `setPoolSource` / `setDanglingSource` 登记，不要反向 import（会成环），也不要复制种子
   - 页面上「同口径」的数字靠这份共享数据成立：仪表盘的超时未支付 = 订单页待支付筛选（`stalePendingCount`），按池在线数 = 节点池列表（`activeNodesInPool`）
+  - 套餐绑池的 `deliverable_nodes` 用 `admin/nodes.ts` 的 `deliverableNodesInPool`，与节点列表「是否下发」共用同一个 `deliverable` 判定（`deliveryOf` 照 Go 的 `DeliveryState` 再 `Refine`）；改其一要两处一起对照 Go 的 `subscription.DeliverableNodeSQL`
 - 种子都是确定性的（固定 id、按日期生成），`tests/mock-*.test.ts` 直接用种子里的 id 与数值，改种子要同步改测试
 - `admin/node-schemas.ts` 是 Go `nodefabric.ProtocolSchemas()` 的原样导出，没有自动同步也没有守卫
   - Go 的协议 schema 一变就要手动重导

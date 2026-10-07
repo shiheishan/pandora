@@ -202,18 +202,28 @@ ACME
 #   apply_edge_config <render-nginx.sh> <.env>
 apply_edge_config() {
   local render="$1" env_file="$2" out="$NGINX_DIR/conf.d/aegis.conf" prev="" log
+  # render-nginx.sh 顺带把主配置 nginx.conf 的 worker_connections / worker_rlimit_nofile 抬上去，
+  # 它同样先备份、nginx -t 不过就一起换回
+  local main_conf="$NGINX_DIR/nginx.conf" main_prev=""
   install -d -m 0755 "$NGINX_DIR/conf.d"
-  if [ -f "$out" ]; then
+  if [ -f "$out" ] || [ -f "$main_conf" ]; then
     install -d -m 0700 "$BACKUP_DIR" || return 1
+  fi
+  if [ -f "$out" ]; then
     prev="$BACKUP_DIR/nginx-aegis.conf.$(date +%Y%m%d-%H%M%S)"
     cp -p -- "$out" "$prev" || { warn "备份原 nginx 配置失败，没有改动"; return 1; }
   fi
-  bash "$render" "$env_file" "$out" "$REALIP_FILE" | sed 's/^/    /' \
+  if [ -f "$main_conf" ]; then
+    main_prev="$BACKUP_DIR/nginx-main.conf.$(date +%Y%m%d-%H%M%S)"
+    cp -p -- "$main_conf" "$main_prev" || { warn "备份 nginx.conf 失败，没有改动"; return 1; }
+  fi
+  PANDORA_NGINX_MAIN_CONF="$main_conf" bash "$render" "$env_file" "$out" "$REALIP_FILE" | sed 's/^/    /' \
     || { warn "render-nginx.sh 拒绝渲染（原因见上），nginx 配置没动"; return 1; }
   log="$(nginx -t 2>&1)" || {
     if [ -n "$prev" ]; then cp -p -- "$prev" "$out"; else rm -f -- "$out"; fi
+    if [ -n "$main_prev" ]; then cp -p -- "$main_prev" "$main_conf"; fi
     printf '%s\n' "$log" | sed 's/^/    /' >&2
-    warn "新渲染的 nginx 配置没通过 nginx -t，已换回原来的（${prev:-原来没有 aegis.conf}）"
+    warn "新渲染的 nginx 配置没通过 nginx -t，已换回原来的（${prev:-原来没有 aegis.conf}${main_prev:+；nginx.conf 也已换回}）"
     return 1
   }
   nginx_reload

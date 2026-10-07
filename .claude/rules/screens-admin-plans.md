@@ -12,3 +12,4 @@ paths:
 - 不做「恢复上架」：归档确认框写明不可恢复，只想暂停售卖的引导到「销售设置」。
 - 卖点最多 5 条（每条 1–40 字、不重复）与「标为推荐」只在向导第 1 步和销售设置抽屉出现，两处共用 `Highlights.tsx`，校验在 `model.ts`。
 - 写失败走 `failure.ts` 的 `useCatalogFailure`：只有 422 的 `fields` 给表单（没有表单可标的确认框把 fields 的话 Toast 出来）；409 的 `fields` 是乐观锁现值，标到表单上看不见，Toast 信封原文。不要直接用通用 `useFailure`。
+- 绑池选择器（`PoolCard.tsx` 的 `PoolChips`）的数字优先显示 `deliverable_nodes`（能写进订阅的节点数，后端 `subscription.DeliverableNodeSQL`），没有才退回 `active_nodes`；「0 节点」提示（`poolBindingWarning`）只按 `deliverable_nodes` 求和，没绑池或所选池可下发数为 0 都提示。`schemas.ts` 里两个数都是必填计数，假后端同样给齐

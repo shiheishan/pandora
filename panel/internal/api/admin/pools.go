@@ -12,7 +12,6 @@ package admin
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -161,43 +160,6 @@ func (h *handlers) deleteNodePool(w http.ResponseWriter, r *http.Request) {
 }
 
 type deleteNodePoolResponse struct {
-	OK bool `json:"ok"`
-}
-
-// assignNodePool 把一个节点归到某个分组。
-func (h *handlers) assignNodePool(w http.ResponseWriter, r *http.Request) {
-	tenantID := httpx.TenantIDFrom(r.Context())
-	nodeID := chi.URLParam(r, "id")
-	var req struct {
-		PoolID string `json:"pool_id"`
-	}
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	req.PoolID = strings.TrimSpace(req.PoolID)
-	if req.PoolID != "" {
-		if _, err := uuid.Parse(req.PoolID); err != nil {
-			httpx.Fail(w, r, h.d.Log,
-				httpx.Invalid(map[string]string{"pool_id": "必须是 UUID"}))
-			return
-		}
-	}
-
-	err := h.d.Node.CheckNodePoolAssignment(r.Context(), tenantID, nodeID, req.PoolID)
-	if errors.Is(err, nodefabric.ErrNodePoolMoveFrozen) {
-		// 同池是幂等重放（nodefabric 里判定）；换池在有效发布迁移完成前一律拒绝
-		err = httpx.New(httpx.CodeConflict,
-			"配置发布身份升级完成前暂不允许移动节点分组")
-	}
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, assignNodePoolResponse{OK: true})
-}
-
-type assignNodePoolResponse struct {
 	OK bool `json:"ok"`
 }
 
