@@ -22,9 +22,8 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 	if port < 1 || port > 65535 {
 		fields["server_port"] = "端口必须在 1–65535 之间"
 	}
-	if kernel != "" && kernel != "auto" && kernel != "pandora-native" && kernel != "sing-box" && kernel != "xray-core" {
-		fields["kernel"] = "只能是 auto、pandora-native、sing-box 或 xray-core"
-	}
+	// sing-box / xray-core 已不再接受新写入，见 protocol_validate_policy.go。
+	validateKernelChoice(fields, kernel)
 	if containsString(legacyProtocolTypes, nodeType) {
 		// 兼容迁移前已经运行的协议。v0 只保证 JSON 对象和大小边界，
 		// 不会写 config_validated_at，也不会冒充已通过版本化 Schema。
@@ -71,10 +70,19 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 			CertPath string `json:"cert_path"`
 			KeyPath  string `json:"key_path"`
 			Security string `json:"security"`
+			// 只有 naive 有回落：非 CONNECT 请求与认证失败反代到这里。
+			Fallback *string `json:"fallback"`
 		}
 		if err := decodeStrictProtocolObject(raw, &cfg); err != nil {
 			setProtocolObjectError(fields, err, "SOCKS/HTTP 配置包含不支持的字段或类型")
 			break
+		}
+		if cfg.Fallback != nil {
+			if nodeType != "naive" {
+				fields["protocol_config.fallback"] = "只有 Naive、Trojan、AnyTLS 支持回落"
+			} else {
+				validateProbeFallback(fields, *cfg.Fallback)
+			}
 		}
 		network := strings.ToLower(strings.TrimSpace(cfg.Network))
 		if network == "" {
@@ -250,11 +258,16 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 			CertPath      string          `json:"cert_path"`
 			KeyPath       string          `json:"key_path"`
 			PaddingScheme json.RawMessage `json:"padding_scheme"`
+			// 客户端 uTLS 指纹（表单 utls），只进订阅；节点端不读。
+			Fingerprint string `json:"fingerprint"`
+			Fallback    string `json:"fallback"`
 		}
 		if err := decodeStrictProtocolObject(raw, &cfg); err != nil {
 			setProtocolObjectError(fields, err, "AnyTLS 配置包含不支持的字段或类型")
 			break
 		}
+		validateFingerprint(fields, cfg.Fingerprint)
+		validateProbeFallback(fields, cfg.Fallback)
 		if network := strings.ToLower(strings.TrimSpace(cfg.Network)); network != "" && network != "tcp" {
 			fields["protocol_config.network"] = "AnyTLS 仅支持 TCP"
 		}
@@ -294,11 +307,17 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 			WriteBufferSize  json.RawMessage `json:"write_buffer_size"`
 			Mask             string          `json:"mask"`
 			MaskPassword     string          `json:"mask_password"`
+
+			// 认证失败的回落目标，只在 tcp 上生效。
+			Fallback string `json:"fallback"`
 		}
 		if err := decodeStrictProtocolObject(raw, &cfg); err != nil {
 			setProtocolObjectError(fields, err, "Trojan 配置包含不支持的字段或类型")
 			break
 		}
+		validateFingerprint(fields, cfg.Fingerprint)
+		validateProbeFallback(fields, cfg.Fallback)
+		validateTrojanFallbackNetwork(fields, cfg.Fallback, cfg.Network)
 		validateMKCPConfig(fields, cfg.Network, cfg.MTU, cfg.TTI,
 			cfg.UplinkCapacity, cfg.DownlinkCapacity,
 			cfg.ReadBufferSize, cfg.WriteBufferSize)
@@ -400,6 +419,17 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 			Mask             string          `json:"mask"`
 			MaskPassword     string          `json:"mask_password"`
 		}
+		// xboard 的 tls 三态里 0 / 2 已在翻译时换成 security；走到这里还是数字的
+		// 只可能是 1（普通 TLS）或乱填的值。先拦下来给一句看得懂的话，否则严格
+		// 解码会把它当成「布尔类型不对」，报一长串字段名。
+		if value, numeric := numericTLSValue(raw); numeric {
+			if value == 1 {
+				fields["protocol_config.tls"] = plainTLSNotYetMessage
+			} else {
+				fields["protocol_config.tls"] = "tls 只能是 0（不加密）或 2（REALITY）"
+			}
+			break
+		}
 		if err := decodeStrictProtocolObject(raw, &cfg); err != nil {
 			setProtocolObjectError(fields, err,
 				"仅支持 network、tls、security、dest、server_names、"+
@@ -424,23 +454,35 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 		}
 
 		security := strings.ToLower(strings.TrimSpace(cfg.Security))
+		validateFingerprint(fields, cfg.Fingerprint)
 		if nodeType == "vmess" {
 			if cfg.TLS {
-				fields["protocol_config.tls"] = "证书生命周期完成前仅允许 tls=false，请改用 NativeCore 已验证的传输模式"
+				fields["protocol_config.tls"] = plainTLSNotYetMessage
 			}
 			if security == "reality" {
 				fields["protocol_config.security"] = "REALITY 目前只支持 vless"
 			} else if security != "" && !containsString([]string{"none", "zero", "aes-128-gcm", "chacha20-poly1305", "auto"}, security) {
 				fields["protocol_config.security"] = "VMess 仅支持 none、zero、aes-128-gcm、chacha20-poly1305 或 auto"
 			}
+			if _, taken := fields["protocol_config.tls"]; !taken {
+				// VMess 没有 TLS 可选：除了挂 CDN 的 HTTP 类传输，全是明文
+				validatePlaintextStream(fields, cfg.Network)
+			}
+			if strings.TrimSpace(cfg.Flow) != "" {
+				fields["protocol_config.flow"] = "VMess 没有流控，请留空"
+			}
 			break
 		}
+		validateVLESSFlow(fields, cfg.Flow, cfg.Network, security)
 		switch security {
 		case "", "none":
 			if cfg.TLS {
-				fields["protocol_config.tls"] = "证书生命周期完成前仅允许 tls=false，请改用 security=reality"
+				fields["protocol_config.tls"] = plainTLSNotYetMessage
+			} else {
+				validatePlaintextStream(fields, cfg.Network)
 			}
 		case "reality":
+			validateRealityNetwork(fields, cfg.Network)
 			if nodeType != "vless" {
 				fields["protocol_config.security"] = "REALITY 目前只支持 vless"
 			}
@@ -455,6 +497,7 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 			fields["protocol_config.security"] = "仅支持 none 或 reality"
 		}
 	}
+	validateCertificatePaths(fields, raw)
 	return 1, fields
 }
 

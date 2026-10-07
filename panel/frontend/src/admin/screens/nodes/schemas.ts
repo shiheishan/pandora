@@ -111,8 +111,11 @@ export const protocolSchemaSchema = z.object({
   allowed_properties: strs,
   methods: z.array(z.string()).optional(),
   enums: z.record(z.string(), z.array(z.string())).optional(),
-  property_types: z.record(z.string(), z.enum(['number', 'boolean', 'json'])).optional(),
+  // list：逗号分隔录入，一个值存字符串、多个存数组（REALITY 的 server_name / short_id）
+  property_types: z.record(z.string(), z.enum(['number', 'boolean', 'json', 'list'])).optional(),
   sensitive_properties: z.array(z.string()).optional(),
+  /** 字段下的一句说明（按字段路径），跟着后端 schema 走 */
+  hints: z.record(z.string(), z.string()).optional(),
 })
 export const protocolSchemasResponse = z.object({ schemas: list(protocolSchemaSchema) })
 export type ProtocolSchema = z.output<typeof protocolSchemaSchema>

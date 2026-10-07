@@ -39,7 +39,7 @@ func realityConfig(over map[string]any) json.RawMessage {
 }
 
 func TestReality_合法配置能过(t *testing.T) {
-	ver, fields := ValidateProtocolConfig("vless", "xray-core", 443, realityConfig(nil))
+	ver, fields := ValidateProtocolConfig("vless", "pandora-native", 443, realityConfig(nil))
 	if len(fields) != 0 {
 		t.Fatalf("合法配置被拒: %v", fields)
 	}
@@ -72,7 +72,7 @@ func TestReality_拦住配错的情况(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, fields := ValidateProtocolConfig("vless", "xray-core", 443, realityConfig(tc.over))
+			_, fields := ValidateProtocolConfig("vless", "pandora-native", 443, realityConfig(tc.over))
 			if _, ok := fields[tc.field]; !ok {
 				t.Errorf("没有拦住，期望字段 %s 报错，实际: %v", tc.field, fields)
 			}
@@ -83,7 +83,7 @@ func TestReality_拦住配错的情况(t *testing.T) {
 // vmess 走 REALITY 在客户端生态里基本没人支持，允许配置只会让人配出
 // 一个连不上的节点，还以为是节点坏了。
 func TestReality_vmess不允许(t *testing.T) {
-	_, fields := ValidateProtocolConfig("vmess", "xray-core", 443, realityConfig(nil))
+	_, fields := ValidateProtocolConfig("vmess", "pandora-native", 443, realityConfig(nil))
 	if _, ok := fields["protocol_config.security"]; !ok {
 		t.Errorf("vmess 开 reality 应当被拒: %v", fields)
 	}
@@ -96,9 +96,10 @@ func TestReality_不影响原有的TLS约束(t *testing.T) {
 	if _, ok := fields["protocol_config.tls"]; !ok {
 		t.Errorf("tls=true 仍应被拒: %v", fields)
 	}
-	raw2, _ := json.Marshal(map[string]any{"network": "tcp", "tls": false})
+	// 不加密只在挂 CDN 的传输上可用；裸 tcp 明文另有测试。
+	raw2, _ := json.Marshal(map[string]any{"network": "ws", "tls": false})
 	if _, fields := ValidateProtocolConfig("vless", "auto", 443, raw2); len(fields) != 0 {
-		t.Errorf("tls=false 应当照旧可用: %v", fields)
+		t.Errorf("ws + tls=false 应当照旧可用: %v", fields)
 	}
 }
 

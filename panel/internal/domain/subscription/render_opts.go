@@ -8,10 +8,18 @@ package subscription
 // Clash 里能连、在 sing-box 里连不上。
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
+
+// defaultFingerprint 是没配 utls 时下发的 uTLS 指纹。不给的话各家客户端默认值
+// 不一致（有的干脆用 Go 自己的 TLS 指纹），同一条订阅在不同客户端上长得不一样，
+// 而 Go 的指纹本身就是一个代理特征。
+const defaultFingerprint = "chrome"
 
 // streamOpts 是 vless / vmess / trojan 共用的传输与安全层参数。
 type streamOpts struct {
@@ -24,7 +32,7 @@ type streamOpts struct {
 	// 空则客户端用服务器地址）。
 	SNI      string
 	Insecure bool
-	// Fingerprint 是后台配的 uTLS 指纹（utls），空表示没配。REALITY 没配时用 chrome。
+	// Fingerprint 是 uTLS 指纹：后台配的 utls，没配时 REALITY 与普通 TLS 都用 chrome。
 	Fingerprint string
 	PublicKey   string
 	ShortID     string
@@ -39,8 +47,9 @@ type streamOpts struct {
 	Unsupported string
 }
 
-// parseStream 读 vless / vmess / trojan 的连接参数。cfg 是内核形状。
-func parseStream(n Node) streamOpts {
+// parseStream 读 vless / vmess / trojan 的连接参数。cfg 是内核形状；uuid 是
+// 订阅所属用户的凭据，只用来在多个 REALITY server name / short id 里稳定地挑一个。
+func parseStream(n Node, uuid string) streamOpts {
 	cfg := n.Config
 	o := streamOpts{Network: strings.ToLower(strings.TrimSpace(cfgStr(cfg, "network", "tcp")))}
 	if isMKCPNetwork(o.Network) {
@@ -58,23 +67,22 @@ func parseStream(n Node) streamOpts {
 	o.Fingerprint = strings.TrimSpace(cfgStr(cfg, "fingerprint", ""))
 	o.Flow = strings.TrimSpace(cfgStr(cfg, "flow", ""))
 	if o.Reality {
-		// 只发第一个：SNI 是单值。多个 server_names 是给服务端用来接受多种
-		// 握手的，客户端挑一个用就行。
-		if names := cfgStrings(cfg, "server_names"); len(names) > 0 {
-			o.SNI = names[0]
-		}
+		// SNI 与 short id 都是单值，而服务端可以配多个。以前总发第一个：全体
+		// 用户的握手长得一模一样，配了多个也起不到分散特征的作用。现在每个
+		// 用户按稳定哈希分到其中一个——同一个用户每次拉订阅拿到的不变，
+		// 不同用户分散在各个值上。两者各用各的盐，组合也是分散的。
+		o.SNI = pickForUser(cfgStrings(cfg, "server_names"), uuid, n, "sni")
 		o.PublicKey = cfgStr(cfg, "public_key", "")
-		if ids := cfgStrings(cfg, "short_ids"); len(ids) > 0 {
-			o.ShortID = ids[0]
-		}
+		o.ShortID = pickForUser(cfgStrings(cfg, "short_ids"), uuid, n, "sid")
 		if o.Fingerprint == "" {
-			// 指纹决定客户端伪装成哪种浏览器。不给的话各家客户端默认值不一致，
-			// 同一条订阅在不同客户端上表现会不一样。
-			o.Fingerprint = "chrome"
+			o.Fingerprint = defaultFingerprint
 		}
 	} else if o.TLS {
 		o.SNI = strings.TrimSpace(cfgStr(cfg, "server_name", ""))
 		o.Insecure = cfgBool(cfg, "allow_insecure")
+		if o.Fingerprint == "" {
+			o.Fingerprint = defaultFingerprint
+		}
 	}
 
 	host := strings.TrimSpace(cfgStr(cfg, "host", ""))
@@ -163,10 +171,37 @@ func xhttpClientUnsupported(cfg map[string]any) string {
 	return ""
 }
 
+// pickForUser 在 values 里按 (用户, 节点, 用途) 的稳定哈希挑一个；空列表返回空串。
+//
+// 哈希只依赖用户凭据与节点地址，不依赖节点名（改名不该让全体用户换一套握手
+// 参数）。凭据本来就在这份订阅里，哈希结果不泄露任何别的东西。
+func pickForUser(values []string, uuid string, n Node, purpose string) string {
+	var clean []string
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			clean = append(clean, v)
+		}
+	}
+	switch len(clean) {
+	case 0:
+		return ""
+	case 1:
+		return clean[0]
+	}
+	sum := sha256.Sum256([]byte(purpose + "\x00" + uuid + "\x00" + n.Host + "\x00" + strconv.Itoa(n.Port)))
+	return clean[binary.BigEndian.Uint64(sum[:8])%uint64(len(clean))]
+}
+
 // tlsHints 是 TLS 类协议（hysteria2、tuic、anytls、naive、juicity）的客户端提示。
 type tlsHints struct {
 	SNI      string
 	Insecure bool
+}
+
+// anyTLSFingerprint 是 AnyTLS 的 uTLS 指纹：后台配的 utls（内核名 fingerprint），
+// 没配用 chrome。AnyTLS 是 TLS 里跑的协议，客户端握手的指纹同样是识别点。
+func anyTLSFingerprint(cfg map[string]any) string {
+	return firstNonEmptyStr(cfgStr(cfg, "fingerprint", ""), defaultFingerprint)
 }
 
 func parseTLSHints(cfg map[string]any) tlsHints {

@@ -50,7 +50,7 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
 ### 其他用法
 
 - **额外夹具**：`fixtures/extra.json` 每次默认都跑。格式是 `[{id, type, port, config}]`。
-  - 现有三条：旧扁平形状的 REALITY（回归组）、无证书 AnyTLS（应全格式 skip）、cipher 与 method 冲突的 ss（应全格式 skip，下发被拒）。
+  - 现有五条：旧扁平形状的 REALITY（回归组）、无证书 AnyTLS（应全格式 skip）、cipher 与 method 冲突的 ss（应全格式 skip，下发被拒），以及两条 2026-10 起存不进去的存量明文（vless / vmess 裸 tcp 不加密：后台校验不过，但库里的照常下发、照常渲染，E2E 要通）。
   - 想试一个还没进 `formFixtures` 的形状，就另写一个文件用 `--extra` 传入。
 - **只跑几个 E2E 用例**：`--only vless-ws,trojan-tls-grpc --log debug`，sing-box 客户端日志打到 `results/e2e.stderr`。
 - **导出前端假后端的 schema**：`scripts/export-schemas.sh` 把 `nodefabric.ProtocolSchemas()` 原样写进 `panel/frontend/dev/mock/admin/node-schemas.ts`，然后用 `git diff` 看变化。这份文件没有自动同步，也没有守卫，改了 schema 必须重新导出。

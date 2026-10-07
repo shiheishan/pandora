@@ -163,8 +163,16 @@ func renameErrorFieldsToXboard(nodeType string, fields map[string]string) map[st
 	}
 	out := make(map[string]string, len(fields))
 	for key, msg := range fields {
-		if xboardName, ok := inverse[key]; ok {
-			out[unflattenFieldPath(xboardName)] = msg
+		// 校验器的错误键带 protocol_config. 前缀，逆表按裸的内核名查。以前直接拿
+		// 带前缀的键去查，一个也查不到：short_ids、server_names、fingerprint 这些
+		// 与表单叶子名不同的字段，错误永远落不到输入框上，只能弹一条 toast。
+		bare, prefixed := strings.CutPrefix(key, "protocol_config.")
+		if xboardName, ok := inverse[bare]; ok {
+			renamed := unflattenFieldPath(xboardName)
+			if prefixed {
+				renamed = "protocol_config." + renamed
+			}
+			out[renamed] = msg
 			continue
 		}
 		out[key] = msg

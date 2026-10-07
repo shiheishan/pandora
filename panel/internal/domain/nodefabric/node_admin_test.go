@@ -24,8 +24,9 @@ func TestPoolMoveBumpsEffectiveReleaseGeneration(t *testing.T) {
 func TestValidateNewNodeProtocolFailClosed(t *testing.T) {
 	cases := map[string]json.RawMessage{
 		"shadowsocks": json.RawMessage(`{"method":"aes-256-gcm"}`),
-		"vless":       json.RawMessage(`{}`),
-		"vmess":       json.RawMessage(`{}`),
+		// 不加密的 vless / vmess 只许挂 CDN 的传输，裸 tcp 明文被拒（w4proto）
+		"vless": json.RawMessage(`{"network":"ws"}`),
+		"vmess": json.RawMessage(`{"network":"ws"}`),
 	}
 	for nodeType, raw := range cases {
 		t.Run(nodeType, func(t *testing.T) {
@@ -38,7 +39,7 @@ func TestValidateNewNodeProtocolFailClosed(t *testing.T) {
 	if _, err := validateNewNodeProtocol("v2ray", "auto", "edge.example", 443, json.RawMessage(`{}`)); err == nil {
 		t.Fatal("legacy v0 protocol accepted for new write")
 	}
-	if _, err := validateNewNodeProtocol("trojan", "pandora-native", "edge.example", 443, json.RawMessage(`{"tls":true,"cert_path":"cert","key_path":"key"}`)); err != nil {
+	if _, err := validateNewNodeProtocol("trojan", "pandora-native", "edge.example", 443, json.RawMessage(`{"tls":true,"cert_path":"/etc/pandora-native/certs/edge.example/fullchain.pem","key_path":"/etc/pandora-native/certs/edge.example/privkey.pem"}`)); err != nil {
 		t.Fatalf("native trojan rejected for new write: %v", err)
 	}
 	if _, err := validateNewNodeProtocol("future-protocol", "auto", "edge.example", 443, json.RawMessage(`{}`)); err == nil {

@@ -18,9 +18,9 @@ func TestValidateProtocolConfigAcceptsNativeProxyInbounds(t *testing.T) {
 	tests := []struct {
 		nodeType, raw string
 	}{
-		{"socks", `{"network":"udp","tls":true,"cert_path":"cert","key_path":"key"}`},
+		{"socks", `{"network":"udp","tls":true,"cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"}`},
 		{"http", `{"network":"tcp","tls":false,"security":"none"}`},
-		{"naive", `{"network":"tcp","tls":true,"cert_path":"cert","key_path":"key","security":"none"}`},
+		{"naive", `{"network":"tcp","tls":true,"cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","security":"none"}`},
 		{"mieru", `{"transport":"udp"}`},
 		{"shadowtls", `{"network":"tcp","version":3,"password":"outer-secret","server":"www.example.com:443","method":"aes-256-gcm","strict":true}`},
 	}
@@ -38,7 +38,7 @@ func TestValidateProtocolConfigRejectsInvalidNativeProxyInbounds(t *testing.T) {
 		{"HTTP UDP", "http", `{"network":"udp"}`, "protocol_config.network"},
 		{"SOCKS bad security", "socks", `{"security":"reality"}`, "protocol_config.security"},
 		{"TLS missing certificate", "socks", `{"tls":true}`, "protocol_config.tls"},
-		{"Naive without TLS", "naive", `{"network":"tcp","cert_path":"cert","key_path":"key"}`, "protocol_config.tls"},
+		{"Naive without TLS", "naive", `{"network":"tcp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"}`, "protocol_config.tls"},
 		{"Mieru bad transport", "mieru", `{"transport":"quic"}`, "protocol_config.transport"},
 		{"ShadowTLS bad version", "shadowtls", `{"password":"secret","server":"example.com","version":2}`, "protocol_config.version"},
 		{"ShadowTLS missing server", "shadowtls", `{"password":"secret"}`, "protocol_config.server"},
@@ -55,7 +55,7 @@ func TestValidateProtocolConfigRejectsInvalidNativeProxyInbounds(t *testing.T) {
 
 func TestValidateProtocolConfigAcceptsPandoraNativeKernel(t *testing.T) {
 	version, fields := ValidateProtocolConfig(
-		"vless", "pandora-native", 443, json.RawMessage(`{"network":"tcp","tls":false}`))
+		"vless", "pandora-native", 443, json.RawMessage(`{"network":"ws","tls":false}`))
 	if version != StableProtocolSchemaVersion || len(fields) != 0 {
 		t.Fatalf("version=%d fields=%#v, want NativeCore v1 valid", version, fields)
 	}
@@ -91,14 +91,14 @@ func TestValidateProtocolConfigAcceptsNativeXHTTPAndVMessGRPC(t *testing.T) {
 }
 
 func TestValidateProtocolConfigAcceptsNativeHysteria2(t *testing.T) {
-	raw := json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora/cert.pem","key_path":"/etc/pandora/key.pem","obfs":{"type":"salamander","password":"secret"},"up_mbps":100,"down_mbps":"200","udp_timeout":"5m"}`)
+	raw := json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","obfs":{"type":"salamander","password":"secret"},"up_mbps":100,"down_mbps":"200","udp_timeout":"5m"}`)
 	if version, fields := ValidateProtocolConfig("hysteria2", "pandora-native", 443, raw); version != 1 || len(fields) != 0 {
 		t.Fatalf("hysteria2 version=%d fields=%#v", version, fields)
 	}
 }
 
 func TestValidateProtocolConfigAcceptsNativeJuicity(t *testing.T) {
-	raw := json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora/cert.pem","key_path":"/etc/pandora/key.pem","congestion_control":"bbr"}`)
+	raw := json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","congestion_control":"bbr"}`)
 	if version, fields := ValidateProtocolConfig("juicity", "pandora-native", 443, raw); version != 1 || len(fields) != 0 {
 		t.Fatalf("juicity version=%d fields=%#v", version, fields)
 	}
@@ -108,9 +108,9 @@ func TestValidateProtocolConfigRejectsInvalidNativeJuicity(t *testing.T) {
 	tests := []struct {
 		name, raw, field string
 	}{
-		{"missing certificate", `{"network":"udp","key_path":"key"}`, "protocol_config.cert_path"},
-		{"wrong network", `{"network":"tcp","cert_path":"cert","key_path":"key"}`, "protocol_config.network"},
-		{"wrong congestion", `{"network":"udp","cert_path":"cert","key_path":"key","congestion_control":"reno"}`, "protocol_config.congestion_control"},
+		{"missing certificate", `{"network":"udp","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"}`, "protocol_config.cert_path"},
+		{"wrong network", `{"network":"tcp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"}`, "protocol_config.network"},
+		{"wrong congestion", `{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","congestion_control":"reno"}`, "protocol_config.congestion_control"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -123,14 +123,14 @@ func TestValidateProtocolConfigRejectsInvalidNativeJuicity(t *testing.T) {
 }
 
 func TestValidateProtocolConfigAcceptsNativeTUIC(t *testing.T) {
-	raw := json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora/cert.pem","key_path":"/etc/pandora/key.pem","congestion_control":"bbr","auth_timeout":"3s","heartbeat":10,"udp_timeout":"5m","zero_rtt":false}`)
+	raw := json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","congestion_control":"bbr","auth_timeout":"3s","heartbeat":10,"udp_timeout":"5m","zero_rtt":false}`)
 	if version, fields := ValidateProtocolConfig("tuic", "pandora-native", 443, raw); version != 1 || len(fields) != 0 {
 		t.Fatalf("tuic version=%d fields=%#v", version, fields)
 	}
 }
 
 func TestValidateProtocolConfigAcceptsNativeAnyTLS(t *testing.T) {
-	raw := json.RawMessage(`{"network":"tcp","tls":true,"cert_path":"/etc/pandora/cert.pem","key_path":"/etc/pandora/key.pem","padding_scheme":["64-128","256-512"]}`)
+	raw := json.RawMessage(`{"network":"tcp","tls":true,"cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","padding_scheme":["64-128","256-512"]}`)
 	if version, fields := ValidateProtocolConfig("anytls", "pandora-native", 443, raw); version != 1 || len(fields) != 0 {
 		t.Fatalf("anytls version=%d fields=%#v", version, fields)
 	}
@@ -138,7 +138,7 @@ func TestValidateProtocolConfigAcceptsNativeAnyTLS(t *testing.T) {
 
 func TestValidateProtocolConfigAcceptsNativeTrojanTLSAndReality(t *testing.T) {
 	tests := []string{
-		`{"network":"grpc","tls":true,"grpc_path":"/pandora.Trojan","grpc_service_name":"Proxy","cert_path":"/etc/pandora/cert.pem","key_path":"/etc/pandora/key.pem"}`,
+		`{"network":"grpc","tls":true,"grpc_path":"/pandora.Trojan","grpc_service_name":"Proxy","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"}`,
 		`{"network":"tcp","tls":false,"security":"reality","dest":"www.example.com:443","server_names":["www.example.com"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","public_key":"L-V9o0fNYkMVKNqsX7spBzD_9oSvxM_C7ZCZX1jLO3Q","short_ids":["0123456789abcdef"]}`,
 	}
 	for _, raw := range tests {
@@ -155,7 +155,7 @@ func TestValidateProtocolConfigRejectsInvalidNativeTrojan(t *testing.T) {
 		{"missing TLS", `{"network":"tcp"}`, "protocol_config.tls"},
 		{"TLS missing certificate", `{"network":"tcp","tls":true}`, "protocol_config.cert_path"},
 		{"REALITY on websocket", `{"network":"ws","tls":false,"security":"reality","dest":"www.example.com:443","server_names":["www.example.com"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short_ids":["0123456789abcdef"]}`, "protocol_config.security"},
-		{"bad network", `{"network":"xhttp","tls":true,"cert_path":"cert","key_path":"key"}`, "protocol_config.network"},
+		{"bad network", `{"network":"xhttp","tls":true,"cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"}`, "protocol_config.network"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -189,10 +189,10 @@ func TestValidateProtocolConfigRejectsInvalidNativeTUIC(t *testing.T) {
 	tests := []struct {
 		name, raw, field string
 	}{
-		{"missing certificate", `{"network":"udp","key_path":"key"}`, "protocol_config.cert_path"},
-		{"wrong congestion", `{"network":"udp","cert_path":"cert","key_path":"key","congestion_control":"reno"}`, "protocol_config.congestion_control"},
-		{"wrong boolean", `{"network":"udp","cert_path":"cert","key_path":"key","zero_rtt":"false"}`, "protocol_config"},
-		{"bad heartbeat", `{"network":"udp","cert_path":"cert","key_path":"key","heartbeat":-1}`, "protocol_config.heartbeat"},
+		{"missing certificate", `{"network":"udp","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"}`, "protocol_config.cert_path"},
+		{"wrong congestion", `{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","congestion_control":"reno"}`, "protocol_config.congestion_control"},
+		{"wrong boolean", `{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","zero_rtt":"false"}`, "protocol_config"},
+		{"bad heartbeat", `{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","heartbeat":-1}`, "protocol_config.heartbeat"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -208,10 +208,10 @@ func TestValidateProtocolConfigRejectsInvalidNativeHysteria2(t *testing.T) {
 	tests := []struct {
 		name, raw, field string
 	}{
-		{"missing certificate", `{"network":"udp","key_path":"key"}`, "protocol_config.cert_path"},
-		{"wrong network", `{"network":"tcp","cert_path":"cert","key_path":"key"}`, "protocol_config.network"},
-		{"bad obfs", `{"network":"udp","cert_path":"cert","key_path":"key","obfs":{"type":"http"}}`, "protocol_config.obfs"},
-		{"bad timeout", `{"network":"udp","cert_path":"cert","key_path":"key","udp_timeout":-1}`, "protocol_config.udp_timeout"},
+		{"missing certificate", `{"network":"udp","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"}`, "protocol_config.cert_path"},
+		{"wrong network", `{"network":"tcp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"}`, "protocol_config.network"},
+		{"bad obfs", `{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","obfs":{"type":"http"}}`, "protocol_config.obfs"},
+		{"bad timeout", `{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem","udp_timeout":-1}`, "protocol_config.udp_timeout"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -262,7 +262,7 @@ func TestValidateProtocolConfigRejectsUnknownAndUnsafeValues(t *testing.T) {
 
 func TestValidateProtocolConfigKeepsLegacyProtocolsAtVersionZero(t *testing.T) {
 	version, fields := ValidateProtocolConfig(
-		"v2ray", "sing-box", 443, json.RawMessage(`{"legacy_option":true}`))
+		"v2ray", "auto", 443, json.RawMessage(`{"legacy_option":true}`))
 	if version != 0 || len(fields) != 0 {
 		t.Fatalf("version=%d fields=%#v, want compatible v0", version, fields)
 	}
@@ -294,7 +294,7 @@ func TestValidateProtocolConfigRejectsDuplicateKeys(t *testing.T) {
 
 func TestValidateProtocolConfigReportsMalformedJSONSeparately(t *testing.T) {
 	_, fields := ValidateProtocolConfig(
-		"v2ray", "sing-box", 443, json.RawMessage(`{"network":`))
+		"v2ray", "auto", 443, json.RawMessage(`{"network":`))
 	if got := fields["protocol_config"]; got != "协议配置必须是合法的 JSON 对象" {
 		t.Fatalf("message=%q, want malformed JSON message", got)
 	}
@@ -305,8 +305,9 @@ func TestValidateProtocolConfigStableRenderSubset(t *testing.T) {
 		name, nodeType, kernel, raw string
 	}{
 		{"shadowsocks", "shadowsocks", "auto", `{"method":"aes-256-gcm"}`},
-		{"vless tcp plaintext", "vless", "xray-core", `{"network":"tcp","tls":false}`},
-		{"vmess tcp", "vmess", "xray-core", `{"network":"tcp","tls":false}`},
+		// 不加密只剩挂 CDN 的 HTTP 类传输；裸 tcp 明文见 protocol_policy_test.go
+		{"vless ws plaintext", "vless", "pandora-native", `{"network":"ws","tls":false}`},
+		{"vmess grpc", "vmess", "pandora-native", `{"network":"grpc","tls":false}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -321,10 +322,10 @@ func TestValidateProtocolConfigStableRenderSubset(t *testing.T) {
 func TestValidateProtocolConfigStableSubsetFailsClosed(t *testing.T) {
 	tests := []struct{ nodeType, kernel, raw, field string }{
 		{"shadowsocks", "auto", `{"method":"2022-blake3-aes-128-gcm"}`, "protocol_config.method"},
-		{"vless", "xray-core", `{"network":"quic","tls":false}`, "protocol_config.network"},
-		{"vmess", "xray-core", `{"network":"tcp","tls":"true"}`, "protocol_config"},
-		{"vless", "xray-core", `{"network":"tcp","tls":true}`, "protocol_config.tls"},
-		{"vless", "xray-core", `{"network":"tcp","server_name":"edge.example.com"}`, "protocol_config"},
+		{"vless", "pandora-native", `{"network":"quic","tls":false}`, "protocol_config.network"},
+		{"vmess", "pandora-native", `{"network":"tcp","tls":"true"}`, "protocol_config"},
+		{"vless", "pandora-native", `{"network":"tcp","tls":true}`, "protocol_config.tls"},
+		{"vless", "pandora-native", `{"network":"tcp","server_name":"edge.example.com"}`, "protocol_config"},
 	}
 	for _, tt := range tests {
 		_, fields := ValidateProtocolConfig(tt.nodeType, tt.kernel, 443, json.RawMessage(tt.raw))
@@ -417,7 +418,7 @@ func TestValidateProtocolConfigAcceptsMKCPMask(t *testing.T) {
 		if nodeType == "trojan" {
 			// trojan 的 tls=true 要求同时给证书路径，那是既有校验
 			cfg = json.RawMessage(`{"network":"mkcp","tls":true,
-				"cert_path":"/etc/ssl/a.crt","key_path":"/etc/ssl/a.key",
+				"cert_path":"/etc/pandora-native/certs/example.com/a.crt","key_path":"/etc/pandora-native/certs/example.com/a.key",
 				"mask":"mkcp-aes128gcm","mask_password":"hunter2","mtu":1350}`)
 		}
 		_, fields := ValidateProtocolConfig(nodeType, "pandora-native", 28444, cfg)
@@ -465,13 +466,13 @@ func TestMKCPMTUBoundsMatchNodeAgent(t *testing.T) {
 // 什么都没发生——配了没用比配不了更误导。
 func TestTUICRejectsUDPOverStream(t *testing.T) {
 	_, fields := ValidateProtocolConfig("tuic", "pandora-native", 443,
-		json.RawMessage(`{"network":"udp","cert_path":"/a.crt","key_path":"/a.key","udp_over_stream":true}`))
+		json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/a.crt","key_path":"/etc/pandora-native/certs/example.com/a.key","udp_over_stream":true}`))
 	if len(fields) == 0 {
 		t.Error("udp_over_stream 应当被拒")
 	}
 	// zero_rtt 是真实现了的，不能连它一起拒
 	_, fields = ValidateProtocolConfig("tuic", "pandora-native", 443,
-		json.RawMessage(`{"network":"udp","cert_path":"/a.crt","key_path":"/a.key","zero_rtt":true}`))
+		json.RawMessage(`{"network":"udp","cert_path":"/etc/pandora-native/certs/example.com/a.crt","key_path":"/etc/pandora-native/certs/example.com/a.key","zero_rtt":true}`))
 	if len(fields) != 0 {
 		t.Errorf("zero_rtt 被误拒：%v", fields)
 	}
