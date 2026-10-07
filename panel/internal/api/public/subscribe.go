@@ -104,6 +104,8 @@ func (h *handlers) subscribe(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Profile-Update-Interval", "12")
 	// 订阅内容随节点状态变化，不能被任何中间层缓存
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	// 客户端拿文件名当配置名，否则显示成一长串订阅 URL（站点名按租户缓存，不额外查库）
+	w.Header().Set("Content-Disposition", subscription.ContentDisposition(h.d.Subscription.SiteName(ctx, tenantID)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 }
