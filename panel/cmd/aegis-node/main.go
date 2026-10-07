@@ -41,7 +41,7 @@ func run() error {
 		return err
 	}
 	log := logging.New(cfg.Env, "aegis-node")
-	// 信号 context：后台循环（缓存作废订阅、nonce 清理）挂在它上面，停机时先取消、
+	// 信号 context：后台循环（nonce 清理）挂在它上面，停机时先取消、
 	// 限时 join，再交给 defer 关资源。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -122,15 +122,11 @@ func run() error {
 	stream := nodefabric.NewStreamHub()
 	nodeService.AttachStream(stream)
 	nodeService.AttachRealtime(rtHub)
-	// 节点链路缓存（用户集、令牌认证、签名身份）：只在作废订阅跑着的租户上生效。
+	// 节点链路缓存（按池的用户集、签名身份），由下发纪元保证改完即生效（迁移 00101）。
 	nodeService.EnableNodeCaches()
 
 	var workers sync.WaitGroup
-	workers.Add(2)
-	go func() {
-		defer workers.Done()
-		nodeService.RunNodeCacheInvalidation(ctx, middleware.DefaultTenantID, log)
-	}()
+	workers.Add(1)
 	// 签名请求 nonce 的过期清理。原先每个请求顺手删一批，并发请求争同一批行；
 	// 防重放只靠主键冲突，清理晚几分钟不影响判定，只影响表的大小。
 	go func() {

@@ -59,6 +59,11 @@ type ServingNode struct {
 	// 出站与分流，由 LoadRouting 填充
 	Outbounds []NodeOutbound
 	Routes    []NodeRoute
+
+	// deliveryEpoch 是读出这个节点视图时的下发纪元（nodecache.go），与节点行在同一条
+	// 查询里读出。epochKnown 为假（别处拼出来的节点视图）时用户集不走缓存。
+	deliveryEpoch int64
+	epochKnown    bool
 }
 
 // AuthenticateNode 校验 UniProxy 请求携带的 node_id + token。
@@ -66,71 +71,46 @@ type ServingNode struct {
 // token 在库里只有哈希。node_id 走的是节点 UUID，而不是协议里常见的自增整数 ——
 // 节点数量有限，用 UUID 不会给节点端造成困扰，却省掉一套自增 ID 映射。
 //
-// 成功结果按（租户, 节点, 令牌哈希）缓存 30 秒（nodecache.go）：节点行一变（状态、
-// 服务状态、令牌、协议、换池都会触发 nodes 变更通知）就作废，收不到通知时 TTL
-// 兜底——吊销或退役之后最多再放行一个 TTL。认证失败从不缓存。
+// 每次都查库，不缓存：后台停用、退役节点之后下一次请求就必须 401（uniproxy_e2e
+// 钉着这一点），而这只是一次主键点查。它顺手读出下发纪元，用户集缓存拿它判断
+// 自己是否过期，不必为此多跑一次查询。
 func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token, nodeType string) (*ServingNode, error) {
 	if nodeID == "" || token == "" {
 		return nil, httpx.New(httpx.CodeUnauthorized, "缺少 node_id 或 token")
 	}
-	tokenHash := crypto.HashToken(token)
 
-	load := func(ctx context.Context) (ServingNode, error) {
-		var n ServingNode
-		var proto []byte
-		var isControlNode bool
-		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-			return tx.QueryRow(ctx, `
-				SELECT n.id, n.name, coalesce(n.node_type,''), coalesce(n.server_host,''),
-				       coalesce(n.server_port,0), n.traffic_rate, n.protocol_config, n.pool_id,
-				       n.status, coalesce(n.kernel,'auto'), s.status, n.serving_status,
-				       coalesce(s.control_node_id=n.id,false)
-				  FROM nodes n
-				  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
-				 WHERE n.tenant_id = $1 AND n.id = $2::uuid
-				   AND n.server_token_hash = $3
-				   AND s.deleted_at IS NULL
-				   AND s.status IN ('ready','draining')
-				   AND n.serving_status IN ('active','draining')
-				   AND n.node_type IS NOT NULL
-				   AND n.server_port BETWEEN 1 AND 65535
-				   AND `+StableProtocolReadySQL("n"),
-				tenantID, nodeID, tokenHash,
-			).Scan(&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
-				&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
-				&n.ServerStatus, &n.ServingStatus, &isControlNode)
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			// 节点不存在与 token 不对返回同一种错误
-			return ServingNode{}, httpx.New(httpx.CodeUnauthorized, "节点认证失败")
-		}
-		if err != nil {
-			return ServingNode{}, err
-		}
-		// 只有正式在役的节点能拉用户。standby/canary 阶段的节点若也能拉，
-		// 灰度就失去意义了 —— 用户会被分配到还没验证完的机器上（NODE-010）。
-		if !legacyNodeStatusAllowsServing(isControlNode, n.Status) {
-			return ServingNode{}, httpx.New(httpx.CodeForbidden, "节点当前状态不可提供服务")
-		}
-		n.NodeType = CanonicalNodeType(n.NodeType)
-		n.Protocol = proto
-		return n, nil
-	}
-
-	var cached ServingNode
-	var err error
-	if c := s.nodeCachesFor(tenantID); c != nil {
-		cached, err = c.auth.get(ctx, authCacheKey(tenantID, nodeID, tokenHash), nodeCacheGroup(tenantID, nodeID), load)
-	} else {
-		cached, err = load(ctx)
+	var n ServingNode
+	var proto []byte
+	var isControlNode bool
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT n.id, n.name, coalesce(n.node_type,''), coalesce(n.server_host,''),
+			       coalesce(n.server_port,0), n.traffic_rate, n.protocol_config, n.pool_id,
+			       n.status, coalesce(n.kernel,'auto'), s.status, n.serving_status,
+			       coalesce(s.control_node_id=n.id,false), `+deliveryEpochSQL+`
+			  FROM nodes n
+			  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
+			 WHERE n.tenant_id = $1 AND n.id = $2::uuid
+			   AND n.server_token_hash = $3
+			   AND s.deleted_at IS NULL
+			   AND s.status IN ('ready','draining')
+			   AND n.serving_status IN ('active','draining')
+			   AND n.node_type IS NOT NULL
+			   AND n.server_port BETWEEN 1 AND 65535
+			   AND `+StableProtocolReadySQL("n"),
+			tenantID, nodeID, crypto.HashToken(token),
+		).Scan(&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
+			&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
+			&n.ServerStatus, &n.ServingStatus, &isControlNode, &n.deliveryEpoch)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// 节点不存在与 token 不对返回同一种错误
+		return nil, httpx.New(httpx.CodeUnauthorized, "节点认证失败")
 	}
 	if err != nil {
 		return nil, err
 	}
-	// 缓存里那份被多个请求共用：交出去的是副本，调用方往上挂分流、记协议漂移都不串。
-	n := cached
-	n.Protocol = append(json.RawMessage(nil), cached.Protocol...)
-	n.Outbounds, n.Routes, n.DeclaredType = nil, nil, ""
+	n.NodeType = CanonicalNodeType(n.NodeType)
 	// 节点端声明的协议和库里不一致时，以库为准，不再拒绝认证。
 	//
 	// 原先这里直接返回 401。它看着像一道安全检查，其实不是：能走到这行
@@ -152,6 +132,14 @@ func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token,
 	if requestedType := CanonicalNodeType(nodeType); requestedType != "" && requestedType != n.NodeType {
 		n.DeclaredType = requestedType
 	}
+
+	// 只有正式在役的节点能拉用户。standby/canary 阶段的节点若也能拉，
+	// 灰度就失去意义了 —— 用户会被分配到还没验证完的机器上（NODE-010）。
+	if !legacyNodeStatusAllowsServing(isControlNode, n.Status) {
+		return nil, httpx.New(httpx.CodeForbidden, "节点当前状态不可提供服务")
+	}
+	n.Protocol = proto
+	n.epochKnown = true
 	return &n, nil
 }
 
@@ -267,15 +255,23 @@ type ProxyUser struct {
 //
 // 结果只取决于（租户, 节点池）加两条租户设置（设备限制模式与余量），与节点本身
 // 无关——除了「这个节点此刻能不能服务」那道门槛，而它与 AuthenticateNode、
-// loadServingNodeForPush 的 WHERE 是同一组条件，每个调用方拿到 n 之前都验过了。
-// 所以缓存开着时按（租户, 池）缓存、查询不带节点门槛：同池 200 个节点合成一次查询。
-// 缓存没开（没有作废订阅的进程、测试）时照旧带门槛直查。返回的切片只读。
+// loadServingNodeForPush 的 WHERE 是同一组条件，每个调用方拿到 n 之前都刚在同一条
+// 查询里验过，并顺手读出了下发纪元。所以缓存开着时按（租户, 池）缓存、查询不带节点
+// 门槛：同池 200 个节点合成一次查询；条目的纪元落后于 n 的纪元就重算（nodecache.go），
+// 订阅、配额、套餐、池授权、用户组、设备判定设置的任何已提交改动下一次请求就生效。
+// 缓存没开、或 n 不带纪元时照旧带门槛直查。返回的切片只读。
 func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *ServingNode) ([]ProxyUser, error) {
 	// query 是唯一的下发查询。gateNodeID 非空时带上节点门槛（直查路径）；缓存路径
-	// 按池共享结果，门槛由调用方的认证保证，见上。
-	query := func(ctx context.Context, gateNodeID string) ([]ProxyUser, error) {
+	// 按池共享结果，门槛由调用方的认证保证，见上。epoch 非空时先读下发纪元：先于
+	// 名单查询读，名单只会比纪元新，不会更旧。
+	query := func(ctx context.Context, gateNodeID string, epoch *int64) ([]ProxyUser, error) {
 		users := []ProxyUser{}
 		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			if epoch != nil {
+				if err := tx.QueryRow(ctx, `SELECT `+deliveryEpochSQL).Scan(epoch); err != nil {
+					return err
+				}
+			}
 			// 节点必须划进节点池，且订阅的套餐版本绑定了这个池。没划进池的节点
 			// 不服务任何订阅（R104，fail closed）：$2 为 NULL 时等式求值为 NULL，
 			// EXISTS 为假，列表为空。这与订阅下载、门户预览里的
@@ -379,21 +375,24 @@ func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *Serving
 		return users, err
 	}
 
-	c := s.nodeCachesFor(tenantID)
-	if c == nil {
-		return query(ctx, n.ID)
+	c := s.caches
+	if c == nil || !n.epochKnown {
+		return query(ctx, n.ID, nil)
 	}
 	if n.PoolID == nil {
 		// 与直查路径的「$2 为 NULL 时列表为空」同一结论，不必为它查库
 		return []ProxyUser{}, nil
 	}
-	set, err := c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), tenantID,
+	want := n.deliveryEpoch
+	set, err := c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), epochFlight(want),
+		func(set nodeUserSet) bool { return set.epoch >= want },
 		func(ctx context.Context) (nodeUserSet, error) {
-			users, err := query(ctx, "")
+			var epoch int64
+			users, err := query(ctx, "", &epoch)
 			if err != nil {
 				return nodeUserSet{}, err
 			}
-			return nodeUserSet{users: users, version: UserSetVersion(users)}, nil
+			return nodeUserSet{users: users, version: UserSetVersion(users), epoch: epoch}, nil
 		})
 	if err != nil {
 		return nil, err

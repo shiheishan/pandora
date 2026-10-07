@@ -15,8 +15,8 @@ import (
 //
 // 租户级事件（付款、R104 的池与用户组变化）要落到本进程上连着的每个节点。原先
 // 逐节点串行「查节点 → 查分流 → 查用户」：200 个节点就是 600 个事务，且每个节点
-// 各跑一遍同一个池的用户查询。现在一条查询取出全部在线节点所在的池，每个池只算
-// 一次用户集（有缓存时就是一次缓存加载），全量载荷按版本只编码一次，再推给池里
+// 各跑一遍同一个池的用户查询。现在一条查询取出全部在线节点所在的池（连同当前下发
+// 纪元），每个池只算一次用户集（有缓存时至多一次缓存重算），全量载荷按版本只编码一次，再推给池里
 // 的每个节点；查库的那部分并发有上限，不把连接池抽干。
 
 // nodeFanoutConcurrency 是扇出里同时查库的上限。aegis-node 的连接池只有 8 条，
@@ -187,7 +187,7 @@ func (s *Service) loadServingNodesForPush(ctx context.Context, tenantID string, 
 	var out []ServingNode
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT n.id::text, n.pool_id::text
+			SELECT n.id::text, n.pool_id::text, `+deliveryEpochSQL+`
 			  FROM nodes n
 			  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
 			 WHERE n.tenant_id = $1 AND n.id = ANY($2::uuid[])
@@ -204,9 +204,10 @@ func (s *Service) loadServingNodesForPush(ctx context.Context, tenantID string, 
 		defer rows.Close()
 		for rows.Next() {
 			var n ServingNode
-			if err := rows.Scan(&n.ID, &n.PoolID); err != nil {
+			if err := rows.Scan(&n.ID, &n.PoolID, &n.deliveryEpoch); err != nil {
 				return err
 			}
+			n.epochKnown = true
 			out = append(out, n)
 		}
 		return rows.Err()

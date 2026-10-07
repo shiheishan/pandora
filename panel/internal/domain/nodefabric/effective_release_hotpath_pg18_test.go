@@ -192,14 +192,84 @@ func testReportAliveBatchPG18(t *testing.T, ctx context.Context, admin *pgxpool.
 	}
 	cached := NewService(app, svc.signer)
 	cached.EnableNodeCaches()
-	cached.caches.watch(tenant.String())
-	defer cached.caches.unwatch(tenant.String())
-	pooled, version, err := cached.NodeUserSet(ctx, tenant.String(), &ServingNode{ID: node.String(), PoolID: &pool})
+	epoch := deliveryEpochPG18(t, ctx, admin)
+	pooled, version, err := cached.NodeUserSet(ctx, tenant.String(),
+		&ServingNode{ID: node.String(), PoolID: &pool, deliveryEpoch: epoch, epochKnown: true})
 	if err != nil || len(pooled) != 0 || version != UserSetVersion(nil) {
 		t.Fatalf("pool-level node user query = %v %q, %v", pooled, version, err)
+	}
+	if set, ok := cached.caches.users.peek(usersCacheKey(tenant.String(), pool)); !ok || set.epoch < epoch {
+		t.Fatalf("cached user set epoch = %+v (ok=%v), want >= %d", set, ok, epoch)
 	}
 	serving, err := svc.loadServingNodesForPush(ctx, tenant.String(), []string{node.String(), uuid.NewString()})
 	if err != nil || len(serving) != 0 {
 		t.Fatalf("batched serving-node query = %v, %v (fixture node has no server, so none qualify)", serving, err)
 	}
+
+	testDeliveryEpochTriggersPG18(t, ctx, admin, tenant, node, sub)
+}
+
+func deliveryEpochPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool) (epoch int64) {
+	t.Helper()
+	if err := admin.QueryRow(ctx, `SELECT last_value FROM node_delivery_epoch`).Scan(&epoch); err != nil {
+		t.Fatal(err)
+	}
+	return epoch
+}
+
+// 下发纪元（00101）只在下发输入「可能变了」时推进：配额只在用尽与否翻转时、节点只在
+// 状态列被写时；扣量与心跳那种高频写不碰它。推进发生在提交时。
+func testDeliveryEpochTriggersPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant, node, sub uuid.UUID) {
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%v\nSQL: %s", err, sql)
+		}
+	}
+	expect := func(what string, bumped bool, change func()) {
+		t.Helper()
+		before := deliveryEpochPG18(t, ctx, admin)
+		change()
+		after := deliveryEpochPG18(t, ctx, admin)
+		if (after > before) != bumped {
+			t.Fatalf("%s: delivery epoch %d -> %d, want advanced=%v", what, before, after, bumped)
+		}
+	}
+	expect("new quota balance", true, func() {
+		exec(`INSERT INTO quota_balances (tenant_id, subscription_id, metric, period, period_start, period_end, granted, limit_value)
+			VALUES ($1, $2, 'traffic.bytes', 'cycle', now() - interval '1 day', now() + interval '30 days', 100, 100)`, tenant, sub)
+	})
+	expect("consumption that leaves quota", false, func() {
+		exec(`UPDATE quota_balances SET consumed = 40 WHERE subscription_id=$1 AND metric='traffic.bytes'`, sub)
+	})
+	expect("consumption that exhausts quota", true, func() {
+		exec(`UPDATE quota_balances SET consumed = 100 WHERE subscription_id=$1 AND metric='traffic.bytes'`, sub)
+	})
+	expect("consumption past an exhausted quota", false, func() {
+		exec(`UPDATE quota_balances SET consumed = 150 WHERE subscription_id=$1 AND metric='traffic.bytes'`, sub)
+	})
+	expect("quota reset", true, func() {
+		exec(`UPDATE quota_balances SET consumed = 0 WHERE subscription_id=$1 AND metric='traffic.bytes'`, sub)
+	})
+	expect("subscription change", true, func() {
+		exec(`UPDATE subscriptions SET current_period_end = now() + interval '31 days' WHERE id=$1`, sub)
+	})
+	expect("heartbeat-style node write", false, func() {
+		exec(`UPDATE nodes SET last_heartbeat_at = now(), health_score = 90 WHERE id=$1`, node)
+	})
+	expect("node serving status change", true, func() {
+		exec(`UPDATE nodes SET serving_status = 'disabled' WHERE id=$1`, node)
+	})
+	expect("rolled back change", false, func() {
+		tx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE subscriptions SET current_period_end = now() + interval '32 days' WHERE id=$1`, sub); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	platformcrypto "github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
-	"github.com/aegispanel/aegis/internal/platform/realtime"
 )
 
 // 这些检查是 TestSignedNodeHTTPPG18 的一部分（effective 域的 -run 只列顶层函数名），
@@ -89,35 +88,18 @@ func checkEffectiveConfigUnchanged(t *testing.T, privateKey ed25519.PrivateKey, 
 	get("not-a-release", http.StatusOK)
 }
 
-// 缓存开着的网关：签名身份、令牌认证、用户集都走缓存；节点退役的库变更通知一到，
-// 两种认证立刻失效，不用等 TTL。通知链路与生产一致：库触发器 → 库监听 → realtime
-// → 作废订阅。
-func checkCachedGatewayRevocation(t *testing.T, ctx context.Context, admin *pgxpool.Pool, app *db.Pool,
+// 缓存开着的网关：签名身份与用户集走缓存，但改动提交后下一次请求就生效——下发纪元
+// （迁移 00101）随 nonce 认领、UniProxy 认证一起读出，不靠事件、不等 TTL。
+func checkCachedGatewayFollowsEpoch(t *testing.T, ctx context.Context, admin *pgxpool.Pool, app *db.Pool,
 	signer *platformcrypto.Signer, privateKey ed25519.PrivateKey, tenantID, nodeID, runtimeToken string) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	hub := realtime.NewHub(nil, logger)
-	defer hub.Close()
 	cached := nodefabric.NewService(app, signer)
 	cached.SetReleaseBinding(nodefabric.ReleaseBinding{})
-	cached.AttachRealtime(hub)
 	cached.EnableNodeCaches()
-
-	listenCtx, stopListen := context.WithCancel(ctx)
-	realtime.StartDBListener(listenCtx, app.Pool, hub, logger)
-	watchDone := make(chan struct{})
-	go func() {
-		defer close(watchDone)
-		cached.RunNodeCacheInvalidation(listenCtx, tenantID, logger)
-	}()
-	defer func() {
-		stopListen()
-		<-watchDone
-	}()
-	waitForNodeChangeEvents(t, ctx, admin, hub, tenantID, nodeID)
-
 	server := httptest.NewServer(NewRouter(Deps{Pool: app, Log: logger, Node: cached}))
 	defer server.Close()
+
 	heartbeat := func() int {
 		t.Helper()
 		req := newSignedRequest(t, privateKey, nodeID, http.MethodPost, server.URL+"/v1/nodes/heartbeat",
@@ -151,7 +133,7 @@ func checkCachedGatewayRevocation(t *testing.T, ctx context.Context, admin *pgxp
 		return resp.StatusCode, resp.Header.Get("ETag")
 	}
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		if code := heartbeat(); code != http.StatusOK {
 			t.Fatalf("cached gateway heartbeat #%d = %d", i, code)
 		}
@@ -164,40 +146,21 @@ func checkCachedGatewayRevocation(t *testing.T, ctx context.Context, admin *pgxp
 		t.Fatalf("cached gateway user list with matching ETag = %d, want 304", code)
 	}
 
-	if _, err := admin.Exec(ctx, `UPDATE nodes SET serving_status='retired' WHERE tenant_id=$1 AND id=$2::uuid`,
+	// 只改身份表的手工吊销：没有节点行变化、没有事件，下一次签名请求照样被拒。
+	if _, err := admin.Exec(ctx, `UPDATE node_identities SET status='revoked', revoked_at=now(),
+		revoked_reason='e2e cache revocation' WHERE tenant_id=$1 AND node_id=$2::uuid AND status='active'`,
 		tenantID, nodeID); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for heartbeat() != http.StatusUnauthorized {
-		if time.Now().After(deadline) {
-			t.Fatal("retired node's cached identity was still accepted 5s after the change notification")
-		}
-		time.Sleep(50 * time.Millisecond)
+	if code := heartbeat(); code != http.StatusUnauthorized {
+		t.Fatalf("revoked identity still accepted by the cached gateway: %d", code)
+	}
+	// 停用节点：UniProxy 认证每次查库，下一次请求就 401。
+	if _, err := admin.Exec(ctx, `UPDATE nodes SET serving_status='disabled' WHERE tenant_id=$1 AND id=$2::uuid`,
+		tenantID, nodeID); err != nil {
+		t.Fatal(err)
 	}
 	if code, _ := users(""); code != http.StatusUnauthorized {
-		t.Fatalf("retired node's cached UniProxy token = %d, want 401", code)
+		t.Fatalf("disabled node's UniProxy token = %d, want 401", code)
 	}
-}
-
-// waitForNodeChangeEvents 等库监听真正 LISTEN 上：反复碰一下节点行，直到管理频道
-// 收到它的变更通知。之后的改动就不会落在监听建立之前的空窗里。
-func waitForNodeChangeEvents(t *testing.T, ctx context.Context, admin *pgxpool.Pool, hub *realtime.Hub, tenantID, nodeID string) {
-	t.Helper()
-	events, unsubscribe := hub.Subscribe([]string{realtime.ChannelAdmin(tenantID)})
-	defer unsubscribe()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := admin.Exec(ctx, `UPDATE nodes SET name=name WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, nodeID); err != nil {
-			t.Fatal(err)
-		}
-		select {
-		case ev := <-events:
-			if table, _ := ev.Payload["table"].(string); table == "nodes" {
-				return
-			}
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
-	t.Fatal("database change listener never delivered a nodes notification")
 }

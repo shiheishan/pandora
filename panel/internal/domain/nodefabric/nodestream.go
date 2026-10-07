@@ -375,7 +375,7 @@ func (s *Service) loadServingNodeForPush(ctx context.Context, tenantID, nodeID s
 		return tx.QueryRow(ctx, `
 			SELECT n.id, n.name, coalesce(n.node_type,''), coalesce(n.server_host,''),
 			       coalesce(n.server_port,0), n.traffic_rate, n.protocol_config, n.pool_id,
-			       n.status, coalesce(n.kernel,'auto'), s.status, n.serving_status
+			       n.status, coalesce(n.kernel,'auto'), s.status, n.serving_status, `+deliveryEpochSQL+`
 			  FROM nodes n
 			  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
 			 WHERE n.tenant_id = $1 AND n.id = $2::uuid
@@ -388,13 +388,14 @@ func (s *Service) loadServingNodeForPush(ctx context.Context, tenantID, nodeID s
 			tenantID, nodeID,
 		).Scan(&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
 			&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
-			&n.ServerStatus, &n.ServingStatus)
+			&n.ServerStatus, &n.ServingStatus, &n.deliveryEpoch)
 	})
 	if err != nil {
 		return nil, err
 	}
 	n.NodeType = CanonicalNodeType(n.NodeType)
 	n.Protocol = proto
+	n.epochKnown = true
 	return &n, nil
 }
 
@@ -487,11 +488,10 @@ func (s *Service) WatchNodeChanges(ctx context.Context, tenantID string, log *sl
 			nodeID, _ := ev.Payload["node_id"].(string)
 			if nodeID == "" {
 				// 不带 node_id 的是租户级事件——目前是「可服务用户集合变了」，
-				// 由付款履约与 R104 三处写路径触发。先作废用户集缓存（缓存的作废
-				// 订阅也会收到同一条，但两边谁先处理没有保证），再交给 worker 按池
-				// 重算、推给本进程上连着的全部节点。只推用户：配置没变，推 sync.config
-				// 会让每个节点白白重拉一遍配置。
-				s.invalidateNodeUsers(tenantID)
+				// 由付款履约与 R104 三处写路径触发。交给 worker 按池重算、推给本进程
+				// 上连着的全部节点；那些写已经推进了下发纪元，worker 读节点时拿到新
+				// 纪元，用户集缓存自然重算。只推用户：配置没变，推 sync.config 会让
+				// 每个节点白白重拉一遍配置。
 				queue.addAllUsers()
 				// 这条日志是排障的锚点：事件到没到、落到几个节点上，
 				// 一眼可见。付款后节点迟迟不认新用户时先看它。
