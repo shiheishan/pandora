@@ -50,6 +50,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// sing-box 订阅附带的路由模板：规则集地址前缀与广告拦截开关（w5retain）
+	subscription.ConfigureSingboxTemplate(subscription.SingboxTemplate(cfg.SingboxTemplate))
 
 	log := logging.New(cfg.Env, "aegis-public")
 	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

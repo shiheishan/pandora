@@ -56,17 +56,8 @@ func renderSingbox(nodes []Node, uuid string) ([]byte, string, int) {
 	}
 	all = append(all, map[string]any{"type": "direct", "tag": "direct"})
 
-	cfg := map[string]any{
-		"log":       map[string]any{"level": "warn"},
-		"outbounds": all,
-		"route": map[string]any{
-			"rules": []map[string]any{
-				{"ip_is_private": true, "action": "route", "outbound": "direct"},
-			},
-			"final": finalOutbound,
-		},
-	}
-	body, err := json.MarshalIndent(cfg, "", "  ")
+	// 入站、DNS 与路由模板见 render_singbox_template.go
+	body, err := json.MarshalIndent(singboxFrame(all, finalOutbound), "", "  ")
 	if err != nil {
 		return []byte("{}"), "application/json; charset=utf-8", 0
 	}
