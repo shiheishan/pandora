@@ -1,11 +1,13 @@
 package nodefabric
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"math"
+	"sort"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -417,44 +419,80 @@ func (s *Service) NodeUserSet(ctx context.Context, tenantID string, n *ServingNo
 //
 // 只存 IP 的哈希：在线设备数是运营需要的指标，原始 IP 不是。
 // 存哈希既能去重计数，又不会积累一份可回溯到个人的地址库。
+//
+// 整份上报一条 SQL 落库：原先每个用户查一次订阅、每个 IP 插一次，一个 30 人
+// 在线的节点每分钟就是 60 多条语句。现在按 node_uid 关联订阅、批量 upsert，
+// 查不到订阅的 uid 照旧跳过。返回实际写入（新增或刷新）的行数。
 func (s *Service) ReportAlive(ctx context.Context, tenantID string, n *ServingNode, raw []byte) (int, error) {
 	var alive map[string][]string
 	if err := json.Unmarshal(raw, &alive); err != nil {
 		return 0, httpx.New(httpx.CodeBadRequest, "上报格式非法")
 	}
+	uids, hashes := aliveRows(alive)
+	if len(uids) == 0 {
+		return 0, nil
+	}
 
 	count := 0
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		for uidStr, ips := range alive {
-			uid, err := strconv.ParseInt(uidStr, 10, 64)
-			if err != nil {
-				continue
-			}
-			var subID string
-			if err := tx.QueryRow(ctx,
-				`SELECT id FROM subscriptions WHERE tenant_id=$1 AND node_uid=$2`,
-				tenantID, uid).Scan(&subID); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					continue
-				}
-				return err
-			}
-			for _, ip := range ips {
-				h := sha256.Sum256([]byte(ip))
-				if _, err := tx.Exec(ctx, `
-					INSERT INTO node_alive_ips (tenant_id, node_id, subscription_id, ip_hash)
-					VALUES ($1,$2,$3,$4)
-					ON CONFLICT (node_id, subscription_id, ip_hash)
-					DO UPDATE SET last_seen_at = now()`,
-					tenantID, n.ID, subID, h[:]); err != nil {
-					return err
-				}
-				count++
-			}
+		// 按（订阅, 哈希）排序插入：同一节点两份上报并发时加锁顺序一致，不互等成死锁。
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO node_alive_ips (tenant_id, node_id, subscription_id, ip_hash)
+			SELECT s.tenant_id, $2::uuid, s.id, a.ip_hash
+			  FROM unnest($3::bigint[], $4::bytea[]) AS a(node_uid, ip_hash)
+			  JOIN subscriptions s ON s.tenant_id = $1::uuid AND s.node_uid = a.node_uid
+			 ORDER BY s.id, a.ip_hash
+			ON CONFLICT (node_id, subscription_id, ip_hash)
+			DO UPDATE SET last_seen_at = now()`,
+			tenantID, n.ID, uids, hashes)
+		if err != nil {
+			return err
 		}
+		count = int(tag.RowsAffected())
 		return nil
 	})
 	return count, err
+}
+
+// aliveRows 把上报摊平成（node_uid, IP 哈希）两列，去重并排序。
+//
+// 去重是必须的：一条 INSERT … ON CONFLICT DO UPDATE 不能两次碰同一行，而 "01"
+// 和 "1" 会解析成同一个 uid、同一 IP 也可能报两遍。uid 不是整数的整条跳过，
+// 与逐条处理时一致。
+func aliveRows(alive map[string][]string) ([]int64, [][]byte) {
+	type row struct {
+		uid  int64
+		hash [sha256.Size]byte
+	}
+	seen := make(map[row]struct{})
+	rows := make([]row, 0)
+	for uidStr, ips := range alive {
+		uid, err := strconv.ParseInt(uidStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		for _, ip := range ips {
+			r := row{uid: uid, hash: sha256.Sum256([]byte(ip))}
+			if _, dup := seen[r]; dup {
+				continue
+			}
+			seen[r] = struct{}{}
+			rows = append(rows, r)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].uid != rows[j].uid {
+			return rows[i].uid < rows[j].uid
+		}
+		return bytes.Compare(rows[i].hash[:], rows[j].hash[:]) < 0
+	})
+	uids := make([]int64, len(rows))
+	hashes := make([][]byte, len(rows))
+	for i := range rows {
+		uids[i] = rows[i].uid
+		hashes[i] = append([]byte(nil), rows[i].hash[:]...)
+	}
+	return uids, hashes
 }
 
 type uniProxyResourcePair struct {
