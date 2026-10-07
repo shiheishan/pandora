@@ -1,0 +1,1036 @@
+{
+  "contracts": {
+    "key_possession": "aegis-server-key-possession-v1",
+    "manifest": "aegis-server-manifest-v1",
+    "release_manifest": "pandora-release-manifest-v1",
+    "server_request": "aegis-server-request-v1",
+    "upgrade_order": "aegis-agent-upgrade-order-v1",
+    "users": "aegis-server-users-v1"
+  },
+  "note": "Fictional fixtures for docs/server-binding-contract.md. Every key here is a TEST-ONLY key derived as sha256(label) from the labels below; never use them in production. preimage_hex is the exact signed byte string; signature is standard base64 of the Ed25519 signature over it.",
+  "keys": {
+    "panel_config_seed_label": "pandora bindingcontract v1 TEST ONLY panel config ed25519 seed",
+    "panel_config_public_key": "3LOKwJ8W4vwgEJJMjRcxqJopYoYz5IDpUop3k4rVr5Q=",
+    "panel_config_key_id": "0mMJ8wMlBzo",
+    "panel_key_pin": "sha256:d26309f30325073a78993f618bc93c206756cea99b386fa3086381f6ecb415d9",
+    "server_seed_label": "pandora bindingcontract v1 TEST ONLY server identity ed25519 seed",
+    "server_public_key": "DBtc/dcytKVriE9fuHfr9EAN8CgYLg9pjbOfF+dXp9I=",
+    "server_key_id": "MZzVZgotUKw",
+    "server_enc_private_label": "pandora bindingcontract v1 TEST ONLY server x25519 private key",
+    "server_enc_public_key": "JpJ5fKAI6fOzy32w2eEngdsoml/+bRQo80n9iLBEm1g=",
+    "server_enc_key_id": "6RMEpIjE_JA",
+    "release_seed_label": "pandora bindingcontract v1 TEST ONLY release ed25519 seed",
+    "release_public_key": "f+gXPvO8F5SMBh6HU3c7Njo4vp7Ktwa8MBPdrxL8v1Q=",
+    "release_key_id": "4fZZVwiJXtE",
+    "gateway_p256_scalar_label": "pandora bindingcontract v1 TEST ONLY gateway p256 scalar",
+    "gateway_spki_der": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZBKwaMidrS10nmPEpNN++wkrbb1XmuvjcxXGKHxCtFQT+qbV98cWwaNJQTjzU+3SRx6sunJ4sM397llJjNZlPg==",
+    "gateway_tls_pin": "sha256//70GcM08q6gTsnGhWGaLrJHWM4+khfPx0FiKcSrbuUcY="
+  },
+  "server_requests": [
+    {
+      "name": "report with report id",
+      "valid": true,
+      "preimage_hex": "61656769732d7365727665722d726571756573742d76310a6d6574686f643d504f53540a7461726765743d2f76312f736572766572732f7265706f72740a74656e616e745f69643d30313933663062302d313131312d373030302d383030302d3030303030303030303061310a7365727665725f69643d30313933663062302d323232322d373030302d383030302d3030303030303030303062310a73657269616c3d310a74733d323032362d31302d30375430383a30303a30305a0a6e6f6e63653d455245524552455245524552455245524552455245510a7265706f72745f69643d30313933663062302d363636362d373030302d383030302d3030303030303030303066310a626f64795f7368613235363d52615467377946584157712f4a796d464945726c4161524759732f5568793637336643446f77557432426f3d0a",
+      "signature": "3P2SEJhzut2VHYOOqVVyjK2Yh+nKO+FUW3SoYPeus9oHHyS12KHqVTHynk4doj6yYjI1u/NO88w8bXUr+3wYDw==",
+      "method": "POST",
+      "target": "/v1/servers/report",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "ts": "2026-10-07T08:00:00Z",
+      "nonce": "EREREREREREREREREREREQ",
+      "report_id": "0193f0b0-6666-7000-8000-0000000000f1",
+      "body": "{\"agent_version\":\"v1.5.0\",\"applied_manifest_generation\":17,\"nodes\":[]}",
+      "body_sha256": "RaTg7yFXAWq/JymFIErlAaRGYs/Uhy673fCDowUt2Bo="
+    },
+    {
+      "name": "users of one pool",
+      "valid": true,
+      "preimage_hex": "61656769732d7365727665722d726571756573742d76310a6d6574686f643d4745540a7461726765743d2f76312f736572766572732f75736572733f706f6f6c3d30313933663062302d343434342d373030302d383030302d3030303030303030303064310a74656e616e745f69643d30313933663062302d313131312d373030302d383030302d3030303030303030303061310a7365727665725f69643d30313933663062302d323232322d373030302d383030302d3030303030303030303062310a73657269616c3d310a74733d323032362d31302d30375430383a30303a30305a0a6e6f6e63653d455245524552455245524552455245524552455245510a7265706f72745f69643d0a626f64795f7368613235363d3437444551706a38484253612b2f54496d572b354a4365755165526b6d354e4d704a575a473368537546553d0a",
+      "signature": "8v5AvQgy4yrqJrWP/n1WdUEc4m8muAM68W0M1vZZzMipZuIUmcGmD3q2D4ueru3KOHqjbafuv5pIDPzsPE+QAQ==",
+      "method": "GET",
+      "target": "/v1/servers/users?pool=0193f0b0-4444-7000-8000-0000000000d1",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "ts": "2026-10-07T08:00:00Z",
+      "nonce": "EREREREREREREREREREREQ",
+      "report_id": "",
+      "body": "",
+      "body_sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+    },
+    {
+      "name": "query keys out of order",
+      "valid": false,
+      "method": "GET",
+      "target": "/v1/servers/users?pool=0193f0b0-4444-7000-8000-0000000000d1&after=1",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "ts": "2026-10-07T08:00:00Z",
+      "nonce": "EREREREREREREREREREREQ",
+      "report_id": "",
+      "body": "",
+      "body_sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+    },
+    {
+      "name": "dot-dot segment",
+      "valid": false,
+      "method": "GET",
+      "target": "/v1/servers/../nodes/config",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "ts": "2026-10-07T08:00:00Z",
+      "nonce": "EREREREREREREREREREREQ",
+      "report_id": "",
+      "body": "",
+      "body_sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+    },
+    {
+      "name": "percent-encoded path",
+      "valid": false,
+      "method": "GET",
+      "target": "/v1/servers/users%2F..",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "ts": "2026-10-07T08:00:00Z",
+      "nonce": "EREREREREREREREREREREQ",
+      "report_id": "",
+      "body": "",
+      "body_sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+    },
+    {
+      "name": "not a server path",
+      "valid": false,
+      "method": "POST",
+      "target": "/v1/nodes/heartbeat",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "ts": "2026-10-07T08:00:00Z",
+      "nonce": "EREREREREREREREREREREQ",
+      "report_id": "",
+      "body": "",
+      "body_sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+    },
+    {
+      "name": "offset timestamp",
+      "valid": false,
+      "method": "GET",
+      "target": "/v1/servers/manifest",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "ts": "2026-10-07T16:00:00+08:00",
+      "nonce": "EREREREREREREREREREREQ",
+      "report_id": "",
+      "body": "",
+      "body_sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+    },
+    {
+      "name": "uppercase server id",
+      "valid": false,
+      "method": "GET",
+      "target": "/v1/servers/manifest",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193F0B0-2222-7000-8000-0000000000B1",
+      "serial": 1,
+      "ts": "2026-10-07T08:00:00Z",
+      "nonce": "EREREREREREREREREREREQ",
+      "report_id": "",
+      "body": "",
+      "body_sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+    },
+    {
+      "name": "lowercase method",
+      "valid": false,
+      "method": "get",
+      "target": "/v1/servers/manifest",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "ts": "2026-10-07T08:00:00Z",
+      "nonce": "EREREREREREREREREREREQ",
+      "report_id": "",
+      "body": "",
+      "body_sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+    }
+  ],
+  "manifests": [
+    {
+      "name": "bound with two nodes",
+      "valid": true,
+      "preimage_hex": "61656769732d7365727665722d6d616e69666573742d76310a74656e616e745f69643d30313933663062302d313131312d373030302d383030302d3030303030303030303061310a7365727665725f69643d30313933663062302d323232322d373030302d383030302d3030303030303030303062310a73657269616c3d310a6d616e69666573745f67656e65726174696f6e3d31370a73746174653d626f756e640a756e626f756e645f726561736f6e3d0a66656174757265733d7265706f72742d76312c75736572732d76310a6d696e5f6167656e745f76657273696f6e3d76312e352e300a746c735f70696e5f6e6578743d7368613235362f2f7954594a4c645170434752574a4257506c487172746b566b7a43443151646c4f51457a4e69504d743732453d0a6d616e69666573745f70756c6c5f7365636f6e64733d31350a75736572735f70756c6c5f7365636f6e64733d31350a7265706f72745f7365636f6e64733d36300a73747265616d5f6f6e6c696e655f70756c6c5f7365636f6e64733d36300a726571756573745f6e6f6e63653d496949694969496949694969496949694969496949670a6b65795f69643d306d4d4a38774d6c427a6f0a6973737565645f61743d323032362d31302d30375430383a30303a30302e3132333435365a0a657870697265735f61743d323032362d31302d30375430383a31303a30302e3132333435365a0a6e6f64655f636f756e743d320a6e6f6465206e6f64655f69643d30313933663062302d333333332d373030302d383030302d3030303030303030303063312070726f746f636f6c3d766c65737320706f72743d343433206c343d74637020706f6f6c5f69643d30313933663062302d343434342d373030302d383030302d303030303030303030306431206566666563746976655f67656e65726174696f6e3d3720636f6e74656e745f7368613235363d55302f303543345341573747434f31754c676e386e476a5243326739412b584f5146703430584f51326a673d0a6e6f6465206e6f64655f69643d30313933663062302d333333332d373030302d383030302d3030303030303030303063322070726f746f636f6c3d68797374657269613220706f72743d38343433206c343d75647020706f6f6c5f69643d206566666563746976655f67656e65726174696f6e3d3320636f6e74656e745f7368613235363d59524d714d2b685765355142342b7941564b51565a764646567471325974795744646b7441786f484c71633d0a",
+      "signature": "mthLBfjkn1egjZzqYCodKOn2/A68F8EZy65yY12cn1HLSiHbgHxMhyqF2FpqztQ53RZ8ICm7ictaJqwNrfdHBA==",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "manifest_generation": 17,
+      "state": "bound",
+      "unbound_reason": "",
+      "features": [
+        "report-v1",
+        "users-v1"
+      ],
+      "min_agent_version": "v1.5.0",
+      "tls_pin_next": "sha256//yTYJLdQpCGRWJBWPlHqrtkVkzCD1QdlOQEzNiPMt72E=",
+      "intervals": {
+        "manifest_pull_seconds": 15,
+        "users_pull_seconds": 15,
+        "report_seconds": 60,
+        "stream_online_pull_seconds": 60
+      },
+      "nodes": [
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+          "protocol": "vless",
+          "port": 443,
+          "l4": "tcp",
+          "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+          "effective_generation": 7,
+          "content_sha256": "U0/05C4SAW7GCO1uLgn8nGjRC2g9A+XOQFp40XOQ2jg="
+        },
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c2",
+          "protocol": "hysteria2",
+          "port": 8443,
+          "l4": "udp",
+          "pool_id": "",
+          "effective_generation": 3,
+          "content_sha256": "YRMqM+hWe5QB4+yAVKQVZvFFVtq2YtyWDdktAxoHLqc="
+        }
+      ],
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "unbound tombstone",
+      "valid": true,
+      "preimage_hex": "61656769732d7365727665722d6d616e69666573742d76310a74656e616e745f69643d30313933663062302d313131312d373030302d383030302d3030303030303030303061310a7365727665725f69643d30313933663062302d323232322d373030302d383030302d3030303030303030303062310a73657269616c3d310a6d616e69666573745f67656e65726174696f6e3d31380a73746174653d756e626f756e640a756e626f756e645f726561736f6e3d7365727665725f756e626f756e640a66656174757265733d0a6d696e5f6167656e745f76657273696f6e3d0a746c735f70696e5f6e6578743d0a6d616e69666573745f70756c6c5f7365636f6e64733d31350a75736572735f70756c6c5f7365636f6e64733d31350a7265706f72745f7365636f6e64733d36300a73747265616d5f6f6e6c696e655f70756c6c5f7365636f6e64733d36300a726571756573745f6e6f6e63653d496949694969496949694969496949694969496949670a6b65795f69643d306d4d4a38774d6c427a6f0a6973737565645f61743d323032362d31302d30375430383a30303a30302e3132333435365a0a657870697265735f61743d323032362d31302d30375430383a31303a30302e3132333435365a0a6e6f64655f636f756e743d300a",
+      "signature": "uPO/K8oKLJraO2qw6fcAR+yxFWELhtApCACTnAkAB2rb5hLod6FFDdFwZYs9OBa1IvhVWAX0DvXg3BnTPEkmCg==",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "manifest_generation": 18,
+      "state": "unbound",
+      "unbound_reason": "server_unbound",
+      "features": null,
+      "min_agent_version": "",
+      "tls_pin_next": "",
+      "intervals": {
+        "manifest_pull_seconds": 15,
+        "users_pull_seconds": 15,
+        "report_seconds": 60,
+        "stream_online_pull_seconds": 60
+      },
+      "nodes": null,
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "delivery window over ten minutes",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "manifest_generation": 17,
+      "state": "bound",
+      "unbound_reason": "",
+      "features": [
+        "report-v1",
+        "users-v1"
+      ],
+      "min_agent_version": "v1.5.0",
+      "tls_pin_next": "sha256//yTYJLdQpCGRWJBWPlHqrtkVkzCD1QdlOQEzNiPMt72E=",
+      "intervals": {
+        "manifest_pull_seconds": 15,
+        "users_pull_seconds": 15,
+        "report_seconds": 60,
+        "stream_online_pull_seconds": 60
+      },
+      "nodes": [
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+          "protocol": "vless",
+          "port": 443,
+          "l4": "tcp",
+          "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+          "effective_generation": 7,
+          "content_sha256": "U0/05C4SAW7GCO1uLgn8nGjRC2g9A+XOQFp40XOQ2jg="
+        },
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c2",
+          "protocol": "hysteria2",
+          "port": 8443,
+          "l4": "udp",
+          "pool_id": "",
+          "effective_generation": 3,
+          "content_sha256": "YRMqM+hWe5QB4+yAVKQVZvFFVtq2YtyWDdktAxoHLqc="
+        }
+      ],
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:11:00.123456Z"
+    },
+    {
+      "name": "nanosecond timestamp",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "manifest_generation": 17,
+      "state": "bound",
+      "unbound_reason": "",
+      "features": [
+        "report-v1",
+        "users-v1"
+      ],
+      "min_agent_version": "v1.5.0",
+      "tls_pin_next": "sha256//yTYJLdQpCGRWJBWPlHqrtkVkzCD1QdlOQEzNiPMt72E=",
+      "intervals": {
+        "manifest_pull_seconds": 15,
+        "users_pull_seconds": 15,
+        "report_seconds": 60,
+        "stream_online_pull_seconds": 60
+      },
+      "nodes": [
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+          "protocol": "vless",
+          "port": 443,
+          "l4": "tcp",
+          "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+          "effective_generation": 7,
+          "content_sha256": "U0/05C4SAW7GCO1uLgn8nGjRC2g9A+XOQFp40XOQ2jg="
+        },
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c2",
+          "protocol": "hysteria2",
+          "port": 8443,
+          "l4": "udp",
+          "pool_id": "",
+          "effective_generation": 3,
+          "content_sha256": "YRMqM+hWe5QB4+yAVKQVZvFFVtq2YtyWDdktAxoHLqc="
+        }
+      ],
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456789Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "features out of order",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "manifest_generation": 17,
+      "state": "bound",
+      "unbound_reason": "",
+      "features": [
+        "users-v1",
+        "report-v1"
+      ],
+      "min_agent_version": "v1.5.0",
+      "tls_pin_next": "sha256//yTYJLdQpCGRWJBWPlHqrtkVkzCD1QdlOQEzNiPMt72E=",
+      "intervals": {
+        "manifest_pull_seconds": 15,
+        "users_pull_seconds": 15,
+        "report_seconds": 60,
+        "stream_online_pull_seconds": 60
+      },
+      "nodes": [
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+          "protocol": "vless",
+          "port": 443,
+          "l4": "tcp",
+          "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+          "effective_generation": 7,
+          "content_sha256": "U0/05C4SAW7GCO1uLgn8nGjRC2g9A+XOQFp40XOQ2jg="
+        },
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c2",
+          "protocol": "hysteria2",
+          "port": 8443,
+          "l4": "udp",
+          "pool_id": "",
+          "effective_generation": 3,
+          "content_sha256": "YRMqM+hWe5QB4+yAVKQVZvFFVtq2YtyWDdktAxoHLqc="
+        }
+      ],
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "duplicate node id",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "manifest_generation": 17,
+      "state": "bound",
+      "unbound_reason": "",
+      "features": [
+        "report-v1",
+        "users-v1"
+      ],
+      "min_agent_version": "v1.5.0",
+      "tls_pin_next": "sha256//yTYJLdQpCGRWJBWPlHqrtkVkzCD1QdlOQEzNiPMt72E=",
+      "intervals": {
+        "manifest_pull_seconds": 15,
+        "users_pull_seconds": 15,
+        "report_seconds": 60,
+        "stream_online_pull_seconds": 60
+      },
+      "nodes": [
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+          "protocol": "vless",
+          "port": 443,
+          "l4": "tcp",
+          "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+          "effective_generation": 7,
+          "content_sha256": "U0/05C4SAW7GCO1uLgn8nGjRC2g9A+XOQFp40XOQ2jg="
+        },
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+          "protocol": "vless",
+          "port": 443,
+          "l4": "tcp",
+          "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+          "effective_generation": 7,
+          "content_sha256": "U0/05C4SAW7GCO1uLgn8nGjRC2g9A+XOQFp40XOQ2jg="
+        }
+      ],
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "unbound with nodes",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "manifest_generation": 17,
+      "state": "unbound",
+      "unbound_reason": "server_deleted",
+      "features": [
+        "report-v1",
+        "users-v1"
+      ],
+      "min_agent_version": "v1.5.0",
+      "tls_pin_next": "sha256//yTYJLdQpCGRWJBWPlHqrtkVkzCD1QdlOQEzNiPMt72E=",
+      "intervals": {
+        "manifest_pull_seconds": 15,
+        "users_pull_seconds": 15,
+        "report_seconds": 60,
+        "stream_online_pull_seconds": 60
+      },
+      "nodes": [
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+          "protocol": "vless",
+          "port": 443,
+          "l4": "tcp",
+          "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+          "effective_generation": 7,
+          "content_sha256": "U0/05C4SAW7GCO1uLgn8nGjRC2g9A+XOQFp40XOQ2jg="
+        },
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c2",
+          "protocol": "hysteria2",
+          "port": 8443,
+          "l4": "udp",
+          "pool_id": "",
+          "effective_generation": 3,
+          "content_sha256": "YRMqM+hWe5QB4+yAVKQVZvFFVtq2YtyWDdktAxoHLqc="
+        }
+      ],
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "unknown l4",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "manifest_generation": 17,
+      "state": "bound",
+      "unbound_reason": "",
+      "features": [
+        "report-v1",
+        "users-v1"
+      ],
+      "min_agent_version": "v1.5.0",
+      "tls_pin_next": "sha256//yTYJLdQpCGRWJBWPlHqrtkVkzCD1QdlOQEzNiPMt72E=",
+      "intervals": {
+        "manifest_pull_seconds": 15,
+        "users_pull_seconds": 15,
+        "report_seconds": 60,
+        "stream_online_pull_seconds": 60
+      },
+      "nodes": [
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+          "protocol": "vless",
+          "port": 443,
+          "l4": "tcpudp",
+          "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+          "effective_generation": 7,
+          "content_sha256": "U0/05C4SAW7GCO1uLgn8nGjRC2g9A+XOQFp40XOQ2jg="
+        }
+      ],
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "prerelease min version",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "manifest_generation": 17,
+      "state": "bound",
+      "unbound_reason": "",
+      "features": [
+        "report-v1",
+        "users-v1"
+      ],
+      "min_agent_version": "v1.5.0-rc1",
+      "tls_pin_next": "sha256//yTYJLdQpCGRWJBWPlHqrtkVkzCD1QdlOQEzNiPMt72E=",
+      "intervals": {
+        "manifest_pull_seconds": 15,
+        "users_pull_seconds": 15,
+        "report_seconds": 60,
+        "stream_online_pull_seconds": 60
+      },
+      "nodes": [
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+          "protocol": "vless",
+          "port": 443,
+          "l4": "tcp",
+          "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+          "effective_generation": 7,
+          "content_sha256": "U0/05C4SAW7GCO1uLgn8nGjRC2g9A+XOQFp40XOQ2jg="
+        },
+        {
+          "node_id": "0193f0b0-3333-7000-8000-0000000000c2",
+          "protocol": "hysteria2",
+          "port": 8443,
+          "l4": "udp",
+          "pool_id": "",
+          "effective_generation": 3,
+          "content_sha256": "YRMqM+hWe5QB4+yAVKQVZvFFVtq2YtyWDdktAxoHLqc="
+        }
+      ],
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    }
+  ],
+  "users": [
+    {
+      "name": "full list of one pool",
+      "valid": true,
+      "preimage_hex": "61656769732d7365727665722d75736572732d76310a74656e616e745f69643d30313933663062302d313131312d373030302d383030302d3030303030303030303061310a7365727665725f69643d30313933663062302d323232322d373030302d383030302d3030303030303030303062310a73657269616c3d310a706f6f6c5f69643d30313933663062302d343434342d373030302d383030302d3030303030303030303064310a75736572735f76657273696f6e3d34320a6b696e643d66756c6c0a757365725f636f756e743d320a636f6e74656e745f7368613235363d7066417536434c785a39375a514430765045576e42773963566f54323556306a3154773577422b627636673d0a726571756573745f6e6f6e63653d4d7a4d7a4d7a4d7a4d7a4d7a4d7a4d7a4d7a4d7a4d770a6b65795f69643d306d4d4a38774d6c427a6f0a6973737565645f61743d323032362d31302d30375430383a30303a30302e3132333435365a0a657870697265735f61743d323032362d31302d30375430383a31303a30302e3132333435365a0a",
+      "signature": "n55GiK84A2H3iiW6l1XmqmivScAnyB8NCBt0IrALY33TDT+JoP6NRSJ4sFqfSfbvzV40QmB07wCy3gUzEPr+Dg==",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+      "users_version": 42,
+      "kind": "full",
+      "user_count": 2,
+      "payload": "{\"users\":[{\"id\":1,\"uuid\":\"0193f0b0-7777-4000-8000-000000000001\",\"speed_limit\":0,\"device_limit\":0},{\"id\":2,\"uuid\":\"0193f0b0-7777-4000-8000-000000000002\",\"speed_limit\":100,\"device_limit\":3}]}",
+      "content_sha256": "pfAu6CLxZ97ZQD0vPEWnBw9cVoT25V0j1Tw5wB+bv6g=",
+      "request_nonce": "MzMzMzMzMzMzMzMzMzMzMw",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "delta kind is not in v1",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "pool_id": "0193f0b0-4444-7000-8000-0000000000d1",
+      "users_version": 42,
+      "kind": "delta",
+      "user_count": 2,
+      "payload": "{\"users\":[{\"id\":1,\"uuid\":\"0193f0b0-7777-4000-8000-000000000001\",\"speed_limit\":0,\"device_limit\":0},{\"id\":2,\"uuid\":\"0193f0b0-7777-4000-8000-000000000002\",\"speed_limit\":100,\"device_limit\":3}]}",
+      "content_sha256": "pfAu6CLxZ97ZQD0vPEWnBw9cVoT25V0j1Tw5wB+bv6g=",
+      "request_nonce": "MzMzMzMzMzMzMzMzMzMzMw",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "missing pool",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "pool_id": "",
+      "users_version": 42,
+      "kind": "full",
+      "user_count": 2,
+      "payload": "{\"users\":[{\"id\":1,\"uuid\":\"0193f0b0-7777-4000-8000-000000000001\",\"speed_limit\":0,\"device_limit\":0},{\"id\":2,\"uuid\":\"0193f0b0-7777-4000-8000-000000000002\",\"speed_limit\":100,\"device_limit\":3}]}",
+      "content_sha256": "pfAu6CLxZ97ZQD0vPEWnBw9cVoT25V0j1Tw5wB+bv6g=",
+      "request_nonce": "MzMzMzMzMzMzMzMzMzMzMw",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    }
+  ],
+  "upgrade_orders": [
+    {
+      "name": "upgrade to v1.6.0",
+      "valid": true,
+      "preimage_hex": "61656769732d6167656e742d757067726164652d6f726465722d76310a74656e616e745f69643d30313933663062302d313131312d373030302d383030302d3030303030303030303061310a7365727665725f69643d30313933663062302d323232322d373030302d383030302d3030303030303030303062310a73657269616c3d310a6f726465725f69643d30313933663062302d353535352d373030302d383030302d3030303030303030303065310a7461726765745f76657273696f6e3d76312e362e300a72656c656173655f6d616e69666573745f7368613235363d724a4571594a795a6a5a68324e6344536c7a7a4852362f68416767654f4a6a715751566d544f644f744d383d0a726571756573745f6e6f6e63653d496949694969496949694969496949694969496949670a6b65795f69643d306d4d4a38774d6c427a6f0a6973737565645f61743d323032362d31302d30375430383a30303a30302e3132333435365a0a657870697265735f61743d323032362d31302d30375430383a31303a30302e3132333435365a0a",
+      "signature": "S1eQSp/zJy6HEJg1PF8jtJ64sbSB56ge5YTLzZymQTjpf4jl67v4bNHCibLyXYPCgGq2ltfwLPOdf02mMhQOBw==",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "order_id": "0193f0b0-5555-7000-8000-0000000000e1",
+      "target_version": "v1.6.0",
+      "release_manifest_sha256": "rJEqYJyZjZh2NcDSlzzHR6/hAggeOJjqWQVmTOdOtM8=",
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "prerelease target",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "order_id": "0193f0b0-5555-7000-8000-0000000000e1",
+      "target_version": "v1.6.0-rc1",
+      "release_manifest_sha256": "rJEqYJyZjZh2NcDSlzzHR6/hAggeOJjqWQVmTOdOtM8=",
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:10:00.123456Z"
+    },
+    {
+      "name": "window over ten minutes",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "server_id": "0193f0b0-2222-7000-8000-0000000000b1",
+      "serial": 1,
+      "order_id": "0193f0b0-5555-7000-8000-0000000000e1",
+      "target_version": "v1.6.0",
+      "release_manifest_sha256": "rJEqYJyZjZh2NcDSlzzHR6/hAggeOJjqWQVmTOdOtM8=",
+      "request_nonce": "IiIiIiIiIiIiIiIiIiIiIg",
+      "key_id": "0mMJ8wMlBzo",
+      "issued_at": "2026-10-07T08:00:00.123456Z",
+      "expires_at": "2026-10-07T08:11:00.123456Z"
+    }
+  ],
+  "release_manifests": [
+    {
+      "name": "two architectures",
+      "valid": true,
+      "preimage_hex": "70616e646f72612d72656c656173652d6d616e69666573742d76310a70726f647563743d70616e646f72612d6e61746976650a76657273696f6e3d76312e362e300a636f6d6d69743d303132333435363738396162636465663031323334353637383961626364656630313233343536370a72656c65617365645f61743d323032362d31302d30315430303a30303a30305a0a72656c656173655f6b65795f69643d34665a5a5677694a5874450a61727469666163745f636f756e743d320a6172746966616374206e616d653d70616e646f72612d6e61746976652d6c696e75782d616d6436342073697a653d3233303638363732207368613235363d316263393336336565646165663466313963323134666436353634346234313135323562333263333364653364326130656461336533316532623138383961360a6172746966616374206e616d653d70616e646f72612d6e61746976652d6c696e75782d61726d36342073697a653d3231343935383038207368613235363d303362396365373531363364373630376633376461623965373132666662393366613066613530396130313437343730386465383739663564363337666139630a",
+      "signature": "L3jBkoRlG7xMZv5JfAfY5zp1d8rynjcx37QTORG04aUcf7DUc7jaQM5R5o5TIdTkT6FBNNvpvCC5HyAX10etCw==",
+      "product": "pandora-native",
+      "version": "v1.6.0",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "released_at": "2026-10-01T00:00:00Z",
+      "release_key_id": "4fZZVwiJXtE",
+      "artifacts": [
+        {
+          "name": "pandora-native-linux-amd64",
+          "size": 23068672,
+          "sha256": "1bc9363eedaef4f19c214fd65644b411525b32c33de3d2a0eda3e31e2b1889a6"
+        },
+        {
+          "name": "pandora-native-linux-arm64",
+          "size": 21495808,
+          "sha256": "03b9ce75163d7607f37dab9e712ffb93fa0fa509a01474708de879f5d637fa9c"
+        }
+      ],
+      "document": "{\"contract\":\"pandora-release-manifest-v1\",\"product\":\"pandora-native\",\"version\":\"v1.6.0\",\"commit\":\"0123456789abcdef0123456789abcdef01234567\",\"released_at\":\"2026-10-01T00:00:00Z\",\"release_key_id\":\"4fZZVwiJXtE\",\"artifacts\":[{\"name\":\"pandora-native-linux-amd64\",\"size\":23068672,\"sha256\":\"1bc9363eedaef4f19c214fd65644b411525b32c33de3d2a0eda3e31e2b1889a6\"},{\"name\":\"pandora-native-linux-arm64\",\"size\":21495808,\"sha256\":\"03b9ce75163d7607f37dab9e712ffb93fa0fa509a01474708de879f5d637fa9c\"}],\"signature\":\"L3jBkoRlG7xMZv5JfAfY5zp1d8rynjcx37QTORG04aUcf7DUc7jaQM5R5o5TIdTkT6FBNNvpvCC5HyAX10etCw==\"}"
+    },
+    {
+      "name": "artifacts out of order",
+      "valid": false,
+      "product": "pandora-native",
+      "version": "v1.6.0",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "released_at": "2026-10-01T00:00:00Z",
+      "release_key_id": "4fZZVwiJXtE",
+      "artifacts": [
+        {
+          "name": "pandora-native-linux-arm64",
+          "size": 21495808,
+          "sha256": "03b9ce75163d7607f37dab9e712ffb93fa0fa509a01474708de879f5d637fa9c"
+        },
+        {
+          "name": "pandora-native-linux-amd64",
+          "size": 23068672,
+          "sha256": "1bc9363eedaef4f19c214fd65644b411525b32c33de3d2a0eda3e31e2b1889a6"
+        }
+      ]
+    },
+    {
+      "name": "git describe version",
+      "valid": false,
+      "product": "pandora-native",
+      "version": "v1.6.0-3-gabcdef0",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "released_at": "2026-10-01T00:00:00Z",
+      "release_key_id": "4fZZVwiJXtE",
+      "artifacts": [
+        {
+          "name": "pandora-native-linux-amd64",
+          "size": 23068672,
+          "sha256": "1bc9363eedaef4f19c214fd65644b411525b32c33de3d2a0eda3e31e2b1889a6"
+        },
+        {
+          "name": "pandora-native-linux-arm64",
+          "size": 21495808,
+          "sha256": "03b9ce75163d7607f37dab9e712ffb93fa0fa509a01474708de879f5d637fa9c"
+        }
+      ]
+    },
+    {
+      "name": "foreign product",
+      "valid": false,
+      "product": "something-else",
+      "version": "v1.6.0",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "released_at": "2026-10-01T00:00:00Z",
+      "release_key_id": "4fZZVwiJXtE",
+      "artifacts": [
+        {
+          "name": "pandora-native-linux-amd64",
+          "size": 23068672,
+          "sha256": "1bc9363eedaef4f19c214fd65644b411525b32c33de3d2a0eda3e31e2b1889a6"
+        },
+        {
+          "name": "pandora-native-linux-arm64",
+          "size": 21495808,
+          "sha256": "03b9ce75163d7607f37dab9e712ffb93fa0fa509a01474708de879f5d637fa9c"
+        }
+      ]
+    },
+    {
+      "name": "uppercase hash",
+      "valid": false,
+      "product": "pandora-native",
+      "version": "v1.6.0",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "released_at": "2026-10-01T00:00:00Z",
+      "release_key_id": "4fZZVwiJXtE",
+      "artifacts": [
+        {
+          "name": "pandora-native-linux-amd64",
+          "size": 23068672,
+          "sha256": "ABCDEF3eedaef4f19c214fd65644b411525b32c33de3d2a0eda3e31e2b1889a6"
+        }
+      ]
+    }
+  ],
+  "key_possessions": [
+    {
+      "name": "upgrade to server",
+      "valid": true,
+      "preimage_hex": "61656769732d7365727665722d6b65792d706f7373657373696f6e2d76310a707572706f73653d757067726164652d746f2d7365727665720a74656e616e745f69643d30313933663062302d313131312d373030302d383030302d3030303030303030303061310a6e6f64655f69643d30313933663062302d333333332d373030302d383030302d3030303030303030303063310a726571756573745f6e6f6e63653d524552455245524552455245524552455245524552410a7365727665725f7075626c69635f6b65793d444274632f646379744b567269453966754866723945414e384367594c6739706a624f66462b64587039493d0a656e635f6b656d3d64686b656d2d7832353531392d686b64662d7368613235360a7365727665725f656e635f7075626c69635f6b65793d4a704a35664b414936664f7a793332773265456e6764736f6d6c2f2b6252516f38306e39694c42456d31673d0a",
+      "signature": "Ypfy3UiWp2x64DhPY1xKinRH8kYHsTz186yQpxZxK7jzz4PknFJ6Oe/okQNaX1H+sCZ7UW8Fm0S3MbG0S2zeCA==",
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+      "request_nonce": "RERERERERERERERERERERA",
+      "server_public_key": "DBtc/dcytKVriE9fuHfr9EAN8CgYLg9pjbOfF+dXp9I=",
+      "server_enc_public_key": "JpJ5fKAI6fOzy32w2eEngdsoml/+bRQo80n9iLBEm1g="
+    },
+    {
+      "name": "short public key",
+      "valid": false,
+      "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1",
+      "node_id": "0193f0b0-3333-7000-8000-0000000000c1",
+      "request_nonce": "RERERERERERERERERERERA",
+      "server_public_key": "c2hvcnQ=",
+      "server_enc_public_key": "JpJ5fKAI6fOzy32w2eEngdsoml/+bRQo80n9iLBEm1g="
+    }
+  ],
+  "panel_origins": [
+    {
+      "input": "https://panel.example.com",
+      "valid": true,
+      "canonical": "https://panel.example.com:443"
+    },
+    {
+      "input": "HTTPS://Panel.Example.COM:8443/",
+      "valid": true,
+      "canonical": "https://panel.example.com:8443"
+    },
+    {
+      "input": "https://[2001:DB8::1]:8443",
+      "valid": true,
+      "canonical": "https://[2001:db8::1]:8443"
+    },
+    {
+      "input": "https://[::ffff:127.0.0.1]",
+      "valid": true,
+      "canonical": "https://127.0.0.1:443"
+    },
+    {
+      "input": "http://127.0.0.1:8080",
+      "valid": true,
+      "canonical": "http://127.0.0.1:8080"
+    },
+    {
+      "input": "http://localhost",
+      "valid": true,
+      "canonical": "http://localhost:80"
+    },
+    {
+      "input": "http://[::1]:8080",
+      "valid": true,
+      "canonical": "http://[::1]:8080"
+    },
+    {
+      "input": "http://panel.example.com",
+      "valid": false
+    },
+    {
+      "input": "https://user@panel.example.com",
+      "valid": false
+    },
+    {
+      "input": "https://panel.example.com/admin",
+      "valid": false
+    },
+    {
+      "input": "https://panel.example.com?x=1",
+      "valid": false
+    },
+    {
+      "input": "https://panel.example.com#frag",
+      "valid": false
+    },
+    {
+      "input": "https://panel.example.com:70000",
+      "valid": false
+    },
+    {
+      "input": "https://panel.example.com.",
+      "valid": false
+    },
+    {
+      "input": "https://[fe80::1%25eth0]:443",
+      "valid": false
+    },
+    {
+      "input": "ftp://panel.example.com",
+      "valid": false
+    }
+  ],
+  "agent_versions": [
+    {
+      "a": "v1.5.0",
+      "b": "v1.10.0",
+      "valid": true,
+      "compare": -1
+    },
+    {
+      "a": "v2.0.0",
+      "b": "v1.99.99",
+      "valid": true,
+      "compare": 1
+    },
+    {
+      "a": "v1.5.0",
+      "b": "v1.5.0",
+      "valid": true,
+      "compare": 0
+    },
+    {
+      "a": "v0.0.1",
+      "b": "v0.0.0",
+      "valid": true,
+      "compare": 1
+    },
+    {
+      "a": "1.5.0",
+      "b": "v1.5.0",
+      "valid": false,
+      "compare": 0
+    },
+    {
+      "a": "v1.05.0",
+      "b": "v1.5.0",
+      "valid": false,
+      "compare": 0
+    },
+    {
+      "a": "v1.5.0-rc1",
+      "b": "v1.5.0",
+      "valid": false,
+      "compare": 0
+    },
+    {
+      "a": "dev",
+      "b": "v1.5.0",
+      "valid": false,
+      "compare": 0
+    },
+    {
+      "a": "v1.5",
+      "b": "v1.5.0",
+      "valid": false,
+      "compare": 0
+    },
+    {
+      "a": "v1.5.0",
+      "b": "v4294967296.0.0",
+      "valid": false,
+      "compare": 0
+    }
+  ],
+  "same_panel_tenant": [
+    {
+      "a": {
+        "origin": "https://panel.example.com:443",
+        "panel_key": "sha256:d26309f30325073a78993f618bc93c206756cea99b386fa3086381f6ecb415d9",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1"
+      },
+      "b": {
+        "origin": "https://panel.example.com:443",
+        "panel_key": "sha256:d26309f30325073a78993f618bc93c206756cea99b386fa3086381f6ecb415d9",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1"
+      },
+      "same": true
+    },
+    {
+      "a": {
+        "origin": "https://panel.example.com:443",
+        "panel_key": "sha256:d26309f30325073a78993f618bc93c206756cea99b386fa3086381f6ecb415d9",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1"
+      },
+      "b": {
+        "origin": "https://panel.example.com:8443",
+        "panel_key": "sha256:d26309f30325073a78993f618bc93c206756cea99b386fa3086381f6ecb415d9",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1"
+      },
+      "same": true
+    },
+    {
+      "a": {
+        "origin": "https://panel.example.com:443",
+        "panel_key": "sha256:d26309f30325073a78993f618bc93c206756cea99b386fa3086381f6ecb415d9",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1"
+      },
+      "b": {
+        "origin": "https://panel.example.com:443",
+        "panel_key": "sha256:7c022db631e1e33000b8a1c77a5a5cfcccb75ab61f20fefdaec6d95d5c877d84",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1"
+      },
+      "same": true
+    },
+    {
+      "a": {
+        "origin": "https://panel.example.com:443",
+        "panel_key": "sha256:d26309f30325073a78993f618bc93c206756cea99b386fa3086381f6ecb415d9",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1"
+      },
+      "b": {
+        "origin": "https://panel.example.com:443",
+        "panel_key": "sha256:d26309f30325073a78993f618bc93c206756cea99b386fa3086381f6ecb415d9",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a2"
+      },
+      "same": false
+    },
+    {
+      "a": {
+        "origin": "https://panel.example.com:443",
+        "panel_key": "sha256:d26309f30325073a78993f618bc93c206756cea99b386fa3086381f6ecb415d9",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1"
+      },
+      "b": {
+        "origin": "https://other.example.com:443",
+        "panel_key": "sha256:7c022db631e1e33000b8a1c77a5a5cfcccb75ab61f20fefdaec6d95d5c877d84",
+        "tenant_id": "0193f0b0-1111-7000-8000-0000000000a1"
+      },
+      "same": false
+    }
+  ],
+  "enums": {
+    "failure_codes": [
+      "port_in_use",
+      "port_reserved",
+      "cert_missing",
+      "cert_invalid",
+      "cert_expiring",
+      "protocol_unsupported",
+      "config_invalid",
+      "bind_permission"
+    ],
+    "warning_only_codes": [
+      "cert_expiring"
+    ],
+    "runtime_states": [
+      "running",
+      "pending",
+      "failed",
+      "stopped"
+    ],
+    "receipt_results": [
+      "switched",
+      "health_passed",
+      "failed"
+    ],
+    "upgrade_states": [
+      "accepted",
+      "downloading",
+      "installing",
+      "succeeded",
+      "failed",
+      "rolled_back"
+    ],
+    "upgrade_failure_codes": [
+      "upgrade_order_invalid",
+      "upgrade_release_unavailable",
+      "upgrade_signature_invalid",
+      "upgrade_hash_mismatch",
+      "upgrade_downgrade_refused",
+      "upgrade_install_failed",
+      "upgrade_rolled_back"
+    ],
+    "event_types": [
+      "sync.manifest",
+      "sync.config",
+      "users.delta",
+      "users.full",
+      "ping"
+    ],
+    "unbound_reasons": [
+      "server_deleted",
+      "server_unbound",
+      "identity_revoked",
+      "machine_unbound"
+    ]
+  }
+}
