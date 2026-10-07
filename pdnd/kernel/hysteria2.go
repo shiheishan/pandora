@@ -16,7 +16,6 @@ import (
 	"github.com/aegispanel/nodeagent/route"
 	"github.com/sagernet/sing-quic/hysteria"
 	"github.com/sagernet/sing/common/auth"
-	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
@@ -60,23 +59,25 @@ type hysteria2Slot struct {
 type hysteria2Adapter struct {
 	spec InboundSpec
 
-	mu        sync.RWMutex
-	users     map[string]int
-	slots     []hysteria2Slot
-	traffic   map[int64]core.UserTraffic
-	online    map[int64]map[string]struct{}
-	service   *hy2.Service[int]
-	packet    net.PacketConn
-	plane     DataPlane
-	connErr   connErrorReporter
-	limiters  core.SpeedLimiters
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closed    bool
-	active    map[net.Conn]struct{}
-	closeOnce sync.Once
-	wg        sync.WaitGroup
-	updateMu  sync.Mutex
+	mu      sync.RWMutex
+	users   map[string]int
+	slots   []hysteria2Slot
+	traffic map[int64]core.UserTraffic
+	// udpTraffic 是活跃 UDP 会话的流量计数，SnapshotTraffic 时并入 traffic。
+	udpTraffic map[*hy2Traffic]struct{}
+	online     map[int64]map[string]struct{}
+	service    *hy2.Service[int]
+	packet     net.PacketConn
+	plane      DataPlane
+	connErr    connErrorReporter
+	limiters   core.SpeedLimiters
+	ctx        context.Context
+	cancel     context.CancelFunc
+	closed     bool
+	active     map[net.Conn]struct{}
+	closeOnce  sync.Once
+	wg         sync.WaitGroup
+	updateMu   sync.Mutex
 
 	salamander string
 	upBPS      uint64
@@ -137,7 +138,24 @@ func (a *hysteria2Adapter) Validate(spec InboundSpec) error {
 			return fmt.Errorf("hysteria2 udp_timeout: %w", err)
 		}
 	}
+	if _, err := hysteria2UDPQueueSize(spec.Config.Raw); err != nil {
+		return err
+	}
 	return nil
+}
+
+// hysteria2UDPQueueSize 读可选的 udp_queue_size（每个 UDP 会话的接收队列长度，
+// 16–65536，缺省 hy2.DefaultUDPQueueSize）。面板不下发它，只留给运维按机器调。
+func hysteria2UDPQueueSize(raw map[string]any) (int, error) {
+	value, exists := raw["udp_queue_size"]
+	if !exists || value == nil {
+		return hy2.DefaultUDPQueueSize, nil
+	}
+	n, ok := nonNegativeInt(value)
+	if !ok || n < 16 || n > 65536 {
+		return 0, fmt.Errorf("hysteria2 udp_queue_size must be an integer between 16 and 65536")
+	}
+	return n, nil
 }
 
 func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks AdapterHooks) error {
@@ -173,10 +191,15 @@ func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks
 			return fmt.Errorf("hysteria2 udp_timeout: %w", err)
 		}
 	}
+	udpQueueSize, err := hysteria2UDPQueueSize(spec.Config.Raw)
+	if err != nil {
+		cancel()
+		return err
+	}
 	service, err := hy2.NewService[int](hy2.ServiceOptions{
 		Context: ctx, Logger: newSingConnErrorLogger(connErr, nil), SendBPS: uint64(up) * hysteria.MbpsToBps,
 		ReceiveBPS: uint64(down) * hysteria.MbpsToBps, SalamanderPassword: salamander,
-		TLSConfig: tlsConfig, UDPTimeout: udpTimeout, Handler: a,
+		TLSConfig: tlsConfig, UDPTimeout: udpTimeout, UDPQueueSize: udpQueueSize, Handler: a,
 		MasqueradeHandler: hysteria2RejectHandler(connErr),
 	})
 	if err != nil {
@@ -336,6 +359,9 @@ func (a *hysteria2Adapter) DelUsers(ids []string) error {
 func (a *hysteria2Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	for traffic := range a.udpTraffic {
+		a.collectUDPTrafficLocked(traffic)
+	}
 	out := make([]core.UserTraffic, 0, len(a.traffic))
 	for id, traffic := range a.traffic {
 		if traffic.Upload != 0 || traffic.Download != 0 {
@@ -449,58 +475,7 @@ func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.Pac
 			return
 		}
 		defer upstream.Close()
-		bridgeCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		var bridgeWG sync.WaitGroup
-		bridgeWG.Add(2)
-		go func() {
-			defer cancel()
-			defer bridgeWG.Done()
-			for {
-				packet := buf.NewPacket()
-				dst, err := conn.ReadPacket(packet)
-				if err != nil {
-					packet.Release()
-					return
-				}
-				if !dst.IsValid() {
-					dst = destination
-				}
-				addr, err := resolveUDPAddr(bridgeCtx, dst)
-				if err == nil {
-					if n, writeErr := upstream.WriteTo(packet.Bytes(), addr); writeErr == nil {
-						a.addTraffic(index, int64(n), 0)
-					} else {
-						packet.Release()
-						return
-					}
-				}
-				packet.Release()
-			}
-		}()
-		go func() {
-			defer cancel()
-			defer bridgeWG.Done()
-			data := make([]byte, 64<<10)
-			for {
-				n, addr, err := upstream.ReadFrom(data)
-				if err != nil {
-					return
-				}
-				payload := append([]byte(nil), data[:n]...)
-				packet := buf.As(payload)
-				if err := conn.WritePacket(packet, M.SocksaddrFromNet(addr).Unwrap()); err != nil {
-					return
-				}
-				a.addTraffic(index, 0, int64(n))
-			}
-		}()
-		go func() {
-			<-bridgeCtx.Done()
-			_ = conn.SetDeadline(time.Now())
-			_ = upstream.SetDeadline(time.Now())
-		}()
-		bridgeWG.Wait()
+		a.relayHy2UDP(ctx, conn, upstream, destination, index)
 	}()
 }
 
@@ -545,6 +520,11 @@ func (a *hysteria2Adapter) leaveDevice(user core.User, ip string) {
 
 func (a *hysteria2Adapter) addTraffic(index int, upload, download int64) {
 	a.mu.Lock()
+	a.addTrafficLocked(index, upload, download)
+	a.mu.Unlock()
+}
+
+func (a *hysteria2Adapter) addTrafficLocked(index int, upload, download int64) {
 	if index >= 0 && index < len(a.slots) {
 		id := a.slots[index].user.ID
 		current := a.traffic[id]
@@ -553,7 +533,6 @@ func (a *hysteria2Adapter) addTraffic(index int, upload, download int64) {
 		current.Download += download
 		a.traffic[id] = current
 	}
-	a.mu.Unlock()
 }
 
 func (a *hysteria2Adapter) removeActive(conn net.Conn) {

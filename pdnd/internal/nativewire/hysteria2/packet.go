@@ -1,7 +1,6 @@
 package hysteria2
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -18,7 +17,6 @@ import (
 	"github.com/sagernet/quic-go/quicvarint"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
-	"github.com/sagernet/sing/common/cache"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/pipe"
@@ -50,8 +48,20 @@ type udpMessage struct {
 	fragmentID    uint8
 	fragmentTotal uint8
 	destination   string
-	data          *buf.Buffer
-	referenced    bool
+	// addr 是 destination 预先解析好的结果（hasAddr 为真时有效）。服务端按会话
+	// 缓存最近的目标，同一目标的包不再逐包解析地址字符串（Pandora 改动）。
+	addr       M.Socksaddr
+	hasAddr    bool
+	data       *buf.Buffer
+	referenced bool
+}
+
+// socksaddr 返回消息目标；没有预解析时退回逐包解析。
+func (m *udpMessage) socksaddr() M.Socksaddr {
+	if m.hasAddr {
+		return m.addr
+	}
+	return M.ParseSocksaddr(m.destination).Unwrap()
 }
 
 func (m *udpMessage) release() {
@@ -67,17 +77,15 @@ func (m *udpMessage) releaseMessage() {
 	m.release()
 }
 
-func (m *udpMessage) pack() *buf.Buffer {
-	buffer := buf.NewSize(m.headerSize() + m.data.Len())
-	common.Must(
-		binary.Write(buffer, binary.BigEndian, m.sessionID),
-		binary.Write(buffer, binary.BigEndian, m.packetID),
-		binary.Write(buffer, binary.BigEndian, m.fragmentID),
-		binary.Write(buffer, binary.BigEndian, m.fragmentTotal),
-		protocol.WriteVString(buffer, m.destination),
-		common.Error(buffer.Write(m.data.Bytes())),
-	)
-	return buffer
+// appendTo 把消息编码追加到 dst：与原 pack 的线格式逐字节一致，但不经
+// binary.Write 的反射与临时分配（Pandora 改动）。
+func (m *udpMessage) appendTo(dst []byte) []byte {
+	dst = binary.BigEndian.AppendUint32(dst, m.sessionID)
+	dst = binary.BigEndian.AppendUint16(dst, m.packetID)
+	dst = append(dst, m.fragmentID, m.fragmentTotal)
+	dst = quicvarint.Append(dst, uint64(len(m.destination)))
+	dst = append(dst, m.destination...)
+	return append(dst, m.data.Bytes()...)
 }
 
 func (m *udpMessage) headerSize() int {
@@ -115,6 +123,12 @@ func fragUDPMessage(message *udpMessage, maxPacketSize int) []*udpMessage {
 	return fragments
 }
 
+// DefaultUDPQueueSize 是每个 UDP 会话「已收到、待转发」的消息队列长度。
+// 上游 sing-quic 写死 64，单连接 300Mbps（1200 字节包分两片，约 6 万片/秒）时
+// 转发 goroutine 稍一停顿就整批丢；放大到 512 并可经 ServiceOptions 配置。
+// 队列满仍然丢包（UDP 语义），不阻塞 QUIC 收包循环。
+const DefaultUDPQueueSize = 512
+
 type udpPacketConn struct {
 	ctx             context.Context
 	cancel          common.ContextCancelCauseFunc
@@ -128,15 +142,29 @@ type udpPacketConn struct {
 	onDestroy       func()
 	readWaitOptions N.ReadWaitOptions
 	readDeadline    pipe.Deadline
+	// dropped 统计因队列满丢弃的消息数，供测试与诊断。
+	dropped atomic.Uint64
+	// 空闲超时由连接自己维护（实现 canceler.PacketConn），见 SetTimeout。
+	idle idleTimeout
+	// lastWrite 缓存最近一次下行目标的字符串形式，同一目标不再逐包 String()。
+	lastWrite atomic.Pointer[writeDestination]
 }
 
-func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, onDestroy func()) *udpPacketConn {
+type writeDestination struct {
+	addr M.Socksaddr
+	text string
+}
+
+func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, onDestroy func(), queueSize int) *udpPacketConn {
 	ctx, cancel := common.ContextWithCancelCause(ctx)
+	if queueSize <= 0 {
+		queueSize = DefaultUDPQueueSize
+	}
 	return &udpPacketConn{
 		ctx:          ctx,
 		cancel:       cancel,
 		quicConn:     quicConn,
-		data:         make(chan *udpMessage, 64),
+		data:         make(chan *udpMessage, queueSize),
 		udpMTU:       1200 - 3,
 		defragger:    newUDPDefragger(),
 		onDestroy:    onDestroy,
@@ -144,12 +172,31 @@ func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, onDestroy func()
 	}
 }
 
+// Dropped 返回因接收队列满而丢弃的消息数。
+func (c *udpPacketConn) Dropped() uint64 { return c.dropped.Load() }
+
+// TryReadPacket 非阻塞地取一条已到达的消息，没有就返回 false。转发方先阻塞读
+// 一条，再用它把队列里积压的消息一并取走，凑批发给上游。
+func (c *udpPacketConn) TryReadPacket(buffer *buf.Buffer) (destination M.Socksaddr, ok bool) {
+	select {
+	case p := <-c.data:
+		_, _ = buffer.ReadOnceFrom(p.data)
+		destination = p.socksaddr()
+		p.releaseMessage()
+		c.idle.touch()
+		return destination, true
+	default:
+		return M.Socksaddr{}, false
+	}
+}
+
 func (c *udpPacketConn) ReadPacket(buffer *buf.Buffer) (destination M.Socksaddr, err error) {
 	select {
 	case p := <-c.data:
 		_, err = buffer.ReadOnceFrom(p.data)
-		destination = M.ParseSocksaddr(p.destination).Unwrap()
+		destination = p.socksaddr()
 		p.releaseMessage()
+		c.idle.touch()
 		return
 	case <-c.ctx.Done():
 		return M.Socksaddr{}, io.ErrClosedPipe
@@ -162,7 +209,8 @@ func (c *udpPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	select {
 	case pkt := <-c.data:
 		n = copy(p, pkt.data.Bytes())
-		destination := M.ParseSocksaddr(pkt.destination).Unwrap()
+		destination := pkt.socksaddr()
+		c.idle.touch()
 		if destination.IsFqdn() {
 			addr = destination
 		} else {
@@ -193,10 +241,11 @@ func (c *udpPacketConn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr)
 		sessionID:     c.sessionID,
 		packetID:      packetId,
 		fragmentTotal: 1,
-		destination:   destination.String(),
+		destination:   c.destinationText(destination),
 		data:          buffer,
 	}
 	defer message.releaseMessage()
+	c.idle.touch()
 	var err error
 	if buffer.Len() > c.udpMTU-message.headerSize() {
 		err = c.writePackets(fragUDPMessage(message, c.udpMTU))
@@ -253,20 +302,29 @@ func (c *udpPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	return
 }
 
+// destinationText 返回目标地址的线格式字符串；与上一包目标相同时复用缓存。
+func (c *udpPacketConn) destinationText(destination M.Socksaddr) string {
+	if cached := c.lastWrite.Load(); cached != nil && cached.addr == destination {
+		return cached.text
+	}
+	text := destination.String()
+	c.lastWrite.Store(&writeDestination{addr: destination, text: text})
+	return text
+}
+
 func (c *udpPacketConn) inputPacket(message *udpMessage) {
-	if message.fragmentTotal <= 1 {
-		select {
-		case c.data <- message:
-		default:
+	if message.fragmentTotal > 1 {
+		message = c.defragger.feed(message)
+		if message == nil {
+			return
 		}
-	} else {
-		newMessage := c.defragger.feed(message)
-		if newMessage != nil {
-			select {
-			case c.data <- newMessage:
-			default:
-			}
-		}
+	}
+	select {
+	case c.data <- message:
+	default:
+		// 队列满：丢弃并归还缓冲（上游这里直接丢掉引用，池里的对象就漏了）。
+		c.dropped.Add(1)
+		message.releaseMessage()
 	}
 }
 
@@ -282,13 +340,14 @@ func (c *udpPacketConn) writePackets(messages []*udpMessage) error {
 }
 
 func (c *udpPacketConn) writePacket(message *udpMessage) error {
-	buffer := message.pack()
-	defer buffer.Release()
-	return c.quicConn.SendDatagram(buffer.Bytes())
+	// SendDatagram 会自己复制一份，编码缓冲放栈上即可（分片后单条不超过 MTU）。
+	var scratch [1536]byte
+	return c.quicConn.SendDatagram(message.appendTo(scratch[:0]))
 }
 
 func (c *udpPacketConn) Close() error {
 	c.closeOnce.Do(func() {
+		c.idle.stop()
 		c.closeWithError(os.ErrClosed)
 		c.onDestroy()
 	})
@@ -324,26 +383,50 @@ func (c *udpPacketConn) WriterMTU() int {
 	return protocol.MaxUDPSize
 }
 
+// defragSlots 是每个会话同时重组中的分片包上限。
+const defragSlots = 16
+
+// udpDefragger 重组分片消息（Pandora 改动）。上游用 10 秒寿命的 LRU，每个分片
+// 都要 LoadOrStore、分配表项和链表节点；同一会话的分片几乎总是紧挨着到达，
+// 这里改成按 packetID 线性查找的小环：最多同时重组 defragSlots 个包，新包挤掉
+// 最旧的未完成包。内存因此按会话有界，乱发 packetID 也撑不大。
 type udpDefragger struct {
-	packetMap *cache.LruCache[uint16, *packetItem]
+	mu    sync.Mutex
+	slots [defragSlots]defragSlot
+	next  int
+}
+
+type defragSlot struct {
+	used     bool
+	packetID uint16
+	count    uint8
+	messages []*udpMessage
+}
+
+func (s *defragSlot) clear() {
+	releaseMessages(s.messages)
+	for i := range s.messages {
+		s.messages[i] = nil
+	}
+	s.messages = s.messages[:0]
+	s.used, s.count = false, 0
 }
 
 func newUDPDefragger() *udpDefragger {
-	return &udpDefragger{
-		packetMap: cache.New(
-			cache.WithAge[uint16, *packetItem](10),
-			cache.WithUpdateAgeOnGet[uint16, *packetItem](),
-			cache.WithEvict[uint16, *packetItem](func(key uint16, value *packetItem) {
-				releaseMessages(value.messages)
-			}),
-		),
-	}
+	return &udpDefragger{}
 }
 
-type packetItem struct {
-	access   sync.Mutex
-	messages []*udpMessage
-	count    uint8
+func (d *udpDefragger) slotFor(packetID uint16) *defragSlot {
+	for i := range d.slots {
+		if d.slots[i].used && d.slots[i].packetID == packetID {
+			return &d.slots[i]
+		}
+	}
+	slot := &d.slots[d.next]
+	d.next = (d.next + 1) % defragSlots
+	slot.clear()
+	slot.used, slot.packetID = true, packetID
+	return slot
 }
 
 func (d *udpDefragger) feed(m *udpMessage) *udpMessage {
@@ -351,78 +434,100 @@ func (d *udpDefragger) feed(m *udpMessage) *udpMessage {
 		return m
 	}
 	if m.fragmentID >= m.fragmentTotal {
+		m.releaseMessage()
 		return nil
 	}
-	item, _ := d.packetMap.LoadOrStore(m.packetID, newPacketItem)
-	item.access.Lock()
-	defer item.access.Unlock()
-	if int(m.fragmentTotal) != len(item.messages) {
-		releaseMessages(item.messages)
-		item.messages = make([]*udpMessage, m.fragmentTotal)
-		item.count = 1
-		item.messages[m.fragmentID] = m
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	slot := d.slotFor(m.packetID)
+	if int(m.fragmentTotal) != len(slot.messages) {
+		releaseMessages(slot.messages)
+		if cap(slot.messages) >= int(m.fragmentTotal) {
+			slot.messages = slot.messages[:m.fragmentTotal]
+			for i := range slot.messages {
+				slot.messages[i] = nil
+			}
+		} else {
+			slot.messages = make([]*udpMessage, m.fragmentTotal)
+		}
+		slot.count = 0
+	}
+	if slot.messages[m.fragmentID] != nil {
+		m.releaseMessage()
 		return nil
 	}
-	if item.messages[m.fragmentID] != nil {
+	slot.messages[m.fragmentID] = m
+	slot.count++
+	if int(slot.count) != len(slot.messages) {
 		return nil
 	}
-	item.messages[m.fragmentID] = m
-	item.count++
-	if int(item.count) != len(item.messages) {
+	var finalLength int
+	for _, message := range slot.messages {
+		finalLength += message.data.Len()
+	}
+	if finalLength == 0 {
+		slot.clear()
 		return nil
 	}
 	newMessage := allocMessage()
 	newMessage.sessionID = m.sessionID
 	newMessage.packetID = m.packetID
-	newMessage.destination = item.messages[0].destination
-	var finalLength int
-	for _, message := range item.messages {
-		finalLength += message.data.Len()
+	newMessage.destination = slot.messages[0].destination
+	newMessage.addr, newMessage.hasAddr = slot.messages[0].addr, slot.messages[0].hasAddr
+	newMessage.data = buf.NewSize(finalLength)
+	for _, message := range slot.messages {
+		_, _ = newMessage.data.Write(message.data.Bytes())
 	}
-	if finalLength > 0 {
-		newMessage.data = buf.NewSize(finalLength)
-		for _, message := range item.messages {
-			newMessage.data.Write(message.data.Bytes())
-			message.releaseMessage()
-		}
-		item.messages = nil
-		return newMessage
+	slot.clear()
+	return newMessage
+}
+
+// decodeUDPMessage 解析一条 UDP 消息。手写解析代替 bytes.Reader + binary.Read
+// （每包多次分配）；destCache 非 nil 时（服务端单 goroutine 收包循环）同一目标
+// 复用上一包的地址字符串与解析结果（Pandora 改动，线格式不变）。
+func decodeUDPMessage(message *udpMessage, data []byte, destCache *destinationCache) error {
+	if len(data) < 8 {
+		return io.ErrUnexpectedEOF
+	}
+	message.sessionID = binary.BigEndian.Uint32(data[0:4])
+	message.packetID = binary.BigEndian.Uint16(data[4:6])
+	message.fragmentID = data[6]
+	message.fragmentTotal = data[7]
+	length, consumed, err := quicvarint.Parse(data[8:])
+	if err != nil {
+		return err
+	}
+	if length > protocol.MaxAddressLength {
+		return errors.New("invalid address length")
+	}
+	rest := data[8+consumed:]
+	if uint64(len(rest)) < length {
+		return io.ErrUnexpectedEOF
+	}
+	raw := rest[:length]
+	if destCache != nil {
+		message.destination, message.addr = destCache.lookup(raw)
+		message.hasAddr = true
 	} else {
-		newMessage.releaseMessage()
-		for _, message := range item.messages {
-			message.releaseMessage()
-		}
+		message.destination = string(raw)
 	}
-	item.messages = nil
+	message.data = buf.As(rest[length:])
 	return nil
 }
 
-func newPacketItem() *packetItem {
-	return new(packetItem)
+// destinationCache 记住上一条消息的目标：同一会话的包通常发往同一目标。
+// 只能在单个 goroutine 里用。
+type destinationCache struct {
+	text string
+	addr M.Socksaddr
+	set  bool
 }
 
-func decodeUDPMessage(message *udpMessage, data []byte) error {
-	reader := bytes.NewReader(data)
-	err := binary.Read(reader, binary.BigEndian, &message.sessionID)
-	if err != nil {
-		return err
+func (d *destinationCache) lookup(raw []byte) (string, M.Socksaddr) {
+	if !d.set || d.text != string(raw) {
+		d.text = string(raw)
+		d.addr = M.ParseSocksaddr(d.text).Unwrap()
+		d.set = true
 	}
-	err = binary.Read(reader, binary.BigEndian, &message.packetID)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(reader, binary.BigEndian, &message.fragmentID)
-	if err != nil {
-		return err
-	}
-	err = binary.Read(reader, binary.BigEndian, &message.fragmentTotal)
-	if err != nil {
-		return err
-	}
-	message.destination, err = protocol.ReadVString(reader)
-	if err != nil {
-		return err
-	}
-	message.data = buf.As(data[len(data)-reader.Len():])
-	return nil
+	return d.text, d.addr
 }

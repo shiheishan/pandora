@@ -42,8 +42,10 @@ type ServiceOptions struct {
 	TLSConfig             aTLS.ServerConfig
 	UDPDisabled           bool
 	UDPTimeout            time.Duration
-	Handler               ServerHandler
-	MasqueradeHandler     http.Handler
+	// UDPQueueSize 是每个 UDP 会话的接收队列长度，非正值用 DefaultUDPQueueSize。
+	UDPQueueSize      int
+	Handler           ServerHandler
+	MasqueradeHandler http.Handler
 }
 
 type ServerHandler interface {
@@ -65,6 +67,7 @@ type Service[U comparable] struct {
 	userMap               map[string]U
 	udpDisabled           bool
 	udpTimeout            time.Duration
+	udpQueueSize          int
 	handler               ServerHandler
 	masqueradeHandler     http.Handler
 	quicListener          io.Closer
@@ -102,6 +105,7 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		userMap:               make(map[string]U),
 		udpDisabled:           options.UDPDisabled,
 		udpTimeout:            options.UDPTimeout,
+		udpQueueSize:          options.UDPQueueSize,
 		handler:               options.Handler,
 		masqueradeHandler:     options.MasqueradeHandler,
 	}, nil
@@ -182,6 +186,8 @@ type serverSession[U comparable] struct {
 	authUser      U
 	udpAccess     sync.RWMutex
 	udpConnMap    map[uint32]*udpPacketConn
+	// destCache 只在 loopMessages 里用（Pandora 改动）。
+	destCache destinationCache
 }
 
 func (s *serverSession[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
