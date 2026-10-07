@@ -12,6 +12,7 @@ paths:
 
 ## 约束与迁移联动
 - `payment_intents` 的 BEFORE UPDATE 守卫 `app.guard_payment_intent` 只放行白名单列：status、provider_ref、action_payload、failure_code、failure_message、expires_at、updated_at、query_attempts、next_query_at；status 只能按状态机前进，provider_ref 只能写一次。给支付意图加要 UPDATE 的列，必须在同一迁移里 CREATE OR REPLACE 该函数补白名单（Down 恢复上一版原文），并 `GRANT UPDATE (列) TO aegis_app`。现行定义在 00097
+- 支付渠道只经 `provider_admin.go` 的 `CreateProvider` / `UpdateProvider` 写（后台与 aegis-payctl 共用）：先落行、再按 id 用 `payment_provider:<id>` 作 AAD 加密（与 `loadProvider` 同一个）；保存前用 `Factory.Build` 试构造；adapter 与 code 建后不可改，offline 只读；审计只记 `credentials_changed`。`CreatePaymentIntent` 先用 `resolvePaymentMethod` 校验方式在渠道 methods 内，复用在途意图要同渠道且 `action_payload.method` 相同。守卫 `TestPaymentProviderAdminPG18`
 - 金额恒等式 total = max(小计 − 折扣 − 剩余价值折算, 0) + 税，Go 侧只有 `orderTotal` 一处，和 00071 的 `orders_total_identity` 一致；折算额只有 upgrade 单可以非零
 - 科目类型 `AccountType` 与迁移里的 CHECK 一一对应，借贷配平最终由延迟约束触发器强制
 
