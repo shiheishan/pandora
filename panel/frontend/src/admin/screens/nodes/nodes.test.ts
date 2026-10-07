@@ -33,15 +33,17 @@ import {
   toProtocolConfig,
   validateBasic,
   NO_POOL_HINT,
+  NODE_LINE_FIELDS,
+  sameNodeLine,
 } from './logic'
-import { nodeRowSchema, protocolSchemasResponse, type NodeRow } from './schemas'
+import { nodeDetailSchema, nodeRowSchema, protocolSchemasResponse, type NodeDetail } from './schemas'
 
 const SCHEMAS = protocolSchemasResponse.parse(NODE_PROTOCOL_SCHEMAS).schemas
 const schemaOf = (t: string) => SCHEMAS.find((s) => s.node_type === t)!
 
-// Go 的列表行原样形状：指针字段为 null，nil 切片为 null
-const row = (over: Partial<Record<string, unknown>> = {}): NodeRow =>
-  nodeRowSchema.parse({
+// Go 的单取行（?id=）原样形状：指针字段为 null，nil 切片为 null；列表行是它去掉编辑字段
+const row = (over: Partial<Record<string, unknown>> = {}): NodeDetail =>
+  nodeDetailSchema.parse({
     id: 'n1',
     node_no: 101,
     row_version: 5,
@@ -96,6 +98,24 @@ describe('schemas', () => {
     expect(schemaOf('socks').required).toEqual([])
     expect(schemaOf('v2ray').allowed_properties).toEqual([])
     expect(row().granted_plans).toEqual([])
+  })
+
+  it('keeps the edit-form fields out of the list row shape', () => {
+    const listed = nodeRowSchema.parse(row())
+    for (const k of ['protocol_config', 'kernel', 'traffic_rate', 'protocol_schema_version', 'config_validated_at', 'traffic_bytes']) expect(listed).not.toHaveProperty(k)
+    expect(row().protocol_config).toMatchObject({ network: 'tcp' })
+  })
+})
+
+describe('node line memo', () => {
+  it('ignores fields the line does not show and catches the ones it does', () => {
+    const a = row()
+    const beat: NodeDetail = { ...a, last_heartbeat_at: '2026-09-24T10:00:30Z', agent_version: 'core r54', row_version: 6 }
+    expect(sameNodeLine(a, beat)).toBe(true)
+    for (const k of NODE_LINE_FIELDS) {
+      const changed = { ...a, [k]: k === 'stale' || k === 'delivered_to_users' ? !a[k] : `${String(a[k])}-x` }
+      expect(sameNodeLine(a, changed)).toBe(false)
+    }
   })
 })
 

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
 import { storedProtocolConfig } from '../dev/mock/admin/nodes'
 import { activeNodesInPool } from '../dev/mock/admin/nodes-infra'
-import { adminNodeSchema, globalRoutingSchema, nodesResponse, poolsResponse, serverSchema, serversResponse } from '../src/admin/screens/nodes/schemas'
+import { adminNodeSchema, globalRoutingSchema, nodeDetailResponse, nodesResponse, poolsResponse, serverSchema, serversResponse } from '../src/admin/screens/nodes/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 describe('mock api · admin nodes', () => {
@@ -25,8 +25,43 @@ describe('mock api · admin nodes', () => {
     expect(rows.some((n) => n.serving_status === 'retired')).toBe(false)
     const all = nodesResponse.parse(await (await call('GET', '/v1/nodes?include_retired=1')).json()).nodes
     expect(all.some((n) => n.serving_status === 'retired')).toBe(true)
-    // 读接口抹掉敏感键
-    expect(JSON.stringify(rows.map((n) => n.protocol_config))).not.toContain('private_key')
+    // 列表不带编辑字段；按 id 单取才带，且读接口抹掉敏感键
+    const raw = (await (await call('GET', '/v1/nodes')).json()) as { nodes: Array<Record<string, unknown>> }
+    expect(raw.nodes.some((n) => 'protocol_config' in n || 'kernel' in n || 'traffic_rate' in n)).toBe(false)
+    const one = nodeDetailResponse.parse(await (await call('GET', `/v1/nodes?id=${rows[0]!.id}`)).json())
+    expect(one.nodes).toHaveLength(1)
+    expect(one.nodes[0]!.id).toBe(rows[0]!.id)
+    expect(one.nodes[0]!.protocol_config).toMatchObject({ network: 'tcp' })
+    expect(JSON.stringify(one.nodes[0]!.protocol_config)).not.toContain('private_key')
+    expect(nodeDetailResponse.parse(await (await call('GET', '/v1/nodes?id=00000000-0000-4000-8000-000000000000')).json())).toEqual({ nodes: [], total: 0 })
+  })
+
+  it('searches, filters and pages on the server like nodefabric.QueryAdminNodes', async () => {
+    const page = async (query: string) => nodesResponse.parse(await (await call('GET', `/v1/nodes?${query}`)).json())
+    const all = await page('state=all')
+    expect(all.nodes.every((n) => n.serving_status !== 'retired')).toBe(true)
+    // state 给出时由它决定含不含已退役
+    expect((await page('state=retired')).nodes.every((n) => n.serving_status === 'retired')).toBe(true)
+    expect((await page('state=retired')).total).toBeGreaterThan(0)
+    expect((await page('state=offline')).nodes.every((n) => n.serving_status === 'active' && n.stale)).toBe(true)
+    expect((await page('state=online')).nodes.every((n) => n.serving_status === 'draining' || (n.serving_status === 'active' && !n.stale))).toBe(true)
+    expect((await page('state=disabled')).nodes.every((n) => n.serving_status === 'draft' || n.serving_status === 'disabled')).toBe(true)
+    // 搜索：名称、国家（不分大小写）、编号
+    const hk = await page('q=hk')
+    expect(hk.total).toBeGreaterThan(0)
+    expect(hk.nodes.every((n) => `${n.name} ${n.country_code} ${n.server_host} ${n.server_name}`.toLowerCase().includes('hk'))).toBe(true)
+    const byNo = await page(`q=${all.nodes[1]!.node_no}`)
+    expect(byNo.nodes.map((n) => n.id)).toContain(all.nodes[1]!.id)
+    // 分页：total 与页无关
+    const second = await page('state=all&limit=2&offset=2')
+    expect(second.total).toBe(all.total)
+    expect(second.nodes.map((n) => n.id)).toEqual(all.nodes.slice(2, 4).map((n) => n.id))
+    // 与 Go 一样在碰数据前回 422
+    for (const [query, field] of [['state=gone', 'state'], ['id=nope', 'id'], [`q=${'长'.repeat(121)}`, 'q']] as const) {
+      const res = await call('GET', `/v1/nodes?${query}`)
+      expect(res.status).toBe(422)
+      expect(await res.json()).toMatchObject({ error: { code: 'validation_failed', fields: { [field]: expect.any(String) } } })
+    }
   })
 
   it('copies into a new node and refuses illegal transitions and deployed moves', async () => {
