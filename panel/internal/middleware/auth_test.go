@@ -24,21 +24,6 @@ const (
 	authTestSession = "33333333-3333-4333-8333-333333333333"
 )
 
-func TestSessionValidityQueryFailsClosedAcrossPrincipalBoundaries(t *testing.T) {
-	for _, clause := range []string{
-		"revoked_at IS NOT NULL",
-		"expires_at <= now()",
-		"tenant_id = $1",
-		"id = $2::uuid",
-		"user_id = $3::uuid",
-		"audience = $4",
-	} {
-		if !strings.Contains(sessionValiditySQL, clause) {
-			t.Fatalf("session validity query is missing %q: %s", clause, sessionValiditySQL)
-		}
-	}
-}
-
 type authFakeQuerier struct {
 	revoked     bool
 	permissions []string
@@ -181,7 +166,9 @@ func TestAuthenticateAcceptsActiveTenantBoundSession(t *testing.T) {
 		t.Fatalf("active session result next=%v status=%d db_calls=%d", nextCalled, res.Code, q.calls)
 	}
 	// 有效性、节流刷新（R62）与权限展开在同一条语句、同一次往返里
-	if q.sql != sessionAuthSQL || q.scope != (db.Scope{TenantID: authTestTenant, ActorID: authTestUser}) {
+	// 语句本身的断言在 platform/sessionauth 的测试里
+	if !strings.Contains(q.sql, "UPDATE sessions SET last_seen_at") ||
+		q.scope != (db.Scope{TenantID: authTestTenant, ActorID: authTestUser}) {
 		t.Fatalf("auth query scope=%+v sql=%q", q.scope, q.sql)
 	}
 	if len(q.args) != 4 || q.args[0] != authTestTenant || q.args[1] != authTestSession ||
@@ -190,39 +177,7 @@ func TestAuthenticateAcceptsActiveTenantBoundSession(t *testing.T) {
 	}
 }
 
-func TestSessionTouchIsThrottledAndScoped(t *testing.T) {
-	for _, clause := range []string{
-		"SET last_seen_at = now()",
-		"tenant_id = $1",
-		"id = $2::uuid",
-		"last_seen_at < now() - interval '5 minutes'",
-		// 只刷新仍有效的会话
-		"EXISTS (SELECT 1 FROM sess WHERE NOT sess.revoked)",
-	} {
-		if !strings.Contains(sessionTouchSQL, clause) {
-			t.Fatalf("session touch is missing %q: %s", clause, sessionTouchSQL)
-		}
-	}
-	// 数据修改 CTE 必须在同一条语句里（PostgreSQL 保证它执行），而不是一条被跳过的独立语句
-	if !strings.Contains(sessionAuthSQL, "touch AS ("+sessionTouchSQL) ||
-		!strings.Contains(sessionAuthSQL, "WITH sess AS ("+sessionValiditySQL) {
-		t.Fatal("validity and touch must be CTEs of the single auth statement")
-	}
-}
-
 func TestAdminPermissionExpansionRequiresTenantScope(t *testing.T) {
-	for _, want := range []string{"JOIN roles r ON r.id = rb.role_id AND r.tenant_id = rb.tenant_id",
-		"rb.scope_type = 'tenant'", "rb.scope_id IS NULL", "rb.expires_at > now()", "rb.user_id = $3::uuid"} {
-		if !strings.Contains(adminPermissionsSQL, want) {
-			t.Fatalf("admin permission query missing %q: %s", want, adminPermissionsSQL)
-		}
-	}
-	// 只有后台、且会话有效时才展开；门户不展开
-	if !strings.Contains(sessionAuthSQL, "CASE WHEN $4 = 'admin' AND NOT sess.revoked") ||
-		!strings.Contains(sessionAuthSQL, "THEN ARRAY("+adminPermissionsSQL+")") {
-		t.Fatalf("permission expansion must be gated on admin audience: %s", sessionAuthSQL)
-	}
-
 	q := &authFakeQuerier{permissions: []string{"iam.user.read", "node.read"}}
 	var got []string
 	handler := Authenticate(q, authIssuer("admin"), slog.New(slog.NewTextHandler(io.Discard, nil)))(

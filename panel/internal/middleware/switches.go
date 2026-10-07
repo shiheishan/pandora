@@ -2,30 +2,21 @@ package middleware
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 
-	"github.com/aegispanel/aegis/internal/platform/db"
+	"github.com/aegispanel/aegis/internal/platform/featureswitch"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 // switchQuerier 是开关读取对数据库的全部要求（*db.Pool 的 QueryRowScoped，一次往返）。
-type switchQuerier interface {
-	QueryRowScoped(ctx context.Context, s db.Scope, sql string, args []any, dest ...any) error
-}
+// 语句在 platform/featureswitch（中间件不写 SQL）。
+type switchQuerier = featureswitch.Querier
 
-const featureSwitchSQL = `SELECT enabled FROM feature_switches WHERE tenant_id = $1 AND code = $2`
-
-// switchEnabled 读一个降级开关。enabled=true 表示功能可用。
-//
-// 缺行视为开启（fail open）：这几个开关是运维手里的「急停」，迁移只给当时已有的
-// 租户插了行，之后新建的租户没有行；把缺行当关闭，新租户会一上来就不能下单。
-// auth.registration 是反例（缺行即关闭），那是注册策略自己的规则，不走这里。
+// switchEnabled 读一个降级开关。enabled=true 表示功能可用；缺行视为开启（见 featureswitch.Enabled）。
 //
 // 读到的值在进程内缓存 switchCacheTTL（见 switch_cache.go）：管理端每个写请求、
 // 门户每次下单都要过一道开关，以前每次一个完整事务（四次往返 + 归还清理）。
@@ -34,12 +25,7 @@ func switchEnabled(ctx context.Context, pool switchQuerier, tenantID, code strin
 	if enabled, ok := switches.get(tenantID, code); ok {
 		return enabled, nil
 	}
-	enabled := true
-	err := pool.QueryRowScoped(ctx, db.Scope{TenantID: tenantID}, featureSwitchSQL,
-		[]any{tenantID, code}, &enabled)
-	if errors.Is(err, pgx.ErrNoRows) {
-		enabled, err = true, nil
-	}
+	enabled, err := featureswitch.Enabled(ctx, pool, tenantID, code)
 	if err != nil {
 		return false, err
 	}
