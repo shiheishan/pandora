@@ -10,7 +10,7 @@ paths:
 - `panel/tests/*.sh` 打真实网关与真实库，本机没有数据库跑不了；CI 在一次性冒烟栈上经 `panel/deploy/run-smoke-e2e.sh` 逐个跑
   - 脚本假定 `/opt/aegispanel` 的 docker-compose 布局（`deploy/.env`、`deploy/psql.sh`、容器 `aegis-postgres`）。runner 只负责把这套环境搭出来，不要为了 CI 改脚本
   - 新增 e2e 脚本要加进 `run-smoke-e2e.sh` 的 `SCRIPTS`，它声明要的环境也由 runner 搭
-  - 顺序固定 admin → epay → support → uniproxy → risk → e2e：`e2e.sh` 的限流探测会打满登录额度，必须最后；脚本之间空一个限流窗口
+  - 顺序固定 admin → epay → support → uniproxy → password_reset → portal_staff → risk → e2e：`e2e.sh` 的限流探测会打满登录额度，必须最后；脚本之间空一个限流窗口
   - `run-smoke-e2e.sh` 只肯在 GitHub Actions 上跑；全部跑完、结果表写完后才判失败
 - 会留下不可逆证据（审计、账本、订单）的脚本必须要求显式的一次性库确认变量（`ADMIN_E2E_DISPOSABLE`、`UNIPROXY_E2E_DISPOSABLE`、`RISK_E2E_DISPOSABLE`，值为 `YES_DELETE_FIXTURES`），runner 负责设置
 - 冒烟栈的库名 `aegis_smoke_test` 带 test 段，才能过 e2e 脚本的一次性库守卫；改库名会让脚本拒跑
