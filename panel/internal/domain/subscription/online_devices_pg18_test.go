@@ -50,12 +50,14 @@ const onlineViewDiffSQL = `
 // 订阅链接）的输出与改前口径一致。挂在 TestDeviceWindowPG18 下跑（delivery 域的
 // -run 过滤是写死的函数名列表）。
 func testOnlineDevicesViewPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool, app *platformdb.Pool) {
+	// 同一个 delivery 库里还住着别的测试的夹具（api/admin 的 node_status_refusal 用 …0901 段），
+	// 这里用十六进制 a0 段，与十进制编号的夹具不会撞
 	const (
-		tenantA = "93000000-0000-4000-8000-000000000901"
-		tenantB = "93000000-0000-4000-8000-000000000902"
-		owner   = "93000000-0000-4000-8000-000000000911"
-		subOn   = "93000000-0000-4000-8000-000000000981"
-		subOff  = "93000000-0000-4000-8000-000000000982"
+		tenantA = "93000000-0000-4000-8000-00000000a001"
+		tenantB = "93000000-0000-4000-8000-00000000a002"
+		owner   = "93000000-0000-4000-8000-00000000a011"
+		subOn   = "93000000-0000-4000-8000-00000000a081"
+		subOff  = "93000000-0000-4000-8000-00000000a082"
 		prefix  = "f0e1d2c3b4a5"
 	)
 	must := func(sql string, args ...any) {
