@@ -40,15 +40,35 @@ type nodeListItem struct {
 	DeliveryNote string `json:"delivery_note"`
 }
 
+// nodeDetailItem 是按 id 单取时的一行：列表行再加上编辑表单才用的字段（protocol_config 已抹掉敏感键）。
+type nodeDetailItem struct {
+	nodeListItem
+	nodefabric.AdminNodeDetail
+}
+
+// nodeList 是 GET v1/nodes。
+//
+// 查询参数：limit / offset 分页；q 服务端搜索；state 状态筛选（all / online / offline /
+// disabled / retired，给了就不看 include_retired）；id 只取一个节点并带上编辑字段
+// （protocol_config、kernel、traffic_rate、30 天流量等），抽屉与编辑表单用它。
+// 列表本身不带这些字段：1000 个节点的列表每 30 秒刷一次，表单字段一个也不显示。
 func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
-	includeRetired := r.URL.Query().Get("include_retired") == "1"
+	query := r.URL.Query()
 	// 原先写死 LIMIT 200、total 取本页条数：第 201 个节点起被静默截掉，
 	// 前端还以为那就是全部（缺陷 21）。现在可分页，total 是真实总数。
-	limit, offset := nodeListPage(r.URL.Query())
-	rows, total, err := h.d.Node.ListAdminNodes(r.Context(), httpx.TenantIDFrom(r.Context()),
-		includeRetired, limit, offset)
+	limit, offset := nodeListPage(query)
+	q := nodefabric.AdminNodeQuery{
+		IncludeRetired: query.Get("include_retired") == "1",
+		State:          query.Get("state"),
+		Search:         query.Get("q"),
+		ID:             query.Get("id"),
+		Limit:          limit,
+		Offset:         offset,
+	}
+	tenantID := httpx.TenantIDFrom(r.Context())
+	rows, total, err := h.d.Node.QueryAdminNodes(r.Context(), tenantID, q)
 	if err != nil {
-		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
+		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	// 服务器就绪、协议与地址、池是否绑了套餐：按订阅资格的同一个 SQL 片段
@@ -58,7 +78,7 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 	for _, x := range rows {
 		ids = append(ids, x.ID)
 	}
-	facts, err := subscription.NodeDeliverability(r.Context(), h.d.Pool, httpx.TenantIDFrom(r.Context()), ids)
+	facts, err := subscription.NodeDeliverability(r.Context(), h.d.Pool, tenantID, ids)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
@@ -78,10 +98,19 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 			time.Since(*x.LastBeat) < subscription.HeartbeatFreshWindow
 		item.Delivered, item.DeliveryNote = facts[x.ID].Refine(subscription.DeliveryState(
 			x.ServingStatus, x.PoolID != nil, everSeen, beatFresh))
-		item.Protocol = nodefabric.RedactProtocolConfig(x.Protocol)
 		out = append(out, item)
 	}
-	httpx.OK(w, nodeListResponse{Nodes: out, Total: total})
+	if q.ID == "" {
+		httpx.OK(w, nodeListResponse{Nodes: out, Total: total})
+		return
+	}
+	detail := make([]nodeDetailItem, 0, len(out))
+	for _, item := range out {
+		d := nodeDetailItem{nodeListItem: item, AdminNodeDetail: item.AdminNodeDetail}
+		d.Protocol = nodefabric.RedactProtocolConfig(d.Protocol)
+		detail = append(detail, d)
+	}
+	httpx.OK(w, nodeDetailResponse{Nodes: detail, Total: total})
 }
 
 // nodeListResponse 是 GET v1/nodes 的响应；Nodes 非 nil，空页编成 []。
@@ -90,8 +119,14 @@ type nodeListResponse struct {
 	Total int64          `json:"total"`
 }
 
-// nodeListPage 解析节点列表的分页参数。默认 500 条、最多 1000 条：前端按
-// 设计在本地做筛选与搜索，一页要装得下常规规模的全部节点。非法值回默认。
+// nodeDetailResponse 是 GET v1/nodes?id= 的响应：形状同列表，行里多了编辑字段；节点不存在时 nodes 为 []。
+type nodeDetailResponse struct {
+	Nodes []nodeDetailItem `json:"nodes"`
+	Total int64            `json:"total"`
+}
+
+// nodeListPage 解析节点列表的分页参数。默认 500 条、最多 1000 条：节点不超过一页时前端
+// 在本地做筛选与搜索；超过时前端改用 q / state 交给服务端并按页取。非法值回默认。
 func nodeListPage(q url.Values) (limit, offset int) {
 	limit, offset = 500, 0
 	if v, err := strconv.Atoi(strings.TrimSpace(q.Get("limit"))); err == nil && v >= 1 && v <= 1000 {
