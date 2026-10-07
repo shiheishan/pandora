@@ -76,7 +76,7 @@ func TestTrojanAdapterLoopbackTCPAndTraffic(t *testing.T) {
 	port := reserved.Addr().(*net.TCPAddr).Port
 	_ = reserved.Close()
 
-	adapter := &trojanAdapter{users: make(map[string]trojanUser), traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	adapter := &trojanAdapter{users: make(map[string]trojanUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "trojan", Listen: "127.0.0.1", Port: port}}
 	if err := adapter.Validate(spec); err != nil {
 		t.Fatal(err)
@@ -251,9 +251,7 @@ func TestTrojanAdapterRealityXrayInterop(t *testing.T) {
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		adapter.mu.RLock()
-		observed := adapter.traffic[904]
-		adapter.mu.RUnlock()
+		observed := adapter.sessions.peek(904)
 		if observed.Upload > 0 && observed.Download > 0 {
 			break
 		}

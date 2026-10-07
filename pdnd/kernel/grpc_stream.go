@@ -18,14 +18,16 @@ import (
 )
 
 type grpcDuplexConn struct {
-	ctx      context.Context
-	body     io.ReadCloser
-	writer   http.ResponseWriter
-	readMu   sync.Mutex
-	writeMu  sync.Mutex
-	pending  []byte
-	maxFrame uint32
-	encoding string
+	ctx     context.Context
+	body    io.ReadCloser
+	writer  http.ResponseWriter
+	readMu  sync.Mutex
+	writeMu sync.Mutex
+	pending []byte
+	// pendingBuf 非空时 pending 指向池里借来的帧缓冲，取完即还（frame_pool.go）。
+	pendingBuf *[]byte
+	maxFrame   uint32
+	encoding   string
 }
 
 func newGRPCDuplexConn(ctx context.Context, body io.ReadCloser, writer http.ResponseWriter, maxFrame uint32) net.Conn {
@@ -53,28 +55,39 @@ func (c *grpcDuplexConn) Read(p []byte) (int, error) {
 		if length > c.maxFrame {
 			return 0, fmt.Errorf("grpc message exceeds %d bytes", c.maxFrame)
 		}
-		frame := make([]byte, length)
+		bp, frame := getFrameBuf(int(length))
 		if _, err := io.ReadFull(c.body, frame); err != nil {
+			putFrameBuf(bp)
 			c.pending = nil
 			return 0, err
 		}
 		if header[0] == 0 {
-			payload, err := decodeGunHunk(frame)
+			payload, aliased, err := decodeGunHunkAliased(frame)
 			if err != nil {
+				putFrameBuf(bp)
 				return 0, err
 			}
 			c.pending = payload
+			// 单个 Hunk 时 payload 就是 frame 的切片，留着缓冲到取完；多 Hunk 已拷出。
+			if aliased {
+				c.pendingBuf = bp
+			} else {
+				putFrameBuf(bp)
+			}
 			continue
 		}
 		if header[0] != 1 || c.encoding != "gzip" {
+			putFrameBuf(bp)
 			return 0, fmt.Errorf("grpc compressed message encoding %q is unsupported", c.encoding)
 		}
 		reader, err := gzip.NewReader(bytes.NewReader(frame))
 		if err != nil {
+			putFrameBuf(bp)
 			return 0, fmt.Errorf("grpc gzip message: %w", err)
 		}
 		decoded, readErr := io.ReadAll(io.LimitReader(reader, int64(c.maxFrame)+1))
 		closeErr := reader.Close()
+		putFrameBuf(bp) // 解压结果是新分配的，压缩帧用完即还
 		if readErr != nil {
 			return 0, fmt.Errorf("grpc gzip message: %w", readErr)
 		}
@@ -92,6 +105,10 @@ func (c *grpcDuplexConn) Read(p []byte) (int, error) {
 	}
 	n := copy(p, c.pending)
 	c.pending = c.pending[n:]
+	if len(c.pending) == 0 && c.pendingBuf != nil {
+		putFrameBuf(c.pendingBuf)
+		c.pendingBuf, c.pending = nil, nil
+	}
 	return n, nil
 }
 
@@ -111,7 +128,9 @@ func (c *grpcDuplexConn) Write(p []byte) (int, error) {
 	hunkHeader[0] = gunHunkTag
 	hunkLen := 1 + binary.PutUvarint(hunkHeader[1:], uint64(len(p)))
 	overhead := 5 + hunkLen
-	frame := make([]byte, overhead+len(p))
+	bp, frame := getFrameBuf(overhead + len(p))
+	defer putFrameBuf(bp)
+	frame[0] = 0 // 未压缩
 	binary.BigEndian.PutUint32(frame[1:5], uint32(hunkLen+len(p)))
 	copy(frame[5:], hunkHeader[:hunkLen])
 	copy(frame[overhead:], p)
@@ -137,25 +156,32 @@ const gunHunkTag = 0x0a
 // 消息体当裸数据，任何标准客户端连上来，协议层读到的第一个字节都是 0x0a：
 // VLESS 报版本无效、Trojan 报口令格式错、VMess 认证失败。
 func decodeGunHunk(message []byte) ([]byte, error) {
+	out, _, err := decodeGunHunkAliased(message)
+	return out, err
+}
+
+// decodeGunHunkAliased 同 decodeGunHunk，并报告结果是否就是 message 的切片
+// （单个 Hunk）——是的话调用方在取完之前不能回收 message 的缓冲。
+func decodeGunHunkAliased(message []byte) ([]byte, bool, error) {
 	var out []byte
 	for first := true; len(message) > 0; first = false {
 		if message[0] != gunHunkTag {
-			return nil, fmt.Errorf("grpc gun message has unexpected field tag 0x%02x", message[0])
+			return nil, false, fmt.Errorf("grpc gun message has unexpected field tag 0x%02x", message[0])
 		}
 		length, n := binary.Uvarint(message[1:])
 		if n <= 0 || length > uint64(len(message)-1-n) {
-			return nil, fmt.Errorf("grpc gun hunk length is invalid")
+			return nil, false, fmt.Errorf("grpc gun hunk length is invalid")
 		}
 		start := 1 + n
 		chunk := message[start : start+int(length)]
 		message = message[start+int(length):]
 		if first && len(message) == 0 {
 			// 常见情形：一条消息一个 Hunk，直接用切片，不复制
-			return chunk, nil
+			return chunk, true, nil
 		}
 		out = append(out, chunk...)
 	}
-	return out, nil
+	return out, false, nil
 }
 
 func (c *grpcDuplexConn) Close() error                     { return c.body.Close() }

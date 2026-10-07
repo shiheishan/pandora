@@ -3,6 +3,7 @@ package kernel
 import (
 	"bufio"
 	"context"
+	"crypto/cipher"
 	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
@@ -46,27 +48,30 @@ var vmessAddressSerializer = M.NewSerializer(
 )
 
 type vmessAdapter struct {
-	spec        InboundSpec
-	mu          sync.RWMutex
-	users       map[string]vmessUser
-	traffic     map[int64]core.UserTraffic
-	online      map[int64]map[string]struct{}
-	listener    net.Listener
-	packet      net.PacketConn
-	httpServer  *http.Server
-	h3Server    interface{ Close() error }
-	xhttpConfig XHTTPConfig
-	tlsConfig   *tls.Config
-	plane       DataPlane
-	connErr     connErrorReporter
-	limiters    core.SpeedLimiters
-	ctx         context.Context
-	cancel      context.CancelFunc
-	closed      bool
-	lastErr     error
-	active      map[net.Conn]struct{}
-	replay      *replayFilter
-	replayOnce  sync.Once
+	spec  InboundSpec
+	mu    sync.RWMutex
+	users map[string]vmessUser
+	// authCandidates 是认证用的只读快照（vmess_auth.go），每次用户变更后重建；
+	// 握手直接读它，不加锁、不复制、不再逐用户重做 KDF 与 aes.NewCipher。
+	authCandidates atomic.Pointer[[]vmessUserCandidate]
+	sessions       userSessions
+	online         map[int64]map[string]struct{}
+	listener       net.Listener
+	packet         net.PacketConn
+	httpServer     *http.Server
+	h3Server       interface{ Close() error }
+	xhttpConfig    XHTTPConfig
+	tlsConfig      *tls.Config
+	plane          DataPlane
+	connErr        connErrorReporter
+	limiters       core.SpeedLimiters
+	ctx            context.Context
+	cancel         context.CancelFunc
+	closed         bool
+	lastErr        error
+	active         map[net.Conn]struct{}
+	replay         *replayFilter
+	replayOnce     sync.Once
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
 	headerTimeout time.Duration
 	xhttpBroker   *XHTTPPacketBroker
@@ -80,10 +85,12 @@ type vmessUser struct {
 	// SpeedLimit 之前没存，面板下发的限速到这里就丢了。
 	SpeedLimit int
 	key        [16]byte
+	// authBlock 是 AuthID 的 AES 解密块，加用户时算好（KDF + aes.NewCipher）。
+	authBlock cipher.Block
 }
 
 func newVMessAdapter(spec InboundSpec) (Adapter, error) {
-	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*vmessXHTTPPacketSession)}, nil
+	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*vmessXHTTPPacketSession)}, nil
 }
 
 func (a *vmessAdapter) Protocol() string { return "vmess" }
@@ -298,11 +305,11 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			a.active[conn] = struct{}{}
 			a.wg.Add(1)
 			a.mu.Unlock()
-			go func() {
+			goGuarded(conn, func() {
 				defer a.wg.Done()
 				defer a.removeActive(conn)
 				_ = a.handleConn(connCtx, conn)
-			}()
+			})
 		}
 		if strings.EqualFold(network, "ws") {
 			server, serveErr = serveNativeWebSocket(ln, path, host, func() context.Context { return a.ctx }, onConn)
@@ -392,7 +399,7 @@ func (a *vmessAdapter) serveAccepted(conn net.Conn) {
 	a.wg.Add(1)
 	ctx, tlsConfig := a.ctx, a.tlsConfig
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer a.removeActive(conn)
 		session := conn
@@ -412,7 +419,7 @@ func (a *vmessAdapter) serveAccepted(conn net.Conn) {
 			}
 			a.mu.Unlock()
 		}
-	}()
+	})
 }
 
 // handleConn 是 TCP / mKCP / WS / HTTP Upgrade / gRPC / XHTTP 共同的会话入口，
@@ -425,8 +432,9 @@ func (a *vmessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
 
 func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
+	epoch := a.sessions.epoch()
 	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
-	reader := bufio.NewReaderSize(conn, 64*1024)
+	reader := bufio.NewReaderSize(conn, ssHeaderReadBuffer)
 	user, destination, body, security, err := a.readRequest(reader)
 	if err != nil {
 		// authID 对不上、头部解不开：读到超时再关，不在读完 16 字节后立刻断
@@ -447,6 +455,11 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 		return markConnError(connErrAuth, fmt.Errorf("vmess replayed request"))
 	}
 	_ = conn.SetReadDeadline(time.Time{})
+	sess := a.sessions.open(user, epoch, conn)
+	if sess == nil {
+		return errSessionRevoked
+	}
+	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
 		return deviceLimitError("vmess")
@@ -474,28 +487,16 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	if err := vmessWriteResponse(conn, bodyState.key, bodyState.nonce, 0, bodyState.option); err != nil {
 		return err
 	}
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		n, _ := core.SpeedLimitedCopy(upstream, body, a.limiters.For(user))
-		a.addTraffic(user, n, 0)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		wg.Done()
-	}()
 	responseWriter := io.Writer(conn)
 	if security == vmessSecAES128 || security == vmessSecChaCha {
 		responseKeyHash := sha256.Sum256(bodyState.key)
 		responseNonceHash := sha256.Sum256(bodyState.nonce)
 		responseWriter = newVMessAEADWriter(conn, vmessBodyAEAD(security, responseKeyHash[:16]), responseNonceHash[:16], bodyState.option)
 	}
-	go func() {
-		n, _ := core.SpeedLimitedCopy(responseWriter, upstream, a.limiters.For(user))
-		a.addTraffic(user, 0, n)
-		wg.Done()
-	}()
-	wg.Wait()
+	// VMess 的读写各自分块加解密，读端是 body、写端是响应流，拼成一端交给转发；
+	// 响应流没有半关闭，上游结束后按单向收尾计时收尾。
+	client := &core.SplitStream{R: body, W: responseWriter, C: conn}
+	sess.relay(client, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
 	return nil
 }
 

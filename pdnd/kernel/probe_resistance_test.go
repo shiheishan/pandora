@@ -14,6 +14,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"math/big"
 	"net"
@@ -310,17 +311,21 @@ func startProbeInbound(t *testing.T, protocol string, extra map[string]any, plan
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = adapter.Close() })
-	if err := adapter.AddUsers([]core.User{{ID: 931, UUID: "probe-test-user"}}); err != nil {
+	user := core.User{ID: 931, UUID: "probe-test-user"}
+	if protocol == "vless" {
+		user.UUID = uuid.NewString() // VLESS 只收 UUID 形式的用户
+	}
+	if err := adapter.AddUsers([]core.User{user}); err != nil {
 		t.Fatal(err)
 	}
 	return fmt.Sprintf("127.0.0.1:%d", port), adapter
 }
 
-// Trojan / AnyTLS 认证不过：没配回落时回中性 404，配了回落时探测方看到的
+// Trojan / AnyTLS / VLESS 认证不过：没配回落时回中性 404，配了回落时探测方看到的
 // 就是回落站点（h1 原样转发、h2 经本地 HTTP/2 反代过去）。
 func TestTLSInboundAuthFailureServesFallback(t *testing.T) {
 	site, paths := startProbeFallbackSite(t)
-	for _, protocol := range []string{"trojan", "anytls"} {
+	for _, protocol := range []string{"trojan", "anytls", "vless"} {
 		t.Run(protocol, func(t *testing.T) {
 			bare, _ := startProbeInbound(t, protocol, nil, nil)
 			withFallback, _ := startProbeInbound(t, protocol, map[string]any{"fallback": site}, nil)

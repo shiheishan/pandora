@@ -76,22 +76,51 @@ func (d *Direct) Tag() string  { return d.tag }
 func (d *Direct) Type() string { return "direct" }
 func (d *Direct) Close() error { return nil }
 
+// DialTCP 是「用户给的目标」：默认拒绝私网目标（private_guard.go）。
 func (d *Direct) DialTCP(ctx context.Context, dest M.Socksaddr) (net.Conn, error) {
-	return d.DialContext(ctx, "tcp", dest)
+	return d.dial(ctx, "tcp", dest, true)
 }
 
+// ListenUDP 同上：默认逐包丢弃发往私网目标的包。
 func (d *Direct) ListenUDP(ctx context.Context, dest M.Socksaddr) (net.PacketConn, error) {
-	return d.ListenPacket(ctx, dest)
+	if dest.IsIP() && destinationBlocked(dest.Addr) {
+		return nil, ErrPrivateDestination
+	}
+	pc, err := d.ListenPacket(ctx, dest)
+	if err != nil || !BlockPrivateDestinations() {
+		return pc, err
+	}
+	return &guardedPacketConn{PacketConn: pc}, nil
 }
 
-// DialContext 实现 Dialer，供中转出站连接它们的上游。
+// DialContext 实现 Dialer，供中转出站连接它们的上游（管理员配置，可以在内网，不把关）。
 func (d *Direct) DialContext(ctx context.Context, network string, dest M.Socksaddr) (net.Conn, error) {
+	return d.dial(ctx, network, dest, false)
+}
+
+func (d *Direct) dial(ctx context.Context, network string, dest M.Socksaddr, guard bool) (net.Conn, error) {
 	if dest.IsIP() {
+		if guard && destinationBlocked(dest.Addr) {
+			return nil, ErrPrivateDestination
+		}
 		return d.dialer.DialContext(ctx, network, dest.String())
 	}
 	addrs, err := d.resolve(ctx, dest.Fqdn)
 	if err != nil {
 		return nil, err
+	}
+	if guard {
+		// 域名按解析出的实际 IP 判：只留公网地址，全是私网就拒绝（防 DNS 指向内网）。
+		allowed := addrs[:0:0]
+		for _, a := range addrs {
+			if !destinationBlocked(a) {
+				allowed = append(allowed, a)
+			}
+		}
+		if len(allowed) == 0 {
+			return nil, fmt.Errorf("连接 %s: %w", dest.Fqdn, ErrPrivateDestination)
+		}
+		addrs = allowed
 	}
 	// 逐个尝试。只试第一个的话，一个 IP 不通就整体失败，
 	// 而多 A 记录站点里恰好有一个坏节点是常态。

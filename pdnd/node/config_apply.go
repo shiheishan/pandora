@@ -153,7 +153,12 @@ func (n *Node) applyConfigOnce(cfg map[string]any) error {
 		previousUsers = append(previousUsers, user)
 	}
 
-	if err := n.installConfig(cfg); err != nil {
+	prepared := n.prepareInstallUsers(cfg)
+	if err := n.installConfig(cfg, prepared); err != nil {
+		if prepared != nil && prepared.fresh {
+			// 客户端已记下新名单的 ETag，内核却没装上：作废它，下一轮全量对齐。
+			n.client.ForgetUsersVersion()
+		}
 		n.pullInterval, n.pushInterval = previousPull, previousPush
 		var applyErr *core.ConfigApplyError
 		if errors.As(err, &applyErr) && applyErr.PreviousPreserved {
@@ -168,7 +173,7 @@ func (n *Node) applyConfigOnce(cfg map[string]any) error {
 		if previous == nil {
 			return err
 		}
-		if restoreErr := n.installConfig(previous); restoreErr != nil {
+		if restoreErr := n.installConfig(previous, nil); restoreErr != nil {
 			n.markInboundLost()
 			return errors.Join(err, fmt.Errorf("restore previous config: %w", restoreErr))
 		}
@@ -187,16 +192,16 @@ func (n *Node) applyConfigOnce(cfg map[string]any) error {
 	}
 
 	n.activeConfig = snapshot
-	// 入站重建会丢掉内核里的用户表，本地镜像与用户版本必须一并作废，
-	// 否则下一轮要么 diff 认为「都已下发」，要么拿旧 ETag 换回 304——
-	// 两种都是谁也连不上。
-	n.resetUserMirror()
+	// 入站重建会丢掉内核里的用户表：带名单装的，本地镜像对齐到那份名单；没带的
+	// 整个作废（否则下一轮要么 diff 认为「都已下发」，要么拿旧 ETag 换回 304——
+	// 两种都是谁也连不上）。
+	n.adoptInstalledUsers(prepared)
 	n.started = true
 	n.log.Info("入站已就绪", "port", intFrom(cfg, "server_port"))
 	return nil
 }
 
-func (n *Node) installConfig(cfg map[string]any) error {
+func (n *Node) installConfig(cfg map[string]any, prepared *preparedUsers) error {
 	port := intFrom(cfg, "server_port")
 	if port <= 0 || port > 65535 {
 		return errInvalidPort(port)
@@ -215,7 +220,16 @@ func (n *Node) installConfig(cfg map[string]any) error {
 		return err
 	}
 	n.registerInboundOwner()
-	if applier, ok := n.kernel.(core.ConfigApplier); ok {
+	if applier, ok := n.kernel.(usersApplier); ok && prepared != nil {
+		if err := applier.ApplyInboundWithUsers(inbound, routing, prepared.users); err != nil {
+			if !isUsersPreloadError(err) {
+				return err
+			}
+			// 入站已起、名单没装上：与原先「装完再同步用户失败」一样，留给下一轮同步。
+			n.log.Warn("入站已就绪，随入站一起装的用户名单失败，等下一轮同步", "err", err)
+			prepared.failed = true
+		}
+	} else if applier, ok := n.kernel.(core.ConfigApplier); ok {
 		if err := applier.ApplyInbound(inbound, routing); err != nil {
 			return err
 		}
