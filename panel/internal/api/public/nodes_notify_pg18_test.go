@@ -153,3 +153,67 @@ func TestNodesChangeNotifyPG18(t *testing.T) {
 		t.Fatalf("nodes notify triggers:\n%s\n%s", insertDelete, update)
 	}
 }
+
+// 在线巡检：心跳跨过 90 秒（离线）或 10 分钟（下发新鲜窗口）的节点各通知一次，再巡一轮不重发。
+func TestNodeLivenessPatrolPG18(t *testing.T) {
+	ctx, admin, app := pg18test.Open(t, publicAPIFixture)
+	const (
+		tenant   = "7f720000-0000-4000-8000-000000000001"
+		pool     = "7f720000-0000-4000-8000-0000000000a1"
+		server   = "7f720000-0000-4000-8000-0000000000b1"
+		offline  = "7f720000-0000-4000-8000-0000000000c1" // 95 秒前：刚跨过 90 秒
+		expiring = "7f720000-0000-4000-8000-0000000000c2" // 605 秒前：刚跨过 10 分钟
+		quiet    = "7f720000-0000-4000-8000-0000000000c3" // 200 秒前：早已离线，这一轮不翻转
+		fresh    = "7f720000-0000-4000-8000-0000000000c4" // 10 秒前：在线
+		retired  = "7f720000-0000-4000-8000-0000000000c5" // 已退役：不参与
+	)
+	must := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%v\nSQL: %s", err, sql)
+		}
+	}
+	must(`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES($1,'node-liveness-pg18','Node Liveness','CNY')`, tenant)
+	must(`INSERT INTO node_pools(id,tenant_id,code,name,status) VALUES($1,$2,'nl','NL','active')`, pool, tenant)
+	must(`INSERT INTO servers(id,tenant_id,name,status) VALUES($1,$2,'nl-server','ready')`, server, tenant)
+	for id, ago := range map[string]string{offline: "95 seconds", expiring: "605 seconds", quiet: "200 seconds", fresh: "10 seconds", retired: "95 seconds"} {
+		serving := "active"
+		if id == retired {
+			serving = "retired"
+		}
+		must(`INSERT INTO nodes(id,tenant_id,name,pool_id,status,node_type,server_host,server_port,server_id,serving_status,last_heartbeat_at)
+			VALUES($1,$2,$7,$3,'active','vless','nl.invalid',443,$4,$5,now() - $6::interval)`,
+			id, tenant, pool, server, serving, ago, "nl-"+id[len(id)-2:])
+	}
+	listener := listenNodeNotices(t, ctx, admin)
+
+	nodes := nodefabric.NewService(app, nil)
+	until, n, err := nodes.PatrolNodeLiveness(ctx, tenant, time.Time{})
+	if err != nil {
+		t.Fatalf("first patrol: %v", err)
+	}
+	got := listener.drain()
+	if n != 2 || len(got) != 2 || got[offline] != 1 || got[expiring] != 1 {
+		t.Fatalf("first patrol notified %d: %v, want exactly %s and %s once", n, got, offline, expiring)
+	}
+	// 下一轮从上一轮的水位接着看：同一次翻转不再发
+	until2, n, err := nodes.PatrolNodeLiveness(ctx, tenant, until)
+	if err != nil {
+		t.Fatalf("second patrol: %v", err)
+	}
+	if got := listener.drain(); n != 0 || len(got) != 0 {
+		t.Fatalf("second patrol re-notified %d: %v", n, got)
+	}
+	if !until2.After(until) {
+		t.Fatalf("patrol watermark did not advance: %s → %s", until, until2)
+	}
+	// 在线的节点停止心跳后，等它跨过窗口的那一轮才发：把它拨到「上一轮水位前 91 秒」
+	must(`UPDATE nodes SET last_heartbeat_at = $2::timestamptz - interval '91 seconds' WHERE id=$1`, fresh, until2)
+	listener.drain() // 往回拨不是翻转，触发器不发；这里只清掉可能的残留
+	if _, n, err = nodes.PatrolNodeLiveness(ctx, tenant, until2.Add(-2*time.Second)); err != nil {
+		t.Fatalf("third patrol: %v", err)
+	}
+	if got := listener.drain(); n != 1 || got[fresh] != 1 {
+		t.Fatalf("node going offline notified %d: %v", n, got)
+	}
+}
