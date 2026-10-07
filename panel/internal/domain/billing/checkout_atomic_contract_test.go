@@ -143,7 +143,7 @@ func TestSettlementReservationAndLockOrderSourceContract(t *testing.T) {
 	// R117：续费 / 变更单锁住订阅后、碰支付意图与预留图之前复核订阅状态，
 	// 不合格的钱进挂账而不是让履约撞状态机回滚。
 	subLock := strings.Index(handler, "lockOrderSubscriptionForSettlement(")
-	recheck := strings.Index(handler, "subscriptionAcceptsPaidChange(subscriptionStatus)")
+	recheck := strings.Index(handler, "subscriptionAcceptsPaidChange(subscriptionStatus, renewalClosed)")
 	ineligible := strings.Index(handler, `"ineligible_subscription", in)`)
 	intentLock := strings.Index(handler, "ORDER BY id FOR UPDATE")
 	if subLock < 0 || recheck < 0 || ineligible < 0 || intentLock < 0 ||

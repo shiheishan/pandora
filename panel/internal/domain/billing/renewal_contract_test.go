@@ -23,8 +23,9 @@ func TestRenewalCreateReservationAndIdempotencySourceContract(t *testing.T) {
 		"redeemCoupon(",
 		"INSERT INTO balance_holds",
 		"captureZeroPaySubscriptionOrder(",
-		"httpx.PrepareJSON(http.StatusCreated, out)",
 		"idempotencybind.BindResource(",
+		"s.settlePaymentTx(",
+		"httpx.PrepareJSON(http.StatusCreated, out)",
 		"idempotencybind.CompleteSuccessJSON(",
 		"audit.Write(",
 		"SET CONSTRAINTS ALL IMMEDIATE",
@@ -65,19 +66,30 @@ func TestRenewalZeroPayAndFulfilmentLockSourceContract(t *testing.T) {
 	}
 }
 
+// 续费的配额口径（2026-10-07 规则 5 与过期恢复）：提前续费一行配额都不动，只有过期恢复
+// 才把全部配额对齐清零；更新上限的连接键必须带 period。
 func TestRenewalQuotaPeriodsRemainIndependent(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
-	src := pkg.Decl("Service.fulfillRenewalLocked")
+	renew := pkg.Decl("renewSubscriptionTx")
 	for _, required := range []string{
-		"AND period = 'cycle'",
+		"renewalBase(out.PreviousEnd, paidAt, g.OrderCreatedAt)",
+		"if restart {",
+		"restartQuotaPeriodsTx(",
 		"qd.metric = qb.metric AND qd.period = qb.period",
 	} {
-		if !strings.Contains(src, required) {
+		if !strings.Contains(renew, required) {
 			t.Fatalf("renewal quota contract missing %q", required)
 		}
 	}
-	if strings.Contains(pkg.Source(), "AND period <> 'total'") {
-		t.Fatal("renewal must not reset independent day/month quota periods")
+	if strings.Count(pkg.Source(), "restartQuotaPeriodsTx(") != 2 {
+		t.Fatal("restartQuotaPeriodsTx must only be called from renewSubscriptionTx")
+	}
+	restart := pkg.Decl("restartQuotaPeriodsTx")
+	if !strings.Contains(restart, `quotaPeriodEndSQL("qb.period", "$3::timestamptz", "$4::timestamptz")`) {
+		t.Fatal("restart must align every quota period through quotaPeriodEndSQL")
+	}
+	if !strings.Contains(pkg.Decl("Service.fulfillRenewalLocked"), "SELECT paid_at, created_at FROM orders") {
+		t.Fatal("renewal fulfilment must use the payment moment as its base")
 	}
 	if strings.Contains(pkg.Source(), "qd.plan_version_id = $3::uuid AND qd.metric = qb.metric`") {
 		t.Fatal("renewal quota definition join must include period")
@@ -89,14 +101,17 @@ func TestRenewalQuotaPeriodsRemainIndependent(t *testing.T) {
 // 隔离的钱会在提交时被拒、整笔回滚；若比 Go 窄，本该履约的钱会被当成挂账。
 func TestSubscriptionPaidChangeStatusesMatchLatePaymentGuard(t *testing.T) {
 	accepted := map[string]bool{"active": true, "trialing": true, "grace": true, "past_due": true}
-	// 状态全集来自 00003 的 subscription_transitions
+	// 状态全集来自 00003 的 subscription_transitions；已过期只在原地续费窗口没关时收（00124）
 	for _, status := range []string{"pending", "trialing", "active", "past_due", "grace",
 		"paused", "cancelled", "expired"} {
-		if got := subscriptionAcceptsPaidChange(status); got != accepted[status] {
-			t.Errorf("subscriptionAcceptsPaidChange(%q)=%v want %v", status, got, accepted[status])
+		for _, closed := range []bool{false, true} {
+			want := accepted[status] || (status == "expired" && !closed)
+			if got := subscriptionAcceptsPaidChange(status, closed); got != want {
+				t.Errorf("subscriptionAcceptsPaidChange(%q, closed=%v)=%v want %v", status, closed, got, want)
+			}
 		}
 	}
-	body, err := os.ReadFile("../../../migrations/00095_late_payment_ineligible_subscription.sql")
+	body, err := os.ReadFile("../../../migrations/00124_subscription_expired_renewal.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +119,9 @@ func TestSubscriptionPaidChangeStatusesMatchLatePaymentGuard(t *testing.T) {
 	if at := strings.Index(up, "-- +goose Down"); at > 0 {
 		up = up[:at]
 	}
-	if !strings.Contains(up, "AND v_sub_status IN ('active','trialing','grace','past_due')") {
-		t.Fatal("00095 guard must reject exactly the statuses subscriptionAcceptsPaidChange accepts")
+	if !strings.Contains(up, `AND (v_sub_status IN ('active','trialing','grace','past_due')
+            OR (v_sub_status='expired' AND v_sub_closed IS NULL)) THEN`) {
+		t.Fatal("00124 guard must reject exactly the statuses subscriptionAcceptsPaidChange accepts")
 	}
 	pkg := sourcetest.Load(t, ".")
 	// 状态列表只许写在 subscriptionAcceptsPaidChange 里，包内别处重写一份即失败
@@ -114,7 +130,7 @@ func TestSubscriptionPaidChangeStatusesMatchLatePaymentGuard(t *testing.T) {
 		t.Error("the renewable status list is restated outside subscriptionAcceptsPaidChange")
 	}
 	for _, creator := range []string{"Service.CreateRenewal", "quotePlanChange"} {
-		if !strings.Contains(pkg.Decl(creator), "subscriptionAcceptsPaidChange(status)") {
+		if !strings.Contains(pkg.Decl(creator), "subscriptionAcceptsPaidChange(status, renewalClosed)") {
 			t.Errorf("%s creation must check subscriptionAcceptsPaidChange", creator)
 		}
 	}

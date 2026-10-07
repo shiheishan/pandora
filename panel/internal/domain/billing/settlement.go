@@ -286,7 +286,8 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 	var renewalSubscriptionID string
 	if subscriptionBoundOrderKind(orderKind) {
 		var subscriptionStatus string
-		renewalSubscriptionID, subscriptionStatus, err = lockOrderSubscriptionForSettlement(
+		var renewalClosed bool
+		renewalSubscriptionID, subscriptionStatus, renewalClosed, err = lockOrderSubscriptionForSettlement(
 			ctx, tx, tenantID, orderID, userID,
 		)
 		if err != nil {
@@ -296,7 +297,7 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 		// active、被状态机拒绝，整笔结算回滚，连收款证据都留不下。钱已经到了，
 		// 按建单同一口径复核，不合格就隔离进挂账，订单与订阅都不动；订单之后
 		// 照常过期或被取消，释放时退回余额冻结（R117）。
-		if recordedWhilePending || !subscriptionAcceptsPaidChange(subscriptionStatus) {
+		if recordedWhilePending || !subscriptionAcceptsPaidChange(subscriptionStatus, renewalClosed) {
 			quarantined, err := s.quarantineUnexpectedPayment(ctx, tx,
 				tenantID, eventID, providerID, orderID, userID, status,
 				in.ProviderCode, "ineligible_subscription", in)

@@ -11,5 +11,6 @@ paths:
 - 用户组删除拦截先看节点池名单（`exclusive_pools`），再看成员与引用，与后端 409 同序（`model.ts` 的 `groupBlocker`）。
 - 前端口径与后端逐一对齐，改后端这些函数时同步改 `model.ts`：当前订阅挑法 = `currentSubscriptionSQL`；手动重置挑哪条订阅 = `billing.ManualResetTraffic`；批量生成校验 = `adminops.GenerateUsers`；密码预检 = `platform/crypto.ValidatePassword`。
 - 设备策略请求体：strict 才带 grace，识别窗口改了才带 `window_minutes`。
+- 加时长口径（w5expiry，与 `billing.subscriptionExtendable` / `extendSubscriptionTx` 一致，`model.ts` 的 `extendableSubscriptions`）：可选生效中、试用中、过期不满 30 天（`RENEWAL_WINDOW_DAYS`，后台列表不带关窗时刻，按周期末推算）且有到期时间的订阅。救回（已过期或试用中，`isRescue`）要二次确认「已过期 N 天，延长后旧链接恢复可用」：状态回到正常、流量按延长天数 ÷ 套餐周期天数折算进本周期、已用流量沿用；生效中没到期的只给时间
 - 批量导出没有 cookie，只能 fetch 带 Bearer 取回再存文件，要 reauth。
 - 用户相关的地址被别处引用：仪表盘排行、工单「查看用户」、订单抽屉都跳 `#/users/list/<用户 id>`，订单标签跳 `#/billing/orders?user_id=`；改地址格式要同步这些入口。

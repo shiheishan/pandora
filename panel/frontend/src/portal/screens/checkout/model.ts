@@ -1,4 +1,4 @@
-import { isLive, pickPrimary, type Subscription } from '../../queries'
+import { isCurrent, pickPrimary, type Subscription } from '../../queries'
 import { cnyPrices, periodOf, PERIODS, type Pack, type Plan, type Price } from '../common/catalog'
 
 // ---------------------------------------------------------------------------
@@ -20,7 +20,8 @@ export function resolveMode(query: URLSearchParams, plans: readonly Plan[], pack
   }
   const renewId = query.get('renew')
   if (renewId) {
-    const sub = subs.find((s) => s.id === renewId && isLive(s))
+    // 过期 30 天内的订阅照样在原订阅上续费（后端 renewable 为真），链接不变
+    const sub = subs.find((s) => s.id === renewId && isCurrent(s))
     if (!sub) return { problem: 'sub_gone' }
     return { mode: { kind: 'renew', sub, plan: plans.find((p) => p.id === sub.plan_id) ?? null } }
   }

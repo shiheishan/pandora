@@ -199,9 +199,9 @@ func run() error {
 	// 多一个常驻进程的代价大于收益；而 EscalateOverdue 本身是幂等的，
 	// 将来拆成独立 worker 或换成 cron 也不需要改动业务代码。
 	//
-	// 五个循环都经 newLoopPacer 定节拍：首轮随机延迟、之后每轮 ±10% 抖动（pacer.go）。
+	// 六个循环都经 newLoopPacer 定节拍：首轮随机延迟、之后每轮 ±10% 抖动（pacer.go）。
 	var workers sync.WaitGroup
-	workers.Add(5)
+	workers.Add(6)
 	go func() {
 		defer workers.Done()
 		pace := newLoopPacer(5 * time.Minute)
@@ -350,6 +350,35 @@ func run() error {
 			if alive > 0 || metrics > 0 || rollups > 0 || activityPurged > 0 {
 				log.Info("保留期清理完成", "alive_ips", alive, "node_metrics", metrics, "traffic_rollups", rollups,
 					"activity_daily", activityPurged)
+			}
+		}
+	}()
+
+	// 订阅过期扫描（w5expiry）：到期的订阅改成 expired、写过期事件与 subscription.expired
+	// 钩子；过期满 30 天的关闭原地续费窗口并吊销凭据（billing/expire.go）。停发不靠它
+	// （节点名单与订阅拉取按周期末现算），它管的是状态、事件和之后的续费口径；到期通知
+	// 与召回由 public 网关的通知扫描按 expired 状态发。一分钟一轮：门户「已过期」与
+	// 续费入口最多晚一分钟。
+	go func() {
+		defer workers.Done()
+		pace := newLoopPacer(time.Minute)
+		defer pace.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
+			sctx, cancel := context.WithTimeout(ctx, time.Minute)
+			res, err := billingSvc.ScanExpiredSubscriptions(sctx, middleware.DefaultTenantID)
+			cancel()
+			switch {
+			case err != nil:
+				log.Error("订阅过期扫描失败", "error", err.Error(),
+					"expired", res.Expired, "closed", res.Closed)
+			case res.Expired > 0 || res.Closed > 0:
+				log.Info("订阅过期扫描完成", "expired", res.Expired,
+					"renewal_closed", res.Closed, "revoked_credentials", res.RevokedCredentials)
 			}
 		}
 	}()

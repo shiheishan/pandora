@@ -350,7 +350,8 @@ func TestPlanChangePG18(t *testing.T) {
 	// 8) 第 3 阶段后端一的推断「续费单待支付的 30 分钟里订阅过期，状态机不许 expired → active，
 	//    履约失败」按产品真实路径复现：代码里没有任何地方把订阅状态改成 expired，到期只是
 	//    current_period_end 走过去、状态仍是 active。付款照常履约；新周期的起点从付款时刻算
-	//    （修前起点留在旧周期，断掉的那段被算进本周期）。
+	//    （修前起点留在旧周期，断掉的那段被算进本周期）。续费事件的起始状态按事实记 expired
+	//    （w5expiry：状态列还没被过期扫描改过来也一样），变更套餐的折算据此认出周期重开。
 	renewClaim = orderReleasePG18Claim(t, ctx, admin, fx.tenant, fx.buyer, RenewalIdempotencyScope, "pc-renew-lapse")
 	lapse, err := service.CreateRenewal(ctx, fx.tenant, CreateRenewalInput{
 		UserID: fx.buyer, SubscriptionID: subID, Claim: renewClaim,
@@ -370,7 +371,7 @@ func TestPlanChangePG18(t *testing.T) {
 		t.Fatalf("read lapse renewal event: %v", err)
 	}
 	if got := readSub(t, subID); got.status != "active" || got.start.Before(paidAt) ||
-		!got.end.Equal(got.start.UTC().AddDate(0, 1, 0)) || !got.credExpires.Equal(got.end) || lapsedFrom != "active" {
+		!got.end.Equal(got.start.UTC().AddDate(0, 1, 0)) || !got.credExpires.Equal(got.end) || lapsedFrom != "expired" {
 		t.Fatalf("renewal after lapse subscription=%+v from=%s paid_after=%s", got, lapsedFrom, paidAt)
 	}
 	t.Log("marker=plan_change_pg18_renewal_after_lapse_ok")

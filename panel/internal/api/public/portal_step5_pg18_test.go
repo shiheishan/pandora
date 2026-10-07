@@ -66,9 +66,11 @@ func TestPortalStep5PG18(t *testing.T) {
 		{`INSERT INTO prices(id,tenant_id,product_id,currency,unit_amount,billing_interval,interval_count,status,user_group_id) VALUES
 		   ($2,$1,$3,'CNY',3000,'month',1,'active',NULL),($4,$1,$3,'CNY',2000,'month',1,'active',$5)`, []any{tenant, price, product, vipPrice, other}},
 		{`INSERT INTO subscriptions(id,tenant_id,user_id,plan_id,plan_version_id,price_id,status,snapshot_currency,snapshot_amount,
-			current_period_start,current_period_end,created_at) VALUES
-		   ($2,$1,$3,$4,$5,$6,'active','CNY',3000,now()-interval '10 days',now()+interval '20 days',now()),
-		   ($7,$1,$3,$4,$5,$8,'expired','CNY',2000,now()-interval '90 days',now()-interval '60 days',now()-interval '90 days')`,
+			current_period_start,current_period_end,created_at,renewal_closed_at) VALUES
+		   ($2,$1,$3,$4,$5,$6,'active','CNY',3000,now()-interval '10 days',now()+interval '20 days',now(),NULL),
+		   -- 过期 60 天：过期扫描早已关掉原地续费窗口（00124），不可续
+		   ($7,$1,$3,$4,$5,$8,'expired','CNY',2000,now()-interval '90 days',now()-interval '60 days',now()-interval '90 days',
+		    now()-interval '30 days')`,
 			[]any{tenant, subLive, user, plan, version, price, subVip, vipPrice}},
 		{`INSERT INTO quota_balances(tenant_id,subscription_id,metric,period,period_start,period_end,granted,limit_value,consumed,adjusted)
 		  VALUES($1,$2,'traffic.bytes','cycle',now()-interval '10 days',now()+interval '20 days',1000,1000,400,50)`, []any{tenant, subLive}},

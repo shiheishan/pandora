@@ -142,8 +142,24 @@ export function liveSubscriptions(subs: readonly Subscription[]): Subscription[]
   return subs.filter(isLive).sort((a, b) => end(b) - end(a))
 }
 
-/** 契约门户-01：多条订阅时展示生效订阅中 current_period_end 最晚的一条；外框徽标、概览、选购页都按它。 */
-export const pickPrimary = (subs: readonly Subscription[]): Subscription | null => liveSubscriptions(subs)[0] ?? null
+/** 已过期、但还能在原订阅上续费的（过期不满 30 天，后端 renewable 为真）：续费后原链接自动恢复（w5expiry）。 */
+export const isRenewableExpired = (s: Pick<Subscription, 'status' | 'renewable'>) => s.status === 'expired' && s.renewable
+
+/** 门户当成「当前订阅」的：生效中的，或能原地续费的已过期订阅。 */
+export const isCurrent = (s: Pick<Subscription, 'status' | 'renewable'>) => isLive(s) || isRenewableExpired(s)
+
+/** 能原地续费的已过期订阅，到期最晚的在前。 */
+export function renewableExpired(subs: readonly Subscription[]): Subscription[] {
+  const end = (s: Subscription) => (s.current_period_end ? new Date(s.current_period_end).getTime() : 0)
+  return subs.filter(isRenewableExpired).sort((a, b) => end(b) - end(a))
+}
+
+/**
+ * 契约门户-01：多条订阅时展示生效订阅中 current_period_end 最晚的一条；外框徽标、概览、选购页都按它。
+ * 没有生效订阅时回落到最近一条能原地续费的已过期订阅：显示「已过期」与续费，买同套餐走续费、
+ * 别的套餐走改套餐，链接不变（w5expiry）。
+ */
+export const pickPrimary = (subs: readonly Subscription[]): Subscription | null => liveSubscriptions(subs)[0] ?? renewableExpired(subs)[0] ?? null
 
 export const SUBSCRIPTIONS_KEY = ['portal', 'subscriptions'] as const
 

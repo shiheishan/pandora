@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchStats, metaLabel } from '../subs/labels'
+import { fetchStats, isExpiredView, metaLabel } from '../subs/labels'
 import { importClients, protocolLabel, rateLabel } from './clients'
 import { throttleNote } from './catalog'
 import { createPlacedOrder, recallPayable } from './intent'
@@ -68,13 +68,21 @@ describe('traffic', () => {
     expect(usageLevel(0.95)).toBe('danger')
   })
 
-  it('到期：向上取整天数，7 天内为紧急，日期按切日时区', () => {
-    expect(expiryInfo('2026-09-30T00:00:00Z', NOW)).toMatchObject({ days: 6, urgent: true })
+  it('到期：向上取整天数，7 天内为紧急，时刻精确到分钟、按切日时区', () => {
+    expect(expiryInfo('2026-09-30T00:00:00Z', NOW)).toMatchObject({ days: 6, urgent: true, expired: false, label: '6 天后到期' })
     expect(expiryInfo('2026-11-05T10:00:00Z', NOW)).toMatchObject({ days: 42, urgent: false })
     expect(expiryInfo(null, NOW)).toBeNull()
-    // 给了切日时区就按它出日期：上海 09-27 零点
-    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'Asia/Shanghai')?.date).toBe('2026-09-27')
-    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'UTC')?.date).toBe('2026-09-26')
+    // 给了切日时区就按它出时刻：上海 09-27 零点
+    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'Asia/Shanghai')?.date).toBe('2026-09-27 00:00')
+    expect(expiryInfo('2026-09-26T16:00:00Z', NOW, 'UTC')?.date).toBe('2026-09-26 16:00')
+  })
+
+  it('到期：最后 24 小时写「还剩 X 小时」，过了写「已于 … 到期」（w5expiry）', () => {
+    const in5h = new Date(NOW.getTime() + 4.5 * 3_600_000).toISOString()
+    expect(expiryInfo(in5h, NOW, 'UTC')).toMatchObject({ hours: 5, urgent: true, expired: false, label: '还剩 5 小时' })
+    const past = expiryInfo(new Date(NOW.getTime() - 3_600_000).toISOString(), NOW, 'UTC')
+    expect(past).toMatchObject({ hours: 0, urgent: true, expired: true })
+    expect(past?.label).toBe(`已于 ${past?.date} 到期`)
   })
 
   it('重置日：never 不重置；next_reset_at → 额度周期末 → 用量窗口末', () => {
@@ -186,6 +194,17 @@ describe('subscriptions', () => {
     expect(pickPrimary([sub({ status: 'cancelled' })])).toBeNull()
   })
 
+  it('主订阅：没有生效订阅时回落到能原地续费的已过期订阅（w5expiry）', () => {
+    const expired = [
+      sub({ id: 'closed', status: 'expired', renewable: false, current_period_end: '2026-09-01T00:00:00Z' }),
+      sub({ id: 'older', status: 'expired', renewable: true, current_period_end: '2026-09-10T00:00:00Z' }),
+      sub({ id: 'newer', status: 'expired', renewable: true, current_period_end: '2026-09-20T00:00:00Z' }),
+    ]
+    expect(pickPrimary(expired)?.id).toBe('newer')
+    expect(pickPrimary([expired[0]!])).toBeNull()
+    expect(pickPrimary([...expired, sub({ id: 'live' })])?.id).toBe('live')
+  })
+
   it('续费入口：取服务端的 renewable', () => {
     expect(canRenew(sub())).toBe(true)
     expect(canRenew(sub({ renewable: false }))).toBe(false)
@@ -199,13 +218,17 @@ describe('subscriptions', () => {
   })
 
   it('头部元信息：设备上限 null 写「不限设备」', () => {
-    expect(metaLabel(sub(), NOW)).toBe('42 天后到期 · 2026-11-05 · 不限设备 · 当前在线 0')
-    expect(metaLabel(sub({ device_limit: 5, online_devices: 3 }), NOW)).toBe('42 天后到期 · 2026-11-05 · 5 台设备 · 当前在线 3')
+    expect(metaLabel(sub(), NOW, 'UTC')).toBe('42 天后到期 · 2026-11-05 10:00 · 不限设备 · 当前在线 0')
+    expect(metaLabel(sub({ device_limit: 5, online_devices: 3 }), NOW, 'UTC')).toBe('42 天后到期 · 2026-11-05 10:00 · 5 台设备 · 当前在线 3')
     expect(metaLabel(sub({ current_period_end: null, device_limit: null }), NOW)).toBe('长期有效 · 不限设备 · 当前在线 0')
+    expect(metaLabel(sub({ status: 'expired', current_period_end: '2026-09-20T08:30:00Z' }), NOW, 'UTC')).toBe('已于 2026-09-20 08:30 到期 · 不限设备 · 当前在线 0')
+    expect(isExpiredView(sub({ status: 'expired' }), NOW)).toBe(true)
+    expect(isExpiredView(sub({ current_period_end: '2026-09-20T08:30:00Z' }), NOW)).toBe(true)
+    expect(isExpiredView(sub(), NOW)).toBe(false)
   })
 
   it('拉取统计：相对时间加「前」，来源数超过设备上限提示泄露', () => {
-    const link = { subscription_id: 's1', url: 'u', expires_at: null, fetch_count: 12, last_fetched_at: '2026-09-24T11:54:00Z', distinct_sources_24h: 7 }
+    const link = { subscription_id: 's1', url: 'u', expires_at: null, fetch_count: 12, last_fetched_at: '2026-09-24T11:54:00Z', distinct_sources_24h: 7, expired: false }
     expect(fetchStats(link, 5, NOW)).toEqual({ text: '已被拉取 12 次 · 最近 6 分钟前 · 近 24 小时 7 个来源', leak: true })
     expect(fetchStats({ ...link, last_fetched_at: null }, null, NOW)).toEqual({ text: '已被拉取 12 次 · 还没有被拉取过 · 近 24 小时 7 个来源', leak: false })
     expect(fetchStats(link, undefined, NOW).leak).toBe(false)

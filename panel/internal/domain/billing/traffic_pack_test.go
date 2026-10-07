@@ -23,7 +23,8 @@ func TestGiftTrafficBecomesATrafficPackGrant(t *testing.T) {
 		"renewal": pkg.Decls("ErrSubNotRenewable", "ErrRenewPriceGone", "RenewalIdempotencyScope", "CreateRenewalInput",
 			"Service.CreateRenewal", "zeroPaySubscriptionCapture", "Service.captureZeroPaySubscriptionOrder",
 			"subscriptionBoundOrderKind", "subscriptionAcceptsPaidChange", "lockOrderSubscriptionForSettlement",
-			"Service.fulfillRenewal", "Service.fulfillRenewalLocked", "Service.RollQuotaPeriods"),
+			"Service.fulfillRenewal", "Service.fulfillRenewalLocked", "Service.RollQuotaPeriods",
+			"renewSubscriptionTx", "restartQuotaPeriodsTx", "renewalBase"),
 		"traffic reset": pkg.Decls("LogTrafficReset", "ResetLog", "ListResetLogsInput", "Service.ListTrafficResets",
 			"ResetStats", "Service.TrafficResetStats", "ManualResetInput", "Service.ManualResetTraffic"),
 	} {

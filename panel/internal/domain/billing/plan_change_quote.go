@@ -3,8 +3,10 @@ package billing
 // 剩余价值 = 本周期付费合计 × min(剩余时间比例, 剩余流量比例)，向下取整到分。
 //
 // 「本周期」从最近一次让周期重新起算的事件开始：开通（activated）、从过期
-// 状态续回（renewed 且 from_status 为 expired/past_due/grace）、上一次变更套餐
-// （plan_changed）。提前续费是在原周期末往后叠，不改周期起点，所以一个周期
+// 状态续回（renewed 且 from_status 为 expired/past_due/grace；状态列还是 active、
+// 实际已过期的续费也按 expired 记，见 renewal_fulfill.go）、礼品卡或后台加时长
+// 救回走过到期日的订阅（extended 且 payload.restart，subscription_period.go）、
+// 上一次变更套餐（plan_changed）。提前续费是在原周期末往后叠，不改周期起点，所以一个周期
 // 可能由好几张付费单拼成 —— 基数是它们的合计，而不是最近一张。
 //
 // 每张单的「付费」按 max(小计 − 折扣 − 已退款, 0) 计。0 元单、全额券、人工
@@ -105,7 +107,8 @@ func loadProrationBasis(ctx context.Context, tx pgx.Tx, tenantID, subID string,
 			 WHERE e.tenant_id = $1 AND e.subscription_id = $2::uuid
 			   AND (e.event_type IN ('activated', 'plan_changed')
 			        OR (e.event_type = 'renewed'
-			            AND e.from_status IN ('expired', 'past_due', 'grace')))
+			            AND e.from_status IN ('expired', 'past_due', 'grace'))
+			        OR (e.event_type = 'extended' AND e.payload->>'restart' = 'true'))
 			 ORDER BY e.id DESC LIMIT 1
 		)
 		SELECT o.currency::text,
@@ -150,8 +153,11 @@ func loadProrationBasis(ctx context.Context, tx pgx.Tx, tenantID, subID string,
 	}
 	b.PaidSpan = paidUntil.Sub(periodStart)
 
+	// 提前续费时 cycle 行停在原到期日、订阅周期末已经往后推了（规则 5）：后面那几期的
+	// 流量还一点没用。按「本行之后还有几个本行那么长的周期」把它们的额度算进来，
+	// 否则本期流量用完就把下一期已付的钱也折成 0。
 	rows, err = tx.Query(ctx, `
-		SELECT limit_value + granted_addon + adjusted, consumed
+		SELECT limit_value + granted_addon + adjusted, consumed, period, period_start, period_end
 		  FROM quota_balances
 		 WHERE tenant_id = $1 AND subscription_id = $2::uuid
 		   AND metric = 'traffic.bytes' AND period IN ('cycle', 'total')
@@ -163,10 +169,31 @@ func loadProrationBasis(ctx context.Context, tx pgx.Tx, tenantID, subID string,
 	defer rows.Close()
 	for rows.Next() {
 		var t trafficAllowance
-		if err := rows.Scan(&t.Cap, &t.Consumed); err != nil {
+		var period string
+		var rowStart time.Time
+		var rowEnd *time.Time
+		if err := rows.Scan(&t.Cap, &t.Consumed, &period, &rowStart, &rowEnd); err != nil {
 			return b, err
+		}
+		if period == "cycle" && rowEnd != nil {
+			t.Cap += pendingCycleAllowance(t.Cap, rowStart, *rowEnd, periodEnd)
 		}
 		b.Traffic = append(b.Traffic, t)
 	}
 	return b, rows.Err()
+}
+
+// pendingCycleAllowance 是 cycle 行之后、订阅周期末之前还没开始的那几期的额度：
+// cap × (订阅周期末 − 行末) / (行末 − 行起点)，向下取整。没有待开始的周期时为 0。
+func pendingCycleAllowance(rowCap int64, rowStart, rowEnd, subEnd time.Time) int64 {
+	span := rowEnd.Sub(rowStart)
+	if rowCap <= 0 || span <= 0 || !subEnd.After(rowEnd) {
+		return 0
+	}
+	n := new(big.Int).Mul(big.NewInt(rowCap), big.NewInt(int64(subEnd.Sub(rowEnd))))
+	n.Quo(n, big.NewInt(int64(span)))
+	if !n.IsInt64() {
+		return 0
+	}
+	return n.Int64()
 }

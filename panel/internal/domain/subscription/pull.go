@@ -21,6 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 )
@@ -34,7 +35,20 @@ type Pull struct {
 	Cred  *Credential
 	Nodes []Node
 	Usage Usage
+	// Expired 非空表示令牌有效、订阅已过期（规则 1）：不取节点，调用方只回一条提示节点
+	Expired *ExpiredPull
 }
+
+// ExpiredPull 是过期订阅拉取要的信息。
+type ExpiredPull struct {
+	PeriodEnd time.Time
+	// Location 是提示里显示到期时刻用的时区：用户时区，未设（'UTC'）跟随站点时区
+	Location *time.Location
+}
+
+// ErrExpired 是 checkCredential 的内部结论：令牌对、凭据没被吊销，但订阅已过期。
+// 只在本包内流转，LoadPull 把它变成 Pull.Expired，不会返回给调用方。
+var ErrExpired = errors.New("订阅已过期")
 
 // pullAuthSQL 按令牌哈希取凭据、订阅、用户组与用量，$1 租户、$2 令牌哈希。
 //
@@ -49,6 +63,9 @@ const pullAuthSQL = `
 	SELECT sc.id, sc.token_hash, sc.subscription_id, sc.user_id, sc.status,
 	       sc.expires_at, sc.grace_until, sc.rate_limit_per_hour,
 	       s.plan_version_id, s.proxy_uuid, s.node_uid, s.status, s.current_period_end,
+	       s.renewal_closed_at IS NOT NULL,
+	       COALESCE(u.timezone, ''),
+	       COALESCE((SELECT t.timezone FROM tenants t WHERE t.id = s.tenant_id), ''),
 	       COALESCE(u.user_group_id::text, ''),
 	       q.granted, q.consumed,
 	       (SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
@@ -70,6 +87,7 @@ const pullAuthSQL = `
 // LoadPull 完成一次订阅拉取的全部读取。
 //
 // 返回 ErrNotFound 表示前缀或令牌不对、凭据失效或订阅不可用——对外一律回伪装页。
+// 令牌有效、订阅已过期（原地续费窗口没关）时不报错，返回的 Pull.Expired 非空、不带节点。
 // 其余错误是库错误、超时或数据缺失；认证已经通过时，返回的 Pull 里带着 Cred，
 // 调用方据此记一条带凭据的 error 日志。
 func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) (*Pull, error) {
@@ -88,17 +106,20 @@ func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) 
 	var c Credential
 	var granted, consumed *int64
 	var packRemaining int64
+	var userTZ, tenantTZ string
 	want := crypto.HashToken(token)
 	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var (
 			hash                  []byte
 			credStatus            string
 			expiresAt, graceUntil *time.Time
+			renewalClosed         bool
 		)
 		err := tx.QueryRow(ctx, pullAuthSQL, tenantID, want).Scan(
 			&c.ID, &hash, &c.SubscriptionID, &c.UserID, &credStatus,
 			&expiresAt, &graceUntil, &c.RateLimit,
 			&c.PlanVersionID, &c.ProxyUUID, &c.NodeUID, &c.Status, &c.PeriodEnd,
+			&renewalClosed, &userTZ, &tenantTZ,
 			&c.UserGroupID, &granted, &consumed, &packRemaining)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
@@ -106,8 +127,22 @@ func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) 
 		if err != nil {
 			return err
 		}
-		return checkCredential(hash, want, credStatus, expiresAt, graceUntil, c.Status, time.Now())
+		return checkCredential(hash, want, credStatus, expiresAt, graceUntil, c.Status,
+			renewalClosed, time.Now())
 	})
+	if errors.Is(err, ErrExpired) {
+		pull := &Pull{Cred: &c, Expired: &ExpiredPull{
+			Location: nodefabric.UsageLocation(userTZ, tenantTZ)}}
+		if c.PeriodEnd != nil {
+			pull.Expired.PeriodEnd = *c.PeriodEnd
+			pull.Usage.Expire = c.PeriodEnd.Unix()
+		}
+		if granted != nil && consumed != nil {
+			pull.Usage.Total = *granted + packRemaining
+			pull.Usage.Download = *consumed
+		}
+		return pull, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -134,9 +169,14 @@ func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) 
 	return pull, nil
 }
 
-// checkCredential 判定一条按哈希取回的凭据能不能用；不能用一律 ErrNotFound。
+// checkCredential 判定一条按哈希取回的凭据能不能用：能用回 nil；令牌对、凭据没被吊销、
+// 订阅只是过期了（原地续费窗口没关）回 ErrExpired；其余一律 ErrNotFound。
+//
+// 伪装 404 只留给「令牌不存在、已吊销、前缀不对」与不在服务的订阅（暂停、取消……）：
+// 持有有效令牌的人本来就知道链接是真的，告诉他「已过期」不泄露新信息（规则 1）。
+// 过期满 30 天关窗后凭据被吊销（billing/expire.go），从那以后回 404。
 func checkCredential(hash, want []byte, credStatus string, expiresAt, graceUntil *time.Time,
-	subStatus string, now time.Time) error {
+	subStatus string, renewalClosed bool, now time.Time) error {
 	// 定时安全比较，避免按字节比对泄露信息
 	if !hmac.Equal(hash, want) {
 		return ErrNotFound
@@ -151,12 +191,23 @@ func checkCredential(hash, want []byte, credStatus string, expiresAt, graceUntil
 	if graceUntil != nil && (deadline == nil || graceUntil.After(*deadline)) {
 		deadline = graceUntil
 	}
-	if deadline != nil && now.After(*deadline) {
+	lapsed := deadline != nil && now.After(*deadline)
+	if lapsed && credStatus != "active" {
+		// 换发链接后留着宽限的旧凭据，宽限一过就是失效的链接，不是「订阅过期」
 		return ErrNotFound
 	}
 	switch subStatus {
 	case "active", "trialing", "grace":
+		if lapsed {
+			// 状态还没被过期扫描改过来，但已经过了截止时间
+			return ErrExpired
+		}
 		return nil
+	case "expired":
+		if renewalClosed {
+			return ErrNotFound
+		}
+		return ErrExpired
 	default:
 		return ErrNotFound
 	}
@@ -183,6 +234,23 @@ func (s *Service) cachedNodes(ctx context.Context, tenantID string, c *Credentia
 // 与原先一致（失败请求不占额度）。
 func (s *Service) RecordSuccessfulFetch(ctx context.Context, tenantID, credID, subID,
 	format, ip, ua, uaFamily string, nodeCount, bytesSent, limit int) error {
+	return s.recordFetch(ctx, tenantID, credID, subID, "ok", format, ip, ua, uaFamily,
+		nodeCount, bytesSent, limit)
+}
+
+// RecordExpiredFetch 记一次过期订阅的拉取（规则 1）：结果记 expired，与扫描器的
+// not_found 分开；限流与成功拉取同一套，只是按 expired 自己的次数算，拿着有效令牌
+// 反复刷提示也一样被挡。
+func (s *Service) RecordExpiredFetch(ctx context.Context, tenantID, credID, subID,
+	format, ip, ua, uaFamily string, bytesSent, limit int) error {
+	return s.recordFetch(ctx, tenantID, credID, subID, "expired", format, ip, ua, uaFamily,
+		0, bytesSent, limit)
+}
+
+// recordFetch 是 RecordSuccessfulFetch / RecordExpiredFetch 的共同实现；result 只会是
+// ok 或 expired，限流按同一 result 的近一小时次数算。
+func (s *Service) recordFetch(ctx context.Context, tenantID, credID, subID, result,
+	format, ip, ua, uaFamily string, nodeCount, bytesSent, limit int) error {
 	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		ipHash := s.hash(ip)
 		var lockedID string
@@ -200,14 +268,14 @@ func (s *Service) RecordSuccessfulFetch(ctx context.Context, tenantID, credID, s
 				(tenant_id, credential_id, subscription_id, ip_hash, ua_hash,
 				 ua_family, result, format, node_count, bytes_sent, ip_enc, ua_enc)
 			SELECT $1::uuid, $2::uuid, $3::uuid, $4::bytea, $5::bytea,
-			       $6::text, 'ok', $7::text, $8::int, $9::int, $10::bytea, $11::bytea
+			       $6::text, $13::text, $7::text, $8::int, $9::int, $10::bytea, $11::bytea
 			 WHERE $12::int <= 0
 			    OR (SELECT count(*) FROM subscription_fetch_log
 			         WHERE tenant_id = $1::uuid AND credential_id = $2::uuid
 			           AND fetched_at > now() - interval '1 hour'
-			           AND result = 'ok') < $12::int`,
+			           AND result = $13::text) < $12::int`,
 			tenantID, credID, subID, ipHash, s.hash(ua), uaFamily,
-			nullIfEmpty(format), nodeCount, bytesSent, s.seal(ip), s.seal(ua), limit)
+			nullIfEmpty(format), nodeCount, bytesSent, s.seal(ip), s.seal(ua), limit, result)
 		if err != nil {
 			return err
 		}

@@ -309,7 +309,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	var controlSub string
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, control, func(tx pgx.Tx) error {
 		var err error
-		controlSub, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, control, planA, priceA, "fixture")
+		controlSub, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, control, planA, priceA, "fixture")
 		return err
 	})
 	controlToken := p.rotate(control, controlSub)
@@ -318,8 +318,10 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	p.must(`UPDATE subscription_credentials SET expires_at=now()-interval '5 days'
 		WHERE subscription_id=$1::uuid AND status='revoked'`, controlSub)
 	p.travel(controlSub, 48)
-	if _, err := p.pull(controlToken); !errors.Is(err, subscription.ErrNotFound) {
-		t.Fatalf("legacy extension pull err=%v, want the 404 this wave fixes", err)
+	// 旧写法的分叉：凭据过了旧到期日。原先回 404；现在令牌有效、按「已过期」回提示节点
+	// （w5expiry 规则 1），同样拿不到任何真实节点
+	if pulled, err := p.pull(controlToken); err != nil || pulled.Expired == nil || len(pulled.Nodes) != 0 {
+		t.Fatalf("legacy extension pull=%+v err=%v, want the expired notice this wave fixes", pulled, err)
 	}
 	p.report(controlSub, 0, 50)
 	if got := p.cycleConsumed(controlSub); got != 0 {
@@ -405,10 +407,22 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	}
 	beforeRenewal := p.aligned("before renewal", subID)
 	p.pay("sp-renew", renewal.OrderID, renewal.PayableAmount)
-	// 续费从当前周期末往后延一个月（月长 28–31 天）
-	if end := p.aligned("renewal", subID); end.Before(beforeRenewal.AddDate(0, 0, 28)) ||
-		end.After(beforeRenewal.AddDate(0, 0, 31)) {
-		t.Fatalf("renewal end=%s after %s", end, beforeRenewal)
+	// 提前续费从当前周期末往后延一个月（月长 28–31 天）；凭据跟到新周期末，本期 cycle 行
+	// 留在原到期日、已用量不动（w5expiry 规则 5），到点由 RollQuotaPeriods 滚进新周期
+	var renewedEnd, cycleEnd time.Time
+	var credsOff int
+	if err := admin.QueryRow(ctx, `
+		SELECT s.current_period_end,
+		       (SELECT max(q.period_end) FROM quota_balances q
+		         WHERE q.subscription_id = s.id AND q.period = 'cycle'),
+		       (SELECT count(*) FROM subscription_credentials c
+		         WHERE c.subscription_id = s.id AND c.status = 'active'
+		           AND c.expires_at IS DISTINCT FROM s.current_period_end)
+		  FROM subscriptions s WHERE s.id = $1::uuid`, subID).Scan(&renewedEnd, &cycleEnd, &credsOff); err != nil ||
+		credsOff != 0 || !cycleEnd.Equal(beforeRenewal) ||
+		renewedEnd.Before(beforeRenewal.AddDate(0, 0, 28)) || renewedEnd.After(beforeRenewal.AddDate(0, 0, 31)) {
+		t.Fatalf("early renewal end=%s cycle=%s creds off=%d after %s err=%v",
+			renewedEnd, cycleEnd, credsOff, beforeRenewal, err)
 	}
 	changeClaim := orderReleasePG18Claim(t, ctx, conn.Conn(), p.fx.tenant, buyer, PlanChangeIdempotencyScope, "sp-change")
 	change, err := p.billing.CreatePlanChange(ctx, p.fx.tenant, PlanChangeInput{
@@ -440,7 +454,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	var pausedSub string
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, buyer, func(tx pgx.Tx) error {
 		var err error
-		pausedSub, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, buyer, planA, priceA, "fixture")
+		pausedSub, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, buyer, planA, priceA, "fixture")
 		return err
 	})
 	p.must(`UPDATE subscriptions SET status='paused' WHERE id=$1::uuid`, pausedSub)
@@ -466,5 +480,11 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	t.Run("quota periods roll on their own cycle", func(t *testing.T) {
 		p.t = t
 		checkQuotaRollPG18(t, p)
+	})
+
+	// 到期与续费规则（w5expiry，用户 2026-10-07）
+	t.Run("expiry and renewal rules", func(t *testing.T) {
+		p.t = t
+		checkExpiryRulesPG18(t, p, conn.Conn())
 	})
 }

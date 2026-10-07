@@ -183,13 +183,14 @@ func TestIneligibleSubscriptionSettlementPG18(t *testing.T) {
 		return amount
 	}
 
-	// 1) 续费单（余额抵 300、渠道付 700）待支付期间订阅被改成 expired：
-	//    钱进挂账、订单与订阅不动、回执成功、不通知节点。
+	// 1) 续费单（余额抵 300、渠道付 700）待支付期间订阅被改成 expired、原地续费窗口已关
+	//    （过期满 30 天，00124）：钱进挂账、订单与订阅不动、回执成功、不通知节点。
+	//    窗口没关的已过期订阅照常收续费款，见 6)。
 	subExpired := buy(t, "ine-exp-buy")
 	orderReleasePG18FundBalance(t, ctx, pool, fx.tenant, fx.buyer, 300)
 	expiredRenewal := renew(t, "ine-exp", subExpired, 300)
 	before := readSub(t, subExpired)
-	must(`UPDATE subscriptions SET status='expired' WHERE id=$1::uuid`, subExpired)
+	must(`UPDATE subscriptions SET status='expired', renewal_closed_at=now() WHERE id=$1::uuid`, subExpired)
 	walletHeld := balance(t)
 	notified = 0
 	out, err := webhook("ine-exp", "ine-exp", expiredRenewal.OrderID, 700)
@@ -276,7 +277,7 @@ func TestIneligibleSubscriptionSettlementPG18(t *testing.T) {
 		t.Fatalf("pending plan change=%+v err=%v", change, err)
 	}
 	before = readSub(t, subUp)
-	must(`UPDATE subscriptions SET status='expired' WHERE id=$1::uuid`, subUp)
+	must(`UPDATE subscriptions SET status='expired', renewal_closed_at=now() WHERE id=$1::uuid`, subUp)
 	out, err = webhook("ine-up", "ine-up", change.OrderID, change.PayableAmount)
 	wantQuarantined(t, "expired plan change", out, err)
 	orderReleasePG18AssertQuarantine(t, ctx, pool, fx.tenant, change.OrderID,
@@ -367,4 +368,21 @@ func TestIneligibleSubscriptionSettlementPG18(t *testing.T) {
 		t.Fatalf("eligible renewal out=%#v err=%v", out, err)
 	}
 	t.Log("marker=ineligible_pg18_guard_ok")
+
+	// 6) 已过期但原地续费窗口没关（w5expiry 规则 4）：续费款照常履约、订阅回到 active，
+	//    数据库也拒绝把这笔钱伪造成 ineligible_subscription。
+	subOpen := buy(t, "ine-open-buy")
+	openRenewal := renew(t, "ine-open", subOpen, 0)
+	must(`UPDATE subscriptions SET status='expired' WHERE id=$1::uuid`, subOpen)
+	if state := orderReleasePG18SQLState(forge(t, "ine-forge-open", openRenewal.OrderID)); state != "23514" {
+		t.Fatalf("forged ineligible case on an expired subscription inside the window SQLSTATE=%q", state)
+	}
+	if out, err := webhook("ine-open", "ine-open", openRenewal.OrderID, 1000); err != nil ||
+		out == nil || !out.Processed || out.QuarantineKind != "" || out.SubscriptionID != subOpen {
+		t.Fatalf("renewal of an expired subscription inside the window out=%#v err=%v", out, err)
+	}
+	if got := readSub(t, subOpen); got.status != "active" {
+		t.Fatalf("expired subscription renewed inside the window status=%s", got.status)
+	}
+	t.Log("marker=ineligible_pg18_expired_open_window_renews_ok")
 }

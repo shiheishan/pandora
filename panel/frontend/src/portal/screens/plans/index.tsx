@@ -85,7 +85,7 @@ function SubscriptionPlans({ plans, primary }: { plans: ReturnType<typeof usePla
         {primary && (
           <div className={css.hint}>
             当前 {primary.plan_name}
-            {expiry ? ` · ${expiry.days} 天后到期` : ''}。换套餐时剩余天数自动折算。
+            {expiry ? ` · ${expiry.label}` : ''}。{expiry?.expired ? '续费或换套餐都在原订阅上进行，订阅地址不变。' : '换套餐时剩余天数自动折算。'}
           </div>
         )}
       </div>

@@ -100,6 +100,80 @@ var rollQuotaSQL = `
 	  FROM rolled r
 	  JOIN stepped n ON n.id = r.id`
 
+// rollCycleQuotaSQL 把提前续费留下的 cycle 配额行滚进新周期，$1 租户、$2 批量上限。
+//
+// 提前续费（规则 5）不动本期配额：订阅周期末先往后推，cycle 行仍停在原到期日，本期剩余
+// 流量照常用到那一刻。到点后这里把它滚进下一期：已用量清零（写 renewal 重置日志），
+// 上限按订阅的套餐版本写回（救回时折算加进来的只属于上一期），周期是
+//   - 起点：旧 period_end；
+//   - 终点：起点加一个计费周期（订阅价格档的周期，与 Go 的 addInterval 同口径）；
+//     剩下不足两个周期（含礼品卡加的零头天数）就直接到订阅周期末，零头并进最后一期，
+//     不单独发一轮流量；没有价格档就直接到订阅周期末。
+//
+// 只滚每条订阅每个指标最新的那一条 cycle 行；订阅已经过期或周期末没比这一行晚的不滚。
+// 加锁与 rollQuotaSQL 同：按 id、SKIP LOCKED，与 push 记账同序。
+var rollCycleQuotaSQL = `
+	WITH due AS MATERIALIZED (
+		SELECT qb.id, s.user_id, qb.period_end AS new_start,
+		       CASE WHEN st.step IS NULL OR qb.period_end + 2 * st.step > s.current_period_end
+		            THEN s.current_period_end
+		            ELSE qb.period_end + st.step END AS new_end,
+		       qd.found AS has_definition, qd.limit_value AS def_limit
+		  FROM quota_balances qb
+		  JOIN subscriptions s
+		    ON s.tenant_id = qb.tenant_id AND s.id = qb.subscription_id
+		  LEFT JOIN LATERAL (
+		        SELECT CASE pr.billing_interval
+		                 WHEN 'day'      THEN make_interval(days => greatest(pr.interval_count, 1))
+		                 WHEN 'week'     THEN make_interval(days => 7 * greatest(pr.interval_count, 1))
+		                 WHEN 'quarter'  THEN make_interval(months => 3 * greatest(pr.interval_count, 1))
+		                 WHEN 'year'     THEN make_interval(years => greatest(pr.interval_count, 1))
+		                 WHEN 'one_time' THEN interval '100 years'
+		                 ELSE make_interval(months => greatest(pr.interval_count, 1)) END AS step
+		          FROM prices pr
+		         WHERE pr.tenant_id = s.tenant_id AND pr.id = s.price_id) st ON true
+		  LEFT JOIN LATERAL (
+		        SELECT true AS found, d.limit_value
+		          FROM quota_definitions d
+		         WHERE d.plan_version_id = s.plan_version_id
+		           AND d.metric = qb.metric AND d.period = 'cycle'
+		         LIMIT 1) qd ON true
+		 WHERE qb.tenant_id = $1
+		   AND qb.period = 'cycle'
+		   AND qb.period_end IS NOT NULL
+		   AND qb.period_end <= now()
+		   AND s.status IN ('active','trialing','grace')
+		   AND s.current_period_end > now()
+		   AND s.current_period_end > qb.period_end
+		   AND NOT EXISTS (
+		         SELECT 1 FROM quota_balances x
+		          WHERE x.tenant_id = qb.tenant_id AND x.subscription_id = qb.subscription_id
+		            AND x.metric = qb.metric AND x.period = 'cycle'
+		            AND x.period_start > qb.period_start)
+		 ORDER BY qb.id
+		 LIMIT $2
+		   FOR UPDATE OF qb SKIP LOCKED
+	), rolled AS (
+		UPDATE quota_balances qb
+		   SET consumed = 0,
+		       period_start = d.new_start,
+		       period_end = d.new_end,
+		       limit_value = CASE WHEN d.has_definition THEN d.def_limit ELSE qb.limit_value END,
+		       granted = CASE WHEN d.has_definition THEN coalesce(d.def_limit, 0) ELSE qb.granted END,
+		       notified_thresholds = '{}',
+		       overage_applied_at = NULL,
+		       updated_at = now()
+		  FROM due d
+		 WHERE qb.id = d.id
+		RETURNING qb.id, qb.subscription_id, qb.metric, OLD.consumed AS consumed_before
+	)
+	INSERT INTO traffic_reset_logs
+		(tenant_id, subscription_id, user_id, metric, reason,
+		 consumed_before, consumed_after)
+	SELECT $1, r.subscription_id, d.user_id, r.metric, 'renewal', r.consumed_before, 0
+	  FROM rolled r
+	  JOIN due d ON d.id = r.id`
+
 // quotaStepSQL 是 day / month 配额的自然周期长度（period 是 SQL 表达式）。这两类配额的
 // 周期独立于订阅周期（年付套餐按月给流量、月付套餐按日限量）。
 func quotaStepSQL(period string) string {
@@ -108,9 +182,9 @@ func quotaStepSQL(period string) string {
 
 // RollQuotaPeriods 把周期已过的配额滚到下一个周期，返回滚动的行数。
 //
-// 只处理 period 为 day / month 的配额 —— 那类的周期独立于订阅周期
-// （比如年付套餐但流量按月给）。period='cycle' 的跟着订阅走，
-// 由续费负责重置；period='total' 永不重置。
+// day / month 的配额周期独立于订阅周期（比如年付套餐但流量按月给），到点滚动；
+// period='cycle' 的跟着订阅走，过期恢复的续费当场重置，提前续费到原到期日才由这里
+// 滚进新周期（rollCycleQuotaSQL）；period='total' 只在过期恢复时清零。
 //
 // 分批、每批一个短事务（rollQuotaSQL）；一批满额就接着下一批。跑完后若有行因被 push
 // 锁着而跳过，隔一小会儿再补一遍，仍锁着的留给下一轮。计费不依赖滚动及时：push 侧
@@ -126,19 +200,27 @@ func (s *Service) RollQuotaPeriods(ctx context.Context, tenantID string) (int, e
 			}
 		}
 		for batch := 0; batch < rollQuotaMaxBatches; batch++ {
-			var n int
+			var n, rolled int
 			err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 				tag, err := tx.Exec(ctx, rollQuotaSQL, tenantID, rollQuotaBatch)
 				if err != nil {
 					return err
 				}
 				n = int(tag.RowsAffected())
+				rolled = n
+				// 提前续费留下的 cycle 行（两条语句锁的都是配额行，同为按 id 的 SKIP LOCKED）
+				tag, err = tx.Exec(ctx, rollCycleQuotaSQL, tenantID, rollQuotaBatch)
+				if err != nil {
+					return err
+				}
+				rolled += int(tag.RowsAffected())
+				n = max(n, int(tag.RowsAffected()))
 				return nil
 			})
 			if err != nil {
 				return total, err
 			}
-			total += n
+			total += rolled
 			if n < rollQuotaBatch {
 				break
 			}

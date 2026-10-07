@@ -31,6 +31,10 @@ type CreateOrderInput struct {
 	UseBalance int64
 	// CouponCode 是可选的优惠码
 	CouponCode string
+	// RejectSamePlan 由门户新购设置（规则 3）：用户已有这个套餐、可以原地续费的订阅时
+	// 拒绝新开（ErrSamePlanUseRenewal），门户改走续费。人工开单在进来之前已按同一口径
+	// 改走续费（CreateManualOrder），不设它。
+	RejectSamePlan bool
 
 	// --- 以下仅供管理端人工单（XBD-015）使用，用户端一律留空 ---
 	//
@@ -173,6 +177,17 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 		}
 		if !allowNew {
 			return httpx.New(httpx.CodeConflict, "该套餐当前不接受新购")
+		}
+		// 同套餐只续不新开（规则 3，same_plan.go）：门户新购遇到可原地续费的同套餐订阅
+		// 拒绝，新开会换订阅链接。只读不锁：这里已锁着套餐行，续费的锁序是先订阅后
+		// 套餐，再锁订阅会交叉；序列化隔离兜住并发。
+		if in.RejectSamePlan {
+			if samePlanSub, err := renewableSamePlanSubscription(ctx, tx, tenantID,
+				in.UserID, in.PlanID, false); err != nil {
+				return err
+			} else if samePlanSub != "" {
+				return ErrSamePlanUseRenewal
+			}
 		}
 		if currentVersion == nil {
 			return httpx.New(httpx.CodeConflict, "该套餐尚未发布可用版本")

@@ -44,6 +44,8 @@ type TemplateRow struct {
 // 否则管理员不敢改。
 var templateDescription = map[string]string{
 	"subscription.expiring": "套餐到期前提醒（由定时扫描触发，每个订阅每个提醒窗口只发一次）",
+	"subscription.expired":  "套餐到期当时的通知（订阅被过期扫描标成已过期后触发，每次到期只发一次）",
+	"subscription.recall":   "过期后的续费召回（过期第 1 天、第 7 天各一次；已有别的在用订阅或过期满 30 天不发）",
 	"quota.warning":         "流量用量预警（用量越过阈值时触发）",
 	"order.paid":            "订单支付成功后发给下单用户",
 	"ticket.replied":        "工单被管理员回复后通知提单人",
@@ -315,6 +317,33 @@ var defaultTemplates = map[string]defaultTemplate{
 
 你的「{{plan}}」将在 {{days}} 天后到期（{{expires_at}}）。
 到期后节点将停止服务，请及时续费以免影响使用。
+
+{{site}}`,
+	},
+	"subscription.expired|inapp": {
+		Subject: "套餐已到期",
+		Body:    "你的「{{plan}}」已于 {{expired_at}} 到期，节点已停止服务。续费后在客户端里更新订阅即可恢复，订阅链接不变。",
+	},
+	"subscription.expired|email": {
+		Subject: "【{{site}}】你的套餐已到期",
+		Body: `你好，
+
+你的「{{plan}}」已于 {{expired_at}} 到期，节点已停止服务。
+续费后在客户端里更新一次订阅即可恢复，订阅链接不变，无需重新导入。
+过期满 30 天后将不能再原地续费，只能重新购买并更换订阅链接。
+
+{{site}}`,
+	},
+	"subscription.recall|inapp": {
+		Subject: "套餐已过期 {{days}} 天",
+		Body:    "你的「{{plan}}」已于 {{expired_at}} 到期。现在续费，原订阅链接自动恢复，无需重新导入；过期满 30 天后只能重新购买。",
+	},
+	"subscription.recall|email": {
+		Subject: "【{{site}}】你的套餐已过期 {{days}} 天",
+		Body: `你好，
+
+你的「{{plan}}」已于 {{expired_at}} 到期，至今已 {{days}} 天。
+现在续费，原订阅链接自动恢复，无需重新导入；过期满 30 天后只能重新购买，并需要更换订阅链接。
 
 {{site}}`,
 	},

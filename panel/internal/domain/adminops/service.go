@@ -103,7 +103,10 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FILTER (WHERE status = 'active'),
 			       count(*) FILTER (WHERE status = 'trialing'),
+			       -- 7 天内到期：补上下限（w5expiry）。原先没有 > now()，状态还没被过期扫描
+			       -- 翻成 expired 的历史订阅全算进来，数字只增不减
 			       count(*) FILTER (WHERE status IN ('active','trialing')
+			                          AND current_period_end > now()
 			                          AND current_period_end < now() + interval '7 days'),
 			       count(*) FILTER (WHERE status = 'expired'),
 			       count(*) FILTER (WHERE status IN ('active','trialing')

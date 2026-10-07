@@ -7,6 +7,8 @@ import {
   expiryView,
   extendableSubscriptions,
   extendedEnd,
+  expiredDays,
+  isRescue,
   extendReasonProblem,
   initial,
   listParams,
@@ -86,9 +88,15 @@ describe('当前订阅（与后端 currentSubscriptionSQL 同口径）', () => {
 describe('加时长（与后端 subscriptionExtendable / validateAdminExtend 同口径）', () => {
   const s = (status: 'active' | 'trialing' | 'expired', end: number | null, id: string) => ({ id, status, current_period_end: end === null ? null : days(end) })
 
-  it('只有生效中且有到期时间的订阅能加时长', () => {
-    expect(extendableSubscriptions([s('active', 5, 'a'), s('trialing', 5, 'b'), s('expired', -1, 'c'), s('active', null, 'd')]).map((x) => x.id)).toEqual(['a'])
-    expect(extendableSubscriptions([s('expired', -1, 'c')])).toEqual([])
+  it('生效中、试用中、过期不满 30 天且有到期时间的订阅能加时长（w5expiry）', () => {
+    expect(extendableSubscriptions([s('active', 5, 'a'), s('trialing', 5, 'b'), s('expired', -1, 'c'), s('active', null, 'd'), s('expired', -31, 'e')], NOW).map((x) => x.id)).toEqual(['a', 'b', 'c'])
+    expect(extendableSubscriptions([s('expired', -31, 'e')], NOW)).toEqual([])
+    expect(expiredDays(days(-3), NOW)).toBe(3)
+    expect(expiredDays(days(2), NOW)).toBeNull()
+    expect(isRescue(s('expired', -3, 'c'), NOW)).toBe(true)
+    expect(isRescue(s('active', -1, 'x'), NOW)).toBe(true)
+    expect(isRescue(s('trialing', 5, 'b'), NOW)).toBe(true)
+    expect(isRescue(s('active', 5, 'a'), NOW)).toBe(false)
   })
 
   it('天数 1–3650 的整数，原因 5–500 字', () => {
