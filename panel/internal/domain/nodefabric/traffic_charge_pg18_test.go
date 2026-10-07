@@ -161,7 +161,79 @@ func TestTrafficChargePG18(t *testing.T) {
 	t.Log("marker=traffic_charge_pg18_charges_do_not_notify_ok")
 
 	batchChargeScenario(t, ctx, admin, app)
+	rolloverAndForeignUIDScenario(t, ctx, admin, app)
 	retentionScenario(t, ctx, admin, app)
+}
+
+// rolloverAndForeignUIDScenario 证明审计 N1、N2、N3：
+//   - 周期滚动空窗：本期 period_end 已过、RollQuotaPeriods 还没推进时照扣在这一行上，
+//     更早那一期的行不动；
+//   - 节点只能扣自己放行名单里的用户：别池用户的 uid 留档但不扣；
+//   - 不合规条目（负数、错长度）不扣、计 invalid，同一报文里的合规条目照扣。
+func rolloverAndForeignUIDScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app *platformdb.Pool) {
+	t.Helper()
+	const (
+		tenantID = "75400000-0000-7000-8000-000000000001"
+		userID   = "75400000-0000-7000-8000-000000000011"
+		subOwn   = "75400000-0000-7000-8000-000000000021"
+		subOther = "75400000-0000-7000-8000-000000000022"
+		nodeID   = "75400000-0000-7000-8000-000000000041"
+	)
+	must := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("fixture: %v\nSQL: %s", err, sql)
+		}
+	}
+	must(`INSERT INTO tenants (id, slug, display_name, default_currency)
+		VALUES ($1, 'traffic-rollover-pg18', 'Traffic Rollover PG18', 'CNY')`, tenantID)
+	must(`INSERT INTO users (id, tenant_id, email, display_name, status)
+		VALUES ($1, $2, 'traffic-rollover@example.test', 'Traffic Rollover', 'active')`, userID, tenantID)
+	must(`INSERT INTO nodes (id, tenant_id, name, status) VALUES ($1, $2, 'rollover-node', 'active')`, nodeID, tenantID)
+	must(`SET session_replication_role = replica`)
+	must(`INSERT INTO subscriptions (id, tenant_id, user_id, plan_id, plan_version_id,
+			status, snapshot_currency, snapshot_amount, current_period_end, node_uid)
+		VALUES ($1, $3, $4, gen_random_uuid(), gen_random_uuid(), 'active', 'CNY', 0, now() + interval '30 days', 7540001),
+		       ($2, $3, $4, gen_random_uuid(), gen_random_uuid(), 'active', 'CNY', 0, now() + interval '30 days', 7540002)`,
+		subOwn, subOther, tenantID, userID)
+	must(`SET session_replication_role = origin`)
+	// 自己的订阅：上一期已结束（1 分钟前）但还没滚动；更早一期是历史行
+	must(`INSERT INTO quota_balances (tenant_id, subscription_id, metric, period,
+			period_start, period_end, granted, limit_value)
+		VALUES ($1, $2, 'traffic.bytes', 'cycle', now() - interval '62 days', now() - interval '31 days', 1000, 1000),
+		       ($1, $2, 'traffic.bytes', 'cycle', now() - interval '31 days', now() - interval '1 minute', 1000, 1000),
+		       ($1, $3, 'traffic.bytes', 'cycle', now() - interval '1 day', now() + interval '30 days', 1000, 1000)`,
+		tenantID, subOwn, subOther)
+
+	svc := NewService(app, nil)
+	node := servingNodeWithUsers(svc, tenantID, nodeID, 1, 7540001) // 7540002 属于别的池
+	res, err := svc.ReportTraffic(ctx, tenantID, node,
+		[]byte(`{"7540001":[100,20],"7540002":[500,500],"7540003":[-1,5],"7540004":[1]}`))
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if res.Accepted != 1 || res.Invalid != 3 || res.Duplicate {
+		t.Fatalf("report = %+v, want 1 accepted and 3 invalid", res)
+	}
+	var lapsed, history, other int64
+	if err := admin.QueryRow(ctx, `
+		SELECT (SELECT consumed FROM quota_balances WHERE subscription_id = $1 AND period_end < now() - interval '30 days'),
+		       (SELECT consumed FROM quota_balances WHERE subscription_id = $1 AND period_end > now() - interval '30 days'),
+		       (SELECT consumed FROM quota_balances WHERE subscription_id = $2)`,
+		subOwn, subOther).Scan(&history, &lapsed, &other); err != nil {
+		t.Fatal(err)
+	}
+	if lapsed != 120 || history != 0 {
+		t.Fatalf("rollover gap: lapsed period consumed=%d, older period=%d; want 120 and 0", lapsed, history)
+	}
+	if other != 0 {
+		t.Fatalf("a node charged a user outside its pool: consumed=%d", other)
+	}
+	var archived int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM node_traffic_reports WHERE node_id = $1`, nodeID).Scan(&archived); err != nil || archived != 1 {
+		t.Fatalf("report archive rows = %d err=%v, want the whole report archived", archived, err)
+	}
+	t.Log("marker=traffic_charge_pg18_rollover_gap_and_foreign_uid_ok")
 }
 
 // batchChargeScenario 证明整份上报批量记账与逐笔记账同一结果：同一用户的两条订阅
@@ -208,7 +280,7 @@ func batchChargeScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app
 		packOld, packNew, tenantID, userID)
 
 	svc := NewService(app, nil)
-	node := &ServingNode{ID: nodeID, TrafficRate: 1}
+	node := servingNodeWithUsers(svc, tenantID, nodeID, 1, 7510001, 7510002, 7519999)
 	report := func(payload string) *PushResult {
 		t.Helper()
 		res, err := svc.ReportTraffic(ctx, tenantID, node, []byte(payload))

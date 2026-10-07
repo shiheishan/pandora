@@ -159,7 +159,9 @@ func chargeReportEntries(ctx context.Context, tx pgx.Tx, tenantID string, entrie
 		  FROM unnest($2::uuid[], $3::text[], $4::bigint[]) AS v(subscription_id, day, bytes)
 		 ORDER BY v.subscription_id, v.day
 		ON CONFLICT (tenant_id, subscription_id, day) DO UPDATE
-		   SET bytes = subscription_usage_daily.bytes + EXCLUDED.bytes,
+		   SET bytes = CASE WHEN subscription_usage_daily.bytes > 9223372036854775807 - EXCLUDED.bytes
+		                    THEN 9223372036854775807
+		                    ELSE subscription_usage_daily.bytes + EXCLUDED.bytes END,
 		       updated_at = now()`,
 		tenantID, subs, days, bytes); err != nil {
 		return 0, err

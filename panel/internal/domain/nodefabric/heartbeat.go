@@ -132,7 +132,7 @@ func (s *Service) heartbeat(ctx context.Context, tenantID, nodeID string, in Hea
 	gateKey []byte) (*HeartbeatOutput, error) {
 	if in.ConfigSigningKeyID != "" {
 		if _, err := canonicalEffectiveReleaseKeyID(in.ConfigSigningKeyID); err != nil {
-			return nil, httpx.New(httpx.CodeBadRequest, "invalid config signing key id").WithInternal(err)
+			return nil, httpx.New(httpx.CodeBadRequest, "配置签名密钥标识非法").WithInternal(err)
 		}
 	}
 	if in.Metrics != nil {

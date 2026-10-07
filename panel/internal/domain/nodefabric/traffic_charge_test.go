@@ -38,17 +38,29 @@ func TestSplitTrafficChargePlanFirstThenPacks(t *testing.T) {
 	}
 }
 
-func TestSortedReportEntriesOrdersAndMergesUIDs(t *testing.T) {
-	got := sortedReportEntries(map[string][2]int64{
-		"30": {1, 2}, "7": {10, 0}, "007": {0, 5}, "bad": {99, 99}, "12": {0, 4},
-	})
+func TestParseTrafficReportOrdersMergesAndValidates(t *testing.T) {
+	got, err := parseTrafficReport([]byte(`{"30":[1,2],"7":[10,0],"007":[0,5],"bad":[99,99],"12":[0,4],
+		"40":[-5000000000,6000000000],"41":[100],"42":[100,200,300],"43":[9223372036854775807,1],
+		"44":[30000000001,0],"45":[1.5,0],"46":null,"47":{"up":1},"48":[0,99999999999999999999]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []reportEntry{{7, 15}, {12, 4}, {30, 3}}
-	if len(got) != len(want) {
-		t.Fatalf("entries=%v want %v", got, want)
+	if len(got.entries) != len(want) {
+		t.Fatalf("entries=%v want %v", got.entries, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("entries=%v want %v", got, want)
+		if got.entries[i] != want[i] {
+			t.Fatalf("entries=%v want %v", got.entries, want)
+		}
+	}
+	// 非整数 uid、负数、错长度、超上限、小数、null、对象、超出 int64：逐项计 invalid，不拒整份
+	if got.invalid != 10 || got.keys != 14 || got.upload != 11 || got.download != 11 {
+		t.Fatalf("invalid=%d keys=%d up=%d down=%d", got.invalid, got.keys, got.upload, got.download)
+	}
+	for _, bad := range []string{`[]`, `"x"`, `null`, `{`} {
+		if _, err := parseTrafficReport([]byte(bad)); err == nil {
+			t.Fatalf("non-object report %s accepted", bad)
 		}
 	}
 }
@@ -76,7 +88,21 @@ func TestUniProxyServesAndChargesTrafficPacks(t *testing.T) {
 		!strings.Contains(pkg.Decl("chargeReportEntries"), "applyTrafficCharges(") {
 		t.Fatal("single and batch charges must share one charging core")
 	}
-	if !strings.Contains(pkg.Decl("Service.ReportTraffic"), "for _, entry := range sortedReportEntries(report)") {
+	report := pkg.Decl("Service.ReportTraffic")
+	if !strings.Contains(report, "for _, entry := range report.entries") ||
+		!strings.Contains(pkg.Decl("parseTrafficReport"), "slices.SortFunc(out.entries") {
 		t.Fatal("ReportTraffic must charge users in a deterministic order")
+	}
+	// 节点只能扣自己放行名单里的用户（审计 N2）
+	if !strings.Contains(report, "s.ListNodeUsers(ctx, tenantID, n)") || !strings.Contains(report, "allowed[entry.uid]") {
+		t.Fatal("ReportTraffic must only charge users the node currently serves")
+	}
+	// 死锁 / 序列化失败整笔重来（审计 N4）
+	if !strings.Contains(report, "db.IsSerializationFailure(err)") || pushRetryAttempts < 2 {
+		t.Fatal("ReportTraffic must retry deadlocked charges")
+	}
+	// 滚动空窗照扣（审计 N1）：不再要求 period_end > now()
+	if strings.Contains(charge, "period_end > now()))") || !strings.Contains(charge, "period_start <= now()") {
+		t.Fatal("applyTrafficCharges must charge the latest started period even after its period_end")
 	}
 }
