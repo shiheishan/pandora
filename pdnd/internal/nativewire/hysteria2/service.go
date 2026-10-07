@@ -42,8 +42,10 @@ type ServiceOptions struct {
 	TLSConfig             aTLS.ServerConfig
 	UDPDisabled           bool
 	UDPTimeout            time.Duration
-	Handler               ServerHandler
-	MasqueradeHandler     http.Handler
+	// UDPQueueSize 是每个 UDP 会话的接收队列长度，非正值用 DefaultUDPQueueSize。
+	UDPQueueSize      int
+	Handler           ServerHandler
+	MasqueradeHandler http.Handler
 }
 
 type ServerHandler interface {
@@ -65,6 +67,7 @@ type Service[U comparable] struct {
 	userMap               map[string]U
 	udpDisabled           bool
 	udpTimeout            time.Duration
+	udpQueueSize          int
 	handler               ServerHandler
 	masqueradeHandler     http.Handler
 	quicListener          io.Closer
@@ -102,6 +105,7 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		userMap:               make(map[string]U),
 		udpDisabled:           options.UDPDisabled,
 		udpTimeout:            options.UDPTimeout,
+		udpQueueSize:          options.UDPQueueSize,
 		handler:               options.Handler,
 		masqueradeHandler:     options.MasqueradeHandler,
 	}, nil
@@ -115,6 +119,34 @@ func (s *Service[U]) UpdateUsers(userList []U, passwordList []string) {
 	s.userAccess.Lock()
 	s.userMap = userMap
 	s.userAccess.Unlock()
+}
+
+// PatchUsers 增量更新口令表（Pandora 改动）：先删 remove 里的口令，再写入
+// passwords[i] → users[i]。用户数上千时，一次增减几十人不必重建整张表。
+func (s *Service[U]) PatchUsers(remove []string, users []U, passwords []string) {
+	s.userAccess.Lock()
+	defer s.userAccess.Unlock()
+	for _, password := range remove {
+		delete(s.userMap, password)
+	}
+	for i, user := range users {
+		s.userMap[passwords[i]] = user
+	}
+}
+
+// LookupUser 按口令查用户，供测试与诊断核对口令表。
+func (s *Service[U]) LookupUser(password string) (U, bool) {
+	s.userAccess.RLock()
+	defer s.userAccess.RUnlock()
+	user, ok := s.userMap[password]
+	return user, ok
+}
+
+// UserCount 返回口令表条目数。
+func (s *Service[U]) UserCount() int {
+	s.userAccess.RLock()
+	defer s.userAccess.RUnlock()
+	return len(s.userMap)
 }
 
 func (s *Service[U]) Start(conn net.PacketConn) error {
@@ -182,6 +214,8 @@ type serverSession[U comparable] struct {
 	authUser      U
 	udpAccess     sync.RWMutex
 	udpConnMap    map[uint32]*udpPacketConn
+	// destCache 只在 loopMessages 里用（Pandora 改动）。
+	destCache destinationCache
 }
 
 func (s *serverSession[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {

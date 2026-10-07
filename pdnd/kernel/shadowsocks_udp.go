@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"context"
+	"crypto/cipher"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -40,7 +41,7 @@ func (a *shadowsocksAdapter) packetLoop() {
 }
 
 func (a *shadowsocksAdapter) handlePacket(ctx context.Context, wire []byte, clientAddr net.Addr) error {
-	user, destination, payload, err := a.decodeUDPPacket(wire)
+	user, destination, payload, err := a.decodeUDPPacket(wire, clientAddr)
 	if err != nil {
 		return err
 	}
@@ -91,39 +92,38 @@ func destinationUDPAddr(destination vlessDestination) (net.Addr, error) {
 	return net.ResolveUDPAddr("udp", net.JoinHostPort(destination.Domain, strconv.Itoa(int(destination.Port))))
 }
 
-func (a *shadowsocksAdapter) decodeUDPPacket(wire []byte) (core.User, vlessDestination, []byte, error) {
+// decodeUDPPacket 与 TCP 握手共用快照、零分配派生和来源 IP 提示（clientAddr
+// 可为 nil）；每个候选用户都做完整 AEAD 校验并解析出合法目标地址才算认证通过。
+func (a *shadowsocksAdapter) decodeUDPPacket(wire []byte, clientAddr net.Addr) (core.User, vlessDestination, []byte, error) {
 	var destination vlessDestination
 	if len(wire) < a.method.SaltLen+16 {
 		return core.User{}, destination, nil, fmt.Errorf("shadowsocks UDP packet too short")
 	}
 	salt := wire[:a.method.SaltLen]
 	ciphertext := wire[a.method.SaltLen:]
-	a.mu.RLock()
-	users := make([]ssUser, 0, len(a.users))
-	for _, user := range a.users {
-		users = append(users, user)
+	sc := getSSScratch()
+	defer putSSScratch(sc)
+	if cap(sc.plain) < len(ciphertext) {
+		sc.plain = make([]byte, 0, len(ciphertext))
 	}
-	a.mu.RUnlock()
-	for _, candidate := range users {
-		subkey, err := deriveSSSubkey(candidate.MasterKey, salt, a.method.KeyLen)
+	var payload []byte
+	selected, aead := a.findSSUser(sc, salt, ssSourceKey(clientAddr), func(aead cipher.AEAD) bool {
+		plain, err := aead.Open(sc.plain[:0], sc.zeroNonce(), ciphertext, nil)
 		if err != nil {
-			continue
+			return false
 		}
-		aead, err := a.method.NewAEAD(subkey)
+		var candidate vlessDestination
+		consumed, err := parseSSDestination(plain, &candidate)
 		if err != nil {
-			continue
+			return false
 		}
-		plain, err := aead.Open(nil, makeSSNonce(0), ciphertext, nil)
-		if err != nil {
-			continue
-		}
-		consumed, err := parseSSDestination(plain, &destination)
-		if err != nil {
-			continue
-		}
-		return core.User{ID: candidate.ID, DeviceLimit: candidate.DeviceLimit, SpeedLimit: candidate.SpeedLimit}, destination, append([]byte(nil), plain[consumed:]...), nil
+		destination, payload = candidate, plain[consumed:]
+		return true
+	})
+	if aead == nil {
+		return core.User{}, destination, nil, fmt.Errorf("shadowsocks UDP user authentication failed")
 	}
-	return core.User{}, destination, nil, fmt.Errorf("shadowsocks UDP user authentication failed")
+	return core.User{ID: selected.ID, DeviceLimit: selected.DeviceLimit, SpeedLimit: selected.SpeedLimit}, destination, append([]byte(nil), payload...), nil
 }
 
 func (a *shadowsocksAdapter) encodeUDPPacket(user core.User, destination vlessDestination, payload []byte) ([]byte, error) {
@@ -152,12 +152,9 @@ func (a *shadowsocksAdapter) encodeUDPPacket(user core.User, destination vlessDe
 }
 
 func (a *shadowsocksAdapter) userMasterKey(id int64) []byte {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	for _, user := range a.users {
-		if user.ID == id {
-			return append([]byte(nil), user.MasterKey...)
-		}
+	// 快照里的 MasterKey 发布后不再修改，可以直接返回、不复制。
+	if user := a.loadUsers().byID[id]; user != nil {
+		return user.MasterKey
 	}
 	return nil
 }
