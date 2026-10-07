@@ -18,14 +18,15 @@ type PortalProfile struct {
 }
 
 // PortalProfile 读本人的账户行；行不存在按错误返回（pgx.ErrNoRows），由调用方决定怎么报。
+// 单条只读，经 readBatch 一次往返（不开 BEGIN / COMMIT）。
 func (s *Service) PortalProfile(ctx context.Context, tenantID, userID string) (PortalProfile, error) {
 	var out PortalProfile
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID},
-		func(tx pgx.Tx) error {
-			return tx.QueryRow(ctx,
-				`SELECT email, display_name, status, created_at
-				   FROM users WHERE tenant_id = $1 AND id = $2`,
-				tenantID, userID).Scan(&out.Email, &out.DisplayName, &out.Status, &out.CreatedAt)
+	b := &pgx.Batch{}
+	b.Queue(`SELECT email, display_name, status, created_at
+		   FROM users WHERE tenant_id = $1 AND id = $2`, tenantID, userID).
+		QueryRow(func(row pgx.Row) error {
+			return row.Scan(&out.Email, &out.DisplayName, &out.Status, &out.CreatedAt)
 		})
+	err := s.readBatch(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, b)
 	return out, err
 }
