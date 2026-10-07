@@ -61,7 +61,7 @@ func TestKernelConfigIsTheSameTranslationAsDelivery(t *testing.T) {
 }
 
 func TestClientTLSHintsAreValidatedAndAccepted(t *testing.T) {
-	cert := `"cert_path":"/c.pem","key_path":"/k.pem"`
+	cert := `"cert_path":"/etc/pandora-native/certs/example.com/c.pem","key_path":"/etc/pandora-native/certs/example.com/k.pem"`
 	ok := map[string]string{
 		"trojan":    `{"tls":1,"network":"tcp",` + cert + `,"tls_settings":{"server_name":"sni.example.com","allow_insecure":true}}`,
 		"hysteria2": `{` + cert + `,"tls_settings":{"server_name":"203.0.113.5","allow_insecure":false}}`,
@@ -96,7 +96,7 @@ func TestClientTLSHintsAreValidatedAndAccepted(t *testing.T) {
 }
 
 func TestAnyTLSRequiresCertificate(t *testing.T) {
-	for _, raw := range []string{`{}`, `{"tls":true}`, `{"cert_path":"/c.pem"}`} {
+	for _, raw := range []string{`{}`, `{"tls":true}`, `{"cert_path":"/etc/pandora-native/certs/example.com/c.pem"}`} {
 		_, fields := ValidateAdminProtocolConfig("anytls", "pandora-native", 443, json.RawMessage(raw))
 		if fields["protocol_config.cert_path"] == "" && fields["protocol_config.key_path"] == "" {
 			t.Errorf("anytls %s without certificate accepted: %v", raw, fields)

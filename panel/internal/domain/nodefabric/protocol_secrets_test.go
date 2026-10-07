@@ -141,7 +141,7 @@ func TestPreserveRedactedProtocolSecretsGatedMaskPassword(t *testing.T) {
 		{"掩码不变只改 MTU：补回口令", `{"network":"mkcp","mask":"mkcp-aes128gcm","mtu":1100}`, true},
 		{"关掉掩码：不补", `{"network":"mkcp","mask":"none","mtu":1100}`, false},
 		{"去掉 mask 键：不补", `{"network":"mkcp","mtu":1100}`, false},
-		{"离开 mKCP：不补", `{"network":"tcp"}`, false},
+		{"离开 mKCP：不补", `{"network":"ws"}`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -34,6 +34,9 @@ func validateRealityFields(fields map[string]string, dest string,
 		} else if ip := net.ParseIP(host); ip != nil {
 			// 用 IP 当 dest 拿不到有意义的证书，SNI 也无从对应
 			fields["protocol_config.dest"] = "要填域名而不是 IP"
+		} else if reason := realityDestReason(host); reason != "" {
+			// 认证失败的连接会被转发给 dest：指向本机或内网就是给扫描器开的后门
+			fields["protocol_config.dest"] = reason
 		}
 	}
 
@@ -41,7 +44,8 @@ func validateRealityFields(fields map[string]string, dest string,
 		fields["protocol_config.server_names"] = "必填：至少一个，且要和 dest 的证书对得上"
 	} else {
 		for _, n := range names {
-			if strings.TrimSpace(n) == "" || strings.ContainsAny(n, " /:") {
+			// 逗号、下划线这类字符以前能混进来，客户端拿去当 SNI 握不上手
+			if strings.TrimSpace(n) != n || n == "" || len(n) > 253 || net.ParseIP(n) != nil || !validServerName(n) {
 				fields["protocol_config.server_names"] = "每一项都应是纯域名"
 				break
 			}
@@ -64,10 +68,16 @@ func validateRealityFields(fields map[string]string, dest string,
 		fields["protocol_config.public_key"] = "公钥和私钥不是一对：请用「生成」按钮重新生成，或填私钥对应的公钥"
 	}
 
+	// short_id 必填，且不许有空项：节点端把空 short_id 当成「不带 short id 的
+	// 客户端也放行」，少了这道门，探测者只要知道公钥就能走完认证。
+	if len(shortIDs) == 0 {
+		fields["protocol_config.short_ids"] = "必填：至少一个 short id（不超过 16 位的十六进制，可用「生成」按钮）"
+	}
 	for _, s := range shortIDs {
 		s = strings.TrimSpace(s)
 		if s == "" {
-			continue
+			fields["protocol_config.short_ids"] = "short id 不能为空：空值等于对没有 short id 的客户端放行"
+			break
 		}
 		if len(s) > 16 || len(s)%2 != 0 {
 			fields["protocol_config.short_ids"] = "short id 应为不超过 16 位的十六进制"

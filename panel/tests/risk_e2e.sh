@@ -781,7 +781,7 @@ def main():
                                  server_host,server_port,kernel,traffic_rate,display_name,protocol_config,
                                  protocol_schema_version,config_validated_at,row_version)
               SELECT '{TENANT}','risk-node-{STAMP}',s.id,p.id,'draft','active','vless','node.example.com',
-                     443,'auto',1.0,'Risk 01','{{"network":"tcp","tls":false}}'::jsonb,1,now(),1
+                     443,'auto',1.0,'Risk 01','{{"network":"ws","tls":false}}'::jsonb,1,now(),1
                 FROM s CROSS JOIN p RETURNING id, pool_id
             ) SELECT id::text || '|' || pool_id::text FROM n""")[0]
         node_id, pool_id = (need_uuid(x, "夹具 id") for x in row.split("|"))
@@ -790,7 +790,7 @@ def main():
         ADMIN.call("POST", f"/v1/nodes/{node_id}/protocol",
                    {"row_version": 1, "node_type": "vless", "server_host": "node.example.com",
                     "server_port": 443, "kernel": "auto", "traffic_rate": 1.0, "display_name": "Risk 01",
-                    "protocol_config": {"network": "tcp", "tls": False}})
+                    "protocol_config": {"network": "ws", "tls": False}})
         ctx["node_rv"] = 2
         _, js = ADMIN.call("POST", f"/v1/nodes/{node_id}/server-token", idem=f"risk-token-{STAMP}",
                            expect=(201,))

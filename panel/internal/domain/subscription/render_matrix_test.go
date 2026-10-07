@@ -38,6 +38,7 @@ func renderMatrix() map[string]matrixRow {
 	realitySingbox := `"reality":{"enabled":true,"public_key":"` + fixtureRealityPub + `","short_id":"0a1b2c3d"}`
 	realityURI := []string{"security=reality", "pbk=" + fixtureRealityPub, "sid=0a1b2c3d", "sni=www.example.com"}
 	return map[string]matrixRow{
+		// 节点端 Shadowsocks 只听 TCP：Clash 写 udp:false，sing-box 声明只走 tcp
 		"ss-aes128": {
 			clash: has(`type: "ss"`, `cipher: "aes-128-gcm"`, `udp: false`), premium: has(`cipher: "aes-128-gcm"`, `udp: false`),
 			singbox: has(`"method":"aes-128-gcm"`, `"network":"tcp"`), uri: has(ssB64("aes-128-gcm")),
@@ -61,15 +62,27 @@ func renderMatrix() map[string]matrixRow {
 			singbox: has(`"congestion_control":"cubic"`, `"alpn":["h3"]`, `"server_name":"sni.example.com"`),
 			uri:     has("tuic://"+uu+"@", "congestion_control=cubic", "sni=sni.example.com", "alpn=h3"),
 		},
+		// 没配 utls 时三种格式都下发 chrome
 		"anytls": {
 			clash: has(`type: "anytls"`, `sni: "sni.example.com"`, `skip-cert-verify: true`, `client-fingerprint: "chrome"`), premium: skip("Premium"),
 			singbox: has(`"type":"anytls"`, `"insecure":true`, `"server_name":"sni.example.com"`, `"utls":{"enabled":true,"fingerprint":"chrome"}`),
 			uri:     has("anytls://", "sni=sni.example.com", "insecure=1", "fp=chrome"),
 		},
+		// 回落只给节点端，不进订阅
+		"anytls-utls-fallback": {
+			clash: has(`client-fingerprint: "safari"`).without("decoy"), premium: skip("Premium"),
+			singbox: has(`"utls":{"enabled":true,"fingerprint":"safari"}`).without("decoy"),
+			uri:     has("anytls://", "fp=safari").without("decoy"),
+		},
 		"naive": {
 			clash: skip("naive"), premium: skip("Premium"),
 			singbox: has(`"type":"naive"`, `"username":"`+fixtureUUID+`"`, `"server_name":"sni.example.com"`),
 			uri:     has("naive+https://" + uu + "@node.example.com:9443?sni=sni.example.com#naive"),
+		},
+		"naive-fallback": {
+			clash: skip("naive"), premium: skip("Premium"),
+			singbox: has(`"type":"naive"`, `"server_name":"sni.example.com"`).without("decoy"),
+			uri:     has("naive+https://").without("decoy"),
 		},
 		"naive-insecure": {
 			clash: skip("naive"), premium: skip("Premium"), singbox: skip("跳过证书校验"), uri: skip("跳过证书校验"),
@@ -118,6 +131,7 @@ func renderMatrix() map[string]matrixRow {
 			singbox: has(`"server_name":"sni.example.com"`, `"insecure":true`, `"utls":{"enabled":true,"fingerprint":"firefox"}`).without("transport"),
 			uri:     has("trojan://", "security=tls", "sni=sni.example.com", "fp=firefox", "allowInsecure=1", "type=tcp"),
 		},
+		// 没配 utls 的普通 TLS 也下发 chrome（Premium 内核不认 client-fingerprint）
 		"trojan-tls-ws": {
 			clash:   has(`network: "ws"`, `ws-opts: {headers: {Host: "cdn.example.com"}, path: "/tw"}`, `client-fingerprint: "chrome"`),
 			premium: has(`network: "ws"`, `Host: "cdn.example.com"`).without("client-fingerprint"),
@@ -140,6 +154,18 @@ func renderMatrix() map[string]matrixRow {
 			singbox: has(`"transport":{"host":"node.example.com","path":"/tu","type":"httpupgrade"}`),
 			uri:     has("type=httpupgrade", "path=%2Ftu", "host=node.example.com"),
 		},
+		"trojan-tls-fallback": {
+			clash:   has(`type: "trojan"`, `client-fingerprint: "chrome"`, `network: "tcp"`).without("decoy"),
+			premium: has(`type: "trojan"`).without("client-fingerprint", "decoy"),
+			singbox: has(`"utls":{"enabled":true,"fingerprint":"chrome"}`).without("decoy"),
+			uri:     has("trojan://", "security=tls", "fp=chrome").without("decoy"),
+		},
+		"trojan-reality-fallback": {
+			clash:   has(append(realityClash, `client-fingerprint: "chrome"`)...).without("tls: true", "decoy"),
+			premium: skip("REALITY"),
+			singbox: has(realitySingbox, `"utls":{"enabled":true,"fingerprint":"chrome"}`).without("decoy"),
+			uri:     has(append(realityURI, "trojan://", "fp=chrome")...).without("decoy"),
+		},
 		"trojan-reality": {
 			clash:   has(append(realityClash, `sni: "www.example.com"`, `client-fingerprint: "firefox"`)...).without("tls: true"),
 			premium: skip("REALITY"),
@@ -152,6 +178,7 @@ func renderMatrix() map[string]matrixRow {
 			singbox: has(realitySingbox, `"flow":"xtls-rprx-vision"`, `"fingerprint":"chrome"`),
 			uri:     has(append(realityURI, "flow=xtls-rprx-vision", "fp=chrome", "type=tcp")...).without("security=tls"),
 		},
+		// 多个 server name / short id：挑哪个由用户决定，见 render_reality_spread_test.go
 		"vless-reality-multi": {
 			clash:   has(`reality-opts: {public-key: "`+fixtureRealityPub+`", short-id: "`, `servername: "`, `flow: "xtls-rprx-vision"`, `client-fingerprint: "chrome"`),
 			premium: skip("Premium"),
@@ -208,6 +235,15 @@ func renderMatrix() map[string]matrixRow {
 			singbox: has(`"type":"vmess"`, `"security":"auto"`).without("transport"),
 			uri:     has(`"net":"tcp"`, `"id":"`+fixtureUUID+`"`),
 		},
+		// 以下是存量形状（legacyFixtures）：新写入被拒，渲染照旧
+		"vless-tcp-plain": {
+			clash: has(`type: "vless"`, `network: "tcp"`).without("tls"), premium: skip("Premium"),
+			singbox: has(`"type":"vless"`).without("transport", `"tls"`), uri: has("vless://", "security=none", "type=tcp"),
+		},
+		"trojan-legacy-cert": {
+			clash: has(`type: "trojan"`, `client-fingerprint: "chrome"`), premium: has(`type: "trojan"`),
+			singbox: has(`"type":"trojan"`, `"utls":{"enabled":true,"fingerprint":"chrome"}`), uri: has("trojan://", "security=tls", "fp=chrome"),
+		},
 		"vmess-ws": {
 			clash: has(`ws-opts: {headers: {Host: "cdn.example.com"}, path: "/mw"}`), premium: has(`network: "ws"`),
 			singbox: has(`"transport":{"headers":{"Host":"cdn.example.com"},"path":"/mw","type":"ws"}`),
@@ -232,11 +268,15 @@ func renderMatrix() map[string]matrixRow {
 
 func TestRenderMatrixCoversEveryFormFixture(t *testing.T) {
 	matrix := renderMatrix()
-	fixtures := formFixtures()
+	fixtures := append(formFixtures(), legacyFixtures()...)
 	if len(matrix) != len(fixtures) {
 		t.Fatalf("matrix has %d rows, fixtures %d: every fixture needs a row", len(matrix), len(fixtures))
 	}
-	nodes := kernelShapedNodes(uniqueNodeNames(formNodes(t)))
+	var raw []Node
+	for _, f := range fixtures {
+		raw = append(raw, formNode(t, f))
+	}
+	nodes := kernelShapedNodes(uniqueNodeNames(raw))
 	for _, n := range nodes {
 		row, ok := matrix[n.Name]
 		if !ok {
