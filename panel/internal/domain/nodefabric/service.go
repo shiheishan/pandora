@@ -206,6 +206,12 @@ func CanonicalPayloadV2(method, path, nodeID, ts, nonce string, bodyHash []byte)
 
 // ClaimSignedRequest atomically consumes a signed request nonce. Handler
 // failures deliberately do not release it; a retry must use a fresh nonce.
+//
+// 防重放只靠主键冲突：同一（租户, 节点, nonce）第二次插入一定 DO NOTHING、回 401。
+// 过期行的清理不在这里做——原先每个请求顺手删「最老 32 条」，200 个节点每秒十几个
+// 请求同时去删同一批行，互相等行锁；现在由 aegis-node 的后台定时调
+// PurgeExpiredNonces。清理只删已过期的行，不影响这里的判定：签名时间戳只接受
+// ±5 分钟，而每条 nonce 至少留到请求时间戳 +5 分钟、入库时间 +11 分钟之后。
 func (s *Service) ClaimSignedRequest(ctx context.Context, tenantID, nodeID string, nonce, fingerprint []byte, requestTS time.Time) error {
 	if len(nonce) != 16 || len(fingerprint) != sha256.Size {
 		return httpx.New(httpx.CodeUnauthorized, "节点身份校验失败")
@@ -222,20 +228,6 @@ func (s *Service) ClaimSignedRequest(ctx context.Context, tenantID, nodeID strin
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.New(httpx.CodeUnauthorized, "节点身份校验失败")
 		}
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `
-			WITH expired AS (
-				SELECT tenant_id, node_id, nonce
-				  FROM node_request_nonces
-				 WHERE tenant_id = $1 AND expires_at < now()
-				 ORDER BY expires_at
-				 LIMIT 32
-			)
-			DELETE FROM node_request_nonces n
-			 USING expired e
-			 WHERE n.tenant_id=e.tenant_id AND n.node_id=e.node_id AND n.nonce=e.nonce`, tenantID)
 		return err
 	})
 	if err == nil {
@@ -246,6 +238,52 @@ func (s *Service) ClaimSignedRequest(ctx context.Context, tenantID, nodeID strin
 		return apiErr
 	}
 	return httpx.New(httpx.CodeUnavailable, "节点认证服务暂不可用").WithInternal(err)
+}
+
+// nonceGCBatch 是后台清理每个事务删除的上限：事务短，不长时间占着连接与锁。
+const nonceGCBatch = 5000
+
+// nonceGCMaxBatches 是一次清理最多跑几批。积压超过它（停机很久后）就留给下一轮，
+// 不在一次定时里把连接池占满。
+const nonceGCMaxBatches = 20
+
+// PurgeExpiredNonces 删除已过期的签名请求 nonce，返回删除的行数。幂等，由 aegis-node
+// 的后台定时调用；多副本同时跑也只是各删各抢到的，不影响防重放（见 ClaimSignedRequest）。
+//
+// 运行角色对这张表只有 SELECT/INSERT/DELETE（00056），没有 UPDATE，所以不能用
+// FOR UPDATE SKIP LOCKED 挑行；两个清理者撞上同一行时后到的等一下、发现已删就跳过。
+func (s *Service) PurgeExpiredNonces(ctx context.Context, tenantID string) (int64, error) {
+	var total int64
+	for i := 0; i < nonceGCMaxBatches; i++ {
+		var n int64
+		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			tag, err := tx.Exec(ctx, `
+				WITH expired AS (
+					SELECT tenant_id, node_id, nonce
+					  FROM node_request_nonces
+					 WHERE tenant_id = $1 AND expires_at < now()
+					 ORDER BY expires_at
+					 LIMIT $2
+				)
+				DELETE FROM node_request_nonces n
+				 USING expired e
+				 WHERE n.tenant_id=e.tenant_id AND n.node_id=e.node_id AND n.nonce=e.nonce`,
+				tenantID, nonceGCBatch)
+			if err != nil {
+				return err
+			}
+			n = tag.RowsAffected()
+			return nil
+		})
+		total += n
+		if err != nil {
+			return total, err
+		}
+		if n < nonceGCBatch {
+			break
+		}
+	}
+	return total, nil
 }
 
 //------------------------------------------------------------------------------

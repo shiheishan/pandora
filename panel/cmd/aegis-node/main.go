@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sync"
@@ -40,7 +41,7 @@ func run() error {
 		return err
 	}
 	log := logging.New(cfg.Env, "aegis-node")
-	// 信号 context：后台循环（缓存作废订阅）挂在它上面，停机时先取消、
+	// 信号 context：后台循环（缓存作废订阅、nonce 清理）挂在它上面，停机时先取消、
 	// 限时 join，再交给 defer 关资源。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -125,10 +126,16 @@ func run() error {
 	nodeService.EnableNodeCaches()
 
 	var workers sync.WaitGroup
-	workers.Add(1)
+	workers.Add(2)
 	go func() {
 		defer workers.Done()
 		nodeService.RunNodeCacheInvalidation(ctx, middleware.DefaultTenantID, log)
+	}()
+	// 签名请求 nonce 的过期清理。原先每个请求顺手删一批，并发请求争同一批行；
+	// 防重放只靠主键冲突，清理晚几分钟不影响判定，只影响表的大小。
+	go func() {
+		defer workers.Done()
+		runNoncePurge(ctx, nodeService, log)
 	}()
 
 	handler := node.NewRouter(node.Deps{
@@ -163,6 +170,31 @@ func run() error {
 			"error", drainErr.Error())
 	}
 	return errors.Join(serverErr, drainErr)
+}
+
+// noncePurgeInterval 是过期 nonce 的清理节拍。每条 nonce 至少留 11 分钟，一分钟
+// 一扫足够让表维持在「最近十几分钟的签名请求数」这个量级。
+const noncePurgeInterval = time.Minute
+
+func runNoncePurge(ctx context.Context, svc *nodefabric.Service, log *slog.Logger) {
+	t := time.NewTicker(noncePurgeInterval)
+	defer t.Stop()
+	for {
+		runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		n, err := svc.PurgeExpiredNonces(runCtx, middleware.DefaultTenantID)
+		cancel()
+		switch {
+		case err != nil && ctx.Err() == nil:
+			log.Error("清理过期的节点请求 nonce 失败", "error", err.Error(), "已删除", n)
+		case n > 0:
+			log.Debug("已清理过期的节点请求 nonce", "count", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 var errNodeWorkerDrainTimeout = errors.New("node worker drain timed out")
