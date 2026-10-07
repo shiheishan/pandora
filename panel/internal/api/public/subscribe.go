@@ -12,6 +12,7 @@ package public
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ func (h *handlers) subscribe(w http.ResponseWriter, r *http.Request) {
 	// 按来源关联同一条链接的拉取
 	ip := httpx.ClientIP(r)
 	family := subscription.UAFamily(ua)
+	format := subscription.DetectFormat(ua, subscribeTarget(r))
 
 	// 客户端常给链接加个扩展名让自己认得出格式，去掉再比对
 	token := rawToken
@@ -50,44 +52,36 @@ func (h *handlers) subscribe(w http.ResponseWriter, r *http.Request) {
 		token = strings.TrimSuffix(token, ext)
 	}
 
-	// 前缀不对：连查库都不做。扫描器的绝大多数请求止步于此，
-	// 不让它们产生任何数据库负载
-	ok, err := h.d.Subscription.MatchPrefix(ctx, tenantID, prefix)
-	if err != nil || !ok {
-		h.d.Subscription.Log(ctx, tenantID, "", "", "not_found", "", ip, ua, family, 0, 0)
+	// 全部读取：前缀（进程内缓存，前缀不对连库都不碰）、凭据与用量（一个只读事务）、
+	// 节点（按套餐版本与用户组缓存）
+	pull, err := h.d.Subscription.LoadPull(ctx, tenantID, prefix, token)
+	if errors.Is(err, subscription.ErrNotFound) {
+		// 前缀或令牌不对、凭据失效：扫描器的主要流量。按来源采样落库，不是每次都写
+		if dropped := h.d.Subscription.RecordUnauthenticated(ctx, tenantID, ip, ua, family); dropped > 0 {
+			h.d.Log.Warn("订阅未认证失败超出采样额度，上一窗口未落库", "dropped", dropped)
+		}
 		writeDecoy(w)
 		return
 	}
-
-	cred, err := h.d.Subscription.Authenticate(ctx, tenantID, token)
 	if err != nil {
-		h.d.Subscription.Log(ctx, tenantID, "", "", "not_found", "", ip, ua, family, 0, 0)
+		// 库错误、超时、数据缺失：对外照样回伪装页（一个 500 页面同样能告诉探测者
+		// 这里有东西），对内必须留下 ERROR，否则会被当成「令牌不存在」而隐形。
+		// 日志不带令牌与请求路径
+		attrs := []any{slog.String("request_id", httpx.RequestIDFrom(ctx)), "err", err}
+		if pull != nil && pull.Cred != nil {
+			attrs = append(attrs, "subscription", pull.Cred.SubscriptionID)
+			h.d.Subscription.Log(ctx, tenantID, pull.Cred.ID, pull.Cred.SubscriptionID,
+				"error", string(format), ip, ua, family, 0, 0)
+		}
+		h.d.Log.Error("订阅拉取读库失败", attrs...)
 		writeDecoy(w)
 		return
 	}
+	cred := pull.Cred
 
-	nodes, err := h.d.Subscription.ListNodes(ctx, tenantID, cred)
-	if err != nil {
-		h.d.Log.Error("订阅取节点失败", "subscription", cred.SubscriptionID, "err", err)
-		// 内部错误同样回伪装页：一个 500 页面同样能告诉探测者这里有东西
-		h.d.Subscription.Log(ctx, tenantID, cred.ID, cred.SubscriptionID,
-			"error", "", ip, ua, family, 0, 0)
-		writeDecoy(w)
-		return
-	}
+	body, contentType, count := subscription.Render(format, pull.Nodes, cred.ProxyUUID)
 
-	format := subscription.DetectFormat(ua, subscribeTarget(r))
-	body, contentType, count := subscription.Render(format, nodes, cred.ProxyUUID)
-
-	usage, err := h.d.Subscription.LoadUsage(ctx, tenantID, cred)
-	if err != nil {
-		h.d.Log.Error("订阅取用量失败", "subscription", cred.SubscriptionID, "err", err)
-		h.d.Subscription.Log(ctx, tenantID, cred.ID, cred.SubscriptionID,
-			"error", string(format), ip, ua, family, count, 0)
-		writeDecoy(w)
-		return
-	}
-	// 所有读取完成后再原子检查限流并写成功计数；失败请求不占额度。
+	// 所有读取完成后再原子检查限流、写成功日志并记下拉取次数；失败请求不占额度。
 	if err := h.d.Subscription.RecordSuccessfulFetch(ctx, tenantID, cred.ID, cred.SubscriptionID,
 		string(format), ip, ua, family, count, len(body), cred.RateLimit); err != nil {
 		if errors.Is(err, subscription.ErrRateLimited) {
@@ -97,22 +91,21 @@ func (h *handlers) subscribe(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "too many requests", http.StatusTooManyRequests)
 			return
 		}
-		h.d.Log.Error("订阅限流计数失败", "subscription", cred.SubscriptionID, "err", err)
+		h.d.Log.Error("订阅限流计数失败", slog.String("request_id", httpx.RequestIDFrom(ctx)),
+			"subscription", cred.SubscriptionID, "err", err)
 		writeDecoy(w)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
 	// 这个头是客户端显示「已用 / 总量 / 到期」的唯一来源，
 	// 各家客户端都认它，格式不能改
-	w.Header().Set("Subscription-Userinfo", formatUserinfo(usage))
+	w.Header().Set("Subscription-Userinfo", formatUserinfo(pull.Usage))
 	// 让客户端知道多久回来拉一次，避免有人几秒钟拉一回
 	w.Header().Set("Profile-Update-Interval", "12")
 	// 订阅内容随节点状态变化，不能被任何中间层缓存
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
-
-	h.d.Subscription.TouchCredential(ctx, tenantID, cred.ID, ip)
 }
 
 func writeDecoy(w http.ResponseWriter) {

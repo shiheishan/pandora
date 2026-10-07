@@ -95,6 +95,11 @@ func NewRouter(d Deps) http.Handler {
 	//
 	// chi 里字面量路由优先于通配符，因此这条不会抢走 /healthz、/v1/... 的请求。
 	r.Get("/{prefix}/{token}", h.subscribe)
+	// 订阅拉取按（套餐版本, 用户组）缓存可下发节点；后台改节点、路由、节点池、
+	// 用户组后发的 node.* 信号经 hub 到达本进程，收到即失效（没有 hub 时只靠 TTL）
+	if d.Subscription != nil && d.Realtime != nil {
+		d.Subscription.AttachRealtime(d.Realtime)
+	}
 
 	// Pandora NativeCore 一键安装。字面量 /pdnd 优先于上面那条通配订阅路由。
 	// 不放在 /v1 下：这些是给 curl | sh 用的，路径越短越不容易抄错。
