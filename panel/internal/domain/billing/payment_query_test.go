@@ -79,7 +79,7 @@ func TestQueryProviderTranslatesChannelFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.prepare()
 			time.Sleep(time.Millisecond) // 让工厂缓存过期，重新读到 enabled
-			res, err := svc.queryProvider(context.Background(), "tenant", "order", "AO-1", "stub")
+			res, err := svc.queryProvider(context.Background(), "tenant", "order", "AO-1", queryRef{Code: "stub", OutTradeNo: "AO-1"}, nil)
 			var he *httpx.Error
 			if res != nil || !errors.As(err, &he) || he.Code != tc.code || he.Message != tc.message {
 				t.Fatalf("res=%+v err=%v, want %s %q", res, err, tc.code, tc.message)

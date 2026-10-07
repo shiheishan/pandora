@@ -18,6 +18,8 @@ type PaymentMethodRow struct {
 
 // PaymentMethods 列出能用来下单的支付方式：启用且接受新支付的渠道
 // （人工单专用渠道 accepting_new=false，自然不在里面），按渠道代码与方式顺序排列。
+// 具名的方式只出 EpayMethods 里的（支付宝、微信），与下单时的 providerMethods 同口径；
+// 一种可用方式都不剩的渠道整个不出。
 func (s *Service) PaymentMethods(ctx context.Context, tenantID, userID string) ([]PaymentMethodRow, error) {
 	var out []PaymentMethodRow
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
@@ -35,7 +37,8 @@ func (s *Service) PaymentMethods(ctx context.Context, tenantID, userID string) (
 			                      THEN jsonb_build_array(pp.config->>'default_method')
 			                      ELSE '[""]'::jsonb END) WITH ORDINALITY AS t(value, ord)) m ON true
 			 WHERE pp.tenant_id = $1 AND pp.enabled AND pp.accepting_new
-			 ORDER BY pp.code, m.ord`, tenantID)
+			   AND (m.method = '' OR m.method = ANY($2::text[]))
+			 ORDER BY pp.code, m.ord`, tenantID, EpayMethods)
 		if err != nil {
 			return err
 		}

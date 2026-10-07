@@ -2,10 +2,15 @@ package billing
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/aegispanel/aegis/internal/domain/payment/epay"
 
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -116,7 +121,7 @@ func TestPaymentProviderAdminPG18(t *testing.T) {
 
 	t.Run("edit with blank credentials keeps the ciphertext", func(t *testing.T) {
 		id, before := sealedOf(t, code)
-		in := settings("", "", "alipay", "wxpay", "qqpay")
+		in := settings("", "", "alipay", "wxpay")
 		in.DisplayName = "易支付 PG18 改"
 		out, err := payments.UpdateProvider(ctx, fx.tenant, actor, UpdateProviderInput{Code: code, ProviderSettings: in})
 		if err != nil || out.ID != id || out.CredentialsChanged {
@@ -267,6 +272,111 @@ func TestPaymentProviderAdminPG18(t *testing.T) {
 		if count(t, `SELECT count(*) FROM payment_intents WHERE order_id=$1::uuid
 			AND status IN ('created','requires_action','processing')`, order.OrderID) != 1 {
 			t.Fatal("an order must keep exactly one active intent")
+		}
+	})
+
+	// 同一订单换方式（w5account，用户 2026-10-07 定）：换方式时对外单号用「订单号-序号」，
+	// 旧意图作废；回调先按 provider_ref 找到订单。先付了新的那笔结清订单，旧单号那笔迟到的
+	// 回调走「意外付款」挂账（excess_capture），最后只入账一次。
+	t.Run("a switched order settles once and the late old callback is quarantined", func(t *testing.T) {
+		buyer := uuid.NewString()
+		if _, err := admin.Exec(ctx, `INSERT INTO users(id,tenant_id,email,display_name,status)
+			VALUES($1,$2,$3,'Out Trade No Buyer','active')`,
+			buyer, fx.tenant, "w5pay-"+buyer[:8]+"@example.test"); err != nil {
+			t.Fatalf("insert buyer: %v", err)
+		}
+		claim := orderReleasePG18Claim(t, ctx, admin, fx.tenant, buyer, CheckoutIdempotencyScope, "w5pay-switch")
+		order, err := service.CreateOrder(ctx, fx.tenant, CreateOrderInput{
+			UserID: buyer, PlanID: fx.plan, PriceID: fx.price, Claim: claim,
+		})
+		if err != nil || order.PayableAmount != 1000 {
+			t.Fatalf("create order=%+v err=%v", order, err)
+		}
+		pay := func(method string) *CreateIntentOutput {
+			t.Helper()
+			out, err := payments.CreatePaymentIntent(ctx, fx.tenant, CreateIntentInput{
+				OrderID: order.OrderID, UserID: buyer, ProviderCode: code, Method: method,
+			})
+			if err != nil {
+				t.Fatalf("pay %s: %v", method, err)
+			}
+			return out
+		}
+		refOf := func(intentID string) (status, ref, payloadRef string) {
+			t.Helper()
+			if err := admin.QueryRow(ctx, `SELECT status, coalesce(provider_ref,''),
+				coalesce(action_payload->>'out_trade_no','') FROM payment_intents WHERE id=$1`, intentID).
+				Scan(&status, &ref, &payloadRef); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		ali := pay("alipay")
+		if _, ref, payloadRef := refOf(ali.IntentID); ref != order.OrderNo || payloadRef != order.OrderNo ||
+			!strings.Contains(ali.RedirectURL, "out_trade_no="+order.OrderNo+"&") {
+			t.Fatalf("first intent ref=%q payload=%q url=%s, want the plain order number", ref, payloadRef, ali.RedirectURL)
+		}
+		wx := pay("wxpay")
+		second := order.OrderNo + "-2"
+		if status, ref, payloadRef := refOf(wx.IntentID); ref != second || payloadRef != second ||
+			!strings.Contains(wx.RedirectURL, "out_trade_no="+second) || status != "requires_action" {
+			t.Fatalf("switched intent status=%s ref=%q payload=%q url=%s, want %s", status, ref, payloadRef, wx.RedirectURL, second)
+		}
+		if status, _, _ := refOf(ali.IntentID); status != "cancelled" {
+			t.Fatalf("old alipay intent status=%s, want cancelled", status)
+		}
+
+		rec, err := payments.loadProvider(ctx, fx.tenant, code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		notify := func(outTradeNo, tradeNo, method string) *PaymentWebhookOutput {
+			t.Helper()
+			params := map[string]string{
+				"pid": rec.Credentials.MerchantID, "trade_no": tradeNo, "out_trade_no": outTradeNo,
+				"type": method, "name": "pg18", "money": "10.00", "trade_status": "TRADE_SUCCESS",
+			}
+			params["sign"] = epay.Sign(params, rec.Credentials.Key)
+			params["sign_type"] = "MD5"
+			q := url.Values{}
+			for k, v := range params {
+				q.Set(k, v)
+			}
+			req := httptest.NewRequest(http.MethodGet, "/v1/webhooks/payments/"+code+"?"+q.Encode(), nil)
+			parsed, err := payments.ParseNotification(ctx, fx.tenant, code, req)
+			if err != nil || !parsed.Input.SignatureVerified || parsed.Input.OrderID != order.OrderID {
+				t.Fatalf("parse %s: input=%+v err=%v, want located by provider_ref", outTradeNo, parsed, err)
+			}
+			out, err := service.HandlePaymentWebhook(ctx, fx.tenant, parsed.Input)
+			if err != nil {
+				t.Fatalf("settle %s: %v", outTradeNo, err)
+			}
+			return out
+		}
+		paid := notify(second, "w5pay-wx-"+fx.suffix, "wxpay")
+		if !paid.Processed || paid.QuarantineKind != "" || paid.LedgerTxnID == "" {
+			t.Fatalf("wxpay settlement=%+v", paid)
+		}
+		late := notify(order.OrderNo, "w5pay-ali-"+fx.suffix, "alipay")
+		if late.QuarantineKind != "excess_capture" {
+			t.Fatalf("late alipay callback=%+v, want the unexpected-payment queue", late)
+		}
+		if n := count(t, `SELECT count(*) FROM ledger_transactions
+			WHERE source_type='order' AND source_id=$1::uuid AND kind='order_paid'`, order.OrderID); n != 1 {
+			t.Fatalf("order booked %d times, want once", n)
+		}
+		if n := count(t, `SELECT count(*) FROM late_payment_cases WHERE order_id=$1::uuid AND case_kind='excess_capture'`,
+			order.OrderID); n != 1 {
+			t.Fatalf("late payment cases=%d, want 1", n)
+		}
+		if n := count(t, `SELECT count(*) FROM payment_intents WHERE id=$1 AND status='succeeded'`, wx.IntentID); n != 1 {
+			t.Fatal("the wxpay intent must be the one that succeeded")
+		}
+		// 第三次发起（订单已付）被拒，不会再生成新单号
+		if _, err := payments.CreatePaymentIntent(ctx, fx.tenant, CreateIntentInput{
+			OrderID: order.OrderID, UserID: buyer, ProviderCode: code, Method: "alipay",
+		}); err == nil {
+			t.Fatal("a paid order must not start another payment")
 		}
 	})
 }

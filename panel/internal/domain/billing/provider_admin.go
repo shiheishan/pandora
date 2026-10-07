@@ -33,8 +33,10 @@ import (
 //
 // 改完只清本进程的渠道缓存。public 网关各自缓存 5 分钟，最迟 5 分钟后结账页生效。
 
-// EpayMethods 是易支付可勾选的方式（与门户 paymentMethodLabels 的键一致）。
-var EpayMethods = []string{"alipay", "wxpay", "qqpay"}
+// EpayMethods 是易支付可用的方式（用户 2026-10-07 定：只出支付宝和微信）。后台只能勾这两种；
+// 存量配置里的其它方式（如 qqpay）在下单与结账页列表里一律不出（providerMethods 与
+// PaymentMethods 的 SQL 同口径过滤）。
+var EpayMethods = []string{"alipay", "wxpay"}
 
 // adminProviderAdapters 是后台能新建与编辑的适配器。demo_hmac 只给集成测试与本地联调用，
 // 它的密钥为空时回落到主密钥，不能让后台随手建出来。
@@ -141,7 +143,7 @@ func normalizeProviderSettings(in ProviderSettings, devMode bool) (normalizedPro
 	for _, m := range in.Methods {
 		m = strings.TrimSpace(m)
 		if !slices.Contains(EpayMethods, m) {
-			fields["methods"] = "支付方式只能从支付宝、微信支付、QQ 钱包中选"
+			fields["methods"] = "支付方式只能从支付宝、微信支付中选"
 			continue
 		}
 		if !slices.Contains(methods, m) {
@@ -441,6 +443,7 @@ func providerWriteError(err error) error {
 
 // providerMethods 是渠道允许的支付方式，口径与 PaymentMethods 的 SQL 一致：
 // config.methods 是非空数组时用它，否则用 default_method，两者都没有时为空（交给渠道决定）。
+// 只留 EpayMethods 里的方式：存量配置里勾过的 qqpay 之类不再可下单。
 func providerMethods(cfg map[string]any) []string {
 	var out []string
 	switch v := cfg["methods"].(type) {
@@ -453,13 +456,12 @@ func providerMethods(cfg map[string]any) []string {
 	case []string:
 		out = append(out, v...)
 	}
-	if len(out) > 0 {
-		return out
+	if len(out) == 0 {
+		if d := payment.ConfigString(cfg, "default_method"); d != "" {
+			out = []string{d}
+		}
 	}
-	if d := payment.ConfigString(cfg, "default_method"); d != "" {
-		return []string{d}
-	}
-	return nil
+	return slices.DeleteFunc(out, func(m string) bool { return !slices.Contains(EpayMethods, m) })
 }
 
 // resolvePaymentMethod 把用户选的方式规整成实际下单的方式。

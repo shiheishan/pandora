@@ -30,29 +30,53 @@ func orderQueryResult(res *OrderPaymentQuery, err error) string {
 	}
 }
 
-// AdminQueryOrderPayment 是后台的查单入口：照常查单，然后写一条带操作人、订单、
+// AdminQueryOrderPayment 是后台的查单入口：照常查单，并写一条带操作人、订单、
 // 渠道与结果的审计。资金相关的人工操作必须能直接查到是谁点的，所以查单失败
 // （渠道停用、查询失败、金额不符、从没发起过支付）也记，结果是 failed 并带错误码；
 // 只有订单不存在或无权访问时没有可归属的对象，不记。
 //
-// 审计在查单之后另开一个事务写：补记的结算事务已经提交，审计写不进去时
-// 回内部错误而不是假装成功——钱已经按回调同一条主链记上，同一订单再查一次
-// 会得到 already_recorded，并补上这条审计。
+// 查到已付、走了补记时，审计与补记的结算写在同一个事务里（审计台账 2.3 第 4 条）：
+// 不会出现「钱记上了、却查不到是谁点的」。没走补记（未付、查不到、查单失败、补记被
+// 拒绝回滚）时没有业务写入，审计单独一个事务写；写不进去回内部错误而不是假装成功。
 func (s *PaymentService) AdminQueryOrderPayment(ctx context.Context, tenantID, orderID, actorID string) (*OrderPaymentQuery, error) {
-	res, target, err := s.queryOrderPayment(ctx, tenantID, orderID, "")
+	audited := false
+	res, target, err := s.queryOrderPayment(ctx, tenantID, orderID, "",
+		func(ctx context.Context, tx pgx.Tx, res *OrderPaymentQuery) error {
+			if err := audit.Write(ctx, tx, tenantID, orderQueryAuditEntry(ctx, orderID, actorID, nil, res, nil)); err != nil {
+				return err
+			}
+			audited = true
+			return nil
+		})
 	if target == nil {
 		return res, err
 	}
+	if audited && err == nil {
+		return res, nil
+	}
+	entry := orderQueryAuditEntry(ctx, orderID, actorID, target, res, err)
+	if werr := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		return audit.Write(ctx, tx, tenantID, entry)
+	}); werr != nil {
+		return nil, httpx.Internal(fmt.Errorf("order payment query audit: %w", werr))
+	}
+	return res, err
+}
 
-	digest := map[string]any{
-		"order_no": target.OrderNo,
-		"result":   orderQueryResult(res, err),
+// orderQueryAuditEntry 是一次后台查单的审计。
+func orderQueryAuditEntry(ctx context.Context, orderID, actorID string, target *queryTarget,
+	res *OrderPaymentQuery, err error) audit.Entry {
+	digest := map[string]any{"result": orderQueryResult(res, err)}
+	switch {
+	case target != nil:
+		digest["order_no"] = target.OrderNo
+	case res != nil:
+		digest["order_no"] = res.OrderNo
 	}
 	entry := audit.Entry{
 		ActorKind: "admin", ActorID: &actorID,
 		Action: OrderQueryAuditAction, ResourceType: "order", ResourceID: &orderID,
-		APIDomain: "admin", RequestID: httpx.RequestIDFrom(ctx),
-		Outcome: "success",
+		APIDomain: "admin", RequestID: httpx.RequestIDFrom(ctx), Outcome: "success",
 	}
 	if res != nil {
 		digest["provider_code"] = res.ProviderCode
@@ -62,7 +86,9 @@ func (s *PaymentService) AdminQueryOrderPayment(ctx context.Context, tenantID, o
 			digest["quarantine_kind"] = res.QuarantineKind
 		}
 	} else {
-		digest["providers"] = target.Providers
+		if target != nil {
+			digest["providers"] = target.Providers
+		}
 		entry.Outcome = "failure"
 		var he *httpx.Error
 		if errors.As(err, &he) {
@@ -73,11 +99,5 @@ func (s *PaymentService) AdminQueryOrderPayment(ctx context.Context, tenantID, o
 		}
 	}
 	entry.AfterDigest = digest
-
-	if werr := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return audit.Write(ctx, tx, tenantID, entry)
-	}); werr != nil {
-		return nil, httpx.Internal(fmt.Errorf("order payment query audit: %w", werr))
-	}
-	return res, err
+	return entry
 }
