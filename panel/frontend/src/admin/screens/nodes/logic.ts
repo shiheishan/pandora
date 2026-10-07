@@ -346,6 +346,7 @@ export function protocolNotices(nodeType: string, v: FormValues): string[] {
   const plain = (v.tls ?? '') === '' || v.tls === '0'
   if (!plain) return []
   const network = v.network || 'tcp'
+  if (network === 'tcp' && nodeType === 'vmess') return ['VMess 裸 tcp 特征明显、容易被识别封锁：建议改用 VLESS REALITY，或换 ws / grpc 等传输套 CDN']
   if (network === 'tcp') return ['不加密的裸 tcp 就是明文代理，保存会被拒绝：VLESS 请选 2 · REALITY，或换 ws / httpupgrade / grpc / xhttp 并套 CDN']
   if (CDN_NETWORKS.has(network)) return ['不加密：需要套 CDN 或 TLS 反代后再给用户用，否则 UUID 和流量在线路上明文可见']
   return []

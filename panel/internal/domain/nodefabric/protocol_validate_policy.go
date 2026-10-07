@@ -140,6 +140,9 @@ func numericTLSValue(raw json.RawMessage) (int, bool) {
 	return value, true
 }
 
+// vmessRawTCPWarning：VMess 自带加密，裸 tcp 放行（用户 2026-10-07 定），但协议特征明显。
+const vmessRawTCPWarning = "VMess 裸 tcp 特征明显、容易被识别封锁：建议改用 VLESS REALITY，或换 ws / grpc 等传输套 CDN"
+
 // plainTLSNotYetMessage 是 vless / vmess 选普通 TLS（tls=1）时的报错。
 const plainTLSNotYetMessage = "普通 TLS 需要证书，证书自动申请上线后开放；现在请选 REALITY（vless），或不加密并套 CDN"
 
@@ -229,9 +232,25 @@ func validateProbeFallback(fields map[string]string, value string) {
 		fields[key] = "回落目标的端口必须在 1–65535 之间"
 		return
 	}
+	// 本机回环放行（用户 2026-10-07 定）：回落到节点本机的 nginx（如 127.0.0.1:80）
+	// 是最常见的部署；只有管理员能配回落，本机服务由管理员自己掌握。私网、链路本地
+	// 与局域网域名仍然拒绝，免得节点变成打内网的跳板。
+	if isLoopbackHost(host) {
+		return
+	}
 	if reason := nonPublicHostReason(host); reason != "" {
 		fields[key] = "回落目标" + reason + "：探测流量会被转发过去"
 	}
+}
+
+// isLoopbackHost 判断 host 字面上是否是本机回环（127.0.0.0/8、::1、localhost）。
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "localhost" {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.Unmap().IsLoopback()
 }
 
 // validateTrojanFallbackNetwork：Trojan 只在 TCP 直连承载上记录认证前的字节并
@@ -307,6 +326,12 @@ func ProtocolConfigWarnings(nodeType string, raw json.RawMessage) []string {
 	}
 	kernel := toKernelConfig(CanonicalNodeType(nodeType), cfg)
 	var out []string
+	if CanonicalNodeType(nodeType) == "vmess" {
+		network, _ := kernel["network"].(string)
+		if normalizedNetwork(network) == "tcp" {
+			out = append(out, vmessRawTCPWarning)
+		}
+	}
 	for _, key := range []string{"cert_path", "key_path"} {
 		value, ok := kernel[key].(string)
 		if !ok || value == "" {

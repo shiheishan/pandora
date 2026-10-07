@@ -5,7 +5,7 @@ package nodefabric
 
 // fallbackHint 是回落字段的说明：回落目标是什么、谁会被转过去。
 const fallbackHint = "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，" +
-	"让节点看起来像个普通网站；不能填本机、内网或 localhost。留空时回一个中性的 404 页面。"
+	"让节点看起来像个普通网站；可以填本机（如 127.0.0.1:80 的本机 nginx），不能填内网地址。留空时回一个中性的 404 页面。"
 
 const utlsHint = "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。"
 

@@ -294,6 +294,7 @@ describe('protocol form', () => {
     expect(protocolNotices('vless', { tls: '0', network: 'ws' })[0]).toContain('需要套 CDN 或 TLS')
     expect(protocolNotices('vmess', { tls: '0', network: 'grpc' })[0]).toContain('需要套 CDN 或 TLS')
     expect(protocolNotices('vless', { tls: '0' })[0]).toContain('会被拒绝')
+    expect(protocolNotices('vmess', { tls: '0' })[0]).toContain('容易被识别')
     expect(protocolNotices('vless', { tls: '2', network: 'tcp' })).toEqual([])
     expect(protocolNotices('trojan', { tls: '1', network: 'ws' })).toEqual([])
     expect(protocolNotices('vless', { tls: '0', network: 'mkcp' })).toEqual([])
