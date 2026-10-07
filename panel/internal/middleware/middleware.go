@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -205,110 +204,10 @@ func RequireRecentReauth(log *slog.Logger) func(http.Handler) http.Handler {
 }
 
 //------------------------------------------------------------------------------
-// SEC-002 多维限流
+// SEC-002 多维限流（RateLimit / RateLimitStrict 在 ratelimit.go）
 //------------------------------------------------------------------------------
 
-// Limit 是一个限流维度。
-type Limit struct {
-	Name   string
-	Window time.Duration
-	Max    int
-	// KeyFn 返回该维度的计数键；返回空串表示本次请求不适用此维度。
-	KeyFn func(*http.Request) string
-}
-
-// RateLimit 按多个维度联合限流。
-//
-// SEC-002 验收要求「攻击者不能通过轮换单一维度轻易绕过」，
-// 因此这里对每个维度独立计数，任一维度超限即拒绝 ——
-// 换 IP 挡不住账号维度，换账号挡不住 IP 段维度。
-//
-// Redis 不可用时选择放行而非拒绝：限流是防滥用手段，
-// 让它的故障演变成全站不可用是本末倒置（NFR-002 舱壁思想）。
-func RateLimit(rdb *redis.Client, log *slog.Logger, limits ...Limit) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-			for _, l := range limits {
-				suffix := l.KeyFn(r)
-				if suffix == "" {
-					continue
-				}
-				key := fmt.Sprintf("rl:%s:%s:%d", l.Name, suffix,
-					time.Now().UnixNano()/int64(l.Window))
-
-				n, err := rdb.Incr(ctx, key).Result()
-				if err != nil {
-					log.Warn("限流计数失败，本次放行",
-						slog.String("dimension", l.Name),
-						slog.String("error", err.Error()))
-					continue
-				}
-				if n == 1 {
-					// 只在首次创建时设过期，避免每次请求都刷新窗口导致永不过期
-					rdb.Expire(ctx, key, l.Window+time.Second)
-				}
-				if n > int64(l.Max) {
-					log.Info("触发限流",
-						slog.String("dimension", l.Name),
-						slog.Int64("count", n),
-						slog.Int("max", l.Max),
-						slog.String("request_id", httpx.RequestIDFrom(ctx)))
-					httpx.Fail(w, r, log,
-						httpx.New(httpx.CodeRateLimited, "请求过于频繁，请稍后再试"))
-					return
-				}
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // --- 常用维度 ---
-
-// RateLimitStrict is for security-critical anonymous mutations. Any Redis
-// counter or expiry failure returns a neutral 503 instead of bypassing controls.
-func RateLimitStrict(rdb *redis.Client, log *slog.Logger, limits ...Limit) func(http.Handler) http.Handler {
-	const incrementAndExpire = `
-local n = redis.call('INCR', KEYS[1])
-if n == 1 then
-  redis.call('PEXPIRE', KEYS[1], ARGV[1])
-end
-return n`
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-			for _, l := range limits {
-				suffix := l.KeyFn(r)
-				if suffix == "" {
-					continue
-				}
-				if rdb == nil {
-					httpx.Fail(w, r, log, httpx.New(httpx.CodeUnavailable,
-						"服务暂时不可用，请稍后重试"))
-					return
-				}
-				key := fmt.Sprintf("rl:%s:%s:%d", l.Name, suffix,
-					time.Now().UnixNano()/int64(l.Window))
-				n, err := rdb.Eval(ctx, incrementAndExpire, []string{key},
-					(l.Window + time.Second).Milliseconds()).Int64()
-				if err != nil {
-					log.Warn("strict rate-limit counter failed",
-						slog.String("dimension", l.Name), slog.String("error", err.Error()))
-					httpx.Fail(w, r, log, httpx.New(httpx.CodeUnavailable,
-						"服务暂时不可用，请稍后重试"))
-					return
-				}
-				if n > int64(l.Max) {
-					httpx.Fail(w, r, log,
-						httpx.New(httpx.CodeRateLimited, "请求过于频繁，请稍后再试"))
-					return
-				}
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
 
 func ByIP(name string, window time.Duration, max int) Limit {
 	return Limit{Name: name, Window: window, Max: max,
