@@ -237,24 +237,31 @@ func checkNodeHotPathPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 
 	t.Run("heartbeat is a HOT update", func(t *testing.T) {
 		svc := nodefabric.NewService(app, signer)
-		read := func() (upd, hot int64) {
+		// 后端的表统计是攒着刷的（空闲后至多约 10 秒）：轮询到更新数追上为止。
+		read := func(atLeast int64) (upd, hot int64) {
 			t.Helper()
-			time.Sleep(1500 * time.Millisecond) // 后端统计每秒至多刷新一次
-			if _, err := admin.Exec(ctx, `SELECT pg_stat_clear_snapshot()`); err != nil {
-				t.Fatal(err)
+			deadline := time.Now().Add(25 * time.Second)
+			for {
+				if _, err := admin.Exec(ctx, `SELECT pg_stat_clear_snapshot()`); err != nil {
+					t.Fatal(err)
+				}
+				if err := admin.QueryRow(ctx, `SELECT n_tup_upd, n_tup_hot_upd FROM pg_stat_user_tables
+					WHERE relid = 'public.nodes'::regclass`).Scan(&upd, &hot); err != nil {
+					t.Fatal(err)
+				}
+				if upd >= atLeast || time.Now().After(deadline) {
+					return upd, hot
+				}
+				time.Sleep(250 * time.Millisecond)
 			}
-			if err := admin.QueryRow(ctx, `SELECT n_tup_upd, n_tup_hot_upd FROM pg_stat_user_tables
-				WHERE relid = 'public.nodes'::regclass`).Scan(&upd, &hot); err != nil {
-				t.Fatal(err)
-			}
-			return upd, hot
 		}
 		in := nodefabric.HeartbeatInput{AgentVersion: "hot-test", RuntimeVersion: "native-hot", CPUCores: 2,
 			MemoryMB: 2048, DiskGB: 40, RuntimeStatus: "running", ConfigSigningKeyID: signer.KeyID()}
 		if _, err := svc.Heartbeat(ctx, tenantID, nodeID, in); err != nil {
 			t.Fatal(err)
 		}
-		upd0, hot0 := read()
+		time.Sleep(11 * time.Second) // 先让此前的更新全部计入，基线才干净
+		upd0, hot0 := read(0)
 		const beats = 40
 		for i := 0; i < beats; i++ {
 			in.Metrics = &nodefabric.Metrics{CPUBasisPoints: 100 + i}
@@ -262,7 +269,7 @@ func checkNodeHotPathPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 				t.Fatal(err)
 			}
 		}
-		upd1, hot1 := read()
+		upd1, hot1 := read(upd0 + beats)
 		updates, hotUpdates := upd1-upd0, hot1-hot0
 		t.Logf("%d 次心跳：nodes 更新 %d 行，其中 HOT %d 行（%.0f%%）", beats, updates, hotUpdates,
 			100*float64(hotUpdates)/float64(max(updates, 1)))
@@ -352,7 +359,7 @@ func checkNodeHotPathPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 			WHERE tgrelid = 'public.nodes'::regclass AND tgname = 'zz_notify_nodes_update'`).Scan(&def); err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(def, "to_jsonb") {
+		if strings.Contains(def, "to_jsonb") || !strings.Contains(strings.ToLower(def), "is distinct from") {
 			t.Fatalf("trigger still serializes whole rows: %s", def)
 		}
 		heartbeatColumns := map[string]bool{"last_heartbeat_at": true, "updated_at": true, "agent_version": true,
@@ -371,8 +378,9 @@ func checkNodeHotPathPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 			if err := rows.Scan(&col); err != nil {
 				t.Fatal(err)
 			}
-			listed := strings.Contains(lower, "old."+col+",") || strings.Contains(lower, "old."+col+")")
-			if heartbeatColumns[col] && listed && col != "last_heartbeat_at" {
+			// 行比较被解析成逐列的 (old.c IS DISTINCT FROM new.c) OR …
+			listed := strings.Contains(lower, "old."+col+" is distinct from new."+col)
+			if heartbeatColumns[col] && listed {
 				t.Errorf("heartbeat column %s is compared by the notify trigger", col)
 			}
 			if !heartbeatColumns[col] && !listed {
