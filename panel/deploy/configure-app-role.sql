@@ -636,5 +636,8 @@ REVOKE UPDATE, DELETE ON traffic_reset_logs FROM aegis_app;
 -- 导出标记，UPDATE 保留，靠触发器约束写法。
 REVOKE DELETE ON traffic_pack_grants FROM aegis_app;
 REVOKE DELETE ON gift_card_batches FROM aegis_app;
+-- 批量生成账号任务（00130）：结果密文到期由 worker 置空（result_purged_at）、不删行，
+-- 与 00130 的口径一致。
+REVOKE DELETE, TRUNCATE ON user_generation_jobs FROM aegis_app;
 
 COMMIT;

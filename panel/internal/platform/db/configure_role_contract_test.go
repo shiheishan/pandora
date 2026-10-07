@@ -56,6 +56,7 @@ func TestConfigureAppRoleRevokesDeleteOnGuardedTablesLast(t *testing.T) {
 		"REVOKE UPDATE, DELETE ON traffic_reset_logs FROM aegis_app;",
 		"REVOKE DELETE ON traffic_pack_grants FROM aegis_app;",
 		"REVOKE DELETE ON gift_card_batches FROM aegis_app;",
+		"REVOKE DELETE, TRUNCATE ON user_generation_jobs FROM aegis_app;",
 	} {
 		at := strings.LastIndex(normalized, revoke)
 		if at < 0 || at < regrant {
