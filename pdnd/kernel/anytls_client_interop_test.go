@@ -9,6 +9,8 @@ package kernel
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -23,14 +25,26 @@ import (
 	"github.com/sagernet/sing/common/uot"
 )
 
+// tls 子测试：外层 TLS 宣告 h2 / http/1.1（与 mihomo、sing-box 的默认 ALPN
+// 一致）后，sing-anytls 客户端照常认证与转发；口令不对的仍被拒。
 func TestAnyTLSNativeClientTCPAndUOTUDP(t *testing.T) {
+	t.Run("plain", func(t *testing.T) { runAnyTLSNativeClient(t, false) })
+	t.Run("tls", func(t *testing.T) { runAnyTLSNativeClient(t, true) })
+}
+
+func runAnyTLSNativeClient(t *testing.T, useTLS bool) {
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	port := probe.Addr().(*net.TCPAddr).Port
 	_ = probe.Close()
-	spec := InboundSpec{Config: core.InboundConfig{Protocol: "anytls", Listen: "127.0.0.1", Port: port, Raw: map[string]any{}}}
+	raw := map[string]any{}
+	if useTLS {
+		certPath, keyPath := testXHTTPServerCertFiles(t)
+		raw = map[string]any{"tls": true, "cert_path": certPath, "key_path": keyPath}
+	}
+	spec := InboundSpec{Config: core.InboundConfig{Protocol: "anytls", Listen: "127.0.0.1", Port: port, Raw: raw}}
 	adapter, err := newAnyTLSAdapter(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +59,20 @@ func TestAnyTLSNativeClientTCPAndUOTUDP(t *testing.T) {
 		t.Fatal(err)
 	}
 	dialOut := func(ctx context.Context) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:"+strconv.Itoa(port))
+		conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:"+strconv.Itoa(port))
+		if err != nil || !useTLS {
+			return conn, err
+		}
+		tlsConn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2", "http/1.1"}}) //nolint:gosec -- 测试证书。
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		if got := tlsConn.ConnectionState().NegotiatedProtocol; got != "h2" {
+			_ = tlsConn.Close()
+			return nil, fmt.Errorf("ALPN=%q，期望服务端选 h2", got)
+		}
+		return tlsConn, nil
 	}
 	client, err := anytls.NewClient(ctx, anytls.ClientConfig{Password: "anytls-secret", DialOut: util.DialOutFunc(dialOut), Logger: logger.NOP()})
 	if err != nil {
