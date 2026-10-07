@@ -93,8 +93,16 @@ const (
 //------------------------------------------------------------------------------
 
 // subscriber 是一条已建立的 SSE 连接。
+//
+// ch 永不关闭：注销只关 done。dispatch 先复制目标列表、解锁后再发送，
+// 注销若在这两步之间 close(ch)，发送就会 panic（send on closed channel），
+// 而 consume 没有 recover，整个网关进程跟着崩。改成关 done 之后，dispatch
+// 看到 done 已关就跳过；即便恰好撞上窗口，往一个没人读的带缓冲通道里
+// 非阻塞地塞一条也无害，随订阅者一起被回收。
 type subscriber struct {
 	ch       chan Event
+	done     chan struct{}
+	once     sync.Once
 	channels map[string]bool
 }
 
@@ -184,7 +192,14 @@ func (h *Hub) dispatch(channel string, ev Event) {
 
 	for _, s := range targets {
 		select {
+		case <-s.done:
+			// 已注销：不再投递
+			continue
+		default:
+		}
+		select {
 		case s.ch <- ev:
+		case <-s.done:
 		default:
 			// 这条连接的缓冲满了 —— 客户端读得太慢或已经僵死。
 			// 直接丢弃这条事件而不是阻塞：一个卡住的浏览器标签页
@@ -218,11 +233,15 @@ func (h *Hub) Publish(ctx context.Context, channel, topic string, payload map[st
 //------------------------------------------------------------------------------
 
 // Subscribe 登记一条连接，返回事件通道与注销函数。
+//
+// 注销后事件通道不会关闭（见 subscriber 的说明），调用方要靠自己的
+// ctx / 请求结束退出读循环，不要用 range 等它关闭。注销函数可重复调用。
 func (h *Hub) Subscribe(channels []string) (<-chan Event, func()) {
 	s := &subscriber{
 		// 带缓冲：一次批量变更可能连发几条事件，
 		// 无缓冲会让发布方在写入时被慢客户端拖住
 		ch:       make(chan Event, 32),
+		done:     make(chan struct{}),
 		channels: make(map[string]bool, len(channels)),
 	}
 
@@ -238,19 +257,22 @@ func (h *Hub) Subscribe(channels []string) (<-chan Event, func()) {
 	h.mu.Unlock()
 
 	return s.ch, func() {
-		h.mu.Lock()
-		delete(h.subs, s)
-		for c := range s.channels {
-			if set := h.byChannel[c]; set != nil {
-				delete(set, s)
-				if len(set) == 0 {
-					// 空集合要删掉，否则频道多了以后这张表只增不减
-					delete(h.byChannel, c)
+		s.once.Do(func() {
+			h.mu.Lock()
+			delete(h.subs, s)
+			for c := range s.channels {
+				if set := h.byChannel[c]; set != nil {
+					delete(set, s)
+					if len(set) == 0 {
+						// 空集合要删掉，否则频道多了以后这张表只增不减
+						delete(h.byChannel, c)
+					}
 				}
 			}
-		}
-		h.mu.Unlock()
-		close(s.ch)
+			h.mu.Unlock()
+			// 只关 done，不关 ch：关 ch 会与 dispatch 的解锁后发送竞争而 panic
+			close(s.done)
+		})
 	}
 }
 
