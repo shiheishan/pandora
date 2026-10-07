@@ -18,7 +18,7 @@ import (
 )
 
 // 原行为趋势 SQL（66a2043 的 user_profile.go:ActivityTimeseries 原文），只作 PG18 对照：
-// 改成按天汇总（00107）之后，同一批数据用它现场聚合的结果必须与新读法逐天相同。
+// 改成按天汇总（00114）之后，同一批数据用它现场聚合的结果必须与新读法逐天相同。
 // 不要「顺手」改它——它的价值就在于是旧口径的原文。
 const legacyActivityTimeseriesSQL = `
 			WITH d AS (
@@ -57,7 +57,7 @@ const legacyActivityTimeseriesSQL = `
 			   AND a.occurred_at >= date_trunc('day', now()) - make_interval(days => $2 - 1)
 			 GROUP BY d.day ORDER BY d.day`
 
-// TestActivityDailyRollupPG18 证明行为趋势改读按天汇总（00107）后口径不变：
+// TestActivityDailyRollupPG18 证明行为趋势改读按天汇总（00114）后口径不变：
 //
 //  1. 没有汇总行时全部实时算，与原 SQL 逐天相同（1、2、3、7、14、90 天）；
 //  2. 跑迁移原文的回填段后，定稿行被读到（篡改一行，输出跟着变），结果仍与原 SQL 相同；
@@ -120,7 +120,7 @@ func TestActivityDailyRollupPG18(t *testing.T) {
 	}
 
 	// 2. 迁移回填：近 90 天的已结束日，前天及更早的定稿
-	if _, err := admin.Exec(ctx, migrationSection(t, "00107_activity_daily.sql", "activity-backfill")); err != nil {
+	if _, err := admin.Exec(ctx, migrationSection(t, "00114_activity_daily.sql", "activity-backfill")); err != nil {
 		t.Fatalf("activity backfill: %v", err)
 	}
 	var finalRows, allRows int

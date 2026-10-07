@@ -9,12 +9,12 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/db"
 )
 
-// 后台行为趋势的按天汇总（迁移 00107）。
+// 后台行为趋势的按天汇总（迁移 00114）。
 //
 // 逐天口径只有一个出处：app.activity_daily_compute(租户, 起日, 止日)，它是原
 // ActivityTimeseries 请求 SQL 的原文（按会话时区切日）。activity_daily 只存已结束的日子，
 // 并记下算它时的会话时区；读路径只用 tz 等于当前会话时区、且可用（定稿，或昨天且没有迟到写入，
-// 判据见迁移 00107 文件头）的行，其余日子实时经同一个函数算，所以数字与原来逐天现场聚合相同
+// 判据见迁移 00114 文件头）的行，其余日子实时经同一个函数算，所以数字与原来逐天现场聚合相同
 // （PG18 对照：activity_rollup_pg18_test.go）。
 
 // ActivityDailyRetentionDays 是按天汇总的保留期。读路径最远 90 天（接口上限），留长是为了
@@ -54,7 +54,7 @@ DELETE FROM activity_daily a
 // generate_series 起点同一个日界），没有任何可用行时只返回这一列有值的一行。
 //
 // 可用 = 定稿（算于该日结束整一天之后），或算于该日结束 10 分钟之后、且这一天的按日流量在
-// 算它之前 5 分钟以来没被写过（00106 的 (tenant_id, day) 索引让这个判断只读这一天的行）。
+// 算它之前 5 分钟以来没被写过（00113 的 (tenant_id, day) 索引让这个判断只读这一天的行）。
 // 稳态下只有今天要实时算。
 const activityDailyFinalSQL = `
 WITH w AS MATERIALIZED (
