@@ -43,7 +43,7 @@ func TestAdminTrafficGrantSourceContract(t *testing.T) {
 	body := sourcetest.Load(t, ".").Decl("Service.GrantTrafficPackAsAdmin")
 	grant := strings.Index(body, `GrantTrafficPackTx(ctx, tx, tenantID, out.UserID, "admin"`)
 	auditAt := strings.Index(body, "audit.Write(ctx, tx")
-	complete := strings.Index(body, "in.Complete(ctx, tx, prepared)")
+	complete := strings.Index(body, "middleware.CompleteSuccessJSONInTx(ctx, tx, in.Claim, prepared)")
 	notify := strings.Index(body, "s.notifyUsersChanged(ctx, tenantID)")
 	if grant < 0 || auditAt < grant || complete < auditAt || notify < complete {
 		t.Fatalf("grant=%d audit=%d complete=%d notify=%d: grant, audit and idempotency must share one transaction, notify after commit",

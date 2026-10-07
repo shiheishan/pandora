@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -180,17 +181,15 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	}
 	var notified int
 	service.SetUsersChangedNotifier(func(context.Context, string) { notified++ })
-	completed := 0
+	claims := 0
+	var lastClaim string
 	grantAdmin := func(sub string, bytes int64, reason string) (*AdminTrafficGrantOutput, error) {
+		claims++
+		claim := orderReleasePG18Claim(t, ctx, admin, fx.tenant, fx.referrer,
+			SubscriptionTrafficGrantIdempotencyScope, fmt.Sprintf("admin-traffic-%d", claims))
+		lastClaim = claim.ID
 		return service.GrantTrafficPackAsAdmin(ctx, fx.tenant, AdminTrafficGrantInput{
-			SubscriptionID: sub, ActorID: fx.referrer, Bytes: bytes, Reason: reason,
-			Complete: func(_ context.Context, tx pgx.Tx, resp httpx.PreparedResponse) error {
-				completed++
-				if resp.StatusCode() != 200 {
-					t.Errorf("prepared response status=%d", resp.StatusCode())
-				}
-				return nil
-			},
+			SubscriptionID: sub, ActorID: fx.referrer, Bytes: bytes, Reason: reason, Claim: claim,
 		})
 	}
 	if _, err := grantAdmin(subID, 4096, "短"); !errors.As(err, &he) || he.Fields["reason"] == "" {
@@ -204,8 +203,13 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 		t.Fatalf("admin traffic grant: %v", err)
 	}
 	if granted.UserID != fx.buyer || granted.GrantedBytes != 4096 || granted.RemainingBytesTotal != 1750+4096 ||
-		completed != 1 || notified != 1 {
-		t.Fatalf("admin grant out=%+v completed=%d notified=%d", granted, completed, notified)
+		notified != 1 || granted.PreparedResponse().StatusCode() != 200 {
+		t.Fatalf("admin grant out=%+v notified=%d", granted, notified)
+	}
+	var claimStatus string
+	if err := admin.QueryRow(ctx, `SELECT status FROM idempotency_keys
+		WHERE tenant_id=$1 AND id=$2::uuid`, fx.tenant, lastClaim).Scan(&claimStatus); err != nil || claimStatus != "completed" {
+		t.Fatalf("admin grant idempotency status=%q err=%v", claimStatus, err)
 	}
 	var adminSource string
 	var auditRows int
@@ -218,16 +222,21 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 		fx.tenant, subID, fx.referrer).Scan(&auditRows); err != nil || auditRows != 1 {
 		t.Fatalf("admin grant audit rows=%d err=%v", auditRows, err)
 	}
-	// 幂等完成失败时整笔回滚：余额、审计都不留
-	_, err = service.GrantTrafficPackAsAdmin(ctx, fx.tenant, AdminTrafficGrantInput{
-		SubscriptionID: subID, ActorID: fx.referrer, Bytes: 1, Reason: "补偿线路故障",
-		Complete: func(context.Context, pgx.Tx, httpx.PreparedResponse) error { return errors.New("claim lost") },
-	})
-	if err == nil {
-		t.Fatal("a failed idempotency completion must fail the grant")
+	// 幂等完成失败时整笔回滚：拿一个已经完成的声明再发一次，余额、审计都不留
+	reused := orderReleasePG18Claim(t, ctx, admin, fx.tenant, fx.referrer,
+		SubscriptionTrafficGrantIdempotencyScope, "admin-traffic-reused")
+	if _, err := service.GrantTrafficPackAsAdmin(ctx, fx.tenant, AdminTrafficGrantInput{
+		SubscriptionID: subID, ActorID: fx.referrer, Bytes: 1, Reason: "补偿线路故障", Claim: reused,
+	}); err != nil {
+		t.Fatalf("grant with a fresh claim: %v", err)
 	}
-	if remaining, _ := grants(t); remaining != 1750+4096 {
-		t.Fatalf("rolled-back admin grant changed the balance, remaining=%d", remaining)
+	if _, err := service.GrantTrafficPackAsAdmin(ctx, fx.tenant, AdminTrafficGrantInput{
+		SubscriptionID: subID, ActorID: fx.referrer, Bytes: 1, Reason: "补偿线路故障", Claim: reused,
+	}); err == nil {
+		t.Fatal("a completed claim must not grant again")
+	}
+	if remaining, _ := grants(t); remaining != 1750+4096+1 {
+		t.Fatalf("a replayed claim changed the balance, remaining=%d", remaining)
 	}
 	service.SetUsersChangedNotifier(nil)
 	t.Log("marker=traffic_pack_pg18_admin_grant_ok")

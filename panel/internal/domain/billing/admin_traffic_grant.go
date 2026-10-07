@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -43,9 +44,7 @@ type AdminTrafficGrantInput struct {
 	Bytes          int64
 	// Reason 写进审计：凭空给用户加流量必须留下理由
 	Reason string
-	// Complete 在发放的同一事务里完成幂等记录（api 层用 CompleteSuccessJSONInTx 注入；
-	// 本包不 import middleware）。为 nil 时不记。
-	Complete func(ctx context.Context, tx pgx.Tx, resp httpx.PreparedResponse) error
+	Claim  middleware.IdempotencyClaim
 }
 
 // AdminTrafficGrantOutput 是加流量包的响应，也是幂等记录里回放的那一份。
@@ -84,15 +83,17 @@ func validateAdminTrafficGrant(bytes int64, reason string) (string, error) {
 func (s *Service) GrantTrafficPackAsAdmin(ctx context.Context, tenantID string,
 	in AdminTrafficGrantInput) (*AdminTrafficGrantOutput, error) {
 
+	if err := middleware.ValidateIdempotencyClaim(
+		in.Claim, tenantID, in.ActorID, SubscriptionTrafficGrantIdempotencyScope,
+	); err != nil {
+		return nil, fmt.Errorf("grant traffic pack: %w", err)
+	}
 	reason, err := validateAdminTrafficGrant(in.Bytes, in.Reason)
 	if err != nil {
 		return nil, err
 	}
 	if _, err := uuid.Parse(in.SubscriptionID); err != nil {
 		return nil, httpx.NotFoundOrForbidden()
-	}
-	if _, err := uuid.Parse(in.ActorID); err != nil {
-		return nil, httpx.New(httpx.CodeUnauthorized, "缺少操作人")
 	}
 	sourceID, err := uuid.NewV7()
 	if err != nil {
@@ -148,10 +149,7 @@ func (s *Service) GrantTrafficPackAsAdmin(ctx context.Context, tenantID string,
 			return err
 		}
 		out.prepared = prepared
-		if in.Complete == nil {
-			return nil
-		}
-		return in.Complete(ctx, tx, prepared)
+		return middleware.CompleteSuccessJSONInTx(ctx, tx, in.Claim, prepared)
 	})
 	if err != nil {
 		return nil, err
