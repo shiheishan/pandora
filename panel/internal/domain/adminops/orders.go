@@ -150,9 +150,17 @@ func (s *Service) ListOrders(ctx context.Context, tenantID string, in ListOrders
 			return err
 		}
 
-		rows, err := tx.Query(ctx, orderRowSelectSQL+where+`
-			 ORDER BY o.created_at DESC
-			 LIMIT $7 OFFSET $8`,
+		// 先按筛选与排序只取一页订单 id（走 00100 的 (tenant_id, created_at, id) 索引），
+		// 再只对这一页拼支付渠道与首项快照；原来两个 LATERAL 挂在 Sort / LIMIT 之下，
+		// 订单越多越慢。并列的 created_at 按 id 定序，翻页稳定。
+		rows, err := tx.Query(ctx, `
+			WITH page AS MATERIALIZED (
+			  SELECT o.id FROM orders o JOIN users u ON u.id = o.user_id`+where+`
+			   ORDER BY o.created_at DESC, o.id DESC
+			   LIMIT $7 OFFSET $8
+			)`+orderRowSelectSQL+`
+			 WHERE o.tenant_id = $1 AND o.id IN (SELECT id FROM page)
+			 ORDER BY o.created_at DESC, o.id DESC`,
 			tenantID, q, statuses, in.From, in.To, userID, in.Limit, in.Offset)
 		if err != nil {
 			return err
