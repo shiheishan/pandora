@@ -12,7 +12,7 @@
 
 **迁移号**：只用分配给你的号段，没用到就空着。每个迁移写 `-- +goose Up` 和 `-- +goose Down`（能逆就逆，不能逆的 Down 里明确 RAISE 拒绝并写原因）。迁移注释里不要写 `panel/migrations/RESERVED-TABLES.md` 登记的保留表名（会触发契约测试）。
 
-**代码约定**：注释中文；日志 platform/logging（slog）；响应与错误 platform/httpx；配置只经 platform/config；单文件 ≤800 行（超了按主题拆，不加豁免）；行为改动配测试，需要真库的按现有 PG18 测试写法（`platform/pg18test`）。保持 RLS、租户、审计、追加写等数据库不变量；不削弱任何安全检查来换性能。不引入新依赖（确有必要先写进报告）。
+**代码约定**：注释中文；日志 platform/logging（slog）；响应与错误 platform/httpx；配置只经 platform/config；单文件 ≤800 行（超了按主题拆，不加豁免）；行为改动配测试，需要真库的按现有 PG18 测试写法（`platform/pg18test`）；新用例尽量挂成已登记顶层测试的子测试，免改 `deploy/run-pg18-gates.sh`；夹具租户 id 先 grep 主线确认没人用（同域共库，撞号是最常见的 CI 红）。保持 RLS、租户、审计、追加写等数据库不变量；不削弱任何安全检查来换性能。不引入新依赖（确有必要先写进报告）。
 
 **性能类任务**：每项改动在报告里写「机制 → 改前 → 改后 → 预期效果」；改了 SQL 就在报告附录给出改后 SQL 的可直接 EXPLAIN 版本（参数内联），总协调会用评测集判分（性能 + 改前改后结果一致）。
 
@@ -27,7 +27,7 @@
 
 **不要再拆实现型子 agent**；只读调研可以拆。
 
-**报告**：写进本 worktree 的 `.claude/report.md`，最终消息给出路径和摘要。内容：
+**报告**：Agent 工具派的子 agent 写不了文件，**最终消息就是报告**（总协调用 accept-task 的 save-report.sh 代存）；用户自己开的任务会话写进本 worktree 的 `.claude/report.md`。内容：
 1. 每项任务：做了/没做、机制、改前改后、证据；
 2. 改了哪些文件（`git diff --stat <基点>..HEAD`）；
 3. 跑了哪些命令与关键输出；

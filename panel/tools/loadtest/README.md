@@ -59,12 +59,13 @@
 2. 安装：
 
    ```bash
-   cd <RELEASE_DIR> && sudo PANDORA_PUBLIC_BASE_URL=https://<PANEL_DOMAIN> ./install.sh
+   cd <RELEASE_DIR> && sudo PANDORA_CERTBOT=1 PANDORA_PUBLIC_BASE_URL=https://<PANEL_DOMAIN> ./install.sh
    ```
 
    - 首装会生成 `/opt/aegispanel/deploy/.env`：里面是密钥和随机生成的后台前缀 `AEGIS_ADMIN_PATH`，0600 权限。
-   - PG18 和 Valkey 跑在 Docker 数据基座里，只绑 `127.0.0.1:5433` 和 `127.0.0.1:6380`。
-3. 渲染 nginx 并加载：
+   - PG18 和 Valkey 跑在 Docker 数据基座里，只绑 `127.0.0.1:5433` 和 `127.0.0.1:6380`；网关经 `/opt/aegispanel/deploy/run/` 下的 unix socket 连它们（install.sh 确认 socket 可用后改写 `.env`），不走 docker-proxy。
+   - install.sh 最后一步配 nginx：ufw 开着就放行 80/443；没有证书且给了 `PANDORA_CERTBOT=1` 就用 certbot webroot 申请（等于同意 Let's Encrypt 订户协议）；停用 Debian 自带的默认站点；渲染、`nginx -t`、reload。
+3. 只在 install.sh 跳过了 nginx（没装 nginx、没给证书）时，手工渲染并加载：
 
    ```bash
    sudo /opt/aegispanel/deploy/render-nginx.sh && sudo nginx -t && sudo systemctl reload nginx
@@ -160,11 +161,11 @@ scp ~/loadtest root@<PANEL_IP>:/root/lt/loadtest
 ```bash
 sudo systemctl stop aegis-public aegis-admin aegis-node
 cd /opt/aegispanel/deploy && sudo docker compose down -v      # 删掉 PG 与 Valkey 的数据卷
-cd <RELEASE_DIR> && sudo ./install.sh                         # .env 已在：走升级路径，数据库容器没在跑就跳过备份，空库跳过迁移预检
+cd <RELEASE_DIR> && sudo ./install.sh                         # .env 已在：走升级路径，先拉起空库做一次（很小的）升级前备份，空库跳过迁移预检
 ```
 
 - install.sh 会重新拉起数据基座、从空库迁移到最新、收窄 aegis_app、装回二进制并启动三网关、做健康检查。
-- `.env`（密钥、后台前缀、pprof 地址）和 nginx 都不变。
+- `.env`（密钥、后台前缀、pprof 地址）不变；nginx 按模板重新渲染（原配置备份在 `/var/backups/aegispanel/`），手工改过 `aegis.conf` 的话要重做。
 - 之后补三件事：
   1. 重建管理员（第 2 节第 4 步）；
   2. 重开 pg_stat_statements（第 3 节第 3 步）；
@@ -176,14 +177,15 @@ cd <RELEASE_DIR> && sudo ./install.sh                         # .env 已在：�
 cd /root/lt && mkdir -p /root/lt-results/5k-seed
 set -a; . /opt/aegispanel/deploy/.env; . /opt/aegispanel/deploy/release-artifact.env; set +a
 export LOADTEST_ADMIN_PASSWORD='<管理员口令>'   # 只在这个 shell 里
-./loadtest seed -database-url "$AEGIS_DATABASE_URL" \
+./loadtest seed \
   -admin-base "https://<PANEL_DOMAIN>/$AEGIS_ADMIN_PATH" -node-base https://<PANEL_DOMAIN> \
   -public-base https://<PANEL_DOMAIN> -admin-email <ADMIN_EMAIL> \
   -users 5000 -nodes 198 -label 5k -out /root/lt-results/5k-seed/lt-manifest.json \
   | tee /root/lt-results/5k-seed/seed.log
 ```
 
-- **连的是运行角色**：`AEGIS_DATABASE_URL` 是 aegis_app，所以 RLS 和列级授权都真的在起作用。
+- **连的是运行角色**：不传 `-database-url`，seed 从环境变量 `AEGIS_DATABASE_URL`（上面 source 的 `.env`）取，那是 aegis_app，所以 RLS 和列级授权都真的在起作用。
+  - 不要把连接串写进命令行参数：里面有 aegis_app 的口令，`ps` / `pgrep -fa` 对本机所有用户可见。
 - **两份环境文件的作用**：
   - `.env` 里的 `AEGIS_MASTER_KEY` 用来像面板那样加密存一份订阅令牌；
   - `release-artifact.env` 提供节点接入时要对上的版本与摘要（`PANDORA_NATIVE_*`）。

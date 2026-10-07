@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { pickThemeTokens, portalBranding } from './appearance'
+import { APPEARANCE_CACHE_KEY, pickThemeTokens, portalBranding, readThemeCache, themeCacheValue, writeThemeCache } from './appearance'
 import { quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
 import { greeting, navLabel, navOwner, resolvePage } from './pages'
 import { displayName } from './queries'
@@ -117,5 +117,48 @@ describe('displayName', () => {
     expect(displayName({ email: 'zhang.wei@qq.com', display_name: '张伟' })).toBe('张伟')
     expect(displayName({ email: 'zhang.wei@qq.com', display_name: null })).toBe('zhang.wei')
     expect(displayName(undefined)).toBe('')
+  })
+})
+
+describe('theme cache', () => {
+  function memoryStorage() {
+    const data = new Map<string, string>()
+    return {
+      data,
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+      removeItem: (k: string) => void data.delete(k),
+    }
+  }
+  const custom = {
+    theme: { tokens: { light: { '--brand': '#b9442b', 'not-a-token': 'red' }, dark: { '--brand': '#e46e52' } }, branding: { logo: 'data:image/png;base64,AAAA' } },
+    slots: {},
+  }
+
+  it('stores only whitelisted colours of both themes, never the logo', () => {
+    const storage = memoryStorage()
+    writeThemeCache(custom, storage)
+    const raw = storage.data.get(APPEARANCE_CACHE_KEY)!
+    expect(JSON.parse(raw)).toEqual({ v: 1, light: { '--brand': '#b9442b' }, dark: { '--brand': '#e46e52' } })
+    expect(raw).not.toContain('data:image')
+    expect(readThemeCache('dark', storage)).toEqual([['--brand', '#e46e52']])
+  })
+
+  it('clears the cache when the default theme is back in effect', () => {
+    const storage = memoryStorage()
+    writeThemeCache(custom, storage)
+    writeThemeCache({ theme: null, slots: {} }, storage)
+    expect(storage.data.has(APPEARANCE_CACHE_KEY)).toBe(false)
+    expect(themeCacheValue({ theme: null, slots: {} })).toBeNull()
+  })
+
+  it('reads nothing from a missing, broken or tampered cache', () => {
+    const storage = memoryStorage()
+    expect(readThemeCache('light', storage)).toEqual([])
+    storage.setItem(APPEARANCE_CACHE_KEY, '{')
+    expect(readThemeCache('light', storage)).toEqual([])
+    storage.setItem(APPEARANCE_CACHE_KEY, JSON.stringify({ v: 1, light: { color: 'red', '--brand': 3, '--bg': '#fff' } }))
+    expect(readThemeCache('light', storage)).toEqual([['--bg', '#fff']])
+    expect(readThemeCache('light', null)).toEqual([])
   })
 })
