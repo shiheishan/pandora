@@ -363,10 +363,8 @@ func main() {
 	log.Info("内核已启动", "kernel", kernel.Type(), "version", buildVersion, "节点数", len(cfg.Nodes))
 
 	stateDir := cfg.stateDir()
-	// 冷启动按 nodes[] 顺序首装入站：同机端口先到先得，赢家不随 goroutine 竞速变。
-	order := node.NewStartupOrder(len(cfg.Nodes))
 	var nodes []runningNode
-	for index, nc := range cfg.Nodes {
+	for _, nc := range cfg.Nodes {
 		client := panel.New(panel.Options{
 			BaseURL:  cfg.Panel.URL,
 			NodeID:   nc.NodeID,
@@ -400,12 +398,16 @@ func main() {
 		}
 		n := node.NewWithSignedClient(client, kernel, log, signed)
 		n.SetCacheDir(stateDir)
-		n.SetStartupOrder(order, index)
-		running := runningNode{n: n, done: make(chan struct{})}
-		nodes = append(nodes, running)
+		nodes = append(nodes, runningNode{n: n, done: make(chan struct{})})
+	}
+	// 冷启动按 nodes[] 顺序首装入站：同机端口先到先得，赢家不随 goroutine 竞速变。
+	// 次序只排真正起来的节点（被拒绝启动的不占位，否则后面的节点会一直等它）。
+	order := node.NewStartupOrder(len(nodes))
+	for index, running := range nodes {
+		running.n.SetStartupOrder(order, index)
 		go func() {
 			defer close(running.done)
-			n.Run(ctx)
+			running.n.Run(ctx)
 		}()
 	}
 
