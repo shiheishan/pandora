@@ -311,6 +311,9 @@ func run() error {
 	// 都有上限，积压由下一轮接着清，不会一次删几十万行长时间持锁。十分钟一次：在线
 	// 记录 70 分钟才过期，再勤只是空转。追加写的上报留档与订阅拉取日志不在这里删
 	// （它们的保留方案待定，读路径已不依赖它们的大小）。
+	//
+	// 同一轮里顺带维护行为趋势的按天汇总（00114）：重算最近 2 个已结束日（吸收迟到写入，
+	// 读路径只用其中可用的行），并删 400 天以前的行。
 	go func() {
 		defer workers.Done()
 		pace := newLoopPacer(10 * time.Minute)
@@ -325,6 +328,9 @@ func run() error {
 			alive, aliveErr := nodeSvc.PurgeStaleAlive(sctx, middleware.DefaultTenantID)
 			metrics, metricsErr := nodeSvc.PurgeMetrics(sctx, middleware.DefaultTenantID, nodefabric.MetricsRetentionHours)
 			rollups, rollupsErr := nodeSvc.PurgeTrafficRollups(sctx, middleware.DefaultTenantID)
+			// 每轮固定重算 2 行，行数不记日志
+			_, activityErr := opsSvc.RefreshActivityDaily(sctx, middleware.DefaultTenantID)
+			activityPurged, activityPurgeErr := opsSvc.PurgeActivityDaily(sctx, middleware.DefaultTenantID)
 			cancel()
 			if aliveErr != nil {
 				log.Error("在线记录清理失败", "error", aliveErr.Error(), "deleted", alive)
@@ -335,8 +341,15 @@ func run() error {
 			if rollupsErr != nil {
 				log.Error("流量小时汇总清理失败", "error", rollupsErr.Error(), "deleted", rollups)
 			}
-			if alive > 0 || metrics > 0 || rollups > 0 {
-				log.Info("保留期清理完成", "alive_ips", alive, "node_metrics", metrics, "traffic_rollups", rollups)
+			if activityErr != nil {
+				log.Error("行为趋势按天汇总失败", "error", activityErr.Error())
+			}
+			if activityPurgeErr != nil {
+				log.Error("行为趋势按天汇总清理失败", "error", activityPurgeErr.Error(), "deleted", activityPurged)
+			}
+			if alive > 0 || metrics > 0 || rollups > 0 || activityPurged > 0 {
+				log.Info("保留期清理完成", "alive_ips", alive, "node_metrics", metrics, "traffic_rollups", rollups,
+					"activity_daily", activityPurged)
 			}
 		}
 	}()
