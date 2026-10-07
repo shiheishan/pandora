@@ -255,19 +255,19 @@ func hysteria2RejectHandler(connErr connErrorReporter) http.Handler {
 	})
 }
 
+// syncUsers 把整张槽位表同步进 nativewire 口令表，只在 Start 时用；之后的增减
+// 走 PatchUsers 增量更新。停用的槽位不进口令表。
 func (a *hysteria2Adapter) syncUsers() error {
 	a.updateMu.Lock()
 	defer a.updateMu.Unlock()
 	a.mu.RLock()
 	service := a.service
-	indices := make([]int, len(a.slots))
-	passwords := make([]string, len(a.slots))
+	indices := make([]int, 0, len(a.users))
+	passwords := make([]string, 0, len(a.users))
 	for i, slot := range a.slots {
-		indices[i] = i
 		if slot.active {
-			passwords[i] = slot.user.UUID
-		} else {
-			passwords[i] = fmt.Sprintf("__pandora_disabled_%d__", i)
+			indices = append(indices, i)
+			passwords = append(passwords, slot.user.UUID)
 		}
 	}
 	a.mu.RUnlock()
@@ -277,72 +277,74 @@ func (a *hysteria2Adapter) syncUsers() error {
 	return nil
 }
 
-func (a *hysteria2Adapter) AddUsers(users []core.User) error {
+func normalizeHysteria2Users(users []core.User) ([]core.User, error) {
 	// Validate the entire batch before taking the state lock. A failed batch
 	// must not partially publish users or leave the adapter locked.
 	validated := make([]core.User, 0, len(users))
 	for _, user := range users {
 		password := strings.TrimSpace(user.UUID)
 		if password == "" {
-			return fmt.Errorf("hysteria2 user password is empty")
+			return nil, fmt.Errorf("hysteria2 user password is empty")
 		}
 		user.UUID = password
 		validated = append(validated, user)
 	}
-	a.mu.Lock()
-	if a.closed {
-		a.mu.Unlock()
-		return fmt.Errorf("hysteria2 adapter is closed")
-	}
-	for _, user := range validated {
-		password := user.UUID
-		if _, exists := a.users[password]; exists {
-			continue
-		}
-		a.users[password] = len(a.slots)
-		a.slots = append(a.slots, hysteria2Slot{user: user, active: true})
-	}
-	a.mu.Unlock()
-	return a.syncUsers()
+	return validated, nil
 }
 
-func (a *hysteria2Adapter) UpsertUsers(users []core.User) error {
-	validated := make([]core.User, 0, len(users))
-	for _, user := range users {
-		password := strings.TrimSpace(user.UUID)
-		if password == "" {
-			return fmt.Errorf("hysteria2 user password is empty")
-		}
-		user.UUID = password
-		validated = append(validated, user)
+// putUsers 是 AddUsers / UpsertUsers 的共同实现。updateMu 在整个过程中持有
+// （锁序 updateMu → mu，与 syncUsers 一致），保证口令表的增量与槽位表的变更
+// 同序生效，并发的增删不会互相覆盖。
+func (a *hysteria2Adapter) putUsers(users []core.User, upsert bool) error {
+	validated, err := normalizeHysteria2Users(users)
+	if err != nil {
+		return err
 	}
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
 		return fmt.Errorf("hysteria2 adapter is closed")
 	}
-	changed := false
+	var indices []int
+	var passwords []string
 	for _, user := range validated {
 		password := user.UUID
 		if index, exists := a.users[password]; exists {
-			a.slots[index].user = user
-			a.slots[index].active = true
-			changed = true
+			if upsert {
+				// 口令不变、槽位不变，口令表无需改动。
+				a.slots[index].user = user
+				a.slots[index].active = true
+			}
 			continue
 		}
 		a.users[password] = len(a.slots)
+		indices = append(indices, len(a.slots))
+		passwords = append(passwords, password)
 		a.slots = append(a.slots, hysteria2Slot{user: user, active: true})
-		changed = true
 	}
+	service := a.service
 	a.mu.Unlock()
-	if !changed {
-		return nil
+	if service != nil && len(indices) > 0 {
+		service.PatchUsers(nil, indices, passwords)
 	}
-	return a.syncUsers()
+	return nil
+}
+
+func (a *hysteria2Adapter) AddUsers(users []core.User) error {
+	return a.putUsers(users, false)
+}
+
+func (a *hysteria2Adapter) UpsertUsers(users []core.User) error {
+	return a.putUsers(users, true)
 }
 
 func (a *hysteria2Adapter) DelUsers(ids []string) error {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
 	a.mu.Lock()
+	removed := make([]string, 0, len(ids))
 	for _, id := range ids {
 		password := strings.TrimSpace(id)
 		if index, ok := a.users[password]; ok {
@@ -350,10 +352,15 @@ func (a *hysteria2Adapter) DelUsers(ids []string) error {
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			a.limiters.Remove(a.slots[index].user.ID)
 			delete(a.users, password)
+			removed = append(removed, password)
 		}
 	}
+	service := a.service
 	a.mu.Unlock()
-	return a.syncUsers()
+	if service != nil && len(removed) > 0 {
+		service.PatchUsers(removed, nil, nil)
+	}
+	return nil
 }
 
 func (a *hysteria2Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {

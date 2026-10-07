@@ -121,6 +121,34 @@ func (s *Service[U]) UpdateUsers(userList []U, passwordList []string) {
 	s.userAccess.Unlock()
 }
 
+// PatchUsers 增量更新口令表（Pandora 改动）：先删 remove 里的口令，再写入
+// passwords[i] → users[i]。用户数上千时，一次增减几十人不必重建整张表。
+func (s *Service[U]) PatchUsers(remove []string, users []U, passwords []string) {
+	s.userAccess.Lock()
+	defer s.userAccess.Unlock()
+	for _, password := range remove {
+		delete(s.userMap, password)
+	}
+	for i, user := range users {
+		s.userMap[passwords[i]] = user
+	}
+}
+
+// LookupUser 按口令查用户，供测试与诊断核对口令表。
+func (s *Service[U]) LookupUser(password string) (U, bool) {
+	s.userAccess.RLock()
+	defer s.userAccess.RUnlock()
+	user, ok := s.userMap[password]
+	return user, ok
+}
+
+// UserCount 返回口令表条目数。
+func (s *Service[U]) UserCount() int {
+	s.userAccess.RLock()
+	defer s.userAccess.RUnlock()
+	return len(s.userMap)
+}
+
 func (s *Service[U]) Start(conn net.PacketConn) error {
 	if s.salamanderPassword != "" {
 		conn = NewSalamanderConn(conn, []byte(s.salamanderPassword))
