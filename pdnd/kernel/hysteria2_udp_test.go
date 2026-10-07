@@ -153,7 +153,7 @@ func TestHy2BatchWriterDeliversAll(t *testing.T) {
 		if raw {
 			upstream = hy2LoadRawPacketConn{conn}
 		}
-		writer := newHy2BatchWriter(upstream, rawUDPConnOf(upstream))
+		writer := newHy2BatchWriter(upstream, newHy2UDPUpstream(upstream).batch)
 		if (writer.batch != nil) != raw {
 			t.Fatalf("raw=%v 时批量通道 %v", raw, writer.batch != nil)
 		}
@@ -194,7 +194,7 @@ func TestHy2BatchWriterSkipsUnresolvable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	writer := newHy2BatchWriter(hy2LoadRawPacketConn{conn}, conn.(*net.UDPConn))
+	writer := newHy2BatchWriter(hy2LoadRawPacketConn{conn}, nil)
 	resolver := &hy2UDPResolver{ctx: context.Background()}
 	writer.reset()
 	writer.add(resolver, []byte("bad"), M.Socksaddr{Fqdn: " ", Port: 53}, M.Socksaddr{})

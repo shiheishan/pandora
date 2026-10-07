@@ -15,7 +15,6 @@ import (
 	"github.com/aegispanel/nodeagent/route"
 	"github.com/gofrs/uuid/v5"
 	"github.com/sagernet/sing/common/auth"
-	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -409,7 +408,9 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 		if onClose != nil {
 			defer onClose(nil)
 		}
-		index, user, ok := a.userFromContext(ctx)
+		// epoch 要在查用户之前取，见 userSessions 的竞态说明。
+		epoch := a.sessions.epoch()
+		_, user, ok := a.userFromContext(ctx)
 		if admitErr := admissionError("tuic", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
@@ -422,59 +423,16 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 			return
 		}
 		defer upstream.Close()
-		bridgeCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		var bridgeWG sync.WaitGroup
-		bridgeWG.Add(2)
-		go func() {
-			defer cancel()
-			defer bridgeWG.Done()
-			for {
-				packet := buf.NewPacket()
-				dst, err := conn.ReadPacket(packet)
-				if err != nil {
-					packet.Release()
-					return
-				}
-				if !dst.IsValid() {
-					dst = destination
-				}
-				addr, err := resolveUDPAddr(bridgeCtx, dst)
-				if err != nil {
-					packet.Release()
-					continue
-				}
-				if n, err := upstream.WriteTo(packet.Bytes(), addr); err != nil {
-					packet.Release()
-					return
-				} else {
-					a.addTraffic(index, int64(n), 0)
-				}
-				packet.Release()
-			}
-		}()
-		go func() {
-			defer cancel()
-			defer bridgeWG.Done()
-			data := make([]byte, 64<<10)
-			for {
-				n, addr, err := upstream.ReadFrom(data)
-				if err != nil {
-					return
-				}
-				packet := buf.As(append([]byte(nil), data[:n]...))
-				if err := conn.WritePacket(packet, M.SocksaddrFromNet(addr).Unwrap()); err != nil {
-					return
-				}
-				a.addTraffic(index, 0, int64(n))
-			}
-		}()
-		go func() {
-			<-bridgeCtx.Done()
-			_ = conn.SetDeadline(time.Now())
-			_ = upstream.SetDeadline(time.Now())
-		}()
-		bridgeWG.Wait()
+		// UDP 会话登记进用户连接表：删用户时关掉会话与上游 socket，不必等空闲超时。
+		sess := a.sessions.open(user, epoch, conn, upstream)
+		if sess == nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
+			return
+		}
+		defer sess.close()
+		// 与 Hysteria2 共用转发热路径（hysteria2_udp.go）：凑批上行、批量或逐包下行
+		// 不复制负载、目标解析按会话缓存、流量原子累加到用户计数器。
+		relayHy2UDP(ctx, conn, upstream, destination, sess.up(), sess.down())
 	})
 }
 
@@ -514,19 +472,6 @@ func (a *tuicAdapter) leaveDevice(user core.User, ip string) {
 		if len(set) == 0 {
 			delete(a.online, user.ID)
 		}
-	}
-}
-
-func (a *tuicAdapter) addTraffic(index int, upload, download int64) {
-	a.mu.RLock()
-	var id int64
-	ok := index >= 0 && index < len(a.slots)
-	if ok {
-		id = a.slots[index].user.ID
-	}
-	a.mu.RUnlock()
-	if ok {
-		a.sessions.add(id, upload, download)
 	}
 }
 
