@@ -89,11 +89,11 @@ func (g *GiftGranter) GrantTraffic(ctx context.Context, tx pgx.Tx,
 	return err
 }
 
-// ExtendExpiry 把订阅到期时间往后推。
+// ExtendExpiry 把用户当前生效订阅的到期时间往后推。
 //
-// 基准取「现在」和「原到期时间」里更晚的那个：已过期的订阅从今天起算，
-// 未过期的接着原到期日往后 —— 否则给还有 20 天的用户送 7 天，
-// 他反而只剩 7 天了。
+// 走 extendSubscriptionTx：订阅周期末、本周期 cycle 配额行、active 凭据一起推。
+// 原先只改订阅一行，过了原到期日订阅拉取 404、门户链接消失、流量不再计入本周期。
+// 基准取「现在」和「原到期时间」里更晚的那个，规则见 extendSubscriptionTx。
 func (g *GiftGranter) ExtendExpiry(ctx context.Context, tx pgx.Tx,
 	tenantID, userID string, days int) error {
 
@@ -104,20 +104,11 @@ func (g *GiftGranter) ExtendExpiry(ctx context.Context, tx pgx.Tx,
 	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE subscriptions
-		   SET current_period_end =
-		         greatest(coalesce(current_period_end, now()), now())
-		         + make_interval(days => $3),
-		       updated_at = now()
-		 WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, subID, days)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() != 1 {
-		return errors.New("subscription expiry extension lost")
-	}
-	return nil
+	_, err = extendSubscriptionTx(ctx, tx, subscriptionExtension{
+		TenantID: tenantID, SubscriptionID: subID, Days: days,
+		ActorKind: "user", ActorID: &userID, Source: "gift_card",
+	})
+	return err
 }
 
 // ResetQuota 把本周期已用流量清零。
