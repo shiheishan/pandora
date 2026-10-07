@@ -94,6 +94,12 @@ func (h *handlers) userProfile(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	// 下面要把来源 IP 解成明文交出去：先留痕（审计台账 2.3 第 6 条），写不进去就不给
+	if err := h.d.Ops.RecordSourceIPView(r.Context(), tenantID, httpx.PrincipalFrom(r.Context()).UserID,
+		adminops.SourceIPViewUserProfile, userID, nil); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
 	registeredIP := h.decryptIP(activity.RegisteredIPEnc)
 	events := make([]userProfileEvent, 0, len(activity.Events))
 	for _, e := range activity.Events {

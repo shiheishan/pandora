@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/domain/notify"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -212,6 +213,14 @@ func (h *handlers) testMailTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 收件地址可以随便填：发之前先留痕（审计台账 2.3 第 5 条），写不进去就不发
+	if err := h.d.Ops.RecordTestSend(r.Context(), tenantID, httpx.PrincipalFrom(r.Context()).UserID,
+		adminops.TestSendMailTemplate, req.To, map[string]any{
+			"template": req.Code, "channel": req.Channel, "draft": req.Subject != nil || req.Body != nil,
+		}); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
 	if err := notify.NewSMTPSender(cfg).Send(r.Context(), req.To,
 		"[测试] "+subject, body); err != nil {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeValidationFailed,

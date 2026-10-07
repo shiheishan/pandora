@@ -368,6 +368,13 @@ func TestUserProfileRegisteredIPPG18(t *testing.T) {
 			t.Fatalf("profile %s: status=%d body=%s, want %s", id, w.Code, w.Body.String(), want)
 		}
 	}
+	// 解开明文来源 IP 的查看留痕（审计台账 2.3 第 6 条）：两个用户各一条，挂在被看的人身上
+	var views int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE tenant_id=$1
+		AND action='security.source_ip_viewed' AND after_digest->>'view'='user_profile'
+		AND resource_id IN ($2::uuid, $3::uuid)`, tenant, user, quiet).Scan(&views); err != nil || views != 2 {
+		t.Fatalf("profile view audits=%d err=%v, want 2", views, err)
+	}
 }
 
 func TestDashboardReadModelsPG18(t *testing.T) {

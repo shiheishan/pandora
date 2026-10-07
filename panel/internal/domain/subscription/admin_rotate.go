@@ -2,6 +2,7 @@ package subscription
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -54,54 +55,51 @@ func (s *Service) AdminRotate(ctx context.Context, tenantID string,
 		return nil, httpx.NotFoundOrForbidden()
 	}
 
-	// 先查出订阅归谁 —— Rotate 内部要用它做所有权校验，这里由管理员代为
+	// 先查出订阅归谁 —— rotateInTx 内部要用它做所有权校验，这里由管理员代为
 	// 提供，而不是绕过那道校验。绕过去的话，一个拼错的 subID 就会静默地
 	// 换掉别人的链接。
-	var ownerID, email string
-	if err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
+	//
+	// 换发与审计在同一个事务里（审计台账 2.3 第 4 条）：原来审计单独一笔事务，换发已经
+	// 提交、审计却可能写不进去，留下一次没人负责的凭据变更。
+	var email string
+	actor := in.ActorID
+	sub := in.SubscriptionID
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor}, func(tx pgx.Tx) error {
+		var ownerID string
+		if err := tx.QueryRow(ctx, `
 			SELECT s.user_id::text, u.email::text
 			  FROM subscriptions s JOIN users u ON u.id = s.user_id
 			 WHERE s.tenant_id = $1 AND s.id = $2::uuid`,
-			tenantID, in.SubscriptionID).Scan(&ownerID, &email)
-	}); err != nil {
-		return nil, httpx.NotFoundOrForbidden()
-	}
-
-	if _, err := s.Rotate(ctx, tenantID, ownerID, in.SubscriptionID); err != nil {
-		if err == ErrNotFound {
-			return nil, httpx.NotFoundOrForbidden()
+			tenantID, sub).Scan(&ownerID, &email); err != nil {
+			return httpx.NotFoundOrForbidden()
 		}
+		if _, err := s.rotateInTx(ctx, tx, tenantID, ownerID, sub); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return httpx.NotFoundOrForbidden()
+			}
+			return err
+		}
+		return audit.Write(ctx, tx, tenantID, audit.Entry{
+			ActorKind:    "admin",
+			ActorID:      &actor,
+			Action:       "subscription.link_rotated_by_admin",
+			ResourceType: "subscription",
+			ResourceID:   &sub,
+			APIDomain:    in.APIDomain,
+			Outcome:      "success",
+			RequestID:    httpx.RequestIDFrom(ctx),
+			SourceIP:     in.IP,
+			UserAgent:    in.UserAgent,
+			AfterDigest: map[string]any{
+				"target_email":  email,
+				"reason":        in.Reason,
+				"old_revoked":   true,
+				"user_must_ref": "客户端需重新导入订阅",
+			},
+		})
+	})
+	if err != nil {
 		return nil, err
-	}
-
-	// 审计单独一笔事务：Rotate 已经提交了，这里失败不该把换发回滚掉，
-	// 但要如实报出来 —— 没有审计的凭据变更等于没人负责。
-	actor := in.ActorID
-	sub := in.SubscriptionID
-	if err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor},
-		func(tx pgx.Tx) error {
-			return audit.Write(ctx, tx, tenantID, audit.Entry{
-				ActorKind:    "admin",
-				ActorID:      &actor,
-				Action:       "subscription.link_rotated_by_admin",
-				ResourceType: "subscription",
-				ResourceID:   &sub,
-				APIDomain:    in.APIDomain,
-				Outcome:      "success",
-				RequestID:    httpx.RequestIDFrom(ctx),
-				SourceIP:     in.IP,
-				UserAgent:    in.UserAgent,
-				AfterDigest: map[string]any{
-					"target_email":  email,
-					"reason":        in.Reason,
-					"old_revoked":   true,
-					"user_must_ref": "客户端需重新导入订阅",
-				},
-			})
-		}); err != nil {
-		return nil, httpx.New(httpx.CodeInternal,
-			"订阅链接已换发，但审计写入失败，请联系运维核对："+err.Error())
 	}
 
 	return &AdminRotateOutput{UserEmail: email}, nil

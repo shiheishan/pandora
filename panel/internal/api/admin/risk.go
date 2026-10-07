@@ -38,9 +38,16 @@ type ipClusterView struct {
 // 这是主动发现批量注册的入口：不必先怀疑某个人，直接看哪些 IP 下面
 // 挂着一串账号。标记为正常且未过期的默认不列，?include_reviewed=1 时列出。
 func (h *handlers) ipClusters(w http.ResponseWriter, r *http.Request) {
-	clusters, err := h.d.Ops.ListIPClusters(r.Context(), httpx.TenantIDFrom(r.Context()),
-		r.URL.Query().Get("include_reviewed") == "1")
+	includeReviewed := r.URL.Query().Get("include_reviewed") == "1"
+	clusters, err := h.d.Ops.ListIPClusters(r.Context(), httpx.TenantIDFrom(r.Context()), includeReviewed)
 	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	// 下面要把来源 IP 解成明文交出去：先留痕（审计台账 2.3 第 6 条），写不进去就不给
+	if err := h.d.Ops.RecordSourceIPView(r.Context(), httpx.TenantIDFrom(r.Context()),
+		httpx.PrincipalFrom(r.Context()).UserID, adminops.SourceIPViewIPClusters, "",
+		map[string]any{"include_reviewed": includeReviewed, "clusters": len(clusters)}); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}

@@ -156,6 +156,24 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 // 删不掉也不该删 —— 泄露之后最需要回答的问题正是「旧链接被谁用过」，
 // 把记录抹掉等于把唯一的线索也一起丢了。
 func (s *Service) Rotate(ctx context.Context, tenantID, userID, subID string) (string, error) {
+	if _, err := uuid.Parse(subID); err != nil {
+		return "", ErrNotFound
+	}
+	var token string
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
+		var err error
+		token, err = s.rotateInTx(ctx, tx, tenantID, userID, subID)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// rotateInTx 在调用方事务里换发订阅凭据：作废现有 active 凭据、写一条新的，返回新令牌明文。
+// 后台替用户换发（AdminRotate）在同一个事务里接着写审计。
+func (s *Service) rotateInTx(ctx context.Context, tx pgx.Tx, tenantID, userID, subID string) (string, error) {
 	parsedSubID, err := uuid.Parse(subID)
 	if err != nil {
 		return "", ErrNotFound
@@ -172,41 +190,37 @@ func (s *Service) Rotate(ctx context.Context, tenantID, userID, subID string) (s
 		}
 	}
 
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
-		// 确认这条订阅确实属于该用户，避免拿别人的 subID 来换
-		var owner string
-		if err := tx.QueryRow(ctx,
-			`SELECT user_id::text FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`,
-			tenantID, subID).Scan(&owner); err != nil {
-			return ErrNotFound
-		}
-		if owner != userID {
-			return ErrNotFound
-		}
+	// 确认这条订阅确实属于该用户，避免拿别人的 subID 来换
+	var owner string
+	if err := tx.QueryRow(ctx,
+		`SELECT user_id::text FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`,
+		tenantID, subID).Scan(&owner); err != nil {
+		return "", ErrNotFound
+	}
+	if owner != userID {
+		return "", ErrNotFound
+	}
 
-		if _, err := tx.Exec(ctx, `
-			UPDATE subscription_credentials
-			   SET status = 'revoked', revoked_at = now(), revoked_reason = 'rotated',
-			       rotated_count = rotated_count + 1, rotated_at = now()
-			 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND status = 'active'`,
-			tenantID, subID); err != nil {
-			return err
-		}
+	if _, err := tx.Exec(ctx, `
+		UPDATE subscription_credentials
+		   SET status = 'revoked', revoked_at = now(), revoked_reason = 'rotated',
+		       rotated_count = rotated_count + 1, rotated_at = now()
+		 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND status = 'active'`,
+		tenantID, subID); err != nil {
+		return "", err
+	}
 
-		var expires *time.Time
-		_ = tx.QueryRow(ctx,
-			`SELECT current_period_end FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`,
-			tenantID, subID).Scan(&expires)
+	var expires *time.Time
+	_ = tx.QueryRow(ctx,
+		`SELECT current_period_end FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`,
+		tenantID, subID).Scan(&expires)
 
-		_, err := tx.Exec(ctx, `
-			INSERT INTO subscription_credentials
-				(tenant_id, subscription_id, user_id, token_hash, token_prefix,
-				 scope, expires_at, token_encrypted)
-			VALUES ($1,$2,$3::uuid,$4,$5,'subscription',$6,$7)`,
-			tenantID, subID, userID, crypto.HashToken(token), token[:8], expires, sealed)
-		return err
-	})
-	if err != nil {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO subscription_credentials
+			(tenant_id, subscription_id, user_id, token_hash, token_prefix,
+			 scope, expires_at, token_encrypted)
+		VALUES ($1,$2,$3::uuid,$4,$5,'subscription',$6,$7)`,
+		tenantID, subID, userID, crypto.HashToken(token), token[:8], expires, sealed); err != nil {
 		return "", err
 	}
 	return token, nil

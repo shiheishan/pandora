@@ -7,8 +7,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
+	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 // TelegramAdminChat 读管理员群组 chat id（system_settings 的 telegram.admin_chat_id），缺行回 nil。
@@ -89,6 +91,20 @@ func (s *Service) SaveTelegramSettings(ctx context.Context, in TelegramSettingsI
 					return err
 				}
 			}
-			return nil
+			// 改的是 bot 身份与告警发给谁（审计台账 2.3 第 2 条）：同一事务里留痕。
+			// Token 只记「换没换」，不记明文也不记密文
+			after := map[string]any{
+				"enabled": in.Enabled, "bot_username": in.BotUsername,
+				"bot_token_changed": in.BotToken != "", "admin_chat_changed": in.SetAdminChat,
+			}
+			if in.SetAdminChat {
+				after["admin_chat_id"] = in.AdminChat
+			}
+			actor := in.ActorID
+			return audit.Write(ctx, tx, tenantID, audit.Entry{
+				ActorKind: "admin", ActorID: &actor,
+				Action: "settings.telegram_updated", ResourceType: "system_settings",
+				AfterDigest: after, APIDomain: "admin", RequestID: httpx.RequestIDFrom(ctx),
+			})
 		})
 }
