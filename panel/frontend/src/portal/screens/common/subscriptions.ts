@@ -8,13 +8,13 @@ import { pickTrafficQuota, resetAtOf, trafficSummary, type TrafficSummary } from
 // GET v1/me/subscriptions 的 schema 与查询在外框 queries.ts（外框徽标与页面同键共用），
 // 这里转出，页面照旧从 common 取
 // ---------------------------------------------------------------------------
-export { isLive, LIVE_STATUSES, liveSubscriptions, pickPrimary, subscriptionSchema, useSubscriptions, type Subscription } from '../../queries'
+export { isCurrent, isLive, isRenewableExpired, LIVE_STATUSES, liveSubscriptions, pickPrimary, renewableExpired, subscriptionSchema, useSubscriptions, type Subscription } from '../../queries'
 
 /** 能否续费：取服务端的 renewable（生效状态且套餐允许续费，与续费下单同一口径）。 */
 export const canRenew = (s: Subscription) => s.renewable
 
 // ---------------------------------------------------------------------------
-// GET v1/me/subscription-links：只含 active 且未过期的凭据，按 subscription_id 配对
+// GET v1/me/subscription-links：active 凭据，含过期 30 天内订阅的（expired 为真、只读），按 subscription_id 配对
 // ---------------------------------------------------------------------------
 export const subscriptionLinkSchema = z.object({
   subscription_id: z.string(),
@@ -23,6 +23,8 @@ export const subscriptionLinkSchema = z.object({
   fetch_count: z.number().int(),
   last_fetched_at: z.string().nullable(),
   distinct_sources_24h: z.number().int(),
+  // 订阅已过期、链接暂停（只读展示；续费后原链接自动恢复，过期期间不能更换）
+  expired: z.boolean(),
 })
 export type SubscriptionLink = z.output<typeof subscriptionLinkSchema>
 
@@ -53,7 +55,7 @@ export function useRotateLink() {
     mutationFn: (subscriptionId: string) => api.post(`v1/me/subscriptions/${encodeURIComponent(subscriptionId)}/rotate`, rotateSchema),
     onSuccess: ({ url }, subscriptionId) => {
       client.setQueryData<z.output<typeof linksSchema>>(LINKS_KEY, (old) => {
-        const fresh: SubscriptionLink = { subscription_id: subscriptionId, url, expires_at: null, fetch_count: 0, last_fetched_at: null, distinct_sources_24h: 0 }
+        const fresh: SubscriptionLink = { subscription_id: subscriptionId, url, expires_at: null, fetch_count: 0, last_fetched_at: null, distinct_sources_24h: 0, expired: false }
         const rest = (old?.links ?? []).filter((l) => l.subscription_id !== subscriptionId)
         return { links: [...rest, fresh] }
       })

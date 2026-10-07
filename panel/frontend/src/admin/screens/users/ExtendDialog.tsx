@@ -5,32 +5,38 @@ import { Button, Input, Select, TextArea, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { extendedSchema, type SubscriptionRow, type UserDetail } from './api'
 import { ActionModal } from './dialogs'
-import { EXTEND_DAYS_MAX, EXTEND_PRESETS, extendableSubscriptions, extendedEnd, extendReasonProblem, parseExtendDays, SUB_STATUS_VIEW } from './model'
+import { EXTEND_DAYS_MAX, EXTEND_PRESETS, expiredDays, extendableSubscriptions, extendedEnd, extendReasonProblem, isRescue, parseExtendDays, SUB_STATUS_VIEW } from './model'
 import css from './Users.module.css'
 
 // ---------------------------------------------------------------------------
 // 加时长：POST v1/subscriptions/{id}/extend（billing.adjustment.write + reauth + 幂等 subscription_admin_extend）
-// 订阅周期末、本周期流量配额、订阅链接有效期一起往后推；已用流量不清零，不开新周期
+// 订阅周期末、本周期流量配额、订阅链接有效期一起往后推；已用流量不清零，不开新周期。
+// 已过期 30 天内或试用中的订阅可以救回（w5expiry）：状态回到正常、流量按天数折算，
+// 提交前二次确认「已过期 N 天，延长后旧链接恢复可用」。
 // ---------------------------------------------------------------------------
 export function ExtendDialog({ user, open, onClose, onDone, now }: { user: UserDetail; open: boolean; onClose: () => void; onDone: () => void; now: Date }) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const intent = useIntentKey()
-  const choices = extendableSubscriptions(user.subscriptions)
+  const choices = extendableSubscriptions(user.subscriptions, now)
   const [picked, setPicked] = useState('')
+  const [confirmingRescue, setConfirmingRescue] = useState(false)
   const [days, setDays] = useState('30')
   const [reason, setReason] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const sub = choices.find((s) => s.id === picked) ?? choices[0]
   const parsed = parseExtendDays(days)
+  const rescue = sub ? isRescue(sub, now) : false
+  const lapsedDays = sub ? expiredDays(sub.current_period_end, now) : null
 
   const close = () => {
     setPicked('')
     setDays('30')
     setReason('')
     setErrors({})
+    setConfirmingRescue(false)
     intent.reset()
     onClose()
   }
@@ -41,6 +47,8 @@ export function ExtendDialog({ user, open, onClose, onDone, now }: { user: UserD
     const problem = extendReasonProblem(reason)
     if (problem) local.reason = problem
     if (Object.keys(local).length || parsed === null) return setErrors(local)
+    // 救回要二次确认：第一次点只亮出后果，第二次才提交
+    if (rescue && !confirmingRescue) return setConfirmingRescue(true)
     const body = { days: parsed, reason: reason.trim() }
     setBusy(true)
     try {
@@ -58,10 +66,31 @@ export function ExtendDialog({ user, open, onClose, onDone, now }: { user: UserD
   }
 
   return (
-    <ActionModal open={open} title="加时长" busy={busy} confirm="确认延长" disabled={!sub} onCancel={close} onConfirm={() => void submit()}>
+    <ActionModal
+      open={open}
+      title="加时长"
+      busy={busy}
+      confirm={confirmingRescue ? '确认救回并延长' : '确认延长'}
+      tone={confirmingRescue ? 'danger' : 'primary'}
+      disabled={!sub}
+      onCancel={close}
+      onConfirm={() => void submit()}
+    >
       <p className={css.dialogText}>到期时间、本周期流量配额与订阅链接的有效期一起往后推；已用流量不清零。已过到期日的订阅从现在起算。</p>
+      {rescue && (
+        <p className={css.dialogText}>
+          {lapsedDays !== null ? `这条订阅已过期 ${lapsedDays} 天，延长后旧链接恢复可用。` : '这条订阅在试用中，延长后转为正常订阅。'}
+          流量按延长天数 ÷ 套餐周期天数折算加进本周期，已用流量沿用。
+          {confirmingRescue && ' 再点一次「确认救回并延长」提交。'}
+        </p>
+      )}
       {choices.length > 1 && (
-        <Select label="订阅" options={choices.map((s) => ({ value: s.id, label: subLabel(s) }))} value={sub?.id ?? ''} onChange={(e) => setPicked(e.target.value)} />
+        <Select label="订阅" options={choices.map((s) => ({ value: s.id, label: subLabel(s) }))} value={sub?.id ?? ''}
+          onChange={(e) => {
+            setPicked(e.target.value)
+            setConfirmingRescue(false)
+          }}
+        />
       )}
       {choices.length === 1 && sub && <p className={css.dialogText}>订阅：{subLabel(sub)}</p>}
       <Input

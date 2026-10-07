@@ -297,6 +297,8 @@ export function subscriptionView(sub: SubFixture, packBytes: number) {
   const plan = findPlan(sub.plan_id)
   const listed = plan ? findPrice(plan, sub.price_id) : undefined
   const live = ['active', 'trialing', 'grace', 'past_due'].includes(sub.status)
+  // 过期 30 天内仍可原地续费（billing.subscriptionAcceptsPaidChange，w5expiry）
+  const openExpired = sub.status === 'expired' && Date.now() - new Date(sub.current_period_end).getTime() < 30 * DAY_MS
   return {
     id: sub.id,
     plan_id: sub.plan_id,
@@ -313,7 +315,7 @@ export function subscriptionView(sub: SubFixture, packBytes: number) {
     online_devices: sub.online,
     quota_reset_strategy: plan?.quota_reset_strategy ?? 'billing_cycle',
     next_reset_at: sub.resetAt,
-    renewable: live && (plan?.allow_renewal ?? false),
+    renewable: (live || openExpired) && (plan?.allow_renewal ?? false),
     renewal_price: listed
       ? { id: listed.id, currency: listed.currency, unit_amount: listed.unit_amount, billing_interval: listed.billing_interval, interval_count: listed.interval_count, available: true }
       : { id: sub.price_id, currency: 'CNY', unit_amount: sub.amount, billing_interval: 'month', interval_count: 1, available: false },

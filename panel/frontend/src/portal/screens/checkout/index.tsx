@@ -439,7 +439,7 @@ function PreviewLines({
       {quote.refund > 0 && <Line k="差额退回余额" v={`+${money(quote.refund)}`} tone="ok" />}
       {target.kind === 'change' && change && <Line k="新周期" v={`今天起至 ${formatDate(change.new_period_end)}`} tone="muted" />}
       {target.kind === 'change' && change?.direction === 'downgrade' && <Line k="降级说明" v="差额退回余额，余额不可提现" tone="muted" />}
-      {target.kind === 'renew' && <Line k="剩余天数折算" v="续期叠加" tone="muted" />}
+      {target.kind === 'renew' && <Line k="新周期" v={target.sub.status === 'expired' ? '从付款时起算，原订阅地址自动恢复' : '接在原到期日之后，本期剩余流量照常可用'} tone="muted" />}
       {isRepriced(target) && <Line k="价格调整" v="原价格已调整，按当前价格计费" tone="muted" />}
       {target.kind === 'new' && <Line k="生效" v="支付后立即开通" tone="muted" />}
       {target.kind === 'pack' && (
