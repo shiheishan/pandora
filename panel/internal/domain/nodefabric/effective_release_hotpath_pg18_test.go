@@ -211,7 +211,7 @@ func testReportAliveBatchPG18(t *testing.T, ctx context.Context, admin *pgxpool.
 
 func deliveryEpochPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool) (epoch int64) {
 	t.Helper()
-	if err := admin.QueryRow(ctx, `SELECT last_value FROM node_delivery_epoch`).Scan(&epoch); err != nil {
+	if err := admin.QueryRow(ctx, `SELECT `+deliveryEpochSQL).Scan(&epoch); err != nil {
 		t.Fatal(err)
 	}
 	return epoch

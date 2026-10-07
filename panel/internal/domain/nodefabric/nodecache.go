@@ -42,7 +42,10 @@ const (
 )
 
 // deliveryEpochSQL 读出当前下发纪元，嵌进各处本来就要跑的查询里，不单独多一次往返。
-const deliveryEpochSQL = `(SELECT last_value FROM node_delivery_epoch)`
+//
+// 要加上 is_called：新建的序列 last_value=1、is_called=false，第一次 nextval 返回 1、
+// last_value 还是 1，只把 is_called 翻成 true。只读 last_value 会漏掉全库的第一次推进。
+const deliveryEpochSQL = `(SELECT last_value + is_called::int FROM node_delivery_epoch)`
 
 type ttlEntry[V any] struct {
 	value   V
