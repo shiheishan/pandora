@@ -2,6 +2,8 @@ package adminops
 
 import (
 	"context"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,31 +155,66 @@ func listUsersArgs(tenantID string, in ListUsersInput) (ListUsersInput, []any, e
 	return in, []any{tenantID, pattern, exactID, tokenHash, statuses, in.GroupID, in.SubState}, nil
 }
 
-// listUsersWhereSQL 是用户列表的筛选（参数见 listUsersArgs），总数与取页共用。
+// listUsersWhere 是用户列表的筛选，总数与取页共用。a 是 listUsersArgs 规整好的 $1–$7
+// （租户、LIKE 模式、精确 id、令牌哈希、状态、用户组、订阅状态），返回只含用到的条件的
+// WHERE 与它的参数（$1 恒为租户）。
 //
-// 令牌反查写成不相关子查询：整条查询只按哈希查一次凭据（唯一索引），而不是每个
-// 用户各探一次。u.tenant_id = $1 已在最前，与按 u.tenant_id 关联等价。
-var listUsersWhereSQL = `u.tenant_id = $1
-		AND ($2 = '' OR lower(u.email) LIKE $2 OR lower(coalesce(u.display_name,'')) LIKE $2
-		     OR u.id::text = $3
-		     OR u.id IN (SELECT sc.user_id FROM subscription_credentials sc
+// 不写「$2 为空串或命中」这类万能条件：pgx 缓存语句后 PostgreSQL 改用通用计划，万能条件的
+// 选择率只能按缺省值估，也没法按实际取值裁掉不用的分支（审计 P12）。每种筛选组合是一条
+// 单独的语句文本，各自缓存。语义与原来逐条相同：
+//   - q 依次按邮箱 / 显示名片段、用户 id 精确、订阅令牌反查；原来的 u.id::text = 精确值
+//     只可能命中规范小写 uuid，所以只在精确值是规范 uuid 时才拼 u.id = 精确值（能走主键）；
+//   - 令牌反查写成不相关子查询：整条查询只按哈希查一次凭据（唯一索引），而不是每个
+//     用户各探一次。
+func listUsersWhere(a []any) (string, []any) {
+	pattern, exactID, tokenHash := a[1].(string), a[2].(string), a[3].([]byte)
+	statuses, groupID, subState := a[4].([]string), a[5].(string), a[6].(string)
+	args := []any{a[0]}
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	var b strings.Builder
+	b.WriteString("u.tenant_id = $1")
+	if pattern != "" {
+		p := arg(pattern)
+		b.WriteString(" AND (lower(u.email) LIKE " + p + " OR lower(coalesce(u.display_name,'')) LIKE " + p)
+		if id, err := uuid.Parse(exactID); err == nil && id.String() == exactID {
+			b.WriteString(" OR u.id = " + arg(exactID) + "::uuid")
+		}
+		b.WriteString(` OR u.id IN (SELECT sc.user_id FROM subscription_credentials sc
 		                  WHERE sc.tenant_id = $1
-		                    AND sc.token_hash = $4 AND sc.status IN ('active','grace')))
-		AND (cardinality($5::text[]) = 0 OR u.status::text = ANY($5::text[]))
-		AND ($6 = '' OR ($6 = 'none' AND u.user_group_id IS NULL) OR u.user_group_id::text = $6)
-		AND ($7 = '' OR ` + subStateSQL("$7") + `)`
+		                    AND sc.token_hash = ` + arg(tokenHash) + ` AND sc.status IN ('active','grace')))`)
+	}
+	if len(statuses) > 0 {
+		b.WriteString(" AND u.status::text = ANY(" + arg(statuses) + "::text[])")
+	}
+	switch groupID {
+	case "":
+	case "none":
+		b.WriteString(" AND u.user_group_id IS NULL")
+	default:
+		b.WriteString(" AND u.user_group_id::text = " + arg(groupID))
+	}
+	if subState != "" {
+		b.WriteString(" AND " + subStateSQL(arg(subState)))
+	}
+	return b.String(), args
+}
 
 // listUsersPageSQL 先按筛选与排序只取一页 id（page，走 00100 的
 // (tenant_id, created_at DESC, id DESC) 索引），再只对这一页拼当前订阅、配额、余额与
 // 在线设备。原来这些 LATERAL 挂在 Sort / LIMIT 之下，要对全部用户算完才取 25 条
-// （5k 用户 470s）。同一时刻批量建的用户按 id 定序，翻页不重不漏。$8 / $9 是 LIMIT / OFFSET。
-var listUsersPageSQL = `
+// （5k 用户 470s）。同一时刻批量建的用户按 id 定序，翻页不重不漏。where 与 limit / offset 的
+// 占位符由 listUsersWhere 与调用方给出。
+func listUsersPageSQL(where, limit, offset string) string {
+	return `
 	WITH page AS MATERIALIZED (
 	  SELECT u.id, u.created_at
 	    FROM users u
-	   WHERE ` + listUsersWhereSQL + `
+	   WHERE ` + where + `
 	   ORDER BY u.created_at DESC, u.id DESC
-	   LIMIT $8 OFFSET $9
+	   LIMIT ` + limit + ` OFFSET ` + offset + `
 	), win AS MATERIALIZED (
 	  SELECT ` + onlineSinceSQL("$1") + ` AS since
 	)
@@ -215,6 +252,7 @@ var listUsersPageSQL = `
 	           AND q.metric = 'traffic.bytes'
 	         ORDER BY q.period_start DESC LIMIT 1) tq ON true
 	 ORDER BY p.created_at DESC, p.id DESC`
+}
 
 // scanUserRows 读列表行（列形状见 listUsersPageSQL）。
 func scanUserRows(rows pgx.Rows) ([]UserRow, error) {
@@ -249,20 +287,21 @@ func (s *Service) ListUsers(ctx context.Context, tenantID string, in ListUsersIn
 	if err != nil {
 		return nil, 0, err
 	}
+	// 总数只数 users 本表（不拼读模型），与取页同一份筛选；两条排进一个批次，一次往返
+	where, wargs := listUsersWhere(args)
+	pageArgs := append(slices.Clone(wargs), in.Limit, in.Offset)
+	pageSQL := listUsersPageSQL(where, "$"+strconv.Itoa(len(wargs)+1), "$"+strconv.Itoa(len(wargs)+2))
 	var out []UserRow
 	var total int64
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		// 总数只数 users 本表（不拼读模型），与取页同一份筛选
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM users u WHERE `+listUsersWhereSQL, args...).Scan(&total); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, listUsersPageSQL, append(args, in.Limit, in.Offset)...)
-		if err != nil {
-			return err
-		}
+	b := &pgx.Batch{}
+	b.Queue(`SELECT count(*) FROM users u WHERE `+where, wargs...).
+		QueryRow(func(row pgx.Row) error { return row.Scan(&total) })
+	b.Queue(pageSQL, pageArgs...).Query(func(rows pgx.Rows) error {
+		var err error
 		out, err = scanUserRows(rows)
 		return err
 	})
+	err = s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{}, b)
 	if err != nil {
 		return nil, 0, httpx.Internal(err)
 	}
