@@ -299,7 +299,10 @@ func (s *Service) replyAsAgent(
 		// 否则客服写条备注就能把 SLA 计时停掉，指标立刻失真。
 		afterStatus := status
 		if !in.InternalNote {
-			set := `status = 'pending_user', resolved_at = NULL, closed_at = NULL`
+			// 关闭原因与说明随关闭一起作废（与 setStatus 一致）：否则重新打开的工单还挂着
+			// 「用户撤回」之类的原因，门户展示和解决率统计都会认错
+			set := `status = 'pending_user', resolved_at = NULL, closed_at = NULL,
+			        closed_reason = NULL, closed_note = NULL`
 			if firstResponded == nil {
 				set += `, first_responded_at = now()`
 			}

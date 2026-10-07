@@ -56,8 +56,9 @@ func TestPreferFreshNodes(t *testing.T) {
 
 func TestDeliveryStateMatchesEligibilitySQL(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
-	// 资格查询先要存在，下面的正向断言都落在它身上
-	body := pkg.Decl("listEligibleNodesTx")
+	// 资格查询先要存在，下面的正向断言都落在它身上；节点自身条件在它引用的
+	// DeliverableNodeSQL 里，两段拼起来才是完整的资格查询
+	body := pkg.Decls("listEligibleNodesTx", "DeliverableNodeSQL")
 
 	// SQL 必须排除从未心跳的节点。DeliveryState 对同样的输入也必须说不发；
 	// 少了这一条，后台会显示「在下发」而实际不发，运营查不出问题在哪。

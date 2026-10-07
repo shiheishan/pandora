@@ -152,7 +152,9 @@ export const planPoolsSchema = z.object({
   version_status: z.string(),
   row_version: int,
   editable: z.boolean(),
-  pools: list(z.object({ id: z.string(), name: z.string(), active_nodes: count, bound: z.boolean() })),
+  // active_nodes 是生命周期 active 且定了协议的节点数（与节点池列表同口径）；deliverable_nodes 是其中
+  // 真能写进订阅的（服务器就绪、在役、见过心跳、协议稳定、有地址，后端 subscription.DeliverableNodeSQL）
+  pools: list(z.object({ id: z.string(), name: z.string(), active_nodes: count, deliverable_nodes: count, bound: z.boolean() })),
 })
 export type PlanPools = z.output<typeof planPoolsSchema>
 

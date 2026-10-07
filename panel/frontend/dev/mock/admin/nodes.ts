@@ -128,22 +128,49 @@ function activationWarnings(n: Node): string[] {
   return pools.find((p) => p.id === n.pool_id)?.plans.length ? [] : ['所在节点池没有绑定任何套餐，暂时不服务任何用户']
 }
 
+// subscription.DeliveryState / NodeDeliveryFacts.Refine 的文案，与 Go 一字不差
+const DELIVERY_NOTES = {
+  notActive: '服务状态不是 active，不下发',
+  neverSeen: '从未上报过心跳，不下发 —— 多半是建了没装 agent，或是测试留下的记录。发出去就是一条必然连不上的线路',
+  stale: '心跳已超时，但仍在下发 —— 只有当套餐里一个新鲜节点都没有时才会用到它。空订阅会让客户端清空服务器列表，比给一条可能不通的线路更糟',
+  serverNotReady: '所属服务器未就绪或已删除，不下发',
+  nodeNotReady: '协议、端口或可连地址不完整，不下发',
+  poolUnbound: '所在节点池没有绑定任何套餐，暂时不服务任何用户',
+}
+const STABLE_TYPES = new Set(SCHEMAS.filter((s) => s.status === 'stable').map((s) => s.node_type))
+
+/** subscription.DeliverableNodeSQL 的镜像：与用户、套餐都无关的节点自身条件 */
+function deliverable(n: Node): boolean {
+  const srv = servers.find((s) => s.id === n.server_id)
+  // 假后端的服务器没有控制节点（control_node_id 恒为 null），Go 里那一条在这里恒真
+  if (!srv || srv.status !== 'ready') return false
+  const port = n.server_port ?? 0
+  const host = n.server_host || srv.public_ipv4 || ''
+  return n.serving_status === 'active' && !!n.node_type && STABLE_TYPES.has(n.node_type) && n.protocol_schema_version === 1 && port >= 1 && port <= 65535 && !!n.last_heartbeat_at && host !== ''
+}
+
+/** 套餐页 GET v1/plans/{id}/pools 的 deliverable_nodes：池里节点自身可下发的个数 */
+export const deliverableNodesInPool = (poolId: string): number => store.filter((n) => n.pool_id === poolId && deliverable(n)).length
+
+/** 后台节点列表的 delivered_to_users / delivery_note：DeliveryState 之后按 Refine 补齐 */
+function deliveryOf(n: Node): { delivered: boolean; note: string } {
+  if (n.serving_status !== 'active') return { delivered: false, note: DELIVERY_NOTES.notActive }
+  if (n.pool_id === null) return { delivered: false, note: NO_POOL_NOTE }
+  if (!n.last_heartbeat_at) return { delivered: false, note: DELIVERY_NOTES.neverSeen }
+  if (!deliverable(n)) {
+    const srv = servers.find((s) => s.id === n.server_id)
+    return { delivered: false, note: srv?.status === 'ready' ? DELIVERY_NOTES.nodeNotReady : DELIVERY_NOTES.serverNotReady }
+  }
+  if (!pools.find((p) => p.id === n.pool_id)?.plans.length) return { delivered: false, note: DELIVERY_NOTES.poolUnbound }
+  const fresh = Date.now() - new Date(n.last_heartbeat_at).getTime() < 600_000
+  return { delivered: true, note: fresh ? '' : DELIVERY_NOTES.stale }
+}
+
 function listRow(n: Node) {
   const srv = servers.find((s) => s.id === n.server_id)
   const pool = pools.find((p) => p.id === n.pool_id)
   const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
-  const heartbeatOk = !!n.last_heartbeat_at && Date.now() - new Date(n.last_heartbeat_at).getTime() < 600_000
-  // R105：先看服务状态，再看有没有池，再看心跳；无池节点不服务任何订阅
-  const delivered = n.serving_status === 'active' && n.pool_id !== null && heartbeatOk
-  const note = delivered
-    ? ''
-    : n.serving_status !== 'active'
-      ? '服务状态不是 active，不会下发给用户'
-      : n.pool_id === null
-        ? NO_POOL_NOTE
-        : !n.last_heartbeat_at
-          ? '从未心跳，不会下发给用户'
-          : '超过 10 分钟没有心跳，已停止下发'
+  const { delivered, note } = deliveryOf(n)
   const cpu = srv?.probe ? srv.probe.cpu_bp / 100 : null
   return {
     id: n.id,
@@ -359,6 +386,8 @@ export const nodes: MockModule = {
       const config = body.protocol_config === undefined ? n.protocol_config : nodeType === n.node_type ? restoreSecrets(n.protocol_config, body.protocol_config) : body.protocol_config
       const touched = ['node_type', 'server_host', 'server_port', 'kernel', 'protocol_config'].some((k) => body[k] !== undefined)
       const fields = { ...basicErrors(body, false), ...(touched ? validateProtocol(nodeType, config) : {}) }
+      // nodefabric.PatchAdminNode：在役节点不许清空池（无池节点不服务任何用户），草稿等仍可无池
+      if (body.pool_id !== undefined && !text(body.pool_id) && n.serving_status === 'active') fields.pool_id = '在役节点必须属于一个节点池；不选池则不服务任何用户，先停用节点再移出'
       if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
       if (body.name !== undefined && store.some((x) => x !== n && x.name === text(body.name).trim())) return ctx.fail(409, 'conflict', '节点名称已存在')
       if (body.name !== undefined) n.name = text(body.name).trim()

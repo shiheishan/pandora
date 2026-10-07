@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Json, MockContext, MockModule, MockResult, MockRoute } from '../types.ts'
+import { deliverableNodesInPool } from './nodes.ts'
 import { pools } from './nodes-infra.ts'
 import { packRoutes } from './plans-packs.ts'
 import {
@@ -484,7 +485,7 @@ const routes: Record<string, MockRoute> = {
       version_status: v?.status ?? '',
       row_version: v?.row_version ?? 0,
       editable: v?.status === 'draft',
-      pools: pools.filter((x) => x.status !== 'disabled').map((x) => ({ id: x.id, name: x.name, active_nodes: activeNodes(x.id), bound: v?.pool_ids.includes(x.id) ?? false })),
+      pools: pools.filter((x) => x.status !== 'disabled').map((x) => ({ id: x.id, name: x.name, active_nodes: activeNodes(x.id), deliverable_nodes: deliverableNodesInPool(x.id), bound: v?.pool_ids.includes(x.id) ?? false })),
     })
   },
 

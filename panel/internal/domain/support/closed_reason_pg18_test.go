@@ -66,6 +66,29 @@ func TestTicketClosedReasonPG18(t *testing.T) {
 		t.Fatalf("reopened ticket kept reason=%v note=%v", r, n)
 	}
 
+	// 客服对已关闭工单的公开回复把它改回 pending_user，原因与说明同样清空；
+	// 内部备注不改状态，也不动原因
+	replied := newTicket()
+	if err := svc.WithdrawByUser(ctx, tenantID, ownerID, replied, "不用了，谢谢"); err != nil {
+		t.Fatalf("withdraw before agent reply: %v", err)
+	}
+	if err := svc.ReplyAsAgent(ctx, tenantID, AgentReplyInput{TicketID: replied, AgentID: agentID, Body: "这是内部备注", InternalNote: true}); err != nil {
+		t.Fatalf("agent internal note: %v", err)
+	}
+	if r, n := reasonOf(replied); !is(r, "withdrawn") || n == nil {
+		t.Fatalf("internal note touched close reason=%v note=%v", r, n)
+	}
+	if err := svc.ReplyAsAgent(ctx, tenantID, AgentReplyInput{TicketID: replied, AgentID: agentID, Body: "我们再确认一下，请稍候。"}); err != nil {
+		t.Fatalf("agent reply on closed ticket: %v", err)
+	}
+	var repliedStatus string
+	if err := admin.QueryRow(ctx, `SELECT status FROM tickets WHERE id=$1`, replied).Scan(&repliedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if r, n := reasonOf(replied); repliedStatus != "pending_user" || r != nil || n != nil {
+		t.Fatalf("agent reply left status=%s reason=%v note=%v, want pending_user with both cleared", repliedStatus, r, n)
+	}
+
 	// 客服关闭记 agent_closed
 	agentClosed := newTicket()
 	if err := svc.SetStatus(ctx, tenantID, agentID, agentClosed, "closed", "已排查完毕"); err != nil {

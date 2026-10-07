@@ -51,6 +51,18 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
 	}
+	// 服务器就绪、协议与地址、池是否绑了套餐：按订阅资格的同一个 SQL 片段
+	// （subscription.DeliverableNodeSQL）在库里算，DeliveryState 之后用 Refine 补齐，
+	// 免得列表说「下发」而订阅里根本没有它。
+	ids := make([]string, 0, len(rows))
+	for _, x := range rows {
+		ids = append(ids, x.ID)
+	}
+	facts, err := subscription.NodeDeliverability(r.Context(), h.d.Pool, httpx.TenantIDFrom(r.Context()), ids)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
+		return
+	}
 	out := make([]nodeListItem, 0, len(rows))
 	for _, x := range rows {
 		// 心跳的两个事实由 Go 侧从 LastBeat 推出，不在 SQL 里算。
@@ -64,8 +76,8 @@ func (h *handlers) nodeList(w http.ResponseWriter, r *http.Request) {
 		everSeen := x.LastBeat != nil
 		beatFresh := everSeen &&
 			time.Since(*x.LastBeat) < subscription.HeartbeatFreshWindow
-		item.Delivered, item.DeliveryNote = subscription.DeliveryState(
-			x.ServingStatus, x.PoolID != nil, everSeen, beatFresh)
+		item.Delivered, item.DeliveryNote = facts[x.ID].Refine(subscription.DeliveryState(
+			x.ServingStatus, x.PoolID != nil, everSeen, beatFresh))
 		item.Protocol = nodefabric.RedactProtocolConfig(x.Protocol)
 		out = append(out, item)
 	}

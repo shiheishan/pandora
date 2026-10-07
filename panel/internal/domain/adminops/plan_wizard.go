@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -286,6 +287,10 @@ func ptrInt64(v int64) *int64 { return &v }
 
 // bindPoolsTx 在调用方的事务里绑定，返回实际绑定的分组数（去重、去空之后）。
 // 绑定了至少一个分组时版本行推进一格，发布时的乐观锁要跟上。
+//
+// 校验池时加 FOR SHARE 锁到事务结束：只挡删池的 FOR KEY SHARE 挡不住并发把池改成
+// disabled，向导就会把套餐绑到一个刚停用的池上。按 id 排序后逐个加锁，与 SetPlanPools
+// 同一顺序，避免反向顺序的两个请求互等。
 func bindPoolsTx(ctx context.Context, tx pgx.Tx,
 	tenantID, versionID string, poolIDs []string) (int, error) {
 
@@ -301,12 +306,14 @@ func bindPoolsTx(ctx context.Context, tx pgx.Tx,
 	if len(unique) == 0 {
 		return 0, nil
 	}
+	slices.Sort(unique)
 
 	for _, pid := range unique {
 		var ok string
 		err := tx.QueryRow(ctx, `
 			SELECT id::text FROM node_pools
-			 WHERE tenant_id=$1 AND id=$2::uuid AND status <> 'disabled'`,
+			 WHERE tenant_id=$1 AND id=$2::uuid AND status <> 'disabled'
+			 FOR SHARE`,
 			tenantID, pid).Scan(&ok)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, httpx.Invalid(map[string]string{

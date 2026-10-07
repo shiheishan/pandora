@@ -100,7 +100,7 @@ func (n *simNode) run(ctx context.Context) {
 
 	// 事件流是加速通路，轮询不停
 	if n.opt.Stream {
-		go n.uni.streamLoop(ctx, n.events, func(err error) { n.obs.sample("stream", n.id, err) })
+		go n.uni.streamLoop(ctx, n.events, !legacy, func(err error) { n.obs.sample("stream", n.id, err) })
 	}
 
 	for {
