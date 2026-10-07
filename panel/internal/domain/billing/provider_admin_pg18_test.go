@@ -133,7 +133,7 @@ func TestPaymentProviderAdminPG18(t *testing.T) {
 		}
 		rec, err := payments.loadProvider(ctx, fx.tenant, code)
 		if err != nil || rec.Credentials.MerchantID != merchant || rec.Credentials.Key != keyA ||
-			rec.DisplayName != "易支付 PG18 改" || len(providerMethods(rec.Config)) != 3 {
+			rec.DisplayName != "易支付 PG18 改" || len(providerMethods(rec.Config)) != 2 {
 			t.Fatalf("after blank update rec=%+v err=%v", rec, err)
 		}
 		if count(t, `SELECT count(*) FROM audit_events WHERE tenant_id=$1 AND resource_id=$2
