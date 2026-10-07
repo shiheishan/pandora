@@ -191,6 +191,14 @@
   gap: 6px;
 }
 
+/* 运行状态标签：「生效失败：端口 443/TCP 被节点「东京-01」占用」可能很长，列里截断，全文在 title */
+.runTag {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .state {
   display: inline-flex;
   align-items: center;

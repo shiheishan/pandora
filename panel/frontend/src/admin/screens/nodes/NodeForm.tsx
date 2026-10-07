@@ -91,6 +91,11 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
         void invalidate()
         return
       }
+      // 同机端口门禁：端口已被同一服务器上的节点占用，标到端口框上
+      if (isApiError(error, 'conflict') && error.fields.server_port) {
+        setErrors({ server_port: error.fields.server_port })
+        return
+      }
       fail(error)
     },
   })
