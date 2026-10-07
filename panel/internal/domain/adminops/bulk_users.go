@@ -303,9 +303,17 @@ func (s *Service) GenerateUsers(ctx context.Context, tenantID string,
 		return nil, httpx.Invalid(map[string]string{"group_id": "分组标识格式不正确"})
 	}
 
-	out := make([]GeneratedUser, 0, in.Count)
+	// Argon2 在事务外先算好（每个 19MiB、t=2，单核几十毫秒，500 个就是十几秒）：
+	// 原来在事务里逐个算，整段时间占着一条库连接并持有已插入行的锁，会撞
+	// statement_timeout 与网关超时。哈希失败或请求取消时什么都还没写。
+	creds, err := hashGeneratedPasswords(ctx, in.Count)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []GeneratedUser
 	actor := in.ActorID
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor}, func(tx pgx.Tx) error {
+	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor}, func(tx pgx.Tx) error {
 		var group any
 		if in.GroupID != "" {
 			var exists bool
@@ -321,42 +329,12 @@ func (s *Service) GenerateUsers(ctx context.Context, tenantID string,
 			group = in.GroupID
 		}
 
-		for len(out) < in.Count {
-			suffix, err := randomSlug(8)
-			if err != nil {
-				return err
-			}
-			email := in.EmailPrefix + "-" + suffix + "@" + in.EmailDomain
-			password, err := randomPassword()
-			if err != nil {
-				return err
-			}
-			phc, err := crypto.HashPassword(password, crypto.DefaultArgon2Params())
-			if err != nil {
-				return err
-			}
-
-			var userID string
-			err = tx.QueryRow(ctx, `
-				INSERT INTO users (tenant_id, email, status, user_group_id, email_verified_at)
-				VALUES ($1,$2,'active',$3::uuid, now())
-				ON CONFLICT (tenant_id, email) DO NOTHING
-				RETURNING id::text`, tenantID, email, group).Scan(&userID)
-			if errors.Is(err, pgx.ErrNoRows) {
-				// 撞了已有邮箱，换一个后缀重试。8 位随机撞车概率极低，
-				// 但批量 500 个时「极低」不等于「不会」。
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO user_passwords (user_id, tenant_id, phc)
-				VALUES ($1::uuid,$2,$3)`, userID, tenantID, phc); err != nil {
-				return err
-			}
-			out = append(out, GeneratedUser{Email: email, Password: password})
+		users, err := insertGeneratedUsers(ctx, tx, tenantID, group, in.EmailPrefix, in.EmailDomain, creds,
+			func() (string, error) { return randomSlug(8) })
+		if err != nil {
+			return err
 		}
+		out = users
 
 		return audit.Write(ctx, tx, tenantID, audit.Entry{
 			ActorKind: "admin", ActorID: &actor,
@@ -369,6 +347,121 @@ func (s *Service) GenerateUsers(ctx context.Context, tenantID string,
 		})
 	})
 	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// generatedCredential 是事务外先算好的一份随机口令与它的 PHC 哈希。
+type generatedCredential struct {
+	password string
+	phc      string
+}
+
+// hashGeneratedPasswords 逐个生成随机口令并算 Argon2 哈希，全部在事务外。
+//
+// 顺序算、一次一个：全局 Argon2 并发上限（登录、改密共用）只占一个名额，不把登录挤出去。
+// 合并 w1plat 的 crypto.AcquirePasswordSlot 时，接在每次 crypto.HashPassword 之前取槽、
+// 算完即还；取槽超时就整批失败返回（此时库里什么都没写）。
+func hashGeneratedPasswords(ctx context.Context, n int) ([]generatedCredential, error) {
+	out := make([]generatedCredential, 0, n)
+	for len(out) < n {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		password, err := randomPassword()
+		if err != nil {
+			return nil, err
+		}
+		phc, err := crypto.HashPassword(password, crypto.DefaultArgon2Params())
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, generatedCredential{password: password, phc: phc})
+	}
+	return out, nil
+}
+
+// generatedEmailRounds 是撞邮箱换后缀重试的轮数上限：8 位随机后缀撞车概率极低，
+// 但批量 500 个时「极低」不等于「不会」；上限只为不让异常情况无限循环。
+const generatedEmailRounds = 20
+
+// insertGeneratedUsers 在调用方事务里一次性写入：每轮一条 INSERT … unnest … ON CONFLICT
+// DO NOTHING 写这一批邮箱，撞了已有邮箱的那几个换后缀进下一轮；最后一条语句写全部口令。
+// 事务里不再算哈希。返回顺序与 creds 一致。suffix 生成邮箱后缀（测试可注入）。
+func insertGeneratedUsers(ctx context.Context, tx pgx.Tx, tenantID string, group any,
+	prefix, domain string, creds []generatedCredential, suffix func() (string, error)) ([]GeneratedUser, error) {
+	userIDs := make([]string, len(creds))
+	emails := make([]string, len(creds))
+	pending := make([]int, len(creds))
+	for i := range creds {
+		pending[i] = i
+	}
+	tried := map[string]bool{}
+	for round := 0; len(pending) > 0; round++ {
+		if round >= generatedEmailRounds {
+			return nil, errors.New("批量生成账号：邮箱后缀反复冲突")
+		}
+		batch := make([]string, 0, len(pending))
+		byEmail := make(map[string]int, len(pending))
+		for _, i := range pending {
+			var email string
+			for {
+				sfx, err := suffix()
+				if err != nil {
+					return nil, err
+				}
+				email = prefix + "-" + sfx + "@" + domain
+				if !tried[email] {
+					break
+				}
+			}
+			tried[email] = true
+			emails[i] = email
+			byEmail[email] = i
+			batch = append(batch, email)
+		}
+		rows, err := tx.Query(ctx, `
+			INSERT INTO users (tenant_id, email, status, user_group_id, email_verified_at)
+			SELECT $1, e, 'active', $3::uuid, now() FROM unnest($2::text[]) AS e
+			ON CONFLICT (tenant_id, email) DO NOTHING
+			RETURNING id::text, email::text`, tenantID, batch, group)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, email string
+			if err := rows.Scan(&id, &email); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if i, ok := byEmail[email]; ok {
+				userIDs[i] = id
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		next := pending[:0]
+		for _, i := range pending {
+			if userIDs[i] == "" {
+				next = append(next, i)
+			}
+		}
+		pending = next
+	}
+
+	phcs := make([]string, len(creds))
+	out := make([]GeneratedUser, len(creds))
+	for i, c := range creds {
+		phcs[i] = c.phc
+		out[i] = GeneratedUser{Email: emails[i], Password: c.password}
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO user_passwords (user_id, tenant_id, phc)
+		SELECT u, $2, p FROM unnest($1::uuid[], $3::text[]) AS x(u, p)`,
+		userIDs, tenantID, phcs); err != nil {
 		return nil, err
 	}
 	return out, nil
