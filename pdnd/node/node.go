@@ -60,6 +60,8 @@ type Node struct {
 	cache      *nodeCache
 	fromCache  bool
 	usersDirty bool
+	// offlineStart 只在冷启动走落盘缓存装入站的那一刻为真（install_users.go）。
+	offlineStart bool
 
 	// traffic 是还没被面板收下的流量，见 report.go。
 	traffic trafficBuffer

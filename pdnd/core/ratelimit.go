@@ -105,7 +105,9 @@ func SpeedLimitedCopy(dst io.Writer, src io.Reader, limiter *rate.Limiter) (int6
 	}
 	// 与 io.Copy 的默认缓冲一致。桶容量下限是 64 KiB，装得下一整个缓冲，
 	// 不会出现「要的比桶还大」导致 WaitN 直接报错的情况。
-	buf := make([]byte, 32*1024)
+	bp := getBigBuf()
+	defer putBigBuf(bp)
+	buf := *bp
 	var written int64
 	for {
 		nr, readErr := src.Read(buf)
@@ -171,6 +173,14 @@ func (c *SpeedLimitedConn) Write(p []byte) (int, error) {
 		}
 	}
 	return c.Conn.Write(p)
+}
+
+// CloseWrite 把半关闭转给底层（内嵌接口不会提升底层的 CloseWrite）。
+func (c *SpeedLimitedConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return net.ErrClosed
 }
 
 // NetConn 暴露底层连接，供需要穿透包装的调用方使用。

@@ -59,10 +59,13 @@ type hysteria2Slot struct {
 type hysteria2Adapter struct {
 	spec InboundSpec
 
-	mu      sync.RWMutex
-	users   map[string]int
-	slots   []hysteria2Slot
-	traffic map[int64]core.UserTraffic
+	mu    sync.RWMutex
+	users map[string]int
+	slots []hysteria2Slot
+	// traffic 是 UDP 路径的流量（主线 hysteria2_udp.go 的口径）；TCP 子流走
+	// sessions 的原子计数（user_sessions.go），SnapshotTraffic 时两边合并。
+	traffic  map[int64]core.UserTraffic
+	sessions userSessions
 	// udpTraffic 是活跃 UDP 会话的流量计数，SnapshotTraffic 时并入 traffic。
 	udpTraffic map[*hy2Traffic]struct{}
 	online     map[int64]map[string]struct{}
@@ -345,12 +348,14 @@ func (a *hysteria2Adapter) DelUsers(ids []string) error {
 	defer a.updateMu.Unlock()
 	a.mu.Lock()
 	removed := make([]string, 0, len(ids))
+	var removedIDs []int64
 	for _, id := range ids {
 		password := strings.TrimSpace(id)
 		if index, ok := a.users[password]; ok {
 			a.slots[index].active = false
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			a.limiters.Remove(a.slots[index].user.ID)
+			removedIDs = append(removedIDs, a.slots[index].user.ID)
 			delete(a.users, password)
 			removed = append(removed, password)
 		}
@@ -360,6 +365,8 @@ func (a *hysteria2Adapter) DelUsers(ids []string) error {
 	if service != nil && len(removed) > 0 {
 		service.PatchUsers(removed, nil, nil)
 	}
+	// 先删表、再踢线（锁外关）：已有 QUIC 会话里属于他的 TCP 子流随之断开。
+	a.sessions.revoke(removedIDs)
 	return nil
 }
 
@@ -369,7 +376,7 @@ func (a *hysteria2Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	for traffic := range a.udpTraffic {
 		a.collectUDPTrafficLocked(traffic)
 	}
-	out := make([]core.UserTraffic, 0, len(a.traffic))
+	out := a.sessions.snapshot()
 	for id, traffic := range a.traffic {
 		if traffic.Upload != 0 || traffic.Download != 0 {
 			out = append(out, traffic)
@@ -401,13 +408,14 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 	a.wg.Add(1)
 	a.active[conn] = struct{}{}
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer a.removeActive(conn)
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
 		}
+		epoch := a.sessions.epoch()
 		index, user, ok := a.userFromContext(ctx)
 		if admitErr := admissionError("hysteria2", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
@@ -417,6 +425,12 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 			return
 		}
 		defer a.leaveDevice(user, source.AddrString())
+		sess := a.sessions.open(user, epoch, conn)
+		if sess == nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
+			return
+		}
+		defer sess.close()
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "hysteria2", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.DialTCP(ctx, meta, destination)
 		if err != nil {
@@ -432,26 +446,10 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 				return
 			}
 		}
-		var copyWG sync.WaitGroup
-		copyWG.Add(2)
-		copyDone := make(chan struct{}, 2)
-		go func() {
-			n, _ := core.SpeedLimitedCopy(upstream, conn, a.limiters.For(user))
-			a.addTraffic(index, n, 0)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		go func() {
-			n, _ := core.SpeedLimitedCopy(conn, upstream, a.limiters.For(user))
-			a.addTraffic(index, 0, n)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		<-copyDone
-		_ = conn.Close()
-		_ = upstream.Close()
-		copyWG.Wait()
-	}()
+		// 子流的 Close 语义与 TCP 半关闭不同：沿用「一侧结束即两端全关」。
+		sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
+		_ = index
+	})
 }
 
 func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {

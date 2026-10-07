@@ -264,3 +264,11 @@ func (b *bufferedConn) Read(p []byte) (int, error) {
 	}
 	return b.Conn.Read(p)
 }
+
+// CloseWrite 把半关闭传给底层连接（内嵌接口不会提升底层的 CloseWrite）。
+func (b *bufferedConn) CloseWrite() error {
+	if cw, ok := b.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return errHalfCloseUnsupported
+}
