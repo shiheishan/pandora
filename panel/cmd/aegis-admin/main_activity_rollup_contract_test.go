@@ -29,7 +29,7 @@ func TestAdminWiresActivityDailyRollup(t *testing.T) {
 			t.Fatalf("%q must run in the retention worker, not a new loop", want)
 		}
 	}
-	if strings.Count(run, "workers.Add(") != 1 || !strings.Contains(run, "workers.Add(5)") {
-		t.Fatal("admin gateway must keep exactly five background workers")
+	if strings.Count(run, "workers.Add(") != 1 || !strings.Contains(run, "workers.Add(6)") {
+		t.Fatal("admin gateway must keep exactly six background workers")
 	}
 }
