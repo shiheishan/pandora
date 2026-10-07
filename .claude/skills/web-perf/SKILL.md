@@ -1,0 +1,127 @@
+---
+name: web-perf
+description: pandora 面板网页打开性能的测量：静态分析（产物大小、首屏 JS/CSS、路由分包、依赖构成）、本机假后端造 N 个节点的后台节点页基准（首屏、重拉、长任务、滚动、常驻动画）、线上实测（curl 验 gzip 与 HTTP/2 和缓存头，Lighthouse 冷热缓存 × 桌面移动 × 空闲压测）。改了前端分包或依赖、nginx 模板与下发链路、实时事件与重拉节奏，或要出网页性能报告、验收性能类前端改动时使用。
+---
+
+# 网页打开性能
+
+目标：每个结论都有数字，而且能在同一台机器、同一份产物上复现。
+
+测量全部在会话 scratchpad 里的前端拷贝上做：
+- 不在仓库的 `panel/frontend` 里装东西、打补丁，也不改它的 `package.json`；
+- 测量工具（puppeteer-core 驱动本机 Chrome、Lighthouse、source-map-explorer）按本 skill 的 `package.json` 和 `package-lock.json` 锁定版本，装在 scratchpad。
+
+## 什么时候用
+
+- 改了前端的分包、依赖、入口、主题脚本或字体：跑静态分析，对比首屏体积。
+- 改了实时事件、`core/query.ts` 的重拉节奏、节点列表的渲染或接口：跑 1000 节点基准。
+- 改了 `panel/deploy/nginx-aegis.conf`、`render-nginx.sh`、`platform/webapp`，或换了 CDN：在测试机上跑线上实测。
+- 出网页性能报告，或验收性能类前端分支：三层都跑，改前改后各一份。
+
+## 步骤
+
+所有子命令都接受 `--work <scratchpad>/webperf`，不给时用 `$TMPDIR/pandora-web-perf`。
+
+1. **准备**：`bash .claude/skills/web-perf/scripts/run.sh prep --work <W>`
+   - 把 `panel/frontend` 拷到 `W/fe`（不含 node_modules 和 dist），用 `scripts/patch-mock.py` 给假后端打性能补丁，再 `npm ci`。
+   - 测量工具装到 `W/tools`。
+   - lock 文件没变时跳过 `npm ci`。要测 worktree 就加 `--repo <worktree>`。
+2. **静态分析**：`run.sh static --work <W>`
+   - 用 `npm run build` 构建两个入口，另出一份带 sourcemap 的；然后跑三个脚本：
+     - `sizes.mjs`：首屏，即 index.html 引用的文件加它们的静态 import 闭包，给出原始、gzip-9、brotli-11 三个数，外加最大的 10 个 chunk；
+     - `routes.mjs`：每个路由分包连同 mapDeps 带出的依赖，合计多大；
+     - `deps.mjs`：source-map-explorer 按 npm 包汇总的依赖构成。
+   - 结果在 `W/results/static/`。
+3. **本机 N 节点基准**：`run.sh bench --work <W> [--nodes 1000] [--scenarios …] [--throttle "1 4 6"] [--observe 20]`
+   - 每个场景起一个 `vite preview`（admin 入口加假后端），用 `nodes-bench.mjs` 跑「场景 × CPU 降速」，出一张表（`W/results/bench/summary.md`）。
+   - 默认三个场景：
+     - `quiet:none:0`：心跳不推事件；
+     - `refetch2s:none:2000`：每 2 秒推一条，强制每 2 秒重拉；
+     - `storm:old:0`：每次心跳都推，1000 个节点约 33 条/秒，即 nodes 通知触发器跳过纯心跳（w3live 的迁移 00110）之前的行为。
+   - 要模拟只在在线状态翻转时才推，用 `PERF_TRIGGER=new`，写法如 `flip:new:0`。
+4. **常驻动画**：`run.sh idle --work <W>`，同一页面动画开、关各静置 10 秒，比主线程 Task 毫秒数。
+5. **线上实测**（测试机，不在面板机本机上跑，压测期间先和总协调确认）：
+   1. 先跑 `run.sh online https://<站点> --admin <后台前缀>`，用 curl 核对：
+      - 协议是 2；
+      - JS、CSS 带 `Content-Encoding`；
+      - `/assets/*` 是 `public, max-age=31536000, immutable`；
+      - index.html 是 `no-cache` 加 ETag，带 If-None-Match 再请求回 304；
+      - 每个首屏资源的原始字节、传输字节、TTFB。
+   2. 再跑 Lighthouse：`TOKEN=<令牌> run.sh lighthouse "https://<站点>/#/overview" --app portal --runs 5`。
+      - 后台用 `--app admin`，URL 写 `https://<站点>/<前缀>/#/dash`。
+      - 默认跑 cold/warm × desktop/mobile，每格 5 次取中位数，原始数据是 `W/results/lighthouse/*.jsonl`。
+      - 登录页不需要 TOKEN。
+   3. 「空闲」和「压测中」各跑一轮。压测按 prod-retest skill 起，两轮的结果分开存。
+   4. 节点页实测：`ADMIN_TOKEN=<令牌> EXPECT_ROWS=<实际节点数> node W/tools/nodes-bench.mjs https://<站点>/<前缀>/ 1 20`。
+6. **记录**：交付报告里按下一节列数字，并写明机器、网络、Chrome 版本、是否无头。域名、IP、后台前缀一律写成占位符（`panel.example.com`、`<后台前缀>`）。
+
+## 记录哪些指标
+
+- **静态**：每个入口首屏 JS、CSS 的原始 / gzip / br；后台看板、门户概览、门户订阅页三个路由的增量；全部 JS+CSS 合计；最大的 10 个 chunk；第三方依赖各多大。
+  - 2026-10-07 主线 a03aa47 的基线：
+    - 后台首屏 JS 397.9 / 121.7 / 105.1 KiB，CSS 32.4 / 7.7 / 6.9；
+    - 门户首屏 JS 392.5 / 122.3 / 106.3，CSS 26.2 / 7.0 / 6.3；
+    - 后台 JS+CSS 合计 1041.5；
+    - react-dom 202、zod 约 88、query-core 33。
+- **1000 节点基准**：
+  - 加载：首屏（990 行进 DOM 的时刻）、加载期长任务数和最长那个、列表响应字节；
+  - 静置窗口：nodes.changed 条数、重拉次数、每次重拉的脚本毫秒、长任务，以及 Task / Script / Style / Layout；
+  - 交互：滚动 fps、p95、卡顿帧，全选和搜索到下一帧。
+  - 同一天的基线（M 系列 Mac，无头）：
+    - quiet 场景首屏 459 ms（x1）/ 715 ms（x4）；
+    - storm 场景 10 秒内 330 条事件、5 次重拉，每次重拉脚本 12 ms（x1）/ 46 ms（x4），x4 下滚动 55.7 fps、4 个卡顿帧；
+    - 常驻动画开时主线程每 10 秒 1964 ms，关后 40 ms。
+- **线上**：
+  - Lighthouse 的 TTFB、FCP、LCP、TBT、CLS、Speed Index、性能分；
+  - 请求数、传输 KB、协议；
+  - 最慢的几个接口，重点看 `v1/me` 和后台看板的 6 个接口。
+  - curl 表里每个首屏资源的编码、缓存头与耗时。
+  - 服务端同时采 nginx 访问日志里 `/assets/` 的 request_time 和 upstream_time，空闲与压测中对比。
+
+## 脚本
+
+| 路径 | 作用 |
+|---|---|
+| `scripts/run.sh` | 子命令 prep / static / bench / idle / online / lighthouse，参数见文件头 |
+| `scripts/patch-mock.py` | 给前端拷贝的假后端打补丁，可重复执行：`PERF_NODES`、`PERF_TRIGGER=old/new/none`、`PERF_NODES_EVENT_MS`，并让 `vite preview` 也挂假后端；锚点对不上时报错退出 |
+| `scripts/sizes.mjs` `routes.mjs` `deps.mjs` | 静态分析，只用 node 内置模块 |
+| `scripts/nodes-bench.mjs` | 节点页基准，可指向本机端口或测试机；`ADMIN_TOKEN`、`EXPECT_ROWS`、`CHROME` |
+| `scripts/idle-cpu.mjs` | 静置 10 秒的主线程占用；`KILL_CSS` 可以只关某一个动画 |
+| `scripts/lh.mjs` | Lighthouse user flow 跑一次导航，输出一行 JSON；`TOKEN`、`TOKEN_KEY` |
+| `scripts/online.sh` | curl 实证下发链路 |
+| `scripts/summarize.py` | bench 结果出表、Lighthouse 结果取中位数 |
+| `package.json` / `package-lock.json` | lighthouse 13.5.0、puppeteer-core 25.12.0、source-map-explorer 2.5.3 |
+
+Chrome 默认用 `/Applications/Google Chrome.app`，换路径时设 `CHROME`。假后端账号是 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`（admin@pandora.dev / user@pandora.dev），换账号时设 `MOCK_EMAIL`、`MOCK_PASSWORD`。
+
+## 坑
+
+- **`go build` / `go test` 不要和 `npm ci` 同时跑**：`node_modules` 里的 flatted 带 Go 包，并发时 go 会假失败。prep 期间别跑 Go 的验证。
+- **无头 Chrome 的数字偏大**：没有 GPU 合成，动画、重绘的成本会被放大。只拿它做同一台机器上的开关对照、改前改后对照；绝对值以有 GPU 的真浏览器复核为准。同一组对照要在同一次会话、机器空闲时跑，每格至少跑两遍。
+- **呼吸灯吃主线程**：
+  - `admin/EventsCapsule.module.css` 的 `.dotLive` 用 `animation: pulse 2s infinite` 动画 box-shadow，每帧都要重绘。
+  - 1000 节点页上实测每 10 秒 1964 ms，关掉后 40 ms。
+  - 修法是改成只走合成层的 transform / opacity，并尊重 `prefers-reduced-motion`。改完用 `run.sh idle` 验证。
+- **gzip_types 对不上 text/javascript**：
+  - Go 的 webapp 给 `.js` 发 `text/javascript; charset=utf-8`，nginx 按分号前的类型匹配 `gzip_types`。
+  - 旧模板只登记了 `application/javascript`，JS 一直是原样下发的，每个入口冷加载多传约 270 KB。
+  - 模板在 47451e0 补上了 `text/javascript`，但已装的机器要重跑 install.sh 重新渲染 nginx 才生效。上线后必须用 `run.sh online` 看 JS 有没有 `Content-Encoding`，不能只读配置。
+- **HTTP/2**：
+  - nginx 1.25.1 及以上写 `http2 on;`，更老的版本写 `listen … ssl http2`，`render-nginx.sh` 按版本渲染。
+  - HTTP/1.1 下每个源最多 6 条连接，每个标签页的 SSE 长期占一条，第 6 个标签页之后新页面会挂住。
+  - 开 h2 后每个并发请求都算一条 `limit_conn`，所以上限提到了 64。
+- **前面有 Cloudflare 橙云时**：浏览器到边缘那段本来就是 h2/h3 加压缩，curl 和 Lighthouse 量的是边缘，量不到源站。要看源站，就在机器上用 curl 请求回环 `127.0.0.1:9080`，或者用 `--resolve` 直连源站。
+- **SSE 让网络永远不空闲**：puppeteer、Lighthouse 都不能等 `networkidle`，要等 `load` 再加固定延时。
+- **只差 `#路由` 的导航是同文档跳转**：Lighthouse 量不到绘制，报 NO_FCP。所以 `lh.mjs` 的热缓存先跳到 `about:blank` 再回来。
+- **冷缓存会清掉 localStorage**，令牌是每个新文档开始时由 `evaluateOnNewDocument` 重新写入的。键名是 `pandora-portal-token` / `pandora-admin-token`。令牌由总协调从 1Password 给，经环境变量传入，不落盘、不写进结果文件。
+- **事件风暴的来源**：
+  - 迁移 00021 的 `zz_notify_nodes` 是 `AFTER UPDATE FOR EACH ROW`，没有 WHEN 条件，每次心跳都广播 `nodes.changed`，门户频道也收得到。
+  - `core/query.ts` 按 topic 节流 2 秒，结果是事件不停就每 2 秒重拉一次 1.26 MB 的列表。
+  - 假后端的 `PERF_TRIGGER=old` 就是在模拟这个，测修复效果时对照 `new`。
+- **静态资源曾经经过 Redis 限流**：每 IP 每分钟 120 次，共用 IP 的用户冷加载会拿到 429，表现是白屏。1767a52 已经把 `webapp.Mount` 挪到限流之前；改 router 时用 curl 连打 `/assets/` 复核不会 429。
+- **nodes-bench 依赖页面文案和列表形态**：
+  - 依赖 aria-label「选择 <名>」「全选当前列表」「搜索节点」，改了文案要同步改脚本。
+  - 列表改成服务端翻页或搜索后，`/v1/nodes?` 的参数和每页行数都会变，`EXPECT_ROWS` 要跟着改。搜索那一项只量到发请求前的那一帧。
+- **假后端补丁靠锚点**：`patch-mock.py` 锚在 `dev/mock/admin/nodes.ts` 的 `store[0]!.routing = …` 和 `dev/mock-api.ts` 的 SSE 保活定时器、`mockApi` 插件块上。假后端改过之后锚点对不上，脚本会报错退出，照报错位置更新脚本，不要手改拷贝凑合。
+- **sizes 用的是 gzip-9**，nginx 实际是 5 级，线上传输会略大。「首屏」只算 index.html 引用的文件和静态 import；后台路由分包原先要等 `v1/me` 回来才开始下，现在有 `admin/prefetch.ts` 并行预取，看串行往返要用 Lighthouse 的网络瀑布确认。
+- `npm ci` 每次都会删掉 node_modules 重装，run.sh 用 lock 文件的哈希做了跳过；拷贝里的依赖坏了，删掉 `W/fe/node_modules` 再 prep。

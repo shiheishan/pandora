@@ -205,7 +205,9 @@ func TestTrojanSchemaUsesXboardNestedShape(t *testing.T) {
 
 func TestTrojanXboardRealityConfigPassesAdminValidation(t *testing.T) {
 	key := strings.Repeat("A", 43) // 32 字节的无填充 base64url 编码，仅用于测试
-	raw := json.RawMessage(`{"network":"tcp","tls":2,"reality_settings":{"dest":"www.example.com:443","server_name":"www.example.com","private_key":"` + key + `","public_key":"` + key + `","short_id":"01234567"}}`)
+	// 全零私钥（clamp 后）对应的公钥：校验器要求两把钥匙成对
+	pub := "L-V9o0fNYkMVKNqsX7spBzD_9oSvxM_C7ZCZX1jLO3Q"
+	raw := json.RawMessage(`{"network":"tcp","tls":2,"reality_settings":{"dest":"www.example.com:443","server_name":"www.example.com","private_key":"` + key + `","public_key":"` + pub + `","short_id":"01234567"}}`)
 	version, fields := ValidateAdminProtocolConfig("trojan", "pandora-native", 443, raw)
 	if version != 1 || len(fields) != 0 {
 		t.Fatalf("xboard-shaped Trojan REALITY config rejected: version=%d fields=%v", version, fields)

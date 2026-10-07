@@ -19,11 +19,13 @@ import {
   orders,
   paymentFor,
   providers,
+  providerSecrets,
   providerView,
   subscriptionEnded,
   todayLocal,
   type Adjustment,
   type Order,
+  type Provider,
 } from './billing-store.ts'
 import { plans } from './plans-store.ts'
 import { userStore } from './users.ts'
@@ -33,6 +35,59 @@ const LATE = ['', 'suspense', 'applied', 'refunded', 'manual_review', 'refund_pe
 const chars = (v: unknown) => (typeof v === 'string' ? [...v.trim()].length : 0)
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 const BAD_JSON = err(400, 'bad_request', '请求体不是合法的 JSON')
+
+// ---- 支付渠道写入：照 billing/provider_admin.go 的 normalizeProviderSettings ----
+const EPAY_METHODS = ['alipay', 'wxpay', 'qqpay']
+const PROVIDER_SETTINGS = ['display_name', 'base_url', 'submit_path', 'api_path', 'methods', 'default_method', 'allow_private_host', 'merchant_id', 'key'] as const
+const PROVIDER_PATH = /^\/[A-Za-z0-9._~/-]{0,127}$/
+const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/
+
+/** 解析失败或空串回 null */
+function parseURL(raw: string): URL | null {
+  if (!raw) return null
+  try {
+    return new URL(raw)
+  } catch {
+    return null
+  }
+}
+
+interface ProviderSettings {
+  config: Pick<Provider, 'display_name' | 'base_url' | 'submit_path' | 'api_path' | 'methods' | 'default_method' | 'allow_private_host'>
+  merchant_id: string
+  key: string
+}
+
+function providerSettings(body: Json): { ok: ProviderSettings } | { fields: Record<string, string> } {
+  const f: Record<string, string> = {}
+  const display_name = str(body.display_name).trim()
+  if (chars(display_name) < 1 || chars(display_name) > 40) f.display_name = '名称需为 1–40 个字'
+  const allow = body.allow_private_host === true
+  const base_url = str(body.base_url).trim().replace(/\/+$/, '')
+  const url = parseURL(base_url)
+  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:') || url.search || url.hash || url.username) f.base_url = '请填写完整的站点地址，如 https://pay.example.com'
+  else if (url.protocol !== 'https:' && !allow) f.base_url = '站点地址必须使用 https'
+  else if (!allow && PRIVATE_HOST.test(url.hostname)) f.base_url = `渠道配置校验未通过：主机 "${url.hostname}" 解析到非公网地址`
+  const paths = { submit_path: str(body.submit_path).trim() || '/submit.php', api_path: str(body.api_path).trim() || '/api.php' }
+  for (const k of ['submit_path', 'api_path'] as const) if (!PROVIDER_PATH.test(paths[k]) || paths[k].startsWith('//')) f[k] = '路径需以 / 开头，只含字母、数字与 . _ ~ / -'
+  const raw = Array.isArray(body.methods) ? body.methods.map((m) => str(m).trim()) : []
+  const methods: string[] = []
+  for (const m of raw) {
+    if (!EPAY_METHODS.includes(m)) f.methods = '支付方式只能从支付宝、微信支付、QQ 钱包中选'
+    else if (!methods.includes(m)) methods.push(m)
+  }
+  if (methods.length === 0 && !f.methods) f.methods = '至少选一种支付方式'
+  const default_method = str(body.default_method).trim() || (methods[0] ?? '')
+  if (!f.methods && !methods.includes(default_method)) f.default_method = '默认方式必须是已勾选的方式之一'
+  if (Object.keys(f).length) return { fields: f }
+  return {
+    ok: {
+      config: { display_name, base_url, ...paths, methods, default_method, allow_private_host: allow },
+      merchant_id: str(body.merchant_id).trim(),
+      key: str(body.key).trim(),
+    },
+  }
+}
 
 function unknownField(body: Json, allowed: readonly string[]): MockResult | null {
   const extra = Object.keys(body).find((k) => !allowed.includes(k))
@@ -360,6 +415,58 @@ export const billing: MockModule = {
       p.enabled = body.enabled === true
       p.accepting_new = body.accepting_new === true
       ctx.send(200, { ok: true })
+    },
+
+    // 新建：billing.provider.write → reauth → 幂等；建出来是「已启用、暂停收新单」，只回凭据是否变更
+    'POST /v1/payment-providers': async (ctx) => {
+      if (!ctx.requirePermission('billing.provider.write') || !ctx.requireReauth()) return
+      const body = await ctx.body()
+      if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
+      await ctx.idempotent('payment_provider_create', () => {
+        const bad = unknownField(body, ['code', 'adapter', ...PROVIDER_SETTINGS])
+        if (bad) return bad
+        const parsed = providerSettings(body)
+        const f = 'fields' in parsed ? { ...parsed.fields } : {}
+        const code = str(body.code).trim()
+        if (!/^[a-z][a-z0-9_-]{1,31}$/.test(code)) f.code = '编码需为 2–32 位小写字母、数字、- 或 _，以字母开头'
+        else if (code === 'offline') f.code = 'offline 是系统内置渠道的编码'
+        if (str(body.adapter).trim() !== 'epay') f.adapter = '只支持易支付（epay）'
+        if (!str(body.merchant_id).trim()) f.merchant_id = '必填'
+        if (!str(body.key).trim()) f.key = '必填'
+        if (Object.keys(f).length || !('ok' in parsed)) return invalid(f)
+        if (providers.some((p) => p.code === code)) return err(409, 'conflict', '渠道编码已存在，请换一个')
+        const p: Provider = { id: randomUUID(), code, adapter: 'epay', enabled: true, accepting_new: false, has_credentials: true, currencies: ['CNY'], ...parsed.ok.config }
+        providers.push(p)
+        providerSecrets.set(p.id, { merchant_id: parsed.ok.merchant_id, key: parsed.ok.key })
+        return { status: 201, body: { id: p.id, code, credentials_changed: true } }
+      })
+    },
+
+    // 编辑：请求体不收 code / adapter（建后不可改）；商户号、密钥留空 = 不改；offline 与非易支付只读
+    'PUT /v1/payment-providers/:code': async (ctx) => {
+      if (!ctx.requirePermission('billing.provider.write') || !ctx.requireReauth()) return
+      const body = await ctx.body()
+      if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
+      await ctx.idempotent('payment_provider_update', () => {
+        const bad = unknownField(body, PROVIDER_SETTINGS)
+        if (bad) return bad
+        const parsed = providerSettings(body)
+        if ('fields' in parsed) return invalid(parsed.fields)
+        const p = providers.find((x) => x.code === ctx.params.code)
+        if (!p) return NOT_FOUND
+        if (p.code === 'offline' || p.adapter === 'offline') return err(409, 'conflict', '系统内置渠道不可编辑')
+        if (p.adapter !== 'epay') return err(409, 'conflict', '这类渠道不支持在后台编辑')
+        const current = providerSecrets.get(p.id) ?? { merchant_id: '', key: '' }
+        const next = { merchant_id: parsed.ok.merchant_id || current.merchant_id, key: parsed.ok.key || current.key }
+        const missing: Record<string, string> = {}
+        if (!next.merchant_id) missing.merchant_id = '该渠道还没有商户号，需填写'
+        if (!next.key) missing.key = '该渠道还没有密钥，需填写'
+        if (Object.keys(missing).length) return invalid(missing)
+        const changed = next.merchant_id !== current.merchant_id || next.key !== current.key
+        Object.assign(p, parsed.ok.config, { has_credentials: true })
+        providerSecrets.set(p.id, next)
+        return { status: 200, body: { id: p.id, code: p.code, credentials_changed: changed } }
+      })
     },
 
     // ---- 收入调整（报表口径，只追加）---------------------------------------------

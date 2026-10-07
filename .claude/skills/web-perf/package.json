@@ -1,0 +1,14 @@
+{
+  "name": "pandora-web-perf-tools",
+  "private": true,
+  "type": "module",
+  "description": "web-perf skill 的测量工具：装在会话 scratchpad 里用，不进 panel/frontend",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "lighthouse": "13.5.0",
+    "puppeteer-core": "25.12.0",
+    "source-map-explorer": "2.5.3"
+  }
+}

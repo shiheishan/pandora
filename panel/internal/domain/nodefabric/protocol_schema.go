@@ -92,10 +92,12 @@ func ProtocolSchemas() []ProtocolSchema {
 		{NodeType: "hysteria2", Version: 1, Status: "stable",
 			Required: []string{"cert_path", "key_path"},
 			AllowedProperties: []string{"network", "cert_path", "key_path",
-				"obfs.type", "obfs.password", "bandwidth.up", "bandwidth.down", "udp_timeout"},
+				"obfs.type", "obfs.password", "bandwidth.up", "bandwidth.down", "udp_timeout",
+				"tls_settings.server_name", "tls_settings.allow_insecure"},
 			Enums: map[string][]string{"network": {"udp"}, "obfs.type": {"salamander"}},
 			PropertyTypes: map[string]string{
-				"bandwidth.up": "number", "bandwidth.down": "number"},
+				"bandwidth.up": "number", "bandwidth.down": "number",
+				"tls_settings.allow_insecure": "boolean"},
 			SensitiveProperties: []string{"obfs.password"}},
 		{NodeType: "juicity", Version: 1, Status: "stable",
 			Required:          []string{"cert_path", "key_path"},
@@ -110,10 +112,11 @@ func ProtocolSchemas() []ProtocolSchema {
 			Enums:             map[string][]string{"network": {"tcp"}, "security": {"none"}},
 			PropertyTypes:     map[string]string{"tls": "boolean"}},
 		{NodeType: "naive", Version: 1, Status: "stable",
-			Required:          []string{"tls", "cert_path", "key_path"},
-			AllowedProperties: []string{"network", "tls", "cert_path", "key_path", "security"},
-			Enums:             map[string][]string{"network": {"tcp"}, "security": {"none"}},
-			PropertyTypes:     map[string]string{"tls": "boolean"}},
+			Required: []string{"tls", "cert_path", "key_path"},
+			AllowedProperties: []string{"network", "tls", "cert_path", "key_path", "security",
+				"tls_settings.server_name", "tls_settings.allow_insecure"},
+			Enums:         map[string][]string{"network": {"tcp"}, "security": {"none"}},
+			PropertyTypes: map[string]string{"tls": "boolean", "tls_settings.allow_insecure": "boolean"}},
 		// xboard 的 transport 是大写的 TCP / UDP，内核要小写，
 		// 转换在 applyKernelShapeFixups 里。
 		{NodeType: "mieru", Version: 1, Status: "stable",
@@ -129,14 +132,19 @@ func ProtocolSchemas() []ProtocolSchema {
 			PropertyTypes:       map[string]string{"version": "number", "server_port": "number", "strict": "boolean"},
 			SensitiveProperties: []string{"password"}},
 		{NodeType: "tuic", Version: 1, Status: "stable",
-			Required:          []string{"cert_path", "key_path"},
-			AllowedProperties: []string{"network", "cert_path", "key_path", "congestion_control", "auth_timeout", "heartbeat", "udp_timeout", "zero_rtt"},
-			Enums:             map[string][]string{"network": {"udp"}, "congestion_control": {"cubic", "new_reno", "bbr"}},
-			PropertyTypes:     map[string]string{"zero_rtt": "boolean"}},
+			Required: []string{"cert_path", "key_path"},
+			AllowedProperties: []string{"network", "cert_path", "key_path", "congestion_control", "auth_timeout", "heartbeat", "udp_timeout", "zero_rtt",
+				"tls_settings.server_name", "tls_settings.allow_insecure"},
+			Enums:         map[string][]string{"network": {"udp"}, "congestion_control": {"cubic", "new_reno", "bbr"}},
+			PropertyTypes: map[string]string{"zero_rtt": "boolean", "tls_settings.allow_insecure": "boolean"}},
+		// AnyTLS 证书必填：没证书时节点端以明文起，而所有客户端都强制 TLS，
+		// 存得进去却谁都连不上（校验在 xboard_validate.go:requireAnyTLSCertificate）。
 		{NodeType: "anytls", Version: 1, Status: "stable",
-			AllowedProperties: []string{"network", "tls", "cert_path", "key_path", "padding_scheme"},
-			Enums:             map[string][]string{"network": {"tcp"}},
-			PropertyTypes:     map[string]string{"tls": "boolean", "padding_scheme": "json"}},
+			Required: []string{"cert_path", "key_path"},
+			AllowedProperties: []string{"network", "tls", "cert_path", "key_path", "padding_scheme",
+				"tls_settings.server_name", "tls_settings.allow_insecure"},
+			Enums:         map[string][]string{"network": {"tcp"}},
+			PropertyTypes: map[string]string{"tls": "boolean", "padding_scheme": "json", "tls_settings.allow_insecure": "boolean"}},
 		{NodeType: "trojan", Version: 1, Status: "stable",
 			// Trojan 的管理端形状与 vless/vmess 保持一致：REALITY 参数收进
 			// reality_settings，传输参数收进 network_settings，uTLS 指纹叫 utls。
@@ -151,6 +159,8 @@ func ProtocolSchemas() []ProtocolSchema {
 				"reality_settings.dest", "reality_settings.server_name",
 				"reality_settings.private_key", "reality_settings.public_key",
 				"reality_settings.short_id", "flow",
+				// 普通 TLS（tls=1）时给客户端的 SNI 与「跳过证书校验」，只进订阅。
+				"tls_settings.server_name", "tls_settings.allow_insecure",
 				// mKCP 及其掩码。network 枚举里有 mkcp，属性表里就得有对应
 				// 字段，否则后台能选 mkcp 却配不了任何 mKCP 参数。
 				"mtu", "tti", "uplink_capacity", "downlink_capacity", "congestion",
@@ -159,7 +169,7 @@ func ProtocolSchemas() []ProtocolSchema {
 				"network": {"tcp", "ws", "httpupgrade", "grpc", "mkcp"},
 				"tls":     {"1", "2"},
 			},
-			PropertyTypes: map[string]string{"tls": "number",
+			PropertyTypes: map[string]string{"tls": "number", "tls_settings.allow_insecure": "boolean",
 				"mtu": "number", "tti": "number", "uplink_capacity": "number",
 				"downlink_capacity": "number", "congestion": "boolean",
 				"read_buffer_size": "number", "write_buffer_size": "number"},

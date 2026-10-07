@@ -240,4 +240,9 @@ func TestDeliveryAdminPG18(t *testing.T) {
 		t.Fatalf("node list missing fixture nodes: %+v", list.Nodes)
 	}
 	t.Log("delivery_admin_pg18 plan_pools_notify=commit-only node_list_delivery=node_users")
+
+	// 套餐页的可下发节点数、节点列表的下发说明与订阅下载同口径
+	t.Run("deliverable_admin", func(t *testing.T) {
+		runDeliverableAdminPG18(t, ctx, admin, app, d, tenant, owner, plan, published, pool, pooled)
+	})
 }

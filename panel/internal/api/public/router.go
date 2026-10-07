@@ -57,7 +57,9 @@ type Deps struct {
 }
 
 func NewRouter(d Deps) http.Handler {
-	r := chi.NewRouter()
+	// mux 是根路由；r 起初就是它，挂完静态前端后换成带基础限流的内联路由（见下）
+	mux := chi.NewRouter()
+	var r chi.Router = mux
 
 	// 全局链：顺序有讲究 ——
 	// RequestID 最先（后续所有日志都要带它），Recovery 紧随（要能兜住后面所有 panic），
@@ -71,18 +73,22 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(middleware.Authenticate(d.Pool, d.Issuer, d.Log))
 	r.Use(middleware.DomainGuard(string(config.DomainPublic), d.Log))
 
-	// 基础限流：IP + 网段两个维度联合，单换 IP 绕不过网段（SEC-002）
-	r.Use(middleware.RateLimit(d.Redis, d.Log,
+	// 用户门户前端：入口 / 与 /assets/*，放在 /v1 之外，与 API 命名空间互不干扰。
+	// 同时注册 HEAD：健康探针与 CDN 预检常用 HEAD，只注册 GET 会让它们收到 404。
+	// 字面量 /assets 优先于下面的 /{prefix}/{token}，而订阅前缀是 12 位十六进制（迁移 00018），永远不会等于 assets。
+	// 挂在基础限流之前：入口与带哈希的不可变资源是嵌入二进制的只读文件，不碰 Valkey，
+	// 也不占每 IP 的额度（冷加载约 20 个资源，共用出口 IP 的用户容易被 429 成白屏）。
+	// 边缘 nginx 的 limit_req 照旧兜着。守卫：router_ratelimit_test.go
+	webapp.Mount(r, web.PortalApp)
+
+	// 基础限流：IP + 网段两个维度联合，单换 IP 绕不过网段（SEC-002）。
+	// 之后注册的路由（含 NotFound / MethodNotAllowed）全部经过它
+	r = r.With(middleware.RateLimit(d.Redis, d.Log,
 		middleware.ByIP("pub_ip", time.Minute, d.Cfg.RateLimitPerIPPerMinute),
 		middleware.ByIPPrefix("pub_net", time.Minute, d.Cfg.RateLimitPerIPPerMinute*8),
 	))
 
 	h := &handlers{d: d}
-
-	// 用户门户前端：入口 / 与 /assets/*，放在 /v1 之外，与 API 命名空间互不干扰。
-	// 同时注册 HEAD：健康探针与 CDN 预检常用 HEAD，只注册 GET 会让它们收到 404。
-	// 字面量 /assets 优先于下面的 /{prefix}/{token}，而订阅前缀是 12 位十六进制（迁移 00018），永远不会等于 assets。
-	webapp.Mount(r, web.PortalApp)
 
 	r.Get("/healthz", h.health)
 	r.Get("/readyz", h.ready)
@@ -298,5 +304,5 @@ func NewRouter(d Deps) http.Handler {
 		httpx.Fail(w, r, d.Log, httpx.NotFoundOrForbidden())
 	})
 
-	return r
+	return mux
 }

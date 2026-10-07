@@ -102,14 +102,27 @@ VALKEY_PW="$(rand_hex 24)"
 ADMIN_EMAIL="smoke-admin@example.test"
 ADMIN_PASS="Smoke-$(rand_hex 16)"
 
+# 网关与生产一样经 unix socket 连 PG 与 Valkey（docker-compose.yml 的 run/ 挂载，install.sh
+# 把 .env 换成 socket 连接串），不走 docker-proxy；回环端口照留给迁移与造数据。
+# socket 路径不能超过 107 字节，状态目录太深就直接拒绝
+SOCK_PG_DIR="$STATE/run/postgresql"
+SOCK_VK="$STATE/run/valkey/valkey.sock"
+(( ${#SOCK_PG_DIR} + 15 <= 107 && ${#SOCK_VK} <= 107 )) || {
+  echo "状态目录路径太长，unix socket 放不下：$STATE" >&2; exit 2; }
+mkdir -p "$SOCK_PG_DIR" "$(dirname "$SOCK_VK")"
+
 echo "==> 起 PostgreSQL 18 与 Valkey 8"
 echo "$PG_CONTAINER" >> "$STATE/containers"
 docker run -d --name "$PG_CONTAINER" \
   -e POSTGRES_PASSWORD="$PG_SUPER_PW" -e POSTGRES_USER="$PG_SUPER" -e POSTGRES_DB="$PG_DB" \
+  -v "$SOCK_PG_DIR:/var/run/postgresql" \
   -p 127.0.0.1::5432 "$PG_IMAGE" >/dev/null
 echo "$VK_CONTAINER" >> "$STATE/containers"
-docker run -d --name "$VK_CONTAINER" -p 127.0.0.1::6379 "$VALKEY_IMAGE" \
-  valkey-server --requirepass "$VALKEY_PW" >/dev/null
+# 生产是 770（网关以 root 运行）；runner 上网关是普通用户、不在 valkey 组，冒烟放宽到 777
+docker run -d --name "$VK_CONTAINER" -p 127.0.0.1::6379 \
+  -v "$(dirname "$SOCK_VK"):/data/sock" "$VALKEY_IMAGE" \
+  valkey-server --requirepass "$VALKEY_PW" \
+  --unixsocket /data/sock/valkey.sock --unixsocketperm 777 >/dev/null
 
 # 就绪检查走 TCP，理由同 run-pg18-gates.sh：镜像初始化时先起一个只听 unix socket
 # 的临时实例，经 socket 探测会在它身上报「就绪」，紧接着的迁移正好撞上它关停。
@@ -129,12 +142,41 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 [[ -n "$ready" ]] || { echo "Valkey 30 秒内没有就绪" >&2; false; }
+ready=""
+for _ in $(seq 1 30); do
+  if [[ -S "$SOCK_PG_DIR/.s.PGSQL.5432" && -S "$SOCK_VK" ]]; then ready=1; break; fi
+  sleep 1
+done
+[[ -n "$ready" ]] || { echo "宿主机上 30 秒内没有出现 PG / Valkey 的 unix socket" >&2; ls -la "$STATE/run"/* >&2 || true; false; }
 
 PG_PORT="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' "$PG_CONTAINER")"
-VK_PORT="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "6379/tcp") 0).HostPort}}' "$VK_CONTAINER")"
 MIGRATION_DSN="postgres://${PG_SUPER}:${PG_SUPER_PW}@127.0.0.1:${PG_PORT}/${PG_DB}?sslmode=disable"
-APP_DSN="postgres://aegis_app:${APP_PW}@127.0.0.1:${PG_PORT}/${PG_DB}?sslmode=disable"
+# 运行角色走 socket（与 install.sh 换出来的形式一致）：host 是目录，端口决定文件名 .s.PGSQL.5432
+APP_DSN="postgres://aegis_app:${APP_PW}@/${PG_DB}?host=${SOCK_PG_DIR}"
 echo "    $(docker exec "$PG_CONTAINER" psql -U "$PG_SUPER" -d "$PG_DB" -tAc 'SELECT version()' | cut -d, -f1)"
+
+# ---------------------------------------------------------------------------
+# 回环往返对照（只打印、不判，失败也不拦起栈）：同一个库上各 1000 次 SELECT 1，
+# 一边是经 docker-proxy 的回环 TCP（宿主端口），一边是挂出来的 unix socket。
+# pgbench 用 PG 镜像自带的，跑在宿主网络命名空间里，等同宿主机上的进程；单连接、不重连，
+# 测的是纯往返。PANDORA_SMOKE_RTT=0 跳过
+# ---------------------------------------------------------------------------
+rtt_once() {
+  local label="$1" host="$2" port="$3"; shift 3
+  ( export PGPASSWORD="$PG_SUPER_PW" PGUSER="$PG_SUPER" PGDATABASE="$PG_DB" PGHOST="$host" PGPORT="$port"
+    docker run --rm --network host -e PGPASSWORD -e PGUSER -e PGDATABASE -e PGHOST -e PGPORT "$@" \
+      --entrypoint sh "$PG_IMAGE" -c 'echo "SELECT 1;" > /tmp/q.sql && pgbench -n -c 1 -t 1000 -f /tmp/q.sql' 2>&1 ) \
+    | awk -v l="$label" '/latency average/ { print "    " l "：1000 次 SELECT 1，" $0 }'
+}
+if [[ "${PANDORA_SMOKE_RTT:-1}" != 0 ]]; then
+  echo "==> 回环往返对照（docker-proxy：$(pgrep -x docker-proxy >/dev/null && echo 在跑 || echo 没有)）"
+  {
+    for round in 1 2 3; do
+      rtt_once "第 $round 轮 TCP 127.0.0.1:$PG_PORT（经 docker-proxy）" 127.0.0.1 "$PG_PORT"
+      rtt_once "第 $round 轮 unix socket" /var/run/postgresql 5432 -v "$SOCK_PG_DIR:/var/run/postgresql"
+    done
+  } | tee "$STATE/rtt.txt" || true
+fi
 
 # ---------------------------------------------------------------------------
 # 迁移与运行角色：和生产同一条路
@@ -158,7 +200,7 @@ docker exec -i -e PGPASSWORD="$PG_SUPER_PW" -e AEGIS_DB_APP_PASSWORD="$APP_PW" "
 cat > "$STATE/gateway.env" <<EOF
 AEGIS_ENV=test
 AEGIS_DATABASE_URL=$APP_DSN
-AEGIS_REDIS_URL=redis://:${VALKEY_PW}@127.0.0.1:${VK_PORT}/0
+AEGIS_REDIS_URL=unix://:${VALKEY_PW}@${SOCK_VK}?db=0
 AEGIS_PUBLIC_ADDR=$PUB_ADDR
 AEGIS_ADMIN_ADDR=$ADM_ADDR
 AEGIS_NODE_ADDR=$NODE_ADDR

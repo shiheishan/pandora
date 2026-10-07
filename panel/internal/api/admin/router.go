@@ -83,7 +83,9 @@ type Deps struct {
 }
 
 func NewRouter(d Deps) http.Handler {
-	r := chi.NewRouter()
+	// mux 是根路由；r 起初就是它，挂完静态前端后换成带基础限流的内联路由（见下）
+	mux := chi.NewRouter()
+	var r chi.Router = mux
 
 	r.Use(middleware.RequestID)
 	r.Use(middleware.ClientInfo)
@@ -96,16 +98,18 @@ func NewRouter(d Deps) http.Handler {
 	// 即使签名侥幸通过也会在这一层被挡下（EXT-001 验收）。
 	r.Use(middleware.DomainGuard(string(config.DomainAdmin), d.Log))
 
+	// 管理控制台前端：入口 / 与 /assets/*，只接 GET/HEAD。
+	// 挂在基础限流之前：静态资源不碰 Valkey、不占每 IP 的额度。守卫：router_ratelimit_test.go
+	webapp.Mount(r, web.AdminApp)
+
 	// 管理面的限流比用户面更严：正常管理操作频率远低于用户侧，
-	// 高频访问本身就是异常信号。
-	r.Use(middleware.RateLimit(d.Redis, d.Log,
+	// 高频访问本身就是异常信号。之后注册的路由（含 NotFound / MethodNotAllowed）全部经过它
+	r = r.With(middleware.RateLimit(d.Redis, d.Log,
 		middleware.ByIP("adm_ip", time.Minute, 240),
 	))
 
 	h := &handlers{d: d}
 
-	// 管理控制台前端：入口 / 与 /assets/*，只接 GET/HEAD
-	webapp.Mount(r, web.AdminApp)
 	r.Get("/healthz", h.health)
 	r.Get("/readyz", h.ready)
 
@@ -186,5 +190,5 @@ func NewRouter(d Deps) http.Handler {
 		httpx.Fail(w, r, d.Log, httpx.NotFoundOrForbidden())
 	})
 
-	return r
+	return mux
 }

@@ -6,7 +6,8 @@ import { Button, Drawer, Empty, Skeleton, Tabs, Tag } from '../../../ui'
 import { useCan } from '../../actions'
 import { useInvalidateUsers, useUser, type UserDetail } from './api'
 import { BalanceForm, ResetPasswordDialog, RotateDialog, StatusDialog } from './dialogs'
-import { initial, shortId, USER_STATUS_VIEW } from './model'
+import { ExtendDialog } from './ExtendDialog'
+import { extendableSubscriptions, initial, shortId, USER_STATUS_VIEW } from './model'
 import { ResetHistory } from './Resets'
 import { RiskTab } from './RiskTab'
 import { DevicesTab, OrdersTab, ProfileTab, SubscriptionsTab } from './tabs'
@@ -79,7 +80,7 @@ function DrawerTitle({ d }: { d: UserDetail }) {
   )
 }
 
-type Dialog = 'status' | 'password' | 'rotate' | null
+type Dialog = 'status' | 'password' | 'rotate' | 'extend' | null
 
 function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t: DrawerTab) => void; now: Date }) {
   const can = useCan()
@@ -95,7 +96,8 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
   // 待验证、注销中、已匿名的账号不给启停：后端只收 active / suspended / banned 之间的切换语义
   const toggleable = d.status === 'active' || disabled
   // 只读账号一个操作都没有时，不留空的操作条
-  const hasActions = canWrite || can('billing.provider.write') || can('billing.order.write')
+  const canExtend = can('billing.adjustment.write') && extendableSubscriptions(d.subscriptions).length > 0
+  const hasActions = canWrite || canExtend || can('billing.provider.write') || can('billing.order.write')
 
   return (
     <div className={css.drawerBody}>
@@ -121,6 +123,11 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
               更换订阅地址
             </Button>
           )}
+          {canExtend && (
+            <Button size="sm" onClick={() => setDialog('extend')}>
+              加时长
+            </Button>
+          )}
           {can('billing.order.write') && (
             <Button size="sm" onClick={() => navigate('/billing/orders', { query: { new: d.id } })}>
               为其开单
@@ -141,6 +148,7 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
       <StatusDialog user={d} open={dialog === 'status'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
       <ResetPasswordDialog user={d} open={dialog === 'password'} onClose={() => setDialog(null)} />
       <RotateDialog user={d} open={dialog === 'rotate'} onClose={() => setDialog(null)} onDone={() => void invalidate()} />
+      <ExtendDialog user={d} open={dialog === 'extend'} onClose={() => setDialog(null)} onDone={() => void invalidate()} now={now} />
     </div>
   )
 }

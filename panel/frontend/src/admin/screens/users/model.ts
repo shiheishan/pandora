@@ -360,3 +360,37 @@ export function exactEmail<T extends Pick<UserRow, 'email'>>(users: readonly T[]
   const want = email.trim().toLowerCase()
   return want ? users.find((u) => u.email.toLowerCase() === want) : undefined
 }
+
+// ===========================================================================
+// 加时长：POST v1/subscriptions/{id}/extend，口径与后端 billing.subscriptionExtendable、
+// validateAdminExtend、extendSubscriptionTx 一致
+// ===========================================================================
+export const EXTEND_DAYS_MAX = 3650
+export const EXTEND_PRESETS = [7, 30, 90] as const
+
+/** 能加时长的订阅：只有生效中（active）且有到期时间的；别的状态后端回 409，没有到期时间回 422 */
+export function extendableSubscriptions<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T[] {
+  return subs.filter((s) => s.status === 'active' && s.current_period_end !== null)
+}
+
+/** 天数：1 到 3650 的整数，否则 null（后端 fields.days） */
+export function parseExtendDays(input: string): number | null {
+  const v = input.trim()
+  if (!/^\d{1,4}$/.test(v)) return null
+  const n = Number(v)
+  return n >= 1 && n <= EXTEND_DAYS_MAX ? n : null
+}
+
+/** 原因 5–500 字（后端 fields.reason） */
+export function extendReasonProblem(reason: string): string | null {
+  const n = [...reason.trim()].length
+  if (n < REASON_MIN) return `请写清加时长的原因，至少 ${REASON_MIN} 个字`
+  if (n > NOTE_MAX) return `原因不超过 ${NOTE_MAX} 个字`
+  return null
+}
+
+/** 预计新到期：从「原到期」与「现在」里更晚的那个起算，加 days 个 24 小时（后端按 UTC 加天） */
+export function extendedEnd(periodEnd: string, days: number, now: Date): Date {
+  const base = Math.max(new Date(periodEnd).getTime(), now.getTime())
+  return new Date(base + days * DAY)
+}

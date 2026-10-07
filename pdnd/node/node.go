@@ -62,8 +62,10 @@ func NewWithSignedClient(client *panel.Client, kernel core.Core, log *slog.Logge
 		client: client,
 		signed: signed,
 		kernel: kernel,
-		log:    log.With("node", client.NodeID(), "type", client.NodeType()),
-		tag:    client.NodeType() + "-" + client.NodeID(),
+		// type 不在构造时定死：面板下发的协议会经 SetNodeType 改掉它（protocolFrom），
+		// 日志要跟着变；按条从 client 现取，事件流 goroutine 读也不竞争（原子值）
+		log: slog.New(nodeTypeHandler{inner: log.With("node", client.NodeID()).Handler(), client: client}),
+		tag: client.NodeType() + "-" + client.NodeID(),
 		// 面板会在 base_config 里下发真实间隔，这里只是拿不到时的兜底
 		pullInterval: 60 * time.Second,
 		pushInterval: 60 * time.Second,
@@ -680,4 +682,32 @@ func intFrom(m map[string]any, key string) int {
 		return int(i)
 	}
 	return 0
+}
+
+// nodeTypeHandler 给每条日志补上节点当前的协议（type）。
+//
+// 原先构造时 log.With("type", …) 把协议写死，面板下发换了协议之后日志还报旧协议，
+// 排查「这台到底在跑什么」时只会误导。每条现取 client.NodeType()（原子读），既跟得上
+// SetNodeType，也不用在主循环里换 logger（事件流 goroutine 同时在用它）。
+type nodeTypeHandler struct {
+	inner  slog.Handler
+	client *panel.Client
+}
+
+func (h nodeTypeHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.inner.Enabled(ctx, level)
+}
+
+func (h nodeTypeHandler) Handle(ctx context.Context, r slog.Record) error {
+	r = r.Clone()
+	r.AddAttrs(slog.String("type", h.client.NodeType()))
+	return h.inner.Handle(ctx, r)
+}
+
+func (h nodeTypeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return nodeTypeHandler{inner: h.inner.WithAttrs(attrs), client: h.client}
+}
+
+func (h nodeTypeHandler) WithGroup(name string) slog.Handler {
+	return nodeTypeHandler{inner: h.inner.WithGroup(name), client: h.client}
 }

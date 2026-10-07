@@ -651,15 +651,9 @@ func (s *Service) fulfillRenewalLocked(ctx context.Context, tx pgx.Tx, tenantID,
 		return "", fmt.Errorf("更新配额上限: %w", err)
 	}
 
-	// 凭据有效期跟着周期走。token 本身不换 ——
-	// 换了等于让用户所有设备重新导入一次订阅
-	if _, err := tx.Exec(ctx, `
-		UPDATE subscription_credentials
-		   SET expires_at = $3
-		 WHERE tenant_id = $1 AND subscription_id = $2::uuid
-		   AND status = 'active'`,
-		tenantID, subID, newEnd); err != nil {
-		return "", fmt.Errorf("延长凭据有效期: %w", err)
+	// 凭据有效期跟着周期走（token 不换），与礼品卡、后台加时长同一个函数
+	if _, err := syncCredentialExpiryTx(ctx, tx, tenantID, subID, newEnd); err != nil {
+		return "", err
 	}
 
 	if _, err := tx.Exec(ctx, `

@@ -110,6 +110,53 @@ describe('mock api · admin users ops', () => {
     expect(await win()).toBe(30)
   })
 
+  it('extends an active subscription only after reauth, replays the stored result and refuses the rest', async () => {
+    type Detail = { subscriptions: Array<{ id: string; status: string; current_period_end: string | null }> }
+    const detail = (await (await get(`/v1/users/${SEED_USER}`)).json()) as Detail
+    const active = detail.subscriptions.find((s) => s.status === 'active' && s.current_period_end)!
+    const path = `/v1/subscriptions/${active.id}/extend`
+    const body = { days: 7, reason: '补偿线路故障' }
+
+    // 只读账号没有 billing.adjustment.write：404，不暴露接口
+    const viewer = bearer((await loginAs(base, MOCK_ACCOUNTS.viewer)).access_token)
+    expect((await mockFetch(base, viewer, 'POST', path, body, 'extend-viewer')).status).toBe(404)
+
+    await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
+    const blocked = await send('POST', path, body, 'extend-1')
+    expect(blocked.status).toBe(403)
+    expect(await blocked.json()).toMatchObject({ error: { code: 'reauth_required' } })
+    const reauth = await fetch(`${base}/v1/auth/reauth`, { method: 'POST', headers: auth, body: JSON.stringify({ password: MOCK_ACCOUNTS.admin.password }) })
+    auth = { Authorization: `Bearer ${((await reauth.json()) as { access_token: string }).access_token}` }
+
+    expect((await send('POST', path, { ...body, note: 'x' }, 'extend-0')).status).toBe(400)
+    expect(await (await send('POST', path, { days: 0, reason: '短' }, 'extend-0b')).json()).toMatchObject({
+      error: { code: 'validation_failed', fields: { days: expect.any(String), reason: expect.any(String) } },
+    })
+
+    const done = await send('POST', path, body, 'extend-1')
+    expect(done.status).toBe(200)
+    const first = (await done.json()) as { subscription_id: string; days: number; previous_end: string; period_end: string }
+    const base0 = Math.max(Date.parse(active.current_period_end!), Date.now())
+    expect(first).toMatchObject({ subscription_id: active.id, days: 7, previous_end: active.current_period_end })
+    expect(Math.abs(Date.parse(first.period_end) - (base0 + 7 * 86_400_000))).toBeLessThan(60_000)
+    // 同键重放回同一份结果，不再多加 7 天
+    expect(await (await send('POST', path, body, 'extend-1')).json()).toEqual(first)
+    const after = (await (await get(`/v1/users/${SEED_USER}`)).json()) as Detail
+    expect(after.subscriptions.find((s) => s.id === active.id)!.current_period_end).toBe(first.period_end)
+
+    expect((await send('POST', '/v1/subscriptions/00000000-0000-4000-8000-000000000000/extend', body, 'extend-2')).status).toBe(404)
+    const users = (await (await get('/v1/users?limit=100')).json()) as { users: Array<{ id: string }> }
+    let ended: string | undefined
+    for (const u of users.users) {
+      const d = (await (await get(`/v1/users/${u.id}`)).json()) as Detail
+      ended = d.subscriptions.find((s) => s.status === 'expired' || s.status === 'cancelled')?.id
+      if (ended) break
+    }
+    const refused = await send('POST', `/v1/subscriptions/${ended!}/extend`, body, 'extend-3')
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toMatchObject({ error: { code: 'conflict' } })
+  })
+
   it('sets a new password without a reason (R101) but still caps a given reason at 500', async () => {
     const fresh = bearer((await loginAs(base, MOCK_ACCOUNTS.admin)).access_token)
     const reset = (body: unknown) => mockFetch(base, fresh, 'POST', `/v1/users/${SEED_USER}/reset-password`, body)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -32,10 +31,10 @@ func serveNativeWebSocket(listener net.Listener, path, host string, ctx func() c
 		return nil, fmt.Errorf("native websocket server requires listener, context and handler")
 	}
 	upgrader := websocket.Upgrader{ReadBufferSize: 32 * 1024, WriteBufferSize: 32 * 1024, CheckOrigin: func(req *http.Request) bool {
-		return host == "" || strings.EqualFold(strings.TrimSpace(req.Host), host)
+		return requestHostMatches(req.Host, host)
 	}}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL == nil || req.URL.Path != path || (host != "" && !strings.EqualFold(strings.TrimSpace(req.Host), host)) {
+		if req.URL == nil || req.URL.Path != path || !requestHostMatches(req.Host, host) {
 			http.NotFound(w, req)
 			return
 		}

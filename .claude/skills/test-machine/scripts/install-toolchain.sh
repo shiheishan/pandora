@@ -5,6 +5,8 @@ set -euo pipefail
 GO_SERIES="${GO_SERIES:-1.26}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 export DEBIAN_FRONTEND=noninteractive
+# 全新镜像的包索引是空的或过期的，不先 update 会找不到包
+apt-get update -qq >/dev/null
 apt-get install -y -qq curl ca-certificates git xz-utils python3 >/dev/null
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT; cd "$work"
 

@@ -52,11 +52,32 @@ type IssueTokenOutput struct {
 // {{PANEL}} 面板地址 / {{TOKEN}} 引导令牌 / {{NAME}} 节点名
 const (
 	settingInstallTemplate = "node.install_command_template"
-	defaultInstallTemplate = "umask 077; printf 'Bootstrap token: ' >&2; IFS= read -r PANDORA_BOOTSTRAP_TOKEN </dev/tty; " +
-		"PANDORA_TOKEN_FILE=$(mktemp); trap 'PANDORA_RC=$?; rm -f \"$PANDORA_TOKEN_FILE\"; exit \"$PANDORA_RC\"' EXIT; " +
+	defaultInstallTemplate = installTokenPrologue +
+		"printf 'Bootstrap token: ' >&2; " + installEchoOff +
+		"IFS= read -r PANDORA_BOOTSTRAP_TOKEN </dev/tty; " + installEchoOn +
+		"PANDORA_TOKEN_FILE=$(mktemp); " +
 		"printf '%s' \"$PANDORA_BOOTSTRAP_TOKEN\" >\"$PANDORA_TOKEN_FILE\"; " +
 		"unset PANDORA_BOOTSTRAP_TOKEN; curl -fsSL {{PANEL}}/pdnd/install.sh | sh -s -- " +
 		"--token-file \"$PANDORA_TOKEN_FILE\" --name {{NAME}}; PANDORA_RC=$?; rm -f \"$PANDORA_TOKEN_FILE\"; exit $PANDORA_RC"
+)
+
+// installTokenPrologue 是两段接入命令共用的开头：先装好退出与中断时的收尾，再读令牌。
+//
+// 读令牌时关掉终端回显（stty -echo），令牌不留在屏幕和录屏里。read -s 不是 POSIX，
+// dash 不认，所以用 stty。回显必须在每条出路上恢复：读完立刻恢复；EXIT trap 里再恢复
+// 一次并删掉令牌文件（文件名还没生成时为空串，不删）；Ctrl-C、挂断、被杀先转成 exit，
+// 让 EXIT trap 收尾——否则在 Ctrl-C 之后终端一直不回显。stty 与 /dev/tty 失败都静默，
+// 没有终端时照旧读不到令牌、由安装器报错。
+const installTokenPrologue = "umask 077; PANDORA_TOKEN_FILE=; " +
+	"trap 'PANDORA_RC=$?; stty echo </dev/tty 2>/dev/null; " +
+	"[ -z \"$PANDORA_TOKEN_FILE\" ] || rm -f \"$PANDORA_TOKEN_FILE\"; exit \"$PANDORA_RC\"' EXIT; " +
+	"trap 'exit 130' INT; trap 'exit 129' HUP; trap 'exit 143' TERM; "
+
+// installEchoOff / installEchoOn 夹住读令牌的那条 read：读完立刻恢复回显，
+// 并补一个换行（回车没被回显，下一行提示会接在同一行上）。
+const (
+	installEchoOff = "stty -echo </dev/tty 2>/dev/null; "
+	installEchoOn  = "stty echo </dev/tty 2>/dev/null; printf '\\n' >&2; "
 )
 
 // shellQuote 用单引号包裹并转义内部单引号。
@@ -103,8 +124,10 @@ func RenderLegacyInstallCommand(panelURL, nodeID, nodeType string) string {
 	if !safePanelURL.MatchString(panel) {
 		panel = shellQuote(panel)
 	}
-	return "umask 077; printf 'UniProxy runtime token: ' >&2; IFS= read -r PANDORA_RUNTIME_TOKEN </dev/tty; " +
-		"PANDORA_TOKEN_FILE=$(mktemp); trap 'PANDORA_RC=$?; rm -f \"$PANDORA_TOKEN_FILE\"; exit \"$PANDORA_RC\"' EXIT; " +
+	return installTokenPrologue +
+		"printf 'UniProxy runtime token: ' >&2; " + installEchoOff +
+		"IFS= read -r PANDORA_RUNTIME_TOKEN </dev/tty; " + installEchoOn +
+		"PANDORA_TOKEN_FILE=$(mktemp); " +
 		"printf '%s' \"$PANDORA_RUNTIME_TOKEN\" >\"$PANDORA_TOKEN_FILE\"; " +
 		"unset PANDORA_RUNTIME_TOKEN; curl -fsSL " + panel + "/pdnd/install.sh | sh -s -- " +
 		"--node-id " + shellQuote(nodeID) + " --node-type " + shellQuote(nodeType) +

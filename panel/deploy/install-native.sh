@@ -268,8 +268,27 @@ export AEGIS_ENV_FILE="$INSTALL_DIR/deploy/.env"
 export AEGIS_MIGRATIONS_DIR="$INSTALL_DIR/migrations"
 export AEGIS_MIGRATION_DATABASE_URL="postgres://postgres:${PG_SUPER_PASS}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable"
 export GOOSE_BIN="$INSTALL_DIR/bin/goose"
-# 全新库跳过一次性数据库预检（migrate.sh 官方机制：goose_db_version 不存在即全新库）
-export PANDORA_SKIP_PRECHECK_FRESH_DB=yes-empty-database
+# 只有全新库才跳过一次性数据库预检（migrate.sh 的约定：goose_db_version 不存在即全新库）。
+# 以前这里无条件跳过，升级时已有数据的库也不演练就直接迁移
+fresh_db="$(su -s /bin/bash postgres -c "psql -X -d aegis -tAc \"SELECT pg_catalog.to_regclass('public.goose_db_version') IS NULL\"" 2>/dev/null | tr -d '[:space:]')"
+case "$fresh_db" in
+  t) export PANDORA_SKIP_PRECHECK_FRESH_DB=yes-empty-database ;;
+  f) unset PANDORA_SKIP_PRECHECK_FRESH_DB; say "  已有迁移记录，先在一次性克隆库上演练（这一步比较慢）" ;;
+  *) die "查不到库 aegis 的迁移状态，不知道是不是全新库，停下（psql -d aegis 能连上吗？）" ;;
+esac
+
+# 升级前必备份：库里已有迁移记录就先 pg_dump，导出失败或读不出目录就停在迁移之前
+if [[ "$fresh_db" = f ]]; then
+  BACKUP_DIR=/var/backups/pandora
+  install -d -o root -g root -m 0700 "$BACKUP_DIR"
+  BK="$BACKUP_DIR/pre-upgrade-$(date +%Y%m%d-%H%M%S).dump"
+  su -s /bin/bash postgres -c "pg_dump -Fc -d aegis" >"$BK" \
+    || { rm -f -- "$BK"; die "升级前备份失败（pg_dump），迁移没有执行"; }
+  [[ -s "$BK" ]] && su -s /bin/bash postgres -c "pg_restore --list" <"$BK" >/dev/null \
+    || { rm -f -- "$BK"; die "升级前备份读不出目录（pg_restore --list），迁移没有执行"; }
+  chmod 0600 "$BK"
+  say "  升级前备份：$BK（$(du -h "$BK" | cut -f1)）"
+fi
 "$INSTALL_DIR/deploy/migrate.sh" up || die "迁移失败, 见上"
 
 # 应用角色权限（迁移后）：必须跑官方 configure-app-role.sql 做收敛
@@ -280,16 +299,15 @@ export PANDORA_SKIP_PRECHECK_FRESH_DB=yes-empty-database
 # postgres 超级用户 + 显式环境变量执行（迁移 DSN 同理必须是超级用户）。
 cp -f "$SCRIPT_DIR/configure-app-role.sql" /tmp/configure-app-role.sql 2>/dev/null || true
 chmod 0644 /tmp/configure-app-role.sql 2>/dev/null || true
-if ! su -s /bin/bash postgres -c "AEGIS_DB_APP_PASSWORD='${APP_PASS}' psql -d aegis -v ON_ERROR_STOP=1 -f /tmp/configure-app-role.sql" >/dev/null 2>&1; then
-  # 兜底：即使收敛失败也保留基础权限，方便人工排查
-  su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -d aegis -c 'GRANT USAGE ON SCHEMA public TO aegis_app'" 2>/dev/null || true
-  su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -d aegis -c 'GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO aegis_app'" 2>/dev/null || true
-  su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -d aegis -c 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO aegis_app'" 2>/dev/null || true
-  say "  ! configure-app-role.sql 收敛失败，已保留基础 GRANT（需人工检查角色权限）"
-else
-  say "  configure-app-role.sql 角色收敛完成"
-fi
+# 收敛失败即停。以前这里兜底 GRANT 全表的增删改查：那会绕过 configure-app-role.sql 的列级
+# 白名单与追加写表的限制，让运行角色拿到比设计大得多的权限，而安装还显示「完成」
+role_log="$(su -s /bin/bash postgres -c "AEGIS_DB_APP_PASSWORD='${APP_PASS}' psql -X -d aegis -v ON_ERROR_STOP=1 -f /tmp/configure-app-role.sql" 2>&1)" || {
+  rm -f /tmp/configure-app-role.sql
+  printf '%s\n' "$role_log" | tail -20 >&2
+  die "configure-app-role.sql 收敛运行角色失败（输出见上），没有启动服务。修好后重跑本脚本（按升级处理，幂等）"
+}
 rm -f /tmp/configure-app-role.sql
+say "  configure-app-role.sql 角色收敛完成"
 
 # ── 5. systemd ───────────────────────────────────────
 say "[5/6] 安装 systemd 服务"

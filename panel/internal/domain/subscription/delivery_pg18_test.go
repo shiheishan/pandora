@@ -146,4 +146,7 @@ func TestDeliverySetPG18(t *testing.T) {
 		t.Fatalf("node users after joining the bound pool = %v, want [%d]", got, nodeUID)
 	}
 	t.Log("delivery_set_pg18 role=aegis_app no_pool=0 unbound_pool=0 bound_pool=1 download=preview=node_users")
+
+	// 抽出 DeliverableNodeSQL 前后的对照（同一个库、另一个租户）
+	t.Run("deliverable_extraction", func(t *testing.T) { runDeliverableExtractionPG18(t, ctx, admin, app) })
 }

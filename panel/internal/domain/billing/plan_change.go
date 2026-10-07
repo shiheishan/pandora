@@ -597,12 +597,9 @@ func (s *Service) fulfillPlanChangeLocked(ctx context.Context, tx pgx.Tx, tenant
 			return "", fmt.Errorf("记录变更重置: %w", err)
 		}
 	}
-	// 凭据不换，只跟着新周期走。
-	if _, err := tx.Exec(ctx, `
-		UPDATE subscription_credentials SET expires_at = $3
-		 WHERE tenant_id = $1 AND subscription_id = $2::uuid AND status = 'active'`,
-		tenantID, subID, newEnd); err != nil {
-		return "", fmt.Errorf("延长凭据有效期: %w", err)
+	// 凭据不换，只跟着新周期走（与续费、礼品卡、后台加时长同一个函数）。
+	if _, err := syncCredentialExpiryTx(ctx, tx, tenantID, subID, newEnd); err != nil {
+		return "", err
 	}
 
 	// 降级：剩余价值抵完新价还有余，差额退进余额。那部分钱此前已记成平台收入，

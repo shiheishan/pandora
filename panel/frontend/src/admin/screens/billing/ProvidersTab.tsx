@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useApi } from '../../../shell/runtime'
-import { ConfirmModal, Empty, Menu, QueryView, Switch, Tag, useToast } from '../../../ui'
+import { Button, ConfirmModal, Empty, Menu, QueryView, Switch, Tag, useToast, type MenuEntry } from '../../../ui'
 import { useCan, useFailure } from '../../actions'
 import { toggledSchema, useInvalidateBilling, useProviders, type Provider } from './api'
 import css from './Billing.module.css'
-import { isOffline, providerMode, providerNote, rateLabel, todayLabel, toggleBody, type ProviderMode } from './model'
+import { effectiveMethods, isEditableProvider, isOffline, methodLabel, providerMode, providerNote, rateLabel, todayLabel, toggleBody, type ProviderMode } from './model'
+import { ProviderDialog } from './ProviderDialog'
 
 interface Pending {
   p: Provider
@@ -16,28 +17,44 @@ export function ProvidersTab({ now }: { now: Date }) {
   const can = useCan()
   const writable = can('billing.provider.write')
   const [pending, setPending] = useState<Pending | null>(null)
+  // null = 关；'new' = 新建；Provider = 编辑这一条
+  const [form, setForm] = useState<Provider | 'new' | null>(null)
 
   return (
     <>
-      <QueryView query={providers} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有支付渠道" description="运维用 aegis-payctl 配置渠道后会出现在这里。" />}>
+      <div className={css.toolbar}>
+        <span className={css.small}>后台的新建、编辑与开关在门户结账页最多 5 分钟后生效。</span>
+        <span className={css.spacer} />
+        {writable && (
+          <Button size="sm" variant="primary" onClick={() => setForm('new')}>
+            新建渠道
+          </Button>
+        )}
+      </div>
+      <QueryView query={providers} isEmpty={(d) => d.length === 0} empty={<Empty title="还没有支付渠道" description="点「新建渠道」接入易支付，或由运维用 aegis-payctl 配置。" />}>
         {(rows) => (
           <div className={css.cards}>
             {rows.map((p) => (
-              <ProviderCard key={p.id} p={p} now={now} writable={writable} onToggle={(target) => setPending({ p, target })} />
+              <ProviderCard key={p.id} p={p} now={now} writable={writable} onToggle={(target) => setPending({ p, target })} onEdit={() => setForm(p)} />
             ))}
           </div>
         )}
       </QueryView>
       <ToggleDialog pending={pending} onClose={() => setPending(null)} />
+      <ProviderDialog open={form !== null} editing={form === 'new' ? null : form} onClose={() => setForm(null)} />
     </>
   )
 }
 
-function ProviderCard({ p, now, writable, onToggle }: { p: Provider; now: Date; writable: boolean; onToggle: (target: ProviderMode) => void }) {
+function ProviderCard({ p, now, writable, onToggle, onEdit }: { p: Provider; now: Date; writable: boolean; onToggle: (target: ProviderMode) => void; onEdit: () => void }) {
   const offline = isOffline(p)
   const mode = providerMode(p)
   const note = providerNote(p, now)
   const toggleable = writable && !offline
+  const methods = p.adapter === 'epay' ? effectiveMethods(p) : []
+  const entries: MenuEntry[] = []
+  if (writable && isEditableProvider(p)) entries.push({ key: 'edit', label: '编辑配置', onSelect: onEdit })
+  if (toggleable && mode !== 'off') entries.push({ key: 'off', label: '完全停用（回调也不处理）', danger: true, onSelect: () => onToggle('off') })
   return (
     <section className={`${css.card} ${mode !== 'on' && !offline ? css.cardOff : ''}`} aria-label={p.display_name}>
       <div className={css.cardHead}>
@@ -52,15 +69,8 @@ function ProviderCard({ p, now, writable, onToggle }: { p: Provider; now: Date; 
         {toggleable && (
           <>
             <Switch aria-label={`${p.display_name} 收新单`} checked={mode === 'on'} onChange={(e) => onToggle(e.target.checked ? 'on' : 'paused')} />
-            {mode !== 'off' && (
-              <Menu
-                label={`${p.display_name} 更多操作`}
-                triggerLabel="更多操作"
-                triggerClassName={css.moreButton}
-                align="end"
-                trigger="⋯"
-                entries={[{ key: 'off', label: '完全停用（回调也不处理）', danger: true, onSelect: () => onToggle('off') }]}
-              />
+            {entries.length > 0 && (
+              <Menu label={`${p.display_name} 更多操作`} triggerLabel="更多操作" triggerClassName={css.moreButton} align="end" trigger="⋯" entries={entries} />
             )}
           </>
         )}
@@ -81,6 +91,7 @@ function ProviderCard({ p, now, writable, onToggle }: { p: Provider; now: Date; 
           <dd>{p.currencies.join(' / ') || '—'}</dd>
         </div>
       </dl>
+      {methods.length > 0 && <div className={css.small}>支付方式：{methods.map(methodLabel).join(' / ')}</div>}
       <div className={`${css.note} ${css[`tone_${note.tone}`]}`}>{note.text}</div>
     </section>
   )
