@@ -4,7 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PDND_ROOT="$(cd "$ROOT/../pdnd" && pwd)"
 OUT="${1:-$ROOT/dist}"
-VERSION="${PANDORA_VERSION:-$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo dev)}"
+# 只认 v* 发布标签：仓库里还有 archive/client-auth 这类带斜杠的归档标签，裸 describe
+# 会取到它，版本号带斜杠，被下面的格式检查拒掉，不设 PANDORA_VERSION 就出不了包。
+# 没有 v* 标签时 --always 回落到短提交号。
+VERSION="${PANDORA_VERSION:-$(git -C "$ROOT" describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)}"
 PREBUILT_ROOT="${PANDORA_PREBUILT_ROOT:-}"
 # 迁移工具版本随发布包固定，不跟 @latest 漂移。
 GOOSE_VERSION="${PANDORA_GOOSE_VERSION:-v3.26.0}"

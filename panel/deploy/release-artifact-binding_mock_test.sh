@@ -47,4 +47,40 @@ need "$DEPLOY/install.sh" '-e "s|^AEGIS_ENV=.*|AEGIS_ENV=production|"'
 need "$DEPLOY/install.sh" 'PANDORA_PUBLIC_BASE_URL'
 need "$DEPLOY/install-native.sh" 'AEGIS_ENV=production'
 
+# 5. 版本号：不设 PANDORA_VERSION 时由 git describe 推出，必须过脚本自己的格式检查。
+#    仓库里有 archive/client-auth 这种带斜杠的归档标签，裸 describe 会取到它（曾经就这样
+#    出不了包），所以只认 v* 标签。这里抠出脚本里的版本行与格式检查，在临时仓库里实跑。
+need "$BUILD" "describe --tags --match 'v*' --always --dirty"
+version_line="$(grep -E '^VERSION="\$\{PANDORA_VERSION:-' "$BUILD")"
+check_block="$(awk '/^if \[\[ ! "\$VERSION" =~/{p=1} p{print} p&&/^fi$/{exit}' "$BUILD")"
+[ -n "$version_line" ] && [ -n "$check_block" ] || fail 'cannot locate the VERSION derivation or its format check'
+command -v git >/dev/null 2>&1 || fail 'git is required for the version stub'
+derive() (
+  ROOT="$1"
+  unset PANDORA_VERSION
+  eval "$version_line"
+  eval "$check_block"
+  printf '%s' "$VERSION"
+)
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+repo="$TMP/repo"
+mkdir -p "$repo"
+g() { git -C "$repo" -c user.name=stub -c user.email=stub@example.invalid -c commit.gpgsign=false -c tag.gpgsign=false "$@" >/dev/null; }
+g init -q
+echo one >"$repo/f"; g add f; g commit -q -m one
+g tag -a archive/client-auth -m archived
+echo two >"$repo/f"; g commit -q -am two
+got="$(derive "$repo")" || fail 'version check rejected the describe output next to an archive/* tag'
+case "$got" in */*) fail "version picked up a slash tag: $got" ;; esac
+[ "$got" = "$(git -C "$repo" rev-parse --short HEAD)" ] || fail "without a v* tag the version must be the short commit, got $got"
+g tag -a v1.2.3 -m release
+[ "$(derive "$repo")" = v1.2.3 ] || fail "on a v* tag the version must be the tag, got $(derive "$repo")"
+echo three >"$repo/f"; g commit -q -am three
+echo dirty >"$repo/f"
+got="$(derive "$repo")" || fail 'version check rejected a dirty tree after a v* tag'
+case "$got" in v1.2.3-1-g*-dirty) ;; *) fail "dirty tree after v1.2.3 gave $got" ;; esac
+[ "$(PANDORA_VERSION=custom-1 bash -c "ROOT=$repo; $version_line; printf %s \"\$VERSION\"")" = custom-1 ] ||
+  fail 'PANDORA_VERSION must still override git describe'
+
 printf 'release-artifact-binding mock: PASS\n'
