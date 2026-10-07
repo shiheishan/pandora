@@ -23,7 +23,9 @@ package outbound
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sort"
 	"strings"
@@ -311,6 +313,53 @@ func (c *leasedConn) Close() error {
 	c.once.Do(c.release)
 	return err
 }
+
+// leasedConn 内嵌的是 net.Conn 接口，底层 *net.TCPConn 的 CloseWrite、ReadFrom 等
+// 方法不会被提升出来。少了 CloseWrite，转发对上游的半关闭断言就失败：客户端断开后
+// 上游收不到 FIN、一直不关，下行永远阻塞在读上游（10 万连接实测的会话泄漏）。
+// 所以这里逐个按底层是否支持转发出去。
+
+// CloseWrite 把半关闭传给底层连接；底层不支持时返回错误，调用方据此改走收尾计时。
+func (c *leasedConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return errHalfCloseUnsupported
+}
+
+// CloseRead 同上。
+func (c *leasedConn) CloseRead() error {
+	if cr, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return errHalfCloseUnsupported
+}
+
+// ReadFrom 让 io.Copy 能用到底层的零拷贝（Linux 上 TCP→TCP 走 splice）。
+func (c *leasedConn) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := c.Conn.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(writerOnly{c.Conn}, r)
+}
+
+// WriteTo 同上，方向相反。
+func (c *leasedConn) WriteTo(w io.Writer) (int64, error) {
+	if wt, ok := c.Conn.(io.WriterTo); ok {
+		return wt.WriteTo(w)
+	}
+	return io.Copy(w, readerOnly{c.Conn})
+}
+
+// TransparentConn 声明这层包装不缓冲、不改字节（core.TransparentConn），转发可以
+// 直接在底层裸 TCP 上等可读，空闲时不占拷贝缓冲。
+func (c *leasedConn) TransparentConn() net.Conn { return c.Conn }
+
+var errHalfCloseUnsupported = errors.New("底层连接不支持半关闭")
+
+// writerOnly / readerOnly 藏起 ReadFrom / WriteTo，避免 io.Copy 绕回自己。
+type writerOnly struct{ io.Writer }
+type readerOnly struct{ io.Reader }
 
 type leasedPacketConn struct {
 	net.PacketConn

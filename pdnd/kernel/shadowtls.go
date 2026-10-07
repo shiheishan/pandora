@@ -139,7 +139,7 @@ func (a *shadowTLSAdapter) acceptLoop() {
 		ctx := a.ctx
 		service := a.service
 		a.mu.Unlock()
-		go func() {
+		goGuarded(conn, func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
 			// NewConnection 的错误都出在外层伪装握手（读 ClientHello、与诱饵
@@ -148,7 +148,7 @@ func (a *shadowTLSAdapter) acceptLoop() {
 				a.connErr.conn(StageTLSHandshake, conn, err)
 			}
 			_ = conn.Close()
-		}()
+		})
 	})
 }
 
@@ -266,3 +266,6 @@ func shadowRawBool(raw map[string]any, key string, fallback bool) bool {
 	}
 	return fallback
 }
+
+// innerAdapter 让关停排空与测试看到内层 Shadowsocks 的用户连接表。
+func (a *shadowTLSAdapter) innerAdapter() Adapter { return a.inner }

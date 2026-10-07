@@ -30,7 +30,7 @@ type trojanAdapter struct {
 	spec       InboundSpec
 	mu         sync.RWMutex
 	users      map[string]trojanUser
-	traffic    map[int64]core.UserTraffic
+	sessions   userSessions
 	online     map[int64]map[string]struct{}
 	listener   net.Listener
 	httpServer *http.Server
@@ -62,7 +62,7 @@ const trojanCommandUDP byte = 3
 func newTrojanAdapter(spec InboundSpec) (Adapter, error) {
 	return &trojanAdapter{
 		spec: spec, users: make(map[string]trojanUser),
-		traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{}),
+		online: make(map[int64]map[string]struct{}),
 		active: make(map[net.Conn]struct{}),
 	}, nil
 }
@@ -212,11 +212,11 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			a.wg.Add(1)
 			connCtx := a.ctx
 			a.mu.Unlock()
-			go func() {
+			goGuarded(conn, func() {
 				defer a.wg.Done()
 				defer a.removeActive(conn)
 				_ = a.handleConn(connCtx, conn, nil)
-			}()
+			})
 		})
 		server := newInboundHTTPServer(handler, 64<<10)
 		a.mu.Lock()
@@ -274,11 +274,11 @@ func (a *trojanAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			a.wg.Add(1)
 			connCtx := a.ctx
 			a.mu.Unlock()
-			go func() {
+			goGuarded(conn, func() {
 				defer a.wg.Done()
 				defer a.removeActive(conn)
 				_ = a.handleConn(connCtx, conn, nil)
-			}()
+			})
 		})
 		server := newInboundHTTPServer(handler, 64<<10)
 		a.mu.Lock()
@@ -361,7 +361,7 @@ func (a *trojanAdapter) serveAccepted(conn net.Conn) {
 	a.wg.Add(1)
 	ctx, tlsConfig := a.ctx, a.tlsConfig
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer a.removeActive(conn)
 		session := conn
@@ -386,7 +386,7 @@ func (a *trojanAdapter) serveAccepted(conn net.Conn) {
 		}
 		err := a.serveConn(ctx, session, realitySession, true)
 		a.connErr.conn(StageSession, session, err)
-	}()
+	})
 }
 
 // handleConn 是 TCP / REALITY / WS / HTTP Upgrade / gRPC 共同的会话入口，
@@ -402,6 +402,7 @@ func (a *trojanAdapter) handleConn(ctx context.Context, conn net.Conn, realitySe
 // 之前读到的字节被记下，认证失败就交给回落或中性页面，而不是立刻断开。
 func (a *trojanAdapter) serveConn(ctx context.Context, conn net.Conn, realitySession *RealitySession, probe bool) error {
 	defer conn.Close()
+	epoch := a.sessions.epoch()
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var reader io.Reader = conn
 	var recorder *trojanPreAuthRecorder
@@ -422,6 +423,11 @@ func (a *trojanAdapter) serveConn(ctx context.Context, conn net.Conn, realitySes
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
+	sess := a.sessions.open(user, epoch, conn)
+	if sess == nil {
+		return errSessionRevoked
+	}
+	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
 		return deviceLimitError("trojan")
@@ -448,28 +454,7 @@ func (a *trojanAdapter) serveConn(ctx context.Context, conn net.Conn, realitySes
 	}
 	defer upstream.Close()
 	// 上下行共用一个令牌桶：限的是这个用户的带宽，不是单条连接的。
-	limiter := a.limiters.For(user)
-	var copyWG sync.WaitGroup
-	copyWG.Add(2)
-	go func() {
-		n, _ := core.SpeedLimitedCopy(upstream, conn, limiter)
-		a.addTraffic(user, n, 0)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		copyWG.Done()
-	}()
-	go func() {
-		n, _ := core.SpeedLimitedCopy(conn, upstream, limiter)
-		a.addTraffic(user, 0, n)
-		// 上游关掉写端时，这个关闭要传给客户端，否则它收不到 EOF，
-		// 会一直等到自己超时——连接也就一直不释放。
-		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		copyWG.Done()
-	}()
-	copyWG.Wait()
+	sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
 	return nil
 }
 
@@ -617,29 +602,24 @@ func (a *trojanAdapter) UpsertUsers(users []core.User) error {
 
 func (a *trojanAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	for _, password := range ids {
 		proof := trojanPasswordProof(password)
 		// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着，map 只增不减。
 		if metadata, ok := a.users[proof]; ok {
 			a.limiters.Remove(metadata.ID)
+			removed = append(removed, metadata.ID)
 		}
 		delete(a.users, proof)
 	}
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关）：已有的长连接、mux / QUIC 会话随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 
 func (a *trojanAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, core.UserTraffic{ID: id, Upload: traffic.Upload, Download: traffic.Download})
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
 func (a *trojanAdapter) OnlineIPs() map[int64][]string {
@@ -681,13 +661,7 @@ func (a *trojanAdapter) leaveDevice(user core.User, ip string) {
 }
 
 func (a *trojanAdapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	traffic := a.traffic[user.ID]
-	traffic.ID = user.ID
-	traffic.Upload += upload
-	traffic.Download += download
-	a.traffic[user.ID] = traffic
-	a.mu.Unlock()
+	a.sessions.add(user.ID, upload, download)
 }
 
 func (a *trojanAdapter) Close() error {

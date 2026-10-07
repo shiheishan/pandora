@@ -63,7 +63,7 @@ type hysteria2Adapter struct {
 	mu        sync.RWMutex
 	users     map[string]int
 	slots     []hysteria2Slot
-	traffic   map[int64]core.UserTraffic
+	sessions  userSessions
 	online    map[int64]map[string]struct{}
 	service   *hy2.Service[int]
 	packet    net.PacketConn
@@ -90,7 +90,7 @@ var _ N.UDPConnectionHandlerEx = (*hysteria2Adapter)(nil)
 
 func newHysteria2Adapter(spec InboundSpec) (Adapter, error) {
 	return &hysteria2Adapter{
-		spec: spec, users: make(map[string]int), traffic: make(map[int64]core.UserTraffic),
+		spec: spec, users: make(map[string]int),
 		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
 	}, nil
 }
@@ -320,30 +320,26 @@ func (a *hysteria2Adapter) UpsertUsers(users []core.User) error {
 
 func (a *hysteria2Adapter) DelUsers(ids []string) error {
 	a.mu.Lock()
+	var removed []int64
 	for _, id := range ids {
 		password := strings.TrimSpace(id)
 		if index, ok := a.users[password]; ok {
 			a.slots[index].active = false
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			a.limiters.Remove(a.slots[index].user.ID)
+			removed = append(removed, a.slots[index].user.ID)
 			delete(a.users, password)
 		}
 	}
 	a.mu.Unlock()
-	return a.syncUsers()
+	err := a.syncUsers()
+	// 先删表、再踢线（锁外关）：已有的 QUIC / AnyTLS 会话里属于他的流随之断开。
+	a.sessions.revoke(removed)
+	return err
 }
 
 func (a *hysteria2Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
 func (a *hysteria2Adapter) OnlineIPs() map[int64][]string {
@@ -368,13 +364,14 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 	a.wg.Add(1)
 	a.active[conn] = struct{}{}
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer a.removeActive(conn)
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
 		}
+		epoch := a.sessions.epoch()
 		index, user, ok := a.userFromContext(ctx)
 		if admitErr := admissionError("hysteria2", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
@@ -384,6 +381,12 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 			return
 		}
 		defer a.leaveDevice(user, source.AddrString())
+		sess := a.sessions.open(user, epoch, conn)
+		if sess == nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
+			return
+		}
+		defer sess.close()
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "hysteria2", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.DialTCP(ctx, meta, destination)
 		if err != nil {
@@ -399,26 +402,10 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 				return
 			}
 		}
-		var copyWG sync.WaitGroup
-		copyWG.Add(2)
-		copyDone := make(chan struct{}, 2)
-		go func() {
-			n, _ := core.SpeedLimitedCopy(upstream, conn, a.limiters.For(user))
-			a.addTraffic(index, n, 0)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		go func() {
-			n, _ := core.SpeedLimitedCopy(conn, upstream, a.limiters.For(user))
-			a.addTraffic(index, 0, n)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		<-copyDone
-		_ = conn.Close()
-		_ = upstream.Close()
-		copyWG.Wait()
-	}()
+		// 子流的 Close 语义与 TCP 半关闭不同：沿用「一侧结束即两端全关」。
+		sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
+		_ = index
+	})
 }
 
 func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -544,16 +531,16 @@ func (a *hysteria2Adapter) leaveDevice(user core.User, ip string) {
 }
 
 func (a *hysteria2Adapter) addTraffic(index int, upload, download int64) {
-	a.mu.Lock()
-	if index >= 0 && index < len(a.slots) {
-		id := a.slots[index].user.ID
-		current := a.traffic[id]
-		current.ID = id
-		current.Upload += upload
-		current.Download += download
-		a.traffic[id] = current
+	a.mu.RLock()
+	var id int64
+	ok := index >= 0 && index < len(a.slots)
+	if ok {
+		id = a.slots[index].user.ID
 	}
-	a.mu.Unlock()
+	a.mu.RUnlock()
+	if ok {
+		a.sessions.add(id, upload, download)
+	}
 }
 
 func (a *hysteria2Adapter) removeActive(conn net.Conn) {

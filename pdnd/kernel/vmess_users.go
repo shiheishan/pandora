@@ -62,31 +62,26 @@ func (a *vmessAdapter) UpsertUsers(users []core.User) error {
 
 func (a *vmessAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	for _, id := range ids {
 		if parsed, err := uuid.Parse(id); err == nil {
 			key := parsed.String()
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			if entry, ok := a.users[key]; ok {
 				a.limiters.Remove(entry.ID)
+				removed = append(removed, entry.ID)
 			}
 			delete(a.users, key)
 		}
 	}
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关）：已有的长连接、mux / QUIC 会话随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 
 func (a *vmessAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, t := range a.traffic {
-		if t.Upload != 0 || t.Download != 0 {
-			out = append(out, t)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
 func (a *vmessAdapter) OnlineIPs() map[int64][]string {
@@ -128,11 +123,5 @@ func (a *vmessAdapter) leaveDevice(u core.User, ip string) {
 }
 
 func (a *vmessAdapter) addTraffic(u core.User, up, down int64) {
-	a.mu.Lock()
-	t := a.traffic[u.ID]
-	t.ID = u.ID
-	t.Upload += up
-	t.Download += down
-	a.traffic[u.ID] = t
-	a.mu.Unlock()
+	a.sessions.add(u.ID, up, down)
 }

@@ -59,7 +59,7 @@ type shadowsocksAdapter struct {
 	method   ssMethodSpec
 	mu       sync.RWMutex
 	users    map[string]ssUser
-	traffic  map[int64]core.UserTraffic
+	sessions userSessions
 	online   map[int64]map[string]struct{}
 	plane    DataPlane
 	connErr  connErrorReporter
@@ -96,7 +96,7 @@ func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 	}
 	return &shadowsocksAdapter{
 		protocol: strings.ToLower(strings.TrimSpace(spec.Config.Protocol)), spec: spec, method: methodSpec,
-		users: make(map[string]ssUser), traffic: make(map[int64]core.UserTraffic),
+		users:  make(map[string]ssUser),
 		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
 		salts: newReplayFilter(ssSaltReplayPeriod, ssSaltReplayKeep, replayFilterMaxPerGen),
 	}, nil
@@ -191,11 +191,11 @@ func (a *shadowsocksAdapter) acceptLoop() {
 		a.wg.Add(1)
 		ctx := a.ctx
 		a.mu.Unlock()
-		go func() {
+		goGuarded(conn, func() {
 			defer a.wg.Done()
 			defer a.removeActive(conn)
 			_ = a.handleConn(ctx, conn)
-		}()
+		})
 	})
 }
 
@@ -210,6 +210,7 @@ func (a *shadowsocksAdapter) handleConn(ctx context.Context, conn net.Conn) erro
 
 func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
+	epoch := a.sessions.epoch()
 	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
 	user, stream, destination, err := a.readRequest(conn)
 	if err != nil {
@@ -221,6 +222,11 @@ func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
+	sess := a.sessions.open(user, epoch, conn)
+	if sess == nil {
+		return errSessionRevoked
+	}
+	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
 		return deviceLimitError("shadowsocks")
@@ -233,25 +239,8 @@ func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error
 		return err
 	}
 	defer upstream.Close()
-	var copyWG sync.WaitGroup
-	copyWG.Add(2)
-	go func() {
-		n, _ := core.SpeedLimitedCopy(upstream, stream, a.limiters.For(user))
-		a.addTraffic(user, n, 0)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		copyWG.Done()
-	}()
-	go func() {
-		n, _ := core.SpeedLimitedCopy(stream, upstream, a.limiters.For(user))
-		a.addTraffic(user, 0, n)
-		// 上游关掉写端时，这个关闭要传给客户端，否则它收不到 EOF，
-		// 会一直等到自己超时——连接也就一直不释放。
-		_ = stream.CloseWrite()
-		copyWG.Done()
-	}()
-	copyWG.Wait()
+	// ssStream 自带 CloseWrite（把半关闭转给底层），转发据此把上游结束传给客户端。
+	sess.relay(stream, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
 	return nil
 }
 
@@ -563,29 +552,24 @@ func (a *shadowsocksAdapter) UpsertUsers(users []core.User) error {
 
 func (a *shadowsocksAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	for _, password := range ids {
 		key := hex.EncodeToString(deriveSSMasterKey(password, a.method.KeyLen))
 		// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着，map 只增不减。
 		if entry, ok := a.users[key]; ok {
 			a.limiters.Remove(entry.ID)
+			removed = append(removed, entry.ID)
 		}
 		delete(a.users, key)
 	}
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关）：已有的长连接、mux / QUIC 会话随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 
 func (a *shadowsocksAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
 func (a *shadowsocksAdapter) OnlineIPs() map[int64][]string {
@@ -627,13 +611,7 @@ func (a *shadowsocksAdapter) leaveDevice(user core.User, ip string) {
 }
 
 func (a *shadowsocksAdapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	traffic := a.traffic[user.ID]
-	traffic.ID = user.ID
-	traffic.Upload += upload
-	traffic.Download += download
-	a.traffic[user.ID] = traffic
-	a.mu.Unlock()
+	a.sessions.add(user.ID, upload, download)
 }
 
 func (a *shadowsocksAdapter) Close() error {

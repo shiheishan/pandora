@@ -32,7 +32,7 @@ type tuicAdapter struct {
 	mu        sync.RWMutex
 	users     map[string]int
 	slots     []tuicSlot
-	traffic   map[int64]core.UserTraffic
+	sessions  userSessions
 	online    map[int64]map[string]struct{}
 	service   *tuic.Service[int]
 	packet    net.PacketConn
@@ -54,7 +54,7 @@ var _ N.UDPConnectionHandlerEx = (*tuicAdapter)(nil)
 
 func newTUICAdapter(spec InboundSpec) (Adapter, error) {
 	return &tuicAdapter{
-		spec: spec, users: make(map[string]int), traffic: make(map[int64]core.UserTraffic),
+		spec: spec, users: make(map[string]int),
 		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
 	}, nil
 }
@@ -313,6 +313,7 @@ func (a *tuicAdapter) UpsertUsers(users []core.User) error {
 
 func (a *tuicAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
+	var removed []int64
 	for _, id := range ids {
 		parsed, err := uuid.FromString(strings.TrimSpace(id))
 		if err != nil {
@@ -323,24 +324,19 @@ func (a *tuicAdapter) DelUsers(ids []string) error {
 			a.slots[index].active = false
 			// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 			a.limiters.Remove(a.slots[index].user.ID)
+			removed = append(removed, a.slots[index].user.ID)
 			delete(a.users, canonical)
 		}
 	}
 	a.mu.Unlock()
-	return a.syncUsers()
+	err := a.syncUsers()
+	// 先删表、再踢线（锁外关）：已有的 QUIC / AnyTLS 会话里属于他的流随之断开。
+	a.sessions.revoke(removed)
+	return err
 }
 
 func (a *tuicAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 
 func (a *tuicAdapter) OnlineIPs() map[int64][]string {
@@ -365,19 +361,26 @@ func (a *tuicAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	a.wg.Add(1)
 	a.active[conn] = struct{}{}
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer a.removeActive(conn)
 		defer conn.Close()
 		if onClose != nil {
 			defer onClose(nil)
 		}
+		epoch := a.sessions.epoch()
 		index, user, ok := a.userFromContext(ctx)
 		if admitErr := admissionError("tuic", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
 		defer a.leaveDevice(user, source.AddrString())
+		sess := a.sessions.open(user, epoch, conn)
+		if sess == nil {
+			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
+			return
+		}
+		defer sess.close()
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "tcp", Protocol: "tuic", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.DialTCP(ctx, meta, destination)
 		if err != nil {
@@ -385,26 +388,10 @@ func (a *tuicAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, source
 			return
 		}
 		defer upstream.Close()
-		var copyWG sync.WaitGroup
-		copyWG.Add(2)
-		copyDone := make(chan struct{}, 2)
-		go func() {
-			n, _ := core.SpeedLimitedCopy(upstream, conn, a.limiters.For(user))
-			a.addTraffic(index, n, 0)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		go func() {
-			n, _ := core.SpeedLimitedCopy(conn, upstream, a.limiters.For(user))
-			a.addTraffic(index, 0, n)
-			copyDone <- struct{}{}
-			copyWG.Done()
-		}()
-		<-copyDone
-		_ = conn.Close()
-		_ = upstream.Close()
-		copyWG.Wait()
-	}()
+		// 子流的 Close 语义与 TCP 半关闭不同：沿用「一侧结束即两端全关」。
+		sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
+		_ = index
+	})
 }
 
 func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -416,7 +403,7 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 	}
 	a.wg.Add(1)
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer conn.Close()
 		if onClose != nil {
@@ -488,7 +475,7 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 			_ = upstream.SetDeadline(time.Now())
 		}()
 		bridgeWG.Wait()
-	}()
+	})
 }
 
 func (a *tuicAdapter) userFromContext(ctx context.Context) (int, core.User, bool) {
@@ -531,16 +518,16 @@ func (a *tuicAdapter) leaveDevice(user core.User, ip string) {
 }
 
 func (a *tuicAdapter) addTraffic(index int, upload, download int64) {
-	a.mu.Lock()
-	if index >= 0 && index < len(a.slots) {
-		id := a.slots[index].user.ID
-		current := a.traffic[id]
-		current.ID = id
-		current.Upload += upload
-		current.Download += download
-		a.traffic[id] = current
+	a.mu.RLock()
+	var id int64
+	ok := index >= 0 && index < len(a.slots)
+	if ok {
+		id = a.slots[index].user.ID
 	}
-	a.mu.Unlock()
+	a.mu.RUnlock()
+	if ok {
+		a.sessions.add(id, upload, download)
+	}
 }
 
 func (a *tuicAdapter) removeActive(conn net.Conn) {

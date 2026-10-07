@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"runtime/debug"
@@ -135,14 +136,20 @@ func guardConnHandler(conn net.Conn, handle func(net.Conn)) {
 // fn 自己 defer 的收尾（wg.Done、removeActive）在 panic 展开时照常执行，
 // 再由这里 recover，所以适配器的计数与关停等待不会因此卡住。
 func goGuardedConn(conn net.Conn, fn func()) {
+	goGuarded(conn, fn)
+}
+
+// goGuarded 同 goGuardedConn，给手上不是 net.Conn 的场合（QUIC 流、UDP 会话、
+// mux 子流）：panic 时关掉 closer（可为 nil，只兜底不关）。
+func goGuarded(closer io.Closer, fn func()) {
 	go func() {
-		defer recoverConnPanic(conn)
+		defer recoverConnPanic(closer)
 		fn()
 	}()
 }
 
 // recoverConnPanic 必须直接 defer 调用（recover 只在被 defer 的函数里生效）。
-func recoverConnPanic(conn net.Conn) {
+func recoverConnPanic(conn io.Closer) {
 	r := recover()
 	if r == nil {
 		return

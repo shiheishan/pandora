@@ -49,7 +49,7 @@ type vmessAdapter struct {
 	spec        InboundSpec
 	mu          sync.RWMutex
 	users       map[string]vmessUser
-	traffic     map[int64]core.UserTraffic
+	sessions    userSessions
 	online      map[int64]map[string]struct{}
 	listener    net.Listener
 	packet      net.PacketConn
@@ -83,7 +83,7 @@ type vmessUser struct {
 }
 
 func newVMessAdapter(spec InboundSpec) (Adapter, error) {
-	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*vmessXHTTPPacketSession)}, nil
+	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*vmessXHTTPPacketSession)}, nil
 }
 
 func (a *vmessAdapter) Protocol() string { return "vmess" }
@@ -298,11 +298,11 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			a.active[conn] = struct{}{}
 			a.wg.Add(1)
 			a.mu.Unlock()
-			go func() {
+			goGuarded(conn, func() {
 				defer a.wg.Done()
 				defer a.removeActive(conn)
 				_ = a.handleConn(connCtx, conn)
-			}()
+			})
 		}
 		if strings.EqualFold(network, "ws") {
 			server, serveErr = serveNativeWebSocket(ln, path, host, func() context.Context { return a.ctx }, onConn)
@@ -392,7 +392,7 @@ func (a *vmessAdapter) serveAccepted(conn net.Conn) {
 	a.wg.Add(1)
 	ctx, tlsConfig := a.ctx, a.tlsConfig
 	a.mu.Unlock()
-	go func() {
+	goGuarded(conn, func() {
 		defer a.wg.Done()
 		defer a.removeActive(conn)
 		session := conn
@@ -412,7 +412,7 @@ func (a *vmessAdapter) serveAccepted(conn net.Conn) {
 			}
 			a.mu.Unlock()
 		}
-	}()
+	})
 }
 
 // handleConn 是 TCP / mKCP / WS / HTTP Upgrade / gRPC / XHTTP 共同的会话入口，
@@ -425,6 +425,7 @@ func (a *vmessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
 
 func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
+	epoch := a.sessions.epoch()
 	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
 	reader := bufio.NewReaderSize(conn, 64*1024)
 	user, destination, body, security, err := a.readRequest(reader)
@@ -447,6 +448,11 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 		return markConnError(connErrAuth, fmt.Errorf("vmess replayed request"))
 	}
 	_ = conn.SetReadDeadline(time.Time{})
+	sess := a.sessions.open(user, epoch, conn)
+	if sess == nil {
+		return errSessionRevoked
+	}
+	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
 		return deviceLimitError("vmess")
@@ -474,28 +480,16 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	if err := vmessWriteResponse(conn, bodyState.key, bodyState.nonce, 0, bodyState.option); err != nil {
 		return err
 	}
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		n, _ := core.SpeedLimitedCopy(upstream, body, a.limiters.For(user))
-		a.addTraffic(user, n, 0)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		wg.Done()
-	}()
 	responseWriter := io.Writer(conn)
 	if security == vmessSecAES128 || security == vmessSecChaCha {
 		responseKeyHash := sha256.Sum256(bodyState.key)
 		responseNonceHash := sha256.Sum256(bodyState.nonce)
 		responseWriter = newVMessAEADWriter(conn, vmessBodyAEAD(security, responseKeyHash[:16]), responseNonceHash[:16], bodyState.option)
 	}
-	go func() {
-		n, _ := core.SpeedLimitedCopy(responseWriter, upstream, a.limiters.For(user))
-		a.addTraffic(user, 0, n)
-		wg.Done()
-	}()
-	wg.Wait()
+	// VMess 的读写各自分块加解密，读端是 body、写端是响应流，拼成一端交给转发；
+	// 响应流没有半关闭，上游结束后按单向收尾计时收尾。
+	client := &core.SplitStream{R: body, W: responseWriter, C: conn}
+	sess.relay(client, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
 	return nil
 }
 
