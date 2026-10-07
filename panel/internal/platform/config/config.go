@@ -75,6 +75,9 @@ type Config struct {
 
 	// Runtime 是进程级资源上限（连接池、口令哈希并发），见 runtime.go。
 	Runtime
+
+	// NodePorts 是节点端口的保留表（node_ports.go）。
+	NodePorts NodePorts
 }
 
 func Load() (*Config, error) {
@@ -133,6 +136,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if c.Runtime, err = loadRuntime(); err != nil {
+		return nil, err
+	}
+	if c.NodePorts, err = loadNodePorts(c.PublicBaseURL); err != nil {
 		return nil, err
 	}
 	if c.IsProduction() {

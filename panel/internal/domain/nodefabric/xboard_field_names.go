@@ -55,7 +55,7 @@ var xboardRename = map[string]map[string]string{
 	"trojan":  xboardStreamRename,
 	"mieru":   {},
 	"tuic":    xboardClientTLSRename,
-	"anytls":  xboardClientTLSRename,
+	"anytls":  xboardAnyTLSRename,
 	"juicity": {},
 	"socks":   {},
 	"http":    {},
@@ -75,6 +75,14 @@ var xboardRename = map[string]map[string]string{
 var xboardClientTLSRename = map[string]string{
 	"tls_settings_server_name":    "server_name",
 	"tls_settings_allow_insecure": "allow_insecure",
+}
+
+// xboardAnyTLSRename 是 AnyTLS 的重命名：客户端 TLS 提示之外，uTLS 指纹和
+// vless / trojan 一样表单叫 utls、内核叫 fingerprint。指纹只进订阅，节点端不读。
+var xboardAnyTLSRename = map[string]string{
+	"tls_settings_server_name":    "server_name",
+	"tls_settings_allow_insecure": "allow_insecure",
+	"utls":                        "fingerprint",
 }
 
 // xboardStreamRename 是 vless / vmess / trojan 共用的传输层重命名。

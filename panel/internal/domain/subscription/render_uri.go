@@ -42,7 +42,7 @@ func nodeToURI(n Node, uuid string) (string, string) {
 
 	switch n.Type {
 	case "vless":
-		o := parseStream(n)
+		o := parseStream(n, uuid)
 		if o.Unsupported != "" {
 			return "", o.Unsupported
 		}
@@ -54,7 +54,7 @@ func nodeToURI(n Node, uuid string) (string, string) {
 		return "vless://" + uuid + "@" + addr + "?" + q.Encode() + frag, ""
 
 	case "vmess":
-		o := parseStream(n)
+		o := parseStream(n, uuid)
 		if o.Unsupported != "" {
 			return "", o.Unsupported
 		}
@@ -87,7 +87,7 @@ func nodeToURI(n Node, uuid string) (string, string) {
 		return "vmess://" + base64.StdEncoding.EncodeToString(body), ""
 
 	case "trojan":
-		o := parseStream(n)
+		o := parseStream(n, uuid)
 		if o.Unsupported != "" {
 			return "", o.Unsupported
 		}
@@ -143,6 +143,8 @@ func nodeToURI(n Node, uuid string) (string, string) {
 		if h.Insecure {
 			q.Set("insecure", "1")
 		}
+		// fp 与 vless / trojan 分享链接同名；不认它的客户端会忽略这个参数
+		q.Set("fp", anyTLSFingerprint(n.Config))
 		return "anytls://" + url.QueryEscape(uuid) + "@" + addr + "?" + q.Encode() + frag, ""
 
 	case "naive":

@@ -163,6 +163,7 @@ func TestTrafficChargePG18(t *testing.T) {
 	batchChargeScenario(t, ctx, admin, app)
 	rolloverAndForeignUIDScenario(t, ctx, admin, app)
 	retentionScenario(t, ctx, admin, app)
+	reportIDScenario(t, ctx, admin, app)
 }
 
 // rolloverAndForeignUIDScenario 证明审计 N1、N2、N3：

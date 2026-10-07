@@ -36,7 +36,14 @@ func realitySettings() string {
 		`"private_key":"` + fixtureRealityPri + `","public_key":"` + fixtureRealityPub + `","short_id":"0a1b2c3d"}`
 }
 
-const certPaths = `"cert_path":"/etc/pdnd/c.pem","key_path":"/etc/pdnd/k.pem"`
+// 证书放在约定目录下（docs/node-certificates.md），后台校验只收这个目录里的路径。
+const certPaths = `"cert_path":"/etc/pandora-native/certs/example.com/fullchain.pem","key_path":"/etc/pandora-native/certs/example.com/privkey.pem"`
+
+// realityMultiSettings 配了两个 server name、三个 short id：订阅按用户分散。
+func realityMultiSettings() string {
+	return `"reality_settings":{"dest":"www.example.com:443","server_name":["www.example.com","static.example.com"],` +
+		`"private_key":"` + fixtureRealityPri + `","public_key":"` + fixtureRealityPub + `","short_id":["0a1b2c3d","4e5f","6a7b8c9d0e1f2a3b"]}`
+}
 
 func formFixtures() []formFixture {
 	return []formFixture{
@@ -46,8 +53,10 @@ func formFixtures() []formFixture {
 		{"hy2-plain", "hysteria2", 8444, `{` + certPaths + `}`},
 		{"tuic", "tuic", 5443, `{` + certPaths + `,"congestion_control":"cubic","tls_settings":{"server_name":"sni.example.com"}}`},
 		{"anytls", "anytls", 6443, `{"tls":true,` + certPaths + `,"tls_settings":{"server_name":"sni.example.com","allow_insecure":true}}`},
+		{"anytls-utls-fallback", "anytls", 6445, `{"tls":true,` + certPaths + `,"utls":"safari","fallback":"decoy.example.net:80","tls_settings":{"server_name":"sni.example.com","allow_insecure":true}}`},
 		{"naive", "naive", 9443, `{"tls":true,` + certPaths + `,"tls_settings":{"server_name":"sni.example.com"}}`},
 		{"naive-insecure", "naive", 9444, `{"tls":true,` + certPaths + `,"tls_settings":{"allow_insecure":true}}`},
+		{"naive-fallback", "naive", 9445, `{"tls":true,` + certPaths + `,"fallback":"decoy.example.net:80","tls_settings":{"server_name":"sni.example.com"}}`},
 		{"juicity", "juicity", 8445, `{` + certPaths + `,"congestion_control":"bbr"}`},
 		{"socks", "socks", 1080, `{"network":"tcp"}`},
 		{"socks-udp", "socks", 1081, `{"network":"udp"}`},
@@ -62,12 +71,14 @@ func formFixtures() []formFixture {
 		{"trojan-tls-grpc", "trojan", 7445, `{"tls":1,"network":"grpc",` + certPaths + `,"network_settings":{"serviceName":"tgrpc"}}`},
 		{"trojan-tls-grpc-sni", "trojan", 7448, `{"tls":1,"network":"grpc",` + certPaths + `,"network_settings":{"serviceName":"tg2"},"tls_settings":{"server_name":"sni.example.com"}}`},
 		{"trojan-tls-httpupgrade", "trojan", 7447, `{"tls":1,"network":"httpupgrade",` + certPaths + `,"network_settings":{"path":"/tu"}}`},
+		{"trojan-tls-fallback", "trojan", 7449, `{"tls":1,"network":"tcp",` + certPaths + `,"fallback":"decoy.example.net:80","tls_settings":{"server_name":"sni.example.com","allow_insecure":true}}`},
 		{"trojan-reality", "trojan", 7446, `{"tls":2,"network":"tcp","utls":"firefox",` + realitySettings() + `}`},
+		{"trojan-reality-fallback", "trojan", 7450, `{"tls":2,"network":"tcp","fallback":"decoy.example.net:80",` + realitySettings() + `}`},
 		{"vless-reality-vision", "vless", 443, `{"tls":2,"network":"tcp","flow":"xtls-rprx-vision","utls":"chrome",` + realitySettings() + `}`},
+		{"vless-reality-multi", "vless", 449, `{"tls":2,"network":"tcp","flow":"xtls-rprx-vision",` + realityMultiSettings() + `}`},
 		{"vless-reality-grpc", "vless", 444, `{"tls":2,"network":"grpc","utls":"safari","network_settings":{"serviceName":"vgrpc"},` + realitySettings() + `}`},
 		{"vless-reality-xhttp", "vless", 445, `{"tls":2,"network":"xhttp","network_settings":{"path":"/xh","mode":"auto"},` + realitySettings() + `}`},
 		{"vless-xhttp-header", "vless", 447, `{"tls":2,"network":"xhttp","session_placement":"header","network_settings":{"path":"/xh"},` + realitySettings() + `}`},
-		{"vless-reality-xhttp-h3", "vless", 448, `{"tls":2,"network":"xhttp-h3","network_settings":{"path":"/h3"},` + realitySettings() + `}`},
 		{"vless-ws", "vless", 10080, `{"tls":0,"network":"ws","network_settings":{"path":"/vw","headers":{"Host":"cdn.example.com"}}}`},
 		{"vless-ws-nohost", "vless", 10084, `{"tls":0,"network":"ws","network_settings":{"path":"/vw"}}`},
 		{"vless-httpupgrade", "vless", 10081, `{"tls":0,"network":"httpupgrade","network_settings":{"path":"/vu","headers":{"Host":"cdn.example.com"}}}`},
@@ -75,11 +86,27 @@ func formFixtures() []formFixture {
 		{"vless-grpc-cdnhost", "vless", 10085, `{"tls":0,"network":"grpc","network_settings":{"serviceName":"vg","headers":{"Host":"cdn.example.com"}}}`},
 		{"vless-mkcp", "vless", 10083, `{"tls":0,"network":"mkcp"}`},
 		{"vless-mkcp-mask", "vless", 10086, `{"tls":0,"network":"mkcp","mask":"mkcp-aes128gcm","mask_password":"mask-pass-1"}`},
-		{"vmess-tcp", "vmess", 10090, `{"tls":0,"network":"tcp"}`},
 		{"vmess-ws", "vmess", 10091, `{"tls":0,"network":"ws","network_settings":{"path":"/mw","headers":{"Host":"cdn.example.com"}}}`},
+		// VMess 自带加密：裸 tcp 放行，读接口提示特征明显（用户 2026-10-07 定）
+		{"vmess-tcp", "vmess", 10090, `{"tls":0,"network":"tcp"}`},
 		{"vmess-grpc", "vmess", 10092, `{"tls":0,"network":"grpc","network_settings":{"serviceName":"mg"}}`},
 		{"vmess-httpupgrade", "vmess", 10093, `{"tls":0,"network":"httpupgrade","network_settings":{"path":"/mu"}}`},
 		{"vmess-xhttp", "vmess", 10094, `{"tls":0,"network":"xhttp","network_settings":{"path":"/mx"}}`},
+	}
+}
+
+// legacyFixtures 是现在的后台已经存不进去、但库里可能还有的形状（收紧之前
+// 保存的）。它们照常下发、照常渲染——收紧规则只拦新写入，不改写存量。
+// TestLegacyFixturesAreRejectedForNewWrites 守着「确实存不进去」，矩阵守着
+// 「渲染照旧」。
+func legacyFixtures() []formFixture {
+	return []formFixture{
+		// VLESS 裸 tcp 不加密：明文代理，2026-10 起拒绝新写入（VMess 自带加密，放行）
+		{"vless-tcp-plain", "vless", 10087, `{"tls":0,"network":"tcp"}`},
+		// REALITY 只许 tcp / grpc / xhttp；QUIC 版 REALITY 三种格式本来就都跳过
+		{"vless-reality-xhttp-h3", "vless", 448, `{"tls":2,"network":"xhttp-h3","network_settings":{"path":"/h3"},` + realitySettings() + `}`},
+		// 证书不在约定目录下：读接口标 warning，照常服务
+		{"trojan-legacy-cert", "trojan", 7451, `{"tls":1,"network":"tcp","cert_path":"/etc/pdnd/c.pem","key_path":"/etc/pdnd/k.pem"}`},
 	}
 }
 
@@ -109,6 +136,14 @@ func TestFormFixturesAreAcceptedByAdminValidation(t *testing.T) {
 		version, fields := nodefabric.ValidateAdminProtocolConfig(f.typ, "pandora-native", f.port, json.RawMessage(f.config))
 		if version != nodefabric.StableProtocolSchemaVersion || len(fields) != 0 {
 			t.Errorf("%s: admin validation rejected fixture: version=%d fields=%v", f.id, version, fields)
+		}
+	}
+}
+
+func TestLegacyFixturesAreRejectedForNewWrites(t *testing.T) {
+	for _, f := range legacyFixtures() {
+		if _, fields := nodefabric.ValidateAdminProtocolConfig(f.typ, "pandora-native", f.port, json.RawMessage(f.config)); len(fields) == 0 {
+			t.Errorf("%s: still accepted by admin validation, move it back to formFixtures", f.id)
 		}
 	}
 }

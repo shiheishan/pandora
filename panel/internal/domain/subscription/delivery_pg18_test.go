@@ -65,19 +65,21 @@ func TestDeliverySetPG18(t *testing.T) {
 	must(`UPDATE plans SET current_version_id=$2,status='active' WHERE tenant_id=$1 AND id=$3`, tenant, planVer, plan)
 	must(`INSERT INTO servers(id,tenant_id,name,status) VALUES($2,$1,'delivery-server','ready')`, tenant, server)
 	// 三个节点除了 pool_id 完全一样：都可服务、协议稳定、见过心跳、有可连地址，
-	// 任何一个被排除都只能是因为节点池。
+	// 任何一个被排除都只能是因为节点池。端口各不相同只因为同一台服务器上同端口同 L4
+	// 撞同机端口门禁的唯一索引（00122），与下发资格无关。
 	for _, node := range []struct {
 		id, name, host string
 		pool           any
+		port           int
 	}{
-		{pooled, "Pooled Node", "pooled.invalid", boundPool},
-		{noPool, "No Pool Node", "nopool.invalid", nil},
-		{unbound, "Unbound Pool Node", "unbound.invalid", otherPool},
+		{pooled, "Pooled Node", "pooled.invalid", boundPool, 443},
+		{noPool, "No Pool Node", "nopool.invalid", nil, 8443},
+		{unbound, "Unbound Pool Node", "unbound.invalid", otherPool, 9443},
 	} {
 		must(`INSERT INTO nodes(id,tenant_id,name,display_name,pool_id,status,node_type,server_host,server_port,
 				server_id,serving_status,protocol_schema_version,config_validated_at,last_heartbeat_at)
-			  VALUES($2,$1,$3,$3,$4,'active','vless',$5,443,$6,'active',1,now(),now())`,
-			tenant, node.id, node.name, node.pool, node.host, server)
+			  VALUES($2,$1,$3,$3,$4,'active','vless',$5,$7,$6,'active',1,now(),now())`,
+			tenant, node.id, node.name, node.pool, node.host, server, node.port)
 	}
 	must(`INSERT INTO subscriptions(id,tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount)
 		  VALUES($1,$2,$3,$4,$5,'active','USD',100)`, sub, tenant, user, plan, planVer)

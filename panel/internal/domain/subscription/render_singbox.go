@@ -89,7 +89,7 @@ func nodeToSingbox(n Node, uuid string) (map[string]any, string) {
 
 	switch n.Type {
 	case "vless", "vmess", "trojan":
-		s := parseStream(n)
+		s := parseStream(n, uuid)
 		if reason := singboxStreamUnsupported(n, s); reason != "" {
 			return nil, reason
 		}
@@ -122,6 +122,9 @@ func nodeToSingbox(n Node, uuid string) (map[string]any, string) {
 		o["type"] = "shadowsocks"
 		o["method"] = ssMethod(n.Config)
 		o["password"] = uuid
+		// 节点端只监听 TCP（见 render_clash.go 同一处），声明只走 TCP，
+		// UDP 交给路由的其它出站，而不是发到没人听的端口
+		o["network"] = "tcp"
 
 	case "hysteria2":
 		o["type"] = "hysteria2"
@@ -146,7 +149,9 @@ func nodeToSingbox(n Node, uuid string) (map[string]any, string) {
 		}
 		o["type"] = "anytls"
 		o["password"] = uuid
-		o["tls"] = singboxTLS(parseTLSHints(n.Config))
+		t := singboxTLS(parseTLSHints(n.Config))
+		t["utls"] = map[string]any{"enabled": true, "fingerprint": anyTLSFingerprint(n.Config)}
+		o["tls"] = t
 
 	case "naive":
 		h := parseTLSHints(n.Config)
@@ -164,6 +169,7 @@ func nodeToSingbox(n Node, uuid string) (map[string]any, string) {
 		o["type"] = "shadowsocks"
 		o["method"] = ssMethod(n.Config)
 		o["password"] = uuid
+		o["network"] = "tcp"
 
 	case "socks":
 		if cfgBool(n.Config, "tls") {

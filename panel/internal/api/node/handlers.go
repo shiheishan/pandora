@@ -175,6 +175,8 @@ func (h *handlers) heartbeat(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	// degraded 的原因走请求头（pdnd 不放进正文，正文按 DisallowUnknownFields 解码）
+	in.RuntimeReason = r.Header.Get(nodefabric.RuntimeReasonHeader)
 	tenantID, nodeID := httpx.TenantIDFrom(r.Context()), nodeIDFrom(r.Context())
 	var out *nodefabric.HeartbeatOutput
 	var err error
@@ -444,14 +446,20 @@ func (h *handlers) uniPush(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeBadRequest, "读取上报失败"))
 		return
 	}
-	res, err := h.d.Node.ReportTraffic(r.Context(), httpx.TenantIDFrom(r.Context()), n, raw)
+	// 上报编号（pdnd 重发同一份时带同一个）：不合规就按老节点的内容哈希去重，不拒收
+	reportID, ok := nodefabric.NormalizeTrafficReportID(r.Header.Get(nodefabric.TrafficReportIDHeader))
+	if !ok && r.Header.Get(nodefabric.TrafficReportIDHeader) != "" {
+		h.d.Log.Warn("流量上报编号不合规，按内容哈希去重", "node", n.Name,
+			"request_id", httpx.RequestIDFrom(r.Context()))
+	}
+	res, err := h.d.Node.ReportTrafficWithID(r.Context(), httpx.TenantIDFrom(r.Context()), n, raw, reportID)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
 	if res.Duplicate {
 		h.d.Log.Warn("丢弃重复的流量上报",
-			"node", n.Name, "bytes", res.TotalBytes,
+			"node", n.Name, "bytes", res.TotalBytes, "report_id", reportID,
 			"request_id", httpx.RequestIDFrom(r.Context()))
 	}
 	// 节点端只看 HTTP 状态码，返回体内容不影响它，但保留便于排查
@@ -486,7 +494,10 @@ func (h *handlers) uniStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, httpx.New(httpx.CodeBadRequest, "读取状态上报失败"))
 		return
 	}
-	if err := h.d.Node.ReportRuntimeStatus(r.Context(), httpx.TenantIDFrom(r.Context()), n, raw); err != nil {
+	// 运行状态与原因走请求头：/status 的正文是 UniProxy 的固定结构，加字段会被别的面板拒收
+	runtime := nodefabric.NormalizeRuntimeState(r.Header.Get(nodefabric.RuntimeStatusHeader),
+		r.Header.Get(nodefabric.RuntimeReasonHeader))
+	if err := h.d.Node.ReportRuntimeStatus(r.Context(), httpx.TenantIDFrom(r.Context()), n, raw, runtime); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}

@@ -5,6 +5,7 @@ import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, Empty, IconClose, Input, Modal, Pager, QueryView, Segmented, Tag, useToast } from '../../../ui'
 import { addressLabel, batchPlan, filterNodes, moveItem, nodeState, orderItems, protocolLabel, sameNodeLine, type NodeFilter, type NodeLineData } from './logic'
+import { portConflictText, runState, sameRunState, type RunState } from './runtime'
 import { DRAWER_TABS, NodeDrawer, type DrawerTab } from './NodeDrawer'
 import { NodeForm } from './NodeForm'
 import css from './nodes.module.css'
@@ -194,7 +195,20 @@ export function NodesTab({ rest }: { rest: string[] }) {
           {() => (
             <>
               {rows.map((n, i) => (
-                <NodeLine key={n.id} node={n} index={i} picked={picked.has(n.id)} sorting={!!sorting} onPick={togglePick} onOpen={openNode} onMove={moveNode} first={i === 0} last={i === rows.length - 1} />
+                <NodeLine
+                  key={n.id}
+                  node={n}
+                  run={runState(n)}
+                  conflict={portConflictText(n)}
+                  index={i}
+                  picked={picked.has(n.id)}
+                  sorting={!!sorting}
+                  onPick={togglePick}
+                  onOpen={openNode}
+                  onMove={moveNode}
+                  first={i === 0}
+                  last={i === rows.length - 1}
+                />
               ))}
               {serverMode && !sorting && page.data && (
                 <div className={css.more}>
@@ -235,6 +249,10 @@ export function NodesTab({ rest }: { rest: string[] }) {
 
 interface NodeLineProps {
   node: NodeLineData
+  /** 真实运行状态（runtime.ts）；运行中不在列表上占位，只显示待生效、生效失败、降级 */
+  run: RunState | null
+  /** 存量的同机端口冲突提示，没有为空串 */
+  conflict: string
   index: number
   picked: boolean
   sorting: boolean
@@ -249,7 +267,7 @@ interface NodeLineProps {
  * 列表一行。react-query 的结构共享让没变的节点保持同一个对象，但心跳时刻这类不显示的字段
  * 几乎每次刷新都在变，所以 memo 按行上实际显示的字段比（logic.ts 的 NODE_LINE_FIELDS）
  */
-const NodeLine = memo(function NodeLine({ node: n, index, picked, sorting, onPick, onOpen, onMove, first, last }: NodeLineProps) {
+const NodeLine = memo(function NodeLine({ node: n, run, conflict, index, picked, sorting, onPick, onOpen, onMove, first, last }: NodeLineProps) {
   const state = nodeState(n)
   const cpu = n.cpu_percent
   return (
@@ -296,6 +314,16 @@ const NodeLine = memo(function NodeLine({ node: n, index, picked, sorting, onPic
                 不下发
               </Tag>
             )}
+            {run && run.tone !== 'ok' && (
+              <Tag tone={run.tone} title={run.detail || run.label} className={css.runTag}>
+                {run.label}
+              </Tag>
+            )}
+            {conflict && (
+              <Tag tone="danger" title={conflict}>
+                端口冲突
+              </Tag>
+            )}
           </>
         )}
       </span>
@@ -313,6 +341,8 @@ function sameLineProps(a: NodeLineProps, b: NodeLineProps): boolean {
     a.onPick === b.onPick &&
     a.onOpen === b.onOpen &&
     a.onMove === b.onMove &&
+    a.conflict === b.conflict &&
+    sameRunState(a.run, b.run) &&
     sameNodeLine(a.node, b.node)
   )
 }

@@ -166,6 +166,10 @@ func runDeliverableExtractionPG18(t *testing.T, ctx context.Context, admin *pgxp
 		}(),
 	}
 	for i, v := range variants {
+		// 端口按序号错开（no-port 仍为空）：同一台服务器上同端口同 L4 撞同机端口门禁的唯一索引（00122）
+		if v.port != nil {
+			v.port = 20000 + i
+		}
 		beat := "NULL"
 		if v.beat != "" {
 			beat = v.beat

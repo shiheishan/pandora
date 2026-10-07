@@ -279,6 +279,8 @@ func TestNodeConfigLegacyPG18(t *testing.T) {
 	t.Log("node_config_legacy_pg18_ninth_batch=ok")
 	runNodeConfigPG18PoolMoveBatch(t, ctx, admin, appPool, signer)
 	t.Log("node_config_legacy_pg18_tenth_batch=ok")
+	runNodeConfigPG18PortClaimBatch(t, ctx, admin, appPool, signer)
+	t.Log("node_config_legacy_pg18_port_claim_batch=ok")
 }
 
 func runNodeConfigPG18Publishes(ctx context.Context, service *nodefabric.Service,

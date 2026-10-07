@@ -6,6 +6,7 @@ import { useApi } from '../../../shell/runtime'
 import { Button, Checkbox, ConfirmModal, Input, Modal, Select, useToast } from '../../../ui'
 import { MOVE_BLOCKED_HINT, activationHint, canActivate, canMove, canTransition, moveBlockers } from './logic'
 import css from './nodes.module.css'
+import { copyPortValue } from './runtime'
 import { endsIntent, useCan, useFailure, useIntentKey, useInvalidateNodes, useServers } from './queries'
 import { adminNodeSchema, batchStatusResponse, deletedResponse, publishResponse, type NodeRow } from './schemas'
 
@@ -249,11 +250,21 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
   const [name, setName] = useState(`${node.name} 副本`)
   const [target, setTarget] = useState(node.server_id ?? '')
   const [copyRouting, setCopyRouting] = useState(true)
+  // 副本端口：留空沿用原节点端口；复制到同一台服务器必须换端口（同机端口门禁）
+  const [port, setPort] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const portValue = copyPortValue(port)
+  const sameServer = !target || target === node.server_id
 
   const copy = useMutation({
     mutationFn: () => {
-      const body = { row_version: node.row_version, name: name.trim(), copy_routing: copyRouting, ...(target && target !== node.server_id ? { target_server_id: target } : {}) }
+      const body = {
+        row_version: node.row_version,
+        name: name.trim(),
+        copy_routing: copyRouting,
+        ...(target && target !== node.server_id ? { target_server_id: target } : {}),
+        ...(typeof portValue === 'number' ? { server_port: portValue } : {}),
+      }
       return api.post(`v1/nodes/${node.id}/copy`, adminNodeSchema, { body, idempotencyKey: intent.keyFor([node.id, body]) })
     },
     onSuccess: (created) => {
@@ -267,6 +278,7 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
     onError: (e) => {
       if (endsIntent(e)) intent.reset()
       if (isApiError(e, 'conflict') && /名称/.test(e.message)) return setErrors({ name: e.message })
+      if (isApiError(e, 'conflict') && e.fields.server_port) return setErrors({ server_port: e.fields.server_port })
       fail(e, setErrors)
     },
   })
@@ -282,7 +294,7 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
           <Button size="dialog" onClick={onClose} disabled={copy.isPending}>
             取消
           </Button>
-          <Button size="dialog" variant="primary" busy={copy.isPending} disabled={!name.trim()} onClick={() => copy.mutate()}>
+          <Button size="dialog" variant="primary" busy={copy.isPending} disabled={!name.trim() || portValue === 'invalid'} onClick={() => copy.mutate()}>
             复制为草稿
           </Button>
         </>
@@ -296,6 +308,16 @@ function CopyModal({ node, onClose }: { node: NodeRow; onClose: () => void }) {
           onChange={(e) => setTarget(e.target.value)}
           error={errors.target_server_id ?? errors.capacity_nodes}
           options={(servers.data ?? []).map((s) => ({ value: s.id, label: `${s.name}${s.id === node.server_id ? '（原服务器）' : ''}`, disabled: s.status !== 'ready' }))}
+        />
+        <Input
+          label="端口"
+          mono
+          inputMode="numeric"
+          value={port}
+          placeholder={node.server_port ? `${node.server_port}（沿用原节点）` : '沿用原节点'}
+          onChange={(e) => setPort(e.target.value)}
+          error={errors.server_port ?? (portValue === 'invalid' ? '端口必须是 1 到 65535 的整数' : undefined)}
+          hint={sameServer ? '复制到同一台服务器要换一个端口：同一台机器上一个端口只能给一个节点' : undefined}
         />
         <Checkbox label="同时复制单节点路由规则" checked={copyRouting} onChange={(e) => setCopyRouting(e.target.checked)} />
         <div className={css.faint}>已部署节点要换机器，就复制到新服务器，再退役原节点。</div>

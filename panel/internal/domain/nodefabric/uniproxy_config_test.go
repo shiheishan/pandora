@@ -23,11 +23,12 @@ func TestBuildNodeConfigMatchesQNodeContract(t *testing.T) {
 	if got["protocol"] != "vless" {
 		t.Fatalf("protocol = %#v, want vless", got["protocol"])
 	}
-	if got["kernel_type"] != "singbox" {
-		t.Fatalf("kernel_type = %#v, want singbox", got["kernel_type"])
+	// 存量的 sing-box 读时忽略：按 auto 下发，不带 kernel_type
+	if _, exists := got["kernel_type"]; exists {
+		t.Fatalf("legacy kernel must not emit kernel_type: %#v", got["kernel_type"])
 	}
-	if got["kernel"] != "sing-box" {
-		t.Fatalf("legacy kernel = %#v, want sing-box", got["kernel"])
+	if got["kernel"] != "auto" {
+		t.Fatalf("legacy kernel = %#v, want auto", got["kernel"])
 	}
 }
 
@@ -55,7 +56,7 @@ func TestBuildNodeConfigReservedContractFieldsCannotBeOverridden(t *testing.T) {
 	if got["protocol"] != "shadowsocks" || got["server_port"] != float64(8388) {
 		t.Fatalf("reserved node identity was overridden: %#v", got)
 	}
-	if got["kernel"] != "xray-core" || got["kernel_type"] != "xray" {
+	if _, exists := got["kernel_type"]; got["kernel"] != "auto" || exists {
 		t.Fatalf("reserved kernel selection was overridden: %#v", got)
 	}
 	if got["method"] != "aes-128-gcm" {

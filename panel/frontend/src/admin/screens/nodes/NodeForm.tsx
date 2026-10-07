@@ -12,16 +12,19 @@ import {
   createBody,
   emptyBasic,
   isStable,
+  legacyKernelNote,
   mapProtocolErrors,
   optionLabel,
   patchBody,
   protocolChanged,
   protocolFields,
   protocolLabel,
+  protocolNotices,
   realityEnabled,
   toFormValues,
   toProtocolConfig,
   validateBasic,
+  withProtocolDefaults,
   type BasicForm,
   type FormValues,
   type ProtocolField,
@@ -60,7 +63,8 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
 
   const set = <K extends keyof BasicForm>(key: K, v: BasicForm[K]) => setBasic((b) => ({ ...b, [key]: v }))
   const setValue = (path: string, v: string) => {
-    setValues({ ...current, [path]: v })
+    // 联动默认值（VLESS + REALITY + tcp 默认 Vision 流控）见 logic.withProtocolDefaults
+    setValues(withProtocolDefaults(basic.nodeType, path, { ...current, [path]: v }))
     // 重新填了值就不再是「清空」
     if (v && cleared.has(path)) setCleared(new Set([...cleared].filter((p) => p !== path)))
   }
@@ -89,6 +93,11 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
       if (isApiError(error, 'conflict') && error.fields.row_version) {
         toast('节点已被其他人修改，已刷新到最新；请确认后再保存', 'danger')
         void invalidate()
+        return
+      }
+      // 同机端口门禁：端口已被同一服务器上的节点占用，标到端口框上
+      if (isApiError(error, 'conflict') && error.fields.server_port) {
+        setErrors({ server_port: error.fields.server_port })
         return
       }
       fail(error)
@@ -169,7 +178,15 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
               ...stable.map((s) => ({ value: s.node_type, label: protocolLabel(s.node_type) })),
             ]}
           />
-          <Select label="内核" value={basic.kernel} onChange={(e) => set('kernel', e.target.value)} error={errors.kernel} disabled={disabled} options={KERNELS.map(([value, label]) => ({ value, label }))} />
+          <Select
+            label="内核"
+            value={basic.kernel}
+            onChange={(e) => set('kernel', e.target.value)}
+            error={errors.kernel}
+            hint={legacyKernelNote(node)}
+            disabled={disabled}
+            options={KERNELS.map(([value, label]) => ({ value, label }))}
+          />
           <Input label="地址（IP 或主机名）" mono value={basic.host} onChange={(e) => set('host', e.target.value)} error={errors.server_host} disabled={disabled} />
           <Input label="端口" mono inputMode="numeric" value={basic.port} onChange={(e) => set('port', e.target.value)} error={errors.server_port} disabled={disabled} />
           <Input label="流量倍率" mono inputMode="decimal" value={basic.rate} onChange={(e) => set('rate', e.target.value)} error={errors.traffic_rate} disabled={disabled} />
@@ -195,6 +212,11 @@ export function NodeForm({ node, onSaved, onCancel }: { node: NodeDetail | null;
                   : '换了协议，原来的敏感字段不会带过来：必填的敏感字段要重新填写。'}
               </div>
             )}
+            {protocolNotices(basic.nodeType, current).map((notice) => (
+              <div key={notice} className={css.notice}>
+                {notice}
+              </div>
+            ))}
             <ProtocolFields
               schema={schema}
               fields={fields}
@@ -289,6 +311,7 @@ function ProtocolFields({
               placeholder={f.required ? '选择' : '不设置'}
               value={value}
               error={errors[f.path]}
+              hint={f.hint}
               disabled={disabled}
               onChange={(e) => onChange(f.path, e.target.value)}
               options={f.options.map((o) => ({ value: o, label: optionLabel(f.path, o) }))}
@@ -304,7 +327,7 @@ function ProtocolFields({
           )
         }
         if (f.kind === 'json') {
-          return <TextArea key={f.path} label={label} mono rows={3} value={value} error={errors[f.path]} disabled={disabled} onChange={(e) => onChange(f.path, e.target.value)} fieldClassName={css.span2} placeholder="JSON" />
+          return <TextArea key={f.path} label={label} mono rows={3} value={value} error={errors[f.path]} hint={f.hint} disabled={disabled} onChange={(e) => onChange(f.path, e.target.value)} fieldClassName={css.span2} placeholder="JSON" />
         }
         const clearing = f.sensitive && cleared.has(f.path) && !value
         const input = (
@@ -318,8 +341,8 @@ function ProtocolFields({
             value={value}
             error={errors[f.path]}
             disabled={disabled}
-            placeholder={!f.sensitive ? undefined : clearing ? '保存时清空' : keepSecrets ? '不回显，留空 = 不改' : '不回显，留空即不设置'}
-            hint={clearing ? '保存时会清空原值' : undefined}
+            placeholder={!f.sensitive ? (f.kind === 'list' ? '可填多个，逗号分隔' : undefined) : clearing ? '保存时清空' : keepSecrets ? '不回显，留空 = 不改' : '不回显，留空即不设置'}
+            hint={clearing ? '保存时会清空原值' : f.hint}
             onChange={(e) => onChange(f.path, e.target.value)}
             fieldClassName={f.path.endsWith('private_key') || f.path.endsWith('public_key') ? css.span2 : undefined}
           />
