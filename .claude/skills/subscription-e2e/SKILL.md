@@ -113,6 +113,7 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
   - `sbcheck` 先对原样配置跑 `box.New`（TUN 与规则集的写法照样校验），`-start` 时 Start 的是离线副本：去掉 TUN 入站与 cache_file，远程规则集换成同 tag 的内联规则集，`download_detour` 另行核对必须指向存在的出站。
   - 真客户端第一次启动时规则集下载失败（经「节点选择」下载，节点不通）整份配置起不来，下载成功一次后靠 cache_file 缓存。这一条这里测不到，上真机验。
   - E2E 只取订阅里的出站，自建入站，不受模板影响。
+- **pdnd 默认拒绝回环与内网目标**（w4kernel 起，`outbound.SetBlockPrivateDestinations`）：E2E 的目标站点在 127.0.0.1，run.sh 在被测仓库有这道闸时往工作副本的 e2e 里加一个 `init` 放开它；不放开时全部用例报 EOF / SOCKS general failure。
 - **E2E 环境注入了信任，通了不等于真环境能用**：
   - 客户端信任本次的自签证书；
   - REALITY 的 dest 和 ShadowTLS 的握手站点换成了本地 TLS 站点；

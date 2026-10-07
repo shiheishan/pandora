@@ -88,6 +88,18 @@ grep -E 'zz_e2e_.*(渲染了|下发配置)' "$res/render.log" "$res/nodeconfig.l
 echo "[2/5] 编译 sbcheck / yamlcheck / uricheck / e2e（tags: $tags）"
 rm -rf "$work/tools"; mkdir -p "$work/tools"
 cp -R "$here/tools/." "$work/tools/"
+# pdnd 起默认拒绝回环与内网目标（w4kernel，outbound.SetBlockPrivateDestinations）；E2E 的目标站点就在
+# 127.0.0.1，被测仓库有这道闸时在工作副本里放开。老基点没有这个函数，不写这个文件
+if [ -f "$repo/pdnd/outbound/private_guard.go" ]; then
+  cat > "$work/tools/e2e/zz_allow_private.go" <<'GO'
+package main
+
+import "github.com/aegispanel/nodeagent/outbound"
+
+// E2E 的目标站点在 127.0.0.1：放开 pdnd 的私网目标拦截（只在这个测试进程里）
+func init() { outbound.SetBlockPrivateDestinations(false) }
+GO
+fi
 (
   cd "$work/tools"
   go mod edit -replace "github.com/aegispanel/nodeagent=$repo/pdnd"
