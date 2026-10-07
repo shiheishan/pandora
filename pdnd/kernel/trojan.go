@@ -540,15 +540,19 @@ func readTrojanAddress(conn io.Reader, addressType byte, destination *vlessDesti
 	return nil
 }
 
+// lookupUser 按口令哈希直接查表。
+//
+// 原先对全部用户逐个做常量时间比较（压测时握手 CPU 的约 22%）。表的键是口令的
+// SHA-224，查表时间最多泄露「某个已有键的前缀」，那是摘要不是口令，凭它造不出
+// 能通过的口令（要找原像）；Xray / trojan-go 同样按哈希查表。
 func (a *trojanAdapter) lookupUser(proof string) (core.User, bool) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
-	for candidate, metadata := range a.users {
-		if trojanProofEqual(candidate, proof) {
-			return core.User{ID: metadata.ID, DeviceLimit: metadata.DeviceLimit, SpeedLimit: metadata.SpeedLimit}, true
-		}
+	metadata, ok := a.users[proof]
+	a.mu.RUnlock()
+	if !ok {
+		return core.User{}, false
 	}
-	return core.User{}, false
+	return core.User{ID: metadata.ID, DeviceLimit: metadata.DeviceLimit, SpeedLimit: metadata.SpeedLimit}, true
 }
 
 func (a *trojanAdapter) AddUsers(users []core.User) error {

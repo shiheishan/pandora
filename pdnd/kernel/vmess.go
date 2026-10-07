@@ -434,7 +434,7 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
 	epoch := a.sessions.epoch()
 	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
-	reader := bufio.NewReaderSize(conn, 64*1024)
+	reader := bufio.NewReaderSize(conn, ssHeaderReadBuffer)
 	user, destination, body, security, err := a.readRequest(reader)
 	if err != nil {
 		// authID 对不上、头部解不开：读到超时再关，不在读完 16 字节后立刻断
