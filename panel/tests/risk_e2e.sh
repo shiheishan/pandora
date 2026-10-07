@@ -44,7 +44,7 @@ export RISK_E2E_TENANT_ID=${RISK_E2E_TENANT_ID:-}
 command -v python3 >/dev/null 2>&1 || { echo "  [FATAL] 需要 python3" >&2; exit 1; }
 
 exec python3 - <<'PY'
-import ipaddress, json, os, re, secrets, signal, subprocess, sys, time
+import csv, io, ipaddress, json, os, re, secrets, signal, subprocess, sys, time
 import urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -190,6 +190,39 @@ class Admin:
         return code, js
 
 ADMIN = Admin()
+
+# 批量生成是后台任务（w5account）：提交回 202 与任务，aegis-admin 的 worker 逐个生成；
+# 轮询进度到 succeeded（有上限），再下载结果 CSV（邮箱,初始密码；要近期重认证，Admin.call
+# 每 10 分钟重登一次，登录令牌自带 15 分钟重认证窗口）
+GEN_TIMEOUT = 300
+
+def generate_users(count, prefix, idem):
+    _, job = ADMIN.call("POST", "/v1/users/bulk/generate",
+                        {"count": count, "email_prefix": prefix, "email_domain": "example.test",
+                         "reason": "风控评估脚本预制的一次性账号"},
+                        idem=idem, expect=(202,))
+    job_id = need_uuid((job or {}).get("id"), "批量生成任务 id")
+    deadline = time.monotonic() + GEN_TIMEOUT
+    while True:
+        _, job = ADMIN.call("GET", f"/v1/users/bulk/generate/jobs/{job_id}", expect=(200,))
+        status = (job or {}).get("status")
+        if status == "succeeded":
+            break
+        if status == "failed":
+            raise Fatal("批量生成任务失败", str((job or {}).get("error"))[:200])
+        if time.monotonic() > deadline:
+            raise Fatal(f"批量生成任务 {GEN_TIMEOUT} 秒内没完成",
+                        f"status={status} completed={(job or {}).get('completed')}/{count}")
+        time.sleep(1)
+    ADMIN.call("GET", "/v1/me", expect=(200,))  # 过了 10 分钟就先重登，下载要近期重认证
+    code, _, text = http("GET", ADM + f"/v1/users/bulk/generate/jobs/{job_id}/result",
+                         headers={"Accept": "text/csv"}, token=ADMIN.token)
+    if code != 200:
+        raise Fatal(f"下载批量生成结果返回 {code}", text[:300])
+    rows = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
+    if not rows or rows[0] != ["邮箱", "初始密码"]:
+        raise Fatal("批量生成结果的表头不对", repr(rows[:1])[:200])
+    return [{"email": r[0], "password": r[1]} for r in rows[1:] if len(r) == 2]
 
 # ============================================================================
 #  用例集。每条写明标签与理由；ip 键按轮次与用例序号展开成互不相撞的地址：
@@ -414,11 +447,7 @@ def run_round(rnd, ctx):
     logins = [(c, i) for c in CLUSTER_CASES for i, (how, _) in enumerate(c["members"]) if how == "login"]
     n_gen = len(owners) + len(logins)
     prefix = f"rk{rnd}-{STAMP}"
-    _, js = ADMIN.call("POST", "/v1/users/bulk/generate",
-                       {"count": n_gen, "email_prefix": prefix, "email_domain": "example.test",
-                        "reason": "风控评估脚本预制的一次性账号"},
-                       idem=f"risk-gen-{STAMP}-{rnd}")
-    gen = (js or {}).get("users") or []
+    gen = generate_users(n_gen, prefix, f"risk-gen-{STAMP}-{rnd}")
     if not check(len(gen) == n_gen, f"后台批量生成 {n_gen} 个账号"):
         raise Fatal("批量生成的账号数不对")
     ids = dict(r.split("|") for r in sql(
