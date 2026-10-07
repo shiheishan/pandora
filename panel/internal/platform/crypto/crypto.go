@@ -49,7 +49,15 @@ func DefaultArgon2Params() Argon2Params {
 }
 
 // HashPassword 返回 PHC 格式的 Argon2id 串。
-func HashPassword(password string, p Argon2Params) (string, error) {
+//
+// 经全局哈希闸门（见 password_gate.go）：等名额不设超时。请求路径应先
+// AcquirePasswordSlot 再用名额的 Hash，排队受 ctx 与排队超时约束。
+func HashPassword(password string, p Argon2Params) (phc string, err error) {
+	withBlockingSlot(func() { phc, err = hashPassword(password, p) })
+	return phc, err
+}
+
+func hashPassword(password string, p Argon2Params) (string, error) {
 	salt := make([]byte, p.SaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("生成盐值: %w", err)
@@ -63,7 +71,14 @@ func HashPassword(password string, p Argon2Params) (string, error) {
 
 // VerifyPassword 以恒定时间比较口令与 PHC 串。
 // needsRehash 为 true 表示该哈希用的参数弱于当前默认值，应在本次登录后静默升级。
+//
+// 经全局哈希闸门，等名额不设超时；请求路径用 PasswordSlot.Verify。
 func VerifyPassword(password, phc string) (ok bool, needsRehash bool, err error) {
+	withBlockingSlot(func() { ok, needsRehash, err = verifyPassword(password, phc) })
+	return ok, needsRehash, err
+}
+
+func verifyPassword(password, phc string) (ok bool, needsRehash bool, err error) {
 	parts := strings.Split(phc, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
 		return false, false, errors.New("不是合法的 argon2id PHC 串")
@@ -104,7 +119,13 @@ func VerifyPassword(password, phc string) (ok bool, needsRehash bool, err error)
 //
 // 这是 IAM-006「不能通过正文、状态码或明显时间差确认账号存在」的必要条件：
 // 若账号不存在就立即返回，攻击者用响应耗时就能枚举出哪些邮箱已注册。
+//
+// 经全局哈希闸门，等名额不设超时；请求路径用 PasswordSlot.DummyVerify。
 func DummyVerify(password string) {
+	withBlockingSlot(func() { dummyVerify(password) })
+}
+
+func dummyVerify(password string) {
 	p := DefaultArgon2Params()
 	salt := make([]byte, p.SaltLength) // 全零盐，结果丢弃，只为消耗等量 CPU
 	_ = argon2.IDKey([]byte(password), salt, p.Iterations, p.Memory, p.Parallelism, p.KeyLength)

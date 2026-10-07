@@ -55,11 +55,15 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	// 连接池上限按网关取（config.DefaultDBMaxConns 的算式），含常驻 LISTEN 那一条
+	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{MaxConns: cfg.DBMaxConns[config.DomainPublic]})
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
+
+	// 口令哈希（Argon2id 19 MiB/次）全局并发上限：登录、注册、改密都在这个网关上
+	crypto.ConfigurePasswordHashing(cfg.PasswordHashConcurrency, cfg.PasswordHashQueueTimeout)
 
 	redisOpt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
@@ -125,6 +129,8 @@ func run() error {
 	// 数据库变更监听：任何一张被关注的表发生写入，都会自动推到前端。
 	// 这样新增功能不必记得「顺手发条推送」——覆盖面由触发器保证。
 	realtime.StartDBListener(ctx, pool.Pool, rtHub, log)
+	// 降级开关缓存：后台切开关时广播 switches.changed，本网关收到即失效（下单、礼品卡开关）
+	waitSwitchWatch := middleware.WatchFeatureSwitchChanges(ctx, rtHub, middleware.DefaultTenantID)
 
 	// 通知：站内信总是可用；邮件要配了 SMTP 才启用，
 	// 没配时相关投递会被标成 suppressed（未配置），而不是攒成失败记录。
@@ -194,6 +200,7 @@ func run() error {
 	stop()
 	waitReservationExpiry()
 	waitPaymentQuery()
+	waitSwitchWatch()
 	return serverErr
 }
 

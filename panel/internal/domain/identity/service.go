@@ -238,12 +238,17 @@ func (s *Service) CompleteRegistration(ctx context.Context, tenantID string, in 
 	if err := validatePassword(in.Password); err != nil {
 		return nil, err
 	}
+	slot, err := acquirePasswordSlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer slot.Release()
 
 	scope := db.Scope{TenantID: tenantID}
 	var out CompleteRegistrationOutput
 	var rejectedAttempt bool
 
-	err := s.pool.InTx(ctx, scope, func(tx pgx.Tx) error {
+	err = s.pool.InTx(ctx, scope, func(tx pgx.Tx) error {
 		registrationMode, err := enforceRegistrationCompletePolicy(ctx, tx, tenantID)
 		if err != nil {
 			return err
@@ -327,7 +332,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, tenantID string, in 
 			}
 		}
 
-		phc, err := crypto.HashPassword(in.Password, crypto.DefaultArgon2Params())
+		phc, err := slot.Hash(in.Password, crypto.DefaultArgon2Params())
 		if err != nil {
 			return err
 		}
@@ -511,13 +516,21 @@ func (s *Service) Login(ctx context.Context, tenantID string, in LoginInput) (*L
 
 	invalid := httpx.New(httpx.CodeUnauthorized, "邮箱或密码不正确")
 
+	// 口令计算在两个事务之间、经全局哈希名额进行：不占连接排队，名额只罩住计算。
+	// 账号存在与否都排同一个队，排不上同样回 503（IAM-006）。
+	slot, err := acquirePasswordSlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer slot.Release()
+
 	if !found {
 		// 关键：不提前返回，先付出与真实校验相同的计算代价
-		crypto.DummyVerify(in.Password)
+		slot.DummyVerify(in.Password)
 		return nil, invalid
 	}
 
-	ok, rehash, err := crypto.VerifyPassword(in.Password, phc)
+	ok, rehash, err := slot.Verify(in.Password, phc)
 	if err != nil {
 		return nil, httpx.Internal(err)
 	}
@@ -531,6 +544,15 @@ func (s *Service) Login(ctx context.Context, tenantID string, in LoginInput) (*L
 		return nil, invalid
 	}
 	needsHash = rehash
+	// 参数被调强后，趁用户输入明文时静默升级。在事务外、名额内算好，
+	// 建会话的事务里只写结果；算失败就下次登录再升级，不影响本次登录。
+	var rehashedPHC string
+	if needsHash {
+		if newPHC, herr := slot.Hash(in.Password, crypto.DefaultArgon2Params()); herr == nil {
+			rehashedPHC = newPHC
+		}
+	}
+	slot.Release()
 
 	// 建立会话
 	refreshToken, err := crypto.NewToken(32)
@@ -567,13 +589,11 @@ func (s *Service) Login(ctx context.Context, tenantID string, in LoginInput) (*L
 			return err
 		}
 
-		// 参数被调强后，趁用户输入明文时静默升级
-		if needsHash {
-			if newPHC, herr := crypto.HashPassword(in.Password, crypto.DefaultArgon2Params()); herr == nil {
-				_, _ = tx.Exec(ctx,
-					`UPDATE user_passwords SET phc = $2, rotated_at = now() WHERE user_id = $1`,
-					userID, newPHC)
-			}
+		// 参数被调强后，趁用户输入明文时静默升级（哈希已在事务外算好）
+		if rehashedPHC != "" {
+			_, _ = tx.Exec(ctx,
+				`UPDATE user_passwords SET phc = $2, rotated_at = now() WHERE user_id = $1`,
+				userID, rehashedPHC)
 		}
 
 		return audit.Write(ctx, tx, tenantID, audit.Entry{
@@ -639,15 +659,20 @@ func validatePassword(p string) error {
 	return nil
 }
 
-// adminPasswordMinRunes 是管理员改自己密码的最短长度（契约后台外壳）：管理员口令
+// adminPasswordMinRunes 是后台人员口令的最短长度（契约后台外壳）：管理员口令
 // 是权限的根，比门户用户的 8 位更严；字母 + 数字与 256 字节上限仍走通用规则。
 const adminPasswordMinRunes = 12
 
-func validatePasswordFor(apiDomain, p string) error {
+// validatePasswordFor 按账号本身定口令策略：staff 为 true（有任何角色绑定，
+// 定义见 iamguard.IsStaff）时至少 12 位。
+//
+// 以前按请求从哪个网关进来判断，管理员在门户的 /me/password 能把自己改成 8 位，
+// 后台替人重置时管理员账号也只要 8 位。看账号不看入口，两个漏口一起堵上。
+func validatePasswordFor(staff bool, p string) error {
 	if err := validatePassword(p); err != nil {
 		return err
 	}
-	if apiDomain == "admin" && len([]rune(p)) < adminPasswordMinRunes {
+	if staff && len([]rune(p)) < adminPasswordMinRunes {
 		return httpx.Invalid(map[string]string{"password": "管理员密码至少需要 12 个字符"})
 	}
 	return nil

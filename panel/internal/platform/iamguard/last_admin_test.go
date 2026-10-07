@@ -58,7 +58,7 @@ func TestLockLastAdministratorIsTenantScopedTransactionLock(t *testing.T) {
 		"11111111-1111-1111-1111-111111111111"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"SELECT id::text FROM tenants", "FOR UPDATE"} {
+	for _, want := range []string{"SELECT id::text FROM tenants", "FOR NO KEY UPDATE"} {
 		if !strings.Contains(tx.querySQL, want) {
 			t.Fatalf("lock SQL missing %q: %s", want, tx.querySQL)
 		}

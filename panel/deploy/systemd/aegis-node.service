@@ -38,6 +38,10 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @mount @reboot @swap @obsolete
 MemoryMax=256M
 CPUQuota=60%
+# Go 软上限 = MemoryMax 的 80%；撞上限时不换页、宁可重启（理由见 aegis-public.service）。
+# EnvironmentFile 里同名变量会覆盖 GOMEMLIMIT。
+Environment=GOMEMLIMIT=204MiB
+MemorySwapMax=0
 StandardOutput=append:/var/log/aegis/node.log
 StandardError=append:/var/log/aegis/node.log
 

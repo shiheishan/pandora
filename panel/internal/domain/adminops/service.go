@@ -223,6 +223,11 @@ func (s *Service) SetUserStatus(ctx context.Context, tenantID, actorID, userID, 
 			}
 			return err
 		}
+		// 越级闸：目标持有操作者没有的权限时拒绝（403），停用与恢复都一样。
+		// 在「状态没变」的短路之前判断，管不了的账号连空操作也不放行
+		if _, err := iamguard.CanManage(ctx, tx, tenantID, actorID, userID); err != nil {
+			return err
+		}
 		if before == status {
 			return iamguard.RequireEffectiveAdministrator(ctx, tx, tenantID)
 		}

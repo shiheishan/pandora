@@ -11,6 +11,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/iamguard"
 )
 
 // 管理员替用户重置密码。
@@ -48,6 +49,10 @@ type AdminResetPasswordInput struct {
 }
 
 // AdminResetPassword 由管理员直接设置某个用户的新密码。
+//
+// 越级检查（iamguard.CanManage）：目标账号持有操作者没有的权限时拒绝（403）。
+// 没有它，持 iam.user.write 的租户管理员能重置平台管理员的密码、再用新密码登录，
+// 一步提权到全部权限。口令策略按目标账号算：目标是后台人员时至少 12 位。
 func (s *Service) AdminResetPassword(ctx context.Context, tenantID string,
 	in AdminResetPasswordInput) error {
 
@@ -67,12 +72,23 @@ func (s *Service) AdminResetPassword(ctx context.Context, tenantID string,
 	target := in.TargetUserID
 	actor := in.ActorID
 
+	// 名额在开事务之前拿：不拿着连接、锁着目标行排队等哈希
+	slot, err := acquirePasswordSlot(ctx)
+	if err != nil {
+		return err
+	}
+	defer slot.Release()
+
 	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor},
 		func(tx pgx.Tx) error {
+			// 锁住目标行：与并发的改状态（FOR UPDATE）、重置互斥，越级检查与写入针对
+			// 同一个账号状态。用 NO KEY UPDATE：不挡引用这行的外键检查（如目标用户
+			// 此刻的登录建会话），只挡同样要改这行的事务
 			var email string
 			err := tx.QueryRow(ctx, `
 				SELECT email::text FROM users
-				 WHERE tenant_id = $1 AND id = $2::uuid`,
+				 WHERE tenant_id = $1 AND id = $2::uuid
+				 FOR NO KEY UPDATE`,
 				tenantID, target).Scan(&email)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return httpx.NotFoundOrForbidden()
@@ -81,7 +97,15 @@ func (s *Service) AdminResetPassword(ctx context.Context, tenantID string,
 				return err
 			}
 
-			newPHC, err := crypto.HashPassword(in.NewPassword, crypto.DefaultArgon2Params())
+			authority, err := iamguard.CanManage(ctx, tx, tenantID, actor, target)
+			if err != nil {
+				return err
+			}
+			if err := validatePasswordFor(authority.Staff, in.NewPassword); err != nil {
+				return err
+			}
+
+			newPHC, err := slot.Hash(in.NewPassword, crypto.DefaultArgon2Params())
 			if err != nil {
 				return err
 			}

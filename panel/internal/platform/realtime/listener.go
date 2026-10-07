@@ -65,8 +65,9 @@ func topicFor(table string) string {
 
 // StartDBListener 起一个后台监听，把数据库变更转成实时事件。
 //
-// 它自己持有一条独立连接：LISTEN 是连接级的状态，
-// 从连接池里借一条用完还回去的话，还回去的瞬间监听就断了。
+// 它从池里借一条连接独占：LISTEN 是连接级的状态，监听期间不能还回去。
+// 退出时这条连接直接销毁而不是还回池里（见 listenOnce），否则带着 LISTEN 的
+// 连接会被别的请求借走，通知在它的缓冲里越积越多。
 func StartDBListener(ctx context.Context, pool *pgxpool.Pool, hub *Hub, log *slog.Logger) {
 	go func() {
 		for {
@@ -93,7 +94,14 @@ func listenOnce(ctx context.Context, pool *pgxpool.Pool, hub *Hub, log *slog.Log
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
+	// 不还回池：从池里摘下并关闭。连接池归还时不做任何清理（db.OpenWithOptions），
+	// 会话级的 LISTEN 一旦回到池里就会跟着连接被复用。池会按需补建新连接。
+	defer func() {
+		raw := conn.Hijack()
+		closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = raw.Close(closeCtx)
+	}()
 
 	if _, err := conn.Exec(ctx, "LISTEN aegis_change"); err != nil {
 		return err

@@ -66,6 +66,26 @@ ALTER ROLE aegis_app SET row_security = on;
 -- and pin the role setting to this database only.  Cluster-wide ALTER ROLE is
 -- forbidden because disposable prechecks share cluster roles with their
 -- source database.
+--
+-- Runtime query guards, pinned to this database for the same reason as
+-- search_path (role-in-database settings beat role, database and server
+-- settings, and do not leak into disposable prechecks on the same cluster):
+--
+--   jit = off: PG18 defaults to jit=on with jit_above_cost=100000.  Queries
+--   with per-row subplans cross that estimate easily and spend far longer
+--   compiling than executing; at 5k users JIT was ~78% of all execution time.
+--   docker-compose.yml also passes -c jit=off for the bundled instance; this
+--   setting covers native installs and managed PostgreSQL.
+--
+--   statement_timeout = 15s: one statement running longer than this means the
+--   request is already lost.  15s stays below nginx's 20s read timeout on the
+--   auth location and the gateways' 25s request timeout, so the gateway gets a
+--   clean cancellation (and answers with its own error) instead of the query
+--   burning CPU after the client is gone.  Lock waits count too.  It applies to
+--   aegis_app only: migrations, backups and psql maintenance connect as the
+--   superuser and keep the server default (no timeout; migrations set their
+--   own SET LOCAL statement_timeout where needed).  Existing sessions pick it
+--   up on reconnect; gateways are restarted on every upgrade.
 DO $$
 DECLARE
   v_database name := pg_catalog.current_database();
@@ -76,6 +96,12 @@ BEGIN
   EXECUTE pg_catalog.format(
     'ALTER ROLE aegis_app IN DATABASE %I SET search_path TO pg_catalog, public, pg_temp',
     v_database
+  );
+  EXECUTE pg_catalog.format(
+    'ALTER ROLE aegis_app IN DATABASE %I SET jit = off', v_database
+  );
+  EXECUTE pg_catalog.format(
+    'ALTER ROLE aegis_app IN DATABASE %I SET statement_timeout = %L', v_database, '15s'
   );
 END $$;
 REVOKE CREATE ON SCHEMA public, app FROM PUBLIC, aegis_app;
