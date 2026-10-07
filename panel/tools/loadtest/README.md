@@ -140,6 +140,7 @@ sudo /root/lt/nginx-realip.sh status
 
 1. 每档都要重新接入（真节点的身份在库里，档与档之间重装数据基座后身份就作废了），这里只做一次性准备：确认系统时间同步（签名时间窗口很窄），记下 `<NODE1_IP>`、`<NODE2_IP>`。
 2. 真节点的作用是对照组：在面板机的 nginx access log 里，比较真节点 IP 与模拟节点的同类请求次数，核对模拟节点的请求节奏。
+   - 模拟节点按 `-node-behavior` 模拟两代 pdnd（见 8.1）。发布包里的 pdnd 拉生效配置时带请求头 `X-Applied-Effective-Release`，就是 current（缺省）；更早的版本对应 legacy。两边不是同一代时，同类请求次数对不上是预期的。
 
 ## 6. 构建压测工具（压测机）
 
@@ -231,6 +232,7 @@ T=<T 的 unix 秒>   # 两台机器约定的稳态起点；-steady-* 让报告�
 export LOADTEST_ADMIN_EMAIL=<ADMIN_EMAIL> LOADTEST_ADMIN_PASSWORD='<管理员口令>'
 
 # 198 个模拟节点：签名通道 + UniProxy + 每节点一条 SSE；-strict 让签名失败与 5xx 反映在退出码上
+# 节拍按新 pdnd（-node-behavior current，缺省）；与旧版 pdnd 时期的数据对照时加 -node-behavior legacy（见 8.1）
 ~/loadtest nodes -manifest $M -node-url https://<PANEL_DOMAIN> -stagger 60s -duration 37m \
   -steady-start $T -steady-dur 30m -out $R -strict > $R/nodes.log 2>&1 &
 
@@ -256,9 +258,23 @@ export LOADTEST_ADMIN_EMAIL=<ADMIN_EMAIL> LOADTEST_ADMIN_PASSWORD='<管理员口
 - 门户 5 次/秒（200 个活跃用户各自复用登录令牌）、后台 0.5 次/秒、重新登录 0.05 次/秒，各档相同。
 - users 开跑前会按速率逐维预估面板各个限流（每 IP、每 /24、每账号、订阅每小时、登录、后台每 IP），每维打一行 ok 或 WARN。出现 WARN 先调速率，再开跑。
 - 后台每 IP 每分钟限 240 次；要压更高，给 `-admin-ips` 多个虚构地址。
-- 节点侧稳态的请求量不用配，由面板下发的节拍决定：
-  - 每个节点每 15 秒 4 个签名请求加 1 次用户拉取，每 60 秒 push 和 alive 各一次，每 30 秒一次签名心跳。
-  - 200 个节点合计约 80 req/s。
+- 节点侧稳态的请求量不用配，由节拍决定：拉取 15 秒、上报 60 秒由面板经 `base_config` 下发；心跳 30 秒、换钥检查 10 分钟是 pdnd 写死的。
+- `-node-behavior` 选模拟哪一代 pdnd，稳态每节点每分钟的请求数如下（单池、无配置变更）：
+
+  | 端点 | current（缺省） | legacy |
+  |---|---|---|
+  | `GET /v1/nodes/effective-config` | 4，几乎全是 204：带已应用版本，仍是当前版 | 4，每次 200 全量 |
+  | `GET /v1/nodes/config-signing-key` | 0.1：10 分钟一次，验签失败时立刻补一次 | 4：每次拉配置前都问 |
+  | `POST /v1/nodes/config/report` | ≈0：switched、health_passed 各报一次，面板收下即停，配置版本变了再报 | 8：每轮两条都重报 |
+  | `GET /api/v1/server/UniProxy/user` | 4，ETag，稳态几乎全是 304 | 4 |
+  | `POST /v1/nodes/heartbeat` | 2 | 2 |
+  | `POST /api/v1/server/UniProxy/push`、`alive` | 各 1 | 各 1 |
+  | **合计** | **≈12.1** | **≈24** |
+  | 200 个节点 | ≈40 req/s | ≈80 req/s |
+
+  - current 的拉取、上报、心跳三条节拍都是定时器：每拍处理完再按 ±10% 随机抖动排下一拍，实际周期是「处理耗时 + 抖动后的间隔」，面板慢的时候请求数会低于上表；换钥检查的间隔同样抖动。抖动的随机源由 `-seed` 派生，同一种子下每个节点每条节拍的间隔序列可复现。
+  - legacy 原样保留改版前的模拟器：固定周期、没有抖动，只为和 legacy 时期的实测（例如 `5k-r1`）对照。
+  - 核对实测：`nodes.txt` 末尾的「per node per minute」表按稳态窗口把各端点折成每节点每分钟，并按状态码拆开（生效配置的 200 与 204 分开列），可以直接和上表比。JSON 里对应 `per_unit` 与各端点的 `per_unit_per_min`、`per_unit_per_min_by_code`。
 
 ### 8.2 场景顺序
 
@@ -308,7 +324,8 @@ export LOADTEST_ADMIN_EMAIL=<ADMIN_EMAIL> LOADTEST_ADMIN_PASSWORD='<管理员口
 
 JSON 里每个端点都有 count、QPS、p50/p95/p99/max（毫秒）、错误码分布、自定义标签，以及 10 秒一格的时间线。
 
-- 节点侧的标签：`sig_fail`、`auth_fail`、`etag_304`、`trigger:stream`、`phase:*`。
+- 节点侧的标签：`sig_fail`、`auth_fail`、`etag_304`、`unchanged_204`（生效配置回 204：节点手上已是当前版）、`trigger:stream`、`phase:*`。
+- 每节点每分钟各端点的请求数：`nodes.txt` 末尾的「per node per minute」表（给了 `-steady-*` 就只算稳态窗口内，否则按整个运行区间折，只作参考）。
 - burst 的尖峰：在 nodes.json 的时间线里看，按 burst.json 的 `trigger_unix_ms` 对齐。
 
 ### 9.2 及格线（照原四条，逐条对照）
