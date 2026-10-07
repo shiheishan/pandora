@@ -254,7 +254,8 @@ func TestAdapterAcceptLoopsBackOffOnEMFILE(t *testing.T) {
 	}
 }
 
-// 退避之后接到的连接照常交给会话处理：VMess 收到非法请求头会关掉连接。
+// 退避之后接到的连接照常交给会话处理：VMess 收到非法请求头后读到超时再关
+// （抗探测），net.Pipe 的写是同步的，两次写都被读走就说明会话在处理它。
 func TestVMessAcceptLoopServesConnAfterEMFILE(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
@@ -267,11 +268,14 @@ func TestVMessAcceptLoopServesConnAfterEMFILE(t *testing.T) {
 	if _, err := client.Write(make([]byte, 64)); err != nil {
 		t.Fatalf("写请求头: %v", err)
 	}
-	if _, err := io.ReadAll(client); err != nil {
-		t.Fatalf("会话应在非法请求头后关闭连接，实际 %v", err)
+	if _, err := client.Write(make([]byte, 64)); err != nil {
+		t.Fatalf("非法请求头之后会话应继续读空连接，实际 %v", err)
 	}
 	closed := make(chan error, 1)
 	go func() { closed <- a.Close() }()
+	if _, err := io.ReadAll(client); err != nil {
+		t.Fatalf("Close 应关掉会话连接，实际 %v", err)
+	}
 	select {
 	case <-closed:
 	case <-time.After(2 * time.Second):

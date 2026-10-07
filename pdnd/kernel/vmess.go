@@ -46,26 +46,29 @@ var vmessAddressSerializer = M.NewSerializer(
 )
 
 type vmessAdapter struct {
-	spec          InboundSpec
-	mu            sync.RWMutex
-	users         map[string]vmessUser
-	traffic       map[int64]core.UserTraffic
-	online        map[int64]map[string]struct{}
-	listener      net.Listener
-	packet        net.PacketConn
-	httpServer    *http.Server
-	h3Server      interface{ Close() error }
-	xhttpConfig   XHTTPConfig
-	tlsConfig     *tls.Config
-	plane         DataPlane
-	connErr       connErrorReporter
-	limiters      core.SpeedLimiters
-	ctx           context.Context
-	cancel        context.CancelFunc
-	closed        bool
-	lastErr       error
-	active        map[net.Conn]struct{}
-	replay        map[string]time.Time
+	spec        InboundSpec
+	mu          sync.RWMutex
+	users       map[string]vmessUser
+	traffic     map[int64]core.UserTraffic
+	online      map[int64]map[string]struct{}
+	listener    net.Listener
+	packet      net.PacketConn
+	httpServer  *http.Server
+	h3Server    interface{ Close() error }
+	xhttpConfig XHTTPConfig
+	tlsConfig   *tls.Config
+	plane       DataPlane
+	connErr     connErrorReporter
+	limiters    core.SpeedLimiters
+	ctx         context.Context
+	cancel      context.CancelFunc
+	closed      bool
+	lastErr     error
+	active      map[net.Conn]struct{}
+	replay      *replayFilter
+	replayOnce  sync.Once
+	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
+	headerTimeout time.Duration
 	xhttpBroker   *XHTTPPacketBroker
 	xhttpSessions map[string]*vmessXHTTPPacketSession
 	wg            sync.WaitGroup
@@ -422,14 +425,26 @@ func (a *vmessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
 
 func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
 	reader := bufio.NewReaderSize(conn, 64*1024)
 	user, destination, body, security, err := a.readRequest(reader)
 	if err != nil {
+		// authID 对不上、头部解不开：读到超时再关，不在读完 16 字节后立刻断
+		// （读错误本身立即返回，读空不会多等）。
+		drainUntilDeadline(conn)
 		return fmt.Errorf("vmess request: %w", err)
 	}
 	if security != vmessSecNone && security != vmessSecZero && security != vmessSecAES128 && security != vmessSecChaCha {
 		return fmt.Errorf("vmess security %d is not enabled in native slice", security)
+	}
+	bodyState, ok := body.(*vmessBodyReader)
+	if !ok {
+		return fmt.Errorf("vmess internal body state missing")
+	}
+	// 重放检查放在清读截止时间之前：重放的请求头与认证失败一样读到超时再关。
+	if !a.acceptAuthID(bodyState.authID) {
+		drainUntilDeadline(conn)
+		return markConnError(connErrAuth, fmt.Errorf("vmess replayed request"))
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	ip := remoteIP(conn.RemoteAddr())
@@ -437,13 +452,6 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 		return deviceLimitError("vmess")
 	}
 	defer a.leaveDevice(user, ip)
-	bodyState, ok := body.(*vmessBodyReader)
-	if !ok {
-		return fmt.Errorf("vmess internal body state missing")
-	}
-	if !a.acceptAuthID(bodyState.authID) {
-		return fmt.Errorf("vmess replayed request")
-	}
 	if bodyState.command == vmessUDP {
 		return a.handleUDP(ctx, conn, user, destination, bodyState, security)
 	}
@@ -600,22 +608,20 @@ func (a *vmessAdapter) Close() error {
 }
 func (a *vmessAdapter) removeActive(c net.Conn) { a.mu.Lock(); delete(a.active, c); a.mu.Unlock() }
 
+// VMess authID 防重放：authID 里的时间戳允许 ±120 秒，同一个 authID 最晚在
+// 首次出现 240 秒后仍能通过时间检查，所以至少要记 4 分钟。按 2 分钟分代、
+// 保留 3 代：至少 4 分钟、至多 6 分钟。以前是每个连接在全局锁下扫整张表、
+// 只记 2 分钟。
+const (
+	vmessAuthIDReplayPeriod = 2 * time.Minute
+	vmessAuthIDReplayKeep   = 3
+)
+
 func (a *vmessAdapter) acceptAuthID(id [16]byte) bool {
-	now := time.Now()
-	key := string(id[:])
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.replay == nil {
-		a.replay = make(map[string]time.Time)
-	}
-	for k, seen := range a.replay {
-		if now.Sub(seen) > 2*time.Minute {
-			delete(a.replay, k)
+	a.replayOnce.Do(func() {
+		if a.replay == nil {
+			a.replay = newReplayFilter(vmessAuthIDReplayPeriod, vmessAuthIDReplayKeep, replayFilterMaxPerGen)
 		}
-	}
-	if _, exists := a.replay[key]; exists {
-		return false
-	}
-	a.replay[key] = now
-	return true
+	})
+	return a.replay.check(id[:], time.Now())
 }
