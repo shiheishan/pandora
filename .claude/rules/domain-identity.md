@@ -10,4 +10,6 @@ paths:
 - 注册不可借来探测邮箱（IAM-006）：`StartRegistration` 对已存在的邮箱返回与新邮箱完全一致的响应，但不写验证码、不入队任何邮件。验证码与入队在同一事务，提交后再 `Kick`
 - 注册总开关 `feature_switches.auth.registration` 缺行或关闭都按关闭处理；邮箱验证缺行按 `EmailVerificationDefault`（= 迁移种子 false），后台邮件页也必须用这个值（守卫 `email_verify_default_test.go:TestEmailVerificationDefaultMatchesSeed`）
 - 门户自助会话管理只能触及 audience=public 的会话，后台会话对门户不可见、不可踢；`last_seen_at` 在本包只读，写入点在认证中间件
-- 改密：门户保留当前会话及其 refresh，admin 域吊销全部登录凭据（产品「保留规则 4」）；admin 新密码至少 12 个字符，门户仍是 8 个（`validatePasswordFor`）。旧密码错误的审计要先单独提交，再在事务外返回认证错误，不能随事务回滚
+- 改密：门户保留当前会话及其 refresh，admin 域吊销全部登录凭据（产品「保留规则 4」）；后台人员（有任何角色绑定，`iamguard.IsStaff`）不论从门户还是后台改密、或被别人重置，新密码都至少 12 个字符，普通用户 8 个；看账号不看入口（`validatePasswordFor(staff, …)`）。旧密码错误的审计要先单独提交，再在事务外返回认证错误，不能随事务回滚
+- 越级：替人重置密码、改账号状态、批量停用同源账号前都过 `iamguard.CanManage`——操作者当前生效的租户级权限必须覆盖目标的全部生效权限，否则 403；批量停用一律跳过后台人员
+- Argon2 一律经全局名额：本包先 `acquirePasswordSlot`（排不上回 503）再开事务，事务里用名额的 Hash/Verify；不调 crypto 的包级 HashPassword / VerifyPassword（守卫 `password_gate_test.go`）。改密失败计数复用审计记录：同一账号 15 分钟内旧口令错 5 次回 429

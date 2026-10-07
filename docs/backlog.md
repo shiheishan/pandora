@@ -6,14 +6,14 @@
 
 ## 安全与计费缺陷
 
-1. **后台改自己密码没有认证类限流**
+1. ~~**后台改自己密码没有认证类限流**~~ —— 2026-10-06 已修（第 1 波 w1plat：按账号、按 IP 两级限流，旧口令错误按账号计数）
    - 要做：`POST v1/me/password` 要校验旧口令，应和同组的 `POST v1/auth/reauth` 一样，按账号、按 IP 两级挂 `RateLimit`。
    - 现状：`panel/internal/api/admin/router.go` 的 `NewRouter` 直接注册 `h.changePassword`，只受网关全局的按 IP 限流约束；`identity.ChangePassword` 也没有失败计数。
    - 出处：§7.3「同类都有、这条没有」。
 
 ## 后端
 
-2. **设备列表行缺 `user_id`**
+2. ~~**设备列表行缺 `user_id`**~~ —— 2026-10-06 后端已补（第 1 波 w1sub），第 5 条可以做了
    - 要做：`GET v1/devices` 每行加 `user_id`（不需要迁移），前端就能直接打开用户抽屉，不用再按邮箱搜（见第 5 条）。
    - 现状：`panel/internal/domain/nodefabric/device_limit_admin.go` 的 `OnlineDevice` 只有 `subscription_id`、`email` 等字段。
    - 出处：§8.2「其他发现」（后台-03 用户 · 设备策略）。

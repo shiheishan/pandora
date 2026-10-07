@@ -16,3 +16,6 @@ paths:
 - 停用用户（单个改状态、风控批量停用）都经 `revokeUserLogins` 吊销会话与 refresh；事务末尾核对仍有有效管理员（守卫 `last_admin_contract_test.go:TestSetUserStatusPreservesLastAdministratorBeforeAudit`）
 - 读模型里的来源 IP、收款信息等只给密文，明文由 handler 按表的 AAD 解开；审计表与订阅拉取日志的 IP 哈希盐不同，不能拿一边的哈希去查另一边
 - 删用户组前逐项数引用，按 池名单 > 用户 > 套餐 > 价格 > 优惠券 的顺序给 409；查完到删之间被池名单引用的由外键兜住，同样回 409。组的 code 建后不可改（套餐、价格、优惠券按 ID 引用它）
+- 后台列表先在主表上按排序键取一页 id（`(tenant_id, created_at DESC, id DESC)` 索引），再只对这一页拼当前订阅、配额、在线设备等读模型；不要把 LATERAL 放在 LIMIT 之前
+- 看板流量与节点列表的流量只读小时汇总表（`node_traffic_hourly`、`node_user_traffic_hourly`，入库时在 `ReportTraffic` 同一事务里累加，00099），不在请求时解析 `node_traffic_reports.raw_payload`
+- 批量生成用户：Argon2 在事务外逐个经全局名额算好，事务里只写库

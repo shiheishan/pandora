@@ -12,7 +12,7 @@ paths:
 - 三个网关的共同装配只有一处契约：`panel/cmd/aegis-node/main_test.go`
   - `audit.Configure` 在三个 `run` 里都要在开服之前调用，且哈希与加密写法逐字相同（三者写同一张 `audit_events`）。改一处就改三处，守卫 `TestGatewaysConfigureAuditSourceIdentically`
   - pprof 每个网关只起一个，取本域的 `config.PprofAddrs`，开服前起、defer 关闭，守卫 `TestGatewaysStartPprofFromTheirOwnVariable`
-- 后台循环的生命周期：有循环的网关（public、admin）自建信号 context，调 `server.RunContext`；停机时先取消，限时 join 循环，再交给 defer 关资源；admin 的 join 超时就不关连接池（`waitForAdminWorkers`），免得拆掉仍在用的连接。没有循环的 node 直接用 `server.Run`
+- 后台循环的生命周期：有循环的网关（public、admin）自建信号 context，调 `server.RunContext`；停机时先取消，限时 join 循环，再交给 defer 关资源；admin 的 join 超时就不关连接池（`waitForAdminWorkers`），免得拆掉仍在用的连接。node 也有后台循环（签名请求 nonce 的过期清理），同样自建信号 context、`server.RunContext`、限时 join
   - 新增循环要挂在同一个信号 context 上并加入 join。守卫：`panel/cmd/aegis-admin/main_contract_test.go` 的 `TestAdminWorkersShareSignalContextAndJoinBeforeCleanup`、`panel/cmd/aegis-public/main_test.go` 的 `TestPublicProcessCancelsExpiryWorkerBeforeResourceCleanup`
 - 通知收件人哈希在 admin 与 public 两边都用 `crypto.NotifyRecipientSalt`，同一收件人两边要算出同一个值。守卫：`TestAdminNotifyUsesRecipientSalt`、`TestPublicNotifyUsesRecipientSalt`
 - pprof 只经 `platform/profiling` 开在独立回环端口上，不要挂到网关路由：它能导出含明文密钥的堆

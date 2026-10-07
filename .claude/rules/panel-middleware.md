@@ -8,7 +8,9 @@ paths:
 - 只依赖 platform，不 import domain
 - 路由上 `RequireRecentReauth` 总在 `Idempotency` 之前：reauth 失败不能消耗幂等键（前端以原键重放）
 - `RequirePermission` 缺权限回 404，不回 403，免得暴露接口存在
-- `sessions.last_seen_at` 只在 `auth.go` 的 `sessionTouchSQL` 一处写（5 分钟节流），会话有效性、节流刷新与实时权限在同一事务里取齐；别处不要再写这一列
+- `sessions.last_seen_at` 只在 `auth.go` 的 `sessionTouchSQL` 一处写（5 分钟节流），会话有效性、节流刷新与实时权限在一条语句里取齐（`sessionAuthSQL`，经 `QueryRowScoped` 一次往返）；别处不要再写这一列
+- 门户请求不展开权限（门户没有任何路由按权限放行）；后台才展开
+- 降级开关读取有 3 秒进程内缓存：admin 切开关经 `AdminWritesGate` 当场失效，public 收 `switches.changed` 失效，广播丢了退回 TTL
 - 降级开关缺行视为开启（`switches.go` 的 `FeatureSwitch`、`AdminWritesGate`），因为它们是急停开关，新租户没有行也要能下单
   - 新增开关要同时补进建租户触发器 `app.seed_tenant_defaults`。守卫：`switch_seed_test.go` 的 `TestTenantSeedSwitchesMatchCode`
 - 单租户假设：`Tenant` 恒定注入 `DefaultTenantID`。守卫：`tenant_guard_test.go` 的 `TestSingleTenantAssumptionGuard`

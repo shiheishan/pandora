@@ -27,3 +27,9 @@ paths:
 - 按日流量的切日只用 `nodefabric.UsageLocation` / `UsageDay`：写入（流量上报）和读取（门户柱状图）必须是同一个函数，否则同一笔流量会落在不同的「那一天」。用户时区为默认 'UTC' 视同未设，跟随站点时区
 - 流量上报按 uid 排序逐个记账：先锁本周期配额行，再按先到先扣锁流量包；扣量与当日用量行在同一事务（重试报文两边都不记）
 - 设备识别窗口的可选值 `DeviceWindowMinutes` 与迁移 00094 的 `app.device_limit_window_minutes` 一一对应，在线统计一律调这个库函数，不写死 interval；`PurgeStaleAlive` 的截止必须大于最大窗口。守卫 `device_window_test.go:TestDeviceWindowHasOneSource`
+
+## 订阅拉取与在线设备的热路径
+- `subscription_online_devices` 视图（00098）按订阅 LATERAL 聚合、窗口每条语句只算一次；调用方按单订阅 `LEFT JOIN LATERAL (… WHERE od.subscription_id = s.id)` 用它，条件一定能推进视图
+- node_alive_ips 由 aegis-admin 的保留期任务清理（保留 70 分钟 > 最大设备窗口 60 分钟），清理截止不能小于最大窗口
+- 订阅拉取：令牌按 `token_hash`（唯一索引）查；读在一个只读事务里一条语句取齐，写（凭据计数、拉取日志、限流）合成一个事务；未认证的失败按来源采样写日志，不每次落库；非「不存在」的错误对外仍伪装 404、对内打 ERROR
+- 订阅里的节点列表按（租户, 套餐版本, 用户组）进程内缓存 20 秒，`node.*` 信号失效；认证、用量、限流一律现查，不缓存

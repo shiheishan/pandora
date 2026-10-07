@@ -27,7 +27,7 @@ paths:
 
 ## 签名通道的配置台账
 
-- 签名通道没有 ETag，每轮全量拉取；「哪个版本已知装不上」的台账在 `node/signed_config.go`，不在 `panel/`。
+- 签名通道拉生效配置时带请求头 `X-Applied-Effective-Release`（已应用的版本），面板判定仍是当前版就回 204、不签名不写库；switched / health_passed 回执被面板收下就不再重报，版本变化时再报；签名钥匙约 10 分钟查一次、验签失败立刻补查；各节拍 ±10% 抖动。「哪个版本已知装不上」的台账在 `node/signed_config.go`，不在 `panel/`。
 - 版本身份 `signedConfigKeyOf` 只认内容（生效发布 release_id + generation + content_sha256；旧式 version + hash），不认每轮重签都变的 issued_at、签名（`TestSignedConfigKeyIgnoresResigning`）。
 - 坏版本：旧配置仍在服务时不再试装，节点已停时每轮按拉取间隔重试；failed 每版本只报一次，送不到（传输错误、5xx、408、429）随后续拉取补报，其余 4xx 即作罢。区分靠 `panel.StatusError`，`SignedClient.Do` 对非 2xx 必须返回它（`signed_failure_test.go`、`TestReportSettled`）。
 
