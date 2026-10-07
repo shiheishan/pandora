@@ -187,14 +187,20 @@ func (c *NativeCore) Close() error {
 }
 
 func (c *NativeCore) AddInbound(cfg *core.InboundConfig) error {
-	return c.applyInbound(cfg, nil)
+	return c.applyInbound(cfg, nil, nil)
 }
 
 func (c *NativeCore) ApplyInbound(cfg *core.InboundConfig, routing *core.Routing) error {
-	return c.applyInbound(cfg, routing)
+	return c.applyInbound(cfg, routing, nil)
 }
 
-func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing) error {
+// ApplyInboundWithUsers 同 ApplyInbound，但先把 users 装进新适配器、再开始 accept
+// （startup_users.go）：冷启动与入站重建时不再有「监听开了、名单还是空的」窗口。
+func (c *NativeCore) ApplyInboundWithUsers(cfg *core.InboundConfig, routing *core.Routing, users []core.User) error {
+	return c.applyInbound(cfg, routing, users)
+}
+
+func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing, users []core.User) error {
 	if cfg == nil {
 		return fmt.Errorf("入站配置不能为空")
 	}
@@ -235,6 +241,9 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 	if err != nil {
 		return &core.ConfigApplyError{Err: err, PreviousPreserved: previousExists}
 	}
+	// 名单装不上（某个用户凭据格式不对之类）不挡入站本身：与原先「装完入站再
+	// 同步用户」失败时一样，入站照起、名单留给下一轮同步，错误单独交回。
+	usersErr := preloadUsers(adapter, users)
 	// Compile the complete routing generation before touching the old listener.
 	// A malformed route must not turn a configuration update into an outage.
 	runtime, err := Build(routing)
@@ -331,6 +340,9 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 		return startErr
 	}
 
+	if usersErr == nil {
+		usersErr = postloadUsers(adapter, users)
+	}
 	newInbound := &nativeInbound{
 		spec: spec, routing: routing, adapter: adapter, plane: plane, runtime: runtime,
 	}
@@ -353,6 +365,9 @@ func (c *NativeCore) applyInbound(cfg *core.InboundConfig, routing *core.Routing
 	if stale != nil {
 		_ = closeNativeInbound(stale)
 		c.stashRetiredTraffic(cfg.Tag, stale)
+	}
+	if usersErr != nil {
+		return &UsersPreloadError{Err: usersErr}
 	}
 	return nil
 }
