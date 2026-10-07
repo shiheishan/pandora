@@ -130,7 +130,13 @@ func NewRouter(d Deps) http.Handler {
 
 			r.Post("/auth/logout", h.logout)
 			r.Get("/me", h.me)
-			r.Post("/me/password", h.changePassword)
+			// 改自己密码要验旧口令，与下面的重认证同样是认证入口：按账号、按 IP
+			// 两级限流（拿到会话的人不能借它高频猜旧口令）。旧口令错误另有按账号的
+			// 失败计数（identity.ChangePassword），换 IP 也绕不过
+			r.With(middleware.RateLimit(d.Redis, d.Log,
+				middleware.ByAccount("adm_password", time.Minute, d.Cfg.RateLimitAuthPerMinute),
+				middleware.ByIP("adm_password_ip", time.Minute, d.Cfg.RateLimitAuthPerMinute),
+			)).Post("/me/password", h.changePassword)
 
 			// 重认证。必须留在「已登录但不要求近期重认证」这一层 ——
 			// 放进 RequireRecentReauth 后面就成了死锁：想重认证得先有
