@@ -79,6 +79,7 @@ func (c *SignedClient) RefreshConfigSigningKey(ctx context.Context) error {
 		return fmt.Errorf("refresh config signing key: %w", err)
 	}
 	if transition.Contract == "" {
+		c.markConfigKeyChecked()
 		return nil
 	}
 	if transition.NodeID != c.identity.NodeID || transition.FromKeyID != c.identity.ConfigKeyID {
@@ -111,5 +112,6 @@ func (c *SignedClient) RefreshConfigSigningKey(ctx context.Context) error {
 	}
 	c.identity.ConfigKeyID = next.ConfigKeyID
 	c.identity.ConfigPublicKey = next.ConfigPublicKey
+	c.markConfigKeyChecked()
 	return nil
 }

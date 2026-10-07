@@ -3,13 +3,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/aegispanel/aegis/internal/api/node"
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
+	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/config"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
@@ -34,13 +41,21 @@ func run() error {
 		return err
 	}
 	log := logging.New(cfg.Env, "aegis-node")
-	ctx := context.Background()
+	// 信号 context：后台循环（nonce 清理）挂在它上面，停机时先取消、
+	// 限时 join，再交给 defer 关资源。
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	closeResourcesOnReturn := true
 
 	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{MaxConns: cfg.DBMaxConns[config.DomainNode]})
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
+	defer func() {
+		if closeResourcesOnReturn {
+			pool.Close()
+		}
+	}()
 
 	redisOpt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
@@ -107,6 +122,17 @@ func run() error {
 	stream := nodefabric.NewStreamHub()
 	nodeService.AttachStream(stream)
 	nodeService.AttachRealtime(rtHub)
+	// 节点链路缓存（按池的用户集、签名身份），由下发纪元保证改完即生效（迁移 00101）。
+	nodeService.EnableNodeCaches()
+
+	var workers sync.WaitGroup
+	workers.Add(1)
+	// 签名请求 nonce 的过期清理。原先每个请求顺手删一批，并发请求争同一批行；
+	// 防重放只靠主键冲突，清理晚几分钟不影响判定，只影响表的大小。
+	go func() {
+		defer workers.Done()
+		runNoncePurge(ctx, nodeService, log)
+	}()
 
 	handler := node.NewRouter(node.Deps{
 		Cfg: cfg, Pool: pool, Log: log,
@@ -125,10 +151,65 @@ func run() error {
 	}
 	defer pprofSrv.Close()
 
-	return server.Run(server.Options{
+	serverErr := server.RunContext(ctx, server.Options{
 		Addr:            cfg.NodeAddr,
 		Handler:         handler,
 		Log:             log,
 		ShutdownTimeout: cfg.ShutdownTimeout,
 	})
+	stop()
+	drainErr := waitForNodeWorkers(&workers, cfg.ShutdownTimeout)
+	if drainErr != nil {
+		// 没退出的后台循环可能还拿着库连接：不和它抢着关连接池，交给进程退出回收。
+		closeResourcesOnReturn = false
+		log.Error("node background workers did not stop before shutdown deadline",
+			"error", drainErr.Error())
+	}
+	return errors.Join(serverErr, drainErr)
+}
+
+// noncePurgeInterval 是过期 nonce 的清理节拍。每条 nonce 至少留 11 分钟，一分钟
+// 一扫足够让表维持在「最近十几分钟的签名请求数」这个量级。
+const noncePurgeInterval = time.Minute
+
+func runNoncePurge(ctx context.Context, svc *nodefabric.Service, log *slog.Logger) {
+	t := time.NewTicker(noncePurgeInterval)
+	defer t.Stop()
+	for {
+		runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		n, err := svc.PurgeExpiredNonces(runCtx, middleware.DefaultTenantID)
+		cancel()
+		switch {
+		case err != nil && ctx.Err() == nil:
+			log.Error("清理过期的节点请求 nonce 失败", "error", err.Error(), "已删除", n)
+		case n > 0:
+			log.Debug("已清理过期的节点请求 nonce", "count", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+var errNodeWorkerDrainTimeout = errors.New("node worker drain timed out")
+
+func waitForNodeWorkers(workers *sync.WaitGroup, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	done := make(chan struct{})
+	go func() {
+		workers.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("%w after %s", errNodeWorkerDrainTimeout, timeout)
+	}
 }

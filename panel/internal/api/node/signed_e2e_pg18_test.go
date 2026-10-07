@@ -198,6 +198,11 @@ func TestSignedNodeHTTPPG18(t *testing.T) {
 	if adoptedKeyID != signer.KeyID() {
 		t.Fatalf("config signing key adoption was not persisted: got=%q want=%q", adoptedKeyID, signer.KeyID())
 	}
+
+	checkSignedReplayRejected(t, privateKey, bootstrap.NodeID, server.URL+"/v1/nodes/heartbeat",
+		mustJSON(t, map[string]any{"agent_version": "e2e-test", "runtime_version": "native-e2e"}))
+	checkEffectiveConfigUnchanged(t, privateKey, bootstrap.NodeID, server.URL+"/v1/nodes/effective-config", cfg)
+	checkCachedGatewayFollowsEpoch(t, ctx, admin, app, signer, privateKey, tenantID, bootstrap.NodeID, runtimeToken)
 }
 
 func mustJSON(t *testing.T, value any) []byte {

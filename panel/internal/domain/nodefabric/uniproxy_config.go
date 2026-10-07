@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -101,6 +102,46 @@ func (s *Service) LoadRouting(ctx context.Context, tenantID, nodeID string) ([]N
 	return outs, routes, err
 }
 
+// defaultNodePullInterval 是下发给节点的默认拉取间隔（配置 + 用户名单）。
+//
+// 定 15 秒、不放宽，理由：
+//   - 它直接决定「付完钱多久能连上」。60 秒时实测新用户第一次连必失败，得等下一轮
+//     同步，用户看到的只是「买了个连不上的东西」。付款路径虽然会经事件流推
+//     sync.users，但 V2bX、XrayR 这类第三方 UniProxy 节点端不连事件流，事件流断线
+//     时 pdnd 也只剩轮询；到期、配额用尽这些没有事件的变化同样只能靠轮询收口。
+//   - 拖垮库的从来不是这个频率本身，而是每次轮询都要全量查库：用户集缓存之后，
+//     命中时一次拉用户不碰库（304），签名通道带上已应用版本后一次拉配置只剩 nonce
+//     认领加一条无锁只读查询。200 节点按 15 秒拉，节点轮询这一块约 130 条语句/秒，
+//     都是主键点查与单行插入。
+//
+// 需要更省时由运维调大（SetNodePullInterval，范围见 minNodePullInterval 与
+// maxNodePullInterval）。改它会改变之后物化的生效发布内容，已物化的代际不受影响，
+// 节点在下一次配置变更推进代际时拿到新值。
+const defaultNodePullInterval = 15 * time.Second
+
+const (
+	minNodePullInterval = 5 * time.Second
+	maxNodePullInterval = 300 * time.Second
+)
+
+// SetNodePullInterval 设置下发给节点的拉取间隔，装配时调用一次。超出
+// [minNodePullInterval, maxNodePullInterval] 或不是整秒的值返回错误、保持原值。
+func (s *Service) SetNodePullInterval(d time.Duration) error {
+	if d < minNodePullInterval || d > maxNodePullInterval || d%time.Second != 0 {
+		return fmt.Errorf("node pull interval must be whole seconds within [%s, %s], got %s",
+			minNodePullInterval, maxNodePullInterval, d)
+	}
+	s.pullInterval = d
+	return nil
+}
+
+func (s *Service) nodePullIntervalSeconds() int {
+	if s.pullInterval == 0 {
+		return int(defaultNodePullInterval / time.Second)
+	}
+	return int(s.pullInterval / time.Second)
+}
+
 func (s *Service) BuildNodeConfig(n *ServingNode) ([]byte, string, error) {
 	kernel := n.Kernel
 	if kernel == "" {
@@ -118,11 +159,8 @@ func (s *Service) BuildNodeConfig(n *ServingNode) ([]byte, string, error) {
 		"base_config": map[string]any{
 			// 上报流量：60 秒够了，快了只是多写库。
 			"push_interval": 60,
-			// 拉用户名单：15 秒。这个值直接决定「付完钱多久能连上」——
-			// 60 秒时实测新用户第一次连必失败，得等下一轮同步，
-			// 而用户那边看到的只是「买了个连不上的东西」。
-			// 代价是每个节点每分钟 4 次请求，可以忽略。
-			"pull_interval": 15,
+			// 拉取间隔（配置 + 用户），见 nodePullIntervalSeconds。
+			"pull_interval": s.nodePullIntervalSeconds(),
 		},
 	}
 	switch kernel {

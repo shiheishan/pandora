@@ -46,6 +46,11 @@ type Node struct {
 	// failedSigned 记下最近一个装不上的签名配置版本，旧配置仍在服务时不再试装它；
 	// 只在进程内存里，重启后的节点本就没有旧配置可保，见 signed_config.go。
 	failedSigned *signedApplyFailure
+	// appliedSigned 是已应用的那份签名配置；switchedSettled / healthSettled 记它的
+	// 两个阶段是否已被面板收下（或明确拒收），收下之后不再重报。
+	appliedSigned   *panel.SignedConfig
+	switchedSettled bool
+	healthSettled   bool
 }
 
 func New(client *panel.Client, kernel core.Core, log *slog.Logger) *Node {
@@ -82,9 +87,11 @@ func (n *Node) Run(ctx context.Context) {
 	// 先同步一次再进循环，否则节点要等一个完整周期才开始服务
 	n.syncOnce(ctx)
 
-	pull := time.NewTicker(n.pullInterval)
-	push := time.NewTicker(n.pushInterval)
-	status := time.NewTicker(n.statusInterval)
+	// 三条节拍都用定时器而不是 ticker：每轮各自带 ±10% 抖动（panel.Jitter），
+	// 同时装好、同时启动的一批节点几轮之后就不再踩同一秒打面板。
+	pull := time.NewTimer(panel.Jitter(n.pullInterval))
+	push := time.NewTimer(panel.Jitter(n.pushInterval))
+	status := time.NewTimer(panel.Jitter(n.statusInterval))
 	defer pull.Stop()
 	defer push.Stop()
 	defer status.Stop()
@@ -114,25 +121,28 @@ func (n *Node) Run(ctx context.Context) {
 			return
 		case <-pull.C:
 			n.syncOnce(ctx)
+			pull.Reset(panel.Jitter(n.pullInterval))
 		case <-push.C:
 			n.report(ctx)
+			push.Reset(panel.Jitter(n.pushInterval))
 		case <-status.C:
 			n.reportStatus(ctx)
+			status.Reset(panel.Jitter(n.statusInterval))
 		case ev := <-n.events:
 			n.applyStreamEvent(ctx, ev)
 		}
 
 		// 面板可以在 base_config 里改这两个节拍，applyConfig 会写进字段，
-		// 但 ticker 是启动时按旧值建的 —— 不在这里重置，改下来的值就只是
+		// 但定时器是按旧值排的 —— 不在这里重排，改下来的值就只是
 		// 存了个变量，行为一点没变。面板把拉取间隔从 60 秒调到 15 秒之后
 		// 实测节点仍然 60 秒一次，就是栽在这一步。
 		if n.pullInterval != curPull && n.pullInterval > 0 {
-			pull.Reset(n.pullInterval)
+			pull.Reset(panel.Jitter(n.pullInterval))
 			curPull = n.pullInterval
 			n.log.Info("拉取间隔已调整", "秒", int(curPull.Seconds()))
 		}
 		if n.pushInterval != curPush && n.pushInterval > 0 {
-			push.Reset(n.pushInterval)
+			push.Reset(panel.Jitter(n.pushInterval))
 			curPush = n.pushInterval
 			n.log.Info("上报间隔已调整", "秒", int(curPush.Seconds()))
 		}

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -221,28 +222,40 @@ func (h *handlers) requireNodeSignature(next http.Handler) http.Handler {
 		r.Body = io.NopCloser(bytes.NewReader(body)) // 供后续 handler 再读一次
 		sum := sha256.Sum256(body)
 
-		id, err := h.d.Node.LookupIdentity(r.Context(), httpx.TenantIDFrom(r.Context()), nodeID)
-		if err != nil {
-			fail("身份不存在或已吊销")
-			return
-		}
-
 		raw, err := base64.StdEncoding.DecodeString(sig)
 		if err != nil {
 			fail("签名不是合法 base64")
 			return
 		}
+		// 身份（公钥）在 aegis-node 里按节点缓存：nonce 认领顺手读出当前下发纪元，
+		// 身份或节点状态改过（纪元前进）就回库重验，吊销下一次请求即生效；缓存里的
+		// 旧公钥验不过时也回库再验一次，刚重新接入、换了钥匙的节点不会被挡住。
 		payload := nodefabric.CanonicalPayloadV2(r.Method, r.URL.Path, nodeID, ts, nonce, sum[:])
-		if !crypto.Verify(id.PublicKey, payload, raw) {
-			fail("签名不匹配")
+		failSignature := func(err error) {
+			if errors.Is(err, nodefabric.ErrNodeSignatureMismatch) {
+				fail("签名不匹配")
+			} else {
+				fail("身份不存在或已吊销")
+			}
+		}
+		check, err := h.d.Node.VerifyNodeRequestSignature(r.Context(), httpx.TenantIDFrom(r.Context()),
+			nodeID, payload, raw)
+		if err != nil {
+			failSignature(err)
 			return
 		}
 		fingerprint := sha256.Sum256(payload)
-		if err := h.d.Node.ClaimSignedRequest(r.Context(), httpx.TenantIDFrom(r.Context()), nodeID,
-			nonceRaw, fingerprint[:], t); err != nil {
+		epoch, err := h.d.Node.ClaimSignedRequestEpoch(r.Context(), httpx.TenantIDFrom(r.Context()), nodeID,
+			nonceRaw, fingerprint[:], t)
+		if err != nil {
 			h.d.Log.Warn("node request nonce claim failed", "node_id", nodeID,
 				"request_id", httpx.RequestIDFrom(r.Context()), "error", err)
 			httpx.Fail(w, r, h.d.Log, err)
+			return
+		}
+		if err := h.d.Node.ConfirmNodeIdentity(r.Context(), httpx.TenantIDFrom(r.Context()), nodeID,
+			check, epoch, payload, raw); err != nil {
+			failSignature(err)
 			return
 		}
 

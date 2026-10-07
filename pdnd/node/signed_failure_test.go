@@ -94,13 +94,38 @@ type fakeSignedPanel struct {
 	reports    []signedReport
 	// failReports 大于零时，接下来这么多次上报回 503（面板暂时不可用）。
 	failReports int
+	// honorApplied 为真时像新面板一样认 X-Applied-Effective-Release：节点手上就是
+	// 当前版则回 204。为假时像老面板，总回全量。
+	honorApplied bool
+	// 计数：拉配置次数、其中回 204 的次数、换钥检查次数，以及最近一次带来的已应用版本。
+	effectiveFetches int
+	unchangedReplies int
+	keyChecks        int
+	lastApplied      string
 }
 
 func (p *fakeSignedPanel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/v1/nodes/config-signing-key":
+		p.mu.Lock()
+		p.keyChecks++
+		p.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	case "/v1/nodes/effective-config":
+		applied := r.Header.Get(panel.AppliedEffectiveReleaseHeader)
+		p.mu.Lock()
+		p.effectiveFetches++
+		p.lastApplied = applied
+		current := p.releaseID + "/" + strconv.FormatUint(p.generation, 10)
+		unchanged := p.honorApplied && applied == current
+		if unchanged {
+			p.unchangedReplies++
+		}
+		p.mu.Unlock()
+		if unchanged {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(p.release())
 	case "/v1/nodes/config/report":
 		p.mu.Lock()
