@@ -17,6 +17,9 @@ type ProtocolSchema struct {
 	Enums               map[string][]string `json:"enums,omitempty"`
 	PropertyTypes       map[string]string   `json:"property_types,omitempty"`
 	SensitiveProperties []string            `json:"sensitive_properties,omitempty"`
+	// Hints 是表单上挂在字段下的一句说明（按字段路径）。说明跟着 schema 走，
+	// 前端不硬编码协议知识。
+	Hints map[string]string `json:"hints,omitempty"`
 }
 
 var shadowsocksMethods = []string{
@@ -98,25 +101,30 @@ func ProtocolSchemas() []ProtocolSchema {
 			PropertyTypes: map[string]string{
 				"bandwidth.up": "number", "bandwidth.down": "number",
 				"tls_settings.allow_insecure": "boolean"},
-			SensitiveProperties: []string{"obfs.password"}},
+			SensitiveProperties: []string{"obfs.password"},
+			Hints:               withCertHints(nil)},
 		{NodeType: "juicity", Version: 1, Status: "stable",
 			Required:          []string{"cert_path", "key_path"},
 			AllowedProperties: []string{"network", "cert_path", "key_path", "congestion_control"},
-			Enums:             map[string][]string{"network": {"udp"}, "congestion_control": {"cubic", "new_reno", "bbr"}}},
+			Enums:             map[string][]string{"network": {"udp"}, "congestion_control": {"cubic", "new_reno", "bbr"}},
+			Hints:             withCertHints(nil)},
 		{NodeType: "socks", Version: 1, Status: "stable",
 			AllowedProperties: []string{"network", "tls", "cert_path", "key_path", "security"},
 			Enums:             map[string][]string{"network": {"tcp", "udp"}, "security": {"none"}},
-			PropertyTypes:     map[string]string{"tls": "boolean"}},
+			PropertyTypes:     map[string]string{"tls": "boolean"},
+			Hints:             withCertHints(nil)},
 		{NodeType: "http", Version: 1, Status: "stable",
 			AllowedProperties: []string{"network", "tls", "cert_path", "key_path", "security"},
 			Enums:             map[string][]string{"network": {"tcp"}, "security": {"none"}},
-			PropertyTypes:     map[string]string{"tls": "boolean"}},
+			PropertyTypes:     map[string]string{"tls": "boolean"},
+			Hints:             withCertHints(nil)},
 		{NodeType: "naive", Version: 1, Status: "stable",
 			Required: []string{"tls", "cert_path", "key_path"},
 			AllowedProperties: []string{"network", "tls", "cert_path", "key_path", "security",
-				"tls_settings.server_name", "tls_settings.allow_insecure"},
+				"tls_settings.server_name", "tls_settings.allow_insecure", "fallback"},
 			Enums:         map[string][]string{"network": {"tcp"}, "security": {"none"}},
-			PropertyTypes: map[string]string{"tls": "boolean", "tls_settings.allow_insecure": "boolean"}},
+			PropertyTypes: map[string]string{"tls": "boolean", "tls_settings.allow_insecure": "boolean"},
+			Hints:         withCertHints(map[string]string{"fallback": fallbackHint})},
 		// xboard 的 transport 是大写的 TCP / UDP，内核要小写，
 		// 转换在 applyKernelShapeFixups 里。
 		{NodeType: "mieru", Version: 1, Status: "stable",
@@ -136,15 +144,17 @@ func ProtocolSchemas() []ProtocolSchema {
 			AllowedProperties: []string{"network", "cert_path", "key_path", "congestion_control", "auth_timeout", "heartbeat", "udp_timeout", "zero_rtt",
 				"tls_settings.server_name", "tls_settings.allow_insecure"},
 			Enums:         map[string][]string{"network": {"udp"}, "congestion_control": {"cubic", "new_reno", "bbr"}},
-			PropertyTypes: map[string]string{"zero_rtt": "boolean", "tls_settings.allow_insecure": "boolean"}},
+			PropertyTypes: map[string]string{"zero_rtt": "boolean", "tls_settings.allow_insecure": "boolean"},
+			Hints:         withCertHints(nil)},
 		// AnyTLS 证书必填：没证书时节点端以明文起，而所有客户端都强制 TLS，
 		// 存得进去却谁都连不上（校验在 xboard_validate.go:requireAnyTLSCertificate）。
 		{NodeType: "anytls", Version: 1, Status: "stable",
 			Required: []string{"cert_path", "key_path"},
 			AllowedProperties: []string{"network", "tls", "cert_path", "key_path", "padding_scheme",
-				"tls_settings.server_name", "tls_settings.allow_insecure"},
-			Enums:         map[string][]string{"network": {"tcp"}},
-			PropertyTypes: map[string]string{"tls": "boolean", "padding_scheme": "json", "tls_settings.allow_insecure": "boolean"}},
+				"tls_settings.server_name", "tls_settings.allow_insecure", "utls", "fallback"},
+			Enums:         map[string][]string{"network": {"tcp"}, "utls": append([]string(nil), utlsFingerprints...)},
+			PropertyTypes: map[string]string{"tls": "boolean", "padding_scheme": "json", "tls_settings.allow_insecure": "boolean"},
+			Hints:         withCertHints(map[string]string{"fallback": fallbackHint, "utls": utlsHint})},
 		{NodeType: "trojan", Version: 1, Status: "stable",
 			// Trojan 的管理端形状与 vless/vmess 保持一致：REALITY 参数收进
 			// reality_settings，传输参数收进 network_settings，uTLS 指纹叫 utls。
@@ -158,7 +168,10 @@ func ProtocolSchemas() []ProtocolSchema {
 				"ws_path", "grpc_path", "cert_path", "key_path",
 				"reality_settings.dest", "reality_settings.server_name",
 				"reality_settings.private_key", "reality_settings.public_key",
-				"reality_settings.short_id", "flow",
+				"reality_settings.short_id",
+				// 认证失败的回落目标；只在 tcp 上生效。没有 flow：Trojan 没有
+				// 流控，内核校验器也从来不收这个键（以前填了就整份 422）。
+				"fallback",
 				// 普通 TLS（tls=1）时给客户端的 SNI 与「跳过证书校验」，只进订阅。
 				"tls_settings.server_name", "tls_settings.allow_insecure",
 				// mKCP 及其掩码。network 枚举里有 mkcp，属性表里就得有对应
@@ -168,12 +181,18 @@ func ProtocolSchemas() []ProtocolSchema {
 			Enums: map[string][]string{
 				"network": {"tcp", "ws", "httpupgrade", "grpc", "mkcp"},
 				"tls":     {"1", "2"},
+				"utls":    append([]string(nil), utlsFingerprints...),
 			},
 			PropertyTypes: map[string]string{"tls": "number", "tls_settings.allow_insecure": "boolean",
 				"mtu": "number", "tti": "number", "uplink_capacity": "number",
 				"downlink_capacity": "number", "congestion": "boolean",
-				"read_buffer_size": "number", "write_buffer_size": "number"},
-			SensitiveProperties: []string{"private_key", "mask_password"}},
+				"read_buffer_size": "number", "write_buffer_size": "number",
+				"reality_settings.server_name": "list", "reality_settings.short_id": "list"},
+			SensitiveProperties: []string{"private_key", "mask_password"},
+			Hints: withCertHints(withRealityHints(map[string]string{
+				"fallback": fallbackHint + "只在 tcp 传输上生效。",
+				"utls":     utlsHint,
+			}))},
 		{NodeType: "vless", Version: 1, Status: "stable",
 			AllowedProperties: append(append([]string(nil), streamProperties...),
 				"reality_settings.dest", "reality_settings.server_name",
@@ -185,16 +204,22 @@ func ProtocolSchemas() []ProtocolSchema {
 				// "证书生命周期完成前仅允许 tls=false"，放出来只会让人填完
 				// 保存失败。等证书那套做完再开。
 				"tls":                   {"0", "2"},
+				"flow":                  append([]string(nil), vlessFlows...),
+				"utls":                  append([]string(nil), utlsFingerprints...),
 				"mode":                  {"auto", "packet-up", "stream-up", "stream-one", "stream-down"},
 				"session_placement":     {"path", "query", "header", "cookie"},
 				"seq_placement":         {"path", "query", "header", "cookie"},
 				"uplink_data_placement": {"body", "query", "header", "cookie"},
 				"uplink_http_method":    {"GET", "POST"},
 			},
-			PropertyTypes: cloneStringMap(streamPropertyTypes),
+			PropertyTypes: withRealityListTypes(cloneStringMap(streamPropertyTypes)),
 			// private_key 会被 RedactProtocolConfig 从读接口里抹掉，
 			// 后台只能写不能回显 —— 和其它密钥一个待遇。
-			SensitiveProperties: []string{"private_key", "mask_password"}},
+			SensitiveProperties: []string{"private_key", "mask_password"},
+			Hints: withCertHints(withRealityHints(map[string]string{
+				"flow": "REALITY + tcp 时用 xtls-rprx-vision（默认）；其它传输必须留空。",
+				"utls": utlsHint,
+			}))},
 		{NodeType: "vmess", Version: 1, Status: "stable",
 			AllowedProperties: append([]string(nil), append(streamProperties,
 				"security")...),
@@ -204,6 +229,7 @@ func ProtocolSchemas() []ProtocolSchema {
 				// 而不是把字段藏掉：藏掉之后照 xboard 教程填的人会以为漏了
 				// 什么，摆在那里显示只有一个选项，一眼就知道是不支持。
 				"tls":                   {"0"},
+				"utls":                  append([]string(nil), utlsFingerprints...),
 				"security":              {"none", "zero", "aes-128-gcm", "chacha20-poly1305", "auto"},
 				"mode":                  {"auto", "packet-up", "stream-up", "stream-one", "stream-down"},
 				"session_placement":     {"path", "query", "header", "cookie"},
@@ -212,6 +238,9 @@ func ProtocolSchemas() []ProtocolSchema {
 				"uplink_http_method":    {"GET", "POST"},
 			},
 			PropertyTypes: cloneStringMap(streamPropertyTypes),
+			Hints: withCertHints(map[string]string{
+				"network": "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。",
+			}),
 		},
 	}
 	for _, nodeType := range legacyProtocolTypes {

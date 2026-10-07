@@ -144,18 +144,20 @@ func (s *Service) nodePullIntervalSeconds() int {
 }
 
 func (s *Service) BuildNodeConfig(n *ServingNode) ([]byte, string, error) {
-	kernel := n.Kernel
-	if kernel == "" {
-		kernel = "auto"
-	}
+	// 存量的 sing-box / xray-core 读时忽略，一律按 auto 下发（EffectiveKernel）：
+	// 生产的 pdnd 只有 NativeCore，根本不读 kernel；只有 -tags compat 的迁移构建
+	// 按它分派，照旧值下发反而会让那种构建把数据面切到别的内核，或在
+	// native-only 模式下拒绝起入站。新写入已只接受 auto / pandora-native。
+	kernel := EffectiveKernel(n.Kernel)
 	base := map[string]any{
 		// QNode's panel client rejects a config without protocol. Keep this in
 		// the reserved base map so protocol_config can never spoof a different
 		// runtime protocol than the node record selected by the credential.
 		"protocol":    CanonicalNodeType(n.NodeType),
 		"server_port": n.ServerPort,
-		// kernel is retained for older UniProxy consumers. Current QNode reads
-		// kernel_type and uses its local configured kernel when it is omitted.
+		// kernel is retained for older UniProxy consumers. kernel_type is no
+		// longer emitted: with only auto / pandora-native left, every agent uses
+		// its local configured kernel.
 		"kernel": kernel,
 		"base_config": map[string]any{
 			// 上报流量：60 秒够了，快了只是多写库。
@@ -163,12 +165,6 @@ func (s *Service) BuildNodeConfig(n *ServingNode) ([]byte, string, error) {
 			// 拉取间隔（配置 + 用户），见 nodePullIntervalSeconds。
 			"pull_interval": s.nodePullIntervalSeconds(),
 		},
-	}
-	switch kernel {
-	case "sing-box":
-		base["kernel_type"] = "singbox"
-	case "xray-core":
-		base["kernel_type"] = "xray"
 	}
 	if n.ServerHost != "" {
 		base["host"] = n.ServerHost
@@ -206,8 +202,9 @@ func (s *Service) BuildNodeConfig(n *ServingNode) ([]byte, string, error) {
 		}
 		for k, v := range extra {
 			// 不允许协议配置覆盖 server_port 等基础字段：
-			// 那会让管理端两处配置打架，且排查时极难发现
-			if _, taken := base[k]; !taken {
+			// 那会让管理端两处配置打架，且排查时极难发现。kernel_type 不再下发，
+			// 也不许旧数据借协议配置塞进来改内核。
+			if _, taken := base[k]; !taken && k != "kernel_type" {
 				base[k] = v
 			}
 		}

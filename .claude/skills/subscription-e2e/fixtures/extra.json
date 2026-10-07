@@ -29,5 +29,23 @@
    "cipher": "aes-128-gcm",
    "method": "chacha20-ietf-poly1305"
   }
+ },
+ {
+  "id": "legacy-vmess-tcp",
+  "type": "vmess",
+  "port": 10095,
+  "config": {
+   "tls": 0,
+   "network": "tcp"
+  }
+ },
+ {
+  "id": "legacy-vless-tcp-plain",
+  "type": "vless",
+  "port": 10088,
+  "config": {
+   "tls": 0,
+   "network": "tcp"
+  }
  }
 ]

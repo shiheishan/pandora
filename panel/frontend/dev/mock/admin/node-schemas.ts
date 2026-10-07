@@ -52,7 +52,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
       },
       "sensitive_properties": [
         "obfs.password"
-      ]
+      ],
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。"
+      }
     },
     {
       "node_type": "juicity",
@@ -77,6 +81,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "network": [
           "udp"
         ]
+      },
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。"
       }
     },
     {
@@ -102,6 +110,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
       },
       "property_types": {
         "tls": "boolean"
+      },
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。"
       }
     },
     {
@@ -126,6 +138,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
       },
       "property_types": {
         "tls": "boolean"
+      },
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。"
       }
     },
     {
@@ -144,7 +160,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "key_path",
         "security",
         "tls_settings.server_name",
-        "tls_settings.allow_insecure"
+        "tls_settings.allow_insecure",
+        "fallback"
       ],
       "enums": {
         "network": [
@@ -157,6 +174,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "property_types": {
         "tls": "boolean",
         "tls_settings.allow_insecure": "boolean"
+      },
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "fallback": "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，让节点看起来像个普通网站；不能填本机、内网或 localhost。留空时回一个中性的 404 页面。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。"
       }
     },
     {
@@ -249,6 +271,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "property_types": {
         "tls_settings.allow_insecure": "boolean",
         "zero_rtt": "boolean"
+      },
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。"
       }
     },
     {
@@ -266,17 +292,36 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "key_path",
         "padding_scheme",
         "tls_settings.server_name",
-        "tls_settings.allow_insecure"
+        "tls_settings.allow_insecure",
+        "utls",
+        "fallback"
       ],
       "enums": {
         "network": [
           "tcp"
+        ],
+        "utls": [
+          "chrome",
+          "firefox",
+          "safari",
+          "ios",
+          "android",
+          "edge",
+          "360",
+          "qq",
+          "random"
         ]
       },
       "property_types": {
         "padding_scheme": "json",
         "tls": "boolean",
         "tls_settings.allow_insecure": "boolean"
+      },
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "fallback": "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，让节点看起来像个普通网站；不能填本机、内网或 localhost。留空时回一个中性的 404 页面。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
+        "utls": "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。"
       }
     },
     {
@@ -303,7 +348,7 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "reality_settings.private_key",
         "reality_settings.public_key",
         "reality_settings.short_id",
-        "flow",
+        "fallback",
         "tls_settings.server_name",
         "tls_settings.allow_insecure",
         "mtu",
@@ -327,6 +372,17 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "tls": [
           "1",
           "2"
+        ],
+        "utls": [
+          "chrome",
+          "firefox",
+          "safari",
+          "ios",
+          "android",
+          "edge",
+          "360",
+          "qq",
+          "random"
         ]
       },
       "property_types": {
@@ -334,6 +390,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "downlink_capacity": "number",
         "mtu": "number",
         "read_buffer_size": "number",
+        "reality_settings.server_name": "list",
+        "reality_settings.short_id": "list",
         "tls": "number",
         "tls_settings.allow_insecure": "boolean",
         "tti": "number",
@@ -343,7 +401,16 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "sensitive_properties": [
         "private_key",
         "mask_password"
-      ]
+      ],
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "fallback": "选填，host:port。回落目标是一个明文 HTTP 站点，认证失败的探测会被转过去，让节点看起来像个普通网站；不能填本机、内网或 localhost。留空时回一个中性的 404 页面。只在 tcp 传输上生效。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
+        "reality_settings.dest": "借用握手的真实公网站点，域名:端口，例如 www.example.com:443；不能填 IP、localhost 或内网域名。",
+        "reality_settings.server_name": "可填多个，用逗号分隔；每个用户的订阅按固定规则分到其中一个，分散特征。",
+        "reality_settings.short_id": "必填，可填多个（逗号分隔），每个不超过 16 位十六进制；每个用户的订阅分到其中一个。",
+        "utls": "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。"
+      }
     },
     {
       "node_type": "vless",
@@ -393,6 +460,10 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "flow"
       ],
       "enums": {
+        "flow": [
+          "xtls-rprx-vision",
+          "xtls-rprx-vision-udp443"
+        ],
         "mode": [
           "auto",
           "packet-up",
@@ -434,6 +505,17 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "uplink_http_method": [
           "GET",
           "POST"
+        ],
+        "utls": [
+          "chrome",
+          "firefox",
+          "safari",
+          "ios",
+          "android",
+          "edge",
+          "360",
+          "qq",
+          "random"
         ]
       },
       "property_types": {
@@ -442,6 +524,8 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "headers": "json",
         "mtu": "number",
         "read_buffer_size": "number",
+        "reality_settings.server_name": "list",
+        "reality_settings.short_id": "list",
         "sc_max_buffered_posts": "number",
         "sc_max_each_post_bytes": "json",
         "sc_min_posts_interval_ms": "json",
@@ -456,7 +540,16 @@ export const NODE_PROTOCOL_SCHEMAS = {
       "sensitive_properties": [
         "private_key",
         "mask_password"
-      ]
+      ],
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "flow": "REALITY + tcp 时用 xtls-rprx-vision（默认）；其它传输必须留空。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
+        "reality_settings.dest": "借用握手的真实公网站点，域名:端口，例如 www.example.com:443；不能填 IP、localhost 或内网域名。",
+        "reality_settings.server_name": "可填多个，用逗号分隔；每个用户的订阅按固定规则分到其中一个，分散特征。",
+        "reality_settings.short_id": "必填，可填多个（逗号分隔），每个不超过 16 位十六进制；每个用户的订阅分到其中一个。",
+        "utls": "客户端模仿的浏览器 TLS 指纹，订阅三种格式都会下发；留空按 chrome。"
+      }
     },
     {
       "node_type": "vmess",
@@ -548,6 +641,17 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "uplink_http_method": [
           "GET",
           "POST"
+        ],
+        "utls": [
+          "chrome",
+          "firefox",
+          "safari",
+          "ios",
+          "android",
+          "edge",
+          "360",
+          "qq",
+          "random"
         ]
       },
       "property_types": {
@@ -566,6 +670,11 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "uplink_capacity": "number",
         "uplink_chunk_size": "json",
         "write_buffer_size": "number"
+      },
+      "hints": {
+        "cert_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/fullchain.pem（见 docs/node-certificates.md）。",
+        "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
+        "network": "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。"
       }
     },
     {

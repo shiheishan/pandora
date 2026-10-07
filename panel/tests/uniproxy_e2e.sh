@@ -362,7 +362,7 @@ FIXTURE=$(db_scalar uuid_triplet "
        protocol_schema_version,config_validated_at,row_version)
     SELECT '$TENANT','uni-node-$STAMP',s.id,p.id,'draft','active','vless',
            'node.example.com',443,'auto',1.0,'Hong Kong 01',
-           '{\"network\":\"tcp\",\"tls\":false}'::jsonb,1,now(),1
+           '{\"network\":\"ws\",\"tls\":false}'::jsonb,1,now(),1
       FROM created_server s CROSS JOIN created_pool p
     RETURNING id,server_id,pool_id
   )
@@ -377,7 +377,7 @@ assert_nonempty "$INITIAL_POOL_ID" "fixture pool created"
 expect_http 200 POST "$ADM/v1/nodes/$NODE_ID/protocol" -H "$AH" -H 'Content-Type: application/json' \
   -d '{"row_version":1,"node_type":"vless","server_host":"node.example.com","server_port":443,
        "kernel":"auto","traffic_rate":1.0,"display_name":"Hong Kong 01",
-       "protocol_config":{"network":"tcp","tls":false}}'
+       "protocol_config":{"network":"ws","tls":false}}'
 json_check "$HTTP_BODY" \
   'd["node_type"] == "vless" and d["server_port"] == 443 and d["protocol_schema_version"] == 1 and d["config_validated_at"] is not None and d["row_version"] == 2' \
   "protocol update accepted only the stable v1 contract"
@@ -419,7 +419,7 @@ sec "3. Config and ETag contract"
 expect_http 200 GET "$UNI/config?$Q" -H "$NAH"
 CFG=$HTTP_BODY
 json_check "$CFG" \
-  'd["protocol"] == "vless" and d["server_port"] == 443 and d["network"] == "tcp" and d["tls"] is False and d["base_config"]["push_interval"] == 60' \
+  'd["protocol"] == "vless" and d["server_port"] == 443 and d["network"] == "ws" and d["tls"] is False and d["base_config"]["push_interval"] == 60' \
   "config response contains the required UniProxy fields"
 ETAG=$(printf '%s\n' "$HTTP_HEADERS" | awk 'BEGIN{IGNORECASE=1} /^ETag:/{sub(/\r$/, ""); print $2}' | tail -1)
 assert_nonempty "$ETAG" "config returned ETag"
@@ -431,7 +431,7 @@ ok "matching ETag returned an empty 304 response"
 expect_http 200 POST "$ADM/v1/nodes/$NODE_ID/protocol" -H "$AH" -H 'Content-Type: application/json' \
   -d "{\"row_version\":$NODE_ROW_VERSION,\"node_type\":\"vless\",\"server_host\":\"node.example.com\",\"server_port\":8443,
        \"kernel\":\"auto\",\"traffic_rate\":1.5,\"display_name\":\"Hong Kong 01\",
-       \"protocol_config\":{\"network\":\"tcp\",\"tls\":false}}"
+       \"protocol_config\":{\"network\":\"ws\",\"tls\":false}}"
 json_check "$HTTP_BODY" 'd["server_port"] == 8443 and d["traffic_rate"] == 1.5 and d["row_version"] == 3' \
   "valid protocol change returned the new row version"
 NODE_ROW_VERSION=3

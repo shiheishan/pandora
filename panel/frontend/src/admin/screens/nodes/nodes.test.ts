@@ -14,6 +14,8 @@ import {
   filterNodes,
   heartbeatLabel,
   isStable,
+  KERNELS,
+  legacyKernelNote,
   mapProtocolErrors,
   moveBlockers,
   moveItem,
@@ -22,7 +24,11 @@ import {
   patchBody,
   protocolChanged,
   protocolFields,
+  protocolNotices,
   realityEnabled,
+  splitList,
+  VISION_FLOW,
+  withProtocolDefaults,
   insertRule,
   renameOutbound,
   routeToRow,
@@ -267,6 +273,50 @@ describe('protocol form', () => {
     expect(protocolChanged(fields, initial, { ...initial, 'reality_settings.private_key': 'K' })).toBe(true)
   })
 
+  it('w4proto: VLESS + REALITY + tcp defaults to Vision, other transports drop it, a cleared flow stays cleared', () => {
+    const on = withProtocolDefaults('vless', 'tls', { tls: '2' })
+    expect(on.flow).toBe(VISION_FLOW)
+    expect(withProtocolDefaults('vless', 'network', { tls: '2', network: 'tcp', flow: '' }).flow).toBe(VISION_FLOW)
+    // 管理员自己选的 udp443 变体不被覆盖
+    expect(withProtocolDefaults('vless', 'tls', { tls: '2', flow: 'xtls-rprx-vision-udp443' }).flow).toBe('xtls-rprx-vision-udp443')
+    // 换到 grpc：Vision 不能用，清掉
+    expect(withProtocolDefaults('vless', 'network', { ...on, network: 'grpc' }).flow).toBe('')
+    // 改别的字段（包括手动清空 flow）不触发联动
+    expect(withProtocolDefaults('vless', 'flow', { tls: '2', network: 'tcp', flow: '' }).flow).toBe('')
+    // 不是 REALITY、不是 vless：不动
+    expect(withProtocolDefaults('vless', 'tls', { tls: '0' }).flow).toBeUndefined()
+    expect(withProtocolDefaults('trojan', 'tls', { tls: '2' }).flow).toBeUndefined()
+    // schema 里 flow 是枚举，默认值在可选项里
+    expect(protocolFields(schemaOf('vless')).find((f) => f.path === 'flow')).toMatchObject({ kind: 'enum', options: [VISION_FLOW, 'xtls-rprx-vision-udp443'] })
+  })
+
+  it('w4proto: warns that unencrypted CDN transports need CDN or TLS, and that bare tcp will be refused', () => {
+    expect(protocolNotices('vless', { tls: '0', network: 'ws' })[0]).toContain('需要套 CDN 或 TLS')
+    expect(protocolNotices('vmess', { tls: '0', network: 'grpc' })[0]).toContain('需要套 CDN 或 TLS')
+    expect(protocolNotices('vless', { tls: '0' })[0]).toContain('会被拒绝')
+    expect(protocolNotices('vless', { tls: '2', network: 'tcp' })).toEqual([])
+    expect(protocolNotices('trojan', { tls: '1', network: 'ws' })).toEqual([])
+    expect(protocolNotices('vless', { tls: '0', network: 'mkcp' })).toEqual([])
+  })
+
+  it('w4proto: carries schema hints (fallback, cert directory) and REALITY list fields', () => {
+    for (const t of ['trojan', 'anytls', 'naive']) {
+      expect(protocolFields(schemaOf(t)).find((f) => f.path === 'fallback')?.hint).toContain('明文 HTTP 站点')
+    }
+    expect(protocolFields(schemaOf('hysteria2')).find((f) => f.path === 'cert_path')?.hint).toContain('/etc/pandora-native/certs/')
+    expect(protocolFields(schemaOf('anytls')).find((f) => f.path === 'utls')).toMatchObject({ kind: 'enum' })
+    const s = schemaOf('vless')
+    const fields = protocolFields(s)
+    expect(fields.find((f) => f.path === 'reality_settings.short_id')!.kind).toBe('list')
+    // 存量数组 → 逗号分隔；一个值存字符串，多个存数组
+    const values = toFormValues(fields, { tls: 2, reality_settings: { server_name: ['a.example.com', 'b.example.com'], short_id: '0a1b' } })
+    expect(values['reality_settings.server_name']).toBe('a.example.com, b.example.com')
+    const { config } = toProtocolConfig(fields, { ...values, 'reality_settings.short_id': '0a1b，2c3d  ' }, s.property_types)
+    expect(config).toMatchObject({ reality_settings: { server_name: ['a.example.com', 'b.example.com'], short_id: ['0a1b', '2c3d'] } })
+    expect(toProtocolConfig(fields, { 'reality_settings.server_name': ' a.example.com ' }, s.property_types).config).toMatchObject({ reality_settings: { server_name: 'a.example.com' } })
+    expect(splitList(' , ')).toEqual([])
+  })
+
   it('maps protocol_config.* 422 keys onto form fields by path, then by leaf', () => {
     const fields = protocolFields(schemaOf('vless'))
     const out = mapProtocolErrors(fields, { 'protocol_config.tls': 'x', 'protocol_config.private_key': 'y', name: 'z' })
@@ -299,6 +349,19 @@ describe('basic info and PATCH', () => {
     expect(patchBody(n, b, { changed: false, config: { x: 1 } })).toEqual({ row_version: 5, name: '香港 01 · 新', pool_id: 'p1', country_code: null })
     expect(patchBody(n, basicFromRow(n), { changed: true, config: { network: 'ws' } })).toEqual({ row_version: 5, protocol_config: { network: 'ws' } })
     expect(patchBody(n, { ...basicFromRow(n), poolId: '' }, { changed: false, config: {} })).toEqual({ row_version: 5 })
+  })
+
+  it('w4proto: only native kernels are offered; a stored sing-box / xray-core reads as auto and is replaced when the protocol is revalidated', () => {
+    expect(KERNELS.map(([v]) => v)).toEqual(['auto', 'pandora-native'])
+    const legacy = row({ kernel: 'sing-box' })
+    expect(basicFromRow(legacy).kernel).toBe('auto')
+    expect(legacyKernelNote(legacy)).toContain('sing-box')
+    expect(legacyKernelNote(row())).toBeUndefined()
+    // 只改名字：不碰协议，库里的旧值原样留着
+    expect(patchBody(legacy, { ...basicFromRow(legacy), name: 'x' }, { changed: false, config: {} })).toEqual({ row_version: 5, name: 'x' })
+    // 改端口或协议：后端会重新校验，内核一起换成表单值
+    expect(patchBody(legacy, { ...basicFromRow(legacy), port: '8443' }, { changed: false, config: {} })).toEqual({ row_version: 5, server_port: 8443, kernel: 'auto' })
+    expect(patchBody(legacy, basicFromRow(legacy), { changed: true, config: { network: 'ws' } })).toEqual({ row_version: 5, protocol_config: { network: 'ws' }, kernel: 'auto' })
   })
 })
 

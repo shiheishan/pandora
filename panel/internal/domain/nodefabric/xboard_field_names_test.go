@@ -183,14 +183,15 @@ func TestTrojanSchemaUsesXboardNestedShape(t *testing.T) {
 		"ws_path", "grpc_path", "cert_path", "key_path",
 		"reality_settings.dest", "reality_settings.server_name",
 		"reality_settings.private_key", "reality_settings.public_key",
-		"reality_settings.short_id", "flow",
+		"reality_settings.short_id", "fallback",
 	}
 	for _, property := range wantAllowed {
 		if !containsString(schema.AllowedProperties, property) {
 			t.Errorf("trojan schema must expose xboard property %q; got %v", property, schema.AllowedProperties)
 		}
 	}
-	for _, legacy := range []string{"security", "dest", "server_names", "private_key", "public_key", "short_ids", "fingerprint"} {
+	// flow 也不该有：Trojan 没有流控，内核校验器从来不收这个键。
+	for _, legacy := range []string{"security", "dest", "server_names", "private_key", "public_key", "short_ids", "fingerprint", "flow"} {
 		if containsString(schema.AllowedProperties, legacy) {
 			t.Errorf("trojan schema must not expose legacy flat property %q", legacy)
 		}
@@ -215,7 +216,7 @@ func TestTrojanXboardRealityConfigPassesAdminValidation(t *testing.T) {
 }
 
 func TestTrojanXboardTLSConfigPassesAdminValidation(t *testing.T) {
-	raw := json.RawMessage(`{"network":"tcp","tls":1,"cert_path":"/etc/pandora/trojan.crt","key_path":"/etc/pandora/trojan.key"}`)
+	raw := json.RawMessage(`{"network":"tcp","tls":1,"cert_path":"/etc/pandora-native/certs/example.com/trojan.crt","key_path":"/etc/pandora-native/certs/example.com/trojan.key"}`)
 	version, fields := ValidateAdminProtocolConfig("trojan", "pandora-native", 443, raw)
 	if version != 1 || len(fields) != 0 {
 		t.Fatalf("xboard-shaped Trojan TLS config rejected: version=%d fields=%v", version, fields)
