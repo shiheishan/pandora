@@ -10,7 +10,7 @@ const list = <T extends z.ZodType>(item: T) =>
 const strs = list(z.string())
 
 // ---------------------------------------------------------------------------
-// 节点：列表行（GET v1/nodes）与写接口回的 AdminNode
+// 节点：列表行（GET v1/nodes）、单取的详情行（GET v1/nodes?id=）与写接口回的 AdminNode
 // ---------------------------------------------------------------------------
 export const SERVING_STATUSES = ['draft', 'active', 'draining', 'disabled', 'retired'] as const
 export type ServingStatus = (typeof SERVING_STATUSES)[number]
@@ -44,13 +44,8 @@ export const nodeRowSchema = z.object({
   node_type: z.string().nullable(),
   server_host: z.string().nullable(),
   server_port: z.number().nullable(),
-  traffic_rate: z.number(),
   display_name: z.string().nullable(),
   country_code: z.string().nullable(),
-  kernel: z.string(),
-  protocol_config: z.record(z.string(), z.unknown()).nullable().transform((v) => v ?? {}),
-  protocol_schema_version: z.number(),
-  config_validated_at: iso.nullable(),
   sort_order: z.number(),
   online_users: z.number(),
   online_ips: z.number(),
@@ -58,11 +53,25 @@ export const nodeRowSchema = z.object({
   cpu_percent: z.number().nullable(),
   mem_percent: z.number().nullable(),
   metrics_at: iso.nullable(),
-  traffic_bytes: z.number().int(),
   granted_plans: strs,
 })
 export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.number() })
 export type NodeRow = z.output<typeof nodeRowSchema>
+
+/**
+ * 单取（?id=）才带的编辑字段（nodefabric.AdminNodeDetail）：列表不带，1000 个节点每次刷新省掉
+ * 全部 protocol_config。protocol_config 已由后端抹掉敏感键
+ */
+export const nodeDetailSchema = nodeRowSchema.extend({
+  traffic_rate: z.number(),
+  kernel: z.string(),
+  protocol_config: z.record(z.string(), z.unknown()).nullable().transform((v) => v ?? {}),
+  protocol_schema_version: z.number(),
+  config_validated_at: iso.nullable(),
+  traffic_bytes: z.number().int(),
+})
+export const nodeDetailResponse = z.object({ nodes: list(nodeDetailSchema), total: z.number() })
+export type NodeDetail = z.output<typeof nodeDetailSchema>
 
 export const adminNodeSchema = z.object({
   id: uuid,

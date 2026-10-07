@@ -201,13 +201,8 @@ function listRow(n: Node) {
     node_type: n.node_type,
     server_host: n.server_host,
     server_port: n.server_port,
-    traffic_rate: n.traffic_rate,
     display_name: n.display_name,
     country_code: n.country_code,
-    kernel: n.kernel,
-    protocol_config: redact(n.protocol_config),
-    protocol_schema_version: n.protocol_schema_version,
-    config_validated_at: n.node_type ? n.updated_at : null,
     sort_order: n.sort_order,
     online_users: n.online_users,
     online_ips: n.online_ips,
@@ -215,9 +210,48 @@ function listRow(n: Node) {
     cpu_percent: cpu,
     mem_percent: srv?.probe ? Math.round((srv.probe.mem_used_mb / srv.probe.mem_total_mb) * 1000) / 10 : null,
     metrics_at: cpu === null ? null : ago(20),
-    traffic_bytes: n.traffic_bytes_24h * 30,
     granted_plans: pool?.plans.length ? pool.plans : null,
   }
+}
+
+/** GET v1/nodes?id= 的一行：列表行加上编辑表单才用的字段（nodefabric.AdminNodeDetail） */
+function detailRow(n: Node) {
+  return {
+    ...listRow(n),
+    traffic_rate: n.traffic_rate,
+    kernel: n.kernel,
+    protocol_config: redact(n.protocol_config),
+    protocol_schema_version: n.protocol_schema_version,
+    config_validated_at: n.node_type ? n.updated_at : null,
+    traffic_bytes: n.traffic_bytes_24h * 30,
+  }
+}
+
+/** nodefabric.AdminNodeStates 与 adminNodeFilterSQL：后台列表的状态筛选（「离线」= 在役且心跳超过 90 秒） */
+const NODE_STATES = ['all', 'online', 'offline', 'disabled', 'retired']
+function matchesState(n: Node, state: string): boolean {
+  const stale = !n.last_heartbeat_at || Date.now() - new Date(n.last_heartbeat_at).getTime() > 90_000
+  switch (state) {
+    case 'all':
+      return n.serving_status !== 'retired'
+    case 'online':
+      return n.serving_status === 'draining' || (n.serving_status === 'active' && !stale)
+    case 'offline':
+      return n.serving_status === 'active' && stale
+    case 'disabled':
+      return n.serving_status === 'draft' || n.serving_status === 'disabled'
+    case 'retired':
+      return n.serving_status === 'retired'
+    default:
+      return true
+  }
+}
+/** 服务端搜索：名称、展示名、服务器名、国家、协议、地址、编号里按子串找，不分大小写 */
+function matchesSearch(n: Node, q: string): boolean {
+  if (!q) return true
+  const srv = servers.find((s) => s.id === n.server_id)
+  const hay = [n.name, n.display_name, srv?.name, n.country_code, n.node_type, n.server_host, String(n.node_no)].filter(Boolean).join(' ').toLowerCase()
+  return hay.includes(q.toLowerCase())
 }
 
 /** nodefabric.RedactProtocolConfig：按名字在任意深度删掉敏感键 */
@@ -330,12 +364,23 @@ export const nodes: MockModule = {
     },
     'GET /v1/nodes': (ctx) => {
       if (!ctx.requirePermission('node.read')) return
-      const withRetired = ctx.query.get('include_retired') === '1'
+      // nodefabric.validateAdminNodeQuery：不认得的状态、过长的搜索词、不是 UUID 的 id 回 422
+      const state = ctx.query.get('state') ?? ''
+      const q = (ctx.query.get('q') ?? '').trim()
+      const id = (ctx.query.get('id') ?? '').trim()
+      if (state && !NODE_STATES.includes(state)) return reply(ctx, invalid({ state: '只能是 all、online、offline、disabled、retired 之一' }))
+      if ([...q].length > 120) return reply(ctx, invalid({ q: '搜索词太长' }))
+      if (id && !UUID.test(id)) return reply(ctx, invalid({ id: '格式不正确' }))
+      // 给了 state 就由它决定含不含已退役
+      const withRetired = state !== '' || ctx.query.get('include_retired') === '1'
       const limit = Number(ctx.query.get('limit'))
       const offset = Number(ctx.query.get('offset')) || 0
-      const rows = store.filter((n) => n.status !== 'destroyed' && (withRetired || n.serving_status !== 'retired')).sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
+      const rows = store
+        .filter((n) => n.status !== 'destroyed' && (withRetired || n.serving_status !== 'retired') && matchesState(n, state) && matchesSearch(n, q) && (!id || n.id === id))
+        .sort((a, b) => a.sort_order - b.sort_order || a.node_no - b.node_no)
       const size = limit >= 1 && limit <= 1000 ? limit : 500
-      ctx.send(200, { nodes: rows.slice(offset, offset + size).map(listRow), total: rows.length })
+      const page = rows.slice(offset, offset + size)
+      ctx.send(200, { nodes: id ? page.map(detailRow) : page.map(listRow), total: rows.length })
     },
     'POST /v1/nodes': async (ctx) => {
       if (!ctx.requirePermission('node.provision')) return

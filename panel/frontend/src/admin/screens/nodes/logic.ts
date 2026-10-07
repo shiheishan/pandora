@@ -1,5 +1,5 @@
 import { relativeTime } from '../../../core/format'
-import type { MetricPoint, NodeRow, ProtocolSchema, Route, RoutingSource, ServingStatus } from './schemas'
+import type { MetricPoint, NodeDetail, NodeRow, ProtocolSchema, Route, RoutingSource, ServingStatus } from './schemas'
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'info' | 'neutral'
 
@@ -31,7 +31,11 @@ export function nodeState(n: Pick<NodeRow, 'serving_status' | 'stale'>): NodeSta
   }
 }
 
-/** 前端筛选与搜索（契约：列表无服务端筛选）；「全部」不含已退役；搜名称、展示名、服务器、国家、协议、地址、编号 */
+/**
+ * 前端筛选与搜索：节点总数不超过一页（1000）时在本地做；超过时同一组条件交给服务端
+ * （GET v1/nodes 的 state 与 q，nodefabric.adminNodeFilterSQL 与这里同一映射、同一组字段）。
+ * 「全部」不含已退役；搜名称、展示名、服务器、国家、协议、地址、编号
+ */
 export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query: string): NodeRow[] {
   const q = query.trim().toLowerCase()
   return rows.filter((n) => {
@@ -42,6 +46,31 @@ export function filterNodes(rows: readonly NodeRow[], filter: NodeFilter, query:
     return hay.includes(q)
   })
 }
+
+/**
+ * 列表一行显示用到的字段：NodeLine 只拿这些，memo 也只比这些——心跳时刻、版本号等
+ * 不在行上显示的字段变了，不重渲染这一行。行上新显示一个字段就加进这里（类型会逼着加）
+ */
+export const NODE_LINE_FIELDS = [
+  'id',
+  'name',
+  'country_code',
+  'server_host',
+  'server_port',
+  'node_type',
+  'server_name',
+  'online_users',
+  'online_ips',
+  'cpu_percent',
+  'traffic_bytes_24h',
+  'serving_status',
+  'stale',
+  'delivered_to_users',
+  'delivery_note',
+] as const satisfies ReadonlyArray<keyof NodeRow>
+export type NodeLineData = Pick<NodeRow, (typeof NODE_LINE_FIELDS)[number]>
+
+export const sameNodeLine = (a: NodeLineData, b: NodeLineData): boolean => a === b || NODE_LINE_FIELDS.every((k) => Object.is(a[k], b[k]))
 
 // ---------------------------------------------------------------------------
 // 文案
@@ -316,7 +345,7 @@ export const NO_POOL_HINT = '选择资源池：不在任何资源池里的节点
 
 export const emptyBasic = (): BasicForm => ({ name: '', displayName: '', serverId: '', poolId: '', nodeType: '', host: '', port: '', kernel: 'auto', rate: '1', country: '' })
 
-export function basicFromRow(n: NodeRow): BasicForm {
+export function basicFromRow(n: NodeDetail): BasicForm {
   return {
     name: n.name,
     displayName: n.display_name ?? '',
@@ -367,7 +396,7 @@ export function createBody(b: BasicForm, config: Record<string, unknown>): Recor
  * PATCH 差量：省略 = 不改。protocol_config 只在协议字段真的改了（或换了协议）才带：
  * 它是整体替换，普通键缺席就是删除；敏感键缺席由后端补回（R106），所以没动的敏感字段不带键即可。
  */
-export function patchBody(row: NodeRow, b: BasicForm, protocol: { changed: boolean; config: Record<string, unknown> }): Record<string, unknown> {
+export function patchBody(row: NodeDetail, b: BasicForm, protocol: { changed: boolean; config: Record<string, unknown> }): Record<string, unknown> {
   const before = basicFromRow(row)
   const body: Record<string, unknown> = { row_version: row.row_version }
   if (b.name.trim() !== before.name) body.name = b.name.trim()
