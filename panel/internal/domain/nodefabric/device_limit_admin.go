@@ -14,15 +14,17 @@ import (
 
 // OnlineDevice 是在线设备概览的一行（一条在用订阅）。
 type OnlineDevice struct {
-	SubscriptionID string     `json:"subscription_id"`
-	Email          string     `json:"email"`
-	Plan           string     `json:"plan"`
-	Limit          int        `json:"limit"`
-	Online         int        `json:"online"`
-	Nodes          int        `json:"nodes"`
-	Overridden     bool       `json:"overridden"`
-	Exceeded       bool       `json:"exceeded"`
-	LastSeenAt     *time.Time `json:"last_seen_at"`
+	SubscriptionID string `json:"subscription_id"`
+	// UserID 是订阅主人，前端凭它直接打开用户抽屉，不用再按邮箱搜（backlog 第 2 条）
+	UserID     string     `json:"user_id"`
+	Email      string     `json:"email"`
+	Plan       string     `json:"plan"`
+	Limit      int        `json:"limit"`
+	Online     int        `json:"online"`
+	Nodes      int        `json:"nodes"`
+	Overridden bool       `json:"overridden"`
+	Exceeded   bool       `json:"exceeded"`
+	LastSeenAt *time.Time `json:"last_seen_at"`
 }
 
 // DeviceOverview 是在线设备概览与当前生效的判定策略。
@@ -40,6 +42,34 @@ type DeviceLimitPolicyInput struct {
 	Grace         *int
 	WindowMinutes *int
 }
+
+// onlineDevicesSQL 是在线设备概览的主查询，$1 租户。
+//
+// 用 LEFT JOIN 而不是从视图出发：没有人在线的订阅也要能看到，
+// 否则「这个用户到底几台设备」这个问题在他离线时就查不了了。
+//
+// 在线数按订阅走 LATERAL：od.subscription_id = s.id 在子查询里是外层参数，
+// 一定被推进视图，每条订阅只探 idx_node_alive_recent 里自己那一段。原先 LEFT JOIN
+// 整个视图，要把全站在线记录聚合一遍、逐行重算窗口（5000 用户实测 3.9s/次）。
+const onlineDevicesSQL = `
+	SELECT s.id::text, s.user_id::text, COALESCE(u.email,''), COALESCE(p.name,''),
+	       COALESCE(s.device_limit, pv.max_devices, 0),
+	       COALESCE(d.device_count, 0), COALESCE(d.node_count, 0),
+	       (s.device_limit IS NOT NULL),
+	       d.last_seen_at
+	  FROM subscriptions s
+	  JOIN plan_versions pv ON pv.id = s.plan_version_id
+	  LEFT JOIN plans p ON p.id = s.plan_id
+	  LEFT JOIN users u ON u.id = s.user_id
+	  LEFT JOIN LATERAL (
+	        SELECT od.device_count, od.node_count, od.last_seen_at
+	          FROM subscription_online_devices od
+	         WHERE od.tenant_id = s.tenant_id AND od.subscription_id = s.id
+	  ) d ON true
+	 WHERE s.tenant_id = $1
+	   AND s.status IN ('active','trialing','grace')
+	 ORDER BY COALESCE(d.device_count,0) DESC, s.created_at DESC
+	 LIMIT 200`
 
 // ListOnlineDevices 返回当前在线设备概览，超限的排在前面。
 func (s *Service) ListOnlineDevices(ctx context.Context, tenantID string) (*DeviceOverview, error) {
@@ -62,30 +92,14 @@ func (s *Service) ListOnlineDevices(ctx context.Context, tenantID string) (*Devi
 			return err
 		}
 
-		// 用 LEFT JOIN 而不是从视图出发：没有人在线的订阅也要能看到，
-		// 否则「这个用户到底几台设备」这个问题在他离线时就查不了了
-		rows, err := tx.Query(ctx, `
-			SELECT s.id::text, COALESCE(u.email,''), COALESCE(p.name,''),
-			       COALESCE(s.device_limit, pv.max_devices, 0),
-			       COALESCE(d.device_count, 0), COALESCE(d.node_count, 0),
-			       (s.device_limit IS NOT NULL),
-			       d.last_seen_at
-			  FROM subscriptions s
-			  JOIN plan_versions pv ON pv.id = s.plan_version_id
-			  LEFT JOIN plans p ON p.id = s.plan_id
-			  LEFT JOIN users u ON u.id = s.user_id
-			  LEFT JOIN subscription_online_devices d ON d.subscription_id = s.id
-			 WHERE s.tenant_id = $1
-			   AND s.status IN ('active','trialing','grace')
-			 ORDER BY COALESCE(d.device_count,0) DESC, s.created_at DESC
-			 LIMIT 200`, tenantID)
+		rows, err := tx.Query(ctx, onlineDevicesSQL, tenantID)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var it OnlineDevice
-			if err := rows.Scan(&it.SubscriptionID, &it.Email, &it.Plan,
+			if err := rows.Scan(&it.SubscriptionID, &it.UserID, &it.Email, &it.Plan,
 				&it.Limit, &it.Online, &it.Nodes, &it.Overridden, &it.LastSeenAt); err != nil {
 				return err
 			}
