@@ -42,6 +42,8 @@ type anyTLSAdapter struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    bool
+	// fallback 是认证失败时的回落目标（raw `fallback`）；空串时由中性页面接住。
+	fallback  *probeFallback
 	active    map[net.Conn]struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
@@ -88,6 +90,9 @@ func (a *anyTLSAdapter) Validate(spec InboundSpec) error {
 			return err
 		}
 	}
+	if _, err := parseProbeFallback(spec.Config.Raw); err != nil {
+		return fmt.Errorf("anytls %w", err)
+	}
 	return nil
 }
 
@@ -107,7 +112,7 @@ func (a *anyTLSAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			cancel()
 			return fmt.Errorf("anytls TLS certificate: %w", err)
 		}
-		tlsConfig = &hysteria2TLSConfig{std: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}}
+		tlsConfig = &hysteria2TLSConfig{std: withInboundWebALPN(&tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13})}
 	}
 	paddingScheme := padding.DefaultPaddingScheme
 	if raw, exists := spec.Config.Raw["padding_scheme"]; exists {
@@ -118,7 +123,14 @@ func (a *anyTLSAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 			return err
 		}
 	}
-	service, err := anytls.NewService(anytls.ServiceConfig{PaddingScheme: paddingScheme, Handler: a, Logger: logger.NOP()})
+	fallback, err := parseProbeFallback(spec.Config.Raw)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("anytls %w", err)
+	}
+	// 口令不对、首包不足 32 字节等认证失败交给 anyTLSFallback：回落或中性页面，
+	// 不再 0 秒断开。
+	service, err := anytls.NewService(anytls.ServiceConfig{PaddingScheme: paddingScheme, Handler: a, FallbackHandler: anyTLSFallback{adapter: a}, Logger: logger.NOP()})
 	if err != nil {
 		cancel()
 		return fmt.Errorf("anytls service: %w", err)
@@ -140,6 +152,7 @@ func (a *anyTLSAdapter) Start(parent context.Context, spec InboundSpec, hooks Ad
 		return fmt.Errorf("anytls adapter already started or closed")
 	}
 	a.spec, a.plane, a.ctx, a.cancel, a.service, a.listener, a.tlsConfig = spec, hooks.DataPlane, ctx, cancel, service, listener, tlsConfig
+	a.fallback = newProbeFallback(fallback)
 	a.connErr = newConnErrorReporter(hooks, spec, "anytls")
 	a.mu.Unlock()
 	if err := a.syncUsers(); err != nil {
@@ -340,6 +353,7 @@ func (a *anyTLSAdapter) handleAccepted(conn net.Conn) {
 			return
 		}
 		conn = wrapped
+		ctx = context.WithValue(ctx, anyTLSNegotiatedH2{}, wrapped.ConnectionState().NegotiatedProtocol == "h2")
 	}
 	source := M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap()
 	// NewConnection 的错误是 AnyTLS 会话层的：口令不对（"unknown user
