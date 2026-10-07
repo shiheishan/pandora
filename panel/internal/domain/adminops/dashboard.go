@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -361,13 +362,33 @@ SELECT coalesce((
        q.duplicate_report_count,q.invalid_report_count,q.invalid_entry_count
   FROM traffic_totals t CROSS JOIN ranking r CROSS JOIN quality q`
 
+// dashboardTrafficCacheKey 是「现在」视图的缓存键；带 snapshot_at 的历史查询不缓存（返回空串）。
+func dashboardTrafficCacheKey(kind, tenantID string, in DashboardTrafficQuery) string {
+	if in.SnapshotAt != "" {
+		return ""
+	}
+	return kind + ":" + tenantID + ":" + in.Range + ":" + strconv.Itoa(in.Limit)
+}
+
+// DashboardNodeTraffic 读节点流量排行；「现在」视图按（租户, 区间, 条数）缓存 dashboardCacheTTL，
+// 返回的 snapshot_at 就是那次计算的时刻，数据与它一致。
 func (s *Service) DashboardNodeTraffic(ctx context.Context, tenantID string, input DashboardTrafficQuery) (*DashboardNodeTraffic, error) {
 	in, parsed, err := validateDashboardTrafficQuery(input)
 	if err != nil {
 		return nil, err
 	}
+	key := dashboardTrafficCacheKey("traffic-nodes", tenantID, in)
+	if key == "" {
+		return s.readDashboardNodeTraffic(ctx, tenantID, in, parsed)
+	}
+	return cachedRead(s.dash, key, func() (*DashboardNodeTraffic, error) {
+		return s.readDashboardNodeTraffic(ctx, tenantID, in, parsed)
+	})
+}
+
+func (s *Service) readDashboardNodeTraffic(ctx context.Context, tenantID string, in DashboardTrafficQuery, parsed *time.Time) (*DashboardNodeTraffic, error) {
 	out := &DashboardNodeTraffic{Range: in.Range, Basis: "strict_raw_report_entries", Items: []DashboardNodeTrafficItem{}}
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		window, err := resolveDashboardWindow(ctx, tx, in, parsed)
 		if err != nil {
 			return err
@@ -385,13 +406,24 @@ func (s *Service) DashboardNodeTraffic(ctx context.Context, tenantID string, inp
 	return out, nil
 }
 
+// DashboardUserTraffic 读用户流量排行，缓存口径同 DashboardNodeTraffic。
 func (s *Service) DashboardUserTraffic(ctx context.Context, tenantID string, input DashboardTrafficQuery) (*DashboardUserTraffic, error) {
 	in, parsed, err := validateDashboardTrafficQuery(input)
 	if err != nil {
 		return nil, err
 	}
+	key := dashboardTrafficCacheKey("traffic-users", tenantID, in)
+	if key == "" {
+		return s.readDashboardUserTraffic(ctx, tenantID, in, parsed)
+	}
+	return cachedRead(s.dash, key, func() (*DashboardUserTraffic, error) {
+		return s.readDashboardUserTraffic(ctx, tenantID, in, parsed)
+	})
+}
+
+func (s *Service) readDashboardUserTraffic(ctx context.Context, tenantID string, in DashboardTrafficQuery, parsed *time.Time) (*DashboardUserTraffic, error) {
 	out := &DashboardUserTraffic{Range: in.Range, Basis: "strict_raw_report_entries", Items: []DashboardUserTrafficItem{}}
-	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		window, err := resolveDashboardWindow(ctx, tx, in, parsed)
 		if err != nil {
 			return err

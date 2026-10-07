@@ -24,10 +24,12 @@ import (
 
 type Service struct {
 	pool *db.Pool
+	// dash 是看板读模型的 30 秒缓存（dashboard_cache.go）；nil 时不缓存
+	dash *dashboardCache
 }
 
 func NewService(pool *db.Pool) *Service {
-	return &Service{pool: pool}
+	return &Service{pool: pool, dash: newDashboardCache(dashboardCacheTTL, time.Now)}
 }
 
 //==============================================================================
@@ -85,80 +87,84 @@ type RevenueRow struct {
 	AdjustmentTotal  int64  `json:"adjustment_total"`
 }
 
+// Overview 读看板概览，结果按租户缓存 dashboardCacheTTL。
 func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, error) {
+	return cachedRead(s.dash, "overview:"+tenantID, func() (*Overview, error) {
+		return s.readOverview(ctx, tenantID)
+	})
+}
+
+// overviewRevenueSQL 是一个币种的收入：实际收入只认 platform_revenue 的全部分录净额
+// （credit - debit）；报表调整来自独立追加表，只影响展示值，不回写账本。日界按租户时区，
+// 时区在语句里按租户读（原来先单独查一次再代入，多一次往返）。
+const overviewRevenueSQL = `
+	WITH params AS (
+	 SELECT (now() AT TIME ZONE t.timezone)::date AS today, t.timezone AS tz
+	   FROM tenants t WHERE t.id = $1
+	), actual AS (
+	 SELECT coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
+	          FILTER(WHERE (lt.occurred_at AT TIME ZONE p.tz)::date>=p.today),0)::bigint,
+	        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
+	          FILTER(WHERE (lt.occurred_at AT TIME ZONE p.tz)::date>=p.today-6),0)::bigint,
+	        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
+	          FILTER(WHERE (lt.occurred_at AT TIME ZONE p.tz)::date>=p.today-29),0)::bigint,
+	        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END),0)::bigint,
+	        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
+	          FILTER(WHERE (lt.occurred_at AT TIME ZONE p.tz)::date=p.today-1),0)::bigint
+	   FROM ledger_entries le
+	   JOIN ledger_transactions lt ON lt.id=le.transaction_id AND lt.tenant_id=le.tenant_id
+	   JOIN ledger_accounts la ON la.id=le.account_id AND la.tenant_id=le.tenant_id
+	   CROSS JOIN params p
+	  WHERE le.tenant_id=$1 AND le.currency=$2 AND la.account_type='platform_revenue'
+	), adj AS (
+	 SELECT coalesce(sum(amount) FILTER(WHERE effective_on=p.today),0)::bigint,
+	        coalesce(sum(amount) FILTER(WHERE effective_on>=p.today-6),0)::bigint,
+	        coalesce(sum(amount) FILTER(WHERE effective_on>=p.today-29),0)::bigint,
+	        coalesce(sum(amount),0)::bigint,
+	        coalesce(sum(amount) FILTER(WHERE effective_on=p.today-1),0)::bigint
+	   FROM revenue_report_adjustments, params p WHERE tenant_id=$1 AND currency=$2
+	) SELECT * FROM actual CROSS JOIN adj`
+
+// readOverview 直读概览。各项互不依赖，排进一个批次经 BatchScoped 一次往返
+// （原来 InTx 里逐条执行：BEGIN + 注入、八条语句、COMMIT，共 10 次往返）。
+func (s *Service) readOverview(ctx context.Context, tenantID string) (*Overview, error) {
 	var o Overview
-	o.Revenue = []RevenueRow{}
-
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*),
-			       count(*) FILTER (WHERE status = 'active'),
-			       count(*) FILTER (WHERE created_at >= date_trunc('day', now())),
-			       count(*) FILTER (WHERE created_at >= now() - interval '7 days')
-			  FROM users WHERE tenant_id = $1`, tenantID,
-		).Scan(&o.Users.Total, &o.Users.Active, &o.Users.Today, &o.Users.Last7Days); err != nil {
-			return err
-		}
-
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FILTER (WHERE status = 'active'),
-			       count(*) FILTER (WHERE status = 'trialing'),
-			       count(*) FILTER (WHERE status IN ('active','trialing')
-			                          AND current_period_end < now() + interval '7 days'),
-			       count(*) FILTER (WHERE status = 'expired'),
-			       count(*) FILTER (WHERE status IN ('active','trialing')
-			                          AND created_at >= now() - interval '7 days')
-			  FROM subscriptions WHERE tenant_id = $1`, tenantID,
-		).Scan(&o.Subscriptions.Active, &o.Subscriptions.Trialing,
-			&o.Subscriptions.Expiring, &o.Subscriptions.Expired, &o.Subscriptions.New7Days); err != nil {
-			return err
-		}
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*),
-			       count(*) FILTER (WHERE last_heartbeat_at >= now() - interval '90 seconds')
-			  FROM nodes
-			 WHERE tenant_id = $1 AND status <> 'destroyed' AND serving_status <> 'retired'`, tenantID,
-		).Scan(&o.Nodes.Total, &o.Nodes.Online); err != nil {
-			return err
-		}
-
-		// 实际收入只认 platform_revenue 的全部分录净额：credit - debit。
-		// 报表调整来自独立追加表，只影响展示值，不回写账本。
-		var revenueTimezone string
-		if err := tx.QueryRow(ctx, `SELECT timezone FROM tenants WHERE id=$1`, tenantID).Scan(&revenueTimezone); err != nil {
-			return err
-		}
-		for _, currency := range []string{"CNY", "USD"} {
-			r := RevenueRow{Currency: currency}
+	b := &pgx.Batch{}
+	b.Queue(`
+		SELECT count(*),
+		       count(*) FILTER (WHERE status = 'active'),
+		       count(*) FILTER (WHERE created_at >= date_trunc('day', now())),
+		       count(*) FILTER (WHERE created_at >= now() - interval '7 days')
+		  FROM users WHERE tenant_id = $1`, tenantID,
+	).QueryRow(func(row pgx.Row) error {
+		return row.Scan(&o.Users.Total, &o.Users.Active, &o.Users.Today, &o.Users.Last7Days)
+	})
+	b.Queue(`
+		SELECT count(*) FILTER (WHERE status = 'active'),
+		       count(*) FILTER (WHERE status = 'trialing'),
+		       count(*) FILTER (WHERE status IN ('active','trialing')
+		                          AND current_period_end < now() + interval '7 days'),
+		       count(*) FILTER (WHERE status = 'expired'),
+		       count(*) FILTER (WHERE status IN ('active','trialing')
+		                          AND created_at >= now() - interval '7 days')
+		  FROM subscriptions WHERE tenant_id = $1`, tenantID,
+	).QueryRow(func(row pgx.Row) error {
+		return row.Scan(&o.Subscriptions.Active, &o.Subscriptions.Trialing,
+			&o.Subscriptions.Expiring, &o.Subscriptions.Expired, &o.Subscriptions.New7Days)
+	})
+	b.Queue(`
+		SELECT count(*),
+		       count(*) FILTER (WHERE last_heartbeat_at >= now() - interval '90 seconds')
+		  FROM nodes
+		 WHERE tenant_id = $1 AND status <> 'destroyed' AND serving_status <> 'retired'`, tenantID,
+	).QueryRow(func(row pgx.Row) error { return row.Scan(&o.Nodes.Total, &o.Nodes.Online) })
+	revenue := []RevenueRow{{Currency: "CNY"}, {Currency: "USD"}}
+	for i := range revenue {
+		r := &revenue[i]
+		b.Queue(overviewRevenueSQL, tenantID, r.Currency).QueryRow(func(row pgx.Row) error {
 			var adjYesterday int64
-			if err := tx.QueryRow(ctx, `
-				WITH params AS (
-				 SELECT (now() AT TIME ZONE $3)::date AS today
-				), actual AS (
-				 SELECT coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
-				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date>=p.today),0)::bigint,
-				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
-				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date>=p.today-6),0)::bigint,
-				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
-				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date>=p.today-29),0)::bigint,
-				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END),0)::bigint,
-				        coalesce(sum(CASE WHEN le.direction='credit' THEN le.amount ELSE -le.amount END)
-				          FILTER(WHERE (lt.occurred_at AT TIME ZONE $3)::date=p.today-1),0)::bigint
-				   FROM ledger_entries le
-				   JOIN ledger_transactions lt ON lt.id=le.transaction_id AND lt.tenant_id=le.tenant_id
-				   JOIN ledger_accounts la ON la.id=le.account_id AND la.tenant_id=le.tenant_id
-				   CROSS JOIN params p
-				  WHERE le.tenant_id=$1 AND le.currency=$2 AND la.account_type='platform_revenue'
-				), adj AS (
-				 SELECT coalesce(sum(amount) FILTER(WHERE effective_on=p.today),0)::bigint,
-				        coalesce(sum(amount) FILTER(WHERE effective_on>=p.today-6),0)::bigint,
-				        coalesce(sum(amount) FILTER(WHERE effective_on>=p.today-29),0)::bigint,
-				        coalesce(sum(amount),0)::bigint,
-				        coalesce(sum(amount) FILTER(WHERE effective_on=p.today-1),0)::bigint
-				   FROM revenue_report_adjustments, params p WHERE tenant_id=$1 AND currency=$2
-				) SELECT * FROM actual CROSS JOIN adj`, tenantID, currency, revenueTimezone).
-				Scan(&r.ActualToday, &r.Actual7Days, &r.Actual30Days, &r.ActualTotal, &r.ActualYesterday,
-					&r.AdjustmentToday, &r.Adjustment7Days, &r.Adjustment30Days, &r.AdjustmentTotal, &adjYesterday); err != nil {
+			if err := row.Scan(&r.ActualToday, &r.Actual7Days, &r.Actual30Days, &r.ActualTotal, &r.ActualYesterday,
+				&r.AdjustmentToday, &r.Adjustment7Days, &r.Adjustment30Days, &r.AdjustmentTotal, &adjYesterday); err != nil {
 				return err
 			}
 			r.Yesterday = r.ActualYesterday + adjYesterday
@@ -166,26 +172,23 @@ func (s *Service) Overview(ctx context.Context, tenantID string) (*Overview, err
 			r.Last7Days = r.Actual7Days + r.Adjustment7Days
 			r.Last30 = r.Actual30Days + r.Adjustment30Days
 			r.Total = r.ActualTotal + r.AdjustmentTotal
-			o.Revenue = append(o.Revenue, r)
-		}
-
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FILTER (WHERE status IN ('paid','fulfilled')
-			                          AND paid_at >= date_trunc('day', now())),
-			       count(*) FILTER (WHERE status IN ('draft','pending_payment')),
-			       count(*) FILTER (WHERE status IN ('cancelled','expired')
-			                          AND updated_at >= date_trunc('day', now()))
-			  FROM orders WHERE tenant_id = $1`, tenantID,
-		).Scan(&o.Orders.Paid, &o.Orders.Pending, &o.Orders.Failed); err != nil {
-			return err
-		}
-
-		return tx.QueryRow(ctx,
-			`SELECT count(*) FROM app.verify_ledger_all()`).Scan(&o.LedgerDrift)
-	})
-	if err != nil {
+			return nil
+		})
+	}
+	b.Queue(`
+		SELECT count(*) FILTER (WHERE status IN ('paid','fulfilled')
+		                          AND paid_at >= date_trunc('day', now())),
+		       count(*) FILTER (WHERE status IN ('draft','pending_payment')),
+		       count(*) FILTER (WHERE status IN ('cancelled','expired')
+		                          AND updated_at >= date_trunc('day', now()))
+		  FROM orders WHERE tenant_id = $1`, tenantID,
+	).QueryRow(func(row pgx.Row) error { return row.Scan(&o.Orders.Paid, &o.Orders.Pending, &o.Orders.Failed) })
+	b.Queue(`SELECT count(*) FROM app.verify_ledger_all()`).
+		QueryRow(func(row pgx.Row) error { return row.Scan(&o.LedgerDrift) })
+	if err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{}, b); err != nil {
 		return nil, httpx.Internal(err)
 	}
+	o.Revenue = revenue
 	return &o, nil
 }
 
