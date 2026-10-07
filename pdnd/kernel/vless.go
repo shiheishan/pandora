@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -50,7 +51,9 @@ type vlessAdapter struct {
 	xhttpConfig   XHTTPConfig
 	xhttpBroker   *XHTTPPacketBroker
 	xhttpSessions map[string]*vlessXHTTPPacketSession
-	wg            sync.WaitGroup
+	// fallback 是 TCP 直连承载认证失败时的回落（raw `fallback`）；空即中性 404。
+	fallback *probeFallback
+	wg       sync.WaitGroup
 }
 
 func NewDefaultAdapterRegistry() *AdapterRegistry {
@@ -104,6 +107,9 @@ func (a *vlessAdapter) Validate(spec InboundSpec) error {
 			return fmt.Errorf("vless xhttp-h3 requires cert_path and key_path")
 		}
 	}
+	if _, err := parseProbeFallback(spec.Config.Raw); err != nil {
+		return fmt.Errorf("vless %w", err)
+	}
 	security, _ := spec.Config.Raw["security"].(string)
 	if strings.EqualFold(security, "reality") {
 		if _, err := ParseRealityServerConfig(spec.Config.Raw); err != nil {
@@ -134,6 +140,12 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		return fmt.Errorf("vless 适配器已启动或已关闭")
 	}
 	a.spec, a.plane, a.connErr = spec, hooks.DataPlane, newConnErrorReporter(hooks, spec, "vless")
+	fallbackAddr, fallbackErr := parseProbeFallback(spec.Config.Raw)
+	if fallbackErr != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("vless %w", fallbackErr)
+	}
+	a.fallback = newProbeFallback(fallbackAddr)
 	security, _ := spec.Config.Raw["security"].(string)
 	a.reality = strings.EqualFold(security, "reality")
 	var tlsEnabled bool
@@ -513,7 +525,7 @@ func (a *vlessAdapter) serveAccepted(conn net.Conn) {
 			}
 			realitySession = &captured
 		}
-		_ = a.handleConnSession(ctx, session, realitySession)
+		_ = a.handleConnSessionProbe(ctx, session, realitySession, true)
 	})
 }
 func (a *vlessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
@@ -534,12 +546,18 @@ func (a *vlessAdapter) reportConnError(stage string, conn net.Conn, err error) {
 // 以前只有 TCP 的 acceptLoop 报，其余承载都是 `_ =` 丢掉——换个 network
 // 配置，同一个「用户未授权」就从日志里消失了。
 func (a *vlessAdapter) handleConnSession(ctx context.Context, conn net.Conn, realitySession *RealitySession) error {
-	err := a.serveConnSession(ctx, conn, realitySession)
+	return a.handleConnSessionProbe(ctx, conn, realitySession, false)
+}
+
+// handleConnSessionProbe 的 probe 为真（TCP 直连类承载）时，认证判定失败的连接
+// 交给回落或中性页面；WS / HTTP Upgrade / gRPC / XHTTP 在 HTTP 层已对错路径回 404。
+func (a *vlessAdapter) handleConnSessionProbe(ctx context.Context, conn net.Conn, realitySession *RealitySession, probe bool) error {
+	err := a.serveConnSession(ctx, conn, realitySession, probe)
 	a.reportConnError(StageSession, conn, err)
 	return err
 }
 
-func (a *vlessAdapter) serveConnSession(ctx context.Context, conn net.Conn, realitySession *RealitySession) error {
+func (a *vlessAdapter) serveConnSession(ctx context.Context, conn net.Conn, realitySession *RealitySession, probe bool) error {
 	defer conn.Close()
 	// epoch 要在读请求（查用户）之前取，见 userSessions 的竞态说明。
 	epoch := a.sessions.epoch()
@@ -551,8 +569,23 @@ func (a *vlessAdapter) serveConnSession(ctx context.Context, conn net.Conn, real
 	// 首字节是 0x00（VLESS version），后面才是 UUID、addons。上游那句
 	// 「we do a long padding to hide vless header」说的是客户端把首帧的
 	// 填充做长，用长度掩盖头部特征，不是把头部本身塞进帧里。
-	user, destination, err := readVLESSRequest(conn, a.lookupUser)
+	var reader io.Reader = conn
+	var recorder *vlessPreAuthRecorder
+	if probe {
+		recorder = &vlessPreAuthRecorder{r: conn}
+		reader = recorder
+	}
+	user, destination, err := readVLESSRequest(reader, a.lookupUser)
 	if err != nil {
+		if recorder != nil && recorder.rejected(err) {
+			// 先报失败：回落会话可能持续到对端断开或空闲超时，观测不能等它。
+			a.reportConnError(StageSession, conn, err)
+			a.mu.RLock()
+			fallback := a.fallback
+			a.mu.RUnlock()
+			fallback.serveConn(ctx, conn, recorder.buf, negotiatedH2(conn))
+			return nil
+		}
 		return err
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
