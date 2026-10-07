@@ -126,6 +126,66 @@ func pdndAllowedArtifact(name string) bool {
 	return false
 }
 
+// pdndSysctlFunction 是安装脚本里调系统参数的那段 shell 函数，单独成段好在测试里
+// 只跑它（不需要 root、不碰本机）。
+//
+// 依据是节点容量实测（10 万连接、1c1g 单位数据）：重启风暴时 conntrack 峰值 31 万，
+// 超过 Debian 默认的 262144，1c1g 镜像默认只有 8192、约 4000 条连接就静默丢包；
+// TIME_WAIT 顶到 32768；QUIC 需要 7.5MB 以上的收发缓冲。写成持久的 sysctl.d
+// drop-in，只调大不调小：机器上已有更大的值按原值写回。conntrack 模块晚于
+// systemd-sysctl 加载时，udev 会对 net.netfilter 前缀再应用一次 sysctl.d；
+// hashsize 只能走模块参数，另写一份 modprobe.d。
+const pdndSysctlFunction = `
+pandora_tune_sysctl() {
+  SYSCTL_DIR="${PANDORA_SYSCTL_DIR:-/etc/sysctl.d}"
+  MODPROBE_DIR="${PANDORA_MODPROBE_DIR:-/etc/modprobe.d}"
+  HASHSIZE_PARAM="${PANDORA_CONNTRACK_HASHSIZE_PATH:-/sys/module/nf_conntrack/parameters/hashsize}"
+  if ! command -v sysctl >/dev/null 2>&1; then
+    echo "==> 跳过系统参数：找不到 sysctl" >&2
+    return 0
+  fi
+  mkdir -p "$SYSCTL_DIR" "$MODPROBE_DIR"
+  DROPIN="${SYSCTL_DIR}/90-pandora-native.conf"
+  echo "# 由 pandora-native 安装器生成：只调大不调小，重装时按当时的取值重算。" > "${DROPIN}.new"
+  for pair in net.netfilter.nf_conntrack_max=524288 net.ipv4.tcp_max_tw_buckets=262144 \
+      net.core.somaxconn=65535 net.ipv4.tcp_max_syn_backlog=65535 \
+      net.core.rmem_max=16777216 net.core.wmem_max=16777216 net.core.netdev_max_backlog=16384; do
+    key="${pair%%=*}"
+    want="${pair#*=}"
+    cur="$(sysctl -n "$key" 2>/dev/null || true)"
+    case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+    if [ "$cur" -gt "$want" ]; then want="$cur"; fi
+    echo "$key = $want" >> "${DROPIN}.new"
+  done
+  # 本地端口范围只放宽不收窄。
+  range="$(sysctl -n net.ipv4.ip_local_port_range 2>/dev/null || true)"
+  low="$(echo "$range" | awk '{print $1}')"
+  high="$(echo "$range" | awk '{print $2}')"
+  case "$low" in ''|*[!0-9]*) low=1024 ;; esac
+  case "$high" in ''|*[!0-9]*) high=65535 ;; esac
+  if [ "$low" -gt 1024 ]; then low=1024; fi
+  if [ "$high" -lt 65535 ]; then high=65535; fi
+  echo "net.ipv4.ip_local_port_range = $low $high" >> "${DROPIN}.new"
+  # tcp_tw_reuse：1 是对外连接也复用；默认 2 只管回环。
+  echo "net.ipv4.tcp_tw_reuse = 1" >> "${DROPIN}.new"
+  chmod 0644 "${DROPIN}.new"
+  mv -f "${DROPIN}.new" "$DROPIN"
+  hashsize=131072
+  cur="$(cat "$HASHSIZE_PARAM" 2>/dev/null || true)"
+  case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+  if [ "$cur" -gt "$hashsize" ]; then hashsize="$cur"; fi
+  echo "options nf_conntrack hashsize=${hashsize}" > "${MODPROBE_DIR}/pandora-native.conf"
+  chmod 0644 "${MODPROBE_DIR}/pandora-native.conf"
+  if [ "$cur" -gt 0 ] && [ "$cur" -lt "$hashsize" ] && [ -w "$HASHSIZE_PARAM" ]; then
+    echo "$hashsize" > "$HASHSIZE_PARAM" 2>/dev/null || true
+  fi
+  if ! sysctl -e -p "$DROPIN" >/dev/null 2>&1; then
+    echo "==> 部分系统参数没能立即生效（容器或只读 /proc/sys），已写入 ${DROPIN}，重启后生效" >&2
+  fi
+  echo "==> 系统参数已写入 ${DROPIN}"
+}
+`
+
 // pdndInstallTemplate 是安装脚本本体。@@PANEL@@ 在下发时替换成面板地址，
 // 这样落地机上的人不用再手填一次域名——填错域名的排查成本比这行替换高得多。
 const pdndInstallTemplate = `#!/bin/sh
@@ -149,7 +209,7 @@ INSTALL_DIR="${PANDORA_INSTALL_DIR:-/usr/local/bin}"
 CONFIG_DIR="${PANDORA_CONFIG_DIR:-/etc/pandora-native}"
 UNIT_DIR="${PANDORA_UNIT_DIR:-/etc/systemd/system}"
 SERVICE="pandora-native"
-
+` + pdndSysctlFunction + `
 while [ $# -gt 0 ]; do
   case "$1" in
     --token) TOKEN="$2"; shift 2 ;;
@@ -386,7 +446,7 @@ ExecStart=${INSTALL_DIR}/${SERVICE} -c ${CONFIG_DIR}/config.json
 Restart=on-failure
 RestartSec=5s
 KillSignal=SIGTERM
-TimeoutStopSec=20s
+TimeoutStopSec=30s
 NoNewPrivileges=true
 UMask=0077
 ProtectSystem=strict
@@ -442,6 +502,9 @@ if [ "$ENROLLMENT_PENDING" = 1 ]; then
   chown root:pandora "${CONFIG_DIR}/identity.json"
   chmod 0640 "${CONFIG_DIR}/identity.json"
 fi
+
+echo "==> 调整系统参数（conntrack、监听队列、端口范围、收发缓冲）"
+pandora_tune_sysctl || echo "==> 系统参数调整失败，不影响安装，可稍后手动处理" >&2
 
 if [ "$SIGNED_REQUIRED" = true ]; then
   echo "==> verifying the signed node identity with the control plane"

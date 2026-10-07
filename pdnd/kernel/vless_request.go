@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 
 	"github.com/google/uuid"
@@ -27,11 +26,14 @@ type vlessDestination struct {
 	RawUUID [16]byte
 }
 
-func readVLESSRequest(conn net.Conn, lookup func(string) (core.User, bool)) (core.User, vlessDestination, error) {
+func readVLESSRequest(conn io.Reader, lookup func(string) (core.User, bool)) (core.User, vlessDestination, error) {
 	var out vlessDestination
 	var version [1]byte
-	if _, err := io.ReadFull(conn, version[:]); err != nil || version[0] != vlessVersion {
-		return core.User{}, out, fmt.Errorf("vless version 无效")
+	if _, err := io.ReadFull(conn, version[:]); err != nil {
+		return core.User{}, out, fmt.Errorf("vless version 无效: %w", err)
+	}
+	if version[0] != vlessVersion {
+		return core.User{}, out, markConnError(connErrProtocol, errVLESSVersionRejected)
 	}
 	var id [16]byte
 	if _, err := io.ReadFull(conn, id[:]); err != nil {
@@ -39,7 +41,10 @@ func readVLESSRequest(conn net.Conn, lookup func(string) (core.User, bool)) (cor
 	}
 	user, ok := lookup(uuid.UUID(id).String())
 	if !ok {
-		return core.User{}, out, markConnError(connErrAuth, fmt.Errorf("vless 用户未授权"))
+		return core.User{}, out, markConnError(connErrAuth, errVLESSUserRejected)
+	}
+	if recorder, ok := conn.(*vlessPreAuthRecorder); ok {
+		recorder.authenticated()
 	}
 	out.RawUUID = id
 	var addonLen [1]byte

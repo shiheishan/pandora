@@ -102,20 +102,20 @@ func (n *Node) applyUserDelta(ev panel.StreamEvent) error {
 			return err
 		}
 	}
+	// 增量里的 Removed 是用户 ID，内核与本地镜像都按 UUID 删，先换算一次。
+	// 原先镜像那边是「每个删除 ID 扫一遍全表」，±500 人的增量比整体替换还慢。
+	// 同一 ID 可能挂着不止一个 UUID（口令重置的中间态），全部删。
+	var removedUUIDs []string
 	if len(ev.Removed) > 0 {
-		// 增量里的 Removed 是用户 ID，内核按 UUID 删，要先换算。
-		byID := make(map[int64]string, len(n.known))
+		byID := make(map[int64][]string, len(n.known))
 		for uuid, u := range n.known {
-			byID[u.ID] = uuid
+			byID[u.ID] = append(byID[u.ID], uuid)
 		}
-		uuids := make([]string, 0, len(ev.Removed))
 		for _, id := range ev.Removed {
-			if uuid, ok := byID[id]; ok {
-				uuids = append(uuids, uuid)
-			}
+			removedUUIDs = append(removedUUIDs, byID[id]...)
 		}
-		if len(uuids) > 0 {
-			if err := n.kernel.DelUsers(n.tag, uuids); err != nil {
+		if len(removedUUIDs) > 0 {
+			if err := n.kernel.DelUsers(n.tag, removedUUIDs); err != nil {
 				return err
 			}
 		}
@@ -126,12 +126,8 @@ func (n *Node) applyUserDelta(ev panel.StreamEvent) error {
 	for _, u := range updated {
 		n.known[u.UUID] = u
 	}
-	for _, id := range ev.Removed {
-		for uuid, user := range n.known {
-			if user.ID == id {
-				delete(n.known, uuid)
-			}
-		}
+	for _, uuid := range removedUUIDs {
+		delete(n.known, uuid)
 	}
 	n.usersDirty = true
 	n.log.Info("用户增量已应用",

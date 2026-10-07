@@ -62,6 +62,7 @@ type ss2022Stream struct {
 	readAEAD, writeAEAD   cipher.AEAD
 	readNonce, writeNonce []byte
 	pending               []byte
+	pendingBuf            *[]byte
 	mu                    sync.Mutex
 }
 
@@ -83,17 +84,23 @@ func ss2022ReadRawChunk(r io.Reader, aead cipher.AEAD, nonce []byte, dst []byte)
 	return nil
 }
 
+// Read / Write 与经典 AEAD 的 ssStream 同一套做法：装得下就原地解密，装不下借
+// 池里的帧缓冲（frame_pool.go），写方向原地封装、一次写出，数据路径不逐块分配。
 func (s *ss2022Stream) Read(p []byte) (int, error) {
 	if len(s.pending) > 0 {
 		n := copy(p, s.pending)
 		s.pending = s.pending[n:]
+		if len(s.pending) == 0 && s.pendingBuf != nil {
+			putFrameBuf(s.pendingBuf)
+			s.pendingBuf, s.pending = nil, nil
+		}
 		return n, nil
 	}
 	var encryptedLength [2 + ss2022Overhead]byte
 	if _, err := io.ReadFull(s.reader, encryptedLength[:]); err != nil {
 		return 0, err
 	}
-	plainLength, err := s.readAEAD.Open(nil, s.readNonce, encryptedLength[:], nil)
+	plainLength, err := s.readAEAD.Open(encryptedLength[:0], s.readNonce, encryptedLength[:], nil)
 	ss2022IncNonce(s.readNonce)
 	if err != nil || len(plainLength) != 2 {
 		return 0, fmt.Errorf("shadowsocks 2022 length authentication failed")
@@ -102,18 +109,31 @@ func (s *ss2022Stream) Read(p []byte) (int, error) {
 	if length == 0 || length > ss2022MaxChunk {
 		return 0, fmt.Errorf("shadowsocks 2022 frame length invalid")
 	}
-	frame := make([]byte, length+ss2022Overhead)
+	frameLen := length + ss2022Overhead
+	var bp *[]byte
+	frame := p
+	if len(p) < frameLen {
+		bp, frame = getFrameBuf(frameLen)
+	}
+	frame = frame[:frameLen]
 	if _, err := io.ReadFull(s.reader, frame); err != nil {
+		putFrameBuf(bp)
 		return 0, err
 	}
-	plain, err := s.readAEAD.Open(nil, s.readNonce, frame, nil)
+	plain, err := s.readAEAD.Open(frame[:0], s.readNonce, frame, nil)
 	ss2022IncNonce(s.readNonce)
 	if err != nil {
+		putFrameBuf(bp)
 		return 0, fmt.Errorf("shadowsocks 2022 frame authentication failed")
+	}
+	if bp == nil {
+		return len(plain), nil
 	}
 	n := copy(p, plain)
 	if n < len(plain) {
-		s.pending = append(s.pending, plain[n:]...)
+		s.pending, s.pendingBuf = plain[n:], bp
+	} else {
+		putFrameBuf(bp)
 	}
 	return n, nil
 }
@@ -121,18 +141,20 @@ func (s *ss2022Stream) Read(p []byte) (int, error) {
 func (s *ss2022Stream) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	bp, _ := getFrameBuf(2 + 2*ss2022Overhead + ss2022MaxChunk)
+	defer putFrameBuf(bp)
 	written := 0
 	for len(p) > 0 {
 		chunk := p
 		if len(chunk) > ss2022MaxChunk {
 			chunk = chunk[:ss2022MaxChunk]
 		}
-		length := []byte{byte(len(chunk) >> 8), byte(len(chunk))}
-		header := s.writeAEAD.Seal(nil, s.writeNonce, length, nil)
+		length := [2]byte{byte(len(chunk) >> 8), byte(len(chunk))}
+		out := s.writeAEAD.Seal((*bp)[:0], s.writeNonce, length[:], nil)
 		ss2022IncNonce(s.writeNonce)
-		body := s.writeAEAD.Seal(nil, s.writeNonce, chunk, nil)
+		out = s.writeAEAD.Seal(out, s.writeNonce, chunk, nil)
 		ss2022IncNonce(s.writeNonce)
-		if _, err := s.writer.Write(append(header, body...)); err != nil {
+		if _, err := s.writer.Write(out); err != nil {
 			return written, err
 		}
 		written += len(chunk)

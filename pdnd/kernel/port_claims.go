@@ -195,39 +195,3 @@ func (c *NativeCore) takeRetiredTrafficLocked(tag string) []core.UserTraffic {
 	delete(c.retiredTraffic, tag)
 	return out
 }
-
-// CloseAndDrainTraffic 关停内核并交出每个入站最后一轮流量。
-//
-// 进程退出时必须先关入站：TCP 连接要到连接结束才把流量入账，先上报再关会把
-// 在途连接的流量全部丢掉（每次重启、升级都丢）。适配器 Close 会等连接
-// goroutine 收尾，之后取到的就是最终值。重复调用返回空表。
-func (c *NativeCore) CloseAndDrainTraffic() (map[string][]core.UserTraffic, error) {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return map[string][]core.UserTraffic{}, nil
-	}
-	c.closed = true
-	inbounds := make(map[string]*nativeInbound, len(c.inbounds))
-	for tag, in := range c.inbounds {
-		inbounds[tag] = in
-		delete(c.inbounds, tag)
-	}
-	c.ports = make(map[portKey]string)
-	c.mu.Unlock()
-
-	var first error
-	for tag, in := range inbounds {
-		if err := closeNativeInbound(in); err != nil && first == nil {
-			first = err
-		}
-		c.stashRetiredTraffic(tag, in)
-	}
-	c.connErrors.Close()
-
-	c.mu.Lock()
-	out := c.retiredTraffic
-	c.retiredTraffic = make(map[string][]core.UserTraffic)
-	c.mu.Unlock()
-	return out, first
-}

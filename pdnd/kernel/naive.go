@@ -29,7 +29,7 @@ type naiveAdapter struct {
 	spec     InboundSpec
 	mu       sync.RWMutex
 	users    map[string]proxyUser
-	traffic  map[int64]core.UserTraffic
+	sessions userSessions
 	online   map[int64]map[string]struct{}
 	listener net.Listener
 	server   *http.Server
@@ -47,7 +47,7 @@ type naiveAdapter struct {
 }
 
 func newNaiveAdapter(spec InboundSpec) (Adapter, error) {
-	return &naiveAdapter{spec: spec, users: make(map[string]proxyUser), traffic: make(map[int64]core.UserTraffic), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}, nil
+	return &naiveAdapter{spec: spec, users: make(map[string]proxyUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}, nil
 }
 
 func (a *naiveAdapter) Protocol() string { return "naive" }
@@ -141,6 +141,7 @@ func (a *naiveAdapter) serveHTTP(w http.ResponseWriter, req *http.Request) {
 		a.fallback.ServeHTTP(w, req)
 		return
 	}
+	epoch := a.sessions.epoch()
 	name, password, ok := parseNaiveBasicAuth(req.Header.Get("Proxy-Authorization"))
 	user, valid := a.lookupCredential(name, password)
 	if !ok || !valid {
@@ -175,7 +176,7 @@ func (a *naiveAdapter) serveHTTP(w http.ResponseWriter, req *http.Request) {
 	a.mu.Unlock()
 	defer a.wg.Done()
 	defer a.removeActive(conn)
-	if err := a.handleStream(ctx, conn, user, destination); err != nil {
+	if err := a.handleStream(ctx, conn, user, destination, epoch); err != nil {
 		a.connErr.request(StageSession, req.RemoteAddr, err)
 	}
 }
@@ -225,8 +226,13 @@ func parseNaiveDestination(req *http.Request) (vlessDestination, error) {
 	return out, nil
 }
 
-func (a *naiveAdapter) handleStream(ctx context.Context, conn net.Conn, user core.User, destination vlessDestination) error {
+func (a *naiveAdapter) handleStream(ctx context.Context, conn net.Conn, user core.User, destination vlessDestination, epoch uint64) error {
 	defer conn.Close()
+	sess := a.sessions.open(user, epoch, conn)
+	if sess == nil {
+		return errSessionRevoked
+	}
+	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
 	if !a.enterDevice(user, ip) {
 		return deviceLimitError("naive")
@@ -239,27 +245,7 @@ func (a *naiveAdapter) handleStream(ctx context.Context, conn net.Conn, user cor
 		return err
 	}
 	defer upstream.Close()
-	var copyWG sync.WaitGroup
-	copyWG.Add(2)
-	go func() {
-		n, _ := core.SpeedLimitedCopy(upstream, conn, a.limiters.For(user))
-		a.addTraffic(user, n, 0)
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		copyWG.Done()
-	}()
-	go func() {
-		n, _ := core.SpeedLimitedCopy(conn, upstream, a.limiters.For(user))
-		a.addTraffic(user, 0, n)
-		// 上游关掉写端时，这个关闭要传给客户端，否则它收不到 EOF，
-		// 会一直等到自己超时——连接也就一直不释放。
-		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		copyWG.Done()
-	}()
-	copyWG.Wait()
+	sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user)})
 	return nil
 }
 
@@ -318,28 +304,23 @@ func (a *naiveAdapter) UpsertUsers(users []core.User) error {
 
 func (a *naiveAdapter) DelUsers(ids []string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var removed []int64
 	for _, id := range ids {
 		name := strings.TrimSpace(id)
 		// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着。
 		if entry, ok := a.users[name]; ok {
 			a.limiters.Remove(entry.user.ID)
+			removed = append(removed, entry.user.ID)
 		}
 		delete(a.users, name)
 	}
+	a.mu.Unlock()
+	// 先删表、再踢线（锁外关）：已有的长连接、mux / QUIC 会话随之断开。
+	a.sessions.revoke(removed)
 	return nil
 }
 func (a *naiveAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	out := make([]core.UserTraffic, 0, len(a.traffic))
-	for id, traffic := range a.traffic {
-		if traffic.Upload != 0 || traffic.Download != 0 {
-			out = append(out, traffic)
-		}
-		delete(a.traffic, id)
-	}
-	return out, nil
+	return a.sessions.snapshot(), nil
 }
 func (a *naiveAdapter) OnlineIPs() map[int64][]string {
 	a.mu.RLock()
@@ -377,13 +358,7 @@ func (a *naiveAdapter) leaveDevice(user core.User, ip string) {
 	}
 }
 func (a *naiveAdapter) addTraffic(user core.User, upload, download int64) {
-	a.mu.Lock()
-	t := a.traffic[user.ID]
-	t.ID = user.ID
-	t.Upload += upload
-	t.Download += download
-	a.traffic[user.ID] = t
-	a.mu.Unlock()
+	a.sessions.add(user.ID, upload, download)
 }
 func (a *naiveAdapter) removeActive(conn net.Conn) {
 	a.mu.Lock()

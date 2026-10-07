@@ -135,12 +135,12 @@ func (s *vmessMuxSession) newStream(id uint16, network byte, destination M.Socks
 	s.streams[id] = stream
 	s.mu.Unlock()
 	s.wg.Add(1)
-	go func() {
+	goGuarded(nil, func() {
 		defer s.wg.Done()
 		if network == vmessMuxNetworkTCP {
 			s.forwardMuxTCP(stream)
 		}
-	}()
+	})
 	return stream
 }
 
@@ -159,18 +159,8 @@ func (s *vmessMuxSession) forwardMuxTCP(stream *vmessMuxStream) {
 	}
 	defer upstream.Close()
 	conn := &vmessMuxTCPConn{stream: stream, session: s}
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		_, _ = core.SpeedLimitedCopy(upstream, stream.pipeR, s.adapter.limiters.For(s.user))
-		if cw, ok := upstream.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		wg.Done()
-	}()
-	go func() { _, _ = core.SpeedLimitedCopy(conn, upstream, s.adapter.limiters.For(s.user)); wg.Done() }()
-	wg.Wait()
-	_ = s.writeClose(stream.sessionID, false)
+	relayMuxTCP(&s.adapter.sessions, s.user, core.RelayOptions{Limiter: s.adapter.limiters.For(s.user)},
+		stream.pipeR, conn, func() error { return s.writeClose(stream.sessionID, false) }, upstream)
 	s.removeStream(stream.sessionID, false)
 }
 
