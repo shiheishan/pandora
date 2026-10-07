@@ -164,6 +164,11 @@ func TestTrafficChargePG18(t *testing.T) {
 	rolloverAndForeignUIDScenario(t, ctx, admin, app)
 	retentionScenario(t, ctx, admin, app)
 	reportIDScenario(t, ctx, admin, app)
+	// w5retain：31 天留档清理、删掉的索引无依赖、billed_bytes、按天汇总（traffic_retention_pg18_test.go）
+	reportRetentionScenario(t, ctx, admin, app)
+	droppedIndexScenario(t, ctx, admin)
+	billedBytesScenario(t, ctx, admin, app)
+	trafficDailyScenario(t, ctx, admin, app)
 }
 
 // rolloverAndForeignUIDScenario 证明审计 N1、N2、N3：

@@ -4,8 +4,6 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/aegispanel/aegis/internal/platform/db"
 )
 
 // trafficRollupSQL 把刚写入的一行上报累加进两张小时汇总表（迁移 00099）。
@@ -22,8 +20,15 @@ import (
 //
 // 节点×小时这一行同一节点的并发上报会在这里排队（各节点互不相干）；它在扣量之前写，
 // 不延长配额行锁的持有时间。
+//
+// billed_bytes（00133）是乘过节点倍率的计费字节：$3 / $4 是 Go 记账算出的 uid 与计费量，
+// 与传给扣量（chargeReportEntries）的是同一组数（放行名单内、合规、按倍率折算），重复上报
+// 传空。小时汇总因此留下对账要的口径，原始留档过了 31 天被清理也不丢。桶里原来是 NULL
+// （跨过 00133 之前的那个桶）时加了仍是 NULL，整桶算未知。
 const trafficRollupSQL = `
-WITH r AS MATERIALIZED (
+WITH b AS MATERIALIZED (
+  SELECT uid, billed FROM unnest($3::bigint[], $4::bigint[]) AS b(uid, billed)
+), r AS MATERIALIZED (
   SELECT tenant_id, node_id, received_at,
          date_trunc('hour', received_at, 'UTC') AS hour_start,
          duplicate_of IS NOT NULL AS is_dup,
@@ -52,7 +57,7 @@ WITH r AS MATERIALIZED (
   INSERT INTO node_traffic_hourly AS h
     (tenant_id, hour_start, node_id, report_count, duplicate_report_count,
      invalid_report_count, invalid_entry_count, raw_bytes, upload_bytes, download_bytes,
-     positive_entry_count, positive_report_count, last_positive_report_at)
+     positive_entry_count, positive_report_count, last_positive_report_at, billed_bytes)
   SELECT r.tenant_id, r.hour_start, r.node_id,
          CASE WHEN r.is_dup THEN 0 ELSE 1 END,
          CASE WHEN r.is_dup THEN 1 ELSE 0 END,
@@ -61,7 +66,8 @@ WITH r AS MATERIALIZED (
          CASE WHEN r.is_dup THEN 0 ELSE r.raw_bytes END,
          t.upload_bytes, t.download_bytes, t.positive_entries,
          CASE WHEN t.positive_entries > 0 THEN 1 ELSE 0 END,
-         CASE WHEN t.positive_entries > 0 THEN r.received_at END
+         CASE WHEN t.positive_entries > 0 THEN r.received_at END,
+         (SELECT coalesce(sum(billed), 0) FROM b)
     FROM r CROSS JOIN totals t
   ON CONFLICT (tenant_id, hour_start, node_id) DO UPDATE SET
     report_count            = h.report_count + EXCLUDED.report_count,
@@ -73,74 +79,33 @@ WITH r AS MATERIALIZED (
     download_bytes          = h.download_bytes + EXCLUDED.download_bytes,
     positive_entry_count    = h.positive_entry_count + EXCLUDED.positive_entry_count,
     positive_report_count   = h.positive_report_count + EXCLUDED.positive_report_count,
-    last_positive_report_at = greatest(h.last_positive_report_at, EXCLUDED.last_positive_report_at)
+    last_positive_report_at = greatest(h.last_positive_report_at, EXCLUDED.last_positive_report_at),
+    billed_bytes            = h.billed_bytes + EXCLUDED.billed_bytes
 )
 INSERT INTO node_user_traffic_hourly AS u
-  (tenant_id, hour_start, node_id, node_uid, upload_bytes, download_bytes, entry_count, last_report_at)
+  (tenant_id, hour_start, node_id, node_uid, upload_bytes, download_bytes, entry_count, last_report_at,
+   billed_bytes)
 SELECT r.tenant_id, r.hour_start, r.node_id, p.entry_uid,
-       p.upload_bytes, p.download_bytes, p.entry_count, r.received_at
+       p.upload_bytes, p.download_bytes, p.entry_count, r.received_at,
+       coalesce((SELECT sum(b.billed) FROM b WHERE b.uid = p.entry_uid), 0)
   FROM r CROSS JOIN per_uid p
  ORDER BY p.entry_uid
 ON CONFLICT (tenant_id, hour_start, node_id, node_uid) DO UPDATE SET
   upload_bytes   = u.upload_bytes + EXCLUDED.upload_bytes,
   download_bytes = u.download_bytes + EXCLUDED.download_bytes,
   entry_count    = u.entry_count + EXCLUDED.entry_count,
-  last_report_at = greatest(u.last_report_at, EXCLUDED.last_report_at)`
+  last_report_at = greatest(u.last_report_at, EXCLUDED.last_report_at),
+  billed_bytes   = u.billed_bytes + EXCLUDED.billed_bytes`
 
-// rollupTrafficReport 在调用方的事务里把一行上报累加进小时汇总。
-func rollupTrafficReport(ctx context.Context, tx pgx.Tx, tenantID, reportID string) error {
-	_, err := tx.Exec(ctx, trafficRollupSQL, tenantID, reportID)
-	return err
-}
-
-// TrafficRollupRetentionDays 是小时汇总的保留期：读得最远的是看板（snapshot_at 不早于
-// 31 天前、区间最长 30 天，即 61 天前），节点列表 30 天；留 70 天给余量。更早的桶
-// 没有任何读路径会读到，汇总也能从上报留档重算。
-const TrafficRollupRetentionDays = 70
-
-// rollupPurgeBatch 是每个短事务最多删的行数，rollupPurgeMaxBatches 是一次调用每张表最多
-// 跑几批；积压由下一轮继续清。
-const (
-	rollupPurgeBatch      = 5000
-	rollupPurgeMaxBatches = 200
-)
-
-// PurgeTrafficRollups 删除超出保留期的小时汇总（先节点×uid 表，再节点表）。由 aegis-admin 的
-// 保留期任务定时调用，幂等；分批删，每批一个短事务。
-func (s *Service) PurgeTrafficRollups(ctx context.Context, tenantID string) (int64, error) {
-	var total int64
-	for _, sql := range []string{`
-		DELETE FROM node_user_traffic_hourly t
-		 USING (SELECT tenant_id, hour_start, node_id, node_uid
-		          FROM node_user_traffic_hourly
-		         WHERE tenant_id = $1 AND hour_start < now() - make_interval(days => $2)
-		         ORDER BY hour_start
-		         LIMIT $3) d
-		 WHERE t.tenant_id = d.tenant_id AND t.hour_start = d.hour_start
-		   AND t.node_id = d.node_id AND t.node_uid = d.node_uid`, `
-		DELETE FROM node_traffic_hourly t
-		 USING (SELECT tenant_id, hour_start, node_id
-		          FROM node_traffic_hourly
-		         WHERE tenant_id = $1 AND hour_start < now() - make_interval(days => $2)
-		         ORDER BY hour_start
-		         LIMIT $3) d
-		 WHERE t.tenant_id = d.tenant_id AND t.hour_start = d.hour_start AND t.node_id = d.node_id`,
-	} {
-		for range rollupPurgeMaxBatches {
-			var n int64
-			err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-				ct, err := tx.Exec(ctx, sql, tenantID, TrafficRollupRetentionDays, rollupPurgeBatch)
-				n = ct.RowsAffected()
-				return err
-			})
-			total += n
-			if err != nil {
-				return total, err
-			}
-			if n < rollupPurgeBatch {
-				break
-			}
-		}
+// rollupTrafficReport 在调用方的事务里把一行上报累加进小时汇总。billed 是这份上报计费的
+// uid 与计费量（重复上报传 nil）。
+func rollupTrafficReport(ctx context.Context, tx pgx.Tx, tenantID, reportID string, billed []billedEntry) error {
+	uids := make([]int64, 0, len(billed))
+	amounts := make([]int64, 0, len(billed))
+	for _, e := range billed {
+		uids = append(uids, e.uid)
+		amounts = append(amounts, e.billed)
 	}
-	return total, nil
+	_, err := tx.Exec(ctx, trafficRollupSQL, tenantID, reportID, uids, amounts)
+	return err
 }

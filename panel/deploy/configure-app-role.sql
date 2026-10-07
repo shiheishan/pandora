@@ -120,11 +120,11 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 ALTER DEFAULT PRIVILEGES IN SCHEMA app
   GRANT EXECUTE ON FUNCTIONS TO aegis_app;
 
--- Retention and maintenance routines cross tenant/evidence boundaries and are
--- scheduler-only.  PostgreSQL grants new functions to PUBLIC by default, so
--- both paths must be closed after the broad legacy compatibility grant above.
-REVOKE EXECUTE ON FUNCTION app.purge_subscription_fetch_log(interval)
-  FROM PUBLIC, aegis_app;
+-- Maintenance routines that cross tenant/evidence boundaries are scheduler-only.
+-- PostgreSQL grants new functions to PUBLIC by default, so both paths must be
+-- closed after the broad legacy compatibility grant above.
+-- 00018 的 app.purge_subscription_fetch_log(interval) 不限租户，原先在这里收回；00131 把它换成
+-- 只删本租户、保留期不少于 31 天的 (int, int) 版本，由 aegis_app 的保留期任务调用，旧签名已不存在。
 REVOKE EXECUTE ON FUNCTION app.guard_finalized_refund_ledger_entry()
   FROM PUBLIC, aegis_app;
 
