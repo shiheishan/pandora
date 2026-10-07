@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
@@ -45,12 +46,17 @@ var nativeSSMethods = map[string]ssMethodSpec{
 	"xchacha20-ietf-poly1305": {Name: "xchacha20-ietf-poly1305", KeyLen: 32, SaltLen: 32, NewAEAD: chacha20poly1305.NewX},
 }
 
+// ssUser 发布后只读；同一口令被 UpsertUsers 换成新记录或被删除时 retired 置位，
+// 来源 IP 提示里残留的旧指针据此作废（见 shadowsocks_match.go）。
 type ssUser struct {
 	ID          int64
 	DeviceLimit int
 	// SpeedLimit 之前没存，面板下发的限速到这里就丢了。
 	SpeedLimit int
 	MasterKey  []byte
+	retired    atomic.Bool
+	// lastAuth 是最近一次认证通过的时间（UnixNano），快照据此把活跃用户排前。
+	lastAuth atomic.Int64
 }
 
 type shadowsocksAdapter struct {
@@ -58,18 +64,23 @@ type shadowsocksAdapter struct {
 	spec     InboundSpec
 	method   ssMethodSpec
 	mu       sync.RWMutex
-	users    map[string]ssUser
-	traffic  map[int64]core.UserTraffic
-	online   map[int64]map[string]struct{}
-	plane    DataPlane
-	connErr  connErrorReporter
-	limiters core.SpeedLimiters
-	listener net.Listener
-	packet   net.PacketConn
-	ctx      context.Context
-	cancel   context.CancelFunc
-	closed   bool
-	active   map[net.Conn]struct{}
+	// users 是用户集合的事实源（a.mu 保护）；每次变更后重建 snapshot，
+	// 握手只读 snapshot，不加锁、不复制。
+	users      map[string]*ssUser
+	snapshot   atomic.Pointer[ssUserSnapshot]
+	reordering atomic.Bool
+	hints      ssSourceHints
+	traffic    map[int64]core.UserTraffic
+	online     map[int64]map[string]struct{}
+	plane      DataPlane
+	connErr    connErrorReporter
+	limiters   core.SpeedLimiters
+	listener   net.Listener
+	packet     net.PacketConn
+	ctx        context.Context
+	cancel     context.CancelFunc
+	closed     bool
+	active     map[net.Conn]struct{}
 	// salts 是 TCP 请求 salt 的防重放表（认证通过才记），见 replayFilter。
 	salts *replayFilter
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
@@ -96,7 +107,7 @@ func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 	}
 	return &shadowsocksAdapter{
 		protocol: strings.ToLower(strings.TrimSpace(spec.Config.Protocol)), spec: spec, method: methodSpec,
-		users: make(map[string]ssUser), traffic: make(map[int64]core.UserTraffic),
+		users: make(map[string]*ssUser), traffic: make(map[int64]core.UserTraffic),
 		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
 		salts: newReplayFilter(ssSaltReplayPeriod, ssSaltReplayKeep, replayFilterMaxPerGen),
 	}, nil
@@ -257,42 +268,24 @@ func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error
 
 func (a *shadowsocksAdapter) readRequest(conn net.Conn) (core.User, *ssStream, vlessDestination, error) {
 	var destination vlessDestination
-	salt := make([]byte, a.method.SaltLen)
-	if _, err := io.ReadFull(conn, salt); err != nil {
+	sc := getSSScratch()
+	defer putSSScratch(sc)
+	// salt 与加密长度块读进同一块缓冲：salt 要留给防重放表，长度块只在本函数内用。
+	header := make([]byte, a.method.SaltLen+2+16)
+	if _, err := io.ReadFull(conn, header); err != nil {
 		return core.User{}, nil, destination, err
 	}
-	var encryptedLength [2 + 16]byte
-	if _, err := io.ReadFull(conn, encryptedLength[:]); err != nil {
-		return core.User{}, nil, destination, err
-	}
-	a.mu.RLock()
-	users := make([]ssUser, 0, len(a.users))
-	for _, user := range a.users {
-		users = append(users, user)
-	}
-	a.mu.RUnlock()
-	var selected ssUser
-	var selectedAEAD cipher.AEAD
-	var plainLength [2]byte
-	for _, candidate := range users {
-		subkey, err := deriveSSSubkey(candidate.MasterKey, salt, a.method.KeyLen)
-		if err != nil {
-			continue
+	salt, encryptedLength := header[:a.method.SaltLen], header[a.method.SaltLen:]
+	var length int
+	// 每个候选用户都要过完整的 AEAD 校验；来源 IP 提示只决定先试谁。
+	selected, selectedAEAD := a.findSSUser(sc, salt, ssSourceKey(conn.RemoteAddr()), func(aead cipher.AEAD) bool {
+		plain, err := aead.Open(sc.plain[:0], sc.zeroNonce(), encryptedLength, nil)
+		if err != nil || len(plain) != 2 {
+			return false
 		}
-		aead, err := a.method.NewAEAD(subkey)
-		if err != nil {
-			continue
-		}
-		plain, err := aead.Open(nil, makeSSNonce(0), encryptedLength[:], nil)
-		if err == nil && len(plain) == 2 {
-			copy(plainLength[:], plain)
-			length := int(binary.BigEndian.Uint16(plain))
-			if length > 0 && length <= ssChunkLimit {
-				selected, selectedAEAD = candidate, aead
-				break
-			}
-		}
-	}
+		length = int(binary.BigEndian.Uint16(plain))
+		return length > 0 && length <= ssChunkLimit
+	})
 	if selectedAEAD == nil {
 		return core.User{}, nil, destination, markConnError(connErrAuth, fmt.Errorf("shadowsocks user authentication failed"))
 	}
@@ -301,12 +294,12 @@ func (a *shadowsocksAdapter) readRequest(conn net.Conn) (core.User, *ssStream, v
 	if a.salts != nil && !a.salts.check(salt, time.Now()) {
 		return core.User{}, nil, destination, markConnError(connErrAuth, fmt.Errorf("shadowsocks salt replayed"))
 	}
-	length := int(binary.BigEndian.Uint16(plainLength[:]))
 	first := make([]byte, length+selectedAEAD.Overhead())
 	if _, err := io.ReadFull(conn, first); err != nil {
 		return core.User{}, nil, destination, err
 	}
-	firstPlain, err := selectedAEAD.Open(nil, makeSSNonce(1), first, nil)
+	// 原地解密：first 归本连接所有，余下明文直接当 pending，不再复制。
+	firstPlain, err := selectedAEAD.Open(first[:0], makeSSNonce(1), first, nil)
 	if err != nil {
 		return core.User{}, nil, destination, err
 	}
@@ -318,18 +311,15 @@ func (a *shadowsocksAdapter) readRequest(conn net.Conn) (core.User, *ssStream, v
 	if _, err := rand.Read(responseSalt); err != nil {
 		return core.User{}, nil, destination, err
 	}
-	responseSubkey, err := deriveSSSubkey(selected.MasterKey, responseSalt, a.method.KeyLen)
-	if err != nil {
-		return core.User{}, nil, destination, err
-	}
-	responseAEAD, err := a.method.NewAEAD(responseSubkey)
+	sc.setSalt(responseSalt)
+	responseAEAD, err := a.method.NewAEAD(sc.subkey(selected.MasterKey, a.method.KeyLen))
 	if err != nil {
 		return core.User{}, nil, destination, err
 	}
 	if _, err := conn.Write(responseSalt); err != nil {
 		return core.User{}, nil, destination, err
 	}
-	stream := &ssStream{conn: conn, aead: selectedAEAD, writeAEAD: responseAEAD, readNonce: 2, writeNonce: 0, pending: append([]byte(nil), firstPlain[consumed:]...)}
+	stream := &ssStream{conn: conn, aead: selectedAEAD, writeAEAD: responseAEAD, readNonce: 2, writeNonce: 0, pending: firstPlain[consumed:]}
 	return core.User{ID: selected.ID, DeviceLimit: selected.DeviceLimit, SpeedLimit: selected.SpeedLimit}, stream, destination, nil
 }
 
@@ -526,9 +516,10 @@ func (a *shadowsocksAdapter) AddUsers(users []core.User) error {
 	}
 	for _, entry := range validated {
 		if _, exists := a.users[entry.key]; !exists {
-			a.users[entry.key] = ssUser{ID: entry.user.ID, DeviceLimit: entry.user.DeviceLimit, SpeedLimit: entry.user.SpeedLimit, MasterKey: entry.master}
+			a.users[entry.key] = &ssUser{ID: entry.user.ID, DeviceLimit: entry.user.DeviceLimit, SpeedLimit: entry.user.SpeedLimit, MasterKey: entry.master}
 		}
 	}
+	a.publishUsersLocked()
 	return nil
 }
 
@@ -555,9 +546,11 @@ func (a *shadowsocksAdapter) UpsertUsers(users []core.User) error {
 	for _, entry := range validated {
 		if previous, exists := a.users[entry.key]; exists {
 			a.limiters.Remove(previous.ID)
+			previous.retired.Store(true)
 		}
-		a.users[entry.key] = ssUser{ID: entry.user.ID, DeviceLimit: entry.user.DeviceLimit, SpeedLimit: entry.user.SpeedLimit, MasterKey: entry.master}
+		a.users[entry.key] = &ssUser{ID: entry.user.ID, DeviceLimit: entry.user.DeviceLimit, SpeedLimit: entry.user.SpeedLimit, MasterKey: entry.master}
 	}
+	a.publishUsersLocked()
 	return nil
 }
 
@@ -569,9 +562,11 @@ func (a *shadowsocksAdapter) DelUsers(ids []string) error {
 		// 顺手丢掉这个用户的令牌桶，否则用户删了桶还留着，map 只增不减。
 		if entry, ok := a.users[key]; ok {
 			a.limiters.Remove(entry.ID)
+			entry.retired.Store(true)
 		}
 		delete(a.users, key)
 	}
+	a.publishUsersLocked()
 	return nil
 }
 

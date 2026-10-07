@@ -88,7 +88,7 @@ func TestNativeProtocolUserBatchesAreAtomic(t *testing.T) {
 		t.Fatalf("trojan partially published invalid batch: err=%v users=%v", err, trojan.users)
 	}
 
-	ss := &shadowsocksAdapter{method: ssMethodSpec{KeyLen: 16}, users: make(map[string]ssUser)}
+	ss := &shadowsocksAdapter{method: ssMethodSpec{KeyLen: 16}, users: make(map[string]*ssUser)}
 	if err := ss.AddUsers([]core.User{{ID: 1, UUID: "password"}, {ID: 2}}); err == nil || len(ss.users) != 0 {
 		t.Fatalf("shadowsocks partially published invalid batch: err=%v users=%v", err, ss.users)
 	}
