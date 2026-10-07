@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 	"github.com/aegispanel/aegis/internal/platform/token"
@@ -62,7 +61,14 @@ func (s *Service) Reauth(ctx context.Context, tenantID string, in ReauthInput) (
 	apiDomain := in.APIDomain
 	var resultErr error
 
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID},
+	// 名额在开事务之前拿：不拿着连接排队等哈希
+	slot, err := acquirePasswordSlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer slot.Release()
+
+	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID},
 		func(tx pgx.Tx) error {
 			writeAudit := func(outcome, errorCode string) error {
 				return audit.Write(ctx, tx, tenantID, audit.Entry{
@@ -95,7 +101,7 @@ func (s *Service) Reauth(ctx context.Context, tenantID string, in ReauthInput) (
 				return err
 			}
 
-			ok, _, err := crypto.VerifyPassword(in.Password, phc)
+			ok, _, err := slot.Verify(in.Password, phc)
 			if err != nil {
 				return err
 			}
