@@ -3,6 +3,8 @@ package adminops
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -228,6 +230,21 @@ func TestActivityDailyRollupPG18(t *testing.T) {
 		t.Fatalf("app.activity_daily_compute was not inlined:\n%s", plan.String())
 	}
 	t.Log("marker=activity_daily_rollup_pg18_matches_legacy_ok")
+}
+
+// migrationSection 截取迁移原文里两行标记之间的一段（回填段），PG18 测试在回滚或一次性库里重跑它。
+func migrationSection(t *testing.T, file, marker string) string {
+	t.Helper()
+	migration, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(migration)
+	begin, end := strings.Index(text, "-- "+marker+":begin"), strings.Index(text, "-- "+marker+":end")
+	if begin < 0 || end <= begin {
+		t.Fatalf("%s lost its %s markers", file, marker)
+	}
+	return text[begin:end]
 }
 
 func legacyActivityTimeseries(ctx context.Context, tx pgx.Tx, tenant string, days int) ([]TimeseriesPoint, error) {

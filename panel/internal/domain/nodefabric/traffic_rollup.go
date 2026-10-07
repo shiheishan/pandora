@@ -8,9 +8,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/db"
 )
 
-// trafficRollupSQL 把刚写入的一行上报累加进三张小时汇总表：节点级与节点×uid（迁移 00099），
-// 以及去掉节点维度的 uid 级（迁移 00106，看板用户排行读它）。后两张由同一份 per_uid 累加，
-// 恒有 uid 级 = 节点×uid 按 (租户, 小时, uid) 求和。
+// trafficRollupSQL 把刚写入的一行上报累加进两张小时汇总表（迁移 00099）。
 //
 // 口径只有一个出处：上报按 app.node_traffic_payload_entries 分类，那是原看板
 // strict_entries CTE 的原文，迁移里的回填也只经它。这里读的是刚写进
@@ -24,11 +22,6 @@ import (
 //
 // 节点×小时这一行同一节点的并发上报会在这里排队（各节点互不相干）；它在扣量之前写，
 // 不延长配额行锁的持有时间。
-//
-// uid 级的行跨节点共享：同一小时里两个节点同时报同一个 uid，会在这一行上排队。行按 uid 升序
-// 加锁（ORDER BY），两份上报的加锁顺序一致，不会交叉死锁；这一步在扣量之前、且一份上报只在这里
-// 锁 uid 行，扣量阶段再按配额行 id 排序加锁，两个阶段的锁不会成环。同一 uid 的两份上报本来就要在
-// 该订阅的配额行上排队，这里不增加新的串行。
 const trafficRollupSQL = `
 WITH r AS MATERIALIZED (
   SELECT tenant_id, node_id, received_at,
@@ -81,18 +74,6 @@ WITH r AS MATERIALIZED (
     positive_entry_count    = h.positive_entry_count + EXCLUDED.positive_entry_count,
     positive_report_count   = h.positive_report_count + EXCLUDED.positive_report_count,
     last_positive_report_at = greatest(h.last_positive_report_at, EXCLUDED.last_positive_report_at)
-), uid_rows AS (
-  INSERT INTO uid_traffic_hourly AS g
-    (tenant_id, hour_start, node_uid, upload_bytes, download_bytes, entry_count, last_report_at)
-  SELECT r.tenant_id, r.hour_start, p.entry_uid,
-         p.upload_bytes, p.download_bytes, p.entry_count, r.received_at
-    FROM r CROSS JOIN per_uid p
-   ORDER BY p.entry_uid
-  ON CONFLICT (tenant_id, hour_start, node_uid) DO UPDATE SET
-    upload_bytes   = g.upload_bytes + EXCLUDED.upload_bytes,
-    download_bytes = g.download_bytes + EXCLUDED.download_bytes,
-    entry_count    = g.entry_count + EXCLUDED.entry_count,
-    last_report_at = greatest(g.last_report_at, EXCLUDED.last_report_at)
 )
 INSERT INTO node_user_traffic_hourly AS u
   (tenant_id, hour_start, node_id, node_uid, upload_bytes, download_bytes, entry_count, last_report_at)
@@ -124,8 +105,8 @@ const (
 	rollupPurgeMaxBatches = 200
 )
 
-// PurgeTrafficRollups 删除超出保留期的小时汇总（先节点×uid 表，再 uid 表，最后节点表）。由
-// aegis-admin 的保留期任务定时调用，幂等；分批删，每批一个短事务。
+// PurgeTrafficRollups 删除超出保留期的小时汇总（先节点×uid 表，再节点表）。由 aegis-admin 的
+// 保留期任务定时调用，幂等；分批删，每批一个短事务。
 func (s *Service) PurgeTrafficRollups(ctx context.Context, tenantID string) (int64, error) {
 	var total int64
 	for _, sql := range []string{`
@@ -137,13 +118,6 @@ func (s *Service) PurgeTrafficRollups(ctx context.Context, tenantID string) (int
 		         LIMIT $3) d
 		 WHERE t.tenant_id = d.tenant_id AND t.hour_start = d.hour_start
 		   AND t.node_id = d.node_id AND t.node_uid = d.node_uid`, `
-		DELETE FROM uid_traffic_hourly t
-		 USING (SELECT tenant_id, hour_start, node_uid
-		          FROM uid_traffic_hourly
-		         WHERE tenant_id = $1 AND hour_start < now() - make_interval(days => $2)
-		         ORDER BY hour_start
-		         LIMIT $3) d
-		 WHERE t.tenant_id = d.tenant_id AND t.hour_start = d.hour_start AND t.node_uid = d.node_uid`, `
 		DELETE FROM node_traffic_hourly t
 		 USING (SELECT tenant_id, hour_start, node_id
 		          FROM node_traffic_hourly
