@@ -169,6 +169,7 @@ func TestTrafficChargePG18(t *testing.T) {
 	droppedIndexScenario(t, ctx, admin)
 	billedBytesScenario(t, ctx, admin, app)
 	trafficDailyScenario(t, ctx, admin, app)
+	migrationRoundTripScenario(t, ctx, admin)
 }
 
 // rolloverAndForeignUIDScenario 证明审计 N1、N2、N3：

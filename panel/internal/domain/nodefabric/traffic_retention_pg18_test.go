@@ -3,6 +3,8 @@ package nodefabric
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -388,4 +390,80 @@ func trafficDailyScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, ap
 		t.Fatalf("after purge daily=%d nodeHours=%d uidHours=%d, want 4/1/5", daily, nodeHours, uidHours)
 	}
 	t.Log("marker=retain_pg18_traffic_daily_ok")
+}
+
+// migrationRoundTripScenario 证明 00131–00133 的 Down 可执行、Down 之后能再 Up（总协调要求）：在一个回滚的
+// 事务里按 00133 → 00131 的顺序跑 Down，核对还原（自引用外键以 NOT VALID 加回、四条索引重建、旧的
+// (interval) 清理函数回来、billed_bytes 列与按天表消失），再按 00131 → 00133 跑 Up，核对回到迁移后的形状。
+func migrationRoundTripScenario(t *testing.T, ctx context.Context, admin *pgx.Conn) {
+	t.Helper()
+	section := func(file, which string) string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		up, down := strings.Index(text, "-- +goose Up"), strings.Index(text, "-- +goose Down")
+		if up < 0 || down < up {
+			t.Fatalf("%s: goose markers missing", file)
+		}
+		body := text[down:]
+		if which == "up" {
+			body = text[up:down]
+		}
+		return strings.NewReplacer("-- +goose StatementBegin", "", "-- +goose StatementEnd", "").Replace(body)
+	}
+	files := []string{"00131_append_only_retention.sql", "00132_drop_unused_indexes.sql", "00133_traffic_daily_rollup.sql"}
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	type shape struct {
+		selfFK, oldPurge, newReportPurge, newFetchPurge, dailyTable bool
+		indexes, billedCols                                         int
+	}
+	read := func() (s shape) {
+		t.Helper()
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE contype = 'f'
+			                 AND conrelid = 'public.node_traffic_reports'::regclass
+			                 AND confrelid = 'public.node_traffic_reports'::regclass),
+			       to_regprocedure('app.purge_subscription_fetch_log(interval)') IS NOT NULL,
+			       to_regprocedure('app.purge_node_traffic_reports(int, int)') IS NOT NULL,
+			       to_regprocedure('app.purge_subscription_fetch_log(int, int)') IS NOT NULL,
+			       to_regclass('public.node_user_traffic_daily') IS NOT NULL,
+			       (SELECT count(*) FROM pg_class WHERE relkind = 'i' AND relname IN (
+			          'idx_node_traffic_reports_dashboard_window', 'idx_node_traffic_reports_dashboard_duplicate_window',
+			          'idx_node_traffic_reports_dedup', 'idx_audit_events_actor')),
+			       (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public'
+			          AND table_name IN ('node_traffic_hourly', 'node_user_traffic_hourly') AND column_name = 'billed_bytes')`).
+			Scan(&s.selfFK, &s.oldPurge, &s.newReportPurge, &s.newFetchPurge, &s.dailyTable, &s.indexes, &s.billedCols); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	migrated := shape{newReportPurge: true, newFetchPurge: true, dailyTable: true, billedCols: 2}
+	if got := read(); got != migrated {
+		t.Fatalf("before round trip: %+v, want %+v", got, migrated)
+	}
+	for i := len(files) - 1; i >= 0; i-- {
+		if _, err := tx.Exec(ctx, section(files[i], "down")); err != nil {
+			t.Fatalf("%s Down: %v", files[i], err)
+		}
+	}
+	if got, want := read(), (shape{selfFK: true, oldPurge: true, indexes: 4}); got != want {
+		t.Fatalf("after Down: %+v, want %+v", got, want)
+	}
+	for _, f := range files {
+		if _, err := tx.Exec(ctx, section(f, "up")); err != nil {
+			t.Fatalf("%s Up again: %v", f, err)
+		}
+	}
+	if got := read(); got != migrated {
+		t.Fatalf("after Down then Up: %+v, want %+v", got, migrated)
+	}
+	t.Log("marker=retain_pg18_migrations_down_up_ok")
 }
