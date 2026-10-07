@@ -46,6 +46,8 @@ type Service struct {
 	release *ReleaseBinding
 	// caches 是节点链路的进程内缓存，只在 aegis-node 里开（见 nodecache.go）。
 	caches *nodeCaches
+	// releaseMemo 记着已校验过的不可变发布物的规范字节（见 effective_release_fast.go）。
+	releaseMemo releaseMemo
 }
 
 func NewService(pool *db.Pool, signer *crypto.Signer) *Service {

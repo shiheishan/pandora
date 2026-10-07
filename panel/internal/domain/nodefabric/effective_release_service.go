@@ -34,9 +34,43 @@ type effectiveLayerManifest struct {
 // FetchEffectiveConfig materializes one immutable, node-specific runtime
 // release. Re-fetching an unchanged generation returns the same release ID;
 // producing different bytes for an existing generation fails closed.
+//
+// 先无锁读（effective_release_fast.go）：当前代际已有用当前密钥签的发布物，它就是
+// 不可变的现成结果，不锁节点行，desired_* 已指向它就不写。只有要物化新代际、或
+// 换了签名密钥要推代际时，才走下面原来那条持节点行锁的路径。
 func (s *Service) FetchEffectiveConfig(ctx context.Context, tenantID, nodeID string) (*SignedConfig, error) {
 	var out SignedConfig
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		reuse, found, err := readReusableEffectiveReleaseTx(ctx, tx, tenantID, nodeID)
+		if err != nil {
+			return err
+		}
+		if found && reuse.hasRelease && reuse.keyID == s.signer.KeyID() {
+			payload, ok, err := s.releaseMemo.canonicalVerified(reuse.id+"\x00payload", reuse.payload, reuse.content)
+			if err != nil || !ok {
+				return httpx.New(httpx.CodeConflict, "stored effective configuration is invalid").WithInternal(err)
+			}
+			manifest, ok, err := s.releaseMemo.canonicalVerified(reuse.id+"\x00manifest", reuse.manifest, reuse.mhash)
+			if err != nil || !ok {
+				return httpx.New(httpx.CodeConflict, "stored effective manifest is invalid").WithInternal(err)
+			}
+			if !reuse.desiredUpToDate() {
+				// 没持锁，所以只许往前写：并发的另一次拉取若已物化出更新的代际并
+				// 写了 desired_*，这里不能把它改回旧版。
+				if _, err := tx.Exec(ctx, `UPDATE nodes SET desired_effective_release_id=$3::uuid,
+					desired_effective_generation=$4 WHERE tenant_id=$1 AND id=$2::uuid
+					AND (desired_effective_release_id IS DISTINCT FROM $3::uuid
+					     OR desired_effective_generation IS DISTINCT FROM $4)
+					AND (desired_effective_generation IS NULL OR desired_effective_generation <= $4)`,
+					tenantID, nodeID, reuse.id, reuse.generation); err != nil {
+					return err
+				}
+			}
+			out, err = s.signEffectiveRelease(tenantID, nodeID, reuse.id, reuse.generation, reuse.keyID,
+				payload, reuse.content, manifest, reuse.mhash)
+			return err
+		}
+
 		var n ServingNode
 		var protocol []byte
 		var generation int64
@@ -89,16 +123,18 @@ func (s *Service) FetchEffectiveConfig(ctx context.Context, tenantID, nodeID str
 			tenantID, nodeID, generation).Scan(&existingID, &existingKeyID, &existingPayload,
 			&existingContent, &existingManifest, &existingManifestHash)
 		if existingErr == nil && existingKeyID == s.signer.KeyID() {
-			payload, err := canonicalJSON(existingPayload)
-			if err != nil || !hashMatches(payload, existingContent) {
+			payload, ok, err := s.releaseMemo.canonicalVerified(existingID+"\x00payload", existingPayload, existingContent)
+			if err != nil || !ok {
 				return httpx.New(httpx.CodeConflict, "stored effective configuration is invalid").WithInternal(err)
 			}
-			manifest, err := canonicalJSON(existingManifest)
-			if err != nil || !hashMatches(manifest, existingManifestHash) {
+			manifest, ok, err := s.releaseMemo.canonicalVerified(existingID+"\x00manifest", existingManifest, existingManifestHash)
+			if err != nil || !ok {
 				return httpx.New(httpx.CodeConflict, "stored effective manifest is invalid").WithInternal(err)
 			}
 			if _, err := tx.Exec(ctx, `UPDATE nodes SET desired_effective_release_id=$3::uuid,
-				desired_effective_generation=$4 WHERE tenant_id=$1 AND id=$2::uuid`,
+				desired_effective_generation=$4 WHERE tenant_id=$1 AND id=$2::uuid
+				AND (desired_effective_release_id IS DISTINCT FROM $3::uuid
+				     OR desired_effective_generation IS DISTINCT FROM $4)`,
 				tenantID, nodeID, existingID, generation); err != nil {
 				return err
 			}
@@ -199,8 +235,13 @@ func (s *Service) FetchEffectiveConfig(ctx context.Context, tenantID, nodeID str
 			storedKeyID != s.signer.KeyID() {
 			return httpx.New(httpx.CodeConflict, "effective configuration changed without a generation bump")
 		}
+		// 刚核对过的规范字节记下来：之后同一代际的每次拉取都直接用，不再规范化。
+		s.releaseMemo.remember(storedID+"\x00payload", storedPayload, storedContent, storedPayloadCanonical)
+		s.releaseMemo.remember(storedID+"\x00manifest", storedManifest, storedManifestHash, storedManifestCanonical)
 		if _, err := tx.Exec(ctx, `UPDATE nodes SET desired_effective_release_id=$3::uuid,
-			desired_effective_generation=$4 WHERE tenant_id=$1 AND id=$2::uuid`,
+			desired_effective_generation=$4 WHERE tenant_id=$1 AND id=$2::uuid
+			AND (desired_effective_release_id IS DISTINCT FROM $3::uuid
+			     OR desired_effective_generation IS DISTINCT FROM $4)`,
 			tenantID, nodeID, storedID, generation); err != nil {
 			return err
 		}

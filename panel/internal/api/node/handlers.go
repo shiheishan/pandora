@@ -205,9 +205,27 @@ func (h *handlers) fetchConfig(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, cfg)
 }
 
+// fetchEffectiveConfig 下发节点的生效发布。
+//
+// 节点带上已应用的版本（nodefabric.AppliedEffectiveReleaseHeader）且它仍是当前版时
+// 回 204：没有新东西要验、要装，面板也不必锁行、签名、传 payload。头缺失或写法
+// 不规范就照旧走全量路径——老节点不受影响。
 func (h *handlers) fetchEffectiveConfig(w http.ResponseWriter, r *http.Request) {
-	cfg, err := h.d.Node.FetchEffectiveConfig(r.Context(),
-		httpx.TenantIDFrom(r.Context()), nodeIDFrom(r.Context()))
+	tenantID, nodeID := httpx.TenantIDFrom(r.Context()), nodeIDFrom(r.Context())
+	if releaseID, generation, ok := nodefabric.ParseAppliedEffectiveRelease(
+		r.Header.Get(nodefabric.AppliedEffectiveReleaseHeader)); ok {
+		unchanged, err := h.d.Node.EffectiveConfigUnchanged(r.Context(), tenantID, nodeID, releaseID, generation)
+		if err != nil {
+			httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
+			return
+		}
+		if unchanged {
+			w.Header().Set("Cache-Control", "no-store")
+			httpx.NoContent(w)
+			return
+		}
+	}
+	cfg, err := h.d.Node.FetchEffectiveConfig(r.Context(), tenantID, nodeID)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
