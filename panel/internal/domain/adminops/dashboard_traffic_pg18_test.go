@@ -254,10 +254,53 @@ func backfillMatchesLegacy(t *testing.T, ctx context.Context, admin *pgxpool.Poo
 			t.Fatalf("plant historic report %s: %v", h.payload, err)
 		}
 	}
+	// 两档窗口：5 天前的上报只进原始合计（节点列表），不解析；40 天前的什么都不进
+	for _, old := range []struct {
+		age     string
+		payload string
+		dup     bool
+	}{
+		{age: "5 days", payload: `{` + u(5) + `:[5,5]}`},
+		{age: "5 days", payload: `{` + u(5) + `:[7,7]}`, dup: true},
+		{age: "40 days", payload: `{` + u(5) + `:[9,9]}`},
+	} {
+		hash := sha256.Sum256([]byte(old.payload + old.age))
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO node_traffic_reports (tenant_id, node_id, raw_payload, content_hash, duplicate_of,
+			                                  total_upload, total_download, received_at)
+			VALUES ($1, $2, $3::jsonb, $4, CASE WHEN $5 THEN $6::uuid END, 1000, 24,
+			        date_trunc('hour', now() - $7::interval, 'UTC') + interval '10 minutes')`,
+			tenant, node, old.payload, hash[:], old.dup, prevID, old.age); err != nil {
+			t.Fatalf("plant %s old report: %v", old.age, err)
+		}
+	}
 	for _, sql := range []string{`DELETE FROM node_user_traffic_hourly`, `DELETE FROM node_traffic_hourly`, backfill} {
 		if _, err := tx.Exec(ctx, sql); err != nil {
 			t.Fatalf("rerun backfill: %v\nSQL: %s", err, sql)
 		}
+	}
+	var reports, dups, invalid int64
+	var raw, upload string
+	var positive int64
+	if err := tx.QueryRow(ctx, `
+		SELECT report_count, duplicate_report_count, invalid_report_count, raw_bytes::text,
+		       upload_bytes::text, positive_entry_count
+		  FROM node_traffic_hourly
+		 WHERE tenant_id = $1 AND node_id = $2
+		   AND hour_start = date_trunc('hour', now() - interval '5 days', 'UTC')`, tenant, node).Scan(
+		&reports, &dups, &invalid, &raw, &upload, &positive); err != nil {
+		t.Fatalf("5-day-old bucket: %v", err)
+	}
+	if reports != 1 || dups != 0 || invalid != 0 || raw != "1024" || upload != "0" || positive != 0 {
+		t.Fatalf("5-day-old bucket = reports %d dups %d invalid %d raw %s upload %s positive %d, want raw totals only",
+			reports, dups, invalid, raw, upload, positive)
+	}
+	var oldRows int
+	if err := tx.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM node_user_traffic_hourly WHERE tenant_id = $1 AND hour_start < now() - interval '3 days')
+		     + (SELECT count(*) FROM node_traffic_hourly WHERE tenant_id = $1 AND hour_start < now() - interval '35 days')`,
+		tenant).Scan(&oldRows); err != nil || oldRows != 0 {
+		t.Fatalf("rows outside the backfill windows = %d err=%v", oldRows, err)
 	}
 	window, err := resolveDashboardWindow(ctx, tx, DashboardTrafficQuery{Range: "24h"}, nil)
 	if err != nil {

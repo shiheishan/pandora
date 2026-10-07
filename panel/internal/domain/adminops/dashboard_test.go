@@ -82,12 +82,13 @@ func TestDashboardTrafficQueriesReadHourlyRollups(t *testing.T) {
 		"CREATE FUNCTION app.node_traffic_payload_entries(p_payload jsonb)",
 		"LANGUAGE sql IMMUTABLE PARALLEL SAFE",
 		"entry.key_text ~ '^[+-]?[0-9]+$'",
-		"length(ltrim(key_lex.normalized_key_text,'-')) <= 19",
+		"length(ltrim(k.normalized_key_text,'-')) <= 19",
+		"coalesce(nullif(regexp_replace(ltrim(s.key_text,'+-'), '^0+', ''), ''), '0')",
 		"-9223372036854775808::numeric AND 9223372036854775807::numeric",
-		"value_shape.array_len=2 AS shape_ok",
-		"jsonb_typeof(components.upload_json)='number'",
-		"numbers.upload_numeric=trunc(numbers.upload_numeric)",
-		"numbers.upload_numeric BETWEEN 0 AND 9223372036854775807::numeric",
+		"k.array_len=2 AS shape_ok",
+		"jsonb_typeof(b.upload_json)='number'",
+		"p.upload_numeric=trunc(p.upload_numeric)",
+		"p.upload_numeric BETWEEN 0 AND 9223372036854775807::numeric",
 		"CASE WHEN jsonb_typeof(p_payload)='object' THEN p_payload ELSE '{}'::jsonb END",
 		"r.duplicate_of IS NULL",
 		"-- rollup-backfill:begin",
@@ -97,12 +98,22 @@ func TestDashboardTrafficQueriesReadHourlyRollups(t *testing.T) {
 			t.Fatalf("00099 classifier/backfill missing %q", guard)
 		}
 	}
-	header := up[strings.Index(up, "CREATE FUNCTION app.node_traffic_payload_entries"):]
-	header = header[:strings.Index(header, "AS $$")]
+	fn := up[strings.Index(up, "CREATE FUNCTION app.node_traffic_payload_entries"):]
+	header := fn[:strings.Index(fn, "AS $$")]
 	for _, banned := range []string{"STRICT", "SECURITY DEFINER", "VOLATILE", "SET "} {
 		if strings.Contains(header, banned) {
 			t.Fatalf("classifier must stay inlinable, header has %q", banned)
 		}
+	}
+	// 一步一层、OFFSET 0：拉平之后每引用一次上一步的列就把整棵表达式（含正则）再算一遍，
+	// 5k 库回填因此要 83s + 109s。正则与归一各只能出现一次。
+	body := fn[strings.Index(fn, "AS $$"):]
+	body = body[:strings.Index(body[len("AS $$"):], "$$")+len("AS $$")]
+	if got := strings.Count(body, "OFFSET 0)"); got != 5 {
+		t.Fatalf("classifier has %d OFFSET 0 fences, want one per step (5)", got)
+	}
+	if strings.Count(body, "~ '^[+-]?[0-9]+$'") != 1 || strings.Count(body, "regexp_replace(") != 1 {
+		t.Fatal("classifier must evaluate the key regex and its normalization exactly once per entry")
 	}
 }
 

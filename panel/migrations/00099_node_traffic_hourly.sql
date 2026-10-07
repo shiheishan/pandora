@@ -30,10 +30,17 @@
 --   - 汇总与上报行在同一个事务里写：事务回滚两边都不留，提交两边都在；没有别的路径
 --     会再把同一行上报加一次，节点重放同一报文得到的是一条新的上报行（10 秒内则是重复）。
 --
--- 回填只覆盖近 62 天：读路径最远读到 now - 61 天（看板 snapshot_at 不早于 31 天前、
--- 区间最长 30 天；节点列表 30 天），迁移之后的上报全部由入库路径汇总，更早的留档
--- 不会再被任何读路径读到。发布是停写窗口（install.sh 先停三个网关再跑迁移），
--- 回填与入库不会交错。
+-- 回填分两档，迁移之后的上报全部由入库路径汇总：
+--   - 节点列表要的原始合计（report_count、raw_bytes，取上报行上的 total_* 列，不解析报文）
+--     回填近 31 天（按整点对齐）：节点列表读近 30 天。
+--   - 看板要的严格口径（解析报文：重复 / 非法计数、有效上下行、正流量项与节点×uid 表）
+--     只回填近 48 小时（按整点对齐）：看板界面固定读近 24 小时（整点对齐后至多 25 个桶），
+--     留一倍余量。解析是回填里唯一贵的部分（生产 200 节点每分钟一报约 28.8 万份 / 天，
+--     按 62 天全量解析在 2 核机器上是小时级），停写窗口里不值得为界面不读的数据付这个代价。
+--     代价写明：API 允许的 7d / 30d 区间（界面不发）在上线后的头 7 / 30 天里，上线 48 小时
+--     以前的那部分不计；过了这段时间就完全由入库路径覆盖。
+-- 发布是停写窗口（install.sh 先停三个网关再跑迁移），回填与入库不会交错。
+-- 外键在回填之后再加：逐行的外键触发器在批量写入时比回填本身还贵，ADD CONSTRAINT 一次校验。
 --
 -- 两张表是派生读数，不是证据：证据仍是 node_traffic_reports，汇总丢了可以从它重算。
 -- 保留 70 天（nodefabric.TrafficRollupRetentionDays，比读路径最远的 61 天多留余量），
@@ -49,60 +56,70 @@ SET LOCAL lock_timeout = '5s';
 -- 不是 STRICT、不带 SET、IMMUTABLE 的单条 SELECT：规划器会把它内联进调用方的查询。
 -- 输出：entry_valid 为真时 entry_uid / entry_upload / entry_download 有值（上下行已 trunc），
 -- 否则三者为 NULL。根不是对象时没有任何项（调用方另按 jsonb_typeof 判非法上报）。
+--
+-- 表达式与原 strict_entries 逐条相同，只是每一步单独一层子查询并加 OFFSET 0：不加的话
+-- 规划器会把各层拉平，每引用一次上一步的列就把它的整棵表达式（含正则）抄一遍，
+-- 一项要算上百次正则（5k 库回填 1.9 万份上报要 83s + 109s）；分层后每项每步只算一次
+-- （同样的数据量级比旧看板的解析还快）。改这里时保持「一步一层、OFFSET 0」。
 CREATE FUNCTION app.node_traffic_payload_entries(p_payload jsonb)
 RETURNS TABLE (entry_uid bigint, entry_upload numeric, entry_download numeric, entry_valid boolean)
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-SELECT CASE WHEN c.is_valid THEN c.parsed_uid_numeric::bigint END,
-       CASE WHEN c.is_valid THEN trunc(c.upload_numeric) END,
-       CASE WHEN c.is_valid THEN trunc(c.download_numeric) END,
-       c.is_valid
+SELECT CASE WHEN v.is_valid THEN v.parsed_uid_numeric::bigint END,
+       CASE WHEN v.is_valid THEN trunc(v.upload_numeric) END,
+       CASE WHEN v.is_valid THEN trunc(v.download_numeric) END,
+       v.is_valid
   FROM (
-    SELECT parsed.parsed_uid_numeric, numbers.upload_numeric, numbers.download_numeric,
+    -- 判定（numbers 之后的 is_valid）
+    SELECT p.parsed_uid_numeric, p.upload_numeric, p.download_numeric,
            coalesce(
-             parsed.parsed_uid_numeric IS NOT NULL AND components.shape_ok IS TRUE
-             AND numbers.upload_numeric=trunc(numbers.upload_numeric)
-             AND numbers.download_numeric=trunc(numbers.download_numeric)
-             AND numbers.upload_numeric BETWEEN 0 AND 9223372036854775807::numeric
-             AND numbers.download_numeric BETWEEN 0 AND 9223372036854775807::numeric,
+             p.parsed_uid_numeric IS NOT NULL AND p.shape_ok IS TRUE
+             AND p.upload_numeric=trunc(p.upload_numeric)
+             AND p.download_numeric=trunc(p.download_numeric)
+             AND p.upload_numeric BETWEEN 0 AND 9223372036854775807::numeric
+             AND p.download_numeric BETWEEN 0 AND 9223372036854775807::numeric,
              false
            ) AS is_valid
-      FROM jsonb_each(
-             CASE WHEN jsonb_typeof(p_payload)='object' THEN p_payload ELSE '{}'::jsonb END
-           ) entry(key_text,value_json)
-      CROSS JOIN LATERAL (
-        SELECT entry.key_text ~ '^[+-]?[0-9]+$' AS key_syntax_ok,
-               CASE WHEN entry.key_text ~ '^[+-]?[0-9]+$' THEN
-                 CASE WHEN left(entry.key_text,1)='-' THEN '-' ELSE '' END ||
-                 coalesce(nullif(regexp_replace(ltrim(entry.key_text,'+-'), '^0+', ''), ''), '0')
-               END AS normalized_key_text
-      ) key_lex
-      CROSS JOIN LATERAL (
-        SELECT CASE WHEN key_lex.key_syntax_ok IS TRUE
-                         AND length(ltrim(key_lex.normalized_key_text,'-')) <= 19
-                    THEN key_lex.normalized_key_text END AS bounded_key_text
-      ) key_bound
-      CROSS JOIN LATERAL (
-        SELECT CASE WHEN key_bound.bounded_key_text IS NOT NULL
-                         AND key_bound.bounded_key_text::numeric BETWEEN
+      FROM (
+        -- parsed 与 numbers
+        SELECT CASE WHEN b.bounded_key_text IS NOT NULL
+                         AND b.bounded_key_text::numeric BETWEEN
                              -9223372036854775808::numeric AND 9223372036854775807::numeric
-                    THEN key_bound.bounded_key_text::numeric END AS parsed_uid_numeric
-      ) parsed
-      CROSS JOIN LATERAL (
-        SELECT CASE WHEN jsonb_typeof(entry.value_json)='array'
-                    THEN jsonb_array_length(entry.value_json) END AS array_len
-      ) value_shape
-      CROSS JOIN LATERAL (
-        SELECT value_shape.array_len=2 AS shape_ok,
-               CASE WHEN value_shape.array_len=2 THEN entry.value_json->0 END AS upload_json,
-               CASE WHEN value_shape.array_len=2 THEN entry.value_json->1 END AS download_json
-      ) components
-      CROSS JOIN LATERAL (
-        SELECT CASE WHEN jsonb_typeof(components.upload_json)='number'
-                    THEN (components.upload_json #>> '{}')::numeric END AS upload_numeric,
-               CASE WHEN jsonb_typeof(components.download_json)='number'
-                    THEN (components.download_json #>> '{}')::numeric END AS download_numeric
-      ) numbers
-  ) c
+                    THEN b.bounded_key_text::numeric END AS parsed_uid_numeric,
+               b.shape_ok,
+               CASE WHEN jsonb_typeof(b.upload_json)='number'
+                    THEN (b.upload_json #>> '{}')::numeric END AS upload_numeric,
+               CASE WHEN jsonb_typeof(b.download_json)='number'
+                    THEN (b.download_json #>> '{}')::numeric END AS download_numeric
+          FROM (
+            -- key_bound 与 components
+            SELECT CASE WHEN k.key_syntax_ok IS TRUE
+                             AND length(ltrim(k.normalized_key_text,'-')) <= 19
+                        THEN k.normalized_key_text END AS bounded_key_text,
+                   k.array_len=2 AS shape_ok,
+                   CASE WHEN k.array_len=2 THEN k.value_json->0 END AS upload_json,
+                   CASE WHEN k.array_len=2 THEN k.value_json->1 END AS download_json
+              FROM (
+                -- key_lex 的归一（只在语法通过时做）
+                SELECT s.key_syntax_ok,
+                       CASE WHEN s.key_syntax_ok THEN
+                         CASE WHEN left(s.key_text,1)='-' THEN '-' ELSE '' END ||
+                         coalesce(nullif(regexp_replace(ltrim(s.key_text,'+-'), '^0+', ''), ''), '0')
+                       END AS normalized_key_text,
+                       s.value_json, s.array_len
+                  FROM (
+                    -- key_lex 的语法与 value_shape
+                    SELECT entry.key_text, entry.value_json,
+                           entry.key_text ~ '^[+-]?[0-9]+$' AS key_syntax_ok,
+                           CASE WHEN jsonb_typeof(entry.value_json)='array'
+                                THEN jsonb_array_length(entry.value_json) END AS array_len
+                      FROM jsonb_each(
+                             CASE WHEN jsonb_typeof(p_payload)='object' THEN p_payload ELSE '{}'::jsonb END
+                           ) entry(key_text,value_json)
+                    OFFSET 0) s
+                OFFSET 0) k
+            OFFSET 0) b
+        OFFSET 0) p
+    OFFSET 0) v
 $$;
 
 COMMENT ON FUNCTION app.node_traffic_payload_entries(jsonb) IS
@@ -111,11 +128,12 @@ GRANT EXECUTE ON FUNCTION app.node_traffic_payload_entries(jsonb) TO aegis_app;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
+-- 外键（tenants / nodes，ON DELETE CASCADE）在回填之后再加，见文件末尾
 CREATE TABLE node_traffic_hourly (
-  tenant_id               uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tenant_id               uuid NOT NULL,
   hour_start              timestamptz NOT NULL
                             CHECK (extract(epoch FROM hour_start) % 3600 = 0),
-  node_id                 uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  node_id                 uuid NOT NULL,
   -- 非重复上报数；重复上报只进 duplicate_report_count
   report_count            bigint NOT NULL DEFAULT 0 CHECK (report_count >= 0),
   duplicate_report_count  bigint NOT NULL DEFAULT 0 CHECK (duplicate_report_count >= 0),
@@ -135,10 +153,10 @@ CREATE TABLE node_traffic_hourly (
 );
 
 CREATE TABLE node_user_traffic_hourly (
-  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tenant_id      uuid NOT NULL,
   hour_start     timestamptz NOT NULL
                    CHECK (extract(epoch FROM hour_start) % 3600 = 0),
-  node_id        uuid NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  node_id        uuid NOT NULL,
   -- 节点端上报的 uid（subscriptions.node_uid），读时再连订阅
   node_uid       bigint NOT NULL,
   upload_bytes   numeric NOT NULL CHECK (upload_bytes >= 0),
@@ -163,7 +181,8 @@ COMMENT ON TABLE node_user_traffic_hourly IS
   '节点流量按小时汇总（节点 × uid），只存严格口径下有流量的有效项；归属在读时按 subscriptions.node_uid 连。';
 -- +goose StatementEnd
 
--- 回填（PG18 测试按下面两行标记截取这一段，在回滚的事务里重跑，与原看板口径比对）
+-- 回填（PG18 测试按下面两行标记截取这一段，在回滚的事务里重跑，与原看板口径比对）。
+-- 两档窗口见文件头：严格口径近 48 小时、原始合计近 31 天，都按 UTC 整点对齐。
 -- rollup-backfill:begin
 -- +goose StatementBegin
 INSERT INTO node_user_traffic_hourly
@@ -172,7 +191,7 @@ SELECT r.tenant_id, date_trunc('hour', r.received_at, 'UTC'), r.node_id, e.entry
        sum(e.entry_upload), sum(e.entry_download), count(*), max(r.received_at)
   FROM node_traffic_reports r
   CROSS JOIN LATERAL app.node_traffic_payload_entries(r.raw_payload) e
- WHERE r.received_at >= now() - interval '62 days'
+ WHERE r.received_at >= date_trunc('hour', now() - interval '48 hours', 'UTC')
    AND r.duplicate_of IS NULL
    AND e.entry_valid AND e.entry_upload + e.entry_download > 0
  GROUP BY 1, 2, 3, 4;
@@ -183,8 +202,8 @@ INSERT INTO node_traffic_hourly
    positive_entry_count, positive_report_count, last_positive_report_at)
 SELECT r.tenant_id, date_trunc('hour', r.received_at, 'UTC'), r.node_id,
        count(*) FILTER (WHERE NOT r.is_dup),
-       count(*) FILTER (WHERE r.is_dup),
-       count(*) FILTER (WHERE NOT r.is_dup AND (NOT r.root_is_object OR q.invalid_entries > 0)),
+       count(*) FILTER (WHERE r.is_dup AND r.strict),
+       count(*) FILTER (WHERE r.strict AND NOT r.is_dup AND (NOT r.root_is_object OR q.invalid_entries > 0)),
        coalesce(sum(q.invalid_entries), 0),
        coalesce(sum(r.raw_bytes) FILTER (WHERE NOT r.is_dup), 0),
        coalesce(sum(q.upload_bytes), 0),
@@ -194,22 +213,38 @@ SELECT r.tenant_id, date_trunc('hour', r.received_at, 'UTC'), r.node_id,
        max(r.received_at) FILTER (WHERE q.positive_entries > 0)
   FROM (SELECT tenant_id, node_id, received_at, raw_payload,
                duplicate_of IS NOT NULL AS is_dup,
-               jsonb_typeof(raw_payload)='object' AS root_is_object,
+               received_at >= date_trunc('hour', now() - interval '48 hours', 'UTC') AS strict,
+               -- 只对严格档读报文（档外的行不解 TOAST）
+               CASE WHEN received_at >= date_trunc('hour', now() - interval '48 hours', 'UTC')
+                    THEN jsonb_typeof(raw_payload)='object' END AS root_is_object,
                total_upload::numeric + total_download::numeric AS raw_bytes
           FROM node_traffic_reports
-         WHERE received_at >= now() - interval '62 days') r
+         WHERE received_at >= date_trunc('hour', now() - interval '31 days', 'UTC')) r
   CROSS JOIN LATERAL (
-    -- 重复上报不展开：按空对象分类，所有计数为 0
+    -- 重复上报与严格档外的上报不展开：按空对象分类，各计数为 0
     SELECT count(*) FILTER (WHERE e.entry_valid IS NOT TRUE) AS invalid_entries,
            sum(e.entry_upload) FILTER (WHERE e.entry_valid) AS upload_bytes,
            sum(e.entry_download) FILTER (WHERE e.entry_valid) AS download_bytes,
            count(*) FILTER (WHERE e.entry_valid AND e.entry_upload + e.entry_download > 0) AS positive_entries
       FROM app.node_traffic_payload_entries(
-             CASE WHEN r.is_dup THEN '{}'::jsonb ELSE r.raw_payload END) e
+             CASE WHEN r.is_dup OR NOT r.strict THEN '{}'::jsonb ELSE r.raw_payload END) e
   ) q
  GROUP BY 1, 2, 3;
 -- +goose StatementEnd
 -- rollup-backfill:end
+
+-- +goose StatementBegin
+ALTER TABLE node_traffic_hourly
+  ADD CONSTRAINT node_traffic_hourly_tenant_id_fkey
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  ADD CONSTRAINT node_traffic_hourly_node_id_fkey
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE;
+ALTER TABLE node_user_traffic_hourly
+  ADD CONSTRAINT node_user_traffic_hourly_tenant_id_fkey
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  ADD CONSTRAINT node_user_traffic_hourly_node_id_fkey
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE;
+-- +goose StatementEnd
 
 -- +goose Down
 
