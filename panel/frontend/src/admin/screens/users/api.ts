@@ -5,6 +5,7 @@ import { useApi } from '../../../shell/runtime'
 import { orderRowSchema } from '../billing/schemas'
 import { planOptionsKey } from '../plans/api'
 import { exactEmail } from './model'
+import { generationJobSchema, generationJobsSchema } from './opsSchemas'
 
 // 订单的封闭枚举与列表行归订单与收款模块（后台-05），用户详情「最近订单」同形
 export { ORDER_KINDS, ORDER_STATUSES, type OrderKind, type OrderRow, type OrderStatus } from '../billing/schemas'
@@ -164,9 +165,28 @@ export const bulkPreviewSchema = z.object({
   sample_rows: z.array(z.object({ email: z.string(), plan_name: z.string().nullable(), current_period_end: time.nullable() })),
 })
 export type BulkPreview = z.output<typeof bulkPreviewSchema>
-// 口令明文只回这一次；warning 是后端给的中文提醒
-export const generatedSchema = z.object({ count: count, users: z.array(z.object({ email: z.string(), password: z.string() })), warning: z.string() })
-export type Generated = z.output<typeof generatedSchema>
+// 批量生成任务与加流量包的 schema 在 opsSchemas.ts（不依赖 React，假后端测试也引用）
+export { generationJobSchema, generationJobsSchema, trafficGrantedSchema, type GenerationJob } from './opsSchemas'
+/** 一个批量生成任务的进度：没结束时每 1.5 秒轮询一次，结束即停 */
+export function useGenerationJob(id: string | null) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'generation-job', id],
+    queryFn: ({ signal }) => api.get(`v1/users/bulk/generate/jobs/${encodeURIComponent(id!)}`, generationJobSchema, { signal }),
+    enabled: id !== null,
+    refetchInterval: (q) => (q.state.data && (q.state.data.status === 'succeeded' || q.state.data.status === 'failed') ? false : 1500),
+  })
+}
+
+/** 最近的批量生成任务（最多 20 个，最新在前） */
+export function useGenerationJobs(enabled = true) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...UK, 'generation-jobs'],
+    queryFn: ({ signal }) => api.get('v1/users/bulk/generate/jobs', generationJobsSchema, { signal }).then((r) => r.jobs),
+    enabled,
+  })
+}
 export const bulkMailSchema = z.object({ queued: count, skipped: count })
 
 // ---------------------------------------------------------------------------

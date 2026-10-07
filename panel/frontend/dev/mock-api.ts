@@ -103,6 +103,7 @@ export function mockApi(app: MockApp): Plugin {
   const users = new Map<string, MockUser>(initialUsers(app).map((u) => [u.email, u]))
   const sessions = new Map<string, Session>()
   const registrations = new Map<string, { email: string; code: string }>()
+  const resets = new Map<string, { code: string; attempts: number }>()
   const replays = new Map<string, Replay>()
   const modules = app === 'admin' ? ADMIN_MODULES : PORTAL_MODULES
   // 后台假后端启动即按内存初值重写共享的生效主题：上次会话激活过的主题不会残留到门户
@@ -152,7 +153,7 @@ export function mockApi(app: MockApp): Plugin {
         : send(res, 200, { access_token: token, refresh_token: randomUUID(), token_type: 'Bearer', expires_in: TTL_SECONDS, user_id: user.userId })
     }
     if (app === 'portal' && route === 'GET /v1/site-config') {
-      return send(res, 200, { registration_mode: 'invite_only', email_verification: true })
+      return send(res, 200, { registration_mode: 'invite_only', email_verification: true, password_reset: true })
     }
     if (app === 'portal' && route === 'GET /v1/appearance') {
       // 生效主题取后台假后端经 appearance-share 写下的那份（后台激活、门户刷新即生效）；没开过后台时用内置默认
@@ -190,6 +191,43 @@ export function mockApi(app: MockApp): Plugin {
       const user: MockUser = { email: reg.email, password, userId: randomUUID(), displayName: null, permissions: [], roles: [] }
       users.set(reg.email, user)
       return send(res, 201, { user_id: user.userId, email: user.email })
+    }
+    // 找回密码（identity.StartPasswordReset / CompletePasswordReset）：邮箱存不存在回同一个响应；
+    // 演示验证码固定 123456，只在邮箱存在时出现在 dev_code 里（与 Go 开发模式一致）
+    if (app === 'portal' && route === 'POST /v1/auth/password-reset/start') {
+      const body = await base.body()
+      if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const email = str(body.email).trim().toLowerCase()
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { email: '邮箱格式不正确' })
+      const known = users.has(email)
+      if (known) resets.set(email, { code: '123456', attempts: 0 })
+      return send(res, 200, {
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        message: '若该邮箱已注册，验证码已发送',
+        ...(known ? { dev_code: '123456' } : {}),
+      })
+    }
+    if (app === 'portal' && route === 'POST /v1/auth/password-reset/complete') {
+      const body = await base.body()
+      if (!body) return fail(res, 400, 'bad_request', '请求体不是合法的 JSON')
+      const email = str(body.email).trim().toLowerCase()
+      const invalid = () => fail(res, 422, 'validation_failed', '请求参数校验未通过', { code: '验证码错误或已失效，请重新获取' })
+      if (!/^\d{6}$/.test(str(body.code))) return invalid()
+      const password = str(body.new_password)
+      if (password.length < 8) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码至少需要 8 个字符' })
+      if (!/[a-z]/i.test(password) || !/\d/.test(password)) return fail(res, 422, 'validation_failed', '请求参数校验未通过', { password: '密码必须同时包含字母和数字' })
+      const pending = resets.get(email)
+      const user = users.get(email)
+      if (!pending || !user || pending.attempts >= 5) return invalid()
+      if (pending.code !== str(body.code)) {
+        pending.attempts++
+        return invalid()
+      }
+      resets.delete(email)
+      user.password = password
+      // 用户定：重置后吊销该账号的全部登录
+      for (const [token, s] of sessions) if (s.userId === user.userId) sessions.delete(token)
+      return send(res, 200, { ok: true })
     }
     if (app === 'portal' && route === 'POST /v1/auth/quick-login') {
       const body = await base.body()

@@ -41,11 +41,11 @@ describe('支付渠道新建与编辑', () => {
     const api = pageClient('admin')
     const row = (await api.get('v1/payment-providers', providersSchema)).providers.find((p) => p.code === code)
     expect(row, '上一步新建的渠道不在列表里').toBeDefined()
-    const form = { ...providerFormFrom(row!), display_name: '冒烟易支付', methods: ['wxpay', 'qqpay'], default_method: 'wxpay' }
+    const form = { ...providerFormFrom(row!), display_name: '冒烟易支付', methods: ['wxpay'], default_method: 'wxpay' }
     const saved = await api.put(`v1/payment-providers/${encodeURIComponent(code)}`, providerWrittenSchema, { body: providerBody(form, 'edit'), idempotencyKey: randomUUID() })
     expect(saved.credentials_changed).toBe(false)
     const after = (await api.get('v1/payment-providers', providersSchema)).providers.find((p) => p.code === code)
-    expect(after).toMatchObject({ display_name: '冒烟易支付', methods: ['wxpay', 'qqpay'], default_method: 'wxpay', has_credentials: true })
+    expect(after).toMatchObject({ display_name: '冒烟易支付', methods: ['wxpay'], default_method: 'wxpay', has_credentials: true })
     return '改名与方式生效，凭据未变'
   })
 })

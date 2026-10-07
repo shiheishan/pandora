@@ -1,10 +1,24 @@
-import { useState } from 'react'
-import { filenameFromDisposition, saveFile, toCsv } from '../../../core/download'
-import { formatCount } from '../../../core/format'
+import { useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { filenameFromDisposition, saveFile } from '../../../core/download'
+import { formatCount, formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
-import { Button, Card, ConfirmModal, Empty, Input, QueryView, Select, TextArea, useToast } from '../../../ui'
+import { Button, Card, ConfirmModal, Empty, Input, QueryView, Select, Tag, TextArea, useToast } from '../../../ui'
 import { useCan, useFailure, useIntentKey } from '../../actions'
-import { bulkMailSchema, generatedSchema, useBulkPreview, useInvalidateUsers, usePlanOptions, useUserGroups, type BulkFilter, type Generated } from './api'
+import {
+  bulkMailSchema,
+  generationJobSchema,
+  UK,
+  useBulkPreview,
+  useGenerationJob,
+  useGenerationJobs,
+  useInvalidateUsers,
+  usePlanOptions,
+  useUserGroups,
+  type BulkFilter,
+  type GenerationJob,
+} from './api'
+import { JOB_STATUS_VIEW, jobFilename, jobFinished, jobPercent } from './jobs'
 import {
   BULK_EXPIRY,
   BULK_STATUS,
@@ -12,7 +26,6 @@ import {
   EXPORT_MAX,
   expiryView,
   exportQuery,
-  generatedRows,
   generateProblems,
   MAIL_MAX,
   type BulkExpiry,
@@ -238,7 +251,9 @@ function MailForm({ filter, total, onSent }: { filter: BulkFilter; total: number
 
 // ===========================================================================
 // 批量生成：POST v1/users/bulk/generate（iam.user.write + reauth + 幂等 user_bulk_generate）
-// 口令明文只回这一次：结果留在本页，下载在本地拼 CSV，不再请求服务器
+// 是后台任务：提交即回，worker 逐个生成（一次只占 1 个 Argon2 名额，不挡登录）。
+// 这里轮询进度画进度条；完成后从服务端下载结果 CSV（含初始口令，24 小时内、只有提交人能下，
+// 要近期重认证，每次下载都进审计）
 // ===========================================================================
 const EMPTY_FORM: GenerateForm = { count: '10', prefix: '', domain: '', group: '', reason: '' }
 // 后端字段名 → 表单字段名
@@ -250,11 +265,22 @@ function GeneratePanel() {
   const fail = useFailure()
   const intent = useIntentKey()
   const invalidate = useInvalidateUsers()
+  const client = useQueryClient()
   const groups = useUserGroups()
   const [form, setForm] = useState<GenerateForm>(EMPTY_FORM)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{ data: Generated; prefix: string } | null>(null)
+  const [jobId, setJobId] = useState<string | null>(null)
+  const job = useGenerationJob(jobId)
+  const jobs = useGenerationJobs()
+  const finished = job.data ? jobFinished(job.data) : false
+
+  // 任务一结束：用户列表与最近任务各刷新一次
+  useEffect(() => {
+    if (!finished) return
+    void invalidate(true)
+    void client.invalidateQueries({ queryKey: [...UK, 'generation-jobs'] })
+  }, [finished, invalidate, client])
 
   const set = (key: keyof GenerateForm, value: string) => {
     setForm((f) => ({ ...f, [key]: value }))
@@ -272,22 +298,26 @@ function GeneratePanel() {
     }
     setBusy(true)
     try {
-      const data = await api.post('v1/users/bulk/generate', generatedSchema, { body, idempotencyKey: intent.keyFor(body) })
+      const data = await api.post('v1/users/bulk/generate', generationJobSchema, { body, idempotencyKey: intent.keyFor(body) })
       intent.reset()
-      setResult({ data, prefix: body.email_prefix })
+      setJobId(data.id)
       setForm((f) => ({ ...f, reason: '' }))
-      toast(`已生成 ${formatCount(data.count)} 个账号`)
-      void invalidate(true)
+      toast(`已提交，正在后台生成 ${formatCount(data.total)} 个账号`)
+      void client.invalidateQueries({ queryKey: [...UK, 'generation-jobs'] })
     } catch (e) {
       fail(e, { fields: (f) => setErrors(Object.fromEntries(Object.entries(f).map(([k, v]) => [FIELD_KEYS[k] ?? k, v]))), intent })
     } finally {
       setBusy(false)
     }
   }
-  const download = () => {
-    if (!result) return
-    const day = new Date().toISOString().slice(0, 10)
-    saveFile(toCsv(generatedRows(result.data.users)), `users-${result.prefix}-${day}.csv`)
+  const download = async (j: GenerationJob) => {
+    try {
+      const res = await api.requestRaw(`v1/users/bulk/generate/jobs/${encodeURIComponent(j.id)}/result`)
+      saveFile(await res.blob(), filenameFromDisposition(res.headers.get('Content-Disposition'), jobFilename(j)))
+      toast('已下载。文件里有初始密码，交付后请删除本地副本')
+    } catch (e) {
+      fail(e)
+    }
   }
 
   return (
@@ -321,37 +351,78 @@ function GeneratePanel() {
           onChange={(e) => set('group', e.target.value)}
         />
         <TextArea label="生成原因" rows={2} value={form.reason} error={errors.reason} hint="写进审计日志，5 到 500 个字" onChange={(e) => set('reason', e.target.value)} />
-        <p className={css.small}>生成的账号不带套餐；需要时到「订单与收款」为其人工开单。</p>
+        <p className={css.small}>生成的账号不带套餐；需要时到「订单与收款」为其人工开单。生成在后台进行，不影响用户登录。</p>
         <Button type="submit" variant="primary" busy={busy}>
           生成
         </Button>
       </form>
-      {result && (
-        <div className={ops.genResult}>
-          <div className={ops.genHead}>
-            <span>已生成 {formatCount(result.data.count)} 个账号，初始密码只显示这一次</span>
-            <span className={css.spacer} />
-            <Button size="xs" variant="link" onClick={download}>
-              下载
-            </Button>
-            <Button size="xs" variant="ghost" onClick={() => setResult(null)}>
-              关闭
-            </Button>
-          </div>
-          <ul className={ops.genList} aria-label="生成的账号">
-            {result.data.users.slice(0, 5).map((u) => (
-              <li key={u.email}>
-                <span>{u.email}</span>
-                <span className={css.muted}>{u.password}</span>
-              </li>
-            ))}
-          </ul>
-          <p className={ops.genWarn}>
-            {result.data.users.length > 5 ? `另外 ${formatCount(result.data.users.length - 5)} 个在下载的文件里。` : ''}
-            {result.data.warning}
-          </p>
-        </div>
-      )}
+      {job.data && <JobProgress job={job.data} onDownload={(j) => void download(j)} onClose={() => setJobId(null)} />}
+      <RecentJobs jobs={(jobs.data ?? []).filter((j) => j.id !== jobId)} onDownload={(j) => void download(j)} />
     </Card>
+  )
+}
+
+function JobProgress({ job, onDownload, onClose }: { job: GenerationJob; onDownload: (j: GenerationJob) => void; onClose: () => void }) {
+  const view = JOB_STATUS_VIEW[job.status]
+  const pct = jobPercent(job)
+  return (
+    <div className={ops.genResult}>
+      <div className={ops.genHead}>
+        <Tag tone={view.tone}>{view.label}</Tag>
+        <span>
+          {formatCount(job.completed)} / {formatCount(job.total)}
+          {job.failed > 0 ? `，${formatCount(job.failed)} 个未生成` : ''}
+        </span>
+        <span className={css.spacer} />
+        {job.result_available && (
+          <Button size="xs" variant="link" onClick={() => onDownload(job)}>
+            下载结果
+          </Button>
+        )}
+        {jobFinished(job) && (
+          <Button size="xs" variant="ghost" onClick={onClose}>
+            关闭
+          </Button>
+        )}
+      </div>
+      <div className={ops.progressTrack} role="progressbar" aria-label="生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+        <div className={ops.progressBar} style={{ width: `${pct}%` }} />
+      </div>
+      {job.error && <p className={ops.genWarn}>{job.error}</p>}
+      {job.result_available && (
+        <p className={ops.genWarn}>
+          结果里有初始密码，只有提交人能下载{job.result_expires_at ? `，${formatDateTime(job.result_expires_at)} 之后自动清除` : '，任务结束 24 小时后自动清除'}。
+        </p>
+      )}
+    </div>
+  )
+}
+
+function RecentJobs({ jobs, onDownload }: { jobs: GenerationJob[]; onDownload: (j: GenerationJob) => void }) {
+  if (jobs.length === 0) return null
+  return (
+    <div className={ops.genResult}>
+      <div className={ops.genHead}>最近的生成任务</div>
+      <ul className={ops.genList} aria-label="最近的生成任务">
+        {jobs.slice(0, 5).map((j) => (
+          <li key={j.id}>
+            <span>
+              {j.email_prefix}@{j.email_domain} · {formatCount(j.completed)}/{formatCount(j.total)} · {JOB_STATUS_VIEW[j.status].label}
+            </span>
+            <span className={css.muted}>
+              {formatDateTime(j.created_at)}
+              {j.result_available && (
+                <>
+                  {' '}
+                  <Button size="xs" variant="link" onClick={() => onDownload(j)}>
+                    下载
+                  </Button>
+                </>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }

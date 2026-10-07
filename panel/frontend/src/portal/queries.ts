@@ -5,6 +5,8 @@ import { useApi } from '../shell/runtime'
 export const siteConfigSchema = z.object({
   registration_mode: z.enum(['closed', 'invite_only', 'open']),
   email_verification: z.boolean(),
+  /** 找回密码开没开：没配邮件服务时为 false，门户隐藏「忘记密码」 */
+  password_reset: z.boolean(),
 })
 
 export const appearanceSchema = z.object({

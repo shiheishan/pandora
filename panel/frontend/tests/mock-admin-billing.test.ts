@@ -257,7 +257,11 @@ describe('mock api · admin billing', () => {
 
     // 编辑：不收 code / adapter；凭据留空 = 不改
     expect((await put(admin, 'payment-providers/epay3', { code: 'other', ...settings, merchant_id: '', key: '' }, 'prov-3')).status).toBe(400)
-    const kept = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, methods: ['alipay', 'qqpay'], default_method: 'qqpay', merchant_id: '', key: '' }, 'prov-4')))
+    // 易支付只出支付宝和微信：勾 QQ 钱包被拒
+    expect(await json(await put(admin, 'payment-providers/epay3', { ...settings, methods: ['alipay', 'qqpay'], default_method: 'qqpay', merchant_id: '', key: '' }, 'prov-4q'))).toMatchObject({
+      error: { fields: { methods: '支付方式只能从支付宝、微信支付中选' } },
+    })
+    const kept = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, methods: ['alipay', 'wxpay'], default_method: 'wxpay', merchant_id: '', key: '' }, 'prov-4')))
     expect(kept.credentials_changed).toBe(false)
     const rotated = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, merchant_id: '', key: 'secret-rotated' }, 'prov-5')))
     expect(rotated.credentials_changed).toBe(true)

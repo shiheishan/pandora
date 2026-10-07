@@ -227,6 +227,21 @@
   font-size: var(--fs-caption);
 }
 
+.progressTrack {
+  height: 6px;
+  margin: 0 var(--space-12) 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+
+.progressBar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand);
+  transition: width 0.3s ease;
+}
+
 /* --- 设备策略 ----------------------------------------------------------- */
 .modeSet {
   display: flex;
