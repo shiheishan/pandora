@@ -30,7 +30,7 @@ done
 case "$COMMAND" in
   down|redo)
     echo "migration: destructive down/redo is not available through the public wrapper" >&2
-    echo "migration: to return to an earlier version use the confirmed 'rollback-to <version>' (see MIGRATION-RUNBOOK.md)" >&2
+    echo "migration: to return to an earlier version use the confirmed 'rollback-to <version>' (see panel/deploy/MIGRATION-RUNBOOK.md in the source tree)" >&2
     exit 78
     ;;
   up|up-to|up-by-one|status|version|rollback-to) ;;
@@ -224,9 +224,9 @@ if [ "$COMMAND" = rollback-to ]; then
     furthest=$((10#${BLOCKERS[0]%%_*}))
     echo "migration rollback: irreversible migrations in range: ${BLOCKERS[*]}" >&2
     if [ "$furthest" -lt "$CURRENT_VERSION" ]; then
-      echo "migration rollback: the furthest this tool can go is version $furthest; anything earlier needs the pre-upgrade backup (MIGRATION-RUNBOOK.md, section 3)" >&2
+      echo "migration rollback: the furthest this tool can go is version $furthest; anything earlier needs the pre-upgrade backup (panel/deploy/MIGRATION-RUNBOOK.md, section 3)" >&2
     else
-      echo "migration rollback: the current migration itself is irreversible; restore the pre-upgrade backup (MIGRATION-RUNBOOK.md, section 3)" >&2
+      echo "migration rollback: the current migration itself is irreversible; restore the pre-upgrade backup (panel/deploy/MIGRATION-RUNBOOK.md, section 3)" >&2
     fi
     echo "migration rollback: nothing was executed" >&2
     exit 78
@@ -252,7 +252,7 @@ if [ "$COMMAND" = rollback-to ]; then
     if ! "${GOOSE_BASE_ENV[@]}" "$GOOSE" down; then
       now="$(goose_current_version || true)"
       echo "migration rollback: STOPPED: the Down of $name failed or refused (see above); the database is at version ${now:-unknown}" >&2
-      echo "migration rollback: nothing below it was attempted; to go further back restore $ROLLBACK_BACKUP (MIGRATION-RUNBOOK.md, section 3)" >&2
+      echo "migration rollback: nothing below it was attempted; to go further back restore $ROLLBACK_BACKUP (panel/deploy/MIGRATION-RUNBOOK.md, section 3)" >&2
       exit 1
     fi
     now="$(goose_current_version)" || { echo "migration rollback: cannot read the version after $name" >&2; exit 1; }
