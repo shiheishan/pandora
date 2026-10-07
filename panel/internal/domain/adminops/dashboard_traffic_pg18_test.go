@@ -132,6 +132,9 @@ func TestDashboardTrafficRollupPG18(t *testing.T) {
 		t.Fatalf("node list comparison is vacuous: %v", legacyBytes)
 	}
 
+	// 入库路径：uid 级小时表（00106）恰好等于节点×uid 表按 (租户, 小时, uid) 求和
+	assertUIDRollupMatchesNodeUser(t, ctx, admin, tenant)
+
 	backfillMatchesLegacy(t, ctx, admin, tenant, nodeIDs[2], uid)
 	t.Log("marker=dashboard_traffic_rollup_pg18_matches_legacy_ok")
 }
@@ -204,20 +207,60 @@ func compareDashboardTraffic(t *testing.T, ctx context.Context, tx pgx.Tx, tenan
 	}
 }
 
-// backfillMatchesLegacy 在回滚的事务里补一批只可能出现在历史留档里的报文，清空汇总，
-// 跑迁移 00099 原文的回填段，再比对。
-func backfillMatchesLegacy(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant, node string, uid func(int) string) {
+// migrationSection 截取迁移原文里两行标记之间的一段（回填段），PG18 测试在回滚的事务里重跑它。
+func migrationSection(t *testing.T, file, marker string) string {
 	t.Helper()
-	migration, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "00099_node_traffic_hourly.sql"))
+	migration, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", file))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(migration)
-	begin, end := strings.Index(text, "-- rollup-backfill:begin"), strings.Index(text, "-- rollup-backfill:end")
+	begin, end := strings.Index(text, "-- "+marker+":begin"), strings.Index(text, "-- "+marker+":end")
 	if begin < 0 || end <= begin {
-		t.Fatal("00099 lost its rollup-backfill markers")
+		t.Fatalf("%s lost its %s markers", file, marker)
 	}
-	backfill := text[begin:end]
+	return text[begin:end]
+}
+
+// uidRollupDiffSQL 数出 uid 级小时表（00106）与「节点×uid 表按 (租户, 小时, uid) 求和」
+// 不一致的行（任一边多出、或任一列不同），为 0 才算一致。
+const uidRollupDiffSQL = `
+WITH want AS (
+  SELECT tenant_id, hour_start, node_uid, sum(upload_bytes) AS upload_bytes,
+         sum(download_bytes) AS download_bytes, sum(entry_count) AS entry_count,
+         max(last_report_at) AS last_report_at
+    FROM node_user_traffic_hourly WHERE tenant_id = $1
+   GROUP BY tenant_id, hour_start, node_uid
+), got AS (
+  SELECT tenant_id, hour_start, node_uid, upload_bytes, download_bytes,
+         entry_count::numeric AS entry_count, last_report_at
+    FROM uid_traffic_hourly WHERE tenant_id = $1
+)
+SELECT (SELECT count(*) FROM (SELECT * FROM want EXCEPT ALL SELECT * FROM got) a)
+     + (SELECT count(*) FROM (SELECT * FROM got EXCEPT ALL SELECT * FROM want) b),
+       (SELECT count(*) FROM got)`
+
+type uidRollupQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func assertUIDRollupMatchesNodeUser(t *testing.T, ctx context.Context, q uidRollupQuerier, tenant string) {
+	t.Helper()
+	var diff, rows int64
+	if err := q.QueryRow(ctx, uidRollupDiffSQL, tenant).Scan(&diff, &rows); err != nil {
+		t.Fatalf("compare uid rollup: %v", err)
+	}
+	if diff != 0 || rows == 0 {
+		t.Fatalf("uid_traffic_hourly differs from node_user_traffic_hourly grouped by uid: diff=%d rows=%d", diff, rows)
+	}
+}
+
+// backfillMatchesLegacy 在回滚的事务里补一批只可能出现在历史留档里的报文，清空汇总，
+// 跑迁移 00099 原文的回填段、再跑 00106 原文的回填段（两遍，证明可重入），再比对。
+func backfillMatchesLegacy(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant, node string, uid func(int) string) {
+	t.Helper()
+	backfill := migrationSection(t, "00099_node_traffic_hourly.sql", "rollup-backfill")
+	uidBackfill := migrationSection(t, "00106_uid_traffic_hourly.sql", "uid-backfill")
 
 	tx, err := admin.Begin(ctx)
 	if err != nil {
@@ -274,11 +317,24 @@ func backfillMatchesLegacy(t *testing.T, ctx context.Context, admin *pgxpool.Poo
 			t.Fatalf("plant %s old report: %v", old.age, err)
 		}
 	}
-	for _, sql := range []string{`DELETE FROM node_user_traffic_hourly`, `DELETE FROM node_traffic_hourly`, backfill} {
+	// 00099 回填重建两张按节点的表，00106 回填再从节点×uid 表重建 uid 级表
+	for _, sql := range []string{`DELETE FROM node_user_traffic_hourly`, `DELETE FROM node_traffic_hourly`, backfill,
+		`DELETE FROM uid_traffic_hourly`, uidBackfill} {
 		if _, err := tx.Exec(ctx, sql); err != nil {
 			t.Fatalf("rerun backfill: %v\nSQL: %s", err, sql)
 		}
 	}
+	assertUIDRollupMatchesNodeUser(t, ctx, tx, tenant)
+	// 可重入：把已回填的行弄脏再重跑，冲突时按重算值覆盖（不是累加），结果与第一次相同
+	for _, sql := range []string{
+		`UPDATE uid_traffic_hourly SET upload_bytes = upload_bytes + 7, entry_count = entry_count + 1`,
+		uidBackfill, uidBackfill,
+	} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			t.Fatalf("rerun uid backfill: %v\nSQL: %s", err, sql)
+		}
+	}
+	assertUIDRollupMatchesNodeUser(t, ctx, tx, tenant)
 	var reports, dups, invalid int64
 	var raw, upload string
 	var positive int64

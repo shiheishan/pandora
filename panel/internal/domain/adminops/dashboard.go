@@ -211,7 +211,7 @@ func resolveDashboardWindow(ctx context.Context, tx pgx.Tx, in DashboardTrafficQ
 }
 
 // dashboardTrafficWindowCTE 是节点排行与用户排行共用的窗口读数，只读小时汇总
-// （迁移 00099），不再回到上报留档逐条展开 raw_payload。
+// （迁移 00099、00106），不再回到上报留档逐条展开 raw_payload。
 //
 // 校验口径没有变：汇总表是入库时按 app.node_traffic_payload_entries 分类累加的，
 // 那个函数就是原来这里 strict_entries CTE 的原文（键 [+-]?数字、归一后不超过 19 位、
@@ -219,6 +219,10 @@ func resolveDashboardWindow(ctx context.Context, tx pgx.Tx, in DashboardTrafficQ
 // duplicate_report_count；非法上报 = 根不是对象或含非法项的非重复上报。归属仍在读时
 // 按 subscriptions.node_uid 连，订阅不在了就算未归属。PG18 测试拿原 SQL 对同一批
 // 上报逐项比对（dashboard_traffic_pg18_test.go）。
+//
+// 归属读 uid 级小时表（00106，去掉节点维度），并且先在窗口内按 uid 聚合、再连订阅：
+// node_uid 全局唯一，一个 uid 至多一条订阅，先聚合再连与逐小时行连的结果相同，
+// 连订阅的次数从「uid × 小时 × 节点」降到「uid 数」。
 //
 // 窗口按整点桶取：桶起点 hour_start 落在 [$2, $3) 的桶整桶计入。$2 由
 // resolveDashboardWindow 向上取整到整点，最旧不足一小时的那段不计；最新的桶是
@@ -245,15 +249,24 @@ quality AS (
          coalesce(sum(upload_bytes+download_bytes),0)::numeric AS reported_bytes
     FROM node_hours
 ),
+uid_hours AS MATERIALIZED (
+  SELECT t.node_uid,
+         sum(t.upload_bytes) AS upload_bytes,
+         sum(t.download_bytes) AS download_bytes,
+         sum(t.entry_count) AS entry_count,
+         max(t.last_report_at) AS last_report_at
+    FROM uid_traffic_hourly t
+   WHERE t.tenant_id=$1 AND t.hour_start >= $2 AND t.hour_start < $3
+   GROUP BY t.node_uid
+),
 attributed AS MATERIALIZED (
   SELECT sub.id AS subscription_id, sub.user_id,
-         t.upload_bytes, t.download_bytes, t.entry_count, t.last_report_at
-    FROM node_user_traffic_hourly t
+         g.upload_bytes, g.download_bytes, g.entry_count, g.last_report_at
+    FROM uid_hours g
     JOIN subscriptions sub
-      ON sub.tenant_id=t.tenant_id
-     AND sub.node_uid=t.node_uid
-   WHERE t.tenant_id=$1 AND t.hour_start >= $2 AND t.hour_start < $3
-     AND sub.user_id IS NOT NULL
+      ON sub.tenant_id=$1
+     AND sub.node_uid=g.node_uid
+   WHERE sub.user_id IS NOT NULL
 ),
 traffic_totals AS (
   SELECT q.reported_bytes,
