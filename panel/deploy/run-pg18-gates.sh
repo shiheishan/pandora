@@ -128,6 +128,9 @@ DOMAINS=(
   # 主动查单（00097，PAY-009）：补记、补记与回调的去重、取消单进挂账、并发巡检。
   # 复用 order_release 的一次性租户夹具；它会取消订单、置上 00040 的全局水位，独占一个库。
   "payment_query|pandora_payment_query_gate|./internal/domain/billing||||app_role|^TestPaymentQueryPG18$"
+  # 订阅周期（第 2 波 w2sub）：礼品卡延期、后台加时长、续费、变更套餐四条路径的周期末与凭据到期、
+  # 本周期配额一致，并以迁移角色执行 00102 的存量修复。复用 order_release 的一次性租户夹具，独占一个库。
+  "sub_period|pandora_sub_period_gate|./internal/domain/billing|run_id|pandora_sub_period_test_marker|pandora-sub-period-pg18|app_role|^TestSubscriptionPeriodPG18$"
   # 按日流量（00072）：写入与扣量同事务，写入测试并进 traffic_charge 的库；
   # 读模型在 subscription 包，与 node_preview 同包，两边过滤都写精确。
   "usage_daily|pandora_usage_daily_gate|./internal/domain/subscription||||app_role|^TestUsageDailyReadPG18$"
