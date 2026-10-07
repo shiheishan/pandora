@@ -36,10 +36,10 @@ case "${1:-}" in
   show)
     if ! test -f "$MOCK_SYSTEMCTL_STATE_DIR/active.$unit"; then printf '0\n'; exit 0; fi
     case "$unit" in
-      aegis-admin.service) printf '2101\n' ;;
-      aegis-public.service) printf '2102\n' ;;
-      aegis-node.service) printf '2103\n' ;;
-      *) printf '2100\n' ;;
+      aegis-admin.service) printf '4194301\n' ;;
+      aegis-public.service) printf '4194302\n' ;;
+      aegis-node.service) printf '4194303\n' ;;
+      *) printf '4194300\n' ;;
     esac
     ;;
   stop)
@@ -76,18 +76,18 @@ MOCK
 cat >"$TMP/mock-bin/readlink" <<'MOCK'
 #!/usr/bin/env bash
 case "${2:-${1:-}}" in
-  /proc/2101/exe) printf '%s/bin/aegis-admin\n' "$MOCK_APP_DIR" ;;
-  /proc/2102/exe) printf '%s/bin/aegis-public\n' "$MOCK_APP_DIR" ;;
-  /proc/2103/exe) printf '%s/bin/aegis-node\n' "$MOCK_APP_DIR" ;;
+  /proc/4194301/exe) printf '%s/bin/aegis-admin\n' "$MOCK_APP_DIR" ;;
+  /proc/4194302/exe) printf '%s/bin/aegis-public\n' "$MOCK_APP_DIR" ;;
+  /proc/4194303/exe) printf '%s/bin/aegis-node\n' "$MOCK_APP_DIR" ;;
   *) exec /usr/bin/readlink "$@" ;;
 esac
 MOCK
 cat >"$TMP/mock-bin/sha256sum" <<'MOCK'
 #!/usr/bin/env bash
 case "${1:-}" in
-  /proc/2101/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-admin" ;;
-  /proc/2102/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-public" ;;
-  /proc/2103/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-node" ;;
+  /proc/4194301/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-admin" ;;
+  /proc/4194302/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-public" ;;
+  /proc/4194303/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-node" ;;
   *) exec /usr/bin/sha256sum "$@" ;;
 esac
 MOCK

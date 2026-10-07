@@ -79,12 +79,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run release-stop-the-world mock test as root
+        # 控制器要求发布目录的每一级父目录都归 root、不可组写或他写，/tmp（1777）过不了；
+        # 桩测试的临时目录放到一个 root 独占的目录里（PANDORA_MOCK_TMPDIR）
         run: |
           t=release-stop-the-world_mock_test.sh
+          mock_tmp=/srv/pandora-release-mock
           if [ "$(id -u)" -eq 0 ]; then
-            bash "$t"
+            install -d -m 0700 -o root -g root "$mock_tmp"
+            PANDORA_MOCK_TMPDIR="$mock_tmp" bash "$t"
           elif sudo -n true 2>/dev/null; then
-            sudo -n env "PATH=$PATH" bash "$t"
+            sudo -n install -d -m 0700 -o root -g root "$mock_tmp"
+            sudo -n env "PATH=$PATH" PANDORA_MOCK_TMPDIR="$mock_tmp" bash "$t"
           elif [ "${GITHUB_ACTIONS:-}" = true ]; then
             echo "GitHub runner 上没有免密 sudo，无法跑 $t" >&2
             exit 1
