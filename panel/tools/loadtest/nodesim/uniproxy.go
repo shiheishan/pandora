@@ -31,6 +31,8 @@ type uniClient struct {
 	http       *http.Client
 	stream     *http.Client
 	obs        *observer
+	// streamWait 只给测试替换事件流的重连等待；nil 时真等
+	streamWait func(ctx context.Context, d time.Duration) bool
 }
 
 func newUniClient(base, nodeID, nodeType, token, realIP string, timeout time.Duration, obs *observer) *uniClient {
@@ -230,20 +232,22 @@ type streamEvent struct {
 }
 
 // 退避参数与 pdnd 相同：1 秒起翻倍、30 秒封顶，再加 [0, backoff/2) 的抖动。
-// 注意 pdnd 的退避在连接成功后不归位，模拟器照抄这一点。
+// current 照 pdnd panel/stream.go：一次健康连接（回 200 且至少完整读到一行，心跳注释
+// 也算）之后退避回到 1 秒；legacy 冻结为改版前的模拟器，退避从不复位。
 const (
 	streamMinBackoff = time.Second
 	streamMaxBackoff = 30 * time.Second
 )
 
 // streamLoop 复刻 pdnd Client.Stream：自己重连，不返回错误。
-func (c *uniClient) streamLoop(ctx context.Context, out chan<- streamEvent, onError func(error)) {
+// resetOnHealthy 为 true 时（current）健康连接后退避复位，false（legacy）照旧只翻倍。
+func (c *uniClient) streamLoop(ctx context.Context, out chan<- streamEvent, resetOnHealthy bool, onError func(error)) {
 	backoff := streamMinBackoff
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		err := c.streamOnce(ctx, out)
+		healthy, err := c.streamOnce(ctx, out)
 		if ctx.Err() != nil {
 			return
 		}
@@ -251,11 +255,12 @@ func (c *uniClient) streamLoop(ctx context.Context, out chan<- streamEvent, onEr
 		if err != nil && onError != nil {
 			onError(err)
 		}
+		if healthy && resetOnHealthy {
+			backoff = streamMinBackoff
+		}
 		jitter := time.Duration(rand.Int64N(int64(backoff / 2)))
-		select {
-		case <-ctx.Done():
+		if !c.waitReconnect(ctx, backoff+jitter) {
 			return
-		case <-time.After(backoff + jitter):
 		}
 		if backoff *= 2; backoff > streamMaxBackoff {
 			backoff = streamMaxBackoff
@@ -263,24 +268,40 @@ func (c *uniClient) streamLoop(ctx context.Context, out chan<- streamEvent, onEr
 	}
 }
 
+// waitReconnect 等 d 再重连，ctx 先结束则返回 false；测试经 streamWait 替换掉真等。
+func (c *uniClient) waitReconnect(ctx context.Context, d time.Duration) bool {
+	if c.streamWait != nil {
+		return c.streamWait(ctx, d)
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // streamOnce 建一次连接读到断开。只把建连（拿到响应头）记成一次请求，
-// 长连接活了多久不是延迟；事件按类型计数进 fleet。
-func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent) error {
+// 长连接活了多久不是延迟；事件按类型计数进 fleet。healthy 与 pdnd 同口径：
+// 回了 200 并且至少完整读到过一行；只回 200 就断的「接了就断」不算。
+func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent) (healthy bool, err error) {
 	req, err := c.newRequest(ctx, http.MethodGet, "stream", nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	start := time.Now()
 	resp, err := c.stream.Do(req)
 	if err != nil {
 		c.obs.record(ctx, "node:GET "+uniPrefix+"stream", 0, time.Since(start), err, "")
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
 	c.finish(ctx, "stream", resp, start, "")
 	if resp.StatusCode != http.StatusOK {
-		return httpError("连接事件流", resp)
+		return false, httpError("连接事件流", resp)
 	}
 	c.obs.fleet.streamOpened()
 	defer c.obs.fleet.streamsOpen.Add(-1)
@@ -290,10 +311,11 @@ func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent) erro
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				return nil
+				return healthy, nil
 			}
-			return err
+			return healthy, err
 		}
+		healthy = true
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue
@@ -311,7 +333,7 @@ func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent) erro
 		select {
 		case out <- ev:
 		case <-ctx.Done():
-			return nil
+			return healthy, nil
 		}
 	}
 }
