@@ -7,6 +7,14 @@ package reality
 // the live encrypted connection immediately. The wire cryptography remains
 // the vendored REALITY implementation; routing and protocol ownership stay
 // outside this package.
+//
+// 与上游 XTLS/REALITY 的差异（Pandora 改动）：
+//   - 上游 Server 在认证不过时自己把连接与 dest 双向拷贝到结束；这里改为
+//     返回 *RejectedError，把已经收到全部已读字节的 dest 连接交还调用方，由
+//     调用方（kernel/reality_listener.go）带上下行字节与时长上限去拷贝。
+//     对探测方而言结果与上游一致：完整拿到 dest 的握手与响应。
+//   - 认证通过之后 dest 的握手飞行不合法、客户端 Finished 不对等情况仍直接
+//     关闭（上游同样不回落这类已认证连接）。
 
 import (
 	"context"
@@ -26,9 +34,22 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
+// RejectedError 表示连接在认证判定之前被拒（不是 TLS 1.3、SNI 不在白名单、
+// ClientHello 读不出、REALITY 认证不过）。此时客户端已发出的每个字节都已经
+// 经 MirrorConn 原样写给了 Target，调用方应把原始连接与 Target 双向拷贝
+// （上游 REALITY 的回落行为），用完负责关闭两者。
+type RejectedError struct {
+	Target net.Conn
+	Reason error
+}
+
+func (e *RejectedError) Error() string { return e.Reason.Error() }
+func (e *RejectedError) Unwrap() error { return e.Reason }
+
 // ServerHandoff performs the REALITY server handshake and returns as soon as
-// a client is authenticated. Invalid clients are closed instead of being
-// silently handed to a different data plane.
+// a client is authenticated. Clients rejected before authentication get a
+// *RejectedError carrying the dest connection so the caller can fall back to
+// it; failures after authentication close both connections.
 func ServerHandoff(ctx context.Context, conn net.Conn, config *Config) (*Conn, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -64,21 +85,15 @@ func ServerHandoff(ctx context.Context, conn net.Conn, config *Config) (*Conn, e
 	hs.clientHello, _, err = hs.c.readClientHello(ctx)
 	if err != nil {
 		mutex.Unlock()
-		_ = target.Close()
-		_ = conn.Close()
-		return nil, fmt.Errorf("REALITY: failed to read client hello: %w", err)
+		return nil, &RejectedError{Target: target, Reason: fmt.Errorf("REALITY: failed to read client hello: %w", err)}
 	}
 	if hs.c.vers != VersionTLS13 || hs.clientHello == nil || !config.ServerNames[hs.clientHello.serverName] {
 		mutex.Unlock()
-		_ = target.Close()
-		_ = conn.Close()
-		return nil, fmt.Errorf("REALITY: client hello rejected")
+		return nil, &RejectedError{Target: target, Reason: fmt.Errorf("REALITY: client hello rejected")}
 	}
 	if err := authenticateHandoff(&hs, config); err != nil {
 		mutex.Unlock()
-		_ = target.Close()
-		_ = conn.Close()
-		return nil, err
+		return nil, &RejectedError{Target: target, Reason: err}
 	}
 	// From this point all TLS records must go directly to the client. The
 	// mirror wrapper is only needed to forward the initial ClientHello.

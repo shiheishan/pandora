@@ -70,8 +70,20 @@ type shadowsocksAdapter struct {
 	cancel   context.CancelFunc
 	closed   bool
 	active   map[net.Conn]struct{}
-	wg       sync.WaitGroup
+	// salts 是 TCP 请求 salt 的防重放表（认证通过才记），见 replayFilter。
+	salts *replayFilter
+	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
+	headerTimeout time.Duration
+	wg            sync.WaitGroup
 }
+
+// Shadowsocks TCP salt 防重放：按分钟分代、保留 3 代，即每个 salt 至少记
+// 2 分钟、至多 3 分钟；每代上限 replayFilterMaxPerGen 条。
+const (
+	ssSaltReplayPeriod    = time.Minute
+	ssSaltReplayKeep      = 3
+	replayFilterMaxPerGen = 1 << 16
+)
 
 func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 	method, _ := spec.Config.Raw["method"].(string)
@@ -86,6 +98,7 @@ func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 		protocol: strings.ToLower(strings.TrimSpace(spec.Config.Protocol)), spec: spec, method: methodSpec,
 		users: make(map[string]ssUser), traffic: make(map[int64]core.UserTraffic),
 		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
+		salts: newReplayFilter(ssSaltReplayPeriod, ssSaltReplayKeep, replayFilterMaxPerGen),
 	}, nil
 }
 
@@ -197,9 +210,12 @@ func (a *shadowsocksAdapter) handleConn(ctx context.Context, conn net.Conn) erro
 
 func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
 	user, stream, destination, err := a.readRequest(conn)
 	if err != nil {
+		// 认证失败、salt 重放、首块解不开：读到超时再关，不在读完固定字节
+		// 后立刻断（读错误本身则立即返回，读空不会多等）。
+		drainUntilDeadline(conn)
 		return err
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
@@ -279,6 +295,11 @@ func (a *shadowsocksAdapter) readRequest(conn net.Conn) (core.User, *ssStream, v
 	}
 	if selectedAEAD == nil {
 		return core.User{}, nil, destination, markConnError(connErrAuth, fmt.Errorf("shadowsocks user authentication failed"))
+	}
+	// 重放：把抓到的合法首包原样重发，salt 必然相同。只在认证通过后记录，
+	// 乱发的字节填不满这张表。
+	if a.salts != nil && !a.salts.check(salt, time.Now()) {
+		return core.User{}, nil, destination, markConnError(connErrAuth, fmt.Errorf("shadowsocks salt replayed"))
 	}
 	length := int(binary.BigEndian.Uint16(plainLength[:]))
 	first := make([]byte, length+selectedAEAD.Overhead())

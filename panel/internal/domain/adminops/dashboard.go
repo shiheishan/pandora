@@ -223,6 +223,16 @@ func resolveDashboardWindow(ctx context.Context, tx pgx.Tx, in DashboardTrafficQ
 // 窗口按整点桶取：桶起点 hour_start 落在 [$2, $3) 的桶整桶计入。$2 由
 // resolveDashboardWindow 向上取整到整点，最旧不足一小时的那段不计；最新的桶是
 // 当前小时，snapshot_at 取现在时它正好截到现在。
+//
+// 归属的读法两条排行各写各的（node_uid 全局唯一，一个 uid 至多一条订阅，两种读法都与
+// 逐小时行连订阅的结果相同）：
+//   - 节点排行只要「已归属字节」一个总数：节点×uid 行对订阅做半连接后直接求和，不分组；
+//   - 用户排行先在窗口内按 uid 聚合，再每个 uid 连一次订阅（原来是每个 uid×小时×节点行
+//     连一次），按用户分组时每行就是一条不同的订阅，订阅数用 count(*)（可走哈希聚合，
+//     原来的 count(DISTINCT) 要排序、逐组建排序器）。
+//
+// traffic_totals 必须 MATERIALIZED：它被最终 SELECT 引用三次，内联后「已归属字节」那个
+// 子查询会按引用次数重算。
 const dashboardTrafficWindowCTE = `
 node_hours AS MATERIALIZED (
   SELECT h.node_id,
@@ -238,31 +248,26 @@ node_hours AS MATERIALIZED (
    WHERE h.tenant_id=$1 AND h.hour_start >= $2 AND h.hour_start < $3
    GROUP BY h.node_id
 ),
-quality AS (
+quality AS MATERIALIZED (
   SELECT coalesce(sum(duplicate_report_count),0)::bigint AS duplicate_report_count,
          coalesce(sum(invalid_report_count),0)::bigint AS invalid_report_count,
          coalesce(sum(invalid_entry_count),0)::bigint AS invalid_entry_count,
          coalesce(sum(upload_bytes+download_bytes),0)::numeric AS reported_bytes
     FROM node_hours
-),
-attributed AS MATERIALIZED (
-  SELECT sub.id AS subscription_id, sub.user_id,
-         t.upload_bytes, t.download_bytes, t.entry_count, t.last_report_at
-    FROM node_user_traffic_hourly t
-    JOIN subscriptions sub
-      ON sub.tenant_id=t.tenant_id
-     AND sub.node_uid=t.node_uid
-   WHERE t.tenant_id=$1 AND t.hour_start >= $2 AND t.hour_start < $3
-     AND sub.user_id IS NOT NULL
-),
-traffic_totals AS (
-  SELECT q.reported_bytes,
-         (SELECT coalesce(sum(upload_bytes+download_bytes),0) FROM attributed)::numeric AS attributed_bytes
-    FROM quality q
 )
 `
 
 const dashboardNodeTrafficSQL = `WITH ` + dashboardTrafficWindowCTE + `,
+traffic_totals AS MATERIALIZED (
+  SELECT q.reported_bytes,
+         (SELECT coalesce(sum(t.upload_bytes+t.download_bytes),0)
+            FROM node_user_traffic_hourly t
+           WHERE t.tenant_id=$1 AND t.hour_start >= $2 AND t.hour_start < $3
+             AND EXISTS (SELECT 1 FROM subscriptions sub
+                          WHERE sub.tenant_id=$1 AND sub.node_uid=t.node_uid
+                            AND sub.user_id IS NOT NULL))::numeric AS attributed_bytes
+    FROM quality q
+),
 node_groups AS (
   SELECT g.node_id, n.name, n.display_name,
          g.upload_bytes::numeric AS upload_bytes,
@@ -296,12 +301,37 @@ SELECT coalesce((
   FROM traffic_totals t CROSS JOIN ranking r CROSS JOIN quality q`
 
 const dashboardUserTrafficSQL = `WITH ` + dashboardTrafficWindowCTE + `,
+uid_hours AS MATERIALIZED (
+  SELECT t.node_uid,
+         sum(t.upload_bytes) AS upload_bytes,
+         sum(t.download_bytes) AS download_bytes,
+         sum(t.entry_count) AS entry_count,
+         max(t.last_report_at) AS last_report_at
+    FROM node_user_traffic_hourly t
+   WHERE t.tenant_id=$1 AND t.hour_start >= $2 AND t.hour_start < $3
+   GROUP BY t.node_uid
+),
+attributed AS MATERIALIZED (
+  SELECT sub.user_id, g.upload_bytes, g.download_bytes,
+         g.upload_bytes+g.download_bytes AS total_bytes, g.entry_count, g.last_report_at
+    FROM uid_hours g
+    JOIN subscriptions sub
+      ON sub.tenant_id=$1
+     AND sub.node_uid=g.node_uid
+   WHERE sub.user_id IS NOT NULL
+),
+traffic_totals AS MATERIALIZED (
+  SELECT q.reported_bytes,
+         (SELECT coalesce(sum(total_bytes),0) FROM attributed)::numeric AS attributed_bytes
+    FROM quality q
+),
 user_groups AS (
   SELECT a.user_id,u.email::text AS email,
          sum(a.upload_bytes)::numeric AS upload_bytes,
          sum(a.download_bytes)::numeric AS download_bytes,
-         sum(a.upload_bytes+a.download_bytes)::numeric AS total_bytes,
-         count(DISTINCT a.subscription_id)::bigint AS subscription_count,
+         sum(a.total_bytes)::numeric AS total_bytes,
+         -- 每行是一条不同的订阅（uid 唯一 → 订阅唯一），等于按订阅去重计数
+         count(*)::bigint AS subscription_count,
          sum(a.entry_count)::bigint AS contributing_entry_count,
          max(a.last_report_at)::timestamptz(6) AS last_report_at
     FROM attributed a
