@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -24,74 +25,54 @@ type vmessBodyReader struct {
 	key, nonce       []byte
 	security, option byte
 	command          byte
-	authID           [16]byte
-	aead             *vmessAEADReader
-	plainChunks      *vmessPlainChunkReader
+	// respHeader 是请求头里的 V 字节（header[33]），响应头首字节必须原样回显：
+	// Xray 客户端逐字节核对，对不上就报 unexpected response header 断开。
+	respHeader byte
+	authID     [16]byte
+	chunks     *vmessAEADReader
 }
+
+// chunked 表示请求体是分块的。aes / chacha 恒分块；none 由 ChunkStream 选项决定
+// （Xray 的 none 开 ChunkStream + ChunkMasking，zero 与 sing-box 的 none 不分块）。
+func (r *vmessBodyReader) chunked() bool {
+	return r.security == vmessSecAES128 || r.security == vmessSecChaCha || r.option&vmessOptChunk != 0
+}
+
+// packet 对应 Xray 的 TransferTypePacket：UDP 每块就是一个包。
+func (r *vmessBodyReader) packet() bool { return r.command == vmessUDP }
 
 func (r *vmessBodyReader) Read(p []byte) (int, error) {
-	if r.security == vmessSecNone || r.security == vmessSecZero {
-		if r.command == vmessUDP {
-			if r.plainChunks == nil {
-				r.plainChunks = &vmessPlainChunkReader{upstream: r.reader}
-			}
-			return r.plainChunks.Read(p)
-		}
+	if !r.chunked() {
 		return r.reader.Read(p)
 	}
-	if r.aead == nil {
-		r.aead = newVMessAEADReader(r.reader, vmessBodyAEAD(r.security, r.key), r.nonce, r.option)
+	if r.chunks == nil {
+		var aead cipher.AEAD
+		if r.security == vmessSecAES128 || r.security == vmessSecChaCha {
+			aead = vmessBodyAEAD(r.security, r.key)
+		}
+		r.chunks = newVMessChunkReader(r.reader, aead, r.nonce, r.option, r.packet())
 	}
-	return r.aead.Read(p)
+	return r.chunks.Read(p)
 }
 
-type vmessPlainChunkReader struct {
-	upstream *bufio.Reader
-	pending  []byte
+// writeResponse 写 AEAD 响应头，首字节回显请求的 V 字节。
+func (r *vmessBodyReader) writeResponse(w io.Writer) error {
+	return vmessWriteResponse(w, r.key, r.nonce, r.respHeader, r.option)
 }
 
-func (r *vmessPlainChunkReader) Read(p []byte) (int, error) {
-	if len(r.pending) > 0 {
-		n := copy(p, r.pending)
-		r.pending = r.pending[n:]
-		return n, nil
+// responseWriter 按请求的安全类型与选项包装响应体写端：响应体的密钥与 IV 是
+// 请求体密钥与 IV 的 SHA-256 前 16 字节，分块、掩码、填充选项与请求一致。
+func (r *vmessBodyReader) responseWriter(w io.Writer) io.Writer {
+	if !r.chunked() {
+		return w
 	}
-	var length [2]byte
-	if _, err := io.ReadFull(r.upstream, length[:]); err != nil {
-		return 0, err
+	keyHash := sha256.Sum256(r.key)
+	nonceHash := sha256.Sum256(r.nonce)
+	var aead cipher.AEAD
+	if r.security == vmessSecAES128 || r.security == vmessSecChaCha {
+		aead = vmessBodyAEAD(r.security, keyHash[:16])
 	}
-	n := int(binary.BigEndian.Uint16(length[:]))
-	if n == 0 || n > 65535 {
-		return 0, fmt.Errorf("vmess UDP chunk length %d invalid", n)
-	}
-	data := make([]byte, n)
-	if _, err := io.ReadFull(r.upstream, data); err != nil {
-		return 0, err
-	}
-	written := copy(p, data)
-	if written < len(data) {
-		r.pending = append(r.pending, data[written:]...)
-	}
-	return written, nil
-}
-
-type vmessPlainChunkWriter struct {
-	mu       sync.Mutex
-	upstream io.Writer
-}
-
-func (w *vmessPlainChunkWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if len(p) > 65535 {
-		p = p[:65535]
-	}
-	var length [2]byte
-	binary.BigEndian.PutUint16(length[:], uint16(len(p)))
-	if _, err := w.upstream.Write(length[:]); err != nil {
-		return 0, err
-	}
-	return w.upstream.Write(p)
+	return newVMessChunkWriter(w, aead, nonceHash[:16], r.option, r.packet())
 }
 
 // VMess 分块的数据路径不再逐块分配（1c1g 实测 vmess 的加解密每个数据块都要
@@ -99,10 +80,20 @@ func (w *vmessPlainChunkWriter) Write(p []byte) (int, error) {
 // 剩余明文留在借来的缓冲里、取完即还。写方向在池里的缓冲上原地封装，长度头
 // 与密文一次写出（原先两次 Write，TLS 上就是两个记录）。
 
+// VMess 分块（Xray common/crypto 的 AuthenticationReader / ChunkStreamReader）：
+//
+//	[2 字节长度][密文（长度 - 填充）][填充]
+//
+// 长度可被 SHAKE128(IV) 流掩码（ChunkMasking）；GlobalPadding 时每块末尾追加
+// 0–63 字节随机填充，填充长度取自同一条 SHAKE 流，且先于长度掩码取（读写两侧
+// 次序必须与 Xray 一致，错一次后面全错）。aead 为 nil 是 none 安全类型的分块：
+// 没有认证标签，TCP 不加填充（ChunkStream），UDP 按包加填充（NoOp 认证器）。
+// 长度等于「标签 + 填充」即空块，表示对端写完。
 type vmessAEADReader struct {
 	upstream   *bufio.Reader
 	gcm        cipher.AEAD
 	mask       sha3.ShakeHash
+	padding    bool
 	nonce      [12]byte
 	count      uint16
 	pending    []byte
@@ -110,6 +101,10 @@ type vmessAEADReader struct {
 }
 
 func newVMessAEADReader(upstream *bufio.Reader, aead cipher.AEAD, nonce []byte, option byte) *vmessAEADReader {
+	return newVMessChunkReader(upstream, aead, nonce, option, false)
+}
+
+func newVMessChunkReader(upstream *bufio.Reader, aead cipher.AEAD, nonce []byte, option byte, packet bool) *vmessAEADReader {
 	var base [12]byte
 	copy(base[:], nonce)
 	var mask sha3.ShakeHash
@@ -117,7 +112,8 @@ func newVMessAEADReader(upstream *bufio.Reader, aead cipher.AEAD, nonce []byte, 
 		mask = sha3.NewShake128()
 		_, _ = mask.Write(nonce)
 	}
-	return &vmessAEADReader{upstream: upstream, gcm: aead, mask: mask, nonce: base}
+	padding := mask != nil && option&vmessOptPadding != 0 && (aead != nil || packet)
+	return &vmessAEADReader{upstream: upstream, gcm: aead, mask: mask, padding: padding, nonce: base}
 }
 
 // nextMask 取下一个 16 位长度掩码（不经 binary.Read，免一次分配）。
@@ -127,6 +123,16 @@ func nextVMessMask(mask sha3.ShakeHash) (uint16, error) {
 		return 0, err
 	}
 	return binary.BigEndian.Uint16(b[:]), nil
+}
+
+// vmessMaxPadding 是 GlobalPadding 每块填充长度的上界（Xray ShakeSizeParser.MaxPaddingLen）。
+const vmessMaxPadding = 64
+
+func (r *vmessAEADReader) overhead() int {
+	if r.gcm == nil {
+		return 0
+	}
+	return r.gcm.Overhead()
 }
 
 func (r *vmessAEADReader) Read(p []byte) (int, error) {
@@ -143,6 +149,14 @@ func (r *vmessAEADReader) Read(p []byte) (int, error) {
 	if _, err := io.ReadFull(r.upstream, rawLen[:]); err != nil {
 		return 0, err
 	}
+	paddingLen := 0
+	if r.padding {
+		next, err := nextVMessMask(r.mask)
+		if err != nil {
+			return 0, err
+		}
+		paddingLen = int(next % vmessMaxPadding)
+	}
 	length := binary.BigEndian.Uint16(rawLen[:])
 	if r.mask != nil {
 		maskCode, err := nextVMessMask(r.mask)
@@ -151,8 +165,17 @@ func (r *vmessAEADReader) Read(p []byte) (int, error) {
 		}
 		length ^= maskCode
 	}
-	if length < 16 || length > 65535 {
-		return 0, fmt.Errorf("vmess AES chunk length %d invalid", length)
+	if int(length) == r.overhead()+paddingLen {
+		// 空块：对端写完。填充照样在线上，读掉免得留给下一个读者。
+		if paddingLen > 0 {
+			if _, err := r.upstream.Discard(paddingLen); err != nil {
+				return 0, err
+			}
+		}
+		return 0, io.EOF
+	}
+	if int(length) < r.overhead()+paddingLen {
+		return 0, fmt.Errorf("vmess chunk length %d invalid", length)
 	}
 	var bp *[]byte
 	ciphertext := p
@@ -166,20 +189,19 @@ func (r *vmessAEADReader) Read(p []byte) (int, error) {
 		}
 		return 0, err
 	}
-	binary.BigEndian.PutUint16(r.nonce[:2], r.count)
-	r.count++
-	plaintext, err := r.gcm.Open(ciphertext[:0], r.nonce[:], ciphertext, nil)
-	if err != nil {
-		if bp != nil {
-			putFrameBuf(bp)
+	ciphertext = ciphertext[:int(length)-paddingLen]
+	plaintext := ciphertext
+	if r.gcm != nil {
+		binary.BigEndian.PutUint16(r.nonce[:2], r.count)
+		r.count++
+		var err error
+		plaintext, err = r.gcm.Open(ciphertext[:0], r.nonce[:], ciphertext, nil)
+		if err != nil {
+			if bp != nil {
+				putFrameBuf(bp)
+			}
+			return 0, fmt.Errorf("vmess AES chunk authentication failed: %w", err)
 		}
-		return 0, fmt.Errorf("vmess AES chunk authentication failed: %w", err)
-	}
-	if len(plaintext) == 0 {
-		if bp != nil {
-			putFrameBuf(bp)
-		}
-		return 0, io.EOF
 	}
 	if bp == nil {
 		return len(plaintext), nil
@@ -198,11 +220,17 @@ type vmessAEADWriter struct {
 	upstream io.Writer
 	gcm      cipher.AEAD
 	mask     sha3.ShakeHash
+	padding  bool
+	packet   bool
 	nonce    [12]byte
 	count    uint16
 }
 
 func newVMessAEADWriter(upstream io.Writer, aead cipher.AEAD, nonce []byte, option byte) *vmessAEADWriter {
+	return newVMessChunkWriter(upstream, aead, nonce, option, false)
+}
+
+func newVMessChunkWriter(upstream io.Writer, aead cipher.AEAD, nonce []byte, option byte, packet bool) *vmessAEADWriter {
 	var base [12]byte
 	copy(base[:], nonce)
 	var mask sha3.ShakeHash
@@ -210,24 +238,53 @@ func newVMessAEADWriter(upstream io.Writer, aead cipher.AEAD, nonce []byte, opti
 		mask = sha3.NewShake128()
 		_, _ = mask.Write(nonce)
 	}
-	return &vmessAEADWriter{upstream: upstream, gcm: aead, mask: mask, nonce: base}
+	padding := mask != nil && option&vmessOptPadding != 0 && (aead != nil || packet)
+	return &vmessAEADWriter{upstream: upstream, gcm: aead, mask: mask, padding: padding, packet: packet, nonce: base}
 }
+
+// vmessStreamChunk 是流式分块的单块明文上限；UDP 一个包一块，上限是长度字段能
+// 表示的最大值减去标签与填充。
+const (
+	vmessStreamChunk = 15000
+	vmessPacketChunk = 65535 - 16 - vmessMaxPadding
+)
 
 func (w *vmessAEADWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	bp, _ := getFrameBuf(2 + 15000 + 16)
+	limit := vmessStreamChunk
+	if w.packet {
+		limit = vmessPacketChunk
+	}
+	overhead := 0
+	if w.gcm != nil {
+		overhead = w.gcm.Overhead()
+	}
+	bp, _ := getFrameBuf(2 + limit + overhead + vmessMaxPadding)
 	defer putFrameBuf(bp)
 	written := 0
 	for len(p) > 0 {
 		chunk := p
-		if len(chunk) > 15000 {
-			chunk = chunk[:15000]
+		if len(chunk) > limit {
+			chunk = chunk[:limit]
 		}
-		binary.BigEndian.PutUint16(w.nonce[:2], w.count)
-		w.count++
-		out := w.gcm.Seal((*bp)[:2], w.nonce[:], chunk, nil)
-		length := uint16(len(out) - 2)
+		out := (*bp)[:2]
+		if w.gcm != nil {
+			binary.BigEndian.PutUint16(w.nonce[:2], w.count)
+			w.count++
+			out = w.gcm.Seal(out, w.nonce[:], chunk, nil)
+		} else {
+			out = append(out, chunk...)
+		}
+		paddingLen := 0
+		if w.padding {
+			next, err := nextVMessMask(w.mask)
+			if err != nil {
+				return written, err
+			}
+			paddingLen = int(next % vmessMaxPadding)
+		}
+		length := uint16(len(out) - 2 + paddingLen)
 		if w.mask != nil {
 			maskCode, err := nextVMessMask(w.mask)
 			if err != nil {
@@ -236,6 +293,14 @@ func (w *vmessAEADWriter) Write(p []byte) (int, error) {
 			length ^= maskCode
 		}
 		binary.BigEndian.PutUint16(out[:2], length)
+		if paddingLen > 0 {
+			// 填充明文上线：用密码学随机数，免得泄露 PRNG 状态（Xray 同此）。
+			start := len(out)
+			out = out[:start+paddingLen]
+			if _, err := rand.Read(out[start:]); err != nil {
+				return written, err
+			}
+		}
 		if _, err := w.upstream.Write(out); err != nil {
 			return written, err
 		}

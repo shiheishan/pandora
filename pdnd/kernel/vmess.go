@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/cipher"
-	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -36,6 +35,12 @@ const (
 	vmessSecZero   byte = 6
 	vmessOptChunk  byte = 1
 	vmessOptMask   byte = 4
+	// vmessOptPadding 是 Xray 的 RequestOptionGlobalPadding：aes / chacha / auto
+	// 默认开启，每块追加随机填充，必须与 ChunkMasking 同开。
+	vmessOptPadding byte = 8
+	// vmessOptAuthLength 是 Xray 的实验选项 AuthenticatedLength（长度字段也加密），
+	// 默认不开；不支持就明确拒绝，免得按普通长度解出一串乱码。
+	vmessOptAuthLength byte = 0x10
 )
 
 var vmessKDFRoot = []byte("VMess AEAD KDF")
@@ -484,15 +489,10 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 	defer upstream.Close()
-	if err := vmessWriteResponse(conn, bodyState.key, bodyState.nonce, 0, bodyState.option); err != nil {
+	if err := bodyState.writeResponse(conn); err != nil {
 		return err
 	}
-	responseWriter := io.Writer(conn)
-	if security == vmessSecAES128 || security == vmessSecChaCha {
-		responseKeyHash := sha256.Sum256(bodyState.key)
-		responseNonceHash := sha256.Sum256(bodyState.nonce)
-		responseWriter = newVMessAEADWriter(conn, vmessBodyAEAD(security, responseKeyHash[:16]), responseNonceHash[:16], bodyState.option)
-	}
+	responseWriter := bodyState.responseWriter(conn)
 	// VMess 的读写各自分块加解密，读端是 body、写端是响应流，拼成一端交给转发；
 	// 响应流没有半关闭，上游结束后按单向收尾计时收尾。
 	client := &core.SplitStream{R: body, W: responseWriter, C: conn}
@@ -509,17 +509,10 @@ func (a *vmessAdapter) handleUDP(ctx context.Context, conn net.Conn, user core.U
 		return err
 	}
 	defer upstream.Close()
-	if err := vmessWriteResponse(conn, body.key, body.nonce, 0, body.option); err != nil {
+	if err := body.writeResponse(conn); err != nil {
 		return err
 	}
-	responseKeyHash := sha256.Sum256(body.key)
-	responseNonceHash := sha256.Sum256(body.nonce)
-	var writer io.Writer
-	if security == vmessSecAES128 || security == vmessSecChaCha {
-		writer = newVMessAEADWriter(conn, vmessBodyAEAD(security, responseKeyHash[:16]), responseNonceHash[:16], body.option)
-	} else {
-		writer = &vmessPlainChunkWriter{upstream: conn}
-	}
+	writer := body.responseWriter(conn)
 	destinationAddr, err := vmessDestinationUDPAddr(destination)
 	if err != nil {
 		return err

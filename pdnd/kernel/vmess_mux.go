@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -50,15 +49,10 @@ type vmessMuxStream struct {
 }
 
 func (a *vmessAdapter) handleMux(ctx context.Context, conn net.Conn, user core.User, body *vmessBodyReader, security byte) error {
-	if err := vmessWriteResponse(conn, body.key, body.nonce, 0, body.option); err != nil {
+	if err := body.writeResponse(conn); err != nil {
 		return err
 	}
-	var writer io.Writer = conn
-	if security == vmessSecAES128 || security == vmessSecChaCha {
-		keyHash := sha256.Sum256(body.key)
-		nonceHash := sha256.Sum256(body.nonce)
-		writer = newVMessAEADWriter(conn, vmessBodyAEAD(security, keyHash[:16]), nonceHash[:16], body.option)
-	}
+	writer := body.responseWriter(conn)
 	session := &vmessMuxSession{adapter: a, ctx: ctx, user: user, writer: writer, streams: make(map[uint16]*vmessMuxStream)}
 	reader := bufio.NewReaderSize(body, 64*1024)
 	for {
