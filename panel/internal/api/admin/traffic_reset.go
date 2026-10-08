@@ -67,6 +67,7 @@ type manualResetTrafficResponse struct {
 	Reset      bool  `json:"reset"`
 }
 
+// manualResetTraffic 把订阅行上的那一份本期已用流量清零（POST v1/subscriptions/{id}/traffic-reset）。
 func (h *handlers) manualResetTraffic(w http.ResponseWriter, r *http.Request) {
 	var req manualResetReq
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -76,7 +77,7 @@ func (h *handlers) manualResetTraffic(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFrom(r.Context())
 	freed, err := h.d.Billing.ManualResetTraffic(r.Context(),
 		httpx.TenantIDFrom(r.Context()), billing.ManualResetInput{
-			UserID: chi.URLParam(r, "id"), ActorID: p.UserID, Note: req.Note,
+			SubscriptionID: chi.URLParam(r, "id"), ActorID: p.UserID, Note: req.Note,
 		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)

@@ -262,7 +262,7 @@ db "UPDATE plan_versions SET frozen_at=now(), status='published' WHERE id='$VERS
 db "UPDATE plans SET current_version_id='$VERSION2', status='active' WHERE id='$PLAN2'" >/dev/null
 expect_http 201 POST "$ADM/v1/orders/manual" -H "$AH" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: exp-manual-change-$STAMP" \
-  -d "{\"user_id\":\"$USER_ID\",\"plan_id\":\"$PLAN2\",\"price_id\":\"$PRICE2\",\"reason\":\"换套餐端到端测试\",\"settlement\":\"grant\"}"
+  -d "{\"user_id\":\"$USER_ID\",\"plan_id\":\"$PLAN2\",\"price_id\":\"$PRICE2\",\"reason\":\"换套餐端到端测试\",\"settlement\":\"grant\",\"target\":{\"kind\":\"change\",\"subscription_id\":\"$SUB_ID\"}}"
 json_check "$HTTP_BODY" "d['status'] == 'fulfilled' and 'balance_refund' in d" "manual order for another plan is an in-place plan change"
 assert_eq "$(db "SELECT count(*) FROM subscriptions WHERE user_id='$USER_ID'")" 1 "no second subscription was opened"
 assert_eq "$(db "SELECT plan_id FROM subscriptions WHERE id='$SUB_ID'")" "$PLAN2" "the original subscription now carries the new plan"

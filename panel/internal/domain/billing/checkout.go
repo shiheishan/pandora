@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aegispanel/aegis/internal/domain/plugin"
 	"github.com/aegispanel/aegis/internal/middleware"
@@ -32,8 +31,8 @@ type CreateOrderInput struct {
 	// CouponCode 是可选的优惠码
 	CouponCode string
 	// RejectSamePlan 由门户新购设置（规则 3）：用户已有这个套餐、可以原地续费的订阅时
-	// 拒绝新开（ErrSamePlanUseRenewal），门户改走续费。人工开单在进来之前已按同一口径
-	// 改走续费（CreateManualOrder），不设它。
+	// 拒绝新开（ErrSamePlanUseRenewal），门户改走续费（NewCopy 时不拦）；同一套餐已有未付款
+	// 的新购单时回 409 order_pending。人工开单按 Target 分派（CreateManualOrder），不设它。
 	RejectSamePlan bool
 	// NewCopy 是门户「另买一份」的显式意图：设了它就不拦同套餐（RejectSamePlan 只在
 	// !NewCopy 时生效），开出来的是一份新订阅、新链接。
@@ -88,22 +87,6 @@ func (o *CreateOrderOutput) PreparedResponse() httpx.PreparedResponse {
 
 const CheckoutIdempotencyScope = "order_create"
 
-func catalogGroupAllowed(userGroupID *string, allowed []string) bool {
-	if userGroupID == nil {
-		return false
-	}
-	for _, id := range allowed {
-		if id == *userGroupID {
-			return true
-		}
-	}
-	return false
-}
-
-func catalogPriceCurrentlyValid(from, until *time.Time, now time.Time) bool {
-	return (from == nil || !from.After(now)) && (until == nil || until.After(now))
-}
-
 func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrderInput) (*CreateOrderOutput, error) {
 	// 幂等声明绑定的是发起请求的人，不是订单归属的人。
 	// 普通下单两者相同；人工单是管理员替用户开的，发起人是管理员 ——
@@ -129,67 +112,16 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 	// 用序列化隔离：库存与限购次数的检查-更新之间不能有写偏斜（XBD-012 验收
 	// 「并发购买不突破库存和次数限制」）。调用方需要能重试 40001。
 	err := s.pool.InTxSerializableRetry(ctx, scope, func(tx pgx.Tx) error {
-		// --- 取套餐与当前版本 ---
-		var (
-			planName        string
-			planStatus      string
-			visibility      string
-			visibleGroupIDs []string
-			visibleFrom     *time.Time
-			visibleUntil    *time.Time
-			allowNew        bool
-			purchaseLimit   *int
-			stockTotal      *int
-			stockReserved   int
-			stockSold       int
-			currentVersion  *string
-			productID       string
-		)
-		err := tx.QueryRow(ctx, `
-			SELECT name, status, visibility, visible_group_ids::text[],
-			       visible_from, visible_until, allow_new_purchase,
-			       purchase_limit_per_user, stock_total, stock_reserved, stock_sold,
-			       current_version_id, product_id
-			  FROM plans
-			 WHERE tenant_id = $1 AND id = $2
-			 FOR UPDATE`,
-			tenantID, in.PlanID).Scan(&planName, &planStatus, &visibility,
-			&visibleGroupIDs, &visibleFrom, &visibleUntil, &allowNew,
-			&purchaseLimit, &stockTotal, &stockReserved, &stockSold, &currentVersion, &productID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.NotFoundOrForbidden()
-		}
+		now := time.Now().UTC()
+		// --- 取套餐与当前版本（与报价同一份校验，checkout_catalog.go）---
+		plan, err := loadNewPurchasePlanTx(ctx, tx, tenantID, in.UserID, in.PlanID, true, now)
 		if err != nil {
 			return err
 		}
-
-		// XBD-011：不可见套餐不能通过直接 API 下单
-		if planStatus != "active" || visibility == "hidden" || visibility == "invite_only" {
-			return httpx.NotFoundOrForbidden()
-		}
-		now := time.Now().UTC()
-		if (visibleFrom != nil && visibleFrom.After(now)) ||
-			(visibleUntil != nil && !visibleUntil.After(now)) {
-			return httpx.NotFoundOrForbidden()
-		}
-		var userGroupID *string
-		if err := tx.QueryRow(ctx, `SELECT user_group_id FROM users
-			WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, in.UserID).Scan(&userGroupID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-		if visibility == "group" && !catalogGroupAllowed(userGroupID, visibleGroupIDs) {
-			return httpx.NotFoundOrForbidden()
-		}
-		if !allowNew {
-			return httpx.New(httpx.CodeConflict, "该套餐当前不接受新购")
-		}
 		// 同套餐只续不新开（规则 3，same_plan.go）：门户新购遇到可原地续费的同套餐订阅
-		// 拒绝，新开会换订阅链接。只读不锁：这里已锁着套餐行，续费的锁序是先订阅后
-		// 套餐，再锁订阅会交叉；序列化隔离兜住并发。
-		if in.RejectSamePlan {
+		// 拒绝，新开会换订阅链接；「另买一份」（NewCopy）是显式意图，不拦。只读不锁：这里
+		// 已锁着套餐行，续费的锁序是先订阅后套餐，再锁订阅会交叉；序列化隔离兜住并发。
+		if in.RejectSamePlan && !in.NewCopy {
 			if samePlanSub, err := renewableSamePlanSubscription(ctx, tx, tenantID,
 				in.UserID, in.PlanID, false); err != nil {
 				return err
@@ -197,12 +129,21 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 				return ErrSamePlanUseRenewal
 			}
 		}
-		if currentVersion == nil {
-			return httpx.New(httpx.CodeConflict, "该套餐尚未发布可用版本")
+		label, err := newCopyLabel(ctx, tx, tenantID, in, plan.PlanName)
+		if err != nil {
+			return err
+		}
+		// 防重复下单：门户新购（RejectSamePlan 是门户新购的标记）同一套餐同时只能有一张未付款
+		// 的新购单；人工单不受限。两个标签页同时点，靠序列化隔离保证只有一张成功：后提交的
+		// 那个拿到 40001，重试时就能看到前一张
+		if in.RejectSamePlan && in.ManualActor == "" {
+			if err := ensureNoPendingNewOrder(ctx, tx, tenantID, in.UserID, in.PlanID, plan.PlanName); err != nil {
+				return err
+			}
 		}
 
 		// XBD-012：限购次数
-		if purchaseLimit != nil {
+		if plan.PurchaseLimit != nil {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO plan_purchase_counters
 					(tenant_id, plan_id, user_id, purchased, reserved)
@@ -219,88 +160,28 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 				tenantID, in.PlanID, in.UserID).Scan(&purchased, &reserved); err != nil {
 				return err
 			}
-			if purchased+reserved >= *purchaseLimit {
+			if purchased+reserved >= *plan.PurchaseLimit {
 				return httpx.New(httpx.CodeConflict, "已达到该套餐的限购次数")
 			}
 		}
 
 		// 库存
-		if stockTotal != nil && stockSold+stockReserved >= *stockTotal {
+		if plan.StockTotal != nil && plan.StockSold+plan.StockReserved >= *plan.StockTotal {
 			return httpx.New(httpx.CodeConflict, "该套餐已售罄")
 		}
 
 		// --- 取价格并快照 ---
-		var (
-			currency        string
-			unitAmount      int64
-			interval        string
-			intervalCount   int16
-			priceStatus     string
-			priceGroupID    *string
-			priceValidFrom  *time.Time
-			priceValidUntil *time.Time
-		)
-		err = tx.QueryRow(ctx, `
-			SELECT currency, unit_amount, billing_interval, interval_count, status,
-			       user_group_id, valid_from, valid_until
-			  FROM prices
-			 WHERE tenant_id = $1 AND id = $2 AND product_id = $3
-			   AND currency IN ('CNY','USD')
-			 FOR UPDATE`,
-			tenantID, in.PriceID, productID).Scan(
-			&currency, &unitAmount, &interval, &intervalCount, &priceStatus,
-			&priceGroupID, &priceValidFrom, &priceValidUntil)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.NotFoundOrForbidden()
-		}
+		price, err := loadNewPurchasePriceTx(ctx, tx, tenantID, plan.ProductID, in.PriceID,
+			plan.UserGroupID, true, now)
 		if err != nil {
 			return err
 		}
-		if priceStatus != "active" {
-			return httpx.New(httpx.CodeConflict, "该价格已下架")
-		}
+		currency, unitAmount := price.Currency, price.UnitAmount
+		interval, intervalCount := price.Interval, price.IntervalCount
 
 		// --- 权益与配额快照（SUB-002「可解释用户最终获得的每一项权益来源」）---
-		if priceGroupID != nil && (userGroupID == nil || *userGroupID != *priceGroupID) {
-			return httpx.NotFoundOrForbidden()
-		}
-		if !catalogPriceCurrentlyValid(priceValidFrom, priceValidUntil, now) {
-			return httpx.New(httpx.CodeConflict, "该价格当前不在有效期内")
-		}
-
-		entitlements, err := jsonAgg(ctx, tx, `
-			SELECT coalesce(jsonb_agg(jsonb_build_object('code', code, 'value', value)), '[]'::jsonb)
-			  FROM entitlements WHERE plan_version_id = $1`, *currentVersion)
+		snap, err := loadPlanSnapshotTx(ctx, tx, tenantID, in.PlanID, plan.CurrentVersion, plan.ProductID)
 		if err != nil {
-			return err
-		}
-		quotas, err := jsonAgg(ctx, tx, `
-			SELECT coalesce(jsonb_agg(jsonb_build_object(
-			         'metric', metric, 'limit', limit_value,
-			         'unit', unit, 'period', period)), '[]'::jsonb)
-			  FROM quota_definitions WHERE plan_version_id = $1`, *currentVersion)
-		if err != nil {
-			return err
-		}
-
-		var planVersionNo int
-		var planVersionStatus string
-		var frozenAt *time.Time
-		if err := tx.QueryRow(ctx,
-			`SELECT version,status,frozen_at FROM plan_versions
-			  WHERE tenant_id=$1 AND id=$2::uuid AND plan_id=$3::uuid FOR SHARE`,
-			tenantID, *currentVersion, in.PlanID).
-			Scan(&planVersionNo, &planVersionStatus, &frozenAt); err != nil {
-			return err
-		}
-		if planVersionStatus != "published" || frozenAt == nil {
-			return httpx.New(httpx.CodeConflict, "套餐当前版本未完成发布")
-		}
-
-		var productName string
-		if err := tx.QueryRow(ctx,
-			`SELECT name FROM products WHERE tenant_id = $1 AND id = $2`,
-			tenantID, productID).Scan(&productName); err != nil {
 			return err
 		}
 
@@ -326,15 +207,19 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 		}
 
 		total := subtotal - discount
-		balanceApplied := in.UseBalance
-		if balanceApplied < 0 {
-			balanceApplied = 0
+		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced；付不了的回 422，只有换套餐的零头能免）
+		bal, err := balancePlan(ctx, tx, tenantID, in.UserID, currency, total,
+			in.UseBalance, balanceOpts{Offline: in.Offline != nil, Manual: in.ManualActor != ""})
+		if err != nil {
+			return err
 		}
-		if balanceApplied > total {
-			balanceApplied = total
+		if err := checkExpectation(in.Expect, total, bal); err != nil {
+			return err
 		}
-
-		payable := total - balanceApplied
+		if bal.Waived > 0 {
+			discount, total = waiveIntoDiscount(coupon, discount, total, bal.Waived)
+		}
+		balanceApplied, payable := bal.Applied, bal.Payable
 		if in.Offline != nil && payable == 0 {
 			return httpx.New(httpx.CodeConflict, "这张订单不需要支付，请改用赠送")
 		}
@@ -359,15 +244,16 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 				(tenant_id, order_no, user_id, kind, status, currency,
 				 subtotal_amount, discount_amount, tax_amount,
 				 total_amount, balance_applied, payable_amount, expires_at, coupon_id,
-				 idempotency_key_id, manual_reason, created_by)
+				 idempotency_key_id, manual_reason, created_by, subscription_label)
 			VALUES ($1, $2, $3, $12, 'pending_payment', $4,
 			        $5, $6, 0, $7, $8, $9, now() + interval '30 minutes', $10,
-			        $11::uuid, $13, $14::uuid)
+			        $11::uuid, $13, $14::uuid, $15)
 			RETURNING id::text, expires_at`,
 			tenantID, orderNo, in.UserID, currency,
 			subtotal, discount, total, balanceApplied, payable,
 			couponID(coupon), in.Claim.ID,
 			orderKindFor(in), nullIfEmpty(in.ManualReason), nullIfEmpty(in.ManualActor),
+			nullIfEmpty(label),
 		).Scan(&orderID, &expiresAt); err != nil {
 			return err
 		}
@@ -392,9 +278,9 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 				 snapshot_entitlements, snapshot_quotas,
 				 quantity, unit_amount, line_amount, currency)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,1,$14,$14,$15)`,
-			tenantID, orderID, productID, in.PriceID, in.PlanID, *currentVersion,
-			productName, planName, planVersionNo, interval, intervalCount,
-			entitlements, quotas, unitAmount, currency); err != nil {
+			tenantID, orderID, plan.ProductID, in.PriceID, in.PlanID, plan.CurrentVersion,
+			snap.ProductName, plan.PlanName, snap.PlanVersionNo, interval, intervalCount,
+			snap.Entitlements, snap.Quotas, unitAmount, currency); err != nil {
 			return err
 		}
 
@@ -418,7 +304,7 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 		if stockTag.RowsAffected() != 1 {
 			return httpx.New(httpx.CodeConflict, "该套餐已售罄")
 		}
-		if purchaseLimit != nil {
+		if plan.PurchaseLimit != nil {
 			if _, err := tx.Exec(ctx, `
 				UPDATE plan_purchase_counters
 				   SET reserved = reserved + 1, updated_at = now()
@@ -450,7 +336,7 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 				ReservationID: reservationID, BusinessRequestID: in.Claim.ID,
 				Kind: "new", PlanID: in.PlanID, Currency: currency, TotalAmount: total,
 				BalanceApplied: balanceApplied, HoldAccountID: holdAccounts.HoldID,
-				HasPurchaseLimit: purchaseLimit != nil, Coupon: coupon,
+				HasPurchaseLimit: plan.PurchaseLimit != nil, Coupon: coupon,
 			}); err != nil {
 				return err
 			}
@@ -468,7 +354,8 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 			Action: "order.created", ResourceType: "order", ResourceID: &orderID,
 			AfterDigest: map[string]any{
 				"order_no": orderNo, "total": total, "currency": currency,
-				"plan_version": planVersionNo,
+				"plan_version": snap.PlanVersionNo, "new_copy": in.NewCopy,
+				"small_due_waived": bal.Waived,
 			},
 			APIDomain: "public", RequestID: httpx.RequestIDFrom(ctx),
 		}); err != nil {
@@ -542,172 +429,4 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 		s.notifyIfFulfilled(ctx, tenantID, out.Status)
 	}
 	return &out, nil
-}
-
-type zeroPayCapture struct {
-	TenantID          string
-	UserID            string
-	OrderID           string
-	ReservationID     string
-	BusinessRequestID string
-	// Kind 是 new 或 addon：新购要结转库存并开订阅，流量包没有库存、履约是发余额
-	Kind             string
-	PlanID           string
-	Currency         string
-	TotalAmount      int64
-	BalanceApplied   int64
-	HoldAccountID    string
-	HasPurchaseLimit bool
-	Coupon           *couponMatch
-}
-
-// captureZeroPayOrder converts every held resource to captured and fulfils a
-// zero-payable order before the surrounding create-order transaction commits.
-func (s *Service) captureZeroPayOrder(ctx context.Context, tx pgx.Tx, in zeroPayCapture) error {
-	var captureTxnID string
-	if in.BalanceApplied > 0 {
-		if in.BalanceApplied != in.TotalAmount || in.HoldAccountID == "" {
-			return errors.New("zero-pay order has an invalid balance hold")
-		}
-		revenueAccountID, err := EnsureAccount(ctx, tx, in.TenantID,
-			AccountPlatformRevenue, in.Currency, nil, "main")
-		if err != nil {
-			return err
-		}
-		captureTxnID, err = Post(ctx, tx, in.TenantID, Posting{
-			Kind: "order_paid", Currency: in.Currency,
-			SourceType: "order", SourceID: &in.OrderID,
-			Memo: "zero-pay order balance capture", ActorKind: "user", ActorID: &in.UserID,
-			Entries: []Entry{
-				{AccountID: in.HoldAccountID, Direction: Debit, Amount: in.BalanceApplied,
-					Description: "capture order balance hold"},
-				{AccountID: revenueAccountID, Direction: Credit, Amount: in.TotalAmount,
-					Description: "order revenue"},
-			},
-		})
-		if err != nil {
-			return err
-		}
-		tag, err := tx.Exec(ctx, `
-			UPDATE balance_holds
-			   SET status = 'captured', capture_txn_id = $4::uuid, captured_at = now()
-			 WHERE tenant_id = $1 AND order_id = $2::uuid
-			   AND reservation_id = $3::uuid AND status = 'held'`,
-			in.TenantID, in.OrderID, in.ReservationID, captureTxnID)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return errors.New("zero-pay order balance hold capture lost")
-		}
-	}
-
-	if in.Kind != "new" && in.Kind != "addon" {
-		return fmt.Errorf("zero-pay capture does not support order kind %q", in.Kind)
-	}
-	var tag pgconn.CommandTag
-	var err error
-	if in.Kind == "new" {
-		tag, err = tx.Exec(ctx, `
-			UPDATE plans
-			   SET stock_reserved = stock_reserved - 1, stock_sold = stock_sold + 1
-			 WHERE tenant_id = $1 AND id = $2::uuid AND stock_reserved > 0`,
-			in.TenantID, in.PlanID)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return errors.New("zero-pay order stock capture lost")
-		}
-	}
-
-	if in.HasPurchaseLimit {
-		tag, err = tx.Exec(ctx, `
-			UPDATE plan_purchase_counters
-			   SET reserved = reserved - 1, purchased = purchased + 1, updated_at = now()
-			 WHERE tenant_id = $1 AND plan_id = $2::uuid AND user_id = $3::uuid
-			   AND reserved > 0`, in.TenantID, in.PlanID, in.UserID)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return errors.New("zero-pay order purchase-limit capture lost")
-		}
-	}
-
-	if in.Coupon != nil {
-		tag, err = tx.Exec(ctx, `
-			UPDATE coupons
-			   SET reserved_count = reserved_count - 1,
-			       redeemed_count = redeemed_count + 1, updated_at = now()
-			 WHERE tenant_id = $1 AND id = $2::uuid AND reserved_count > 0`,
-			in.TenantID, in.Coupon.ID)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return errors.New("zero-pay order coupon counter capture lost")
-		}
-		tag, err = tx.Exec(ctx, `
-			UPDATE coupon_redemptions
-			   SET status = 'captured', captured_at = now()
-			 WHERE tenant_id = $1 AND order_id = $2::uuid
-			   AND reservation_id = $3::uuid AND status = 'held'`,
-			in.TenantID, in.OrderID, in.ReservationID)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return errors.New("zero-pay order coupon capture lost")
-		}
-	}
-
-	tag, err = tx.Exec(ctx, `
-		UPDATE order_reservations
-		   SET state = 'captured', captured_at = now()
-		 WHERE tenant_id = $1 AND id = $2::uuid AND order_id = $3::uuid
-		   AND state = 'held'`, in.TenantID, in.ReservationID, in.OrderID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() != 1 {
-		return errors.New("zero-pay order parent reservation capture lost")
-	}
-	tag, err = tx.Exec(ctx, `
-		INSERT INTO order_reservation_events
-			(tenant_id, reservation_id, order_id, from_state, to_state,
-			 event_kind, business_request_id, actor_kind, actor_id)
-		VALUES ($1, $2::uuid, $3::uuid, 'held', 'captured',
-		        'capture', $4::uuid, 'user', $5::uuid)`,
-		in.TenantID, in.ReservationID, in.OrderID, in.BusinessRequestID, in.UserID,
-	)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() != 1 {
-		return errors.New("zero-pay terminal capture event was not inserted")
-	}
-
-	tag, err = tx.Exec(ctx, `
-		UPDATE orders
-		   SET status = 'paid', paid_amount = total_amount, paid_at = now()
-		 WHERE tenant_id = $1 AND id = $2::uuid AND status = 'pending_payment'`,
-		in.TenantID, in.OrderID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() != 1 {
-		return errors.New("zero-pay order paid transition lost")
-	}
-	subID := ""
-	if in.Kind == "addon" {
-		if _, err := fulfillTrafficPackOrder(ctx, tx, in.TenantID, in.OrderID, in.UserID); err != nil {
-			return err
-		}
-	} else if subID, err = s.fulfillOrder(ctx, tx, in.TenantID, in.OrderID, in.UserID); err != nil {
-		return err
-	}
-	// 零元单也算一次支付完成：插件那边不该因为金额是 0 就漏掉这笔。
-	return plugin.EmitOrderPaid(ctx, tx, in.TenantID, in.OrderID, in.UserID,
-		in.Kind, "", 0, subID)
 }

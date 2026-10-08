@@ -15,7 +15,7 @@ func TestGiftTrafficBecomesATrafficPackGrant(t *testing.T) {
 	if strings.Contains(grant, "granted_addon") || strings.Contains(grant, "quota_balances") {
 		t.Fatal("gift traffic must not touch subscription quota rows any more")
 	}
-	if !strings.Contains(grant, `GrantTrafficPackTx(ctx, tx, tenantID, userID, "gift_card", codeID, bytes)`) {
+	if !strings.Contains(grant, `GrantTrafficPackTx(ctx, tx, tenantID, userID, sub, "gift_card", codeID, bytes)`) {
 		t.Fatal("gift traffic must land in the user's traffic pack balance, one grant per code")
 	}
 	// 续费与流量重置的全部声明（原先按 renewal.go、traffic_reset.go 两个文件读）
@@ -46,6 +46,7 @@ func TestTrafficPackOrderShapeAndFulfilment(t *testing.T) {
 	create := pkg.Decl("Service.CreateTrafficPackOrder")
 	for _, needle := range []string{
 		"middleware.ValidateIdempotencyClaim(", "CheckoutIdempotencyScope",
+		"lockLiveSubscriptionForPack(", "balancePlan(", "checkExpectation(",
 		"s.pool.InTxSerializableRetry(", "status = 'active'", "applyCoupon(",
 		"'addon', 'pending_payment'", "insertHeldReservation(", "redeemCoupon(",
 		"traffic_pack_id", `"metric": "traffic.bytes"`, "postBalanceHold(",
@@ -57,7 +58,7 @@ func TestTrafficPackOrderShapeAndFulfilment(t *testing.T) {
 	}
 	fulfil := pkg.Decl("fulfillTrafficPackOrder")
 	last := -1
-	for _, step := range []string{"snapshot_quotas->0->>'limit'", `GrantTrafficPackTx(ctx, tx, tenantID, userID, "order", orderID, bytes)`,
+	for _, step := range []string{"snapshot_quotas->0->>'limit'", `GrantTrafficPackTx(ctx, tx, tenantID, userID, subID, "order", orderID, bytes)`,
 		"SET status = 'fulfilled'", "AND status = 'paid'"} {
 		at := strings.Index(fulfil, step)
 		if at <= last {

@@ -25,12 +25,12 @@ func TestApplyBalance(t *testing.T) {
 			want: Balance{Applied: 30, Payable: 0, Forced: true}},
 		{name: "Forced 余额正好等于应付", due: 30, available: 30, requested: 10, mp: minPay,
 			want: Balance{Applied: 30, Payable: 0, Forced: true}},
-		{name: "SmallDue 余额为 0", due: 30, available: 0, requested: 0, mp: minPay,
-			want: Balance{Applied: 0, Payable: 30, SmallDue: true}},
-		{name: "SmallDue 余额不够 用了一部分", due: 30, available: 20, requested: 20, mp: minPay,
-			want: Balance{Applied: 20, Payable: 10, SmallDue: true}},
-		{name: "SmallDue 余额不够 关掉余额", due: 30, available: 20, requested: 0, mp: minPay,
-			want: Balance{Applied: 0, Payable: 30, SmallDue: true}},
+		{name: "Short 余额为 0", due: 30, available: 0, requested: 0, mp: minPay,
+			want: Balance{Applied: 0, Payable: 30, Short: true}},
+		{name: "Short 余额不够 开着余额：用尽余额", due: 30, available: 20, requested: 20, mp: minPay,
+			want: Balance{Applied: 20, Payable: 10, Short: true}},
+		{name: "Short 余额不够 关掉余额：同样用尽余额，零头不会变大", due: 30, available: 20, requested: 0, mp: minPay,
+			want: Balance{Applied: 20, Payable: 10, Short: true}},
 		{name: "requested 超过余额：截到余额", due: 3000, available: 1200, requested: 99999, mp: minPay,
 			want: Balance{Applied: 1200, Payable: 1800}},
 		{name: "requested 超过应付：截到应付", due: 500, available: 99999, requested: 99999, mp: minPay,
@@ -50,14 +50,14 @@ func TestApplyBalance(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("got %+v want %+v", got, tc.want)
 			}
-			// 不变量：用掉的余额 + 还需支付 = 应付；不用超过余额；在线付款要么为 0 要么够最低额（SmallDue 除外）
+			// 不变量：用掉的余额 + 还需支付 = 应付；不用超过余额；在线付款要么为 0 要么够最低额（Short 除外）
 			if got.Applied+got.Payable != max(tc.due, 0) {
 				t.Fatalf("applied+payable=%d due=%d", got.Applied+got.Payable, tc.due)
 			}
 			if got.Applied > tc.available || got.Applied < 0 {
 				t.Fatalf("applied %d outside [0,%d]", got.Applied, tc.available)
 			}
-			if !got.SmallDue && tc.mp > 1 && got.Payable > 0 && got.Payable < tc.mp {
+			if !got.Short && tc.mp > 1 && got.Payable > 0 && got.Payable < tc.mp {
 				t.Fatalf("payable %d below minimum %d", got.Payable, tc.mp)
 			}
 		})
@@ -91,6 +91,31 @@ func TestNormalizeLabel(t *testing.T) {
 	for in, want := range bad {
 		if _, err := NormalizeLabel(in); err != want {
 			t.Fatalf("NormalizeLabel(%q) err=%v want %v", in, err, want)
+		}
+	}
+}
+
+func TestWaiveSmallDue(t *testing.T) {
+	// 换套餐的零头：免掉，Short 清掉
+	got := WaiveSmallDue(ApplyBalance(30, 20, 0, 100), true)
+	if got != (Balance{Applied: 20, Payable: 0, SmallDue: true, Waived: 10}) {
+		t.Fatalf("waive = %+v", got)
+	}
+	// 不是换套餐（新购、续费、流量包、后台开单）：不免，仍是 Short，调用方拒绝
+	if got := WaiveSmallDue(ApplyBalance(30, 0, 0, 100), false); !got.Short || got.SmallDue || got.Payable != 30 {
+		t.Fatalf("not allowed = %+v", got)
+	}
+	// 零头上限 99 分，与最低额无关：最低额 ¥5 时差 ¥1.00 也不免
+	if got := WaiveSmallDue(ApplyBalance(100, 0, 0, 500), true); !got.Short || got.SmallDue {
+		t.Fatalf("over the cap = %+v", got)
+	}
+	if got := WaiveSmallDue(ApplyBalance(99, 0, 0, 500), true); !got.SmallDue || got.Waived != 99 {
+		t.Fatalf("at the cap = %+v", got)
+	}
+	// 不是 Short 的原样返回
+	for _, b := range []Balance{ApplyBalance(3000, 1200, 1200, 100), ApplyBalance(30, 50, 0, 100)} {
+		if WaiveSmallDue(b, true) != b {
+			t.Fatalf("non short balance must be unchanged: %+v", b)
 		}
 	}
 }

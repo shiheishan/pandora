@@ -198,7 +198,10 @@ type grantedRecord struct {
 	OrderID      string `json:"order_id,omitempty"`
 	// PlanMode 是套餐卡的落地方式（new / renewed / changed）；换套餐时 PlanRefund 是原套餐
 	// 退进余额的剩余价值，币种 RefundCurrency
-	PlanMode       string `json:"plan_mode,omitempty"`
+	PlanMode string `json:"plan_mode,omitempty"`
+	// SubscriptionID 是这张卡落到的那一份（加时长、重置、送流量、套餐卡）；送流量没有可挂的
+	// 那一份时为空，余额记为未分配
+	SubscriptionID string `json:"subscription_id,omitempty"`
 	PlanRefund     int64  `json:"plan_refund,omitempty"`
 	RefundCurrency string `json:"refund_currency,omitempty"`
 	LedgerTxnID    string `json:"ledger_txn_id,omitempty"`
@@ -207,11 +210,30 @@ type grantedRecord struct {
 func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID string,
 	t Template, choice *purchase.Choice, out *RedeemResult) (grantedRecord, error) {
 
-	// 契约阶段：落点选择尚未接入，按旧口径由计费域自动选（subID 为空、choice 为零值）
-	_ = choice
-	subID := ""
-
 	var g grantedRecord
+	// 落点（Q8）：选项在本事务里按当前订阅重新取，用户的选择必须还在里面
+	subID := ""
+	var planChoice purchase.Choice
+	if offer, ok := cardOffer(t); ok {
+		views, _, err := s.grant.Placements(ctx, tx, tenantID, userID, offer)
+		if err != nil {
+			return g, err
+		}
+		opt, found, err := resolveChoice(views, choice)
+		if err != nil {
+			return g, err
+		}
+		if found {
+			subID = opt.SubscriptionID
+			planChoice = purchase.Choice{Kind: opt.Kind, SubscriptionID: opt.SubscriptionID}
+		} else if offer.Kind != purchase.OfferTraffic {
+			// 要落到一份订阅上（加时长、重置、盲盒）却一份都没有：在抽奖、发放之前就拒绝，
+			// 同一张卡的抽奖结果不会因为失败回滚再重试而变化（只有纯送流量可以先记为未分配）
+			return g, ErrNoPlacement
+		}
+	}
+	g.SubscriptionID = subID
+
 	r := t.Rewards
 
 	if t.Type == "mystery" {
@@ -230,12 +252,13 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 
 	if t.Type == "plan" {
 		subID, mode, refund, currency, err := s.grant.GrantPlan(ctx, tx, tenantID, userID,
-			codeID, r.PlanID, r.PriceID, purchase.Choice{})
+			codeID, r.PlanID, r.PriceID, planChoice)
 		if err != nil {
 			return g, err
 		}
 		g.PlanID = r.PlanID
 		g.OrderID = subID
+		g.SubscriptionID = subID
 		g.PlanMode = mode
 		g.PlanRefund = refund
 		g.RefundCurrency = currency

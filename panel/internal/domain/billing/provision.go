@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
+	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -31,6 +35,8 @@ type provisionSpec struct {
 	ActorKind string
 	// OrderID 可空：礼品卡兑换没有订单
 	OrderID *string
+	// Label 是新购时给这一份起的备注名（orders.subscription_label），空表示不起名
+	Label string
 }
 
 // provisionSubscription 创建并激活订阅，初始化配额，签发订阅凭据。
@@ -76,6 +82,14 @@ func (s *Service) provisionSubscription(ctx context.Context, tx pgx.Tx,
 
 	if err := initQuotaBalances(ctx, tx, tenantID, subID, spec.PlanVersionID,
 		now, periodEnd); err != nil {
+		return "", err
+	}
+	if spec.Label != "" {
+		if err := setProvisionLabelTx(ctx, tx, tenantID, userID, subID, spec.Label); err != nil {
+			return "", err
+		}
+	}
+	if err := attachUnassignedPacksTx(ctx, tx, tenantID, userID, subID); err != nil {
 		return "", err
 	}
 
@@ -180,4 +194,68 @@ func (s *Service) grantPlanDirect(ctx context.Context, tx pgx.Tx,
 	spec.ActorKind = "system"
 
 	return s.provisionSubscription(ctx, tx, tenantID, userID, spec)
+}
+
+// setProvisionLabelTx 给刚开通的一份写上备注名。名字在履约时已被占（付款期间用户把别的份
+// 改成了同名）就自动加「 2」「 3」后缀：结算主链上任何失败都会把整笔钱卡住，不能因为
+// 一个显示用的名字让结算失败。每次尝试在一个保存点里，撞唯一索引只回滚这一步；
+// 试满还撞就不起名。
+func setProvisionLabelTx(ctx context.Context, tx pgx.Tx, tenantID, userID, subID, label string) error {
+	for n := 1; n <= 20; n++ {
+		candidate := labelWithSuffix(label, n)
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = sp.Exec(ctx, `
+			UPDATE subscriptions SET label = $4
+			 WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid`,
+			tenantID, subID, userID, candidate)
+		if err == nil {
+			return sp.Commit(ctx)
+		}
+		if rbErr := sp.Rollback(ctx); rbErr != nil {
+			return rbErr
+		}
+		if !db.IsUniqueViolation(err) {
+			return fmt.Errorf("写订阅备注名: %w", err)
+		}
+	}
+	return nil
+}
+
+// labelWithSuffix 给名字加第 n 个后缀（n=1 原样），总长不超过 purchase.MaxLabelRunes 个字。
+func labelWithSuffix(label string, n int) string {
+	if n <= 1 {
+		return label
+	}
+	suffix := " " + strconv.Itoa(n)
+	runes := []rune(label)
+	if keep := purchase.MaxLabelRunes - len([]rune(suffix)); len(runes) > keep {
+		runes = runes[:keep]
+	}
+	return strings.TrimRight(string(runes), " ") + suffix
+}
+
+// attachUnassignedPacksTx：刚开通的这一份是用户唯一一份生效中的订阅、而他名下有还没加到任何
+// 一份的流量包（无订阅时兑换的送流量卡、迁移时留空的余额）时，自动挂到这一份上，转移流水
+// 记 system。有多份生效中的就不替用户选，门户提示他自己选。
+func attachUnassignedPacksTx(ctx context.Context, tx pgx.Tx, tenantID, userID, subID string) error {
+	var live int
+	var unassigned bool
+	if err := tx.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM subscriptions s
+		         WHERE s.tenant_id = $1 AND s.user_id = $2::uuid
+		           AND s.status IN ('active','trialing','grace','past_due')),
+		       EXISTS (SELECT 1 FROM traffic_pack_grants g
+		                WHERE g.tenant_id = $1 AND g.user_id = $2::uuid
+		                  AND g.subscription_id IS NULL AND g.consumed_bytes < g.granted_bytes)`,
+		tenantID, userID).Scan(&live, &unassigned); err != nil {
+		return err
+	}
+	if live != 1 || !unassigned {
+		return nil
+	}
+	_, err := transferTrafficPacksTx(ctx, tx, tenantID, userID, nil, subID, "system", nil)
+	return err
 }
