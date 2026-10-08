@@ -9,6 +9,7 @@ paths:
 - 支付渠道开关只动 `accepting_new`（关 = 结账页不再显示、进行中的回调照常）；「完全停用」才动 `enabled`，放在「更多」菜单里。系统内置的 `offline` 渠道只读，不给开关（`model.ts` 的 `isOffline` / `toggleBody`）。
 - 新建 / 编辑渠道（`ProviderDialog.tsx`）只对易支付（`isEditableProvider`）：code 与类型建后不可改（PUT 请求体不带这两个键）；商户号与密钥只写不读，列表只有 `has_credentials`，编辑留空 = 不改；新建的渠道是「已启用、暂停收新单」，在卡片上打开收单才进结账页。后台改动在门户结账页最多 5 分钟后生效（各网关的渠道缓存），页面上写明了。
 - 人工开单不提供「从余额扣除」（D-C-3 已决），弹窗里引导先到用户详情调账、再用赠送开单。
+- 人工开单遇到用户已有订阅时不新开（2026-10-07）：同套餐续一期，别的套餐在原订阅上换套餐，弹窗用 `MANUAL_EXISTING_HINT` 说明；响应多 `proration_credit` / `balance_refund` 时即落成了换套餐，`manualCreatedToast` 报退回余额的金额。
 - 取消订单、标记已支付的失败文案（凭证号重复、订阅已结束款项进挂账都回 409）是后端中文原文，经 `useFailure` 原样 Toast，不要按状态码改写。
 - 会改用户余额或订阅的写（标记已支付、向渠道查单补记、人工开单、转入余额）成功后，除了 `useInvalidateBilling` 还要调 `users/api.ts` 的 `useInvalidateUsers`。
 - 「向渠道查单」只对发起过支付的待支付 / 处理中订单出现（`canQueryChannel`：`provider_code` 非空且非 offline）；查单与取消不挂 reauth，人工开单与标记已支付挂 reauth。

@@ -142,7 +142,7 @@ func TestRateLimitScriptShortCircuitsInDeclarationOrder(t *testing.T) {
 	body := rateLimitScriptSource
 	incr := strings.Index(body, "redis.call('INCR', key)")
 	expire := strings.Index(body, "redis.call('PEXPIRE', key, ARGV[2 * i])")
-	reject := strings.Index(body, "return {i, n}")
+	reject := strings.Index(body, "return {i, n, redis.call('PTTL', key)}")
 	loopEnd := strings.Index(body, "return {0, 0}")
 	if incr < 0 || expire < incr || reject < expire || loopEnd < reject ||
 		!strings.Contains(body, "if n == 1 then") {

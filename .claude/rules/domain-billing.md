@@ -39,9 +39,16 @@ paths:
 - 过期扫描 `ScanExpiredSubscriptions`（expire.go，aegis-admin 一分钟一轮）：到点改 status=expired、写 expired 事件与 `subscription.expired` 钩子，只改状态、不动凭据；过期满 30 天写 `renewal_closed_at` 并吊销凭据（旧链接作废），之后只能新购换链接。状态机 expired → active 由 00124 放开，「已取消」不放开
 - 续费履约只有 `renewSubscriptionTx` 一份（renewal_fulfill.go，订单与套餐卡共用）：基准是付款时刻（订单 paid_at）。付款时没到期 = 提前续费：接在原到期日之后，本期配额一行都不动，到点由 `rollCycleQuotaSQL` 把 cycle 行滚进新周期（剩不足两个周期就并到订阅周期末）；订单在到期前创建、回调晚到的也按提前续费。付款时已到期 = 过期恢复：从付款时刻起算，total / cycle / day / month 全部对齐清零（`restartQuotaPeriodsTx`），事件 from_status 记 expired
 - 加时长口径（礼品卡加时长与后台加时长同一个 `extendSubscriptionTx`）：生效中没到期只给时间；救回（已过期 30 天内、走过到期日、试用中）状态回 active，cycle 流量按「延长天数 ÷ 套餐周期天数」折算加到本周期上限（`rescueQuotaTx`，limit_value 只属于本周期，下次过期恢复或滚动写回），已用量沿用；走过到期日的 day / month 从今天重新对齐。只有付费续费给满额。永不过期的订阅不能延长
-- 同套餐只续不新开（same_plan.go）：门户新购带 `RejectSamePlan` 遇到可原地续费的同套餐订阅回 409；人工开单改开续费单（`CreateRenewal` 的 Manual* 字段，幂等域仍是 order_create，00125 放开这一组合，审计在建单事务里）；套餐卡改走 `grantPlanRenewal`。换套餐由门户路由到原订阅改套餐；后台不同套餐的人工单仍新开订阅
+- 同套餐只续不新开（same_plan.go）：门户新购带 `RejectSamePlan` 遇到可原地续费的同套餐订阅回 409；人工开单改开续费单（`CreateRenewal` 的 Manual* 字段，幂等域仍是 order_create，00125 放开这一组合，审计在建单事务里）；套餐卡改走 `grantPlanRenewal`
 - 变更套餐的折算：重开周期的事件还包括 `extended` 且 payload.restart；提前续费待开始的周期按 cycle 行长度把额度算进流量比例（`pendingCycleAllowance`）
 - `MarkOrderPaid` 的审计与结算在同一事务
+
+## 换套餐的三个入口（2026-10-07 用户定，w6plan）
+- 门户改套餐、后台人工开单遇到不同套餐、套餐卡遇到不同套餐，都在原订阅上换套餐、链接不变，共用一份折算（`plan_change_quote.go`）与一份履约（`applyPlanChangeTx`，plan_change_apply.go）。不要另写一套
+- 选哪条原订阅：先找同套餐（续费），没有再按 `planChangeTargetSubscription`（plan_change_manual.go）——`subscriptionAcceptsPaidChange` 收的订阅里生效中优先、其次到期最晚、再次最新创建。已取消不放开，照旧新开订阅
+- 人工开单：`CreateManualOrder` → `CreatePlanChange` 带 Manual* 字段（与人工续费同一套）：幂等声明属于管理员、域是 order_create（00134 放开 upgrade + created_by 这一组合）；赠送 `waiveNewPrice` 把新价全额减免，剩余价值全额退余额（`assertManualGrantRenewal` 认 renewal / upgrade 两种）；线下已收款在建单事务里 `settleManualOfflineTx`；审计 order.manual_created（digest 带 plan_change）与订单同事务
+- 套餐卡：`GiftGranter.GrantPlan`（带卡密）→ `grantPlanChange`（plan_change_grant.go），无订单，卡算 0 元，剩余价值全额退余额；退款分录 `source_type='gift_card_code'`、plan_changed 事件 order_id 为空且 payload 带 source=gift_card / gift_card_code_id / refund_currency，00134 的 `app.assert_gift_plan_change` 在提交时核对兑换流水、事件归属与金额。订阅上挂着未完结的续费或变更单时拒绝兑换（409）。giftcard 经接口拿到的是基本类型（订阅、mode、退款与币种），不 import billing
+- 守卫：PG18 sub_period 域的 `plan change entries` 子测试
 
 ## 佣金
 - 可用佣金 = `user_commission_available` 科目余额 − requested / reviewing / approved 状态的在途提现，唯一口径在 commission_available.go。提现申请与转余额都先 `lockUserCommissionAccounts`，再按这个口径校验。守卫 `TestRequestWithdrawalUsesLedgerAvailabilityUnderSharedLock`、`TestCommissionTransferUsesSameLedgerAvailability`

@@ -144,7 +144,7 @@ func TestSubscriptionPeriodWritersSyncCredentials(t *testing.T) {
 	// 已知的三处：续费、变更套餐（开新周期），以及只往后推的延期。新增一处要在这里登记，
 	// 并确认它对齐了本周期配额行（见 extendSubscriptionTx 的注释）。
 	want := []string{
-		"internal/domain/billing/plan_change.go:fulfillPlanChangeLocked",
+		"internal/domain/billing/plan_change_apply.go:applyPlanChangeTx",
 		"internal/domain/billing/renewal_fulfill.go:renewSubscriptionTx",
 		"internal/domain/billing/subscription_period.go:extendSubscriptionTx",
 	}

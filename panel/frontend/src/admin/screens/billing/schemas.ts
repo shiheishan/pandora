@@ -177,6 +177,9 @@ export const manualCreatedSchema = z.object({
   balance_applied: int,
   payable_amount: int,
   status: z.enum(ORDER_STATUSES),
+  // 用户已有别的套餐的订阅时落成原订阅上的变更单（2026-10-07），多这两项：原套餐的剩余价值与退进余额的部分
+  proration_credit: int.optional(),
+  balance_refund: int.optional(),
 })
 export type ManualCreated = z.output<typeof manualCreatedSchema>
 /** POST v1/orders/{id}/mark-paid：修订 R2 起是 snake_case，不回 signature_failed */

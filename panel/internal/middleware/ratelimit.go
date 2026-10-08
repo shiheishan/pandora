@@ -20,6 +20,23 @@ type Limit struct {
 	Max    int
 	// KeyFn 返回该维度的计数键；返回空串表示本次请求不适用此维度。
 	KeyFn func(*http.Request) string
+	// Cooldown 为真时计数键不分时间窗：从第一次计数起 Window 内有效（随后过期重来）。
+	// Max = 1 即「两次之间至少隔 Window」；固定时间窗做不到这一点（窗口边界两侧可以紧挨着）。
+	Cooldown bool
+	// RetryHint 为真时，这个维度超限的 429 写明还要等几分钟（「操作太频繁，请 X 分钟后再试」）。
+	RetryHint bool
+}
+
+// AsCooldown 把维度改成冷却式计数（见 Limit.Cooldown）。
+func (l Limit) AsCooldown() Limit {
+	l.Cooldown = true
+	return l
+}
+
+// WithRetryHint 让这个维度超限时在提示里写明还要等几分钟（见 Limit.RetryHint）。
+func (l Limit) WithRetryHint() Limit {
+	l.RetryHint = true
+	return l
 }
 
 // rateLimitScript 在一次 Valkey 往返里按维度顺序计数（审计 P11）。
@@ -32,7 +49,8 @@ type Limit struct {
 //   - 经 EVALSHA 发出（redis.Script 在脚本缓存丢失时自动退回 EVAL），不必每次带整段脚本。
 //
 // KEYS 是各维度的计数键；ARGV 依次是每个维度的 (上限, 过期毫秒)。
-// 返回 {序号, 计数}：序号为 0 表示全部放行，否则是第一个超限维度在 KEYS 里的序号（从 1 起）。
+// 返回 {序号, 计数, 剩余毫秒}：序号为 0 表示全部放行（{0, 0}），否则是第一个超限维度在 KEYS
+// 里的序号（从 1 起），剩余毫秒是那个计数键还有多久过期（给「X 分钟后再试」用）。
 const rateLimitScriptSource = `
 for i, key in ipairs(KEYS) do
   local n = redis.call('INCR', key)
@@ -40,7 +58,7 @@ for i, key in ipairs(KEYS) do
     redis.call('PEXPIRE', key, ARGV[2 * i])
   end
   if n > tonumber(ARGV[2 * i - 1]) then
-    return {i, n}
+    return {i, n, redis.call('PTTL', key)}
   end
 end
 return {0, 0}`
@@ -51,6 +69,8 @@ var rateLimitScript = redis.NewScript(rateLimitScriptSource)
 type rateLimitHit struct {
 	limit *Limit
 	count int64
+	// retry 是超限维度的计数键还有多久过期（脚本没回时为 0）
+	retry time.Duration
 }
 
 // checkLimits 计算本请求适用的维度，在一次往返里计数并判定。没有适用维度时不碰 Valkey。
@@ -65,8 +85,13 @@ func checkLimits(ctx context.Context, rdb *redis.Client, r *http.Request, limits
 		if suffix == "" {
 			continue
 		}
-		keys = append(keys, fmt.Sprintf("rl:%s:%s:%d", l.Name, suffix,
-			time.Now().UnixNano()/int64(l.Window)))
+		if l.Cooldown {
+			// 冷却式：键不带时间窗编号，从第一次计数起 Window 后过期
+			keys = append(keys, fmt.Sprintf("rl:%s:%s", l.Name, suffix))
+		} else {
+			keys = append(keys, fmt.Sprintf("rl:%s:%s:%d", l.Name, suffix,
+				time.Now().UnixNano()/int64(l.Window)))
+		}
 		args = append(args, l.Max, (l.Window + time.Second).Milliseconds())
 		applied = append(applied, l)
 	}
@@ -80,13 +105,27 @@ func checkLimits(ctx context.Context, rdb *redis.Client, r *http.Request, limits
 	if err != nil {
 		return rateLimitHit{}, err
 	}
-	if len(res) != 2 || res[0] < 0 || res[0] > int64(len(applied)) {
+	if len(res) < 2 || len(res) > 3 || res[0] < 0 || res[0] > int64(len(applied)) {
 		return rateLimitHit{}, fmt.Errorf("限流脚本返回了意外的结果 %v", res)
 	}
 	if res[0] == 0 {
 		return rateLimitHit{}, nil
 	}
-	return rateLimitHit{limit: applied[res[0]-1], count: res[1]}, nil
+	hit := rateLimitHit{limit: applied[res[0]-1], count: res[1]}
+	if len(res) == 3 && res[2] > 0 {
+		// 过期时间比时间窗多设了 1 秒余量，提示里扣掉
+		hit.retry = max(time.Duration(res[2])*time.Millisecond-time.Second, 0)
+	}
+	return hit, nil
+}
+
+// rejectMessage 是超限的 429 提示：维度要求写明等待时间时按分钟向上取整（至少 1 分钟）。
+func (h rateLimitHit) rejectMessage() string {
+	if h.limit == nil || !h.limit.RetryHint {
+		return "请求过于频繁，请稍后再试"
+	}
+	minutes := max(int64((h.retry+time.Minute-1)/time.Minute), 1)
+	return fmt.Sprintf("操作太频繁，请 %d 分钟后再试", minutes)
 }
 
 // RateLimit 按多个维度联合限流。
@@ -118,7 +157,7 @@ func RateLimit(rdb *redis.Client, log *slog.Logger, limits ...Limit) func(http.H
 					slog.Int("max", hit.limit.Max),
 					slog.String("request_id", httpx.RequestIDFrom(ctx)))
 				httpx.Fail(w, r, log,
-					httpx.New(httpx.CodeRateLimited, "请求过于频繁，请稍后再试"))
+					httpx.New(httpx.CodeRateLimited, hit.rejectMessage()))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -142,7 +181,7 @@ func RateLimitStrict(rdb *redis.Client, log *slog.Logger, limits ...Limit) func(
 			}
 			if hit.limit != nil {
 				httpx.Fail(w, r, log,
-					httpx.New(httpx.CodeRateLimited, "请求过于频繁，请稍后再试"))
+					httpx.New(httpx.CodeRateLimited, hit.rejectMessage()))
 				return
 			}
 			next.ServeHTTP(w, r)

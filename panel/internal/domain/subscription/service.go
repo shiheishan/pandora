@@ -247,7 +247,29 @@ func (s *Service) rotateInTx(ctx context.Context, tx pgx.Tx, tenantID, userID, s
 		tenantID, subID, userID, crypto.HashToken(token), token[:8], expires, sealed); err != nil {
 		return "", err
 	}
+	// 节点密码一起换（2026-10-07，与 Xboard「重置订阅」一致）：只换链接的话，泄露者已经
+	// 导入的节点配置里带着 proxy_uuid，照样能连。新值写在同一事务里；00101 的下发纪元
+	// 触发器随订阅行的更新推进，节点下一轮拉名单就换成新 UUID，pdnd 按用户 ID 记的连接
+	// 表会断开旧 UUID 建立的连接。
+	if err := rotateProxyUUIDTx(ctx, tx, tenantID, subID); err != nil {
+		return "", err
+	}
 	return token, nil
+}
+
+// rotateProxyUUIDTx 给订阅换一个新的协议层用户标识（VMess/VLESS uuid、Trojan password）。
+// 调用方已锁住订阅行。
+func rotateProxyUUIDTx(ctx context.Context, tx pgx.Tx, tenantID, subID string) error {
+	tag, err := tx.Exec(ctx, `
+		UPDATE subscriptions SET proxy_uuid = gen_random_uuid(), updated_at = now()
+		 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, subID)
+	if err != nil {
+		return fmt.Errorf("更换节点密码: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // MatchPrefix 校验路径前缀是否属于该租户。

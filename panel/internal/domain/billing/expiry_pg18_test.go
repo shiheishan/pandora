@@ -320,15 +320,14 @@ func checkExpiryRulesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 		return end
 	}
 	beforeCard := subEnd(s7)
-	var cardSub string
-	var renewed bool
+	var cardSub, mode string
 	orderReleasePG18InTxAs(t, ctx, p.app, p.fx.tenant, u7, func(tx pgx.Tx) error {
 		var err error
-		cardSub, renewed, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, u7, plan, price, "同套餐套餐卡")
+		cardSub, mode, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, u7, "", plan, price, "同套餐套餐卡")
 		return err
 	})
-	if cardSub != s7 || !renewed || !subEnd(s7).Equal(beforeCard.AddDate(0, 1, 0)) {
-		t.Fatalf("plan card sub=%s renewed=%v", cardSub, renewed)
+	if cardSub != s7 || mode != PlanGrantRenewed || !subEnd(s7).Equal(beforeCard.AddDate(0, 1, 0)) {
+		t.Fatalf("plan card sub=%s mode=%s", cardSub, mode)
 	}
 	t.Log("marker=expiry_pg18_same_plan_renews_ok")
 }

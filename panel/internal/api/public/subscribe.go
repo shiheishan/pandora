@@ -20,11 +20,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/subscription"
+	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/realtime"
 )
 
 // decoyPage 是所有失败请求看到的东西。
@@ -270,7 +273,22 @@ type rotateLinkResponse struct {
 	URL string `json:"url"`
 }
 
-// rotateSubscriptionLink 换一条新链接，旧的立即失效。
+// subscriptionRotateLimits 是门户重置订阅链接的按用户限频（用户 2026-10-07 定），两条规则
+// 在同一次 EVAL 里判定：
+//
+//	两次重置之间至少隔 10 分钟   冷却式计数，从这次重置起 10 分钟内的下一次回 429
+//	每天最多 5 次                冷却式计数，从当天第一次重置起 24 小时内最多 5 次
+//
+// 间隔放在前面：被间隔拦下的请求不占当天的次数。超限回 429「操作太频繁，请 X 分钟后再试」，
+// 不进处理器，旧链接照常可用。后台替用户换发不限频（管理员操作本身有审计）。
+func subscriptionRotateLimits() []middleware.Limit {
+	return []middleware.Limit{
+		middleware.ByAccount("sub_rotate_gap", 10*time.Minute, 1).AsCooldown().WithRetryHint(),
+		middleware.ByAccount("sub_rotate_day", 24*time.Hour, 5).AsCooldown().WithRetryHint(),
+	}
+}
+
+// rotateSubscriptionLink 换一条新链接，旧的立即失效；节点密码（proxy_uuid）一起换。
 func (h *handlers) rotateSubscriptionLink(w http.ResponseWriter, r *http.Request) {
 	p, ok := httpx.RequireUser(w, r, h.d.Log)
 	if !ok {
@@ -292,6 +310,12 @@ func (h *handlers) rotateSubscriptionLink(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// 节点密码（proxy_uuid）跟着换了：提交后通知节点立刻重拉用户名单，旧 UUID 的连接随之
+	// 断开。尽力而为，节点每 15 秒的轮询与下发纪元兜底。
+	if h.d.Realtime != nil {
+		h.d.Realtime.Publish(r.Context(), realtime.ChannelNodeAll(p.TenantID),
+			realtime.TopicNodeUsersChanged, map[string]any{})
+	}
 	prefix, _ := h.d.Subscription.PathPrefix(r.Context(), p.TenantID)
 	h.d.Log.Info("用户轮换订阅链接", "subscription", subID, "user", p.UserID)
 	httpx.OK(w, rotateLinkResponse{

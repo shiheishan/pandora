@@ -154,6 +154,30 @@ func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
 		})
 	}
 
+	// 用户已有别的套餐的订阅（同样的状态范围）：在原订阅上开一张变更单，换套餐、不换
+	// 链接（2026-10-07）。剩余价值与门户改套餐同一口径（plan_change_quote.go）：先抵新价，
+	// 抵不完的退进余额；赠送单新价算 0 元，剩余价值全额退进余额。审计在建单事务里写。
+	changeSub, err := s.PlanChangeSubscription(ctx, tenantID, in.UserID)
+	if err != nil {
+		return nil, httpx.Internal(err)
+	}
+	if changeSub != "" {
+		if in.PriceID == "" {
+			return nil, httpx.Invalid(map[string]string{"price_id": "请选择新套餐的价格档"})
+		}
+		changed, err := s.CreatePlanChange(ctx, tenantID, PlanChangeInput{
+			UserID: in.UserID, SubscriptionID: changeSub, PlanID: in.PlanID, PriceID: in.PriceID,
+			Claim:       in.Claim,
+			ManualGrant: in.Settlement == ManualSettlementGrant, ManualReason: in.Reason,
+			ManualActor: in.ActorID, Offline: offline, ManualSettlement: in.Settlement,
+		})
+		if err != nil {
+			return nil, err
+		}
+		// 响应体是变更单那一份（多 proration_credit / balance_refund 两项），已写进幂等记录
+		return &changed.CreateOrderOutput, nil
+	}
+
 	out, err := s.CreateOrder(ctx, tenantID, CreateOrderInput{
 		UserID: in.UserID, PlanID: in.PlanID, PriceID: in.PriceID, Claim: in.Claim,
 		ManualGrant:  in.Settlement == ManualSettlementGrant,

@@ -4,6 +4,8 @@
 #   开通 → 到期（aegis-admin 的过期扫描把订阅改成 expired）→ 订阅链接只剩一条提示节点、
 #   门户照常列出链接且不许换 → 续费（同套餐人工开单落成原订阅上的续费单）→ 真实节点
 #   回来、链接不变；门户同套餐新购被拒（只续不新开）。
+#   w6plan 追加：后台开别的套餐落成原订阅上的换套餐（链接不变）；重置链接时节点密码
+#   proxy_uuid 一起换（旧链接 404、新链接只带新 UUID），10 分钟内第二次重置回 429。
 #
 # 夹具用 SQL 建（服务器、节点池、带心跳的节点、绑池的套餐），用户走门户注册，开单走
 # 后台人工单，到期用 SQL 把周期挪到过去，等真实的过期扫描循环接手。
@@ -229,6 +231,89 @@ json_check "$HTTP_BODY" "any(o.get('tag') == 'Expiry Line $STAMP' for o in d['ou
 expect_http 200 GET "$PUB/v1/me/subscription-links" -H "$UH"
 json_check "$HTTP_BODY" "len(d['links']) == 1 and d['links'][0]['url'] == '$LINK' and d['links'][0]['expired'] is False" \
   "the subscription link did not change"
+
+#-------------------------------------------------------------------------------
+sec "5. 后台开不同套餐：原订阅换套餐，链接不变（w6plan）"
+POOL=$(db "SELECT pool_id FROM nodes WHERE tenant_id='$TENANT' AND name='exp-node-$STAMP'")
+is_uuid "$POOL" || die "fixture node pool not found"
+FIXTURE2=$(db "
+  WITH product AS (
+    INSERT INTO products (tenant_id,code,name,status) VALUES ('$TENANT','exp-product2-$STAMP','Expiry Pro $STAMP','active') RETURNING id
+  ), plan AS (
+    INSERT INTO plans (tenant_id,product_id,code,name,status,visibility)
+    SELECT '$TENANT',id,'exp-plan2-$STAMP','Expiry Pro Plan $STAMP','draft','public' FROM product RETURNING id, product_id
+  ), version AS (
+    INSERT INTO plan_versions (tenant_id,plan_id,version) SELECT '$TENANT',id,1 FROM plan RETURNING id, plan_id
+  ), quota AS (
+    INSERT INTO quota_definitions (tenant_id,plan_version_id,metric,limit_value,unit,period)
+    SELECT '$TENANT',id,'traffic.bytes',2147483648,'bytes','cycle' FROM version RETURNING plan_version_id
+  ), bind AS (
+    INSERT INTO plan_node_pools (tenant_id,plan_version_id,pool_id)
+    SELECT '$TENANT',v.id,'$POOL' FROM version v RETURNING plan_version_id
+  ), price AS (
+    INSERT INTO prices (tenant_id,product_id,currency,unit_amount,billing_interval,interval_count,status)
+    SELECT '$TENANT',product_id,'CNY',3000,'month',1,'active' FROM plan RETURNING id
+  )
+  SELECT p.id::text || '|' || v.id::text || '|' || pr.id::text
+    FROM plan p, version v, price pr, quota q, bind b")
+IFS='|' read -r PLAN2 VERSION2 PRICE2 <<<"$FIXTURE2"
+is_uuid "$PLAN2" && is_uuid "$VERSION2" && is_uuid "$PRICE2" || die "second plan fixture returned '$FIXTURE2'"
+db "UPDATE plan_versions SET frozen_at=now(), status='published' WHERE id='$VERSION2'" >/dev/null
+db "UPDATE plans SET current_version_id='$VERSION2', status='active' WHERE id='$PLAN2'" >/dev/null
+expect_http 201 POST "$ADM/v1/orders/manual" -H "$AH" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: exp-manual-change-$STAMP" \
+  -d "{\"user_id\":\"$USER_ID\",\"plan_id\":\"$PLAN2\",\"price_id\":\"$PRICE2\",\"reason\":\"换套餐端到端测试\",\"settlement\":\"grant\"}"
+json_check "$HTTP_BODY" "d['status'] == 'fulfilled' and 'balance_refund' in d" "manual order for another plan is an in-place plan change"
+assert_eq "$(db "SELECT count(*) FROM subscriptions WHERE user_id='$USER_ID'")" 1 "no second subscription was opened"
+assert_eq "$(db "SELECT plan_id FROM subscriptions WHERE id='$SUB_ID'")" "$PLAN2" "the original subscription now carries the new plan"
+assert_eq "$(db "SELECT kind FROM orders WHERE subscription_id='$SUB_ID' ORDER BY created_at DESC LIMIT 1")" upgrade \
+  "the manual order is an upgrade order on the original subscription"
+expect_http 200 GET "$PUB/v1/me/subscription-links" -H "$UH"
+json_check "$HTTP_BODY" "len(d['links']) == 1 and d['links'][0]['url'] == '$LINK'" "the subscription link did not change"
+pull
+json_check "$HTTP_BODY" "any(o.get('tag') == 'Expiry Line $STAMP' for o in d['outbounds'])" "the same link serves the new plan's nodes"
+
+#-------------------------------------------------------------------------------
+sec "6. 重置订阅链接：节点密码一起换，门户按用户限频（w6plan）"
+# 用一个新用户：第 3 节过期期间的那次重置尝试已经占了上一个用户的 10 分钟间隔
+UE2="exp2_${STAMP}@example.com"
+expect_http 200 POST "$PUB/v1/auth/register/start" -H 'Content-Type: application/json' -d "{\"email\":\"$UE2\"}"
+RT2=$(json_get "$HTTP_BODY" registration_token)
+CODE2=$(json_get "$HTTP_BODY" dev_code 2>/dev/null || true)
+expect_http 201 POST "$PUB/v1/auth/register/complete" -H 'Content-Type: application/json' \
+  -d "{\"registration_token\":\"$RT2\",\"code\":\"$CODE2\",\"password\":\"ExpPass2026\"}"
+USER2=$(json_get "$HTTP_BODY" user_id)
+is_uuid "$USER2" || die "second registration returned no user id"
+expect_http 200 POST "$PUB/v1/auth/login" -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$UE2\",\"password\":\"ExpPass2026\"}"
+UH2="Authorization: Bearer $(json_get "$HTTP_BODY" access_token)"
+expect_http 201 POST "$ADM/v1/orders/manual" -H "$AH" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: exp-manual-rotate-$STAMP" \
+  -d "{\"user_id\":\"$USER2\",\"plan_id\":\"$PLAN\",\"price_id\":\"$PRICE\",\"reason\":\"重置链接端到端测试\",\"settlement\":\"grant\"}"
+SUB2=$(db "SELECT id FROM subscriptions WHERE user_id='$USER2'")
+is_uuid "$SUB2" || die "manual grant did not open the second user's subscription"
+expect_http 200 GET "$PUB/v1/me/subscription-links" -H "$UH2"
+LINK2=$(json_get "$HTTP_BODY" links.0.url)
+LINK2_PATH=$(python3 -c 'import sys, urllib.parse as u; print(u.urlsplit(sys.argv[1]).path)' "$LINK2")
+OLD_UUID=$(db "SELECT proxy_uuid FROM subscriptions WHERE id='$SUB2'")
+expect_http 200 GET "$PUB$LINK2_PATH?target=singbox" -H 'User-Agent: sing-box 1.13'
+json_check "$HTTP_BODY" "any(o.get('uuid') == '$OLD_UUID' for o in d['outbounds'])" "the link serves the current node password"
+expect_http 200 POST "$PUB/v1/me/subscriptions/$SUB2/rotate" -H "$UH2"
+NEW_LINK=$(json_get "$HTTP_BODY" url)
+NEW_PATH=$(python3 -c 'import sys, urllib.parse as u; print(u.urlsplit(sys.argv[1]).path)' "$NEW_LINK")
+[ "$NEW_PATH" != "$LINK2_PATH" ] || die "rotation returned the same link"
+NEW_UUID=$(db "SELECT proxy_uuid FROM subscriptions WHERE id='$SUB2'")
+[ -n "$NEW_UUID" ] && [ "$NEW_UUID" != "$OLD_UUID" ] || die "rotation kept the node password" "$OLD_UUID -> $NEW_UUID"
+ok "rotation replaced proxy_uuid"
+expect_http 404 GET "$PUB$LINK2_PATH?target=singbox" -H 'User-Agent: sing-box 1.13'
+ok "the old link is gone"
+expect_http 200 GET "$PUB$NEW_PATH?target=singbox" -H 'User-Agent: sing-box 1.13'
+json_check "$HTTP_BODY" "any(o.get('uuid') == '$NEW_UUID' for o in d['outbounds']) and not any(o.get('uuid') == '$OLD_UUID' for o in d['outbounds'])" \
+  "the new link serves only the new node password"
+expect_http 429 POST "$PUB/v1/me/subscriptions/$SUB2/rotate" -H "$UH2"
+json_check "$HTTP_BODY" "'分钟后再试' in d['error']['message']" "a second reset within 10 minutes is refused with the wait time"
+expect_http 200 GET "$PUB$NEW_PATH?target=singbox" -H 'User-Agent: sing-box 1.13'
+ok "the refused reset left the current link working"
 
 echo
 echo "expiry e2e: $pass checks passed"

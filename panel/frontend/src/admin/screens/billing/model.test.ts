@@ -18,6 +18,7 @@ import {
   isOrderFilter,
   lateReason,
   manualBody,
+  manualCreatedToast,
   manualProblems,
   orderFacts,
   paymentLines,
@@ -38,7 +39,7 @@ import {
   toggleBody,
   toggleMethod,
 } from './model'
-import { adjustmentSchema, cancelledSchema, latePaymentsSchema, markedPaidSchema, orderDetailSchema, orderQueriedSchema, type OrderDetail, type PaymentHistory, type Provider } from './schemas'
+import { adjustmentSchema, cancelledSchema, latePaymentsSchema, manualCreatedSchema, markedPaidSchema, orderDetailSchema, orderQueriedSchema, type OrderDetail, type PaymentHistory, type Provider } from './schemas'
 
 const row = { provider_name: null, balance_applied: 0, total_amount: 2500 }
 
@@ -360,5 +361,19 @@ describe('channel query (PAY-009)', () => {
     expect(queriedView({ ...r, channel_status: 'not_found', reconciled: false, order_status: 'pending_payment' }).text).toContain('没有这笔订单的付款记录')
     expect(orderQueriedSchema.safeParse({ ...base, channel_status: 'error' }).success).toBe(false)
     expect(orderQueriedSchema.safeParse({ ...base, quarantine_kind: 'overdue' }).success).toBe(false)
+  })
+})
+
+describe('manualCreatedToast', () => {
+  const base = { order_id: 'o1', order_no: 'NO1', currency: 'CNY', discount_amount: 0, total_amount: 1000, balance_applied: 0, payable_amount: 1000, status: 'fulfilled' as const }
+  it('新开或续费：沿用原提示', () => {
+    expect(manualCreatedToast(base, 'grant')).toBe('订单 NO1 已赠送开通')
+    expect(manualCreatedToast(base, 'pending')).toContain('等待用户在 30 分钟内支付')
+  })
+  it('落成原订阅上的换套餐：说明链接不变与退回余额的金额', () => {
+    const changed = manualCreatedSchema.parse({ ...base, proration_credit: 995, balance_refund: 995 })
+    expect(manualCreatedToast(changed, 'grant')).toBe('订单 NO1 已在原订阅上换套餐，订阅链接不变，原套餐剩余价值 ¥9.95 已退回余额')
+    expect(manualCreatedToast({ ...changed, balance_refund: 0 }, 'offline')).toBe('订单 NO1 已在原订阅上换套餐，订阅链接不变')
+    expect(manualCreatedToast({ ...changed, status: 'pending_payment', balance_refund: 0 }, 'pending')).toContain('在原订阅上换套餐')
   })
 })

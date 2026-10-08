@@ -60,10 +60,15 @@ type Granter interface {
 		days int) error
 	// ResetQuota 把当前周期的已用流量清零。
 	ResetQuota(ctx context.Context, tx pgx.Tx, tenantID, userID string) error
-	// GrantPlan 给用户开通一个套餐，返回订阅 ID；用户已有同套餐订阅（生效中或过期
-	// 30 天内）时改为在原订阅上续一期、链接不变，renewed 为真（规则 3）。
-	GrantPlan(ctx context.Context, tx pgx.Tx, tenantID, userID,
-		planID, priceID, reason string) (subscriptionID string, renewed bool, err error)
+	// GrantPlan 兑换套餐卡（codeID 是这张卡密），返回订阅 ID 与落地方式 mode：
+	//   new      没有可续可换的订阅，开通一条新订阅
+	//   renewed  已有同套餐订阅（生效中或过期 30 天内），在原订阅上续一期（规则 3）
+	//   changed  已有别的套餐的订阅，在原订阅上换成卡上的套餐（2026-10-07），原套餐的
+	//            剩余价值 refund（币种 refundCurrency）退进余额
+	// 后两种链接都不变。
+	GrantPlan(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID,
+		planID, priceID, reason string) (subscriptionID, mode string, refund int64,
+		refundCurrency string, err error)
 }
 
 func New(pool *db.Pool, log *slog.Logger, grant Granter) *Service {

@@ -309,7 +309,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	var controlSub string
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, control, func(tx pgx.Tx) error {
 		var err error
-		controlSub, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, control, planA, priceA, "fixture")
+		controlSub, _, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, control, "", planA, priceA, "fixture")
 		return err
 	})
 	controlToken := p.rotate(control, controlSub)
@@ -451,10 +451,15 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 		wantHTTPCode(t, step, err, code)
 	}
 	refuse("sp-missing", uuid.NewString(), httpx.CodeNotFound)
+	// 单独一个用户：buyer 已有别的套餐的订阅，再兑套餐卡会在原订阅上换套餐（w6plan），
+	// 这里要的是一条新开的订阅
 	var pausedSub string
-	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, buyer, func(tx pgx.Tx) error {
+	pausedUser := uuid.NewString()
+	p.must(`INSERT INTO users(id,tenant_id,email,display_name,status) VALUES($1,$2,$3,'Paused','active')`,
+		pausedUser, p.fx.tenant, "sp-paused-"+pausedUser[:8]+"@example.test")
+	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, pausedUser, func(tx pgx.Tx) error {
 		var err error
-		pausedSub, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, buyer, planA, priceA, "fixture")
+		pausedSub, _, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, pausedUser, "", planA, priceA, "fixture")
 		return err
 	})
 	p.must(`UPDATE subscriptions SET status='paused' WHERE id=$1::uuid`, pausedSub)
@@ -486,5 +491,11 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	t.Run("expiry and renewal rules", func(t *testing.T) {
 		p.t = t
 		checkExpiryRulesPG18(t, p, conn.Conn())
+	})
+
+	// 换套餐的三个入口统一（w6plan，用户 2026-10-07）
+	t.Run("plan change entries", func(t *testing.T) {
+		p.t = t
+		checkPlanChangeEntriesPG18(t, p, conn.Conn())
 	})
 }

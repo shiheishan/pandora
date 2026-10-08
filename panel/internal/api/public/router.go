@@ -213,7 +213,9 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/me/notifications/{id}/read", h.markNotificationRead)
 			r.Get("/me/notification-preferences", h.getNotificationPreferences)
 			r.Put("/me/notification-preferences", h.setNotificationPreference)
-			r.Post("/me/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
+			// 重置订阅链接按用户限频：间隔 10 分钟、每天 5 次（subscriptionRotateLimits）
+			r.With(middleware.RateLimit(d.Redis, d.Log, subscriptionRotateLimits()...)).
+				Post("/me/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
 			r.With(checkout, middleware.Idempotency(d.Pool, "subscription_renewal_create", d.Log)).
 				Post("/me/subscriptions/{id}/renew", h.createRenewal)
 			// 变更套餐（D-E-2）：试算不落库；下单有自己的幂等域，数据库的订单/幂等
