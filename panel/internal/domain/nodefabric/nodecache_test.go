@@ -359,8 +359,8 @@ func TestNextExpiryHelpers(t *testing.T) {
 // 节点名单只收 active 账号的订阅（封禁即断、解封恢复），并带出到期时刻。
 func TestNodeUsersRequireActiveOwner(t *testing.T) {
 	list := sourcetest.Load(t, ".").Decl("Service.nodeUsers")
-	for _, want := range []string{"JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id",
-		"AND u.status = 'active'", "s.current_period_end", "earlierExpiry(set.nextExpiry, periodEnd)"} {
+	for _, want := range []string{"AND s.user_id NOT IN (SELECT u.id FROM users u",
+		"WHERE u.tenant_id = $1 AND u.status <> 'active')", "s.current_period_end", "earlierExpiry(set.nextExpiry, periodEnd)"} {
 		if !strings.Contains(list, want) {
 			t.Fatalf("node user list missing %q", want)
 		}
