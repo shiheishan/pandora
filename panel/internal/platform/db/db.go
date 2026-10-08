@@ -213,7 +213,7 @@ func rollbackForCleanup(tx transactionRollbacker) {
 // 用 set_config(..., true) 而非会话级设置：GUC 随事务结束自动失效，
 // 即使连接被复用也不会带着上一个租户的身份。
 func (p *Pool) InTx(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
-	return p.runScoped(ctx, s, pgx.TxOptions{}, "开启事务", true, fn)
+	return p.runScoped(ctx, s, pgx.TxOptions{}, "开启事务", true, false, fn)
 }
 
 // InTxSerializableRetry 是 InTxSerializable 加上对 40001 的自动重试。
@@ -223,34 +223,83 @@ func (p *Pool) InTx(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
 // 抛给用户（「请求冲突，请重试」）等于让用户替数据库做退避——50 并发压测
 // 下有近三成下单撞上这个。
 //
+// 第一次乐观地跑；失败后的每次重试都先排队（审计链闸，见 chainGateSQL）。
+// 用这个入口的事务都写审计，而审计链是同租户的全序：快照之后只要有别人取过号，
+// 本事务取号就报 40001（platform/audit 的 Write）。争用时只靠退避重试，每一轮
+// 只有一个能过，16 路并发要十几轮；排队后快照晚于前面所有序列化事务的取号，
+// 剩下的冲突只来自读已提交的审计写入（登录、回调，窗口是本事务从开始到取号）
+// 与业务数据本身，所以排队后的重试次数给得宽一些。
+//
 // 要求 fn 除了写数据库不做别的：重试会完整重放它。带外部副作用（发消息、
 // 调第三方）的逻辑不能用这个入口。
 func (p *Pool) InTxSerializableRetry(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
-	const attempts = 4
+	const attempts = 8
 	var err error
 	for i := 0; i < attempts; i++ {
-		err = p.InTxSerializable(ctx, s, fn)
+		err = p.runScoped(ctx, s, pgx.TxOptions{IsoLevel: pgx.Serializable}, "开启序列化事务", false, i > 0, fn)
 		if err == nil || !IsSerializationFailure(err) {
 			return err
 		}
 		if ctx.Err() != nil {
 			return err
 		}
-		// 退避一点点再试，避免两个事务反复以同样的节奏互相撞。
-		// 量级是毫秒：序列化冲突的窗口本来就很短。
-		select {
-		case <-ctx.Done():
-			return err
-		case <-time.After(time.Duration(2<<i) * time.Millisecond):
-		}
 	}
 	return err
+}
+
+// 审计链闸：一张没有行、只用来加锁的表（00142），只有序列化事务碰它。
+//
+//   - 排队的重试（gate 为真）事务第一条语句 chainGateSQL：LOCK TABLE 是 PostgreSQL 里
+//     唯一不取快照的加锁语句，快照因此晚于拿到闸的时刻。SHARE ROW EXCLUSIVE 与自身
+//     互斥，重试之间按到达顺序排队；它在任何业务锁之前拿，拿闸时手里什么都没有，
+//     不会和别的事务成环。
+//   - 乐观的第一次尝试在取号前经 EnterChainGate 以 NOWAIT 拿 ROW EXCLUSIVE（彼此不
+//     互斥）：有重试在排队或持闸时立刻失败、改去排队，而不是带着手里的业务锁等闸
+//     （那会和持闸后要同一业务锁的重试成环，死锁要等 deadlock_timeout 才解开）；
+//     拿到了，排队的重试就等它提交，快照能看到它取的号。
+//   - 读已提交的审计写入（登录、回调、后台操作）完全不碰闸，只在链头行上排队
+//     （与原来的 advisory lock 同一窗口：取号到提交）。曾经让它们也等闸，结果
+//     「手握 users 行再等闸」与「持闸再要 users 行」成环，登录与回调 40P01。
+//
+// 锁随事务结束释放，连接回池时不留任何状态（会话级 advisory 锁被
+// session_state_guard_test 禁止，也不需要）。闸是全库一把，不分租户：只在冲突后的
+// 重试里持有，单租户部署没有区别。
+const (
+	chainGateSQL      = `LOCK TABLE public.audit_chain_gate IN SHARE ROW EXCLUSIVE MODE`
+	chainGateEnterSQL = `LOCK TABLE public.audit_chain_gate IN ROW EXCLUSIVE MODE NOWAIT`
+)
+
+// errChainGateBusy 表示乐观尝试取号时有重试在排队：按序列化失败处理，交给重试排队。
+var errChainGateBusy = errors.New("审计链闸被排队的重试占着")
+
+// serialTx 是序列化事务交给 fn 的事务：记着本事务是否已过审计链闸。
+type serialTx struct {
+	pgx.Tx
+	gated bool
+}
+
+// EnterChainGate 在写审计取号之前调用（platform/audit 的 Write）。读已提交事务与
+// 已持闸的事务什么都不做；序列化事务的第一次取号以 NOWAIT 过闸，过不去就返回一个
+// IsSerializationFailure 认作可重试的错误（事务已中止）。
+func EnterChainGate(ctx context.Context, tx pgx.Tx) error {
+	st, ok := tx.(*serialTx)
+	if !ok || st.gated {
+		return nil
+	}
+	if _, err := st.Exec(ctx, chainGateEnterSQL); err != nil {
+		if pe := pgErr(err); pe != nil && pe.Code == "55P03" {
+			return fmt.Errorf("%w: %w", errChainGateBusy, err)
+		}
+		return err
+	}
+	st.gated = true
+	return nil
 }
 
 // InTxSerializable 用于必须防写偏斜的场景：库存扣减、配额扣减、优惠券兑换。
 // 需要自动消化 40001 的场景请用 InTxSerializableRetry。
 func (p *Pool) InTxSerializable(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
-	return p.runScoped(ctx, s, pgx.TxOptions{IsoLevel: pgx.Serializable}, "开启序列化事务", false, fn)
+	return p.runScoped(ctx, s, pgx.TxOptions{IsoLevel: pgx.Serializable}, "开启序列化事务", false, false, fn)
 }
 
 // --- 错误分类：让上层不必到处写 pgconn 类型断言 ---
@@ -295,8 +344,12 @@ func IsInsufficientPrivilege(err error) bool {
 	return pe != nil && pe.Code == "42501"
 }
 
-// IsSerializationFailure 报告事务是否因序列化冲突失败（40001），调用方可安全重试。
+// IsSerializationFailure 报告事务是否因序列化冲突失败（40001、死锁 40P01，以及
+// 序列化事务取审计号时闸被排队的重试占着），调用方可安全重试。
 func IsSerializationFailure(err error) bool {
+	if errors.Is(err, errChainGateBusy) {
+		return true
+	}
 	pe := pgErr(err)
 	return pe != nil && (pe.Code == "40001" || pe.Code == "40P01")
 }

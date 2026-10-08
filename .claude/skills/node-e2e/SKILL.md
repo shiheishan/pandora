@@ -1,6 +1,6 @@
 ---
 name: node-e2e
-description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（一台跑 pdnd/NativeCore 并接入复测面板，一台跑 sing-box / mihomo / xray / juicity / mieru 真客户端），按面板下发的订阅（clash / sing-box / uri 三种格式）逐个协议测 TCP 与 UDP，另含 UDP 多会话出口端口稳定（Hysteria2/TUIC）、删人断线、整份 sing-box 订阅原样（TUN）加载三项专项检查。改了 pdnd kernel 的协议实现或传输层（vless/vmess/trojan/ss/hy2/tuic/anytls/juicity/naive/mieru/shadowtls/xhttp/REALITY/Vision）、订阅渲染、协议 schema、节点配置下发路径，或发版前要确认"用户拿到的订阅在真机真网络上能用"时使用。先后：改订阅渲染、协议 schema、kernel 传输层，先跑 subscription-e2e（本机回环、一个客户端实现）；它通过后，在发版前或改了 kernel 协议实现时再跑本 skill。比 subscription-e2e 多的是：真网络、真证书校验、多个独立客户端实现。
+description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（一台跑 pdnd/NativeCore 并接入复测面板，一台跑多个独立实现的真客户端），按面板下发的订阅逐个协议测 TCP 与 UDP，另有 UDP 多会话端口稳定、删人断线、整份订阅原样加载三项专项。改了 pdnd kernel 的协议实现或传输层、订阅渲染、协议 schema、节点配置下发路径，或发版前要确认"用户拿到的订阅在真机真网络上能用"时使用。先后：改订阅渲染、协议 schema、kernel 传输层，先跑 subscription-e2e（本机回环、一个客户端实现）；它通过后，在发版前或改了 kernel 协议实现时再跑本 skill。比 subscription-e2e 多的是：真网络、真证书校验、多个独立客户端实现。
 ---
 
 # 真节点逐协议验证（node-e2e）
@@ -15,20 +15,20 @@ description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（�
 
 ## 红线
 
-两台测试机的红线继承机器工位 `AGENTS.md` 与 test-machine skill（不删机、不改 `authorized_keys`/`sshd_config`、不读私钥与 `ops-local/**/secrets/`），仓库公开红线见根 CLAUDE.md。本 skill 额外的：
+测试机红线见机器工位 `AGENTS.md`、test-machine skill 与根 CLAUDE.md「红线」。本 skill 额外的：
 
-- 协议端口只用 20000–20099（tcp+udp）。客户端机本来只放行 22，要放回显/持续流服务就放行同一段（`ufw allow 20000:20099/udp|tcp`），收尾写进 `/root/README.md`。
+- 协议端口段见 test-machine。客户端机本来只放行 22，要放回显/持续流服务就放行同一段（`ufw allow 20000:20099/udp|tcp`），收尾写进 `/root/README.md`。
 - 面板机不升级、不重启网关、不动 PG 以外的配置；只在后台建服务器/节点池/套餐/节点/测试用户。直接改 PG 数据只限测试用户的数据，用完还原并写进面板机 README。
-- 后台口令与前缀只从 `ops-local/<轮次>/admin-cred.txt`、`admin-path.txt` 读，不进命令行、不打印；令牌、订阅链接只放 `ops-local/` 和机器上。
+- 后台口令与前缀只从 `ops-local/<轮次>/admin-cred.txt`、`admin-path.txt` 读（放置规则见根 CLAUDE.md「红线」）；令牌、订阅链接只放 `ops-local/` 和机器上。
 - ssh 脚本一律走 `scripts/sshx` / `scpx`（ControlMaster 复用连接 + 签名失败重试，退出码 255 的 agent 故障见根 CLAUDE.md「环境与工具坑」）。
 
 ## 机器分工
 
 | 机器 | 角色 | 装什么 |
 |---|---|---|
-| 服务端机（脚本名与旧笔记里叫 node3） | pdnd（NativeCore）服务，30 个节点同一进程 | 待测 pdnd 二进制、测试 CA 与服务端证书、sysctl（面板安装脚本的 pandora_tune_sysctl 写入） |
-| 客户端机（node4） | 真客户端 + 回显/持续流目标 | sing-box（glibc 版，含 naive）、mihomo、xray、juicity-client、mieru；UDP 回显与 TCP 持续流服务 |
-| 面板机（panel2） | 只做后台操作与订阅下发 | 已装好的复测面板，不动 |
+| 服务端机 | pdnd（NativeCore）服务，30 个节点同一进程 | 待测 pdnd 二进制、测试 CA 与服务端证书、sysctl（面板安装脚本的 pandora_tune_sysctl 写入） |
+| 客户端机 | 真客户端 + 回显/持续流目标 | sing-box（glibc 版，含 naive）、mihomo、xray、juicity-client、mieru；UDP 回显与 TCP 持续流服务 |
+| 面板机 | 只做后台操作与订阅下发 | 已装好的复测面板，不动 |
 
 每轮的实际别名记在 `ops-local/<轮次>/env.sh`，下文一律用角色名。
 
@@ -88,7 +88,7 @@ description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（�
 - `python3 $S/kick-run.py rotate 75`：换发订阅链接（是否换节点密码取决于面板版本，记下面板版本号）。
 - `python3 $S/kick-db.py 90`：把被处理用户订阅的 `current_period_end` 直接在 PG 里改到过去（与「到期」等价，名单按 `current_period_end > now()` 过滤），测完还原。再 `python3 $S/kick-db-analyze.py` 出「PG 提交 -> 各节点应用移除 -> 连接断开」表。需要后台把订阅状态翻回来时用「加时长」（扫描器会把状态翻成 expired）。
 - 三者共用 `holders.py`：user4（对照）与 user5（被处理）各起一组长连接，每个节点一条长 TCP（读客户端机上 `tcp-stream.py 20051` 的持续流）加一条长 UDP（每 100 ms 一包到 `udp-echo.py 20050`）。管理员动作在**客户端机上**用本机拿到的短期令牌（经 stdin，不落盘）执行，所有时间戳取客户端机时钟；三台机器 chrony 偏差在 0.1 ms 量级。
-- 回显/持续流目标必须是公网地址：pdnd 默认拒绝回环与内网目标，用客户端机自己的公网 IP。
+- 回显/持续流目标默认用公网地址（客户端机自己的公网 IP）：pdnd 默认拒绝回环与内网目标；要走内网目标，节点配置打开 `runtime.allow_private_destinations`（见 node-accept）。
 
 ### 5. 整份订阅原样加载（sing-box TUN，在网络命名空间里）
 
@@ -101,7 +101,7 @@ sing-box 订阅带 TUN 入站、DoH 分流、远程规则集（经「节点选�
 
 ### 6. 收尾
 
-- 把被处理用户的订阅恢复（后台「加时长 1 天」），测试节点与用户按面板机 `/root/README.md` 的约定留着；删机由用户在控制台做。
+- 把被处理用户的订阅恢复（后台「加时长 1 天」），测试节点与用户按面板机 `/root/README.md` 的约定留着。
 - 三台机器的 `/root/README.md` 各补一段：pdnd 是否继续跑、服务名 `pandora-native`、配置与日志位置、证书目录、临时 ufw 规则、测试 CA 是否在系统信任库、遗留的样例节点。停掉回显/持续流服务，消费掉的一次性令牌文件删掉。
 - 还原试验改动：REALITY dest、服务端机的 debug 日志级别与 `pandora-native.service.d/` drop-in、`ss.pid` 之类。
 

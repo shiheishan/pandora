@@ -35,6 +35,10 @@ type adminClient struct {
 	password string
 	http     *http.Client
 	interval time.Duration
+	// ip / ipHeaders 非空时每个请求带上这个虚构来源地址（多会话并行造数时各会话各占一个 IP，
+	// 后台每 IP 每分钟 240 次的限流各算各的）；为空则不带，来源就是连接本身
+	ip        string
+	ipHeaders []string
 
 	mu       sync.Mutex
 	token    string
@@ -138,6 +142,11 @@ func (c *adminClient) send(ctx context.Context, method, path string, body any, t
 			req.Header.Set("Idempotency-Key", idem)
 		}
 		req.Header.Set("User-Agent", "pandora-loadtest-seed")
+		if c.ip != "" {
+			for _, h := range c.ipHeaders {
+				req.Header.Set(h, c.ip)
+			}
+		}
 		resp, err := c.http.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("%s %s: %w", method, path, err)

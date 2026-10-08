@@ -21,7 +21,7 @@ func TestNodeClientsCarryRealIP(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	uni := newUniClient(srv.URL, "n1", "shadowsocks", "tok", "203.0.113.7", time.Second, nil)
+	uni := newUniClient(srv.URL, "n1", "shadowsocks", "tok", "203.0.113.7", time.Second, nil, nil)
 	if _, err := uni.http.Get(srv.URL); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestNodeClientsCarryRealIP(t *testing.T) {
 	}
 	uni.http.CloseIdleConnections()
 
-	plain := newUniClient(srv.URL, "n2", "shadowsocks", "tok", "", time.Second, nil)
+	plain := newUniClient(srv.URL, "n2", "shadowsocks", "tok", "", time.Second, nil, nil)
 	if _, err := plain.http.Get(srv.URL); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestNodeClientsCarryRealIP(t *testing.T) {
 		t.Fatalf("no real_ip in manifest but X-Real-IP = %q", ip)
 	}
 
-	signed, err := newSignedClient(srv.URL, ltkit.ManifestNode{ID: "n3", PrivateKey: testPrivateKeyB64(t), RealIP: "203.0.113.9"}, false, nil)
+	signed, err := newSignedClient(srv.URL, ltkit.ManifestNode{ID: "n3", PrivateKey: testPrivateKeyB64(t), RealIP: "203.0.113.9"}, false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,8 +28,9 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
 ## 合并
 
 - 在主目录主线上 `git merge --no-ff <分支>`。冲突多在共享热点（`cmd/*/main.go`、router、config、`.claude/rules`），保留双方；语义冲突（一方删了另一方新用到的东西）合完立刻编译测试。
+- 合进来的分支带新迁移：合完在主线跑 `python3 .claude/skills/new-migration/scripts/upsegment-sha.py <新迁移.sql> >> panel/tools/migrationlint/upsegments.txt` 冻结 Up 段，再跑 `--check`；冻结由合并的人做，不指望子 agent。
 - 一波几路合完再推主线（长期授权：`feat/panel-redesign` 可推），推完等检查机与 GitHub 全绿才算完成。
-- **推 main 每次都要先问用户**；删 worktree、删本地或远端分支，把命令给用户或得到同意再做。
+- **推 main 每次都要先问用户**；删 worktree、删分支见 cleanup skill。
 
 ## 交给用户
 
@@ -41,5 +42,5 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
 - 分支自己的 CI 没出结论不合（推送故障时等用户解锁，见 ci-triage 的坑与根 CLAUDE.md「环境与工具坑」）。
 - PG18 夹具撞号是最常见的 CI 红：报告里出现「PG18 首推失败、改夹具 id 后绿」属正常，合并前 grep 一下新夹具的 id 前缀在主线上没有别人在用（细则见 `.claude/rules/platform-pg18.md`）。
 - 子 agent 常把「为新 PG18 域在 run-pg18-gates.sh 加一行」「为新方法改同包的一个小文件」列为越界：只要是登记性的一两行就接受，记进 TASKS 结论。
-- **改了 SQL 的性能类分支，合前必须过 bench-eval**（改前改后结果集 md5 一致、训练集与留出集都不变差）；`check-ownership.sh` 每路都跑，不只信报告里自报的越界。
-- 几路同改一个 `CREATE OR REPLACE` 的函数，后合的那份迁移要在先合的函数体上加（见根 CLAUDE.md「环境与工具坑」与 new-migration）；计数类契约合完一并改。
+- `check-ownership.sh` 每路都跑，不只信报告里自报的越界。
+- 几路同改一个 `CREATE OR REPLACE` 的函数：见根 CLAUDE.md「环境与工具坑」。

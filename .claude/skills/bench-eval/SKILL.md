@@ -1,6 +1,6 @@
 ---
 name: bench-eval
-description: pandora 的 SQL 性能判分（单条 SQL 或一批 SQL 改前改后；整机 30 分钟稳态成绩单用 prod-retest；先用 db-query 看哪条慢）：在开发对照机（vultr-sgp-pt-bench）上用 ops-local/bench 评测集给 SQL 改动做改前改后判分（用例逐字取自 Go 源码，训练集 + 留出集，通用计划，结果集哈希一致，噪声底），另有单条 SQL 改前改后 EXPLAIN 的快速诊断。验收性能类分支、判断某条 SQL 改写值不值、换栈（gin + GORM）每步的 SQL 性能闸门、复现并对比某条慢查询的计划时使用。
+description: pandora 的 SQL 性能判分（单条 SQL 或一批 SQL 改前改后；整机 30 分钟稳态成绩单用 prod-retest；先用 db-query 看哪条慢）：在开发对照机（vultr-sgp-pt-bench）上用 ops-local/bench 评测集给 SQL 改动做改前改后判分，另有单条 SQL 改前改后 EXPLAIN 的快速诊断。验收性能类分支、判断某条 SQL 改写值不值、换栈（gin + GORM）每步的 SQL 性能闸门、复现并对比某条慢查询的计划时使用。
 ---
 
 # SQL 改前改后判分
@@ -60,7 +60,7 @@ ops-local/bench/tools/build_w5l_templates.sh <临时目录> <后缀>
 - 动态拼接的语句（筛选、分页、批次）不能手抄：在 `git archive` 导出的临时副本里跑一个 Go 小测试，调用真实的拼接函数导出 SQL 与参数形状（`extract_w5l.py` 的 `--dump` 目录就是这些导出）。
 - `case.json` 关键字段：`threshold_ms`、`params`（`{tenant}`、`{user}`、`{node}`… 占位符，键取自 `datasets/train.bindings.json`）、`compare.mode`（`set` 或 `topk`）、`write`、`state_sql`（写语句比写后表状态）、`jit_forbidden`、`note`。
 - **一条改动把一条 SQL 拆成多条或挪到 Go 里**：用一条等价 SQL（CTE 或标量子查询拼成一行）表达最终结果集，并在 `note` 里写清等价关系（例：`w5l_dbstats` 把三条独立语句各包一层标量子查询拼成一行）。表达不了的只能走端到端 A/B（`ops-local/bench/e2e/`）。
-- `EXECUTE` 的参数里不能放子查询：原文里由上一条语句结果传入的数组，改写成 `ANY(ARRAY(SELECT …))` 放进语句体（例：`w5l_user_detail_quotas`）；快速诊断里同理。
+- 原文里由上一条语句结果传入 `EXECUTE` 的数组，改写成 `ANY(ARRAY(SELECT …))` 放进语句体（例：`w5l_user_detail_quotas`）；快速诊断里同理。
 - 判分器的 `EXECUTE` 至少要一个参数；没参数的语句末尾补 `WHERE $1::uuid IS NOT NULL` 并传租户，改前改后同补（例：`w5l_dbstats`）。
 - SQL 文本没改、改动在缓存或往返数的用例，也建用例（`case.json` 里标 `sql_identical`），作回归哨兵：它们应该持平，变差就是抓到了副作用。
 
@@ -175,9 +175,9 @@ cd ops-local/bench
 
 用来复现慢查询、看一条改写是否值得做。没有噪声底、没有留出集，**不能当合并依据**。
 
-对照机：容器 `bench-pg`（postgres:18，512M、max_connections 60、shared_buffers 128MB，与生产 compose 一致，只绑本机回环），库 `aegis` 是 5k 实测库原样，**不要改它**；dump 在容器内 `/tmp/d.pgdump`。
+对照机：容器 `bench-pg`（postgres:18，规格与生产 compose 一致，只绑本机回环），库 `aegis` 是 5k 实测库原样，**不要改它**；dump 在容器内 `/tmp/d.pgdump`。
 
-1. 建副本并只应用该分支新增迁移的 Up 段：`scripts/prep-copy.sh aegis_cmp_<名字> <worktree>/panel/migrations/<新迁移>.sql ...`（pg_restore 约 12 秒，打印每个迁移的耗时）。
+1. 建副本并只应用该分支新增迁移的 Up 段：`scripts/prep-copy.sh aegis_cmp_<名字> <worktree>/panel/migrations/<新迁移>.sql ...`（打印每个迁移的耗时）。
 2. EXPLAIN 脚本照 `ops-local/vultr-test/5k-diag/q*-explain.sql` 的写法：`BEGIN; SET LOCAL ROLE aegis_app; SELECT set_config('app.tenant_id', …, true);`，再 PREPARE、EXPLAIN (ANALYZE, BUFFERS)、ROLLBACK；每段用「-- A1 说明」这样的行开头。
 3. 跑：`scripts/explain.sh <库名> <脚本.sql> [on|off|both]`，输出每段的 Execution Time。生产已关 JIT，以 off 为准，on 用来看 JIT 是否会被触发。
 4. 比：同一脚本至少连跑两遍，提升要超过两遍之间的差；改写过的查询用 `SELECT md5(string_agg(t::text, '|' ORDER BY t::text)) FROM (<查询>) t` 在两边比结果集，不一致直接判失败。
@@ -187,6 +187,5 @@ cd ops-local/bench
 - psql `-q` 不回显 SQL 注释，输出只能按顺序和段对上：用 explain.sh（它把「-- A1」行换成 `\echo` 标记），不要自己数。
 - 统计信息新旧会改变计划（见 `rules/sql-performance.md`）：对比前两边都 ANALYZE；要复现线上问题，就额外测一份不 ANALYZE 的。
 - `aegis` 里的 `node_alive_ips` 全部早已过期，与负载中的真实状态不同；测在线设备相关的查询，要把 `last_seen_at` 平移到窗口内（评测集的 `train_live` 用 `ops-local/bench/remote/datasets/live-shift.sql` 做了这件事）。
-- `CREATE DATABASE … TEMPLATE aegis` 要求模板库上没有其他连接，评测集在用时会失败；prep-copy 用 pg_restore，不受影响。
 - 副本名必须是 `aegis_cmp_` 开头，同名会被删掉重建；不要拿 `aegis`、`aegis_train*`、`aegis_holdout*` 做实验。
 - 对照机是共享 CPU：先确认空闲（见第 1 节）。

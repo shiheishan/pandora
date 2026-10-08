@@ -1,7 +1,7 @@
 import { test as base, expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { epayNotify, exclusive, freshIp, type User } from './api.ts'
+import { epayNotify, freshIp, type User } from './api.ts'
 import { ADM, ADMIN_EMAIL, ADMIN_PASSWORD, PUB, SHOTS, STEPS_FILE } from './env.ts'
 import { loadWorld, type World } from './seed.ts'
 
@@ -171,15 +171,13 @@ export async function happened(page: Page): Promise<string[]> {
 }
 
 /**
- * 会建单、改账或写审计的那一下点击：排进 api.ts 的审计写锁（见那里的说明），点完等到这次写请求的响应回来再放锁。
+ * 会建单、改账或写审计的那一下点击：点完等到这次写请求的响应回来。
  * 只认点击之后发出的第一个写请求（报价、预览、查单不算）
  */
 export async function submit(page: Page, target: Locator): Promise<void> {
-  await exclusive(async () => {
-    const done = page.waitForResponse((r) => r.request().method() !== 'GET' && /\/v1\//.test(r.url()) && !/checkout\/quote|\/preview$|\/query$/.test(r.url()), { timeout: 20_000 })
-    await target.click()
-    await done
-  })
+  const done = page.waitForResponse((r) => r.request().method() !== 'GET' && /\/v1\//.test(r.url()) && !/checkout\/quote|\/preview$|\/query$/.test(r.url()), { timeout: 20_000 })
+  await target.click()
+  await done
 }
 
 /** 前提：在门户上买一份（确认页 → 付款页 → 收银台回调 → 完成页），停在我的套餐 */

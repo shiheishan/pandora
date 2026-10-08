@@ -21,6 +21,7 @@ paths:
 - `common/` 只放多个门户页面共用的东西；只有一个页面用的放回该页面目录，后台也要用的提升到 `core/` 或 `ui/`，不让后台引用 `portal/screens/common`。
 - schema 按 Go 实际编码写严：无 omitempty 的字段必填（指针 / 可空列 nullable），只有 omitempty 的字段可选；页面对缺席做降级，而不是放宽 schema。实时失效只靠查询的 `meta.topics`。
 - 各页面的 schema 被 `panel/frontend/tests/mock-portal*.test.ts` 与 `tests/smoke/` 引用核对，改 schema 要一起跑、一起改。
+- 购买路径（概览、我的套餐、选购、确认与付款、完成页、订单、钱包与兑换卡）的页面文字或结构改了，同改 `panel/frontend/tests/browser`（按角色与可见文字选元素、按页面文字断言，见 `frontend-browser-e2e.md`），否则要等 CI 的浏览器步骤红了才发现。
 - 日期显示统一按按日用量接口回的切日时区（`common/subscriptions.ts` 的 `timeZone` → `common/traffic.ts` 的 `formatDate`），与用量柱同一口径；拿不到时才退回浏览器本地时区。
 - 幂等键从 `common/intent.ts` 取（转出 `core/intent`）：一次用户意图一把、按请求指纹复用，成功或 4xx 业务拒绝后丢弃，断网与 5xx 保留；没挂幂等中间件的接口不带键。
 - 门户只展示 CNY 价格与能收 CNY 的支付方式（余额与 epay 只有 CNY）；USDT 一律不做。
