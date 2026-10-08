@@ -328,14 +328,21 @@ func runVisionInnerTLS13Direct(t *testing.T, outerKind string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// 踢人：用户移出名单，直通中的连接也要断。
+	// 踢人：用户移出名单，直通中的连接也要立刻断——包括客户端不再读、服务端
+	// 往裸 TCP 写到阻塞的连接（原先外层 Close 要先写 close_notify，卡满 5 秒）。
+	go func() { _, _ = inner.Write(make([]byte, 32<<20)) }()
+	time.Sleep(1500 * time.Millisecond)
+	start := time.Now()
 	if err := adapter.DelUsers([]string{id.String()}); err != nil {
 		t.Fatal(err)
 	}
-	_ = inner.SetReadDeadline(time.Now().Add(3 * time.Second))
-	_, err = inner.Read(make([]byte, 1))
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("踢掉一条读不动的直通连接用了 %v", took)
+	}
+	_ = raw.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, err = io.Copy(io.Discard, raw)
 	var netErr net.Error
-	if err == nil || (errors.As(err, &netErr) && netErr.Timeout()) {
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		t.Fatalf("移出名单后直通连接没断：%v", err)
 	}
 }
