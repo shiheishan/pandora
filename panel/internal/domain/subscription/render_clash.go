@@ -102,9 +102,12 @@ func nodeToClash(n Node, uuid string, premium bool) (map[string]any, string) {
 		p["type"] = "ss"
 		p["password"] = uuid
 		p["cipher"] = ssMethod(n.Config)
-		// 节点端的 Shadowsocks 只监听 TCP（pdnd kernel/shadowsocks.go:Start，
-		// 面板也不许配 network=udp）。写 udp:true 的话客户端会把 DNS、游戏这些
-		// UDP 发到一个没人听的端口，静默失败；写 false 让客户端走别的路。
+		// 节点端的 Shadowsocks 一个入站只听一种传输（pdnd kernel/shadowsocks.go:Start：
+		// network=udp 只开 UDP 口，否则只开 TCP 口），TCP 路径也不认 UDP-over-TCP；
+		// 面板的 schema 不许配 network，所以下发的 ss 节点都只听 TCP。写 udp:true 的话
+		// 客户端会把 DNS、游戏这些 UDP 发到一个没人听的端口，静默失败；写 false 让客户端
+		// 走别的路。node-e2e（2026-10-08）里 mihomo 的 ss「UDP 通」是 mihomo 报
+		// 「UDP is not supported」后改走了 DIRECT，不是经节点通的。
 		p["udp"] = false
 
 	case "hysteria2":
