@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/aegispanel/aegis/tools/loadtest/nodesim"
+	"github.com/aegispanel/aegis/tools/loadtest/quiet"
 	"github.com/aegispanel/aegis/tools/loadtest/seed"
 	"github.com/aegispanel/aegis/tools/loadtest/userload"
 )
@@ -18,6 +19,7 @@ seed    create N fictitious users, plans, subscriptions and nodes with identitie
 nodes   run simulated pdnd nodes against the node gateway (signed channel + UniProxy + stream)
 users   run mixed user traffic: subscription pulls, portal reads, admin list reads
 burst   change one user through the admin API so every node re-pulls its user list
+quiet-report   read the quiet-run collector output (scripts/quiet-collect.sh) and judge panel + database CPU and whole-machine memory against the quiet standard
 
 Run "go run ./tools/loadtest <command> -h" for the flags of each command.
 `
@@ -37,6 +39,8 @@ func main() {
 		err = userload.Main(os.Args[2:])
 	case "burst":
 		err = userload.BurstMain(os.Args[2:])
+	case "quiet-report":
+		err = quiet.Main(os.Args[2:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
