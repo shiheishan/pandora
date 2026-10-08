@@ -22,6 +22,7 @@ import {
   providers,
   providerSecrets,
   providerView,
+  siteMinPayment,
   subscriptionEnded,
   todayLocal,
   type Adjustment,
@@ -56,12 +57,17 @@ function parseURL(raw: string): URL | null {
 }
 
 interface ProviderSettings {
-  config: Pick<Provider, 'display_name' | 'base_url' | 'submit_path' | 'api_path' | 'methods' | 'default_method' | 'allow_private_host' | 'min_amount'>
+  config: Pick<Provider, 'display_name' | 'base_url' | 'submit_path' | 'api_path' | 'methods' | 'default_method' | 'allow_private_host'>
+  /** 最低付款额（分）；null = 没传或传 0：新建用默认 100，编辑保留原值（provider_admin.go） */
+  min_amount: number | null
   merchant_id: string
   key: string
 }
 
-function providerSettings(body: Json): { ok: ProviderSettings } | { fields: Record<string, string> } {
+function providerSettings(body: Json): { ok: ProviderSettings } | { fields: Record<string, string> } | { bad: MockResult } {
+  // min_amount 是 Go 的 int64：不是整数（1.5、"100"）在解码时就 400
+  const rawMin = body.min_amount
+  if (rawMin !== undefined && rawMin !== null && (typeof rawMin !== 'number' || !Number.isInteger(rawMin))) return { bad: err(400, 'bad_request', '请求体不是合法的 JSON') }
   const f: Record<string, string> = {}
   const display_name = str(body.display_name).trim()
   if (chars(display_name) < 1 || chars(display_name) > 40) f.display_name = '名称需为 1–40 个字'
@@ -82,14 +88,14 @@ function providerSettings(body: Json): { ok: ProviderSettings } | { fields: Reco
   if (methods.length === 0 && !f.methods) f.methods = '至少选一种支付方式'
   const default_method = str(body.default_method).trim() || (methods[0] ?? '')
   if (!f.methods && !methods.includes(default_method)) f.default_method = '默认方式必须是已勾选的方式之一'
-  // 最低付款额（分）：1–100000；不带按 epay 默认 100（¥1.00）
-  const rawMin = body.min_amount
-  const min_amount = rawMin === undefined || rawMin === null ? 100 : rawMin
-  if (typeof min_amount !== 'number' || !Number.isInteger(min_amount) || min_amount < 1 || min_amount > 100_000) f.min_amount = '最低付款额需在 0.01 到 1000 元之间'
+  // 最低付款额（分）：1–100000；不传或 0 = 新建按 epay 默认 100（¥1.00）、编辑保留原值
+  const min_amount = typeof rawMin === 'number' && rawMin !== 0 ? rawMin : null
+  if (min_amount !== null && (min_amount < 1 || min_amount > 100_000)) f.min_amount = '最低付款额需在 ¥0.01 到 ¥1000.00 之间'
   if (Object.keys(f).length) return { fields: f }
   return {
     ok: {
-      config: { display_name, base_url, ...paths, methods, default_method, allow_private_host: allow, min_amount: min_amount as number },
+      config: { display_name, base_url, ...paths, methods, default_method, allow_private_host: allow },
+      min_amount,
       merchant_id: str(body.merchant_id).trim(),
       key: str(body.key).trim(),
     },
@@ -214,15 +220,25 @@ export const billing: MockModule = {
       if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
       const bad = unknownField(body, ['user_id', 'plan_id', 'price_id', 'entry_subscription_id'])
       if (bad) return ctx.send(bad.status, bad.body)
-      const subject = manualSubject(body)
-      if (!subject.ok) return ctx.send(subject.error.status, subject.error.body)
+      // 顺序照 billing.ManualOrderOptions：用户、套餐标识不对 400；价格档、入口订阅标识不对 422 带 fields（F9）；
+      // 用户或套餐不存在 404。价格档找不到不报错，按一个月算新到期日（offerPeriod 的 LEFT JOIN）
+      const userId = str(body.user_id)
+      const planId = str(body.plan_id)
+      if (!isUuid(userId) || !isUuid(planId)) return ctx.fail(400, 'bad_request', '标识符格式不正确')
+      const priceId = str(body.price_id)
       const entry = str(body.entry_subscription_id)
-      if (entry && !isUuid(entry)) return ctx.fail(400, 'bad_request', '标识符格式不正确')
-      const { user, plan, price } = subject
+      const fields: Record<string, string> = {}
+      if (priceId && !isUuid(priceId)) fields.price_id = '价格档标识不正确'
+      if (entry && !isUuid(entry)) fields.entry_subscription_id = '订阅标识不正确'
+      if (Object.keys(fields).length) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', fields)
+      const user = userStore.find((u) => u.id === userId)
+      const plan = plans.find((p) => p.id === planId)
+      if (!user || !plan) return ctx.send(NOT_FOUND.status, NOT_FOUND.body)
+      const price = plan.prices.find((x) => x.id === priceId)
       const now = Date.now()
       const cands = candidatesOf(user, now)
       const { options, defaultKey } = planOptions(plan.id, cands, entry)
-      const info = { interval: price.billing_interval, count: price.interval_count, currency: price.currency }
+      const info = price ? { interval: price.billing_interval, count: price.interval_count, currency: price.currency } : { interval: 'month', count: 1, currency: 'CNY' }
       ctx.send(200, {
         options: options.map((o) => placementView(o, cands.find((c) => c.sub.id === o.subscription_id), info, now)),
         default_key: defaultKey,
@@ -286,6 +302,11 @@ export const billing: MockModule = {
         const refund = pick.kind !== 'change' ? 0 : grant ? credit : Math.max(credit - amount, 0)
         const paysNow = grant || payable === 0
         if (settlement === 'offline' && payable <= 0) return err(409, 'conflict', '这张订单不需要支付，请改用赠送')
+        // 待支付单低于站点最低付款额：用户付不了，后台单不用余额、不免零头，回 422（不带 fields，A 路 errManualBelowMinimum）
+        if (settlement === 'pending' && price.currency === 'CNY') {
+          const minPay = siteMinPayment()
+          if (minPay > 1 && payable > 0 && payable < minPay) return err(422, 'validation_failed', '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款')
+        }
         if (settlement === 'offline' && referenceOwner(reference)) return err(409, 'conflict', '凭证号已用于其他订单')
 
         const at = new Date().toISOString()
@@ -500,6 +521,7 @@ export const billing: MockModule = {
         const bad = unknownField(body, ['code', 'adapter', ...PROVIDER_SETTINGS])
         if (bad) return bad
         const parsed = providerSettings(body)
+        if ('bad' in parsed) return parsed.bad
         const f = 'fields' in parsed ? { ...parsed.fields } : {}
         const code = str(body.code).trim()
         if (!/^[a-z][a-z0-9_-]{1,31}$/.test(code)) f.code = '编码需为 2–32 位小写字母、数字、- 或 _，以字母开头'
@@ -509,7 +531,7 @@ export const billing: MockModule = {
         if (!str(body.key).trim()) f.key = '必填'
         if (Object.keys(f).length || !('ok' in parsed)) return invalid(f)
         if (providers.some((p) => p.code === code)) return err(409, 'conflict', '渠道编码已存在，请换一个')
-        const p: Provider = { id: randomUUID(), code, adapter: 'epay', enabled: true, accepting_new: false, has_credentials: true, currencies: ['CNY'], ...parsed.ok.config }
+        const p: Provider = { id: randomUUID(), code, adapter: 'epay', enabled: true, accepting_new: false, has_credentials: true, currencies: ['CNY'], ...parsed.ok.config, min_amount: parsed.ok.min_amount ?? 100 }
         providers.push(p)
         providerSecrets.set(p.id, { merchant_id: parsed.ok.merchant_id, key: parsed.ok.key })
         return { status: 201, body: { id: p.id, code, credentials_changed: true } }
@@ -525,6 +547,7 @@ export const billing: MockModule = {
         const bad = unknownField(body, PROVIDER_SETTINGS)
         if (bad) return bad
         const parsed = providerSettings(body)
+        if ('bad' in parsed) return parsed.bad
         if ('fields' in parsed) return invalid(parsed.fields)
         const p = providers.find((x) => x.code === ctx.params.code)
         if (!p) return NOT_FOUND
@@ -537,7 +560,7 @@ export const billing: MockModule = {
         if (!next.key) missing.key = '该渠道还没有密钥，需填写'
         if (Object.keys(missing).length) return invalid(missing)
         const changed = next.merchant_id !== current.merchant_id || next.key !== current.key
-        Object.assign(p, parsed.ok.config, { has_credentials: true })
+        Object.assign(p, parsed.ok.config, { has_credentials: true, min_amount: parsed.ok.min_amount ?? p.min_amount })
         providerSecrets.set(p.id, next)
         return { status: 200, body: { id: p.id, code: p.code, credentials_changed: changed } }
       })

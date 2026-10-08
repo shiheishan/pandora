@@ -20,6 +20,7 @@ import {
   passwordProblem,
   shortId,
   trafficView,
+  unattachedNext,
 } from './model'
 import { sharingHint } from './RiskTab'
 
@@ -145,6 +146,12 @@ describe('订单与输入', () => {
     expect(passwordProblem('pandora2026')).toBeNull()
   })
 
+  it('未分配的流量包：没有在用的订阅时开通第一份会自动挂上，有在用的要用户自己挑', () => {
+    expect(unattachedNext(0)).toContain('开通第一份订阅时会自动加到那一份上')
+    expect(unattachedNext(1)).toContain('在门户里选一份')
+    expect(unattachedNext(3)).toContain('在门户里选一份')
+  })
+
   it('分享提示阈值', () => {
     expect(sharingHint(1).tone).toBe('ok')
     expect(sharingHint(3).tone).toBe('warn')
@@ -205,8 +212,12 @@ describe('schema', () => {
       stats: { paid_totals: [], order_count: 0, referral_count: 0 },
       referrer: null,
       telegram: null,
+      unattached_pack_bytes: 5 * 1024 ** 3,
     }
     expect(userDetailSchema.safeParse(detail).success).toBe(true)
+    // 顶层未分配的流量包余量（B 路 UserDetail.UnattachedPackBytes，非 omitempty）：必填、非负整数
+    expect(userDetailSchema.safeParse({ ...detail, unattached_pack_bytes: undefined }).success).toBe(false)
+    expect(userDetailSchema.safeParse({ ...detail, unattached_pack_bytes: -1 }).success).toBe(false)
     expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, label: null }] }).success).toBe(true)
     expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, pack_remaining_bytes: undefined }] }).success).toBe(false)
     expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, label: undefined }] }).success).toBe(false)

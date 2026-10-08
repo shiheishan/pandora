@@ -4,7 +4,7 @@ import { Button, Checkbox, Input, Modal, Select, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { providerWrittenSchema, useInvalidateBilling, type Provider } from './api'
 import css from './Billing.module.css'
-import { EPAY_METHODS, emptyProviderForm, methodLabel, providerBody, providerFormFrom, providerProblems, toggleMethod, type ProviderForm } from './model'
+import { EPAY_METHODS, emptyProviderForm, methodLabel, minAmountHint, providerBody, providerFormFrom, providerProblems, toggleMethod, type ProviderForm } from './model'
 
 /** 新建（editing 为空）或编辑一个易支付渠道。每次打开都是一张新表单，也是一次新的写意图 */
 export function ProviderDialog({ open, editing, onClose }: { open: boolean; editing: Provider | null; onClose: () => void }) {
@@ -148,7 +148,8 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
           label="最低付款额（元）"
           inputMode="decimal"
           mono
-          hint="低于这个金额的在线支付不会发起：余额没法凑够时，会少用一点余额让这笔付满最低额。线下收款与赠送不受限"
+          placeholder={editing ? '留空表示不改' : '留空按 1.00'}
+          hint={minAmountHint(mode)}
           value={form.min_amount}
           onChange={(e) => set('min_amount', e.target.value)}
           error={errors.min_amount}

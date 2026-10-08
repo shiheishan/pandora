@@ -2,13 +2,27 @@ import { useEffect, useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Select, useToast } from '../../../ui'
-import { useCan, useFailure, useIntentKey } from '../../actions'
+import { endsIntent, useCan, useFailure, useIntentKey } from '../../actions'
 import { usePlans } from '../plans/api'
 import { useInvalidateUsers, useUser } from '../users/api'
-import { manualCreatedSchema, useInvalidateBilling, useManualPreview, useUserPick } from './api'
+import { manualCreatedSchema, useInvalidateBilling, useManualPreview, useProviders, useUserPick } from './api'
 import css from './Billing.module.css'
-import { emptyManual, manualBody, manualCreatedToast, manualProblems, previewParams, priceChoices, SETTLEMENTS, type ManualForm, type Settlement } from './model'
-import { choiceOf, priceNote, selectedKey, submitGate } from './placement'
+import {
+  belowMinimumText,
+  emptyManual,
+  manualBelowMinimum,
+  manualBody,
+  manualCreatedToast,
+  manualFailureFields,
+  manualProblems,
+  previewParams,
+  priceChoices,
+  SETTLEMENTS,
+  siteMinPayment,
+  type ManualForm,
+  type Settlement,
+} from './model'
+import { choiceOf, previewFailure, priceNote, selectedKey, submitGate } from './placement'
 import { PlacementError, PlacementPicker } from './PlacementPicker'
 
 /**
@@ -42,6 +56,9 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
   const canPlans = can('catalog.read')
   const prefill = useUser(canUsers ? userId : null)
   const plans = usePlans()
+  // 站点最低付款额从渠道列表算（读渠道要 billing.payment.read）；读不到就不在提交前拦，交给服务端的 422
+  const providers = useProviders(can('billing.payment.read'))
+  const minPay = providers.data ? siteMinPayment(providers.data) : null
   const [form, setForm] = useState<ManualForm>(() => emptyManual())
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -63,14 +80,25 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
     setErrors({})
   }
 
-  // 入口订阅只对入口那位用户有效：中途换了人就不再预选
-  const entry = form.user !== null && form.user.id === userId ? entrySubscriptionId : null
+  // 入口订阅只对入口那位用户有效：中途换了人就不再预选；服务端说它不对（422 entry_subscription_id）时也不再带
+  const [entryRejected, setEntryRejected] = useState<string | null>(null)
+  const entry = entryRejected === null && form.user !== null && form.user.id === userId ? entrySubscriptionId : null
   const params = previewParams(form, entry)
   const preview = useManualPreview(params)
+  const failure = previewFailure(preview.error ? (isApiError(preview.error) ? preview.error : { status: 0, fields: {}, message: preview.error.message }) : null)
+  if (failure.entryRejected !== null && entryRejected === null) setEntryRejected(failure.entryRejected)
   const selected = selectedKey(preview.data, picked)
   const option = preview.data?.options.find((o) => o.key === selected)
   const target = option ? choiceOf(option) : null
-  const gate = submitGate({ hasInputs: params !== null, loading: params !== null && preview.isPending, failed: preview.isError, selected })
+  const below = manualBelowMinimum(form.settlement, chosen, option, minPay)
+  const gate = submitGate({
+    hasInputs: params !== null,
+    loading: params !== null && preview.isPending,
+    failed: preview.isError,
+    failedLabel: failure.fields.price_id ? '先换一个价格' : undefined,
+    selected,
+    blocked: below ? '低于最低付款额' : null,
+  })
 
   const submit = async () => {
     const problems = manualProblems(form, target)
@@ -83,9 +111,14 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
       toast(manualCreatedToast(r, form.settlement, target?.kind))
       onClose(r.order_id)
     } catch (e) {
-      fail(e, { fields: setErrors, intent })
+      // 低于最低付款额的 422 不带 fields：认出来落到结算方式上（下一步就是换结算方式），不只弹 Toast
+      const own = isApiError(e) ? manualFailureFields(e) : null
+      if (own) {
+        if (endsIntent(e)) intent.reset()
+        setErrors(own)
+      } else fail(e, { fields: setErrors, intent })
       // 订阅状态在预览之后变了（落点已失效）或没选落点：重新取一遍选项，点过的作废
-      if (isApiError(e) && (e.status === 422 || e.status === 409)) {
+      if (isApiError(e) && (e.status === 409 || e.fields.target !== undefined)) {
         setPicked('')
         void preview.refetch()
       }
@@ -130,7 +163,7 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
             options={choices.map(({ value, label }) => ({ value, label }))}
             value={form.choice}
             onChange={(e) => set('choice', e.target.value)}
-            error={errors.price_id || errors.plan_id}
+            error={errors.price_id || errors.plan_id || failure.fields.price_id}
             disabled={!canPlans}
           />
           <Select
@@ -141,7 +174,7 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
             error={errors.settlement}
           />
         </div>
-        {params !== null && preview.isError && <PlacementError message={preview.error.message} onRetry={() => void preview.refetch()} />}
+        {params !== null && failure.general !== null && <PlacementError message={failure.general} onRetry={() => void preview.refetch()} />}
         {preview.data && chosen && (
           <PlacementPicker
             options={preview.data.options}
@@ -155,10 +188,26 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
             }}
           />
         )}
+        {entryRejected !== null && entrySubscriptionId !== null && form.user?.id === userId && (
+          <span className={`${css.small} ${css.tone_warn}`}>没能预选「给这份开单」点的那份（{entryRejected}），请自己选这单落到哪一份。</span>
+        )}
         {errors.target && (
           <span role="alert" className={`${css.small} ${css.tone_danger}`}>
             {errors.target}
           </span>
+        )}
+        {below && (
+          <div className={css.minWarn} role="alert">
+            <span>{belowMinimumText(below)}</span>
+            <span className={css.minWarnActions}>
+              <Button size="xs" onClick={() => set('settlement', 'grant')}>
+                改用赠送
+              </Button>
+              <Button size="xs" onClick={() => set('settlement', 'offline')}>
+                改用线下已收款
+              </Button>
+            </span>
+          </div>
         )}
         <p className={css.small}>
           {settlement.hint}

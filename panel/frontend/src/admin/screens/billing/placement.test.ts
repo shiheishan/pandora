@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { badgeLabel, choiceOf, placementResult, placementTitle, priceNote, selectedKey, stateLine, submitGate, subjectOf } from './placement'
+import { badgeLabel, choiceOf, placementResult, placementTitle, previewFailure, priceNote, selectedKey, stateLine, submitGate, subjectOf } from './placement'
 import { manualPreviewSchema, type Placement } from './schemas'
 
 const sub = (over: Partial<Placement>): Placement => ({
@@ -108,6 +108,22 @@ describe('默认值与提交按钮', () => {
     expect(submitGate({ ...base, failed: true, selected: '' })).toEqual({ ok: false, label: '落点读取失败' })
     // 用户、套餐、价格没选全：落点无从谈起，按钮照常可点，点了由表单预检指出缺哪项
     expect(submitGate({ hasInputs: false, loading: false, failed: false, selected: '' })).toEqual({ ok: true })
+    // 价格档不对时按钮写下一步；选好了也提交不了（低于最低付款额）时灰着写原因
+    expect(submitGate({ ...base, failed: true, failedLabel: '先换一个价格', selected: '' })).toEqual({ ok: false, label: '先换一个价格' })
+    expect(submitGate({ ...base, selected: 'new', blocked: '低于最低付款额' })).toEqual({ ok: false, label: '低于最低付款额' })
+    expect(submitGate({ ...base, selected: '', blocked: '低于最低付款额' })).toEqual({ ok: false, label: '先选落点' })
+    expect(submitGate({ ...base, selected: 'new', blocked: null })).toEqual({ ok: true })
+  })
+
+  it('preview 的 422 落到对应的表单项上（F9）', () => {
+    expect(previewFailure(null)).toEqual({ fields: {}, entryRejected: null, general: null })
+    expect(previewFailure({ status: 422, fields: { price_id: '价格档标识不正确' }, message: '请求参数校验未通过' })).toEqual({ fields: { price_id: '价格档标识不正确' }, entryRejected: null, general: null })
+    // 入口订阅不对：不按入口预选，去掉它重取
+    expect(previewFailure({ status: 422, fields: { entry_subscription_id: '订阅标识不正确' }, message: '请求参数校验未通过' })).toEqual({ fields: {}, entryRejected: '订阅标识不正确', general: null })
+    expect(previewFailure({ status: 422, fields: { price_id: 'a', entry_subscription_id: 'b' }, message: 'x' })).toEqual({ fields: { price_id: 'a' }, entryRejected: 'b', general: null })
+    // 别的失败（含网络）整块提示并给重试
+    expect(previewFailure({ status: 0, fields: {}, message: '网络不通' })).toEqual({ fields: {}, entryRejected: null, general: '网络不通' })
+    expect(previewFailure({ status: 404, fields: {}, message: '不存在' }).general).toBe('不存在')
   })
 })
 

@@ -50,6 +50,8 @@ export interface User {
   balance: number
   currency: string
   subs: Sub[]
+  /** 还没加到任何一份的流量包余量（字节）：无订阅时兑的送流量卡、迁移时留空的余量 */
+  unattached_bytes: number
   referrer: string | null
   telegram: { username: string; bound_at: string } | null
   roles: string[]
@@ -146,6 +148,7 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
     balance: (i * 1375) % 26500,
     currency: 'CNY',
     subs,
+    unattached_bytes: 0,
     referrer: null,
     telegram: i % 3 === 0 ? { username: NAMES[i % NAMES.length]!.replace(/[._]/g, ''), bound_at: iso((i + 1) * DAY) } : null,
     roles: i === 0 ? ['support'] : [],
@@ -165,6 +168,10 @@ if (duo.length === 2) {
   duo[0]!.pack_bytes = 30 * GiB
   duo[1]!.label = '妈妈的 iPad'
 }
+// 两份不同款都在用时兑的送流量卡不会自动挂：第 2 位还有 5 GiB 未分配，要用户在门户里选一份
+users[1]!.unattached_bytes = 5 * GiB
+// 第 7 位（没有订阅）：兑过一张送流量卡，20 GiB 未分配；人工开第一份订阅时自动挂上
+users[6]!.unattached_bytes = 20 * GiB
 // 第 6 位（…06）：再加一份同款（专业版）订阅，两份同款都在用。开专业版时默认续到期更早的那份
 const twin = users[5]!
 const twinFirst = twin.subs[0]
@@ -332,6 +339,7 @@ function detail(u: User) {
     },
     referrer: referrer ? { id: referrer.id, email: referrer.email } : null,
     telegram: u.telegram,
+    unattached_pack_bytes: u.unattached_bytes,
   }
 }
 

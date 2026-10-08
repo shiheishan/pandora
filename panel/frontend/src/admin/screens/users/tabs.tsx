@@ -21,6 +21,7 @@ import {
   subName,
   trafficQuota,
   trafficView,
+  unattachedNext,
 } from './model'
 import { ResetDialog } from './Resets'
 import { TrafficPackDialog } from './TrafficPackDialog'
@@ -131,6 +132,7 @@ export function SubscriptionsTab({ d, now }: { d: UserDetail; now: Date }) {
     <>
       {/* 保留规则 2：后台看不到订阅地址，设计稿的「订阅地址 + 复制」整块换成这句说明 */}
       <p className={css.notice}>订阅地址仅用户本人可见；如疑似泄露，请点「更换订阅地址」后让用户在门户重新复制。</p>
+      {d.unattached_pack_bytes > 0 && <UnattachedPacks bytes={d.unattached_pack_bytes} subscriptions={d.subscriptions} />}
       {ordered.length === 0 ? (
         <Empty bare title="还没有订阅" description="用户在门户下单，或在订单页人工开单后，这里会出现订阅。" />
       ) : (
@@ -142,6 +144,19 @@ export function SubscriptionsTab({ d, now }: { d: UserDetail; now: Date }) {
       <TrafficPackDialog user={d} subscriptionId={action?.kind === 'traffic' ? action.id : null} open={action?.kind === 'traffic'} onClose={close} onDone={done} />
       <ResetDialog user={action?.kind === 'reset' ? { id: d.id, email: d.email } : null} subscriptionId={action?.kind === 'reset' ? action.id : null} onClose={close} onDone={close} />
     </>
+  )
+}
+
+/**
+ * 未分配的流量包：还没加到任何一份订阅，节点不会用它。写明有多少、为什么没生效、会怎样挂上去
+ * （后台没有挪流量包的入口，挪是用户在门户里做的事）
+ */
+function UnattachedPacks({ bytes, subscriptions }: { bytes: number; subscriptions: readonly SubscriptionRow[] }) {
+  const live = subscriptions.filter((s) => isLiveSub(s.status)).length
+  return (
+    <p className={`${css.notice} ${css.notice_warn}`} role="note" aria-label="未分配的流量包">
+      <strong>未分配的流量包 {formatBytes(bytes)}</strong>：还没加到任何一份订阅，暂时不能用。{unattachedNext(live)}
+    </p>
   )
 }
 

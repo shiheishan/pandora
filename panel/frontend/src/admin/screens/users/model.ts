@@ -165,6 +165,14 @@ export function isLiveSub(status: SubStatus): boolean {
   return LIVE.has(status)
 }
 
+/**
+ * 未分配的流量包会怎样生效（billing provision 的口径）：开通后只有一份在用时自动加到那一份；
+ * 已经有在用的订阅时不会自动挂，要用户在门户里选一份加上（后台没有挪流量包的入口）
+ */
+export function unattachedNext(liveCount: number): string {
+  return liveCount === 0 ? '用户开通第一份订阅时会自动加到那一份上。' : '用户在门户里选一份在用的订阅加上去后才生效。'
+}
+
 export function currentSubscription<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
   const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : -Infinity)
   return [...subs].sort((a, b) => Number(isLiveSub(b.status)) - Number(isLiveSub(a.status)) || end(b) - end(a))[0]

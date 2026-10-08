@@ -150,7 +150,7 @@ describe('mock api · admin billing', () => {
   const TWIN = '1a2b3c46-0000-4000-8000-000000000006'
   const SOLO = '1a2b3c41-0000-4000-8000-000000000001'
   type SubRow = { id: string; label: string | null; plan_name: string; status: string; current_period_end: string; current_period_start: string; quotas: Array<{ consumed: number }> }
-  type Detail = { balance: number; subscriptions: SubRow[]; recent_orders: Array<{ id: string; kind: string }> }
+  type Detail = { balance: number; subscriptions: Array<SubRow & { pack_remaining_bytes: number }>; recent_orders: Array<{ id: string; kind: string }>; unattached_pack_bytes: number }
   const detailOf = async (id: string) => json<Detail>(await get(admin, `users/${id}`))
   const planByName = async (name: string) => {
     const plans = await json<{ plans: Array<{ id: string; name: string; status: string; prices: Array<{ id: string; status: string; currency: string; unit_amount: number }> }> }>(await get(admin, 'plans'))
@@ -219,14 +219,22 @@ describe('mock api · admin billing', () => {
     expect(fresh.default_key).toBe('new')
   })
 
-  it('guards the preview: permission, unknown fields, ids, and a plan that is not on sale', async () => {
+  it('guards the preview: permission, unknown fields, malformed ids land on their fields (F9)', async () => {
     const standard = await planByName('标准版')
     const body = { user_id: DUO, plan_id: standard.plan_id, price_id: standard.price_id }
     expect((await post(viewer, 'orders/manual/preview', body)).status).toBe(404)
     expect((await post(admin, 'orders/manual/preview', { ...body, settlement: 'grant' })).status).toBe(400)
-    expect((await post(admin, 'orders/manual/preview', { ...body, entry_subscription_id: 'nope' })).status).toBe(400)
     expect((await post(admin, 'orders/manual/preview', { ...body, user_id: 'nope' })).status).toBe(400)
-    expect((await post(admin, 'orders/manual/preview', { ...body, price_id: '00000000-0000-4000-8000-000000000000' })).status).toBe(422)
+    // 价格档、入口订阅不是合法标识：422 并带对应的 fields，两项一起报
+    expect(await json(await post(admin, 'orders/manual/preview', { ...body, entry_subscription_id: 'nope' }))).toEqual({
+      error: expect.objectContaining({ code: 'validation_failed', fields: { entry_subscription_id: '订阅标识不正确' } }),
+    })
+    const both = await post(admin, 'orders/manual/preview', { ...body, price_id: 'nope', entry_subscription_id: 'nope' })
+    expect(both.status).toBe(422)
+    expect(await json(both)).toMatchObject({ error: { fields: { price_id: '价格档标识不正确', entry_subscription_id: '订阅标识不正确' } } })
+    // 合法但不存在的价格档不报错（offerPeriod 的 LEFT JOIN），新到期日按一个月算；不存在的用户 404
+    expect(manualPreviewSchema.parse(await json(await post(admin, 'orders/manual/preview', { ...body, price_id: '00000000-0000-4000-8000-000000000000' }))).options.length).toBeGreaterThan(0)
+    expect((await post(admin, 'orders/manual/preview', { ...body, user_id: '00000000-0000-4000-8000-000000000000' })).status).toBe(404)
     // 只读预览不要重新认证
     await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
     expect((await post(admin, 'orders/manual/preview', body)).status).toBe(200)
@@ -288,6 +296,24 @@ describe('mock api · admin billing', () => {
     expect(after.subscriptions).toHaveLength(before.subscriptions.length)
     expect(after.subscriptions.find((x) => x.id === phone.id)).toMatchObject({ plan_name: '标准版', label: '我的手机', status: 'active' })
     expect(after.balance).toBe(before.balance + created.balance_refund!)
+  })
+
+  it('attaches unattached traffic to a first subscription, and leaves it alone when several are in use', async () => {
+    const GiB = 1024 ** 3
+    const standard = await planByName('标准版')
+    admin = await reauthed()
+    // 第 7 位种子用户没有订阅、兑过 20 GiB 的送流量卡：开第一份时自动挂上（billing provision）
+    const found = await json<{ users: Array<{ id: string }> }>(await get(admin, 'users?q=grace.h@foxmail.com&limit=1'))
+    const lone = found.users[0]!.id
+    expect(await detailOf(lone)).toMatchObject({ subscriptions: [], unattached_pack_bytes: 20 * GiB })
+    const first = await post(admin, 'orders/manual', { user_id: lone, plan_id: standard.plan_id, price_id: standard.price_id, reason: '首次开通赠送', settlement: 'grant' }, 'attach-1')
+    expect(first.status).toBe(201)
+    const after = await detailOf(lone)
+    expect(after.unattached_pack_bytes).toBe(0)
+    expect(after.subscriptions).toHaveLength(1)
+    expect(after.subscriptions[0]!.pack_remaining_bytes).toBe(20 * GiB)
+    // …02 两份不同款都在用，未分配的 5 GiB 不会被系统挑一份挂上
+    expect((await detailOf(DUO)).unattached_pack_bytes).toBe(5 * GiB)
   })
 
   it('opens another copy when asked to, and a single option needs no target', async () => {
@@ -464,18 +490,25 @@ describe('mock api · admin billing', () => {
     expect(await json(await put(admin, 'payment-providers/epay3', { ...settings, methods: ['alipay', 'qqpay'], default_method: 'qqpay', merchant_id: '', key: '' }, 'prov-4q'))).toMatchObject({
       error: { fields: { methods: '支付方式只能从支付宝、微信支付中选' } },
     })
-    // 最低付款额：1–100000 分；不带按默认 100；编辑后列表里是新值
-    for (const bad of [0, 100_001, 1.5, '100']) {
+    // 最低付款额：1–100000 分，越界 422 标在 min_amount；不是整数在解码时就 400；新建不带按默认 100
+    const minOf = async (code: string) => providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === code)!.min_amount
+    for (const bad of [100_001, -1]) {
       expect(await json(await put(admin, 'payment-providers/epay3', { ...settings, min_amount: bad, merchant_id: '', key: '' }, `prov-min-${String(bad)}`))).toMatchObject({
         error: { fields: { min_amount: expect.any(String) } },
       })
     }
-    expect(providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'epay3')!.min_amount).toBe(100)
+    for (const bad of [1.5, '100']) expect((await put(admin, 'payment-providers/epay3', { ...settings, min_amount: bad, merchant_id: '', key: '' }, `prov-min-${String(bad)}`)).status).toBe(400)
+    expect(await minOf('epay3')).toBe(100)
     providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, min_amount: 250, merchant_id: '', key: '' }, 'prov-min-ok')))
-    expect(providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'epay3')!.min_amount).toBe(250)
-    expect(await json(await post(admin, 'payment-providers', { code: 'epay4', adapter: 'epay', ...settings, min_amount: 0, merchant_id: '2002', key: 'k' }, 'prov-min-new'))).toMatchObject({
-      error: { fields: { min_amount: expect.any(String) } },
-    })
+    expect(await minOf('epay3')).toBe(250)
+    // 编辑时不传或传 0 = 保留原值（A 路修复），不会被重置成默认值
+    providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, merchant_id: '', key: '' }, 'prov-min-keep')))
+    expect(await minOf('epay3')).toBe(250)
+    providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, min_amount: 0, merchant_id: '', key: '' }, 'prov-min-keep0')))
+    expect(await minOf('epay3')).toBe(250)
+    // 新建时传 0 等于没传：按默认 ¥1.00
+    expect((await post(admin, 'payment-providers', { code: 'epay4', adapter: 'epay', ...settings, min_amount: 0, merchant_id: '2002', key: 'k' }, 'prov-min-new')).status).toBe(201)
+    expect(await minOf('epay4')).toBe(100)
     const kept = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, methods: ['alipay', 'wxpay'], default_method: 'wxpay', merchant_id: '', key: '' }, 'prov-4')))
     expect(kept.credentials_changed).toBe(false)
     const rotated = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, merchant_id: '', key: 'secret-rotated' }, 'prov-5')))
@@ -487,6 +520,28 @@ describe('mock api · admin billing', () => {
     expect((await put(admin, 'payment-providers/offline', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-7')).status).toBe(409)
     expect((await put(admin, 'payment-providers/demo', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-8')).status).toBe(409)
     expect((await put(admin, 'payment-providers/nope', { ...settings, merchant_id: 'm', key: 'k' }, 'prov-9')).status).toBe(404)
+  })
+
+  it('refuses a pending manual order below the minimum payment, but grants and offline receipts go through (F4)', async () => {
+    const standard = await planByName('标准版') // ¥25
+    admin = await reauthed()
+    // 站点门槛 = 启用且收新单的 CNY 渠道里最小的 min_amount：把收银台打开并调到 ¥30
+    expect((await post(admin, 'payment-providers/epay/toggle', { enabled: true, accepting_new: true })).status).toBe(200)
+    const epay = { display_name: '聚合收银台', base_url: 'https://pay.example.com', submit_path: '/submit.php', api_path: '/api.php', methods: ['alipay', 'wxpay'], default_method: 'alipay', allow_private_host: false, merchant_id: '', key: '' }
+    providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay', { ...epay, min_amount: 3000 }, 'min-epay-up')))
+    // …01 只有一份标准版：唯一的选项是续它，不带 target
+    const body = { user_id: SOLO, plan_id: standard.plan_id, price_id: standard.price_id, reason: '小额补单测试' }
+    const pending = await post(admin, 'orders/manual', { ...body, settlement: 'pending' }, 'min-pending')
+    expect(pending.status).toBe(422)
+    const failure = await json<{ error: { code: string; message: string; fields?: Record<string, string> } }>(pending)
+    expect(failure.error).toMatchObject({ code: 'validation_failed', message: '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款' })
+    // A 路的 422 不带 fields：前端按文案落到结算方式上
+    expect(failure.error.fields ?? {}).toEqual({})
+    expect((await post(admin, 'orders/manual', { ...body, settlement: 'grant' }, 'min-grant')).status).toBe(201)
+    expect((await post(admin, 'orders/manual', { ...body, settlement: 'offline', reference: 'BANK-MIN-001' }, 'min-offline')).status).toBe(201)
+    // 门槛降回 ¥1.00：同一张单能开成待支付
+    providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay', { ...epay, min_amount: 100 }, 'min-epay-down')))
+    expect(manualCreatedSchema.parse(await json(await post(admin, 'orders/manual', { ...body, settlement: 'pending' }, 'min-pending-ok'))).status).toBe('pending_payment')
   })
 
   it('records, lists and reverses revenue adjustments once', async () => {

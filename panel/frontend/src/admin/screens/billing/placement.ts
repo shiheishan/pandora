@@ -99,10 +99,42 @@ export function selectedKey(preview: Pick<ManualPreview, 'options' | 'default_ke
  */
 export type SubmitGate = { ok: true } | { ok: false; label: string }
 
-export function submitGate(opts: { hasInputs: boolean; loading: boolean; failed: boolean; selected: string }): SubmitGate {
+export function submitGate(opts: {
+  hasInputs: boolean
+  loading: boolean
+  failed: boolean
+  selected: string
+  /** 读取失败时按钮上的字：价格档不对时是「先换一个价格」，其余是「落点读取失败」 */
+  failedLabel?: string
+  /** 选好了也提交不了的原因（如待支付单低于最低付款额），原因与下一步写在表单里，按钮上只写短句 */
+  blocked?: string | null
+}): SubmitGate {
   if (!opts.hasInputs) return { ok: true }
   if (opts.loading) return { ok: false, label: '读取落点中…' }
-  if (opts.failed) return { ok: false, label: '落点读取失败' }
+  if (opts.failed) return { ok: false, label: opts.failedLabel ?? '落点读取失败' }
   if (!opts.selected) return { ok: false, label: '先选落点' }
+  if (opts.blocked) return { ok: false, label: opts.blocked }
   return { ok: true }
+}
+
+/**
+ * preview 的 422 落到哪：price_id 落到「套餐与周期」；entry_subscription_id（「给这份开单」带进来的那份）
+ * 不对时不按入口预选，改由管理员自己选，原因写在落点区。其余失败（含网络）整块提示并给重试
+ */
+export interface PreviewFailure {
+  /** 落到表单项上的错误，键与开单表单一致 */
+  fields: Record<string, string>
+  /** 入口订阅被拒：去掉入口重取一次 */
+  entryRejected: string | null
+  /** 没有落到任何表单项上，落点区整块提示 */
+  general: string | null
+}
+
+export function previewFailure(e: { status: number; fields: Readonly<Record<string, string>>; message: string } | null): PreviewFailure {
+  if (!e) return { fields: {}, entryRejected: null, general: null }
+  const { price_id, entry_subscription_id } = e.fields
+  if (e.status === 422 && (price_id || entry_subscription_id)) {
+    return { fields: price_id ? { price_id } : {}, entryRejected: entry_subscription_id ?? null, general: null }
+  }
+  return { fields: {}, entryRejected: null, general: e.message }
 }

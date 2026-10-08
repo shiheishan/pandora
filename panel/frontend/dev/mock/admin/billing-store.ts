@@ -56,6 +56,11 @@ export const providers: Provider[] = [
   { id: randomUUID(), code: 'epay_backup', adapter: 'epay', display_name: '易支付 · 备用', enabled: true, accepting_new: false, has_credentials: false, base_url: 'https://pay2.example.com', currencies: ['CNY', 'USD'], ...epayPaths, methods: [], default_method: 'alipay' },
   { id: randomUUID(), code: 'offline', adapter: 'offline', display_name: '线下收款', enabled: true, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'], ...noConfig },
 ]
+/** 站点最低付款额（分，billing.minPaymentSQL）：启用且收新单、支持 CNY 的渠道里最小的 min_amount；一个都没有为 0 */
+export function siteMinPayment(): number {
+  const mins = providers.filter((p) => p.enabled && p.accepting_new && p.currencies.includes('CNY')).map((p) => p.min_amount)
+  return mins.length ? Math.min(...mins) : 0
+}
 /** 凭据只写不读：单独存，providerView 展开 Provider 时带不出去（与 Go 的列表只给 has_credentials 一致） */
 export const providerSecrets = new Map<string, { merchant_id: string; key: string }>([
   [providers[1]!.id, { merchant_id: '1001', key: 'mock-key-epay' }],
@@ -483,6 +488,7 @@ function applyEffect(o: Order, u: User, fx: PlacementEffect, at: string): void {
   o.subscription_id = sub.id
 }
 
+const LIVE_SUB = new Set<Sub['status']>(['active', 'trialing', 'grace', 'past_due'])
 export function fulfil(o: Order, at: string): void {
   const u = userStore.find((x) => x.id === o.user_id)
   const item = o.items[0]
@@ -521,6 +527,11 @@ export function fulfil(o: Order, at: string): void {
   }
   u.subs.push(sub)
   o.subscription_id = sub.id
+  // 未分配的流量包：开通后这是唯一一份在用的订阅，就挂到它上面（billing provision）
+  if (u.unattached_bytes > 0 && u.subs.filter((x) => LIVE_SUB.has(x.status)).length === 1) {
+    sub.pack_bytes += u.unattached_bytes
+    u.unattached_bytes = 0
+  }
 }
 
 // ===========================================================================

@@ -93,6 +93,9 @@ export const userDetailSchema = z.object({
   stats: z.object({ paid_totals: z.array(z.object({ currency: z.string(), amount: int })), order_count: count, referral_count: count }),
   referrer: z.object({ id: z.string(), email: z.string() }).nullable(),
   telegram: z.object({ username: z.string(), bound_at: time }).nullable(),
+  // 还没加到任何一份的流量包余量（字节，与门户 v1/me/subscriptions 同名同口径）：节点不会用它，
+  // 用户开通第一份订阅时自动挂上，或在门户里自己挑一份挂上
+  unattached_pack_bytes: count,
 })
 export type UserDetail = z.output<typeof userDetailSchema>
 export type PaidTotal = UserDetail['stats']['paid_totals'][number]

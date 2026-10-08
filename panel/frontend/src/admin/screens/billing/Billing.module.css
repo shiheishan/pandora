@@ -620,3 +620,23 @@
   padding: 0;
   border: 0;
 }
+
+/* 人工开单：待支付单低于最低付款额（提交前就写明原因，并给两个改结算方式的按钮） */
+.minWarn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: 10px var(--space-12);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+}
+
+.minWarnActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}

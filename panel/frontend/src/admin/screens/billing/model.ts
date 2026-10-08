@@ -3,7 +3,7 @@ import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
 import type { PlacementChoice } from './placement'
-import type { Adjustment, Currency, LateCase, LateKind, LateStatus, ManualCreated, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Provider } from './schemas'
+import type { Adjustment, Currency, LateCase, LateKind, LateStatus, ManualCreated, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Placement, Provider } from './schemas'
 
 export { ORDER_STATUS_VIEW, orderWhat, type Tone }
 
@@ -276,6 +276,52 @@ export function manualBody(f: ManualForm, target: PlacementChoice | null) {
   }
 }
 
+/**
+ * 站点「能不能在线付」的门槛，与 billing 的 minPaymentSQL 同一口径：启用且收新单、支持 CNY 的渠道里
+ * 最小的 min_amount（用户只要有一种方式能付就能付）；一个都没有为 0（不限）
+ */
+export function siteMinPayment(providers: ReadonlyArray<Pick<Provider, 'enabled' | 'accepting_new' | 'currencies' | 'min_amount'>>): number {
+  const mins = providers.filter((p) => p.enabled && p.accepting_new && p.currencies.includes('CNY')).map((p) => p.min_amount)
+  return mins.length ? Math.min(...mins) : 0
+}
+
+/** 待支付单低于最低付款额：应付与门槛（分），用来在提交前写明原因 */
+export interface BelowMinimum {
+  due: number
+  min: number
+  currency: string
+}
+
+/**
+ * 后台待支付单的应付低于站点最低付款额时，用户没法在线付，服务端回 422（billing.balancePlan 的 Manual 分支：
+ * 不用余额、不免零头）。这里在提交前就把它算出来：续一期与另开一份应付是价格；换套餐先抵原套餐没用完的部分
+ * （preview 时刻的数，服务端以开单时刻为准）。赠送与线下已收款不走在线支付，不受限；只有 CNY 有门槛。
+ * minPay 为 null 表示不知道门槛（没有读渠道的权限或还没读回来），这时不拦，交给服务端
+ */
+export function manualBelowMinimum(
+  settlement: Settlement,
+  price: Pick<PriceChoice, 'amount' | 'currency'> | undefined,
+  option: Pick<Placement, 'kind' | 'credit'> | undefined,
+  minPay: number | null,
+): BelowMinimum | null {
+  if (settlement !== 'pending' || !price || minPay === null || price.currency !== 'CNY') return null
+  const due = option?.kind === 'change' ? Math.max(price.amount - (option.credit ?? 0), 0) : price.amount
+  return due > 0 && minPay > 1 && due < minPay ? { due, min: minPay, currency: price.currency } : null
+}
+
+export function belowMinimumText(b: BelowMinimum): string {
+  return `这单应付 ${formatMoney(b.due, b.currency)}，低于支付渠道的最低付款额 ${formatMoney(b.min, b.currency)}，用户没法在线付。请改用「赠送」或「线下已收款」`
+}
+
+/**
+ * 开单失败里能落到表单上的那部分。服务端「待支付单低于最低付款额」的 422 不带 fields（A 路 errManualBelowMinimum），
+ * 只能按文案认出来，落到结算方式上：它的下一步就是换结算方式。其余交给通用的 fields / Toast
+ */
+export function manualFailureFields(e: { status: number; fields: Readonly<Record<string, string>>; message: string }): Fields | null {
+  if (e.status === 422 && Object.keys(e.fields).length === 0 && e.message.includes('最低付款额')) return { settlement: e.message }
+  return null
+}
+
 /** preview 的请求体：用户、套餐、价格都选好才发；入口订阅（从订阅行点「给这份开单」）只影响默认值 */
 export function previewParams(f: ManualForm, entrySubscriptionId: string | null) {
   if (!f.user || !f.choice) return null
@@ -499,7 +545,8 @@ export function providerProblems(f: ProviderForm, mode: 'create' | 'edit', hasCr
   }
   if (f.methods.length === 0) out.methods = '至少选一种支付方式'
   else if (!f.methods.includes(f.default_method)) out.default_method = '默认方式必须是已勾选的方式之一'
-  if (parseMinAmount(f.min_amount) === null) out.min_amount = '写成元，如 1 或 0.50，范围 0.01 到 1000'
+  // 留空 = 不传：编辑时保留原值、新建按默认 ¥1.00（后端口径）；填了就要合法，不会把空值当 0 发出去
+  if (f.min_amount.trim() !== '' && parseMinAmount(f.min_amount) === null) out.min_amount = '写成元，如 1 或 0.50，范围 0.01 到 1000'
   const needCreds = mode === 'create' || !hasCredentials
   if (needCreds && !f.merchant_id.trim()) out.merchant_id = mode === 'create' ? '必填' : '该渠道还没有商户号，需填写'
   if (needCreds && !f.key.trim()) out.key = mode === 'create' ? '必填' : '该渠道还没有密钥，需填写'
@@ -516,11 +563,19 @@ export function providerBody(f: ProviderForm, mode: 'create' | 'edit') {
     methods: [...f.methods],
     default_method: f.default_method,
     allow_private_host: f.allow_private_host,
-    min_amount: parseMinAmount(f.min_amount) ?? MIN_AMOUNT_DEFAULT,
     merchant_id: f.merchant_id.trim(),
     key: f.key.trim(),
   }
-  return mode === 'create' ? { code: f.code.trim(), adapter: 'epay', ...settings } : settings
+  // 最低付款额只在填了时带：后端把不传（或 0）当作「编辑保留原值、新建用默认」，所以前端从不发 0
+  const min = parseMinAmount(f.min_amount)
+  const body = min === null ? settings : { ...settings, min_amount: min }
+  return mode === 'create' ? { code: f.code.trim(), adapter: 'epay', ...body } : body
+}
+
+/** 最低付款额输入框下的说明：留空的含义随新建 / 编辑不同 */
+export function minAmountHint(mode: 'create' | 'edit'): string {
+  const blank = mode === 'edit' ? '留空表示不改' : `留空按默认 ¥${minAmountText(MIN_AMOUNT_DEFAULT)}`
+  return `应付低于它时不能在线付：用户只能用余额付，后台待支付单要改用赠送或线下已收款。${blank}`
 }
 
 // ===========================================================================

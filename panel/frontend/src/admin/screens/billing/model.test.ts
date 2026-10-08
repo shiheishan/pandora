@@ -5,6 +5,7 @@ import {
   adjustmentView,
   adjustProblems,
   ageDays,
+  belowMinimumText,
   canCancel,
   canMarkPaid,
   canQueryChannel,
@@ -17,9 +18,12 @@ import {
   isEditableProvider,
   isOrderFilter,
   lateReason,
+  manualBelowMinimum,
   manualBody,
   manualCreatedToast,
+  manualFailureFields,
   manualProblems,
+  minAmountHint,
   minAmountText,
   orderFacts,
   paymentLines,
@@ -37,6 +41,7 @@ import {
   reasonProblem,
   referenceProblem,
   reverseReason,
+  siteMinPayment,
   todayLabel,
   todayLocal,
   toggleBody,
@@ -326,6 +331,57 @@ describe('late payments, providers and adjustments', () => {
     expect(providerProblems({ ...good, min_amount: '1.5' }, 'create')).toEqual({})
     expect(providerBody({ ...good, min_amount: '1.5' }, 'create')).toMatchObject({ min_amount: 150 })
     expect(providerBody({ ...good, min_amount: '3' }, 'edit')).toMatchObject({ min_amount: 300 })
+  })
+
+  it('leaves the minimum payment out when blank: edit keeps the old value, create uses ¥1.00, never sends 0', () => {
+    const good = { ...emptyProviderForm(), code: 'epay2', base_url: 'https://pay.example.com', merchant_id: '1001', key: 'k' }
+    // 留空不是错：后端把不传（或 0）当作「编辑保留原值、新建用默认」
+    expect(providerProblems({ ...good, min_amount: '  ' }, 'create')).toEqual({})
+    expect(providerProblems({ ...good, min_amount: '' }, 'edit')).toEqual({})
+    expect(providerBody({ ...good, min_amount: '' }, 'edit')).not.toHaveProperty('min_amount')
+    expect(providerBody({ ...good, min_amount: '' }, 'create')).not.toHaveProperty('min_amount')
+    // 写了 0 是错，不会当成「不改」悄悄发出去
+    expect(providerProblems({ ...good, min_amount: '0' }, 'edit').min_amount).toBeDefined()
+    expect(providerBody({ ...good, min_amount: '0' }, 'edit')).not.toHaveProperty('min_amount')
+    // 文案和行为一致
+    expect(minAmountHint('edit')).toContain('留空表示不改')
+    expect(minAmountHint('create')).toContain('留空按默认 ¥1.00')
+  })
+
+  it('takes the site minimum from enabled, accepting CNY channels, the smallest one (minPaymentSQL)', () => {
+    expect(siteMinPayment([provider({ min_amount: 300 }), provider({ min_amount: 100 })])).toBe(100)
+    // 暂停收新单、停用、不收人民币的渠道不算；一个都没有就不限
+    expect(siteMinPayment([provider({ min_amount: 50, accepting_new: false }), provider({ min_amount: 200 })])).toBe(200)
+    expect(siteMinPayment([provider({ min_amount: 50, enabled: false }), provider({ min_amount: 80, currencies: ['USD'] })])).toBe(0)
+    // 演示渠道没有门槛（0）也算：有一种方式能付就能付
+    expect(siteMinPayment([provider({ min_amount: 0, code: 'demo' }), provider({ min_amount: 100 })])).toBe(0)
+    expect(siteMinPayment([])).toBe(0)
+  })
+
+  it('warns before submit when a pending manual order is below the minimum (F4)', () => {
+    const cny = { amount: 50, currency: 'CNY' }
+    expect(manualBelowMinimum('pending', cny, { kind: 'new' }, 100)).toEqual({ due: 50, min: 100, currency: 'CNY' })
+    // 赠送、线下已收款不走在线支付；不知道门槛（没权限读渠道）时不拦
+    expect(manualBelowMinimum('grant', cny, { kind: 'new' }, 100)).toBeNull()
+    expect(manualBelowMinimum('offline', cny, { kind: 'new' }, 100)).toBeNull()
+    expect(manualBelowMinimum('pending', cny, { kind: 'new' }, null)).toBeNull()
+    // 门槛 0 / 1 等于不限；够门槛不拦；只有 CNY 有门槛
+    expect(manualBelowMinimum('pending', cny, { kind: 'new' }, 1)).toBeNull()
+    expect(manualBelowMinimum('pending', { amount: 100, currency: 'CNY' }, { kind: 'renew' }, 100)).toBeNull()
+    expect(manualBelowMinimum('pending', { amount: 50, currency: 'USD' }, undefined, 100)).toBeNull()
+    // 换套餐：新价先抵原套餐没用完的部分；抵完不用付就不拦
+    expect(manualBelowMinimum('pending', { amount: 2500, currency: 'CNY' }, { kind: 'change', credit: 2470 }, 100)).toEqual({ due: 30, min: 100, currency: 'CNY' })
+    expect(manualBelowMinimum('pending', { amount: 2500, currency: 'CNY' }, { kind: 'change', credit: 2600 }, 100)).toBeNull()
+    expect(belowMinimumText({ due: 30, min: 100, currency: 'CNY' })).toBe('这单应付 ¥0.30，低于支付渠道的最低付款额 ¥1.00，用户没法在线付。请改用「赠送」或「线下已收款」')
+  })
+
+  it('lands the server-side below-minimum 422 on the settlement field', () => {
+    const msg = '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款'
+    expect(manualFailureFields({ status: 422, fields: {}, message: msg })).toEqual({ settlement: msg })
+    // 带 fields 的、别的 422、别的状态码都不归它管
+    expect(manualFailureFields({ status: 422, fields: { target: '请选择这单落到哪一份' }, message: '请求参数校验未通过' })).toBeNull()
+    expect(manualFailureFields({ status: 422, fields: {}, message: '该套餐不允许升级' })).toBeNull()
+    expect(manualFailureFields({ status: 409, fields: {}, message: msg })).toBeNull()
   })
 
   it('keeps methods in canonical order and moves the default off an unticked method', () => {
