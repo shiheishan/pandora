@@ -23,8 +23,9 @@
 #
 #   1. 幂等。已有 .env 绝不覆盖——那里面是随机生成的密钥，重写一次
 #      就再也连不上原来的数据库了。
-#   2. 不替用户造管理员。脚本生成并打印管理员密码，等于把它写进终端
-#      回滚日志和 CI 输出里。装完只提示该跑哪条命令。
+#   2. 不替用户生成管理员密码：生成再打印出来，等于把它写进终端回滚日志和 CI 输出里。
+#      首装且在交互终端里时，健康检查通过后现场问邮箱和密码（不回显、输两次），
+#      密码只经标准输入交给 aegis-adminctl；无人值守时只提示该跑哪条命令。
 #   3. 失败即停，并说清楚停在哪一步、怎么恢复。
 set -Eeuo pipefail
 umask 022
@@ -230,6 +231,75 @@ apply_edge_config() {
   info "nginx 配置已渲染并生效：$out${prev:+（原配置备份在 $prev）}"
 }
 
+# 收尾提示：按「现在可以做什么 → 还差什么 → 常用操作」三段写，首装与升级分开说，
+# 只留新手需要的。用到的全局量：MODE、EDGE_STATE（applied / no-cert / skipped）、
+# PANDORA_ADMIN_STATE（created / existing / manual）、PANDORA_ADMIN_EMAIL、PENDING_COUNT、
+# before / after（迁移版本）、BK（升级前备份）、DEST、RELEASE_ROOT。
+# 后台地址只在首装时打印：升级没改它，也就不必再把入口写进一次终端记录。
+print_install_summary() {
+  local env_file="$DEST/deploy/.env" base admin_path url todo=()
+  base="$(pandora_env_file_value "$env_file" AEGIS_PUBLIC_BASE_URL)"; base="${base%/}"
+  admin_path="$(pandora_env_file_value "$env_file" AEGIS_ADMIN_PATH)"
+  url="$base/$admin_path/"
+  local show_url="sudo $DEST/deploy/admin-url.sh"
+  local create_cmd="cd $DEST && set -a && . deploy/.env && set +a && read -rsp '密码：' p && echo && printf '%s\n' \"\$p\" | ./bin/aegis-adminctl create --email <你的邮箱> --password-stdin; unset p"
+  local rerun="sudo PANDORA_CERTBOT=1 $RELEASE_ROOT/deploy/install.sh"
+
+  # 还差什么：只列这台机器上确实还没做的
+  case "${EDGE_STATE:-skipped}" in
+    applied) ;;
+    no-cert) todo+=("申请 HTTPS 证书并配好 nginx（会先备份再走升级）：$rerun") ;;
+    *) todo+=("配好 nginx 才能从公网打开面板：装好 nginx 后重跑 $RELEASE_ROOT/deploy/install.sh") ;;
+  esac
+  if [ "$MODE" = install ] && [ "${PANDORA_ADMIN_STATE:-manual}" = manual ]; then
+    todo+=("创建管理员（下面这条整行复制；密码不回显，只经标准输入交给 aegis-adminctl）：" "    $create_cmd")
+  fi
+  if [ "${PENDING_COUNT:-0}" -gt 0 ]; then
+    todo+=("填好 $env_file 里还是 CHANGE_ME 的 $PENDING_COUNT 项，再 systemctl restart aegis-public aegis-admin aegis-node")
+  fi
+  [ "$MODE" != install ] \
+    || todo+=("站点放在 Cloudflare 后面的话：sudo $DEST/deploy/update-cloudflare-realip.sh（默认不信任任何代理）")
+
+  if [ "$MODE" = install ]; then
+    step "安装完成"
+    printf '%s\n' "  现在可以做什么："
+    if [ "${EDGE_STATE:-}" = applied ]; then
+      printf '    %s\n' "打开管理后台：$url" "  （这个地址就是后台入口，别外传）"
+    else
+      printf '    %s\n' "面板已在本机跑起来（三个服务健康检查通过）；nginx 配好后从这里打开管理后台：" "  $url"
+    fi
+    case "${PANDORA_ADMIN_STATE:-manual}" in
+      created) printf '    %s\n' "用刚建的管理员 ${PANDORA_ADMIN_EMAIL:-} 登录，然后尽快绑定两步验证" ;;
+      existing) printf '    %s\n' "用库里已有的管理员登录" ;;
+    esac
+  else
+    step "升级完成"
+    printf '%s\n' "  现在可以做什么："
+    printf '    %s\n' "面板已升级（迁移版本 ${before:-?} → ${after:-?}），三个服务已重启并通过健康检查" \
+      "管理后台地址没变（重看：$show_url）"
+    [ -z "${BK:-}" ] || printf '    %s\n' "升级前的数据库备份：$BK"
+  fi
+
+  printf '\n%s\n' "  还差什么："
+  local item
+  [ "${#todo[@]}" -gt 0 ] || printf '    %s\n' "没有了"
+  for item in ${todo[@]+"${todo[@]}"}; do
+    case "$item" in
+      "    "*) printf '    %s\n' "$item" ;;
+      *) printf '    · %s\n' "$item" ;;
+    esac
+  done
+
+  printf '\n%s\n' "  常用操作："
+  printf '    %s\n' \
+    "重看后台地址  $show_url" \
+    "查看状态      systemctl status aegis-public aegis-admin aegis-node" \
+    "查看日志      tail -f /var/log/aegis/public.log" \
+    "重启          systemctl restart aegis-public aegis-admin aegis-node" \
+    "数据库        cd $DEST/deploy && ./psql.sh" \
+    "升级          新发布包放到 root 独占目录后：sudo <发布目录>/deploy/install.sh"
+}
+
 # 可单测的部分到此为止
 if [ "${PANDORA_INSTALL_LIB:-}" = 1 ]; then
   return 0 2>/dev/null || exit 0
@@ -279,6 +349,9 @@ info "环境检查通过（$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME
 # 对外地址的校验与取值、.env 单键读取，与 install-native.sh 共用一份
 [ -f "$HERE/public-base-url.sh" ] || die "发布目录缺少 deploy/public-base-url.sh"
 . "$HERE/public-base-url.sh"
+# 升级迁移的停服顺序、首装交互式建管理员，与 install-native.sh 共用一份
+[ -f "$HERE/install-lib.sh" ] || die "发布目录缺少 deploy/install-lib.sh"
+. "$HERE/install-lib.sh"
 
 #------------------------------------------------------------------------------
 # 2) 判断首装还是升级
@@ -351,7 +424,8 @@ if [ "$MODE" = install ]; then
 
   pending="$(pending_env_lines "$DEST/deploy/.env")"
   if [ -n "$pending" ]; then
-    warn "还有 $(printf '%s\n' "$pending" | wc -l | tr -d ' ') 项需要手工填写（装完后编辑 $DEST/deploy/.env）："
+    PENDING_COUNT="$(printf '%s\n' "$pending" | wc -l | tr -d ' ')"
+    warn "还有 $PENDING_COUNT 项需要手工填写（装完后编辑 $DEST/deploy/.env）："
     printf '%s\n' "$pending" | sed 's/=.*/=…/' | sed 's/^/      /' >&2
   fi
   info "已生成 $DEST/deploy/.env（密钥随机，未打印）"
@@ -366,8 +440,20 @@ cp "$RELEASE_ROOT/deploy/configure-app-role.sql" "$DEST/deploy/"
 cp "$RELEASE_ROOT/deploy/bootstrap.sh" "$DEST/deploy/"
 cp "$RELEASE_ROOT/deploy/psql.sh" "$DEST/deploy/" 2>/dev/null || true
 chmod 0755 "$DEST/deploy/bootstrap.sh" "$DEST/deploy/psql.sh" 2>/dev/null || true
+# 随时重看后台地址的小脚本，收尾提示里告诉用户
+cp "$RELEASE_ROOT/deploy/admin-url.sh" "$DEST/deploy/" || die "发布目录缺少 deploy/admin-url.sh"
+chmod 0755 "$DEST/deploy/admin-url.sh"
+# 迁移失败、要回滚时照着做的手册，放在机器上随手可查
+cp "$RELEASE_ROOT/deploy/MIGRATION-RUNBOOK.md" "$DEST/deploy/" || die "发布目录缺少 deploy/MIGRATION-RUNBOOK.md"
+chmod 0644 "$DEST/deploy/MIGRATION-RUNBOOK.md"
 install -d -o root -g root -m 0755 "$DEST/migrations"
 cp "$RELEASE_ROOT"/migrations/*.sql "$DEST/migrations/"
+# 迁移走 migrate.sh，预检走 check-migrations.sh（它们的依赖 platform.sh 一起）：升级时预检在
+# 停服之前就要跑，所以和迁移文件一起先就位
+for f in migrate.sh platform.sh check-migrations.sh; do
+  cp "$RELEASE_ROOT/deploy/$f" "$DEST/deploy/" || die "发布目录缺少 deploy/$f"
+  chmod 0755 "$DEST/deploy/$f"
+done
 
 set -a; . "$DEST/deploy/.env"; set +a
 
@@ -466,28 +552,13 @@ fi
 #------------------------------------------------------------------------------
 step "执行数据库迁移"
 
-# 几个涉及幂等键与订单释放的迁移是 fail-closed 的：必须显式声明「写入者
-# 已停止」才肯执行。首装时本来就没有写入者，升级时前面已经停服，两种
-# 情况下这份声明都成立。
+# 迁移只走 migrate.sh，不自己拼 goose 命令：它在 AEGIS_MIGRATION_DATABASE_URL 缺失时从
+# POSTGRES_* 回退，密码只走环境不进 DSN，回退固定 loopback，并要求显式批准。第一版这里
+# 直接引用那个变量，结果在只有 POSTGRES_* 的存量 .env 上崩在停服之后，把生产撂在停机状态。
 #
-# 具体批准值固定在 migrate.sh 内部，这里只递交「已停止」这个事实——
-# 那是有意的设计：不让调用方通过特权迁移入口注入任意 libpq 选项。
-
-# 迁移走 migrate.sh，不自己拼 goose 命令。
-#
-# 它比这里周全：AEGIS_MIGRATION_DATABASE_URL 缺失时从 POSTGRES_* 回退，
-# 密码只走环境不进 DSN，回退固定 loopback，并要求显式批准。
-#
-# 第一版这里直接引用那个变量，结果在只有 POSTGRES_* 的存量 .env 上崩在
-# 停服之后，把生产撂在停机状态。教训有两条：能复用的运维脚本别另写一套；
-# 新装环境与存量环境的配置形态不同，只验证新装那种是不够的。
-# migrate.sh 会先在一次性数据库上演练一遍迁移（check-migrations.sh），
-# 通过了才碰真库——这道预检值得留着，但它的依赖必须一起就位，
-# 否则报的是「precheck failed」，看着像迁移本身有问题。
-for f in migrate.sh platform.sh check-migrations.sh; do
-  cp "$RELEASE_ROOT/deploy/$f" "$DEST/deploy/" 2>/dev/null || true
-  chmod 0755 "$DEST/deploy/$f" 2>/dev/null || true
-done
+# 几个涉及幂等键与订单释放的迁移是 fail-closed 的：必须显式声明「写入者已停止」才肯执行。
+# 这份声明只在真的停了之后才给（首装本来就没有写入者）；升级的一次性库预检挪到了停服
+# 之前，停服窗口里只核对预检凭据。顺序与失败处置见 install-lib.sh 的 pandora_run_migrations。
 
 # 查询失败要返回空串，而不是让整个脚本死掉。
 #
@@ -501,59 +572,31 @@ pgq() {
 before="$(pgq 'SELECT coalesce(max(version_id),0) FROM goose_db_version')" || before=""
 [ -n "$before" ] || before=0
 
-restore_services() {
-  warn "迁移失败，正在把服务拉回来"
-  systemctl start aegis-public aegis-admin aegis-node 2>/dev/null || true
-}
-
-if [ "$MODE" = upgrade ]; then
-  info "停止服务后再迁移"
-  systemctl stop aegis-public aegis-admin aegis-node 2>/dev/null || true
-  # 迁移失败不能把生产撂在停机状态。
-  trap restore_services ERR
-fi
-
 # 发布包自带 goose；migrate.sh 通过 GOOSE_BIN 认它，免得用到目标机器上
-# 碰巧装着的其它版本。
+# 碰巧装着的其它版本。预检与正式迁移必须用同一个 goose。
 GOOSE_FOR_MIGRATE="$RELEASE_ROOT/bin/goose"
 if [ ! -x "$GOOSE_FOR_MIGRATE" ]; then
   GOOSE_FOR_MIGRATE="$(command -v goose || echo /root/go/bin/goose)"
   warn "发布包里没有 goose，改用 $GOOSE_FOR_MIGRATE"
 fi
 
-# 迁移输出落盘再择要显示：失败时要能看到完整原因。
-# 第一版直接 | tail -4，把真正的报错吞掉了，日志上只剩「执行数据库迁移」
-# 一行，排障时完全看不出发生了什么。
-MIGRATE_LOG="$(mktemp)"
-# 库里没有 goose 记录 = 从没跑过迁移 = 预检没有可保护的东西。
-# 这种情况下跳过它，省掉一遍完整迁移（单核机器上是十分钟量级的差别）。
-SKIP_PRECHECK=""
-if [ "$(pgq "SELECT (pg_catalog.to_regclass('public.goose_db_version') IS NOT NULL)::text")" = false ]; then
-  SKIP_PRECHECK="PANDORA_SKIP_PRECHECK_FRESH_DB=yes-empty-database"
-  info "全新库，跳过一次性数据库预检"
-else
-  info "已有迁移记录，先在一次性克隆库上演练（这一步比较慢）"
-fi
+# 库里没有 goose 记录 = 从没跑过迁移 = 预检没有可保护的东西，跳过它，省掉一遍完整迁移
+# （单核机器上是十分钟量级的差别）。用 goose_db_version 在不在判断，比「表数为 0」严谨。
+FRESH_DB=no
+[ "$(pgq "SELECT (pg_catalog.to_regclass('public.goose_db_version') IS NOT NULL)::text")" != false ] || FRESH_DB=yes
 
-if ( cd "$DEST/deploy" && env \
-      "GOOSE_BIN=$GOOSE_FOR_MIGRATE" \
-      "PANDORA_LOCAL_MIGRATION_APPROVED=yes" \
-      "PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes" \
-      ${SKIP_PRECHECK:+"$SKIP_PRECHECK"} \
-      bash ./migrate.sh up ) > "$MIGRATE_LOG" 2>&1; then
-  tail -4 "$MIGRATE_LOG" | sed 's/^/    /'
-  rm -f "$MIGRATE_LOG"
-else
-  rc=$?
-  echo "    ---- 迁移完整输出 ----" >&2
-  sed 's/^/    /' "$MIGRATE_LOG" >&2
-  rm -f "$MIGRATE_LOG"
-  die "迁移失败（退出码 $rc）" "上面是完整输出。预检失败时数据库未被改动。"
-fi
-
-if [ "$MODE" = upgrade ]; then
-  trap - ERR
-fi
+migrate_rc=0
+pandora_run_migrations "$MODE" "$FRESH_DB" "$DEST/deploy" "$DEST/deploy/.env" "$DEST/migrations" "$GOOSE_FOR_MIGRATE" \
+  || migrate_rc=$?
+case "$migrate_rc" in
+  0) ;;
+  10) die "停服前的迁移预检没通过：服务没停，数据库没动" \
+        "上面是预检的完整输出。按提示处理后重跑本脚本（走升级，会再备份一次）。" ;;
+  11) die "迁移失败，服务已拉回原来的版本" \
+        "上面是完整输出。迁移逐个事务提交，失败的那个已回滚，之前跑完的留在库里；
+      怎么处置（前滚、rollback-to、从升级前备份恢复）见 $DEST/deploy/MIGRATION-RUNBOOK.md" ;;
+  *) die "迁移失败（返回 $migrate_rc）" "上面是完整输出。" ;;
+esac
 
 after="$(pgq 'SELECT max(version_id) FROM goose_db_version')"
 info "迁移版本 $before → ${after:-未知}"
@@ -620,6 +663,18 @@ if [ "$ok" != 1 ]; then
 fi
 
 #------------------------------------------------------------------------------
+# 9b) 首装：在交互终端里现场建第一个管理员
+#------------------------------------------------------------------------------
+# 放在 nginx 之前：证书或 nginx 那一步停下时，管理员已经建好，重跑会走升级、不再问。
+# aegis-adminctl 经 platform/config 读配置，用网关此刻用的同一份 .env（含改成 socket 的连接串）。
+PANDORA_ADMIN_STATE=manual
+if pandora_admin_prompt_wanted "$MODE"; then
+  step "创建管理员"
+  set -a; . "$DEST/deploy/.env"; set +a
+  pandora_bootstrap_admin "$DEST/bin/aegis-adminctl"
+fi
+
+#------------------------------------------------------------------------------
 # 10) nginx 边缘：防火墙 → 证书 → 停用抢 80 的默认站点 → 渲染 → nginx -t → reload
 #------------------------------------------------------------------------------
 # 以前这几步全靠手工：装完要自己 render-nginx.sh、nginx -t、reload、ufw 放行、申请证书，
@@ -659,33 +714,4 @@ fi
 #------------------------------------------------------------------------------
 # 11) 收尾提示
 #------------------------------------------------------------------------------
-step "安装完成"
-cat <<EOF
-    三个网关只监听 127.0.0.1，公网经 nginx（443，HTTP/2）进来。
-    nginx：$(case "$EDGE_STATE" in
-      applied) echo "已按 .env 的 AEGIS_PUBLIC_BASE_URL（${AEGIS_PUBLIC_BASE_URL:-未设置}）渲染并 reload" ;;
-      no-cert) echo "等证书，见上面的提示" ;;
-      *) echo "未配置；之后跑 $DEST/deploy/render-nginx.sh && nginx -t && systemctl reload nginx" ;;
-    esac)
-    站点在 Cloudflare 后面时，再跑 $DEST/deploy/update-cloudflare-realip.sh
-    写入 Cloudflare 网段（默认的信任表不信任任何代理，升级不会覆盖它）
-    运行模式 AEGIS_ENV=${AEGIS_ENV:-development}；节点端发布物绑定在 $DEST/deploy/release-artifact.env，随每次升级覆盖
-
-    管理后台路径（高熵，泄露等同暴露入口）：
-      /$AEGIS_ADMIN_PATH/
-
-$([ "$MODE" = install ] && cat <<'FIRST'
-    还差最后一步——创建管理员。脚本不替你生成密码，避免它出现在终端
-    记录和日志里。自己跑：
-
-      cd /opt/aegispanel
-      set -a; . deploy/.env; set +a
-      ./bin/aegis-adminctl create --email <你的邮箱> --password-stdin
-FIRST
-)
-    常用操作：
-      查看状态    systemctl status aegis-public aegis-admin aegis-node
-      查看日志    tail -f /var/log/aegis/public.log
-      重启        systemctl restart aegis-public aegis-admin aegis-node
-      数据库      cd $DEST/deploy && ./psql.sh
-EOF
+print_install_summary
