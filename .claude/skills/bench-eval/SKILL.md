@@ -1,6 +1,6 @@
 ---
 name: bench-eval
-description: pandora 的 SQL 性能判分：在开发对照机（vultr-sgp-pt-bench）上用 ops-local/bench 评测集给 SQL 改动做改前改后判分（用例逐字取自 Go 源码，训练集 + 留出集，通用计划，结果集哈希一致，噪声底），另有单条 SQL 改前改后 EXPLAIN 的快速诊断。验收性能类分支、判断某条 SQL 改写值不值、换栈（gin + GORM）每步的性能闸门、复现实测慢查询时使用。
+description: pandora 的 SQL 性能判分（单条 SQL 或一批 SQL 改前改后；整机 30 分钟稳态成绩单用 prod-retest；先用 db-query 看哪条慢）：在开发对照机（vultr-sgp-pt-bench）上用 ops-local/bench 评测集给 SQL 改动做改前改后判分（用例逐字取自 Go 源码，训练集 + 留出集，通用计划，结果集哈希一致，噪声底），另有单条 SQL 改前改后 EXPLAIN 的快速诊断。验收性能类分支、判断某条 SQL 改写值不值、换栈（gin + GORM）每步的 SQL 性能闸门、复现并对比某条慢查询的计划时使用。
 ---
 
 # SQL 改前改后判分
@@ -13,38 +13,16 @@ description: pandora 的 SQL 性能判分：在开发对照机（vultr-sgp-pt-be
 
 ## 评测集在哪
 
-评测集本体在 `ops-local/bench/`（不进仓库，0700）。完整说明读 `ops-local/bench/README.md`（用例清单、阈值依据、判分规则）。
+评测集本体在 `ops-local/bench/`（不进仓库，0700）。用例清单、数据集、跑法与判法（热身与测几次、噪声底公式、阈值依据）、目录结构都在 `ops-local/bench/README.md`，这里不重复。本 skill 用到的入口：
 
 | 路径 | 是什么 |
 |---|---|
 | `run.sh <数据集> <版本> [选项]` | 本机入口：同步到对照机 → 机器上跑 → 拉回结果并打印 summary.md |
 | `judge.sh compare / gate / consistency / drift` | 本机比较结果目录，不连机器 |
-| `remote/cases/<id>/` | 用例：`case.json`（参数、阈值、判分方式、出处）、`before.sql`、`after.sql`、`after.json` |
-| `remote/versions/<版本>/` | 版本：`migration.sql`、`session.sql`、`cases/<id>.sql|json` |
-| `remote/datasets/datasets.json` | 数据集配置（运行库、模板库、是否平移时间、绑定参数） |
-| `tools/extract_cases.py` | 从 f364a62 的 Go 源码抽用例，`--check` 复核 |
-| `tools/extract_w5l.py` | 按 BASE 与 HEAD 两个提交抽改前改后 SQL 的范本（w5latency 判分用） |
-| `tools/build_w5l_templates.sh` | 给评测模板补迁移，建新结构的模板 |
-| `tools/w5l_driver.sh` | 4 个数据集 × 5 个版本的总驱动，范本 |
-| `results/` | 每次运行一个目录；汇总在 `results/_<任务>_judge/` |
 
-数据集：
-
-| 数据集 | 是什么 |
-|---|---|
-| `train` / `train_live` | 5k 实测库克隆；`_live` 把在线 IP、nonce、心跳平移到 now() 附近（每个用例开跑前重新平移） |
-| `holdout` / `holdout_stale` | 留出集；`_stale` 是统计信息陈旧的变体 |
-| `w5l_*` | 同上四个，但模板是「原模板 + 迁移 00098–00123」（9051135 结构）；`w5l_orders` 见第 5 节 |
+数据集名：`train` / `train_live`（5k 实测库克隆，`_live` 平移在线时间）、`holdout` / `holdout_stale`（留出集及其统计信息陈旧变体）、`w5l_*`（同上四个，模板是原模板加迁移 00098–00123）。
 
 **留出集只给总协调用**：规模与分布不在这里写，也不要把 `holdout/`、留出集绑定参数和明细结果贴进给实现方的 brief。brief 里只说「训练集与留出集都不变差」，防止对着留出集调参。
-
-跑法与判法的要点（判分器 `remote/bench.py` 实现）：
-
-- 执行上下文同生产：以 `aegis_app` 登录、`search_path = pg_catalog, public, pg_temp`、每次请求一个事务并 `set_config('app.tenant_id', …, true)`、同一连接 PREPARE 后反复 EXECUTE（pgx 语句缓存），会话开头补生产的 `effective_cache_size / work_mem / maintenance_work_mem`（`datasets/pg-session.sql`）。
-- 性能：热身 5 次（前 5 次必为 custom plan）+ 测 7 次，每次独立事务回滚，取中位；探针超 2 秒的慢用例改为热身 1 + 测 3。
-- 正确性：同一个 REPEATABLE READ 事务里先跑改前、再套迁移跑改后，比「全列排序后哈希」；写语句比写后表状态；`LIMIT` 有并列的用 top-k 判分。
-- 噪声底：变好或变差要同时超过 `max(3×轮间CV, 5%)` 和 0.2ms，否则算「持平（噪声内）」。
-- 阈值：节点类 5ms、订阅 5ms、门户与后台 50ms、看板 200ms；节点、订阅、门户触发 JIT 直接判失败。
 
 ## 1. 开工前
 
@@ -82,7 +60,7 @@ ops-local/bench/tools/build_w5l_templates.sh <临时目录> <后缀>
 - 动态拼接的语句（筛选、分页、批次）不能手抄：在 `git archive` 导出的临时副本里跑一个 Go 小测试，调用真实的拼接函数导出 SQL 与参数形状（`extract_w5l.py` 的 `--dump` 目录就是这些导出）。
 - `case.json` 关键字段：`threshold_ms`、`params`（`{tenant}`、`{user}`、`{node}`… 占位符，键取自 `datasets/train.bindings.json`）、`compare.mode`（`set` 或 `topk`）、`write`、`state_sql`（写语句比写后表状态）、`jit_forbidden`、`note`。
 - **一条改动把一条 SQL 拆成多条或挪到 Go 里**：用一条等价 SQL（CTE 或标量子查询拼成一行）表达最终结果集，并在 `note` 里写清等价关系（例：`w5l_dbstats` 把三条独立语句各包一层标量子查询拼成一行）。表达不了的只能走端到端 A/B（`ops-local/bench/e2e/`）。
-- `EXECUTE` 的参数里不能放子查询：原文里由上一条语句结果传入的数组，改写成 `ANY(ARRAY(SELECT …))` 放进语句体（例：`w5l_user_detail_quotas`）。
+- `EXECUTE` 的参数里不能放子查询：原文里由上一条语句结果传入的数组，改写成 `ANY(ARRAY(SELECT …))` 放进语句体（例：`w5l_user_detail_quotas`）；快速诊断里同理。
 - 判分器的 `EXECUTE` 至少要一个参数；没参数的语句末尾补 `WHERE $1::uuid IS NOT NULL` 并传租户，改前改后同补（例：`w5l_dbstats`）。
 - SQL 文本没改、改动在缓存或往返数的用例，也建用例（`case.json` 里标 `sql_identical`），作回归哨兵：它们应该持平，变差就是抓到了副作用。
 
@@ -95,7 +73,7 @@ ops-local/bench/tools/build_w5l_templates.sh <临时目录> <后缀>
 | `before_gp` | `session.sql` 一行 `SET plan_cache_mode = force_generic_plan;`，不放 `cases/` |
 | `after_gp` | 同样的 `session.sql`，加 `cases/<id>.sql|json`（改了的用例）；**分支有迁移的话，`migration.sql` 也要在这里放一份**，判分器按版本目录各读各的 |
 
-为什么要 `_gp`：pgx 缓存语句后，PG 从第 6 次执行起可能换通用计划；强制通用计划测的是最坏形态。参数化的 SQL 改动都要跑。部署配置类改动（如 `SET jit = off;`）同样写进某个版本的 `session.sql`。
+为什么要 `_gp`：强制通用计划测的是 pgx 语句缓存后的最坏形态。参数化的 SQL 改动都要跑。部署配置类改动（如 `SET jit = off;`）同样写进某个版本的 `session.sql`。
 
 没放进 `cases/` 的用例沿用 `before.sql`（结果里标「该版本未改此用例」）。`run.sh` 每次 `rsync --delete` 同步 `remote/`，改完用例直接重跑即可；`meta.json` 里的 `case_sha` / `before_sha` 能核对两次运行用的是不是同一份 SQL。
 
@@ -207,11 +185,8 @@ cd ops-local/bench
 坑：
 
 - psql `-q` 不回显 SQL 注释，输出只能按顺序和段对上：用 explain.sh（它把「-- A1」行换成 `\echo` 标记），不要自己数。
-- `EXECUTE q(ARRAY(SELECT …))` 会报 cannot use subquery in EXECUTE parameter，同一事务后面全部变 aborted：先 `\gset` 取值再传，或把子查询写进 PREPARE 体。
-- 从 pg_stat_statements 或日志抄来的语句常被压成一行，行内的 `--` 注释会把后面整段都吞掉：先去掉注释再用。
-- **统计信息新旧会改变计划**：刚 ANALYZE 过的库估价低、JIT 不触发，实测时估价高一倍、触发 JIT。对比前两边都 ANALYZE；要复现线上问题，就额外测一份不 ANALYZE 的。
+- 统计信息新旧会改变计划（见 `rules/sql-performance.md`）：对比前两边都 ANALYZE；要复现线上问题，就额外测一份不 ANALYZE 的。
 - `aegis` 里的 `node_alive_ips` 全部早已过期，与负载中的真实状态不同；测在线设备相关的查询，要把 `last_seen_at` 平移到窗口内（评测集的 `train_live` 用 `ops-local/bench/remote/datasets/live-shift.sql` 做了这件事）。
 - `CREATE DATABASE … TEMPLATE aegis` 要求模板库上没有其他连接，评测集在用时会失败；prep-copy 用 pg_restore，不受影响。
-- ssh、docker exec、psql 三层嵌套时引号极易出错：把 SQL 写进文件再 scp，`docker exec -i … psql < 文件`；脚本里用 `bash -s` 加 heredoc。
 - 副本名必须是 `aegis_cmp_` 开头，同名会被删掉重建；不要拿 `aegis`、`aegis_train*`、`aegis_holdout*` 做实验。
 - 对照机是共享 CPU：先确认空闲（见第 1 节）。

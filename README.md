@@ -46,7 +46,7 @@ aegis-public    aegis-admin     aegis-node
 | `panel/tests/` | 数据层不变量 SQL 与端到端脚本 |
 | `panel/frontend/` | 面板前端，2026-09-23 起按设计稿从零重写、2026-09-26 完成（React + TypeScript + Vite，管理后台与用户门户双入口），构建后经 `make frontend-embed` 嵌入 `panel/web/` |
 | `panel/web/` | 面板前端的 `go:embed` 嵌入点：两个网关在根 `/` 下发入口、`/assets/*` 下发产物；仓库只存占位入口，由 `make frontend-embed` 覆盖 |
-| `panel/migrations/` | SQL 迁移，按序号递增，当前到 00097，共 94 个 `.sql`（00073、00091、00092 空号）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 21 张 Go 从不引用的表及锁定原因 |
+| `panel/migrations/` | SQL 迁移，按序号递增（编号规则与历史空号见 `.claude/rules/panel-migrations.md`，数量与最大号以目录为准）；00067 删除 21 张无依赖孤儿表，未在任何生产库执行（CI 的一次性库会跑全部迁移）；`RESERVED-TABLES.md` 登记其余 21 张 Go 从不引用的表及锁定原因 |
 | `panel/deploy/` | 安装、迁移、备份、WebDAV、Nginx、systemd、PG18 与 UI 验收脚本 |
 | `pdnd/` | Pandora node（pdnd / pandora-native）：NativeCore 协议入站、认证、路由、用户与流量 |
 | `pdnd/kernel/`、`pdnd/internal/` | NativeCore 自研数据面 |
@@ -325,22 +325,8 @@ bash panel/deploy/test-install.sh <发布目录>
 
 ### 已有证据（FACT）
 
-**CI 门禁（2026-09-26 在 `main` 上全绿：`36230330995` / `36230331009` / `36230331011`）**。
+**CI 门禁**：四个 workflow（`pandora-native.yml`、`panel-pg18.yml`、`panel-smoke.yml`、`panel-deploy.yml`）各管什么、改了什么要等哪个结论、PG18 必须 0 SKIP，一律以 `.claude/skills/verify/SKILL.md` 为准，这里不重复（数字和 job 清单一改就过时）。只改仓库根的文档不触发 workflow；被路径过滤的目录里的任何文件改动都会触发对应的 workflow。2026-09-26 `main` 上三组全绿的 run：`36230330995` / `36230331009` / `36230331011`。
 
-三个 workflow 各有路径过滤：只改仓库根的文档不触发；改 `pdnd/**`、`panel/internal/**`、`panel/web/**`、`panel/frontend/**` 等被过滤目录里的任何文件都会触发对应 workflow。
-
-- **Panel PostgreSQL 18 gates**（`panel-pg18.yml`）：
-  - `panel-unit` 跑 panel 全量 build / vet / go test，是 CI 上唯一跑 panel 全部单元测试的地方；
-  - `panel-pg18` 在 runner 的 Docker 里起一次性 PG18，用发布包钉死的 goose 从空库套用全部迁移（到 00095），再跑 15 个包的 PG18 集成用例：234 PASS / 0 SKIP / 0 FAIL。有用例跳过、或一个都没跑，同样判失败。
-- **Pandora NativeCore**（`pandora-native.yml`）：
-  - pdnd：amd64 race / vet、原生 `ubuntu-24.04-arm` 的 ARM64 race、`-tags interop` 外部客户端门（外部 Xray、AnyTLS 客户端，非 race）；
-  - 能力矩阵 smoke、H3 探针、默认构建依赖边界（sing-box / xray 不得进默认构建）、compat 编译、amd64 / arm64 双架构发布构建；
-  - `check_native_panel_parity.py`（NativeCore、Panel Schema、serving allowlist 各 13 个协议一致）与 nodefabric 契约；
-  - `panel-frontend`：新前端 lint / typecheck / vitest（对假后端）/ 双入口构建，再 `make frontend-embed` 用真实产物跑 web、webapp、api 的 Go 契约，占位页没被替换即失败。
-- **Panel frontend smoke**（`panel-smoke.yml`）：起一次性 PG18 + 真实网关，经真网关造数据，用前端页面自己的 zod schema 解析真实响应（读表先于写路径），再在同一栈上跑 `tests/` 下五个 e2e 脚本；任一失败即红。
-- **Panel deploy script contracts**（`panel-deploy.yml`，2026-09-26 新增）：改 `panel/deploy/**` 或 `panel/migrations/**` 即触发，逐个跑不需要数据库与 root 的 deploy 桩测试；两个迁移脚本（migrate.sh、check-migrations.sh）拿真实 `panel/migrations` 校验文件名与编号（严格递增、不重复，允许 00073、00091、00092 历史空号），拒绝真实目录即变红。
-
-  在此之前 deploy 桩测试 CI 一个都不跑，其中两个对真实目录早已是红的。
 - **仓库守卫**（随 `go test ./...`）：panel 与 pdnd 两道 800 行守卫、表登记簿与权限字典契约。第 5 阶段拆分超长文件时，每步都用 `panel/tools/refactorcheck` 证明是纯挪动。
 - 2026-09-23 起 workflow 默认 `shell: bash`（`-eo pipefail`）。在此之前 `go test … | tee` 的失败会被 `tee` 吞掉，**那之前的 race 绿灯不能当证据**。
 
@@ -370,7 +356,7 @@ bash panel/deploy/test-install.sh <发布目录>
 | 项 | 状态 |
 |---|---|
 | 仓库基线 | 面板重构第 1–5 阶段于 `d04513e` 合入 `main`，其后只有文档合并 |
-| CI | `main` 上三组全绿（`36230330995` / `36230331009` / `36230331011`）：PG18 集成门禁 234 PASS / 0 SKIP，NativeCore（含 race、原生 ARM64、interop），新前端对真实网关的联调冒烟 |
+| CI | `main` 上三组全绿（`36230330995` / `36230331009` / `36230331011`）：PG18 集成门禁 0 SKIP，NativeCore（含 race、原生 ARM64、interop），新前端对真实网关的联调冒烟 |
 | Xboard 功能验收 | PARTIAL，未 RELEASED |
 | 前端 | 旧的手写单页与 React 候选已删除，管理后台与用户门户按设计稿在 `panel/frontend` 重写完成并补齐后端缺口 |
 | 部署 | 这一版尚未在任何真实机器上部署或实测；真机测试待换新机器再做 |

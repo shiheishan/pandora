@@ -12,7 +12,6 @@ description: pandora 总协调把工作派给任务会话或实现型子 agent�
 - **开工说明里的事实先核实**：符号、文件、行号、表名一律在当前主线 grep 一遍。总协调记忆、旧报告、子 agent 转述里的行号常常过时（实测报告的行号以当时的提交为准），按符号找。
 - **按文件切归属，不按主题切**。同一文件只给一路；绕不开的共享热点（`cmd/*/main.go`、`api/*/router.go`、`platform/config/config.go`、同包的大文件）要么整体给一路，要么写清「只许改哪一个函数或哪一行」，其余路在报告里提需求。
 - **迁移号段**：先看主线最大号（`ls panel/migrations | tail`），每路预分一段，用不到就空着（脚本允许空号、严格递增即可）。
-- 小任务不拆，拆分本身有成本；只读调研可以随便拆。
 
 ## 开 worktree
 
@@ -34,8 +33,8 @@ description: pandora 总协调把工作派给任务会话或实现型子 agent�
 
 ## 启动
 
-- Agent 调用显式传 `model`，口径见根 CLAUDE.md「大任务拆子 agent」：实现型任务（跨模块，或涉及钱、权限、认证、迁移、节点内核）用 `opus`；照 skill 跑命令收数字的复测、纯挪动、文档整理用 `sonnet`。在 `.claude/TASKS.md` 登记时写上模型。
-- 子 agent 用 `templates/agent-prompt.md`（替换 `<名字>`、`<一句话范围>`），后台运行，给 worktree 的绝对路径。模板已写明：推送设 dangerouslyDisableSandbox、最终消息就是报告、go 不与 npm ci 并发。
+- Agent 调用显式传 `model`，口径见根 CLAUDE.md「大任务拆子 agent」，在 `.claude/TASKS.md` 登记时写上模型。
+- 子 agent 用 `templates/agent-prompt.md`（替换 `<名字>`、`<一句话范围>`），后台运行，给 worktree 的绝对路径。模板已写明：推送设 dangerouslyDisableSandbox、最终消息就是报告。
 - 要读主目录里的长文档（规划、审计、评估），先把子 agent 的结论存成主目录 `.claude/<主题>.md`（git 忽略），brief 里给绝对路径，别把几千字贴进 prompt。
 - 用户自己开会话时，给一段「发给新会话」的原话，内容同 agent-prompt。
 - 在主目录 `.claude/TASKS.md` 记下：名字、目录、范围、迁移号、派出的基点。
@@ -48,7 +47,6 @@ description: pandora 总协调把工作派给任务会话或实现型子 agent�
 - 主线在任务进行中前进了，检查机按全部 job 回放，旧基点会误红：brief 里要求交付前 `git merge feat/panel-redesign`。
 - 性能任务：留出评测集的规模与细节不要写进 brief，防止实现方对着评测调参（见 bench 流程）。
 - 报告：用户开的任务会话写 worktree 的 `.claude/report.md`；**Agent 工具派的子 agent 写不了报告文件**（环境拦截，要求以文本返回），它的最终消息就是报告，总协调代存到 `.claude/report.md`。都不用跨会话消息（要用户手动批准，常过期送不到）。
-- 子 agent 在沙箱里连不上 1Password SSH agent，推送报签名失败；要么关沙箱重试，要么由总协调代推，不改走 HTTPS。
-- 有迁移的几路按号段从小到大合（goose 不接受「库里到了 00106 又冒出没跑过的 00104」）；没迁移的随时合。brief 里写明号段和合并顺序。
+- 有迁移的几路按号段从小到大合（goose 不接受「库里到了 00106 又冒出没跑过的 00104」，见 `rules/panel-migrations.md`）；没迁移的随时合。brief 里写明号段和合并顺序。
 - 中途追加范围用 SendMessage 发给该 agent，写清新增的归属文件与「不碰」，并在 TASKS 记一笔；别的路归属的文件，改由那一路做（例：订阅地址 /32 问题属 service.go → 发给 w2node，不给 w2render）。
 - 推送的授权边界见 accept-task skill 的「合并」一节（任务分支可推，推 main、删 worktree、删分支另问用户）。
