@@ -66,7 +66,8 @@ if [ -n "$vpc" ]; then
 fi
 
 # 5. 机器上：chrony、/root/README.md（只写位置不写值）
-ssh -o BatchMode=yes "$alias" bash -s -- "$alias" "$day" "$plan" "$purpose" "$vpc" <<'REMOTE'
+# ssh 把参数拼成一条远端命令行再交给远端 shell 重新分词：带空格的用途必须先 %q 转义，否则会被拆开、后面的参数全部错位
+ssh -o BatchMode=yes "$alias" "bash -s -- $(printf '%q ' "$alias" "$day" "$plan" "$purpose" "$vpc")" <<'REMOTE'
 set -e
 alias="$1"; day="$2"; plan="$3"; purpose="$4"; vpc="${5:-}"
 export DEBIAN_FRONTEND=noninteractive
