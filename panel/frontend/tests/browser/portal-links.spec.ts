@@ -102,6 +102,12 @@ test('C8：改名与按份换新链接', async ({ browser, world }) => {
     const device = await text(page.getByRole('radiogroup', { name: '你的设备' }).getByRole('radio', { checked: true }))
     const apps = (await page.getByRole('article').getByRole('heading', { level: 3 }).allInnerTexts()).map((s) => s.trim())
     expect(apps.length, '这台设备至少有一个 App 的说明').toBeGreaterThan(0)
-    return `换新链接完成页的链接打开帮助中心「在 App 里点一次「更新」」，设备选中「${device}」，有 ${apps.join('、')} 的三步说明`
+    // 引用 App 自己的按钮名（用户 10-08 定的例外）：照它的中文界面写、按钮样式，第一次出现补半句说明
+    await page.getByRole('radiogroup', { name: '你的设备' }).getByRole('radio', { name: '安卓手机' }).click()
+    const v2rayNG = page.getByRole('article').locator('section').filter({ has: page.getByRole('heading', { name: 'v2rayNG', exact: true }) })
+    await expect(v2rayNG.getByText('更新订阅', { exact: true })).toBeVisible()
+    const tap = await text(v2rayNG.getByRole('listitem').nth(1))
+    expect(tap).toContain('更新订阅（就是更新你添加的那条链接）')
+    return `换新链接完成页的链接打开帮助中心「在 App 里点一次「更新」」，设备选中「${device}」，有 ${apps.join('、')} 的三步说明；Android 下 v2rayNG 写「${tap}」`
   })
 })

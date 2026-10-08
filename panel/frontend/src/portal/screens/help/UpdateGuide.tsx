@@ -1,6 +1,6 @@
 import { href, navigate } from '../../../core/router'
 import { Card } from '../../../ui'
-import { APP_UPDATE, guideApps, PROFILE_NAME_HINT, UPDATE_FALLBACK, UPDATE_GUIDE_PARAM } from '../common/app-update'
+import { APP_UPDATE, guideApps, PROFILE_NAME_HINT, UPDATE_FALLBACK, UPDATE_GUIDE_PARAM, type GuideText } from '../common/app-update'
 import { DEVICE_SAY, DEVICES, type Device } from '../common/clients'
 import { Chips } from '../common/Flow'
 import css from './Help.module.css'
@@ -35,6 +35,8 @@ export function UpdateGuideToc({ current }: { current: Device | null }) {
  * 末尾给退路。完成页与换新链接页「点一次更新」旁边链接到这里。
  */
 export function UpdateGuide({ device }: { device: Device }) {
+  // 按渲染顺序记下已经说明过的按钮名：同一篇里每个带说明的按钮只在第一次出现时补那半句
+  const explained = new Set<string>()
   return (
     <Card className={css.article}>
       <a className={css.back} href={href('/help')}>
@@ -55,9 +57,15 @@ export function UpdateGuide({ device }: { device: Device }) {
             <section key={app} className={css.guideApp} id={`guide-${app.replace(/\s+/g, '-')}`}>
               <h3 className={css.heading}>{app}</h3>
               <ol className={css.steps}>
-                <li>{s.where}</li>
-                <li>{s.tap}</li>
-                <li>{s.ok}</li>
+                <li>
+                  <GuideLine text={s.where} explained={explained} />
+                </li>
+                <li>
+                  <GuideLine text={s.tap} explained={explained} />
+                </li>
+                <li>
+                  <GuideLine text={s.ok} explained={explained} />
+                </li>
               </ol>
             </section>
           ) : null
@@ -65,5 +73,28 @@ export function UpdateGuide({ device }: { device: Device }) {
         <p className={css.para}>{UPDATE_FALLBACK}</p>
       </article>
     </Card>
+  )
+}
+
+/**
+ * 一步的文字：App 自己的按钮名、页面名照它的中文界面原样写，做成按钮样式（用户 10-08 定的例外）；
+ * 带说明的按钮在这一篇里第一次出现时，后面补半句「（就是更新你添加的那条链接）」
+ */
+function GuideLine({ text, explained }: { text: GuideText; explained: Set<string> }) {
+  if (typeof text === 'string') return <>{text}</>
+  return (
+    <>
+      {text.map((part, i) => {
+        if (typeof part === 'string') return <span key={i}>{part}</span>
+        const note = part.note && !explained.has(part.button) ? part.note : null
+        if (note) explained.add(part.button)
+        return (
+          <span key={i}>
+            <kbd className={css.appButton}>{part.button}</kbd>
+            {note && `（${note}）`}
+          </span>
+        )
+      })}
+    </>
   )
 }
