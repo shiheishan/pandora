@@ -18,7 +18,8 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/db"
 )
 
-// 并发写审计（w9audit）：下单、续费、换套餐都在 SERIALIZABLE 事务里写审计。
+// 并发写审计（w9audit）：下单、续费、换套餐都在 SERIALIZABLE 事务里写审计，
+// 登录、支付回调在读已提交事务里写审计，两类同租户同时发生。
 // 序列化事务的快照在第一条语句就定了，早于取链尾；并发时读到的链尾是旧的，
 // 写进去就撞 (tenant_id, chain_seq) 唯一约束回 500。这里同租户一起压：
 // 序列化写全部成功（或经 40001 重试成功），链完整、chain_seq 连续，并打出
@@ -36,52 +37,92 @@ func TestAuditConcurrentSerializablePG18(t *testing.T) {
 	const (
 		baseTenant  = "85000000-0000-4000-8000-000000000004" // 不争用的基线
 		burstTenant = "85000000-0000-4000-8000-000000000003" // 新租户一上来就并发
+		loginTenant = "85000000-0000-4000-8000-000000000005" // 只有读已提交的写（登录高峰）
 	)
 	auditSeedTenant(t, ctx, admin, baseTenant, "audit-baseline-pg18")
 	auditSeedTenant(t, ctx, admin, burstTenant, "audit-concurrency-pg18")
+	auditSeedTenant(t, ctx, admin, loginTenant, "audit-login-pg18")
 
-	// 序列化写：先做一段「业务」（3ms），再写审计，与下单的形状一致
-	serial := func(tenant, action string) call {
+	// 业务锁：用户维度的一把事务锁，序列化与读已提交的写共用 4 个用户。真实路径里是
+	// 登录的 UPDATE users、回调的按支付单 advisory lock、下单锁的套餐 / 余额行 ——
+	// 「先拿业务锁、再写审计」，审计取号排队的方式要是让人手握业务锁去等别人，
+	// 这里就会死锁（40P01）
+	userLock := func(tx pgx.Tx, user int) error {
+		_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('w9audit-user-' || $1::text, 0))`, user%4)
+		return err
+	}
+	// 序列化写：先做一段「业务」（共 3ms，中间拿用户锁），再写审计，与下单的形状一致
+	serial := func(tenant, action string, user int) call {
 		start, attempts := time.Now(), 0
 		err := pool.InTxSerializableRetry(ctx, db.Scope{TenantID: tenant}, func(tx pgx.Tx) error {
 			attempts++
-			if _, err := tx.Exec(ctx, `SELECT pg_sleep(0.003)`); err != nil {
+			if _, err := tx.Exec(ctx, `SELECT pg_sleep(0.002)`); err != nil {
+				return err
+			}
+			if user >= 0 {
+				if err := userLock(tx, user); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.Exec(ctx, `SELECT pg_sleep(0.001)`); err != nil {
 				return err
 			}
 			return Write(ctx, tx, tenant, Entry{ActorKind: "system", Action: action})
 		})
-		return call{serial: true, dur: time.Since(start), attempts: attempts, err: err}
+		return call{kind: "serializable", dur: time.Since(start), attempts: attempts, err: err}
 	}
-	// 读已提交的写：登录、回调这类路径
-	readCommitted := func(tenant, action string) call {
+	// 读已提交的写。登录：拿用户锁 → 写审计 → 提交；回调：拿锁 → 写审计 → 审计之后还有
+	// 1ms 的活（结算在审计之后还记账），链头行锁多握一会儿
+	readCommitted := func(kind, tenant, action string, user int) call {
 		start := time.Now()
 		err := pool.InTx(ctx, db.Scope{TenantID: tenant}, func(tx pgx.Tx) error {
-			return Write(ctx, tx, tenant, Entry{ActorKind: "system", Action: action})
+			if err := userLock(tx, user); err != nil {
+				return err
+			}
+			if err := Write(ctx, tx, tenant, Entry{ActorKind: "system", Action: action}); err != nil {
+				return err
+			}
+			if kind == "callback" {
+				_, err := tx.Exec(ctx, `SELECT pg_sleep(0.001)`)
+				return err
+			}
+			return nil
 		})
-		return call{dur: time.Since(start), attempts: 1, err: err}
+		return call{kind: kind, dur: time.Since(start), attempts: 1, err: err}
 	}
 
 	// 基线：同一租户顺序写 16 笔，没有任何争用
 	var base []call
 	for i := range 16 {
-		base = append(base, serial(baseTenant, fmt.Sprintf("baseline.%d", i)))
+		base = append(base, serial(baseTenant, fmt.Sprintf("baseline.%d", i), -1))
 	}
 	logCalls(t, "baseline 16 sequential serializable", base)
 	assertChain(t, ctx, pool, admin, baseTenant, 16)
 
 	// 新租户一上来就 16 路并发序列化写（链头还不存在）
-	burst := together(16, 1, func(g, r int) call { return serial(burstTenant, fmt.Sprintf("burst.%d", g)) })
+	burst := together(16, 1, func(g, r int) call { return serial(burstTenant, fmt.Sprintf("burst.%d", g), -1) })
 	logCalls(t, "burst 16 concurrent serializable (fresh tenant)", burst)
 
-	// 混合：16 路序列化 + 8 路读已提交，各 3 轮
-	mixed := together(24, 3, func(g, r int) call {
-		if g < 16 {
-			return serial(burstTenant, fmt.Sprintf("mixed.s%d.%d", g, r))
+	// 混合：16 路序列化 + 8 路登录 + 8 路回调，各 3 轮，共用 4 个用户的业务锁
+	mixed := together(32, 3, func(g, r int) call {
+		switch {
+		case g < 16:
+			return serial(burstTenant, fmt.Sprintf("mixed.s%d.%d", g, r), g)
+		case g < 24:
+			return readCommitted("login", burstTenant, fmt.Sprintf("mixed.login%d.%d", g, r), g)
+		default:
+			return readCommitted("callback", burstTenant, fmt.Sprintf("mixed.cb%d.%d", g, r), g)
 		}
-		return readCommitted(burstTenant, fmt.Sprintf("mixed.rc%d.%d", g, r))
 	})
-	logCalls(t, "mixed 16 serializable + 8 read-committed x3", mixed)
-	assertChain(t, ctx, pool, admin, burstTenant, 16+24*3)
+	logCalls(t, "mixed 16 serializable + 8 login + 8 callback x3", mixed)
+	assertChain(t, ctx, pool, admin, burstTenant, 16+32*3)
+
+	// 登录高峰：32 路读已提交的写同时抢一个租户的链头，各 3 轮
+	logins := together(32, 3, func(g, r int) call {
+		return readCommitted("login", loginTenant, fmt.Sprintf("login.%d.%d", g, r), g)
+	})
+	logCalls(t, "login burst 32 read-committed x3", logins)
+	assertChain(t, ctx, pool, admin, loginTenant, 32*3)
 
 	var advisory int
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_locks
@@ -91,7 +132,7 @@ func TestAuditConcurrentSerializablePG18(t *testing.T) {
 }
 
 type call struct {
-	serial   bool
+	kind     string // serializable / login / callback
 	dur      time.Duration
 	attempts int
 	err      error
@@ -124,11 +165,11 @@ func together(n, rounds int, do func(g, r int) call) []call {
 // logCalls 打出耗时分位与重试次数；任何一笔失败都按 SQLSTATE 归类后判红。
 func logCalls(t *testing.T, name string, calls []call) {
 	t.Helper()
-	for _, serial := range []bool{true, false} {
+	for _, kind := range []string{"serializable", "login", "callback"} {
 		var durs []time.Duration
 		retried, maxAttempts := 0, 0
 		for _, c := range calls {
-			if c.serial != serial || c.err != nil {
+			if c.kind != kind || c.err != nil {
 				continue
 			}
 			durs = append(durs, c.dur)
@@ -141,10 +182,6 @@ func logCalls(t *testing.T, name string, calls []call) {
 			continue
 		}
 		slices.Sort(durs)
-		kind := "serializable"
-		if !serial {
-			kind = "read-committed"
-		}
 		t.Logf("%s [%s] ok=%d p50=%s p99=%s max=%s retried=%d max_attempts=%d", name, kind,
 			len(durs), pct(durs, 50), pct(durs, 99), durs[len(durs)-1], retried, maxAttempts)
 	}
