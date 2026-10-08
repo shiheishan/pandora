@@ -10,7 +10,8 @@ paths:
   - `reauth_required` 与 `forbidden` 同为 403、码不同，前端靠码弹重认证框；`upgrade_required`（426）只给节点网关，前端不登记
   - 对外只给码和中性中文文案，内部详情只进日志
 - 审计只经 `platform/audit` 的 `Write` 写入 `audit_events`：它从每租户链头 `audit_chain_heads`（00142）`UPDATE … RETURNING` 取 `chain_seq` 与前驱哈希，写行时同一条语句把链头推到新行。不要在别处直接 INSERT 这张表或改链头；改哈希口径必须保持存量行仍能按 `chain.go` 的 `VerifyChain` 复算
-  - 序列化事务的快照早于取号：快照之后别人写过审计，取号就报 40001。写审计的序列化事务一律用 `InTxSerializableRetry`（重试时事务第一条语句 `LOCK TABLE audit_chain_heads` 排队，快照晚于拿锁，见 `db.go` 的 `chainGateSQL`）；只用 `InTxSerializable` 的写审计路径在并发下会回 40001
+  - 序列化事务的快照早于取号：快照之后别人取过号，取号就报 40001。写审计的序列化事务一律用 `InTxSerializableRetry`：第一次乐观，重试时事务第一条语句 `LOCK TABLE audit_chain_gate`（只用来加锁的空表，LOCK 不取快照）排队；乐观尝试取号前以 NOWAIT 过闸，闸被占就改去排队，不带着业务锁等闸（见 `db.go` 的 `EnterChainGate`）。只用 `InTxSerializable` 的写审计路径在并发下会回 40001
+  - 读已提交的审计写入（登录、回调、后台操作）不碰闸，只在链头行上排队。别让它们等任何「序列化事务整段持有」的锁：它们手里常握着业务行锁（`UPDATE users`、按支付单的 advisory lock），会和持锁后要同一行的事务成环（w9audit 曾因此 40P01）
   - 链头缺行时 `Write` 按审计表链尾现建（口径只在 Go 里一处），所以链头不回填、被删也不会分叉
 - 会落库的秘密只落哈希或密文。主密钥只做信封加密的根和派生用途专用盐（`crypto.go` 的 `SubscriptionAuditSalt`、`NotifyRecipientSalt`）
   - 新用途就新派生一个盐，带自己的域分隔串（`aegis/<用途>/…/v1`），不要复用已有的盐
