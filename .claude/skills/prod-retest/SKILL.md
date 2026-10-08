@@ -21,6 +21,7 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 |---|---|---|
 | 面板机 `$PANEL_HOST` | Vultr 共享型 2c4g，Debian 13 | install.sh 生产模式（三网关 + nginx + Docker 里 PG18/Valkey，装法见 panel-install），seed、采集脚本 |
 | 压测机 `$LOADGEN_HOST` | 同机房 2c4g | `loadtest nodes / users / burst` |
+| （1000 节点档）压测机 ×2 | 同机房 2c4g | 一台只跑 `loadtest nodes -nodes 1000 -stagger 180s`，一台只跑 `loadtest users`；nodes 单进程 1000 节点的资源见 runbook 第 11.2 节 |
 
 开机与登记走 test-machine skill，装面板走 panel-install skill。每轮在 `ops-local/<轮次>/` 下准备：
 
@@ -39,6 +40,7 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 3. **realip**（原因与做法见 runbook 第 4 节）：在面板机执行 `/root/lt/nginx-realip.sh enable <LOADGEN_IP>`（脚本由上一步推上去）。验证：从压测机带 `X-Real-IP: 198.18.x.x` 请求 /healthz，`/var/log/nginx/aegis-access.log` 最后一行的来源应是这个地址。收尾或删机前 `nginx-realip.sh disable`。
 4. **seed**（面板机，参数与自检见 runbook 7.2）：
    - 包装脚本只从 0600 文件读口令，参考 `ops-local/vultr-test2/` 现场的 `run-seed-5k.sh`；参数 `-users 5000 -nodes 198 -label 5k -out /root/lt-results/5k-seed/lt-manifest.json`。
+   - **1 万用户 / 1000 节点档**（2026-10-08 起的整机标准）：参数 `-users 10000 -nodes 1000 -label 10k -admin-workers 8`，并直连面板机回环网关（`-admin-base http://127.0.0.1:9001 -node-base http://127.0.0.1:9003 -public-base http://127.0.0.1:9000`，端口取 `.env`），不经 nginx；单会话要约 25 分钟，8 会话预计 5 到 6 分钟。上一批留在库里时 `-retire-previous` 会先吊销上一批节点身份再退役（runbook 第 11.1 节）。
    - 用 `cd /root/lt; setsid -f ./run-seed-….sh > 日志 2>&1 < /dev/null` 起，退出码必须为 0（自检不过就是非 0）。
    - 记下 `seed_timings`（耗时参考值在 runbook 7.2）。
    - manifest 拉回 `ops-local/<轮次>/<label>-seed/`（0600），再拷一份到压测机。
@@ -73,6 +75,7 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 
 标准：5000 用户整机内存约 1G；**静默运行（只有节点在心跳、拉取、上报，没人操作）时面板 + 数据库合计 CPU ≤ 单核 30%**。每个检查点都测一次：
 - 节点照常起（200 档，必要时加 300 档），**不起 users、不做 burst**，稳态 15 分钟。
+- 1000 节点档：压测机上 `panel/tools/loadtest/scripts/run-quiet.sh <manifest> <node-url> <T> 1000`（T−8 分钟起跑，180 秒错开），面板机 `quiet-collect.sh <目录> <T> 15`，采完用 `loadtest quiet-report -dir <目录>`（`-strict` 不达标退出码非 0）出判定；口径与上面一致，细节见 runbook 第 11.3 节。
 - 采样只用轻量方式：开头与结尾各读一次 `/proc/stat` 与各进程 `/proc/<pid>/stat`（含 cutime/cstime）做差，加 `vmstat 5`；**不跑 sample-procs 与 sample-pgact**——它们自身自身开销大（`overhead.sh` 实测，数字见各轮 ops-local 结果），会把静默 CPU 抬过线。
 - 成绩单单列一节：面板 + 数据库（三网关、postgres、valkey、nginx）合计 CPU、整机已用内存、swap，对照标准判过或不过。
 

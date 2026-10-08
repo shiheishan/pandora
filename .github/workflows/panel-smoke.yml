@@ -138,7 +138,7 @@ jobs:
           start=$(date +%s)
           "$S/bin/loadtest" seed -database-url "$AEGIS_DATABASE_URL" -admin-base "$SMOKE_ADMIN_BASE" \
             -node-base "$SMOKE_NODE_BASE" -public-base "$SMOKE_PUBLIC_BASE" -admin-email "$SMOKE_ADMIN_EMAIL" \
-            -users 200 -nodes 5 -label ci -out "$S/lt-manifest.json"
+            -users 200 -nodes 5 -label ci -admin-workers 4 -out "$S/lt-manifest.json"
           echo "seed took $(( $(date +%s) - start ))s"
           "$S/bin/loadtest" nodes -manifest "$S/lt-manifest.json" -node-url "$SMOKE_NODE_BASE" \
             -nodes 5 -duration 60s -stagger 10s -progress 20s -out "$LT" -strict > "$LT/nodes.log" 2>&1 &

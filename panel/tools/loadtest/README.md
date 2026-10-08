@@ -2,6 +2,8 @@
 
 在 Vultr 上实测面板在真实规模附近的资源占用。节点固定 200 个（2 台真 pdnd + 198 个模拟节点），用户分 5,000 / 10,000 / 15,000 三档。
 
+> 2026-10-08 起整机标准升到 **1 万用户、1000 节点**，造数、模拟节点和静默测量的做法见第 11 节；下面各节仍以 200 节点档为例，参数照第 11 节替换即可。
+
 这份手册只讲怎么测、测什么、存在哪。测出来的问题先记下来，等基线出来再决定怎么调，不在压测中途改面板。
 
 > 文中所有地址、域名、口令一律是占位符：`<PANEL_DOMAIN>`、`<PANEL_IP>`、`<LOADGEN_IP>`、`<NODE1_IP>`、`<NODE2_IP>`、`<ADMIN_PATH>`、`<ADMIN_EMAIL>`、`<RELEASE_DIR>`。真实值只在机器上和你自己的笔记里，不进仓库。
@@ -190,6 +192,7 @@ export LOADTEST_ADMIN_PASSWORD='<管理员口令>'   # 只在这个 shell 里
   - `.env` 里的 `AEGIS_MASTER_KEY` 用来像面板那样加密存一份订阅令牌；
   - `release-artifact.env` 提供节点接入时要对上的版本与摘要（`PANDORA_NATIVE_*`）。
 - **耗时**：后台每 IP 每分钟限 240 次，请求按 260ms 间隔排队，所以建服务器、建节点、接入、激活占了绝大部分时间。2026-10-07 实测：198 个节点整段约 5 分钟（总计 303 秒，后台请求 797 次），300 个节点约 7.7 分钟；5k 用户的 SQL 批量写入约 11 秒（`users_total`），15k 档以各阶段打印为准。
+  - 单会话时请求按 260ms 间隔串行，1000 个节点要 4000 个后台请求（建服务器、建节点、签令牌、激活各一千次），约 17 分钟，加接入合计约 25 分钟。`-admin-workers N` 把这些请求分给 N 个并行会话，见第 11.1 节。
   - 各阶段耗时打在 stdout 上，也写进 manifest 的 `seed_timings`。
   - 「每档造数耗时」直接取这里。
 - **自检**：seed 最后会核对首尾两个节点的签名配置、UniProxy 配置，用户列表恰好是本批全部用户，再用第一个用户拉一次订阅。自检失败就退出码非 0，不要往下跑。
@@ -392,3 +395,85 @@ SQL 热点看 `pgstat-*-total.csv` 前十，结合 pprof 的 CPU 火焰图定位
 2. 把两台机器的 `lt-results` 拉回本机，打包后存到仓库目录之外。
 3. 在 Vultr 控制台删除四台机器，删 `<PANEL_DOMAIN>` 的 DNS 记录。
 4. 测试用的管理员口令作废。
+
+## 11. 1 万用户、1000 节点与静默场景
+
+整机标准（用户 2026-10-07 定，10-08 升档）：1 万用户、1000 节点；静默（0 活跃用户、1000 节点在线上报）整机已用内存 ≤ 1 GiB（`free` 的 used，不含 cache），静默时面板 + 数据库 ≤ 单核 30%；负载下的及格线与第 9.2 节、prod-retest skill 相同。
+
+### 11.1 造数：1000 节点、1 万用户
+
+选了「全走真实网关、只并行」，没有改成批量接口或超级用户直写库：
+
+| 路径 | 结论 |
+|---|---|
+| 批量接口 | 面板没有批量建服务器 / 节点 / 签令牌的接口（只有节点状态批量改，退役用的就是它），需要的话得改产品代码，不在压测工具范围 |
+| 超级用户 SQL 种子 | 绕开 RLS、状态机触发器、审计，测出来的不是真实开通路径；工具规则也要求造数经运行角色与真实网关，不选 |
+| 并行会话（选用） | 后台的限流是每 IP 每分钟 240 次，瓶颈在「每个来源一个会话、请求间隔 260ms」，不在面板。`-admin-workers N` 开 N 个会话，各自登录、各自节流、各占一个虚构来源 IP（198.51.100.1 起，经 `-ip-headers`，缺省 `X-Real-IP`），同一套网关、权限、审计，吞吐是单会话的 N 倍 |
+
+```bash
+cd /root/lt && mkdir -p /root/lt-results/10k-seed
+set -a; . /opt/aegispanel/deploy/.env; . /opt/aegispanel/deploy/release-artifact.env; set +a
+export LOADTEST_ADMIN_PASSWORD='<管理员口令>'
+./loadtest seed \
+  -admin-base http://127.0.0.1:9001 -node-base http://127.0.0.1:9003 -public-base http://127.0.0.1:9000 \
+  -admin-email <ADMIN_EMAIL> -users 10000 -nodes 1000 -label 10k -admin-workers 8 \
+  -out /root/lt-results/10k-seed/lt-manifest.json | tee /root/lt-results/10k-seed/seed.log
+```
+
+- **直连回环网关**：seed 跑在面板机上，三个地址取 `.env` 的 `AEGIS_ADMIN_ADDR`、`AEGIS_NODE_ADDR`、`AEGIS_PUBLIC_ADDR`（缺省 9001、9003、9000；管理网关在根路径，不带后台前缀）。面板应用只认 `X-Real-IP`，不经 nginx 就不用动信任表，8 个来源 IP 各算各的限流。
+  - 要经 nginx（`https://<PANEL_DOMAIN>/<ADMIN_PATH>`）则必须 `nginx-realip.sh enable <LOADGEN_IP> <PANEL_IP>`，让 nginx 采信面板机自己的地址发来的 `X-Real-IP`，否则 8 个会话在 nginx 眼里是同一个来源，登录与后台每 IP 限流（12/分、300/分）照旧卡住。
+- **耗时（估算，真机基线时校正）**：4000 个后台请求 ÷ 8 会话 × 260ms ≈ 2.2 分钟；接入 1000 个节点（每个带自己所在服务器的虚构地址）与 1 万用户的 SQL 批量写入（5k 档实测约 11 秒）合计预计 5 到 6 分钟。`-admin-workers 1` 保持旧行为，约 25 分钟。
+  - 开工前 seed 会估算建节点阶段耗时，超过 15 分钟（接入令牌 30 分钟有效）直接拒绝并提示加会话数。
+  - 会话数上限 32：后台登录接口按路由整体限流（`AEGIS_RL_AUTH_PER_MIN`，缺省 10/分），会话太多光登录就要排队。
+- **可重复执行**：`-retire-previous`（缺省开）先把上一批用户的订阅转 expired，再**吊销上一批节点的有效接入身份**（后台不允许退役仍有有效身份的节点，这是旧版重复造数会 409 的原因），再把节点 active → draining → retired。每一步只处理还没处理的，中途失败原样重跑即可；不 DELETE，追加写表照旧。
+  - 这条路径靠 GitHub 冒烟（空库）只验到「没有上一批」；带上一批的重跑，第一次在真库上走是 1000 节点基线前的预演，出错先看 `seed.log` 的 `retire_previous` 一段。
+  - 想要干净库仍然是第 7.1 节重装数据基座（要用户同意，会删库）。
+- 造出的是虚构数据：邮箱 `@loadtest.invalid`、节点与目录以 `loadtest-` 开头、服务器地址在 203.0.113.0/24（1000 台循环使用 254 个地址，每个地址约 4 台）。
+
+### 11.2 模拟节点：单机撑 1000 个
+
+一台 2c4g 压测机跑 `loadtest nodes -nodes 1000`，节拍以 pdnd 当前代码为准（`pdnd/node/node.go`、`pdnd/panel/*`）：拉取 15 秒（面板经 base_config 下发，兜底 60 秒）、上报 60 秒、心跳 30 秒、换钥检查 10 分钟，各带 ±10% 抖动；每个节点一条 SSE（面板每 20 秒一行保活）、两条 TLS 连接（签名通道一条、UniProxy + 事件流共用一条 h2）。稳态每节点每分钟约 12.1 个请求，1000 个节点约 200 req/s（第 8.1 节的表按节点数线性放大）。
+
+```bash
+~/loadtest nodes -manifest $M -node-url https://<PANEL_DOMAIN> -stagger 180s -duration 40m \
+  -steady-start $T -steady-dur 30m -out $R -strict > $R/nodes.log 2>&1 &
+```
+
+- **起跑错开用 180 秒**（200 节点用 60 秒）：每个节点起跑要拉两份全量名单（REST 一份、事件流一份），1 万用户时每份约 1 MB。看进度行 `started=1000 streams=1000` 到齐再进稳态窗口。
+- **资源实测**（`nodesim/scale_unix_test.go`，`go test ./tools/loadtest/nodesim -run TestScale1000Nodes -v`）：1000 个节点、1 万用户，假面板在另一个子进程里（TLS + HTTP/2、真实节拍与保活间隔），父进程 CPU 与内存只属于 nodesim：
+
+  | 平台 | 稳态 CPU | 起跑段 CPU | 峰值 RSS | 存活堆 | 请求 | p99 |
+  |---|---|---|---|---|---|---|
+  | macOS arm64 本机（10 核） | 约 0.1 核 | 约 17 核·秒（起跑后 45 秒内） | 约 350 MiB | 约 150 MiB | 约 264 req/s | 约 20ms |
+
+  - 这是 Mac 上的数，**2c4g 压测机（Linux amd64）的实测数还没有**：在压测机上（已装 Go）跑 `cd panel && go test ./tools/loadtest/nodesim -run TestScale1000Nodes -v -count=1`，约 1.5 分钟，日志里一行给出稳态核数、起跑段核·秒、峰值 RSS、存活堆；首轮真机基线时取这一行补进上表。测试里的哨兵是稳态 ≤ 1 核、峰值 RSS ≤ 1.5 GiB，只防出大问题，不是及格线。（测试在设了 `GITHUB_STEP_SUMMARY` 的环境里会把这行写进 job summary，但目前没有 GitHub job 跑 `go test`。）
+  - 优化过两处内存：节点只记「可能连在自己身上」的用户 id（发给面板的请求不变，每节点省 80 KB，千节点省约 80 MiB），事件流读缓冲从 64 KiB 降到 8 KiB。
+  - 测试里把 Go 客户端宣告的 HTTP/2 最大帧压到 16 KiB：Go 服务端会按客户端宣告的 1 MiB 切帧，把每条连接的读缓冲撑到 1 MiB（千节点 2 GB）；生产里前面是 nginx，按 8 KiB 切块，没有这个问题。真机上看 RSS 若远高于上表，先怀疑这一条。
+  - 压测机本身：2c4g 的压测机跑 1000 节点 + 另一台跑 1 万用户（users），两个进程不要放同一台。
+
+### 11.3 静默场景
+
+静默 = **只起模拟节点**，不起 users、不做 burst；0 个活跃用户，但节点照常拉取、上报（在线比例缺省 0.3，与 5k-r4 静默同口径，每个节点仍有少量 push / alive）。
+
+| 时刻 | 面板机（root） | 压测机 |
+|---|---|---|
+| T−8m | | `scripts/run-quiet.sh $M https://<PANEL_DOMAIN> $T 1000`（节点起跑，180 秒内错开） |
+| T−20s | `scripts/quiet-collect.sh $P $T 15`（自己睡到 T−20 秒取内存快照，后台起 `vmstat 5`） | |
+| T | 读第一份 CPU 快照（`cpu-A`） | 稳态窗口开始 |
+| T+15m | 读第二份（`cpu-B`），取第二份内存快照，停 `vmstat` | 节点再跑约 2 分钟结束 |
+
+```bash
+# 面板机（root），P 是结果目录，T 是约定的 unix 秒（两边同一个值）
+setsid -f /root/lt/quiet-collect.sh $P $T 15 > $P.out 2>&1 < /dev/null
+# 压测机
+setsid -f ~/run-quiet.sh $M https://<PANEL_DOMAIN> $T 1000 $R > /dev/null 2>&1 < /dev/null
+# 采集结束后，在任何有 loadtest 的机器上判定
+loadtest quiet-report -dir $P            # 加 -strict 则任一标准不达标退出码非 0
+```
+
+- **采样口径**（与 5k-r4 一致，刻意很轻——`sample-procs.sh` / `sample-pgact.sh` 自身占 2–9 个百分点，会把静默 CPU 抬过线，静默期间不要开）：
+  - CPU：窗口首尾各读一次 `/proc/stat`、全部 `/proc/<pid>/stat`、`system.slice` 下各单元 `cpu.stat`，做差；判定用 cgroup 的 `usage_usec`（含已退出的子进程，最准），面板 + 数据库 = aegis-public + aegis-admin + aegis-node + postgres + valkey，nginx / docker / containerd 单列。单核 = 100，标准 ≤ 30。
+  - 内存：窗口外首尾各取一次 `MemTotal − MemAvailable`（等于 `free` 的 used，不含 cache），取较大者对 1024 MiB；同时列 PSS、swap 与窗口内换页数（有换页就说明已用数被 swap 掩盖）。
+  - 同时兼容 Docker 数据基座（`containers.txt` 把容器 cgroup 翻成名字）与直装布局（`postgresql@*-main.service`、`valkey-server.service`）。
+- 用 5k-r4 的原始快照（`ops-local/vultr-test2/5k-r4/quiet/panel`）喂 `quiet-report`，面板 + 数据库 15.90、含 nginx 18.39、整机忙 22.12、已用内存 918 MiB，与当时人工算的一致。
+- 出成绩单时，静默一节单列这几项：面板 + 数据库 CPU、各部分拆分、整机已用内存、swap、节点侧的 QPS / 错误数（`nodes.txt`）、aegis-node 的 `nr_throttled`。

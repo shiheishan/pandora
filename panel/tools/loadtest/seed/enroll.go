@@ -72,6 +72,10 @@ type nodeClient struct {
 	agentVersion string
 	binarySHA256 string
 	now          func() time.Time
+	// ipHeaders 非空时，接入请求带该节点所在服务器的虚构公网地址（节点自己的来源，与模拟节点
+	// 运行期带的同一个）：1000 个节点同一时刻接入，不带的话全挤在 seed 所在主机一个地址上，
+	// 撞 nginx 对 /v1/nodes/ 的每 IP 限流。nginx 不信任来源时会用连接地址覆盖它，带了也无害。
+	ipHeaders []string
 }
 
 func newNodeClient(base, agentVersion, binarySHA256 string) *nodeClient {
@@ -80,7 +84,7 @@ func newNodeClient(base, agentVersion, binarySHA256 string) *nodeClient {
 }
 
 // enroll 走两段式接入：begin 用接入令牌占位并登记候选公钥，commit 用候选私钥签名后激活身份与运行令牌。
-func (c *nodeClient) enroll(ctx context.Context, id *nodeIdentity, nodeName, bootstrapToken, wantNodeID, hostname string) (*enrollResult, error) {
+func (c *nodeClient) enroll(ctx context.Context, id *nodeIdentity, nodeName, bootstrapToken, wantNodeID, hostname, realIP string) (*enrollResult, error) {
 	const beginPath = "/v1/nodes/enrollments"
 	requestID := uuid.NewString()
 	beginBody, err := json.Marshal(jsonObject{
@@ -92,9 +96,9 @@ func (c *nodeClient) enroll(ctx context.Context, id *nodeIdentity, nodeName, boo
 		return nil, err
 	}
 	beginHash := sha256.Sum256(beginBody)
-	begin, err := c.do(ctx, http.MethodPost, beginPath, beginBody, map[string]string{
+	begin, err := c.do(ctx, http.MethodPost, beginPath, beginBody, c.withRealIP(map[string]string{
 		"X-Enrollment-Signature": id.sign(nodefabric.CanonicalEnrollmentBeginV1(beginPath, requestID, beginHash[:])),
-	}, http.StatusCreated)
+	}, realIP), http.StatusCreated)
 	if err != nil {
 		return nil, fmt.Errorf("enrollment begin %s: %w", nodeName, err)
 	}
@@ -135,11 +139,11 @@ func (c *nodeClient) enroll(ctx context.Context, id *nodeIdentity, nodeName, boo
 		return nil, err
 	}
 	commitHash := sha256.Sum256(commitBody)
-	commit, err := c.do(ctx, http.MethodPost, commitPath, commitBody, map[string]string{
+	commit, err := c.do(ctx, http.MethodPost, commitPath, commitBody, c.withRealIP(map[string]string{
 		"X-Node-Id": out.NodeID, "X-Node-Serial": strconv.Itoa(out.Serial), "X-Node-Ts": ts, "X-Node-Nonce": nonce,
 		"X-Node-Sig": id.sign(nodefabric.CanonicalEnrollmentRequestV1(http.MethodPost, commitPath, enrollmentID,
 			out.NodeID, out.Serial, ts, nonce, commitHash[:])),
-	}, http.StatusOK)
+	}, realIP), http.StatusOK)
 	if err != nil {
 		return nil, fmt.Errorf("enrollment commit %s: %w", nodeName, err)
 	}
@@ -147,6 +151,17 @@ func (c *nodeClient) enroll(ctx context.Context, id *nodeIdentity, nodeName, boo
 		return nil, fmt.Errorf("enrollment commit %s: state %q, want committed", nodeName, state)
 	}
 	return &out, nil
+}
+
+// withRealIP 把虚构来源地址补进请求头表；没配 ipHeaders 或没有地址时原样返回。
+func (c *nodeClient) withRealIP(headers map[string]string, realIP string) map[string]string {
+	if realIP == "" {
+		return headers
+	}
+	for _, h := range c.ipHeaders {
+		headers[h] = realIP
+	}
+	return headers
 }
 
 // signedGet 以节点身份发一个 V2 签名的 GET（心跳、配置等 /v1/nodes/* 同一套头）。

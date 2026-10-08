@@ -38,7 +38,7 @@ func TestCurrentPushRetriesVerbatimWithSameReportID(t *testing.T) {
 	defer srv.Close()
 	obs := &observer{rec: ltkit.NewRecorder("nodes", time.Second), fleet: newFleetStats(), maxSamples: 1}
 	n := &simNode{id: "n1", opt: &Options{}, obs: obs,
-		uni: newUniClient(srv.URL, "n1", "vless", "tok", "", time.Second, obs)}
+		uni: newUniClient(srv.URL, "n1", "vless", "tok", "", time.Second, obs, nil)}
 
 	n.flushPush(context.Background(), map[string][2]int64{"1": {10, 20}})
 	n.flushPush(context.Background(), map[string][2]int64{"1": {1, 1}, "2": {5, 5}})

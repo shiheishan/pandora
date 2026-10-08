@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -83,7 +84,7 @@ func (e *statusError) Error() string {
 	return fmt.Sprintf("%s %s: HTTP %d: %s", e.method, e.path, e.code, e.body)
 }
 
-func newSignedClient(base string, n ltkit.ManifestNode, verify bool, obs *observer) (*signedClient, error) {
+func newSignedClient(base string, n ltkit.ManifestNode, verify bool, obs *observer, tlsCfg *tls.Config) (*signedClient, error) {
 	priv, err := base64.StdEncoding.DecodeString(n.PrivateKey)
 	if err != nil || len(priv) != ed25519.PrivateKeySize {
 		return nil, fmt.Errorf("node %s: invalid private key in manifest", n.ID)
@@ -99,6 +100,10 @@ func newSignedClient(base string, n ltkit.ManifestNode, verify bool, obs *observ
 	// pdnd 的签名客户端用 http.DefaultTransport（一台机器一个），模拟器每个
 	// 节点克隆一份：两百台机器就是两百个独立的连接池，面板看到的连接数才对。
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if tlsCfg != nil {
+		transport.TLSClientConfig = tlsCfg.Clone() // 只有测试：信任假面板的自签证书
+		transport.HTTP2 = testHTTP2Config()
+	}
 	return &signedClient{
 		base: base, nodeID: n.ID, signer: signer,
 		configKeyID: n.ConfigKeyID, configPub: pub, verify: verify, obs: obs,

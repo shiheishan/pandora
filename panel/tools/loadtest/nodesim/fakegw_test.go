@@ -46,6 +46,8 @@ type fakeGateway struct {
 	pullSec int
 	pushSec int
 	done    chan struct{}
+	// keepalive 是事件流的保活间隔
+	keepalive time.Duration
 
 	mu        sync.Mutex
 	order     []string
@@ -74,7 +76,20 @@ type fakeGateway struct {
 	badUsers  int
 }
 
+// fakeOpts 是假面板的可选项；零值就是单测用的明文回环服务。
+type fakeOpts struct {
+	// tls 起自签证书的 HTTPS 并协商 HTTP/2：量模拟器的 TLS 与多路复用开销时用
+	tls bool
+	// keepalive 是事件流的保活注释间隔，0 取 200 毫秒（单测要快）；真面板是 20 秒
+	keepalive time.Duration
+}
+
 func newFakeGateway(t testing.TB, nodes, users, pullSec, pushSec int) *fakeGateway {
+	t.Helper()
+	return newFakeGatewayWith(t, nodes, users, pullSec, pushSec, fakeOpts{})
+}
+
+func newFakeGatewayWith(t testing.TB, nodes, users, pullSec, pushSec int, opts fakeOpts) *fakeGateway {
 	t.Helper()
 	signer, err := crypto.NewSigner(bytes.Repeat([]byte{7}, 32))
 	if err != nil {
@@ -85,7 +100,10 @@ func newFakeGateway(t testing.TB, nodes, users, pullSec, pushSec int) *fakeGatew
 		log: slog.New(slog.DiscardHandler), pullSec: pullSec, pushSec: pushSec, done: make(chan struct{}),
 		nodes: map[string]*fakeNode{}, nonces: map[string]bool{}, hits: map[string]int{},
 		phases: map[string]int{}, firstSeen: map[string]time.Time{}, fail500: map[string]bool{},
-		reject409: map[string]bool{},
+		reject409: map[string]bool{}, keepalive: opts.keepalive,
+	}
+	if g.keepalive <= 0 {
+		g.keepalive = 200 * time.Millisecond
 	}
 	for i := range nodes {
 		seed := sha256.Sum256([]byte(fmt.Sprintf("fake-node-%d", i)))
@@ -108,7 +126,7 @@ func newFakeGateway(t testing.TB, nodes, users, pullSec, pushSec int) *fakeGatew
 	mux.HandleFunc("GET /api/v1/server/UniProxy/config", g.uni(g.uniConfig))
 	mux.HandleFunc("POST /api/v1/server/UniProxy/status", g.uni(g.uniStatus))
 	mux.HandleFunc("GET /api/v1/server/UniProxy/stream", g.uni(g.uniStream))
-	g.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Method + " " + r.URL.Path
 		g.mu.Lock()
 		g.hits[key]++
@@ -127,6 +145,13 @@ func newFakeGateway(t testing.TB, nodes, users, pullSec, pushSec int) *fakeGatew
 		}
 		mux.ServeHTTP(w, r)
 	}))
+	if opts.tls {
+		srv.EnableHTTP2 = true
+		srv.StartTLS()
+	} else {
+		srv.Start()
+	}
+	g.srv = srv
 	t.Cleanup(func() {
 		close(g.done)
 		g.srv.CloseClientConnections()
@@ -453,7 +478,7 @@ func (g *fakeGateway) uniStream(w http.ResponseWriter, r *http.Request, n *fakeN
 	g.mu.Unlock()
 	defer func() { g.mu.Lock(); n.streams--; g.mu.Unlock() }()
 	g.pushUsersEvent(n.id)
-	keepalive := time.NewTicker(200 * time.Millisecond)
+	keepalive := time.NewTicker(g.keepalive)
 	defer keepalive.Stop()
 	for {
 		select {
