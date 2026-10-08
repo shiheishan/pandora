@@ -199,3 +199,17 @@ func TestClassifyFailureAndWindow(t *testing.T) {
 		t.Fatal("a window in the past renews now")
 	}
 }
+
+// 阿里云 SDK 的错误类型不一：值类型、指针类型、只有文本，都要认出凭据错误
+func TestAliAuthRejectedRecognisesSDKErrors(t *testing.T) {
+	text := errors.New("SDKError:\n   StatusCode: 404\n   Code: InvalidAccessKeyId.NotFound\n   Message: code: 404, Specified access key is not found.")
+	if detail, ok := aliAuthRejected(fmt.Errorf("alicloud: %w", text)); !ok || !strings.HasPrefix(detail, "InvalidAccessKeyId.NotFound") {
+		t.Fatalf("text-only SDK error: %q %v", detail, ok)
+	}
+	if _, ok := aliAuthRejected(errors.New("SDKError:\n   Code: InternalError\n")); ok {
+		t.Fatal("server errors are not credential errors")
+	}
+	if _, ok := aliAuthRejected(errors.New("dial tcp: timeout")); ok {
+		t.Fatal("network errors are not credential errors")
+	}
+}

@@ -3,6 +3,7 @@ package certs
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -36,15 +37,16 @@ func (p *aliDNSProvider) client() (*alidns.Client, error) {
 	return alidns.NewClient(cfg)
 }
 
-// aliAuthRejected 判断阿里云的错误是不是凭据问题：HTTP 401/403/404 带 AccessKey、签名、RAM 类错误码。
+// aliAuthRejected 判断阿里云的错误是不是凭据问题：AccessKey、签名、RAM 类错误码。
+// SDK 各层的错误类型不一（dara.SDKError、openapi 的 ClientError 等，有的以值类型实现 error），
+// 依次按类型、按 GetCode 接口取错误码，都取不到再从错误文本里找「Code: …」。
 func aliAuthRejected(err error) (string, bool) {
-	var se *dara.SDKError
-	if !errors.As(err, &se) {
+	code, msg := aliErrorCode(err)
+	if code == "" {
 		return "", false
 	}
-	code := dara.StringValue(se.Code)
 	detail := code
-	if msg := dara.StringValue(se.Message); msg != "" {
+	if msg != "" {
 		detail = code + " " + truncate(strings.Join(strings.Fields(msg), " "), 200)
 	}
 	for _, prefix := range []string{"InvalidAccessKeyId", "SignatureDoesNotMatch", "Forbidden", "NoPermission",
@@ -54,6 +56,28 @@ func aliAuthRejected(err error) (string, bool) {
 		}
 	}
 	return detail, false
+}
+
+var aliCodePattern = regexp.MustCompile(`(?:^|\s)Code:\s*([A-Za-z][A-Za-z0-9_.]*)`)
+
+func aliErrorCode(err error) (code, msg string) {
+	var se *dara.SDKError
+	if errors.As(err, &se) && dara.StringValue(se.Code) != "" {
+		return dara.StringValue(se.Code), dara.StringValue(se.Message)
+	}
+	var coded interface {
+		GetCode() *string
+		GetMessage() *string
+	}
+	if errors.As(err, &coded) && dara.StringValue(coded.GetCode()) != "" {
+		return dara.StringValue(coded.GetCode()), dara.StringValue(coded.GetMessage())
+	}
+	if err != nil {
+		if m := aliCodePattern.FindStringSubmatch(err.Error()); m != nil {
+			return m[1], ""
+		}
+	}
+	return "", ""
 }
 
 func (p *aliDNSProvider) check(ctx context.Context, zone string, write bool) (checkResult, error) {
