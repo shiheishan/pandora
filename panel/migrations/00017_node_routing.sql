@@ -94,3 +94,11 @@ COMMENT ON TABLE node_outbounds IS
   '节点出站。内核中立格式，由节点端翻译成 sing-box / xray 各自的配置。';
 COMMENT ON TABLE node_routes IS
   '节点分流规则。priority 小的先匹配，matcher 为空对象表示兜底。';
+
+-- +goose Down
+-- 回到 00016：删掉出站与分流两张表（连同策略、索引、授权）。
+-- 已配置的出站和分流规则随表一起丢失，回滚前先确认有升级前备份。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+DROP TABLE IF EXISTS node_routes;
+DROP TABLE IF EXISTS node_outbounds;

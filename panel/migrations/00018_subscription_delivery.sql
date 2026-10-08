@@ -91,3 +91,17 @@ COMMENT ON TABLE subscription_fetch_log IS
 COMMENT ON COLUMN tenants.sub_path_prefix IS
   '订阅分发路径前缀，随机生成，避免全网按固定路径批量识别。';
 -- +goose StatementEnd
+
+-- +goose Down
+-- 回到 00017：删掉拉取审计表与它的清理函数，去掉凭据轮换计数与订阅路径前缀。
+-- 注意：sub_path_prefix 是随机生成的，回滚后再 Up 会生成新前缀，所有已分发的
+-- 订阅链接都会变。线上要回到这一版之前，走升级前备份恢复，不要靠 Down。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+DROP FUNCTION IF EXISTS app.purge_subscription_fetch_log(interval);
+DROP TABLE IF EXISTS subscription_fetch_log;
+ALTER TABLE subscription_credentials
+  DROP COLUMN IF EXISTS rotated_at,
+  DROP COLUMN IF EXISTS rotated_count;
+ALTER TABLE tenants
+  DROP COLUMN IF EXISTS sub_path_prefix;

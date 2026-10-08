@@ -6,8 +6,46 @@
 # database and later scratch replays must reject that pre-existing state. A
 # data/ACL-preserving clone instead starts at the live goose version and lets
 # goose apply only migrations that are actually pending in this release.
+#
+# 两种用法：
+#   check-migrations.sh
+#       完整预检（克隆库上演练待执行迁移）。设了 PANDORA_PRECHECK_ATTESTATION_OUT=<绝对路径>
+#       时，通过后在那里写一张预检凭据：源库水位、迁移目录摘要、是否按停写升级演练。
+#       发布控制器在停服之前跑这一步，停服时间里不再包含克隆与演练。
+#   check-migrations.sh --verify-attestation <凭据>
+#       停服之后的轻量核对，只读：重新校验迁移目录、源库水位与续费闸门，并与凭据逐项比对，
+#       不克隆、不演练。任何一项对不上即以 78 拒绝，要求重跑完整预检。
+#
+# 克隆库上的停写闸门：PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes（写入者已停，
+# migrate.sh 在停服后内联预检时用）或 PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER=yes
+# （停服前的演练：只作用于没有写入者的克隆库，不是「线上写入者已停」的声明）。
 set -Eeuo pipefail
 umask 077
+
+MODE=full
+ATTESTATION_IN=""
+if [ "$#" -gt 0 ]; then
+  if [ "$#" -eq 2 ] && [ "$1" = --verify-attestation ] && [ -n "$2" ]; then
+    MODE=verify
+    ATTESTATION_IN="$2"
+  else
+    echo "migration precheck: usage: check-migrations.sh [--verify-attestation <file>]" >&2
+    exit 78
+  fi
+fi
+ATTESTATION_OUT="${PANDORA_PRECHECK_ATTESTATION_OUT:-}"
+if [ -n "$ATTESTATION_OUT" ]; then
+  [ "$MODE" = full ] || { echo "migration precheck: attestation output only applies to a full precheck" >&2; exit 78; }
+  [ "${ATTESTATION_OUT#/}" != "$ATTESTATION_OUT" ] \
+    || { echo "migration precheck: attestation path must be absolute" >&2; exit 78; }
+  [ ! -e "$ATTESTATION_OUT" ] && [ ! -L "$ATTESTATION_OUT" ] \
+    || { echo "migration precheck: attestation path already exists" >&2; exit 78; }
+fi
+REHEARSE_STOPPED_WRITER=no
+if [ "${PANDORA_STOPPED_WRITER_UPGRADE_APPROVED:-}" = yes ] \
+    || [ "${PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER:-}" = yes ]; then
+  REHEARSE_STOPPED_WRITER=yes
+fi
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="${AEGIS_ENV_FILE:-$DEPLOY_DIR/.env}"
@@ -64,13 +102,40 @@ for migration in "${migration_files[@]}"; do
       /^-- \+goose Up([[:space:]]*)$/ { up=1 }
       END { exit !up }
     ' "$migration"; then
-    echo "OK"
+    :
   else
     echo "FAIL"
     echo "migration precheck: $name must contain an exact goose Up marker" >&2
     exit 1
   fi
+  # 每个迁移都要能回滚，或者明说不能：没有 Down 段的迁移执行 goose down 只删版本行、
+  # 什么也不撤，回滚会静默「成功」。完整规则（Down 里 RAISE、forward-fix）由
+  # panel/tools/migrationlint 在 CI 里查，这里在发布物上兜底。
+  if awk '
+      /^-- \+goose Down([[:space:]]*)$/ { down=1 }
+      /^-- \+goose Up([[:space:]]*)$/ { header_done=1 }
+      !header_done && /^-- irreversible:[[:space:]]*[^[:space:]]/ { irreversible=1 }
+      END { exit !(down || irreversible) }
+    ' "$migration"; then
+    echo "OK"
+  else
+    echo "FAIL"
+    echo "migration precheck: $name must contain a goose Down section or an irreversible header" >&2
+    exit 1
+  fi
 done
+
+sha256_stream() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'; else shasum -a 256 | awk '{print $1}'; fi
+}
+# 迁移目录摘要：文件名与内容一起算。停服后的核对拿它确认「演练过的」就是「要跑的」。
+MIGRATIONS_DIGEST="$(
+  for migration in "${migration_files[@]}"; do
+    printf '%s  %s\n' "$(sha256_stream <"$migration")" "${migration##*/}"
+  done | sha256_stream
+)"
+[[ "$MIGRATIONS_DIGEST" =~ ^[0-9a-f]{64}$ ]] \
+  || { echo "migration precheck: cannot digest the migration directory" >&2; exit 1; }
 
 # 这里原本钉死了「42 号槽位必须是 00042_client_auth_expand.sql，且 SHA 必须是
 # FFAF84B6…」。项目转为只做面板之后，CA42 客户端认证子系统冻结，它的两个迁移
@@ -214,8 +279,9 @@ fi
 # without the actor-bound idempotency linkage required by the current
 # settlement writer. Applying the new binary in that state would correctly
 # fail closed, but a customer could already have paid an order that can never
-# settle. This read-only cutover gate runs while every writer is stopped and
-# before any production migration. It emits counts only, never user/order data.
+# settle. This read-only cutover gate emits counts only, never user/order data.
+# 发布控制器在停服前的完整预检里跑它一次，停服后 --verify-attestation 再跑一次：
+# 后一次才是在全部写入者停止之后、正式迁移之前，结论以它为准。
 ORDERS_PRESENT="$(psql_run -d "$POSTGRES_DB" -tAc \
   "SELECT pg_catalog.to_regclass('public.orders') IS NOT NULL;")" \
   || { echo "migration precheck: cannot determine renewal cutover state" >&2; exit 78; }
@@ -252,6 +318,43 @@ if [ "$ORDERS_PRESENT" = t ]; then
 fi
 echo "renewal cutover active_legacy=0"
 
+if [ "$MODE" = verify ]; then
+  # 停服后的轻量核对：上面已经只读地重做了文件校验、水位与续费闸门，这里与停服前那次
+  # 完整预检留下的凭据逐项比对。对不上说明演练的不是这次要跑的东西（有人在中间迁移过、
+  # 迁移目录换过、换了库、演练与正式运行的停写闸门不一致、或凭据太旧），一律拒绝。
+  attest_refuse() {
+    echo "migration precheck: attestation $1; production is unchanged, rerun the full precheck" >&2
+    exit 78
+  }
+  [ -f "$ATTESTATION_IN" ] && [ ! -L "$ATTESTATION_IN" ] || attest_refuse "is missing or not a regular file"
+  [ -O "$ATTESTATION_IN" ] || attest_refuse "is not owned by the current user"
+  [ -z "$(find "$ATTESTATION_IN" -prune \( -perm -0020 -o -perm -0002 \) -print)" ] \
+    || attest_refuse "is group- or world-writable"
+  attestation_value() {
+    awk -v key="$1" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); found=1; exit } END { exit !found }' \
+      "$ATTESTATION_IN"
+  }
+  [ "$(attestation_value format || true)" = pandora-precheck-v1 ] || attest_refuse "has an unknown format"
+  [ "$(attestation_value database || true)" = "$POSTGRES_DB" ] || attest_refuse "was made for another database"
+  [ "$(attestation_value migrations_sha256 || true)" = "$MIGRATIONS_DIGEST" ] \
+    || attest_refuse "was made for a different migration directory"
+  [ "$(attestation_value release_max_version || true)" = "$previous_version" ] \
+    || attest_refuse "was made for a different release"
+  [ "$(attestation_value source_goose_version || true)" = "$SOURCE_GOOSE_VERSION" ] \
+    || attest_refuse "waterline does not match the database (now $SOURCE_GOOSE_VERSION)"
+  [ "$(attestation_value rehearsed_stopped_writer || true)" = "$REHEARSE_STOPPED_WRITER" ] \
+    || attest_refuse "rehearsed a different stopped-writer approval than this run"
+  ATTESTED_EPOCH="$(attestation_value created_epoch || true)"
+  [[ "$ATTESTED_EPOCH" =~ ^[0-9]{1,12}$ ]] || attest_refuse "has an invalid timestamp"
+  ATTESTATION_AGE=$(( $(date +%s) - 10#$ATTESTED_EPOCH ))
+  # 预检演练的是克隆那一刻的数据；隔得越久越不代表现在。发布控制器从预检到迁移通常是
+  # 分钟级，但中间夹着整库加密备份，库大时备份本身可能要一两个小时，上限给到六小时。
+  [ "$ATTESTATION_AGE" -ge 0 ] && [ "$ATTESTATION_AGE" -le 21600 ] \
+    || attest_refuse "is older than six hours (or from the future)"
+  echo "migration precheck attestation verified: source=$SOURCE_GOOSE_VERSION release=$previous_version age=${ATTESTATION_AGE}s"
+  exit 0
+fi
+
 # 这里原本拦的是：CLIENT-AUTH-00042 会创建集群级角色，而本预检查是在同一个
 # PostgreSQL 集群里克隆一个库来重放迁移的，重放它会污染生产集群。理由成立，
 # 但条件写成了「版本号 ≥42」，于是 42 号槽位换成别的迁移之后照样拦。
@@ -260,16 +363,17 @@ echo "renewal cutover active_legacy=0"
 # 恢复 CA42 时请按「迁移内容是否含 CREATE ROLE / CREATE DATABASE 等集群级 DDL」
 # 来判断，而不是版本号 —— 那才是这道闸门真正要防的东西。
 
+PRECHECK_STARTED_EPOCH="$(date +%s)"
 psql_run -d postgres -qc "CREATE DATABASE $DB;"
 SCRATCH_DB_CREATED=1
-# Preserve owners, ACLs, goose history and representative data. The release
-# controller has already stopped writers, while pg_dump itself also provides a
-# transactionally consistent snapshot for standalone use.
+# Preserve owners, ACLs, goose history and representative data. pg_dump takes a
+# transactionally consistent snapshot, so the clone is sound even while writers
+# are still running (the release controller now prechecks before stopping them).
 pg_dump_run -d "$POSTGRES_DB" | psql_run -d "$DB" -q
 echo "migration precheck database clone created"
 
 MIGRATION_PGOPTIONS=""
-if [ "${PANDORA_STOPPED_WRITER_UPGRADE_APPROVED:-}" = yes ]; then
+if [ "$REHEARSE_STOPPED_WRITER" = yes ]; then
   # 冻结迁移要的两个 aegis.client_auth_* 开关随它移出主序列，不再下发。
   MIGRATION_PGOPTIONS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes'
 fi
@@ -305,5 +409,21 @@ psql_run -d "$DB" -tAc \
 psql_run -d "$DB" -tAc "SELECT count(*) FROM permissions;"
 psql_run -d "$DB" -tAc "SELECT count(*) FROM roles WHERE is_system;"
 psql_run -d "$DB" -tAc "SELECT count(*) FROM role_permissions;"
+
+if [ -n "$ATTESTATION_OUT" ]; then
+  # 先写同目录临时文件再改名：控制器只会看到完整的凭据。
+  ATTESTATION_TMP="$(mktemp "$(dirname -- "$ATTESTATION_OUT")/.pandora-precheck-attestation.XXXXXX")"
+  {
+    printf 'format=pandora-precheck-v1\n'
+    printf 'created_epoch=%s\n' "$PRECHECK_STARTED_EPOCH"
+    printf 'database=%s\n' "$POSTGRES_DB"
+    printf 'source_goose_version=%s\n' "$SOURCE_GOOSE_VERSION"
+    printf 'release_max_version=%s\n' "$previous_version"
+    printf 'migrations_sha256=%s\n' "$MIGRATIONS_DIGEST"
+    printf 'rehearsed_stopped_writer=%s\n' "$REHEARSE_STOPPED_WRITER"
+  } >"$ATTESTATION_TMP"
+  mv -f -- "$ATTESTATION_TMP" "$ATTESTATION_OUT"
+  echo "migration precheck attestation written"
+fi
 
 echo "migration precheck complete"

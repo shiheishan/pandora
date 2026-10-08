@@ -16,3 +16,14 @@ COMMENT ON FUNCTION app.notify_change() IS
   '数据变更通知。只发定位信息（表名/操作/租户/归属/主键），前端据此重新拉取。'
   ' 注意：仅适用于 user_id 表示数据归属的表；若 user_id 是操作者而非归属者'
   '（如 ticket_messages），不能挂本触发器，否则通知会发给错误的人。';
+
+-- +goose Down
+-- 回到 00021：把工单消息的通知触发器挂回去，函数注释恢复成 00020 的原文。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+DROP TRIGGER IF EXISTS zz_notify_ticket_messages ON public.ticket_messages;
+CREATE TRIGGER zz_notify_ticket_messages AFTER INSERT OR UPDATE OR DELETE ON public.ticket_messages
+  FOR EACH ROW EXECUTE FUNCTION app.notify_change();
+
+COMMENT ON FUNCTION app.notify_change() IS
+  '数据变更通知。只发定位信息（表名/操作/租户/归属/主键），前端据此重新拉取。';

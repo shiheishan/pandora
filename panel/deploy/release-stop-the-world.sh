@@ -291,18 +291,19 @@ attempt_safe_rollback() {
   ROLLBACK_RUNNING=1
   echo "pandora-release: failure during phase=$PHASE ($reason)" >&2
 
+  # Never leave a migration child running while rollback decisions are made.
+  # 预检现在在 preflight 阶段（停服之前）跑，同样要先停掉它：它收到 TERM 会自己删掉克隆库。
+  if [ -n "$MIGRATION_PID" ] && kill -0 "$MIGRATION_PID" 2>/dev/null; then
+    kill -TERM -- "-${MIGRATION_PGID:-$MIGRATION_PID}" 2>/dev/null || true
+    wait "$MIGRATION_PID" 2>/dev/null || true
+  fi
+
   case "$PHASE" in
     preflight)
       evidence rollback not_required
       return 0
       ;;
   esac
-
-  # Never leave a migration child running while rollback decisions are made.
-  if [ -n "$MIGRATION_PID" ] && kill -0 "$MIGRATION_PID" 2>/dev/null; then
-    kill -TERM -- "-${MIGRATION_PGID:-$MIGRATION_PID}" 2>/dev/null || true
-    wait "$MIGRATION_PID" 2>/dev/null || true
-  fi
 
   case "$PHASE" in
     isolating|isolated)
@@ -416,6 +417,33 @@ RELEASE_DIR="$STAGE_DIR/release"
 verify_release_manifest "$RELEASE_DIR"
 evidence release_preflight ok
 
+# 一次性库预检放在停服之前：克隆整库、在克隆上演练待执行迁移，耗时随库大小线性增长
+# （5k-r4 实测 95 MB 的库约 15 秒，占停服的 2/3）。pg_dump 本身给出一致快照，写入者
+# 还在跑也不影响演练的正确性。克隆上按停写升级的口径演练（PANDORA_PRECHECK_REHEARSE_
+# STOPPED_WRITER 只作用于没有写入者的克隆库，不是「线上写入者已停」的声明）；通过后
+# 留一张凭据，停服之后只做只读核对。这里失败仍在 preflight 阶段：没碰任何服务。
+PRECHECK_ATTESTATION="$STAGE_DIR/precheck.attestation"
+MIGRATION_PRECHECK_STARTED_NS="$(date +%s%N)"
+setsid env -i PATH="$PATH" HOME="${HOME:-/root}" \
+  AEGIS_ENV_FILE="$ENV_FILE" AEGIS_MIGRATIONS_DIR="$RELEASE_DIR/migrations" \
+  PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER=yes \
+  PANDORA_PRECHECK_ATTESTATION_OUT="$PRECHECK_ATTESTATION" \
+  "$RELEASE_DIR/deploy/check-migrations.sh" &
+MIGRATION_PID=$!
+MIGRATION_PGID=$MIGRATION_PID
+if ! wait "$MIGRATION_PID"; then
+  MIGRATION_PID=""
+  MIGRATION_PGID=""
+  die "disposable-database migration precheck failed (before any service was stopped)"
+fi
+MIGRATION_PID=""
+MIGRATION_PGID=""
+[ -s "$PRECHECK_ATTESTATION" ] || die "migration precheck did not leave an attestation"
+evidence migration_precheck ok
+MIGRATION_PRECHECK_FINISHED_NS="$(date +%s%N)"
+evidence migration_precheck_duration_ns "$((MIGRATION_PRECHECK_FINISHED_NS - MIGRATION_PRECHECK_STARTED_NS))"
+evidence migration_precheck_before_isolation ok
+
 OLD_ADMIN_PID="$(unit_pid "$ADMIN_UNIT")"
 OLD_PUBLIC_PID="$(unit_pid "$PUBLIC_UNIT")"
 OLD_NODE_PID="$(unit_pid "$NODE_UNIT")"
@@ -440,6 +468,24 @@ wait_port_closed "$PUBLIC_PORT" || die "public port is still listening"
 wait_port_closed "$NODE_PORT" || die "node port is still listening"
 evidence old_pids_gone ok
 evidence old_ports_closed ok
+
+# 停服后的轻量核对（只读，亚秒级）：确认停服前演练的就是现在要跑的——迁移目录摘要、
+# 源库水位没被别人推进、续费闸门在全部写入者停止后仍为 0、停写演练与正式迁移一致。
+# 仍在 isolated 阶段：失败会自动拉回旧写入者与入口，库没有被碰过。
+setsid env -i PATH="$PATH" HOME="${HOME:-/root}" \
+  AEGIS_ENV_FILE="$ENV_FILE" AEGIS_MIGRATIONS_DIR="$RELEASE_DIR/migrations" \
+  PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes \
+  "$RELEASE_DIR/deploy/check-migrations.sh" --verify-attestation "$PRECHECK_ATTESTATION" &
+MIGRATION_PID=$!
+MIGRATION_PGID=$MIGRATION_PID
+if ! wait "$MIGRATION_PID"; then
+  MIGRATION_PID=""
+  MIGRATION_PGID=""
+  die "migration precheck attestation no longer matches the stopped database"
+fi
+MIGRATION_PID=""
+MIGRATION_PGID=""
+evidence migration_precheck_attestation ok
 
 BACKUP_OUTPUT="$($APP_DIR/deploy/backup-postgres.sh)" \
   || die "encrypted database backup failed"
@@ -470,25 +516,9 @@ mv "$RELEASE_DIR/migrations" "$APP_DIR/migrations"
 PHASE=layout_switched
 evidence release_layout_switched ok
 
-# Run the disposable-database precheck while automatic old-layout recovery is
-# still safe.  Only the production goose command crosses the fail-closed line.
-MIGRATION_PRECHECK_STARTED_NS="$(date +%s%N)"
-setsid env -i PATH="$PATH" HOME="${HOME:-/root}" \
-  AEGIS_ENV_FILE="$ENV_FILE" AEGIS_MIGRATIONS_DIR="$APP_DIR/migrations" \
-  PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes \
-  "$RELEASE_DIR/deploy/check-migrations.sh" &
-MIGRATION_PID=$!
-MIGRATION_PGID=$MIGRATION_PID
-if ! wait "$MIGRATION_PID"; then
-  MIGRATION_PID=""
-  MIGRATION_PGID=""
-  die "disposable-database migration precheck failed"
-fi
-MIGRATION_PID=""
-MIGRATION_PGID=""
-evidence migration_precheck ok
-MIGRATION_PRECHECK_FINISHED_NS="$(date +%s%N)"
-evidence migration_precheck_duration_ns "$((MIGRATION_PRECHECK_FINISHED_NS - MIGRATION_PRECHECK_STARTED_NS))"
+# 停服窗口里不再跑完整预检：它已在停服前跑过，上面又做了只读核对。migrate.sh 收到
+# 凭据后只重复那次只读核对（它自己的兜底：up 永远不会在没有预检也没有凭据时执行）。
+# Only the production goose command crosses the fail-closed line.
 
 # Set this phase immediately before spawning production goose: goose may commit
 # earlier migrations and then fail later in the same `up` command.
@@ -500,6 +530,7 @@ setsid env -i PATH="$PATH" HOME="${HOME:-/root}" \
   AEGIS_ENV_FILE="$ENV_FILE" AEGIS_MIGRATIONS_DIR="$APP_DIR/migrations" \
   PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes \
   PANDORA_LOCAL_MIGRATION_APPROVED=yes \
+  PANDORA_PRECHECK_ATTESTATION="$PRECHECK_ATTESTATION" \
   "$RELEASE_DIR/deploy/migrate.sh" up &
 MIGRATION_PID=$!
 MIGRATION_PGID=$MIGRATION_PID

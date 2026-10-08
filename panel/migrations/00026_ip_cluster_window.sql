@@ -42,3 +42,30 @@ COMMENT ON VIEW audit_ip_clusters IS
 CREATE INDEX IF NOT EXISTS audit_events_cluster_idx
   ON audit_events (tenant_id, occurred_at DESC, source_ip_hash)
   WHERE source_ip_hash IS NOT NULL AND actor_kind = 'user' AND actor_id IS NOT NULL;
+
+-- +goose Down
+-- 回到 00025：同源账号视图恢复成不带时间窗的原定义（列不变，CREATE OR REPLACE
+-- 即可），注释恢复成 00025 的原文，再删掉这一版加的聚类索引。
+-- 以下视图与注释逐字取自 00025。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+CREATE OR REPLACE VIEW audit_ip_clusters AS
+SELECT tenant_id,
+       source_ip_hash,
+       count(DISTINCT actor_id)                          AS account_count,
+       count(*)                                          AS event_count,
+       min(occurred_at)                                  AS first_seen,
+       max(occurred_at)                                  AS last_seen,
+       array_agg(DISTINCT actor_id::text)                AS accounts
+  FROM audit_events
+ WHERE source_ip_hash IS NOT NULL
+   AND actor_kind = 'user'
+   AND actor_id IS NOT NULL
+ GROUP BY tenant_id, source_ip_hash
+HAVING count(DISTINCT actor_id) > 1;
+
+COMMENT ON VIEW audit_ip_clusters IS
+  '同一来源 IP 关联到的多个账号。仅为线索：共用出口 IP 在学校、公司、
+   家庭网络下是正常现象，需结合注册时间、行为模式一起判断。';
+
+DROP INDEX IF EXISTS audit_events_cluster_idx;

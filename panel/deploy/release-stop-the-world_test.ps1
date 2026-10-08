@@ -35,7 +35,7 @@ Assert-Contains $release 'wait_port_closed "$ADMIN_PORT"' 'release must prove ad
 Assert-Contains $release 'PHASE=migration_attempted' 'migration fail-closed phase is missing'
 Assert-Contains $release 'PHASE=isolating' 'partial-stop rollback phase is missing'
 Assert-Contains $release 'PHASE=layout_switching' 'partial-layout rollback phase is missing'
-Assert-Contains $release 'find bin migrations deploy -type f -print' 'manifest exact-file comparison must retain path prefixes'
+Assert-Contains $release 'find bin pdnd-dist migrations deploy -type f -print' 'manifest exact-file comparison must retain path prefixes'
 Assert-Contains $release 'wait_pid_gone "$OLD_NODE_PID"' 'release must stop and prove the node DB writer exited'
 Assert-Contains $release 'wait_port_closed "$NODE_PORT"' 'release must prove node port closed'
 Assert-Contains $release 'rollback manual_required' 'post-migration failure must fail closed'
@@ -54,16 +54,21 @@ Assert-Contains $release 'release directory must be outside the live application
 Assert-Contains $release 'exec 9>>"$LOCK_FILE"' 'lock acquisition must not truncate an existing file'
 Assert-Contains $release '[ "${file##*.}" != md ] || mode=0644' 'release documentation must be installed non-executable'
 
+# 完整预检（克隆演练）在停服之前；停服之后只有只读核对，再备份、迁移
 Assert-Order $release @(
     'verify_release_manifest "$RELEASE_DIR"',
+    'PANDORA_PRECHECK_ATTESTATION_OUT="$PRECHECK_ATTESTATION"',
+    '"$RELEASE_DIR/deploy/check-migrations.sh" &',
+    'evidence migration_precheck_before_isolation ok',
     'stop_unit_and_prove "$INGRESS_UNIT"',
     'stop_unit_and_prove "$ADMIN_UNIT"',
     'wait_pid_gone "$OLD_ADMIN_PID"',
     'wait_port_closed "$ADMIN_PORT"',
+    '--verify-attestation "$PRECHECK_ATTESTATION" &',
     'BACKUP_OUTPUT="$($APP_DIR/deploy/backup-postgres.sh)"',
-    '"$RELEASE_DIR/deploy/check-migrations.sh" &',
     'PHASE=migration_attempted',
     'setsid env -i PATH="$PATH"',
+    'PANDORA_PRECHECK_ATTESTATION="$PRECHECK_ATTESTATION"',
     'systemctl start "${WRITER_UNITS[@]}"',
     'prove_all_ready || die "new writer binary identity or readiness check failed"',
     'PHASE=exposure_attempted',
@@ -71,7 +76,7 @@ Assert-Order $release @(
 )
 
 Assert-Contains $build 'cp "$ROOT"/migrations/*.sql' 'release archive must contain migrations'
-Assert-Contains $build 'find bin migrations deploy -type f' 'manifest must cover binaries, migrations and deployment controller'
+Assert-Contains $build 'find bin pdnd-dist migrations deploy -type f' 'manifest must cover binaries, migrations and deployment controller'
 Assert-Contains $build 'PANDORA_VERSION must match [A-Za-z0-9._-]+' 'release version must be path-safe'
 Assert-Contains $build 'release output directory cannot be /' 'release output must protect filesystem root'
 Assert-Contains $migrate '"$GOOSE" "$COMMAND" "$@"' 'migration wrapper must forward goose arguments'
@@ -101,6 +106,12 @@ if ($release -match 'systemctl\s+restart\s+("?\$?ADMIN_UNIT|"?\$?PUBLIC_UNIT|aeg
     throw 'rolling restart of writer services is forbidden'
 }
 if ($release.Contains('migration_command down-to')) { throw 'automatic database down-to is forbidden after migration starts' }
+if ($release.Contains('rollback-to')) { throw 'the release controller must never roll the schema back by itself' }
+$fullPrecheck = '"$RELEASE_DIR/deploy/check-migrations.sh" &'
+if ($release.IndexOf($fullPrecheck) -ne $release.LastIndexOf($fullPrecheck)) { throw 'the full disposable-database precheck must run exactly once, before isolation' }
+Assert-Contains $migrate 'rollback-to)' 'migration wrapper must offer the confirmed rollback-to command'
+Assert-Contains $migrate 'PANDORA_ROLLBACK_CONFIRM' 'rollback-to must require an explicit confirmation'
+Assert-Contains $check '--verify-attestation' 'precheck must support the post-stop attestation check'
 if ($check.Contains('-e "PGPASSWORD=${POSTGRES_PASSWORD}"')) { throw 'database password must not be placed in argv' }
 
 Write-Output 'release-stop-the-world static gate: PASS'

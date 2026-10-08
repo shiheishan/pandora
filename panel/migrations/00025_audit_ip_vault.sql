@@ -64,3 +64,18 @@ HAVING count(DISTINCT actor_id) > 1;
 COMMENT ON VIEW audit_ip_clusters IS
   '同一来源 IP 关联到的多个账号。仅为线索：共用出口 IP 在学校、公司、
    家庭网络下是正常现象，需结合注册时间、行为模式一起判断。';
+
+-- +goose Down
+-- 回到 00024：删掉同源账号视图、两条审计索引和三列密文。
+-- 审计里的来源 IP 密文与拉取记录里的 IP/UA 密文随列丢失（哈希列保留），
+-- 线上要回到这一版之前，走升级前备份恢复。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+DROP VIEW IF EXISTS audit_ip_clusters;
+DROP INDEX IF EXISTS audit_events_ip_idx;
+DROP INDEX IF EXISTS audit_events_actor_time_idx;
+ALTER TABLE subscription_fetch_log
+  DROP COLUMN IF EXISTS ua_enc,
+  DROP COLUMN IF EXISTS ip_enc;
+ALTER TABLE audit_events
+  DROP COLUMN IF EXISTS source_ip_enc;
