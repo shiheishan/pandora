@@ -3,29 +3,42 @@ import { formatBytes } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Select, TextArea, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
-import { trafficGrantedSchema, type SubscriptionRow, type UserDetail } from './api'
+import { trafficGrantedSchema, type UserDetail } from './api'
 import { ActionModal } from './dialogs'
-import { SUB_STATUS_VIEW } from './model'
+import { defaultTrafficSub, subLabel, subName, trafficPackTargets } from './model'
 import { GRANT_GB_MAX, GRANT_GB_PRESETS, grantReasonProblem, parseGrantGB } from './trafficPack'
 import css from './Users.module.css'
 
 // ---------------------------------------------------------------------------
 // 加流量包：POST v1/subscriptions/{id}/traffic-pack（billing.adjustment.write + reauth + 幂等
-// subscription_admin_traffic_grant）。发一笔不过期的流量包，挂在订阅所属的用户身上，
-// 每周期先扣套餐额度、再扣流量包；任何状态的订阅都能挑（余额在用户身上）
+// subscription_admin_traffic_grant）。发一笔不过期的流量包，挂在这一份订阅上（流量包按订阅挂，
+// 不再是用户名下一个总数），这份每周期先扣套餐额度、再扣流量包；只列还在用的订阅
 // ---------------------------------------------------------------------------
-export function TrafficPackDialog({ user, open, onClose, onDone }: { user: UserDetail; open: boolean; onClose: () => void; onDone: () => void }) {
+export function TrafficPackDialog({
+  user,
+  subscriptionId = null,
+  open,
+  onClose,
+  onDone,
+}: {
+  user: UserDetail
+  /** 订阅行上点的「加流量」：只给这一份，不再让挑 */
+  subscriptionId?: string | null
+  open: boolean
+  onClose: () => void
+  onDone: () => void
+}) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const intent = useIntentKey()
-  const choices = user.subscriptions
+  const choices = trafficPackTargets(user.subscriptions).filter((s) => subscriptionId === null || s.id === subscriptionId)
   const [picked, setPicked] = useState('')
   const [gb, setGb] = useState('10')
   const [reason, setReason] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
-  const sub = choices.find((s) => s.id === picked) ?? choices[0]
+  const sub = choices.find((s) => s.id === picked) ?? defaultTrafficSub(choices)
   const bytes = parseGrantGB(gb)
 
   const close = () => {
@@ -51,7 +64,7 @@ export function TrafficPackDialog({ user, open, onClose, onDone }: { user: UserD
         idempotencyKey: intent.keyFor([sub.id, body]),
       })
       intent.reset()
-      toast(`已为 ${r.user_email} 加 ${formatBytes(r.granted_bytes)} 流量包，流量包剩余合计 ${formatBytes(r.remaining_bytes_total)}`)
+      toast(`已为 ${r.user_email} 的${subName(sub)}加 ${formatBytes(r.granted_bytes)} 流量包，这一份的流量包剩余 ${formatBytes(r.remaining_bytes_total)}`)
       close()
       onDone()
     } catch (e) {
@@ -63,7 +76,7 @@ export function TrafficPackDialog({ user, open, onClose, onDone }: { user: UserD
 
   return (
     <ActionModal open={open} title="加流量包" busy={busy} confirm="确认发放" disabled={!sub} onCancel={close} onConfirm={() => void submit()}>
-      <p className={css.dialogText}>发一笔不过期的流量包，挂在用户身上、用完为止；每个周期先扣套餐流量，再扣流量包。发出后不能撤回。</p>
+      <p className={css.dialogText}>发一笔不过期的流量包，只挂在下面这一份订阅上、用完为止，用户的其他订阅用不上；这一份每个周期先扣套餐流量，再扣流量包。发出后不能撤回。</p>
       {choices.length > 1 && (
         <Select label="订阅" options={choices.map((s) => ({ value: s.id, label: subLabel(s) }))} value={sub?.id ?? ''} onChange={(e) => setPicked(e.target.value)} />
       )}
@@ -102,8 +115,4 @@ export function TrafficPackDialog({ user, open, onClose, onDone }: { user: UserD
       />
     </ActionModal>
   )
-}
-
-function subLabel(s: SubscriptionRow): string {
-  return `${s.plan_name} · v${s.plan_version} · ${SUB_STATUS_VIEW[s.status].label}`
 }

@@ -29,7 +29,8 @@ export const generationJobSchema = z.object({
 export type GenerationJob = z.output<typeof generationJobSchema>
 export const generationJobsSchema = z.object({ jobs: z.array(generationJobSchema) })
 
-// POST v1/subscriptions/{id}/traffic-pack：billing.AdminTrafficGrantOutput（无 omitempty）
+// POST v1/subscriptions/{id}/traffic-pack：billing.AdminTrafficGrantOutput（无 omitempty）。
+// 流量包挂在这一份订阅上；remaining_bytes_total 的字段名没改，口径改成「这份订阅的流量包余量」
 export const trafficGrantedSchema = z.object({
   subscription_id: z.string(),
   user_id: z.string(),

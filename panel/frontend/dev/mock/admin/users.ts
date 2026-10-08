@@ -14,6 +14,8 @@ type SubStatus = 'pending' | 'trialing' | 'active' | 'past_due' | 'grace' | 'pau
 
 export interface Sub {
   id: string
+  /** 用户起的备注名（购买模型统一）；后台只读 */
+  label: string | null
   plan_id: string
   plan_name: string
   plan_version: number
@@ -28,6 +30,8 @@ export interface Sub {
   device_limit_override: number | null
   plan_max_devices: number | null
   online_devices: number
+  /** 挂在这一份上的流量包余量（字节）：流量包按订阅挂 */
+  pack_bytes: number
   created_at: string
   /** 只用于 q 反查，永不出现在响应里（保留规则 2） */
   token: string
@@ -100,6 +104,7 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
   const used = limit === null ? (i * 7 + 3) * GiB : Math.round(limit * (((i * 37 + j * 11) % 100) / 100))
   return {
     id: randomUUID(),
+    label: null,
     plan_id: planId,
     plan_name: name,
     plan_version: 1 + ((i + j) % 3),
@@ -114,6 +119,7 @@ function makeSub(i: number, j: number, state: 'live' | 'expired'): Sub {
     device_limit_override: i % 11 === 5 ? 10 : null,
     plan_max_devices: devices,
     online_devices: state === 'live' ? (i * 5 + j) % ((devices ?? 3) + 2) : 0,
+    pack_bytes: 0,
     created_at: new Date(start - DAY).toISOString(),
     token: `tk${String(i).padStart(3, '0')}${j}`,
   }
@@ -147,6 +153,40 @@ const users: User[] = Array.from({ length: 48 }, (_, i) => {
 })
 // 邀请关系：每隔几个人由第 0 号邀请
 for (let i = 2; i < users.length; i += 4) users[i]!.referrer = users[0]!.id
+
+// ---------------------------------------------------------------------------
+// 落点演示数据（购买模型统一）：固定 id 的种子用户里布置「多份订阅」，后台开单的落点、
+// 订阅行上的按份操作才有东西可点。只改备注名、流量包与一条同款订阅，其余沿用上面的确定性生成
+// ---------------------------------------------------------------------------
+// 第 2 位（…02）：专业版 + 体验版，两份都在用、不同款。开别的套餐时没有默认落点
+const duo = users[1]!.subs
+if (duo.length === 2) {
+  duo[0]!.label = '我的手机'
+  duo[0]!.pack_bytes = 30 * GiB
+  duo[1]!.label = '妈妈的 iPad'
+}
+// 第 6 位（…06）：再加一份同款（专业版）订阅，两份同款都在用。开专业版时默认续到期更早的那份
+const twin = users[5]!
+const twinFirst = twin.subs[0]
+if (twinFirst) {
+  const second: Sub = {
+    ...twinFirst,
+    id: randomUUID(),
+    label: '备用',
+    status: 'active',
+    current_period_start: new Date(Date.parse(twinFirst.current_period_start ?? '') + 12 * DAY).toISOString(),
+    current_period_end: new Date(Date.parse(twinFirst.current_period_end ?? '') + 12 * DAY).toISOString(),
+    traffic_used: Math.round((twinFirst.traffic_limit ?? 100 * GiB) * 0.82),
+    pack_bytes: 0,
+    online_devices: 0,
+    token: 'tk005b',
+    created_at: new Date(Date.parse(twinFirst.created_at) + 12 * DAY).toISOString(),
+  }
+  twinFirst.label = '常用'
+  twinFirst.status = 'active'
+  twinFirst.pack_bytes = 10 * GiB
+  twin.subs.push(second)
+}
 
 // ---------------------------------------------------------------------------
 // 视图：列表行与详情，字段与 Go 的 json tag 一一对应
@@ -266,6 +306,7 @@ function detail(u: User) {
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .map((s) => ({
         id: s.id,
+        label: s.label,
         plan_name: s.plan_name,
         plan_version: s.plan_version,
         status: s.status,
@@ -278,6 +319,7 @@ function detail(u: User) {
         device_limit_override: s.device_limit_override,
         plan_max_devices: s.plan_max_devices,
         online_devices: s.online_devices,
+        pack_remaining_bytes: s.pack_bytes,
       })),
     recent_orders: orders.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20),
     roles: u.roles,

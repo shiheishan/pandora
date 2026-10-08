@@ -66,6 +66,8 @@ export type CurrentSub = z.output<typeof currentSubSchema>
 const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
 const subscriptionSchema = z.object({
   id: z.string(),
+  // 用户起的备注名（购买模型统一）：没起为 null；后台只读，改名是用户在门户里做的事
+  label: z.string().nullable(),
   plan_name: z.string(),
   plan_version: int,
   status: z.enum(SUB_STATUSES),
@@ -78,6 +80,8 @@ const subscriptionSchema = z.object({
   device_limit_override: count.nullable(),
   plan_max_devices: count.nullable(),
   online_devices: count,
+  // 挂在这一份上的流量包余量（字节）：流量包按订阅挂，不再是用户名下一个总数
+  pack_remaining_bytes: count,
 })
 export const userDetailSchema = z.object({
   ...userRowShape,

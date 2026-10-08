@@ -15,44 +15,81 @@ describe('mock api · admin users ops', () => {
   afterAll(() => close(server))
 
   const SEED_USER = '1a2b3c42-0000-4000-8000-000000000002'
+  // 第 6 位种子用户：布置了两份同款订阅（「常用」「备用」）
+  const TWIN_USER = '1a2b3c46-0000-4000-8000-000000000006'
   const get = (path: string) => mockFetch(base, auth, 'GET', path)
   const send = (method: string, path: string, body: unknown, key?: string) => mockFetch(base, auth, method, path, body, key)
-  const trafficUsed = async (id: string) => {
-    const d = (await (await get(`/v1/users/${id}`)).json()) as { subscriptions: Array<{ status: string; current_period_end: string; quotas: Array<{ consumed: number }> }> }
-    const active = d.subscriptions.filter((s) => s.status === 'active').sort((a, b) => b.current_period_end.localeCompare(a.current_period_end))[0]!
-    return active.quotas[0]!.consumed
+  type SubRow = { id: string; label: string | null; plan_name: string; status: string; current_period_end: string | null; quotas: Array<{ consumed: number }>; pack_remaining_bytes: number }
+  const subsOf = async (id: string) => ((await (await get(`/v1/users/${id}`)).json()) as { subscriptions: SubRow[] }).subscriptions
+  const reauth = async () => {
+    const res = await fetch(`${base}/v1/auth/reauth`, { method: 'POST', headers: auth, body: JSON.stringify({ password: MOCK_ACCOUNTS.admin.password }) })
+    auth = { Authorization: `Bearer ${((await res.json()) as { access_token: string }).access_token}` }
   }
 
-  it('resets traffic only after reauth, logs it, and replays the stored result', async () => {
-    await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
-    const blocked = await send('POST', `/v1/users/${SEED_USER}/traffic-reset`, { note: '补偿断线时长' }, 'reset-1')
-    expect(blocked.status).toBe(403)
-    const reauth = await fetch(`${base}/v1/auth/reauth`, { method: 'POST', headers: auth, body: JSON.stringify({ password: MOCK_ACCOUNTS.admin.password }) })
-    auth = { Authorization: `Bearer ${((await reauth.json()) as { access_token: string }).access_token}` }
+  it('shows per-subscription labels and the pack left on each one in the user detail', async () => {
+    const duo = await subsOf(SEED_USER)
+    expect(duo.map((x) => x.label).sort()).toEqual(['妈妈的 iPad', '我的手机'])
+    expect(duo.find((x) => x.label === '我的手机')!.pack_remaining_bytes).toBe(30 * 1024 ** 3)
+    expect(duo.find((x) => x.label === '妈妈的 iPad')!.pack_remaining_bytes).toBe(0)
+    // 没起名的订阅 label 是 null 而不是缺键
+    const none = (await (await get('/v1/users?sub_state=active&limit=100')).json()) as { users: Array<{ id: string }> }
+    const some = await Promise.all(none.users.slice(0, 20).map((u) => subsOf(u.id)))
+    expect(some.flat().some((x) => x.label === null)).toBe(true)
+    const twin = await subsOf(TWIN_USER)
+    expect(twin).toHaveLength(2)
+    expect(new Set(twin.map((x) => x.plan_name)).size).toBe(1)
+  })
 
-    const short = await send('POST', `/v1/users/${SEED_USER}/traffic-reset`, { note: '短' }, 'reset-0')
+  it('resets traffic one subscription at a time, only after reauth, and logs it', async () => {
+    const [first, second] = await subsOf(SEED_USER)
+    const path = (id: string) => `/v1/subscriptions/${id}/traffic-reset`
+    await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
+    const blocked = await send('POST', path(first!.id), { note: '补偿断线时长' }, 'reset-1')
+    expect(blocked.status).toBe(403)
+    await reauth()
+
+    const short = await send('POST', path(first!.id), { note: '短' }, 'reset-0')
     expect(short.status).toBe(422)
     expect(await short.json()).toMatchObject({ error: { fields: { note: expect.any(String) } } })
+    expect((await send('POST', path(first!.id), { note: '补偿断线时长', user_id: SEED_USER }, 'reset-0b')).status).toBe(400)
+    expect((await send('POST', path('00000000-0000-4000-8000-000000000000'), { note: '补偿断线时长' }, 'reset-0c')).status).toBe(404)
+    // 按用户重置的老接口删了
+    expect((await send('POST', `/v1/users/${SEED_USER}/traffic-reset`, { note: '补偿断线时长' }, 'reset-0d')).status).toBe(404)
 
-    const before = await trafficUsed(SEED_USER)
+    const before = first!.quotas[0]!.consumed
+    const otherBefore = second!.quotas[0]!.consumed
     expect(before).toBeGreaterThan(0)
-    const done = await send('POST', `/v1/users/${SEED_USER}/traffic-reset`, { note: '补偿断线时长' }, 'reset-1')
+    expect(otherBefore).toBeGreaterThan(0)
+    const done = await send('POST', path(first!.id), { note: '补偿断线时长' }, 'reset-1')
     expect(await done.json()).toEqual({ reset: true, freed_bytes: before })
-    expect(await trafficUsed(SEED_USER)).toBe(0)
-    const replay = await send('POST', `/v1/users/${SEED_USER}/traffic-reset`, { note: '补偿断线时长' }, 'reset-1')
+    // 只清了点中的这一份，另一份的用量原样
+    const after = await subsOf(SEED_USER)
+    expect(after.find((x) => x.id === first!.id)!.quotas[0]!.consumed).toBe(0)
+    expect(after.find((x) => x.id === second!.id)!.quotas[0]!.consumed).toBe(otherBefore)
+    const replay = await send('POST', path(first!.id), { note: '补偿断线时长' }, 'reset-1')
     expect(await replay.json()).toEqual({ reset: true, freed_bytes: before })
 
     const history = (await (await get(`/v1/users/${SEED_USER}/traffic-resets`)).json()) as { logs: Array<Record<string, unknown>> }
-    expect(history.logs[0]).toMatchObject({ reason: 'manual', consumed_before: before, actor_email: MOCK_ACCOUNTS.admin.email, note: '补偿断线时长' })
+    expect(history.logs[0]).toMatchObject({ reason: 'manual', plan_name: first!.plan_name, consumed_before: before, actor_email: MOCK_ACCOUNTS.admin.email, note: '补偿断线时长' })
     expect((await get('/v1/traffic-resets?reason=admin')).status).toBe(400)
+
+    // 只读账号没有 metering.reset.write：404，不暴露接口
+    const viewer = bearer((await loginAs(base, MOCK_ACCOUNTS.viewer)).access_token)
+    expect((await mockFetch(base, viewer, 'POST', path(second!.id), { note: '补偿断线时长' }, 'reset-viewer')).status).toBe(404)
   })
 
-  it('answers 422 without fields for a user with no active subscription', async () => {
-    const none = (await (await get('/v1/users?sub_state=none&limit=1')).json()) as { users: Array<{ id: string }> }
-    const res = await send('POST', `/v1/users/${none.users[0]!.id}/traffic-reset`, { note: '补偿断线时长' }, 'reset-2')
+  it('answers 422 without fields for a subscription that is not active', async () => {
+    const users = (await (await get('/v1/users?limit=100')).json()) as { users: Array<{ id: string }> }
+    let ended: string | undefined
+    for (const u of users.users) {
+      ended = (await subsOf(u.id)).find((x) => x.status !== 'active')?.id
+      if (ended) break
+    }
+    const res = await send('POST', `/v1/subscriptions/${ended!}/traffic-reset`, { note: '补偿断线时长' }, 'reset-2')
     expect(res.status).toBe(422)
-    const body = (await res.json()) as { error: { fields?: unknown } }
+    const body = (await res.json()) as { error: { fields?: unknown; message: string } }
     expect(body.error.fields).toBeUndefined()
+    expect(body.error.message).toBe('这份订阅没有在生效中，不能重置流量')
   })
 
   it('previews, exports and generates against the same user list', async () => {
@@ -95,17 +132,27 @@ describe('mock api · admin users ops', () => {
     expect(await bad.json()).toMatchObject({ error: { fields: { group_id: '分组不存在' } } })
   })
 
-  it('grants a non-expiring traffic pack to the subscription owner', async () => {
-    const d = (await (await get(`/v1/users/${SEED_USER}`)).json()) as { subscriptions: Array<{ id: string }> }
-    const sub = d.subscriptions[0]!.id
+  it('grants a non-expiring traffic pack to the one subscription it was clicked on', async () => {
+    const [mine, other] = (await subsOf(SEED_USER)).sort((a, b) => (b.label ?? '').localeCompare(a.label ?? ''))
+    // 排序后 mine 是「我的手机」（种子里挂着 30 GB 流量包），other 是「妈妈的 iPad」（0）
+    expect(mine!.label).toBe('我的手机')
+    const sub = mine!.id
     const short = await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 1024, reason: '短' }, 'tp-0')
     expect(short.status).toBe(422)
     expect(await short.json()).toMatchObject({ error: { fields: { reason: expect.any(String) } } })
     const granted = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 10 * 1024 ** 3, reason: '补偿线路故障' }, 'tp-1')).json())
-    expect(granted).toMatchObject({ user_id: SEED_USER, granted_bytes: 10 * 1024 ** 3, remaining_bytes_total: 10 * 1024 ** 3 })
+    // remaining_bytes_total 是这一份的余量：种子 30 GB 加这次发的 10 GB
+    expect(granted).toMatchObject({ subscription_id: sub, user_id: SEED_USER, granted_bytes: 10 * 1024 ** 3, remaining_bytes_total: 40 * 1024 ** 3 })
     // 同键重放回同一份结果，不再发一笔
     const replay = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${sub}/traffic-pack`, { bytes: 10 * 1024 ** 3, reason: '补偿线路故障' }, 'tp-1')).json())
     expect(replay.grant_id).toBe(granted.grant_id)
+    // 另一份的余量没动；用户详情里按份显示
+    const after = await subsOf(SEED_USER)
+    expect(after.find((x) => x.id === sub)!.pack_remaining_bytes).toBe(40 * 1024 ** 3)
+    expect(after.find((x) => x.id === other!.id)!.pack_remaining_bytes).toBe(0)
+    // 给另一份发，各记各的
+    const second = trafficGrantedSchema.parse(await (await send('POST', `/v1/subscriptions/${other!.id}/traffic-pack`, { bytes: 5 * 1024 ** 3, reason: '补偿线路故障' }, 'tp-3')).json())
+    expect(second.remaining_bytes_total).toBe(5 * 1024 ** 3)
     expect((await send('POST', '/v1/subscriptions/00000000-0000-4000-8000-000000000000/traffic-pack', { bytes: 1, reason: '补偿线路故障' }, 'tp-2')).status).toBe(404)
   })
 

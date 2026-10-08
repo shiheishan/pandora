@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extendedSchema, rotatedSchema, usersSchema } from './api'
+import { extendedSchema, rotatedSchema, userDetailSchema, usersSchema } from './api'
 import {
   currentSubscription,
   deviceLimitLabel,
@@ -163,6 +163,53 @@ describe('schema', () => {
     expect(extendedSchema.safeParse(ok).success).toBe(true)
     expect(extendedSchema.safeParse({ ...ok, days: 0 }).success).toBe(false)
     expect(extendedSchema.safeParse({ ...ok, period_end: undefined }).success).toBe(false)
+  })
+
+  it('用户详情的订阅行（按份）：备注名可为 null，这一份的流量包余量必填', () => {
+    const subscription = {
+      id: 's1',
+      label: '妈妈的 iPad',
+      plan_name: '标准版',
+      plan_version: 1,
+      status: 'active',
+      current_period_start: days(-20),
+      current_period_end: days(10),
+      amount: 2500,
+      currency: 'CNY',
+      auto_renew: true,
+      quotas: [],
+      device_limit_override: null,
+      plan_max_devices: 3,
+      online_devices: 0,
+      pack_remaining_bytes: 10 * 1024 ** 3,
+    }
+    const detail = {
+      id: 'u',
+      email: 'a@b.c',
+      display_name: null,
+      status: 'active',
+      risk_level: 'normal',
+      group_name: '',
+      group_id: null,
+      created_at: days(-30),
+      last_login_at: null,
+      subscription_count: 0,
+      active_plan: null,
+      balance: 0,
+      currency: 'CNY',
+      current_subscription: null,
+      email_verified: true,
+      subscriptions: [subscription],
+      recent_orders: [],
+      roles: [],
+      stats: { paid_totals: [], order_count: 0, referral_count: 0 },
+      referrer: null,
+      telegram: null,
+    }
+    expect(userDetailSchema.safeParse(detail).success).toBe(true)
+    expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, label: null }] }).success).toBe(true)
+    expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, pack_remaining_bytes: undefined }] }).success).toBe(false)
+    expect(userDetailSchema.safeParse({ ...detail, subscriptions: [{ ...subscription, label: undefined }] }).success).toBe(false)
   })
 
   it('列表行：未知账号状态判为不符；current_subscription 可为 null', () => {
