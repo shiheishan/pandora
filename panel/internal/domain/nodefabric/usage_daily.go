@@ -91,11 +91,11 @@ func chargeReportEntries(ctx context.Context, tx pgx.Tx, tenantID string, entrie
 		uids[i] = e.uid
 	}
 	type owner struct {
-		subID, userID, userTZ, tenantTZ string
+		subID, userTZ, tenantTZ string
 	}
 	owners := map[int64]owner{}
 	rows, err := tx.Query(ctx, `
-		SELECT s.node_uid, s.id::text, s.user_id::text, u.timezone, t.timezone
+		SELECT s.node_uid, s.id::text, u.timezone, t.timezone
 		  FROM subscriptions s
 		  JOIN users u   ON u.tenant_id = s.tenant_id AND u.id = s.user_id
 		  JOIN tenants t ON t.id = s.tenant_id
@@ -107,7 +107,7 @@ func chargeReportEntries(ctx context.Context, tx pgx.Tx, tenantID string, entrie
 	for rows.Next() {
 		var uid int64
 		var o owner
-		if err := rows.Scan(&uid, &o.subID, &o.userID, &o.userTZ, &o.tenantTZ); err != nil {
+		if err := rows.Scan(&uid, &o.subID, &o.userTZ, &o.tenantTZ); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -132,7 +132,7 @@ func chargeReportEntries(ctx context.Context, tx pgx.Tx, tenantID string, entrie
 			continue
 		}
 		accepted++
-		charges = append(charges, trafficCharge{subID: o.subID, userID: o.userID, billed: e.billed})
+		charges = append(charges, trafficCharge{subID: o.subID, billed: e.billed})
 		if e.billed > 0 {
 			k := usageKey{o.subID, UsageDay(now, UsageLocation(o.userTZ, o.tenantTZ)).Format(time.DateOnly)}
 			if _, ok := usage[k]; !ok {

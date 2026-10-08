@@ -72,23 +72,28 @@ func TestParseTrafficReportOrdersMergesAndValidates(t *testing.T) {
 }
 
 // 流量包有剩余的订阅，套餐额度用完也要继续下发；扣量先锁配额行再锁流量包。
+// 购买模型统一后流量包按份挂：下发判断与扣量都按订阅，不再按用户。
 func TestUniProxyServesAndChargesTrafficPacks(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
 	list := pkg.Decl("Service.ListNodeUsers")
 	list = list[strings.Index(list, "流量耗尽的订阅不下发到节点"):]
 	list = list[:strings.Index(list, "poolFilter")]
 	for _, needle := range []string{"qb.remaining <= 0", "OR EXISTS", "traffic_pack_grants g",
-		"g.user_id = s.user_id", "g.consumed_bytes < g.granted_bytes"} {
+		"g.subscription_id = s.id", "g.consumed_bytes < g.granted_bytes"} {
 		if !strings.Contains(list, needle) {
 			t.Errorf("node user list eligibility missing %q", needle)
 		}
 	}
-	// 批量记账（applyTrafficCharges）：一次锁全部配额行（按 id），再锁流量包（按用户、先到先扣）
+	if strings.Contains(list, "g.user_id = s.user_id") {
+		t.Error("node user list must not count packs attached to the owner's other subscriptions")
+	}
+	// 批量记账（applyTrafficCharges）：一次锁全部配额行（按 id），再锁流量包（按订阅、先到先扣）
 	charge := pkg.Decl("applyTrafficCharges")
 	quotaLock := strings.Index(charge, "ORDER BY id FOR UPDATE")
-	packLock := strings.Index(charge, "ORDER BY user_id, created_at, id FOR UPDATE")
-	if quotaLock < 0 || packLock < 0 || quotaLock > packLock {
-		t.Fatal("applyTrafficCharges must lock quota rows before traffic pack grants, packs oldest first")
+	packLock := strings.Index(charge, "ORDER BY subscription_id, created_at, id FOR UPDATE")
+	if quotaLock < 0 || packLock < 0 || quotaLock > packLock ||
+		!strings.Contains(charge, "subscription_id = ANY($2::uuid[])") || strings.Contains(charge, "user_id = ANY(") {
+		t.Fatal("applyTrafficCharges must lock quota rows before the subscriptions' traffic pack grants, packs oldest first")
 	}
 	if !strings.Contains(pkg.Decl("chargeTraffic"), "applyTrafficCharges(") ||
 		!strings.Contains(pkg.Decl("chargeReportEntries"), "applyTrafficCharges(") {
