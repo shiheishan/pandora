@@ -75,7 +75,9 @@ func waitForLogs(t *testing.T, h *captureHandler, msg string, n int) []capturedL
 
 func TestConnErrorLogSinkRateLimitsPerKeyAndSummarizes(t *testing.T) {
 	h := &captureHandler{}
-	sink := newConnErrorLogSink(slog.New(h), 2, 50*time.Millisecond)
+	// 窗口给足一小时、到点由测试亲手调 flush：窗口很短时，race 下 11 次 Report
+	// 本身就可能跨过窗口，计数被劈成两轮。
+	sink := newConnErrorLogSink(slog.New(h), 2, time.Hour)
 	remote := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 40000}
 	for i := 0; i < 10; i++ {
 		sink.Report(ConnError{Tag: "edge-a", Protocol: "vless", Stage: StageSession, Remote: remote, Err: errors.New("vless version 无效")})
@@ -94,7 +96,8 @@ func TestConnErrorLogSinkRateLimitsPerKeyAndSummarizes(t *testing.T) {
 		t.Fatalf("对端地址没有截成网段: %+v", events[0].attrs)
 	}
 
-	summary := waitForLogs(t, h, "入站连接失败已限流", 1)
+	sink.flush() // 窗口到点
+	summary := h.byMessage("入站连接失败已限流")
 	if len(summary) != 1 || summary[0].attrs["suppressed"] != "8" || summary[0].attrs["category"] != connErrProtocol {
 		t.Fatalf("摘要应只有 protocol 桶、抑制 8 条: %+v", summary)
 	}
@@ -175,12 +178,17 @@ func (h *slowSummaryHandler) Handle(ctx context.Context, r slog.Record) error {
 // 锁内取走计数、再在锁外写摘要；Close 若恰好落在这两步之间，看到的是空计数，直接
 // 返回，那一轮摘要还没写完。现在 Close 等在途的 flush 写完再返回。这里把 flush 钉在
 // 「正在写摘要」的那一刻再 Close，不靠调度运气。
+//
+// 窗口到点也不交给定时器：原先窗口是 1ms，race 下 6 次 Report 还没报完定时器就可能
+// 先到点，计数被劈成两轮（摘要抑制数不是 5，或不止一条），检查机偶发红。现在窗口
+// 给足一小时，报完之后由测试在另一个 goroutine 里调 flush，等价于定时器回调。
 func TestConnErrorLogSinkCloseWaitsForFlush(t *testing.T) {
 	h := &slowSummaryHandler{entered: make(chan struct{})}
-	sink := newConnErrorLogSink(slog.New(h), 1, time.Millisecond)
+	sink := newConnErrorLogSink(slog.New(h), 1, time.Hour)
 	for i := 0; i < 6; i++ {
 		sink.Report(ConnError{Tag: "edge-c", Protocol: "socks", Stage: StageSession, Err: errors.New("socks version 9 unsupported")})
 	}
+	go sink.flush() // 窗口到点
 	select {
 	case <-h.entered:
 	case <-time.After(5 * time.Second):

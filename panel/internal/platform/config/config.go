@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -212,6 +213,10 @@ func (c *Config) IsProduction() bool { return c.Env == "production" }
 
 // CanonicalPublicOrigin returns the deployment-owned external origin used in
 // generated root-install commands. Request headers are never authoritative.
+//
+// 生产环境的规则与 deploy/public-base-url.sh 的 pandora_valid_public_base_url、
+// deploy/render-nginx.sh 的校验是同一条：https://<DNS 域名或公网 IPv4>，不带端口与路径。
+// 三处共用 deploy/fixtures/public-base-url-cases.txt 这张用例表，改规则要三处同改。
 func (c *Config) CanonicalPublicOrigin() (string, error) {
 	base := strings.TrimRight(strings.TrimSpace(c.PublicBaseURL), "/")
 	u, err := url.Parse(base)
@@ -226,11 +231,17 @@ func (c *Config) CanonicalPublicOrigin() (string, error) {
 		// 500 加一句「服务暂时不可用」——没人猜得到要去配一个环境变量。
 		return "", fmt.Errorf(
 			"AEGIS_PUBLIC_BASE_URL 必须是面板的 HTTPS 对外地址"+
-				"（如 https://panel.example.com），当前为 %q。"+
+				"（如 https://panel.example.com 或 https://公网IPv4），当前为 %q。"+
 				"接入命令、支付回调、订阅链接都从它拼出来", base)
 	}
-	if c.IsProduction() && !isPublicHostname(u.Hostname()) {
-		return "", fmt.Errorf("AEGIS_PUBLIC_BASE_URL 生产环境必须使用公网 Host，当前为 %q", u.Hostname())
+	if c.IsProduction() {
+		if !isPublicHostname(u.Hostname()) {
+			return "", fmt.Errorf("AEGIS_PUBLIC_BASE_URL 生产环境必须是 DNS 域名或公网 IPv4（IPv6 地址请改用解析到它的域名），当前为 %q", u.Hostname())
+		}
+		// nginx 只在 443 上按这个地址出证书；带端口的地址边缘配置渲染不出来
+		if strings.Contains(u.Host, ":") {
+			return "", fmt.Errorf("AEGIS_PUBLIC_BASE_URL 生产环境不能带端口，当前为 %q", base)
+		}
 	}
 	if strings.ContainsAny(base, "\"'`$\\\r\n") {
 		return "", fmt.Errorf("canonical public base URL contains unsafe characters")
@@ -321,13 +332,42 @@ func parseEnvironment(raw string) (string, error) {
 	}
 }
 
+// isPublicHostname 判断生产环境对外地址的主机名：小写的 DNS 域名（至少两段、末段以字母开头，
+// 不是 localhost），或公网 IPv4。IPv6 字面量一律不收：nginx 的 server_name 与 ACME 的
+// HTTP-01 都按 IPv4 写，只有 IPv6 的机器用解析到它的域名。
 func isPublicHostname(host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
-	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	host = strings.ToLower(host)
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return isPublicIPv4(addr)
+	}
+	if len(host) > 253 || strings.HasSuffix(host, ".localhost") {
 		return false
 	}
-	if addr, err := netip.ParseAddr(host); err == nil {
-		return addr.IsGlobalUnicast() && !addr.IsPrivate()
+	return publicDNSName.MatchString(host)
+}
+
+// publicDNSName 与 public-base-url.sh、render-nginx.sh 的域名正则逐字相同。
+var publicDNSName = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$`)
+
+// nonPublicIPv4 是 IsGlobalUnicast / IsPrivate 之外仍不能作对外地址的 IPv4 段：
+// 「本网络」、运营商级 NAT、IETF 协议分配、基准测试、保留段（含广播）。
+// 文档段 TEST-NET-1/2/3 不在其中：测试夹具用它们，Let's Encrypt 会拒签，安装器兜底自签。
+var nonPublicIPv4 = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+}
+
+func isPublicIPv4(addr netip.Addr) bool {
+	if !addr.Is4() || !addr.IsGlobalUnicast() || addr.IsPrivate() {
+		return false
+	}
+	for _, p := range nonPublicIPv4 {
+		if p.Contains(addr) {
+			return false
+		}
 	}
 	return true
 }

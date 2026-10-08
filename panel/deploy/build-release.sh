@@ -202,7 +202,7 @@ for arch in amd64 arm64; do
   # unit.  Shipping only binaries makes it possible to run new code against an
   # old schema (or vice versa), which is not a supported rollout mode.
   cp "$ROOT"/migrations/*.sql "$target/migrations/"
-  for script in install.sh install-native.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh update-cloudflare-realip.sh; do
+  for script in install.sh install-native.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
     cp "$ROOT/deploy/$script" "$target/deploy/$script"
   done
   cp "$ROOT/deploy/nginx-aegis.conf" "$target/deploy/nginx-aegis.conf" 2>/dev/null || true
@@ -234,6 +234,9 @@ for arch in amd64 arm64; do
   done
   cp "$ROOT/deploy/systemd/aegis-backup.service" "$target/deploy/systemd/aegis-backup.service"
   cp "$ROOT/deploy/systemd/aegis-backup.timer" "$target/deploy/systemd/aegis-backup.timer"
+  # HTTPS 证书续期（edge-tls.sh renew），install-linux-binaries.sh 装到 /etc/systemd/system
+  cp "$ROOT/deploy/systemd/aegis-tls-renew.service" "$target/deploy/systemd/aegis-tls-renew.service"
+  cp "$ROOT/deploy/systemd/aegis-tls-renew.timer" "$target/deploy/systemd/aegis-tls-renew.timer"
   chmod 0755 "$target"/deploy/*.sh
   if find "$target/bin" "$target/pdnd-dist" "$target/migrations" "$target/deploy" ! -type d ! -type f -print -quit | grep -q .; then
     echo "release tree contains a non-regular object" >&2
@@ -272,7 +275,7 @@ for arch in amd64 arm64; do
   rm -f "$archive" "$archive_tar"
   target_base="$(basename "$target")"
   release_scripts=()
-  for script in install.sh install-native.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh update-cloudflare-realip.sh; do
+  for script in install.sh install-native.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
     release_scripts+=("$target_base/deploy/$script")
   done
   release_data=(
@@ -289,6 +292,8 @@ for arch in amd64 arm64; do
     "$target_base/deploy/systemd/aegis-node.service"
     "$target_base/deploy/systemd/aegis-backup.service"
     "$target_base/deploy/systemd/aegis-backup.timer"
+    "$target_base/deploy/systemd/aegis-tls-renew.service"
+    "$target_base/deploy/systemd/aegis-tls-renew.timer"
   )
   migration_files=()
   for migration in "$target"/migrations/*.sql; do

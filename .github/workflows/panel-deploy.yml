@@ -55,6 +55,9 @@ jobs:
             install-chain_mock_test.sh
             install-migrate-order_mock_test.sh
             install-firstrun_mock_test.sh
+            edge-tls_mock_test.sh
+            healthcheck_mock_test.sh
+            tls-renew_static_test.sh
           )
           failed=()
           for t in "${tests[@]}"; do

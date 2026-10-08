@@ -348,3 +348,12 @@ func (c *Client) SetUsersVersion(v string) {
 		c.usersETag.Store(v)
 	}
 }
+
+// UsersVersionKey 把用户 ETag 规整成事件流里的版本写法，供两边比对。
+//
+// 面板的 REST ETag 与事件流的 version / from_version 出自同一个计算函数，原文
+// 相同；但中间的 nginx 压缩响应时会把 ETag 改写成弱形式 W/"..."，原样拿去和
+// from_version 比就永远对不上，每条增量都退化成拉全量。去掉 W/ 前缀即可。
+func UsersVersionKey(etag string) string {
+	return strings.TrimPrefix(strings.TrimSpace(etag), "W/")
+}

@@ -1,0 +1,41 @@
+[Unit]
+Description=Pandora panel HTTPS certificate renewal (edge-tls.sh renew)
+Documentation=file:///opt/aegispanel/deploy/edge-tls.sh
+Wants=network-online.target
+After=network-online.target nginx.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/aegispanel/deploy
+# 续期、自签兜底时重试申请、证书换了就 reload nginx、到期告警；结论写 /var/lib/aegispanel/tls/status。
+# 失败时本单元记为 failed（systemctl --failed 看得见），配了 AEGIS_ALERT_TG_* 还会推 Telegram
+ExecStart=/opt/aegispanel/deploy/edge-tls.sh renew /opt/aegispanel/deploy/.env
+UMask=0022
+TimeoutStartSec=15min
+
+# 以 root 跑（要 reload nginx、读写证书私钥），但不给别的：不能提权、看不到 /home、/usr 与 /etc 只读
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+# ProtectSystem=full 让 /etc 只读，这里放开证书相关的几处；前缀 - 表示目录不存在也不报错
+#（只有 IP 证书的机器没有 /etc/letsencrypt）
+ReadWritePaths=-/etc/aegispanel/tls -/etc/letsencrypt
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

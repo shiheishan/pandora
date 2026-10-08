@@ -26,6 +26,8 @@ type userTableCore struct {
 	port           int
 	users          map[string]core.User
 	failSetRouting int
+	// failAddUsers 不为 0 时 AddUsers 报错（每次减一）。
+	failAddUsers int
 }
 
 func newUserTableCore() *userTableCore {
@@ -67,6 +69,10 @@ func (c *userTableCore) SetRouting(string, *core.Routing) error {
 func (c *userTableCore) AddUsers(_ string, users []core.User) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.failAddUsers > 0 {
+		c.failAddUsers--
+		return errors.New("rejected users")
+	}
 	for _, u := range users {
 		c.users[u.UUID] = u
 	}
