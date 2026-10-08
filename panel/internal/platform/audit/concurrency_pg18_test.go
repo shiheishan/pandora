@@ -48,7 +48,7 @@ func TestAuditConcurrentSerializablePG18(t *testing.T) {
 	// 「先拿业务锁、再写审计」，审计取号排队的方式要是让人手握业务锁去等别人，
 	// 这里就会死锁（40P01）
 	userLock := func(tx pgx.Tx, user int) error {
-		_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('w9audit-user-' || $1::text, 0))`, user%4)
+		_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, fmt.Sprintf("w9audit-user-%d", user%4))
 		return err
 	}
 	// 序列化写：先做一段「业务」（共 3ms，中间拿用户锁），再写审计，与下单的形状一致
