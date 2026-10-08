@@ -98,6 +98,15 @@ func TestSubscriptionRotatePG18(t *testing.T) {
 	})
 	r.Get("/{prefix}/{token}", h.subscribe)
 	r.Post("/v1/me/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
+	pullAs := func(token, ua string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/"+prefix+"/"+token, nil).WithContext(ctx)
+		req.Header.Set("User-Agent", ua)
+		req.Header.Set("X-Real-IP", "198.51.100.41")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
 	pull := func(token string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/"+prefix+"/"+token+".yaml", nil).WithContext(ctx)
@@ -173,6 +182,19 @@ func TestSubscriptionRotatePG18(t *testing.T) {
 		strings.Contains(w.Body.String(), oldUUID) {
 		t.Fatalf("new link must serve the new node password only: status=%d body=%s", w.Code, w.Body)
 	}
+	// 订阅按客户端 UA 选 sing-box 写法（RenderForClient）：1.14 起的官方客户端拿 http_clients，
+	// 认不出版本或旧内核拿 download_detour（旧内核遇到 http_clients 整份拒载）
+	for _, c := range []struct{ ua, want, not string }{
+		{"SFA/1.14.2 (614; sing-box 1.14.2; language zh_CN)", `"http_clients"`, `"download_detour"`},
+		{"SFA/1.12.4 (520; sing-box 1.12.4; language zh_CN)", `"download_detour"`, `"http_clients"`},
+		{"sing-box", `"download_detour"`, `"http_clients"`},
+	} {
+		w := pullAs(newTok, c.ua)
+		if body := w.Body.String(); w.Code != http.StatusOK || !strings.Contains(body, c.want) || strings.Contains(body, c.not) {
+			t.Fatalf("sing-box pull as %q: status=%d want %s without %s\n%s", c.ua, w.Code, c.want, c.not, body)
+		}
+	}
+	t.Log("marker=rotate_pg18_singbox_dialect_by_ua_ok")
 	if got := nodeUUIDs(); got[oldUUID] || !got[newUUID] || !got[otherUUID] {
 		t.Fatalf("node users after rotation=%v want new %s, without old %s", got, newUUID, oldUUID)
 	}
