@@ -1,6 +1,6 @@
 ---
 name: cleanup
-description: pandora 开发侧资源清理：先用只读脚本列出已合并且干净的 worktree、已合并的本地与远端分支、scratchpad 遗留的 worktree、ops-local 原始数据，删前把每个 worktree 里被 git 忽略的 brief / TASKS / report / ownership 归档到 ops-local/reports，整份清单给用户确认后，再用不带 --force 的 worktree remove、branch -d 和只删已合并的远端分支执行；对照库与测试机的清理分别指向 bench-eval 与 test-machine。一波任务合完、worktree 或分支太多、磁盘紧张，或用户说「清理」「删掉合完的 worktree / 分支」时使用。产品的备份恢复不归这里。
+description: pandora 开发侧资源清理：列出已合并且干净的 worktree、已合并的分支、遗留的 worktree 与 ops-local 原始数据，归档 worktree 里被 git 忽略的报告，清单经用户确认后再删；对照库与测试机的清理分别见 bench-eval 与 test-machine。一波任务合完、worktree 或分支太多、磁盘紧张，或用户说「清理」「删掉合完的 worktree / 分支」时使用。产品的备份恢复不归这里。
 ---
 
 # 开发侧资源清理
@@ -24,17 +24,10 @@ bash .claude/skills/cleanup/scripts/list.sh          # 约 5 秒
 bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 worktree 的占用
 ```
 
-在主目录或任一 worktree 里跑都一样。它不 fetch，远端结论以上次 fetch 为准，输出第三行有时间。脚本按下面的顺序判定，命中第一条就保留：
+在主目录或任一 worktree 里跑都一样。它不 fetch，远端结论以上次 fetch 为准，输出第三行有时间。判定规则（保留、「待确认」、候选的各种情形）见脚本文件头。其中两条容易忽略：
 
-| 判定 | 结果 |
-|---|---|
-| 在运行中表或 `KEEP` 里 | 保留 |
-| 有未提交改动或未跟踪文件 | 保留（`worktree remove` 本来也会拒绝） |
-| 有提交没进 `feat/panel-redesign` | 保留，写出个数 |
-| worktree 被锁定 | 保留 |
-| 找不到运行中表 | 全部「待确认」，不进候选 |
-| `.claude/` 下有文件在 `ACTIVE_MIN` 分钟内（默认 120）改过 | 「待确认」：可能是刚合完的收尾，也可能有人还在用 |
-| 其余 | 候选 |
+- 找不到运行中表：全部「待确认」，不进候选。
+- `.claude/` 下有文件在 `ACTIVE_MIN` 分钟内（默认 120）改过：「待确认」，可能是刚合完的收尾，也可能有人还在用。
 
 候选每行带三样东西：要归档的 `.claude` 忽略文件个数、TASKS.md 里还有几处引用 `pandora-<名字>/`、是否已有归档。
 
@@ -85,7 +78,7 @@ bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 wor
 | 资源 | 怎么清 |
 |---|---|
 | 对照机上的 `aegis_cmp_*` 库 | 见 bench-eval 第 6 节「结果在哪、对照机上留下什么」：先列给用户确认（动对照机属于改仓库外的东西），只删本任务建的，基线库和模板不碰 |
-| 测试机 | 见 test-machine「回收」：删机只由用户在 Vultr 控制台做；用户说删了以后，再去掉登记（`~/.ssh/config`、`~/ai/servers/README.md`、`ssh-keygen -R`），机器目录保留并注明已删 |
+| 测试机 | 见 test-machine「回收」（删机只由用户在控制台做，规则见根 CLAUDE.md） |
 | ops-local 原始数据 | 见下 |
 | 会话 scratchpad 里的文件 | 不管，会话结束随系统临时目录清；只处理登记在 git 里的 worktree |
 
@@ -93,7 +86,7 @@ bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 wor
 
 - **永远留**：成绩单与汇总（`summary.md`、`stats.txt`、`auto-targets*`、`*/results/`）、归档的报告（`reports/`）、评测集（`bench/` 的用例与数据集定义）。
 - **可压缩**：各轮的 `raw/`（压测原始日志、pprof、采样）。在原目录旁打成 `raw.tar.gz`，用 `tar -tzf` 核对文件数一致后，删原目录要先问用户。
-- **不碰**：`**/secrets/`（不读、不压、不删）、`gitleaks*`、`memoh-ci/`。
+- **不碰**：`**/secrets/`（不压、不删，也不读）、`gitleaks*`、`memoh-ci/`。
 - **有的 raw 里套着 secrets**（例 `vultr-test/raw/secrets/`）：`list.sh` 会在这类 raw 后面标「含 secrets/」。整个 raw 都不压、不删，交用户定。
 - ops-local 被 git 忽略、只在维护者本机，没有别的备份，删前多想一步。
 
@@ -101,6 +94,4 @@ bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 wor
 
 - **`git worktree remove` 会连同被忽略的文件一起删**：`.claude/` 下的 brief、TASKS、report、ownership 都被 git 忽略，删完就没了，只能靠第 4 步第 1 条的归档。
 - **合并判定看的是本地 `feat/panel-redesign`**：主目录没 pull 到最新时，刚在别处合进去的分支会显示「未合并」，这只会让清单更保守。远端那组看 `origin/feat/panel-redesign`，要新就先 fetch。
-- **`branch -d` 对有上游的分支检查上游**：本地比 `origin/<分支>` 多提交（没推送）时会拒绝，脚本在这类分支后标了 `ahead`，不进建议命令。
 - 远端分支删了，正在跑的任务下次 push 会重建它。运行中的不会进清单，但如果总协调手里有 TASKS 表没登记的任务，先补 `KEEP`。
-- worktree 里有 `node_modules` 和构建缓存，一个几十到上百 MB，删起来要几秒，别并发删。

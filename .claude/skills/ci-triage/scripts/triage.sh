@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 把一个提交的 CI 失败压成一页：检查机结论、每个失败 run 的失败测试与首条报错、已知偶发项。
 # 用法：triage.sh <sha 或分支> [输出目录]   只读；完整失败日志存进输出目录（默认 $TMPDIR/ci-triage-<sha>）。
+#   浏览器购买路径步骤红了时，另取整个 run 的日志（<id>.full.log）读结果表，按失败 / 已登记 fixme / 未执行分开。
 set -euo pipefail
 ref="${1:?sha 或分支}"
 repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
@@ -49,6 +50,40 @@ printf '%s\n' "$runs" | while IFS=$'\t' read -r id name state; do
   grep -E 'Serialized Error|返回 [0-9]{3} ' "$clean" | sort -u | head -5 | sed 's/^/  /' || true
   echo "-- e2e 脚本"
   grep -E '失败（退出码|\[FAIL\]' "$clean" | head -12 | sed 's/^/  /' || true
+  # 浏览器购买路径（panel-smoke 的 Playwright 步骤，见 .claude/rules/frontend-browser-e2e.md）
+  if grep -qE $'\tBrowser purchase paths' "$log"; then
+    echo "-- 浏览器购买路径（Playwright）"
+    grep -E '^ *[0-9]+\) (\[chromium\] › )?tests/browser/|^ *[0-9]+ (failed|flaky|skipped|passed|did not run)|Error in global setup' "$clean" \
+      | perl -CSD -Mutf8 -pe 's/ *─+$//' | head -15 | sed 's/^/  /' || true
+    grep -E '^ *(Error|TimeoutError): ' "$clean" | awk '!seen[$0]++' | head -6 | sed 's/^ */  报错 → /' || true
+    # 前提没满足：种子、最低付款额、限流、SQL 夹具。这类先查栈与种子，不是页面回归
+    grep -oE '门户报价的最低付款额 90 秒内没变成 100[^"]{0,40}|套餐 [^ ]+ 没发布出去|SQL 夹具「[^」]+」失败|返回 429|rate_limited' "$clean" \
+      | sort | uniq -c | head -6 | sed 's/^/  前提未满足：/' || true
+    # 结果表在「Browser path table」步骤的输出里（那步自己是绿的，--log-failed 不含），取整个 run 的日志
+    full="$out/$id.full.log"
+    [ -s "$full" ] || gh run view "$id" -R "$repo" --log > "$full" 2>/dev/null || true
+    awk -F'\t' '$2 ~ /Browser path table/ {print $3}' "$full" | perl -CSD -pe 's/^\x{FEFF}?[0-9TZ:.-]+ //' \
+      | python3 -c '
+import sys
+rows = [l.rstrip("\n") for l in sys.stdin if l.startswith("| ") and l.rstrip().endswith("|")]
+by = {}
+for r in rows:
+    cells = [c.strip() for c in r.strip().strip("|").split(" | ")]
+    by.setdefault(cells[-1], []).append(cells)
+if not rows:
+    print("结果表没取到（步骤没跑到、或日志已过期）")
+    sys.exit()
+print("结果表：" + "，".join(f"{k} {len(v)}" for k, v in by.items()))
+for c in by.get("失败", [])[:10]:
+    print(f"失败（这次红的原因）{c[0]}：{c[1][:150]}")
+if by.get("失败（产品问题）"):
+    print("失败（产品问题）= PRODUCT_ISSUES 里已登记的 test.fixme，不是这次红的原因：" + "、".join(c[0].split()[0] for c in by["失败（产品问题）"]))
+if by.get("未执行"):
+    print("未执行 = 同一个 test 里前一步失败、或在步骤之外就报错（登录、种子），看上面的报错：" + "、".join(c[0].split()[0] for c in by["未执行"]))
+' | sed 's/^/  /' || true
+    echo "  截图与 trace 在产物 browser-paths（十几到几十 MB，按需下）：gh run download $id -R $repo -n browser-paths -D $out/$id-browser"
+    echo "  看 shots/<步骤>-fail.png 与 test-results/*/trace.zip（npx playwright show-trace <trace.zip>）"
+  fi
   echo "-- 已知偶发"
   if grep -qE 'TestIdempotencyMiddlewarePG18' "$clean" && grep -qE 'lock timeout|55P03|canceling statement due to lock' "$clean"; then
     echo "  TestIdempotencyMiddlewarePG18 锁超时：gh run rerun $id -R $repo --failed"

@@ -26,10 +26,8 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 
 - **原型阶段**（decision-research 第 6 步）：测 `.claude/purchase-proto/index.html`，地址带 `#s=<场景>&screen=<页>&clean=1`，`clean=1` 把测试栏整条藏起来。场景与 hint 在原型 `SCENARIOS`，流程与叫法在同目录 `flow.md`。
 - **实现阶段**：测门户假后端。
-  - 场景定义在 `panel/frontend/dev/mock/portal/scenario.ts`。`proto-*` 的数据与原型 `SCENARIOS` 一一对应，在 `proto.ts`，起始页在 `PROTO_START`。
-  - **`proto-*` 随 w7portal 合入主线**。合入前，用 `../pandora-w7portal/panel/frontend` 起。
-  - `GET /v1/__mock/proto?s=proto-s2[&to=/plans]` 切到该场景（重建全部状态）并 302 到起始页，登录态不丢。给测试员的每个任务都用这个地址开头，等于「重来」。
-  - 非原型场景（`default`、`empty`、`multi`、`legacy`、`error`、`slow`）用 `POST /v1/__mock/portal-scenario` 切，见 flow-walk「假后端」。
+  - 场景与 `proto-*` 的定义、两个切场景的接口见 `.claude/rules/frontend-mock.md`。
+  - 给测试员的每个任务都用 `GET /v1/__mock/proto?s=proto-s2[&to=/plans]` 开头，等于「重来」；非原型场景用 `POST /v1/__mock/portal-scenario`，见 flow-walk「假后端」。
 - **场景状态是整个 vite 进程共用的**：两个测试员连同一个端口，一个人付了款，另一个人的页面也跟着变。并行测试时一人一个端口，用 `scripts/mock-multi.sh`：
   - `up <前端目录> <个数>` 在 5191 起依次开门户实例（`--strictPort`，被占就报错）；
   - `down`、`status`。
@@ -54,6 +52,7 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 | proto-s5b | 两份，兑换页 | 用加 30 天卡给快到期的那份；用流量重置卡；用标准版月卡 |
 | proto-s6 | 妈妈那份的链接 24 小时有 7 个地方在用 | 妈妈那份好像被人蹭了：只让她那份的旧链接失效，再给她的 iPad 装上新的，别影响你自己的 |
 | proto-s7 / s7b / s7c | 余额 ¥12 / ¥50 / ¥29.50，续费 ¥30 | 续一个月，能用余额就用；说出最后用余额付了多少、另外付了多少 |
+| proto-s7d | 余额 ¥0.20，用优惠码 LUCKY99 续费只要 ¥0.30（低于支付最低额） | 用优惠码 LUCKY99 续一个月；下不了单时，说出为什么、该怎么办 |
 | proto-s8 | 标准版 3 天前过期 | 让它恢复能用，说出能用到哪天 |
 | proto-legacy | 升级前买的 80G 流量包挂在「我的」 | 把这 80G 挪给妈妈那份 |
 | 未登录端口 | — | 用朋友给的邀请码 `PANDORA` 注册（验证码会显示在页面提示里）；忘了密码，找回来 |
@@ -67,9 +66,9 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 ## 二、派模拟新手
 
 - 每个测试员一个 `sonnet` 子 agent，零上下文：**只给地址和任务**，不给代码、设计稿、flow.md、正确路径。prompt 用 `templates/tester-prompt.md` 填空。
-- `subagent_type` 用 `Explore`，它没有写文件的工具；prompt 里再禁掉读文件、看源码和 `javascript_tool`。
+- `subagent_type` 用 `Explore`：它没有 Edit / Write，但有 Bash，所以全靠 prompt 禁止读文件、跑命令、看源码和用 `javascript_tool`。
 - 一人一个端口、一个标签页，同时不超过 3 个：内置浏览器窗格是共用的，标签数有上限。
-- **首次点击测试要看截图**。窗格没显示时，截图会超时，`read_page` 也返回空，这正是新手「看到」的东西。所以派之前先 `tabs_context` 确认窗格是 displayed，不是就请用户把 Browser 面板打开。只靠 `read_page` 测出的结果要标「未看截图」，因为它会读到折叠起来、视觉上看不到的文字，成绩会偏好。
+- **首次点击测试必须看截图**：派之前先 `tabs_context` 确认窗格是 displayed（窗格隐藏的坑见 flow-walk）。只靠 `read_page` 测出的结果要标「未看截图」，因为它会读到视觉上看不到的文字，成绩会偏好。
 - 每个场景手机（375）和桌面（1280）各派一次，**不是同一个测试员换尺寸重做**，做过一遍的人已经学会了。
 - 测试员交回后，总协调把原文存成 `tester-<场景>-<尺寸>.md`，位置见第五节。
 
@@ -81,7 +80,7 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
    - 深色不能靠 `resize_window` 的 `colorScheme`：面板只认 `<html data-theme>`，默认浅色，不跟随系统。切深色要 `localStorage.setItem('pandora-theme','dark')` 后刷新，切回删掉这个键。
    - 每种跑一次 `scripts/page-check.js`：把文件内容整段作为 `javascript_tool` 的 `text`。它返回横向溢出的元素、禁用词命中（含 `aria-label`、`title`、`placeholder`、打开着的 `<dialog>`）和没有可读名字的按钮。
    - JS 错误用 `read_console_messages` 的 `onlyErrors`。
-2. **禁用词 0 次**（门户）。词表以原型 `flow.md` 第 7 节和 `.claude/rules/screens-portal.md` 的叫法一条为准，两处有出入时取并集。`page-check.js` 顶部的 `WORDS` 跟着它改。「升级」只许出现在兑换不同款套餐卡的选项里；「流量重置卡」是卡名，不算「重置」。
+2. **禁用词 0 次**（门户）。词表以单测 `panel/frontend/tests/mock-portal-wording.test.ts` 为准，`page-check.js` 顶部的 `WORDS` 与它保持一致。「升级」只许出现在兑换不同款套餐卡的选项里；「流量重置卡」是卡名，不算「重置」。
 3. 规则清单：
 
 | 查什么 | 怎么算过 |
@@ -138,7 +137,6 @@ description: pandora 门户与后台的体验审查：派零上下文的模拟�
 - **测试员越界**：sonnet 有时会去读 `read_page` 全树找按钮，或跑 JS 切场景。交回里出现页面上看不见的文字、或提到场景名时，这一条作废重派。
 - **假后端不限频的地方**测不出冷却文案。哪些动作有限频，以 `dev/mock/portal/` 的实现为准，没模拟的在记录里写「未测（假后端未模拟）」，留到测试机上用 flow-walk 补。
 - 内置浏览器的通用用法见 flow-walk，这里不重复：标签数上限、每个调用带 `tabId`、窗格隐藏时视口 0x0，在「操作方法」第 1、3 条；toast 不在 `<main>` 里、SSE 让网络永不空闲、假收银台整页跳转，在「坑」。
-- 窗格隐藏时 `setTimeout` 会被节流。`page-check.js` 是同步的，不受影响；自己另写等待逻辑时改用 `MessageChannel`。
 
 ## 文件
 
