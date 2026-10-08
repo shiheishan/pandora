@@ -138,10 +138,9 @@ func checkOrderDetailAndPreviewPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Co
 		c.SubscriptionID != vSub || c.Credit < 2500 || c.Due != 0 || c.BelowMinimum {
 		t.Fatalf("cheap preview=%+v", cheap)
 	}
-	// 同款 ¥40：续一期与另开一份都是 ¥40，不拦
+	// 同款 ¥40：同套餐只续不新开，唯一的选项是续一期，应付 ¥40，不拦
 	same := preview("same", planStd, priceStd)
-	if r, n := same[string(purchase.KindRenew)], same[string(purchase.KindNew)]; r.Due != 4000 || r.BelowMinimum ||
-		n.Due != 4000 || n.BelowMinimum {
+	if r := same[string(purchase.KindRenew)]; len(same) != 1 || r.Due != 4000 || r.BelowMinimum {
 		t.Fatalf("same plan preview=%+v", same)
 	}
 	// ¥45 换掉那份：先抵剩余价值，剩下的不到 ¥30 → 拦；另开一份 ¥45 不拦
