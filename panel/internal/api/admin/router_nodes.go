@@ -86,6 +86,18 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "server_bootstrap_token_issue", d.Log),
 	).Post("/servers/{id}/bootstrap-token", h.serverIssueToken)
+	// 服务器级绑定（server_binding.go）：生成绑定命令、看状态、解除绑定
+	r.With(
+		middleware.RequirePermission("node.provision", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+		middleware.Idempotency(d.Pool, "server_binding_token_issue", d.Log),
+	).Post("/servers/{id}/binding-token", h.serverIssueBindingToken)
+	r.With(middleware.RequirePermission("node.read", d.Log)).
+		Get("/servers/{id}/binding", h.serverBinding)
+	r.With(
+		middleware.RequirePermission("node.identity.revoke", d.Log),
+		middleware.RequireRecentReauth(d.Log),
+	).Post("/servers/{id}/unbind", h.serverUnbind)
 
 	// REALITY 密钥对生成。只读权限就能调：它不碰任何现存数据，
 	// 生成一对没人用的密钥本身不构成风险，而把它锁在写权限后面
