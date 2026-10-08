@@ -67,14 +67,17 @@ func releaseScoped(c *pgxpool.Conn) {
 // 只有租户与操作者都是规范小写 UUID（或操作者为空）时才内联进 SQL：字面量
 // 只含十六进制与连字符，没有引号可逃逸。其余情况退回参数化的两次往返，
 // 行为与以前完全一致。
+//
+// gate 为真时（InTxSerializableRetry 的重试），事务第一条语句是 chainGateSQL，
+// 排在 set_config 之前，快照晚于拿到锁的时刻。
 func (p *Pool) runScoped(ctx context.Context, s Scope, opts pgx.TxOptions, beginLabel string,
-	wrapCommit bool, fn func(pgx.Tx) error) error {
+	wrapCommit, gate bool, fn func(pgx.Tx) error) error {
 	if s.TenantID == "" {
 		return errMissingTenant
 	}
 
 	inlined := false
-	if begin, ok := scopedBeginSQL(s, opts.IsoLevel); ok {
+	if begin, ok := scopedBeginSQL(s, opts.IsoLevel, gate); ok {
 		opts.BeginQuery = begin
 		inlined = true
 	}
@@ -91,12 +94,23 @@ func (p *Pool) runScoped(ctx context.Context, s Scope, opts pgx.TxOptions, begin
 	defer rollbackForCleanup(tx)
 
 	if !inlined {
+		if gate {
+			// 简单协议：不带参数的 LOCK 不取快照，必须在 set_config 之前
+			if _, err := tx.Exec(ctx, chainGateSQL, pgx.QueryExecModeSimpleProtocol); err != nil {
+				return fmt.Errorf("%s: %w", beginLabel, err)
+			}
+		}
 		if _, err := tx.Exec(ctx, scopeSetConfigSQL, s.TenantID, s.ActorID); err != nil {
 			return fmt.Errorf("注入租户上下文: %w", err)
 		}
 	}
 
-	if err := fn(tx); err != nil {
+	var run pgx.Tx = tx
+	if opts.IsoLevel == pgx.Serializable {
+		// 记着本事务是否已过审计链闸（见 EnterChainGate）
+		run = &serialTx{Tx: tx, gated: gate}
+	}
+	if err := fn(run); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -111,8 +125,9 @@ func (p *Pool) runScoped(ctx context.Context, s Scope, opts pgx.TxOptions, begin
 // scopedBeginSQL 返回「BEGIN + 注入租户上下文」的单次往返写法；ok=false 表示
 // 本次不能内联（值不是规范 UUID），调用方退回参数化路径。
 //
-// 只支持 InTx 用到的两种隔离级别：缺省（读已提交）与可串行化。
-func scopedBeginSQL(s Scope, iso pgx.TxIsoLevel) (string, bool) {
+// 只支持 InTx 用到的两种隔离级别：缺省（读已提交）与可串行化。gate 为真时在
+// BEGIN 与 set_config 之间插入 chainGateSQL（见 runScoped）。
+func scopedBeginSQL(s Scope, iso pgx.TxIsoLevel, gate bool) (string, bool) {
 	if !canonicalUUID(s.TenantID) || (s.ActorID != "" && !canonicalUUID(s.ActorID)) {
 		return "", false
 	}
@@ -124,6 +139,10 @@ func scopedBeginSQL(s Scope, iso pgx.TxIsoLevel) (string, bool) {
 		b.WriteString("BEGIN ISOLATION LEVEL SERIALIZABLE")
 	default:
 		return "", false
+	}
+	if gate {
+		b.WriteString("; ")
+		b.WriteString(chainGateSQL)
 	}
 	// set_config 第三个参数为 true：事务级，随提交或回滚失效
 	b.WriteString("; SELECT set_config('app.tenant_id', '")

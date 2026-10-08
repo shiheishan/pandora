@@ -62,8 +62,10 @@ func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string,
 
 	var out RedeemResult
 	expired := false
-	err := s.pool.InTxSerializable(ctx,
+	err := s.pool.InTxSerializableRetry(ctx,
 		db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
+			// 序列化冲突会整段重放：上一次尝试写进结果里的东西先清掉（Summary 是追加的）
+			out, expired = RedeemResult{}, false
 
 			// 1) 锁住码行。FOR UPDATE 让并发兑换同一个码的请求排队，
 			//    后到的那个会看到 status 已经变成 used。
