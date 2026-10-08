@@ -179,6 +179,21 @@ func TestSubscriptionRotatePG18(t *testing.T) {
 	if proxyUUID(otherSub) != otherUUID {
 		t.Fatal("rotation changed another user's node password")
 	}
+	// 门户换新链接与审计同一事务落库：用户本人、这一份、不记令牌（w8walk 第 5 节第 2 条）
+	var userAudits int
+	var digest string
+	if err := admin.QueryRow(ctx, `
+		SELECT count(*), coalesce(max(after_digest::text), '') FROM audit_events
+		 WHERE tenant_id=$1 AND action='subscription.link_rotated' AND actor_kind='user'
+		   AND actor_id=$2::uuid AND resource_type='subscription' AND resource_id=$3::uuid
+		   AND api_domain='public' AND outcome='success'`,
+		tenant, user, sub).Scan(&userAudits, &digest); err != nil || userAudits != 1 {
+		t.Fatalf("portal rotation audits=%d err=%v", userAudits, err)
+	}
+	if strings.Contains(digest, newTok) || strings.Contains(digest, newTok[:8]) || !strings.Contains(digest, "old_revoked") {
+		t.Fatalf("portal rotation audit digest=%s", digest)
+	}
+	t.Log("marker=rotate_pg18_portal_rotation_audited_ok")
 	t.Log("marker=rotate_pg18_portal_rotates_proxy_uuid_ok")
 
 	// --- 后台替用户换发：口径一致 ---
