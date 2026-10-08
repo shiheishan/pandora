@@ -7,14 +7,17 @@ import { navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Modal, Skeleton } from '../../../ui'
 import { methodKey, usePaymentMethods, type PaymentMethod } from './catalog'
+import { detectDevice } from './clients'
+import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from './order-query'
 import css from './PayFlow.module.css'
-import { PAID_STATUSES, useOrder, type OrderDetail } from './orders'
+import { PAID_STATUSES, useCancelOrder, useOrder, type OrderDetail } from './orders'
+import { QrCode } from './qr'
 import { formatDate } from './traffic'
 
 export type PayState =
   /** 下单成功、待外部支付：弹窗一打开就发起 pay 并跳收银台 */
   | { phase: 'redirect'; orderId: string; orderNo: string; amount: number; currency: string; method: PaymentMethod }
-  /** 0 元订单已当场履约，或回跳后确认已支付 */
+  /** 0 元订单已当场履约，或回跳后确认已支付（含在付款面板里轮询到已付） */
   | { phase: 'done'; orderId: string }
   /** 收银台回跳：轮询订单直到 paid / fulfilled，最多 2 分钟 */
   | { phase: 'confirm'; orderId: string }
@@ -34,7 +37,7 @@ export function paySuccessText(o: Pick<OrderDetail, 'kind' | 'paid_amount' | 'to
     case 'addon':
       return '流量包已到账'
     case 'upgrade':
-      return '已开通，订阅地址不变'
+      return '已换好，链接不变'
     default:
       return o.subscription_period_end ? `已开通，有效期至 ${formatDate(o.subscription_period_end)}` : '已开通'
   }
@@ -56,7 +59,7 @@ function useRefreshAccount() {
   return () => void client.invalidateQueries({ queryKey: ['portal'] })
 }
 
-const TITLES: Record<PayState['phase'], string> = { redirect: '正在前往收银台…', done: '支付成功', confirm: '正在确认支付结果', choose: '选择支付方式' }
+const TITLES: Record<PayState['phase'], string> = { redirect: '付款', done: '支付成功', confirm: '正在确认支付结果', choose: '选择支付方式' }
 
 /**
  * onUnpayable：支付接口回 409（订单已不可支付——别处取消、已超时或已付掉）时调用，
@@ -74,16 +77,38 @@ export function PaymentModal({ state: given, onClose, onUnpayable }: { state: Pa
     onClose()
   }
   const confirm = useConfirmation(state?.phase === 'confirm' ? state.orderId : undefined)
-  const title = !state ? '' : state.phase === 'confirm' && confirm.paid ? '支付成功' : TITLES[state.phase]
+  // 付款面板里轮询到已付：就地换成成功态
+  const [paidHere, setPaidHere] = useState<string | null>(null)
+  const title = !state ? '' : (state.phase === 'confirm' && confirm.paid) || paidHere === stateOrder(state) ? '支付成功' : TITLES[state.phase]
   return (
     <Modal open={state !== null} onClose={close} title={title} className={css.modal}>
       {state?.phase === 'choose' && <Choose state={state} onPick={(method) => setPicked({ orderId: state.orderId, method })} onLater={close} />}
-      {state?.phase === 'redirect' && <Redirecting state={state} onLater={close} onBack={picked ? () => setPicked(null) : undefined} onUnpayable={onUnpayable} />}
+      {state?.phase === 'redirect' &&
+        (paidHere === state.orderId ? (
+          <Done orderId={state.orderId} onClose={close} />
+        ) : (
+          <PayPanel
+            orderId={state.orderId}
+            amount={state.amount}
+            currency={state.currency}
+            method={state.method}
+            returnUrl={payReturnUrl(state.orderId)}
+            onPaid={() => setPaidHere(state.orderId)}
+            onUnpayable={onUnpayable}
+            onOtherMethod={picked ? () => setPicked(null) : undefined}
+            onLater={() => {
+              close()
+              navigate('/orders')
+            }}
+          />
+        ))}
       {state?.phase === 'done' && <Done orderId={state.orderId} onClose={close} />}
       {state?.phase === 'confirm' && <Confirming confirm={confirm} onClose={close} />}
     </Modal>
   )
 }
+
+const stateOrder = (s: PayState) => s.orderId
 
 // ---------------------------------------------------------------------------
 // 选支付方式：只列能收该币种的方式（GET v1/payment-methods，修订 R61）
@@ -122,20 +147,51 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
 }
 
 // ---------------------------------------------------------------------------
-// 去收银台：pay 不幂等，但服务层对同渠道复用在途意图（reused=true），重试是安全的
+// 付款面板（原型 pay）：确认页的付款页与订单页、钱包的支付弹窗共用。
+//   手机：主按钮「打开支付宝付款」（顶层 GET 跳收银台），二维码收进「用另一台手机扫码」；
+//   电脑：直接给收银台地址的二维码，用手机扫；放不进二维码（易支付地址带签名、回跳与商品名，常常很长）
+//         时退回「打开付款页」，收银台页面上自己有码。
+//   付完回到这里会自动更新（每 3 秒查一次订单）；没更新再点「我已付款」主动查单。
+// pay 不幂等，但服务层对同渠道复用在途意图（reused=true），重进页面是安全的。
 // ---------------------------------------------------------------------------
-function Redirecting({ state, onLater, onBack, onUnpayable }: { state: Extract<PayState, { phase: 'redirect' }>; onLater: () => void; onBack?: () => void; onUnpayable?: () => void }) {
+const POLL_PAY_MS = 3000
+
+/** 发起支付回 409「这张订单已超过付款期限，请取消后重新下单」（billing.ErrOrderPaymentExpired，没有单独的码） */
+export const isPaymentLapsed = (e: unknown) => isApiError(e, 'conflict') && e.message.includes('超过付款期限')
+
+export interface PayPanelProps {
+  orderId: string
+  amount: number
+  currency: string
+  method: PaymentMethod
+  /** 收银台付完回跳到哪：确认页是完成页，订单页与钱包是订单页的 ?paid=1 */
+  returnUrl: string
+  onPaid: () => void
+  onUnpayable?: () => void
+  /** 换个付款方式（确认页退回去重选、弹窗回到选方式） */
+  onOtherMethod?: () => void
+  /** 稍后再付 */
+  onLater?: () => void
+  /** 订单过了付款期限、取消之后去哪（确认页的付款页回选购页） */
+  afterCancel?: () => void
+}
+
+export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid, onUnpayable, onOtherMethod, onLater, afterCancel }: PayPanelProps) {
+  const cancel = useCancelOrder()
   const api = useApi()
   const started = useRef(false)
+  const [opened, setOpened] = useState(false)
+  const [outcome, setOutcome] = useState<QueryOutcome | null>(null)
+  const order = useOrder(orderId, POLL_PAY_MS)
+  const query = useQueryOrderPayment()
+  const paid = order.data !== undefined && PAID_STATUSES.has(order.data.status)
+  const closed = order.data?.status === 'cancelled' || order.data?.status === 'expired'
+  const phone = (() => {
+    const d = detectDevice(navigator.userAgent, navigator.maxTouchPoints)
+    return d === 'ios' || d === 'android'
+  })()
   const pay = useMutation({
-    mutationFn: () =>
-      api.post(`v1/orders/${encodeURIComponent(state.orderId)}/pay`, intentSchema, {
-        body: { provider: state.method.provider, method: state.method.method, return_url: payReturnUrl(state.orderId) },
-      }),
-    onSuccess: (intent) => {
-      // http_method 目前只有 GET；POST 要自动提交表单，会被入口页 CSP 的 form-action 'self' 拦下
-      if (intent.http_method === 'GET') window.location.assign(intent.redirect_url)
-    },
+    mutationFn: () => api.post(`v1/orders/${encodeURIComponent(orderId)}/pay`, intentSchema, { body: { provider: method.provider, method: method.method, return_url: returnUrl } }),
     onError: (e) => {
       if (isApiError(e, 'conflict')) onUnpayable?.()
     },
@@ -147,46 +203,96 @@ function Redirecting({ state, onLater, onBack, onUnpayable }: { state: Extract<P
     pay.mutate()
   }, [pay])
 
+  useEffect(() => {
+    if (paid) onPaid()
+  }, [paid]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const redirect = pay.data?.http_method === 'GET' ? pay.data.redirect_url : null
   const unsupported = pay.data?.http_method === 'POST'
-  // 4xx 是后端的明确答复（订单已不可支付、渠道不存在），原样重试不会变
   const final = isApiError(pay.error) && pay.error.status >= 400 && pay.error.status < 500
-  const error = unsupported ? '该支付方式暂不可用，请换一种支付方式。' : pay.isError ? payErrorText(pay.error) : null
+  const error = closed ? (order.data?.status === 'expired' ? '这单超过 30 分钟没付，已经自动取消了，没有扣钱。' : '这单已经取消了，没有扣钱。') : unsupported ? '这个付款方式暂时用不了，换一个付款方式。' : pay.isError ? payErrorText(pay.error) : null
+  const after = <p className={css.hint}>{opened ? '正在等付款结果……' : ''}付完回到这里会自动更新；没更新再点下面的「我已付款」。</p>
+  const qr = redirect ? <QrCode value={redirect} label={`用${method.label}扫码付款`} className={css.qr} /> : null
+
+  function check() {
+    setOutcome(null)
+    query.mutate(orderId, { onSuccess: (r) => setOutcome(queryOutcome(r)), onError: (e) => setOutcome(queryFailure(e)) })
+  }
 
   return (
-    <div className={css.body}>
-      <div className={css.amount}>{formatMoney(state.amount, state.currency)}</div>
-      <div className={css.note}>
-        订单 {state.orderNo} · 30 分钟内有效 · {state.method.label}
-      </div>
+    <div className={css.body} data-screen="pay">
+      <p className={css.note}>用{method.label}付</p>
+      <div className={css.amount}>{formatMoney(amount, currency)}</div>
       {error ? (
         <>
           <div className={css.error} role="alert">
             {error}
           </div>
-          {!unsupported && !final && (
+          {!closed && !unsupported && !final && (
             <Button variant="primary" block onClick={() => pay.mutate()} busy={pay.isPending}>
               重试
             </Button>
           )}
-          {onBack && (
-            <Button block onClick={onBack}>
-              换一种支付方式
+          {isPaymentLapsed(pay.error) && (
+            <Button variant="primary" block busy={cancel.isPending} onClick={() => cancel.mutate(orderId, { onSuccess: () => (afterCancel ? afterCancel() : onLater?.()) })}>
+              取消这张单，重新下单
             </Button>
           )}
         </>
+      ) : !redirect ? (
+        <div className={css.hint}>正在准备付款…</div>
+      ) : phone ? (
+        <>
+          <a className={css.open} href={redirect} onClick={() => setOpened(true)} id="btn-open-pay">
+            打开{method.label}付款
+          </a>
+          {after}
+          <details className={css.others}>
+            <summary>用另一台手机扫码</summary>
+            {qr ?? <p className={css.hint}>这个付款地址太长，放不进二维码，请直接点上面的按钮。</p>}
+          </details>
+        </>
+      ) : qr ? (
+        <>
+          {qr}
+          <p>
+            <b>用手机{method.label}扫码付款</b>
+          </p>
+          {after}
+          <a className={css.textLink} href={redirect} onClick={() => setOpened(true)}>
+            不方便扫码？在这台电脑上打开付款页
+          </a>
+        </>
       ) : (
-        <div className={css.hint}>{pay.isSuccess ? '正在打开收银台，完成支付后会自动回到这里。' : '正在创建支付…'}</div>
+        <>
+          <a className={css.open} href={redirect} onClick={() => setOpened(true)} id="btn-open-pay">
+            打开{method.label}付款页
+          </a>
+          <p className={css.hint}>付款页上有二维码，用手机{method.label}扫一下。</p>
+          {after}
+        </>
       )}
-      <button
-        type="button"
-        className={css.later}
-        onClick={() => {
-          onLater()
-          navigate('/orders')
-        }}
-      >
-        稍后支付
-      </button>
+      {!closed && (
+        <Button block onClick={check} busy={query.isPending} id="btn-paid">
+          我已付款
+        </Button>
+      )}
+      {outcome && (
+        <div className={outcome.kind === 'failed' ? css.error : css.hint} role="status">
+          {outcome.text}
+        </div>
+      )}
+      {onOtherMethod && !closed && (
+        <button type="button" className={css.later} onClick={onOtherMethod}>
+          换个付款方式
+        </button>
+      )}
+      {onLater && !closed && (
+        <button type="button" className={css.later} onClick={onLater}>
+          稍后再付
+        </button>
+      )}
+      <p className={css.hint}>30 分钟内没付，订单自动取消，不会扣钱。</p>
     </div>
   )
 }
@@ -221,7 +327,7 @@ function SuccessBody({ order, loading, onClose }: { order: OrderDetail | undefin
         data-autofocus
         onClick={() => {
           onClose()
-          navigate('/overview')
+          navigate('/subs')
         }}
       >
         完成

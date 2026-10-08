@@ -2,7 +2,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useCallback } from 'react'
 import { useApi } from '../../../shell/runtime'
 import { usersSchema, type UserRow } from '../users/api'
-import { adjustmentsSchema, latePaymentsSchema, orderResponseSchema, ordersSchema, paymentHistorySchema, providersSchema, type LateStatus } from './schemas'
+import { adjustmentsSchema, latePaymentsSchema, manualPreviewSchema, orderResponseSchema, ordersSchema, paymentHistorySchema, providersSchema, type LateStatus } from './schemas'
 
 export * from './schemas'
 
@@ -63,6 +63,30 @@ export function useUserPick(q: string, enabled: boolean) {
   })
 }
 
+export interface ManualPreviewParams {
+  user_id: string
+  plan_id: string
+  price_id: string
+  /** 从订阅行点「给这份开单」进来时带上，只影响默认选哪一份 */
+  entry_subscription_id?: string
+}
+
+/**
+ * 人工开单的落点：POST v1/orders/manual/preview（只读的 POST，不带幂等键、不要重新认证）。
+ * 选项和默认值都由服务端按 purchase.Options 给；用户、套餐、价格任何一项变了就是另一次查询。
+ * 订阅状态随时会变，所以每次打开都重新取，不复用旧结果
+ */
+export function useManualPreview(params: ManualPreviewParams | null) {
+  const api = useApi()
+  return useQuery({
+    queryKey: [...BK, 'manual-preview', params],
+    queryFn: ({ signal }) => api.post('v1/orders/manual/preview', manualPreviewSchema, { signal, body: params! }),
+    enabled: params !== null,
+    staleTime: 0,
+    gcTime: 0,
+  })
+}
+
 export function useLatePayments(status: LateStatus | '', offset: number) {
   const api = useApi()
   return useQuery({
@@ -72,11 +96,13 @@ export function useLatePayments(status: LateStatus | '', offset: number) {
   })
 }
 
-export function useProviders() {
+/** 渠道列表（billing.payment.read）。人工开单也用它算站点最低付款额，没有读权限时传 false 不请求 */
+export function useProviders(enabled = true) {
   const api = useApi()
   return useQuery({
     queryKey: [...BK, 'providers'],
     queryFn: ({ signal }) => api.get('v1/payment-providers', providersSchema, { signal }).then((r) => r.providers),
+    enabled,
   })
 }
 

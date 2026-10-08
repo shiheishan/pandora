@@ -1,234 +1,184 @@
-import { useState } from 'react'
-import { formatBytes, formatMoney } from '../../../core/format'
+import { useQueries } from '@tanstack/react-query'
 import { href, navigate, useHashLocation } from '../../../core/router'
-import { Card, Empty, Segmented, Skeleton, Tag } from '../../../ui'
-import { pickPrimary, useSubscriptions, type Subscription } from '../../queries'
+import { useApi } from '../../../shell/runtime'
+import { Card, Empty, Skeleton, Tag } from '../../../ui'
 import { LoadError, Slot } from '../common/Blocks'
-import {
-  monthlyNote,
-  periodName,
-  periodUnit,
-  perGbNote,
-  priceFor,
-  quotaPeriodNote,
-  resetNote,
-  throttleNote,
-  trafficQuotaOf,
-  usePackCatalog,
-  usePlans,
-  type Pack,
-  type Plan,
-  type PeriodKey,
-} from '../common/catalog'
-import { canRenew, useTrafficPacks } from '../common/subscriptions'
-import { compactBytes, expiryInfo, pickTrafficQuota } from '../common/traffic'
-import { availablePeriods, fromPrice, planAction } from './labels'
+import { usePackCatalog, usePlans, type Pack } from '../common/catalog'
+import { Chips, flowCss } from '../common/Flow'
+import { useHoldings, type Holdings } from '../common/holdings'
+import { PlanCard } from '../common/PlanCard'
+import { gb, leftOf, moneyShort } from '../common/purchase'
+import { quoteSchema, tierOf, type QuoteRow } from '../common/quote'
+import { isLive, type Subscription } from '../common/subscriptions'
+import { planCardView, type PlansMode } from './labels'
 import css from './Plans.module.css'
 
-type Tab = 'subs' | 'packs'
+// ---------------------------------------------------------------------------
+// 选购（原型 plans）：套餐 / 流量包两个标签。有套餐时套餐标签顶部先选「给现在的续费或换套餐」（默认）
+// 还是「另买一份」；切到后者时所有套餐卡都是「买这个」。地址：?tab=packs、?mode=new、?sub=<流量包加到哪一份>
+// ---------------------------------------------------------------------------
+type Tab = 'plans' | 'packs'
 
 export default function Plans() {
   const { query } = useHashLocation()
-  const tab: Tab = query.get('tab') === 'packs' ? 'packs' : 'subs'
-  const plans = usePlans()
-  const packs = usePackCatalog()
-  const primary = useSubscriptions(pickPrimary).data ?? null
-
-  const tabs: Array<{ key: Tab; title: string; tag: string }> = [
-    { key: 'subs', title: '订阅套餐', tag: `按时间${plans.data ? fromPrice(plans.data) : ''}` },
-    { key: 'packs', title: '流量包', tag: `按流量${packs.data?.length ? ` · ${formatMoney(Math.min(...packs.data.map((p) => p.unit_amount)), 'CNY')} 起` : ''}` },
-  ]
+  const tab: Tab = query.get('tab') === 'packs' ? 'packs' : 'plans'
+  const set = (patch: Record<string, string | null>) => navigate('/plans', { query: { ...Object.fromEntries(query), ...patch }, replace: true })
+  const h = useHoldings()
 
   return (
-    <div className={css.page}>
+    <div className={flowCss.stack}>
       <Slot name="portal.plans.notice" />
-      <div className={css.kinds}>
-        <div className={css.kindTabs} role="tablist" aria-label="商品类型">
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={t.key === tab}
-              className={css.kind}
-              onClick={() => navigate('/plans', { query: t.key === 'packs' ? { tab: 'packs' } : undefined, replace: true })}
-            >
-              <span className={css.kindTitle}>{t.title}</span>
-              <span className={css.kindTag}>{t.tag}</span>
-            </button>
-          ))}
-        </div>
-        <div className={css.kindDesc}>{tab === 'packs' ? '买完立即生效，不限时间，用完为止。适合偶尔用，或订阅流量不够时补充。' : '每期送固定流量，按周期自动重置。适合每天都在用。'}</div>
+      <div className={css.seg} role="tablist" aria-label="商品类型">
+        <button type="button" role="tab" aria-selected={tab === 'plans'} onClick={() => set({ tab: null })} id="tab-plans">
+          套餐<small>按月，每月给流量</small>
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'packs'} onClick={() => set({ tab: 'packs' })} id="tab-packs">
+          流量包<small>用完为止，不过期</small>
+        </button>
       </div>
-      {tab === 'subs' ? <SubscriptionPlans plans={plans} primary={primary} /> : <PackList packs={packs} primary={primary} />}
+      {h.subs.isPending ? (
+        <Skeleton height={240} />
+      ) : h.subs.isError ? (
+        <LoadError error={h.subs.error} onRetry={() => void h.subs.refetch()} what="套餐" />
+      ) : tab === 'plans' ? (
+        <PlansTab h={h} mode={h.held.length && query.get('mode') === 'new' ? 'new' : 'mine'} onMode={(m) => set({ mode: m === 'new' ? 'new' : null })} />
+      ) : (
+        <PacksTab h={h} picked={query.get('sub')} onPick={(id) => set({ sub: id })} />
+      )}
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// 订阅套餐
-// ---------------------------------------------------------------------------
-function SubscriptionPlans({ plans, primary }: { plans: ReturnType<typeof usePlans>; primary: Subscription | null }) {
-  const [chosen, setChosen] = useState<PeriodKey | null>(null)
-  if (plans.isPending) return <CardsSkeleton count={3} />
+/** 每份能换的套餐一次报价（按订阅展开），给「换成 X」下面的「今天付 ¥x」用 */
+function useChangeQuotes(subs: readonly Subscription[]) {
+  const api = useApi()
+  const results = useQueries({
+    queries: subs.map((s) => ({
+      queryKey: ['portal', 'quote', { action: 'change', subscription_id: s.id }],
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.post('v1/me/checkout/quote', quoteSchema, { body: { action: 'change', subscription_id: s.id }, signal }),
+      retry: false,
+      meta: { topics: ['orders.changed', 'subscriptions.changed'] },
+    })),
+  })
+  return (subId: string, planId: string): QuoteRow | undefined => {
+    const i = subs.findIndex((s) => s.id === subId)
+    return tierOf(results[i]?.data?.quotes ?? [], subs[i], (q) => q.plan_id === planId)
+  }
+}
+
+function PlansTab({ h, mode, onMode }: { h: Holdings; mode: PlansMode; onMode: (m: PlansMode) => void }) {
+  const plans = usePlans()
+  const changeable = h.held.filter((s) => s.changeable)
+  // 只有一份能换时卡片上直接写「今天付 ¥x」；多份时下一步再选，不预先报价
+  const quoteFor = useChangeQuotes(changeable.length === 1 ? changeable : [])
+  if (plans.isPending) return <Skeleton height={240} />
   if (plans.isError) return <LoadError error={plans.error} onRetry={() => void plans.refetch()} what="套餐" />
-  if (plans.data.length === 0) return <Empty title="暂时没有可购买的套餐" description="新套餐上架后会显示在这里，也可以先看看流量包。" action={<a href={href('/plans', { tab: 'packs' })}>看看流量包</a>} />
-
-  const periods = availablePeriods(plans.data)
-  const period = chosen && periods.some((p) => p.key === chosen) ? chosen : (periods[0]?.key ?? '1m')
-  const expiry = primary ? expiryInfo(primary.current_period_end) : null
-
   return (
     <>
-      <div className={css.periodRow}>
-        {periods.length > 1 && <Segmented label="计费周期" value={period} onChange={setChosen} options={periods.map((p) => ({ value: p.key, label: p.label }))} />}
-        {primary && (
-          <div className={css.hint}>
-            当前 {primary.plan_name}
-            {expiry ? ` · ${expiry.label}` : ''}。{expiry?.expired ? '续费或换套餐都在原订阅上进行，订阅地址不变。' : '换套餐时剩余天数自动折算。'}
-          </div>
-        )}
-      </div>
-      <div className={css.planGrid}>
-        {plans.data.map((plan) => (
-          <PlanCard key={plan.id} plan={plan} period={period} primary={primary} />
-        ))}
-      </div>
+      {h.held.length > 0 && (
+        <div className={flowCss.modes} role="radiogroup" aria-label="想做什么">
+          <button type="button" role="radio" aria-checked={mode === 'mine'} className={flowCss.mode} onClick={() => onMode('mine')} id="mode-mine">
+            <span className={flowCss.modeTitle}>给现在的续费或换套餐</span>
+            <span className={flowCss.modeNote}>链接不变</span>
+          </button>
+          <button type="button" role="radio" aria-checked={mode === 'new'} className={flowCss.mode} onClick={() => onMode('new')} id="mode-new">
+            <span className={flowCss.modeTitle}>另买一份</span>
+            <span className={flowCss.modeNote}>新链接，给家人或别人用</span>
+          </button>
+        </div>
+      )}
+      {mode === 'new' && <p className={flowCss.faint}>会得到一个新链接，和你现在的分开：各自的流量、各自到期。</p>}
+      {plans.data.length === 0 ? (
+        <Empty title="暂时没有可买的套餐" description="新套餐上架后会出现在这里，也可以先看看流量包。" action={<a href={href('/plans', { tab: 'packs' })}>看看流量包</a>} />
+      ) : (
+        <div className={flowCss.cards}>
+          {plans.data.map((plan) => {
+            const v = planCardView(plan, mode, h.held, h.naming, quoteFor)
+            return (
+              <PlanCard
+                key={plan.id}
+                plan={plan}
+                current={v.current}
+                tag={v.tag && <Tag tone={v.tag.tone === 'neutral' ? undefined : v.tag.tone}>{v.tag.text}</Tag>}
+                action={
+                  v.href ? (
+                    <a className={v.primary ? flowCss.cta : flowCss.ctaQuiet} href={v.href} id={`btn-plan-${plan.id}`}>
+                      {v.label}
+                    </a>
+                  ) : (
+                    <span className={flowCss.ctaOff} aria-disabled="true" id={`btn-plan-${plan.id}`}>
+                      {v.label}
+                    </span>
+                  )
+                }
+                note={v.note}
+              />
+            )
+          })}
+        </div>
+      )}
     </>
   )
 }
 
-function PlanCard({ plan, period, primary }: { plan: Plan; period: PeriodKey; primary: Subscription | null }) {
-  const price = priceFor(plan, period)
-  const quota = trafficQuotaOf(plan)
-  const current = primary?.plan_id === plan.id
-  const action = planAction(plan, price, primary, period, primary ? canRenew(primary) : false)
-  // 流量、设备、限速是后端事实，照固定位置显示；卖点跟在后面（R100）
-  const facts = [plan.max_devices === null ? '不限设备数' : `${plan.max_devices} 台设备同时在线`, throttleNote(plan.throttle_kbps), ...plan.highlights].filter((f): f is string => Boolean(f))
-
-  return (
-    <Card tint={plan.recommended} className={plan.recommended ? css.planHot : css.planCard}>
-      <div className={css.planHead}>
-        <span className={css.planName}>{plan.name}</span>
-        {plan.recommended && <Tag tone="brandSolid">推荐</Tag>}
-        {current && <Tag tone="ok">当前</Tag>}
-      </div>
-      {plan.description && <div className={css.planDesc}>{plan.description}</div>}
-      <div className={css.priceBlock}>
-        {price ? (
-          <>
-            <div className={css.priceRow}>
-              <span className={css.price}>{formatMoney(price.unit_amount, price.currency)}</span>
-              <span className={css.per}>{periodUnit(period)}</span>
-            </div>
-            <div className={css.monthly}>{monthlyNote(price)}</div>
-          </>
-        ) : (
-          <div className={css.monthly}>暂不提供{periodName(period)}</div>
-        )}
-      </div>
-      <div className={css.facts}>
-        <div className={css.traffic}>
-          <span className={css.trafficValue}>{!quota || quota.limit === null ? '不限流量' : `${compactBytes(quota.limit)} ${quotaPeriodNote(plan, quota.period, period)}`}</span>
-          {quota && quota.limit !== null && quota.period !== 'total' && <span className={css.reset}>{resetNote(plan)}</span>}
-        </div>
-        <ul className={css.factList}>
-          {facts.map((f, i) => (
-            <li key={i} className={css.fact}>
-              <span aria-hidden="true">—</span>
-              <span>{f}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-      {action.href ? (
-        <a className={plan.recommended ? css.ctaPrimary : css.cta} href={action.href}>
-          {action.label}
-        </a>
-      ) : (
-        <span className={css.ctaDisabled} aria-disabled="true">
-          {action.label}
-        </span>
-      )}
-    </Card>
-  )
-}
-
 // ---------------------------------------------------------------------------
-// 流量包：挂在用户身上、永不过期、可叠加（5.A D-E-1）
+// 流量包：要加到一份在用的套餐上；多份时选「加到哪一份」，预选剩得最少的那份
 // ---------------------------------------------------------------------------
-const PACK_RULES = [
-  ['立即生效，用完为止', '支付成功马上到账，没有有效期，也不按月清零。'],
-  ['先用订阅流量', '有订阅时，订阅流量用完才开始扣流量包。'],
-  ['可以叠加，到期不清零', '多次购买的容量累加；订阅到期或续费后余量保留，有生效订阅时才会使用。'],
-] as const
+const leftBytes = (s: Subscription) => leftOf(s).left ?? Number.MAX_SAFE_INTEGER
 
-function PackList({ packs, primary }: { packs: ReturnType<typeof usePackCatalog>; primary: Subscription | null }) {
-  const mine = useTrafficPacks()
-  if (packs.isPending) return <CardsSkeleton count={4} />
+function PacksTab({ h, picked, onPick }: { h: Holdings; picked: string | null; onPick: (id: string) => void }) {
+  const packs = usePackCatalog()
+  const live = h.held.filter(isLive)
+  if (packs.isPending) return <Skeleton height={200} />
   if (packs.isError) return <LoadError error={packs.error} onRetry={() => void packs.refetch()} what="流量包" />
-
-  const quota = primary ? pickTrafficQuota(primary.quotas) : null
-  const hints: string[] = []
-  if (primary && quota && quota.remaining !== null) hints.push(`您的${primary.plan_name}本期还剩 ${formatBytes(Math.max(0, quota.remaining))}。买了流量包后，会先用完订阅流量，再自动接着用流量包。`)
-  if (mine.data && mine.data.remaining_bytes_total > 0) hints.push(`现有流量包余量 ${compactBytes(mine.data.remaining_bytes_total)}。`)
-
+  if (!live.length) {
+    return (
+      <div className={flowCss.tip}>
+        流量包要加到一份在用的套餐上。先<a href={href('/subs')}>续费</a>或<a href={href('/plans')}>买个套餐</a>。
+      </div>
+    )
+  }
+  const target = live.find((s) => s.id === picked) ?? [...live].sort((a, b) => leftBytes(a) - leftBytes(b))[0]!
+  const left = leftOf(target).left
   return (
     <>
-      {hints.length > 0 && <div className={css.hint}>{hints.join('')}</div>}
-      {packs.data.length === 0 ? (
-        <Empty title="暂时没有可购买的流量包" description="流量包上架后会显示在这里。" />
+      {live.length > 1 ? (
+        <div className={css.field}>
+          <span className={css.fieldLabel}>加到哪一份</span>
+          <Chips label="加到哪一份" selected={target.id} onSelect={onPick} items={live.map((s) => ({ key: s.id, label: h.naming.sn(s), note: leftOf(s).left === null ? '不限' : `剩 ${gb(leftOf(s).left!)}` }))} />
+        </div>
       ) : (
-        <div className={css.packGrid}>
+        <p className={flowCss.lead}>
+          会加到你的{target.plan_name}，现在剩 {left === null ? '不限' : gb(left)}。
+        </p>
+      )}
+      {packs.data.length === 0 ? (
+        <Empty title="暂时没有可买的流量包" description="流量包上架后会出现在这里。" />
+      ) : (
+        <div className={flowCss.stack}>
           {packs.data.map((p) => (
-            <PackCard key={p.id} pack={p} />
+            <PackRow key={p.id} pack={p} target={target} left={left} />
           ))}
         </div>
       )}
-      <div className={css.rules}>
-        {PACK_RULES.map(([title, body]) => (
-          <div key={title} className={css.rule}>
-            <span className={css.ruleTitle}>{title}</span>
-            <span className={css.ruleBody}>{body}</span>
-          </div>
-        ))}
-      </div>
+      <p className={flowCss.faint}>先用套餐每月的流量，不够了再用流量包。流量包不会过期，续费、换套餐后跟着这份走。</p>
     </>
   )
 }
 
-function PackCard({ pack }: { pack: Pack }) {
+function PackRow({ pack, target, left }: { pack: Pack; target: Subscription; left: number | null }) {
   return (
-    <Card tint={pack.recommended} className={pack.recommended ? css.packHot : css.packCard}>
-      <div className={css.packHead}>
-        <span className={css.packKind}>流量包</span>
-        {pack.recommended && <Tag tone="brandSolid">最划算</Tag>}
+    <Card className={css.packRow}>
+      <div className={css.packText}>
+        <b>{gb(pack.traffic_bytes)}</b> {pack.recommended && <Tag tone="ok">最划算</Tag>}
+        <small>
+          {moneyShort(pack.unit_amount)}
+          {left !== null && <> · 加完能用 {gb(left + pack.traffic_bytes)}</>}
+        </small>
       </div>
-      <div>
-        <div className={css.packSize}>{compactBytes(pack.traffic_bytes)}</div>
-        <div className={css.packPriceRow}>
-          <span className={css.packPrice}>{formatMoney(pack.unit_amount, pack.currency)}</span>
-          <span className={css.per}>{perGbNote(pack)}</span>
-        </div>
-      </div>
-      <a className={pack.recommended ? css.ctaPrimary : css.cta} href={href('/checkout', { pack: pack.id })}>
-        购买
+      <a className={css.packBuy} href={href('/checkout', { pack: pack.id, sub: target.id })} id={`btn-pack-${pack.id}`}>
+        买 {gb(pack.traffic_bytes)}
       </a>
     </Card>
-  )
-}
-
-function CardsSkeleton({ count }: { count: number }) {
-  return (
-    <div className={css.planGrid} aria-busy="true">
-      {Array.from({ length: count }, (_, i) => (
-        <Card key={i}>
-          <Skeleton width={90} height={20} />
-          <Skeleton width={140} height={36} />
-          <Skeleton height={60} />
-          <Skeleton height={40} radius="var(--radius-md)" />
-        </Card>
-      ))}
-    </div>
   )
 }

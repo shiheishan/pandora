@@ -1,0 +1,199 @@
+/* ===========================================================================
+ * 一份的卡片（原型 subCard）
+ * ========================================================================= */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+  padding: var(--pad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.name {
+  margin: 0;
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-h2);
+  line-height: var(--lh-heading);
+  overflow-wrap: anywhere;
+}
+
+.exp {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.exp[data-tone='warn'] {
+  color: var(--warn);
+  font-weight: var(--fw-medium);
+}
+
+.exp[data-tone='danger'] {
+  color: var(--danger);
+  font-weight: var(--fw-medium);
+}
+
+.expAt {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+}
+
+.usageTop {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-8);
+  color: var(--text-2);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usageTop b {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.usage[data-low] .usageTop b {
+  color: var(--danger);
+}
+
+.bar {
+  height: 8px;
+  margin-top: var(--space-8);
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--brand-soft);
+}
+
+.fill {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--brand);
+}
+
+.usage[data-low] .fill {
+  background: var(--danger);
+}
+
+.detailLink {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.detailLink:hover {
+  color: var(--text);
+}
+
+.leak {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  margin-top: var(--space-8);
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.nudge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--brand-soft);
+  border-radius: var(--radius-md);
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  font-size: 13px;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-8);
+}
+
+.actionsOne {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* 卡片底部的弱操作：离添加按钮远，避免误点「换新链接」 */
+.more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 0;
+  margin-top: calc(var(--space-8) * -1);
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.quiet {
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.quiet:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.more > * + *::before {
+  content: '·';
+  margin: 0 10px;
+  color: var(--text-3);
+}
+
+
+/* 升级前的旧流量包可以挪一次：信息色的一行，按钮在右 */
+.move {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding: 8px 10px;
+  border: 1px solid var(--info-line);
+  border-radius: var(--radius-md);
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: 13px;
+}

@@ -305,16 +305,19 @@ func testOnlineDevicesViewPG18(t *testing.T, ctx context.Context, admin *pgxpool
 	      VALUES ($1,$2,'traffic.bytes','cycle',now()-interval '40 days',now()-interval '10 days',100,100,100),
 	             ($1,$2,'traffic.bytes','cycle',now()-interval '10 days',now()+interval '20 days',100,100,30),
 	             ($1,$3,'traffic.bytes','cycle',now()-interval '5 days',now()+interval '25 days',50,50,5)`, tenantA, subOn, subOff)
-	must(`INSERT INTO traffic_pack_grants(tenant_id,user_id,source,source_id,granted_bytes,consumed_bytes)
-	      VALUES ($1,$2,'migration',gen_random_uuid(),100,40),($1,$2,'migration',gen_random_uuid(),50,50)`, tenantA, owner)
+	// 流量包按份挂：subOn 上 100 用了 40、subOff 上的已用光，另有 30 还没加到任何一份
+	must(`INSERT INTO traffic_pack_grants(tenant_id,user_id,subscription_id,source,source_id,granted_bytes,consumed_bytes)
+	      VALUES ($1,$2,$3,'migration',gen_random_uuid(),100,40),($1,$2,$4,'migration',gen_random_uuid(),50,50),
+	             ($1,$2,NULL,'migration',gen_random_uuid(),30,0)`, tenantA, owner, subOn, subOff)
 	svc := New(app, []byte("online-view-salt"), nil)
-	mine, err := svc.MySubscriptions(ctx, tenantA, owner)
+	list, err := svc.MySubscriptions(ctx, tenantA, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(mine) != 2 || mine[0].ID != subOn || mine[1].ID != subOff ||
+	mine := list.Subscriptions
+	if len(mine) != 2 || mine[0].ID != subOn || mine[1].ID != subOff || list.UnattachedPackBytes != 30 ||
 		mine[0].OnlineDevices != 4 || mine[1].OnlineDevices != 0 ||
-		mine[0].PackRemainingBytes != 60 || mine[1].PackRemainingBytes != 60 ||
+		mine[0].PackRemainingBytes != 60 || mine[1].PackRemainingBytes != 0 ||
 		len(mine[0].Quotas) != 2 || len(mine[1].Quotas) != 1 ||
 		mine[0].Quotas[0].Consumed != 30 || mine[0].Quotas[1].Consumed != 100 || mine[1].Quotas[0].Consumed != 5 {
 		t.Fatalf("MySubscriptions = %+v", mine)

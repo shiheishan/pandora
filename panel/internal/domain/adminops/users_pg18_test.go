@@ -2,7 +2,9 @@ package adminops
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -74,6 +76,72 @@ func TestAdminUsersPG18(t *testing.T) {
 	if !reflect.DeepEqual(listed[0], got) {
 		t.Fatalf("user detail order differs from order list\ndetail: %+v\nlist:   %+v", got, listed[0])
 	}
+
+	t.Run("subscription_labels_and_packs", func(t *testing.T) {
+		userDetailSubscriptionPacks(t, ctx, admin, svc, tenant, loner)
+	})
+}
+
+// userDetailSubscriptionPacks 钉住购买模型统一后后台用户详情的订阅卡字段（D 路按这两个名字解析）：
+// 每份带备注名 label（没起为 null）与挂在这一份上的流量包余量 pack_remaining_bytes，
+// 顶层带还没加到任何一份的余量 unattached_pack_bytes。
+func userDetailSubscriptionPacks(t *testing.T, ctx context.Context, admin interface {
+	Begin(context.Context) (pgx.Tx, error)
+}, svc *Service, tenant, user string) {
+	const (
+		plan    = "7a000000-0000-4000-8000-000000000031"
+		planVer = "7a000000-0000-4000-8000-000000000032"
+		named   = "7a000000-0000-4000-8000-000000000041"
+		plain   = "7a000000-0000-4000-8000-000000000042"
+	)
+	// 连接池上的 SET 不跨连接：整段夹具放进一个事务，用 SET LOCAL
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		// 套餐背后的产品与本测试无关：replica 模式跳过外键，只写读路径要的列
+		`SET LOCAL session_replication_role = replica`,
+		`INSERT INTO plans(id,tenant_id,product_id,code,name,status) VALUES('` + plan + `','` + tenant + `',gen_random_uuid(),'detail-plan','基础版','active')`,
+		`INSERT INTO plan_versions(id,tenant_id,plan_id,version) VALUES('` + planVer + `','` + tenant + `','` + plan + `',1)`,
+		`INSERT INTO subscriptions(id,tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount,current_period_end,label,created_at)
+		 VALUES('` + named + `','` + tenant + `','` + user + `','` + plan + `','` + planVer + `','active','CNY',0,now()+interval '20 days','妈妈的 iPad',now()-interval '1 day'),
+		       ('` + plain + `','` + tenant + `','` + user + `','` + plan + `','` + planVer + `','active','CNY',0,now()+interval '20 days',NULL,now())`,
+		`SET LOCAL session_replication_role = origin`,
+		// named 上 100 用了 40、另一笔已用光；plain 上没有；另有 25 还没加到任何一份
+		`INSERT INTO traffic_pack_grants(tenant_id,user_id,subscription_id,source,source_id,granted_bytes,consumed_bytes) VALUES
+		   ('` + tenant + `','` + user + `','` + named + `','migration',gen_random_uuid(),100,40),
+		   ('` + tenant + `','` + user + `','` + named + `','migration',gen_random_uuid(),50,50),
+		   ('` + tenant + `','` + user + `',NULL,'migration',gen_random_uuid(),25,0)`,
+	} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("seed: %v\nSQL: %s", err, sql)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
+	d, err := svc.GetUser(ctx, tenant, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Subscriptions) != 2 || d.Subscriptions[0].ID != plain || d.Subscriptions[1].ID != named ||
+		d.Subscriptions[0].Label != nil || d.Subscriptions[0].PackRemainingBytes != 0 ||
+		d.Subscriptions[1].Label == nil || *d.Subscriptions[1].Label != "妈妈的 iPad" ||
+		d.Subscriptions[1].PackRemainingBytes != 60 || d.UnattachedPackBytes != 25 {
+		t.Fatalf("user detail subscriptions=%+v unattached=%d", d.Subscriptions, d.UnattachedPackBytes)
+	}
+	body, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"label":null`, `"label":"妈妈的 iPad"`, `"pack_remaining_bytes":60`, `"unattached_pack_bytes":25`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("user detail JSON lacks %s: %s", want, body)
+		}
+	}
+	t.Log("marker=catalog_sales_pg18_user_detail_packs_per_subscription_ok")
 }
 
 // plantTwoItemOrder 直接写一张两项的订单。

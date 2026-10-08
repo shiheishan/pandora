@@ -13,6 +13,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	"github.com/aegispanel/aegis/internal/domain/subscription"
+	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/config"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -210,4 +211,55 @@ func TestSubscriptionRotatePG18(t *testing.T) {
 		t.Fatalf("admin rotation audits=%d active credentials=%d err=%v", audits, active, err)
 	}
 	t.Log("marker=rotate_pg18_admin_rotates_proxy_uuid_ok")
+
+	// --- 按份限频（购买模型统一）：重置 A 后马上重置 B 都成功，10 分钟内再重置 A 回 429，
+	// 被拒的那次不换链接 ---
+	const subB = "7d5e0000-0000-4000-8000-000000000073"
+	tokB := strings.Repeat("rotb", 9)
+	must(`INSERT INTO subscriptions(id,tenant_id,user_id,plan_id,plan_version_id,status,snapshot_currency,snapshot_amount,
+			current_period_start,current_period_end)
+		  VALUES($1,$2,$3,$4,$5,'active','USD',100,now()-interval '10 days',now()+interval '20 days')`,
+		subB, tenant, user, plan, planVer)
+	must(`INSERT INTO subscription_credentials(tenant_id,subscription_id,user_id,token_hash,token_prefix,scope,expires_at)
+		  VALUES($1,$2,$3,$4,$5,'subscription',now()+interval '20 days')`, tenant, subB, user, crypto.HashToken(tokB), tokB[:8])
+	rdb, _ := newLuaLimiterRedis(t)
+	limited := chi.NewRouter()
+	limited.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			c := httpx.WithTenantID(req.Context(), tenant)
+			c = httpx.WithPrincipal(c, &httpx.Principal{Kind: "user", Audience: "public", UserID: user, TenantID: tenant})
+			next.ServeHTTP(w, req.WithContext(c))
+		})
+	})
+	limited.With(middleware.RateLimit(rdb, log, subscriptionRotateLimits()...)).
+		Post("/v1/me/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
+	rotateLimited := func(id string) int {
+		t.Helper()
+		w := httptest.NewRecorder()
+		limited.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/me/subscriptions/"+id+"/rotate", nil).WithContext(ctx))
+		return w.Code
+	}
+	activeCredential := func(id string) string {
+		t.Helper()
+		var v string
+		if err := admin.QueryRow(ctx, `SELECT id::text FROM subscription_credentials
+			WHERE subscription_id=$1 AND status='active'`, id).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if code := rotateLimited(sub); code != http.StatusOK {
+		t.Fatalf("limited rotation of A: status=%d", code)
+	}
+	if code := rotateLimited(subB); code != http.StatusOK {
+		t.Fatalf("rotating B right after A: status=%d", code)
+	}
+	credA := activeCredential(sub)
+	if code := rotateLimited(sub); code != http.StatusTooManyRequests {
+		t.Fatalf("rotating A again within 10 minutes: status=%d, want 429", code)
+	}
+	if activeCredential(sub) != credA {
+		t.Fatal("a rate-limited rotation still replaced the link")
+	}
+	t.Log("marker=rotate_pg18_rate_limit_per_subscription_ok")
 }

@@ -14,33 +14,8 @@ export function useTopup() {
   })
 }
 
-// ---------------------------------------------------------------------------
-// POST v1/gift-cards/preview（修订 R68：不回发行量，套餐卡补套餐名与周期）
-// ---------------------------------------------------------------------------
-export const giftCardSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string(),
-  type: z.enum(['general', 'plan', 'mystery']),
-  status: z.string(),
-  rewards: z.object({
-    balance: z.number().int().optional(),
-    traffic_bytes: z.number().int().optional(),
-    expire_days: z.number().int().optional(),
-    reset_quota: z.boolean().optional(),
-    plan_id: z.string().optional(),
-    price_id: z.string().optional(),
-    pool: z.array(z.object({ label: z.string(), weight: z.number() })).optional(),
-  }),
-  conditions: z.record(z.string(), z.unknown()),
-  limits: z.record(z.string(), z.unknown()),
-  theme_color: z.string(),
-  created_at: z.string(),
-  plan_name: z.string().optional(),
-  interval: z.string().optional(),
-  interval_count: z.number().int().optional(),
-})
-export type GiftCard = z.output<typeof giftCardSchema>
+export { giftCardSchema, placementOptionSchema, placementSchema, PLACEMENT_KINDS, type GiftCard, type Placement, type PlacementKind, type PlacementOption } from './schemas'
+import { giftCardSchema, type PlacementKind } from './schemas'
 
 export function useGiftPreview() {
   const api = useApi()
@@ -50,7 +25,7 @@ export function useGiftPreview() {
 }
 
 // ---------------------------------------------------------------------------
-// POST v1/gift-cards/redeem（修订 R31：流量奖励发流量包余额，不再要求有订阅）
+// POST v1/gift-cards/redeem（修订 R31；设计稿 2.5 带 choice：preview 选项里选定的那一项，只有一项时可不传）
 // ---------------------------------------------------------------------------
 export const redeemResultSchema = z.object({
   template_name: z.string(),
@@ -61,15 +36,23 @@ export const redeemResultSchema = z.object({
   expire_days: z.number().int().optional(),
   quota_reset: z.boolean().optional(),
   plan_granted: z.string().optional(),
-  // Redeem 在 summary 为空时直接报错，成功响应一定是非空数组
+  // Redeem 在 summary 为空时直接报错，成功响应一定是非空数组。服务端的话术里有「订阅」等词，
+  // 门户不直接显示，完成页按选定的用法自己写
   summary: z.array(z.string()),
 })
+
+export interface RedeemBody {
+  code: string
+  choice?: { kind: PlacementKind; subscription_id?: string }
+}
+
+export type RedeemResult = z.output<typeof redeemResultSchema>
 
 export function useRedeemGift() {
   const api = useApi()
   const client = useQueryClient()
   return useMutation({
-    mutationFn: ({ code, key }: { code: string; key: string }) => api.post('v1/gift-cards/redeem', redeemResultSchema, { body: { code }, idempotencyKey: key }),
+    mutationFn: ({ body, key }: { body: RedeemBody; key: string }) => api.post('v1/gift-cards/redeem', redeemResultSchema, { body, idempotencyKey: key }),
     // 礼品卡改余额、订阅、流量包，都没有推送：主动失效整个门户前缀
     onSuccess: () => void client.invalidateQueries({ queryKey: ['portal'] }),
   })

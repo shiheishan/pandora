@@ -82,58 +82,13 @@ export function useBalance() {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/me/subscriptions：外框的套餐徽标与概览、我的订阅、结账页共用一个查询键和一份
-// 完整 schema（契约门户-02，含修订 R53–R62 的扩展字段），各处经 select 取自己要的部分，
-// 所以缓存里始终是全字段、整个门户只发一次请求。字段与 Go 的 mySubscriptionView / myQuotaView
-// 一一对应：都没有 omitempty，指针字段（设备上限、周期末、下次重置、续费价）为 null 而不缺席。
+// GET v1/me/subscriptions：外框的套餐徽标与概览、我的套餐、选购、确认页共用一个查询键和一份
+// 完整 schema（契约门户-02，含修订 R53–R62 的扩展字段与购买模型设计稿 2.9），各处经 select 取自己
+// 要的部分，所以缓存里始终是全字段、整个门户只发一次请求。字段与 Go 的 mySubscriptionView / myQuotaView
+// 一一对应：都没有 omitempty，指针字段（设备上限、周期末、下次重置、续费价、备注名、续到哪天）为 null 而不缺席。
 // ---------------------------------------------------------------------------
-export const SUBSCRIPTION_STATUSES = ['pending', 'trialing', 'active', 'past_due', 'grace', 'paused', 'cancelled', 'expired'] as const
-export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number]
-
-const quotaSchema = z.object({
-  metric: z.string(),
-  limit: z.number().int().nullable(),
-  consumed: z.number().int(),
-  remaining: z.number().int().nullable(),
-  period: z.string(),
-  period_start: z.string(),
-  period_end: z.string().nullable(),
-  granted_addon: z.number().int(),
-  adjusted: z.number().int(),
-})
-
-const renewalPriceSchema = z.object({
-  id: z.string(),
-  currency: z.string(),
-  unit_amount: z.number().int(),
-  billing_interval: z.string(),
-  interval_count: z.number().int(),
-  available: z.boolean(),
-})
-
-export const subscriptionSchema = z.object({
-  id: z.string(),
-  plan_id: z.string(),
-  price_id: z.string(),
-  plan_name: z.string(),
-  plan_version: z.number().int(),
-  status: z.enum(SUBSCRIPTION_STATUSES),
-  current_period_start: z.string().nullable(),
-  current_period_end: z.string().nullable(),
-  currency: z.string(),
-  amount: z.number().int(),
-  quotas: z.array(quotaSchema),
-  device_limit: z.number().int().nullable(),
-  online_devices: z.number().int(),
-  quota_reset_strategy: z.enum(['never', 'natural_month', 'billing_cycle', 'fixed_day']),
-  next_reset_at: z.string().nullable(),
-  renewable: z.boolean(),
-  renewal_price: renewalPriceSchema.nullable(),
-  pack_remaining_bytes: z.number().int(),
-})
-export type Subscription = z.output<typeof subscriptionSchema>
-
-export const subscriptionsSchema = z.object({ subscriptions: z.array(subscriptionSchema) })
+export { SUBSCRIPTION_STATUSES, subscriptionSchema, subscriptionsSchema, type Subscription, type SubscriptionStatus } from './subscription-schema'
+import { subscriptionsSchema, type Subscription, type SubscriptionStatus } from './subscription-schema'
 
 export const LIVE_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(['active', 'trialing', 'grace', 'past_due'])
 export const isLive = (s: Pick<Subscription, 'status'>) => LIVE_STATUSES.has(s.status)
@@ -175,9 +130,20 @@ export function useSubscriptions<T = Subscription[]>(select?: (subs: Subscriptio
   })
 }
 
+/** 顶层的未分配流量包余量：与订阅列表同键同一次请求 */
+export function useUnattachedPackBytes() {
+  const api = useApi()
+  return useQuery({
+    queryKey: SUBSCRIPTIONS_KEY,
+    queryFn: ({ signal }) => api.get('v1/me/subscriptions', subscriptionsSchema, { signal }),
+    select: (d) => d.unattached_pack_bytes,
+    meta: { topics: ['subscriptions.changed', 'orders.changed'] },
+  })
+}
+
 const primaryPlanName = (subs: Subscription[]) => pickPrimary(subs)?.plan_name ?? null
 
-/** 头像菜单的套餐徽标：与概览主卡同一条订阅。 */
+/** 头像菜单的套餐徽标：生效中到期最晚的那份（pickPrimary 只留给外框徽标用）。 */
 export function useActivePlanName(): string | null {
   return useSubscriptions(primaryPlanName).data ?? null
 }

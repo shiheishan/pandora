@@ -15,7 +15,13 @@ import {
   noteProblem,
   pips,
   resetActor,
-  resettableSub,
+  resettableSubs,
+  defaultResetSub,
+  defaultTrafficSub,
+  subName,
+  subLabel,
+  trafficPackTargets,
+  isOrderTarget,
   type GenerateForm,
 } from './model'
 
@@ -122,10 +128,53 @@ describe('流量重置', () => {
     expect(noteProblem('字'.repeat(501))).not.toBeNull()
   })
 
-  it('只挑 status=active 里到期最晚的一条；试用、宽限都不算', () => {
+  it('能重置的只有 status=active 的订阅；试用、宽限都不算，也不再替管理员挑一条', () => {
     const s = (status: 'active' | 'trialing' | 'grace', end: string | null) => ({ status, current_period_end: end, id: `${status}-${end}` })
-    expect(resettableSub([s('trialing', '2026-12-01'), s('grace', '2026-12-02')])).toBeUndefined()
-    expect(resettableSub([s('active', '2026-10-01'), s('active', '2026-11-01'), s('trialing', '2027-01-01')])?.id).toBe('active-2026-11-01')
+    expect(resettableSubs([s('trialing', '2026-12-01'), s('grace', '2026-12-02')])).toEqual([])
+    expect(resettableSubs([s('active', '2026-10-01'), s('active', '2026-11-01'), s('trialing', '2027-01-01')]).map((x) => x.id)).toEqual(['active-2026-10-01', 'active-2026-11-01'])
+  })
+
+  const quota = (limit: number | null, consumed: number) => [{ metric: 'traffic.bytes', limit, consumed, remaining: limit === null ? null : Math.max(0, limit - consumed) }]
+  const row = (id: string, over: Partial<{ status: 'active' | 'trialing'; end: string | null; limit: number | null; used: number; pack: number }>) => ({
+    id,
+    status: over.status ?? ('active' as const),
+    current_period_end: over.end === undefined ? '2026-11-01T00:00:00Z' : over.end,
+    quotas: quota(over.limit === undefined ? 100 : over.limit, over.used ?? 0),
+    pack_remaining_bytes: over.pack ?? 0,
+  })
+
+  it('多份可重置时预选本期用得最多的；同比例取到期更早的；只有一份就是它', () => {
+    expect(defaultResetSub([])).toBeUndefined()
+    expect(defaultResetSub([row('a', { used: 10 })])?.id).toBe('a')
+    expect(defaultResetSub([row('a', { used: 10 }), row('b', { used: 80 }), row('c', { used: 50 })])?.id).toBe('b')
+    expect(defaultResetSub([row('late', { used: 50, end: '2026-12-01T00:00:00Z' }), row('early', { used: 50, end: '2026-11-01T00:00:00Z' })])?.id).toBe('early')
+    // 不限量的那份用量比例按 0 算；试用的不参与
+    expect(defaultResetSub([row('free', { limit: null, used: 999 }), row('a', { used: 1 })])?.id).toBe('a')
+    expect(defaultResetSub([row('t', { status: 'trialing', used: 99 }), row('a', { used: 1 })])?.id).toBe('a')
+  })
+
+  it('多份可加流量时预选剩余最少的：套餐本期剩余加这份的流量包，不限量的最大', () => {
+    expect(defaultTrafficSub([])).toBeUndefined()
+    expect(defaultTrafficSub([row('a', { used: 10 }), row('b', { used: 90 })])?.id).toBe('b')
+    // b 套餐只剩 10，但这份挂了 50 的流量包，合计 60，比 a 的 40 多
+    expect(defaultTrafficSub([row('a', { used: 60 }), row('b', { used: 90, pack: 50 })])?.id).toBe('a')
+    expect(defaultTrafficSub([row('free', { limit: null }), row('a', { used: 1 })])?.id).toBe('a')
+  })
+
+  it('订阅的称呼与下拉标签带备注名', () => {
+    expect(subName({ label: null, plan_name: '标准版' })).toBe('标准版')
+    expect(subName({ label: '妈妈的 iPad', plan_name: '标准版' })).toBe('「妈妈的 iPad」标准版')
+    expect(subLabel({ label: '妈妈的 iPad', plan_name: '标准版', plan_version: 2, status: 'active' })).toBe('「妈妈的 iPad」标准版 · v2 · 生效中')
+  })
+
+  it('加流量只列还在用的订阅；「给这份开单」只对还在用或还能续的订阅有意义', () => {
+    const now = new Date('2026-10-07T00:00:00Z')
+    const s = (status: 'active' | 'expired' | 'cancelled' | 'grace', end: string | null) => ({ status, current_period_end: end })
+    expect(trafficPackTargets([s('active', null), s('grace', null), s('expired', '2026-09-01T00:00:00Z'), s('cancelled', null)]).map((x) => x.status)).toEqual(['active', 'grace'])
+    expect(isOrderTarget(s('active', '2026-11-01T00:00:00Z'), now)).toBe(true)
+    expect(isOrderTarget(s('expired', '2026-09-20T00:00:00Z'), now)).toBe(true)
+    expect(isOrderTarget(s('expired', '2026-08-01T00:00:00Z'), now)).toBe(false)
+    expect(isOrderTarget(s('cancelled', '2026-11-01T00:00:00Z'), now)).toBe(false)
   })
 
   it('按邮箱找人只认完全相等（不分大小写），模糊命中不算', () => {

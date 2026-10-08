@@ -247,28 +247,28 @@ func splitTrafficCharge(billed int64, planRoom *int64, packRemaining int64) (int
 // trafficCharge 是一笔已经找到订阅的计费用量。
 type trafficCharge struct {
 	subID  string
-	userID string
 	billed int64
 }
 
-// chargeTraffic 把一笔已计费的用量记到订阅配额与用户的流量包上（D-E-1），
+// chargeTraffic 把一笔已计费的用量记到订阅配额与这一份的流量包上（D-E-1），
 // 是 applyTrafficCharges 的单笔形式。
-func chargeTraffic(ctx context.Context, tx pgx.Tx, tenantID, subID, userID string, billed int64) error {
-	return applyTrafficCharges(ctx, tx, tenantID, []trafficCharge{{subID: subID, userID: userID, billed: billed}})
+func chargeTraffic(ctx context.Context, tx pgx.Tx, tenantID, subID string, billed int64) error {
+	return applyTrafficCharges(ctx, tx, tenantID, []trafficCharge{{subID: subID, billed: billed}})
 }
 
 // applyTrafficCharges 在调用方事务里把一批计费用量记到配额与流量包上（D-E-1）。
 //
 // 口径与逐笔记账完全相同，按 charges 的顺序（上报按 uid 升序）依次决定每笔怎么分：
 // 先吃该订阅本周期剩余额度（取本周期所有限量流量行里最紧的一条；没有限量行就是
-// 不限量，不动流量包），超出的部分按先到先扣从该用户的流量包里扣，两者都不够的
-// 那部分仍记在套餐上（配额变负、下一轮停止下发）。同一用户的多条订阅共用流量包，
-// 前一笔扣掉的后一笔看得见。
+// 不限量，不动流量包），超出的部分按先到先扣从挂在这一份订阅上的流量包里扣，两者都
+// 不够的那部分仍记在套餐上（配额变负、下一轮停止下发）。购买模型统一后流量包按份挂：
+// 一个人的 A 份产生的流量不扣挂在 B 份上的包；同一份在一批里出现两次（不会，uid 唯一）
+// 时前一笔扣掉的后一笔也看得见。
 //
 // 语句数与条数无关：一次锁全部配额行（ORDER BY id FOR UPDATE），有超额时再一次锁
-// 涉及用户的流量包（按用户、先到先扣的顺序 FOR UPDATE），然后配额与流量包各一条
-// UPDATE。所有上报走同一锁序：先配额行（按 id），再流量包，并发两份上报不会交叉
-// 死锁；锁从第一条语句起只持有到本批写完，不再随条数线性拉长。
+// 涉及订阅的流量包（按订阅、先到先扣的顺序 FOR UPDATE，走 idx_traffic_pack_grants_open_sub），
+// 然后配额与流量包各一条 UPDATE。所有上报走同一锁序：先配额行（按 id），再流量包
+// （按订阅、created_at、id），并发两份上报不会交叉死锁；锁从第一条语句起只持有到本批写完。
 func applyTrafficCharges(ctx context.Context, tx pgx.Tx, tenantID string, charges []trafficCharge) error {
 	subIDs := make([]string, 0, len(charges))
 	seen := map[string]bool{}
@@ -351,38 +351,38 @@ func applyTrafficCharges(ctx context.Context, tx pgx.Tx, tenantID string, charge
 		}
 	}
 
-	// 只有超出套餐剩余额度的用户才需要流量包
-	var packUsers []string
+	// 只有超出套餐剩余额度的订阅才需要流量包
+	var packSubs []string
 	needPacks := map[string]bool{}
 	for _, c := range charges {
-		if room := planRoom[c.subID]; c.billed > 0 && room != nil && c.billed > max(*room, 0) && !needPacks[c.userID] {
-			needPacks[c.userID] = true
-			packUsers = append(packUsers, c.userID)
+		if room := planRoom[c.subID]; c.billed > 0 && room != nil && c.billed > max(*room, 0) && !needPacks[c.subID] {
+			needPacks[c.subID] = true
+			packSubs = append(packSubs, c.subID)
 		}
 	}
 	type openGrant struct {
 		id   string
 		left int64
 	}
-	grants := map[string][]*openGrant{} // 用户 → 按先到先扣排好的流量包
-	if len(packUsers) > 0 {
+	grants := map[string][]*openGrant{} // 订阅 → 按先到先扣排好的流量包
+	if len(packSubs) > 0 {
 		rows, err := tx.Query(ctx, `
-			SELECT id::text, user_id::text, granted_bytes - consumed_bytes
+			SELECT id::text, subscription_id::text, granted_bytes - consumed_bytes
 			  FROM traffic_pack_grants
-			 WHERE tenant_id = $1 AND user_id = ANY($2::uuid[])
+			 WHERE tenant_id = $1 AND subscription_id = ANY($2::uuid[])
 			   AND consumed_bytes < granted_bytes
-			 ORDER BY user_id, created_at, id FOR UPDATE`, tenantID, packUsers)
+			 ORDER BY subscription_id, created_at, id FOR UPDATE`, tenantID, packSubs)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var g openGrant
-			var user string
-			if err := rows.Scan(&g.id, &user, &g.left); err != nil {
+			var sub string
+			if err := rows.Scan(&g.id, &sub, &g.left); err != nil {
 				rows.Close()
 				return err
 			}
-			grants[user] = append(grants[user], &g)
+			grants[sub] = append(grants[sub], &g)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -403,12 +403,12 @@ func applyTrafficCharges(ctx context.Context, tx pgx.Tx, tenantID string, charge
 		fromPacks := int64(0)
 		if room != nil && c.billed > max(*room, 0) {
 			var packRemaining int64
-			for _, g := range grants[c.userID] {
+			for _, g := range grants[c.subID] {
 				packRemaining += g.left
 			}
 			_, fromPacks = splitTrafficCharge(c.billed, room, packRemaining)
 			left := fromPacks
-			for _, g := range grants[c.userID] {
+			for _, g := range grants[c.subID] {
 				if left == 0 {
 					break
 				}

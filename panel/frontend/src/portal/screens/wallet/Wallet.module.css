@@ -246,3 +246,44 @@
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
+
+/* 兑换卡入口：整行可点 */
+.listRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  width: 100%;
+  padding: 16px var(--pad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.listRow:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.listRow b {
+  display: block;
+  font-weight: var(--fw-semibold);
+}
+
+.listRow small {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.listRow > span:last-child {
+  color: var(--text-3);
+  font-size: 18px;
+}
+
+.cardTitle {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+}

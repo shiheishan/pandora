@@ -25,6 +25,9 @@ export const SERVER_ERROR_CODES = [
   'service_unavailable',
   'internal_error',
   'reauth_required',
+  // 购买模型（设计稿 2.2 / 2.4）：都是 409。确认下单时金额与报价不符 / 同一套餐已有一张未付款的新购单
+  'quote_changed',
+  'order_pending',
 ] as const
 export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number]
 export type ApiErrorCode = ServerErrorCode | 'network_error' | 'invalid_response'

@@ -1,16 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { APPEARANCE_CACHE_KEY, pickThemeTokens, portalBranding, readThemeCache, themeCacheValue, writeThemeCache } from './appearance'
 import { quickLoginLink, quickLoginTokenFromHash, quickLoginTokenFromInput, readStoredInvite, takeInviteFromUrl, INVITE_STORAGE_KEY } from './entry-links'
-import { greeting, navLabel, navOwner, resolvePage } from './pages'
+import { greeting, MENU_PAGES, NAV_PAGES, navLabel, navOwner, resolvePage } from './pages'
 import { displayName } from './queries'
 
 describe('pages', () => {
-  it('resolves known pages and sends everything else to the overview', () => {
+  it('resolves known pages and sends everything else to 我的套餐', () => {
     expect(resolvePage('/orders')).toEqual({ page: 'orders', rest: [], canonical: '/orders' })
-    expect(resolvePage('/').canonical).toBe('/overview')
-    expect(resolvePage('/nope').canonical).toBe('/overview')
-    expect(resolvePage('/nope/abc')).toEqual({ page: 'overview', rest: [], canonical: '/overview' })
-    expect(resolvePage('/constructor').canonical).toBe('/overview')
+    expect(resolvePage('/').canonical).toBe('/subs')
+    expect(resolvePage('/nope').canonical).toBe('/subs')
+    expect(resolvePage('/nope/abc')).toEqual({ page: 'subs', rest: [], canonical: '/subs' })
+    expect(resolvePage('/constructor').canonical).toBe('/subs')
+    expect(resolvePage('/subs/abc/traffic')).toEqual({ page: 'subs', rest: ['abc', 'traffic'], canonical: '/subs/abc/traffic' })
   })
 
   it('hands the segments after the page to it as rest', () => {
@@ -21,11 +22,12 @@ describe('pages', () => {
     expect(resolvePage('/orders/%E0%A4%A').canonical).toBe('/orders')
   })
 
-  it('checkout belongs to the plans tab; the orders tab is labelled 订单', () => {
-    expect(navOwner('checkout')).toBe('plans')
+  it('导航只有「我的套餐 / 选购 / 钱包」三项（用户 10-07 拍板），概览、订单等收进菜单；确认页不高亮', () => {
+    expect(NAV_PAGES.map(navLabel)).toEqual(['我的套餐', '选购', '钱包'])
+    expect(MENU_PAGES).toEqual(['overview', 'orders', 'referral', 'tickets', 'help', 'account'])
+    expect(navOwner('checkout')).toBeNull()
     expect(navOwner('wallet')).toBe('wallet')
     expect(navLabel('orders')).toBe('订单')
-    expect(navLabel('subs')).toBe('我的订阅')
   })
 
   it('greets by the hour like the design', () => {

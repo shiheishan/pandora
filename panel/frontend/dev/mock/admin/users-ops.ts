@@ -216,8 +216,6 @@ function jobView(j: GenerationJob) {
 export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
   const { users, groups } = store
   const generationJobs: GenerationJob[] = []
-  // 后台发的流量包余额（按用户累加）
-  const packBytes = new Map<string, number>()
   const logs = seedLogs(users)
   // window_minutes：R103 设备识别窗口（5 / 10 / 30 / 60，缺省 5）
   const device = { mode: 'loose' as 'loose' | 'strict', grace: 1, window_minutes: 5 }
@@ -374,6 +372,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
             balance: 0,
             currency: 'CNY',
             subs: [],
+            unattached_bytes: 0,
             referrer: null,
             telegram: null,
             roles: [],
@@ -518,8 +517,9 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       ctx.send(200, { logs: hits.slice(0, 50).map(logView), total: hits.length })
     },
 
-    // 手动重置：metering.reset.write + reauth + 幂等 traffic_manual_reset；只清 status=active、到期最晚那条订阅的本期已用
-    'POST /v1/users/:id/traffic-reset': async (ctx) => {
+    // 手动重置（按份）：metering.reset.write + reauth + 幂等 traffic_manual_reset；
+    // path 是订阅 id，只清这一份的本期已用，且这一份必须 status=active（试用不行）
+    'POST /v1/subscriptions/:id/traffic-reset': async (ctx) => {
       if (!ctx.requirePermission('metering.reset.write') || !ctx.requireReauth()) return
       const body = await ctx.body()
       await ctx.idempotent('traffic_manual_reset', () => {
@@ -529,11 +529,10 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         if (!UUID.test(ctx.params.id!)) return err(404, 'not_found', '资源不存在或无权访问')
         const note = typeof body.note === 'string' ? body.note.trim() : ''
         if (runes(note) < 5 || runes(note) > 500) return err(422, 'validation_failed', '请求参数校验未通过', { note: '请写清重置原因，5 到 500 个字' })
-        // 用户不存在时后端也是「没有生效中的订阅」：查的是订阅表
-        const u = users.find((x) => x.id === ctx.params.id)
-        const end = (s: Sub) => (s.current_period_end ? Date.parse(s.current_period_end) : -Infinity)
-        const sub = u?.subs.filter((s) => s.status === 'active').sort((a, b) => end(b) - end(a))[0]
-        if (!u || !sub) return err(422, 'validation_failed', '这个用户没有生效中的订阅')
+        const u = users.find((x) => x.subs.some((s) => s.id === ctx.params.id))
+        const sub = u?.subs.find((s) => s.id === ctx.params.id)
+        if (!u || !sub) return err(404, 'not_found', '资源不存在或无权访问')
+        if (sub.status !== 'active') return err(422, 'validation_failed', '这份订阅没有在生效中，不能重置流量')
         const freed = sub.traffic_used
         sub.traffic_used = 0
         logs.unshift({
@@ -578,7 +577,7 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
       })
     },
     // 加流量包：billing.adjustment.write + reauth + 幂等 subscription_admin_traffic_grant；
-    // 发到订阅所属用户的流量包余额里（billing.GrantTrafficPackAsAdmin）
+    // 流量包挂在这一份订阅上（billing.GrantTrafficPackAsAdmin），回执里的剩余量是这一份的余量
     'POST /v1/subscriptions/:id/traffic-pack': async (ctx) => {
       if (!ctx.requirePermission('billing.adjustment.write') || !ctx.requireReauth()) return
       const body = await ctx.body()
@@ -593,12 +592,12 @@ export function opsRoutes(store: UsersStore): Record<string, MockRoute> {
         if (runes(reason) < 5 || runes(reason) > 500) fields.reason = '请写清加流量的原因，5 到 500 个字。这条会进审计'
         if (Object.keys(fields).length) return err(422, 'validation_failed', '请求参数校验未通过', fields)
         const owner = UUID.test(ctx.params.id!) ? users.find((u) => u.subs.some((s) => s.id === ctx.params.id)) : undefined
-        if (!owner) return err(404, 'not_found', '资源不存在或无权访问')
-        const total = (packBytes.get(owner.id) ?? 0) + bytes
-        packBytes.set(owner.id, total)
+        const sub = owner?.subs.find((s) => s.id === ctx.params.id)
+        if (!owner || !sub) return err(404, 'not_found', '资源不存在或无权访问')
+        sub.pack_bytes += bytes
         return {
           status: 200,
-          body: { subscription_id: ctx.params.id!, user_id: owner.id, user_email: owner.email, grant_id: randomUUID(), granted_bytes: bytes, remaining_bytes_total: total },
+          body: { subscription_id: sub.id, user_id: owner.id, user_email: owner.email, grant_id: randomUUID(), granted_bytes: bytes, remaining_bytes_total: sub.pack_bytes },
         }
       })
     },

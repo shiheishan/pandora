@@ -203,10 +203,10 @@ func (s *Service) scanExpiredNotices(ctx context.Context, tx pgx.Tx, tenantID st
 
 // ScanQuota 扫出流量接近用尽的订阅。
 //
-// 可用量 = 套餐本期额度 + 该用户流量包的剩余（D-E-1）。套餐额度用完后扣量转到
+// 可用量 = 套餐本期额度 + 挂在这一份上的流量包剩余（D-E-1）。套餐额度用完后扣量转到
 // 流量包，订阅配额行的 consumed 就停在额度上；只看套餐额度的话，买了流量包的
-// 用户照样会收到「流量即将用尽」。流量包挂在用户上、几条订阅共用，这里给每条
-// 订阅都算上全部剩余 —— 与扣量时「套餐不够再动流量包」的口径一致。
+// 用户照样会收到「流量即将用尽」。购买模型统一后流量包按份挂（扣量也只扣这一份的包），
+// 这里按订阅取余量，走 idx_traffic_pack_grants_open_sub —— 与扣量同一口径。
 func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 	queued := 0
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
@@ -222,7 +222,7 @@ func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 					 CROSS JOIN LATERAL (
 					       SELECT COALESCE(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint AS pack_left
 					         FROM traffic_pack_grants g
-					        WHERE g.tenant_id = q.tenant_id AND g.user_id = s.user_id
+					        WHERE g.tenant_id = q.tenant_id AND g.subscription_id = q.subscription_id
 					          AND g.consumed_bytes < g.granted_bytes) pk
 					 WHERE q.tenant_id = $1
 					   AND q.metric = 'traffic.bytes'

@@ -343,7 +343,8 @@ func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *Serving
 				   AND s.status IN ('active', 'trialing', 'grace')
 				   AND (s.current_period_end IS NULL OR s.current_period_end > now())`+nodeGate+`
 				   -- 流量耗尽的订阅不下发到节点（USE-007）：套餐额度用完、
-				   -- 而且用户名下的流量包也没有剩余（D-E-1 先扣套餐再扣流量包）
+				   -- 而且挂在这一份上的流量包也没有剩余（D-E-1 先扣套餐再扣流量包；
+				   -- 购买模型统一后流量包按份挂，走 idx_traffic_pack_grants_open_sub）
 				   AND ( NOT EXISTS (
 				           SELECT 1 FROM quota_balances qb
 				            WHERE qb.tenant_id = s.tenant_id
@@ -353,7 +354,7 @@ func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *Serving
 				              AND qb.remaining <= 0)
 				      OR EXISTS (
 				           SELECT 1 FROM traffic_pack_grants g
-				            WHERE g.tenant_id = s.tenant_id AND g.user_id = s.user_id
+				            WHERE g.tenant_id = s.tenant_id AND g.subscription_id = s.id
 				              AND g.consumed_bytes < g.granted_bytes) )
 				`+poolFilter+`
 				 ORDER BY s.node_uid`, args...)

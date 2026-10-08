@@ -4,8 +4,8 @@ import { formatMoney } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Segmented, Select, TextArea, useToast } from '../../../ui'
 import { endsIntent, useFailure, useIntentKey } from '../../actions'
-import { balanceSchema, passwordResetSchema, rotatedSchema, statusSetSchema, type SubscriptionRow, type UserDetail } from './api'
-import { liveSubscriptions, parseYuan, passwordProblem, REASON_MIN, SUB_STATUS_VIEW } from './model'
+import { balanceSchema, passwordResetSchema, rotatedSchema, statusSetSchema, type UserDetail } from './api'
+import { liveSubscriptions, parseYuan, passwordProblem, REASON_MIN, subLabel } from './model'
 import css from './Users.module.css'
 
 const reasonShort = (r: string) => [...r.trim()].length < REASON_MIN
@@ -247,10 +247,6 @@ export function RotateDialog({ user, open, onClose, onDone }: { user: UserDetail
       />
     </ActionModal>
   )
-}
-
-function subLabel(s: SubscriptionRow): string {
-  return `${s.plan_name} · v${s.plan_version} · ${SUB_STATUS_VIEW[s.status].label}`
 }
 
 // ---------------------------------------------------------------------------

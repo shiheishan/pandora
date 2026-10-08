@@ -182,6 +182,43 @@ export const manualCreatedSchema = z.object({
   balance_refund: int.optional(),
 })
 export type ManualCreated = z.output<typeof manualCreatedSchema>
+
+// ---------------------------------------------------------------------------
+// POST v1/orders/manual/preview：这单能落到哪几份、默认哪一份（购买模型统一，设计稿 2.3 / 4.2）。
+// 形状取 purchase.Placement 的 json tag：Option 内嵌展平，其余全是 omitempty，所以都是 optional。
+// 后台开单只会出现 renew / change / new 三种落点；default_key 为空 = 不预选，提交按钮置灰
+// ---------------------------------------------------------------------------
+export const PLACEMENT_KINDS = ['renew', 'change', 'new'] as const
+export const PLACEMENT_BADGES = ['same_plan', 'soonest_expiry', 'most_used', 'least_remaining'] as const
+export type PlacementKind = (typeof PLACEMENT_KINDS)[number]
+const placementSchema = z.object({
+  key: z.string(),
+  kind: z.enum(PLACEMENT_KINDS),
+  subscription_id: z.string().optional(),
+  // 只用在 change 上：目标是过期 30 天内的那份，即「恢复并改成 P」
+  expired: z.boolean().optional(),
+  badge: z.enum(PLACEMENT_BADGES).optional(),
+  // 这一份现在的样子；new 选项这几项为空
+  label: z.string().optional(),
+  plan_id: z.string().optional(),
+  plan_name: z.string().optional(),
+  state: z.enum(['live', 'revivable', 'dead']).optional(),
+  period_end: time.optional(),
+  // 落地之后的到期日（续、换与新开都会给）
+  new_period_end: time.optional(),
+  // 只用在 change 上：原套餐没用完的部分。赠送全额退到余额，别的结算方式先抵新价
+  credit: int.optional(),
+  currency: z.string().optional(),
+  traffic_used: int.optional(),
+  traffic_cap: int.optional(),
+  pack_remaining: int.optional(),
+})
+export const manualPreviewSchema = z.object({
+  options: z.array(placementSchema),
+  default_key: z.string().default(''),
+})
+export type Placement = z.output<typeof placementSchema>
+export type ManualPreview = z.output<typeof manualPreviewSchema>
 /** POST v1/orders/{id}/mark-paid：修订 R2 起是 snake_case，不回 signature_failed */
 export const markedPaidSchema = z.object({
   processed: z.boolean(),
@@ -249,6 +286,8 @@ const providerSchema = z.object({
   methods: z.array(z.string()),
   default_method: z.string(),
   allow_private_host: z.boolean(),
+  // 最低付款额（分，渠道 config 的 min_amount）：低于它的在线支付不发起；demo / offline 没有这个概念，回 0
+  min_amount: count,
   today: byCurrency,
   success_rate_24h: z.number().min(0).max(1).nullable(),
   last_callback_at: time.nullable(),

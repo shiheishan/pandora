@@ -317,6 +317,8 @@ type UserDetail struct {
 	Stats         UserStats         `json:"stats"`
 	Referrer      *UserRef          `json:"referrer"`
 	Telegram      *TelegramRef      `json:"telegram"`
+	// UnattachedPackBytes 是还没加到任何一份的流量包余量（与门户 v1/me/subscriptions 同名同口径）
+	UnattachedPackBytes int64 `json:"unattached_pack_bytes"`
 }
 
 type SubscriptionRow struct {
@@ -334,6 +336,10 @@ type SubscriptionRow struct {
 	DeviceLimitOverride *int       `json:"device_limit_override"`
 	PlanMaxDevices      *int       `json:"plan_max_devices"`
 	OnlineDevices       int        `json:"online_devices"`
+	// Label 是用户起的备注名，没起为 null（后台订阅卡显示它）
+	Label *string `json:"label"`
+	// PackRemainingBytes 是挂在这一份上的流量包余量（与门户同名同口径）
+	PackRemainingBytes int64 `json:"pack_remaining_bytes"`
 }
 
 type QuotaRow struct {

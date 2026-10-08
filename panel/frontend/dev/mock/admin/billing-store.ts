@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { MockResult } from '../types.ts'
+import { addInterval } from './billing-placement.ts'
 import { currentOf, plans, trafficOf } from './plans-store.ts'
 import { seedOrders, setOrderSource, userStore, type Sub, type User } from './users.ts'
 
@@ -43,9 +44,11 @@ export interface Provider {
   methods: string[]
   default_method: string
   allow_private_host: boolean
+  // 最低付款额（分，渠道 config 的 min_amount）：epay 默认 100；demo / offline 没有这个概念，回 0
+  min_amount: number
 }
-const epayPaths = { submit_path: '/submit.php', api_path: '/api.php', allow_private_host: false }
-const noConfig = { submit_path: '', api_path: '', methods: [], default_method: '', allow_private_host: false }
+const epayPaths = { submit_path: '/submit.php', api_path: '/api.php', allow_private_host: false, min_amount: 100 }
+const noConfig = { submit_path: '', api_path: '', methods: [], default_method: '', allow_private_host: false, min_amount: 0 }
 export const providers: Provider[] = [
   { id: randomUUID(), code: 'demo', adapter: 'demo', display_name: '演示渠道', enabled: false, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'], ...noConfig },
   { id: randomUUID(), code: 'epay', adapter: 'epay', display_name: '聚合收银台', enabled: true, accepting_new: true, has_credentials: true, base_url: 'https://pay.example.com', currencies: ['CNY'], ...epayPaths, methods: ['alipay', 'wxpay'], default_method: 'alipay' },
@@ -53,6 +56,11 @@ export const providers: Provider[] = [
   { id: randomUUID(), code: 'epay_backup', adapter: 'epay', display_name: '易支付 · 备用', enabled: true, accepting_new: false, has_credentials: false, base_url: 'https://pay2.example.com', currencies: ['CNY', 'USD'], ...epayPaths, methods: [], default_method: 'alipay' },
   { id: randomUUID(), code: 'offline', adapter: 'offline', display_name: '线下收款', enabled: true, accepting_new: false, has_credentials: true, base_url: '', currencies: ['CNY', 'USD'], ...noConfig },
 ]
+/** 站点最低付款额（分，billing.minPaymentSQL）：启用且收新单、支持 CNY 的渠道里最小的 min_amount；一个都没有为 0 */
+export function siteMinPayment(): number {
+  const mins = providers.filter((p) => p.enabled && p.accepting_new && p.currencies.includes('CNY')).map((p) => p.min_amount)
+  return mins.length ? Math.min(...mins) : 0
+}
 /** 凭据只写不读：单独存，providerView 展开 Provider 时带不出去（与 Go 的列表只给 has_credentials 一致） */
 export const providerSecrets = new Map<string, { merchant_id: string; key: string }>([
   [providers[1]!.id, { merchant_id: '1001', key: 'mock-key-epay' }],
@@ -434,19 +442,71 @@ setOrderSource((userId) =>
 )
 
 // ---------------------------------------------------------------------------
-// 履约：赠送、线下已收款、标记已支付之后给用户开一条订阅（与后端开通同一时刻）
+// 履约：赠送、线下已收款、标记已支付之后给用户开一条订阅（与后端开通同一时刻）。
+// 后台开单落在已有订阅上（续费 / 换套餐）时，建单处先在 pendingEffects 里登记落点，履约时按它办：
+// 续费把那份往后推，换套餐就地改成新套餐（链接不变）并把没用完的价值退进余额
 // ---------------------------------------------------------------------------
+export interface PlacementEffect {
+  kind: 'renew' | 'change'
+  subscriptionId: string
+  /** change：原套餐没用完的部分与退进余额的部分 */
+  credit: number
+  refund: number
+}
+export const pendingEffects = new Map<string, PlacementEffect>()
+
+function applyEffect(o: Order, u: User, fx: PlacementEffect, at: string): void {
+  const sub = u.subs.find((x) => x.id === fx.subscriptionId)
+  const item = o.items[0]
+  if (!sub || !item) return
+  const interval = item.interval ?? 'month'
+  const count = item.interval_count ?? 1
+  const now = Date.parse(at)
+  const live = ['active', 'trialing', 'grace', 'past_due'].includes(sub.status)
+  if (fx.kind === 'renew') {
+    // 生效中的接在原到期日后；过期 30 天内的从付款起算（恢复使用）
+    const from = live && sub.current_period_end ? Date.parse(sub.current_period_end) : now
+    sub.current_period_end = addInterval(from, interval, count).toISOString()
+    if (!live) Object.assign(sub, { status: 'active', current_period_start: at, traffic_used: 0 })
+  } else {
+    const plan = plans.find((p) => p.id === item.plan_id)
+    const version = plan ? currentOf(plan) : undefined
+    if (plan) {
+      Object.assign(sub, {
+        plan_id: plan.id,
+        plan_name: plan.name,
+        plan_version: version?.version ?? 1,
+        amount: item.unit_amount,
+        currency: item.currency,
+        traffic_limit: version ? trafficOf(version) : null,
+        plan_max_devices: version?.max_devices ?? null,
+      })
+    }
+    Object.assign(sub, { status: 'active', current_period_start: at, current_period_end: addInterval(now, interval, count).toISOString(), traffic_used: 0 })
+    u.balance += fx.refund
+  }
+  o.subscription_id = sub.id
+}
+
+const LIVE_SUB = new Set<Sub['status']>(['active', 'trialing', 'grace', 'past_due'])
 export function fulfil(o: Order, at: string): void {
   const u = userStore.find((x) => x.id === o.user_id)
   const item = o.items[0]
   const plan = plans.find((p) => p.id === item?.plan_id)
   o.status = 'fulfilled'
   o.fulfilled_at = at
+  const fx = pendingEffects.get(o.id)
+  if (fx && u) {
+    pendingEffects.delete(o.id)
+    applyEffect(o, u, fx, at)
+    return
+  }
   if (!u || !item || !plan) return
   const version = currentOf(plan)
   const traffic = version ? trafficOf(version) : null
   const sub: Sub = {
     id: randomUUID(),
+    label: null,
     plan_id: plan.id,
     plan_name: plan.name,
     plan_version: version?.version ?? 1,
@@ -461,11 +521,17 @@ export function fulfil(o: Order, at: string): void {
     device_limit_override: null,
     plan_max_devices: version?.max_devices ?? null,
     online_devices: 0,
+    pack_bytes: 0,
     created_at: at,
     token: `tk-manual-${o.order_no}`,
   }
   u.subs.push(sub)
   o.subscription_id = sub.id
+  // 未分配的流量包：开通后这是唯一一份在用的订阅，就挂到它上面（billing provision）
+  if (u.unattached_bytes > 0 && u.subs.filter((x) => LIVE_SUB.has(x.status)).length === 1) {
+    sub.pack_bytes += u.unattached_bytes
+    u.unattached_bytes = 0
+  }
 }
 
 // ===========================================================================

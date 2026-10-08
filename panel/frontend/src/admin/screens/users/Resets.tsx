@@ -3,7 +3,7 @@ import { isApiError } from '../../../core/api'
 import { formatBytes, formatCount, formatDateTime } from '../../../core/format'
 import { navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Input, Pager, QueryView, Segmented, StatStrip, Table, Tag, TextArea, useToast, type TableColumn } from '../../../ui'
+import { Button, Empty, Input, Pager, QueryView, Segmented, Select, StatStrip, Table, Tag, TextArea, useToast, type TableColumn } from '../../../ui'
 import { endsIntent, useCan, useFailure, useIntentKey } from '../../actions'
 import {
   RESET_REASONS,
@@ -20,7 +20,7 @@ import {
   type UserDetail,
 } from './api'
 import { ActionModal } from './dialogs'
-import { NOTE_MAX, noteProblem, RESET_REASON_VIEW, resetActor, resettableSub, trafficQuota } from './model'
+import { defaultResetSub, NOTE_MAX, noteProblem, RESET_REASON_VIEW, resetActor, resettableSubs, subName, trafficQuota, trafficView } from './model'
 import ops from './Ops.module.css'
 import css from './Users.module.css'
 
@@ -173,13 +173,13 @@ export function ResetHistory({ d }: { d: UserDetail }) {
   const can = useCan()
   const history = useUserResets(d.id)
   const [open, setOpen] = useState(false)
-  const sub = resettableSub(d.subscriptions)
+  const has = resettableSubs(d.subscriptions).length > 0
   return (
     <>
       <div className={ops.historyHead}>
         <span className={css.muted}>此用户的流量重置历史</span>
         {can('metering.reset.write') && (
-          <Button size="xs" disabled={!sub} title={sub ? undefined : '没有生效中的订阅（试用订阅不能手动重置）'} onClick={() => setOpen(true)}>
+          <Button size="xs" disabled={!has} title={has ? undefined : '没有生效中的订阅（试用订阅不能手动重置）'} onClick={() => setOpen(true)}>
             立即重置本期
           </Button>
         )}
@@ -206,9 +206,21 @@ export function ResetHistory({ d }: { d: UserDetail }) {
 }
 
 // ===========================================================================
-// 确认框：POST v1/users/{id}/traffic-reset（metering.reset.write + reauth + 幂等 traffic_manual_reset）
+// 确认框：POST v1/subscriptions/{id}/traffic-reset（metering.reset.write + reauth + 幂等 traffic_manual_reset）。
+// 重置按份：订阅行上点的是哪份重置哪份（subscriptionId）；从邮箱或历史页进来没指定，多份时自己选，
+// 预选本期用得最多的
 // ===========================================================================
-export function ResetDialog({ user, onClose, onDone }: { user: { id: string; email: string } | null; onClose: () => void; onDone: () => void }) {
+export function ResetDialog({
+  user,
+  subscriptionId = null,
+  onClose,
+  onDone,
+}: {
+  user: { id: string; email: string } | null
+  subscriptionId?: string | null
+  onClose: () => void
+  onDone: () => void
+}) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
@@ -216,8 +228,12 @@ export function ResetDialog({ user, onClose, onDone }: { user: { id: string; ema
   const invalidate = useInvalidateResets()
   // 详情在抽屉里已有缓存；按邮箱重置时这里现取，用来说清「清掉多少」
   const detail = useUser(user?.id ?? null)
-  const sub = detail.data ? resettableSub(detail.data.subscriptions) : undefined
-  const used = sub ? trafficQuota(sub.quotas)?.consumed : undefined
+  const all = detail.data ? resettableSubs(detail.data.subscriptions) : []
+  const [picked, setPicked] = useState('')
+  const pool = subscriptionId ? all.filter((s) => s.id === subscriptionId) : all
+  const sub = pool.find((s) => s.id === picked) ?? (subscriptionId ? pool[0] : defaultResetSub(pool))
+  const quota = sub ? trafficQuota(sub.quotas) : undefined
+  const used = quota?.consumed
   const noSub = detail.data !== undefined && sub === undefined
   const [note, setNote] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -225,26 +241,28 @@ export function ResetDialog({ user, onClose, onDone }: { user: { id: string; ema
 
   const close = () => {
     setNote('')
+    setPicked('')
     setError(null)
     onClose()
   }
   const submit = async () => {
-    if (!user) return
+    if (!user || !sub) return
     const problem = noteProblem(note)
     if (problem) return setError(problem)
     const body = { note: note.trim() }
     setBusy(true)
     try {
-      const r = await api.post(`v1/users/${encodeURIComponent(user.id)}/traffic-reset`, resetDoneSchema, { body, idempotencyKey: intent.keyFor([user.id, body]) })
+      const r = await api.post(`v1/subscriptions/${encodeURIComponent(sub.id)}/traffic-reset`, resetDoneSchema, { body, idempotencyKey: intent.keyFor([sub.id, body]) })
       intent.reset()
-      toast(`已重置 ${user.email} 的本期流量，清零 ${formatBytes(r.freed_bytes)}`)
+      toast(`已重置 ${user.email} 的${subName(sub)}的本期流量，清零 ${formatBytes(r.freed_bytes)}`)
       void invalidate()
       setNote('')
+      setPicked('')
       setError(null)
       onDone()
     } catch (e) {
       if (endsIntent(e)) intent.reset()
-      // 没有生效订阅 / 没有流量配额是 422 且没有 fields，原文放进框里
+      // 订阅不在生效中是 422 且没有 fields，原文放进框里
       if (isApiError(e, 'validation_failed') && Object.keys(e.fields).length === 0) setError(e.message)
       else fail(e, (f) => setError(f.note ?? Object.values(f)[0] ?? null))
     } finally {
@@ -253,12 +271,23 @@ export function ResetDialog({ user, onClose, onDone }: { user: { id: string; ema
   }
 
   return (
-    <ActionModal open={user !== null} title="立即重置本期流量？" busy={busy} confirm="重置" tone="danger" disabled={noSub} onCancel={close} onConfirm={() => void submit()}>
+    <ActionModal open={user !== null} title="立即重置本期流量？" busy={busy} confirm="重置" tone="danger" disabled={noSub || sub === undefined} onCancel={close} onConfirm={() => void submit()}>
       <p className={css.dialogText}>
         {noSub
-          ? `${user?.email ?? ''} 没有生效中的订阅（试用订阅不能手动重置）。`
-          : `${user?.email ?? ''}${sub ? ` 的「${sub.plan_name}」` : ''} 本期已用${used !== undefined ? ` ${formatBytes(used)}` : '流量'}将清零，并记录在重置历史中。流量包余额不受影响。`}
+          ? `${user?.email ?? ''} ${subscriptionId ? '这份订阅已不在生效中' : '没有生效中的订阅'}（试用订阅不能手动重置）。`
+          : `${user?.email ?? ''}${sub ? ` 的${subName(sub)}` : ''} 本期已用${used !== undefined ? ` ${formatBytes(used)}` : '流量'}将清零，并记录在重置历史中。只重置这一份；流量包余额不受影响。`}
       </p>
+      {!subscriptionId && pool.length > 1 && (
+        <Select
+          label="重置哪一份"
+          options={pool.map((s) => {
+            const q = trafficQuota(s.quotas)
+            return { value: s.id, label: `${subName(s)} · ${q ? trafficView(q.limit, q.consumed).text : '无流量配额'}` }
+          })}
+          value={sub?.id ?? ''}
+          onChange={(e) => setPicked(e.target.value)}
+        />
+      )}
       <TextArea
         label="重置原因"
         rows={2}

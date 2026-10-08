@@ -35,6 +35,9 @@ type Pull struct {
 	Cred  *Credential
 	Nodes []Node
 	Usage Usage
+	// Label 与 PlanName 拼配置名（ProfileName）：Content-Disposition 的文件名
+	Label    string
+	PlanName string
 	// Expired 非空表示令牌有效、订阅已过期（规则 1）：不取节点，调用方只回一条提示节点
 	Expired *ExpiredPull
 }
@@ -57,8 +60,9 @@ var ErrExpired = errors.New("订阅已过期")
 // 本租户的全部凭据。哈希是 SHA-256，扫描器控制不了它的取值，按它走 B-tree
 // 不泄露任何可利用的时序信息；取回后仍做一次定时安全比较。
 //
-// 用量与 LoadUsage 原来的两条查询同口径：本期配额取 period_end 最晚的一行，
-// 流量包余量是订阅主人名下全部流量包的「授予 − 已用」之和。
+// 用量与 LoadUsage 原来的两条查询同口径：本期配额取 period_end 最晚的一行；
+// 流量包余量是挂在这一份订阅上的流量包的「授予 − 已用」之和（购买模型统一：流量包按份挂，
+// 走 idx_traffic_pack_grants_open_sub）。备注名与套餐名（按主键取一行）拼配置名。
 const pullAuthSQL = `
 	SELECT sc.id, sc.token_hash, sc.subscription_id, sc.user_id, sc.status,
 	       sc.expires_at, sc.grace_until, sc.rate_limit_per_hour,
@@ -70,9 +74,12 @@ const pullAuthSQL = `
 	       q.granted, q.consumed,
 	       (SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
 	          FROM traffic_pack_grants g
-	         WHERE g.tenant_id = s.tenant_id AND g.user_id = s.user_id)
+	         WHERE g.tenant_id = s.tenant_id AND g.subscription_id = s.id
+	           AND g.consumed_bytes < g.granted_bytes),
+	       COALESCE(s.label, ''), COALESCE(pl.name, '')
 	  FROM subscription_credentials sc
 	  JOIN subscriptions s ON s.id = sc.subscription_id AND s.tenant_id = sc.tenant_id
+	  LEFT JOIN plans pl ON pl.id = s.plan_id
 	  LEFT JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id
 	  LEFT JOIN LATERAL (
 	        SELECT COALESCE(qb.limit_value, 0) + COALESCE(qb.granted_addon, 0) + COALESCE(qb.adjusted, 0) AS granted,
@@ -106,7 +113,7 @@ func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) 
 	var c Credential
 	var granted, consumed *int64
 	var packRemaining int64
-	var userTZ, tenantTZ string
+	var userTZ, tenantTZ, label, planName string
 	want := crypto.HashToken(token)
 	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var (
@@ -120,7 +127,7 @@ func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) 
 			&expiresAt, &graceUntil, &c.RateLimit,
 			&c.PlanVersionID, &c.ProxyUUID, &c.NodeUID, &c.Status, &c.PeriodEnd,
 			&renewalClosed, &userTZ, &tenantTZ,
-			&c.UserGroupID, &granted, &consumed, &packRemaining)
+			&c.UserGroupID, &granted, &consumed, &packRemaining, &label, &planName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -131,7 +138,7 @@ func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) 
 			renewalClosed, time.Now())
 	})
 	if errors.Is(err, ErrExpired) {
-		pull := &Pull{Cred: &c, Expired: &ExpiredPull{
+		pull := &Pull{Cred: &c, Label: label, PlanName: planName, Expired: &ExpiredPull{
 			Location: nodefabric.UsageLocation(userTZ, tenantTZ)}}
 		if c.PeriodEnd != nil {
 			pull.Expired.PeriodEnd = *c.PeriodEnd
@@ -146,14 +153,14 @@ func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) 
 	if err != nil {
 		return nil, err
 	}
-	pull := &Pull{Cred: &c}
+	pull := &Pull{Cred: &c, Label: label, PlanName: planName}
 	if granted == nil || consumed == nil {
 		return pull, errNoUsageRow
 	}
 	if c.PeriodEnd != nil {
 		pull.Usage.Expire = c.PeriodEnd.Unix()
 	}
-	// 流量包余额（D-E-1）挂在用户身上，套餐额度用完后接着用：客户端显示的
+	// 流量包余额（D-E-1）挂在这一份订阅上，套餐额度用完后接着用：客户端显示的
 	// 总量 = 套餐本期额度 + 流量包剩余，已用量只算套餐部分，剩余正好是两者之和。
 	pull.Usage.Total = *granted + packRemaining
 	// 客户端把 upload+download 相加当作已用量。
