@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/aegispanel/nodeagent/internal/confnum"
 )
 
 // XHTTPMode is the wire scheduling mode. The values intentionally follow the
@@ -343,21 +345,9 @@ func rawString(raw map[string]any, key string) string {
 	return strings.TrimSpace(value)
 }
 
+// rawInt 读一个整数字段，数值形态的归一见 confnum。
 func rawInt(value any) (int, bool) {
-	switch v := value.(type) {
-	case int:
-		return v, true
-	case int64:
-		return int(v), true
-	case float64:
-		if v == float64(int(v)) {
-			return int(v), true
-		}
-	case string:
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		return n, err == nil
-	}
-	return 0, false
+	return confnum.Int(value)
 }
 
 func parseXHTTPRange(value any, fallback XHTTPRange, minValue, maxValue int) (XHTTPRange, error) {
