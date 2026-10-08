@@ -25,6 +25,10 @@ type XHTTPPacketQueue struct {
 	notify     chan struct{}
 	closed     bool
 	closeErr   error
+	// tail 是下一个由 AppendWait 分配的序号（已收到的最大序号 + 1）。
+	tail uint64
+	// waiters 是在 PushWait 里等位置的写方数；Read 腾出位置时只在有人等才唤醒。
+	waiters int
 }
 
 func NewXHTTPPacketQueue(maxPending int) (*XHTTPPacketQueue, error) {
@@ -56,9 +60,79 @@ func (q *XHTTPPacketQueue) Push(packet XHTTPPacket) error {
 	if len(q.pending) >= q.maxPending {
 		return fmt.Errorf("xhttp packet queue is full")
 	}
-	q.pending[packet.Seq] = append([]byte(nil), packet.Payload...)
-	q.signalLocked()
+	q.storeLocked(packet)
 	return nil
+}
+
+func (q *XHTTPPacketQueue) storeLocked(packet XHTTPPacket) {
+	q.pending[packet.Seq] = append([]byte(nil), packet.Payload...)
+	if packet.Seq >= q.tail {
+		q.tail = packet.Seq + 1
+	}
+	q.signalLocked()
+}
+
+// PushWait 与 Push 相同，但队列满时等读端腾出位置而不是报错。
+//
+// 本端产生的流（下行、stream-up 的上行）必须靠它限速：Push 在满时直接报错，
+// 下载稍快于客户端取走的速度，连接就被「队列已满」打断。
+func (q *XHTTPPacketQueue) PushWait(ctx context.Context, packet XHTTPPacket) error {
+	if q == nil {
+		return fmt.Errorf("xhttp packet queue is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	q.mu.Lock()
+	for {
+		if q.closed {
+			err := q.closeErrOrDefault()
+			q.mu.Unlock()
+			return err
+		}
+		if packet.Seq < q.next {
+			q.mu.Unlock()
+			return nil
+		}
+		if _, ok := q.pending[packet.Seq]; ok {
+			q.mu.Unlock()
+			return fmt.Errorf("xhttp packet sequence %d already queued", packet.Seq)
+		}
+		if len(q.pending) < q.maxPending {
+			q.storeLocked(packet)
+			q.mu.Unlock()
+			return nil
+		}
+		notify := q.notify
+		q.waiters++
+		q.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			q.mu.Lock()
+			q.waiters--
+			q.mu.Unlock()
+			return ctx.Err()
+		case <-notify:
+		}
+		q.mu.Lock()
+		q.waiters--
+	}
+}
+
+// AppendWait 把一段负载按下一个序号排进队列（stream-up 的流式上行没有线上序号），
+// 队列满时等待。
+func (q *XHTTPPacketQueue) AppendWait(ctx context.Context, payload []byte) error {
+	if q == nil {
+		return fmt.Errorf("xhttp packet queue is nil")
+	}
+	q.mu.Lock()
+	seq := q.tail
+	if seq < q.next {
+		seq = q.next
+	}
+	q.tail = seq + 1
+	q.mu.Unlock()
+	return q.PushWait(ctx, XHTTPPacket{Seq: seq, Payload: payload})
 }
 
 func (q *XHTTPPacketQueue) Read(ctx context.Context) (XHTTPPacket, error) {
@@ -74,6 +148,9 @@ func (q *XHTTPPacketQueue) Read(ctx context.Context) (XHTTPPacket, error) {
 			packet := XHTTPPacket{Seq: q.next, Payload: append([]byte(nil), payload...)}
 			delete(q.pending, q.next)
 			q.next++
+			if q.waiters > 0 {
+				q.signalLocked()
+			}
 			q.mu.Unlock()
 			return packet, nil
 		}

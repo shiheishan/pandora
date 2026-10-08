@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -231,6 +232,10 @@ func (c XHTTPConfig) extractRequestMetaOptions(req *http.Request, allowMissingSe
 	if c.SeqPlacement != "path" {
 		seq = readXHTTPMeta(req, c.SeqPlacement, c.SeqKey)
 	}
+	if sessionID == "" && allowMissingSession {
+		// stream-one 不带任何会话元数据（会话放在 query / header / cookie 时同理）。
+		return "", "", nil
+	}
 	if sessionID == "" || (!allowMissingSeq && seq == "") {
 		return "", "", fmt.Errorf("xhttp 会话元数据不完整")
 	}
@@ -243,16 +248,77 @@ func (c XHTTPConfig) extractRequestMetaOptions(req *http.Request, allowMissingSe
 	return sessionID, seq, nil
 }
 
+var errXHTTPMethodNotAllowed = errors.New("xhttp method not allowed")
+
+// classifyRequest 判定一次请求在会话里的角色。
+//
+//   - stream-one：任何形状都按双工处理（含 Pandora 探针用的「会话/序号」路径）。
+//   - packet-up / stream-down：GET 是下行，上行方法须带会话与序号。
+//   - auto / stream-up：照 Xray 服务端的逐请求判定。auto 由客户端自己选模式——
+//     Xray 在 REALITY 上选 stream-one（配了 downloadSettings 时选 stream-up），
+//     其余（TLS h2/h3、明文 h1）选 packet-up；mihomo 同样。所以 auto 必须三种
+//     都收：不带会话的上行请求是 stream-one；带会话的 GET 是下行；带会话与序号
+//     的上行请求是 packet-up；带会话不带序号的上行请求是 stream-up。stream-up
+//     模式不收 packet-up（与 Xray 一致）。
+func (c XHTTPConfig) classifyRequest(req *http.Request) (XHTTPRequestKind, string, string, error) {
+	uplinkMethod := req.Method == c.UplinkHTTPMethod
+	switch c.Mode {
+	case XHTTPStreamOne:
+		if !uplinkMethod {
+			return 0, "", "", errXHTTPMethodNotAllowed
+		}
+		sessionID, seq, err := c.extractRequestMetaOptions(req, true, true)
+		return XHTTPRequestDuplex, sessionID, seq, err
+	case XHTTPPacketUp, XHTTPStreamDown:
+		get := req.Method == http.MethodGet
+		if !uplinkMethod && !get {
+			return 0, "", "", errXHTTPMethodNotAllowed
+		}
+		sessionID, seq, err := c.extractRequestMetaOptions(req, false, get)
+		if get {
+			return XHTTPRequestDownlink, sessionID, seq, err
+		}
+		return XHTTPRequestPacket, sessionID, seq, err
+	}
+	get := req.Method == http.MethodGet
+	if !uplinkMethod && !get {
+		return 0, "", "", errXHTTPMethodNotAllowed
+	}
+	sessionID, seq, err := c.extractRequestMetaOptions(req, true, true)
+	if err != nil {
+		return 0, "", "", err
+	}
+	if sessionID == "" {
+		if !uplinkMethod || seq != "" {
+			return 0, "", "", fmt.Errorf("xhttp stream-one 请求不应带序号")
+		}
+		return XHTTPRequestDuplex, "", "", nil
+	}
+	// 上行方法配成 GET 时，带序号的 GET 才是上行包（Xray 同此判定）。
+	if get && (seq == "" || !uplinkMethod) {
+		return XHTTPRequestDownlink, sessionID, "", nil
+	}
+	if seq == "" {
+		return XHTTPRequestStreamUp, sessionID, "", nil
+	}
+	if c.Mode == XHTTPStreamUp {
+		return 0, "", "", fmt.Errorf("xhttp stream-up 模式不接受 packet-up 上行")
+	}
+	return XHTTPRequestPacket, sessionID, seq, nil
+}
+
+// xhttpUsesSessions 表示这个 mode 下会出现跨请求的会话（需要会话中转）。
+// 只有 stream-one 是一请求一连接。
+func xhttpUsesSessions(mode XHTTPMode) bool {
+	return mode != XHTTPStreamOne
+}
+
 func validXHTTPMode(mode XHTTPMode) bool {
 	switch mode {
 	case XHTTPAuto, XHTTPPacketUp, XHTTPStreamUp, XHTTPStreamOne, XHTTPStreamDown:
 		return true
 	}
 	return false
-}
-
-func isXHTTPPacketMode(mode XHTTPMode) bool {
-	return mode == XHTTPPacketUp || mode == XHTTPStreamDown
 }
 
 func validXHTTPPlacement(value string, allowBody bool) bool {

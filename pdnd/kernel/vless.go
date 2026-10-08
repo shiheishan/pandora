@@ -50,7 +50,7 @@ type vlessAdapter struct {
 	tlsConfig     *tls.Config
 	xhttpConfig   XHTTPConfig
 	xhttpBroker   *XHTTPPacketBroker
-	xhttpSessions map[string]*vlessXHTTPPacketSession
+	xhttpSessions map[string]*xhttpSession
 	// fallback 是 TCP 直连承载认证失败时的回落（raw `fallback`）；空即中性 404。
 	fallback *probeFallback
 	wg       sync.WaitGroup
@@ -75,7 +75,7 @@ func NewDefaultAdapterRegistry() *AdapterRegistry {
 	return r
 }
 func newVLESSAdapter(spec InboundSpec) (Adapter, error) {
-	return &vlessAdapter{spec: spec, users: make(map[string]core.User), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*vlessXHTTPPacketSession)}, nil
+	return &vlessAdapter{spec: spec, users: make(map[string]core.User), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*xhttpSession)}, nil
 }
 func (a *vlessAdapter) Protocol() string { return "vless" }
 func (a *vlessAdapter) Validate(spec InboundSpec) error {
@@ -161,7 +161,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.active = make(map[net.Conn]struct{})
 	}
 	if a.xhttpSessions == nil {
-		a.xhttpSessions = make(map[string]*vlessXHTTPPacketSession)
+		a.xhttpSessions = make(map[string]*xhttpSession)
 	}
 	a.ctx, a.cancel = context.WithCancel(parent)
 	network, _ := spec.Config.Raw["network"].(string)
@@ -203,7 +203,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 			return listenErr
 		}
 		a.xhttpConfig = xhttpConfig
-		if isXHTTPPacketMode(xhttpConfig.Mode) {
+		if xhttpUsesSessions(xhttpConfig.Mode) {
 			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
 			if parseErr != nil {
 				_ = packet.Close()
@@ -437,7 +437,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Lock()
 		a.xhttpConfig = xhttpConfig
-		if isXHTTPPacketMode(xhttpConfig.Mode) {
+		if xhttpUsesSessions(xhttpConfig.Mode) {
 			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
 			if parseErr != nil {
 				a.mu.Unlock()
@@ -470,7 +470,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 }
 func (a *vlessAdapter) xhttpHandler() XHTTPHandler {
 	return func(ctx context.Context, session XHTTPSession) error {
-		if isXHTTPPacketMode(a.xhttpConfig.Mode) {
+		if session.Kind != XHTTPRequestDuplex {
 			return a.xhttpPacketHandler(ctx, session)
 		}
 		conn := newXHTTPDuplexConn(ctx, session.Body, session.Writer)
@@ -666,7 +666,7 @@ func (a *vlessAdapter) Close() error {
 	for conn := range a.active {
 		active = append(active, conn)
 	}
-	packetSessions := make([]*vlessXHTTPPacketSession, 0, len(a.xhttpSessions))
+	packetSessions := make([]*xhttpSession, 0, len(a.xhttpSessions))
 	for _, session := range a.xhttpSessions {
 		packetSessions = append(packetSessions, session)
 	}

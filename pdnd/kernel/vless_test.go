@@ -282,7 +282,8 @@ func TestVLESSAdapterXHTTPH3Bridge(t *testing.T) {
 	header = append(header, id[:]...)
 	header = append(header, 0, vlessTCP, 0x01, 0xbb, 1, 127, 0, 0, 1)
 	payload := []byte("native-vless-h3")
-	resp, err := client.Post("https://"+net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))+"/xhttp/session-h3/1/", "application/octet-stream", bytes.NewReader(append(header, payload...)))
+	// 节点缺省 mode=auto：不带会话的上行请求按 stream-one 双工处理（真实客户端的写法）。
+	resp, err := client.Post("https://"+net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))+"/xhttp/", "application/octet-stream", bytes.NewReader(append(header, payload...)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +399,7 @@ func TestVLESSAdapterRealityXHTTPH3Bridge(t *testing.T) {
 	header = append(header, id[:]...)
 	header = append(header, 0, vlessTCP, 0x01, 0xbb, 1, 127, 0, 0, 1)
 	payload := []byte("native-vless-reality-h3")
-	resp, err := client.Post("https://"+packetAddr(adapter)+"/xhttp/reality-h3-session/1/", "application/octet-stream", bytes.NewReader(append(header, payload...)))
+	resp, err := client.Post("https://"+packetAddr(adapter)+"/xhttp/", "application/octet-stream", bytes.NewReader(append(header, payload...)))
 	if err != nil {
 		t.Fatal(err)
 	}

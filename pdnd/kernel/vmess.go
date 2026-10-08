@@ -75,7 +75,7 @@ type vmessAdapter struct {
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
 	headerTimeout time.Duration
 	xhttpBroker   *XHTTPPacketBroker
-	xhttpSessions map[string]*vmessXHTTPPacketSession
+	xhttpSessions map[string]*xhttpSession
 	wg            sync.WaitGroup
 }
 
@@ -90,7 +90,7 @@ type vmessUser struct {
 }
 
 func newVMessAdapter(spec InboundSpec) (Adapter, error) {
-	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*vmessXHTTPPacketSession)}, nil
+	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*xhttpSession)}, nil
 }
 
 func (a *vmessAdapter) Protocol() string { return "vmess" }
@@ -150,7 +150,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.active = make(map[net.Conn]struct{})
 	}
 	if a.xhttpSessions == nil {
-		a.xhttpSessions = make(map[string]*vmessXHTTPPacketSession)
+		a.xhttpSessions = make(map[string]*xhttpSession)
 	}
 	var tlsErr error
 	a.tlsConfig, _, tlsErr = loadInboundTLSConfig(spec.Config.Raw)
@@ -207,7 +207,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Lock()
 		a.packet = packet
 		a.xhttpConfig = xhttpConfig
-		if isXHTTPPacketMode(xhttpConfig.Mode) {
+		if xhttpUsesSessions(xhttpConfig.Mode) {
 			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
 			if parseErr != nil {
 				a.mu.Unlock()
@@ -218,7 +218,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Unlock()
 		handler := XHTTPServer{Config: xhttpConfig, Handler: func(ctx context.Context, session XHTTPSession) error {
-			if isXHTTPPacketMode(a.xhttpConfig.Mode) {
+			if session.Kind != XHTTPRequestDuplex {
 				return a.xhttpPacketHandler(ctx, session)
 			}
 			conn := newXHTTPDuplexConn(ctx, session.Body, session.Writer)
@@ -251,7 +251,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Lock()
 		a.xhttpConfig = xhttpConfig
-		if isXHTTPPacketMode(xhttpConfig.Mode) {
+		if xhttpUsesSessions(xhttpConfig.Mode) {
 			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
 			if parseErr != nil {
 				a.mu.Unlock()
@@ -262,7 +262,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Unlock()
 		handler := XHTTPServer{Config: xhttpConfig, Handler: func(ctx context.Context, session XHTTPSession) error {
-			if isXHTTPPacketMode(a.xhttpConfig.Mode) {
+			if session.Kind != XHTTPRequestDuplex {
 				return a.xhttpPacketHandler(ctx, session)
 			}
 			conn := newXHTTPDuplexConn(ctx, session.Body, session.Writer)
@@ -579,7 +579,7 @@ func (a *vmessAdapter) Close() error {
 	for c := range a.active {
 		active = append(active, c)
 	}
-	packetSessions := make([]*vmessXHTTPPacketSession, 0, len(a.xhttpSessions))
+	packetSessions := make([]*xhttpSession, 0, len(a.xhttpSessions))
 	for _, session := range a.xhttpSessions {
 		packetSessions = append(packetSessions, session)
 	}

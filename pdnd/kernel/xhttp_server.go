@@ -16,12 +16,28 @@ import (
 	"golang.org/x/net/http2/h2c"
 )
 
+// XHTTPRequestKind 是一次 XHTTP 请求在会话里扮演的角色，由 XHTTPServer 按
+// 节点配置的 mode 与请求形状判定，适配器只按它分派，不再自己看 mode。
+type XHTTPRequestKind uint8
+
+const (
+	// XHTTPRequestDuplex：stream-one，请求体是上行、响应体是下行，一个请求就是一条连接。
+	XHTTPRequestDuplex XHTTPRequestKind = iota
+	// XHTTPRequestDownlink：带会话、不带序号的 GET，承载该会话的下行（packet-up / stream-up 共用）。
+	XHTTPRequestDownlink
+	// XHTTPRequestPacket：带会话与序号的上行包（packet-up）。
+	XHTTPRequestPacket
+	// XHTTPRequestStreamUp：带会话、不带序号的上行流（stream-up），请求体持续送上行。
+	XHTTPRequestStreamUp
+)
+
 // XHTTPSession is the H1 session boundary. The handler owns protocol
 // decoding and may stream from Body to Writer; no xray transport object is
 // involved.
 type XHTTPSession struct {
 	ID      string
 	Seq     string
+	Kind    XHTTPRequestKind
 	Request *http.Request
 	Body    io.ReadCloser
 	Writer  http.ResponseWriter
@@ -94,19 +110,20 @@ func (s XHTTPServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "host mismatch", http.StatusNotFound)
 		return
 	}
-	packetMode := isXHTTPPacketMode(s.Config.Mode)
-	if req.Method != s.Config.UplinkHTTPMethod && !(packetMode && req.Method == http.MethodGet) {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.Config.MaxPost.To > 0 && req.ContentLength > int64(s.Config.MaxPost.To) {
-		http.Error(w, "xhttp body too large", http.StatusRequestEntityTooLarge)
-		return
-	}
-	allowStreamOne := s.Config.Mode == XHTTPStreamOne
-	sessionID, seq, err := s.Config.extractRequestMetaOptions(req, allowStreamOne, allowStreamOne || (packetMode && req.Method == http.MethodGet))
+	kind, sessionID, seq, err := s.Config.classifyRequest(req)
 	if err != nil {
+		if err == errXHTTPMethodNotAllowed {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		http.Error(w, "invalid xhttp metadata", http.StatusBadRequest)
+		return
+	}
+	// sc_max_each_post_bytes 只约束 packet-up 的单个上行包（与 Xray 一致）。
+	// stream-one / stream-up 的请求体是整条连接的上行，套上它会把超过 1MB 的
+	// 上传截断。
+	if kind == XHTTPRequestPacket && s.Config.MaxPost.To > 0 && req.ContentLength > int64(s.Config.MaxPost.To) {
+		http.Error(w, "xhttp body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	for key, value := range s.Config.Headers {
@@ -117,14 +134,16 @@ func (s XHTTPServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-store")
-	if flusher, ok := w.(http.Flusher); ok && !(packetMode && req.Method == s.Config.UplinkHTTPMethod) {
+	// 上行包请求等包收下再回 200；其余（双工、下行、流式上行）先把响应头冲出去，
+	// 客户端据此开始收下行或继续送上行。
+	if flusher, ok := w.(http.Flusher); ok && kind != XHTTPRequestPacket {
 		flusher.Flush()
 	}
 	body := req.Body
-	if s.Config.MaxPost.To > 0 {
+	if kind == XHTTPRequestPacket && s.Config.MaxPost.To > 0 {
 		body = http.MaxBytesReader(w, req.Body, int64(s.Config.MaxPost.To))
 	}
-	if err := s.Handler(req.Context(), XHTTPSession{ID: sessionID, Seq: seq, Request: req, Body: body, Writer: w}); err != nil {
+	if err := s.Handler(req.Context(), XHTTPSession{ID: sessionID, Seq: seq, Kind: kind, Request: req, Body: body, Writer: w}); err != nil {
 		http.Error(w, fmt.Sprintf("xhttp session: %v", err), http.StatusBadGateway)
 	}
 }
