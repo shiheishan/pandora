@@ -42,10 +42,13 @@ type vmessMuxSession struct {
 type vmessMuxStream struct {
 	sessionID uint16
 	network   byte
-	dest      M.Socksaddr
-	pipeW     *io.PipeWriter
-	pipeR     *io.PipeReader
-	closed    chan struct{}
+	// dest 是建流时的目的地址，建好后只读（TCP 转发协程读它）。
+	dest M.Socksaddr
+	// udpDest 是 UDP 流当前的目的地址，只在 handleMux 主循环里读写。
+	udpDest M.Socksaddr
+	pipeW   *io.PipeWriter
+	pipeR   *io.PipeReader
+	closed  chan struct{}
 }
 
 func (a *vmessAdapter) handleMux(ctx context.Context, conn net.Conn, user core.User, body *vmessBodyReader, security byte) error {
@@ -102,29 +105,32 @@ func (a *vmessAdapter) handleMux(ctx context.Context, conn net.Conn, user core.U
 		if stream == nil {
 			continue
 		}
-		if dataDestination.IsValid() {
-			stream.dest = dataDestination
-		}
 		if stream.network == vmessMuxNetworkTCP {
 			if _, err := stream.pipeW.Write(data); err != nil {
 				session.removeStream(streamID, true)
 			}
 		} else {
+			// UDP 每个包可以带自己的目的地址（XUDP）。dest 只在这个主循环里读写，
+			// 以值传给转发协程：TCP 流的 dest 在建流时定下、之后不再改（原先这里
+			// 无条件回写 stream.dest，与已经起来的 TCP 转发协程读 dest 构成数据竞争）。
+			if dataDestination.IsValid() {
+				stream.udpDest = dataDestination
+			}
 			session.wg.Add(1)
-			go func(streamID uint16, stream *vmessMuxStream, payload []byte) {
+			go func(streamID uint16, stream *vmessMuxStream, dest M.Socksaddr, payload []byte) {
 				defer session.wg.Done()
-				if err := session.forwardMuxUDP(stream, payload); err != nil {
+				if err := session.forwardMuxUDP(stream, dest, payload); err != nil {
 					_ = session.writeClose(streamID, true)
 					session.removeStream(streamID, true)
 				}
-			}(streamID, stream, data)
+			}(streamID, stream, stream.udpDest, data)
 		}
 	}
 }
 
 func (s *vmessMuxSession) newStream(id uint16, network byte, destination M.Socksaddr) *vmessMuxStream {
 	reader, writer := io.Pipe()
-	stream := &vmessMuxStream{sessionID: id, network: network, dest: destination, pipeW: writer, pipeR: reader, closed: make(chan struct{})}
+	stream := &vmessMuxStream{sessionID: id, network: network, dest: destination, udpDest: destination, pipeW: writer, pipeR: reader, closed: make(chan struct{})}
 	s.mu.Lock()
 	s.streams[id] = stream
 	s.mu.Unlock()
@@ -171,17 +177,17 @@ func (c *vmessMuxTCPConn) Close() error {
 	return c.session.writeClose(c.stream.sessionID, false)
 }
 
-func (s *vmessMuxSession) forwardMuxUDP(stream *vmessMuxStream, payload []byte) error {
-	if !stream.dest.IsValid() {
+func (s *vmessMuxSession) forwardMuxUDP(stream *vmessMuxStream, dest M.Socksaddr, payload []byte) error {
+	if !dest.IsValid() {
 		return fmt.Errorf("vmess mux UDP destination missing")
 	}
-	meta := route.Meta{Domain: stream.dest.Fqdn, IP: stream.dest.Addr, Port: stream.dest.Port, Network: "udp", Protocol: "vmess-mux"}
-	upstream, err := s.adapter.plane.ListenUDP(s.ctx, meta, stream.dest)
+	meta := route.Meta{Domain: dest.Fqdn, IP: dest.Addr, Port: dest.Port, Network: "udp", Protocol: "vmess-mux"}
+	upstream, err := s.adapter.plane.ListenUDP(s.ctx, meta, dest)
 	if err != nil {
 		return err
 	}
 	defer upstream.Close()
-	destinationAddr, err := vmessDestinationUDPAddr(vmessDestination{Host: stream.dest.AddrString(), Domain: stream.dest.Fqdn, IP: stream.dest.Addr, Port: stream.dest.Port})
+	destinationAddr, err := vmessDestinationUDPAddr(vmessDestination{Host: dest.AddrString(), Domain: dest.Fqdn, IP: dest.Addr, Port: dest.Port})
 	if err != nil {
 		return err
 	}
@@ -194,7 +200,7 @@ func (s *vmessMuxSession) forwardMuxUDP(stream *vmessMuxStream, payload []byte) 
 	if err != nil {
 		return err
 	}
-	responseDestination := stream.dest
+	responseDestination := dest
 	if sourceAddr != nil {
 		if host, portText, splitErr := net.SplitHostPort(sourceAddr.String()); splitErr == nil {
 			if portValue, parseErr := strconv.ParseUint(portText, 10, 16); parseErr == nil {
