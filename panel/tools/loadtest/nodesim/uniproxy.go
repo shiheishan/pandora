@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,10 +41,17 @@ type uniClient struct {
 	streamIdle time.Duration
 }
 
-func newUniClient(base, nodeID, nodeType, token, realIP string, timeout time.Duration, obs *observer) *uniClient {
+func newUniClient(base, nodeID, nodeType, token, realIP string, timeout time.Duration, obs *observer, tlsCfg *tls.Config) *uniClient {
 	// pdnd 每个节点一个显式 Transport（MaxIdleConnsPerHost 4、空闲 90 秒），
 	// 事件流复用同一个 Transport、但不带总超时。
-	transport := withRealIP(&http.Transport{MaxIdleConnsPerHost: 4, IdleConnTimeout: 90 * time.Second}, realIP)
+	base0 := &http.Transport{MaxIdleConnsPerHost: 4, IdleConnTimeout: 90 * time.Second}
+	if tlsCfg != nil {
+		// 给了自定义 TLS 配置（只有测试：信任假面板的自签证书）Go 默认就不再协商 HTTP/2，
+		// 要显式打开，量到的才是生产里 h2 多路复用的开销
+		base0.TLSClientConfig, base0.ForceAttemptHTTP2 = tlsCfg.Clone(), true
+		base0.HTTP2 = testHTTP2Config()
+	}
+	transport := withRealIP(base0, realIP)
 	c := &uniClient{
 		base: base, nodeID: nodeID, token: token, obs: obs,
 		http:   &http.Client{Timeout: timeout, Transport: transport},
@@ -370,7 +378,8 @@ func (c *uniClient) streamOnce(ctx context.Context, out chan<- streamEvent, curr
 	c.obs.fleet.streamOpened()
 	defer c.obs.fleet.streamsOpen.Add(-1)
 
-	reader := bufio.NewReaderSize(resp.Body, 64<<10)
+	// pdnd 用 64 KiB；缓冲大小只影响读系统调用的粒度，不影响请求，上千条流时每条省下 56 KiB
+	reader := bufio.NewReaderSize(resp.Body, 8<<10)
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {

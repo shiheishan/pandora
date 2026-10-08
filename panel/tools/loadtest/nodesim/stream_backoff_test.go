@@ -67,7 +67,7 @@ func recordStreamWaits(t *testing.T, clock *fakeStreamClock, script streamScript
 	defer srv.Close()
 
 	obs := &observer{rec: ltkit.NewRecorder("nodes", time.Second), fleet: newFleetStats(), maxSamples: 1}
-	c := newUniClient(srv.URL, "n1", "vless", "tok", "", time.Second, obs)
+	c := newUniClient(srv.URL, "n1", "vless", "tok", "", time.Second, obs, nil)
 	c.streamNow = clock.now
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
