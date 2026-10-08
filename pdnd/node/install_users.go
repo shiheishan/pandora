@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/panel"
 )
 
 // 启动顺序：先有名单、再开 accept。
@@ -115,7 +116,8 @@ func (n *Node) adoptInstalledUsers(p *preparedUsers) {
 	n.known = known
 	switch {
 	case p.fresh:
-		n.userVersion = ""
+		// 客户端刚记下的 ETag 就是这份全量的版本，也是增量基准（见 syncUsers）。
+		n.userVersion = panel.UsersVersionKey(n.client.UsersVersion())
 		n.usersDirty = true
 	case p.fromCache:
 		n.userVersion = p.version
