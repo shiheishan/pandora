@@ -96,13 +96,12 @@ export function useLatePayments(status: LateStatus | '', offset: number) {
   })
 }
 
-/** 渠道列表（billing.payment.read）。人工开单也用它算站点最低付款额，没有读权限时传 false 不请求 */
-export function useProviders(enabled = true) {
+/** 渠道列表（billing.payment.read）。人工开单的站点最低付款额改由 preview 的 min_payment 给，不再读它 */
+export function useProviders() {
   const api = useApi()
   return useQuery({
     queryKey: [...BK, 'providers'],
     queryFn: ({ signal }) => api.get('v1/payment-providers', providersSchema, { signal }).then((r) => r.providers),
-    enabled,
   })
 }
 

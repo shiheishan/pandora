@@ -29,7 +29,7 @@ import {
   type Order,
   type Provider,
 } from './billing-store.ts'
-import { candidatesOf, planOptions, placementView, prorationCredit, type Option } from './billing-placement.ts'
+import { candidatesOf, manualDue, manualDueBelowMinimum, planOptions, placementView, prorationCredit, type Option } from './billing-placement.ts'
 import { plans } from './plans-store.ts'
 import { userStore } from './users.ts'
 
@@ -239,9 +239,18 @@ export const billing: MockModule = {
       const cands = candidatesOf(user, now)
       const { options, defaultKey } = planOptions(plan.id, cands, entry)
       const info = price ? { interval: price.billing_interval, count: price.interval_count, currency: price.currency } : { interval: 'month', count: 1, currency: 'CNY' }
+      // billing.ManualOrderPreview：站点最低额（价格档的币种，非 CNY 不限）与每个落点按「待用户支付」开时的应付、
+      // 是否低于最低额（与建单 422 同一个判定）。价格档找不到时都给 0 / false
+      const minPay = price && price.currency === 'CNY' ? siteMinPayment() : 0
       ctx.send(200, {
-        options: options.map((o) => placementView(o, cands.find((c) => c.sub.id === o.subscription_id), info, now)),
+        options: options.map((o) => {
+          const c = cands.find((x) => x.sub.id === o.subscription_id)
+          const view = placementView(o, c, info, now)
+          const due = price ? manualDue(o.kind, price.unit_amount, typeof view.credit === 'number' ? view.credit : 0) : 0
+          return { ...view, due, below_minimum: manualDueBelowMinimum(due, minPay) }
+        }),
         default_key: defaultKey,
+        min_payment: minPay,
       })
     },
 
@@ -298,14 +307,15 @@ export const billing: MockModule = {
         const amount = price.unit_amount
         // 换套餐：原套餐没用完的部分先抵新价，抵不完的退进余额（赠送时全额退回）；过期的那份没有可抵的
         const credit = pick.kind === 'change' && targetSub && !pick.expired ? prorationCredit(targetSub, now) : 0
-        const payable = grant ? 0 : Math.max(amount - credit, 0)
+        const payable = grant ? 0 : manualDue(pick.kind, amount, credit)
         const refund = pick.kind !== 'change' ? 0 : grant ? credit : Math.max(credit - amount, 0)
         const paysNow = grant || payable === 0
         if (settlement === 'offline' && payable <= 0) return err(409, 'conflict', '这张订单不需要支付，请改用赠送')
-        // 待支付单低于站点最低付款额：用户付不了，后台单不用余额、不免零头，回 422（不带 fields，A 路 errManualBelowMinimum）
-        if (settlement === 'pending' && price.currency === 'CNY') {
-          const minPay = siteMinPayment()
-          if (minPay > 1 && payable > 0 && payable < minPay) return err(422, 'validation_failed', '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款')
+        // 待支付单低于站点最低付款额：用户付不了，后台单不用余额、不免零头，回 422 带 fields.settlement
+        // （billing.errManualBelowMinimum），后台落到「结算方式」上
+        if (settlement === 'pending' && price.currency === 'CNY' && manualDueBelowMinimum(payable, siteMinPayment())) {
+          const msg = '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款'
+          return err(422, 'validation_failed', msg, { settlement: msg })
         }
         if (settlement === 'offline' && referenceOwner(reference)) return err(409, 'conflict', '凭证号已用于其他订单')
 
