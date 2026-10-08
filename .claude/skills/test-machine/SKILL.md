@@ -1,6 +1,6 @@
 ---
 name: test-machine
-description: pandora 一次性 Vultr 测试机（压测面板机、压测机、真节点、开发对照机）的规格、要不要 VPC、费用与公网出流量估算、开通登记与回收。用户发来新机器 IP、要开或删测试机、要估算压测流量费、要在测试机上装 Docker / Go / Node（不装面板时）使用。在机器上装面板见 panel-install，面板压测见 prod-retest，节点大流量验收见 node-accept。
+description: pandora 一次性 Vultr 测试机（压测面板机、压测机、真节点、开发对照机）的规格、要不要 VPC、费用与公网出流量估算、用 Vultr API 开机、挂 VPC、查账单与超额、删机，以及开通登记与回收。用户发来新机器 IP、要开或删测试机、要给机器挂内网、要查流量超额或估算压测流量费、要在测试机上装 Docker / Go / Node（不装面板时）使用。在机器上装面板见 panel-install，面板压测见 prod-retest，节点大流量验收见 node-accept。
 ---
 
 # 一次性测试机
@@ -31,6 +31,23 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 - **跑前报用户**：计划多少 Gbps、多少小时、走不走内网、预计公网出流量多少 GB。
 - **跑中、跑后核对**：各机 `/proc/net/dev` 的 tx，默认路由那块网卡才是公网（`bash .claude/skills/node-accept/scripts/netdev.sh <别名>...`）。开跑前、收尾各记一次，差值写进报告。
 
+## 用 API 开机、挂 VPC、删机（用户 10-08 授权 agent 开机）
+
+脚本都在 `scripts/`，现场值（1Password 引用、地域、os、SSH key、VPC 的 id）在主目录 `ops-local/vultr/env`（0600，不进仓库）。Bash 调用设 `dangerouslyDisableSandbox: true`（要连 1Password app 与 ssh agent）。
+
+| 要做的事 | 命令 | 什么时候能跑 |
+|---|---|---|
+| 开机并登记 | `vultr-create.sh [--no-vpc] <别名> <套餐> "<用途>"` | 先在对话里报套餐、台数、时长、公网出流量估算；大流量机器一律挂 VPC（缺省） |
+| 已有机器挂 VPC | `vultr-attach-vpc.sh <别名>...` | 用户同意改这几台后；不重启，约 20 秒 enp8s0 有地址，登记一并补上 |
+| 看账单与超额 | `vultr-billing.sh` | 随时（只读）；开机前、删机前各看一次 |
+| 删机 | `vultr-delete.sh <别名>...` 先列出，`--yes` 才删，删完自动撤登记 | **只在用户对话里点名同意删这几台之后**；只删 `vultr-sgp-pt-*` |
+| 底层调用 | `vultr.sh <METHOD> <路径> [JSON 文件]` | 上面没覆盖的接口 |
+
+- 4c8g 独享是 `voc-c-4c-8gb-75s-amd`，2c4g 是 `vc2-2c-4gb`，1c1g 是 `vc2-1c-1gb`；套餐与 os 列表的接口免密钥：`curl -s 'https://api.vultr.com/v2/plans?type=all&per_page=500'`。
+- 密钥只经 builtin `printf` 走 stdin 给 `curl -H @-`：不进命令行参数、不打印、不落盘。创建返回体里的 `default_password` 不保存。
+- 老机器的 Vultr 标签不是别名（如 mianban2），脚本按 `~/.ssh/config` 的公网地址对 `main_ip` 找实例。
+- 删不删机看超额：`vultr-billing.sh` 的「流量超额」没归零时，开着的机器按开机时长攒额度，比交超额便宜（2c4g 约 4.5GB/h 花 $0.030，1c1g 约 1.5GB/h 花 $0.0074，超额 $0.01/GB）；归零后再开就是纯开销。不要为了攒额度开到月底。
+
 ## 开通
 
 ```bash
@@ -47,7 +64,7 @@ bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] <别名>
 
 ## 回收
 
-删机只由用户在 Vultr 控制台操作，agent 不删、不重装、不改套餐。用户说删了之后：从 `~/ai/servers/README.md` 总表、`~/.ssh/config` 和 `ops-local/vpc-hosts.tsv` 去掉，`ssh-keygen -R <IP>`；机器目录保留，`AGENTS.md` 顶部注明「已于某日删除，只作记录」。结果先拉回 `ops-local/` 再让用户删。
+删机只在用户点名同意后用 `vultr-delete.sh --yes`，或由用户在 Vultr 控制台删；agent 不重装、不改套餐。用户在控制台删了之后跑 `unregister.sh <别名>`：去掉 `~/.ssh/config` 的 Host 块、总表一行、`ops-local/vpc-hosts.tsv` 一行，`ssh-keygen -R`，`AGENTS.md` 顶部注明已删（目录保留作记录），重生成私有 gitleaks 规则。结果先拉回 `ops-local/` 再删。
 
 ## 坑
 
