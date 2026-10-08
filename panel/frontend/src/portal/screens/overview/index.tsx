@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
-import { formatBytes, formatMoney, relativeTime } from '../../../core/format'
+import { formatMoney, relativeTime } from '../../../core/format'
 import { href } from '../../../core/router'
-import { Button, Card, Empty, Modal, Skeleton, Tag, useToast } from '../../../ui'
+import { Button, Card, Empty, Modal, Skeleton, Tag } from '../../../ui'
 import { useBalance, useCommissionAvailable } from '../../queries'
 import { SEVERITY_LABEL, useAnnouncements, type Announcement } from '../common/announcements'
 import { LoadError, Slot } from '../common/Blocks'
-import { copyText } from '../common/clients'
+import { usePackCatalog } from '../common/catalog'
+import { flowCss } from '../common/Flow'
+import { useHoldings } from '../common/holdings'
 import { expiryNote, orderTitle, usePendingOrders } from '../common/orders'
-import { canRenew, pickPrimary, usePlanTraffic, useSubscriptionLinks, useSubscriptions, type Subscription } from '../common/subscriptions'
-import { bytesParts, daysUntil, expiryInfo, shortDate, usageLevel } from '../common/traffic'
-import { UsageCard } from '../common/UsageCard'
+import { SubCard } from '../common/SubCard'
+import { isLive, type Subscription } from '../common/subscriptions'
+import { shortDate } from '../common/traffic'
 import css from './Overview.module.css'
 
 /** 倒计时文案每 30 秒刷新一次 */
@@ -23,9 +25,11 @@ function useNow(intervalMs = 30_000): Date {
 }
 
 export default function Overview() {
-  const subs = useSubscriptions()
-  const primary = subs.data ? pickPrimary(subs.data) : null
+  const h = useHoldings()
+  const packs = usePackCatalog()
+  const minPack = packs.data?.length ? Math.min(...packs.data.map((p) => p.unit_amount)) : null
   const [reading, setReading] = useState<Announcement | null>(null)
+  const noop = () => undefined
 
   return (
     <div className={css.page}>
@@ -33,39 +37,46 @@ export default function Overview() {
       <CriticalBanners onOpen={setReading} />
       <PendingOrders />
       <div className={css.top}>
-        {subs.isPending ? (
-          <Card tint aria-busy="true" className={css.plan}>
-            <Skeleton width={120} height={26} />
-            <Skeleton width={200} height={40} />
-            <Skeleton height={8} />
-            <Skeleton width={260} height={40} radius="var(--radius-md)" />
-          </Card>
-        ) : subs.isError ? (
-          <Card tint className={css.plan}>
-            <LoadError error={subs.error} onRetry={() => void subs.refetch()} what="套餐" />
-          </Card>
-        ) : primary ? (
-          <PlanCard sub={primary} />
-        ) : (
-          <Card tint className={css.plan}>
-            <Empty
-              bare
-              title="您还没有生效中的套餐"
-              description="选购一个套餐，拿到订阅地址后导入客户端即可使用。"
-              action={
-                <a className={css.emptyAction} href={href('/plans')}>
-                  选购套餐
-                </a>
-              }
-            />
-          </Card>
-        )}
+        <div className={css.subs}>
+          {h.subs.isPending ? (
+            <Card aria-busy="true">
+              <Skeleton width={120} height={26} />
+              <Skeleton height={8} />
+              <Skeleton height={52} radius="var(--radius-md)" />
+            </Card>
+          ) : h.subs.isError ? (
+            <Card>
+              <LoadError error={h.subs.error} onRetry={() => void h.subs.refetch()} what="套餐" />
+            </Card>
+          ) : h.held.length ? (
+            <>
+              {h.held.map((sub) => (
+                <SubCard key={sub.id} compact sub={sub} naming={h.naming} link={h.linkOf(sub.id)} minPack={minPack} actions={{ onImport: noop, onRename: noop, onRotate: noop }} />
+              ))}
+              <a className={flowCss.textButton} href={href('/subs')}>
+                去我的套餐：添加到 App、换新链接、改名 →
+              </a>
+            </>
+          ) : (
+            <Card tint>
+              <Empty
+                bare
+                title="你还没有套餐"
+                description="选一个套餐，拿到链接后添加到 App 就能用。"
+                action={
+                  <a className={css.emptyAction} href={href('/plans')}>
+                    去选购
+                  </a>
+                }
+              />
+            </Card>
+          )}
+        </div>
         <div className={css.side}>
-          <Stats sub={primary} loading={subs.isPending} />
+          <Stats held={h.held} loading={h.subs.isPending} />
           <AnnouncementsCard onOpen={setReading} />
         </div>
       </div>
-      {primary && <PrimaryUsage sub={primary} />}
       <Slot name="portal.home.aside" />
       <Modal
         open={reading !== null}
@@ -120,122 +131,15 @@ function PendingOrders() {
 }
 
 // ---------------------------------------------------------------------------
-// 当前套餐主卡
+// 三格统计：余额与可提佣金复用外框查询（同键同 schema）；在线设备是在用的各份加起来（没有套餐时显示「—」）
 // ---------------------------------------------------------------------------
-function PlanCard({ sub }: { sub: Subscription }) {
-  const toast = useToast()
-  const links = useSubscriptionLinks()
-  const { summary, resetAt, timeZone } = usePlanTraffic(sub)
-  const expiry = expiryInfo(sub.current_period_end, new Date(), timeZone)
-  const link = links.data?.find((l) => l.subscription_id === sub.id)
-  const level = summary ? usageLevel(summary.ratio) : 'ok'
-  const left = bytesParts(summary ? (summary.remaining ?? 0) + summary.pack : 0)
-  const renewHref = canRenew(sub) ? href('/checkout', { renew: sub.id }) : null
-
-  async function copy() {
-    if (!link) {
-      toast(links.isPending ? '订阅地址还在加载，稍后再试' : '还没有订阅地址，请到「我的订阅」重新生成', 'danger')
-      return
-    }
-    const ok = await copyText(link.url)
-    toast(ok ? '订阅地址已复制' : '复制失败，请到「我的订阅」手动复制', ok ? 'ok' : 'danger')
-  }
-
-  return (
-    <Card tint className={css.plan}>
-      <div className={css.planHead}>
-        <div className={css.planName}>
-          <div className={css.caption}>当前套餐</div>
-          <div className={css.planTitle}>{sub.plan_name}</div>
-        </div>
-        <div className={css.planBadges}>
-          {sub.status === 'grace' && <Tag tone="warn">宽限期</Tag>}
-          {sub.status === 'past_due' && <Tag tone="danger">待续费</Tag>}
-          {expiry && <Tag tone={expiry.expired ? 'danger' : expiry.urgent ? 'warn' : 'ok'}>{expiry.expired ? '已过期' : expiry.urgent ? expiry.label : `${expiry.label} · ${expiry.date.slice(5)}`}</Tag>}
-          {!expiry && <Tag tone="ok">长期有效</Tag>}
-          {renewHref && !expiry?.urgent && (
-            <a className={css.textLink} href={renewHref}>
-              续费
-            </a>
-          )}
-        </div>
-      </div>
-
-      {summary ? (
-        <div className={css.traffic}>
-          <div className={css.trafficRow}>
-            <div className={css.trafficLeft}>
-              <div className={css.caption}>剩余流量</div>
-              <div className={css.bigNumber} data-level={level}>
-                {summary.remaining === null ? (
-                  '不限'
-                ) : (
-                  <>
-                    {left[0]}
-                    <span className={css.unit}>{left[1]}</span>
-                  </>
-                )}
-              </div>
-            </div>
-            <div className={css.trafficUsed}>
-              已用 {formatBytes(summary.used)} / {summary.total === null ? '不限' : formatBytes(summary.total)}
-            </div>
-          </div>
-          {summary.total !== null && (
-            <div className={css.meter} role="progressbar" aria-label="本期已用" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(summary.ratio * 100)}>
-              <div className={css.meterFill} data-level={level} style={{ width: `${summary.ratio * 100}%` }} />
-            </div>
-          )}
-          <div className={css.trafficNotes}>
-            {summary.total !== null && (
-              <span className={css.usedNote} data-level={level}>
-                已用 {Math.round(summary.ratio * 100)}%{level === 'ok' ? '' : '，流量即将用完'}
-              </span>
-            )}
-            {summary.pack > 0 && <span>含流量包 {formatBytes(summary.pack)}</span>}
-            <span className={css.spacer} />
-            {resetAt && (
-              <span>
-                {daysUntil(resetAt)} 天后重置（{shortDate(resetAt, timeZone)}）
-              </span>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className={css.caption}>这个套餐没有流量额度记录。</div>
-      )}
-
-      {expiry?.expired && <div className={css.caption}>{expiry.label}，节点已暂停。续费后原订阅地址自动恢复，无需重新导入。</div>}
-      <div className={css.planActions}>
-        <a className={css.primaryAction} href={href('/subs', { sub: sub.id })}>
-          导入到客户端
-        </a>
-        <Button onClick={() => void copy()}>
-          复制订阅地址
-        </Button>
-        {renewHref && expiry?.urgent && (
-          <a className={css.renewAction} href={renewHref}>
-            立即续费
-          </a>
-        )}
-      </div>
-    </Card>
-  )
-}
-
-function PrimaryUsage({ sub }: { sub: Subscription }) {
-  const { summary, resetAt } = usePlanTraffic(sub)
-  return <UsageCard subscriptionId={sub.id} summary={summary} resetAt={resetAt} />
-}
-
-// ---------------------------------------------------------------------------
-// 三格统计：余额与可提佣金复用外框查询（同键同 schema），在线设备取订阅的 online_devices / device_limit（没有订阅时显示「—」）
-// ---------------------------------------------------------------------------
-function Stats({ sub, loading }: { sub: Subscription | null; loading: boolean }) {
+function Stats({ held, loading }: { held: readonly Subscription[]; loading: boolean }) {
   const balance = useBalance()
   const commission = useCommissionAvailable()
-  const devices =
-    sub === null ? null : { on: sub.online_devices, max: sub.device_limit === null ? '不限' : String(sub.device_limit) }
+  const live = held.filter(isLive)
+  const devices = live.length
+    ? { on: live.reduce((n, s) => n + s.online_devices, 0), max: live.some((s) => s.device_limit === null) ? '不限' : String(live.reduce((n, s) => n + (s.device_limit ?? 0), 0)) }
+    : null
 
   return (
     <div className={css.stats}>

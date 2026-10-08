@@ -310,7 +310,7 @@ export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_rea
     case 'paid':
       if (o.kind === 'topup') return '余额已到账'
       if (o.kind === 'addon') return '流量包已到账'
-      if (o.kind === 'upgrade') return '已变更套餐，订阅地址不变'
+      if (o.kind === 'upgrade') return '已换好套餐，链接不变'
       return [method, o.subscription_period_end ? `有效期至 ${formatDateTime(o.subscription_period_end).slice(0, 10)}` : '已开通'].filter(Boolean).join(' · ')
     case 'expired':
       return '超时未支付，已自动取消'
@@ -339,7 +339,7 @@ export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
     { k: '原价', v: money(original) },
   ]
   if (o.discount_amount > 0) facts.push({ k: '优惠', v: `−${money(o.discount_amount)}${o.coupon_code ? `（${o.coupon_code}）` : ''}` })
-  if (o.balance_applied > 0) facts.push({ k: '余额抵扣', v: `−${money(o.balance_applied)}` })
+  if (o.balance_applied > 0) facts.push({ k: '用了余额', v: `−${money(o.balance_applied)}` })
   if (PAID_STATUSES.has(o.status) || o.status.endsWith('refunded')) facts.push({ k: '实付', v: money(o.paid_amount) })
   if (o.refunded_amount > 0) facts.push({ k: '退款', v: money(o.refunded_amount) })
   if (OPEN_STATUSES.includes(o.status as (typeof OPEN_STATUSES)[number]) && o.expires_at) facts.push({ k: '过期时间', v: formatDateTime(o.expires_at) })

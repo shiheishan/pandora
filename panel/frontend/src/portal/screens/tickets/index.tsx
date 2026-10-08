@@ -317,7 +317,7 @@ function NewTicket({ orderId }: { orderId: string | null }) {
       <TextArea
         label="详细描述"
         rows={6}
-        placeholder="详细描述：使用的客户端、节点、出现时间…"
+        placeholder="详细描述：用的是哪个 App、哪个节点、什么时候出现的…"
         maxLength={5000}
         value={body}
         error={errors.body}

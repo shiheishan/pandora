@@ -415,3 +415,11 @@
     font-size: 17px;
   }
 }
+
+/* 手上的各份：复用我的套餐的卡片（精简版） */
+.subs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}

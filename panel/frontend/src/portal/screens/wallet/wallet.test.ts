@@ -6,7 +6,7 @@ import { giftFace, giftNote, ledgerLabel, normalizeGiftCode, parseTopupAmount, r
 const GIB = 1024 ** 3
 
 function card(over: Partial<GiftCard>): GiftCard {
-  return giftCardSchema.parse({ id: 'c', name: '卡', description: '', type: 'general', status: 'active', rewards: {}, conditions: {}, limits: {}, theme_color: '#000', created_at: 'x', ...over })
+  return giftCardSchema.parse({ id: 'c', name: '卡', description: '', type: 'general', status: 'active', rewards: {}, conditions: {}, limits: {}, theme_color: '#000', created_at: 'x', placement: null, ...over })
 }
 
 describe('充值金额', () => {
@@ -24,9 +24,10 @@ describe('充值金额', () => {
 
 describe('余额流水', () => {
   it('账本类型映射，挂账两类都叫「挂账转入」，未知类型返回 null', () => {
-    expect(ledgerLabel('balance_hold')).toBe('下单抵扣（冻结）')
+    expect(ledgerLabel('balance_hold')).toBe('下单用余额（冻结）')
     expect(ledgerLabel('late_payment_suspense')).toBe('挂账转入')
-    expect(ledgerLabel('plan_change_refund')).toBeNull()
+    expect(ledgerLabel('plan_change_refund')).toBe('换套餐退回')
+    expect(ledgerLabel('something_new')).toBeNull()
   })
 })
 
@@ -34,14 +35,14 @@ describe('礼品卡', () => {
   it('卡面：余额 / 流量 / 延期组合、套餐、盲盒', () => {
     expect(giftFace(card({ rewards: { balance: 10000 } }))).toBe('¥100.00 余额')
     expect(giftFace(card({ rewards: { traffic_bytes: 200 * GIB, expire_days: 7 } }))).toBe('流量 +200 GB + 延长 7 天')
-    expect(giftFace(card({ type: 'plan', plan_name: '专业版', interval: 'month', interval_count: 1 }))).toBe('专业版 月付')
+    expect(giftFace(card({ type: 'plan', plan_name: '专业版', interval: 'month', interval_count: 1 }))).toBe('专业版 · 1 个月')
     expect(giftFace(card({ type: 'mystery', rewards: { pool: [{ label: 'A', weight: 0 }, { label: 'B', weight: 0 }] } }))).toBe('盲盒：可能抽到 A / B')
     expect(giftFace(card({ name: '空卡' }))).toBe('空卡')
   })
 
   it('说明：后台说明优先，缺省按类型', () => {
     expect(giftNote(card({ description: '限国庆' }))).toBe('限国庆')
-    expect(giftNote(card({ rewards: { traffic_bytes: GIB } }))).toBe('流量进流量包余额，不过期，用完为止')
+    expect(giftNote(card({ rewards: { traffic_bytes: GIB } }))).toBe('流量包不过期，用完为止')
     expect(giftNote(card({ type: 'mystery' }))).toBe('兑换时随机抽取其中一项')
   })
 

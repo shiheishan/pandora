@@ -1,0 +1,9 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.body p {
+  margin: 0;
+}

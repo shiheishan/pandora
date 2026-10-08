@@ -1,0 +1,71 @@
+.card {
+  gap: 0;
+}
+
+/* 推荐：朱砂描边 */
+.hot {
+  composes: card;
+  border-color: var(--brand);
+}
+
+/* 正在用的那一款：Card tint */
+.current {
+  composes: card;
+  border-color: var(--brand-soft);
+  background: var(--brand-tint);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.name {
+  margin: 0;
+  font-size: 17px;
+  font-weight: var(--fw-semibold);
+}
+
+.price {
+  margin: 10px 0 0;
+  font-size: 34px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.price small {
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: var(--fw-regular);
+  letter-spacing: 0;
+}
+
+.desc {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.facts {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin: 14px 0 16px;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+  list-style: none;
+}
+
+.note {
+  margin-top: var(--space-8);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  text-align: center;
+}

@@ -37,7 +37,7 @@ function useQuickLoginFromUrl(): QuickState {
   useEffect(() => {
     if (!token || started.current) return
     started.current = true
-    navigate('/overview', { replace: true })
+    navigate('/subs', { replace: true })
     consumeQuickLogin(api, tokens, token).then(
       () => setState({ phase: 'idle' }),
       (err: unknown) => setState({ phase: 'failed', message: isApiError(err) ? err.message : '快捷登录失败，请稍后重试' }),

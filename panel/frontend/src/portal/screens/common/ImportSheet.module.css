@@ -1,0 +1,119 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.what {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.what b {
+  font-weight: var(--fw-medium);
+}
+
+.devLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.app {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.app:first-child {
+  border-top: 0;
+}
+
+.appIcon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-weight: var(--fw-semibold);
+}
+
+.appText {
+  flex: 1;
+  min-width: 0;
+}
+
+.appText b {
+  font-weight: var(--fw-medium);
+}
+
+.appText small {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.more summary {
+  padding: 8px 0;
+  color: var(--link);
+  cursor: pointer;
+}
+
+.more summary:hover {
+  color: var(--link-hover);
+}
+
+.message {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.message p {
+  margin: 4px 0 0;
+}
+
+.qrSide {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.qr {
+  flex: none;
+  width: 132px;
+  height: 132px;
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 639px) {
+  .qrSide {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .qr {
+    width: 168px;
+    height: 168px;
+  }
+}

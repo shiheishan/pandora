@@ -72,3 +72,53 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* 手机上的主按钮：打开支付宝付款（顶层 GET 跳收银台） */
+.open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--h-control);
+  padding: 0 var(--pad-button);
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: var(--fw-medium);
+}
+
+.open:hover {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+  text-decoration: none;
+}
+
+.qr {
+  width: 188px;
+  height: 188px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.others {
+  width: 100%;
+}
+
+.others summary {
+  color: var(--link);
+  cursor: pointer;
+}
+
+.others .qr {
+  display: block;
+  margin: var(--space-12) auto 0;
+}
+
+.textLink {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.body p {
+  margin: 0;
+}

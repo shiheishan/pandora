@@ -1,120 +1,77 @@
-.grid {
+.line {
+  margin: 0;
+}
+
+.line + .line {
+  margin-top: 4px;
+}
+
+/* 买多久：三档并排，每档写到哪天或算式 */
+.periods {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
-  align-items: start;
-  gap: var(--space-16);
-}
-
-.form,
-.preview {
-  gap: var(--space-16);
-}
-
-.preview {
-  gap: var(--space-12);
-}
-
-.formTitle {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-weight: var(--fw-semibold);
-}
-
-.formSub {
-  font-size: var(--fs-caption);
-  font-weight: var(--fw-regular);
-  color: var(--text-2);
-}
-
-.linkButton {
-  display: inline-flex;
-  align-items: center;
-  height: var(--h-control-sm);
-  padding: 0 16px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  color: var(--text);
-}
-
-.linkButton:hover {
-  border-color: var(--border-hover);
-  color: var(--text);
-  text-decoration: none;
-}
-
-/* ===========================================================================
- * 周期 / 容量选项
- * ========================================================================= */
-.options {
-  display: flex;
-  flex-direction: column;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: var(--space-8);
 }
 
-.option {
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  padding: 12px 14px;
+.period {
+  padding: 10px 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
-  text-align: left;
-  cursor: pointer;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
-.option[aria-checked='true'] {
+.period:hover {
+  border-color: var(--border-hover);
+}
+
+.period b {
+  display: block;
+  font-weight: var(--fw-medium);
+}
+
+.period span {
+  display: block;
+  color: var(--text-2);
+}
+
+.period small {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.period[aria-checked='true'] {
   border-color: var(--brand);
   background: var(--brand-tint);
 }
 
-.dot {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  border: 1.5px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--surface);
+.period[aria-checked='true'] small {
+  color: var(--brand-ink);
 }
 
-.option[aria-checked='true'] .dot {
-  border: 5px solid var(--brand);
-}
-
-.optionTitle {
-  flex: 1;
-  font-weight: var(--fw-medium);
-}
-
-.optionSave,
-.optionNote {
-  font-size: var(--fs-caption);
-  color: var(--ok);
-}
-
-.optionNote {
-  color: var(--text-3);
-}
-
-.optionPrice {
+.formula {
+  margin: 0;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
-/* ===========================================================================
- * 优惠码、余额、支付方式
- * ========================================================================= */
 .field {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.label {
-  font-size: var(--fs-caption);
+.fieldLabel {
   color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.fieldLabel small {
+  color: var(--text-3);
 }
 
 .couponRow {
@@ -122,27 +79,87 @@
   gap: var(--space-8);
 }
 
-.couponInput {
+.grow {
   flex: 1;
   min-width: 0;
 }
 
-.upper {
+.upper input {
   text-transform: uppercase;
 }
 
-.couponOk,
-.couponBad {
-  font-size: var(--fs-caption);
+.good {
+  margin: 0;
+  color: var(--ok);
+  font-size: 13px;
+}
+
+.bad {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+/* 付钱那一块：上面一条线隔开 */
+.payBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding-top: var(--space-16);
+  border-top: 1px solid var(--border);
+}
+
+.balance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+/* 余额打开：绿底，加粗写「已用余额 ¥8.50」，免得像没选就被扣 */
+.balanceOn {
+  composes: balance;
+  border-color: var(--ok-line);
+  background: var(--ok-soft);
   color: var(--ok);
 }
 
-.couponBad {
-  color: var(--danger);
+.balanceOn b {
+  font-weight: var(--fw-medium);
 }
 
-.muted {
-  color: var(--text-3);
+.sum {
+  margin: 0;
+  font-size: var(--fs-body);
+}
+
+.sum b {
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.updated {
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: var(--radius-tag);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: var(--fs-caption);
+  vertical-align: 3px;
+}
+
+/* 凑最低额的说明：紧挨金额、正常字色 */
+.sumNote {
+  margin: calc(var(--space-8) * -1) 0 0;
+  color: var(--text);
+  font-size: 13px;
 }
 
 .methods {
@@ -159,87 +176,15 @@
   background: var(--surface);
   color: var(--text);
   text-align: left;
-  cursor: pointer;
+}
+
+.method:hover {
+  border-color: var(--border-hover);
 }
 
 .method[aria-checked='true'] {
   border-color: var(--brand);
   background: var(--brand-tint);
-}
-
-/* ===========================================================================
- * 订单预览
- * ========================================================================= */
-.lines {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-  margin: 0;
-}
-
-.line,
-.lineOk,
-.lineMuted {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-12);
-}
-
-.line dd,
-.lineOk dd,
-.lineMuted dd {
-  margin: 0;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.lineOk {
-  color: var(--ok);
-}
-
-.lineMuted {
-  color: var(--text-3);
-}
-
-.divider {
-  height: 1px;
-  background: var(--border);
-}
-
-.total {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-
-.totalValue {
-  font-size: 28px;
-  font-weight: var(--fw-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-.submitError {
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: 13px;
-}
-
-.inline {
-  margin-left: 6px;
+  color: var(--brand-ink);
   font-weight: var(--fw-medium);
-}
-
-.back {
-  align-self: center;
-  height: var(--h-control-sm);
-  display: inline-flex;
-  align-items: center;
-  color: var(--text-2);
-}
-
-.back:hover {
-  color: var(--text);
-  text-decoration: none;
 }
