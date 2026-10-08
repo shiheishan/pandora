@@ -10,10 +10,9 @@ description: pandora 在一次性测试机上按生产方式（panel/deploy/inst
 ## 前提与红线
 
 - 机器已按 test-machine skill 开通登记（别名、ssh、`/root/README.md`）。下文 `$H` 指这台机器的 ssh 别名。
-- 仓库公开：IP、域名、后台前缀、口令不进仓库，也不进报告。现场值放 `~/.ssh/config`、`~/ai/servers/`、`ops-local/<目录>/`；口令只经 stdin 或 0600 文件传。
-- 不删、不重装测试机。不读 `ops-local/**/secrets/`。
+- 仓库公开红线见根 CLAUDE.md；现场值放 `~/.ssh/config`、`~/ai/servers/`、`ops-local/<目录>/`，口令只经 stdin 或 0600 文件传。不删、不重装测试机，不读 `ops-local/**/secrets/`。
 - 本地发现安装链的问题，记下来交总协调派任务，不在测试机上临时改仓库脚本。
-- ssh 需要 1Password SSH agent；子 agent 的沙箱连不上，要关沙箱。远端起长命令（构建约 10 分钟）的写法见 test-machine 的坑「ssh 起后台脚本」。
+- 远端起长命令（构建约 10 分钟）的写法与 1Password 签名失败的处理见根 CLAUDE.md「环境与工具坑」。
 
 ## 首装
 
@@ -27,19 +26,16 @@ description: pandora 在一次性测试机上按生产方式（panel/deploy/inst
    - 在 `/root/release/` 里 `sha256sum -c *_linux_amd64.tar.gz.sha256`；
    - 解到 `/opt/pandora-release/`，进包目录执行 `sha256sum -c SHA256SUMS`；
    - **保留这个目录**：之后原地升级、重装数据基座都要再跑它的 install.sh。
-6. **安装**：进包内 `deploy/` 执行
-   `PANDORA_ASSUME_YES=1 PANDORA_CERTBOT=1 PANDORA_PUBLIC_BASE_URL=https://<域名> ./install.sh > /root/install-1.log 2>&1`，再 `chmod 600` 这个日志（结尾会打印后台前缀）。
+6. **安装**：通用步骤（安装命令、`PANDORA_CERTBOT` 的含义、nginx 渲染）照 `panel/tools/loadtest/README.md` 第 2 节第 2、3 步。测试机特有的：进包内 `deploy/`，`PANDORA_ASSUME_YES=1 PANDORA_CERTBOT=1 PANDORA_PUBLIC_BASE_URL=https://<域名> ./install.sh > /root/install-1.log 2>&1`，再 `chmod 600` 这个日志（结尾会打印后台前缀）。
    - 域名必须是 DNS 域名，不能是裸 IP 或 localhost（production 模式的硬要求）；没有域名就用 `<IP 用横线>.sslip.io`。
-   - `PANDORA_CERTBOT=1` 等于同意 Let's Encrypt 订户协议：install.sh 用 webroot 申请证书，再停用发行版原样的 default 站点、渲染 nginx、`nginx -t`、reload。不加这个变量，它在没有证书时只提示、不渲染 nginx。
-   - 不碰 nginx：`PANDORA_SKIP_NGINX=1`。
 7. **核对安装结果**：
    - 日志里「迁移版本 0 → N」，N 等于包内 `migrations/` 的最大号；
    - 三网关 `127.0.0.1:9000/9001/9003` 的 `/healthz` 都是 200（`aegis-public / admin / node` 三个服务 active）；
-   - 日志里「nginx 配置已渲染并生效」。若提示没有证书或被跳过，补一次 `render-nginx`：`/opt/aegispanel/deploy/render-nginx.sh && nginx -t && systemctl reload nginx`。
+   - 日志里「nginx 配置已渲染并生效」。若提示没有证书或被跳过，按 loadtest README 第 2 节第 3 步补一次 `render-nginx`。
 8. **https 可访问**：`https://<域名>/healthz` 返回 200；`http://` 跳转 308；`https://<域名>/<后台前缀>/` 返回 200。前缀在 `/opt/aegispanel/deploy/.env` 的 `AEGIS_ADMIN_PATH`。
 9. **建管理员**：install.sh 不替人生成管理员。
    - 在机器上生成随机口令写进 `/root/lt-admin-cred.txt`（0600，第 1 行邮箱、第 2 行口令），`AEGIS_ADMIN_PATH` 写进 `/root/lt-admin-path.txt`（0600）。
-   - 执行 `cd /opt/aegispanel && set -a && . deploy/.env && set +a && printf %s "$pw" | ./bin/aegis-adminctl create --email ltadmin@example.com --password-stdin --role platform_admin`。邮箱 `ltadmin@example.com` 是 prod-retest 的 run-load 缺省值，要压测就别换。
+   - 建管理员的命令见 loadtest README 第 2 节第 4 步，口令经 stdin（`printf %s "$pw" | … --password-stdin`），邮箱用 `ltadmin@example.com`：它是 prod-retest 的 run-load 缺省值，要压测就别换。
    - 两个文件 scp 回 `ops-local/<目录>/`，保持 0600。
    - 用这个账号登录一次后台（浏览器或后续 seed 的自检），登得进才算「后台能登录」。
 10. 在机器 `/root/README.md` 补「现状」：版本、目录（`/opt/aegispanel`、`/opt/pandora-release`、`/root/release`）、日志与口令文件位置（只写位置不写值）。
@@ -55,12 +51,13 @@ description: pandora 在一次性测试机上按生产方式（panel/deploy/inst
    PANDORA_ASSUME_YES=1 ./install.sh 2>&1 | while IFS= read -r l; do printf '%s %s\n' "$(date -u +%T)" "$l"; done > /root/install-2.log
    ```
    给每行打时间戳，是为了量停服时间。检测到 `/opt/aegispanel/deploy/.env` 就自动走升级：保留 `.env` 与数据，不改 `AEGIS_ENV`。证书已在，不需要再加 `PANDORA_CERTBOT=1`。
-3. 它自己做的事（顺序即日志顺序）：
-   - **升级前备份**：`pg_dump -Fc` 到 `/var/backups/aegispanel/pre-upgrade-<时间>.dump`（0600），并 `pg_restore --list` 验过能读。备份失败就中止，此时服务没停、迁移没跑；
+3. 它自己做的事（顺序即日志顺序；顺序与失败处置以 `panel/deploy/install-lib.sh` 的 `pandora_run_migrations` 为准）：
+   - **升级前备份**：`pg_dump -Fc` 到 `/var/backups/aegispanel/pre-upgrade-<时间>.dump`（0600），并验过能读。备份失败就中止，此时服务没停、迁移没跑；
    - 起数据基座，确认 unix socket 可用后换连接串；
-   - **停三网关再迁移**：已有迁移记录时先在一次性克隆库上演练，较慢；
+   - **停服之前**在一次性克隆库上演练迁移（服务照常在跑，库越大越慢），日志「预检通过（N 秒），凭据已写好；停服后只核对凭据，不再演练」；预检失败则服务没停、数据库没动；
+   - **停服**（日志「停止服务后迁移」）：只核对预检凭据，再迁移；迁移失败会把服务拉回来；
    - 收窄数据库角色、装二进制与 systemd 单元、启动、健康检查、重渲染 nginx。
-4. **停服时间**：日志里「停止服务后再迁移」到「启动服务」之间的时间戳之差。成绩里同时写迁移条数和库大小，否则这个数没法比。
+4. **停服时间**：日志里「停止服务后迁移」到「启动服务」之间的时间戳之差（预检不在这段里）。成绩里同时写迁移条数和库大小，否则这个数没法比。
 5. **迁移号核对**：日志「迁移版本 M → N」，M 等于升级前（`SELECT max(version_id) FROM goose_db_version`，用 `/opt/aegispanel/deploy/psql.sh`），N 等于新包 `migrations/` 的最大号。
 6. 照首装 7、8 重新核对 healthz 与 https；再登录一次后台。
 7. 升级前后各留一份 `systemctl is-active aegis-public aegis-admin aegis-node` 与版本号（后台登录页或侧栏显示的发布版本）写进现场记录。

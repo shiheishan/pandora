@@ -9,11 +9,13 @@
 --   traffic_pack_transfers（新表，追加写） 每一次改挂一条：「我买的 100G 去哪了」要能逐笔追到。
 --                                        billing.TransferTrafficPacks 与 00138 回填写。
 --
--- 改挂只允许三种情形（app.guard_traffic_pack_grant，基于 00070 版，其余逐字不变）：
+-- 改挂只允许这几种情形（app.guard_traffic_pack_grant，基于 00070 版，其余逐字不变）：
 --   1. 原来为空，挂到同一用户一份生效中或可救回（过期 30 天内）的订阅；
 --   2. 原来那份已经彻底停用（cancelled，或 expired 且 renewal_closed_at 非空），改挂到同一用户
 --      另一份生效中或可救回的订阅；
---   3. 其余一律拒绝（包括摘回为空）。
+--   3. 升级前的旧余额（只有 00138 回填写的 migration 流水，没有 user / admin 流水）可以从生效中的
+--      那份挪一次（用户 2026-10-07 定）：回填替多份在用的老用户挑了到期最晚的那份，给他一次改的机会；
+--   4. 其余一律拒绝（包括摘回为空）。
 -- 判断用 IF NEW.subscription_id IS DISTINCT FROM OLD.subscription_id 包住：扣量的 UPDATE 不改这一列，
 -- 不多跑一次查询，节点上报这条热路径不受影响。
 --
@@ -142,11 +144,19 @@ BEGIN
       RAISE EXCEPTION 'traffic pack grant % can only move to a live or revivable subscription of the same user', OLD.id
         USING ERRCODE = 'check_violation';
     END IF;
+    -- 例外（用户 2026-10-07 定）：升级前的旧余额由 00138 回填挂上，只有 migration 流水、没有
+    -- 用户或后台挪过的，可以从生效中的那份挪一次（这次挪动写 user 流水，之后按原规则）
     IF OLD.subscription_id IS NOT NULL AND NOT EXISTS (
          SELECT 1 FROM subscriptions s
           WHERE s.tenant_id = OLD.tenant_id AND s.id = OLD.subscription_id
             AND (s.status = 'cancelled'
-                 OR (s.status = 'expired' AND s.renewal_closed_at IS NOT NULL))) THEN
+                 OR (s.status = 'expired' AND s.renewal_closed_at IS NOT NULL)))
+       AND NOT (EXISTS (SELECT 1 FROM traffic_pack_transfers t
+                         WHERE t.tenant_id = OLD.tenant_id AND t.grant_id = OLD.id
+                           AND t.actor_kind = 'migration')
+                AND NOT EXISTS (SELECT 1 FROM traffic_pack_transfers t
+                                 WHERE t.tenant_id = OLD.tenant_id AND t.grant_id = OLD.id
+                                   AND t.actor_kind <> 'migration')) THEN
       RAISE EXCEPTION 'traffic pack grant % can only leave an unattached or ended subscription', OLD.id
         USING ERRCODE = 'check_violation';
     END IF;
