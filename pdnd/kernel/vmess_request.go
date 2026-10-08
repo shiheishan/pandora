@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/cipher"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -14,6 +15,11 @@ import (
 
 	"github.com/aegispanel/nodeagent/core"
 )
+
+// errVMessUnsupportedRequest 标记「已通过认证、但请求的安全类型或选项不支持」：
+// 对端是持有凭据的真实客户端，读完请求头就拒绝断开；按探测处理读满 10 秒只会
+// 让它干等（审查 VMess 4）。
+var errVMessUnsupportedRequest = errors.New("vmess request option unsupported")
 
 func vmessDestinationUDPAddr(destination vmessDestination) (net.Addr, error) {
 	if destination.IP.IsValid() {
@@ -102,27 +108,27 @@ func readVMessRequestWithCandidates(r *bufio.Reader, candidates []vmessUserCandi
 	}
 	security := header[35] & 0x0f
 	if security != vmessSecNone && security != vmessSecZero && security != vmessSecAES128 && security != vmessSecChaCha {
-		return core.User{}, out, nil, security, fmt.Errorf("vmess security %d unsupported", security)
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess security %d unsupported", errVMessUnsupportedRequest, security)
 	}
 	option := header[34]
 	if (security == vmessSecAES128 || security == vmessSecChaCha) && option&vmessOptChunk == 0 {
-		return core.User{}, out, nil, security, fmt.Errorf("vmess AES-GCM requires chunk framing")
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess AES-GCM requires chunk framing", errVMessUnsupportedRequest)
 	}
 	if option&vmessOptAuthLength != 0 {
-		return core.User{}, out, nil, security, fmt.Errorf("vmess AuthenticatedLength (experimental) is not supported")
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess AuthenticatedLength (experimental) is not supported", errVMessUnsupportedRequest)
 	}
 	if option&vmessOptPadding != 0 && option&vmessOptMask == 0 {
 		// Xray 同样拒绝：填充长度取自掩码流，没有掩码就没有填充长度。
-		return core.User{}, out, nil, security, fmt.Errorf("vmess GlobalPadding requires ChunkMasking")
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess GlobalPadding requires ChunkMasking", errVMessUnsupportedRequest)
 	}
 	// none / zero：不分块（option 0，zero 与 sing-box 的 none）或 Xray 的 none 分块
 	// （ChunkStream + ChunkMasking，UDP 另带 GlobalPadding 时也收）。掩码、填充离开
 	// 分块没有意义，拒绝。
 	if (security == vmessSecNone || security == vmessSecZero) && option&vmessOptChunk == 0 && option != 0 {
-		return core.User{}, out, nil, security, fmt.Errorf("vmess chunk options require ChunkStream")
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess chunk options require ChunkStream", errVMessUnsupportedRequest)
 	}
 	if (security == vmessSecNone || security == vmessSecZero) && header[37] == vmessUDP && option&vmessOptChunk == 0 {
-		return core.User{}, out, nil, security, fmt.Errorf("vmess UDP requires chunk framing")
+		return core.User{}, out, nil, security, fmt.Errorf("%w: vmess UDP requires chunk framing", errVMessUnsupportedRequest)
 	}
 	pos := 38
 	if header[37] == vmessMux {

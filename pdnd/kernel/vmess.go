@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/cipher"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -443,8 +444,11 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	user, destination, body, security, err := a.readRequest(reader)
 	if err != nil {
 		// authID 对不上、头部解不开：读到超时再关，不在读完 16 字节后立刻断
-		// （读错误本身立即返回，读空不会多等）。
-		drainUntilDeadline(conn)
+		// （读错误本身立即返回，读空不会多等）。已认证客户端请求了不支持的选项
+		// 则立刻断开。
+		if !errors.Is(err, errVMessUnsupportedRequest) {
+			drainUntilDeadline(conn)
+		}
 		return fmt.Errorf("vmess request: %w", err)
 	}
 	if security != vmessSecNone && security != vmessSecZero && security != vmessSecAES128 && security != vmessSecChaCha {

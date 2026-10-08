@@ -194,9 +194,12 @@ func TestVMessXrayClientUDP(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		security protocol.SecurityType
+		padding  bool
 	}{
-		{"auto", protocol.SecurityType_AUTO},
-		{"none", protocol.SecurityType_NONE},
+		{"auto", protocol.SecurityType_AUTO, false},
+		{"none", protocol.SecurityType_NONE, false},
+		// Xray 设了 XRAY_VMESS_PADDING 时 none 也开 GlobalPadding：UDP 按包加填充。
+		{"none+padding", protocol.SecurityType_NONE, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", itoa(port)), 2*time.Second)
@@ -206,6 +209,9 @@ func TestVMessXrayClientUDP(t *testing.T) {
 			defer conn.Close()
 			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 			request := xrayVMessRequest(t, id, tc.security, protocol.RequestCommandUDP, upstream.LocalAddr().(*net.UDPAddr).Port)
+			if tc.padding {
+				request.Option.Set(protocol.RequestOptionGlobalPadding)
+			}
 			session := encoding.NewClientSession(context.Background(), 0)
 			if err := session.EncodeRequestHeader(request, conn); err != nil {
 				t.Fatal(err)
@@ -243,5 +249,42 @@ func TestVMessXrayClientUDP(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestVMessAuthenticatedLengthRejectedPromptly（审查 VMess 4）：开了 AuthenticatedLength
+// 的客户端已经通过认证，读完请求头就该拒绝并断开，而不是按探测处理、读满 10 秒。
+func TestVMessAuthenticatedLengthRejectedPromptly(t *testing.T) {
+	port := reserveTCPPort(t)
+	id := uuid.New()
+	adapter := &vmessAdapter{users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vmess", Listen: "127.0.0.1", Port: port, Raw: map[string]any{}}}
+	if err := adapter.AddUsers([]core.User{{ID: 7405, UUID: id.String()}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := adapter.Start(ctx, spec, AdapterHooks{DataPlane: &vlessTestPlane{}}); err != nil {
+		t.Fatal(err)
+	}
+	defer adapter.Close()
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", itoa(port)), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	request := xrayVMessRequest(t, id, protocol.SecurityType_AES128_GCM, protocol.RequestCommandTCP, 443)
+	request.Option.Set(protocol.RequestOptionAuthenticatedLength)
+	session := encoding.NewClientSession(context.Background(), 0)
+	if err := session.EncodeRequestHeader(request, conn); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := io.Copy(io.Discard, conn); err != nil {
+		t.Fatalf("连接没有被干净关闭：%v", err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("AuthenticatedLength 请求 %v 后才被断开", took)
 	}
 }

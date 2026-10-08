@@ -98,6 +98,8 @@ type vmessAEADReader struct {
 	count      uint16
 	pending    []byte
 	pendingBuf *[]byte
+	// done：已读到终止空块，之后一律 io.EOF。
+	done bool
 }
 
 func newVMessAEADReader(upstream *bufio.Reader, aead cipher.AEAD, nonce []byte, option byte) *vmessAEADReader {
@@ -145,6 +147,9 @@ func (r *vmessAEADReader) Read(p []byte) (int, error) {
 		}
 		return n, nil
 	}
+	if r.done {
+		return 0, io.EOF
+	}
 	var rawLen [2]byte
 	if _, err := io.ReadFull(r.upstream, rawLen[:]); err != nil {
 		return 0, err
@@ -166,12 +171,14 @@ func (r *vmessAEADReader) Read(p []byte) (int, error) {
 		length ^= maskCode
 	}
 	if int(length) == r.overhead()+paddingLen {
-		// 空块：对端写完。填充照样在线上，读掉免得留给下一个读者。
-		if paddingLen > 0 {
-			if _, err := r.upstream.Discard(paddingLen); err != nil {
+		// 空块：对端写完。认证标签与填充照样在线上，一并读掉，免得留给下一个
+		// 读者被当成下一块的长度。
+		if length > 0 {
+			if _, err := r.upstream.Discard(int(length)); err != nil {
 				return 0, err
 			}
 		}
+		r.done = true
 		return 0, io.EOF
 	}
 	if int(length) < r.overhead()+paddingLen {

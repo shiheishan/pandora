@@ -116,7 +116,7 @@ func Duration(value any) (time.Duration, bool) {
 	return time.Duration(seconds) * time.Second, true
 }
 
-// Truthy 把开关类字段归一：bool 原样；数字非零为真；字符串 "true" / "1" 为真。
+// Truthy 把开关类字段归一：bool 原样；数字大于 0 为真（负数为假）；字符串 "true" / "1" 为真。
 // 第二个返回值表示这个值是否是可识别的开关形态。
 func Truthy(value any) (bool, bool) {
 	switch v := value.(type) {
