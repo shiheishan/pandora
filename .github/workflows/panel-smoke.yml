@@ -21,6 +21,7 @@ on:
       - "panel/go.sum"
       - "panel/frontend/src/**"
       - "panel/frontend/tests/smoke/**"
+      - "panel/frontend/tests/browser/**"
       - "panel/frontend/package.json"
       - "panel/frontend/package-lock.json"
       - "panel/deploy/run-smoke-stack.sh"
@@ -40,6 +41,7 @@ on:
       - "panel/go.sum"
       - "panel/frontend/src/**"
       - "panel/frontend/tests/smoke/**"
+      - "panel/frontend/tests/browser/**"
       - "panel/frontend/package.json"
       - "panel/frontend/package-lock.json"
       - "panel/deploy/run-smoke-stack.sh"
@@ -75,6 +77,15 @@ jobs:
           test -n "$v"
           GOBIN="$RUNNER_TEMP/bin" go install "github.com/pressly/goose/v3/cmd/goose@$v"
           "$RUNNER_TEMP/bin/goose" --version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: panel/frontend/package-lock.json
+      # 网关嵌入真前端产物（同 make frontend-embed，发布包也这么做）：门户在门户网关根上、后台在后台网关根上，
+      # 最后一步的浏览器测试点的就是它。仓库里只有占位页，所以必须在起栈编译网关之前构建
+      - name: Embed the real frontend into the gateways
+        run: make -C panel frontend-embed
       # 配置在脚本里用 openssl 现场生成，不读任何 secrets
       # 容器取 docker-compose 的名字 aegis-postgres：第 ⑤ 步的 e2e 脚本经仓库自带的
       # deploy/psql.sh 查库，它写死这个名字；runner 一次性，不会撞名
@@ -84,9 +95,6 @@ jobs:
           GOOSE_BIN: ${{ runner.temp }}/bin/goose
           PANDORA_SMOKE_PG_CONTAINER: aegis-postgres
         run: bash panel/deploy/run-smoke-stack.sh up panel "$RUNNER_TEMP/smoke"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       # 最小业务链：各列表不为空，schema 才验得出东西。seed.ts 只用 node 内置模块，
       # Node 22 原生剥类型直接跑，不需要 npm ci
       - name: Seed through the real gateways
@@ -161,6 +169,32 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "nodes=$nodes_rc users=$users_rc burst=$burst_rc"
           [ "$nodes_rc" = 0 ] && [ "$users_rc" = 0 ] && [ "$burst_rc" = 0 ]
+      # 购买路径的无头浏览器测试（tests/browser，w8walk 的 31 步在门户与后台的页面上点一遍）：
+      # 种子现场生成用户与套餐，只经真网关；每步读页面文字核对金额、到期日、按钮与错误提示。
+      # 放在最后：它只留自己的演示易支付渠道收新单（站点最低付款额要是 ¥1.00），会改变之后下单的前提
+      - name: Playwright version for the browser cache
+        id: playwright
+        if: always() && steps.stack.outcome == 'success'
+        working-directory: panel/frontend
+        run: echo "version=$(node -p "require('./node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        if: always() && steps.stack.outcome == 'success'
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Browser purchase paths (Playwright, headless Chromium)
+        if: always() && steps.stack.outcome == 'success'
+        timeout-minutes: 8
+        working-directory: panel/frontend
+        env:
+          SMOKE_STATE: ${{ runner.temp }}/smoke
+          BROWSER_OUT: ${{ runner.temp }}/smoke/browser
+        run: |
+          start=$(date +%s)
+          npx playwright install --with-deps --only-shell chromium
+          echo "装 Chromium 用了 $(( $(date +%s) - start ))s"
+          npx playwright test -c tests/browser/playwright.config.ts
+          echo "整步用了 $(( $(date +%s) - start ))s"
       - name: Shape table
         if: always()
         run: |
@@ -187,6 +221,30 @@ jobs:
             cat "$f"
           } >> "$GITHUB_STEP_SUMMARY"
           cat "$f"
+      - name: Browser path table
+        if: always()
+        working-directory: panel/frontend
+        run: |
+          d="$RUNNER_TEMP/smoke/browser"
+          [ -d "$d" ] || exit 0
+          node tests/browser/table.ts "$d" > /dev/null
+          {
+            echo "### 购买路径 × 浏览器（Playwright 无头 Chromium，任一失败即 job 变红）"
+            echo
+            echo "| 步骤 | 页面上看到的 | 预期 | 结果 |"
+            echo "|---|---|---|---|"
+            cat "$d/results.md"
+            echo
+            echo "每步一张 1280 宽截图、关键页面另有 375 宽，失败的 trace 与 HTML 报告都在产物 browser-paths 里"
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$d/results.md"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-paths
+          path: ${{ runner.temp }}/smoke/browser
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Gateway logs
         if: always()
         run: |
