@@ -190,6 +190,8 @@ type VisionConn struct {
 	pending []byte
 	// rawReader 是读侧直通后的来源：外层残留的字节在前，底层连接在后。
 	rawReader io.Reader
+	// watchReleased：读侧已确定不会再切直通（见 releaseDirectWatch）。
+	watchReleased bool
 
 	writeMu sync.Mutex
 	// rawWriter 是写侧直通后的目标（外层的底层连接）。
@@ -262,6 +264,7 @@ func (c *VisionConn) Read(p []byte) (int, error) {
 			c.scratch = nil
 			c.readBuf = bytes.Buffer{}
 		}
+		c.releaseDirectWatch()
 		return c.readSource().Read(p)
 	}
 	// 读进调用方的缓冲：剥出来的内容随后拷进 readBuf，再从 readBuf 交回调用方，

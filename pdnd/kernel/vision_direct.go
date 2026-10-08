@@ -62,3 +62,15 @@ func (c *VisionConn) Close() error {
 	}
 	return c.Conn.Close()
 }
+
+// releaseDirectWatch 在读侧不再可能切直通时调用（持 readMu）：对端已用 command=1
+// 结束填充、或已经切过直通。普通 TLS 外层据此让 tap 转为透传，不再逐记录交付。
+func (c *VisionConn) releaseDirectWatch() {
+	if c.rawReader != nil || c.watchReleased {
+		return
+	}
+	c.watchReleased = true
+	if d, ok := c.outer.(*visionTLSDirect); ok {
+		d.tap.passthrough()
+	}
+}
