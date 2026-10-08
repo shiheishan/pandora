@@ -40,14 +40,23 @@ func (s *serverSession[U]) handleUDPMessage(message *udpMessage) {
 	udpConn, loaded := s.udpConnMap[message.sessionID]
 	s.udpAccess.RUnlock()
 	if !loaded || common.Done(udpConn.ctx) {
-		udpConn = newUDPPacketConn(auth.ContextWithUser(s.ctx, s.authUser), s.quicConn, func() {
+		// 关闭回调只认建会话这一刻的 sessionID 和这条 conn（Pandora 改动）：message 来自
+		// 对象池，转发读完就归还清零、可能已被别的包复用，回调里再读 message.sessionID
+		// 是数据竞争，会删掉别的会话（常见是 0 号）的登记；同号会话已被新 conn 替换时，
+		// 旧 conn 关闭也不能把新的删掉。
+		sessionID := message.sessionID
+		var created *udpPacketConn
+		created = newUDPPacketConn(auth.ContextWithUser(s.ctx, s.authUser), s.quicConn, func() {
 			s.udpAccess.Lock()
-			delete(s.udpConnMap, message.sessionID)
+			if s.udpConnMap[sessionID] == created {
+				delete(s.udpConnMap, sessionID)
+			}
 			s.udpAccess.Unlock()
 		}, s.udpQueueSize)
-		udpConn.sessionID = message.sessionID
+		udpConn = created
+		udpConn.sessionID = sessionID
 		s.udpAccess.Lock()
-		s.udpConnMap[message.sessionID] = udpConn
+		s.udpConnMap[sessionID] = udpConn
 		s.udpAccess.Unlock()
 		newCtx, newConn := canceler.NewPacketConn(udpConn.ctx, udpConn, s.udpTimeout)
 		go s.handler.NewPacketConnectionEx(newCtx, newConn, M.SocksaddrFromNet(s.quicConn.RemoteAddr()).Unwrap(), M.ParseSocksaddr(message.destination).Unwrap(), nil)
