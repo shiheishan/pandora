@@ -492,7 +492,7 @@ func (s *Service) SetCertificatePaused(ctx context.Context, tenantID string, act
 func queueOrder(ctx context.Context, tx pgx.Tx, tenantID, certID, reason, actorID string) (bool, error) {
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO certificate_orders (tenant_id, certificate_id, reason, replaces_ari_id, created_by)
-		SELECT c.tenant_id, c.id, $3, v.ari_cert_id, nullif($4, '')::uuid
+		SELECT c.tenant_id, c.id, $3::text, v.ari_cert_id, nullif($4::text, '')::uuid
 		  FROM certificates c
 		  LEFT JOIN certificate_versions v ON v.tenant_id = c.tenant_id AND v.id = c.current_version_id
 		 WHERE c.tenant_id = $1 AND c.id = $2::uuid

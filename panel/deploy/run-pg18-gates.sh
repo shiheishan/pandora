@@ -144,6 +144,9 @@ DOMAINS=(
   # 交付集合（R103、R104）：同一个库里对照节点用户列表、订阅下载、门户预览与后台
   # 写接口的通知，含节点池限定用户组（00093）、设备识别窗口（00094）、节点一步上线（R108）、节点状态报错中文化（⑪）与路由组（00096：改组后成员节点的有效发布物）。跨两个包，过滤写精确，免得把两个包里别的域拉进来被算作跳过。
   "delivery|pandora_delivery_gate|./internal/domain/subscription ./internal/api/admin|run_id|pandora_delivery_test_marker|pandora-delivery-pg18||^(TestDeliverySetPG18|TestDeliveryAdminPG18|TestPoolUserGroupsDeliveryPG18|TestPoolUserGroupsAdminPG18|TestDeviceWindowPG18|TestDeviceWindowAdminPG18|TestNodeActivatePG18|TestNodeStatusRefusalPG18|TestRouteGroupsPG18)$"
+  # 节点证书集中签发（00147 / 00148，w9cert）：先跑 configure-app-role.sql，以 aegis_app 证明证书版本没有
+  # UPDATE 授权；worker 接进程内 pebble 与模拟 DNS 提供方跑签发、续期、限流与凭据失效。两个包同库，过滤写精确。
+  "certs|pandora_certs_gate|./internal/domain/certs ./internal/api/admin|run_id|pandora_certs_test_marker|pandora-certs-pg18|app_role|^(TestCertsPG18|TestCertificatesAdminPG18)$"
 )
 
 selected() {
