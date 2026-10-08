@@ -38,7 +38,7 @@ func TestPoolAdmitsUserSQLIsTheOnlyAdmissionRule(t *testing.T) {
 
 	pkg := sourcetest.Load(t, ".")
 	body := pkg.Source()
-	if !strings.Contains(pkg.Decl("Service.ListNodeUsers"), `PoolAdmitsUserSQL("s.tenant_id", "$2::uuid", "s.user_id")`) ||
+	if !strings.Contains(pkg.Decl("Service.nodeUsers"), `PoolAdmitsUserSQL("s.tenant_id", "$2::uuid", "s.user_id")`) ||
 		strings.Count(body, `PoolAdmitsUserSQL("s.tenant_id", "$2::uuid", "s.user_id")`) != 1 {
 		t.Fatal("ListNodeUsers must apply the pool user-group admission exactly once")
 	}

@@ -164,6 +164,12 @@ func UAFamily(ua string) string {
 // 传入的 nodes 来自进程内缓存、被所有命中者共享：这里只读不改，翻译出的
 // 内核形状是新 map（render_shared_test.go 守着）。
 func Render(f Format, nodes []Node, uuid string) ([]byte, string, int) {
+	return RenderForClient(f, nodes, uuid, "")
+}
+
+// RenderForClient 与 Render 相同，另按 User-Agent 选客户端内核认得的写法：目前只有 sing-box
+// 的规则集下载出口分 1.14 前后两种（render_singbox_template.go）。ua 为空即认不出版本，给兼容写法。
+func RenderForClient(f Format, nodes []Node, uuid, ua string) ([]byte, string, int) {
 	nodes = kernelShapedNodes(uniqueNodeNames(nodes))
 	switch f {
 	case FormatClash:
@@ -171,7 +177,7 @@ func Render(f Format, nodes []Node, uuid string) ([]byte, string, int) {
 	case FormatClashPremium:
 		return renderClash(nodes, uuid, true)
 	case FormatSingbox:
-		return renderSingbox(nodes, uuid)
+		return renderSingbox(nodes, uuid, singboxDialectFor(ua))
 	default:
 		return renderURI(nodes, uuid)
 	}

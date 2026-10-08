@@ -63,6 +63,7 @@ var ErrExpired = errors.New("订阅已过期")
 // 用量与 LoadUsage 原来的两条查询同口径：本期配额取 period_end 最晚的一行；
 // 流量包余量是挂在这一份订阅上的流量包的「授予 − 已用」之和（购买模型统一：流量包按份挂，
 // 走 idx_traffic_pack_grants_open_sub）。备注名与套餐名（按主键取一行）拼配置名。
+// 账号状态（最后一列）给 checkOwnerStatus：停用、封禁的账号拉不到节点。
 const pullAuthSQL = `
 	SELECT sc.id, sc.token_hash, sc.subscription_id, sc.user_id, sc.status,
 	       sc.expires_at, sc.grace_until, sc.rate_limit_per_hour,
@@ -76,7 +77,8 @@ const pullAuthSQL = `
 	          FROM traffic_pack_grants g
 	         WHERE g.tenant_id = s.tenant_id AND g.subscription_id = s.id
 	           AND g.consumed_bytes < g.granted_bytes),
-	       COALESCE(s.label, ''), COALESCE(pl.name, '')
+	       COALESCE(s.label, ''), COALESCE(pl.name, ''),
+	       COALESCE(u.status, '')
 	  FROM subscription_credentials sc
 	  JOIN subscriptions s ON s.id = sc.subscription_id AND s.tenant_id = sc.tenant_id
 	  LEFT JOIN plans pl ON pl.id = s.plan_id
@@ -113,7 +115,7 @@ func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) 
 	var c Credential
 	var granted, consumed *int64
 	var packRemaining int64
-	var userTZ, tenantTZ, label, planName string
+	var userTZ, tenantTZ, label, planName, userStatus string
 	want := crypto.HashToken(token)
 	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var (
@@ -127,15 +129,15 @@ func (s *Service) LoadPull(ctx context.Context, tenantID, prefix, token string) 
 			&expiresAt, &graceUntil, &c.RateLimit,
 			&c.PlanVersionID, &c.ProxyUUID, &c.NodeUID, &c.Status, &c.PeriodEnd,
 			&renewalClosed, &userTZ, &tenantTZ,
-			&c.UserGroupID, &granted, &consumed, &packRemaining, &label, &planName)
+			&c.UserGroupID, &granted, &consumed, &packRemaining, &label, &planName, &userStatus)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
-		return checkCredential(hash, want, credStatus, expiresAt, graceUntil, c.Status,
-			renewalClosed, time.Now())
+		return checkOwnerStatus(userStatus, checkCredential(hash, want, credStatus, expiresAt, graceUntil, c.Status,
+			renewalClosed, time.Now()))
 	})
 	if errors.Is(err, ErrExpired) {
 		pull := &Pull{Cred: &c, Label: label, PlanName: planName, Expired: &ExpiredPull{
@@ -218,6 +220,17 @@ func checkCredential(hash, want []byte, credStatus string, expiresAt, graceUntil
 	default:
 		return ErrNotFound
 	}
+}
+
+// checkOwnerStatus 在凭据判定之后再看订阅主人的账号状态（用户 2026-10-07 定「封禁即断，
+// 解封恢复」）：不是 active（停用、封禁……）就按「不在服务」处理，回伪装 404、不给节点，
+// 订阅过期的提示也不给——与节点名单不收他的订阅同一口径（nodefabric 的 Service.nodeUsers）。
+// 凭据不吊销：恢复成 active 后原链接照常可用。令牌本身不对（ErrNotFound）时原样返回。
+func checkOwnerStatus(userStatus string, err error) error {
+	if userStatus != "active" && (err == nil || errors.Is(err, ErrExpired)) {
+		return ErrNotFound
+	}
+	return err
 }
 
 // cachedNodes 按（租户, 套餐版本, 用户组）取可下发节点，未命中时现查一次。
