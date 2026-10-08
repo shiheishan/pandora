@@ -30,6 +30,8 @@ type fakeNodeGateway struct {
 	runtimeHash string
 	commits     int
 	signedGets  int
+	// realIPs 是接入两步（begin、commit）各自收到的 X-Real-IP
+	realIPs []string
 }
 
 func (g *fakeNodeGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +44,9 @@ func (g *fakeNodeGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	reply := func(status int, v any) {
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(v)
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/nodes/enrollments") {
+		g.realIPs = append(g.realIPs, r.Header.Get("X-Real-IP"))
 	}
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/nodes/enrollments":
@@ -105,14 +110,19 @@ func TestEnrollAndSignedGetPassGatewayVerification(t *testing.T) {
 	srv := httptest.NewServer(gw)
 	defer srv.Close()
 	nc := newNodeClient(srv.URL, "loadtest", strings.Repeat("1", 64))
+	nc.ipHeaders = []string{"X-Real-IP"}
 	id, err := newNodeIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	res, err := nc.enroll(ctx, id, "loadtest-ci-abc123-n0001", "bootstrap", fakeNodeID, "lt-host-0001")
+	res, err := nc.enroll(ctx, id, "loadtest-ci-abc123-n0001", "bootstrap", fakeNodeID, "lt-host-0001", "203.0.113.7")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// 接入两步都带节点所在服务器的虚构地址，nginx 的每 IP 限流才按节点各算各的
+	if len(gw.realIPs) != 2 || gw.realIPs[0] != "203.0.113.7" || gw.realIPs[1] != "203.0.113.7" {
+		t.Fatalf("enrollment X-Real-IP = %v, want the node's server address on both steps", gw.realIPs)
 	}
 	if gw.commits != 1 || res.Serial != 3 || res.ConfigKeyID != "kid" || res.ConfigPublicKey != "cHVi" {
 		t.Fatalf("unexpected enrollment result %+v (commits %d)", res, gw.commits)
@@ -138,7 +148,7 @@ func TestEnrollRefusesForeignNode(t *testing.T) {
 	defer srv.Close()
 	id, _ := newNodeIdentity()
 	_, err := newNodeClient(srv.URL, "loadtest", strings.Repeat("1", 64)).
-		enroll(context.Background(), id, "n", "bootstrap", "33333333-3333-7333-8333-333333333333", "h")
+		enroll(context.Background(), id, "n", "bootstrap", "33333333-3333-7333-8333-333333333333", "h", "")
 	if err == nil || !strings.Contains(err.Error(), "landed on node") {
 		t.Fatalf("enrollment that lands on another node must fail, got %v", err)
 	}

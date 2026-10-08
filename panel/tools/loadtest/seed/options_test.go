@@ -4,6 +4,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testTenant = "00000000-0000-7000-8000-000000000001"
@@ -120,5 +121,47 @@ func TestValidBase(t *testing.T) {
 	}
 	if !validBase("https://panel.test/entry", true) {
 		t.Fatal("admin base may carry the admin entry prefix")
+	}
+}
+
+func TestParseOptionsAdminWorkersAndHeaders(t *testing.T) {
+	base := []string{"-users", "10000", "-nodes", "1000", "-label", "10k", "-out", "m.json"}
+	o, err := parseOptions(base, fakeEnv(smokeEnv()), testTenant, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.AdminWorkers != 1 || len(o.IPHeaders) != 1 || o.IPHeaders[0] != "X-Real-IP" {
+		t.Fatalf("defaults: workers=%d headers=%v", o.AdminWorkers, o.IPHeaders)
+	}
+	o, err = parseOptions(append([]string{"-admin-workers", "8", "-ip-headers", "X-Real-IP, CF-Connecting-IP"}, base...),
+		fakeEnv(smokeEnv()), testTenant, io.Discard)
+	if err != nil || o.AdminWorkers != 8 || len(o.IPHeaders) != 2 || o.IPHeaders[1] != "CF-Connecting-IP" {
+		t.Fatalf("workers/headers not parsed: %+v %v", o, err)
+	}
+	for _, bad := range []string{"0", "-1", "33"} {
+		if _, err := parseOptions(append([]string{"-admin-workers", bad}, base...), fakeEnv(smokeEnv()), testTenant, io.Discard); err == nil {
+			t.Fatalf("-admin-workers %s must be refused", bad)
+		}
+	}
+	if _, err := parseOptions(append([]string{"-ip-headers", " , "}, base...), fakeEnv(smokeEnv()), testTenant, io.Discard); err == nil {
+		t.Fatal("an empty -ip-headers list must be refused")
+	}
+}
+
+// 1000 个节点、单会话、缺省节流约 8.7 分钟，在接入令牌 30 分钟的寿命内；节流放慢到 1 秒就不行，要在动手前拒绝。
+func TestParseOptionsRefusesNodeCreationLongerThanTokenLifetime(t *testing.T) {
+	args := []string{"-users", "10000", "-nodes", "1000", "-label", "10k", "-out", "m.json"}
+	if est := nodeCreateEstimate(1000, 1, defaultAdminInterval); est < 8*time.Minute || est > 9*time.Minute {
+		t.Fatalf("1000 nodes on one session estimate %s, want about 8.7 minutes", est)
+	}
+	if _, err := parseOptions(args, fakeEnv(smokeEnv()), testTenant, io.Discard); err != nil {
+		t.Fatalf("the documented single-session default must still pass for 1000 nodes: %v", err)
+	}
+	_, err := parseOptions(append([]string{"-admin-interval", "1s"}, args...), fakeEnv(smokeEnv()), testTenant, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "-admin-workers") {
+		t.Fatalf("slow pacing past the token lifetime must be refused with a hint, got %v", err)
+	}
+	if _, err := parseOptions(append([]string{"-admin-interval", "1s", "-admin-workers", "8"}, args...), fakeEnv(smokeEnv()), testTenant, io.Discard); err != nil {
+		t.Fatalf("8 sessions bring it back under the limit: %v", err)
 	}
 }

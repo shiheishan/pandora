@@ -72,52 +72,57 @@ func createCatalog(ctx context.Context, admin *adminClient, ns namespace, o *opt
 // serverCount 是放下 nodes 个节点、每台 perServer 个所需的服务器数。
 func serverCount(nodes, perServer int) int { return (nodes + perServer - 1) / perServer }
 
-func createServers(ctx context.Context, admin *adminClient, ns namespace, count, perServer int) ([]string, error) {
-	ids := make([]string, 0, count)
-	for j := 0; j < count; j++ {
-		out, err := admin.call(ctx, http.MethodPost, "/v1/servers", jsonObject{
+func createServers(ctx context.Context, admin *adminPool, ns namespace, count, perServer int) ([]string, error) {
+	ids := make([]string, count)
+	err := admin.forEach(ctx, count, func(ctx context.Context, c *adminClient, j int) error {
+		out, err := c.call(ctx, http.MethodPost, "/v1/servers", jsonObject{
 			"name": ns.ServerName(j), "hostname": fmt.Sprintf("s%04d.%s.%s", j+1, ns.base(), loadtestEmailDomain),
 			"public_ipv4": serverIP(j), "capacity_nodes": perServer,
 		}, http.StatusCreated)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		id, err := str(out, "id")
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
+		ids[j], err = str(out, "id")
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
 	return ids, nil
 }
 
 // createNodes 建草稿节点并逐个签发接入令牌（按节点签发：令牌哈希绑节点名，按服务器签发会拿服务器名当节点名）。
-func createNodes(ctx context.Context, admin *adminClient, ns namespace, poolID string, serverIDs []string, count, perServer int) ([]*seededNode, error) {
-	nodes := make([]*seededNode, 0, count)
-	for i := 0; i < count; i++ {
+// 各节点互不依赖，多会话时按下标并行；结果按节点序号排好。
+func createNodes(ctx context.Context, admin *adminPool, ns namespace, poolID string, serverIDs []string, count, perServer int) ([]*seededNode, error) {
+	nodes := make([]*seededNode, count)
+	err := admin.forEach(ctx, count, func(ctx context.Context, c *adminClient, i int) error {
 		n := &seededNode{Index: i, Name: ns.NodeName(i), ServerID: serverIDs[i/perServer], RealIP: serverIP(i / perServer), Port: seedBasePort + i}
-		out, err := admin.call(ctx, http.MethodPost, "/v1/nodes", jsonObject{
+		out, err := c.call(ctx, http.MethodPost, "/v1/nodes", jsonObject{
 			"name": n.Name, "server_id": n.ServerID, "pool_id": poolID, "node_type": seedNodeType,
 			"server_host": ns.NodeHost(i), "server_port": n.Port, "kernel": "auto", "traffic_rate": 1,
 			"display_name":    fmt.Sprintf("LT %s %04d", ns.Label, i+1),
 			"protocol_config": jsonObject{"method": seedNodeMethod},
 		}, http.StatusCreated)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if n.ID, err = str(out, "id"); err != nil {
-			return nil, err
+			return err
 		}
-		tok, err := admin.call(ctx, http.MethodPost, "/v1/nodes/bootstrap-token", jsonObject{
+		tok, err := c.call(ctx, http.MethodPost, "/v1/nodes/bootstrap-token", jsonObject{
 			"node_name": n.Name, "ttl_minutes": bootstrapTTLMinutes, "server_id": n.ServerID,
 		}, http.StatusCreated)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if n.token, err = str(tok, "token"); err != nil {
-			return nil, err
+			return err
 		}
-		nodes = append(nodes, n)
+		nodes[i] = n
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return nodes, nil
 }
@@ -139,7 +144,7 @@ func enrollNodes(ctx context.Context, nc *nodeClient, nodes []*seededNode, worke
 				id, err := newNodeIdentity()
 				var res *enrollResult
 				if err == nil {
-					res, err = nc.enroll(ctx, id, n.Name, n.token, n.ID, fmt.Sprintf("lt-host-%04d", n.Index+1))
+					res, err = nc.enroll(ctx, id, n.Name, n.token, n.ID, fmt.Sprintf("lt-host-%04d", n.Index+1), n.RealIP)
 				}
 				if err != nil {
 					mu.Lock()
@@ -166,7 +171,8 @@ func enrollNodes(ctx context.Context, nc *nodeClient, nodes []*seededNode, worke
 }
 
 // activateNodes 一步上线：行版本直接从库里读（接入推过两次生命周期），省掉逐个列节点的后台请求。
-func activateNodes(ctx context.Context, admin *adminClient, pool *db.Pool, tenantID string, nodes []*seededNode) error {
+// 各节点互不依赖，多会话时并行。
+func activateNodes(ctx context.Context, admin *adminPool, pool *db.Pool, tenantID string, nodes []*seededNode) error {
 	ids := make([]string, len(nodes))
 	for i, n := range nodes {
 		ids[i] = n.ID
@@ -191,12 +197,13 @@ func activateNodes(ctx context.Context, admin *adminClient, pool *db.Pool, tenan
 	if err != nil {
 		return fmt.Errorf("read node row versions: %w", err)
 	}
-	for _, n := range nodes {
+	return admin.forEach(ctx, len(nodes), func(ctx context.Context, c *adminClient, i int) error {
+		n := nodes[i]
 		v, ok := versions[n.ID]
 		if !ok {
 			return fmt.Errorf("node %s (%s) vanished before activation", n.Name, n.ID)
 		}
-		out, err := admin.call(ctx, http.MethodPost, "/v1/nodes/"+n.ID+"/activate", jsonObject{"row_version": v})
+		out, err := c.call(ctx, http.MethodPost, "/v1/nodes/"+n.ID+"/activate", jsonObject{"row_version": v})
 		if err != nil {
 			return err
 		}
@@ -209,8 +216,8 @@ func activateNodes(ctx context.Context, admin *adminClient, pool *db.Pool, tenan
 		if w := lookup(out, "warnings"); w != nil {
 			return fmt.Errorf("node %s activated with warnings: %s", n.Name, mustJSON(w))
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // publishPlan 发布套餐草稿版本：两个乐观锁取自详情，与后台「版本」页的发布对话框同一个请求。
