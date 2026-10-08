@@ -459,13 +459,15 @@ function Refusal({ refusal, onCleared }: { refusal: RefusalInfo; onCleared: () =
             size="sm"
             busy={cancel.isPending}
             onClick={() =>
-              cancel.mutate(refusal.orderId!, {
-                onSuccess: () => {
+              // 用 mutateAsync 而不是 mutate 的回调：取消成功会让报价重新拉取，报价阶段的这个提示框随之卸载，
+              // 卸载后 mutate 的回调不再触发（提示「已取消」会时有时无）；promise 照样兑现
+              void cancel.mutateAsync(refusal.orderId!).then(
+                () => {
                   toast('那张单已取消，没有扣钱。现在可以重新下单了')
                   onCleared()
                 },
-                onError: (e) => toast(e.message || '没取消成，请稍后再试', 'danger'),
-              })
+                (e: unknown) => toast((e instanceof Error && e.message) || '没取消成，请稍后再试', 'danger'),
+              )
             }
           >
             取消它
