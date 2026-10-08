@@ -47,12 +47,12 @@ SELECT q.subscription_id, q.metric, q.period, q.period_start, q.period_end,
  WHERE s.user_id = :'uid'
  ORDER BY q.subscription_id, q.metric, q.period_start DESC;
 
-\echo == 4 流量包（挂用户不挂订阅；永不过期；剩余 = granted_bytes - consumed_bytes）
-SELECT id, source, source_id, granted_bytes, consumed_bytes,
+\echo == 4 流量包（00137 起挂在某一份订阅上，subscription_id 为空 = 未分配；永不过期；剩余 = granted_bytes - consumed_bytes；转移经过见 purchase-user-ledger.sql）
+SELECT id, subscription_id, source, source_id, granted_bytes, consumed_bytes,
        granted_bytes - consumed_bytes AS remaining_bytes, created_at
   FROM traffic_pack_grants
  WHERE user_id = :'uid'
- ORDER BY created_at;
+ ORDER BY subscription_id NULLS LAST, created_at;
 
 \echo == 5 余额账户（用户科目是贷方科目，余额 = -balance_signed；user_balance_hold 是下单时冻结的部分）
 SELECT account_type, currency, -balance_signed AS balance, status

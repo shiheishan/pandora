@@ -47,13 +47,16 @@ bash .claude/skills/db-query/scripts/q.sh [-t 目标] [-v 名=值]... .claude/sk
 | `identity-check.sql` | 超→app | tenant | 现在是谁、RLS 挡没挡 |
 | `sub-status.sql` | app | tenant | 订阅按状态分布；已到期没被扫成 expired 的；expired 里还能原地续费的 |
 | `sub-expiring.sql` | app | days=7 | 未来 N 天到期的订阅清单与按日汇总 |
-| `user-overview.sql` | app | uid 或 email | 一个用户的账号、订阅、配额、流量包、余额与冻结额、最近订单、在线设备 |
+| `user-overview.sql` | app | uid 或 email | 一个用户的账号、订阅、配额、流量包（挂在哪份）、余额与冻结额、最近订单、在线设备 |
 | `orders-status.sql` | app | days=7 | 订单状态分布；过期没清、processing 卡住、预留到期没释放 |
 | `ledger-reconcile.sql` | app | timeout | 账本漂移、余额方向、已付订单缺分录、收入与订单总额、渠道实收与应付 |
 | `nodes-online.sql` | app | tenant | 节点在线数（心跳 90 秒内）、应在线却失联、degraded |
 | `audit-chain-links.sql` | app | timeout | 审计链的行数、序号连续、prev_hash 接得上 |
 | `slow-queries.sql` | 超 | n=20 | pg_stat_statements 总耗时/平均/调用数前 N |
 | `connections.sql` | 超 | 无 | 连接数与预算、按用户和状态、长事务、锁等待 |
+| `purchase-user-ledger.sql` | app | uid 或 email、n=20 | 一个用户的购买与余额对账：每份订阅、流量包挂在哪份及转移经过、订单金额拆解、支付、余额流水、卡密兑换、相关审计 |
+| `pack-legacy-pre.sql` | app | tenant | 升级到 00137 前：有流量包余量的人、其中多份在用订阅的人、靠共用流量包才下发的订阅（只适用于 00137 之前的库） |
+| `pack-legacy-impact.sql` | app | tenant | 升级到 00137–00139 后：00138 回填挂到哪份、受影响老用户、因此停发的订阅、还能「挪一次」的订阅 |
 
 例：
 
