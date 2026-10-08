@@ -192,7 +192,11 @@ export function usageDays(count: number, total: number, now = Date.now()): Array
     return { date: ymdInZone(t), weight: i === count - 1 ? base * 0.45 : base }
   })
   const sum = raw.reduce((s, d) => s + d.weight, 0)
-  return raw.map((d) => ({ date: d.date, bytes: Math.round((d.weight / sum) * total) }))
+  const days = raw.map((d) => ({ date: d.date, bytes: Math.round((d.weight / sum) * total) }))
+  // 四舍五入的零头补到今天，合计正好等于 total（原型场景的「已用 20G」与按流量折的钱才对得上）
+  const drift = total - days.reduce((n, d) => n + d.bytes, 0)
+  days[days.length - 1]!.bytes += drift
+  return days
 }
 
 /** 某个 YYYY-MM-DD 在 MOCK_TIMEZONE（+08:00，无夏令时）的零点 */

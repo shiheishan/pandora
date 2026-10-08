@@ -147,6 +147,12 @@ describe('确认页的钱（原型 S7 / S7b / S7c 与最低额）', () => {
     expect(s.sum.text).toBe('差价 ¥0.30 不到支付最低额，这次免了')
     expect(s.needsMethod).toBe(false)
     expect(s.button).toBe('换成进阶版')
+    expect(s.tooSmall).toBe(false)
+    // 收窄后：新买、续费、流量包的应付低于最低额且余额不够，不免，先充值或用余额
+    const tiny = row({ total: 30, with_balance: split({ payable: 30, small_due: true }), without_balance: split({ payable: 30, small_due: true }) })
+    const t = payCopy(quote([tiny]), tiny, tiny.with_balance, true, '续费', methods)
+    expect(t).toMatchObject({ tooSmall: true, needsMethod: false, button: '先充值或用余额付' })
+    expect(t.sum.text).toBe('这单要付 ¥0.30，低于支付最低额 ¥1.00，在线付不了。先给钱包充值，或打开余额付')
   })
 
   it('不用付钱、还退余额', () => {

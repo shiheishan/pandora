@@ -108,13 +108,16 @@ function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: b
     credit_detail: spec.credit?.detail ?? null,
     total,
     refund,
-    with_balance: waiveSmallDue(applyBalance(total, state.balance, state.balance, MIN_PAYMENT)),
-    without_balance: waiveSmallDue(applyBalance(total, state.balance, 0, MIN_PAYMENT)),
+    // 只有换套餐抵扣后的零头能免（A 路收窄）；新买、续费、流量包保留 small_due、下单回 422
+    with_balance: maybeWaive(applyBalance(total, state.balance, state.balance, MIN_PAYMENT), spec.credit !== null),
+    without_balance: maybeWaive(applyBalance(total, state.balance, 0, MIN_PAYMENT), spec.credit !== null),
     period_start: spec.start === null ? null : new Date(spec.start).toISOString(),
     period_end: spec.start === null || !spec.price ? null : new Date(addInterval(spec.start, spec.price)).toISOString(),
     previous_end: spec.sub ? spec.sub.current_period_end : null,
   }
 }
+
+const maybeWaive = (b: Balance, isChange: boolean) => (isChange ? waiveSmallDue(b) : b)
 
 const cnyPrices = (plan: CatalogPlan) => plan.prices.filter((p) => p.currency === 'CNY')
 function ownedSub(state: PortalState, id: unknown): SubFixture {
@@ -219,7 +222,8 @@ export function settle(state: PortalState, rows: QuoteRow[], priceId: string | n
   if (!hit) throw new BillingError(409, 'conflict', '所选价格已下架，请重新选择')
   const want = body.use_balance
   if (want !== undefined && (typeof want !== 'number' || !Number.isInteger(want))) throw new BillingError(422, 'validation_failed', '参数不合法', { use_balance: '须为整数（分）' })
-  const balance = waiveSmallDue(applyBalance(hit.total, state.balance, (want as number | undefined) ?? 0, MIN_PAYMENT))
+  const balance = maybeWaive(applyBalance(hit.total, state.balance, (want as number | undefined) ?? 0, MIN_PAYMENT), hit.credit_detail !== null)
+  if (balance.small_due && balance.waived === 0) throw new BillingError(422, 'validation_failed', '这单金额低于支付最低额，在线付不了；先给钱包充值，或打开余额付')
   const expect = body.expect as Json | undefined
   if (expect !== undefined) {
     if (!expect || typeof expect !== 'object') throw new BillingError(422, 'validation_failed', '参数不合法', { expect: '须为对象' })

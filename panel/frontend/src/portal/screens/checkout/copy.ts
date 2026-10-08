@@ -187,6 +187,8 @@ export interface PayCopy {
   /** 要选付款方式 */
   needsMethod: boolean
   button: string
+  /** 应付低于支付最低额、余额又不够、这单又不能免（只有换套餐的零头能免）：在线付不了，先充值或用余额 */
+  tooSmall: boolean
 }
 
 /** methods：付款方式的名字（「支付宝、微信支付」），写进最低额的说明 */
@@ -202,17 +204,22 @@ export function payCopy(quote: Quote, row: QuoteRow, split: BalanceSplit, useBal
       : null
   let sum: PayCopy['sum']
   if (row.total === 0) sum = { text: '这次不用付钱', ...(row.refund > 0 ? { after: `，多出的 ${money(row.refund)} 退到钱包余额` } : {}) }
-  else if (split.small_due) sum = { text: `差价 ${money(split.waived)} 不到支付最低额，这次免了${split.applied > 0 ? `；余额抵 ${money(split.applied)}` : ''}` }
+  // SmallDue 收窄（A 路审查）：换套餐抵扣后的零头免掉（waived>0）；新买、续费、流量包不免，报价带标记、下单 422。
+  // 标记的字段名 A 还没定，先按「small_due 而没免」认，定了再换
+  else if (split.small_due && split.waived > 0) sum = { text: `差价 ${money(split.waived)} 不到支付最低额，这次免了${split.applied > 0 ? `；余额抵 ${money(split.applied)}` : ''}` }
+  else if (split.small_due) sum = { text: `这单要付 ${money(split.payable)}，低于支付最低额 ${money(quote.min_payment)}，在线付不了。先给钱包充值，或打开余额付` }
   else if (split.applied > 0 && split.payable > 0) sum = { text: `余额抵 ${money(split.applied)}，还需支付 `, strong: money(split.payable) }
   else if (split.applied > 0) sum = { text: '余额够付，', strong: money(split.applied), after: ' 全部用余额' }
   else sum = { text: '要付 ', strong: money(split.payable) }
+  const tooSmall = split.small_due && split.waived === 0 && split.payable > 0
   const needsMethod = split.payable > 0 && !split.small_due
-  const button = row.total === 0 || split.small_due ? verb : split.payable > 0 ? `${verb}，付 ${money(split.payable)}` : `${verb}，用余额付 ${money(split.applied)}`
+  const button = tooSmall ? '先充值或用余额付' : row.total === 0 || split.small_due ? verb : split.payable > 0 ? `${verb}，付 ${money(split.payable)}` : `${verb}，用余额付 ${money(split.applied)}`
   return {
     balanceLine,
     sum,
     keptNote: split.kept > 0 ? `${methods || '在线付款'}最低要付 ${money(quote.min_payment)}，所以这次余额只用 ${money(split.applied)}，剩下 ${money(split.kept)} 还在余额里。` : undefined,
     needsMethod,
     button,
+    tooSmall,
   }
 }

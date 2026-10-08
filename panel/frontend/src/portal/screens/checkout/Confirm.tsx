@@ -255,7 +255,7 @@ function Priced({
   const methodList = methods.data ?? []
   const method = methodList.find((m) => methodKey(m) === methodChoice) ?? methodList[0] ?? null
   const pay = payCopy(quote, row, split, useBalance, copy.verb, methodList.map((m) => m.label).join('、'))
-  const blocked = required && !name.trim() ? '先给它起个名字' : pay.needsMethod && !method ? '暂时没有能用的付款方式' : null
+  const blocked = pay.tooSmall ? pay.button : required && !name.trim() ? '先给它起个名字' : pay.needsMethod && !method ? '暂时没有能用的付款方式' : null
   const periods = target.kind !== 'pack' && tiers.length > 0
 
   const create = useMutation({
@@ -408,6 +408,11 @@ function Priced({
         <Button variant="primary" block busy={busy} disabled={blocked !== null} onClick={() => void submit()} id="btn-submit">
           {blocked ?? pay.button}
         </Button>
+        {pay.tooSmall && (
+          <a className={flowCss.textButton} href={href('/wallet')}>
+            去钱包充值 →
+          </a>
+        )}
         {copy.change && <p className={flowCss.canChange}>↺ {copy.change}</p>}
       </div>
       {copy.alt && <Alt href={copy.alt.href}>{copy.alt.text}</Alt>}
