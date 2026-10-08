@@ -24,7 +24,7 @@ func validateRealityFields(fields map[string]string, dest string,
 
 	dest = strings.TrimSpace(dest)
 	if dest == "" {
-		fields["protocol_config.dest"] = "必填：借用握手的真实站点，如 www.microsoft.com:443"
+		fields["protocol_config.dest"] = "必填：借用握手的真实站点，如 www.apple.com:443（需支持 TLS 1.3 + X25519）"
 	} else {
 		host, port, err := net.SplitHostPort(dest)
 		if err != nil || host == "" {

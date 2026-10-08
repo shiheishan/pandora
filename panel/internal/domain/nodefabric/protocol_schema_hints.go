@@ -28,7 +28,9 @@ func withCertHints(in map[string]string) map[string]string {
 
 // withRealityHints 给 REALITY 的 dest / server_name / short_id 补说明。
 func withRealityHints(in map[string]string) map[string]string {
-	in["reality_settings.dest"] = "借用握手的真实公网站点，域名:端口，例如 www.example.com:443；不能填 IP、localhost 或内网域名。"
+	// 示例站点取 node-e2e（2026-10-08）在 pdnd 上实测可用的；www.microsoft.com 这类证书链大、
+	// 单条握手记录超出旧版 pdnd 缓冲上限的站点不能当示例。
+	in["reality_settings.dest"] = "借用握手的真实公网站点，域名:端口，例如 www.apple.com:443；dest 需支持 TLS 1.3 + X25519。不能填 IP、localhost 或内网域名。"
 	in["reality_settings.server_name"] = "可填多个，用逗号分隔；每个用户的订阅按固定规则分到其中一个，分散特征。"
 	in["reality_settings.short_id"] = "必填，可填多个（逗号分隔），每个不超过 16 位十六进制；每个用户的订阅分到其中一个。"
 	return in
