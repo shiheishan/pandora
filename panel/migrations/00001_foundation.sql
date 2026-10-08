@@ -180,6 +180,10 @@ COMMENT ON TABLE idempotency_keys IS
 -- +goose StatementEnd
 
 -- +goose Down
+-- 回到空库：删掉本迁移建的表、域、函数、app schema，以及 Up 装的三个扩展。
+-- 扩展不带 CASCADE：还有别的对象（或运维另装的东西）依赖它们时宁可失败，不连带删。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
 
 -- +goose StatementBegin
 DROP TABLE IF EXISTS idempotency_keys;
@@ -193,4 +197,7 @@ DROP FUNCTION IF EXISTS app.set_updated_at();
 DROP FUNCTION IF EXISTS app.current_actor_id();
 DROP FUNCTION IF EXISTS app.current_tenant_id();
 DROP SCHEMA IF EXISTS app;
+DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS pgcrypto;
+DROP EXTENSION IF EXISTS citext;
 -- +goose StatementEnd
