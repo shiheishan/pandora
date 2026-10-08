@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -55,23 +56,16 @@ func (g *GiftGranter) GrantBalance(ctx context.Context, tx pgx.Tx,
 	})
 }
 
-// activeSubscription 取用户当前生效的订阅。
-//
-// 流量和到期这类奖励只能落在某个订阅上。用户没有生效订阅时不能静默跳过 ——
-// 那会让「兑换成功」和「什么都没变」同时发生。
-func activeSubscription(ctx context.Context, tx pgx.Tx, tenantID, userID string) (string, error) {
-	var subID string
-	err := tx.QueryRow(ctx, `
-		SELECT id::text FROM subscriptions
-		 WHERE tenant_id=$1 AND user_id=$2::uuid AND status='active'
-		 ORDER BY current_period_end DESC NULLS LAST
-		 LIMIT 1 FOR UPDATE`, tenantID, userID).Scan(&subID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", httpx.New(httpx.CodeValidationFailed,
-			"你当前没有生效中的订阅，这类奖励需要先有一个套餐才能发放")
-	}
-	return subID, err
+// Placements 给出礼品卡在该用户名下的落点选项与默认 Key（规则 purchase.Options，展示数据见
+// placementsTx）。兑换前的 preview 与兑换时都在礼品卡自己的事务里调。
+func (g *GiftGranter) Placements(ctx context.Context, tx pgx.Tx, tenantID, userID string,
+	offer purchase.Offer) ([]purchase.Placement, string, error) {
+	return placementsTx(ctx, tx, tenantID, userID, offer, "")
 }
+
+// errNoSubscriptionForReward 是加时长、重置这类奖励没有可落的那一份（原型：先续费再来兑换，卡不会过期）。
+var errNoSubscriptionForReward = httpx.New(httpx.CodeValidationFailed,
+	"现在没有在用的套餐，这张卡暂时用不了。先续费再来兑换，卡不会过期")
 
 // GrantTraffic 把礼品卡送的流量发成一笔流量包余额（D-E-1）。
 //
@@ -80,31 +74,17 @@ func activeSubscription(ctx context.Context, tx pgx.Tx, tenantID, userID string)
 // 是同一笔余额：挂用户、永不过期、用完为止、每周期先扣套餐额度再扣它。
 // 没有生效订阅也能先领着 —— 余额在用户身上，等有了订阅再用。
 func (g *GiftGranter) GrantTraffic(ctx context.Context, tx pgx.Tx,
-	tenantID, userID, codeID string, bytes int64) error {
+	tenantID, userID, subID, codeID string, bytes int64) error {
 
 	if bytes <= 0 {
 		return errors.New("gift traffic must be positive")
 	}
-	_, err := GrantTrafficPackTx(ctx, tx, tenantID, userID, "gift_card", codeID, bytes)
-	return err
-}
-
-// extendableSubscription 取用户可以加时长的那条订阅：生效中、试用中优先，其次是
-// 过期 30 天内（原地续费窗口没关）的，各自按到期最晚。口径与 subscriptionExtendable 一致。
-func extendableSubscription(ctx context.Context, tx pgx.Tx, tenantID, userID string) (string, error) {
-	var subID string
-	err := tx.QueryRow(ctx, `
-		SELECT id::text FROM subscriptions
-		 WHERE tenant_id=$1 AND user_id=$2::uuid
-		   AND (status IN ('active','trialing')
-		        OR (status = 'expired' AND renewal_closed_at IS NULL))
-		 ORDER BY (status <> 'expired') DESC, current_period_end DESC NULLS LAST
-		 LIMIT 1 FOR UPDATE`, tenantID, userID).Scan(&subID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", httpx.New(httpx.CodeValidationFailed,
-			"你当前没有可以延长的订阅（生效中，或过期不满 30 天），这类奖励需要先有一个套餐")
+	var sub *string
+	if subID != "" {
+		sub = &subID
 	}
-	return subID, err
+	_, err := GrantTrafficPackTx(ctx, tx, tenantID, userID, sub, "gift_card", codeID, bytes)
+	return err
 }
 
 // ExtendExpiry 把用户订阅的到期时间往后推；已过期 30 天内或试用中的订阅会被救回。
@@ -113,12 +93,16 @@ func extendableSubscription(ctx context.Context, tx pgx.Tx, tenantID, userID str
 // 救回时状态回到 active、流量按天数折算（规则 2）。基准取「现在」和「原到期时间」
 // 里更晚的那个，规则见 extendSubscriptionTx。
 func (g *GiftGranter) ExtendExpiry(ctx context.Context, tx pgx.Tx,
-	tenantID, userID string, days int) error {
+	tenantID, userID, subID string, days int) error {
 
 	if days <= 0 {
 		return errors.New("gift expire days must be positive")
 	}
-	subID, err := extendableSubscription(ctx, tx, tenantID, userID)
+	if subID == "" {
+		return errNoSubscriptionForReward
+	}
+	err := lockPlacementSubscription(ctx, tx, tenantID, userID,
+		purchase.Option{Kind: purchase.KindExtendDays, SubscriptionID: subID})
 	if err != nil {
 		return err
 	}
@@ -131,10 +115,13 @@ func (g *GiftGranter) ExtendExpiry(ctx context.Context, tx pgx.Tx,
 
 // ResetQuota 把本周期已用流量清零。
 func (g *GiftGranter) ResetQuota(ctx context.Context, tx pgx.Tx,
-	tenantID, userID string) error {
+	tenantID, userID, subID string) error {
 
-	subID, err := activeSubscription(ctx, tx, tenantID, userID)
-	if err != nil {
+	if subID == "" {
+		return errNoSubscriptionForReward
+	}
+	if err := lockPlacementSubscription(ctx, tx, tenantID, userID,
+		purchase.Option{Kind: purchase.KindResetTraffic, SubscriptionID: subID}); err != nil {
 		return err
 	}
 
@@ -169,18 +156,16 @@ func (g *GiftGranter) ResetQuota(ctx context.Context, tx pgx.Tx,
 		"traffic.bytes", "gift_card", before, nil, "")
 }
 
-// GrantPlan 兑换套餐卡，codeID 是这张卡密。
+// GrantPlan 兑换套餐卡，codeID 是这张卡密，按 choice 落地（用户 2026-10-07 定：落点由人选）：
 //
-// 用户已有订阅时不再新开订阅、换链接（2026-10-07 规则）：
+//	renew   在同款那份上续一期（w5expiry 规则 3）：周期与流量和付费续费完全一样
+//	        （renewSubscriptionTx），沿用原套餐版本
+//	change  把那份换成卡上的套餐（grantPlanChange）：与门户改套餐同一份折算与履约，卡算 0 元，
+//	        原套餐的剩余价值全额退进余额（00134 的守卫照常核对）
+//	new     开通一份新订阅（grantPlanDirect）
 //
-//	同一套餐（生效中，或过期 30 天内）  在原订阅上续一期（w5expiry 规则 3）：周期与流量和
-//	                                   付费续费完全一样（renewSubscriptionTx），沿用原套餐版本
-//	别的套餐（同样的状态范围）          在原订阅上换成卡上的套餐（grantPlanChange）：与门户改
-//	                                   套餐同一份折算与履约，卡算 0 元，原套餐的剩余价值全额
-//	                                   退进余额
-//
-// 链接都不变。用户有多条订阅时，同套餐的优先续费，否则按 planChangeTargetSubscription
-// 的次序选一条换（生效中的优先，其次到期最晚）。没有可续可换的订阅时照旧开通一条新订阅。
+// choice 在这个事务里按当前候选重新 Match：选项变了回 422，卡不会被用掉。choice 为零值时
+// 只有一个选项就用它（只有一份同款、或一份都没有时的新开），否则要求先选。
 //
 // 这里没有复用 CreateManualOrder：那个方法自己开事务，而兑换必须
 // 和标记码已用在同一个事务里。硬凑会得到一个「订单建好了但码没作废」
@@ -189,8 +174,8 @@ func (g *GiftGranter) ResetQuota(ctx context.Context, tx pgx.Tx,
 // 返回值拆成基本类型（订阅 ID、落地方式 PlanGrant*、退进余额的金额与币种）：giftcard 经
 // 自己的 Granter 接口调用，不引用计费域的类型。
 func (g *GiftGranter) GrantPlan(ctx context.Context, tx pgx.Tx,
-	tenantID, userID, codeID, planID, priceID, reason string) (string, string, int64, string, error) {
-	r, err := g.grantPlan(ctx, tx, tenantID, userID, codeID, planID, priceID)
+	tenantID, userID, codeID, planID, priceID string, choice purchase.Choice) (string, string, int64, string, error) {
+	r, err := g.grantPlan(ctx, tx, tenantID, userID, codeID, planID, priceID, choice)
 	if err != nil {
 		return "", "", 0, "", err
 	}
@@ -198,29 +183,36 @@ func (g *GiftGranter) GrantPlan(ctx context.Context, tx pgx.Tx,
 }
 
 func (g *GiftGranter) grantPlan(ctx context.Context, tx pgx.Tx,
-	tenantID, userID, codeID, planID, priceID string) (PlanGrant, error) {
+	tenantID, userID, codeID, planID, priceID string, choice purchase.Choice) (PlanGrant, error) {
 	if planID == "" {
 		return PlanGrant{}, errors.New("gift plan id is required")
 	}
-	subID, err := renewableSamePlanSubscription(ctx, tx, tenantID, userID, planID, true)
+	opt, ok, err := resolvePlacementTx(ctx, tx, tenantID, userID,
+		purchase.Offer{Kind: purchase.OfferPlan, PlanID: planID, PriceID: priceID}, &choice)
 	if err != nil {
 		return PlanGrant{}, err
 	}
-	if subID != "" {
-		if err := g.s.grantPlanRenewal(ctx, tx, tenantID, userID, subID, planID, priceID); err != nil {
+	if !ok {
+		return PlanGrant{}, errors.New("plan offer has no placement option")
+	}
+	if opt.Kind != purchase.KindNew {
+		if err := lockPlacementSubscription(ctx, tx, tenantID, userID, opt); err != nil {
 			return PlanGrant{}, err
 		}
-		return PlanGrant{SubscriptionID: subID, Mode: PlanGrantRenewed}, nil
 	}
-	if subID, err = planChangeTargetSubscription(ctx, tx, tenantID, userID, true); err != nil {
-		return PlanGrant{}, err
+	switch opt.Kind {
+	case purchase.KindRenew:
+		if err := g.s.grantPlanRenewal(ctx, tx, tenantID, userID, opt.SubscriptionID, planID, priceID); err != nil {
+			return PlanGrant{}, err
+		}
+		return PlanGrant{SubscriptionID: opt.SubscriptionID, Mode: PlanGrantRenewed}, nil
+	case purchase.KindChange:
+		return g.s.grantPlanChange(ctx, tx, tenantID, userID, opt.SubscriptionID, planID, priceID, codeID)
+	default:
+		subID, err := g.s.grantPlanDirect(ctx, tx, tenantID, userID, planID, priceID)
+		if err != nil {
+			return PlanGrant{}, err
+		}
+		return PlanGrant{SubscriptionID: subID, Mode: PlanGrantNew}, nil
 	}
-	if subID != "" {
-		return g.s.grantPlanChange(ctx, tx, tenantID, userID, subID, planID, priceID, codeID)
-	}
-	subID, err = g.s.grantPlanDirect(ctx, tx, tenantID, userID, planID, priceID)
-	if err != nil {
-		return PlanGrant{}, err
-	}
-	return PlanGrant{SubscriptionID: subID, Mode: PlanGrantNew}, nil
 }

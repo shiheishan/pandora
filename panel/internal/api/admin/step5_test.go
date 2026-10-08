@@ -12,7 +12,7 @@ func TestStep5RouteProtections(t *testing.T) {
 		"POST /switches/{code}": {handler: "h.setSwitch",
 			permissions: []string{"platform.settings.write"}, recentReauth: true},
 		// 手动重置直接改变可用额度：权限 → 重认证 → 幂等
-		"POST /users/{id}/traffic-reset": {handler: "h.manualResetTraffic",
+		"POST /subscriptions/{id}/traffic-reset": {handler: "h.manualResetTraffic",
 			permissions: []string{"metering.reset.write"}, recentReauth: true, idempotency: "traffic_manual_reset"},
 		// 全局出站与分流：读挂 node.read；发布影响全部节点，重认证 + 幂等
 		"GET /nodes/routing": {handler: "h.nodeGetGlobalRouting", permissions: []string{"node.read"}},

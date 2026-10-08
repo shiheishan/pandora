@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/giftcard"
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 )
 
@@ -79,11 +80,17 @@ func checkPlanChangeEntriesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) 
 	}
 	// 下单与试算之间过去了几毫秒，剩余价值向下取整可能少 1 分
 	near := func(got, want int64) bool { return got == want || got == want-1 }
-	manual := func(user, settlement, reference, label string) *CreateOrderOutput {
+	// manual 后台开单：落点由人选（购买模型统一），target 是要换掉的那一份，空串表示不带
+	// （只有「另开一份」一个选项时可以不带）
+	manual := func(user, target, settlement, reference, label string) *CreateOrderOutput {
 		claim := orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, operator, CheckoutIdempotencyScope, label)
+		var choice *purchase.Choice
+		if target != "" {
+			choice = &purchase.Choice{Kind: purchase.KindChange, SubscriptionID: target}
+		}
 		return mustOrder(t, label)(p.billing.CreateManualOrder(ctx, p.fx.tenant, CreateManualOrderInput{
 			UserID: user, PlanID: planB, PriceID: priceB, Reason: "后台换套餐测试：" + label,
-			ActorID: operator, Settlement: settlement, Reference: reference, Claim: claim,
+			ActorID: operator, Settlement: settlement, Reference: reference, Claim: claim, Target: choice,
 		}))
 	}
 	type orderRow struct {
@@ -122,7 +129,7 @@ func checkPlanChangeEntriesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) 
 	token1 := p.rotate(u1, s1)
 	want1 := preview(u1, s1)
 	bal1 := balance(u1)
-	grant := manual(u1, ManualSettlementGrant, "", "pc-manual-grant")
+	grant := manual(u1, s1, ManualSettlementGrant, "", "pc-manual-grant")
 	o1 := readOrder(grant.OrderID)
 	if grant.Status != "fulfilled" || grant.TotalAmount != 0 || grant.DiscountAmount != 3000 ||
 		o1.kind != "upgrade" || o1.sub != s1 || o1.createdBy != operator || o1.discount != 3000 ||
@@ -157,7 +164,7 @@ func checkPlanChangeEntriesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) 
 	u2 := newUser("pending")
 	s2 := buyA(u2, "pc-pending-buy")
 	want2 := preview(u2, s2)
-	pending := manual(u2, ManualSettlementPending, "", "pc-manual-pending")
+	pending := manual(u2, s2, ManualSettlementPending, "", "pc-manual-pending")
 	o2 := readOrder(pending.OrderID)
 	if pending.Status != "pending_payment" || o2.kind != "upgrade" || o2.sub != s2 || !near(o2.credit, want2) ||
 		pending.PayableAmount != 3000-o2.credit || o2.audits != 1 {
@@ -173,7 +180,7 @@ func checkPlanChangeEntriesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) 
 	// 线下已收款：建单事务里按线下渠道结清并换套餐
 	u3 := newUser("offline")
 	s3 := buyA(u3, "pc-offline-buy")
-	offline := manual(u3, ManualSettlementOffline, "PC-OFFLINE-"+p.fx.suffix[:8], "pc-manual-offline")
+	offline := manual(u3, s3, ManualSettlementOffline, "PC-OFFLINE-"+p.fx.suffix[:8], "pc-manual-offline")
 	if o3 := readOrder(offline.OrderID); offline.Status != "fulfilled" || o3.kind != "upgrade" || o3.sub != s3 ||
 		o3.refunds != 0 || subsOf(u3) != 1 || planOf(s3) != planB ||
 		scalar(`SELECT count(*) FROM payments WHERE order_id = $1::uuid`, offline.OrderID) != 1 {
@@ -195,7 +202,9 @@ func checkPlanChangeEntriesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) 
 	want4 := preview(u4, s4)
 	bal4 := balance(u4)
 	cards := giftcard.New(p.app, slog.New(slog.NewTextHandler(io.Discard, nil)), p.billing.GiftGranter())
-	res, err := cards.Redeem(ctx, p.fx.tenant, u4, code)
+	// 不同款套餐卡不预选：用户选「换掉这一份」
+	res, err := cards.Redeem(ctx, p.fx.tenant, u4, code,
+		&purchase.Choice{Kind: purchase.KindChange, SubscriptionID: s4})
 	if err != nil || len(res.Summary) != 2 || !strings.Contains(res.Summary[0], "订阅链接不变") ||
 		!strings.Contains(res.Summary[1], "已退回余额") {
 		t.Fatalf("plan card redeem=%+v err=%v", res, err)
@@ -251,7 +260,7 @@ func checkPlanChangeEntriesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) 
 	u5 := newUser("cancelled")
 	s5 := buyA(u5, "pc-cancelled-buy")
 	p.must(`UPDATE subscriptions SET status = 'cancelled' WHERE id = $1::uuid`, s5)
-	fresh := manual(u5, ManualSettlementGrant, "", "pc-manual-cancelled")
+	fresh := manual(u5, "", ManualSettlementGrant, "", "pc-manual-cancelled")
 	if o5 := readOrder(fresh.OrderID); o5.kind != "new" || subsOf(u5) != 2 || planOf(s5) != planA {
 		t.Fatalf("cancelled subscription: order=%+v subs=%d plan=%s", o5, subsOf(u5), planOf(s5))
 	}

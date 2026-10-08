@@ -8,6 +8,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
+	"github.com/aegispanel/aegis/internal/platform/period"
 )
 
 type Service struct {
@@ -56,32 +57,9 @@ func (s *Service) notifyIfFulfilled(ctx context.Context, tenantID, status string
 // 辅助
 //------------------------------------------------------------------------------
 
-// addInterval 按计费周期推进时间。
-//
-// 用 AddDate 而非固定天数：AddDate 处理月末与闰年的规则是
-// 「1月31日 + 1月 = 3月3日（平年）」，这与多数支付平台一致。
-// SUB-010 要求的月末/闰年测试即针对此行为。
+// addInterval 按计费周期推进时间，实现在 platform/period（subscription 也要用）。
 func addInterval(from time.Time, interval string, count int) time.Time {
-	if count <= 0 {
-		count = 1
-	}
-	switch interval {
-	case "day":
-		return from.AddDate(0, 0, count)
-	case "week":
-		return from.AddDate(0, 0, 7*count)
-	case "month":
-		return from.AddDate(0, count, 0)
-	case "quarter":
-		return from.AddDate(0, 3*count, 0)
-	case "year":
-		return from.AddDate(count, 0, 0)
-	case "one_time":
-		// 一次性商品没有周期，给一个远期哨兵值
-		return from.AddDate(100, 0, 0)
-	default:
-		return from.AddDate(0, count, 0)
-	}
+	return period.AddInterval(from, interval, count)
 }
 
 func newOrderNo() (string, error) {

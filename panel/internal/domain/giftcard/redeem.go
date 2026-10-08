@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/plugin"
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -45,7 +46,9 @@ type RedeemResult struct {
 	Summary      []string `json:"summary"` // 给用户看的人话
 }
 
-func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string) (*RedeemResult, error) {
+// Redeem 兑换一张卡。choice 是用户在 preview 给出的选项里选定的落点；选项只有一个时可以不传。
+func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string,
+	choice *purchase.Choice) (*RedeemResult, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if tenantID == "" || userID == "" {
 		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户或用户")
@@ -114,7 +117,7 @@ func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string) (*R
 			}
 
 			// 5) 结算奖励
-			granted, err := s.applyRewards(ctx, tx, tenantID, userID, codeID, t, &out)
+			granted, err := s.applyRewards(ctx, tx, tenantID, userID, codeID, t, choice, &out)
 			if err != nil {
 				return err
 			}
@@ -195,16 +198,42 @@ type grantedRecord struct {
 	OrderID      string `json:"order_id,omitempty"`
 	// PlanMode 是套餐卡的落地方式（new / renewed / changed）；换套餐时 PlanRefund 是原套餐
 	// 退进余额的剩余价值，币种 RefundCurrency
-	PlanMode       string `json:"plan_mode,omitempty"`
+	PlanMode string `json:"plan_mode,omitempty"`
+	// SubscriptionID 是这张卡落到的那一份（加时长、重置、送流量、套餐卡）；送流量没有可挂的
+	// 那一份时为空，余额记为未分配
+	SubscriptionID string `json:"subscription_id,omitempty"`
 	PlanRefund     int64  `json:"plan_refund,omitempty"`
 	RefundCurrency string `json:"refund_currency,omitempty"`
 	LedgerTxnID    string `json:"ledger_txn_id,omitempty"`
 }
 
 func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID string,
-	t Template, out *RedeemResult) (grantedRecord, error) {
+	t Template, choice *purchase.Choice, out *RedeemResult) (grantedRecord, error) {
 
 	var g grantedRecord
+	// 落点（Q8）：选项在本事务里按当前订阅重新取，用户的选择必须还在里面
+	subID := ""
+	var planChoice purchase.Choice
+	if offer, ok := cardOffer(t); ok {
+		views, _, err := s.grant.Placements(ctx, tx, tenantID, userID, offer)
+		if err != nil {
+			return g, err
+		}
+		opt, found, err := resolveChoice(views, choice)
+		if err != nil {
+			return g, err
+		}
+		if found {
+			subID = opt.SubscriptionID
+			planChoice = purchase.Choice{Kind: opt.Kind, SubscriptionID: opt.SubscriptionID}
+		} else if offer.Kind != purchase.OfferTraffic {
+			// 要落到一份订阅上（加时长、重置、盲盒）却一份都没有：在抽奖、发放之前就拒绝，
+			// 同一张卡的抽奖结果不会因为失败回滚再重试而变化（只有纯送流量可以先记为未分配）
+			return g, ErrNoPlacement
+		}
+	}
+	g.SubscriptionID = subID
+
 	r := t.Rewards
 
 	if t.Type == "mystery" {
@@ -223,12 +252,13 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 
 	if t.Type == "plan" {
 		subID, mode, refund, currency, err := s.grant.GrantPlan(ctx, tx, tenantID, userID,
-			codeID, r.PlanID, r.PriceID, "礼品卡兑换："+t.Name)
+			codeID, r.PlanID, r.PriceID, planChoice)
 		if err != nil {
 			return g, err
 		}
 		g.PlanID = r.PlanID
 		g.OrderID = subID
+		g.SubscriptionID = subID
 		g.PlanMode = mode
 		g.PlanRefund = refund
 		g.RefundCurrency = currency
@@ -260,7 +290,7 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		out.Summary = append(out.Summary, "余额 +"+formatMoney(r.Balance))
 	}
 	if r.TrafficBytes > 0 {
-		if err := s.grant.GrantTraffic(ctx, tx, tenantID, userID, codeID, r.TrafficBytes); err != nil {
+		if err := s.grant.GrantTraffic(ctx, tx, tenantID, userID, subID, codeID, r.TrafficBytes); err != nil {
 			return g, err
 		}
 		g.TrafficBytes = r.TrafficBytes
@@ -268,7 +298,7 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		out.Summary = append(out.Summary, "流量 +"+formatBytes(r.TrafficBytes))
 	}
 	if r.ExpireDays > 0 {
-		if err := s.grant.ExtendExpiry(ctx, tx, tenantID, userID, r.ExpireDays); err != nil {
+		if err := s.grant.ExtendExpiry(ctx, tx, tenantID, userID, subID, r.ExpireDays); err != nil {
 			return g, err
 		}
 		g.ExpireDays = r.ExpireDays
@@ -276,7 +306,7 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		out.Summary = append(out.Summary, "到期时间延长 "+itoa(r.ExpireDays)+" 天")
 	}
 	if r.ResetQuota {
-		if err := s.grant.ResetQuota(ctx, tx, tenantID, userID); err != nil {
+		if err := s.grant.ResetQuota(ctx, tx, tenantID, userID, subID); err != nil {
 			return g, err
 		}
 		g.QuotaReset = true

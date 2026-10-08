@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/domain/subscription"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
@@ -272,7 +273,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	origEnd := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Microsecond)
 	p.setPeriodEnd(subID, origEnd)
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, buyer, func(tx pgx.Tx) error {
-		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, buyer, 30)
+		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, buyer, subID, 30)
 	})
 	if end := p.aligned("gift card extension", subID); !end.Equal(origEnd.AddDate(0, 0, 30)) {
 		t.Fatalf("gift card extension end=%s want %s", end, origEnd.AddDate(0, 0, 30))
@@ -309,7 +310,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	var controlSub string
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, control, func(tx pgx.Tx) error {
 		var err error
-		controlSub, _, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, control, "", planA, priceA, "fixture")
+		controlSub, _, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, control, "", planA, priceA, purchase.Choice{})
 		return err
 	})
 	controlToken := p.rotate(control, controlSub)
@@ -459,7 +460,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 		pausedUser, p.fx.tenant, "sp-paused-"+pausedUser[:8]+"@example.test")
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, pausedUser, func(tx pgx.Tx) error {
 		var err error
-		pausedSub, _, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, pausedUser, "", planA, priceA, "fixture")
+		pausedSub, _, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, pausedUser, "", planA, priceA, purchase.Choice{})
 		return err
 	})
 	p.must(`UPDATE subscriptions SET status='paused' WHERE id=$1::uuid`, pausedSub)
@@ -497,5 +498,18 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	t.Run("plan change entries", func(t *testing.T) {
 		p.t = t
 		checkPlanChangeEntriesPG18(t, p, conn.Conn())
+	})
+
+	// 购买模型统一（w7buya）：落点由人选（套餐卡、加时长、重置、送流量、后台开单）
+	t.Run("placement", func(t *testing.T) {
+		p.t = t
+		checkPlacementPG18(t, p, conn.Conn())
+	})
+
+	// 购买模型统一（w7buya）：统一报价与确认比对、余额与支付最低额、防重复下单、换掉一份。
+	// 放在最后：它给租户加了一个带最低额的渠道（结束时停用）
+	t.Run("purchase quote", func(t *testing.T) {
+		p.t = t
+		checkPurchaseQuotePG18(t, p, conn.Conn())
 	})
 }

@@ -4,11 +4,14 @@ import (
 	"net/http"
 
 	"github.com/aegispanel/aegis/internal/domain/giftcard"
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 type giftCodeReq struct {
 	Code string `json:"code"`
+	// Choice 只有兑换要：preview 返回的选项里选定的那一项；选项只有一个时可以不传
+	Choice *purchase.Choice `json:"choice,omitempty"`
 }
 
 type giftCardPreviewResponse struct {
@@ -26,7 +29,9 @@ func (h *handlers) previewGiftCard(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
-	t, err := h.d.GiftCard.PreviewCode(r.Context(), httpx.TenantIDFrom(r.Context()), req.Code)
+	principal := httpx.PrincipalFrom(r.Context())
+	t, err := h.d.GiftCard.PreviewCode(r.Context(), httpx.TenantIDFrom(r.Context()),
+		principal.UserID, req.Code)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return
@@ -42,7 +47,7 @@ func (h *handlers) redeemGiftCard(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := httpx.PrincipalFrom(r.Context())
 	out, err := h.d.GiftCard.Redeem(r.Context(), httpx.TenantIDFrom(r.Context()),
-		principal.UserID, req.Code)
+		principal.UserID, req.Code, req.Choice)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
 		return

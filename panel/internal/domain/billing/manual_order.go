@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
@@ -98,6 +99,11 @@ type CreateManualOrderInput struct {
 	// Reference 是线下凭证号，仅 offline 必填，别的结算方式忽略。
 	Reference string
 	Claim     middleware.IdempotencyClaim
+	// Target 是这单落到哪一份（ManualOrderOptions 给出的选项之一）；选项只有一个时可以不传，
+	// 多于一个而没带回 422「请选择这单落到哪一份」
+	Target *purchase.Choice
+	// EntrySubscriptionID 是后台从哪一行订阅点进来的（「给这份开单」），只影响 preview 的默认值
+	EntrySubscriptionID string
 }
 
 func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
@@ -136,37 +142,31 @@ func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,
 		return nil, httpx.Invalid(map[string]string{"settlement": "结算方式只能是 grant、pending 或 offline"})
 	}
 
-	// 用户已有同一套餐的订阅（生效中，或过期 30 天内）：在原订阅上开续费单，不新开、
-	// 不换链接（规则 3）。续费单的审计在建单事务里写（CreateRenewal）。
-	samePlanSub, err := s.SamePlanSubscription(ctx, tenantID, in.UserID, in.PlanID)
+	// 落点由人选（购买模型统一，设计稿 2.3）：Target 必须是 ManualOrderOptions 给出的选项之一，
+	// 只有一个选项时可以不传。按选项分派：renew 在那一份上开续费单（规则 3，不新开、不换链接）；
+	// change 在那一份上开变更单（剩余价值与门户改套餐同一口径，赠送单新价算 0 元、剩余价值全额
+	// 退进余额）；new 另开一份。续费与变更单的审计在建单事务里写。
+	opt, err := s.manualPlacement(ctx, tenantID, in)
 	if err != nil {
-		return nil, httpx.Internal(err)
+		return nil, err
 	}
-	if samePlanSub != "" {
+	switch opt.Kind {
+	case purchase.KindRenew:
 		if in.PriceID == "" {
 			return nil, httpx.Invalid(map[string]string{"price_id": "请选择续费的价格档"})
 		}
 		return s.CreateRenewal(ctx, tenantID, CreateRenewalInput{
-			UserID: in.UserID, SubscriptionID: samePlanSub, PriceID: in.PriceID,
+			UserID: in.UserID, SubscriptionID: opt.SubscriptionID, PriceID: in.PriceID,
 			Claim:       in.Claim,
 			ManualGrant: in.Settlement == ManualSettlementGrant, ManualReason: in.Reason,
 			ManualActor: in.ActorID, Offline: offline, ManualSettlement: in.Settlement,
 		})
-	}
-
-	// 用户已有别的套餐的订阅（同样的状态范围）：在原订阅上开一张变更单，换套餐、不换
-	// 链接（2026-10-07）。剩余价值与门户改套餐同一口径（plan_change_quote.go）：先抵新价，
-	// 抵不完的退进余额；赠送单新价算 0 元，剩余价值全额退进余额。审计在建单事务里写。
-	changeSub, err := s.PlanChangeSubscription(ctx, tenantID, in.UserID)
-	if err != nil {
-		return nil, httpx.Internal(err)
-	}
-	if changeSub != "" {
+	case purchase.KindChange:
 		if in.PriceID == "" {
 			return nil, httpx.Invalid(map[string]string{"price_id": "请选择新套餐的价格档"})
 		}
 		changed, err := s.CreatePlanChange(ctx, tenantID, PlanChangeInput{
-			UserID: in.UserID, SubscriptionID: changeSub, PlanID: in.PlanID, PriceID: in.PriceID,
+			UserID: in.UserID, SubscriptionID: opt.SubscriptionID, PlanID: in.PlanID, PriceID: in.PriceID,
 			Claim:       in.Claim,
 			ManualGrant: in.Settlement == ManualSettlementGrant, ManualReason: in.Reason,
 			ManualActor: in.ActorID, Offline: offline, ManualSettlement: in.Settlement,
@@ -348,4 +348,97 @@ func markPaidQuarantined(caseKind string) *httpx.Error {
 	}
 	return httpx.New(httpx.CodeConflict,
 		"订单已不在待支付状态，款项已转入挂账，可在挂账里转入用户余额")
+}
+
+// ManualOrderPreview 是后台开单「这单落到哪一份」的选项与默认值（DefaultKey 为空表示不预选，
+// 提交按钮置灰「先选落点」）。
+type ManualOrderPreview struct {
+	Options    []purchase.Placement `json:"options"`
+	DefaultKey string               `json:"default_key"`
+}
+
+// ManualOrderOptions 给后台开单 preview：规则同套餐卡（purchase.Options），从订阅行进来
+// （entrySub）时预选那一份。只读。
+func (s *Service) ManualOrderOptions(ctx context.Context, tenantID, userID, planID, priceID,
+	entrySub string) (*ManualOrderPreview, error) {
+	for _, id := range []string{userID, planID} {
+		if _, err := uuid.Parse(id); err != nil {
+			return nil, httpx.New(httpx.CodeBadRequest, "标识符格式不正确")
+		}
+	}
+	fields := map[string]string{}
+	if priceID != "" {
+		if _, err := uuid.Parse(priceID); err != nil {
+			fields["price_id"] = "价格档标识不正确"
+		}
+	}
+	if entrySub != "" {
+		if _, err := uuid.Parse(entrySub); err != nil {
+			fields["entry_subscription_id"] = "订阅标识不正确"
+		}
+	}
+	if len(fields) > 0 {
+		return nil, httpx.Invalid(fields)
+	}
+	out := ManualOrderPreview{Options: []purchase.Placement{}}
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE tenant_id = $1 AND id = $2::uuid)
+			AND EXISTS (SELECT 1 FROM plans WHERE tenant_id = $1 AND id = $3::uuid)`,
+			tenantID, userID, planID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return httpx.NotFoundOrForbidden()
+		}
+		views, def, err := placementsTx(ctx, tx, tenantID, userID,
+			purchase.Offer{Kind: purchase.OfferPlan, PlanID: planID, PriceID: priceID}, entrySub)
+		if err != nil {
+			return err
+		}
+		out.Options, out.DefaultKey = views, def
+		return nil
+	})
+	if err != nil {
+		var he *httpx.Error
+		if errors.As(err, &he) {
+			return nil, he
+		}
+		return nil, httpx.Internal(err)
+	}
+	return &out, nil
+}
+
+// manualPlacement 取开单的落点：在一个只读事务里按当前候选校验 Target。多于一个选项而没带
+// Target 回 422「请选择这单落到哪一份」；选项变了回 422 要求刷新。续费与变更的建单会锁住
+// 那一份再复核状态。
+func (s *Service) manualPlacement(ctx context.Context, tenantID string,
+	in CreateManualOrderInput) (purchase.Option, error) {
+	var opt purchase.Option
+	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		cands, err := loadCandidatesTx(ctx, tx, tenantID, in.UserID)
+		if err != nil {
+			return err
+		}
+		opts, _ := purchase.Options(purchase.Offer{Kind: purchase.OfferPlan, PlanID: in.PlanID}, cands, "")
+		o, _, err := purchase.Resolve(in.Target, opts)
+		switch {
+		case errors.Is(err, purchase.ErrChoiceRequired):
+			return httpx.Invalid(map[string]string{"target": "请选择这单落到哪一份"})
+		case errors.Is(err, purchase.ErrChoiceStale):
+			return httpx.Invalid(map[string]string{"target": err.Error()})
+		case err != nil:
+			return err
+		}
+		opt = o
+		return nil
+	})
+	if err != nil {
+		var he *httpx.Error
+		if errors.As(err, &he) {
+			return purchase.Option{}, he
+		}
+		return purchase.Option{}, httpx.Internal(err)
+	}
+	return opt, nil
 }

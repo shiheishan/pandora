@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 )
 
 // checkQuotaRollPG18：年付套餐的月流量、日限量按自然周期起算与滚动；滚动按 id 加锁、
@@ -39,7 +41,7 @@ func checkQuotaRollPG18(t *testing.T, p *subPeriodPG18) {
 			user, p.fx.tenant, "quota-roll-"+user[:8]+"@example.test")
 		orderReleasePG18InTxAs(t, ctx, p.app, p.fx.tenant, user, func(tx pgx.Tx) error {
 			var err error
-			sub, _, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, user, "", plan, priceID, "quota-roll")
+			sub, _, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, user, "", plan, priceID, purchase.Choice{})
 			return err
 		})
 		return sub

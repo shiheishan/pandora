@@ -61,6 +61,9 @@ type ProviderSettings struct {
 	Methods          []string
 	DefaultMethod    string
 	AllowPrivateHost bool
+	// MinAmount 是这个渠道的最低付款额（分），1–100000；0 表示用默认（易支付 ¥1.00）。
+	// 站点「能不能在线付」取启用且接单的 CNY 渠道里最小的那个（checkout_amounts.go）；编辑时 0 表示保留原值。
+	MinAmount int64
 	// MerchantID 与 Key 只写不读。新建时必填；编辑时留空表示沿用库里的那一份。
 	MerchantID string
 	Key        string
@@ -168,7 +171,16 @@ func normalizeProviderSettings(in ProviderSettings, devMode bool) (normalizedPro
 		fields["key"] = "密钥最多 256 个字符"
 	}
 
+	minAmount := in.MinAmount
+	if minAmount == 0 {
+		minAmount = defaultEpayMinAmount
+	}
+	if minAmount < 1 || minAmount > maxProviderMinAmount {
+		fields["min_amount"] = "最低付款额需在 ¥0.01 到 ¥1000.00 之间"
+	}
+
 	out.config = map[string]any{
+		"min_amount":         minAmount,
 		"base_url":           baseURL,
 		"submit_path":        submitPath,
 		"api_path":           apiPath,
@@ -207,7 +219,7 @@ func (s *PaymentService) sealProviderCredentials(providerID string, creds paymen
 // providerAuditDigest 是审计里的渠道快照：只有非机密字段，凭据只记是否变更。
 func providerAuditDigest(displayName string, cfg map[string]any, extra map[string]any) map[string]any {
 	d := map[string]any{"display_name": displayName}
-	for _, k := range []string{"base_url", "submit_path", "api_path", "methods", "default_method", "allow_private_host"} {
+	for _, k := range []string{"base_url", "submit_path", "api_path", "methods", "default_method", "allow_private_host", "min_amount"} {
 		if v, ok := cfg[k]; ok {
 			d[k] = v
 		}
@@ -299,6 +311,7 @@ func (s *PaymentService) CreateProvider(ctx context.Context, tenantID string, ac
 		return nil, providerWriteError(err)
 	}
 	s.factory.Invalidate(tenantID, code)
+	invalidateMinPayment(tenantID)
 	return out, nil
 }
 
@@ -384,6 +397,12 @@ func (s *PaymentService) UpdateProvider(ctx context.Context, tenantID string, ac
 		for k, v := range norm.config {
 			merged[k] = v
 		}
+		// 最低付款额不传（0）就保留原值；原来也没有才用默认（normalize 已填）
+		if in.MinAmount == 0 {
+			if v, ok := before["min_amount"]; ok {
+				merged["min_amount"] = v
+			}
+		}
 		if err := s.tryBuildProvider(code, adapter, merged, next); err != nil {
 			return err
 		}
@@ -427,6 +446,7 @@ func (s *PaymentService) UpdateProvider(ctx context.Context, tenantID string, ac
 		return nil, providerWriteError(err)
 	}
 	s.factory.Invalidate(tenantID, code)
+	invalidateMinPayment(tenantID)
 	return out, nil
 }
 

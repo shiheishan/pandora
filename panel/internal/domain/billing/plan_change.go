@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/plugin"
@@ -54,6 +53,8 @@ type PlanChangeInput struct {
 	CouponCode     string
 	// Claim 只有下单要，试算不落库也不占幂等键。
 	Claim middleware.IdempotencyClaim
+	// Expect 是确认时带回的报价，见 Expectation
+	Expect *Expectation
 
 	// --- 以下仅供后台人工开单（manual_order.go）用，门户改套餐一律留空 ---
 	//
@@ -93,7 +94,7 @@ type PlanChangeOrderOutput struct {
 	BalanceRefund   int64 `json:"balance_refund"`
 }
 
-// planChangeQuote 是一次变更的全部定价与快照，试算与下单共用。
+// planChangeQuote 是一次变更的全部定价与快照（建单用）。
 type planChangeQuote struct {
 	PlanChangePreview
 	PlanVersionID string
@@ -106,177 +107,49 @@ type planChangeQuote struct {
 	Entitlements  []byte
 	Quotas        []byte
 	Coupon        *couponMatch
+	CreditDetail  *CreditDetail
 }
 
-// quotePlanChange 锁住订阅并算出变更到目标套餐与价格的全部金额。
+// quotePlanChange 锁住订阅并算出变更到目标套餐与价格的全部金额（建单用；报价走
+// Service.Quote，同样三步读取但不锁）。剩余价值的时间比例按 asOf 算（报价时刻，见 quoteTime）。
 //
 // 锁序与续费一致：订阅 → 套餐 → 价格 → 优惠券，账本科目留给调用方最后锁。
 func quotePlanChange(ctx context.Context, tx pgx.Tx, tenantID string,
-	in PlanChangeInput, now time.Time) (*planChangeQuote, error) {
+	in PlanChangeInput, now, asOf time.Time) (*planChangeQuote, error) {
 
-	for _, id := range []string{in.SubscriptionID, in.PlanID, in.PriceID} {
-		if _, err := uuid.Parse(id); err != nil {
-			return nil, httpx.NotFoundOrForbidden()
-		}
-	}
-	var (
-		curPlanID              string
-		status                 string
-		periodStart, periodEnd *time.Time
-		renewalClosed          bool
-	)
-	err := tx.QueryRow(ctx, `
-		SELECT plan_id::text, status, current_period_start, current_period_end,
-		       renewal_closed_at IS NOT NULL
-		  FROM subscriptions
-		 WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid
-		 FOR UPDATE`, tenantID, in.SubscriptionID, in.UserID).
-		Scan(&curPlanID, &status, &periodStart, &periodEnd, &renewalClosed)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, httpx.NotFoundOrForbidden()
-	}
+	src, err := loadChangeSourceTx(ctx, tx, tenantID, in.UserID, in.SubscriptionID, true)
 	if err != nil {
 		return nil, err
 	}
-	// 过期 30 天内的订阅同样可以在原订阅上改套餐（规则 3、4），链接不变
-	if !subscriptionAcceptsPaidChange(status, renewalClosed) {
-		if status == "expired" {
-			return nil, ErrRenewalWindowClosed
-		}
-		return nil, ErrPlanChangeSubStatus
-	}
-	if in.PlanID == curPlanID {
+	if in.PlanID == src.PlanID {
 		return nil, ErrPlanChangeSamePlan
 	}
-	if err := ensureNoOpenSubscriptionOrder(ctx, tx, tenantID, in.SubscriptionID); err != nil {
-		return nil, err
-	}
-
-	q := planChangeQuote{}
-	var (
-		planStatus, visibility    string
-		visibleGroupIDs           []string
-		visibleFrom, visibleUntil *time.Time
-		allowUpgrade              bool
-		currentVersion            *string
-	)
-	err = tx.QueryRow(ctx, `
-		SELECT name, status, visibility, visible_group_ids::text[],
-		       visible_from, visible_until, allow_upgrade, current_version_id::text,
-		       product_id::text
-		  FROM plans
-		 WHERE tenant_id = $1 AND id = $2::uuid
-		 FOR SHARE`, tenantID, in.PlanID).Scan(&q.PlanName, &planStatus, &visibility,
-		&visibleGroupIDs, &visibleFrom, &visibleUntil, &allowUpgrade, &currentVersion,
-		&q.ProductID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, httpx.NotFoundOrForbidden()
-	}
+	target, err := loadChangeTargetTx(ctx, tx, tenantID, in.PlanID, in.PriceID,
+		src.UserGroupID, in.ManualActor != "", now)
 	if err != nil {
 		return nil, err
 	}
-	// 可见性与新购同一套规则（XBD-011）：看不到的套餐也换不过去。
-	if planStatus != "active" || visibility == "hidden" || visibility == "invite_only" ||
-		(visibleFrom != nil && visibleFrom.After(now)) ||
-		(visibleUntil != nil && !visibleUntil.After(now)) {
-		return nil, httpx.NotFoundOrForbidden()
-	}
-	var userGroupID *string
-	if err := tx.QueryRow(ctx, `SELECT user_group_id::text FROM users
-		WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, in.UserID).Scan(&userGroupID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, httpx.NotFoundOrForbidden()
-		}
-		return nil, err
-	}
-	if visibility == "group" && !catalogGroupAllowed(userGroupID, visibleGroupIDs) {
-		return nil, httpx.NotFoundOrForbidden()
-	}
-	if !allowUpgrade {
-		return nil, ErrPlanChangeNotAllowed
-	}
-	if currentVersion == nil {
-		return nil, httpx.New(httpx.CodeConflict, "该套餐尚未发布可用版本")
-	}
-	q.PlanVersionID = *currentVersion
-
-	var (
-		unitAmount      int64
-		priceStatus     string
-		priceGroupID    *string
-		priceValidFrom  *time.Time
-		priceValidUntil *time.Time
-	)
-	err = tx.QueryRow(ctx, `
-		SELECT currency::text, unit_amount, billing_interval, interval_count, status,
-		       user_group_id::text, valid_from, valid_until
-		  FROM prices
-		 WHERE tenant_id = $1 AND id = $2::uuid AND product_id = $3::uuid
-		   AND currency IN ('CNY','USD')
-		 FOR UPDATE`, tenantID, in.PriceID, q.ProductID).Scan(&q.Currency, &unitAmount,
-		&q.Interval, &q.IntervalCount, &priceStatus, &priceGroupID,
-		&priceValidFrom, &priceValidUntil)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, httpx.NotFoundOrForbidden()
-	}
+	price := target.Prices[0]
+	snap, err := loadPlanSnapshotTx(ctx, tx, tenantID, in.PlanID, target.PlanVersionID, target.ProductID)
 	if err != nil {
 		return nil, err
 	}
-	if priceGroupID != nil && (userGroupID == nil || *userGroupID != *priceGroupID) {
-		return nil, httpx.NotFoundOrForbidden()
+	q := planChangeQuote{
+		PlanVersionID: target.PlanVersionID, ProductID: target.ProductID,
+		ProductName: snap.ProductName, PlanName: target.PlanName, PlanVersionNo: snap.PlanVersionNo,
+		Interval: price.Interval, IntervalCount: price.IntervalCount,
+		Entitlements: snap.Entitlements, Quotas: snap.Quotas,
 	}
-	if priceStatus != "active" {
-		return nil, httpx.New(httpx.CodeConflict, "该价格已下架")
-	}
-	if !catalogPriceCurrentlyValid(priceValidFrom, priceValidUntil, now) {
-		return nil, httpx.New(httpx.CodeConflict, "该价格当前不在有效期内")
-	}
-
-	var versionStatus string
-	var frozenAt *time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT version, status, frozen_at FROM plan_versions
-		 WHERE tenant_id = $1 AND id = $2::uuid AND plan_id = $3::uuid FOR SHARE`,
-		tenantID, q.PlanVersionID, in.PlanID).Scan(&q.PlanVersionNo, &versionStatus,
-		&frozenAt); err != nil {
-		return nil, err
-	}
-	if versionStatus != "published" || frozenAt == nil {
-		return nil, httpx.New(httpx.CodeConflict, "套餐当前版本未完成发布")
-	}
-	if q.Entitlements, err = jsonAgg(ctx, tx, `
-		SELECT coalesce(jsonb_agg(jsonb_build_object('code', code, 'value', value)), '[]'::jsonb)
-		  FROM entitlements WHERE plan_version_id = $1`, q.PlanVersionID); err != nil {
-		return nil, err
-	}
-	if q.Quotas, err = jsonAgg(ctx, tx, `
-		SELECT coalesce(jsonb_agg(jsonb_build_object(
-		         'metric', metric, 'limit', limit_value,
-		         'unit', unit, 'period', period)), '[]'::jsonb)
-		  FROM quota_definitions WHERE plan_version_id = $1`, q.PlanVersionID); err != nil {
-		return nil, err
-	}
-	if err := tx.QueryRow(ctx, `SELECT name FROM products
-		WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, q.ProductID).Scan(&q.ProductName); err != nil {
-		return nil, err
-	}
+	q.Currency = price.Currency
 
 	// 剩余价值：周期边界缺失（从未开通过的订阅）就没有可折的东西。
-	if periodStart != nil && periodEnd != nil {
-		basis, err := loadProrationBasis(ctx, tx, tenantID, in.SubscriptionID,
-			*periodStart, *periodEnd)
-		if err != nil {
-			return nil, err
-		}
-		if basis.Currency != "" && basis.Currency != q.Currency {
-			return nil, ErrPlanChangeCurrency
-		}
-		q.ProrationCredit = prorationCredit(basis, now)
+	if q.ProrationCredit, q.CreditDetail, err = src.credit(asOf, q.Currency); err != nil {
+		return nil, err
 	}
 
 	// 优惠券按新套餐的价格算（与新购同一口径），升级、降级都能用；
 	// 降级时折扣让差额变大，多出来的一并退进余额（2026-09-24 用户拍板）。
-	q.Subtotal = unitAmount
+	q.Subtotal = price.UnitAmount
 	if q.Coupon, err = applyCoupon(ctx, tx, tenantID, in.UserID, in.CouponCode,
 		in.PlanID, q.Currency, q.Subtotal); err != nil {
 		return nil, err
@@ -291,7 +164,7 @@ func quotePlanChange(ctx context.Context, tx pgx.Tx, tenantID string,
 	if q.Total > 0 {
 		q.Direction = "upgrade"
 	}
-	q.CurrentPeriodEnd = periodEnd
+	q.CurrentPeriodEnd = src.PeriodEnd
 	q.NewPeriodStart = now
 	q.NewPeriodEnd = addInterval(now, q.Interval, int(q.IntervalCount))
 	return &q, nil
@@ -315,28 +188,6 @@ func ensureNoOpenSubscriptionOrder(ctx context.Context, tx pgx.Tx, tenantID, sub
 	return nil
 }
 
-// PreviewPlanChange 试算变更套餐，不写库。
-func (s *Service) PreviewPlanChange(ctx context.Context, tenantID string,
-	in PlanChangeInput) (*PlanChangePreview, error) {
-	var out PlanChangePreview
-	err := s.pool.InTx(ctx, dbScope(tenantID, in.UserID), func(tx pgx.Tx) error {
-		q, err := quotePlanChange(ctx, tx, tenantID, in, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		out = q.PlanChangePreview
-		return nil
-	})
-	if err != nil {
-		var he *httpx.Error
-		if errors.As(err, &he) {
-			return nil, he
-		}
-		return nil, httpx.Internal(err)
-	}
-	return &out, nil
-}
-
 // CreatePlanChange 建一张变更套餐订单（kind='upgrade'）。无需外部付款时当场履约。
 // 后台人工开单遇到不同套餐时也走这里（in.ManualActor 非空，见 PlanChangeInput）。
 func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
@@ -354,7 +205,12 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 
 	var out PlanChangeOrderOutput
 	err := s.pool.InTxSerializableRetry(ctx, dbScope(tenantID, claimActor), func(tx pgx.Tx) error {
-		q, err := quotePlanChange(ctx, tx, tenantID, in, time.Now().UTC())
+		now := time.Now().UTC()
+		asOf, err := quoteTime(in.Expect, now)
+		if err != nil {
+			return err
+		}
+		q, err := quotePlanChange(ctx, tx, tenantID, in, now, asOf)
 		if err != nil {
 			return err
 		}
@@ -363,8 +219,20 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 		if in.ManualGrant {
 			q.waiveNewPrice()
 		}
-		balanceApplied := min(max(in.UseBalance, 0), q.Total)
-		payable := q.Total - balanceApplied
+		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced；付不了的回 422，只有换套餐的零头能免）
+		// 只有门户换套餐抵扣后的零头能免（用户 8.1 第 1 题），后台开单不免
+		bal, err := balancePlan(ctx, tx, tenantID, in.UserID, q.Currency, q.Total, in.UseBalance,
+			balanceOpts{Offline: in.Offline != nil, Manual: in.ManualActor != "", AllowWaive: in.ManualActor == ""})
+		if err != nil {
+			return err
+		}
+		if err := checkExpectation(in.Expect, q.Total, bal); err != nil {
+			return err
+		}
+		if bal.Waived > 0 {
+			q.Discount, q.Total = waiveIntoDiscount(q.Coupon, q.Discount, q.Total, bal.Waived)
+		}
+		balanceApplied, payable := bal.Applied, bal.Payable
 		if in.Offline != nil && payable == 0 {
 			return httpx.New(httpx.CodeConflict, "原套餐的剩余价值已经抵完新价，这张单不需要支付，请改用赠送")
 		}
@@ -448,7 +316,7 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 				TotalAmount: q.Total, BalanceApplied: balanceApplied,
 				CouponID: couponIDPtr, HoldAccountID: holdAccounts.HoldID,
 				RevenueAccountID: holdAccounts.RevenueID, ProrationCredit: q.ProrationCredit,
-				ManualGrant: in.ManualGrant,
+				ManualGrant: in.ManualGrant, SmallDueWaived: bal.Waived,
 			}); err != nil {
 				return err
 			}
@@ -504,6 +372,7 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 				"to_plan_id": in.PlanID, "direction": q.Direction,
 				"proration_credit": q.ProrationCredit, "total": q.Total,
 				"balance_refund": q.BalanceRefund, "currency": q.Currency,
+				"small_due_waived": bal.Waived,
 			},
 		}); err != nil {
 			return err
