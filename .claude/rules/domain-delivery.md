@@ -37,6 +37,7 @@ paths:
 - 订阅里的节点列表按（租户, 套餐版本, 用户组）进程内缓存 20 秒，`node.*` 信号失效；认证、用量、限流一律现查，不缓存
 - 过期订阅（2026-10-07 规则 1，w5expiry）：令牌有效、凭据 active、订阅已过期（status=expired 且窗口没关，或 active 但走过截止）时 `checkCredential` 回 ErrExpired，`LoadPull` 返回 `Pull.Expired`、不取节点；handler 回 200 只含一条提示节点（render_expired.go，「已于 X 到期，续费后更新订阅即可恢复」，X 用用户时区到分钟），Subscription-Userinfo 的 expire 是过去时刻，带 profile-web-page-url（门户续费页），更新间隔 1 小时，拉取日志记 expired。令牌不存在、已吊销（含关窗吊销）仍是伪装 404
 - 门户链接列表照常列出过期 30 天内订阅的链接（`Link.Expired` 只读）；过期期间用户换链接回 409（`ErrRotateWhileExpired`）；`mySubscriptionsSQL` 的 renewable 与 `subscriptionAcceptsPaidChange` 同口径（含窗口内的 expired）
+- 重置订阅链接（2026-10-07 用户定，w6plan）：`rotateInTx` 在同一事务里吊销旧凭据、签新凭据、`rotateProxyUUIDTx` 换 `subscriptions.proxy_uuid`（与 Xboard「重置订阅」一致），门户 `Rotate` 与后台 `AdminRotate` 同一个函数。00101 的下发纪元随订阅行更新推进，handler 提交后发一次 `node.users.changed`；pdnd 按用户 ID 记连接，旧 UUID 的连接被断开。门户重置按用户限频（`api/public` 的 `subscriptionRotateLimits`：间隔 10 分钟、24 小时 5 次），后台换发不限频。守卫 `api/public/rotate_pg18_test.go:TestSubscriptionRotatePG18`
 
 ## 流量上报记账（uniproxy_traffic.go，2026-10 w3node）
 - 节点只能扣自己当前放行名单（`ListNodeUsers`）里的 uid；名单外与不合规条目（非整数 uid、不是恰好两个 0–30GB 的整数）照样留档，不扣费，计入 `PushResult.Invalid`，不拒整份报文
