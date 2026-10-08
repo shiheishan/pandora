@@ -28,6 +28,7 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
 ## 合并
 
 - 在主目录主线上 `git merge --no-ff <分支>`。冲突多在共享热点（`cmd/*/main.go`、router、config、`.claude/rules`），保留双方；语义冲突（一方删了另一方新用到的东西）合完立刻编译测试。
+- 合进来的分支带新迁移：合完在主线跑 `python3 .claude/skills/new-migration/scripts/upsegment-sha.py <新迁移.sql> >> panel/tools/migrationlint/upsegments.txt` 冻结 Up 段，再跑 `--check`（10-08 发现 00141、00142 合入后漏冻）。
 - 一波几路合完再推主线（长期授权：`feat/panel-redesign` 可推），推完等检查机与 GitHub 全绿才算完成。
 - **推 main 每次都要先问用户**；删 worktree、删本地或远端分支，把命令给用户或得到同意再做。
 
