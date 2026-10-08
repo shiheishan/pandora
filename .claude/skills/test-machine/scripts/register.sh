@@ -60,3 +60,6 @@ R
 echo "chrony: $(systemctl is-active chrony)；ufw: $(ufw status 2>/dev/null | head -1 || echo 无)；$(nproc) 核 $(free -m | awk '/Mem:/{print $2}')MB"
 REMOTE
 echo "已登记 $alias：~/.ssh/config、$dir、总表、机器 /root/README.md"
+# 新 IP 进私有 gitleaks 规则（提交前拦真实 IP），见根 CLAUDE.md「红线：仓库公开」
+gen="$(git -C "$here" rev-parse --show-toplevel 2>/dev/null)/ops-local/gitleaks/gen-private.sh"
+if [[ -x "$gen" ]]; then bash "$gen"; else echo "提醒：没找到 $gen，私有 gitleaks 规则没更新"; fi

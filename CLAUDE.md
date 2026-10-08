@@ -61,7 +61,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 提交前闸门 `.githooks/pre-commit`：
   - 用 gitleaks 扫暂存区，公开规则是 `.gitleaks.toml`，`ops-local/gitleaks-private.toml` 存在时一并加载；没装 gitleaks 也拒绝提交。
   - clone 后执行 `git config core.hooksPath .githooks` 启用。
-  - worktree 里没有 `ops-local/`，私有规则不会加载。
+  - 私有规则由 `ops-local/gitleaks/gen-private.sh` 从 `~/.ssh/config` 与 `~/ai/servers` 生成（真实 IP 的点分与短横线写法），加测试机后重跑；worktree 里的提交回主仓库的 `ops-local/` 加载。
 - gitleaks 命中必须停下处理。扫描不得与提交、推送串在同一条命令里。
 
 ## 长任务的任务清单

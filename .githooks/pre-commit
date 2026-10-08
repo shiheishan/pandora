@@ -11,7 +11,12 @@ scan() { gitleaks git --pre-commit --staged --redact --no-banner --config "$1" "
 
 # 公开规则：内置密钥格式 + 本项目专属格式
 scan "$root/.gitleaks.toml"
-# 私有规则：真实服务器 IP、监控域名等，只存在于维护者本机
-if [[ -f "$root/ops-local/gitleaks-private.toml" ]]; then
-  scan "$root/ops-local/gitleaks-private.toml"
-fi
+# 私有规则：真实服务器 IP 等，只存在于维护者本机主目录的 ops-local/（由
+# ops-local/gitleaks/gen-private.sh 生成）。worktree 里没有 ops-local/，回到主仓库去找。
+main_root="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+for private in "$root/ops-local/gitleaks-private.toml" "$main_root/ops-local/gitleaks-private.toml"; do
+  if [[ -f "$private" ]]; then
+    scan "$private"
+    break
+  fi
+done

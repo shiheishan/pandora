@@ -44,7 +44,7 @@ description: pandora 总协调把工作派给任务会话或实现型子 agent�
 
 - Agent 工具的 `isolation: "worktree"` 起点常是旧的 main 而不是任务分支：不要用它，手工建 worktree，在 prompt 里给绝对路径，并要求开工先核对 HEAD。
 - 实现型子 agent 不要再拆实现型子 agent：同一个 worktree 里并发改文件、并发 `go test` 会互相踩。只读调研可以拆。
-- worktree 里没有 `ops-local/`：证据和等待脚本都给主目录的绝对路径。pre-commit 在 worktree 里加载不到私有 gitleaks 规则（已知缺口），仓库公开红线要在 brief 里写明。
+- worktree 里没有 `ops-local/`：证据和等待脚本都给主目录的绝对路径。pre-commit 会回主仓库的 `ops-local/` 加载私有 gitleaks 规则，但它只认真实 IP，域名、路径前缀等仓库公开红线仍要在 brief 里写明。
 - 主线在任务进行中前进了，检查机按全部 job 回放，旧基点会误红：brief 里要求交付前 `git merge feat/panel-redesign`。
 - 性能任务：留出评测集的规模与细节不要写进 brief，防止实现方对着评测调参（见 bench 流程）。
 - 报告：用户开的任务会话写 worktree 的 `.claude/report.md`；**Agent 工具派的子 agent 写不了报告文件**（环境拦截，要求以文本返回），它的最终消息就是报告，总协调代存到 `.claude/report.md`。都不用跨会话消息（要用户手动批准，常过期送不到）。
