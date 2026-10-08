@@ -105,7 +105,12 @@ func (p *Pool) runScoped(ctx context.Context, s Scope, opts pgx.TxOptions, begin
 		}
 	}
 
-	if err := fn(tx); err != nil {
+	var run pgx.Tx = tx
+	if opts.IsoLevel == pgx.Serializable {
+		// 记着本事务是否已过审计链闸（见 EnterChainGate）
+		run = &serialTx{Tx: tx, gated: gate}
+	}
+	if err := fn(run); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

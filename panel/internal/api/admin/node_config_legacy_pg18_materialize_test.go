@@ -439,8 +439,7 @@ func runNodeConfigPG18BootstrapPublicationRaces(t *testing.T, ctx context.Contex
 			before := nodeConfigPG18BusinessSnapshot(t, ctx, admin, fx.tenant)
 			holder := beginNodeConfigPG18LockHolder(t, ctx, holderPool, fx)
 			defer holder.cleanup()
-			// 挡在审计取号上：持有链头表的排队锁（platform/db 的 chainGateSQL），
-			// audit.Write 取号的 UPDATE 要等它
+			// 挡在审计取号上：锁住链头表（与 ROW EXCLUSIVE 互斥），audit.Write 取号的 UPDATE 要等它
 			if _, err := holder.tx.Exec(ctx, `LOCK TABLE public.audit_chain_heads IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 				t.Fatalf("NEW-04 %s cancel hold audit lock: %v", kind, err)
 			}

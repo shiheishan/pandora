@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -109,7 +110,11 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 	// 链头一行一个租户（00142）。读已提交事务里 UPDATE 等到行锁后作用在最新版本上，
 	// 序号与前驱都是最新的，行锁顺带串行化同租户的写；可串行化事务的快照早于这一句，
 	// 别人在快照之后取过号就直接报 40001（不会再读到旧链尾、写出重复序号），由
-	// InTxSerializableRetry 重试。
+	// InTxSerializableRetry 重试。序列化事务取号前先过审计链闸（读已提交事务不碰），
+	// 有重试在排队时立刻让路，见 db.EnterChainGate。
+	if err := db.EnterChainGate(ctx, tx); err != nil {
+		return fmt.Errorf("取审计链序号: %w", err)
+	}
 	//
 	// 发生时间与 uuid 的规范文本在同一句里取回：uuid 经 PostgreSQL 往返一次，库里存的
 	// 是 uuid 值，读回永远是小写带连字符的形式，调用方给的大写或不带连字符的写法不能
