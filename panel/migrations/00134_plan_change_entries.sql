@@ -26,6 +26,7 @@
 
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION app.assert_idempotency_order_binding(
@@ -236,6 +237,8 @@ $$;
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
+-- 下面的数据守卫要扫订单、订阅事件与账本，给足时间
+SET LOCAL statement_timeout = '5min';
 
 -- 还原 00125 的绑定函数与 00071 的证据触发函数（逐字），删掉卡密来源的核对函数。
 -- 已经存在的后台代开变更单、套餐卡换套餐证据在还原之后会被旧断言拒绝（订单再被写时、
