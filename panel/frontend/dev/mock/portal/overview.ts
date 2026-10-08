@@ -1,5 +1,7 @@
 import type { MockModule } from '../types.ts'
 import { gate, MOCK_TIMEZONE, portalState, SCENARIOS, setScenario, zoneMidnight } from './fixtures.ts'
+import { PROTO_START } from './proto.ts'
+import { isProto, scenario } from './scenario.ts'
 
 export const overview: MockModule = {
   anonymous: {
@@ -8,6 +10,19 @@ export const overview: MockModule = {
       const name = typeof body?.name === 'string' ? body.name : ''
       if (!setScenario(name)) return ctx.fail(422, 'validation_failed', `场景只能是 ${SCENARIOS.join(' / ')}`, { name: '未知场景' })
       ctx.send(200, { scenario: name })
+    },
+    // 首次点击测试用：GET /v1/__mock/proto?s=proto-s2[&to=/plans] 切到原型场景（重建状态）并跳到该场景的起始页。
+    // 登录态在浏览器里（localStorage），切场景不登出；测试员每个任务开一次这个地址就从头来
+    'GET /v1/__mock/proto': (ctx) => {
+      const name = ctx.query.get('s') ?? ''
+      if (!name.startsWith('proto-') || !setScenario(name)) return ctx.fail(422, 'validation_failed', `场景只能是 ${SCENARIOS.filter((s) => s.startsWith('proto-')).join(' / ')}`)
+      const to = ctx.query.get('to')
+      const s = scenario()
+      const target = to && /^\/[a-z/?=&-]*$/.test(to) ? to : isProto(s) ? PROTO_START[s] : '/subs'
+      ctx.res.statusCode = 302
+      ctx.res.setHeader('Location', `/#${target}`)
+      ctx.res.setHeader('Cache-Control', 'no-store')
+      ctx.res.end()
     },
   },
   routes: {
