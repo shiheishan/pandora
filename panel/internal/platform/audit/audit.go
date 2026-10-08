@@ -8,8 +8,6 @@ package audit
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -106,53 +104,33 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 		}
 	}
 
-	// 串行化同租户的审计写入，保证哈希链不分叉。
-	// 用事务级 advisory lock：随事务结束自动释放，不会泄漏锁。
-	// 审计不是热路径，这点串行开销换来链条完整性是划算的。
-	lockKey := int64(binary.BigEndian.Uint64(sha256Sum(tenantID)[:8]) >> 1)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, lockKey); err != nil {
-		return fmt.Errorf("获取审计链锁: %w", err)
-	}
-
-	// 链尾、发生时间与 uuid 的规范文本一次取回。
+	// 取号：本租户链头的 last_seq 加一，同时拿到前驱（链尾）的 entry_hash。
 	//
-	// uuid 经 PostgreSQL 往返一次：库里存的是 uuid 值，读回永远是小写带连字符
-	// 的形式，调用方给的大写或不带连字符的写法不能直接进哈希。发生时间显式
-	// 取 now() 再写回列里（与列默认值相同），这样哈希里的时间就是库里那一个。
+	// 链头一行一个租户（00142）。读已提交事务里 UPDATE 等到行锁后作用在最新版本上，
+	// 序号与前驱都是最新的，行锁顺带串行化同租户的写；可串行化事务的快照早于这一句，
+	// 别人在快照之后取过号就直接报 40001（不会再读到旧链尾、写出重复序号），由
+	// InTxSerializableRetry 重试。
+	//
+	// 发生时间与 uuid 的规范文本在同一句里取回：uuid 经 PostgreSQL 往返一次，库里存的
+	// 是 uuid 值，读回永远是小写带连字符的形式，调用方给的大写或不带连字符的写法不能
+	// 直接进哈希。发生时间显式取 now() 再写回列里（与列默认值相同），这样哈希里的
+	// 时间就是库里那一个。
 	var (
 		rec      chainRecord
 		prevHash []byte
-		tailSeq  *int64
 	)
-	err := tx.QueryRow(ctx, `
-		SELECT now(), $1::uuid::text, $2::uuid::text, $3::uuid::text, $4::uuid::text,
-		       t.entry_hash, t.chain_seq
-		  FROM (SELECT 1) AS one
-		  LEFT JOIN LATERAL (
-		        SELECT entry_hash, chain_seq FROM audit_events
-		         WHERE tenant_id = $1 AND chain_seq IS NOT NULL
-		         ORDER BY chain_seq DESC
-		         LIMIT 1) AS t ON true`,
-		tenantID, e.ActorID, e.ResourceID, e.ApprovalID).Scan(
-		&rec.OccurredAt, &rec.TenantID, &rec.ActorID, &rec.ResourceID, &rec.ApprovalID,
-		&prevHash, &tailSeq)
-	if err != nil {
-		return fmt.Errorf("读取审计链尾: %w", err)
+	args := []any{tenantID, e.ActorID, e.ResourceID, e.ApprovalID}
+	scan := func(row pgx.Row) error {
+		return row.Scan(&rec.Seq, &prevHash,
+			&rec.OccurredAt, &rec.TenantID, &rec.ActorID, &rec.ResourceID, &rec.ApprovalID)
 	}
-	rec.Seq = 1
-	if tailSeq != nil {
-		rec.Seq = *tailSeq + 1
-	} else {
-		// 本租户还没有第二版记录：接在第一版链尾之后（00086 之前的记录按
-		// occurred_at, id 排序，与 VerifyChain 走第一版行的顺序一致）
-		err := tx.QueryRow(ctx, `
-			SELECT entry_hash FROM audit_events
-			 WHERE tenant_id = $1
-			 ORDER BY occurred_at DESC, id DESC
-			 LIMIT 1`, tenantID).Scan(&prevHash)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("读取审计链尾: %w", err)
-		}
+	err := scan(tx.QueryRow(ctx, claimSeqSQL, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		// 本租户还没有链头：按审计表的链尾建一个（并发建头的另一方走 ON CONFLICT 取下一个号）
+		err = scan(tx.QueryRow(ctx, createHeadSQL, args...))
+	}
+	if err != nil {
+		return fmt.Errorf("取审计链序号: %w", err)
 	}
 
 	beforeJSON, err := toJSON(e.BeforeDigest)
@@ -174,14 +152,8 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 		return err
 	}
 
-	_, err = tx.Exec(ctx, `
-		INSERT INTO audit_events
-			(tenant_id, actor_kind, actor_id, actor_label, action,
-			 resource_type, resource_id, before_digest, after_digest,
-			 request_id, api_domain, source_ip_hash, user_agent,
-			 approval_request_id, outcome, error_code, prev_hash, entry_hash,
-			 source_ip_enc, auth_context, chain_seq, occurred_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+	// 写行与把链头的 last_hash 推到新行是同一条语句：链头与链尾在任何提交点上都一致
+	tag, err := tx.Exec(ctx, appendEventSQL,
 		tenantID, rec.ActorKind, rec.ActorID, nullIfEmpty(rec.ActorLabel), rec.Action,
 		nullIfEmpty(rec.ResourceType), rec.ResourceID, beforeJSON, afterJSON,
 		nullIfEmpty(rec.RequestID), nullIfEmpty(rec.APIDomain), rec.SourceIPHash,
@@ -190,8 +162,57 @@ func Write(ctx context.Context, tx pgx.Tx, tenantID string, e Entry) error {
 	if err != nil {
 		return fmt.Errorf("写入审计记录: %w", err)
 	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("写入审计记录: 链头不见了")
+	}
 	return nil
 }
+
+// claimSeqSQL 取号：链头 last_seq 加一，返回新序号、前驱哈希，以及规范化的
+// 发生时间与 uuid 文本（参数：租户、操作者、资源、审批单）。
+const claimSeqSQL = `
+	UPDATE audit_chain_heads SET last_seq = last_seq + 1
+	 WHERE tenant_id = $1
+	RETURNING last_seq, last_hash,
+	          now(), $1::uuid::text, $2::uuid::text, $3::uuid::text, $4::uuid::text`
+
+// createHeadSQL 给还没有链头的租户建头，返回值与 claimSeqSQL 相同。
+//
+// 链尾按审计表现算：有第二版记录就接最大 chain_seq 那一条；没有就接第一版链尾
+// （00086 之前的记录按 occurred_at, id 排序，与 VerifyChain 走第一版行的顺序一致），
+// 序号从 1 起；都没有则前驱为空。另一方并发建了头时走 ON CONFLICT 在它之后取号：
+// 读已提交下等它提交后作用在最新版本上，可串行化下报 40001。
+const createHeadSQL = `
+	INSERT INTO audit_chain_heads AS h (tenant_id, last_seq, last_hash)
+	SELECT $1::uuid, coalesce(v2.chain_seq, 0) + 1,
+	       CASE WHEN v2.chain_seq IS NOT NULL THEN v2.entry_hash ELSE v1.entry_hash END
+	  FROM (SELECT 1) AS one
+	  LEFT JOIN LATERAL (
+	        SELECT chain_seq, entry_hash FROM audit_events
+	         WHERE tenant_id = $1 AND chain_seq IS NOT NULL
+	         ORDER BY chain_seq DESC
+	         LIMIT 1) AS v2 ON true
+	  LEFT JOIN LATERAL (
+	        SELECT entry_hash FROM audit_events
+	         WHERE tenant_id = $1 AND v2.chain_seq IS NULL
+	         ORDER BY occurred_at DESC, id DESC
+	         LIMIT 1) AS v1 ON true
+	ON CONFLICT (tenant_id) DO UPDATE SET last_seq = h.last_seq + 1
+	RETURNING last_seq, last_hash,
+	          now(), $1::uuid::text, $2::uuid::text, $3::uuid::text, $4::uuid::text`
+
+// appendEventSQL 写审计行，并把链头的 last_hash 推到这一行（$18 是本行 entry_hash）。
+const appendEventSQL = `
+	WITH ins AS (
+		INSERT INTO audit_events
+			(tenant_id, actor_kind, actor_id, actor_label, action,
+			 resource_type, resource_id, before_digest, after_digest,
+			 request_id, api_domain, source_ip_hash, user_agent,
+			 approval_request_id, outcome, error_code, prev_hash, entry_hash,
+			 source_ip_enc, auth_context, chain_seq, occurred_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22))
+	UPDATE audit_chain_heads SET last_hash = $18
+	 WHERE tenant_id = $1 AND last_seq = $21`
 
 // authContextFrom 从请求主体推出本条记录的认证强度。
 //
@@ -207,11 +228,6 @@ func authContextFrom(ctx context.Context, actorID *string) string {
 		return "reauth"
 	}
 	return "session"
-}
-
-func sha256Sum(s string) []byte {
-	sum := sha256.Sum256([]byte(s))
-	return sum[:]
 }
 
 func toJSON(v any) ([]byte, error) {

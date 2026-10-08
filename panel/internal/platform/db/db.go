@@ -213,7 +213,7 @@ func rollbackForCleanup(tx transactionRollbacker) {
 // 用 set_config(..., true) 而非会话级设置：GUC 随事务结束自动失效，
 // 即使连接被复用也不会带着上一个租户的身份。
 func (p *Pool) InTx(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
-	return p.runScoped(ctx, s, pgx.TxOptions{}, "开启事务", true, fn)
+	return p.runScoped(ctx, s, pgx.TxOptions{}, "开启事务", true, false, fn)
 }
 
 // InTxSerializableRetry 是 InTxSerializable 加上对 40001 的自动重试。
@@ -223,34 +223,47 @@ func (p *Pool) InTx(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
 // 抛给用户（「请求冲突，请重试」）等于让用户替数据库做退避——50 并发压测
 // 下有近三成下单撞上这个。
 //
+// 第一次乐观地跑；失败后的每次重试都先排队（chainGateSQL）：事务第一条语句
+// 锁住审计链头表，再取快照。用这个入口的事务都写审计，而审计链是同租户的全序 ——
+// 快照之后只要有别人写过审计，本事务取号就报 40001（platform/audit 的 Write）。
+// 争用时只靠退避重试，每一轮只有一个能过，16 路并发要十几轮，4 次重试兜不住；
+// 排队后快照晚于前面所有审计写入，取号不会再冲突，剩下的只有业务数据本身的冲突。
+//
 // 要求 fn 除了写数据库不做别的：重试会完整重放它。带外部副作用（发消息、
 // 调第三方）的逻辑不能用这个入口。
 func (p *Pool) InTxSerializableRetry(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
 	const attempts = 4
 	var err error
 	for i := 0; i < attempts; i++ {
-		err = p.InTxSerializable(ctx, s, fn)
+		err = p.runScoped(ctx, s, pgx.TxOptions{IsoLevel: pgx.Serializable}, "开启序列化事务", false, i > 0, fn)
 		if err == nil || !IsSerializationFailure(err) {
 			return err
 		}
 		if ctx.Err() != nil {
 			return err
 		}
-		// 退避一点点再试，避免两个事务反复以同样的节奏互相撞。
-		// 量级是毫秒：序列化冲突的窗口本来就很短。
-		select {
-		case <-ctx.Done():
-			return err
-		case <-time.After(time.Duration(2<<i) * time.Millisecond):
-		}
 	}
 	return err
 }
 
+// chainGateSQL 是重试事务的第一条语句：在取快照之前锁住审计链头表。
+//
+// LOCK TABLE 是 PostgreSQL 里唯一不取快照的加锁语句，序列化事务的快照因此晚于
+// 拿到锁的时刻。SHARE ROW EXCLUSIVE 与自身互斥、与 UPDATE / INSERT 要的
+// ROW EXCLUSIVE 互斥、不挡只读：
+//   - 拿锁前已经在取号的事务（持有 ROW EXCLUSIVE 到提交）先走完，本事务的快照能看到它们；
+//   - 拿锁后别人取号要等本事务结束，快照之后不会有人改链头；
+//   - 重试之间按到达顺序排队，不用再退避。
+//
+// 锁随事务结束释放，连接回池时不留任何状态（会话级 advisory 锁被
+// session_state_guard_test 禁止，也不需要）。代价是锁住整张表：排队期间其他租户的
+// 审计写入也要等它，只在冲突后的重试里发生，单租户部署没有区别。
+const chainGateSQL = `LOCK TABLE public.audit_chain_heads IN SHARE ROW EXCLUSIVE MODE`
+
 // InTxSerializable 用于必须防写偏斜的场景：库存扣减、配额扣减、优惠券兑换。
 // 需要自动消化 40001 的场景请用 InTxSerializableRetry。
 func (p *Pool) InTxSerializable(ctx context.Context, s Scope, fn func(pgx.Tx) error) error {
-	return p.runScoped(ctx, s, pgx.TxOptions{IsoLevel: pgx.Serializable}, "开启序列化事务", false, fn)
+	return p.runScoped(ctx, s, pgx.TxOptions{IsoLevel: pgx.Serializable}, "开启序列化事务", false, false, fn)
 }
 
 // --- 错误分类：让上层不必到处写 pgconn 类型断言 ---

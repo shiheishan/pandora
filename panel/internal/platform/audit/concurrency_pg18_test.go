@@ -84,7 +84,8 @@ func TestAuditConcurrentSerializablePG18(t *testing.T) {
 	assertChain(t, ctx, pool, admin, burstTenant, 16+24*3)
 
 	var advisory int
-	if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE locktype='advisory'`).Scan(&advisory); err != nil || advisory != 0 {
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_locks
+		WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database())`).Scan(&advisory); err != nil || advisory != 0 {
 		t.Errorf("advisory locks left behind=%d err=%v", advisory, err)
 	}
 }
