@@ -1,0 +1,64 @@
+# 面板对外地址 AEGIS_PUBLIC_BASE_URL 的生产规则用例表（一行一例：accept|reject <地址>）。
+# 三处校验共用这一张表，改规则先改这里：
+#   deploy/public-base-url.sh 的 pandora_valid_public_base_url（public-base-url_mock_test.sh）
+#   deploy/render-nginx.sh 的校验（render-nginx_test.sh）
+#   platform/config 的 CanonicalPublicOrigin，生产模式（config 包的 public_origin_test.go）
+# 只用虚构值：example.test / example.com 与文档段 192.0.2.0/24、198.51.100.0/24、203.0.113.0/24。
+
+# DNS 域名
+accept https://panel.example.test
+accept https://panel.example.test/
+accept https://Panel.Example.TEST
+accept https://a-b.c.example.test
+accept https://xn--fsq.example.com
+# 公网 IPv4（文档段视同公网：Let's Encrypt 会拒签，安装器兜底自签）
+accept https://203.0.113.10
+accept https://198.51.100.7/
+accept https://192.0.2.1
+
+# 协议、端口、路径、凭据、查询
+reject http://panel.example.test
+reject http://203.0.113.10
+reject https://panel.example.test:8443
+reject https://panel.example.test:443
+reject https://203.0.113.10:8443
+reject https://panel.example.test/x
+reject https://203.0.113.10/x
+reject https://u@panel.example.test
+reject https://panel.example.test?x=1
+reject https://panel.example.test#x
+reject https://CHANGE_ME_TO_YOUR_PANEL_DOMAIN
+# 不是公网域名
+reject https://localhost
+reject https://a.localhost
+reject https://panel
+reject https://panel.example.test.
+reject https://panel_x.example.test
+reject https://-panel.example.test
+reject https://panel.123
+# 不是公网 IPv4：私网、回环、链路本地、运营商级 NAT、本网络、协议分配、基准测试、组播、保留、广播
+reject https://10.0.0.1
+reject https://172.16.0.1
+reject https://172.31.255.255
+reject https://192.168.1.1
+reject https://127.0.0.1
+reject https://169.254.1.1
+reject https://100.64.0.1
+reject https://100.127.255.255
+reject https://0.0.0.0
+reject https://0.1.2.3
+reject https://192.0.0.8
+reject https://198.18.0.1
+reject https://198.19.255.255
+reject https://224.0.0.1
+reject https://240.0.0.1
+reject https://255.255.255.255
+# IPv4 的歧义写法
+reject https://203.0.113.010
+reject https://203.0.113.256
+reject https://203.0.113
+reject https://3405803786
+# IPv6 字面量不支持（只有 IPv6 的机器用解析到它的域名）
+reject https://[2001:db8::1]
+reject https://[::ffff:203.0.113.10]
+reject https://[::1]
