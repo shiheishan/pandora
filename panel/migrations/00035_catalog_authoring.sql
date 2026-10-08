@@ -624,6 +624,9 @@ COMMENT ON COLUMN plan_versions.status IS
   'Authoring lifecycle: draft -> published -> retired. Publishing freezes the semantic snapshot.';
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
+-- 下面的数据守卫要扫套餐、版本与价格表，回填还原要改版本行，给足时间
+SET LOCAL statement_timeout = '5min';
 
 -- Rolling back after the new guarantees have become semantically observable is
 -- unsafe. Refuse rather than silently re-enable edits to sold prices or frozen
@@ -724,8 +727,7 @@ BEGIN
       USING ERRCODE = 'insufficient_privilege';
   END IF;
   RETURN NEW;
-END;
-$$;
+END $$;
 -- +goose StatementEnd
 
 CREATE TRIGGER trg_plan_versions_frozen BEFORE UPDATE ON plan_versions

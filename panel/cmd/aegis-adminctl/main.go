@@ -12,6 +12,7 @@
 //	aegis-adminctl revoke --email admin@x.com --role finance
 //	aegis-adminctl list
 //	aegis-adminctl roles
+//	aegis-adminctl has-admin        有可登录的有效管理员时退出 0，没有时退出 3（安装器用）
 package main
 
 import (
@@ -41,13 +42,13 @@ const defaultTenant = middleware.DefaultTenantID
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "错误:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("用法: aegis-adminctl <create|reset-password|grant|revoke|list|roles> [flags]")
+		return errors.New("用法: aegis-adminctl <create|reset-password|grant|revoke|list|roles|has-admin> [flags]")
 	}
 
 	cfg, err := config.Load()
@@ -77,6 +78,8 @@ func run() error {
 		return list(ctx, pool)
 	case "roles":
 		return roles(ctx, pool)
+	case "has-admin":
+		return hasAdmin(ctx, pool)
 	default:
 		return fmt.Errorf("未知子命令 %q", os.Args[1])
 	}

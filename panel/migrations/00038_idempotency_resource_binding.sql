@@ -476,9 +476,8 @@ $$;
 GRANT UPDATE (resource_type,resource_id)
   ON public.idempotency_keys TO aegis_app;
 
--- The NOLOGIN role is deliberately retained, stripped of all object
--- privileges. Cluster-wide role deletion belongs to a separately audited
--- cleanup after proving zero dependencies in every database.
+-- 先证明本库已不再引用这个 NOLOGIN 角色：它在本库的对象权限必须已全部剥掉，
+-- 再做下面的集群级检查。
 -- +goose StatementBegin
 DO $$
 DECLARE v_owner oid;
@@ -521,5 +520,30 @@ BEGIN
      OR NOT has_column_privilege('aegis_app','public.idempotency_keys','resource_id','UPDATE') THEN
     RAISE EXCEPTION '00038 Down failed to restore schema-37 ACL/catalog state';
   END IF;
+END $$;
+-- +goose StatementEnd
+
+-- 角色是集群级的，回到 00037 的集群形状要把它删掉。只在整个集群都不再引用它时才删：
+-- pg_shdepend 覆盖同集群所有库（含预检克隆库、同集群的其他安装）里的属主与授权，
+-- 再加成员关系与按库设置。还有任何引用就保留这个已剥光权限的 NOLOGIN 角色并提示，
+-- 与改之前的行为一致（configure-app-role.sql 也会按需建它）。
+-- +goose StatementBegin
+DO $$
+DECLARE v_owner oid;
+BEGIN
+  SELECT oid INTO v_owner FROM pg_catalog.pg_roles
+   WHERE rolname='aegis_idempotency_owner';
+  IF v_owner IS NULL THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_shdepend d
+              WHERE d.refclassid='pg_catalog.pg_authid'::regclass AND d.refobjid=v_owner)
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m
+                 WHERE m.roleid=v_owner OR m.member=v_owner)
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_db_role_setting s WHERE s.setrole=v_owner) THEN
+    RAISE NOTICE '00038 Down kept role aegis_idempotency_owner: still referenced elsewhere in this cluster';
+    RETURN;
+  END IF;
+  DROP ROLE aegis_idempotency_owner;
 END $$;
 -- +goose StatementEnd

@@ -169,8 +169,20 @@ DROP FUNCTION IF EXISTS app.purge_node_traffic_reports(int, int);
 
 COMMENT ON COLUMN public.node_traffic_reports.duplicate_of IS NULL;
 
--- 保留期清理可能已经删掉了一些原报文，留下指向它们的重复件：外键按 NOT VALID 加回，
--- 只约束之后的写入，不校验存量（否则 Down 会因悬空引用失败）。再 Up 时照常删掉。
+-- 保留期清理可能已经删掉了一些原报文，留下指向它们的重复件：外键先按 NOT VALID 加回，
+-- 只约束之后的写入；再试着校验存量，没有悬空引用（新装、没跑过清理的库）就成为已校验的
+-- 外键，与 00131 之前的形状逐项一致。有悬空引用时校验失败只回滚这一步，外键保持 NOT VALID，
+-- 回滚照常完成（不为了外键去删报文）。再 Up 时照常删掉。
 ALTER TABLE public.node_traffic_reports
   ADD CONSTRAINT node_traffic_reports_duplicate_of_fkey
   FOREIGN KEY (duplicate_of) REFERENCES public.node_traffic_reports(id) ON DELETE SET NULL NOT VALID;
+
+-- +goose StatementBegin
+DO $$
+BEGIN
+  ALTER TABLE public.node_traffic_reports
+    VALIDATE CONSTRAINT node_traffic_reports_duplicate_of_fkey;
+EXCEPTION WHEN foreign_key_violation THEN
+  RAISE NOTICE '00131 Down: duplicate reports point at purged originals; node_traffic_reports_duplicate_of_fkey stays NOT VALID';
+END $$;
+-- +goose StatementEnd

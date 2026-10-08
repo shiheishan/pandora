@@ -1,3 +1,5 @@
+-- irreversible: 纯种子数据。这一版只插入权限字典、默认租户、系统角色与降级开关，没有结构可回退；删默认租户会经外键级联删掉它名下的全部业务数据，其中订阅事件、审计等追加写证据表一律拒绝删除，不删则 Down 什么也没做，两者都不是真正的回退。
+-- forward-fix: 这些种子行对 00009 的结构无害；权限或角色有误就写新迁移前滚修正。要整体回到 00010 之前，走升级前备份恢复（panel/deploy/MIGRATION-RUNBOOK.md 第 3 节）。
 -- 权限字典与系统角色种子。
 --
 -- 对应 PRD 2.3 用户角色矩阵与 IAM-009「默认拒绝；新增接口必须声明权限」。
@@ -181,13 +183,11 @@ ON CONFLICT (tenant_id, code) DO NOTHING;
 -- +goose StatementEnd
 
 -- +goose Down
-
 -- +goose StatementBegin
-DELETE FROM feature_switches WHERE tenant_id = '00000000-0000-7000-8000-000000000001';
-DELETE FROM role_permissions WHERE role_id IN (
-  SELECT id FROM roles WHERE tenant_id = '00000000-0000-7000-8000-000000000001' AND is_system
-);
-DELETE FROM roles WHERE tenant_id = '00000000-0000-7000-8000-000000000001' AND is_system;
-DELETE FROM tenants WHERE id = '00000000-0000-7000-8000-000000000001';
-DELETE FROM permissions;
+DO $$
+BEGIN
+  RAISE EXCEPTION
+    'rollback refused (00010 rbac seed): deleting the default tenant would cascade into append-only evidence and every business row; fix permissions or roles with a forward migration, or restore the pre-upgrade backup';
+END
+$$;
 -- +goose StatementEnd
