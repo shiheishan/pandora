@@ -206,7 +206,8 @@ func hy2UplinkUDP(ctx context.Context, conn N.PacketConn, upstream hy2UDPUpstrea
 }
 
 // hy2BatchWriter 攒一批上行包：上游能批量且目标都是 IPv4 时走 WriteBatch
-// （Linux 上即 sendmmsg），否则逐包 WriteTo。
+// （Linux 上即 sendmmsg），同一目标的连续包再合成一条 GSO 消息（见
+// hysteria2_udp_gso.go）；否则逐包 WriteTo。
 type hy2BatchWriter struct {
 	upstream net.PacketConn
 	batch    hy2UDPBatchIO
@@ -215,6 +216,13 @@ type hy2BatchWriter struct {
 	addrs    []*net.UDPAddr
 	payloads [][]byte
 	v4Only   bool
+	// gso 为真时同目标的连续包合成一条 UDP_SEGMENT 消息；内核或网卡不支持时
+	// 第一次失败即关掉，本会话之后逐条发。
+	gso bool
+	// first[i] 是 messages[i] 里第一个包在 payloads 里的下标；oob 是各条 GSO
+	// 消息的控制信息缓冲。
+	first []int
+	oob   []byte
 }
 
 func newHy2BatchWriter(upstream net.PacketConn, batch hy2UDPBatchIO) *hy2BatchWriter {
@@ -223,6 +231,11 @@ func newHy2BatchWriter(upstream net.PacketConn, batch hy2UDPBatchIO) *hy2BatchWr
 		w.batch = batch
 		w.messages = make([]ipv4.Message, 0, hy2UDPBatch)
 		w.buffers = make([][1][]byte, hy2UDPBatch)
+		w.first = make([]int, 0, hy2UDPBatch)
+		if hy2UDPGSOSupported {
+			w.gso = true
+			w.oob = make([]byte, hy2UDPBatch*udpSegmentCmsgSpace)
+		}
 	}
 	return w
 }
@@ -249,34 +262,43 @@ func (w *hy2BatchWriter) add(resolver *hy2UDPResolver, payload []byte, destinati
 
 // flush 发出攒下的包，返回成功写出的字节数。
 func (w *hy2BatchWriter) flush() (int64, error) {
-	var written int64
 	if w.batch != nil && w.v4Only && len(w.payloads) > 1 {
-		w.messages = w.messages[:0]
-		for i, payload := range w.payloads {
-			w.buffers[i][0] = payload
-			w.messages = append(w.messages, ipv4.Message{Buffers: w.buffers[i][:], Addr: w.addrs[i]})
-		}
-		for sent := 0; sent < len(w.messages); {
-			n, err := w.batch.WriteBatch(w.messages[sent:], 0)
-			for _, message := range w.messages[sent : sent+n] {
-				written += int64(message.N)
-			}
-			sent += n
-			if err != nil {
-				return written, err
-			}
-			if n == 0 {
-				break
-			}
-		}
-		return written, nil
+		return w.flushBatch(0)
 	}
+	var written int64
 	for i, payload := range w.payloads {
 		n, err := w.upstream.WriteTo(payload, w.addrs[i])
 		if err != nil {
 			return written, err
 		}
 		written += int64(n)
+	}
+	return written, nil
+}
+
+// flushBatch 从 payloads[from] 起批量发出。
+func (w *hy2BatchWriter) flushBatch(from int) (int64, error) {
+	w.buildMessages(from)
+	var written int64
+	for sent := 0; sent < len(w.messages); {
+		n, err := w.batch.WriteBatch(w.messages[sent:], 0)
+		for _, message := range w.messages[sent : sent+n] {
+			written += int64(message.N)
+		}
+		sent += n
+		if err != nil {
+			if w.gso && sent < len(w.messages) && len(w.messages[sent].OOB) > 0 && isUDPGSOError(err) {
+				// 这条 GSO 消息被拒（老内核、出口网卡没有校验和卸载、段长超过路径
+				// MTU 等）：本会话关掉 GSO，从这条的第一个包起逐条重发。
+				w.gso = false
+				more, err := w.flushBatch(w.first[sent])
+				return written + more, err
+			}
+			return written, err
+		}
+		if n == 0 {
+			break
+		}
 	}
 	return written, nil
 }
