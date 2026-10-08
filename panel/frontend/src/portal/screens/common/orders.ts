@@ -117,6 +117,8 @@ export const orderDetailSchema = z.object({
     ),
     coupon_code: z.string().optional(),
     subscription_period_end: z.string().optional(),
+    // 履约后落到的那一份（新购是新开的那份，续费、换套餐、流量包是原来那份）；没履约时 null
+    subscription_id: z.string().nullable(),
   }),
 })
 export type OrderDetail = z.output<typeof orderDetailSchema>['order']

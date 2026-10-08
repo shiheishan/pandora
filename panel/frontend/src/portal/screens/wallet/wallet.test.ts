@@ -85,6 +85,7 @@ function detail(over: Partial<OrderDetail> = {}): OrderDetail {
       payments: [{ status: 'succeeded', amount: 4720, currency: 'CNY', created_at: '2026-09-21T10:01:00Z', method: 'alipay', provider_name: '易支付' }],
       coupon_code: 'AUTUMN26',
       subscription_period_end: '2026-11-05T10:00:00Z',
+      subscription_id: 's1',
       ...over,
     },
   }).order

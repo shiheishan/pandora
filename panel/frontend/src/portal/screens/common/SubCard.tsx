@@ -18,6 +18,7 @@ export interface SubCardActions {
 /**
  * 我的套餐里的一份（原型 subCard）：到期、用量条、链接尾号与「复制 / 添加到 App」、App 里显示成什么、
  * 疑似泄露的红条，主按钮「续费」（流量低于 15% 时「加流量」变成主按钮），底部一行「换个套餐 · 改名 · 换新链接」。
+ * 已过期的那份没有「加流量」，「换个套餐」从底部移到主按钮旁边，次一级。
  * 卡片上的按钮自带对象：从哪张卡点进去就作用在哪一份，后面不再问。
  */
 export function SubCard({
@@ -61,7 +62,15 @@ export function SubCard({
         <small>{moneyShort(minPack)} 起，马上到账</small>
       </a>
     ) : null
-  const buttons = low ? [traffic, renew] : [renew, traffic]
+  // 已过期的那份：「换个套餐」和「续费，恢复使用」并列、次一级（首次点击测试 s8：底部灰字找不到）
+  const change =
+    expired && sub.changeable ? (
+      <a key="change" className={renew ? flowCss.twoLine : flowCss.twoLinePrimary} href={href(`/subs/${sub.id}/change`)} id={`btn-changepick-${sub.id}`}>
+        换个套餐
+        <small>换成别的，马上恢复</small>
+      </a>
+    ) : null
+  const buttons = expired ? [renew, change] : low ? [traffic, renew] : [renew, traffic]
   const shown = buttons.filter(Boolean)
 
   return (
@@ -143,7 +152,7 @@ export function SubCard({
 
       {!compact && (
         <div className={css.more}>
-          {sub.changeable && (
+          {sub.changeable && !expired && (
             <a className={css.quiet} href={href(`/subs/${sub.id}/change`)} id={`btn-changepick-${sub.id}`}>
               换个套餐
             </a>

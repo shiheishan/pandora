@@ -149,15 +149,15 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
 // ---------------------------------------------------------------------------
 // 付款面板（原型 pay）：确认页的付款页与订单页、钱包的支付弹窗共用。
 //   手机：主按钮「打开支付宝付款」（顶层 GET 跳收银台），二维码收进「用另一台手机扫码」；
-//   电脑：直接给收银台地址的二维码，用手机扫；放不进二维码（易支付地址带签名、回跳与商品名，常常很长）
+//   电脑：直接给收银台地址的二维码，用手机扫；下面是次按钮「在这台电脑上付款」（没带手机时用）；放不进二维码（易支付地址带签名、回跳与商品名，常常很长）
 //         时退回「打开付款页」，收银台页面上自己有码。
 //   付完回到这里会自动更新（每 3 秒查一次订单）；没更新再点「我已付款」主动查单。
 // pay 不幂等，但服务层对同渠道复用在途意图（reused=true），重进页面是安全的。
 // ---------------------------------------------------------------------------
 const POLL_PAY_MS = 3000
 
-/** 发起支付回 409「这张订单已超过付款期限，请取消后重新下单」（billing.ErrOrderPaymentExpired，没有单独的码） */
-export const isPaymentLapsed = (e: unknown) => isApiError(e, 'conflict') && e.message.includes('超过付款期限')
+/** 发起支付回 409 order_lapsed：这张单已超过付款期限（billing.ErrOrderPaymentExpired），只能取消后重新下单 */
+export const isPaymentLapsed = (e: unknown) => isApiError(e, 'order_lapsed')
 
 export interface PayPanelProps {
   orderId: string
@@ -193,7 +193,7 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
   const pay = useMutation({
     mutationFn: () => api.post(`v1/orders/${encodeURIComponent(orderId)}/pay`, intentSchema, { body: { provider: method.provider, method: method.method, return_url: returnUrl } }),
     onError: (e) => {
-      if (isApiError(e, 'conflict')) onUnpayable?.()
+      if (isApiError(e, 'conflict') || isPaymentLapsed(e)) onUnpayable?.()
     },
   })
 
@@ -259,8 +259,9 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
             <b>用手机{method.label}扫码付款</b>
           </p>
           {after}
-          <a className={css.textLink} href={redirect} onClick={() => setOpened(true)}>
-            不方便扫码？在这台电脑上打开付款页
+          <a className={css.openHere} href={redirect} onClick={() => setOpened(true)} id="btn-open-pay-here">
+            在这台电脑上付款
+            <small>{payHereNote(method)}</small>
           </a>
         </>
       ) : (
@@ -295,6 +296,11 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
       <p className={css.hint}>30 分钟内没付，订单自动取消，不会扣钱。</p>
     </div>
   )
+}
+
+/** 电脑上的次按钮写清它是干什么的：没带手机时直接在这台电脑上付（二维码仍是主路径） */
+export function payHereNote(method: Pick<PaymentMethod, 'method' | 'label'>): string {
+  return method.method === 'alipay' ? '没带手机？在这台电脑上用支付宝网页付' : `没带手机？在这台电脑上打开${method.label}付款页，按页面提示付`
 }
 
 function payErrorText(error: unknown): string {

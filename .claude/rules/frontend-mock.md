@@ -33,6 +33,13 @@ paths:
   - 页面单测 `src/admin/screens/nodes/nodes.test.ts` 也在用它
 - `dev:admin` 与 `dev:portal` 是两个 vite 进程，生效主题经 `appearance-share.ts` 写到 `node_modules/.cache/pandora-mock/appearance.json` 互通
 - 门户场景（`portal/fixtures.ts` 的 `SCENARIOS`，`POST /v1/__mock/portal-scenario` 一切换就重建全部状态）：
+  - 基础六个：`default` / `empty` / `multi` / `legacy` / `error` / `slow`（说明在 `fixtures.ts` 文件头）
+  - `proto-*`（`portal/proto.ts`、名单在 `portal/scenario.ts` 的 `PROTO_SCENARIOS`）：购买流程原型的场景，给首次点击测试用，数据照原型 SCENARIOS、套餐换成原型的三档目录，「今天」换成相对天数
+    - `proto-s1`…`proto-s8`（含 `s5a` / `s5b`、`s7b` / `s7c`）照原型；`proto-legacy` 是升级前买的 80G 流量包挂在「我的」上、能挪一次；`proto-s7d` 是余额 ¥0.20 加优惠码 `LUCKY99`，续费应付低于最低额下不了单
+    - 每个场景的起始页在 `proto.ts` 的 `PROTO_START`，加场景要同时登记 `PROTO_SCENARIOS` 与 `PROTO_START`
+  - 测试用的两个接口（都只在假后端里，不进 Go）：
+    - `GET /v1/__mock/proto?s=<proto-场景>&to=<门户地址>`：匿名可调，切到该场景（重建状态）后 302 跳到 `/#<to>`，不带 `to` 跳场景的起始页；`to` 只收 `/` 开头的门户地址。登录态在浏览器里，切场景不登出，测试员每个任务开一次这个地址就从头来
+    - `POST /v1/__mock/expire-orders`：要登录，把本人所有待支付单的付款期限拨到一分钟前（不关单），走「超过付款期限」的两条 409：发起支付回 `order_lapsed`，同款再买回 `order_pending` 带 `fields.lapsed`
   - 新增响应字段时照 Go 有没有 omitempty，决定 `legacy` 场景里它是否缺席
   - 页面读接口要先过 `gate`，`error` / `slow` 场景才对它生效；外框读的余额、佣金也算在内
   - 按用户挂的模块状态放在 `WeakMap<PortalState, …>` 里，才能随切换场景一起重建
