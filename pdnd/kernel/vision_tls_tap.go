@@ -25,6 +25,9 @@ var errVisionTLSTapSwitched = errors.New("vision: tls 读方向已切到直通")
 // visionTLSTapScratch 能装下一整条最大的 TLS 记录（头 + 2^14 + 256）。
 const visionTLSTapScratch = 5 + 16384 + 256
 
+// visionTLSTapPool：tap 的读缓冲读空就还，空闲连接不常驻 16KB（审查 V3）。
+var visionTLSTapPool = sync.Pool{New: func() any { b := make([]byte, visionTLSTapScratch); return &b }}
+
 type visionTLSTap struct {
 	net.Conn
 
@@ -33,7 +36,7 @@ type visionTLSTap struct {
 	// 会话后关掉，此后直接透传，不多一次拷贝。
 	aligned  bool
 	switched bool
-	scratch  []byte
+	scratch  *[]byte
 	buf      []byte // 已从底层读到、尚未交给 tls.Conn 的字节
 	readErr  error  // 与数据一起读到的错误，数据交完再报
 	hdr      [5]byte
@@ -51,42 +54,54 @@ func (t *visionTLSTap) Read(p []byte) (int, error) {
 	if t.switched {
 		return 0, errVisionTLSTapSwitched
 	}
-	if !t.aligned && len(t.buf) == 0 {
-		if t.readErr != nil {
-			return 0, t.readErr
-		}
+	if len(t.buf) > 0 {
+		return t.deliverLocked(p), nil
+	}
+	if t.readErr != nil {
+		return 0, t.readErr
+	}
+	if !t.aligned {
 		return t.Conn.Read(p)
 	}
-	if len(t.buf) == 0 {
-		if t.readErr != nil {
-			return 0, t.readErr
-		}
-		if t.scratch == nil {
-			t.scratch = make([]byte, visionTLSTapScratch)
-		}
-		n, err := t.Conn.Read(t.scratch)
-		t.buf, t.readErr = t.scratch[:n], err
-		if n == 0 {
-			t.readErr = nil
-			return 0, err
-		}
+	// 直接读进调用方（tls.Conn）的缓冲，阻塞读期间不占自己的缓冲；越过当前记录
+	// 末尾的那部分才挪进池里借来的暂存区，交完就还（审查 V3）。
+	n, err := t.Conn.Read(p)
+	if n == 0 {
+		return 0, err
 	}
+	limit := t.recordEnd(p[:n])
+	t.advance(p[:limit])
+	if limit < n {
+		t.scratch = visionTLSTapPool.Get().(*[]byte)
+		t.buf = append((*t.scratch)[:0], p[limit:n]...)
+		t.readErr = err
+		return limit, nil
+	}
+	return n, err
+}
+
+// deliverLocked 从暂存区交出字节，按记录对齐时不越过当前记录末尾；交空即归还暂存区。
+func (t *visionTLSTap) deliverLocked(p []byte) int {
 	limit := len(t.buf)
 	if t.aligned {
 		limit = t.recordEnd(t.buf)
-	}
-	if limit > len(p) {
-		limit = len(p)
 	}
 	n := copy(p, t.buf[:limit])
 	if t.aligned {
 		t.advance(t.buf[:n])
 	}
 	t.buf = t.buf[n:]
-	if len(t.buf) == 0 && !t.aligned {
-		t.scratch = nil
+	if len(t.buf) == 0 {
+		t.releaseScratchLocked()
 	}
-	return n, nil
+	return n
+}
+
+func (t *visionTLSTap) releaseScratchLocked() {
+	if t.scratch != nil {
+		visionTLSTapPool.Put(t.scratch)
+		t.scratch, t.buf = nil, nil
+	}
 }
 
 // recordEnd 返回 b 里到当前记录末尾为止的字节数（记录不完整时是全部）。
@@ -153,7 +168,7 @@ func (t *visionTLSTap) switchDirect() []byte {
 	defer t.mu.Unlock()
 	t.switched = true
 	out := append([]byte(nil), t.buf...)
-	t.buf, t.scratch = nil, nil
+	t.releaseScratchLocked()
 	return out
 }
 

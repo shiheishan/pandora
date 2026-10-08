@@ -28,9 +28,11 @@ func TestVisionTLSTapNeverCrossesRecordBoundary(t *testing.T) {
 	tail := []byte("raw-bytes-after-switch")
 	client, server := net.Pipe()
 	go func() {
-		// 故意按不对齐的小块写，记录头也会被拆开。
+		// 前一半故意按不对齐的小块写（记录头也会被拆开），后一半一次写完：
+		// 一次底层读就跨过好几条记录，越界的部分要进暂存区。
 		all := append(append([]byte(nil), wire...), tail...)
-		for len(all) > 0 {
+		half := len(wire) / 2
+		for len(all) > len(wire)-half+len(tail) {
 			n := 7 + len(all)%13
 			if n > len(all) {
 				n = len(all)
@@ -38,6 +40,7 @@ func TestVisionTLSTapNeverCrossesRecordBoundary(t *testing.T) {
 			_, _ = client.Write(all[:n])
 			all = all[n:]
 		}
+		_, _ = client.Write(all)
 		_ = client.Close()
 	}()
 	tap := newVisionTLSTap(server)

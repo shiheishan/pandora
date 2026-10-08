@@ -31,9 +31,42 @@ import (
 // 发出 command=2 的帧之后写裸 TCP；收到 command=2 之后先取走外层 TLS 已缓冲的
 // input / rawInput（Xray 用反射读同名字段，这里一样），再读裸 TCP。
 // 帧格式借 visionState（填充编码早已被三个真实客户端验证过，这里要测的只是直通）。
+// visionHoldConn 在合包模式下把客户端发出 command=2 那一帧之后的写攒住，与下一段
+// 裸字节合成一次 TCP 写：服务端一次读到「外层记录 + 裸字节」，裸字节落进外层的
+// rawInput，直通切换必须把它交出来（审查 V2）。
+type visionHoldConn struct {
+	net.Conn
+	mu   sync.Mutex
+	hold bool
+	buf  []byte
+}
+
+func (h *visionHoldConn) Write(p []byte) (int, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.hold {
+		h.buf = append(h.buf, p...)
+		return len(p), nil
+	}
+	return h.Conn.Write(p)
+}
+
+func (h *visionHoldConn) setHold(v bool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.hold = v
+	if !v && len(h.buf) > 0 {
+		_, err := h.Conn.Write(h.buf)
+		h.buf = nil
+		return err
+	}
+	return nil
+}
+
 type visionDirectTestClient struct {
 	outer net.Conn // *xrayreality.UConn 或 *utls.UConn
 	raw   net.Conn
+	hold  *visionHoldConn // 合包模式才有
 	state *visionState
 
 	readMu     sync.Mutex
@@ -84,7 +117,13 @@ func (c *visionDirectTestClient) Write(p []byte) (int, error) {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	if c.writeDirect {
-		return c.raw.Write(p)
+		n, err := c.raw.Write(p)
+		if c.hold != nil {
+			if flushErr := c.hold.setHold(false); flushErr != nil {
+				return 0, flushErr
+			}
+		}
+		return n, err
 	}
 	c.state.mu.Lock()
 	if c.state.packetsToFilter > 0 {
@@ -97,6 +136,12 @@ func (c *visionDirectTestClient) Write(p []byte) (int, error) {
 	frames := c.state.buildPaddedFrames(p)
 	direct := c.state.writerDirect
 	c.state.mu.Unlock()
+	if direct && c.hold != nil {
+		// 下一次直通写会把攒住的一起冲出去；客户端接下来若只读不写，到点也冲出去。
+		_ = c.hold.setHold(true)
+		hold := c.hold
+		time.AfterFunc(200*time.Millisecond, func() { _ = hold.setHold(false) })
+	}
 	for _, frame := range frames {
 		if _, err := c.outer.Write(frame); err != nil {
 			return 0, err
@@ -148,11 +193,13 @@ func takeUTLSBuffered(outer net.Conn) []byte {
 // 双向传数据，再核对直通后的流量统计与踢人。外层是普通 TLS 时同理（tls 子测试）。
 func TestVLESSRealityVisionInnerTLS13Direct(t *testing.T) {
 	for _, outer := range []string{"reality", "tls"} {
-		t.Run(outer, func(t *testing.T) { runVisionInnerTLS13Direct(t, outer) })
+		t.Run(outer, func(t *testing.T) { runVisionInnerTLS13Direct(t, outer, false) })
+		// 合包：command=2 那一帧与之后的裸字节同一次 TCP 写到达（审查 V2）。
+		t.Run(outer+"+合包", func(t *testing.T) { runVisionInnerTLS13Direct(t, outer, true) })
 	}
 }
 
-func runVisionInnerTLS13Direct(t *testing.T, outerKind string) {
+func runVisionInnerTLS13Direct(t *testing.T, outerKind string, coalesce bool) {
 	// 目标站：真 TLS 1.3 回显服务。
 	targetTLS := testXHTTPServerTLSConfig(t)
 	targetTLS.MinVersion = tls.VersionTLS13
@@ -246,9 +293,15 @@ func runVisionInnerTLS13Direct(t *testing.T, outerKind string) {
 	}
 	defer raw.Close()
 	_ = raw.SetDeadline(time.Now().Add(15 * time.Second))
+	var hold *visionHoldConn
+	clientRaw := raw
+	if coalesce {
+		hold = &visionHoldConn{Conn: raw}
+		clientRaw = hold
+	}
 	var outer net.Conn
 	if outerKind == "tls" {
-		uc := utls.UClient(raw, &utls.Config{InsecureSkipVerify: true, ServerName: "localhost"}, utls.HelloChrome_Auto) //nolint:gosec // 测试自签证书
+		uc := utls.UClient(clientRaw, &utls.Config{InsecureSkipVerify: true, ServerName: "localhost"}, utls.HelloChrome_Auto) //nolint:gosec // 测试自签证书
 		if err := uc.Handshake(); err != nil {
 			t.Fatalf("外层 TLS 握手: %v", err)
 		}
@@ -257,7 +310,7 @@ func runVisionInnerTLS13Direct(t *testing.T, outerKind string) {
 		}
 		outer = uc
 	} else {
-		outer, err = xrayreality.UClient(raw, &xrayreality.Config{Fingerprint: "chrome", ServerName: "example.com", PublicKey: key.PublicKey().Bytes(), ShortId: shortID[:]}, ctx, xnet.TCPDestination(xnet.ParseAddress("127.0.0.1"), xnet.Port(port)))
+		outer, err = xrayreality.UClient(clientRaw, &xrayreality.Config{Fingerprint: "chrome", ServerName: "example.com", PublicKey: key.PublicKey().Bytes(), ShortId: shortID[:]}, ctx, xnet.TCPDestination(xnet.ParseAddress("127.0.0.1"), xnet.Port(port)))
 		if err != nil {
 			t.Fatalf("xray REALITY 握手: %v", err)
 		}
@@ -275,7 +328,7 @@ func runVisionInnerTLS13Direct(t *testing.T, outerKind string) {
 	if _, err := outer.Write(header); err != nil {
 		t.Fatal(err)
 	}
-	client := &visionDirectTestClient{outer: outer, raw: raw, state: newVisionState([][]byte{id[:]}).asClient(id[:])}
+	client := &visionDirectTestClient{outer: outer, raw: clientRaw, hold: hold, state: newVisionState([][]byte{id[:]}).asClient(id[:])}
 	// VLESS 响应头两个字节在 Vision 之外，先读掉。
 	respHead := make([]byte, 2)
 	if _, err := io.ReadFull(outer, respHead); err != nil || respHead[0] != vlessVersion {
@@ -288,7 +341,12 @@ func runVisionInnerTLS13Direct(t *testing.T, outerKind string) {
 	}
 	// 先来回几轮小消息：每轮回程是目标站的一条完整 TLS 记录，服务端写侧据此
 	// 判定可以直通、发出 command=2（只有整记录才切，见 isCompleteTLSRecord）。
-	for i := 0; i < 5; i++ {
+	// 合包模式不来回小消息：让 command=2 那一帧紧接着大块上行，一起到达。
+	rounds := 5
+	if coalesce {
+		rounds = 0
+	}
+	for i := 0; i < rounds; i++ {
 		ping := bytes.Repeat([]byte{byte('a' + i)}, 1000)
 		if _, err := inner.Write(ping); err != nil {
 			t.Fatalf("第 %d 轮写: %v（服务端：%v）", i, err, serverErrors())
@@ -311,7 +369,7 @@ func runVisionInnerTLS13Direct(t *testing.T, outerKind string) {
 	client.state.mu.Lock()
 	enabled := client.state.enableXtls
 	client.state.mu.Unlock()
-	if !enabled || !client.sawCommand2 || client.readDirect == nil {
+	if !enabled || !client.sawCommand2 || (!coalesce && client.readDirect == nil) {
 		t.Fatalf("没有走到直通：enableXtls=%v 上行command2=%v 下行直通=%v", enabled, client.sawCommand2, client.readDirect != nil)
 	}
 
