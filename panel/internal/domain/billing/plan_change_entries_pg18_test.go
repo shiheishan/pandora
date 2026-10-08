@@ -210,7 +210,7 @@ func checkPlanChangeEntriesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) 
 		       (SELECT r.granted FROM gift_card_redemptions r WHERE r.code_id = $2::uuid)
 		  FROM subscription_events e
 		 WHERE e.subscription_id = $1::uuid AND e.event_type = 'plan_changed' AND e.order_id IS NULL
-		   AND e.payload->>'gift_card_code_id' = $2`, s4, codeID).Scan(&eventRefund, &eventCredit,
+		   AND e.payload->>'gift_card_code_id' = $2::uuid::text`, s4, codeID).Scan(&eventRefund, &eventCredit,
 		&refundTxns, &granted); err != nil {
 		t.Fatalf("read plan card evidence: %v", err)
 	}
