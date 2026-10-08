@@ -7,7 +7,11 @@ import { usePlans } from '../plans/api'
 import { useInvalidateUsers, useUser } from '../users/api'
 import { manualCreatedSchema, useInvalidateBilling, useUserPick } from './api'
 import css from './Billing.module.css'
-import { emptyManual, manualBody, manualProblems, priceChoices, SETTLEMENTS, type ManualForm, type Settlement } from './model'
+import { emptyManual, manualBody, manualCreatedToast, manualProblems, priceChoices, SETTLEMENTS, type ManualForm, type Settlement } from './model'
+
+// 用户已有订阅时不新开、不换链接（2026-10-07）：同套餐续一期，别的套餐在原订阅上换套餐
+const MANUAL_EXISTING_HINT =
+  '用户已有这个套餐的订阅时在原订阅上续一期；已有别的套餐的订阅时在原订阅上换套餐，订阅链接都不变。换套餐时原套餐剩余价值先抵新价，抵不完的退回余额（赠送时全额退回）。'
 
 /** onClose(新订单 id)：取消时不带参数 */
 export function ManualOrder({ open, userId, onClose }: { open: boolean; userId: string | null; onClose: (createdId?: string) => void }) {
@@ -53,13 +57,7 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
     try {
       const r = await api.post('v1/orders/manual', manualCreatedSchema, { body, idempotencyKey: intent.keyFor(body) })
       intent.reset()
-      toast(
-        form.settlement === 'pending'
-          ? `订单 ${r.order_no} 已创建，等待用户在 30 分钟内支付`
-          : form.settlement === 'offline'
-            ? `订单 ${r.order_no} 已按线下收款入账，订阅已开通`
-            : `订单 ${r.order_no} 已赠送开通`,
-      )
+      toast(manualCreatedToast(r, form.settlement))
       onClose(r.order_id)
     } catch (e) {
       fail(e, { fields: setErrors, intent })
@@ -119,6 +117,7 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
           {settlement.hint}
           {chosen && form.settlement !== 'grant' && `；应付 ${formatMoney(chosen.amount, chosen.currency)}`}。「从余额扣除」暂不提供，需要时先到用户详情调账，再用赠送开单。
         </p>
+        <p className={css.small}>{MANUAL_EXISTING_HINT}</p>
         {form.settlement === 'offline' && (
           <Input label="凭证号" mono placeholder="银行流水号、收据编号等" value={form.reference} onChange={(e) => set('reference', e.target.value)} error={errors.reference} />
         )}

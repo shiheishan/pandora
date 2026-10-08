@@ -2,7 +2,7 @@ import { formatDateTime, formatMoney, relativeTime } from '../../../core/format'
 import { periodLabel } from '../plans/model'
 import type { PlanRow } from '../plans/schemas'
 import { ORDER_STATUS_VIEW, orderWhat, parseYuan, REASON_MIN, type Tone } from '../users/model'
-import type { Adjustment, Currency, LateCase, LateKind, LateStatus, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Provider } from './schemas'
+import type { Adjustment, Currency, LateCase, LateKind, LateStatus, ManualCreated, OrderDetail, OrderQueried, OrderRow, OrderStatus, PaymentHistory, Provider } from './schemas'
 
 export { ORDER_STATUS_VIEW, orderWhat, type Tone }
 
@@ -534,4 +534,19 @@ export function adjustmentView(a: Adjustment) {
 /** 冲销原因的默认值：「冲销：」+ 原因（原因 ≥ 5 字，拼出来必然够长），截到 500 字 */
 export function reverseReason(a: Pick<Adjustment, 'reason'>): string {
   return [...`冲销：${a.reason}`].slice(0, REASON_MAX).join('')
+}
+
+/** 开单成功的提示：落成换套餐时带上原订阅剩余价值的去向 */
+export function manualCreatedToast(r: ManualCreated, settlement: Settlement): string {
+  if (r.balance_refund !== undefined) {
+    const refund = r.balance_refund > 0 ? `，原套餐剩余价值 ${formatMoney(r.balance_refund, r.currency)} 已退回余额` : ''
+    return settlement === 'pending'
+      ? `订单 ${r.order_no} 已创建（在原订阅上换套餐），等待用户在 30 分钟内支付`
+      : `订单 ${r.order_no} 已在原订阅上换套餐，订阅链接不变${refund}`
+  }
+  return settlement === 'pending'
+    ? `订单 ${r.order_no} 已创建，等待用户在 30 分钟内支付`
+    : settlement === 'offline'
+      ? `订单 ${r.order_no} 已按线下收款入账，订阅已开通`
+      : `订单 ${r.order_no} 已赠送开通`
 }

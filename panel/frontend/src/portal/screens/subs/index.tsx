@@ -88,6 +88,10 @@ function SubscriptionView({ sub, live }: { sub: Subscription; live: Subscription
   )
 }
 
+// 重置订阅链接会连节点密码一起换（2026-10-07）：旧链接与已导入的节点都失效；门户重置按用户限频
+const ROTATE_LIMIT = '两次更换至少间隔 10 分钟，每天最多 5 次。'
+const ROTATE_CONFIRM = `重置后旧链接和已导入的节点立即失效，你所有设备都要重新更新一次订阅。${ROTATE_LIMIT}`
+
 function Header({ sub, live, hasLink, timeZone }: { sub: Subscription; live: Subscription[]; hasLink: boolean; timeZone: string | undefined }) {
   const toast = useToast()
   const rotate = useRotateLink()
@@ -134,7 +138,7 @@ function Header({ sub, live, hasLink, timeZone }: { sub: Subscription; live: Sub
       <ConfirmModal
         open={confirming}
         title="更换订阅地址？"
-        body="旧地址会立即失效，所有设备需要重新导入。"
+        body={ROTATE_CONFIRM}
         confirmLabel="更换"
         tone="danger"
         onConfirm={doRotate}
@@ -190,7 +194,7 @@ function LinkBox({ sub, link, loading, error, onRetry }: { sub: Subscription; li
       {expired ? (
         <div className={css.hint}>订阅已过期，节点暂停服务。续费后此链接自动恢复，无需重新导入；过期期间不能更换订阅地址。</div>
       ) : (
-        <div className={css.hint}>订阅地址请勿分享。泄露后点击「更换订阅地址」，旧地址会立即失效。</div>
+        <div className={css.hint}>订阅地址请勿分享。泄露后点击「更换订阅地址」，旧地址和已导入的节点会立即失效。{ROTATE_LIMIT}</div>
       )}
       {stats && (
         <div className={css.stats} data-leak={stats.leak ? '' : undefined}>
