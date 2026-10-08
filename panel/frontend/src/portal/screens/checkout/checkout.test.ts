@@ -60,6 +60,7 @@ describe('确认页地址（约定地址）', () => {
     expect(parse('new=gone')).toEqual({ problem: 'plan_gone' })
     expect(parse('pack=gone')).toEqual({ problem: 'pack_gone' })
     expect(parse('pack=k100', [sub({ status: 'expired' })])).toEqual({ problem: 'sub_gone' })
+    expect(parse('pack=k100&sub=nope', [MINE, MOM])).toEqual({ problem: 'sub_gone' })
   })
 })
 
@@ -140,7 +141,8 @@ describe('确认页的钱（原型 S7 / S7b / S7c 与最低额）', () => {
     const f = payCopy(quote([forced], { balance: 850 }), forced, forced.with_balance, false, '换成进阶版', methods)
     expect(f.balanceLine).toEqual({ on: true, locked: true, text: '这单只要 ¥0.30，低于支付最低额，只能用余额付' })
     expect(f.button).toBe('换成进阶版，用余额付 ¥0.30')
-    const small = row({ total: 30, with_balance: split({ payable: 30, small_due: true }), without_balance: split({ payable: 30, small_due: true }) })
+    // A 路：SmallDue 时 payable 已归零、免掉的钱在 waived
+    const small = row({ total: 30, with_balance: split({ small_due: true, waived: 30 }), without_balance: split({ small_due: true, waived: 30 }) })
     const s = payCopy(quote([small]), small, small.with_balance, true, '换成进阶版', methods)
     expect(s.sum.text).toBe('差价 ¥0.30 不到支付最低额，这次免了')
     expect(s.needsMethod).toBe(false)

@@ -1,4 +1,4 @@
-import { periodMonths, periodOf, type Pack, type Plan } from '../common/catalog'
+import type { Pack, Plan } from '../common/catalog'
 import { createPlacedOrder } from '../common/intent'
 import { isHeld, leftOf } from '../common/purchase'
 import { balanceSplit, expectation, type BalanceSplit, type Quote, type QuoteRequest, type QuoteRow } from '../common/quote'
@@ -45,7 +45,10 @@ export function parseTarget(query: URLSearchParams, held: readonly Subscription[
     if (!live.length) return { problem: 'sub_gone' }
     // 没带是哪一份：预选剩得最少的那份（与选购页流量包标签同一规则）
     const least = [...live].sort((a, b) => (leftOf(a).left ?? Number.MAX_SAFE_INTEGER) - (leftOf(b).left ?? Number.MAX_SAFE_INTEGER))[0]!
-    const sub = live.find((s) => s.id === query.get('sub'))?.id ?? least.id
+    const named = query.get('sub')
+    // 地址点名的那一份不在用了（停用、不是你的）：不悄悄换成别的一份
+    if (named && !live.some((s) => s.id === named)) return { problem: 'sub_gone' }
+    const sub = named ?? least.id
     // 从卡片或选购页来的已经带了是哪一份，不再问；老地址没带、多份时才在确认页选（选过的带 pick=1 继续显示）
     return { target: { kind: 'pack', packId, subId: sub, chooser: live.length > 1 && (!query.get('sub') || query.get('pick') === '1') } }
   }
@@ -93,23 +96,7 @@ export function quoteRequest(t: Target, held: readonly Subscription[], coupon: s
   }
 }
 
-/** 「买多久」按时长排：1 个月、3 个月、1 年，其余排后 */
-const rowMonths = (r: Pick<QuoteRow, 'interval' | 'interval_count'>) => periodMonths(periodOf({ billing_interval: r.interval as never, interval_count: r.interval_count })) ?? 999
-export const sortTiers = (rows: readonly QuoteRow[]) => [...rows].sort((a, b) => rowMonths(a) - rowMonths(b) || a.subtotal - b.subtotal)
-
-/** 默认的一档：地址点名的 → 续费沿用原价格 → 与这一份现在同样长的 → 第一档 */
-export function defaultTier(rows: readonly QuoteRow[], sub: Subscription | undefined, requested: string | null): QuoteRow | null {
-  const sorted = sortTiers(rows)
-  const hit = (pred: (r: QuoteRow) => boolean) => sorted.find(pred) ?? null
-  const rp = sub?.renewal_price
-  return (
-    (requested ? hit((r) => r.price_id === requested) : null) ??
-    (rp?.available ? hit((r) => r.price_id === rp.id) : null) ??
-    (rp ? hit((r) => r.interval === rp.billing_interval && r.interval_count === rp.interval_count) : null) ??
-    sorted[0] ??
-    null
-  )
-}
+export { defaultTier, sortTiers } from '../common/quote'
 
 // ---------------------------------------------------------------------------
 // 建单：四个接口各自的请求体，都带 as_of + expect（服务端重算比对，不符回 409 quote_changed）。

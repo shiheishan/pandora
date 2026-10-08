@@ -94,7 +94,7 @@ function grant(state: PortalState, code: string, card: GiftTemplate, choice: Cho
     try {
       target = resolve(choice, options(offer, candidates(state))[0])
     } catch (e) {
-      if (e instanceof ChoiceError) throw new BillingError(422, 'validation_failed', e.message)
+      if (e instanceof ChoiceError) throw new BillingError(422, 'validation_failed', e.message, { choice: e.message })
       throw e
     }
   }

@@ -141,7 +141,7 @@ export function redeemViews(c: RedeemCtx, options: readonly PlacementOption[], d
           label: noDefault ? `把${m ? `「${sn}」` : '现在'}的${plan}${up ? '升级成' : '换成'}${np}` : m ? `换掉「${sn}」` : `把现在的${plan}换成${np}`,
           desc: [noDefault ? '' : `到 ${to}`, '链接不变', back].filter(Boolean).join(' · '),
           badge,
-          sentence: `${who}今天换成${np}，从今天起算，到 ${to}。链接不变${back ? `；${back}（在「钱包」里，可用于续费、加流量、买套餐）` : ''}。`,
+          sentence: `${who}今天换成${np}，从今天起算，到 ${to}。链接不变${back ? `；${plan}这期还没用完的天数和流量按 ${money(credit)} 算给你，退到钱包余额（在「钱包」里，可用于续费、加流量、买套餐）` : ''}。`,
           verb: `兑换，换成${np}`,
         }
       }

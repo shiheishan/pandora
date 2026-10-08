@@ -139,6 +139,8 @@ export interface Balance {
   kept: number
   forced: boolean
   small_due: boolean
+  /** SmallDue 时免掉、记作折扣的钱（purchase.WaiveSmallDue） */
+  waived: number
 }
 
 export function applyBalance(due: number, available: number, requested: number, minPay: number): Balance {
@@ -146,7 +148,7 @@ export function applyBalance(due: number, available: number, requested: number, 
   available = Math.max(0, available)
   const limit = Math.min(due, available)
   requested = Math.min(Math.max(0, requested), limit)
-  const b: Balance = { applied: requested, payable: due - requested, kept: 0, forced: false, small_due: false }
+  const b: Balance = { applied: requested, payable: due - requested, kept: 0, forced: false, small_due: false, waived: 0 }
   if (b.payable <= 0 || minPay <= 1 || b.payable >= minPay) return b
   if (due >= minPay) {
     const applied = due - minPay
@@ -161,6 +163,11 @@ export function applyBalance(due: number, available: number, requested: number, 
     b.small_due = true
   }
   return b
+}
+
+/** purchase.WaiveSmallDue：SmallDue 时剩下那点在线付不了的钱免掉，payable 归零、记进 waived */
+export function waiveSmallDue(b: Balance): Balance {
+  return b.small_due && b.payable > 0 ? { ...b, waived: b.payable, payable: 0 } : b
 }
 
 // ---------------------------------------------------------------------------

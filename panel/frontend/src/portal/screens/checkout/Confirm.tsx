@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
+import { isApiError } from '../../../core/api'
 import { href, navigate } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Input, Skeleton, Switch } from '../../../ui'
@@ -10,8 +11,8 @@ import { Alt, Callout, Chips, ChoiceList, flowCss, Notes, Rows } from '../common
 import type { Holdings } from '../common/holdings'
 import { endsIntent, recallPayable, useIntentKey } from '../common/intent'
 import { orderCreatedSchema, useOrderPayable } from '../common/orders'
-import { daysLeft, gb, leftOf, money, nameIdeas, nameRequired, periodLabel, profileName } from '../common/purchase'
-import { balanceSplit, purchaseRefusal, useQuote, type Quote, type QuoteRow } from '../common/quote'
+import { daysLeft, gb, leftOf, money, nameIdeas, nameRequired, NEW_COPY_IDEAS, periodLabel, profileName } from '../common/purchase'
+import { balanceSplit, purchaseRefusal, tierOf, useQuote, type Quote, type QuoteRow } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import css from './Checkout.module.css'
 import { confirmCopy, payCopy, tierNote, type Note } from './copy'
@@ -106,7 +107,7 @@ function ChangeChooser({ target, h, plan, rows, loading }: { target: Extract<Tar
         selected={target.subId}
         onSelect={pick}
         items={cands.map((s) => {
-          const row = rows?.find((r) => r.subscription_id === s.id)
+          const row = tierOf(rows ?? [], s, (r) => r.subscription_id === s.id)
           const pay = !row ? (loading ? '正在算价钱…' : '') : row.total > 0 ? `今天付 ${money(row.total)}` : row.refund > 0 ? `今天不用付，退 ${money(row.refund)} 到钱包余额` : '今天不用付'
           return { key: s.id, label: h.naming.dn(s), desc: [`${isLive(s) ? '' : '已过期，恢复并'}${s.plan_name} → ${np}`, pay, '链接不变'].filter(Boolean).join(' · ') }
         })}
@@ -242,9 +243,9 @@ function Priced({
   const [useBalance, setUseBalance] = useState(true)
   const [methodChoice, setMethodChoice] = useState<string | null>(null)
   const required = target.kind === 'new' && nameRequired(h.held, target.planId)
-  const [name, setName] = useState(() => (target.kind === 'new' && h.held.some((s) => s.plan_id === target.planId) ? (nameIdeas(h.held, null)[0] ?? '') : ''))
+  const [name, setName] = useState(() => (target.kind === 'new' && h.held.some((s) => s.plan_id === target.planId) ? (nameIdeas(h.held, null, NEW_COPY_IDEAS)[0] ?? '') : ''))
   const [updated, setUpdated] = useState(false)
-  const [refusal, setRefusal] = useState<{ kind: 'order_pending' | 'other'; text: string } | null>(null)
+  const [refusal, setRefusal] = useState<{ kind: 'order_pending' | 'other'; text: string; orderId?: string } | null>(null)
   const [busy, setBusy] = useState(false)
 
   const tiers = sortTiers(quote.quotes)
@@ -273,7 +274,7 @@ function Priced({
       oldPlan: target.kind === 'change' ? (sub?.plan_name ?? null) : null,
       refund: row.refund,
       packBytes: pack?.traffic_bytes ?? 0,
-      waived: split.small_due ? split.payable : 0,
+      waived: split.waived,
       revive: target.kind === 'renew' && sub !== undefined && !isLive(sub),
     })
     const toPay = (orderId: string) => navigate(`/checkout/pay/${orderId}`, { query: { ...ctx, m: method ? methodKey(method) : '' } })
@@ -295,7 +296,8 @@ function Priced({
         setUpdated(true)
         await refetch()
       } else {
-        setRefusal({ kind: kind === 'order_pending' ? 'order_pending' : 'other', text: e instanceof Error && e.message ? e.message : '没下成单，请稍后再试' })
+        // order_pending 的 fields.order_id 是那张还没付款的单（A 路实现）
+        setRefusal({ kind: kind === 'order_pending' ? 'order_pending' : 'other', text: e instanceof Error && e.message ? e.message : '没下成单，请稍后再试', orderId: isApiError(e) ? e.fields.order_id : undefined })
       }
     } finally {
       setBusy(false)
@@ -398,7 +400,7 @@ function Priced({
             {refusal.kind === 'order_pending' && (
               <>
                 {' '}
-                <a href={href('/orders')}>去订单里继续付款或取消 →</a>
+                <a href={href(refusal.orderId ? `/orders/${refusal.orderId}` : '/orders')}>去那张订单继续付款或取消 →</a>
               </>
             )}
           </div>
@@ -421,9 +423,10 @@ function NameField({ required, name, onName, plan, h }: { required: boolean; nam
         给它起个名字 <small>{required ? '必填' : '选填，方便分清是谁的'}</small>
       </label>
       <Input id="name-input-new" maxLength={16} value={name} placeholder="例如：妈妈的 iPad" onChange={(e) => onName(e.target.value)} />
-      {required && <p className={flowCss.warnBox}>不起名的话，App 里会有两个「{profileName(h.site, '', plan.name)}」，分不清哪个是哪个。</p>}
+      {/* 只在空着时说重名的后果（首次点击测试：已经填了名字还挂着提醒，像没生效） */}
+      {required && !name.trim() && <p className={flowCss.warnBox}>不起名的话，App 里会有两个「{profileName(h.site, '', plan.name)}」，分不清哪个是哪个。</p>}
       <div className={flowCss.chips}>
-        {nameIdeas(h.held, null)
+        {nameIdeas(h.held, null, NEW_COPY_IDEAS)
           .slice(0, 3)
           .map((v) => (
             <button key={v} type="button" className={flowCss.chip} onClick={() => onName(v)}>

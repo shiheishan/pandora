@@ -12,6 +12,8 @@ export const balanceSplitSchema = z.object({
   forced: z.boolean(),
   /** 应付本身低于最低额、余额又不够：差价免掉（用户 10-07 拍板） */
   small_due: z.boolean(),
+  /** SmallDue 时免掉的钱（payable 已归零，记作折扣） */
+  waived: z.number().int(),
 })
 export type BalanceSplit = z.output<typeof balanceSplitSchema>
 

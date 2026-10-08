@@ -202,7 +202,7 @@ export function payCopy(quote: Quote, row: QuoteRow, split: BalanceSplit, useBal
       : null
   let sum: PayCopy['sum']
   if (row.total === 0) sum = { text: '这次不用付钱', ...(row.refund > 0 ? { after: `，多出的 ${money(row.refund)} 退到钱包余额` } : {}) }
-  else if (split.small_due) sum = { text: `差价 ${money(split.payable)} 不到支付最低额，这次免了${split.applied > 0 ? `；余额抵 ${money(split.applied)}` : ''}` }
+  else if (split.small_due) sum = { text: `差价 ${money(split.waived)} 不到支付最低额，这次免了${split.applied > 0 ? `；余额抵 ${money(split.applied)}` : ''}` }
   else if (split.applied > 0 && split.payable > 0) sum = { text: `余额抵 ${money(split.applied)}，还需支付 `, strong: money(split.payable) }
   else if (split.applied > 0) sum = { text: '余额够付，', strong: money(split.applied), after: ' 全部用余额' }
   else sum = { text: '要付 ', strong: money(split.payable) }

@@ -18,7 +18,7 @@ export const overview: MockModule = {
       if (!name.startsWith('proto-') || !setScenario(name)) return ctx.fail(422, 'validation_failed', `场景只能是 ${SCENARIOS.filter((s) => s.startsWith('proto-')).join(' / ')}`)
       const to = ctx.query.get('to')
       const s = scenario()
-      const target = to && /^\/[a-z/?=&-]*$/.test(to) ? to : isProto(s) ? PROTO_START[s] : '/subs'
+      const target = to && /^\/[\w/?=&.-]*$/.test(to) ? to : isProto(s) ? PROTO_START[s] : '/subs'
       ctx.res.statusCode = 302
       ctx.res.setHeader('Location', `/#${target}`)
       ctx.res.setHeader('Cache-Control', 'no-store')

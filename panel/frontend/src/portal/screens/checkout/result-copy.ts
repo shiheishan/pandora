@@ -85,7 +85,8 @@ export interface DoneLines {
 }
 
 export function doneLines(c: DoneContext, order: OrderDetail, sub: Subscription | undefined, plan: Plan | undefined, held: readonly Subscription[], naming: Naming, balance: number | null): DoneLines {
-  const paid = paidText(order, c.waived)
+  // 用了余额就顺带写还剩多少（首次点击测试：余额付完不知道还剩几块）
+  const paid = paidText(order, c.waived) + (order.balance_applied > 0 && balance !== null ? `；余额还剩 ${money(balance)}` : '')
   const others = held.filter((s) => s.id !== sub?.id)
   const othersFine = others.length ? [`${others.map((x) => `「${naming.sn(x)}」`).join('、')}不受影响`] : []
   const end = sub?.current_period_end ? day(sub.current_period_end) : order.subscription_period_end ? day(order.subscription_period_end) : ''
@@ -107,7 +108,7 @@ export function doneLines(c: DoneContext, order: OrderDetail, sub: Subscription 
           c.refund > 0 ? `${money(c.refund)} 已退到余额${balance !== null ? `，现在余额 ${money(balance)}` : ''}（在「钱包」里，可用于续费、加流量、买套餐）` : paid,
         ],
         kept: ['链接没变', ...othersFine],
-        updateHint: `在 App 里点一次「更新」，就能看到${np}的节点。不用重新添加。`,
+        updateHint: `在 App 里点一次「更新」（找到「${sub?.client_name ?? '这个配置'}」，点刷新或更新），就能看到${np}的节点。不用重新添加。`,
         changeable: '想换回来随时可以，在卡片上点「换个套餐」。',
         showNewLink: false,
       }
@@ -124,7 +125,7 @@ export function doneLines(c: DoneContext, order: OrderDetail, sub: Subscription 
       const left = sub ? leftOf(sub).left : null
       return {
         title: `已加 ${gb(c.packBytes)}`,
-        happened: [`${sub ? naming.who(sub) : '这一份'}${left !== null ? `这期还能用 ${gb(left)}` : '加上了'}`, paid],
+        happened: [`${sub ? naming.who(sub) : '这一份'}${left !== null ? `现在一共还能用 ${gb(left)}` : '加上了'}（流量包不过期，这期的用完再用它，用完为止）`, paid],
         kept: ['链接没变，不用重新添加', ...(end ? [`到期日不变（${end}）`] : [])],
         showNewLink: false,
       }

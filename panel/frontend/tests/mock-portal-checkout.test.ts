@@ -42,6 +42,8 @@ describe('mock api · portal checkout (purchase model)', () => {
     expect([pro.credit, pro.total, pro.refund]).toEqual([2400, 2100, 0])
     expect([basic.total, basic.refund]).toEqual([0, 900])
     expect(pro.credit_detail).toMatchObject({ paid: 3000, days_left: 25, days_total: 30, ratio_ppm: 800000 })
+    // 与 A 路一致：只给订阅时每个套餐的全部价格档都返回
+    expect(byPlan.quotes.filter((q) => q.plan_id === PRO)).toHaveLength(3)
     const tiers = await quote({ action: 'change', subscription_id: sub!.id, plan_id: PRO })
     expect(tiers.quotes.map((q) => q.total)).toEqual([2100, 10200, 42600])
   })
@@ -66,7 +68,7 @@ describe('mock api · portal checkout (purchase model)', () => {
     const [sub] = (await subs()).subscriptions
     const q = await quote({ action: 'renew', subscription_id: sub!.id })
     const r = q.quotes.find((x) => x.interval === 'month' && x.interval_count === 1)!
-    expect(r.with_balance).toEqual({ applied: 2900, payable: 100, kept: 50, forced: false, small_due: false })
+    expect(r.with_balance).toEqual({ applied: 2900, payable: 100, kept: 50, forced: false, small_due: false, waived: 0 })
     const res = await call('POST', `/v1/me/subscriptions/${sub!.id}/renew`, { price_id: r.price_id, use_balance: 2900, as_of: q.as_of, expect: { total: 3000, balance_applied: 2900, payable: 100 } }, true)
     expect(await res.json()).toMatchObject({ balance_applied: 2900, payable_amount: 100 })
     await scenario('proto-s7b')
@@ -89,7 +91,9 @@ describe('mock api · portal checkout (purchase model)', () => {
     expect((await call('POST', '/v1/orders', { ...base, new_copy: true, label: '妈妈的 iPad' }, true)).status).toBe(201)
     const again = await call('POST', '/v1/orders', { ...base, new_copy: true, label: '爸爸的手机' }, true)
     expect(again.status).toBe(409)
-    expect(((await again.json()) as { error: { code: string } }).error.code).toBe('order_pending')
+    const pending = (await again.json()) as { error: { code: string; fields: Record<string, string> } }
+    expect(pending.error.code).toBe('order_pending')
+    expect(pending.error.fields.order_id).toMatch(/^[0-9a-f-]{36}$/)
   })
 
   it('流量包必须挂到一份在用的上；付款前的支付最低额兜底', async () => {

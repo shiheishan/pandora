@@ -107,7 +107,7 @@ export const plans: MockModule = {
             discount: row.discount,
             total: row.total,
             applied: balance.applied,
-            waived: balance.small_due ? balance.payable : 0,
+            waived: balance.waived,
             couponCode: row.coupon?.code,
             planName: pack.name,
             itemName: pack.name,

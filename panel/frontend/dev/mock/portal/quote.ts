@@ -1,8 +1,8 @@
 import type { Json, MockModule } from '../types.ts'
 import { BillingError, couponCheck, couponFace, isUuid, readStrict } from './billing.ts'
 import { findPack, findPlan, MIN_PAYMENT, plansNow, type CatalogPack, type CatalogPlan, type CatalogPrice } from './catalog.ts'
-import { addInterval, gate, isLiveSub, isRevivable, portalState, subPrice, usedBytes, type PortalState, type SubFixture } from './fixtures.ts'
-import { applyBalance, type Balance } from './purchase.ts'
+import { addInterval, gate, isLiveSub, isRevivable, portalState, usedBytes, type PortalState, type SubFixture } from './fixtures.ts'
+import { applyBalance, waiveSmallDue, type Balance } from './purchase.ts'
 
 // ---------------------------------------------------------------------------
 // 统一报价（设计稿 2.2）：POST /v1/me/checkout/quote 与四个建单接口共用这里的算法。
@@ -108,8 +108,8 @@ function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: b
     credit_detail: spec.credit?.detail ?? null,
     total,
     refund,
-    with_balance: applyBalance(total, state.balance, state.balance, MIN_PAYMENT),
-    without_balance: applyBalance(total, state.balance, 0, MIN_PAYMENT),
+    with_balance: waiveSmallDue(applyBalance(total, state.balance, state.balance, MIN_PAYMENT)),
+    without_balance: waiveSmallDue(applyBalance(total, state.balance, 0, MIN_PAYMENT)),
     period_start: spec.start === null ? null : new Date(spec.start).toISOString(),
     period_end: spec.start === null || !spec.price ? null : new Date(addInterval(spec.start, spec.price)).toISOString(),
     previous_end: spec.sub ? spec.sub.current_period_end : null,
@@ -117,12 +117,6 @@ function row(state: PortalState, spec: RowSpec, coupon: unknown, strictCoupon: b
 }
 
 const cnyPrices = (plan: CatalogPlan) => plan.prices.filter((p) => p.currency === 'CNY')
-/** 换套餐按订阅现在的周期取同档，没有同档取第一档 */
-const sameTier = (plan: CatalogPlan, sub: SubFixture) => {
-  const cur = subPrice(sub)
-  return cnyPrices(plan).find((p) => p.billing_interval === cur.billing_interval && p.interval_count === cur.interval_count) ?? cnyPrices(plan)[0]
-}
-
 function ownedSub(state: PortalState, id: unknown): SubFixture {
   const sub = typeof id === 'string' ? state.subs.find((s) => s.id === id) : undefined
   if (!sub) throw new BillingError(404, 'not_found', '订阅不存在')
@@ -168,17 +162,18 @@ export function quoteRows(state: PortalState, req: QuoteInput, at: number, stric
       }
       if (sub) {
         if (!isLiveSub(sub) && !isRevivable(sub, at)) throw new BillingError(409, 'conflict', '当前订阅状态不能变更')
+        // A 路实现：最多展开 20 个套餐，每个套餐的全部价格档都返回
         return plansNow()
           .filter((p) => p.id !== sub.plan_id && p.allow_upgrade && cnyPrices(p).length > 0)
           .slice(0, MAX_ROWS)
-          .map((p) => row(state, changeSpec(sub, p, sameTier(p, sub)!, at), coupon, strictCoupon))
+          .flatMap((p) => cnyPrices(p).map((price) => row(state, changeSpec(sub, p, price, at), coupon, strictCoupon)))
       }
       if (plan) {
         if (!plan.allow_upgrade) throw new BillingError(409, 'conflict', '目标套餐不允许变更')
         return state.subs
           .filter((s) => s.plan_id !== plan.id && (isLiveSub(s) || isRevivable(s, at)))
           .slice(0, MAX_ROWS)
-          .map((s) => row(state, changeSpec(s, plan, sameTier(plan, s)!, at), coupon, strictCoupon))
+          .flatMap((s) => cnyPrices(plan).map((price) => row(state, changeSpec(s, plan, price, at), coupon, strictCoupon)))
       }
       throw new BillingError(422, 'validation_failed', '参数不合法', { plan_id: '订阅与套餐至少给一个' })
     }
@@ -224,7 +219,7 @@ export function settle(state: PortalState, rows: QuoteRow[], priceId: string | n
   if (!hit) throw new BillingError(409, 'conflict', '所选价格已下架，请重新选择')
   const want = body.use_balance
   if (want !== undefined && (typeof want !== 'number' || !Number.isInteger(want))) throw new BillingError(422, 'validation_failed', '参数不合法', { use_balance: '须为整数（分）' })
-  const balance = applyBalance(hit.total, state.balance, (want as number | undefined) ?? 0, MIN_PAYMENT)
+  const balance = waiveSmallDue(applyBalance(hit.total, state.balance, (want as number | undefined) ?? 0, MIN_PAYMENT))
   const expect = body.expect as Json | undefined
   if (expect !== undefined) {
     if (!expect || typeof expect !== 'object') throw new BillingError(422, 'validation_failed', '参数不合法', { expect: '须为对象' })

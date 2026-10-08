@@ -7,7 +7,7 @@ import { usePackCatalog, usePlans, type Pack } from '../common/catalog'
 import { flowCss } from '../common/Flow'
 import { useHoldings } from '../common/holdings'
 import { day, gb, leftOf, money, moneyShort, planTraffic } from '../common/purchase'
-import { useQuote } from '../common/quote'
+import { tierOf, useQuote } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import { pickTrafficQuota } from '../common/traffic'
 import { periodWord } from '../common/card-text'
@@ -79,8 +79,8 @@ function BiggerPlan({ sub }: { sub: Subscription }) {
   const quote = useQuote(sub.changeable ? { action: 'change', subscription_id: sub.id } : null)
   const mine = pickTrafficQuota(sub.quotas)?.limit ?? null
   if (mine === null || !plans.data || !quote.data) return null
-  const bigger = quote.data.quotes
-    .map((row) => ({ row, plan: plans.data.find((p) => p.id === row.plan_id) }))
+  const bigger = [...new Set(quote.data.quotes.map((q) => q.plan_id))]
+    .map((planId) => ({ row: tierOf(quote.data.quotes, sub, (q) => q.plan_id === planId)!, plan: plans.data.find((p) => p.id === planId) }))
     .map((x) => ({ ...x, limit: x.plan?.quotas.find((q) => q.metric === 'traffic.bytes')?.limit }))
     .filter((x) => x.plan && (x.limit === null || (x.limit ?? 0) > mine))
     .sort((a, b) => (a.limit ?? Number.MAX_SAFE_INTEGER) - (b.limit ?? Number.MAX_SAFE_INTEGER))[0]

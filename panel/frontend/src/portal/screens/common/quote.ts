@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { isApiError } from '../../../core/api'
+import { periodMonths, periodOf } from './catalog'
+import type { Subscription } from './subscriptions'
 import { useApi } from '../../../shell/runtime'
 
 // ---------------------------------------------------------------------------
@@ -46,15 +48,37 @@ export function expectation(quote: Quote, row: QuoteRow, split: BalanceSplit) {
 /** 换套餐「今天付 ¥x」还是「退 ¥y」：按同一行的 total / refund */
 export const changeOutcome = (row: Pick<QuoteRow, 'total' | 'refund'>): { pay: number; refund: number } => ({ pay: row.total, refund: row.refund })
 
-/**
- * 建单被拒的两种购买特有情形（设计稿 2.2 / 2.4，httpx.CodeQuoteChanged / CodeOrderPending，都是 409）。
- * core/api.ts 的 SERVER_ERROR_CODES 还没登记这两个码，信封里的码会被归成 conflict：在 core 补登记之前
- * 先按服务端的固定文案认，登记后按码认（两条都留着，码优先）。
- */
+/** 建单被拒的两种购买特有情形（设计稿 2.2 / 2.4，httpx.CodeQuoteChanged / CodeOrderPending，都是 409），按码认 */
 export function purchaseRefusal(error: unknown): 'quote_changed' | 'order_pending' | null {
-  if (!isApiError(error) || error.status !== 409) return null
-  const code: string = error.code
-  if (code === 'quote_changed' || error.message.startsWith('金额刚变了')) return 'quote_changed'
-  if (code === 'order_pending' || error.message.includes('还没付款')) return 'order_pending'
+  if (isApiError(error, 'quote_changed')) return 'quote_changed'
+  if (isApiError(error, 'order_pending')) return 'order_pending'
   return null
+}
+
+// ---------------------------------------------------------------------------
+// 价格档：报价按（订阅，套餐）展开时每个价格档各一条（A 路实现）。列表里每个组合只显示一档：
+// 与这一份现在同样长的那档；确认页「买多久」才把三档都摆出来。
+// ---------------------------------------------------------------------------
+/** 「买多久」按时长排：1 个月、3 个月、1 年，其余排后 */
+const rowMonths = (r: Pick<QuoteRow, 'interval' | 'interval_count'>) => periodMonths(periodOf({ billing_interval: r.interval as never, interval_count: r.interval_count })) ?? 999
+export const sortTiers = (rows: readonly QuoteRow[]) => [...rows].sort((a, b) => rowMonths(a) - rowMonths(b) || a.subtotal - b.subtotal)
+
+/** 默认的一档：地址点名的 → 续费沿用原价格 → 与这一份现在同样长的 → 第一档 */
+export function defaultTier(rows: readonly QuoteRow[], sub: Subscription | undefined, requested: string | null): QuoteRow | null {
+  const sorted = sortTiers(rows)
+  const hit = (pred: (r: QuoteRow) => boolean) => sorted.find(pred) ?? null
+  const rp = sub?.renewal_price
+  return (
+    (requested ? hit((r) => r.price_id === requested) : null) ??
+    (rp?.available ? hit((r) => r.price_id === rp.id) : null) ??
+    (rp ? hit((r) => r.interval === rp.billing_interval && r.interval_count === rp.interval_count) : null) ??
+    sorted[0] ??
+    null
+  )
+}
+
+
+/** 某个（订阅，套餐）组合在列表里显示的那一档 */
+export function tierOf(rows: readonly QuoteRow[], sub: Subscription | undefined, match: (r: QuoteRow) => boolean): QuoteRow | undefined {
+  return defaultTier(rows.filter(match), sub, null) ?? undefined
 }

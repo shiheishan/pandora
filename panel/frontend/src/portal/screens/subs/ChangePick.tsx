@@ -6,7 +6,7 @@ import { priceFor, usePlans, type Plan } from '../common/catalog'
 import { flowCss } from '../common/Flow'
 import { useHoldings } from '../common/holdings'
 import { day, devicesText, money, moneyShort, perPeriod, planTraffic } from '../common/purchase'
-import { useQuote, type QuoteRow } from '../common/quote'
+import { tierOf, useQuote, type QuoteRow } from '../common/quote'
 import type { Subscription } from '../common/subscriptions'
 import css from './Subs.module.css'
 
@@ -57,9 +57,10 @@ export function ChangePick({ id }: { id: string }) {
           <Empty bare title="暂时没有能换的套餐" description="可以另买一份，或者到期后再来看看。" />
         ) : (
           <div>
-            {quote.data.quotes.map((row) => {
-              const plan = plans.data!.find((p) => p.id === row.plan_id)
-              return plan ? <Row key={row.plan_id} sub={sub} row={row} plan={plan} current={current} /> : null
+            {[...new Set(quote.data.quotes.map((q) => q.plan_id))].map((planId) => {
+              const plan = plans.data!.find((p) => p.id === planId)
+              const row = tierOf(quote.data.quotes, sub, (q) => q.plan_id === planId)
+              return plan && row ? <Row key={planId} sub={sub} row={row} plan={plan} current={current} /> : null
             })}
           </div>
         )}

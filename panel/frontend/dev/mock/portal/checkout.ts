@@ -106,7 +106,7 @@ export const checkout: MockModule = {
             discount: row.discount,
             total: row.total,
             applied: balance.applied,
-            waived: balance.small_due ? balance.payable : 0,
+            waived: balance.waived,
             couponCode: row.coupon?.code,
             planName: plan.name,
             itemName: plan.name,
@@ -138,7 +138,7 @@ export const checkout: MockModule = {
             discount: row.discount,
             total: row.total,
             applied: balance.applied,
-            waived: balance.small_due ? balance.payable : 0,
+            waived: balance.waived,
             couponCode: row.coupon?.code,
             planName: plan.name,
             itemName: plan.name,
@@ -174,7 +174,7 @@ export const checkout: MockModule = {
             credit: row.credit,
             total: row.total,
             applied: balance.applied,
-            waived: balance.small_due ? balance.payable : 0,
+            waived: balance.waived,
             couponCode: row.coupon?.code,
             planName: plan.name,
             itemName: plan.name,
@@ -233,7 +233,7 @@ function labelOf(raw: unknown): string | null {
 /** 同一套餐同时只能有一张未付款的新购单（设计稿 2.4，防两个标签页各付一次） */
 function assertNoPendingNew(state: PortalState, planId: string, planName: string) {
   sweepExpired(state)
-  const open = state.orders.some((o) => o.kind === 'new' && o.status === 'pending_payment' && o.effect.type === 'new' && o.effect.planId === planId)
-  if (open) throw new BillingError(409, 'order_pending', `你有一张还没付款的「${planName}」订单，继续付款或取消后再买`)
+  const open = state.orders.find((o) => o.kind === 'new' && o.status === 'pending_payment' && o.effect.type === 'new' && o.effect.planId === planId)
+  if (open) throw new BillingError(409, 'order_pending', `你有一张还没付款的「${planName}」订单，继续付款或取消后再买`, { order_id: open.id })
 }
 

@@ -134,7 +134,7 @@ function Rotated({ id }: { id: string }) {
           title: '已换新链接',
           next: (
             <>
-              <p className={flowCss.lead}>在{h.naming.multi ? `用「${h.naming.sn(sub)}」的` : '你的每台'}设备上把新链接添加到 App：</p>
+              <p className={flowCss.lead}>在{h.naming.multi ? `用「${h.naming.sn(sub)}」的` : '你的每台'}设备上把新链接添加到 App。设备不在身边？点「添加到 App」→「别的设备」，复制链接和说明发给对方。</p>
               <LinkBox sub={sub} url={h.urlOf(sub.id)} naming={h.naming} label="新链接" onImport={() => actions.onImport(sub)} />
             </>
           ),

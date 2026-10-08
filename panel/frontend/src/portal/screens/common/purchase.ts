@@ -65,6 +65,8 @@ export const profileName = (site: string, label: string, planName: string) => `$
 // 名字：候选名排除别的份已用的（不排除自己）；同款没起名时新买的那份必须起名
 // ---------------------------------------------------------------------------
 export const NAME_IDEAS = ['我的', '妈妈的 iPad', '爸爸的手机', '工作电脑', '孩子的平板'] as const
+/** 另买一份多半是给别人的：建议名不放「我的」（首次点击测试：预填「我的」容易把家人那份起成自己的） */
+export const NEW_COPY_IDEAS = NAME_IDEAS.filter((n) => n !== '我的')
 
 export function nameIdeas(subs: readonly Subscription[], self: Subscription | null, list: readonly string[] = NAME_IDEAS): string[] {
   const used = new Set(subs.filter((s) => s !== self && s.label).map((s) => s.label!.toLowerCase()))

@@ -8,7 +8,7 @@ import { Chips, flowCss } from '../common/Flow'
 import { useHoldings, type Holdings } from '../common/holdings'
 import { PlanCard } from '../common/PlanCard'
 import { gb, leftOf, moneyShort } from '../common/purchase'
-import { quoteSchema, type QuoteRow } from '../common/quote'
+import { quoteSchema, tierOf, type QuoteRow } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import { planCardView, type PlansMode } from './labels'
 import css from './Plans.module.css'
@@ -62,7 +62,7 @@ function useChangeQuotes(subs: readonly Subscription[]) {
   })
   return (subId: string, planId: string): QuoteRow | undefined => {
     const i = subs.findIndex((s) => s.id === subId)
-    return results[i]?.data?.quotes.find((q) => q.plan_id === planId)
+    return tierOf(results[i]?.data?.quotes ?? [], subs[i], (q) => q.plan_id === planId)
   }
 }
 
