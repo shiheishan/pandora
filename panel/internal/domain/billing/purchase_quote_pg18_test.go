@@ -21,7 +21,7 @@ import (
 //  3. 并发重复下单：两个请求同时新购同一套餐，只有一张成功，另一张回 order_pending；
 //  4. 价格篡改：expect 偏低、use_balance 超过余额、as_of 早于 10 分钟或在未来、price_id 属于
 //     别的套餐、订阅属于别人，都拒绝；
-//  5. 价格漂移：报价后后台改价、或原订阅又用了流量，回 quote_changed；
+//  5. 漂移：报价后余额变了、或原订阅又用了流量（剩余价值按当前用量算），回 quote_changed；
 //  6. 换掉一份：链接（凭据与 proxy_uuid）不变；过期 30 天内的换套餐剩余价值为 0；窗口关闭回 409。
 func checkPurchaseQuotePG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	ctx := p.ctx
@@ -379,13 +379,14 @@ func checkPurchaseQuotePG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 		PlanID: planAdv, PriceID: priceAdv, Expect: expect(dq, q, false),
 		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u10, PlanChangeIdempotencyScope, "pq-drift-traffic")})
 	wantCode("traffic used after the quote", err, httpx.CodeQuoteChanged)
+	// 价格档不可改（改价是新建一档），这里用余额变化：报价后又进了一笔余额，用余额的那组数就变了
+	orderReleasePG18FundBalance(t, ctx, p.app, p.fx.tenant, u10, 500)
 	rq = quote(QuoteInput{UserID: u10, Action: QuoteRenew, SubscriptionID: s10})
-	p.must(`UPDATE prices SET unit_amount = 3100 WHERE id=$1::uuid`, priceStd)
+	orderReleasePG18FundBalance(t, ctx, p.app, p.fx.tenant, u10, 700)
 	_, err = p.billing.CreateRenewal(ctx, p.fx.tenant, CreateRenewalInput{UserID: u10, SubscriptionID: s10,
-		Expect: expect(rq, rq.Quotes[0], false),
-		Claim:  orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u10, RenewalIdempotencyScope, "pq-drift-price")})
-	wantCode("price changed after the quote", err, httpx.CodeQuoteChanged)
-	p.must(`UPDATE prices SET unit_amount = 3000 WHERE id=$1::uuid`, priceStd)
+		UseBalance: 1200, Expect: expect(rq, rq.Quotes[0], true),
+		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u10, RenewalIdempotencyScope, "pq-drift-balance")})
+	wantCode("balance changed after the quote", err, httpx.CodeQuoteChanged)
 	t.Log("marker=purchase_quote_pg18_drift_ok")
 
 	// 6) 过期 30 天内换不同款：剩余价值为 0、链接不变；窗口关闭后回 409

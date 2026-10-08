@@ -153,10 +153,12 @@ func checkTrafficPackSubscriptionPG18(t *testing.T, ctx context.Context, pool *p
 	a1, a2 := newSub(ua), newSub(ua)
 	must(`UPDATE subscriptions SET current_period_end = now() + interval '90 days' WHERE id=$1::uuid`, a2)
 	bs := newSub(ub)
-	must(`UPDATE subscriptions SET status='expired', current_period_end = now() - interval '3 days' WHERE id=$1::uuid`, bs)
+	must(`UPDATE subscriptions SET status='expired', current_period_start = now() - interval '33 days',
+		current_period_end = now() - interval '3 days' WHERE id=$1::uuid`, bs)
 	cs := newSub(uc)
-	must(`UPDATE subscriptions SET status='expired', current_period_end = now() - interval '40 days',
-		renewal_closed_at = now() - interval '10 days' WHERE id=$1::uuid`, cs)
+	must(`UPDATE subscriptions SET status='expired', current_period_start = now() - interval '70 days',
+		current_period_end = now() - interval '40 days', renewal_closed_at = now() - interval '10 days'
+		WHERE id=$1::uuid`, cs)
 	dLive, dExpired := newSub(ud), newSub(ud)
 	must(`UPDATE subscriptions SET status='expired', current_period_end = now() + interval '1 day' WHERE id=$1::uuid`, dExpired)
 	ga, gb, gc, gd := grant(ua, nil, 100), grant(ub, nil, 200), grant(uc, nil, 300), grant(ud, nil, 400)

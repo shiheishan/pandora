@@ -31,8 +31,8 @@ type CreateOrderInput struct {
 	// CouponCode 是可选的优惠码
 	CouponCode string
 	// RejectSamePlan 由门户新购设置（规则 3）：用户已有这个套餐、可以原地续费的订阅时
-	// 拒绝新开（ErrSamePlanUseRenewal），门户改走续费。人工开单在进来之前已按同一口径
-	// 改走续费（CreateManualOrder），不设它。
+	// 拒绝新开（ErrSamePlanUseRenewal），门户改走续费（NewCopy 时不拦）；同一套餐已有未付款
+	// 的新购单时回 409 order_pending。人工开单按 Target 分派（CreateManualOrder），不设它。
 	RejectSamePlan bool
 	// NewCopy 是门户「另买一份」的显式意图：设了它就不拦同套餐（RejectSamePlan 只在
 	// !NewCopy 时生效），开出来的是一份新订阅、新链接。
@@ -133,10 +133,10 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 		if err != nil {
 			return err
 		}
-		// 防重复下单：同一套餐同时只能有一张未付款的新购单（门户；人工单不受限）。
-		// 两个标签页同时点，靠序列化隔离保证只有一张成功：后提交的那个拿到 40001，
-		// 重试时就能看到前一张
-		if in.ManualActor == "" {
+		// 防重复下单：门户新购（RejectSamePlan 是门户新购的标记）同一套餐同时只能有一张未付款
+		// 的新购单；人工单不受限。两个标签页同时点，靠序列化隔离保证只有一张成功：后提交的
+		// 那个拿到 40001，重试时就能看到前一张
+		if in.RejectSamePlan && in.ManualActor == "" {
 			if err := ensureNoPendingNewOrder(ctx, tx, tenantID, in.UserID, in.PlanID, plan.PlanName); err != nil {
 				return err
 			}
