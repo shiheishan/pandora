@@ -93,3 +93,31 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
+
+-- +goose Down
+-- 回到 00019：拆掉 Up 挂上的 zz_notify_* 触发器，再删通知函数。
+-- 表清单与 Up 一致（当时不存在的表 Up 跳过了，这里同样跳过）。
+-- 函数不带 CASCADE：还有别的触发器引用它就报错停下，不悄悄连带删除。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+-- +goose StatementBegin
+DO $$
+DECLARE
+  t text;
+  watched text[] := ARRAY[
+    'orders', 'subscriptions', 'subscription_credentials',
+    'support_tickets', 'support_messages', 'quota_balances',
+    'wallet_accounts', 'wallet_transactions',
+    'plans', 'plan_versions', 'plan_prices', 'nodes', 'announcements'
+  ];
+BEGIN
+  FOREACH t IN ARRAY watched LOOP
+    IF to_regclass('public.' || t) IS NULL THEN
+      CONTINUE;
+    END IF;
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I', 'zz_notify_' || t, t);
+  END LOOP;
+END;
+$$;
+-- +goose StatementEnd
+DROP FUNCTION IF EXISTS app.notify_change();

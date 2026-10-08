@@ -19,3 +19,13 @@
 -- 改它会让已经跑过的环境和文件对不上。写清楚为什么删，比抹掉痕迹有用。
 
 DROP INDEX IF EXISTS audit_events_cluster_idx;
+
+-- +goose Down
+-- 回到 00026：把聚类索引按 00026 的定义原样建回来（定义逐字取自 00026）。
+-- 这是在审计热表上的普通建索引，持 SHARE 锁、期间审计写入会排队；
+-- 表大时宁可走升级前备份恢复，也不要在业务时段跑这一步。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '5min';
+CREATE INDEX IF NOT EXISTS audit_events_cluster_idx
+  ON audit_events (tenant_id, occurred_at DESC, source_ip_hash)
+  WHERE source_ip_hash IS NOT NULL AND actor_kind = 'user' AND actor_id IS NOT NULL;

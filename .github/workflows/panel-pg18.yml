@@ -19,6 +19,7 @@ on:
       - "panel/go.sum"
       # PG18 门禁脚本、运行角色加固、种子，以及钉 goose 版本的发布脚本
       - "panel/deploy/run-pg18-gates.sh"
+      - "panel/deploy/run-migration-roundtrip.sh"
       - "panel/deploy/configure-app-role.sql"
       - "panel/deploy/fixtures/**"
       - "panel/deploy/build-release.sh"
@@ -33,6 +34,7 @@ on:
       - "panel/go.mod"
       - "panel/go.sum"
       - "panel/deploy/run-pg18-gates.sh"
+      - "panel/deploy/run-migration-roundtrip.sh"
       - "panel/deploy/configure-app-role.sql"
       - "panel/deploy/fixtures/**"
       - "panel/deploy/build-release.sh"
@@ -85,10 +87,19 @@ jobs:
           test -n "$v"
           GOBIN="$RUNNER_TEMP/bin" go install "github.com/pressly/goose/v3/cmd/goose@$v"
           "$RUNNER_TEMP/bin/goose" --version
+      # 迁移往返：空库逐个 up，每一步 down 回上一版、再 up 回来，pg_dump 结构
+      # （含函数、触发器、RLS 策略、授权与角色）必须逐项一致；irreversible 的 down
+      # 必须被拒且不留痕迹。放在这个 job 里而不是另起一个：检查机只跳过 panel-pg18
+      # 这一个需要 Docker 的 job
+      - name: Migration round trip (up, down, up per migration)
+        env:
+          GOOSE_BIN: ${{ runner.temp }}/bin/goose
+        run: bash panel/deploy/run-migration-roundtrip.sh panel
       # 脚本自己起 postgres:18-alpine 容器（runner 自带 Docker），迁移到最新、
       # 查运行角色授权，再给每个域克隆一次性库跑 go test -v；有用例跳过或
-      # 一个都没跑也判失败
+      # 一个都没跑也判失败。往返失败时照样跑，两边的结论一次都拿到
       - name: Run every PG18 domain gate
+        if: ${{ !cancelled() }}
         env:
           GOOSE_BIN: ${{ runner.temp }}/bin/goose
         run: bash panel/deploy/run-pg18-gates.sh panel

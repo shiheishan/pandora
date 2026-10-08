@@ -16,7 +16,11 @@ trap cleanup EXIT
 
 mkdir -p "$TMP/mock-bin" "$TMP/systemctl-state" "$TMP/app/bin" "$TMP/app/pdnd-dist" "$TMP/app/migrations" "$TMP/app/deploy" "$TMP/backup-output"
 : >"$TMP/systemctl.log"
+: >"$TMP/events.log"
 export MOCK_SYSTEMCTL_LOG="$TMP/systemctl.log"
+# 全部桩按发生顺序写进同一份事件日志，用来证明「预检在停服之前」。迁移脚本经 env -i
+# 启动、拿不到环境变量，它们从 PATH 第一项（mock-bin）推出日志位置。
+export MOCK_EVENT_LOG="$TMP/events.log"
 export MOCK_SYSTEMCTL_STATE_DIR="$TMP/systemctl-state"
 export MOCK_APP_DIR="$TMP/app"
 for unit in nginx.service aegis-admin.service aegis-public.service aegis-node.service; do
@@ -32,19 +36,21 @@ case "${1:-}" in
   show)
     if ! test -f "$MOCK_SYSTEMCTL_STATE_DIR/active.$unit"; then printf '0\n'; exit 0; fi
     case "$unit" in
-      aegis-admin.service) printf '2101\n' ;;
-      aegis-public.service) printf '2102\n' ;;
-      aegis-node.service) printf '2103\n' ;;
-      *) printf '2100\n' ;;
+      aegis-admin.service) printf '4194301\n' ;;
+      aegis-public.service) printf '4194302\n' ;;
+      aegis-node.service) printf '4194303\n' ;;
+      *) printf '4194300\n' ;;
     esac
     ;;
   stop)
     printf '%s\n' "$*" >>"$MOCK_SYSTEMCTL_LOG"
+    printf 'systemctl %s\n' "$*" >>"$MOCK_EVENT_LOG"
     shift
     for unit in "$@"; do rm -f "$MOCK_SYSTEMCTL_STATE_DIR/active.$unit"; done
     ;;
   start)
     printf '%s\n' "$*" >>"$MOCK_SYSTEMCTL_LOG"
+    printf 'systemctl %s\n' "$*" >>"$MOCK_EVENT_LOG"
     shift
     for unit in "$@"; do : >"$MOCK_SYSTEMCTL_STATE_DIR/active.$unit"; done
     ;;
@@ -70,18 +76,18 @@ MOCK
 cat >"$TMP/mock-bin/readlink" <<'MOCK'
 #!/usr/bin/env bash
 case "${2:-${1:-}}" in
-  /proc/2101/exe) printf '%s/bin/aegis-admin\n' "$MOCK_APP_DIR" ;;
-  /proc/2102/exe) printf '%s/bin/aegis-public\n' "$MOCK_APP_DIR" ;;
-  /proc/2103/exe) printf '%s/bin/aegis-node\n' "$MOCK_APP_DIR" ;;
+  /proc/4194301/exe) printf '%s/bin/aegis-admin\n' "$MOCK_APP_DIR" ;;
+  /proc/4194302/exe) printf '%s/bin/aegis-public\n' "$MOCK_APP_DIR" ;;
+  /proc/4194303/exe) printf '%s/bin/aegis-node\n' "$MOCK_APP_DIR" ;;
   *) exec /usr/bin/readlink "$@" ;;
 esac
 MOCK
 cat >"$TMP/mock-bin/sha256sum" <<'MOCK'
 #!/usr/bin/env bash
 case "${1:-}" in
-  /proc/2101/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-admin" ;;
-  /proc/2102/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-public" ;;
-  /proc/2103/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-node" ;;
+  /proc/4194301/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-admin" ;;
+  /proc/4194302/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-public" ;;
+  /proc/4194303/exe) exec /usr/bin/sha256sum "$MOCK_APP_DIR/bin/aegis-node" ;;
   *) exec /usr/bin/sha256sum "$@" ;;
 esac
 MOCK
@@ -115,6 +121,7 @@ PANDORA_NATIVE_RELEASE_VERSION=mock-v1
 ENV
 cat >"$TMP/app/deploy/backup-postgres.sh" <<'MOCK'
 #!/usr/bin/env bash
+printf 'backup\n' >>"${MOCK_EVENT_LOG:?}"
 artifact="${MOCK_BACKUP_DIR:?}/database-backup.age"
 printf 'encrypted test backup\n' >"$artifact"
 /usr/bin/sha256sum "$artifact" >"$artifact.sha256"
@@ -172,10 +179,28 @@ for script in platform.sh release-stop-the-world.sh; do
   cp "$ROOT/deploy/$script" "$TMP/good-release/deploy/$script"
   chmod 0755 "$TMP/good-release/deploy/$script"
 done
-for script in check-migrations.sh migrate.sh; do
-  printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/good-release/deploy/$script"
-  chmod 0755 "$TMP/good-release/deploy/$script"
-done
+# 预检桩：完整预检写凭据，--verify-attestation 只记一笔；$TMP/fail_verify 存在时核对失败
+cat >"$TMP/good-release/deploy/check-migrations.sh" <<'MOCK'
+#!/usr/bin/env bash
+root="$(cd "${PATH%%:*}/.." && pwd)"
+if [ "${1:-}" = --verify-attestation ]; then
+  printf 'verify %s approved=%s\n' "$2" "${PANDORA_STOPPED_WRITER_UPGRADE_APPROVED:-}" >>"$root/events.log"
+  [ ! -f "$root/fail_verify" ] || exit 78
+  exit 0
+fi
+printf 'precheck rehearse=%s approved=%s dir=%s\n' "${PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER:-}" \
+  "${PANDORA_STOPPED_WRITER_UPGRADE_APPROVED:-}" "${AEGIS_MIGRATIONS_DIR:-}" >>"$root/events.log"
+[ -n "${PANDORA_PRECHECK_ATTESTATION_OUT:-}" ] || exit 64
+printf 'format=mock\n' >"$PANDORA_PRECHECK_ATTESTATION_OUT"
+MOCK
+cat >"$TMP/good-release/deploy/migrate.sh" <<'MOCK'
+#!/usr/bin/env bash
+root="$(cd "${PATH%%:*}/.." && pwd)"
+printf 'migrate %s attestation=%s approved=%s\n' "$*" "${PANDORA_PRECHECK_ATTESTATION:-}" \
+  "${PANDORA_STOPPED_WRITER_UPGRADE_APPROVED:-}" >>"$root/events.log"
+[ -s "${PANDORA_PRECHECK_ATTESTATION:-/nonexistent}" ] || exit 65
+MOCK
+chmod 0755 "$TMP/good-release/deploy/check-migrations.sh" "$TMP/good-release/deploy/migrate.sh"
 amd64_digest="$(sha256sum "$TMP/good-release/pdnd-dist/pandora-native-linux-amd64" | awk '{print $1}')"
 arm64_digest="$(sha256sum "$TMP/good-release/pdnd-dist/pandora-native-linux-arm64" | awk '{print $1}')"
 cat >"$TMP/good-release/deploy/release-artifact.env" <<ENV
@@ -211,8 +236,8 @@ run_expect_failure 'release-artifact.env does not match amd64 artifact' "$TMP/ba
 MOCK_MANIFEST_DIGEST="$GOOD_MANIFEST_DIGEST"
 MOCK_TAMPER_STAGE=1 run_expect_failure 'release manifest digest mismatch' "$TMP/good-release"
 
-# A migration failure after layout switching must restore the old bin,
-# pdnd-dist and migrations before starting writers again.
+# A precheck failure now happens before any service is stopped: systemd is never
+# touched and the live layout stays as it was.
 cp -a "$TMP/app" "$TMP/rollback-app"
 printf 'old-admin\n' >"$TMP/rollback-app/bin/aegis-admin"
 printf 'old-public\n' >"$TMP/rollback-app/bin/aegis-public"
@@ -229,16 +254,19 @@ chmod 0755 "$TMP/bad-migration-release/deploy/check-migrations.sh"
 )
 MOCK_MANIFEST_DIGEST="$(sha256sum "$TMP/bad-migration-release/SHA256SUMS" | awk '{print $1}')"
 ROLLBACK_STDERR="$TMP/rollback.stderr"
+: >"$TMP/systemctl.log"
 if MOCK_CONTROLLER_APP_DIR="$TMP/rollback-app" MOCK_APP_DIR="$TMP/rollback-app" run_controller "$TMP/bad-migration-release" >"$TMP/rollback.stdout" 2>"$ROLLBACK_STDERR"; then
   echo 'migration failure was incorrectly reported as success' >&2
   exit 1
 fi
-grep -Fq 'rollback=restored_before_migration' "$TMP/rollback.stdout" || {
-  echo 'migration failure did not report pre-exposure rollback' >&2
+grep -Fq 'rollback=not_required' "$TMP/rollback.stdout" || {
+  echo 'precheck failure did not stay in the preflight phase' >&2
   cat "$TMP/rollback.stdout" >&2
   cat "$ROLLBACK_STDERR" >&2
   exit 1
 }
+grep -Fq 'before any service was stopped' "$ROLLBACK_STDERR"
+[ ! -s "$TMP/systemctl.log" ] || { echo "precheck failure touched systemd: $(cat "$TMP/systemctl.log")" >&2; exit 1; }
 grep -Fxq 'old-admin' "$TMP/rollback-app/bin/aegis-admin"
 grep -Fxq 'old-native-amd64' "$TMP/rollback-app/pdnd-dist/pandora-native-linux-amd64"
 grep -Fxq 'old-native-arm64' "$TMP/rollback-app/pdnd-dist/pandora-native-linux-arm64"
@@ -285,6 +313,54 @@ assert_duration "$SUCCESS_STDOUT" migration_precheck_duration_ns
 assert_duration "$SUCCESS_STDOUT" migration_duration_ns
 assert_duration "$SUCCESS_STDOUT" maintenance_window_duration_ns
 grep -Fxq 'release_committed=ok' "$SUCCESS_STDOUT"
+grep -Fxq 'migration_precheck_before_isolation=ok' "$SUCCESS_STDOUT"
+grep -Fxq 'migration_precheck_attestation=ok' "$SUCCESS_STDOUT"
+
+# 顺序证明：完整预检在第一次停服之前；停服之后只有只读核对、备份、迁移。
+event_line() { grep -n -m1 -- "$1" "$TMP/events.log" | cut -d: -f1; }
+assert_before() {
+  local a b
+  a="$(event_line "$1")"; b="$(event_line "$2")"
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || {
+    echo "event order violated: '$1' (line ${a:-missing}) must precede '$2' (line ${b:-missing})" >&2
+    cat "$TMP/events.log" >&2
+    exit 1
+  }
+}
+assert_before '^precheck ' '^systemctl stop nginx.service'
+assert_before '^systemctl stop nginx.service' '^systemctl stop aegis-node.service'
+assert_before '^systemctl stop aegis-node.service' '^verify '
+assert_before '^verify ' '^backup'
+assert_before '^backup' '^migrate up '
+assert_before '^migrate up ' '^systemctl start aegis-admin.service'
+[ "$(grep -c '^precheck ' "$TMP/events.log")" -eq 1 ] || { echo 'full precheck must run exactly once' >&2; cat "$TMP/events.log" >&2; exit 1; }
+grep -Eq '^precheck rehearse=yes approved= dir=.*/\.release-stage/[^/]+/release/migrations$' "$TMP/events.log" || {
+  echo 'pre-stop precheck must rehearse on the staged release without claiming writers are stopped' >&2
+  cat "$TMP/events.log" >&2
+  exit 1
+}
+grep -Eq '^verify .*/\.release-stage/[^/]+/precheck\.attestation approved=yes$' "$TMP/events.log"
+grep -Eq '^migrate up attestation=.*/\.release-stage/[^/]+/precheck\.attestation approved=yes$' "$TMP/events.log"
+
+# 停服后核对不过：库没被碰过，自动拉回旧写入者与入口，迁移不执行。
+: >"$TMP/events.log"
+touch "$TMP/fail_verify"
+VERIFY_STDOUT="$TMP/verify-fail.stdout"
+if run_controller "$TMP/good-release" >"$VERIFY_STDOUT" 2>"$TMP/verify-fail.stderr"; then
+  echo 'attestation mismatch after stop was reported as success' >&2
+  exit 1
+fi
+rm -f "$TMP/fail_verify"
+grep -Fxq 'rollback=writers_and_ingress_restored' "$VERIFY_STDOUT" || {
+  echo 'attestation mismatch did not restore writers' >&2
+  cat "$VERIFY_STDOUT" "$TMP/verify-fail.stderr" >&2
+  exit 1
+}
+if grep -q '^migrate ' "$TMP/events.log"; then echo 'migration ran after a failed attestation check' >&2; exit 1; fi
+if grep -q '^backup' "$TMP/events.log"; then echo 'backup ran after a failed attestation check' >&2; exit 1; fi
+for unit in nginx.service aegis-admin.service aegis-public.service aegis-node.service; do
+  [ -f "$TMP/systemctl-state/active.$unit" ] || { echo "$unit was not restarted" >&2; exit 1; }
+done
 
 # A failure after release_committed evidence must remain non-zero.  This
 # directly guards against setting SUCCESS before the fallible stage cleanup.
@@ -297,4 +373,4 @@ fi
 grep -Fxq 'release_committed=ok' "$POSTCOMMIT_STDOUT"
 grep -Fq 'automatic database rollback is prohibited' "$POSTCOMMIT_STDERR"
 
-echo "release-stop-the-world preflight, success, duration and post-commit failure gates: PASS"
+echo "release-stop-the-world preflight, precheck-before-stop order, success, duration and post-commit failure gates: PASS"

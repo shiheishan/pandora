@@ -67,3 +67,15 @@ SELECT id, 'device_limit.grace', '1'::jsonb,
  WHERE NOT EXISTS (
    SELECT 1 FROM system_settings s
     WHERE s.tenant_id = tenants.id AND s.key = 'device_limit.grace');
+
+-- +goose Down
+-- 回到 00023：删掉在线设备视图与订阅上的设备数覆盖列。
+-- 管理员按订阅调过的设备数随列丢失。
+--
+-- device_limit.mode / device_limit.grace 两条设置行保留不删：管理员可能已改成 strict，
+-- 00023 的代码不读它们；再次 Up 时 INSERT 带 NOT EXISTS，不会覆盖。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+DROP VIEW IF EXISTS subscription_online_devices;
+ALTER TABLE subscriptions
+  DROP COLUMN IF EXISTS device_limit;

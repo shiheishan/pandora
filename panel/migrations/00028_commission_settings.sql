@@ -34,3 +34,13 @@ CREATE INDEX IF NOT EXISTS withdrawals_user_idx
 CREATE INDEX IF NOT EXISTS commission_pending_idx
   ON commission_entries (tenant_id, frozen_until)
   WHERE status = 'pending';
+
+-- +goose Down
+-- 回到 00027：删掉这一版加的两条索引。
+--
+-- 三条分销设置行保留不删：管理员可能已经调过费率与门槛，删掉等于替经营者
+-- 改回默认值；00027 的代码不读它们。再次 Up 时 INSERT 带 NOT EXISTS，不会覆盖。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+DROP INDEX IF EXISTS commission_pending_idx;
+DROP INDEX IF EXISTS withdrawals_user_idx;

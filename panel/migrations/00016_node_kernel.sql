@@ -23,3 +23,13 @@ ALTER TABLE nodes
 COMMENT ON COLUMN nodes.kernel IS
   '承载该节点的内核：auto=节点端按协议自选，sing-box / xray-core=强制指定。'
   '对 mieru、juicity 这类只有单一实现的协议无效。';
+
+-- +goose Down
+-- 回到 00015：去掉内核选择列与它的取值约束。按节点钉死的内核随之丢失，
+-- 重新 Up 后全部回到默认的 auto。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
+ALTER TABLE nodes
+  DROP CONSTRAINT IF EXISTS nodes_kernel_check;
+ALTER TABLE nodes
+  DROP COLUMN IF EXISTS kernel;
