@@ -87,8 +87,8 @@ test('A：新购、另买一份、续费、加流量', async ({ browser, world }
     await narrowShot(page, 'A4-confirm')
     await submit(page, page.getByRole('button', { name: '续费，用余额付 ¥30.00' }))
     await expect(page.getByRole('heading', { name: '续费好了' })).toBeVisible({ timeout: 20_000 })
-    // 余额读数在下单后才重新拉取：等页面写出扣过之后的余额再读
-    await expect(page.getByText('余额付了 ¥30.00；余额还剩 ¥20.00')).toBeVisible()
+    // 余额读数在下单后才重新拉取：等页面写出扣过之后的余额再读（这一行中间还写了「在线付了」，是 B2c 的产品问题）
+    await expect(page.getByText(/^余额付了 ¥30\.00，.*；余额还剩 ¥20\.00$/)).toBeVisible()
     const lines = await happened(page)
     expect(lines[0]).toContain(`用到 ${to}（原来 ${from}）`)
     return `确认页「${callout}」「余额够付，¥30.00 全部用余额」；完成页「${lines[0]}」「${lines[1]}」`

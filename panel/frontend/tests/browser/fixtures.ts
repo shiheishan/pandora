@@ -37,7 +37,7 @@ export async function openPortal(browser: Browser, u: User): Promise<Page> {
   await page.goto('/')
   await page.getByLabel('邮箱').fill(u.email)
   await page.getByLabel('密码', { exact: true }).fill(u.password)
-  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await submit(page, page.getByRole('button', { name: '登录', exact: true }))
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
   return page
 }
@@ -48,7 +48,7 @@ export async function openAdmin(browser: Browser): Promise<Page> {
   await page.goto('/')
   await page.getByLabel('邮箱').fill(ADMIN_EMAIL)
   await page.getByLabel('密码', { exact: true }).fill(ADMIN_PASSWORD)
-  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await submit(page, page.getByRole('button', { name: '登录', exact: true }))
   const reauth = page.getByRole('dialog', { name: '验证身份后继续' })
   await page.addLocatorHandler(reauth, async () => {
     await reauth.getByLabel('当前登录密码').fill(ADMIN_PASSWORD)

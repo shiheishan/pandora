@@ -86,7 +86,8 @@ export function str(o: unknown, path: string): string {
 // ----------------------------------------------------------------------------
 //  写审计的请求跨 worker 排队（产品问题，见任务报告）：审计链序号在 SERIALIZABLE 事务里按事务快照取链尾，
 //  快照早于审计锁，两笔并发的写有一笔会撞 audit_events_chain_seq_key 回 500。浏览器测试并行跑时
-//  会随机撞上，所以造前提的后台写、收银台回调、页面上会建单或改账的那一下点击都经这把锁串行。
+//  会随机撞上（登录、注册也写审计），所以造前提的后台写、注册与登录、收银台回调、页面上登录与会建单或改账的
+//  那一下点击都经这把锁串行。
 //  锁是状态目录里的一个目录（mkdir 原子），30 秒没释放视为上一个进程崩了
 // ----------------------------------------------------------------------------
 const LOCK = join(OUT, '.audit-write.lock')
@@ -124,7 +125,7 @@ export async function exclusive<T>(fn: () => Promise<T>): Promise<T> {
 let adminToken: string | null = null
 
 async function adminLogin(): Promise<string> {
-  adminToken = str(await call(ADM, '/v1/auth/login', { body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } }), 'access_token')
+  adminToken = str(await exclusive(() => call(ADM, '/v1/auth/login', { body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } })), 'access_token')
   return adminToken
 }
 
@@ -166,15 +167,17 @@ export async function newUser(tag: string): Promise<User> {
   const email = `w9b-${tag.toLowerCase()}-${runTag}-${worker}-${userSeq}@example.test`
   const password = `W9b-${randomUUID()}`
   const ip = freshIp()
-  const start = await call(PUB, '/v1/auth/register/start', { body: { email }, ip })
-  const code = typeof start.dev_code === 'string' ? start.dev_code : ''
-  const done = await call(PUB, '/v1/auth/register/complete', { body: { registration_token: str(start, 'registration_token'), code, password }, expect: [200, 201], ip })
-  return { email, password, id: str(done, 'user_id') }
+  return exclusive(async () => {
+    const start = await call(PUB, '/v1/auth/register/start', { body: { email }, ip })
+    const code = typeof start.dev_code === 'string' ? start.dev_code : ''
+    const done = await call(PUB, '/v1/auth/register/complete', { body: { registration_token: str(start, 'registration_token'), code, password }, expect: [200, 201], ip })
+    return { email, password, id: str(done, 'user_id') }
+  })
 }
 
 /** 门户接口令牌：只用于读回核对（例如取订单 id 做 SQL 夹具），不替页面做动作 */
 export async function portalToken(u: User): Promise<string> {
-  return str(await call(PUB, '/v1/auth/login', { body: { email: u.email, password: u.password } }), 'access_token')
+  return str(await exclusive(() => call(PUB, '/v1/auth/login', { body: { email: u.email, password: u.password } })), 'access_token')
 }
 
 export async function portalGet(token: string, path: string): Promise<Json> {

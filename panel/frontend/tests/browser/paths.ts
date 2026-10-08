@@ -64,6 +64,6 @@ export const PATHS: readonly PathStep[] = [
 export const PRODUCT_ISSUES: Readonly<Record<string, string>> = {
   A0: '报价接口（quoteNewTx → ensureNoPendingNewOrder）就回 409 order_pending，确认页只显示「价格加载失败 / 你有一张还没付款的…订单，继续付款或取消后再买 / 重试」，没有「取消它 / 去付款」；假后端只在建单时拦，所以假后端上看不出来',
   A0b: '同 A0：已超过付款期限的那张也在报价时被拦，页面只有「价格加载失败」与重试',
-  B2c: '完成页按订单 paid_amount 写渠道付了多少，而 paid_amount 是订单总额（含余额那部分）：实际「余额付了 ¥29.00，W9 演示收银（假商户）付了 ¥30.00」；渠道名也不是「支付宝」（payments.method 恒为空，w8walk 第 5 节第 4 条）',
+  B2c: '完成页按订单 paid_amount 写渠道付了多少，而 paid_amount 是订单总额（含余额那部分）：实际「余额付了 ¥29.00，W9 演示收银（假商户）付了 ¥30.00」；渠道名也不是「支付宝」（payments.method 恒为空，w8walk 第 5 节第 4 条）；全用余额付的续费（A4）也写「余额付了 ¥30.00，在线付了 ¥30.00」',
   B6c: '服务端只在 without_balance 上标 forced（with_balance 用整额余额时提前返回），门户却看 with_balance.forced：开关显示「已用余额 ¥0.50（可关掉）」、没锁住（按代码推断关掉后会写「用余额（现在没用）」又写「余额够付，¥0.50 全部用余额」）；钱的结果是对的，见 B6b',
 }
