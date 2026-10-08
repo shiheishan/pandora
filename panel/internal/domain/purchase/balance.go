@@ -14,6 +14,20 @@ type Balance struct {
 	// 处理口径（用户 8.1 第 1 题，按推荐 A）：由调用方把 Payable 作为折扣免掉，
 	// 审计 digest 记 small_due_waived
 	SmallDue bool `json:"small_due"`
+	// Waived 是调用方按 SmallDue 免掉、记作折扣的部分（ApplyBalance 本身不填，见 WaiveSmallDue）
+	Waived int64 `json:"waived"`
+}
+
+// WaiveSmallDue 按用户 8.1 第 1 题的推荐 A 处理 SmallDue：剩下那点在线付不了的钱免掉，
+// Payable 归零、记进 Waived（调用方把它并进订单折扣，审计记 small_due_waived）。
+// 不是 SmallDue 时原样返回。
+func WaiveSmallDue(b Balance) Balance {
+	if !b.SmallDue || b.Payable <= 0 {
+		return b
+	}
+	b.Waived = b.Payable
+	b.Payable = 0
+	return b
 }
 
 // ApplyBalance 计算余额的用法（原型 payCalc，加上应付本身低于最低额的情形）。

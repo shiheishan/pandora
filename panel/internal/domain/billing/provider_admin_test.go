@@ -25,6 +25,8 @@ func TestNormalizeProviderSettingsDefaultsAndDedupes(t *testing.T) {
 	want := map[string]any{
 		"base_url": "https://pay.example.test", "submit_path": "/submit.php", "api_path": "/api.php",
 		"methods": []string{"wxpay", "alipay"}, "default_method": "wxpay", "allow_private_host": false,
+		// 没填最低付款额按易支付默认 ¥1.00
+		"min_amount": int64(100),
 	}
 	if !reflect.DeepEqual(got.config, want) {
 		t.Fatalf("config=%v, want %v", got.config, want)

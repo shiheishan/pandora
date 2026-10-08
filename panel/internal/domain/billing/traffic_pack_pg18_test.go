@@ -244,7 +244,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 
 	// 6) 数据库守卫：伪造订单来源的余额、改容量、删除都被拒绝。
 	forged := pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
-		if _, err := GrantTrafficPackTx(ctx, tx, fx.tenant, fx.buyer, "order", uuid.NewString(), 999); err != nil {
+		if _, err := GrantTrafficPackTx(ctx, tx, fx.tenant, fx.buyer, nil, "order", uuid.NewString(), 999); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE`)

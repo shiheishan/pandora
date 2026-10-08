@@ -41,7 +41,7 @@ func TestValidateAdminTrafficGrant(t *testing.T) {
 // 节点通知在事务提交之后发。
 func TestAdminTrafficGrantSourceContract(t *testing.T) {
 	body := sourcetest.Load(t, ".").Decl("Service.GrantTrafficPackAsAdmin")
-	grant := strings.Index(body, `GrantTrafficPackTx(ctx, tx, tenantID, out.UserID, "admin"`)
+	grant := strings.Index(body, `GrantTrafficPackTx(ctx, tx, tenantID, out.UserID, &subID, "admin"`)
 	auditAt := strings.Index(body, "audit.Write(ctx, tx")
 	complete := strings.Index(body, "middleware.CompleteSuccessJSONInTx(ctx, tx, in.Claim, prepared)")
 	notify := strings.Index(body, "s.notifyUsersChanged(ctx, tenantID)")

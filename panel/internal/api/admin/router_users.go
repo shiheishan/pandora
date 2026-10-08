@@ -42,7 +42,7 @@ func registerUserBulkRoutes(r chi.Router, d Deps, h *handlers) {
 
 func registerTrafficResetRoutes(r chi.Router, d Deps, h *handlers) {
 	// --- 流量重置（XBD 的 traffic-reset）---
-	// 手动重置直接改变用户可用额度，所以要写权限 + 近期重认证；
+	// 手动重置直接改变用户可用额度，所以要写权限 + 近期重认证；按订阅行操作（一个人可以有多份）；
 	// 查日志只要读权限 —— 客服排查「我流量怎么变了」时用得上。
 	r.With(middleware.RequirePermission("metering.reset.read", d.Log)).
 		Get("/traffic-resets", h.listTrafficResets)
@@ -54,7 +54,7 @@ func registerTrafficResetRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequirePermission("metering.reset.write", d.Log),
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "traffic_manual_reset", d.Log),
-	).Post("/users/{id}/traffic-reset", h.manualResetTraffic)
+	).Post("/subscriptions/{id}/traffic-reset", h.manualResetTraffic)
 }
 
 func registerUserRoutes(r chi.Router, d Deps, h *handlers) {

@@ -16,6 +16,11 @@ type createOrderReq struct {
 	PriceID    string `json:"price_id"`
 	UseBalance int64  `json:"use_balance"`
 	CouponCode string `json:"coupon_code"`
+	// NewCopy 是「另买一份」（新链接）的显式意图；不带时遇到同套餐回 409 改走续费
+	NewCopy bool `json:"new_copy"`
+	// Label 是给新的一份起的名字（可空；另买同款且会和已有一份重名时必填）
+	Label string `json:"label"`
+	quoteConfirmReq
 }
 
 func (h *handlers) createOrder(w http.ResponseWriter, r *http.Request) {
@@ -62,8 +67,12 @@ func (h *handlers) createOrder(w http.ResponseWriter, r *http.Request) {
 		UseBalance: req.UseBalance,
 		CouponCode: req.CouponCode,
 		Claim:      claim,
-		// 同套餐只续不新开（规则 3）：已有可原地续费的同套餐订阅时回 409，门户改走续费
+		// 同套餐只续不新开（规则 3）：已有可原地续费的同套餐订阅时回 409，门户改走续费；
+		// 带 new_copy 是显式「另买一份」，不拦
 		RejectSamePlan: true,
+		NewCopy:        req.NewCopy,
+		Label:          req.Label,
+		Expect:         req.expectation(),
 	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
@@ -100,6 +109,7 @@ func (h *handlers) createRenewal(w http.ResponseWriter, r *http.Request) {
 		PriceID    string `json:"price_id"`
 		UseBalance int64  `json:"use_balance"`
 		CouponCode string `json:"coupon_code"`
+		quoteConfirmReq
 	}
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
@@ -108,6 +118,7 @@ func (h *handlers) createRenewal(w http.ResponseWriter, r *http.Request) {
 	out, err := h.d.Billing.CreateRenewal(r.Context(), p.TenantID, billing.CreateRenewalInput{
 		UserID: p.UserID, SubscriptionID: subID, PriceID: req.PriceID,
 		UseBalance: req.UseBalance, CouponCode: req.CouponCode, Claim: claim,
+		Expect: req.expectation(),
 	})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)

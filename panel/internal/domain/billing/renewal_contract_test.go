@@ -9,11 +9,19 @@ import (
 )
 
 func TestRenewalCreateReservationAndIdempotencySourceContract(t *testing.T) {
-	create := sourcetest.Load(t, ".").Decl("Service.CreateRenewal")
+	pkg := sourcetest.Load(t, ".")
+	// 订阅、套餐、价格的读取与校验在 loadRenewalTargetTx（报价不锁、建单锁，renewal_price.go）
+	loader := pkg.Decls("loadRenewalTargetTx", "loadRenewalSourceTx")
+	for _, needle := range []string{"FROM subscriptions", "FOR UPDATE", "ensureNoOpenSubscriptionOrder(",
+		"loadRenewalPriceTx("} {
+		if !strings.Contains(loader, needle) {
+			t.Fatalf("renewal target loader missing %q", needle)
+		}
+	}
+	create := pkg.Decl("Service.CreateRenewal")
 	ordered := []string{
 		"ValidateIdempotencyClaim(",
-		"FROM subscriptions",
-		"FOR UPDATE",
+		"loadRenewalTargetTx(ctx, tx, tenantID, in.UserID, in.SubscriptionID,\n\t\t\tin.PriceID, true, now)",
 		"applyCoupon(",
 		"prepareAndLockLedgerAccounts(",
 		"INSERT INTO orders",
@@ -129,8 +137,11 @@ func TestSubscriptionPaidChangeStatusesMatchLatePaymentGuard(t *testing.T) {
 	if strings.Count(pkg.Source(), statusList) != strings.Count(pkg.Decl("subscriptionAcceptsPaidChange"), statusList) {
 		t.Error("the renewable status list is restated outside subscriptionAcceptsPaidChange")
 	}
-	for _, creator := range []string{"Service.CreateRenewal", "quotePlanChange"} {
-		if !strings.Contains(pkg.Decl(creator), "subscriptionAcceptsPaidChange(status, renewalClosed)") {
+	for creator, call := range map[string]string{
+		"loadRenewalSourceTx": "subscriptionAcceptsPaidChange(t.Status, renewalClosed)",
+		"loadChangeSourceTx":  "subscriptionAcceptsPaidChange(src.Status, renewalClosed)",
+	} {
+		if !strings.Contains(pkg.Decl(creator), call) {
 			t.Errorf("%s creation must check subscriptionAcceptsPaidChange", creator)
 		}
 	}

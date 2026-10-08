@@ -647,19 +647,24 @@ func (s *Service) postOrderPaid(ctx context.Context, tx pgx.Tx, tenantID string,
 // fulfillOrder 依据订单行的快照创建并激活订阅，同时初始化配额与订阅凭据。
 func (s *Service) fulfillOrder(ctx context.Context, tx pgx.Tx, tenantID, orderID, userID string) (string, error) {
 	var spec provisionSpec
+	var label *string
 	err := tx.QueryRow(ctx, `
-		SELECT plan_id, plan_version_id, price_id, currency, unit_amount,
-		       snapshot_interval, snapshot_interval_count
-		  FROM order_items
-		 WHERE tenant_id = $1 AND order_id = $2
-		 ORDER BY created_at LIMIT 1`,
+		SELECT oi.plan_id, oi.plan_version_id, oi.price_id, oi.currency, oi.unit_amount,
+		       oi.snapshot_interval, oi.snapshot_interval_count, o.subscription_label
+		  FROM order_items oi
+		  JOIN orders o ON o.tenant_id = oi.tenant_id AND o.id = oi.order_id
+		 WHERE oi.tenant_id = $1 AND oi.order_id = $2
+		 ORDER BY oi.created_at LIMIT 1`,
 		tenantID, orderID).Scan(&spec.PlanID, &spec.PlanVersionID, &spec.PriceID,
-		&spec.Currency, &spec.UnitAmount, &spec.Interval, &spec.IntervalCount)
+		&spec.Currency, &spec.UnitAmount, &spec.Interval, &spec.IntervalCount, &label)
 	if err != nil {
 		return "", fmt.Errorf("读取订单行: %w", err)
 	}
 	spec.ActorKind = "payment"
 	spec.OrderID = &orderID
+	if label != nil {
+		spec.Label = *label
+	}
 
 	subID, err := s.provisionSubscription(ctx, tx, tenantID, userID, spec)
 	if err != nil {

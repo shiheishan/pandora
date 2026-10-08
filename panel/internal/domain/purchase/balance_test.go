@@ -94,3 +94,14 @@ func TestNormalizeLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestWaiveSmallDue(t *testing.T) {
+	got := WaiveSmallDue(ApplyBalance(30, 20, 20, 100))
+	if got != (Balance{Applied: 20, Payable: 0, SmallDue: true, Waived: 10}) {
+		t.Fatalf("waive = %+v", got)
+	}
+	plain := ApplyBalance(3000, 1200, 1200, 100)
+	if WaiveSmallDue(plain) != plain {
+		t.Fatal("non small-due balance must be unchanged")
+	}
+}

@@ -29,6 +29,8 @@ type zeroPaySubscriptionCapture struct {
 	ProrationCredit   int64
 	// ManualGrant：后台人工开单赠送的续费（全额减免，见 reservationLockRequest.ManualGrant）
 	ManualGrant bool
+	// SmallDueWaived：应付低于支付最低额、余额又不够，免掉并进折扣的那点钱（见 reservationLockRequest）
+	SmallDueWaived int64
 }
 
 // captureZeroPaySubscriptionOrder captures the complete held renewal or plan
@@ -45,7 +47,7 @@ func (s *Service) captureZeroPaySubscriptionOrder(ctx context.Context, tx pgx.Tx
 		SubtotalAmount: in.SubtotalAmount, DiscountAmount: in.DiscountAmount,
 		TotalAmount: in.TotalAmount, PayableAmount: 0,
 		BalanceAmount: in.BalanceApplied, ProrationCredit: in.ProrationCredit,
-		ManualGrant: in.ManualGrant,
+		ManualGrant: in.ManualGrant, SmallDueWaived: in.SmallDueWaived,
 	})
 	if err != nil {
 		return err

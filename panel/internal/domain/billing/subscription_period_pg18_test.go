@@ -273,7 +273,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	origEnd := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Microsecond)
 	p.setPeriodEnd(subID, origEnd)
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, buyer, func(tx pgx.Tx) error {
-		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, buyer, "", 30)
+		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, buyer, subID, 30)
 	})
 	if end := p.aligned("gift card extension", subID); !end.Equal(origEnd.AddDate(0, 0, 30)) {
 		t.Fatalf("gift card extension end=%s want %s", end, origEnd.AddDate(0, 0, 30))
