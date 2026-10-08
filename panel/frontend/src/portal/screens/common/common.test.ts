@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { expiryText, isExpiredNow, leakSources, usageText } from './card-text'
-import { appLink, detectDevice, guessDeviceFromName, protocolLabel, rateLabel, shareMessage } from './clients'
+import { APP_UPDATE, guideApps, parseGuideDevice } from './app-update'
+import { appLink, CLIENTS, DEVICES, detectDevice, guessDeviceFromName, protocolLabel, rateLabel, shareMessage } from './clients'
 import { throttleNote } from './catalog'
 import { createPlacedOrder, recallPayable } from './intent'
+import { isPaymentLapsed, payHereNote } from './PayFlow'
+import { refusalOf } from './quote'
 import { ApiError } from '../../../core/api'
 import { orderQuerySchema, queryFailure, queryOutcome } from './order-query'
 import { expiryNote, intervalLabel, isPayable, orderRowSchema, orderTitle } from './orders'
@@ -355,5 +358,44 @@ describe('order query (我已支付，刷新状态)', () => {
     expect(queryFailure(new ApiError({ status: 409, code: 'conflict', message: '该订单从未发起过支付，无法向渠道查单' }))).toEqual({ kind: 'failed', text: '查询失败：该订单从未发起过支付，无法向渠道查单' })
     expect(queryFailure(new ApiError({ status: 429, code: 'rate_limited', message: 'x' })).text).toContain('太频繁')
     expect(queryFailure(new ApiError({ status: 0, code: 'network_error', message: 'x' })).text).toContain('网络')
+  })
+})
+
+describe('在 App 里点一次更新（按 App 的帮助）', () => {
+  it('clients.ts 推荐的每个 App 都有一段：在哪个页面、点哪个按钮、看到什么算成功', () => {
+    const apps = new Set(DEVICES.flatMap((d) => [...CLIENTS[d].top, ...CLIENTS[d].rest].map((a) => a.name)))
+    for (const app of apps) {
+      const s = APP_UPDATE[app]
+      expect(s, app).toBeDefined()
+      expect([s!.where, s!.tap, s!.ok].every((x) => x.length > 0), app).toBe(true)
+    }
+    // 先常用的，再「其他 App」
+    expect(guideApps('ios')).toEqual(['Shadowrocket', 'Stash', 'Quantumult X', 'Loon', 'sing-box'])
+  })
+
+  it('地址里的设备：认识的照用，不认识的按这台算', () => {
+    expect(parseGuideDevice('android', 'ios')).toBe('android')
+    expect(parseGuideDevice('nokia', 'mac')).toBe('mac')
+    expect(parseGuideDevice(null, 'windows')).toBe('windows')
+  })
+})
+
+describe('付款与建单被拒', () => {
+  it('电脑上的次按钮写清是干什么的', () => {
+    expect(payHereNote({ method: 'alipay', label: '支付宝' })).toBe('没带手机？在这台电脑上用支付宝网页付')
+    expect(payHereNote({ method: 'wxpay', label: '微信支付' })).toBe('没带手机？在这台电脑上打开微信支付付款页，按页面提示付')
+  })
+
+  it('发起支付超过付款期限按码认（409 order_lapsed），同样文案的普通 409 不算', () => {
+    expect(isPaymentLapsed(new ApiError({ status: 409, code: 'order_lapsed', message: '随便什么话' }))).toBe(true)
+    expect(isPaymentLapsed(new ApiError({ status: 409, code: 'conflict', message: '这张订单已超过付款期限，请取消后重新下单' }))).toBe(false)
+  })
+
+  it('order_pending 按 fields 认：order_id 与 lapsed，不靠文案', () => {
+    const pending = new ApiError({ status: 409, code: 'order_pending', message: '你有一张还没付款的「标准版」订单', fields: { order_id: 'o1' } })
+    expect(refusalOf(pending, 'order_pending')).toEqual({ kind: 'order_pending', text: pending.message, orderId: 'o1', lapsed: false })
+    const lapsed = new ApiError({ status: 409, code: 'order_pending', message: '随便什么话', fields: { order_id: 'o2', lapsed: 'true' } })
+    expect(refusalOf(lapsed, 'order_pending')).toMatchObject({ orderId: 'o2', lapsed: true })
+    expect(refusalOf(new Error(''), null)).toEqual({ kind: 'other', text: '没下成单，请稍后再试', lapsed: false })
   })
 })

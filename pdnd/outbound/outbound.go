@@ -32,6 +32,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/aegispanel/nodeagent/internal/confnum"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -492,8 +493,8 @@ func sameOutbound(a, b Outbound) bool {
 //------------------------------------------------------------------------------
 // 配置读取的小工具
 //
-// 面板下发的是 JSON 解出来的 map[string]any，数字一律是 float64。
-// 每个出站都要做同样的取值与类型归一，放在这里一次写好。
+// 面板下发的是 JSON 解出来的 map[string]any：签名通道的数字是 json.Number，
+// 兼容通道是 float64，归一统一交给 confnum。
 //------------------------------------------------------------------------------
 
 func Str(m map[string]any, key string) string {
@@ -502,29 +503,13 @@ func Str(m map[string]any, key string) string {
 }
 
 func Int(m map[string]any, key string) int {
-	switch v := m[key].(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	case string:
-		var n int
-		_, _ = fmt.Sscanf(v, "%d", &n)
-		return n
-	}
-	return 0
+	n, _ := confnum.Int(m[key])
+	return n
 }
 
 func Bool(m map[string]any, key string) bool {
-	switch v := m[key].(type) {
-	case bool:
-		return v
-	case float64:
-		return v > 0
-	case string:
-		return v == "true" || v == "1"
-	}
-	return false
+	v, _ := confnum.Truthy(m[key])
+	return v
 }
 
 func Strings(m map[string]any, key string) []string {

@@ -114,9 +114,35 @@
   margin: var(--space-12) auto 0;
 }
 
-.textLink {
+/* 电脑上「在这台电脑上付款」：二维码之下的次按钮，两行（做什么 + 什么时候用） */
+.openHere {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 52px;
+  padding: 7px var(--pad-button);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: var(--fw-medium);
+  line-height: 1.3;
+  text-align: center;
+}
+
+.openHere:hover {
+  background: var(--surface-3);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.openHere small {
+  margin-top: 1px;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
 }
 
 .body p {

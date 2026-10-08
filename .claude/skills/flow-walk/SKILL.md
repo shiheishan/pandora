@@ -16,6 +16,7 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 | 页面拿真数据不崩 | `panel/frontend/tests/smoke/`（CI） |
 | 订阅文件能渲染、能连 | subscription-e2e |
 | 打开快不快 | web-perf |
+| 购买路径（w8walk 31 步）每次改动后自动在页面上点一遍 | `panel/frontend/tests/browser/`（Playwright，CI 冒烟栈上跑，见 `.claude/rules/frontend-browser-e2e.md`） |
 | **用户在页面上点得通，文字和结果对** | **本 skill** |
 
 ## 先选环境

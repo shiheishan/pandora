@@ -54,7 +54,8 @@ func newCopyLabel(ctx context.Context, tx pgx.Tx, tenantID string, in CreateOrde
 }
 
 // ensureNoPendingNewOrder 拒绝同一套餐的第二张未付款新购单（409 order_pending，Fields 带
-// 那张单的 order_id，前端显示「继续付款或取消」的入口）。
+// 那张单的 order_id，前端显示「继续付款或取消」的入口；那张已超过付款期限时另带 lapsed=true，
+// 前端只给「取消它」）。
 //
 // 已过付款期限、还没被释放任务关掉的那张也算：它的支付回调可能晚到，而结算按订单状态走——
 // 仍是待支付就照常履约。若这时允许同款再下一张，两张都付了就是两份。等它被关掉（expired /
@@ -85,6 +86,9 @@ func ensureNoPendingNewOrder(ctx context.Context, tx pgx.Tx, tenantID, userID, p
 	}
 	e := httpx.New(httpx.CodeOrderPending, msg)
 	e.Fields = map[string]string{"order_id": orderID}
+	if lapsed {
+		e.Fields["lapsed"] = "true"
+	}
 	return e
 }
 

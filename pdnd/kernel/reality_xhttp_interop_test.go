@@ -112,7 +112,9 @@ func TestNativeRealityXHTTPXrayClientInterop(t *testing.T) {
 	header := append([]byte{vlessVersion}, id[:]...)
 	header = append(header, 0, vlessTCP, 0, 0xbb, 1, 127, 0, 0, 1)
 	bodyPayload := append(header, payload...)
-	if _, err := fmt.Fprintf(realityConn, "POST /xhttp/reality-session/1/ HTTP/1.1\r\nHost: example.com\r\nContent-Length: %d\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n", len(bodyPayload)); err != nil {
+	// 节点不写 mode（缺省 auto）。Xray / mihomo 在 REALITY 上的 auto 选 stream-one：
+	// 不带会话、直接 POST 基础路径。10-08 真节点测试里这种请求被回 400。
+	if _, err := fmt.Fprintf(realityConn, "POST /xhttp/ HTTP/1.1\r\nHost: example.com\r\nContent-Length: %d\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n", len(bodyPayload)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := realityConn.Write(bodyPayload); err != nil {
@@ -156,7 +158,7 @@ func TestNativeRealityXHTTPXrayClientInterop(t *testing.T) {
 	h2Header := append([]byte{vlessVersion}, id[:]...)
 	h2Header = append(h2Header, 0, vlessTCP, 0, 0xbb, 1, 127, 0, 0, 1)
 	h2Body := append(h2Header, h2Payload...)
-	h2Req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.com/xhttp/h2-session/2/", bytes.NewReader(h2Body))
+	h2Req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.com/xhttp/", bytes.NewReader(h2Body))
 	if err != nil {
 		t.Fatal(err)
 	}

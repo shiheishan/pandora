@@ -154,3 +154,18 @@
     text-decoration: none;
   }
 }
+
+/* 内置说明「在 App 里点一次更新」：每个 App 三步 */
+.guideApp {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.steps {
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: 15px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}

@@ -63,14 +63,12 @@ export function paidText(o: Pick<OrderDetail, 'balance_applied' | 'paid_amount' 
 }
 
 /**
- * 新买的那一份：订单详情没有订阅 id，按套餐名与订单上的「有效期至」认；
- * 认不出时取同套餐里最新开始的那份。
+ * 这单落到的那一份：订单详情履约后带 subscription_id（新购是新开的那份，续费、换套餐、流量包是原来那份），
+ * 按它认；还没履约（收银台刚回跳）时续费、换套餐、流量包先用地址里带回的那份，新购等它履约。
  */
-export function findNewSub(order: Pick<OrderDetail, 'plan_name' | 'subscription_period_end'>, held: readonly Subscription[]): Subscription | undefined {
-  const same = held.filter((s) => s.plan_name === order.plan_name)
-  const exact = order.subscription_period_end ? same.find((s) => s.current_period_end === order.subscription_period_end) : undefined
-  const start = (s: Subscription) => (s.current_period_start ? new Date(s.current_period_start).getTime() : 0)
-  return exact ?? [...same].sort((a, b) => start(b) - start(a))[0]
+export function doneSub(order: Pick<OrderDetail, 'subscription_id'>, ctx: Pick<DoneContext, 'kind' | 'subId'>, held: readonly Subscription[]): Subscription | undefined {
+  const id = order.subscription_id ?? (ctx.kind === 'new' ? null : ctx.subId)
+  return id ? held.find((s) => s.id === id) : undefined
 }
 
 export interface DoneLines {

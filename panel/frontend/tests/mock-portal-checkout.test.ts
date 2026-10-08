@@ -97,7 +97,7 @@ describe('mock api · portal checkout (purchase model)', () => {
     expect(waiveSmallDue(applyBalance(500, 0, 0, 1000), true)).toMatchObject({ payable: 500, below_minimum: true })
   })
 
-  it('过了付款期限的单：发起支付 409，同款再买 order_pending 换成「已超过付款期限」并带 order_id', async () => {
+  it('过了付款期限的单：发起支付 409 order_lapsed，同款再买 order_pending 换成「已超过付款期限」并带 order_id 与 lapsed', async () => {
     await scenario('proto-s3')
     const q = await quote({ action: 'new', plan_id: STD, new_copy: true })
     const r = q.quotes[0]!
@@ -106,11 +106,36 @@ describe('mock api · portal checkout (purchase model)', () => {
     expect((await call('POST', '/v1/__mock/expire-orders')).status).toBe(200)
     const pay = await call('POST', `/v1/orders/${order.order_id}/pay`, { provider: 'epay', method: 'alipay', return_url: `${base}/#/x` })
     expect(pay.status).toBe(409)
-    expect(((await pay.json()) as { error: { message: string } }).error.message).toBe('这张订单已超过付款期限，请取消后重新下单')
+    expect(((await pay.json()) as { error: { code: string; message: string } }).error).toMatchObject({ code: 'order_lapsed', message: '这张订单已超过付款期限，请取消后重新下单' })
     const again = await call('POST', '/v1/orders', { plan_id: STD, price_id: r.price_id, new_copy: true, label: '爸爸的手机' }, true)
     const body = (await again.json()) as { error: { code: string; message: string; fields: Record<string, string> } }
     expect([again.status, body.error.code, body.error.fields.order_id]).toEqual([409, 'order_pending', order.order_id])
     expect(body.error.message).toBe('你有一张已超过付款期限的「标准版」订单，取消后再买')
+    expect(body.error.fields.lapsed).toBe('true')
+  })
+
+  it('订单详情的 subscription_id：新买的是新开的那份，续费是原来那份，没履约时 null', async () => {
+    // Go 无 omitempty：没履约时也在，值为 null（门户 orderDetailSchema 的 nullable）
+    const detail = async (id: string) => ((await (await call('GET', `/v1/orders/${id}`)).json()) as { order: { subscription_id: string | null } }).order
+    await scenario('proto-s7b')
+    const [mine] = (await subs()).subscriptions
+    const q = await quote({ action: 'new', plan_id: STD, new_copy: true })
+    const r = q.quotes[0]!
+    const bought = await call('POST', '/v1/orders', { plan_id: STD, price_id: r.price_id, new_copy: true, label: '妈妈的 iPad', use_balance: r.with_balance.applied, as_of: q.as_of, expect: { total: r.total, balance_applied: r.with_balance.applied, payable: r.with_balance.payable } }, true)
+    const order = (await bought.json()) as { order_id: string; status: string }
+    expect(order.status).toBe('fulfilled')
+    const fresh = (await subs()).subscriptions.find((s) => s.label === '妈妈的 iPad')!
+    expect(fresh.id).not.toBe(mine!.id)
+    expect((await detail(order.order_id)).subscription_id).toBe(fresh.id)
+    // 待支付的续费：订单上记着那一份，但没履约时详情仍是 null
+    await scenario('proto-s3')
+    const [s3] = (await subs()).subscriptions
+    const rq = await quote({ action: 'renew', subscription_id: s3!.id })
+    const rr = rq.quotes[0]!
+    const renewal = await call('POST', `/v1/me/subscriptions/${s3!.id}/renew`, { price_id: rr.price_id, as_of: rq.as_of, expect: { total: rr.total, balance_applied: 0, payable: rr.total } }, true)
+    const pending = (await renewal.json()) as { order_id: string; status: string }
+    expect(pending.status).toBe('pending_payment')
+    expect((await detail(pending.order_id)).subscription_id).toBeNull()
   })
 
   it('另买一份：不带 new_copy 拦同款；同款没起名时名字必填；同一套餐只能有一张未付款的新购单', async () => {

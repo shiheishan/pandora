@@ -55,6 +55,22 @@ export function purchaseRefusal(error: unknown): 'quote_changed' | 'order_pendin
   return null
 }
 
+/** 确认页建单被拒时显示什么：文案原样，order_pending 另带那张单与它是否已超过付款期限 */
+export interface RefusalInfo {
+  kind: 'order_pending' | 'other'
+  text: string
+  /** order_pending 的 fields.order_id：那张还没付款的单 */
+  orderId?: string
+  /** order_pending 的 fields.lapsed：那张已超过付款期限，只能取消、不能再付 */
+  lapsed: boolean
+}
+
+export function refusalOf(error: unknown, kind: ReturnType<typeof purchaseRefusal>): RefusalInfo {
+  const text = error instanceof Error && error.message ? error.message : '没下成单，请稍后再试'
+  if (kind !== 'order_pending' || !isApiError(error)) return { kind: 'other', text, lapsed: false }
+  return { kind, text, orderId: error.fields.order_id, lapsed: error.fields.lapsed === 'true' }
+}
+
 // ---------------------------------------------------------------------------
 // 价格档：报价按（订阅，套餐）展开时每个价格档各一条（A 路实现）。列表里每个组合只显示一档：
 // 与这一份现在同样长的那档；确认页「买多久」才把三档都摆出来。

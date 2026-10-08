@@ -68,6 +68,7 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
   - 经 `deploy/run-smoke-stack.sh` 起一次性的 PG18 加网关，读表先于写路径。
   - 再经 `deploy/run-smoke-e2e.sh` 在同一栈上跑 `panel/tests` 下的 e2e 脚本（清单与顺序以该脚本的 `SCRIPTS` 为准），含内鬼检测评估 `risk_e2e.sh`。全部跑完再判，任一失败 job 即变红。
   - 最后用 `panel/tools/loadtest` 做一次小规模压测工具试跑（规模以 workflow 为准），要求零 5xx、零签名失败。
+  - 压测之后跑购买路径的无头浏览器测试（`panel/frontend/tests/browser`，Playwright）：网关嵌真前端产物，每步读页面文字核对，结果表进 job summary、截图与失败 trace 进产物 browser-paths；触发面另含 `panel/frontend/tests/browser`。
 - **panel-deploy.yml**
   - 按 `panel/deploy` 与 `panel/migrations` 路径触发。
   - deploy-mock-tests job 逐个点名跑不需要数据库和 root 的 deploy 桩测试（清单以 workflow 里的 `tests=(...)` 为准）。新加这类桩测试要补进清单。

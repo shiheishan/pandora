@@ -15,6 +15,12 @@ package reality
 //     对探测方而言结果与上游一致：完整拿到 dest 的握手与响应。
 //   - 认证通过之后 dest 的握手飞行不合法、客户端 Finished 不对等情况仍直接
 //     关闭（上游同样不回落这类已认证连接）。
+//   - dest 的握手飞行：单条记录上限从上游的 8192 放宽到 TLS 记录上限
+//     （www.microsoft.com 的证书记录 8273 字节，上游同样用不了它）；EncryptedExtensions
+//     到 Finished 并成一条记录（cloudflare、dl.google.com）时立即合成握手，与上游
+//     tls.go 一致——原先这里还在等后面几条记录，握手挂到 15 秒截止。
+//   - 加了 (*Conn).TakeBufferedForDirect，供 XTLS Vision 直通取走读方向已缓冲的
+//     字节（上游没有这个方法，Xray 是用反射直接读 input / rawInput 两个字段）。
 
 import (
 	"context"
@@ -185,9 +191,17 @@ func authenticateHandoff(hs *serverHandshakeStateTLS13, config *Config) error {
 	return nil
 }
 
+// targetRecordMax 是 dest 单条握手记录允许的最大长度：TLS 1.3 记录上限（头 + 2^14 +
+// 256），合成时按它补齐填充，见 tls.go 的 empty。targetFlightMax 是整段服务端
+// 飞行（ServerHello、CCS、加密握手记录、可选的票据）缓冲的上限。
+const (
+	targetRecordMax = recordHeaderLen + maxCiphertextTLS13
+	targetFlightMax = 64 << 10
+)
+
 func readTargetFlight(hs *serverHandshakeStateTLS13, target net.Conn, config *Config) error {
-	s2cSaved := make([]byte, 0, size)
-	buf := make([]byte, size)
+	s2cSaved := make([]byte, 0, targetRecordMax)
+	buf := make([]byte, targetRecordMax)
 	handshakeLen := 0
 	for {
 		n, err := target.Read(buf)
@@ -198,10 +212,13 @@ func readTargetFlight(hs *serverHandshakeStateTLS13, target net.Conn, config *Co
 			continue
 		}
 		s2cSaved = append(s2cSaved, buf[:n]...)
-		if len(s2cSaved) > size {
+		if len(s2cSaved) > targetFlightMax {
 			return fmt.Errorf("REALITY: target handshake too large")
 		}
 		complete := true
+		// coalesced：dest 把 EncryptedExtensions 到 Finished 并成了一条记录，后面不会
+		// 再有单独的 Certificate / CertificateVerify / Finished 记录可等。
+		coalesced := false
 		// The target's NewSessionTicket is optional. Capture its record length
 		// when it is already in the buffered flight so the native handshake can
 		// mirror it, but never wait forever for a post-handshake ticket.
@@ -225,7 +242,7 @@ func readTargetFlight(hs *serverHandshakeStateTLS13, target net.Conn, config *Co
 				}
 				handshakeLen = recordHeaderLen + Value(s2cSaved[3:5]...)
 			}
-			if handshakeLen > size || (i == 1 && handshakeLen != 6) {
+			if handshakeLen > targetRecordMax || (i == 1 && handshakeLen != 6) {
 				return fmt.Errorf("REALITY: target TLS record length invalid")
 			}
 			if i == 2 && handshakeLen > 512 {
@@ -233,6 +250,7 @@ func readTargetFlight(hs *serverHandshakeStateTLS13, target net.Conn, config *Co
 				// Do not alias the scratch read buffer: subsequent target reads
 				// reuse buf and would corrupt the synthesized QUIC handshake flight.
 				hs.c.out.handshakeBuf = make([]byte, 0, size)
+				coalesced = true
 				break
 			}
 			if handshakeLen == 0 || len(s2cSaved) < handshakeLen {
@@ -259,7 +277,7 @@ func readTargetFlight(hs *serverHandshakeStateTLS13, target net.Conn, config *Co
 		if os.Getenv("REALITY_TRACE") != "" {
 			fmt.Fprintf(os.Stderr, "[REALITY] read=%d saved=%d lens=%v complete=%v\n", n, len(s2cSaved), hs.c.out.handshakeLen, complete)
 		}
-		if complete || hs.c.out.handshakeLen[5] != 0 {
+		if complete || coalesced || hs.c.out.handshakeLen[5] != 0 {
 			if err := hs.handshake(); err != nil {
 				return fmt.Errorf("REALITY: synthesize server handshake: %w", err)
 			}
@@ -277,4 +295,24 @@ func realityTracef(format string, args ...any) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+// TakeBufferedForDirect 交出读方向已缓冲、尚未交给上层的字节，供 XTLS Vision 切到
+// 直通（command=2）后改读底层连接（Pandora 改动）。
+//
+// plain 是已解密、还没被 Read 取走的明文（input）；raw 是已从底层连接读入、还没
+// 解密的原始字节（rawInput）——对端切到直通之后发来的裸流量可能已经被读进这里，
+// 丢掉就是数据缺口。两者都清空后返回。调用之后不得再经本连接读。
+func (c *Conn) TakeBufferedForDirect() (plain, raw []byte) {
+	c.in.Lock()
+	defer c.in.Unlock()
+	if n := c.input.Len(); n > 0 {
+		plain = make([]byte, n)
+		_, _ = c.input.Read(plain)
+	}
+	if c.rawInput.Len() > 0 {
+		raw = append([]byte(nil), c.rawInput.Bytes()...)
+		c.rawInput.Reset()
+	}
+	return plain, raw
 }

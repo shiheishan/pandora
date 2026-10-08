@@ -12,9 +12,11 @@ const sub = (over: Partial<Placement>): Placement => ({
   period_end: '2026-10-30T12:00:00Z',
   new_period_end: '2026-11-30T12:00:00Z',
   currency: 'CNY',
+  due: 3000,
+  below_minimum: false,
   ...over,
 })
-const NEW: Placement = { key: 'new', kind: 'new', new_period_end: '2026-11-07T12:00:00Z' }
+const NEW: Placement = { key: 'new', kind: 'new', new_period_end: '2026-11-07T12:00:00Z', due: 3000, below_minimum: false }
 
 describe('落点选项的称呼与结果', () => {
   it('有备注名写「备注名」套餐名，没有只写套餐名', () => {
@@ -73,8 +75,8 @@ describe('落点选项的称呼与结果', () => {
 })
 
 describe('默认值与提交按钮', () => {
-  const two = manualPreviewSchema.parse({ options: [sub({}), NEW], default_key: 'renew:s1' })
-  const noDefault = manualPreviewSchema.parse({ options: [NEW, sub({ key: 'change:s1', kind: 'change' })], default_key: '' })
+  const two = manualPreviewSchema.parse({ options: [sub({}), NEW], default_key: 'renew:s1', min_payment: 100 })
+  const noDefault = manualPreviewSchema.parse({ options: [NEW, sub({ key: 'change:s1', kind: 'change' })], default_key: '', min_payment: 100 })
 
   it('按服务端默认预选；点过且仍在列表里的用点的', () => {
     expect(selectedKey(two, '')).toBe('renew:s1')
@@ -129,13 +131,18 @@ describe('默认值与提交按钮', () => {
 
 describe('preview 的 schema', () => {
   it('omitempty 的键缺席、default_key 缺席都按空处理', () => {
-    const r = manualPreviewSchema.parse({ options: [{ key: 'new', kind: 'new' }] })
+    const r = manualPreviewSchema.parse({ options: [{ key: 'new', kind: 'new', due: 0, below_minimum: false }], min_payment: 0 })
     expect(r.default_key).toBe('')
     expect(r.options[0]!.new_period_end).toBeUndefined()
   })
 
+  it('应付、是否低于最低额与站点最低额无 omitempty（billing.ManualPlacement / ManualOrderPreview），缺席判为不符', () => {
+    expect(manualPreviewSchema.safeParse({ options: [{ key: 'new', kind: 'new' }], min_payment: 0 }).success).toBe(false)
+    expect(manualPreviewSchema.safeParse({ options: [{ key: 'new', kind: 'new', due: 2500, below_minimum: true }] }).success).toBe(false)
+  })
+
   it('后台开单只会有 renew / change / new，别的判为不符', () => {
-    expect(manualPreviewSchema.safeParse({ options: [{ key: 'reset_traffic:s1', kind: 'reset_traffic' }], default_key: '' }).success).toBe(false)
-    expect(manualPreviewSchema.safeParse({ options: [{ key: 'new', kind: 'new', badge: 'cheapest' }], default_key: '' }).success).toBe(false)
+    expect(manualPreviewSchema.safeParse({ options: [{ key: 'reset_traffic:s1', kind: 'reset_traffic', due: 0, below_minimum: false }], default_key: '', min_payment: 0 }).success).toBe(false)
+    expect(manualPreviewSchema.safeParse({ options: [{ key: 'new', kind: 'new', badge: 'cheapest', due: 0, below_minimum: false }], default_key: '', min_payment: 0 }).success).toBe(false)
   })
 })

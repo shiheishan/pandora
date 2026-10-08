@@ -11,6 +11,7 @@ import { endsIntent, useIntentKey } from '../common/intent'
 import { LinkBox } from '../common/LinkBox'
 import { day, gb, heldSubs, makeNaming, money, type Naming } from '../common/purchase'
 import { ResultView, type ResultInfo } from '../common/Result'
+import { UpdateHelpLink } from '../common/UpdateHelp'
 import type { Subscription } from '../common/subscriptions'
 import { shortDate } from '../common/traffic'
 import { useGiftPreview, useMyGiftCards, useRedeemGift, type GiftCard, type PlacementOption, type RedeemResult } from './api'
@@ -218,7 +219,12 @@ function redeemResult(card: GiftCard, o: PlacementOption | undefined, r: RedeemR
     const credit = o.credit ?? 0
     return {
       title: o.expired ? '已恢复使用' : `已换成${np}`,
-      next: <p className={flowCss.lead}>在 App 里点一次「更新」，就能看到{np}的节点。不用重新添加。</p>,
+      next: (
+        <>
+          <p className={flowCss.lead}>在 App 里点一次「更新」，就能看到{np}的节点。不用重新添加。</p>
+          <UpdateHelpLink />
+        </>
+      ),
       happened: [`${naming.multi && sub ? `「${naming.sn(sub)}」` : '你原来的套餐'}现在是${np}，用到 ${end}`, ...(credit > 0 ? [`${money(credit)} 已退到余额${balance !== null ? `，现在余额 ${money(balance)}` : ''}（在「钱包」里，可用于续费、加流量、买套餐）`] : [])],
       kept: ['链接没变'],
     }

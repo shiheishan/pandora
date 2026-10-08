@@ -108,6 +108,17 @@ export function prorationCredit(s: Sub, now: number): number {
   return Math.round(s.amount * Math.min(timeRatio, trafficRatio))
 }
 
+/**
+ * 后台待支付单用户要付多少（分）：续一期与另开一份是价格，换套餐先抵原套餐没用完的部分（billing.orderTotal）。
+ * preview 的 due 与建单共用
+ */
+export function manualDue(kind: Option['kind'], amount: number, credit: number): number {
+  return Math.max(amount - (kind === 'change' ? credit : 0), 0)
+}
+
+/** 用户付不了：应付为正且低于站点最低额，最低额 ≤ 1 分等于不限（billing.manualDueBelowMinimum） */
+export const manualDueBelowMinimum = (due: number, minPay: number) => due > 0 && minPay > 1 && due < minPay
+
 export interface PriceInfo {
   interval: string
   count: number

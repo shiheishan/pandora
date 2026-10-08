@@ -284,6 +284,9 @@ export function orderRow(o: OrderFixture) {
   }
 }
 
+/** 履约过的订单状态（Go：status = 'fulfilled' 或 fulfilled_at 非空，退款不清 fulfilled_at） */
+const FULFILLED_ONCE: ReadonlySet<string> = new Set(['fulfilled', 'partially_refunded', 'refunded'])
+
 export function orderDetail(state: PortalState, o: OrderFixture) {
   const legacy = scenario() === 'legacy'
   const sub = o.subscription_id ? state.subs.find((s) => s.id === o.subscription_id) : undefined
@@ -297,6 +300,8 @@ export function orderDetail(state: PortalState, o: OrderFixture) {
           : [],
       ...(!legacy && o.coupon_code ? { coupon_code: o.coupon_code } : {}),
       ...(!legacy && o.status === 'fulfilled' && sub ? { subscription_period_end: sub.current_period_end } : {}),
+      // Go 无 omitempty（billing.MyOrderDetail.SubscriptionID）：履约后是落到的那一份，没履约时 null
+      subscription_id: FULFILLED_ONCE.has(o.status) && sub ? sub.id : null,
     },
   }
 }
