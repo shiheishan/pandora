@@ -75,7 +75,7 @@ func TestParseTrafficReportOrdersMergesAndValidates(t *testing.T) {
 // 购买模型统一后流量包按份挂：下发判断与扣量都按订阅，不再按用户。
 func TestUniProxyServesAndChargesTrafficPacks(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
-	list := pkg.Decl("Service.ListNodeUsers")
+	list := pkg.Decl("Service.nodeUsers")
 	list = list[strings.Index(list, "流量耗尽的订阅不下发到节点"):]
 	list = list[:strings.Index(list, "poolFilter")]
 	for _, needle := range []string{"qb.remaining <= 0", "OR EXISTS", "traffic_pack_grants g",

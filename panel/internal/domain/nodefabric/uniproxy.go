@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -249,6 +250,10 @@ type ProxyUser struct {
 //   - 套餐必须授权了该节点所属的资源池（XBD-010）；没划进池的节点不服务任何人（R104）
 //   - 池限定了用户组时，用户所在的组必须在名单里（R104，PoolAdmitsUserSQL）
 //   - 流量必须没跑超（USE-007 超额停用）
+//   - 订阅主人的账号必须是 active（用户 2026-10-07 定「封禁即断，解封恢复」）：停用、
+//     封禁之后名下所有订阅都不进任何节点的名单，节点下一次推送把他移出、断开已有连接；
+//     恢复成 active 自动回到名单。状态的任何写（后台改状态、风控批量停用、直接执行的
+//     SQL）都经 00141 的纪元触发器让节点及时重算，不在调用点各写一遍
 //
 // 任何一条漏掉，都会变成免费用或该用用不了，两种都是事故。
 //
@@ -260,11 +265,19 @@ type ProxyUser struct {
 // 订阅、配额、套餐、池授权、用户组、设备判定设置的任何已提交改动下一次请求就生效。
 // 缓存没开、或 n 不带纪元时照旧带门槛直查。返回的切片只读。
 func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *ServingNode) ([]ProxyUser, error) {
+	set, err := s.nodeUsers(ctx, tenantID, n)
+	return set.users, err
+}
+
+// nodeUsers 是 ListNodeUsers 的实现，另带出名单的版本（缓存路径）与名单里最早的订阅
+// 到期时刻（nextExpiry）：到期没有写、不推进纪元，缓存条目到这个时刻硬过期，推送
+// 也按它定时（nodestream_epoch.go）。
+func (s *Service) nodeUsers(ctx context.Context, tenantID string, n *ServingNode) (nodeUserSet, error) {
 	// query 是唯一的下发查询。gateNodeID 非空时带上节点门槛（直查路径）；缓存路径
 	// 按池共享结果，门槛由调用方的认证保证，见上。epoch 非空时先读下发纪元：先于
 	// 名单查询读，名单只会比纪元新，不会更旧。
-	query := func(ctx context.Context, gateNodeID string, epoch *int64) ([]ProxyUser, error) {
-		users := []ProxyUser{}
+	query := func(ctx context.Context, gateNodeID string, epoch *int64) (nodeUserSet, error) {
+		set := nodeUserSet{users: []ProxyUser{}}
 		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 			if epoch != nil {
 				if err := tx.QueryRow(ctx, `SELECT `+deliveryEpochSQL).Scan(epoch); err != nil {
@@ -322,9 +335,13 @@ func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *Serving
 				SELECT s.node_uid, s.proxy_uuid::text,
 				       coalesce(pv.throttle_kbps, 0),
 				       -- 管理员在订阅上的覆盖优先于套餐规定
-				       coalesce(s.device_limit, pv.max_devices, 0)
+				       coalesce(s.device_limit, pv.max_devices, 0),
+				       s.current_period_end
 				  FROM subscriptions s
 				  JOIN plan_versions pv ON pv.id = s.plan_version_id
+				  -- 封禁即断、解封恢复：只有 active 账号的订阅进名单
+				  JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id
+				              AND u.status = 'active'
 				 WHERE s.tenant_id = $1
 				   -- strict 模式：跨节点去重后仍然超限的，本轮不下发到任何节点。
 				   --
@@ -365,14 +382,20 @@ func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *Serving
 
 			for rows.Next() {
 				var u ProxyUser
-				if err := rows.Scan(&u.ID, &u.UUID, &u.SpeedLimit, &u.DeviceLimit); err != nil {
+				var periodEnd *time.Time
+				if err := rows.Scan(&u.ID, &u.UUID, &u.SpeedLimit, &u.DeviceLimit, &periodEnd); err != nil {
 					return err
 				}
-				users = append(users, u)
+				set.users = append(set.users, u)
+				set.nextExpiry = earlierExpiry(set.nextExpiry, periodEnd)
 			}
 			return rows.Err()
 		})
-		return users, err
+		if epoch != nil {
+			set.epoch = *epoch
+		}
+		set.nextExpiry = clampNextExpiry(set.nextExpiry, time.Now())
+		return set, err
 	}
 
 	c := s.caches
@@ -381,33 +404,33 @@ func (s *Service) ListNodeUsers(ctx context.Context, tenantID string, n *Serving
 	}
 	if n.PoolID == nil {
 		// 与直查路径的「$2 为 NULL 时列表为空」同一结论，不必为它查库
-		return []ProxyUser{}, nil
+		return nodeUserSet{users: []ProxyUser{}}, nil
 	}
 	want := n.deliveryEpoch
-	set, err := c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), epochFlight(want),
+	return c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), epochFlight(want),
 		func(set nodeUserSet) bool { return set.epoch >= want },
 		func(ctx context.Context) (nodeUserSet, error) {
 			var epoch int64
-			users, err := query(ctx, "", &epoch)
+			set, err := query(ctx, "", &epoch)
 			if err != nil {
 				return nodeUserSet{}, err
 			}
-			return nodeUserSet{users: users, version: UserSetVersion(users), epoch: epoch}, nil
+			set.version = UserSetVersion(set.users)
+			return set, nil
 		})
-	if err != nil {
-		return nil, err
-	}
-	return set.users, nil
 }
 
 // NodeUserSet 返回节点该放行的用户与版本（UniProxy 的 ETag）。缓存命中时版本是
 // 算好的，handler 先拿它比 If-None-Match，没变就回 304，不必序列化也不必再算哈希。
 func (s *Service) NodeUserSet(ctx context.Context, tenantID string, n *ServingNode) ([]ProxyUser, string, error) {
-	users, err := s.ListNodeUsers(ctx, tenantID, n)
+	set, err := s.nodeUsers(ctx, tenantID, n)
 	if err != nil {
 		return nil, "", err
 	}
-	return users, s.userSetVersionOf(tenantID, n, users), nil
+	if set.version == "" {
+		set.version = UserSetVersion(set.users)
+	}
+	return set.users, set.version, nil
 }
 
 //------------------------------------------------------------------------------

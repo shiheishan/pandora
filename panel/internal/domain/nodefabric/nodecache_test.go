@@ -194,7 +194,7 @@ func TestDeliveryEpochIsReadAlongsideEveryCachedInput(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
 	for _, decl := range []string{"Service.AuthenticateNode", "Service.LookupIdentity",
 		"Service.claimNonceInDatabase", "Service.EffectiveConfigUnchangedAt", "Service.CurrentDeliveryEpoch", "Service.loadServingNodeForPush",
-		"Service.loadServingNodesForPush", "Service.ListNodeUsers"} {
+		"Service.loadServingNodesForPush", "Service.nodeUsers"} {
 		if !strings.Contains(pkg.Decl(decl), "deliveryEpochSQL") {
 			t.Errorf("%s no longer reads the delivery epoch", decl)
 		}
@@ -290,5 +290,79 @@ func TestIdentityCacheNeverOutlivesIdentityExpiry(t *testing.T) {
 	}
 	if nodeIdentityCacheTTL != 10*time.Minute || caches.identity.staleGrace != 0 {
 		t.Fatal("identity cache: TTL is min(expires_at, 10 minutes) and never serves stale entries")
+	}
+}
+
+// 用户集按名单里最早的订阅到期时刻硬过期：到点同步重算，不走「先回旧值」的宽限
+// （到期没有写、不推进纪元，宽限会让刚到期的人多留 10 秒）。只到 TTL 的条目照旧宽限。
+func TestNodeUserSetHardExpiresAtNextSubscriptionExpiry(t *testing.T) {
+	clock := newFakeClock()
+	caches := newNodeCaches(clock.Now)
+	c := caches.users
+	expiry := clock.Now().Add(2 * time.Second)
+	loads := 0
+	load := func(context.Context) (nodeUserSet, error) {
+		loads++
+		if loads == 1 {
+			return nodeUserSet{epoch: 1, version: "with-expiring", nextExpiry: expiry}, nil
+		}
+		return nodeUserSet{epoch: 1, version: "after-expiry"}, nil
+	}
+	get := func() nodeUserSet {
+		t.Helper()
+		v, err := c.get(context.Background(), "pool", epochFlight(1),
+			func(set nodeUserSet) bool { return set.epoch >= 1 }, load)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if v := get(); v.version != "with-expiring" {
+		t.Fatalf("first load = %+v", v)
+	}
+	clock.Advance(time.Second)
+	if v := get(); v.version != "with-expiring" || loads != 1 {
+		t.Fatalf("entry reloaded before the subscription expired: %+v loads=%d", v, loads)
+	}
+	clock.Advance(time.Second)
+	if v := get(); v.version != "after-expiry" || loads != 2 {
+		t.Fatalf("expired subscription served from the stale grace window: %+v loads=%d", v, loads)
+	}
+}
+
+func TestNextExpiryHelpers(t *testing.T) {
+	now := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	a, b := now.Add(time.Hour), now.Add(time.Minute)
+	if got := earlierExpiry(time.Time{}, &a); !got.Equal(a) {
+		t.Fatalf("first expiry = %v", got)
+	}
+	if got := earlierExpiry(a, &b); !got.Equal(b) {
+		t.Fatalf("earlier expiry = %v", got)
+	}
+	if got := earlierExpiry(b, &a); !got.Equal(b) {
+		t.Fatalf("later expiry replaced earlier: %v", got)
+	}
+	if got := earlierExpiry(b, nil); !got.Equal(b) {
+		t.Fatalf("nil expiry changed result: %v", got)
+	}
+	if got := clampNextExpiry(time.Time{}, now); !got.IsZero() {
+		t.Fatalf("no expiry must stay zero: %v", got)
+	}
+	if got := clampNextExpiry(now.Add(-time.Second), now); !got.Equal(now.Add(nextExpiryFloor)) {
+		t.Fatalf("past expiry (clock skew) not floored: %v", got)
+	}
+	if got := clampNextExpiry(a, now); !got.Equal(a) {
+		t.Fatalf("future expiry changed: %v", got)
+	}
+}
+
+// 节点名单只收 active 账号的订阅（封禁即断、解封恢复），并带出到期时刻。
+func TestNodeUsersRequireActiveOwner(t *testing.T) {
+	list := sourcetest.Load(t, ".").Decl("Service.nodeUsers")
+	for _, want := range []string{"JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id",
+		"AND u.status = 'active'", "s.current_period_end", "earlierExpiry(set.nextExpiry, periodEnd)"} {
+		if !strings.Contains(list, want) {
+			t.Fatalf("node user list missing %q", want)
+		}
 	}
 }
