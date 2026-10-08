@@ -51,6 +51,8 @@ func TestNormalizeProviderSettingsRejects(t *testing.T) {
 		{"default outside methods", func(s *ProviderSettings) { s.Methods = []string{"alipay"}; s.DefaultMethod = "wxpay" }, false, "default_method"},
 		{"bad submit path", func(s *ProviderSettings) { s.SubmitPath = "submit.php?x" }, false, "submit_path"},
 		{"protocol-relative api path", func(s *ProviderSettings) { s.APIPath = "//evil.example.test/api.php" }, false, "api_path"},
+		{"negative minimum payment", func(s *ProviderSettings) { s.MinAmount = -1 }, false, "min_amount"},
+		{"minimum payment above ¥1000", func(s *ProviderSettings) { s.MinAmount = 100001 }, false, "min_amount"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
