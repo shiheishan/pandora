@@ -13,6 +13,7 @@ paths:
   - 种子 `seed.ts` 是 globalSetup，只经后台真实接口造：五个套餐（绑冒烟种子的节点池）、12G 流量包、六种礼品卡模板、演示易支付渠道 `w9pay`（随机商户号与密钥，`allow_private_host` 只在非生产放行）
   - 它把其余 CNY 渠道暂停收新单，让站点最低付款额变成 ¥1.00（凑最低额、免零头、低于最低额被拦都要这个前提），所以必须排在所有会下单的步骤之后；再轮询门户报价直到 `min_payment` 为 100（各网关按进程缓存一分钟），不用固定等待
   - 结果表由 `table.ts` 出，写进 job summary；截图、失败的 trace、HTML 报告在产物 `browser-paths`
+  - 查失败先看产物里的 `shots/<步骤>-fail.png` 与 `test-results/*/trace.zip`：测试自己开上下文（门户、后台各一个），Playwright 的 `error-context.md` 里的页面快照取的不一定是出错的那个页面
 - 本机跑（要一套已起的冒烟栈，本机没有 Docker 时只做类型检查与 lint）：
   - `panel/deploy/run-smoke-stack.sh up panel <状态目录>`（起栈前先 `make -C panel frontend-embed`）→ `node panel/frontend/tests/smoke/seed.ts <状态目录>`
   - 在 `panel/frontend`：`npx playwright install --only-shell chromium`，再 `SMOKE_STATE=<状态目录> npx playwright test -c tests/browser/playwright.config.ts`；`node tests/browser/table.ts <状态目录>/browser` 出表
