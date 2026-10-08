@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { AnonContext, Json, MockResult } from '../types.ts'
-import { COUPONS, findPlan, intervalMonths, type CatalogPlan, type CatalogPrice } from './catalog.ts'
-import { makeSub, scenario, type OrderEffect, type OrderFixture, type PortalState, type SubFixture } from './fixtures.ts'
+import { COUPONS, findPlan, type CatalogPlan, type CatalogPrice } from './catalog.ts'
+import { addInterval, isLiveSub, makeSub, scenario, type OrderEffect, type OrderFixture, type PortalState, type SubFixture } from './fixtures.ts'
 
-const DAY_MS = 86_400_000
 const ORDER_TTL_MS = 30 * 60_000
 
 /** 业务拒绝：由调用方写成错误信封（在幂等表里也原样重放） */
@@ -60,22 +59,35 @@ export function couponFace(code: unknown) {
 }
 
 // ---------------------------------------------------------------------------
-// 下单：余额先扣（冻结），0 元当场履约
+// 下单：金额由 quote.ts 的 settle 算好（余额已过 ApplyBalance），这里只落单、先扣（冻结）余额，
+// 0 元当场履约。差价不到支付最低额且余额不够（SmallDue）时按设计稿 2.6 推荐 A 免掉、记为折扣
 // ---------------------------------------------------------------------------
 let orderSeq = 3400
 
 export function placeOrder(
   state: PortalState,
-  init: { kind: OrderFixture['kind']; subtotal: number; credit?: number; coupon: unknown; priceId: string | null; useBalance: unknown; planName?: string; itemName?: string; price?: CatalogPrice; subscriptionId?: string; effect: OrderEffect },
+  init: {
+    kind: OrderFixture['kind']
+    subtotal: number
+    discount: number
+    credit?: number
+    /** 小计 − 折扣 − 剩余价值 */
+    total: number
+    /** 用掉的余额 */
+    applied: number
+    /** SmallDue 免掉的差价 */
+    waived?: number
+    couponCode?: string
+    planName?: string
+    itemName?: string
+    price?: CatalogPrice
+    subscriptionId?: string
+    effect: OrderEffect
+  },
 ): OrderFixture {
-  if (init.useBalance !== undefined && (typeof init.useBalance !== 'number' || !Number.isInteger(init.useBalance))) {
-    throw new BillingError(422, 'validation_failed', '参数不合法', { use_balance: '须为整数（分）' })
-  }
-  const discount = couponCheck(init.coupon, init.subtotal, init.priceId)
-  const total = Math.max(0, init.subtotal - discount - (init.credit ?? 0))
-  const want = Math.max(0, (init.useBalance as number | undefined) ?? 0)
-  const applied = Math.min(want, total)
-  if (applied > state.balance) throw new BillingError(409, 'conflict', '余额不足')
+  if (init.applied > state.balance) throw new BillingError(409, 'conflict', '余额不足')
+  const waived = init.waived ?? 0
+  const total = init.total - waived
   const now = Date.now()
   const order: OrderFixture = {
     id: randomUUID(),
@@ -88,18 +100,18 @@ export function placeOrder(
     interval_count: init.price?.interval_count,
     subtotal: init.subtotal,
     total_amount: total,
-    discount_amount: discount,
-    balance_applied: applied,
-    payable_amount: total - applied,
+    discount_amount: init.discount + waived,
+    balance_applied: init.applied,
+    payable_amount: total - init.applied,
     paid_amount: 0,
-    coupon_code: typeof init.coupon === 'string' && init.coupon.trim() ? init.coupon.trim().toUpperCase() : undefined,
+    coupon_code: init.couponCode,
     subscription_id: init.subscriptionId,
     created_at: new Date(now).toISOString(),
     expires_at: new Date(now + ORDER_TTL_MS).toISOString(),
     effect: init.effect,
   }
   state.orders.unshift(order)
-  if (applied > 0) moveBalance(state, 'balance_hold', -applied, `订单 ${order.order_no}`)
+  if (init.applied > 0) moveBalance(state, 'balance_hold', -init.applied, `订单 ${order.order_no}`)
   if (order.payable_amount === 0) fulfill(state, order)
   return order
 }
@@ -119,9 +131,26 @@ export function createdView(o: OrderFixture) {
   }
 }
 
-function extend(iso: string, months: number): string {
-  const d = new Date(iso)
-  return new Date(d.getTime() + Math.round(months * 30) * DAY_MS).toISOString()
+/** 履约时名字已被别的份占了（付款期间改了名）：加「 2」「 3」后缀，不让结算失败（设计稿 2.4 provision） */
+function freeLabel(state: PortalState, label: string | null): string | null {
+  if (!label) return null
+  const taken = new Set(state.subs.map((s) => s.label?.toLowerCase()).filter(Boolean))
+  if (!taken.has(label.toLowerCase())) return label
+  for (let n = 2; ; n++) if (!taken.has(`${label} ${n}`.toLowerCase())) return `${label} ${n}`
+}
+
+/** 订阅按价格续一期：生效中的接在原到期日后，过期 30 天内的从现在起算（恢复使用、本期流量从 0 开始） */
+export function renewSub(sub: SubFixture, price: CatalogPrice, now: number) {
+  if (isLiveSub(sub)) {
+    sub.current_period_end = new Date(addInterval(new Date(sub.current_period_end).getTime(), price)).toISOString()
+    if (sub.status === 'past_due' || sub.status === 'grace') sub.status = 'active'
+  } else {
+    const end = addInterval(now, price)
+    const fresh = makeSub({ planId: sub.plan_id, priceId: price.id, status: 'active', usedGiB: 0, elapsedDays: 0, resetInDays: 30, expiresInDays: 30, online: 0, sources: 0 })
+    Object.assign(sub, { status: 'active', current_period_start: new Date(now).toISOString(), current_period_end: new Date(end).toISOString(), days: fresh.days, resetAt: fresh.resetAt })
+  }
+  sub.price_id = price.id
+  sub.amount = price.unit_amount
 }
 
 export function fulfill(state: PortalState, order: OrderFixture, via?: { provider: string; method: string }) {
@@ -134,12 +163,23 @@ export function fulfill(state: PortalState, order: OrderFixture, via?: { provide
     order.payMethod = via.method
   }
   const e = order.effect
-  if (e.type === 'addon') state.packBytes += e.bytes
+  if (e.type === 'addon') {
+    const sub = state.subs.find((s) => s.id === e.subId)
+    if (sub) sub.packBytes += e.bytes
+    else state.unattachedBytes += e.bytes
+  }
   if (e.type === 'topup') moveBalance(state, 'balance_topup', e.amount, `充值 ${order.order_no}`)
   if (e.type === 'new') {
     const plan = findPlan(e.planId)!
     const price = plan.prices.find((p) => p.id === e.priceId)!
-    const sub = makeSub({ planId: plan.id, priceId: price.id, status: 'active', usedGiB: 0, elapsedDays: 0, resetInDays: 30, expiresInDays: Math.round(intervalMonths(price) * 30), online: 0, sources: 0 })
+    const sub = makeSub({ planId: plan.id, priceId: price.id, status: 'active', usedGiB: 0, elapsedDays: 0, resetInDays: 30, expiresInDays: 30, online: 0, sources: 0, label: freeLabel(state, e.label) })
+    sub.current_period_end = new Date(addInterval(now, price)).toISOString()
+    // 这是唯一一份生效中的、名下又有未分配的流量包：自动挂上（设计稿 2.4 provision，actor=system）
+    if (!state.subs.some(isLiveSub) && state.unattachedBytes > 0) {
+      sub.packBytes += state.unattachedBytes
+      state.transfers.push({ from: null, to: sub.id, bytes: state.unattachedBytes, at: new Date(now).toISOString() })
+      state.unattachedBytes = 0
+    }
     state.subs.unshift(sub)
     order.subscription_id = sub.id
   }
@@ -147,26 +187,21 @@ export function fulfill(state: PortalState, order: OrderFixture, via?: { provide
     const sub = state.subs.find((s) => s.id === e.subId)
     const plan = sub && findPlan(sub.plan_id)
     const price = plan?.prices.find((p) => p.id === e.priceId)
-    if (sub && price) {
-      sub.current_period_end = extend(sub.current_period_end, intervalMonths(price))
-      sub.price_id = price.id
-      sub.amount = price.unit_amount
-      if (sub.status === 'past_due' || sub.status === 'grace') sub.status = 'active'
-    }
+    if (sub && price) renewSub(sub, price, now)
   }
   if (e.type === 'upgrade') {
     const sub = state.subs.find((s) => s.id === e.subId)
     const plan = findPlan(e.planId)
     const price = plan?.prices.find((p) => p.id === e.priceId)
     if (sub && plan && price) swapPlan(sub, plan, price)
-    if (e.refund > 0) moveBalance(state, 'plan_change_refund', e.refund, '变更套餐差额退回')
+    if (e.refund > 0) moveBalance(state, 'plan_change_refund', e.refund, '换套餐退回')
   }
 }
 
-/** 变更套餐履约：原地换套餐、凭据不变，新周期从今天起，已用流量清零（修订 R36） */
-function swapPlan(sub: SubFixture, plan: CatalogPlan, price: CatalogPrice) {
+/** 变更套餐履约：原地换套餐、凭据不变，新周期从今天起，已用流量清零（修订 R36）；流量包仍挂在这一份上 */
+export function swapPlan(sub: SubFixture, plan: CatalogPlan, price: CatalogPrice) {
   const now = Date.now()
-  const fresh = makeSub({ planId: plan.id, priceId: price.id, status: 'active', usedGiB: 0, elapsedDays: 0, resetInDays: 30, expiresInDays: Math.round(intervalMonths(price) * 30), online: sub.online, sources: 0 })
+  const fresh = makeSub({ planId: plan.id, priceId: price.id, status: 'active', usedGiB: 0, elapsedDays: 0, resetInDays: 30, expiresInDays: 30, online: sub.online, sources: 0 })
   Object.assign(sub, {
     plan_id: plan.id,
     price_id: price.id,
@@ -176,7 +211,7 @@ function swapPlan(sub: SubFixture, plan: CatalogPlan, price: CatalogPrice) {
     limitBytes: fresh.limitBytes,
     deviceLimit: fresh.deviceLimit,
     current_period_start: new Date(now).toISOString(),
-    current_period_end: fresh.current_period_end,
+    current_period_end: new Date(addInterval(now, price)).toISOString(),
     days: fresh.days,
     resetAt: fresh.resetAt,
   })
@@ -213,40 +248,6 @@ export function assertNoOpenChange(state: PortalState, subId: string) {
   sweepExpired(state)
   const open = state.orders.some((o) => o.subscription_id === subId && (o.kind === 'renewal' || o.kind === 'upgrade') && o.status === 'pending_payment')
   if (open) throw new BillingError(409, 'conflict', '这条订阅还有未完成的续费或变更套餐订单，请先支付或取消')
-}
-
-// ---------------------------------------------------------------------------
-// 变更套餐试算（5.A D-E-2 + 修订 R39）：剩余价值 = 实付 × min(剩余时间比, 剩余流量比)，向下取整
-// ---------------------------------------------------------------------------
-export function changeQuote(sub: SubFixture, plan: CatalogPlan, price: CatalogPrice, coupon: unknown) {
-  if (plan.id === sub.plan_id) throw new BillingError(409, 'conflict', '与当前套餐相同，请使用续费')
-  if (!plan.allow_upgrade) throw new BillingError(409, 'conflict', '目标套餐不允许变更')
-  if (!['active', 'trialing', 'grace', 'past_due'].includes(sub.status)) throw new BillingError(409, 'conflict', '当前订阅状态不能变更')
-  if (price.currency !== 'CNY') throw new BillingError(409, 'conflict', '变更套餐不能更换币种')
-  const now = Date.now()
-  const start = new Date(sub.current_period_start).getTime()
-  const end = new Date(sub.current_period_end).getTime()
-  const timeRatio = end > start ? Math.min(1, Math.max(0, (end - now) / (end - start))) : 0
-  const used = sub.days.reduce((s, d) => s + d.bytes, 0)
-  const trafficRatio = sub.limitBytes > 0 ? Math.max(0, 1 - used / sub.limitBytes) : 1
-  const credit = Math.floor(sub.amount * Math.min(timeRatio, trafficRatio))
-  const discount = couponCheck(coupon, price.unit_amount, price.id)
-  const total = Math.max(0, price.unit_amount - credit - discount)
-  const refund = Math.max(0, credit + discount - price.unit_amount)
-  return {
-    direction: total > 0 ? 'upgrade' : 'downgrade',
-    currency: 'CNY',
-    subtotal: price.unit_amount,
-    proration_credit: credit,
-    discount,
-    total,
-    balance_refund: refund,
-    current_period_end: sub.current_period_end,
-    new_period_start: new Date(now).toISOString(),
-    new_period_end: new Date(now + Math.round(intervalMonths(price) * 30) * DAY_MS).toISOString(),
-    // R76 / R114：券面与优惠码试算同形，没用码时为 null（真后端已上线，legacy 场景也照回）
-    coupon: couponFace(coupon),
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,13 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.body p {
+  margin: 0;
+}
+
+.body .after {
+  margin-top: 4px;
+}

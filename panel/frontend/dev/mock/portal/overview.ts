@@ -1,5 +1,7 @@
 import type { MockModule } from '../types.ts'
 import { gate, MOCK_TIMEZONE, portalState, SCENARIOS, setScenario, zoneMidnight } from './fixtures.ts'
+import { PROTO_START } from './proto.ts'
+import { isProto, scenario } from './scenario.ts'
 
 export const overview: MockModule = {
   anonymous: {
@@ -9,8 +11,33 @@ export const overview: MockModule = {
       if (!setScenario(name)) return ctx.fail(422, 'validation_failed', `场景只能是 ${SCENARIOS.join(' / ')}`, { name: '未知场景' })
       ctx.send(200, { scenario: name })
     },
+    // 首次点击测试用：GET /v1/__mock/proto?s=proto-s2[&to=/plans] 切到原型场景（重建状态）并跳到该场景的起始页。
+    // 登录态在浏览器里（localStorage），切场景不登出；测试员每个任务开一次这个地址就从头来
+    'GET /v1/__mock/proto': (ctx) => {
+      const name = ctx.query.get('s') ?? ''
+      if (!name.startsWith('proto-') || !setScenario(name)) return ctx.fail(422, 'validation_failed', `场景只能是 ${SCENARIOS.filter((s) => s.startsWith('proto-')).join(' / ')}`)
+      const to = ctx.query.get('to')
+      const s = scenario()
+      const target = to && /^\/[\w/?=&.-]*$/.test(to) ? to : isProto(s) ? PROTO_START[s] : '/subs'
+      ctx.res.statusCode = 302
+      ctx.res.setHeader('Location', `/#${target}`)
+      ctx.res.setHeader('Cache-Control', 'no-store')
+      ctx.res.end()
+    },
   },
   routes: {
+    // 测试用：把本人所有待支付单的付款期限拨到一分钟前（不关单），走「超过付款期限」的两条 409
+    'POST /v1/__mock/expire-orders': (ctx) => {
+      const state = portalState(ctx.user.userId)
+      const past = new Date(Date.now() - 60_000).toISOString()
+      let n = 0
+      for (const o of state.orders) {
+        if (o.status !== 'pending_payment') continue
+        o.expires_at = past
+        n++
+      }
+      ctx.send(200, { aged: n })
+    },
     // 修订 R47：days 须为 1–93 的整数（422 fields.days）；不是本人的订阅一律 404；缺省窗口为本期流量周期，最多 93 天，无数据的日子补 0
     'GET /v1/me/subscriptions/:id/usage': async (ctx) => {
       if (!(await gate(ctx))) return

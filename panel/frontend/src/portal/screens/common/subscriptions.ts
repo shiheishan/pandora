@@ -113,13 +113,14 @@ export function useSubscriptionUsage(subscriptionId: string | undefined) {
 }
 
 // ---------------------------------------------------------------------------
-// GET v1/me/traffic-packs（修订 R30）：流量包挂用户，余量新增推 subscriptions.changed（R33）
+// GET v1/me/traffic-packs（修订 R30；设计稿 2.4 每笔带上挂在哪一份，未分配为 null）：余量新增推 subscriptions.changed（R33）
 // ---------------------------------------------------------------------------
 export const trafficPacksSchema = z.object({
   remaining_bytes_total: z.number().int(),
   packs: z.array(
     z.object({
       id: z.string(),
+      subscription_id: z.string().nullable(),
       source: z.enum(['order', 'gift_card', 'migration', 'admin']),
       order_id: z.string().nullable(),
       granted_bytes: z.number().int(),
@@ -130,18 +131,9 @@ export const trafficPacksSchema = z.object({
   ),
 })
 
-export function useTrafficPacks() {
-  const api = useApi()
-  return useQuery({
-    queryKey: ['portal', 'traffic-packs'],
-    queryFn: ({ signal }) => api.get('v1/me/traffic-packs', trafficPacksSchema, { signal }),
-    meta: { topics: ['subscriptions.changed', 'orders.changed'] },
-  })
-}
 
 // ---------------------------------------------------------------------------
-// 一条订阅的流量摘要与下次重置：主卡、我的订阅、用量图共用；流量包余量取订阅上的
-// pack_remaining_bytes（挂在用户上，几条订阅同一个数）。用量查询与用量图同键，缓存共享、不多发请求。
+// 一份的流量摘要与下次重置：卡片、用量图共用；流量包余量取这一份上的 pack_remaining_bytes（设计稿 2.9）。用量查询与用量图同键，缓存共享、不多发请求。
 // ---------------------------------------------------------------------------
 export interface PlanTraffic {
   summary: TrafficSummary | null

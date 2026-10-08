@@ -1,24 +1,33 @@
 import { useState } from 'react'
 import { formatDateTime, formatMoney } from '../../../core/format'
-import { Button, Card, Empty, Input, QueryView, Select, Skeleton, useToast } from '../../../ui'
+import { href } from '../../../core/router'
+import { Button, Card, Empty, Input, QueryView, Select, Skeleton } from '../../../ui'
 import { useBalance } from '../../queries'
+import type { PortalScreenProps } from '../index'
 import { methodKey, usePaymentMethods } from '../common/catalog'
 import { endsIntent, recallPayable, useIntentKey, usePlacedOrder } from '../common/intent'
 import { useOrderPayable } from '../common/orders'
 import { PaymentModal, type PayState } from '../common/PayFlow'
-import { shortDate } from '../common/traffic'
-import { useGiftPreview, useMyGiftCards, useRedeemGift, useTopup } from './api'
-import { giftFace, giftNote, ledgerLabel, normalizeGiftCode, parseTopupAmount, redemptionGain, TOPUP_PRESETS } from './model'
+import { useTopup } from './api'
+import { ledgerLabel, parseTopupAmount, TOPUP_PRESETS } from './model'
+import { Redeem } from './Redeem'
 import css from './Wallet.module.css'
 
-export default function Wallet() {
+export default function Wallet({ rest }: PortalScreenProps) {
+  if (rest[0] === 'redeem') return <Redeem />
   return (
     <div className={css.grid}>
       <div className={css.balanceArea}>
         <BalanceCard />
       </div>
       <div className={css.giftArea}>
-        <GiftCardCard />
+        <a className={css.listRow} href={href('/wallet/redeem')} id="btn-redeem">
+          <span>
+            <b>兑换卡</b>
+            <small>套餐卡、加时长卡、流量重置卡</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </a>
       </div>
       <div className={css.historyArea}>
         <HistoryCard />
@@ -78,7 +87,7 @@ function BalanceCard() {
       <div>
         <div className={css.caption}>账户余额</div>
         <div className={css.bigAmount}>{balance.data ? formatMoney(balance.data.balance, balance.data.currency) : balance.isError ? '—' : <Skeleton width={140} height={40} />}</div>
-        <div className={css.hint}>可用于购买套餐、续费与流量包</div>
+        <div className={css.hint}>买套餐、续费、买流量包都能用，结账时自动先用。不能提现。</div>
       </div>
       <div className={css.field}>
         <div className={css.caption}>充值金额</div>
@@ -130,8 +139,8 @@ function HistoryCard() {
   const balance = useBalance()
   const [all, setAll] = useState(false)
   return (
-    <Card flush title="余额明细" className={css.listCard}>
-      <QueryView query={balance} rows={3} isEmpty={(d) => d.history.length === 0} empty={<Empty bare title="还没有余额变动" description="充值、下单抵扣、礼品卡与佣金转入都会记在这里。" />}>
+    <Card flush title="余额记录" className={css.listCard}>
+      <QueryView query={balance} rows={3} isEmpty={(d) => d.history.length === 0} empty={<Empty bare title="还没有余额变动" description="充值、下单用余额、兑换卡、换套餐退回与佣金转入都会记在这里。" />}>
         {(d) => (
           <>
             <ul className={css.list}>
@@ -159,103 +168,6 @@ function HistoryCard() {
           </>
         )}
       </QueryView>
-    </Card>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// 礼品卡：先查询卡面，再兑换；兑换幂等（一张卡一个键）
-// ---------------------------------------------------------------------------
-function GiftCardCard() {
-  const toast = useToast()
-  const preview = useGiftPreview()
-  const redeem = useRedeemGift()
-  const intentKey = useIntentKey()
-  const mine = useMyGiftCards()
-  const [code, setCode] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const normalized = normalizeGiftCode(code)
-  const card = preview.data && preview.variables === normalized ? preview.data.card : null
-
-  function lookup() {
-    if (normalized.length < 8) return setError('请输入完整的卡密')
-    setError(null)
-    preview.mutate(normalized, { onError: (e) => setError(e.message) })
-  }
-
-  function doRedeem() {
-    const body = { code: normalized }
-    redeem.mutate(
-      { code: normalized, key: intentKey.keyFor(body) },
-      {
-        onSuccess: (r) => {
-          intentKey.reset()
-          toast(`兑换成功：${r.summary.join('，')}`)
-          setCode('')
-          preview.reset()
-        },
-        onError: (e) => {
-          if (endsIntent(e)) intentKey.reset()
-          setError(e.message)
-        },
-      },
-    )
-  }
-
-  return (
-    <Card title="兑换礼品卡" className={css.gift}>
-      <div className={css.giftRow}>
-        <Input
-          mono
-          aria-label="礼品卡卡密"
-          placeholder="GC-XXXX-XXXX-XXXX"
-          className={css.upper}
-          fieldClassName={css.grow}
-          value={code}
-          onChange={(e) => {
-            setCode(e.target.value)
-            setError(null)
-          }}
-          onKeyDown={(e) => e.key === 'Enter' && lookup()}
-        />
-        <Button onClick={lookup} busy={preview.isPending} disabled={!normalized}>
-          查询
-        </Button>
-      </div>
-      {card && (
-        <div className={css.giftCard}>
-          <div className={css.giftInfo}>
-            <div className={css.caption}>礼品卡内容</div>
-            <div className={css.giftFace}>{giftFace(card)}</div>
-            <div className={css.caption}>{giftNote(card)}</div>
-          </div>
-          <Button variant="primary" busy={redeem.isPending} onClick={doRedeem}>
-            立即兑换
-          </Button>
-        </div>
-      )}
-      {error && (
-        <div className={css.error} role="alert">
-          {error}
-        </div>
-      )}
-      <div className={css.mine}>
-        <div className={css.caption}>我的礼品卡</div>
-        <QueryView query={mine} rows={2} empty={<div className={css.hint}>兑换过的礼品卡会显示在这里。</div>}>
-          {(rows) => (
-            <ul className={css.list}>
-              {rows.map((r, i) => (
-                <li key={`${r.redeemed_at}-${i}`} className={css.mineRow}>
-                  <span className={css.mineCode}>{r.code_hint}</span>
-                  <span className={css.mineGain}>{redemptionGain(r)}</span>
-                  <span className={css.mineAt}>{shortDate(r.redeemed_at)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </QueryView>
-      </div>
     </Card>
   )
 }

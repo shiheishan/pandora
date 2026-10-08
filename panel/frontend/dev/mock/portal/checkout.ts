@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import type { MockContext, MockModule, MockResult } from '../types.ts'
-import { assertNoOpenChange, BillingError, changeQuote, createdView, fulfill, isUuid, placeOrder, readStrict, sweepExpired } from './billing.ts'
-import { findPlan, findPrice, PAY_METHODS } from './catalog.ts'
-import { gate, portalState } from './fixtures.ts'
-
-const LIVE = new Set(['active', 'trialing', 'grace', 'past_due'])
+import type { MockModule, MockResult } from '../types.ts'
+import { assertNoOpenChange, BillingError, createdView, fulfill, isUuid, placeOrder, readStrict, sweepExpired } from './billing.ts'
+import { findPlan, MIN_PAYMENT, PAY_METHODS } from './catalog.ts'
+import { gate, isLiveSub, isRevivable, portalState, type PortalState } from './fixtures.ts'
+import { normalizeLabel, profileName } from './purchase.ts'
+import { quoteRows, quoteTime, settle } from './quote.ts'
 
 /** 业务拒绝写成可重放的结果（幂等表原样重放 4xx） */
 function guard(run: () => MockResult): MockResult {
@@ -14,22 +14,6 @@ function guard(run: () => MockResult): MockResult {
     if (e instanceof BillingError) return e.result()
     throw e
   }
-}
-
-function ownedSub(ctx: MockContext) {
-  const sub = portalState(ctx.user.userId).subs.find((s) => s.id === ctx.params.id)
-  if (!sub) throw new BillingError(404, 'not_found', '订阅不存在')
-  return sub
-}
-
-function planAndPrice(planId: unknown, priceId: unknown) {
-  if (!isUuid(planId)) throw new BillingError(422, 'validation_failed', '参数不合法', { plan_id: '必填' })
-  if (!isUuid(priceId)) throw new BillingError(422, 'validation_failed', '参数不合法', { price_id: '必填' })
-  const plan = findPlan(planId)
-  if (!plan) throw new BillingError(404, 'not_found', '套餐不存在')
-  const price = findPrice(plan, priceId)
-  if (!price) throw new BillingError(409, 'conflict', '该价格已下架')
-  return { plan, price }
 }
 
 // 收银台意图：intent → 订单与回跳地址；只在内存里。channelPaid 是「渠道收到了钱、回调却丢了」：
@@ -93,48 +77,69 @@ export const checkout: MockModule = {
       ctx.send(200, { methods: PAY_METHODS.map(({ provider, method, label, currencies }) => ({ provider, method, label, currencies })) })
     },
 
+    // 新购（门户「另买一份」带 new_copy 与 label）；带 as_of + expect 时按报价比对（设计稿 2.2）
     'POST /v1/orders': async (ctx) => {
-      const body = await readStrict(ctx, ['plan_id', 'price_id', 'use_balance', 'coupon_code'])
+      const body = await readStrict(ctx, ['plan_id', 'price_id', 'use_balance', 'coupon_code', 'new_copy', 'label', 'as_of', 'expect'])
       if (!body) return
       await ctx.idempotent('order_create', () =>
         guard(() => {
-          const { plan, price } = planAndPrice(body.plan_id, body.price_id)
-          const order = placeOrder(portalState(ctx.user.userId), {
+          const state = portalState(ctx.user.userId)
+          if (!isUuid(body.price_id)) throw new BillingError(422, 'validation_failed', '参数不合法', { price_id: '必填' })
+          const plan = findPlan(body.plan_id)
+          if (!plan) throw new BillingError(404, 'not_found', '套餐不存在')
+          const newCopy = body.new_copy === true
+          const label = labelOf(body.label)
+          // RejectSamePlan 只在 !new_copy 时生效
+          if (!newCopy && state.subs.some((s) => s.plan_id === plan.id && (isLiveSub(s) || isRevivable(s)))) {
+            throw new BillingError(409, 'conflict', '你已有这个套餐的订阅，请在原订阅上续费，订阅链接不变')
+          }
+          // 会和已有一份在 App 里重名（已有那份没起名、同套餐）又没起名：必填
+          if (newCopy && !label && state.subs.some((s) => s.plan_id === plan.id && !s.label && (isLiveSub(s) || isRevivable(s)))) {
+            throw new BillingError(422, 'validation_failed', '参数不合法', { label: `不起名的话，App 里会有两个「${profileName('Pandora', null, plan.name)}」，分不清哪个是哪个` })
+          }
+          assertNoPendingNew(state, plan.id, plan.name)
+          const { row, balance } = settle(state, quoteRows(state, { action: 'new', plan_id: plan.id, coupon_code: body.coupon_code }, quoteTime(body), true), body.price_id, body)
+          const price = plan.prices.find((p) => p.id === row.price_id)!
+          const order = placeOrder(state, {
             kind: 'new',
-            subtotal: price.unit_amount,
-            coupon: body.coupon_code,
-            priceId: price.id,
-            useBalance: body.use_balance,
+            subtotal: row.subtotal,
+            discount: row.discount,
+            total: row.total,
+            applied: balance.applied,
+            waived: balance.waived,
+            couponCode: row.coupon?.code,
             planName: plan.name,
             itemName: plan.name,
             price,
-            effect: { type: 'new', planId: plan.id, priceId: price.id },
+            effect: { type: 'new', planId: plan.id, priceId: price.id, label },
           })
           return { status: 201, body: createdView(order) }
         }),
       )
     },
 
-    // 门户-02 条目；price_id 不传沿用订阅当前价格
+    // 门户-02 条目；price_id 不传沿用订阅当前价格；过期 30 天内的从付款时起算（恢复使用）
     'POST /v1/me/subscriptions/:id/renew': async (ctx) => {
-      const body = await readStrict(ctx, ['price_id', 'use_balance', 'coupon_code'])
+      const body = await readStrict(ctx, ['price_id', 'use_balance', 'coupon_code', 'as_of', 'expect'])
       if (!body) return
       await ctx.idempotent('subscription_renewal_create', () =>
         guard(() => {
           const state = portalState(ctx.user.userId)
-          const sub = ownedSub(ctx)
-          if (!LIVE.has(sub.status)) throw new BillingError(409, 'conflict', '这条订阅当前不能续费')
-          const plan = findPlan(sub.plan_id)
-          if (!plan?.allow_renewal) throw new BillingError(409, 'conflict', '该套餐当前不允许续费')
-          const price = findPrice(plan, body.price_id ?? sub.price_id)
-          if (!price) throw new BillingError(409, 'conflict', '所选价格已下架，请重新选择')
+          const sub = state.subs.find((s) => s.id === ctx.params.id)
+          if (!sub) throw new BillingError(404, 'not_found', '订阅不存在')
           assertNoOpenChange(state, sub.id)
+          const rows = quoteRows(state, { action: 'renew', subscription_id: sub.id, coupon_code: body.coupon_code }, quoteTime(body), true)
+          const { row, balance } = settle(state, rows, (body.price_id as string | undefined) ?? sub.price_id, body)
+          const plan = findPlan(sub.plan_id)!
+          const price = plan.prices.find((p) => p.id === row.price_id)!
           const order = placeOrder(state, {
             kind: 'renewal',
-            subtotal: price.unit_amount,
-            coupon: body.coupon_code,
-            priceId: price.id,
-            useBalance: body.use_balance,
+            subtotal: row.subtotal,
+            discount: row.discount,
+            total: row.total,
+            applied: balance.applied,
+            waived: balance.waived,
+            couponCode: row.coupon?.code,
             planName: plan.name,
             itemName: plan.name,
             price,
@@ -146,42 +151,36 @@ export const checkout: MockModule = {
       )
     },
 
-    // 修订 R35：不落库，不幂等
-    'POST /v1/me/subscriptions/:id/change-plan/preview': async (ctx) => {
-      const body = await readStrict(ctx, ['plan_id', 'price_id', 'coupon_code'])
-      if (!body) return
-      const result = guard(() => {
-        const sub = ownedSub(ctx)
-        const { plan, price } = planAndPrice(body.plan_id, body.price_id)
-        assertNoOpenChange(portalState(ctx.user.userId), sub.id)
-        return { status: 200, body: changeQuote(sub, plan, price, body.coupon_code) }
-      })
-      ctx.send(result.status, result.body)
-    },
-
-    // 修订 R36：升降级 kind 都是 upgrade，0 元当场履约并退余额
+    // 修订 R36：升降级 kind 都是 upgrade，0 元当场履约并退余额；过期 30 天内的那份是「恢复并改成 X」
     'POST /v1/me/subscriptions/:id/change-plan': async (ctx) => {
-      const body = await readStrict(ctx, ['plan_id', 'price_id', 'use_balance', 'coupon_code'])
+      const body = await readStrict(ctx, ['plan_id', 'price_id', 'use_balance', 'coupon_code', 'as_of', 'expect'])
       if (!body) return
       await ctx.idempotent('subscription_change_plan_create', () =>
         guard(() => {
           const state = portalState(ctx.user.userId)
-          const sub = ownedSub(ctx)
-          const { plan, price } = planAndPrice(body.plan_id, body.price_id)
+          const sub = state.subs.find((s) => s.id === ctx.params.id)
+          if (!sub) throw new BillingError(404, 'not_found', '订阅不存在')
+          if (!isUuid(body.plan_id)) throw new BillingError(422, 'validation_failed', '参数不合法', { plan_id: '必填' })
+          if (!isUuid(body.price_id)) throw new BillingError(422, 'validation_failed', '参数不合法', { price_id: '必填' })
           assertNoOpenChange(state, sub.id)
-          const quote = changeQuote(sub, plan, price, body.coupon_code)
+          const rows = quoteRows(state, { action: 'change', subscription_id: sub.id, plan_id: body.plan_id, coupon_code: body.coupon_code }, quoteTime(body), true)
+          const { row, balance } = settle(state, rows, body.price_id, body)
+          const plan = findPlan(body.plan_id)!
+          const price = plan.prices.find((p) => p.id === row.price_id)!
           const order = placeOrder(state, {
             kind: 'upgrade',
-            subtotal: price.unit_amount,
-            credit: quote.proration_credit,
-            coupon: body.coupon_code,
-            priceId: price.id,
-            useBalance: body.use_balance,
+            subtotal: row.subtotal,
+            discount: row.discount,
+            credit: row.credit,
+            total: row.total,
+            applied: balance.applied,
+            waived: balance.waived,
+            couponCode: row.coupon?.code,
             planName: plan.name,
             itemName: plan.name,
             price,
             subscriptionId: sub.id,
-            effect: { type: 'upgrade', subId: sub.id, planId: plan.id, priceId: price.id, credit: quote.proration_credit, refund: quote.balance_refund },
+            effect: { type: 'upgrade', subId: sub.id, planId: plan.id, priceId: price.id, credit: row.credit, refund: row.refund },
           })
           return { status: 201, body: createdView(order) }
         }),
@@ -193,14 +192,18 @@ export const checkout: MockModule = {
       const body = await readStrict(ctx, ['provider', 'method', 'return_url'])
       if (!body) return
       const state = portalState(ctx.user.userId)
-      sweepExpired(state)
       const order = state.orders.find((o) => o.id === ctx.params.id)
       if (typeof body.provider !== 'string' || body.provider === '') return ctx.fail(422, 'validation_failed', '参数不合法', { provider: '必填' })
       if (!order) return ctx.fail(404, 'not_found', '订单不存在')
+      // 过了付款期限、过期扫描还没关它（billing.ErrOrderPaymentExpired）
+      if (order.status === 'pending_payment' && order.expires_at && new Date(order.expires_at).getTime() <= Date.now()) return ctx.fail(409, 'conflict', '这张订单已超过付款期限，请取消后重新下单')
+      sweepExpired(state)
       const channel = PAY_METHODS.find((m) => m.provider === body.provider && (body.method === undefined || m.method === body.method))
       if (!channel) return ctx.fail(404, 'not_found', '未知的支付渠道')
       if (order.status !== 'pending_payment') return ctx.fail(409, 'conflict', '该订单当前状态不可支付')
       if (order.payable_amount <= 0) return ctx.fail(409, 'conflict', '该订单无需外部支付')
+      // 兜底（设计稿 2.6）：低于渠道最低额不发起，渠道自己的报错是英文或干脆没有
+      if (order.payable_amount < MIN_PAYMENT) return ctx.fail(409, 'conflict', '支付金额低于该付款方式的最低额')
       const origin = `http://${ctx.req.headers.host}`
       const returnUrl = typeof body.return_url === 'string' && body.return_url.startsWith(`${origin}/`) ? body.return_url : `${origin}/#orders`
       const existing = [...intents.entries()].find(([, v]) => v.orderId === order.id && v.provider === channel.provider && v.method === channel.method)
@@ -219,3 +222,23 @@ export const checkout: MockModule = {
     },
   },
 }
+
+/** 备注名经 NormalizeLabel；不合规回 422 fields.label */
+function labelOf(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== 'string') throw new BillingError(422, 'validation_failed', '参数不合法', { label: '须为字符串' })
+  const n = normalizeLabel(raw)
+  if ('error' in n) throw new BillingError(422, 'validation_failed', '参数不合法', { label: n.error })
+  return n.ok || null
+}
+
+/** 同一套餐同时只能有一张未付款的新购单（设计稿 2.4，防两个标签页各付一次） */
+function assertNoPendingNew(state: PortalState, planId: string, planName: string) {
+  // 不先清超时单：过了付款期限但还没被关掉的那张也拦（A 路），文案换成「已超过付款期限」
+  const open = state.orders.find((o) => o.kind === 'new' && o.status === 'pending_payment' && o.effect.type === 'new' && o.effect.planId === planId)
+  if (!open) return
+  const lapsed = open.expires_at !== undefined && new Date(open.expires_at).getTime() <= Date.now()
+  const msg = lapsed ? `你有一张已超过付款期限的「${planName}」订单，取消后再买` : `你有一张还没付款的「${planName}」订单，继续付款或取消后再买`
+  throw new BillingError(409, 'order_pending', msg, { order_id: open.id })
+}
+

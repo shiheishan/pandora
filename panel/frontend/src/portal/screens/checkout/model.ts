@@ -1,155 +1,143 @@
-import { isCurrent, pickPrimary, type Subscription } from '../../queries'
-import { cnyPrices, periodOf, PERIODS, type Pack, type Plan, type Price } from '../common/catalog'
+import type { Pack, Plan } from '../common/catalog'
+import { createPlacedOrder } from '../common/intent'
+import { isHeld, leftOf } from '../common/purchase'
+import { balanceSplit, expectation, type BalanceSplit, type Quote, type QuoteRequest, type QuoteRow } from '../common/quote'
+import { isLive, type Subscription } from '../common/subscriptions'
+import { renewOrder } from '../plans/labels'
 
 // ---------------------------------------------------------------------------
-// 模式：地址 #/checkout?plan=&price= | ?renew=<订阅>&price= | ?pack=
+// 确认页的地址（.claude/rules/screens-portal.md 约定地址）：
+//   ?renew=<一份>[&from=plans]              续费（过期 30 天内的是「恢复使用」）
+//   ?change=<一份>&plan=<套餐>              把这一份换成 X
+//   ?change-plan=<套餐>[&sub=<一份>]        先选换掉哪一份（不预选；能换的只有一份时直接定）
+//   ?new=<套餐>                             另买一份
+//   ?pack=<流量包>&sub=<一份>               加流量（没带 sub 且多份时先选加到哪一份，选过带 pick=1）
+//   ?plan=<套餐>                            老地址：没有套餐 → 新买；有同款 → 续费；否则 → 选换掉哪一份
+//   以上都可带 &price=<价格> 预选「买多久」
 // ---------------------------------------------------------------------------
-export type CheckoutMode =
-  | { kind: 'new'; plan: Plan }
-  | { kind: 'renew'; sub: Subscription; plan: Plan | null }
-  | { kind: 'change'; sub: Subscription; plan: Plan }
-  | { kind: 'pack'; pack: Pack }
+export type Target =
+  | { kind: 'renew'; subId: string; fromPlans: boolean }
+  | { kind: 'change'; subId: string | null; planId: string; chooser: boolean }
+  | { kind: 'new'; planId: string }
+  | { kind: 'pack'; packId: string; subId: string | null; chooser: boolean }
 
-export type ModeResult = { mode: CheckoutMode } | { problem: 'missing' | 'plan_gone' | 'pack_gone' | 'sub_gone' }
+export type Problem = 'missing' | 'plan_gone' | 'pack_gone' | 'sub_gone'
+export type Parsed = { target: Target } | { problem: Problem }
 
-export function resolveMode(query: URLSearchParams, plans: readonly Plan[], packs: readonly Pack[], subs: readonly Subscription[]): ModeResult {
+/** 能换成 plan 的份：手上的、能付费换套餐的、不是同款的 */
+export const changeCandidates = (held: readonly Subscription[], planId: string) => held.filter((s) => s.changeable && s.plan_id !== planId)
+
+function changeOrRenew(planId: string, held: readonly Subscription[], picked: string | null): Target | Problem {
+  const holders = renewOrder(held.filter((s) => s.plan_id === planId && s.renew_until !== null))
+  const cands = changeCandidates(held, planId)
+  if (!cands.length) return holders[0] ? { kind: 'renew', subId: holders[0].id, fromPlans: true } : held.length ? 'sub_gone' : { kind: 'new', planId }
+  // 只有一份能换时直接定，不问；多份时不预选（换掉生效中的那份永不作默认）
+  if (cands.length === 1) return { kind: 'change', subId: cands[0]!.id, planId, chooser: false }
+  return { kind: 'change', subId: cands.some((s) => s.id === picked) ? picked : null, planId, chooser: true }
+}
+
+export function parseTarget(query: URLSearchParams, held: readonly Subscription[], plans: readonly Plan[], packs: readonly Pack[]): Parsed {
+  const wrap = (t: Target | Problem): Parsed => (typeof t === 'string' ? { problem: t } : { target: t })
   const packId = query.get('pack')
   if (packId) {
-    const pack = packs.find((p) => p.id === packId)
-    return pack ? { mode: { kind: 'pack', pack } } : { problem: 'pack_gone' }
+    if (!packs.some((p) => p.id === packId)) return { problem: 'pack_gone' }
+    const live = held.filter(isLive)
+    if (!live.length) return { problem: 'sub_gone' }
+    // 没带是哪一份：预选剩得最少的那份（与选购页流量包标签同一规则）
+    const least = [...live].sort((a, b) => (leftOf(a).left ?? Number.MAX_SAFE_INTEGER) - (leftOf(b).left ?? Number.MAX_SAFE_INTEGER))[0]!
+    const named = query.get('sub')
+    // 地址点名的那一份不在用了（停用、不是你的）：不悄悄换成别的一份
+    if (named && !live.some((s) => s.id === named)) return { problem: 'sub_gone' }
+    const sub = named ?? least.id
+    // 从卡片或选购页来的已经带了是哪一份，不再问；老地址没带、多份时才在确认页选（选过的带 pick=1 继续显示）
+    return { target: { kind: 'pack', packId, subId: sub, chooser: live.length > 1 && (!query.get('sub') || query.get('pick') === '1') } }
   }
-  const renewId = query.get('renew')
-  if (renewId) {
-    // 过期 30 天内的订阅照样在原订阅上续费（后端 renewable 为真），链接不变
-    const sub = subs.find((s) => s.id === renewId && isCurrent(s))
-    if (!sub) return { problem: 'sub_gone' }
-    return { mode: { kind: 'renew', sub, plan: plans.find((p) => p.id === sub.plan_id) ?? null } }
+  const renew = query.get('renew')
+  if (renew) {
+    const sub = held.find((s) => s.id === renew)
+    return sub && sub.renew_until !== null ? { target: { kind: 'renew', subId: sub.id, fromPlans: query.get('from') === 'plans' } } : { problem: 'sub_gone' }
   }
-  const planId = query.get('plan')
-  if (planId) {
-    const plan = plans.find((p) => p.id === planId)
-    if (!plan) return { problem: 'plan_gone' }
-    const primary = pickPrimary(subs)
-    if (!primary) return { mode: { kind: 'new', plan } }
-    if (primary.plan_id === plan.id) return { mode: { kind: 'renew', sub: primary, plan } }
-    return { mode: { kind: 'change', sub: primary, plan } }
+  const change = query.get('change')
+  const changePlan = query.get('change-plan')
+  if (change || changePlan) {
+    const planId = changePlan ?? query.get('plan') ?? ''
+    if (!plans.some((p) => p.id === planId)) return { problem: 'plan_gone' }
+    if (change && !changePlan) {
+      const sub = held.find((s) => s.id === change)
+      return sub && sub.changeable && sub.plan_id !== planId ? { target: { kind: 'change', subId: sub.id, planId, chooser: false } } : { problem: 'sub_gone' }
+    }
+    return wrap(changeOrRenew(planId, held, query.get('sub')))
+  }
+  const newPlan = query.get('new')
+  if (newPlan) return plans.some((p) => p.id === newPlan) ? { target: { kind: 'new', planId: newPlan } } : { problem: 'plan_gone' }
+  const legacy = query.get('plan')
+  if (legacy) {
+    if (!plans.some((p) => p.id === legacy)) return { problem: 'plan_gone' }
+    if (!held.length) return { target: { kind: 'new', planId: legacy } }
+    const owner = renewOrder(held.filter((s) => s.plan_id === legacy && s.renew_until !== null))[0]
+    if (owner) return { target: { kind: 'renew', subId: owner.id, fromPlans: true } }
+    return wrap(changeOrRenew(legacy, held, null))
   }
   return { problem: 'missing' }
 }
 
-const periodRank = (p: Price) => {
-  const i = PERIODS.indexOf(periodOf(p))
-  return i < 0 ? PERIODS.length : i
+/** 报价请求：换套餐还没选是哪一份时按套餐展开（给「换掉哪一份」每个选项写今天付多少） */
+export function quoteRequest(t: Target, held: readonly Subscription[], coupon: string | null): QuoteRequest {
+  const c = coupon ? { coupon_code: coupon } : {}
+  switch (t.kind) {
+    case 'renew':
+      return { action: 'renew', subscription_id: t.subId, ...c }
+    case 'change':
+      return t.subId ? { action: 'change', subscription_id: t.subId, plan_id: t.planId, ...c } : { action: 'change', plan_id: t.planId, ...c }
+    case 'new':
+      return { action: 'new', plan_id: t.planId, new_copy: held.some(isHeld), ...c }
+    default:
+      return { action: 'pack', pack_id: t.packId, ...(t.subId ? { subscription_id: t.subId } : {}), ...c }
+  }
 }
 
-/**
- * 周期选项（只列 CNY）。续费：套餐当前有效价格，外加订阅的原价格（仍有效但不在目录里时，
- * 例如组专属价）；原价格失效（renewal_price.available=false）时只列当前价格。
- */
-export function periodOptions(mode: CheckoutMode): Price[] {
-  if (mode.kind === 'pack') return []
-  const listed = mode.plan ? cnyPrices(mode.plan) : []
-  if (mode.kind === 'renew') {
-    const rp = mode.sub.renewal_price
-    if (rp && rp.available && rp.currency === 'CNY' && !listed.some((p) => p.id === rp.id)) {
-      const interval = rp.billing_interval as Price['billing_interval']
-      listed.push({ id: rp.id, currency: rp.currency, unit_amount: rp.unit_amount, billing_interval: interval, interval_count: rp.interval_count, trial_days: 0 })
+export { defaultTier, sortTiers } from '../common/quote'
+
+// ---------------------------------------------------------------------------
+// 建单：四个接口各自的请求体，都带 as_of + expect（服务端重算比对，不符回 409 quote_changed）。
+// 后端 DisallowUnknownFields：可选字段不用时不传。use_balance 传这一档报价里用掉的余额。
+// ---------------------------------------------------------------------------
+export interface OrderInput {
+  target: Target
+  quote: Quote
+  row: QuoteRow
+  split: BalanceSplit
+  coupon: string | null
+  /** 另买一份时起的名字 */
+  label?: string
+  newCopy?: boolean
+}
+
+export function orderRequest(i: OrderInput): { path: string; body: Record<string, unknown> } {
+  const extra: Record<string, unknown> = { ...expectation(i.quote, i.row, i.split) }
+  if (i.split.applied > 0) extra.use_balance = i.split.applied
+  if (i.coupon) extra.coupon_code = i.coupon
+  const t = i.target
+  switch (t.kind) {
+    case 'pack':
+      return { path: 'v1/me/traffic-pack-orders', body: { pack_id: t.packId, subscription_id: t.subId, ...extra } }
+    case 'renew':
+      return { path: `v1/me/subscriptions/${encodeURIComponent(t.subId)}/renew`, body: { price_id: i.row.price_id, ...extra } }
+    case 'change':
+      return { path: `v1/me/subscriptions/${encodeURIComponent(t.subId!)}/change-plan`, body: { plan_id: t.planId, price_id: i.row.price_id, ...extra } }
+    default: {
+      const label = i.label?.trim()
+      return { path: 'v1/orders', body: { plan_id: t.planId, price_id: i.row.price_id, ...(i.newCopy ? { new_copy: true } : {}), ...(label ? { label } : {}), ...extra } }
     }
   }
-  return [...listed].sort((a, b) => periodRank(a) - periodRank(b) || a.unit_amount - b.unit_amount)
 }
 
-/** 续费遇改价（契约门户-02 renew 待补·前端）：原价格已不可用 */
-export const isRepriced = (mode: CheckoutMode) => mode.kind === 'renew' && mode.sub.renewal_price?.available === false
+/** 刚下的待支付单（跨页面记住）：付款页点「换个付款方式」退回来再点，重开这张单的付款，不下第二张 */
+export const placedOrders = createPlacedOrder<{ orderId: string }>()
 
-/** 默认选中：地址里点名的价格 → 续费沿用原价格 → 改价后选同 billing_interval → 第一项 */
-export function defaultPriceId(mode: CheckoutMode, options: readonly Price[], requested: string | null): string | null {
-  if (requested && options.some((p) => p.id === requested)) return requested
-  if (mode.kind === 'renew') {
-    const rp = mode.sub.renewal_price
-    if (rp?.available && options.some((p) => p.id === rp.id)) return rp.id
-    const same = rp && options.find((p) => p.billing_interval === rp.billing_interval && p.interval_count === rp.interval_count)
-    if (same) return same.id
-    const byInterval = rp && options.find((p) => p.billing_interval === rp.billing_interval)
-    if (byInterval) return byInterval.id
-  }
-  return options[0]?.id ?? null
+/** 同一个意图的指纹不含报价时刻与 expect：重新报价后再点仍是同一张单 */
+export function intentOf(req: { path: string; body: Record<string, unknown> }) {
+  return { path: req.path, body: Object.fromEntries(Object.entries(req.body).filter(([k]) => k !== 'as_of' && k !== 'expect')) }
 }
 
-// ---------------------------------------------------------------------------
-// 订单预览：新购 / 续费 / 流量包按目录价与优惠码试算前端算；变更套餐用服务端试算
-// ---------------------------------------------------------------------------
-export interface ChangePreview {
-  direction: 'upgrade' | 'downgrade'
-  currency: string
-  subtotal: number
-  proration_credit: number
-  discount: number
-  total: number
-  balance_refund: number
-  current_period_end: string
-  new_period_start: string
-  new_period_end: string
-  /** R76 / R114：所用优惠码的券面，没用码时为 null */
-  coupon: { code: string; discount_type: 'percent' | 'fixed'; discount_value: number } | null
-}
-
-export interface Quote {
-  currency: string
-  subtotal: number
-  discount: number
-  /** 变更套餐的剩余价值折算（正数，展示为减项） */
-  credit: number
-  /** 余额抵扣前应付 */
-  due: number
-  balanceApplied: number
-  payable: number
-  /** 降级退回余额的差额 */
-  refund: number
-}
-
-export function buildQuote(input: { subtotal: number; currency: string; discount: number; change?: ChangePreview | null; balance: number; useBalance: boolean }): Quote {
-  const change = input.change ?? null
-  const subtotal = change ? change.subtotal : input.subtotal
-  const discount = change ? change.discount : Math.min(input.discount, input.subtotal)
-  const credit = change ? change.proration_credit : 0
-  const due = change ? change.total : Math.max(0, subtotal - discount)
-  // 契约：开关打开时 use_balance = min(余额, 优惠后应付)
-  const balanceApplied = input.useBalance ? Math.max(0, Math.min(input.balance, due)) : 0
-  return { currency: change?.currency ?? input.currency, subtotal, discount, credit, due, balanceApplied, payable: due - balanceApplied, refund: change?.balance_refund ?? 0 }
-}
-
-// ---------------------------------------------------------------------------
-// 请求体：后端 DisallowUnknownFields，可选字段不用时不传
-// ---------------------------------------------------------------------------
-export function orderRequest(mode: CheckoutMode, priceId: string | null, balanceApplied: number, coupon: string | null): { path: string; body: Record<string, unknown> } {
-  const extra: Record<string, unknown> = {}
-  if (balanceApplied > 0) extra.use_balance = balanceApplied
-  if (coupon) extra.coupon_code = coupon
-  switch (mode.kind) {
-    case 'pack':
-      return { path: 'v1/me/traffic-pack-orders', body: { pack_id: mode.pack.id, ...extra } }
-    case 'renew':
-      return { path: `v1/me/subscriptions/${encodeURIComponent(mode.sub.id)}/renew`, body: { ...(priceId ? { price_id: priceId } : {}), ...extra } }
-    case 'change':
-      return { path: `v1/me/subscriptions/${encodeURIComponent(mode.sub.id)}/change-plan`, body: { plan_id: mode.plan.id, price_id: priceId, ...extra } }
-    default:
-      return { path: 'v1/orders', body: { plan_id: mode.plan.id, price_id: priceId, ...extra } }
-  }
-}
-
-/** POST v1/coupons/preview 的请求体：流量包用 pack_id 形态（修订 R69），其余用套餐 + 价格 */
-export function couponPreviewBody(mode: CheckoutMode, priceId: string | null, code: string): Record<string, unknown> | null {
-  if (mode.kind === 'pack') return { pack_id: mode.pack.id, coupon_code: code }
-  const planId = mode.kind === 'renew' ? mode.sub.plan_id : mode.plan.id
-  return priceId ? { plan_id: planId, price_id: priceId, coupon_code: code } : null
-}
-
-export const normalizeCoupon = (raw: string) => raw.trim().toUpperCase()
-
-/** 成功行「已使用 CODE：20% 折扣 / 立减 ¥X」；percent 的 discount_value 是万分比 */
-export function couponNote(code: string, coupon: { discount_type: 'percent' | 'fixed'; discount_value: number } | null, discount: number, fmt: (minor: number) => string): string {
-  if (coupon?.discount_type === 'percent') return `已使用 ${code}：${Number((coupon.discount_value / 100).toFixed(2))}% 折扣`
-  if (coupon?.discount_type === 'fixed') return `已使用 ${code}：立减 ${fmt(coupon.discount_value)}`
-  return `已使用 ${code}：优惠 ${fmt(discount)}`
-}
+export { balanceSplit }

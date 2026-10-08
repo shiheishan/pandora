@@ -94,7 +94,7 @@ export function UsageCard({ subscriptionId, summary, resetAt }: UsageCardProps) 
           </div>
         </div>
       ) : (
-        <Empty bare title="本期还没有用量记录" description="客户端连上节点后，每天的用量会显示在这里。" />
+        <Empty bare title="本期还没有用量记录" description="App 连上节点后，每天的用量会显示在这里。" />
       )}
     </Card>
   )
