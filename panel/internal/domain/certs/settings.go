@@ -179,8 +179,10 @@ func (s *Service) SaveACMESettings(ctx context.Context, tenantID string, actor A
 		}
 		if in.ZeroSSLEABHMAC != nil {
 			if newHMAC == "" {
-				if _, err := tx.Exec(ctx, `DELETE FROM system_settings WHERE tenant_id = $1 AND key = $2`,
-					tenantID, settingZeroSSLHMAC); err != nil {
+				// 不删行：设置的修订记录是追加写，删设置行会级联删修订而被拒。清掉密文、取消秘密标记即可
+				if _, err := tx.Exec(ctx, `
+					UPDATE system_settings SET secret_encrypted = NULL, is_secret = false, updated_at = now()
+					 WHERE tenant_id = $1 AND key = $2`, tenantID, settingZeroSSLHMAC); err != nil {
 					return err
 				}
 			} else {

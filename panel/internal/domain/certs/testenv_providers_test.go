@@ -156,11 +156,20 @@ func (p *fakeProvider) alidns() http.Handler {
 		fail := func(status int, code, msg string) {
 			writeJSON(w, status, map[string]any{"RequestId": "req", "Code": code, "Message": msg})
 		}
-		if get("AccessKeyId") != p.secret {
+		// 新版 SDK 用 ACS3 签名：AccessKeyId 在 Authorization 头的 Credential=，Action 在 x-acs-action 头
+		ak := get("AccessKeyId")
+		if auth := r.Header.Get("Authorization"); strings.Contains(auth, "Credential=") {
+			ak = strings.SplitN(strings.SplitN(auth, "Credential=", 2)[1], ",", 2)[0]
+		}
+		action := r.Header.Get("x-acs-action")
+		if action == "" {
+			action = get("Action")
+		}
+		if ak != p.secret {
 			fail(http.StatusNotFound, "InvalidAccessKeyId.NotFound", "Specified access key is not found.")
 			return
 		}
-		switch get("Action") {
+		switch action {
 		case "DescribeDomains":
 			var list []map[string]any
 			for i, z := range p.zones {

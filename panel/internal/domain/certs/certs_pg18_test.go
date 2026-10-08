@@ -468,8 +468,9 @@ func TestCertsPG18(t *testing.T) {
 		}
 		var wait float64
 		if err := e.admin.QueryRow(e.ctx, `SELECT extract(epoch FROM next_attempt_at - now()) FROM certificates WHERE id = $1`,
-			cert.ID).Scan(&wait); err != nil || wait < 5*86400 || wait > 7*86400 {
-			t.Fatalf("local limit back-off = %.0fs err=%v, want until the oldest ages out", wait, err)
+			cert.ID).Scan(&wait); err != nil || wait < 117*3600 || wait > 119*3600 {
+			// 最早那张是 50 小时前签的：7 天减 50 小时 = 118 小时后它满 7 天，计数降到 49
+			t.Fatalf("local limit back-off = %.0fs err=%v, want ~118h until the oldest ages out", wait, err)
 		}
 		// 配上备用 CA（要 EAB 的第二个 pebble），手动续期：本地超限且从没签出过 → 改走 ZeroSSL
 		zs := startCA(t, e.dns.addr, true)
