@@ -15,6 +15,7 @@ import (
 	"github.com/aegispanel/nodeagent/core/mieru"
 	"github.com/aegispanel/nodeagent/core/sing"
 	"github.com/aegispanel/nodeagent/core/xray"
+	"github.com/aegispanel/nodeagent/internal/confnum"
 	nativekernel "github.com/aegispanel/nodeagent/kernel"
 )
 
@@ -487,15 +488,8 @@ func xrayCannotServe(cfg *core.InboundConfig) string {
 	// 普通 TLS 在 xray 侧要 cert_path + key_path 两个文件；面板目前
 	// 不下发证书路径，配了 tls=true 却没有文件的话 xray 会直接失败，
 	// 而 sing-box 那边有自己的证书处理路径。
-	switch v := cfg.Raw["tls"].(type) {
-	case bool:
-		if v && strFrom(cfg.Raw, "cert_path") == "" {
-			return "启用了 TLS 但没有证书文件路径"
-		}
-	case float64:
-		if v > 0 && strFrom(cfg.Raw, "cert_path") == "" {
-			return "启用了 TLS 但没有证书文件路径"
-		}
+	if enabled, _ := confnum.Truthy(cfg.Raw["tls"]); enabled && strFrom(cfg.Raw, "cert_path") == "" {
+		return "启用了 TLS 但没有证书文件路径"
 	}
 	return ""
 }

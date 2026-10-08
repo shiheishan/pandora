@@ -1,11 +1,16 @@
 package kernel
 
 import (
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/aegispanel/nodeagent/internal/confnum"
 )
 
 // XHTTPMode is the wire scheduling mode. The values intentionally follow the
@@ -120,6 +125,10 @@ func ParseXHTTPConfig(raw map[string]any) (XHTTPConfig, error) {
 	if c.UplinkHTTPMethod != http.MethodPost && c.UplinkHTTPMethod != http.MethodGet {
 		return XHTTPConfig{}, fmt.Errorf("xhttp uplink_http_method 仅支持 GET 或 POST")
 	}
+	if c.UplinkHTTPMethod == http.MethodGet && c.UplinkDataPlacement == "body" {
+		// GET 没有请求体：上行数据只能放请求头或 Cookie（Xray 同样拒绝这种组合）。
+		return XHTTPConfig{}, fmt.Errorf("xhttp uplink_http_method=GET 需要 uplink_data_placement 为 header 或 cookie")
+	}
 	if c.UplinkChunkSize, err = parseXHTTPRange(rawValue(raw, "uplink_chunk_size"), XHTTPRange{From: c.MaxPost.From, To: c.MaxPost.To}, 64, 64<<20); err != nil {
 		return XHTTPConfig{}, fmt.Errorf("xhttp uplink_chunk_size: %w", err)
 	}
@@ -229,6 +238,10 @@ func (c XHTTPConfig) extractRequestMetaOptions(req *http.Request, allowMissingSe
 	if c.SeqPlacement != "path" {
 		seq = readXHTTPMeta(req, c.SeqPlacement, c.SeqKey)
 	}
+	if sessionID == "" && allowMissingSession {
+		// stream-one 不带任何会话元数据（会话放在 query / header / cookie 时同理）。
+		return "", "", nil
+	}
 	if sessionID == "" || (!allowMissingSeq && seq == "") {
 		return "", "", fmt.Errorf("xhttp 会话元数据不完整")
 	}
@@ -241,6 +254,133 @@ func (c XHTTPConfig) extractRequestMetaOptions(req *http.Request, allowMissingSe
 	return sessionID, seq, nil
 }
 
+var (
+	errXHTTPMethodNotAllowed = errors.New("xhttp method not allowed")
+	errXHTTPPayloadTooLarge  = errors.New("xhttp uplink packet too large")
+)
+
+// uplinkPayload 按 uplink_data_placement 取 packet-up 上行包的负载（照 Xray 的
+// splithttp 服务端）：body 读请求体；header 拼接 {key}-0、{key}-1… 请求头；cookie
+// 拼接 {key}_0、{key}_1… Cookie；auto 三者依次拼接。请求头与 Cookie 里是
+// base64url（无填充）。超过 sc_max_each_post_bytes 即拒。
+func (c XHTTPConfig) uplinkPayload(req *http.Request) ([]byte, error) {
+	limit := int64(c.MaxPost.To)
+	var out []byte
+	placement := c.UplinkDataPlacement
+	if placement == "header" || placement == "auto" {
+		var encoded strings.Builder
+		for i := 0; ; i++ {
+			chunk := req.Header.Get(c.UplinkDataKey + "-" + strconv.Itoa(i))
+			if chunk == "" {
+				break
+			}
+			encoded.WriteString(chunk)
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(encoded.String())
+		if err != nil {
+			return nil, fmt.Errorf("xhttp uplink header payload: %w", err)
+		}
+		out = append(out, decoded...)
+	}
+	if placement == "cookie" || placement == "auto" {
+		var encoded strings.Builder
+		for i := 0; ; i++ {
+			cookie, err := req.Cookie(c.UplinkDataKey + "_" + strconv.Itoa(i))
+			if err != nil {
+				break
+			}
+			encoded.WriteString(cookie.Value)
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(encoded.String())
+		if err != nil {
+			return nil, fmt.Errorf("xhttp uplink cookie payload: %w", err)
+		}
+		out = append(out, decoded...)
+	}
+	if placement != "header" && placement != "cookie" && req.Body != nil {
+		body := io.Reader(req.Body)
+		if limit > 0 {
+			body = io.LimitReader(req.Body, limit+1)
+		}
+		data, err := io.ReadAll(body)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, data...)
+	}
+	if limit > 0 && int64(len(out)) > limit {
+		return nil, errXHTTPPayloadTooLarge
+	}
+	if out == nil {
+		out = []byte{}
+	}
+	return out, nil
+}
+
+// classifyRequest 判定一次请求在会话里的角色。
+//
+//   - stream-one：任何形状都按双工处理（含 Pandora 探针用的「会话/序号」路径）。
+//   - packet-up / stream-down：GET 是下行，上行方法须带会话与序号。
+//   - auto / stream-up：照 Xray 服务端的逐请求判定。auto 由客户端自己选模式——
+//     Xray 在 REALITY 上选 stream-one（配了 downloadSettings 时选 stream-up），
+//     其余（TLS h2/h3、明文 h1）选 packet-up；mihomo 同样。所以 auto 必须三种
+//     都收：不带会话的上行请求是 stream-one；带会话的 GET 是下行；带会话与序号
+//     的上行请求是 packet-up；带会话不带序号的上行请求是 stream-up。stream-up
+//     模式不收 packet-up（与 Xray 一致）。
+func (c XHTTPConfig) classifyRequest(req *http.Request) (XHTTPRequestKind, string, string, error) {
+	uplinkMethod := req.Method == c.UplinkHTTPMethod
+	switch c.Mode {
+	case XHTTPStreamOne:
+		if !uplinkMethod {
+			return 0, "", "", errXHTTPMethodNotAllowed
+		}
+		sessionID, seq, err := c.extractRequestMetaOptions(req, true, true)
+		return XHTTPRequestDuplex, sessionID, seq, err
+	case XHTTPPacketUp, XHTTPStreamDown:
+		get := req.Method == http.MethodGet
+		if !uplinkMethod && !get {
+			return 0, "", "", errXHTTPMethodNotAllowed
+		}
+		sessionID, seq, err := c.extractRequestMetaOptions(req, false, get)
+		// 上行方法配成 GET 时，带序号的 GET 是上行包，不带序号的才是下行（审查 X6）。
+		if get && (!uplinkMethod || seq == "") {
+			return XHTTPRequestDownlink, sessionID, seq, err
+		}
+		return XHTTPRequestPacket, sessionID, seq, err
+	}
+	get := req.Method == http.MethodGet
+	if !uplinkMethod && !get {
+		return 0, "", "", errXHTTPMethodNotAllowed
+	}
+	sessionID, seq, err := c.extractRequestMetaOptions(req, true, true)
+	if err != nil {
+		return 0, "", "", err
+	}
+	if sessionID == "" {
+		if !uplinkMethod || seq != "" {
+			return 0, "", "", fmt.Errorf("xhttp stream-one 请求不应带序号")
+		}
+		return XHTTPRequestDuplex, "", "", nil
+	}
+	// 上行方法配成 GET 时，带序号的 GET 才是上行包（Xray 同此判定）。
+	if get && (seq == "" || !uplinkMethod) {
+		return XHTTPRequestDownlink, sessionID, "", nil
+	}
+	if seq == "" {
+		return XHTTPRequestStreamUp, sessionID, "", nil
+	}
+	if c.Mode == XHTTPStreamUp {
+		return 0, "", "", fmt.Errorf("xhttp stream-up 模式不接受 packet-up 上行")
+	}
+	return XHTTPRequestPacket, sessionID, seq, nil
+}
+
+// xhttpUsesSessions 表示这个 mode 下会出现跨请求的会话（需要会话中转）。
+// 只有 stream-one 是一请求一连接。
+func xhttpUsesSessions(mode XHTTPMode) bool {
+	return mode != XHTTPStreamOne
+}
+
 func validXHTTPMode(mode XHTTPMode) bool {
 	switch mode {
 	case XHTTPAuto, XHTTPPacketUp, XHTTPStreamUp, XHTTPStreamOne, XHTTPStreamDown:
@@ -249,12 +389,8 @@ func validXHTTPMode(mode XHTTPMode) bool {
 	return false
 }
 
-func isXHTTPPacketMode(mode XHTTPMode) bool {
-	return mode == XHTTPPacketUp || mode == XHTTPStreamDown
-}
-
 func validXHTTPPlacement(value string, allowBody bool) bool {
-	if allowBody && value == "body" {
+	if allowBody && (value == "body" || value == "auto") {
 		return true
 	}
 	switch value {
@@ -343,21 +479,9 @@ func rawString(raw map[string]any, key string) string {
 	return strings.TrimSpace(value)
 }
 
+// rawInt 读一个整数字段，数值形态的归一见 confnum。
 func rawInt(value any) (int, bool) {
-	switch v := value.(type) {
-	case int:
-		return v, true
-	case int64:
-		return int(v), true
-	case float64:
-		if v == float64(int(v)) {
-			return int(v), true
-		}
-	case string:
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		return n, err == nil
-	}
-	return 0, false
+	return confnum.Int(value)
 }
 
 func parseXHTTPRange(value any, fallback XHTTPRange, minValue, maxValue int) (XHTTPRange, error) {
