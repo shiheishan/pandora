@@ -14,11 +14,24 @@ paths:
 - 对外地址 `AEGIS_PUBLIC_BASE_URL` 的合规规则有三份，改一处要改三处：`public-base-url.sh` 的 `pandora_valid_public_base_url`、`render-nginx.sh` 的域名校验、Go 侧 `platform/config` 的 `CanonicalPublicOrigin`（生产要求 https + 公网 Host）。nginx 的 `server_name` 与证书路径就从这个值生成
 - Cloudflare 真实 IP 信任表 `/etc/aegispanel/cloudflare-realip.conf` 的路径在模板、`render-nginx.sh`、`update-cloudflare-realip.sh` 三处写死，须一致；渲染器只在文件缺失时写一份不信任任何代理的默认文件，已存在绝不覆盖。守卫：`cloudflare-realip_mock_test.sh`
 - 日志路径：`logrotate-aegis` 的 glob 必须覆盖三个 systemd 单元 `StandardOutput=append:` 的全部文件。守卫：`logrotate-aegis_static_test.sh`
-- 新的发布物文件（脚本、模板、单元）要同时进 `build-release.sh` 的拷贝清单与随后的归档清单（两处 `for script in` 列表）、`install-linux-binaries.sh` 的安装事务；install-native.sh 要用的还得在它自己的拷贝行里加上
+- 新的发布物文件（脚本、模板、单元）要同时进 `build-release.sh` 的拷贝清单与随后的归档清单（两处 `for script in` 列表；非脚本的数据文件进 `release_data`，以 0644 归档）、`install-linux-binaries.sh` 的安装事务；install-native.sh 要用的还得在它自己的拷贝行里加上
+  - 只给安装器 source 的库（`public-base-url.sh`、`install-lib.sh`）只进发布包，不装到主机上
+  - `admin-url.sh` 与 `MIGRATION-RUNBOOK.md` 由 install.sh、install-native.sh 自己拷到 `deploy/` 下。守卫：`install-firstrun_mock_test.sh`、`install-migrate-order_mock_test.sh`
 - `release-artifact.env` 由 `build-release.sh` 生成，只含 pdnd 版本与两架构 SHA-256，绝不写 `AEGIS_ENV`：aegis-node 在 `.env` 之后加载它，写进去会在升级时把已装机器的运行模式悄悄翻掉。守卫：`release-artifact-binding_mock_test.sh`
-- 发布包装出来的就是生产：install.sh 首装写 `AEGIS_ENV=production`；升级不改现有运行模式，升级前自动全量备份，不替人造管理员
+- 发布包装出来的就是生产：install.sh 首装写 `AEGIS_ENV=production`；升级不改现有运行模式，升级前自动全量备份
+- 不替人生成管理员密码。首装且标准输入输出都是终端时，健康检查通过后、nginx 之前现场问邮箱与密码（`install-lib.sh` 的 `pandora_bootstrap_admin`）：
+  - 密码 `read -s` 读两次，经内建 printf 管道送到 `aegis-adminctl create --password-stdin`，不进命令行参数、环境变量、输出；
+  - `aegis-adminctl has-admin` 退出 0（已有可登录的有效管理员）就不问，退出 3 才问，别的退出码不问；
+  - `PANDORA_ASSUME_YES=1`、`PANDORA_NONINTERACTIVE=1`、管道与 CI 一律不问，收尾提示给手工命令。
+  - 守卫：`install-firstrun_mock_test.sh`
+- 收尾提示按「现在可以做什么 → 还差什么 → 常用操作」三段写，首装与升级分开；后台地址只在首装打印，之后用 `deploy/admin-url.sh` 随时重看（读 `.env` 的两个键，不 source）。守卫：`install-firstrun_mock_test.sh`
+- 两个安装器的升级迁移都走 `install-lib.sh` 的 `pandora_run_migrations`，不各写一套：
+  - 停服之前跑 `check-migrations.sh` 完整预检（`PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER=yes` 加 `PANDORA_PRECHECK_ATTESTATION_OUT`），失败就退出，服务没停；
+  - 停服之后 `migrate.sh up` 带 `PANDORA_PRECHECK_ATTESTATION`，只核凭据；`PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes` 只在这一步给，安装器自己不写、也不写进 `.env`；
+  - 迁移失败把服务拉回来，所以新程序在迁移成功之后才装（install-native.sh 也是）。
+  - 守卫：`install-migrate-order_mock_test.sh`
 - 桩测试与静态检查（`*_mock_test.sh`、`*_static_test.sh`）不需要数据库；与安装、迁移、nginx、发布物绑定相关的，CI 的 `.github/workflows/panel-deploy.yml` 逐个点名跑，新增这类测试要补进那份清单
-  - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root
+  - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root。前者在 panel-deploy 的 deploy-root-mock-tests job 里用 runner 的免密 sudo 跑（只在 GitHub 上，检查机明说跳过）
 - nginx 的节点路径（`/api/v1/server/UniProxy/`、`/v1/nodes/`）用自己的限速区：`aegis_node` 按「来源 IP + 节点标识」分桶（签名通道 `X-Node-Id` 头、兼容通道 query `node_id`，只认 UUID 形状，否则退回按 IP 一个桶），外加宽松的每 IP 总上限 `aegis_node_ip`；`limit_conn` 在这两个 location 单独写（`aegis_node_conn`），server 层的 64 不再作用于节点。一台机器 60 个节点约 810 次/分、60 条事件流。守卫：`render-nginx_test.sh`
 - nginx 主配置的连接上限：`render-nginx.sh` 在输出位于 `<nginx 目录>/conf.d/` 时（或 `PANDORA_NGINX_MAIN_CONF` 指定）把 `nginx.conf` 的 `worker_connections` 抬到至少 8192、`worker_rlimit_nofile` 至少 65536，已更高的不动、认不出的结构不改；`install.sh` 的 `apply_edge_config` 连同 nginx.conf 一起备份，`nginx -t` 不过一起换回。每条 SSE / 节点事件流占两个连接，Debian 缺省 768 约一千条就满（5k-r4）。站点的 `error_log` 写 `/var/log/nginx/aegis-error.log crit`，不要再改回 /dev/null。守卫：`render-nginx_test.sh`、`install-chain_mock_test.sh`
 - 三个网关单元的 `TimeoutStopSec` 一律 45 秒（两段停机各 20 秒）；valkey.sock 权限 700（容器 valkey 组的 gid 在宿主上常撞第一个普通用户）。守卫：`install-chain_mock_test.sh`
