@@ -102,7 +102,7 @@ test('A：新购、另买一份、续费、加流量', async ({ browser, world }
     await page.getByRole('radio', { name: /^12G/ }).click()
     await page.getByRole('link', { name: /^加 12G · ¥5\.00/ }).click()
     const callout = page.getByText(`12G 马上加到「妈妈的 · ${std.name}」，只给这份用，用完为止`)
-    await expect(callout).toBeVisible()
+    const calloutText = await text(callout)
     await setSwitch(page, '用余额', false)
     await expect(page.getByText('要付 ¥5.00', { exact: true })).toBeVisible()
     await submit(page, page.getByRole('button', { name: '加 12G，付 ¥5.00' }))
@@ -111,7 +111,7 @@ test('A：新购、另买一份、续费、加流量', async ({ browser, world }
     await backToSubs(page)
     await expect(card(page, '妈妈的')).toContainText('含流量包 12G')
     await expect(card(page, std.name)).not.toContainText('含流量包')
-    return `从「妈妈的」卡片加流量：「${await text(callout)}」，关掉余额后付 ¥5.00；${paid}；完成页「已加 12G」；只有「妈妈的」写含流量包 12G`
+    return `从「妈妈的」卡片加流量：「${calloutText}」，关掉余额后付 ¥5.00；${paid}；完成页「已加 12G」；只有「妈妈的」写含流量包 12G`
   })
 })
 
