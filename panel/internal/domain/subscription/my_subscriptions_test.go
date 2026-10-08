@@ -22,6 +22,12 @@ func TestMySubscriptionsQueriesStayConstant(t *testing.T) {
 		!strings.Contains(unattachedPacksSQL, "g.subscription_id IS NULL") {
 		t.Fatal("pack remaining must be per subscription, unattached packs folded into the main query")
 	}
+	// 可挪一次的旧包：与这一份的余量同一次聚合（不加查询），只认只有回填流水、没被挪过的
+	if !strings.Contains(mySubscriptionsSQL, "FILTER (WHERE "+legacyMovablePackSQL+")") ||
+		!strings.Contains(legacyMovablePackSQL, "t.actor_kind = 'migration'") ||
+		!strings.Contains(legacyMovablePackSQL, "AND NOT EXISTS") || !strings.Contains(legacyMovablePackSQL, "t.actor_kind <> 'migration'") {
+		t.Fatal("legacy movable packs must be summed in the per-subscription pack aggregate, migration-only grants")
+	}
 	if strings.Contains(mySubscriptionsSQL, "g.user_id = s.user_id") {
 		t.Fatal("a subscription must not show packs attached to the owner's other subscriptions")
 	}
