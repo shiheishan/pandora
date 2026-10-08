@@ -2,8 +2,6 @@ package admin
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -441,9 +439,9 @@ func runNodeConfigPG18BootstrapPublicationRaces(t *testing.T, ctx context.Contex
 			before := nodeConfigPG18BusinessSnapshot(t, ctx, admin, fx.tenant)
 			holder := beginNodeConfigPG18LockHolder(t, ctx, holderPool, fx)
 			defer holder.cleanup()
-			sum := sha256.Sum256([]byte(fx.tenant))
-			lockKey := int64(binary.BigEndian.Uint64(sum[:8]) >> 1)
-			if _, err := holder.tx.Exec(ctx, `SELECT pg_catalog.pg_advisory_xact_lock($1)`, lockKey); err != nil {
+			// 挡在审计取号上：持有链头表的排队锁（platform/db 的 chainGateSQL），
+			// audit.Write 取号的 UPDATE 要等它
+			if _, err := holder.tx.Exec(ctx, `LOCK TABLE public.audit_chain_heads IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 				t.Fatalf("NEW-04 %s cancel hold audit lock: %v", kind, err)
 			}
 			assertNodeConfigPG18ApplicationName(t, ctx, admin, holder.pid, holderName)
@@ -457,7 +455,7 @@ func runNodeConfigPG18BootstrapPublicationRaces(t *testing.T, ctx context.Contex
 				})
 				result <- err
 			}()
-			waiterPID := waitNodeConfigPG18BlockedPID(t, ctx, admin, holder.pid, `%SELECT pg_advisory_xact_lock($1)%`)
+			waiterPID := waitNodeConfigPG18BlockedPID(t, ctx, admin, holder.pid, `%UPDATE audit_chain_heads SET last_seq%`)
 			assertNodeConfigPG18ApplicationName(t, ctx, admin, waiterPID, workerName)
 			cancel()
 			awaitNodeConfigPG18Cancellation(t, opCtx, result)
