@@ -187,7 +187,7 @@ export interface PayCopy {
   /** 要选付款方式 */
   needsMethod: boolean
   button: string
-  /** 应付低于支付最低额、余额又不够、这单又不能免（只有换套餐的零头能免）：在线付不了，先充值或用余额 */
+  /** below_minimum：用尽余额后剩下的低于在线支付最低额，这一单下不了（只有换套餐 ≤ ¥0.99 的零头会免） */
   tooSmall: boolean
 }
 
@@ -198,22 +198,23 @@ export function payCopy(quote: Quote, row: QuoteRow, split: BalanceSplit, useBal
     row.total > 0 && balance > 0
       ? row.with_balance.forced
         ? { on: true, locked: true, text: `这单只要 ${money(row.total)}，低于支付最低额，只能用余额付` }
+        : split.below_minimum
+          ? { on: true, locked: true, text: `余额 ${money(split.applied)} 已全用上` }
         : useBalance
           ? { on: true, locked: false, strong: `已用余额 ${money(split.applied)}`, text: '（可关掉）' }
           : { on: false, locked: false, text: `用余额（有 ${money(balance)}，现在没用）` }
       : null
   let sum: PayCopy['sum']
   if (row.total === 0) sum = { text: '这次不用付钱', ...(row.refund > 0 ? { after: `，多出的 ${money(row.refund)} 退到钱包余额` } : {}) }
-  // SmallDue 收窄（A 路审查）：换套餐抵扣后的零头免掉（waived>0）；新买、续费、流量包不免，报价带标记、下单 422。
-  // 标记的字段名 A 还没定，先按「small_due 而没免」认，定了再换
-  else if (split.small_due && split.waived > 0) sum = { text: `差价 ${money(split.waived)} 不到支付最低额，这次免了${split.applied > 0 ? `；余额抵 ${money(split.applied)}` : ''}` }
-  else if (split.small_due) sum = { text: `这单要付 ${money(split.payable)}，低于支付最低额 ${money(quote.min_payment)}，在线付不了。先给钱包充值，或打开余额付` }
+  // A 路：换套餐抵扣后 ≤ ¥0.99 的零头免掉（small_due + waived）；其余付不了的标 below_minimum，下单 422
+  else if (split.small_due) sum = { text: `零头 ${money(split.waived)} 不到支付最低额，这次免了${split.applied > 0 ? `；余额抵 ${money(split.applied)}` : ''}` }
+  else if (split.below_minimum) sum = { text: `${split.applied > 0 ? `余额 ${money(split.applied)} 全用上，` : ''}还差 ${money(split.payable)}。在线付款最少要付 ${money(quote.min_payment)}，这一单付不了：先给钱包充一点，或换成更长的时长` }
   else if (split.applied > 0 && split.payable > 0) sum = { text: `余额抵 ${money(split.applied)}，还需支付 `, strong: money(split.payable) }
   else if (split.applied > 0) sum = { text: '余额够付，', strong: money(split.applied), after: ' 全部用余额' }
   else sum = { text: '要付 ', strong: money(split.payable) }
-  const tooSmall = split.small_due && split.waived === 0 && split.payable > 0
-  const needsMethod = split.payable > 0 && !split.small_due
-  const button = tooSmall ? '先充值或用余额付' : row.total === 0 || split.small_due ? verb : split.payable > 0 ? `${verb}，付 ${money(split.payable)}` : `${verb}，用余额付 ${money(split.applied)}`
+  const tooSmall = split.below_minimum
+  const needsMethod = split.payable > 0 && !split.below_minimum
+  const button = tooSmall ? '余额不够，先充值再来' : row.total === 0 || split.small_due ? verb : split.payable > 0 ? `${verb}，付 ${money(split.payable)}` : `${verb}，用余额付 ${money(split.applied)}`
   return {
     balanceLine,
     sum,

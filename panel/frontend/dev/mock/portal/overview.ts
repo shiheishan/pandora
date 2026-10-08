@@ -26,6 +26,18 @@ export const overview: MockModule = {
     },
   },
   routes: {
+    // 测试用：把本人所有待支付单的付款期限拨到一分钟前（不关单），走「超过付款期限」的两条 409
+    'POST /v1/__mock/expire-orders': (ctx) => {
+      const state = portalState(ctx.user.userId)
+      const past = new Date(Date.now() - 60_000).toISOString()
+      let n = 0
+      for (const o of state.orders) {
+        if (o.status !== 'pending_payment') continue
+        o.expires_at = past
+        n++
+      }
+      ctx.send(200, { aged: n })
+    },
     // 修订 R47：days 须为 1–93 的整数（422 fields.days）；不是本人的订阅一律 404；缺省窗口为本期流量周期，最多 93 天，无数据的日子补 0
     'GET /v1/me/subscriptions/:id/usage': async (ctx) => {
       if (!(await gate(ctx))) return

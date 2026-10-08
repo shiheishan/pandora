@@ -58,7 +58,7 @@ export const plans: MockModule = {
         } else {
           // 用户 10-07：升级前的旧流量包允许自己挪一次（只挪那部分，挪完清零）
           const legacy = Math.min(from.legacyPackBytes ?? 0, from.packBytes)
-          if (legacy <= 0) return ctx.fail(409, 'conflict', '这一份还在用，流量包不能转走')
+          if (legacy <= 0) return ctx.fail(422, 'validation_failed', '参数不合法', { from_subscription_id: '升级前买的旧流量包只能挪一次，这里的已经挪过一次或是新买的，等这份停用后再转' })
           if (from === to) return ctx.fail(422, 'validation_failed', '参数不合法', { to_subscription_id: '要挪到另一份' })
           moved = legacy
           from.packBytes -= legacy

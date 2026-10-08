@@ -58,7 +58,7 @@ export function paidText(o: Pick<OrderDetail, 'balance_applied' | 'paid_amount' 
     const how = (p?.method && METHOD_NAMES[p.method]) || p?.provider_name || '在线'
     parts.push(`${how}付了 ${money(o.paid_amount)}`)
   }
-  if (waived > 0) parts.push(`差价 ${money(waived)} 不到支付最低额，这次免了`)
+  if (waived > 0) parts.push(`零头 ${money(waived)} 已免`)
   return parts.length ? parts.join('，') : '这次没有花钱'
 }
 

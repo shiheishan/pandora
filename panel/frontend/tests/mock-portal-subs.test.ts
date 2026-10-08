@@ -82,12 +82,15 @@ describe('mock api · portal subscriptions (purchase model)', () => {
   it('流量包转移：只能从未分配或彻底停用的那份转到在用的那份；重复转 moved_bytes=0', async () => {
     await scenario('proto-s2')
     const [mine, mom] = (await subs()).subscriptions
-    expect((await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })).status).toBe(409)
+    // A 路：从在用的那份挪、又不是可挪一次的旧包：422 fields.from_subscription_id
+    const refused = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })
+    expect(refused.status).toBe(422)
+    expect(((await refused.json()) as { error: { fields: Record<string, string> } }).error.fields.from_subscription_id).toContain('只能挪一次')
     const res = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: null, to_subscription_id: mom!.id })
     expect(await res.json()).toEqual({ moved_bytes: 0 })
   })
 
-  it('升级前的旧流量包（用户 10-07）：列表给出能挪的余量，从在用的那份挪一次后清零，再挪回 409', async () => {
+  it('升级前的旧流量包（用户 10-07）：列表给出能挪的余量，从在用的那份挪一次后清零，再挪回 422', async () => {
     await scenario('proto-legacy')
     const [mine, mom] = (await subs()).subscriptions
     expect(mine!.legacy_movable_pack_bytes).toBe(80 * 1024 ** 3)
@@ -99,7 +102,7 @@ describe('mock api · portal subscriptions (purchase model)', () => {
       [0, 0],
       [0, 80 * 1024 ** 3],
     ])
-    expect((await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })).status).toBe(409)
+    expect((await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })).status).toBe(422)
   })
 
   it('原型场景入口：切场景并跳到起始页', async () => {

@@ -1,16 +1,16 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { isApiError } from '../../../core/api'
-import { href, navigate } from '../../../core/router'
+import { href, navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
-import { Button, Empty, Input, Skeleton, Switch } from '../../../ui'
+import { Button, Empty, Input, Skeleton, Switch, useToast } from '../../../ui'
 import { usePageHead } from '../../head'
 import { LoadError } from '../common/Blocks'
 import { methodKey, usePaymentMethods, type Pack, type Plan } from '../common/catalog'
 import { Alt, Callout, Chips, ChoiceList, flowCss, Notes, Rows } from '../common/Flow'
 import type { Holdings } from '../common/holdings'
 import { endsIntent, recallPayable, useIntentKey } from '../common/intent'
-import { orderCreatedSchema, useOrderPayable } from '../common/orders'
+import { orderCreatedSchema, useCancelOrder, useOrderPayable } from '../common/orders'
 import { daysLeft, gb, leftOf, money, nameIdeas, nameRequired, NEW_COPY_IDEAS, periodLabel, profileName } from '../common/purchase'
 import { balanceSplit, purchaseRefusal, tierOf, useQuote, type Quote, type QuoteRow } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
@@ -39,9 +39,16 @@ export function titleOf(t: Target, h: Holdings, plans: readonly Plan[]): string 
  * 就重新报价、在金额旁标「已更新」，让用户再点一次。
  */
 export function ConfirmForm({ target, h, plans, packs, requested }: { target: Target; h: Holdings; plans: readonly Plan[]; packs: readonly Pack[]; requested: string | null }) {
-  const [couponInput, setCouponInput] = useState('')
-  const [coupon, setCoupon] = useState<string | null>(null)
-  const [couponOpen, setCouponOpen] = useState(false)
+  // 用过的优惠码记在地址里（?coupon=）：去钱包充值再回来，码还在（首次点击测试）
+  const { query } = useHashLocation()
+  const initial = query.get('coupon')
+  const [couponInput, setCouponInput] = useState(initial ?? '')
+  const [coupon, setCouponState] = useState<string | null>(initial)
+  const [couponOpen, setCouponOpen] = useState(initial !== null)
+  const setCoupon = (code: string | null) => {
+    setCouponState(code)
+    navigate('/checkout', { query: { ...Object.fromEntries(query), coupon: code }, replace: true })
+  }
   const quote = useQuote(target.kind === 'change' && !target.subId ? null : target.kind === 'pack' && !target.subId ? null : quoteRequest(target, h.held, coupon))
   // 换套餐还没选是哪一份：按套餐展开报价，给每个选项写今天付多少
   const chooser = useQuote(target.kind === 'change' && target.chooser ? { action: 'change', plan_id: target.planId } : null)
@@ -394,23 +401,13 @@ function Priced({
               ))}
             </div>
           ))}
-        {refusal && (
-          <div className={flowCss.errorBox} role="alert">
-            {refusal.text}
-            {refusal.kind === 'order_pending' && (
-              <>
-                {' '}
-                <a href={href(refusal.orderId ? `/orders/${refusal.orderId}` : '/orders')}>去那张订单继续付款或取消 →</a>
-              </>
-            )}
-          </div>
-        )}
+        {refusal && <Refusal refusal={refusal} onCleared={() => setRefusal(null)} />}
         <Button variant="primary" block busy={busy} disabled={blocked !== null} onClick={() => void submit()} id="btn-submit">
           {blocked ?? pay.button}
         </Button>
         {pay.tooSmall && (
           <a className={flowCss.textButton} href={href('/wallet')}>
-            去钱包充值 →
+            去钱包充值（充 ¥1 就够），充完回来再点 →
           </a>
         )}
         {copy.change && <p className={flowCss.canChange}>↺ {copy.change}</p>}
@@ -440,6 +437,45 @@ function NameField({ required, name, onName, plan, h }: { required: boolean; nam
           ))}
       </div>
       <p className={flowCss.faint}>App 里会显示成「{profileName(h.site, name, plan.name)}」。名字以后随时能改。</p>
+    </div>
+  )
+}
+
+/**
+ * 建单被拒：同一套餐有一张还没付款的新购单（order_pending，fields.order_id）时给「去付款 / 取消它」；
+ * 那张已超过付款期限时只给「取消它」（A 路）。取消后可以直接再点一次。
+ */
+function Refusal({ refusal, onCleared }: { refusal: { kind: 'order_pending' | 'other'; text: string; orderId?: string }; onCleared: () => void }) {
+  const toast = useToast()
+  const cancel = useCancelOrder()
+  const lapsed = refusal.text.includes('超过付款期限')
+  return (
+    <div className={flowCss.errorBox} role="alert">
+      {refusal.text}
+      {refusal.kind === 'order_pending' && refusal.orderId && (
+        <div className={css.refusalActions}>
+          <Button
+            size="sm"
+            busy={cancel.isPending}
+            onClick={() =>
+              cancel.mutate(refusal.orderId!, {
+                onSuccess: () => {
+                  toast('那张单已取消，没有扣钱。现在可以重新下单了')
+                  onCleared()
+                },
+                onError: (e) => toast(e.message || '没取消成，请稍后再试', 'danger'),
+              })
+            }
+          >
+            取消它
+          </Button>
+          {!lapsed && (
+            <a className={flowCss.mini} href={href(`/orders/${refusal.orderId}`)}>
+              去付款
+            </a>
+          )}
+        </div>
+      )}
     </div>
   )
 }

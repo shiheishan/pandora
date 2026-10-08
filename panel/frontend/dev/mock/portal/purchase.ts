@@ -138,6 +138,8 @@ export interface Balance {
   payable: number
   kept: number
   forced: boolean
+  /** 应付低于最低额、用尽余额也付不完：下不了单（只有换套餐 ≤ ¥0.99 的零头能免） */
+  below_minimum: boolean
   small_due: boolean
   /** SmallDue 时免掉、记作折扣的钱（purchase.WaiveSmallDue） */
   waived: number
@@ -148,7 +150,7 @@ export function applyBalance(due: number, available: number, requested: number, 
   available = Math.max(0, available)
   const limit = Math.min(due, available)
   requested = Math.min(Math.max(0, requested), limit)
-  const b: Balance = { applied: requested, payable: due - requested, kept: 0, forced: false, small_due: false, waived: 0 }
+  const b: Balance = { applied: requested, payable: due - requested, kept: 0, forced: false, below_minimum: false, small_due: false, waived: 0 }
   if (b.payable <= 0 || minPay <= 1 || b.payable >= minPay) return b
   if (due >= minPay) {
     const applied = due - minPay
@@ -160,14 +162,21 @@ export function applyBalance(due: number, available: number, requested: number, 
     b.payable = 0
     b.forced = true
   } else {
-    b.small_due = true
+    // 用尽余额，剩下的零头标 below_minimum（与开关无关）
+    b.applied = available
+    b.payable = due - available
+    b.below_minimum = true
   }
   return b
 }
 
-/** purchase.WaiveSmallDue：SmallDue 时剩下那点在线付不了的钱免掉，payable 归零、记进 waived */
-export function waiveSmallDue(b: Balance): Balance {
-  return b.small_due && b.payable > 0 ? { ...b, waived: b.payable, payable: 0 } : b
+/** purchase.MaxSmallDueWaive：一次最多免 ¥0.99 */
+export const MAX_SMALL_DUE_WAIVE = 99
+
+/** purchase.WaiveSmallDue：只有换套餐（allowed）且零头 ≤ ¥0.99 时免掉——payable 归零、记进 waived、清 below_minimum */
+export function waiveSmallDue(b: Balance, allowed: boolean): Balance {
+  if (!allowed || !b.below_minimum || b.payable <= 0 || b.payable > MAX_SMALL_DUE_WAIVE) return b
+  return { ...b, waived: b.payable, payable: 0, below_minimum: false, small_due: true }
 }
 
 // ---------------------------------------------------------------------------

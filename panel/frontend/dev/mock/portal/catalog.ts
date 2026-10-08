@@ -204,6 +204,8 @@ export const COUPONS: Readonly<Record<string, CatalogCoupon>> = {
   WELCOME: { type: 'percent', value: 1000 },
   PROYEAR: { type: 'fixed', value: 10000, onlyPrices: ['6f1c2a10-0000-4000-8000-000000000023'] },
   BIG50: { type: 'fixed', value: 5000, minAmount: 10000 },
+  // 99% 折扣：把应付压到支付最低额以下，测 below_minimum（proto-s7d）
+  LUCKY99: { type: 'percent', value: 9900 },
   EXPIRED: { type: 'percent', value: 1000, error: { status: 422, code: 'validation_failed', message: '优惠码已过期' } },
   USED: { type: 'percent', value: 1000, error: { status: 409, code: 'conflict', message: '你已使用过这个优惠码' } },
 }

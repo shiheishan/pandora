@@ -10,9 +10,11 @@ export const balanceSplitSchema = z.object({
   kept: z.number().int(),
   /** 应付本身低于最低额且余额够付：只能全用余额，开关锁成打开 */
   forced: z.boolean(),
-  /** 应付本身低于最低额、余额又不够：差价免掉（用户 10-07 拍板） */
+  /** 用尽余额后剩下的钱低于在线支付最低额：这一单下不了（按钮置灰，先充值或换更长的时长） */
+  below_minimum: z.boolean(),
+  /** 只出现在换套餐：抵扣后剩的零头（≤ ¥0.99）已免掉，payable 归零 */
   small_due: z.boolean(),
-  /** SmallDue 时免掉的钱（payable 已归零，记作折扣） */
+  /** 免掉的零头（分） */
   waived: z.number().int(),
 })
 export type BalanceSplit = z.output<typeof balanceSplitSchema>

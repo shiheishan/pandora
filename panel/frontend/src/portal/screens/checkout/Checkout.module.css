@@ -188,3 +188,10 @@
   color: var(--brand-ink);
   font-weight: var(--fw-medium);
 }
+
+.refusalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  margin-top: var(--space-8);
+}

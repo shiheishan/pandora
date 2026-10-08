@@ -192,10 +192,12 @@ export const checkout: MockModule = {
       const body = await readStrict(ctx, ['provider', 'method', 'return_url'])
       if (!body) return
       const state = portalState(ctx.user.userId)
-      sweepExpired(state)
       const order = state.orders.find((o) => o.id === ctx.params.id)
       if (typeof body.provider !== 'string' || body.provider === '') return ctx.fail(422, 'validation_failed', '参数不合法', { provider: '必填' })
       if (!order) return ctx.fail(404, 'not_found', '订单不存在')
+      // 过了付款期限、过期扫描还没关它（billing.ErrOrderPaymentExpired）
+      if (order.status === 'pending_payment' && order.expires_at && new Date(order.expires_at).getTime() <= Date.now()) return ctx.fail(409, 'conflict', '这张订单已超过付款期限，请取消后重新下单')
+      sweepExpired(state)
       const channel = PAY_METHODS.find((m) => m.provider === body.provider && (body.method === undefined || m.method === body.method))
       if (!channel) return ctx.fail(404, 'not_found', '未知的支付渠道')
       if (order.status !== 'pending_payment') return ctx.fail(409, 'conflict', '该订单当前状态不可支付')
@@ -232,8 +234,11 @@ function labelOf(raw: unknown): string | null {
 
 /** 同一套餐同时只能有一张未付款的新购单（设计稿 2.4，防两个标签页各付一次） */
 function assertNoPendingNew(state: PortalState, planId: string, planName: string) {
-  sweepExpired(state)
+  // 不先清超时单：过了付款期限但还没被关掉的那张也拦（A 路），文案换成「已超过付款期限」
   const open = state.orders.find((o) => o.kind === 'new' && o.status === 'pending_payment' && o.effect.type === 'new' && o.effect.planId === planId)
-  if (open) throw new BillingError(409, 'order_pending', `你有一张还没付款的「${planName}」订单，继续付款或取消后再买`, { order_id: open.id })
+  if (!open) return
+  const lapsed = open.expires_at !== undefined && new Date(open.expires_at).getTime() <= Date.now()
+  const msg = lapsed ? `你有一张已超过付款期限的「${planName}」订单，取消后再买` : `你有一张还没付款的「${planName}」订单，继续付款或取消后再买`
+  throw new BillingError(409, 'order_pending', msg, { order_id: open.id })
 }
 

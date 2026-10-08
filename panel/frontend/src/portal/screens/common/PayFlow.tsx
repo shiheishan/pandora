@@ -10,7 +10,7 @@ import { methodKey, usePaymentMethods, type PaymentMethod } from './catalog'
 import { detectDevice } from './clients'
 import { queryFailure, queryOutcome, useQueryOrderPayment, type QueryOutcome } from './order-query'
 import css from './PayFlow.module.css'
-import { PAID_STATUSES, useOrder, type OrderDetail } from './orders'
+import { PAID_STATUSES, useCancelOrder, useOrder, type OrderDetail } from './orders'
 import { QrCode } from './qr'
 import { formatDate } from './traffic'
 
@@ -156,6 +156,9 @@ function Choose({ state, onPick, onLater }: { state: Extract<PayState, { phase: 
 // ---------------------------------------------------------------------------
 const POLL_PAY_MS = 3000
 
+/** 发起支付回 409「这张订单已超过付款期限，请取消后重新下单」（billing.ErrOrderPaymentExpired，没有单独的码） */
+export const isPaymentLapsed = (e: unknown) => isApiError(e, 'conflict') && e.message.includes('超过付款期限')
+
 export interface PayPanelProps {
   orderId: string
   amount: number
@@ -169,9 +172,12 @@ export interface PayPanelProps {
   onOtherMethod?: () => void
   /** 稍后再付 */
   onLater?: () => void
+  /** 订单过了付款期限、取消之后去哪（确认页的付款页回选购页） */
+  afterCancel?: () => void
 }
 
-export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid, onUnpayable, onOtherMethod, onLater }: PayPanelProps) {
+export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid, onUnpayable, onOtherMethod, onLater, afterCancel }: PayPanelProps) {
+  const cancel = useCancelOrder()
   const api = useApi()
   const started = useRef(false)
   const [opened, setOpened] = useState(false)
@@ -225,6 +231,11 @@ export function PayPanel({ orderId, amount, currency, method, returnUrl, onPaid,
           {!closed && !unsupported && !final && (
             <Button variant="primary" block onClick={() => pay.mutate()} busy={pay.isPending}>
               重试
+            </Button>
+          )}
+          {isPaymentLapsed(pay.error) && (
+            <Button variant="primary" block busy={cancel.isPending} onClick={() => cancel.mutate(orderId, { onSuccess: () => (afterCancel ? afterCancel() : onLater?.()) })}>
+              取消这张单，重新下单
             </Button>
           )}
         </>

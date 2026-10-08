@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
 import { subscriptionsSchema } from '../src/portal/subscription-schema'
 import { quoteSchema } from '../src/portal/screens/common/quote-schema'
+import { applyBalance, waiveSmallDue } from '../dev/mock/portal/purchase'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
 
 // 购买模型（设计稿 2.2 / 2.4 / 2.6）：报价、建单比对 expect、同套餐未付款新购单、最低额、流量包必须挂一份
@@ -68,7 +69,7 @@ describe('mock api · portal checkout (purchase model)', () => {
     const [sub] = (await subs()).subscriptions
     const q = await quote({ action: 'renew', subscription_id: sub!.id })
     const r = q.quotes.find((x) => x.interval === 'month' && x.interval_count === 1)!
-    expect(r.with_balance).toEqual({ applied: 2900, payable: 100, kept: 50, forced: false, small_due: false, waived: 0 })
+    expect(r.with_balance).toEqual({ applied: 2900, payable: 100, kept: 50, forced: false, below_minimum: false, small_due: false, waived: 0 })
     const res = await call('POST', `/v1/me/subscriptions/${sub!.id}/renew`, { price_id: r.price_id, use_balance: 2900, as_of: q.as_of, expect: { total: 3000, balance_applied: 2900, payable: 100 } }, true)
     expect(await res.json()).toMatchObject({ balance_applied: 2900, payable_amount: 100 })
     await scenario('proto-s7b')
@@ -77,6 +78,39 @@ describe('mock api · portal checkout (purchase model)', () => {
     const r2 = q2.quotes[0]!
     const done = await call('POST', `/v1/me/subscriptions/${s7b!.id}/renew`, { price_id: r2.price_id, use_balance: 3000, as_of: q2.as_of, expect: { total: 3000, balance_applied: 3000, payable: 0 } }, true)
     expect(await done.json()).toMatchObject({ status: 'fulfilled', payable_amount: 0 })
+  })
+
+  it('应付低于最低额（A 路）：续费不免、标 below_minimum、下单 422；换套餐 ≤ ¥0.99 的零头免掉', async () => {
+    await scenario('proto-s7d')
+    const [sub] = (await subs()).subscriptions
+    const q = await quote({ action: 'renew', subscription_id: sub!.id, coupon_code: 'LUCKY99' })
+    const r = q.quotes.find((x) => x.interval === 'month' && x.interval_count === 1)!
+    expect(r.total).toBe(30)
+    expect(r.with_balance).toMatchObject({ applied: 20, payable: 10, below_minimum: true, small_due: false })
+    expect(r.without_balance).toMatchObject({ applied: 20, payable: 10, below_minimum: true })
+    const res = await call('POST', `/v1/me/subscriptions/${sub!.id}/renew`, { price_id: r.price_id, coupon_code: 'LUCKY99', use_balance: 20, as_of: q.as_of, expect: { total: 30, balance_applied: 20, payable: 10 } }, true)
+    expect(res.status).toBe(422)
+    expect(((await res.json()) as { error: { message: string } }).error.message).toBe('应付金额低于支付渠道的最低付款额，请先充值或使用余额支付')
+    // 只有换套餐 ≤ ¥0.99 的零头能免（purchase.WaiveSmallDue）
+    expect(waiveSmallDue(applyBalance(30, 20, 20, 100), true)).toMatchObject({ applied: 20, payable: 0, waived: 10, small_due: true, below_minimum: false })
+    expect(waiveSmallDue(applyBalance(30, 20, 20, 100), false)).toMatchObject({ payable: 10, below_minimum: true, small_due: false })
+    expect(waiveSmallDue(applyBalance(500, 0, 0, 1000), true)).toMatchObject({ payable: 500, below_minimum: true })
+  })
+
+  it('过了付款期限的单：发起支付 409，同款再买 order_pending 换成「已超过付款期限」并带 order_id', async () => {
+    await scenario('proto-s3')
+    const q = await quote({ action: 'new', plan_id: STD, new_copy: true })
+    const r = q.quotes[0]!
+    const first = await call('POST', '/v1/orders', { plan_id: STD, price_id: r.price_id, new_copy: true, label: '妈妈的 iPad', as_of: q.as_of, expect: { total: r.total, balance_applied: 0, payable: r.total } }, true)
+    const order = (await first.json()) as { order_id: string }
+    expect((await call('POST', '/v1/__mock/expire-orders')).status).toBe(200)
+    const pay = await call('POST', `/v1/orders/${order.order_id}/pay`, { provider: 'epay', method: 'alipay', return_url: `${base}/#/x` })
+    expect(pay.status).toBe(409)
+    expect(((await pay.json()) as { error: { message: string } }).error.message).toBe('这张订单已超过付款期限，请取消后重新下单')
+    const again = await call('POST', '/v1/orders', { plan_id: STD, price_id: r.price_id, new_copy: true, label: '爸爸的手机' }, true)
+    const body = (await again.json()) as { error: { code: string; message: string; fields: Record<string, string> } }
+    expect([again.status, body.error.code, body.error.fields.order_id]).toEqual([409, 'order_pending', order.order_id])
+    expect(body.error.message).toBe('你有一张已超过付款期限的「标准版」订单，取消后再买')
   })
 
   it('另买一份：不带 new_copy 拦同款；同款没起名时名字必填；同一套餐只能有一张未付款的新购单', async () => {

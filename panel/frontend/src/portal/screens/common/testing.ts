@@ -76,7 +76,7 @@ export const link = (subscriptionId: string, tail: string, over: Partial<Subscri
   ...over,
 })
 
-const split = (over: Partial<BalanceSplit> = {}): BalanceSplit => ({ applied: 0, payable: 0, kept: 0, forced: false, small_due: false, waived: 0, ...over })
+const split = (over: Partial<BalanceSplit> = {}): BalanceSplit => ({ applied: 0, payable: 0, kept: 0, forced: false, below_minimum: false, small_due: false, waived: 0, ...over })
 
 export function row(over: Partial<QuoteRow> = {}): QuoteRow {
   return {

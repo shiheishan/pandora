@@ -17,6 +17,7 @@ import type { ProtoScenario } from './scenario.ts'
 //   proto-s7b  余额 ¥50，够付
 //   proto-s7c  余额 ¥29.50，剩 5 毛低于支付最低额
 //   proto-s8   标准版 3 天前已过期
+//   proto-s7d  余额 ¥0.20，用优惠码 LUCKY99 续费只要 ¥0.30：还差 ¥0.10，低于最低额下不了单
 //   proto-legacy  小王两份，升级前买的 80G 流量包挂在「我的」上，能挪一次
 // ---------------------------------------------------------------------------
 const [BASIC, STD] = PROTO_PLANS as [CatalogPlan, CatalogPlan, CatalogPlan]
@@ -72,6 +73,8 @@ const DATA: Readonly<Record<ProtoScenario, () => { balance: number; subs: SubFix
   'proto-s7b': () => single({}, 5000),
   'proto-s7c': () => single({}, 2950),
   'proto-s8': () => single({ days: -3, used: 47 }),
+  // 余额 ¥0.20，优惠码 LUCKY99 把续费压到 ¥0.30：用尽余额还差 ¥0.10，低于在线支付最低额（A 路 below_minimum）
+  'proto-s7d': () => single({}, 20),
   // 用户 10-07：升级前买的 80G 流量包迁移时挂到了到期最晚的「我的」，可以自己挪一次到「妈妈的 iPad」
   'proto-legacy': () => {
     const d = xiaowang(false)
@@ -95,6 +98,7 @@ export const PROTO_START: Readonly<Record<ProtoScenario, string>> = {
   'proto-s7c': '/subs',
   'proto-s8': '/subs',
   'proto-legacy': '/subs',
+  'proto-s7d': '/subs',
 }
 
 export function buildProto(s: ProtoScenario): PortalState {

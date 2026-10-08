@@ -136,23 +136,23 @@ describe('确认页的钱（原型 S7 / S7b / S7c 与最低额）', () => {
     expect(c.button).toBe('续费，付 ¥1.00')
   })
 
-  it('应付低于最低额：余额够就锁成打开；不够就免掉差价（用户 10-07 拍板）', () => {
+  it('应付低于最低额：余额够就锁成打开；换套餐 ≤ ¥0.99 的零头免掉；其余 below_minimum 下不了单', () => {
     const forced = row({ total: 30, with_balance: split({ applied: 30, forced: true }), without_balance: split({ payable: 30 }) })
     const f = payCopy(quote([forced], { balance: 850 }), forced, forced.with_balance, false, '换成进阶版', methods)
     expect(f.balanceLine).toEqual({ on: true, locked: true, text: '这单只要 ¥0.30，低于支付最低额，只能用余额付' })
     expect(f.button).toBe('换成进阶版，用余额付 ¥0.30')
-    // A 路：SmallDue 时 payable 已归零、免掉的钱在 waived
+    // A 路：换套餐的零头免掉时 payable 已归零、免掉的钱在 waived
     const small = row({ total: 30, with_balance: split({ small_due: true, waived: 30 }), without_balance: split({ small_due: true, waived: 30 }) })
     const s = payCopy(quote([small]), small, small.with_balance, true, '换成进阶版', methods)
-    expect(s.sum.text).toBe('差价 ¥0.30 不到支付最低额，这次免了')
+    expect(s.sum.text).toBe('零头 ¥0.30 不到支付最低额，这次免了')
     expect(s.needsMethod).toBe(false)
     expect(s.button).toBe('换成进阶版')
     expect(s.tooSmall).toBe(false)
-    // 收窄后：新买、续费、流量包的应付低于最低额且余额不够，不免，先充值或用余额
-    const tiny = row({ total: 30, with_balance: split({ payable: 30, small_due: true }), without_balance: split({ payable: 30, small_due: true }) })
-    const t = payCopy(quote([tiny]), tiny, tiny.with_balance, true, '续费', methods)
-    expect(t).toMatchObject({ tooSmall: true, needsMethod: false, button: '先充值或用余额付' })
-    expect(t.sum.text).toBe('这单要付 ¥0.30，低于支付最低额 ¥1.00，在线付不了。先给钱包充值，或打开余额付')
+    // 新买、续费、流量包：用尽余额还差的低于最低额，标 below_minimum，下不了单
+    const tiny = row({ total: 30, with_balance: split({ applied: 20, payable: 10, below_minimum: true }), without_balance: split({ applied: 20, payable: 10, below_minimum: true }) })
+    const t = payCopy(quote([tiny], { balance: 20 }), tiny, tiny.with_balance, true, '续费', methods)
+    expect(t).toMatchObject({ tooSmall: true, needsMethod: false, button: '余额不够，先充值再来', balanceLine: { on: true, locked: true, text: '余额 ¥0.20 已全用上' } })
+    expect(t.sum.text).toBe('余额 ¥0.20 全用上，还差 ¥0.10。在线付款最少要付 ¥1.00，这一单付不了：先给钱包充一点，或换成更长的时长')
   })
 
   it('不用付钱、还退余额', () => {
@@ -212,7 +212,7 @@ describe('完成页', () => {
     const o = { balance_applied: 850, paid_amount: 950, payments: [{ status: 'succeeded', amount: 950, currency: 'CNY', created_at: '', method: 'alipay', provider_name: '易支付' }] }
     expect(paidText(o)).toBe('余额付了 ¥8.50，支付宝付了 ¥9.50')
     expect(paidText({ balance_applied: 0, paid_amount: 0, payments: [] })).toBe('这次没有花钱')
-    expect(paidText({ balance_applied: 0, paid_amount: 0, payments: [] }, 30)).toBe('差价 ¥0.30 不到支付最低额，这次免了')
+    expect(paidText({ balance_applied: 0, paid_amount: 0, payments: [] }, 30)).toBe('零头 ¥0.30 已免')
   })
 
   it('新买的那一份：按套餐名与有效期至认', () => {
