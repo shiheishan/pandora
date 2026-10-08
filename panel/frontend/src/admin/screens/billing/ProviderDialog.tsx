@@ -4,7 +4,7 @@ import { Button, Checkbox, Input, Modal, Select, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
 import { providerWrittenSchema, useInvalidateBilling, type Provider } from './api'
 import css from './Billing.module.css'
-import { EPAY_METHODS, emptyProviderForm, methodLabel, providerBody, providerFormFrom, providerProblems, toggleMethod, type ProviderForm } from './model'
+import { EPAY_METHODS, emptyProviderForm, methodLabel, minAmountHint, providerBody, providerFormFrom, providerProblems, toggleMethod, type ProviderForm } from './model'
 
 /** 新建（editing 为空）或编辑一个易支付渠道。每次打开都是一张新表单，也是一次新的写意图 */
 export function ProviderDialog({ open, editing, onClose }: { open: boolean; editing: Provider | null; onClose: () => void }) {
@@ -144,6 +144,16 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
             error={errors.key}
           />
         </div>
+        <Input
+          label="最低付款额（元）"
+          inputMode="decimal"
+          mono
+          placeholder={editing ? '留空表示不改' : '留空按 1.00'}
+          hint={minAmountHint(mode)}
+          value={form.min_amount}
+          onChange={(e) => set('min_amount', e.target.value)}
+          error={errors.min_amount}
+        />
         <Checkbox
           label="允许内网或 http 地址（仅开发环境，生产会被拒绝）"
           checked={form.allow_private_host}

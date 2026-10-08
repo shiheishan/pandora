@@ -3,9 +3,9 @@ import { formatDateTime } from '../../../core/format'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Select, TextArea, useToast } from '../../../ui'
 import { useFailure, useIntentKey } from '../../actions'
-import { extendedSchema, type SubscriptionRow, type UserDetail } from './api'
+import { extendedSchema, type UserDetail } from './api'
 import { ActionModal } from './dialogs'
-import { EXTEND_DAYS_MAX, EXTEND_PRESETS, expiredDays, extendableSubscriptions, extendedEnd, extendReasonProblem, isRescue, parseExtendDays, SUB_STATUS_VIEW } from './model'
+import { EXTEND_DAYS_MAX, EXTEND_PRESETS, expiredDays, extendableSubscriptions, extendedEnd, extendReasonProblem, isRescue, parseExtendDays, subLabel } from './model'
 import css from './Users.module.css'
 
 // ---------------------------------------------------------------------------
@@ -14,12 +14,27 @@ import css from './Users.module.css'
 // 已过期 30 天内或试用中的订阅可以救回（w5expiry）：状态回到正常、流量按天数折算，
 // 提交前二次确认「已过期 N 天，延长后旧链接恢复可用」。
 // ---------------------------------------------------------------------------
-export function ExtendDialog({ user, open, onClose, onDone, now }: { user: UserDetail; open: boolean; onClose: () => void; onDone: () => void; now: Date }) {
+export function ExtendDialog({
+  user,
+  subscriptionId = null,
+  open,
+  onClose,
+  onDone,
+  now,
+}: {
+  user: UserDetail
+  /** 订阅行上点的「加时长」：只给这一份，不再让挑 */
+  subscriptionId?: string | null
+  open: boolean
+  onClose: () => void
+  onDone: () => void
+  now: Date
+}) {
   const api = useApi()
   const toast = useToast()
   const fail = useFailure()
   const intent = useIntentKey()
-  const choices = extendableSubscriptions(user.subscriptions, now)
+  const choices = extendableSubscriptions(user.subscriptions, now).filter((s) => subscriptionId === null || s.id === subscriptionId)
   const [picked, setPicked] = useState('')
   const [confirmingRescue, setConfirmingRescue] = useState(false)
   const [days, setDays] = useState('30')
@@ -132,8 +147,4 @@ export function ExtendDialog({ user, open, onClose, onDone, now }: { user: UserD
       />
     </ActionModal>
   )
-}
-
-function subLabel(s: SubscriptionRow): string {
-  return `${s.plan_name} · v${s.plan_version} · ${SUB_STATUS_VIEW[s.status].label}`
 }

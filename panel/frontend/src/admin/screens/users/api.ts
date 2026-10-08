@@ -66,6 +66,8 @@ export type CurrentSub = z.output<typeof currentSubSchema>
 const quotaSchema = z.object({ metric: z.string(), limit: int.nullable(), consumed: count, remaining: int.nullable() })
 const subscriptionSchema = z.object({
   id: z.string(),
+  // 用户起的备注名（购买模型统一）：没起为 null；后台只读，改名是用户在门户里做的事
+  label: z.string().nullable(),
   plan_name: z.string(),
   plan_version: int,
   status: z.enum(SUB_STATUSES),
@@ -78,6 +80,8 @@ const subscriptionSchema = z.object({
   device_limit_override: count.nullable(),
   plan_max_devices: count.nullable(),
   online_devices: count,
+  // 挂在这一份上的流量包余量（字节）：流量包按订阅挂，不再是用户名下一个总数
+  pack_remaining_bytes: count,
 })
 export const userDetailSchema = z.object({
   ...userRowShape,
@@ -89,6 +93,9 @@ export const userDetailSchema = z.object({
   stats: z.object({ paid_totals: z.array(z.object({ currency: z.string(), amount: int })), order_count: count, referral_count: count }),
   referrer: z.object({ id: z.string(), email: z.string() }).nullable(),
   telegram: z.object({ username: z.string(), bound_at: time }).nullable(),
+  // 还没加到任何一份的流量包余量（字节，与门户 v1/me/subscriptions 同名同口径）：节点不会用它，
+  // 用户开通第一份订阅时自动挂上，或在门户里自己挑一份挂上
+  unattached_pack_bytes: count,
 })
 export type UserDetail = z.output<typeof userDetailSchema>
 export type PaidTotal = UserDetail['stats']['paid_totals'][number]

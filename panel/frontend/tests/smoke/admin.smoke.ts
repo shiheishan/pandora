@@ -1,4 +1,3 @@
-import { z } from 'zod'
 import { adminMeSchema } from '../../src/admin/me'
 import { tasksSchema } from '../../src/admin/tasks'
 import { adjustmentsSchema, latePaymentsSchema, orderResponseSchema, ordersSchema, paymentHistorySchema, providersSchema } from '../../src/admin/screens/billing/schemas'
@@ -149,13 +148,8 @@ const rows: Row[] = [
   { at: 'billing/api.ts', seed: '演示渠道回调两笔', path: `v1/orders/${s.order_id}/payments`, schema: paymentHistorySchema },
   { at: 'billing/api.ts', path: 'v1/users', query: { q: 'smoke', limit: 8, offset: 0 }, schema: usersSchema },
   { at: 'billing/api.ts', seed: '对已付订单再送一笔演示回调（excess_capture）', path: 'v1/late-payments', query: { limit: 25, offset: 0 }, schema: latePaymentsSchema },
-  // 每个渠道带最低付款额 min_amount（分，非负整数；易支付没配时是 100），购买模型统一 2.6
-  {
-    at: 'billing/api.ts',
-    seed: '迁移种子 offline + SQL 夹具 demo',
-    path: 'v1/payment-providers',
-    schema: providersSchema.extend({ providers: z.array(providersSchema.shape.providers.element.extend({ min_amount: z.number().int().min(0) })) }),
-  },
+  // 每个渠道带最低付款额 min_amount（分，非负整数；易支付没配时是 100），购买模型统一 2.6；页面 schema 已收这一项
+  { at: 'billing/api.ts', seed: '迁移种子 offline + SQL 夹具 demo', path: 'v1/payment-providers', schema: providersSchema },
   { at: 'billing/api.ts', seed: '后台 POST revenue/adjustments', path: 'v1/revenue/adjustments', schema: adjustmentsSchema },
 
   // ---- 非 JSON：两个 CSV 导出与事件流，只验状态与内容类型 ----

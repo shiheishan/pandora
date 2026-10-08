@@ -7,7 +7,7 @@ import { useCan } from '../../actions'
 import { useInvalidateUsers, useUser, type UserDetail } from './api'
 import { BalanceForm, ResetPasswordDialog, RotateDialog, StatusDialog } from './dialogs'
 import { ExtendDialog } from './ExtendDialog'
-import { extendableSubscriptions, initial, shortId, USER_STATUS_VIEW } from './model'
+import { extendableSubscriptions, initial, shortId, trafficPackTargets, USER_STATUS_VIEW } from './model'
 import { ResetHistory } from './Resets'
 import { RiskTab } from './RiskTab'
 import { DevicesTab, OrdersTab, ProfileTab, SubscriptionsTab } from './tabs'
@@ -98,8 +98,8 @@ function Body({ d, tab, onTab, now }: { d: UserDetail; tab: DrawerTab; onTab: (t
   const toggleable = d.status === 'active' || disabled
   // 只读账号一个操作都没有时，不留空的操作条
   const canExtend = can('billing.adjustment.write') && extendableSubscriptions(d.subscriptions).length > 0
-  // 加流量包：与加时长同权限码；任何状态的订阅都行（余额在用户身上）
-  const canGrantTraffic = can('billing.adjustment.write') && d.subscriptions.length > 0
+  // 加流量包：与加时长同权限码；流量包挂在某一份订阅上，只有还在用的订阅用得上
+  const canGrantTraffic = can('billing.adjustment.write') && trafficPackTargets(d.subscriptions).length > 0
   const hasActions = canWrite || canExtend || canGrantTraffic || can('billing.provider.write') || can('billing.order.write')
 
   return (

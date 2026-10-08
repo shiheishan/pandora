@@ -165,6 +165,14 @@ export function isLiveSub(status: SubStatus): boolean {
   return LIVE.has(status)
 }
 
+/**
+ * 未分配的流量包会怎样生效（billing provision 的口径）：开通后只有一份在用时自动加到那一份；
+ * 已经有在用的订阅时不会自动挂，要用户在门户里选一份加上（后台没有挪流量包的入口）
+ */
+export function unattachedNext(liveCount: number): string {
+  return liveCount === 0 ? '用户开通第一份订阅时会自动加到那一份上。' : '用户在门户里选一份在用的订阅加上去后才生效。'
+}
+
 export function currentSubscription<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
   const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : -Infinity)
   return [...subs].sort((a, b) => Number(isLiveSub(b.status)) - Number(isLiveSub(a.status)) || end(b) - end(a))[0]
@@ -344,10 +352,60 @@ export function noteProblem(note: string): string | null {
   return null
 }
 
-/** 手动重置作用的订阅：与 billing.ManualResetTraffic 同口径——只看 status=active，到期最晚的一条（不含试用） */
-export function resettableSub<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
-  const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : -Infinity)
-  return subs.filter((s) => s.status === 'active').sort((a, b) => end(b) - end(a))[0]
+/**
+ * 能手动重置本期流量的订阅（按份，购买模型统一）：只看 status=active，不含试用。
+ * 不再替管理员挑「到期最晚的一条」：行上点哪份重置哪份，从邮箱或历史页进来再自己选
+ */
+export function resettableSubs<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
+  return subs.filter((s) => s.status === 'active')
+}
+
+/** 本期用量比例；不限量的那份按 0 算（清零对它没有意义） */
+function usedRatio(s: Pick<SubscriptionRow, 'quotas'>): number {
+  const q = trafficQuota(s.quotas)
+  return q && q.limit !== null && q.limit > 0 ? q.consumed / q.limit : 0
+}
+
+/**
+ * 多份可重置时预选哪份：本期用得最多的（purchase.Options 的流量重置规则，同比例取到期更早的）。
+ * 只有一份时就是它；一份都没有返回 undefined
+ */
+export function defaultResetSub<T extends Pick<SubscriptionRow, 'status' | 'quotas' | 'current_period_end'>>(subs: readonly T[]): T | undefined {
+  const end = (s: T) => (s.current_period_end ? new Date(s.current_period_end).getTime() : Infinity)
+  const candidates = resettableSubs(subs).sort((a, b) => end(a) - end(b))
+  return candidates.reduce<T | undefined>((best, s) => (best === undefined || usedRatio(s) > usedRatio(best) ? s : best), undefined)
+}
+
+/**
+ * 多份可加流量时预选哪份：剩余最少的（套餐本期剩余加这一份的流量包余量，purchase.Options 的加流量规则）；
+ * 不限量的那份最大，排在最后
+ */
+export function defaultTrafficSub<T extends Pick<SubscriptionRow, 'quotas' | 'pack_remaining_bytes'>>(subs: readonly T[]): T | undefined {
+  const left = (s: T) => {
+    const q = trafficQuota(s.quotas)
+    return q && q.limit !== null ? Math.max(0, q.limit - q.consumed) + s.pack_remaining_bytes : Infinity
+  }
+  return subs.reduce<T | undefined>((best, s) => (best === undefined || left(s) < left(best) ? s : best), undefined)
+}
+
+/** 这一份怎么称呼：有备注名写「备注名」套餐名，没有就只写套餐名 */
+export function subName(s: Pick<SubscriptionRow, 'label' | 'plan_name'>): string {
+  return s.label ? `「${s.label}」${s.plan_name}` : s.plan_name
+}
+
+/** 下拉与对话框里一份订阅的完整名字：称呼 · 版本 · 状态 */
+export function subLabel(s: Pick<SubscriptionRow, 'label' | 'plan_name' | 'plan_version' | 'status'>): string {
+  return `${subName(s)} · v${s.plan_version} · ${SUB_STATUS_VIEW[s.status].label}`
+}
+
+/** 「给这份开单」有意义的订阅：还在用的，或过期不满 30 天还能续的（其余落点规则里不出现） */
+export function isOrderTarget<T extends Pick<SubscriptionRow, 'status' | 'current_period_end'>>(s: T, now: Date): boolean {
+  return isLiveSub(s.status) || extendableSubscriptions([s], now).length > 0
+}
+
+/** 能加流量的订阅：只有还在用的（流量包挂在停用的那份上用不上） */
+export function trafficPackTargets<T extends Pick<SubscriptionRow, 'status'>>(subs: readonly T[]): T[] {
+  return subs.filter((s) => isLiveSub(s.status))
 }
 
 /** 按邮箱找人：GET v1/users?q= 是模糊匹配，只认邮箱完全相等（不分大小写）的那一条 */
