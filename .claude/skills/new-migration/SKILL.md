@@ -109,25 +109,25 @@ Up 段从此视为已发布。冻结表 `upsegments.txt` 只追加不改，登�
 
 ## 5. 修历史迁移的 Down（往返 KNOWN）
 
-`run-migration-roundtrip.sh` 的 `KNOWN` 登记了 12 个历史 Down 缺陷（建门禁时实测），只许删不许加；登记了却已通过的条目会判「过期登记」变红。做法：
+`run-migration-roundtrip.sh` 的 `KNOWN` 原登记 12 个历史 Down 缺陷，w7migr（10-07，合入 0fd6c5d）已全部修完，现在是空数组，只许保持为空；往返再红就按下面的做法修，不往 KNOWN 里加。登记了却已通过的条目会判「过期登记」变红。做法：
 
 1. **只动 Down 段和文件头**，Up 段一个字节不改（`TestPublishedUpSegmentsAreFrozen` 兜底）。
 2. **先看差异再修**。KNOWN 里的条目失败时，往返只打一行「KNOWN roundtrip/…: <原因>」，**不打 diff**。要看完整差异：先只从 KNOWN 删掉这一条推一次，或者修好一版推上去看还差什么。改函数体前用 `find-def.py <函数> --before <本迁移号> --body` 拿上一版原文逐字抄（00035 就是只差 `END $$;` 与 `END;` 换行 `$$;`）。
 3. **修一个，就在同一个提交里从 KNOWN 删一条**。
 4. **同步登记**：
    - 给 Down 段开头补了超时，或给文件头加了 irreversible（irreversible 的 Down 不查超时），`ratchet.txt` 里这个文件的 `lock-timeout-down` / `statement-timeout-down` 会变成过期登记，测试要求删掉。给 Up 补不了超时，`*-up` 那几行留着。
-   - 先 `grep` 哪些测试读这个迁移文件：PG18 用例会原样执行历史迁移的 Up 或 Down（`traffic_retention_pg18_test.go` 跑 00131–00133 的 Down 并断言自引用外键以 NOT VALID 加回；`subscription_period_pg18_test.go` 执行 00102 的 Up），改了 Down 要连断言一起改。
+   - 先 `grep` 哪些测试读这个迁移文件：PG18 用例会原样执行历史迁移的 Up 或 Down（`traffic_retention_pg18_test.go` 跑 00131–00133 的 Down 并断言自引用外键还在；`subscription_period_pg18_test.go` 执行 00102 的 Up），改了 Down 要连断言一起改。
 
 按缺陷类型的修法方向（以往返 diff 为准）：
 
-| 类型 | KNOWN 里的例子 | 方向 |
+| 类型 | 历史例子（都已修好，修法见各文件 Down 段） | 方向 |
 |---|---|---|
-| Down 对追加写表 DELETE（直接或经外键级联），语句级触发器空表也拒绝 | 00010、00012、00042、00050 | 首选不删：种子行按规则在 Down 里保留（00042、00050 的 Up 插入都带 ON CONFLICT DO NOTHING，重跑不重复）；要删的证据行改成数据守卫（有行就 RAISE）。确实要删，迁移以超级用户跑，`SET LOCAL session_replication_role = replica` 能跳过触发器，但外键级联与校验也一并跳过 |
+| Down 对追加写表 DELETE（直接或经外键级联），语句级触发器空表也拒绝 | 00010、00012、00042、00050 | 首选不删：种子行按规则在 Down 里保留（00042、00050 的 Up 插入都带 ON CONFLICT DO NOTHING，重跑不重复）；要删的证据行改成数据守卫（有行就 RAISE）。确实要删，迁移以超级用户跑，`SET LOCAL session_replication_role = replica` 能跳过触发器，但外键级联与校验也一并跳过，会削弱追加写不变量，不用。实际修法：00010、00042 纯种子标 irreversible 加 forward-fix（00010 的 Down 要删默认租户，等于删全部业务数据）；00012 改成有节点审计行就拒绝回滚；00050 只删两张表、保留设置行与模板 |
 | 函数体文本与上一版不同 | 00035、00037 | `find-def.py --before` 取上一版逐字粘贴 |
 | 授权没退干净 | 00036（列级 INSERT/UPDATE 授权残留） | Down 里逐条 REVOKE Up 加的列级授权 |
-| 集群级对象残留 | 00038（角色）、00001（扩展） | Down 里 DROP。角色是集群级的，同集群其他库（预检克隆库）可能还有依赖，先读 00038 的 Up 再定 |
+| 集群级对象残留 | 00038（角色）、00001（扩展） | Down 里 DROP。角色是集群级的，同集群其他库（预检克隆库）可能还有依赖，先读 00038 的 Up 再定。实际修法：00038 只在整个集群都不再引用该角色时才删，否则保留并提示；00001 删扩展不带 CASCADE |
 | Down 无条件 RAISE 却没标 | 00067、00102 | 文件头加 `-- irreversible:` 与 `-- forward-fix:`；之后 rollback-to 不能越过它 |
-| 约束恢复得不一样 | 00131（外键以 NOT VALID 加回） | NOT VALID 是有意的（保留期清理可能删了原报文），要在结构一致与存量数据之间取舍，先读 00131 Down 的注释和上面那个 PG18 用例 |
+| 约束恢复得不一样 | 00131（外键） | 先以 NOT VALID 加回再试 VALIDATE：没有悬空引用就成为已校验外键（结构一致），有就保持 NOT VALID（保留期清理可能删了原报文），回滚照常完成 |
 
 ## 6. 坑
 
