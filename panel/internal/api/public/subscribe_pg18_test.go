@@ -124,8 +124,9 @@ func TestSubscribePullPG18(t *testing.T) {
 	must(`INSERT INTO quota_balances(tenant_id,subscription_id,metric,period,period_start,period_end,granted,limit_value,consumed,adjusted)
 	      VALUES($1,$2,'traffic.bytes','cycle',now()-interval '10 days',now()+interval '20 days',1000,1000,400,50),
 	            ($1,$3,'traffic.bytes','cycle',now()-interval '10 days',now()+interval '20 days',1000,1000,10,0)`, tenant, vipSub, plainSub)
-	must(`INSERT INTO traffic_pack_grants(tenant_id,user_id,source,source_id,granted_bytes,consumed_bytes)
-	      VALUES($1,$2,'migration',gen_random_uuid(),100,40)`, tenant, vipUser)
+	// 流量包按份挂（购买模型统一）：挂在 vipSub 上
+	must(`INSERT INTO traffic_pack_grants(tenant_id,user_id,subscription_id,source,source_id,granted_bytes,consumed_bytes)
+	      VALUES($1,$2,$3,'migration',gen_random_uuid(),100,40)`, tenant, vipUser, vipSub)
 
 	var logs bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&logs, nil))
@@ -189,6 +190,11 @@ func TestSubscribePullPG18(t *testing.T) {
 	if w.Code != http.StatusOK || w.Header().Get("Subscription-Userinfo") != wantInfo ||
 		w.Body.String() != render(vipUser) || !strings.Contains(w.Body.String(), "VIP Line") {
 		t.Fatalf("vip pull: status=%d userinfo=%q body=%s", w.Code, w.Header().Get("Subscription-Userinfo"), w.Body)
+	}
+	// 没起备注名：配置名是「站点名 · 套餐名」（租户没有主题，站点名是默认的 Pandora）
+	if got, want := w.Header().Get("Content-Disposition"),
+		`attachment; filename="Pandora Pull Plan"; filename*=UTF-8''Pandora%20%C2%B7%20Pull%20Plan`; got != want {
+		t.Fatalf("vip pull Content-Disposition=%q want %q", got, want)
 	}
 	if n := count(`SELECT fetch_count::int FROM subscription_credentials WHERE subscription_id=$1`, vipSub); n != 1 {
 		t.Fatalf("fetch_count=%d after one pull, want 1", n)

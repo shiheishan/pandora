@@ -193,6 +193,24 @@ func TestAdminFinanceReadsPG18(t *testing.T) {
 	}
 	t.Log("marker=admin_provider_stats_ok")
 
+	// 最低付款额（购买模型统一 2.6）：没配时易支付 100、其它 0；配了按 config.min_amount
+	if epay.MinAmount != 100 || demo.MinAmount != 0 {
+		t.Fatalf("min_amount epay=%d demo=%d, want 100 and 0 by default", epay.MinAmount, demo.MinAmount)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE payment_providers SET config = config || '{"min_amount": 250}'::jsonb
+		WHERE tenant_id = $1 AND code IN ('fr-epay','fr-demo')`, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	if providers, err = svc.ListProviders(ctx, tenantID); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range providers {
+		if (p.Code == "fr-epay" || p.Code == "fr-demo") && p.MinAmount != 250 {
+			t.Fatalf("configured min_amount %s=%d, want 250", p.Code, p.MinAmount)
+		}
+	}
+	t.Log("marker=admin_provider_min_amount_ok")
+
 	// --- 收入调整登记人 ---
 	adjustments, err := svc.ListRevenueAdjustments(ctx, tenantID, "")
 	if err != nil || len(adjustments) != 1 || strp(adjustments[0].CreatedByEmail) != "finance-admin@example.test" {

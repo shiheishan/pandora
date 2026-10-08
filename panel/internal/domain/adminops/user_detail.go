@@ -43,13 +43,19 @@ func (s *Service) GetUser(ctx context.Context, tenantID, userID string) (*UserDe
 		                  AND o.user_id = u.id AND o.status IN ('paid','fulfilled')), 0)::bigint,
 		       (SELECT count(*) FROM orders o WHERE o.tenant_id = u.tenant_id AND o.user_id = u.id)::int,
 		       (SELECT count(*) FROM referrals rf WHERE rf.tenant_id = u.tenant_id
-		                  AND rf.referrer_user_id = u.id)::int
+		                  AND rf.referrer_user_id = u.id)::int,
+		       -- 还没加到任何一份的流量包余量（购买模型统一：流量包按份挂）
+		       (SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
+		          FROM traffic_pack_grants g
+		         WHERE g.tenant_id = u.tenant_id AND g.user_id = u.id AND g.subscription_id IS NULL
+		           AND g.consumed_bytes < g.granted_bytes)
 		  FROM users u WHERE u.tenant_id = $1 AND u.id = $2`,
 		tenantID, userID,
 	).QueryRow(func(row pgx.Row) error {
 		err := row.Scan(&d.ID, &d.Email, &d.DisplayName, &d.Status, &d.RiskLevel,
 			&d.CreatedAt, &d.LastLoginAt, &verifiedAt, &d.Balance, &d.Currency,
-			&d.GroupName, &d.GroupID, &d.Stats.PaidTotal, &d.Stats.OrderCount, &d.Stats.ReferralCount)
+			&d.GroupName, &d.GroupID, &d.Stats.PaidTotal, &d.Stats.OrderCount, &d.Stats.ReferralCount,
+			&d.UnattachedPackBytes)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFoundOrForbidden()
 		}
@@ -100,12 +106,18 @@ func (s *Service) GetUser(ctx context.Context, tenantID, userID string) (*UserDe
 		return rows.Err()
 	})
 
-	// 在线设备按单条订阅计（onlineDevicesSQL），窗口起点只算一次
+	// 在线设备按单条订阅计（onlineDevicesSQL），窗口起点只算一次；流量包余量按份取
+	// （每份一次 idx_traffic_pack_grants_open_sub 探测），与门户「我的套餐」同口径
 	b.Queue(`
 		WITH win AS MATERIALIZED (SELECT `+onlineSinceSQL("$1")+` AS since)
 		SELECT s.id, pl.name, pv.version, s.status, s.current_period_start, s.current_period_end,
 		       s.snapshot_amount, s.snapshot_currency, s.auto_renew,
-		       s.device_limit, pv.max_devices, coalesce(od.device_count, 0)::int
+		       s.device_limit, pv.max_devices, coalesce(od.device_count, 0)::int,
+		       s.label,
+		       (SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
+		          FROM traffic_pack_grants g
+		         WHERE g.tenant_id = s.tenant_id AND g.subscription_id = s.id
+		           AND g.consumed_bytes < g.granted_bytes)
 		  FROM subscriptions s
 		  JOIN plans pl ON pl.id = s.plan_id
 		  JOIN plan_versions pv ON pv.id = s.plan_version_id
@@ -118,7 +130,8 @@ func (s *Service) GetUser(ctx context.Context, tenantID, userID string) (*UserDe
 			r := SubscriptionRow{Quotas: []QuotaRow{}}
 			if err := rows.Scan(&r.ID, &r.PlanName, &r.PlanVersion, &r.Status,
 				&r.CurrentPeriodStart, &r.PeriodEnd, &r.Amount, &r.Currency, &r.AutoRenew,
-				&r.DeviceLimitOverride, &r.PlanMaxDevices, &r.OnlineDevices); err != nil {
+				&r.DeviceLimitOverride, &r.PlanMaxDevices, &r.OnlineDevices,
+				&r.Label, &r.PackRemainingBytes); err != nil {
 				return err
 			}
 			d.Subscriptions = append(d.Subscriptions, r)
