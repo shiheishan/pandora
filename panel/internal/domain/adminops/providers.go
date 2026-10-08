@@ -45,8 +45,8 @@ type ProviderRow struct {
 	LastCallbackAt *time.Time       `json:"last_callback_at"`
 }
 
-// providerMinAmountSQL 是一个渠道（别名 pp）的最低付款额（分）。站点最低额取的是启用且接单的
-// CNY 渠道里这个值的最大者（billing 的 minPaymentSQL），两处必须同一个 CASE：
+// providerMinAmountSQL 是一个渠道（别名 pp）的最低付款额（分）。站点「能不能在线付」的门槛是
+// 启用且接单的 CNY 渠道里对这个值做的聚合（billing 的 minPaymentSQL），两处必须同一个 CASE：
 // 守卫 providers_test.go 的 TestProviderMinAmountMatchesBilling。
 const providerMinAmountSQL = `CASE
 	         WHEN coalesce(pp.config->>'min_amount', '') ~ '^[0-9]{1,6}$'
