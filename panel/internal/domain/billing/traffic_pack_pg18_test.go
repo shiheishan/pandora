@@ -11,13 +11,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
-// TestTrafficPackOrderPG18 证明流量包的购买与余额（D-E-1，迁移 00070）：
-// 无订阅也能买；付款后发一笔余额；全额余额支付当场履约；多次购买叠加；
+// TestTrafficPackOrderPG18 证明流量包的购买与余额（D-E-1，迁移 00070；购买模型统一 Q5，00137）：
+// 没有在用的套餐买不了；付款后发一笔余额、挂在指定那一份上；全额余额支付当场履约；多次购买叠加；
 // 取消的单不发余额；下架的包买不到；礼品卡一码一笔；数据库守卫拒绝伪造与改写。
+// 流量包按订阅的转移、守卫与 00138 回填在子测试 checkTrafficPackSubscriptionPG18。
 // 由 run-pg18-gates.sh 的 traffic_pack 域驱动，复用 order_release 的一次性租户夹具。
 func TestTrafficPackOrderPG18(t *testing.T) {
 	appDSN := os.Getenv("AEGIS_TRAFFIC_PACK_PG18_DSN")
@@ -54,12 +56,30 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 		t.Fatalf("seed traffic packs: %v", err)
 	}
 
+	// 流量包要加到一份在用的套餐上：先没有订阅时下单被拒，再开通一份
+	noSub := orderReleasePG18Claim(t, ctx, admin, fx.tenant, fx.buyer, CheckoutIdempotencyScope, "pack-no-sub")
+	_, err = service.CreateTrafficPackOrder(ctx, fx.tenant, CreateTrafficPackOrderInput{
+		UserID: fx.buyer, PackID: packA, SubscriptionID: uuid.NewString(), Claim: noSub,
+	})
+	var notFound *httpx.Error
+	if !errors.As(err, &notFound) || notFound.Code != httpx.CodeNotFound {
+		t.Fatalf("pack order on a missing subscription err=%v", err)
+	}
+	var subID string
+	if err := pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
+		var err error
+		subID, _, _, _, err = service.GiftGranter().GrantPlan(ctx, tx, fx.tenant, fx.buyer, "", fx.plan, fx.price, purchase.Choice{})
+		return err
+	}); err != nil {
+		t.Fatalf("seed a subscription for the packs: %v", err)
+	}
+
 	order := func(t *testing.T, label, packID string, useBalance int64) *CreateOrderOutput {
 		t.Helper()
 		claim := orderReleasePG18Claim(t, ctx, admin, fx.tenant, fx.buyer,
 			CheckoutIdempotencyScope, label)
 		out, err := service.CreateTrafficPackOrder(ctx, fx.tenant, CreateTrafficPackOrderInput{
-			UserID: fx.buyer, PackID: packID, UseBalance: useBalance, Claim: claim,
+			UserID: fx.buyer, PackID: packID, SubscriptionID: subID, UseBalance: useBalance, Claim: claim,
 		})
 		if err != nil {
 			t.Fatalf("CreateTrafficPackOrder(%s): %v", label, err)
@@ -88,7 +108,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 		t.Fatalf("traffic pack catalog=%+v err=%v", packs, err)
 	}
 
-	// 1) 没有订阅也能买；付款回调后履约成一笔余额。
+	// 1) 付款回调后履约成一笔余额，挂在下单时指定的那一份上。
 	paid := order(t, "pack-a-paid", packA, 0)
 	if paid.Status != "pending_payment" || paid.PayableAmount != 1000 {
 		t.Fatalf("pack order output=%+v", paid)
@@ -106,7 +126,8 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 		t.Fatalf("paid pack order status=%s want fulfilled", got)
 	}
 	if remaining, list := grants(t); remaining != 1000 || len(list) != 1 ||
-		list[0].Source != "order" || list[0].OrderID == nil || *list[0].OrderID != paid.OrderID {
+		list[0].Source != "order" || list[0].OrderID == nil || *list[0].OrderID != paid.OrderID ||
+		list[0].SubscriptionID == nil || *list[0].SubscriptionID != subID {
 		t.Fatalf("after paid pack remaining=%d grants=%+v", remaining, list)
 	}
 	t.Log("marker=traffic_pack_pg18_paid_order_granted_ok")
@@ -143,7 +164,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	}
 	claim := orderReleasePG18Claim(t, ctx, admin, fx.tenant, fx.buyer, CheckoutIdempotencyScope, "pack-b-archived")
 	_, err = service.CreateTrafficPackOrder(ctx, fx.tenant, CreateTrafficPackOrderInput{
-		UserID: fx.buyer, PackID: packB, Claim: claim,
+		UserID: fx.buyer, PackID: packB, SubscriptionID: subID, Claim: claim,
 	})
 	var he *httpx.Error
 	if !errors.As(err, &he) || he.Code != httpx.CodeNotFound {
@@ -155,7 +176,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	codeID := uuid.NewString()
 	grantGift := func() error {
 		return pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
-			return service.GiftGranter().GrantTraffic(ctx, tx, fx.tenant, fx.buyer, codeID, 250)
+			return service.GiftGranter().GrantTraffic(ctx, tx, fx.tenant, fx.buyer, subID, codeID, 250)
 		})
 	}
 	if err := grantGift(); err != nil {
@@ -169,16 +190,8 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	}
 	t.Log("marker=traffic_pack_pg18_gift_card_grant_ok")
 
-	// 5b) 后台给订阅加流量包（w5account，00129）：发到订阅所属用户的同一余额里，来源 admin，
-	// 审计与幂等完成在同一事务；原因太短、订阅不存在都不发。
-	var subID string
-	if err := pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
-		var err error
-		subID, _, _, _, err = service.GiftGranter().GrantPlan(ctx, tx, fx.tenant, fx.buyer, "", fx.plan, fx.price, "pg18 admin traffic")
-		return err
-	}); err != nil {
-		t.Fatalf("seed a subscription for the admin grant: %v", err)
-	}
+	// 5b) 后台给订阅加流量包（w5account，00129）：挂到这一行的订阅上，来源 admin，
+	// 审计与幂等完成在同一事务；原因太短、订阅不存在都不发。回执的剩余量是这一份的。
 	var notified int
 	service.SetUsersChangedNotifier(func(context.Context, string) { notified++ })
 	claims := 0
@@ -243,7 +256,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 
 	// 6) 数据库守卫：伪造订单来源的余额、改容量、删除都被拒绝。
 	forged := pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
-		if _, err := GrantTrafficPackTx(ctx, tx, fx.tenant, fx.buyer, "order", uuid.NewString(), 999); err != nil {
+		if _, err := GrantTrafficPackTx(ctx, tx, fx.tenant, fx.buyer, nil, "order", uuid.NewString(), 999); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE`)
@@ -275,4 +288,8 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 		t.Fatalf("granted_addon must be pinned to zero, constraint present=%v err=%v", addonRetired, err)
 	}
 	t.Log("marker=traffic_pack_pg18_guards_ok")
+
+	t.Run("traffic packs belong to a subscription", func(t *testing.T) {
+		checkTrafficPackSubscriptionPG18(t, ctx, pool, admin, service, fx)
+	})
 }

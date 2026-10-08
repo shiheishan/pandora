@@ -88,6 +88,14 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 主会话核对证据后才接受：自己读 diff、重跑关键命令，不只信转述。
 - 收尾附一张表：子任务 | 子 agent（模型） | 结论 | 证据。
 
+## 环境与工具坑（所有 skill 共用）
+
+- go 与 npm：`go build/test/vet` 不与 `npm ci` 并发（node_modules 里的 flatted 带 Go 包，并发时 go 假失败）；子 agent 的 prompt 也要写明。
+- 1Password SSH agent：推送或 ssh 报签名失败，多半是沙箱连不上 agent 或 agent 锁着。Bash 调用设 `dangerouslyDisableSandbox: true` 重试，仍失败就请用户解锁或由总协调代推；不改走 HTTPS。
+- 远端后台进程：`x &` 作用于整个 `&&` 列表，会留下挂住 ssh 的子 shell。一律写成 `ssh -n host 'cd /root/lt; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；真挂住时先停本机那条命令（远端的 x 已在自己的会话里）。远端 `pkill -f '<模式>'` 的模式会出现在执行它的 bash 命令行里而误杀自己的 ssh 会话：改用记下的 PID，或锚定写法 `pkill -f '^vmstat'`。
+- PG18 夹具与 DOMAINS：同域共库，夹具租户 id 撞号和 `run-pg18-gates.sh` 的 DOMAINS 相邻行冲突，做法见 `.claude/rules/platform-pg18.md`「多路并行时的坑」。
+- 两路同改一个 `CREATE OR REPLACE` 函数（如 `app.seed_tenant_defaults`）：后合那份在先合那份的函数体上加，Down 还原到先合那份；计数类契约（模板数、`workers.Add`、DOMAINS、SCRIPTS）合完一并改。细则见 new-migration skill。
+
 # Compact instructions
 
 压缩时优先保留：

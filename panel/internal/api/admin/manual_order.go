@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/billing"
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -18,6 +19,33 @@ type manualOrderReq struct {
 	Reason     string `json:"reason"`
 	Settlement string `json:"settlement"`
 	Reference  string `json:"reference"`
+	// Target 是这单落到哪一份（preview 给出的选项之一，{kind, subscription_id}）；
+	// 选项只有一个时可以不传，多于一个而没带回 422「请选择这单落到哪一份」
+	Target *purchase.Choice `json:"target,omitempty"`
+}
+
+type manualOrderPreviewReq struct {
+	UserID              string `json:"user_id"`
+	PlanID              string `json:"plan_id"`
+	PriceID             string `json:"price_id"`
+	EntrySubscriptionID string `json:"entry_subscription_id"`
+}
+
+// previewManualOrder 给开单页「这单落到哪一份」：选项、每项会发生什么（新到期日、原套餐没用完
+// 的部分）与默认值（从订阅行进来时预选那一份；不同款不预选）。只读，不要幂等键。
+func (h *handlers) previewManualOrder(w http.ResponseWriter, r *http.Request) {
+	var req manualOrderPreviewReq
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	out, err := h.d.Billing.ManualOrderOptions(r.Context(), httpx.TenantIDFrom(r.Context()),
+		req.UserID, req.PlanID, req.PriceID, req.EntrySubscriptionID)
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, err)
+		return
+	}
+	httpx.OK(w, out)
 }
 
 // createManualOrder 替用户开单：赠送（缺省，当场履约）、待用户支付，
@@ -39,6 +67,7 @@ func (h *handlers) createManualOrder(w http.ResponseWriter, r *http.Request) {
 			UserID: req.UserID, PlanID: req.PlanID, PriceID: req.PriceID,
 			Reason: req.Reason, ActorID: principal.UserID,
 			Settlement: req.Settlement, Reference: req.Reference, Claim: claim,
+			Target: req.Target,
 		})
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)

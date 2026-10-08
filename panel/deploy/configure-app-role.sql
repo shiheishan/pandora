@@ -406,6 +406,17 @@ GRANT INSERT (
 ) ON orders TO aegis_app;
 DO $$
 BEGIN
+  -- 新购单给新的一份起的备注名（00135）；回滚后列不在，跳过即可
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='orders'
+       AND column_name='subscription_label'
+  ) THEN
+    EXECUTE 'GRANT INSERT (subscription_label) ON public.orders TO aegis_app';
+  END IF;
+END $$;
+DO $$
+BEGIN
   IF to_regprocedure(
     'app.bind_idempotency_resource(uuid,uuid,uuid,text,text,text,bytea,bigint,timestamptz,text,uuid)'
   ) IS NOT NULL THEN
@@ -639,5 +650,13 @@ REVOKE DELETE ON gift_card_batches FROM aegis_app;
 -- 批量生成账号任务（00130）：结果密文到期由 worker 置空（result_purged_at）、不删行，
 -- 与 00130 的口径一致。
 REVOKE DELETE, TRUNCATE ON user_generation_jobs FROM aegis_app;
+-- 流量包转移流水（00137）是证据，只能追加：迁移里收过的写权限，上面的表级重授不该放开。
+-- 回滚到 00137 之前表不在，跳过即可（REVOKE 在 IF 里，执行到才解析表名）。
+DO $$
+BEGIN
+  IF to_regclass('public.traffic_pack_transfers') IS NOT NULL THEN
+    REVOKE UPDATE, DELETE, TRUNCATE ON traffic_pack_transfers FROM aegis_app;
+  END IF;
+END $$;
 
 COMMIT;

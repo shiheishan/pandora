@@ -39,6 +39,14 @@ const (
 	// 目前只有节点网关的旧 bootstrap 用它，调用方是节点不是页面，
 	// 所以前端 core/api.ts 的 SERVER_ERROR_CODES 不登记它。
 	CodeUpgradeRequired Code = "upgrade_required"
+
+	// CodeQuoteChanged 是 409：确认下单时服务端按同一套函数重算的金额与报价时不同
+	// （改价、又用了流量、报价超过 10 分钟）。前端据它重新报价、在金额旁标「已更新」，
+	// 不靠比对文案。
+	CodeQuoteChanged Code = "quote_changed"
+	// CodeOrderPending 是 409：同一套餐已有一张还没付款的新购单。前端据它显示那张单的
+	// 入口（继续付款或取消），防止两个标签页各付一次。
+	CodeOrderPending Code = "order_pending"
 )
 
 var statusByCode = map[Code]int{
@@ -54,6 +62,8 @@ var statusByCode = map[Code]int{
 	CodeInternal:         http.StatusInternalServerError,
 	CodeReauthRequired:   http.StatusForbidden,
 	CodeUpgradeRequired:  http.StatusUpgradeRequired,
+	CodeQuoteChanged:     http.StatusConflict,
+	CodeOrderPending:     http.StatusConflict,
 }
 
 // Error 同时承载对外与对内两份信息。

@@ -71,6 +71,13 @@ type couponMatch struct {
 // 不产生负数。负数会一路穿到支付金额和账本上，那种错误很难往回追。
 func applyCoupon(ctx context.Context, tx pgx.Tx, tenantID, userID, code string,
 	planID, currency string, subtotal int64) (*couponMatch, error) {
+	return applyCouponTx(ctx, tx, tenantID, userID, code, planID, currency, subtotal, true)
+}
+
+// applyCouponTx 是 applyCoupon 的实现。lock 为假时不锁券行：报价（checkout_quote.go）只读，
+// 与建单同一套校验与算法，确认建单时锁住重算。
+func applyCouponTx(ctx context.Context, tx pgx.Tx, tenantID, userID, code string,
+	planID, currency string, subtotal int64, lock bool) (*couponMatch, error) {
 
 	code = strings.TrimSpace(strings.ToUpper(code))
 	if code == "" {
@@ -104,8 +111,7 @@ func applyCoupon(ctx context.Context, tx pgx.Tx, tenantID, userID, code string,
 		       valid_from, valid_until, status,
 		       COALESCE(applicable_user_group_ids, ARRAY[]::uuid[])::text[]
 		  FROM coupons
-		 WHERE tenant_id = $1 AND upper(code) = $2
-		 FOR UPDATE`, tenantID, code).Scan(
+		 WHERE tenant_id = $1 AND upper(code) = $2`+lockClause(lock, " FOR UPDATE"), tenantID, code).Scan(
 		&id, &discountType, &discountValue, &couponCur, &maxDiscount,
 		&minOrder, &planIDs, &maxRedeem, &maxPerUser, &redeemed, &reserved,
 		&validFrom, &validUntil, &status, &groupIDs)

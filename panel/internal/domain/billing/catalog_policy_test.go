@@ -23,7 +23,8 @@ func TestCatalogGroupAuthorization(t *testing.T) {
 
 func TestPurchaseSQLRestrictsCatalogCurrencies(t *testing.T) {
 	pkg := sourcetest.Load(t, ".")
-	for _, name := range []string{"Service.CreateOrder", "Service.CreateRenewal"} {
+	// 新购的价格读取在 checkout_catalog.go，续费的在 renewal_price.go（都是报价与建单共用）
+	for _, name := range []string{"loadNewPurchasePriceTx", "listPlanPricesTx", "loadRenewalPriceTx"} {
 		if !strings.Contains(pkg.Decl(name), "currency IN ('CNY','USD')") {
 			t.Fatalf("%s lacks currency allowlist", name)
 		}

@@ -27,15 +27,14 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
 2. **一处报错连带一片**：先看「SQL 报错」和 e2e 首个失败。同一条 SQLSTATE 出现在几个测试里，通常是一条共享查询坏了，修一处全好（10-07：ListLinks 漏逗号 → 门户链接 500、两个 PG18 用例、expiry/risk e2e、两个前端冒烟一起红）。
 3. **整合问题**（几路并行合并后才出现）：
    - 计数类断言：内置模板数、后台循环数（`workers.Add` 与两份契约测试）、`run-pg18-gates.sh` 的 DOMAINS、`run-smoke-e2e.sh` 的 SCRIPTS；
-   - 同一个函数被两路各自 `CREATE OR REPLACE`（如 `app.seed_tenant_defaults`），后合的那份要包含先合那份的全部内容，Down 还原到先合那份；
+   - 同一个函数被两路各自 `CREATE OR REPLACE`（如 `app.seed_tenant_defaults`），见根 CLAUDE.md「环境与工具坑」与 new-migration skill；
    - 一路改了签名或口径，另一路的新测试还按旧的写（返回值个数、状态名、枚举个数）；
-   - 夹具 id 撞号（同一 PG18 域库共用），见 accept-task 的坑。
+   - 夹具 id 撞号（同一 PG18 域库共用），见 `.claude/rules/platform-pg18.md`。
 4. **审计、限频类 e2e**：smoke 里各脚本从同一来源 IP 打同一个栈，按 IP 窗口去重的逻辑会被前一个脚本的记录吞掉。先确认是产品语义（要不要豁免）还是脚本假设，再改。
 5. **真缺陷**：在本机复现（PG18 用例本机没有 Docker 会跳过，跳过不等于通过）。修完按 verify skill 重跑改到的包，推送后再等两个脚本。
 
 ## 坑
 
 - `gh run list --commit` 只认完整 sha（脚本已处理）；一次推多个提交只有最新那个有 run，旧提交显示「没有 run」不代表没红。
-- `--log-failed` 每行带「job\tstep\t时间戳」前缀，BSD sed 不认 `\t`，脚本用 perl 去前缀；自己 grep 原文要考虑前缀。
 - 前端冒烟里 `500 internal_error` 只有 requestId，没有后端堆栈；对应的后端报错常常也在同一提交的 PG18 run 里，先看那边。
 - 推送故障（1Password 签名失败）时不要先在本地把任务分支合进主线：等分支自己的 CI 结论再合（10-07 先合后测，CI 抓出的问题只能在主线上修）。

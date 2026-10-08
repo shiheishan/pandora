@@ -288,9 +288,19 @@ type CardPreview struct {
 	PlanName      string     `json:"plan_name,omitempty"`
 	Interval      string     `json:"interval,omitempty"`
 	IntervalCount int        `json:"interval_count,omitempty"`
+	// Placement 是这张卡在当前用户名下怎么用：问题、选项与默认值；纯余额卡为 null
+	Placement *CardPlacement `json:"placement"`
 }
 
-func (s *Service) PreviewCode(ctx context.Context, tenantID, code string) (*CardPreview, error) {
+// CardPlacement 是兑换卡的落点问题。DefaultKey 为空表示不预选（前端按钮置灰「先选一种用法」）。
+type CardPlacement struct {
+	Question   string          `json:"question"`
+	Options    []PlacementView `json:"options"`
+	DefaultKey string          `json:"default_key"`
+}
+
+// PreviewCode 查卡面；userID 用来给出这张卡在他名下的落点选项（Placement，纯余额卡为 nil）。
+func (s *Service) PreviewCode(ctx context.Context, tenantID, userID, code string) (*CardPreview, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if len(code) < 8 || len(code) > 32 {
 		return nil, ErrCodeUnusable
@@ -319,6 +329,7 @@ func (s *Service) PreviewCode(ctx context.Context, tenantID, code string) (*Card
 		if out.Status != "active" {
 			return ErrCodeUnusable
 		}
+		full := out
 		// 盲盒的奖池不回给用户：把权重摆出来等于公示中奖概率，
 		// 而奖池里各项的金额也会让人算出期望值再决定要不要兑。
 		// 只保留奖品名称，够用户知道能抽到什么。
@@ -333,6 +344,18 @@ func (s *Service) PreviewCode(ctx context.Context, tenantID, code string) (*Card
 			ID: out.ID, Name: out.Name, Description: out.Description, Type: out.Type,
 			Status: out.Status, Rewards: out.Rewards, Conditions: out.Conditions,
 			Limits: out.Limits, ThemeColor: out.ThemeColor, CreatedAt: out.CreatedAt,
+		}
+		// 落点在脱敏之前按完整奖池算（盲盒要知道可能抽到加时长还是流量），只回选项不回奖池
+		if offer, ok := cardOffer(full); ok && userID != "" && s.grant != nil {
+			views, def, err := s.grant.Placements(ctx, tx, tenantID, userID, offer)
+			if err != nil {
+				return err
+			}
+			if views == nil {
+				views = []PlacementView{}
+			}
+			preview.Placement = &CardPlacement{Question: placementQuestion(offer),
+				Options: views, DefaultKey: def}
 		}
 		if out.Type == "plan" && out.Rewards.PlanID != "" && out.Rewards.PriceID != "" {
 			// 套餐或价格后来被删掉时不报错：卡面照样能看，兑换那一步会给出明确原因。

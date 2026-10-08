@@ -44,6 +44,9 @@ func registerOrderRoutes(r chi.Router, d Deps, h *handlers) {
 		// 换个名字只会让声明校验过不去。
 		middleware.Idempotency(d.Pool, billing.CheckoutIdempotencyScope, d.Log),
 	).Post("/orders/manual", h.createManualOrder)
+	// 开单前看「这单落到哪一份」（购买模型统一 2.3）：只读，与开单同权限，不要重认证与幂等键
+	r.With(middleware.RequirePermission("billing.order.write", d.Log)).
+		Post("/orders/manual/preview", h.previewManualOrder)
 	r.With(
 		middleware.RequirePermission("billing.order.write", d.Log),
 		middleware.RequireRecentReauth(d.Log),

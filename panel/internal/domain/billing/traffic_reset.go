@@ -161,21 +161,22 @@ func (s *Service) TrafficResetStats(ctx context.Context, tenantID string) (*Rese
 }
 
 type ManualResetInput struct {
-	UserID  string
-	ActorID string
-	Note    string
+	// SubscriptionID 是要重置的那一份（后台订阅行上的操作；不再按用户自动挑一条）
+	SubscriptionID string
+	ActorID        string
+	Note           string
 }
 
-// ManualResetTraffic 把用户当前订阅的已用流量清零。
+// ManualResetTraffic 把指定那一份订阅本期的已用流量清零。
 //
 // 这是个会直接改变用户可用额度的动作，所以要理由、要审计、要落日志。
 // 只清 consumed，不动 limit_value —— 那是「给了多少」，重置改的是「用了多少」。
-// 流量包余额挂在用户身上（traffic_pack_grants），重置不碰它（D-E-1）。
+// 挂在这一份上的流量包余额（traffic_pack_grants）不碰（D-E-1）。
 func (s *Service) ManualResetTraffic(ctx context.Context, tenantID string,
 	in ManualResetInput) (int64, error) {
 
 	in.Note = strings.TrimSpace(in.Note)
-	if _, err := uuid.Parse(in.UserID); err != nil {
+	if _, err := uuid.Parse(in.SubscriptionID); err != nil {
 		return 0, httpx.NotFoundOrForbidden()
 	}
 	if _, err := uuid.Parse(in.ActorID); err != nil {
@@ -189,17 +190,21 @@ func (s *Service) ManualResetTraffic(ctx context.Context, tenantID string,
 	var freed int64
 	actor := in.ActorID
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor}, func(tx pgx.Tx) error {
-		var subID string
+		subID := in.SubscriptionID
+		var userID, status string
 		err := tx.QueryRow(ctx, `
-			SELECT id::text FROM subscriptions
-			 WHERE tenant_id=$1 AND user_id=$2::uuid AND status='active'
-			 ORDER BY current_period_end DESC NULLS LAST
-			 LIMIT 1 FOR UPDATE`, tenantID, in.UserID).Scan(&subID)
+			SELECT user_id::text, status FROM subscriptions
+			 WHERE tenant_id=$1 AND id=$2::uuid
+			 FOR UPDATE`, tenantID, subID).Scan(&userID, &status)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.New(httpx.CodeValidationFailed, "这个用户没有生效中的订阅")
+			return httpx.NotFoundOrForbidden()
 		}
 		if err != nil {
 			return err
+		}
+		// 只给生效中的那一份重置（可付费变更的状态里去掉「过期但窗口没关」）
+		if !subscriptionAcceptsPaidChange(status, true) {
+			return httpx.New(httpx.CodeValidationFailed, "这一份不在生效中，不能重置流量")
 		}
 
 		// 先读出清零前的用量：日志要靠它回答「当时用了多少」，
@@ -228,7 +233,7 @@ func (s *Service) ManualResetTraffic(ctx context.Context, tenantID string,
 			return errors.New("traffic reset transition lost")
 		}
 
-		if err := LogTrafficReset(ctx, tx, tenantID, subID, in.UserID,
+		if err := LogTrafficReset(ctx, tx, tenantID, subID, userID,
 			"traffic.bytes", "manual", freed, &actor, in.Note); err != nil {
 			return err
 		}
@@ -239,7 +244,7 @@ func (s *Service) ManualResetTraffic(ctx context.Context, tenantID string,
 			ResourceID:   &subID,
 			BeforeDigest: map[string]any{"consumed": freed},
 			AfterDigest: map[string]any{
-				"consumed": 0, "user_id": in.UserID, "note": in.Note,
+				"consumed": 0, "user_id": userID, "note": in.Note,
 			},
 			APIDomain: "admin", RequestID: httpx.RequestIDFrom(ctx),
 		})

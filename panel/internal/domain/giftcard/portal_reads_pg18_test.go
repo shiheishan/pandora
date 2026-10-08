@@ -60,7 +60,7 @@ func TestGiftCardReadsPG18(t *testing.T) {
 	t.Log("marker=giftcard_reads_balance_issued_ok")
 
 	// 门户预览：套餐卡补套餐名与周期，不带发行量与兑换量。
-	card, err := svc.PreviewCode(ctx, tenantID, "gcreadsplan0004")
+	card, err := svc.PreviewCode(ctx, tenantID, userID, "gcreadsplan0004")
 	if err != nil {
 		t.Fatalf("preview plan card: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestGiftCardReadsPG18(t *testing.T) {
 	if strings.Contains(string(raw), "code_total") || strings.Contains(string(raw), "code_used") {
 		t.Fatalf("portal preview leaks operating counts: %s", raw)
 	}
-	general, err := svc.PreviewCode(ctx, tenantID, "GCREADSOPEN0002")
+	general, err := svc.PreviewCode(ctx, tenantID, userID, "GCREADSOPEN0002")
 	if err != nil || general.PlanName != "" || general.Rewards.Balance != 500 {
 		t.Fatalf("general card preview=%+v err=%v", general, err)
 	}

@@ -7,6 +7,8 @@ import (
 	"sort"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 )
 
 type reservationLockRequest struct {
@@ -28,6 +30,9 @@ type reservationLockRequest struct {
 	// （2026-10-07，w6plan）：没有优惠券、全额减免。只认 kind 为 renewal / upgrade 且订单行
 	// 确实由管理员开（created_by、manual_reason 非空），折扣必须等于小计、total 为 0。
 	ManualGrant bool
+	// SmallDueWaived 是建单时按 SmallDue 免掉、并进折扣的金额（用户 8.1 第 1 题推荐 A，
+	// checkout_amounts.go）。只在建单事务里当场捕获时出现；没有券时它就是全部折扣。
+	SmallDueWaived int64
 }
 
 // orderTotal 是订单的金额恒等式（迁移 00071 的 orders_total_identity）：
@@ -298,11 +303,19 @@ func lockOrderReservationGraph(ctx context.Context, tx pgx.Tx,
 			return nil, errors.New("coupon redemption exists without an order coupon")
 		}
 		if in.DiscountAmount != 0 {
-			if !in.ManualGrant {
+			switch {
+			case in.ManualGrant:
+				if err := assertManualGrantRenewal(ctx, tx, in); err != nil {
+					return nil, err
+				}
+			case in.SmallDueWaived > 0:
+				// 只有换套餐抵扣后的零头能免（最多 99 分）：折扣就是它，免完不剩在线应付
+				if in.Kind != "upgrade" || in.DiscountAmount != in.SmallDueWaived || in.PayableAmount != 0 ||
+					in.SmallDueWaived > purchase.MaxSmallDueWaive {
+					return nil, errors.New("small-due waiver does not match the order discount")
+				}
+			default:
 				return nil, errors.New("order discount exists without a coupon reservation")
-			}
-			if err := assertManualGrantRenewal(ctx, tx, in); err != nil {
-				return nil, err
 			}
 		}
 	}

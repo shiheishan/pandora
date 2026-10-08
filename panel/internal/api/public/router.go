@@ -218,11 +218,13 @@ func NewRouter(d Deps) http.Handler {
 				Post("/me/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
 			r.With(checkout, middleware.Idempotency(d.Pool, "subscription_renewal_create", d.Log)).
 				Post("/me/subscriptions/{id}/renew", h.createRenewal)
-			// 变更套餐（D-E-2）：试算不落库；下单有自己的幂等域，数据库的订单/幂等
-			// 对称绑定把 kind=upgrade 映射到它（迁移 00071）
-			r.Post("/me/subscriptions/{id}/change-plan/preview", h.previewPlanChange)
+			// 变更套餐（D-E-2）：下单有自己的幂等域，数据库的订单/幂等对称绑定把 kind=upgrade
+			// 映射到它（迁移 00071）。原来的试算接口已退役，金额走下面的统一报价
 			r.With(checkout, middleware.Idempotency(d.Pool, billing.PlanChangeIdempotencyScope, d.Log)).
 				Post("/me/subscriptions/{id}/change-plan", h.createPlanChange)
+			// 统一报价（购买模型统一 2.2）：续费、换套餐、新购、流量包的金额与余额用法都由它算，
+			// 确认下单时四个建单接口按同一套函数重算比对。不落库、不要幂等键
+			r.With(checkout).Post("/me/checkout/quote", h.checkoutQuote)
 
 			// 下单要求幂等键：用户网络抖动重发不能变成两张订单
 			r.With(checkout, middleware.Idempotency(d.Pool, "order_create", d.Log)).
@@ -232,6 +234,8 @@ func NewRouter(d Deps) http.Handler {
 			r.With(checkout, middleware.Idempotency(d.Pool, billing.CheckoutIdempotencyScope, d.Log)).
 				Post("/me/traffic-pack-orders", h.createTrafficPackOrder)
 			r.Get("/me/traffic-packs", h.myTrafficPacks)
+			// 把未分配或停用那份上的流量包转到一份在用的上（2.7）：不要幂等键，重复调用转 0
+			r.Post("/me/traffic-packs/transfer", h.transferTrafficPacks)
 
 			// 发起支付：返回收银台跳转地址。
 			// 不加网关级幂等 —— 复用在途意图的逻辑在服务层用行锁做，

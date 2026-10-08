@@ -75,7 +75,7 @@ func TestCheckoutLedgerAndCouponHoldSourceContract(t *testing.T) {
 		t.Fatal("user balance hold must be a credit-normal account")
 	}
 
-	cs := pkg.Decls("applyCoupon", "redeemCoupon")
+	cs := pkg.Decls("applyCoupon", "applyCouponTx", "redeemCoupon")
 	for _, needle := range []string{
 		"redeemed+reserved >= *maxRedeem",
 		"status IN ('held','captured')",
