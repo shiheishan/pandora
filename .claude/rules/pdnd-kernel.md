@@ -43,6 +43,16 @@ paths:
   - Xray 的 none 带 ChunkStream + ChunkMasking：TCP 不加填充，UDP 可加填充。
   - 回归测试用 Xray 的编码库（`vmess_xray_client_test.go`）。
 
+## Hysteria2 / TUIC 的 UDP 收发效率
+
+QUIC 栈是 sagernet/quic-go（经 sing-quic 与 `internal/nativewire` 的 hy2 / TUIC fork），不 fork quic-go：整份 fork 要给 `connection.go`（3000 多行）加 800 行豁免，需用户授权；本地实验里「同步发送」「ACK 抽稀」对 TCP 没有收益（见 w9quic 报告）。效率改动都在 quic-go 的公开接口之外：
+
+- DATAGRAM 分片按连接的实际上限（`nativewire/dgram`）：用必然超长的缓冲调 `SendDatagram` 问上限（只比长度、不发包），缓存 1 秒；实际只用上限减 `AckMargin`（64）。不留余量时贴上限的 DATAGRAM 碰上带 ACK 的包装不下，quic-go 试 10 次就丢（`TestLimitSizedDatagramsSurviveBidirectionalTraffic` 去掉余量即红）。不要改回上游固定的 1197。
+- 上行 UDP 转发（`hysteria2_udp.go` 的 `hy2BatchWriter`）：同一目标、等长的连续包合成一条 UDP_SEGMENT（GSO）消息，经 `WriteBatch` 的 OOB 交给内核；iovec 直接指向各包不复制。私网拦截仍逐消息判定（一条 GSO 消息同一目标），被拒（EIO / EINVAL 等）时本会话关 GSO、从失败那条起逐条重发。只在 Linux，回归测试 `hysteria2_udp_gso_linux_test.go`。
+- Salamander 混淆在 Linux 上走 `batchSalamanderConn`：自己实现 quic-go 认的 `OOBCapablePacketConn` 与 `ReadBatch`，quic-go 才会照常 recvmmsg 批量收、GSO 发；GSO 写时逐段加盐、段长改为原段长 + 8。它不内嵌 `*net.UDPConn`，未混淆的收发方法一个都不透出。
+- hy2 / TUIC 入站起来后检查 UDP 收发缓冲（`quic_socket_linux.go`）：pdnd 无 CAP_NET_ADMIN，受 `net.core.rmem_max / wmem_max` 限制拿不到 quic-go 要的 8MB，不足一半就 Warn 一次并提示 sysctl。
+- 包装 quic-go 的监听 socket 时必须保留批量与 GSO：任何只实现 `net.PacketConn` 的包装都会让 quic-go 退回逐包 ReadFrom / WriteTo（每 Gbps 多约一核）。测量口径与 harness 见 w9quic 报告（回环、私网目标放开）；生产默认拦私网时走 outbound 的带检查批量接口，GSO 消息同样逐条过 guard。
+
 ## 传输与订阅的对口
 
 - gRPC 的 gun Hunk 帧（`grpc_stream.go`）与 Host / `:authority` 比较不比端口（`host_match.go` 的 `requestHostMatches`）都要和订阅渲染保持同一口径：写法与守卫测试见 subscription-render 规则文件。改了这两处，跑 subscription-e2e skill 实连一遍。
