@@ -3,20 +3,36 @@
 #
 #   首次安装：  sudo ./install.sh
 #   升级：      sudo ./install.sh          （检测到已装会自动走升级）
-#   无人值守：  sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名 ./install.sh
-#   顺带申请证书：加 PANDORA_CERTBOT=1（等于同意 Let's Encrypt 的订户协议；
-#               PANDORA_CERTBOT_EMAIL=你的邮箱 可选）。不碰 nginx：PANDORA_SKIP_NGINX=1
+#
+# 面板默认走 HTTPS（nginx 边缘 + 证书，交给同目录的 edge-tls.sh）：
+#   有域名     → Let's Encrypt 域名证书（certbot webroot）
+#   只有公网 IP → Let's Encrypt IP 证书（lego，shortlived 约 6 天，aegis-tls-renew.timer 自动续期）
+#   申请失败   → 自签证书兜底（浏览器提示不安全），timer 每天两次重试，成功即无缝换上
+# 申请证书即表示同意 Let's Encrypt 的订户协议。
+#
+# 无人值守的环境变量（都可选）：
+#   PANDORA_ASSUME_YES=1            不问任何问题
+#   PANDORA_PUBLIC_BASE_URL=URL     面板对外地址：https://你的域名 或 https://公网IPv4。首装不给时，
+#                                   终端里现场问（回车用本机公网 IPv4），无人值守直接用本机公网 IPv4；
+#                                   本机没有公网 IPv4（NAT 后面）就必须给
+#   PANDORA_ACME=0                  不联系任何 CA，只用自签证书（旧名 PANDORA_CERTBOT=0 同义）
+#   PANDORA_ACME=1                  升级一台还没走 nginx 边缘的旧面板时，同意接管 nginx 并申请证书
+#                                   （旧名 PANDORA_CERTBOT=1 同义）
+#   PANDORA_ACME_EMAIL=邮箱          ACME 账号联系邮箱（旧名 PANDORA_CERTBOT_EMAIL）
+#   PANDORA_ACME_SERVER=URL         ACME 目录地址，缺省 Let's Encrypt 正式环境（演练可用 staging）
+#   PANDORA_SKIP_NGINX=1            不碰 nginx 与证书
+#   例：sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.com ./install.sh
 #
 # 发布包装出来的就是生产：首装写 AEGIS_ENV=production。生产模式下网关启动时
-# 要求 AEGIS_PUBLIC_BASE_URL 是 https://公网域名（platform/config 的
+# 要求 AEGIS_PUBLIC_BASE_URL 是 https://域名 或 https://公网IPv4（platform/config 的
 # CanonicalPublicOrigin），节点接入要求发布物的 SHA-256 与版本（deploy/
-# release-artifact.env，随发布包生成）。所以首装必须先拿到
-# 域名：PANDORA_PUBLIC_BASE_URL 给出，或在终端里现场问；两者都没有就在动手前停下。
+# release-artifact.env，随发布包生成）。所以首装必须先拿到对外地址：
+# PANDORA_PUBLIC_BASE_URL 给出、终端里现场问、或用本机公网 IPv4；都没有就在动手前停下。
 #
 # 这个脚本把原先要手工串起来的七八步固化成一条命令：前置检查 → 生成配置
 # → 升级前备份 → 起数据基座、网关改走 unix socket → 迁移 → 收窄数据库角色 →
-# 安装二进制与 systemd 单元 → 启动 → 健康检查 → nginx 边缘（防火墙、证书、
-# 渲染、nginx -t、reload）。每一步都做过实机验证，顺序上的坑（下面注释里逐条记着）
+# 安装二进制与 systemd 单元 → 启动 → 健康检查 → HTTPS 边缘（防火墙、证书、
+# 渲染、nginx -t、reload、续期 timer）。每一步都做过实机验证，顺序上的坑（下面注释里逐条记着）
 # 都是踩出来的。
 #
 # 设计上的三条约束：
@@ -43,11 +59,9 @@ die() {
   exit 1
 }
 
-# 宿主机上的路径。PANDORA_* 覆盖只给桩测试用（install-chain_mock_test.sh 把它们指到临时目录）
+# 宿主机上的路径。PANDORA_* 覆盖只给桩测试用（install-chain_mock_test.sh 把它们指到临时目录）；
+# 证书、nginx 渲染相关的路径归 edge-tls.sh，它自己读同名的 PANDORA_* 覆盖
 NGINX_DIR="${PANDORA_NGINX_DIR:-/etc/nginx}"
-LE_LIVE_DIR="${PANDORA_LE_LIVE_DIR:-/etc/letsencrypt/live}"
-ACME_WEBROOT="${PANDORA_ACME_WEBROOT:-/var/www/aegis-acme}"
-REALIP_FILE="${PANDORA_REALIP_FILE:-/etc/aegispanel/cloudflare-realip.conf}"
 BACKUP_DIR="${PANDORA_BACKUP_DIR:-/var/backups/aegispanel}"
 # docker-compose.yml 把两个 socket 挂到 deploy/run/ 下
 PG_SOCKET_DIR="$DEST/deploy/run/postgresql"
@@ -113,126 +127,8 @@ switch_env_to_sockets() {
   done
 }
 
-# ufw 开着才放行 80/443（证书校验与 HTTPS 入口都要）；没装或没开就什么都不做
-open_firewall() {
-  command -v ufw >/dev/null 2>&1 || return 0
-  ufw status 2>/dev/null | grep -q '^Status: active' || return 0
-  ufw allow 80/tcp >/dev/null
-  ufw allow 443/tcp >/dev/null
-  info "ufw 已开启：放行了 80/tcp 与 443/tcp（ufw status 可查）"
-}
-
-nginx_reload() {
-  if systemctl is-active --quiet nginx; then
-    systemctl reload nginx
-  else
-    systemctl enable --now nginx >/dev/null 2>&1 || systemctl start nginx
-  fi
-}
-
-# Debian/Ubuntu 的 nginx 包自带默认站点，它也 listen 80 default_server，与 aegis.conf
-# 抢同一个位置，nginx -t 报 duplicate default server。只停用包里原样的那个链接
-# （sites-enabled/default → sites-available/default），原文件留着，随时能链回去；
-# 别的冲突不替人处理，交给 nginx -t 报出来
-disable_stock_default_site() {
-  local link="$NGINX_DIR/sites-enabled/default"
-  [ -L "$link" ] || return 0
-  case "$(readlink "$link")" in
-    */sites-available/default|../sites-available/default) ;;
-    *) return 0 ;;
-  esac
-  grep -Eq '^[[:space:]]*listen[^;#]*default_server' "$link" 2>/dev/null || return 0
-  rm -f -- "$link"
-  info "停用了 nginx 自带的默认站点（它与面板抢 80 端口的 default_server）"
-  info "  原文件还在 $NGINX_DIR/sites-available/default，要恢复：ln -s ../sites-available/default $link"
-}
-
-have_certificate() {
-  [ -s "$LE_LIVE_DIR/$1/fullchain.pem" ] && [ -s "$LE_LIVE_DIR/$1/privkey.pem" ]
-}
-
-# 没有证书时按需用 certbot 的 webroot 方式申请。要显式同意：PANDORA_CERTBOT=1，
-# 或在终端里答 y（等于同意 Let's Encrypt 的订户协议）。
-# 申请期间临时放一个只回答该域名 ACME 校验的 80 端口站点，申请完就删掉；
-# 不依赖发行版默认站点，也不碰 aegis.conf（它要证书在才能通过 nginx -t）。
-# 返回 0 有证书；1 申请失败；2 没同意申请（不是错误，只是还不能渲染）
-obtain_certificate() {
-  local domain="$1" acme_conf rc=0 reply
-  have_certificate "$domain" && return 0
-  if [ "${PANDORA_CERTBOT:-}" != 1 ]; then
-    if [ "${PANDORA_ASSUME_YES:-}" != 1 ] && [ -t 0 ]; then
-      printf '    %s 还没有证书。现在用 certbot 申请 Let'"'"'s Encrypt 证书（同意其订户协议）？[y/N] ' "$domain"
-      read -r reply
-      case "$reply" in [yY]*) ;; *) return 2 ;; esac
-    else
-      return 2
-    fi
-  fi
-  command -v certbot >/dev/null 2>&1 || { warn "没有 certbot：apt-get install -y certbot 后重跑"; return 1; }
-  acme_conf="$NGINX_DIR/conf.d/aegis-acme.conf"
-  install -d -m 0755 "$ACME_WEBROOT"
-  cat >"$acme_conf" <<ACME
-# install.sh 申请证书时临时放的站点，申请完即删除
-server {
-    listen 80;
-    listen [::]:80;
-    server_name $domain;
-    location ^~ /.well-known/acme-challenge/ { root $ACME_WEBROOT; }
-    location / { return 404; }
-}
-ACME
-  if ! nginx -t >/dev/null 2>&1; then
-    rm -f -- "$acme_conf"
-    warn "放进 ACME 校验站点后 nginx -t 不通过，先修好 nginx 现有配置：nginx -t"
-    return 1
-  fi
-  nginx_reload
-  local email_args=(--register-unsafely-without-email)
-  [ -n "${PANDORA_CERTBOT_EMAIL:-}" ] && email_args=(--email "$PANDORA_CERTBOT_EMAIL")
-  certbot certonly --webroot -w "$ACME_WEBROOT" -d "$domain" \
-    --non-interactive --agree-tos "${email_args[@]}" || rc=$?
-  rm -f -- "$acme_conf"
-  nginx_reload || true
-  [ "$rc" -eq 0 ] && have_certificate "$domain" && return 0
-  warn "certbot 没有拿到证书（退出码 $rc）：确认 $domain 解析到本机、80 端口从公网可达"
-  return 1
-}
-
-# 渲染 aegis.conf → nginx -t → reload。原有的 aegis.conf 先备份；nginx -t 不过就原样
-# 换回去（没有原文件就删掉新的），nginx 继续跑旧配置，不会因为这一步停摆。
-#   apply_edge_config <render-nginx.sh> <.env>
-apply_edge_config() {
-  local render="$1" env_file="$2" out="$NGINX_DIR/conf.d/aegis.conf" prev="" log
-  # render-nginx.sh 顺带把主配置 nginx.conf 的 worker_connections / worker_rlimit_nofile 抬上去，
-  # 它同样先备份、nginx -t 不过就一起换回
-  local main_conf="$NGINX_DIR/nginx.conf" main_prev=""
-  install -d -m 0755 "$NGINX_DIR/conf.d"
-  if [ -f "$out" ] || [ -f "$main_conf" ]; then
-    install -d -m 0700 "$BACKUP_DIR" || return 1
-  fi
-  if [ -f "$out" ]; then
-    prev="$BACKUP_DIR/nginx-aegis.conf.$(date +%Y%m%d-%H%M%S)"
-    cp -p -- "$out" "$prev" || { warn "备份原 nginx 配置失败，没有改动"; return 1; }
-  fi
-  if [ -f "$main_conf" ]; then
-    main_prev="$BACKUP_DIR/nginx-main.conf.$(date +%Y%m%d-%H%M%S)"
-    cp -p -- "$main_conf" "$main_prev" || { warn "备份 nginx.conf 失败，没有改动"; return 1; }
-  fi
-  PANDORA_NGINX_MAIN_CONF="$main_conf" bash "$render" "$env_file" "$out" "$REALIP_FILE" | sed 's/^/    /' \
-    || { warn "render-nginx.sh 拒绝渲染（原因见上），nginx 配置没动"; return 1; }
-  log="$(nginx -t 2>&1)" || {
-    if [ -n "$prev" ]; then cp -p -- "$prev" "$out"; else rm -f -- "$out"; fi
-    if [ -n "$main_prev" ]; then cp -p -- "$main_prev" "$main_conf"; fi
-    printf '%s\n' "$log" | sed 's/^/    /' >&2
-    warn "新渲染的 nginx 配置没通过 nginx -t，已换回原来的（${prev:-原来没有 aegis.conf}${main_prev:+；nginx.conf 也已换回}）"
-    return 1
-  }
-  nginx_reload
-  info "nginx 配置已渲染并生效：$out${prev:+（原配置备份在 $prev）}"
-}
-
 # 收尾提示：按「现在可以做什么 → 还差什么 → 常用操作」三段写，首装与升级分开说，
-# 只留新手需要的。用到的全局量：MODE、EDGE_STATE（applied / no-cert / skipped）、
+# 只留新手需要的。用到的全局量：MODE、EDGE_STATE（trusted / selfsigned / not-enabled / bad-url / skipped）、
 # PANDORA_ADMIN_STATE（created / existing / manual）、PANDORA_ADMIN_EMAIL、PENDING_COUNT、
 # before / after（迁移版本）、BK（升级前备份）、DEST、RELEASE_ROOT。
 # 后台地址只在首装时打印：升级没改它，也就不必再把入口写进一次终端记录。
@@ -243,12 +139,14 @@ print_install_summary() {
   url="$base/$admin_path/"
   local show_url="sudo $DEST/deploy/admin-url.sh"
   local create_cmd="cd $DEST && set -a && . deploy/.env && set +a && read -rsp '密码：' p && echo && printf '%s\n' \"\$p\" | ./bin/aegis-adminctl create --email <你的邮箱> --password-stdin; unset p"
-  local rerun="sudo PANDORA_CERTBOT=1 $RELEASE_ROOT/deploy/install.sh"
+  local rerun="sudo PANDORA_ACME=1 $RELEASE_ROOT/deploy/install.sh"
 
   # 还差什么：只列这台机器上确实还没做的
   case "${EDGE_STATE:-skipped}" in
-    applied) ;;
-    no-cert) todo+=("申请 HTTPS 证书并配好 nginx（会先备份再走升级）：$rerun") ;;
+    trusted) ;;
+    selfsigned) todo+=("换上正规证书（现在是自签，浏览器提示不安全、节点用 https 接入会失败）：确认 80/tcp 从公网可达后 sudo $DEST/deploy/edge-tls.sh issue；续期 timer 每天两次也会自动重试，成功即换上") ;;
+    not-enabled) todo+=("切到 HTTPS（接管 nginx 80/443、申请 Let's Encrypt 证书，会先备份再走升级）：$rerun") ;;
+    bad-url) todo+=("把 $env_file 的 AEGIS_PUBLIC_BASE_URL 改成 https://域名 或 https://公网IPv4，再 $rerun") ;;
     *) todo+=("配好 nginx 才能从公网打开面板：装好 nginx 后重跑 $RELEASE_ROOT/deploy/install.sh") ;;
   esac
   if [ "$MODE" = install ] && [ "${PANDORA_ADMIN_STATE:-manual}" = manual ]; then
@@ -263,8 +161,10 @@ print_install_summary() {
   if [ "$MODE" = install ]; then
     step "安装完成"
     printf '%s\n' "  现在可以做什么："
-    if [ "${EDGE_STATE:-}" = applied ]; then
+    if [ "${EDGE_STATE:-}" = trusted ]; then
       printf '    %s\n' "打开管理后台：$url" "  （这个地址就是后台入口，别外传）"
+    elif [ "${EDGE_STATE:-}" = selfsigned ]; then
+      printf '    %s\n' "打开管理后台：$url" "  （这个地址就是后台入口，别外传；现在是自签证书，浏览器提示不安全时确认继续即可）"
     else
       printf '    %s\n' "面板已在本机跑起来（三个服务健康检查通过）；nginx 配好后从这里打开管理后台：" "  $url"
     fi
@@ -277,6 +177,10 @@ print_install_summary() {
     printf '%s\n' "  现在可以做什么："
     printf '    %s\n' "面板已升级（迁移版本 ${before:-?} → ${after:-?}），三个服务已重启并通过健康检查" \
       "管理后台地址没变（重看：$show_url）"
+    case "${EDGE_STATE:-}" in
+      trusted) printf '    %s\n' "HTTPS：Let's Encrypt 证书在用（查看：sudo $DEST/deploy/edge-tls.sh status）" ;;
+      selfsigned) printf '    %s\n' "HTTPS：在用自签证书（查看：sudo $DEST/deploy/edge-tls.sh status）" ;;
+    esac
     [ -z "${BK:-}" ] || printf '    %s\n' "升级前的数据库备份：$BK"
   fi
 
@@ -297,6 +201,7 @@ print_install_summary() {
     "查看日志      tail -f /var/log/aegis/public.log" \
     "重启          systemctl restart aegis-public aegis-admin aegis-node" \
     "数据库        cd $DEST/deploy && ./psql.sh" \
+    "HTTPS 证书    sudo $DEST/deploy/edge-tls.sh status" \
     "升级          新发布包放到 root 独占目录后：sudo <发布目录>/deploy/install.sh"
 }
 
@@ -362,13 +267,13 @@ step "运行模式：$([ "$MODE" = install ] && echo '首次安装' || echo '升
 
 if [ "$MODE" = upgrade ]; then
   info "检测到 $DEST/deploy/.env，将保留现有配置与数据"
-  # 升级不改运行模式：把别人的 development 悄悄改成 production，可能因为域名
+  # 升级不改运行模式：把别人的 development 悄悄改成 production，可能因为对外地址
   # 不合规让三个网关起不来。只提示，由管理员自己决定。
   current_env="$(pandora_env_file_value "$DEST/deploy/.env" AEGIS_ENV)"
   if [ "${current_env,,}" != production ]; then
     warn "现有 .env 的 AEGIS_ENV=${current_env:-（未设置，按 development）}，不是 production："
     warn "  节点接入不会强制校验发布物的 SHA-256 与版本，支付回调、插件钩子也按开发模式放宽。"
-    warn "  这次升级不改它。要切到生产：确认 AEGIS_PUBLIC_BASE_URL 是 https://公网域名，"
+    warn "  这次升级不改它。要切到生产：确认 AEGIS_PUBLIC_BASE_URL 是 https://域名 或 https://公网IPv4，"
     warn "  把 AEGIS_ENV 改成 production，再 systemctl restart aegis-public aegis-admin aegis-node"
   fi
 else
@@ -665,7 +570,7 @@ fi
 #------------------------------------------------------------------------------
 # 9b) 首装：在交互终端里现场建第一个管理员
 #------------------------------------------------------------------------------
-# 放在 nginx 之前：证书或 nginx 那一步停下时，管理员已经建好，重跑会走升级、不再问。
+# 放在 HTTPS 边缘之前：证书或 nginx 那一步停下时，管理员已经建好，重跑会走升级、不再问。
 # aegis-adminctl 经 platform/config 读配置，用网关此刻用的同一份 .env（含改成 socket 的连接串）。
 PANDORA_ADMIN_STATE=manual
 if pandora_admin_prompt_wanted "$MODE"; then
@@ -675,39 +580,34 @@ if pandora_admin_prompt_wanted "$MODE"; then
 fi
 
 #------------------------------------------------------------------------------
-# 10) nginx 边缘：防火墙 → 证书 → 停用抢 80 的默认站点 → 渲染 → nginx -t → reload
+# 10) HTTPS 边缘：防火墙 → 证书（没有先自签）→ 渲染 nginx → nginx -t → reload
+#     → 申请 Let's Encrypt 证书 → 续期 timer。全在 edge-tls.sh setup 里
 #------------------------------------------------------------------------------
-# 以前这几步全靠手工：装完要自己 render-nginx.sh、nginx -t、reload、ufw 放行、申请证书，
-# 还要先删发行版默认站点。面板此时已装好并通过健康检查，这一步失败也只停在这里，
-# nginx 保持原来的配置继续跑
-step "配置 nginx 边缘"
+# 面板此时已装好并通过健康检查，这一步失败也只停在这里，nginx 保持原来的配置继续跑。
+# 证书申请失败不算安装失败：自签兜底，浏览器提示不安全，续期 timer 每天两次重试
+step "配置 HTTPS（nginx 边缘与证书）"
 EDGE_STATE=skipped
-DOMAIN="$(pandora_env_file_value "$DEST/deploy/.env" AEGIS_PUBLIC_BASE_URL)"
-DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%/}"; DOMAIN="${DOMAIN,,}"
+EDGE_URL="$(pandora_env_file_value "$DEST/deploy/.env" AEGIS_PUBLIC_BASE_URL)"
 if [ "${PANDORA_SKIP_NGINX:-}" = 1 ]; then
-  info "PANDORA_SKIP_NGINX=1：不碰 nginx"
+  info "PANDORA_SKIP_NGINX=1：不碰 nginx 与证书"
 elif ! command -v nginx >/dev/null 2>&1; then
-  warn "本机没有 nginx，跳过：apt-get install -y nginx 后重跑本脚本，或手工跑 $DEST/deploy/render-nginx.sh"
-elif ! pandora_valid_public_base_url "https://$DOMAIN"; then
-  warn "AEGIS_PUBLIC_BASE_URL 不是 https://公网域名，nginx 没法按它渲染，跳过"
+  warn "本机没有 nginx，跳过：apt-get install -y nginx 后重跑本脚本，或手工跑 $DEST/deploy/edge-tls.sh setup"
+elif ! pandora_valid_public_base_url "$EDGE_URL"; then
+  EDGE_STATE=bad-url
+  warn "AEGIS_PUBLIC_BASE_URL（${EDGE_URL:-空}）不是 https://域名 或 https://公网IPv4，没法按它配 HTTPS，跳过"
+elif ! pandora_edge_wanted "$MODE" "$NGINX_DIR/conf.d/aegis.conf"; then
+  EDGE_STATE=not-enabled
+  warn "这台面板还没走 nginx 边缘（没有 $NGINX_DIR/conf.d/aegis.conf），升级不替你接管 80/443。"
+  warn "  切到 HTTPS：sudo PANDORA_ACME=1 $RELEASE_ROOT/deploy/install.sh（会先备份再走升级）"
 else
-  open_firewall
-  cert_rc=0
-  obtain_certificate "$DOMAIN" || cert_rc=$?
-  case "$cert_rc" in
-    0)
-      disable_stock_default_site
-      apply_edge_config "$DEST/deploy/render-nginx.sh" "$DEST/deploy/.env" || die "nginx 配置没有生效（面板本身已装好并通过健康检查）" \
-        "按上面 nginx -t 的输出修好后，手工跑：$DEST/deploy/render-nginx.sh && nginx -t && systemctl reload nginx"
-      EDGE_STATE=applied ;;
-    2)
-      EDGE_STATE=no-cert
-      warn "$DOMAIN 还没有证书，nginx 配置先不渲染（它按 Let's Encrypt 的证书路径找证书）。"
-      warn "  申请并渲染：sudo PANDORA_CERTBOT=1 $RELEASE_ROOT/deploy/install.sh（走升级，会先备份）"
-      warn "  或自己申请到 $LE_LIVE_DIR/$DOMAIN/ 后：$DEST/deploy/render-nginx.sh && nginx -t && systemctl reload nginx" ;;
-    *)
-      die "证书申请失败（面板本身已装好并通过健康检查）" \
-        "确认域名解析与 80 端口后重跑：sudo PANDORA_CERTBOT=1 $RELEASE_ROOT/deploy/install.sh" ;;
+  edge_rc=0
+  PANDORA_BACKUP_DIR="$BACKUP_DIR" bash "$DEST/deploy/edge-tls.sh" setup "$DEST/deploy/.env" 2>&1 \
+    | sed 's/^edge-tls: /    /' || edge_rc=$?
+  case "$edge_rc" in
+    0) EDGE_STATE=trusted ;;
+    3) EDGE_STATE=selfsigned ;;
+    *) die "HTTPS 边缘没有配好（面板本身已装好并通过健康检查；nginx 保持原配置）" \
+         "按上面的输出修好后执行：sudo $DEST/deploy/edge-tls.sh setup" ;;
   esac
 fi
 

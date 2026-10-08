@@ -44,17 +44,39 @@ admin_path="$(env_value AEGIS_ADMIN_PATH)"
 [[ "$admin_path" != CHANGE_ME* ]] || die "example/default value is forbidden"
 
 # The edge serves the same origin the panel builds install commands, payment
-# callbacks and subscription links from, so the domain is taken from that URL
+# callbacks and subscription links from, so the host is taken from that URL
 # rather than configured twice. HTTPS on the default port only: the template
-# listens on 443 and looks up the certificate by this name.
+# listens on 443 and the certificate sits behind /etc/aegispanel/tls/live
+# (edge-tls.sh keeps it there: Let's Encrypt for a domain or a public IPv4,
+# self-signed as the fallback).
+#
+# 与 public-base-url.sh 的 pandora_valid_public_base_url、platform/config 的
+# CanonicalPublicOrigin（生产）同一规则，用例表 fixtures/public-base-url-cases.txt：
+# https://<DNS 域名或公网 IPv4>。本脚本装在主机上单独运行，不 source 安装器的库，所以抄一份。
+public_ipv4() {
+  local o='(0|[1-9][0-9]{0,2})' a b c d
+  [[ "$1" =~ ^$o\.$o\.$o\.$o$ ]] || return 1
+  a="${BASH_REMATCH[1]}" b="${BASH_REMATCH[2]}" c="${BASH_REMATCH[3]}" d="${BASH_REMATCH[4]}"
+  (( a <= 255 && b <= 255 && c <= 255 && d <= 255 )) || return 1
+  (( a != 0 && a != 10 && a != 127 && a < 224 )) || return 1
+  (( !(a == 100 && b >= 64 && b <= 127) )) || return 1
+  (( !(a == 169 && b == 254) )) || return 1
+  (( !(a == 172 && b >= 16 && b <= 31) )) || return 1
+  (( !(a == 192 && b == 168) )) || return 1
+  (( !(a == 192 && b == 0 && c == 0) )) || return 1
+  (( !(a == 198 && (b == 18 || b == 19)) ))
+}
 base_url="$(env_value AEGIS_PUBLIC_BASE_URL)"
 [[ "$base_url" != *CHANGE_ME* ]] || die "AEGIS_PUBLIC_BASE_URL still holds the example value"
 [[ "$base_url" =~ ^https://([^/:]+)/?$ ]] || \
-  die "AEGIS_PUBLIC_BASE_URL must be https://<domain> with no port or path"
+  die "AEGIS_PUBLIC_BASE_URL must be https://<domain or public IPv4> with no port or path"
 domain="${BASH_REMATCH[1],,}"
-[[ ${#domain} -le 253 ]] || die "domain is too long"
-[[ "$domain" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$ ]] || \
-  die "AEGIS_PUBLIC_BASE_URL must name a DNS domain, not an IP address"
+if ! public_ipv4 "$domain"; then
+  [[ ${#domain} -le 253 ]] || die "domain is too long"
+  [[ "$domain" != *.localhost ]] || die "AEGIS_PUBLIC_BASE_URL must not be a localhost name"
+  [[ "$domain" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$ ]] || \
+    die "AEGIS_PUBLIC_BASE_URL must name a DNS domain or a public IPv4 address (not a private, reserved or IPv6 address)"
+fi
 
 for placeholder in __AEGIS_ADMIN_PATH__ __AEGIS_DOMAIN__; do
   grep -q "$placeholder" "$TEMPLATE_FILE" || die "template placeholder $placeholder is missing"
