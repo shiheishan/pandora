@@ -209,10 +209,18 @@ describe('完成页', () => {
   })
 
   it('花了多少：余额、渠道、免掉的差价', () => {
-    const o = { balance_applied: 850, paid_amount: 950, payments: [{ status: 'succeeded', amount: 950, currency: 'CNY', created_at: '', method: 'alipay', provider_name: '易支付' }] }
+    const pay = (amount: number, method?: string) => ({ status: 'succeeded', amount, currency: 'CNY', created_at: '', method, provider_name: 'W9 演示收银（假商户）' })
+    const o = { balance_applied: 850, payments: [pay(950, 'alipay')] }
     expect(paidText(o)).toBe('余额付了 ¥8.50，支付宝付了 ¥9.50')
-    expect(paidText({ balance_applied: 0, paid_amount: 0, payments: [] })).toBe('这次没有花钱')
-    expect(paidText({ balance_applied: 0, paid_amount: 0, payments: [] }, 30)).toBe('零头 ¥0.30 已免')
+    // B2c：余额 ¥29 + 渠道 ¥1，渠道那半边按渠道实收写，不是订单总额；渠道名用付款方式，不用商户名
+    expect(paidText({ balance_applied: 2900, payments: [pay(100, 'alipay')] })).toBe('余额付了 ¥29.00，支付宝付了 ¥1.00')
+    expect(paidText({ balance_applied: 0, payments: [pay(3000, 'wxpay')] })).toBe('微信支付付了 ¥30.00')
+    // 认不出方式时说「在线」，也不露商户名
+    expect(paidText({ balance_applied: 0, payments: [pay(3000)] })).toBe('在线付了 ¥30.00')
+    // A4：全用余额，没有渠道那一笔
+    expect(paidText({ balance_applied: 3000, payments: [] })).toBe('余额付了 ¥30.00')
+    expect(paidText({ balance_applied: 0, payments: [] })).toBe('这次没有花钱')
+    expect(paidText({ balance_applied: 0, payments: [] }, 30)).toBe('零头 ¥0.30 已免')
   })
 
   it('落到的那一份按订单详情的 subscription_id 认，同套餐同到期也不会认错', () => {
@@ -233,7 +241,24 @@ describe('完成页', () => {
     const lines = doneLines({ kind: 'renew', subId: s.id, was: '2026-10-19T12:00:00Z', oldPlan: null, refund: 0, packBytes: 0, waived: 0, revive: false }, o, s, STD, [s], makeNaming([s], undefined), null)
     expect(lines.title).toBe('续费好了')
     expect(lines.happened[0]).toMatch(/^你的标准版用到 11月\d+日（原来 10月\d+日）$/)
+    expect(lines.happened[1]).toBe('这次没有花钱')
     expect(lines.showNewLink).toBe(false)
+  })
+
+  it('用到哪天先按订单详情：订阅列表还是缓存里的旧到期时不闪错的日期', () => {
+    const o = { balance_applied: 3000, payments: [], plan_name: '标准版', subscription_period_end: '2026-12-19T12:00:00Z' } as never
+    const stale = sub({ current_period_end: '2026-11-19T12:00:00Z' })
+    const lines = doneLines({ kind: 'renew', subId: stale.id, was: '2026-11-19T12:00:00Z', oldPlan: null, refund: 0, packBytes: 0, waived: 0, revive: false }, o, stale, STD, [stale], makeNaming([stale], undefined), null)
+    expect(lines.happened[0]).toMatch(/^你的标准版用到 12月\d+日（原来 11月\d+日）$/)
+    expect(lines.happened[1]).toBe('余额付了 ¥30.00')
+  })
+
+  it('过期那份换套餐：标题先说恢复了', () => {
+    const o = { balance_applied: 0, payments: [], plan_name: '进阶版', subscription_period_end: '2026-12-19T12:00:00Z' } as never
+    const s = sub({ current_period_end: '2026-10-01T12:00:00Z' })
+    const ctx = { kind: 'change' as const, subId: s.id, was: '2026-10-01T12:00:00Z', oldPlan: '标准版', refund: 0, packBytes: 0, waived: 0 }
+    expect(doneLines({ ...ctx, revive: true }, o, s, STD, [s], makeNaming([s], undefined), null).title).toBe('已恢复使用，换成进阶版')
+    expect(doneLines({ ...ctx, revive: false }, o, s, STD, [s], makeNaming([s], undefined), null).title).toBe('已换成进阶版')
   })
 })
 

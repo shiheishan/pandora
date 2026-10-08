@@ -66,6 +66,9 @@ export function ConfirmForm({ target, h, plans, packs, requested }: { target: Ta
         <Waiting target={target} plan={plan} />
       ) : quote.isPending ? (
         <Skeleton height={260} />
+      ) : quote.isError && purchaseRefusal(quote.error) === 'order_pending' ? (
+        // 同款已有一张没付的新购单：报价阶段就拦（建单也拦），这里直接给「取消它 / 去付款」，不当加载失败
+        <Refusal refusal={refusalOf(quote.error, 'order_pending')} onCleared={() => void quote.refetch()} />
       ) : quote.isError ? (
         <LoadError error={quote.error} onRetry={() => void quote.refetch()} what="价格" />
       ) : quote.data.quotes.length === 0 ? (
@@ -281,7 +284,7 @@ function Priced({
       refund: row.refund,
       packBytes: pack?.traffic_bytes ?? 0,
       waived: split.waived,
-      revive: target.kind === 'renew' && sub !== undefined && !isLive(sub),
+      revive: (target.kind === 'renew' || target.kind === 'change') && sub !== undefined && !isLive(sub),
     })
     const toPay = (orderId: string) => navigate(`/checkout/pay/${orderId}`, { query: { ...ctx, m: method ? methodKey(method) : '' } })
     setBusy(true)
@@ -440,8 +443,8 @@ function NameField({ required, name, onName, plan, h }: { required: boolean; nam
 }
 
 /**
- * 建单被拒：同一套餐有一张还没付款的新购单（order_pending，fields.order_id）时给「去付款 / 取消它」；
- * 那张已超过付款期限（fields.lapsed）时只给「取消它」。取消后可以直接再点一次。
+ * 报价或建单被拒：同一套餐有一张还没付款的新购单（order_pending，fields.order_id）时给「去付款 / 取消它」；
+ * 那张已超过付款期限（fields.lapsed）时只给「取消它」。取消后重新报价，可以直接再点一次。
  */
 function Refusal({ refusal, onCleared }: { refusal: RefusalInfo; onCleared: () => void }) {
   const toast = useToast()

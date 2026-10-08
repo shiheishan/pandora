@@ -151,7 +151,12 @@ export function applyBalance(due: number, available: number, requested: number, 
   const limit = Math.min(due, available)
   requested = Math.min(Math.max(0, requested), limit)
   const b: Balance = { applied: requested, payable: due - requested, kept: 0, forced: false, below_minimum: false, small_due: false, waived: 0 }
-  if (b.payable <= 0 || minPay <= 1 || b.payable >= minPay) return b
+  if (b.payable <= 0) {
+    // 余额付清整单：整单本身低于最低额时这也是唯一付法，同样标 forced（Go purchase.ApplyBalance，B6c）
+    b.forced = due > 0 && minPay > 1 && due < minPay
+    return b
+  }
+  if (minPay <= 1 || b.payable >= minPay) return b
   if (due >= minPay) {
     const applied = due - minPay
     b.kept = b.applied - applied

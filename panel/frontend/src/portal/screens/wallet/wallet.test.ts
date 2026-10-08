@@ -118,7 +118,7 @@ describe('订单页', () => {
   })
 
   it('结果：按状态与种类（契约门户-04 映射）', () => {
-    expect(orderResult(detail())).toBe('易支付 · 有效期至 2026-11-05')
+    expect(orderResult(detail())).toBe('支付宝 · 有效期至 2026-11-05')
     expect(orderResult(detail({ kind: 'topup' }))).toBe('余额已到账')
     expect(orderResult(detail({ status: 'expired' }))).toBe('超时未支付，已自动取消')
     expect(orderResult(detail({ status: 'cancelled', cancel_reason: 'user_cancelled' }))).toBe('已由您取消')
@@ -131,7 +131,8 @@ describe('订单页', () => {
     expect(facts['原价']).toBe('¥59.00')
     expect(facts['优惠']).toBe('−¥11.80（AUTUMN26）')
     expect(facts['实付']).toBe('¥47.20')
-    expect(facts['支付记录']).toMatch(/^易支付 · ¥47\.20 · 成功 · 2026-09-21 /)
+    // 付款方式的叫法，不是渠道商户名（易支付）
+    expect(facts['支付记录']).toMatch(/^支付宝 · ¥47\.20 · 成功 · 2026-09-21 /)
     const open = orderFacts(detail({ status: 'pending_payment', payments: [], expires_at: '2026-09-24T10:30:00Z' })).map((f) => f.k)
     expect(open).toContain('过期时间')
     expect(open).not.toContain('实付')

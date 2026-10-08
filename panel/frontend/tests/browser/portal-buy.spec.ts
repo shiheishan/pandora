@@ -87,10 +87,11 @@ test('A：新购、另买一份、续费、加流量', async ({ browser, world }
     await narrowShot(page, 'A4-confirm')
     await submit(page, page.getByRole('button', { name: '续费，用余额付 ¥30.00' }))
     await expect(page.getByRole('heading', { name: '续费好了' })).toBeVisible({ timeout: 20_000 })
-    // 余额读数在下单后才重新拉取：等页面写出扣过之后的余额再读（这一行中间还写了「在线付了」，是 B2c 的产品问题）
-    await expect(page.getByText(/^余额付了 ¥30\.00，.*；余额还剩 ¥20\.00$/)).toBeVisible()
+    // 余额读数在下单后才重新拉取：等页面写出扣过之后的余额再读；全用余额付，没有「在线付了」
+    await expect(page.getByText(/^余额付了 ¥30\.00；余额还剩 ¥20\.00$/)).toBeVisible()
+    // 到期日会自动重试：页面先渲染、数据随后到齐时不读早（w9audit 报告）
+    await expect(page.getByRole('heading', { name: '发生了什么' }).locator('xpath=following-sibling::ul[1]').getByRole('listitem').first()).toContainText(`用到 ${to}（原来 ${from}）`)
     const lines = await happened(page)
-    expect(lines[0]).toContain(`用到 ${to}（原来 ${from}）`)
     return `确认页「${callout}」「余额够付，¥30.00 全部用余额」；完成页「${lines[0]}」「${lines[1]}」`
   })
 
@@ -144,8 +145,8 @@ async function pendingNotice(page: import('@playwright/test').Page): Promise<str
   return text(notice.locator('xpath=..'))
 }
 
-// 产品问题（见 paths.ts 的 PRODUCT_ISSUES.A0）：报价接口先回 409 order_pending，确认页只显示「价格加载失败」
-test.fixme('A0：同款已有待付款单', async ({ browser, world }) => {
+// 报价接口在报价阶段就回 409 order_pending：确认页按码给「取消它 / 去付款」，不当加载失败
+test('A0：同款已有待付款单', async ({ browser, world }) => {
   const { std } = world.plans
   const page = await openPortal(browser, await newUser('a0'))
 
@@ -163,7 +164,7 @@ test.fixme('A0：同款已有待付款单', async ({ browser, world }) => {
   })
 })
 
-test.fixme('A0b：那张待付款单已超过付款期限', async ({ browser, world }) => {
+test('A0b：那张待付款单已超过付款期限', async ({ browser, world }) => {
   const { std } = world.plans
   const page = await openPortal(browser, await newUser('a0b'))
 
