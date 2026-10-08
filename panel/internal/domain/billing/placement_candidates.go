@@ -102,26 +102,33 @@ func offerPeriod(ctx context.Context, tx pgx.Tx, tenantID, planID, priceID strin
 	return interval, count, err
 }
 
-// creditOf 是一份订阅此刻的剩余价值（换掉它时退回或抵扣的钱）与币种；没有周期边界为 0。
-func creditOf(ctx context.Context, tx pgx.Tx, tenantID, subID string, now time.Time) (int64, string, error) {
+// changeValue 是换掉一份订阅时它值多少：剩余价值（退回或抵扣的钱）与币种，以及不保留的赠送整天数。
+type changeValue struct {
+	Credit   int64
+	Currency string
+	GiftDays int
+}
+
+// changeValueOf 算一份订阅此刻的 changeValue；没有周期边界时全为 0。
+func changeValueOf(ctx context.Context, tx pgx.Tx, tenantID, subID string, now time.Time) (changeValue, error) {
 	var start, end *time.Time
 	if err := tx.QueryRow(ctx, `SELECT current_period_start, current_period_end
 		FROM subscriptions WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, subID).Scan(&start, &end); err != nil {
-		return 0, "", err
+		return changeValue{}, err
 	}
 	if start == nil || end == nil {
-		return 0, "", nil
+		return changeValue{}, nil
 	}
 	basis, err := loadProrationBasis(ctx, tx, tenantID, subID, *start, *end)
 	if err != nil {
 		var he *httpx.Error
 		if errors.As(err, &he) {
-			return 0, "", nil // 币种不一致之类：展示时不报价值，落地时会给出原因
+			return changeValue{}, nil // 币种不一致之类：展示时不报价值，落地时会给出原因
 		}
-		return 0, "", err
+		return changeValue{}, err
 	}
 	credit, _ := prorationCreditDetail(basis, now)
-	return credit, basis.Currency, nil
+	return changeValue{Credit: credit, Currency: basis.Currency, GiftDays: giftedDaysLeft(basis, now)}, nil
 }
 
 // placementsTx 给出一次落地的全部选项（含展示用的数）与默认 Key。
@@ -163,9 +170,11 @@ func placementsTx(ctx context.Context, tx pgx.Tx, tenantID, userID string, offer
 			end = period.AddInterval(base, interval, count)
 		case purchase.KindChange:
 			end = period.AddInterval(now, interval, count)
-			if v.Credit, v.Currency, err = creditOf(ctx, tx, tenantID, o.SubscriptionID, now); err != nil {
+			cv, err := changeValueOf(ctx, tx, tenantID, o.SubscriptionID, now)
+			if err != nil {
 				return nil, "", err
 			}
+			v.Credit, v.Currency, v.GiftDaysLost = cv.Credit, cv.Currency, cv.GiftDays
 		case purchase.KindExtendDays:
 			base := now
 			if v.PeriodEnd != nil && v.PeriodEnd.After(now) {

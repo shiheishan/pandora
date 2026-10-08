@@ -52,6 +52,11 @@ describe('兑换卡', () => {
     ])
     expect(selectedView(views, null, '')).toBeNull()
     expect(selectedView(views, 'new', '')?.verb).toBe('兑换，开一份新的')
+    // 只退已付价值：这一份有赠送的天数时选之前写明不保留（用户 10-08），没有就不写
+    expect(views[1]!.sentence).not.toContain('赠送')
+    const gifted = redeemViews({ card: pro, held: [one], naming: makeNaming([one], undefined), monthPrice: month, now: NOW }, [opts[0]!, { ...opts[1]!, gift_days_lost: 37 }], '')[1]!
+    expect(gifted.desc).toBe('链接不变 · 标准版没用完的 ¥12.00 退到钱包余额 · 赠送的 37 天不保留')
+    expect(gifted.sentence).toMatch(/；赠送的 37 天不保留。$/)
   })
 
   it('加时长卡预选最快到期；流量重置卡写用量清零；纯余额卡直接进钱包', () => {

@@ -24,6 +24,8 @@ export const placementOptionSchema = z.object({
   /** change：原套餐没用完的部分，套餐卡全额退到余额 */
   credit: z.number().int().optional(),
   currency: z.string().optional(),
+  /** change：这一份到期前来自赠送的剩余整天数，换掉时不保留（用户 10-08） */
+  gift_days_lost: z.number().int().optional(),
   traffic_used: z.number().int().optional(),
   traffic_cap: z.number().int().optional(),
   pack_remaining: z.number().int().optional(),

@@ -67,7 +67,9 @@ export function placementResult(p: Placement, settlement: 'grant' | 'pending' | 
       const money = formatMoney(credit, p.currency ?? 'CNY')
       const creditText =
         credit <= 0 ? '原套餐没有可抵的剩余价值' : settlement === 'grant' ? `没用完的 ${money} 全额退到用户余额` : `没用完的 ${money} 先抵新价，抵不完的退到用户余额`
-      return [stateLine(p), creditText, p.new_period_end ? `换后从现在起算，到期 ${day(p.new_period_end)}` : '', '订阅链接不变'].filter(Boolean).join('；')
+      // 只退已付价值：赠送的时长（加时长卡、套餐卡续的期）不保留，有就写出来（与门户兑换卡同一句）
+      const gift = (p.gift_days_lost ?? 0) > 0 ? `赠送的 ${p.gift_days_lost} 天不保留` : ''
+      return [stateLine(p), creditText, gift, p.new_period_end ? `换后从现在起算，到期 ${day(p.new_period_end)}` : '', '订阅链接不变'].filter(Boolean).join('；')
     }
     case 'new':
       return ['会生成新的订阅链接，用户现有的订阅都不动', p.new_period_end ? `到期 ${day(p.new_period_end)}` : ''].filter(Boolean).join('；')
