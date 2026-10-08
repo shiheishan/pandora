@@ -1,0 +1,14 @@
+[Unit]
+Description=Renew the Pandora panel HTTPS certificate twice a day
+
+[Timer]
+# Let's Encrypt 的 IP 证书只有约 6 天，过半（约剩 3 天）就续；每天两次给失败留足重试次数。
+# 自签兜底期间每次都重试申请正规证书，成功即换上
+OnCalendar=*-*-* 03,15:00:00
+RandomizedDelaySec=1h
+Persistent=true
+AccuracySec=1m
+Unit=aegis-tls-renew.service
+
+[Install]
+WantedBy=timers.target
