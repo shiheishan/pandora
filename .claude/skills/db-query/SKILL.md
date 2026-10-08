@@ -1,6 +1,6 @@
 ---
 name: db-query
-description: pandora 查库与查 Valkey：怎么连（本地数据基座、测试机/面板机、对照机 bench-pg）、以什么身份查（超级用户 vs aegis_app + 租户，RLS 下查不到不等于不存在）、常用只读查询文件（订阅分布与即将到期、某用户的订阅/配额/流量包/余额、订单状态、账本对平、节点在线、审计链、慢查询、连接数、限流键与剩余冷却）。用户或总协调说「查数据」「看库里现在什么状态」「核对订阅/订单/余额/节点」「慢查询」「连接数」「限流键」「为什么这个用户查不到」时使用。只读；要写库、清键、开 pg_stat_statements 先问用户。
+description: pandora 查库与查 Valkey：怎么连（本地数据基座、测试机/面板机、对照机 bench-pg）、以什么身份查（超级用户 vs aegis_app + 租户，RLS 下查不到不等于不存在）、常用只读查询文件（订阅分布与即将到期、某用户的订阅/配额/流量包/余额、订单状态、账本对平、节点在线、审计链、慢查询、连接数、限流键与剩余冷却）。看哪条 SQL 慢用本 skill，改写前后对比用 bench-eval。用户或总协调说「查数据」「看库里现在什么状态」「核对订阅/订单/余额/节点」「慢查询」「连接数」「限流键」「为什么这个用户查不到」时使用。只读；要写库、清键、开 pg_stat_statements 先问用户。
 ---
 
 # 查库、核对状态
@@ -34,7 +34,6 @@ bash .claude/skills/db-query/scripts/q.sh [-t 目标] [-v 名=值]... .claude/sk
 
 - 默认租户 id 是 `00000000-0000-7000-8000-000000000001`（迁移 00010 种下，Go 里是 `middleware.DefaultTenantID`）。查询文件都以 `tenant` 变量覆盖它。
 - `SET ROLE` 不带角色级配置。运行角色在本库上有 `search_path`、`jit = off`、`statement_timeout = 15s`（`deploy/configure-app-role.sql`），查询文件开头都手动 `SET LOCAL` 补上；`timeout` 变量可调大。`aegis_app` 被收回了 TEMPORARY 权限，别建临时表。
-- `SET LOCAL` 和 `set_config(..., true)` 只在事务内有效，所以每个文件都是 `BEGIN READ ONLY; … ROLLBACK;`。自己手写时别忘。
 - 运行角色下 `users.email = '…'`（citext）走不了索引，要写 `email_lower = lower('…')`（00119）。超级用户查邮箱随便写。
 - 「查不到」先跑 `identity-check.sql`：超级用户视角有行、`aegis_app` 无租户 0 行、设租户后有行，就是会话没设租户或租户填错。
 - 超级用户查得到而产品里看不到，用 `aegis_app` 重查一遍再下结论。
@@ -73,7 +72,7 @@ bash $q/scripts/q.sh -t bench -v n=10 $q/queries/slow-queries.sql
 - **对账**：`ledger-reconcile.sql` 前两段应为空；后三段是候选异常，种子数据、迁移造的订单会命中，先看 `kind` 与 `paid_at`。借贷配平靠延迟约束触发器，不用 SQL 复核。
 - **审计链**：SQL 只能核序号和链接。重算 `entry_hash` 的完整校验只有 Go 的 `audit.VerifyChain(ctx, tx, tenantID)`，没有命令行入口，只在 PG18 测试里被调用（`platform/audit/chain_pg18_test.go`）。
 - **在线节点**：`last_heartbeat_at` 在 90 秒内（`nodefabric.NodeStaleAfter`），且只有 `serving_status = 'active'` 才算「应在线」。
-- **连接预算**：compose 里 `max_connections=60`；3 条超级用户保留、11 条维护余量、public 常驻 1 条 LISTEN，三个网关各至多 15 条（缺省 public 16、admin 15、node 15），见 `deploy/.env.example`。网关经 unix socket 连库时 `client_addr` 为空。
+- **连接预算**：算式与各网关缺省上限见 `panel/deploy/.env.example` 的连接池注释。网关经 unix socket 连库时 `client_addr` 为空。
 
 ## 慢查询（pg_stat_statements）
 
@@ -93,34 +92,20 @@ ssh <别名> 'bash -s -- cli PTTL rl:sub_rotate_gap:<用户 id>' < $v
 ssh <别名> 'bash -s -- cli INFO memory'     < $v
 ```
 
-### 限流键的形状
+### 限流键
 
-来源 `panel/internal/middleware/ratelimit.go`，维度构造在 `middleware.go`：
-
-| 键 | 含义 |
-|---|---|
-| `rl:<name>:<suffix>:<N>` | 固定窗口。`N = 当前 Unix 纳秒 / 窗口纳秒`，即窗口起点秒数除以窗口秒数；键 TTL 为窗口 + 1 秒 |
-| `rl:<name>:<suffix>` | 冷却式（`AsCooldown`），不带窗口号，从第一次计数起 Window 后过期。目前只有 `sub_rotate_gap`（10 分钟 1 次）与 `sub_rotate_day`（24 小时 5 次），后缀是用户 id |
-| `aegis:node-nonce:…` | 节点签名请求的 nonce 防重放（`SET NX PX`） |
-| `rt:sse:conns:<实例>` | 各网关进程上报的 SSE 连接数，TTL 90 秒。`rt:*` 另有同名的 pub/sub 频道，不是键 |
-
-`<suffix>` 按维度：`ByIP` 是客户端 IP；`ByIPPrefix` 是 `a.b.c.0/24` 或 IPv6 `x:y:z::/48`；`ByAccount` 是用户 id；`ByRoute` 是 `METHOD:/path|IP`；`ByTenant` 是租户 id；`ByJSONFieldHash` 是规范化后字段值 sha256 的前 16 字节十六进制（键里没有邮箱原文）。后缀里有冒号和 `|`，别按冒号切。键名和维度的对应用 `grep -rn 'middleware.By.*("<name>"' panel/internal` 找。
-
-剩余冷却时间：
-
-- 冷却式键：`PTTL` 毫秒数减 1000 就是面板提示「请 X 分钟后再试」用的值（`rejectMessage`，分钟向上取整）；`valkey.sh rl` 的 `retry_after_s` 就是这个数，对固定窗口键只是上界参考。
-- 固定窗口键：键名末段是窗口号 N，窗口秒数 W 取自源码里该维度的声明，解封时刻 = `(N+1)*W` 秒（Unix 时间），剩余 = `(N+1)*W - $(date +%s)`；计数超过该维度的 Max 才会 429。
-- 限流只有 Valkey 可用时才生效：Valkey 不可达时 `RateLimit` 放行，`RateLimitStrict`（匿名写入口）回 503。Valkey 配了 `allkeys-lru`、96MB，键可能被淘汰，没有键不等于没限过。
+- 键形是 `rl:<name>:<后缀>[:<窗口号>]`（实现在 `panel/internal/middleware/ratelimit.go`、`middleware.go`），另有 `aegis:node-nonce:…`（节点 nonce 防重放）、`rt:sse:conns:<实例>`（SSE 连接数，`rt:*` 另有同名 pub/sub 频道，不是键）。
+- 后缀里有冒号和 `|`（IP 前缀、`METHOD:/path|IP`），别按冒号切。键名和维度的对应用 `grep -rn 'middleware.By.*("<name>"' panel/internal` 找。
+- 冷却式键（`AsCooldown`，不带窗口号，如 `sub_rotate_gap`）：`PTTL` 毫秒数减 1000 就是面板提示「请 X 分钟后再试」用的值（`rejectMessage`）；`valkey.sh rl` 的 `retry_after_s` 就是这个数，对固定窗口键只是上界参考。
+- 固定窗口键：键名末段是窗口号 N，窗口秒数 W 取自源码里该维度的声明，解封时刻 = `(N+1)*W`（Unix 秒），计数超过该维度的 Max 才会 429。
+- 限流只有 Valkey 可用时才生效：不可达时 `RateLimit` 放行，`RateLimitStrict`（匿名写入口）回 503。Valkey 配了 `allkeys-lru`、96MB，键可能被淘汰，没有键不等于没限过。
 
 清键只有开发基座用 `panel/deploy/clear-ratelimit.sh`（删光 `rl:*`）；`FLUSHALL`、`FLUSHDB` 在 compose 里被改名禁用。测试机和生产上不要清，要清先问用户。
 
 ## 坑
 
-- **多语句 SQL 用文件，经标准输入送**：`psql.sh < 文件.sql`。docker 布局下 `psql -f` 和 `\i` 指的是容器里的路径，宿主文件读不到；内联 `-c` 里引号经 ssh、docker exec、psql 三层极易出错。
-- **psql 变量只在顶层语句里展开**：`:'uid'` 在 `$$…$$` 函数体、`DO` 块里不替换。需要这类逻辑时在顶层 `\gset` 取值再用。
-- **`-v` 的变量要先于文件生效**：文件里用 `\if :{?名}` 设缺省，`-v` 传入的优先。
+- **多语句 SQL 用文件，经标准输入送**：`psql.sh < 文件.sql`。docker 布局下 `psql -f` 和 `\i` 指的是容器里的路径，宿主文件读不到。
 - **口令**：`.env` 是 0600，只由远端脚本读；不要 `cat .env`，不要把口令写进命令行（`PGPASSWORD=… psql` 会进进程表）。要从本机直连的现场口令只经 0600 文件或标准输入，来源在 `ops-local/` 与 `~/ai/servers/`，不读 `ops-local/**/secrets/`。
 - **输出含邮箱、订阅 id、订单号**：不贴进仓库和公开报告，汇报时脱敏或只给计数。
 - **生产/测试机上不跑写语句**：包括 `pg_stat_statements_reset()`、`pg_terminate_backend`、`DEL`。排障需要写，先向用户说明语句和影响面。
-- **对照机的 5k 库统计信息新旧会改变计划**，只读核对数据没影响，做耗时对比时见 bench-eval。
 - **对照机 `aegis` 库的结构停在 10-06 的快照**（goose 97），新迁移加的列它没有：`sub-status.sql`、`user-overview.sql` 用到的 `renewal_closed_at`（00124）、`nodes-online.sql` 用到的 `runtime_status`（00122）在那里报「column does not exist」。这是库旧，不是查询错；查这几项改连跑着当前版本的测试机或本地库。10-07 实测：10 个查询在对照机跑通 7 个，剩下 3 个在当前版本的测试机上全部跑通。
