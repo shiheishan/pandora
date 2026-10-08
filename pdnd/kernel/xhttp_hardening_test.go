@@ -23,7 +23,7 @@ import (
 func TestXHTTPUnauthSessionsCannotPinMemory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	base, _ := startAutoXHTTPVLESS(t, ctx, 7601, uuid.New())
+	base, adapter := startAutoXHTTPVLESS(t, ctx, 7601, uuid.New())
 	transport := h2cTransport()
 	defer transport.CloseIdleConnections()
 	const sessions, posts, size = 20, 10, 1_000_000
@@ -58,12 +58,30 @@ func TestXHTTPUnauthSessionsCannotPinMemory(t *testing.T) {
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 	delta := (int64(after.HeapAlloc) - int64(before.HeapAlloc)) >> 20
-	t.Logf("status=%v heap delta=%dMB", codes, delta)
-	if delta > 48 {
-		t.Fatalf("未认证会话钉住了 %dMB（状态码 %v）", delta, codes)
+	// 断言看会话中转自己记的账，不看 heap：heap 是整个测试进程的，前面用例收尾的
+	// 连接、race 检测器都会抖它（检查机上就抖红过一次）。heap 只记日志备查。
+	broker := adapter.xhttpBroker
+	broker.mu.Lock()
+	var pinned int64
+	for _, session := range broker.sessions {
+		session.uplink.mu.Lock()
+		pinned += session.uplink.bytes
+		if session.uplink.bytes > broker.limits.unauthSessionBytes {
+			t.Errorf("单个未认证会话钉住 %d 字节，超过上限 %d", session.uplink.bytes, broker.limits.unauthSessionBytes)
+		}
+		session.uplink.mu.Unlock()
 	}
-	if codes[http.StatusOK] == sessions*posts {
-		t.Fatalf("超出预算的上行包全被收下：%v", codes)
+	budget := broker.limits.budget
+	broker.mu.Unlock()
+	budget.mu.Lock()
+	used, limit := budget.used, budget.limit
+	budget.mu.Unlock()
+	t.Logf("status=%v pinned=%dMB budget=%d/%d heap delta=%dMB", codes, pinned>>20, used, limit, delta)
+	if pinned > limit || used > limit || used != pinned {
+		t.Fatalf("未认证会话钉住 %d 字节、预算记账 %d，上限 %d", pinned, used, limit)
+	}
+	if codes[http.StatusServiceUnavailable] == 0 || codes[http.StatusOK] == sessions*posts {
+		t.Fatalf("超出预算的上行包没有被拒：%v", codes)
 	}
 }
 
