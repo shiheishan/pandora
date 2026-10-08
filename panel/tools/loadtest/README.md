@@ -446,7 +446,7 @@ export LOADTEST_ADMIN_PASSWORD='<管理员口令>'
   |---|---|---|---|---|---|---|
   | macOS arm64 本机（10 核） | 约 0.1 核 | 约 17 核·秒（起跑后 45 秒内） | 约 350 MiB | 约 150 MiB | 约 264 req/s | 约 20ms |
 
-  - 2c4g 压测机（Linux amd64）的实测数由 CI 的 job summary 给出（测试会把一行数写进 `GITHUB_STEP_SUMMARY`），首轮真机基线再校正；测试里的哨兵是稳态 ≤ 1 核、峰值 RSS ≤ 1.5 GiB，只防出大问题，不是及格线。
+  - 这是 Mac 上的数，**2c4g 压测机（Linux amd64）的实测数还没有**：在压测机上（已装 Go）跑 `cd panel && go test ./tools/loadtest/nodesim -run TestScale1000Nodes -v -count=1`，约 1.5 分钟，日志里一行给出稳态核数、起跑段核·秒、峰值 RSS、存活堆；首轮真机基线时取这一行补进上表。测试里的哨兵是稳态 ≤ 1 核、峰值 RSS ≤ 1.5 GiB，只防出大问题，不是及格线。（测试在设了 `GITHUB_STEP_SUMMARY` 的环境里会把这行写进 job summary，但目前没有 GitHub job 跑 `go test`。）
   - 优化过两处内存：节点只记「可能连在自己身上」的用户 id（发给面板的请求不变，每节点省 80 KB，千节点省约 80 MiB），事件流读缓冲从 64 KiB 降到 8 KiB。
   - 测试里把 Go 客户端宣告的 HTTP/2 最大帧压到 16 KiB：Go 服务端会按客户端宣告的 1 MiB 切帧，把每条连接的读缓冲撑到 1 MiB（千节点 2 GB）；生产里前面是 nginx，按 8 KiB 切块，没有这个问题。真机上看 RSS 若远高于上表，先怀疑这一条。
   - 压测机本身：2c4g 的压测机跑 1000 节点 + 另一台跑 1 万用户（users），两个进程不要放同一台。
