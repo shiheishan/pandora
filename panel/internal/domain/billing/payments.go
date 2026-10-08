@@ -238,6 +238,10 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, tenantID strin
 		if payable <= 0 {
 			return httpx.New(httpx.CodeConflict, "该订单无需外部支付")
 		}
+		// 兜底：建单已按站点最低额收尾，这里再按所选渠道的最低额核一次（设计稿 2.6）
+		if err := checkProviderMinimum(rec, payable); err != nil {
+			return err
+		}
 
 		// --- 复用在途意图 ---
 		// payment_intents 上有部分唯一索引保证一个订单只允许一个未终结意图。

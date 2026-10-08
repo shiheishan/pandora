@@ -71,9 +71,9 @@ const rows: Row[] = [
   { at: 'users/api.ts', path: 'v1/users', query: { q: s.portal.email, limit: 100, offset: 0 }, schema: usersSchema },
   { at: 'users/api.ts', path: 'v1/plans', schema: planOptionsSchema },
   { at: 'users/api.ts', seed: '演示渠道付款开出订阅；UniProxy /alive 上报在线 IP', path: 'v1/devices', schema: devicesSchema },
-  { at: 'users/api.ts', seed: '后台 POST users/{id}/traffic-reset', path: 'v1/traffic-resets', query: { limit: 25, offset: 0 }, schema: resetLogsSchema },
+  { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: 'v1/traffic-resets', query: { limit: 25, offset: 0 }, schema: resetLogsSchema },
   { at: 'users/api.ts', path: 'v1/traffic-resets/stats', schema: resetStatsSchema },
-  { at: 'users/api.ts', seed: '后台 POST users/{id}/traffic-reset', path: `v1/users/${s.portal.user_id}/traffic-resets`, schema: resetLogsSchema },
+  { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: `v1/users/${s.portal.user_id}/traffic-resets`, schema: resetLogsSchema },
 
   // ---- 营销 ----
   { at: 'marketing/queries.ts', path: 'v1/plans', schema: marketingPlansResponse },

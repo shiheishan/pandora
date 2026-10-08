@@ -26,6 +26,8 @@ type providerSettingsReq struct {
 	Methods          []string `json:"methods"`
 	DefaultMethod    string   `json:"default_method"`
 	AllowPrivateHost bool     `json:"allow_private_host"`
+	// MinAmount 是最低付款额（分，1–100000；不传或 0 按易支付默认 100），购买模型统一 2.6
+	MinAmount int64 `json:"min_amount"`
 	// 编辑时留空 = 不改
 	MerchantID string `json:"merchant_id"`
 	Key        string `json:"key"`
@@ -36,8 +38,8 @@ func (r providerSettingsReq) settings() billing.ProviderSettings {
 		DisplayName: r.DisplayName, BaseURL: r.BaseURL,
 		SubmitPath: r.SubmitPath, APIPath: r.APIPath,
 		Methods: r.Methods, DefaultMethod: r.DefaultMethod,
-		AllowPrivateHost: r.AllowPrivateHost,
-		MerchantID:       r.MerchantID, Key: r.Key,
+		AllowPrivateHost: r.AllowPrivateHost, MinAmount: r.MinAmount,
+		MerchantID: r.MerchantID, Key: r.Key,
 	}
 }
 

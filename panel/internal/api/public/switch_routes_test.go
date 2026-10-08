@@ -19,6 +19,7 @@ func TestCheckoutAndRedeemRoutesAreSwitchGated(t *testing.T) {
 		`Post("/me/subscriptions/{id}/change-plan", h.createPlanChange)`: "r.With(checkout, middleware.Idempotency(",
 		`Post("/me/topups", h.createTopup)`:                              "r.With(checkout, middleware.Idempotency(",
 		`Post("/orders/{id}/pay", h.payOrder)`:                           "r.With(checkout).",
+		`Post("/me/checkout/quote", h.checkoutQuote)`:                    "r.With(checkout).",
 		`Post("/gift-cards/redeem", h.redeemGiftCard)`:                   `middleware.FeatureSwitch(d.Pool, "marketing.giftcard.redeem",`,
 	} {
 		at := strings.Index(source, route)

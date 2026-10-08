@@ -32,7 +32,7 @@ paths:
 - 同一订阅同时只许一张未完结的续费或变更单（00071 唯一索引兜底，`ensureNoOpenSubscriptionOrder` 先回可读的 409），否则冻结在订单里的剩余价值会失效
 - 变更套餐时配额行不能删（人工调整只许追加），新套餐没有的指标把上限置空，等于不限量；降级差额（含券折扣）退进余额
 - 剩余价值 = 本周期付费合计 × min(时间比, 流量比)，向下取整，付费天数先用、赠送天数最后用；全程整数运算（`prorationCredit`）
-- 流量重置只清套餐已用量，不碰挂在用户身上的流量包（traffic_pack_grants）
+- 流量重置只清套餐已用量，不碰流量包余额（traffic_pack_grants）；后台手动重置按订阅行（`ManualResetInput.SubscriptionID`，`POST v1/subscriptions/{id}/traffic-reset`）
 - 人工单结算方式只收 grant / pending / offline，balance（从余额扣）未定，不接受
 
 ## 到期与续费（2026-10-07 用户定，w5expiry）
@@ -43,10 +43,20 @@ paths:
 - 变更套餐的折算：重开周期的事件还包括 `extended` 且 payload.restart；提前续费待开始的周期按 cycle 行长度把额度算进流量比例（`pendingCycleAllowance`）
 - `MarkOrderPaid` 的审计与结算在同一事务
 
+## 购买模型统一（2026-10-07 用户定，w7buya；设计稿 purchase-model-design.md）
+- 规则只写一处：纯函数包 `internal/domain/purchase`（只依赖标准库）放落点选项与默认值（`Options`、`Choice.Match` / `Resolve`）、备注名规范化（`NormalizeLabel`）、余额与支付最低额（`ApplyBalance`、`WaiveSmallDue`）。billing、giftcard（经 Granter）与后台开单都调它，门户的金额与默认值由服务端算好下发
+- 落点由人选：候选一条 SQL（`placement_candidates.go` 的 `loadCandidatesTx`，状态三档只经 `subscriptionAcceptsPaidChange`），选项与展示数据 `placementsTx`，落地前 `resolvePlacementTx` 重新 Match、`lockPlacementSubscription` 锁住那一份复核。不同款不预选，换掉生效中的那份永不自动默认；不要再写「系统自动挑一条」的代码。`renewableSamePlanSubscription` 只留给门户新购没带 new_copy 时拦截
+- 统一报价 `Service.Quote`（checkout_quote.go）与四个建单入口用同一套读取：新购 `checkout_catalog.go`、续费 `renewal_price.go`、换套餐 `plan_change_load.go`（source / targets / snapshot），报价传 lock=false 不加锁。建单带 `Expectation`（as_of 只收 [now-10min, now]）时与重算不符回 409 `quote_changed`；换套餐的时间比例按 as_of 算，流量按当前用量
+- 余额一律经 `balancePlan`（checkout_amounts.go）：`ApplyBalance` 加 SmallDue 免单（用户 8.1 第 1 题推荐 A），免掉的并进订单折扣（有券就并进券的折扣，00036 要求券核销折扣等于订单折扣），审计 digest 记 `small_due_waived`；续费 / 变更当场捕获时 `reservationLockRequest.SmallDueWaived` 是没有券的折扣唯一合法来源（除人工赠送）
+- 支付最低额：渠道 config `min_amount`（分，1–100000，易支付默认 100），站点取启用且接单的 CNY 渠道最大值，按租户缓存一分钟（渠道写入后 `invalidateMinPayment`）；`CreatePaymentIntent` 再按所选渠道兜底 409
+- 新购：`NewCopy` 是「另买一份」，`Label` 经 `NormalizeLabel` 存 `orders.subscription_label`，另买同款而已有那份没起名时 422；同一套餐同时只能有一张未付款新购单（409 `order_pending`，Fields 带 order_id，门户；人工单不受限）。履约 `provisionSubscription` 写备注名，撞名加「 2」「 3」后缀（保存点重试，不让结算失败），并在这是唯一一份生效中订阅时把未分配的流量包挂上（转移流水 actor system）
+- 流量包挂订阅（00137）：addon 单必须带一份生效中的订阅、余额挂上去；送流量没有在用的那份时未分配；`transferTrafficPacksTx` 只从未分配或彻底停用的那份转到生效中或可救回的那份，每笔写 `traffic_pack_transfers`（追加写），提交时约束触发器核对同事务有流水。门户转移、后台加流量（挂这一行）、履约自动挂都走它或 `GrantTrafficPackTx`
+- 守卫：PG18 sub_period 域的 `placement`、`purchase quote` 子测试，traffic_pack 域的 `traffic packs belong to a subscription` 子测试
+
 ## 换套餐的三个入口（2026-10-07 用户定，w6plan）
 - 门户改套餐、后台人工开单遇到不同套餐、套餐卡遇到不同套餐，都在原订阅上换套餐、链接不变，共用一份折算（`plan_change_quote.go`）与一份履约（`applyPlanChangeTx`，plan_change_apply.go）。不要另写一套
-- 选哪条原订阅：先找同套餐（续费），没有再按 `planChangeTargetSubscription`（plan_change_manual.go）——`subscriptionAcceptsPaidChange` 收的订阅里生效中优先、其次到期最晚、再次最新创建。已取消不放开，照旧新开订阅
-- 人工开单：`CreateManualOrder` → `CreatePlanChange` 带 Manual* 字段（与人工续费同一套）：幂等声明属于管理员、域是 order_create（00134 放开 upgrade + created_by 这一组合）；赠送 `waiveNewPrice` 把新价全额减免，剩余价值全额退余额（`assertManualGrantRenewal` 认 renewal / upgrade 两种）；线下已收款在建单事务里 `settleManualOfflineTx`；审计 order.manual_created（digest 带 plan_change）与订单同事务
+- 选哪条原订阅：由人选（购买模型统一）——后台开单带 `Target`（`POST v1/orders/manual/preview` 给选项与默认值，多个选项没带回 422），套餐卡带 `choice`；已取消、窗口关闭的不出现在选项里
+- 人工开单：`CreateManualOrder` 按 Target 分派 → `CreatePlanChange` 带 Manual* 字段（后台开单跳过可见性与用户组，保留 allow_upgrade、版本已发布、订阅状态）（与人工续费同一套）：幂等声明属于管理员、域是 order_create（00134 放开 upgrade + created_by 这一组合）；赠送 `waiveNewPrice` 把新价全额减免，剩余价值全额退余额（`assertManualGrantRenewal` 认 renewal / upgrade 两种）；线下已收款在建单事务里 `settleManualOfflineTx`；审计 order.manual_created（digest 带 plan_change）与订单同事务
 - 套餐卡：`GiftGranter.GrantPlan`（带卡密）→ `grantPlanChange`（plan_change_grant.go），无订单，卡算 0 元，剩余价值全额退余额；退款分录 `source_type='gift_card_code'`、plan_changed 事件 order_id 为空且 payload 带 source=gift_card / gift_card_code_id / refund_currency，00134 的 `app.assert_gift_plan_change` 在提交时核对兑换流水、事件归属与金额。订阅上挂着未完结的续费或变更单时拒绝兑换（409）。giftcard 经接口拿到的是基本类型（订阅、mode、退款与币种），不 import billing
 - 守卫：PG18 sub_period 域的 `plan change entries` 子测试
 

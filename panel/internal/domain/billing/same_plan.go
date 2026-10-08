@@ -1,14 +1,14 @@
 package billing
 
-// 同套餐只续不新开（用户 2026-10-07 规则 3）。
+// 同套餐只续不新开（用户 2026-10-07 规则 3；购买模型统一后只剩门户新购没带 new_copy 时拦截）。
 //
 // Pandora 的订阅链接挂在订阅上，一个用户可以有多条订阅：任何走成「新购」的路径都会
 // 新开订阅、换链接。所以用户已有同一套餐的订阅（生效中，或过期 30 天内、原地续费
 // 窗口没关）时：
 //
 //	门户新购     拒绝（409），门户改走续费（前端按同一口径路由，这里兜底）
-//	礼品卡套餐卡 在原订阅上续一期（GiftGranter.GrantPlan → grantPlanRenewal）
-//	后台人工开单 在原订阅上开续费单（CreateManualOrder → CreateRenewal）
+//	礼品卡套餐卡 同款那份是默认选项（purchase.Options），选了就续一期（grantPlanRenewal）
+//	后台人工开单 同上，Target 选 renew 时开续费单（CreateManualOrder → CreateRenewal）
 //
 // 换别的套餐走原订阅的「改套餐」（plan_change.go），由门户路由；过期超过 30 天的同套餐
 // 订阅只能新购，换新链接（旧链接已被过期扫描吊销，见 expire.go）。
@@ -21,7 +21,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -71,18 +70,6 @@ func renewableSamePlanSubscription(ctx context.Context, tx pgx.Tx,
 		return "", nil
 	}
 	return subID, nil
-}
-
-// SamePlanSubscription 返回用户在这个套餐上可以原地续费的订阅 ID（没有为空串）。
-// 后台人工开单据此决定开续费单还是新购单；只读，不加锁（CreateRenewal 会锁住复核）。
-func (s *Service) SamePlanSubscription(ctx context.Context, tenantID, userID, planID string) (string, error) {
-	var subID string
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var err error
-		subID, err = renewableSamePlanSubscription(ctx, tx, tenantID, userID, planID, false)
-		return err
-	})
-	return subID, err
 }
 
 // grantPlanRenewal 用套餐卡在同套餐订阅上续一期（无订单）。调用方已锁住订阅行。

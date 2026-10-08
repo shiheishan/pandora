@@ -13,10 +13,8 @@ package billing
 // 本身算 0 元，所以原套餐的剩余价值全额退进余额。订阅链接不变，用户在客户端刷新一次
 // 订阅就换到新套餐。
 //
-// 「原订阅」怎么选：与同套餐只续不新开（same_plan.go）同一个次序，推广到任意套餐——
-// 可以原地续费或变更的订阅里（subscriptionAcceptsPaidChange：生效中，或过期 30 天内、
-// 窗口没关），生效中的优先，其次到期最晚，再次最新创建。已取消的不放开。同套餐的
-// 订阅优先走续费（调用方先查同套餐）。
+// 「原订阅」由人选（购买模型统一，2026-10-07）：后台开单带 Target、套餐卡带 choice，
+// 选项与默认值只由 purchase.Options 给出（placement_candidates.go），不再由系统自动挑一条。
 
 import (
 	"context"
@@ -25,65 +23,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/audit"
-	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
-
-// planChangeTargetSubscription 取用户可以原地换套餐的那条订阅，没有返回空串。
-// 次序见文件头；是否可换只经 subscriptionAcceptsPaidChange 判断。
-// lock 为真时锁住选中的那一行并复核（调用方随后要在它上面换套餐）。
-func planChangeTargetSubscription(ctx context.Context, tx pgx.Tx,
-	tenantID, userID string, lock bool) (string, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT id::text, status, renewal_closed_at IS NOT NULL
-		  FROM subscriptions
-		 WHERE tenant_id = $1 AND user_id = $2::uuid
-		 ORDER BY (status <> 'expired') DESC, current_period_end DESC NULLS LAST,
-		          created_at DESC`, tenantID, userID)
-	if err != nil {
-		return "", err
-	}
-	subID := ""
-	for rows.Next() {
-		var id, status string
-		var closed bool
-		if err := rows.Scan(&id, &status, &closed); err != nil {
-			rows.Close()
-			return "", err
-		}
-		if subID == "" && subscriptionAcceptsPaidChange(status, closed) {
-			subID = id
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil || subID == "" || !lock {
-		return subID, err
-	}
-	// 锁住后复核：读和锁之间状态可能刚变
-	var status string
-	var closed bool
-	if err := tx.QueryRow(ctx, `
-		SELECT status, renewal_closed_at IS NOT NULL FROM subscriptions
-		 WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE`, tenantID, subID).Scan(&status, &closed); err != nil {
-		return "", err
-	}
-	if !subscriptionAcceptsPaidChange(status, closed) {
-		return "", nil
-	}
-	return subID, nil
-}
-
-// PlanChangeSubscription 返回用户可以原地换套餐的订阅 ID（没有为空串）。后台人工开单在
-// 没有同套餐订阅时据此决定开变更单还是新购单；只读，不加锁（quotePlanChange 会锁住复核）。
-func (s *Service) PlanChangeSubscription(ctx context.Context, tenantID, userID string) (string, error) {
-	var subID string
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		var err error
-		subID, err = planChangeTargetSubscription(ctx, tx, tenantID, userID, false)
-		return err
-	})
-	return subID, err
-}
 
 // waiveNewPrice 把新价全额减免（人工赠送）：折扣等于小计，剩余价值于是全部退进余额。
 // 折算本身（剩余价值）不动。人工单不带优惠券。

@@ -1,9 +1,15 @@
 package billing
 
 import (
+	"context"
+	"errors"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
 	"github.com/aegispanel/aegis/internal/domain/purchase"
+	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 // 统一报价（设计稿 2.2）：门户的金额与默认值一律由服务端算好下发，前端只在两组数之间切换。
@@ -68,6 +74,8 @@ type Quote struct {
 	PeriodStart    *time.Time       `json:"period_start"`
 	PeriodEnd      *time.Time       `json:"period_end"`
 	PreviousEnd    *time.Time       `json:"previous_end"`
+
+	currency string
 }
 
 // QuoteCoupon 是报价里生效的优惠码。
@@ -94,4 +102,283 @@ type Expectation struct {
 	Total          int64
 	BalanceApplied int64
 	Payable        int64
+}
+
+// Quote 是统一报价（POST /v1/me/checkout/quote）：在一个不加锁、不写库的事务里按建单同一套
+// 读取与函数算出每一条报价，最后统一过 purchase.ApplyBalance（开、关余额各一组）。
+// 优惠码不能用时不让整个报价失败，原因写在 coupon_error。
+func (s *Service) Quote(ctx context.Context, tenantID string, in QuoteInput) (*QuoteOutput, error) {
+	if _, err := uuid.Parse(in.UserID); err != nil {
+		return nil, httpx.NotFoundOrForbidden()
+	}
+	out := QuoteOutput{Quotes: []Quote{}}
+	err := s.pool.InTx(ctx, dbScope(tenantID, in.UserID), func(tx pgx.Tx) error {
+		now := time.Now().UTC()
+		out.AsOf = now
+		var err error
+		switch in.Action {
+		case QuoteRenew:
+			out.Quotes, err = quoteRenewTx(ctx, tx, tenantID, in, now)
+		case QuoteNew:
+			out.Quotes, err = quoteNewTx(ctx, tx, tenantID, in, now)
+		case QuoteChange:
+			out.Quotes, err = quoteChangeTx(ctx, tx, tenantID, in, now)
+		case QuotePack:
+			out.Quotes, err = quotePackTx(ctx, tx, tenantID, in)
+		default:
+			return httpx.Invalid(map[string]string{"action": "只能是 renew、change、new 或 pack"})
+		}
+		if err != nil {
+			return err
+		}
+		out.Currency = "CNY"
+		if len(out.Quotes) > 0 {
+			out.Currency = out.Quotes[0].currency
+		}
+		if out.Balance, err = availableBalance(ctx, tx, tenantID, in.UserID, out.Currency); err != nil {
+			return err
+		}
+		if out.MinPayment, err = minPayment(ctx, tx, tenantID, out.Currency); err != nil {
+			return err
+		}
+		for i := range out.Quotes {
+			q := &out.Quotes[i]
+			avail := out.Balance
+			if q.currency != out.Currency {
+				avail = 0 // 不同币种的余额不能抵（目录只有 CNY 时不会发生）
+			}
+			q.WithBalance = purchase.WaiveSmallDue(purchase.ApplyBalance(q.Total, avail, avail, out.MinPayment))
+			q.WithoutBalance = purchase.WaiveSmallDue(purchase.ApplyBalance(q.Total, avail, 0, out.MinPayment))
+		}
+		return nil
+	})
+	if err != nil {
+		var he *httpx.Error
+		if errors.As(err, &he) {
+			return nil, he
+		}
+		return nil, httpx.Internal(err)
+	}
+	return &out, nil
+}
+
+// quoteCoupon 按建单同一口径试算优惠码（不锁券行）；不能用时把原因放进 coupon_error。
+func quoteCoupon(ctx context.Context, tx pgx.Tx, tenantID, userID, code, planID, currency string,
+	subtotal int64, q *Quote) error {
+	if code == "" {
+		return nil
+	}
+	m, err := applyCouponTx(ctx, tx, tenantID, userID, code, planID, currency, subtotal, false)
+	var he *httpx.Error
+	if errors.As(err, &he) {
+		msg := he.Message
+		q.CouponError = &msg
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if m != nil {
+		q.Discount = m.Discount
+		q.Coupon = &QuoteCoupon{Code: m.Code}
+	}
+	return nil
+}
+
+func strPtr(s string) *string { return &s }
+
+func timePtr(t time.Time) *time.Time { return &t }
+
+// quoteRenewTx：一份订阅续一期，每个价格档一条。生效中的接在原到期日后，过期 30 天内的从现在起算。
+func quoteRenewTx(ctx context.Context, tx pgx.Tx, tenantID string, in QuoteInput,
+	now time.Time) ([]Quote, error) {
+	if in.SubscriptionID == "" {
+		return nil, httpx.Invalid(map[string]string{"subscription_id": "必填"})
+	}
+	src, err := loadRenewalSourceTx(ctx, tx, tenantID, in.UserID, in.SubscriptionID, false)
+	if err != nil {
+		return nil, err
+	}
+	var productID string
+	if err := tx.QueryRow(ctx, `SELECT product_id::text FROM plans WHERE tenant_id = $1 AND id = $2::uuid`,
+		tenantID, src.PlanID).Scan(&productID); err != nil {
+		return nil, err
+	}
+	prices, err := listPlanPricesTx(ctx, tx, tenantID, productID, src.UserGroupID, now)
+	if err != nil {
+		return nil, err
+	}
+	base := now
+	if src.Status != "expired" && src.PeriodEnd != nil && src.PeriodEnd.After(now) {
+		base = *src.PeriodEnd
+	}
+	out := make([]Quote, 0, len(prices))
+	for _, p := range prices {
+		q := Quote{SubscriptionID: strPtr(in.SubscriptionID), PlanID: strPtr(src.PlanID),
+			PriceID: strPtr(p.ID), Interval: p.Interval, IntervalCount: int(p.IntervalCount),
+			Subtotal: p.UnitAmount, currency: p.Currency, PreviousEnd: src.PeriodEnd,
+			PeriodStart: timePtr(base), PeriodEnd: timePtr(addInterval(base, p.Interval, int(p.IntervalCount)))}
+		if err := quoteCoupon(ctx, tx, tenantID, in.UserID, in.CouponCode, src.PlanID, p.Currency,
+			p.UnitAmount, &q); err != nil {
+			return nil, err
+		}
+		q.Total = orderTotal(q.Subtotal, q.Discount, 0, 0)
+		out = append(out, q)
+	}
+	return out, nil
+}
+
+// quoteNewTx：新购一份，每个价格档一条。没带 new_copy 而已有可续的同款时与建单一样回 409
+// （门户改走续费）；同一套餐已有未付款的新购单回 409 order_pending。
+func quoteNewTx(ctx context.Context, tx pgx.Tx, tenantID string, in QuoteInput,
+	now time.Time) ([]Quote, error) {
+	if in.PlanID == "" {
+		return nil, httpx.Invalid(map[string]string{"plan_id": "必填"})
+	}
+	plan, err := loadNewPurchasePlanTx(ctx, tx, tenantID, in.UserID, in.PlanID, false, now)
+	if err != nil {
+		return nil, err
+	}
+	if !in.NewCopy {
+		if sub, err := renewableSamePlanSubscription(ctx, tx, tenantID, in.UserID, in.PlanID, false); err != nil {
+			return nil, err
+		} else if sub != "" {
+			return nil, ErrSamePlanUseRenewal
+		}
+	}
+	if err := ensureNoPendingNewOrder(ctx, tx, tenantID, in.UserID, in.PlanID, plan.PlanName); err != nil {
+		return nil, err
+	}
+	prices, err := listPlanPricesTx(ctx, tx, tenantID, plan.ProductID, plan.UserGroupID, now)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Quote, 0, len(prices))
+	for _, p := range prices {
+		q := Quote{PlanID: strPtr(in.PlanID), PriceID: strPtr(p.ID), Interval: p.Interval,
+			IntervalCount: int(p.IntervalCount), Subtotal: p.UnitAmount, currency: p.Currency,
+			PeriodStart: timePtr(now), PeriodEnd: timePtr(addInterval(now, p.Interval, int(p.IntervalCount)))}
+		if err := quoteCoupon(ctx, tx, tenantID, in.UserID, in.CouponCode, in.PlanID, p.Currency,
+			p.UnitAmount, &q); err != nil {
+			return nil, err
+		}
+		q.Total = orderTotal(q.Subtotal, q.Discount, 0, 0)
+		out = append(out, q)
+	}
+	return out, nil
+}
+
+// quoteChangeTx：换套餐。给了订阅没给套餐，按这份能换成的每个套餐展开；给了套餐没给订阅，
+// 按每份能换的订阅展开（多份时「把哪一份换成 X」）；都给就一条。每个价格档各一条。
+func quoteChangeTx(ctx context.Context, tx pgx.Tx, tenantID string, in QuoteInput,
+	now time.Time) ([]Quote, error) {
+	if in.SubscriptionID == "" && in.PlanID == "" {
+		return nil, httpx.Invalid(map[string]string{"subscription_id": "订阅与套餐至少给一个"})
+	}
+	var sources []*changeSource
+	if in.SubscriptionID != "" {
+		src, err := loadChangeSourceTx(ctx, tx, tenantID, in.UserID, in.SubscriptionID, false)
+		if err != nil {
+			return nil, err
+		}
+		if in.PlanID == src.PlanID {
+			return nil, ErrPlanChangeSamePlan
+		}
+		sources = append(sources, src)
+	} else {
+		cands, err := loadCandidatesTx(ctx, tx, tenantID, in.UserID)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range cands {
+			if c.State == purchase.StateDead || c.PlanID == in.PlanID || len(sources) >= maxQuoteRows {
+				continue
+			}
+			src, err := loadChangeSourceTx(ctx, tx, tenantID, in.UserID, c.SubscriptionID, false)
+			var he *httpx.Error
+			if errors.As(err, &he) {
+				continue // 有未完结的续费或变更单之类：这一份现在不能换，不列
+			}
+			if err != nil {
+				return nil, err
+			}
+			sources = append(sources, src)
+		}
+	}
+	var planIDs []string
+	if in.PlanID != "" {
+		planIDs = []string{in.PlanID}
+	}
+	out := []Quote{}
+	for _, src := range sources {
+		exclude := src.PlanID
+		targets, err := loadChangeTargetsTx(ctx, tx, tenantID, planIDs, exclude, src.UserGroupID, false, now)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range targets {
+			for _, p := range t.Prices {
+				credit, detail, err := src.credit(now, p.Currency)
+				if err != nil {
+					continue // 原订阅本期币种与这个价格不同，换不过去
+				}
+				q := Quote{SubscriptionID: strPtr(src.SubscriptionID), PlanID: strPtr(t.PlanID),
+					PriceID: strPtr(p.ID), Interval: p.Interval, IntervalCount: int(p.IntervalCount),
+					Subtotal: p.UnitAmount, Credit: credit, CreditDetail: detail, currency: p.Currency,
+					PreviousEnd: src.PeriodEnd, PeriodStart: timePtr(now),
+					PeriodEnd: timePtr(addInterval(now, p.Interval, int(p.IntervalCount)))}
+				if err := quoteCoupon(ctx, tx, tenantID, in.UserID, in.CouponCode, t.PlanID, p.Currency,
+					p.UnitAmount, &q); err != nil {
+					return nil, err
+				}
+				q.Total = orderTotal(q.Subtotal, q.Discount, q.Credit, 0)
+				q.Refund = max(q.Credit-(q.Subtotal-q.Discount), 0)
+				out = append(out, q)
+			}
+		}
+	}
+	return out, nil
+}
+
+// quotePackTx：一个流量包。给了订阅就核对它是本人生效中的（建单要求同样）。
+func quotePackTx(ctx context.Context, tx pgx.Tx, tenantID string, in QuoteInput) ([]Quote, error) {
+	if _, err := uuid.Parse(in.PackID); err != nil {
+		return nil, httpx.NotFoundOrForbidden()
+	}
+	q := Quote{PackID: strPtr(in.PackID)}
+	if in.SubscriptionID != "" {
+		if _, err := uuid.Parse(in.SubscriptionID); err != nil {
+			return nil, httpx.NotFoundOrForbidden()
+		}
+		var status string
+		err := tx.QueryRow(ctx, `SELECT status FROM subscriptions
+			WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid`,
+			tenantID, in.SubscriptionID, in.UserID).Scan(&status)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, httpx.NotFoundOrForbidden()
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !subscriptionAcceptsPaidChange(status, true) {
+			return nil, errPackNeedsLiveSubscription
+		}
+		q.SubscriptionID = strPtr(in.SubscriptionID)
+	}
+	err := tx.QueryRow(ctx, `
+		SELECT currency::text, unit_amount FROM traffic_packs
+		 WHERE tenant_id = $1 AND id = $2::uuid AND status = 'active'`,
+		tenantID, in.PackID).Scan(&q.currency, &q.Subtotal)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, httpx.NotFoundOrForbidden()
+	}
+	if err != nil {
+		return nil, err
+	}
+	// 限定套餐的券对流量包不适用（planID 传空，与建单同）
+	if err := quoteCoupon(ctx, tx, tenantID, in.UserID, in.CouponCode, "", q.currency, q.Subtotal, &q); err != nil {
+		return nil, err
+	}
+	q.Total = orderTotal(q.Subtotal, q.Discount, 0, 0)
+	return []Quote{q}, nil
 }

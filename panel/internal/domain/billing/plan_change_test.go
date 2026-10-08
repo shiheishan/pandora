@@ -72,6 +72,9 @@ func TestProrationCredit(t *testing.T) {
 		}, at(0), math.MaxInt64 / 2},
 	}
 	for _, tc := range cases {
+		if detailed, _ := prorationCreditDetail(tc.b, tc.now); detailed != tc.want {
+			t.Errorf("%s: prorationCreditDetail = %d, want %d", tc.name, detailed, tc.want)
+		}
 		if got := prorationCredit(tc.b, tc.now); got != tc.want {
 			t.Errorf("%s: credit=%d want %d", tc.name, got, tc.want)
 		}

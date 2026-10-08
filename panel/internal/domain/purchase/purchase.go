@@ -52,10 +52,13 @@ const (
 )
 
 // Offer 描述一次要落地的东西。PlanID 只对 OfferPlan 有意义；Has* 只对 OfferMixed 有意义。
+// PriceID 与 Days 不影响选项，只用来算每个选项「之后到哪天」（Placement.NewPeriodEnd）。
 type Offer struct {
 	Kind                          OfferKind
 	PlanID                        string
 	HasDays, HasReset, HasTraffic bool
+	PriceID                       string
+	Days                          int
 }
 
 // Kind 是一个选项的动作。
