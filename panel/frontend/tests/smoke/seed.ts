@@ -505,11 +505,13 @@ const pack = await call(ADM, '/v1/traffic-packs', {
   expect: [200, 201],
 })
 const packId = str(pack, (pack.pack as Json | undefined) ? 'pack.id' : 'id')
-await call(PUB, '/v1/me/traffic-pack-orders', { token: user, idem: true, body: { pack_id: packId, use_balance: 500, coupon_code: '' }, expect: [200, 201] })
+// 流量包加到一份在用的套餐上（购买模型统一 Q5：subscription_id 必填）
+await call(PUB, '/v1/me/traffic-pack-orders', { token: user, idem: true, body: { pack_id: packId, subscription_id: subscriptionId, use_balance: 500, coupon_code: '' }, expect: [200, 201] })
 
 step('收入调整与手动流量重置')
 await call(ADM, '/v1/revenue/adjustments', { token: admin, idem: true, body: { currency: 'CNY', amount: 1000, reason: 'smoke adjustment', effective_on: '' }, expect: [200, 201] })
-await call(ADM, `/v1/users/${userId}/traffic-reset`, { token: admin, idem: true, body: { note: 'smoke manual reset' }, expect: [200, 201] })
+// 手动重置按订阅行操作（购买模型统一：一个人可以有多份）
+await call(ADM, `/v1/subscriptions/${subscriptionId}/traffic-reset`, { token: admin, idem: true, body: { note: 'smoke manual reset' }, expect: [200, 201] })
 
 // ============================================================================
 //  提现申请（SQL 夹具）。产品路径走不通冒烟：佣金要被邀请人付款后由 aegis-admin 的

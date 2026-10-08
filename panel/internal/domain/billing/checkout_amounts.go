@@ -161,6 +161,10 @@ func checkExpectation(exp *Expectation, total int64, b purchase.Balance) error {
 	if exp == nil {
 		return nil
 	}
+	// 报价超过 10 分钟（或时刻在未来）一律重新报价：四个建单入口同一口径
+	if _, err := quoteTime(exp, time.Now().UTC()); err != nil {
+		return err
+	}
 	if exp.Total != total || exp.BalanceApplied != b.Applied || exp.Payable != b.Payable {
 		return ErrQuoteChanged
 	}
