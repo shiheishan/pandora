@@ -234,6 +234,7 @@ func (a *hysteria2Adapter) Start(parent context.Context, spec InboundSpec, hooks
 		_ = a.Close()
 		return fmt.Errorf("hysteria2 listen: %w", err)
 	}
+	warnSmallQUICSocketBuffers("hysteria2", spec.Config.Port, packet)
 	return nil
 }
 
