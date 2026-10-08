@@ -88,6 +88,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/commit", h.commitEnrollment)
 			r.Post("/abort", h.abortEnrollment)
 		})
+		// 服务器级绑定（/v1/servers/*，见 server_router.go）
+		registerServerRoutes(r, h)
 
 		// 其余接口一律要求有效的节点签名
 		r.Group(func(r chi.Router) {

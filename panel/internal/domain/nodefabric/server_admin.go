@@ -461,6 +461,12 @@ func (s *Service) SetServerStatus(ctx context.Context, tenantID, id string, in S
 		if err != nil {
 			return err
 		}
+		// 退役是终态：同事务收回服务器级绑定凭据（身份、进行中的接入、未用的绑定令牌）
+		if in.Status == "retired" {
+			if _, _, _, err := revokeServerBindingTx(ctx, tx, tenantID, id, ServerRevokedDeleted); err != nil {
+				return err
+			}
+		}
 		return audit.Write(ctx, tx, tenantID, audit.Entry{
 			ActorKind: "admin", ActorID: &in.ActorID, Action: "server.status_change",
 			ResourceType: "server", ResourceID: &id, APIDomain: "admin",
@@ -548,6 +554,10 @@ func (s *Service) DeleteServer(ctx context.Context, tenantID, actorID, id string
 				tenantID, id); err != nil {
 				return err
 			}
+		}
+		// 服务器级绑定凭据随删除一起收回（身份、进行中的接入、未用的绑定令牌）
+		if _, _, _, err := revokeServerBindingTx(ctx, tx, tenantID, id, ServerRevokedDeleted); err != nil {
+			return err
 		}
 		ct, err := tx.Exec(ctx, `UPDATE servers
 			SET deleted_at=now(), status='retired', retired_at=coalesce(retired_at,now()),
