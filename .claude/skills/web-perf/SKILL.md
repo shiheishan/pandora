@@ -58,25 +58,18 @@ description: pandora 面板网页打开性能的测量：静态分析（产物�
 ## 记录哪些指标
 
 - **静态**：每个入口首屏 JS、CSS 的原始 / gzip / br；后台看板、门户概览、门户订阅页三个路由的增量；全部 JS+CSS 合计；最大的 10 个 chunk；第三方依赖各多大。
-  - 2026-10-07 主线 a03aa47 的基线：
-    - 后台首屏 JS 397.9 / 121.7 / 105.1 KiB，CSS 32.4 / 7.7 / 6.9；
-    - 门户首屏 JS 392.5 / 122.3 / 106.3，CSS 26.2 / 7.0 / 6.3；
-    - 后台 JS+CSS 合计 1041.5；
-    - react-dom 202、zod 约 88、query-core 33。
 - **1000 节点基准**：
   - 加载：首屏（990 行进 DOM 的时刻）、加载期长任务数和最长那个、列表响应字节；
   - 静置窗口：nodes.changed 条数、重拉次数、每次重拉的脚本毫秒、长任务，以及 Task / Script / Style / Layout；
   - 交互：滚动 fps、p95、卡顿帧，全选和搜索到下一帧。
-  - 同一天的基线（M 系列 Mac，无头）：
-    - quiet 场景首屏 459 ms（x1）/ 715 ms（x4）；
-    - storm 场景 10 秒内 330 条事件、5 次重拉，每次重拉脚本 12 ms（x1）/ 46 ms（x4），x4 下滚动 55.7 fps、4 个卡顿帧；
-    - 常驻动画开时主线程每 10 秒 1964 ms，关后 40 ms。
 - **线上**：
   - Lighthouse 的 TTFB、FCP、LCP、TBT、CLS、Speed Index、性能分；
   - 请求数、传输 KB、协议；
   - 最慢的几个接口，重点看 `v1/me` 和后台看板的 6 个接口。
   - curl 表里每个首屏资源的编码、缓存头与耗时。
   - 服务端同时采 nginx 访问日志里 `/assets/` 的 request_time 和 upstream_time，空闲与压测中对比。
+
+基线数字（静态体积、1000 节点基准、常驻动画）在 `ops-local/web-perf/baseline-from-skill.md`，不在 skill 里；出新报告时追加到那个文件。
 
 ## 脚本
 
@@ -96,23 +89,13 @@ Chrome 默认用 `/Applications/Google Chrome.app`，换路径时设 `CHROME`。
 
 ## 坑
 
-- **`go build` / `go test` 不要和 `npm ci` 同时跑**：`node_modules` 里的 flatted 带 Go 包，并发时 go 会假失败。prep 期间别跑 Go 的验证。
 - **无头 Chrome 的数字偏大**：没有 GPU 合成，动画、重绘的成本会被放大。只拿它做同一台机器上的开关对照、改前改后对照；绝对值以有 GPU 的真浏览器复核为准。同一组对照要在同一次会话、机器空闲时跑，每格至少跑两遍。
 - **常驻动画**：呼吸灯曾动画 box-shadow，1000 节点页空闲时每 10 秒吃 1964 ms 主线程，已改成伪元素只动 transform / opacity 并尊重 `prefers-reduced-motion`（`admin/EventsCapsule.module.css`）。以后改任何常驻动画，都用 `run.sh idle` 验证。
-- **gzip_types 对不上 text/javascript**：
-  - Go 的 webapp 给 `.js` 发 `text/javascript; charset=utf-8`，nginx 按分号前的类型匹配 `gzip_types`。
-  - 旧模板只登记了 `application/javascript`，JS 一直是原样下发的，每个入口冷加载多传约 270 KB。
-  - 模板在 47451e0 补上了 `text/javascript`，但已装的机器要重跑 install.sh 重新渲染 nginx 才生效。上线后必须用 `run.sh online` 看 JS 有没有 `Content-Encoding`，不能只读配置。
-- **HTTP/2**：
-  - nginx 1.25.1 及以上写 `http2 on;`，更老的版本写 `listen … ssl http2`，`render-nginx.sh` 按版本渲染。
-  - HTTP/1.1 下每个源最多 6 条连接，每个标签页的 SSE 长期占一条，第 6 个标签页之后新页面会挂住。
-  - 开 h2 后每个并发请求都算一条 `limit_conn`，所以上限提到了 64。
+- **上线后必验**：`run.sh online` 看 JS、CSS 有没有 `Content-Encoding`（不能只读 nginx 配置：已装机器要重跑 install.sh 重新渲染才生效）；改 router 后用 curl 连打 `/assets/` 确认不 429（静态资源不应经过限流）。HTTP/1.1 下每个标签页的 SSE 长期占一条连接，开 h2 后 `limit_conn` 上限是 64。
 - **前面有 Cloudflare 橙云时**：浏览器到边缘那段本来就是 h2/h3 加压缩，curl 和 Lighthouse 量的是边缘，量不到源站。要看源站，就在机器上用 curl 请求回环 `127.0.0.1:9080`，或者用 `--resolve` 直连源站。
-- **SSE 让网络永远不空闲**：puppeteer、Lighthouse 都不能等 `networkidle`，要等 `load` 再加固定延时。
-- **只差 `#路由` 的导航是同文档跳转**：Lighthouse 量不到绘制，报 NO_FCP。所以 `lh.mjs` 的热缓存先跳到 `about:blank` 再回来。
-- **冷缓存会清掉 localStorage**，令牌是每个新文档开始时由 `evaluateOnNewDocument` 重新写入的。键名是 `pandora-portal-token` / `pandora-admin-token`。令牌由总协调从 1Password 给，经环境变量传入，不落盘、不写进结果文件。
+- **SSE 让网络永远不空闲**（同 flow-walk）：puppeteer、Lighthouse 都不能等 `networkidle`，要等 `load` 再加固定延时。只差 `#路由` 的导航是同文档跳转，Lighthouse 量不到绘制，报 NO_FCP，所以 `lh.mjs` 的热缓存先跳到 `about:blank` 再回来。
+- **冷缓存会清掉 localStorage**，令牌是每个新文档开始时由 `evaluateOnNewDocument` 重新写入的（键名见 flow-walk「坑」）。令牌由总协调从 1Password 给，经环境变量传入，不落盘、不写进结果文件。
 - **`PERF_TRIGGER` 的含义**：`old` 模拟迁移 00110 之前的行为（每次心跳都推 `nodes.changed`，前端按 2 秒节流整表重拉 1.26 MB），`new` 模拟 00110 之后（只在在线状态翻转时推）。测前端重拉节奏的改动，两种都跑。
-- **静态资源曾经经过 Redis 限流**：每 IP 每分钟 120 次，共用 IP 的用户冷加载会拿到 429，表现是白屏。1767a52 已经把 `webapp.Mount` 挪到限流之前；改 router 时用 curl 连打 `/assets/` 复核不会 429。
 - **nodes-bench 依赖页面文案和列表形态**：
   - 依赖 aria-label「选择 <名>」「全选当前列表」「搜索节点」，改了文案要同步改脚本。
   - 列表改成服务端翻页或搜索后，`/v1/nodes?` 的参数和每页行数都会变，`EXPECT_ROWS` 要跟着改。搜索那一项只量到发请求前的那一帧。

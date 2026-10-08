@@ -268,7 +268,7 @@ func checkExpiryRulesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	lapse(s6, 48*time.Hour)
 	scan("rescue scan")
 	orderReleasePG18InTxAs(t, ctx, p.app, p.fx.tenant, u5, func(tx pgx.Tx) error {
-		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, u5, "", 3)
+		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, u5, s5, 3)
 	})
 	rescued("gift card rescue", s5, 3, 1000)
 	extendClaim := orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, p.fx.referrer,

@@ -76,9 +76,10 @@ type CreateTrafficPackOrderInput struct {
 	Expect *Expectation
 }
 
-// CreateTrafficPackOrder 建一张流量包订单（kind='addon'）。
+// CreateTrafficPackOrder 建一张流量包订单（kind='addon'），加到 SubscriptionID 那一份上。
 //
-// 没有生效订阅也可以买（D-E-1）：余额挂在用户身上，等有了订阅再用。
+// 必须指定一份生效中的订阅（购买模型统一 Q5）：一份都没有时按原型提示「先续费或买个套餐」。
+// 订单的 subscription_id 存这一份，履约时余额挂上去（00137 的守卫核对）。
 // 幂等域与新购共用 order_create —— 数据库的订单/幂等对称绑定按 kind 映射
 // 幂等域，addon 映射到它（迁移 00070），不必另开一个域去改绑定函数。
 func (s *Service) CreateTrafficPackOrder(ctx context.Context, tenantID string,
@@ -90,6 +91,12 @@ func (s *Service) CreateTrafficPackOrder(ctx context.Context, tenantID string,
 		return nil, fmt.Errorf("create traffic pack order: %w", err)
 	}
 	if _, err := uuid.Parse(in.PackID); err != nil {
+		return nil, httpx.NotFoundOrForbidden()
+	}
+	if in.SubscriptionID == "" {
+		return nil, httpx.Invalid(map[string]string{"subscription_id": "请选择加到哪一份"})
+	}
+	if _, err := uuid.Parse(in.SubscriptionID); err != nil {
 		return nil, httpx.NotFoundOrForbidden()
 	}
 
@@ -110,13 +117,8 @@ func (s *Service) CreateTrafficPackOrder(ctx context.Context, tenantID string,
 		if err != nil {
 			return err
 		}
-		var userExists bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users
-			WHERE tenant_id = $1 AND id = $2::uuid)`, tenantID, in.UserID).Scan(&userExists); err != nil {
+		if err := lockLiveSubscriptionForPack(ctx, tx, tenantID, in.UserID, in.SubscriptionID); err != nil {
 			return err
-		}
-		if !userExists {
-			return httpx.NotFoundOrForbidden()
 		}
 
 		// 金额：先优惠券、再余额（顺序理由见 CreateOrder）。限定套餐的券对
@@ -132,8 +134,18 @@ func (s *Service) CreateTrafficPackOrder(ctx context.Context, tenantID string,
 			discount = coupon.Discount
 		}
 		total := subtotal - discount
-		balanceApplied := min(max(in.UseBalance, 0), total)
-		payable := total - balanceApplied
+		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced；付不了的回 422，只有换套餐的零头能免）
+		bal, err := balancePlan(ctx, tx, tenantID, in.UserID, currency, total, in.UseBalance, balanceOpts{})
+		if err != nil {
+			return err
+		}
+		if err := checkExpectation(in.Expect, total, bal); err != nil {
+			return err
+		}
+		if bal.Waived > 0 {
+			discount, total = waiveIntoDiscount(coupon, discount, total, bal.Waived)
+		}
+		balanceApplied, payable := bal.Applied, bal.Payable
 
 		var holdAccounts balanceHoldAccounts
 		if balanceApplied > 0 {
@@ -154,12 +166,12 @@ func (s *Service) CreateTrafficPackOrder(ctx context.Context, tenantID string,
 				(tenant_id, order_no, user_id, kind, status, currency,
 				 subtotal_amount, discount_amount, tax_amount,
 				 total_amount, balance_applied, payable_amount, expires_at, coupon_id,
-				 idempotency_key_id)
+				 idempotency_key_id, subscription_id)
 			VALUES ($1, $2, $3::uuid, 'addon', 'pending_payment', $4,
-			        $5, $6, 0, $7, $8, $9, now() + interval '30 minutes', $10, $11::uuid)
+			        $5, $6, 0, $7, $8, $9, now() + interval '30 minutes', $10, $11::uuid, $12::uuid)
 			RETURNING id::text, expires_at`,
 			tenantID, orderNo, in.UserID, currency, subtotal, discount, total,
-			balanceApplied, payable, couponID(coupon), in.Claim.ID,
+			balanceApplied, payable, couponID(coupon), in.Claim.ID, in.SubscriptionID,
 		).Scan(&orderID, &expiresAt); err != nil {
 			return err
 		}
@@ -232,6 +244,7 @@ func (s *Service) CreateTrafficPackOrder(ctx context.Context, tenantID string,
 			AfterDigest: map[string]any{
 				"order_no": orderNo, "total": total, "currency": currency,
 				"traffic_pack_id": in.PackID, "traffic_bytes": trafficBytes,
+				"subscription_id": in.SubscriptionID, "small_due_waived": bal.Waived,
 			},
 			APIDomain: "public", RequestID: httpx.RequestIDFrom(ctx),
 		}); err != nil {
@@ -263,19 +276,28 @@ func fulfillTrafficPackOrder(ctx context.Context, tx pgx.Tx, tenantID, orderID,
 	userID string) (string, error) {
 
 	var bytes int64
+	var subID *string
 	if err := tx.QueryRow(ctx, `
-		SELECT (oi.snapshot_quotas->0->>'limit')::bigint
+		SELECT (oi.snapshot_quotas->0->>'limit')::bigint, o.subscription_id::text
 		  FROM order_items oi
+		  JOIN orders o ON o.tenant_id = oi.tenant_id AND o.id = oi.order_id
 		 WHERE oi.tenant_id = $1 AND oi.order_id = $2::uuid
 		   AND oi.traffic_pack_id IS NOT NULL
 		   AND oi.snapshot_quotas->0->>'metric' = 'traffic.bytes'`,
-		tenantID, orderID).Scan(&bytes); err != nil {
+		tenantID, orderID).Scan(&bytes, &subID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", errors.New("addon order has no traffic pack snapshot")
 		}
 		return "", err
 	}
-	grantID, err := GrantTrafficPackTx(ctx, tx, tenantID, userID, "order", orderID, bytes)
+	// 升级前下的在途单没有指定订阅：用户恰好有一份生效中的就挂到那份，否则留作未分配
+	if subID == nil {
+		var err error
+		if subID, err = soleLiveSubscription(ctx, tx, tenantID, userID); err != nil {
+			return "", err
+		}
+	}
+	grantID, err := GrantTrafficPackTx(ctx, tx, tenantID, userID, subID, "order", orderID, bytes)
 	if err != nil {
 		return "", err
 	}
@@ -291,10 +313,11 @@ func fulfillTrafficPackOrder(ctx context.Context, tx pgx.Tx, tenantID, orderID,
 	return grantID, nil
 }
 
-// GrantTrafficPackTx 在调用方事务里给用户发一笔流量包余额。
-// source 与 source_id 唯一：同一单、同一张卡重复调用会撞唯一约束而不是发两份。
-func GrantTrafficPackTx(ctx context.Context, tx pgx.Tx, tenantID, userID, source,
-	sourceID string, bytes int64) (string, error) {
+// GrantTrafficPackTx 在调用方事务里给用户发一笔流量包余额，挂到 subscriptionID 那一份
+// （为空表示还没加到任何一份）。source 与 source_id 唯一：同一单、同一张卡重复调用会撞
+// 唯一约束而不是发两份。订阅属于同一用户由 00137 的约束触发器在提交时核对。
+func GrantTrafficPackTx(ctx context.Context, tx pgx.Tx, tenantID, userID string,
+	subscriptionID *string, source, sourceID string, bytes int64) (string, error) {
 
 	if bytes <= 0 {
 		return "", errors.New("traffic pack grant must be positive")
@@ -302,15 +325,17 @@ func GrantTrafficPackTx(ctx context.Context, tx pgx.Tx, tenantID, userID, source
 	var id string
 	err := tx.QueryRow(ctx, `
 		INSERT INTO traffic_pack_grants
-			(tenant_id, user_id, source, source_id, granted_bytes)
-		VALUES ($1, $2::uuid, $3, $4::uuid, $5)
-		RETURNING id::text`, tenantID, userID, source, sourceID, bytes).Scan(&id)
+			(tenant_id, user_id, source, source_id, granted_bytes, subscription_id)
+		VALUES ($1, $2::uuid, $3, $4::uuid, $5, $6::uuid)
+		RETURNING id::text`, tenantID, userID, source, sourceID, bytes, subscriptionID).Scan(&id)
 	return id, err
 }
 
 // TrafficPackGrant 是用户看到的一笔余额。
 type TrafficPackGrant struct {
-	ID             string    `json:"id"`
+	ID string `json:"id"`
+	// SubscriptionID 是这笔余额挂在哪一份上，null 表示还没加到任何一份
+	SubscriptionID *string   `json:"subscription_id"`
 	Source         string    `json:"source"`
 	OrderID        *string   `json:"order_id"`
 	GrantedBytes   int64     `json:"granted_bytes"`
@@ -335,7 +360,7 @@ func (s *Service) MyTrafficPacks(ctx context.Context, tenantID, userID string) (
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT id::text, source,
+			SELECT id::text, subscription_id::text, source,
 			       CASE WHEN source = 'order' THEN source_id::text END,
 			       granted_bytes, consumed_bytes, created_at
 			  FROM traffic_pack_grants
@@ -347,7 +372,7 @@ func (s *Service) MyTrafficPacks(ctx context.Context, tenantID, userID string) (
 		defer rows.Close()
 		for rows.Next() {
 			var g TrafficPackGrant
-			if err := rows.Scan(&g.ID, &g.Source, &g.OrderID, &g.GrantedBytes,
+			if err := rows.Scan(&g.ID, &g.SubscriptionID, &g.Source, &g.OrderID, &g.GrantedBytes,
 				&g.ConsumedBytes, &g.CreatedAt); err != nil {
 				return err
 			}
@@ -360,4 +385,54 @@ func (s *Service) MyTrafficPacks(ctx context.Context, tenantID, userID string) (
 		return nil, err
 	}
 	return &out, nil
+}
+
+// errPackNeedsLiveSubscription 是流量包要加到的那一份不在用（原型：先续费或买个套餐）。
+var errPackNeedsLiveSubscription = httpx.New(httpx.CodeConflict,
+	"流量包只能加到在用的套餐上，先续费或买个套餐")
+
+// lockLiveSubscriptionForPack 核对流量包要加到的那一份是本人的、生效中的；FOR KEY SHARE 只防删，
+// 不挡续费与扣量对订阅行的更新。
+func lockLiveSubscriptionForPack(ctx context.Context, tx pgx.Tx, tenantID, userID, subID string) error {
+	var status string
+	err := tx.QueryRow(ctx, `
+		SELECT status FROM subscriptions
+		 WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid
+		 FOR KEY SHARE`, tenantID, subID, userID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return httpx.NotFoundOrForbidden()
+	}
+	if err != nil {
+		return err
+	}
+	// 生效中 = 可付费变更的状态里去掉「过期但窗口没关」（窗口按已关传入）
+	if subscriptionAcceptsPaidChange(status, true) {
+		return nil
+	}
+	return errPackNeedsLiveSubscription
+}
+
+// soleLiveSubscription 返回用户唯一一份生效中的订阅；没有或不止一份时为 nil（不替用户选）。
+func soleLiveSubscription(ctx context.Context, tx pgx.Tx, tenantID, userID string) (*string, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT s.id::text FROM subscriptions s
+		 WHERE s.tenant_id = $1 AND s.user_id = $2::uuid
+		   AND s.status IN ('active','trialing','grace','past_due')
+		 LIMIT 2`, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil || len(ids) != 1 {
+		return nil, err
+	}
+	return &ids[0], nil
 }

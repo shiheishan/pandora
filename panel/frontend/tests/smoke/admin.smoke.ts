@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { adminMeSchema } from '../../src/admin/me'
 import { tasksSchema } from '../../src/admin/tasks'
 import { adjustmentsSchema, latePaymentsSchema, orderResponseSchema, ordersSchema, paymentHistorySchema, providersSchema } from '../../src/admin/screens/billing/schemas'
@@ -71,9 +72,9 @@ const rows: Row[] = [
   { at: 'users/api.ts', path: 'v1/users', query: { q: s.portal.email, limit: 100, offset: 0 }, schema: usersSchema },
   { at: 'users/api.ts', path: 'v1/plans', schema: planOptionsSchema },
   { at: 'users/api.ts', seed: '演示渠道付款开出订阅；UniProxy /alive 上报在线 IP', path: 'v1/devices', schema: devicesSchema },
-  { at: 'users/api.ts', seed: '后台 POST users/{id}/traffic-reset', path: 'v1/traffic-resets', query: { limit: 25, offset: 0 }, schema: resetLogsSchema },
+  { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: 'v1/traffic-resets', query: { limit: 25, offset: 0 }, schema: resetLogsSchema },
   { at: 'users/api.ts', path: 'v1/traffic-resets/stats', schema: resetStatsSchema },
-  { at: 'users/api.ts', seed: '后台 POST users/{id}/traffic-reset', path: `v1/users/${s.portal.user_id}/traffic-resets`, schema: resetLogsSchema },
+  { at: 'users/api.ts', seed: '后台 POST subscriptions/{id}/traffic-reset', path: `v1/users/${s.portal.user_id}/traffic-resets`, schema: resetLogsSchema },
 
   // ---- 营销 ----
   { at: 'marketing/queries.ts', path: 'v1/plans', schema: marketingPlansResponse },
@@ -148,7 +149,13 @@ const rows: Row[] = [
   { at: 'billing/api.ts', seed: '演示渠道回调两笔', path: `v1/orders/${s.order_id}/payments`, schema: paymentHistorySchema },
   { at: 'billing/api.ts', path: 'v1/users', query: { q: 'smoke', limit: 8, offset: 0 }, schema: usersSchema },
   { at: 'billing/api.ts', seed: '对已付订单再送一笔演示回调（excess_capture）', path: 'v1/late-payments', query: { limit: 25, offset: 0 }, schema: latePaymentsSchema },
-  { at: 'billing/api.ts', seed: '迁移种子 offline + SQL 夹具 demo', path: 'v1/payment-providers', schema: providersSchema },
+  // 每个渠道带最低付款额 min_amount（分，非负整数；易支付没配时是 100），购买模型统一 2.6
+  {
+    at: 'billing/api.ts',
+    seed: '迁移种子 offline + SQL 夹具 demo',
+    path: 'v1/payment-providers',
+    schema: providersSchema.extend({ providers: z.array(providersSchema.shape.providers.element.extend({ min_amount: z.number().int().min(0) })) }),
+  },
   { at: 'billing/api.ts', seed: '后台 POST revenue/adjustments', path: 'v1/revenue/adjustments', schema: adjustmentsSchema },
 
   // ---- 非 JSON：两个 CSV 导出与事件流，只验状态与内容类型 ----

@@ -115,8 +115,9 @@ func (h *handlers) subscribe(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Profile-Update-Interval", "12")
 	// 订阅内容随节点状态变化，不能被任何中间层缓存
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-	// 客户端拿文件名当配置名，否则显示成一长串订阅 URL（站点名按租户缓存，不额外查库）
-	w.Header().Set("Content-Disposition", subscription.ContentDisposition(h.d.Subscription.SiteName(ctx, tenantID)))
+	// 客户端拿文件名当配置名，否则显示成一长串订阅 URL。配置名是「站点名 · 备注名」或
+	// 「站点名 · 套餐名」，与门户上的 client_name 同一个函数（站点名按租户缓存，不额外查库）
+	w.Header().Set("Content-Disposition", h.profileDisposition(r, pull))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 }
@@ -153,9 +154,16 @@ func (h *handlers) writeExpiredSubscription(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Profile-Update-Interval", "1")
 	w.Header().Set("Profile-Web-Page-Url", renewalPageURL(h.d.Cfg.PublicBaseURL, cred.SubscriptionID))
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-	w.Header().Set("Content-Disposition", subscription.ContentDisposition(h.d.Subscription.SiteName(ctx, tenantID)))
+	w.Header().Set("Content-Disposition", h.profileDisposition(r, pull))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// profileDisposition 是订阅下载的 Content-Disposition：文件名就是这一份在 App 里的配置名
+// （subscription.ProfileName，与门户订阅列表的 client_name 同一来源）。
+func (h *handlers) profileDisposition(r *http.Request, pull *subscription.Pull) string {
+	site := h.d.Subscription.SiteName(r.Context(), httpx.TenantIDFrom(r.Context()))
+	return subscription.ContentDisposition(subscription.ProfileName(site, pull.Label, pull.PlanName))
 }
 
 // renewalPageURL 是门户里这条订阅的续费页（门户由网关在根 / 下发，页面地址见
@@ -273,18 +281,23 @@ type rotateLinkResponse struct {
 	URL string `json:"url"`
 }
 
-// subscriptionRotateLimits 是门户重置订阅链接的按用户限频（用户 2026-10-07 定），两条规则
-// 在同一次 EVAL 里判定：
+// subscriptionRotateLimits 是门户重置订阅链接的限频（用户 2026-10-07 定口径，购买模型统一后
+// 改为按份），三条规则在同一次 EVAL 里按声明顺序判定：
 //
-//	两次重置之间至少隔 10 分钟   冷却式计数，从这次重置起 10 分钟内的下一次回 429
-//	每天最多 5 次                冷却式计数，从当天第一次重置起 24 小时内最多 5 次
+//	每份两次重置之间至少隔 10 分钟   按「用户:订阅」冷却式计数
+//	每份每天最多 5 次               按「用户:订阅」冷却式计数，从这份当天第一次重置起 24 小时
+//	每个账号每天最多 20 次           按账号冷却式计数，从当天第一次重置起 24 小时
 //
-// 间隔放在前面：被间隔拦下的请求不占当天的次数。超限回 429「操作太频繁，请 X 分钟后再试」，
-// 不进处理器，旧链接照常可用。后台替用户换发不限频（管理员操作本身有审计）。
+// 前两条是用户定的口径，从按账号改成按份：重置 A 之后马上重置 B 不受影响。第三条是保护：
+// 每次重置都推进全局下发纪元、引发全池重算，名下 20 份订阅的人一天也不该能触发 100 次。
+// 被前面维度拦下的请求不占后面维度的额度，所以「间隔」在前、按账号的总数在最后。
+// 超限回 429「操作太频繁，请 X 分钟后再试」，不进处理器，旧链接照常可用。
+// 后台替用户换发不限频（管理员操作本身有审计）。
 func subscriptionRotateLimits() []middleware.Limit {
 	return []middleware.Limit{
-		middleware.ByAccount("sub_rotate_gap", 10*time.Minute, 1).AsCooldown().WithRetryHint(),
-		middleware.ByAccount("sub_rotate_day", 24*time.Hour, 5).AsCooldown().WithRetryHint(),
+		middleware.ByAccountParam("sub_rotate_gap", "id", 10*time.Minute, 1).AsCooldown().WithRetryHint(),
+		middleware.ByAccountParam("sub_rotate_day", "id", 24*time.Hour, 5).AsCooldown().WithRetryHint(),
+		middleware.ByAccount("sub_rotate_acct_day", 24*time.Hour, 20).AsCooldown().WithRetryHint(),
 	}
 }
 

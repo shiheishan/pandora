@@ -1,6 +1,6 @@
 ---
 name: verify
-description: pandora 改完代码后本地跑什么、推送后必须等哪个 CI 结论才算完成，以及每个 CI job 各管什么。改了 Go、前端、迁移、部署脚本或 workflow，要验证、准备推送、等 CI 或查 CI 为什么变红时使用。
+description: pandora 改完代码后本地跑什么、推送后必须等哪个 CI 结论才算完成，以及每个 CI job 各管什么。改了 Go、前端、迁移、部署脚本或 workflow，要验证、准备推送、等 CI 时使用；CI 变红了怎么查见 ci-triage。
 ---
 
 # 验证 pandora 的改动
@@ -21,7 +21,7 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 | pdnd 的协议、能力矩阵，或面板的协议 schema | `python3 pdnd/release/check_native_panel_parity.py` |
 | 面板前端 | 在 `panel/frontend/` 跑 `npm run lint`、`npm run typecheck`、`npm run test`（依赖变了先 `npm ci`），不构建 |
 | 部署脚本 | 在 `panel/deploy/` 跑对应的 `*_mock_test.sh` / `*_static_test.sh` / `*_test.sh` |
-| 迁移文件 | `bash panel/deploy/check-migrations_mock_test.sh`（编号与 Up 标记）；在 `panel/` 跑 `go test ./tools/migrationlint/ ./internal/platform/db/`（DDL lint 与棘轮、Up 段冻结、表登记簿）；动了已发布迁移再跑 `python3 .claude/skills/new-migration/scripts/upsegment-sha.py --check`（Up 段 0 条不一致）；外加改到的 Go 包 |
+| 迁移文件 | 本地命令和自证见 new-migration skill 第 4 节；外加改到的 Go 包 |
 
 本地跑不了的：
 - 迁移往返（`run-migration-roundtrip.sh`）要 Docker，只在 GitHub 的 panel-pg18 job 里跑。
@@ -47,12 +47,11 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 
 ## 坑
 
-- `go build` / `go test` 不要和 `npm ci` 同时跑：`node_modules` 里带 Go 包，并发时 Go 会假失败。
+- `go build` / `go test` 不要和 `npm ci` 同时跑（见根 CLAUDE.md「环境与工具坑」）。
 - PG18 用例在没有 Docker 的地方会跳过，跳过不等于通过。只有 GitHub 的 panel-pg18 job 真跑，`wait-github.sh` 会把 SKIP 判为失败。
 
 ## CI 各 job 管什么
 
-workflow 默认 `shell: bash`，即 `-eo pipefail`，`| tee` 不会吞掉失败。
 
 - **pandora-native.yml**
   - pdnd 的 Ubuntu race/vet、原生 ubuntu-24.04-arm 的 ARM64 race 门、`-tags interop` 的非 race 外部客户端门，以及 amd64/arm64 双架构构建门禁。
@@ -62,13 +61,13 @@ workflow 默认 `shell: bash`，即 `-eo pipefail`，`| tee` 不会吞掉失败�
 - **panel-pg18.yml**
   - panel-unit 跑 panel 全量 build、vet 和 go test（PG18 用例在此跳过），是 CI 上唯一跑 panel 全部单元测试的地方。
   - PG18 集成门禁的触发面是整棵 `panel/internal` 加 cmd 与 web 的 Go 源码、`panel/migrations` 与往返脚本，不拖 pdnd 的重任务；runner 自带 Docker，goose 版本跟 `build-release.sh` 走。
-  - 同一个 panel-pg18 job 里先跑「Migration round trip (up, down, up per migration)」：`run-migration-roundtrip.sh panel` 从空库逐个迁移 up → down（必须等于上一版）→ 再 up（必须等于第一次），irreversible 的 down 必须被拒且版本、结构不变；118 个迁移约 2.5 分钟。`KNOWN` 已清空，任何迁移往返不过即红。看结论的命令见 new-migration skill 第 4 节。检查机跳过整个 panel-pg18，所以只有 GitHub 上的结论算数。
+  - 同一个 panel-pg18 job 里先跑「Migration round trip (up, down, up per migration)」：`run-migration-roundtrip.sh panel` 从空库逐个迁移 up → down（必须等于上一版）→ 再 up（必须等于第一次），irreversible 的 down 必须被拒且版本、结构不变；耗时见 new-migration skill。`KNOWN` 已清空，任何迁移往返不过即红。看结论的命令见 new-migration skill 第 4 节。检查机跳过整个 panel-pg18，所以只有 GitHub 上的结论算数。
   - 往返通过后再跑 `run-pg18-gates.sh` 的全部 PG18 域门禁。
 - **panel-smoke.yml**
   - 新前端对真实网关的联调冒烟，触发面含 `panel/frontend/src` 与 `panel/tests`。
   - 经 `deploy/run-smoke-stack.sh` 起一次性的 PG18 加网关，读表先于写路径。
-  - 再经 `deploy/run-smoke-e2e.sh` 在同一栈上跑 `panel/tests` 下的 e2e 脚本（清单与顺序以该脚本的 `SCRIPTS` 为准，现为九个），含内鬼检测评估 `risk_e2e.sh`。全部跑完再判，任一失败 job 即变红。
-  - 最后用 `panel/tools/loadtest` 做一次 200 用户、5 节点、60 秒的压测工具试跑，要求零 5xx、零签名失败。
+  - 再经 `deploy/run-smoke-e2e.sh` 在同一栈上跑 `panel/tests` 下的 e2e 脚本（清单与顺序以该脚本的 `SCRIPTS` 为准），含内鬼检测评估 `risk_e2e.sh`。全部跑完再判，任一失败 job 即变红。
+  - 最后用 `panel/tools/loadtest` 做一次小规模压测工具试跑（规模以 workflow 为准），要求零 5xx、零签名失败。
 - **panel-deploy.yml**
   - 按 `panel/deploy` 与 `panel/migrations` 路径触发。
   - deploy-mock-tests job 逐个点名跑不需要数据库和 root 的 deploy 桩测试（清单以 workflow 里的 `tests=(...)` 为准）。新加这类桩测试要补进清单。

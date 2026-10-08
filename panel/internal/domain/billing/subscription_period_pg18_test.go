@@ -273,7 +273,7 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	origEnd := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Microsecond)
 	p.setPeriodEnd(subID, origEnd)
 	orderReleasePG18InTxAs(t, ctx, app, p.fx.tenant, buyer, func(tx pgx.Tx) error {
-		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, buyer, "", 30)
+		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, buyer, subID, 30)
 	})
 	if end := p.aligned("gift card extension", subID); !end.Equal(origEnd.AddDate(0, 0, 30)) {
 		t.Fatalf("gift card extension end=%s want %s", end, origEnd.AddDate(0, 0, 30))
@@ -498,5 +498,18 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 	t.Run("plan change entries", func(t *testing.T) {
 		p.t = t
 		checkPlanChangeEntriesPG18(t, p, conn.Conn())
+	})
+
+	// 购买模型统一（w7buya）：落点由人选（套餐卡、加时长、重置、送流量、后台开单）
+	t.Run("placement", func(t *testing.T) {
+		p.t = t
+		checkPlacementPG18(t, p, conn.Conn())
+	})
+
+	// 购买模型统一（w7buya）：统一报价与确认比对、余额与支付最低额、防重复下单、换掉一份。
+	// 放在最后：它给租户加了一个带最低额的渠道（结束时停用）
+	t.Run("purchase quote", func(t *testing.T) {
+		p.t = t
+		checkPurchaseQuotePG18(t, p, conn.Conn())
 	})
 }

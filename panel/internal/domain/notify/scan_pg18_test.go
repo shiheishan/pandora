@@ -40,16 +40,19 @@ func TestScanQuotaCountsTrafficPacksPG18(t *testing.T) {
 	must(`UPDATE notification_templates SET body='{{percent}} {{remaining}}'
 		WHERE tenant_id=$1 AND code='quota.warning' AND channel='inapp'`, tenant)
 
-	// 每个用户一条生效订阅、本期套餐额度 100 字节；pack 为 [授予, 已用]，nil 表示没买
+	// 每个用户一条生效订阅、本期套餐额度 100 字节；pack 为 [授予, 已用]，nil 表示没买。
+	// 流量包按份挂（购买模型统一）：unattached 的那笔没加到任何一份，不算这份的余量
 	users := []struct {
-		key      string
-		consumed int64
-		pack     []int64
+		key        string
+		consumed   int64
+		pack       []int64
+		unattached bool
 	}{
-		{"a", 85, nil},              // 85%：预警
-		{"b", 85, []int64{100, 0}},  // 85 / 200：有余量，不预警
-		{"c", 85, []int64{50, 50}},  // 流量包用光：85%，预警
-		{"d", 100, []int64{40, 30}}, // 100 / 110 ≈ 91%：落在 80 档，剩余 10 字节
+		{"a", 85, nil, false},              // 85%：预警
+		{"b", 85, []int64{100, 0}, false},  // 85 / 200：有余量，不预警
+		{"c", 85, []int64{50, 50}, false},  // 流量包用光：85%，预警
+		{"d", 100, []int64{40, 30}, false}, // 100 / 110 ≈ 91%：落在 80 档，剩余 10 字节
+		{"e", 85, []int64{100, 0}, true},   // 包没挂在这份上：85%，预警
 	}
 	subs := map[string]string{}
 	for i, u := range users {
@@ -69,15 +72,19 @@ func TestScanQuotaCountsTrafficPacksPG18(t *testing.T) {
 			VALUES($1,$2,'traffic.bytes','cycle',now() - interval '1 day',now() + interval '30 days',100,100,$3)`,
 			tenant, sub, u.consumed)
 		if u.pack != nil {
-			must(`INSERT INTO traffic_pack_grants(tenant_id,user_id,source,source_id,granted_bytes,consumed_bytes)
-				VALUES($1,$2,'migration',gen_random_uuid(),$3,$4)`, tenant, user, u.pack[0], u.pack[1])
+			attachTo := &sub
+			if u.unattached {
+				attachTo = nil
+			}
+			must(`INSERT INTO traffic_pack_grants(tenant_id,user_id,subscription_id,source,source_id,granted_bytes,consumed_bytes)
+				VALUES($1,$2,$5,'migration',gen_random_uuid(),$3,$4)`, tenant, user, u.pack[0], u.pack[1], attachTo)
 		}
 	}
 
 	svc := New(app, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte("notify-scan-salt"))
 	queued, err := svc.ScanQuota(ctx, tenant)
-	if err != nil || queued != 3 {
-		t.Fatalf("ScanQuota queued=%d err=%v, want 3", queued, err)
+	if err != nil || queued != 4 {
+		t.Fatalf("ScanQuota queued=%d err=%v, want 4", queued, err)
 	}
 	rows, err := admin.Query(ctx, `SELECT dedupe_key, payload->>'remaining' FROM notification_deliveries
 		WHERE tenant_id=$1 AND template_code='quota.warning' ORDER BY dedupe_key`, tenant)
@@ -95,7 +102,7 @@ func TestScanQuotaCountsTrafficPacksPG18(t *testing.T) {
 	var warned []string
 	remaining := map[string]string{}
 	for _, d := range got {
-		// 键形如 quota:<订阅>:80:inapp —— 三条都应落在 80 档
+		// 键形如 quota:<订阅>:80:inapp —— 四条都应落在 80 档
 		sub, ok := strings.CutPrefix(d.key, "quota:")
 		if sub, ok = strings.CutSuffix(sub, ":80:inapp"); !ok || subs[sub] == "" {
 			t.Fatalf("unexpected dedupe key %q", d.key)
@@ -104,10 +111,10 @@ func TestScanQuotaCountsTrafficPacksPG18(t *testing.T) {
 		remaining[subs[sub]] = d.remaining
 	}
 	sort.Strings(warned)
-	if len(warned) != 3 || warned[0] != "a" || warned[1] != "c" || warned[2] != "d" {
-		t.Fatalf("warned users=%v, want [a c d]", warned)
+	if len(warned) != 4 || warned[0] != "a" || warned[1] != "c" || warned[2] != "d" || warned[3] != "e" {
+		t.Fatalf("warned users=%v, want [a c d e]", warned)
 	}
-	if remaining["a"] != "15 B" || remaining["c"] != "15 B" || remaining["d"] != "10 B" {
+	if remaining["a"] != "15 B" || remaining["c"] != "15 B" || remaining["d"] != "10 B" || remaining["e"] != "15 B" {
 		t.Fatalf("remaining=%v", remaining)
 	}
 
@@ -116,7 +123,7 @@ func TestScanQuotaCountsTrafficPacksPG18(t *testing.T) {
 		t.Fatal(err)
 	}
 	var total int
-	if err := admin.QueryRow(ctx, `SELECT count(*) FROM notification_deliveries WHERE tenant_id=$1`, tenant).Scan(&total); err != nil || total != 3 {
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM notification_deliveries WHERE tenant_id=$1`, tenant).Scan(&total); err != nil || total != 4 {
 		t.Fatalf("deliveries after rescan=%d err=%v", total, err)
 	}
 }

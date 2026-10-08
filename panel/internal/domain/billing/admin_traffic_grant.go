@@ -54,7 +54,7 @@ type AdminTrafficGrantOutput struct {
 	UserEmail      string `json:"user_email"`
 	GrantID        string `json:"grant_id"`
 	GrantedBytes   int64  `json:"granted_bytes"`
-	// RemainingBytesTotal 是发放之后这个用户全部流量包的剩余合计
+	// RemainingBytesTotal 是发放之后这一份订阅上全部流量包的剩余合计（流量包按订阅，Q5）
 	RemainingBytesTotal int64 `json:"remaining_bytes_total"`
 
 	prepared httpx.PreparedResponse
@@ -117,7 +117,9 @@ func (s *Service) GrantTrafficPackAsAdmin(ctx context.Context, tenantID string,
 			return err
 		}
 
-		grantID, err := GrantTrafficPackTx(ctx, tx, tenantID, out.UserID, "admin", sourceID.String(), in.Bytes)
+		// 余额挂到这一行的订阅上（购买模型统一 Q5）
+		subID := in.SubscriptionID
+		grantID, err := GrantTrafficPackTx(ctx, tx, tenantID, out.UserID, &subID, "admin", sourceID.String(), in.Bytes)
 		if err != nil {
 			return err
 		}
@@ -126,8 +128,8 @@ func (s *Service) GrantTrafficPackAsAdmin(ctx context.Context, tenantID string,
 		out.GrantedBytes = in.Bytes
 		if err := tx.QueryRow(ctx, `
 			SELECT coalesce(sum(granted_bytes - consumed_bytes), 0)::bigint
-			  FROM traffic_pack_grants WHERE tenant_id = $1 AND user_id = $2::uuid`,
-			tenantID, out.UserID).Scan(&out.RemainingBytesTotal); err != nil {
+			  FROM traffic_pack_grants WHERE tenant_id = $1 AND subscription_id = $2::uuid`,
+			tenantID, in.SubscriptionID).Scan(&out.RemainingBytesTotal); err != nil {
 			return err
 		}
 

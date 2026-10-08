@@ -77,107 +77,17 @@ func (s *Service) CreateRenewal(ctx context.Context, tenantID string,
 	}
 
 	var out CreateOrderOutput
-	err := s.pool.InTxSerializable(ctx, dbScope(tenantID, claimActor), func(tx pgx.Tx) error {
-		var (
-			planID, planVersionID string
-			curPriceID            *string
-			status                string
-			periodEnd             *time.Time
-			renewalClosed         bool
-		)
-		if err := tx.QueryRow(ctx, `
-			SELECT plan_id::text, plan_version_id::text, price_id::text,
-			       status, current_period_end, renewal_closed_at IS NOT NULL
-			  FROM subscriptions
-			 WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid
-			 FOR UPDATE`,
-			tenantID, in.SubscriptionID, in.UserID).Scan(
-			&planID, &planVersionID, &curPriceID, &status, &periodEnd, &renewalClosed); err != nil {
-			if err == pgx.ErrNoRows {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-
-		var allowRenewal bool
-		if err := tx.QueryRow(ctx, `SELECT allow_renewal FROM plans
-			WHERE tenant_id=$1 AND id=$2::uuid FOR SHARE`, tenantID, planID).Scan(&allowRenewal); err != nil {
-			if err == pgx.ErrNoRows {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-		if !allowRenewal {
-			return httpx.New(httpx.CodeConflict, "该套餐当前不允许续费")
-		}
-		var userGroupID *string
-		if err := tx.QueryRow(ctx, `SELECT user_group_id FROM users
-			WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, in.UserID).Scan(&userGroupID); err != nil {
-			if err == pgx.ErrNoRows {
-				return httpx.NotFoundOrForbidden()
-			}
-			return err
-		}
-
-		// 已取消、或过期超过原地续费窗口（30 天）的订阅不给续 —— 那种情况应该
-		// 走重新购买，因为权益版本、价格、节点分组可能都已经变了。窗口内的已过期
-		// 订阅照常续，沿用原套餐版本，链接不变（规则 4）
-		if !subscriptionAcceptsPaidChange(status, renewalClosed) {
-			if status == "expired" {
-				return ErrRenewalWindowClosed
-			}
-			return ErrSubNotRenewable
-		}
-		if err := ensureNoOpenSubscriptionOrder(ctx, tx, tenantID, in.SubscriptionID); err != nil {
-			return err
-		}
-
-		priceID := in.PriceID
-		if priceID == "" {
-			if curPriceID == nil {
-				return httpx.New(httpx.CodeConflict, "这条订阅没有关联价格，无法自动续费")
-			}
-			priceID = *curPriceID
-		}
-
-		var (
-			currency      string
-			unitAmount    int64
-			interval      string
-			intervalCount int16
-			priceStatus   string
-			priceGroupID  *string
-			validFrom     *time.Time
-			validUntil    *time.Time
-		)
-		if err := tx.QueryRow(ctx, `
-			SELECT pr.currency::text, pr.unit_amount, pr.billing_interval,
-			       pr.interval_count, pr.status, pr.user_group_id,
-			       pr.valid_from, pr.valid_until
-			  FROM prices pr
-			  JOIN plans pl ON pl.product_id = pr.product_id AND pl.tenant_id = pr.tenant_id
-			 WHERE pr.tenant_id = $1 AND pr.id = $2::uuid AND pl.id = $3::uuid
-			   AND pr.currency IN ('CNY','USD')
-			 FOR UPDATE OF pr`,
-			tenantID, priceID, planID).Scan(&currency, &unitAmount,
-			&interval, &intervalCount, &priceStatus, &priceGroupID,
-			&validFrom, &validUntil); err != nil {
-			if err == pgx.ErrNoRows {
-				return ErrRenewPriceGone
-			}
-			return err
-		}
-		if priceStatus != "active" {
-			return ErrRenewPriceGone
-		}
-
-		if priceGroupID != nil && (userGroupID == nil || *priceGroupID != *userGroupID) {
-			return ErrRenewPriceGone
-		}
+	// 与其余建单入口一致用可重试的序列化事务：少一些「请求冲突，请重试」
+	err := s.pool.InTxSerializableRetry(ctx, dbScope(tenantID, claimActor), func(tx pgx.Tx) error {
 		now := time.Now().UTC()
-		if !catalogPriceCurrentlyValid(validFrom, validUntil, now) {
-			return ErrRenewPriceGone
+		t, err := loadRenewalTargetTx(ctx, tx, tenantID, in.UserID, in.SubscriptionID,
+			in.PriceID, true, now)
+		if err != nil {
+			return err
 		}
+		planID, planVersionID, priceID := t.PlanID, t.PlanVersionID, t.Price.ID
+		currency, unitAmount := t.Price.Currency, t.Price.UnitAmount
+		interval, intervalCount := t.Price.Interval, t.Price.IntervalCount
 
 		subtotal := unitAmount
 
@@ -200,14 +110,19 @@ func (s *Service) CreateRenewal(ctx context.Context, tenantID string,
 		}
 		total := subtotal - discount
 
-		balanceApplied := in.UseBalance
-		if balanceApplied < 0 {
-			balanceApplied = 0
+		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced；付不了的回 422，只有换套餐的零头能免）
+		bal, err := balancePlan(ctx, tx, tenantID, in.UserID, currency, total,
+			in.UseBalance, balanceOpts{Offline: in.Offline != nil, Manual: in.ManualActor != ""})
+		if err != nil {
+			return err
 		}
-		if balanceApplied > total {
-			balanceApplied = total
+		if err := checkExpectation(in.Expect, total, bal); err != nil {
+			return err
 		}
-		payable := total - balanceApplied
+		if bal.Waived > 0 {
+			discount, total = waiveIntoDiscount(coupon, discount, total, bal.Waived)
+		}
+		balanceApplied, payable := bal.Applied, bal.Payable
 		if in.Offline != nil && payable == 0 {
 			return httpx.New(httpx.CodeConflict, "这张订单不需要支付，请改用赠送")
 		}
@@ -349,6 +264,7 @@ func (s *Service) CreateRenewal(ctx context.Context, tenantID string,
 				TotalAmount: total, BalanceApplied: balanceApplied,
 				CouponID: renewalCouponID, HoldAccountID: holdAccountID,
 				RevenueAccountID: revenueAccountID, ManualGrant: in.ManualGrant,
+				SmallDueWaived: bal.Waived,
 			}); err != nil {
 				return err
 			}
@@ -415,7 +331,7 @@ func (s *Service) CreateRenewal(ctx context.Context, tenantID string,
 				RequestID: httpx.RequestIDFrom(ctx),
 				AfterDigest: map[string]any{
 					"subscription_id": in.SubscriptionID, "order_no": orderNo,
-					"total": total, "currency": currency,
+					"total": total, "currency": currency, "small_due_waived": bal.Waived,
 				},
 			}); err != nil {
 				return err
@@ -436,157 +352,6 @@ func (s *Service) CreateRenewal(ctx context.Context, tenantID string,
 	}
 	s.notifyIfFulfilled(ctx, tenantID, out.Status)
 	return &out, nil
-}
-
-// zeroPaySubscriptionCapture 是挂在已有订阅上的零元单（续费 renewal、变更套餐
-// upgrade）当场捕获所需的全部输入。
-type zeroPaySubscriptionCapture struct {
-	Kind              string
-	TenantID          string
-	UserID            string
-	OrderID           string
-	SubscriptionID    string
-	ReservationID     string
-	BusinessRequestID string
-	Currency          string
-	SubtotalAmount    int64
-	DiscountAmount    int64
-	TotalAmount       int64
-	BalanceApplied    int64
-	CouponID          *string
-	HoldAccountID     string
-	RevenueAccountID  string
-	ProrationCredit   int64
-	// ManualGrant：后台人工开单赠送的续费（全额减免，见 reservationLockRequest.ManualGrant）
-	ManualGrant bool
-}
-
-// captureZeroPaySubscriptionOrder captures the complete held renewal or plan
-// change graph and fulfils the already locked subscription before the create
-// transaction commits.
-func (s *Service) captureZeroPaySubscriptionOrder(ctx context.Context, tx pgx.Tx,
-	in zeroPaySubscriptionCapture) error {
-	if !subscriptionBoundOrderKind(in.Kind) {
-		return fmt.Errorf("zero-pay subscription capture does not support order kind %q", in.Kind)
-	}
-	locked, err := lockOrderReservationGraph(ctx, tx, reservationLockRequest{
-		TenantID: in.TenantID, OrderID: in.OrderID, UserID: in.UserID,
-		Kind: in.Kind, Currency: in.Currency, CouponID: in.CouponID,
-		SubtotalAmount: in.SubtotalAmount, DiscountAmount: in.DiscountAmount,
-		TotalAmount: in.TotalAmount, PayableAmount: 0,
-		BalanceAmount: in.BalanceApplied, ProrationCredit: in.ProrationCredit,
-		ManualGrant: in.ManualGrant,
-	})
-	if err != nil {
-		return err
-	}
-
-	var captureTxnID string
-	if in.BalanceApplied > 0 {
-		if in.BalanceApplied != in.TotalAmount || in.HoldAccountID == "" ||
-			in.RevenueAccountID == "" {
-			return errors.New("zero-pay " + in.Kind + " has an invalid balance hold")
-		}
-		captureTxnID, err = Post(ctx, tx, in.TenantID, Posting{
-			Kind: "order_paid", Currency: in.Currency,
-			SourceType: "order", SourceID: &in.OrderID,
-			Memo:      "zero-pay " + in.Kind + " balance capture",
-			ActorKind: "user", ActorID: &in.UserID,
-			Entries: []Entry{
-				{AccountID: in.HoldAccountID, Direction: Debit,
-					Amount: in.BalanceApplied, Description: "capture " + in.Kind + " balance hold"},
-				{AccountID: in.RevenueAccountID, Direction: Credit,
-					Amount: in.TotalAmount, Description: in.Kind + " revenue"},
-			},
-		})
-		if err != nil {
-			return err
-		}
-	}
-	if err := captureLockedReservation(ctx, tx, in.TenantID, in.OrderID,
-		in.UserID, in.BusinessRequestID, locked, captureTxnID); err != nil {
-		return err
-	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE orders
-		   SET status='paid', paid_amount=total_amount, paid_at=now()
-		 WHERE tenant_id=$1 AND id=$2::uuid AND status='pending_payment'`,
-		in.TenantID, in.OrderID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() != 1 {
-		return errors.New("zero-pay " + in.Kind + " paid transition lost")
-	}
-	if in.Kind == "upgrade" {
-		_, err = s.fulfillPlanChangeLocked(ctx, tx, in.TenantID, in.OrderID,
-			in.UserID, in.SubscriptionID)
-		return err
-	}
-	_, err = s.fulfillRenewalLocked(ctx, tx, in.TenantID, in.OrderID,
-		in.UserID, in.SubscriptionID)
-	return err
-}
-
-// subscriptionBoundOrderKind 是挂在已有订阅上、履约时原地改那条订阅的订单：
-// 续费与变更套餐。它们的结算与创建都先锁订阅，再碰预留图与账本。
-func subscriptionBoundOrderKind(kind string) bool {
-	return kind == "renewal" || kind == "upgrade"
-}
-
-// subscriptionAcceptsPaidChange 是续费与变更套餐对订阅状态的唯一口径：建单时
-// 校验一次，结算时锁住订阅后再校验一次——支付窗口里订阅可能被改成终态，履约
-// 写 active 会被状态机拒绝，钱于是改走挂账（R117）。迁移 00124 的挂账守卫写着
-// 同一组状态，renewal_contract_test.go 钉住两边一致。
-//
-// 生效中的四种状态之外，已过期但原地续费窗口没关（renewal_closed_at 为空，过期
-// 不满 30 天）的订阅也收：续费、改套餐都在原订阅上做，链接不变（规则 4）。
-// 窗口关了只能新购。已取消、暂停、待开通一律不收。
-func subscriptionAcceptsPaidChange(status string, renewalClosed bool) bool {
-	switch status {
-	case "active", "trialing", "grace", "past_due":
-		return true
-	case "expired":
-		return !renewalClosed
-	}
-	return false
-}
-
-// ErrRenewalWindowClosed 是过期超过原地续费窗口的订阅再来续费时的 409。
-var ErrRenewalWindowClosed = httpx.New(httpx.CodeConflict,
-	"这条订阅已过期超过 30 天，不能再原地续费，请重新购买（会换新的订阅链接）")
-
-// lockOrderSubscriptionForSettlement establishes the shared lock order for
-// renewal and plan change settlement:
-// order -> subscription -> payment intents -> reservation graph -> ledger.
-// The caller has already locked the order before entering this helper. The
-// returned status and renewal-window flag are read under the lock, for the
-// settlement-time recheck (subscriptionAcceptsPaidChange).
-func lockOrderSubscriptionForSettlement(ctx context.Context, tx pgx.Tx,
-	tenantID, orderID, userID string) (string, string, bool, error) {
-	var subID string
-	if err := tx.QueryRow(ctx, `
-		SELECT subscription_id::text FROM orders
-		 WHERE tenant_id=$1 AND id=$2::uuid AND user_id=$3::uuid
-		   AND kind IN ('renewal','upgrade')`,
-		tenantID, orderID, userID).Scan(&subID); err != nil {
-		return "", "", false, fmt.Errorf("读取订单关联的订阅: %w", err)
-	}
-	if subID == "" {
-		return "", "", false, errors.New("续费或变更订单没有关联订阅")
-	}
-	var lockedID, status string
-	var closed bool
-	if err := tx.QueryRow(ctx, `
-		SELECT id::text, status, renewal_closed_at IS NOT NULL FROM subscriptions
-		 WHERE tenant_id=$1 AND id=$2::uuid AND user_id=$3::uuid
-		 FOR UPDATE`, tenantID, subID, userID).Scan(&lockedID, &status, &closed); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", false, httpx.NotFoundOrForbidden()
-		}
-		return "", "", false, err
-	}
-	return lockedID, status, closed, nil
 }
 
 // manualRenewalAudit 是后台人工开单落成续费单时的审计（与订单同一事务）。

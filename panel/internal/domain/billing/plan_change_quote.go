@@ -61,31 +61,49 @@ type prorationBasis struct {
 // prorationCredit 算出剩余价值：floor(Value × min(时间比例, 流量比例))。
 // 全程用有理数比较与整数除法，不经浮点 —— 钱的取整只能发生一次，而且只能向下。
 func prorationCredit(b prorationBasis, now time.Time) int64 {
+	credit, _ := prorationCreditDetail(b, now)
+	return credit
+}
+
+// prorationCreditDetail 与 prorationCredit 同一个算法，另给出「怎么算的」明细（报价的
+// credit_detail）：本期付费合计、剩余与总的付费天数、起决定作用的那条流量配额的剩余与总量、
+// 取到的比例（百万分之一，向下取整，只用于展示）。
+func prorationCreditDetail(b prorationBasis, now time.Time) (int64, CreditDetail) {
+	d := CreditDetail{Paid: max(b.Value, 0), DaysTotal: int(b.PaidSpan / (24 * time.Hour))}
+	for _, t := range b.Traffic {
+		d.TrafficTotal += max(t.Cap, 0)
+		d.TrafficLeft += max(min(t.Cap-t.Consumed, t.Cap), 0)
+	}
 	if b.Value <= 0 || b.PaidSpan <= 0 {
-		return 0
+		return 0, d
 	}
 	remaining := min(b.PaidSpan-now.Sub(b.PeriodStart), b.PeriodEnd.Sub(now), b.PaidSpan)
 	if remaining <= 0 {
-		return 0
+		return 0, d
 	}
+	d.DaysLeft = int(remaining / (24 * time.Hour))
 	num, den := big.NewInt(int64(remaining)), big.NewInt(int64(b.PaidSpan))
 
 	for _, t := range b.Traffic {
 		left := max(min(t.Cap-t.Consumed, t.Cap), 0)
 		if t.Cap <= 0 || left == 0 {
-			return 0
+			d.TrafficLeft, d.TrafficTotal = left, max(t.Cap, 0)
+			return 0, d
 		}
 		// left/cap < num/den  ⇔  left·den < num·cap
 		l := new(big.Int).Mul(big.NewInt(left), den)
 		r := new(big.Int).Mul(num, big.NewInt(t.Cap))
 		if l.Cmp(r) < 0 {
 			num, den = big.NewInt(left), big.NewInt(t.Cap)
+			d.TrafficLeft, d.TrafficTotal = left, t.Cap
 		}
 	}
 
+	ppm := new(big.Int).Mul(num, big.NewInt(1_000_000))
+	d.RatioPPM = ppm.Quo(ppm, den).Int64()
 	credit := new(big.Int).Mul(big.NewInt(b.Value), num)
 	credit.Quo(credit, den)
-	return credit.Int64()
+	return credit.Int64(), d
 }
 
 // errProrationMixedCurrency 在本周期的付费单不是同一种币种时返回：

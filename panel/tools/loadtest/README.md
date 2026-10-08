@@ -11,7 +11,7 @@
 | 事项 | 做法 |
 |---|---|
 | 库 | **每档干净库**：同一档的 r1 / r2 之间不重装，档与档之间重装数据基座（第 7 节） |
-| 资源上限 | **按生产上限测**：CPUQuota、MemoryMax、连接池 8 都不改。只有某档撞上限时，才在该档补一轮放开上限的对照（第 9.4 节），结果写成「撞上限」，不写成「机器不够」 |
+| 资源上限 | **按生产上限测**：CPUQuota、MemoryMax、连接池上限（缺省值）都不改。只有某档撞上限时，才在该档补一轮放开上限的对照（第 9.4 节），结果写成「撞上限」，不写成「机器不够」 |
 | 真实来源 IP | 压测机**直连源站**，不经 Cloudflare；压测期间用 `nginx-realip.sh` 顶替信任表（第 4 节） |
 | 及格线 | 照原四条；另把「15k 档稳态时三个网关的 `nr_throttled` 增量」列为**必报观测项**（不是及格线） |
 | 速率 | 稳态各档订阅按每人每 30 分钟一次（偏激进，测余量）；24 小时那轮可选「贴近真实」：每人每 6 小时一次 |
@@ -85,7 +85,7 @@
 5. 记下随包的资源上限。它们就是生产形态，压测按它测：
    - systemd：`aegis-public` 和 `aegis-node` 是 `CPUQuota=60%`、`MemoryMax=256M`；`aegis-admin` 是 `80%`、`384M`。
    - Docker 数据基座：PG `max_connections=60`、`shared_buffers=128MB`、容器 512M；Valkey `maxmemory 96mb allkeys-lru`。
-   - `platform/db` 连接池每个网关最多 8 个连接，写死在代码里。
+   - `platform/db` 连接池上限可配置：缺省 public 16、admin 15、node 15，算式和环境变量 `AEGIS_{PUBLIC,ADMIN,NODE}_DB_MAX_CONNS` 见 `panel/deploy/.env.example`，压测按缺省测。
 
 ## 3. 打开观测开关（面板机）
 
@@ -189,7 +189,7 @@ export LOADTEST_ADMIN_PASSWORD='<管理员口令>'   # 只在这个 shell 里
 - **两份环境文件的作用**：
   - `.env` 里的 `AEGIS_MASTER_KEY` 用来像面板那样加密存一份订阅令牌；
   - `release-artifact.env` 提供节点接入时要对上的版本与摘要（`PANDORA_NATIVE_*`）。
-- **耗时**：后台每 IP 每分钟限 240 次，所以 198 个节点的接入大约要 3.5 分钟；15k 用户的 SQL 批量插入在秒级到十几秒。
+- **耗时**：后台每 IP 每分钟限 240 次，请求按 260ms 间隔排队，所以建服务器、建节点、接入、激活占了绝大部分时间。2026-10-07 实测：198 个节点整段约 5 分钟（总计 303 秒，后台请求 797 次），300 个节点约 7.7 分钟；5k 用户的 SQL 批量写入约 11 秒（`users_total`），15k 档以各阶段打印为准。
   - 各阶段耗时打在 stdout 上，也写进 manifest 的 `seed_timings`。
   - 「每档造数耗时」直接取这里。
 - **自检**：seed 最后会核对首尾两个节点的签名配置、UniProxy 配置，用户列表恰好是本批全部用户，再用第一个用户拉一次订阅。自检失败就退出码非 0，不要往下跑。
@@ -374,7 +374,7 @@ sudo systemctl revert aegis-public.service && sudo systemctl daemon-reload      
 systemctl show aegis-public.service -p CPUQuotaPerSecUSec -p MemoryMax                     # 应回到 600ms 与 256M；没回到就 systemctl restart aegis-public
 ```
 
-撞了连接池：池大小写死在 `platform/db`，没有运行时开关，这一轮不做对照。只在结果里写「撞连接池上限」并附 goroutine 证据；要不要为对照临时改代码由总协调定。
+撞了连接池：池上限由 `.env` 的 `AEGIS_*_DB_MAX_CONNS` 配置，但总量受 PG `max_connections=60` 约束（算式见 `.env.example`），这一轮不做对照。只在结果里写「撞连接池上限」并附 goroutine 证据；要不要为对照调大上限由总协调定。
 
 结果一律写成「<网关> 在 <档> 撞 <哪个上限>，放开后 <指标> 为 …」，不写成「机器不够」。
 
