@@ -143,9 +143,20 @@ type balanceOpts struct {
 var ErrBelowMinimum = httpx.New(httpx.CodeValidationFailed,
 	"应付金额低于支付渠道的最低付款额，请先充值或使用余额支付")
 
+// manualBelowMinimumMessage 是后台待支付单低于最低额时落在「结算方式」上的话。
+const manualBelowMinimumMessage = "应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款"
+
 // errManualBelowMinimum 是后台待支付单低于最低额：用户付不了，管理员改用赠送或线下已收款。
-var errManualBelowMinimum = httpx.New(httpx.CodeValidationFailed,
-	"应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款")
+// 带 fields.settlement，后台据它落到「结算方式」这一项上，不靠匹配文案。
+var errManualBelowMinimum = &httpx.Error{Code: httpx.CodeValidationFailed,
+	Message: manualBelowMinimumMessage,
+	Fields:  map[string]string{"settlement": manualBelowMinimumMessage}}
+
+// manualDueBelowMinimum 是后台待支付单「用户付不了」的唯一判定：应付为正且低于站点最低额
+// （最低额 ≤ 1 分等于不限）。建单（balancePlan 的 Manual 分支）与开单 preview 的 below_minimum 共用。
+func manualDueBelowMinimum(due, minPay int64) bool {
+	return due > 0 && minPay > 1 && due < minPay
+}
 
 // balancePlan 算一单用多少余额：ApplyBalance，再按入口决定零头能不能免（只有门户换套餐能免，
 // 最多 99 分）；免不了又付不了就拒绝。
@@ -159,7 +170,7 @@ func balancePlan(ctx context.Context, tx pgx.Tx, tenantID, userID, currency stri
 		return purchase.Balance{}, err
 	}
 	if o.Manual {
-		if minPay > 1 && total < minPay {
+		if manualDueBelowMinimum(total, minPay) {
 			return purchase.Balance{}, errManualBelowMinimum
 		}
 		return purchase.ApplyBalance(total, 0, 0, 0), nil
@@ -207,8 +218,9 @@ func quoteTime(exp *Expectation, now time.Time) (time.Time, error) {
 	return asOf, nil
 }
 
-// ErrOrderPaymentExpired 是订单已过 30 分钟付款期限还来发起支付的 409。
-var ErrOrderPaymentExpired = httpx.New(httpx.CodeConflict, "这张订单已超过付款期限，请取消后重新下单")
+// ErrOrderPaymentExpired 是订单已过 30 分钟付款期限还来发起支付的 409 order_lapsed（专门的码，
+// 门户据它只给「取消这张单，重新下单」）。
+var ErrOrderPaymentExpired = httpx.New(httpx.CodeOrderLapsed, "这张订单已超过付款期限，请取消后重新下单")
 
 // ErrPaymentBelowMinimum 是发起的在线支付低于所选渠道最低额时的 409（建单已按最低额收尾，
 // 正常路径到不了这里；渠道自己的报错是英文或者干脆没有，所以面板先拦）。

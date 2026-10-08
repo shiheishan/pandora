@@ -47,6 +47,9 @@ const (
 	// CodeOrderPending 是 409：同一套餐已有一张还没付款的新购单。前端据它显示那张单的
 	// 入口（继续付款或取消），防止两个标签页各付一次。
 	CodeOrderPending Code = "order_pending"
+	// CodeOrderLapsed 是 409：这张订单已超过付款期限、还没被释放任务关掉，不能再发起支付。
+	// 前端据它只给「取消这张单，重新下单」，不靠匹配文案。
+	CodeOrderLapsed Code = "order_lapsed"
 )
 
 var statusByCode = map[Code]int{
@@ -64,6 +67,7 @@ var statusByCode = map[Code]int{
 	CodeUpgradeRequired:  http.StatusUpgradeRequired,
 	CodeQuoteChanged:     http.StatusConflict,
 	CodeOrderPending:     http.StatusConflict,
+	CodeOrderLapsed:      http.StatusConflict,
 }
 
 // Error 同时承载对外与对内两份信息。

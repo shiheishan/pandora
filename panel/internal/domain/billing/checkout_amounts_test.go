@@ -1,12 +1,15 @@
 package billing
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"github.com/aegispanel/aegis/internal/domain/purchase"
+	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 func TestProviderMinAmount(t *testing.T) {
@@ -81,5 +84,53 @@ func TestLabelWithSuffix(t *testing.T) {
 	}
 	if n, err := purchase.NormalizeLabel(got); err != nil || n != got {
 		t.Fatalf("suffixed label must stay valid: %q %v", n, err)
+	}
+}
+
+// 后台待支付单「用户付不了」只有一个判定：建单 422 与 preview 的 below_minimum 共用。
+// 应付为 0（赠送抵满、换套餐抵满）不算，最低额 ≤ 1 分等于不限。
+func TestManualDueBelowMinimum(t *testing.T) {
+	cases := []struct {
+		due, min int64
+		want     bool
+	}{
+		{2500, 3000, true},
+		{3000, 3000, false},
+		{0, 3000, false},
+		{50, 1, false},
+		{50, 0, false},
+	}
+	for _, tc := range cases {
+		if got := manualDueBelowMinimum(tc.due, tc.min); got != tc.want {
+			t.Errorf("manualDueBelowMinimum(%d,%d)=%v want %v", tc.due, tc.min, got, tc.want)
+		}
+	}
+	// 建单的 422 带 fields.settlement：后台据它落到「结算方式」，不靠文案
+	if errManualBelowMinimum.Code != httpx.CodeValidationFailed ||
+		errManualBelowMinimum.Fields["settlement"] != errManualBelowMinimum.Message {
+		t.Fatalf("manual below-minimum error=%+v", errManualBelowMinimum)
+	}
+	// 超过付款期限有自己的码（409 order_lapsed），门户不再匹配文案
+	if ErrOrderPaymentExpired.Code != httpx.CodeOrderLapsed {
+		t.Fatalf("lapsed order code=%s", ErrOrderPaymentExpired.Code)
+	}
+}
+
+// preview 的选项是 purchase.Placement 原样展平再加 due / below_minimum 两项，外加顶层 min_payment；
+// 后台 schema（admin/screens/billing/schemas.ts）按这个形状校验。
+func TestManualOrderPreviewJSONShape(t *testing.T) {
+	b, err := json.Marshal(ManualOrderPreview{Options: []ManualPlacement{{
+		Placement: purchase.Placement{Option: purchase.Option{Key: "new", Kind: purchase.KindNew}},
+		Due:       2500, BelowMinimum: true,
+	}}, MinPayment: 3000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	for _, want := range []string{`"key":"new"`, `"kind":"new"`, `"due":2500`, `"below_minimum":true`,
+		`"default_key":""`, `"min_payment":3000`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("preview JSON %s lacks %s", got, want)
+		}
 	}
 }
