@@ -53,6 +53,8 @@ export const subscriptionSchema = z.object({
   changeable: z.boolean(),
   /** 按续费价续一期会到哪天：生效中的从当前到期日起算，过期的从现在起算；不能续时为 null */
   renew_until: z.string().nullable(),
+  /** 升级前买的、迁移时挂到这一份上的流量包里还能挪的余量（用户 10-07：允许自己挪一次）；挪过或没有为 0 */
+  legacy_movable_pack_bytes: z.number().int(),
 })
 export type Subscription = z.output<typeof subscriptionSchema>
 

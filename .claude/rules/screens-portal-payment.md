@@ -9,8 +9,8 @@ paths:
 # 门户 · 下单、支付与订单
 
 - 确认页的意图由地址决定（`checkout/model.ts` 的 `parseTarget`，地址见 screens-portal.md）；入口页只拼地址不判模式。
-- 金额全取报价接口（`common/quote.ts`）：余额开关默认打开，只在 `with_balance` / `without_balance` 两组数之间切换；Forced 锁成打开；Kept 时紧挨金额写「最低要付 ¥1.00，所以这次余额只用 ¥x」；SmallDue 写「差价不到支付最低额，这次免了」（用户 10-07 拍板）。文字在 `checkout/copy.ts`
-- 建单带 `as_of` 与 `expect {total, balance_applied, payable}`，`use_balance` 传这一档用掉的余额；409 `quote_changed` 重新报价并标「已更新」，409 `order_pending` 给去订单页的入口。core 的 `SERVER_ERROR_CODES` 还没登记这两个码，`purchaseRefusal` 先按服务端固定文案认、码登记后按码认
+- 金额全取报价接口（`common/quote.ts`）：余额开关默认打开，只在 `with_balance` / `without_balance` 两组数之间切换；Forced 锁成打开；Kept 时紧挨金额写「最低要付 ¥1.00，所以这次余额只用 ¥x」；SmallDue 只有换套餐的零头免掉（`waived` > 0，写「差价不到支付最低额，这次免了」）；新买、续费、流量包的应付低于最低额且余额不够时不免，按钮置灰「先充值或用余额付」并给钱包入口（A 路收窄，标记字段名未定，现按 small_due 而 waived=0 认）。文字在 `checkout/copy.ts`
+- 建单带 `as_of` 与 `expect {total, balance_applied, payable}`，`use_balance` 传这一档用掉的余额；409 `quote_changed` 重新报价并标「已更新」，用户再点时请求体变了、按指纹换新幂等键；409 `order_pending` 给去那张单（`fields.order_id`）的入口。两个码已登记进 core 的 `SERVER_ERROR_CODES`（`purchaseRefusal` 按码认）
 - 付款是一页（`#/checkout/pay/<订单>`，`common/PayFlow.tsx` 的 `PayPanel`，订单页与钱包的弹窗也用它）：手机主按钮「打开支付宝付款」、二维码收进「用另一台手机扫码」；电脑直接给收银台地址的二维码（放不进 40 版时退回「打开付款页」）；3 秒查一次订单，付完自动去完成页，没更新再点「我已付款」（`POST v1/orders/{id}/query`）。
 - 完成页（`#/checkout/done/<订单>`，`common/Result.tsx`）分「发生了什么 / 你要做的 / 没变的」；新买一份把新链接与「添加到 App」放最上面。订单详情没有订阅 id，新那份按套餐名与「有效期至」认（`findNewSub`）
 - 下单幂等键按请求体指纹复用：双击、失败重试、关掉支付弹窗后再点都回放同一张订单，改了任何参数才换新键。

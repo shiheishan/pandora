@@ -17,6 +17,7 @@ import type { ProtoScenario } from './scenario.ts'
 //   proto-s7b  余额 ¥50，够付
 //   proto-s7c  余额 ¥29.50，剩 5 毛低于支付最低额
 //   proto-s8   标准版 3 天前已过期
+//   proto-legacy  小王两份，升级前买的 80G 流量包挂在「我的」上，能挪一次
 // ---------------------------------------------------------------------------
 const [BASIC, STD] = PROTO_PLANS as [CatalogPlan, CatalogPlan, CatalogPlan]
 const DAY_MS = 86_400_000
@@ -71,6 +72,13 @@ const DATA: Readonly<Record<ProtoScenario, () => { balance: number; subs: SubFix
   'proto-s7b': () => single({}, 5000),
   'proto-s7c': () => single({}, 2950),
   'proto-s8': () => single({ days: -3, used: 47 }),
+  // 用户 10-07：升级前买的 80G 流量包迁移时挂到了到期最晚的「我的」，可以自己挪一次到「妈妈的 iPad」
+  'proto-legacy': () => {
+    const d = xiaowang(false)
+    d.subs[0]!.packBytes = 80 * 1024 ** 3
+    d.subs[0]!.legacyPackBytes = 80 * 1024 ** 3
+    return d
+  },
 }
 
 /** 每个场景开始时进入的页面（原型 start；兑换场景从钱包的兑换页开始） */
@@ -86,6 +94,7 @@ export const PROTO_START: Readonly<Record<ProtoScenario, string>> = {
   'proto-s7b': '/subs',
   'proto-s7c': '/subs',
   'proto-s8': '/subs',
+  'proto-legacy': '/subs',
 }
 
 export function buildProto(s: ProtoScenario): PortalState {

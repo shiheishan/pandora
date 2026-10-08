@@ -87,6 +87,21 @@ describe('mock api · portal subscriptions (purchase model)', () => {
     expect(await res.json()).toEqual({ moved_bytes: 0 })
   })
 
+  it('升级前的旧流量包（用户 10-07）：列表给出能挪的余量，从在用的那份挪一次后清零，再挪回 409', async () => {
+    await scenario('proto-legacy')
+    const [mine, mom] = (await subs()).subscriptions
+    expect(mine!.legacy_movable_pack_bytes).toBe(80 * 1024 ** 3)
+    expect(mom!.legacy_movable_pack_bytes).toBe(0)
+    const moved = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })
+    expect(await moved.json()).toEqual({ moved_bytes: 80 * 1024 ** 3 })
+    const after = (await subs()).subscriptions
+    expect(after.map((s) => [s.legacy_movable_pack_bytes, s.pack_remaining_bytes])).toEqual([
+      [0, 0],
+      [0, 80 * 1024 ** 3],
+    ])
+    expect((await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })).status).toBe(409)
+  })
+
   it('原型场景入口：切场景并跳到起始页', async () => {
     const res = await fetch(`${base}/v1/__mock/proto?s=proto-s5a`, { redirect: 'manual' })
     expect(res.status).toBe(302)

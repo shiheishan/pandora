@@ -2,7 +2,7 @@ import { href } from '../../../core/router'
 import { Tag } from '../../../ui'
 import { flowCss } from './Flow'
 import { LinkBox } from './LinkBox'
-import { day, isLow, moneyShort, type Naming } from './purchase'
+import { day, gb, isLow, moneyShort, type Naming } from './purchase'
 import css from './SubCard.module.css'
 import { expiryText, isExpiredNow, leakSources, usageText } from './card-text'
 import type { Subscription, SubscriptionLink } from './subscriptions'
@@ -11,6 +11,8 @@ export interface SubCardActions {
   onImport: (sub: Subscription) => void
   onRename: (sub: Subscription) => void
   onRotate: (sub: Subscription) => void
+  /** 升级前的旧流量包挪一次（用户 10-07）；不给就不显示这一行 */
+  onMove?: (sub: Subscription) => void
 }
 
 /**
@@ -18,7 +20,24 @@ export interface SubCardActions {
  * 疑似泄露的红条，主按钮「续费」（流量低于 15% 时「加流量」变成主按钮），底部一行「换个套餐 · 改名 · 换新链接」。
  * 卡片上的按钮自带对象：从哪张卡点进去就作用在哪一份，后面不再问。
  */
-export function SubCard({ sub, naming, link, minPack, actions, compact = false }: { sub: Subscription; naming: Naming; link: SubscriptionLink | undefined; minPack: number | null; actions: SubCardActions; compact?: boolean }) {
+export function SubCard({
+  sub,
+  naming,
+  link,
+  minPack,
+  actions,
+  compact = false,
+  moveTo = [],
+}: {
+  sub: Subscription
+  naming: Naming
+  link: SubscriptionLink | undefined
+  minPack: number | null
+  actions: SubCardActions
+  compact?: boolean
+  /** 旧流量包能挪去的那几份（生效中或可救回、不是这一份） */
+  moveTo?: readonly Subscription[]
+}) {
   const expired = isExpiredNow(sub)
   const exp = expiryText(sub)
   const usage = usageText(sub)
@@ -83,6 +102,15 @@ export function SubCard({ sub, naming, link, minPack, actions, compact = false }
               节点和每天用量 ›
             </a>
           )}
+        </div>
+      )}
+
+      {!compact && actions.onMove && sub.legacy_movable_pack_bytes > 0 && moveTo.length > 0 && (
+        <div className={css.move}>
+          <span>升级前买的 {gb(sub.legacy_movable_pack_bytes)} 流量包现在加在这一份上，可以挪到别的一份（只能挪一次）。</span>
+          <button type="button" className={flowCss.mini} onClick={() => actions.onMove?.(sub)} id={`btn-move-${sub.id}`}>
+            {moveTo.length === 1 ? `挪到「${naming.dn(moveTo[0]!)}」` : '挪到别的一份'}
+          </button>
         </div>
       )}
 

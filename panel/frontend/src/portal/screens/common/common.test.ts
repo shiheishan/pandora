@@ -38,6 +38,7 @@ function sub(over: Partial<Subscription> = {}): Subscription {
     client_name: 'Pandora · 专业版',
     changeable: ['active', 'trialing', 'grace', 'past_due'].includes(status),
     renew_until: null,
+    legacy_movable_pack_bytes: 0,
     ...over,
   })
 }

@@ -60,6 +60,7 @@ export function sub(over: Partial<Subscription> & { usedGiB?: number; capGiB?: n
     client_name: `Pandora · ${rest.label ?? rest.plan_name ?? '标准版'}`,
     changeable: live,
     renew_until: live ? '2026-11-19T12:00:00Z' : null,
+    legacy_movable_pack_bytes: 0,
     ...rest,
   })
 }

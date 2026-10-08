@@ -59,6 +59,8 @@ export interface SubFixture {
   label: string | null
   /** 挂在这一份上的流量包余量（traffic_pack_grants.subscription_id） */
   packBytes: number
+  /** 升级前买的流量包（迁移时挂到到期最晚那份）还能挪的余量；用户挪过一次后为 0 */
+  legacyPackBytes?: number
   /** 门户换新链接的时刻（毫秒），按份限频用 */
   rotations: number[]
   current_period_start: string
@@ -399,6 +401,7 @@ export function subscriptionView(sub: SubFixture) {
     client_name: clientName(sub),
     changeable,
     renew_until: renewable ? new Date(addInterval(base, price)).toISOString() : null,
+    legacy_movable_pack_bytes: sub.legacyPackBytes ?? 0,
   }
 }
 

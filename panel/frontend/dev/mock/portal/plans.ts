@@ -37,7 +37,7 @@ export const plans: MockModule = {
       ctx.send(200, { remaining_bytes_total: packs.reduce((n, p) => n + p.remaining_bytes, 0), packs })
     },
 
-    // 设计稿 2.7：来源只能是未分配（null）或彻底停用的那份，目标须生效中或可救回；不幂等，重复调用 moved_bytes=0
+    // 设计稿 2.7：来源只能是未分配（null）或彻底停用的那份（另外升级前的旧流量包允许从在用的那份挪一次），目标须生效中或可救回；不幂等
     'POST /v1/me/traffic-packs/transfer': async (ctx) => {
       const body = await readStrict(ctx, ['from_subscription_id', 'to_subscription_id'])
       if (!body) return
@@ -52,9 +52,18 @@ export const plans: MockModule = {
       } else {
         const from = state.subs.find((s) => s.id === body.from_subscription_id)
         if (!from) return ctx.fail(404, 'not_found', '订阅不存在')
-        if (!isDead(from)) return ctx.fail(409, 'conflict', '这一份还在用，流量包不能转走')
-        moved = from.packBytes
-        from.packBytes = 0
+        if (isDead(from)) {
+          moved = from.packBytes
+          from.packBytes = 0
+        } else {
+          // 用户 10-07：升级前的旧流量包允许自己挪一次（只挪那部分，挪完清零）
+          const legacy = Math.min(from.legacyPackBytes ?? 0, from.packBytes)
+          if (legacy <= 0) return ctx.fail(409, 'conflict', '这一份还在用，流量包不能转走')
+          if (from === to) return ctx.fail(422, 'validation_failed', '参数不合法', { to_subscription_id: '要挪到另一份' })
+          moved = legacy
+          from.packBytes -= legacy
+          from.legacyPackBytes = 0
+        }
       }
       to.packBytes += moved
       if (moved > 0) state.transfers.push({ from: (body.from_subscription_id as string | null | undefined) ?? null, to: to.id, bytes: moved, at: new Date().toISOString() })
