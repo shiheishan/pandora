@@ -73,3 +73,17 @@ func TestRenewUntil(t *testing.T) {
 		}
 	}
 }
+
+// 门户「可挪一次的旧包」与 billing 真正放行挪动的判定（legacyMovableSQL，与 00137 守卫情形 3 同口径）
+// 必须是同一个条件：一边改了另一边没跟，页面上写着能挪，点了却被 422 拒绝。
+func TestLegacyMovablePackMatchesBilling(t *testing.T) {
+	norm := func(s string) string {
+		s = strings.Join(strings.Fields(s), " ")
+		s = strings.ReplaceAll(s, "( ", "(")
+		return strings.ReplaceAll(s, " )", ")")
+	}
+	billing := norm(sourcetest.Load(t, "../billing").Decl("legacyMovableSQL"))
+	if mine := norm(legacyMovablePackSQL); !strings.Contains(billing, "`("+mine+")`") {
+		t.Fatalf("legacyMovablePackSQL drifted from billing.legacyMovableSQL\nsubscription: %s\nbilling:      %s", mine, billing)
+	}
+}
