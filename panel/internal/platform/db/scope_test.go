@@ -16,17 +16,23 @@ const (
 
 // BEGIN 与注入租户上下文合成一次往返：内联的只能是规范 UUID，set_config 必须是事务级。
 func TestScopedBeginSQLInlinesOnlyCanonicalUUIDs(t *testing.T) {
-	got, ok := scopedBeginSQL(Scope{TenantID: scopeTestTenant, ActorID: scopeTestActor}, "")
+	got, ok := scopedBeginSQL(Scope{TenantID: scopeTestTenant, ActorID: scopeTestActor}, "", false)
 	want := "BEGIN; SELECT set_config('app.tenant_id', '" + scopeTestTenant +
 		"', true), set_config('app.actor_id', '" + scopeTestActor + "', true)"
 	if !ok || got != want {
 		t.Fatalf("scopedBeginSQL = %q, %v\nwant %q", got, ok, want)
 	}
 
-	got, ok = scopedBeginSQL(Scope{TenantID: scopeTestTenant}, pgx.Serializable)
+	got, ok = scopedBeginSQL(Scope{TenantID: scopeTestTenant}, pgx.Serializable, false)
 	if !ok || !strings.HasPrefix(got, "BEGIN ISOLATION LEVEL SERIALIZABLE; SELECT set_config(") ||
 		!strings.HasSuffix(got, "set_config('app.actor_id', '', true)") {
 		t.Fatalf("serializable anonymous scope = %q, %v", got, ok)
+	}
+
+	// 重试排队：LOCK 紧跟 BEGIN、在 set_config 之前（LOCK 不取快照，set_config 取）
+	got, ok = scopedBeginSQL(Scope{TenantID: scopeTestTenant}, pgx.Serializable, true)
+	if !ok || !strings.HasPrefix(got, "BEGIN ISOLATION LEVEL SERIALIZABLE; "+chainGateSQL+"; SELECT set_config(") {
+		t.Fatalf("gated serializable scope = %q, %v", got, ok)
 	}
 
 	for _, s := range []Scope{
@@ -38,11 +44,11 @@ func TestScopedBeginSQLInlinesOnlyCanonicalUUIDs(t *testing.T) {
 		{TenantID: scopeTestTenant, ActorID: "system"},
 		{TenantID: scopeTestTenant, ActorID: "x', false); --"},
 	} {
-		if sql, ok := scopedBeginSQL(s, ""); ok {
+		if sql, ok := scopedBeginSQL(s, "", false); ok {
 			t.Errorf("non-canonical scope %+v was inlined: %s", s, sql)
 		}
 	}
-	if _, ok := scopedBeginSQL(Scope{TenantID: scopeTestTenant}, pgx.RepeatableRead); ok {
+	if _, ok := scopedBeginSQL(Scope{TenantID: scopeTestTenant}, pgx.RepeatableRead, false); ok {
 		t.Error("unsupported isolation level was inlined")
 	}
 }

@@ -1,8 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
-import { ADM, ADMIN_EMAIL, ADMIN_PASSWORD, OUT, PG_CONTAINER, PG_DB, PUB } from './env.ts'
+import { ADM, ADMIN_EMAIL, ADMIN_PASSWORD, PG_CONTAINER, PG_DB, PUB } from './env.ts'
 
 // ============================================================================
 //  测试自己的接口调用：只用来「造人、造前提」（注册、后台调余额、赠送开一份、发礼品卡），
@@ -84,57 +82,17 @@ export function str(o: unknown, path: string): string {
 }
 
 // ----------------------------------------------------------------------------
-//  写审计的请求跨 worker 排队（产品问题，见任务报告）：审计链序号在 SERIALIZABLE 事务里按事务快照取链尾，
-//  快照早于审计锁，两笔并发的写有一笔会撞 audit_events_chain_seq_key 回 500。浏览器测试并行跑时
-//  会随机撞上（登录、注册也写审计），所以造前提的后台写、注册与登录、收银台回调、页面上登录与会建单或改账的
-//  那一下点击都经这把锁串行。
-//  锁是状态目录里的一个目录（mkdir 原子），30 秒没释放视为上一个进程崩了
-// ----------------------------------------------------------------------------
-const LOCK = join(OUT, '.audit-write.lock')
-let held = 0
-
-export async function exclusive<T>(fn: () => Promise<T>): Promise<T> {
-  if (held > 0) return fn()
-  for (;;) {
-    try {
-      mkdirSync(LOCK)
-      break
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
-      try {
-        if (Date.now() - statSync(LOCK).mtimeMs > 30_000) rmSync(LOCK, { recursive: true, force: true })
-      } catch {
-        // 别的进程刚好释放了
-      }
-      await new Promise((r) => setTimeout(r, 50))
-    }
-  }
-  held += 1
-  try {
-    return await fn()
-  } finally {
-    held -= 1
-    rmSync(LOCK, { recursive: true, force: true })
-  }
-}
-
-// ----------------------------------------------------------------------------
 //  后台：每个 worker 登录一次。登录签发的令牌自带 15 分钟重认证窗口；
 //  窗口过了（403 reauth_required）就用口令重认证一次再试
 // ----------------------------------------------------------------------------
 let adminToken: string | null = null
 
 async function adminLogin(): Promise<string> {
-  adminToken = str(await exclusive(() => call(ADM, '/v1/auth/login', { body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } })), 'access_token')
+  adminToken = str(await call(ADM, '/v1/auth/login', { body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } }), 'access_token')
   return adminToken
 }
 
 export async function admin(path: string, c: Omit<Call, 'token'> = {}): Promise<Json> {
-  const write = (c.method ?? (c.body === undefined ? 'GET' : 'POST')) !== 'GET'
-  return write ? exclusive(() => adminCall(path, c)) : adminCall(path, c)
-}
-
-async function adminCall(path: string, c: Omit<Call, 'token'>): Promise<Json> {
   const token = adminToken ?? (await adminLogin())
   try {
     return await call(ADM, path, { ...c, token })
@@ -167,17 +125,15 @@ export async function newUser(tag: string): Promise<User> {
   const email = `w9b-${tag.toLowerCase()}-${runTag}-${worker}-${userSeq}@example.test`
   const password = `W9b-${randomUUID()}`
   const ip = freshIp()
-  return exclusive(async () => {
-    const start = await call(PUB, '/v1/auth/register/start', { body: { email }, ip })
-    const code = typeof start.dev_code === 'string' ? start.dev_code : ''
-    const done = await call(PUB, '/v1/auth/register/complete', { body: { registration_token: str(start, 'registration_token'), code, password }, expect: [200, 201], ip })
-    return { email, password, id: str(done, 'user_id') }
-  })
+  const start = await call(PUB, '/v1/auth/register/start', { body: { email }, ip })
+  const code = typeof start.dev_code === 'string' ? start.dev_code : ''
+  const done = await call(PUB, '/v1/auth/register/complete', { body: { registration_token: str(start, 'registration_token'), code, password }, expect: [200, 201], ip })
+  return { email, password, id: str(done, 'user_id') }
 }
 
 /** 门户接口令牌：只用于读回核对（例如取订单 id 做 SQL 夹具），不替页面做动作 */
 export async function portalToken(u: User): Promise<string> {
-  return str(await exclusive(() => call(PUB, '/v1/auth/login', { body: { email: u.email, password: u.password } })), 'access_token')
+  return str(await call(PUB, '/v1/auth/login', { body: { email: u.email, password: u.password } }), 'access_token')
 }
 
 export async function portalGet(token: string, path: string): Promise<Json> {
@@ -227,10 +183,8 @@ export async function epayNotify(code: string, merchant: string, key: string, ou
   }
   params.sign = epaySign(params, key)
   params.sign_type = 'MD5'
-  return exclusive(async () => {
-    const res = await fetch(`${PUB}/v1/webhooks/payments/${code}?${new URLSearchParams(params)}`, { headers: { 'X-Real-IP': freshIp() } })
-    return (await res.text()).trim()
-  })
+  const res = await fetch(`${PUB}/v1/webhooks/payments/${code}?${new URLSearchParams(params)}`, { headers: { 'X-Real-IP': freshIp() } })
+  return (await res.text()).trim()
 }
 
 // ----------------------------------------------------------------------------

@@ -24,7 +24,6 @@ paths:
   - 开关（ui/Switch）的透明 checkbox 被轨道盖住，点外面那层 label（`setSwitch`），和人点的是同一处
   - 后台写操作要重新认证时，`openAdmin` 挂的 `addLocatorHandler` 自动在弹框里填口令；登录自带 15 分钟窗口，通常不出现
 - 每条路径一个现场注册的新用户，互不依赖，`fullyParallel` 4 个 worker；前提（赠送开一份、调余额、发卡号）经后台接口造，要验证的那一步在页面上点
-- 写审计的动作跨 worker 排队（`api.ts` 的 `exclusive`，页面上用 `fixtures.ts` 的 `submit` 点）：产品问题，SERIALIZABLE 事务按快照取审计链尾，并发写审计时一笔撞 `audit_events_chain_seq_key` 回 500。造前提的后台写、注册与登录、收银台回调、会建单或改账的那一下点击都要经它；新写一处会写审计的点击也用 `submit`，产品修好后可以去掉这把锁
 - 来源地址：网关在冒烟栈上直接信 `X-Real-IP`（见 panel-e2e 规则）。浏览器按机器速度点，门户每 IP 每分钟 120 次、后台 240 次会被打满，所以每个用户、每一步各用一个 198.18.0.0/15 里的虚构地址（`api.ts` 的 `freshIp`），相邻两个落在不同的 /24
 - 付款：付款页「在这台电脑上付款」（或「打开…付款页」）的地址就是收银台地址，读出金额与订单号，按易支付规则签名后打真实的 `/v1/webhooks/payments/w9pay`（与 `panel/tests/epay_e2e.sh` 同一口径）；页面自己查单走到完成页，测试不替它跳
 - SQL 夹具（`api.ts` 的 `sql`）只用于接口造不出或要等时间流逝的数据，每处写明原因。现有四处：付款期限拨到过去（A0b、C5，只改 `orders.expires_at`、不动预留，释放任务不会中途关单）、本期已用 5G（C6b）、旧流量包的 migration 流水（C7，照 00138）、周期挪到过去（过期卡片，照 `expiry_e2e.sh`，状态等过期扫描自己翻）
