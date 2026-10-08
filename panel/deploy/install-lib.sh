@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# install.sh 与 install-native.sh 共用的两段步骤：升级迁移的停服顺序、首装时交互式建管理员。
+# install.sh 与 install-native.sh 共用的步骤：升级迁移的停服顺序、首装时交互式建管理员、
+# 要不要配 HTTPS 边缘。
 # 只定义函数，由安装器从发布目录 source（与 public-base-url.sh 同样的用法），不装到主机上。
-# 桩测试：install-migrate-order_mock_test.sh、install-firstrun_mock_test.sh。
+# 桩测试：install-migrate-order_mock_test.sh、install-firstrun_mock_test.sh、install-chain_mock_test.sh。
 
 #------------------------------------------------------------------------------
 # 迁移
@@ -158,4 +159,24 @@ pandora_bootstrap_admin() {
   done
   printf '    %s\n' "三次都没建成，管理员留给你手工建" >&2
   return 0
+}
+
+#------------------------------------------------------------------------------
+# HTTPS 边缘：要不要接管 nginx
+#------------------------------------------------------------------------------
+# 首装一律配（证书与 nginx 交给 edge-tls.sh setup）。升级时：已经在用（有 aegis.conf）就照常
+# 重渲染、沿用证书；还没走过 nginx 边缘的旧面板（以前没申请证书、没渲染 nginx，可能另有自己的
+# nginx 站点）不替人接管 80/443，除非显式 PANDORA_ACME=1（旧名 PANDORA_CERTBOT=1），或在终端里答 y。
+#   pandora_edge_wanted <install|upgrade> <aegis.conf 路径>
+pandora_edge_wanted() {
+  local reply
+  [ "$1" = install ] && return 0
+  [ -f "$2" ] && return 0
+  if [ "${PANDORA_ACME:-}" = 1 ] || [ "${PANDORA_CERTBOT:-}" = 1 ]; then return 0; fi
+  if [ "${PANDORA_ASSUME_YES:-}" != 1 ] && [ -t 0 ]; then
+    printf '    这台面板还没走 nginx 边缘。现在配 HTTPS（接管 80/443、申请 Let'"'"'s Encrypt 证书，即同意其订户协议）？[y/N] '
+    read -r reply || reply=""
+    case "$reply" in [yY]*) return 0 ;; esac
+  fi
+  return 1
 }

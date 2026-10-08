@@ -132,8 +132,8 @@ order_ok() {
   [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ]
 }
 
-# 首装、nginx 已配好、管理员已建
-MODE=install EDGE_STATE=applied PANDORA_ADMIN_STATE=created PANDORA_ADMIN_EMAIL=admin@example.test PENDING_COUNT=0
+# 首装、HTTPS 已配好（正规证书）、管理员已建
+MODE=install EDGE_STATE=trusted PANDORA_ADMIN_STATE=created PANDORA_ADMIN_EMAIL=admin@example.test PENDING_COUNT=0
 before=0 after=134 BK=""
 summary
 order_ok || fail "install sections out of order: $(cat "$T/summary")"
@@ -144,11 +144,14 @@ grep -Fq "sudo $DEST/deploy/admin-url.sh" "$T/summary" || fail 'install summary 
 refute -q 'aegis-adminctl create' "$T/summary"
 refute -q "$SECRET_VALUE" "$T/summary"
 
-# 首装、等证书、管理员没建：还差什么里有证书命令与建管理员命令（密码不回显、走标准输入）
-MODE=install EDGE_STATE=no-cert PANDORA_ADMIN_STATE=manual PENDING_COUNT=2
+# 首装、证书没申请下来（自签兜底）、管理员没建：照样给后台地址并说明自签；还差什么里有换证书的命令
+# 与建管理员命令（密码不回显、走标准输入）
+MODE=install EDGE_STATE=selfsigned PANDORA_ADMIN_STATE=manual PENDING_COUNT=2
 summary
 order_ok || fail 'manual install sections out of order'
-grep -Fq 'PANDORA_CERTBOT=1' "$T/summary" || fail 'no-cert summary lacks the certbot rerun'
+grep -Fq "打开管理后台：$url" "$T/summary" && grep -q '自签证书' "$T/summary" || fail 'self-signed install summary lacks the URL or the warning'
+awk '/还差什么/{t=1} /常用操作/{t=0} t' "$T/summary" | grep -Fq "sudo $DEST/deploy/edge-tls.sh issue" \
+  || fail 'self-signed summary lacks the issue command under 还差什么'
 grep -Fq "read -rsp" "$T/summary" && grep -Fq -- '--password-stdin' "$T/summary" \
   || fail "manual admin command must read the password silently and pass it on stdin: $(cat "$T/summary")"
 refute -q -- '--password [^-]' "$T/summary"
@@ -156,8 +159,17 @@ grep -q 'CHANGE_ME 的 2 项' "$T/summary" || fail 'pending .env items not liste
 awk '/还差什么/{t=1} /常用操作/{t=0} t' "$T/summary" | grep -q 'aegis-adminctl create' \
   || fail 'the create command is not under 还差什么'
 
+# 升级一台没走 nginx 边缘的旧面板：给出切到 HTTPS 的命令（PANDORA_ACME=1 重跑）
+MODE=upgrade EDGE_STATE=not-enabled PANDORA_ADMIN_STATE=manual PENDING_COUNT=0
+summary
+grep -Fq "sudo PANDORA_ACME=1 $RELEASE_ROOT/deploy/install.sh" "$T/summary" || fail 'not-enabled summary lacks the switch command'
+# 对外地址不合规：说清楚改哪里
+MODE=upgrade EDGE_STATE=bad-url
+summary
+grep -q 'https://域名 或 https://公网IPv4' "$T/summary" || fail 'bad-url summary does not say what to change'
+
 # 升级：标题不同；不再打印后台地址本身，只提示怎么重看；给出备份位置；不提建管理员
-MODE=upgrade EDGE_STATE=applied PANDORA_ADMIN_STATE=manual PENDING_COUNT=0
+MODE=upgrade EDGE_STATE=trusted PANDORA_ADMIN_STATE=manual PENDING_COUNT=0
 before=121 after=134 BK="$T/backups/pre-upgrade-20261007.dump"
 summary
 order_ok || fail 'upgrade sections out of order'
@@ -166,6 +178,7 @@ grep -q '121 → 134' "$T/summary" || fail 'upgrade summary lacks the migration 
 grep -Fq "$BK" "$T/summary" || fail 'upgrade summary lacks the backup path'
 refute -q "$ADMIN_PATH_VALUE" "$T/summary"
 grep -Fq "sudo $DEST/deploy/admin-url.sh" "$T/summary" || fail 'upgrade summary does not say how to see the admin URL'
+grep -q "Let's Encrypt 证书在用" "$T/summary" || fail 'upgrade summary does not report the certificate state'
 refute -q 'aegis-adminctl create' "$T/summary"
 
 # --- ④ 静态：发布包与安装器都带上新文件 ------------------------------------------------
@@ -176,11 +189,11 @@ for script in admin-url.sh install-lib.sh; do
 done
 grep -Fq 'cp "$RELEASE_ROOT/deploy/admin-url.sh" "$DEST/deploy/"' "$DEPLOY/install.sh" || fail 'install.sh does not install admin-url.sh'
 grep -Fq '"$SCRIPT_DIR/admin-url.sh"' "$DEPLOY/install-native.sh" || fail 'install-native.sh does not install admin-url.sh'
-# 建管理员在健康检查之后、nginx 之前（nginx 那一步停下时管理员已建好）
+# 建管理员在健康检查之后、HTTPS 边缘之前（那一步停下时管理员已建好）
 line() { grep -nF "$1" "$DEPLOY/install.sh" | head -1 | cut -d: -f1; }
 [ "$(line '服务起来了但健康检查没通过')" -lt "$(line 'pandora_bootstrap_admin "$DEST/bin/aegis-adminctl"')" ] \
-  && [ "$(line 'pandora_bootstrap_admin "$DEST/bin/aegis-adminctl"')" -lt "$(line 'step "配置 nginx 边缘"')" ] \
-  || fail 'install.sh must create the administrator after the health check and before nginx'
+  && [ "$(line 'pandora_bootstrap_admin "$DEST/bin/aegis-adminctl"')" -lt "$(line 'step "配置 HTTPS（nginx 边缘与证书）"')" ] \
+  || fail 'install.sh must create the administrator after the health check and before the HTTPS edge'
 grep -q 'if pandora_admin_prompt_wanted "\$MODE"; then' "$DEPLOY/install.sh" || fail 'install.sh does not gate the prompt'
 
 printf 'install-firstrun mock: PASS\n'

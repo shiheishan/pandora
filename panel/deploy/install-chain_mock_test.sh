@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # install.sh 安装链的桩测试：不需要 root、Docker、nginx 或数据库。
 #
-# install.sh 以 PANDORA_INSTALL_LIB=1 被 source 时只定义步骤函数、不执行安装；这里把
-# nginx / systemctl / certbot / ufw 换成记账的桩，路径都指到临时目录，逐个验证：
-#   CHANGE_ME 计数不算注释、连接串换成 unix socket、ufw 放行、停用发行版默认站点、
-#   certbot webroot 申请、渲染 + nginx -t + reload 与失败回滚；
-# 再静态核对升级前必备份、install-native.sh 不再兜底 GRANT、compose 与冒烟栈的 socket 挂载。
+# install.sh 以 PANDORA_INSTALL_LIB=1 被 source 时只定义步骤函数、不执行安装；这里逐个验证：
+#   CHANGE_ME 计数不算注释、连接串换成 unix socket、升级时要不要接管 nginx 边缘；
+# 再静态核对升级前必备份、HTTPS 边缘交给 edge-tls.sh 且在健康检查之后、install-native.sh 同步、
+# install-native.sh 不再兜底 GRANT、compose 与冒烟栈的 socket 挂载。
+# 证书、nginx 渲染与回滚、防火墙、默认站点的行为在 edge-tls_mock_test.sh。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,35 +14,20 @@ trap 'rm -rf -- "$T"' EXIT
 fail() { printf 'install-chain: %s\n' "$*" >&2; exit 1; }
 refute() { if grep "$@"; then fail "unexpected match: $*"; fi; }
 
-# --- 桩：每次调用记一行到 calls.log ---------------------------------------------
-mkdir -p "$T/bin"
-stub() {
-  local name="$1" body="${2:-}"
-  printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" "%s" "$*" >>"%s/calls.log"\n%s\n' "$name" "$T" "$body" >"$T/bin/$name"
-  chmod +x "$T/bin/$name"
-}
-stub systemctl 'exit 0'
-stub ufw 'if [ "${1:-}" = status ]; then echo "Status: ${UFW_STATE:-active}"; fi; exit 0'
-stub nginx 'if [ "${NGINX_T_FAIL:-}" = 1 ]; then echo "nginx: [emerg] stub failure" >&2; exit 1; fi; exit 0'
-# certbot 桩：成功时按 -d 写出证书文件（模拟 /etc/letsencrypt/live/<域名>/）
-stub certbot '
-[ "${CERTBOT_FAIL:-}" = 1 ] && exit 1
-while [ $# -gt 0 ]; do [ "$1" = -d ] && d="$2"; shift; done
-mkdir -p "$PANDORA_LE_LIVE_DIR/$d"; echo cert >"$PANDORA_LE_LIVE_DIR/$d/fullchain.pem"; echo key >"$PANDORA_LE_LIVE_DIR/$d/privkey.pem"'
-export PATH="$T/bin:$PATH"
-calls() { cat "$T/calls.log" 2>/dev/null || true; }
-reset_calls() { : >"$T/calls.log"; }
-
-export PANDORA_NGINX_DIR="$T/nginx" PANDORA_LE_LIVE_DIR="$T/le" PANDORA_ACME_WEBROOT="$T/acme"
-export PANDORA_REALIP_FILE="$T/realip.conf" PANDORA_BACKUP_DIR="$T/backups" PANDORA_NGINX_VERSION=1.26.3
-mkdir -p "$T/nginx/conf.d" "$T/nginx/sites-available" "$T/nginx/sites-enabled"
+export PANDORA_NGINX_DIR="$T/nginx" PANDORA_BACKUP_DIR="$T/backups"
+mkdir -p "$T/nginx/conf.d"
 
 # shellcheck source=public-base-url.sh
 . "$DEPLOY/public-base-url.sh"
+# shellcheck source=install-lib.sh
+. "$DEPLOY/install-lib.sh"
 # shellcheck source=install.sh
 PANDORA_INSTALL_LIB=1 . "$DEPLOY/install.sh"
 set +E; trap 'rm -rf -- "$T"' EXIT
-declare -F switch_env_to_sockets apply_edge_config obtain_certificate >/dev/null || fail 'library mode did not define the step functions'
+declare -F switch_env_to_sockets pandora_edge_wanted print_install_summary >/dev/null || fail 'library mode did not define the step functions'
+for gone in obtain_certificate apply_edge_config open_firewall disable_stock_default_site; do
+  if declare -F "$gone" >/dev/null; then fail "install.sh still defines $gone (moved to edge-tls.sh)"; fi
+done
 
 # --- ① CHANGE_ME 只数「键=值」行 ------------------------------------------------
 grep -q '^#.*CHANGE_ME' "$DEPLOY/.env.example" || fail '.env.example no longer mentions CHANGE_ME in a comment (test premise)'
@@ -90,88 +75,15 @@ cmp -s "$T/custom.env" "$T/custom.before" || fail 'custom values were rewritten'
 if switch_env_to_sockets "$T/custom.env" 'relative/dir' /x.sock >/dev/null 2>&1; then fail 'relative socket dir accepted'; fi
 [ "$(conn_form 'postgres://aegis_app:a@127.0.0.1:5433/aegis?sslmode=disable')" = tcp ] || fail 'conn_form tcp'
 
-# --- ④ ufw：开着才放行 80/443 -----------------------------------------------------
-reset_calls; UFW_STATE=active open_firewall >/dev/null
-calls | grep -qx 'ufw allow 80/tcp' && calls | grep -qx 'ufw allow 443/tcp' || fail "ufw active: $(calls)"
-reset_calls; UFW_STATE=inactive open_firewall >/dev/null
-refute -q 'allow' "$T/calls.log"
-
-# --- ② 默认站点：只停用发行版原样的链接 -------------------------------------------
-printf 'server {\n    listen 80 default_server;\n    listen [::]:80 default_server;\n}\n' >"$T/nginx/sites-available/default"
-ln -s "$T/nginx/sites-available/default" "$T/nginx/sites-enabled/default"
-disable_stock_default_site >/dev/null
-[ ! -e "$T/nginx/sites-enabled/default" ] || fail 'stock default site still enabled'
-[ -f "$T/nginx/sites-available/default" ] || fail 'stock default site file was deleted'
-printf 'server { listen 80 default_server; }\n' >"$T/nginx/sites-available/mine"
-ln -s "$T/nginx/sites-available/mine" "$T/nginx/sites-enabled/default"
-disable_stock_default_site >/dev/null
-[ -L "$T/nginx/sites-enabled/default" ] || fail 'a non-stock link named default was removed'
-rm -f "$T/nginx/sites-enabled/default"
-
-# --- ② 证书：已有不申请；没同意不申请；同意后走 webroot ------------------------------
-domain=panel.example.test
-reset_calls
-rc=0; PANDORA_ASSUME_YES=1 obtain_certificate "$domain" </dev/null >/dev/null 2>&1 || rc=$?
-[ "$rc" = 2 ] || fail "no consent should return 2, got $rc"
-refute -q '^certbot' "$T/calls.log"
-reset_calls
-rc=0; PANDORA_CERTBOT=1 obtain_certificate "$domain" >/dev/null 2>&1 || rc=$?
-[ "$rc" = 0 ] || fail "certbot flow returned $rc: $(calls)"
-calls | grep -q "^certbot certonly --webroot -w $T/acme -d $domain --non-interactive --agree-tos --register-unsafely-without-email$" \
-  || fail "certbot arguments: $(calls)"
-calls | grep -qx 'nginx -t' || fail 'nginx -t not run before certbot'
-[ ! -e "$T/nginx/conf.d/aegis-acme.conf" ] || fail 'temporary ACME site left behind'
-reset_calls
-rc=0; obtain_certificate "$domain" >/dev/null 2>&1 || rc=$?
-[ "$rc" = 0 ] && ! calls | grep -q '^certbot' || fail 'existing certificate was requested again'
-rm -rf "$T/le"
-reset_calls
-rc=0; PANDORA_CERTBOT=1 PANDORA_CERTBOT_EMAIL=ops@example.test CERTBOT_FAIL=1 obtain_certificate "$domain" >/dev/null 2>&1 || rc=$?
-[ "$rc" = 1 ] || fail "failed certbot should return 1, got $rc"
-calls | grep -q -- '--email ops@example.test' || fail 'email not passed to certbot'
-[ ! -e "$T/nginx/conf.d/aegis-acme.conf" ] || fail 'temporary ACME site left behind after failure'
-
-# --- ③ 渲染 → nginx -t → reload；失败换回原配置 -----------------------------------
-printf 'AEGIS_ADMIN_PATH=ops_0123456789abcdef0123456789abcdef\nAEGIS_PUBLIC_BASE_URL=https://%s\n' "$domain" >"$T/edge.env"
-# 发行版主配置：worker_connections 768（5k-r4 撞上的上限），渲染时一并抬到 8192
-stock_main='user www-data;
-worker_processes auto;
-
-events {
-	worker_connections 768;
-}
-
-http {
-	include /etc/nginx/conf.d/*.conf;
-}'
-printf '%s\n' "$stock_main" >"$T/nginx/nginx.conf"
-reset_calls
-apply_edge_config "$DEPLOY/render-nginx.sh" "$T/edge.env" >/dev/null || fail "apply failed: $(calls)"
-grep -Fq "server_name $domain;" "$T/nginx/conf.d/aegis.conf" || fail 'aegis.conf not rendered'
-grep -Eq '^[[:space:]]*http2 on;' "$T/nginx/conf.d/aegis.conf" || fail 'rendered without http2 on'
-calls | grep -qx 'nginx -t' && calls | grep -qx 'systemctl reload nginx' || fail "no nginx -t + reload: $(calls)"
-grep -Eq '^[[:space:]]*worker_connections 8192;' "$T/nginx/nginx.conf" && grep -Fq 'worker_rlimit_nofile 65536;' "$T/nginx/nginx.conf" \
-  || fail 'install did not raise nginx worker_connections / worker_rlimit_nofile'
-# 已有配置：先备份；nginx -t 失败就一字不差地换回去（站点文件与主配置都换回），不 reload
-echo '# previous good config' >"$T/nginx/conf.d/aegis.conf"
-printf '%s\n' "$stock_main" >"$T/nginx/nginx.conf"
-reset_calls
-if NGINX_T_FAIL=1 apply_edge_config "$DEPLOY/render-nginx.sh" "$T/edge.env" >/dev/null 2>&1; then fail 'nginx -t failure not reported'; fi
-[ "$(cat "$T/nginx/conf.d/aegis.conf")" = '# previous good config' ] || fail 'previous config not restored'
-[ "$(cat "$T/nginx/nginx.conf")" = "$stock_main" ] || fail 'nginx.conf not restored after nginx -t failure'
-refute -q 'reload' "$T/calls.log"
-ls "$T/backups"/nginx-aegis.conf.* >/dev/null 2>&1 || fail 'previous config was not backed up'
-ls "$T/backups"/nginx-main.conf.* >/dev/null 2>&1 || fail 'nginx.conf was not backed up'
-# 原来没有配置、nginx -t 失败：新文件删掉
-rm -f "$T/nginx/conf.d/aegis.conf"
-if NGINX_T_FAIL=1 apply_edge_config "$DEPLOY/render-nginx.sh" "$T/edge.env" >/dev/null 2>&1; then fail 'nginx -t failure not reported'; fi
-[ ! -e "$T/nginx/conf.d/aegis.conf" ] || fail 'failed render left a new aegis.conf'
-# 渲染器拒绝（例如 .env 缺后台前缀）：不动 nginx
-echo '# keep me' >"$T/nginx/conf.d/aegis.conf"
-printf 'AEGIS_PUBLIC_BASE_URL=https://%s\n' "$domain" >"$T/bad.env"
-reset_calls
-if apply_edge_config "$DEPLOY/render-nginx.sh" "$T/bad.env" >/dev/null 2>&1; then fail 'render refusal not reported'; fi
-[ "$(cat "$T/nginx/conf.d/aegis.conf")" = '# keep me' ] && ! calls | grep -q '^nginx' || fail 'nginx touched after render refusal'
+# --- 升级时要不要接管 nginx 边缘 ---------------------------------------------------
+unset PANDORA_ACME PANDORA_CERTBOT
+pandora_edge_wanted install "$T/nginx/conf.d/aegis.conf" </dev/null || fail 'first install must set up the edge'
+if pandora_edge_wanted upgrade "$T/nginx/conf.d/aegis.conf" </dev/null; then fail 'upgrade took over nginx without consent'; fi
+if PANDORA_ASSUME_YES=1 pandora_edge_wanted upgrade "$T/nginx/conf.d/aegis.conf"; then fail 'unattended upgrade took over nginx'; fi
+PANDORA_ACME=1 pandora_edge_wanted upgrade "$T/nginx/conf.d/aegis.conf" </dev/null || fail 'PANDORA_ACME=1 ignored'
+PANDORA_CERTBOT=1 pandora_edge_wanted upgrade "$T/nginx/conf.d/aegis.conf" </dev/null || fail 'legacy PANDORA_CERTBOT=1 ignored'
+touch "$T/nginx/conf.d/aegis.conf"
+pandora_edge_wanted upgrade "$T/nginx/conf.d/aegis.conf" </dev/null || fail 'an existing edge was not re-rendered on upgrade'
 
 # --- 静态：主流程的顺序与红线 ------------------------------------------------------
 inst="$DEPLOY/install.sh"
@@ -181,7 +93,20 @@ grep -Fq 'pg_restore --list /tmp/pre-upgrade.dump' "$inst" || fail 'install.sh d
 # socket 改写在迁移之前、边缘配置在健康检查之后
 line() { grep -nF "$1" "$inst" | head -1 | cut -d: -f1; }
 [ "$(line '"$DEST/deploy/.env" "$PG_SOCKET_DIR" "$VK_SOCKET"')" -lt "$(line 'pandora_run_migrations "$MODE"')" ] || fail 'socket switch is not before migrations'
-[ "$(line 'apply_edge_config "$DEST/deploy/render-nginx.sh"')" -gt "$(line '服务起来了但健康检查没通过')" ] || fail 'edge config is not after the health check'
+[ "$(line 'bash "$DEST/deploy/edge-tls.sh" setup "$DEST/deploy/.env"')" -gt "$(line '服务起来了但健康检查没通过')" ] || fail 'edge setup is not after the health check'
+# edge-tls.sh 的退出码：0 正规证书、3 自签兜底（不算失败）、其余停下
+grep -Fq '3) EDGE_STATE=selfsigned ;;' "$inst" && grep -Fq '0) EDGE_STATE=trusted ;;' "$inst" || fail 'install.sh does not map the edge exit codes'
+grep -Fq 'pandora_edge_wanted "$MODE" "$NGINX_DIR/conf.d/aegis.conf"' "$inst" || fail 'install.sh does not gate the edge on upgrade'
+# 无人值守的环境变量写在头注释里
+for v in PANDORA_PUBLIC_BASE_URL PANDORA_ACME=0 PANDORA_ACME=1 PANDORA_ACME_EMAIL PANDORA_ACME_SERVER PANDORA_SKIP_NGINX PANDORA_ASSUME_YES; do
+  sed -n '1,40p' "$inst" | grep -Fq "$v" || fail "install.sh header does not document $v"
+done
+# install-native.sh 同一条 HTTPS 边缘：拷 edge-tls.sh、装续期单元（换安装目录）、按同样的条件调 setup
+native_edge="$DEPLOY/install-native.sh"
+grep -Fq '"$SCRIPT_DIR/edge-tls.sh"' "$native_edge" || fail 'install-native.sh does not copy edge-tls.sh'
+grep -Fq 'for u in aegis-tls-renew.service aegis-tls-renew.timer; do' "$native_edge" || fail 'install-native.sh does not install the renewal units'
+grep -Fq 'bash "$INSTALL_DIR/deploy/edge-tls.sh" setup "$ENV_FILE"' "$native_edge" || fail 'install-native.sh does not run edge setup'
+grep -Fq 'pandora_edge_wanted "$MODE"' "$native_edge" || fail 'install-native.sh does not gate the edge on upgrade'
 # install.sh 认的 socket 位置与 compose 的挂载一致；冒烟栈用同样的容器内路径
 compose="$DEPLOY/docker-compose.yml"
 grep -Fq -- '- ./run/postgresql:/var/run/postgresql' "$compose" || fail 'compose does not expose the PG socket under run/'

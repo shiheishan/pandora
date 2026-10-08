@@ -2,6 +2,11 @@
 # Pandora Panel — 普通直接安装版（无 Docker）
 # 用法: sudo bash install-native.sh
 #       无人值守: sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名 bash install-native.sh
+# 对外地址与 HTTPS 和 install.sh 同一套（变量含义见 install.sh 头注释）：
+#   PANDORA_PUBLIC_BASE_URL  https://域名 或 https://公网IPv4；首装不给时问，无人值守用本机公网 IPv4
+#   PANDORA_ACME=0|1、PANDORA_ACME_EMAIL、PANDORA_ACME_SERVER、PANDORA_SKIP_NGINX=1
+# 本机装了 nginx 时，首装把 HTTPS 边缘一并配好（edge-tls.sh setup：证书 → nginx → 续期 timer）；
+# 没装 nginx 就只提示命令。
 # 信条: 目录简单、文件简单、不臃肿
 set -euo pipefail
 
@@ -24,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # 首装还是升级：已有 .env 就是升级，.env 一字不动（里面是随机生成的口令与密钥，
 # 重写一次就连不上原来的数据库、解不开信封加密的字段）。首装在动手之前先拿到
-# 合规的对外地址——.env 定为 production，网关拿不到 https 公网域名会拒绝启动。
+# 合规的对外地址——.env 定为 production，网关拿不到 https://域名 或 https://公网IPv4 会拒绝启动。
 [[ -f "$SCRIPT_DIR/public-base-url.sh" ]] || die "发布目录缺少 deploy/public-base-url.sh"
 . "$SCRIPT_DIR/public-base-url.sh"
 # 升级迁移的停服顺序、首装交互式建管理员，与 install.sh 共用一份
@@ -265,8 +270,8 @@ if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]]; then
 fi
 
 # 迁移只走官方 migrate.sh（它带 PGOPTIONS 保护参数），预检走 check-migrations.sh
-cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/update-cloudflare-realip.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$SCRIPT_DIR/admin-url.sh" "$SCRIPT_DIR/MIGRATION-RUNBOOK.md" "$INSTALL_DIR/deploy/" 2>/dev/null || true
-chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" "$INSTALL_DIR/deploy/render-nginx.sh" "$INSTALL_DIR/deploy/update-cloudflare-realip.sh" "$INSTALL_DIR/deploy/admin-url.sh" 2>/dev/null || true
+cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/edge-tls.sh" "$SCRIPT_DIR/update-cloudflare-realip.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$SCRIPT_DIR/admin-url.sh" "$SCRIPT_DIR/MIGRATION-RUNBOOK.md" "$INSTALL_DIR/deploy/" 2>/dev/null || true
+chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" "$INSTALL_DIR/deploy/render-nginx.sh" "$INSTALL_DIR/deploy/edge-tls.sh" "$INSTALL_DIR/deploy/update-cloudflare-realip.sh" "$INSTALL_DIR/deploy/admin-url.sh" 2>/dev/null || true
 GOOSE_BIN="$RELEASE_BIN/goose"
 # 迁移 DSN 用 postgres 超级用户（00010 等迁移需绕过 RLS）；老的 .env 里可能没有这一行
 export AEGIS_MIGRATION_DATABASE_URL="postgres://postgres:${PG_SUPER_PASS}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable"
@@ -336,6 +341,10 @@ install -d -m 0750 /var/log/aegis
 for s in "${SERVICES[@]}"; do
   sed "s|/opt/aegispanel|${INSTALL_DIR}|g" "$SCRIPT_DIR/systemd/${s}.service" > "/etc/systemd/system/${s}.service"
 done
+# HTTPS 证书续期（edge-tls.sh renew）：只装单元，启用由 edge-tls.sh setup 做
+for u in aegis-tls-renew.service aegis-tls-renew.timer; do
+  [[ ! -f "$SCRIPT_DIR/systemd/$u" ]] || sed "s|/opt/aegispanel|${INSTALL_DIR}|g" "$SCRIPT_DIR/systemd/$u" > "/etc/systemd/system/$u"
+done
 systemctl daemon-reload
 for s in "${SERVICES[@]}"; do
   systemctl enable "$s" >/dev/null 2>&1 || true
@@ -363,6 +372,29 @@ if [[ "$HEALTH_OK" == 1 ]] && pandora_admin_prompt_wanted "$MODE"; then
   pandora_bootstrap_admin "$INSTALL_DIR/bin/aegis-adminctl"
 fi
 
+# HTTPS 边缘：与 install.sh 同一条 edge-tls.sh setup（首装默认配；升级只在已走 nginx 边缘、
+# 或显式 PANDORA_ACME=1 时接管）。失败不算安装失败，收尾说清楚补救命令
+EDGE_NOTE=""
+EDGE_URL="$(pandora_env_file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)"
+if [[ "${PANDORA_SKIP_NGINX:-}" = 1 ]]; then
+  EDGE_NOTE="PANDORA_SKIP_NGINX=1，没碰 nginx；要 HTTPS 时：sudo ${INSTALL_DIR}/deploy/edge-tls.sh setup"
+elif ! command -v nginx >/dev/null 2>&1; then
+  EDGE_NOTE="本机没有 nginx：apt-get install -y nginx 后执行 sudo ${INSTALL_DIR}/deploy/edge-tls.sh setup"
+elif ! pandora_valid_public_base_url "$EDGE_URL"; then
+  EDGE_NOTE="AEGIS_PUBLIC_BASE_URL 不是 https://域名 或 https://公网IPv4，没配 HTTPS；改好后 sudo ${INSTALL_DIR}/deploy/edge-tls.sh setup"
+elif ! pandora_edge_wanted "$MODE" /etc/nginx/conf.d/aegis.conf; then
+  EDGE_NOTE="还没走 nginx 边缘，升级不替你接管 80/443；切到 HTTPS：sudo ${INSTALL_DIR}/deploy/edge-tls.sh setup"
+else
+  say "配置 HTTPS（nginx 边缘与证书）"
+  edge_rc=0
+  PANDORA_BACKUP_DIR=/var/backups/pandora bash "$INSTALL_DIR/deploy/edge-tls.sh" setup "$ENV_FILE" || edge_rc=$?
+  case "$edge_rc" in
+    0) EDGE_NOTE="Let's Encrypt 证书在用（查看：sudo ${INSTALL_DIR}/deploy/edge-tls.sh status）" ;;
+    3) EDGE_NOTE="在用自签证书（浏览器提示不安全）；80/tcp 公网可达后 sudo ${INSTALL_DIR}/deploy/edge-tls.sh issue，续期 timer 也会每天两次自动重试" ;;
+    *) EDGE_NOTE="HTTPS 边缘没配好（原因见上，nginx 保持原配置）；修好后 sudo ${INSTALL_DIR}/deploy/edge-tls.sh setup" ;;
+  esac
+fi
+
 say ""
 say "═══════════════════════════════════════════"
 say " Pandora $([[ "$MODE" = install ]] && echo 安装 || echo 升级)完成"
@@ -372,7 +404,8 @@ if [[ "$MODE" = install && "$PANDORA_ADMIN_STATE" = manual ]]; then
   say " 创建管理员:  cd ${INSTALL_DIR} && set -a && . deploy/.env && set +a && read -rsp '密码：' p && echo && printf '%s\n' \"\$p\" | ./bin/aegis-adminctl create --email <你的邮箱> --password-stdin; unset p"
 fi
 say " 配置文件:    ${INSTALL_DIR}/deploy/.env"
-say " 对外地址:    $(pandora_env_file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)（渲染 nginx: ${INSTALL_DIR}/deploy/render-nginx.sh）"
+say " 对外地址:    $(pandora_env_file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)"
+say " HTTPS:       ${EDGE_NOTE}"
 say " Cloudflare:  站点在 Cloudflare 后面时再跑 ${INSTALL_DIR}/deploy/update-cloudflare-realip.sh（默认不信任任何代理）"
 say "═══════════════════════════════════════════"
 [[ "$HEALTH_OK" == 1 ]] || die "部分服务未启动, 检查日志: journalctl -u aegis-public"

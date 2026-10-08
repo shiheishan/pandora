@@ -21,6 +21,12 @@ package reality
 //     tls.go 一致——原先这里还在等后面几条记录，握手挂到 15 秒截止。
 //   - 加了 (*Conn).TakeBufferedForDirect，供 XTLS Vision 直通取走读方向已缓冲的
 //     字节（上游没有这个方法，Xray 是用反射直接读 input / rawInput 两个字段）。
+//   - 握手完成后放掉 hand / rawInput 被握手撑大的底层数组（releaseHandshakeBuffers）。
+//   - conn.go 的 writeRecordLocked：一次 Write 切出的多条记录合并成一次底层写
+//     （writeCoalesceLimit），线上字节不变。
+//   - conn.go 的 Read：调用方经 SetReadCoalescing 打开后，把 rawInput 里已整条到齐的
+//     后续记录一并解出（readBufferedRecords，绝不等网络）；默认关闭，Vision 只在
+//     读侧不会再切直通之后打开。
 
 import (
 	"context"
@@ -118,6 +124,7 @@ func ServerHandoff(ctx context.Context, conn net.Conn, config *Config) (*Conn, e
 	}
 	hs.c.isHandshakeComplete.Store(true)
 	_ = target.Close()
+	hs.c.releaseHandshakeBuffers()
 	return hs.c, nil
 }
 

@@ -16,6 +16,10 @@ paths:
 - 握手限时：普通 TLS 用 `inboundHandshakeTimeout`（10 秒，`withHandshakeDeadline` / `serverTLSHandshake`），REALITY 握手 worker 15 秒。Close 打断的握手不算失败、不上报。ShadowTLS 组合入站把 `inboundHandshakeTimeout` 显式传给 `nativewire/shadowtls`，只限认证判定之前，判定后的诱饵中继不限时（原则见 pdnd-forks 规则文件）。
 - 全部 HTTP 承载（WebSocket、HTTP Upgrade、gRPC、XHTTP、Naive）的 `http.Server` 只经 `newInboundHTTPServer` 构造，靠它的 `ReadHeaderTimeout` 给 TLS 握手与请求头限时；不要直接 `&http.Server{}`（`TestInboundHTTPServerBoundsHandshake`）。
 
+## 转发的空闲回收
+
+- `core.Relay` 两个方向都没有数据超过 `runtime.connection_idle_seconds`（默认 1800 即 30 分钟，用户 10-08 定；与 Xray connIdle 同义但 Xray 默认 300；0 不回收）即断开，整段无数据的长连接（iperf3 的控制连接、不发保活的 SSH）也在此列。10-08 验收记的「iperf3 控制连接第 240 秒被断」是 `-i 60` 的汇报粒度，回环 `-i 2` 复测断在 298–300 秒，就是这个回收。
+
 ## 连接失败观测链
 
 - 适配器在失败点经 `connErrorReporter` 调 OnConnError；`reportAdapterConnError(Addr)` 统一跳过 `io.EOF`、`net.ErrClosed`、`context.Canceled`，不要在适配器里各自过滤。
@@ -37,6 +41,7 @@ paths:
   - 切读方向前要交出外层已缓冲的 input 与 rawInput：REALITY 经 fork 的 `TakeBufferedForDirect`，普通 TLS 经垫在 `tls.Server` 下的 `visionTLSTap`（`vision_tls_tap.go`），它在 Vision 会话期间按记录逐条交付。
   - 直通后 Close / CloseWrite 先作用于底层 TCP；踢人（`user_sessions.go` 的 `closeAbruptly`）先关底层 TCP 再关外层，避免外层 close_notify 卡 5 秒写截止或落进裸流。
   - 回归测试 `TestVLESSRealityVisionInnerTLS13Direct` 含合包变体。
+  - 读侧确定不会再切直通（`releaseDirectWatch`）后才打开 REALITY 的机会式多读（fork 的 `SetReadCoalescing`：一次 Read 解出 rawInput 里已到齐的多条记录）；切直通之前打开会把对端的裸流量当记录解密、连接即断。守卫 `TestVLESSRealityVisionPlainPassthroughBulk`。
 - VMess 照 Xray：响应头首字节回显请求头的 V 字节；aes / chacha / auto 默认带 GlobalPadding（0x08）。
   - 每块先从同一条 SHAKE128(IV) 流取填充长度（%64），再取长度掩码；读写两侧次序必须一致。
   - 终止空块的长度等于「标签 + 填充」，要整块读掉。

@@ -13,11 +13,80 @@ set -u
 
 ROOT=/opt/aegispanel
 LOG=$ROOT/logs/health.log
-cd "$ROOT" || exit 1
-set -a; . deploy/.env 2>/dev/null; set +a
 
 PROBLEMS=()
 note(){ PROBLEMS+=("$1"); }
+
+#--- HTTPS 证书 ---
+# 主机取对外地址 AEGIS_PUBLIC_BASE_URL（域名或公网 IPv4），不再从 nginx 的 server_name 用域名正则
+# 猜：只有 IP 的部署那样取不到、根本不查。查的是 nginx 此刻真正下发的那张（经回环 443），
+# 阈值按证书自己的寿命缩放：剩余不到寿命的 1/3（最多 14 天）才警告。6 天的 IP 证书过半就续，
+# 约剩 2.2 天才报；90 天的域名证书 certbot 剩 30 天续，仍按 14 天报。
+# 续期 timer（edge-tls.sh renew）的结论也接到这里：上次续期出错、或 timer 超过 36 小时没跑。
+# 路径变量只给桩测试覆盖（healthcheck_mock_test.sh 以 HEALTHCHECK_LIB=1 source 本文件）。
+EDGE_CONF="${EDGE_CONF:-/etc/nginx/conf.d/aegis.conf}"
+TLS_STATUS_FILE="${TLS_STATUS_FILE:-/var/lib/aegispanel/tls/status}"
+
+# openssl 打的日期或 ISO 时间转成 epoch 秒；GNU date 与 BSD date 都认
+date_epoch() {
+  date -u -d "$1" +%s 2>/dev/null \
+    || date -u -j -f '%b %e %T %Y %Z' "$1" +%s 2>/dev/null \
+    || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null
+}
+
+# nginx 在回环 443 上给这个主机下发的证书（PEM）。IP 不发 SNI（RFC 6066 不许填 IP），
+# 与浏览器、节点用 IP 直连时一致
+served_cert() {
+  local sni=()
+  [[ "$1" =~ ^[0-9.]+$ ]] || sni=(-servername "$1")
+  echo | timeout 10 openssl s_client -connect 127.0.0.1:443 "${sni[@]}" 2>/dev/null | openssl x509 2>/dev/null
+}
+
+check_tls() {
+  local url host pem end start now left life threshold result message checked checked_at
+  url="${AEGIS_PUBLIC_BASE_URL:-}"; url="${url%/}"
+  # 没走 HTTPS 边缘的部署（没有 aegis.conf、对外地址不是 https://主机）不查
+  [ -f "$EDGE_CONF" ] || return 0
+  [[ "$url" =~ ^https://([^/:]+)$ ]] || return 0
+  host="${BASH_REMATCH[1],,}"
+  now=$(date -u +%s)
+  pem="$(served_cert "$host")"
+  if [ -z "$pem" ]; then
+    note "取不到 https://$host 在用的证书（nginx 没在 443 上提供 HTTPS？）"
+  else
+    end=$(printf '%s\n' "$pem" | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+    start=$(printf '%s\n' "$pem" | openssl x509 -noout -startdate 2>/dev/null | cut -d= -f2)
+    end=$(date_epoch "$end"); start=$(date_epoch "$start")
+    if [ -z "$end" ] || [ -z "$start" ]; then
+      note "读不出 https://$host 证书的有效期"
+    else
+      left=$(( end - now )); life=$(( end - start ))
+      threshold=$(( life / 3 )); [ "$threshold" -lt $(( 14 * 86400 )) ] || threshold=$(( 14 * 86400 ))
+      if [ "$left" -le 0 ]; then
+        note "https://$host 的证书已过期"
+      elif [ "$left" -lt "$threshold" ]; then
+        note "https://$host 的证书还剩 $(( left / 3600 )) 小时到期（寿命 $(( life / 86400 )) 天，续期没跟上）"
+      fi
+    fi
+  fi
+  [ -f "$TLS_STATUS_FILE" ] || return 0
+  result=$(awk -F= '$1 == "RESULT" { sub(/^[^=]*=/, ""); print }' "$TLS_STATUS_FILE")
+  message=$(awk -F= '$1 == "MESSAGE" { sub(/^[^=]*=/, ""); print }' "$TLS_STATUS_FILE")
+  checked_at=$(awk -F= '$1 == "CHECKED_AT" { sub(/^[^=]*=/, ""); print }' "$TLS_STATUS_FILE")
+  [ "$result" != error ] || note "HTTPS 证书续期出错：$message（sudo $ROOT/deploy/edge-tls.sh status）"
+  checked=$(date_epoch "$checked_at")
+  if [ -n "$checked" ] && [ $(( now - checked )) -gt $(( 36 * 3600 )) ]; then
+    note "证书续期 timer 超过 36 小时没跑（systemctl status aegis-tls-renew.timer）"
+  fi
+}
+
+# 可单测的部分到此为止
+if [ "${HEALTHCHECK_LIB:-}" = 1 ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+cd "$ROOT" || exit 1
+set -a; . deploy/.env 2>/dev/null; set +a
 
 #--- 服务存活 ---
 for s in aegis-public aegis-admin aegis-node; do
@@ -62,18 +131,8 @@ else
   [ "$sz" -gt 10240 ] || note "最新备份只有 ${sz} 字节，疑似空文件"
 fi
 
-#--- 证书到期 ---
-DOMAIN=$(nginx -T 2>/dev/null | grep -oP 'server_name \K[a-z0-9.-]+\.[a-z]+' | head -1)
-if [ -n "$DOMAIN" ]; then
-  end=$(echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null \
-        | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
-  if [ -n "$end" ]; then
-    left=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
-    [ "$left" -gt 14 ] || note "$DOMAIN 的证书还有 ${left} 天到期"
-  else
-    note "取不到 $DOMAIN 的证书信息"
-  fi
-fi
+#--- 证书到期与续期（见上面 check_tls） ---
+check_tls
 
 #--- 通知队列积压 ---
 # 队列涨起来通常意味着 SMTP 挂了或 Telegram token 失效，

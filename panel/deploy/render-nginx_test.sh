@@ -37,8 +37,25 @@ stray_listen="$(grep -vE '^[[:space:]]*#' "$TEST_DIR/aegis.conf" | grep -oE 'lis
 grep -Fq 'listen 0.0.0.0:80 default_server' "$TEST_DIR/aegis.conf"
 grep -Fq "server_name $domain;" "$TEST_DIR/aegis.conf"
 grep -Fq 'listen 0.0.0.0:443 ssl' "$TEST_DIR/aegis.conf"
-grep -Fq "/etc/letsencrypt/live/$domain/fullchain.pem" "$TEST_DIR/aegis.conf"
-grep -Fq "/etc/letsencrypt/live/$domain/privkey.pem" "$TEST_DIR/aegis.conf"
+# 证书一律经 edge-tls.sh 维护的稳定链接（Let's Encrypt 域名 / IP 证书或自签兜底），不再按域名拼 certbot 路径
+grep -Fq 'ssl_certificate /etc/aegispanel/tls/live/fullchain.pem;' "$TEST_DIR/aegis.conf"
+grep -Fq 'ssl_certificate_key /etc/aegispanel/tls/live/privkey.pem;' "$TEST_DIR/aegis.conf"
+refute -Fq '/etc/letsencrypt' "$TEST_DIR/aegis.conf"
+# 面板主机的 80：只放 ACME 校验目录，其余 308 到 https；不再在 443 的 server 里用 if 判端口
+server_block() {
+  # 打印第 $1 个顶层 server 块
+  awk -v want="$1" '/^server \{/ { n++ } n == want { print } n == want && /^\}/ { exit }' "$2"
+}
+[[ "$(grep -c '^server {' "$TEST_DIR/aegis.conf")" -eq 3 ]] || { printf 'want 3 server blocks\n' >&2; exit 1; }
+port80="$(server_block 2 "$TEST_DIR/aegis.conf")"
+grep -Fq "server_name $domain;" <<<"$port80"
+grep -Fq 'location ^~ /.well-known/acme-challenge/ {' <<<"$port80"
+grep -Fq 'root /var/www/aegis-acme;' <<<"$port80"
+grep -Fq 'return 308 https://$host$request_uri;' <<<"$port80"
+if grep -Eq 'listen[^;]*443|proxy_pass' <<<"$port80"; then printf 'port-80 server must not proxy or serve TLS\n' >&2; exit 1; fi
+main="$(server_block 3 "$TEST_DIR/aegis.conf")"
+if grep -Eq 'listen[^;]*:80[; ]' <<<"$main"; then printf 'the TLS server still listens on 80\n' >&2; exit 1; fi
+refute -Fq 'if ($server_port' "$TEST_DIR/aegis.conf"
 refute -Fq '__AEGIS_DOMAIN__' "$TEST_DIR/aegis.conf"
 # 模板属于产品，不能带任何一套具体部署的域名：server_name 只能是兜底的 _ 或 .env 给的域名
 stray="$(grep -vE '^[[:space:]]*#' "$TEST_DIR/aegis.conf" | grep -oE 'server_name[[:space:]]+[^;]*;' \
@@ -105,7 +122,8 @@ for invalid in short '../escape-path-0123456789' 'slash/path-0123456789abcdef' '
   fi
 done
 
-# 域名只接受 https://<DNS 域名>：缺失、重复、示例值、http、带端口或路径、IP 都拒绝
+# 对外地址只接受 https://<DNS 域名或公网 IPv4>：规则与 public-base-url.sh、platform/config 共用用例表；
+# 另有缺失、重复、注入
 reject_base() {
   printf 'AEGIS_ADMIN_PATH=%s\n' "$path" >"$TEST_DIR/invalid.env"
   printf '%s' "$1" >>"$TEST_DIR/invalid.env"
@@ -116,13 +134,29 @@ reject_base() {
 }
 reject_base ''
 reject_base $'AEGIS_PUBLIC_BASE_URL=https://a.example.test\nAEGIS_PUBLIC_BASE_URL=https://b.example.test\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://CHANGE_ME_TO_YOUR_PANEL_DOMAIN\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=http://panel.example.test\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://panel.example.test:8443\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://panel.example.test/sub\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://203.0.113.9\n'
-reject_base $'AEGIS_PUBLIC_BASE_URL=https://localhost\n'
 reject_base $'AEGIS_PUBLIC_BASE_URL=https://evil.test;include/x\n'
+cases=0
+while read -r verdict url; do
+  case "$verdict" in ''|'#'*) continue ;; esac
+  cases=$((cases + 1))
+  if [[ "$verdict" = reject ]]; then
+    reject_base "AEGIS_PUBLIC_BASE_URL=$url"$'\n'
+  else
+    printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=%s\n' "$path" "$url" >"$TEST_DIR/case.env"
+    "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/case.env" "$TEST_DIR/case.conf" "$TEST_DIR/realip.conf" >/dev/null \
+      || { printf 'rejected valid base URL %s\n' "$url" >&2; exit 1; }
+    host="${url#https://}"; host="${host%/}"; host="${host,,}"
+    grep -Fq "server_name $host;" "$TEST_DIR/case.conf" || { printf '%s: server_name not %s\n' "$url" "$host" >&2; exit 1; }
+  fi
+done <"$SCRIPT_DIR/fixtures/public-base-url-cases.txt"
+(( cases >= 30 )) || { printf 'shared case table looks truncated\n' >&2; exit 1; }
+
+# 只有公网 IPv4：server_name 就是这个 IP（Let's Encrypt 的 HTTP-01 按 Host: <IP> 来校验），证书仍走 live
+printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://203.0.113.10\n' "$path" >"$TEST_DIR/ip.env"
+"$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/ip.env" "$TEST_DIR/ip.conf" "$TEST_DIR/realip.conf" >/dev/null
+[[ "$(grep -c 'server_name 203.0.113.10;' "$TEST_DIR/ip.conf")" -eq 2 ]] || { printf 'IP render: want server_name on 80 and 443\n' >&2; exit 1; }
+grep -Fq 'ssl_certificate /etc/aegispanel/tls/live/fullchain.pem;' "$TEST_DIR/ip.conf"
+grep -Fq 'location ^~ /.well-known/acme-challenge/ {' "$TEST_DIR/ip.conf"
 
 # 大写与结尾斜杠按同一个域名处理
 printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://Panel.Example.TEST/\n' "$path" >"$TEST_DIR/upper.env"
@@ -134,8 +168,8 @@ grep -Fq "server_name $domain;" "$TEST_DIR/upper.conf"
 
 # error_log：不能是 /dev/null（连接数顶满时「worker_connections are not enough」只在这里），留 crit 写文件
 refute -Eq '^[[:space:]]*error_log[[:space:]]+/dev/null' "$TEST_DIR/aegis.conf"
-[[ "$(grep -cE '^[[:space:]]*error_log /var/log/nginx/aegis-error\.log crit;' "$TEST_DIR/aegis.conf")" -eq 2 ]] \
-  || { printf 'both servers must log crit to /var/log/nginx/aegis-error.log\n' >&2; exit 1; }
+[[ "$(grep -cE '^[[:space:]]*error_log /var/log/nginx/aegis-error\.log crit;' "$TEST_DIR/aegis.conf")" -eq 3 ]] \
+  || { printf 'all three servers must log crit to /var/log/nginx/aegis-error.log\n' >&2; exit 1; }
 
 # 主配置的连接上限（5k-r4：Debian 缺省 768 × 2 个 worker，约一千条 SSE 就把节点请求挤成 500）。
 # 输出在 <dir>/conf.d/ 下时改 <dir>/nginx.conf：worker_connections 至少 8192、worker_rlimit_nofile 至少 65536

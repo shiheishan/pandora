@@ -19,7 +19,7 @@ import (
 // runtimeTuning 是 config.json 里可选的 "runtime" 段：连接回收、停机排空与内存上限。
 // 全部可省略，省略即用默认值；面板安装器不写这一段。
 type runtimeTuning struct {
-	// ConnectionIdleSeconds：两个方向都没有数据超过这么久即回收连接，默认 300；0 不回收。
+	// ConnectionIdleSeconds：两个方向都没有数据超过这么久即回收连接，默认 1800（30 分钟）；0 不回收。
 	ConnectionIdleSeconds *int `json:"connection_idle_seconds"`
 	// HalfCloseSeconds：一侧结束后，另一侧空闲超过这么久即收尾，默认 1。
 	HalfCloseSeconds *int `json:"half_close_seconds"`

@@ -140,7 +140,7 @@ for node_arch in amd64 arm64; do
   stage_file "$RELEASE_DIR/pdnd-dist/pandora-native-linux-$node_arch" \
     "/opt/aegispanel/pdnd-dist/pandora-native-linux-$node_arch" 0755
 done
-for script in backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh update-cloudflare-realip.sh migrate.sh platform.sh check-migrations.sh; do
+for script in backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh render-nginx.sh edge-tls.sh update-cloudflare-realip.sh migrate.sh platform.sh check-migrations.sh; do
   stage_file "$RELEASE_DIR/deploy/$script" "/opt/aegispanel/deploy/$script" 0755
 done
 # release-artifact.env 是本包节点端二进制的 SHA-256 与版本，aegis-node.service
@@ -158,8 +158,10 @@ if [ -d /etc/logrotate.d ]; then
 else
   echo "installer: /etc/logrotate.d is missing; /var/log/aegis will not be rotated until logrotate is installed" >&2
 fi
+# aegis-tls-renew.*：HTTPS 证书续期（edge-tls.sh renew）。只装单元，启用由 edge-tls.sh setup 做：
+# 没配 nginx 边缘的机器上它没有要续的证书
 for unit in aegis-public.service aegis-admin.service aegis-node.service \
-             aegis-backup.service aegis-backup.timer; do
+             aegis-backup.service aegis-backup.timer aegis-tls-renew.service aegis-tls-renew.timer; do
   stage_file "$RELEASE_DIR/deploy/systemd/$unit" "/etc/systemd/system/$unit" 0644
 done
 

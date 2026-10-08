@@ -85,6 +85,10 @@ const streamHealthyAfter = 40 * time.Second
 // 中间设备半开）时，没有它连接会永远挂着，推送加速静默失效。
 const streamIdleTimeout = 60 * time.Second
 
+// StreamUsersVersionHeader 是建事件流时报告「手上的用户名单是哪一版」的请求头，值与
+// UniProxy /user 的 ETag 同源。面板据此跳过首个全量；不认识它的面板忽略即可。
+const StreamUsersVersionHeader = "X-Users-Version"
+
 // ErrStreamUnsupported 表示面板不提供事件流（第三方面板回 404），Stream 已停止，
 // 节点只走轮询。
 var ErrStreamUnsupported = errors.New("面板不支持事件流（HTTP 404），改为只走轮询")
@@ -187,6 +191,12 @@ func (c *Client) streamOnce(ctx context.Context, out chan<- StreamEvent) (health
 		return false, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	// 报上手上的用户名单版本：面板发现与当前版一致就不再推首个全量（面板网关重启后
+	// 成百条流同时重连，原先每条都要推一份全量）。值取客户端记着的用户 ETag——它与
+	// 内核里的名单同生同灭（见 node 的 resetUserMirror），装不上就会被作废。
+	if v := UsersVersionKey(c.UsersVersion()); v != "" {
+		req.Header.Set(StreamUsersVersionHeader, v)
+	}
 
 	// 事件流要挂很久，不能用带总超时的那个 http.Client——它会在
 	// Timeout 到点时把连接掐掉，表现为每隔固定时间断一次。
