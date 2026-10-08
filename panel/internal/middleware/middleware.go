@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -237,6 +238,27 @@ func ByIPPrefix(name string, window time.Duration, max int) Limit {
 func ByAccount(name string, window time.Duration, max int) Limit {
 	return Limit{Name: name, Window: window, Max: max, KeyFn: func(r *http.Request) string {
 		return httpx.PrincipalFrom(r.Context()).UserID
+	}}
+}
+
+// ByAccountParam 按「用户 + 路由参数」计数：同一个人对不同对象（比如每份订阅）各算各的。
+// 参数取 chi.URLParam，所以要挂在 r.With 上（路由已匹配、参数拿得到）。
+//
+// 参数是用户可控的路径段：能解析成 UUID 的一律写成规范形式（大小写、花括号、urn 前缀
+// 换个写法不能换出一个新计数）；解析不了的全部归到同一个桶里，乱填的路径既拿不到
+// 新额度、也不能在 Valkey 里造出任意多个键。没登录或路由上没有这个参数时不适用。
+func ByAccountParam(name, param string, window time.Duration, max int) Limit {
+	return Limit{Name: name, Window: window, Max: max, KeyFn: func(r *http.Request) string {
+		user := httpx.PrincipalFrom(r.Context()).UserID
+		raw := chi.URLParam(r, param)
+		if user == "" || raw == "" {
+			return ""
+		}
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return user + ":invalid"
+		}
+		return user + ":" + id.String()
 	}}
 }
 

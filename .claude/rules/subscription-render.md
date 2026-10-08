@@ -26,3 +26,4 @@ paths:
   - 所有引用（路由出站、DNS detour、规则集下载出口、规则集 tag、DNS 服务器 tag）都必须指向存在的东西，没节点时退回 direct：一处悬空 sing-box 整份起不来（守卫 `render_singbox_template_test.go` 的 `assertSingboxReferencesResolve`）
   - 规则集地址前缀与广告拦截开关经 `platform/config` 的 `SingboxTemplate`（`AEGIS_SINGBOX_*`），aegis-public 启动时 `subscription.ConfigureSingboxTemplate` 设一次；渲染里不读环境变量
   - 只改 sing-box 格式：Clash、URI 不经过模板；Hiddify、Karing 这类第三方 sing-box 客户端只取出站
+- **配置名只有一个来源**（购买模型统一 2.8，2026-10-07）：订阅下载的 Content-Disposition 文件名与门户订阅列表的 `client_name` 都经 `subscription.ProfileName(站点名, 备注名, 套餐名)`（`label.go`）：「站点名 · 备注名」，没起名时「站点名 · 套餐名」。`ContentDisposition` 的入参是完整配置名，`filename` 只留安全 ASCII 并把连续空白并成一个，`filename*` 是 UTF-8 原名；备注名字符规则只在 `purchase.NormalizeLabel`。pull 的 `pullAuthSQL` 按主键带出 `s.label` 与套餐名，不另查。改名不推进节点下发纪元

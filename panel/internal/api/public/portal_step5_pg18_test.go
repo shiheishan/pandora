@@ -74,8 +74,10 @@ func TestPortalStep5PG18(t *testing.T) {
 			[]any{tenant, subLive, user, plan, version, price, subVip, vipPrice}},
 		{`INSERT INTO quota_balances(tenant_id,subscription_id,metric,period,period_start,period_end,granted,limit_value,consumed,adjusted)
 		  VALUES($1,$2,'traffic.bytes','cycle',now()-interval '10 days',now()+interval '20 days',1000,1000,400,50)`, []any{tenant, subLive}},
-		{`INSERT INTO traffic_pack_grants(tenant_id,user_id,source,source_id,granted_bytes,consumed_bytes)
-		  VALUES($1,$2,'migration',gen_random_uuid(),100,40)`, []any{tenant, user}},
+		// 流量包按份挂（购买模型统一）：60 挂在 subLive 上，另有 25 还没加到任何一份
+		{`INSERT INTO traffic_pack_grants(tenant_id,user_id,subscription_id,source,source_id,granted_bytes,consumed_bytes)
+		  VALUES($1,$2,$3,'migration',gen_random_uuid(),100,40),($1,$2,NULL,'migration',gen_random_uuid(),25,0)`,
+			[]any{tenant, user, subLive}},
 		{`INSERT INTO orders(id,tenant_id,order_no,user_id,kind,status,currency,subtotal_amount,discount_amount,tax_amount,
 			total_amount,balance_applied,payable_amount,expires_at,business_request_id)
 		  VALUES($2,$1,'P5-ORDER-1',$3,'new','pending_payment','CNY',100,0,0,100,0,100,now()+interval '30 minutes',gen_random_uuid())`,
@@ -146,12 +148,18 @@ func TestPortalStep5PG18(t *testing.T) {
 				ID        string `json:"id"`
 				Available bool   `json:"available"`
 			} `json:"renewal_price"`
-			PackRemainingBytes int64 `json:"pack_remaining_bytes"`
+			PackRemainingBytes int64      `json:"pack_remaining_bytes"`
+			Label              *string    `json:"label"`
+			ClientName         string     `json:"client_name"`
+			Changeable         bool       `json:"changeable"`
+			RenewUntil         *time.Time `json:"renew_until"`
+			PeriodEnd          *time.Time `json:"current_period_end"`
 			Quotas             []struct {
 				Period   string `json:"period"`
 				Adjusted int64  `json:"adjusted"`
 			} `json:"quotas"`
 		} `json:"subscriptions"`
+		UnattachedPackBytes int64 `json:"unattached_pack_bytes"`
 	}
 	body := do(http.MethodGet, "/v1/me/subscriptions", "", http.StatusOK, &subs)
 	if len(subs.Subscriptions) != 2 {
@@ -164,8 +172,18 @@ func TestPortalStep5PG18(t *testing.T) {
 		!strings.Contains(body, `"next_reset_at":"`) {
 		t.Fatalf("live subscription=%+v body=%s", live, body)
 	}
-	if vip.Renewable || vip.RenewalPrice == nil || vip.RenewalPrice.Available || vip.PackRemainingBytes != 60 {
+	if vip.Renewable || vip.RenewalPrice == nil || vip.RenewalPrice.Available || vip.PackRemainingBytes != 0 {
 		t.Fatalf("expired vip subscription=%+v", vip)
+	}
+	// 购买模型统一 2.9：备注名、配置名、可换套餐、续一期到哪天、未分配的流量包
+	if live.Label != nil || live.ClientName != "Pandora · Pro" || !live.Changeable || live.PeriodEnd == nil ||
+		live.RenewUntil == nil || !live.RenewUntil.Equal(live.PeriodEnd.UTC().AddDate(0, 1, 0).Truncate(time.Microsecond)) {
+		t.Fatalf("live subscription purchase-model fields=%+v body=%s", live, body)
+	}
+	// 过期满 60 天、窗口已关：不能换套餐，也不能续
+	if vip.Changeable || vip.RenewUntil != nil || vip.ClientName != "Pandora · Pro" || subs.UnattachedPackBytes != 25 ||
+		!strings.Contains(body, `"label":null`) || !strings.Contains(body, `"renew_until":null`) {
+		t.Fatalf("vip subscription purchase-model fields=%+v unattached=%d body=%s", vip, subs.UnattachedPackBytes, body)
 	}
 
 	// --- 支付方式：渠道按 methods 展开，不接新支付的不出现 ---
