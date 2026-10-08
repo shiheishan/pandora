@@ -309,6 +309,10 @@ func (h *handlers) rotateSubscriptionLink(w http.ResponseWriter, r *http.Request
 		httpx.Fail(w, r, h.d.Log, err)
 		return
 	}
+	// 节点密码（proxy_uuid）跟着换了：提交后通知节点立刻重拉用户名单（尽力而为）
+	if h.d.Node != nil {
+		h.d.Node.NotifyUsersChanged(r.Context(), httpx.TenantIDFrom(r.Context()))
+	}
 	// 不回新令牌（保留规则 2 / D-B-1）：界面提示用户到门户重新复制订阅地址。
 	httpx.OK(w, adminRotateResponse(out))
 }
