@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/internal/confnum"
 	"github.com/aegispanel/nodeagent/panel"
 )
 
@@ -353,14 +354,6 @@ func errInvalidPort(port int) error {
 }
 
 func intFrom(m map[string]any, key string) int {
-	switch v := m[key].(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	case json.Number:
-		i, _ := v.Int64()
-		return int(i)
-	}
-	return 0
+	n, _ := confnum.Int(m[key])
+	return n
 }

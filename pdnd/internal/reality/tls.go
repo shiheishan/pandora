@@ -137,8 +137,10 @@ func NewRatelimitedConn(conn net.Conn, limit *LimitFallback) net.Conn {
 }
 
 var (
-	size  = 8192
-	empty = make([]byte, size)
+	size = 8192
+	// Pandora 改动：填充源要覆盖 dest 单条握手记录的最大长度（handoff.go 的
+	// targetRecordMax）；上游是 size（8192），证书记录更大的 dest 会越界。
+	empty = make([]byte, targetRecordMax)
 	types = [7]string{
 		"Server Hello",
 		"Change Cipher Spec",

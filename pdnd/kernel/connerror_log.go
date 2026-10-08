@@ -40,6 +40,9 @@ type connErrorLogSink struct {
 	counts map[connErrorKey]*connErrorCount
 	timer  *time.Timer
 	closed bool
+	// flushing 是已取走计数、正在锁外写摘要的 flush；Close 等它们写完再返回，
+	// 否则 Close 之后还会冒出上一轮的摘要（调用方以为日志已经齐了）。
+	flushing sync.WaitGroup
 }
 
 func newConnErrorLogSink(log *slog.Logger, burst int, window time.Duration) *connErrorLogSink {
@@ -96,11 +99,13 @@ func (s *connErrorLogSink) flush() {
 	counts := s.counts
 	s.counts = make(map[connErrorKey]*connErrorCount)
 	s.timer = nil
+	s.flushing.Add(1)
 	s.mu.Unlock()
+	defer s.flushing.Done()
 	s.logSuppressed(counts)
 }
 
-// Close 停掉定时器并补打最后一轮摘要；之后的 Report 一律丢弃。
+// Close 停掉定时器、等在途的 flush 写完，并补打最后一轮摘要；之后的 Report 一律丢弃。
 func (s *connErrorLogSink) Close() {
 	s.mu.Lock()
 	if s.closed {
@@ -115,6 +120,7 @@ func (s *connErrorLogSink) Close() {
 	counts := s.counts
 	s.counts = nil
 	s.mu.Unlock()
+	s.flushing.Wait()
 	s.logSuppressed(counts)
 }
 

@@ -16,6 +16,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 
+	"github.com/aegispanel/nodeagent/internal/confnum"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -123,8 +124,8 @@ func parseMasquerade(raw map[string]any) *NaiveMasquerade {
 	m.URL, _ = node["url"].(string)
 	m.RewriteHost, _ = node["rewrite_host"].(bool)
 	m.Content, _ = node["content"].(string)
-	if v, ok := node["status_code"].(float64); ok {
-		m.StatusCode = int(v)
+	if v, ok := confnum.Int(node["status_code"]); ok {
+		m.StatusCode = v
 	}
 	if hdrs, ok := node["headers"].(map[string]any); ok {
 		m.Headers = make(map[string][]string, len(hdrs))

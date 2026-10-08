@@ -29,6 +29,19 @@ paths:
 - Shadowsocks AEAD 分块负载上限 0x3FFF（SIP004），读写两侧共用 `ssChunkLimit`；超长块规范客户端会断连（`shadowsocks_chunk_test.go`）。
 - VLESS / VMess 的 mux（XUDP）刻意留在 NativeCore 内实现，不委托兼容内核。
 - `reality_client.go` 的 `ParseRealityClientConfig` 目前只有单测消费，自检与 h3 探针都不调用它。
+- XHTTP 按请求判定角色（`xhttp.go` 的 `classifyRequest`），适配器只按 `XHTTPSession.Kind` 分派。auto（节点缺省）照 Xray 服务端逐请求收：不带会话的上行请求是 stream-one；带会话的 GET 是下行；带会话与序号的是 packet-up；带会话无序号的是 stream-up。Xray 的 auto 在 REALITY 上选 stream-one（有 downloadSettings 时选 stream-up），其余选 packet-up。
+  - 会话型请求共用 `xhttp_session.go`：一个会话只许一种上行，第二条 stream-up 回 409。
+  - 未认证会话（协议层还没清掉读截止）按 `xhttp_budget.go` 限会话数与待读字节，超出回 503。
+  - 出错只回状态码，不写错误文本。
+- Vision 直通（command=2）之后，读写都改走外层的底层连接，不再经外层加解密（`vision_direct.go`）。
+  - 切读方向前要交出外层已缓冲的 input 与 rawInput：REALITY 经 fork 的 `TakeBufferedForDirect`，普通 TLS 经垫在 `tls.Server` 下的 `visionTLSTap`（`vision_tls_tap.go`），它在 Vision 会话期间按记录逐条交付。
+  - 直通后 Close / CloseWrite 先作用于底层 TCP；踢人（`user_sessions.go` 的 `closeAbruptly`）先关底层 TCP 再关外层，避免外层 close_notify 卡 5 秒写截止或落进裸流。
+  - 回归测试 `TestVLESSRealityVisionInnerTLS13Direct` 含合包变体。
+- VMess 照 Xray：响应头首字节回显请求头的 V 字节；aes / chacha / auto 默认带 GlobalPadding（0x08）。
+  - 每块先从同一条 SHAKE128(IV) 流取填充长度（%64），再取长度掩码；读写两侧次序必须一致。
+  - 终止空块的长度等于「标签 + 填充」，要整块读掉。
+  - Xray 的 none 带 ChunkStream + ChunkMasking：TCP 不加填充，UDP 可加填充。
+  - 回归测试用 Xray 的编码库（`vmess_xray_client_test.go`）。
 
 ## 传输与订阅的对口
 
@@ -37,4 +50,4 @@ paths:
 ## 互操作测试门
 
 - 三个构建标签都不进默认套件：`interop`（外部 Xray 的 xhttp/mkcp、sing-anytls 客户端）、`interop_mihomo`（需 `MIHOMO_BIN` 与 `MIHOMO_SHA256`）、`interop_external`（sing-box / Juicity / Naive，各需钉住哈希的外部二进制，`*_BIN` + `*_SHA256`）。
-- CI 只以非 race 方式跑 `interop` 里的 Xray XHTTP 与 AnyTLS 两组：外部客户端自带数据竞争，不能进 race 套件（原因见 `anytls_client_interop_test.go` 文件头）。
+- CI 只以非 race 方式跑 `interop` 里的 Xray（XHTTP、VMess、REALITY+Vision）与 AnyTLS 两组：外部客户端自带数据竞争，Xray 在 -race 下还会崩在自己的 checkptr 上，不能进 race 套件（原因见 `anytls_client_interop_test.go` 文件头）。新加 Xray interop 测试要同步 `pandora-native.yml` 的 `-run` 正则。

@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"context"
 	"crypto/cipher"
-	"crypto/sha256"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -36,6 +36,12 @@ const (
 	vmessSecZero   byte = 6
 	vmessOptChunk  byte = 1
 	vmessOptMask   byte = 4
+	// vmessOptPadding 是 Xray 的 RequestOptionGlobalPadding：aes / chacha / auto
+	// 默认开启，每块追加随机填充，必须与 ChunkMasking 同开。
+	vmessOptPadding byte = 8
+	// vmessOptAuthLength 是 Xray 的实验选项 AuthenticatedLength（长度字段也加密），
+	// 默认不开；不支持就明确拒绝，免得按普通长度解出一串乱码。
+	vmessOptAuthLength byte = 0x10
 )
 
 var vmessKDFRoot = []byte("VMess AEAD KDF")
@@ -75,7 +81,7 @@ type vmessAdapter struct {
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
 	headerTimeout time.Duration
 	xhttpBroker   *XHTTPPacketBroker
-	xhttpSessions map[string]*vmessXHTTPPacketSession
+	xhttpSessions map[string]*xhttpSession
 	wg            sync.WaitGroup
 }
 
@@ -90,7 +96,7 @@ type vmessUser struct {
 }
 
 func newVMessAdapter(spec InboundSpec) (Adapter, error) {
-	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*vmessXHTTPPacketSession)}, nil
+	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*xhttpSession)}, nil
 }
 
 func (a *vmessAdapter) Protocol() string { return "vmess" }
@@ -150,7 +156,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.active = make(map[net.Conn]struct{})
 	}
 	if a.xhttpSessions == nil {
-		a.xhttpSessions = make(map[string]*vmessXHTTPPacketSession)
+		a.xhttpSessions = make(map[string]*xhttpSession)
 	}
 	var tlsErr error
 	a.tlsConfig, _, tlsErr = loadInboundTLSConfig(spec.Config.Raw)
@@ -207,8 +213,8 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Lock()
 		a.packet = packet
 		a.xhttpConfig = xhttpConfig
-		if isXHTTPPacketMode(xhttpConfig.Mode) {
-			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
+		if xhttpUsesSessions(xhttpConfig.Mode) {
+			a.xhttpBroker, parseErr = newXHTTPSessionBroker(xhttpConfig)
 			if parseErr != nil {
 				a.mu.Unlock()
 				_ = packet.Close()
@@ -218,7 +224,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Unlock()
 		handler := XHTTPServer{Config: xhttpConfig, Handler: func(ctx context.Context, session XHTTPSession) error {
-			if isXHTTPPacketMode(a.xhttpConfig.Mode) {
+			if session.Kind != XHTTPRequestDuplex {
 				return a.xhttpPacketHandler(ctx, session)
 			}
 			conn := newXHTTPDuplexConn(ctx, session.Body, session.Writer)
@@ -251,8 +257,8 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Lock()
 		a.xhttpConfig = xhttpConfig
-		if isXHTTPPacketMode(xhttpConfig.Mode) {
-			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
+		if xhttpUsesSessions(xhttpConfig.Mode) {
+			a.xhttpBroker, parseErr = newXHTTPSessionBroker(xhttpConfig)
 			if parseErr != nil {
 				a.mu.Unlock()
 				_ = ln.Close()
@@ -262,7 +268,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.mu.Unlock()
 		handler := XHTTPServer{Config: xhttpConfig, Handler: func(ctx context.Context, session XHTTPSession) error {
-			if isXHTTPPacketMode(a.xhttpConfig.Mode) {
+			if session.Kind != XHTTPRequestDuplex {
 				return a.xhttpPacketHandler(ctx, session)
 			}
 			conn := newXHTTPDuplexConn(ctx, session.Body, session.Writer)
@@ -438,8 +444,11 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	user, destination, body, security, err := a.readRequest(reader)
 	if err != nil {
 		// authID 对不上、头部解不开：读到超时再关，不在读完 16 字节后立刻断
-		// （读错误本身立即返回，读空不会多等）。
-		drainUntilDeadline(conn)
+		// （读错误本身立即返回，读空不会多等）。已认证客户端请求了不支持的选项
+		// 则立刻断开。
+		if !errors.Is(err, errVMessUnsupportedRequest) {
+			drainUntilDeadline(conn)
+		}
 		return fmt.Errorf("vmess request: %w", err)
 	}
 	if security != vmessSecNone && security != vmessSecZero && security != vmessSecAES128 && security != vmessSecChaCha {
@@ -484,15 +493,10 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 	defer upstream.Close()
-	if err := vmessWriteResponse(conn, bodyState.key, bodyState.nonce, 0, bodyState.option); err != nil {
+	if err := bodyState.writeResponse(conn); err != nil {
 		return err
 	}
-	responseWriter := io.Writer(conn)
-	if security == vmessSecAES128 || security == vmessSecChaCha {
-		responseKeyHash := sha256.Sum256(bodyState.key)
-		responseNonceHash := sha256.Sum256(bodyState.nonce)
-		responseWriter = newVMessAEADWriter(conn, vmessBodyAEAD(security, responseKeyHash[:16]), responseNonceHash[:16], bodyState.option)
-	}
+	responseWriter := bodyState.responseWriter(conn)
 	// VMess 的读写各自分块加解密，读端是 body、写端是响应流，拼成一端交给转发；
 	// 响应流没有半关闭，上游结束后按单向收尾计时收尾。
 	client := &core.SplitStream{R: body, W: responseWriter, C: conn}
@@ -509,17 +513,10 @@ func (a *vmessAdapter) handleUDP(ctx context.Context, conn net.Conn, user core.U
 		return err
 	}
 	defer upstream.Close()
-	if err := vmessWriteResponse(conn, body.key, body.nonce, 0, body.option); err != nil {
+	if err := body.writeResponse(conn); err != nil {
 		return err
 	}
-	responseKeyHash := sha256.Sum256(body.key)
-	responseNonceHash := sha256.Sum256(body.nonce)
-	var writer io.Writer
-	if security == vmessSecAES128 || security == vmessSecChaCha {
-		writer = newVMessAEADWriter(conn, vmessBodyAEAD(security, responseKeyHash[:16]), responseNonceHash[:16], body.option)
-	} else {
-		writer = &vmessPlainChunkWriter{upstream: conn}
-	}
+	writer := body.responseWriter(conn)
 	destinationAddr, err := vmessDestinationUDPAddr(destination)
 	if err != nil {
 		return err
@@ -579,7 +576,7 @@ func (a *vmessAdapter) Close() error {
 	for c := range a.active {
 		active = append(active, c)
 	}
-	packetSessions := make([]*vmessXHTTPPacketSession, 0, len(a.xhttpSessions))
+	packetSessions := make([]*xhttpSession, 0, len(a.xhttpSessions))
 	for _, session := range a.xhttpSessions {
 		packetSessions = append(packetSessions, session)
 	}
