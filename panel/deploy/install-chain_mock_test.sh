@@ -180,7 +180,7 @@ refute -q '跳过备份' "$inst"
 grep -Fq 'pg_restore --list /tmp/pre-upgrade.dump' "$inst" || fail 'install.sh does not verify the pre-upgrade dump'
 # socket 改写在迁移之前、边缘配置在健康检查之后
 line() { grep -nF "$1" "$inst" | head -1 | cut -d: -f1; }
-[ "$(line '"$DEST/deploy/.env" "$PG_SOCKET_DIR" "$VK_SOCKET"')" -lt "$(line 'bash ./migrate.sh up')" ] || fail 'socket switch is not before migrations'
+[ "$(line '"$DEST/deploy/.env" "$PG_SOCKET_DIR" "$VK_SOCKET"')" -lt "$(line 'pandora_run_migrations "$MODE"')" ] || fail 'socket switch is not before migrations'
 [ "$(line 'apply_edge_config "$DEST/deploy/render-nginx.sh"')" -gt "$(line '服务起来了但健康检查没通过')" ] || fail 'edge config is not after the health check'
 # install.sh 认的 socket 位置与 compose 的挂载一致；冒烟栈用同样的容器内路径
 compose="$DEPLOY/docker-compose.yml"
@@ -208,9 +208,9 @@ done
 native="$DEPLOY/install-native.sh"
 refute -Eq 'GRANT[^;]*ON ALL TABLES' "$native"
 refute -q '^export PANDORA_SKIP_PRECHECK_FRESH_DB' "$native"
-grep -Fq 't) export PANDORA_SKIP_PRECHECK_FRESH_DB=yes-empty-database' "$native" || fail 'native precheck skip is not tied to a fresh database'
+grep -Fq 't) FRESH_DB=yes ;;' "$native" || fail 'native precheck skip is not tied to a fresh database'
 grep -Fq 'pg_dump -Fc -d aegis' "$native" || fail 'install-native.sh has no pre-upgrade dump'
-awk '/pg_dump -Fc -d aegis/ { dump = NR } /"\$INSTALL_DIR\/deploy\/migrate.sh" up/ { mig = NR } END { exit !(dump && mig && dump < mig) }' "$native" \
+awk '/pg_dump -Fc -d aegis/ { dump = NR } /pandora_run_migrations "\$MODE"/ { mig = NR } END { exit !(dump && mig && dump < mig) }' "$native" \
   || fail 'native dump does not come before the migration'
 
 printf 'install-chain mock: PASS\n'

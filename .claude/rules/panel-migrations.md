@@ -41,7 +41,10 @@ paths:
     - 文件头写 `-- irreversible: <原因>` 和 `-- forward-fix: <前滚补救办法>`；
     - Down 里 `RAISE EXCEPTION` 拒绝（照 00029、00030）；
     - rollback-to 遇到它会在执行任何 Down 之前就拒绝，并指向备份恢复。
-  - 带数据守卫的 Down（有不能丢的行时 RAISE，没有时照常回退，照 00057、00129）不算 irreversible，不要标
+  - 带数据守卫的 Down（有不能丢的行时 RAISE，没有时照常回退，照 00057、00129、00012）不算 irreversible，不要标
+  - Down 不对追加写表 DELETE（直接或经外键级联都会被语句级触发器拒绝，空表也拒）：种子行保留（00050），证据行用数据守卫（00012）；纯种子、删了会级联进证据表的标 irreversible（00010、00042）
+  - 集群级对象：Up 装的扩展在 Down 里删（00001）；Up 建的角色只在整个集群都不再引用时才删（00038 查 `pg_shdepend`、成员关系与按库设置），否则保留并 NOTICE
+  - 恢复约束时，存量数据允许就恢复成原样：00131 的外键先 NOT VALID 加回，再试 VALIDATE，有悬空引用才保持 NOT VALID
   - 发布物兜底：`check-migrations.sh` 拒绝既没有 Down 段、也没有 irreversible 文件头的迁移
 - DDL lint：`panel/tools/migrationlint`，随 `go test ./...` 跑。新迁移必须全部满足：
   - Up 和 Down 开头、任何 DDL/DML 之前，`SET LOCAL lock_timeout` 与 `SET LOCAL statement_timeout`
@@ -60,9 +63,9 @@ paths:
   - irreversible 的 down 必须失败，且版本与结构都不变
   - dump 是 `pg_dump --schema-only` 加 `pg_dumpall --roles-only`，按对象条目切开排序后比较
   - 全量约 3 分钟
-  - 历史缺陷登记在脚本的 `KNOWN`（12 条，见脚本注释），同样只许删不许加
+  - 历史缺陷登记在脚本的 `KNOWN`，同样只许删不许加。建门禁时的 12 条已于 2026-10-07 全部修好（只改 Down 与文件头），现在为空：任何迁移往返不过即红
   - 改 Down 时先在本地读懂上一版的完整定义，再推到 GitHub 看往返结果；本机没有 Docker 跑不了它
-- 一次性库预检（`check-migrations.sh`）由发布控制器在**停服之前**跑，整库克隆在停服窗口之外
+- 一次性库预检（`check-migrations.sh`）由发布控制器、install.sh 与 install-native.sh 的升级在**停服之前**跑，整库克隆在停服窗口之外（安装器经 `install-lib.sh` 的 `pandora_run_migrations`，桩测试 `install-migrate-order_mock_test.sh`）
   - 通过后写预检凭据，内容是水位、迁移目录摘要、是否按停写口径演练
   - 停服后 `--verify-attestation` 只读核对：文件、水位、续费闸门，再与凭据比对，对不上就自动拉回旧服务
   - `migrate.sh up` 带 `PANDORA_PRECHECK_ATTESTATION` 时只做这次核对，不带时照旧完整预检，两样都没有就不跑 up
@@ -79,7 +82,7 @@ paths:
 - 读路径、定时任务、回填共用一个 SQL 函数作口径的唯一出处（如 `app.node_traffic_payload_entries`）：口径只有一处可改；PG18 用例拿旧 SQL 逐项对照，并在计划里确认函数被内联（没有对它的 Function Scan）
 - 回填耗时按两倍估：迁移预检先在克隆库上跑一遍，正式库再跑一遍。上线前按 new-migration skill「回填耗时」一节在 5k 副本上实测
 - 数据修复迁移只往前推、不缩短，如只把落后的凭据到期、额度周期末拉齐到订阅周期末。注释写清哪些行可以安全改、哪些不碰（已吊销、空值、已用量）
-- 不可逆的 Down 用 `RAISE EXCEPTION` 拒绝并写明原因（照 00102：修复前的值没留存，恢复就等于让用户重新 404）。新迁移还要在文件头写 `-- irreversible:` 与 `-- forward-fix:`（00102 是建守卫前的，缺标记，登记在往返 KNOWN 里）
+- 不可逆的 Down 用 `RAISE EXCEPTION` 拒绝并写明原因（照 00102：修复前的值没留存，恢复就等于让用户重新 404），文件头写 `-- irreversible:` 与 `-- forward-fix:`
 - 修复和回填要在 PG18 里实跑 Up：
   - 数据修复：以迁移角色执行这段 Up，断言三件事：旧写法留下的分叉被修好、已一致的行不变、重跑一次零改动
   - 回填：在回滚的事务里重跑迁移原文，与旧 SQL 逐项对照；再把行改脏重跑两遍，结果相同

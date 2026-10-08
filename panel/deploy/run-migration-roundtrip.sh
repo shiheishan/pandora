@@ -36,24 +36,11 @@ PGPW=roundtrip-gate-password
 DB=pandora_roundtrip
 
 # 历史迁移已知的往返问题：「文件名|原因」。2026-10-07 建门禁时（主线最大 00133）在
-# GitHub 上实测出来的，修它们要改那些迁移的 Down 段，不在本门禁的授权里。
+# GitHub 上实测出 12 条，同日按用户授权改了那些迁移的 Down 段与文件头，已全部清空。
 # 只许删不许加：新迁移必须一次往返通过（编号大于 KNOWN_CEILING 的条目直接判失败）；
-# 某条修好之后这里会因「已登记却通过」变红，提醒删掉。
+# 登记了却已经通过的条目会因「已登记却通过」变红，提醒删掉。
 KNOWN_CEILING=133
-KNOWN=(
-  "00001_foundation.sql|Down 不删 Up 建的扩展 btree_gist、citext、pgcrypto"
-  "00010_seed_rbac.sql|Down 对追加写表 subscription_events 执行 DELETE，语句级追加写触发器空表也拒绝"
-  "00012_audit_node_actor.sql|Down 对追加写表 audit_events 执行 DELETE，被追加写触发器拒绝"
-  "00035_catalog_authoring.sql|Down 重建的 app.guard_frozen_plan_version() 函数体文本与 Up 之前不同（只差 END 的写法）"
-  "00036_order_reservations.sql|Down 留下 Up 之前不存在的列级 INSERT/UPDATE 授权（coupon_redemptions、ledger_accounts、ledger_entries、ledger_transactions 等）"
-  "00037_idempotency_runtime_hardening.sql|Down 重建的 app.assert_refund_idempotency_key 等函数体文本与 Up 之前不同（排版）"
-  "00038_idempotency_resource_binding.sql|Down 后集群级角色 aegis_idempotency_owner 残留"
-  "00042_seed_registration_mode.sql|Down 对追加写表 system_setting_revisions 执行 DELETE，被追加写触发器拒绝"
-  "00050_telegram.sql|Down 对追加写表 system_setting_revisions 执行 DELETE，被追加写触发器拒绝"
-  "00067_drop_orphan_tables.sql|Down 无条件 RAISE（不恢复孤儿表），实为 irreversible，但文件头缺 irreversible 标记"
-  "00102_subscription_period_resync.sql|修数据，Down 无条件 RAISE，实为 irreversible，但文件头缺 irreversible 标记"
-  "00131_append_only_retention.sql|Down 恢复的 node_traffic_reports_duplicate_of_fkey 带 NOT VALID，Up 之前是已校验的外键"
-)
+KNOWN=()
 
 # 迁移里的 fail-closed 闸门（00037–00040 的 Up 与 Down）要显式批准；一次性库里全部
 # 原样满足，绕过闸门跑出来的结果证明不了线上能回滚。

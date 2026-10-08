@@ -27,6 +27,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # 合规的对外地址——.env 定为 production，网关拿不到 https 公网域名会拒绝启动。
 [[ -f "$SCRIPT_DIR/public-base-url.sh" ]] || die "发布目录缺少 deploy/public-base-url.sh"
 . "$SCRIPT_DIR/public-base-url.sh"
+# 升级迁移的停服顺序、首装交互式建管理员，与 install.sh 共用一份
+[[ -f "$SCRIPT_DIR/install-lib.sh" ]] || die "发布目录缺少 deploy/install-lib.sh"
+. "$SCRIPT_DIR/install-lib.sh"
 ENV_FILE="$INSTALL_DIR/deploy/.env"
 if [[ -f "$ENV_FILE" ]]; then
   MODE=upgrade
@@ -189,15 +192,16 @@ VK_PORT="${VALKEY_PORT:-$(awk -F' ' '/^port /{print $2; exit}' /etc/valkey/valke
 [[ "$VK_PORT" =~ ^[0-9]+$ ]] || VK_PORT=6379
 
 # ── 3. 安装文件 ───────────────────────────────────────
+# 程序（bin/）放到第 5 步、迁移成功之后再装：升级时迁移失败要把服务拉回来，拉回来的
+# 必须还是原来的程序；迁移用发布包自带的 goose（RELEASE_BIN）。
 say "[3/6] 安装到 $INSTALL_DIR"
+RELEASE_BIN="$(cd "$SCRIPT_DIR/../bin" && pwd)"
 mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/migrations" "$INSTALL_DIR/deploy"
-cp -f "$SCRIPT_DIR"/../bin/* "$INSTALL_DIR/bin/"
 cp -f "$SCRIPT_DIR"/../migrations/*.sql "$INSTALL_DIR/migrations/"
 cp -f "$SCRIPT_DIR"/systemd/*.service "$INSTALL_DIR/deploy/"
 # 节点端发布物绑定（SHA-256 与版本），aegis-node.service 以 EnvironmentFile= 加载；
 # 下面装单元时 /opt/aegispanel 会被替换成 $INSTALL_DIR
 [[ ! -f "$SCRIPT_DIR/release-artifact.env" ]] || cp -f "$SCRIPT_DIR/release-artifact.env" "$INSTALL_DIR/deploy/"
-chmod 0755 "$INSTALL_DIR/bin/"*
 
 # ── 4. 建库 + 迁移 ────────────────────────────────────
 say "[4/6] 初始化数据库 + 执行迁移"
@@ -245,7 +249,6 @@ AEGIS_JWT_PUBLIC_SECRET=${JWT_PUBLIC_SECRET}
 AEGIS_JWT_ADMIN_SECRET=${JWT_ADMIN_SECRET}
 AEGIS_CONFIG_SIGNING_SEED=${CONFIG_SIGNING_SEED}
 AEGIS_PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
-PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes
 EOF
 chmod 0600 "$INSTALL_DIR/deploy/.env"
 fi
@@ -261,19 +264,23 @@ if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]]; then
   sleep 1
 fi
 
-# 迁移（用官方 migrate.sh, 它带 PGOPTIONS 保护参数；migrate.sh 在包内 deploy/ 下）
-cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/update-cloudflare-realip.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$INSTALL_DIR/deploy/" 2>/dev/null || true
-chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" "$INSTALL_DIR/deploy/render-nginx.sh" "$INSTALL_DIR/deploy/update-cloudflare-realip.sh" 2>/dev/null || true
-export AEGIS_ENV_FILE="$INSTALL_DIR/deploy/.env"
-export AEGIS_MIGRATIONS_DIR="$INSTALL_DIR/migrations"
+# 迁移只走官方 migrate.sh（它带 PGOPTIONS 保护参数），预检走 check-migrations.sh
+cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/update-cloudflare-realip.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$SCRIPT_DIR/admin-url.sh" "$SCRIPT_DIR/MIGRATION-RUNBOOK.md" "$INSTALL_DIR/deploy/" 2>/dev/null || true
+chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" "$INSTALL_DIR/deploy/render-nginx.sh" "$INSTALL_DIR/deploy/update-cloudflare-realip.sh" "$INSTALL_DIR/deploy/admin-url.sh" 2>/dev/null || true
+GOOSE_BIN="$RELEASE_BIN/goose"
+# 迁移 DSN 用 postgres 超级用户（00010 等迁移需绕过 RLS）；老的 .env 里可能没有这一行
 export AEGIS_MIGRATION_DATABASE_URL="postgres://postgres:${PG_SUPER_PASS}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable"
-export GOOSE_BIN="$INSTALL_DIR/bin/goose"
+# 早期版本把「写入者已停」写死在 .env 里，手工跑 migrate.sh 时也会被当成已停服。
+# 不替人改 .env（那里是口令与密钥），只提醒；本脚本自己只在真的停服之后才递交这份声明。
+if [[ "$MODE" = upgrade ]] && grep -q '^PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=' "$ENV_FILE"; then
+  say "  ! $ENV_FILE 里有 PANDORA_STOPPED_WRITER_UPGRADE_APPROVED：它让每次手工跑 migrate.sh 都声称写入者已停，建议删掉这一行"
+fi
 # 只有全新库才跳过一次性数据库预检（migrate.sh 的约定：goose_db_version 不存在即全新库）。
 # 以前这里无条件跳过，升级时已有数据的库也不演练就直接迁移
 fresh_db="$(su -s /bin/bash postgres -c "psql -X -d aegis -tAc \"SELECT pg_catalog.to_regclass('public.goose_db_version') IS NULL\"" 2>/dev/null | tr -d '[:space:]')"
 case "$fresh_db" in
-  t) export PANDORA_SKIP_PRECHECK_FRESH_DB=yes-empty-database ;;
-  f) unset PANDORA_SKIP_PRECHECK_FRESH_DB; say "  已有迁移记录，先在一次性克隆库上演练（这一步比较慢）" ;;
+  t) FRESH_DB=yes ;;
+  f) FRESH_DB=no ;;
   *) die "查不到库 aegis 的迁移状态，不知道是不是全新库，停下（psql -d aegis 能连上吗？）" ;;
 esac
 
@@ -289,7 +296,16 @@ if [[ "$fresh_db" = f ]]; then
   chmod 0600 "$BK"
   say "  升级前备份：$BK（$(du -h "$BK" | cut -f1)）"
 fi
-"$INSTALL_DIR/deploy/migrate.sh" up || die "迁移失败, 见上"
+# 升级：停服前完整预检（写凭据）→ 停服 → 迁移只核凭据；首装直接迁移。见 install-lib.sh
+migrate_rc=0
+PANDORA_SERVICES="${SERVICES[*]}" pandora_run_migrations "$MODE" "$FRESH_DB" "$INSTALL_DIR/deploy" \
+  "$ENV_FILE" "$INSTALL_DIR/migrations" "$GOOSE_BIN" || migrate_rc=$?
+case "$migrate_rc" in
+  0) ;;
+  10) die "停服前的迁移预检没通过（输出见上）：服务没停，数据库没动" ;;
+  11) die "迁移失败（输出见上），服务已拉回原来的版本；处置见 $INSTALL_DIR/deploy/MIGRATION-RUNBOOK.md" ;;
+  *) die "迁移失败, 见上" ;;
+esac
 
 # 应用角色权限（迁移后）：必须跑官方 configure-app-role.sql 做收敛
 # （REVOKE TEMPORARY、固定 search_path、列级权限白名单）。只做粗粒度 GRANT
@@ -304,13 +320,15 @@ chmod 0644 /tmp/configure-app-role.sql 2>/dev/null || true
 role_log="$(su -s /bin/bash postgres -c "AEGIS_DB_APP_PASSWORD='${APP_PASS}' psql -X -d aegis -v ON_ERROR_STOP=1 -f /tmp/configure-app-role.sql" 2>&1)" || {
   rm -f /tmp/configure-app-role.sql
   printf '%s\n' "$role_log" | tail -20 >&2
-  die "configure-app-role.sql 收敛运行角色失败（输出见上），没有启动服务。修好后重跑本脚本（按升级处理，幂等）"
+  die "configure-app-role.sql 收敛运行角色失败（输出见上），没有启动服务（升级时服务已在迁移前停下）。修好后重跑本脚本（按升级处理，幂等）"
 }
 rm -f /tmp/configure-app-role.sql
 say "  configure-app-role.sql 角色收敛完成"
 
-# ── 5. systemd ───────────────────────────────────────
-say "[5/6] 安装 systemd 服务"
+# ── 5. 程序与 systemd ─────────────────────────────────
+say "[5/6] 安装程序与 systemd 服务"
+cp -f "$RELEASE_BIN"/* "$INSTALL_DIR/bin/"
+chmod 0755 "$INSTALL_DIR/bin/"*
 # 单元把日志 append 到 /var/log/aegis，目录不存在时 systemd 以 209/STDOUT 失败
 install -d -m 0750 /var/log/aegis
 [[ ! -d /etc/logrotate.d || ! -f "$SCRIPT_DIR/logrotate-aegis" ]] \
@@ -337,10 +355,22 @@ if command -v valkey-server >/dev/null 2>&1; then
   valkey-cli -a "$VK_PASS" --no-auth-warning ping 2>/dev/null | grep -q PONG && echo "  valkey: PONG" || echo "  valkey: 检查失败"
 fi
 
+# 首装且在交互终端里：现场建第一个管理员（aegis-adminctl 经 platform/config 读 .env）
+PANDORA_ADMIN_STATE=manual
+if [[ "$HEALTH_OK" == 1 ]] && pandora_admin_prompt_wanted "$MODE"; then
+  say "创建管理员"
+  set -a; . "$ENV_FILE"; set +a
+  pandora_bootstrap_admin "$INSTALL_DIR/bin/aegis-adminctl"
+fi
+
 say ""
 say "═══════════════════════════════════════════"
-say " Pandora 安装完成"
-say " 管理后台路径: /${ADMIN_PATH}"
+say " Pandora $([[ "$MODE" = install ]] && echo 安装 || echo 升级)完成"
+say " 管理后台:    $(bash "$INSTALL_DIR/deploy/admin-url.sh" "$ENV_FILE" 2>/dev/null || echo "/${ADMIN_PATH}/")"
+say " 重看后台地址: sudo ${INSTALL_DIR}/deploy/admin-url.sh"
+if [[ "$MODE" = install && "$PANDORA_ADMIN_STATE" = manual ]]; then
+  say " 创建管理员:  cd ${INSTALL_DIR} && set -a && . deploy/.env && set +a && read -rsp '密码：' p && echo && printf '%s\n' \"\$p\" | ./bin/aegis-adminctl create --email <你的邮箱> --password-stdin; unset p"
+fi
 say " 配置文件:    ${INSTALL_DIR}/deploy/.env"
 say " 对外地址:    $(pandora_env_file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)（渲染 nginx: ${INSTALL_DIR}/deploy/render-nginx.sh）"
 say " Cloudflare:  站点在 Cloudflare 后面时再跑 ${INSTALL_DIR}/deploy/update-cloudflare-realip.sh（默认不信任任何代理）"

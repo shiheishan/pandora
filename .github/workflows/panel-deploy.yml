@@ -53,6 +53,8 @@ jobs:
             public-base-url_mock_test.sh
             migrate-to-new-host_mock_test.sh
             install-chain_mock_test.sh
+            install-migrate-order_mock_test.sh
+            install-firstrun_mock_test.sh
           )
           failed=()
           for t in "${tests[@]}"; do

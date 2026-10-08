@@ -953,8 +953,10 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
+
   IF OLD.status='succeeded' AND to_jsonb(NEW) IS DISTINCT FROM to_jsonb(OLD) THEN
-    RAISE EXCEPTION 'successful idempotency evidence is immutable' USING ERRCODE='check_violation';
+    RAISE EXCEPTION 'successful idempotency evidence is immutable'
+      USING ERRCODE='check_violation';
   END IF;
   IF OLD.status='failed' AND NEW.status='failed'
      AND to_jsonb(NEW) IS DISTINCT FROM to_jsonb(OLD) THEN
@@ -971,7 +973,8 @@ BEGIN
   IF OLD.resource_type IS NOT NULL AND
      (NEW.resource_type,NEW.resource_id) IS DISTINCT FROM
      (OLD.resource_type,OLD.resource_id) THEN
-    RAISE EXCEPTION 'idempotency resource binding is write-once' USING ERRCODE='check_violation';
+    RAISE EXCEPTION 'idempotency resource binding is write-once'
+      USING ERRCODE='check_violation';
   END IF;
   IF NEW.status IS DISTINCT FROM OLD.status AND NOT (
        (OLD.status='in_flight' AND NEW.status IN ('succeeded','failed'))
@@ -995,7 +998,8 @@ BEGIN
   END IF;
   IF TG_OP='UPDATE' AND OLD.status='succeeded'
      AND to_jsonb(NEW) IS DISTINCT FROM to_jsonb(OLD) THEN
-    RAISE EXCEPTION 'terminal refund request is immutable' USING ERRCODE='check_violation';
+    RAISE EXCEPTION 'terminal refund request is immutable'
+      USING ERRCODE='check_violation';
   END IF;
   IF TG_OP='UPDATE' AND NEW.status IS DISTINCT FROM OLD.status AND NOT (
        (OLD.status='pending' AND NEW.status IN ('processing','failed','manual_review'))
@@ -1012,7 +1016,8 @@ BEGIN
     SELECT 1 FROM idempotency_keys k
      WHERE k.tenant_id=NEW.tenant_id AND k.id=NEW.business_request_id
        AND k.scope='refund_create' AND k.resource_type='refund_request'
-       AND k.resource_id=NEW.id AND k.status IN ('in_flight','succeeded','failed')
+       AND k.resource_id=NEW.id
+       AND k.status IN ('in_flight','succeeded','failed')
        AND k.request_hash=NEW.request_hash
        AND k.actor_id IS NOT DISTINCT FROM NEW.requested_by
   ) THEN
@@ -1025,27 +1030,36 @@ $$;
 
 CREATE OR REPLACE FUNCTION app.assert_refund_request(p_tenant uuid,p_request uuid)
 RETURNS void LANGUAGE plpgsql AS $$
-DECLARE v_detail text;
+DECLARE
+  v_detail text;
 BEGIN
   SELECT format('request %s status %s/key %s has %s legs/%s amount/%s succeeded',
                 rr.id,rr.status,k.status,count(r.id),coalesce(sum(r.amount),0),
                 count(r.id) FILTER (WHERE r.status='succeeded'))
-    INTO v_detail FROM refund_requests rr
-    LEFT JOIN idempotency_keys k ON k.tenant_id=rr.tenant_id AND k.id=rr.business_request_id
-    LEFT JOIN refunds r ON r.tenant_id=rr.tenant_id AND r.refund_request_id=rr.id
+    INTO v_detail
+    FROM refund_requests rr
+    LEFT JOIN idempotency_keys k
+      ON k.tenant_id=rr.tenant_id AND k.id=rr.business_request_id
+    LEFT JOIN refunds r
+      ON r.tenant_id=rr.tenant_id AND r.refund_request_id=rr.id
    WHERE rr.tenant_id=p_tenant AND rr.id=p_request
    GROUP BY rr.id,rr.status,rr.requested_amount,k.id,k.status,k.scope,
             k.request_hash,k.actor_id,k.resource_type,k.resource_id
   HAVING k.id IS NULL OR k.scope<>'refund_create'
-      OR k.request_hash<>rr.request_hash OR k.actor_id IS DISTINCT FROM rr.requested_by
+      OR k.request_hash<>rr.request_hash
+      OR k.actor_id IS DISTINCT FROM rr.requested_by
       OR k.resource_type<>'refund_request' OR k.resource_id<>rr.id
-      OR (rr.status IN ('pending','processing','manual_review','partially_succeeded') AND k.status<>'in_flight')
+      OR (rr.status IN ('pending','processing','manual_review','partially_succeeded')
+          AND k.status<>'in_flight')
       OR (rr.status='succeeded' AND k.status<>'succeeded')
       OR (rr.status='failed' AND k.status<>'failed')
       OR count(r.id)=0 OR coalesce(sum(r.amount),0)<>rr.requested_amount
-      OR (rr.status='succeeded' AND count(r.id) FILTER (WHERE r.status='succeeded')<>count(r.id))
-      OR (rr.status='failed' AND count(r.id) FILTER (WHERE r.status IN ('failed','rejected'))<>count(r.id))
-      OR (rr.status IN ('pending','processing') AND count(r.id) FILTER (WHERE r.status IN ('succeeded','failed','rejected'))>0)
+      OR (rr.status='succeeded' AND
+          count(r.id) FILTER (WHERE r.status='succeeded')<>count(r.id))
+      OR (rr.status='failed' AND
+          count(r.id) FILTER (WHERE r.status IN ('failed','rejected'))<>count(r.id))
+      OR (rr.status IN ('pending','processing') AND
+          count(r.id) FILTER (WHERE r.status IN ('succeeded','failed','rejected'))>0)
       OR (rr.status IN ('manual_review','partially_succeeded') AND
           (count(r.id) FILTER (WHERE r.status='succeeded')=0
            OR count(r.id) FILTER (WHERE r.status='succeeded')=count(r.id)));
@@ -1057,22 +1071,27 @@ $$;
 
 CREATE OR REPLACE FUNCTION app.assert_refund_idempotency_key(p_tenant uuid,p_key uuid)
 RETURNS void LANGUAGE plpgsql AS $$
-DECLARE v_detail text;
+DECLARE
+  v_detail text;
 BEGIN
   SELECT format('refund key %s status %s is not bidirectionally bound',k.id,k.status)
-    INTO v_detail FROM idempotency_keys k
-    LEFT JOIN refund_requests rr ON rr.tenant_id=k.tenant_id AND rr.business_request_id=k.id
+    INTO v_detail
+    FROM idempotency_keys k
+    LEFT JOIN refund_requests rr
+      ON rr.tenant_id=k.tenant_id AND rr.business_request_id=k.id
    WHERE k.tenant_id=p_tenant AND k.id=p_key AND k.scope='refund_create'
    GROUP BY k.id,k.status,k.request_hash,k.actor_id,k.resource_type,k.resource_id,
             rr.id,rr.status,rr.request_hash,rr.requested_by
   HAVING rr.id IS NULL OR k.request_hash<>rr.request_hash
       OR k.actor_id IS DISTINCT FROM rr.requested_by
       OR k.resource_type<>'refund_request' OR k.resource_id<>rr.id
-      OR (rr.status IN ('pending','processing','manual_review','partially_succeeded') AND k.status<>'in_flight')
+      OR (rr.status IN ('pending','processing','manual_review','partially_succeeded')
+          AND k.status<>'in_flight')
       OR (rr.status='succeeded' AND k.status<>'succeeded')
       OR (rr.status='failed' AND k.status<>'failed');
   IF v_detail IS NOT NULL THEN
-    RAISE EXCEPTION 'refund idempotency invariant: %',v_detail USING ERRCODE='check_violation';
+    RAISE EXCEPTION 'refund idempotency invariant: %',v_detail
+      USING ERRCODE='check_violation';
   END IF;
 END;
 $$;
