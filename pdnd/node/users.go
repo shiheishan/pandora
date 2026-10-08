@@ -147,5 +147,17 @@ func (n *Node) syncUsers(ctx context.Context) error {
 		return nil
 	}
 
-	return n.applyUsers(users)
+	if err := n.applyUsers(users); err != nil {
+		// 客户端在解析成功时已记下这一版的 ETag，内核却没装齐：作废它与增量
+		// 基准，下一轮无条件全量对齐。不作废的话下一轮拿它换回 304，这份名单
+		// 就再也装不上了；增量也不能再按旧基准往上打。
+		n.userVersion = ""
+		n.client.ForgetUsersVersion()
+		return err
+	}
+	// 记下这一版作为增量基准。REST 的 ETag 与事件流的版本出自面板同一个计算
+	// 函数，装上了全量就等于手上是这一版：基于它的增量直接打，不必再拉一次
+	// 全量（原先这里不记，轮询之后的每条增量都对不上基准、退化成拉全量）。
+	n.userVersion = panel.UsersVersionKey(n.client.UsersVersion())
+	return nil
 }

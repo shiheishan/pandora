@@ -216,12 +216,12 @@ func (n *Node) applyStreamEvent(ctx context.Context, ev panel.StreamEvent) {
 			n.log.Error("按事件同步用户失败", "err", err)
 			return
 		}
-		n.userVersion = ev.Version
+		n.userVersion = panel.UsersVersionKey(ev.Version)
 		// 同步给客户端，让下一轮轮询带上这个版本换 304，不用重复拉
 		n.client.SetUsersVersion(ev.Version)
 
 	case panel.EventSyncUserDelta:
-		if ev.FromVersion != n.userVersion {
+		if n.userVersion == "" || panel.UsersVersionKey(ev.FromVersion) != n.userVersion {
 			// 基准对不上：这条增量是基于我们没有的那一版算出来的。
 			// 硬打上去会留下一批本该删掉的用户还在放行——比不打更糟。
 			n.log.Info("增量基准版本对不上，改拉全量",
@@ -235,7 +235,7 @@ func (n *Node) applyStreamEvent(ctx context.Context, ev panel.StreamEvent) {
 			n.log.Error("应用用户增量失败", "err", err)
 			return
 		}
-		n.userVersion = ev.ToVersion
+		n.userVersion = panel.UsersVersionKey(ev.ToVersion)
 		n.client.SetUsersVersion(ev.ToVersion)
 	}
 }
