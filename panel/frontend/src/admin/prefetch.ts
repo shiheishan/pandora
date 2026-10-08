@@ -18,6 +18,7 @@ export const SCREEN_CHUNKS: Readonly<Record<ModuleKey, () => Promise<unknown>>> 
   billing: () => import('./screens/billing'),
   marketing: () => import('./screens/marketing'),
   nodes: () => import('./screens/nodes'),
+  certs: () => import('./screens/certs'),
   content: () => import('./screens/content'),
   system: () => import('./screens/system'),
   security: () => import('./screens/security'),
