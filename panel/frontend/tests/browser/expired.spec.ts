@@ -1,5 +1,5 @@
 import { grant, newUser, sql, str, subscriptionsOf, uuid } from './api.ts'
-import { card, expect, happened, narrowShot, openPortal, payByCashier, seen, step, test, text } from './fixtures.ts'
+import { card, expect, happened, narrowShot, openPortal, payByCashier, seen, step, test, text, submit } from './fixtures.ts'
 
 // ============================================================================
 //  过期卡片（w8buyfix 第 5 项）：「续费，恢复使用」与并列的次按钮「换个套餐」，再续费恢复。
@@ -37,7 +37,7 @@ test('过期卡片：续费恢复使用', async ({ browser, world }) => {
     await card(page, std.name).getByRole('link', { name: /^续费，恢复使用/ }).click()
     await expect(page.getByRole('heading', { level: 1, name: '恢复使用' })).toBeVisible()
     const callout = await seen(page, /^付款后马上恢复使用。从今天起算/)
-    await page.getByRole('button', { name: '恢复使用，付 ¥30.00' }).click()
+    await submit(page, page.getByRole('button', { name: '恢复使用，付 ¥30.00' }))
     const paid = await payByCashier(page, world, '30.00')
     await expect(page.getByRole('heading', { name: '已恢复使用' })).toBeVisible({ timeout: 20_000 })
     const lines = await happened(page)

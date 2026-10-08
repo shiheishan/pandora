@@ -1,5 +1,5 @@
 import { grant, newUser, subscriptionsOf, type User } from './api.ts'
-import { card, expect, go, narrowShot, openAdmin, openPortal, payByCashier, seen, step, test, text } from './fixtures.ts'
+import { card, expect, go, narrowShot, openAdmin, openPortal, payByCashier, seen, step, test, text, submit } from './fixtures.ts'
 import type { Locator, Page } from '@playwright/test'
 
 // ============================================================================
@@ -40,10 +40,12 @@ test('C1：后台开单的落点', async ({ browser, world }) => {
     const price = await pickPrice(dlg, std.name, '30.00')
     const place = placement(dlg)
     await expect(place).toContainText(`续一期：${std.name}`)
-    await expect(place).toContainText('同款')
+    // 同款只续不新开：服务端只给「续一期」一项时不让选、直接写结果；多项时它必须是默认选中的那项
     const renew = place.getByRole('radio', { name: new RegExp(`^续一期：${std.name}`) })
-    if ((await renew.count()) > 0) await expect(renew).toBeChecked()
-    return `选「${price}」：落点「${await text(place)}」，默认选中续这一份`
+    const many = (await renew.count()) > 0
+    if (many) await expect(renew).toBeChecked()
+    await expect(dlg.getByRole('button', { name: '创建订单' })).toBeEnabled()
+    return `选「${price}」：落点「${await text(place)}」，${many ? '默认选中续这一份' : '只有这一项，不让选、直接写结果'}；按钮「创建订单」可点`
   })
 
   await step(page, 'C1b', async () => {
@@ -61,7 +63,7 @@ test('C1：后台开单的落点', async ({ browser, world }) => {
     await placement(dlg).getByRole('radio', { name: new RegExp(`把${std.name}换成${pro.name}`) }).check()
     await dlg.getByLabel('结算方式').selectOption({ label: '赠送（0 元）' })
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台开单换套餐')
-    await dlg.getByRole('button', { name: '赠送开通' }).click()
+    await submit(page, dlg.getByRole('button', { name: '赠送开通' }))
     const toast = await seen(page, /已在原订阅上换套餐/)
     await expect(dlg).toBeHidden()
     const subs = await subscriptionsOf(u)
@@ -94,7 +96,7 @@ test('C2：待支付低于最低额，改用赠送', async ({ browser, world }) 
     await dlg.getByRole('button', { name: '改用赠送' }).click()
     await expect(dlg.getByLabel('结算方式')).toHaveValue('grant')
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台赠送开通')
-    await dlg.getByRole('button', { name: '赠送开通' }).click()
+    await submit(page, dlg.getByRole('button', { name: '赠送开通' }))
     const toast = await seen(page, /已赠送开通，已另开一份订阅/)
     const portal = await openPortal(browser, u)
     await expect(card(portal, mini.name)).toBeVisible()
@@ -112,17 +114,17 @@ test('C3：后台待支付，用户在门户付', async ({ browser, world }) => 
     await pickPrice(dlg, std.name, '30.00')
     await expect(placement(dlg)).toContainText(`另开一份${std.name}`)
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台待支付开单')
-    await dlg.getByRole('button', { name: '创建订单' }).click()
+    await submit(page, dlg.getByRole('button', { name: '创建订单' }))
     const toast = await seen(page, /已创建，等待用户在 30 分钟内支付/)
 
     const portal = await openPortal(browser, u)
     await go(portal, '/orders')
-    const pending = portal.locator('section').filter({ hasText: '待支付' }).filter({ has: portal.getByRole('button', { name: '去支付' }) })
+    const pending = portal.locator('section').filter({ hasText: '待支付' }).filter({ has: portal.getByRole('button', { name: '去支付' }) }).last()
     await expect(pending).toContainText('¥30.00')
     const row = await text(pending)
     await pending.getByRole('button', { name: '去支付' }).click()
     const modal = portal.getByRole('dialog')
-    await modal.getByRole('button', { name: '支付宝' }).click()
+    await submit(portal, modal.getByRole('button', { name: '支付宝' }))
     const paid = await payByCashier(modal, world, '30.00')
     await expect(modal.getByText(/已开通，有效期至/)).toBeVisible({ timeout: 20_000 })
     const ok = await text(modal.getByText(/已开通，有效期至/))
@@ -143,7 +145,7 @@ test('C4：后台线下已收款', async ({ browser, world }) => {
     await dlg.getByLabel('结算方式').selectOption({ label: '线下已收款' })
     await dlg.getByLabel('凭证号').fill(`W9B-OFFLINE-${u.id.slice(0, 6)}`)
     await dlg.getByLabel('开单原因（写入审计）').fill('w9browser 后台线下已收款')
-    await dlg.getByRole('button', { name: '入账并开通' }).click()
+    await submit(page, dlg.getByRole('button', { name: '入账并开通' }))
     const toast = await seen(page, /已按线下收款入账，已另开一份订阅/)
     const portal = await openPortal(browser, u)
     await expect(card(portal, basic.name)).toBeVisible()

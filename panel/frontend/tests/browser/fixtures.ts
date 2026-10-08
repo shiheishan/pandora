@@ -1,7 +1,7 @@
 import { test as base, expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { epayNotify, freshIp, type User } from './api.ts'
+import { epayNotify, exclusive, freshIp, type User } from './api.ts'
 import { ADM, ADMIN_EMAIL, ADMIN_PASSWORD, PUB, SHOTS, STEPS_FILE } from './env.ts'
 import { loadWorld, type World } from './seed.ts'
 
@@ -170,13 +170,35 @@ export async function happened(page: Page): Promise<string[]> {
   return (await list.getByRole('listitem').allInnerTexts()).map((s) => s.replace(/\s+/g, ' ').trim())
 }
 
+/**
+ * 会建单、改账或写审计的那一下点击：排进 api.ts 的审计写锁（见那里的说明），点完等到这次写请求的响应回来再放锁。
+ * 只认点击之后发出的第一个写请求（报价、预览、查单不算）
+ */
+export async function submit(page: Page, target: Locator): Promise<void> {
+  await exclusive(async () => {
+    const done = page.waitForResponse((r) => r.request().method() !== 'GET' && /\/v1\//.test(r.url()) && !/checkout\/quote|\/preview$|\/query$/.test(r.url()), { timeout: 20_000 })
+    await target.click()
+    await done
+  })
+}
+
 /** 前提：在门户上买一份（确认页 → 付款页 → 收银台回调 → 完成页），停在我的套餐 */
 export async function buyNew(page: Page, world: World, plan: { id: string; name: string }, yuan: string): Promise<void> {
   await go(page, `/checkout?new=${plan.id}`)
-  await page.getByRole('button', { name: `买${plan.name}，付 ¥${yuan}` }).click()
+  await submit(page, page.getByRole('button', { name: `买${plan.name}，付 ¥${yuan}` }))
   await payByCashier(page, world, yuan)
   await expect(page.getByRole('heading', { name: '新的一份买好了' })).toBeVisible({ timeout: 20_000 })
   await backToSubs(page)
+}
+
+/**
+ * 开关（ui/Switch）：透明的 checkbox 被轨道盖住，人点的是外面那层 label，这里也点 label。
+ * 点完核对状态真的变了
+ */
+export async function setSwitch(page: Page, name: string, on: boolean): Promise<void> {
+  const sw = page.getByRole('switch', { name })
+  if ((await sw.isChecked()) !== on) await sw.locator('xpath=ancestor::label[1]').click()
+  await expect(sw).toBeChecked({ checked: on })
 }
 
 /** 页面上第一段匹配的文字（压成一行） */

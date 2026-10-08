@@ -1,5 +1,5 @@
 import { admin, grant, newUser, subscriptionsOf, sql, str, uuid, type User } from './api.ts'
-import { backToSubs, card, daysBetween, expect, happened, monthsLater, narrowShot, nav, openPortal, step, test, text } from './fixtures.ts'
+import { backToSubs, card, daysBetween, expect, happened, monthsLater, narrowShot, nav, openPortal, step, test, text, submit } from './fixtures.ts'
 import { giftCode } from './seed.ts'
 import type { Page } from '@playwright/test'
 
@@ -42,7 +42,7 @@ test('C6：礼品卡', async ({ browser, world }) => {
     const [, from = '', to = ''] = /到期日 (.+?) → (.+?)。/.exec(s) ?? []
     expect(daysBetween(from, to), `${from} → ${to} 是 7 天`).toBe(7)
     await narrowShot(page, 'C6a-card')
-    await page.getByRole('button', { name: '兑换，加 7 天' }).click()
+    await submit(page, page.getByRole('button', { name: '兑换，加 7 天' }))
     await expect(page.getByRole('heading', { name: '兑换好了' })).toBeVisible()
     const lines = await happened(page)
     expect(lines[0]).toContain(`用到 ${to}（原来 ${from}）`)
@@ -56,7 +56,7 @@ test('C6：礼品卡', async ({ browser, world }) => {
     const face = await lookup(page, await giftCode(world.cards.reset))
     const s = await sentence(page)
     expect(s).toContain('已用 5G → 0')
-    await page.getByRole('button', { name: '兑换，流量清零重算' }).click()
+    await submit(page, page.getByRole('button', { name: '兑换，流量清零重算' }))
     await expect(page.getByRole('heading', { name: '流量已清零重算' })).toBeVisible()
     const lines = await happened(page)
     await backToSubs(page)
@@ -67,7 +67,7 @@ test('C6：礼品卡', async ({ browser, world }) => {
   await step(page, 'C6c', async () => {
     const face = await lookup(page, await giftCode(world.cards.traffic2g))
     const s = await sentence(page)
-    await page.getByRole('button', { name: '兑换，加 2G' }).click()
+    await submit(page, page.getByRole('button', { name: '兑换，加 2G' }))
     await expect(page.getByRole('heading', { name: '已加 2G' })).toBeVisible()
     const lines = await happened(page)
     await backToSubs(page)
@@ -82,7 +82,7 @@ test('C6：礼品卡', async ({ browser, world }) => {
     const s = await sentence(page)
     const [, from = '', to = ''] = /到期日 (.+?) → (.+?)。/.exec(s) ?? []
     expect(monthsLater(from, to, 1), `${from} → ${to} 是一个月`).toBe(true)
-    await page.getByRole('button', { name: `兑换，续到 ${to}` }).click()
+    await submit(page, page.getByRole('button', { name: `兑换，续到 ${to}` }))
     await expect(page.getByRole('heading', { name: '兑换好了' })).toBeVisible()
     const lines = await happened(page)
     return `卡面「${face}」；默认「续到你的${std.name}」；「${s}」；完成页「${lines[0]}」`
@@ -96,10 +96,10 @@ test('C6：礼品卡', async ({ browser, world }) => {
     await expect(page.getByRole('button', { name: '先选一种用法' })).toBeDisabled()
     const options = (await choices.getByRole('radio').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim())
     await narrowShot(page, 'C6e-choose')
-    await choices.getByRole('radio', { name: new RegExp(`换成${pro.name}`) }).click()
+    await choices.getByRole('radio', { name: new RegExp(`(升级成|换成)${pro.name}`) }).click()
     const s = await sentence(page)
     expect(s).toMatch(new RegExp(`今天换成${pro.name}，从今天起算，到 .+`))
-    await page.getByRole('button', { name: `兑换，换成${pro.name}` }).click()
+    await submit(page, page.getByRole('button', { name: `兑换，换成${pro.name}` }))
     await expect(page.getByRole('heading', { name: `已换成${pro.name}` })).toBeVisible()
     const lines = await happened(page)
     return `卡面「${face}」；不预选、按钮灰着，选项：${options.map((o) => `「${o}」`).join('')}；选换掉后「${s}」；完成页「${lines.join('；')}」`
@@ -117,7 +117,7 @@ test('C6：礼品卡', async ({ browser, world }) => {
     const go = other.getByRole('button', { name: '兑换，抽一次' })
     const err = other.getByRole('alert').first()
     await expect(go.or(err).first()).toBeVisible()
-    if (await go.isVisible()) await go.click()
+    if (await go.isVisible()) await submit(other, go)
     await expect(err).toBeVisible()
     const why = await text(err)
     await expect(other.getByText('兑换过的卡会显示在这里。')).toBeVisible()
@@ -127,7 +127,7 @@ test('C6：礼品卡', async ({ browser, world }) => {
   await step(page, 'C6g', async () => {
     const face = await lookup(page, mystery)
     const s = await sentence(page)
-    await page.getByRole('button', { name: '兑换，抽一次' }).click()
+    await submit(page, page.getByRole('button', { name: '兑换，抽一次' }))
     const lines = await happened(page)
     expect(lines.join('；')).toMatch(/抽中了「(加 3 天|送 1G)」/)
     return `卡面「${face}」；「${s}」；完成页「${lines.join('；')}」`
@@ -165,7 +165,7 @@ test('C7：升级前的旧流量包挪一次', async ({ browser, world }) => {
     const callout = await text(sheet.getByText('会发生什么', { exact: true }).locator('xpath=..'))
     expect(callout).toContain('只能挪一次')
     await narrowShot(page, 'C7-sheet')
-    await sheet.getByRole('button', { name: new RegExp(`^挪到「${basic.name}`) }).click()
+    await submit(page, sheet.getByRole('button', { name: new RegExp(`^挪到「${basic.name}`) }))
     await expect(page.getByText(new RegExp(`已把 1G 挪到「${basic.name}`))).toBeVisible()
     await expect(sheet).toBeHidden()
     // 第二次：两张卡上都不再出现挪的入口

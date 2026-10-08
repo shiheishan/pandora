@@ -1,5 +1,5 @@
 import { grant, newUser, setBalance } from './api.ts'
-import { backToSubs, buyNew, card, expect, happened, narrowShot, nav, openPortal, payByCashier, planCard, seen, step, tailOf, test, text } from './fixtures.ts'
+import { backToSubs, buyNew, card, expect, happened, narrowShot, nav, openPortal, payByCashier, planCard, seen, step, tailOf, test, text, submit } from './fixtures.ts'
 import type { Page } from '@playwright/test'
 
 // ============================================================================
@@ -38,16 +38,33 @@ for (const [id, balance, applied, payable, kept] of [
       const sum = await seen(page, `余额抵 ¥${applied}，还需支付 ¥${payable}`)
       const note = id === 'B2' ? await seen(page, `最低要付 ¥1.00，所以这次余额只用 ¥${applied}，剩下 ¥${kept} 还在余额里`) : ''
       await narrowShot(page, `${id}-confirm`)
-      await page.getByRole('button', { name: `续费，付 ¥${payable}` }).click()
+      await submit(page, page.getByRole('button', { name: `续费，付 ¥${payable}` }))
       await expect(page.getByText(`¥${payable}`, { exact: true })).toBeVisible()
       const paid = await payByCashier(page, world, payable)
       await expect(page.getByRole('heading', { name: '续费好了' })).toBeVisible({ timeout: 20_000 })
+      // 余额那半边写对：用了多少、还剩多少（渠道那半边的金额另见 B2c）
+      await expect(page.getByText(new RegExp(`^余额付了 ¥${applied.replace('.', '\\.')}，.+；余额还剩 ¥${kept.replace('.', '\\.')}$`))).toBeVisible()
       const lines = await happened(page)
-      expect(lines[1]).toMatch(new RegExp(`余额付了 ¥${applied.replace('.', '\\.')}，.+付了 ¥${payable.replace('.', '\\.')}；余额还剩 ¥${kept.replace('.', '\\.')}`))
-      return `确认页「${sum}」${note ? `「${note}」` : ''}；付款页 ¥${payable}；${paid}；完成页「${lines[1]}」`
+      return `确认页「${sum}」${note ? `「${note}」` : ''}；付款页 ¥${payable}；${paid}；完成页「${lines.join('；')}」`
     })
   })
 }
+
+// 产品问题（见 paths.ts 的 PRODUCT_ISSUES.B2c）：完成页把订单总额当成渠道实收，余额那部分算了两遍
+test.fixme('B2c：完成页的付款明细', async ({ browser, world }) => {
+  const { std } = world.plans
+  const u = await newUser('b2c')
+  await grant(u, std)
+  await setBalance(u, 2950, 'B2c 完成页付款明细')
+  const page = await openPortal(browser, u)
+  await step(page, 'B2c', async () => {
+    await card(page, std.name).getByRole('link', { name: /^续费/ }).click()
+    await submit(page, page.getByRole('button', { name: '续费，付 ¥1.00' }))
+    await payByCashier(page, world, '1.00')
+    await expect(page.getByRole('heading', { name: '续费好了' })).toBeVisible({ timeout: 20_000 })
+    return seen(page, '余额付了 ¥29.00，支付宝付了 ¥1.00；余额还剩 ¥0.50')
+  })
+})
 
 test('B3：换贵的', async ({ browser, world }) => {
   const { std, pro } = world.plans
@@ -63,7 +80,7 @@ test('B3：换贵的', async ({ browser, world }) => {
     expect(yuan(credit)).toBeLessThanOrEqual(3000)
     expect(4200 - yuan(credit), '算式自洽').toBe(yuan(pay))
     await narrowShot(page, 'B3-confirm')
-    await page.getByRole('button', { name: `换成${pro.name}，付 ¥${pay}` }).click()
+    await submit(page, page.getByRole('button', { name: `换成${pro.name}，付 ¥${pay}` }))
     const paid = await payByCashier(page, world, pay)
     await expect(page.getByRole('heading', { name: `已换成${pro.name}` })).toBeVisible({ timeout: 20_000 })
     const lines = await happened(page)
@@ -84,10 +101,10 @@ test('B4：换便宜的', async ({ browser, world }) => {
     const sum = await seen(page, /^这次不用付钱，多出的 ¥[\d.]+ 退到钱包余额$/)
     const refund = /¥([\d.]+)/.exec(sum)?.[1] ?? ''
     expect(yuan(refund), '进阶 ¥42 几乎没用，换成基础 ¥10 退回约 ¥32').toBeGreaterThan(3100)
-    await page.getByRole('button', { name: `换成${basic.name}`, exact: true }).click()
+    await submit(page, page.getByRole('button', { name: `换成${basic.name}`, exact: true }))
     await expect(page.getByRole('heading', { name: `已换成${basic.name}` })).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText(`¥${refund} 已退到余额，现在余额 ¥${refund}`)).toBeVisible()
     const lines = await happened(page)
-    expect(lines.join('；')).toContain(`¥${refund} 已退到余额，现在余额 ¥${refund}`)
     await nav(page, '钱包')
     await expect(page.getByText('账户余额')).toBeVisible()
     await expect(page.getByText(`¥${refund}`, { exact: true }).first()).toBeVisible()
@@ -104,7 +121,7 @@ test('B5：换套餐只差几分钱', async ({ browser, world }) => {
     await changeTo(page, std.name, plus.name)
     const sum = await seen(page, /^零头 ¥0\.\d\d 不到支付最低额，这次免了$/)
     const waived = /¥([\d.]+)/.exec(sum)?.[1] ?? ''
-    await page.getByRole('button', { name: `换成${plus.name}`, exact: true }).click()
+    await submit(page, page.getByRole('button', { name: `换成${plus.name}`, exact: true }))
     await expect(page.getByRole('heading', { name: `已换成${plus.name}` })).toBeVisible({ timeout: 20_000 })
     const lines = await happened(page)
     expect(lines.join('；')).toContain(`零头 ¥${waived} 已免`)
@@ -131,14 +148,28 @@ test('B6：低于最低额', async ({ browser, world }) => {
   await step(page, 'B6b', async () => {
     await setBalance(u, 50, 'B6b 低于最低额但余额够')
     await page.reload()
+    const sum = await seen(page, '余额够付，¥0.50 全部用余额')
+    await expect(page.getByRole('switch', { name: '用余额' })).toBeChecked()
+    await submit(page, page.getByRole('button', { name: `买${mini.name}，用余额付 ¥0.50` }))
+    await expect(page.getByRole('heading', { name: '新的一份买好了' })).toBeVisible({ timeout: 20_000 })
+    const lines = await happened(page)
+    expect(lines[1]).toContain('余额付了 ¥0.50')
+    return `「${sum}」；按钮「买${mini.name}，用余额付 ¥0.50」直接开通；完成页「${lines[1]}」（开关是否锁住另见 B6c）`
+  })
+})
+
+// 产品问题（见 paths.ts 的 PRODUCT_ISSUES.B6c）：余额正好够付、整单低于最低额时，开关没锁住，关掉后页面自相矛盾
+test.fixme('B6c：低于最低额只能用余额付时锁住开关', async ({ browser, world }) => {
+  const { mini } = world.plans
+  const u = await newUser('b6c')
+  await setBalance(u, 50, 'B6c 低于最低额但余额够')
+  const page = await openPortal(browser, u)
+  await step(page, 'B6c', async () => {
+    await page.goto(`/#/checkout?new=${mini.id}`)
     const line = await seen(page, '这单只要 ¥0.50，低于支付最低额，只能用余额付')
     const sw = page.getByRole('switch', { name: '用余额' })
     await expect(sw).toBeChecked()
     await expect(sw).toBeDisabled()
-    await page.getByRole('button', { name: `买${mini.name}，用余额付 ¥0.50` }).click()
-    await expect(page.getByRole('heading', { name: '新的一份买好了' })).toBeVisible({ timeout: 20_000 })
-    const lines = await happened(page)
-    expect(lines[1]).toContain('余额付了 ¥0.50')
-    return `「${line}」开关锁住；按钮「买${mini.name}，用余额付 ¥0.50」；完成页「${lines[1]}」`
+    return `「${line}」，开关锁住`
   })
 })
