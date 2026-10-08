@@ -171,6 +171,11 @@ func TestTrafficChargePG18(t *testing.T) {
 	droppedIndexScenario(t, ctx, admin)
 	billedBytesScenario(t, ctx, admin, app)
 	trafficDailyScenario(t, ctx, admin, app)
+	// w8node：封禁即断、解封恢复，下发变化 1–2 秒内推给节点（user_status_delivery_pg18_test.go）。
+	// 自带时限：要等几轮真实的推送节拍
+	t.Run("node_delivery_status", func(t *testing.T) {
+		nodeDeliveryStatusScenario(t, admin, app)
+	})
 	migrationRoundTripScenario(t, ctx, admin)
 
 	// 后台节点列表的通用计划门禁借这个库跑（node_list_admin_pg18_test.go），免改 gates 脚本的过滤

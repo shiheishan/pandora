@@ -43,4 +43,7 @@ paths:
 
 ## 生效配置的热路径与下发纪元
 - 拉生效配置先无锁复用当前版本；节点带上已应用版本且仍是当前版时回 204。只有需要物化新版本时才锁节点行，回写当前版本只在真有变化时写（`IS DISTINCT FROM`），无锁路径不写回旧版本
-- aegis-node 按（租户，池）缓存用户名单、缓存签名身份，靠序列 `node_delivery_epoch`（00101）判断是否过期：凡影响下发结果的写一提交就让它前进（订阅、套餐版本、池授权、池用户组、用户换组、系统设置、节点身份与状态；配额与流量包只在「用尽 / 未用尽」翻转时）。**新增会影响节点下发结果的表或列，要给 00101 那组延迟约束触发器加同类触发**，否则节点最多旧一个缓存周期（名单 5 秒、身份 30 秒）
+- aegis-node 按（租户，池）缓存用户名单、缓存签名身份，靠序列 `node_delivery_epoch`（00101）判断是否过期：凡影响下发结果的写一提交就让它前进（订阅、套餐版本、池授权、池用户组、用户换组与账号状态（00141）、系统设置、节点身份与状态；配额与流量包只在「用尽 / 未用尽」翻转时）。**新增会影响节点下发结果的表或列，要给 00101 那组延迟约束触发器加同类触发**，否则节点最多旧一个缓存周期（名单 5 秒、身份 30 秒），事件流也收不到
+- 节点名单只收 active 账号的订阅（`Service.nodeUsers` JOIN users，用户 2026-10-07 定「封禁即断，解封恢复」）；订阅拉取对非 active 账号回伪装 404（`subscription.checkOwnerStatus`），凭据不吊销，恢复后原链接可用。改状态的入口（后台、风控、以后的注销）不用各自通知节点，纪元触发器统一兜
+- 下发变化的推送（w8node，`nodestream_epoch.go`）：aegis-node 每个有连接的租户一个信号循环，每 500ms 读一次纪元（`CurrentDeliveryEpoch`），前进了等 200ms 让提交落定再排一轮租户级推送；名单里最早的订阅到期时刻（`nodeUserSet.nextExpiry`）到了也排一轮。两轮之间至少隔 1 秒（`runPushRounds`），批量变化合并成每秒至多一轮。守卫 `TestWatchNodeChangesFollowsDeliveryEpoch`（三个间隔之和不超过 2 秒）、`TestPushRoundsThrottleAndCoalesce`，PG18 `nodeDeliveryStatusScenario`
+- 用户集缓存条目按 `nextExpiry` 硬过期（`ttlEntry.hard`），不走「先回旧值」的宽限：到期没有写、不推进纪元，宽限会让刚到期的人多留 10 秒（守卫 `TestNodeUserSetHardExpiresAtNextSubscriptionExpiry`）
