@@ -226,6 +226,10 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		if found {
 			subID = opt.SubscriptionID
 			planChoice = purchase.Choice{Kind: opt.Kind, SubscriptionID: opt.SubscriptionID}
+		} else if offer.Kind != purchase.OfferTraffic {
+			// 要落到一份订阅上（加时长、重置、盲盒）却一份都没有：在抽奖、发放之前就拒绝，
+			// 同一张卡的抽奖结果不会因为失败回滚再重试而变化（只有纯送流量可以先记为未分配）
+			return g, ErrNoPlacement
 		}
 	}
 	g.SubscriptionID = subID

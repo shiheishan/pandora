@@ -62,7 +62,7 @@ type ProviderSettings struct {
 	DefaultMethod    string
 	AllowPrivateHost bool
 	// MinAmount 是这个渠道的最低付款额（分），1–100000；0 表示用默认（易支付 ¥1.00）。
-	// 站点的支付最低额取所有启用且接单的 CNY 渠道里最大的那个（checkout_amounts.go）。
+	// 站点「能不能在线付」取启用且接单的 CNY 渠道里最小的那个（checkout_amounts.go）；编辑时 0 表示保留原值。
 	MinAmount int64
 	// MerchantID 与 Key 只写不读。新建时必填；编辑时留空表示沿用库里的那一份。
 	MerchantID string
@@ -396,6 +396,12 @@ func (s *PaymentService) UpdateProvider(ctx context.Context, tenantID string, ac
 		}
 		for k, v := range norm.config {
 			merged[k] = v
+		}
+		// 最低付款额不传（0）就保留原值；原来也没有才用默认（normalize 已填）
+		if in.MinAmount == 0 {
+			if v, ok := before["min_amount"]; ok {
+				merged["min_amount"] = v
+			}
 		}
 		if err := s.tryBuildProvider(code, adapter, merged, next); err != nil {
 			return err

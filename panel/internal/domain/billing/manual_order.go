@@ -366,6 +366,20 @@ func (s *Service) ManualOrderOptions(ctx context.Context, tenantID, userID, plan
 			return nil, httpx.New(httpx.CodeBadRequest, "标识符格式不正确")
 		}
 	}
+	fields := map[string]string{}
+	if priceID != "" {
+		if _, err := uuid.Parse(priceID); err != nil {
+			fields["price_id"] = "价格档标识不正确"
+		}
+	}
+	if entrySub != "" {
+		if _, err := uuid.Parse(entrySub); err != nil {
+			fields["entry_subscription_id"] = "订阅标识不正确"
+		}
+	}
+	if len(fields) > 0 {
+		return nil, httpx.Invalid(fields)
+	}
 	out := ManualOrderPreview{Options: []purchase.Placement{}}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var exists bool

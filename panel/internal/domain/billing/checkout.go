@@ -207,9 +207,9 @@ func (s *Service) CreateOrder(ctx context.Context, tenantID string, in CreateOrd
 		}
 
 		total := subtotal - discount
-		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced、SmallDue 免单）
+		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced；付不了的回 422，只有换套餐的零头能免）
 		bal, err := balancePlan(ctx, tx, tenantID, in.UserID, currency, total,
-			in.UseBalance, in.Offline != nil)
+			in.UseBalance, balanceOpts{Offline: in.Offline != nil, Manual: in.ManualActor != ""})
 		if err != nil {
 			return err
 		}

@@ -23,7 +23,7 @@ import (
 //  2. 套餐卡不同款：不预选；选项失效回 422 且卡没被用掉；选换掉妈妈那份 → 换套餐、链接不变、退余额；
 //  3. 加时长卡、重置卡、送流量卡、盲盒：落到选中的那一份（不一定是默认那份）；
 //  4. 只有一份同款：不问，直接续；
-//  5. 没有订阅：送流量记为未分配、加时长卡拒绝且卡没用掉；开通第一份时未分配的流量包自动挂上；
+//  5. 没有订阅：送流量记为未分配、加时长卡与盲盒在发放 / 抽奖之前拒绝且卡没用掉；开通第一份时未分配的流量包自动挂上；
 //  6. 后台开单：多个选项没带 target 回 422；从订阅行进来预选那一份；跳过可见性、检查 allow_upgrade。
 //
 // 礼品卡域的库没有计费夹具与运行角色准备，用例放在这里，走真实的 giftcard.Redeem。
@@ -225,6 +225,15 @@ func checkPlacementPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	lonely := card("general", `{"expire_days":3}`)
 	_, err = redeem(nobody, lonely, nil)
 	refused("days card without a subscription", lonely, err)
+	// 盲盒要落到一份在用的套餐上：没有就在抽奖之前拒绝，重试不会换奖品，卡没被用掉、没有流水
+	box := card("mystery", `{"pool":[{"label":"小奖","weight":1,"traffic_bytes":1000},{"label":"大奖","weight":1,"expire_days":30}]}`)
+	_, err = redeem(nobody, box, nil)
+	refused("mystery card without a subscription", box, err)
+	var boxRows int64
+	if err := p.admin.QueryRow(ctx, `SELECT count(*) FROM gift_card_redemptions r JOIN gift_card_codes c
+		ON c.id = r.code_id WHERE c.tenant_id=$1 AND c.code=$2`, p.fx.tenant, box).Scan(&boxRows); err != nil || boxRows != 0 {
+		t.Fatalf("refused mystery card left %d redemption rows err=%v", boxRows, err)
+	}
 	first := buy(nobody, planBasic, priceBasic, "pl-nosub-firs", 1500)
 	var attached, systemMoves int64
 	if err := p.admin.QueryRow(ctx, `SELECT
@@ -256,6 +265,11 @@ func checkPlacementPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	}
 	if pv, err := p.billing.ManualOrderOptions(ctx, p.fx.tenant, xw, planBasic, priceBasic, ""); err != nil || pv.DefaultKey != "" {
 		t.Fatalf("manual preview without entry=%+v err=%v", pv, err)
+	}
+	// preview 的价格档标识不合法：422，不是 500
+	if _, err := p.billing.ManualOrderOptions(ctx, p.fx.tenant, xw, planBasic, "not-a-uuid", ""); !errors.As(err, &he) ||
+		he.Code != httpx.CodeValidationFailed || he.Fields["price_id"] == "" {
+		t.Fatalf("manual preview with a bad price id err=%v", err)
 	}
 	// 后台开单不看可见性：隐藏的套餐照样能换过去
 	p.must(`UPDATE plans SET visibility='hidden' WHERE id=$1::uuid`, planBasic)
