@@ -144,11 +144,14 @@ func TestXHTTPServerH1Session(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := XHTTPServer{Config: c, Handler: func(_ context.Context, session XHTTPSession) error {
-		payload, err := io.ReadAll(session.Body)
-		if err != nil {
-			return err
+		payload := session.Payload
+		if payload == nil {
+			var err error
+			if payload, err = io.ReadAll(session.Body); err != nil {
+				return err
+			}
 		}
-		_, err = session.Writer.Write(payload)
+		_, err := session.Writer.Write(payload)
 		return err
 	}}
 	req := httptest.NewRequest(http.MethodPost, "https://edge.example/xhttp/7/?sid=abc", strings.NewReader("hello-xhttp"))
@@ -170,11 +173,14 @@ func TestXHTTPServerStreamOneBasePath(t *testing.T) {
 		if session.ID != "" || session.Seq != "" {
 			t.Fatalf("stream-one metadata=%q,%q", session.ID, session.Seq)
 		}
-		payload, err := io.ReadAll(session.Body)
-		if err != nil {
-			return err
+		payload := session.Payload
+		if payload == nil {
+			var err error
+			if payload, err = io.ReadAll(session.Body); err != nil {
+				return err
+			}
 		}
-		_, err = session.Writer.Write(payload)
+		_, err := session.Writer.Write(payload)
 		return err
 	}}
 	recorder := httptest.NewRecorder()
@@ -212,11 +218,14 @@ func TestXHTTPServerH2CSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := XHTTPServer{Config: c, Handler: func(_ context.Context, session XHTTPSession) error {
-		payload, err := io.ReadAll(session.Body)
-		if err != nil {
-			return err
+		payload := session.Payload
+		if payload == nil {
+			var err error
+			if payload, err = io.ReadAll(session.Body); err != nil {
+				return err
+			}
 		}
-		_, err = session.Writer.Write(payload)
+		_, err := session.Writer.Write(payload)
 		return err
 	}}
 	httpServer, err := server.Serve(listener)
@@ -258,11 +267,14 @@ func TestXHTTPServerH3Session(t *testing.T) {
 	}
 	defer packet.Close()
 	server := XHTTPServer{Config: c, Handler: func(_ context.Context, session XHTTPSession) error {
-		payload, err := io.ReadAll(session.Body)
-		if err != nil {
-			return err
+		payload := session.Payload
+		if payload == nil {
+			var err error
+			if payload, err = io.ReadAll(session.Body); err != nil {
+				return err
+			}
 		}
-		_, err = session.Writer.Write(payload)
+		_, err := session.Writer.Write(payload)
 		return err
 	}}
 	h3Server, err := server.ServeH3(packet, testXHTTPServerTLSConfig(t))

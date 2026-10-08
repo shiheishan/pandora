@@ -186,7 +186,7 @@ jobs:
       - name: External Xray TLS XHTTP H3 interoperability
         # This is intentionally a non-race opt-in gate: the external Xray
         # client currently contains a known WaitReadCloser race of its own.
-        run: go test -mod=mod -tags interop -run 'TestExternalXray(VLESSXHTTPRealityH2Interop|VLESSXHTTPH3Interop|XHTTPH3Transport)$' -count=1 ./kernel
+        run: go test -mod=mod -tags interop -run 'TestExternalXray(VLESSXHTTPRealityH2Interop|VLESSXHTTPH3Interop|XHTTPH3Transport|VMessInterop|VLESSRealityVisionTLS13Interop)$' -count=1 ./kernel
       - name: External AnyTLS client interoperability
         # Non-race for the same reason: sing-anytls (v0.0.11 and v0.0.13)
         # races between Stream.closeLocally and Stream.Write inside the client.

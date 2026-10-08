@@ -3,6 +3,7 @@ package kernel
 import (
 	"errors"
 	"io"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -242,10 +243,23 @@ func (s *userSessions) revoke(ids []int64) {
 	for _, sess := range victims {
 		for _, c := range sess.closers {
 			if c != nil {
-				_ = c.Close()
+				closeAbruptly(c)
 			}
 		}
 	}
+}
+
+// closeAbruptly 是踢人用的关闭：带安全层的连接（TLS / REALITY，有 NetConn）先关
+// 底层 TCP 再关外层。外层 Close 会先写一条 close_notify（带 5 秒写截止）：对端不读
+// 时每条连接卡满 5 秒、逐条串行；Vision 直通之后这条加密告警还会落进裸流，被对端
+// 当成内层数据。被踢的连接不需要体面收尾。
+func closeAbruptly(c io.Closer) {
+	if nc, ok := c.(interface{ NetConn() net.Conn }); ok {
+		if under := nc.NetConn(); under != nil {
+			_ = under.Close()
+		}
+	}
+	_ = c.Close()
 }
 
 // liveCount 是已登记、还没结束的会话数（关停排空等它归零）。

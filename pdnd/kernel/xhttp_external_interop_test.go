@@ -32,7 +32,15 @@ import (
 	_ "github.com/xtls/xray-core/main/distro/all"
 )
 
+// TestExternalXrayVLESSXHTTPH3Interop 先跑显式 stream-one，再跑节点缺省的 auto（服务端不写 mode、客户端 auto）：
+// Xray 的 auto 在 REALITY 上选 stream-one，在 TLS h3 上选 packet-up，节点都要收。
 func TestExternalXrayVLESSXHTTPH3Interop(t *testing.T) {
+	for _, mode := range []string{"stream-one", "auto"} {
+		t.Run(mode, func(t *testing.T) { testExternalXrayVLESSXHTTPH3(t, mode) })
+	}
+}
+
+func testExternalXrayVLESSXHTTPH3(t *testing.T, mode string) {
 	upstream, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +71,9 @@ func TestExternalXrayVLESSXHTTPH3Interop(t *testing.T) {
 		Tag: tag, Protocol: "vless", Listen: "127.0.0.1", Port: serverPort,
 		Raw: map[string]any{"network": "xhttp-h3", "security": "none", "path": "/xhttp", "mode": "stream-one", "cert_path": certPath, "key_path": keyPath},
 	}}
+	if mode == "auto" {
+		delete(spec.Config.Raw, "mode")
+	}
 	adapterValue, err := newVLESSAdapter(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +134,7 @@ func TestExternalXrayVLESSXHTTPH3Interop(t *testing.T) {
 				},
 				"xhttpSettings": map[string]any{
 					"path": "/xhttp",
-					"mode": "stream-one",
+					"mode": mode,
 					"host": "localhost",
 				},
 			},
@@ -321,7 +332,15 @@ func TestExternalXrayXHTTPH3Transport(t *testing.T) {
 	}
 }
 
+// TestExternalXrayVLESSXHTTPRealityH2Interop 先跑显式 stream-one，再跑节点缺省的 auto（服务端不写 mode、客户端 auto）：
+// Xray 的 auto 在 REALITY 上选 stream-one，在 TLS h3 上选 packet-up，节点都要收。
 func TestExternalXrayVLESSXHTTPRealityH2Interop(t *testing.T) {
+	for _, mode := range []string{"stream-one", "auto"} {
+		t.Run(mode, func(t *testing.T) { testExternalXrayVLESSXHTTPRealityH2(t, mode) })
+	}
+}
+
+func testExternalXrayVLESSXHTTPRealityH2(t *testing.T, mode string) {
 	upstream, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -373,6 +392,9 @@ func TestExternalXrayVLESSXHTTPRealityH2Interop(t *testing.T) {
 			"private_key": base64.RawURLEncoding.EncodeToString(key.Bytes()), "short_ids": []any{shortID},
 		},
 	}}
+	if mode == "auto" {
+		delete(spec.Config.Raw, "mode")
+	}
 	adapterValue, err := newVLESSAdapter(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -408,7 +430,7 @@ func TestExternalXrayVLESSXHTTPRealityH2Interop(t *testing.T) {
 					"serverName": "example.com", "fingerprint": "firefox",
 					"publicKey": base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), "shortId": shortID,
 				},
-				"xhttpSettings": map[string]any{"path": "/xhttp", "mode": "stream-one", "host": "example.com"},
+				"xhttpSettings": map[string]any{"path": "/xhttp", "mode": mode, "host": "example.com"},
 			},
 		}},
 	}

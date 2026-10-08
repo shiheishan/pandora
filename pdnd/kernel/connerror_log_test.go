@@ -154,6 +154,45 @@ func TestConnErrorLogSinkConcurrentReports(t *testing.T) {
 	}
 }
 
+// slowSummaryHandler 写「已限流」摘要时先报到、再慢一拍：用来把「窗口到点的
+// flush 正在写摘要」这一刻钉住。
+type slowSummaryHandler struct {
+	captureHandler
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (h *slowSummaryHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == "入站连接失败已限流" {
+		h.once.Do(func() { close(h.entered) })
+		time.Sleep(100 * time.Millisecond)
+	}
+	return h.captureHandler.Handle(ctx, r)
+}
+
+// TestConnErrorLogSinkCloseWaitsForFlush：TestConnErrorLogSinkConcurrentReports 在检查机
+// 的 race 下偶发「逐条 + 抑制 != 上报总数」。根因不在计时本身：窗口到点的 flush 先在
+// 锁内取走计数、再在锁外写摘要；Close 若恰好落在这两步之间，看到的是空计数，直接
+// 返回，那一轮摘要还没写完。现在 Close 等在途的 flush 写完再返回。这里把 flush 钉在
+// 「正在写摘要」的那一刻再 Close，不靠调度运气。
+func TestConnErrorLogSinkCloseWaitsForFlush(t *testing.T) {
+	h := &slowSummaryHandler{entered: make(chan struct{})}
+	sink := newConnErrorLogSink(slog.New(h), 1, time.Millisecond)
+	for i := 0; i < 6; i++ {
+		sink.Report(ConnError{Tag: "edge-c", Protocol: "socks", Stage: StageSession, Err: errors.New("socks version 9 unsupported")})
+	}
+	select {
+	case <-h.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("窗口到点后没有写摘要")
+	}
+	sink.Close()
+	summaries := h.byMessage("入站连接失败已限流")
+	if len(summaries) != 1 || summaries[0].attrs["suppressed"] != "5" {
+		t.Fatalf("Close 返回时在途那一轮摘要还没写完：%+v", summaries)
+	}
+}
+
 // ============================================================
 //  生产接线：NativeCore 的两处 adapter.Start 都带上日志出口
 // ============================================================

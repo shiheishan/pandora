@@ -4,11 +4,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"net"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aegispanel/nodeagent/internal/confnum"
 )
 
 // RealityServerConfig is Pandora's protocol-level REALITY configuration. It
@@ -76,28 +76,14 @@ func ParseRealityServerConfig(raw map[string]any) (RealityServerConfig, error) {
 }
 
 func parseRealityXver(value any) (byte, error) {
-	switch v := value.(type) {
-	case string:
-		parsed, err := strconv.ParseUint(strings.TrimSpace(v), 10, 8)
-		if err != nil || parsed > 2 {
-			return 0, fmt.Errorf("reality xver 必须是 0、1 或 2")
-		}
-		return byte(parsed), nil
-	case float64:
-		if v != math.Trunc(v) || v < 0 || v > 2 {
-			return 0, fmt.Errorf("reality xver 必须是 0、1 或 2")
-		}
-		return byte(v), nil
-	case int:
-		if v < 0 || v > 2 {
-			return 0, fmt.Errorf("reality xver 必须是 0、1 或 2")
-		}
-		return byte(v), nil
-	case nil:
+	if value == nil {
 		return 0, nil
-	default:
-		return 0, fmt.Errorf("reality xver 必须是数字或字符串")
 	}
+	n, ok := confnum.Int64(value)
+	if !ok || n < 0 || n > 2 {
+		return 0, fmt.Errorf("reality xver 必须是 0、1 或 2")
+	}
+	return byte(n), nil
 }
 
 func stringValue(v any) string {
@@ -171,16 +157,9 @@ func parseShortIDs(v any) (map[[8]byte]bool, error) {
 }
 
 func parseDurationSeconds(v any) (time.Duration, error) {
-	if text, ok := v.(string); ok {
-		d, err := time.ParseDuration(strings.TrimSpace(text))
-		if err != nil || d < 0 {
-			return 0, fmt.Errorf("必须是非负秒数或 duration")
-		}
-		return d, nil
+	d, ok := confnum.Duration(v)
+	if !ok {
+		return 0, fmt.Errorf("必须是非负整数秒或 duration")
 	}
-	seconds, ok := v.(float64)
-	if !ok || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < 0 || math.Trunc(seconds) != seconds {
-		return 0, fmt.Errorf("必须是非负整数秒")
-	}
-	return time.Duration(seconds) * time.Second, nil
+	return d, nil
 }

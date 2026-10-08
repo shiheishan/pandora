@@ -90,7 +90,7 @@ func TestVMessNativeXHTTPStreamLoopback(t *testing.T) {
 	}
 
 	requestReader, requestWriter := io.Pipe()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:"+itoa(port)+"/xhttp/vmess-session/1/", requestReader)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:"+itoa(port)+"/xhttp/", requestReader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestVMessNativeXHTTPH3StreamLoopback(t *testing.T) {
 	}
 
 	requestReader, requestWriter := io.Pipe()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://127.0.0.1:"+itoa(port)+"/xhttp/vmess-h3/1/", requestReader)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://127.0.0.1:"+itoa(port)+"/xhttp/", requestReader)
 	if err != nil {
 		t.Fatal(err)
 	}

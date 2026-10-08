@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
+	"github.com/aegispanel/nodeagent/internal/confnum"
 	hy2 "github.com/aegispanel/nodeagent/internal/nativewire/hysteria2"
 	"github.com/aegispanel/nodeagent/route"
 	"github.com/sagernet/sing-quic/hysteria"
@@ -550,49 +551,22 @@ func (a *hysteria2Adapter) Close() error {
 	return nil
 }
 
+// nonNegativeInt 读一个非负整数字段；缺省（nil）按 0。数值形态的归一见 confnum。
 func nonNegativeInt(value any) (int, bool) {
-	switch v := value.(type) {
-	case nil:
+	if value == nil {
 		return 0, true
-	case int:
-		return v, v >= 0
-	case int64:
-		return int(v), v >= 0 && int64(int(v)) == v
-	case float64:
-		return int(v), v >= 0 && v == float64(int(v))
-	case string:
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		return n, err == nil && n >= 0
-	default:
-		return 0, false
 	}
+	n, ok := confnum.Int(value)
+	return n, ok && n >= 0
 }
 
+// parseHysteriaDuration 读一个时长字段：数字按整秒，字符串按 Go 时长语法。
 func parseHysteriaDuration(value any) (time.Duration, error) {
-	switch v := value.(type) {
-	case int:
-		if v < 0 {
-			return 0, fmt.Errorf("must be non-negative")
-		}
-		return time.Duration(v) * time.Second, nil
-	case int64:
-		if v < 0 {
-			return 0, fmt.Errorf("must be non-negative")
-		}
-		return time.Duration(v) * time.Second, nil
-	case float64:
-		if v < 0 || v != float64(int64(v)) {
-			return 0, fmt.Errorf("must be a non-negative integer")
-		}
-		return time.Duration(int64(v)) * time.Second, nil
-	case string:
-		if d, err := time.ParseDuration(strings.TrimSpace(v)); err == nil && d >= 0 {
-			return d, nil
-		}
-		return 0, fmt.Errorf("must be a duration or seconds")
-	default:
+	d, ok := confnum.Duration(value)
+	if !ok {
 		return 0, fmt.Errorf("must be a duration or seconds")
 	}
+	return d, nil
 }
 
 func resolveUDPAddr(ctx context.Context, destination M.Socksaddr) (*net.UDPAddr, error) {
