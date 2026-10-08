@@ -21,3 +21,4 @@ paths:
 - 会改用户余额或订阅的写（标记已支付、向渠道查单补记、人工开单、转入余额）成功后，除了 `useInvalidateBilling` 还要调 `users/api.ts` 的 `useInvalidateUsers`。
 - 「向渠道查单」只对发起过支付的待支付 / 处理中订单出现（`canQueryChannel`：`provider_code` 非空且非 offline）；查单与取消不挂 reauth，人工开单与标记已支付挂 reauth。
 - 用户抽屉的「为其开单」跳 `#/billing/orders?new=<用户 id>`，订单页靠 `?new=` 打开人工开单弹窗并预选用户；改这个参数要同步 `users/UserDrawer.tsx`。
+- 人工开单（落点、最低付款额、赠送 / 线下已收款）的页面文字或结构改了，同改 `panel/frontend/tests/browser/admin.spec.ts`（按角色与可见文字选元素、按页面文字断言，见 `frontend-browser-e2e.md`），否则要等 CI 的浏览器步骤红了才发现。

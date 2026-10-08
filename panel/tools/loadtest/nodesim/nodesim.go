@@ -9,6 +9,7 @@ package nodesim
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -58,6 +59,9 @@ type Options struct {
 	// KeyCheckInterval 是 current 下主动问面板换钥的间隔（pdnd 写死 10 分钟，每次
 	// 另带 ±10% 抖动）；legacy 每次拉配置前都问，不看它。
 	KeyCheckInterval time.Duration
+
+	// TLSConfig 只给测试：假面板用自签证书时在这里放信任它的根；nil 用系统根（生产路径）。
+	TLSConfig *tls.Config
 
 	ErrorSamples int64
 	Stdout       io.Writer
@@ -188,11 +192,11 @@ func Run(ctx context.Context, m *ltkit.Manifest, opt Options, rec *ltkit.Recorde
 	sims := make([]*simNode, len(nodes))
 	var transports []func()
 	for i, n := range nodes {
-		uni := newUniClient(base, n.ID, n.NodeType, n.RuntimeToken, n.RealIP, opt.Timeout, obs)
+		uni := newUniClient(base, n.ID, n.NodeType, n.RuntimeToken, n.RealIP, opt.Timeout, obs, opt.TLSConfig)
 		transports = append(transports, uni.http.CloseIdleConnections)
 		var signed *signedClient
 		if n.PrivateKey != "" {
-			if signed, err = newSignedClient(base, n, opt.VerifyConfig, obs); err != nil {
+			if signed, err = newSignedClient(base, n, opt.VerifyConfig, obs, opt.TLSConfig); err != nil {
 				return fleetSummary{}, err
 			}
 			transports = append(transports, signed.http.CloseIdleConnections)

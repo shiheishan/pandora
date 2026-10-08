@@ -2,8 +2,10 @@ package seed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 
@@ -16,6 +18,8 @@ const retireBatchSize = 100
 type retireResult struct {
 	Nodes         int
 	Subscriptions int
+	// Revoked 是吊销了有效接入身份的上一批节点数：有有效身份的节点后台不让退役（仍有依赖）
+	Revoked int
 }
 
 type nodeVersion struct {
@@ -52,7 +56,20 @@ const expireSubscriptionsSQL = `
 	)
 	SELECT (SELECT count(*) FROM expired), (SELECT count(*) FROM events), (SELECT count(*) FROM creds)`
 
-func retirePrevious(ctx context.Context, admin *adminClient, pool *db.Pool, tenantID string) (*retireResult, error) {
+// activeIdentityNodesSQL 圈出上一批里仍带有效接入身份的节点：上一轮压测接入过的节点都在此列。
+// 后台退役要求节点没有有效身份，所以重复造数必须先把这些身份吊销。
+const activeIdentityNodesSQL = `
+	SELECT n.id::text
+	  FROM nodes n
+	 WHERE n.tenant_id = $1::uuid AND n.name LIKE $2 AND n.serving_status <> 'retired'
+	   AND EXISTS (SELECT 1 FROM node_identities i
+	                WHERE i.tenant_id = n.tenant_id AND i.node_id = n.id AND i.status = 'active')
+	 ORDER BY n.id`
+
+// retirePrevious 清掉上一批造数，可重复执行（每一步都只处理还没处理的）：
+// 订阅转 expired → 吊销上一批节点的有效身份 → 在役节点转 draining → 全部转 retired。
+// 中途失败后原样重跑即可继续，不会因为已处理的部分报错。
+func retirePrevious(ctx context.Context, admin *adminPool, pool *db.Pool, tenantID string) (*retireResult, error) {
 	res := &retireResult{}
 	err := pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var subs, events, creds int
@@ -70,6 +87,29 @@ func retirePrevious(ctx context.Context, admin *adminClient, pool *db.Pool, tena
 		return nil, fmt.Errorf("expire previous load-test subscriptions: %w", err)
 	}
 
+	var identityNodes []string
+	err = pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, activeIdentityNodesSQL, tenantID, loadtestNodePrefix+"%")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			identityNodes = append(identityNodes, id)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list previous load-test nodes with active identities: %w", err)
+	}
+	if res.Revoked, err = revokeIdentities(ctx, admin, identityNodes); err != nil {
+		return nil, err
+	}
+
 	// 先把在役的推到 draining，再把全部未退役的推到 retired；每一步都重读行版本
 	for _, step := range []struct {
 		from []string
@@ -83,7 +123,7 @@ func retirePrevious(ctx context.Context, admin *adminClient, pool *db.Pool, tena
 			return nil, err
 		}
 		for _, batch := range retireBatches(nodes, retireBatchSize) {
-			if _, err := admin.call(ctx, http.MethodPost, "/v1/nodes/status:batch", jsonObject{
+			if _, err := admin.primary().call(ctx, http.MethodPost, "/v1/nodes/status:batch", jsonObject{
 				"items": batch, "serving_status": step.to, "reason": "loadtest seed: retire previous batch",
 			}); err != nil {
 				return nil, err
@@ -131,4 +171,26 @@ func retireBatches(nodes []nodeVersion, size int) [][]nodeVersion {
 		nodes = nodes[n:]
 	}
 	return out
+}
+
+// revokeIdentities 经后台吊销接口逐个吊销节点的有效身份，多会话并行。回 404 说明这一刻已没有
+// 有效身份（别处刚吊销过），不算错。返回实际吊销的个数。
+func revokeIdentities(ctx context.Context, admin *adminPool, nodeIDs []string) (int, error) {
+	var mu sync.Mutex
+	revoked := 0
+	err := admin.forEach(ctx, len(nodeIDs), func(ctx context.Context, c *adminClient, i int) error {
+		_, err := c.call(ctx, http.MethodPost, "/v1/nodes/"+nodeIDs[i]+"/revoke-identity", jsonObject{})
+		var ae *apiError
+		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("revoke identity of node %s: %w", nodeIDs[i], err)
+		}
+		mu.Lock()
+		revoked++
+		mu.Unlock()
+		return nil
+	})
+	return revoked, err
 }

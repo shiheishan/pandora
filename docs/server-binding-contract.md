@@ -290,6 +290,31 @@ pdnd 收到响应后按顺序做三项检查：
 - 面板核对 `binary_sha256` 的口径改为：它必须出现在某份**官方签名的发布清单**里，并且版本不低于面板随包的版本（§13.6）。
 - commit 成功之后才原子写绑定文件。中途任何失败都先 abort，不留下半个绑定。
 
+### 3.3 P1 面板实现备注
+
+只补充面板侧的落地口径，不改上面的线上格式。实现见 `panel/internal/domain/nodefabric/server_identity*.go`、`server_enrollment*.go`，网关 `panel/internal/api/node/server_router.go`，迁移 `00144`。
+
+- **绑定令牌**：`bootstrap_tokens.kind=server`，绑定 `server_id`、`max_uses=1`、1 小时；存储哈希的域分隔串与节点接入令牌不同，两条接入互相查不到对方的令牌。同一台服务器只保留最新签发的一张未用令牌。
+- **begin**：
+  - 成功回 201；同一 `request_id` 带同一份请求体重试，回同一个结果；请求体不同回 409。
+  - 令牌不存在、用过、过期一律 401，文案相同。
+  - 对已绑定的服务器照常受理，好让 pdnd 拿到 `server_id` 按 §3.1 第 2 步自判幂等再 abort。
+  - 一台服务器同时只有一个进行中的接入，第二个回 409；接入最长 15 分钟，且不晚于令牌过期。
+  - P1 的响应 `features` 为空列表：S2–S7 还没实现，不声明 `server-binding-v1`，由 P2 加上。
+- **status / commit / abort 的验签**：请求头的 `server_id`、`serial` 必须就是这次接入的；未提交的接入用 begin 登记的候选公钥验，已提交的改按有效服务器身份验，所以身份被吊销后再问状态也是 401。nonce 认领键空间按服务器隔离（Valkey 键前缀 `aegis:server-nonce:`，回落表 `server_request_nonces`）。
+- **commit**：
+  - 这台服务器已有别的有效身份时回 409，不顶替；库里有唯一部分索引兜底。
+  - 证据核对暂用节点接入同一套随包发布绑定：摘要与版本必须等于面板随包的那一份。这比 §13.6 的放宽口径更严。签名发布清单（P5）落地后再按 §13.6 放宽。
+  - commit 的 `agent_version` 必须与 begin 上报的一致。
+- **吊销**：后台「解除绑定」、退役服务器、删除服务器，都在同一事务里吊销有效身份、中止进行中的接入、作废未用的绑定令牌。吊销理由按 §4.2 墓碑取值记录：解除绑定是 `server_unbound`，退役与删除都是 `server_deleted`。
+- **后台接口**：
+  - `POST /servers/{id}/binding-token`：已绑定的服务器回 409，先解除绑定。
+  - `GET /servers/{id}/binding`：状态 `unbound | binding | bound | revoked` 由身份与接入现算。
+  - `POST /servers/{id}/unbind`。
+- **绑定命令**：令牌不进命令行，执行时关回显从终端读入、写进 0600 临时文件，只把 `--token-file` 交给 pdnd（与节点接入命令一致）。机器上已有 `pandora-native` 时只执行 `bind`。
+  - 网关 SPKI 钉住在 P4 落地之前为空：命令里不带 `-k`、`--pinnedpubkey`、`--pin`，按系统 CA 校验。
+  - `--panel-key` 总是带上。
+
 ---
 
 ## 4. 清单 S2 `aegis-server-manifest-v1`

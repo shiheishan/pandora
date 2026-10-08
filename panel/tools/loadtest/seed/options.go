@@ -46,6 +46,10 @@ type options struct {
 	MaxDevices     int
 	EnrollWorkers  int
 	AdminInterval  time.Duration
+	// AdminWorkers 是并行的后台会话数，每个会话各占一个虚构来源 IP、各自按 AdminInterval 节流；
+	// IPHeaders 是承载这个来源 IP 的请求头（接入节点时也用它带节点所在服务器的地址）
+	AdminWorkers   int
+	IPHeaders      []string
 	RetirePrevious bool
 	Verify         bool
 
@@ -78,6 +82,8 @@ func parseOptions(args []string, getenv func(string) string, tenantDefault strin
 	fs.IntVar(&o.MaxDevices, "max-devices", defaultMaxDevices, "device limit of the load-test plan")
 	fs.IntVar(&o.EnrollWorkers, "enroll-workers", defaultEnrollWorkers, "concurrent node enrollments against the node gateway")
 	fs.DurationVar(&o.AdminInterval, "admin-interval", defaultAdminInterval, "minimum spacing between admin gateway requests (the gateway allows 240 per minute per IP)")
+	fs.IntVar(&o.AdminWorkers, "admin-workers", 1, "parallel admin sessions, each with its own fictitious source IP (198.51.100.1..N via -ip-headers) and its own -admin-interval pacing, so admin calls run N times faster inside the per-IP limit; 1 keeps the old single-session behaviour with no source header")
+	ipHeaders := fs.String("ip-headers", "X-Real-IP", "comma-separated headers carrying the fictitious source IP: the admin sessions' when -admin-workers > 1, and each node's server address during enrollment")
 	fs.BoolVar(&o.RetirePrevious, "retire-previous", true, "retire nodes and expire subscriptions left by earlier seeds (loadtest- names, @"+loadtestEmailDomain+" users) before creating the new batch")
 	fs.BoolVar(&o.Verify, "verify", true, "after seeding, check signed effective-config and the UniProxy user list of the first and last node")
 	fs.StringVar(&o.AgentVersion, "agent-version", "", "agent_version reported at enrollment commit; falls back to PANDORA_NATIVE_RELEASE_VERSION, then \"loadtest\"")
@@ -96,6 +102,7 @@ func parseOptions(args []string, getenv func(string) string, tenantDefault strin
 	o.AdminEmail = firstNonEmpty(o.AdminEmail, getenv("LOADTEST_ADMIN_EMAIL"), getenv("SMOKE_ADMIN_EMAIL"))
 	o.AdminPassword = firstNonEmpty(getenv("LOADTEST_ADMIN_PASSWORD"), getenv("SMOKE_ADMIN_PASSWORD"))
 	o.MasterKey = strings.TrimSpace(getenv("AEGIS_MASTER_KEY"))
+	o.IPHeaders = splitHeaders(*ipHeaders)
 	o.AgentVersion = firstNonEmpty(o.AgentVersion, getenv("PANDORA_NATIVE_RELEASE_VERSION"), "loadtest")
 	o.BinarySHA256 = strings.ToLower(firstNonEmpty(o.BinarySHA256, getenv("PANDORA_NATIVE_ARTIFACT_AMD64_SHA256"), strings.Repeat("1", 64)))
 	for _, p := range []*string{&o.AdminBase, &o.NodeBase, &o.PublicBase} {
@@ -125,11 +132,41 @@ func parseOptions(args []string, getenv func(string) string, tenantDefault strin
 	need(o.MaxDevices > 0, "-max-devices must be positive")
 	need(o.EnrollWorkers > 0 && o.EnrollWorkers <= 64, "-enroll-workers must be 1..64")
 	need(o.AdminInterval >= 0, "-admin-interval must not be negative")
+	need(o.AdminWorkers >= 1 && o.AdminWorkers <= maxAdminWorkers, fmt.Sprintf("-admin-workers must be 1..%d", maxAdminWorkers))
+	need(len(o.IPHeaders) > 0, "-ip-headers is empty")
+	if len(problems) == 0 {
+		// 接入令牌签发后要在 bootstrapTTLMinutes 内用掉；第一个令牌签发到最后一个节点接入之间，
+		// 光建节点就占 nodes × 2 个后台请求，工作量算不过来就在动手前拒绝，别造到一半令牌过期
+		if est := nodeCreateEstimate(o.Nodes, o.AdminWorkers, o.AdminInterval); est > maxNodeCreateTime {
+			problems = append(problems, fmt.Sprintf("creating %d nodes would take about %s with -admin-workers %d, past the %d-minute enrollment token lifetime; raise -admin-workers",
+				o.Nodes, est.Round(time.Second), o.AdminWorkers, bootstrapTTLMinutes))
+		}
+	}
 	need(sha256HexPattern.MatchString(o.BinarySHA256), "-binary-sha256 must be 64 lowercase hex characters")
 	if len(problems) > 0 {
 		return nil, errors.New(strings.Join(problems, "; "))
 	}
 	return o, nil
+}
+
+// maxNodeCreateTime 是建节点阶段（节点 + 接入令牌）可接受的最长耗时：令牌 30 分钟有效，
+// 要给其后的接入阶段留足余量。
+const maxNodeCreateTime = 15 * time.Minute
+
+// nodeCreateEstimate 估算建节点阶段耗时：每个节点两个后台请求，各会话并行，每个请求至少隔 interval。
+func nodeCreateEstimate(nodes, workers int, interval time.Duration) time.Duration {
+	perWorker := (2*nodes + workers - 1) / max(workers, 1)
+	return time.Duration(perWorker) * interval
+}
+
+func splitHeaders(s string) []string {
+	var out []string
+	for _, h := range strings.Split(s, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func firstNonEmpty(values ...string) string {

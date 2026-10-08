@@ -57,8 +57,8 @@ func run(ctx context.Context, o *options, out io.Writer) error {
 		return err
 	}
 	ns := newNamespace(o.Label, runID)
-	fmt.Fprintf(out, "==> loadtest seed: label=%s run=%s users=%d nodes=%d (%d per server)\n",
-		o.Label, runID, o.Users, o.Nodes, o.NodesPerServer)
+	fmt.Fprintf(out, "==> loadtest seed: label=%s run=%s users=%d nodes=%d (%d per server) admin-workers=%d\n",
+		o.Label, runID, o.Users, o.Nodes, o.NodesPerServer, o.AdminWorkers)
 
 	pool, err := openPool(ctx, o.DatabaseURL, out)
 	if err != nil {
@@ -79,13 +79,14 @@ func run(ctx context.Context, o *options, out io.Writer) error {
 		fmt.Fprintln(out, "    AEGIS_MASTER_KEY not set: subscription tokens are stored hash-only, the portal link list stays empty")
 	}
 
-	admin := newAdminClient(o.AdminBase, o.AdminEmail, o.AdminPassword, o.AdminInterval)
+	admin := newAdminPool(o.AdminBase, o.AdminEmail, o.AdminPassword, o.AdminInterval, o.AdminWorkers, o.IPHeaders)
 	nc := newNodeClient(o.NodeBase, o.AgentVersion, o.BinarySHA256)
+	nc.ipHeaders = o.IPHeaders
 	tm := &timings{out: out}
 	m := &ltkit.Manifest{CreatedAt: time.Now().UTC(), Label: o.Label, TenantID: o.TenantID, RunID: runID}
 
 	fmt.Fprintf(out, "    %-18s %7s  %10s\n", "phase", "count", "seconds")
-	if err := tm.track("admin_login", func() (int, error) { return 1, admin.login(ctx) }); err != nil {
+	if err := tm.track("admin_login", func() (int, error) { return len(admin.clients), admin.login(ctx) }); err != nil {
 		return err
 	}
 	if o.RetirePrevious {
@@ -94,7 +95,7 @@ func run(ctx context.Context, o *options, out io.Writer) error {
 			if err != nil {
 				return 0, err
 			}
-			fmt.Fprintf(out, "    retired %d earlier load-test nodes, expired %d earlier load-test subscriptions\n", r.Nodes, r.Subscriptions)
+			fmt.Fprintf(out, "    retired %d earlier load-test nodes (revoked %d active identities first), expired %d earlier load-test subscriptions\n", r.Nodes, r.Revoked, r.Subscriptions)
 			return r.Nodes + r.Subscriptions, nil
 		}); err != nil {
 			return err
@@ -104,7 +105,7 @@ func run(ctx context.Context, o *options, out io.Writer) error {
 	var planID, versionID string
 	if err := tm.track("catalog", func() (int, error) {
 		var err error
-		m.PoolID, planID, versionID, err = createCatalog(ctx, admin, ns, o)
+		m.PoolID, planID, versionID, err = createCatalog(ctx, admin.primary(), ns, o)
 		return 2, err
 	}); err != nil {
 		return err
@@ -138,7 +139,7 @@ func run(ctx context.Context, o *options, out io.Writer) error {
 	}); err != nil {
 		return err
 	}
-	if err := tm.track("plan_publish", func() (int, error) { return 1, publishPlan(ctx, admin, planID, versionID) }); err != nil {
+	if err := tm.track("plan_publish", func() (int, error) { return 1, publishPlan(ctx, admin.primary(), planID, versionID) }); err != nil {
 		return err
 	}
 	for _, n := range nodes {
@@ -203,7 +204,7 @@ func run(ctx context.Context, o *options, out io.Writer) error {
 		}
 	}
 	tm.add("total", o.Users+o.Nodes, time.Since(begin))
-	fmt.Fprintf(out, "    admin gateway requests: %d (paced at %s)\n", admin.Calls, o.AdminInterval)
+	fmt.Fprintf(out, "    admin gateway requests: %d (%d session(s), each paced at %s)\n", admin.Calls(), len(admin.clients), o.AdminInterval)
 	m.SeedTimings = tm.list
 	if err := m.Save(o.Out); err != nil {
 		return fmt.Errorf("write manifest: %w", err)

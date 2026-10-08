@@ -11,8 +11,8 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 
 ## 红线
 
-- 仓库公开红线见根 CLAUDE.md。现场值只放 `~/.ssh/config`、`~/ai/servers/`、`ops-local/<轮次>/`；口令只经 stdin 或 0600 文件传，不出现在命令行参数与输出里。
-- 不删、不重装测试机；不在对照机 bench 的 `bench-pg`、`aegis*` 库、`bench-e2e-*` 容器上动手（bench 当压测机时只用它跑 loadtest）。不读 `ops-local/**/secrets/`。
+- 红线（仓库公开、现场值与口令的放置、测试机不删不重装）见根 CLAUDE.md「红线」与 test-machine skill。
+- 不在对照机 bench 的 `bench-pg`、`aegis*` 库、`bench-e2e-*` 容器上动手（bench 当压测机时只用它跑 loadtest）。
 - 本仓库的代码不改；发现产品 bug 记进成绩单，交总协调派任务。
 
 ## 机器与现场参数
@@ -21,6 +21,7 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 |---|---|---|
 | 面板机 `$PANEL_HOST` | Vultr 共享型 2c4g，Debian 13 | install.sh 生产模式（三网关 + nginx + Docker 里 PG18/Valkey，装法见 panel-install），seed、采集脚本 |
 | 压测机 `$LOADGEN_HOST` | 同机房 2c4g | `loadtest nodes / users / burst` |
+| （1000 节点档）压测机 ×2 | 同机房 2c4g | 一台只跑 `loadtest nodes -nodes 1000 -stagger 180s`，一台只跑 `loadtest users`；nodes 单进程 1000 节点的资源见 runbook 第 11.2 节 |
 
 开机与登记走 test-machine skill，装面板走 panel-install skill。每轮在 `ops-local/<轮次>/` 下准备：
 
@@ -39,6 +40,7 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 3. **realip**（原因与做法见 runbook 第 4 节）：在面板机执行 `/root/lt/nginx-realip.sh enable <LOADGEN_IP>`（脚本由上一步推上去）。验证：从压测机带 `X-Real-IP: 198.18.x.x` 请求 /healthz，`/var/log/nginx/aegis-access.log` 最后一行的来源应是这个地址。收尾或删机前 `nginx-realip.sh disable`。
 4. **seed**（面板机，参数与自检见 runbook 7.2）：
    - 包装脚本只从 0600 文件读口令，参考 `ops-local/vultr-test2/` 现场的 `run-seed-5k.sh`；参数 `-users 5000 -nodes 198 -label 5k -out /root/lt-results/5k-seed/lt-manifest.json`。
+   - **1 万用户 / 1000 节点档**（2026-10-08 起的整机标准）：参数 `-users 10000 -nodes 1000 -label 10k -admin-workers 8`，并直连面板机回环网关（`-admin-base http://127.0.0.1:9001 -node-base http://127.0.0.1:9003 -public-base http://127.0.0.1:9000`，端口取 `.env`），不经 nginx；单会话要约 25 分钟，8 会话预计 5 到 6 分钟。上一批留在库里时 `-retire-previous` 会先吊销上一批节点身份再退役（runbook 第 11.1 节）。
    - 用 `cd /root/lt; setsid -f ./run-seed-….sh > 日志 2>&1 < /dev/null` 起，退出码必须为 0（自检不过就是非 0）。
    - 记下 `seed_timings`（耗时参考值在 runbook 7.2）。
    - manifest 拉回 `ops-local/<轮次>/<label>-seed/`（0600），再拷一份到压测机。
@@ -73,12 +75,13 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 
 标准：5000 用户整机内存约 1G；**静默运行（只有节点在心跳、拉取、上报，没人操作）时面板 + 数据库合计 CPU ≤ 单核 30%**。每个检查点都测一次：
 - 节点照常起（200 档，必要时加 300 档），**不起 users、不做 burst**，稳态 15 分钟。
-- 采样只用轻量方式：开头与结尾各读一次 `/proc/stat` 与各进程 `/proc/<pid>/stat`（含 cutime/cstime）做差，加 `vmstat 5`；**不跑 sample-procs 与 sample-pgact**——它们自身自身开销大（`overhead.sh` 实测，数字见各轮 ops-local 结果），会把静默 CPU 抬过线。
+- 1000 节点档：压测机上 `panel/tools/loadtest/scripts/run-quiet.sh <manifest> <node-url> <T> 1000`（T−8 分钟起跑，180 秒错开），面板机 `quiet-collect.sh <目录> <T> 15`，采完用 `loadtest quiet-report -dir <目录>`（`-strict` 不达标退出码非 0）出判定；口径与上面一致，细节见 runbook 第 11.3 节。
+- 采样只用轻量方式：开头与结尾各读一次 `/proc/stat` 与各进程 `/proc/<pid>/stat`（含 cutime/cstime）做差，加 `vmstat 5`；**不跑 sample-procs 与 sample-pgact**——它们自身开销大（`overhead.sh` 实测，数字见各轮 ops-local 结果），会把静默 CPU 抬过线。
 - 成绩单单列一节：面板 + 数据库（三网关、postgres、valkey、nginx）合计 CPU、整机已用内存、swap，对照标准判过或不过。
 
 ### 加一档节点（同样 5k 用户）
 
-seed 不能往已有资源池追加节点：每次都会新建资源池和套餐。而且 `-retire-previous` 遇到已接入并跑过的节点会失败，见「坑」。做法是：
+seed 不能往已有资源池追加节点：每次都会新建资源池和套餐。加档要保留上一批节点同时在线，所以不用 `-retire-previous`。做法是：
 
 - 执行 `seed -users 5000 -nodes <N> -label 5k-n<N> -retire-previous=false`，在新资源池里放 N 个节点和一批新的 5000 用户，每个节点的名单仍然恰好 5000 人；
 - 旧批的订阅如果还 active，会多出一批「在册但没人拉」的数据，要在成绩单里写明口径差别。
@@ -104,7 +107,7 @@ seed 不能往已有资源池追加节点：每次都会新建资源池和套餐
    | 全部 | — | 零 5xx、不超时、不换页、连接池不排队 |
 
    - users 和 nodes 用稳态窗口 [T, T+30m) 的统计；预热、burst、节点的 config/report 与 stream 只有全程统计。
-   - 连接池拿不到 pgxpool.Stat()，面板没有导出。只能用两个旁证：T+15m 的 goroutine profile 里停在 `pgxpool.*Acquire|puddle` 的个数，以及 pgact.csv 里各网关已建连接是否顶到池上限（public 16、admin 15、node 15，见 `.env.example`）。**注意**：pgact 的 `conn_public/admin/node` 三列数的是到 `:5433` 的 TCP 连接，而 e65faec 起新装机的网关经 unix socket 连 PG，这三列恒为 0；要用它们须先把 `sample-pgact.sh` 改成数 socket 连接，改之前以 pg_stat_activity 的 total 和 goroutine profile 为准。
+   - 连接池拿不到 pgxpool.Stat()，面板没有导出。只能用两个旁证：T+15m 的 goroutine profile 里停在 `pgxpool.*Acquire|puddle` 的个数，以及 pgact.csv 里各网关已建连接是否顶到池上限（public 16、admin 15、node 15，见 `.env.example`）。**注意**：pgact 的 `conn_public/admin/node` 三列数的是到 `:5433` 的 TCP 连接，网关经 unix socket 连 PG 的新装机上恒为 0（脚本遗留，已记进 TASKS）；这几列以 pg_stat_activity 的 total 和 goroutine profile 为准。
 5. **c. 与上一轮对比**（compare.md）：
    - 每节点每分钟请求数和节点总 QPS；
    - 5xx 与超时；
@@ -132,14 +135,12 @@ seed 不能往已有资源池追加节点：每次都会新建资源池和套餐
 ## 坑
 
 - 远端起后台脚本、`pkill -f` 的写法见根 CLAUDE.md「环境与工具坑」（start.sh 已这样做）。
-- **`-retire-previous`（缺省开）遇到已接入并跑过的节点会 409**：`POST /v1/nodes/status:batch` 回「节点仍有控制面、身份或任务依赖，不能退役」。而且这一步**不是原子的**：旧批订阅已在前一个事务里置为 expired，节点停在 draining，seed 以退出码 1 退出。加档时用 `-retire-previous=false`，见上文。
+- **`-retire-previous`（缺省开）**：先吊销上一批节点的接入身份再退役（w9load 起，10-08 之前的版本遇到接入过的节点会 409 且停在 draining）。这条路径至今只有单测，第一次在真库上用时出错先看 `seed.log` 的 `retire_previous` 段；中途失败原样重跑即可。
 - **压测机必须带 X-Real-IP，面板机要先信任它**：否则所有请求来源 IP 相同，会撞上按 IP 限流（每分钟 240 次）和 IP 聚类，198 个节点共用一个地址就会大面积 503。做法见 runbook 第 4 节。
 - **镜像自带约 7.7G 的 `/swapfile`，内存吃紧会被它掩盖**：峰值没撑爆不等于没问题，可能在换页。成绩单的「不换页」要看 sample-procs 的 `_system` 行里 `pswpin`/`pswpout` 的逐行差，再配合 vmswap 的各进程 VmSwap；换页必须记录，不能只报内存峰值。
-- **seed 在面板机上跑会撞 nginx 节点接口的按 IP 限流**：seed 的来源是面板机自己，不在 realip 信任表里。接入 198 个节点那两分钟 nginx 记了 501 次 503，seed 重试后通过。数 5xx 时要把这段排除在窗口外，不要误判成压测的 5xx。
+- **seed 在面板机上跑会撞 nginx 节点接口的按 IP 限流**：seed 的来源是面板机自己，不在 realip 信任表里。接入节点那一段 nginx 会记 503，seed 重试后通过。数 5xx 时要把这段排除在窗口外，不要误判成压测的 5xx。
 - **采集脚本自身有开销**：sample-procs.sh 每 5 秒对每个 PID 起几次 cat 和 awk 并读 smaps_rollup，sample-pgact.sh 每 10 秒一次 `docker exec psql`；短命进程退出后只记在父进程的 cutime 上，所以整机 CPU 会明显高于各进程之和。成绩单里的「整机 CPU」要注明含观测开销，外推容量时给「含」与「扣除」两个数；换机型或改采样器后重跑 `overhead.sh`。
-- **procs.csv 原来只统计 6 个进程**（三网关、postgres、valkey、nginx），看不到 dockerd、containerd 和采样器。整机与各进程之和的差额要用 sample-cpustat.sh 的 allprocs.csv 补齐。
+- **整机与各进程之和的差额**用 sample-cpustat.sh 的 allprocs.csv 补齐（procs.csv 只统计三网关、postgres、valkey、nginx）。
 - **解读 p99 先看 timeline 最大格**：burst（T+20m）和每小时整点的 node push 会形成 p99 尾巴，稳态 p99 含这几格，JSON 只有 10 秒一格的 max，事后剔除不了。先看 nodes.json 的 timeline，找最大的几格落在哪里；原因不明的尾巴在 pgact 里对上时间。
 - **稳态统计的 codes 可能不含 transport 错误**：targets.py 的超时一律取全程计数兜底，再看 nodes.json 的 timeline 判断它落在不在稳态窗口里。
 - **nodes 收尾时会记 transport:timeout**：到时关停那一格（稳态外）的 alive 和 push 会各记 1 次。稳态窗口内为 0 才算不超时。
-- **300 个节点时来源 IP 会两两共用**：seed 给节点的 real_ip 在 203.0.113.1 到 .254 里循环，第 255 到 300 个节点与第 1 到 46 个共用地址，每个地址每分钟约 24 次，离 nginx 的 240 次/分还很远。到 2500 个以上节点才要担心限流。
-- **网络与 TLS 不是延迟大头**：同机房 ping 0.47ms，keep-alive 下 /healthz 的 p50 是 0.5ms。新建 TLS 连接要 35ms，但 nginx 的 keepalive 缺省 75 秒，nodesim 空闲 90 秒，都长于节点节拍，连接会被复用。nginx access log 里有 request_time 和 upstream_time，可以用来核对时间花在了网关内部。

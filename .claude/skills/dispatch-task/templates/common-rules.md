@@ -2,15 +2,15 @@
 
 **背景**：<一两句：为什么做这件事、实测或用户给的依据、这一波有几路、各管什么>
 
-**证据**（只读；worktree 里没有 ops-local，用主目录绝对路径）：<列出报告、数据、EXPLAIN 原文的绝对路径>。不要读 `ops-local/**/secrets/`。
+**证据**（只读；worktree 里没有 ops-local，用主目录绝对路径）：<列出报告、数据、EXPLAIN 原文的绝对路径>。
 
 **工作目录与分支**：只在本 worktree 里改。开工先 `git log -1 --oneline`，应为 <基点短 sha>，不是就停下报告。不碰 main、不碰别的分支、不 force push、不删 worktree。主线若在你工作期间前进，交付前 `git merge feat/panel-redesign` 跟上再推。
 
-**开工**：先读根 CLAUDE.md、`.claude/skills/verify/SKILL.md`、与你的目录相关的 `.claude/rules/*.md`；然后在本 worktree 建 `.claude/TASKS.md`（被 git 忽略）列勾选清单，每完成一项打勾写一句结论，新发现当场追加；上下文压缩后先读它。
+**开工**：先读根 CLAUDE.md、`.claude/skills/verify/SKILL.md`、与你的目录相关的 `.claude/rules/*.md`；然后按根 CLAUDE.md「长任务的任务清单」在本 worktree 建 `.claude/TASKS.md`；上下文压缩后先读它。
 
 **文件归属**：只改上面「归属」里列出的文件（及你新建的文件）。需要动别人归属的文件时不要改，写进报告「需要别的路配合」。
 
-**迁移号**：只用分配给你的号段，没用到就空着。每个迁移写 `-- +goose Up` 和 `-- +goose Down`（能逆就逆，不能逆的 Down 里明确 RAISE 拒绝并写原因）。Go 源码（含注释、含从迁移抄进 Go 的 SQL）里不要写 `panel/migrations/RESERVED-TABLES.md` 登记的保留表名（表登记簿测试会把它算作引用而变红；迁移 .sql 本身不参与匹配）。
+**迁移号**：只用分配给你的号段，没用到就空着。每个迁移写 `-- +goose Up` 和 `-- +goose Down`（能逆就逆，不能逆的 Down 里明确 RAISE 拒绝并写原因）。保留表名不进 Go 源码（含注释），见根 CLAUDE.md「环境与工具坑」。
 
 **代码约定**：按根 CLAUDE.md「既定范式」与 800 行规则；行为改动配测试，需要真库的按现有 PG18 测试写法（`platform/pg18test`）。夹具租户 id 先 grep 主线确认没人用（同域共库，撞号是最常见的 CI 红）。保持 RLS、租户、审计、追加写等数据库不变量；不削弱任何安全检查来换性能。不引入新依赖（确有必要先写进报告）。
 
@@ -26,6 +26,8 @@
 3. 等结论（后台跑，不手写轮询）：`/Users/a1/ai/projects/pandora/ops-local/memoh-ci/wait-status.sh <sha>` 退出 0；动了 panel/internal 数据层、SQL、迁移、前端或 pdnd 内核，再等 `wait-github.sh <sha>` 退出 0（PG18 必须 0 SKIP）。退出 1 按描述本机复现、修、再推；退出 2 说明原因后改看 GitHub。
 
 **不要再拆实现型子 agent**；只读调研可以拆。
+
+**要登测试机的任务**：只用 VPC 内网地址打测试流量；跑前估算公网出流量并写进报告；故障注入（iptables DROP、停服务等）要在远端自带撤销，写法见根 CLAUDE.md「环境与工具坑」。
 
 **报告**：Agent 工具派的子 agent 写不了文件，**最终消息就是报告**（总协调用 accept-task 的 save-report.sh 代存）；用户自己开的任务会话写进本 worktree 的 `.claude/report.md`。内容：
 1. 每项任务：做了/没做、机制、改前改后、证据；

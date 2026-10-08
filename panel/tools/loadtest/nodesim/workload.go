@@ -57,6 +57,12 @@ func mix(x uint64) uint64 {
 	return x ^ (x >> 31)
 }
 
+// candidate 判断 uid 是否可能连在第 index 个模拟节点上（与在线比例无关）：onlineOn 的前半。
+// 节点只需要记住这部分用户的 id。
+func (w *workload) candidate(uid int64, index int) bool {
+	return int(mix(uint64(uid))%uint64(w.total)) == index
+}
+
 // onlineOn 判断 uid 此刻是否在线且连在第 index 个模拟节点上。
 func (w *workload) onlineOn(uid int64, index int) bool {
 	h := mix(uint64(uid))
