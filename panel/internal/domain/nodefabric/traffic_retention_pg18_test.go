@@ -393,7 +393,7 @@ func trafficDailyScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, ap
 }
 
 // migrationRoundTripScenario 证明 00131–00133 的 Down 可执行、Down 之后能再 Up（总协调要求）：在一个回滚的
-// 事务里按 00133 → 00131 的顺序跑 Down，核对还原（自引用外键以 NOT VALID 加回、四条索引重建、旧的
+// 事务里按 00133 → 00131 的顺序跑 Down，核对还原（自引用外键加回：无悬空引用时已校验、否则保持 NOT VALID；四条索引重建、旧的
 // (interval) 清理函数回来、billed_bytes 列与按天表消失），再按 00131 → 00133 跑 Up，核对回到迁移后的形状。
 func migrationRoundTripScenario(t *testing.T, ctx context.Context, admin *pgx.Conn) {
 	t.Helper()
