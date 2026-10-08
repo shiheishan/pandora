@@ -4,7 +4,7 @@
 #   结果目录占位 <目录> 取环境变量 RESULTS_DIR（默认 vultr-test2）。
 #   例：register.sh vultr-sgp-pt-node5 <IP> vc2-1c-1gb "pandora 真节点验证，接 panel2"
 # 用户发来 IP 即视为同意登记（根 CLAUDE.md）。IP 只落在 ~/.ssh/config 与 ~/ai/servers/，不进仓库。
-# 必须用 bash 跑：zsh 下 `set -- $var` 不按空格拆，曾把「别名 IP」整串当成目录名。
+# 必须用 bash 跑（脚本用了 bash 语法，不要在 zsh 里 source）。
 set -euo pipefail
 alias="${1:?别名}"; ip="${2:?IP}"; plan="${3:?套餐}"; purpose="${4:?用途}"; day="${5:-$(date -u +%F)}"
 [[ "$alias" =~ ^[a-z0-9-]+$ ]] || { echo "别名只用小写字母、数字、连字符：$alias" >&2; exit 2; }

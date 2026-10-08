@@ -1,13 +1,13 @@
 ---
 name: prod-retest
-description: pandora 生产规模复测：在一次性 Vultr 面板机上按生产方式（install.sh）装指定版本、seed 5k 级数据，用压测机跑 runbook 第 8 节的 30 分钟稳态（节点 + 用户 + burst），采集 pprof、pg_stat_statements、CPU 拆分与连接池旁证，按分档目标出成绩单并与上一轮对比。用户或总协调说「复测」「压测」「出成绩单」「换栈检查点」「加一档节点」「跟上一轮比」时使用。
+description: pandora 生产规模复测：在已按生产方式装好面板的一次性 Vultr 面板机上（装法见 panel-install）seed 5k 级数据，用压测机跑 runbook 第 8 节的 30 分钟稳态（节点 + 用户 + burst），采集 pprof、pg_stat_statements、CPU 拆分与连接池旁证，按分档目标出成绩单并与上一轮对比。用户或总协调说「复测」「压测」「出成绩单」「换栈检查点」「加一档节点」「跟上一轮比」时使用。
 ---
 
 # 生产规模复测
 
 目标：每个换栈检查点都在**同一种机器、同一种装法、同一套负载参数**下重跑一遍，得到可以逐项对比的成绩单。工具只负责测得出、测得准；测出的问题记进成绩单，不在压测中途改面板。
 
-runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版」：把 2026-10-06/07 两轮（`ops-local/vultr-test/`、`ops-local/vultr-test2/`）手工做过的步骤固化成脚本，并把踩过的坑写在最后。
+runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版」：把 2026-10-06/07 两轮（`ops-local/vultr-test/`、`ops-local/vultr-test2/`）手工做过的压测步骤固化成脚本，并把踩过的坑写在最后。装面板属于 panel-install，开机与回收属于 test-machine。
 
 ## 红线
 
@@ -21,47 +21,33 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 
 | 角色 | 规格 | 跑什么 |
 |---|---|---|
-| 面板机 `$PANEL_HOST` | Vultr 共享型 2c4g，Debian 13 | install.sh 生产模式（三网关 + nginx + Docker 里 PG18/Valkey），seed、采集脚本 |
+| 面板机 `$PANEL_HOST` | Vultr 共享型 2c4g，Debian 13 | install.sh 生产模式（三网关 + nginx + Docker 里 PG18/Valkey，装法见 panel-install），seed、采集脚本 |
 | 压测机 `$LOADGEN_HOST` | 同机房 2c4g | `loadtest nodes / users / burst` |
 
-开机与登记走 test-machine skill。每轮在 `ops-local/<轮次>/` 下准备：
+开机与登记走 test-machine skill，装面板走 panel-install skill。每轮在 `ops-local/<轮次>/` 下准备：
 
 - `env.sh`：从 `scripts/env.example.sh` 复制后填写（ssh 别名、域名、IP、管理员邮箱、结果目录、对比基线）；
 - `admin-cred.txt`（第 1 行邮箱、第 2 行口令）、`admin-path.txt`（后台前缀），都 0600；
 - `phase-a-notes.md`：现场记录，可以含真实值，格式仿 `ops-local/vultr-test/phase2-notes.md`。
 
-下文 `$S` 指本 skill 的 `scripts/` 目录，命令都在仓库根目录执行。ssh 需要 1Password SSH agent，子 agent 要关沙箱才能连上。
+下文 `$S` 指本 skill 的 `scripts/` 目录，命令都在仓库根目录执行。ssh 需要 1Password SSH agent，子 agent 要关沙箱才能连上（见 test-machine 的坑）。
 
-## A 段：装机 → 证书 → install → realip → seed
+## 准备：面板机装好 → 压测工具 → realip → seed
 
-1. **工具链**（面板机，压测机同理）：`ssh $PANEL_HOST 'bash -s' < .claude/skills/test-machine/scripts/install-toolchain.sh`。装的是 Go 1.26 系列最新版和 Node 22。
-2. **源码**：本机 `git archive --prefix=pandora-<sha>/ <sha> > /tmp/p.tgz`，scp 后解到面板机 `/root/src/`。
-3. **构建**：在面板机执行 `cd /root/src/pandora-<sha>/panel && PANDORA_VERSION=vt-<sha> bash deploy/build-release.sh /root/release`。2c4g 上约 10 分钟。必须显式给版本号。
-4. **前置包**（Debian 主仓）：`apt-get update && apt-get install -y docker.io docker-compose age nginx certbot`。ufw 开着就执行 `ufw allow 80/tcp; ufw allow 443/tcp`。
-5. **证书**：装 e65faec 及以后的发布包，直接在第 6 步给 install.sh 加 `PANDORA_CERTBOT=1`（它自己用 webroot 申请、只停用发行版原样的 default 链接、渲染 nginx 并 `nginx -t` 后 reload、ufw active 时放行 80/443）。更早的发布包仍要手工：趁 Debian 默认站点还占着 80，执行 `certbot certonly --webroot -w /var/www/html -d <域名> --non-interactive --agree-tos --register-unsafely-without-email`，再 `rm /etc/nginx/sites-enabled/default`。没有域名就用 `<IP 用横线>.sslip.io`。撞上 Let's Encrypt 限额就停下汇报。
-6. **安装**：
-   - 先核 `sha256sum -c *.tar.gz.sha256`，再解到 `/opt/pandora-release/`，在包内 `SHA256SUMS` 上执行 `sha256sum -c`。
-   - 然后：`cd <包>/deploy && PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://<域名> ./install.sh > /root/install-1.log 2>&1`，再 `chmod 600` 这个日志（里面有后台前缀）。
-   - 核对：迁移 `0 → <最新号>`；三网关 :9000/:9001/:9003 的 healthz 都是 200。
-   - **保留发布包目录**：档与档之间重装数据基座要再跑它的 install.sh。
-7. **nginx**：执行 `/opt/aegispanel/deploy/render-nginx.sh && nginx -t && systemctl reload nginx`。核对 https 的 /healthz 返回 200、http 跳 308、后台入口返回 200。
-8. **管理员**：
-   - 在面板机上生成随机口令写进 `/root/lt-admin-cred.txt`（0600）；`AEGIS_ADMIN_PATH` 写进 `/root/lt-admin-path.txt`。
-   - 执行 `cd /opt/aegispanel && set -a && . deploy/.env && set +a && printf %s "$pw" | ./bin/aegis-adminctl create --email ltadmin@example.com --password-stdin --role platform_admin`。
-   - 两个文件 scp 回 `ops-local/<轮次>/`，保持 0600。
-9. **压测工具**：
+1. **先按 panel-install 装好面板机**（版本、证书、nginx、管理员都在那边）：做到后台能登录、三网关 healthz 200、https 可访问，并把 `admin-cred.txt`、`admin-path.txt` 拉回 `ops-local/<轮次>/`。压测机只需要 test-machine 的工具链脚本（要在上面构建 loadtest）。
+2. **压测工具**：
    - 面板机和压测机各用同一份源码构建：`cd panel && CGO_ENABLED=0 go build -buildvcs=false -o <路径>/loadtest ./tools/loadtest`。面板机放 `/root/lt/loadtest`，压测机放 `/root/loadtest`。
    - 然后执行 `$S/push-scripts.sh ops-local/<轮次>/env.sh`，推送采集脚本和压测机上的 0600 地址、口令文件。
-10. **realip**：在面板机执行 `/root/lt/nginx-realip.sh enable <LOADGEN_IP>`。验证方法：从压测机带 `X-Real-IP: 198.18.x.x` 请求 /healthz，`/var/log/nginx/aegis-access.log` 最后一行的来源应是这个地址。
-11. **seed**（面板机，runbook 7.2）：
-    - 包装脚本只从 0600 文件读口令，参考 `ops-local/vultr-test2/` 现场的 `run-seed-5k.sh`。
-    - 参数：`-users 5000 -nodes 198 -label 5k -out /root/lt-results/5k-seed/lt-manifest.json`。
-    - 用 `cd /root/lt; setsid -f ./run-seed-….sh > 日志 2>&1 < /dev/null` 起，退出码必须为 0：自检要求首尾两个节点的签名配置和 UniProxy 都通过、名单恰好是本批用户、订阅拉取 ok。
-    - 记下 `seed_timings`：198 个节点约 5 分钟，300 个约 7.7 分钟，后台请求按 260ms 间隔。
-    - manifest 拉回 `ops-local/<轮次>/<label>-seed/`（0600），再拷一份到压测机。
-12. 在面板机 `/root/README.md` 补「现状」：版本、目录、结果目录、口令文件位置（只写位置不写值）。
+3. **realip**：在面板机执行 `/root/lt/nginx-realip.sh enable <LOADGEN_IP>`（脚本由上一步推上去；它要求 nginx 已按 deploy 渲染过）。验证方法：从压测机带 `X-Real-IP: 198.18.x.x` 请求 /healthz，`/var/log/nginx/aegis-access.log` 最后一行的来源应是这个地址。原因见「坑」。
+4. **seed**（面板机，runbook 7.2）：
+   - 包装脚本只从 0600 文件读口令，参考 `ops-local/vultr-test2/` 现场的 `run-seed-5k.sh`。
+   - 参数：`-users 5000 -nodes 198 -label 5k -out /root/lt-results/5k-seed/lt-manifest.json`。
+   - 用 `cd /root/lt; setsid -f ./run-seed-….sh > 日志 2>&1 < /dev/null` 起，退出码必须为 0：自检要求首尾两个节点的签名配置和 UniProxy 都通过、名单恰好是本批用户、订阅拉取 ok。
+   - 记下 `seed_timings`：198 个节点约 5 分钟，300 个约 7.7 分钟，后台请求按 260ms 间隔。
+   - manifest 拉回 `ops-local/<轮次>/<label>-seed/`（0600），再拷一份到压测机。
+   - 在面板机 `/root/README.md` 的「现状」补上结果目录。
 
-## B 段：采集 → 节点 → 用户 → burst → 导出 → 成绩单
+## 跑一场：观测开关 → 起跑 → 看进度 → 拉回 → 报告 → 观测开销 → 收尾
 
 1. **观测开关**（runbook 第 3 节）：
    - 先 `cp -p /opt/aegispanel/deploy/.env /root/env.pre-pprof.bak`；
@@ -104,7 +90,7 @@ seed 不能往已有资源池追加节点：每次都会新建资源池和套餐
 - 执行 `seed -users 5000 -nodes <N> -label 5k-n<N> -retire-previous=false`，在新资源池里放 N 个节点和一批新的 5000 用户，每个节点的名单仍然恰好 5000 人；
 - 旧批的订阅如果还 active，会多出一批「在册但没人拉」的数据，要在成绩单里写明口径差别。
 
-最干净的做法是按 runbook 7.1 重装数据基座。但那会删库，要先得到用户同意。
+最干净的做法是按 runbook 7.1 重装数据基座（要再跑 panel-install 要求保留的发布包目录里的 install.sh）。但那会删库，要先得到用户同意。
 
 ## 成绩单（summary.md）
 
@@ -178,8 +164,10 @@ seed 不能往已有资源池追加节点：每次都会新建资源池和套餐
 
 ## 坑
 
-- **ssh 起后台脚本会挂住会话**：远端写成 `cd /root/lt && setsid nohup ./x > log 2>&1 &` 时，`&` 作用于整个 `&&` 列表，bash 会 fork 一个子 shell，它的 stdout/stderr 仍是 ssh 的管道并一直等 x 结束，于是 ssh 不返回，同一条本机命令里的下一条 ssh 发不出去。2026-10-07 踩了三次，两次让压测机晚起 1.5 分钟。一律写成 `ssh -n host 'cd /root/lt; setsid -f ./x > log 2>&1 < /dev/null'`（start.sh 已这样做），两台机器分两条命令发。真挂住时，先停本机那条命令（远端的 x 已在自己的会话里，不受影响），再单独补发第二台，否则它会在第一条返回时晚发。
+- **ssh 起后台脚本会挂住会话**：一律写成 `ssh -n host 'cd /root/lt; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发（start.sh 已这样做）。原因与真挂住时的补救见 test-machine 的坑。
 - **`-retire-previous`（缺省开）遇到已接入并跑过的节点会 409**：`POST /v1/nodes/status:batch` 回「节点仍有控制面、身份或任务依赖，不能退役」。而且这一步**不是原子的**：旧批订阅已在前一个事务里置为 expired，节点停在 draining，seed 以退出码 1 退出。加档时用 `-retire-previous=false`，见上文。
+- **压测机必须带 X-Real-IP，面板机要先信任它**：压测机经 nginx 压面板时所有请求来源 IP 相同，会撞上按 IP 限流（每分钟 240 次）和 IP 聚类，198 个节点共用一个地址就会大面积 503。做法是准备步骤的 realip（`nginx-realip.sh enable`，只信任压测机单个地址）加 loadtest 自带的 X-Real-IP（用户取自 198.18.0.0/15，节点取 manifest 的 `real_ip`，见 runbook 第 4 节）。收尾或删机前执行 `nginx-realip.sh disable`。
+- **镜像自带约 7.7G 的 `/swapfile`，内存吃紧会被它掩盖**：峰值没撑爆不等于没问题，可能在换页。成绩单的「不换页」要看 sample-procs 的 `_system` 行里 `pswpin`/`pswpout` 的逐行差，再配合 vmswap 的各进程 VmSwap；换页必须记录，不能只报内存峰值。
 - **seed 在面板机上跑会撞 nginx 节点接口的按 IP 限流**：seed 的来源是面板机自己，不在 realip 信任表里。接入 198 个节点那两分钟 nginx 记了 501 次 503，seed 重试后通过。数 5xx 时要把这段排除在窗口外，不要误判成压测的 5xx。
 - **pg_stat_statements 开关要重启 PG**：网关会断几秒。所以同一轮的多个场景之间不关；`shared_preload_libraries` 原来有值时脚本会拒绝执行。
 - **采集脚本自身有开销**：
@@ -198,9 +186,7 @@ seed 不能往已有资源池追加节点：每次都会新建资源池和套餐
 - **稳态统计的 codes 可能不含 transport 错误**：targets.py 的超时一律取全程计数兜底，再看 nodes.json 的 timeline 判断它落在不在稳态窗口里。
 - **nodes 收尾时会记 transport:timeout**：到时关停那一格（稳态外）的 alive 和 push 会各记 1 次。稳态窗口内为 0 才算不超时。
 - **300 个节点时来源 IP 会两两共用**：seed 给节点的 real_ip 在 203.0.113.1 到 .254 里循环，第 255 到 300 个节点与第 1 到 46 个共用地址，每个地址每分钟约 24 次，离 nginx 的 240 次/分还很远。到 2500 个以上节点才要担心限流。
-- **install.sh 的 CHANGE_ME 误报**：首装会提示「还有 1 项需要手工填写」，命中的其实是 .env 里一行注释，AEGIS_PUBLIC_BASE_URL 已经填好，可以忽略。这是第 2 波修安装链的输入。
-- **安装链不申请证书、不放行 ufw、不渲染 nginx**：A 段第 4、5、7 步手工做。Debian 默认站点要在拿到证书后、渲染前删掉，否则会和 aegis.conf 抢 80 端口的 default_server。
 - **Debian 最小镜像没有 `/usr/bin/time`**：包装脚本里用 bash 的 `time`。
-- **`pgrep -fa` 会把带口令的命令行打出来**：runbook 7.2 的 `-database-url "$AEGIS_DATABASE_URL"` 让口令出现在 argv 里。排查进程时用 `pgrep -a <名字>` 并 `cut` 掉参数，或者改用 loadtest 的环境变量回落，不传这个参数。
+- **`pgrep -fa` / `ps` 会把命令行里的口令打出来**：seed 不要传 `-database-url`（runbook 7.2 已是从环境变量 `AEGIS_DATABASE_URL` 取），自己写包装脚本时也别把口令放进 argv。排查进程时用 `pgrep -a <名字>` 并 `cut` 掉参数。
 - **`pkill -f '<模式>'` 会连带杀掉执行它的那条 ssh 的 bash**：远端命令行本身也含这个模式。停采样器用 PID，或用 `pkill -f '^vmstat'` 这类锚定的写法。
 - **网络与 TLS 不是延迟大头**：同机房 ping 0.47ms，keep-alive 下 /healthz 的 p50 是 0.5ms。新建 TLS 连接要 35ms，但 nginx 的 keepalive 缺省 75 秒，nodesim 空闲 90 秒，都长于节点节拍，连接会被复用。nginx access log 里有 request_time 和 upstream_time，可以用来核对时间花在了网关内部。

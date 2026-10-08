@@ -22,7 +22,8 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
 1. **已知偶发**，不改代码，重跑：
    - `TestIdempotencyMiddlewarePG18` 锁超时 → `gh run rerun <id> --failed`；
    - Actions 因付款失败没启动 → `gh run rerun <id>`；
-   - 检查机红、GitHub 同一 job 绿（例：10-07 fda8a31 的 linux-race，GitHub 与本机 `-race -count=3` 都过）→ 先当偶发，`MEMOH_FRESH=1 wait-status.sh <sha>` 重跑一次；第二次还红再查。检查机日志在云电脑 `/data/memoh-ci/logs/<sha>/<job>.log`，本机读不到。
+   - 同一提交有时先绿、再出一组新运行 → 以最新一组为准；
+   - 检查机红、GitHub 同一 job 绿（例：10-07 fda8a31 的 linux-race，GitHub 与本机 `-race -count=3` 都过）→ 先当偶发，`MEMOH_FRESH=1 wait-status.sh <sha>` 重跑一次；第二次还红再查，查时先怀疑检查机的容器环境（`/dev/fd`、apt 包随重启丢失），不要直接改代码。检查机日志在云电脑 `/data/memoh-ci/logs/<sha>/<job>.log`，本机读不到。
 2. **一处报错连带一片**：先看「SQL 报错」和 e2e 首个失败。同一条 SQLSTATE 出现在几个测试里，通常是一条共享查询坏了，修一处全好（10-07：ListLinks 漏逗号 → 门户链接 500、两个 PG18 用例、expiry/risk e2e、两个前端冒烟一起红）。
 3. **整合问题**（几路并行合并后才出现）：
    - 计数类断言：内置模板数、后台循环数（`workers.Add` 与两份契约测试）、`run-pg18-gates.sh` 的 DOMAINS、`run-smoke-e2e.sh` 的 SCRIPTS；

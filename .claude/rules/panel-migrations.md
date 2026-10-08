@@ -49,7 +49,7 @@ paths:
     - irreversible 的 Down 只 RAISE，不要求设超时
   - 大表（清单在 `bigtables.go`，按用户数、节点数或时间增长的表；新表会增长就登记）上的三条：
     - 建索引用 `CREATE INDEX CONCURRENTLY`，文件带 `-- +goose NO TRANSACTION`，Up 要能重入（`IF NOT EXISTS`）。CONCURRENTLY 出现在事务内同样报错
-    - 不做整表重写的 ALTER：改列类型、加带易变默认值的列（`gen_random_uuid()`、`clock_timestamp()`、`nextval` 等；`now()` 是稳定函数，不重写）、加存储型生成列或标识列、改存储属性。确有必要就在文件头写 `-- rewrite: <表> rows=<行数> est=<预估耗时>`，数字用 bench-eval 在 5k 副本上量
+    - 不做整表重写的 ALTER：改列类型、加带易变默认值的列（`gen_random_uuid()`、`clock_timestamp()`、`nextval` 等；`now()` 是稳定函数，不重写）、加存储型生成列或标识列、改存储属性。确有必要就在文件头写 `-- rewrite: <表> rows=<行数> est=<预估耗时>`，数字按 new-migration skill「回填耗时」一节在 5k 副本上量
     - 回填、批量 UPDATE/DELETE、INSERT…SELECT 写进大表时，文件头写 `-- backfill: batched-by=<分批方式>; rerunnable=<为什么重跑安全>`，做法见下一节
   - 删列、改列名、改表名走「扩展 → 迁移数据 → 收缩」，收缩单独一个发布。收缩那个迁移的文件头写 `-- contract-of: <扩展迁移编号>`
   - 同一个迁移里刚建的表是空的，不受大表规则约束；注释、字符串、函数体里的字不算语句，DO 块体算
@@ -77,7 +77,7 @@ paths:
 - 回填分档：便宜的原始合计取现成列、不解析报文，覆盖长窗口；昂贵的严格口径只回填界面真会读的短窗口（00099 是 31 天 / 48 小时）。两档都按 UTC 整点对齐，每个桶要么整桶严格、要么整桶只有原始合计
 - 外键放到回填之后，用 `ADD CONSTRAINT` 一次校验：批量写入时逐行外键触发器（约 46µs/行）比回填本身还贵
 - 读路径、定时任务、回填共用一个 SQL 函数作口径的唯一出处（如 `app.node_traffic_payload_entries`）：口径只有一处可改；PG18 用例拿旧 SQL 逐项对照，并在计划里确认函数被内联（没有对它的 Function Scan）
-- 回填耗时按两倍估：迁移预检先在克隆库上跑一遍，正式库再跑一遍。上线前用 bench-eval skill 在 5k 副本上实测
+- 回填耗时按两倍估：迁移预检先在克隆库上跑一遍，正式库再跑一遍。上线前按 new-migration skill「回填耗时」一节在 5k 副本上实测
 - 数据修复迁移只往前推、不缩短，如只把落后的凭据到期、额度周期末拉齐到订阅周期末。注释写清哪些行可以安全改、哪些不碰（已吊销、空值、已用量）
 - 不可逆的 Down 用 `RAISE EXCEPTION` 拒绝并写明原因（照 00102：修复前的值没留存，恢复就等于让用户重新 404）。新迁移还要在文件头写 `-- irreversible:` 与 `-- forward-fix:`（00102 是建守卫前的，缺标记，登记在往返 KNOWN 里）
 - 修复和回填要在 PG18 里实跑 Up：

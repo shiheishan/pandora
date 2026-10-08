@@ -38,12 +38,11 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
 ## 坑
 
 - 自动模式会拦 `git reset --hard`、force push、删 worktree、改别的会话分支的 ref，也会顺带拦紧跟着的查询。要改写分支，用 `git commit-tree` 复用原树拼好，再把 `update-ref` 和 `--force-with-lease` 命令交给用户。
-- zsh 下变量不按空格拆分；sed 表达式含 `#` 会坏；命令行里内嵌的 python 遇到单引号会出错。改文档一律把 python 写进 scratchpad，或用 heredoc `<<'EOF'`。
+- 改文档把脚本写进 scratchpad，或用 heredoc `<<'EOF'`，别在命令行里内嵌脚本。
 - 前台 `sleep` 被拦；等 CI 只用 wait-status.sh / wait-github.sh，后台跑。
 - `gh run list --commit` 传短 sha 会静默返回 []，要先转成完整 sha（等待脚本已处理）。一次推多个提交，只有最新那个有 run。
 - 注释里写 `RESERVED-TABLES.md` 登记的保留表名会触发表登记簿测试。
-- 偶发 `TestIdempotencyMiddlewarePG18` 锁竞争超时：`gh run rerun <id> --failed`。Actions 因付款失败不启动：`gh run rerun <id>`。同一提交有时先绿、再出一组新运行，以最新一组为准。
-- 检查机红而 GitHub 绿，先怀疑容器环境（`/dev/fd`、apt 包随重启丢失），不要直接改代码。
+- CI 红了按 ci-triage skill 查（偶发项、重跑办法都在那里）。
 - 只改仓库根文档不触发任何 workflow；被路径过滤的目录里的任何文件（含规则文件）都会触发对应 workflow。
 - 推送走 SSH，1Password agent 锁着会签名失败：请用户解锁，不要改走 HTTPS。
 - 几路同时新增 PG18 域时，`panel/deploy/run-pg18-gates.sh` 的 DOMAINS 列表会在相邻行冲突：两行都留，合完跑 `go build` 和 deploy 桩测试。各路的 `-run` 过滤都是精确正则，不会重复跑。

@@ -30,6 +30,10 @@ paths:
 - VLESS / VMess 的 mux（XUDP）刻意留在 NativeCore 内实现，不委托兼容内核。
 - `reality_client.go` 的 `ParseRealityClientConfig` 目前只有单测消费，自检与 h3 探针都不调用它。
 
+## 传输与订阅的对口
+
+- gRPC 的 gun Hunk 帧（`grpc_stream.go`）与 Host / `:authority` 比较不比端口（`host_match.go` 的 `requestHostMatches`）都要和订阅渲染保持同一口径：写法与守卫测试见 subscription-render 规则文件。改了这两处，跑 subscription-e2e skill 实连一遍。
+
 ## 互操作测试门
 
 - 三个构建标签都不进默认套件：`interop`（外部 Xray 的 xhttp/mkcp、sing-anytls 客户端）、`interop_mihomo`（需 `MIHOMO_BIN` 与 `MIHOMO_SHA256`）、`interop_external`（sing-box / Juicity / Naive，各需钉住哈希的外部二进制，`*_BIN` + `*_SHA256`）。

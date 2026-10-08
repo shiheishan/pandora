@@ -51,4 +51,4 @@ description: pandora 总协调把工作派给任务会话或实现型子 agent�
 - 子 agent 在沙箱里连不上 1Password SSH agent，推送报签名失败；要么关沙箱重试，要么由总协调代推，不改走 HTTPS。
 - 有迁移的几路按号段从小到大合（goose 不接受「库里到了 00106 又冒出没跑过的 00104」）；没迁移的随时合。brief 里写明号段和合并顺序。
 - 中途追加范围用 SendMessage 发给该 agent，写清新增的归属文件与「不碰」，并在 TASKS 记一笔；别的路归属的文件，改由那一路做（例：订阅地址 /32 问题属 service.go → 发给 w2node，不给 w2render）。
-- 推送任务分支是长期授权（`feat/panel-redesign` 开头只为跑 CI）；推 main、删 worktree、删远端分支都要另外问用户。
+- 推送的授权边界见 accept-task skill 的「合并」一节（任务分支可推，推 main、删 worktree、删分支另问用户）。

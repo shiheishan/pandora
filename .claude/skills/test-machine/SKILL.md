@@ -1,6 +1,6 @@
 ---
 name: test-machine
-description: pandora 一次性 Vultr 测试机（压测面板机、压测机、真节点、开发对照机）的开通登记、环境准备与回收。用户发来新机器 IP、要开或删测试机、要在测试机上装 Docker / Go / Node 或在 Linux 上构建发布包时使用。
+description: pandora 一次性 Vultr 测试机（压测面板机、压测机、真节点、开发对照机）的规格、开通登记与回收。用户发来新机器 IP、要开或删测试机、要在测试机上装 Docker / Go / Node 时使用。在机器上装面板见 panel-install，压测见 prod-retest。
 ---
 
 # 一次性测试机
@@ -20,14 +20,14 @@ Vultr 新加坡，Shared CPU，Debian 13 x64（与生产同版），开机时用
 
 ## 开通
 
-一条命令做完 1–2 和 chrony：`bash .claude/skills/test-machine/scripts/register.sh <别名> <IP> <套餐> "<用途一句话>"`（必须 bash 跑；ssh 需要 1Password agent，在沙箱里要关沙箱）。同名目录已存在就换序号——删过的旧机目录保留作记录（如 node1/node2 已删，新开的叫 node3/node4）。下面是它做的事，手工补救时照这个：
+一条命令做完 1–2、chrony 和更新私有 gitleaks 规则（提交前拦真实 IP）：`bash .claude/skills/test-machine/scripts/register.sh <别名> <IP> <套餐> "<用途一句话>"`（必须 bash 跑；ssh 需要 1Password agent，在沙箱里要关沙箱）。同名目录已存在就换序号——删过的旧机目录保留作记录（如 node1/node2 已删，新开的叫 node3/node4）。下面是它做的事，手工补救时照这个：
 
 1. 首次连接：`ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes root@<IP> true`。
 2. 登记三处，缺一不可（一次性机不建 1Password 条目，用户定的）：
    - `~/.ssh/config` 末尾追加 Host 块（别名、HostName、`User root`）；
    - `~/ai/servers/<别名>/`：`AGENTS.md`（用 `templates/AGENTS.md` 填身份卡、用途、红线）、`CLAUDE.md`（内容 `@AGENTS.md`）、`backups/`、`tools/`；`~/ai/servers/README.md` 总表加一行；
    - 机器上 `/root/README.md`：用途、关键容器与端口、口令文件位置（只写位置不写值）、结果目录。
-3. 准备：`apt-get install -y chrony`；要 Docker 用 Debian 主仓的 `docker.io` 与 `docker-compose`；要构建就 `ssh <别名> 'bash -s' < scripts/install-toolchain.sh`，装与 CI 同小版本的 Go（go.mod 的 1.26 系列最新版）和 Node 22，官方包都核 sha256。
+3. 准备：`apt-get install -y chrony`；要 Docker 用 Debian 主仓的 `docker.io` 与 `docker-compose`；要构建就 `ssh <别名> 'bash -s' < .claude/skills/test-machine/scripts/install-toolchain.sh`，装与 CI 同小版本的 Go（go.mod 的 1.26 系列最新版）和 Node 22，官方包都核 sha256。装面板、构建发布包的步骤见 panel-install。
 
 ## 回收
 
@@ -35,15 +35,10 @@ Vultr 新加坡，Shared CPU，Debian 13 x64（与生产同版），开机时用
 
 ## 坑
 
-- 刚开机头一次 ssh 常报 `Connection timed out during banner exchange`，隔 15 秒重试即可，不是密钥问题。
-- 镜像自带约 7.7G 的 `/swapfile`（磁盘上来就用掉 11G）。压测必须记录 swap 换页（runbook 的 sample-procs 已带），否则看不出「内存没撑爆但在换页」。
-- 镜像开着 ufw：面板机的 install.sh（e65faec 起）在 ufw active 时自动放行 80/443；节点机的协议端口（约定 20000–20099 的 tcp 与 udp）仍要手工放行。
-- 证书与 Debian 默认站点：install.sh（e65faec 起）加 `PANDORA_CERTBOT=1` 时自己用 webroot 申请证书、只停用发行版原样的 default 链接、渲染并 `nginx -t` 后 reload。没有域名就用 sslip.io；撞上 Let's Encrypt 限额就停下报告。装 e65faec 之前的发布包仍要手工：趁默认站点占着 80 先 certbot webroot，再删默认站点、执行 install.sh。
-- e65faec 起网关经 unix socket 连 PG 与 Valkey（`deploy/run/`）：复测时用 `SELECT client_addr IS NULL AS unix, count(*) FROM pg_stat_activity WHERE usename='aegis_app' GROUP BY 1` 确认；回退到更早的发布包前先把 `.env` 两条连接串改回回环。
-- `build-release.sh` 只能在 Linux 上跑（GNU tar、sha256sum），要在 `panel/` 目录下执行；它的 `git describe` 会取到 `archive/` 开头的标签，导致版本号被拒，要显式传版本号。
-- 压测机经 nginx 压面板时，所有请求的来源 IP 相同，会撞上按 IP 限流（每分钟 240 次）和 IP 聚类：要让面板信任压测机并由压测机带 X-Real-IP（runbook 第 4 节，loadtest 已支持）。
+- 刚开机头一次 ssh 常报 `Connection timed out during banner exchange`，隔 15 秒重试即可，不是密钥问题（register.sh 已内置重试 3 次）。
 - 1Password SSH agent 锁着时 ssh 会签名失败；子 agent 的沙箱连不到 agent，需要关掉沙箱或由主会话来执行。
-- 从本机用 ssh 在测试机上起后台脚本（`nohup … &`）会挂住 ssh 会话、拖住后面的命令：用 `ssh -n <别名> 'setsid nohup <脚本> >log 2>&1 < /dev/null &'`。两轮复测都因为这个把压测机起跑推迟了 1.5 分钟。
-- 在 zsh 里写循环处理「别名 IP」成对参数时，`set -- $pair` 不按空格拆，会把整串当成一个参数（曾建出名为「别名 IP」的目录）；脚本一律 bash，或用 `${pair%% *}` / `${pair##* }`。
-- 同一个 IP 重装系统后主机密钥会变，要先 `ssh-keygen -R <IP>` 再连。
+- **ssh 起后台脚本会挂住会话**：远端写成 `cd /root/lt && setsid nohup ./x > log 2>&1 &` 时，`&` 作用于整个 `&&` 列表，bash 会 fork 一个子 shell，它的 stdout/stderr 仍是 ssh 的管道并一直等 x 结束，于是 ssh 不返回，同一条本机命令里的下一条 ssh 发不出去。2026-10-07 踩了三次，两次让压测机晚起 1.5 分钟。一律写成 `ssh -n host 'cd /root/lt; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发。真挂住时，先停本机那条命令（远端的 x 已在自己的会话里，不受影响），再单独补发第二台，否则它会在第一条返回时晚发。构建、install.sh 这类长命令同理。
+- 镜像开着 ufw。面板机的 80/443 由 install.sh 放行（见 panel-install）；**节点机的协议端口**（约定 20000–20099 的 tcp 与 udp）要手工放行。
+- 镜像自带约 7.7G 的 `/swapfile`，磁盘上来就用掉 11G。压测时怎么看换页见 prod-retest。
+- 同一个 IP 重装系统后主机密钥会变，要先 `ssh-keygen -R <IP>` 再连（register.sh 首次连接前已先清）。
 - 真实 IP 只能出现在 `~/.ssh/config`、`~/ai/servers/`、`ops-local/` 里；报告和仓库里一律写别名或 `<PANEL_IP>` 这类占位符。

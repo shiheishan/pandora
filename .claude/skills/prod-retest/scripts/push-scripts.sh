@@ -2,7 +2,7 @@
 # 把两端要用的脚本与机器上的 0600 秘密文件推上去（在仓库根目录跑）：push-scripts.sh <env.sh>
 #   面板机 /root/lt/：仓库 panel/tools/loadtest/scripts/* + 本 skill 的 run-collect、sample-vmswap、sample-pgact、sample-cpustat、trim-access
 #   压测机 /root/run-load.sh、/root/run-split.sh；/root/.lt-panel-url、/root/.lt-admin-url、/root/.lt-admin-pw（0600，值从 ops-local 读，不回显）
-# loadtest 二进制不在这里：两端各自用同一份源码 go build（见 SKILL.md A 段）。
+# loadtest 二进制不在这里：两端各自用同一份源码 go build（见 SKILL.md「准备」）。
 set -euo pipefail
 ENV=${1:?env.sh}
 # shellcheck disable=SC1090

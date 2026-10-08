@@ -89,26 +89,15 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
 
 ## 坑
 
+协议渲染本身的规则见 `.claude/rules/subscription-render.md` 与 `pdnd-kernel.md`；下面只记这套工具的坑。
+
 - **夹具必须是后台表单写进库的形状**（xboard：`tls` 三态、`reality_settings.*`、`network_settings.*`、`cipher`、`utls`、`tls_settings.*`）。
   - 渲染器先经 `nodefabric.KernelConfig` 翻译成内核形状，和下发给节点的是同一张映射表。
   - 当初的事故就是夹具用了内核扁平形状：库里从来不存这种形状，测试照样全绿，REALITY 却被渲染成普通 TLS。
   - 额外夹具的「来源」列会标出没过后台校验的，扁平形状只用作回归组。
-- **naive**
-  - sing-box 要带 `with_naive_outbound` 构建（cgo 加 cronet），否则报 `naive outbound is not included in this build`，naive 行和 ALL 行都变 FAIL。`--no-naive` 只在 cronet 链接不了时用。
-  - sing-box 的 naive 出站不支持跳过证书校验，带上 insecure 整份配置都起不来。所以勾了 allow_insecure 的 naive 在 sing-box 和 URI 里跳过。mihomo 本来就没有 naive。
-- **shadowtls 必须成对出站**：外层 shadowtls（v3、外层密码、`tls.server_name` 填握手站点、开 uTLS），内层 ss 经 `detour` 串上去，tag 要唯一。
-  - 少了外层，Start 报 `dependency[<名>-stls] not found`，整份订阅一起失效。
-  - 握手端口曾被 `BuildNodeConfig` 用监听端口覆盖。现在的做法是在翻译时把表单里填的握手端口折进 `server`（host:port）。E2E 只把 `server` 换成本地站点，没写出 `server` 时记 `E2E-PRECONDITION`。
-- **节点端 gRPC 是 gun 的 Hunk 帧**：Xray、sing-box、mihomo 的消息体都先包一层 Hunk。
-  - 当成裸数据收发时，Host 修好之后 vless 报版本无效，vmess 报 auth id rejected。
-  - REALITY 加 gRPC 时，客户端发的 `:authority` 是 REALITY 的 server name，不是节点地址。
-- **Host 校验不比端口**：节点端比较前先 `SplitHostPort`，IPv6 的方括号也要处理。
-  - E2E 把端口统一加了 20000，Host 和 `:authority` 里会带上非默认端口，这个坑就是这样测出来的。
-  - 后台没配 `network_settings.headers.Host` 时，下发和订阅都写节点地址，两边口径一致。
-- **sing-box 跳过 xhttp**：它没有 xhttp，这类节点只在 Clash（`xhttp-opts`）和 URI 里有。
-  - mKCP 在 Clash 和 sing-box 里都跳过。
-  - TLS 加 gRPC、且 SNI 与 Host 不同时，sing-box 和 mihomo 设不了 `:authority`，也跳过；URI 用 `authority` 参数可以。
-  - 所以 mieru、juicity、socks over TLS、xhttp、mKCP 都没有 E2E 覆盖，只有静态检查。
+- **naive 要带构建 tag**：sing-box 要带 `with_naive_outbound` 构建（cgo 加 cronet），否则报 `naive outbound is not included in this build`，naive 行和 ALL 行都变 FAIL。`--no-naive` 只在 cronet 链接不了时用。
+- **ShadowTLS 的 E2E 前提**：E2E 只把外层的 `server` 换成本地站点，表单没写出 `server` 时记 `E2E-PRECONDITION`。
+- **有些协议没有 E2E 覆盖**：mieru、juicity、socks over TLS、xhttp、mKCP 只有静态检查（sing-box 跳过 xhttp / mKCP 的原因见 subscription-render 规则文件）。
 - **sing-box 订阅带 TUN、远程规则集与 cache_file（w5retain 起）**：原样 Start 要 root 建 TUN、要联网下载规则集。
   - `sbcheck` 先对原样配置跑 `box.New`（TUN 与规则集的写法照样校验），`-start` 时 Start 的是离线副本：去掉 TUN 入站与 cache_file，远程规则集换成同 tag 的内联规则集，`download_detour` 另行核对必须指向存在的出站。
   - 真客户端第一次启动时规则集下载失败（经「节点选择」下载，节点不通）整份配置起不来，下载成功一次后靠 cache_file 缓存。这一条这里测不到，上真机验。
@@ -122,9 +111,6 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
   - 修前 naive「通」就是这个原因：面板根本没下发 insecure。上线前仍要上真节点验。
 - **Clash 和 URI 两列只是静态核对**：本机没有 mihomo 和 Xray 客户端。
   - mihomo 对空的 `proxies` 组会整份拒载，`yamlcheck` 查这条。
-  - Clash Premium 内核不认 vless、hy2、tuic、anytls、mieru，必须按 UA 和 Meta 分开给（`FormatClashPremium`）。
-  - httpupgrade 在 mihomo 里要写成 `network: ws` 加 `ws-opts.v2ray-http-upgrade: true`。
-  - 分享链接里 mKCP 要写 `kcp`，v2rayN 系不认 `mkcp`。
 - **overlay 依赖包内的名字**：
   - subscription 包：`Render`、`Node`、`formFixtures`、`fixtureUUID`、`fixtureHost`、`fixtureRealityPri`、`fixtureRealityPub`；
   - nodefabric 包：`BuildNodeConfig`、`ServingNode`、`ValidateAdminProtocolConfig`、`StableProtocolSchemaVersion`、`ProtocolSchemas`。

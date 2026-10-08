@@ -98,10 +98,7 @@ Chrome 默认用 `/Applications/Google Chrome.app`，换路径时设 `CHROME`。
 
 - **`go build` / `go test` 不要和 `npm ci` 同时跑**：`node_modules` 里的 flatted 带 Go 包，并发时 go 会假失败。prep 期间别跑 Go 的验证。
 - **无头 Chrome 的数字偏大**：没有 GPU 合成，动画、重绘的成本会被放大。只拿它做同一台机器上的开关对照、改前改后对照；绝对值以有 GPU 的真浏览器复核为准。同一组对照要在同一次会话、机器空闲时跑，每格至少跑两遍。
-- **呼吸灯吃主线程**：
-  - `admin/EventsCapsule.module.css` 的 `.dotLive` 用 `animation: pulse 2s infinite` 动画 box-shadow，每帧都要重绘。
-  - 1000 节点页上实测每 10 秒 1964 ms，关掉后 40 ms。
-  - 修法是改成只走合成层的 transform / opacity，并尊重 `prefers-reduced-motion`。改完用 `run.sh idle` 验证。
+- **常驻动画**：呼吸灯曾动画 box-shadow，1000 节点页空闲时每 10 秒吃 1964 ms 主线程，已改成伪元素只动 transform / opacity 并尊重 `prefers-reduced-motion`（`admin/EventsCapsule.module.css`）。以后改任何常驻动画，都用 `run.sh idle` 验证。
 - **gzip_types 对不上 text/javascript**：
   - Go 的 webapp 给 `.js` 发 `text/javascript; charset=utf-8`，nginx 按分号前的类型匹配 `gzip_types`。
   - 旧模板只登记了 `application/javascript`，JS 一直是原样下发的，每个入口冷加载多传约 270 KB。
@@ -114,10 +111,7 @@ Chrome 默认用 `/Applications/Google Chrome.app`，换路径时设 `CHROME`。
 - **SSE 让网络永远不空闲**：puppeteer、Lighthouse 都不能等 `networkidle`，要等 `load` 再加固定延时。
 - **只差 `#路由` 的导航是同文档跳转**：Lighthouse 量不到绘制，报 NO_FCP。所以 `lh.mjs` 的热缓存先跳到 `about:blank` 再回来。
 - **冷缓存会清掉 localStorage**，令牌是每个新文档开始时由 `evaluateOnNewDocument` 重新写入的。键名是 `pandora-portal-token` / `pandora-admin-token`。令牌由总协调从 1Password 给，经环境变量传入，不落盘、不写进结果文件。
-- **事件风暴的来源**：
-  - 迁移 00021 的 `zz_notify_nodes` 是 `AFTER UPDATE FOR EACH ROW`，没有 WHEN 条件，每次心跳都广播 `nodes.changed`，门户频道也收得到。
-  - `core/query.ts` 按 topic 节流 2 秒，结果是事件不停就每 2 秒重拉一次 1.26 MB 的列表。
-  - 假后端的 `PERF_TRIGGER=old` 就是在模拟这个，测修复效果时对照 `new`。
+- **`PERF_TRIGGER` 的含义**：`old` 模拟迁移 00110 之前的行为（每次心跳都推 `nodes.changed`，前端按 2 秒节流整表重拉 1.26 MB），`new` 模拟 00110 之后（只在在线状态翻转时推）。测前端重拉节奏的改动，两种都跑。
 - **静态资源曾经经过 Redis 限流**：每 IP 每分钟 120 次，共用 IP 的用户冷加载会拿到 429，表现是白屏。1767a52 已经把 `webapp.Mount` 挪到限流之前；改 router 时用 curl 连打 `/assets/` 复核不会 429。
 - **nodes-bench 依赖页面文案和列表形态**：
   - 依赖 aria-label「选择 <名>」「全选当前列表」「搜索节点」，改了文案要同步改脚本。
