@@ -50,7 +50,7 @@ paths:
 - 余额一律经 `balancePlan`（checkout_amounts.go）：`ApplyBalance` 先算（低于最低额时余额够就全用 Forced，不够就用尽余额后标 Short，都与开关无关）。只有门户换套餐抵扣后的零头可以免（用户 8.1 第 1 题推荐 A，`WaiveSmallDue`，固定上限 99 分、与最低额无关），并进订单折扣（有券就并进券的折扣，00036 要求券核销折扣等于订单折扣），审计 digest 记 `small_due_waived`；`reservationLockRequest.SmallDueWaived` 只认 upgrade 单。新购、续费、流量包免不了又付不了回 422（报价里 `below_minimum` 提前标出）；后台待支付单不做 Forced、不免，低于最低额 422 让管理员改用赠送或线下收款
 - 支付最低额：渠道 config `min_amount`（分，1–100000，易支付默认 100；编辑时不传保留原值），「能不能在线付」取启用且接单的 CNY 渠道里最小的那个，按租户在进程内缓存一分钟（本进程的渠道写入后 `invalidateMinPayment`；别的进程、adminops 的开关最多晚一分钟生效）；`CreatePaymentIntent` 再按所选渠道兜底 409，并拒绝已过付款期限的单
 - 新购：`NewCopy` 是「另买一份」，`Label` 经 `NormalizeLabel` 存 `orders.subscription_label`，另买同款而已有那份没起名时 422；门户新购（RejectSamePlan）同一套餐同时只能有一张未付款新购单（409 `order_pending`，Fields 带 order_id；已过付款期限、还没被释放任务关掉的那张也算，防止它的晚到回调与同款新单双开；人工单不受限）。履约 `provisionSubscription` 写备注名，撞名加「 2」「 3」后缀（保存点重试，不让结算失败），并在这是唯一一份生效中订阅时把未分配的流量包挂上（转移流水 actor system）
-- 流量包挂订阅（00137）：addon 单必须带一份生效中的订阅、余额挂上去；送流量没有在用的那份时未分配；`transferTrafficPacksTx` 只从未分配或彻底停用的那份转到生效中或可救回的那份，每笔写 `traffic_pack_transfers`（追加写），提交时约束触发器核对同事务有流水。门户转移、后台加流量（挂这一行）、履约自动挂都走它或 `GrantTrafficPackTx`
+- 流量包挂订阅（00137）：addon 单必须带一份生效中的订阅、余额挂上去；送流量没有在用的那份时未分配；`transferTrafficPacksTx` 只从未分配或彻底停用的那份转到生效中或可救回的那份（例外：升级前的旧包——只有 00138 回填的 migration 流水、没有 user / admin 流水的——可以从生效中的那份挪一次，用户 2026-10-07 定，口径 `legacyMovableSQL` 与 00137 守卫同一条），每笔写 `traffic_pack_transfers`（追加写），提交时约束触发器核对同事务有流水。门户转移、后台加流量（挂这一行）、履约自动挂都走它或 `GrantTrafficPackTx`
 - 守卫：PG18 sub_period 域的 `placement`、`purchase quote` 子测试，traffic_pack 域的 `traffic packs belong to a subscription` 子测试
 
 ## 换套餐的三个入口（2026-10-07 用户定，w6plan）

@@ -22,7 +22,8 @@ import (
 //  2. 那份停用后转出成功：每笔一条转移流水，纪元推进；重复调用转 0；
 //  3. 未分配的转到一份在用的上；转到别人的订阅 404；
 //  4. 不写流水直接改 subscription_id：提交时被约束触发器拒绝；
-//  5. 00138 回填三档：生效中到期最晚 → 过期 30 天内到期最晚 → 留空；重跑零改动。
+//  5. 00138 回填三档：生效中到期最晚 → 过期 30 天内到期最晚 → 留空；重跑零改动；
+//  6. 回填的旧包可以从生效中的那份挪一次，挪过就不能再从生效中的份挪。
 func checkTrafficPackSubscriptionPG18(t *testing.T, ctx context.Context, pool *platformdb.Pool,
 	admin *pgx.Conn, service *Service, fx orderReleasePG18Fixture) {
 	must := func(sql string, args ...any) {
@@ -101,10 +102,10 @@ func checkTrafficPackSubscriptionPG18(t *testing.T, ctx context.Context, pool *p
 	x, y := newSub(u), newSub(u)
 	g1 := grant(u, &x, 1000)
 
-	// 1) 从生效中的那份转出：服务 409，直接改库被 BEFORE 守卫拒绝；摘回为空也拒绝
+	// 1) 新买的包从生效中的那份转出：服务 422，直接改库被 BEFORE 守卫拒绝；摘回为空也拒绝
 	_, err := service.TransferTrafficPacks(ctx, fx.tenant, TrafficPackTransferInput{UserID: u, From: &x, To: y})
 	var he *httpx.Error
-	if !errors.As(err, &he) || he.Code != httpx.CodeConflict {
+	if !errors.As(err, &he) || he.Code != httpx.CodeValidationFailed || he.Fields["from_subscription_id"] == "" {
 		t.Fatalf("transfer out of a live subscription err=%v", err)
 	}
 	if state := orderReleasePG18SQLState(moveDirect(u, g1, y, false)); state != "23514" {
@@ -190,4 +191,21 @@ func checkTrafficPackSubscriptionPG18(t *testing.T, ctx context.Context, pool *p
 		t.Fatalf("rerunning the backfill wrote %d more records", again-moves)
 	}
 	t.Log("marker=traffic_pack_sub_pg18_backfill_ok")
+
+	// 6) 回填的旧包可以从生效中的那份挪一次（用户 2026-10-07 定）：A 的旧包从 a2 挪到 a1 成功，
+	// 写 user 流水；再挪回 a2 被拒（服务 422、直接改库被守卫拒）
+	moved, err := service.TransferTrafficPacks(ctx, fx.tenant, TrafficPackTransferInput{UserID: ua, From: &a2, To: a1})
+	if err != nil || moved.MovedBytes != 100 || attachedTo(ga) != a1 ||
+		scalar(`SELECT count(*) FROM traffic_pack_transfers WHERE grant_id=$1::uuid AND actor_kind='user'
+			AND from_subscription_id=$2::uuid AND to_subscription_id=$3::uuid`, ga, a2, a1) != 1 {
+		t.Fatalf("one-time move of a backfilled pack out=%+v err=%v", moved, err)
+	}
+	if _, err := service.TransferTrafficPacks(ctx, fx.tenant, TrafficPackTransferInput{UserID: ua, From: &a1, To: a2}); !errors.As(err, &he) ||
+		he.Code != httpx.CodeValidationFailed {
+		t.Fatalf("second move of a backfilled pack err=%v", err)
+	}
+	if state := orderReleasePG18SQLState(moveDirect(ua, ga, a2, false)); state != "23514" || attachedTo(ga) != a1 {
+		t.Fatalf("guard on moving a backfilled pack twice SQLSTATE=%q", state)
+	}
+	t.Log("marker=traffic_pack_sub_pg18_legacy_move_once_ok")
 }
