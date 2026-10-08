@@ -11,13 +11,6 @@ description: pandora 面板网页打开性能的测量：静态分析（产物�
 - 不在仓库的 `panel/frontend` 里装东西、打补丁，也不改它的 `package.json`；
 - 测量工具（puppeteer-core 驱动本机 Chrome、Lighthouse、source-map-explorer）按本 skill 的 `package.json` 和 `package-lock.json` 锁定版本，装在 scratchpad。
 
-## 什么时候用
-
-- 改了前端的分包、依赖、入口、主题脚本或字体：跑静态分析，对比首屏体积。
-- 改了实时事件、`core/query.ts` 的重拉节奏、节点列表的渲染或接口：跑 1000 节点基准。
-- 改了 `panel/deploy/nginx-aegis.conf`、`render-nginx.sh`、`platform/webapp`，或换了 CDN：在测试机上跑线上实测。
-- 出网页性能报告，或验收性能类前端分支：三层都跑，改前改后各一份。
-
 ## 步骤
 
 所有子命令都接受 `--work <scratchpad>/webperf`，不给时用 `$TMPDIR/pandora-web-perf`。
@@ -83,16 +76,16 @@ description: pandora 面板网页打开性能的测量：静态分析（产物�
 | `scripts/lh.mjs` | Lighthouse user flow 跑一次导航，输出一行 JSON；`TOKEN`、`TOKEN_KEY` |
 | `scripts/online.sh` | curl 实证下发链路 |
 | `scripts/summarize.py` | bench 结果出表、Lighthouse 结果取中位数 |
-| `package.json` / `package-lock.json` | lighthouse 13.5.0、puppeteer-core 25.12.0、source-map-explorer 2.5.3 |
+| `package.json` / `package-lock.json` | 测量工具的锁定版本 |
 
 Chrome 默认用 `/Applications/Google Chrome.app`，换路径时设 `CHROME`。假后端账号是 `dev/mock-api.ts` 的 `MOCK_ACCOUNTS`（admin@pandora.dev / user@pandora.dev），换账号时设 `MOCK_EMAIL`、`MOCK_PASSWORD`。
 
 ## 坑
 
 - **无头 Chrome 的数字偏大**：没有 GPU 合成，动画、重绘的成本会被放大。只拿它做同一台机器上的开关对照、改前改后对照；绝对值以有 GPU 的真浏览器复核为准。同一组对照要在同一次会话、机器空闲时跑，每格至少跑两遍。
-- **常驻动画**：呼吸灯曾动画 box-shadow，1000 节点页空闲时每 10 秒吃 1964 ms 主线程，已改成伪元素只动 transform / opacity 并尊重 `prefers-reduced-motion`（`admin/EventsCapsule.module.css`）。以后改任何常驻动画，都用 `run.sh idle` 验证。
+- **常驻动画**：改任何常驻动画，都用 `run.sh idle` 验。
 - **上线后必验**：`run.sh online` 看 JS、CSS 有没有 `Content-Encoding`（不能只读 nginx 配置：已装机器要重跑 install.sh 重新渲染才生效）；改 router 后用 curl 连打 `/assets/` 确认不 429（静态资源不应经过限流）。HTTP/1.1 下每个标签页的 SSE 长期占一条连接，开 h2 后 `limit_conn` 上限是 64。
-- **前面有 Cloudflare 橙云时**：浏览器到边缘那段本来就是 h2/h3 加压缩，curl 和 Lighthouse 量的是边缘，量不到源站。要看源站，就在机器上用 curl 请求回环 `127.0.0.1:9080`，或者用 `--resolve` 直连源站。
+- **看源站**：用回环 `127.0.0.1:9080` 或 `--resolve`（前面有 Cloudflare 时 curl 和 Lighthouse 量的是边缘）。
 - **SSE 让网络永远不空闲**（同 flow-walk）：puppeteer、Lighthouse 都不能等 `networkidle`，要等 `load` 再加固定延时。只差 `#路由` 的导航是同文档跳转，Lighthouse 量不到绘制，报 NO_FCP，所以 `lh.mjs` 的热缓存先跳到 `about:blank` 再回来。
 - **冷缓存会清掉 localStorage**，令牌是每个新文档开始时由 `evaluateOnNewDocument` 重新写入的（键名见 flow-walk「坑」）。令牌由总协调从 1Password 给，经环境变量传入，不落盘、不写进结果文件。
 - **`PERF_TRIGGER` 的含义**：`old` 模拟迁移 00110 之前的行为（每次心跳都推 `nodes.changed`，前端按 2 秒节流整表重拉 1.26 MB），`new` 模拟 00110 之后（只在在线状态翻转时推）。测前端重拉节奏的改动，两种都跑。
@@ -101,4 +94,4 @@ Chrome 默认用 `/Applications/Google Chrome.app`，换路径时设 `CHROME`。
   - 列表改成服务端翻页或搜索后，`/v1/nodes?` 的参数和每页行数都会变，`EXPECT_ROWS` 要跟着改。搜索那一项只量到发请求前的那一帧。
 - **假后端补丁靠锚点**：`patch-mock.py` 锚在 `dev/mock/admin/nodes.ts` 的 `store[0]!.routing = …` 和 `dev/mock-api.ts` 的 SSE 保活定时器、`mockApi` 插件块上。假后端改过之后锚点对不上，脚本会报错退出，照报错位置更新脚本，不要手改拷贝凑合。
 - **sizes 用的是 gzip-9**，nginx 实际是 5 级，线上传输会略大。「首屏」只算 index.html 引用的文件和静态 import；后台路由分包原先要等 `v1/me` 回来才开始下，现在有 `admin/prefetch.ts` 并行预取，看串行往返要用 Lighthouse 的网络瀑布确认。
-- `npm ci` 每次都会删掉 node_modules 重装，run.sh 用 lock 文件的哈希做了跳过；拷贝里的依赖坏了，删掉 `W/fe/node_modules` 再 prep。
+- 拷贝里的依赖坏了，删掉 `W/fe/node_modules` 再 prep（lock 文件没变时 run.sh 会跳过 `npm ci`）。

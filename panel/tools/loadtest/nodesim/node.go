@@ -46,9 +46,9 @@ type simNode struct {
 	userVersion    string
 	events         chan streamEvent
 
-	// userIDs 对应 pdnd 的 n.known（内核里已下发的用户），只留排好序的 id：
-	// 两百个节点各存一份上万人的完整用户表太占压测机内存，而流量与在线
-	// 上报只用得到 id。
+	// userIDs 对应 pdnd 的 n.known（内核里已下发的用户），只留排好序的 id，并且只留
+	// 「可能连在本节点上」的那一部分（workload.candidate）：流量与在线上报只会选中这些人，
+	// 上千个节点各存一份上万人的名单要吃掉近百 MB，而发给面板的请求一字不差。
 	userIDs []int64
 	// started 跨 goroutine 读（结束时统计），用原子值。
 	started              atomic.Bool
@@ -291,9 +291,9 @@ func (n *simNode) syncUsers(ctx context.Context, flag string) error {
 
 // applyUsers 把完整列表落到本地（pdnd 落到内核），跳过没有 UUID 的条目。
 func (n *simNode) applyUsers(users []nodefabric.ProxyUser) {
-	ids := make([]int64, 0, len(users))
+	ids := make([]int64, 0, len(users)/max(n.work.total, 1)+8)
 	for _, u := range users {
-		if u.UUID != "" {
+		if u.UUID != "" && n.work.candidate(u.ID, n.index) {
 			ids = append(ids, u.ID)
 		}
 	}
@@ -337,7 +337,7 @@ func (n *simNode) applyStreamEvent(ctx context.Context, ev streamEvent) {
 func (n *simNode) applyUserDelta(ev streamEvent) {
 	ids := slices.Clone(n.userIDs)
 	for _, u := range ev.Added {
-		if u.UUID != "" {
+		if u.UUID != "" && n.work.candidate(u.ID, n.index) {
 			ids = append(ids, u.ID)
 		}
 	}

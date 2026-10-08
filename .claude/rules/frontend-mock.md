@@ -29,10 +29,10 @@ paths:
   - 套餐绑池的 `deliverable_nodes` 用 `admin/nodes.ts` 的 `deliverableNodesInPool`，与节点列表「是否下发」共用同一个 `deliverable` 判定（`deliveryOf` 照 Go 的 `DeliveryState` 再 `Refine`）；改其一要两处一起对照 Go 的 `subscription.DeliverableNodeSQL`
 - 种子都是确定性的（固定 id、按日期生成），`tests/mock-*.test.ts` 直接用种子里的 id 与数值，改种子要同步改测试
 - `admin/node-schemas.ts` 是 Go `nodefabric.ProtocolSchemas()` 的原样导出，没有自动同步也没有守卫
-  - Go 的协议 schema 一变就要手动重导
+  - Go 的协议 schema 一变（改了 `nodefabric/protocol_schema.go` 或字段翻译）就要手动重导：在仓库根（或 worktree 根）跑 `bash .claude/skills/subscription-e2e/scripts/export-schemas.sh`，会覆盖这个文件，再用 `git diff` 看变化、跑页面单测
   - 页面单测 `src/admin/screens/nodes/nodes.test.ts` 也在用它
 - `dev:admin` 与 `dev:portal` 是两个 vite 进程，生效主题经 `appearance-share.ts` 写到 `node_modules/.cache/pandora-mock/appearance.json` 互通
-- 门户场景（`portal/fixtures.ts` 的 `SCENARIOS`，`POST /v1/__mock/portal-scenario` 一切换就重建全部状态）：
+- 门户场景（`portal/scenario.ts` 的 `SCENARIOS`，`POST /v1/__mock/portal-scenario` 一切换就重建全部状态）：
   - 基础六个：`default` / `empty` / `multi` / `legacy` / `error` / `slow`（说明在 `fixtures.ts` 文件头）
   - `proto-*`（`portal/proto.ts`、名单在 `portal/scenario.ts` 的 `PROTO_SCENARIOS`）：购买流程原型的场景，给首次点击测试用，数据照原型 SCENARIOS、套餐换成原型的三档目录，「今天」换成相对天数
     - `proto-s1`…`proto-s8`（含 `s5a` / `s5b`、`s7b` / `s7c`）照原型；`proto-legacy` 是升级前买的 80G 流量包挂在「我的」上、能挪一次；`proto-s7d` 是余额 ¥0.20 加优惠码 `LUCKY99`，续费应付低于最低额下不了单

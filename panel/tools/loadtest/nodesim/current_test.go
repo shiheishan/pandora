@@ -91,7 +91,7 @@ func TestCurrent204WithoutAppliedReleaseIsAnError(t *testing.T) {
 	defer srv.Close()
 	rec := ltkit.NewRecorder("nodes", time.Second)
 	c, err := newSignedClient(srv.URL, g.manifest().Nodes[0], true,
-		&observer{rec: rec, fleet: newFleetStats(), maxSamples: 1})
+		&observer{rec: rec, fleet: newFleetStats(), maxSamples: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

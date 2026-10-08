@@ -1,6 +1,6 @@
 ---
 name: subscription-e2e
-description: pandora 订阅渲染的本地端到端矩阵：把后台表单形状的节点夹具渲染成 clash / clash-premium / sing-box / uri，sing-box 离线校验、Clash 与 URI 静态检查，再起本地 pdnd NativeCore 用订阅里的 sing-box 出站真连一次，出一张矩阵。改订阅渲染（panel/internal/domain/subscription/render*）、协议 schema 或字段翻译（nodefabric/protocol_schema.go、xboard_*、uniproxy_config.go）、pdnd kernel 传输层，以及上真节点验证（node-e2e）之前先用本 skill，它通过后再上真机；比修前修后、导出前端 node-schemas.ts 也用它。
+description: pandora 订阅渲染的本地端到端矩阵：把后台表单形状的节点夹具渲染成 clash / clash-premium / sing-box / uri，sing-box 离线校验、Clash 与 URI 静态检查，再起本地 pdnd NativeCore 用订阅里的 sing-box 出站真连一次，出一张矩阵。改订阅渲染（panel/internal/domain/subscription/render*）、协议 schema 或字段翻译（nodefabric/protocol_schema.go、xboard_*、uniproxy_config.go）、pdnd kernel 传输层，以及上真节点验证（node-e2e）之前先用本 skill，它通过后再上真机；比修前修后也用它。
 ---
 
 # 订阅渲染端到端矩阵
@@ -37,25 +37,22 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
    - `--fixtures-file` 会替换基点包里的 `render_fixtures_test.go`，没有就补进去。
    - 基点没有 `FormatClashPremium` 时，用 `--formats` 把 premium 去掉。
 3. 修后的结果用主线或分支跑一遍，两张矩阵对照。
-4. 实例（2026-10-07）：w2render 之前的基点 sing-box E2E 失败 23 个，主线 ddf39ec 是通 28、skip 15、失败 0。
 
 ### 其他用法
 
 - **额外夹具**：`fixtures/extra.json` 每次默认都跑。格式是 `[{id, type, port, config}]`。
-  - 现有五条：旧扁平形状的 REALITY（回归组）、无证书 AnyTLS（应全格式 skip）、cipher 与 method 冲突的 ss（应全格式 skip，下发被拒），以及两条 2026-10 起存不进去的存量明文（vless / vmess 裸 tcp 不加密：后台校验不过，但库里的照常下发、照常渲染，E2E 要通）。
   - 想试一个还没进 `formFixtures` 的形状，就另写一个文件用 `--extra` 传入。
 - **只跑几个 E2E 用例**：`--only vless-ws,trojan-tls-grpc --log debug`，sing-box 客户端日志打到 `results/e2e.stderr`。
-- **导出前端假后端的 schema**：`scripts/export-schemas.sh` 把 `nodefabric.ProtocolSchemas()` 原样写进 `panel/frontend/dev/mock/admin/node-schemas.ts`，然后用 `git diff` 看变化。这份文件没有自动同步，也没有守卫，改了 schema 必须重新导出。
 - **REALITY 密钥**：`cd tools && go run ./kp` 生成一对新密钥，`go run ./kp <私钥>` 核对私钥和公钥是否成对。
 
 ## 脚本与文件
 
-`scripts/run.sh` 一条命令跑完（参数见文件头），`matrix.py` 拼矩阵，`export-schemas.sh` 导出 node-schemas.ts，`fixtures/extra.json` 是常备额外夹具。另外两处：
+`scripts/run.sh` 一条命令跑完（参数见文件头），`matrix.py` 拼矩阵，`export-schemas.sh` 导出前端假后端的 node-schemas.ts（用法见 `.claude/rules/frontend-mock.md`），`fixtures/extra.json` 是常备额外夹具。另外两处：
 
 - `overlay/zz_e2e_*_test.go`：注入 subscription 与 nodefabric 两个包的临时测试（渲染每个夹具和整份、真实 `BuildNodeConfig`、导出 schema），产物写进工作目录。
 - `tools/`（独立 Go module）：`e2e`、`sbcheck`、`yamlcheck`、`uricheck`、`kp`。
 
-`tools/go.mod` 锁 sing-box v1.13.14，与 pdnd 同版本。`replace` 指向 `../../../../pdnd`，即本仓库的 pdnd。run.sh 会把 tools 拷到工作目录，再把 replace 改成 `--repo` 的 pdnd，所以测 worktree 或基点快照时不用改 skill。
+`tools/go.mod` 里的 sing-box 版本要与 pdnd 的 go.mod 一致。`replace` 指向 `../../../../pdnd`，即本仓库的 pdnd。run.sh 会把 tools 拷到工作目录，再把 replace 改成 `--repo` 的 pdnd，所以测 worktree 或基点快照时不用改 skill。
 
 构建 tags 固定为 `with_quic,with_utls,with_gvisor,with_naive_outbound`，写在 run.sh 里。
 
@@ -94,7 +91,7 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
   - 修前 naive「通」就是这个原因：面板根本没下发 insecure。上线前仍要上真节点验。
 - **Clash 和 URI 两列只是静态核对**：本机没有 mihomo 和 Xray 客户端。
   - mihomo 对空的 `proxies` 组会整份拒载，`yamlcheck` 查这条。
-- **overlay 依赖包内的名字**（subscription 包的 `Render`、`Node`、`formFixtures`、`fixture*`，nodefabric 包的 `BuildNodeConfig`、`ServingNode`、`ValidateAdminProtocolConfig`、`ProtocolSchemas` 等）：这些改名后 overlay 要同步改，否则第 1 步编译失败。overlay 的路径必须是绝对路径；测试读环境变量和文件，所以一律 `-count=1`。
+- **overlay 依赖 subscription 与 nodefabric 包内的名字**：这些改名后 overlay 要同步改，否则第 1 步编译失败。overlay 的路径必须是绝对路径；测试读环境变量和文件，所以一律 `-count=1`。
 - **夹具 id 不能叫 ALL 或 EMPTY，也不能重复**。端口加 20000 后不能超过 65535。用例串行跑，上一个用例是异步关闭的，所以端口别复用。
 - **夹具里不写密钥**：REALITY 用占位符，换成包里那对测试专用的虚构密钥。要加新密钥，用 `kp` 生成，再按完整值登记进 `.gitleaks.toml` 的放行清单。
 - **skip 本身不算失败**，但每个 skip 都要在 `render_matrix_test.go` 有原因。渲染矩阵测试是事实清单，这张矩阵是它的实连旁证。

@@ -15,11 +15,11 @@ bash .claude/skills/db-query/scripts/q.sh [-t 目标] [-v 名=值]... .claude/sk
 
 | `-t` | 连到哪 | 前提 |
 |---|---|---|
-| `local`（缺省） | 本机 `panel/deploy/psql.sh`，即 docker 容器 `aegis-postgres`，读 `panel/deploy/.env` | 本机装了 Docker 并 `make up`（在 `panel/` 下）。2026-10-07 实测这台 Mac 的 PATH 里没有 docker、psql、valkey-cli |
+| `local`（缺省） | 本机 `panel/deploy/psql.sh`，即 docker 容器 `aegis-postgres`，读 `panel/deploy/.env` | 本机装了 Docker 并 `make up`（在 `panel/` 下）；这台 Mac 没装，见根 CLAUDE.md「环境与工具坑」 |
 | `<ssh 别名>` | 面板机/测试机：远端先找 `/opt/aegispanel/deploy`，再找 `/opt/pandora/deploy`；docker 布局走 `psql.sh`，直装布局走 `runuser -u postgres psql` | 别名在 `~/.ssh/config`；ssh 需要 1Password agent，子 agent 沙箱里连不上，要关沙箱或交主会话 |
 | `bench` | 对照机容器 `bench-pg`，超级用户 `postgres`，`-d` 选库（缺省 `aegis`，即 5k 基线库） | 只读用；做 EXPLAIN 对照改走 bench-eval，不要改 `aegis`、`aegis_train*`、`aegis_holdout*` |
 
-脚本做的事：去掉注释和字符串后，文件里有写类关键字（insert/update/delete/create/drop/alter/grant/copy/lock/do 等）就拒绝；发送前先 `SET default_transaction_read_only = on`；`-v` 的值只许字母数字和 `. _ : @ + -`；口令不经本机（远端 `psql.sh` 自己读 `.env`）。这道闸只是兜底，不是授权。
+脚本有只读闸（写类关键字拒绝、会话只读），口令不经本机。这道闸只是兜底，不是授权。
 
 ## 身份与 RLS
 
@@ -69,7 +69,7 @@ bash $q/scripts/q.sh -t bench -v n=10 $q/queries/slow-queries.sql
 
 读结果的几条口径（都对着代码核过）：
 
-- **配额**：`quota_balances.remaining` 是生成列 `limit_value + granted_addon + adjusted - consumed`，`limit_value` 为空是不限量。`granted_addon` 自 00070 起恒为 0（CHECK 钉死），加量包在 `traffic_pack_grants`，挂用户不挂订阅、永不过期、剩余 = `granted_bytes - consumed_bytes`；节点下发看的是配额余量加流量包余量。
+- **配额**：`quota_balances.remaining` 是生成列 `limit_value + granted_addon + adjusted - consumed`，`limit_value` 为空是不限量。`granted_addon` 自 00070 起恒为 0（CHECK 钉死），加量包在 `traffic_pack_grants`，永不过期、剩余 = `granted_bytes - consumed_bytes`，挂在 `subscription_id` 那一份上（为空 = 未分配），转移流水在 `traffic_pack_transfers`；节点下发看的是配额余量加流量包余量。
 - **余额**：用户科目是贷方科目，余额 = `-ledger_accounts.balance_signed`（`user_balance`）；下单时冻结的额度在 `user_balance_hold`。
 - **到期**：订阅到点由 aegis-admin 的过期扫描翻成 expired（`billing.ScanExpiredSubscriptions`），expired 满 30 天写 `renewal_closed_at` 并吊销凭据；`sub-status.sql` 第 2 段的谓词与扫描逐字相同。
 - **对账**：`ledger-reconcile.sql` 前两段应为空；后三段是候选异常，种子数据、迁移造的订单会命中，先看 `kind` 与 `paid_at`。借贷配平靠延迟约束触发器，不用 SQL 复核。
@@ -108,7 +108,7 @@ ssh <别名> 'bash -s -- cli INFO memory'     < $v
 ## 坑
 
 - **多语句 SQL 用文件，经标准输入送**：`psql.sh < 文件.sql`。docker 布局下 `psql -f` 和 `\i` 指的是容器里的路径，宿主文件读不到。
-- **口令**：`.env` 是 0600，只由远端脚本读；不要 `cat .env`，不要把口令写进命令行（`PGPASSWORD=… psql` 会进进程表）。要从本机直连的现场口令只经 0600 文件或标准输入，来源在 `ops-local/` 与 `~/ai/servers/`，不读 `ops-local/**/secrets/`。
+- **口令**：`.env` 是 0600，只由远端脚本读；不要 `cat .env`，不要把口令写进命令行（`PGPASSWORD=… psql` 会进进程表）。要从本机直连时，口令的放置与读取规则见根 CLAUDE.md「红线」。
 - **输出含邮箱、订阅 id、订单号**：不贴进仓库和公开报告，汇报时脱敏或只给计数。
 - **生产/测试机上不跑写语句**：包括 `pg_stat_statements_reset()`、`pg_terminate_backend`、`DEL`。排障需要写，先向用户说明语句和影响面。
-- **对照机 `aegis` 库的结构停在 10-06 的快照**（goose 97），新迁移加的列它没有：`sub-status.sql`、`user-overview.sql` 用到的 `renewal_closed_at`（00124）、`nodes-online.sql` 用到的 `runtime_status`（00122）在那里报「column does not exist」。这是库旧，不是查询错；查这几项改连跑着当前版本的测试机或本地库。10-07 实测：10 个查询在对照机跑通 7 个，剩下 3 个在当前版本的测试机上全部跑通。
+- **对照机 `aegis` 库的结构停在 goose 97**，新迁移加的列它没有：`sub-status.sql`、`user-overview.sql` 用到的 `renewal_closed_at`（00124）、`nodes-online.sql` 用到的 `runtime_status`（00122）在那里报「column does not exist」。这是库旧，不是查询错；查这几项改连跑着当前版本的测试机或本地库。

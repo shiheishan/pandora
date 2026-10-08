@@ -67,6 +67,9 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
   - clone 后执行 `git config core.hooksPath .githooks` 启用。
   - 私有规则由 `ops-local/gitleaks/gen-private.sh` 从 `~/.ssh/config` 与 `~/ai/servers` 生成（真实 IP 的点分与短横线写法），加测试机后重跑；worktree 里的提交回主仓库的 `ops-local/` 加载。
 - gitleaks 命中必须停下处理。扫描不得与提交、推送串在同一条命令里。
+- 现场值（IP、域名、后台前缀）只放 `~/.ssh/config`、`~/ai/servers/`、`ops-local/<目录>/`；口令只经 stdin 或 0600 文件传，不出现在命令行参数、输出和记录里。
+- 不读 `ops-local/**/secrets/`（子 agent 的 prompt 与 brief 同样适用）。
+- 测试机不删、不重装；删机只由用户在 Vultr 控制台做，用户说删了之后 agent 才去掉登记（见 test-machine skill「回收」）。
 
 ## 长任务的任务清单
 
@@ -91,8 +94,10 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 环境与工具坑（所有 skill 共用）
 
 - go 与 npm：`go build/test/vet` 不与 `npm ci` 并发（node_modules 里的 flatted 带 Go 包，并发时 go 假失败）；子 agent 的 prompt 也要写明。
+- 本机（这台 Mac）没有 docker、psql、valkey-cli：PG18 用例、迁移往返、冒烟栈、Playwright 路径本机都跑不了，PG18 用例在本机跳过不等于通过，结论以 GitHub 为准（`wait-github.sh`，见 verify skill）。要查库、开冒烟栈，用测试机或 CI。
+- 保留表名（`panel/migrations/RESERVED-TABLES.md` 登记的）不写进 Go 注释，迁移注释里也不写（迁移里的 SQL 常被抄进 Go）；用描述代替。表登记簿测试对 Go 非测试源码整词匹配，注释里的表名也算「引用」，会变红。
 - 1Password SSH agent：推送或 ssh 报签名失败，多半是沙箱连不上 agent 或 agent 锁着。Bash 调用设 `dangerouslyDisableSandbox: true` 重试，仍失败就请用户解锁或由总协调代推；不改走 HTTPS。
-- 远端后台进程：`x &` 作用于整个 `&&` 列表，会留下挂住 ssh 的子 shell。一律写成 `ssh -n host 'cd /root/lt; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；真挂住时先停本机那条命令（远端的 x 已在自己的会话里）。远端 `pkill -f '<模式>'` 的模式会出现在执行它的 bash 命令行里而误杀自己的 ssh 会话：改用记下的 PID，或锚定写法 `pkill -f '^vmstat'`。
+- 远端后台进程：`x &` 作用于整个 `&&` 列表，会留下挂住 ssh 的子 shell。一律写成 `ssh -n host 'cd /root/lt; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；真挂住时先停本机那条命令（远端的 x 已在自己的会话里）。远端 `pkill -f '<模式>'` 的模式会出现在执行它的 bash 命令行里而误杀自己的 ssh 会话：改用记下的 PID，或锚定写法 `pkill -f '^vmstat'`。限时的故障注入（iptables DROP、停服务等）要在远端自带撤销，例如 `setsid -f sh -c 'sleep N; iptables -D …'`，本机断网时也能恢复。
 - PG18 夹具与 DOMAINS：同域共库，夹具租户 id 撞号和 `run-pg18-gates.sh` 的 DOMAINS 相邻行冲突，做法见 `.claude/rules/platform-pg18.md`「多路并行时的坑」。
 - 两路同改一个 `CREATE OR REPLACE` 函数（如 `app.seed_tenant_defaults`）：后合那份在先合那份的函数体上加，Down 还原到先合那份；计数类契约（模板数、`workers.Add`、DOMAINS、SCRIPTS）合完一并改。细则见 new-migration skill。
 

@@ -18,9 +18,9 @@ description: pandora 新写或修改一个 goose 迁移（panel/migrations）时
 ## 1. 取号
 
 - 跑 `next-number.sh`，用它给的号（编号规则、历史空号不回填见 `rules/panel-migrations.md`）。
-- 文件名 `NNNNN_snake_name.sql`，`migrate.sh` 与 `check-migrations.sh` 用同一个正则 `^[0-9]{5}_[A-Za-z0-9._-]+\.sql$` 检查。
+- 文件名 `NNNNN_snake_name.sql`。
 - 几路并行：号段由总协调按 dispatch-task skill 预分，只用自己那段，用不到就空着；合并顺序也在那里。
-- 新迁移的号一定大于 133：`ratchet.txt` 和往返 `KNOWN` 都只收 00133 及以前的条目，新迁移没有豁免，必须一次合规。
+- `ratchet.txt` 和往返 `KNOWN` 不给新迁移豁免，必须一次合规。
 
 ## 2. 套样板
 
@@ -31,9 +31,8 @@ description: pandora 新写或修改一个 goose 迁移（panel/migrations）时
 | 建表、加列、加索引（小表）等能逆的结构变更 | `reversible.sql` | 00130（建表 + RLS + 收 DELETE）、00129（换 CHECK，Down 带数据守卫） |
 | CREATE OR REPLACE 已有的函数（守卫函数、`app.seed_tenant_defaults`） | `replace-function.sql` | 00134（两个函数，Down 带守卫再逐字还原）、00128（seed 函数在 00126 版上加一行） |
 | 修数据、纯种子，Down 无法还原 | `irreversible.sql` | 00029、00030 |
-| 大表上建索引 | `concurrent-index.sql` | 主线还没有 NO TRANSACTION 的迁移，样板按 lint 规则写 |
+| 大表上建索引 | `concurrent-index.sql` | 00136、00139（都是 `NO TRANSACTION`） |
 
-- **函数体、DO 块**要包在 `-- +goose StatementBegin` / `StatementEnd` 之间。
 - **超时**：Up 和 Down 的第一批语句就是 `SET LOCAL lock_timeout` 与 `SET LOCAL statement_timeout`，在任何 DDL / DML 之前。lint 只认段首连续的 SET。
 - **Down 无法安全执行时**，二选一（细则见规则「Down、DDL 守卫与往返」）：永远不能逆用 `irreversible.sql`，文件头（`-- +goose Up` 之前）写 `-- irreversible:` 与 `-- forward-fix:`，Down 里 `RAISE EXCEPTION`；只在有某类数据时不能逆，Down 开头用 DO 块查、有就 RAISE，这不算 irreversible，**不要**标。不许写空 Down 或只有 SET 的 Down（lint `down-empty`）。
 
@@ -48,7 +47,7 @@ description: pandora 新写或修改一个 goose 迁移（panel/migrations）时
 | 证据流水表追加写：`SELECT app.make_append_only('<表>')`，并把表名加进 `configure-app-role.sql` 的 append-only 数组 | 评审 |
 | 授权：新表对 `aegis_app` 默认只有 SELECT，用到的 INSERT / UPDATE 在迁移里显式 GRANT | PG18 门禁（先跑 configure-app-role.sql，再以 `aegis_app` 测） |
 | 不许删的表：迁移里 REVOKE，再在 configure-app-role.sql 末尾重授块之后补一行并加进契约列表 | `TestConfigureAppRoleRevokesDeleteOnGuardedTablesLast`（`panel/internal/platform/db/configure_role_contract_test.go`，只核列表里的行） |
-| 新表有 Go 引用或登记 `RESERVED-TABLES.md`；删登记过的表先读「保留原因」；迁移注释不写保留表名 | `TestSchemaTablesAreReferencedOrRegistered` |
+| 新表有 Go 引用或登记 `RESERVED-TABLES.md`；删登记过的表先读「保留原因」；迁移注释同样不写保留表名（见根 CLAUDE.md「环境与工具坑」） | `TestSchemaTablesAreReferencedOrRegistered` |
 | CREATE OR REPLACE 别人的函数：`find-def.py <函数> --body` 取当前生效版再改；改签名要 DROP 旧签名并重做授权 | 往返比函数体文本；seed 类契约（第 6 节） |
 | 已发布 Up 不改（允许追加 Down、文件头标记） | `TestPublishedUpSegmentsAreFrozen`（`upsegments.txt`） |
 | 大表（清单 `panel/tools/migrationlint/bigtables.go`）：并发建索引、不整表重写、回填标注 | lint `index-not-concurrent`、`concurrently-in-transaction`、`table-rewrite`、`backfill-unmarked` |
@@ -76,11 +75,11 @@ cd panel && go test ./tools/migrationlint/ ./internal/platform/db/   # DDL lint 
 grep -rln --include='*_test.go' -e '<迁移号>_' -e '<函数或表名>' panel/internal panel/tools
 ```
 
-改了 `app.seed_tenant_defaults` 至少加跑 `go test ./internal/domain/notify/ ./internal/middleware/`（`TestTenantSeedTemplatesMatchDefaults`、`TestTenantSeedSwitchesMatchCode`）。本机没有 Docker，PG18 用例与往返都跑不了，跳过不等于通过。
+改了 `app.seed_tenant_defaults` 至少加跑 `go test ./internal/domain/notify/ ./internal/middleware/`（`TestTenantSeedTemplatesMatchDefaults`、`TestTenantSeedSwitchesMatchCode`）。PG18 用例与往返本机跑不了（见根 CLAUDE.md「环境与工具坑」），跳过不等于通过。
 
 ### 推送后（GitHub）
 
-- 迁移改动触发 `panel-pg18.yml`。往返是 `panel-pg18` job 里的一步「Migration round trip (up, down, up per migration)」（口径见规则），跑 `bash panel/deploy/run-migration-roundtrip.sh panel`，约 3 分钟；之后同一 job 跑 PG18 门禁。检查机跳过整个 panel-pg18，所以必须等 `wait-github.sh`（verify skill）。
+- 迁移改动触发 `panel-pg18.yml`。往返只在 GitHub 的 panel-pg18 job 里跑（口径与脚本见规则），检查机跳过它，所以必须等 `wait-github.sh`（verify skill）。
 - 只看往返的结论（PASS 行已去掉）：
 
   ```bash
@@ -101,7 +100,7 @@ grep -rln --include='*_test.go' -e '<迁移号>_' -e '<函数或表名>' panel/i
 
 ### 合进主线之后
 
-Up 段从此视为已发布。冻结表 `upsegments.txt` 只追加不改，登记行用 `upsegment-sha.py <文件>` 生成（目前登记到 00134）。
+Up 段从此视为已发布。冻结表 `upsegments.txt` 只追加不改：合并时由总协调（accept-task「合并」）用 `upsegment-sha.py <文件>` 追加登记，`--check` 看登记到哪。
 
 ## 5. 往返红了：只改 Down
 
@@ -113,7 +112,7 @@ Up 段从此视为已发布。冻结表 `upsegments.txt` 只追加不改，登�
 ## 6. 坑
 
 - **seed 函数多路并行**：见根 CLAUDE.md「环境与工具坑」。动手前跑 `find-def.py app.seed_tenant_defaults`，看当前生效的是哪一版。
-- **seed 契约按「最后一个定义它的迁移」核对**：notify 与 middleware 的契约按文件名排序，取最后一个包含 `FUNCTION app.seed_tenant_defaults(` 字样的迁移（整个文件，含注释）。只在注释里提到这串字、或只对它 `REVOKE … ON FUNCTION app.seed_tenant_defaults(uuid)` 的迁移，也会被当成最新定义。模板数写死在 `TestTenantSeedTemplatesMatchDefaults`（当前 19），加模板同一提交改它。
+- **seed 契约按「最后一个定义它的迁移」核对**：notify 与 middleware 的契约按文件名排序，取最后一个包含 `FUNCTION app.seed_tenant_defaults(` 字样的迁移（整个文件，含注释）。只在注释里提到这串字、或只对它 `REVOKE … ON FUNCTION app.seed_tenant_defaults(uuid)` 的迁移，也会被当成最新定义。模板数写死在 `TestTenantSeedTemplatesMatchDefaults`，加模板同一提交改它。
 - **契约与计数随迁移一起改**：seed 模板数；后台路由新用的权限码必须由某个迁移插进 `permissions`（`TestRoutePermissionsExistInCatalog` 扫全部迁移）；加了 PG18 域时 `run-pg18-gates.sh` 的 DOMAINS（相邻行冲突与夹具 id 撞号见 `rules/platform-pg18.md`）。
-- **NO TRANSACTION 文件里的 SET**：goose v3.26.0 对这种文件逐条用连接池执行、不开事务，`SET LOCAL` 不生效，lint 要求会话级 `SET`；样板在段尾 RESET，免得留给同一条连接上的下一个迁移。中途失败会留下 INVALID 索引，Up 要能重入。
+- **NO TRANSACTION 文件里的 SET**：会话级 `SET` 的写法见规则；样板在段尾 RESET，免得留给同一条连接上的下一个迁移。中途失败会留下 INVALID 索引，Up 要能重入。
 - **00037–00040 的闸门**：这几个迁移的 Up / Down 要逐版本用 PGOPTIONS 批准，往返脚本的 `MIGRATE_OPTS` 原样带着批准跑；`rollback-to` 不代签，回到这么早只能从备份恢复。修它们的 Down 时，往返里看到的是「已批准」路径。

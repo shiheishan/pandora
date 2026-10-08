@@ -10,13 +10,13 @@ description: pandora 在一次性测试机上按生产方式（panel/deploy/inst
 ## 前提与红线
 
 - 机器已按 test-machine skill 开通登记（别名、ssh、`/root/README.md`）。下文 `$H` 指这台机器的 ssh 别名。
-- 仓库公开红线见根 CLAUDE.md；现场值放 `~/.ssh/config`、`~/ai/servers/`、`ops-local/<目录>/`，口令只经 stdin 或 0600 文件传。不删、不重装测试机，不读 `ops-local/**/secrets/`。
+- 红线（仓库公开、现场值与口令的放置、测试机不删不重装）见根 CLAUDE.md「红线」与 test-machine skill。
 - 本地发现安装链的问题，记下来交总协调派任务，不在测试机上临时改仓库脚本。
 - 远端起长命令（构建约 10 分钟）的写法与 1Password 签名失败的处理见根 CLAUDE.md「环境与工具坑」。
 
 ## 首装
 
-1. **工具链**（要在机器上构建时才装）：`ssh $H 'bash -s' < .claude/skills/test-machine/scripts/install-toolchain.sh`。装与 CI 同小版本的 Go（go.mod 的 1.26 系列最新版）和 Node 22。
+1. **工具链**（要在机器上构建时才装）：见 test-machine「开通」的 `install-toolchain.sh`。
 2. **源码**：本机 `git archive --prefix=pandora-<sha>/ <sha> > <临时目录>/p.tgz`，scp 后解到 `$H:/root/src/`。
 3. **构建**：`cd /root/src/pandora-<sha>/panel && PANDORA_VERSION=vt-<sha> bash deploy/build-release.sh /root/release`。2c4g 约 10 分钟。
    - 产物：`/root/release/pandora-panel_<版本>_linux_{amd64,arm64}.tar.gz`，旁边有 `.sha256` 与 `.manifest.sha256`。
@@ -32,9 +32,9 @@ description: pandora 在一次性测试机上按生产方式（panel/deploy/inst
    - 日志里「迁移版本 0 → N」，N 等于包内 `migrations/` 的最大号；
    - 三网关 `127.0.0.1:9000/9001/9003` 的 `/healthz` 都是 200（`aegis-public / admin / node` 三个服务 active）；
    - 日志里「nginx 配置已渲染并生效」。若提示没有证书或被跳过，按 loadtest README 第 2 节第 3 步补一次 `render-nginx`。
-8. **https 可访问**：`https://<域名>/healthz` 返回 200；`http://` 跳转 308；`https://<域名>/<后台前缀>/` 返回 200。前缀在 `/opt/aegispanel/deploy/.env` 的 `AEGIS_ADMIN_PATH`。
-9. **建管理员**：install.sh 不替人生成管理员。
-   - 在机器上生成随机口令写进 `/root/lt-admin-cred.txt`（0600，第 1 行邮箱、第 2 行口令），`AEGIS_ADMIN_PATH` 写进 `/root/lt-admin-path.txt`（0600）。
+8. **https 可访问**：`https://<域名>/healthz` 返回 200；`http://` 跳转 308；`https://<域名>/<后台前缀>/` 返回 200。前缀用机器上的 `/opt/aegispanel/deploy/admin-url.sh` 取。
+9. **建管理员**：install.sh 首装在交互终端里会现场建第一个管理员，本 skill 的无人值守装法（`PANDORA_ASSUME_YES=1`、日志重定向）下它跳过，按下面手工建。
+   - 在机器上生成随机口令写进 `/root/lt-admin-cred.txt`（0600，第 1 行邮箱、第 2 行口令），后台前缀（用 `admin-url.sh` 取）写进 `/root/lt-admin-path.txt`（0600）。
    - 建管理员的命令见 loadtest README 第 2 节第 4 步，口令经 stdin（`printf %s "$pw" | … --password-stdin`），邮箱用 `ltadmin@example.com`：它是 prod-retest 的 run-load 缺省值，要压测就别换。
    - 两个文件 scp 回 `ops-local/<目录>/`，保持 0600。
    - 用这个账号登录一次后台（浏览器或后续 seed 的自检），登得进才算「后台能登录」。
@@ -64,11 +64,10 @@ description: pandora 在一次性测试机上按生产方式（panel/deploy/inst
 
 ## 坑
 
-- **证书与 Debian 默认站点**：Debian 的 nginx 包自带默认站点，也 listen 80 default_server，会和 `aegis.conf` 抢，`nginx -t` 报 duplicate default server。install.sh 在拿到证书后、渲染前，只停用发行版原样的那个链接（原文件留着，可 `ln -s ../sites-available/default` 链回）。没有域名用 sslip.io；撞上 Let's Encrypt 限额就停下报告。e65faec 之前的发布包没有这套（不申请证书、不放行 ufw、不渲染 nginx），要手工：趁默认站点占着 80 先 `certbot certonly --webroot -w /var/www/html -d <域名> --non-interactive --agree-tos --register-unsafely-without-email`，再删默认站点，再跑 install.sh 和 `render-nginx.sh`。
-- **e65faec 起网关经 unix socket 连 PG 与 Valkey**（`deploy/run/`）：复测时确认真走了 socket：`SELECT client_addr IS NULL AS unix, count(*) FROM pg_stat_activity WHERE usename='aegis_app' GROUP BY 1`。socket 不可用时 install.sh 保持回环端口；`.env` 已是 socket 而 socket 起不来，网关起不来，install.sh 会停下。要回退到更早的发布包，先按 `.env` 末尾的注释把 `AEGIS_DATABASE_URL`、`AEGIS_REDIS_URL` 改回回环形式（口令不变）。
-- **`build-release.sh` 的三个约束**：
-  - 只能在 Linux 上跑（要 GNU tar、`sha256sum`），本机 macOS 不行；
-  - 要在 `panel/` 目录下执行：它用绝对路径 `go build $ROOT/cmd/...`，cwd 不在模块里会失败；
-  - 要显式给版本号：`git archive` 解出来的源码没有 `.git`，缺省版本是 `dev`，追不到提交。`archive/` 开头的标签把版本号弄成非法的问题，脚本现在用 `git describe --match 'v*'` 避开了，但显式版本号仍是对的做法。
+- **证书与 Debian 默认站点**：Debian 的 nginx 包自带默认站点，也 listen 80 default_server，会和 `aegis.conf` 抢，`nginx -t` 报 duplicate default server。install.sh 在拿到证书后、渲染前，只停用发行版原样的那个链接（原文件留着，可 `ln -s ../sites-available/default` 链回）。没有域名用 sslip.io；撞上 Let's Encrypt 限额就停下报告。
+- **网关经 unix socket 连 PG 与 Valkey**（`deploy/run/`）：复测时确认真走了 socket：`SELECT client_addr IS NULL AS unix, count(*) FROM pg_stat_activity WHERE usename='aegis_app' GROUP BY 1`。socket 不可用时 install.sh 保持回环端口；`.env` 已是 socket 而 socket 起不来，网关起不来，install.sh 会停下。要回退到更早的发布包，先按 `.env` 末尾的注释把 `AEGIS_DATABASE_URL`、`AEGIS_REDIS_URL` 改回回环形式（口令不变）。
+- **`build-release.sh` 的两个约束**：
+  - 在 Linux 上、在 `panel/` 下跑；
+  - 要显式给版本号：`git archive` 解出来的源码没有 `.git`，缺省版本是 `dev`，追不到提交。
 - **install 日志里有后台前缀**：保存后立刻 `chmod 600`，不要 `cat` 到对话里。
 - 首装对外地址不合规（IP、带端口、带路径）会在动手前就停，不会装到一半。
