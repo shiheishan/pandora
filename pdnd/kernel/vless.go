@@ -506,7 +506,9 @@ func (a *vlessAdapter) serveAccepted(conn net.Conn) {
 		defer a.removeActive(conn)
 		session := conn
 		if tlsConfig != nil {
-			tlsConn, err := serverTLSHandshake(ctx, conn, tlsConfig, inboundHandshakeTimeout)
+			// tap 让 TLS + Vision 也能真正直通（见 vision_tls_tap.go）；不是 Vision
+			// 会话的连接读完请求头就转为透传。
+			tlsConn, err := serverTLSHandshake(ctx, newVisionTLSTap(conn), tlsConfig, inboundHandshakeTimeout)
 			if err != nil {
 				a.reportConnError(StageTLSHandshake, conn, err)
 				_ = conn.Close()
@@ -576,6 +578,9 @@ func (a *vlessAdapter) serveConnSession(ctx context.Context, conn net.Conn, real
 		reader = recorder
 	}
 	user, destination, err := readVLESSRequest(reader, a.lookupUser)
+	if _, tap := visionTLSTapOf(conn); tap != nil && (err != nil || !destination.Vision) {
+		tap.passthrough()
+	}
 	if err != nil {
 		if recorder != nil && recorder.rejected(err) {
 			// 先报失败：回落会话可能持续到对端断开或空闲超时，观测不能等它。

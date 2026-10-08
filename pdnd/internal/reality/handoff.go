@@ -15,6 +15,8 @@ package reality
 //     对探测方而言结果与上游一致：完整拿到 dest 的握手与响应。
 //   - 认证通过之后 dest 的握手飞行不合法、客户端 Finished 不对等情况仍直接
 //     关闭（上游同样不回落这类已认证连接）。
+//   - 加了 (*Conn).TakeBufferedForDirect，供 XTLS Vision 直通取走读方向已缓冲的
+//     字节（上游没有这个方法，Xray 是用反射直接读 input / rawInput 两个字段）。
 
 import (
 	"context"
@@ -277,4 +279,24 @@ func realityTracef(format string, args ...any) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+// TakeBufferedForDirect 交出读方向已缓冲、尚未交给上层的字节，供 XTLS Vision 切到
+// 直通（command=2）后改读底层连接（Pandora 改动）。
+//
+// plain 是已解密、还没被 Read 取走的明文（input）；raw 是已从底层连接读入、还没
+// 解密的原始字节（rawInput）——对端切到直通之后发来的裸流量可能已经被读进这里，
+// 丢掉就是数据缺口。两者都清空后返回。调用之后不得再经本连接读。
+func (c *Conn) TakeBufferedForDirect() (plain, raw []byte) {
+	c.in.Lock()
+	defer c.in.Unlock()
+	if n := c.input.Len(); n > 0 {
+		plain = make([]byte, n)
+		_, _ = c.input.Read(plain)
+	}
+	if c.rawInput.Len() > 0 {
+		raw = append([]byte(nil), c.rawInput.Bytes()...)
+		c.rawInput.Reset()
+	}
+	return plain, raw
 }
