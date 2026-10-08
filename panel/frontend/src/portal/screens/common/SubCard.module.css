@@ -176,8 +176,11 @@
   text-decoration: none;
 }
 
+/* 分隔点只做视觉：「/ ''」把它的可读文字设成空，屏幕阅读器不会把按钮读成「·起个名字」；
+   不认这种写法的老浏览器退回上一行 */
 .more > * + *::before {
   content: '·';
+  content: '·' / '';
   margin: 0 10px;
   color: var(--text-3);
 }
