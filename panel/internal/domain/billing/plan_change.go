@@ -54,6 +54,19 @@ type PlanChangeInput struct {
 	CouponCode     string
 	// Claim 只有下单要，试算不落库也不占幂等键。
 	Claim middleware.IdempotencyClaim
+
+	// --- 以下仅供后台人工开单（manual_order.go）用，门户改套餐一律留空 ---
+	//
+	// 用户已有别的套餐的订阅时，人工开单不再新开订阅、换链接，而是在原订阅上开一张
+	// 变更单（2026-10-07 规则）。与人工续费同一套字段：ManualActor 非空即人工变更，
+	// 幂等声明属于管理员、scope 是人工开单的 order_create（00134 放开这一组合）；
+	// ManualGrant 全额减免当场履约（新价算 0 元，剩余价值全额退进余额）；Offline 建单
+	// 后在同一事务里按线下渠道结清。审计 order.manual_created 与订单写在同一个事务里。
+	ManualGrant      bool
+	ManualReason     string
+	ManualActor      string
+	Offline          *OfflineReceipt
+	ManualSettlement string
 }
 
 // PlanChangePreview 是试算结果，也是下单时冻结进订单的那组数。
@@ -325,22 +338,36 @@ func (s *Service) PreviewPlanChange(ctx context.Context, tenantID string,
 }
 
 // CreatePlanChange 建一张变更套餐订单（kind='upgrade'）。无需外部付款时当场履约。
+// 后台人工开单遇到不同套餐时也走这里（in.ManualActor 非空，见 PlanChangeInput）。
 func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 	in PlanChangeInput) (*PlanChangeOrderOutput, error) {
+	// 人工变更的幂等声明属于发起开单的管理员（与人工续费同理）
+	claimActor, claimScope := in.UserID, PlanChangeIdempotencyScope
+	if in.ManualActor != "" {
+		claimActor, claimScope = in.ManualActor, CheckoutIdempotencyScope
+	}
 	if err := middleware.ValidateIdempotencyClaim(
-		in.Claim, tenantID, in.UserID, PlanChangeIdempotencyScope,
+		in.Claim, tenantID, claimActor, claimScope,
 	); err != nil {
 		return nil, fmt.Errorf("create plan change: %w", err)
 	}
 
 	var out PlanChangeOrderOutput
-	err := s.pool.InTxSerializableRetry(ctx, dbScope(tenantID, in.UserID), func(tx pgx.Tx) error {
+	err := s.pool.InTxSerializableRetry(ctx, dbScope(tenantID, claimActor), func(tx pgx.Tx) error {
 		q, err := quotePlanChange(ctx, tx, tenantID, in, time.Now().UTC())
 		if err != nil {
 			return err
 		}
+		// 人工赠送：新价全额减免（与人工续费、人工新购同一写法），剩余价值于是全部
+		// 退进余额。折算口径不变，只是新价这一侧算 0 元。
+		if in.ManualGrant {
+			q.waiveNewPrice()
+		}
 		balanceApplied := min(max(in.UseBalance, 0), q.Total)
 		payable := q.Total - balanceApplied
+		if in.Offline != nil && payable == 0 {
+			return httpx.New(httpx.CodeConflict, "原套餐的剩余价值已经抵完新价，这张单不需要支付，请改用赠送")
+		}
 		var holdAccounts balanceHoldAccounts
 		if balanceApplied > 0 {
 			if holdAccounts, err = prepareBalanceHold(ctx, tx, tenantID, in.UserID,
@@ -360,14 +387,15 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 				(tenant_id, order_no, user_id, kind, status, currency,
 				 subtotal_amount, discount_amount, tax_amount, proration_credit_amount,
 				 total_amount, balance_applied, payable_amount, expires_at, coupon_id,
-				 subscription_id, idempotency_key_id)
+				 subscription_id, idempotency_key_id, manual_reason, created_by)
 			VALUES ($1, $2, $3::uuid, 'upgrade', 'pending_payment', $4,
 			        $5, $6, 0, $7, $8, $9, $10, now() + interval '30 minutes', $11,
-			        $12::uuid, $13::uuid)
+			        $12::uuid, $13::uuid, $14, $15::uuid)
 			RETURNING id::text, expires_at`,
 			tenantID, orderNo, in.UserID, q.Currency, q.Subtotal, q.Discount,
 			q.ProrationCredit, q.Total, balanceApplied, payable, couponID(q.Coupon),
 			in.SubscriptionID, in.Claim.ID,
+			nullIfEmpty(in.ManualReason), nullIfEmpty(in.ManualActor),
 		).Scan(&orderID, &expiresAt); err != nil {
 			if db.IsUniqueViolation(err) {
 				return ErrSubscriptionOrderOpen
@@ -420,10 +448,24 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 				TotalAmount: q.Total, BalanceApplied: balanceApplied,
 				CouponID: couponIDPtr, HoldAccountID: holdAccounts.HoldID,
 				RevenueAccountID: holdAccounts.RevenueID, ProrationCredit: q.ProrationCredit,
+				ManualGrant: in.ManualGrant,
 			}); err != nil {
 				return err
 			}
 			status = "fulfilled"
+		}
+
+		if err := idempotencybind.BindResource(ctx, tx, in.Claim, "order", orderID); err != nil {
+			return err
+		}
+		// 人工变更「线下已收款」：订单与幂等绑定都已就位，在同一事务里按线下渠道
+		// 结清，走与标记已支付相同的 settlePaymentTx（同人工续费）
+		var settled *PaymentWebhookOutput
+		if in.Offline != nil {
+			if settled, status, err = s.settleManualOfflineTx(ctx, tx, tenantID, orderID,
+				q.Currency, payable, in.ManualActor, *in.Offline); err != nil {
+				return err
+			}
 		}
 
 		out = PlanChangeOrderOutput{
@@ -431,6 +473,7 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 				OrderID: orderID, OrderNo: orderNo, Currency: q.Currency,
 				DiscountAmount: q.Discount, TotalAmount: q.Total,
 				BalanceApplied: balanceApplied, PayableAmount: payable, Status: status,
+				settlement: settled,
 			},
 			ProrationCredit: q.ProrationCredit, BalanceRefund: q.BalanceRefund,
 		}
@@ -439,15 +482,19 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 			return err
 		}
 		out.prepared = prepared
-		if err := idempotencybind.BindResource(ctx, tx, in.Claim, "order", orderID); err != nil {
-			return err
-		}
 		if err := idempotencybind.CompleteSuccessJSON(
 			ctx, tx, in.Claim, "order", orderID, prepared,
 		); err != nil {
 			return err
 		}
-		if err := audit.Write(ctx, tx, tenantID, audit.Entry{
+		if in.ManualActor != "" {
+			// 人工变更的审计与订单同一事务：没有审计的人工单等于没人负责
+			entry := manualPlanChangeAudit(in, out, q)
+			entry.RequestID = httpx.RequestIDFrom(ctx)
+			if err := audit.Write(ctx, tx, tenantID, entry); err != nil {
+				return err
+			}
+		} else if err := audit.Write(ctx, tx, tenantID, audit.Entry{
 			ActorKind: "user", ActorID: &in.UserID,
 			Action: "subscription.plan_change_created", ResourceType: "order",
 			ResourceID: &orderID, APIDomain: "public", Outcome: "success",
@@ -480,180 +527,4 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 	}
 	s.notifyIfFulfilled(ctx, tenantID, out.Status)
 	return &out, nil
-}
-
-// fulfillPlanChangeLocked 把已支付的变更单落到订阅上。调用方已按
-// 订单 → 订阅 的顺序锁住两者，并已把订单转到 paid。
-func (s *Service) fulfillPlanChangeLocked(ctx context.Context, tx pgx.Tx, tenantID,
-	orderID, userID, subID string) (string, error) {
-
-	var (
-		orderSubID, currency                string
-		subtotal, discount, prorationCredit int64
-	)
-	if err := tx.QueryRow(ctx, `
-		SELECT coalesce(subscription_id::text, ''), currency::text,
-		       subtotal_amount, discount_amount, proration_credit_amount
-		  FROM orders
-		 WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid
-		   AND kind = 'upgrade' AND status = 'paid'`,
-		tenantID, orderID, userID).Scan(&orderSubID, &currency, &subtotal, &discount,
-		&prorationCredit); err != nil {
-		return "", fmt.Errorf("读取变更订单: %w", err)
-	}
-	if subID == "" || orderSubID != subID {
-		return "", errors.New("plan change order is not bound to the locked subscription")
-	}
-
-	var (
-		planID, planVersionID, interval string
-		priceID                         *string
-		intervalCount                   int16
-		unitAmount                      int64
-	)
-	if err := tx.QueryRow(ctx, `
-		SELECT plan_id::text, plan_version_id::text, price_id::text,
-		       snapshot_interval, snapshot_interval_count, unit_amount
-		  FROM order_items
-		 WHERE tenant_id = $1 AND order_id = $2::uuid AND plan_id IS NOT NULL`,
-		tenantID, orderID).Scan(&planID, &planVersionID, &priceID, &interval,
-		&intervalCount, &unitAmount); err != nil {
-		return "", fmt.Errorf("读取变更订单行: %w", err)
-	}
-
-	var fromPlanID, fromVersionID, oldStatus string
-	var oldEnd *time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT plan_id::text, plan_version_id::text, status, current_period_end
-		  FROM subscriptions
-		 WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid`,
-		tenantID, subID, userID).Scan(&fromPlanID, &fromVersionID, &oldStatus,
-		&oldEnd); err != nil {
-		return "", err
-	}
-
-	now := time.Now().UTC()
-	newEnd := addInterval(now, interval, int(intervalCount))
-
-	// 配额按新套餐重新起算，清零前的用量先留日志。配额行不能删：人工调整记录
-	// （00006 的配额调整表）挂在行上且只许追加（DATA-003）。新套餐没有的指标把
-	// 上限置空 —— 上限为空在节点下发与扣量里本来就是「不限量」，与新开一条
-	// 该套餐的订阅（没有这一行）效果相同。
-	type usedQuota struct {
-		metric   string
-		consumed int64
-	}
-	var before []usedQuota
-	rows, err := tx.Query(ctx, `
-		SELECT metric, consumed FROM quota_balances
-		 WHERE tenant_id = $1 AND subscription_id = $2::uuid ORDER BY id`, tenantID, subID)
-	if err != nil {
-		return "", err
-	}
-	for rows.Next() {
-		var u usedQuota
-		if err := rows.Scan(&u.metric, &u.consumed); err != nil {
-			rows.Close()
-			return "", err
-		}
-		before = append(before, u)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE subscriptions
-		   SET status = 'active', plan_id = $3::uuid, plan_version_id = $4::uuid,
-		       price_id = $5::uuid, current_period_start = $6, current_period_end = $7,
-		       snapshot_currency = $8, snapshot_amount = $9, grace_end = NULL,
-		       updated_at = now()
-		 WHERE tenant_id = $1 AND id = $2::uuid`,
-		tenantID, subID, planID, planVersionID, priceID, now, newEnd, currency,
-		unitAmount); err != nil {
-		return "", fmt.Errorf("变更订阅套餐: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE quota_balances qb
-		   SET limit_value = qd.limit_value,
-		       granted = coalesce(qd.limit_value, 0),
-		       consumed = 0,
-		       period_start = $4,
-		       period_end = `+quotaPeriodEndSQL("qb.period", "$4::timestamptz", "$5::timestamptz")+`,
-		       notified_thresholds = '{}',
-		       overage_applied_at = NULL,
-		       updated_at = now()
-		  FROM quota_balances cur
-		  LEFT JOIN quota_definitions qd
-		    ON qd.plan_version_id = $3::uuid
-		   AND qd.metric = cur.metric AND qd.period = cur.period
-		 WHERE qb.id = cur.id
-		   AND cur.tenant_id = $1 AND cur.subscription_id = $2::uuid`,
-		tenantID, subID, planVersionID, now, newEnd); err != nil {
-		return "", fmt.Errorf("按新套餐重置配额: %w", err)
-	}
-	// 新套餐多出来的指标补上配额行（已有的在上面改过，这里跳过）。
-	if err := initQuotaBalances(ctx, tx, tenantID, subID, planVersionID, now, newEnd); err != nil {
-		return "", err
-	}
-	for _, u := range before {
-		if err := LogTrafficReset(ctx, tx, tenantID, subID, userID, u.metric,
-			"plan_change", u.consumed, nil, ""); err != nil {
-			return "", fmt.Errorf("记录变更重置: %w", err)
-		}
-	}
-	// 凭据不换，只跟着新周期走（与续费、礼品卡、后台加时长同一个函数）。
-	if _, err := syncCredentialExpiryTx(ctx, tx, tenantID, subID, newEnd); err != nil {
-		return "", err
-	}
-
-	// 降级：剩余价值抵完新价还有余，差额退进余额。那部分钱此前已记成平台收入，
-	// 这里冲回收入、记成欠用户的余额（负债），不是凭空造钱。
-	refund := max(prorationCredit-(subtotal-discount), 0)
-	if refund > 0 {
-		accounts, err := prepareAndLockLedgerAccounts(ctx, tx, tenantID, []ledgerAccountSpec{
-			{Key: "revenue", AccountType: AccountPlatformRevenue, Currency: currency, OwnerRef: "main"},
-			{Key: "balance", AccountType: AccountUserBalance, Currency: currency, UserID: &userID},
-		})
-		if err != nil {
-			return "", err
-		}
-		if _, err := Post(ctx, tx, tenantID, Posting{
-			Kind: "plan_change_refund", Currency: currency,
-			SourceType: "order", SourceID: &orderID,
-			Memo: "plan change remaining value to balance", ActorKind: "system",
-			Entries: []Entry{
-				{AccountID: accounts["revenue"], Direction: Debit, Amount: refund,
-					Description: "reverse unused plan revenue"},
-				{AccountID: accounts["balance"], Direction: Credit, Amount: refund,
-					Description: "plan change refund to balance"},
-			},
-		}); err != nil {
-			return "", err
-		}
-	}
-
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO subscription_events
-			(tenant_id, subscription_id, event_type, from_status, to_status,
-			 actor_kind, order_id, payload)
-		VALUES ($1, $2::uuid, 'plan_changed', $3, 'active', 'payment', $4::uuid, $5)`,
-		tenantID, subID, oldStatus, orderID, map[string]any{
-			"from_plan_id": fromPlanID, "from_plan_version_id": fromVersionID,
-			"to_plan_id": planID, "to_plan_version_id": planVersionID,
-			"previous_end": oldEnd, "period_end": newEnd,
-			"proration_credit": prorationCredit, "balance_refund": refund,
-		}); err != nil {
-		return "", err
-	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE orders SET status = 'fulfilled', fulfilled_at = now()
-		 WHERE tenant_id = $1 AND id = $2::uuid AND status = 'paid'`, tenantID, orderID)
-	if err != nil {
-		return "", err
-	}
-	if tag.RowsAffected() != 1 {
-		return "", errors.New("plan change fulfilment transition lost")
-	}
-	return subID, nil
 }

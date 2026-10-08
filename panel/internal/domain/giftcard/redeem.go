@@ -193,7 +193,12 @@ type grantedRecord struct {
 	QuotaReset   bool   `json:"quota_reset,omitempty"`
 	PlanID       string `json:"plan_id,omitempty"`
 	OrderID      string `json:"order_id,omitempty"`
-	LedgerTxnID  string `json:"ledger_txn_id,omitempty"`
+	// PlanMode 是套餐卡的落地方式（new / renewed / changed）；换套餐时 PlanRefund 是原套餐
+	// 退进余额的剩余价值，币种 RefundCurrency
+	PlanMode       string `json:"plan_mode,omitempty"`
+	PlanRefund     int64  `json:"plan_refund,omitempty"`
+	RefundCurrency string `json:"refund_currency,omitempty"`
+	LedgerTxnID    string `json:"ledger_txn_id,omitempty"`
 }
 
 func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID string,
@@ -217,17 +222,27 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 	}
 
 	if t.Type == "plan" {
-		subID, renewed, err := s.grant.GrantPlan(ctx, tx, tenantID, userID,
-			r.PlanID, r.PriceID, "礼品卡兑换："+t.Name)
+		subID, mode, refund, currency, err := s.grant.GrantPlan(ctx, tx, tenantID, userID,
+			codeID, r.PlanID, r.PriceID, "礼品卡兑换："+t.Name)
 		if err != nil {
 			return g, err
 		}
 		g.PlanID = r.PlanID
 		g.OrderID = subID
+		g.PlanMode = mode
+		g.PlanRefund = refund
+		g.RefundCurrency = currency
 		out.PlanGranted = t.Name
-		if renewed {
+		switch mode {
+		case PlanGrantRenewed:
 			out.Summary = append(out.Summary, "已为你续费「"+t.Name+"」，订阅链接不变")
-		} else {
+		case PlanGrantChanged:
+			// 换套餐后链接不变，客户端刷新一次订阅就换到新套餐
+			out.Summary = append(out.Summary, "已把你的订阅换成「"+t.Name+"」，订阅链接不变，请在客户端更新一次订阅")
+			if refund > 0 {
+				out.Summary = append(out.Summary, "原套餐剩余价值 "+formatAmount(refund, currency)+" 已退回余额")
+			}
+		default:
 			out.Summary = append(out.Summary, "已为你开通「"+t.Name+"」")
 		}
 		return g, nil
@@ -467,6 +482,21 @@ func itoa(n int) string {
 		b[i] = '-'
 	}
 	return string(b[i:])
+}
+
+// 套餐卡兑换的落地方式，与计费域 GiftGranter.GrantPlan 返回的 mode 一一对应。
+const (
+	PlanGrantNew     = "new"
+	PlanGrantRenewed = "renewed"
+	PlanGrantChanged = "changed"
+)
+
+// formatAmount 按币种格式化金额：人民币用 ¥，其余写币种代码。
+func formatAmount(minor int64, currency string) string {
+	if currency == "" || currency == "CNY" {
+		return formatMoney(minor)
+	}
+	return currency + " " + formatMoney(minor)[len("¥"):]
 }
 
 func formatMoney(minor int64) string {

@@ -24,9 +24,9 @@ type reservationLockRequest struct {
 	BalanceAmount  int64
 	// ProrationCredit 只有变更套餐单（kind='upgrade'）非零：原订阅的剩余价值
 	ProrationCredit int64
-	// ManualGrant 是后台人工开单「赠送」落成的续费单（规则 3，w5expiry）：没有优惠券、
-	// 全额减免。只认 kind='renewal' 且订单行确实由管理员开（created_by、manual_reason 非空），
-	// 折扣必须等于小计、total 为 0。
+	// ManualGrant 是后台人工开单「赠送」落成的续费单（规则 3，w5expiry）或变更单
+	// （2026-10-07，w6plan）：没有优惠券、全额减免。只认 kind 为 renewal / upgrade 且订单行
+	// 确实由管理员开（created_by、manual_reason 非空），折扣必须等于小计、total 为 0。
 	ManualGrant bool
 }
 
@@ -552,10 +552,11 @@ func captureLockedReservation(ctx context.Context, tx pgx.Tx, tenantID, orderID,
 	return nil
 }
 
-// assertManualGrantRenewal 核对「人工赠送续费」的全额减免：只有管理员开的续费单、折扣等于
-// 小计、没有税和余额、total 为 0，才允许没有优惠券的折扣（同 CreateOrder 的人工赠送单）。
+// assertManualGrantRenewal 核对「人工赠送续费 / 变更」的全额减免：只有管理员开的续费单或
+// 变更单、折扣等于小计、没有税和余额、total 为 0，才允许没有优惠券的折扣（同 CreateOrder 的
+// 人工赠送单）。变更单的剩余价值不受影响，履约时全额退进余额。
 func assertManualGrantRenewal(ctx context.Context, tx pgx.Tx, in reservationLockRequest) error {
-	if in.Kind != "renewal" || in.CouponID != nil || in.DiscountAmount != in.SubtotalAmount ||
+	if !subscriptionBoundOrderKind(in.Kind) || in.CouponID != nil || in.DiscountAmount != in.SubtotalAmount ||
 		in.TaxAmount != 0 || in.TotalAmount != 0 || in.BalanceAmount != 0 || in.PayableAmount != 0 {
 		return errors.New("manual grant discount must waive the whole renewal")
 	}
@@ -564,8 +565,8 @@ func assertManualGrantRenewal(ctx context.Context, tx pgx.Tx, in reservationLock
 		SELECT created_by IS NOT NULL AND manual_reason IS NOT NULL
 		       AND discount_amount = subtotal_amount AND total_amount = 0
 		  FROM orders
-		 WHERE tenant_id=$1 AND id=$2::uuid AND kind='renewal' AND coupon_id IS NULL`,
-		in.TenantID, in.OrderID).Scan(&manual); err != nil {
+		 WHERE tenant_id=$1 AND id=$2::uuid AND kind=$3 AND coupon_id IS NULL`,
+		in.TenantID, in.OrderID, in.Kind).Scan(&manual); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errors.New("manual grant discount on a non-renewal or couponed order")
 		}

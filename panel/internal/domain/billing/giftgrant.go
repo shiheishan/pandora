@@ -169,34 +169,58 @@ func (g *GiftGranter) ResetQuota(ctx context.Context, tx pgx.Tx,
 		"traffic.bytes", "gift_card", before, nil, "")
 }
 
-// GrantPlan 兑换套餐卡，返回订阅 ID 与是否落成了续费。
+// GrantPlan 兑换套餐卡，codeID 是这张卡密。
 //
-// 用户已有同一套餐的订阅（生效中，或过期 30 天内）时，不再新开订阅、换链接，而是在
-// 原订阅上续一期（规则 3）：周期与流量和付费续费完全一样（renewSubscriptionTx），
-// 沿用原订阅的套餐版本，链接不变。没有同套餐订阅时照旧开通一条新订阅。
+// 用户已有订阅时不再新开订阅、换链接（2026-10-07 规则）：
+//
+//	同一套餐（生效中，或过期 30 天内）  在原订阅上续一期（w5expiry 规则 3）：周期与流量和
+//	                                   付费续费完全一样（renewSubscriptionTx），沿用原套餐版本
+//	别的套餐（同样的状态范围）          在原订阅上换成卡上的套餐（grantPlanChange）：与门户改
+//	                                   套餐同一份折算与履约，卡算 0 元，原套餐的剩余价值全额
+//	                                   退进余额
+//
+// 链接都不变。用户有多条订阅时，同套餐的优先续费，否则按 planChangeTargetSubscription
+// 的次序选一条换（生效中的优先，其次到期最晚）。没有可续可换的订阅时照旧开通一条新订阅。
 //
 // 这里没有复用 CreateManualOrder：那个方法自己开事务，而兑换必须
 // 和标记码已用在同一个事务里。硬凑会得到一个「订单建好了但码没作废」
 // 的窗口 —— 对卡密来说这等于无限复制。
+//
+// 返回值拆成基本类型（订阅 ID、落地方式 PlanGrant*、退进余额的金额与币种）：giftcard 经
+// 自己的 Granter 接口调用，不引用计费域的类型。
 func (g *GiftGranter) GrantPlan(ctx context.Context, tx pgx.Tx,
-	tenantID, userID, planID, priceID, reason string) (string, bool, error) {
+	tenantID, userID, codeID, planID, priceID, reason string) (string, string, int64, string, error) {
+	r, err := g.grantPlan(ctx, tx, tenantID, userID, codeID, planID, priceID)
+	if err != nil {
+		return "", "", 0, "", err
+	}
+	return r.SubscriptionID, r.Mode, r.BalanceRefund, r.RefundCurrency, nil
+}
 
+func (g *GiftGranter) grantPlan(ctx context.Context, tx pgx.Tx,
+	tenantID, userID, codeID, planID, priceID string) (PlanGrant, error) {
 	if planID == "" {
-		return "", false, errors.New("gift plan id is required")
+		return PlanGrant{}, errors.New("gift plan id is required")
 	}
 	subID, err := renewableSamePlanSubscription(ctx, tx, tenantID, userID, planID, true)
 	if err != nil {
-		return "", false, err
+		return PlanGrant{}, err
 	}
 	if subID != "" {
 		if err := g.s.grantPlanRenewal(ctx, tx, tenantID, userID, subID, planID, priceID); err != nil {
-			return "", false, err
+			return PlanGrant{}, err
 		}
-		return subID, true, nil
+		return PlanGrant{SubscriptionID: subID, Mode: PlanGrantRenewed}, nil
+	}
+	if subID, err = planChangeTargetSubscription(ctx, tx, tenantID, userID, true); err != nil {
+		return PlanGrant{}, err
+	}
+	if subID != "" {
+		return g.s.grantPlanChange(ctx, tx, tenantID, userID, subID, planID, priceID, codeID)
 	}
 	subID, err = g.s.grantPlanDirect(ctx, tx, tenantID, userID, planID, priceID)
 	if err != nil {
-		return "", false, err
+		return PlanGrant{}, err
 	}
-	return subID, false, nil
+	return PlanGrant{SubscriptionID: subID, Mode: PlanGrantNew}, nil
 }

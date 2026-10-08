@@ -174,7 +174,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	var subID string
 	if err := pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
 		var err error
-		subID, _, err = service.GiftGranter().GrantPlan(ctx, tx, fx.tenant, fx.buyer, fx.plan, fx.price, "pg18 admin traffic")
+		subID, _, _, _, err = service.GiftGranter().GrantPlan(ctx, tx, fx.tenant, fx.buyer, "", fx.plan, fx.price, "pg18 admin traffic")
 		return err
 	}); err != nil {
 		t.Fatalf("seed a subscription for the admin grant: %v", err)
