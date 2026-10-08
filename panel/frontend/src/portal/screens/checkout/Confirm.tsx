@@ -1,6 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
-import { isApiError } from '../../../core/api'
 import { href, navigate, useHashLocation } from '../../../core/router'
 import { useApi } from '../../../shell/runtime'
 import { Button, Empty, Input, Skeleton, Switch, useToast } from '../../../ui'
@@ -12,7 +11,7 @@ import type { Holdings } from '../common/holdings'
 import { endsIntent, recallPayable, useIntentKey } from '../common/intent'
 import { orderCreatedSchema, useCancelOrder, useOrderPayable } from '../common/orders'
 import { daysLeft, gb, leftOf, money, nameIdeas, nameRequired, NEW_COPY_IDEAS, periodLabel, profileName } from '../common/purchase'
-import { balanceSplit, purchaseRefusal, tierOf, useQuote, type Quote, type QuoteRow } from '../common/quote'
+import { balanceSplit, purchaseRefusal, refusalOf, tierOf, useQuote, type Quote, type QuoteRow, type RefusalInfo } from '../common/quote'
 import { isLive, type Subscription } from '../common/subscriptions'
 import css from './Checkout.module.css'
 import { confirmCopy, payCopy, tierNote, type Note } from './copy'
@@ -252,7 +251,7 @@ function Priced({
   const required = target.kind === 'new' && nameRequired(h.held, target.planId)
   const [name, setName] = useState(() => (target.kind === 'new' && h.held.some((s) => s.plan_id === target.planId) ? (nameIdeas(h.held, null, NEW_COPY_IDEAS)[0] ?? '') : ''))
   const [updated, setUpdated] = useState(false)
-  const [refusal, setRefusal] = useState<{ kind: 'order_pending' | 'other'; text: string; orderId?: string } | null>(null)
+  const [refusal, setRefusal] = useState<RefusalInfo | null>(null)
   const [busy, setBusy] = useState(false)
 
   const tiers = sortTiers(quote.quotes)
@@ -303,8 +302,7 @@ function Priced({
         setUpdated(true)
         await refetch()
       } else {
-        // order_pending 的 fields.order_id 是那张还没付款的单（A 路实现）
-        setRefusal({ kind: kind === 'order_pending' ? 'order_pending' : 'other', text: e instanceof Error && e.message ? e.message : '没下成单，请稍后再试', orderId: isApiError(e) ? e.fields.order_id : undefined })
+        setRefusal(refusalOf(e, kind))
       }
     } finally {
       setBusy(false)
@@ -443,12 +441,12 @@ function NameField({ required, name, onName, plan, h }: { required: boolean; nam
 
 /**
  * 建单被拒：同一套餐有一张还没付款的新购单（order_pending，fields.order_id）时给「去付款 / 取消它」；
- * 那张已超过付款期限时只给「取消它」（A 路）。取消后可以直接再点一次。
+ * 那张已超过付款期限（fields.lapsed）时只给「取消它」。取消后可以直接再点一次。
  */
-function Refusal({ refusal, onCleared }: { refusal: { kind: 'order_pending' | 'other'; text: string; orderId?: string }; onCleared: () => void }) {
+function Refusal({ refusal, onCleared }: { refusal: RefusalInfo; onCleared: () => void }) {
   const toast = useToast()
   const cancel = useCancelOrder()
-  const lapsed = refusal.text.includes('超过付款期限')
+  const lapsed = refusal.lapsed
   return (
     <div className={flowCss.errorBox} role="alert">
       {refusal.text}

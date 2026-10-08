@@ -185,7 +185,8 @@ export type ManualCreated = z.output<typeof manualCreatedSchema>
 
 // ---------------------------------------------------------------------------
 // POST v1/orders/manual/preview：这单能落到哪几份、默认哪一份（购买模型统一，设计稿 2.3 / 4.2）。
-// 形状取 purchase.Placement 的 json tag：Option 内嵌展平，其余全是 omitempty，所以都是 optional。
+// 形状取 billing.ManualPlacement 的 json tag：purchase.Placement 内嵌展平（Option 再内嵌，其余全是 omitempty，
+// 所以都是 optional），外加 due / below_minimum 两项；顶层另有 min_payment。
 // 后台开单只会出现 renew / change / new 三种落点；default_key 为空 = 不预选，提交按钮置灰
 // ---------------------------------------------------------------------------
 export const PLACEMENT_KINDS = ['renew', 'change', 'new'] as const
@@ -212,10 +213,17 @@ const placementSchema = z.object({
   traffic_used: int.optional(),
   traffic_cap: int.optional(),
   pack_remaining: int.optional(),
+  // billing.ManualPlacement（无 omitempty）：按「待用户支付」开这单用户要付多少（分，换套餐已先抵 credit），
+  // 以及它是否低于站点最低付款额（与建单 422 同一个判定）。价格档读不到时为 0 / false
+  due: int,
+  below_minimum: z.boolean(),
 })
 export const manualPreviewSchema = z.object({
   options: z.array(placementSchema),
   default_key: z.string().default(''),
+  // 站点最低付款额（分）：启用且收新单的 CNY 渠道里最小的 min_amount，与报价、建单同一口径；不限为 0。
+  // 只有开单权限、读不到渠道列表的管理员也拿得到
+  min_payment: int,
 })
 export type Placement = z.output<typeof placementSchema>
 export type ManualPreview = z.output<typeof manualPreviewSchema>

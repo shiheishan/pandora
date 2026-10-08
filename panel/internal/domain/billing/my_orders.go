@@ -178,9 +178,12 @@ type MyOrderDetail struct {
 	CouponCode *string `json:"coupon_code,omitempty"`
 	// SubscriptionPeriodEnd 是已履约订单所属订阅当前的到期时间
 	// （结果行「有效期至 …」）；未履约或不开订阅的单没有。
-	SubscriptionPeriodEnd *time.Time       `json:"subscription_period_end,omitempty"`
-	Items                 []MyOrderItem    `json:"items"`
-	Payments              []MyOrderPayment `json:"payments"`
+	SubscriptionPeriodEnd *time.Time `json:"subscription_period_end,omitempty"`
+	// SubscriptionID 是这单履约后落到的那一份：新购是新开的那份，续费、换套餐、流量包是原来那份。
+	// 还没履约（待支付、已取消、钱进了挂账）时为 null。门户完成页按它认出是哪一份，不再按套餐名猜
+	SubscriptionID *string          `json:"subscription_id"`
+	Items          []MyOrderItem    `json:"items"`
+	Payments       []MyOrderPayment `json:"payments"`
 }
 
 type MyOrderItem struct {
@@ -229,12 +232,13 @@ func (s *Service) MyOrderDetail(ctx context.Context, tenantID, userID,
 		}
 		if err := tx.QueryRow(ctx, `
 			SELECT c.code,
-			       CASE WHEN o.status = 'fulfilled' THEN s.current_period_end END
+			       CASE WHEN o.status = 'fulfilled' THEN s.current_period_end END,
+			       CASE WHEN o.status = 'fulfilled' OR o.fulfilled_at IS NOT NULL THEN s.id::text END
 			  FROM orders o
 			  LEFT JOIN coupons c       ON c.tenant_id = o.tenant_id AND c.id = o.coupon_id
 			  LEFT JOIN subscriptions s ON s.tenant_id = o.tenant_id AND s.id = o.subscription_id
 			 WHERE o.tenant_id = $1 AND o.id = $2::uuid`,
-			tenantID, orderID).Scan(&out.CouponCode, &out.SubscriptionPeriodEnd); err != nil {
+			tenantID, orderID).Scan(&out.CouponCode, &out.SubscriptionPeriodEnd, &out.SubscriptionID); err != nil {
 			return err
 		}
 

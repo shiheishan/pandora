@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { ApiError } from '../../../core/api'
+import { classifyFailure } from '../../actions'
 import type { PlanRow, PriceRow } from '../plans/schemas'
 import {
   adjustBody,
@@ -21,7 +23,6 @@ import {
   manualBelowMinimum,
   manualBody,
   manualCreatedToast,
-  manualFailureFields,
   manualProblems,
   minAmountHint,
   minAmountText,
@@ -41,7 +42,6 @@ import {
   reasonProblem,
   referenceProblem,
   reverseReason,
-  siteMinPayment,
   todayLabel,
   todayLocal,
   toggleBody,
@@ -348,40 +348,23 @@ describe('late payments, providers and adjustments', () => {
     expect(minAmountHint('create')).toContain('留空按默认 ¥1.00')
   })
 
-  it('takes the site minimum from enabled, accepting CNY channels, the smallest one (minPaymentSQL)', () => {
-    expect(siteMinPayment([provider({ min_amount: 300 }), provider({ min_amount: 100 })])).toBe(100)
-    // 暂停收新单、停用、不收人民币的渠道不算；一个都没有就不限
-    expect(siteMinPayment([provider({ min_amount: 50, accepting_new: false }), provider({ min_amount: 200 })])).toBe(200)
-    expect(siteMinPayment([provider({ min_amount: 50, enabled: false }), provider({ min_amount: 80, currencies: ['USD'] })])).toBe(0)
-    // 演示渠道没有门槛（0）也算：有一种方式能付就能付
-    expect(siteMinPayment([provider({ min_amount: 0, code: 'demo' }), provider({ min_amount: 100 })])).toBe(0)
-    expect(siteMinPayment([])).toBe(0)
-  })
-
-  it('warns before submit when a pending manual order is below the minimum (F4)', () => {
-    const cny = { amount: 50, currency: 'CNY' }
-    expect(manualBelowMinimum('pending', cny, { kind: 'new' }, 100)).toEqual({ due: 50, min: 100, currency: 'CNY' })
-    // 赠送、线下已收款不走在线支付；不知道门槛（没权限读渠道）时不拦
-    expect(manualBelowMinimum('grant', cny, { kind: 'new' }, 100)).toBeNull()
-    expect(manualBelowMinimum('offline', cny, { kind: 'new' }, 100)).toBeNull()
-    expect(manualBelowMinimum('pending', cny, { kind: 'new' }, null)).toBeNull()
-    // 门槛 0 / 1 等于不限；够门槛不拦；只有 CNY 有门槛
-    expect(manualBelowMinimum('pending', cny, { kind: 'new' }, 1)).toBeNull()
-    expect(manualBelowMinimum('pending', { amount: 100, currency: 'CNY' }, { kind: 'renew' }, 100)).toBeNull()
-    expect(manualBelowMinimum('pending', { amount: 50, currency: 'USD' }, undefined, 100)).toBeNull()
-    // 换套餐：新价先抵原套餐没用完的部分；抵完不用付就不拦
-    expect(manualBelowMinimum('pending', { amount: 2500, currency: 'CNY' }, { kind: 'change', credit: 2470 }, 100)).toEqual({ due: 30, min: 100, currency: 'CNY' })
-    expect(manualBelowMinimum('pending', { amount: 2500, currency: 'CNY' }, { kind: 'change', credit: 2600 }, 100)).toBeNull()
+  it('warns before submit from what preview says (due / below_minimum / min_payment), without reading channels', () => {
+    const below = { due: 2500, below_minimum: true }
+    expect(manualBelowMinimum('pending', below, 3000, 'CNY')).toEqual({ due: 2500, min: 3000, currency: 'CNY' })
+    // 赠送、线下已收款不走在线支付
+    expect(manualBelowMinimum('grant', below, 3000, 'CNY')).toBeNull()
+    expect(manualBelowMinimum('offline', below, 3000, 'CNY')).toBeNull()
+    // 服务端说不低于就不拦（换套餐抵完之后够门槛、或门槛 0 / 1 等于不限，都由服务端判）
+    expect(manualBelowMinimum('pending', { due: 0, below_minimum: false }, 3000, 'CNY')).toBeNull()
+    // 还没选落点、preview 还没回来：不拦
+    expect(manualBelowMinimum('pending', undefined, 3000, 'CNY')).toBeNull()
+    expect(manualBelowMinimum('pending', below, undefined, 'CNY')).toBeNull()
     expect(belowMinimumText({ due: 30, min: 100, currency: 'CNY' })).toBe('这单应付 ¥0.30，低于支付渠道的最低付款额 ¥1.00，用户没法在线付。请改用「赠送」或「线下已收款」')
   })
 
-  it('lands the server-side below-minimum 422 on the settlement field', () => {
-    const msg = '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款'
-    expect(manualFailureFields({ status: 422, fields: {}, message: msg })).toEqual({ settlement: msg })
-    // 带 fields 的、别的 422、别的状态码都不归它管
-    expect(manualFailureFields({ status: 422, fields: { target: '请选择这单落到哪一份' }, message: '请求参数校验未通过' })).toBeNull()
-    expect(manualFailureFields({ status: 422, fields: {}, message: '该套餐不允许升级' })).toBeNull()
-    expect(manualFailureFields({ status: 409, fields: {}, message: msg })).toBeNull()
+  it('lands the server-side below-minimum 422 on the settlement field by its fields, not its wording', () => {
+    const e = new ApiError({ status: 422, code: 'validation_failed', message: '随便哪句话', fields: { settlement: '应付金额低于支付渠道的最低付款额' } })
+    expect(classifyFailure(e, true)).toEqual({ kind: 'fields', fields: { settlement: '应付金额低于支付渠道的最低付款额' } })
   })
 
   it('keeps methods in canonical order and moves the default off an unticked method', () => {

@@ -195,8 +195,8 @@ export const checkout: MockModule = {
       const order = state.orders.find((o) => o.id === ctx.params.id)
       if (typeof body.provider !== 'string' || body.provider === '') return ctx.fail(422, 'validation_failed', '参数不合法', { provider: '必填' })
       if (!order) return ctx.fail(404, 'not_found', '订单不存在')
-      // 过了付款期限、过期扫描还没关它（billing.ErrOrderPaymentExpired）
-      if (order.status === 'pending_payment' && order.expires_at && new Date(order.expires_at).getTime() <= Date.now()) return ctx.fail(409, 'conflict', '这张订单已超过付款期限，请取消后重新下单')
+      // 过了付款期限、过期扫描还没关它（billing.ErrOrderPaymentExpired，409 order_lapsed）
+      if (order.status === 'pending_payment' && order.expires_at && new Date(order.expires_at).getTime() <= Date.now()) return ctx.fail(409, 'order_lapsed', '这张订单已超过付款期限，请取消后重新下单')
       sweepExpired(state)
       const channel = PAY_METHODS.find((m) => m.provider === body.provider && (body.method === undefined || m.method === body.method))
       if (!channel) return ctx.fail(404, 'not_found', '未知的支付渠道')
@@ -239,6 +239,7 @@ function assertNoPendingNew(state: PortalState, planId: string, planName: string
   if (!open) return
   const lapsed = open.expires_at !== undefined && new Date(open.expires_at).getTime() <= Date.now()
   const msg = lapsed ? `你有一张已超过付款期限的「${planName}」订单，取消后再买` : `你有一张还没付款的「${planName}」订单，继续付款或取消后再买`
-  throw new BillingError(409, 'order_pending', msg, { order_id: open.id })
+  // 超过付款期限的那张另带 lapsed=true（Go ensureNoPendingNewOrder），门户只给「取消它」
+  throw new BillingError(409, 'order_pending', msg, lapsed ? { order_id: open.id, lapsed: 'true' } : { order_id: open.id })
 }
 

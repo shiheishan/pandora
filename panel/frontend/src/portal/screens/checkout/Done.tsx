@@ -11,7 +11,8 @@ import { ImportSheet, type ImportTarget } from '../common/ImportSheet'
 import { LinkBox } from '../common/LinkBox'
 import { PAID_STATUSES, useOrder } from '../common/orders'
 import { ResultView } from '../common/Result'
-import { doneLines, findNewSub, readDone } from './result-copy'
+import { UpdateHelpLink } from '../common/UpdateHelp'
+import { doneLines, doneSub, readDone } from './result-copy'
 
 const POLL_MS = 3000
 const POLL_LIMIT_MS = 120_000
@@ -53,7 +54,7 @@ export function Done({ orderId }: { orderId: string }) {
       </Card>
     )
   }
-  const sub = ctx.kind === 'new' ? findNewSub(o, h.held) : h.held.find((s) => s.id === ctx.subId)
+  const sub = doneSub(o, ctx, h.held)
   const plan = plans.data?.find((p) => p.id === sub?.plan_id)
   const lines = doneLines(ctx, o, sub, plan, h.held, h.naming, balance.data?.balance ?? null)
   const next =
@@ -72,7 +73,10 @@ export function Done({ orderId }: { orderId: string }) {
         />
       </>
     ) : lines.updateHint ? (
-      <p className={flowCss.lead}>{lines.updateHint}</p>
+      <>
+        <p className={flowCss.lead}>{lines.updateHint}</p>
+        <UpdateHelpLink />
+      </>
     ) : undefined
   return (
     <>

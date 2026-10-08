@@ -512,4 +512,11 @@ func TestSubscriptionPeriodPG18(t *testing.T) {
 		p.t = t
 		checkPurchaseQuotePG18(t, p, conn.Conn())
 	})
+
+	// 购买模型合后小修（w8buyfix）：订单详情的 subscription_id、后台开单 preview 的最低额。
+	// 它也给租户加一个带最低额的渠道（结束时停用），所以排在 purchase quote 之后
+	t.Run("order detail and manual preview", func(t *testing.T) {
+		p.t = t
+		checkOrderDetailAndPreviewPG18(t, p, conn.Conn())
+	})
 }

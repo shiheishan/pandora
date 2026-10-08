@@ -351,10 +351,23 @@ func markPaidQuarantined(caseKind string) *httpx.Error {
 }
 
 // ManualOrderPreview 是后台开单「这单落到哪一份」的选项与默认值（DefaultKey 为空表示不预选，
-// 提交按钮置灰「先选落点」）。
+// 提交按钮置灰「先选落点」）。MinPayment 是站点在这个价格档币种上的最低付款额（分，与报价、
+// 建单同一个 minPayment：启用且收新单的 CNY 渠道里最小的 min_amount；不限为 0）——
+// 只有开单权限、读不到渠道列表的管理员也能在提交前看到「低于最低额」。
 type ManualOrderPreview struct {
-	Options    []purchase.Placement `json:"options"`
-	DefaultKey string               `json:"default_key"`
+	Options    []ManualPlacement `json:"options"`
+	DefaultKey string            `json:"default_key"`
+	MinPayment int64             `json:"min_payment"`
+}
+
+// ManualPlacement 是一个落点选项，外加这单按「待用户支付」开时用户要付多少：Due 是应付（分，
+// 续一期与另开一份是价格，换套餐先抵 Credit；preview 时刻的数，建单时以那一刻为准），
+// BelowMinimum 是它低于站点最低额、用户没法在线付（与建单 422 同一个判定 manualDueBelowMinimum）。
+// 赠送与线下已收款不受限，页面只在选了待用户支付时看这两项。
+type ManualPlacement struct {
+	purchase.Placement
+	Due          int64 `json:"due"`
+	BelowMinimum bool  `json:"below_minimum"`
 }
 
 // ManualOrderOptions 给后台开单 preview：规则同套餐卡（purchase.Options），从订阅行进来
@@ -380,7 +393,7 @@ func (s *Service) ManualOrderOptions(ctx context.Context, tenantID, userID, plan
 	if len(fields) > 0 {
 		return nil, httpx.Invalid(fields)
 	}
-	out := ManualOrderPreview{Options: []purchase.Placement{}}
+	out := ManualOrderPreview{Options: []ManualPlacement{}}
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE tenant_id = $1 AND id = $2::uuid)
@@ -396,7 +409,28 @@ func (s *Service) ManualOrderOptions(ctx context.Context, tenantID, userID, plan
 		if err != nil {
 			return err
 		}
-		out.Options, out.DefaultKey = views, def
+		out.DefaultKey = def
+		currency, amount, ok, err := manualPreviewPrice(ctx, tx, tenantID, planID, priceID)
+		if err != nil {
+			return err
+		}
+		if ok {
+			if out.MinPayment, err = minPayment(ctx, tx, tenantID, currency); err != nil {
+				return err
+			}
+		}
+		for _, v := range views {
+			mp := ManualPlacement{Placement: v}
+			if ok {
+				credit := int64(0)
+				if v.Kind == purchase.KindChange && (v.Currency == "" || v.Currency == currency) {
+					credit = v.Credit
+				}
+				mp.Due = orderTotal(amount, 0, credit, 0)
+				mp.BelowMinimum = manualDueBelowMinimum(mp.Due, out.MinPayment)
+			}
+			out.Options = append(out.Options, mp)
+		}
 		return nil
 	})
 	if err != nil {
@@ -407,6 +441,29 @@ func (s *Service) ManualOrderOptions(ctx context.Context, tenantID, userID, plan
 		return nil, httpx.Internal(err)
 	}
 	return &out, nil
+}
+
+// manualPreviewPrice 读开单 preview 所选价格档的币种与单价（只读、不校验在售：校验在建单时做）。
+// 没带价格档或它不属于这个套餐时 ok=false，preview 照常给落点，只是不报应付与最低额。
+func manualPreviewPrice(ctx context.Context, tx pgx.Tx, tenantID, planID, priceID string) (string, int64, bool, error) {
+	if priceID == "" {
+		return "", 0, false, nil
+	}
+	var currency string
+	var amount int64
+	err := tx.QueryRow(ctx, `
+		SELECT pr.currency::text, pr.unit_amount
+		  FROM plans p
+		  JOIN prices pr ON pr.tenant_id = p.tenant_id AND pr.product_id = p.product_id
+		 WHERE p.tenant_id = $1 AND p.id = $2::uuid AND pr.id = $3::uuid`,
+		tenantID, planID, priceID).Scan(&currency, &amount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, err
+	}
+	return currency, amount, true, nil
 }
 
 // manualPlacement 取开单的落点：在一个只读事务里按当前候选校验 Target。多于一个选项而没带

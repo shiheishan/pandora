@@ -14,7 +14,7 @@ paths:
   - 有入口上下文（从用户抽屉某份订阅点「给这份开单」，地址带 `&sub=<订阅 id>`）时预选入口那份；没有默认值时一个都不选，提交按钮灰着写「先选落点」；只有一个选项时不让选，直接写出结果。换掉生效中的订阅永远不是默认（服务端保证，页面不另行兜底）。
   - 提交带 `target: {kind, subscription_id?}`；换了用户、套餐或价格，点过的落点作废；409 或带 `fields.target` 的 422（落点已失效或没选）后重新取一遍选项。
   - preview 的 422 落到表单项上（`previewFailure`）：`fields.price_id` 落到「套餐与周期」，按钮写「先换一个价格」；`fields.entry_subscription_id` 时去掉入口重取、不预选，落点区写明原因。其余失败整块提示并给重试。
-  - 待支付单低于站点最低付款额（启用且收新单的 CNY 渠道里最小的 `min_amount`，`siteMinPayment`，与 billing 的 minPaymentSQL 同口径）时服务端回 422（不带 fields）。页面在提交前就算出来（`manualBelowMinimum`：续与新开是价格，换套餐先抵 preview 的 `credit`），写明应付与门槛，给「改用赠送」「改用线下已收款」两个按钮，提交按钮灰着写「低于最低付款额」；没有 `billing.payment.read` 读不到渠道时不拦。服务端的这条 422 按文案认出来（`manualFailureFields`）落到「结算方式」上，不只弹 Toast。
+  - 待支付单低于站点最低付款额时服务端回 422 带 `fields.settlement`（billing.errManualBelowMinimum），随通用的 `useFailure` 落到「结算方式」上，并重取一次 preview。提交前的拦截全用 preview 给的数：顶层 `min_payment`（与报价、建单同一个 minPayment），每个落点的 `due`（按待用户支付开时的应付，换套餐已先抵）与 `below_minimum`（与建单同一个判定）；`manualBelowMinimum` 只把它写成「这单应付 ¥x，低于…¥y」，给「改用赠送」「改用线下已收款」两个按钮，提交按钮灰着写「低于最低付款额」。不再读渠道列表自己算，只有 `billing.order.write` 的管理员也能在提交前看到
   - 响应多 `proration_credit` / `balance_refund` 时即落成了换套餐，`manualCreatedToast` 按落点（`kind`）报续费、换套餐或另开，换套餐时带退回余额的金额。
   - 删掉了「自动续同款、自动换别的套餐」的说明：后端不再替管理员挑落点。
 - 取消订单、标记已支付的失败文案（凭证号重复、订阅已结束款项进挂账都回 409）是后端中文原文，经 `useFailure` 原样 Toast，不要按状态码改写。

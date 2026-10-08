@@ -216,6 +216,9 @@ func checkPurchaseQuotePG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 		Settlement: ManualSettlementPending,
 		Claim:      orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, p.fx.referrer, CheckoutIdempotencyScope, "pq-short-manual")})
 	wantCode("manual pending order below the minimum", err, httpx.CodeValidationFailed)
+	if he := (*httpx.Error)(nil); !errors.As(err, &he) || he.Fields["settlement"] == "" {
+		t.Fatalf("manual pending below the minimum lacks fields.settlement: %v", err)
+	}
 	t.Log("marker=purchase_quote_pg18_below_minimum_rejected_ok")
 
 	// 1f) 换大补差价、换小退余额、换大只差几分钱（SmallDue 免掉）；链接都不变
@@ -459,12 +462,14 @@ func checkPurchaseQuotePG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	if !errors.Is(err, ErrOrderPaymentExpired) {
 		t.Fatalf("paying a lapsed order err=%v", err)
 	}
+	wantCode("paying a lapsed order", err, httpx.CodeOrderLapsed)
 	_, err = p.billing.CreateOrder(ctx, p.fx.tenant, CreateOrderInput{UserID: u13, PlanID: planBasic,
 		PriceID: priceBasic, RejectSamePlan: true,
 		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u13, CheckoutIdempotencyScope, "pq-lapsed-again")})
 	var pendingErr *httpx.Error
 	if !errors.As(err, &pendingErr) || pendingErr.Code != httpx.CodeOrderPending ||
-		pendingErr.Fields["order_id"] != lapsed.OrderID || !strings.Contains(pendingErr.Message, "付款期限") {
+		pendingErr.Fields["order_id"] != lapsed.OrderID || pendingErr.Fields["lapsed"] != "true" ||
+		!strings.Contains(pendingErr.Message, "付款期限") {
 		t.Fatalf("second order while the lapsed one is open err=%v", err)
 	}
 	if _, err := p.billing.CancelOrder(ctx, p.fx.tenant, u13, lapsed.OrderID); err != nil {

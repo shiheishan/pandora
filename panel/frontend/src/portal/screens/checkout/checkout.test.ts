@@ -6,7 +6,7 @@ import { balanceSplit } from '../common/quote'
 import { BASIC, GIB, PACK100, PLANS, quote, row, split, STD, sub } from '../common/testing'
 import { changeFormula, confirmCopy, payCopy, tierNote } from './copy'
 import { defaultTier, intentOf, orderRequest, parseTarget, quoteRequest, sortTiers } from './model'
-import { doneLines, doneQuery, findNewSub, paidText, readDone } from './result-copy'
+import { doneLines, doneQuery, doneSub, paidText, readDone } from './result-copy'
 
 const price = (id: string, unit_amount: number, billing_interval: Price['billing_interval'], interval_count = 1, currency = 'CNY'): Price => ({ id, currency, unit_amount, billing_interval, interval_count, trial_days: 0 })
 const OLD_STD: Plan = { ...STD, prices: [price('s1', 2900, 'month'), price('s3', 7900, 'quarter'), price('s12', 29900, 'year'), price('su', 499, 'month', 1, 'USD')], quota_reset_strategy: 'natural_month', quotas: [{ metric: 'traffic.bytes', limit: 200 * GIB, unit: 'bytes', period: 'cycle' }] }
@@ -215,10 +215,16 @@ describe('完成页', () => {
     expect(paidText({ balance_applied: 0, paid_amount: 0, payments: [] }, 30)).toBe('零头 ¥0.30 已免')
   })
 
-  it('新买的那一份：按套餐名与有效期至认', () => {
-    const fresh = sub({ id: 'n', current_period_start: '2026-10-07T12:00:00Z', current_period_end: '2026-11-07T12:00:00Z' })
-    expect(findNewSub({ plan_name: '标准版', subscription_period_end: '2026-11-07T12:00:00Z' }, [sub(), fresh])?.id).toBe('n')
-    expect(findNewSub({ plan_name: '标准版', subscription_period_end: undefined }, [sub(), fresh])?.id).toBe('n')
+  it('落到的那一份按订单详情的 subscription_id 认，同套餐同到期也不会认错', () => {
+    // 两份同款、到期日相同：以前按套餐名与有效期至猜，会认成先列出的那份
+    const old = sub({ id: 'o', current_period_end: '2026-11-07T12:00:00Z' })
+    const fresh = sub({ id: 'n', current_period_end: '2026-11-07T12:00:00Z' })
+    expect(doneSub({ subscription_id: 'n' }, { kind: 'new', subId: null }, [old, fresh])?.id).toBe('n')
+    // 新购还没履约：不猜，等它履约
+    expect(doneSub({ subscription_id: null }, { kind: 'new', subId: null }, [old, fresh])).toBeUndefined()
+    // 续费、换套餐、流量包没履约时先用地址里带回的那份；履约后以订单为准
+    expect(doneSub({ subscription_id: null }, { kind: 'renew', subId: 'o' }, [old, fresh])?.id).toBe('o')
+    expect(doneSub({ subscription_id: 'n' }, { kind: 'pack', subId: 'o' }, [old, fresh])?.id).toBe('n')
   })
 
   it('续费好了：用到哪天、原来哪天；你要做的什么都不用做', () => {

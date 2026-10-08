@@ -276,15 +276,6 @@ export function manualBody(f: ManualForm, target: PlacementChoice | null) {
   }
 }
 
-/**
- * 站点「能不能在线付」的门槛，与 billing 的 minPaymentSQL 同一口径：启用且收新单、支持 CNY 的渠道里
- * 最小的 min_amount（用户只要有一种方式能付就能付）；一个都没有为 0（不限）
- */
-export function siteMinPayment(providers: ReadonlyArray<Pick<Provider, 'enabled' | 'accepting_new' | 'currencies' | 'min_amount'>>): number {
-  const mins = providers.filter((p) => p.enabled && p.accepting_new && p.currencies.includes('CNY')).map((p) => p.min_amount)
-  return mins.length ? Math.min(...mins) : 0
-}
-
 /** 待支付单低于最低付款额：应付与门槛（分），用来在提交前写明原因 */
 export interface BelowMinimum {
   due: number
@@ -293,33 +284,22 @@ export interface BelowMinimum {
 }
 
 /**
- * 后台待支付单的应付低于站点最低付款额时，用户没法在线付，服务端回 422（billing.balancePlan 的 Manual 分支：
- * 不用余额、不免零头）。这里在提交前就把它算出来：续一期与另开一份应付是价格；换套餐先抵原套餐没用完的部分
- * （preview 时刻的数，服务端以开单时刻为准）。赠送与线下已收款不走在线支付，不受限；只有 CNY 有门槛。
- * minPay 为 null 表示不知道门槛（没有读渠道的权限或还没读回来），这时不拦，交给服务端
+ * 后台待支付单的应付低于站点最低付款额时，用户没法在线付，服务端回 422 fields.settlement。preview 已经按建单
+ * 同一个判定给出每个落点的 due（换套餐先抵原套餐没用完的部分）与 below_minimum，顶层给 min_payment，
+ * 页面只把它写成人话、不重算。赠送与线下已收款不走在线支付，不受限
  */
 export function manualBelowMinimum(
   settlement: Settlement,
-  price: Pick<PriceChoice, 'amount' | 'currency'> | undefined,
-  option: Pick<Placement, 'kind' | 'credit'> | undefined,
-  minPay: number | null,
+  option: Pick<Placement, 'due' | 'below_minimum'> | undefined,
+  minPayment: number | undefined,
+  currency: string | undefined,
 ): BelowMinimum | null {
-  if (settlement !== 'pending' || !price || minPay === null || price.currency !== 'CNY') return null
-  const due = option?.kind === 'change' ? Math.max(price.amount - (option.credit ?? 0), 0) : price.amount
-  return due > 0 && minPay > 1 && due < minPay ? { due, min: minPay, currency: price.currency } : null
+  if (settlement !== 'pending' || !option?.below_minimum || !minPayment || !currency) return null
+  return { due: option.due, min: minPayment, currency }
 }
 
 export function belowMinimumText(b: BelowMinimum): string {
   return `这单应付 ${formatMoney(b.due, b.currency)}，低于支付渠道的最低付款额 ${formatMoney(b.min, b.currency)}，用户没法在线付。请改用「赠送」或「线下已收款」`
-}
-
-/**
- * 开单失败里能落到表单上的那部分。服务端「待支付单低于最低付款额」的 422 不带 fields（A 路 errManualBelowMinimum），
- * 只能按文案认出来，落到结算方式上：它的下一步就是换结算方式。其余交给通用的 fields / Toast
- */
-export function manualFailureFields(e: { status: number; fields: Readonly<Record<string, string>>; message: string }): Fields | null {
-  if (e.status === 422 && Object.keys(e.fields).length === 0 && e.message.includes('最低付款额')) return { settlement: e.message }
-  return null
 }
 
 /** preview 的请求体：用户、套餐、价格都选好才发；入口订阅（从订阅行点「给这份开单」）只影响默认值 */

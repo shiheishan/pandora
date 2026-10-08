@@ -9,6 +9,7 @@ import { flowCss } from '../common/Flow'
 import { useHoldings } from '../common/holdings'
 import { LinkBox } from '../common/LinkBox'
 import { ResultView } from '../common/Result'
+import { UpdateHelpLink } from '../common/UpdateHelp'
 import { ChangePick } from './ChangePick'
 import { Detail } from './Detail'
 import { NewPick } from './NewPick'
@@ -136,6 +137,8 @@ function Rotated({ id }: { id: string }) {
             <>
               <p className={flowCss.lead}>在{h.naming.multi ? `用「${h.naming.sn(sub)}」的` : '你的每台'}设备上把新链接添加到 App。设备不在身边？点「添加到 App」→「别的设备」，复制链接和说明发给对方。</p>
               <LinkBox sub={sub} url={h.urlOf(sub.id)} naming={h.naming} label="新链接" onImport={() => actions.onImport(sub)} />
+              <p className={flowCss.faint}>添加好以后在 App 里点一次更新，看到节点就说明新链接能用了；原来那条连着旧链接，可以删掉。</p>
+              <UpdateHelpLink />
             </>
           ),
           happened: [`${h.naming.who(sub)}的旧链接${old ? ` ····${old}` : ''} 已失效`],

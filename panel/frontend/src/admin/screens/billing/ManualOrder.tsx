@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react'
 import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Select, useToast } from '../../../ui'
-import { endsIntent, useCan, useFailure, useIntentKey } from '../../actions'
+import { useCan, useFailure, useIntentKey } from '../../actions'
 import { usePlans } from '../plans/api'
 import { useInvalidateUsers, useUser } from '../users/api'
-import { manualCreatedSchema, useInvalidateBilling, useManualPreview, useProviders, useUserPick } from './api'
+import { manualCreatedSchema, useInvalidateBilling, useManualPreview, useUserPick } from './api'
 import css from './Billing.module.css'
 import {
   belowMinimumText,
@@ -13,12 +13,10 @@ import {
   manualBelowMinimum,
   manualBody,
   manualCreatedToast,
-  manualFailureFields,
   manualProblems,
   previewParams,
   priceChoices,
   SETTLEMENTS,
-  siteMinPayment,
   type ManualForm,
   type Settlement,
 } from './model'
@@ -56,9 +54,6 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
   const canPlans = can('catalog.read')
   const prefill = useUser(canUsers ? userId : null)
   const plans = usePlans()
-  // 站点最低付款额从渠道列表算（读渠道要 billing.payment.read）；读不到就不在提交前拦，交给服务端的 422
-  const providers = useProviders(can('billing.payment.read'))
-  const minPay = providers.data ? siteMinPayment(providers.data) : null
   const [form, setForm] = useState<ManualForm>(() => emptyManual())
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -90,7 +85,8 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
   const selected = selectedKey(preview.data, picked)
   const option = preview.data?.options.find((o) => o.key === selected)
   const target = option ? choiceOf(option) : null
-  const below = manualBelowMinimum(form.settlement, chosen, option, minPay)
+  // 低于最低付款额：preview 按落点给出应付与判定（只有开单权限也拿得到），页面不再读渠道列表自己算
+  const below = manualBelowMinimum(form.settlement, option, preview.data?.min_payment, chosen?.currency)
   const gate = submitGate({
     hasInputs: params !== null,
     loading: params !== null && preview.isPending,
@@ -111,17 +107,14 @@ function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string |
       toast(manualCreatedToast(r, form.settlement, target?.kind))
       onClose(r.order_id)
     } catch (e) {
-      // 低于最低付款额的 422 不带 fields：认出来落到结算方式上（下一步就是换结算方式），不只弹 Toast
-      const own = isApiError(e) ? manualFailureFields(e) : null
-      if (own) {
-        if (endsIntent(e)) intent.reset()
-        setErrors(own)
-      } else fail(e, { fields: setErrors, intent })
+      // 低于最低付款额的 422 带 fields.settlement：随通用的 fields 落到「结算方式」上（下一步就是换结算方式）
+      fail(e, { fields: setErrors, intent })
       // 订阅状态在预览之后变了（落点已失效）或没选落点：重新取一遍选项，点过的作废
       if (isApiError(e) && (e.status === 409 || e.fields.target !== undefined)) {
         setPicked('')
         void preview.refetch()
       }
+      // 最低额在 preview 之后变了（渠道刚改过）：finally 里失效 billing 前缀会重取 preview，提示与两个按钮跟着出来
     } finally {
       setBusy(false)
       void invalidate()

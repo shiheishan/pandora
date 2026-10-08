@@ -531,16 +531,22 @@ describe('mock api · admin billing', () => {
     providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay', { ...epay, min_amount: 3000 }, 'min-epay-up')))
     // …01 只有一份标准版：唯一的选项是续它，不带 target
     const body = { user_id: SOLO, plan_id: standard.plan_id, price_id: standard.price_id, reason: '小额补单测试' }
+    // preview 提交前就给出门槛与每个落点的应付、是否低于它（只有开单权限也拿得到，不用读渠道列表）
+    const preview = manualPreviewSchema.parse(await json(await post(admin, 'orders/manual/preview', { user_id: SOLO, plan_id: standard.plan_id, price_id: standard.price_id })))
+    expect(preview.min_payment).toBe(3000)
+    expect(preview.options.map((o) => [o.kind, o.due, o.below_minimum])).toEqual([['renew', 2500, true]])
     const pending = await post(admin, 'orders/manual', { ...body, settlement: 'pending' }, 'min-pending')
     expect(pending.status).toBe(422)
     const failure = await json<{ error: { code: string; message: string; fields?: Record<string, string> } }>(pending)
-    expect(failure.error).toMatchObject({ code: 'validation_failed', message: '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款' })
-    // A 路的 422 不带 fields：前端按文案落到结算方式上
-    expect(failure.error.fields ?? {}).toEqual({})
+    const msg = '应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款'
+    // 带 fields.settlement（billing.errManualBelowMinimum）：后台按 fields 落到「结算方式」上，不靠文案
+    expect(failure.error).toEqual({ code: 'validation_failed', message: msg, fields: { settlement: msg } })
     expect((await post(admin, 'orders/manual', { ...body, settlement: 'grant' }, 'min-grant')).status).toBe(201)
     expect((await post(admin, 'orders/manual', { ...body, settlement: 'offline', reference: 'BANK-MIN-001' }, 'min-offline')).status).toBe(201)
     // 门槛降回 ¥1.00：同一张单能开成待支付
     providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay', { ...epay, min_amount: 100 }, 'min-epay-down')))
+    const lower = manualPreviewSchema.parse(await json(await post(admin, 'orders/manual/preview', { user_id: SOLO, plan_id: standard.plan_id, price_id: standard.price_id })))
+    expect([lower.min_payment, lower.options[0]!.below_minimum]).toEqual([100, false])
     expect(manualCreatedSchema.parse(await json(await post(admin, 'orders/manual', { ...body, settlement: 'pending' }, 'min-pending-ok'))).status).toBe('pending_payment')
   })
 
