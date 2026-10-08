@@ -1,3 +1,5 @@
+-- irreversible: 纯种子数据。这一版只插入注册方式与邮箱验证两条设置行，没有结构可回退；删设置行会经外键级联碰到追加写的设置修订表（被触发器拒绝），且会丢掉管理员改过的注册方式，不删则 Down 什么也没做，两者都不是真正的回退。
+-- forward-fix: 这两条设置行对 00041 的代码无害，回到 00041 不需要处理它们；设置有误就在后台「邮件设置」里改。要整体回到 00042 之前，走升级前备份恢复（panel/deploy/MIGRATION-RUNBOOK.md 第 3 节）。
 -- +goose Up
 
 -- auth.registration_mode 是 registration_policy.go 的必读设置：读不到行就
@@ -26,8 +28,11 @@ ON CONFLICT (tenant_id, key) DO NOTHING;
 -- +goose StatementEnd
 
 -- +goose Down
-
 -- +goose StatementBegin
-DELETE FROM system_settings
- WHERE key IN ('auth.registration_mode', 'auth.email_verification');
+DO $$
+BEGIN
+  RAISE EXCEPTION
+    'rollback refused (00042 registration settings seed): deleting the seeded rows would cascade into append-only setting revisions and drop operator choices; change settings forward in the admin panel, or restore the pre-upgrade backup';
+END
+$$;
 -- +goose StatementEnd

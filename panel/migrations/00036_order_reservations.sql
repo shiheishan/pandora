@@ -3051,6 +3051,15 @@ BEGIN
     REVOKE UPDATE (status,response_code,response_body,locked_until,completed_at,
                    resource_type,resource_id) ON idempotency_keys FROM aegis_app;
     GRANT INSERT,UPDATE,DELETE ON idempotency_keys TO aegis_app;
+    -- Up 把下面这些表的表级写权限换成了列级授权。表级 REVOKE 会连带收回列级授权，
+    -- 再按 Up 之前的样子给回表级：00011 给的 INSERT/UPDATE/DELETE；两张账本流水表
+    -- 在 00011 里已收回 UPDATE/DELETE，只给回 INSERT。
+    REVOKE INSERT,UPDATE ON order_items,payment_events,orders,payment_intents,
+      payments,refunds,invoices,coupon_redemptions,ledger_accounts,
+      ledger_transactions,ledger_entries FROM aegis_app;
+    GRANT INSERT,UPDATE,DELETE ON order_items,payment_events,orders,payment_intents,
+      payments,refunds,invoices,coupon_redemptions,ledger_accounts TO aegis_app;
+    GRANT INSERT ON ledger_transactions,ledger_entries TO aegis_app;
   END IF;
 END $$;
 -- +goose StatementEnd

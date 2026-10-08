@@ -92,8 +92,12 @@ ON CONFLICT DO NOTHING;
 -- +goose StatementEnd
 
 -- +goose Down
-
+-- 回到 00049：删掉绑定表与验证码表。用户的 Telegram 绑定随表丢失。
+--
+-- 设置行（含管理员填过的 Bot Token 密文）与 telegram 渠道的通知模板保留不删：删设置行会经
+-- 外键级联碰到追加写的设置修订表（被触发器拒绝），也会丢掉管理员的配置；00049 的代码不读
+-- 这些行。再次 Up 时 INSERT 带 ON CONFLICT DO NOTHING，不会重复插入、不会覆盖。
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '2min';
 DROP TABLE IF EXISTS telegram_bind_codes;
 DROP TABLE IF EXISTS telegram_bindings;
-DELETE FROM notification_templates WHERE channel = 'telegram';
-DELETE FROM system_settings WHERE key LIKE 'telegram.%';

@@ -6,9 +6,7 @@
 # 只许删不许加：
 #   - 新迁移出现违例，测试直接红，改迁移本身，不要往这里加（编号大于 00133 的条目会被拒绝）；
 #   - 某条已不再违例（例如补了 Down 段的超时设置），测试会要求删掉这一行。
-00001_foundation.sql lock-timeout-down
 00001_foundation.sql lock-timeout-up
-00001_foundation.sql statement-timeout-down
 00001_foundation.sql statement-timeout-up
 00002_identity.sql lock-timeout-down
 00002_identity.sql lock-timeout-up
@@ -42,17 +40,13 @@
 00009_security_audit.sql lock-timeout-up
 00009_security_audit.sql statement-timeout-down
 00009_security_audit.sql statement-timeout-up
-00010_seed_rbac.sql lock-timeout-down
 00010_seed_rbac.sql lock-timeout-up
-00010_seed_rbac.sql statement-timeout-down
 00010_seed_rbac.sql statement-timeout-up
 00011_app_role.sql lock-timeout-down
 00011_app_role.sql lock-timeout-up
 00011_app_role.sql statement-timeout-down
 00011_app_role.sql statement-timeout-up
-00012_audit_node_actor.sql lock-timeout-down
 00012_audit_node_actor.sql lock-timeout-up
-00012_audit_node_actor.sql statement-timeout-down
 00012_audit_node_actor.sql statement-timeout-up
 00013_xboard_node_protocol.sql index-not-concurrent
 00013_xboard_node_protocol.sql lock-timeout-down
@@ -121,17 +115,13 @@
 00034_node_admin_concurrency.sql statement-timeout-down
 00034_node_admin_concurrency.sql statement-timeout-up
 00035_catalog_authoring.sql index-not-concurrent
-00035_catalog_authoring.sql lock-timeout-down
-00035_catalog_authoring.sql statement-timeout-down
 00036_order_reservations.sql backfill-unmarked
 00036_order_reservations.sql index-not-concurrent
 00037_idempotency_runtime_hardening.sql backfill-unmarked
 00037_idempotency_runtime_hardening.sql index-not-concurrent
 00040_order_release_and_late_suspense.sql index-not-concurrent
 00041_dashboard_read_models.sql index-not-concurrent
-00042_seed_registration_mode.sql lock-timeout-down
 00042_seed_registration_mode.sql lock-timeout-up
-00042_seed_registration_mode.sql statement-timeout-down
 00042_seed_registration_mode.sql statement-timeout-up
 00043_offline_payment_provider.sql lock-timeout-down
 00043_offline_payment_provider.sql lock-timeout-up
@@ -163,9 +153,7 @@
 00049_broadcast_template.sql lock-timeout-up
 00049_broadcast_template.sql statement-timeout-down
 00049_broadcast_template.sql statement-timeout-up
-00050_telegram.sql lock-timeout-down
 00050_telegram.sql lock-timeout-up
-00050_telegram.sql statement-timeout-down
 00050_telegram.sql statement-timeout-up
 00051_theme_slots_hooks.sql lock-timeout-down
 00051_theme_slots_hooks.sql lock-timeout-up
@@ -232,8 +220,6 @@
 00066_invite_owner_active_unique.sql lock-timeout-up
 00066_invite_owner_active_unique.sql statement-timeout-down
 00066_invite_owner_active_unique.sql statement-timeout-up
-00067_drop_orphan_tables.sql lock-timeout-down
-00067_drop_orphan_tables.sql statement-timeout-down
 00068_marketing_read_and_commission_write_permissions.sql lock-timeout-down
 00068_marketing_read_and_commission_write_permissions.sql lock-timeout-up
 00068_marketing_read_and_commission_write_permissions.sql statement-timeout-down
@@ -352,8 +338,6 @@
 00101_node_delivery_epoch.sql statement-timeout-down
 00101_node_delivery_epoch.sql statement-timeout-up
 00102_subscription_period_resync.sql backfill-unmarked
-00102_subscription_period_resync.sql lock-timeout-down
-00102_subscription_period_resync.sql statement-timeout-down
 00102_subscription_period_resync.sql statement-timeout-up
 00110_nodes_notify_skip_heartbeat.sql statement-timeout-down
 00110_nodes_notify_skip_heartbeat.sql statement-timeout-up

@@ -2,6 +2,7 @@
 
 面向自己部署 Pandora Panel 的运维。三种情形：升级时迁移失败、回到指定版本、从升级前备份恢复。
 命令里的路径按 install.sh 的布局（`/opt/aegispanel`）写；install-native.sh 装的机器换成 `/opt/pandora`。
+这份手册随发布包分发（`deploy/MIGRATION-RUNBOOK.md`），两个安装器都会把它装到 `/opt/aegispanel/deploy/`（或 `/opt/pandora/deploy/`）下。
 
 ## 0. 先弄清三件事
 
@@ -34,7 +35,7 @@
 
 ### 预检在什么时候跑
 
-- 控制器在**停服之前**跑一次性库预检：把正式库整库克隆到同一个 PostgreSQL 里的临时库，在克隆上按「写入者已停」的口径演练待执行的迁移。通过后在只有 root 能读的发布暂存目录里留一张预检凭据。
+- 控制器在**停服之前**跑一次性库预检（`install.sh` 与 `install-native.sh` 的升级也是同一个顺序，见下一条）：把正式库整库克隆到同一个 PostgreSQL 里的临时库，在克隆上按「写入者已停」的口径演练待执行的迁移。通过后在只有 root 能读的发布暂存目录里留一张预检凭据。
   - 好处：停服时间里不再包含克隆和演练。5k 规模实测，这一步约 15 秒，原来占停服的三分之二，库越大越长。
   - 代价：克隆发生在业务时段，会给正式库带来一次整库读。大库请挑低峰发版。
 - **停服之后**只做一次只读核对，亚秒级，结果与凭据逐项比对：
@@ -45,6 +46,11 @@
   - 凭据在六小时内。
 
   任何一项对不上就拒绝，控制器自动拉回旧服务（`rollback=writers_and_ingress_restored`），重新发版即可。
+- `install.sh` / `install-native.sh` 升级时同样是「停服前完整预检 → 停服 → 迁移只核凭据」（共用 `install-lib.sh` 的 `pandora_run_migrations`）：
+  - 预检失败：报「停服前的迁移预检没通过：服务没停，数据库没动」，服务一直在跑，按预检输出处理后重跑安装脚本；
+  - 停服后核对不过或迁移失败：报「迁移失败，服务已拉回原来的版本」。新程序在迁移成功之后才装，拉回来的是原来的版本。
+  - 全新库（还没有 goose 记录）没有要保护的数据，跳过克隆预检。
+  - `install-native.sh` 的机器上没有 Docker 时，一次性库预检跑不了（它在 `aegis-postgres` 容器里克隆），升级会停在预检、服务不停。
 - 预检凭据只对这次发布有效，不要手工复制或改写它。
 - 直接调用 `migrate.sh up` 而不带凭据时，它照旧在调用当下做完整预检。
 
@@ -53,11 +59,11 @@
 现象：
 
 - 控制器输出 `rollback=manual_required` 和 `FAIL-CLOSED after migration attempt`；
-- 或者 `install.sh` 报「迁移失败（退出码 N）」并贴出完整输出。
+- 或者 `install.sh` / `install-native.sh` 报「迁移失败，服务已拉回原来的版本」并贴出完整输出。
 
 1. **保持写入者停止，不要重启服务。**
    - 控制器已经停了写入者，入口（nginx）也没恢复。
-   - install.sh 会尝试把旧服务拉回来；如果新二进制已经装上，立刻 `systemctl stop aegis-public aegis-admin aegis-node`。
+   - 安装脚本会把原来版本的服务拉回来（新程序还没装）。失败的迁移之前已经提交了几个时，旧程序跑在更新过一部分的结构上：立刻 `systemctl stop aegis-public aegis-admin aegis-node`，按下面处理完再启动。
 2. **记下现场。**
    - 用第 0 节的 `migrate.sh version` 看当前版本；
    - 从输出里找出失败的迁移文件名和报错，例如 `ERROR 00135_xxx.sql: ... (SQLSTATE 55P03)`。
@@ -127,7 +133,9 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose \
 
 - Down 里的数据守卫。例如 00129：已经发出去的后台流量包是用户余额，有这种行就拒绝。按报错处理那些行，或者改走第 3 节。
 - 00037–00040 的 Down 要逐个版本显式批准（幂等与订单释放的结构切换）。`rollback-to` 不替人批准，到这里一定会被拒绝；回到这么早的版本只能走第 3 节。
-- 历史迁移里还有少数 Down 本身有缺陷，清单见 `run-migration-roundtrip.sh` 的 `KNOWN`。
+- 00012 的 Down：已有节点写的审计记录（审计只追加、不删）时拒绝，这种库回不到 00011 之前。
+- irreversible 的迁移（种子数据、修数据）：00010、00029、00030、00042、00067、00102。`rollback-to` 越不过它们，例如最多回到 102，要回到 101 之前只能走第 3 节。
+- 历史迁移的 Down 缺陷已清零，CI 上每个迁移都过「up → down → up」往返（`run-migration-roundtrip.sh` 的 `KNOWN` 为空）。
 
 收尾：
 
