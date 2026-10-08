@@ -33,7 +33,7 @@ case "$COMMAND" in
     echo "migration: to return to an earlier version use the confirmed 'rollback-to <version>' (see panel/deploy/MIGRATION-RUNBOOK.md in the source tree)" >&2
     exit 78
     ;;
-  up|up-to|up-by-one|status|version|rollback-to) ;;
+  up|up-to|up-by-one|status|version|rollback-to|check-indexes) ;;
   *)
     echo "migration: unsupported command" >&2
     exit 78
@@ -118,6 +118,93 @@ GOOSE_BASE_ENV=(env -i PATH="$PATH" HOME="${HOME:-/root}"
   GOOSE_DRIVER="$GOOSE_DRIVER" GOOSE_DBSTRING="$GOOSE_DBSTRING"
   GOOSE_MIGRATION_DIR="$GOOSE_MIGRATION_DIR")
 [ -z "$MIGRATION_PGPASSWORD" ] || GOOSE_BASE_ENV+=(PGPASSWORD="$MIGRATION_PGPASSWORD")
+
+# ---------------------------------------------------------------------------
+# 无效索引护栏（w8walk 第 5 节第 1 条，证据见 MIGRATION-RUNBOOK 第 4.3 节）。
+# `-- +goose NO TRANSACTION` 的 CREATE INDEX CONCURRENTLY（00136、00139）中途失败会留下
+# indisvalid=false 的索引；修好数据不清理就重跑，Up 里的 IF NOT EXISTS 把它当成已存在，goose
+# 照样记版本——唯一索引从此不生效且不报错。所以：
+#   - up / up-to / up-by-one 执行前查一次：有无效索引就拒绝，什么都不执行（这时重跑会被骗）；
+#   - 执行后再查一次：有就失败（迁移本身留下了半成品）；
+#   - check-indexes 只做这次查询（安装器停服之前先调它，失败不停服）。
+# 查不了（没有 psql、也没有 aegis-postgres 容器）同样算失败：这是安全检查，不能悄悄跳过。
+# 查询客户端：PANDORA_PSQL_BIN（桩测试用）> PATH 上的 psql（install-native.sh 的机器，按迁移 DSN 连）
+# > docker 容器 aegis-postgres 里的 psql（install.sh 的机器；与 check-migrations.sh 同样先核对
+# 容器发布的端口就是 POSTGRES_PORT，免得查到别的库）。
+# ---------------------------------------------------------------------------
+INVALID_INDEX_SQL="SELECT format('%I.%I', n.nspname, c.relname) || ' on ' || format('%I.%I', tn.nspname, t.relname)
+  FROM pg_catalog.pg_index i
+  JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_catalog.pg_class t ON t.oid = i.indrelid
+  JOIN pg_catalog.pg_namespace tn ON tn.oid = t.relnamespace
+ WHERE NOT i.indisvalid AND n.nspname NOT IN ('pg_catalog', 'pg_toast')
+ ORDER BY 1;"
+
+# 打印无效索引（一行一个，「索引 on 表」）；查不了返回 2
+invalid_indexes() {
+  local psql_bin="${PANDORA_PSQL_BIN:-}" endpoint
+  if [ -n "$psql_bin" ]; then
+    [ -x "$psql_bin" ] || { echo "migration: PANDORA_PSQL_BIN is not executable" >&2; return 2; }
+  else
+    psql_bin="$(command -v psql 2>/dev/null || true)"
+  fi
+  if [ -n "$psql_bin" ]; then
+    local psql_env=(env -i PATH="$PATH" HOME="${HOME:-/root}")
+    [ -z "$MIGRATION_PGPASSWORD" ] || psql_env+=(PGPASSWORD="$MIGRATION_PGPASSWORD")
+    "${psql_env[@]}" "$psql_bin" -X -w -q -At -v ON_ERROR_STOP=1 -d "$AEGIS_MIGRATION_DATABASE_URL" -c "$INVALID_INDEX_SQL" \
+      || { echo "migration: cannot query pg_index for invalid indexes" >&2; return 2; }
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1 && [ -n "${POSTGRES_USER:-}" ] && [ -n "${POSTGRES_DB:-}" ]; then
+    endpoint="$(docker port aegis-postgres 5432/tcp 2>/dev/null | head -n1 || true)"
+    if [ -n "$endpoint" ] && [ "$endpoint" = "127.0.0.1:${POSTGRES_PORT:-}" ]; then
+      # 口令只按名字经 -e 透传（值来自本进程环境），不进命令行参数
+      env -i PATH="$PATH" HOME="${HOME:-/root}" PGPASSWORD="${POSTGRES_PASSWORD:-}" \
+        docker exec -i -e PGPASSWORD aegis-postgres \
+        psql -X -w -q -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$INVALID_INDEX_SQL" \
+        || { echo "migration: cannot query pg_index for invalid indexes" >&2; return 2; }
+      return 0
+    fi
+  fi
+  echo "migration: cannot check for invalid indexes: no psql on PATH and no aegis-postgres container published on 127.0.0.1:${POSTGRES_PORT:-?}" >&2
+  return 2
+}
+
+# 查一次并按时机给出修复命令。$1 = before（执行迁移前）| after（执行迁移后）| failed（迁移失败后）| check
+# 返回 0 没有无效索引；1 有；2 查不了
+check_invalid_indexes() {
+  local when="$1" found rc=0
+  found="$(invalid_indexes)" || rc=$?
+  [ "$rc" -eq 0 ] || return 2
+  [ -n "$found" ] || return 0
+  echo "migration: INVALID indexes found (left by an interrupted CREATE INDEX CONCURRENTLY):" >&2
+  printf '  %s\n' "$found" >&2
+  case "$when" in
+    before|check)
+      echo "migration: re-running 'up' now would skip them (IF NOT EXISTS) and record the migration as done; nothing was executed" >&2 ;;
+    failed)
+      echo "migration: the failed migration left them behind; clean them up before running 'up' again, or the re-run will skip them (IF NOT EXISTS)" >&2 ;;
+    after)
+      echo "migration: the migrations ran, but these indexes are not in effect (a unique index that is INVALID enforces nothing)" >&2 ;;
+  esac
+  echo "migration: fix the cause first (e.g. the duplicate rows a unique index rejected), then for each index:" >&2
+  printf '%s\n' "$found" | while IFS= read -r line; do
+    printf '  DROP INDEX CONCURRENTLY IF EXISTS %s;\n' "${line%% on *}" >&2
+  done
+  echo "migration: run each DROP on its own (not inside a transaction), then 'migrate.sh version':" >&2
+  echo "migration:   - the migration that creates it is NOT recorded yet: run 'migrate.sh up' again, it recreates the index;" >&2
+  echo "migration:   - it IS already recorded: run that migration's CREATE ... CONCURRENTLY statement by hand (MIGRATION-RUNBOOK.md section 4.3, step 3)." >&2
+  echo "migration: confirm with 'migrate.sh check-indexes' (exit 0 = no invalid index)." >&2
+  return 1
+}
+
+if [ "$COMMAND" = check-indexes ]; then
+  [ "$#" -eq 0 ] || { echo "migration: check-indexes does not accept arguments" >&2; exit 78; }
+  rc=0; check_invalid_indexes check || rc=$?
+  [ "$rc" -eq 0 ] && echo "migration: no invalid indexes"
+  exit "$rc"
+fi
 
 # 这里原本整块都是 CLIENT-AUTH-00042 的隔离认证闸门：版本号一旦到 42，
 # up / up-to / up-by-one / redo 全部拒绝，必须先跑一次隔离 PG18 预检换一张
@@ -266,6 +353,14 @@ if [ "$COMMAND" = rollback-to ]; then
   exit 0
 fi
 
+# 执行前先查无效索引：放在克隆预检之前，有就不必白跑一遍预检（见上面「无效索引护栏」）
+case "$COMMAND" in
+  up|up-to|up-by-one)
+    rc=0; check_invalid_indexes before || rc=$?
+    [ "$rc" -eq 0 ] || exit 1
+    ;;
+esac
+
 # 全新库可以跳过预检——它要保护的数据还不存在。
 #
 # 预检会克隆源库再把待应用的迁移跑一遍。库里连 goose 记录都没有时，
@@ -343,4 +438,18 @@ GOOSE_ENV=(env -i PATH="$PATH" HOME="${HOME:-/root}"
   GOOSE_MIGRATION_DIR="$GOOSE_MIGRATION_DIR")
 [ -z "$MIGRATION_PGPASSWORD" ] || GOOSE_ENV+=(PGPASSWORD="$MIGRATION_PGPASSWORD")
 [ -z "$MIGRATION_PGOPTIONS" ] || GOOSE_ENV+=(PGOPTIONS="$MIGRATION_PGOPTIONS")
-exec "${GOOSE_ENV[@]}" "$GOOSE" "$COMMAND" "$@"
+case "$COMMAND" in
+  up|up-to|up-by-one) ;;
+  *) exec "${GOOSE_ENV[@]}" "$GOOSE" "$COMMAND" "$@" ;;
+esac
+
+# 执行后再查一次无效索引（执行前那次在预检之前，见上面「无效索引护栏」）
+goose_rc=0
+"${GOOSE_ENV[@]}" "$GOOSE" "$COMMAND" "$@" || goose_rc=$?
+if [ "$goose_rc" -ne 0 ]; then
+  # 迁移失败：CONCURRENTLY 的半成品这时最常见，顺手把清理命令打出来（查不了就算了，失败本身已经报了）
+  check_invalid_indexes failed 2>&1 | grep -v '^migration: cannot ' >&2 || true
+  exit "$goose_rc"
+fi
+rc=0; check_invalid_indexes after || rc=$?
+[ "$rc" -eq 0 ] || exit 1
