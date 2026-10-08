@@ -219,9 +219,10 @@ func (s *Service) CreatePlanChange(ctx context.Context, tenantID string,
 		if in.ManualGrant {
 			q.waiveNewPrice()
 		}
-		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced、SmallDue 免单）
-		bal, err := balancePlan(ctx, tx, tenantID, in.UserID, q.Currency, q.Total,
-			in.UseBalance, in.Offline != nil)
+		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced；付不了的回 422，只有换套餐的零头能免）
+		// 只有门户换套餐抵扣后的零头能免（用户 8.1 第 1 题），后台开单不免
+		bal, err := balancePlan(ctx, tx, tenantID, in.UserID, q.Currency, q.Total, in.UseBalance,
+			balanceOpts{Offline: in.Offline != nil, Manual: in.ManualActor != "", AllowWaive: in.ManualActor == ""})
 		if err != nil {
 			return err
 		}

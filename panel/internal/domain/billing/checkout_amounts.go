@@ -3,9 +3,9 @@ package billing
 // 建单与报价共用的金额收尾（设计稿 2.2、2.6）：
 //
 //	余额   一律经 purchase.ApplyBalance：限制在余额与应付之内；剩下的钱低于支付最低额时
-//	       少用一点余额（Kept），或只能全用余额（Forced）
-//	几分钱 应付本身低于最低额、余额又不够（SmallDue）：按用户 8.1 第 1 题推荐 A 免掉，
-//	       并进订单折扣；恒等式 total = 小计 − 折扣 − 剩余价值 不变，审计记 small_due_waived
+//	       少用一点余额（Kept），或只能全用余额（Forced），或用尽余额仍付不了（Short）
+//	几分钱 只有门户换套餐抵扣后的零头（≤ 99 分）按用户 8.1 第 1 题推荐 A 免掉，并进订单折扣；
+//	       恒等式 total = 小计 − 折扣 − 剩余价值 不变，审计记 small_due_waived。其余付不了的回 422
 //	比对   带了 Expectation 的建单与服务端重算不符就回 409 quote_changed
 //
 // 报价（checkout_quote.go）与四个建单入口算的是同一组数，确认时才比得上。
@@ -57,10 +57,11 @@ func providerMinAmount(adapter string, cfg map[string]any) int64 {
 	return 0
 }
 
-// minPaymentSQL 是站点的支付最低额：所有启用且接单的 CNY 渠道里最大的那个 min_amount，
-// 用户选哪种付款方式都能付。易支付没配按 ¥1.00，与 providerMinAmount 同一口径。
+// minPaymentSQL 是「能不能在线付」的门槛：所有启用且接单的 CNY 渠道里最小的那个 min_amount
+// （站点只要有一个渠道能付就能付；发起支付时再按所选渠道兜底拦，checkProviderMinimum）。
+// 易支付没配按 ¥1.00，与 providerMinAmount 同一口径。
 const minPaymentSQL = `
-	SELECT coalesce(max(CASE
+	SELECT coalesce(min(CASE
 	         WHEN coalesce(pp.config->>'min_amount', '') ~ '^[0-9]{1,6}$'
 	              AND (pp.config->>'min_amount')::bigint BETWEEN 1 AND 100000
 	           THEN (pp.config->>'min_amount')::bigint
@@ -128,31 +129,53 @@ func availableBalance(ctx context.Context, tx pgx.Tx, tenantID, userID, currency
 	return amount, err
 }
 
-// balancePlan 算一单用多少余额：ApplyBalance 加上 SmallDue 免单。offline（线下已收款）与
-// 赠送不走在线支付，不受最低额限制。
+// balanceOpts 是一单的收尾口径。
+type balanceOpts struct {
+	// Offline 线下已收款：不走在线支付，不受最低额限制
+	Offline bool
+	// Manual 后台人工单（待用户支付）：不做 Forced、不免零头，应付低于最低额回 422
+	Manual bool
+	// AllowWaive 换套餐抵扣后的零头可以免（用户 8.1 第 1 题），其余入口不免
+	AllowWaive bool
+}
+
+// ErrBelowMinimum 是应付低于能在线付的最低额、用尽余额也付不完的 422（报价里 below_minimum 提前标出）。
+var ErrBelowMinimum = httpx.New(httpx.CodeValidationFailed,
+	"应付金额低于支付渠道的最低付款额，请先充值或使用余额支付")
+
+// errManualBelowMinimum 是后台待支付单低于最低额：用户付不了，管理员改用赠送或线下已收款。
+var errManualBelowMinimum = httpx.New(httpx.CodeValidationFailed,
+	"应付金额低于支付渠道的最低付款额，用户无法在线支付，请改用赠送或线下已收款")
+
+// balancePlan 算一单用多少余额：ApplyBalance，再按入口决定零头能不能免（只有门户换套餐能免，
+// 最多 99 分）；免不了又付不了就拒绝。
 func balancePlan(ctx context.Context, tx pgx.Tx, tenantID, userID, currency string,
-	total, requested int64, offline bool) (purchase.Balance, error) {
+	total, requested int64, o balanceOpts) (purchase.Balance, error) {
+	if o.Offline || total <= 0 {
+		return purchase.ApplyBalance(total, 0, 0, 0), nil
+	}
+	minPay, err := minPayment(ctx, tx, tenantID, currency)
+	if err != nil {
+		return purchase.Balance{}, err
+	}
+	if o.Manual {
+		if minPay > 1 && total < minPay {
+			return purchase.Balance{}, errManualBelowMinimum
+		}
+		return purchase.ApplyBalance(total, 0, 0, 0), nil
+	}
 	available := int64(0)
-	if requested > 0 && total > 0 {
-		var err error
+	// 余额开关打开，或应付低于最低额（Forced / Short 与开关无关）时要知道余额
+	if requested > 0 || total < minPay {
 		if available, err = availableBalance(ctx, tx, tenantID, userID, currency); err != nil {
 			return purchase.Balance{}, err
 		}
 	}
-	minPay := int64(0)
-	if !offline && total > 0 {
-		var err error
-		if minPay, err = minPayment(ctx, tx, tenantID, currency); err != nil {
-			return purchase.Balance{}, err
-		}
-		// 最低额下 Forced 要知道余额够不够付整单，即使用户关了余额
-		if total < minPay && available == 0 {
-			if available, err = availableBalance(ctx, tx, tenantID, userID, currency); err != nil {
-				return purchase.Balance{}, err
-			}
-		}
+	b := purchase.WaiveSmallDue(purchase.ApplyBalance(total, available, requested, minPay), o.AllowWaive)
+	if b.Short {
+		return purchase.Balance{}, ErrBelowMinimum
 	}
-	return purchase.WaiveSmallDue(purchase.ApplyBalance(total, available, requested, minPay)), nil
+	return b, nil
 }
 
 // checkExpectation 比对确认时带回的报价与服务端重算的结果：total 是免单之前的应付
@@ -183,6 +206,9 @@ func quoteTime(exp *Expectation, now time.Time) (time.Time, error) {
 	}
 	return asOf, nil
 }
+
+// ErrOrderPaymentExpired 是订单已过 30 分钟付款期限还来发起支付的 409。
+var ErrOrderPaymentExpired = httpx.New(httpx.CodeConflict, "这张订单已超过付款期限，请取消后重新下单")
 
 // ErrPaymentBelowMinimum 是发起的在线支付低于所选渠道最低额时的 409（建单已按最低额收尾，
 // 正常路径到不了这里；渠道自己的报错是英文或者干脆没有，所以面板先拦）。

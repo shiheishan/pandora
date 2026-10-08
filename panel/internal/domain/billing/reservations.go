@@ -7,6 +7,8 @@ import (
 	"sort"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 )
 
 type reservationLockRequest struct {
@@ -307,9 +309,9 @@ func lockOrderReservationGraph(ctx context.Context, tx pgx.Tx,
 					return nil, err
 				}
 			case in.SmallDueWaived > 0:
-				// 免单只把在线付不了的那点钱免掉：折扣就是它，免完不剩在线应付
-				if in.DiscountAmount != in.SmallDueWaived || in.PayableAmount != 0 ||
-					in.SmallDueWaived >= maxProviderMinAmount {
+				// 只有换套餐抵扣后的零头能免（最多 99 分）：折扣就是它，免完不剩在线应付
+				if in.Kind != "upgrade" || in.DiscountAmount != in.SmallDueWaived || in.PayableAmount != 0 ||
+					in.SmallDueWaived > purchase.MaxSmallDueWaive {
 					return nil, errors.New("small-due waiver does not match the order discount")
 				}
 			default:

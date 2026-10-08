@@ -134,8 +134,8 @@ func (s *Service) CreateTrafficPackOrder(ctx context.Context, tenantID string,
 			discount = coupon.Discount
 		}
 		total := subtotal - discount
-		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced、SmallDue 免单）
-		bal, err := balancePlan(ctx, tx, tenantID, in.UserID, currency, total, in.UseBalance, false)
+		// 余额经 purchase.ApplyBalance 收尾（最低付款额、Forced；付不了的回 422，只有换套餐的零头能免）
+		bal, err := balancePlan(ctx, tx, tenantID, in.UserID, currency, total, in.UseBalance, balanceOpts{})
 		if err != nil {
 			return err
 		}

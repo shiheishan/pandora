@@ -16,7 +16,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/period"
 )
 
-// placementCandidatesSQL 一次取用户的全部订阅：套餐名、本期套餐流量（cycle / total 的
+// placementCandidatesSQL 一次取用户还能落地的订阅（生效中或过期 30 天内）：套餐名、本期套餐流量（cycle / total 的
 // traffic.bytes，不限量的那份上限记 0）与挂在这一份上的流量包余量。
 const placementCandidatesSQL = `
 	SELECT s.id::text, s.plan_id::text, pl.name, coalesce(s.label, ''),
@@ -37,8 +37,9 @@ const placementCandidatesSQL = `
 	         WHERE g.tenant_id = s.tenant_id AND g.subscription_id = s.id
 	           AND g.consumed_bytes < g.granted_bytes) pk ON true
 	 WHERE s.tenant_id = $1 AND s.user_id = $2::uuid
-	 ORDER BY s.created_at, s.id
-	 LIMIT 50` // 一个用户参与落点的订阅上限，按创建时间取
+	   AND ` + liveOrRevivableSQL + `
+	 ORDER BY (s.status <> 'expired') DESC, s.created_at DESC, s.id
+	 LIMIT 50` // 一个用户参与落点的订阅上限：已彻底停用的不取，生效中的优先、新的优先
 
 // candidateState 把订阅状态映射成落点规则的三档，口径只经 subscriptionAcceptsPaidChange。
 func candidateState(status string, renewalClosed bool) purchase.State {
@@ -52,7 +53,8 @@ func candidateState(status string, renewalClosed bool) purchase.State {
 	}
 }
 
-// loadCandidatesTx 取用户的候选订阅（不加锁；落地时再锁选中的那一行复核）。
+// loadCandidatesTx 取用户的候选订阅（不加锁；落地时再锁选中的那一行复核）。已彻底停用的不在里面，
+// candidateState 仍按三档映射（读与过滤之间状态可能变，规则里 dead 不出现在任何选项）。
 func loadCandidatesTx(ctx context.Context, tx pgx.Tx, tenantID, userID string) ([]purchase.Candidate, error) {
 	rows, err := tx.Query(ctx, placementCandidatesSQL, tenantID, userID)
 	if err != nil {

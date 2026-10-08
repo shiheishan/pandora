@@ -2,6 +2,7 @@ package billing
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/payment"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
@@ -30,6 +32,7 @@ func checkPurchaseQuotePG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	planBasic, priceBasic := p.seedPlan("pq-basic", 1500, 1_000_000)
 	planTiny, priceTiny := p.seedPlan("pq-tiny", 30, 1_000_000)
 	planNear, priceNear := p.seedPlan("pq-near", 3020, 1_000_000)
+	planFar, priceFar := p.seedPlan("pq-far", 3170, 1_000_000)
 	packID := uuid.NewString()
 	p.must(`INSERT INTO traffic_packs(id,tenant_id,name,traffic_bytes,currency,unit_amount)
 		VALUES($1,$2,'PQ pack',5000,'CNY',50)`, packID, p.fx.tenant)
@@ -179,34 +182,41 @@ func checkPurchaseQuotePG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 		t.Fatalf("forced order=%+v quote=%+v", forced, q)
 	}
 
-	// 1e) SmallDue：应付 ¥0.30、余额 0 → 免掉，按折扣记账；续费同样免（无券的折扣只许是免单）
-	u3 := newUser("smalldue")
+	// 1e) 新购、续费、流量包的应付低于最低额、余额又不够：不免，报价标 below_minimum，下单 422
+	// （「¥0.30 的套餐免费新购、再免费续费」不再可能）
+	u3 := newUser("short")
 	sq := quote(QuoteInput{UserID: u3, Action: QuoteNew, PlanID: planTiny})
 	q = sq.Quotes[0]
-	if !q.WithoutBalance.SmallDue || q.WithoutBalance.Waived != 30 || q.WithoutBalance.Payable != 0 {
-		t.Fatalf("small due quote=%+v", q)
+	if !q.WithoutBalance.Short || !q.WithBalance.Short || q.WithoutBalance.SmallDue || q.WithoutBalance.Payable != 30 {
+		t.Fatalf("below minimum new quote=%+v", q)
 	}
-	small := mustOrder(t, "pq-smalldue")(p.billing.CreateOrder(ctx, p.fx.tenant, CreateOrderInput{
-		UserID: u3, PlanID: planTiny, PriceID: priceTiny, RejectSamePlan: true, Expect: expect(sq, q, false),
-		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u3, CheckoutIdempotencyScope, "pq-smalldue"),
-	}))
-	if small.Status != "fulfilled" || small.DiscountAmount != 30 || small.TotalAmount != 0 || small.PayableAmount != 0 ||
-		scalar(`SELECT count(*) FROM audit_events WHERE resource_id=$1::uuid AND action='order.created'
-			AND (after_digest->>'small_due_waived')::bigint=30`, small.OrderID) != 1 {
-		t.Fatalf("small due order=%+v", small)
-	}
+	_, err = p.billing.CreateOrder(ctx, p.fx.tenant, CreateOrderInput{UserID: u3, PlanID: planTiny,
+		PriceID: priceTiny, RejectSamePlan: true,
+		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u3, CheckoutIdempotencyScope, "pq-short-new")})
+	wantCode("new order below the minimum", err, httpx.CodeValidationFailed)
+	// 充 ¥0.30 后只能全用余额付（Forced）；余额花完再续费：同样 422，不免
+	orderReleasePG18FundBalance(t, ctx, p.app, p.fx.tenant, u3, 30)
+	tinyOrder := mustOrder(t, "pq-short-forced")(p.billing.CreateOrder(ctx, p.fx.tenant, CreateOrderInput{
+		UserID: u3, PlanID: planTiny, PriceID: priceTiny, RejectSamePlan: true,
+		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u3, CheckoutIdempotencyScope, "pq-short-forced")}))
 	var tinyID string
 	if err := p.admin.QueryRow(ctx, `SELECT id::text FROM subscriptions WHERE user_id=$1::uuid AND plan_id=$2::uuid`,
-		u3, planTiny).Scan(&tinyID); err != nil {
-		t.Fatalf("small due subscription: %v", err)
+		u3, planTiny).Scan(&tinyID); err != nil || tinyOrder.BalanceApplied != 30 || tinyOrder.DiscountAmount != 0 {
+		t.Fatalf("forced tiny order=%+v err=%v", tinyOrder, err)
 	}
-	smallRenew := mustOrder(t, "pq-smalldue-renew")(p.billing.CreateRenewal(ctx, p.fx.tenant, CreateRenewalInput{
-		UserID: u3, SubscriptionID: tinyID,
-		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u3, RenewalIdempotencyScope, "pq-smalldue-renew"),
-	}))
-	if smallRenew.Status != "fulfilled" || smallRenew.DiscountAmount != 30 || smallRenew.TotalAmount != 0 {
-		t.Fatalf("small due renewal=%+v", smallRenew)
+	if rq := quote(QuoteInput{UserID: u3, Action: QuoteRenew, SubscriptionID: tinyID}); !rq.Quotes[0].WithBalance.Short {
+		t.Fatalf("below minimum renewal quote=%+v", rq.Quotes[0])
 	}
+	_, err = p.billing.CreateRenewal(ctx, p.fx.tenant, CreateRenewalInput{UserID: u3, SubscriptionID: tinyID,
+		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u3, RenewalIdempotencyScope, "pq-short-renew")})
+	wantCode("renewal below the minimum", err, httpx.CodeValidationFailed)
+	// 后台待支付单不做 Forced、不免：低于最低额 422，让管理员改用赠送或线下收款
+	_, err = p.billing.CreateManualOrder(ctx, p.fx.tenant, CreateManualOrderInput{UserID: newUser("manual-short"),
+		PlanID: planTiny, PriceID: priceTiny, Reason: "低于最低额的待支付单", ActorID: p.fx.referrer,
+		Settlement: ManualSettlementPending,
+		Claim:      orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, p.fx.referrer, CheckoutIdempotencyScope, "pq-short-manual")})
+	wantCode("manual pending order below the minimum", err, httpx.CodeValidationFailed)
+	t.Log("marker=purchase_quote_pg18_below_minimum_rejected_ok")
 
 	// 1f) 换大补差价、换小退余额、换大只差几分钱（SmallDue 免掉）；链接都不变
 	u4 := newUser("upgrade")
@@ -248,16 +258,33 @@ func checkPurchaseQuotePG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	if err != nil || downOrder.Status != "fulfilled" || downOrder.BalanceRefund <= 0 || balance(u5) != downOrder.BalanceRefund {
 		t.Fatalf("downgrade order=%+v balance=%d err=%v", downOrder, balance(u5), err)
 	}
+	// 换大只差几分钱：用尽余额（与开关无关，关着也用）后剩下的零头 ≤ 99 分，免掉
 	u6 := newUser("near")
 	s6 := buy(u6, planStd, priceStd, "pq-near-buy", 3000)
+	orderReleasePG18FundBalance(t, ctx, p.app, p.fx.tenant, u6, 10)
 	near, err := p.billing.CreatePlanChange(ctx, p.fx.tenant, PlanChangeInput{
 		UserID: u6, SubscriptionID: s6, PlanID: planNear, PriceID: priceNear,
 		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u6, PlanChangeIdempotencyScope, "pq-near"),
 	})
-	if err != nil || near.Status != "fulfilled" || near.TotalAmount != 0 || near.DiscountAmount <= 0 ||
-		near.DiscountAmount >= 100 || near.BalanceRefund != 0 {
+	if err != nil || near.Status != "fulfilled" || near.BalanceApplied != 10 || near.TotalAmount != 10 ||
+		near.PayableAmount != 0 || near.DiscountAmount <= 0 || near.DiscountAmount > 99 || near.BalanceRefund != 0 {
 		t.Fatalf("near upgrade (small due) order=%+v err=%v", near, err)
 	}
+	// 零头上限是固定的 99 分，与最低额无关：最低额 ¥5 时差 ¥1.70 左右不免，422
+	p.must(`UPDATE payment_providers SET config = '{"min_amount":500}' WHERE id=$1`, minProvider)
+	invalidateMinPayment(p.fx.tenant)
+	u6b := newUser("near-cap")
+	s6b := buy(u6b, planStd, priceStd, "pq-near-cap-buy", 3000)
+	if cq := quote(QuoteInput{UserID: u6b, Action: QuoteChange, SubscriptionID: s6b, PlanID: planFar}); !cq.Quotes[0].WithoutBalance.Short {
+		t.Fatalf("over-cap change quote=%+v", cq.Quotes[0])
+	}
+	_, err = p.billing.CreatePlanChange(ctx, p.fx.tenant, PlanChangeInput{
+		UserID: u6b, SubscriptionID: s6b, PlanID: planFar, PriceID: priceFar,
+		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u6b, PlanChangeIdempotencyScope, "pq-near-cap"),
+	})
+	wantCode("change remainder above 99 cents", err, httpx.CodeValidationFailed)
+	p.must(`UPDATE payment_providers SET config = '{"min_amount":100}' WHERE id=$1`, minProvider)
+	invalidateMinPayment(p.fx.tenant)
 	t.Log("marker=purchase_quote_pg18_orders_ok")
 
 	// 账平：本租户每笔交易借贷相等，已履约单的余额冻结都已捕获，恒等式成立
@@ -414,4 +441,37 @@ func checkPurchaseQuotePG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u12, PlanChangeIdempotencyScope, "pq-closed")})
 	wantCode("closed window", err, httpx.CodeConflict)
 	t.Log("marker=purchase_quote_pg18_revive_ok")
+
+	// 7) 过了付款期限、还没被关掉的单：不能再发起支付；同款再下单回 order_pending（超时文案），取消后能下
+	u13 := newUser("lapsed")
+	lapsed := mustOrder(t, "pq-lapsed")(p.billing.CreateOrder(ctx, p.fx.tenant, CreateOrderInput{
+		UserID: u13, PlanID: planBasic, PriceID: priceBasic, RejectSamePlan: true,
+		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u13, CheckoutIdempotencyScope, "pq-lapsed")}))
+	orderReleasePG18Backdate(t, ctx, conn, p.fx.tenant, lapsed.OrderID)
+	payments := NewPaymentService(p.billing, p.app, nil, []byte("purchase-quote-pg18-master-key-0"),
+		"https://panel.example.test", true)
+	payments.Factory().RegisterAdapter("demo_hmac",
+		func(payment.ProviderRecord) (payment.Provider, error) {
+			return newQueryStubProvider(p.fx.providerCode), nil
+		})
+	_, err = payments.CreatePaymentIntent(ctx, p.fx.tenant, CreateIntentInput{
+		OrderID: lapsed.OrderID, UserID: u13, ProviderCode: p.fx.providerCode})
+	if !errors.Is(err, ErrOrderPaymentExpired) {
+		t.Fatalf("paying a lapsed order err=%v", err)
+	}
+	_, err = p.billing.CreateOrder(ctx, p.fx.tenant, CreateOrderInput{UserID: u13, PlanID: planBasic,
+		PriceID: priceBasic, RejectSamePlan: true,
+		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u13, CheckoutIdempotencyScope, "pq-lapsed-again")})
+	var pendingErr *httpx.Error
+	if !errors.As(err, &pendingErr) || pendingErr.Code != httpx.CodeOrderPending ||
+		pendingErr.Fields["order_id"] != lapsed.OrderID || !strings.Contains(pendingErr.Message, "付款期限") {
+		t.Fatalf("second order while the lapsed one is open err=%v", err)
+	}
+	if _, err := p.billing.CancelOrder(ctx, p.fx.tenant, u13, lapsed.OrderID); err != nil {
+		t.Fatalf("cancel the lapsed order: %v", err)
+	}
+	mustOrder(t, "pq-lapsed-after-cancel")(p.billing.CreateOrder(ctx, p.fx.tenant, CreateOrderInput{
+		UserID: u13, PlanID: planBasic, PriceID: priceBasic, RejectSamePlan: true,
+		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u13, CheckoutIdempotencyScope, "pq-lapsed-after-cancel")}))
+	t.Log("marker=purchase_quote_pg18_lapsed_order_ok")
 }

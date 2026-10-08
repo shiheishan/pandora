@@ -159,6 +159,21 @@ func TestPaymentProviderAdminPG18(t *testing.T) {
 			fx.tenant, id, keyB) != 1 {
 			t.Fatal("credential update audit missing or carries the key")
 		}
+
+		// 最低付款额（购买模型统一 2.6）：填了就存；编辑时不传（0）保留原值
+		withMin := settings("", "", "alipay", "wxpay")
+		withMin.MinAmount = 300
+		if _, err := payments.UpdateProvider(ctx, fx.tenant, actor, UpdateProviderInput{Code: code, ProviderSettings: withMin}); err != nil {
+			t.Fatalf("set min_amount: %v", err)
+		}
+		if _, err := payments.UpdateProvider(ctx, fx.tenant, actor, UpdateProviderInput{
+			Code: code, ProviderSettings: settings("", "", "alipay", "wxpay")}); err != nil {
+			t.Fatalf("update without min_amount: %v", err)
+		}
+		if rec, err := payments.loadProvider(ctx, fx.tenant, code); err != nil || providerMinAmount(rec.Adapter, rec.Config) != 300 {
+			t.Fatalf("min_amount after an edit without it rec=%+v err=%v", rec, err)
+		}
+		t.Log("marker=payment_provider_pg18_min_amount_kept_ok")
 	})
 
 	t.Run("offline and non-admin adapters are read-only", func(t *testing.T) {

@@ -54,29 +54,36 @@ func newCopyLabel(ctx context.Context, tx pgx.Tx, tenantID string, in CreateOrde
 }
 
 // ensureNoPendingNewOrder 拒绝同一套餐的第二张未付款新购单（409 order_pending，Fields 带
-// 那张单的 order_id，前端显示「继续付款或取消」的入口）。已过付款期限、等释放任务收尾的不算。
+// 那张单的 order_id，前端显示「继续付款或取消」的入口）。
+//
+// 已过付款期限、还没被释放任务关掉的那张也算：它的支付回调可能晚到，而结算按订单状态走——
+// 仍是待支付就照常履约。若这时允许同款再下一张，两张都付了就是两份。等它被关掉（expired /
+// cancelled）之后，晚到的钱进挂账（released_order），不会再开一份；用户也可以直接取消它。
 // 查询走 idx_orders_user 加 idx_order_items_order，不用新索引。
 func ensureNoPendingNewOrder(ctx context.Context, tx pgx.Tx, tenantID, userID, planID,
 	planName string) error {
 	var orderID string
+	var lapsed bool
 	err := tx.QueryRow(ctx, `
-		SELECT o.id::text FROM orders o
+		SELECT o.id::text, coalesce(o.expires_at <= now(), false) FROM orders o
 		 WHERE o.tenant_id = $1 AND o.user_id = $2::uuid AND o.kind = 'new'
 		   AND o.status IN ('draft', 'pending_payment', 'processing')
-		   AND (o.expires_at IS NULL OR o.expires_at > now())
 		   AND EXISTS (SELECT 1 FROM order_items oi
 		                WHERE oi.tenant_id = o.tenant_id AND oi.order_id = o.id
 		                  AND oi.plan_id = $3::uuid)
 		 ORDER BY o.created_at DESC
-		 LIMIT 1`, tenantID, userID, planID).Scan(&orderID)
+		 LIMIT 1`, tenantID, userID, planID).Scan(&orderID, &lapsed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	e := httpx.New(httpx.CodeOrderPending,
-		"你有一张还没付款的「"+planName+"」订单，继续付款或取消后再买")
+	msg := "你有一张还没付款的「" + planName + "」订单，继续付款或取消后再买"
+	if lapsed {
+		msg = "你有一张已超过付款期限的「" + planName + "」订单，取消后再买"
+	}
+	e := httpx.New(httpx.CodeOrderPending, msg)
 	e.Fields = map[string]string{"order_id": orderID}
 	return e
 }

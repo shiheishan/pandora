@@ -41,7 +41,8 @@ type QuoteInput struct {
 	NewCopy        bool
 }
 
-// QuoteOutput 是报价响应。Balance 是报价时的可用余额，MinPayment 是支付最低额（分）。
+// QuoteOutput 是报价响应。Balance 是报价时的可用余额，MinPayment 是能在线付的最低额（分，
+// 启用渠道里最小的那个）。两组余额用法里 below_minimum 为真表示这一条付不了、不能下单。
 type QuoteOutput struct {
 	AsOf       time.Time `json:"as_of"`
 	Currency   string    `json:"currency"`
@@ -147,8 +148,10 @@ func (s *Service) Quote(ctx context.Context, tenantID string, in QuoteInput) (*Q
 			if q.currency != out.Currency {
 				avail = 0 // 不同币种的余额不能抵（目录只有 CNY 时不会发生）
 			}
-			q.WithBalance = purchase.WaiveSmallDue(purchase.ApplyBalance(q.Total, avail, avail, out.MinPayment))
-			q.WithoutBalance = purchase.WaiveSmallDue(purchase.ApplyBalance(q.Total, avail, 0, out.MinPayment))
+			// 只有换套餐的零头能免；其余入口付不了的标 below_minimum，前端提示先充值或用余额
+			waive := in.Action == QuoteChange
+			q.WithBalance = purchase.WaiveSmallDue(purchase.ApplyBalance(q.Total, avail, avail, out.MinPayment), waive)
+			q.WithoutBalance = purchase.WaiveSmallDue(purchase.ApplyBalance(q.Total, avail, 0, out.MinPayment), waive)
 		}
 		return nil
 	})

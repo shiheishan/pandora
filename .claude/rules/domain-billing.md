@@ -45,11 +45,11 @@ paths:
 
 ## 购买模型统一（2026-10-07 用户定，w7buya；设计稿 purchase-model-design.md）
 - 规则只写一处：纯函数包 `internal/domain/purchase`（只依赖标准库）放落点选项与默认值（`Options`、`Choice.Match` / `Resolve`）、备注名规范化（`NormalizeLabel`）、余额与支付最低额（`ApplyBalance`、`WaiveSmallDue`）。billing、giftcard（经 Granter）与后台开单都调它，门户的金额与默认值由服务端算好下发
-- 落点由人选：候选一条 SQL（`placement_candidates.go` 的 `loadCandidatesTx`，状态三档只经 `subscriptionAcceptsPaidChange`），选项与展示数据 `placementsTx`，落地前 `resolvePlacementTx` 重新 Match、`lockPlacementSubscription` 锁住那一份复核。不同款不预选，换掉生效中的那份永不自动默认；不要再写「系统自动挑一条」的代码。`renewableSamePlanSubscription` 只留给门户新购没带 new_copy 时拦截
+- 落点由人选：候选一条 SQL（`placement_candidates.go` 的 `loadCandidatesTx`：只取生效中或过期 30 天内的，生效中优先、新的优先，最多 50 份；状态三档只经 `subscriptionAcceptsPaidChange`），选项与展示数据 `placementsTx`，落地前 `resolvePlacementTx` 重新 Match、`lockPlacementSubscription` 锁住那一份复核。不同款不预选，换掉生效中的那份永不自动默认；不要再写「系统自动挑一条」的代码。`renewableSamePlanSubscription` 只留给门户新购没带 new_copy 时拦截
 - 统一报价 `Service.Quote`（checkout_quote.go）与四个建单入口用同一套读取：新购 `checkout_catalog.go`、续费 `renewal_price.go`、换套餐 `plan_change_load.go`（source / targets / snapshot），报价传 lock=false 不加锁。建单带 `Expectation`（as_of 只收 [now-10min, now]）时与重算不符回 409 `quote_changed`；换套餐的时间比例按 as_of 算，流量按当前用量
-- 余额一律经 `balancePlan`（checkout_amounts.go）：`ApplyBalance` 加 SmallDue 免单（用户 8.1 第 1 题推荐 A），免掉的并进订单折扣（有券就并进券的折扣，00036 要求券核销折扣等于订单折扣），审计 digest 记 `small_due_waived`；续费 / 变更当场捕获时 `reservationLockRequest.SmallDueWaived` 是没有券的折扣唯一合法来源（除人工赠送）
-- 支付最低额：渠道 config `min_amount`（分，1–100000，易支付默认 100），站点取启用且接单的 CNY 渠道最大值，按租户缓存一分钟（渠道写入后 `invalidateMinPayment`）；`CreatePaymentIntent` 再按所选渠道兜底 409
-- 新购：`NewCopy` 是「另买一份」，`Label` 经 `NormalizeLabel` 存 `orders.subscription_label`，另买同款而已有那份没起名时 422；同一套餐同时只能有一张未付款新购单（409 `order_pending`，Fields 带 order_id，门户；人工单不受限）。履约 `provisionSubscription` 写备注名，撞名加「 2」「 3」后缀（保存点重试，不让结算失败），并在这是唯一一份生效中订阅时把未分配的流量包挂上（转移流水 actor system）
+- 余额一律经 `balancePlan`（checkout_amounts.go）：`ApplyBalance` 先算（低于最低额时余额够就全用 Forced，不够就用尽余额后标 Short，都与开关无关）。只有门户换套餐抵扣后的零头可以免（用户 8.1 第 1 题推荐 A，`WaiveSmallDue`，固定上限 99 分、与最低额无关），并进订单折扣（有券就并进券的折扣，00036 要求券核销折扣等于订单折扣），审计 digest 记 `small_due_waived`；`reservationLockRequest.SmallDueWaived` 只认 upgrade 单。新购、续费、流量包免不了又付不了回 422（报价里 `below_minimum` 提前标出）；后台待支付单不做 Forced、不免，低于最低额 422 让管理员改用赠送或线下收款
+- 支付最低额：渠道 config `min_amount`（分，1–100000，易支付默认 100；编辑时不传保留原值），「能不能在线付」取启用且接单的 CNY 渠道里最小的那个，按租户在进程内缓存一分钟（本进程的渠道写入后 `invalidateMinPayment`；别的进程、adminops 的开关最多晚一分钟生效）；`CreatePaymentIntent` 再按所选渠道兜底 409，并拒绝已过付款期限的单
+- 新购：`NewCopy` 是「另买一份」，`Label` 经 `NormalizeLabel` 存 `orders.subscription_label`，另买同款而已有那份没起名时 422；门户新购（RejectSamePlan）同一套餐同时只能有一张未付款新购单（409 `order_pending`，Fields 带 order_id；已过付款期限、还没被释放任务关掉的那张也算，防止它的晚到回调与同款新单双开；人工单不受限）。履约 `provisionSubscription` 写备注名，撞名加「 2」「 3」后缀（保存点重试，不让结算失败），并在这是唯一一份生效中订阅时把未分配的流量包挂上（转移流水 actor system）
 - 流量包挂订阅（00137）：addon 单必须带一份生效中的订阅、余额挂上去；送流量没有在用的那份时未分配；`transferTrafficPacksTx` 只从未分配或彻底停用的那份转到生效中或可救回的那份，每笔写 `traffic_pack_transfers`（追加写），提交时约束触发器核对同事务有流水。门户转移、后台加流量（挂这一行）、履约自动挂都走它或 `GrantTrafficPackTx`
 - 守卫：PG18 sub_period 域的 `placement`、`purchase quote` 子测试，traffic_pack 域的 `traffic packs belong to a subscription` 子测试
 

@@ -79,6 +79,10 @@ func optionsOf(views []PlacementView) []purchase.Option {
 	return out
 }
 
+// ErrNoPlacement 是这张卡要落到一份在用的套餐上、而用户一份都没有（原型：先续费再来兑换，卡不会过期）。
+var ErrNoPlacement = httpx.New(httpx.CodeValidationFailed,
+	"现在没有在用的套餐，这张卡暂时用不了。先续费再来兑换，卡不会过期")
+
 // resolveChoice 在兑换事务里按当前选项校验用户的选择：选项变了、或多于一个却没选，都回 422，
 // 卡不会被用掉（事务回滚）。一个选项都没有时 ok=false：送流量记为未分配，其余由计费域拒绝。
 func resolveChoice(views []PlacementView, choice *purchase.Choice) (purchase.Option, bool, error) {
