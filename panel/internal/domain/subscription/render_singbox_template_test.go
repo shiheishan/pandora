@@ -8,18 +8,24 @@ import (
 
 type singboxTemplateDoc struct {
 	DNS struct {
-		Servers []map[string]any `json:"servers"`
-		Rules   []map[string]any `json:"rules"`
-		Final   string           `json:"final"`
+		Servers  []map[string]any `json:"servers"`
+		Rules    []map[string]any `json:"rules"`
+		Final    string           `json:"final"`
+		Strategy string           `json:"strategy"`
 	} `json:"dns"`
-	Inbounds  []map[string]any `json:"inbounds"`
-	Outbounds []map[string]any `json:"outbounds"`
-	Route     struct {
+	HTTPClients []map[string]any `json:"http_clients"`
+	Inbounds    []map[string]any `json:"inbounds"`
+	Outbounds   []map[string]any `json:"outbounds"`
+	Route       struct {
 		Rules                 []map[string]any `json:"rules"`
 		RuleSet               []map[string]any `json:"rule_set"`
 		Final                 string           `json:"final"`
 		AutoDetectInterface   bool             `json:"auto_detect_interface"`
-		DefaultDomainResolver string           `json:"default_domain_resolver"`
+		DefaultDomainResolver struct {
+			Server   string `json:"server"`
+			Strategy string `json:"strategy"`
+		} `json:"default_domain_resolver"`
+		DefaultHTTPClient string `json:"default_http_client"`
 	} `json:"route"`
 	Experimental struct {
 		CacheFile struct {
@@ -30,7 +36,12 @@ type singboxTemplateDoc struct {
 
 func renderSingboxDoc(t *testing.T, nodes []Node) (singboxTemplateDoc, string) {
 	t.Helper()
-	body, _, _ := Render(FormatSingbox, nodes, fixtureUUID)
+	return renderSingboxDocFor(t, nodes, "")
+}
+
+func renderSingboxDocFor(t *testing.T, nodes []Node, ua string) (singboxTemplateDoc, string) {
+	t.Helper()
+	body, _, _ := RenderForClient(FormatSingbox, nodes, fixtureUUID, ua)
 	var doc singboxTemplateDoc
 	if err := json.Unmarshal(body, &doc); err != nil {
 		t.Fatalf("invalid sing-box JSON: %v\n%s", err, body)
@@ -52,6 +63,16 @@ func assertSingboxReferencesResolve(t *testing.T, doc singboxTemplateDoc, body s
 		if d, ok := s["detour"].(string); ok && !outbounds[d] {
 			t.Fatalf("dns server %v detours to missing outbound %q\n%s", s["tag"], d, body)
 		}
+	}
+	clients := map[string]bool{}
+	for _, c := range doc.HTTPClients {
+		clients[c["tag"].(string)] = true
+		if d, ok := c["detour"].(string); ok && !outbounds[d] {
+			t.Fatalf("http client %v detours to missing outbound %q\n%s", c["tag"], d, body)
+		}
+	}
+	if c := doc.Route.DefaultHTTPClient; c != "" && !clients[c] {
+		t.Fatalf("default http client %q missing\n%s", c, body)
 	}
 	sets := map[string]bool{}
 	for _, rs := range doc.Route.RuleSet {
@@ -81,7 +102,7 @@ func assertSingboxReferencesResolve(t *testing.T, doc singboxTemplateDoc, body s
 			t.Fatalf("route rule routes to missing outbound %q\n%s", o, body)
 		}
 	}
-	if !outbounds[doc.Route.Final] || !servers[doc.DNS.Final] || !servers[doc.Route.DefaultDomainResolver] {
+	if !outbounds[doc.Route.Final] || !servers[doc.DNS.Final] || !servers[doc.Route.DefaultDomainResolver.Server] {
 		t.Fatalf("final / resolver dangling: route=%q dns=%q resolver=%q\n%s",
 			doc.Route.Final, doc.DNS.Final, doc.Route.DefaultDomainResolver, body)
 	}
@@ -98,7 +119,7 @@ func TestSingboxTemplateCarriesTunDNSAndRoutes(t *testing.T) {
 		doc.Inbounds[0]["strict_route"] != true {
 		t.Fatalf("want exactly one auto-route TUN inbound: %v", doc.Inbounds)
 	}
-	if doc.Route.Final != "节点选择" || !doc.Route.AutoDetectInterface || doc.Route.DefaultDomainResolver != "dns-direct" {
+	if doc.Route.Final != "节点选择" || !doc.Route.AutoDetectInterface || doc.Route.DefaultDomainResolver.Server != "dns-direct" {
 		t.Fatalf("route frame = final %q auto_detect %v resolver %q", doc.Route.Final, doc.Route.AutoDetectInterface, doc.Route.DefaultDomainResolver)
 	}
 	// 规则顺序：嗅探 → 劫持 DNS → 私网直连 → 国内直连
@@ -133,10 +154,11 @@ func TestSingboxTemplateCarriesTunDNSAndRoutes(t *testing.T) {
 			t.Fatalf("domestic DNS must be direct: %v", s)
 		}
 	}
-	// 规则集：缺省 SagerNet 公开地址、二进制格式、经代理下载；没开广告拦截就没有广告规则集
+	// 规则集：缺省 SagerNet 公开地址、二进制格式、经「自动选择」下载（认不出内核版本时用
+	// download_detour）；没开广告拦截就没有广告规则集
 	urls := map[string]string{}
 	for _, rs := range doc.Route.RuleSet {
-		if rs["type"] != "remote" || rs["format"] != "binary" || rs["download_detour"] != "节点选择" {
+		if rs["type"] != "remote" || rs["format"] != "binary" || rs["download_detour"] != "自动选择" {
 			t.Fatalf("rule-set shape: %v", rs)
 		}
 		urls[rs["tag"].(string)] = rs["url"].(string)
@@ -213,4 +235,67 @@ func anyStrings(v any) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// 规则集下载出口按内核版本分两种写法（render_singbox_template.go 文件头）：1.14 起给 http_clients，
+// 不再写已弃用的 download_detour；1.13 及以前与认不出版本的给 download_detour（新字段旧内核整份拒载）。
+func TestSingboxRuleSetDownloadDialect(t *testing.T) {
+	ConfigureSingboxTemplate(SingboxTemplate{BlockAds: true})
+	t.Cleanup(func() { ConfigureSingboxTemplate(SingboxTemplate{}) })
+	cases := []struct {
+		ua      string
+		modern  bool
+		comment string
+	}{
+		{"SFA/1.14.2 (614; sing-box 1.14.2; language zh_CN)", true, "Android 官方客户端 1.14"},
+		{"SFI/1.15.0 (1; sing-box 1.15.0-beta.1; language en)", true, "iOS 1.15 预览版"},
+		{"sing-box/2.0.0", true, "大版本"},
+		{"SFM/1.13.14 (1; sing-box 1.13.14; language zh_CN)", false, "1.13"},
+		{"SFA/1.9.0 (1; sing-box 1.9.0)", false, "1.9"},
+		{"Hiddify/2.5 (sing-box)", false, "没有版本号"},
+		{"", false, "空 UA"},
+		{"clash-verge/v2.0", false, "不是 sing-box"},
+	}
+	for _, c := range cases {
+		doc, body := renderSingboxDocFor(t, formNodes(t), c.ua)
+		if strings.Contains(body, `"download_detour"`) == c.modern {
+			t.Fatalf("%s (%q): download_detour present=%v, want %v\n%s", c.comment, c.ua, !c.modern, !c.modern, body)
+		}
+		if c.modern {
+			if len(doc.HTTPClients) != 1 || doc.HTTPClients[0]["detour"] != "自动选择" ||
+				doc.Route.DefaultHTTPClient != doc.HTTPClients[0]["tag"] {
+				t.Fatalf("%s: rule-sets must download via an http client through 自动选择: %v / %q",
+					c.comment, doc.HTTPClients, doc.Route.DefaultHTTPClient)
+			}
+		} else if len(doc.HTTPClients) != 0 || doc.Route.DefaultHTTPClient != "" {
+			t.Fatalf("%s: old cores reject http_clients\n%s", c.comment, body)
+		}
+		assertSingboxReferencesResolve(t, doc, body)
+	}
+	// 没有节点：两种写法都直连下载，不指向不存在的出站
+	for _, ua := range []string{"", "SFA/1.14.2 (614; sing-box 1.14.2; language zh_CN)"} {
+		doc, body := renderSingboxDocFor(t, nil, ua)
+		if strings.Contains(body, "自动选择") {
+			t.Fatalf("empty subscription must not reference 自动选择\n%s", body)
+		}
+		assertSingboxReferencesResolve(t, doc, body)
+	}
+}
+
+// TUN 带 IPv6 地址（不让双栈网络的 IPv6 绕过代理），DNS 全局只答 IPv4，节点地址的解析单独
+// prefer_ipv4（node-e2e 2026-10-08：IPv4-only 节点上有 AAAA 的站点连不上）。
+func TestSingboxTemplateIPv4OnlyAnswersKeepTunIPv6(t *testing.T) {
+	ConfigureSingboxTemplate(SingboxTemplate{})
+	t.Cleanup(func() { ConfigureSingboxTemplate(SingboxTemplate{}) })
+	doc, body := renderSingboxDoc(t, formNodes(t))
+	addrs := anyStrings(doc.Inbounds[0]["address"])
+	if len(addrs) != 2 || !strings.Contains(addrs[1], ":") {
+		t.Fatalf("TUN must keep an IPv6 address so IPv6 traffic is captured: %v", addrs)
+	}
+	if doc.DNS.Strategy != "ipv4_only" {
+		t.Fatalf("dns strategy = %q, want ipv4_only\n%s", doc.DNS.Strategy, body)
+	}
+	if doc.Route.DefaultDomainResolver.Strategy != "prefer_ipv4" {
+		t.Fatalf("node address resolution must not inherit ipv4_only: %+v", doc.Route.DefaultDomainResolver)
+	}
 }

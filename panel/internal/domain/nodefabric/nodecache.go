@@ -20,14 +20,17 @@ import (
 // 就重算。所以无论改动来自后台、门户、定时任务还是直接执行的 SQL，下一次请求都
 // 看得到，不用等 TTL，也不依赖 Pub/Sub 送达。
 //
-// TTL 只兜两类没有纪元的情况：不追踪的输入（在线设备记录、订阅到期的时间流逝），
-// 以及读方恰好卡在写方「纪元已推进、数据还没提交可见」那道提交缝里算出的旧结果。
+// TTL 只兜两类没有纪元的情况：不追踪的输入（在线设备记录），以及读方恰好卡在写方
+// 「纪元已推进、数据还没提交可见」那道提交缝里算出的旧结果。订阅到期的时间流逝没有
+// 写，用户集条目记着名单里最早的到期时刻（nextExpiry），到点硬过期、同步重算，不走
+// 「先回旧值」的宽限。
 //
 // 只在 aegis-node 里开（EnableNodeCaches）；只缓存成功结果。
 
 const (
-	// nodeUsersCacheTTL 是用户集缓存的寿命上限。到期与 strict 模式下的在线设备变化
-	// 没有纪元，最坏延迟 = 这个 TTL + nodeUsersStaleGrace + 节点拉取间隔。
+	// nodeUsersCacheTTL 是用户集缓存的寿命上限。strict 模式下的在线设备变化没有纪元，
+	// 最坏延迟 = 这个 TTL + nodeUsersStaleGrace + 节点拉取间隔。订阅到期按条目的
+	// nextExpiry 硬过期，不受这一条约束。
 	nodeUsersCacheTTL = 5 * time.Second
 	// nodeUsersStaleGrace 是用户集过了 TTL 之后还能先回旧值的窗口：先回旧值、后台单飞
 	// 重算（stale-while-revalidate），请求不再每 5 秒同步等一次 30 多毫秒的名单查询。
@@ -56,6 +59,9 @@ const deliveryEpochSQL = `(SELECT last_value + is_called::int FROM node_delivery
 type ttlEntry[V any] struct {
 	value   V
 	expires time.Time
+	// hard 表示 expires 来自条目自己的到期时刻（expiry），而不是 TTL：过了就不能
+	// 再当旧值先回（staleGrace 只对 TTL 到期生效）。
+	hard bool
 }
 
 type ttlFlight[V any] struct {
@@ -73,7 +79,8 @@ type ttlCache[V any] struct {
 
 	// expiry 给条目一个自己的到期时刻（如身份的 expires_at），与 ttl 取早者；可为 nil。
 	expiry func(V) time.Time
-	// staleGrace > 0 时，TTL 到期但 valid 仍认可的条目在这个窗口里先回旧值、后台重算。
+	// staleGrace > 0 时，TTL 到期但 valid 仍认可的条目在这个窗口里先回旧值、后台重算；
+	// 按 expiry 硬过期的条目不在此列。
 	staleGrace time.Duration
 	// rank 是条目的新旧（纪元）；晚完成的旧加载不覆盖已存的新条目。可为 nil。
 	rank func(V) int64
@@ -103,7 +110,7 @@ func (c *ttlCache[V]) get(ctx context.Context, key, flight string, valid func(V)
 			c.mu.Unlock()
 			return e.value, nil
 		}
-		if c.staleGrace > 0 && now.Before(e.expires.Add(c.staleGrace)) {
+		if c.staleGrace > 0 && !e.hard && now.Before(e.expires.Add(c.staleGrace)) {
 			// 先回旧值；没有同标签的加载在跑就起一个后台加载，跑完替换条目。
 			if _, busy := c.flights[flightKey]; !busy {
 				f := &ttlFlight[V]{done: make(chan struct{})}
@@ -173,13 +180,13 @@ func (c *ttlCache[V]) storeLocked(key string, value V) {
 	if old, ok := c.entries[key]; ok && c.rank != nil && c.rank(old.value) > c.rank(value) {
 		return // 一趟起得早、完成得晚的加载，不能把已存的较新条目换回旧的
 	}
-	expires := now.Add(c.ttl)
+	expires, hard := now.Add(c.ttl), false
 	if c.expiry != nil {
 		if at := c.expiry(value); !at.IsZero() && at.Before(expires) {
-			expires = at
+			expires, hard = at, true
 		}
 	}
-	c.entries[key] = ttlEntry[V]{value: value, expires: expires}
+	c.entries[key] = ttlEntry[V]{value: value, expires: expires, hard: hard}
 }
 
 // peek 只读缓存，不触发加载。
@@ -215,12 +222,38 @@ func (e nodeCacheError) Error() string { return string(e) }
 
 const errNodeCacheLoadPanicked = nodeCacheError("node cache load did not complete")
 
-// nodeUserSet 是一个池当前该放行的用户、它的版本（UniProxy ETag 同源）与算出它时
-// 的下发纪元。users 被多个请求共享，只读。
+// nodeUserSet 是一个池当前该放行的用户、它的版本（UniProxy ETag 同源）、算出它时
+// 的下发纪元，以及名单里最早的订阅到期时刻（零值表示没有会到期的订阅）。users 被
+// 多个请求共享，只读。version 只在缓存路径上算好，直查路径为空。
 type nodeUserSet struct {
-	users   []ProxyUser
-	version string
-	epoch   int64
+	users      []ProxyUser
+	version    string
+	epoch      int64
+	nextExpiry time.Time
+}
+
+// nextExpiryFloor 是 nextExpiry 离现在的最小距离。库与本进程的时钟有偏差：本进程
+// 先到了到期时刻、库里 now() 还没到，重算出的名单仍含这个人、nextExpiry 不变；
+// 不设下限的话，偏差窗口里每个请求都同步重算一次。
+const nextExpiryFloor = time.Second
+
+// earlierExpiry 取两者中较早的到期时刻；at 为空（不会到期）时原样返回 cur。
+func earlierExpiry(cur time.Time, at *time.Time) time.Time {
+	if at == nil || (!cur.IsZero() && !at.Before(cur)) {
+		return cur
+	}
+	return *at
+}
+
+// clampNextExpiry 把已经过去或太近的到期时刻推到 now + nextExpiryFloor。
+func clampNextExpiry(at, now time.Time) time.Time {
+	if at.IsZero() {
+		return at
+	}
+	if floor := now.Add(nextExpiryFloor); at.Before(floor) {
+		return floor
+	}
+	return at
 }
 
 // nodeCaches 是 aegis-node 进程的用户集缓存与签名身份缓存。
@@ -233,6 +266,7 @@ func newNodeCaches(now func() time.Time) *nodeCaches {
 	users := newTTLCache[nodeUserSet](nodeUsersCacheTTL, nodeUsersCacheMax, now)
 	users.staleGrace = nodeUsersStaleGrace
 	users.rank = func(set nodeUserSet) int64 { return set.epoch }
+	users.expiry = func(set nodeUserSet) time.Time { return set.nextExpiry }
 	identity := newTTLCache[Identity](nodeIdentityCacheTTL, nodeIdentityCacheMax, now)
 	identity.expiry = func(id Identity) time.Time { return id.expiresAt }
 	identity.rank = func(id Identity) int64 { return id.epoch }
@@ -252,15 +286,3 @@ func usersCacheKey(tenantID, poolID string) string { return tenantID + "\x00" + 
 func identityCacheKey(tenantID, nodeID string) string { return tenantID + "\x00" + nodeID }
 
 func epochFlight(epoch int64) string { return strconv.FormatInt(epoch, 10) }
-
-// userSetVersionOf 取一份用户列表的版本：列表正是缓存里那一份时直接用算好的，
-// 否则现算。按底层数组判断「同一份」，不比内容——比内容就等于又算一遍。
-func (s *Service) userSetVersionOf(tenantID string, n *ServingNode, users []ProxyUser) string {
-	if c := s.caches; c != nil && n != nil && n.PoolID != nil && len(users) > 0 {
-		if set, ok := c.users.peek(usersCacheKey(tenantID, *n.PoolID)); ok &&
-			len(set.users) == len(users) && &set.users[0] == &users[0] {
-			return set.version
-		}
-	}
-	return UserSetVersion(users)
-}

@@ -377,7 +377,7 @@ func (s *Service) RegisterStream(c *StreamConn, log *slog.Logger) {
 
 	s.watchMu.Lock()
 	defer s.watchMu.Unlock()
-	if !s.stream.Add(c) || s.realtime == nil {
+	if !s.stream.Add(c) {
 		return
 	}
 	if s.nodeWatchers == nil {
@@ -413,23 +413,37 @@ func (s *Service) nodeChangeWatcherCount() int {
 	return len(s.nodeWatchers)
 }
 
-// WatchNodeChanges 订阅节点变更信号，收到就把最新配置推给本进程持有的连接。
+// WatchNodeChanges 盯着这个租户的下发变化，把最新配置与用户名单推给本进程持有的连接。
 //
-// 在 aegis-node 进程里起一个 goroutine 跑它。信号里只有 node_id，配置内容
-// 由这里自己查——那套签名和分流拼装逻辑只应该有一份。
+// 在 aegis-node 进程里每个租户起一个 goroutine 跑它（RegisterStream）。信号有三路：
+//   - Valkey 的节点变更信号（后台改节点配置带 node_id；付款、R104 等写路径发租户级
+//     node.users.changed）——跨进程，没挂 realtime 时没有这一路；
+//   - 下发纪元（nodestream_epoch.go）：每 nodeEpochPollInterval 读一次序列，凡影响下发
+//     结果的已提交写都让它前进（订阅、配额与流量包翻转、套餐、池授权、用户组、账号
+//     状态……），不管写来自哪个进程、哪条路径，甚至直接执行的 SQL；
+//   - 名单里最早的订阅到期时刻：到期没有写，到点按时推一轮。
 //
-// 读事件的循环只登记「谁要推」，真正查库、推送交给 streamPushQueue 的 worker
-// 有上限地并发去做（nodestream_fanout.go）。原先在这个循环里逐节点串行重算：一次
+// 读信号的循环只登记「谁要推」，真正查库、推送交给 streamPushQueue 的 worker 有上限地
+// 并发去做（nodestream_fanout.go），且两轮之间至少隔 nodeFanoutMinInterval：批量到期、
+// 批量开单时的成百上千条变化按节点合并成一轮。原先在这个循环里逐节点串行重算：一次
 // 付款事件要给 200 个节点各查三遍库，几秒钟里事件循环不读，realtime 的 32 条缓冲
 // 一满，后面的配置变更就被丢了。
 func (s *Service) WatchNodeChanges(ctx context.Context, tenantID string, log *slog.Logger) {
-	if s.realtime == nil || s.stream == nil {
+	if s.stream == nil {
 		return
 	}
-	// 订阅这个租户下所有节点的频道。Redis 的模式订阅在这套 Hub 里没有
-	// 暴露，所以退一步：用一个租户级频道，消息里带 node_id。
-	events, unsubscribe := s.realtime.Subscribe([]string{realtime.ChannelNodeAll(tenantID)})
-	defer unsubscribe()
+	var events <-chan realtime.Event
+	if s.realtime != nil {
+		// 订阅这个租户下所有节点的频道。Redis 的模式订阅在这套 Hub 里没有
+		// 暴露，所以退一步：用一个租户级频道，消息里带 node_id。
+		ch, unsubscribe := s.realtime.Subscribe([]string{realtime.ChannelNodeAll(tenantID)})
+		defer unsubscribe()
+		events = ch
+	}
+	poller := s.newEpochPoller(tenantID)
+	if events == nil && poller == nil {
+		return
+	}
 
 	queue := newStreamPushQueue()
 	done := make(chan struct{})
@@ -439,13 +453,37 @@ func (s *Service) WatchNodeChanges(ctx context.Context, tenantID string, log *sl
 	}()
 	defer func() { <-done }()
 
+	var tick <-chan time.Time
+	if poller != nil {
+		ticker := time.NewTicker(nodeEpochPollInterval)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
+	// settle 是纪元前进之后、开始重算之前的等待（见 nodeEpochSettle）；为 nil 表示没有在等。
+	var settle <-chan time.Time
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case now := <-tick:
+			changed, expired := poller.poll(ctx, queue, now, log)
+			if expired {
+				queue.addAllUsers()
+			}
+			if changed && settle == nil {
+				settle = time.After(nodeEpochSettle)
+			}
+		case <-settle:
+			settle = nil
+			queue.addAllUsers()
 		case ev, ok := <-events:
 			if !ok {
-				return
+				if poller == nil {
+					return
+				}
+				events = nil // Valkey 那一路关了，纪元这一路照常
+				continue
 			}
 			nodeID, _ := ev.Payload["node_id"].(string)
 			if nodeID == "" {

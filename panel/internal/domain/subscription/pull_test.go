@@ -123,3 +123,30 @@ func TestPullUsesHashLookupAndSharedEligibility(t *testing.T) {
 		t.Fatal("rate limit, fetch log and credential touch must share one transaction, lock first")
 	}
 }
+
+// 封禁即断、解封恢复（用户 2026-10-07 定）：订阅主人不是 active 时，有效令牌也回伪装 404、
+// 不给节点，过期提示也不给；令牌本身不对照旧 404；active 照常。凭据不吊销，所以恢复后原链接可用。
+func TestPullRefusesNonActiveOwners(t *testing.T) {
+	for _, c := range []struct {
+		status string
+		in     error
+		want   error
+	}{
+		{"active", nil, nil},
+		{"active", ErrExpired, ErrExpired},
+		{"suspended", nil, ErrNotFound},
+		{"banned", nil, ErrNotFound},
+		{"banned", ErrExpired, ErrNotFound},
+		{"deletion_scheduled", nil, ErrNotFound},
+		{"", nil, ErrNotFound},
+		{"active", ErrNotFound, ErrNotFound},
+	} {
+		if got := checkOwnerStatus(c.status, c.in); !errors.Is(got, c.want) && !(got == nil && c.want == nil) {
+			t.Fatalf("checkOwnerStatus(%q, %v) = %v, want %v", c.status, c.in, got, c.want)
+		}
+	}
+	if !strings.Contains(pullAuthSQL, "COALESCE(u.status, '')") ||
+		!strings.Contains(sourcetest.Load(t, ".").Decl("Service.LoadPull"), "checkOwnerStatus(userStatus, checkCredential(") {
+		t.Fatal("pull must read the owner's account status and refuse non-active owners after the token check")
+	}
+}

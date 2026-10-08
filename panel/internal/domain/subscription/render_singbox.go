@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-func renderSingbox(nodes []Node, uuid string) ([]byte, string, int) {
+func renderSingbox(nodes []Node, uuid string, dialect singboxDialect) ([]byte, string, int) {
 	outs := []map[string]any{}
 	var helpers []map[string]any
 	var tags []string
@@ -41,7 +41,7 @@ func renderSingbox(nodes []Node, uuid string) ([]byte, string, int) {
 
 	all := append([]map[string]any(nil), outs...)
 	all = append(all, helpers...)
-	finalOutbound := "direct"
+	finalOutbound, ruleSetVia := "direct", ""
 	if len(tags) > 0 {
 		selector := map[string]any{
 			"type": "selector", "tag": "节点选择",
@@ -52,12 +52,12 @@ func renderSingbox(nodes []Node, uuid string) ([]byte, string, int) {
 			"outbounds": tags, "url": "http://www.gstatic.com/generate_204", "interval": "5m",
 		}
 		all = append([]map[string]any{selector, urltest}, all...)
-		finalOutbound = "节点选择"
+		finalOutbound, ruleSetVia = "节点选择", "自动选择"
 	}
 	all = append(all, map[string]any{"type": "direct", "tag": "direct"})
 
 	// 入站、DNS 与路由模板见 render_singbox_template.go
-	body, err := json.MarshalIndent(singboxFrame(all, finalOutbound), "", "  ")
+	body, err := json.MarshalIndent(singboxFrame(all, finalOutbound, ruleSetVia, dialect), "", "  ")
 	if err != nil {
 		return []byte("{}"), "application/json; charset=utf-8", 0
 	}
