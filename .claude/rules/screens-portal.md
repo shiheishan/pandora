@@ -16,7 +16,7 @@ paths:
   - `#/messages?tab=announcements`：消息页公告标签
   - `#/tickets/new?order=<订单 id>`：新建工单预填关联订单；`#/tickets/<id>`、`#/help/<slug>`
 - 页头：标题默认取 `pages.ts`；子页经 `portal/head.tsx` 的 `usePageHead(标题, 返回落点)` 覆盖标题并给「‹ 返回」（应用内有上一页就退回，直接打开的地址退到落点）
-- 叫法（原型第 7 节）：订阅叫「套餐 / 一份」，订阅地址叫「链接」，客户端叫「App」，导入叫「添加」；渲染文字里「订阅、导入、抵扣、折算、剩余价值、降级、客户端、落点」0 次。守卫：`tests/mock-portal-wording.test.ts` 扫门户全部字符串与 JSX 文字（注释不算）
+- 叫法（原型第 7 节）：订阅叫「套餐 / 一份」，订阅地址叫「链接」，客户端叫「App」，导入叫「添加」；渲染文字里「订阅、导入、抵扣、折算、剩余价值、降级、客户端、落点、约付、周期、重置订阅、重置链接」0 次（原型 flow.md 第 7 节；「周期」说成「买多久：1 个月 / 3 个月 / 1 年」，「流量重置卡」是卡名不算）。守卫：`tests/mock-portal-wording.test.ts` 扫门户全部字符串与 JSX 文字（注释不算）
 - 页面数据只经 `common/` 与外框 `portal/queries.ts` 的查询取，同一接口同一查询键；外框 schema 不够用时在 `queries.ts` 里写全，外框经 `select` 取自己的部分（订阅列表、佣金概况即如此），不另起查询键。
 - `common/` 只放多个门户页面共用的东西；只有一个页面用的放回该页面目录，后台也要用的提升到 `core/` 或 `ui/`，不让后台引用 `portal/screens/common`。
 - schema 按 Go 实际编码写严：无 omitempty 的字段必填（指针 / 可空列 nullable），只有 omitempty 的字段可选；页面对缺席做降级，而不是放宽 schema。实时失效只靠查询的 `meta.topics`。

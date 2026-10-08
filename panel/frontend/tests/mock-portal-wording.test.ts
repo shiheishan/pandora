@@ -4,11 +4,12 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 // ---------------------------------------------------------------------------
-// 叫法（购买模型原型第 7 节）：渲染给用户的文字里，下面这些词一律 0 次。
+// 叫法（购买模型原型 flow.md 第 7 节，已定稿）：渲染给用户的文字里，下面这些词一律 0 次。
+// 「周期」改成「买多久：1 个月 / 3 个月 / 1 年」；「流量重置卡」是卡名，不含这些词。
 // 扫门户全部源码里的字符串字面量、模板字符串与 JSX 文字（注释不算），测试与夹具除外。
 // 服务端下发的文案（错误信息等）不在这里管。
 // ---------------------------------------------------------------------------
-const BANNED = ['订阅', '导入', '抵扣', '折算', '剩余价值', '降级', '客户端', '落点'] as const
+const BANNED = ['订阅', '导入', '抵扣', '折算', '剩余价值', '降级', '客户端', '落点', '约付', '周期', '重置订阅', '重置链接'] as const
 const ROOT = new URL('../src/portal/', import.meta.url).pathname
 
 function files(dir: string): string[] {
@@ -36,7 +37,7 @@ function texts(path: string): Array<{ line: number; text: string }> {
 }
 
 describe('门户叫法', () => {
-  it('界面文字里没有「订阅、导入、抵扣、折算、剩余价值、降级、客户端、落点」', () => {
+  it('界面文字里没有「订阅、导入、抵扣、折算、剩余价值、降级、客户端、落点、约付、周期、重置订阅、重置链接」', () => {
     const hits = files(ROOT).flatMap((f) =>
       texts(f)
         .filter((t) => BANNED.some((w) => t.text.includes(w)))
