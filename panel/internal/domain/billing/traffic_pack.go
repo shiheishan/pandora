@@ -65,11 +65,15 @@ func (s *Service) ListTrafficPacks(ctx context.Context, tenantID string) ([]Traf
 }
 
 type CreateTrafficPackOrderInput struct {
-	UserID     string
-	PackID     string
-	UseBalance int64
-	CouponCode string
-	Claim      middleware.IdempotencyClaim
+	UserID string
+	// SubscriptionID 是流量包加到哪一份（必填，必须是本人生效中的订阅）
+	SubscriptionID string
+	PackID         string
+	UseBalance     int64
+	CouponCode     string
+	Claim          middleware.IdempotencyClaim
+	// Expect 是确认时带回的报价，见 Expectation
+	Expect *Expectation
 }
 
 // CreateTrafficPackOrder 建一张流量包订单（kind='addon'）。

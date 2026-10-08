@@ -45,6 +45,8 @@ type CreateRenewalInput struct {
 	UseBalance int64
 	CouponCode string
 	Claim      middleware.IdempotencyClaim
+	// Expect 是确认时带回的报价，见 Expectation
+	Expect *Expectation
 
 	// --- 以下仅供后台人工开单（manual_order.go）用，门户续费一律留空 ---
 	//

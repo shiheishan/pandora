@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/domain/subscription"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -267,7 +268,7 @@ func checkExpiryRulesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	lapse(s6, 48*time.Hour)
 	scan("rescue scan")
 	orderReleasePG18InTxAs(t, ctx, p.app, p.fx.tenant, u5, func(tx pgx.Tx) error {
-		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, u5, 3)
+		return p.billing.GiftGranter().ExtendExpiry(ctx, tx, p.fx.tenant, u5, "", 3)
 	})
 	rescued("gift card rescue", s5, 3, 1000)
 	extendClaim := orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, p.fx.referrer,
@@ -323,7 +324,7 @@ func checkExpiryRulesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	var cardSub, mode string
 	orderReleasePG18InTxAs(t, ctx, p.app, p.fx.tenant, u7, func(tx pgx.Tx) error {
 		var err error
-		cardSub, mode, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, u7, "", plan, price, "同套餐套餐卡")
+		cardSub, mode, _, _, err = p.billing.GiftGranter().GrantPlan(ctx, tx, p.fx.tenant, u7, "", plan, price, purchase.Choice{})
 		return err
 	})
 	if cardSub != s7 || mode != PlanGrantRenewed || !subEnd(s7).Equal(beforeCard.AddDate(0, 1, 0)) {

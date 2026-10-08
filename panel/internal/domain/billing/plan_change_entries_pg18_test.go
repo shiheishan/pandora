@@ -195,7 +195,7 @@ func checkPlanChangeEntriesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) 
 	want4 := preview(u4, s4)
 	bal4 := balance(u4)
 	cards := giftcard.New(p.app, slog.New(slog.NewTextHandler(io.Discard, nil)), p.billing.GiftGranter())
-	res, err := cards.Redeem(ctx, p.fx.tenant, u4, code)
+	res, err := cards.Redeem(ctx, p.fx.tenant, u4, code, nil)
 	if err != nil || len(res.Summary) != 2 || !strings.Contains(res.Summary[0], "订阅链接不变") ||
 		!strings.Contains(res.Summary[1], "已退回余额") {
 		t.Fatalf("plan card redeem=%+v err=%v", res, err)

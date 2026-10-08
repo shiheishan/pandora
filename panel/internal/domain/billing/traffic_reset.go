@@ -161,6 +161,9 @@ func (s *Service) TrafficResetStats(ctx context.Context, tenantID string) (*Rese
 }
 
 type ManualResetInput struct {
+	// SubscriptionID 是要重置的那一份（后台订阅行上的操作）
+	SubscriptionID string
+	// UserID 是旧的按用户接口用的，按订阅的接口接入后删掉
 	UserID  string
 	ActorID string
 	Note    string

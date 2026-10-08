@@ -288,9 +288,20 @@ type CardPreview struct {
 	PlanName      string     `json:"plan_name,omitempty"`
 	Interval      string     `json:"interval,omitempty"`
 	IntervalCount int        `json:"interval_count,omitempty"`
+	// Placement 是这张卡在当前用户名下怎么用：问题、选项与默认值；纯余额卡为 null
+	Placement *CardPlacement `json:"placement"`
 }
 
-func (s *Service) PreviewCode(ctx context.Context, tenantID, code string) (*CardPreview, error) {
+// CardPlacement 是兑换卡的落点问题。DefaultKey 为空表示不预选（前端按钮置灰「先选一种用法」）。
+type CardPlacement struct {
+	Question   string          `json:"question"`
+	Options    []PlacementView `json:"options"`
+	DefaultKey string          `json:"default_key"`
+}
+
+// PreviewCode 查卡面；userID 用来给出这张卡在他名下的落点选项（Placement，纯余额卡为 nil）。
+func (s *Service) PreviewCode(ctx context.Context, tenantID, userID, code string) (*CardPreview, error) {
+	_ = userID // 契约阶段：落点选项尚未接入
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if len(code) < 8 || len(code) > 32 {
 		return nil, ErrCodeUnusable

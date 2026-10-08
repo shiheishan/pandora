@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -155,7 +156,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	codeID := uuid.NewString()
 	grantGift := func() error {
 		return pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
-			return service.GiftGranter().GrantTraffic(ctx, tx, fx.tenant, fx.buyer, codeID, 250)
+			return service.GiftGranter().GrantTraffic(ctx, tx, fx.tenant, fx.buyer, "", codeID, 250)
 		})
 	}
 	if err := grantGift(); err != nil {
@@ -174,7 +175,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	var subID string
 	if err := pool.InTx(ctx, platformdb.Scope{TenantID: fx.tenant, ActorID: fx.buyer}, func(tx pgx.Tx) error {
 		var err error
-		subID, _, _, _, err = service.GiftGranter().GrantPlan(ctx, tx, fx.tenant, fx.buyer, "", fx.plan, fx.price, "pg18 admin traffic")
+		subID, _, _, _, err = service.GiftGranter().GrantPlan(ctx, tx, fx.tenant, fx.buyer, "", fx.plan, fx.price, purchase.Choice{})
 		return err
 	}); err != nil {
 		t.Fatalf("seed a subscription for the admin grant: %v", err)

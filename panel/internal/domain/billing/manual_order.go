@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/middleware"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
@@ -98,6 +99,11 @@ type CreateManualOrderInput struct {
 	// Reference 是线下凭证号，仅 offline 必填，别的结算方式忽略。
 	Reference string
 	Claim     middleware.IdempotencyClaim
+	// Target 是这单落到哪一份（ManualOrderOptions 给出的选项之一）；选项只有一个时可以不传，
+	// 多于一个而没带回 422「请选择这单落到哪一份」
+	Target *purchase.Choice
+	// EntrySubscriptionID 是后台从哪一行订阅点进来的（「给这份开单」），只影响 preview 的默认值
+	EntrySubscriptionID string
 }
 
 func (s *Service) CreateManualOrder(ctx context.Context, tenantID string,

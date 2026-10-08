@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/plugin"
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -45,7 +46,9 @@ type RedeemResult struct {
 	Summary      []string `json:"summary"` // 给用户看的人话
 }
 
-func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string) (*RedeemResult, error) {
+// Redeem 兑换一张卡。choice 是用户在 preview 给出的选项里选定的落点；选项只有一个时可以不传。
+func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string,
+	choice *purchase.Choice) (*RedeemResult, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if tenantID == "" || userID == "" {
 		return nil, httpx.New(httpx.CodeBadRequest, "缺少租户或用户")
@@ -114,7 +117,7 @@ func (s *Service) Redeem(ctx context.Context, tenantID, userID, code string) (*R
 			}
 
 			// 5) 结算奖励
-			granted, err := s.applyRewards(ctx, tx, tenantID, userID, codeID, t, &out)
+			granted, err := s.applyRewards(ctx, tx, tenantID, userID, codeID, t, choice, &out)
 			if err != nil {
 				return err
 			}
@@ -202,7 +205,11 @@ type grantedRecord struct {
 }
 
 func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID string,
-	t Template, out *RedeemResult) (grantedRecord, error) {
+	t Template, choice *purchase.Choice, out *RedeemResult) (grantedRecord, error) {
+
+	// 契约阶段：落点选择尚未接入，按旧口径由计费域自动选（subID 为空、choice 为零值）
+	_ = choice
+	subID := ""
 
 	var g grantedRecord
 	r := t.Rewards
@@ -223,7 +230,7 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 
 	if t.Type == "plan" {
 		subID, mode, refund, currency, err := s.grant.GrantPlan(ctx, tx, tenantID, userID,
-			codeID, r.PlanID, r.PriceID, "礼品卡兑换："+t.Name)
+			codeID, r.PlanID, r.PriceID, purchase.Choice{})
 		if err != nil {
 			return g, err
 		}
@@ -260,7 +267,7 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		out.Summary = append(out.Summary, "余额 +"+formatMoney(r.Balance))
 	}
 	if r.TrafficBytes > 0 {
-		if err := s.grant.GrantTraffic(ctx, tx, tenantID, userID, codeID, r.TrafficBytes); err != nil {
+		if err := s.grant.GrantTraffic(ctx, tx, tenantID, userID, subID, codeID, r.TrafficBytes); err != nil {
 			return g, err
 		}
 		g.TrafficBytes = r.TrafficBytes
@@ -268,7 +275,7 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		out.Summary = append(out.Summary, "流量 +"+formatBytes(r.TrafficBytes))
 	}
 	if r.ExpireDays > 0 {
-		if err := s.grant.ExtendExpiry(ctx, tx, tenantID, userID, r.ExpireDays); err != nil {
+		if err := s.grant.ExtendExpiry(ctx, tx, tenantID, userID, subID, r.ExpireDays); err != nil {
 			return g, err
 		}
 		g.ExpireDays = r.ExpireDays
@@ -276,7 +283,7 @@ func (s *Service) applyRewards(ctx context.Context, tx pgx.Tx, tenantID, userID,
 		out.Summary = append(out.Summary, "到期时间延长 "+itoa(r.ExpireDays)+" 天")
 	}
 	if r.ResetQuota {
-		if err := s.grant.ResetQuota(ctx, tx, tenantID, userID); err != nil {
+		if err := s.grant.ResetQuota(ctx, tx, tenantID, userID, subID); err != nil {
 			return g, err
 		}
 		g.QuotaReset = true

@@ -35,6 +35,14 @@ type CreateOrderInput struct {
 	// 拒绝新开（ErrSamePlanUseRenewal），门户改走续费。人工开单在进来之前已按同一口径
 	// 改走续费（CreateManualOrder），不设它。
 	RejectSamePlan bool
+	// NewCopy 是门户「另买一份」的显式意图：设了它就不拦同套餐（RejectSamePlan 只在
+	// !NewCopy 时生效），开出来的是一份新订阅、新链接。
+	NewCopy bool
+	// Label 是给新的一份起的备注名（经 purchase.NormalizeLabel），付款前存进
+	// orders.subscription_label，履约建订阅时写上；会和已有一份在 App 里重名时必填。
+	Label string
+	// Expect 是确认时带回的报价，见 Expectation
+	Expect *Expectation
 
 	// --- 以下仅供管理端人工单（XBD-015）使用，用户端一律留空 ---
 	//

@@ -29,6 +29,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/purchase"
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
@@ -48,28 +49,36 @@ type Service struct {
 // 声明成接口而不是直接引 billing：礼品卡依赖计费，计费不该反过来知道
 // 礼品卡的存在。真到了要在下单时抵扣礼品卡的那天，这条边界能省很多事。
 type Granter interface {
+	// Placements 给出这张卡在该用户名下能落到哪几份、默认哪一份（空串表示不预选），
+	// 规则见 purchase.Options。兑换前的 preview 与兑换时的校验都用它，同一个事务口径。
+	Placements(ctx context.Context, tx pgx.Tx, tenantID, userID string,
+		offer purchase.Offer) ([]PlacementView, string, error)
 	// GrantBalance 往用户余额记一笔，返回账本流水号。
 	GrantBalance(ctx context.Context, tx pgx.Tx, tenantID, userID string,
 		amount int64, currency, memo string) (string, error)
-	// GrantTraffic 给用户发一笔流量包余额（字节），codeID 是这张卡密，
-	// 一码只能发一笔（D-E-1：礼品卡流量与购买的流量包同一余额、同一规则）。
-	GrantTraffic(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID string,
+	// GrantTraffic 给用户发一笔流量包余额（字节），挂到 subID 那一份；subID 为空表示
+	// 「还没加到任何一份」（未分配，开通第一份时自动挂上）。codeID 是这张卡密，一码只能发一笔。
+	GrantTraffic(ctx context.Context, tx pgx.Tx, tenantID, userID, subID, codeID string,
 		bytes int64) error
-	// ExtendExpiry 把用户当前生效订阅的到期时间往后推。
-	ExtendExpiry(ctx context.Context, tx pgx.Tx, tenantID, userID string,
+	// ExtendExpiry 把 subID 那一份的到期时间往后推（过期 30 天内的会被救回）。
+	ExtendExpiry(ctx context.Context, tx pgx.Tx, tenantID, userID, subID string,
 		days int) error
-	// ResetQuota 把当前周期的已用流量清零。
-	ResetQuota(ctx context.Context, tx pgx.Tx, tenantID, userID string) error
-	// GrantPlan 兑换套餐卡（codeID 是这张卡密），返回订阅 ID 与落地方式 mode：
-	//   new      没有可续可换的订阅，开通一条新订阅
-	//   renewed  已有同套餐订阅（生效中或过期 30 天内），在原订阅上续一期（规则 3）
-	//   changed  已有别的套餐的订阅，在原订阅上换成卡上的套餐（2026-10-07），原套餐的
-	//            剩余价值 refund（币种 refundCurrency）退进余额
-	// 后两种链接都不变。
+	// ResetQuota 把 subID 那一份本周期的已用流量清零。
+	ResetQuota(ctx context.Context, tx pgx.Tx, tenantID, userID, subID string) error
+	// GrantPlan 兑换套餐卡（codeID 是这张卡密），按 choice 落地，返回订阅 ID 与落地方式 mode：
+	//   new      choice=new，开通一份新订阅
+	//   renewed  choice=renew，在同款那份上续一期（生效中接在到期后，过期 30 天内从现在起算）
+	//   changed  choice=change，把那份换成卡上的套餐，原套餐的剩余价值 refund（币种
+	//            refundCurrency）退进余额
+	// 后两种链接都不变。choice 必须是 Placements 给出的选项之一（调用方已 Match）。
 	GrantPlan(ctx context.Context, tx pgx.Tx, tenantID, userID, codeID,
-		planID, priceID, reason string) (subscriptionID, mode string, refund int64,
+		planID, priceID string, choice purchase.Choice) (subscriptionID, mode string, refund int64,
 		refundCurrency string, err error)
 }
+
+// PlacementView 是一个落点选项的展示结构（选项、这份的名字与套餐、新到期日、退回余额的金额）。
+// 与后台开单 preview 同一个形状，定义在纯函数包 purchase，礼品卡只经它拿基本类型。
+type PlacementView = purchase.Placement
 
 func New(pool *db.Pool, log *slog.Logger, grant Granter) *Service {
 	return &Service{pool: pool, log: log, grant: grant}

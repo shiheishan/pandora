@@ -54,6 +54,8 @@ type PlanChangeInput struct {
 	CouponCode     string
 	// Claim 只有下单要，试算不落库也不占幂等键。
 	Claim middleware.IdempotencyClaim
+	// Expect 是确认时带回的报价，见 Expectation
+	Expect *Expectation
 
 	// --- 以下仅供后台人工开单（manual_order.go）用，门户改套餐一律留空 ---
 	//
