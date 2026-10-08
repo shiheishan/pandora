@@ -40,10 +40,9 @@ func (tx *logoutFakeTx) Exec(_ context.Context, query string, args ...any) (pgco
 		return pgconn.NewCommandTag(fmt.Sprintf("UPDATE %d", tx.sessionRows)), nil
 	case strings.Contains(query, "UPDATE refresh_tokens"):
 		return pgconn.NewCommandTag("UPDATE 2"), nil
-	case strings.Contains(query, "pg_advisory_xact_lock"):
-		return pgconn.NewCommandTag("SELECT 1"), nil
 	case strings.Contains(query, "INSERT INTO audit_events"):
-		return pgconn.NewCommandTag("INSERT 0 1"), nil
+		// audit.Write 写行并推链头：外层语句是链头的 UPDATE
+		return pgconn.NewCommandTag("UPDATE 1"), nil
 	default:
 		return pgconn.CommandTag{}, errors.New("unexpected Exec query")
 	}
@@ -53,14 +52,11 @@ func (tx *logoutFakeTx) QueryRow(_ context.Context, query string, args ...any) p
 	if strings.Contains(query, "SELECT EXISTS") && strings.Contains(query, "FROM sessions") {
 		return logoutFakeRow{value: tx.exactSessionExists}
 	}
-	// audit.Write 取链尾：没有第二版记录，uuid 原样回显
-	if strings.Contains(query, "LEFT JOIN LATERAL") && strings.Contains(query, "chain_seq") {
+	// audit.Write 从链头取号：第一条记录，前驱为空，uuid 原样回显
+	if strings.Contains(query, "UPDATE audit_chain_heads SET last_seq") {
 		return logoutAuditTailRow{args: args}
 	}
-	if !strings.Contains(query, "SELECT entry_hash FROM audit_events") {
-		return logoutFakeRow{err: errors.New("unexpected QueryRow query")}
-	}
-	return logoutFakeRow{err: pgx.ErrNoRows}
+	return logoutFakeRow{err: errors.New("unexpected QueryRow query")}
 }
 
 type logoutFakeRow struct {
@@ -88,12 +84,14 @@ type logoutAuditTailRow struct{ args []any }
 
 func (r logoutAuditTailRow) Scan(dest ...any) error {
 	if len(dest) != 7 || len(r.args) != 4 {
-		return errors.New("unexpected audit tail scan")
+		return errors.New("unexpected audit seq scan")
 	}
-	*dest[0].(*time.Time) = time.Now()
-	*dest[1].(*string) = r.args[0].(string)
+	*dest[0].(*int64) = 1
+	*dest[1].(*[]byte) = nil
+	*dest[2].(*time.Time) = time.Now()
+	*dest[3].(*string) = r.args[0].(string)
 	for i := 1; i <= 3; i++ {
-		*dest[i+1].(**string) = r.args[i].(*string)
+		*dest[i+3].(**string) = r.args[i].(*string)
 	}
 	return nil
 }
