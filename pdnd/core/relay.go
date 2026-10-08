@@ -35,7 +35,7 @@ import (
 //   - 每搬一块就把字节数原子加到调用方给的计数器上，上报周期随时可取增量。
 //   - 一个方向正常结束（EOF）：把半关闭传给对端，另一方向进入「单向收尾」，
 //     空闲超过 HalfCloseTimeout（默认 1 秒）即收尾；任一方向出错：立刻关两端。
-//   - 两个方向都开着时，空闲超过 IdleTimeout（默认 300 秒）回收。两个值与 Xray
+//   - 两个方向都开着时，空闲超过 IdleTimeout（默认 30 分钟）回收。两个值与 Xray
 //     的 uplinkOnly/downlinkOnly、connIdle 同一含义。
 
 // 默认值，进程级，可经 SetRelayTimeouts 改（pdnd 配置 connection_idle_seconds /
@@ -46,8 +46,11 @@ var (
 )
 
 const (
-	// DefaultRelayIdleTimeout 是两个方向都开着时的空闲回收时间。
-	DefaultRelayIdleTimeout = 300 * time.Second
+	// DefaultRelayIdleTimeout 是两个方向都开着时的空闲回收时间。用户 10-08 定为 30 分钟（Xray 默认 300 秒）：
+	// 死连接由 TCP keepalive 约 150 秒探出，不靠它；它只影响对端还在、但长时间不发数据的连接
+	// （SSH、IMAP IDLE、推送长连接），300 秒会把这些正常连接断掉。代价是这类连接多占内存、
+	// 在线 IP 与设备数按开着的连接计，会多算到它真正断开为止。
+	DefaultRelayIdleTimeout = 30 * time.Minute
 	// DefaultRelayHalfCloseTimeout 是一侧结束后、另一侧的空闲收尾时间。
 	DefaultRelayHalfCloseTimeout = time.Second
 )

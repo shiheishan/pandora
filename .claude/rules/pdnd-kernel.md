@@ -18,7 +18,7 @@ paths:
 
 ## 转发的空闲回收
 
-- `core.Relay` 两个方向都没有数据超过 `runtime.connection_idle_seconds`（默认 300，与 Xray connIdle 同义，0 不回收）即断开，整段无数据的长连接（iperf3 的控制连接、不发保活的 SSH）也在此列。10-08 验收记的「iperf3 控制连接第 240 秒被断」是 `-i 60` 的汇报粒度，回环 `-i 2` 复测断在 298–300 秒，就是这个回收。
+- `core.Relay` 两个方向都没有数据超过 `runtime.connection_idle_seconds`（默认 1800 即 30 分钟，用户 10-08 定；与 Xray connIdle 同义但 Xray 默认 300；0 不回收）即断开，整段无数据的长连接（iperf3 的控制连接、不发保活的 SSH）也在此列。10-08 验收记的「iperf3 控制连接第 240 秒被断」是 `-i 60` 的汇报粒度，回环 `-i 2` 复测断在 298–300 秒，就是这个回收。
 
 ## 连接失败观测链
 
