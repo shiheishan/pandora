@@ -168,7 +168,7 @@ func (s *Service) ApplyLatePaymentToBalance(ctx context.Context, tenantID string
 
 	actorID := in.ActorID
 	var txnID string
-	err := s.pool.InTxSerializable(ctx, dbScope(tenantID, actorID), func(tx pgx.Tx) error {
+	err := s.pool.InTxSerializableRetry(ctx, dbScope(tenantID, actorID), func(tx pgx.Tx) error {
 		var amount int64
 		var currency, status, userID, orderID string
 		err := tx.QueryRow(ctx, `

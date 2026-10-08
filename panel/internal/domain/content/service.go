@@ -325,7 +325,7 @@ func (s *Service) PublishVersion(ctx context.Context, tenantID, actorID, request
 		return nil, err
 	}
 	result := &PublishResult{Slug: in.Slug, Status: in.Status}
-	err = s.pool.InTxSerializable(ctx, db.Scope{TenantID: tenantID, ActorID: actorID}, func(tx pgx.Tx) error {
+	err = s.pool.InTxSerializableRetry(ctx, db.Scope{TenantID: tenantID, ActorID: actorID}, func(tx pgx.Tx) error {
 		if len(in.TargetPlanIDs) > 0 {
 			var count int
 			if err := tx.QueryRow(ctx, `SELECT count(*) FROM plans
