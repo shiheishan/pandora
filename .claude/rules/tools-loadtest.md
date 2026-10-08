@@ -10,7 +10,7 @@ paths:
 ## 边界与依赖
 
 - 只经 `go run ./tools/loadtest` 或 `go build` 后拷到压测机使用，不被任何包 import，不进发布包（`deploy/build-release.sh` 只编 `cmd/<名字>`）。
-- 四个子命令 seed / nodes / users / burst 之间只经 `ltkit.Manifest` 交换数据；计量一律走 `ltkit.Recorder`，三类场景的 QPS、分位数、错误码才是同一口径。不要在子命令里另写计量。
+- 四个子命令 seed / nodes / users / burst 之间只经 `ltkit.Manifest` 交换数据；第五个 `quiet-report` 只读 `scripts/quiet-collect.sh` 的采样目录，按静默标准（面板 + 数据库 CPU、整机内存）出判定，`-strict` 不达标退出非 0，口径改动要和 prod-retest skill 的静默一节一起改。计量一律走 `ltkit.Recorder`，三类场景的 QPS、分位数、错误码才是同一口径。不要在子命令里另写计量。
 - 签名规范串、配置验签、线格式直接调 `domain/nodefabric` 与 `platform/crypto`（如 `nodefabric.CanonicalPayloadV2`、`VerifyEffectiveReleaseSignature`），不自己抄一份；也不 import pdnd：它是另一个 module，引用要在 panel 的 go.mod 加 replace。
 
 ## 与被测对象保持同步（对方改了，这里要跟）
@@ -24,12 +24,12 @@ paths:
 
 - 造数标记三件套：用户邮箱只用 `@loadtest.invalid`，节点与目录名以 `loadtest-` 开头，模拟来源 IP 全在 198.18.0.0/15（512 个 /24 轮转）。`seed/retire.go` 只靠这些标记圈定要清理的对象，改命名必须同步（`TestLoadtestMarkersIdentifyEverySeededName`、`TestRetireTouchesOnlyLoadtestMarkers`）。
 - 造数经运行角色与租户上下文（`db.Scope`）写库，让 RLS 与触发器真起作用；不要为了快改用超级用户或直接插 active。
-- 退役不 DELETE：追加写表连着订阅与节点。订阅经状态机转 expired，节点经后台批量接口退役。
+- 退役不 DELETE：追加写表连着订阅与节点。订阅经状态机转 expired；上一批里仍有有效接入身份的节点先经后台吊销接口吊销身份（后台不让退役仍有身份的节点），再经后台批量接口转 draining、retired。每一步只处理还没处理的，中途失败原样重跑即可。
 - 节点与目录全走真实网关，不直写库。
 
 ## 网关与限流
 
-- 模拟来源 IP 经 `X-Real-IP` 带给面板（`httpx.ClientIP` 只认它）。每个模拟节点都要带清单里的 `real_ip`（`nodesim/realip.go`）：不带会让全部节点挤在压测机一个地址上被 nginx 每 IP 限流。
+- 模拟来源 IP 经 `X-Real-IP` 带给面板（`httpx.ClientIP` 只认它）。`seed -admin-workers N`（N>1）开 N 个后台会话，各占一个 198.51.100.x 虚构来源、各自按每 IP 240 次/分节流；缺省 1 不带来源头，与旧行为一致。每个模拟节点都要带清单里的 `real_ip`（`nodesim/realip.go`）：不带会让全部节点挤在压测机一个地址上被 nginx 每 IP 限流。
 - 节点侧请求只对限流重放：应用的 429，或 nginx limit_req 回的 503 `text/html` 页；应用自己的 JSON 错误一律不重放（`TestNodeClientDoesNotRetryApplication503`）。
 - 报告里的端点名必须规范化：不出现令牌、邮箱、id、订阅前缀、后台秘密前缀（`userload/client.go`）。
 
