@@ -3,6 +3,7 @@ package kernel
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -41,6 +42,9 @@ type XHTTPSession struct {
 	Request *http.Request
 	Body    io.ReadCloser
 	Writer  http.ResponseWriter
+	// Payload 是 packet-up 上行包的负载，已按 uplink_data_placement 从请求体、
+	// 请求头或 Cookie 取好；其余请求类型为 nil。
+	Payload []byte
 }
 
 type xhttpDuplexConn struct {
@@ -97,56 +101,107 @@ type XHTTPServer struct {
 	Handler XHTTPHandler
 }
 
-func (s XHTTPServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+// ServeHTTP 只回状态码、不写错误文本：Go 的错误文本是现成的指纹（Xray 只回状态
+// 码，审查 X8）。
+func (s XHTTPServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if req == nil || req.URL == nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		rw.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	if s.Handler == nil {
-		http.Error(w, "xhttp handler unavailable", http.StatusServiceUnavailable)
+		rw.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	if !requestHostMatches(req.Host, s.Config.Host) {
-		http.Error(w, "host mismatch", http.StatusNotFound)
+		rw.WriteHeader(http.StatusNotFound)
 		return
 	}
 	kind, sessionID, seq, err := s.Config.classifyRequest(req)
 	if err != nil {
 		if err == errXHTTPMethodNotAllowed {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			rw.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		http.Error(w, "invalid xhttp metadata", http.StatusBadRequest)
-		return
-	}
-	// sc_max_each_post_bytes 只约束 packet-up 的单个上行包（与 Xray 一致）。
-	// stream-one / stream-up 的请求体是整条连接的上行，套上它会把超过 1MB 的
-	// 上传截断。
-	if kind == XHTTPRequestPacket && s.Config.MaxPost.To > 0 && req.ContentLength > int64(s.Config.MaxPost.To) {
-		http.Error(w, "xhttp body too large", http.StatusRequestEntityTooLarge)
+		rw.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	for key, value := range s.Config.Headers {
 		if req.Header.Get(key) != value {
-			http.Error(w, "header mismatch", http.StatusNotFound)
+			rw.WriteHeader(http.StatusNotFound)
 			return
 		}
 	}
+	var payload []byte
+	if kind == XHTTPRequestPacket {
+		// sc_max_each_post_bytes 只约束 packet-up 的单个上行包（与 Xray 一致）。
+		// stream-one / stream-up 的请求体是整条连接的上行，套上它会把超过 1MB 的
+		// 上传截断。
+		if s.Config.MaxPost.To > 0 && req.ContentLength > int64(s.Config.MaxPost.To) {
+			rw.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
+		if payload, err = s.Config.uplinkPayload(req); err != nil {
+			rw.WriteHeader(xhttpErrorStatus(err))
+			return
+		}
+	}
+	if req.ProtoMajor == 1 && (kind == XHTTPRequestDuplex || kind == XHTTPRequestStreamUp) {
+		// HTTP/1.1 上边读请求体边写响应：不开全双工的话，响应头一冲出去请求体
+		// 就读不动了（审查 X2）。
+		_ = http.NewResponseController(rw).EnableFullDuplex()
+	}
+	w := &xhttpResponseWriter{ResponseWriter: rw}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-store")
-	// 上行包请求等包收下再回 200；其余（双工、下行、流式上行）先把响应头冲出去，
-	// 客户端据此开始收下行或继续送上行。
-	if flusher, ok := w.(http.Flusher); ok && kind != XHTTPRequestPacket {
-		flusher.Flush()
+	// 双工与下行先把响应头冲出去，客户端据此开始收下行；stream-up 等会话认下这条
+	// 上行再回（冲突时回 409）；上行包等包收下再回 200。
+	if kind == XHTTPRequestDuplex || kind == XHTTPRequestDownlink {
+		w.Flush()
 	}
-	body := req.Body
-	if kind == XHTTPRequestPacket && s.Config.MaxPost.To > 0 {
-		body = http.MaxBytesReader(w, req.Body, int64(s.Config.MaxPost.To))
-	}
-	if err := s.Handler(req.Context(), XHTTPSession{ID: sessionID, Seq: seq, Kind: kind, Request: req, Body: body, Writer: w}); err != nil {
-		http.Error(w, fmt.Sprintf("xhttp session: %v", err), http.StatusBadGateway)
+	if err := s.Handler(req.Context(), XHTTPSession{ID: sessionID, Seq: seq, Kind: kind, Request: req, Body: req.Body, Writer: w, Payload: payload}); err != nil && !w.wrote {
+		w.WriteHeader(xhttpErrorStatus(err))
 	}
 }
+
+// xhttpErrorStatus 把会话出错映射成状态码（不带正文）。
+func xhttpErrorStatus(err error) int {
+	var tooLarge *http.MaxBytesError
+	switch {
+	case errors.Is(err, errXHTTPConflict):
+		return http.StatusConflict
+	case errors.Is(err, errXHTTPCapacity):
+		return http.StatusServiceUnavailable
+	case errors.As(err, &tooLarge), errors.Is(err, errXHTTPPayloadTooLarge):
+		return http.StatusRequestEntityTooLarge
+	default:
+		return http.StatusBadRequest
+	}
+}
+
+// xhttpResponseWriter 记下响应头是否已经发出：已发出时出错只能结束响应，不能再写状态码。
+type xhttpResponseWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (w *xhttpResponseWriter) WriteHeader(code int) {
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *xhttpResponseWriter) Write(b []byte) (int, error) {
+	w.wrote = true
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *xhttpResponseWriter) Flush() {
+	w.wrote = true
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *xhttpResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // Serve starts the H1 server with the protocol's explicit header-size limit.
 // The caller owns the returned server and should call Shutdown/Close.

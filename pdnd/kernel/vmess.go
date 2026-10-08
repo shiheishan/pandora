@@ -213,7 +213,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.packet = packet
 		a.xhttpConfig = xhttpConfig
 		if xhttpUsesSessions(xhttpConfig.Mode) {
-			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
+			a.xhttpBroker, parseErr = newXHTTPSessionBroker(xhttpConfig)
 			if parseErr != nil {
 				a.mu.Unlock()
 				_ = packet.Close()
@@ -257,7 +257,7 @@ func (a *vmessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Lock()
 		a.xhttpConfig = xhttpConfig
 		if xhttpUsesSessions(xhttpConfig.Mode) {
-			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
+			a.xhttpBroker, parseErr = newXHTTPSessionBroker(xhttpConfig)
 			if parseErr != nil {
 				a.mu.Unlock()
 				_ = ln.Close()

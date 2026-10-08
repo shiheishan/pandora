@@ -20,6 +20,13 @@ type xhttpPacketConn struct {
 	readBuf  []byte
 	writeSeq uint64
 	closed   bool
+	// writeMu 让并发的 Write 串行：序号分配与入队必须在同一把锁里，否则高序号
+	// 先占满下行队列、低序号进不去，读端等低序号——死锁（审查 X3）。它不保护
+	// closed：Close 只拿 mu，能随时关队列唤醒等待中的写方。
+	writeMu sync.Mutex
+	// onAuth 在协议层读完请求头、清掉读截止时调用一次（见 SetReadDeadline）。
+	onAuth   func()
+	authOnce sync.Once
 	// readDeadline（unix 纳秒，0 表示无）让协议层「10 秒内读不到请求头就断」在
 	// 会话型 XHTTP 上也生效：只开了下行 GET、始终不送上行的会话不再永久挂着。
 	readDeadline atomic.Int64
@@ -61,6 +68,8 @@ func (c *xhttpPacketConn) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -95,9 +104,13 @@ func (c *xhttpPacketConn) RemoteAddr() net.Addr             { return xhttpAddr("
 func (c *xhttpPacketConn) SetDeadline(t time.Time) error    { return c.SetReadDeadline(t) }
 func (c *xhttpPacketConn) SetWriteDeadline(time.Time) error { return nil }
 
+// SetReadDeadline 设读截止。协议层（vless / vmess）读请求头前设 10 秒截止、认证
+// 通过后清零：清掉一个已设的截止即视为认证完成，会话从此不再计入未认证上限。
 func (c *xhttpPacketConn) SetReadDeadline(t time.Time) error {
 	if t.IsZero() {
-		c.readDeadline.Store(0)
+		if c.readDeadline.Swap(0) != 0 && c.onAuth != nil {
+			c.authOnce.Do(c.onAuth)
+		}
 	} else {
 		c.readDeadline.Store(t.UnixNano())
 	}
@@ -134,6 +147,7 @@ func (a *vlessAdapter) startXHTTPPacketSession(id string, realitySession *Realit
 		go func() {
 			defer a.wg.Done()
 			conn := newXHTTPPacketConn(ctx, duplex)
+			conn.onAuth = func() { a.xhttpBroker.Authenticated(id) }
 			err := a.handleConnSession(ctx, conn, realitySession)
 			cancel()
 			session.stopReaper()

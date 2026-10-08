@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -67,7 +66,7 @@ func TestXHTTPServerAcceptsHostWithPort(t *testing.T) {
 		rec := httptest.NewRecorder()
 		server.ServeHTTP(rec, req)
 		// 方法不对时回 405：能走到这一步说明 Host 检查已经放行
-		hostRejected := rec.Code == http.StatusNotFound && strings.Contains(rec.Body.String(), "host mismatch")
+		hostRejected := rec.Code == http.StatusNotFound
 		if hostRejected != c.rejected {
 			t.Fatalf("host %q: status=%d body=%q, rejected=%v want %v", c.host, rec.Code, rec.Body.String(), hostRejected, c.rejected)
 		}

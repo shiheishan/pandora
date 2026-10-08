@@ -32,6 +32,7 @@ func (a *vmessAdapter) startXHTTPPacketSession(id string) (*xhttpSession, error)
 		go func() {
 			defer a.wg.Done()
 			conn := newXHTTPPacketConn(ctx, duplex)
+			conn.onAuth = func() { a.xhttpBroker.Authenticated(id) }
 			err := a.handleConn(ctx, conn)
 			cancel()
 			session.stopReaper()

@@ -204,7 +204,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		}
 		a.xhttpConfig = xhttpConfig
 		if xhttpUsesSessions(xhttpConfig.Mode) {
-			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
+			a.xhttpBroker, parseErr = newXHTTPSessionBroker(xhttpConfig)
 			if parseErr != nil {
 				_ = packet.Close()
 				a.cancel()
@@ -438,7 +438,7 @@ func (a *vlessAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 		a.mu.Lock()
 		a.xhttpConfig = xhttpConfig
 		if xhttpUsesSessions(xhttpConfig.Mode) {
-			a.xhttpBroker, parseErr = NewXHTTPPacketBroker(xhttpConfig.MaxBufferedPosts, 5*time.Minute)
+			a.xhttpBroker, parseErr = newXHTTPSessionBroker(xhttpConfig)
 			if parseErr != nil {
 				a.mu.Unlock()
 				_ = listener.Close()

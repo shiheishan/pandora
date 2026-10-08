@@ -706,7 +706,8 @@ func TestVLESSAdapterXHTTPH1Bridge(t *testing.T) {
 	header = append(header, vlessVersion)
 	header = append(header, id[:]...)
 	header = append(header, 0, vlessTCP, 0x01, 0xbb, 1, 127, 0, 0, 1)
-	req := httptest.NewRequest(http.MethodPost, "https://edge.example/xhttp/session/1/", bytes.NewReader(append(header, []byte("xhttp-vless")...)))
+	// 缺省 auto：不带会话的上行请求按 stream-one 双工处理。
+	req := httptest.NewRequest(http.MethodPost, "https://edge.example/xhttp/", bytes.NewReader(append(header, []byte("xhttp-vless")...)))
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, req)
 	body := recorder.Body.Bytes()

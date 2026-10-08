@@ -1,8 +1,10 @@
 package kernel
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -122,6 +124,10 @@ func ParseXHTTPConfig(raw map[string]any) (XHTTPConfig, error) {
 	}
 	if c.UplinkHTTPMethod != http.MethodPost && c.UplinkHTTPMethod != http.MethodGet {
 		return XHTTPConfig{}, fmt.Errorf("xhttp uplink_http_method 仅支持 GET 或 POST")
+	}
+	if c.UplinkHTTPMethod == http.MethodGet && c.UplinkDataPlacement == "body" {
+		// GET 没有请求体：上行数据只能放请求头或 Cookie（Xray 同样拒绝这种组合）。
+		return XHTTPConfig{}, fmt.Errorf("xhttp uplink_http_method=GET 需要 uplink_data_placement 为 header 或 cookie")
 	}
 	if c.UplinkChunkSize, err = parseXHTTPRange(rawValue(raw, "uplink_chunk_size"), XHTTPRange{From: c.MaxPost.From, To: c.MaxPost.To}, 64, 64<<20); err != nil {
 		return XHTTPConfig{}, fmt.Errorf("xhttp uplink_chunk_size: %w", err)
@@ -248,7 +254,68 @@ func (c XHTTPConfig) extractRequestMetaOptions(req *http.Request, allowMissingSe
 	return sessionID, seq, nil
 }
 
-var errXHTTPMethodNotAllowed = errors.New("xhttp method not allowed")
+var (
+	errXHTTPMethodNotAllowed = errors.New("xhttp method not allowed")
+	errXHTTPPayloadTooLarge  = errors.New("xhttp uplink packet too large")
+)
+
+// uplinkPayload 按 uplink_data_placement 取 packet-up 上行包的负载（照 Xray 的
+// splithttp 服务端）：body 读请求体；header 拼接 {key}-0、{key}-1… 请求头；cookie
+// 拼接 {key}_0、{key}_1… Cookie；auto 三者依次拼接。请求头与 Cookie 里是
+// base64url（无填充）。超过 sc_max_each_post_bytes 即拒。
+func (c XHTTPConfig) uplinkPayload(req *http.Request) ([]byte, error) {
+	limit := int64(c.MaxPost.To)
+	var out []byte
+	placement := c.UplinkDataPlacement
+	if placement == "header" || placement == "auto" {
+		var encoded strings.Builder
+		for i := 0; ; i++ {
+			chunk := req.Header.Get(c.UplinkDataKey + "-" + strconv.Itoa(i))
+			if chunk == "" {
+				break
+			}
+			encoded.WriteString(chunk)
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(encoded.String())
+		if err != nil {
+			return nil, fmt.Errorf("xhttp uplink header payload: %w", err)
+		}
+		out = append(out, decoded...)
+	}
+	if placement == "cookie" || placement == "auto" {
+		var encoded strings.Builder
+		for i := 0; ; i++ {
+			cookie, err := req.Cookie(c.UplinkDataKey + "_" + strconv.Itoa(i))
+			if err != nil {
+				break
+			}
+			encoded.WriteString(cookie.Value)
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(encoded.String())
+		if err != nil {
+			return nil, fmt.Errorf("xhttp uplink cookie payload: %w", err)
+		}
+		out = append(out, decoded...)
+	}
+	if placement != "header" && placement != "cookie" && req.Body != nil {
+		body := io.Reader(req.Body)
+		if limit > 0 {
+			body = io.LimitReader(req.Body, limit+1)
+		}
+		data, err := io.ReadAll(body)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, data...)
+	}
+	if limit > 0 && int64(len(out)) > limit {
+		return nil, errXHTTPPayloadTooLarge
+	}
+	if out == nil {
+		out = []byte{}
+	}
+	return out, nil
+}
 
 // classifyRequest 判定一次请求在会话里的角色。
 //
@@ -275,7 +342,8 @@ func (c XHTTPConfig) classifyRequest(req *http.Request) (XHTTPRequestKind, strin
 			return 0, "", "", errXHTTPMethodNotAllowed
 		}
 		sessionID, seq, err := c.extractRequestMetaOptions(req, false, get)
-		if get {
+		// 上行方法配成 GET 时，带序号的 GET 是上行包，不带序号的才是下行（审查 X6）。
+		if get && (!uplinkMethod || seq == "") {
 			return XHTTPRequestDownlink, sessionID, seq, err
 		}
 		return XHTTPRequestPacket, sessionID, seq, err
@@ -322,7 +390,7 @@ func validXHTTPMode(mode XHTTPMode) bool {
 }
 
 func validXHTTPPlacement(value string, allowBody bool) bool {
-	if allowBody && value == "body" {
+	if allowBody && (value == "body" || value == "auto") {
 		return true
 	}
 	switch value {
