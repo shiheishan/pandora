@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/platform/db"
+	"github.com/aegispanel/aegis/internal/platform/period"
 )
 
 // MyQuota 是一条订阅的一项配额余额（周期内）。
@@ -57,8 +58,30 @@ type MySubscription struct {
 	NextResetAt        *time.Time      `json:"next_reset_at"`
 	Renewable          bool            `json:"renewable"`
 	RenewalPrice       *MyRenewalPrice `json:"renewal_price"`
-	// PackRemainingBytes 是用户的流量包余量：流量包挂在用户上，几条订阅显示同一个数
+	// PackRemainingBytes 是挂在这一份上的流量包余量（购买模型统一：流量包按份挂）
 	PackRemainingBytes int64 `json:"pack_remaining_bytes"`
+	// LegacyMovablePackBytes 是其中「升级前买的、00138 回填挂过来、还没被用户或后台挪过」的余量
+	// （用户 2026-10-07 定：这部分允许自己挪一次到另一份生效中或可救回的订阅）
+	LegacyMovablePackBytes int64 `json:"legacy_movable_pack_bytes"`
+	// Label 是用户起的备注名，没起为 null
+	Label *string `json:"label"`
+	// ClientName 是这一份在 App 里显示的配置名（ProfileName），与订阅下载的
+	// Content-Disposition 同一来源
+	ClientName string `json:"client_name"`
+	// Changeable 与付费换套餐、续费同一口径（billing.subscriptionAcceptsPaidChange）：
+	// 生效中的四种状态，外加过期 30 天内、窗口没关的；不看套餐是否允许续费
+	Changeable bool `json:"changeable"`
+	// RenewUntil 是按 renewal_price 续一期会到哪天：生效中的从当前到期日起算，已过期的
+	// 从现在起算（与履约 renewalBase 同口径）；不能续（不可续或价格不可用）时为 null
+	RenewUntil *time.Time `json:"renew_until"`
+}
+
+// MySubscriptionList 是门户「我的套餐」：每一份，加上还没加到任何一份的流量包余量。
+type MySubscriptionList struct {
+	Subscriptions []MySubscription
+	// UnattachedPackBytes 是「未分配」的流量包余量：没有订阅时兑换的送流量卡、迁移时留空的
+	// 余额。门户据它提示「有 xG 流量包还没加到任何一份」
+	UnattachedPackBytes int64
 }
 
 // mySubscriptionsSQL 是「我的订阅」的主查询，$1 租户、$2 本人。
@@ -71,7 +94,10 @@ type MySubscription struct {
 // LEFT JOIN 整个视图，PostgreSQL 不把 JOIN 条件推进带聚合的视图，只看一个人的
 // 订阅也要把全站在线记录聚合一遍（5000 用户实测 3.38s/次）。
 //
-// 流量包余量挂在用户上、与订阅无关，写成不相关子查询，整条语句只算一次。
+// 每一份的流量包余量按订阅走一个 LATERAL（每份一次 idx_traffic_pack_grants_open_sub 探测），
+// 同一次聚合顺带算出可挪一次的旧包余量（legacyMovablePackSQL，每笔有余量的包再探一次
+// idx_traffic_pack_transfers_grant）；未分配的余量与订阅无关，写成不相关子查询，整条语句只算
+// 一次（InitPlan）。
 const mySubscriptionsSQL = `
 	SELECT s.id, s.plan_id::text, COALESCE(s.price_id::text, ''),
 	       pl.name, pv.version, s.status,
@@ -86,15 +112,17 @@ const mySubscriptionsSQL = `
 	         ORDER BY q.period_start DESC LIMIT 1),
 	       (s.status IN ('active','trialing','grace','past_due')
 	        OR (s.status = 'expired' AND s.renewal_closed_at IS NULL)) AND pl.allow_renewal,
+	       s.status IN ('active','trialing','grace','past_due')
+	        OR (s.status = 'expired' AND s.renewal_closed_at IS NULL),
 	       pr.id::text, pr.currency::text, pr.unit_amount, pr.billing_interval, pr.interval_count,
 	       coalesce(pr.status = 'active' AND pr.currency IN ('CNY','USD')
 	                AND pr.product_id = pl.product_id
 	                AND (pr.user_group_id IS NULL OR pr.user_group_id = u.user_group_id)
 	                AND (pr.valid_from IS NULL OR pr.valid_from <= now())
 	                AND (pr.valid_until IS NULL OR pr.valid_until > now()), false),
-	       (SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
-	          FROM traffic_pack_grants g
-	         WHERE g.tenant_id = $1 AND g.user_id = $2 AND g.consumed_bytes < g.granted_bytes)
+	       s.label,
+	       pk.pack_left, pk.legacy_left,
+	       (` + unattachedPacksSQL + `)
 	  FROM subscriptions s
 	  JOIN plans pl         ON pl.id = s.plan_id
 	  JOIN plan_versions pv ON pv.id = s.plan_version_id
@@ -105,8 +133,26 @@ const mySubscriptionsSQL = `
 	          FROM subscription_online_devices od
 	         WHERE od.tenant_id = s.tenant_id AND od.subscription_id = s.id
 	  ) od ON true
+	  CROSS JOIN LATERAL (
+	        SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint AS pack_left,
+	               coalesce(sum(g.granted_bytes - g.consumed_bytes)
+	                          FILTER (WHERE ` + legacyMovablePackSQL + `), 0)::bigint AS legacy_left
+	          FROM traffic_pack_grants g
+	         WHERE g.tenant_id = s.tenant_id AND g.subscription_id = s.id
+	           AND g.consumed_bytes < g.granted_bytes
+	  ) pk
 	 WHERE s.tenant_id = $1 AND s.user_id = $2
 	 ORDER BY s.created_at DESC`
+
+// legacyMovablePackSQL 判定一笔余额 g 是「升级前买的、还能自己挪一次」的旧包：转移流水里有
+// 00138 回填写的那条（actor_kind='migration'），且没有任何用户、后台或系统的挪动。
+// 两个 EXISTS 都按 idx_traffic_pack_transfers_grant (tenant_id, grant_id, created_at) 探测。
+const legacyMovablePackSQL = `EXISTS (SELECT 1 FROM traffic_pack_transfers t
+	                                     WHERE t.tenant_id = g.tenant_id AND t.grant_id = g.id
+	                                       AND t.actor_kind = 'migration')
+	                          AND NOT EXISTS (SELECT 1 FROM traffic_pack_transfers t
+	                                           WHERE t.tenant_id = g.tenant_id AND t.grant_id = g.id
+	                                             AND t.actor_kind <> 'migration')`
 
 // myQuotasSQL 一次取齐这些订阅的全部配额行（原先每条订阅各查一次），
 // 每条订阅内部的顺序与原来相同：按指标、周期起点倒序。
@@ -117,9 +163,20 @@ const myQuotasSQL = `
 	 WHERE tenant_id = $1 AND subscription_id = ANY($2::uuid[])
 	 ORDER BY subscription_id, metric, period_start DESC`
 
-// MySubscriptions 列出本人的全部订阅（新建在前）。列表为空时返回 []MySubscription{}。
-func (s *Service) MySubscriptions(ctx context.Context, tenantID, userID string) ([]MySubscription, error) {
-	out := []MySubscription{}
+// unattachedPacksSQL 是本人「未分配」的流量包余量，$1 租户、$2 本人。
+const unattachedPacksSQL = `SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint
+	          FROM traffic_pack_grants g
+	         WHERE g.tenant_id = $1 AND g.user_id = $2 AND g.subscription_id IS NULL
+	           AND g.consumed_bytes < g.granted_bytes`
+
+// MySubscriptions 列出本人的全部订阅（新建在前）与未分配的流量包余量。
+// 列表为空时 Subscriptions 是 []MySubscription{}。
+//
+// 有订阅时是两条查询：主查询（未分配余量作为 InitPlan 带出）加一次取齐的配额；
+// 一份订阅都没有时主查询没有行，未分配余量另用一条小查询取。
+func (s *Service) MySubscriptions(ctx context.Context, tenantID, userID string) (MySubscriptionList, error) {
+	out := MySubscriptionList{Subscriptions: []MySubscription{}}
+	now := time.Now()
 
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID},
 		func(tx pgx.Tx) error {
@@ -137,8 +194,8 @@ func (s *Service) MySubscriptions(ctx context.Context, tenantID, userID string) 
 					&v.PlanName, &v.PlanVersion, &v.Status,
 					&v.PeriodStart, &v.PeriodEnd, &v.Currency, &v.Amount,
 					&v.DeviceLimit, &v.OnlineDevices, &v.QuotaResetStrategy, &v.NextResetAt,
-					&v.Renewable, &priceID, &priceCurrency, &unitAmount, &interval, &intervalCount,
-					&available, &v.PackRemainingBytes); err != nil {
+					&v.Renewable, &v.Changeable, &priceID, &priceCurrency, &unitAmount, &interval, &intervalCount,
+					&available, &v.Label, &v.PackRemainingBytes, &v.LegacyMovablePackBytes, &out.UnattachedPackBytes); err != nil {
 					rows.Close()
 					return err
 				}
@@ -147,21 +204,22 @@ func (s *Service) MySubscriptions(ctx context.Context, tenantID, userID string) 
 						UnitAmount: *unitAmount, BillingInterval: *interval, IntervalCount: *intervalCount,
 						Available: available}
 				}
-				out = append(out, v)
+				v.RenewUntil = renewUntil(v.Renewable, v.RenewalPrice, v.PeriodEnd, now)
+				out.Subscriptions = append(out.Subscriptions, v)
 			}
 			rows.Close()
 			if err := rows.Err(); err != nil {
 				return err
 			}
-			if len(out) == 0 {
-				return nil
+			if len(out.Subscriptions) == 0 {
+				return tx.QueryRow(ctx, unattachedPacksSQL, tenantID, userID).Scan(&out.UnattachedPackBytes)
 			}
 
-			ids := make([]string, len(out))
-			index := make(map[string]int, len(out))
-			for i := range out {
-				ids[i] = out[i].ID
-				index[out[i].ID] = i
+			ids := make([]string, len(out.Subscriptions))
+			index := make(map[string]int, len(out.Subscriptions))
+			for i := range out.Subscriptions {
+				ids[i] = out.Subscriptions[i].ID
+				index[out.Subscriptions[i].ID] = i
 			}
 			qrows, err := tx.Query(ctx, myQuotasSQL, tenantID, ids)
 			if err != nil {
@@ -176,13 +234,38 @@ func (s *Service) MySubscriptions(ctx context.Context, tenantID, userID string) 
 					return err
 				}
 				if i, ok := index[subID]; ok {
-					out[i].Quotas = append(out[i].Quotas, q)
+					out.Subscriptions[i].Quotas = append(out.Subscriptions[i].Quotas, q)
 				}
 			}
 			return qrows.Err()
 		})
 	if err != nil {
-		return nil, err
+		return MySubscriptionList{}, err
+	}
+	// 配置名：站点名按租户缓存（与订阅下载同一份），不在事务里读
+	site := s.SiteName(ctx, tenantID)
+	for i := range out.Subscriptions {
+		v := &out.Subscriptions[i]
+		label := ""
+		if v.Label != nil {
+			label = *v.Label
+		}
+		v.ClientName = ProfileName(site, label, v.PlanName)
 	}
 	return out, nil
+}
+
+// renewUntil 是按当前价格档续一期会到哪天：与履约（billing renewalBase）同口径，
+// 到期日还在将来的接在到期日后，已经到期（或没有到期日）的从现在起算。
+// 不可续、没有价格档或价格档不可用时为 nil。
+func renewUntil(renewable bool, price *MyRenewalPrice, periodEnd *time.Time, now time.Time) *time.Time {
+	if !renewable || price == nil || !price.Available {
+		return nil
+	}
+	base := now.UTC()
+	if periodEnd != nil && periodEnd.After(base) {
+		base = periodEnd.UTC()
+	}
+	end := period.AddInterval(base, price.BillingInterval, price.IntervalCount).Truncate(time.Microsecond)
+	return &end
 }

@@ -76,11 +76,11 @@ func TestTrafficChargePG18(t *testing.T) {
 		        now() + interval '30 days', 100, 100)`, tenantID, subID)
 	// 夹具连接自己也听变更通道：新增余额要推给用户，扣量不推（00070）。
 	must(`LISTEN aegis_change`)
-	must(`INSERT INTO traffic_pack_grants (id, tenant_id, user_id, source, source_id,
+	must(`INSERT INTO traffic_pack_grants (id, tenant_id, user_id, subscription_id, source, source_id,
 			granted_bytes, created_at)
-		VALUES ($1, $3, $4, 'migration', gen_random_uuid(), 50, now() - interval '2 hours'),
-		       ($2, $3, $4, 'migration', gen_random_uuid(), 30, now() - interval '1 hour')`,
-		older, newer, tenantID, userID)
+		VALUES ($1, $3, $4, $5, 'migration', gen_random_uuid(), 50, now() - interval '2 hours'),
+		       ($2, $3, $4, $5, 'migration', gen_random_uuid(), 30, now() - interval '1 hour')`,
+		older, newer, tenantID, userID, subID)
 
 	grantNotices := func() (n int) {
 		t.Helper()
@@ -114,7 +114,7 @@ func TestTrafficChargePG18(t *testing.T) {
 	charge := func(billed int64) {
 		t.Helper()
 		if err := app.InTx(ctx, platformdb.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-			return chargeTraffic(ctx, tx, tenantID, subID, userID, billed)
+			return chargeTraffic(ctx, tx, tenantID, subID, billed)
 		}); err != nil {
 			t.Fatalf("charge %d: %v", billed, err)
 		}
@@ -161,6 +161,8 @@ func TestTrafficChargePG18(t *testing.T) {
 	t.Log("marker=traffic_charge_pg18_charges_do_not_notify_ok")
 
 	batchChargeScenario(t, ctx, admin, app)
+	// 购买模型统一：流量包按份挂，下发判断、扣量、转移后的纪元都按订阅（traffic_pack_delivery_pg18_test.go）
+	perSubscriptionPacksScenario(t, ctx, admin, app)
 	rolloverAndForeignUIDScenario(t, ctx, admin, app)
 	retentionScenario(t, ctx, admin, app)
 	reportIDScenario(t, ctx, admin, app)
@@ -249,8 +251,9 @@ func rolloverAndForeignUIDScenario(t *testing.T, ctx context.Context, admin *pgx
 }
 
 // batchChargeScenario 证明整份上报批量记账与逐笔记账同一结果：同一用户的两条订阅
-// 按 uid 升序依次决定怎么分，前一条扣掉的流量包后一条看得见；找不到订阅的 uid 不计；
-// 10 秒内重发的同一报文只留档不记账。
+// 按 uid 升序依次决定怎么分，各自只扣挂在自己那一份上的流量包（购买模型统一：流量包
+// 按份挂，A 份用超的部分不扣 B 份的包）；找不到订阅的 uid 不计；10 秒内重发的同一报文
+// 只留档不记账。
 func batchChargeScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app *platformdb.Pool) {
 	t.Helper()
 	const (
@@ -285,11 +288,12 @@ func batchChargeScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app
 		VALUES ($1, $2, 'traffic.bytes', 'cycle', now() - interval '1 day', now() + interval '30 days', 100, 100),
 		       ($1, $3, 'traffic.bytes', 'cycle', now() - interval '1 day', now() + interval '30 days', 50, 50)`,
 		tenantID, subA, subB)
-	must(`INSERT INTO traffic_pack_grants (id, tenant_id, user_id, source, source_id,
+	// 旧包挂在 A 份、新包挂在 B 份
+	must(`INSERT INTO traffic_pack_grants (id, tenant_id, user_id, subscription_id, source, source_id,
 			granted_bytes, created_at)
-		VALUES ($1, $3, $4, 'migration', gen_random_uuid(), 40, now() - interval '2 hours'),
-		       ($2, $3, $4, 'migration', gen_random_uuid(), 100, now() - interval '1 hour')`,
-		packOld, packNew, tenantID, userID)
+		VALUES ($1, $3, $4, $5, 'migration', gen_random_uuid(), 40, now() - interval '2 hours'),
+		       ($2, $3, $4, $6, 'migration', gen_random_uuid(), 100, now() - interval '1 hour')`,
+		packOld, packNew, tenantID, userID, subA, subB)
 
 	svc := NewService(app, nil)
 	node := servingNodeWithUsers(svc, tenantID, nodeID, 1, 7510001, 7510002, 7519999)
@@ -320,18 +324,20 @@ func batchChargeScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app
 		}
 	}
 
-	// uid 7510001 先记：超出 100 的 50 从流量包扣（旧包 40 扣光、新包扣 10）；
-	// uid 7510002 再记：超出 50 的 30 从新包剩下的 90 里扣。未知 uid 不计。
+	// uid 7510001（A 份）：超出 100 的 50 里，A 份上的旧包 40 扣光，剩下 10 记在套餐上；
+	// uid 7510002（B 份）：超出 50 的 30 从 B 份的新包里扣。未知 uid 不计。
 	first := `{"7510002":[0,80],"7510001":[150,0],"7519999":[5,5]}`
 	if res := report(first); res.Duplicate || res.Accepted != 2 {
 		t.Fatalf("batch report = %+v, want 2 accepted", res)
 	}
-	expect("two subscriptions share packs in uid order", 100, 50, 40, 40, 150, 80)
+	expect("each subscription drains only its own packs", 110, 50, 40, 30, 150, 80)
 	if res := report(first); !res.Duplicate || res.Accepted != 0 {
 		t.Fatalf("resent batch report = %+v, want a duplicate", res)
 	}
-	expect("duplicate report charges nothing", 100, 50, 40, 40, 150, 80)
+	expect("duplicate report charges nothing", 110, 50, 40, 30, 150, 80)
+	// A 份已没有包：再用的流量记在 A 的套餐上，B 份新包剩下的 70 一字节不动
 	report(`{"7510001":[0,10]}`)
-	expect("exhausted plan keeps draining the newer pack", 100, 50, 40, 50, 160, 80)
+	expect("an exhausted subscription never drains another subscription's pack", 120, 50, 40, 30, 160, 80)
 	t.Log("marker=traffic_charge_pg18_batch_matches_sequential_ok")
+	t.Log("marker=traffic_charge_pg18_packs_charged_per_subscription_ok")
 }

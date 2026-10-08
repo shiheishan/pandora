@@ -188,6 +188,9 @@ func NewRouter(d Deps) http.Handler {
 			// 结账页与充值的支付方式（只读）
 			r.Get("/payment-methods", h.listPaymentMethods)
 			r.Get("/me/subscriptions", h.listSubscriptions)
+			// 订阅备注名（App 里显示为「站点名 · 备注名」）：改名不推进节点下发纪元，按账号每分钟 10 次
+			r.With(middleware.RateLimit(d.Redis, d.Log, middleware.ByAccount("sub_rename", time.Minute, 10))).
+				Patch("/me/subscriptions/{id}", h.renameSubscription)
 			r.Get("/me/subscriptions/{id}/nodes", h.meSubscriptionNodes)
 			// 按日用量（门户-02 柱状图）：只读，数据由节点流量上报同事务累加（迁移 00072）
 			r.Get("/me/subscriptions/{id}/usage", h.meSubscriptionUsage)
@@ -213,7 +216,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/me/notifications/{id}/read", h.markNotificationRead)
 			r.Get("/me/notification-preferences", h.getNotificationPreferences)
 			r.Put("/me/notification-preferences", h.setNotificationPreference)
-			// 重置订阅链接按用户限频：间隔 10 分钟、每天 5 次（subscriptionRotateLimits）
+			// 重置订阅链接按份限频：每份间隔 10 分钟、每份每天 5 次，加按账号每天 20 次（subscriptionRotateLimits）
 			r.With(middleware.RateLimit(d.Redis, d.Log, subscriptionRotateLimits()...)).
 				Post("/me/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
 			r.With(checkout, middleware.Idempotency(d.Pool, "subscription_renewal_create", d.Log)).
