@@ -7,6 +7,7 @@ import {
   cancelledSchema,
   latePaymentsSchema,
   manualCreatedSchema,
+  manualPreviewSchema,
   markedPaidSchema,
   orderQueriedSchema,
   orderResponseSchema,
@@ -88,7 +89,8 @@ describe('mock api · admin billing', () => {
 
   it('creates manual orders after reauth, replays the 201, and refuses balance and reused receipts', async () => {
     const { plan_id, price_id } = await firstPlan()
-    const body = { user_id: SEED_USER, plan_id, price_id, reason: '对公转账客户先开单', settlement: 'pending' }
+    // 种子用户已有别的套餐的订阅：落点不止一个，必须带 target（这里选另开一份）
+    const body = { user_id: SEED_USER, plan_id, price_id, reason: '对公转账客户先开单', settlement: 'pending', target: { kind: 'new' } }
     await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
     const blocked = await post(admin, 'orders/manual', body, 'manual-1')
     expect(blocked.status).toBe(403)
@@ -137,6 +139,205 @@ describe('mock api · admin billing', () => {
     const history = paymentHistorySchema.parse(await json(await get(admin, `orders/${created.order_id}/payments`)))
     expect(history.payments[0]).toMatchObject({ provider_code: 'offline', provider_payment_id: 'offline:ICBC-TEST-2', payment_intent_id: null })
     expect((await post(admin, `orders/${created.order_id}/mark-paid`, { ...markBody, reference: 'ICBC-TEST-3' }, 'mark-3')).status).toBe(409)
+  })
+
+  // ---- 人工开单的落点（购买模型统一）----------------------------------------------
+  // 种子用户（dev/mock/admin/users.ts 的落点演示数据）：
+  //   …02 专业版「我的手机」+ 体验版「妈妈的 iPad」，两份都在用、不同款
+  //   …06 两份专业版（「常用」「备用」），同款都在用
+  //   …01 只有一份标准版
+  const DUO = '1a2b3c42-0000-4000-8000-000000000002'
+  const TWIN = '1a2b3c46-0000-4000-8000-000000000006'
+  const SOLO = '1a2b3c41-0000-4000-8000-000000000001'
+  type SubRow = { id: string; label: string | null; plan_name: string; status: string; current_period_end: string; current_period_start: string; quotas: Array<{ consumed: number }> }
+  type Detail = { balance: number; subscriptions: SubRow[]; recent_orders: Array<{ id: string; kind: string }> }
+  const detailOf = async (id: string) => json<Detail>(await get(admin, `users/${id}`))
+  const planByName = async (name: string) => {
+    const plans = await json<{ plans: Array<{ id: string; name: string; status: string; prices: Array<{ id: string; status: string; currency: string; unit_amount: number }> }> }>(await get(admin, 'plans'))
+    const plan = plans.plans.find((p) => p.name === name && p.status === 'active')!
+    const price = plan.prices.find((x) => x.status === 'active' && x.currency === 'CNY')!
+    return { plan_id: plan.id, price_id: price.id, amount: price.unit_amount }
+  }
+  const preview = async (user: string, plan: { plan_id: string; price_id: string }, entry?: string, token = admin) =>
+    manualPreviewSchema.parse(await json(await post(token, 'orders/manual/preview', { user_id: user, plan_id: plan.plan_id, price_id: plan.price_id, ...(entry ? { entry_subscription_id: entry } : {}) })))
+  const reauthed = async () => {
+    const res = await post(admin, 'auth/reauth', { password: MOCK_ACCOUNTS.admin.password })
+    return (await json<{ access_token: string }>(res)).access_token
+  }
+
+  it('previews where a manual order can land: same plan renews, different plans never preselect', async () => {
+    const standard = await planByName('标准版')
+    const pro = await planByName('专业版')
+    const duo = await detailOf(DUO)
+    const phone = duo.subscriptions.find((x) => x.label === '我的手机')!
+    const ipad = duo.subscriptions.find((x) => x.label === '妈妈的 iPad')!
+
+    // 开一个用户两份都不是的套餐：新开 + 换掉任何一份，没有默认值（按钮置灰「先选落点」）
+    const none = await preview(DUO, standard)
+    expect(none.options.map((o) => o.kind).sort()).toEqual(['change', 'change', 'new'])
+    expect(none.default_key).toBe('')
+    const change = none.options.find((o) => o.kind === 'change' && o.subscription_id === phone.id)!
+    expect(change).toMatchObject({ key: `change:${phone.id}`, label: '我的手机', plan_name: '专业版', state: 'live' })
+    expect(change.new_period_end).toBeDefined()
+    // 生效中的订阅换套餐有剩余价值可抵；每一项都写明落地之后的到期日
+    expect(change.credit).toBeGreaterThan(0)
+    expect(none.options.every((o) => o.new_period_end !== undefined)).toBe(true)
+    expect(none.options.find((o) => o.kind === 'new')).toMatchObject({ key: 'new' })
+
+    // 从订阅行点「给这份开单」进来：入口那份预选，换掉也行（管理员自己点的）
+    expect((await preview(DUO, standard, ipad.id)).default_key).toBe(`change:${ipad.id}`)
+    // 入口订阅不在选项里就当没给
+    expect((await preview(DUO, standard, '00000000-0000-4000-8000-000000000000')).default_key).toBe('')
+
+    // 开用户已有的那款：同款排最前并默认，徽标 same_plan；其余仍可选
+    const same = await preview(DUO, pro)
+    expect(same.options[0]).toMatchObject({ key: `renew:${phone.id}`, badge: 'same_plan', label: '我的手机' })
+    expect(same.default_key).toBe(`renew:${phone.id}`)
+    expect(same.options.map((o) => o.key)).toEqual([`renew:${phone.id}`, 'new', `change:${ipad.id}`])
+    // 生效中的同款续一期：到期日接在原到期日后
+    expect(Date.parse(same.options[0]!.new_period_end!)).toBeGreaterThan(Date.parse(same.options[0]!.period_end!))
+
+    // 两份同款：按到期从早到晚，默认第一份
+    const twin = await detailOf(TWIN)
+    const byEnd = [...twin.subscriptions].sort((a, b) => a.current_period_end.localeCompare(b.current_period_end))
+    const twinPreview = await preview(TWIN, pro)
+    expect(twinPreview.options.map((o) => o.key)).toEqual([`renew:${byEnd[0]!.id}`, `renew:${byEnd[1]!.id}`, 'new'])
+    expect(twinPreview.default_key).toBe(`renew:${byEnd[0]!.id}`)
+    expect((await preview(TWIN, pro, byEnd[1]!.id)).default_key).toBe(`renew:${byEnd[1]!.id}`)
+
+    // 只有一份而且就是同款：只剩一项，不让选
+    const solo = await preview(SOLO, standard)
+    expect(solo.options).toHaveLength(1)
+    expect(solo.options[0]!.kind).toBe('renew')
+    expect(solo.options[0]!.badge).toBeUndefined()
+    expect(solo.default_key).toBe(solo.options[0]!.key)
+
+    // 没有订阅的用户：只有新开一份
+    const nobody = await json<{ users: Array<{ id: string }> }>(await get(admin, 'users?sub_state=none&limit=1'))
+    const fresh = await preview(nobody.users[0]!.id, standard)
+    expect(fresh.options.map((o) => o.key)).toEqual(['new'])
+    expect(fresh.default_key).toBe('new')
+  })
+
+  it('guards the preview: permission, unknown fields, ids, and a plan that is not on sale', async () => {
+    const standard = await planByName('标准版')
+    const body = { user_id: DUO, plan_id: standard.plan_id, price_id: standard.price_id }
+    expect((await post(viewer, 'orders/manual/preview', body)).status).toBe(404)
+    expect((await post(admin, 'orders/manual/preview', { ...body, settlement: 'grant' })).status).toBe(400)
+    expect((await post(admin, 'orders/manual/preview', { ...body, entry_subscription_id: 'nope' })).status).toBe(400)
+    expect((await post(admin, 'orders/manual/preview', { ...body, user_id: 'nope' })).status).toBe(400)
+    expect((await post(admin, 'orders/manual/preview', { ...body, price_id: '00000000-0000-4000-8000-000000000000' })).status).toBe(422)
+    // 只读预览不要重新认证
+    await fetch(`${base}/__mock/expire-reauth`, { method: 'POST' })
+    expect((await post(admin, 'orders/manual/preview', body)).status).toBe(200)
+  })
+
+  it('refuses to guess the landing: no target with several options, a stale target, a malformed one', async () => {
+    const standard = await planByName('标准版')
+    admin = await reauthed()
+    const body = { user_id: DUO, plan_id: standard.plan_id, price_id: standard.price_id, reason: '对公转账客户开单', settlement: 'grant' }
+    const none = await post(admin, 'orders/manual', body, 'place-1')
+    expect(none.status).toBe(422)
+    expect(await json(none)).toMatchObject({ error: { code: 'validation_failed', message: '请选择这单落到哪一份' } })
+    const stale = await post(admin, 'orders/manual', { ...body, target: { kind: 'renew', subscription_id: '00000000-0000-4000-8000-000000000000' } }, 'place-2')
+    expect(stale.status).toBe(422)
+    expect(await json(stale)).toMatchObject({ error: { message: '这个用法现在不能用了，请刷新后再选' } })
+    // 同款才有 renew：标准版对「专业版」那份没有续费这个选项
+    const duo = await detailOf(DUO)
+    const wrongKind = await post(admin, 'orders/manual', { ...body, target: { kind: 'renew', subscription_id: duo.subscriptions[0]!.id } }, 'place-3')
+    expect(wrongKind.status).toBe(422)
+    expect((await post(admin, 'orders/manual', { ...body, target: { kind: 'new', extra: 1 } }, 'place-4')).status).toBe(400)
+    expect((await post(admin, 'orders/manual', { ...body, target: 'new' }, 'place-5')).status).toBe(400)
+    // 一个订单都没建出来
+    expect((await detailOf(DUO)).subscriptions).toHaveLength(duo.subscriptions.length)
+  })
+
+  it('renews the chosen subscription in place: same link, later end, no new subscription', async () => {
+    const pro = await planByName('专业版')
+    admin = await reauthed()
+    const before = await detailOf(TWIN)
+    const byEnd = [...before.subscriptions].sort((a, b) => a.current_period_end.localeCompare(b.current_period_end))
+    const [earlier, later] = [byEnd[0]!, byEnd[1]!]
+    // 选第二份（不是默认的第一份）：只有它往后推
+    const body = { user_id: TWIN, plan_id: pro.plan_id, price_id: pro.price_id, reason: '线下续费一个月', settlement: 'grant', target: { kind: 'renew', subscription_id: later.id } }
+    const created = manualCreatedSchema.parse(await json(await post(admin, 'orders/manual', body, 'renew-1')))
+    expect(created.status).toBe('fulfilled')
+    expect(created.proration_credit).toBeUndefined()
+    const after = await detailOf(TWIN)
+    expect(after.subscriptions).toHaveLength(before.subscriptions.length)
+    expect(Date.parse(after.subscriptions.find((x) => x.id === later.id)!.current_period_end)).toBeGreaterThan(Date.parse(later.current_period_end))
+    expect(after.subscriptions.find((x) => x.id === earlier.id)!.current_period_end).toBe(earlier.current_period_end)
+    const order = orderResponseSchema.parse(await json(await get(admin, `orders/${created.order_id}`))).order
+    expect(order).toMatchObject({ kind: 'renewal', subscription_id: later.id })
+  })
+
+  it('changes the chosen subscription to the new plan, refunds what is left, and keeps the link', async () => {
+    const standard = await planByName('标准版')
+    admin = await reauthed()
+    const before = await detailOf(DUO)
+    const phone = before.subscriptions.find((x) => x.label === '我的手机')!
+    const seen = await preview(DUO, standard)
+    const credit = seen.options.find((o) => o.subscription_id === phone.id)!.credit!
+    const body = { user_id: DUO, plan_id: standard.plan_id, price_id: standard.price_id, reason: '客户要求降级', settlement: 'grant', target: { kind: 'change', subscription_id: phone.id } }
+    const created = manualCreatedSchema.parse(await json(await post(admin, 'orders/manual', body, 'change-1')))
+    // 赠送：新价算 0 元，原套餐的剩余价值全额退进余额
+    expect(created).toMatchObject({ status: 'fulfilled', total_amount: 0, payable_amount: 0 })
+    expect(created.balance_refund).toBeGreaterThan(0)
+    expect(Math.abs(created.balance_refund! - credit)).toBeLessThan(Math.max(5, credit * 0.01))
+    const after = await detailOf(DUO)
+    expect(after.subscriptions).toHaveLength(before.subscriptions.length)
+    expect(after.subscriptions.find((x) => x.id === phone.id)).toMatchObject({ plan_name: '标准版', label: '我的手机', status: 'active' })
+    expect(after.balance).toBe(before.balance + created.balance_refund!)
+  })
+
+  it('opens another copy when asked to, and a single option needs no target', async () => {
+    const standard = await planByName('标准版')
+    admin = await reauthed()
+    const before = await detailOf(TWIN)
+    const another = manualCreatedSchema.parse(await json(await post(admin, 'orders/manual', { user_id: TWIN, plan_id: standard.plan_id, price_id: standard.price_id, reason: '再开一份分开用', settlement: 'grant', target: { kind: 'new' } }, 'new-1')))
+    expect(another.status).toBe('fulfilled')
+    const after = await detailOf(TWIN)
+    expect(after.subscriptions).toHaveLength(before.subscriptions.length + 1)
+    expect(after.subscriptions.filter((x) => x.plan_name === '标准版')).toHaveLength(1)
+
+    // 没有订阅的用户只有一个选项，不带 target 也行
+    const nobody = await json<{ users: Array<{ id: string }> }>(await get(admin, 'users?sub_state=none&limit=1'))
+    const only = await post(admin, 'orders/manual', { user_id: nobody.users[0]!.id, plan_id: standard.plan_id, price_id: standard.price_id, reason: '首次开通赠送', settlement: 'grant' }, 'new-2')
+    expect(only.status).toBe(201)
+    expect((await detailOf(nobody.users[0]!.id)).subscriptions).toHaveLength(1)
+  })
+
+  it('applies a pending renewal only when it is paid, and offsets the credit against the price', async () => {
+    const pro = await planByName('专业版')
+    admin = await reauthed()
+    const solo = await detailOf(SOLO)
+    const sub = solo.subscriptions[0]!
+    const std = await planByName('标准版')
+    // 待用户支付的续费单：订阅此刻不动
+    const pending = manualCreatedSchema.parse(await json(await post(admin, 'orders/manual', { user_id: SOLO, plan_id: std.plan_id, price_id: std.price_id, reason: '先开单后付款', settlement: 'pending' }, 'pay-1')))
+    expect(pending).toMatchObject({ status: 'pending_payment', payable_amount: std.amount })
+    expect((await detailOf(SOLO)).subscriptions[0]!.current_period_end).toBe(sub.current_period_end)
+    // 标记已支付之后才续上
+    const paid = await post(admin, `orders/${pending.order_id}/mark-paid`, { reason: '客户已转账', reference: 'ICBC-PLACE-1' }, 'pay-2')
+    expect(paid.status).toBe(200)
+    expect(Date.parse((await detailOf(SOLO)).subscriptions[0]!.current_period_end)).toBeGreaterThan(Date.parse(sub.current_period_end))
+
+    // 换套餐、不是赠送：应付 = 新价 − 剩余价值，抵不完的才付；线下已收款的凭证金额也是抵扣后的
+    const seen = await preview(DUO, pro)
+    // 体验版是免费套餐，没有剩余价值可抵；挑一份有剩余价值的
+    const paying = seen.options.find((o) => o.kind === 'change' && (o.credit ?? 0) > 0)!
+    const credit = paying.credit!
+    expect(credit).toBeGreaterThan(0)
+    const change = manualCreatedSchema.parse(
+      await json(
+        await post(admin, 'orders/manual', { user_id: DUO, plan_id: pro.plan_id, price_id: pro.price_id, reason: '客户升级补差价', settlement: 'pending', target: { kind: 'change', subscription_id: paying.subscription_id } }, 'pay-3'),
+      ),
+    )
+    expect(change.payable_amount).toBe(Math.max(pro.amount - credit, 0))
+    expect(change.proration_credit).toBe(credit)
+    expect(change.balance_refund).toBe(0)
+    // 待支付的换套餐单：付款前订阅还是原套餐
+    expect((await detailOf(DUO)).subscriptions.find((x) => x.id === paying.subscription_id)!.plan_name).toBe(paying.plan_name)
   })
 
   it('cancels with a state_version compare-and-swap and refuses paid orders', async () => {
@@ -230,6 +431,8 @@ describe('mock api · admin billing', () => {
     const list = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers
     expect(list.map((p) => p.code)).toEqual(['demo', 'epay', 'epay_backup', 'offline'])
     expect(list.find((p) => p.code === 'epay')!.today.CNY).toBeGreaterThan(0)
+    // 最低付款额（分）：易支付默认 ¥1.00，演示与线下渠道没有这个概念回 0
+    expect(list.map((p) => [p.code, p.min_amount])).toEqual([['demo', 0], ['epay', 100], ['epay_backup', 100], ['offline', 0]])
     expect((await post(admin, 'payment-providers/nope/toggle', { enabled: true, accepting_new: true })).status).toBe(404)
     expect((await post(admin, 'payment-providers/epay/toggle', { enabled: true })).status).toBe(200)
     const epay = providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'epay')!
@@ -260,6 +463,18 @@ describe('mock api · admin billing', () => {
     // 易支付只出支付宝和微信：勾 QQ 钱包被拒
     expect(await json(await put(admin, 'payment-providers/epay3', { ...settings, methods: ['alipay', 'qqpay'], default_method: 'qqpay', merchant_id: '', key: '' }, 'prov-4q'))).toMatchObject({
       error: { fields: { methods: '支付方式只能从支付宝、微信支付中选' } },
+    })
+    // 最低付款额：1–100000 分；不带按默认 100；编辑后列表里是新值
+    for (const bad of [0, 100_001, 1.5, '100']) {
+      expect(await json(await put(admin, 'payment-providers/epay3', { ...settings, min_amount: bad, merchant_id: '', key: '' }, `prov-min-${String(bad)}`))).toMatchObject({
+        error: { fields: { min_amount: expect.any(String) } },
+      })
+    }
+    expect(providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'epay3')!.min_amount).toBe(100)
+    providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, min_amount: 250, merchant_id: '', key: '' }, 'prov-min-ok')))
+    expect(providersSchema.parse(await json(await get(admin, 'payment-providers'))).providers.find((p) => p.code === 'epay3')!.min_amount).toBe(250)
+    expect(await json(await post(admin, 'payment-providers', { code: 'epay4', adapter: 'epay', ...settings, min_amount: 0, merchant_id: '2002', key: 'k' }, 'prov-min-new'))).toMatchObject({
+      error: { fields: { min_amount: expect.any(String) } },
     })
     const kept = providerWrittenSchema.parse(await json(await put(admin, 'payment-providers/epay3', { ...settings, methods: ['alipay', 'wxpay'], default_method: 'wxpay', merchant_id: '', key: '' }, 'prov-4')))
     expect(kept.credentials_changed).toBe(false)

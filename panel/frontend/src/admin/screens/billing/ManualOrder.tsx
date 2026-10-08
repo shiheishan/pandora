@@ -1,25 +1,36 @@
 import { useEffect, useState } from 'react'
-import { formatMoney } from '../../../core/format'
+import { isApiError } from '../../../core/api'
 import { useApi } from '../../../shell/runtime'
 import { Button, Input, Modal, Select, useToast } from '../../../ui'
 import { useCan, useFailure, useIntentKey } from '../../actions'
 import { usePlans } from '../plans/api'
 import { useInvalidateUsers, useUser } from '../users/api'
-import { manualCreatedSchema, useInvalidateBilling, useUserPick } from './api'
+import { manualCreatedSchema, useInvalidateBilling, useManualPreview, useUserPick } from './api'
 import css from './Billing.module.css'
-import { emptyManual, manualBody, manualCreatedToast, manualProblems, priceChoices, SETTLEMENTS, type ManualForm, type Settlement } from './model'
+import { emptyManual, manualBody, manualCreatedToast, manualProblems, previewParams, priceChoices, SETTLEMENTS, type ManualForm, type Settlement } from './model'
+import { choiceOf, priceNote, selectedKey, submitGate } from './placement'
+import { PlacementError, PlacementPicker } from './PlacementPicker'
 
-// 用户已有订阅时不新开、不换链接（2026-10-07）：同套餐续一期，别的套餐在原订阅上换套餐
-const MANUAL_EXISTING_HINT =
-  '用户已有这个套餐的订阅时在原订阅上续一期；已有别的套餐的订阅时在原订阅上换套餐，订阅链接都不变。换套餐时原套餐剩余价值先抵新价，抵不完的退回余额（赠送时全额退回）。'
-
-/** onClose(新订单 id)：取消时不带参数 */
-export function ManualOrder({ open, userId, onClose }: { open: boolean; userId: string | null; onClose: (createdId?: string) => void }) {
+/**
+ * onClose(新订单 id)：取消时不带参数。
+ * entrySubscriptionId：从用户抽屉某一份订阅的「给这份开单」进来时，那份订阅的 id，只用来预选落点
+ */
+export function ManualOrder({
+  open,
+  userId,
+  entrySubscriptionId = null,
+  onClose,
+}: {
+  open: boolean
+  userId: string | null
+  entrySubscriptionId?: string | null
+  onClose: (createdId?: string) => void
+}) {
   // 每次打开都是一张新表单（也是一次新的开单意图）
-  return open ? <ManualForm userId={userId} onClose={onClose} /> : null
+  return open ? <ManualForm userId={userId} entrySubscriptionId={entrySubscriptionId} onClose={onClose} /> : null
 }
 
-function ManualForm({ userId, onClose }: { userId: string | null; onClose: (createdId?: string) => void }) {
+function ManualForm({ userId, entrySubscriptionId, onClose }: { userId: string | null; entrySubscriptionId: string | null; onClose: (createdId?: string) => void }) {
   const api = useApi()
   const toast = useToast()
   const can = useCan()
@@ -44,23 +55,40 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
 
   const choices = canPlans ? priceChoices(plans.data ?? []) : []
   const chosen = choices.find((c) => c.value === form.choice)
+  // 管理员自己点的落点；换了用户、套餐或价格，选项就变了，点过的作废
+  const [picked, setPicked] = useState('')
   const set = <K extends keyof ManualForm>(key: K, value: ManualForm[K]) => {
     setForm((f) => ({ ...f, [key]: value }))
+    if (key === 'user' || key === 'choice') setPicked('')
     setErrors({})
   }
 
+  // 入口订阅只对入口那位用户有效：中途换了人就不再预选
+  const entry = form.user !== null && form.user.id === userId ? entrySubscriptionId : null
+  const params = previewParams(form, entry)
+  const preview = useManualPreview(params)
+  const selected = selectedKey(preview.data, picked)
+  const option = preview.data?.options.find((o) => o.key === selected)
+  const target = option ? choiceOf(option) : null
+  const gate = submitGate({ hasInputs: params !== null, loading: params !== null && preview.isPending, failed: preview.isError, selected })
+
   const submit = async () => {
-    const problems = manualProblems(form)
+    const problems = manualProblems(form, target)
     if (Object.keys(problems).length) return setErrors(problems)
-    const body = manualBody(form)
+    const body = manualBody(form, target)
     setBusy(true)
     try {
       const r = await api.post('v1/orders/manual', manualCreatedSchema, { body, idempotencyKey: intent.keyFor(body) })
       intent.reset()
-      toast(manualCreatedToast(r, form.settlement))
+      toast(manualCreatedToast(r, form.settlement, target?.kind))
       onClose(r.order_id)
     } catch (e) {
       fail(e, { fields: setErrors, intent })
+      // 订阅状态在预览之后变了（落点已失效）或没选落点：重新取一遍选项，点过的作废
+      if (isApiError(e) && (e.status === 422 || e.status === 409)) {
+        setPicked('')
+        void preview.refetch()
+      }
     } finally {
       setBusy(false)
       void invalidate()
@@ -81,8 +109,8 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
           <Button size="dialog" onClick={() => onClose()} disabled={busy}>
             取消
           </Button>
-          <Button size="dialog" variant="primary" busy={busy} onClick={() => void submit()}>
-            {form.settlement === 'offline' ? '入账并开通' : form.settlement === 'grant' ? '赠送开通' : '创建订单'}
+          <Button size="dialog" variant="primary" busy={busy} disabled={!gate.ok} onClick={() => void submit()}>
+            {!gate.ok ? gate.label : form.settlement === 'offline' ? '入账并开通' : form.settlement === 'grant' ? '赠送开通' : '创建订单'}
           </Button>
         </>
       }
@@ -113,11 +141,29 @@ function ManualForm({ userId, onClose }: { userId: string | null; onClose: (crea
             error={errors.settlement}
           />
         </div>
+        {params !== null && preview.isError && <PlacementError message={preview.error.message} onRetry={() => void preview.refetch()} />}
+        {preview.data && chosen && (
+          <PlacementPicker
+            options={preview.data.options}
+            selected={selected}
+            targetPlan={chosen.planName}
+            settlement={form.settlement}
+            entrySubscriptionId={entry}
+            onPick={(key) => {
+              setPicked(key)
+              setErrors({})
+            }}
+          />
+        )}
+        {errors.target && (
+          <span role="alert" className={`${css.small} ${css.tone_danger}`}>
+            {errors.target}
+          </span>
+        )}
         <p className={css.small}>
           {settlement.hint}
-          {chosen && form.settlement !== 'grant' && `；应付 ${formatMoney(chosen.amount, chosen.currency)}`}。「从余额扣除」暂不提供，需要时先到用户详情调账，再用赠送开单。
+          {chosen && form.settlement !== 'grant' && `；${priceNote(chosen.amount, chosen.currency, option)}`}。「从余额扣除」暂不提供，需要时先到用户详情调账，再用赠送开单。
         </p>
-        <p className={css.small}>{MANUAL_EXISTING_HINT}</p>
         {form.settlement === 'offline' && (
           <Input label="凭证号" mono placeholder="银行流水号、收据编号等" value={form.reference} onChange={(e) => set('reference', e.target.value)} error={errors.reference} />
         )}

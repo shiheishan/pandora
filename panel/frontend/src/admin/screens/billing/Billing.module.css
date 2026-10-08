@@ -327,6 +327,77 @@
 }
 
 /* ===========================================================================
+ * 人工开单：这单落到哪一份（一组单选，每项写明结果）
+ * ========================================================================= */
+.placeList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.placeItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px var(--space-12);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.placeItem:hover {
+  border-color: var(--border-hover);
+}
+
+.placeItemOn {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.placeRadio {
+  flex: none;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+.placeRadio:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.placeText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.placeTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.placeResult {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+}
+
+.placeError {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--danger);
+  font-size: var(--fs-caption);
+}
+
+/* ===========================================================================
  * 挂账
  * ========================================================================= */
 .banner {

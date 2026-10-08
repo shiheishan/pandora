@@ -38,6 +38,9 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
   }
   const newParam = location.query.get('new')
   const manualFor = newParam && UUID.test(newParam) ? newParam : null
+  // 从用户抽屉某一份订阅的「给这份开单」进来：#/billing/orders?new=<用户 id>&sub=<订阅 id>，只用来预选落点
+  const subParam = location.query.get('sub')
+  const entrySubscription = manualFor && subParam && UUID.test(subParam) ? subParam : null
   const manualOpen = newParam !== null && can('billing.order.write')
   const selected = rest[0] ?? null
 
@@ -109,6 +112,7 @@ export function OrdersTab({ rest, now }: { rest: string[]; now: Date }) {
       <ManualOrder
         open={manualOpen}
         userId={manualFor}
+        entrySubscriptionId={entrySubscription}
         onClose={(createdId) => navigate(path(createdId ?? selected), { replace: createdId === undefined, query: query(state) })}
       />
     </div>

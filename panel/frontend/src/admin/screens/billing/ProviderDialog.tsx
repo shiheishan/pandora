@@ -144,6 +144,15 @@ function ProviderFormModal({ editing, onClose }: { editing: Provider | null; onC
             error={errors.key}
           />
         </div>
+        <Input
+          label="最低付款额（元）"
+          inputMode="decimal"
+          mono
+          hint="低于这个金额的在线支付不会发起：余额没法凑够时，会少用一点余额让这笔付满最低额。线下收款与赠送不受限"
+          value={form.min_amount}
+          onChange={(e) => set('min_amount', e.target.value)}
+          error={errors.min_amount}
+        />
         <Checkbox
           label="允许内网或 http 地址（仅开发环境，生产会被拒绝）"
           checked={form.allow_private_host}

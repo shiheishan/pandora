@@ -18,6 +18,7 @@ import {
   orderRow,
   orders,
   paymentFor,
+  pendingEffects,
   providers,
   providerSecrets,
   providerView,
@@ -27,6 +28,7 @@ import {
   type Order,
   type Provider,
 } from './billing-store.ts'
+import { candidatesOf, planOptions, placementView, prorationCredit, type Option } from './billing-placement.ts'
 import { plans } from './plans-store.ts'
 import { userStore } from './users.ts'
 
@@ -39,7 +41,7 @@ const BAD_JSON = err(400, 'bad_request', '请求体不是合法的 JSON')
 // ---- 支付渠道写入：照 billing/provider_admin.go 的 normalizeProviderSettings ----
 // 用户 2026-10-07 定：易支付只出支付宝和微信
 const EPAY_METHODS = ['alipay', 'wxpay']
-const PROVIDER_SETTINGS = ['display_name', 'base_url', 'submit_path', 'api_path', 'methods', 'default_method', 'allow_private_host', 'merchant_id', 'key'] as const
+const PROVIDER_SETTINGS = ['display_name', 'base_url', 'submit_path', 'api_path', 'methods', 'default_method', 'allow_private_host', 'min_amount', 'merchant_id', 'key'] as const
 const PROVIDER_PATH = /^\/[A-Za-z0-9._~/-]{0,127}$/
 const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/
 
@@ -54,7 +56,7 @@ function parseURL(raw: string): URL | null {
 }
 
 interface ProviderSettings {
-  config: Pick<Provider, 'display_name' | 'base_url' | 'submit_path' | 'api_path' | 'methods' | 'default_method' | 'allow_private_host'>
+  config: Pick<Provider, 'display_name' | 'base_url' | 'submit_path' | 'api_path' | 'methods' | 'default_method' | 'allow_private_host' | 'min_amount'>
   merchant_id: string
   key: string
 }
@@ -80,10 +82,14 @@ function providerSettings(body: Json): { ok: ProviderSettings } | { fields: Reco
   if (methods.length === 0 && !f.methods) f.methods = '至少选一种支付方式'
   const default_method = str(body.default_method).trim() || (methods[0] ?? '')
   if (!f.methods && !methods.includes(default_method)) f.default_method = '默认方式必须是已勾选的方式之一'
+  // 最低付款额（分）：1–100000；不带按 epay 默认 100（¥1.00）
+  const rawMin = body.min_amount
+  const min_amount = rawMin === undefined || rawMin === null ? 100 : rawMin
+  if (typeof min_amount !== 'number' || !Number.isInteger(min_amount) || min_amount < 1 || min_amount > 100_000) f.min_amount = '最低付款额需在 0.01 到 1000 元之间'
   if (Object.keys(f).length) return { fields: f }
   return {
     ok: {
-      config: { display_name, base_url, ...paths, methods, default_method, allow_private_host: allow },
+      config: { display_name, base_url, ...paths, methods, default_method, allow_private_host: allow, min_amount: min_amount as number },
       merchant_id: str(body.merchant_id).trim(),
       key: str(body.key).trim(),
     },
@@ -109,6 +115,20 @@ const day = (v: string | null, end: boolean) => {
   if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null
   const t = Date.parse(`${v}T00:00:00Z`)
   return Number.isFinite(t) ? t + (end ? 86_400_000 : 0) : null
+}
+
+/** 人工开单与落点预览共用：用户、套餐、价格都要存在且在售（假后端的近似，真实错误形状以后端为准） */
+function manualSubject(body: Json) {
+  const userId = str(body.user_id)
+  const planId = str(body.plan_id)
+  if (!userId || !planId) return { ok: false as const, error: err(400, 'bad_request', '缺少租户、操作人、用户或套餐') }
+  if (!isUuid(userId) || !isUuid(planId)) return { ok: false as const, error: err(400, 'bad_request', '标识符格式不正确') }
+  const user = userStore.find((u) => u.id === userId)
+  if (!user) return { ok: false as const, error: NOT_FOUND }
+  const plan = plans.find((p) => p.id === planId)
+  const price = plan?.prices.find((x) => x.id === str(body.price_id))
+  if (!plan || plan.status !== 'active' || !price || price.status !== 'active') return { ok: false as const, error: invalid({ price_id: '价格不存在、已下架或不属于该套餐' }) }
+  return { ok: true as const, user, plan, price }
 }
 
 export const billing: MockModule = {
@@ -186,13 +206,38 @@ export const billing: MockModule = {
       })
     },
 
-    // 人工开单：写权限 → reauth → 幂等（scope 与用户结账共用 order_create），201 为预写响应（R64 / R74）
+    // 人工开单的落点：purchase.Options 的一支（同款可续 → 不同款过期 30 天内恢复并改成 P → 新开 → 不同款生效中换掉），
+    // 只读的 POST：写权限，不挂 reauth，也没有幂等键。形状是 purchase.Placement（选项 + 这份现在的样子 + 落地之后）
+    'POST /v1/orders/manual/preview': async (ctx) => {
+      if (!ctx.requirePermission('billing.order.write')) return
+      const body = await ctx.body()
+      if (!body) return ctx.send(BAD_JSON.status, BAD_JSON.body)
+      const bad = unknownField(body, ['user_id', 'plan_id', 'price_id', 'entry_subscription_id'])
+      if (bad) return ctx.send(bad.status, bad.body)
+      const subject = manualSubject(body)
+      if (!subject.ok) return ctx.send(subject.error.status, subject.error.body)
+      const entry = str(body.entry_subscription_id)
+      if (entry && !isUuid(entry)) return ctx.fail(400, 'bad_request', '标识符格式不正确')
+      const { user, plan, price } = subject
+      const now = Date.now()
+      const cands = candidatesOf(user, now)
+      const { options, defaultKey } = planOptions(plan.id, cands, entry)
+      const info = { interval: price.billing_interval, count: price.interval_count, currency: price.currency }
+      ctx.send(200, {
+        options: options.map((o) => placementView(o, cands.find((c) => c.sub.id === o.subscription_id), info, now)),
+        default_key: defaultKey,
+      })
+    },
+
+    // 人工开单：写权限 → reauth → 幂等（scope 与用户结账共用 order_create），201 为预写响应（R64 / R74）。
+    // 落点由 target 定（preview 给出的选项之一）：续费 / 换套餐落在已有订阅上，链接不变；新开另生成一份。
+    // 选项多于一个而没带 target 回 422「请选择这单落到哪一份」，target 不在当前选项里回 422「这个用法现在不能用了…」
     'POST /v1/orders/manual': async (ctx) => {
       if (!ctx.requirePermission('billing.order.write') || !ctx.requireReauth()) return
       const body = await ctx.body()
       if (!body) return ctx.fail(400, 'bad_request', '请求体不是合法的 JSON')
       await ctx.idempotent('order_create', () => {
-        const bad = unknownField(body, ['user_id', 'plan_id', 'price_id', 'reason', 'settlement', 'reference'])
+        const bad = unknownField(body, ['user_id', 'plan_id', 'price_id', 'reason', 'settlement', 'reference', 'target'])
         if (bad) return bad
         const userId = str(body.user_id)
         const planId = str(body.plan_id)
@@ -208,42 +253,66 @@ export const billing: MockModule = {
           const r = referenceProblem(reference)
           if (r) return invalid(r)
         }
-        const user = userStore.find((u) => u.id === userId)
-        if (!user) return NOT_FOUND
-        const plan = plans.find((p) => p.id === planId)
-        const price = plan?.prices.find((x) => x.id === str(body.price_id))
-        // 假后端的近似：CreateOrder 的套餐 / 价格失效错误形状以后端为准
-        if (!plan || plan.status !== 'active' || !price || price.status !== 'active') return invalid({ price_id: '价格不存在、已下架或不属于该套餐' })
-        if (settlement === 'offline' && price.unit_amount <= 0) return err(409, 'conflict', '这张订单不需要支付，请改用赠送')
+        const subject = manualSubject(body)
+        if (!subject.ok) return subject.error
+        const { user, plan, price } = subject
+
+        // 落点：照 preview 同一套规则重算，target 必须是其中一项
+        const now = Date.now()
+        const cands = candidatesOf(user, now)
+        const { options } = planOptions(plan.id, cands, '')
+        let chosen: Option | undefined
+        if (body.target !== undefined) {
+          const t = body.target
+          if (typeof t !== 'object' || t === null || Array.isArray(t)) return err(400, 'bad_request', '请求体不是合法的 JSON')
+          const badTarget = unknownField(t as Json, ['kind', 'subscription_id'])
+          if (badTarget) return badTarget
+          const kind = str((t as Json).kind)
+          const key = kind === 'new' ? 'new' : `${kind}:${str((t as Json).subscription_id)}`
+          chosen = options.find((o) => o.key === key)
+          if (!chosen) return err(422, 'validation_failed', '这个用法现在不能用了，请刷新后再选')
+        } else if (options.length === 1) {
+          chosen = options[0]
+        }
+        if (!chosen) return err(422, 'validation_failed', '请选择这单落到哪一份')
+        const pick: Option = chosen
+        const targetSub = pick.subscription_id ? user.subs.find((x) => x.id === pick.subscription_id) : undefined
+
+        const grant = settlement === 'grant'
+        const amount = price.unit_amount
+        // 换套餐：原套餐没用完的部分先抵新价，抵不完的退进余额（赠送时全额退回）；过期的那份没有可抵的
+        const credit = pick.kind === 'change' && targetSub && !pick.expired ? prorationCredit(targetSub, now) : 0
+        const payable = grant ? 0 : Math.max(amount - credit, 0)
+        const refund = pick.kind !== 'change' ? 0 : grant ? credit : Math.max(credit - amount, 0)
+        const paysNow = grant || payable === 0
+        if (settlement === 'offline' && payable <= 0) return err(409, 'conflict', '这张订单不需要支付，请改用赠送')
         if (settlement === 'offline' && referenceOwner(reference)) return err(409, 'conflict', '凭证号已用于其他订单')
 
         const at = new Date().toISOString()
-        const grant = settlement === 'grant'
-        const amount = price.unit_amount
         const o: Order = {
           id: randomUUID(),
           order_no: nextOrderNo(),
           user_id: user.id,
           user_email: user.email,
-          kind: 'new',
+          kind: pick.kind === 'renew' ? 'renewal' : pick.kind === 'change' ? (amount > credit ? 'upgrade' : 'downgrade') : 'new',
           status: 'pending_payment',
           currency: price.currency,
           subtotal_amount: amount,
           discount_amount: grant ? amount : 0,
-          total_amount: grant ? 0 : amount,
+          total_amount: payable,
           balance_applied: 0,
-          payable_amount: grant ? 0 : amount,
+          payable_amount: payable,
           paid_amount: 0,
           refunded_amount: 0,
           state_version: 1,
           manual_reason: reason,
           created_by: ctx.user.userId,
           created_by_email: ctx.user.email,
-          subscription_id: null,
+          subscription_id: targetSub?.id ?? null,
           created_at: at,
           updated_at: at,
           paid_at: null,
-          expires_at: grant ? null : new Date(Date.now() + 30 * 60_000).toISOString(),
+          expires_at: paysNow ? null : new Date(Date.now() + 30 * 60_000).toISOString(),
           fulfilled_at: null,
           cancelled_at: null,
           expired_at: null,
@@ -267,18 +336,22 @@ export const billing: MockModule = {
           payments: [],
           refunds: [],
         }
-        if (grant) {
+        if (pick.kind !== 'new' && targetSub) pendingEffects.set(o.id, { kind: pick.kind as 'renew' | 'change', subscriptionId: targetSub.id, credit, refund })
+        if (paysNow) {
           o.paid_at = at
+          if (!grant) Object.assign(o, { state_version: 3 })
           fulfil(o, at)
         }
         if (settlement === 'offline') {
           o.payments.push(paymentFor(o, 'offline', null, at, `offline:${reference}`))
-          Object.assign(o, { paid_amount: amount, paid_at: at, state_version: 3 })
+          Object.assign(o, { paid_amount: payable, paid_at: at, state_version: 3 })
           fulfil(o, at)
         }
         orders.push(o)
         const { discount_amount, id: order_id, order_no, currency, total_amount, balance_applied, payable_amount, status } = o
-        return { status: 201, body: { discount_amount, order_id, order_no, currency, total_amount, balance_applied, payable_amount, status } }
+        // 落成换套餐时多这两项：原套餐的剩余价值，与已经退进余额的部分（待支付的单付款后才退）
+        const change = pick.kind === 'change' ? { proration_credit: credit, balance_refund: o.status === 'fulfilled' ? refund : 0 } : {}
+        return { status: 201, body: { discount_amount, order_id, order_no, currency, total_amount, balance_applied, payable_amount, status, ...change } }
       })
     },
 

@@ -20,9 +20,12 @@ import {
   manualBody,
   manualCreatedToast,
   manualProblems,
+  minAmountText,
   orderFacts,
   paymentLines,
+  parseMinAmount,
   pendingTotals,
+  previewParams,
   priceChoices,
   providerBody,
   providerFormFrom,
@@ -192,18 +195,38 @@ describe('write forms', () => {
       plan({ id: 'nover', current_version_id: null, prices: [price({ id: 'e' })] }),
     ])
     expect(choices.map((c) => c.value)).toEqual(['pl:a', 'pl:c'])
+    expect(choices[0]!.planName).toBe('标准版')
     expect(choices[0]!.label).toBe('标准版 · 每月 ¥25.00')
     expect(choices[1]!.label).toContain('（组专属，试用 3 天）')
   })
 
   it('validates the manual order and only sends reference for offline', () => {
-    expect(Object.keys(manualProblems(emptyManual()))).toEqual(['user_id', 'price_id', 'reason'])
+    expect(Object.keys(manualProblems(emptyManual(), null))).toEqual(['user_id', 'price_id', 'reason'])
     const form = { ...emptyManual({ id: 'u1', email: 'a@b.c' }), choice: 'pl:a', reason: '对公转账客户开单', reference: 'X' }
-    expect(manualProblems(form)).toEqual({})
-    expect(manualBody(form)).toEqual({ user_id: 'u1', plan_id: 'pl', price_id: 'a', reason: '对公转账客户开单', settlement: 'pending' })
+    const target = { kind: 'new' as const }
+    expect(manualProblems(form, target)).toEqual({})
+    expect(manualBody(form, target)).toEqual({ user_id: 'u1', plan_id: 'pl', price_id: 'a', reason: '对公转账客户开单', settlement: 'pending', target: { kind: 'new' } })
     const offline = { ...form, settlement: 'offline' as const, reference: '' }
-    expect(manualProblems(offline)).toHaveProperty('reference')
-    expect(manualBody({ ...offline, reference: ' ICBC-1 ' })).toMatchObject({ settlement: 'offline', reference: 'ICBC-1' })
+    expect(manualProblems(offline, target)).toHaveProperty('reference')
+    expect(manualBody({ ...offline, reference: ' ICBC-1 ' }, target)).toMatchObject({ settlement: 'offline', reference: 'ICBC-1' })
+  })
+
+  it('refuses to submit without a placement once user and price are chosen', () => {
+    const form = { ...emptyManual({ id: 'u1', email: 'a@b.c' }), choice: 'pl:a', reason: '对公转账客户开单' }
+    expect(manualProblems(form, null)).toEqual({ target: '先选这单落到哪一份' })
+    expect(manualBody(form, null)).not.toHaveProperty('target')
+    // 还没选价格时先提示价格，不提示落点
+    expect(manualProblems({ ...form, choice: '' }, null)).toEqual({ price_id: '选择套餐与周期' })
+    expect(manualBody(form, { kind: 'renew', subscription_id: 's1' })).toHaveProperty('target', { kind: 'renew', subscription_id: 's1' })
+  })
+
+  it('asks for the placement preview only when user, plan and price are all chosen', () => {
+    const form = { ...emptyManual({ id: 'u1', email: 'a@b.c' }), choice: 'pl:a' }
+    expect(previewParams(emptyManual(), null)).toBeNull()
+    expect(previewParams({ ...form, choice: '' }, null)).toBeNull()
+    expect(previewParams({ ...form, user: null }, null)).toBeNull()
+    expect(previewParams(form, null)).toEqual({ user_id: 'u1', plan_id: 'pl', price_id: 'a' })
+    expect(previewParams(form, 'sub1')).toEqual({ user_id: 'u1', plan_id: 'pl', price_id: 'a', entry_subscription_id: 'sub1' })
   })
 
   it('validates a revenue adjustment and omits an empty effective date', () => {
@@ -244,6 +267,7 @@ describe('late payments, providers and adjustments', () => {
     methods: ['alipay', 'wxpay'],
     default_method: 'alipay',
     allow_private_host: false,
+    min_amount: 100,
     today: {},
     success_rate_24h: null,
     last_callback_at: null,
@@ -265,8 +289,10 @@ describe('late payments, providers and adjustments', () => {
     expect(todayLabel({})).toBe('—')
     expect(rateLabel(0.9724)).toBe('97.2%')
     expect(rateLabel(null)).toBe('—')
-    expect(providerNote(provider({ accepting_new: false, has_credentials: false }), now)).toEqual({ text: '已停止新单，进行中的支付仍会回调 · 未配置凭据 · 尚无回调', tone: 'warn' })
-    expect(providerNote(provider({ last_callback_at: '2026-09-24T11:50:00Z' }), now)).toEqual({ text: '最近回调 10 分钟前', tone: 'neutral' })
+    expect(providerNote(provider({ accepting_new: false, has_credentials: false }), now)).toEqual({ text: '已停止新单，进行中的支付仍会回调 · 未配置凭据 · 最低付款 ¥1.00 · 尚无回调', tone: 'warn' })
+    expect(providerNote(provider({ last_callback_at: '2026-09-24T11:50:00Z' }), now)).toEqual({ text: '最低付款 ¥1.00 · 最近回调 10 分钟前', tone: 'neutral' })
+    // 没配最低额（0）的渠道不写这一项
+    expect(providerNote(provider({ min_amount: 0, last_callback_at: '2026-09-24T11:50:00Z' }), now).text).toBe('最近回调 10 分钟前')
     expect(providerNote(provider({ enabled: false }), now).tone).toBe('danger')
     expect(providerNote(provider({ code: 'offline' }), now).text).toContain('系统内置')
   })
@@ -279,6 +305,27 @@ describe('late payments, providers and adjustments', () => {
     expect(isEditableProvider(provider({ code: 'demo', adapter: 'demo_hmac' }))).toBe(false)
     const legacy = providerFormFrom(provider({ methods: [], default_method: 'wxpay', submit_path: '', base_url: 'https://pay.example.com' }))
     expect(legacy).toMatchObject({ methods: ['wxpay'], default_method: 'wxpay', submit_path: '/submit.php', merchant_id: '', key: '' })
+  })
+
+  it('edits the minimum payment in yuan and sends it in cents (min_amount)', () => {
+    expect(parseMinAmount('1')).toBe(100)
+    expect(parseMinAmount(' ¥0.50 ')).toBe(50)
+    expect(parseMinAmount('1000')).toBe(100_000)
+    expect(parseMinAmount('1000.01')).toBeNull()
+    expect(parseMinAmount('0')).toBeNull()
+    expect(parseMinAmount('0.001')).toBeNull()
+    expect(parseMinAmount('-1')).toBeNull()
+    expect(parseMinAmount('')).toBeNull()
+    expect(minAmountText(100)).toBe('1.00')
+    // 新建默认 ¥1.00；编辑回填渠道现值，旧渠道没配过（0）时从默认值起步
+    expect(emptyProviderForm().min_amount).toBe('1.00')
+    expect(providerFormFrom(provider({ min_amount: 250 })).min_amount).toBe('2.50')
+    expect(providerFormFrom(provider({ min_amount: 0 })).min_amount).toBe('1.00')
+    const good = { ...emptyProviderForm(), code: 'epay2', base_url: 'https://pay.example.com', merchant_id: '1001', key: 'k' }
+    expect(providerProblems({ ...good, min_amount: '0' }, 'create').min_amount).toBeDefined()
+    expect(providerProblems({ ...good, min_amount: '1.5' }, 'create')).toEqual({})
+    expect(providerBody({ ...good, min_amount: '1.5' }, 'create')).toMatchObject({ min_amount: 150 })
+    expect(providerBody({ ...good, min_amount: '3' }, 'edit')).toMatchObject({ min_amount: 300 })
   })
 
   it('keeps methods in canonical order and moves the default off an unticked method', () => {
@@ -366,14 +413,22 @@ describe('channel query (PAY-009)', () => {
 
 describe('manualCreatedToast', () => {
   const base = { order_id: 'o1', order_no: 'NO1', currency: 'CNY', discount_amount: 0, total_amount: 1000, balance_applied: 0, payable_amount: 1000, status: 'fulfilled' as const }
-  it('新开或续费：沿用原提示', () => {
-    expect(manualCreatedToast(base, 'grant')).toBe('订单 NO1 已赠送开通')
-    expect(manualCreatedToast(base, 'pending')).toContain('等待用户在 30 分钟内支付')
+  it('另开一份：说明另开了一份订阅', () => {
+    expect(manualCreatedToast(base, 'grant')).toBe('订单 NO1 已赠送开通，已另开一份订阅')
+    expect(manualCreatedToast(base, 'offline', 'new')).toBe('订单 NO1 已按线下收款入账，已另开一份订阅')
+    expect(manualCreatedToast(base, 'pending', 'new')).toContain('等待用户在 30 分钟内支付')
+  })
+  it('续一期：说明订阅链接不变', () => {
+    expect(manualCreatedToast(base, 'grant', 'renew')).toBe('订单 NO1 已赠送续期，订阅链接不变')
+    expect(manualCreatedToast(base, 'offline', 'renew')).toBe('订单 NO1 已按线下收款入账，订阅已续期，链接不变')
+    expect(manualCreatedToast(base, 'pending', 'renew')).toBe('订单 NO1 已创建（续费），等待用户在 30 分钟内支付')
   })
   it('落成原订阅上的换套餐：说明链接不变与退回余额的金额', () => {
     const changed = manualCreatedSchema.parse({ ...base, proration_credit: 995, balance_refund: 995 })
-    expect(manualCreatedToast(changed, 'grant')).toBe('订单 NO1 已在原订阅上换套餐，订阅链接不变，原套餐剩余价值 ¥9.95 已退回余额')
-    expect(manualCreatedToast({ ...changed, balance_refund: 0 }, 'offline')).toBe('订单 NO1 已在原订阅上换套餐，订阅链接不变')
-    expect(manualCreatedToast({ ...changed, status: 'pending_payment', balance_refund: 0 }, 'pending')).toContain('在原订阅上换套餐')
+    expect(manualCreatedToast(changed, 'grant', 'change')).toBe('订单 NO1 已在原订阅上换套餐，订阅链接不变，原套餐剩余价值 ¥9.95 已退回余额')
+    expect(manualCreatedToast({ ...changed, balance_refund: 0 }, 'offline', 'change')).toBe('订单 NO1 已在原订阅上换套餐，订阅链接不变')
+    expect(manualCreatedToast({ ...changed, status: 'pending_payment', balance_refund: 0 }, 'pending', 'change')).toContain('在原订阅上换套餐')
+    // 响应里没有退款项（Go 的 omitempty）也不报错
+    expect(manualCreatedToast(base, 'grant', 'change')).toBe('订单 NO1 已在原订阅上换套餐，订阅链接不变')
   })
 })
