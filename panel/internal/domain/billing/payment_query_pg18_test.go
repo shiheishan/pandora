@@ -125,6 +125,18 @@ func TestPaymentQueryPG18(t *testing.T) {
 	paymentsOf := func(orderID string) int {
 		return count(`SELECT count(*) FROM payments WHERE order_id=$1::uuid`, orderID)
 	}
+	// payments.method：门户完成页与订单页按它说「支付宝付了 ¥x」（w8walk 第 5 节第 4 条）
+	methodOf := func(orderID string) string {
+		t.Helper()
+		var m *string
+		if err := admin.QueryRow(ctx, `SELECT method FROM payments WHERE order_id=$1::uuid`, orderID).Scan(&m); err != nil {
+			t.Fatalf("read payment method: %v", err)
+		}
+		if m == nil {
+			return "<null>"
+		}
+		return *m
+	}
 	orderPaidTxns := func(orderID string) int {
 		return count(`SELECT count(*) FROM ledger_transactions
 			WHERE source_type='order' AND source_id=$1::uuid AND kind='order_paid'`, orderID)
@@ -147,6 +159,9 @@ func TestPaymentQueryPG18(t *testing.T) {
 			count(`SELECT count(*) FROM payment_events WHERE provider_event_id=$1
 				AND processing_status='processed' AND signature_verified`, ref+":RECONCILED") != 1 {
 			t.Fatalf("reconciled evidence missing (notified %d→%d)", before, notifiedCount.Load())
+		}
+		if got := methodOf(o.id); got != "alipay" {
+			t.Fatalf("reconciled payment method=%s want alipay (from the channel query)", got)
 		}
 
 		// 真实回调晚到：事件号不同、渠道流水号相同，认作已记过
@@ -173,6 +188,9 @@ func TestPaymentQueryPG18(t *testing.T) {
 	t.Run("callback first then query is not recorded again", func(t *testing.T) {
 		o := newOrder(t, "callback-first", true)
 		ref := "pq-trade-callback-first-" + fx.suffix
+		// 夹具：发起支付时选的是微信（测试渠道没配方式，直接写进意图的 action_payload）；回调不带方式
+		must(t, `UPDATE payment_intents SET action_payload = action_payload || '{"method":"wxpay"}'
+			WHERE order_id=$1::uuid`, o.id)
 		if out, err := service.HandlePaymentWebhook(ctx, fx.tenant, PaymentWebhookInput{
 			ProviderCode: fx.providerCode, ProviderEventID: ref + ":TRADE_SUCCESS",
 			ProviderPaymentID: ref, EventType: "payment.succeeded", OrderNo: o.no,
@@ -189,6 +207,10 @@ func TestPaymentQueryPG18(t *testing.T) {
 		if paymentsOf(o.id) != 1 || orderPaidTxns(o.id) != 1 {
 			t.Fatal("query after callback recorded the money twice")
 		}
+		if got := methodOf(o.id); got != "wxpay" {
+			t.Fatalf("callback without a method recorded %s, want the intent's wxpay", got)
+		}
+		t.Log("marker=payment_query_pg18_payment_method_recorded_ok")
 	})
 
 	t.Run("cancelled order found paid is quarantined, not fulfilled", func(t *testing.T) {

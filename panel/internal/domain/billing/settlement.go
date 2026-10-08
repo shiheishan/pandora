@@ -25,11 +25,14 @@ type PaymentWebhookInput struct {
 	// OrderID 与 OrderNo 二选一。
 	// 易支付这类协议回调时只带对外短单号（out_trade_no），拿不到内部 UUID，
 	// 故支持按 order_no 定位；两者都给时以 OrderID 为准。
-	OrderID           string
-	OrderNo           string
-	Amount            int64
-	Currency          string
-	FeeAmount         int64
+	OrderID   string
+	OrderNo   string
+	Amount    int64
+	Currency  string
+	FeeAmount int64
+	// Method 是渠道内的付款方式（alipay / wxpay …，易支付回调的 type）。没带时结算取发起支付
+	// 那个意图上记的方式；写进 payments.method，门户完成页与订单页按它说「支付宝付了 ¥x」。
+	Method            string
 	RawPayload        map[string]any
 	SignatureVerified bool
 }
@@ -412,14 +415,18 @@ func (s *Service) settlePaymentTx(ctx context.Context, tx pgx.Tx, tenantID strin
 		intentID = &id
 	}
 
+	// 付款方式：回调带的优先（用户在收银台实际用的），没带就用发起支付时选的那个（意图的 action_payload）
 	var paymentID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO payments
 			(tenant_id,order_id,provider_id,provider_payment_id,
-			 payment_intent_id,currency,amount,fee_amount,status)
-		VALUES ($1,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8,'succeeded')
+			 payment_intent_id,currency,amount,fee_amount,status,method)
+		VALUES ($1,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8,'succeeded',
+		        coalesce($9::text, (SELECT NULLIF(pi.action_payload->>'method', '') FROM payment_intents pi
+		                             WHERE pi.tenant_id = $1 AND pi.id = $5::uuid)))
 		RETURNING id::text`, tenantID, orderID, providerID,
-		in.ProviderPaymentID, intentID, currency, in.Amount, in.FeeAmount).
+		in.ProviderPaymentID, intentID, currency, in.Amount, in.FeeAmount,
+		paymentMethodOf(in.Method)).
 		Scan(&paymentID)
 	if err != nil {
 		return err
