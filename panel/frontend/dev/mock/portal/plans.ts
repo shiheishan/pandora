@@ -42,6 +42,8 @@ export const plans: MockModule = {
       const body = await readStrict(ctx, ['from_subscription_id', 'to_subscription_id'])
       if (!body) return
       const state = portalState(ctx.user.userId)
+      // 与 billing.TransferTrafficPacks 入口同一句：来源与目标是同一份，先于一切状态判断回 422
+      if (body.from_subscription_id === body.to_subscription_id) return ctx.fail(422, 'validation_failed', '请求参数校验未通过', { to_subscription_id: '要转到另一份上' })
       const to = state.subs.find((s) => s.id === body.to_subscription_id)
       if (!to) return ctx.fail(404, 'not_found', '订阅不存在')
       if (!isLiveSub(to) && !isRevivable(to)) return ctx.fail(409, 'conflict', '只能转到在用的套餐上')

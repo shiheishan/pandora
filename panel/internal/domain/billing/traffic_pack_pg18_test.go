@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aegispanel/aegis/internal/domain/purchase"
 	platformdb "github.com/aegispanel/aegis/internal/platform/db"
@@ -282,6 +284,33 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 			t.Fatalf("%s grant SQLSTATE=%q err=%v", name, orderReleasePG18SQLState(err), err)
 		}
 	}
+	// 00157：addon 单必须指定加到哪一份。00137 版守卫对不带订阅的 addon 单（升级前的在途单）跳过
+	// 订阅核对、照常放行；这里造一张这样的单再让守卫核：先以超级用户在 replica 下把一张待支付
+	// addon 单的 subscription_id 抹成空（运行时订单守卫不许改这一列，只能这样造），再回到 origin
+	// 直接调 app.assert_traffic_pack_order（三条延迟约束触发器调的就是它）。00137 下它正常返回，
+	// 00157 下必须报 check_violation；整个事务回滚。
+	targetless := order(t, "pack-targetless", packB, 0)
+	ftx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ftx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ftx.Exec(ctx, `UPDATE orders SET subscription_id = NULL WHERE id = $1::uuid AND kind = 'addon'`,
+		targetless.OrderID); err != nil {
+		t.Fatalf("clear the addon order's subscription: %v", err)
+	}
+	if _, err := ftx.Exec(ctx, `SET LOCAL session_replication_role = origin`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ftx.Exec(ctx, `SELECT app.assert_traffic_pack_order($1::uuid, $2::uuid)`, fx.tenant, targetless.OrderID)
+	_ = ftx.Rollback(ctx)
+	var noTarget *pgconn.PgError
+	if !errors.As(err, &noTarget) || noTarget.Code != "23514" || !strings.Contains(noTarget.Message, "must target a subscription") {
+		t.Fatalf("addon order without a subscription passed the shape guard err=%v", err)
+	}
+	t.Log("marker=traffic_pack_pg18_addon_needs_subscription_ok")
 	var addonRetired bool
 	if err := admin.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_constraint
 		WHERE conname='quota_balances_addon_retired_00070')`).Scan(&addonRetired); err != nil || !addonRetired {

@@ -25,7 +25,8 @@ import (
 //  4. 不写流水直接改 subscription_id：提交时被约束触发器拒绝；
 //  5. 00138 回填三档：生效中到期最晚 → 过期 30 天内到期最晚 → 留空；重跑零改动；
 //  6. 回填挂上的包（只有 migration 流水）同样不能从生效中的那份转出（00157 删掉了「挪一次」的
-//     例外）：服务 409，直接改库哪怕同一事务写了流水也被改挂守卫拒；那份停用后照规则 2 转走。
+//     例外）：服务 409；直接改库，同一事务先写 user 流水、或照 00137 情形 3 先补 migration 流水，
+//     都被改挂守卫拒；那份停用后照规则 2 转走。
 func checkTrafficPackSubscriptionPG18(t *testing.T, ctx context.Context, pool *platformdb.Pool,
 	admin *pgx.Conn, service *Service, fx orderReleasePG18Fixture) {
 	must := func(sql string, args ...any) {
@@ -216,6 +217,22 @@ func checkTrafficPackSubscriptionPG18(t *testing.T, ctx context.Context, pool *p
 		!strings.Contains(pgErr.Message, "can only leave an unattached or ended subscription") || attachedTo(ga) != a2 ||
 		scalar(`SELECT count(*) FROM traffic_pack_transfers WHERE grant_id=$1::uuid AND actor_kind <> 'migration'`, ga) != 0 {
 		t.Fatalf("guard on moving a backfilled pack out of a live subscription err=%v", err)
+	}
+	// 再用 00157 收紧掉的那条旧放行写法打：同一事务先补一条 migration 流水再改挂。00137 下余额只有
+	// migration 流水、情形 3 成立，提交时的流水检查也过，这一步会成功；00157 下必须被守卫拒。
+	err = inTx(ua, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO traffic_pack_transfers
+			(tenant_id, grant_id, user_id, from_subscription_id, to_subscription_id, remaining_bytes, actor_kind)
+			VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5::uuid, 100, 'migration')`, fx.tenant, ga, ua, a2, a1); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE traffic_pack_grants SET subscription_id = $2::uuid WHERE id = $1::uuid`, ga, a1)
+		return err
+	})
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" ||
+		!strings.Contains(pgErr.Message, "can only leave an unattached or ended subscription") || attachedTo(ga) != a2 ||
+		scalar(`SELECT count(*) FROM traffic_pack_transfers WHERE grant_id=$1::uuid AND from_subscription_id IS NOT NULL`, ga) != 0 {
+		t.Fatalf("guard on the pre-00157 legacy move (migration record + move) err=%v", err)
 	}
 	must(`UPDATE subscriptions SET status='cancelled', cancelled_at=now() WHERE id=$1::uuid`, a2)
 	if out, err := service.TransferTrafficPacks(ctx, fx.tenant, TrafficPackTransferInput{UserID: ua, From: &a2, To: a1}); err != nil ||
