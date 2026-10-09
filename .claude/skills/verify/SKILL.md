@@ -13,11 +13,13 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 
 ## 本地层：改了什么 → 本地跑什么
 
+下表适用于 panel 和 pdnd：本机的 go 命令一律加 `GOTOOLCHAIN=go<go.mod 版本>`（缺省 Go 比 go.mod 新，pdnd 不加会链接失败；原因见根 CLAUDE.md「环境与工具坑」），结论才与 CI 同口径。
+
 | 改了什么 | 本地跑 |
 |---|---|
 | panel 的 Go 代码 | 在 `panel/` 对改到的文件跑 `gofmt -l`；对改到的包跑 `go vet` 和 `go test`，例如 `go test ./internal/domain/billing/...` |
 | 动了 SQL 字符串、表名、路由、权限码 | 除改到的包外，加跑整包扫描的源码契约：`go test ./internal/platform/db/ ./internal/api/...` |
-| pdnd 的 Go 代码 | 在 `pdnd/` 对改到的文件跑 `gofmt -l`，对改到的包跑 `go vet` 和 `go test`，本机命令前加 `GOTOOLCHAIN=go1.26.9`（不加会链接失败，原因见根 CLAUDE.md「环境与工具坑」） |
+| pdnd 的 Go 代码 | 在 `pdnd/` 对改到的文件跑 `gofmt -l`，对改到的包跑 `go vet` 和 `go test` |
 | pdnd 的协议、能力矩阵，或面板的协议 schema | `python3 pdnd/release/check_native_panel_parity.py` |
 | 面板前端 | 在 `panel/frontend/` 跑 `npm run lint`、`npm run typecheck`、`npm run test`（依赖变了先 `npm ci`），不构建 |
 | 部署脚本 | 在 `panel/deploy/` 跑对应的 `*_mock_test.sh` / `*_static_test.sh` / `*_test.sh` |
@@ -55,5 +57,4 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 ## 坑
 
 - `go build` / `go test` 不要和 `npm ci` 同时跑（见根 CLAUDE.md「环境与工具坑」）。
-- 本机 Go 缺省 1.27.1 编不过 pdnd，本机 go 命令要写 `GOTOOLCHAIN=go1.26.9`（原因和换法见根 CLAUDE.md「环境与工具坑」）；panel 的结论也按这个版本，才与 CI 同口径。
 - 检查机串行：几路同时推会排队，`wait-status.sh` 等到 1800 秒退出 2 时，别当红，按 GitHub 的结论判（`wait-github.sh`）。
