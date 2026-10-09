@@ -49,10 +49,12 @@ paths:
 - 用户集缓存条目按 `nextExpiry` 硬过期（`ttlEntry.hard`），不走「先回旧值」的宽限：到期没有写、不推进纪元，宽限会让刚到期的人多留 10 秒（守卫 `TestNodeUserSetHardExpiresAtNextSubscriptionExpiry`）
 
 ## 纪元监听与静默热路径（w10quiet，迁移 00153）
-- aegis-node 独占一条连接 `LISTEN aegis_node_epoch`（`epoch_watch.go`）：00101 的纪元触发器推进纪元时发 `'d'`；节点行非遥测列、服务器的状态 / 删除 / 控制节点、生效发布物变了发 `'c'`（`app.notify_node_config_change`）；本进程每秒经连接池发一条探针 `'p:<序号>'`。健康 = 连着且 5 秒内收到过探针回声；不健康时戳为零值，一切照旧逐请求查库
+- aegis-node 独占一条连接 `LISTEN aegis_node_epoch`（`epoch_watch.go`）：00101 的纪元触发器推进纪元时发 `'d'`；节点行非遥测列、服务器的状态 / 删除 / 控制节点、生效发布物变了发 `'c'`（`app.notify_node_config_change`）；本进程每秒经一条池外专用连接发一条探针 `'p:<实例>:<序号>'`。健康 = 连着且「最近一条收到回声的本进程探针的发送时刻」离现在不到 3 秒（`watchStaleAfter`，也是监听落后时吊销延迟的上界）；别的进程的探针不计。连着却 9 秒没有回声时看门狗主动断开重连。不健康时戳为零值，一切照旧逐请求查库
 - 缓存条目记**加载前**的监听戳（会话号 + `'d'` / `'c'` 计数），戳覆盖请求开始时的戳就原样可用，不读纪元、不看 TTL（只看条目自己的到期：身份 `expires_at`、名单 `nextExpiry`）。通知在提交之后才送达，所以没有「纪元已推进、数据还没可见」的提交缝。strict 设备模式的名单依赖在线设备记录（没有纪元），照旧按 TTL 重算
 - 身份与名单看 `'d'`；节点配置视图（`config_delivery_view.go`：UniProxy 认证、204 判定、心跳回包）看 `'c'`，只在监听健康时用。视图给不出结论（令牌不对、门槛不过、节点不存在）一律交回原来的查库路径，错误与日志不变；门槛片段 `uniProxyServingGateSQL`、`effectiveDeliverableSQL` 与查库路径共用
 - **给 nodes 加列**：除了 `zz_notify_nodes_update`，还要加进 `zz_node_config_notify_nodes_update`（00153，同一份列清单，连 last_heartbeat_at 也不比）；PG18 守卫 `checkNodesTriggerColumns` 两个触发器一起对照 information_schema。影响 UniProxy 认证的服务器列要加进 `zz_node_config_notify_servers_update`
 - 守卫：单测 `epoch_watch_test.go`、`config_delivery_view_test.go`；PG18 `checkWatchedGatewayFollowsNotifications`（身份失效、节点退役、换令牌在提交后 2 秒内生效，实际是通知送达的毫秒级）
-- 心跳写合并（`heartbeat_coalesce.go`）：材料字段（除探针值外的全部上报）没变、离上一拍不到 60 秒、监听健康时只记内存，每 15 秒一批写（节点行只动 last_heartbeat_at、探针点降到约 60 秒一点、服务器行 45 秒刷新），批量写逐行仍以 `activeIdentityFromSQL("v.id")` 为门槛。库里心跳年龄最坏约 48 秒 < 离线判定 90 秒（守卫 `TestHeartbeatCoalesceWindowStaysInsideStaleThreshold`）；运行状态、版本、资产变化与断线回来的第一拍立即写
+- 心跳写合并（`heartbeat_coalesce.go`）：材料字段（除探针值外的全部上报）没变、身份公钥没变、离上一拍不到 60 秒、离上一次立即写不到 10 分钟、监听健康时只记内存，每 15 秒一批写（节点行只动 last_heartbeat_at、探针点降到约 60 秒一点、服务器行 45 秒刷新），批量写逐行仍以 `activeIdentityFromSQL("v.id")` 为门槛，先按 id 排序 `FOR NO KEY UPDATE SKIP LOCKED` 再改（不等别人的行锁，锁不到的放回缓冲）。库里心跳年龄最坏约 48 秒 < 离线判定 90 秒（守卫 `TestHeartbeatCoalesceWindowStaysInsideStaleThreshold`）；运行状态、版本、资产变化与断线回来的第一拍立即写
+  - 合并器只记「库里确实写成了」的材料：所有立即写（`HeartbeatSigned`、`HeartbeatConfirmed`、`Heartbeat`）都经 `Service.heartbeat` 更新它、失败就忘掉；别的入口改写心跳类列要调 `forgetHeartbeat`（兼容通道 `/status` 已调；重新引导与两阶段接入换了身份公钥，自然立即写）。守卫 `TestEveryImmediateHeartbeatWriteUpdatesCoalescer`
+- **单副本设计**（总协调 2026-10-09 定）：aegis-node 目前只支持单实例。心跳合并器的材料记录、在线上报备忘（`uniproxy_alive_memo.go`）都在进程内；多实例时同一节点的请求落到不同实例会让库停在旧状态。以后要多实例，先让 nginx 按节点 / 服务器一致性哈希分流，再补这两处
 - UniProxy `/user` 的 200 正文按（池, 版本）只编码一次（JSON 与 gzip，挂在用户集缓存条目上），请求接受 gzip 就直接给压好的那份，nginx 不再逐个压
