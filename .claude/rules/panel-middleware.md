@@ -13,7 +13,7 @@ paths:
 - 限流（`ratelimit.go`）每层一个 Lua 脚本、一次 EVALSHA 判定全部维度，按声明顺序计数、遇第一个超限维度即停；`RateLimit` 后端故障放行，`RateLimitStrict` 回 503
   - 超限时脚本回 `{序号, 计数, 剩余毫秒}`。维度 `.AsCooldown()` 的计数键不带时间窗编号、从第一次计数起过期（Max=1 即「两次至少隔 Window」）；`.WithRetryHint()` 让 429 写「操作太频繁，请 X 分钟后再试」。被前面维度拦下的请求不占后面维度的额度，所以「间隔」要声明在「总次数」前面
 - 门户请求不展开权限（门户没有任何路由按权限放行）；后台才展开
-- 降级开关读取有 3 秒进程内缓存：admin 切开关经 `AdminWritesGate` 当场失效，public 收 `switches.changed` 失效，广播丢了退回 TTL
+- 降级开关读取有 3 秒进程内缓存（`switches.go`，`platform/cache` 的 Cache：同一开关的并发未命中只读一次库，上限 256 条）：admin 切开关经 `AdminWritesGate` 当场失效（`Clear` 同时作废正在读库的那一趟，失效之后不会写回旧值），public 收 `switches.changed` 失效，广播丢了退回 TTL。守卫 `switches_cache_test.go`
 - 降级开关缺行视为开启（`platform/featureswitch.Enabled`，经 `switches.go` 的 `FeatureSwitch`、`AdminWritesGate`），因为它们是急停开关，新租户没有行也要能下单
   - 新增开关要同时补进建租户触发器 `app.seed_tenant_defaults`。守卫：`switch_seed_test.go` 的 `TestTenantSeedSwitchesMatchCode`
 - 单租户假设：`Tenant` 恒定注入 `DefaultTenantID`。守卫：`tenant_guard_test.go` 的 `TestSingleTenantAssumptionGuard`

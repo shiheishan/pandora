@@ -18,6 +18,9 @@ paths:
   - 已有盐的派生公式落了存量哈希就不能改。守卫：`panel/internal/platform/crypto/salt_test.go` 的 `TestDerivedSaltsAreDomainSeparated`
 - 实时推送（`platform/realtime`）只推「什么变了」（topic + 定位 id），不推数据；客户端收到后经 REST 拉，权限过滤留在 REST。不要往事件里塞业务数据
   - 前端主题由 `listener.go` 的 `topicFor` 从 `notify_change` 触发器的表名映射；高频写入的表（`quota_balances`、按日用量）不挂通知，新增高频表也别挂
+- 进程内缓存一律用 `platform/cache`（2026-10-09 收拢，w12cache）：`Cache` 有上限、单飞、TTL 兜底，条目是否可用由调用方按纪元判（`Freshness`：监听健康时比 `Watch` 的戳、零往返，不健康时比在本来就要跑的查询里读出的纪元 `EpochSQL`）；没有纪元的急停类缓存用 TTL 加 `Clear`。不要再在域里手写 map + mutex + 过期时间的缓存
+  - 纪元的来源是迁移里的触发器（下发纪元 00101/00153，缓存纪元 00155/00156），种类与序列名只在 `platform/cache/epoch.go`；每个 `Watch` 占池里 1 条连接（LISTEN）加池外 1 条（探针），进程要起 Watch 先在 `platform/config` 的连接预算里留位置
+  - 还没迁的：`adminops/dashboard_cache.go`（W1-c）、`subscription/cache.go`（W1-a）
 - 源码契约测试（断言某函数里必须有 / 不许有某段代码）一律经 `platform/sourcetest` 按「包 + 声明名」取源码，不按文件名读、不用「函数 A 到函数 B」截文本
   - 否定断言用 `Source` 覆盖整个包，函数挪到哪个文件都逃不掉；名字找不到或重名直接失败
   - 只被 `*_test.go` 引用
