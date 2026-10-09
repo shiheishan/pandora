@@ -15,7 +15,7 @@ paths:
 - `core/mieru/listener.go` 有一份同值的退避参数：kernel 依赖 core/mieru，那边不能反向引用，改一处要同步另一处。
 - 握手限时：普通 TLS 用 `inboundHandshakeTimeout`（10 秒，`withHandshakeDeadline` / `serverTLSHandshake`），REALITY 握手 worker 15 秒。Close 打断的握手不算失败、不上报。ShadowTLS 组合入站把 `inboundHandshakeTimeout` 显式传给 `nativewire/shadowtls`，只限认证判定之前，判定后的诱饵中继不限时（原则见 pdnd-forks 规则文件）。
 - 全部 HTTP 承载（WebSocket、HTTP Upgrade、gRPC、XHTTP、Naive）的 `http.Server` 只经 `newInboundHTTPServer` 构造，靠它的 `ReadHeaderTimeout` 给 TLS 握手与请求头限时；不要直接 `&http.Server{}`（`TestInboundHTTPServerBoundsHandshake`）。
-- 它同时设 `ErrorLog`（`inbound_http_errorlog.go`）：net/http 缺省把「TLS handshake error from 完整IP」逐条写标准库 log、不限流。TLS 由 net/http 握手的入站（Naive）把 ErrorLog 换成带自己 connErr 的那份，握手失败走 OnConnError；处理请求的 panic 截网段后按 Error 记；其余对端噪声丢弃。
+- 它同时设 `ErrorLog`（`inbound_http_errorlog.go`）：net/http 缺省把「TLS handshake error from 完整IP」逐条写标准库 log、不限流。TLS 由 net/http 握手的入站（Naive）把 ErrorLog 换成带自己 connErr 的那份，握手失败走 OnConnError；panic（`http:` 与 `http2:` 两种前缀）按 Error 记；只丢 `httpPeerNoisePrefixes` 逐条列出的对端噪声，其余按 WARN 记（如 `http: Accept error … too many open files`）；记之前行内 ip:port 截网段。
 
 ## 认证失败的回落
 
@@ -37,7 +37,7 @@ paths:
 ## 在线设备与设备数限制
 
 - 各适配器内嵌一份 `online_devices.go` 的 `onlineDevices`（零值可用），不要再各写 `map[用户]map[IP]struct{}`。按设备键记引用计数：同一设备多条连接只占一个名额，计数到 0 才离线；设备上限按不同设备数判。
-- 设备键是 `core.DeviceKey`（用户 10-09 定）：IPv4 与 IPv4 映射地址按单个地址，IPv6 按 /64 网段（写成 `2001:db8:1:2::/64`）。OnlineIPs 上报的就是设备键：面板对上报串取哈希、按订阅 count(DISTINCT) 计设备（`nodefabric` 的 `aliveRows`、`device_limit_admin`），报原始 IPv6 会把同一 /64 的轮换地址算成多台。mieru 的 `core/counter.OnlineTracker` 也用它。
+- 设备键是 `core.DeviceKey`（用户 10-09 定）：IPv4 与 IPv4 映射地址按单个地址，IPv6 按 /64 网段（写成 `2001:db8:1:2::/64`）。OnlineIPs 上报的就是设备键；面板 `aliveRows` 取哈希前再按同一口径归一（`nodefabric/alive_device_key.go`），新旧节点混跑也不多算。两边读同一张用例表（pdnd `core/device_key_test.go` 的 `TestDeviceKey`），改口径要两边一起改。mieru 的 `core/counter.OnlineTracker` 也用它。
 - 写法固定为 `if !a.online.enter(user, ip) { 拒绝 }` 紧跟 `defer a.online.leave(user, ip)`，异常退出也经 defer 撤销。新增协议要进接线用例：TCP 进 `online_devices_wiring_test.go`（同 IP 两条关一条仍在线、全关才离线、别的设备占满名额时被拒），有 UDP 路径的再进 `online_devices_wiring_udp_test.go`。
 - 例外：mieru 用 `core/counter.OnlineTracker`（最后活跃时间 + 5 分钟 TTL，不按连接计数）；ShadowTLS 委托内层适配器。
 
@@ -72,7 +72,7 @@ QUIC 栈是 sagernet/quic-go（经 sing-quic 与 `internal/nativewire` 的 hy2 /
 - hy2 / TUIC 入站起来后检查 UDP 收发缓冲（`quic_socket_linux.go`）：pdnd 无 CAP_NET_ADMIN，受 `net.core.rmem_max / wmem_max` 限制拿不到 quic-go 要的 8MB，不足一半就 Warn 一次并提示 sysctl。上限由面板的节点安装脚本写进 `/etc/sysctl.d/90-pandora-native.conf`（16MB，`pdndSysctlFunction`），手工安装见 `release/README.md`；不要给 unit 加 CAP_NET_ADMIN。
 - UDP 转发的出站 socket（`newHy2UDPUpstream`）申请 `hy2UDPSocketBuffer`（4MB），刻意比监听的 8MB 小：上游 socket 每会话一个，读回值翻倍记账，会话多了会顶满全局 udp_mem 让整机 UDP 丢包；持续过载时加大缓冲只加排队延迟。受同一 sysctl 上限，拿不到时不逐会话告警（入站那条已覆盖）。默认拦私网时经 `outbound.UDPBatchConn` 调缓冲，不拿裸 socket。下行已是 recvmmsg 批量收（IPv4 本地地址时）。
 - hy2 / TUIC 每用户在途 UDP 会话上限 `quicUDPSessionsPerUser`（1024，`quic_udp_quota.go`），挡 fd 与 udp_mem 被单个用户耗尽；超出拒新不踢旧，走 OnConnError 的 limit 分类。
-- `internal/nativewire` 的 hy2 / TUIC 服务端在 QUIC 连接断开时关掉其上全部 UDP 会话（`closeUDPSessions`）：会话 ctx 来自服务而非连接，不关要等 udpTimeout（5 分钟）才收尾，期间占着上游 socket、在线设备与会话名额（`TestOnlineDevicesWiringUDP` 守着）。
+- `internal/nativewire` 的 hy2 / TUIC 服务端在 QUIC 连接断开时关掉其上全部 UDP 会话（`closeUDPSessions`）：会话 ctx 来自服务而非连接，不关要等 udpTimeout（5 分钟）才收尾，期间占着上游 socket、在线设备与会话名额（`TestOnlineDevicesWiringUDP` 守着）；置 `udpClosed` 与拷列表在同一把 `udpAccess` 里，之后到的包不再建会话（TUIC quic 中继模式会在单向流 goroutine 里建，`TestNoUDPSessionAfterClose`）。
 - 内核里直接用包级 `slog.*` 的日志（缓冲告警、关停、panic）靠 main 的 `installLogger` 把进程 logger 设成 slog 默认才是 `level=` 格式、受 log_level 约束；标准库 log 包转进来的输出按 WARN 记，log_level=warn 时不被吞（`logger_test.go`）。能拿到注入 logger 的地方优先用注入的。
 - 包装 quic-go 的监听 socket 时必须保留批量与 GSO：任何只实现 `net.PacketConn` 的包装都会让 quic-go 退回逐包 ReadFrom / WriteTo（每 Gbps 多约一核）。测量口径与 harness 见 w9quic 报告（回环、私网目标放开）；生产默认拦私网时走 outbound 的带检查批量接口，GSO 消息同样逐条过 guard。
 

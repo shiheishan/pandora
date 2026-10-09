@@ -36,6 +36,7 @@ paths:
 - 节点请求签名原像 `PANDORA-NODE-REQUEST-V2` 有三份独立实现：面板 `nodefabric.CanonicalPayloadV2`（`api/node` 的 `requireNodeSignature` 验签）、`pdnd/panel/signed.go` 的 `SignedClient.Do`、`release/acceptancepanel`。生效发布契约 `aegis-node-effective-config-release-v1` 的原像同样分在面板 `nodefabric/effective_release_codec.go`、`pdnd/panel/effective_release.go`、acceptancepanel 三处。
 - `release/acceptancepanel` 按面板实现独立重写原像与校验，刻意不 import `pdnd/panel`：夹具借用被测代码，两边一起错时验收照样变绿。只有它的 `main_test.go` 可以用 `pdnd/panel` 的 `SignedClient` 对打。
 - `panel/heartbeat_metrics.go` 把采样换算成面板 `nodefabric.Metrics` 的整数口径并钳到库列范围；面板改 Metrics 字段或单位要同步（`TestHeartbeatMetricsJSONMatchesPanelContract`）。`HostCapacity` 同时填进 enrollment begin 请求。
+- 在线上报（alive）的设备键：pdnd `core.DeviceKey` 与面板 `nodefabric.aliveDeviceKey`（IPv4 按地址、IPv6 按 /64、已是 /64 串与解析不了的原样）同一口径，面板侧 `TestAliveDeviceKeyMatchesPdndDeviceKey` 读 pdnd 的 `TestDeviceKey` 表对照。
 - 兼容通道 `/status` 只报机器级指标，不带任何用户信息。
 - 面板的压测模拟节点 `panel/tools/loadtest/nodesim` 逐段对齐这里的节拍、ETag、退避与签名流程；改这里的行为要同步那边。
 
