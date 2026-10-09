@@ -9,7 +9,7 @@ DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 fail() { printf 'pg-layout: %s\n' "$*" >&2; exit 1; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/pandora-pg-layout.XXXXXX")"
 trap 'rm -rf -- "$T"' EXIT
-SCRIPTS=(check-migrations.sh migrate.sh)
+SCRIPTS=(check-migrations.sh migrate.sh backup-postgres.sh verify-backup.sh restore-postgres.sh psql.sh bootstrap.sh)
 
 extract() { awk '/^pandora_db_layout\(\) \{$/ { p = 1 } p { print } p && /^}$/ { exit }' "$DEPLOY/$1"; }
 reference="$(extract "${SCRIPTS[0]}")"
@@ -40,6 +40,85 @@ fallback() {
   || fail "native fallback: $(cat "$T/goose.env")"
 [ "$(fallback docker)" = 'DSN=host=127.0.0.1 port=5433 user=aegis dbname=aegis sslmode=disable PW=owner-pw' ] \
   || fail "docker fallback: $(cat "$T/goose.env")"
+
+# --- 备份、校验、恢复三件套：连库一律经 pandora_pg（三份逐字一致），别处不许直接 docker exec ---
+extract_fn() { awk -v fn="$2" '$0 == fn "() {" { p = 1 } p { print } p && /^}$/ { exit }' "$DEPLOY/$1"; }
+TRIO=(backup-postgres.sh verify-backup.sh restore-postgres.sh)
+for fn in pandora_pg pandora_pg_require pandora_pg_require_login; do
+  ref="$(extract_fn "${TRIO[0]}" "$fn")"
+  [ -n "$ref" ] || fail "${TRIO[0]} has no $fn"
+  for script in "${TRIO[@]}"; do
+    [ "$(extract_fn "$script" "$fn")" = "$ref" ] || fail "$script's $fn differs from ${TRIO[0]}'s"
+  done
+done
+for script in "${TRIO[@]}"; do
+  n="$(grep -c 'docker exec' "$DEPLOY/$script")"
+  [ "$n" -eq 1 ] || fail "$script runs docker exec outside pandora_pg ($n occurrences)"
+  if grep -Eq 'export PGPASSWORD|PGPASSWORD="\$POSTGRES_PASSWORD" *$' "$DEPLOY/$script"; then
+    fail "$script still exports PGPASSWORD for the whole script"
+  fi
+done
+
+# pandora_pg 的行为：直装走本机客户端、回环、postgres 超级用户；docker 走容器、POSTGRES_USER。口令都只在环境里
+cat >"$T/bin/pg_dump" <<'MOCK'
+#!/usr/bin/env bash
+printf 'pg_dump %s | PGHOST=%s PGPORT=%s PGUSER=%s PGPASSWORD=%s PGSSLMODE=%s\n' "$*" \
+  "${PGHOST:-}" "${PGPORT:-}" "${PGUSER:-}" "${PGPASSWORD:-}" "${PGSSLMODE:-}" >"$(dirname "$0")/../pg.calls"
+MOCK
+cat >"$T/bin/docker" <<'MOCK'
+#!/usr/bin/env bash
+printf 'docker %s | PGPASSWORD=%s\n' "$*" "${PGPASSWORD:-}" >"$(dirname "$0")/../pg.calls"
+MOCK
+chmod 0755 "$T/bin/pg_dump" "$T/bin/docker"
+eval "$(extract_fn backup-postgres.sh pandora_pg)"
+(
+  PATH="$T/bin:$PATH"; DB_LAYOUT=native POSTGRES_SUPER_PASSWORD=super-pw POSTGRES_PORT=5434 POSTGRES_PASSWORD=owner-pw
+  pandora_pg pg_dump -d aegis --format=custom
+)
+[ "$(cat "$T/pg.calls")" = 'pg_dump -d aegis --format=custom | PGHOST=127.0.0.1 PGPORT=5434 PGUSER=postgres PGPASSWORD=super-pw PGSSLMODE=disable' ] \
+  || fail "native pandora_pg: $(cat "$T/pg.calls")"
+(
+  PATH="$T/bin:$PATH"; DB_LAYOUT=docker POSTGRES_USER=aegis POSTGRES_PASSWORD=owner-pw
+  pandora_pg pg_dump -d aegis --format=custom
+)
+[ "$(cat "$T/pg.calls")" = 'docker exec -i -e PGPASSWORD aegis-postgres pg_dump -U aegis -d aegis --format=custom | PGPASSWORD=owner-pw' ] \
+  || fail "docker pandora_pg: $(cat "$T/pg.calls")"
+
+# --- psql.sh 与 bootstrap.sh：在临时 deploy/ 里真跑一遍，客户端换成桩 ---
+for layout in native docker; do
+  mkdir -p "$T/$layout"
+  cp "$DEPLOY/psql.sh" "$DEPLOY/bootstrap.sh" "$DEPLOY/configure-app-role.sql" "$T/$layout/"
+done
+app_pw="$(printf 'a%.0s' $(seq 1 40))"
+printf 'POSTGRES_USER=aegis\nPOSTGRES_PASSWORD=owner-pw\nPOSTGRES_DB=aegis\nPOSTGRES_PORT=5434\nPOSTGRES_SUPER_PASSWORD=super-pw\nAEGIS_DB_APP_PASSWORD=%s\n' "$app_pw" >"$T/native/.env"
+printf 'POSTGRES_USER=aegis\nPOSTGRES_PASSWORD=owner-pw\nPOSTGRES_DB=aegis\nPOSTGRES_PORT=5433\nAEGIS_DB_APP_PASSWORD=%s\n' "$app_pw" >"$T/docker/.env"
+cat >"$T/bin/psql" <<'MOCK'
+#!/usr/bin/env bash
+root="$(dirname "$0")/.."
+printf 'psql %s | PGPASSWORD=%s APP=%s OWNER=%s\n' "$*" "${PGPASSWORD:-}" "${AEGIS_DB_APP_PASSWORD:+set}" "${POSTGRES_PASSWORD:+leaked}" >"$root/pg.calls"
+[ -t 0 ] || cat >"$root/pg.stdin"
+MOCK
+cat >"$T/bin/docker" <<'MOCK'
+#!/usr/bin/env bash
+root="$(dirname "$0")/.."
+printf 'docker %s | PGPASSWORD=%s APP=%s\n' "$*" "${PGPASSWORD:-}" "${AEGIS_DB_APP_PASSWORD:+set}" >"$root/pg.calls"
+[ -t 0 ] || cat >"$root/pg.stdin"
+MOCK
+chmod 0755 "$T/bin/psql" "$T/bin/docker"
+PATH="$T/bin:$PATH" bash "$T/native/psql.sh" -X -tAc 'SELECT 1' </dev/null
+[ "$(cat "$T/pg.calls")" = 'psql -h 127.0.0.1 -p 5434 -U postgres -d aegis -X -tAc SELECT 1 | PGPASSWORD=super-pw APP= OWNER=' ] \
+  || fail "native psql.sh: $(cat "$T/pg.calls")"
+PATH="$T/bin:$PATH" bash "$T/docker/psql.sh" -X -tAc 'SELECT 1' </dev/null
+[ "$(cat "$T/pg.calls")" = 'docker exec -i -e PGPASSWORD aegis-postgres psql -U aegis -d aegis -X -tAc SELECT 1 | PGPASSWORD=owner-pw APP=' ] \
+  || fail "docker psql.sh: $(cat "$T/pg.calls")"
+PATH="$T/bin:$PATH" bash "$T/native/bootstrap.sh" >/dev/null
+[ "$(cat "$T/pg.calls")" = 'psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5434 -U postgres -d aegis | PGPASSWORD=super-pw APP=set OWNER=' ] \
+  || fail "native bootstrap.sh: $(cat "$T/pg.calls")"
+cmp -s "$T/pg.stdin" "$DEPLOY/configure-app-role.sql" || fail 'native bootstrap.sh did not feed configure-app-role.sql'
+PATH="$T/bin:$PATH" bash "$T/docker/bootstrap.sh" >/dev/null
+[ "$(cat "$T/pg.calls")" = 'docker exec -i -e PGPASSWORD -e AEGIS_DB_APP_PASSWORD aegis-postgres psql -X -v ON_ERROR_STOP=1 -U aegis -d aegis | PGPASSWORD=owner-pw APP=set' ] \
+  || fail "docker bootstrap.sh: $(cat "$T/pg.calls")"
+cmp -s "$T/pg.stdin" "$DEPLOY/configure-app-role.sql" || fail 'docker bootstrap.sh did not feed configure-app-role.sql'
 
 # 判定本身
 eval "$reference"

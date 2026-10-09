@@ -19,7 +19,7 @@
 
 - **升级前一定有备份。**
   - 发布控制器 `release-stop-the-world.sh` 在停服之后、迁移之前跑 `backup-postgres.sh`，产物是加密的 `aegis-postgres-<时间>.dump.age`，输出里那行 `backup complete: <路径>` 就是它。
-  - `install.sh` 升级时先做 `pg_dump -Fc`，放在 `/var/backups/aegispanel/pre-upgrade-<时间>.dump`。
+  - `install.sh` 升级时先做 `pg_dump -Fc`，放在 `/var/backups/aegispanel/pre-upgrade-<时间>.dump`；`install-native.sh` 放在 `/var/backups/pandora/pre-upgrade-<时间>.dump`。
 
 ### 发布控制器的输出怎么读
 
@@ -184,6 +184,12 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose \
         ```
 
      2. 确认无误后，把 `.env` 的 `POSTGRES_DB` 与两条连接串指向新库；或者删掉旧库后改名。改名前务必再确认一次写入者全部停止。
+   - **install-native.sh 的升级前备份**（`/var/backups/pandora/pre-upgrade-<时间>.dump`，同样未加密）：同上先恢复到新库核对，客户端是本机的，以 postgres 系统用户经本地 socket：
+
+     ```bash
+     runuser -u postgres -- createdb -p <POSTGRES_PORT> <新库名>
+     runuser -u postgres -- pg_restore -p <POSTGRES_PORT> -d <新库名> --exit-on-error < <备份>
+     ```
 5. 恢复后：
    - 用 `migrate.sh version` 确认版本就是旧发布的最大迁移号；
    - 跑 `bootstrap.sh` 重新收窄运行角色；

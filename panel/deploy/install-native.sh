@@ -111,6 +111,64 @@ native_check_foreign_clusters() {
   die "旧集群里的 aegis 库要由人搬到 PG${want}（导出 → 恢复 → 核对，步骤见发布包 deploy/MIGRATION-RUNBOOK.md「旧版本集群里的 aegis 库」）；搬完、确认 .env 的 POSTGRES_PORT=${want_port} 后重跑本脚本"
 }
 
+#------------------------------------------------------------------------------
+# .env 与加密备份。install-native_backup_mock_test.sh 测这几个函数
+#------------------------------------------------------------------------------
+# 直装的加密备份目录（升级前备份、HTTPS 边缘的备份也在这里）；备份单元的 ReadWritePaths 换成它
+NATIVE_BACKUP_DIR=/var/backups/pandora
+
+# 往 .env 末尾追加缺的键（参数是 KEY=VALUE），已有的行一个字节都不动——那里是随机生成的口令与密钥，
+# 改错一个就连不上库、解不开信封加密的字段。先写同目录临时文件再改名，保持 0600。
+# 追加了的键名放在 NATIVE_ENV_ADDED（空格分隔）
+native_env_append_missing() {
+  local env_file="$1" line tmp added=()
+  shift
+  NATIVE_ENV_ADDED=""
+  for line in "$@"; do
+    grep -q "^${line%%=*}=" "$env_file" || added+=("$line")
+  done
+  [ "${#added[@]}" -gt 0 ] || return 0
+  tmp="$(mktemp "$env_file.tmp.XXXXXX")"
+  chmod 0600 "$tmp"
+  {
+    cat "$env_file"
+    printf '\n# install-native.sh 升级时补上的新键（原有的行没动）\n'
+    printf '%s\n' "${added[@]}"
+  } >"$tmp"
+  mv -f -- "$tmp" "$env_file"
+  for line in "${added[@]}"; do NATIVE_ENV_ADDED="${NATIVE_ENV_ADDED:+$NATIVE_ENV_ADDED }${line%%=*}"; done
+}
+
+# 备份加密用的 age 密钥：没有就生成（0600，目录 0700），打印公钥（recipient）。已有的绝不覆盖：
+# 旧备份只能用它解开。解密私钥与备份在同一台机器，机器整体丢失时要另存（见收尾提示）
+native_ensure_age_key() {
+  local key="$1"
+  install -d -m 0700 "$(dirname "$key")"
+  if [ ! -f "$key" ]; then
+    (umask 077 && age-keygen -o "$key" 2>/dev/null) || die "生成备份加密密钥失败（age-keygen）"
+  fi
+  chmod 0600 "$key"
+  age-keygen -y "$key" || die "读不出备份加密密钥的公钥：$key"
+}
+
+# 直装 .env 里与布局、加密备份有关的键（首装写进去，升级缺了才追加）。recipient 为空时不出那一行
+#   native_layout_env_lines <安装目录> <age recipient>
+native_layout_env_lines() {
+  printf '%s\n' "PANDORA_DB_LAYOUT=native" "AEGIS_BACKUP_DIR=$NATIVE_BACKUP_DIR" "AEGIS_BACKUP_RETENTION_DAYS=14"
+  [ -z "$2" ] || printf '%s\n' "AEGIS_BACKUP_AGE_RECIPIENT=$2"
+  printf '%s\n' "AEGIS_BACKUP_AGE_IDENTITY=$1/secrets/backup-age.key" "AEGIS_BACKUP_WEBDAV_BIN=$1/bin/aegis-backup-webdav"
+}
+
+# 发布包里的单元（按 docker 布局写）改成直装：安装目录、备份目录，去掉对 docker 的依赖
+#   native_render_unit <单元文件> <安装目录>
+native_render_unit() {
+  sed -e "s|/opt/aegispanel|$2|g" \
+      -e "s|/var/backups/aegispanel|$NATIVE_BACKUP_DIR|g" \
+      -e '/^Requires=docker\.service$/d' \
+      -e 's|^After=docker\.service$|After=postgresql.service|' \
+      "$1"
+}
+
 # 可单测的部分到此为止
 if [ "${PANDORA_INSTALL_LIB:-}" = 1 ]; then
   return 0 2>/dev/null || exit 0
@@ -123,8 +181,8 @@ ADMIN_PATH="ops_$(openssl rand -hex 12)"   # 高熵管理路径
 need openssl; need curl; need systemctl
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# 首装还是升级：已有 .env 就是升级，.env 一字不动（里面是随机生成的口令与密钥，
-# 重写一次就连不上原来的数据库、解不开信封加密的字段）。首装在动手之前先拿到
+# 首装还是升级：已有 .env 就是升级，已有的行一字不动（里面是随机生成的口令与密钥，
+# 重写一次就连不上原来的数据库、解不开信封加密的字段），新版本新增的键缺了才追加到末尾。首装在动手之前先拿到
 # 合规的对外地址——.env 定为 production，网关拿不到 https://域名 或 https://公网IPv4 会拒绝启动。
 [[ -f "$SCRIPT_DIR/public-base-url.sh" ]] || die "发布目录缺少 deploy/public-base-url.sh"
 . "$SCRIPT_DIR/public-base-url.sh"
@@ -193,6 +251,10 @@ fi
 if ! command -v valkey-server >/dev/null 2>&1 && ! command -v redis-server >/dev/null 2>&1; then
   apt-get install -y -qq valkey-server 2>/dev/null || apt-get install -y -qq redis-server
 fi
+# 加密备份（backup-postgres.sh）要 age，与 install.sh 一样缺了就装，装不上就停
+if ! command -v age >/dev/null 2>&1 || ! command -v age-keygen >/dev/null 2>&1; then
+  apt-get install -y -qq age >/dev/null 2>&1 || die "缺少 age（备份加密）：apt-get install -y age 后重跑"
+fi
 
 # 只用 PG18 的 main 集群：版本钉死，不取「装着的最新版本」——机器上哪天多装了 19，
 # 按最新版本取会另起一个空集群，把迁移跑到空库上，而数据还在 18 里
@@ -254,15 +316,27 @@ cp -f "$SCRIPT_DIR"/systemd/*.service "$INSTALL_DIR/deploy/"
 
 # ── 4. 建库 + 迁移 ────────────────────────────────────
 say "[4/6] 初始化数据库 + 执行迁移"
-# postgres 超级用户密码（迁移需要 superuser 绕过 RLS；本地 peer 认证不用它，
-# 但 TCP 迁移 DSN 需要。生成随机密码写入 .env 供后续迁移/维护用）
-su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -c \"ALTER USER postgres PASSWORD '${PG_SUPER_PASS}'\"" 2>/dev/null || true
-su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE aegis LOGIN PASSWORD '${DB_PASS}'\"" 2>/dev/null || true
-su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE DATABASE aegis OWNER aegis\"" 2>/dev/null || true
+# postgres 超级用户口令（迁移要超级用户绕过 RLS；本地 peer 认证不用它，但迁移 DSN、预检、备份恢复
+# 经 127.0.0.1 TCP 连要它）、库属主 aegis、库、运行角色 aegis_app（NOBYPASSRLS，口令由下面的
+# bootstrap.sh 每次重设）。已有的不重建。口令经 psql 的标准输入给，不进任何进程的命令行参数
+# （以前拼在 su -c 里，ps 看得见）；出错即停，不再 || true 吞掉。
+native_pg_peer -p "$PG_PORT" -d postgres >/dev/null <<SQL || die "建数据库角色或库失败（输出见上）"
+ALTER ROLE postgres PASSWORD '${PG_SUPER_PASS}';
+SELECT pg_catalog.format('CREATE ROLE aegis LOGIN PASSWORD %L', '${DB_PASS}')
+ WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'aegis') \gexec
+SELECT 'CREATE DATABASE aegis OWNER aegis'
+ WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = 'aegis') \gexec
+SELECT pg_catalog.format('CREATE ROLE aegis_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD %L', '${APP_PASS}')
+ WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'aegis_app') \gexec
+GRANT CONNECT ON DATABASE aegis TO aegis_app;
+SQL
 
-# 应用角色（NOBYPASSRLS 等）
-su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -d aegis -c \"CREATE ROLE aegis_app LOGIN PASSWORD '${APP_PASS}' NOSUPERUSER NOBYPASSRLS\"" 2>/dev/null || true
-su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1 -d aegis -c 'GRANT CONNECT ON DATABASE aegis TO aegis_app'" 2>/dev/null || true
+# 加密备份的 age 密钥（首装生成；升级时 .env 里还没有备份键才生成，已有的绝不覆盖）
+AGE_KEY="$INSTALL_DIR/secrets/backup-age.key"
+AGE_RECIPIENT=""
+if [[ "$MODE" = install ]] || ! grep -q '^AEGIS_BACKUP_AGE_RECIPIENT=' "$ENV_FILE"; then
+  AGE_RECIPIENT="$(native_ensure_age_key "$AGE_KEY")"
+fi
 
 # 生成应用密钥并写 .env：只在首装
 if [[ "$MODE" = install ]]; then
@@ -271,7 +345,9 @@ JWT_PUBLIC_SECRET="$(openssl rand -base64 32)"
 JWT_ADMIN_SECRET="$(openssl rand -base64 32)"
 CONFIG_SIGNING_SEED="$(openssl rand -base64 32)"
 
-# 写入 .env
+# 写入 .env（umask 077：写进去之前就是 0600）
+install -d -m 0755 "$INSTALL_DIR/deploy"
+(umask 077 && : > "$INSTALL_DIR/deploy/.env")
 cat > "$INSTALL_DIR/deploy/.env" <<EOF
 # Pandora Panel 配置 (install-native.sh 自动生成)
 POSTGRES_USER=aegis
@@ -298,12 +374,20 @@ AEGIS_JWT_PUBLIC_SECRET=${JWT_PUBLIC_SECRET}
 AEGIS_JWT_ADMIN_SECRET=${JWT_ADMIN_SECRET}
 AEGIS_CONFIG_SIGNING_SEED=${CONFIG_SIGNING_SEED}
 AEGIS_PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
+# 数据库布局与加密备份（deploy/backup-postgres.sh、aegis-backup.timer；timer 装好不启用，见收尾提示）
+$(native_layout_env_lines "$INSTALL_DIR" "$AGE_RECIPIENT")
 EOF
 chmod 0600 "$INSTALL_DIR/deploy/.env"
+else
+  # 升级：老 .env 没有布局与加密备份的键，缺了才追加
+  mapfile -t layout_lines < <(native_layout_env_lines "$INSTALL_DIR" "$AGE_RECIPIENT")
+  native_env_append_missing "$ENV_FILE" "${layout_lines[@]}"
+  [[ -z "$NATIVE_ENV_ADDED" ]] || say "  .env 补上了新键：$NATIVE_ENV_ADDED（原有的行没动）"
 fi
 
 # 给系统 Valkey/Redis 配置密码（普通安装版没有 Docker 隔离，密码落在系统配置里）
-if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]]; then
+# 口令已经是这个就不动、不重启（升级时网关还在跑，重启 Valkey 会断开它们的连接）
+if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]] && ! grep -qxF "requirepass ${VK_PASS}" "$VK_CONF"; then
   if grep -q '^requirepass' "$VK_CONF"; then
     sed -i "s|^requirepass.*|requirepass ${VK_PASS}|" "$VK_CONF"
   else
@@ -313,11 +397,17 @@ if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]]; then
   sleep 1
 fi
 
-# 迁移只走官方 migrate.sh（它带 PGOPTIONS 保护参数），预检走 check-migrations.sh
-# 健康巡检脚本：直装布局读不了 docker 版 psql.sh，脚本自己按有无 psql.sh 选查库方式
+# 迁移只走官方 migrate.sh（它带 PGOPTIONS 保护参数），预检走 check-migrations.sh；
+# 备份、校验、恢复、psql、收窄运行角色与 docker 布局同一套脚本（按 .env 的布局各自连库）。
+# 健康巡检经 psql.sh 查库
 install -m 0755 "$SCRIPT_DIR/healthcheck.sh" "$INSTALL_DIR/deploy/healthcheck.sh"
 cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/edge-tls.sh" "$SCRIPT_DIR/update-cloudflare-realip.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$SCRIPT_DIR/admin-url.sh" "$SCRIPT_DIR/MIGRATION-RUNBOOK.md" "$INSTALL_DIR/deploy/" 2>/dev/null || true
 chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" "$INSTALL_DIR/deploy/render-nginx.sh" "$INSTALL_DIR/deploy/edge-tls.sh" "$INSTALL_DIR/deploy/update-cloudflare-realip.sh" "$INSTALL_DIR/deploy/admin-url.sh" 2>/dev/null || true
+for f in backup-postgres.sh verify-backup.sh restore-postgres.sh psql.sh bootstrap.sh; do
+  install -m 0755 "$SCRIPT_DIR/$f" "$INSTALL_DIR/deploy/$f" || die "发布目录缺少 deploy/$f"
+done
+[[ ! -f "$SCRIPT_DIR/backup-webdav.example.json" ]] \
+  || install -m 0644 "$SCRIPT_DIR/backup-webdav.example.json" "$INSTALL_DIR/deploy/backup-webdav.example.json"
 GOOSE_BIN="$RELEASE_BIN/goose"
 # 迁移 DSN 用 postgres 超级用户（00010 等迁移需绕过 RLS）；老的 .env 里可能没有这一行
 export AEGIS_MIGRATION_DATABASE_URL="postgres://postgres:${PG_SUPER_PASS}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable"
@@ -328,7 +418,7 @@ if [[ "$MODE" = upgrade ]] && grep -q '^PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=
 fi
 # 只有全新库才跳过一次性数据库预检（migrate.sh 的约定：goose_db_version 不存在即全新库）。
 # 以前这里无条件跳过，升级时已有数据的库也不演练就直接迁移
-fresh_db="$(su -s /bin/bash postgres -c "psql -X -d aegis -tAc \"SELECT pg_catalog.to_regclass('public.goose_db_version') IS NULL\"" 2>/dev/null | tr -d '[:space:]')"
+fresh_db="$(native_pg_peer -p "$PG_PORT" -d aegis -tAc "SELECT pg_catalog.to_regclass('public.goose_db_version') IS NULL" 2>/dev/null | tr -d '[:space:]')"
 case "$fresh_db" in
   t) FRESH_DB=yes ;;
   f) FRESH_DB=no ;;
@@ -337,12 +427,12 @@ esac
 
 # 升级前必备份：库里已有迁移记录就先 pg_dump，导出失败或读不出目录就停在迁移之前
 if [[ "$fresh_db" = f ]]; then
-  BACKUP_DIR=/var/backups/pandora
+  BACKUP_DIR="$NATIVE_BACKUP_DIR"
   install -d -o root -g root -m 0700 "$BACKUP_DIR"
   BK="$BACKUP_DIR/pre-upgrade-$(date +%Y%m%d-%H%M%S).dump"
-  su -s /bin/bash postgres -c "pg_dump -Fc -d aegis" >"$BK" \
+  (umask 077 && cd / && runuser -u postgres -- pg_dump -Fc -d aegis -p "$PG_PORT") >"$BK" \
     || { rm -f -- "$BK"; die "升级前备份失败（pg_dump），迁移没有执行"; }
-  [[ -s "$BK" ]] && su -s /bin/bash postgres -c "pg_restore --list" <"$BK" >/dev/null \
+  [[ -s "$BK" ]] && pg_restore --list <"$BK" >/dev/null \
     || { rm -f -- "$BK"; die "升级前备份读不出目录（pg_restore --list），迁移没有执行"; }
   chmod 0600 "$BK"
   say "  升级前备份：$BK（$(du -h "$BK" | cut -f1)）"
@@ -362,18 +452,13 @@ esac
 # （REVOKE TEMPORARY、固定 search_path、列级权限白名单）。只做粗粒度 GRANT
 # 会让 aegis_app 残留 database TEMPORARY 权限，应用启动校验直接拒绝：
 #   db: unsafe runtime role "aegis_app" has database TEMPORARY privilege
-# configure-app-role.sql 用 \getenv AEGIS_DB_APP_PASSWORD 读密码，所以要以
-# postgres 超级用户 + 显式环境变量执行（迁移 DSN 同理必须是超级用户）。
-cp -f "$SCRIPT_DIR/configure-app-role.sql" /tmp/configure-app-role.sql 2>/dev/null || true
-chmod 0644 /tmp/configure-app-role.sql 2>/dev/null || true
+# 与 docker 布局同一个入口 bootstrap.sh（以超级用户执行，口令只经环境变量给 psql）。
 # 收敛失败即停。以前这里兜底 GRANT 全表的增删改查：那会绕过 configure-app-role.sql 的列级
 # 白名单与追加写表的限制，让运行角色拿到比设计大得多的权限，而安装还显示「完成」
-role_log="$(su -s /bin/bash postgres -c "AEGIS_DB_APP_PASSWORD='${APP_PASS}' psql -X -d aegis -v ON_ERROR_STOP=1 -f /tmp/configure-app-role.sql" 2>&1)" || {
-  rm -f /tmp/configure-app-role.sql
+role_log="$(bash "$INSTALL_DIR/deploy/bootstrap.sh" 2>&1)" || {
   printf '%s\n' "$role_log" | tail -20 >&2
   die "configure-app-role.sql 收敛运行角色失败（输出见上），没有启动服务（升级时服务已在迁移前停下）。修好后重跑本脚本（按升级处理，幂等）"
 }
-rm -f /tmp/configure-app-role.sql
 say "  configure-app-role.sql 角色收敛完成"
 
 # ── 5. 程序与 systemd ─────────────────────────────────
@@ -394,6 +479,15 @@ done
 # 健康巡检（healthcheck.sh）：脚本自己取安装根目录，单元里的路径换成安装目录；timer 在服务起来后启用
 for u in aegis-health.service aegis-health.timer; do
   [[ ! -f "$SCRIPT_DIR/systemd/$u" ]] || sed "s|/opt/aegispanel|${INSTALL_DIR}|g" "$SCRIPT_DIR/systemd/$u" > "/etc/systemd/system/$u"
+done
+# 加密备份（backup-postgres.sh）：与 docker 布局同一份单元，换掉安装目录与备份目录、去掉对 docker 的依赖。
+# 只装不启用（与 install.sh 一致：先把解密私钥另存、想清楚要不要异地备份，再 enable --now）。
+# 单元的 ReadWritePaths / ReadOnlyPaths 里的目录必须存在，否则 systemd 以 226/NAMESPACE 失败
+install -d -o root -g root -m 0700 "$NATIVE_BACKUP_DIR"
+[[ -d /var/lib/aegispanel/backup-webdav ]] || install -d -o root -g root -m 0700 /var/lib/aegispanel/backup-webdav
+[[ -d /etc/aegispanel ]] || install -d -o root -g root -m 0755 /etc/aegispanel
+for u in aegis-backup.service aegis-backup.timer; do
+  [[ ! -f "$SCRIPT_DIR/systemd/$u" ]] || native_render_unit "$SCRIPT_DIR/systemd/$u" "$INSTALL_DIR" > "/etc/systemd/system/$u"
 done
 systemctl daemon-reload
 for s in "${SERVICES[@]}"; do
@@ -416,7 +510,7 @@ for s in "${SERVICES[@]}"; do
   [[ "$st" == "active" ]] || HEALTH_OK=0
 done
 if command -v valkey-server >/dev/null 2>&1; then
-  valkey-cli -a "$VK_PASS" --no-auth-warning ping 2>/dev/null | grep -q PONG && echo "  valkey: PONG" || echo "  valkey: 检查失败"
+  REDISCLI_AUTH="$VK_PASS" valkey-cli -p "$VK_PORT" ping 2>/dev/null | grep -q PONG && echo "  valkey: PONG" || echo "  valkey: 检查失败"
 fi
 
 # 首装且在交互终端里：现场建第一个管理员（aegis-adminctl 经 platform/config 读 .env）
@@ -459,6 +553,9 @@ if [[ "$MODE" = install && "$PANDORA_ADMIN_STATE" = manual ]]; then
   say " 创建管理员:  cd ${INSTALL_DIR} && set -a && . deploy/.env && set +a && read -rsp '密码：' p && echo && printf '%s\n' \"\$p\" | ./bin/aegis-adminctl create --email <你的邮箱> --password-stdin; unset p"
 fi
 say " 配置文件:    ${INSTALL_DIR}/deploy/.env"
+say " 数据库:      sudo ${INSTALL_DIR}/deploy/psql.sh"
+say " 加密备份:    立刻做一份 sudo ${INSTALL_DIR}/deploy/backup-postgres.sh；每日 systemctl enable --now aegis-backup.timer"
+say "              解密私钥 ${INSTALL_DIR}/secrets/backup-age.key 与备份在同一台机器，另存一份到别处（机器整体丢失时备份才解得开）"
 say " 对外地址:    $(pandora_env_file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)"
 say " HTTPS:       ${EDGE_NOTE}"
 say " Cloudflare:  站点在 Cloudflare 后面时再跑 ${INSTALL_DIR}/deploy/update-cloudflare-realip.sh（默认不信任任何代理）"

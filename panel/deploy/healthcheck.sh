@@ -82,11 +82,11 @@ check_tls() {
   fi
 }
 
-# 查库：docker 布局走 deploy/psql.sh（容器里的 psql）；直装布局没有 psql.sh，
-# 以 postgres 系统用户经本地 socket 连 aegis 库（建库时就是这样连的）
+# 查库：两种布局都走 deploy/psql.sh（它自己按 .env 认布局）；更早的直装没装 psql.sh，
+# 退回以 postgres 系统用户经本地 socket 连 aegis 库（建库时就是这样连的）
 db_query() {
   if [ -f "$ROOT/deploy/psql.sh" ]; then
-    "$ROOT/deploy/psql.sh" -tAc "$1"
+    "$ROOT/deploy/psql.sh" -X -tAc "$1"
   elif command -v runuser >/dev/null 2>&1; then
     runuser -u postgres -- psql -X -d aegis -tAc "$1"
   else

@@ -21,9 +21,10 @@
 | | `install.sh`（Docker 数据基座） | `install-native.sh`（直装） |
 |---|---|---|
 | 安装目录 | `/opt/aegispanel` | `/opt/pandora` |
-| 进库（超级用户，不受行级安全限制） | `cd /opt/aegispanel/deploy && ./psql.sh` | `runuser -u postgres -- psql -p <POSTGRES_PORT> -d <POSTGRES_DB>`（两个值在 `.env` 里） |
-| PostgreSQL / Valkey | 容器 `aegis-postgres` / `aegis-valkey`（`docker ps`、`docker logs`） | systemd 单元 `postgresql@<版本>-main`、`valkey-server`（或 `redis-server`） |
-| `deploy/` 下的备份、校验、恢复脚本与 `psql.sh` | 有 | 没有；升级前备份在 `/var/backups/pandora/` |
+| 进库（超级用户，不受行级安全限制） | `cd /opt/aegispanel/deploy && ./psql.sh` | `cd /opt/pandora/deploy && ./psql.sh`（以 `postgres` 经 `127.0.0.1:POSTGRES_PORT` 连） |
+| PostgreSQL / Valkey | 容器 `aegis-postgres` / `aegis-valkey`（`docker ps`、`docker logs`） | systemd 单元 `postgresql@18-main`、`valkey-server`（或 `redis-server`） |
+| `deploy/` 下的备份、校验、恢复脚本与 `psql.sh`、`bootstrap.sh` | 有 | 有，同一套命令（脚本按 `.env` 的 `PANDORA_DB_LAYOUT` 认布局）；2026-10 之前装的直装机器升级一次才有 |
+| 加密备份目录 / 升级前备份 | `/var/backups/aegispanel/` | `/var/backups/pandora/`（`.env` 的 `AEGIS_BACKUP_DIR`） |
 
 ## 0. 先看全貌（只读）
 
@@ -85,7 +86,7 @@ systemctl daemon-reload && systemctl enable --now aegis-health.timer
 ```
 
 - 每 10 分钟跑一次，启用后 10 分钟首跑。没问题只往 `<安装目录>/logs/health.log` 追一行 `OK`；有问题单元记为 failed，`.env` 设了 `AEGIS_ALERT_TG_TOKEN` 与 `AEGIS_ALERT_TG_CHAT` 时再推一条 Telegram。
-- 脚本取安装目录自己的位置（`/opt/aegispanel` 或 `/opt/pandora`）；查库时有 `deploy/psql.sh`（docker 布局）走它，没有（直装布局）就以 postgres 系统用户连本机 aegis 库。
+- 脚本取安装目录自己的位置（`/opt/aegispanel` 或 `/opt/pandora`）；查库走 `deploy/psql.sh`（两种布局都有，它按 `.env` 认布局）；更早的直装机器没有 `psql.sh`，就以 postgres 系统用户连本机 aegis 库。
 - 首装后到配好备份之前，会有一条「备份目录里没有任何备份」的告警，这是真告警：去第 10 章把备份配好。
 
 ---
@@ -598,9 +599,9 @@ ls -lt /var/backups/aegispanel | head
 
 ### 常见原因
 
-- **timer 从没启用过。** `install.sh` 装了 `aegis-backup.service/.timer`，但不替你启用；新装的机器上「一份备份都没有」多半是这个。直装布局没有加密备份单元。
+- **timer 从没启用过。** `install.sh` 与 `install-native.sh` 都装了 `aegis-backup.service/.timer`，但不替你启用；新装的机器上「一份备份都没有」多半是这个。2026-10 之前装的直装机器没有这个单元，升级一次（`.env` 会补上备份相关的键，生成 `/opt/pandora/secrets/backup-age.key`）。
 - `.env` 的 `AEGIS_BACKUP_AGE_RECIPIENT` 还是占位符。脚本拒绝生成明文备份，直接失败。
-- Docker 或 `aegis-postgres` 没在跑（备份单元依赖 docker）。
+- docker 布局：Docker 或 `aegis-postgres` 没在跑（备份单元依赖 docker）。直装：`postgresql@18-main` 没在跑，或 `.env` 的 `POSTGRES_SUPER_PASSWORD` 与库里 `postgres` 的口令对不上（报 `password authentication failed`）。
 - 磁盘满（第 9 章）。
 - 远端上传钩子（`AEGIS_BACKUP_REMOTE_HOOK`）失败，日志里能看到。
 

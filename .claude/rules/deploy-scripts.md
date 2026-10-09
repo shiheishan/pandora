@@ -32,6 +32,11 @@ paths:
   - 停服之后 `migrate.sh up` 带 `PANDORA_PRECHECK_ATTESTATION`，只核凭据；`PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes` 只在这一步给，安装器自己不写、也不写进 `.env`；
   - 迁移失败把服务拉回来，所以新程序在迁移成功之后才装（install-native.sh 也是）。
   - 守卫：`install-migrate-order_mock_test.sh`
+- 两种数据库布局同一套运维脚本：`check-migrations.sh`、`migrate.sh`、`backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`、`psql.sh`、`bootstrap.sh` 按 `.env` 的 `PANDORA_DB_LAYOUT`（没有这一键时凭只有直装才写的 `POSTGRES_SUPER_PASSWORD` 推断为 native）选客户端
+  - docker：容器 `aegis-postgres` 里的客户端，以 `POSTGRES_USER`；native：本机客户端经 `127.0.0.1:POSTGRES_PORT` 以 `postgres` 超级用户（`POSTGRES_SUPER_PASSWORD`）。不用 runuser：备份单元的 `SystemCallFilter=~@privileged` 禁止切换用户
+  - 判定函数 `pandora_db_layout` 各脚本内联一份（备份三件套只信任自己，不 source 共用文件），连库一律经 `pandora_pg`；口令只经环境变量。守卫：`pg-layout_mock_test.sh`（逐字一致与行为）、`check-migrations_native_mock_test.sh`
+- `install-native.sh` 只用 PG18 的 `main` 集群（版本钉死），别的版本的集群不停、不升级、不删；旧集群里有 aegis 库而 PG18 不是接班人时停下，什么都不改。守卫：`install-native_pgcluster_mock_test.sh`（静态禁 `pg_dropcluster`、`pg_upgrade`、`pg_ctlcluster`、`dropdb`、`DROP DATABASE`）
+- `install-native.sh` 装与 docker 布局同一套备份、校验、恢复、psql、bootstrap 脚本，加密备份单元经 `native_render_unit` 改成直装（安装目录、`/var/backups/pandora`、去掉 docker 依赖）后只装不启用；升级时 `.env` 已有的行一字不动，缺的新键（布局、备份）才追加；口令经 psql 标准输入或环境变量，不拼进 `su -c`。守卫：`install-native_backup_mock_test.sh`
 - 桩测试与静态检查（`*_mock_test.sh`、`*_static_test.sh`）不需要数据库；与安装、迁移、nginx、发布物绑定相关的，CI 的 `.github/workflows/panel-deploy.yml` 逐个点名跑，新增这类测试要补进那份清单
   - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root。前者在 panel-deploy 的 deploy-root-mock-tests job 里用 runner 的免密 sudo 跑（只在 GitHub 上，检查机明说跳过）
 - nginx 的节点路径（`/api/v1/server/UniProxy/`、`/v1/nodes/`）用自己的限速区：`aegis_node` 按「来源 IP + 节点标识」分桶（签名通道 `X-Node-Id` 头、兼容通道 query `node_id`，只认 UUID 形状，否则退回按 IP 一个桶），外加宽松的每 IP 总上限 `aegis_node_ip`；`limit_conn` 在这两个 location 单独写（`aegis_node_conn`），server 层的 64 不再作用于节点。一台机器 60 个节点约 810 次/分、60 条事件流。守卫：`render-nginx_test.sh`

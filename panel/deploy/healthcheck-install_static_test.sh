@@ -64,7 +64,8 @@ for layout in docker native; do
   mkdir -p "$T/$layout/deploy" "$T/$layout/bin"
   cp "$DEPLOY/healthcheck.sh" "$T/$layout/deploy/healthcheck.sh"
 done
-# docker 布局有 psql.sh（记下它收到的参数）；直装布局没有，靠 PATH 里的桩 runuser
+# 装了 psql.sh 的（两种布局现在都装；它自己按 .env 认布局）走它（记下收到的参数）；
+# 更早的直装没有 psql.sh，靠 PATH 里的桩 runuser
 printf '#!/usr/bin/env bash\nprintf "psql.sh %%s\\n" "$*" >>"$CALLS"\n' >"$T/docker/deploy/psql.sh"
 printf '#!/usr/bin/env bash\nprintf "runuser %%s\\n" "$*" >>"$CALLS"\n' >"$T/native/bin/runuser"
 chmod +x "$T/docker/deploy/psql.sh" "$T/native/bin/runuser"
@@ -75,7 +76,7 @@ export CALLS="$T/calls"
   [ "$ROOT" = "$T/docker" ] || { echo "ROOT=$ROOT, want $T/docker" >&2; exit 1; }
   db_query 'SELECT 1'
 ) || fail 'docker layout: root or query path wrong'
-grep -qx 'psql.sh -tAc SELECT 1' "$CALLS" || fail "docker layout did not go through psql.sh: $(cat "$CALLS")"
+grep -qx 'psql.sh -X -tAc SELECT 1' "$CALLS" || fail "docker layout did not go through psql.sh: $(cat "$CALLS")"
 : >"$CALLS"
 (
   PATH="$T/native/bin:$PATH"
@@ -83,6 +84,6 @@ grep -qx 'psql.sh -tAc SELECT 1' "$CALLS" || fail "docker layout did not go thro
   [ "$ROOT" = "$T/native" ] || { echo "ROOT=$ROOT, want $T/native" >&2; exit 1; }
   db_query 'SELECT 2'
 ) || fail 'native layout: root or query path wrong'
-grep -qx 'runuser -u postgres -- psql -X -d aegis -tAc SELECT 2' "$CALLS" || fail "native layout did not query as postgres: $(cat "$CALLS")"
+grep -qx 'runuser -u postgres -- psql -X -d aegis -tAc SELECT 2' "$CALLS" || fail "an older native install without psql.sh did not query as postgres: $(cat "$CALLS")"
 
 printf 'healthcheck install static: PASS\n'

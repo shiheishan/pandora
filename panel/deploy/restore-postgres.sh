@@ -38,6 +38,55 @@ load_trusted_env() {
   . "/proc/self/fd/$env_fd"
   exec {env_fd}<&-
 }
+# 数据库布局：docker（install.sh，容器 aegis-postgres）或 native（install-native.sh，系统 PostgreSQL）。
+# 以 .env 的 PANDORA_DB_LAYOUT 为准；老的直装 .env 没有这一键，凭只有直装才写的 POSTGRES_SUPER_PASSWORD
+# 认出来。各运维脚本各带一份同样的函数（不 source 共用文件，免得多一个要校验的信任面），
+# pg-layout_mock_test.sh 核对逐字一致。
+pandora_db_layout() {
+  case "${PANDORA_DB_LAYOUT:-}" in
+    native|docker) printf '%s\n' "$PANDORA_DB_LAYOUT" ;;
+    '') if [ -n "${POSTGRES_SUPER_PASSWORD:-}" ]; then printf 'native\n'; else printf 'docker\n'; fi ;;
+    *) return 1 ;;
+  esac
+}
+# 以超级用户跑 PostgreSQL 客户端（psql、pg_dump、pg_restore、createdb、dropdb）：
+#   docker：容器 aegis-postgres 里的客户端，以 POSTGRES_USER（容器里的超级用户）连；
+#   native：本机客户端经 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户连（不用 runuser 切到 postgres：
+#     备份单元的系统调用过滤不许切换用户）。
+# 口令只经环境变量 PGPASSWORD 给客户端（docker 用 -e PGPASSWORD 按名字透传），不进命令行参数。
+# 只读归档目录（pg_restore --list）不连库，不要求凭据；要连库的先过 pandora_pg_require_login。
+pandora_pg() {
+  local tool="$1"; shift
+  case "$DB_LAYOUT" in
+    docker) PGPASSWORD="${POSTGRES_PASSWORD-}" docker exec -i -e PGPASSWORD aegis-postgres \
+              "$tool" -U "${POSTGRES_USER:-postgres}" "$@" ;;
+    native) PGPASSWORD="${POSTGRES_SUPER_PASSWORD-}" PGHOST=127.0.0.1 PGPORT="${POSTGRES_PORT-}" PGUSER=postgres \
+              PGSSLMODE=disable "$tool" "$@" ;;
+    *) return 1 ;;
+  esac
+}
+# 认出布局（写 DB_LAYOUT）并核对它要的命令。参数是直装布局要用到的本机客户端
+pandora_pg_require() {
+  local tool
+  DB_LAYOUT="$(pandora_db_layout)" || die "PANDORA_DB_LAYOUT must be native or docker"
+  case "$DB_LAYOUT" in
+    docker) require_command docker ;;
+    native) for tool in "$@"; do require_command "$tool"; done ;;
+  esac
+}
+# 连库要的凭据：docker 布局是 POSTGRES_USER / POSTGRES_PASSWORD，直装是 postgres 的 POSTGRES_SUPER_PASSWORD
+pandora_pg_require_login() {
+  case "$DB_LAYOUT" in
+    docker)
+      : "${POSTGRES_USER:?POSTGRES_USER is required}"
+      : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      ;;
+    native)
+      : "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required for the native database layout}"
+      [[ "${POSTGRES_PORT:-}" =~ ^[0-9]+$ ]] || die "POSTGRES_PORT must be a port number for the native database layout"
+      ;;
+  esac
+}
 require_command readlink
 require_command stat
 invocation_restore_confirm="${AEGIS_RESTORE_CONFIRM-}"
@@ -66,10 +115,11 @@ done
 [[ "$target_db" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || die "unsafe target database name"
 [ "${AEGIS_RESTORE_CONFIRM:-}" = "RESTORE:${target_db}" ] \
   || die "set AEGIS_RESTORE_CONFIRM=RESTORE:${target_db} for this invocation"
-: "${POSTGRES_USER:?POSTGRES_USER is required}"
-: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
 : "${AEGIS_BACKUP_AGE_IDENTITY:?AEGIS_BACKUP_AGE_IDENTITY is required}"
+require_command age
+pandora_pg_require psql pg_restore createdb dropdb
+pandora_pg_require_login
 [ -z "${AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY:-}" ] \
   || die "unsigned legacy backups cannot be used by restore-postgres.sh"
 
@@ -95,8 +145,7 @@ assert_production_quiesced() {
       esac
     done
   done
-  sessions="$(docker exec -i -e PGPASSWORD aegis-postgres \
-    psql -X -U "$POSTGRES_USER" -d postgres -tAc \
+  sessions="$(pandora_pg psql -X -d postgres -tAc \
       "SELECT count(*) FROM pg_stat_activity WHERE datname = '$target_db'" \
       | tr -d '[:space:]')"
   [[ "$sessions" =~ ^[0-9]+$ ]] && [ "$sessions" = 0 ] \
@@ -116,13 +165,11 @@ reinstate_production_guard() {
     systemctl mask --runtime -- "$unit" >/dev/null 2>&1 || recovery_rc=1
   done
 
-  exists="$(docker exec -i -e PGPASSWORD aegis-postgres \
-    psql -X -U "$POSTGRES_USER" -d postgres -tAc \
+  exists="$(pandora_pg psql -X -d postgres -tAc \
       "SELECT 1 FROM pg_database WHERE datname = '$target_db'" \
       | tr -d '[:space:]')" || recovery_rc=1
   if [ "$exists" = "1" ]; then
-    docker exec -i -e PGPASSWORD aegis-postgres \
-      psql -X -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
+    pandora_pg psql -X -d postgres -v ON_ERROR_STOP=1 \
         -c "ALTER DATABASE \"$target_db\" CONNECTION LIMIT 0" >/dev/null 2>&1 \
       || recovery_rc=1
   fi
@@ -162,8 +209,7 @@ begin_production_guard() {
     esac
   done
   assert_production_quiesced
-  superuser="$(docker exec -i -e PGPASSWORD aegis-postgres \
-    psql -X -U "$POSTGRES_USER" -d postgres -tAc \
+  superuser="$(pandora_pg psql -X -d postgres -tAc \
       'SELECT rolsuper FROM pg_roles WHERE rolname = current_user' \
       | tr -d '[:space:]')"
   [ "$superuser" = t ] \
@@ -192,8 +238,7 @@ commit_production_guard() {
 
   # Opening the connection gate is the final irreversible commit step. If a
   # signal lands before restore_committed is set, the EXIT trap closes it again.
-  if ! docker exec -i -e PGPASSWORD aegis-postgres \
-    psql -X -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
+  if ! pandora_pg psql -X -d postgres -v ON_ERROR_STOP=1 \
       -c "ALTER DATABASE \"$target_db\" CONNECTION LIMIT -1" >/dev/null; then
     reinstate_production_guard || true
     die "cannot open restored database connection gate; production guard reinstated"
@@ -210,30 +255,24 @@ fi
 # can still fail. Complete an isolated temporary-database restore before any
 # destructive action against the requested target database.
 AEGIS_VERIFY_RESTORE=1 "$PWD/verify-backup.sh" "$archive"
-export PGPASSWORD="$POSTGRES_PASSWORD"
 begin_production_guard
-exists="$(docker exec -i -e PGPASSWORD aegis-postgres \
-  psql -X -U "$POSTGRES_USER" -d postgres -tAc \
+exists="$(pandora_pg psql -X -d postgres -tAc \
     "SELECT 1 FROM pg_database WHERE datname = '$target_db'" | tr -d '[:space:]')"
 if [ "$exists" = "1" ]; then
   [ "${AEGIS_RESTORE_EXISTING_CONFIRM:-}" = "OVERWRITE_EXISTING:${target_db}" ] \
     || die "existing target needs AEGIS_RESTORE_EXISTING_CONFIRM=OVERWRITE_EXISTING:${target_db}"
   assert_production_quiesced
-  docker exec -i -e PGPASSWORD aegis-postgres \
-    dropdb -U "$POSTGRES_USER" --force "$target_db"
+  pandora_pg dropdb --force "$target_db"
 fi
 create_args=()
 if [ "$target_db" = "$POSTGRES_DB" ]; then
   create_args+=(--connection-limit=0)
 fi
-docker exec -i -e PGPASSWORD aegis-postgres \
-  createdb -U "$POSTGRES_USER" --template=template0 "${create_args[@]}" "$target_db"
+pandora_pg createdb --template=template0 "${create_args[@]}" "$target_db"
 assert_production_quiesced
 
 age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
-  | docker exec -i -e PGPASSWORD aegis-postgres \
-      pg_restore -U "$POSTGRES_USER" -d "$target_db" \
-        --no-owner --no-privileges --exit-on-error
+  | pandora_pg pg_restore -d "$target_db" --no-owner --no-privileges --exit-on-error
 
 commit_production_guard
 
