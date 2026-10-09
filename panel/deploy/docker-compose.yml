@@ -32,8 +32,11 @@ services:
       # --- 低内存主机调参 ---
       - -c
       - max_connections=60
+      # shared_buffers 缺省 128MB，可在 .env 里用 PG_SHARED_BUFFERS 覆盖。降到 64MB 能省 64MB 内存，
+      # 但要先经同机 A/B（性能闸门）确认热集放得下、p99 不变差，所以缺省值没动；
+      # 改了要 docker compose up -d postgres（重建容器）才生效
       - -c
-      - shared_buffers=128MB
+      - shared_buffers=${PG_SHARED_BUFFERS:-128MB}
       - -c
       - effective_cache_size=384MB
       - -c
@@ -85,11 +88,15 @@ services:
       - ./run/postgresql:/var/run/postgresql
     networks:
       - data
+    # 健康检查每次是一次 docker exec（containerd + dockerd + 容器内起进程），10 秒一次两个容器
+    # 合计约 2.2 个单核点（5k 复测量出来的）。这里只给 docker ps 显示状态、迁移脚本等 healthy
+    # 用，没有任何东西靠它自动重启，所以拉到 60 秒：首次 healthy 最迟 60 秒（脚本等 180 秒），
+    # 连续 5 次失败（5 分钟）才标 unhealthy。直装落地、Docker 退场后这一段整个消失
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegis}"]
-      interval: 10s
+      interval: 60s
       timeout: 5s
-      retries: 12
+      retries: 5
       start_period: 30s
     logging:
       driver: json-file
@@ -139,11 +146,12 @@ services:
       - ./run/valkey:/data/sock
     networks:
       - data
+    # 间隔与理由同 postgres 的健康检查
     healthcheck:
       test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 10s
+      interval: 60s
       timeout: 5s
-      retries: 12
+      retries: 5
       start_period: 10s
     environment:
       VALKEY_PASSWORD: ${VALKEY_PASSWORD}

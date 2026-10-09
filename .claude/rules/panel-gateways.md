@@ -18,6 +18,7 @@ paths:
 - pprof 只经 `platform/profiling` 开在独立回环端口上，不要挂到网关路由：它能导出含明文密钥的堆
   - 地址合法性（只收回环 IP 字面量）在 `platform/config` 的 `Load` 里判，profiling 再对实际绑定地址验一次回环
   - 引入 `net/http/pprof` 会在 init 里往 `DefaultServeMux` 注册，所以 `platform/server` 拒绝 nil Handler。两道闸一起保证 pprof 只出现在那个端口上，不要拆掉任何一道
+- 每个网关的数据库连接串经 `cfg.DatabaseURLFor(域)` 取（`platform/config/plan_cache.go`）：该网关设了 `AEGIS_<域>_DB_PLAN_CACHE_MODE` 就把 `plan_cache_mode` 拼成连接参数，缺省不设、原样返回。三个网关开池时用它（node 先接线），不要直接用 `cfg.DatabaseURL`；adminctl、payctl 不经它
 - 走 `config.Load` 的是三个网关与带数据库的命令行（adminctl、payctl）；不连库的小二进制（如 aegis-backup-webdav 用 `config.LoadBackupWebDAV`）各有小加载函数，不要让它们去满足 `Load` 的必填项
 - aegis-adminctl 是「第一个管理员从哪来」的唯一入口，只在服务器本机跑，不要做成 HTTP 接口，否则就是人人可调的提权口
   - 口令只从标准输入读（`--password-stdin`），不加 `--password` 参数，因为进程参数会进 ps 与 shell 历史。守卫：`panel/cmd/aegis-adminctl/main_test.go` 的 `TestAdministratorPasswordCommandsRejectPasswordArguments`
