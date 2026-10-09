@@ -215,7 +215,7 @@ func (s *Service) VerifyNodeRequestSignature(ctx context.Context, tenantID, node
 		return NodeSignatureCheck{epoch: id.epoch, cached: true, publicKey: id.PublicKey,
 			fresh: id.watch.deliveryCovers(want)}, nil
 	}
-	c.identity.drop(identityCacheKey(tenantID, nodeID))
+	c.identity.Drop(identityCacheKey(tenantID, nodeID))
 	id, err = s.cachedIdentity(ctx, tenantID, nodeID, 0, want)
 	if err != nil {
 		return NodeSignatureCheck{}, identityLookupError(err)
@@ -264,7 +264,7 @@ func (s *Service) cachedIdentity(ctx context.Context, tenantID, nodeID string, m
 		valid = func(id Identity) bool { return id.watch.deliveryCovers(want) }
 		pinned, flight = valid, want.flight("w")
 	}
-	return s.caches.identity.get(ctx, identityCacheKey(tenantID, nodeID), flight, valid, pinned,
+	return s.caches.identity.Get(ctx, identityCacheKey(tenantID, nodeID), flight, valid, pinned,
 		func(ctx context.Context) (Identity, error) {
 			// 戳在查询之前取：查询的快照晚于戳里每一条通知对应的提交
 			loaded := s.watchStamp()
