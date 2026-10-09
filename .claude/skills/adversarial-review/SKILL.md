@@ -66,6 +66,8 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesig
 
 **第二轮 brief** 用 SendMessage 发给原实现 agent，它对这块代码最熟；原 agent 的会话已经不在了，就按 dispatch-task 新开一个。照 `templates/round2-brief.md` 写，骨架可以用 `review-prompt.py round2 <分支> --scratchpad <…>` 生成（填好名字、worktree、分支、探针目录）。模板之外要注意：
 
+- 先用 save-report.sh 把审查报告存成 `review.md`，再发消息：消息让对方先读它。w12native、w12quic 第二轮都是消息先到、报告后存，实现方读不到原文。
+
 - 修法写方向，不写逐步操作；有多个方案时让实现方选更好维护的，并在报告里写理由（w9cert 第 2 项就是这样定了只追加的签发流水）。
 - 迁移号要重新取：主线可能已经前进了。w9cert 第二轮原定的 00149 比主线已有的 00151 还小，只能改用 00152。
 - 实现方交回后，用 save-report.sh 存成 `report-r2.md`，复审员要对着它逐条核。
