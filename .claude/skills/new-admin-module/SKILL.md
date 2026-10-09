@@ -68,7 +68,7 @@ description: pandora 后台新建一个模块（侧栏多一项、`#/<模块>` �
 
 - 分层、依赖方向、处理器不跑 SQL：`.claude/rules/panel-architecture.md`、`.claude/rules/domain-layering.md`。
 - 门槛顺序、重认证的取舍、scope 不共用：`.claude/rules/api-admin-routes.md`。中间件、404 而不是 403：`.claude/rules/panel-middleware.md`。
-- 换栈 S0–S9（chi + pgx → gin + GORM，设计稿是主目录里被 git 忽略的 `.claude/stack-migration-design.md`）会改第 3–6 行的写法：路由改为表化注册，§9.2 还要加表属主登记。届时以那一步的规范为准，并同步更新本节。前端和假后端的登记点（第 11–18 行）不受换栈影响。
+- 换栈 T0–T9（服务器会话占用 S0–S9；chi + pgx → gin + GORM，设计稿是主目录里被 git 忽略的 `.claude/stack-migration-design.md`）会改第 3–6 行的写法：路由改为表化注册，§9.2 还要加表属主登记。届时以那一步的规范为准，并同步更新本节。前端和假后端的登记点（第 11–18 行）不受换栈影响。
 
 **坑：新权限码不会自动授给任何人。** `platform_admin` 的「全部权限」是 00010 执行那一刻展开的，之后插的码不会自动带上（00084 的文件头写了这一点）。迁移里必须显式授权，二选一：
 
