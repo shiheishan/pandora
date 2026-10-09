@@ -24,45 +24,33 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 | 迁移文件 | 本地命令和自证见 new-migration skill 第 4 节；外加改到的 Go 包 |
 
 本地跑不了的：
-- 迁移往返和 PG18 用例要 Docker，本机没有（见根 CLAUDE.md「环境与工具坑」），只在 GitHub 的 panel-pg18 job 里跑。注释里写到保留表名会触发 schema 契约测试，同见根 CLAUDE.md。
+- 迁移往返和 PG18 用例要 Docker，本机没有（见根 CLAUDE.md「环境与工具坑」），只在 GitHub 的 panel-pg18 job 里跑；本机上 PG18 用例会跳过，**跳过不等于通过**（`wait-github.sh` 把 SKIP 判为失败）。注释里写到保留表名会触发 schema 契约测试，同见根 CLAUDE.md。
 - `release-stop-the-world_mock_test.sh` 要 root，只在 GitHub 的 deploy-root-mock-tests job 里跑。
 - `release-stop-the-world_test.ps1` 要 PowerShell。
 - `build-release.sh` 要 GNU tar。
 
-## 远端层：改了什么 → 推送后必须等哪个结论
+## 远端层：推送后等什么
 
 两个等待脚本在维护者本机主目录的 `ops-local/memoh-ci/`（不入库，worktree 里没有）。推送后用它们等，不要手写轮询循环。
 
 - `wait-status.sh <提交>`：等检查机回放。退出 0 通过，1 失败，2 检查机没接单或超时（改看 GitHub）。手动重跑同一提交时设 `MEMOH_FRESH=1`。
-- `wait-github.sh <提交>`：等 GitHub Actions 全部结束，并从日志核对 PG18 没有 SKIP。退出 0 才算过。
+- `wait-github.sh <提交>`：等 GitHub Actions 全部结束，并从日志核对 PG18 没有 SKIP。退出 0 才算过。退出 1 先核 run 的分支再查原因（同一个 sha 推到两个分支时可能算进别的分支的 run，见 ci-triage）。
+- **任何改动**都要 `wait-status.sh` 通过；**合进 main** 一律再等 `wait-github.sh`。
+- job 清单以 `.github/workflows/` 为准，下表只写看 yaml 看不出的：每个 job 管什么、检查机跑不跑、什么改动之后必须等它。
 
-| 改了什么 | 推送后必须等到 |
-|---|---|
-| 任何改动 | `wait-status.sh` 通过。检查机跑 panel 与 pdnd 全量测试、race、vet，以及除 ARM64 外的 pandora-native job、panel-unit、deploy 桩测试 |
-| panel/internal 数据层、SQL、迁移 | 再等 `wait-github.sh`：迁移往返、PG18 集成门禁和 check-migrations 临时库演练只在 GitHub 跑 |
-| 部署脚本（`panel/deploy`） | 检查机跑 panel-deploy 的无 root 桩测试；`release-stop-the-world_mock_test.sh` 只在 GitHub 的 deploy-root-mock-tests 里跑，动了发布控制器或预检凭据再等 `wait-github.sh` |
-| 前端 `src/`、`panel/tests` | 再等 `wait-github.sh`：冒烟栈、e2e 脚本、压测工具试跑、前端双入口构建与嵌入契约 |
-| pdnd 内核或协议 | 再等 `wait-github.sh`：ARM64 race、interop、runtime-acceptance |
-| 合进 main | 一律等 `wait-github.sh` |
-
-## 坑
-
-- `go build` / `go test` 不要和 `npm ci` 同时跑（见根 CLAUDE.md「环境与工具坑」）。
-- PG18 用例在没有 Docker 的地方会跳过，跳过不等于通过；`wait-github.sh` 会把 SKIP 判为失败。
-
-## CI 各 job 管什么
-
-job 清单以 `.github/workflows/` 为准，下表只写看 yaml 看不出的：哪些检查机跳过、只有 GitHub 的结论算数。
-
-| workflow | job | 检查机 | 只在 GitHub 跑的部分 |
+| workflow / job | 管什么 | 检查机 | 什么时候必须等它 |
 |---|---|---|---|
-| pandora-native.yml | pdnd 的 vet / race / 双架构构建，panel 契约，panel-frontend 的 lint / typecheck / vitest / 双入口构建 | 跑，除 ARM64 外 | ARM64 race、interop、runtime-acceptance |
-| panel-pg18.yml | panel-unit（panel 全量 build / vet / go test，PG18 用例在此跳过，是 CI 上唯一跑 panel 全部单元测试的地方） | 跑 | — |
-| panel-pg18.yml | panel-pg18（先迁移往返，再 `run-pg18-gates.sh` 的全部 PG18 域门禁） | 整个跳过 | 全部；往返口径与看结论的命令见 new-migration skill 与 `rules/panel-migrations.md` |
-| panel-smoke.yml | 冒烟栈：读表、`panel/tests` 的 e2e 脚本、压测工具试跑（零 5xx 零签名失败）、购买路径无头浏览器（Playwright，见 `rules/frontend-browser-e2e.md`） | 不跑 | 全部；e2e 清单以 `run-smoke-e2e.sh` 的 `SCRIPTS` 为准，任一失败即红 |
-| panel-deploy.yml | deploy-mock-tests：不需要数据库和 root 的 deploy 桩测试 | 跑 | — |
-| panel-deploy.yml | deploy-root-mock-tests：以 root 跑 `release-stop-the-world_mock_test.sh` | 明说跳过 | 全部；改了发布控制器、`check-migrations.sh` 的凭据或 `migrate.sh` 要等 `wait-github.sh` |
+| pandora-native.yml | pdnd 的 vet / race / 双架构构建，panel 契约，panel-frontend 的 lint / typecheck / vitest / 双入口构建；ARM64 race、interop、runtime-acceptance | 跑，除 ARM64 外 | 检查机部分随 `wait-status.sh`；改了 pdnd 内核或协议，再等 `wait-github.sh` 看 ARM64 race、interop、runtime-acceptance |
+| panel-pg18.yml / panel-unit | panel 全量 build / vet / go test（PG18 用例在此跳过，是 CI 上唯一跑 panel 全部单元测试的地方） | 跑 | 随 `wait-status.sh` |
+| panel-pg18.yml / panel-pg18 | 先迁移往返，再 `run-pg18-gates.sh` 的全部 PG18 域门禁，以及 check-migrations 临时库演练 | 整个跳过 | 改了 `panel/internal` 数据层、SQL、迁移，等 `wait-github.sh`；往返口径与看结论的命令见 new-migration skill 与 `rules/panel-migrations.md` |
+| panel-smoke.yml / 冒烟栈 | 读表、`panel/tests` 的 e2e 脚本（清单以 `run-smoke-e2e.sh` 的 `SCRIPTS` 为准，任一失败即红）、压测工具试跑（零 5xx 零签名失败）、购买路径无头浏览器（Playwright，见 `rules/frontend-browser-e2e.md`） | 不跑 | 改了前端 `src/`、`panel/tests`，等 `wait-github.sh` |
+| panel-deploy.yml / deploy-mock-tests | 不需要数据库和 root 的 deploy 桩测试 | 跑 | 改了 `panel/deploy`，随 `wait-status.sh` |
+| panel-deploy.yml / deploy-root-mock-tests | 以 root 跑 `release-stop-the-world_mock_test.sh` | 明说跳过 | 动了发布控制器、`check-migrations.sh` 的凭据或 `migrate.sh`，等 `wait-github.sh` |
 
 新加不需要数据库和 root 的 deploy 桩测试，要补进 workflow 里 `tests=(...)` 的清单。
 
 路径过滤：只改仓库根的文档不触发 workflow；被过滤目录里的任何文件改动都会触发对应的 workflow。
+
+## 坑
+
+- `go build` / `go test` 不要和 `npm ci` 同时跑（见根 CLAUDE.md「环境与工具坑」）。

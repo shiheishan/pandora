@@ -17,7 +17,7 @@ description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（�
 
 测试机红线见机器工位 `AGENTS.md`、test-machine skill 与根 CLAUDE.md「红线」。本 skill 额外的：
 
-- 协议端口段见 test-machine。客户端机本来只放行 22，要放回显/持续流服务就放行同一段（`ufw allow 20000:20099/udp|tcp`），收尾写进 `/root/README.md`。
+- 协议端口段与 ufw 的坑见 test-machine「坑」。客户端机本来只放行 22，要放回显/持续流服务就放行同一段（`ufw allow 20000:20099/udp|tcp`），收尾写进 `/root/README.md`。
 - 面板机不升级、不重启网关、不动 PG 以外的配置；只在后台建服务器/节点池/套餐/节点/测试用户。直接改 PG 数据只限测试用户的数据，用完还原并写进面板机 README。
 - 后台口令与前缀只从 `ops-local/<轮次>/admin-cred.txt`、`admin-path.txt` 读（放置规则见根 CLAUDE.md「红线」）；令牌、订阅链接只放 `ops-local/` 和机器上。
 - ssh 脚本一律走 `scripts/sshx` / `scpx`（ControlMaster 复用连接 + 签名失败重试，退出码 255 的 agent 故障见根 CLAUDE.md「环境与工具坑」）。
@@ -42,8 +42,8 @@ description: pandora 真节点逐协议验证：在两台 1c1g 测试机上（�
 
 ### 0. 构建 pdnd、装客户端、造证书
 
-1. 本机构建待测 pdnd（与发布脚本同参数，可交叉编译）：
-   `cd pdnd && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -ldflags "-s -w -X main.buildVersion=<标签>" -o $S/../bin/pandora-native-linux-amd64 .`
+1. 本机构建待测 pdnd（与发布脚本同参数、同 Go 版本：版本取 `pdnd/go.mod` 的 `go` 行，本机装的更新版会让测的二进制和 CI、发布不一致）：
+   `cd pdnd && GOTOOLCHAIN=go$(awk '/^go /{print $2}' go.mod) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -ldflags "-s -w -X main.buildVersion=<标签>" -o $S/../bin/pandora-native-linux-amd64 .`
 2. 客户端机装客户端：`$S/sshx <客户端机别名> 'bash -s' < $S/install-clients.sh`。官方发布物，脚本里写死了 GitHub 公布的 SHA-256，升版本要同步改。sing-box 必须用 `-glibc` 包（含 `with_naive_outbound` 与 libcronet），默认包与 musl 包没有 naive。
 3. 测试 CA 与服务端证书：`$S/sshx <服务端机别名> 'bash -s' -- <域名> <IP> < $S/node3-certs.sh`，把 `ca.crt` 拷到客户端机的 `/usr/local/share/ca-certificates/` 并 `update-ca-certificates`。域名用 `<ip 用横线>.sslip.io`（无需自己的域名），证书 SAN 同时写域名和 IP。
 

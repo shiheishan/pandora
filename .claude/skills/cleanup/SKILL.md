@@ -78,7 +78,7 @@ bash .claude/skills/cleanup/scripts/list.sh --size   # 另统计每个候选 wor
 | 资源 | 怎么清 |
 |---|---|
 | 对照机上的 `aegis_cmp_*` 库 | 见 bench-eval 第 6 节「结果在哪、对照机上留下什么」：先列给用户确认（动对照机属于改仓库外的东西），只删本任务建的，基线库和模板不碰 |
-| 测试机 | 见 test-machine「回收」（删机只由用户在控制台做，规则见根 CLAUDE.md） |
+| 测试机 | 见 test-machine「回收」（只删用户点名或明说授权的，规则见根 CLAUDE.md） |
 | ops-local 原始数据 | 见下 |
 | 会话 scratchpad 里的文件 | 不管，会话结束随系统临时目录清；只处理登记在 git 里的 worktree |
 

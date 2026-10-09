@@ -1,6 +1,6 @@
 ---
 name: prod-retest
-description: pandora 生产规模复测：在已按生产方式装好面板的一次性 Vultr 面板机上（装法见 panel-install）seed 5k 级数据，用压测机跑 runbook 第 8 节的 30 分钟稳态（节点 + 用户 + burst），采集 pprof、pg_stat_statements、CPU 拆分与连接池旁证，按分档目标出成绩单并与上一轮对比。整机 30 分钟稳态成绩单用本 skill；单条 SQL 改前改后判分用 bench-eval。用户或总协调说「复测」「压测」「出成绩单」「换栈检查点」「加一档节点」「跟上一轮比」时使用。
+description: pandora 面板整机压测与复测：在已按生产方式装好面板的一次性 Vultr 面板机上（装法见 panel-install）seed 5k 或 1 万用户 / 1000 节点的数据，用压测机跑 runbook 第 8 节的 30 分钟稳态（模拟节点 + 用户 + burst）和静默场景，采集 pprof、pg_stat_statements、CPU 拆分与连接池旁证，按分档目标出成绩单并与上一轮对比。用户或总协调说「面板复测」「面板压测」「整机压测」「出成绩单」「换栈检查点」「10k 基线」「静默 CPU」「加一档节点数」「跟上一轮比」时使用。不是本 skill：节点端（pdnd）压测、节点验收、VPC 复测、10 万连接用 node-accept；单条 SQL 改前改后判分用 bench-eval；逐协议能不能连用 node-e2e。
 ---
 
 # 生产规模复测
@@ -19,9 +19,12 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 
 | 角色 | 规格 | 跑什么 |
 |---|---|---|
-| 面板机 `$PANEL_HOST` | Vultr 共享型 2c4g，Debian 13 | install.sh 生产模式（三网关 + nginx + Docker 里 PG18/Valkey，装法见 panel-install），seed、采集脚本 |
+| 面板机 `$PANEL_HOST`（5k 档） | Vultr 共享型 2c4g，Debian 13 | install.sh 生产模式（三网关 + nginx + Docker 里 PG18/Valkey，装法见 panel-install），seed、采集脚本 |
+| 面板机 `$PANEL_HOST`（1 万用户 / 1000 节点档） | 4c8g 独享（`voc-c-4c-8gb-75s-amd`，用户 10-09 定：这一档的延迟目标按 4c8g 面板机考） | 同上 |
 | 压测机 `$LOADGEN_HOST` | 同机房 2c4g | `loadtest nodes / users / burst` |
 | （1000 节点档）压测机 ×2 | 同机房 2c4g | 一台只跑 `loadtest nodes -nodes 1000 -stagger 180s`，一台只跑 `loadtest users`；nodes 单进程 1000 节点的资源见 runbook 第 11.2 节 |
+
+10-09 之前的 10k-r1 基线是在 2c4g 上跑的，换 4c8g 后的数不能直接当「同机型对比」，对比表和成绩单要写明各轮的面板机机型。静默场景的两条资源标准（内存、CPU）不分机型。
 
 开机与登记走 test-machine skill，装面板走 panel-install skill。每轮在 `ops-local/<轮次>/` 下准备：
 
@@ -29,7 +32,7 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
 - `admin-cred.txt`（第 1 行邮箱、第 2 行口令）、`admin-path.txt`（后台前缀），都 0600；
 - `phase-a-notes.md`：现场记录，可以含真实值，格式仿 `ops-local/vultr-test/phase2-notes.md`。
 
-下文 `$S` 指本 skill 的 `scripts/` 目录，命令都在仓库根目录执行。
+下文 `$S` 指本 skill 的 `scripts/` 目录，命令都在仓库根目录执行；各脚本的用法看文件头注释。
 
 ## 准备：面板机装好 → 压测工具 → realip → seed
 
@@ -39,8 +42,8 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
    - 然后执行 `$S/push-scripts.sh ops-local/<轮次>/env.sh`，推送采集脚本和压测机上的 0600 地址、口令文件。
 3. **realip**（原因与做法见 runbook 第 4 节）：在面板机执行 `/root/lt/nginx-realip.sh enable <LOADGEN_IP>`（脚本由上一步推上去）。验证：从压测机带 `X-Real-IP: 198.18.x.x` 请求 /healthz，`/var/log/nginx/aegis-access.log` 最后一行的来源应是这个地址。收尾或删机前 `nginx-realip.sh disable`。
 4. **seed**（面板机，参数与自检见 runbook 7.2）：
-   - 包装脚本只从 0600 文件读口令，参考 `ops-local/vultr-test2/` 现场的 `run-seed-5k.sh`；参数 `-users 5000 -nodes 198 -label 5k -out /root/lt-results/5k-seed/lt-manifest.json`。
-   - **1 万用户 / 1000 节点档**（2026-10-08 起的整机标准）：参数 `-users 10000 -nodes 1000 -label 10k -admin-workers 8`，并直连面板机回环网关（`-admin-base http://127.0.0.1:9001 -node-base http://127.0.0.1:9003 -public-base http://127.0.0.1:9000`，端口取 `.env`），不经 nginx；单会话要约 25 分钟，8 会话预计 5 到 6 分钟。上一批留在库里时 `-retire-previous` 会先吊销上一批节点身份再退役（runbook 第 11.1 节）。
+   - 包装脚本只从 0600 文件读口令，并经环境变量 `LOADTEST_DATABASE_URL` 传给 seed（`seed/options.go` 认它），不放命令行参数；参考 `ops-local/vultr-test2/` 现场的 `run-seed-5k.sh`、`ops-local/vultr-test2/10k-r1/scripts/run-seed-10k.sh`；参数 `-users 5000 -nodes 198 -label 5k -out /root/lt-results/5k-seed/lt-manifest.json`。
+   - **1 万用户 / 1000 节点档**（2026-10-08 起的整机标准）：参数 `-users 10000 -nodes 1000 -label 10k -admin-workers 8`，并直连面板机回环网关（`-admin-base http://127.0.0.1:9001 -node-base http://127.0.0.1:9003 -public-base http://127.0.0.1:9000`，端口取 `.env`），不经 nginx；单会话要约 25 分钟，8 会话预计 5 到 6 分钟。上一批留在库里时 `-retire-previous`（缺省开）会先清上一批（顺序与可重复性见 `.claude/rules/tools-loadtest.md`「造数与清理」、runbook 第 11.1 节），中途失败原样重跑。
    - 用 `cd /root/lt; setsid -f ./run-seed-….sh > 日志 2>&1 < /dev/null` 起，退出码必须为 0（自检不过就是非 0）。
    - 记下 `seed_timings`（耗时参考值在 runbook 7.2）。
    - manifest 拉回 `ops-local/<轮次>/<label>-seed/`（0600），再拷一份到压测机。
@@ -106,8 +109,10 @@ seed 不能往已有资源池追加节点：每次都会新建资源池和套餐
    | 登录 | `POST /v1/auth/login`（门户与后台） | 不设速度目标；只看不超时、不排队（无 503） |
    | 全部 | — | 零 5xx、不超时、不换页、连接池不排队 |
 
+   - 机型：1 万用户 / 1000 节点档按 4c8g 面板机考（用户 10-09 定），5k 档历史轮次是 2c4g；成绩单开头写明本轮面板机机型。
+
    - users 和 nodes 用稳态窗口 [T, T+30m) 的统计；预热、burst、节点的 config/report 与 stream 只有全程统计。
-   - 连接池拿不到 pgxpool.Stat()，面板没有导出。只能用两个旁证：T+15m 的 goroutine profile 里停在 `pgxpool.*Acquire|puddle` 的个数，以及 pgact.csv 里各网关已建连接是否顶到池上限（public 16、admin 15、node 15，见 `.env.example`）。**注意**：pgact 的 `conn_public/admin/node` 三列数的是到 `:5433` 的 TCP 连接，网关经 unix socket 连 PG 的新装机上恒为 0（脚本遗留，已记进 TASKS）；这几列以 pg_stat_activity 的 total 和 goroutine profile 为准。
+   - 连接池直接证据：三个网关每分钟各打一行「数据库连接池统计」（`platform/db/poolstats.go`，有取连接或建连变化时才打），字段 `empty_acquires`、`acquire_wait_ms` 是「池子不够」的直接证据；`acquired` 贴着 `max` 但 `empty_acquires` 为 0 只是轮着用、没有排队。成绩单取窗口内这几行：`journalctl -u aegis-<public|admin|node> --since … | grep 数据库连接池统计`。旁证两条：T+15m 的 goroutine profile 里停在 `pgxpool.*Acquire|puddle` 的个数，以及 pgact.csv 里各网关已建连接是否顶到池上限（public 16、admin 15、node 15，见 `.env.example`；`conn_public/admin/node` 三列同时数回环 TCP 与 unix socket 两种连法）。
 5. **c. 与上一轮对比**（compare.md）：
    - 每节点每分钟请求数和节点总 QPS；
    - 5xx 与超时；
@@ -128,17 +133,13 @@ seed 不能往已有资源池追加节点：每次都会新建资源池和套餐
 8. **没达标的项：根因猜测 + 证据**：每条要指到具体数字或文件，例如 pprof 热点、pg_stat_statements 某行、pgact 某个时刻、timeline 某一格。
 9. **原始数据清单**。
 
-## scripts/
-
-本机入口：`start.sh`（共用一个 T 起两端）、`peek.sh`（看进度，只读）、`pull.sh`（拉回，并检查没混进后台前缀）、`report.sh`（生成 auto-summary / auto-targets / auto-cpu / compare，用 `summarize.py`、`targets.py`、`cpu.py`）。其余脚本由 `push-scripts.sh` 推到面板机（`run-collect.sh`、`sample-*.sh`、`trim-access.sh`、`overhead.sh`）和压测机（`run-load.sh`、`run-split.sh`），用法看各脚本头注释；`env.example.sh` 是现场参数模板。仓库 `panel/tools/loadtest/scripts/` 里的采集脚本由 push-scripts.sh 直接推上去。
-
 ## 坑
 
 - 远端起后台脚本、`pkill -f` 的写法见根 CLAUDE.md「环境与工具坑」（start.sh 已这样做）。
-- **`-retire-previous`（缺省开）**：先吊销上一批节点的接入身份再退役（w9load 起，10-08 之前的版本遇到接入过的节点会 409 且停在 draining）。这条路径至今只有单测，第一次在真库上用时出错先看 `seed.log` 的 `retire_previous` 段；中途失败原样重跑即可。
+- **`-retire-previous` 出错**：先看 `seed.log` 的 `retire_previous` 段，中途失败原样重跑即可（顺序见 `.claude/rules/tools-loadtest.md`）。
 - **压测机必须带 X-Real-IP，面板机要先信任它**：否则所有请求来源 IP 相同，会撞上按 IP 限流（每分钟 240 次）和 IP 聚类，198 个节点共用一个地址就会大面积 503。做法见 runbook 第 4 节。
 - **镜像自带约 7.7G 的 `/swapfile`，内存吃紧会被它掩盖**：峰值没撑爆不等于没问题，可能在换页。成绩单的「不换页」要看 sample-procs 的 `_system` 行里 `pswpin`/`pswpout` 的逐行差，再配合 vmswap 的各进程 VmSwap；换页必须记录，不能只报内存峰值。
-- **seed 在面板机上跑会撞 nginx 节点接口的按 IP 限流**：seed 的来源是面板机自己，不在 realip 信任表里。接入节点那一段 nginx 会记 503，seed 重试后通过。数 5xx 时要把这段排除在窗口外，不要误判成压测的 5xx。
+- **5k 档的 seed 在面板机上跑会撞 nginx 节点接口的按 IP 限流**：seed 的来源是面板机自己，不在 realip 信任表里。接入节点那一段 nginx 会记 503，seed 重试后通过。数 5xx 时要把这段排除在窗口外，不要误判成压测的 5xx。1 万 / 1000 档直连回环网关（上面 seed 第 4 步），不经 nginx，没有这条。
 - **采集脚本自身有开销**：sample-procs.sh 每 5 秒对每个 PID 起几次 cat 和 awk 并读 smaps_rollup，sample-pgact.sh 每 10 秒一次 `docker exec psql`；短命进程退出后只记在父进程的 cutime 上，所以整机 CPU 会明显高于各进程之和。成绩单里的「整机 CPU」要注明含观测开销，外推容量时给「含」与「扣除」两个数；换机型或改采样器后重跑 `overhead.sh`。
 - **整机与各进程之和的差额**用 sample-cpustat.sh 的 allprocs.csv 补齐（procs.csv 只统计三网关、postgres、valkey、nginx）。
 - **解读 p99 先看 timeline 最大格**：burst（T+20m）和每小时整点的 node push 会形成 p99 尾巴，稳态 p99 含这几格，JSON 只有 10 秒一格的 max，事后剔除不了。先看 nodes.json 的 timeline，找最大的几格落在哪里；原因不明的尾巴在 pgact 里对上时间。

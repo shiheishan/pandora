@@ -1,6 +1,6 @@
 ---
 name: node-accept
-description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同机房 VPC 内网的 4c8g 节点加压测机上跑 10 万连接、1–2Gbps 稳态、单协议档和故障演练（面板宕机、断流、删人、重连风暴），按用户定的标准与取消线出成绩单，含跑前公网出流量估算与远端自撤销的故障注入。改了 pdnd 转发路径、QUIC、SS，要在 Linux 上复测吞吐、延迟、重传、内存、每 Gbps CPU 时使用。逐协议能不能连用 node-e2e；面板整机压测用 prod-retest；开机登记用 test-machine；测试中途被打断用 resume-work。
+description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同机房 VPC 内网的 4c8g 节点加压测机上跑 10 万连接、1–2Gbps 稳态、单协议档和故障演练（面板宕机、断流、删人、重连风暴），按用户定的标准与取消线出成绩单，含跑前公网出流量上报与远端自撤销的故障注入。用户或总协调说「节点压测」「节点验收」「VPC 复测」「节点大流量」「10 万连接」「每 Gbps CPU」「重连风暴」，或改了 pdnd 转发路径、QUIC、SS 要在 Linux 上复测吞吐、延迟、重传、内存时使用。逐协议能不能连用 node-e2e；面板整机压测（面板复测、10k 基线）用 prod-retest；开机登记与流量费估算公式用 test-machine；测试中途被打断用 resume-work。
 ---
 
 # 节点端大流量验收
@@ -13,7 +13,7 @@ description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同
 - 不改仓库代码；测出的 pdnd 问题写进报告的问题表，由总协调派任务。
 - 压测工具不在仓库：在 `ops-local/nodeaccept/harness-src/`（scalepanel、scaleload、sbrun、echosrv、udpblast、overlay、sampler.py）。要不要搬进仓库由用户另定，本 skill 不搬。
 - 远端后台进程一律 `setsid -f`；pkill 只按 PID 或 `-x` 精确进程名（根 CLAUDE.md「环境与工具坑」）。
-- 删机只由用户做（test-machine）。
+- 删机只删用户点名或明说授权的（test-machine「回收」）。
 
 ## 1. 标准与取消线（用户 10-07 定，`.claude/TASKS.md`「节点端大流量验收」）
 
@@ -22,10 +22,10 @@ description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同
 | 稳态 | 4c8g 独享节点，10 万 TCP 长连接 + 1Gbps 跑 3 小时；另一轮 2Gbps（上轮 30 分钟） | — |
 | 崩溃、泄漏、建连失败、换页 | 都是 0 | 任一出现 |
 | 每连接内存 | ≤35KB | >50KB |
-| 代理附加延迟 p50（本机口径，见第 5 节） | ≤0.1ms | >0.5ms |
+| 代理附加延迟 p50（比同机最小 io.Copy 中继多出的，用户 10-08 定） | ≤0.1ms | >0.5ms |
 | TCP 重传（整机） | ≤0.1% | >1% |
-| 每 Gbps CPU | vless/trojan ≤0.5 核；hy2/TUIC ≤1 核 | — |
-| hy2/TUIC 单连接 500Mbps | 丢包 ≤0.1% | — |
+| 每 Gbps CPU | vless/trojan ≤0.5 核；hy2/TUIC「不输同类」：同机同档并排跑 sing-box，不比它高超过 10%（用户 10-09 定，瓶颈在 quic-go，不改 QUIC 库） | — |
+| hy2/TUIC 单连接吞吐与丢包 | 不输同类：吞吐不低于、UDP 丢包不高于同机 sing-box；官方 apernet/hysteria release（核 sha256）作第二把尺子（用户 10-09 同意下载） | — |
 | 故障演练 | 面板宕机 / 断流、节点重启后 10 万重连风暴、批量删人：数据面不受影响，恢复后补报不丢 | — |
 
 用户原话：「中途抽查，表现过于低下就取消测试返工」，不跑满 3 小时浪费机器。取消线之外还要人工看 panic、重启、RSS 与 goroutine 是否单调上涨。
@@ -38,7 +38,7 @@ description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同
 | 压测机 ×3 | 2c4g | scaleload（长连接）、sbrun + iperf3 客户端、采样器 |
 | 目标机 | 2c4g | scalepanel（模拟面板）、echosrv（回显 + REALITY dest 替身）、iperf3 服务端 |
 
-- **开机时勾同机房 VPC，测试流量只走内网地址**。上一轮没开内网，5 台公网出流量合计约 4.11TB，账户流量池只有约 2.64TB，超了约 1.3TB。Vultr 文档写明 VPC 流量不计费、入方向不计量，只计公网出方向。
+- **开机时勾同机房 VPC，测试流量只走内网地址**（上一轮没开内网，超了约 1.3TB 流量池；费用口径与估算公式见 test-machine「费用」）。
 - 开机、登记照 test-machine（register.sh 可以带内网地址）。`ops-local/<轮次>/ips.env` 里**只写内网地址**，脚本、配置、scaleload 的 `-servers` / `-targets`、iperf3 目标、pdnd 的 `panel.url` 全用它。
 - **pdnd 默认拒绝私网目标**（`pdnd/outbound/private_guard.go`：直连出站对用户目标拒回环、10/8、172.16/12、192.168/16、100.64/10 等，UDP 逐包静默丢）。回显和 iperf3 目标在内网时，节点配置要加：
   ```json
@@ -47,14 +47,12 @@ description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同
   （`pdnd/runtime_tuning.go`，`main.go` 的 `runtime` 段；启动日志会打「已放开私网目标」，没看到这句就是没生效）。这是验收专用；其余 runtime 项保持缺省，否则测的不是生产行为。
 - **REALITY dest 和探测回落目标不受这个开关管**：它们由 `kernel/reality_listener.go`、`kernel/probe_fallback.go` 用自己的 `net.Dialer` 直拨，不经 outbound；`ParseRealityServerConfig` / `parseProbeFallback` 目前也不拒私网地址，所以 dest 替身放内网现在能用。TASKS 的节点遗留里排着「这两处要拒私网 dest」，修好之后 dest 替身放内网会被拒（除非修法也挂在这个开关上）。每轮开跑前读一遍这两个函数；被拒就把 dest 替身放到目标机的公网地址上（只有握手流量，10 万次重连风暴也只有几百 MB）。
 - pdnd 连模拟面板走 UniProxy 兼容通道，`panel.url` 用 `http://<目标机内网IP>:18080`、`signed_required: false`。签名通道只认 https 或回环 http（`pdnd/panel/signed.go` 的 `validateSignedServer`），别切过去。
-- ufw：上轮端口段规则计数始终为 0、SYN 被 DROP（原因没查），按来源地址放行才通。VPC 下按内网来源或内网网段放行。
+- ufw：按内网来源或内网网段放行，不要只放端口段（坑见 test-machine「坑」）。
 - 采样器 `sampler.py` 取 `/proc/net/dev` 里**第一块非 lo 网卡**算 rx/tx。开了 VPC 后这通常是公网卡，内网流量算不进来：开跑前改成按内网卡（`ip -o addr` 找内网地址所在的网卡）。
 
 ### 跑前估算公网出流量，报给用户
 
-- 1Gbps 跑 1 小时，每个方向约 450GB。
-- 节点过 X Gbps（一半上行、一半下行）跑 H 小时：节点出 ≈ 450·X·H GB，目标机与压测机合计再出 ≈ 450·X·H GB，**全走公网时合计约 900GB / (Gbps·小时)**。上轮约 4.6 Gbps·小时，实测 4.11TB，与公式吻合。
-- 全走 VPC 时，公网只剩 ssh、拉数据、apt、推二进制，几 GB 量级。
+公式见 test-machine「费用」（全走公网约 900GB / (Gbps·小时)，全走 VPC 只剩几 GB）。
 - 报用户的格式：「计划 X Gbps × H 小时；走内网，预计公网出流量 N GB；若某段只能走公网（例如 dest 替身），那段预计 M GB」。
 - 开跑前、稳态开始、收尾各跑一次 `bash .claude/skills/node-accept/scripts/netdev.sh <别名>...`，按公网卡的 tx 差值核对估算。
 
@@ -62,11 +60,11 @@ description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同
 
 - **pdnd**（在 `pdnd/` 下，与 CI 同 Go 版本，flag 同 `release/build.sh`）：
   ```bash
-  GOTOOLCHAIN=go1.26.9 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
+  GOTOOLCHAIN=go$(awk '/^go /{print $2}' go.mod) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
     -overlay ../ops-local/nodeaccept/harness-src/overlay/overlay.json \
     -ldflags "-s -w -X main.buildVersion=accept-<短 sha>-pprof" -o <输出> .
   ```
-  overlay 注入 `zz_scale_pprof.go`：只在 `PDND_PPROF=127.0.0.1:6060` 时开 pprof 与 `/scale/stats`（goroutine、堆），仓库里不落文件。Go 版本以 CI 当时用的为准。
+  overlay 注入 `zz_scale_pprof.go`：只在 `PDND_PPROF=127.0.0.1:6060` 时开 pprof 与 `/scale/stats`（goroutine、堆），仓库里不落文件。Go 版本取 `pdnd/go.mod` 的 `go` 行，与 CI、发布一致，升版本不用改本 skill。
 - **压测工具**（在 `ops-local/nodeaccept/harness-src/` 下）：
   ```bash
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags with_utls,with_quic -o ../bin/ ./scaleload ./sbrun ./udpblast ./echosrv ./scalepanel
@@ -115,7 +113,7 @@ bash .claude/skills/node-accept/scripts/selfrevert.sh <节点别名> 240 \
 - sysctl 按 `sysctl.before` 改回（只用过 `-w` 的话重启也会恢复）；撤掉本轮加的 ufw 规则。
 - 各机 `/root/README.md` 追加：装了什么、留下了什么（二进制、unit、系统用户）、服务是否 stop。
 - `pull.sh` 拉回原始数据；`netdev.sh` 出各机网卡累计收发，存 `results/netdev_end.txt`。
-- 告诉用户可以删机；删机后的撤登记照 test-machine。
+- 告诉用户测完了，机器可以删；删机范围由用户点名或授权，撤登记照 test-machine。
 
 ## 8. 报告模板（`ops-local/<轮次>/REPORT.md`，照上一轮的结构）
 
