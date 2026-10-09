@@ -27,6 +27,12 @@ paths:
 - `connerror_log.go` 按 (入站, 协议, 阶段, 分类) 固定窗口限流，锁内只计数、日志写在锁外。
 - 新增协议要在 `connerror_hook_test.go` 或 `connerror_hook_client_test.go`（真实 QUIC / mieru 客户端）补至少一条失败路径真的到达 OnConnError。
 
+## 在线设备与设备数限制
+
+- 各适配器内嵌一份 `online_devices.go` 的 `onlineDevices`（零值可用），不要再各写 `map[用户]map[IP]struct{}`。按来源 IP 记引用计数：同 IP 多条连接只占一个名额，计数到 0 才离线；设备上限按不同 IP 数判；IPv4 映射地址按 IPv4 计。
+- 写法固定为 `if !a.online.enter(user, ip) { 拒绝 }` 紧跟 `defer a.online.leave(user, ip)`，异常退出也经 defer 撤销。新增协议要进 `online_devices_wiring_test.go` 的接线用例（同 IP 两条关一条仍在线、全关才离线、别的 IP 占满名额时被拒）。
+- 例外：mieru 用 `core/counter.OnlineTracker`（最后活跃时间 + 5 分钟 TTL，不按连接计数）；ShadowTLS 委托内层适配器。
+
 ## 协议实现约定
 
 - UDP 中继的上下行必须解耦，各一个 goroutine 阻塞读，收尾走 `udp_relay.go` 的 `relayUDPDirections`（SOCKS5、Trojan、VMess command=UDP 共用）。下行不能与上行在同一循环轮询，否则回程被限成几包每秒（`*DownlinkBurstWithoutUplink` 系列测试）。
@@ -55,7 +61,9 @@ QUIC 栈是 sagernet/quic-go（经 sing-quic 与 `internal/nativewire` 的 hy2 /
 - DATAGRAM 分片按连接的实际上限（`nativewire/dgram`）：用必然超长的缓冲调 `SendDatagram` 问上限（只比长度、不发包），缓存 1 秒；实际只用上限减 `AckMargin`（64）。不留余量时贴上限的 DATAGRAM 碰上带 ACK 的包装不下，quic-go 试 10 次就丢（`TestLimitSizedDatagramsSurviveBidirectionalTraffic` 去掉余量即红）。不要改回上游固定的 1197。
 - 上行 UDP 转发（`hysteria2_udp.go` 的 `hy2BatchWriter`）：同一目标、等长的连续包合成一条 UDP_SEGMENT（GSO）消息，经 `WriteBatch` 的 OOB 交给内核；iovec 直接指向各包不复制。私网拦截仍逐消息判定（一条 GSO 消息同一目标），被拒（EIO / EINVAL 等）时本会话关 GSO、从失败那条起逐条重发。只在 Linux，回归测试 `hysteria2_udp_gso_linux_test.go`。
 - Salamander 混淆在 Linux 上走 `batchSalamanderConn`：自己实现 quic-go 认的 `OOBCapablePacketConn` 与 `ReadBatch`，quic-go 才会照常 recvmmsg 批量收、GSO 发；GSO 写时逐段加盐、段长改为原段长 + 8。它不内嵌 `*net.UDPConn`，未混淆的收发方法一个都不透出。
-- hy2 / TUIC 入站起来后检查 UDP 收发缓冲（`quic_socket_linux.go`）：pdnd 无 CAP_NET_ADMIN，受 `net.core.rmem_max / wmem_max` 限制拿不到 quic-go 要的 8MB，不足一半就 Warn 一次并提示 sysctl。
+- hy2 / TUIC 入站起来后检查 UDP 收发缓冲（`quic_socket_linux.go`）：pdnd 无 CAP_NET_ADMIN，受 `net.core.rmem_max / wmem_max` 限制拿不到 quic-go 要的 8MB，不足一半就 Warn 一次并提示 sysctl。上限由面板的节点安装脚本写进 `/etc/sysctl.d/90-pandora-native.conf`（16MB，`pdndSysctlFunction`），手工安装见 `release/README.md`；不要给 unit 加 CAP_NET_ADMIN。
+- UDP 转发的出站 socket（`newHy2UDPUpstream`）按同一口径 `quicSocketBufferWant` 申请收发缓冲，受同一上限；拿不到时不逐会话告警（入站那条已覆盖）。默认拦私网时经 `outbound.UDPBatchConn` 调缓冲，不拿裸 socket。下行已是 recvmmsg 批量收（IPv4 本地地址时）。
+- 内核里直接用包级 `slog.*` 的日志（缓冲告警、关停、panic）靠 main 的 `installLogger` 把进程 logger 设成 slog 默认才是 `level=` 格式、受 log_level 约束（`logger_test.go`）；能拿到注入 logger 的地方优先用注入的。
 - 包装 quic-go 的监听 socket 时必须保留批量与 GSO：任何只实现 `net.PacketConn` 的包装都会让 quic-go 退回逐包 ReadFrom / WriteTo（每 Gbps 多约一核）。测量口径与 harness 见 w9quic 报告（回环、私网目标放开）；生产默认拦私网时走 outbound 的带检查批量接口，GSO 消息同样逐条过 guard。
 
 ## 传输与订阅的对口
