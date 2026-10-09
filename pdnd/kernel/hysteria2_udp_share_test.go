@@ -137,10 +137,21 @@ func (u *fakeUpstream) waitReadable() error {
 	}
 }
 
-// Ready 与 udprecv.Receiver.Ready 同语义：先借组试收，空了还组、等可读再借。
+// Ready 与 udprecv.Receiver.Ready 同语义：先窥视（不借组），空就等；可读了借组收，
+// 落空（虚假唤醒）还组接着等。
 func (u *fakeUpstream) Ready(size int, borrow func() *udprecv.Batch, giveBack func(*udprecv.Batch)) (*udprecv.Batch, int, error) {
 	if err := u.expired(); err != nil {
 		return nil, 0, err
+	}
+	// 第一次只窥视、不借组：空就去等。
+	u.calls.Add(1)
+	u.mu.Lock()
+	empty := len(u.queue) == 0 && !u.closed
+	u.mu.Unlock()
+	if empty {
+		if err := u.waitReadable(); err != nil {
+			return nil, 0, err
+		}
 	}
 	for {
 		b := borrow()

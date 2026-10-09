@@ -40,8 +40,10 @@ func newTestBatch(n int) *Batch {
 	return NewBatch(bufs)
 }
 
-// Ready 等包期间不占缓冲：落空时把组还回去，等到可读才再借；收到的负载与来源
-// （IPv4 与 IPv6，IPv6 来源不被当成 IPv4 映射地址）正确。
+// Ready 等包期间不占缓冲，落空时也不借组：第一次回调只窥视（不借），被 netpoller
+// 叫醒后才借组收；一次醒来两次系统调用（窥视落空 + 收到）、借一次。连等两轮（第二轮
+// 紧跟在收空之后，正是会话收完一串再去等的形状）。包已在队列里时窥视到就借组收。
+// 收到的负载与来源（IPv4 与 IPv6，IPv6 来源不被当成 IPv4 映射地址）正确。
 func TestReadyHoldsNoBatchWhileWaiting(t *testing.T) {
 	for _, network := range []struct{ name, loopback string }{{"udp4", "127.0.0.1"}, {"udp6", "::1"}} {
 		t.Run(network.name, func(t *testing.T) {
@@ -61,40 +63,64 @@ func TestReadyHoldsNoBatchWhileWaiting(t *testing.T) {
 				err error
 			}
 			done := make(chan result, 1)
-			go func() {
-				b, n, err := r.Ready(2, borrow, giveBack)
-				done <- result{b, n, err}
-			}()
-			// 等它落空一次、挂到 netpoller 上。
-			deadline := time.Now().Add(2 * time.Second)
-			for borrowed.Load() == 0 || borrowed.Load() != returned.Load() {
-				if time.Now().After(deadline) {
-					t.Fatalf("等待时借出 %d、还回 %d", borrowed.Load(), returned.Load())
-				}
-				runtime.Gosched()
-			}
-			time.Sleep(20 * time.Millisecond)
-			if out := borrowed.Load() - returned.Load(); out != 0 {
-				t.Fatalf("等包期间占着 %d 组缓冲", out)
-			}
 			payload := bytes.Repeat([]byte{7}, 1200)
+			want := sender.LocalAddr().(*net.UDPAddr).AddrPort()
+			want = netip.AddrPortFrom(want.Addr().Unmap(), want.Port())
+			check := func(res result) {
+				t.Helper()
+				if res.err != nil || res.n != 1 || res.b != batch {
+					t.Fatalf("Ready n=%d err=%v", res.n, res.err)
+				}
+				if !bytes.Equal(batch.Bufs[0][:batch.N[0]], payload) {
+					t.Fatalf("负载不一致：%d 字节", batch.N[0])
+				}
+				if batch.From[0] != want {
+					t.Fatalf("来源 %v，期望 %v", batch.From[0], want)
+				}
+			}
+			for round := range 2 {
+				borrowBefore, returnBefore, recvsBefore := borrowed.Load(), returned.Load(), r.Recvs()
+				go func() {
+					b, n, err := r.Ready(2, borrow, giveBack)
+					done <- result{b, n, err}
+				}()
+				// 等它窥视落空、挂到 netpoller 上。
+				deadline := time.Now().Add(2 * time.Second)
+				for r.Recvs() == recvsBefore {
+					if time.Now().After(deadline) {
+						t.Fatal("Ready 没有开始等")
+					}
+					runtime.Gosched()
+				}
+				time.Sleep(20 * time.Millisecond)
+				if got := borrowed.Load() - borrowBefore; got != 0 {
+					t.Fatalf("第 %d 轮：等包期间借了 %d 次组", round, got)
+				}
+				if _, err := sender.WriteTo(payload, conn.LocalAddr()); err != nil {
+					t.Fatal(err)
+				}
+				check(<-done)
+				if got := borrowed.Load() - borrowBefore; got != 1 {
+					t.Fatalf("第 %d 轮：一次醒来借了 %d 次组，期望 1 次", round, got)
+				}
+				if got := returned.Load() - returnBefore; got != 0 {
+					t.Fatalf("第 %d 轮：收到前还了 %d 次组（落空时借过）", round, got)
+				}
+				if got := r.Recvs() - recvsBefore; got > 3 {
+					t.Fatalf("第 %d 轮：一次醒来收了 %d 次，期望 2 次（容一次虚假唤醒）", round, got)
+				}
+				returned.Add(1)
+			}
+			// 包已在队列里：窥视到、借组收，不等。
 			if _, err := sender.WriteTo(payload, conn.LocalAddr()); err != nil {
 				t.Fatal(err)
 			}
-			res := <-done
-			if res.err != nil || res.n != 1 || res.b != batch {
-				t.Fatalf("Ready n=%d err=%v", res.n, res.err)
-			}
-			if !bytes.Equal(batch.Bufs[0][:batch.N[0]], payload) {
-				t.Fatalf("负载不一致：%d 字节", batch.N[0])
-			}
-			want := sender.LocalAddr().(*net.UDPAddr).AddrPort()
-			want = netip.AddrPortFrom(want.Addr().Unmap(), want.Port())
-			if batch.From[0] != want {
-				t.Fatalf("来源 %v，期望 %v", batch.From[0], want)
-			}
-			if borrowed.Load()-returned.Load() != 1 {
-				t.Fatalf("收到后应借着 1 组，实际借 %d 还 %d", borrowed.Load(), returned.Load())
+			time.Sleep(10 * time.Millisecond)
+			borrowBefore, recvsBefore := borrowed.Load(), r.Recvs()
+			b, n, err := r.Ready(2, borrow, giveBack)
+			check(result{b, n, err})
+			if borrowed.Load()-borrowBefore != 1 || r.Recvs()-recvsBefore != 2 {
+				t.Fatalf("队列里有包：借 %d 次、收 %d 次，期望 1、2", borrowed.Load()-borrowBefore, r.Recvs()-recvsBefore)
 			}
 		})
 	}
@@ -118,6 +144,8 @@ func TestRecvBatchAndDeadline(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// 等三包都进了接收队列（Linux 上才能一次收齐）。
+	time.Sleep(20 * time.Millisecond)
 	got := 0
 	want := 1
 	if runtime.GOOS == "linux" {

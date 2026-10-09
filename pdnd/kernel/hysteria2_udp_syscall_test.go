@@ -6,33 +6,11 @@ import (
 	"context"
 	"net"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/aegispanel/nodeagent/internal/udprecv"
 )
-
-// countingRawConn 记下收包器在 socket 上的每一次收包尝试：udprecv 的回调里每调一次
-// 就是一次 recvmmsg（别的 unix 是 recvfrom），落空的也算。
-type countingRawConn struct {
-	syscall.RawConn
-	recvs atomic.Int64
-}
-
-func (c *countingRawConn) Read(f func(uintptr) bool) error {
-	return c.RawConn.Read(func(fd uintptr) bool {
-		c.recvs.Add(1)
-		return f(fd)
-	})
-}
-
-func (c *countingRawConn) Control(f func(uintptr)) error {
-	return c.RawConn.Control(func(fd uintptr) {
-		c.recvs.Add(1)
-		f(fd)
-	})
-}
 
 // deadlineCountingConn 记设过非零读截止的次数（热态每段设一次，进热态即有）。
 type deadlineCountingConn struct {
@@ -48,13 +26,11 @@ func (c *deadlineCountingConn) SetReadDeadline(t time.Time) error {
 }
 
 // 每包收包系统调用的上限（复审 review-r6 第 1 条）：真 UDP socket 经生产入口
-// hy2DownlinkUDP 收包，数收包器的系统调用。
-//   - 冷态（每 5ms 一包，每秒 200 包，不进热态）：每次醒来「落空 + 收到」两次，与
-//     持有缓冲阻塞读（sing-box 的 ReadFrom）同形状；
-//   - 中速（每 300µs 一包，约每秒 3300 包，会进热态）：同样两次。
-//
-// 上限 2.05（容几次 netpoller 的虚假唤醒）。改回「先窥视等包、再借缓冲收」，冷态
-// 每包三次，这里变红。
+// hy2DownlinkUDP 收包，数收包器的系统调用（udprecv.Receiver.Recvs，窥视也算）。冷态
+// （每 5ms 一包，每秒 200 包，不进热态）与中速（每 300µs 一包，约每秒 3300 包，会进
+// 热态）每包都是「落空 + 收到」两次，与持有缓冲阻塞读（sing-box 的 ReadFrom）同形状。
+// 上限 2.05（容几次虚假唤醒）。改回「阻塞窥视等包、再借缓冲收」，冷态每包三次，变红。
+// 落空时不借组由 internal/udprecv 的 TestReadyHoldsNoBatchWhileWaiting 守。
 func TestHy2DownlinkRecvSyscallsPerPacket(t *testing.T) {
 	if !udprecv.Supported {
 		t.Skip("本平台没有就绪收包")
@@ -84,9 +60,9 @@ func TestHy2DownlinkRecvSyscallsPerPacket(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			counting := &countingRawConn{RawConn: rc}
+			recv := udprecv.NewReceiver(rc)
 			deadlines := &deadlineCountingConn{PacketConn: upstream}
-			u := hy2UDPUpstream{conn: deadlines, recv: udprecv.NewReceiver(counting)}
+			u := hy2UDPUpstream{conn: deadlines, recv: recv}
 			conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
 			ctx, cancel := context.WithCancel(context.Background())
 			userID := int64(66000)
@@ -99,8 +75,8 @@ func TestHy2DownlinkRecvSyscallsPerPacket(t *testing.T) {
 				hy2DownlinkUDP(ctx, conn, u, share, &down)
 			}()
 			// 等会话进入空闲等待，开头那次落空不算进来。
-			waitDownlink(t, "会话开始等包", func() bool { return counting.recvs.Load() >= 1 })
-			before := counting.recvs.Load()
+			waitDownlink(t, "会话开始等包", func() bool { return recv.Recvs() >= 1 })
+			before := recv.Recvs()
 			warmBefore := deadlines.armed.Load()
 			payload := make([]byte, 1200)
 			start := time.Now()
@@ -119,7 +95,7 @@ func TestHy2DownlinkRecvSyscallsPerPacket(t *testing.T) {
 			waitDownlink(t, "收完", func() bool { return conn.writes.Load() == int64(tc.packets) })
 			// 收完最后一包之后会话回到等待，那次落空属于下一次醒来，等它发生再数。
 			time.Sleep(5 * time.Millisecond)
-			recvs := counting.recvs.Load() - before
+			recvs := recv.Recvs() - before
 			warmed := deadlines.armed.Load() - warmBefore
 			cancel()
 			_ = upstream.SetReadDeadline(time.Now())

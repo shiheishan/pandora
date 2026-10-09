@@ -14,3 +14,5 @@ func (s *batchSys) init([][]byte) {}
 func (b *Batch) read(uintptr, int) (int, error) {
 	return 0, errors.New("udprecv: unsupported platform")
 }
+
+func peek(uintptr) error { return errors.New("udprecv: unsupported platform") }

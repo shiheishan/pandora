@@ -17,13 +17,13 @@ import (
 
 // hy2 / TUIC UDP 下行（上游 → 客户端）。
 //
-// 冷态（空闲、零星）：等上游 socket 可读，等待期间不占收包缓冲；可读了才借 2 包的
-// 小组非阻塞收（udprecv.Receiver.Ready：在 RawConn.Read 的回调里借组、recvmmsg，
-// 落空就还组、交给 netpoller 接着等）。一次醒来的系统调用是「落空 + 收到」两次，与
-// 持有缓冲阻塞读（sing-box）相同；之前「MSG_PEEK 窥视 + 收」每次醒来多一次（复审
-// review-r6 第 1 条：1024 个冷会话时每 Gbps 多约 10% 的 CPU）。连收两次都满了说明
-// 积压大，换批量组收空。每次收完先把包复制出来、归还缓冲再写回，卡在写回时不占
-// 收包组（见 burst）。
+// 冷态（空闲、零星）：等上游 socket 可读，等待期间不占收包缓冲（udprecv.Receiver.Ready：
+// 第一次回调只用 1 字节 MSG_PEEK 看有没有包、不借组，没有就交给 netpoller 等；叫醒
+// 后才借 2 包的小组、recvmmsg 非阻塞收）。一次醒来「窥视落空 + 收到」两次系统调用、
+// 借还一次，与持有缓冲阻塞读（sing-box 的「落空 + 收到」）同形状；之前「阻塞窥视
+// 等包、再收」是三次（复审 review-r6 第 1 条：1024 个冷会话时每 Gbps 多约 10% 的
+// CPU）。连收两次都满了说明积压大，换批量组收空。每次收完先把包复制出来、归还缓冲
+// 再写回，卡在写回时不占收包组（见 burst）。
 //
 // 热态（包来得密）：冷态里一段（至少 hy2DownlinkWarmIdle）的平均速率到每秒 500 包
 // （hy2DownlinkWarmMinPackets 包每 hy2DownlinkWarmIdle），且占得到热态名额，就转入
