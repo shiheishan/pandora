@@ -83,11 +83,13 @@ var DefaultDBMinConns = map[Domain]int32{
 
 // 口令哈希（Argon2id，每次 19 MiB）的全局并发上限与排队超时。
 //
-// 并发缺省 1：public 网关的 CPUQuota 是 60%（0.6 核），而 Go 运行时的 GOMAXPROCS
-// 是 2。两个 Argon2 同时算会占满 2 核，约 30ms 就耗光 100ms 周期里 60ms 的额度，
-// 随后整个进程被节流停摆约 70ms，所有请求一起受牵连（5k-r3 预热那一分钟节流
-// 14 秒）。并发 1 时吞吐不变（都受配额约束），单次停摆上限降一半、内存少 19 MiB；
-// 单元文件再配 CPUQuotaPeriodSec=20ms，单次停摆压到十几毫秒。
+// 并发缺省 2，等于 2 核机器的核数：登录潮（预热时 200 个登录、10k 稳态的登录峰）里两个
+// 哈希并行，吞吐翻倍，p50 排队时间折半。这个值要求 aegis-public 没有 CPU 硬配额：原先单元文件
+// 是 CPUQuota=60%，两个 Argon2 同时算约 30ms 就耗光额度，整个进程被节流停摆，所以当时只能
+// 压到 1（5k-r3 预热那一分钟节流 14 秒），而 1 个名额让 200 个登录串行排队，预热 p50 是
+// 100 × 23ms 量级。现在单元文件只设 CPUWeight（争抢时按权重让位，空闲时不封顶），闸门放到 2。
+// 内存峰值多 19 MiB，仍在 MemoryMax=256M 之内。aegis-admin 仍带 CPUQuota=80%，但后台登录
+// 极少并发，两个哈希同时算不会常发生；要压回 1 在 .env 里设 AEGIS_PASSWORD_HASH_CONCURRENCY=1。
 // 排队缺省 5 秒：远小于 nginx 认证入口 20 秒的读超时与网关 25 秒的请求超时，
 // 排不上就回 503 让客户端稍后重试，而不是在队里耗到上游超时。排队不占数据库
 // 连接，也不占内存，只是一个等待中的 goroutine。
@@ -95,7 +97,7 @@ const (
 	PasswordHashConcurrencyEnv  = "AEGIS_PASSWORD_HASH_CONCURRENCY"
 	PasswordHashQueueTimeoutEnv = "AEGIS_PASSWORD_HASH_QUEUE_TIMEOUT"
 
-	DefaultPasswordHashConcurrency  = 1
+	DefaultPasswordHashConcurrency  = 2
 	DefaultPasswordHashQueueTimeout = 5 * time.Second
 
 	maxPasswordHashConcurrency  = 16
@@ -119,6 +121,8 @@ type Runtime struct {
 	DBMaxConns map[Domain]int32
 	// DBMinConns 是各网关连接池常驻连接数，三个域都有值，不超过对应的 DBMaxConns。
 	DBMinConns map[Domain]int32
+	// DBPlanCacheMode 是各网关连接的 plan_cache_mode，空串 = 不设（PG 缺省 auto），见 plan_cache.go。
+	DBPlanCacheMode map[Domain]string
 	// PasswordHashConcurrency 是同时进行的 Argon2 计算上限。
 	PasswordHashConcurrency int
 	// PasswordHashQueueTimeout 是等一个哈希名额的最长时间，超时回 503。
@@ -144,6 +148,11 @@ func loadRuntime() (Runtime, error) {
 		}
 		r.DBMinConns[d] = int32(m)
 	}
+	modes, err := loadPlanCacheModes()
+	if err != nil {
+		return Runtime{}, err
+	}
+	r.DBPlanCacheMode = modes
 	n, err := boundedEnvInt(PasswordHashConcurrencyEnv, DefaultPasswordHashConcurrency, 1, maxPasswordHashConcurrency)
 	if err != nil {
 		return Runtime{}, err
