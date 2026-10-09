@@ -160,26 +160,29 @@ var (
 // 每用户最多其中 1/4。热态只给每秒 500 包以上的会话用：4 核节点 256 个这样的
 // 会话已是每秒 12.8 万包以上，超出的会话照常在冷态收包，只多一次窥视。上限让
 // 热态小组的常驻（含还回后留在存货里的）有界：4 核最多 32MB，单用户 8MB。
-var (
-	hy2DownlinkWarmSlots   = make(chan struct{}, 64*runtime.GOMAXPROCS(0))
-	hy2DownlinkWarmPerUser = int32(max(1, cap(hy2DownlinkWarmSlots)/4))
-)
-
-// hy2BatchShare 是一个用户当前占着的批量名额与热态名额数。
-type hy2BatchShare struct {
-	held atomic.Int32
-	warm atomic.Int32
-	refs int // 在途会话数，受 hy2BatchShares.mu 保护
+//
+// 名额做成值（hy2WarmLimit）由会话带着，而不是测试去替换全局变量：替换的那一刻
+// 若还有别的会话占着旧名额，它归还时会去读新的空 channel、永远阻塞（复审 P2）。
+type hy2WarmLimit struct {
+	slots   chan struct{}
+	perUser int32
 }
 
-// acquireWarm 在用户份额与全局热态名额都有余时占一个热态名额。
-func (share *hy2BatchShare) acquireWarm() bool {
-	if share.warm.Add(1) > hy2DownlinkWarmPerUser {
+func newHy2WarmLimit(slots int) *hy2WarmLimit {
+	return &hy2WarmLimit{slots: make(chan struct{}, slots), perUser: int32(max(1, slots/4))}
+}
+
+// hy2DownlinkWarm 是全进程的热态名额。
+var hy2DownlinkWarm = newHy2WarmLimit(64 * runtime.GOMAXPROCS(0))
+
+// acquire 在用户份额与全局名额都有余时占一个热态名额。
+func (l *hy2WarmLimit) acquire(share *hy2BatchShare) bool {
+	if share.warm.Add(1) > l.perUser {
 		share.warm.Add(-1)
 		return false
 	}
 	select {
-	case hy2DownlinkWarmSlots <- struct{}{}:
+	case l.slots <- struct{}{}:
 		return true
 	default:
 		share.warm.Add(-1)
@@ -187,11 +190,21 @@ func (share *hy2BatchShare) acquireWarm() bool {
 	}
 }
 
-func (share *hy2BatchShare) releaseWarm() {
-	<-hy2DownlinkWarmSlots
+func (l *hy2WarmLimit) release(share *hy2BatchShare) {
+	<-l.slots
 	if share.warm.Add(-1) < 0 {
 		panic(errHy2BatchShareReleased)
 	}
+}
+
+// inUse 返回当前占着的热态名额数。
+func (l *hy2WarmLimit) inUse() int { return len(l.slots) }
+
+// hy2BatchShare 是一个用户当前占着的批量名额与热态名额数。
+type hy2BatchShare struct {
+	held atomic.Int32
+	warm atomic.Int32
+	refs int // 在途会话数，受 hy2BatchShares.mu 保护
 }
 
 type hy2BatchShares struct {
