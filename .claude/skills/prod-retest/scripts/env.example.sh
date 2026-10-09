@@ -5,7 +5,7 @@
 PANEL_HOST=vultr-sgp-pt-panelN
 LOADGEN_HOST=vultr-sgp-pt-loadgenN
 
-# 面板对外域名（无域名就用 sslip.io：<IP 用横线>.sslip.io）
+# 面板对外的域名或公网 IPv4（没有域名就填 IP，面板走 https://<公网IP> 加 IP 证书）
 PANEL_DOMAIN='<PANEL_DOMAIN>'
 
 # 只用于报告打码与 nginx-realip，真实值只放在 ops-local

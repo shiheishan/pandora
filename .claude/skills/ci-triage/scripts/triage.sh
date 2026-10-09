@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # 把一个提交的 CI 失败压成一页：检查机结论、每个失败 run 的失败测试与首条报错、已知偶发项。
-# 用法：triage.sh <sha 或分支> [输出目录]   只读；完整失败日志存进输出目录（默认 $TMPDIR/ci-triage-<sha>）。
+# 用法：triage.sh <sha 或分支> [输出目录] [分支]   只读；完整失败日志存进输出目录（默认 $TMPDIR/ci-triage-<sha>）。
+#   同一个 sha 推到两个分支时 gh run list --commit 会把别的分支的 run 也列出来：
+#   第一个参数是分支名时只取这个分支的 run；是 sha 时用第三个参数（或环境变量 CI_BRANCH）指定分支，
+#   不指定就列出全部并标出 headBranch，跨了多个分支会提示。
 #   浏览器购买路径步骤红了时，另取整个 run 的日志（<id>.full.log）读结果表，按失败 / 已登记 fixme / 未执行分开。
 set -euo pipefail
 ref="${1:?sha 或分支}"
 repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 git fetch -q origin 2>/dev/null || true
-if git rev-parse -q --verify "origin/$ref" >/dev/null; then sha="$(git rev-parse "origin/$ref")"; else sha="$(git rev-parse "$ref")"; fi
+branch="${3:-${CI_BRANCH:-}}"
+if git rev-parse -q --verify "origin/$ref" >/dev/null; then sha="$(git rev-parse "origin/$ref")"; branch="${branch:-$ref}"; else sha="$(git rev-parse "$ref")"; fi
 out="${2:-${TMPDIR:-/tmp}/ci-triage-${sha:0:12}}"
 mkdir -p "$out"
 echo "提交 $(git log -1 --format='%h %s' "$sha")"
@@ -20,12 +24,16 @@ echo "  检查机的完整日志在云电脑 /data/memoh-ci/logs/<sha>/<job>.log
 
 echo
 echo "== GitHub Actions"
-runs="$(gh run list -R "$repo" --commit "$sha" --json databaseId,name,conclusion,status \
-  --jq '.[] | "\(.databaseId)\t\(.name)\t\(.status)/\(.conclusion)"')"
-[ -n "$runs" ] || { echo "  这个提交没有 run（路径过滤没触发，或一次推多个提交时只有最新那个有 run）"; exit 0; }
-printf '%s\n' "$runs" | sed 's/^/  /'
+runs="$(gh run list -R "$repo" --commit "$sha" ${branch:+--branch "$branch"} --json databaseId,name,conclusion,status,headBranch \
+  --jq '.[] | "\(.databaseId)\t\(.name)\t\(.status)/\(.conclusion)\t\(.headBranch)"')"
+[ -n "$runs" ] || { echo "  ${branch:+分支 $branch 上}这个提交没有 run（路径过滤没触发，或一次推多个提交时只有最新那个有 run）"; exit 0; }
+[ -z "$branch" ] || echo "  只取分支 $branch 的 run"
+printf '%s\n' "$runs" | awk -F'\t' '{printf "  %s  %s  %s  [%s]\n", $1, $2, $3, $4}'
+if [ -z "$branch" ] && [ "$(printf '%s\n' "$runs" | cut -f4 | sort -u | wc -l)" -gt 1 ]; then
+  echo "  注意：这个提交在多个分支都有 run（见方括号里的 headBranch），别把别的分支的红算到当前分支上；用第三个参数指定分支重跑"
+fi
 
-printf '%s\n' "$runs" | while IFS=$'\t' read -r id name state; do
+printf '%s\n' "$runs" | while IFS=$'\t' read -r id name state _; do
   case "$state" in */failure|*/cancelled|*/timed_out) ;; *) continue ;; esac
   log="$out/$id.log"
   gh run view "$id" -R "$repo" --log-failed > "$log" 2>&1 || true

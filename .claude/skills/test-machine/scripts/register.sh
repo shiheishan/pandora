@@ -4,7 +4,7 @@
 #   用途只写一句话、不带日期：总表里脚本自己补「（一次性，日期）」；误带了结尾的「（一次性…）」会先去掉，免得写两遍。
 #   --vpc：开机勾了同机房 VPC 时给内网地址。写进 ~/ai/servers/<别名>/AGENTS.md、总表的 IP 列和 ops-local/vpc-hosts.tsv；
 #          ~/.ssh/config 仍走公网地址（ssh 从本机连）。测试流量用内网地址，见 node-accept skill。
-#   结果目录占位 <目录> 取环境变量 RESULTS_DIR（默认 vultr-test2）。
+#   结果目录占位 <目录> 取环境变量 RESULTS_DIR（不设就留着 <目录>，脚本会提示没替换的占位，到时按本轮的 ops-local/<轮次>/ 手工补）。
 #   例：register.sh --vpc <内网IP> vultr-sgp-pt-node5 <IP> vc2-1c-1gb "pandora 真节点验证，接 panel2"
 # 用户发来 IP 即视为同意登记（根 CLAUDE.md）。IP 只落在 ~/.ssh/config 与 ~/ai/servers/，不进仓库。
 # 必须用 bash 跑（脚本用了 bash 语法，不要在 zsh 里 source）。
@@ -38,7 +38,7 @@ printf '\nHost %s\n    HostName %s\n    User root\n' "$alias" "$ip" >> "$HOME/.s
 mkdir -p "$dir/backups" "$dir/tools"
 echo '@AGENTS.md' > "$dir/CLAUDE.md"
 sed -e "s|<别名>|$alias|g" -e "s|<IP>|$ip|g" -e "s|<套餐>|$plan|g" -e "s|<日期>|$day|g" \
-    -e "s|<一句话：pandora 的哪项测试、装什么、和哪台配合>|$purpose|g" -e "s|<目录>|${RESULTS_DIR:-vultr-test2}|g" \
+    -e "s|<一句话：pandora 的哪项测试、装什么、和哪台配合>|$purpose|g" -e "s|<目录>|${RESULTS_DIR:-<目录>}|g" \
     -e "s|<内网IP>|$vpc_text|g" \
     "$here/templates/AGENTS.md" > "$dir/AGENTS.md"
 if grep -q '<[^>]*>' "$dir/AGENTS.md"; then echo "注意：AGENTS.md 还有没替换的占位：$(grep -o '<[^>]*>' "$dir/AGENTS.md" | sort -u | tr '\n' ' ')"; fi

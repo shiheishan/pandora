@@ -1,6 +1,6 @@
 ---
 name: db-query
-description: pandora 查库与查 Valkey：怎么连（本地数据基座、测试机/面板机、对照机 bench-pg）、以什么身份查（超级用户 vs aegis_app + 租户，RLS 下查不到不等于不存在）、常用只读查询文件（订阅分布与即将到期、某用户的订阅/配额/流量包/余额、订单状态、账本对平、节点在线、审计链、慢查询、连接数、限流键与剩余冷却）。看哪条 SQL 慢用本 skill，改写前后对比用 bench-eval。用户或总协调说「查数据」「看库里现在什么状态」「核对订阅/订单/余额/节点」「慢查询」「连接数」「限流键」「为什么这个用户查不到」时使用。只读；要写库、清键、开 pg_stat_statements 先问用户。
+description: pandora 查库与查 Valkey：怎么连（本地数据基座、测试机/面板机、对照机 bench-pg）、以什么身份查（超级用户 vs aegis_app + 租户，RLS 下查不到不等于不存在），并带一批现成的只读查询和 Valkey 限流键查看。看哪条 SQL 慢用本 skill，改写前后对比用 bench-eval。用户或总协调说「查数据」「看库里现在什么状态」「核对订阅/订单/余额/节点」「慢查询」「连接数」「限流键」「为什么这个用户查不到」时使用。只读；要写库、清键、开 pg_stat_statements 先问用户。
 ---
 
 # 查库、核对状态
@@ -55,8 +55,8 @@ bash .claude/skills/db-query/scripts/q.sh [-t 目标] [-v 名=值]... .claude/sk
 | `slow-queries.sql` | 超 | n=20 | pg_stat_statements 总耗时/平均/调用数前 N |
 | `connections.sql` | 超 | 无 | 连接数与预算、按用户和状态、长事务、锁等待 |
 | `purchase-user-ledger.sql` | app | uid 或 email、n=20 | 一个用户的购买与余额对账：每份订阅、流量包挂在哪份及转移经过、订单金额拆解、支付、余额流水、卡密兑换、相关审计 |
-| `pack-legacy-pre.sql` | app | tenant | 升级到 00137 前：有流量包余量的人、其中多份在用订阅的人、靠共用流量包才下发的订阅（只适用于 00137 之前的库） |
-| `pack-legacy-impact.sql` | app | tenant | 升级到 00137–00139 后：00138 回填挂到哪份、受影响老用户、因此停发的订阅、还能「挪一次」的订阅 |
+| `pack-legacy-pre.sql` | app | tenant | **升过 00139 后删。** 升级到 00137 前：有流量包余量的人、其中多份在用订阅的人、靠共用流量包才下发的订阅（只适用于 00137 之前的库） |
+| `pack-legacy-impact.sql` | app | tenant | **升过 00139 后删。** 升级到 00137–00139 后：00138 回填挂到哪份、受影响老用户、因此停发的订阅、还能「挪一次」的订阅 |
 
 例：
 
@@ -108,7 +108,7 @@ ssh <别名> 'bash -s -- cli INFO memory'     < $v
 ## 坑
 
 - **多语句 SQL 用文件，经标准输入送**：`psql.sh < 文件.sql`。docker 布局下 `psql -f` 和 `\i` 指的是容器里的路径，宿主文件读不到。
-- **口令**：`.env` 是 0600，只由远端脚本读；不要 `cat .env`，不要把口令写进命令行（`PGPASSWORD=… psql` 会进进程表）。要从本机直连时，口令的放置与读取规则见根 CLAUDE.md「红线」。
+- **口令**：`.env` 是 0600，只由远端脚本读；不要 `cat .env`，口令不进命令行参数。要从本机直连时，放置与读取规则见根 CLAUDE.md「红线」。
 - **输出含邮箱、订阅 id、订单号**：不贴进仓库和公开报告，汇报时脱敏或只给计数。
 - **生产/测试机上不跑写语句**：包括 `pg_stat_statements_reset()`、`pg_terminate_backend`、`DEL`。排障需要写，先向用户说明语句和影响面。
 - **对照机 `aegis` 库的结构停在 goose 97**，新迁移加的列它没有：`sub-status.sql`、`user-overview.sql` 用到的 `renewal_closed_at`（00124）、`nodes-online.sql` 用到的 `runtime_status`（00122）在那里报「column does not exist」。这是库旧，不是查询错；查这几项改连跑着当前版本的测试机或本地库。
