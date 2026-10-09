@@ -25,8 +25,7 @@ import (
 //     不再为每包复制一份负载；
 //   - 目标地址按上一包缓存，域名目标不再逐包解析；
 //   - 流量直接原子累加到会话所属用户的计数器（userSession），不抢适配器的锁；
-//   - 上游 socket 收发缓冲调大到 hy2UDPSocketBuffer（受系统 rmem_max / wmem_max
-//     上限约束；拿不到时不另告警，入站起来时那一条告警已覆盖，见 quic_socket_linux.go）。
+//   - 上游 socket 收发缓冲固定申请 hy2UDPSocketBuffer（见该常量的数据与理由）。
 //
 // 上游能不能批量（hy2UDPUpstream）：
 //   - 出站明确交出裸 *net.UDPConn（RawUDPConn，私网目标放开时的直连）：直接批量；
@@ -37,15 +36,29 @@ import (
 const (
 	// hy2UDPBatch 是一次批量收发的最大包数。
 	hy2UDPBatch = 32
-	// hy2UDPSocketBuffer 是给上游 UDP socket 申请的收发缓冲，刻意比 QUIC 监听的
-	// quicSocketBufferWant（8MB）小一半：
-	//   - 监听 socket 每个入站一个；上游 socket 每个 UDP 会话一个，数量由用户决定，
-	//     内核按读回值（申请值的两倍）记账，8MB 就是每会话 16MB 的潜在占用，几个
-	//     会话就能顶满全局 net.ipv4.udp_mem，整机 UDP（含 QUIC 监听）一起丢包；
-	//   - 10-09 VPC 复测的下行丢包是持续过载（目标发 500M、QUIC 送出约 250M），
-	//     缓冲再大也只是排队更久（8MB 在 250Mbps 下约 256ms），不提升吞吐。
-	// 4MB 足够接住 QUIC 一侧的调度停顿，会话数另有每用户上限（quic_udp_quota.go）。
-	hy2UDPSocketBuffer = 4 << 20
+	// hy2UDPSocketBuffer 是给上游 UDP socket 申请的收发缓冲。Linux 按申请值的两倍
+	// 记账与读回，实得 212992 字节：等于 Debian / Ubuntu 缺省的 net.core.rmem_default，
+	// 也就是官方 hysteria 与 sing-box 不调缓冲时上游 socket 的大小。
+	//
+	// 数据：10-09 vpcnode2 VPC 复测，hy2 UDP 下行，3 次中位（Mbps / 丢包）。
+	// 「8MB 档」指 rmem_max / wmem_max 为 8MB，节点安装脚本写的 16MB 也落在这一档。
+	//   - 申请 4MB，8MB 档实得 8MB：300M 档 228 / 24.2%，500M 档 217 / 56.7%；
+	//     输给官方 hysteria（243 / 19.0%、246 / 50.8%）。
+	//   - 只把这一项改成 106496（实验 B，其余不变），8MB 档：254 / 15.4%、239 / 52.2%，
+	//     与官方持平。
+	//   - 缺省档（rmem_max 212992，申请 4MB 被截到上限、实得 425984）：252 / 15.9%、
+	//     253 / 49.4%，与官方（不调缓冲，实得 212992）持平；本值在这一档实得 212992，
+	//     与官方相同，留给复测确认。
+	//   - TUIC 两种取值结果相同（230 / 23.2% 对 230 / 23.4%）。
+	//
+	// 机理：下行持续过载（目标发得比 QUIC 送得快）时，大缓冲只是多收进注定在 QUIC
+	// 发送侧被丢的包，白耗单连接发送 goroutine 的 CPU、拉长排队；小缓冲让内核在入口
+	// 直接丢，最便宜。上行只测了 4MB（丢包不超过 0.03%），208KB 的上行留给复测确认。
+	//
+	// 明确申请而不是不调：上游 socket 每会话一个、数量由用户决定（每用户上限见
+	// quic_udp_quota.go），每会话的内核记账固定在收发各约 208KB，不随调大了
+	// rmem_default 的机器膨胀，也不会靠会话数顶满全局 net.ipv4.udp_mem。
+	hy2UDPSocketBuffer = 106496
 	// hy2UDPResolveTTL 是域名目标解析结果在会话内的复用时长。
 	hy2UDPResolveTTL = 30 * time.Second
 )
