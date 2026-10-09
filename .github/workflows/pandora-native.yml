@@ -229,7 +229,6 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: arm64
-          GOTOOLCHAIN: local
         run: |
           go build -mod=readonly -trimpath -ldflags "-s -w" -o pandora-native-linux-arm64 .
           file pandora-native-linux-arm64
@@ -265,8 +264,6 @@ jobs:
       CGO_ENABLED: "0"
       GOOS: linux
       GOARCH: ${{ matrix.arch }}
-      # 只用 setup-go 按 go.mod 装的那一版，不让 go 命令自作主张换工具链
-      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
