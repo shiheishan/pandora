@@ -20,6 +20,7 @@ import (
 	"github.com/aegispanel/aegis/internal/domain/adminops"
 	"github.com/aegispanel/aegis/internal/domain/appearance"
 	"github.com/aegispanel/aegis/internal/domain/billing"
+	"github.com/aegispanel/aegis/internal/domain/certs"
 	"github.com/aegispanel/aegis/internal/domain/content"
 	"github.com/aegispanel/aegis/internal/domain/giftcard"
 	"github.com/aegispanel/aegis/internal/domain/identity"
@@ -201,7 +202,7 @@ func run() error {
 	//
 	// 六个循环都经 newLoopPacer 定节拍：首轮随机延迟、之后每轮 ±10% 抖动（pacer.go）。
 	var workers sync.WaitGroup
-	workers.Add(7)
+	workers.Add(8)
 	go func() {
 		defer workers.Done()
 		pace := newLoopPacer(5 * time.Minute)
@@ -421,6 +422,31 @@ func run() error {
 			cancel()
 			if err != nil && ctx.Err() == nil {
 				log.Error("批量生成账号任务失败", "error", err.Error())
+			}
+		}
+	}()
+
+	// 节点证书巡检（w9cert，P2）：排到期的签发与续期订单、隔几分钟刷新 ARI 窗口与到期等级，每轮认领
+	// 至多一张订单用 lego DNS-01 签掉。订单是租约行（部分唯一索引 + SKIP LOCKED），多实例不会重复签；
+	// lego 没有 context，签发跑在另一个协程里，停机时不等它，租约一过由下一次启动接着做。
+	go func() {
+		defer workers.Done()
+		certWorker := certs.NewService(pool, envelope, certs.Options{
+			DirectoryOverride: cfg.ACME.DirectoryOverride, TrustedRoots: cfg.ACME.TrustedRoots, Log: log,
+		}).NewWorker(log)
+		pace := newLoopPacer(30 * time.Second)
+		defer pace.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pace.C():
+			}
+			sctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+			_, err := certWorker.RunOnce(sctx, middleware.DefaultTenantID)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				log.Error("证书巡检失败", "error", err.Error())
 			}
 		}
 	}()

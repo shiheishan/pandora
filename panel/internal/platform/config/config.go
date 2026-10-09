@@ -82,6 +82,9 @@ type Config struct {
 
 	// SingboxTemplate 是 sing-box 订阅模板的可配项（subscription_template.go）。
 	SingboxTemplate SingboxTemplate
+
+	// ACME 是节点证书签发的非生产目录覆盖（acme.go）。
+	ACME ACME
 }
 
 func Load() (*Config, error) {
@@ -146,6 +149,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if c.SingboxTemplate, err = loadSingboxTemplate(); err != nil {
+		return nil, err
+	}
+	if c.ACME, err = loadACME(c.IsProduction()); err != nil {
 		return nil, err
 	}
 	if c.IsProduction() {
