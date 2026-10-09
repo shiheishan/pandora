@@ -34,7 +34,7 @@ description: pandora 的 SQL 性能判分（单条 SQL 或一批 SQL 改前改�
 
 ### 2.1 找出改了哪些 SQL
 
-在分支 worktree 的 `panel/` 下：`go run ./tools/refactorcheck sqlset -base <BASE> -head <HEAD>`，DIFF 行就是改过的 SQL 声明。BASE 是分支基点（改前），HEAD 是分支头（改后）。每条要么已有用例（`ls ops-local/bench/remote/cases`，看 `case.json` 的 `source`），要么要新建。
+在分支 worktree 的 `panel/` 下：`GOTOOLCHAIN=go<go.mod 版本> go run ./tools/refactorcheck sqlset -base <BASE> -head <HEAD>`，DIFF 行就是改过的 SQL 声明。BASE 是分支基点（改前），HEAD 是分支头（改后）。每条要么已有用例（`ls ops-local/bench/remote/cases`，看 `case.json` 的 `source`），要么要新建。
 
 ### 2.2 模板结构要和 BASE 对上
 
