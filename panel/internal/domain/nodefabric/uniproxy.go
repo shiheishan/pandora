@@ -469,7 +469,11 @@ func (s *Service) NodeUserSet(ctx context.Context, tenantID string, n *ServingNo
 //
 // 整份上报一条 SQL 落库：原先每个用户查一次订阅、每个 IP 插一次，一个 30 人
 // 在线的节点每分钟就是 60 多条语句。现在按 node_uid 关联订阅、批量 upsert，
-// 查不到订阅的 uid 照旧跳过。返回实际写入（新增或刷新）的行数。
+// 查不到订阅的 uid 照旧跳过。
+//
+// aegis-node 开了在线上报合并（StartAliveCoalescer，uniproxy_alive_coalesce.go）时只收进内存、
+// 每 aliveFlushInterval 全部节点合成一条语句写，回执的 ips 是收下的（去重后）条数；没开时当场
+// 写，回执是认下的（找得到订阅的）条数。
 func (s *Service) ReportAlive(ctx context.Context, tenantID string, n *ServingNode, raw []byte) (int, error) {
 	var alive map[string][]string
 	if err := json.Unmarshal(raw, &alive); err != nil {
@@ -479,34 +483,47 @@ func (s *Service) ReportAlive(ctx context.Context, tenantID string, n *ServingNo
 	if len(uids) == 0 {
 		return 0, nil
 	}
+	if s.alive != nil {
+		s.alive.add(tenantID, n.ID, uids, hashes)
+		return len(uids), nil
+	}
+	nodeIDs := make([]string, len(uids))
+	for i := range nodeIDs {
+		nodeIDs[i] = n.ID
+	}
+	return s.writeAliveRows(ctx, tenantID, nodeIDs, uids, hashes)
+}
 
-	// 一次往返、异步提交（遥测，丢最后几百毫秒无妨，下一分钟就补上）。
-	//
-	// 已有的行只在 last_seen_at 落后超过 aliveRefresh 才刷新：节点每分钟报一次，原先
-	// 每次都把全部在线行重写一遍，而 idx_node_alive_recent 含 last_seen_at，每次都是
-	// 非 HOT 更新（r3：每 30 分钟 5.7 万行、24 MB WAL）。最短的设备识别窗口是 5 分钟，
-	// 时间戳最多落后 2 分钟再加一个上报间隔，仍在窗口内；代价只是离线设备最多早
-	// 2 分钟从在线数里掉出去（偏宽松，不会误判超限）。
+// writeAliveRows 一条语句写一批在线记录（可以跨节点），返回认下的（找得到订阅的）条数。
+// 行要按（节点, uid, 哈希）排好、去重（aliveRows 与合并缓冲都这样给）。
+//
+// 一次往返、异步提交（遥测，丢最后几百毫秒无妨，下一分钟就补上）。
+//
+// 已有的行只在 last_seen_at 落后超过 aliveRefresh 才刷新：节点每分钟报一次，原先
+// 每次都把全部在线行重写一遍，而 idx_node_alive_recent 含 last_seen_at，每次都是
+// 非 HOT 更新（r3：每 30 分钟 5.7 万行、24 MB WAL）。最短的设备识别窗口是 5 分钟，
+// 时间戳最多落后 2 分钟再加一个上报间隔（合并时再加 aliveFlushInterval），仍在窗口内；
+// 代价只是离线设备最多早 2 分钟从在线数里掉出去（偏宽松，不会误判超限）。
+func (s *Service) writeAliveRows(ctx context.Context, tenantID string, nodeIDs []string, uids []int64, hashes [][]byte) (int, error) {
 	count := 0
 	b := &pgx.Batch{}
-	// 按（订阅, 哈希）排序插入：同一节点两份上报并发时加锁顺序一致，不互等成死锁。
-	// 回执里的 ips 是认下的（找得到订阅的）条数，不是实际改写的行数。
+	// 按（节点, 订阅, 哈希）排序插入：同一节点两份上报并发时加锁顺序一致，不互等成死锁。
 	b.Queue(`
 			WITH src AS (
-				SELECT s.tenant_id, s.id AS subscription_id, a.ip_hash
-				  FROM unnest($3::bigint[], $4::bytea[]) AS a(node_uid, ip_hash)
+				SELECT s.tenant_id, a.node_id, s.id AS subscription_id, a.ip_hash
+				  FROM unnest($2::uuid[], $3::bigint[], $4::bytea[]) AS a(node_id, node_uid, ip_hash)
 				  JOIN subscriptions s ON s.tenant_id = $1::uuid AND s.node_uid = a.node_uid
 			), upsert AS (
 				INSERT INTO node_alive_ips (tenant_id, node_id, subscription_id, ip_hash)
-				SELECT tenant_id, $2::uuid, subscription_id, ip_hash
+				SELECT tenant_id, node_id, subscription_id, ip_hash
 				  FROM src
-				 ORDER BY subscription_id, ip_hash
+				 ORDER BY node_id, subscription_id, ip_hash
 				ON CONFLICT (node_id, subscription_id, ip_hash)
 				DO UPDATE SET last_seen_at = now()
 				 WHERE node_alive_ips.last_seen_at < now() - interval '`+aliveRefresh+`'
 			)
 			SELECT count(*) FROM src`,
-		tenantID, n.ID, uids, hashes).QueryRow(func(row pgx.Row) error {
+		tenantID, nodeIDs, uids, hashes).QueryRow(func(row pgx.Row) error {
 		return row.Scan(&count)
 	})
 	err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b)
