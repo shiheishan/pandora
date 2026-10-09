@@ -42,16 +42,16 @@ for (const [id, balance, applied, payable, kept] of [
       await expect(page.getByText(`¥${payable}`, { exact: true })).toBeVisible()
       const paid = await payByCashier(page, world, payable)
       await expect(page.getByRole('heading', { name: '续费好了' })).toBeVisible({ timeout: 20_000 })
-      // 余额那半边写对：用了多少、还剩多少（渠道那半边的金额另见 B2c）
-      await expect(page.getByText(new RegExp(`^余额付了 ¥${applied.replace('.', '\\.')}，.+；余额还剩 ¥${kept.replace('.', '\\.')}$`))).toBeVisible()
+      // 两半边都写对：余额用了多少、支付宝付了多少（渠道实收）、余额还剩多少
+      await expect(page.getByText(`余额付了 ¥${applied}，支付宝付了 ¥${payable}；余额还剩 ¥${kept}`, { exact: true })).toBeVisible()
       const lines = await happened(page)
       return `确认页「${sum}」${note ? `「${note}」` : ''}；付款页 ¥${payable}；${paid}；完成页「${lines.join('；')}」`
     })
   })
 }
 
-// 产品问题（见 paths.ts 的 PRODUCT_ISSUES.B2c）：完成页把订单总额当成渠道实收，余额那部分算了两遍
-test.fixme('B2c：完成页的付款明细', async ({ browser, world }) => {
+// 完成页按各来源实际付了多少写：余额那部分 + 渠道实收；渠道按付款方式叫「支付宝」，不写商户名
+test('B2c：完成页的付款明细', async ({ browser, world }) => {
   const { std } = world.plans
   const u = await newUser('b2c')
   await grant(u, std)
@@ -158,8 +158,8 @@ test('B6：低于最低额', async ({ browser, world }) => {
   })
 })
 
-// 产品问题（见 paths.ts 的 PRODUCT_ISSUES.B6c）：余额正好够付、整单低于最低额时，开关没锁住，关掉后页面自相矛盾
-test.fixme('B6c：低于最低额只能用余额付时锁住开关', async ({ browser, world }) => {
+// 余额正好够付、整单低于最低额：只能用余额付，开关锁成打开
+test('B6c：低于最低额只能用余额付时锁住开关', async ({ browser, world }) => {
   const { mini } = world.plans
   const u = await newUser('b6c')
   await setBalance(u, 50, 'B6c 低于最低额但余额够')

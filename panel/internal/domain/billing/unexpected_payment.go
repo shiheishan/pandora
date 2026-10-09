@@ -115,10 +115,10 @@ func (s *Service) quarantineUnexpectedPayment(ctx context.Context, tx pgx.Tx,
 	err = tx.QueryRow(ctx, `
 		INSERT INTO payments
 			(tenant_id,order_id,provider_id,provider_payment_id,payment_intent_id,
-			 currency,amount,fee_amount,status)
-		VALUES ($1,$2::uuid,$3::uuid,$4,NULL,$5,$6,$7,'succeeded')
+			 currency,amount,fee_amount,status,method)
+		VALUES ($1,$2::uuid,$3::uuid,$4,NULL,$5,$6,$7,'succeeded',$8)
 		RETURNING id::text`, tenantID, orderID, providerID, in.ProviderPaymentID,
-		in.Currency, in.Amount, in.FeeAmount).Scan(&paymentID)
+		in.Currency, in.Amount, in.FeeAmount, paymentMethodOf(in.Method)).Scan(&paymentID)
 	if err != nil {
 		return nil, err
 	}

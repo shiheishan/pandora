@@ -38,7 +38,20 @@ export function Done({ orderId }: { orderId: string }) {
     return () => clearTimeout(timer)
   }, [])
 
-  if (order.isPending || h.subs.isPending) return <Skeleton height={260} />
+  // 订单已落到某一份，而订阅列表或链接列表还是这次拉到订单之前的（下单前的缓存，或付款后失效时还没履约）：
+  // 先按订单重拉一次再写，不先用旧列表渲染出「W9 标准，用到 旧日期」再跳成新的。重拉过（列表比订单新）
+  // 仍找不到就照常用订单上的信息写，不会一直转圈
+  const landed = paid ? order.data!.subscription_id : null
+  const orderAt = order.dataUpdatedAt
+  const subsStale = landed !== null && !h.held.some((s) => s.id === landed) && h.subs.dataUpdatedAt < orderAt
+  const linksStale = landed !== null && h.linkOf(landed) === undefined && h.links.dataUpdatedAt < orderAt
+  const { subs, links } = h
+  useEffect(() => {
+    if (subsStale && !subs.isFetching) void subs.refetch()
+    if (linksStale && !links.isFetching) void links.refetch()
+  }, [subsStale, linksStale, subs, links])
+
+  if (order.isPending || h.subs.isPending || subsStale || linksStale) return <Skeleton height={260} />
   if (order.isError) return <LoadError error={order.error} onRetry={() => void order.refetch()} what="订单" />
   const o = order.data!
   if (!paid) {

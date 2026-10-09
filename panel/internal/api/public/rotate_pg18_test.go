@@ -98,6 +98,15 @@ func TestSubscriptionRotatePG18(t *testing.T) {
 	})
 	r.Get("/{prefix}/{token}", h.subscribe)
 	r.Post("/v1/me/subscriptions/{id}/rotate", h.rotateSubscriptionLink)
+	pullAs := func(token, ua string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/"+prefix+"/"+token, nil).WithContext(ctx)
+		req.Header.Set("User-Agent", ua)
+		req.Header.Set("X-Real-IP", "198.51.100.41")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
 	pull := func(token string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/"+prefix+"/"+token+".yaml", nil).WithContext(ctx)
@@ -173,12 +182,40 @@ func TestSubscriptionRotatePG18(t *testing.T) {
 		strings.Contains(w.Body.String(), oldUUID) {
 		t.Fatalf("new link must serve the new node password only: status=%d body=%s", w.Code, w.Body)
 	}
+	// 订阅按客户端 UA 选 sing-box 写法（RenderForClient）：1.14 起的官方客户端拿 http_clients，
+	// 认不出版本或旧内核拿 download_detour（旧内核遇到 http_clients 整份拒载）
+	for _, c := range []struct{ ua, want, not string }{
+		{"SFA/1.14.2 (614; sing-box 1.14.2; language zh_CN)", `"http_clients"`, `"download_detour"`},
+		{"SFA/1.12.4 (520; sing-box 1.12.4; language zh_CN)", `"download_detour"`, `"http_clients"`},
+		{"sing-box", `"download_detour"`, `"http_clients"`},
+	} {
+		w := pullAs(newTok, c.ua)
+		if body := w.Body.String(); w.Code != http.StatusOK || !strings.Contains(body, c.want) || strings.Contains(body, c.not) {
+			t.Fatalf("sing-box pull as %q: status=%d want %s without %s\n%s", c.ua, w.Code, c.want, c.not, body)
+		}
+	}
+	t.Log("marker=rotate_pg18_singbox_dialect_by_ua_ok")
 	if got := nodeUUIDs(); got[oldUUID] || !got[newUUID] || !got[otherUUID] {
 		t.Fatalf("node users after rotation=%v want new %s, without old %s", got, newUUID, oldUUID)
 	}
 	if proxyUUID(otherSub) != otherUUID {
 		t.Fatal("rotation changed another user's node password")
 	}
+	// 门户换新链接与审计同一事务落库：用户本人、这一份、不记令牌（w8walk 第 5 节第 2 条）
+	var userAudits int
+	var digest string
+	if err := admin.QueryRow(ctx, `
+		SELECT count(*), coalesce(max(after_digest::text), '') FROM audit_events
+		 WHERE tenant_id=$1 AND action='subscription.link_rotated' AND actor_kind='user'
+		   AND actor_id=$2::uuid AND resource_type='subscription' AND resource_id=$3::uuid
+		   AND api_domain='public' AND outcome='success'`,
+		tenant, user, sub).Scan(&userAudits, &digest); err != nil || userAudits != 1 {
+		t.Fatalf("portal rotation audits=%d err=%v", userAudits, err)
+	}
+	if strings.Contains(digest, newTok) || strings.Contains(digest, newTok[:8]) || !strings.Contains(digest, "old_revoked") {
+		t.Fatalf("portal rotation audit digest=%s", digest)
+	}
+	t.Log("marker=rotate_pg18_portal_rotation_audited_ok")
 	t.Log("marker=rotate_pg18_portal_rotates_proxy_uuid_ok")
 
 	// --- 后台替用户换发：口径一致 ---

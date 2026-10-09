@@ -37,6 +37,7 @@ type Balance struct {
 //  2. payable = due − requested。若 0 < payable < minPay：
 //     due ≥ minPay：只用 due − minPay 的余额，让还需支付正好等于 minPay，少用的记 Kept；
 //     due < minPay 且余额够付整单：全用余额，Forced（与开关无关）；
+//  3. requested 已付清整单（payable = 0）且 due < minPay：同样标 Forced——这时关掉余额也付不了。
 //     due < minPay 且余额不够：用尽余额，剩下的零头标 Short（与开关无关，关掉余额不会让零头变大）。
 func ApplyBalance(due, available, requested, minPay int64) Balance {
 	if due < 0 {
@@ -56,7 +57,13 @@ func ApplyBalance(due, available, requested, minPay int64) Balance {
 		requested = limit
 	}
 	b := Balance{Applied: requested, Payable: due - requested}
-	if b.Payable <= 0 || minPay <= 1 || b.Payable >= minPay {
+	if b.Payable <= 0 {
+		// 余额已付清整单。整单本身低于最低额时这也是唯一的付法：同样标 Forced，报价的
+		// with_balance 与 without_balance 两组口径一致，门户读哪组都把开关锁成打开（B6c）
+		b.Forced = due > 0 && minPay > 1 && due < minPay
+		return b
+	}
+	if minPay <= 1 || b.Payable >= minPay {
 		return b
 	}
 	switch {

@@ -19,10 +19,12 @@
 # 停服窗口里只剩：停服、凭据核对（亚秒级）、正式迁移、之后的收窄角色、装程序、重启。
 #
 # 首装、或升级但库里还没有 goose 记录（全新库）：没有要保护的数据，跳过克隆预检，直接迁移。
+# 升级且不是全新库：预检之前先 migrate.sh check-indexes，有 INVALID 索引（上次 CONCURRENTLY
+# 失败的半成品，重跑会被 IF NOT EXISTS 跳过）就返回 10，服务不停。
 #
 #   pandora_run_migrations <install|upgrade> <fresh: yes|no> <deploy 目录> <.env> <migrations 目录> <goose>
 # deploy 目录里要有 migrate.sh 与 check-migrations.sh。要停的服务取 PANDORA_SERVICES（空格分隔），
-# 缺省是三个网关。返回 0 成功；10 停服前预检失败（服务没停）；11 迁移失败（服务已拉回）；
+# 缺省是三个网关。返回 0 成功；10 停服前索引检查或预检失败（服务没停）；11 迁移失败（服务已拉回）；
 # 12 迁移失败（首装，没有服务可拉）。
 pandora_run_migrations() {
   local mode="$1" fresh="$2" deploy="$3" env_file="$4" migrations="$5" goose="$6"
@@ -39,6 +41,14 @@ pandora_run_migrations() {
     migrate_extra+=("PANDORA_SKIP_PRECHECK_FRESH_DB=yes-empty-database")
     printf '    %s\n' "全新库，跳过一次性数据库预检"
   elif [ "$mode" = upgrade ]; then
+    # 上次 CREATE INDEX CONCURRENTLY 失败留下的 INVALID 索引：停服之前就拦下（migrate.sh up 自己
+    # 也会在执行前拒绝，但那时服务已经停了）。只读查询，输出里带清理命令。
+    if ! "${base_env[@]}" PANDORA_LOCAL_MIGRATION_APPROVED=yes "$deploy/migrate.sh" check-indexes >"$log" 2>&1; then
+      printf '    ---- 索引检查完整输出 ----\n' >&2
+      sed 's/^/    /' "$log" >&2
+      rm -f -- "$log"
+      return 10
+    fi
     attest_dir="$(mktemp -d "${TMPDIR:-/tmp}/pandora-precheck.XXXXXX")"
     attestation="$attest_dir/precheck.attestation"
     printf '    %s\n' "停服之前，先在一次性克隆库上演练这次要跑的迁移（库越大越慢，服务照常在跑）"

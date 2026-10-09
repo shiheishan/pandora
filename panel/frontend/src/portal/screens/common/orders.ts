@@ -303,10 +303,20 @@ export function groupByMonth<T extends Pick<OrderRow, 'created_at' | 'status' | 
   return groups
 }
 
+const METHOD_NAMES: Readonly<Record<string, string>> = { alipay: '支付宝', wxpay: '微信支付', wechat: '微信支付', qqpay: 'QQ 钱包', offline: '线下' }
+
+/**
+ * 付款方式的用户叫法（支付宝、微信支付）：按 payments.method 认，不用渠道的商户名；
+ * 几笔方式不同或认不出时说「在线」
+ */
+export function payMethodName(payments: ReadonlyArray<Pick<OrderDetail['payments'][number], 'method'>>): string {
+  const names = new Set(payments.map((p) => (p.method && METHOD_NAMES[p.method]) || '在线'))
+  return names.size === 1 ? [...names][0]! : '在线'
+}
+
 /** 展开区「结果」（契约门户-04 订单详情映射） */
 export function orderResult(o: Pick<OrderDetail, 'status' | 'kind' | 'cancel_reason' | 'subscription_period_end' | 'payments' | 'expires_at' | 'refunded_amount' | 'currency'>): string {
-  const via = o.payments.find((p) => p.provider_name || p.method)
-  const method = via ? via.provider_name : ''
+  const method = o.payments.length ? payMethodName(o.payments) : ''
   switch (o.status) {
     case 'fulfilled':
     case 'paid':
@@ -346,7 +356,7 @@ export function orderFacts(o: OrderDetail): Array<{ k: string; v: string }> {
   if (o.refunded_amount > 0) facts.push({ k: '退款', v: money(o.refunded_amount) })
   if (OPEN_STATUSES.includes(o.status as (typeof OPEN_STATUSES)[number]) && o.expires_at) facts.push({ k: '过期时间', v: formatDateTime(o.expires_at) })
   for (const p of o.payments) {
-    facts.push({ k: '支付记录', v: [p.provider_name, formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
+    facts.push({ k: '支付记录', v: [payMethodName([p]), formatMoney(p.amount, p.currency), PAYMENT_STATUS[p.status] ?? p.status, formatDateTime(p.created_at)].join(' · ') })
   }
   return facts
 }

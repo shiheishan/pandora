@@ -202,6 +202,30 @@ func checkPlanChangeEntriesPG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) 
 	want4 := preview(u4, s4)
 	bal4 := balance(u4)
 	cards := giftcard.New(p.app, slog.New(slog.NewTextHandler(io.Discard, nil)), p.billing.GiftGranter())
+	// 预览「换掉这一份」写出不保留的赠送天数（用户 10-08）：刚买的一期全是付费的，没有赠送天数；
+	// 夹具把到期日往后推 7 天（等同加时长卡，没有付费单）后，预览给 7
+	giftDays := func() int {
+		t.Helper()
+		pv, err := cards.PreviewCode(ctx, p.fx.tenant, u4, code)
+		if err != nil || pv.Placement == nil {
+			t.Fatalf("preview plan card=%+v err=%v", pv, err)
+		}
+		for _, o := range pv.Placement.Options {
+			if o.Kind == purchase.KindChange && o.SubscriptionID == s4 {
+				return o.GiftDaysLost
+			}
+		}
+		t.Fatalf("preview has no change option for %s: %+v", s4, pv.Placement.Options)
+		return -1
+	}
+	if got := giftDays(); got != 0 {
+		t.Fatalf("paid-only subscription previews %d gifted days", got)
+	}
+	p.must(`UPDATE subscriptions SET current_period_end = current_period_end + interval '7 days' WHERE id = $1::uuid`, s4)
+	if got := giftDays(); got != 7 {
+		t.Fatalf("after a 7-day extension the preview says %d gifted days, want 7", got)
+	}
+	t.Log("marker=plan_change_entries_pg18_gift_days_preview_ok")
 	// 不同款套餐卡不预选：用户选「换掉这一份」
 	res, err := cards.Redeem(ctx, p.fx.tenant, u4, code,
 		&purchase.Choice{Kind: purchase.KindChange, SubscriptionID: s4})

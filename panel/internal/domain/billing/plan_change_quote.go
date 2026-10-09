@@ -106,6 +106,22 @@ func prorationCreditDetail(b prorationBasis, now time.Time) (int64, CreditDetail
 	return credit.Int64(), d
 }
 
+// giftedDaysLeft 是到期前来自赠送的剩余整天数：按「付费天数先用、赠送天数最后用」，赠送的那段是
+// max(现在, 周期起点 + 付费总时长) 到周期末。礼品卡加的天数、套餐卡续的期没有付费单，都落在这段里；
+// 一张付费单都没有（套餐卡开通的）时整段剩余都是赠送的。换掉这一份时这段不折钱、也不保留，
+// 兑换与后台开单的「换掉这一份」预览按它写「赠送的 N 天不保留」。向下取整到天：不满一天不写。
+func giftedDaysLeft(b prorationBasis, now time.Time) int {
+	from := b.PeriodStart.Add(max(b.PaidSpan, 0))
+	if now.After(from) {
+		from = now
+	}
+	left := b.PeriodEnd.Sub(from)
+	if left <= 0 {
+		return 0
+	}
+	return int(left / (24 * time.Hour))
+}
+
 // errProrationMixedCurrency 在本周期的付费单不是同一种币种时返回：
 // 不同币种的钱加不到一起，也就没有「剩余价值」可言。
 var errProrationMixedCurrency = httpx.New(httpx.CodeConflict, "这条订阅本周期的付费订单币种不一致，无法折算")

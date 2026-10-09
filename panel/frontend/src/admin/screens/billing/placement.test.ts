@@ -47,6 +47,9 @@ describe('落点选项的称呼与结果', () => {
     expect(placementResult(p, 'grant')).toContain('换后从现在起算，到期 2026-11-30')
     expect(placementResult(p, 'grant')).toContain('订阅链接不变')
     expect(placementResult({ ...p, credit: undefined }, 'pending')).toContain('原套餐没有可抵的剩余价值')
+    // 赠送的时长不保留，与门户兑换卡同一句；没有赠送天数时不写
+    expect(placementResult(p, 'grant')).not.toContain('赠送的')
+    expect(placementResult({ ...p, gift_days_lost: 7 }, 'grant')).toContain('；赠送的 7 天不保留；')
   })
 
   it('恢复并改成：目标是过期那份', () => {

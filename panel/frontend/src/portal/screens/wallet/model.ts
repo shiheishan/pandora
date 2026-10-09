@@ -136,12 +136,14 @@ export function redeemViews(c: RedeemCtx, options: readonly PlacementOption[], d
         }
         const up = (c.monthPrice(card.rewards.plan_id) ?? 0) > (c.monthPrice(o.plan_id) ?? Number.MAX_SAFE_INTEGER)
         const back = credit > 0 ? `${plan}没用完的 ${money(credit)} 退到钱包余额` : ''
+        // 只退已付价值，赠送的时长（加时长卡、套餐卡续的期）不保留（用户 10-08）：有就在选之前写明
+        const gift = (o.gift_days_lost ?? 0) > 0 ? `赠送的 ${o.gift_days_lost} 天不保留` : ''
         return {
           key: o.key,
           label: noDefault ? `把${m ? `「${sn}」` : '现在'}的${plan}${up ? '升级成' : '换成'}${np}` : m ? `换掉「${sn}」` : `把现在的${plan}换成${np}`,
-          desc: [noDefault ? '' : `到 ${to}`, '链接不变', back].filter(Boolean).join(' · '),
+          desc: [noDefault ? '' : `到 ${to}`, '链接不变', back, gift].filter(Boolean).join(' · '),
           badge,
-          sentence: `${who}今天换成${np}，从今天起算，到 ${to}。链接不变${back ? `；${plan}这期还没用完的天数和流量按 ${money(credit)} 算给你，退到钱包余额（在「钱包」里，可用于续费、加流量、买套餐）` : ''}。`,
+          sentence: `${who}今天换成${np}，从今天起算，到 ${to}。链接不变${back ? `；${plan}这期还没用完的天数和流量按 ${money(credit)} 算给你，退到钱包余额（在「钱包」里，可用于续费、加流量、买套餐）` : ''}${gift ? `；${gift}` : ''}。`,
           verb: `兑换，换成${np}`,
         }
       }

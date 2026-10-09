@@ -48,6 +48,10 @@ printf 'migrate %s attestation=%s attestation_file=%s approved=%s skip=%s local=
   "${att:+set}" "$([ -n "$att" ] && [ -s "$att" ] && echo present || echo absent)" \
   "${PANDORA_STOPPED_WRITER_UPGRADE_APPROVED:-}" "${PANDORA_SKIP_PRECHECK_FRESH_DB:-}" \
   "${PANDORA_LOCAL_MIGRATION_APPROVED:-}" >>"$events"
+if [ "${1:-}" = check-indexes ]; then
+  [ ! -f "$(dirname "$0")/../invalid_index" ] || { echo 'migration: INVALID indexes found'; echo '  DROP INDEX CONCURRENTLY IF EXISTS public.x;'; exit 1; }
+  exit 0
+fi
 [ ! -f "$(dirname "$0")/../fail_migrate" ] || { echo 'goose: mock failure' >&2; exit 1; }
 echo 'migration precheck=attested'
 MOCK
@@ -58,16 +62,19 @@ export PATH="$T/bin:$PATH" TMPDIR="$T"
 # shellcheck source=install-lib.sh
 . "$DEPLOY/install-lib.sh"
 
-reset() { : >"$EVENTS"; rm -f "$T/fail_precheck" "$T/fail_migrate" "$T/no_attestation"; }
+reset() { : >"$EVENTS"; rm -f "$T/fail_precheck" "$T/fail_migrate" "$T/no_attestation" "$T/invalid_index"; }
 lineno() { grep -n -m1 -e "$1" "$EVENTS" | cut -d: -f1; }
 run() { pandora_run_migrations "$@" "$T/deploy" "$T/env" "$T/migrations" "$T/bin/goose" >"$T/out.log" 2>&1; }
 
 # --- ① 升级：预检在停服之前，停服后只核凭据 -----------------------------------------
 reset
 run upgrade no || fail "upgrade returned $?: $(cat "$T/out.log")"
-pre="$(lineno '^precheck ')"; stop="$(lineno '^systemctl stop ')"; mig="$(lineno '^migrate ')"
-[ -n "$pre" ] && [ -n "$stop" ] && [ -n "$mig" ] || fail "missing events: $(cat "$EVENTS")"
-[ "$pre" -lt "$stop" ] && [ "$stop" -lt "$mig" ] || fail "order is not precheck < stop < migrate: $(cat "$EVENTS")"
+idx="$(lineno '^migrate check-indexes ')"; pre="$(lineno '^precheck ')"; stop="$(lineno '^systemctl stop ')"; mig="$(lineno '^migrate up ')"
+[ -n "$idx" ] && [ -n "$pre" ] && [ -n "$stop" ] && [ -n "$mig" ] || fail "missing events: $(cat "$EVENTS")"
+[ "$idx" -lt "$pre" ] && [ "$pre" -lt "$stop" ] && [ "$stop" -lt "$mig" ] || fail "order is not check-indexes < precheck < stop < migrate: $(cat "$EVENTS")"
+# 索引检查只读：不带「写入者已停」声明
+grep -qx 'migrate check-indexes attestation= attestation_file=absent approved= skip= local=yes' "$EVENTS" \
+  || fail "check-indexes env: $(grep '^migrate check-indexes' "$EVENTS")"
 [ "$(grep -c '^precheck ' "$EVENTS")" = 1 ] || fail 'the full precheck ran more than once'
 # 停服前：按停写口径演练、写凭据；绝不带「线上写入者已停」声明
 grep -q '^precheck rehearse=yes approved= attestation_out=/' "$EVENTS" || fail "precheck env: $(grep '^precheck' "$EVENTS")"
@@ -84,25 +91,31 @@ if ls "$T"/pandora-precheck.* >/dev/null 2>&1; then fail 'attestation directory 
 reset; touch "$T/fail_precheck"
 rc=0; run upgrade no || rc=$?
 [ "$rc" = 10 ] || fail "precheck failure should return 10, got $rc"
-if grep -q -e '^systemctl' -e '^migrate' "$EVENTS"; then fail "precheck failure touched services or ran migrate: $(cat "$EVENTS")"; fi
+if grep -q -e '^systemctl' -e '^migrate up' "$EVENTS"; then fail "precheck failure touched services or ran migrate: $(cat "$EVENTS")"; fi
 grep -q 'mock failure' "$T/out.log" || fail 'precheck output was not shown'
 # 预检说成功却没写凭据，同样当失败
 reset; touch "$T/no_attestation"
 rc=0; run upgrade no || rc=$?
 [ "$rc" = 10 ] || fail "missing attestation should return 10, got $rc"
-if grep -q -e '^systemctl' -e '^migrate' "$EVENTS"; then fail 'missing attestation still stopped services'; fi
+if grep -q -e '^systemctl' -e '^migrate up' "$EVENTS"; then fail 'missing attestation still stopped services'; fi
+# 库里有 INVALID 索引：停服之前就拦下，不预检、不停服、不迁移，清理命令给到屏幕上
+reset; touch "$T/invalid_index"
+rc=0; run upgrade no || rc=$?
+[ "$rc" = 10 ] || fail "invalid index should return 10, got $rc"
+if grep -q -e '^systemctl' -e '^precheck' -e '^migrate up' "$EVENTS"; then fail "invalid index still went on: $(cat "$EVENTS")"; fi
+grep -q 'DROP INDEX CONCURRENTLY' "$T/out.log" || fail 'index check output was not shown'
 
 # --- ③ 迁移失败：服务拉回来 --------------------------------------------------------
 reset; touch "$T/fail_migrate"
 rc=0; run upgrade no || rc=$?
 [ "$rc" = 11 ] || fail "migrate failure should return 11, got $rc"
-[ "$(lineno '^migrate ')" -lt "$(lineno '^systemctl start ')" ] || fail "services not restored after failure: $(cat "$EVENTS")"
+[ "$(lineno '^migrate up ')" -lt "$(lineno '^systemctl start ')" ] || fail "services not restored after failure: $(cat "$EVENTS")"
 grep -qx 'systemctl start aegis-public aegis-admin aegis-node' "$EVENTS" || fail 'restore did not start all three services'
 
 # --- ④ 首装：没有服务可停，全新库跳过预检 --------------------------------------------
 reset
 run install yes || fail "install returned $?"
-if grep -q -e '^precheck' -e '^systemctl' "$EVENTS"; then fail "install ran precheck or touched services: $(cat "$EVENTS")"; fi
+if grep -q -e '^precheck' -e '^systemctl' -e '^migrate check-indexes' "$EVENTS"; then fail "install ran precheck or touched services: $(cat "$EVENTS")"; fi
 grep -qx 'migrate up attestation= attestation_file=absent approved=yes skip=yes-empty-database local=yes' "$EVENTS" \
   || fail "install migrate env: $(cat "$EVENTS")"
 reset; touch "$T/fail_migrate"
@@ -114,7 +127,7 @@ if grep -q '^systemctl' "$EVENTS"; then fail 'install failure touched services';
 reset
 run upgrade yes || fail "fresh upgrade returned $?"
 if grep -q '^precheck' "$EVENTS"; then fail 'fresh database ran the clone precheck'; fi
-[ "$(lineno '^systemctl stop ')" -lt "$(lineno '^migrate ')" ] || fail "fresh upgrade order: $(cat "$EVENTS")"
+[ "$(lineno '^systemctl stop ')" -lt "$(lineno '^migrate up ')" ] || fail "fresh upgrade order: $(cat "$EVENTS")"
 grep -q 'skip=yes-empty-database' "$EVENTS" || fail 'fresh upgrade did not skip the precheck'
 
 # --- ⑥ 服务清单可由调用方给（install-native.sh 传自己的 SERVICES）-----------------------

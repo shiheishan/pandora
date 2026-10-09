@@ -239,6 +239,7 @@ func (s *PaymentService) reconcileQueried(ctx context.Context, tenantID, code st
 		OrderID:           out.OrderID,
 		Amount:            res.Amount,
 		Currency:          res.Currency,
+		Method:            res.Method,
 		RawPayload: map[string]any{
 			"source": "active_query", "method": res.Method,
 		},

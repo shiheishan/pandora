@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { expiryText, isExpiredNow, leakSources, usageText } from './card-text'
-import { APP_UPDATE, guideApps, parseGuideDevice } from './app-update'
+import { APP_UPDATE, guideApps, guideText, parseGuideDevice } from './app-update'
 import { appLink, CLIENTS, DEVICES, detectDevice, guessDeviceFromName, protocolLabel, rateLabel, shareMessage } from './clients'
 import { throttleNote } from './catalog'
 import { createPlacedOrder, recallPayable } from './intent'
@@ -367,7 +367,7 @@ describe('在 App 里点一次更新（按 App 的帮助）', () => {
     for (const app of apps) {
       const s = APP_UPDATE[app]
       expect(s, app).toBeDefined()
-      expect([s!.where, s!.tap, s!.ok].every((x) => x.length > 0), app).toBe(true)
+      expect([s!.where, s!.tap, s!.ok].every((x) => guideText(x).length > 0), app).toBe(true)
     }
     // 先常用的，再「其他 App」
     expect(guideApps('ios')).toEqual(['Shadowrocket', 'Stash', 'Quantumult X', 'Loon', 'sing-box'])

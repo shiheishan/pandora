@@ -95,6 +95,9 @@ describe('mock api · portal checkout (purchase model)', () => {
     expect(waiveSmallDue(applyBalance(30, 20, 20, 100), true)).toMatchObject({ applied: 20, payable: 0, waived: 10, small_due: true, below_minimum: false })
     expect(waiveSmallDue(applyBalance(30, 20, 20, 100), false)).toMatchObject({ payable: 10, below_minimum: true, small_due: false })
     expect(waiveSmallDue(applyBalance(500, 0, 0, 1000), true)).toMatchObject({ payable: 500, below_minimum: true })
+    // B6c：开着余额、余额正好付清低于最低额的整单，同样 forced（两组口径一致）
+    expect(applyBalance(50, 50, 50, 100)).toMatchObject({ applied: 50, payable: 0, forced: true })
+    expect(applyBalance(100, 100, 100, 100)).toMatchObject({ applied: 100, payable: 0, forced: false })
   })
 
   it('过了付款期限的单：发起支付 409 order_lapsed，同款再买 order_pending 换成「已超过付款期限」并带 order_id 与 lapsed', async () => {
@@ -153,6 +156,10 @@ describe('mock api · portal checkout (purchase model)', () => {
     const pending = (await again.json()) as { error: { code: string; fields: Record<string, string> } }
     expect(pending.error.code).toBe('order_pending')
     expect(pending.error.fields.order_id).toMatch(/^[0-9a-f-]{36}$/)
+    // 与 Go quoteNewTx 一致：报价阶段就拦，带同一张单（门户确认页按码给「取消它 / 去付款」）
+    const quoted = await call('POST', '/v1/me/checkout/quote', { action: 'new', plan_id: STD, new_copy: true })
+    const qb = (await quoted.json()) as { error: { code: string; fields: Record<string, string> } }
+    expect([quoted.status, qb.error.code, qb.error.fields.order_id]).toEqual([409, 'order_pending', pending.error.fields.order_id])
   })
 
   it('流量包必须挂到一份在用的上；付款前的支付最低额兜底', async () => {

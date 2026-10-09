@@ -434,9 +434,10 @@ GRANT INSERT (
   tenant_id, order_id, provider_id, currency, amount, status, provider_ref,
   action_payload, expires_at
 ) ON payment_intents TO aegis_app;
+-- method：付款方式（alipay / wxpay / offline），结算与迟到付款挂账写它（00151）
 GRANT INSERT (
   tenant_id, order_id, provider_id, provider_payment_id, payment_intent_id,
-  currency, amount, fee_amount, status
+  currency, amount, fee_amount, status, method
 ) ON payments TO aegis_app;
 GRANT INSERT (
   tenant_id, provider_id, provider_event_id, event_type,
