@@ -361,7 +361,16 @@ func (s *Service) DeleteCertificate(ctx context.Context, tenantID string, actor 
 		if err != nil {
 			return err
 		}
-		if cur.ActiveOrder != nil && cur.ActiveOrder.State == "running" {
+		// 订单行也锁上再判：worker 认领用 SKIP LOCKED，锁住之后它认领不到；锁之前已被认领的就是 running
+		var running bool
+		if err := tx.QueryRow(ctx, `
+			SELECT coalesce(bool_or(state = 'running'), false) FROM (
+			  SELECT state FROM certificate_orders
+			   WHERE tenant_id = $1 AND certificate_id = $2::uuid AND state IN ('queued', 'running')
+			   FOR UPDATE) o`, tenantID, id).Scan(&running); err != nil {
+			return err
+		}
+		if running {
 			return httpx.New(httpx.CodeConflict, "证书正在签发，等这次签发结束再删")
 		}
 		for _, q := range []string{
@@ -427,7 +436,8 @@ func (s *Service) RenewCertificate(ctx context.Context, tenantID string, actor A
 }
 
 // SetCertificatePaused 暂停或恢复自动签发。暂停会取消排队中的订单（签发中的跑完为止）；
-// 恢复清掉失败计数与退避，并立刻排一张订单。
+// 恢复清掉失败计数与退避：没签出过的立刻排一张，已有版本的交给 renew_after（到了续期时间
+// 下一轮 worker 自然排单，没到就不白签一张、不白占 CA 额度）。
 func (s *Service) SetCertificatePaused(ctx context.Context, tenantID string, actor Actor, id string, paused bool) (Certificate, error) {
 	if err := validID(id); err != nil {
 		return Certificate{}, err
@@ -466,12 +476,10 @@ func (s *Service) SetCertificatePaused(ctx context.Context, tenantID string, act
 				WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, id, next); err != nil {
 				return err
 			}
-			reason := "manual"
 			if !hasVersion {
-				reason = "initial"
-			}
-			if _, err := queueOrder(ctx, tx, tenantID, id, reason, actor.ID); err != nil {
-				return err
+				if _, err := queueOrder(ctx, tx, tenantID, id, "initial", actor.ID); err != nil {
+					return err
+				}
 			}
 		}
 		if err := audit.Write(ctx, tx, tenantID, audit.Entry{

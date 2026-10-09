@@ -101,10 +101,20 @@ func (l legoLogger) Fatalln(args ...any) { l.log.Error("lego", "msg", fmt.Sprint
 func (l legoLogger) Fatalf(format string, args ...any) {
 	l.log.Error("lego", "msg", fmt.Sprintf(format, args...))
 }
-func (l legoLogger) Print(args ...any)   { l.log.Debug("lego", "msg", fmt.Sprint(args...)) }
-func (l legoLogger) Println(args ...any) { l.log.Debug("lego", "msg", fmt.Sprint(args...)) }
-func (l legoLogger) Printf(format string, args ...any) {
-	l.log.Debug("lego", "msg", fmt.Sprintf(format, args...))
+func (l legoLogger) Print(args ...any)                 { l.emit(fmt.Sprint(args...)) }
+func (l legoLogger) Println(args ...any)               { l.emit(fmt.Sprint(args...)) }
+func (l legoLogger) Printf(format string, args ...any) { l.emit(fmt.Sprintf(format, args...)) }
+
+// emit 按 lego 自己打的前缀分级：[WARN] → Warn，[INFO] → Info，其余 Debug。
+func (l legoLogger) emit(msg string) {
+	switch {
+	case strings.HasPrefix(msg, "[WARN] "):
+		l.log.Warn("lego", "msg", strings.TrimPrefix(msg, "[WARN] "))
+	case strings.HasPrefix(msg, "[INFO] "):
+		l.log.Info("lego", "msg", strings.TrimPrefix(msg, "[INFO] "))
+	default:
+		l.log.Debug("lego", "msg", msg)
+	}
 }
 
 // legoUser 是 lego 要的账号接口。

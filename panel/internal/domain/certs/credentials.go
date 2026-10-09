@@ -226,14 +226,18 @@ func (s *Service) UpdateDNSCredential(ctx context.Context, tenantID string, acto
 		var sealed []byte
 		hint := cur.SecretHint
 		if len(in.Secret) > 0 {
-			var oldSealed []byte
-			if err := tx.QueryRow(ctx, `SELECT secret_sealed FROM dns_credentials WHERE tenant_id = $1 AND id = $2::uuid`,
-				tenantID, id).Scan(&oldSealed); err != nil {
-				return err
-			}
-			old, err := s.openSecret(tenantID, id, oldSealed)
-			if err != nil {
-				return fmt.Errorf("open dns credential: %w", err)
+			// 这次给齐了全部字段就不用旧值，也就不解旧密文（主密钥轮换后旧密文解不开时照样能改）
+			var old map[string]string
+			if !secretComplete(cur.Provider, in.Secret) {
+				var oldSealed []byte
+				if err := tx.QueryRow(ctx, `SELECT secret_sealed FROM dns_credentials WHERE tenant_id = $1 AND id = $2::uuid`,
+					tenantID, id).Scan(&oldSealed); err != nil {
+					return err
+				}
+				var err error
+				if old, err = s.openSecret(tenantID, id, oldSealed); err != nil {
+					return fmt.Errorf("open dns credential: %w", err)
+				}
 			}
 			secret, secretBad := mergeSecret(cur.Provider, old, in.Secret)
 			for k, v := range secretBad {
@@ -351,7 +355,9 @@ func (s *Service) VerifyDNSCredential(ctx context.Context, tenantID string, acto
 	if err != nil {
 		return VerifyResult{}, err
 	}
-	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	// 后台请求有 25 秒的中间件超时：列 zone 与建 TXT 限 15 秒，删 TXT 另有 8 秒（cleanupContext），
+	// 合计压在超时以内，管理员不会看到网关先超时、校验却还在跑
+	cctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	res, checkErr := provider.check(cctx, cred.Zone, true)
 	cancel()
 

@@ -667,5 +667,12 @@ BEGIN
     REVOKE UPDATE, TRUNCATE ON certificate_versions FROM aegis_app;
   END IF;
 END $$;
+-- 证书签发流水（00152）只追加：限额对账按它数，改写或删掉它就能绕过本地限额。
+DO $$
+BEGIN
+  IF to_regclass('public.certificate_issuances') IS NOT NULL THEN
+    REVOKE UPDATE, DELETE, TRUNCATE ON certificate_issuances FROM aegis_app;
+  END IF;
+END $$;
 
 COMMIT;

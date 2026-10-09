@@ -350,7 +350,8 @@ export const certsModule: MockModule = {
       if (!c) return reply(ctx, NOT_FOUND)
       if (c.status !== 'paused') return reply(ctx, err(409, 'conflict', '证书没有暂停'))
       Object.assign(c, { status: c.versions.length > 0 ? 'active' : 'pending', paused_reason: null, consecutive_failures: 0, next_attempt_at: null })
-      queue(c, c.versions.length > 0 ? 'manual' : 'initial')
+      // 照 Go：已有版本的交给续期时间，没签出过的才立刻排
+      if (c.versions.length === 0) queue(c, 'initial')
       ctx.send(200, certView(c))
     },
 
