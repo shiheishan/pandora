@@ -263,15 +263,19 @@ func TestEpochWatchFreshnessFollowsProbeSendTime(t *testing.T) {
 	if !w.stamp().ok() {
 		t.Fatal("prompt echo not healthy")
 	}
+	// 阈值钉在 3 秒：监听落后 4 秒（下面的模拟）必须判不健康，阈值改回 5 秒这条测试就红
+	if watchStaleAfter > 3*time.Second {
+		t.Fatalf("watchStaleAfter = %s; the revocation bound under a lagging listener must stay <= 3s", watchStaleAfter)
+	}
 	var inFlight []string
 	for i := 0; i < 20; i++ {
 		inFlight = append(inFlight, w.nextProbe())
 		clock.Advance(time.Second)
-		if len(inFlight) > 4 { // 回声迟到 4 秒到达
+		if len(inFlight) > 3 { // 每秒一条探针，回声在发出 4 秒后到达
 			w.observe(inFlight[0])
 			inFlight = inFlight[1:]
 		}
-		if i >= 5 && w.stamp().ok() {
+		if i >= 3 && w.stamp().ok() {
 			t.Fatalf("listener lagging 4s still healthy at second %d", i+1)
 		}
 	}
