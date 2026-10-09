@@ -241,7 +241,10 @@ func TestActivityDailyRollupPG18(t *testing.T) {
 	mustAdmin(`DELETE FROM subscription_usage_daily WHERE tenant_id = $1 AND subscription_id = $2 AND day = current_date - 2`,
 		tenant, activitySub(tenant, 3))
 	// 4.4 昨天的按日流量被迟到写入（用户时区晚于会话时区）：读路径用不上这一行，下一轮只重算昨天并吸收
-	mustAdmin(`UPDATE subscription_usage_daily SET bytes = 5, updated_at = now()
+	// updated_at 取 now() 与零点 11 分钟的较大者：测试恰好跑在 UTC 零点后几分钟时，昨天那一行的
+	// computed_at 被顶到零点 10 分钟，写入时刻必须比它的前 5 分钟晚才算「此后被写过」
+	mustAdmin(`UPDATE subscription_usage_daily
+		   SET bytes = 5, updated_at = greatest(now(), current_date::timestamptz + interval '11 minutes')
 		WHERE tenant_id = $1 AND subscription_id = $2 AND day = current_date - 1`, tenant, activitySub(tenant, 3))
 	before := activeOn(t, ctx, admin, tenant, 1)
 	if n, err := svc.RefreshActivityDaily(ctx, tenant); err != nil || n != 1 {
