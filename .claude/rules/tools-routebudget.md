@@ -25,6 +25,7 @@ paths:
 - `routes_test.go` 遍历三个真实路由器：加、删、改路由都要同步改表，测试会给出要加的行；行按网关、模板、方法排序
 - 预算写「- -」是还没量过。填了数的行由 PG18 走真实路由逐条量：门户 `api/public/route_budget_pg18_test.go`（public_api 域，默认租户里自建夹具），节点 `api/node/route_budget_pg18_test.go`（effective 域，自己接入一个节点，装配照 aegis-node）
 - 量法：先热身（语句缓存热起来），再量 3 次必须一致；比的是语句往返（扣掉准备、探测、归还清理），量出的数必须与表相等。多了是超预算；少了是优化落地，照测试给出的行把表改小——只降不升
+- 「只升」由 CI 拦：panel-pg18.yml 的 panel-unit 跑 `go run ./tools/routebudget/ratchet`，拿推送前的头（PR 取目标分支）与当前比，某行变大、退回「- -」、`pushWALBudget` 变大，区间里的提交信息就必须有一行 `Budget-Raise: <理由>`，否则红。确需放宽时写明理由，让它成为一个看得见的决定
 - 门户路由按已登录量（带 Authorization），登录与订阅拉取不带
 - 节点 push 另有 WAL 棘轮（`pushWALBudget`，3 个有效用户、带上报编号，取 5 次最小值）。N2 落地后 push 行改成 2、WAL 改成 6KB
 
