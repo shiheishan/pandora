@@ -178,6 +178,15 @@ func checkWatchedGatewayFollowsNotifications(t *testing.T, ctx context.Context, 
 	// 不写、不等（探针点的外键检查要 KEY SHARE，会被 FOR UPDATE 挡住），2 秒内返回；锁放开后
 	// 下一轮把这一拍连同探针点补写（复审 N1）
 	t.Run("coalesced heartbeat batch skips rows held FOR UPDATE and requeues their metrics", func(t *testing.T) {
+		// 先缓冲一拍（签名请求的 nonce 在没有 Valkey 的测试库里落 PG，外键同样要 KEY SHARE，
+		// 所以请求本身要在加锁之前发），再锁住节点行、批量写
+		beatBefore, metricsBefore := lastHeartbeat(), countMetrics()
+		if code := metricsBeat(); code != http.StatusOK {
+			t.Fatalf("watched heartbeat with metrics = %d", code)
+		}
+		if !lastHeartbeat().Equal(beatBefore) || countMetrics() != metricsBefore {
+			t.Fatal("the beat was written immediately; the batch path is not exercised")
+		}
 		lockTx, err := admin.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -186,13 +195,6 @@ func checkWatchedGatewayFollowsNotifications(t *testing.T, ctx context.Context, 
 		if _, err := lockTx.Exec(ctx, `SELECT 1 FROM nodes WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`,
 			tenantID, nodeID); err != nil {
 			t.Fatal(err)
-		}
-		beatBefore, metricsBefore := lastHeartbeat(), countMetrics()
-		if code := metricsBeat(); code != http.StatusOK {
-			t.Fatalf("watched heartbeat with metrics = %d", code)
-		}
-		if !lastHeartbeat().Equal(beatBefore) || countMetrics() != metricsBefore {
-			t.Fatal("the beat was written immediately; the batch path is not exercised")
 		}
 		start := time.Now()
 		watched.FlushHeartbeats(ctx)
