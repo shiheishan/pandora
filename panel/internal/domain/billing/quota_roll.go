@@ -186,44 +186,56 @@ func quotaStepSQL(period string) string {
 // period='cycle' 的跟着订阅走，过期恢复的续费当场重置，提前续费到原到期日才由这里
 // 滚进新周期（rollCycleQuotaSQL）；period='total' 只在过期恢复时清零。
 //
-// 分批、每批一个短事务（rollQuotaSQL）；一批满额就接着下一批。跑完后若有行因被 push
-// 锁着而跳过，隔一小会儿再补一遍，仍锁着的留给下一轮。计费不依赖滚动及时：push 侧
+// 分批、每批一个短事务（rollQuotaSQL）；一批满额就接着下一批。第一遍滚动了行时，若有行因被
+// push 锁着而跳过，隔一小会儿再补一遍，仍锁着的留给下一轮。计费不依赖滚动及时：push 侧
 // 扣的是已开始的那一期（见 nodefabric 的记账），滚动晚几分钟只影响重置时刻。
+//
+// 第二遍按需（w12period）：第一遍一行都没滚时不再来第二遍。静默时十轮里有九点九轮没有到期的
+// 行，原先每轮都把同一次整表筛选原样再跑一遍（pgss 窗口里 2 次共 65ms，读了 505 个缓冲块）。
+// 代价只在一个极窄的缝上：到期的行只有零星几条、而且恰好都在这一刻被 push 记账锁着（持锁
+// 几毫秒），它们要晚一轮（10 分钟）才滚；有行滚动时（日、月配额同一刻成批到期的常态）第二遍
+// 照旧补跳过的行。
 func (s *Service) RollQuotaPeriods(ctx context.Context, tenantID string) (int, error) {
+	total, err := s.rollQuotaPass(ctx, tenantID)
+	if err != nil || total == 0 {
+		return total, err
+	}
+	select {
+	case <-ctx.Done():
+		return total, ctx.Err()
+	case <-time.After(rollQuotaRetryDelay):
+	}
+	again, err := s.rollQuotaPass(ctx, tenantID)
+	return total + again, err
+}
+
+// rollQuotaPass 滚一遍到期的行：分批，每批一个短事务，直到一批不满或批数用完。
+func (s *Service) rollQuotaPass(ctx context.Context, tenantID string) (int, error) {
 	total := 0
-	for pass := 0; pass < 2; pass++ {
-		if pass > 0 {
-			select {
-			case <-ctx.Done():
-				return total, ctx.Err()
-			case <-time.After(rollQuotaRetryDelay):
-			}
-		}
-		for batch := 0; batch < rollQuotaMaxBatches; batch++ {
-			var n, rolled int
-			err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-				tag, err := tx.Exec(ctx, rollQuotaSQL, tenantID, rollQuotaBatch)
-				if err != nil {
-					return err
-				}
-				n = int(tag.RowsAffected())
-				rolled = n
-				// 提前续费留下的 cycle 行（两条语句锁的都是配额行，同为按 id 的 SKIP LOCKED）
-				tag, err = tx.Exec(ctx, rollCycleQuotaSQL, tenantID, rollQuotaBatch)
-				if err != nil {
-					return err
-				}
-				rolled += int(tag.RowsAffected())
-				n = max(n, int(tag.RowsAffected()))
-				return nil
-			})
+	for batch := 0; batch < rollQuotaMaxBatches; batch++ {
+		var n, rolled int
+		err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+			tag, err := tx.Exec(ctx, rollQuotaSQL, tenantID, rollQuotaBatch)
 			if err != nil {
-				return total, err
+				return err
 			}
-			total += rolled
-			if n < rollQuotaBatch {
-				break
+			n = int(tag.RowsAffected())
+			rolled = n
+			// 提前续费留下的 cycle 行（两条语句锁的都是配额行，同为按 id 的 SKIP LOCKED）
+			tag, err = tx.Exec(ctx, rollCycleQuotaSQL, tenantID, rollQuotaBatch)
+			if err != nil {
+				return err
 			}
+			rolled += int(tag.RowsAffected())
+			n = max(n, int(tag.RowsAffected()))
+			return nil
+		})
+		if err != nil {
+			return total, err
+		}
+		total += rolled
+		if n < rollQuotaBatch {
+			break
 		}
 	}
 	return total, nil
