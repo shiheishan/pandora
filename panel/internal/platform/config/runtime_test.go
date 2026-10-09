@@ -39,8 +39,8 @@ func TestRuntimeDefaultsFitComposeConnectionBudget(t *testing.T) {
 		t.Fatalf("gateway pools and node probe %d + reserved %d + maintenance %d exceed max_connections %d",
 			total, superuserReservedConnections, maintenanceConnections, composeMaxConnections)
 	}
-	if r.DBMinConns[DomainPublic] != 1 || r.DBMinConns[DomainAdmin] != 1 || r.DBMinConns[DomainNode] != 2 {
-		t.Fatalf("pool min defaults = %v, want public 1 / admin 1 / node 2", r.DBMinConns)
+	if r.DBMinConns[DomainPublic] != 1 || r.DBMinConns[DomainAdmin] != 1 || r.DBMinConns[DomainNode] != 8 {
+		t.Fatalf("pool min defaults = %v, want public 1 / admin 1 / node 8", r.DBMinConns)
 	}
 	// 口令哈希并发 1：GOMAXPROCS 2 而配额 0.6 核，并发 2 会让进程被节流停摆
 	if r.PasswordHashConcurrency != 1 || r.PasswordHashQueueTimeout != 5*time.Second {
@@ -78,9 +78,8 @@ func TestRuntimeOverridesArePerGatewayAndBounded(t *testing.T) {
 	if r, err = loadRuntime(); err != nil {
 		t.Fatal(err)
 	}
-	// node 缺省 2 本来就不超过下限 2 的上限，收不收都是 2
-	if r.DBMinConns[DomainNode] != 2 || r.DBMinConns[DomainAdmin] != 3 || r.DBMinConns[DomainPublic] != 1 {
-		t.Fatalf("pool min conns = %v, want node 2, admin 3, public 1", r.DBMinConns)
+	if r.DBMinConns[DomainNode] != 4 || r.DBMinConns[DomainAdmin] != 3 || r.DBMinConns[DomainPublic] != 1 {
+		t.Fatalf("pool min conns = %v, want node clamped to 4, admin 3, public 1", r.DBMinConns)
 	}
 
 	for _, tc := range []struct{ key, value, want string }{
