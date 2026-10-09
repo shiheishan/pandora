@@ -150,10 +150,20 @@ func checkWatchedGatewayFollowsNotifications(t *testing.T, ctx context.Context, 
 		resp.Body.Close()
 	}
 
-	// 合并的心跳照样落库：批量写之后 last_heartbeat_at 跟上最后一拍
+	// 合并的心跳照样落库：批量写之后 last_heartbeat_at 跟上最后一拍，带的探针点也写进去
+	countMetrics := func() (n int) {
+		t.Helper()
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM node_metrics WHERE tenant_id=$1 AND node_id=$2::uuid`,
+			tenantID, nodeID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	metricsBefore := countMetrics()
 	before := time.Now()
-	if code := heartbeat(); code != http.StatusOK {
-		t.Fatalf("watched heartbeat = %d", code)
+	if code := status(signed(http.MethodPost, "/v1/nodes/heartbeat",
+		[]byte(`{"agent_version":"e2e-watch","metrics":{"cpu_bp":1234,"mem_used_mb":10,"net_rx_bytes":5}}`), nil)); code != http.StatusOK {
+		t.Fatalf("watched heartbeat with metrics = %d", code)
 	}
 	watched.FlushHeartbeats(ctx)
 	var lastBeat time.Time
@@ -163,6 +173,9 @@ func checkWatchedGatewayFollowsNotifications(t *testing.T, ctx context.Context, 
 	}
 	if lastBeat.Before(before.Add(-time.Second)) {
 		t.Fatalf("coalesced heartbeat not persisted: last_heartbeat_at=%s, beat at %s", lastBeat, before)
+	}
+	if got := countMetrics(); got != metricsBefore+1 {
+		t.Fatalf("coalesced heartbeat metrics point: rows %d -> %d, want +1", metricsBefore, got)
 	}
 
 	// 身份失效（只改身份表、没有任何节点行变化）：通知送达后下一次签名请求 401

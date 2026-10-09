@@ -302,10 +302,10 @@ func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows
 	// 节点行只动 last_heartbeat_at（HOT 更新、不触发变更通知与 00153 的配置通知）；
 	// 不往回写：立即写已经写了更新的时刻就跳过
 	b.Queue(`
-		UPDATE nodes n SET last_heartbeat_at = v.at
-		  FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, at, k)
+		UPDATE nodes n SET last_heartbeat_at = v.beat_at
+		  FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, beat_at, k)
 		 WHERE n.tenant_id = $1 AND n.id = v.id
-		   AND (n.last_heartbeat_at IS NULL OR n.last_heartbeat_at < v.at)`+gate,
+		   AND (n.last_heartbeat_at IS NULL OR n.last_heartbeat_at < v.beat_at)`+gate,
 		tenantID, ids, ats, keys)
 	if len(m.ids) > 0 {
 		b.Queue(`
@@ -313,12 +313,12 @@ func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows
 				(tenant_id, node_id, recorded_at, cpu_bp, mem_used_mb, mem_total_mb,
 				 disk_used_gb, disk_total_gb, load1_cbp, load5_cbp, load15_cbp,
 				 net_rx_bytes, net_tx_bytes, tcp_conns, uptime_sec)
-			SELECT $1::uuid, v.id, v.at, v.cpu, v.mem_u, v.mem_t, v.disk_u, v.disk_t,
+			SELECT $1::uuid, v.id, v.beat_at, v.cpu, v.mem_u, v.mem_t, v.disk_u, v.disk_t,
 			       v.l1, v.l5, v.l15, v.rx, v.tx, v.tc, v.up
 			  FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[], $5::int[], $6::int[], $7::int[],
 			              $8::int[], $9::int[], $10::int[], $11::int[], $12::int[],
 			              $13::bigint[], $14::bigint[], $15::int[], $16::bigint[])
-			       AS v(id, at, k, cpu, mem_u, mem_t, disk_u, disk_t, l1, l5, l15, rx, tx, tc, up)
+			       AS v(id, beat_at, k, cpu, mem_u, mem_t, disk_u, disk_t, l1, l5, l15, rx, tx, tc, up)
 			 WHERE true`+gate+`
 			ON CONFLICT (node_id, recorded_at) DO NOTHING`,
 			tenantID, m.ids, m.ats, m.keys, m.cpu, m.memU, m.memT, m.diskU, m.diskT,
@@ -326,11 +326,11 @@ func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows
 	}
 	// 服务器行（两阶段接入的服务器 id = 控制节点 id）：与立即写同一个刷新间隔
 	b.Queue(`
-		UPDATE servers s SET last_heartbeat_at = v.at
-		  FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, at, k)
+		UPDATE servers s SET last_heartbeat_at = v.beat_at
+		  FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, beat_at, k)
 		 WHERE s.tenant_id = $1 AND s.id = v.id AND s.deleted_at IS NULL
 		   AND (s.last_heartbeat_at IS NULL
-		        OR s.last_heartbeat_at < v.at - interval '`+serverHeartbeatRefresh+`')`+gate,
+		        OR s.last_heartbeat_at < v.beat_at - interval '`+serverHeartbeatRefresh+`')`+gate,
 		tenantID, ids, ats, keys)
 	return s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b)
 }
