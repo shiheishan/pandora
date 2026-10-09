@@ -8,6 +8,8 @@ paths:
   - "panel/internal/domain/nodefabric/service.go"
   - "panel/internal/domain/nodefabric/effective_release_codec.go"
   - "panel/internal/domain/nodefabric/heartbeat.go"
+  - "panel/internal/domain/nodefabric/nonce_*.go"
+  - "panel/internal/domain/nodefabric/server_identity_nonce.go"
 ---
 
 # 节点端与面板的闭环（pdnd/node、pdnd/panel）
@@ -45,7 +47,7 @@ paths:
 - `StreamConn.Send` 从不关闭，关闭只关 `closed`；写协程以 `Closed()` 退出。往已关闭通道发送曾让 aegis-node 整个崩溃（守卫 `nodestream_race_test.go`）
 - 用户名单推送按版本共享编码（`nodestream_users.go`）：全量按版本、增量按（起点, 终点）只编码一次，帧直接写共享字节，每帧有写期限。增量只在面板确知节点手上是起点版本时发：REST `/user` 拉取在途或送出过别的版本（`BeginUsersPull`）一律改推全量——pdnd 收增量只核对流版本、不核对内核名单
 - 重连带 `X-Users-Version`（与 ETag 同源）且等于当前版时不推首个全量，但连接标脏，下一次变更推全量；首帧 `retry:` 给 0–10 秒随机重连建议（pdnd 第 4 波再用）
-- 签名请求：nonce 先在 Valkey `SET NX PX` 认领，出错回落 PG；进程内近期集与「PG 活跃窗口」补两个存储之间的缝（`nonce_guard.go`）。后端不可用（库、Valkey、超时）回 503，身份无效、签名错、重放才回 401
+- 签名请求：nonce 先在进程内近期集「查并占」（`nonce_recent.go`，16 字节摘要键），再在 Valkey `SET NX PX` 认领，Valkey 出错或超时回落 PG。存储状态机 healthy → down（冷却 1 秒）→ probing（只放一个探测请求）→ healthy，恢复后立即只走 Valkey；不要再加「回落后若干分钟内每个请求都写 PG」的窗口（w10quiet 实测一次超时换来约 11 分钟、近 20 万次插入）。PG 里有、近期集里没有的 nonce 只有两种来源（上次运行留下的行、触顶挤掉的回落条目），都折成「签名时间戳补查界」：时间戳不晚于它的请求在 Valkey 认领后再在 PG 补查（`nonce_guard.go` 文件头）。后端不可用（库、Valkey、超时）回 503，身份无效、签名错、重放才回 401
 - 缓存身份的纪元复核：纪元监听健康时在验签里按监听戳判新鲜（不读纪元，见 `domain-nodefabric-release.md`「纪元监听」）；不健康时心跳与拉生效配置并进自己的那一次查询（心跳写入在 SQL 里以 `activeIdentitySQL` + 公钥为门槛），其余签名端点在中间件里复核。新端点默认放中间件组（守卫 `TestDeferredIdentityConfirmationIsLimitedToHandlersThatConfirm`）。身份已复核的心跳走 `HeartbeatConfirmed`（可合并），欠复核的走 `HeartbeatSigned`（门槛写）
 - 遥测写（心跳、探针点、在线 IP、nonce 清理）走 `db.BatchOptions{AsyncCommit: true}` 或 `SET LOCAL synchronous_commit = off`；记账、身份、配置一律同步提交
 - nodes 上不要再加含心跳类列的索引（00116 删了 idx_nodes_heartbeat 换 HOT 更新）；给 nodes 加列要同步加进 `zz_notify_nodes_update` 的列清单（PG18 守卫对照 information_schema）
