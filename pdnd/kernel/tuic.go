@@ -28,11 +28,13 @@ type tuicSlot struct {
 type tuicAdapter struct {
 	spec InboundSpec
 
-	mu        sync.RWMutex
-	users     map[string]int
-	slots     []tuicSlot
-	sessions  userSessions
-	online    onlineDevices
+	mu       sync.RWMutex
+	users    map[string]int
+	slots    []tuicSlot
+	sessions userSessions
+	online   onlineDevices
+	// udpQuota 限每用户在途 UDP 会话数（quic_udp_quota.go）。
+	udpQuota  udpSessionQuota
 	service   *tuic.Service[int]
 	packet    net.PacketConn
 	plane     DataPlane
@@ -407,6 +409,11 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 			return
 		}
 		defer a.online.leave(user, source.AddrString())
+		if !a.udpQuota.acquire(user.ID) {
+			a.connErr.addr(StageSession, source.UDPAddr(), udpSessionLimitError("tuic"))
+			return
+		}
+		defer a.udpQuota.release(user.ID)
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "udp", Protocol: "tuic", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.ListenUDP(ctx, meta, destination)
 		if err != nil {

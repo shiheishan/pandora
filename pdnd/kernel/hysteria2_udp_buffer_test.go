@@ -27,12 +27,9 @@ type batchProviderConn struct {
 
 func (c batchProviderConn) UDPBatch() outbound.UDPBatchConn { return c.batch }
 
-// 出站 UDP socket 的收发缓冲与 QUIC 监听同口径：默认拦私网时经出站给的带检查
-// 接口申请（不拿裸 socket），私网放开时直接对裸 socket 申请。
-func TestHy2UpstreamRequestsQUICSizedBuffers(t *testing.T) {
-	if hy2UDPSocketBuffer != quicSocketBufferWant {
-		t.Fatalf("出站缓冲 %d 与 QUIC 监听 %d 不同口径", hy2UDPSocketBuffer, quicSocketBufferWant)
-	}
+// 出站 UDP socket 申请 hy2UDPSocketBuffer：默认拦私网时经出站给的带检查接口申请
+// （不拿裸 socket），私网放开时直接对裸 socket 申请。
+func TestHy2UpstreamRequestsSocketBuffers(t *testing.T) {
 	pc, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +40,7 @@ func TestHy2UpstreamRequestsQUICSizedBuffers(t *testing.T) {
 	if u.raw != nil {
 		t.Fatal("带检查的出站不该交出裸 socket")
 	}
-	if recorder.read != quicSocketBufferWant || recorder.sent != quicSocketBufferWant {
-		t.Fatalf("带检查的出站申请的缓冲 收=%d 发=%d，期望各 %d", recorder.read, recorder.sent, quicSocketBufferWant)
+	if recorder.read != hy2UDPSocketBuffer || recorder.sent != hy2UDPSocketBuffer {
+		t.Fatalf("带检查的出站申请的缓冲 收=%d 发=%d，期望各 %d", recorder.read, recorder.sent, hy2UDPSocketBuffer)
 	}
 }

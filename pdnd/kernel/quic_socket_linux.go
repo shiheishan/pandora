@@ -17,7 +17,7 @@ import (
 // Mbps 时一个调度停顿就能把缓冲灌满、整批丢包（客户端看到的就是限速与重传）。
 // Linux 读回来的值是设置值的两倍，所以按「不到期望的一半」判。
 //
-// UDP 转发的出站 socket（hysteria2_udp.go）按同一口径申请、受同一上限，拿不到时
+// UDP 转发的出站 socket（hysteria2_udp.go 的 hy2UDPSocketBuffer）受同一上限，拿不到时
 // 不逐会话告警：这条告警已经说明了原因与办法，每个入站只出一次。
 //
 // 走包级 slog（main 已把进程日志设成默认 logger），与其他日志同为 level= 结构化格式。

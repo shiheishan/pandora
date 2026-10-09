@@ -39,8 +39,8 @@ func deviceWiringQUICClientTLS() *hysteria2TLSConfig {
 	return &hysteria2TLSConfig{std: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13, ServerName: "localhost", NextProtos: []string{"h3"}}} //nolint:gosec -- ephemeral test certificate.
 }
 
-// streamThenClient 关一条子流时连同它独占的客户端（QUIC 连接）一起关。
-func streamThenClient(stream net.Conn, closeClient func() error) io.Closer {
+// streamThenClient 关一条子流（或 UDP 会话）时连同它独占的客户端（QUIC 连接）一起关。
+func streamThenClient(stream io.Closer, closeClient func() error) io.Closer {
 	return closerFunc(func() error { return errors.Join(stream.Close(), closeClient()) })
 }
 

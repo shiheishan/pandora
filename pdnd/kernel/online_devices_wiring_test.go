@@ -53,6 +53,7 @@ const deviceWiringOtherIP = "198.51.100.7"
 
 func TestOnlineDevicesWiring(t *testing.T) {
 	cases := append(deviceWiringTCPCases(), deviceWiringQUICCases()...)
+	// UDP 路径（hy2 / TUIC / SS / SS2022 / SOCKS / Trojan）见 online_devices_wiring_udp_test.go。
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { runDeviceWiring(t, tc) })
 	}
@@ -247,13 +248,20 @@ type bufferedConn struct {
 func (c bufferedConn) Read(p []byte) (int, error) { return c.r.Read(p) }
 
 func dialDeviceWiringSOCKS5(port int, user core.User, target *net.TCPAddr) (net.Conn, error) {
+	conn, _, err := socks5DeviceWiringRequest(port, user, 1, target.IP, target.Port)
+	return conn, err
+}
+
+// socks5DeviceWiringRequest 做完 SOCKS5 用户名口令认证并发出 cmd（1 = CONNECT，
+// 3 = UDP ASSOCIATE），返回读掉应答后的连接与 10 字节应答。
+func socks5DeviceWiringRequest(port int, user core.User, cmd byte, ip net.IP, targetPort int) (net.Conn, []byte, error) {
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)), 3*time.Second)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 	reader := bufio.NewReader(conn)
-	fail := func(err error) (net.Conn, error) { _ = conn.Close(); return nil, err }
+	fail := func(err error) (net.Conn, []byte, error) { _ = conn.Close(); return nil, nil, err }
 	if _, err := conn.Write([]byte{5, 1, 2}); err != nil {
 		return fail(err)
 	}
@@ -272,9 +280,9 @@ func dialDeviceWiringSOCKS5(port int, user core.User, target *net.TCPAddr) (net.
 	if _, err := io.ReadFull(reader, status[:]); err != nil || status[1] != 0 {
 		return fail(fmt.Errorf("socks auth=%v err=%v", status, err))
 	}
-	request := []byte{5, 1, 0, 1}
-	request = append(request, target.IP.To4()...)
-	request = append(request, byte(target.Port>>8), byte(target.Port))
+	request := []byte{5, cmd, 0, 1}
+	request = append(request, ip.To4()...)
+	request = append(request, byte(targetPort>>8), byte(targetPort))
 	if _, err := conn.Write(request); err != nil {
 		return fail(err)
 	}
@@ -283,7 +291,7 @@ func dialDeviceWiringSOCKS5(port int, user core.User, target *net.TCPAddr) (net.
 		return fail(fmt.Errorf("socks response=%v err=%v", response, err))
 	}
 	_ = conn.SetDeadline(time.Time{})
-	return bufferedConn{Conn: conn, r: reader}, nil
+	return bufferedConn{Conn: conn, r: reader}, response, nil
 }
 
 func dialDeviceWiringHTTPConnect(port int, user core.User, target *net.TCPAddr) (net.Conn, error) {

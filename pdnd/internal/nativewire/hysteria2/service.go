@@ -333,6 +333,23 @@ func (s *serverSession[U]) closeWithError(err error) {
 		s.logger.Error(E.Cause(err, "connection failed"))
 	}
 	_ = s.quicConn.CloseWithError(0, "")
+	s.closeUDPSessions()
+}
+
+// closeUDPSessions 在连接断开时关掉挂在它上面的全部 UDP 会话（Pandora 改动）。
+// 会话的 ctx 派生自服务而不是这条连接，上游不关的话要等 udpTimeout（缺省 5 分钟）
+// 空闲才收尾：期间一直占着上游 socket、转发 goroutine、在线设备与每用户会话名额，
+// 客户端早已断开却仍按在线上报。Close 里的 onDestroy 自己拿 udpAccess，这里先拷出再关。
+func (s *serverSession[U]) closeUDPSessions() {
+	s.udpAccess.Lock()
+	conns := make([]*udpPacketConn, 0, len(s.udpConnMap))
+	for _, conn := range s.udpConnMap {
+		conns = append(conns, conn)
+	}
+	s.udpAccess.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
 }
 
 type serverConn struct {

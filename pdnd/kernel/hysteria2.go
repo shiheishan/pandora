@@ -64,8 +64,10 @@ type hysteria2Adapter struct {
 	users map[string]int
 	slots []hysteria2Slot
 	// sessions 登记 TCP 子流与 UDP 会话（删用户即断），流量也随搬随记在这里。
-	sessions  userSessions
-	online    onlineDevices
+	sessions userSessions
+	online   onlineDevices
+	// udpQuota 限每用户在途 UDP 会话数（quic_udp_quota.go）。
+	udpQuota  udpSessionQuota
 	service   *hy2.Service[int]
 	packet    net.PacketConn
 	plane     DataPlane
@@ -451,6 +453,11 @@ func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.Pac
 			return
 		}
 		defer a.online.leave(user, source.AddrString())
+		if !a.udpQuota.acquire(user.ID) {
+			a.connErr.addr(StageSession, source.UDPAddr(), udpSessionLimitError("hysteria2"))
+			return
+		}
+		defer a.udpQuota.release(user.ID)
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "udp", Protocol: "hysteria2", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.ListenUDP(ctx, meta, destination)
 		if err != nil {
