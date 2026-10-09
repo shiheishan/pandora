@@ -11,7 +11,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=platform.sh
 . "$SCRIPT_DIR/platform.sh"
 
-APP_DIR="${PANDORA_APP_DIR:-/opt/aegispanel}"
+# 安装目录：缺省按机器上装的是哪种布局取（直装 /opt/pandora 是缺省布局，docker 布局 /opt/aegispanel）。
+# 两个都在时只认「从 docker 迁完了」的直装，别的情况要 PANDORA_APP_DIR 明说，免得发到另一套上
+#   default_app_dir [docker 布局目录] [直装目录]（参数只给桩测试）
+default_app_dir() {
+  local docker="${1:-/opt/aegispanel}" native="${2:-/opt/pandora}"
+  if [ -f "$native/deploy/.env" ] && [ -f "$docker/deploy/.env" ]; then
+    if grep -qx 'state=done' "$native/deploy/from-docker.state" 2>/dev/null; then
+      printf '%s\n' "$native"
+    else
+      echo "pandora-release: both $native and $docker are installed; set PANDORA_APP_DIR to the one this release is for" >&2
+      return 1
+    fi
+  elif [ -f "$native/deploy/.env" ]; then
+    printf '%s\n' "$native"
+  else
+    printf '%s\n' "$docker"
+  fi
+}
+APP_DIR="${PANDORA_APP_DIR:-}"
+[ -n "$APP_DIR" ] || APP_DIR="$(default_app_dir)" || exit 1
 RELEASE_DIR="${1:-}"
 SOURCE_RELEASE_DIR=""
 INGRESS_UNIT="${PANDORA_INGRESS_UNIT:-nginx.service}"

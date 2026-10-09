@@ -438,6 +438,10 @@ if [[ "$MODE" = from-docker ]]; then
 fi
 cp -f "$RELEASE_BIN"/* "$INSTALL_DIR/bin/"
 chmod 0755 "$INSTALL_DIR/bin/"*
+# 节点端一键安装下发的二进制（aegis-node 从 .env 的 PANDORA_PDND_DIST_DIR 读）：与程序一起、迁移成功之后才换
+install -d -m 0755 "$INSTALL_DIR/pdnd-dist"
+cp -f "$RELEASE_ROOT"/pdnd-dist/* "$INSTALL_DIR/pdnd-dist/"
+chmod 0755 "$INSTALL_DIR/pdnd-dist/"*
 # 单元把日志 append 到 /var/log/aegis，目录不存在时 systemd 以 209/STDOUT 失败
 install -d -m 0750 /var/log/aegis
 [[ ! -d /etc/logrotate.d || ! -f "$SCRIPT_DIR/logrotate-aegis" ]] \

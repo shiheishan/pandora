@@ -70,7 +70,7 @@ native_env_append_missing "$env_file" PANDORA_DB_LAYOUT=native
 lines="$(native_layout_env_lines /opt/pandora age1abc)"
 for want in PANDORA_DB_LAYOUT=native AEGIS_BACKUP_DIR=/var/backups/pandora AEGIS_BACKUP_RETENTION_DAYS=14 \
     AEGIS_BACKUP_AGE_RECIPIENT=age1abc AEGIS_BACKUP_AGE_IDENTITY=/opt/pandora/secrets/backup-age.key \
-    AEGIS_BACKUP_WEBDAV_BIN=/opt/pandora/bin/aegis-backup-webdav; do
+    AEGIS_BACKUP_WEBDAV_BIN=/opt/pandora/bin/aegis-backup-webdav PANDORA_PDND_DIST_DIR=/opt/pandora/pdnd-dist; do
   grep -qxF "$want" <<<"$lines" || fail "layout env lacks $want"
 done
 if native_layout_env_lines /opt/pandora '' | grep -q '^AEGIS_BACKUP_AGE_RECIPIENT='; then fail 'empty recipient was written'; fi
@@ -120,5 +120,9 @@ n_check="$(grep -n 'native_check_release_tree "$RELEASE_ROOT"' "$NATIVE" | head 
 n_first="$(grep -n 'say "\[0/6\]' "$NATIVE" | head -1 | cut -d: -f1)"
 [ -n "$n_check" ] && [ -n "$n_first" ] && [ "$n_check" -lt "$n_first" ] || fail 'install-native.sh does not verify the release before changing anything'
 grep -Fq 'RELEASE_BIN="$RELEASE_ROOT/bin"' "$NATIVE" || fail 'binaries are not taken from the verified release root'
+# 节点端分发的二进制随程序一起装（以前直装没装，一键安装节点在直装面板上拿不到二进制）
+grep -Fq 'cp -f "$RELEASE_ROOT"/pdnd-dist/* "$INSTALL_DIR/pdnd-dist/"' "$NATIVE" || fail 'install-native.sh does not install pdnd-dist'
+awk '/pandora_run_migrations "\$MODE"/ { m = NR } /cp -f "\$RELEASE_ROOT"\/pdnd-dist/ { p = NR } END { exit !(m && p && m < p) }' "$NATIVE" \
+  || fail 'pdnd-dist is replaced before the migrations succeed'
 
 printf 'install-native backup mock: PASS\n'

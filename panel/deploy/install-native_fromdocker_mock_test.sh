@@ -261,4 +261,18 @@ fi
 grep -Fq 'docker compose down -v' "$NATIVE" || fail 'the summary does not print the manual volume-removal command'
 grep -Fq 'trap fd_abort EXIT' "$NATIVE" || fail 'no rollback trap'
 
+# --- ⑩ 发布控制器的缺省安装目录跟着布局走 -----------------------------------------------
+eval "$(awk '/^default_app_dir\(\) \{$/ { p = 1 } p { print } p && /^}$/ { exit }' "$DEPLOY/release-stop-the-world.sh")"
+declare -F default_app_dir >/dev/null || fail 'release-stop-the-world.sh has no default_app_dir'
+L="$T/layouts"; mkdir -p "$L/docker/deploy" "$L/native/deploy"
+[ "$(default_app_dir "$L/docker" "$L/native")" = "$L/docker" ] || fail 'nothing installed: controller default is not the docker path'
+touch "$L/native/deploy/.env"
+[ "$(default_app_dir "$L/docker" "$L/native")" = "$L/native" ] || fail 'native install not picked by default'
+touch "$L/docker/deploy/.env"
+if default_app_dir "$L/docker" "$L/native" >/dev/null 2>&1; then fail 'both layouts installed: controller guessed instead of asking'; fi
+printf 'state=done\n' >"$L/native/deploy/from-docker.state"
+[ "$(default_app_dir "$L/docker" "$L/native")" = "$L/native" ] || fail 'a finished --from-docker host is not treated as native'
+rm "$L/native/deploy/.env" "$L/native/deploy/from-docker.state"
+[ "$(default_app_dir "$L/docker" "$L/native")" = "$L/docker" ] || fail 'docker-only host not picked'
+
 printf 'install-native from-docker mock: PASS\n'

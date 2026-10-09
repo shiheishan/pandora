@@ -174,12 +174,14 @@ native_ensure_age_key() {
   age-keygen -y "$key" || die "读不出备份加密密钥的公钥：$key"
 }
 
-# 直装 .env 里与布局、加密备份有关的键（首装写进去，升级缺了才追加）。recipient 为空时不出那一行
+# 直装 .env 里与布局、加密备份、节点端分发目录有关的键（首装写进去，升级缺了才追加）。recipient 为空时不出那一行
 #   native_layout_env_lines <安装目录> <age recipient>
 native_layout_env_lines() {
   printf '%s\n' "PANDORA_DB_LAYOUT=native" "AEGIS_BACKUP_DIR=$NATIVE_BACKUP_DIR" "AEGIS_BACKUP_RETENTION_DAYS=14"
   [ -z "$2" ] || printf '%s\n' "AEGIS_BACKUP_AGE_RECIPIENT=$2"
   printf '%s\n' "AEGIS_BACKUP_AGE_IDENTITY=$1/secrets/backup-age.key" "AEGIS_BACKUP_WEBDAV_BIN=$1/bin/aegis-backup-webdav"
+  # 节点一键安装分发的二进制目录：网关的缺省值是 docker 布局的 /opt/aegispanel/pdnd-dist
+  printf '%s\n' "PANDORA_PDND_DIST_DIR=$1/pdnd-dist"
 }
 
 # 发布包里的单元（按 docker 布局写）改成直装：安装目录、备份目录，去掉对 docker 的依赖
