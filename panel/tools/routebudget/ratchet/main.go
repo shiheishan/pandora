@@ -1,13 +1,13 @@
-// Command ratchet 是往返预算「只降不升」的 CI 闸门：拿合并基点的预算与当前的比，
-// 变宽了（某行数字变大、退回「- -」、push 的 WAL 上限变大）就要求基点到 HEAD 之间的
-// 提交信息里有一行 `Budget-Raise: <理由>`，否则退出 1。
+// Command ratchet 是往返预算「只降不升」的 CI 闸门：拿基点的预算与当前的比，变宽了
+// （某行数字变大、退回「- -」、新出现带预算的行、push 的 WAL 上限变大）就要求基点到 HEAD
+// 之间的提交信息逐条点名放行（`Budget-Raise: public GET /v1/me <理由>`、
+// `Budget-Raise: pushWALBudget <理由>`），没点名的照样退出 1。
 //
 //	go run ./tools/routebudget/ratchet            # 在 panel/ 下
 //	BUDGET_BASE=<提交> go run ./tools/routebudget/ratchet
 //
-// 基点：BUDGET_BASE；否则 GitHub 事件（push 取推送前的头，pull_request 取目标分支），
-// 都与 HEAD 取合并基点；再否则（本机、检查机回放）取 HEAD 与 origin/feat/panel-redesign、
-// origin/main 的合并基点。一个都找不到就跳过并说明。只用标准库与本机 git。
+// 基点见 baseCandidates：任务分支一律是与 origin 主线的合并基点，只有推到主线本身才用
+// 推送前的头。一个都取不到就跳过并说明。只用标准库与本机 git。
 package main
 
 import (
@@ -55,33 +55,62 @@ func mergeBase(ref string) string {
 	return mb
 }
 
-func resolveBase() (base, why string) {
-	if b := mergeBase(os.Getenv("BUDGET_BASE")); b != "" {
-		return b, "BUDGET_BASE"
+// mainlines 是主线分支：推到它们本身时才用推送前的头做基点。
+var mainlines = []string{"feat/panel-redesign", "main"}
+
+// candidate 是一个候选基点：与 HEAD 取合并基点后用它比较。
+type candidate struct{ ref, why string }
+
+// baseCandidates 按优先级列出候选基点（纯函数，单测直接验）：
+//   - BUDGET_BASE（手动指定）；
+//   - pull_request：目标分支；
+//   - 推到主线本身：推送前的头，只看这次推送合进来的那一段；
+//   - 其余（任务分支的推送、本机、检查机回放）：与 origin 主线的合并基点，即整条分支相对主线
+//     的全部改动。不用推送前的头：那样一个已经红的放宽，再推一个不相干的提交就被洗绿。
+func baseCandidates(getenv func(string) string, event []byte) []candidate {
+	var out []candidate
+	if b := getenv("BUDGET_BASE"); b != "" {
+		out = append(out, candidate{b, "BUDGET_BASE"})
 	}
-	if path := os.Getenv("GITHUB_EVENT_PATH"); path != "" {
-		var ev struct {
-			Before      string `json:"before"`
-			PullRequest *struct {
-				Base struct {
-					SHA string `json:"sha"`
-				} `json:"base"`
-			} `json:"pull_request"`
-		}
-		if raw, err := os.ReadFile(path); err == nil && json.Unmarshal(raw, &ev) == nil {
-			if ev.PullRequest != nil {
-				if b := mergeBase(ev.PullRequest.Base.SHA); b != "" {
-					return b, "pull request base"
+	var ev struct {
+		Before      string `json:"before"`
+		Ref         string `json:"ref"`
+		PullRequest *struct {
+			Base struct {
+				SHA string `json:"sha"`
+			} `json:"base"`
+		} `json:"pull_request"`
+	}
+	if len(event) > 0 && json.Unmarshal(event, &ev) == nil {
+		switch {
+		case ev.PullRequest != nil:
+			out = append(out, candidate{ev.PullRequest.Base.SHA, "pull request base"})
+		default:
+			ref := ev.Ref
+			if ref == "" {
+				ref = getenv("GITHUB_REF")
+			}
+			for _, m := range mainlines {
+				if ref == "refs/heads/"+m {
+					out = append(out, candidate{ev.Before, "commit before the push to " + m})
 				}
 			}
-			if b := mergeBase(ev.Before); b != "" {
-				return b, "commit before the push"
-			}
 		}
 	}
-	for _, ref := range []string{"origin/feat/panel-redesign", "origin/main"} {
-		if b := mergeBase(ref); b != "" {
-			return b, "merge base with " + ref
+	for _, m := range mainlines {
+		out = append(out, candidate{"origin/" + m, "merge base with origin/" + m})
+	}
+	return out
+}
+
+func resolveBase() (base, why string) {
+	var event []byte
+	if path := os.Getenv("GITHUB_EVENT_PATH"); path != "" {
+		event, _ = os.ReadFile(path)
+	}
+	for _, c := range baseCandidates(os.Getenv, event) {
+		if b := mergeBase(c.ref); b != "" {
+			return b, c.why
 		}
 	}
 	return "", ""
@@ -124,11 +153,19 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("read commit messages %s..HEAD: %w", short, err)
 	}
-	fmt.Printf("ratchet: budgets raised since %s (%s):\n  %s\n", short, why, strings.Join(raises, "\n  "))
-	if routebudget.HasRaiseTrailer(msgs) {
-		fmt.Printf("ratchet: allowed by a %s line in the commit messages\n", routebudget.RaiseTrailer)
+	fmt.Printf("ratchet: budgets widened since %s (%s):\n", short, why)
+	for _, c := range raises {
+		fmt.Println("  " + c.Detail)
+	}
+	left := routebudget.Unapproved(raises, msgs)
+	if len(left) == 0 {
+		fmt.Printf("ratchet: every one is named by a %s line in the commit messages\n", routebudget.RaiseTrailer)
 		return nil
 	}
-	return fmt.Errorf("budgets only go down; to raise one on purpose, add a line\n  %s <why the extra round trips or WAL are needed>\n"+
-		"to the commit message", routebudget.RaiseTrailer)
+	var lines []string
+	for _, c := range left {
+		lines = append(lines, "  "+routebudget.RaiseTrailer+" "+c.Name+" <why it needs more>")
+	}
+	return fmt.Errorf("budgets only go down; to widen one on purpose, name it in a commit message:\n%s",
+		strings.Join(lines, "\n"))
 }
