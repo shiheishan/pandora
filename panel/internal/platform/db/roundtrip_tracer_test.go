@@ -15,7 +15,7 @@ import (
 func TestRoundTripTracerCounts(t *testing.T) {
 	var c roundtrip.Counter
 	ctx := roundtrip.WithCounter(context.Background(), &c)
-	tr := roundTripTracer{}
+	tr := &roundTripTracer{}
 
 	tr.TraceQueryEnd(tr.TraceQueryStart(ctx, nil, pgx.TraceQueryStartData{SQL: "SELECT 1"}), nil, pgx.TraceQueryEndData{})
 	bctx := tr.TraceBatchStart(ctx, nil, pgx.TraceBatchStartData{})
@@ -41,6 +41,12 @@ func TestRoundTripTracerCounts(t *testing.T) {
 	tr.TraceAcquireEnd(ctx, nil, pgxpool.TraceAcquireEndData{})
 	tr.TraceRelease(nil, pgxpool.TraceReleaseData{})
 
+	// 归还钩子的会话清理在池级计数，不论 ctx 上有没有计数器
+	tr.TraceQueryStart(bg, nil, pgx.TraceQueryStartData{SQL: sessionResetSQL})
+	if p := (&Pool{rt: tr}); p.SessionResets() != 1 || (&Pool{}).SessionResets() != 0 {
+		t.Fatalf("session resets = %d, want 1", p.SessionResets())
+	}
+
 	// 语句 1 + 批次 1 + COPY 2；准备 1（已准备的不算）；探测 1
 	want := roundtrip.Counts{DB: 4, Prepare: 1, Ping: 1}
 	if got := c.Snapshot(); got != want {
@@ -57,7 +63,7 @@ func BenchmarkRoundTripTracerQuery(b *testing.B) {
 	for i := 0; i < 8; i++ {
 		ctx = context.WithValue(ctx, k{}, i)
 	}
-	tr := roundTripTracer{}
+	tr := &roundTripTracer{}
 	data := pgx.TraceQueryStartData{SQL: "SELECT 1"}
 	b.ReportAllocs()
 	for b.Loop() {

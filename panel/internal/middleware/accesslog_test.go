@@ -51,13 +51,15 @@ func TestAccessLogRecordsRoutePatternAndRoundTrips(t *testing.T) {
 		DurUS     *int64 `json:"dur_us"`
 		DBRT      int    `json:"db_rt"`
 		KVRT      int    `json:"kv_rt"`
+		DBPing    int    `json:"db_ping"`
 		RequestID string `json:"request_id"`
 	}
 	if err := json.Unmarshal([]byte(line), &got); err != nil {
 		t.Fatalf("%v: %s", err, line)
 	}
 	if got.Msg != "access" || got.Route != "GET /v1/things/{token}" || got.Status != http.StatusCreated ||
-		got.DurUS == nil || got.DBRT != 3 || got.KVRT != 1 || got.RequestID != w.Header().Get("X-Request-ID") {
+		got.DurUS == nil || got.DBRT != 3 || got.KVRT != 1 || got.DBPing != 1 ||
+		got.RequestID != w.Header().Get("X-Request-ID") || strings.Contains(line, "db_prepare") {
 		t.Fatalf("access line = %+v", got)
 	}
 

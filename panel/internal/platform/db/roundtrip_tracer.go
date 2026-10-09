@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,46 +30,54 @@ import (
 //
 // pgxpool 从 ConnConfig.Tracer 上按类型断言取 AcquireTracer / ReleaseTracer，
 // 所以一个值同时实现全部接口。
-type roundTripTracer struct{}
+//
+// 另有一个池级计数：真正执行了的 sessionResetSQL 条数（Pool.SessionResets），不管 ctx。
+// 受控路径归还的连接上一条都不该有；测试据此断言，换栈接 database/sql 时也靠它核对。
+type roundTripTracer struct {
+	resets atomic.Int64
+}
 
 // rtOwnerKey 存在连接的 CustomData 里：取连接的请求的计数器，归还时取走。
 const rtOwnerKey = "aegis.db.rt_owner"
 
-func (roundTripTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+func (t *roundTripTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if data.SQL == sessionResetSQL {
+		t.resets.Add(1)
+	}
 	if c := roundtrip.From(ctx); c != nil {
 		c.AddDB(1)
 	}
 	return ctx
 }
 
-func (roundTripTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+func (*roundTripTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
-func (roundTripTracer) TraceBatchStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+func (*roundTripTracer) TraceBatchStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
 	if c := roundtrip.From(ctx); c != nil {
 		c.AddDB(1)
 	}
 	return ctx
 }
 
-func (roundTripTracer) TraceBatchQuery(context.Context, *pgx.Conn, pgx.TraceBatchQueryData) {}
+func (*roundTripTracer) TraceBatchQuery(context.Context, *pgx.Conn, pgx.TraceBatchQueryData) {}
 
-func (roundTripTracer) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}
+func (*roundTripTracer) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}
 
-func (roundTripTracer) TraceCopyFromStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceCopyFromStartData) context.Context {
+func (*roundTripTracer) TraceCopyFromStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceCopyFromStartData) context.Context {
 	if c := roundtrip.From(ctx); c != nil {
 		c.AddDB(2)
 	}
 	return ctx
 }
 
-func (roundTripTracer) TraceCopyFromEnd(context.Context, *pgx.Conn, pgx.TraceCopyFromEndData) {}
+func (*roundTripTracer) TraceCopyFromEnd(context.Context, *pgx.Conn, pgx.TraceCopyFromEndData) {}
 
-func (roundTripTracer) TracePrepareStart(ctx context.Context, _ *pgx.Conn, _ pgx.TracePrepareStartData) context.Context {
+func (*roundTripTracer) TracePrepareStart(ctx context.Context, _ *pgx.Conn, _ pgx.TracePrepareStartData) context.Context {
 	return ctx
 }
 
 // TracePrepareEnd 只在真的发了 Parse/Describe 时记（已准备过的直接返回，不算往返）。
-func (roundTripTracer) TracePrepareEnd(ctx context.Context, _ *pgx.Conn, data pgx.TracePrepareEndData) {
+func (*roundTripTracer) TracePrepareEnd(ctx context.Context, _ *pgx.Conn, data pgx.TracePrepareEndData) {
 	if data.AlreadyPrepared {
 		return
 	}
@@ -77,12 +86,12 @@ func (roundTripTracer) TracePrepareEnd(ctx context.Context, _ *pgx.Conn, data pg
 	}
 }
 
-func (roundTripTracer) TraceAcquireStart(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireStartData) context.Context {
+func (*roundTripTracer) TraceAcquireStart(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireStartData) context.Context {
 	return ctx
 }
 
 // TraceAcquireEnd 把请求的计数器挂到连接上，归还时据此判定非受控归还记给谁。
-func (roundTripTracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool, data pgxpool.TraceAcquireEndData) {
+func (*roundTripTracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool, data pgxpool.TraceAcquireEndData) {
 	if data.Conn == nil {
 		return
 	}
@@ -95,7 +104,7 @@ func (roundTripTracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool, dat
 // 连接回到空闲、却没有受控标记的，归还后会多跑一条 sessionResetSQL（见 afterRelease）；
 // 非空闲的连接 pgxpool 直接销毁，不清理也不记；恰好到寿命被销毁的空闲连接会多记一次
 // （每条连接一生至多一次）。
-func (roundTripTracer) TraceRelease(_ *pgxpool.Pool, data pgxpool.TraceReleaseData) {
+func (*roundTripTracer) TraceRelease(_ *pgxpool.Pool, data pgxpool.TraceReleaseData) {
 	if data.Conn == nil {
 		return
 	}
@@ -109,6 +118,15 @@ func (roundTripTracer) TraceRelease(_ *pgxpool.Pool, data pgxpool.TraceReleaseDa
 	if custom[scopedReleaseKey] != true && !pc.IsClosed() && !pc.IsBusy() && pc.TxStatus() == 'I' {
 		owner.AddReset()
 	}
+}
+
+// SessionResets 是这个连接池开张以来真正执行过的会话清理条数（sessionResetSQL）：
+// 每一条都对应一次非受控归还。
+func (p *Pool) SessionResets() int64 {
+	if p.rt == nil {
+		return 0
+	}
+	return p.rt.resets.Load()
 }
 
 // pgxpoolPingIdle 与 pgxpool 缺省的 ShouldPing 同一个阈值：连接空闲超过它，

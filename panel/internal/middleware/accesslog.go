@@ -15,7 +15,8 @@ import (
 //
 // 每个请求结束时打一行 info「access」：路由模板、状态码、耗时（微秒），以及这个请求
 // 让数据库与 Valkey 付出的往返数 db_rt、kv_rt（口径见 roundtrip.Counts.DBTotal 与
-// 追踪器的说明）。只记路由模板（如 /{prefix}/{token}），不记原始路径与查询串：
+// 追踪器的说明）。db_rt 里的探测、准备、非受控归还非零时另列 db_ping、db_prepare、
+// db_reset，PG18 的逐路由预算据此扣出语句往返。只记路由模板（如 /{prefix}/{token}），不记原始路径与查询串：
 // 订阅链接、回调签名都在路径里。
 //
 // 挂在 RequestID 之后、其余中间件之前：鉴权的那次库往返、限流的 Valkey 往返都要
@@ -56,14 +57,26 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 				status = http.StatusOK
 			}
 			n := rec.scope.Counter.Snapshot()
-			log.LogAttrs(r.Context(), slog.LevelInfo, "access",
+			var buf [9]slog.Attr
+			attrs := append(buf[:0],
 				slog.String("route", r.Method+" "+route),
 				slog.Int("status", status),
 				slog.Int64("dur_us", time.Since(start).Microseconds()),
 				slog.Int("db_rt", n.DBTotal()),
 				slog.Int("kv_rt", n.KV),
-				slog.String("request_id", httpx.RequestIDFrom(r.Context())),
-			)
+				slog.String("request_id", httpx.RequestIDFrom(r.Context())))
+			// db_rt 里不是语句本身的那几类，非零才写：取连接时的存活探测、语句准备、
+			// 非受控归还（见 roundtrip.Counts）。稳态的请求一个都没有，行不变长。
+			if n.Ping > 0 {
+				attrs = append(attrs, slog.Int("db_ping", n.Ping))
+			}
+			if n.Prepare > 0 {
+				attrs = append(attrs, slog.Int("db_prepare", n.Prepare))
+			}
+			if n.Reset > 0 {
+				attrs = append(attrs, slog.Int("db_reset", n.Reset))
+			}
+			log.LogAttrs(r.Context(), slog.LevelInfo, "access", attrs...)
 		})
 	}
 }
