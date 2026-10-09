@@ -6,10 +6,11 @@ set -uo pipefail
 [ $# -gt 0 ] || { echo "用法：remote-state.sh <ssh 别名>..." >&2; exit 2; }
 for h in "$@"; do
   echo "================ $h"
-  ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$h" "STAGES='${STAGES:-}' bash -s" <<'REMOTE' || echo "（连不上 $h）"
+  # 远端脚本走 heredoc 的 stdin，不能加 -n（-n 会把 stdin 换成 /dev/null，什么都不跑）
+  ssh -o BatchMode=yes -o ConnectTimeout=15 "$h" "STAGES='${STAGES:-}' bash -s" <<'REMOTE' || echo "（连不上 $h）"
 echo "-- 时间 $(date -u +%FT%TZ)，开机 $(uptime -p 2>/dev/null)"
-echo "-- 会话外的测试进程（setsid 起的、非系统服务；按 PID 处理，不要 pkill -f）"
-ps -eo pid,sid,etime,pcpu,rss,args --sort=start_time | awk 'NR==1 || ($2==$1 && $6 !~ /^(\/usr\/lib|\/lib|\/sbin|\/usr\/sbin|sshd|-bash|bash -s|systemd|\(sd-pam\)|ps |awk )/)' | cut -c1-160 | head -40
+echo "-- 会话外的测试进程（setsid 起的、非系统服务；按 PID 处理，不要 pkill -f；命令行里的口令已打码）"
+ps -eo pid,sid,etime,pcpu,rss,args --sort=start_time | awk 'NR==1 || ($2==$1 && $6 !~ /^(\/usr\/lib|\/lib|\/sbin|\/usr\/sbin|sshd|-bash|bash -s|systemd|\(sd-pam\)|ps |awk )/)' | sed -E 's/(--requirepass|--masterauth|--pass(word)?|-a)( +|=)[^ ]+/\1\3***/g; s/((pass(word)?|secret|token|key)=)[^ &]+/\1***/gI' | cut -c1-160 | head -40
 echo "-- systemd 里非系统的服务"
 systemctl list-units --type=service --state=running --no-legend 2>/dev/null | awk '{print $1}' | grep -vE '^(systemd-|ssh|cron|dbus|getty|serial-getty|chrony|rsyslog|unattended|qemu-guest|polkit|ufw|networking|containerd|docker|user@)' | head -20
 echo "-- iptables 非默认规则（故障注入的 DROP 应为 0 条）"

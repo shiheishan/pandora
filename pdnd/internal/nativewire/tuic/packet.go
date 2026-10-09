@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aegispanel/nodeagent/internal/nativewire/dgram"
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
@@ -240,7 +241,6 @@ type udpPacketConn struct {
 	quicConn        *quic.Conn
 	data            chan *udpMessage
 	udpStream       bool
-	udpMTU          int
 	packetId        atomic.Uint32
 	closeOnce       sync.Once
 	isServer        bool
@@ -252,6 +252,9 @@ type udpPacketConn struct {
 	dropped atomic.Uint64
 	// 空闲超时由连接自己维护（实现 canceler.PacketConn），见 idle.go。
 	idle idleTimeout
+	// datagram 跟踪单个 DATAGRAM 的实际上限，决定整包发还是分片（Pandora 改动，
+	// 上游固定按 1197 字节分片）。
+	datagram dgram.Limit
 }
 
 func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, udpStream bool, isServer bool, onDestroy func(), queueSize int) *udpPacketConn {
@@ -268,7 +271,6 @@ func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, udpStream bool, 
 		isServer:     isServer,
 		defragger:    newUDPDefragger(),
 		onDestroy:    onDestroy,
-		udpMTU:       1200 - 3,
 		readDeadline: pipe.MakeDeadline(),
 	}
 }
@@ -349,21 +351,7 @@ func (c *udpPacketConn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr)
 	}
 	defer message.releaseMessage()
 	c.idle.touch()
-	var err error
-	if !c.udpStream && buffer.Len() > c.udpMTU-message.headerSize() {
-		err = c.writePackets(fragUDPMessage(message, c.udpMTU))
-	} else {
-		err = c.writePacket(message)
-	}
-	if err == nil {
-		return nil
-	}
-	var tooLargeErr *quic.DatagramTooLargeError
-	if !errors.As(err, &tooLargeErr) {
-		return err
-	}
-	c.udpMTU = int(tooLargeErr.MaxDatagramPayloadSize) - 3
-	return c.writePackets(fragUDPMessage(message, c.udpMTU))
+	return c.sendMessage(message)
 }
 
 func (c *udpPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
@@ -389,27 +377,43 @@ func (c *udpPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 		data:          buf.As(p),
 	}
 	c.idle.touch()
-	if !c.udpStream && len(p) > c.udpMTU-message.headerSize() {
-		err = c.writePackets(fragUDPMessage(message, c.udpMTU))
-		if err == nil {
-			return len(p), nil
-		}
-	} else {
-		err = c.writePacket(message)
+	if err = c.sendMessage(message); err != nil {
+		return 0, err
 	}
-	if err == nil {
-		return len(p), nil
+	return len(p), nil
+}
+
+// errDatagramLimit 是 quic-go 报的单个 DATAGRAM 上限小到装不下消息头、或要分出
+// 超过 255 片（fragmentTotal 是单字节）：只有对端声明了异常小的
+// max_datagram_frame_size 才会这样，丢掉这一包，不进分片循环。
+var errDatagramLimit = errors.New("tuic: datagram limit too small to fragment")
+
+// sendMessage 发一条消息：UDP 走流（udp_relay_mode=quic）时整条写进单向流；
+// 走 DATAGRAM 时按连接的实际上限，装得下就整包发，否则分片（见 dgram.Limit；
+// Pandora 改动）。
+func (c *udpPacketConn) sendMessage(message *udpMessage) error {
+	if c.udpStream {
+		return c.writePacket(message)
 	}
+	limit := c.datagram.Size(c.quicConn)
+	if message.headerSize()+message.data.Len() > limit {
+		return c.sendFragments(message, limit)
+	}
+	err := c.writePacket(message)
 	var tooLargeErr *quic.DatagramTooLargeError
-	if !errors.As(err, &tooLargeErr) {
-		return
+	if err == nil || !errors.As(err, &tooLargeErr) {
+		return err
 	}
-	c.udpMTU = int(tooLargeErr.MaxDatagramPayloadSize) - 3
-	err = c.writePackets(fragUDPMessage(message, c.udpMTU))
-	if err == nil {
-		return len(p), nil
+	// 缓存的上限过时（PMTU 变小）：重新问一次再分片。
+	return c.sendFragments(message, c.datagram.Refresh(c.quicConn))
+}
+
+func (c *udpPacketConn) sendFragments(message *udpMessage, maxPacketSize int) error {
+	chunk := maxPacketSize - message.headerSize()
+	if chunk <= 0 || (message.data.Len()+chunk-1)/chunk > math.MaxUint8 {
+		return errDatagramLimit
 	}
-	return
+	return c.writePackets(fragUDPMessage(message, maxPacketSize))
 }
 
 func (c *udpPacketConn) inputPacket(message *udpMessage) {

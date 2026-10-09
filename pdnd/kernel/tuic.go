@@ -207,6 +207,7 @@ func (a *tuicAdapter) Start(parent context.Context, spec InboundSpec, hooks Adap
 		_ = a.Close()
 		return fmt.Errorf("tuic listen: %w", err)
 	}
+	warnSmallQUICSocketBuffers("tuic", spec.Config.Port, packet)
 	return nil
 }
 

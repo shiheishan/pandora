@@ -151,7 +151,7 @@ func (s *Service[U]) UserCount() int {
 
 func (s *Service[U]) Start(conn net.PacketConn) error {
 	if s.salamanderPassword != "" {
-		conn = NewSalamanderConn(conn, []byte(s.salamanderPassword))
+		conn = newServerSalamanderConn(conn, []byte(s.salamanderPassword))
 	}
 	err := qtls.ConfigureHTTP3(s.tlsConfig)
 	if err != nil {
