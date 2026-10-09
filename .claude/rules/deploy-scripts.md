@@ -41,6 +41,12 @@ paths:
   - 判定函数 `pandora_db_layout` 各脚本内联一份（备份三件套只信任自己，不 source 共用文件），连库一律经 `pandora_pg`；口令只经环境变量。守卫：`pg-layout_mock_test.sh`（逐字一致与行为）、`check-migrations_native_mock_test.sh`
 - `install-native.sh` 只用 PG18 的 `main` 集群（版本钉死），别的版本的集群不停、不升级、不删；旧集群里有 aegis 库而 PG18 不是接班人时停下，什么都不改。守卫：`install-native_pgcluster_mock_test.sh`（静态禁 `pg_dropcluster`、`pg_upgrade`、`pg_ctlcluster`、`dropdb`、`DROP DATABASE`）
 - `install-native.sh` 装与 docker 布局同一套备份、校验、恢复、psql、bootstrap 脚本，加密备份单元经 `native_render_unit` 改成直装（安装目录、`/var/backups/pandora`、去掉 docker 依赖）后只装不启用；升级时 `.env` 已有的行一字不动，缺的新键（布局、备份）才追加；口令经 psql 标准输入或环境变量，不拼进 `su -c`。守卫：`install-native_backup_mock_test.sh`
+- 直装的 PostgreSQL 与 Valkey 不弱于 docker 布局的容器（对照表见 RUNBOOK 第 13 章「直装的加固」）：`install-native-lib.sh` 写 systemd drop-in `pandora-hardening.conf`，在 Valkey 配置末尾维护 `# >>> pandora` 块
+  - PostgreSQL 的加固在建角色、迁移之前做；带着新 drop-in 起不来就撤回、照原样拉起、停下；内容没变不重启
+  - drop-in 整套写全，不依赖发行版单元写了什么（Debian 12 的 redis 单元把 `ProtectSystem` 改回 `true`）
+  - 内存上限与 Valkey 参数（禁 FLUSHALL / FLUSHDB、不落盘、maxmemory 与淘汰策略）跟 `docker-compose.yml` 逐字对齐，改 compose 要一起改
+  - PostgreSQL 不加 `MemoryDenyWriteExecute`（JIT）；被挡的系统调用返回 EPERM
+  - 守卫：`install-native_hardening_mock_test.sh`
 - `install-native.sh --from-docker` 把 docker 布局迁到直装（RUNBOOK 第 13 章）：只读核对 → 写状态文件 `from-docker.state` → 停写入者 → 导出（含属主与权限）→ 建角色、恢复、跑迁移的超级用户名下对象转给 postgres → 两边指纹逐行一致 → 迁移 → 存原单元、换单元 → 三网关 healthz → 接管 → `docker compose stop`
   - 接管之前任何退出（含 HUP/INT/TERM）由 EXIT trap `fd_abort` 放回原单元、拉起 docker 的网关与备份 timer；`fd_abort` 关 errexit、屏蔽信号、写 `from-docker.log`（终端断了写标准错误会失败）。docker 那边的库只读。删卷、删 `/opt/aegispanel`、停 docker 守护进程只打印，不执行
   - 接管后 docker 的 `.env` 改名为 `.env.migrated-to-native`（不删）。入口判断 `install.sh` 的 `pandora_entry_layout`、`install-native.sh` 普通模式的 `native_plain_mode_guard`、发布控制器的 `default_app_dir` 同一口径：迁完的直装不会被切回 docker；docker 布局还在服务（含迁移回滚后）时普通模式不动手

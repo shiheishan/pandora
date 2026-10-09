@@ -208,6 +208,8 @@ PG_VERSION="$PANDORA_PG_MAJOR"
 native_ensure_pg_cluster "$PG_VERSION"
 PG_PORT="$(native_pg_cluster_port "$PG_VERSION")" || die "PostgreSQL ${PG_VERSION}/main 没有在线，读不出端口"
 say "  PostgreSQL ${PG_VERSION}/main 在线，端口 ${PG_PORT}"
+# 单元加固（drop-in）：Debian 包的 postgresql@.service 除 OOMScoreAdjust 外没有加固，补到不弱于 docker 布局的容器
+native_harden_pg_unit "$PG_VERSION"
 # 别的版本的集群一律不碰；其中有 aegis 库而 PG18 不是它的接班人时停下（见函数注释）
 native_check_foreign_clusters "$PG_VERSION" "$PG_PORT" "$MODE" \
   "$([[ "$MODE" = upgrade ]] && pandora_env_file_value "$ENV_FILE" POSTGRES_PORT || true)"
@@ -216,15 +218,15 @@ native_check_foreign_clusters "$PG_VERSION" "$PG_PORT" "$MODE" \
 
 # ── 2. 准备数据目录 / 启动服务 ─────────────────────────
 say "[2/6] 启动数据服务"
-VK_CONF=""
+VK_CONF="" VK_UNIT=""
 if command -v valkey-server >/dev/null 2>&1; then
-  VK_CONF="/etc/valkey/valkey.conf"
-  systemctl reset-failed valkey-server 2>/dev/null || true   # 清掉历史失败限速
-  systemctl start valkey-server 2>/dev/null || true
+  VK_CONF="/etc/valkey/valkey.conf" VK_UNIT=valkey-server
 elif command -v redis-server >/dev/null 2>&1; then
-  VK_CONF="/etc/redis/redis.conf"
-  systemctl reset-failed redis-server 2>/dev/null || true
-  systemctl start redis-server 2>/dev/null || true
+  VK_CONF="/etc/redis/redis.conf" VK_UNIT=redis-server
+fi
+if [[ -n "$VK_UNIT" ]]; then
+  systemctl reset-failed "$VK_UNIT" 2>/dev/null || true   # 清掉历史失败限速
+  systemctl start "$VK_UNIT" 2>/dev/null || true
 fi
 
 # 凭据：首装一次性生成并写入 .env；升级从现有 .env 读回，后面的建角色、改口令、
@@ -366,11 +368,9 @@ else
 fi
 
 # 给系统 Valkey/Redis 配置密码（普通安装版没有 Docker 隔离，密码落在系统配置里）
-# 口令已经是这个就不动、不重启（升级时网关还在跑，重启 Valkey 会断开它们的连接）
-if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]] && native_set_valkey_password "$VK_CONF" "$VK_PASS"; then
-  systemctl restart valkey-server 2>/dev/null || systemctl restart redis-server 2>/dev/null || true
-  sleep 1
-fi
+# 口令、与 docker 布局同口径的配置块（只听回环、禁 FLUSHALL / FLUSHDB、不落盘、内存上限）、单元加固 drop-in：
+# 都已经是这样就不动、不重启（升级时网关还在跑，重启 Valkey 会断开它们的连接）
+[[ -z "$VK_UNIT" ]] || native_harden_valkey "$VK_UNIT" "$VK_CONF" "$VK_PASS"
 
 # 迁移只走官方 migrate.sh（它带 PGOPTIONS 保护参数），预检走 check-migrations.sh；
 # 备份、校验、恢复、psql、收窄运行角色与 docker 布局同一套脚本（按 .env 的布局各自连库）。

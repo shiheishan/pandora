@@ -41,11 +41,59 @@ native_ensure_pg_cluster() {
   fi
   systemctl reset-failed "postgresql@${ver}-main" 2>/dev/null || true
   systemctl start "postgresql@${ver}-main" 2>/dev/null || true
+  native_wait_pg_online "$ver" || die "PostgreSQL ${ver}/main 起不来：journalctl -u postgresql@${ver}-main -n 50"
+}
+
+# 等 <版本>/main 在线（最多 15 秒）
+native_wait_pg_online() {
+  local _
   for _ in $(seq 1 15); do
-    native_pg_cluster_port "$ver" >/dev/null && return 0
+    native_pg_cluster_port "$1" >/dev/null && return 0
     sleep 1
   done
-  die "PostgreSQL ${ver}/main 起不来：journalctl -u postgresql@${ver}-main -n 50"
+  return 1
+}
+
+# PostgreSQL 单元加固（drop-in 内容见 native_pg_hardening_dropin）。内容变了才重启；重启后起不来就撤回 drop-in、
+# 照原样拉起、停下（这一步在建角色与迁移之前，数据还没动）
+#   native_harden_pg_unit <版本>
+native_harden_pg_unit() {
+  local unit="postgresql@$1-main.service"
+  native_apply_dropin "$unit" "$(native_pg_hardening_dropin)" || return 0
+  systemctl daemon-reload
+  if systemctl restart "$unit" && native_wait_pg_online "$1"; then
+    say "  PostgreSQL 单元已加固（$NATIVE_SYSTEMD_DIR/$unit.d/$NATIVE_HARDENING_DROPIN）"
+    return 0
+  fi
+  native_remove_dropin "$unit"
+  systemctl daemon-reload
+  systemctl restart "$unit" 2>/dev/null || true
+  die "加固 drop-in 让 PostgreSQL $1/main 起不来（journalctl -u $unit -n 50），已撤回、照原样拉起；数据没动"
+}
+
+# Valkey / Redis：口令、pandora 配置块、单元 drop-in 三样，任一变了才重启；带着新 drop-in 起不来就撤回它、停下
+#   native_harden_valkey <单元名，如 valkey-server> <配置文件> <口令>
+native_harden_valkey() {
+  local unit="$1.service" conf="$2" changed=0 dropin_new=0
+  if [ -f "$conf" ]; then
+    native_set_valkey_password "$conf" "$3" && changed=1
+    native_set_valkey_hardening "$conf" && changed=1
+  fi
+  if native_apply_dropin "$unit" "$(native_valkey_hardening_dropin "${1%-server}")"; then
+    systemctl daemon-reload
+    changed=1 dropin_new=1
+  fi
+  [ "$changed" = 1 ] || return 0
+  if systemctl restart "$unit" && sleep 1 && systemctl is-active --quiet "$unit"; then
+    return 0
+  fi
+  if [ "$dropin_new" = 1 ]; then
+    native_remove_dropin "$unit"
+    systemctl daemon-reload
+    systemctl restart "$unit" 2>/dev/null || true
+    die "加固 drop-in 让 $1 起不来（journalctl -u $unit -n 50），已撤回、照原样拉起"
+  fi
+  die "$1 改了配置之后起不来（journalctl -u $unit -n 50；配置 $conf 末尾是 pandora 块）"
 }
 
 # 端口上的集群里有没有 aegis 库：打印 yes / no / unknown（查不了）
@@ -164,6 +212,150 @@ native_render_unit() {
       -e '/^Requires=docker\.service$/d' \
       -e 's|^After=docker\.service$|After=postgresql.service|' \
       "$1"
+}
+
+#------------------------------------------------------------------------------
+# PostgreSQL 与 Valkey 的加固（install-native_hardening_mock_test.sh）
+#------------------------------------------------------------------------------
+# docker 布局里两者跑在容器里：独立的挂载、进程、网络命名空间，Docker 缺省的 seccomp 与能力集，cgroup 内存上限
+# （compose 的 512M / 160M），Valkey 还禁了 FLUSHALL / FLUSHDB、不落盘。直装改用发行版包自带的单元：
+#   - postgresql@.service（postgresql-common）除 OOMScoreAdjust 外没有任何加固，以 root 起、再由 pg_ctlcluster 降到 postgres；
+#   - valkey-server / redis-server 的单元各版本不一：Debian 13 的 valkey 已经较严，Debian 12 的 redis 末尾又把
+#     ProtectSystem 改回 true、能力集留着 SETUID / SETGID / SYS_RESOURCE、没有系统调用过滤；都没有进程可见性、
+#     网络出口与内存上限。配置文件缺省会定期落盘（dump.rdb），也没禁危险命令。
+# 下面的 drop-in 不依赖发行版单元写了什么，整套写全；配置块补 Valkey 的行为。补到「不弱于 docker 布局」，
+# 对照表见 deploy/RUNBOOK.md 第 13 章。被挡的系统调用返回 EPERM（与 Docker 的 seccomp 一样），不杀进程
+
+NATIVE_HARDENING_DROPIN=pandora-hardening.conf
+
+# PostgreSQL 18/main 的 drop-in。不加 MemoryDenyWriteExecute（超级用户会话的 JIT 要可写可执行内存，容器里也没有）；
+# 系统调用用拒绝清单（与 Docker 缺省 seccomp 同一思路：挡挂载、重启、内核模块、调试等），不用允许清单，免得扩展踩到
+native_pg_hardening_dropin() {
+  cat <<'UNIT'
+# pandora（install-native.sh 生成）：把 postgresql@.service 补到不弱于 docker 布局的容器
+[Service]
+User=postgres
+Group=postgres
+# 以 postgres 起之后 pg_ctlcluster 自己建不了 /run/postgresql（tmpfiles 缺省会建，这里兜底）；+ 表示这一步不受下面的限制
+ExecStartPre=+/usr/bin/install -d -m 2775 -o postgres -g postgres /run/postgresql
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/postgresql -/var/log/postgresql /run/postgresql
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap
+MemoryMax=512M
+UNIT
+}
+
+# Valkey / Redis 的 drop-in。<口味> 是 valkey 或 redis，决定放行写的目录。系统调用用允许清单
+# （先清掉发行版单元里的再写，免得两份叠成别的意思）；没有 JIT，可以禁可写可执行内存
+#   native_valkey_hardening_dropin <valkey|redis>
+native_valkey_hardening_dropin() {
+  cat <<UNIT
+# pandora（install-native.sh 生成）：不管发行版单元写了多少，按 docker 布局的容器写全
+[Service]
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=-/var/lib/$1 -/var/log/$1 -/run/$1
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+MemoryMax=160M
+UNIT
+}
+
+# 写一个单元的 drop-in；内容没变返回 1（不必重启），写了返回 0
+#   native_apply_dropin <单元名> <drop-in 内容>
+native_apply_dropin() {
+  local dir="$NATIVE_SYSTEMD_DIR/$1.d" file
+  file="$dir/$NATIVE_HARDENING_DROPIN"
+  if [ -f "$file" ] && [ "$(cat "$file")" = "$2" ]; then return 1; fi
+  install -d -m 0755 "$dir"
+  printf '%s\n' "$2" >"$file.next" && chmod 0644 "$file.next" && mv -f -- "$file.next" "$file"
+}
+native_remove_dropin() { rm -f -- "$NATIVE_SYSTEMD_DIR/$1.d/$NATIVE_HARDENING_DROPIN"; }
+NATIVE_SYSTEMD_DIR=/etc/systemd/system
+
+# Valkey 配置末尾维护一个 pandora 块（与 docker 布局的启动参数同口径）：只听回环、保护模式、禁 FLUSHALL / FLUSHDB、
+# 不落盘、内存上限与淘汰策略。块在文件最后，单值项以它为准；没变返回 1（不必重启），改了返回 0。
+# 不含口令（口令走 native_set_valkey_password），整块经 awk 的环境给，不进命令行参数
+#   native_set_valkey_hardening <配置文件>
+NATIVE_VALKEY_BLOCK_BEGIN='# >>> pandora（install-native.sh 维护，与 docker 布局同口径；手改会被下次安装覆盖）'
+NATIVE_VALKEY_BLOCK_END='# <<< pandora'
+native_valkey_hardening_block() {
+  printf '%s\n' "$NATIVE_VALKEY_BLOCK_BEGIN" \
+    'bind 127.0.0.1 -::1' \
+    'protected-mode yes' \
+    'rename-command FLUSHALL ""' \
+    'rename-command FLUSHDB ""' \
+    'save ""' \
+    'appendonly no' \
+    'maxmemory 96mb' \
+    'maxmemory-policy allkeys-lru' \
+    "$NATIVE_VALKEY_BLOCK_END"
+}
+native_set_valkey_hardening() {
+  local conf="$1" tmp
+  tmp="$(mktemp "$conf.XXXXXX")"
+  NATIVE_VK_BEGIN="$NATIVE_VALKEY_BLOCK_BEGIN" NATIVE_VK_END="$NATIVE_VALKEY_BLOCK_END" \
+  NATIVE_VK_BLOCK="$(native_valkey_hardening_block)" awk '
+    $0 == ENVIRON["NATIVE_VK_BEGIN"] { skip = 1; next }
+    skip && $0 == ENVIRON["NATIVE_VK_END"] { skip = 0; next }
+    skip { next }
+    { lines[++n] = $0 }
+    END {
+      while (n > 0 && lines[n] == "") n--
+      for (i = 1; i <= n; i++) print lines[i]
+      print ""
+      print ENVIRON["NATIVE_VK_BLOCK"]
+    }
+  ' "$conf" >"$tmp" || { rm -f -- "$tmp"; die "改 $conf 的 pandora 配置块失败"; }
+  if cmp -s "$tmp" "$conf"; then rm -f -- "$tmp"; return 1; fi
+  cat "$tmp" >"$conf" || { rm -f -- "$tmp"; die "写回 $conf 失败"; }
+  rm -f -- "$tmp"
+  return 0
 }
 
 #------------------------------------------------------------------------------
