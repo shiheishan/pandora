@@ -86,10 +86,7 @@ func (s *Service) reportTraffic(ctx context.Context, tenantID string, n *Serving
 		if err != nil {
 			return nil, err
 		}
-		allowed = make(map[int64]struct{}, len(served))
-		for _, u := range served {
-			allowed[u.ID] = struct{}{}
-		}
+		allowed = s.servedSet(served)
 	}
 
 	sum := sha256.Sum256(raw)

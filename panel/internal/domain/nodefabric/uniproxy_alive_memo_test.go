@@ -2,6 +2,7 @@ package nodefabric
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -44,5 +45,28 @@ func TestAliveMemoSkipsOnlyFullyRefreshedReports(t *testing.T) {
 	m.record("t", "n", []int64{9}, [][]byte{h("z")}, t0.Add(10*time.Minute))
 	if m.size != 1 || len(m.nodes[hbKey("t", "n")]) != 1 {
 		t.Fatalf("stale rows kept: size=%d", m.size)
+	}
+}
+
+// 放行集合：同一个名单切片只建一次；内容相同的新切片另建（直查路径），判定一样。
+func TestServedSetReusesSharedListOnly(t *testing.T) {
+	svc := NewService(nil, nil)
+	svc.EnableNodeCaches()
+	users := []ProxyUser{{ID: 3}, {ID: 9}}
+	a := svc.servedSet(users)
+	b := svc.servedSet(users)
+	if len(a) != 2 || fmt.Sprintf("%p", a) != fmt.Sprintf("%p", b) {
+		t.Fatal("shared list rebuilt its set")
+	}
+	copyUsers := append([]ProxyUser(nil), users...)
+	c := svc.servedSet(copyUsers)
+	if fmt.Sprintf("%p", a) == fmt.Sprintf("%p", c) {
+		t.Fatal("a different slice reused another list's set")
+	}
+	if _, ok := c[9]; !ok || len(c) != 2 {
+		t.Fatalf("rebuilt set wrong: %v", c)
+	}
+	if empty := svc.servedSet(nil); len(empty) != 0 {
+		t.Fatal("empty list must give an empty set")
 	}
 }

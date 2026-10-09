@@ -301,6 +301,7 @@ func newNodeCaches(now func() time.Time) *nodeCaches {
 func (s *Service) EnableNodeCaches() {
 	if s.caches == nil {
 		s.caches = newNodeCaches(nil)
+		s.served = &servedSets{}
 	}
 }
 
