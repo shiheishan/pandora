@@ -10,7 +10,7 @@ paths:
 ## 边界与依赖
 
 - 只经 `go run ./tools/loadtest` 或 `go build` 后拷到压测机使用，不被任何包 import，不进发布包（`deploy/build-release.sh` 只编 `cmd/<名字>`）。
-- 四个子命令 seed / nodes / users / burst 之间只经 `ltkit.Manifest` 交换数据；第五个 `quiet-report` 只读 `scripts/quiet-collect.sh` 的采样目录，按静默标准（面板 + 数据库 CPU、整机内存）出判定，`-strict` 不达标退出非 0，口径改动要和 prod-retest skill 的静默一节一起改。计量一律走 `ltkit.Recorder`，三类场景的 QPS、分位数、错误码才是同一口径。不要在子命令里另写计量。
+- 四个子命令 seed / nodes / users / burst 之间只经 `ltkit.Manifest` 交换数据；第五个 `quiet-report` 只读 `scripts/quiet-collect.sh` 的采样目录，按 `-tier A|B` 两档静默标准（面板 + 数据库 CPU、nginx、整机内存与窗口内换页）出判定，`-strict` 不达标退出非 0，`-json` 给 perf-gate skill 的 verdict.py 读；口径改动要和 prod-retest skill 的静默一节、perf-gate 一起改。计量一律走 `ltkit.Recorder`，三类场景的 QPS、分位数、错误码才是同一口径。不要在子命令里另写计量。
 - 签名规范串、配置验签、线格式直接调 `domain/nodefabric` 与 `platform/crypto`（如 `nodefabric.CanonicalPayloadV2`、`VerifyEffectiveReleaseSignature`），不自己抄一份；也不 import pdnd：它是另一个 module，引用要在 panel 的 go.mod 加 replace。
 
 ## 与被测对象保持同步（对方改了，这里要跟）

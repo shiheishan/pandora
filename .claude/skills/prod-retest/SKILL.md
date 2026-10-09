@@ -1,6 +1,6 @@
 ---
 name: prod-retest
-description: pandora 面板整机压测与复测：在已按生产方式装好面板的一次性 Vultr 面板机上（装法见 panel-install）seed 5k 或 1 万用户 / 1000 节点的数据，用压测机跑 runbook 第 8 节的 30 分钟稳态（模拟节点 + 用户 + burst）和静默场景，采集 pprof、pg_stat_statements、CPU 拆分与连接池旁证，按分档目标出成绩单并与上一轮对比。用户或总协调说「面板复测」「面板压测」「整机压测」「出成绩单」「换栈检查点」「10k 基线」「静默 CPU」「加一档节点数」「跟上一轮比」时使用。不是本 skill：节点端（pdnd）压测、节点验收、VPC 复测、10 万连接用 node-accept；单条 SQL 改前改后判分用 bench-eval；逐协议能不能连用 node-e2e。
+description: pandora 面板整机压测与复测：在已按生产方式装好面板的一次性 Vultr 面板机上（装法见 panel-install）seed 5k 或 1 万用户 / 1000 节点的数据，用压测机跑 runbook 第 8 节的 30 分钟稳态（模拟节点 + 用户 + burst）和静默两档（A 完全静默、B 30% 在线），采集 pprof、pg_stat_statements、CPU 拆分与连接池旁证，按分档目标出成绩单并与上一轮对比。用户或总协调说「面板复测」「面板压测」「整机压测」「出成绩单」「换栈检查点」「10k 基线」「静默 CPU」「加一档节点数」「跟上一轮比」时使用。不是本 skill：节点端（pdnd）压测、节点验收、VPC 复测、10 万连接用 node-accept；单条 SQL 改前改后判分用 bench-eval；某个分支改前改后的同机 A/B 判分用 perf-gate；逐协议能不能连用 node-e2e。
 ---
 
 # 生产规模复测
@@ -74,13 +74,17 @@ runbook 是 `panel/tools/loadtest/README.md`，本 skill 是它的「照做版�
    - realip 是否保留，按总协调的要求定；收尾或删机前执行 `nginx-realip.sh disable`。
    - 两端结果目录不删。
 
-### 静默场景（用户 2026-10-07 的资源标准）
+### 静默场景（两档，1000 节点）
 
-标准：5000 用户整机内存约 1G；**静默运行（只有节点在心跳、拉取、上报，没人操作）时面板 + 数据库合计 CPU ≤ 单核 30%**。每个检查点都测一次：
-- 节点照常起（200 档，必要时加 300 档），**不起 users、不做 burst**，稳态 15 分钟。
-- 1000 节点档：压测机上 `panel/tools/loadtest/scripts/run-quiet.sh <manifest> <node-url> <T> 1000`（T−8 分钟起跑，180 秒错开），面板机 `quiet-collect.sh <目录> <T> 15`，采完用 `loadtest quiet-report -dir <目录>`（`-strict` 不达标退出码非 0）出判定；口径与上面一致，细节见 runbook 第 11.3 节。
-- 采样只用轻量方式：开头与结尾各读一次 `/proc/stat` 与各进程 `/proc/<pid>/stat`（含 cutime/cstime）做差，加 `vmstat 5`；**不跑 sample-procs 与 sample-pgact**——它们自身开销大（`overhead.sh` 实测，数字见各轮 ops-local 结果），会把静默 CPU 抬过线。
-- 成绩单单列一节：面板 + 数据库（三网关、postgres、valkey、nginx）合计 CPU、整机已用内存、swap，对照标准判过或不过。
+做法、时间轴与采样口径照 runbook 第 11.3 节（`panel/tools/loadtest/README.md`），这里只写容易做错的：
+
+- **两档**（用户 2026-10-09 定，数值见 runbook 第 11 节的表、出处 `.claude/perf-plan/PLAN.md`「新标准」）：A 档完全静默，压测机 `ONLINE_RATIO=0 run-quiet.sh …`；B 档 30% 在线，`run-quiet.sh` 缺省 0.3。旧轮次（5k-r4、10k-r1、w10quiet）的「静默」都是 B 档口径，不是「没人在线」。
+- 档位一律 1000 节点（`run-quiet.sh <manifest> <url> <T> 1000`，T−8 分钟起跑、180 秒错开），同一台机器先 A 后 B，两档之间等上一批节点退出（压测机 `pgrep -x loadtest` 为空）。不起 users、不做 burst。
+- 测前在面板机 `swapoff -a && swapon -a`（swap 已用超过 MemAvailable 的一半时先别做，记进成绩单）：不清的话开窗前换出的旧页读回也算换入，换页一项必不过。
+- 面板机 `quiet-collect.sh <目录> <T> 15`；判定 `loadtest quiet-report -dir <目录> -tier <A|B>`，`-tier` 要和 `nodes.json` 的 `meta.online_ratio` 对上（0 → A，其余 → B）。
+- 正式轮不开 pg_stat_statements、pprof，也不跑 sample-procs、sample-pgact（自身开销会把静默 CPU 抬过线，`overhead.sh` 实测）；要查原因另起一场诊断轮，诊断轮的数不进成绩单。
+- 成绩单单列一节，每档一张：面板 + 数据库 CPU 与拆分、nginx、整机已用、窗口内换入换出、aegis-node 的 `nr_throttled`、节点侧 QPS 与错误（`nodes.txt`）、节点端点 p99（push ≤ 20ms、其余 ≤ 10ms，压测机端口径，见下节分档表的说明）。内存拆账看 `kern-*.txt`、`pg-smaps-*.txt`。
+- 分支改前改后要比静默（同机 A/B、A/A 噪声底、比值线）用 perf-gate skill，不在这里。
 
 ### 加一档节点（同样 5k 用户）
 
@@ -98,21 +102,25 @@ seed 不能往已有资源池追加节点：每次都会新建资源池和套餐
 1. **时间轴**（UTC）：采集起、nodes 起（相对 T 多少）、T、预热结果、pprof、burst、导出、users 与 nodes 结束及退出码。偏离 runbook 的地方写在这里。
 2. **要点**：3 到 5 条，先给结论。
 3. **a. runbook 9.2 及格线**（来自 auto-summary，逐条对照 runbook 9.2；零 5xx 压测工具和 nginx 都要算）。另附网关 cgroup（nr_throttled、mem_max_events、oom_kill）与各进程 CPU 和 PSS。
-4. **b. 分档用户目标**（用户 2026-10-07 定，来自 auto-targets，`targets.py` 的 `classify()` 按端点名分档）：
+4. **b. 分档用户目标**（用户 2026-10-09 定的新标准，出处 `.claude/perf-plan/PLAN.md`「新标准」；来自 auto-targets，`targets.py` 的 `classify()` 按端点名分档）：
 
    | 档 | 端点 | 目标 |
    |---|---|---|
-   | 门户 | `public:` 除登录外，含订阅拉取 | p50 < 5ms、p99 < 50ms |
-   | 节点 | `node:` 除 stream 长连接 | p99 < 20ms |
-   | 后台单条 | `admin:GET /v1/me`、`GET /v1/<资源>/{id}`、单条写 | p50 < 5ms、p99 < 50ms |
-   | 后台列表、搜索、看板 | 其余 `admin:` | p50 < 50ms、p99 < 200ms |
-   | 登录 | `POST /v1/auth/login`（门户与后台） | 不设速度目标；只看不超时、不排队（无 503） |
-   | 全部 | — | 零 5xx、不超时、不换页、连接池不排队 |
+   | 门户读 | `public:` 除登录、订阅拉取、写 | 端到端 p50 ≤ 5ms、p99 ≤ 30ms（服务端 p50 ≤ 2、p99 ≤ 15） |
+   | 订阅拉取 | `public:GET /{prefix}/{token} [格式]` | 300 节点及以下 p50 ≤ 3、p99 ≤ 20；1000 节点 p50 ≤ 5、p99 ≤ 30 |
+   | 写 | 门户下单、续费、换套餐、支付回调（`public:POST`，报价除外） | p50 ≤ 30、p99 ≤ 100；16 路同租户并发 0 个 409 |
+   | 节点 | `node:` 除 stream 长连接 | push p99 ≤ 20ms，其余 p99 ≤ 10ms |
+   | 后台单条 | `admin:GET /v1/me`、`GET /v1/<资源>/{id}`、单条写 | p50 ≤ 3、p99 ≤ 20 |
+   | 后台列表、搜索、看板 | 其余 `admin:` | p50 ≤ 20、p99 ≤ 80（单条 SQL 留出集 ≤ 50ms 归 bench-eval） |
+   | 登录 | `POST /v1/auth/login`（门户与后台） | 稳态不设固定线（p50 ≤ 单次哈希 + 10ms，人工对照）；200 个开环预热 p99 ≤ 3s、0 个 503 |
+   | 全部 | — | 零 5xx、不超时、不换页、连接池不排队；1 倍负载整机 CPU ≤ 60%、网关节流 0 |
 
+   - **口径**：新标准里节点、订阅、后台的线是服务端计时，`targets.py` 只有压测机端（含 TLS 与同机房网络），按压测机端判是偏严的读法；超线不到 2ms 的项在成绩单里注明「待服务端计时复核」。逐路由服务端计时与库往返（`db_rt`/`kv_rt`）要等 P0 往返记账器落地；「每路由库往返 ≤ 预算、Valkey ≤ 1」由 P0 的 CI 守卫管，不在这张表。
+   - 1.5 倍负载 p99 ≤ 50 是另一场（30 分钟稳态后接 10 分钟阶梯），单列。
    - 机型：1 万用户 / 1000 节点档按 4c8g 面板机考（用户 10-09 定），5k 档历史轮次是 2c4g；成绩单开头写明本轮面板机机型。
 
    - users 和 nodes 用稳态窗口 [T, T+30m) 的统计；预热、burst、节点的 config/report 与 stream 只有全程统计。
-   - 连接池直接证据：三个网关每分钟各打一行「数据库连接池统计」（`platform/db/poolstats.go`，有取连接或建连变化时才打），字段 `empty_acquires`、`acquire_wait_ms` 是「池子不够」的直接证据；`acquired` 贴着 `max` 但 `empty_acquires` 为 0 只是轮着用、没有排队。成绩单取窗口内这几行：`journalctl -u aegis-<public|admin|node> --since … | grep 数据库连接池统计`。旁证两条：T+15m 的 goroutine profile 里停在 `pgxpool.*Acquire|puddle` 的个数，以及 pgact.csv 里各网关已建连接是否顶到池上限（public 16、admin 15、node 15，见 `.env.example`；`conn_public/admin/node` 三列同时数回环 TCP 与 unix socket 两种连法）。
+   - 连接池直接证据：三个网关每分钟各打一行「数据库连接池统计」（`platform/db/poolstats.go`，有取连接或建连变化时才打），字段 `empty_acquires`、`acquire_wait_ms` 是「池子不够」的直接证据；`acquired` 贴着 `max` 但 `empty_acquires` 为 0 只是轮着用、没有排队。成绩单取窗口内这几行：`journalctl -u aegis-<public|admin|node> --since … | grep 数据库连接池统计`。旁证两条：T+15m 的 goroutine profile 里停在 `pgxpool.*Acquire|puddle` 的个数，以及 pgact.csv 里各网关已建连接是否顶到池上限（缺省 public 16（含常驻 LISTEN）、admin 15、node 14 加 1 条池外的纪元探针专用连接，三者合计 46（w10quiet 第二轮起；更早的版本 node 池 15、常驻 8），算式与常驻连接数（node 2、其余 1）见 `panel/internal/platform/config/runtime.go` 的 `DefaultDBMaxConns`、`DefaultDBMinConns`；node 一列看到 15 条就是池满。`conn_public/admin/node` 三列同时数回环 TCP 与 unix socket 两种连法）。
 5. **c. 与上一轮对比**（compare.md）：
    - 每节点每分钟请求数和节点总 QPS；
    - 5xx 与超时；

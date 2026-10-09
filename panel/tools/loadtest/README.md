@@ -398,7 +398,16 @@ SQL 热点看 `pgstat-*-total.csv` 前十，结合 pprof 的 CPU 火焰图定位
 
 ## 11. 1 万用户、1000 节点与静默场景
 
-整机标准（用户 2026-10-07 定，10-08 升档）：1 万用户、1000 节点；静默（0 活跃用户、1000 节点在线上报）整机已用内存 ≤ 1 GiB（`free` 的 used，不含 cache），静默时面板 + 数据库 ≤ 单核 30%；负载下的及格线与第 9.2 节、prod-retest skill 相同。
+整机规模（用户 2026-10-08 升档）：1 万用户、1000 节点。静默标准（用户 2026-10-09 定，取代 10-07 的「≤ 30、≤ 1 GiB」，数值出处 `.claude/perf-plan/PLAN.md`「新标准」，判定线写在 `quiet/report.go` 的 `tiers`）分两档，2c4g 也必须达标：
+
+| 项 | A 档：完全静默（`ONLINE_RATIO=0`） | B 档：30% 在线（缺省 0.3） |
+|---|---|---|
+| 面板 + 数据库 CPU（单核 = 100） | ≤ 10 | ≤ 25（push 计费 N2 第 7 项查清后收到 ≤ 20） |
+| nginx（单列） | ≤ 3 | ≤ 6 |
+| 整机已用（`free` 的 used，不含 cache；不改内核参数） | ≤ 950 MiB | 同 A |
+| 窗口内换入、换出 | 都为 0 | 同 A |
+
+负载下的及格线与第 9.2 节、prod-retest skill 相同。
 
 ### 11.1 造数：1000 节点、1 万用户
 
@@ -459,11 +468,11 @@ export LOADTEST_ADMIN_PASSWORD='<管理员口令>'
 
 ### 11.3 静默场景
 
-静默 = **只起模拟节点**，不起 users、不做 burst；0 个活跃用户，但节点照常拉取、上报（在线比例缺省 0.3，与 5k-r4 静默同口径，每个节点仍有少量 push / alive）。
+静默 = **只起模拟节点**，不起 users、不做 burst；0 个活跃用户，节点照常拉取、心跳。两档只差在线比例：B 档缺省 0.3（与 5k-r4、w10quiet 同口径，每个节点仍有 push / alive），A 档 `ONLINE_RATIO=0`（上报空转）。同一台机器先跑 A 再跑 B；两档的数不能互比。测前 `swapoff -a && swapon -a` 清掉旧 swap（否则旧页读回也算换入）。
 
 | 时刻 | 面板机（root） | 压测机 |
 |---|---|---|
-| T−8m | | `scripts/run-quiet.sh $M https://<PANEL_DOMAIN> $T 1000`（节点起跑，180 秒内错开） |
+| T−8m | | `[ONLINE_RATIO=0] scripts/run-quiet.sh $M https://<PANEL_DOMAIN> $T 1000`（节点起跑，180 秒内错开） |
 | T−20s | `scripts/quiet-collect.sh $P $T 15`（自己睡到 T−20 秒取内存快照，后台起 `vmstat 5`） | |
 | T | 读第一份 CPU 快照（`cpu-A`） | 稳态窗口开始 |
 | T+15m | 读第二份（`cpu-B`），取第二份内存快照，停 `vmstat` | 节点再跑约 2 分钟结束 |
@@ -471,15 +480,18 @@ export LOADTEST_ADMIN_PASSWORD='<管理员口令>'
 ```bash
 # 面板机（root），P 是结果目录，T 是约定的 unix 秒（两边同一个值）
 setsid -f /root/lt/quiet-collect.sh $P $T 15 > $P.out 2>&1 < /dev/null
-# 压测机
+# 压测机（A 档在前面加 ONLINE_RATIO=0）
 setsid -f ~/run-quiet.sh $M https://<PANEL_DOMAIN> $T 1000 $R > /dev/null 2>&1 < /dev/null
-# 采集结束后，在任何有 loadtest 的机器上判定
-loadtest quiet-report -dir $P            # 加 -strict 则任一标准不达标退出码非 0
+# 采集结束后，在任何有 loadtest 的机器上判定；-tier 要和压测机的在线比例对上（nodes.json 的 meta.online_ratio）
+loadtest quiet-report -dir $P -tier B    # 加 -strict 则任一标准不达标退出码非 0；-json 给 perf-gate skill 读
 ```
 
 - **采样口径**（与 5k-r4 一致，刻意很轻——`sample-procs.sh` / `sample-pgact.sh` 自身占 2–9 个百分点，会把静默 CPU 抬过线，静默期间不要开）：
-  - CPU：窗口首尾各读一次 `/proc/stat`、全部 `/proc/<pid>/stat`、`system.slice` 下各单元 `cpu.stat`，做差；判定用 cgroup 的 `usage_usec`（含已退出的子进程，最准），面板 + 数据库 = aegis-public + aegis-admin + aegis-node + postgres + valkey，nginx / docker / containerd 单列。单核 = 100，标准 ≤ 30。
-  - 内存：窗口外首尾各取一次 `MemTotal − MemAvailable`（等于 `free` 的 used，不含 cache），取较大者对 1024 MiB；同时列 PSS、swap 与窗口内换页数（有换页就说明已用数被 swap 掩盖）。
+  - CPU：窗口首尾各读一次 `/proc/stat`、全部 `/proc/<pid>/stat`、`system.slice` 下各单元 `cpu.stat`，做差；判定用 cgroup 的 `usage_usec`（含已退出的子进程，最准），面板 + 数据库 = aegis-public + aegis-admin + aegis-node + postgres + valkey，nginx 单列并有自己的线，docker / containerd 只列出。单核 = 100。
+  - 「按进程名」表是旁证：已回收子进程一列只算窗口内的部分（窗口内退出的后端开窗前的累计已扣掉），可以和活进程一列相加，postgres 两列之和应接近 cgroup 的 postgres。
+  - 内存：窗口外首尾各取一次 `MemTotal − MemAvailable`（等于 `free` 的 used，不含 cache），取较大者对 950 MiB；同时列 PSS、swap 与窗口内换页数，换入或换出不为 0 即不过。
+  - 拆账用的旁证同一时刻写在 `kern-{before,after}.txt`（min_free_kbytes、THP、完整 meminfo、sockstat、slab、zoneinfo）与 `pg-smaps-{before,after}.txt`（PG 每个进程的 smaps_rollup），`host.txt` 记机器指纹与面板版本。
   - 同时兼容 Docker 数据基座（`containers.txt` 把容器 cgroup 翻成名字）与直装布局（`postgresql@*-main.service`、`valkey-server.service`）。
 - 用 5k-r4 的原始快照（`ops-local/vultr-test2/5k-r4/quiet/panel`）喂 `quiet-report`，面板 + 数据库 15.90、含 nginx 18.39、整机忙 22.12、已用内存 918 MiB，与当时人工算的一致。
+- 分支改前改后的同机 A/B 判分（A/A 噪声底、两档、稳态、比值线）见 perf-gate skill，本节只管单次测量。
 - 出成绩单时，静默一节单列这几项：面板 + 数据库 CPU、各部分拆分、整机已用内存、swap、节点侧的 QPS / 错误数（`nodes.txt`）、aegis-node 的 `nr_throttled`。

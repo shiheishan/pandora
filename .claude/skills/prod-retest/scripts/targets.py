@@ -9,7 +9,21 @@
 """
 import csv, glob, json, os, re, subprocess, sys, datetime as dt
 
-CORES = 2
+CORES = 2  # 场景目录没有 panel/meminfo.txt 时的缺省（老轮次都是 2c4g）
+
+# 各网关在 pg_stat_activity 里能看到的连接数上限：池上限（public 含常驻 LISTEN）+ node 的 1 条池外纪元探针。
+# 缺省见 panel/internal/platform/config/runtime.go 的 DefaultDBMaxConns（w10quiet 第二轮起 16 / 15 / 14+1，合计 46）。
+# 看到的数达到这里就是池满；早于 w10quiet 第二轮的轮次 node 是 15 条池、没有探针，上限同为 15。
+CONN_CAP = {"public": 16, "admin": 15, "node": 15}
+
+
+def cores(root):
+    f = os.path.join(root, "panel", "meminfo.txt")
+    if os.path.exists(f):
+        for line in open(f):
+            if line.startswith("nproc:"):
+                return int(line.split()[1])
+    return CORES
 
 
 def ts(s):
@@ -94,6 +108,24 @@ def vmswap(root):
     return peak
 
 
+def throttled(root):
+    """稳态窗口内各网关的 Δnr_throttled（cgroup.csv 相邻行做差、跳过重启归零的段）；没有 cgroup.csv 返回 None。"""
+    f = os.path.join(root, "panel", "cgroup.csv")
+    if not os.path.exists(f):
+        return None
+    T, T1 = window(root)
+    out, last = {}, {}
+    for r in csv.DictReader(open(f)):
+        if not (T <= int(r["unix_s"]) <= T1):
+            continue
+        u, v = r["unit"], int(r["nr_throttled"])
+        if u in last and v >= last[u]:
+            out[u] = out.get(u, 0) + v - last[u]
+        out.setdefault(u, 0)
+        last[u] = v
+    return out
+
+
 def pgtop(root, n=10):
     fs = sorted(glob.glob(os.path.join(root, "panel", "pgstat-*-total.csv")))
     if not fs:
@@ -143,29 +175,52 @@ def pgact(root):
     return rows
 
 
-# 分档：返回 (档名, p50 上限, p99 上限)；None 表示该分位不设线
+# 分档：返回 (档名, p50 上限, p99 上限)；None 表示该分位不设线。
+# 新标准（用户 2026-10-09，.claude/perf-plan/PLAN.md「新标准」）。节点、订阅、后台的线是服务端计时，这里只有压测机端
+# （含 TLS 与同机房网络），按压测机端判是偏严的读法；门户用端到端那组线。
 ADMIN_BY_ID = re.compile(r"^admin:(GET /v1/me$|GET /v1/[a-z-]+/\{id\}$|POST /v1/[a-z-]+/\{id\}/|POST /v1/user-groups$)")
+SUBSCRIBE = re.compile(r"^public:GET /\{prefix\}/\{token\}")
+# 门户写（路由见 api/public/router.go）：下单、流量包下单、续费、换套餐、发起支付、支付回调；报价 checkout/quote 是读
+PORTAL_WRITE = re.compile(r"^public:(POST /v1/(orders(\s|$)|orders/\{id\}/pay|me/traffic-pack-orders|me/subscriptions/\{id\}/(renew|change-plan))"
+                          r"|(GET|POST) /v1/webhooks/payments/)")
 
 
-def classify(ep):
+def classify(ep, nodes=None):
     if ep.startswith("node:"):
-        return ("stream", None, None) if ep.endswith("/stream") else ("节点", None, 20)
+        if ep.endswith("/stream"):
+            return ("stream", None, None)
+        return ("节点 push", None, 20) if ep.endswith("/push") else ("节点", None, 10)
     if ep.endswith("POST /v1/auth/login"):
         return ("login", None, None)
     if ep.startswith("admin:"):
         if ADMIN_BY_ID.match(ep):
-            return ("后台单条", 5, 50)
-        return ("后台列表/看板", 50, 200)
-    return ("门户", 5, 50)
+            return ("后台单条", 3, 20)
+        return ("后台列表/看板", 20, 80)
+    if SUBSCRIBE.match(ep):
+        return ("订阅拉取", 5, 30) if (nodes or 0) > 300 else ("订阅拉取", 3, 20)
+    if PORTAL_WRITE.match(ep):
+        return ("写", 30, 100)
+    return ("门户", 5, 30)
+
+
+def node_count(root):
+    j = load(root, "nodes.json")
+    if not j:
+        return None
+    return (j.get("per_unit") or {}).get("units") or j.get("meta", {}).get("nodes")
 
 
 # ---------------------------------------------------------------------------
 def targets(root):
     w = print
     E = eps(root)
+    nodes = node_count(root)
     w("## 用户目标表\n")
-    w("分档目标（用户 2026-10-07 定）：门户 p50<5 p99<50；节点 p99<20；后台按 id 取一条（含单条写）p50<5 p99<50；后台列表、搜索、看板 p50<50 p99<200；登录不设速度目标，只看不超时、不排队（无 503）；所有端点零 5xx、不超时。")
-    w("users / nodes 用稳态窗口 [T, T+30m) 的统计；预热（users-warmup）与 burst 只有全程统计。延迟是压测机侧测得的端到端时间（含 TLS 与新加坡同机房网络往返）。\n")
+    w("分档目标（用户 2026-10-09 定的新标准）：门户读端到端 p50≤5 p99≤30；订阅拉取 300 节点及以下 p50≤3 p99≤20、更多节点 p50≤5 p99≤30；"
+      "写 p50≤30 p99≤100；节点 push p99≤20、其余 p99≤10；后台单条（含单条写）p50≤3 p99≤20；后台列表、搜索、看板 p50≤20 p99≤80；"
+      "登录稳态不设固定线（人工对照单次哈希 + 10ms），预热 p99≤3s、无 503；所有端点零 5xx、不超时。")
+    w(f"本轮节点数 {nodes}。users / nodes 用稳态窗口 [T, T+30m) 的统计；预热（users-warmup）与 burst 只有全程统计。"
+      "延迟是压测机侧测得的端到端时间（含 TLS 与同机房网络往返）；节点、订阅、后台的线本是服务端计时，按压测机端判偏严，超线不到 2ms 的注明待服务端计时复核。\n")
     w("| 文件 | 端点 | 口径 | count | p50 | p95 | p99 | max | 5xx | 超时（全程兜底） | 其他非 2xx/3xx | 目标 | 达标 |")
     w("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     fails = []
@@ -178,15 +233,17 @@ def targets(root):
         to = max(sum(v for k, v in codes.items() if k.startswith("transport:")), timeouts(e))  # 稳态 codes 可能不计 transport，取全程兜底
         other = {k: v for k, v in codes.items() if not k.startswith(("2", "3", "transport:")) and not k.startswith("5")}
         s5 = s.get("server_5xx", 0)
-        tier, lim50, lim99 = classify(ep)
+        tier, lim50, lim99 = classify(ep, nodes)
         clean = s5 == 0 and to == 0
         if tier == "stream":
             goal, ok = "长连接，只看建立", clean
+        elif tier == "login" and n == "users-warmup.json":
+            goal, ok = "登录预热：p99≤3000、无 503", clean and not codes.get("503") and p99 is not None and p99 <= 3000
         elif tier == "login":
-            goal, ok = "登录：不超时、不排队", clean and not codes.get("503")
+            goal, ok = "登录：不超时、不排队（p50 人工对照单次哈希 + 10ms）", clean and not codes.get("503")
         else:
-            goal = f"{tier} p50<{lim50} p99<{lim99}" if lim50 else f"{tier} p99<{lim99}"
-            ok = clean and p99 < lim99 and (lim50 is None or p50 < lim50)
+            goal = f"{tier} p50≤{lim50} p99≤{lim99}" if lim50 else f"{tier} p99≤{lim99}"
+            ok = clean and p99 <= lim99 and (lim50 is None or p50 <= lim50)
         if not ok:
             fails.append((n, ep, p50, p99, s5, to))
         w(f"| {n} | {ep} | {kind} | {s['count']} | {fm(p50)} | {fm(p95)} | {fm(p99)} | {fm(mx)} | {s5} | {to} | {other or ''} | {goal} | {'✅' if ok else '❌'} |")
@@ -204,15 +261,23 @@ def targets(root):
     if sw:
         bad = sw["dpin"] > 50 or sw["dpout"] > 50
         w(f"| 不换页 | 稳态内 Δpswpin={sw['dpin']}、Δpswpout={sw['dpout']}；swap 已用 {sw['used_first']:.1f}→{sw['used_last']:.1f} MB（峰 {sw['used_mb']:.1f}）；进程 VmSwap 峰值 {', '.join(f'{k} {v:.1f}MB' for k, v in sorted(vs.items(), key=lambda x: -x[1]) if v > 0) or '全 0'} | {'❌' if bad else '✅'} |")
+    if "_system" in res:
+        ncpu = cores(root)
+        pct = res["_system"][0] / ncpu
+        th = throttled(root)
+        thtxt = "、".join(f"{u} {v}" for u, v in sorted(th.items())) if th is not None else "cgroup.csv 未采"
+        ok = pct <= 60 and th is not None and not any(th.values())
+        w(f"| 1 倍负载整机 CPU ≤ 60%、网关节流 0 | 整机稳态平均 {pct:.1f}%（{ncpu} 核，含观测开销）；稳态内 Δnr_throttled：{thtxt} | {'✅' if ok else '❌'} |")
     if ga or pa:
         gtxt = "；".join(f"aegis-{g} {a}/{t} 个 goroutine 停在 Acquire" for g, (t, a) in ga.items())
         if pa:
             act = [int(r["active"]) for r in pa]
             cn = {g: max(int(r[f"conn_{g}"]) for r in pa) for g in ("public", "admin", "node")}
-            ptxt = f"pg_stat_activity aegis_app active 平均 {sum(act)/len(act):.2f}、最大 {max(act)}（{len(pa)} 次 × 10s）；各网关已建连接最大 public {cn['public']}/16、admin {cn['admin']}/15、node {cn['node']}/15"
+            ptxt = (f"pg_stat_activity aegis_app active 平均 {sum(act)/len(act):.2f}、最大 {max(act)}（{len(pa)} 次 × 10s）；"
+                    f"各网关已建连接最大 public {cn['public']}/{CONN_CAP['public']}、admin {cn['admin']}/{CONN_CAP['admin']}、node {cn['node']}/{CONN_CAP['node']}（node 含 1 条池外探针）")
         else:
             ptxt = "pg_stat_activity 未采"
-        q = any(a for _, a in ga.values()) or (pa and any(int(r[f"conn_{g}"]) >= (16 if g == "public" else 15) for r in pa for g in ("public", "admin", "node")))
+        q = any(a for _, a in ga.values()) or (pa and any(int(r[f"conn_{g}"]) >= CONN_CAP[g] for r in pa for g in ("public", "admin", "node")))
         w(f"| 连接池不排队 | {gtxt}（T+15m 的 goroutine profile）；{ptxt}。面板不导出 pgxpool.Stat()（AcquireCount/EmptyAcquireCount/AcquireDuration 拿不到），只能用这两个旁证 | {'❌' if q else '✅'} |")
     w("")
     w("## pprof CPU 前 10（T+15m 起 30 秒）\n")
@@ -349,8 +414,9 @@ def scale(dirs):
             w(f"| {'整机' if p == '_system' else p} | {k*100:+.1f} | {c0[p][0] - k*n0:.1f} |")
     k = (c1["_system"][0] - c0["_system"][0]) / (n1 - n0)
     if k > 0:
-        cap = n0 + (CORES * 50 - c0["_system"][0]) / k
-        w(f"\n整机 CPU 平均 50%（= {CORES*50} 单核百分点）对应约 **{cap:.0f} 个节点**（用户侧不变、按 {a}→{b} 的斜率线性外推）。")
+        nc = cores(dirs[0])
+        cap = n0 + (nc * 50 - c0["_system"][0]) / k
+        w(f"\n整机 CPU 平均 50%（= {nc*50} 单核百分点）对应约 **{cap:.0f} 个节点**（用户侧不变、按 {a}→{b} 的斜率线性外推）。")
     else:
         w("\n整机 CPU 没有随节点数上升（斜率 ≤ 0），外推不成立：看采样噪声与 steal。")
 

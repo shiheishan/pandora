@@ -2,6 +2,7 @@ package quiet
 
 import (
 	"bytes"
+	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
@@ -103,18 +104,21 @@ func TestReportMatchesHandComputedNumbersForBothLayouts(t *testing.T) {
 			near(t, "user", r.stat["user"], 12)
 			near(t, "system", r.stat["system"], 5)
 			near(t, "busy", r.busy, 12+5+1+0.2)
-			v := judgeCPU(r, DefaultCPULimit)
+			v := judgeCPU(r, "B", tiers["B"].cpu, tiers["B"].nginx)
 			// usage_usec 增量 / 100 s / 1e4：public 0.1、admin 0.1、node 7、postgres 10、valkey 1
 			near(t, "node", v.roles["aegis-node.service"], 7)
 			near(t, "postgres", v.roles["postgres"], 10)
 			near(t, "valkey", v.roles["valkey"], 1)
 			near(t, "panel+db", v.panelDB, 0.1+0.1+7+10+1)
 			near(t, "nginx", v.nginx, 2)
-			if !v.cpuPass || len(v.problems) != 0 {
+			if !v.cpuPass || !v.nginxPass || len(v.problems) != 0 {
 				t.Fatalf("verdict %+v", v)
 			}
-			if got := judgeCPU(r, 15).cpuPass; got {
-				t.Fatal("18.2 must fail a limit of 15")
+			if got := judgeCPU(r, "A", tiers["A"].cpu, tiers["A"].nginx); got.cpuPass || !got.nginxPass {
+				t.Fatalf("18.2 must fail tier A's 10 while nginx 2 passes its 3: %+v", got)
+			}
+			if got := judgeCPU(r, "B", 25, 1.5); got.nginxPass {
+				t.Fatal("nginx 2 must fail a ceiling of 1.5")
 			}
 			// 进程：node 的 utime+stime 增量 (1600+800-1500)=900/100=9；"a b) c" 含括号与空格，own 增量 100/100=1，子进程 40/100；新进程整段计入 100/100=1
 			byName := map[string]procRow{}
@@ -137,7 +141,8 @@ func TestRunPrintsVerdictsAndStrictFailsOnTheLimits(t *testing.T) {
 		t.Fatalf("without -strict the report is informational: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"**合计 18.20**（标准 ≤ 30）→ 过", "- postgres: 10.00", "整机已用 1084 MiB", "→ 不过", "上下文切换 4000/s", "窗口 100 秒"} {
+	for _, want := range []string{"**合计 18.20**（B 档标准 ≤ 25）→ 过", "**nginx 单列 2.00**（B 档标准 ≤ 6）→ 过", "- postgres: 10.00",
+		"整机已用 1084 MiB**（标准 ≤ 950）→ 不过", "换入、换出都为 0 → 过", "上下文切换 4000/s", "窗口 100 秒"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("report lacks %q:\n%s", want, text)
 		}
@@ -150,6 +155,12 @@ func TestRunPrintsVerdictsAndStrictFailsOnTheLimits(t *testing.T) {
 	}
 	if err := run([]string{"-dir", dir, "-strict", "-mem-limit-mib", "2048", "-cpu-limit", "10"}, &bytes.Buffer{}); err == nil {
 		t.Fatal("-strict must fail when CPU is over the limit")
+	}
+	if err := run([]string{"-dir", dir, "-strict", "-mem-limit-mib", "2048", "-tier", "A"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("-strict must fail tier A: 18.2 is over 10")
+	}
+	if err := run([]string{"-dir", dir, "-tier", "C"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("an unknown tier must be refused")
 	}
 }
 
@@ -166,7 +177,7 @@ func TestMissingGatewayIsFlaggedNotSilentlyZero(t *testing.T) {
 	a, _ := loadCPUSnapshot(dir, "A")
 	b, _ := loadCPUSnapshot(dir, "B")
 	r, _ := computeCPU(a, b, nil)
-	v := judgeCPU(r, DefaultCPULimit)
+	v := judgeCPU(r, "B", tiers["B"].cpu, tiers["B"].nginx)
 	if v.cpuPass || len(v.problems) == 0 || !strings.Contains(v.problems[0], "aegis-node.service") {
 		t.Fatalf("a missing gateway cgroup must fail the verdict loudly: %+v", v)
 	}
@@ -178,8 +189,11 @@ func TestSwapActivityIsCalledOut(t *testing.T) {
 	write(t, filepath.Join(dir, "mem-after.txt"), strings.Replace(string(raw), "pswpin 0", "pswpin 77", 1))
 	var out bytes.Buffer
 	_ = run([]string{"-dir", dir}, &out)
-	if !strings.Contains(out.String(), "发生了换页（换入 77") {
+	if !strings.Contains(out.String(), "窗口内换入 77、换出 0 页（标准都为 0）→ 不过") {
 		t.Fatalf("swap-in during the window must be flagged:\n%s", out.String())
+	}
+	if err := run([]string{"-dir", dir, "-strict", "-mem-limit-mib", "2048"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("-strict must fail on any page swapped in during the window, even under the used-memory ceiling")
 	}
 }
 
@@ -189,5 +203,56 @@ func TestBackwardsSnapshotsAreRefused(t *testing.T) {
 	var out bytes.Buffer
 	if err := run([]string{"-dir", dir}, &out); err == nil {
 		t.Fatal("snapshot B before A must be an error")
+	}
+}
+
+// 窗口内退出的子进程：父进程的 cutime 增量里有它开窗前的累计，要扣掉，只留窗口内的部分（w10quiet v3 的 postgres
+// 5.42 里 3.81 是开窗前的）；kworker 换了工作队列 comm 会变，按 starttime 认同一个进程，不当成新进程整段计入。
+func TestReapedChildrenCountOnlyTheirInWindowTicks(t *testing.T) {
+	dir := fixture(t, "native")
+	line := func(pid, ppid int, comm string, own, child, start uint64) string {
+		return itoa(uint64(pid)) + " (" + comm + ") S " + itoa(uint64(ppid)) + " 0 0 0 -1 0 0 0 0 0 " + itoa(own) + " 0 " + itoa(child) + " 0 20 0 1 0 " + itoa(start) + " 0 0\n"
+	}
+	write(t, filepath.Join(dir, "cpu-A/pidstat"), line(10, 1, "postgres", 100, 0, 5)+line(11, 10, "postgres", 300, 0, 6)+line(12, 2, "kworker/0:1-events", 10, 0, 7))
+	write(t, filepath.Join(dir, "cpu-B/pidstat"), line(10, 1, "postgres", 150, 350, 5)+line(12, 2, "kworker/0:1-mm_percpu_wq", 20, 0, 7))
+	a, _ := loadCPUSnapshot(dir, "A")
+	b, _ := loadCPUSnapshot(dir, "B")
+	r, err := computeCPU(a, b, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]procRow{}
+	for _, p := range r.procs {
+		byName[p.comm] = p
+	}
+	// 父进程自己 +50 tick；子进程开窗前 300、窗口内又跑 50 后退出，cutime +350 里只有 50 属于窗口
+	near(t, "postgres own", byName["postgres"].own, 0.5)
+	near(t, "postgres reaped", byName["postgres"].child, 0.5)
+	near(t, "kworker counted by starttime", byName["kworker/0:1-mm_percpu_wq"].own, 0.1)
+	if _, ok := byName["kworker/0:1-events"]; ok {
+		t.Fatal("the old kworker comm must not appear as a separate row")
+	}
+}
+
+func TestJSONCarriesTheVerdictForPerfGate(t *testing.T) {
+	dir := fixture(t, "docker")
+	var out bytes.Buffer
+	if err := run([]string{"-dir", dir, "-json", "-tier", "A"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var got jsonReport
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out.String())
+	}
+	near(t, "panel_db", got.CPU.PanelDB, 18.2)
+	near(t, "nginx", got.CPU.Nginx, 2)
+	if got.Tier != "A" || got.CPU.Limit != 10 || got.CPU.Pass || !got.CPU.NginxPass || got.Pass {
+		t.Fatalf("tier A verdict wrong: %+v", got)
+	}
+	if got.CPU.Throttled["aegis-node.service"] != 25 {
+		t.Fatalf("throttled = %v, want aegis-node.service 25", got.CPU.Throttled)
+	}
+	if got.Mem == nil || math.Round(got.Mem.UsedMiB) != 1084 || got.Mem.UsedPass || !got.Mem.SwapPass || got.Mem.PSSAfterMiB["postgres"] < 179 {
+		t.Fatalf("memory part wrong: %+v", got.Mem)
 	}
 }
