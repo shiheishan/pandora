@@ -59,7 +59,7 @@ func useSwitchClock(t *testing.T) *time.Time {
 	t.Helper()
 	now := time.Unix(1_700_000_000, 0)
 	old := switches
-	switches = newSwitchCache(switchCacheTTL, func() time.Time { return now })
+	switches = newSwitchCache(func() time.Time { return now })
 	t.Cleanup(func() { switches = old })
 	return &now
 }
@@ -115,13 +115,62 @@ func TestFeatureSwitchMissingRowFailsOpenAndErrorsAreNotCached(t *testing.T) {
 }
 
 func TestSwitchCacheIsBounded(t *testing.T) {
-	c := newSwitchCache(time.Minute, time.Now)
+	c := newSwitchCache(time.Now)
 	for i := 0; i < switchCacheMax*3; i++ {
-		c.put(switchTestTenant, "code-"+string(rune('a'+i%26))+strings.Repeat("x", i), true)
-		if len(c.entries) > switchCacheMax {
-			t.Fatalf("cache grew to %d entries", len(c.entries))
+		c.Put(switchCacheKey(switchTestTenant, "code-"+string(rune('a'+i%26))+strings.Repeat("x", i)), true)
+		if c.Len() > switchCacheMax {
+			t.Fatalf("cache grew to %d entries", c.Len())
 		}
 	}
+}
+
+// 同一个开关的并发未命中只读一次库；Clear 时正在读的那一趟不写回（不会在失效之后留下旧值）。
+func TestFeatureSwitchMissesCoalesceAndClearVoidsInFlightRead(t *testing.T) {
+	useSwitchClock(t)
+	q := &blockingSwitchQuerier{switchFakeQuerier: switchFakeQuerier{enabled: map[string]bool{"billing.checkout": true}},
+		started: make(chan struct{}, 16), release: make(chan struct{})}
+	ctx := context.Background()
+	const workers = 8
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// 这一趟读到的是失效之前的值（开启），等着的人照常拿到它
+			if on, err := switchEnabled(ctx, q, switchTestTenant, "billing.checkout"); !on || err != nil {
+				t.Errorf("concurrent read: on=%v err=%v", on, err)
+			}
+		}()
+	}
+	<-q.started
+	time.Sleep(20 * time.Millisecond) // 其余请求排到同一趟上
+	// 读库进行中，后台关掉了开关并让本进程失效
+	q.set("billing.checkout", false)
+	InvalidateFeatureSwitches()
+	close(q.release)
+	wg.Wait()
+	if q.calls != 1 {
+		t.Fatalf("concurrent misses read the database %d times, want 1", q.calls)
+	}
+	q.release = make(chan struct{})
+	close(q.release)
+	if on, _ := switchEnabled(ctx, q, switchTestTenant, "billing.checkout"); on {
+		t.Fatal("a read started before the invalidation was cached after it")
+	}
+}
+
+type blockingSwitchQuerier struct {
+	switchFakeQuerier
+	started chan struct{}
+	release chan struct{}
+}
+
+// QueryRowScoped 先读出值、再卡住：模拟「读到的是失效之前的旧值，回来得晚」。
+func (q *blockingSwitchQuerier) QueryRowScoped(ctx context.Context, s db.Scope, sql string, args []any, dest ...any) error {
+	err := q.switchFakeQuerier.QueryRowScoped(ctx, s, sql, args, dest...)
+	q.started <- struct{}{}
+	<-q.release
+	return err
 }
 
 // 切开关的请求经过 AdminWritesGate 后，本进程缓存立即失效：关掉 admin.writes 的下一个写请求就被拒。
