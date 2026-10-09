@@ -137,6 +137,8 @@ func TestCacheEpochPG18(t *testing.T) {
 		}
 		if len(want) > 0 {
 			t.Logf("marker=cache_epoch_pg18_ok step=%q latency=%v", name, took.Round(time.Millisecond))
+		} else {
+			t.Logf("marker=cache_epoch_pg18_quiet_ok step=%q", name) // 不该推进的写：所有纪元序列都没动
 		}
 	}
 	nodeCatalog, catalog := cacheSignal(KindNodeCatalog), cacheSignal(KindCatalog)
