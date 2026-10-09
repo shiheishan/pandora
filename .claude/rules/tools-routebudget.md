@@ -16,7 +16,7 @@ paths:
 - 口径：语句、管线批次各 1（含 BEGIN、COMMIT），COPY 2；语句准备、取连接探测（空闲 >1 秒）、非受控归还另记。pgx 批次里顺带的语句准备、显式 `Pool.Ping` 没有钩子，不记
 - 记在发起往返的 ctx 上：单飞合并读（`platform/cache`，发起者用 `context.WithoutCancel` 跑加载，值保留）记在发起者头上，等结果的请求记 0。预算测试串行发请求、量稳态，数字确定；访问日志在并发下同一路由会 0 / N 不一，看分布别看单条
 - 池级 `Pool.SessionResets()` 数真正执行过的会话清理语句：受控路径（InTx / QueryRowScoped / BatchScoped / QueryScoped）归还的连接上必须为 0。换栈接 database/sql 时用它核对 GORM 事务归还有没有多一条清理
-- Valkey 钩子要在每个网关建好客户端后挂一次：`rdb.AddHook(roundtrip.ValkeyHook{})`；挂两次重复计数
+- Valkey 钩子要在每个网关建好客户端后挂一次：`rdb.AddHook(roundtrip.ValkeyHook{})`；挂两次重复计数。每个客户端各挂一次：aegis-node 的 nonce 认领专用客户端（`nonceRDB`）也要挂，否则签名请求的 nonce SET 不进 kv_rt，与预算测试（它的 nonce 计 1 次 Valkey 往返）对不上
 - 访问日志的字段、节点网关的降级与每分钟统计见 `rules/panel-middleware.md`
 
 ## 路由登记表（`panel/tools/routebudget/routes.txt`）

@@ -113,6 +113,8 @@ func run() error {
 	// 在 PG 补查，重放照样被拦下（nodefabric/nonce_guard.go 的状态机）。
 	// nonce 认领用单独的客户端：超时 250ms 且按 ctx 期限收手（nonceRedisOptions）。
 	nonceRDB := redis.NewClient(nonceRedisOptions(redisOpt))
+	// nonce 认领同样记进访问日志的 kv_rt，与共用客户端挂同一个钩子（每个客户端只挂一次）
+	nonceRDB.AddHook(roundtrip.ValkeyHook{})
 	defer nonceRDB.Close()
 	nodeService.SetNonceStore(valkeyNonceStore{rdb: nonceRDB}, log)
 	primeCtx, cancelPrime := context.WithTimeout(ctx, 5*time.Second)
