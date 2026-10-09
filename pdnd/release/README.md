@@ -162,6 +162,16 @@ release version and architecture digest.
 默认构建只链接 NativeCore，节点配置里的 `kernel` 字段被忽略；只有 `-tags compat` 构建在 native-only 模式下才会拒绝显式的
 `kernel: "xray-core"` 与 `kernel: "sing-box"`。
 
+手工安装不经安装器的系统参数段（`pdndSysctlFunction`：conntrack、监听队列、端口范围、收发缓冲），至少要补上
+UDP 收发缓冲上限：Debian 13 缺省 `rmem_max` / `wmem_max` 是 212992，Hysteria2 / TUIC 的 quic-go 要 8MB
+拿不到，单连接大流量丢包，pdnd 启动时每个 QUIC 入站告警一次。pdnd 以无特权用户运行，不要为此给 unit 加
+`CAP_NET_ADMIN`（SO_RCVBUFFORCE），改 sysctl 上限即可，要在启动 pdnd 之前生效：
+
+```bash
+printf 'net.core.rmem_max = 16777216\nnet.core.wmem_max = 16777216\n' > /etc/sysctl.d/90-pandora-native.conf
+sysctl -p /etc/sysctl.d/90-pandora-native.conf
+```
+
 ```bash
 install -d -o pandora -g pandora -m 0750 /etc/pandora-native /var/lib/pandora-native /var/log/pandora-native
 install -o root -g root -m 0755 pandora-native-linux-amd64 /usr/local/bin/pandora-native

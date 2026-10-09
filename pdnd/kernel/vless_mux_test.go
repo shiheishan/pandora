@@ -28,9 +28,8 @@ func TestVLESSMuxUDPFrameRoundTrip(t *testing.T) {
 	}()
 
 	adapter := &vlessAdapter{
-		users:  make(map[string]core.User),
-		online: make(map[int64]map[string]struct{}),
-		plane:  &vlessUDPTestPlane{},
+		users: make(map[string]core.User),
+		plane: &vlessUDPTestPlane{},
 	}
 	client, server := net.Pipe()
 	defer client.Close()

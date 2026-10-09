@@ -210,12 +210,7 @@ func (e *lifecycleEcho) addr() *net.TCPAddr { return e.ln.Addr().(*net.TCPAddr) 
 func startLifecycleCore(t testing.TB, p lifecycleProto, users []core.User) (*NativeCore, int, string) {
 	t.Helper()
 	allowLoopbackTargets(t)
-	reserved, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := reserved.Addr().(*net.TCPAddr).Port
-	_ = reserved.Close()
+	port := reserveTCPAndUDPPort(t)
 	c := NewNativeCore(nil)
 	if err := c.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -234,6 +229,29 @@ func startLifecycleCore(t testing.TB, p lifecycleProto, users []core.User) (*Nat
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	return c, port, tag
+}
+
+// reserveTCPAndUDPPort 找一个 TCP 与 UDP 此刻都空着的端口：同一个夹具既起 TCP 入站
+// 也起 UDP / QUIC 入站，只按 TCP 预留时，号码可能正被别的测试的 UDP 客户端（临时
+// 端口）占着，入站报「端口已被占用」。
+func reserveTCPAndUDPPort(t testing.TB) int {
+	t.Helper()
+	for i := 0; i < 50; i++ {
+		tcp, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := tcp.Addr().(*net.TCPAddr).Port
+		udp, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+		_ = tcp.Close()
+		if err != nil {
+			continue
+		}
+		_ = udp.Close()
+		return port
+	}
+	t.Fatal("找不到 TCP 与 UDP 都空着的端口")
+	return 0
 }
 
 // liveSessions 是入站当前登记的在途会话数。

@@ -62,7 +62,7 @@ type ss2022Adapter struct {
 	hasUser  bool
 	sessions userSessions
 	limiters core.SpeedLimiters
-	online   map[int64]map[string]struct{}
+	online   onlineDevices
 	listener net.Listener
 	plane    DataPlane
 	connErr  connErrorReporter
@@ -118,7 +118,7 @@ func newSS2022Adapter(spec InboundSpec) (Adapter, error) {
 	if len(psks) == 0 {
 		return nil, fmt.Errorf("shadowsocks 2022 requires at least one PSK")
 	}
-	return &ss2022Adapter{spec: spec, method: parsed, psk: psks[len(psks)-1], psks: psks, online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), udp: make(map[string]*ss2022UDPSession)}, nil
+	return &ss2022Adapter{spec: spec, method: parsed, psk: psks[len(psks)-1], psks: psks, active: make(map[net.Conn]struct{}), udp: make(map[string]*ss2022UDPSession)}, nil
 }
 
 func (a *ss2022Adapter) Protocol() string {
@@ -295,10 +295,10 @@ func (a *ss2022Adapter) serveConn(ctx context.Context, conn net.Conn) error {
 	}
 	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
-	if !a.enterDevice(user, ip) {
+	if !a.online.enter(user, ip) {
 		return deviceLimitError("shadowsocks 2022")
 	}
-	defer a.leaveDevice(user, ip)
+	defer a.online.leave(user, ip)
 	sourceIP, _ := netip.ParseAddr(ip)
 	var sourcePort uint16
 	if _, p, e := net.SplitHostPort(conn.RemoteAddr().String()); e == nil {
@@ -413,41 +413,7 @@ func (a *ss2022Adapter) DelUsers(ids []string) error {
 func (a *ss2022Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	return a.sessions.snapshot(), nil
 }
-func (a *ss2022Adapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, set := range a.online {
-		for ip := range set {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
-func (a *ss2022Adapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, ok := set[ip]; !ok && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-func (a *ss2022Adapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
-}
+func (a *ss2022Adapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 func (a *ss2022Adapter) addTraffic(user core.User, upload, download int64) {
 	a.sessions.add(user.ID, upload, download)
 }

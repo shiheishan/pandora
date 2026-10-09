@@ -74,6 +74,14 @@ func (s *serverSession[U]) handleUDPMessage(message *udpMessage, udpStream bool)
 		udpConn = created
 		udpConn.sessionID = sessionID
 		s.udpAccess.Lock()
+		if s.udpClosed {
+			// 连接已断、closeUDPSessions 已拷走会话列表（Pandora 改动）：此后建的会话
+			// 没人会关，要等 udpTimeout。同一把锁里看到标记就不插入，这一包直接丢。
+			s.udpAccess.Unlock()
+			_ = created.Close()
+			message.releaseMessage()
+			return
+		}
 		s.udpConnMap[sessionID] = udpConn
 		s.udpAccess.Unlock()
 		newCtx, newConn := canceler.NewPacketConn(udpConn.ctx, udpConn, s.udpTimeout)

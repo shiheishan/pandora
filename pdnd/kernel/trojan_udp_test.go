@@ -49,7 +49,7 @@ func TestTrojanAdapterUDPForwardAndTraffic(t *testing.T) {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
-	adapter := &trojanAdapter{users: make(map[string]trojanUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	adapter := &trojanAdapter{users: make(map[string]trojanUser), active: make(map[net.Conn]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "trojan", Listen: "127.0.0.1", Port: port}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
