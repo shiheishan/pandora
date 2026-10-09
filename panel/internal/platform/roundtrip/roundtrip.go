@@ -9,6 +9,11 @@
 //   - PG18 测试逐路由断言往返预算（panel/tools/routebudget 的登记表），
 //     换栈每一步与每一路优化都靠它判断「有没有多出往返」。
 //
+// 记在谁头上：按发起往返的 ctx。进程内缓存的单飞合并读（同键并发未命中只读一次库）
+// 由发起者用 context.WithoutCancel 跑加载，WithoutCancel 保留 context 里的值，所以那次
+// 加载记在发起者头上；同时等结果的请求没碰库，记 0。逐路由预算串行发请求、量稳态，
+// 不受这种并发差异影响；访问日志里同一路由在并发下 db_rt 可能 0 / N 不一。
+//
 // 开销：计数是几次原子加；Counter 与 context 节点合在一个 Scope 里，
 // 挂计数器的那一层每请求只多一次分配（见 middleware 的访问日志）。
 package roundtrip

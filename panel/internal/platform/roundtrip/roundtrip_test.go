@@ -38,6 +38,15 @@ func TestScopeCarriesCounterAndDelegates(t *testing.T) {
 		t.Fatalf("snapshot = %+v (total %d), want %+v (total 5)", got, got.DBTotal(), want)
 	}
 
+	// 单飞合并读的发起者用 context.WithoutCancel 跑加载：取消脱钩，值（计数器）照样在，
+	// 加载的往返记在发起者头上；等结果的请求不碰库，记 0
+	detached := context.WithoutCancel(child)
+	cancel()
+	From(detached).AddDB(1)
+	if got := s.Counter.Snapshot().DB; got != 3 {
+		t.Fatalf("detached load not counted on the initiating request: db = %d, want 3", got)
+	}
+
 	var c Counter
 	if From(WithCounter(context.Background(), &c)) != &c {
 		t.Fatal("WithCounter must be found by From")
