@@ -66,7 +66,7 @@ bash $q -t <别名> .claude/skills/db-query/queries/<文件>.sql
 
 ## 坑
 
-- **巡检多半没装。** `healthcheck.sh` 与 `aegis-health.timer` 不在发布包里，按生产方式装的机器上通常没有它，也就没有那些告警。快照里 `aegis-health.timer` 显示 inactive 是常态，以快照为准。
+- **巡检从 w10rel 起随发布包装并启用。** `healthcheck.sh` 与 `aegis-health.timer` 由安装器首装与升级时装上、`enable --now`（首跑在启用后 10 分钟）。之前的版本装的机器上没有它，快照里 `aegis-health.timer` 显示 inactive 时先看面板版本：旧版是常态，新版就是装失败（安装日志里有「没能启用健康巡检」）。
 - **网关日志不在 journal 里。** `journalctl -u aegis-public` 只有启停记录，输出在 `/var/log/aegis/*.log`。证书续期和备份才看 journal（`aegis-tls-renew`、`aegis-backup`）。
 - **nginx 的 503 不一定是网关坏了。** `limit_req` 超限默认就回 503；节点路径按「来源 IP + 节点」限速，压测或一台机器上跑很多节点时常见。
 - **节点证书签发失败不会让节点离线。** 集中签发的证书还没下发到节点（`docs/node-certificates.md` 开头的说明）。节点全掉，先查面板 HTTPS 证书（第 4 章）和 aegis-node。
