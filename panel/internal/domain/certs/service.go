@@ -33,6 +33,8 @@ type Options struct {
 	DirectoryOverride string
 	// TrustedRoots 是 ACME 目录 HTTPS 证书的信任根；nil 用系统根
 	TrustedRoots *x509.CertPool
+	// LibraryEnv 是进程环境里设了的 lego 调试 / 行为开关名（platform/config 查出来的），worker 启动时告警
+	LibraryEnv []string
 
 	// ZeroSSLDirectory 覆盖备用 CA 的目录地址（测试指向第二个 pebble）
 	ZeroSSLDirectory string

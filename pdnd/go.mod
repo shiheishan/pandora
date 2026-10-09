@@ -1,6 +1,6 @@
 module github.com/aegispanel/nodeagent
 
-go 1.26.5
+go 1.26.9
 
 require (
 	github.com/anytls/sing-anytls v0.0.13

@@ -78,3 +78,13 @@ func testRootPEM(t *testing.T) []byte {
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
+
+// lego 自己读的开关：只回名字（不回值），LEGO_DEBUG_ 前缀与两个行为开关
+func TestLookupLibraryEnv(t *testing.T) {
+	got := lookupLibraryEnv([]string{"PATH=/bin", "LEGO_DEBUG_DNS_API_HTTP_CLIENT=1", "LEGO_DISABLE_CNAME_SUPPORT=true",
+		"LEGO_CA_CERTIFICATES=/x", "AEGIS_ENV=development", "LEGO_DEBUG_CLIENT_VERBOSE_ERROR=secret-ish"})
+	want := []string{"LEGO_DEBUG_CLIENT_VERBOSE_ERROR", "LEGO_DEBUG_DNS_API_HTTP_CLIENT", "LEGO_DISABLE_CNAME_SUPPORT"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("library env = %v, want %v", got, want)
+	}
+}

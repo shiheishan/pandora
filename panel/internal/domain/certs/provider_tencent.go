@@ -111,7 +111,9 @@ func (p *tencentProvider) check(ctx context.Context, zone string, write bool) (c
 		del.Domain = common.StringPtr(zone)
 		del.DomainId = found.DomainId
 		del.RecordId = created.Response.RecordId
-		if _, err := dnspod.DeleteRecordWithContext(ctx, c, del); err != nil {
+		dctx, cancel := cleanupContext(ctx)
+		defer cancel()
+		if _, err := dnspod.DeleteRecordWithContext(dctx, c, del); err != nil {
 			res.Warnings = append(res.Warnings, "校验用的 TXT 记录 "+checkRecordLabel+"."+zone+" 没删掉，请手动删除（需要 dnspod:DeleteRecord）")
 		}
 	}

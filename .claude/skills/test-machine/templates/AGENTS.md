@@ -35,7 +35,7 @@ ssh <别名> cat /root/README.md
 
 ## 红线
 
-1. **一次性测试机，用完即删。** 删机只能由用户在 Vultr 控制台操作，agent 不删、不重装、不改套餐。
+1. **一次性测试机，用完即删。** 删机只删用户在对话里点名（或明说授权）的机器，agent 用 test-machine skill 的 `vultr-delete.sh --yes` 删；不重装、不改套餐。
 2. **不放生产数据。** 只用 seed 造的虚构数据。
 3. 结果拉回 `~/ai/projects/pandora/ops-local/<目录>/`，不进仓库。
 4. 口令、后台路径前缀只留在机器上和 ops-local，不写进对话、报告。

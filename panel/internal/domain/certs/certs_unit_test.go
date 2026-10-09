@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-acme/lego/v4/acme"
 )
 
 func TestNormalizeIdentifiers(t *testing.T) {
@@ -99,45 +101,51 @@ func TestCheckLocalLimits(t *testing.T) {
 	newOnes := func(n int, ids []string, renewal bool) []recentIssuance {
 		out := make([]recentIssuance, n)
 		for i := range out {
-			out[i] = recentIssuance{identifiers: ids, isRenewal: renewal, createdAt: now.Add(-time.Duration(n-i) * time.Hour)}
+			out[i] = recentIssuance{ca: CALetsEncrypt, identifiers: ids, isRenewal: renewal, createdAt: now.Add(-time.Duration(n-i) * time.Hour)}
 		}
 		return out
 	}
 	// 每注册域每周 50 张：49 张放行，50 张拦下，退避到第 1 张满 7 天
 	var recent []recentIssuance
 	for i := range 49 {
-		recent = append(recent, recentIssuance{identifiers: []string{fmt.Sprintf("n%d.example.com", i)},
+		recent = append(recent, recentIssuance{ca: CALetsEncrypt, identifiers: []string{fmt.Sprintf("n%d.example.com", i)},
 			createdAt: now.Add(-time.Duration(50-i) * time.Hour)})
 	}
-	if d := checkLocalLimits(recent, []string{"new.example.com"}, false, false, now); d.blocked {
+	if d := checkLocalLimits(recent, []string{"new.example.com"}, CALetsEncrypt, false, false, now); d.blocked {
 		t.Fatalf("49 issued must still allow one more: %+v", d)
 	}
-	recent = append(recent, recentIssuance{identifiers: []string{"n49.example.com"}, createdAt: now.Add(-time.Hour)})
-	d := checkLocalLimits(recent, []string{"new.example.com"}, false, false, now)
+	recent = append(recent, recentIssuance{ca: CAZeroSSL, identifiers: []string{"n49.example.com"}, createdAt: now.Add(-time.Hour)})
+	d := checkLocalLimits(recent, []string{"new.example.com"}, CALetsEncrypt, false, false, now)
 	if !d.blocked || !d.retryAt.Equal(now.Add(-50*time.Hour).Add(limitWindow)) || !strings.Contains(d.reason, "example.com") {
 		t.Fatalf("50 issued must block until the oldest ages out: %+v", d)
 	}
 	// 别的注册域、续期（标识集合不变）、ARI replaces 都不受这一条影响
-	if d := checkLocalLimits(recent, []string{"new.example.net"}, false, false, now); d.blocked {
+	if d := checkLocalLimits(recent, []string{"new.example.net"}, CALetsEncrypt, false, false, now); d.blocked {
 		t.Fatal("other registered domain must not be blocked")
 	}
-	if d := checkLocalLimits(recent, []string{"new.example.com"}, true, false, now); d.blocked {
+	if d := checkLocalLimits(recent, []string{"new.example.com"}, CALetsEncrypt, true, false, now); d.blocked {
 		t.Fatal("renewals do not count against the per-domain limit")
 	}
 	// 续期不计入每域新证书：50 张续期不拦首次签发
-	if d := checkLocalLimits(newOnes(50, []string{"r.example.com"}, true), []string{"x.example.com"}, false, false, now); d.blocked {
+	if d := checkLocalLimits(newOnes(50, []string{"r.example.com"}, true), []string{"x.example.com"}, CALetsEncrypt, false, false, now); d.blocked {
 		t.Fatal("renewals must not count as new certificates")
 	}
 	// 完全相同的标识集合每周 5 张：续期也拦，ARI replaces 不拦
 	same := newOnes(5, []string{"a.example.com"}, true)
-	if d := checkLocalLimits(same, []string{"a.example.com"}, true, false, now); !d.blocked {
+	if d := checkLocalLimits(same, []string{"a.example.com"}, CALetsEncrypt, true, false, now); !d.blocked {
 		t.Fatal("five identical sets must block a sixth")
 	}
-	if d := checkLocalLimits(same, []string{"a.example.com"}, true, true, now); d.blocked {
+	if d := checkLocalLimits(same, []string{"a.example.com"}, CALetsEncrypt, true, true, now); d.blocked {
 		t.Fatal("ARI-coordinated renewals are exempt from all limits")
 	}
-	if d := checkLocalLimits(newOnes(4, []string{"a.example.com"}, true), []string{"a.example.com"}, true, false, now); d.blocked {
+	if d := checkLocalLimits(newOnes(4, []string{"a.example.com"}, true), []string{"a.example.com"}, CALetsEncrypt, true, false, now); d.blocked {
 		t.Fatal("four identical sets allow a fifth")
+	}
+	// 同一组域名的额度按 CA 分开：5 张 Let's Encrypt 不拦 staging、ZeroSSL
+	for _, ca := range []string{CALetsEncryptStaging, CAZeroSSL, CACustom} {
+		if d := checkLocalLimits(same, []string{"a.example.com"}, ca, true, false, now); d.blocked {
+			t.Fatalf("identical-set limit must be per CA, %s blocked", ca)
+		}
 	}
 }
 
@@ -211,5 +219,25 @@ func TestAliAuthRejectedRecognisesSDKErrors(t *testing.T) {
 	}
 	if _, ok := aliAuthRejected(errors.New("dial tcp: timeout")); ok {
 		t.Fatal("network errors are not credential errors")
+	}
+}
+
+// CA 说账号没了才重注册；验证失败（同样是 unauthorized，带子问题或不提账号）不算
+func TestAccountGone(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{&acme.ProblemDetails{Type: "urn:ietf:params:acme:error:accountDoesNotExist"}, true},
+		{fmt.Errorf("wrapped: %w", &acme.ProblemDetails{Type: "urn:ietf:params:acme:error:unauthorized", Detail: "Account is not valid, has status \"deactivated\""}), true},
+		{&acme.ProblemDetails{Type: "urn:ietf:params:acme:error:unauthorized", Detail: "Incorrect TXT record found",
+			SubProblems: []acme.SubProblem{{Type: "urn:ietf:params:acme:error:unauthorized"}}}, false},
+		{&acme.ProblemDetails{Type: "urn:ietf:params:acme:error:unauthorized", Detail: "No TXT record found at _acme-challenge"}, false},
+		{&acme.ProblemDetails{Type: "urn:ietf:params:acme:error:unauthorized", Detail: "requester account did not request the certificate being replaced by this order"}, false},
+		{errors.New("network"), false},
+	} {
+		if got := accountGone(tc.err); got != tc.want {
+			t.Errorf("accountGone(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }

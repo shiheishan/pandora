@@ -168,7 +168,9 @@ func (p *cloudflareProvider) check(ctx context.Context, zone string, write bool)
 	}
 	_ = json.Unmarshal(created.Result, &rec)
 	if rec.ID != "" {
-		if _, err := p.do(ctx, http.MethodDelete, "/zones/"+url.PathEscape(found.ID)+"/dns_records/"+url.PathEscape(rec.ID), nil, nil); err != nil {
+		dctx, cancel := cleanupContext(ctx)
+		defer cancel()
+		if _, err := p.do(dctx, http.MethodDelete, "/zones/"+url.PathEscape(found.ID)+"/dns_records/"+url.PathEscape(rec.ID), nil, nil); err != nil {
 			res.Warnings = append(res.Warnings, "校验用的 TXT 记录 "+checkRecordLabel+"."+zone+" 没删掉，请手动删除")
 		}
 	}

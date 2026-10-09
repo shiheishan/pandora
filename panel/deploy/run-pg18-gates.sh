@@ -148,7 +148,7 @@ DOMAINS=(
   "delivery|pandora_delivery_gate|./internal/domain/subscription ./internal/api/admin|run_id|pandora_delivery_test_marker|pandora-delivery-pg18||^(TestDeliverySetPG18|TestDeliveryAdminPG18|TestPoolUserGroupsDeliveryPG18|TestPoolUserGroupsAdminPG18|TestDeviceWindowPG18|TestDeviceWindowAdminPG18|TestNodeActivatePG18|TestNodeStatusRefusalPG18|TestRouteGroupsPG18)$"
   # 节点证书集中签发（00147 / 00148，w9cert）：先跑 configure-app-role.sql，以 aegis_app 证明证书版本没有
   # UPDATE 授权；worker 接进程内 pebble 与模拟 DNS 提供方跑签发、续期、限流与凭据失效。两个包同库，过滤写精确。
-  "certs|pandora_certs_gate|./internal/domain/certs ./internal/api/admin|run_id|pandora_certs_test_marker|pandora-certs-pg18|app_role|^(TestCertsPG18|TestCertificatesAdminPG18)$"
+  "certs|pandora_certs_gate|./internal/domain/certs ./internal/api/admin|run_id|pandora_certs_test_marker|pandora-certs-pg18|app_role|^(TestCertsPG18|TestCertsReviewPG18|TestCertificatesAdminPG18)$"
 )
 
 selected() {
