@@ -82,7 +82,7 @@ description: pandora 后台新建一个模块（侧栏多一项、`#/<模块>` �
 本地跑，go 与 `npm ci` 不要同时跑：
 
 ```bash
-cd panel && go test ./internal/api/... ./internal/platform/db/ ./internal/platform/config/ ./cmd/aegis-admin/ ./internal/domain/<x>/ ./tools/refactorcheck/
+cd panel && GOTOOLCHAIN=go<go.mod 版本> go test ./internal/api/... ./internal/platform/db/ ./internal/platform/config/ ./cmd/aegis-admin/ ./internal/domain/<x>/ ./tools/refactorcheck/
 cd panel/frontend && npm run lint && npm run typecheck && npm run test
 ```
 
