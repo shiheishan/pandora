@@ -45,6 +45,9 @@ type epochPoller struct {
 	last     int64
 	known    bool
 	failing  bool
+	// watch 是上一次看到的纪元监听戳（监听健康时不读库，比 'd' 通知的计数）。
+	watch      watchStamp
+	watchKnown bool
 }
 
 // newEpochPoller 在有库的服务上返回轮询器；测试里没有库的服务返回 nil（只走 Valkey 那一路）。
@@ -60,6 +63,13 @@ func (s *Service) newEpochPoller(tenantID string) *epochPoller {
 // 已经到了。读失败只记一次日志，等下一个周期；节点的轮询兜底。
 func (p *epochPoller) poll(ctx context.Context, q *streamPushQueue, now time.Time, log *slog.Logger) (changed, expired bool) {
 	expired = q.takeExpiryDue(now)
+	// 纪元监听健康时比 'd' 通知的计数，不读库（epoch_watch.go）；换了会话或从读库切过来都算变化。
+	if ws := p.s.watchStamp(); ws.ok() {
+		changed = !p.watchKnown || ws.session != p.watch.session || ws.delivery != p.watch.delivery
+		p.watch, p.watchKnown, p.known = ws, true, false
+		return changed, expired
+	}
+	p.watchKnown = false
 	readCtx, cancel := context.WithTimeout(ctx, nodeEpochReadTimeout)
 	epoch, err := p.s.CurrentDeliveryEpoch(readCtx, p.tenantID)
 	cancel()

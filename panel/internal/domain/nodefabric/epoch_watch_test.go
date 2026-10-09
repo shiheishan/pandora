@@ -220,3 +220,34 @@ func TestTTLCachePinnedEntriesIgnoreTTLButNotHardExpiry(t *testing.T) {
 		t.Fatalf("pinned entry served past its hard expiry: loads=%d", loads)
 	}
 }
+
+// 下发信号循环：监听健康时只比 'd' 计数、不读库（Service 没有连接池，读库会 panic）；
+// 第一次与换会话都算变化。
+func TestEpochPollerFollowsWatchWithoutDatabase(t *testing.T) {
+	svc := NewService(nil, nil)
+	svc.EnableNodeCaches()
+	w := healthyWatch(t, svc)
+	p := &epochPoller{s: svc, tenantID: "t1"}
+	q := newStreamPushQueue()
+	now := time.Now()
+	if changed, _ := p.poll(context.Background(), q, now, nil); !changed {
+		t.Fatal("first watched poll must report a change")
+	}
+	if changed, _ := p.poll(context.Background(), q, now, nil); changed {
+		t.Fatal("nothing happened but the poller reported a change")
+	}
+	w.observe("c")
+	if changed, _ := p.poll(context.Background(), q, now, nil); changed {
+		t.Fatal("a config-only notification is not a delivery change")
+	}
+	w.observe("d")
+	if changed, _ := p.poll(context.Background(), q, now, nil); !changed {
+		t.Fatal("delivery notification not reported")
+	}
+	w.disconnect()
+	w.connect()
+	w.observe("p:2")
+	if changed, _ := p.poll(context.Background(), q, now, nil); !changed {
+		t.Fatal("a new watch session must count as a change")
+	}
+}
