@@ -135,16 +135,23 @@ func (d *hy2Downlink) run() {
 	}
 }
 
-// dense 在冷态每次醒来时判断要不要进热态：当前这一段（起点起不超过
-// hy2DownlinkWarmIdle）里已经收够 hy2DownlinkWarmMinPackets 包，与热态续期同一
-// 口径。段已过期就作废，从这次醒来起新开一段：一串旧包不能让很久之后的一包进热态。
+// dense 在冷态每次醒来时判断要不要进热态，按整段判：计包段从某次醒来开始，段龄
+// 满 hy2DownlinkWarmIdle 之后的第一次醒来，看这一段的平均速率是否到每秒 500 包
+// （段内包数 × 2ms ≥ 段龄），到了就进，然后从这次醒来起新开一段。
+//
+// 和热态续期（一段 20ms 不足 10 包就出）用同一把尺子。只按「段起点起收够 10 包」
+// 判（半段判）时，一串十几包挤在几毫秒里的中低速流量（每 33ms 一串 12 包，约每秒
+// 360 包）每串都进一段热态，能把名额占满（复审 review-r4 L2）。按段龄折算速率，
+// 很久以前的一串旧包也自然不够（过期即作废）。
 func (d *hy2Downlink) dense() bool {
 	now := hy2StockNow()
-	if d.coldStart != 0 && now-d.coldStart <= int64(hy2DownlinkWarmIdle) {
-		return d.coldPackets >= hy2DownlinkWarmMinPackets
+	age := now - d.coldStart
+	if d.coldStart != 0 && age < int64(hy2DownlinkWarmIdle) {
+		return false
 	}
+	enough := d.coldStart != 0 && int64(d.coldPackets)*int64(hy2DownlinkWarmIdle/hy2DownlinkWarmMinPackets) >= age
 	d.coldStart, d.coldPackets = now, 0
-	return false
+	return enough
 }
 
 // warmHeld 在占到热态名额后跑热态，返回时归还名额（含 panic）。
@@ -183,40 +190,62 @@ type hy2CopiedPacket struct {
 	source M.Socksaddr
 }
 
+// hy2DownlinkCopyBudget 是冷态一次复制的容量上限（按分配到的缓冲容量算），与 2 包
+// 小组一样大：卡在写回的冷态会话复制出的缓冲不超过它。hy2 单包上限 4096
+// （protocol.MaxUDPSize），32 包恰好 128KB，不会超出；TUIC 单包可到 0xffff，大包时
+// 一批里超出的部分不复制，见 readCopied。
+const hy2DownlinkCopyBudget = hy2DownlinkProbeBatch * hy2UDPMaxDatagram
+
 // readCopied 借一组收包缓冲非阻塞收一次，把包复制进 d.copied，归还缓冲后返回包数与
 // 这次最多能收的包数。wantBatch 时先试借批量组。
+//
+// 复制按 hy2DownlinkCopyBudget 封顶（复审 review-r4 L1）：批量组一次收到的大包超出
+// 上限时，先写回已复制的，再从批量组里零拷贝写回剩下的，写完才归还批量组。卡住时
+// 占着的是批量组，受批量名额（全局）与用户份额约束；不封顶的话，复制完立刻还名额，
+// 每个卡住的会话都能各复制 32 个大包（32×64KB = 2MB），常驻就不再受名额约束。
 func (d *hy2Downlink) readCopied(wantBatch bool) (n, size int, ok bool) {
 	probe := d.probe()
 	if wantBatch && d.size > probe {
 		if batch, got := d.share.acquireBatchGroup(); got {
 			defer d.share.releaseBatchGroup(batch)
-			n, ok = d.copyRead(batch.messages[:d.size])
+			messages := batch.messages[:d.size]
+			n, copied, ok := d.copyRead(messages)
+			if ok && copied < n {
+				ok = d.writeCopied() && hy2WriteDownlinkMessages(d.conn, messages[copied:n], d.down)
+			}
 			return n, d.size, ok
 		}
 	}
 	group := hy2DownlinkProbeStock.get()
 	defer hy2DownlinkProbeStock.put(group)
-	n, ok = d.copyRead(group.messages[:probe])
+	n, _, ok = d.copyRead(group.messages[:probe])
 	return n, probe, ok
 }
 
-// copyRead 非阻塞地收一批，逐包复制进 d.copied（见 read 的错误语义）。
-func (d *hy2Downlink) copyRead(messages []ipv4.Message) (int, bool) {
+// copyRead 非阻塞地收一批，逐包复制进 d.copied，复制的容量到 hy2DownlinkCopyBudget
+// 为止；返回收到的包数与复制了的包数（见 read 的错误语义）。
+func (d *hy2Downlink) copyRead(messages []ipv4.Message) (int, int, bool) {
 	n, err := d.src.ReadBatch(messages, hy2UDPDontWaitFlag)
 	if err != nil {
 		if errors.Is(err, os.ErrDeadlineExceeded) {
-			return 0, d.ctx.Err() == nil
+			return 0, 0, d.ctx.Err() == nil
 		}
-		return 0, isHy2UDPWouldBlock(err)
+		return 0, 0, isHy2UDPWouldBlock(err)
 	}
+	spent := 0
 	for i := range messages[:n] {
 		message := &messages[i]
 		data := buf.NewSize(message.N)
+		if spent+data.Cap() > hy2DownlinkCopyBudget {
+			data.Release()
+			return n, i, true
+		}
+		spent += data.Cap()
 		_, _ = data.Write(message.Buffers[0][:message.N])
 		d.copied = append(d.copied, hy2CopiedPacket{data: data, source: hy2MessageSource(message)})
 		message.Addr = nil
 	}
-	return n, true
+	return n, n, true
 }
 
 // writeCopied 按序写回复制出来的包。WritePacket 接手缓冲（写完或出错都由它归还）。

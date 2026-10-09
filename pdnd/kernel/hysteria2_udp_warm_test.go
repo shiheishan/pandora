@@ -20,7 +20,8 @@ func TestHy2DownlinkMediumRateOneReadPerPacket(t *testing.T) {
 	src := newFakeUpstream()
 	conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
 	wait := runTestDownlink(conn, src, 5000)
-	const packets = 1000
+	// 3000 包（约 0.9 秒）：进热态要先在冷态满一段 20ms，量的是稳态。
+	const packets = 3000
 	start := time.Now()
 	for i := range packets {
 		// 每 300µs 一包（约 3300 包/秒）：忙等，不靠计时器精度。
@@ -34,7 +35,7 @@ func TestHy2DownlinkMediumRateOneReadPerPacket(t *testing.T) {
 	wait()
 	perPacket := float64(calls) / packets
 	t.Logf("中速 %d 包：收包调用 %d 次，每包 %.2f 次", packets, calls, perPacket)
-	if perPacket > 1.5 {
+	if perPacket > 1.1 {
 		t.Fatalf("每包 %.2f 次收包调用：中速时没进热态", perPacket)
 	}
 }
@@ -233,10 +234,7 @@ func TestHy2DownlinkClearDeadlineRacesCancel(t *testing.T) {
 		d.run()
 	}()
 	// 包来得密进热态，停下后等窗口到期回冷态、清截止。
-	for range 20 {
-		src.push(make([]byte, 10))
-		time.Sleep(200 * time.Microsecond)
-	}
+	feedUntilWarm(t, src.fakeUpstream)
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -436,31 +434,36 @@ func TestHy2DownlinkPairedLowRateStaysCold(t *testing.T) {
 	}
 }
 
-// 冷态计包段只认最近的：一串 12 包之后静默 100ms 再来一包，不该凭那串旧包进热态；
-// 静默只有 5ms 时则应进（每秒 500 包以上）。去掉「过期的段作废」，前一种也进。
+// 冷态计包段按段龄折算速率：一串 12 包之后静默 100ms 再来一包，不该凭那串旧包进热态；
+// 每毫秒一包持续一段（20ms）以上则应进。去掉「按段龄折算」（只看段内包数），前一种也进。
 func TestHy2DownlinkStaleColdCountDoesNotWarm(t *testing.T) {
-	for _, tc := range []struct {
-		pause time.Duration
-		warm  bool
-	}{{100 * time.Millisecond, false}, {5 * time.Millisecond, true}} {
-		t.Run(tc.pause.String(), func(t *testing.T) {
-			src := newFakeUpstream()
-			conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
-			wait := runTestDownlinkWarm(conn, src, 61000, newHy2WarmLimit(8))
-			burst := make([][]byte, 12)
-			for i := range burst {
-				burst[i] = make([]byte, 10)
-			}
-			src.push(burst...)
-			waitDownlink(t, "收完那一串", func() bool { return conn.writes.Load() == 12 })
-			time.Sleep(tc.pause)
-			src.push(make([]byte, 10))
-			waitDownlink(t, "收到后来的一包", func() bool { return conn.writes.Load() == 13 })
-			src.close()
-			wait()
-			if warmed := src.armed.Load() > 0; warmed != tc.warm {
-				t.Fatalf("一串 12 包、静默 %v 后再来一包：进热态=%v，期望 %v", tc.pause, warmed, tc.warm)
-			}
-		})
-	}
+	t.Run("stale-burst", func(t *testing.T) {
+		src := newFakeUpstream()
+		conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
+		wait := runTestDownlinkWarm(conn, src, 61000, newHy2WarmLimit(8))
+		burst := make([][]byte, 12)
+		for i := range burst {
+			burst[i] = make([]byte, 10)
+		}
+		src.push(burst...)
+		waitDownlink(t, "收完那一串", func() bool { return conn.writes.Load() == 12 })
+		time.Sleep(100 * time.Millisecond)
+		src.push(make([]byte, 10))
+		waitDownlink(t, "收到后来的一包", func() bool { return conn.writes.Load() == 13 })
+		src.close()
+		wait()
+		if src.armed.Load() > 0 {
+			t.Fatal("一串 12 包、静默 100ms 后再来一包：进了热态")
+		}
+	})
+	t.Run("sustained", func(t *testing.T) {
+		src := newFakeUpstream()
+		conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
+		wait := runTestDownlinkWarm(conn, src, 61001, newHy2WarmLimit(8))
+		pushed := feedUntilWarm(t, src)
+		waitDownlink(t, "收完", func() bool { return conn.writes.Load() == pushed })
+		src.close()
+		wait()
+		t.Logf("每毫秒一包，第 %d 包后进热态", pushed)
+	})
 }

@@ -10,7 +10,7 @@ import (
 // hy2 / TUIC UDP 转发借还的收发缓冲：存货表、批量名额与每用户份额。
 //
 // 存货表（hy2Stock）借时有存货就拿、没有才新分配，还回来一律收下，借还本身
-// 从不丢弃、不重新分配；存货只在整段 hy2StockIdle 没被借过时才由后台回收。
+// 从不丢弃、不重新分配；存货只在整段闲置时长（每张表各自定）没被借过时才由后台回收。
 // 所以常驻量 = 最近一段时间里同时借出的峰值，借还不随 GC 或换 P 抖动。
 //
 // 不用 sync.Pool：它按 P 存放，还进某个 P 私有槽的那组别的 P 拿不到，goroutine
@@ -20,10 +20,18 @@ import (
 // 时有停顿，2 秒新分配 2425 组、TotalAlloc 5.1GB）。
 
 const (
-	// hy2StockIdle 是存货多久没被借过就回收。一阵并发高峰（许多会话同时卡在写回）
-	// 借出的组用完就闲着，留得越久常驻越高（VPC 复测 1024 会话：30 秒时高峰后仍留
-	// 约 100MB）；常用的组总在栈顶、持续被借，5 秒回收不会让稳态反复分配。
-	hy2StockIdle = 5 * time.Second
+	// hy2DownlinkStockIdle 是下行收包组存货多久没被借过就回收。一阵并发高峰（许多会话
+	// 同时收积压）借出的组用完就闲着，留得越久常驻越高（下行组 128KB / 2MB；VPC 复测
+	// 1024 会话：30 秒时高峰后仍留约 100MB）；常用的组总在栈顶、持续被借，5 秒回收不会
+	// 让稳态反复分配。
+	hy2DownlinkStockIdle = 5 * time.Second
+	// hy2UplinkStockIdle 是上行凑批缓冲存货的回收时长，比下行长：本机探针（64 会话、
+	// 每 7 秒一阵 32 包上行，40 秒）5 秒回收时每阵都重新分配，新分配 43–79 次、TotalAlloc
+	// 27–46MB，30 秒时 13–23 次、12–17MB，GC 也多 1–2 次。上行组按用到的条数逐条分配
+	// （每条 16KB），高峰占用比下行组小，留 30 秒（与第 4 轮之前相同）。
+	hy2UplinkStockIdle = 30 * time.Second
+	// hy2StockJanitorTick 是后台回收的检查间隔（取各表回收时长里最短的）。
+	hy2StockJanitorTick = hy2DownlinkStockIdle
 )
 
 // hy2StockEpoch 是存货时间戳的起点（单调时钟）。
@@ -46,9 +54,9 @@ type hy2Stock[T any] struct {
 	allocs atomic.Int64
 }
 
-func newHy2Stock[T any](alloc func() *T) *hy2Stock[T] {
+func newHy2Stock[T any](idle time.Duration, alloc func() *T) *hy2Stock[T] {
 	s := &hy2Stock[T]{alloc: alloc}
-	hy2StockJanitor.register(s.trim)
+	hy2StockJanitor.register(func(now int64) { s.trim(now - int64(idle)) })
 	return s
 }
 
@@ -97,17 +105,17 @@ func (s *hy2Stock[T]) size() int {
 	return len(s.items)
 }
 
-// hy2StockJanitor 每 hy2StockIdle 回收一次各存货表里闲置的缓冲；第一次借缓冲时
-// 才起，进程内只有一个。
+// hy2StockJanitor 每 hy2StockJanitorTick 回收一次各存货表里闲置超过各自时长的缓冲；
+// 第一次借缓冲时才起，进程内只有一个。
 var hy2StockJanitor hy2Janitor
 
 type hy2Janitor struct {
 	once  sync.Once
 	mu    sync.Mutex
-	trims []func(before int64)
+	trims []func(now int64)
 }
 
-func (j *hy2Janitor) register(trim func(before int64)) {
+func (j *hy2Janitor) register(trim func(now int64)) {
 	j.mu.Lock()
 	j.trims = append(j.trims, trim)
 	j.mu.Unlock()
@@ -116,21 +124,21 @@ func (j *hy2Janitor) register(trim func(before int64)) {
 func (j *hy2Janitor) start() {
 	j.once.Do(func() {
 		go func() {
-			ticker := time.NewTicker(hy2StockIdle)
+			ticker := time.NewTicker(hy2StockJanitorTick)
 			defer ticker.Stop()
 			for range ticker.C {
-				j.run(hy2StockNow() - int64(hy2StockIdle))
+				j.run(hy2StockNow())
 			}
 		}()
 	})
 }
 
-func (j *hy2Janitor) run(before int64) {
+func (j *hy2Janitor) run(now int64) {
 	j.mu.Lock()
-	trims := append([]func(before int64){}, j.trims...)
+	trims := append([]func(now int64){}, j.trims...)
 	j.mu.Unlock()
 	for _, trim := range trims {
-		trim(before)
+		trim(now)
 	}
 }
 
@@ -151,9 +159,9 @@ func (j *hy2Janitor) run(before int64) {
 var (
 	hy2DownlinkBatchSlots    = make(chan struct{}, 8*runtime.GOMAXPROCS(0))
 	hy2DownlinkBatchPerUser  = int32(max(1, cap(hy2DownlinkBatchSlots)/4))
-	hy2DownlinkBatchStock    = newHy2Stock(func() *hy2DownlinkGroup { return newHy2DownlinkGroup(hy2UDPBatch) })
-	hy2DownlinkProbeStock    = newHy2Stock(func() *hy2DownlinkGroup { return newHy2DownlinkGroup(hy2DownlinkProbeBatch) })
-	hy2UplinkBatchStock      = newHy2Stock(func() *hy2UplinkBatch { return new(hy2UplinkBatch) })
+	hy2DownlinkBatchStock    = newHy2Stock(hy2DownlinkStockIdle, func() *hy2DownlinkGroup { return newHy2DownlinkGroup(hy2UDPBatch) })
+	hy2DownlinkProbeStock    = newHy2Stock(hy2DownlinkStockIdle, func() *hy2DownlinkGroup { return newHy2DownlinkGroup(hy2DownlinkProbeBatch) })
+	hy2UplinkBatchStock      = newHy2Stock(hy2UplinkStockIdle, func() *hy2UplinkBatch { return new(hy2UplinkBatch) })
 	hy2DownlinkBatchShares   = hy2BatchShares{byUser: make(map[int64]*hy2BatchShare)}
 	errHy2BatchShareReleased = "hy2 batch share released twice"
 )

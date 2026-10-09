@@ -135,10 +135,12 @@ type downlinkTestConn struct {
 	writes atomic.Int64
 	after  int64
 	hold   chan struct{}
-	every  int64
-	delay  time.Duration
-	check  func([]byte) bool
-	bad    atomic.Int64
+	// blockAt 非 0 时写回第 blockAt+1 包起卡住（运行中设定，配合 hold）。
+	blockAt atomic.Int64
+	every   int64
+	delay   time.Duration
+	check   func([]byte) bool
+	bad     atomic.Int64
 }
 
 func (c *downlinkTestConn) WritePacket(buffer *buf.Buffer, _ M.Socksaddr) error {
@@ -149,7 +151,7 @@ func (c *downlinkTestConn) WritePacket(buffer *buf.Buffer, _ M.Socksaddr) error 
 			c.bad.Add(1)
 		}
 	}
-	if c.hold != nil && n > c.after {
+	if c.hold != nil && (n > c.after || (c.blockAt.Load() > 0 && n > c.blockAt.Load())) {
 		<-c.hold
 	}
 	if c.every > 0 && n%c.every == 0 {
@@ -321,25 +323,40 @@ func TestHy2DownlinkCrossSessionIsolation(t *testing.T) {
 // holderWarm 是卡住会话用的热态名额（足够大，不让热态名额成为变量）。
 var holderWarm = newHy2WarmLimit(4096)
 
-// startWarmHolder 起一个占着批量组卡在写回的会话：冷态先来 12 包（复制写回、计进计包
-// 段），20ms 内再来 6 包，进热态；热态小组收满 2 包后借批量组收剩下 4 包，写回第 15 包
-// 时卡住，占着批量组直到 hold 关闭。冷态复制写回、不占收包组，只有热态会这样占着。
+// startWarmHolder 起一个占着批量组卡在写回的会话：每毫秒一包直到进热态，再来 6 包；
+// 热态小组收满 2 包后借批量组收剩下 4 包，写回其中第一包时卡住，占着批量组直到 hold
+// 关闭。冷态复制写回、不占收包组，只有热态会这样占着。
 func startWarmHolder(t *testing.T, user int64, hold chan struct{}) (*fakeUpstream, func()) {
 	t.Helper()
 	src := newFakeUpstream()
-	conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn(), after: 14, hold: hold}
+	conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn(), after: 1 << 62, hold: hold}
 	wait := runTestDownlinkWarm(conn, src, user, holderWarm)
-	packets := func(n int) [][]byte {
-		out := make([][]byte, n)
-		for i := range out {
-			out[i] = make([]byte, 100)
-		}
-		return out
+	pushed := feedUntilWarm(t, src)
+	waitDownlink(t, "写回进热态之前的包", func() bool { return conn.writes.Load() == pushed })
+	conn.blockAt.Store(pushed + 2)
+	burst := make([][]byte, 6)
+	for i := range burst {
+		burst[i] = make([]byte, 100)
 	}
-	src.push(packets(12)...)
-	waitDownlink(t, "冷态写回 12 包", func() bool { return conn.writes.Load() == 12 })
-	src.push(packets(6)...)
+	src.push(burst...)
 	return src, wait
+}
+
+// feedUntilWarm 每毫秒给会话一包，直到它进了热态（设过读截止），返回推了多少包。
+// 进热态要一段 20ms 里平均每秒 500 包以上，所以至少推满一段。
+func feedUntilWarm(t *testing.T, src *fakeUpstream) int64 {
+	t.Helper()
+	var pushed int64
+	deadline := time.Now().Add(5 * time.Second)
+	for src.armed.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("每毫秒一包推了 5 秒还没进热态")
+		}
+		src.push(make([]byte, 100))
+		pushed++
+		time.Sleep(time.Millisecond)
+	}
+	return pushed
 }
 
 // 名额占满（审查探针 2）：许多用户各有会话卡在写回、占满全局名额后，新会话照常
@@ -448,17 +465,20 @@ func TestHy2DownlinkPerUserShare(t *testing.T) {
 type panicTestConn struct {
 	*memTestClientConn
 	writes atomic.Int64
+	// panicAt 非 0 时写回第 panicAt+1 包起 panic。
+	panicAt atomic.Int64
 }
 
 func (c *panicTestConn) WritePacket(*buf.Buffer, M.Socksaddr) error {
-	if c.writes.Add(1) > 14 {
+	n := c.writes.Add(1)
+	if at := c.panicAt.Load(); at > 0 && n > at {
 		panic("写回 panic")
 	}
 	return nil
 }
 
 // 写回 panic（会话由 goGuarded 兜住）时名额、份额与热态名额照样归还（审查探针 3）：
-// 冷态 12 包之后 20ms 内再来 6 包进热态，借批量组收的那批写回时 panic。
+// 每毫秒一包直到进热态，再来 6 包，借批量组收的那批写回时 panic。
 func TestHy2DownlinkSlotReturnedOnPanic(t *testing.T) {
 	src := newFakeUpstream()
 	conn := &panicTestConn{memTestClientConn: newMemTestClientConn()}
@@ -473,22 +493,20 @@ func TestHy2DownlinkSlotReturnedOnPanic(t *testing.T) {
 		d := &hy2Downlink{ctx: context.Background(), conn: conn, src: src, size: hy2UDPBatch, share: share, down: &down, warmLimit: warm}
 		d.run()
 	}()
-	burst := func(n int) {
-		out := make([][]byte, n)
-		for i := range out {
-			out[i] = make([]byte, 10)
-		}
-		src.push(out...)
+	pushed := feedUntilWarm(t, src)
+	waitDownlink(t, "写回进热态之前的包", func() bool { return conn.writes.Load() == pushed })
+	conn.panicAt.Store(pushed + 2)
+	burst := make([][]byte, 6)
+	for i := range burst {
+		burst[i] = make([]byte, 10)
 	}
-	burst(12)
-	waitDownlink(t, "冷态写回 12 包", func() bool { return conn.writes.Load() == 12 })
-	burst(6)
+	src.push(burst...)
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("写回 panic 之后下行没有结束")
 	}
-	if conn.writes.Load() <= 14 {
+	if conn.writes.Load() <= pushed+2 {
 		t.Fatalf("没走到热态批量组写回（写回 %d 次）", conn.writes.Load())
 	}
 	if len(hy2DownlinkBatchSlots) != 0 || share.held.Load() != 0 || warm.inUse() != 0 || share.warm.Load() != 0 {
