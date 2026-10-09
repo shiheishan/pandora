@@ -31,6 +31,7 @@ paths:
   - 停服之前跑 `check-migrations.sh` 完整预检（`PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER=yes` 加 `PANDORA_PRECHECK_ATTESTATION_OUT`），失败就退出，服务没停；
   - 停服之后 `migrate.sh up` 带 `PANDORA_PRECHECK_ATTESTATION`，只核凭据；`PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes` 只在这一步给，安装器自己不写、也不写进 `.env`；
   - 迁移失败把服务拉回来，所以新程序在迁移成功之后才装（install-native.sh 也是）。
+  - 带口令的迁移 DSN 经 `pandora_scrubbed_run`（函数内清环境再 export、exec）交给 migrate.sh / check-migrations.sh，不经 `env -i NAME=VALUE`：env(1) 会把参数写进自己的命令行，口令 ps 可见。守卫在同一个测试里（桩 env 记 argv，出现口令即红）
   - 守卫：`install-migrate-order_mock_test.sh`
 - 桩测试与静态检查（`*_mock_test.sh`、`*_static_test.sh`）不需要数据库；与安装、迁移、nginx、发布物绑定相关的，CI 的 `.github/workflows/panel-deploy.yml` 逐个点名跑，新增这类测试要补进那份清单
   - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root。前者在 panel-deploy 的 deploy-root-mock-tests job 里用 runner 的免密 sudo 跑（只在 GitHub 上，检查机明说跳过）
