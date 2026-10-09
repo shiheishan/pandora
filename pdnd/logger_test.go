@@ -14,14 +14,15 @@ import (
 func TestInstallLoggerRoutesPackageLevelLogs(t *testing.T) {
 	prev, prevFlags := slog.Default(), log.Flags()
 	t.Cleanup(func() {
+		slog.SetLogLoggerLevel(slog.LevelInfo)
 		slog.SetDefault(prev)
 		log.SetOutput(os.Stderr)
 		log.SetFlags(prevFlags)
 	})
 	var out bytes.Buffer
-	installLogger("info", &out)
+	installLogger("warn", &out)
 	slog.Warn("包级告警", "port", 20450)
-	slog.Debug("低于 log_level 的包级日志")
+	slog.Info("低于 log_level 的包级日志")
 	log.Print("标准库日志")
 	got := out.String()
 	if !strings.Contains(got, `level=WARN msg=包级告警 port=20450`) {
@@ -30,9 +31,10 @@ func TestInstallLoggerRoutesPackageLevelLogs(t *testing.T) {
 	if strings.Contains(got, "低于 log_level") {
 		t.Fatalf("包级 slog 不受 log_level 约束：%q", got)
 	}
-	// 标准库 log（依赖库常用）按 INFO 转进同一个 handler。
-	if !strings.Contains(got, `level=INFO msg=标准库日志`) {
-		t.Fatalf("标准库 log 没转进进程日志：%q", got)
+	// 标准库 log（依赖库与 net/http 的 panic 日志）按 WARN 转进同一个 handler：
+	// log_level=warn 时也不能被吞。
+	if !strings.Contains(got, `level=WARN msg=标准库日志`) {
+		t.Fatalf("标准库 log 没按 WARN 转进进程日志：%q", got)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
 		if !strings.HasPrefix(line, "time=") {

@@ -117,6 +117,8 @@ func (a *naiveAdapter) Start(parent context.Context, spec InboundSpec, hooks Ada
 	a.ctx, a.cancel = context.WithCancel(parent)
 	server := newInboundHTTPServer(http.HandlerFunc(a.serveHTTP), 64<<10)
 	server.BaseContext = func(net.Listener) context.Context { return a.ctx }
+	// TLS 在 tls.NewListener 里、由 net/http 握手：失败只出现在 ErrorLog，接到 connErr。
+	server.ErrorLog = inboundHTTPErrorLog(a.connErr)
 	if err := http2.ConfigureServer(server, &http2.Server{}); err != nil {
 		_ = ln.Close()
 		a.cancel()
