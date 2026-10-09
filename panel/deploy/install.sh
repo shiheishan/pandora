@@ -211,7 +211,8 @@ print_install_summary() {
 # 标准错误并返回 1。
 #   pandora_entry_layout <docker 布局目录> <直装目录> <PANDORA_LAYOUT 的值>
 # 口径与 install-native.sh 的 native_plain_mode_guard、release-stop-the-world.sh 的 default_app_dir 一致：
-#   - 迁完的直装（state=done 且直装 .env 在），或本来就只有直装 → native；这时要 docker 布局一律拒绝；
+#   - 迁完的直装（state=done、直装 .env 在、docker 的已改名），或本来就只有直装 → native；这时要 docker 布局一律拒绝；
+#   - state=done 而两个 .env 都在（收尾改名没成）→ 停下，要人改名；
 #   - state=done 而直装 .env 不在、docker 的在：退回过 Docker（退回步骤漏了把状态文件改名）→ 只有
 #     显式 PANDORA_LAYOUT=docker 才按 docker 升级，否则停下说清楚；
 #   - 迁移切换了还没收尾 → 停下，先 install-native.sh --from-docker 收尾；
@@ -228,6 +229,10 @@ pandora_entry_layout() {
   [ ! -f "$2/deploy/from-docker.state" ] \
     || state="$(awk -F= '$1 == "state" { sub(/^[^=]*=/, ""); print; exit }' "$2/deploy/from-docker.state")"
   if [ "$state" = done ]; then
+    if [ -f "$native_env" ] && [ -f "$docker_env" ]; then
+      echo "记录说已经从 Docker 迁完，可直装（$2）与 docker 布局（$1）的 .env 都在（收尾时改名没成？）：确认哪套在服务（systemctl cat aegis-public 看 ExecStart），把不用的那套的 deploy/.env 改名（不删），再重跑" >&2
+      return 1
+    fi
     if [ -f "$native_env" ]; then
       if [ "$want" = docker ]; then
         echo "这台已经从 Docker 迁到直装（$2），不再按 docker 布局装；升级直接跑 install-native.sh" >&2
@@ -286,9 +291,14 @@ fi
 # 全新安装、以及已经是直装（含从 Docker 迁完）的机器交给 install-native.sh（同一个发布包、同一套
 # 环境变量）；要 docker 布局显式给 PANDORA_LAYOUT=docker。只装着 docker 布局的机器照旧在这里升级，
 # 收尾提示怎么迁到直装。判断见 pandora_entry_layout
-# 两个目录的 PANDORA_ENTRY_* 覆盖只给桩测试用（install-native_fromdocker_mock_test.sh 拿临时目录造场景）
-NATIVE_DEST="${PANDORA_ENTRY_NATIVE_DIR:-/opt/pandora}"
-ENTRY_DOCKER_DIR="${PANDORA_ENTRY_DOCKER_DIR:-$DEST}"
+# 两个目录的 PANDORA_ENTRY_* 覆盖只给桩测试用（install-native_fromdocker_mock_test.sh 拿临时目录造场景），
+# 而且要同时开着测试开关 PANDORA_ENTRY_TEST=1 才认：生产环境里误设了其中一个不起作用
+NATIVE_DEST=/opt/pandora
+ENTRY_DOCKER_DIR="$DEST"
+if [ "${PANDORA_ENTRY_TEST:-}" = 1 ]; then
+  NATIVE_DEST="${PANDORA_ENTRY_NATIVE_DIR:-$NATIVE_DEST}"
+  ENTRY_DOCKER_DIR="${PANDORA_ENTRY_DOCKER_DIR:-$ENTRY_DOCKER_DIR}"
+fi
 ENTRY_LAYOUT="$(pandora_entry_layout "$ENTRY_DOCKER_DIR" "$NATIVE_DEST" "${PANDORA_LAYOUT:-}")" \
   || die "没动手：按上面的提示处理后重跑"
 if [ "$ENTRY_LAYOUT" = native ]; then

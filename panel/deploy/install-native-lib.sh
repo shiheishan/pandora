@@ -202,17 +202,21 @@ native_check_db_encoding() {
   return 0
 }
 
-# 只换一个库里的对象属主：REASSIGN OWNED 会顺带改集群级对象（别的库）的属主，所以先记下这个角色名下的
-# 别的库，换完原样改回；目标库本身给 <库属主>。以 postgres 经本地 socket 跑
+# 只换一个库里的对象属主：REASSIGN OWNED 会顺带改集群级对象（别的库）的属主。「REASSIGN、给库定属主、把源角色
+# 名下的别的库改回」放在一次 psql 的一个事务里，库名在服务端用 format('%I') 生成、经 \gexec 执行，不经过 shell。
+# 以 postgres 经本地 socket 跑
 #   native_reassign_in_db <端口> <库> <原角色> <新角色> <库属主>
 native_reassign_in_db() {
-  local port="$1" db="$2" from="$3" to="$4" owner="$5" others o
-  others="$(native_pg_peer -p "$port" -d postgres -Atc "SELECT datname FROM pg_catalog.pg_database WHERE datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = '$from') AND datname <> '$db'")" || return 1
-  native_pg_peer -p "$port" -d "$db" -c "REASSIGN OWNED BY \"$from\" TO \"$to\"" -c "ALTER DATABASE \"$db\" OWNER TO \"$owner\"" >/dev/null || return 1
-  while IFS= read -r o; do
-    [ -n "$o" ] || continue
-    native_pg_peer -p "$port" -d postgres -c "ALTER DATABASE \"$o\" OWNER TO \"$from\"" >/dev/null || return 1
-  done <<<"$others"
+  native_pg_peer -p "$1" -d "$2" -v db="$2" -v src="$3" -v dst="$4" -v owner="$5" >/dev/null <<'SQL'
+BEGIN;
+CREATE TEMP TABLE pandora_reassign_other_dbs ON COMMIT DROP AS
+  SELECT datname FROM pg_catalog.pg_database
+   WHERE datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = :'src') AND datname <> :'db';
+REASSIGN OWNED BY :"src" TO :"dst";
+SELECT pg_catalog.format('ALTER DATABASE %I OWNER TO %I', :'db', :'owner') \gexec
+SELECT pg_catalog.format('ALTER DATABASE %I OWNER TO %I', datname, :'src') FROM pandora_reassign_other_dbs \gexec
+COMMIT;
+SQL
 }
 
 #------------------------------------------------------------------------------

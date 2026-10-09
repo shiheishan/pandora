@@ -87,7 +87,7 @@ eval "$(extract_fn backup-postgres.sh pandora_pg)"
 # --- restore-postgres.sh 的恢复步骤：抽出函数、换上桩跑真调用 -----------------------------------
 # （整个脚本要 Linux root 与 /proc 绑定的 .env，本机跑不了；这几个函数就是它在正式库上做的事）
 for fn in archive_role_plan ensure_restore_roles create_target_db restore_into_target reassign_source_migrator \
-    legacy_privilege_repair_sql repair_legacy_privileges; do
+    repair_legacy_privileges; do
   eval "$(extract_fn restore-postgres.sh "$fn")"
   declare -F "$fn" >/dev/null || fail "restore-postgres.sh has no $fn"
 done
@@ -104,6 +104,7 @@ pandora_pg() {
       return 0 ;;
     *'SELECT current_user'*) cat "$T/me"; return 0 ;;
     *'-d aegis_legacy -v ON_ERROR_STOP=1') cat >"$T/repair.stdin"; return 0 ;;
+    *' -v src='*) cat >"$T/reassign.stdin"; return 0 ;;
     'pg_restore -d '*) cat >"$T/restore.stdin"; return 0 ;;
   esac
   return 0
@@ -143,52 +144,90 @@ grep -qx 'psql -X -d postgres -v ON_ERROR_STOP=1 -c CREATE ROLE "aegis_idempoten
 if grep -q 'CREATE ROLE "aegis_app"' "$T/pg.calls"; then fail 'an existing role was recreated'; fi
 # 认不出的角色：停下，不建
 if ( ensure_restore_roles "$(printf 'role intruder\n')" ) >/dev/null 2>&1; then fail 'an unknown role was accepted'; fi
-# 迁移角色换成本机的，临时角色删掉
-: >"$T/pg.calls"; echo aegis >"$T/me"; target_db=aegis; : >"$T/owned-dbs"
+# 迁移角色换成本机的：一次 psql、一个事务；库名在服务端 format('%I') 生成、\gexec 执行，不经过 shell
+: >"$T/pg.calls"; echo aegis >"$T/me"; target_db=aegis; POSTGRES_USER=aegis
 reassign_source_migrator postgres postgres 2>/dev/null
-grep -qx 'psql -X -d aegis -v ON_ERROR_STOP=1 -c REASSIGN OWNED BY "postgres" TO "aegis" -c ALTER DATABASE "aegis" OWNER TO "aegis"' "$T/pg.calls" \
-  || fail "reassign: $(cat "$T/pg.calls")"
+grep -qx 'psql -X -q -d aegis -v ON_ERROR_STOP=1 -v src=postgres -v dst=aegis -v owner=aegis -v target=aegis' "$T/pg.calls" \
+  || fail "reassign call: $(cat "$T/pg.calls")"
+[ "$(grep -c 'REASSIGN\|ALTER DATABASE' "$T/pg.calls")" -eq 0 ] || fail "reassign SQL reached the command line: $(cat "$T/pg.calls")"
+reassign_sql="$(cat "$T/reassign.stdin")"
+first="$(grep -v '^[[:space:]]*$' <<<"$reassign_sql" | head -1)"; last="$(grep -v '^[[:space:]]*$' <<<"$reassign_sql" | tail -1)"
+[ "$first" = 'BEGIN;' ] && [ "$last" = 'COMMIT;' ] || fail "reassign is not one transaction: $reassign_sql"
+for want in 'REASSIGN OWNED BY :"src" TO :"dst";' \
+    "SELECT pg_catalog.format('ALTER DATABASE %I OWNER TO %I', :'target', :'owner') \\gexec" \
+    "SELECT pg_catalog.format('ALTER DATABASE %I OWNER TO %I', datname, :'src') FROM pandora_reassign_other_dbs \\gexec" \
+    "WHERE datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = :'src') AND datname <> :'target';"; do
+  grep -Fq -- "$want" <<<"$reassign_sql" || fail "reassign SQL lacks: $want"
+done
+awk '/CREATE TEMP TABLE pandora_reassign_other_dbs/ { c = NR } /^REASSIGN OWNED/ { r = NR } /pandora_reassign_other_dbs \\gexec/ { g = NR }
+     END { exit !(c && r && g && c < r && r < g) }' <<<"$reassign_sql" || fail 'other databases are not listed before the REASSIGN and restored after it'
 grep -qx 'psql -X -d postgres -v ON_ERROR_STOP=1 -c DROP ROLE "postgres"' "$T/pg.calls" || fail 'temporary migrator role not dropped'
 # 同一种布局：迁移角色就是本机的，什么都不改
 : >"$T/pg.calls"; echo postgres >"$T/me"
 reassign_source_migrator postgres ''
-if grep -q 'REASSIGN' "$T/pg.calls"; then fail 'reassigned although the migrator is the same'; fi
-# 直装机上把 docker 的备份恢复到别名库：REASSIGN 会顺带改 aegis 名下别的库（正式库、aegis_stale_*），换完改回
-: >"$T/pg.calls"; echo postgres >"$T/me"; target_db=aegis_check; printf 'aegis\naegis_stale_20261009\n' >"$T/owned-dbs"
-reassign_source_migrator aegis '' 2>/dev/null
-for db in aegis aegis_stale_20261009; do
-  grep -qx "psql -X -d postgres -v ON_ERROR_STOP=1 -c ALTER DATABASE \"$db\" OWNER TO \"aegis\"" "$T/pg.calls" \
-    || fail "database $db not given back to aegis after REASSIGN: $(cat "$T/pg.calls")"
-done
-awk '/REASSIGN OWNED/ { r = NR } /ALTER DATABASE "aegis" OWNER TO "aegis"/ { a = NR } END { exit !(r && a && r < a) }' "$T/pg.calls" \
-  || fail 'owners given back before the REASSIGN'
-# 旧格式备份（没有 GRANT）：把 00038/00039 的函数属主与授权补回迁移建出来的样子
-: >"$T/pg.calls"; target_db=aegis_legacy
+if grep -q -- '-v src=' "$T/pg.calls"; then fail 'reassigned although the migrator is the same'; fi
+# install-native-lib.sh 的 native_reassign_in_db 用的是同一份事务 SQL（--from-docker 那边）
+lib_sql="$(awk '/^native_reassign_in_db\(\) \{$/ { p = 1 } p && /^BEGIN;$/ { s = 1 } s { print } s && /^COMMIT;$/ { exit }' "$DEPLOY/install-native-lib.sh" \
+  | sed "s/:'db'/:'target'/g")"
+[ "$lib_sql" = "$(grep -v '^[[:space:]]*$' <<<"$reassign_sql")" ] || fail "install-native-lib.sh reassign SQL differs from restore-postgres.sh's"
+# 旧格式备份（没有 GRANT）：随包发布的 legacy-privilege-repair.sql 喂给目标库
+REPAIR="$DEPLOY/legacy-privilege-repair.sql"
+[ -f "$REPAIR" ] || fail 'legacy-privilege-repair.sql is missing'
+require_trusted_sql_file() { :; }
+stat() { echo same; }
+: >"$T/pg.calls"; target_db=aegis_legacy; legacy_repair_sql_file="$REPAIR"
 repair_legacy_privileges 2>/dev/null
+unset -f stat
 grep -qx 'psql -X -q -d aegis_legacy -v ON_ERROR_STOP=1' "$T/pg.calls" || fail "repair not applied to the target: $(cat "$T/pg.calls")"
-cmp -s "$T/repair.stdin" <(legacy_privilege_repair_sql) || fail 'repair SQL not fed to psql'
-# 修复 SQL 里的函数签名必须逐字对上迁移里 OWNER TO aegis_idempotency_owner 的那几个函数
+cmp -s "$T/repair.stdin" "$REPAIR" || fail 'repair SQL not fed to psql'
+# 发布与安装：两处发布清单、docker 布局的安装事务、直装的拷贝行都带上它
+[ "$(grep -c 'deploy/legacy-privilege-repair.sql' "$DEPLOY/build-release.sh")" -ge 2 ] || fail 'build-release.sh does not ship legacy-privilege-repair.sql'
+grep -Fq 'legacy-privilege-repair.sql configure-app-role.sql' "$DEPLOY/install-linux-binaries.sh" || fail 'install-linux-binaries.sh does not install it'
+grep -Fq '"$SCRIPT_DIR/legacy-privilege-repair.sql"' "$DEPLOY/install-native.sh" || fail 'install-native.sh does not install it'
+# 函数签名逐字对上迁移里 OWNER TO aegis_idempotency_owner 的那几个函数
+mig_up() { awk '/^-- \+goose Down/ { exit } { print }' "$1"; }
+mig_all_up="$(for f in "$DEPLOY"/../migrations/*.sql; do mig_up "$f"; done)"
 mig_sigs="$(awk '/^ALTER FUNCTION app\./ { buf = "" } /^ALTER FUNCTION app\./ || buf != "" { buf = buf $0 }
-    buf != "" && /;[[:space:]]*$/ { if (buf ~ /OWNER TO aegis_idempotency_owner;/) print buf; buf = "" }' \
-  "$DEPLOY"/../migrations/*.sql | sed -E 's/^ALTER FUNCTION //; s/\) OWNER TO.*$/)/; s/[[:space:]]+//g' | sort -u)"
-[ "$(printf '%s\n' "$mig_sigs" | grep -c .)" -ge 2 ] || fail "could not read the owner-role functions from the migrations: $mig_sigs"
+    buf != "" && /;[[:space:]]*$/ { if (buf ~ /OWNER TO aegis_idempotency_owner;/) print buf; buf = "" }' <<<"$mig_all_up" \
+  | sed -E 's/^ALTER FUNCTION //; s/\) OWNER TO.*$/)/; s/[[:space:]]+//g' | sort -u)"
+[ "$(printf '%s\n' "$mig_sigs" | grep -c .)" -eq 2 ] || fail "expected the two owner-role functions in the migrations, got: $mig_sigs"
 while IFS= read -r sig; do
-  grep -Fq "to_regprocedure('$sig')" <<<"$(legacy_privilege_repair_sql)" || fail "repair SQL misses $sig"
+  grep -Fq "to_regprocedure('$sig')" "$REPAIR" || fail "repair SQL misses $sig"
 done <<<"$mig_sigs"
 for v in v_bind v_done; do
-  grep -Fq "format('ALTER FUNCTION %s OWNER TO aegis_idempotency_owner', $v)" <<<"$(legacy_privilege_repair_sql)" \
-    || fail "repair SQL does not give $v back to aegis_idempotency_owner"
-  grep -Fq "format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, aegis_app', $v)" <<<"$(legacy_privilege_repair_sql)" \
-    || fail "repair SQL does not take PUBLIC execute away from $v"
+  grep -Fq "format('ALTER FUNCTION %s OWNER TO aegis_idempotency_owner', $v)" "$REPAIR" || fail "repair SQL does not give $v back to aegis_idempotency_owner"
+  grep -Fq "format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, aegis_app', $v)" "$REPAIR" || fail "repair SQL does not take PUBLIC execute away from $v"
+  grep -Fq "format('GRANT EXECUTE ON FUNCTION %s TO aegis_app', $v)" "$REPAIR" || fail "repair SQL does not grant $v to aegis_app"
 done
-grep -Fq 'FROM PUBLIC, aegis_app' <<<"$(legacy_privilege_repair_sql)" || fail 'repair SQL does not take PUBLIC execute away'
-unset -f pandora_pg age die
-# 主流程：核完整性 → 备好角色 → 与正式恢复同参数的演练 → 进正式库保护 → 恢复 → 换迁移角色 → 旧备份补权限 → 开闸门
+# 授权集合：修复 SQL 里授给 aegis_idempotency_owner 的 GRANT，与迁移 Up 段里的逐条相等（去空白比较）
+grants_of() { tr '\n' ' ' | grep -oE 'GRANT [^;]*;' | sed 's/[[:space:]]//g' | sort -u; }
+want_grants="$(grep -v '^[[:space:]]*--' <<<"$mig_all_up" | grants_of | grep 'TOaegis_idempotency_owner;$')"
+have_grants="$(grep -v '^[[:space:]]*--' "$REPAIR" | grants_of | grep 'TOaegis_idempotency_owner;$')"
+[ "$(grep -c . <<<"$want_grants")" -ge 8 ] || fail "could not read the owner-role grants from the migrations: $want_grants"
+[ "$want_grants" = "$have_grants" ] || fail "repair grants differ from the migrations:
+$(diff <(printf '%s\n' "$want_grants") <(printf '%s\n' "$have_grants"))"
+# 别的 GRANT 只许是两个函数的 EXECUTE 授给 aegis_app；PUBLIC 只许出现在 REVOKE 里
+others="$(grep -v '^[[:space:]]*--' "$REPAIR" | grants_of | grep -v 'TOaegis_idempotency_owner;$' || true)"
+[ "$others" = "GRANTEXECUTEONFUNCTION%sTOaegis_app',v_bind);
+GRANTEXECUTEONFUNCTION%sTOaegis_app',v_done);" ] || fail "repair SQL grants something else: $others"
+if grep -v '^[[:space:]]*--' "$REPAIR" | grep -E 'TO[[:space:]]+[^;]*PUBLIC' >/dev/null; then fail 'repair SQL grants to PUBLIC'; fi
+# 00038 的辅助授权只在绑定函数在时做（迁移版本早于 00038 的旧备份不多授）
+awk '/IF v_bind IS NOT NULL THEN/ { inb = 1 } /IF v_done IS NOT NULL THEN/ { inb = 0 }
+     /GRANT USAGE ON SCHEMA|GRANT EXECUTE ON FUNCTION app\.(current_tenant_id|current_actor_id|idempotency_actor_scope|idempotency_scope_matches_actor)/ { if (!inb) bad = 1; n++ }
+     END { exit !(n == 5 && !bad) }' "$REPAIR" || fail 'the 00038 helper grants are not conditional on the bind function'
+unset -f pandora_pg age die require_trusted_sql_file
+# 主流程：核完整性 → 备好角色 → 核修复 SQL（旧备份） → 与正式恢复同参数的演练 → 进正式库保护 → 恢复 → 换迁移角色 → 旧备份补权限 → 开闸门
 awk '/^"\$PWD\/verify-backup.sh" "\$archive"$/ { v = NR } /^created_migrator="\$\(ensure_restore_roles/ { e = NR }
+     /^  require_trusted_sql_file "\$legacy_repair_sql_file"$/ { t = NR }
      /^AEGIS_VERIFY_RESTORE=owners "\$PWD\/verify-backup.sh"/ { o = NR } /^begin_production_guard$/ { g = NR } /^restore_into_target$/ { r = NR }
      /^reassign_source_migrator / { m = NR } /^  repair_legacy_privileges$/ { l = NR } /^commit_production_guard$/ { c = NR }
-     END { exit !(v && e && o && g && r && m && l && c && v < e && e < o && o < g && g < r && r < m && m < l && l < c) }' "$DEPLOY/restore-postgres.sh" \
+     END { exit !(v && e && t && o && g && r && m && l && c && v < e && e < t && t < o && o < g && g < r && r < m && m < l && l < c) }' "$DEPLOY/restore-postgres.sh" \
   || fail 'restore-postgres.sh steps are out of order'
+# 只有归档里没有 GRANT（旧格式）才修：新备份自己带着权限
+[ "$(grep -c "^if grep -qx 'acl no' <<<\"\$role_plan\"; then$" "$DEPLOY/restore-postgres.sh")" -ge 3 ] \
+  || fail 'the legacy repair is not conditional on an archive without GRANTs'
+awk "/^if grep -qx 'acl no' <<<\"\\\$role_plan\"; then\$/ { cond = NR } /^  repair_legacy_privileges\$/ { exit !(cond && NR == cond + 1) }" "$DEPLOY/restore-postgres.sh" \
+  || fail 'repair_legacy_privileges does not sit right under the acl-no condition'
 if grep -q '^AEGIS_VERIFY_RESTORE=1 ' "$DEPLOY/restore-postgres.sh"; then fail 'the restore rehearsal still drops owners'; fi
 grep -Fq '[ "$AEGIS_VERIFY_RESTORE" = owners ] || restore_opts+=(--no-owner --no-privileges)' "$DEPLOY/verify-backup.sh" \
   || fail 'verify-backup.sh has no owner-preserving rehearsal'

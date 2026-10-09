@@ -16,13 +16,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 #   default_app_dir [docker 布局目录] [直装目录]（参数只给桩测试）
 default_app_dir() {
   local docker="${1:-/opt/aegispanel}" native="${2:-/opt/pandora}"
+  # 两个 .env 都在：不管有没有迁移记录都停下（与 install.sh、install-native.sh 同一口径），要人把不用的那套改名
   if [ -f "$native/deploy/.env" ] && [ -f "$docker/deploy/.env" ]; then
-    if grep -qx 'state=done' "$native/deploy/from-docker.state" 2>/dev/null; then
-      printf '%s\n' "$native"
-    else
-      echo "pandora-release: both $native and $docker are installed; set PANDORA_APP_DIR to the one this release is for" >&2
-      return 1
-    fi
+    echo "pandora-release: both $native and $docker have a deploy/.env; rename the one that is not serving (systemctl cat aegis-public shows which), or set PANDORA_APP_DIR" >&2
+    return 1
   elif [ -f "$native/deploy/.env" ]; then
     printf '%s\n' "$native"
   else

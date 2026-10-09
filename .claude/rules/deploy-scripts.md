@@ -33,7 +33,9 @@ paths:
   - 迁移失败把服务拉回来，所以新程序在迁移成功之后才装（install-native.sh 也是）。
   - 守卫：`install-migrate-order_mock_test.sh`
 - 缺省布局是直装：`install.sh` 在全新安装（没有 `/opt/aegispanel/deploy/.env`）且没给 `PANDORA_LAYOUT=docker` 时，在任何前置检查之前 `exec install-native.sh`；已装 docker 布局的机器照旧由 `install.sh` 升级，收尾提示 `--from-docker`。`test-install.sh` 验的是 docker 布局，显式带 `PANDORA_LAYOUT=docker`。守卫：`install-native_fromdocker_mock_test.sh` ⑨
-- 加密备份带属主与权限导出；`restore-postgres.sh` 照原样还原，顺序：核完整性 → 按备份补齐面板自己的角色（只增、`NOLOGIN`）→ 临时库里同参数演练（`AEGIS_VERIFY_RESTORE=owners`）→ 正式库保护 → 恢复 → 把备份里跑迁移的超级用户名下的对象换成本机的 → 旧格式备份（没有 GRANT）自动补 00038/00039 函数属主与授权（`legacy_privilege_repair_sql`，签名由测试对照迁移文件）→ 开闸门。不再用 `--no-owner --no-privileges`。守卫：`pg-layout_mock_test.sh`（抽函数跑真调用）
+- 加密备份带属主与权限导出；`restore-postgres.sh` 照原样还原，顺序：核完整性 → 按备份补齐面板自己的角色（只增、`NOLOGIN`）→ 临时库里同参数演练（`AEGIS_VERIFY_RESTORE=owners`）→ 正式库保护 → 恢复 → 把备份里跑迁移的超级用户名下的对象换成本机的 → 旧格式备份（没有 GRANT）自动补 00038/00039 函数属主与授权（随包发布的 `legacy-privilege-repair.sql`，以超级用户执行前核属主与权限）→ 开闸门。不再用 `--no-owner --no-privileges`。守卫：`pg-layout_mock_test.sh`（抽函数跑真调用；修复 SQL 里授给 aegis_idempotency_owner 的 GRANT 必须与迁移 Up 段逐条相等，函数执行权只授 aegis_app）
+- `REASSIGN OWNED` 那一步与「给目标库定属主、把源角色名下的别的库改回」在一次 psql、一个事务里做；库名在服务端 `format('%I')` 加 `\gexec` 生成，不经过 shell（`restore-postgres.sh` 与 `install-native-lib.sh` 同一份 SQL，测试核对一致）
+- install.sh 入口的 `PANDORA_ENTRY_*` 覆盖只在同时设了 `PANDORA_ENTRY_TEST=1` 时生效
 - 两种数据库布局同一套运维脚本：`check-migrations.sh`、`migrate.sh`、`backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`、`psql.sh`、`bootstrap.sh` 按 `.env` 的 `PANDORA_DB_LAYOUT`（没有这一键时凭只有直装才写的 `POSTGRES_SUPER_PASSWORD` 推断为 native）选客户端
   - docker：容器 `aegis-postgres` 里的客户端，以 `POSTGRES_USER`；native：本机客户端经 `127.0.0.1:POSTGRES_PORT` 以 `postgres` 超级用户（`POSTGRES_SUPER_PASSWORD`）。不用 runuser：备份单元的 `SystemCallFilter=~@privileged` 禁止切换用户
   - 判定函数 `pandora_db_layout` 各脚本内联一份（备份三件套只信任自己，不 source 共用文件），连库一律经 `pandora_pg`；口令只经环境变量。守卫：`pg-layout_mock_test.sh`（逐字一致与行为）、`check-migrations_native_mock_test.sh`
@@ -47,6 +49,7 @@ paths:
   - `REASSIGN OWNED` 会顺带改别的库的属主：`--from-docker` 用 `native_reassign_in_db`、`restore-postgres.sh` 的 `reassign_source_migrator` 都先记下、换完改回
   - 口令不进任何命令行参数：awk 走 `ENVIRON`、grep 走 `-f -`、`migrate.sh` 用 `scrubbed_run`（不经 env(1)）并把 DSN 里的口令拆进 `PGPASSWORD`。守卫：`pg-layout_mock_test.sh`、`install-native_*_mock_test.sh` 里的 argv 断言
   - 守卫：`install-native_fromdocker_mock_test.sh`（.env 改写、角色、回滚、只停不删、指纹、核对阶段只读、主流程顺序）
+- 测信号路径（HUP 等）的桩测试：检查机的循环忽略 SIGHUP，bash 对进程入口时已被忽略的信号装不上 trap，`kill -HUP` 什么也不会发生。被测脚本要先经 python3（没有就 perl）把 SIGHUP 复位成缺省再启动（做法见 `install-native_fromdocker_mock_test.sh` 的 `reset_hup`）；本机用 `bash -c "trap '' HUP INT; bash <测试>" </dev/null` 模拟检查机条件
 - 桩测试与静态检查（`*_mock_test.sh`、`*_static_test.sh`）不需要数据库；与安装、迁移、nginx、发布物绑定相关的，CI 的 `.github/workflows/panel-deploy.yml` 逐个点名跑，新增这类测试要补进那份清单
   - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root。前者在 panel-deploy 的 deploy-root-mock-tests job 里用 runner 的免密 sudo 跑（只在 GitHub 上，检查机明说跳过）
 - nginx 的节点路径（`/api/v1/server/UniProxy/`、`/v1/nodes/`）用自己的限速区：`aegis_node` 按「来源 IP + 节点标识」分桶（签名通道 `X-Node-Id` 头、兼容通道 query `node_id`，只认 UUID 形状，否则退回按 IP 一个桶），外加宽松的每 IP 总上限 `aegis_node_ip`；`limit_conn` 在这两个 location 单独写（`aegis_node_conn`），server 层的 64 不再作用于节点。一台机器 60 个节点约 810 次/分、60 条事件流。守卫：`render-nginx_test.sh`

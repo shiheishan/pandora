@@ -184,7 +184,14 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose \
      - 00038、00039 Up 段里 `GRANT … TO aegis_idempotency_owner` 的那几条（模式 USAGE、几个辅助函数的 EXECUTE、`idempotency_keys` 与两张水位表的列级授权）。
 
      之后跑 `./bootstrap.sh` 补运行角色 `aegis_app` 的权限，再起服务；最后做一份新的加密备份，它就带着属主与权限了。
-     用更早的 `restore-postgres.sh`（带 `--no-owner --no-privileges` 的那版）恢复过的库，用新版脚本里 `legacy_privilege_repair_sql` 打出的 SQL 以超级用户（`./psql.sh -d <库名> < 文件`）执行一遍，效果相同；核对：`./psql.sh -c '\df+ app.bind_idempotency_resource'` 的 Owner 是 `aegis_idempotency_owner`。
+     修复 SQL 是随包发布的 `deploy/legacy-privilege-repair.sql`（两种布局都装在 `<安装目录>/deploy/` 下）。用更早的 `restore-postgres.sh`（带 `--no-owner --no-privileges` 的那版）恢复过的库，以超级用户执行一遍它，效果相同，再跑 `./bootstrap.sh`：
+
+     ```bash
+     cd /opt/pandora/deploy          # docker 布局是 /opt/aegispanel/deploy
+     ./psql.sh -d <库名> < legacy-privilege-repair.sql
+     ./bootstrap.sh
+     ./psql.sh -d <库名> -c '\df+ app.bind_idempotency_resource'   # Owner 应是 aegis_idempotency_owner
+     ```
    - **install.sh 的升级前备份**（`pre-upgrade-<时间>.dump`，未加密的 `pg_dump -Fc`）：
      1. 先恢复到一个新库核对：
 

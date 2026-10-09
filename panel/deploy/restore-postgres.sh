@@ -315,7 +315,10 @@ restore_into_target() {
     | pandora_pg pg_restore -d "$target_db" --exit-on-error
 }
 
-# 备份里跑迁移的角色换成本机跑迁移的超级用户；为恢复临时建的那个角色删掉
+# 备份里跑迁移的角色换成本机跑迁移的超级用户；为恢复临时建的那个角色删掉。
+# REASSIGN OWNED 也会改集群级对象：源角色名下的别的库（正式库 aegis、aegis_stale_* 等）。「REASSIGN、给目标库定属主、
+# 把别的库改回」放在一次 psql 的一个事务里，库名在服务端用 format('%I') 生成、经 \gexec 执行，不经过 shell：
+# 任何一步失败整体回滚，不会停在一半；库名里有空格或引号也不会断
 #   reassign_source_migrator <备份里的迁移角色> <临时建的，或空>
 reassign_source_migrator() {
   local source="$1" created="$2" local_migrator
@@ -323,20 +326,18 @@ reassign_source_migrator() {
   local_migrator="$(pandora_pg psql -X -d postgres -tAc 'SELECT current_user' | tr -d '[:space:]')" \
     || die "cannot read the local migrator role"
   [ "$source" != "$local_migrator" ] || return 0
-  # REASSIGN OWNED 也会改集群级对象：这个角色名下的别的库（正式库 aegis、aegis_stale_* 等）先记下，换完改回
-  local others db
-  others="$(pandora_pg psql -X -d postgres -tAc "SELECT datname FROM pg_catalog.pg_database WHERE datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = '$source') AND datname <> '$target_db'")" \
-    || die "cannot list the databases owned by $source"
-  pandora_pg psql -X -d "$target_db" -v ON_ERROR_STOP=1 \
-    -c "REASSIGN OWNED BY \"$source\" TO \"$local_migrator\"" \
-    -c "ALTER DATABASE \"$target_db\" OWNER TO \"${POSTGRES_USER:-$local_migrator}\"" >/dev/null \
-    || die "cannot hand objects of $source to $local_migrator"
-  while IFS= read -r db; do
-    db="${db//[[:space:]]/}"
-    [ -n "$db" ] || continue
-    pandora_pg psql -X -d postgres -v ON_ERROR_STOP=1 -c "ALTER DATABASE \"$db\" OWNER TO \"$source\"" >/dev/null \
-      || die "cannot give database $db back to $source after REASSIGN"
-  done <<<"$others"
+  pandora_pg psql -X -q -d "$target_db" -v ON_ERROR_STOP=1 \
+    -v src="$source" -v dst="$local_migrator" -v owner="${POSTGRES_USER:-$local_migrator}" -v target="$target_db" \
+    >/dev/null <<'SQL' || die "cannot hand objects of $source to $local_migrator"
+BEGIN;
+CREATE TEMP TABLE pandora_reassign_other_dbs ON COMMIT DROP AS
+  SELECT datname FROM pg_catalog.pg_database
+   WHERE datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = :'src') AND datname <> :'target';
+REASSIGN OWNED BY :"src" TO :"dst";
+SELECT pg_catalog.format('ALTER DATABASE %I OWNER TO %I', :'target', :'owner') \gexec
+SELECT pg_catalog.format('ALTER DATABASE %I OWNER TO %I', datname, :'src') FROM pandora_reassign_other_dbs \gexec
+COMMIT;
+SQL
   echo "restore-postgres: objects owned by the archive's migrator $source now belong to $local_migrator" >&2
   if [ -n "$created" ]; then
     pandora_pg psql -X -d "$target_db" -v ON_ERROR_STOP=1 -c "DROP OWNED BY \"$created\"" >/dev/null \
@@ -345,77 +346,29 @@ reassign_source_migrator() {
   fi
 }
 
-# 2026-10 之前的加密备份导出时带 --no-owner --no-acl（归档里没有 GRANT）。按原样恢复之后，00038、00039 那两个
-# SECURITY DEFINER 函数不一定归专用角色 aegis_idempotency_owner，函数的执行权也回到 PostgreSQL 缺省（PUBLIC 可执行），
-# 迁移给专用角色的列级授权也没了。这里把这一小撮补回到迁移建出来的样子：属主、函数执行权、专用角色的授权。
-# 写死在这里而不是从迁移里抽：旧格式备份是有限的历史存量，之后的备份都带属主与权限；运行角色 aegis_app
-# 的权限另由 bootstrap.sh（configure-app-role.sql）补。每一步都先看对象在不在（旧备份的迁移版本可能更早）。
-# 签名与授权逐字照 00038、00039 的 Up 段；pg-layout_mock_test.sh 拿迁移文件核对签名
-legacy_privilege_repair_sql() {
-  cat <<'SQL'
-\set ON_ERROR_STOP on
-DO $repair$
-DECLARE
-  v_bind regprocedure := pg_catalog.to_regprocedure('app.bind_idempotency_resource(uuid,uuid,uuid,text,text,text,bytea,bigint,timestamptz,text,uuid)');
-  v_done regprocedure := pg_catalog.to_regprocedure('app.complete_bound_idempotency_success(uuid,uuid,uuid,text,text,text,bytea,bigint,timestamptz,text,uuid,integer,bytea,text,text,text,text,text)');
-BEGIN
-  IF pg_catalog.to_regrole('aegis_idempotency_owner') IS NULL THEN
-    RETURN;
-  END IF;
-  IF v_bind IS NOT NULL THEN
-    EXECUTE pg_catalog.format('ALTER FUNCTION %s OWNER TO aegis_idempotency_owner', v_bind);
-    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, aegis_app', v_bind);
-    EXECUTE pg_catalog.format('GRANT EXECUTE ON FUNCTION %s TO aegis_app', v_bind);
-  END IF;
-  IF v_done IS NOT NULL THEN
-    EXECUTE pg_catalog.format('ALTER FUNCTION %s OWNER TO aegis_idempotency_owner', v_done);
-    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, aegis_app', v_done);
-    EXECUTE pg_catalog.format('GRANT EXECUTE ON FUNCTION %s TO aegis_app', v_done);
-  END IF;
-  GRANT USAGE ON SCHEMA public, app TO aegis_idempotency_owner;
-  IF pg_catalog.to_regprocedure('app.current_tenant_id()') IS NOT NULL THEN
-    GRANT EXECUTE ON FUNCTION app.current_tenant_id() TO aegis_idempotency_owner;
-  END IF;
-  IF pg_catalog.to_regprocedure('app.current_actor_id()') IS NOT NULL THEN
-    GRANT EXECUTE ON FUNCTION app.current_actor_id() TO aegis_idempotency_owner;
-  END IF;
-  IF pg_catalog.to_regprocedure('app.idempotency_actor_scope(text,uuid)') IS NOT NULL THEN
-    GRANT EXECUTE ON FUNCTION app.idempotency_actor_scope(text,uuid) TO aegis_idempotency_owner;
-  END IF;
-  IF pg_catalog.to_regprocedure('app.idempotency_scope_matches_actor(text,uuid)') IS NOT NULL THEN
-    GRANT EXECUTE ON FUNCTION app.idempotency_scope_matches_actor(text,uuid) TO aegis_idempotency_owner;
-  END IF;
-  IF v_bind IS NOT NULL THEN
-    GRANT SELECT (id,tenant_id,actor_id,scope,idempotency_key,request_hash,status,
-                  claim_generation,locked_until,resource_type,resource_id)
-      ON public.idempotency_keys TO aegis_idempotency_owner;
-    GRANT UPDATE (resource_type,resource_id) ON public.idempotency_keys TO aegis_idempotency_owner;
-  END IF;
-  IF pg_catalog.to_regclass('app.idempotency_resource_binding_00038_usage') IS NOT NULL THEN
-    GRANT SELECT (singleton,used,first_bound_at), UPDATE (used,first_bound_at)
-      ON app.idempotency_resource_binding_00038_usage TO aegis_idempotency_owner;
-  END IF;
-  IF v_done IS NOT NULL THEN
-    GRANT UPDATE (status,response_code,response_format,response_payload,response_content_type,
-                  response_location,response_etag,response_cache_control,
-                  response_content_language,completed_at,locked_until)
-      ON public.idempotency_keys TO aegis_idempotency_owner;
-    GRANT SELECT (response_code,response_body,response_format,response_payload,
-                  response_content_type,response_location,response_etag,response_cache_control,
-                  response_content_language,completed_at)
-      ON public.idempotency_keys TO aegis_idempotency_owner;
-  END IF;
-  IF pg_catalog.to_regclass('app.bound_idempotency_success_00039_usage') IS NOT NULL THEN
-    GRANT SELECT (singleton,used,first_completed_at), UPDATE (used,first_completed_at)
-      ON app.bound_idempotency_success_00039_usage TO aegis_idempotency_owner;
-  END IF;
-END
-$repair$;
-SQL
+# 旧格式备份（2026-10 之前导出时带 --no-owner --no-acl，归档里没有 GRANT）恢复之后：00038/00039 那两个
+# SECURITY DEFINER 函数的属主、执行权与专用角色的授权，按同目录随包发布的 legacy-privilege-repair.sql 补回
+# （为什么写死、补了哪些，见该文件头）。以超级用户执行的 SQL 只认 root 所有、不可他人改的那份
+legacy_repair_sql_file="$PWD/legacy-privilege-repair.sql"
+require_trusted_sql_file() {
+  local file="$1" mode
+  require_trusted_parent_chain "$file"
+  [ -f "$file" ] && [ ! -L "$file" ] || die "$file is missing or not a regular file"
+  [ "$(stat -c %u -- "$file")" = 0 ] && [ "$(stat -c %h -- "$file")" = 1 ] \
+    || die "$file must be root-owned with one link"
+  mode=$((8#$(stat -c %a -- "$file")))
+  (( (mode & 0022) == 0 )) || die "$file must not be group/world writable"
 }
 repair_legacy_privileges() {
-  legacy_privilege_repair_sql | pandora_pg psql -X -q -d "$target_db" -v ON_ERROR_STOP=1 >/dev/null \
+  local fd path_id fd_id
+  require_trusted_sql_file "$legacy_repair_sql_file"
+  exec {fd}<"$legacy_repair_sql_file"
+  path_id="$(stat -Lc %d:%i -- "$legacy_repair_sql_file")"
+  fd_id="$(stat -Lc %d:%i -- "/proc/self/fd/$fd")"
+  [ "$path_id" = "$fd_id" ] || die "$legacy_repair_sql_file changed while opening"
+  pandora_pg psql -X -q -d "$target_db" -v ON_ERROR_STOP=1 <&"$fd" >/dev/null \
     || die "cannot restore the dedicated owner and grants of the idempotency functions"
+  exec {fd}<&-
   echo "restore-postgres: old-format archive: the 00038/00039 SECURITY DEFINER functions belong to aegis_idempotency_owner again and its grants are back; run ./bootstrap.sh for the runtime role" >&2
 }
 
@@ -428,6 +381,10 @@ role_plan="$(age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" | 
   || die "cannot read the roles this archive needs"
 source_migrator="$(awk '$1 == "migrator" { print $2; exit }' <<<"$role_plan")"
 created_migrator="$(ensure_restore_roles "$role_plan")"
+# 旧格式备份要用的修复 SQL 在动正式库之前就核好（缺了、或不可信，现在停下比恢复一半停下好）
+if grep -qx 'acl no' <<<"$role_plan"; then
+  require_trusted_sql_file "$legacy_repair_sql_file"
+fi
 AEGIS_VERIFY_RESTORE=owners "$PWD/verify-backup.sh" "$archive"
 begin_production_guard
 exists="$(pandora_pg psql -X -d postgres -tAc \

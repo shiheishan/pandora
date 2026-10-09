@@ -148,7 +148,7 @@ done
 # nginx-aegis.conf 是 render-nginx.sh 读的同目录模板：不装它，安装结束时提示的
 # $DEST/deploy/render-nginx.sh 会报 nginx template not found
 for data_file in backup-webdav.example.json .env.example nginx-aegis.conf \
-                 docker-compose.yml configure-app-role.sql release-artifact.env; do
+                 docker-compose.yml legacy-privilege-repair.sql configure-app-role.sql release-artifact.env; do
   stage_file "$RELEASE_DIR/deploy/$data_file" "/opt/aegispanel/deploy/$data_file" 0644
 done
 # 三个网关写 /var/log/aegis/*.log，轮转规则随包更新。没装 logrotate 的主机

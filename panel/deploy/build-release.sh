@@ -261,6 +261,7 @@ for arch in amd64 arm64; do
   # 也没法把 aegis_app 收敛成 NOSUPERUSER + NOBYPASSRLS 的运行时角色。
   cp "$ROOT/deploy/docker-compose.yml" "$target/deploy/docker-compose.yml"
   cp "$ROOT/deploy/configure-app-role.sql" "$target/deploy/configure-app-role.sql"
+  cp "$ROOT/deploy/legacy-privilege-repair.sql" "$target/deploy/legacy-privilege-repair.sql"
   # 网关日志轮转，install-linux-binaries.sh 装到 /etc/logrotate.d/aegis
   cp "$ROOT/deploy/logrotate-aegis" "$target/deploy/logrotate-aegis"
   # 节点端发布物绑定：本包里两个架构 pandora-native 的 SHA-256 与版本号（即
@@ -345,6 +346,7 @@ for arch in amd64 arm64; do
     "$target_base/deploy/MIGRATION-RUNBOOK.md"
     "$target_base/deploy/docker-compose.yml"
     "$target_base/deploy/configure-app-role.sql"
+    "$target_base/deploy/legacy-privilege-repair.sql"
     "$target_base/deploy/logrotate-aegis"
     "$target_base/deploy/systemd/aegis-public.service"
     "$target_base/deploy/systemd/aegis-admin.service"

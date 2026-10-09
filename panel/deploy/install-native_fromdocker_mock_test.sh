@@ -219,6 +219,10 @@ if grep -Eq 'docker .*(down|rm|volume)' "$T/calls"; then fail 'abort touched doc
 # ssh 断开：终端没了（写标准错误失败）再来一个 HUP。回滚照样做完：放回单元、拉起 docker 的网关与备份 timer、
 # 状态记 rolled-back、日志文件里有记录。在独立的 bash 里按主流程的样子装 trap、开 errexit，
 # 不放在 || 后面调用（那会关掉 errexit，测不出 set -e 下中途退出）
+# trap 行从 install-native.sh 里原样抽出来（不照抄）：生产里改了 trap，探针跟着变
+NATIVE_TRAPS="$(grep -E "^  trap (fd_abort EXIT|'FD_SIGNAL_RC=[0-9]+; exit [0-9]+' (HUP|INT|TERM))\$" "$NATIVE" | sed 's/^  //')"
+[ "$(grep -c . <<<"$NATIVE_TRAPS")" -eq 4 ] && grep -q ' HUP$' <<<"$NATIVE_TRAPS" && grep -qx 'trap fd_abort EXIT' <<<"$NATIVE_TRAPS" \
+  || fail "install-native.sh does not set the EXIT/HUP/INT/TERM traps for --from-docker: $NATIVE_TRAPS"
 cat >"$T/hup.sh" <<HUP
 set -euo pipefail
 export PATH="$T/bin:\$PATH"
@@ -227,10 +231,7 @@ export PATH="$T/bin:\$PATH"
 FD_SYSTEMD_DIR="$T/systemd" FD_UNITS_BACKUP="$T/units-backup" FD_STATE_FILE="$T/hup-state"
 FD_LOG="$T/hup.log"; : >"\$FD_STATE_FILE"
 FD_WRITERS_STOPPED=1 FD_CUTOVER=0 FD_UNITS_SWAPPED=1 FD_BACKUP_TIMER_WAS_ACTIVE=1
-trap fd_abort EXIT
-trap 'FD_SIGNAL_RC=129; exit 129' HUP
-trap 'FD_SIGNAL_RC=130; exit 130' INT
-trap 'FD_SIGNAL_RC=143; exit 143' TERM
+$NATIVE_TRAPS
 exec 2>&-
 kill -HUP \$\$
 sleep 1
@@ -298,9 +299,14 @@ done
 
 # native_reassign_in_db：只换一个库里的对象属主；aegis 名下别的库（上次没迁完留下的 aegis_stale_*）换完改回
 printf 'aegis_stale_20261009\n' >"$T/owned-dbs"; : >"$T/calls"
-native_reassign_in_db 5432 aegis aegis postgres aegis </dev/null || fail "native_reassign_in_db failed: $(cat "$T/calls")"
-grep -q 'REASSIGN OWNED BY "aegis" TO "postgres" -c ALTER DATABASE "aegis" OWNER TO "aegis"' "$T/calls" || fail "reassign call: $(cat "$T/calls")"
-grep -q 'ALTER DATABASE "aegis_stale_20261009" OWNER TO "aegis"' "$T/calls" || fail 'aegis_stale_* not given back to aegis after REASSIGN'
+native_reassign_in_db 5432 aegis aegis postgres aegis || fail "native_reassign_in_db failed: $(cat "$T/calls")"
+grep -qx 'runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 -p 5432 -d aegis -v db=aegis -v src=aegis -v dst=postgres -v owner=aegis' "$T/calls" \
+  || fail "reassign call: $(cat "$T/calls")"
+[ "$(grep -c 'runuser' "$T/calls")" -eq 1 ] || fail "reassign is not a single psql: $(cat "$T/calls")"
+for want in 'BEGIN;' 'REASSIGN OWNED BY :"src" TO :"dst";' \
+    "SELECT pg_catalog.format('ALTER DATABASE %I OWNER TO %I', datname, :'src') FROM pandora_reassign_other_dbs \\gexec" 'COMMIT;'; do
+  grep -Fq -- "$want" "$T/runuser.stdin" || fail "native reassign SQL lacks: $want"
+done
 grep -Fq 'native_reassign_in_db "$PG_PORT" aegis "$FD_DOCKER_PG_USER" postgres aegis' "$NATIVE" || fail '--from-docker does not use native_reassign_in_db'
 rm -f "$T/owned-dbs"
 
@@ -369,7 +375,7 @@ EN="$T/entry-real"
 # docker = 走到 docker 布局的前置检查（本机不是 Linux 或不是 root，会在那里停）；stop = 入口判断停下、什么都没动
 run_entry() {
   local out
-  out="$(PANDORA_ENTRY_DOCKER_DIR="$EN/docker" PANDORA_ENTRY_NATIVE_DIR="$EN/native" PANDORA_LAYOUT="$2" \
+  out="$(PANDORA_ENTRY_TEST=1 PANDORA_ENTRY_DOCKER_DIR="$EN/docker" PANDORA_ENTRY_NATIVE_DIR="$EN/native" PANDORA_LAYOUT="$2" \
     bash "$T/entry/deploy/install.sh" 2>&1 </dev/null || true)"
   case "$1" in
     native) grep -q '^NATIVE-INSTALLER' <<<"$out" || fail "real install.sh, $3: did not hand off to install-native.sh: $out" ;;
@@ -390,6 +396,21 @@ touch "$EN/docker/deploy/.env";                             run_entry docker '' 
 mv "$EN/docker/deploy/.env" "$EN/docker/deploy/.env.migrated-to-native"; touch "$EN/native/deploy/.env"
 echo state=done >"$EN/native/deploy/from-docker.state";    run_entry native '' 'migrated'
                                                             run_entry stop docker 'migrated, docker asked'
+# 测试开关没开：覆盖变量不起作用（生产里误设了一个绕不过入口判断）。这里覆盖目录说「只有 docker」，
+# 真机目录是空的（CI 机），所以不认覆盖时走的是「全新安装交给直装」
+rm -rf "$T/entry-off"; mkdir -p "$T/entry-off/docker/deploy" "$T/entry-off/native/deploy"; touch "$T/entry-off/docker/deploy/.env"
+if [ ! -e /opt/aegispanel/deploy/.env ] && [ ! -e /opt/pandora/deploy/.env ]; then
+  out="$(PANDORA_ENTRY_DOCKER_DIR="$T/entry-off/docker" PANDORA_ENTRY_NATIVE_DIR="$T/entry-off/native" \
+    bash "$T/entry/deploy/install.sh" 2>&1 </dev/null || true)"
+  grep -q '^NATIVE-INSTALLER' <<<"$out" || fail "PANDORA_ENTRY_* took effect without PANDORA_ENTRY_TEST=1: $out"
+fi
+grep -Fq 'if [ "${PANDORA_ENTRY_TEST:-}" = 1 ]; then' "$DEPLOY/install.sh" || fail 'the entry overrides are not gated by PANDORA_ENTRY_TEST'
+# 交接只看入口判断的结论（不另写一套条件：在新口径下老条件与它在每个场景上结果相同，行为测试分不出来）
+grep -qx 'if \[ "\$ENTRY_LAYOUT" = native \]; then' "$DEPLOY/install.sh" || fail 'install.sh hands off on its own condition instead of ENTRY_LAYOUT'
+# 迁完但 docker 的 .env 没改名（收尾改名没成）：真跑 install.sh 也停下，要人改名
+touch "$EN/docker/deploy/.env";                             run_entry stop '' 'migrated, docker .env not parked'
+                                                            run_entry stop docker 'migrated, docker .env not parked, docker asked'
+rm "$EN/docker/deploy/.env"
 # 照 RUNBOOK 退回 Docker：两个 .env 与状态文件都改名 → docker 布局照旧升级
 mv "$EN/docker/deploy/.env.migrated-to-native" "$EN/docker/deploy/.env"
 mv "$EN/native/deploy/.env" "$EN/native/deploy/.env.retired"
@@ -430,7 +451,8 @@ touch "$E/docker/deploy/.env";                             entry docker '' 'dock
 reset_e; touch "$E/native/deploy/.env";                    entry native '' 'native only'
                                                            entry stop docker 'native only, docker asked'
 touch "$E/docker/deploy/.env"; echo state=done >"$E/native/deploy/from-docker.state"
-                                                           entry native '' 'migrated, old docker .env still there'
+                                                           entry stop '' 'migrated, old docker .env still there'
+grep -Fq '把不用的那套的 deploy/.env 改名' "$T/entry.err" || fail "done-with-both message: $(cat "$T/entry.err")"
                                                            entry stop docker 'migrated, docker asked'
 mv "$E/docker/deploy/.env" "$E/docker/deploy/.env.migrated-to-native"
                                                            entry native '' 'migrated, docker .env parked'
@@ -493,7 +515,8 @@ touch "$L/native/deploy/.env"
 touch "$L/docker/deploy/.env"
 if default_app_dir "$L/docker" "$L/native" >/dev/null 2>&1; then fail 'both layouts installed: controller guessed instead of asking'; fi
 printf 'state=done\n' >"$L/native/deploy/from-docker.state"
-[ "$(default_app_dir "$L/docker" "$L/native")" = "$L/native" ] || fail 'a finished --from-docker host is not treated as native'
+# 迁完记录在、两个 .env 却都在（收尾改名没成）：与 install.sh、install-native.sh 一样停下要人改名
+if default_app_dir "$L/docker" "$L/native" >/dev/null 2>&1; then fail 'done with both .env: controller picked a layout instead of asking'; fi
 rm "$L/native/deploy/.env" "$L/native/deploy/from-docker.state"
 [ "$(default_app_dir "$L/docker" "$L/native")" = "$L/docker" ] || fail 'docker-only host not picked'
 
