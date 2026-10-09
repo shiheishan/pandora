@@ -47,3 +47,12 @@ paths:
 - 节点名单只收 active 账号的订阅（`Service.nodeUsers` JOIN users，用户 2026-10-07 定「封禁即断，解封恢复」）；订阅拉取对非 active 账号回伪装 404（`subscription.checkOwnerStatus`），凭据不吊销，恢复后原链接可用。改状态的入口（后台、风控、以后的注销）不用各自通知节点，纪元触发器统一兜
 - 下发变化的推送（w8node，`nodestream_epoch.go`）：aegis-node 每个有连接的租户一个信号循环，每 500ms 读一次纪元（`CurrentDeliveryEpoch`），前进了等 200ms 让提交落定再排一轮租户级推送；名单里最早的订阅到期时刻（`nodeUserSet.nextExpiry`）到了也排一轮。两轮之间至少隔 1 秒（`runPushRounds`），批量变化合并成每秒至多一轮。守卫 `TestWatchNodeChangesFollowsDeliveryEpoch`（三个间隔之和不超过 2 秒）、`TestPushRoundsThrottleAndCoalesce`，PG18 `nodeDeliveryStatusScenario`
 - 用户集缓存条目按 `nextExpiry` 硬过期（`ttlEntry.hard`），不走「先回旧值」的宽限：到期没有写、不推进纪元，宽限会让刚到期的人多留 10 秒（守卫 `TestNodeUserSetHardExpiresAtNextSubscriptionExpiry`）
+
+## 纪元监听与静默热路径（w10quiet，迁移 00153）
+- aegis-node 独占一条连接 `LISTEN aegis_node_epoch`（`epoch_watch.go`）：00101 的纪元触发器推进纪元时发 `'d'`；节点行非遥测列、服务器的状态 / 删除 / 控制节点、生效发布物变了发 `'c'`（`app.notify_node_config_change`）；本进程每秒经连接池发一条探针 `'p:<序号>'`。健康 = 连着且 5 秒内收到过探针回声；不健康时戳为零值，一切照旧逐请求查库
+- 缓存条目记**加载前**的监听戳（会话号 + `'d'` / `'c'` 计数），戳覆盖请求开始时的戳就原样可用，不读纪元、不看 TTL（只看条目自己的到期：身份 `expires_at`、名单 `nextExpiry`）。通知在提交之后才送达，所以没有「纪元已推进、数据还没可见」的提交缝。strict 设备模式的名单依赖在线设备记录（没有纪元），照旧按 TTL 重算
+- 身份与名单看 `'d'`；节点配置视图（`config_delivery_view.go`：UniProxy 认证、204 判定、心跳回包）看 `'c'`，只在监听健康时用。视图给不出结论（令牌不对、门槛不过、节点不存在）一律交回原来的查库路径，错误与日志不变；门槛片段 `uniProxyServingGateSQL`、`effectiveDeliverableSQL` 与查库路径共用
+- **给 nodes 加列**：除了 `zz_notify_nodes_update`，还要加进 `zz_node_config_notify_nodes_update`（00153，同一份列清单，连 last_heartbeat_at 也不比）；PG18 守卫 `checkNodesTriggerColumns` 两个触发器一起对照 information_schema。影响 UniProxy 认证的服务器列要加进 `zz_node_config_notify_servers_update`
+- 守卫：单测 `epoch_watch_test.go`、`config_delivery_view_test.go`；PG18 `checkWatchedGatewayFollowsNotifications`（身份失效、节点退役、换令牌在提交后 2 秒内生效，实际是通知送达的毫秒级）
+- 心跳写合并（`heartbeat_coalesce.go`）：材料字段（除探针值外的全部上报）没变、离上一拍不到 60 秒、监听健康时只记内存，每 15 秒一批写（节点行只动 last_heartbeat_at、探针点降到约 60 秒一点、服务器行 45 秒刷新），批量写逐行仍以 `activeIdentityFromSQL("v.id")` 为门槛。库里心跳年龄最坏约 48 秒 < 离线判定 90 秒（守卫 `TestHeartbeatCoalesceWindowStaysInsideStaleThreshold`）；运行状态、版本、资产变化与断线回来的第一拍立即写
+- UniProxy `/user` 的 200 正文按（池, 版本）只编码一次（JSON 与 gzip，挂在用户集缓存条目上），请求接受 gzip 就直接给压好的那份，nginx 不再逐个压
