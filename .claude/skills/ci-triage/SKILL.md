@@ -28,7 +28,9 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
    - **观察中**（还没查清，不算已知偶发）：先重跑一次，第二次还红再当真缺陷查；条目和已有数据在 `.claude/TASKS.md`，别复制进来。
      - pdnd `TestDelUsersEndsQUICUDPSessions`（检查机 linux-race）：见「节点遗留」；
      - smoke 浏览器 A4 续费日期：见「w9https 后续」；
-     - `portal-buy.spec.ts` 套餐卡标题断言：见「w9quic 后续」⑥。
+     - `portal-buy.spec.ts` 套餐卡标题断言：见「w9quic 后续」⑥；
+     - pdnd `TestLongConnectionTrafficIsReportedEachPeriod`（`pdnd/kernel/traffic_periodic_test.go`）：w12deploy 5b03f52 的检查机偶发红一次，GitHub 绿；
+     - 检查机的 panel-frontend 单元测试：w12native d4ca344 红一次，该提交只改部署文件、没动前端，GitHub 绿。
 2. **一处报错连带一片**：先看「SQL 报错」和 e2e 首个失败。同一条 SQLSTATE 出现在几个测试里，通常是一条共享查询坏了，修一处全好（10-07：ListLinks 漏逗号 → 门户链接 500、两个 PG18 用例、expiry/risk e2e、两个前端冒烟一起红）。
 3. **整合问题**（几路并行合并后才出现）：
    - 计数类断言：内置模板数、后台循环数（`workers.Add` 与两份契约测试）、`run-pg18-gates.sh` 的 DOMAINS、`run-smoke-e2e.sh` 的 SCRIPTS；
@@ -37,7 +39,7 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
    - 夹具 id 撞号（同一 PG18 域库共用），见 `.claude/rules/platform-pg18.md`。
 4. **审计、限频类 e2e**：smoke 里各脚本从同一来源 IP 打同一个栈，按 IP 窗口去重的逻辑会被前一个脚本的记录吞掉。先确认是产品语义（要不要豁免）还是脚本假设，再改。
 5. **浏览器购买路径**：见下一节。
-6. **真缺陷**：在本机复现（PG18 用例本机没有 Docker 会跳过，跳过不等于通过）。修完按 verify skill 重跑改到的包，推送后再等两个脚本。
+6. **真缺陷**：在本机复现（PG18 用例本机没有 Docker 会跳过，跳过不等于通过）。修完按 verify skill 重跑改到的包（本机 go 命令的 `GOTOOLCHAIN` 也见 verify），推送后再等两个脚本。
 
 ## 浏览器购买路径（panel-smoke 的 Playwright 步骤）红了
 

@@ -53,7 +53,7 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
 
 构建 tags 固定为 `with_quic,with_utls,with_gvisor,with_naive_outbound`，写在 run.sh 里。
 
-全程只用本机 Go 模块缓存（`GOPROXY=off`、`GOSUMDB=off`、`GOTOOLCHAIN=local`），不要为它打开联网下载：
+全程只用本机 Go 模块缓存（`GOPROXY=off`），不要为它打开联网下载。Go 版本由 `scripts/toolchain.sh` 从 panel 与 pdnd 的 go.mod 取较高者设 `GOTOOLCHAIN`（本机缺省 1.27.1 会让 pdnd 链接失败，原因见根 CLAUDE.md「环境与工具坑」）；不要改回 `GOTOOLCHAIN=local`，也不要加 `GOSUMDB=off`（与 `GOPROXY=off` 一起会让缓存里的工具链校验报错）：
 - 编译报模块缺失，说明 pdnd 自己的依赖还没在本机拉齐。先按 verify 流程把 pdnd 构建通过，再回来跑。
 - pdnd 升级依赖后，run.sh 会在工作副本里离线补齐 go.mod，并提示把 `go.mod`、`go.sum` 拷回 skill。拷回时 replace 行要改回相对路径。
 
