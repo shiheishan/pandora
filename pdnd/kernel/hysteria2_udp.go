@@ -25,7 +25,9 @@ import (
 //     不再为每包复制一份负载；
 //   - 目标地址按上一包缓存，域名目标不再逐包解析；
 //   - 流量直接原子累加到会话所属用户的计数器（userSession），不抢适配器的锁；
-//   - 上游 socket 收发缓冲调大（受系统 rmem_max / wmem_max 上限约束）。
+//   - 上游 socket 收发缓冲与 QUIC 监听同口径（quicSocketBufferWant，受系统
+//     rmem_max / wmem_max 上限约束；拿不到时不另告警，入站起来时那一条告警已覆盖，
+//     见 quic_socket_linux.go）。
 //
 // 上游能不能批量（hy2UDPUpstream）：
 //   - 出站明确交出裸 *net.UDPConn（RawUDPConn，私网目标放开时的直连）：直接批量；
@@ -36,11 +38,17 @@ import (
 const (
 	// hy2UDPBatch 是一次批量收发的最大包数。
 	hy2UDPBatch = 32
-	// hy2UDPSocketBuffer 是给上游 UDP socket 申请的收发缓冲。
-	hy2UDPSocketBuffer = 4 << 20
+	// hy2UDPSocketBuffer 是给上游 UDP socket 申请的收发缓冲，与 QUIC 监听同口径。
+	// 下行是「上游 → 本 socket → QUIC」：QUIC 一侧的调度停顿期间到达的包全靠它兜着，
+	// 只调大监听 socket 时丢包挪到这里（10-09 VPC 复测 8MB 档的 UdpRcvbufErrors）。
+	hy2UDPSocketBuffer = quicSocketBufferWant
 	// hy2UDPResolveTTL 是域名目标解析结果在会话内的复用时长。
 	hy2UDPResolveTTL = 30 * time.Second
 )
+
+// quicSocketBufferWant 是 quic-go 给监听 socket 要的 UDP 收发缓冲（sagernet/quic-go 的
+// protocol.DesiredReceiveBufferSize 与 DesiredSendBufferSize，各 8MB）。
+const quicSocketBufferWant = 8 << 20
 
 // hy2UDPBatchSupported：x/net 的 ReadBatch / WriteBatch 只在 Linux 上是
 // recvmmsg / sendmmsg，别的平台一次只收发一包且每包多几次分配，不如逐包。
