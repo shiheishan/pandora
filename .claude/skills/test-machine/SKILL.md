@@ -40,7 +40,7 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 | 开机并登记 | `vultr-create.sh [--no-vpc] <别名> <套餐> "<用途>"` | 先在对话里报套餐、台数、时长、公网出流量估算；大流量机器一律挂 VPC（缺省） |
 | 已有机器挂 VPC | `vultr-attach-vpc.sh <别名>...` | 用户同意改这几台后；不重启，约 20 秒 enp8s0 有地址，登记一并补上 |
 | 看账单与超额 | `vultr-billing.sh` | 随时（只读）；开机前、删机前各看一次 |
-| 删机 | `vultr-delete.sh <别名>...` 先列出，`--yes` 才删，删完自动撤登记 | **只在用户对话里点名同意删这几台之后**；只删 `vultr-sgp-pt-*` |
+| 删机 | `vultr-delete.sh <别名>...` 先列出，`--yes` 才删，删完自动撤登记 | **只删用户在对话里点名或明说授权的那几台**（用户 10-09 定）；先列清单与账单；只删 `vultr-sgp-pt-*` |
 | 底层调用 | `vultr.sh <METHOD> <路径> [JSON 文件]` | 上面没覆盖的接口 |
 
 - 4c8g 独享是 `voc-c-4c-8gb-75s-amd`，2c4g 是 `vc2-2c-4gb`，1c1g 是 `vc2-1c-1gb`；套餐与 os 列表的接口免密钥：`curl -s 'https://api.vultr.com/v2/plans?type=all&per_page=500'`。
@@ -64,7 +64,7 @@ bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] <别名>
 
 ## 回收
 
-删机只在用户点名同意后用 `vultr-delete.sh --yes`，或由用户在 Vultr 控制台删；agent 不重装、不改套餐。用户在控制台删了之后跑 `unregister.sh <别名>`：去掉 `~/.ssh/config` 的 Host 块、总表一行、`ops-local/vpc-hosts.tsv` 一行，`ssh-keygen -R`，`AGENTS.md` 顶部注明已删（目录保留作记录），重生成私有 gitleaks 规则。结果先拉回 `ops-local/` 再删。
+删机只删用户点名或明说授权的（10-09 定），用 `vultr-delete.sh --yes`，或由用户在 Vultr 控制台删；agent 不重装、不改套餐。用户在控制台删了之后跑 `unregister.sh <别名>`：去掉 `~/.ssh/config` 的 Host 块、总表一行、`ops-local/vpc-hosts.tsv` 一行，`ssh-keygen -R`，`AGENTS.md` 顶部注明已删（目录保留作记录），重生成私有 gitleaks 规则。结果先拉回 `ops-local/` 再删。
 
 ## 坑
 

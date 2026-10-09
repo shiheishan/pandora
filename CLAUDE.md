@@ -69,7 +69,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - gitleaks 命中必须停下处理。扫描不得与提交、推送串在同一条命令里。
 - 现场值（IP、域名、后台前缀）只放 `~/.ssh/config`、`~/ai/servers/`、`ops-local/<目录>/`；口令只经 stdin 或 0600 文件传，不出现在命令行参数、输出和记录里。
 - 不读 `ops-local/**/secrets/`（子 agent 的 prompt 与 brief 同样适用）。
-- 测试机不删、不重装；删机只由用户在 Vultr 控制台做，用户说删了之后 agent 才去掉登记（见 test-machine skill「回收」）。
+- 测试机不重装、不改套餐。删机只删用户在对话里点名的那几台（或用户明说授权删的范围），先列清单与账单，再用 test-machine skill 的 `vultr-delete.sh --yes` 删并撤登记；用户自己在控制台删的，说删了之后 agent 去掉登记（见 test-machine skill「回收」）。
 
 ## 长任务的任务清单
 
