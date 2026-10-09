@@ -31,7 +31,7 @@ public POST    /v1/coupons/preview                                -   -
 public GET     /v1/events                                         -   -
 public POST    /v1/gift-cards/preview                             -   -
 public POST    /v1/gift-cards/redeem                              -   -
-public GET     /v1/me                                             2   2
+public GET     /v1/me                                             3   2
 public GET     /v1/me/announcements                               4   2
 public GET     /v1/me/balance                                     7   2
 public POST    /v1/me/checkout/quote                             10   2
