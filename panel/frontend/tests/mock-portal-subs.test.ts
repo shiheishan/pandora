@@ -16,8 +16,8 @@ const pick = (src: string, re: RegExp, what: string): string => {
 }
 const transferGo = goSource('domain/billing/traffic_pack_transfer.go')
 const goTransfer = {
-  source: pick(transferGo, /errTransferSource = httpx\.New\(httpx\.CodeConflict, "([^"]+)"\)/, 'errTransferSource'),
-  sameTarget: pick(transferGo, /"to_subscription_id": "([^"]+)"/, '同一份的 422 文案'),
+  source: pick(transferGo, /errTransferSource\s*=\s*httpx\.New\(httpx\.CodeConflict,\s*"([^"]+)"\)/, 'errTransferSource'),
+  sameTarget: pick(transferGo, /"to_subscription_id":\s*"([^"]+)"/, '同一份的 422 文案'),
   invalid: pick(goSource('platform/httpx/httpx.go'), /func Invalid\(fields map\[string\]string\) \*Error \{\s*return &Error\{Code: CodeValidationFailed, Message: "([^"]+)"/, 'httpx.Invalid 的 message'),
 }
 
