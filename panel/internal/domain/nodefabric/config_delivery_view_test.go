@@ -12,16 +12,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aegispanel/aegis/internal/platform/cache"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 // healthyWatch 给服务装一个已经健康的监听（不连库），返回它。
-func healthyWatch(t *testing.T, svc *Service) *epochWatch {
+func healthyWatch(t *testing.T, svc *Service) *cache.Watch {
 	t.Helper()
 	w := newEpochWatch(nil)
-	w.connect()
-	w.observe(w.nextProbe())
+	w.Connect()
+	w.Observe(w.NextProbe())
 	svc.caches.watch = w
 	if !svc.watchStamp().ok() {
 		t.Fatal("watch not healthy")
@@ -40,7 +41,7 @@ func TestVerifySignatureTrustsWatchedIdentityUntilDeliveryNotification(t *testin
 		t.Fatal(err)
 	}
 	id := Identity{NodeID: "n1", PublicKey: pub, epoch: 3, watch: svc.watchStamp(), expiresAt: time.Now().Add(time.Hour)}
-	_, _ = svc.caches.identity.get(context.Background(), identityCacheKey("t1", "n1"), "", always[Identity], nil,
+	_, _ = svc.caches.identity.Get(context.Background(), identityCacheKey("t1", "n1"), "", always[Identity], nil,
 		func(context.Context) (Identity, error) { return id, nil })
 	payload := []byte("payload")
 	check, err := svc.VerifyNodeRequestSignature(context.Background(), "t1", "n1", payload, ed25519.Sign(priv, payload))
@@ -54,11 +55,11 @@ func TestVerifySignatureTrustsWatchedIdentityUntilDeliveryNotification(t *testin
 	if err := svc.ConfirmNodeIdentity(context.Background(), "t1", "n1", check, 99, payload, nil); err != nil {
 		t.Fatalf("fresh identity re-checked: %v", err)
 	}
-	w.observe("d")
+	w.Observe("d")
 	if id.watch.deliveryCovers(svc.watchStamp()) {
 		t.Fatal("identity loaded before a delivery notification still counts as fresh")
 	}
-	w.observe("c")
+	w.Observe("c")
 	// 'c' 不影响身份，但上一条 'd' 已经让它过期：取身份必须回库（这里没有库，会 panic）
 	defer func() {
 		if recover() == nil {
@@ -74,15 +75,15 @@ func TestWatchedUserSetSkipsTTLOnlyInLooseMode(t *testing.T) {
 	svc := NewService(nil, nil)
 	svc.caches = newNodeCaches(clock.Now)
 	w := newEpochWatch(clock.Now)
-	w.connect()
-	w.observe(w.nextProbe())
+	w.Connect()
+	w.Observe(w.NextProbe())
 	svc.caches.watch = w
 	pool := "pool-1"
 	users := []ProxyUser{{ID: 1, UUID: "u-1"}}
 	seed := func(strict bool) {
 		set := nodeUserSet{users: users, version: UserSetVersion(users), epoch: 4, watch: svc.watchStamp(), strict: strict}
-		svc.caches.users.drop(usersCacheKey("t1", pool))
-		_, _ = svc.caches.users.get(context.Background(), usersCacheKey("t1", pool), "", always[nodeUserSet], nil,
+		svc.caches.users.Drop(usersCacheKey("t1", pool))
+		_, _ = svc.caches.users.Get(context.Background(), usersCacheKey("t1", pool), "", always[nodeUserSet], nil,
 			func(context.Context) (nodeUserSet, error) { return set, nil })
 	}
 	node := func() *ServingNode {
@@ -90,7 +91,7 @@ func TestWatchedUserSetSkipsTTLOnlyInLooseMode(t *testing.T) {
 	}
 	seed(false)
 	clock.Advance(nodeUsersCacheTTL + nodeUsersStaleGrace + time.Second)
-	w.observe(w.nextProbe()) // 探针回声跟上时钟
+	w.Observe(w.NextProbe()) // 探针回声跟上时钟
 	if got, _, err := svc.NodeUserSet(context.Background(), "t1", node()); err != nil || len(got) != 1 {
 		t.Fatalf("watched loose set was not served past its TTL: %v %v", got, err)
 	}
@@ -105,10 +106,10 @@ func TestWatchedUserSetSkipsTTLOnlyInLooseMode(t *testing.T) {
 	}
 	seed(true)
 	clock.Advance(nodeUsersCacheTTL + nodeUsersStaleGrace + time.Second)
-	w.observe(w.nextProbe())
+	w.Observe(w.NextProbe())
 	mustReload("strict set past TTL")
 	seed(false)
-	w.observe("d")
+	w.Observe("d")
 	mustReload("set loaded before a delivery notification")
 }
 

@@ -221,7 +221,7 @@ func testReportAliveBatchPG18(t *testing.T, ctx context.Context, admin *pgxpool.
 	if err != nil || len(pooled) != 0 || version != UserSetVersion(nil) {
 		t.Fatalf("pool-level node user query = %v %q, %v", pooled, version, err)
 	}
-	if set, ok := cached.caches.users.peek(usersCacheKey(tenant.String(), pool)); !ok || set.epoch < epoch {
+	if set, ok := cached.caches.users.Peek(usersCacheKey(tenant.String(), pool)); !ok || set.epoch < epoch {
 		t.Fatalf("cached user set epoch = %+v (ok=%v), want >= %d", set, ok, epoch)
 	}
 	serving, err := svc.loadServingNodesForPush(ctx, tenant.String(), []string{node.String(), uuid.NewString()})

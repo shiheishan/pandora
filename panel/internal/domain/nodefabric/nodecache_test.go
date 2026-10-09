@@ -2,13 +2,13 @@ package nodefabric
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/aegispanel/aegis/internal/platform/cache"
 	"github.com/aegispanel/aegis/internal/platform/sourcetest"
 )
 
@@ -33,115 +33,6 @@ func (c *fakeClock) Advance(d time.Duration) {
 
 func always[V any](V) bool { return true }
 
-func TestTTLCacheServesUntilTTLThenReloads(t *testing.T) {
-	clock := newFakeClock()
-	c := newTTLCache[int](10*time.Second, 8, clock.Now)
-	loads := 0
-	load := func(context.Context) (int, error) { loads++; return loads, nil }
-	ctx := context.Background()
-
-	for i := 0; i < 3; i++ {
-		if v, err := c.get(ctx, "k", "", always[int], nil, load); err != nil || v != 1 {
-			t.Fatalf("get #%d = %d, %v; want cached 1", i, v, err)
-		}
-	}
-	clock.Advance(10*time.Second - time.Nanosecond)
-	if v, _ := c.get(ctx, "k", "", always[int], nil, load); v != 1 || loads != 1 {
-		t.Fatalf("entry reloaded before TTL: v=%d loads=%d", v, loads)
-	}
-	clock.Advance(time.Nanosecond)
-	if v, _ := c.get(ctx, "k", "", always[int], nil, load); v != 2 || loads != 2 {
-		t.Fatalf("entry not reloaded at TTL: v=%d loads=%d", v, loads)
-	}
-}
-
-// 纪元落后的条目不能用：调用方要求的纪元比条目新，就重算。
-func TestTTLCacheReloadsWhenEntryIsOlderThanRequired(t *testing.T) {
-	c := newTTLCache[nodeUserSet](time.Minute, 8, nil)
-	epoch := int64(7)
-	loads := 0
-	load := func(context.Context) (nodeUserSet, error) {
-		loads++
-		return nodeUserSet{epoch: epoch, version: string(rune('a' + loads))}, nil
-	}
-	get := func(want int64) nodeUserSet {
-		t.Helper()
-		v, err := c.get(context.Background(), "pool", epochFlight(want),
-			func(set nodeUserSet) bool { return set.epoch >= want }, nil, load)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return v
-	}
-	if get(7).version != "b" || get(5).version != "b" || get(7).version != "b" || loads != 1 {
-		t.Fatalf("entry at epoch 7 was not reused for requests at epoch <= 7: loads=%d", loads)
-	}
-	epoch = 9 // 写方推进了纪元
-	if v := get(8); v.version != "c" || v.epoch != 9 || loads != 2 {
-		t.Fatalf("stale entry served to a newer epoch: %+v loads=%d", v, loads)
-	}
-}
-
-func TestTTLCacheDoesNotCacheErrors(t *testing.T) {
-	c := newTTLCache[int](time.Minute, 8, nil)
-	calls := 0
-	fail := func(context.Context) (int, error) { calls++; return 0, errors.New("boom") }
-	for i := 0; i < 2; i++ {
-		if _, err := c.get(context.Background(), "k", "", always[int], nil, fail); err == nil {
-			t.Fatal("error swallowed")
-		}
-	}
-	if calls != 2 || c.len() != 0 {
-		t.Fatalf("failed load was cached: calls=%d entries=%d", calls, c.len())
-	}
-}
-
-// 同一把钥匙、同一个单飞标签的并发请求只放一个加载，其余等它的结果。
-func TestTTLCacheSingleFlight(t *testing.T) {
-	c := newTTLCache[int](time.Minute, 8, nil)
-	var calls atomic.Int32
-	release := make(chan struct{})
-	load := func(context.Context) (int, error) {
-		calls.Add(1)
-		<-release
-		return 42, nil
-	}
-	const workers = 16
-	var wg sync.WaitGroup
-	results := make(chan int, workers)
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			v, _ := c.get(context.Background(), "k", "7", always[int], nil, load)
-			results <- v
-		}()
-	}
-	time.Sleep(50 * time.Millisecond)
-	close(release)
-	wg.Wait()
-	close(results)
-	for v := range results {
-		if v != 42 {
-			t.Fatalf("joiner got %d", v)
-		}
-	}
-	if calls.Load() != 1 {
-		t.Fatalf("load ran %d times for one key, want 1", calls.Load())
-	}
-}
-
-func TestTTLCacheStaysWithinBound(t *testing.T) {
-	c := newTTLCache[int](time.Minute, 2, nil)
-	ctx := context.Background()
-	for _, k := range []string{"a", "b", "c", "d"} {
-		_, _ = c.get(ctx, k, "", always[int], nil, func(context.Context) (int, error) { return 1, nil })
-	}
-	if n := c.len(); n > 2 {
-		t.Fatalf("cache grew past its bound: %d", n)
-	}
-}
-
 // 缓存路径：同池节点共用一份用户集，命中不碰库；版本是算好的那份；没进池的节点
 // 直接得到空表。Service 没有连接池，任何一次回库都会 panic。
 func TestListNodeUsersServesPoolCacheWithoutDatabase(t *testing.T) {
@@ -150,7 +41,7 @@ func TestListNodeUsersServesPoolCacheWithoutDatabase(t *testing.T) {
 	pool := "pool-1"
 	users := []ProxyUser{{ID: 1, UUID: "u-1"}, {ID: 2, UUID: "u-2"}}
 	set := nodeUserSet{users: users, version: UserSetVersion(users), epoch: 12}
-	_, _ = svc.caches.users.get(context.Background(), usersCacheKey("t1", pool), "12", always[nodeUserSet], nil,
+	_, _ = svc.caches.users.Get(context.Background(), usersCacheKey("t1", pool), "12", always[nodeUserSet], nil,
 		func(context.Context) (nodeUserSet, error) { return set, nil })
 
 	for _, nodeID := range []string{"n1", "n2"} {
@@ -204,69 +95,6 @@ func TestDeliveryEpochIsReadAlongsideEveryCachedInput(t *testing.T) {
 	}
 }
 
-// 用户集过了 TTL：宽限期内先回旧值、后台重算一次；过了宽限期同步重算；纪元落后照旧同步。
-func TestTTLCacheServesStaleWhileRevalidating(t *testing.T) {
-	clock := newFakeClock()
-	c := newTTLCache[nodeUserSet](5*time.Second, 8, clock.Now)
-	c.staleGrace = 10 * time.Second
-	c.rank = func(s nodeUserSet) int64 { return s.epoch }
-	var loads atomic.Int64
-	release := make(chan struct{})
-	load := func(context.Context) (nodeUserSet, error) {
-		n := loads.Add(1)
-		if n == 2 {
-			<-release // 后台那一趟卡住，证明前台没在等它
-		}
-		return nodeUserSet{version: "v" + string(rune('0'+n)), epoch: 7}, nil
-	}
-	ctx := context.Background()
-	valid := func(s nodeUserSet) bool { return s.epoch >= 7 }
-	if v, _ := c.get(ctx, "k", "7", valid, nil, load); v.version != "v1" {
-		t.Fatalf("first load = %+v", v)
-	}
-	clock.Advance(6 * time.Second)
-	if v, err := c.get(ctx, "k", "7", valid, nil, load); err != nil || v.version != "v1" {
-		t.Fatalf("stale entry not served while revalidating: %+v %v", v, err)
-	}
-	for start := time.Now(); loads.Load() < 2; time.Sleep(time.Millisecond) {
-		if time.Since(start) > 2*time.Second {
-			t.Fatal("no background refresh started")
-		}
-	}
-	if v, _ := c.get(ctx, "k", "7", valid, nil, load); v.version != "v1" || loads.Load() != 2 {
-		t.Fatalf("second stale read started another refresh: loads=%d", loads.Load())
-	}
-	close(release)
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if e, ok := c.peek("k"); ok && e.version == "v2" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("background refresh never replaced the entry")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	// 过了宽限期：同步重算
-	clock.Advance(20 * time.Second)
-	if v, _ := c.get(ctx, "k", "7", valid, nil, load); v.version != "v3" {
-		t.Fatalf("entry past the grace window was served: %+v", v)
-	}
-	// 纪元前进：即使在 TTL 内也同步重算，不回旧值
-	if v, _ := c.get(ctx, "k", "9", func(s nodeUserSet) bool { return s.epoch >= 9 }, nil, func(context.Context) (nodeUserSet, error) {
-		return nodeUserSet{version: "v9", epoch: 9}, nil
-	}); v.version != "v9" {
-		t.Fatalf("advanced epoch served a stale entry: %+v", v)
-	}
-	// 晚完成的旧纪元加载不把新条目换回去
-	c.mu.Lock()
-	c.storeLocked("k", nodeUserSet{version: "old", epoch: 3})
-	c.mu.Unlock()
-	if e, _ := c.peek("k"); e.version != "v9" {
-		t.Fatalf("older load overwrote a newer entry: %+v", e)
-	}
-}
-
 // 身份缓存的寿命不超过身份自己的 expires_at。
 func TestIdentityCacheNeverOutlivesIdentityExpiry(t *testing.T) {
 	clock := newFakeClock()
@@ -275,21 +103,35 @@ func TestIdentityCacheNeverOutlivesIdentityExpiry(t *testing.T) {
 	loads := 0
 	load := func(context.Context) (Identity, error) {
 		loads++
-		return Identity{NodeID: "n", epoch: 1, expiresAt: expires}, nil
+		return Identity{NodeID: "n", epoch: int64(loads), expiresAt: expires}, nil
 	}
-	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], nil, load)
+	_, _ = caches.identity.Get(context.Background(), "k", "0", always[Identity], nil, load)
 	clock.Advance(59 * time.Second)
-	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], nil, load)
+	_, _ = caches.identity.Get(context.Background(), "k", "0", always[Identity], nil, load)
 	if loads != 1 {
 		t.Fatalf("identity reloaded before its expiry: %d", loads)
 	}
 	clock.Advance(time.Second)
-	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], nil, load)
+	_, _ = caches.identity.Get(context.Background(), "k", "0", always[Identity], nil, load)
 	if loads != 2 {
 		t.Fatal("identity served past its expires_at")
 	}
-	if nodeIdentityCacheTTL != 10*time.Minute || caches.identity.staleGrace != 0 {
-		t.Fatal("identity cache: TTL is min(expires_at, 10 minutes) and never serves stale entries")
+	if nodeIdentityCacheTTL != 10*time.Minute {
+		t.Fatal("identity cache: TTL is min(expires_at, 10 minutes)")
+	}
+	// 只到 TTL（身份本身还没到期）也同步重算：身份缓存不先回旧值
+	expires = clock.Now().Add(time.Hour)
+	_, _ = caches.identity.Get(context.Background(), "k", "0", always[Identity], nil, load)
+	clock.Advance(nodeIdentityCacheTTL)
+	if got, _ := caches.identity.Get(context.Background(), "k", "0", always[Identity], nil, load); loads != 4 || got.epoch != 4 {
+		t.Fatalf("identity past its TTL served stale: loads=%d", loads)
+	}
+}
+
+// 读纪元的常量与 platform/cache 的口径逐字相同。
+func TestDeliveryEpochSQLMatchesPlatform(t *testing.T) {
+	if deliveryEpochSQL != cache.EpochSQL(cache.NodeDeliveryEpoch) {
+		t.Fatalf("deliveryEpochSQL = %s, platform = %s", deliveryEpochSQL, cache.EpochSQL(cache.NodeDeliveryEpoch))
 	}
 }
 
@@ -310,7 +152,7 @@ func TestNodeUserSetHardExpiresAtNextSubscriptionExpiry(t *testing.T) {
 	}
 	get := func() nodeUserSet {
 		t.Helper()
-		v, err := c.get(context.Background(), "pool", epochFlight(1),
+		v, err := c.Get(context.Background(), "pool", epochFlight(1),
 			func(set nodeUserSet) bool { return set.epoch >= 1 }, nil, load)
 		if err != nil {
 			t.Fatal(err)
@@ -364,5 +206,115 @@ func TestNodeUsersRequireActiveOwner(t *testing.T) {
 		if !strings.Contains(list, want) {
 			t.Fatalf("node user list missing %q", want)
 		}
+	}
+}
+
+// 装配参数（newNodeCaches）钉在行为上：名单与身份都按纪元 rank，起得早、完成得晚的旧加载
+// 不把已存的新条目换回去。删掉任一个 Rank，这条就红。
+func TestNodeCachesRankKeepsNewerEntry(t *testing.T) {
+	caches := newNodeCaches(newFakeClock().Now)
+	ctx := context.Background()
+	t.Run("users", func(t *testing.T) {
+		raceOlderLoad(t, func(tag string, epoch int64, gate <-chan struct{}) {
+			_, _ = caches.users.Get(ctx, "pool", tag, func(nodeUserSet) bool { return false }, nil,
+				func(context.Context) (nodeUserSet, error) {
+					<-gate
+					return nodeUserSet{epoch: epoch}, nil
+				})
+		}, func() int64 { v, _ := caches.users.Peek("pool"); return v.epoch })
+	})
+	t.Run("identity", func(t *testing.T) {
+		raceOlderLoad(t, func(tag string, epoch int64, gate <-chan struct{}) {
+			_, _ = caches.identity.Get(ctx, "node", tag, func(Identity) bool { return false }, nil,
+				func(context.Context) (Identity, error) {
+					<-gate
+					return Identity{epoch: epoch, expiresAt: time.Now().Add(time.Hour)}, nil
+				})
+		}, func() int64 { v, _ := caches.identity.Peek("node"); return v.epoch })
+	})
+}
+
+// raceOlderLoad：纪元 5 的一趟先起、卡住；纪元 9 的一趟后起、先完成入库；再放行纪元 5 的那趟。
+func raceOlderLoad(t *testing.T, get func(tag string, epoch int64, gate <-chan struct{}), stored func() int64) {
+	t.Helper()
+	oldGate, newGate := make(chan struct{}), make(chan struct{})
+	oldDone := make(chan struct{})
+	go func() { defer close(oldDone); get("old", 5, oldGate) }()
+	time.Sleep(20 * time.Millisecond) // 旧的那趟已登记、卡在加载里
+	close(newGate)
+	get("new", 9, newGate)
+	if got := stored(); got != 9 {
+		t.Fatalf("newer load not stored: epoch %d", got)
+	}
+	close(oldGate)
+	<-oldDone
+	if got := stored(); got != 9 {
+		t.Fatalf("an older load finishing late replaced the newer entry: epoch %d", got)
+	}
+}
+
+// 名单：TTL 5 秒内直接命中；过了 TTL、在 TTL + 宽限 10 秒内先回旧值并在后台重算；过了宽限同步重算。
+// 删掉 StaleGrace、或把 TTL / 宽限改大改小，这条就红。
+func TestNodeUserSetTTLAndStaleGrace(t *testing.T) {
+	clock := newFakeClock()
+	caches := newNodeCaches(clock.Now)
+	ctx := context.Background()
+	var loads atomic.Int32
+	gate := make(chan struct{}, 8)
+	load := func(context.Context) (nodeUserSet, error) {
+		n := loads.Add(1)
+		if n > 1 {
+			<-gate // 重算卡住：同步等它的请求会被看出来
+		}
+		return nodeUserSet{epoch: 1, version: "v" + string(rune('0'+n))}, nil
+	}
+	valid := func(set nodeUserSet) bool { return set.epoch >= 1 }
+	get := func() nodeUserSet {
+		t.Helper()
+		v, err := caches.users.Get(ctx, "pool", "1", valid, nil, load)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	get()
+	clock.Advance(nodeUsersCacheTTL - time.Millisecond)
+	if v := get(); v.version != "v1" || loads.Load() != 1 {
+		t.Fatalf("reloaded inside the TTL: %+v loads=%d", v, loads.Load())
+	}
+	if nodeUsersCacheTTL != 5*time.Second || nodeUsersStaleGrace != 10*time.Second {
+		t.Fatalf("user set TTL/grace = %s/%s, want 5s/10s", nodeUsersCacheTTL, nodeUsersStaleGrace)
+	}
+	clock.Advance(2 * time.Millisecond) // 刚过 TTL：先回旧值，后台起一趟重算（卡在 gate 上）
+	stale := make(chan nodeUserSet, 1)
+	go func() { v, _ := caches.users.Get(ctx, "pool", "1", valid, nil, load); stale <- v }()
+	select {
+	case v := <-stale:
+		if v.version != "v1" {
+			t.Fatalf("past TTL inside the grace window must serve the old set: %+v", v)
+		}
+	case <-time.After(time.Second):
+		gate <- struct{}{} // 放行那趟同步重算，免得卡住
+		t.Fatal("past TTL inside the grace window the request waited for a synchronous reload")
+	}
+	for start := time.Now(); loads.Load() < 2; time.Sleep(time.Millisecond) {
+		if time.Since(start) > 2*time.Second {
+			t.Fatal("no background refresh after the TTL")
+		}
+	}
+	gate <- struct{}{} // 放行后台那趟
+	for start := time.Now(); ; time.Sleep(time.Millisecond) {
+		if v, ok := caches.users.Peek("pool"); ok && v.version == "v2" {
+			break
+		}
+		if time.Since(start) > 2*time.Second {
+			t.Fatal("background refresh never replaced the set")
+		}
+	}
+	// 过了 TTL + 宽限：同步重算，请求要等它（这里先放行一格，免得卡死）
+	clock.Advance(nodeUsersCacheTTL + nodeUsersStaleGrace + time.Millisecond)
+	gate <- struct{}{}
+	if v := get(); v.version != "v3" {
+		t.Fatalf("past TTL + grace must reload synchronously: %+v", v)
 	}
 }
