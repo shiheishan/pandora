@@ -3,7 +3,7 @@ module pandora/subscription-e2e/tools
 go 1.26.9
 
 require (
-	github.com/anytls/sing-anytls v0.0.11 // indirect
+	github.com/anytls/sing-anytls v0.0.13 // indirect
 	github.com/enfein/mieru/v3 v3.34.1 // indirect
 	github.com/gofrs/uuid/v5 v5.4.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
