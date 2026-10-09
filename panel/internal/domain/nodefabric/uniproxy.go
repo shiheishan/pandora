@@ -65,6 +65,9 @@ type ServingNode struct {
 	// 查询里读出。epochKnown 为假（别处拼出来的节点视图）时用户集不走缓存。
 	deliveryEpoch int64
 	epochKnown    bool
+	// watch 是请求开始时的纪元监听戳（epoch_watch.go）；健康时用户集按它判新旧，
+	// 不比 deliveryEpoch。零值表示监听不健康或节点视图不是经认证得来的。
+	watch watchStamp
 }
 
 // AuthenticateNode 校验 UniProxy 请求携带的 node_id + token。
@@ -72,12 +75,20 @@ type ServingNode struct {
 // token 在库里只有哈希。node_id 走的是节点 UUID，而不是协议里常见的自增整数 ——
 // 节点数量有限，用 UUID 不会给节点端造成困扰，却省掉一套自增 ID 映射。
 //
-// 每次都查库，不缓存：后台停用、退役节点之后下一次请求就必须 401（uniproxy_e2e
-// 钉着这一点），而这只是一次主键点查。它顺手读出下发纪元，用户集缓存拿它判断
-// 自己是否过期，不必为此多跑一次查询。
+// 后台停用、退役节点之后下一次请求就必须 401（uniproxy_e2e 钉着这一点）。纪元监听健康时
+// 先看节点配置视图（config_delivery_view.go）：停用、退役、换令牌、改协议都会在提交后发
+// 'c' 通知、让视图作废，所以视图说「令牌对、门槛过」就是查库也会得到的结论；视图给不出
+// 结论（令牌不对、门槛不过、监听不健康）时照旧一次主键点查，错误与原来逐字相同。查库时
+// 顺手读出下发纪元，用户集缓存在监听不健康时拿它判断自己是否过期。
 func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token, nodeType string) (*ServingNode, error) {
 	if nodeID == "" || token == "" {
 		return nil, httpx.New(httpx.CodeUnauthorized, "缺少 node_id 或 token")
+	}
+	want := s.watchStamp()
+	if v, ok := s.cachedNodeConfig(ctx, tenantID, nodeID, want); ok {
+		if n, ok := v.servingNode(token, nodeType, want); ok {
+			return n, nil
+		}
 	}
 
 	var n ServingNode
@@ -93,12 +104,7 @@ func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token,
 			  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
 			 WHERE n.tenant_id = $1 AND n.id = $2::uuid
 			   AND n.server_token_hash = $3
-			   AND s.deleted_at IS NULL
-			   AND s.status IN ('ready','draining')
-			   AND n.serving_status IN ('active','draining')
-			   AND n.node_type IS NOT NULL
-			   AND n.server_port BETWEEN 1 AND 65535
-			   AND `+StableProtocolReadySQL("n"),
+			   AND `+uniProxyServingGateSQL(),
 		[]any{tenantID, nodeID, crypto.HashToken(token)},
 		&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
 		&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
@@ -140,6 +146,8 @@ func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token,
 	}
 	n.Protocol = proto
 	n.epochKnown = true
+	// 戳在查询之前取（want）：用户集按它判新旧也是对的
+	n.watch = want
 	return &n, nil
 }
 
@@ -309,6 +317,7 @@ func (s *Service) nodeUsers(ctx context.Context, tenantID string, n *ServingNode
 				                  WHERE tenant_id = $1 AND key = 'device_limit.grace'), 1)`,
 				tenantID).Scan(&mode, &grace)
 			strict := mode == "strict"
+			set.strict = strict
 
 			args := []any{tenantID, n.PoolID, strict, grace}
 			nodeGate := ""
@@ -409,16 +418,29 @@ func (s *Service) nodeUsers(ctx context.Context, tenantID string, n *ServingNode
 		// 与直查路径的「$2 为 NULL 时列表为空」同一结论，不必为它查库
 		return nodeUserSet{users: []ProxyUser{}}, nil
 	}
-	want := n.deliveryEpoch
-	return c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), epochFlight(want),
-		func(set nodeUserSet) bool { return set.epoch >= want },
+	// 纪元监听健康（n.watch）时按监听戳判新旧：名单加载之后没有任何下发相关的提交就
+	// 原样可用，loose 模式下也不按 TTL 重算（strict 依赖在线设备记录，没有纪元，照旧）。
+	// 不健康时照旧比纪元。
+	want, ws := n.deliveryEpoch, n.watch
+	valid, pinned := func(set nodeUserSet) bool { return set.epoch >= want }, func(nodeUserSet) bool { return false }
+	flight := epochFlight(want)
+	if ws.ok() {
+		valid = func(set nodeUserSet) bool { return set.watch.deliveryCovers(ws) }
+		pinned = func(set nodeUserSet) bool { return !set.strict && set.watch.deliveryCovers(ws) }
+		flight = ws.flight("w")
+	}
+	return c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), flight, valid, pinned,
 		func(ctx context.Context) (nodeUserSet, error) {
+			// 戳在查询之前取：名单的快照晚于戳里每一条通知对应的提交
+			loaded := s.watchStamp()
 			var epoch int64
 			set, err := query(ctx, "", &epoch)
 			if err != nil {
 				return nodeUserSet{}, err
 			}
+			set.watch = loaded
 			set.version = UserSetVersion(set.users)
+			set.body = &userSetBody{}
 			return set, nil
 		})
 }

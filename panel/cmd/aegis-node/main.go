@@ -148,12 +148,25 @@ func run() error {
 	nodeService.EnableNodeCaches()
 
 	var workers sync.WaitGroup
-	workers.Add(1)
+	workers.Add(3)
 	// 签名请求 nonce 的过期清理。原先每个请求顺手删一批，并发请求争同一批行；
 	// 防重放只靠主键冲突，清理晚几分钟不影响判定，只影响表的大小。
 	go func() {
 		defer workers.Done()
 		runNoncePurge(ctx, nodeService, log)
+	}()
+	// 纪元监听（迁移 00153 的 LISTEN aegis_node_epoch）：健康时节点「变了没」的检查不进库，
+	// 断了自动回到逐次查库（nodefabric/epoch_watch.go）。占连接池一条连接。
+	waitWatch := nodeService.StartEpochWatch(ctx, log)
+	go func() {
+		defer workers.Done()
+		waitWatch()
+	}()
+	// 心跳写合并：没变化的心跳攒 15 秒一批写，停机时写完剩下的（nodefabric/heartbeat_coalesce.go）。
+	waitHeartbeats := nodeService.StartHeartbeatCoalescer(ctx, log)
+	go func() {
+		defer workers.Done()
+		waitHeartbeats()
 	}()
 
 	handler := node.NewRouter(node.Deps{

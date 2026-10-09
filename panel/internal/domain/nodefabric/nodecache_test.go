@@ -41,16 +41,16 @@ func TestTTLCacheServesUntilTTLThenReloads(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		if v, err := c.get(ctx, "k", "", always[int], load); err != nil || v != 1 {
+		if v, err := c.get(ctx, "k", "", always[int], nil, load); err != nil || v != 1 {
 			t.Fatalf("get #%d = %d, %v; want cached 1", i, v, err)
 		}
 	}
 	clock.Advance(10*time.Second - time.Nanosecond)
-	if v, _ := c.get(ctx, "k", "", always[int], load); v != 1 || loads != 1 {
+	if v, _ := c.get(ctx, "k", "", always[int], nil, load); v != 1 || loads != 1 {
 		t.Fatalf("entry reloaded before TTL: v=%d loads=%d", v, loads)
 	}
 	clock.Advance(time.Nanosecond)
-	if v, _ := c.get(ctx, "k", "", always[int], load); v != 2 || loads != 2 {
+	if v, _ := c.get(ctx, "k", "", always[int], nil, load); v != 2 || loads != 2 {
 		t.Fatalf("entry not reloaded at TTL: v=%d loads=%d", v, loads)
 	}
 }
@@ -67,7 +67,7 @@ func TestTTLCacheReloadsWhenEntryIsOlderThanRequired(t *testing.T) {
 	get := func(want int64) nodeUserSet {
 		t.Helper()
 		v, err := c.get(context.Background(), "pool", epochFlight(want),
-			func(set nodeUserSet) bool { return set.epoch >= want }, load)
+			func(set nodeUserSet) bool { return set.epoch >= want }, nil, load)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,7 +87,7 @@ func TestTTLCacheDoesNotCacheErrors(t *testing.T) {
 	calls := 0
 	fail := func(context.Context) (int, error) { calls++; return 0, errors.New("boom") }
 	for i := 0; i < 2; i++ {
-		if _, err := c.get(context.Background(), "k", "", always[int], fail); err == nil {
+		if _, err := c.get(context.Background(), "k", "", always[int], nil, fail); err == nil {
 			t.Fatal("error swallowed")
 		}
 	}
@@ -113,7 +113,7 @@ func TestTTLCacheSingleFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			v, _ := c.get(context.Background(), "k", "7", always[int], load)
+			v, _ := c.get(context.Background(), "k", "7", always[int], nil, load)
 			results <- v
 		}()
 	}
@@ -135,7 +135,7 @@ func TestTTLCacheStaysWithinBound(t *testing.T) {
 	c := newTTLCache[int](time.Minute, 2, nil)
 	ctx := context.Background()
 	for _, k := range []string{"a", "b", "c", "d"} {
-		_, _ = c.get(ctx, k, "", always[int], func(context.Context) (int, error) { return 1, nil })
+		_, _ = c.get(ctx, k, "", always[int], nil, func(context.Context) (int, error) { return 1, nil })
 	}
 	if n := c.len(); n > 2 {
 		t.Fatalf("cache grew past its bound: %d", n)
@@ -150,7 +150,7 @@ func TestListNodeUsersServesPoolCacheWithoutDatabase(t *testing.T) {
 	pool := "pool-1"
 	users := []ProxyUser{{ID: 1, UUID: "u-1"}, {ID: 2, UUID: "u-2"}}
 	set := nodeUserSet{users: users, version: UserSetVersion(users), epoch: 12}
-	_, _ = svc.caches.users.get(context.Background(), usersCacheKey("t1", pool), "12", always[nodeUserSet],
+	_, _ = svc.caches.users.get(context.Background(), usersCacheKey("t1", pool), "12", always[nodeUserSet], nil,
 		func(context.Context) (nodeUserSet, error) { return set, nil })
 
 	for _, nodeID := range []string{"n1", "n2"} {
@@ -221,11 +221,11 @@ func TestTTLCacheServesStaleWhileRevalidating(t *testing.T) {
 	}
 	ctx := context.Background()
 	valid := func(s nodeUserSet) bool { return s.epoch >= 7 }
-	if v, _ := c.get(ctx, "k", "7", valid, load); v.version != "v1" {
+	if v, _ := c.get(ctx, "k", "7", valid, nil, load); v.version != "v1" {
 		t.Fatalf("first load = %+v", v)
 	}
 	clock.Advance(6 * time.Second)
-	if v, err := c.get(ctx, "k", "7", valid, load); err != nil || v.version != "v1" {
+	if v, err := c.get(ctx, "k", "7", valid, nil, load); err != nil || v.version != "v1" {
 		t.Fatalf("stale entry not served while revalidating: %+v %v", v, err)
 	}
 	for start := time.Now(); loads.Load() < 2; time.Sleep(time.Millisecond) {
@@ -233,7 +233,7 @@ func TestTTLCacheServesStaleWhileRevalidating(t *testing.T) {
 			t.Fatal("no background refresh started")
 		}
 	}
-	if v, _ := c.get(ctx, "k", "7", valid, load); v.version != "v1" || loads.Load() != 2 {
+	if v, _ := c.get(ctx, "k", "7", valid, nil, load); v.version != "v1" || loads.Load() != 2 {
 		t.Fatalf("second stale read started another refresh: loads=%d", loads.Load())
 	}
 	close(release)
@@ -249,11 +249,11 @@ func TestTTLCacheServesStaleWhileRevalidating(t *testing.T) {
 	}
 	// 过了宽限期：同步重算
 	clock.Advance(20 * time.Second)
-	if v, _ := c.get(ctx, "k", "7", valid, load); v.version != "v3" {
+	if v, _ := c.get(ctx, "k", "7", valid, nil, load); v.version != "v3" {
 		t.Fatalf("entry past the grace window was served: %+v", v)
 	}
 	// 纪元前进：即使在 TTL 内也同步重算，不回旧值
-	if v, _ := c.get(ctx, "k", "9", func(s nodeUserSet) bool { return s.epoch >= 9 }, func(context.Context) (nodeUserSet, error) {
+	if v, _ := c.get(ctx, "k", "9", func(s nodeUserSet) bool { return s.epoch >= 9 }, nil, func(context.Context) (nodeUserSet, error) {
 		return nodeUserSet{version: "v9", epoch: 9}, nil
 	}); v.version != "v9" {
 		t.Fatalf("advanced epoch served a stale entry: %+v", v)
@@ -277,14 +277,14 @@ func TestIdentityCacheNeverOutlivesIdentityExpiry(t *testing.T) {
 		loads++
 		return Identity{NodeID: "n", epoch: 1, expiresAt: expires}, nil
 	}
-	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], load)
+	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], nil, load)
 	clock.Advance(59 * time.Second)
-	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], load)
+	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], nil, load)
 	if loads != 1 {
 		t.Fatalf("identity reloaded before its expiry: %d", loads)
 	}
 	clock.Advance(time.Second)
-	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], load)
+	_, _ = caches.identity.get(context.Background(), "k", "0", always[Identity], nil, load)
 	if loads != 2 {
 		t.Fatal("identity served past its expires_at")
 	}
@@ -311,7 +311,7 @@ func TestNodeUserSetHardExpiresAtNextSubscriptionExpiry(t *testing.T) {
 	get := func() nodeUserSet {
 		t.Helper()
 		v, err := c.get(context.Background(), "pool", epochFlight(1),
-			func(set nodeUserSet) bool { return set.epoch >= 1 }, load)
+			func(set nodeUserSet) bool { return set.epoch >= 1 }, nil, load)
 		if err != nil {
 			t.Fatal(err)
 		}
