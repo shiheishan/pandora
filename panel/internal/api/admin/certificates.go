@@ -22,17 +22,18 @@ type certHandlers struct {
 	log *slog.Logger
 }
 
+// newCertHandlers 装配证书处理器；没有信封加密器（凭据、私钥都没法加解密）时回 nil，路由不挂，
+// 不留到请求时才 panic。
 func newCertHandlers(d Deps) *certHandlers {
+	if d.Envelope == nil {
+		return nil
+	}
 	opts := certs.Options{Log: d.Log}
 	if d.Cfg != nil {
 		opts.DirectoryOverride = d.Cfg.ACME.DirectoryOverride
 		opts.TrustedRoots = d.Cfg.ACME.TrustedRoots
 	}
-	var sealer certs.Sealer
-	if d.Envelope != nil {
-		sealer = d.Envelope
-	}
-	return &certHandlers{svc: certs.NewService(d.Pool, sealer, opts), log: d.Log}
+	return &certHandlers{svc: certs.NewService(d.Pool, d.Envelope, opts), log: d.Log}
 }
 
 func certActor(r *http.Request) certs.Actor {

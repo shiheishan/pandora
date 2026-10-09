@@ -134,7 +134,7 @@ func TestCertsPG18(t *testing.T) {
 		}
 		// RLS 本身：以 B 的租户上下文直查五张表，一行都看不到
 		if err := app.InTx(b.ctx, platformdb.Scope{TenantID: b.tenant}, func(tx pgx.Tx) error {
-			for _, table := range []string{"certificates", "certificate_orders", "certificate_versions", "dns_credentials", "acme_accounts"} {
+			for _, table := range []string{"certificates", "certificate_orders", "certificate_versions", "certificate_issuances", "dns_credentials", "acme_accounts"} {
 				var n int
 				if err := tx.QueryRow(b.ctx, `SELECT count(*) FROM `+table).Scan(&n); err != nil || n != 0 {
 					return fmt.Errorf("%s visible to tenant B: n=%d err=%v", table, n, err)
@@ -438,24 +438,12 @@ func TestCertsPG18(t *testing.T) {
 	t.Run("local weekly limit blocks, ZeroSSL fallback issues", func(t *testing.T) {
 		e := newPGEnv(t, admin, app, 8)
 		cred := e.credential(t, "cf", cfToken)
-		// 造 50 张 7 天内签出的新证书（同一注册域），挂在一张暂停的证书上，worker 不碰它
-		seed := e.certificate(t, "seed", cred.Credential.ID, "seed.example.com")
-		if _, err := e.svc.SetCertificatePaused(e.ctx, e.tenant, e.actor, seed.ID, true); err != nil {
-			t.Fatal(err)
-		}
-		var acct string
-		if err := e.admin.QueryRow(e.ctx, `INSERT INTO acme_accounts (tenant_id, ca, directory_url, account_key_sealed, account_url)
-			VALUES ($1, 'custom', 'https://seed.invalid/dir', '\x00', 'https://seed.invalid/acct/1') RETURNING id::text`,
-			e.tenant).Scan(&acct); err != nil {
-			t.Fatal(err)
-		}
+		// 签发流水里造 50 张 7 天内签出的新证书（同一注册域）；证书早删了（流水不挂证书外键），照样计数
 		if _, err := e.admin.Exec(e.ctx, `
-			INSERT INTO certificate_versions (tenant_id, certificate_id, version, acme_account_id, ca, identifiers, is_renewal,
-			  serial, chain_pem, private_key_sealed, public_key_sha256, chain_sha256, not_before, not_after, created_at)
-			SELECT $1, $2, g, $3, 'custom', ARRAY['n' || g || '.example.com'], false, to_hex(g), 'seed', '\x00',
-			       decode(repeat('00', 32), 'hex'), decode(repeat('00', 32), 'hex'), now(), now() + interval '90 days',
-			       now() - make_interval(hours => g)
-			  FROM generate_series(1, 50) g`, e.tenant, seed.ID, acct); err != nil {
+			INSERT INTO certificate_issuances (tenant_id, certificate_id, ca, identifiers, is_renewal, serial, created_at)
+			SELECT $1, uuidv7(), CASE WHEN g % 2 = 0 THEN 'custom' ELSE 'zerossl' END, ARRAY['n' || g || '.example.com'],
+			       false, to_hex(g), now() - make_interval(hours => g)
+			  FROM generate_series(1, 50) g`, e.tenant); err != nil {
 			t.Fatal(err)
 		}
 		cert := e.certificate(t, "limited", cred.Credential.ID, "new.example.com")

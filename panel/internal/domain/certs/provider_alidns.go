@@ -131,7 +131,9 @@ func (p *aliDNSProvider) check(ctx context.Context, zone string, write bool) (ch
 		return res, err
 	}
 	if added.Body != nil && added.Body.RecordId != nil {
-		if _, err := alidns.DeleteDomainRecordWithContext(ctx, c, &alidns.DeleteDomainRecordRequest{RecordId: added.Body.RecordId}, rt); err != nil {
+		dctx, cancel := cleanupContext(ctx)
+		defer cancel()
+		if _, err := alidns.DeleteDomainRecordWithContext(dctx, c, &alidns.DeleteDomainRecordRequest{RecordId: added.Body.RecordId}, rt); err != nil {
 			res.Warnings = append(res.Warnings, "校验用的 TXT 记录 "+checkRecordLabel+"."+zone+" 没删掉，请手动删除（需要 alidns:DeleteDomainRecord）")
 		}
 	}

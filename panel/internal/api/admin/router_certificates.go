@@ -12,6 +12,12 @@ import (
 // 订单），不要幂等键。
 func registerCertificateRoutes(r chi.Router, d Deps) {
 	h := newCertHandlers(d)
+	if h == nil {
+		if d.Log != nil {
+			d.Log.Error("没有信封加密器，节点证书的后台路由不挂")
+		}
+		return
+	}
 	read := middleware.RequirePermission("node.certificate.read", d.Log)
 	write := middleware.RequirePermission("node.certificate.write", d.Log)
 

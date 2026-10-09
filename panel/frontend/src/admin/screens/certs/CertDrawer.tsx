@@ -50,8 +50,8 @@ function DetailBody({ detail, onDeleted }: { detail: CertificateDetail; onDelete
   })
   const pause = useMutation({
     mutationFn: (paused: boolean) => api.post(`v1/certificates/${c.id}/${paused ? 'pause' : 'resume'}`, certificateSchema),
-    onSuccess: (_, paused) => {
-      toast(paused ? '已暂停自动签发' : '已恢复自动签发，正在排队')
+    onSuccess: (cert, paused) => {
+      toast(paused ? '已暂停自动签发' : cert.active_order ? '已恢复自动签发，正在排队' : '已恢复自动签发，到续期时间会自动续期；要马上换一张点「立即续期」')
       void invalidate()
     },
     onError: (e) => fail(e),

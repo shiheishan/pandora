@@ -252,6 +252,11 @@ type failureOutcome struct {
 	blockCredential bool
 	// cancel：订单作废（证书已暂停或凭据失效），不算失败
 	cancel bool
+	// credRowVersion 是预检时读到的凭据版本：只在凭据没被改过时才把它标 error、拦下证书，
+	// 免得管理员刚换的新令牌被旧令牌的结论打回去
+	credRowVersion int64
+	// work 是这一单用的标识与密钥类型；签发期间被改过就补排一张（与成功路径一致）
+	work *orderWork
 }
 
 // finishFailure 记一次失败：订单结束、证书的退避与失败计数、需要时暂停或拦下凭据，写审计。
@@ -275,9 +280,11 @@ func (s *Service) finishFailure(ctx context.Context, tenantID string, c *claimed
 			return nil
 		}
 		var failures int
-		var status, credID string
-		if err := tx.QueryRow(ctx, `SELECT consecutive_failures, status, dns_credential_id::text FROM certificates
-			 WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE`, tenantID, c.certID).Scan(&failures, &status, &credID); err != nil {
+		var status, credID, curKey string
+		var curIDs []string
+		if err := tx.QueryRow(ctx, `SELECT consecutive_failures, status, dns_credential_id::text, identifiers, key_type
+			 FROM certificates WHERE tenant_id = $1 AND id = $2::uuid FOR UPDATE`, tenantID, c.certID).Scan(
+			&failures, &status, &credID, &curIDs, &curKey); err != nil {
 			return err
 		}
 		retry := f.retryIn
@@ -299,12 +306,24 @@ func (s *Service) finishFailure(ctx context.Context, tenantID string, c *claimed
 			return err
 		}
 		if f.blockCredential {
-			if _, err := tx.Exec(ctx, `
+			// 只在凭据还是预检时那一版才下结论：管理员在这期间换了令牌，新令牌由它自己的校验定
+			tag, err := tx.Exec(ctx, `
 				UPDATE dns_credentials SET verify_status = 'error', verify_error = $3
-				 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, credID, truncate(f.detail, 500)); err != nil {
+				 WHERE tenant_id = $1 AND id = $2::uuid AND row_version = $4`,
+				tenantID, credID, truncate(f.detail, 500), f.credRowVersion)
+			if err != nil {
 				return err
 			}
-			if _, err := setCredentialBlocked(ctx, tx, tenantID, credID, true); err != nil {
+			if tag.RowsAffected() == 1 {
+				if _, err := setCredentialBlocked(ctx, tx, tenantID, credID, true); err != nil {
+					return err
+				}
+			}
+		}
+		// 签发期间域名或密钥类型被改过：这次失败的是旧的，按新的立刻再排一张（与 finishSuccess 一致）
+		if f.work != nil && !paused && (status == StatusPending || status == StatusActive) &&
+			(!slices.Equal(curIDs, f.work.identifiers) || curKey != f.work.keyType) {
+			if _, err := queueOrder(ctx, tx, tenantID, c.certID, "manual", ""); err != nil {
 				return err
 			}
 		}

@@ -48,6 +48,12 @@ func (s *Service) NewWorker(log *slog.Logger) *Worker {
 	if log == nil {
 		log = slog.Default()
 	}
+	if len(s.opts.LibraryEnv) > 0 {
+		// lego 会自己读这些变量：调试开关可能把 DNS 服务商 API 的请求（含令牌）打进日志，
+		// CNAME / TCP 开关会改变签发行为。面板不用它们，提醒运维删掉
+		log.Warn("进程环境里设了 lego 自己会读的变量，可能泄露 DNS 凭据或改变签发行为，请从环境文件里删掉",
+			"vars", s.opts.LibraryEnv)
+	}
 	host, _ := os.Hostname()
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
@@ -111,13 +117,13 @@ func (s *Service) runOrder(ctx context.Context, tenantID string, c *claimed, log
 	switch {
 	case errors.As(checkErr, &credErr):
 		return s.finishFailure(ctx, tenantID, c, failureOutcome{code: "credential_rejected", detail: credErr.msg,
-			blockCredential: true})
+			blockCredential: true, credRowVersion: w.cred.RowVersion, work: w})
 	case checkErr != nil:
 		if ctx.Err() != nil {
 			return nil
 		}
 		return s.finishFailure(ctx, tenantID, c, failureOutcome{code: "dns_api_unavailable", retryIn: dnsAPIBackoff,
-			detail: "DNS 提供方 API 暂时不可用：" + providerErrorText(checkErr)})
+			detail: "DNS 提供方 API 暂时不可用：" + providerErrorText(checkErr), work: w})
 	}
 
 	// 2. 本地限额对账；超限且证书快到期（或从没签出过）时切到备用 CA
@@ -127,11 +133,11 @@ func (s *Service) runOrder(ctx context.Context, tenantID string, c *claimed, log
 	if c.replaces != nil && renewal && w.currentCA != nil && *w.currentCA == target.CA {
 		replaces = *c.replaces
 	}
-	if d := checkLocalLimits(w.recent, w.identifiers, renewal, replaces != "", w.now); d.blocked {
+	if d := checkLocalLimits(w.recent, w.identifiers, target.CA, renewal, replaces != "", w.now); d.blocked {
 		fb := s.fallbackTarget(w.cfg)
 		if fb == nil || (w.notAfter != nil && w.notAfter.Sub(w.now) >= fallbackBelow) {
 			return s.finishFailure(ctx, tenantID, c, failureOutcome{code: "rate_limited_local", detail: d.reason,
-				retryIn: max(d.retryAt.Sub(w.now), time.Minute)})
+				retryIn: max(d.retryAt.Sub(w.now), time.Minute), work: w})
 		}
 		log.Warn("首选 CA 预计超限，改用备用 CA", "certificate", c.certID, "reason", d.reason)
 		target, replaces = *fb, ""
@@ -145,10 +151,11 @@ func (s *Service) runOrder(ctx context.Context, tenantID string, c *claimed, log
 		}
 		f := classifyFailure(err, &retryRecorder{})
 		return s.finishFailure(ctx, tenantID, c, failureOutcome{code: "acme_account_error", ca: target.CA,
-			retryIn: defaultCA429, detail: "注册 ACME 账号失败：" + f.detail})
+			retryIn: defaultCA429, detail: "注册 ACME 账号失败：" + f.detail, work: w})
 	}
 
-	// 4. 签发：lego 没有 context，放在另一个协程里跑；期间续租，停机或租约丢了就不等它
+	// 4. 签发：lego 没有 context，放在另一个协程里跑；期间续租，停机或租约丢了就不等它。
+	//    CA 一签出就写签发流水（限额对账按它数），不管之后落库成不成功
 	rec := &retryRecorder{}
 	req := issueRequest{target: target, accountKey: acct.key, accountURL: acct.url, email: w.cfg.ContactEmail,
 		provider: provider, identifiers: w.identifiers, keyType: w.keyType, replaces: replaces}
@@ -159,6 +166,11 @@ func (s *Service) runOrder(ctx context.Context, tenantID string, c *claimed, log
 	done := make(chan result, 1)
 	go func() {
 		iss, err := s.obtain(req, rec)
+		if err == nil {
+			if lerr := s.recordIssuance(tenantID, c.certID, target, w.identifiers, renewal, replaces != "", iss); lerr != nil {
+				log.Error("证书签发流水写入失败（本地限额对账会少数这一张）", "certificate", c.certID, "error", lerr.Error())
+			}
+		}
 		done <- result{iss, err}
 	}()
 	tick := time.NewTicker(leaseRenewEvery)
@@ -182,8 +194,14 @@ wait:
 		}
 	}
 	if res.err != nil {
+		if accountGone(res.err) {
+			// CA 说账号不存在或已失效：标失效，下一单重新注册（账号唯一键只管 valid 的行，见 00152）
+			if derr := s.deactivateAccount(ctx, tenantID, acct.id); derr != nil {
+				log.Error("ACME 账号标失效失败", "account", acct.id, "error", derr.Error())
+			}
+		}
 		f := classifyFailure(res.err, rec)
-		out := failureOutcome{code: f.code, detail: f.detail, ca: target.CA, countsAsFailure: !f.rateLimited}
+		out := failureOutcome{code: f.code, detail: f.detail, ca: target.CA, countsAsFailure: !f.rateLimited, work: w}
 		if f.rateLimited {
 			out.retryIn = min(max(f.retryAfter, time.Minute), maxRetryAfter)
 			if f.retryAfter <= 0 {

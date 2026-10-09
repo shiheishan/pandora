@@ -433,6 +433,7 @@ func run() error {
 		defer workers.Done()
 		certWorker := certs.NewService(pool, envelope, certs.Options{
 			DirectoryOverride: cfg.ACME.DirectoryOverride, TrustedRoots: cfg.ACME.TrustedRoots, Log: log,
+			LibraryEnv: cfg.ACME.LibraryEnv,
 		}).NewWorker(log)
 		pace := newLoopPacer(30 * time.Second)
 		defer pace.Stop()

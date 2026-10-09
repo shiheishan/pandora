@@ -31,6 +31,14 @@ var providerFields = map[string][]string{
 // checkRecordLabel 是「能写 TXT」校验用的记录名（zone 下一级），建好立刻删掉。
 const checkRecordLabel = "_pandora-check"
 
+// checkTimeout 是一次校验（列 zone + 建 TXT）的时限；删 TXT 另算（cleanupContext）。
+const checkTimeout = 15 * time.Second
+
+// cleanupContext 给删校验用的 TXT：不随请求取消（请求超时或管理员关页面也要删掉），自带 8 秒时限。
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 8*time.Second)
+}
+
 // dnsProvider 是一家 DNS 提供方的两件事：预检（列 zone，按需再建删一条 TXT）与 lego 的 DNS-01 提供方。
 type dnsProvider interface {
 	check(ctx context.Context, zone string, write bool) (checkResult, error)
@@ -113,6 +121,20 @@ func mergeSecret(provider string, old, in map[string]string) (map[string]string,
 		return nil, bad
 	}
 	return out, nil
+}
+
+// secretComplete 报告这次提交是否给齐了提供方的全部凭据字段（都非空）。
+func secretComplete(provider string, in map[string]string) bool {
+	fields, ok := providerFields[provider]
+	if !ok {
+		return false
+	}
+	for _, f := range fields {
+		if strings.TrimSpace(in[f]) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // secretHint 是界面上显示的末四位（取每家的第一个字段：令牌或密钥 ID）。
