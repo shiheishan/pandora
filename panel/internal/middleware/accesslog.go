@@ -37,7 +37,10 @@ func AccessLog(log *slog.Logger, opts ...AccessLogOption) func(http.Handler) htt
 	for _, o := range opts {
 		o(&cfg)
 	}
-	stats := newRouteStats(cfg.summaryEvery)
+	stats := cfg.stats
+	if stats == nil {
+		stats = newRouteStats(cfg.summaryEvery)
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rec := &accessRecord{ResponseWriter: w}
@@ -100,6 +103,12 @@ type AccessLogOption func(*accessLogConfig)
 type accessLogConfig struct {
 	quietBelow   time.Duration
 	summaryEvery time.Duration
+	stats        *routeStats // 测试注入，便于直接看统计表
+}
+
+// withStats 让访问日志用给定的统计表（测试用）。
+func withStats(s *routeStats) AccessLogOption {
+	return func(c *accessLogConfig) { c.stats = s }
 }
 
 // QuietSuccess 把「成功（200 / 204 / 304）且快于 slow」的请求降到 debug 级，生产里不落盘；
