@@ -156,10 +156,42 @@ var (
 	errHy2BatchShareReleased = "hy2 batch share released twice"
 )
 
-// hy2BatchShare 是一个用户当前占着的批量名额数。
+// 热态名额：同时处在热态（持小组阻塞读）的会话全进程最多 64×GOMAXPROCS 个，
+// 每用户最多其中 1/4。热态只给每秒 500 包以上的会话用：4 核节点 256 个这样的
+// 会话已是每秒 12.8 万包以上，超出的会话照常在冷态收包，只多一次窥视。上限让
+// 热态小组的常驻（含还回后留在存货里的）有界：4 核最多 32MB，单用户 8MB。
+var (
+	hy2DownlinkWarmSlots   = make(chan struct{}, 64*runtime.GOMAXPROCS(0))
+	hy2DownlinkWarmPerUser = int32(max(1, cap(hy2DownlinkWarmSlots)/4))
+)
+
+// hy2BatchShare 是一个用户当前占着的批量名额与热态名额数。
 type hy2BatchShare struct {
 	held atomic.Int32
+	warm atomic.Int32
 	refs int // 在途会话数，受 hy2BatchShares.mu 保护
+}
+
+// acquireWarm 在用户份额与全局热态名额都有余时占一个热态名额。
+func (share *hy2BatchShare) acquireWarm() bool {
+	if share.warm.Add(1) > hy2DownlinkWarmPerUser {
+		share.warm.Add(-1)
+		return false
+	}
+	select {
+	case hy2DownlinkWarmSlots <- struct{}{}:
+		return true
+	default:
+		share.warm.Add(-1)
+		return false
+	}
+}
+
+func (share *hy2BatchShare) releaseWarm() {
+	<-hy2DownlinkWarmSlots
+	if share.warm.Add(-1) < 0 {
+		panic(errHy2BatchShareReleased)
+	}
 }
 
 type hy2BatchShares struct {

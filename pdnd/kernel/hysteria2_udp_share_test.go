@@ -527,3 +527,255 @@ func TestHy2DownlinkDeadlineDuringDrainKeepsSession(t *testing.T) {
 	src.close()
 	<-done
 }
+
+// 低速会话不常驻热态（复审 N1）：每秒 50–100 包（游戏、语音每 10ms / 19ms 一包）
+// 的会话，开头或者来一串 3 包，或者先以每毫秒一包的速度来 30 包（进热态），之后
+// 不该一直持着 128KB 的小组：处在热态的会话不超过 1/8；开头只是一串突发的，每会话
+// 存活堆预算 32KB（空闲会话实测约 6–10KB）。存活堆扣掉存货里的缓冲：还回的组按
+// 设计留在存货里到闲置回收（上限另有名额约束），这里量的是会话自己占着的。开头
+// 先快的那种，快的那段里进热态是应该的，只看之后有没有回冷态。
+// 改回「一串突发即进热态、段内来过一包就续期」，每会话约 200KB、全部处在热态；
+// 只改回续期条件，先快后慢的会话一直处在热态。
+func TestHy2DownlinkLowRateDoesNotStayWarm(t *testing.T) {
+	if raceEnabled {
+		t.Skip("race 检测器自带的分配会抬高堆，不量")
+	}
+	const sessions = 256
+	const budget = 32 << 10
+	type lowRateCase struct {
+		fastStart bool
+		interval  time.Duration
+	}
+	for _, tc := range []lowRateCase{{false, 10 * time.Millisecond}, {false, 19 * time.Millisecond}, {true, 10 * time.Millisecond}, {true, 19 * time.Millisecond}} {
+		interval := tc.interval
+		name := "burst-then-" + interval.String()
+		if tc.fastStart {
+			name = "fast-then-" + interval.String()
+		}
+		t.Run(name, func(t *testing.T) {
+			before := heapAfterGC() - downlinkStockBytes()
+			srcs := make([]*fakeUpstream, sessions)
+			conns := make([]*downlinkTestConn, sessions)
+			var waits []func()
+			for i := range srcs {
+				srcs[i] = newFakeUpstream()
+				conns[i] = &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
+				waits = append(waits, runTestDownlink(conns[i], srcs[i], int64(41000+i)))
+			}
+			stop := make(chan struct{})
+			var feeders sync.WaitGroup
+			for i, src := range srcs {
+				feeders.Add(1)
+				go func() {
+					defer feeders.Done()
+					if tc.fastStart {
+						for range 30 {
+							src.push(make([]byte, 50))
+							time.Sleep(time.Millisecond)
+						}
+					} else {
+						src.push(make([]byte, 50), make([]byte, 50), make([]byte, 50))
+					}
+					// 错开各会话的相位。
+					time.Sleep(time.Duration(i%10) * time.Millisecond)
+					ticker := time.NewTicker(interval)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-stop:
+							return
+						case <-ticker.C:
+							src.push(make([]byte, 50))
+						}
+					}
+				}()
+			}
+			var peak uint64
+			warm := 0
+			for range 6 {
+				time.Sleep(250 * time.Millisecond)
+				peak = max(peak, heapAfterGC()-downlinkStockBytes())
+				now := 0
+				for _, src := range srcs {
+					src.mu.Lock()
+					if !src.deadline.IsZero() {
+						now++
+					}
+					src.mu.Unlock()
+				}
+				warm = max(warm, now)
+			}
+			close(stop)
+			feeders.Wait()
+			var writes int64
+			for i, src := range srcs {
+				src.close()
+				waits[i]()
+				writes += conns[i].writes.Load()
+			}
+			perSession := (int64(peak) - int64(before)) / sessions
+			t.Logf("%s：%d 会话写回 %d 包，峰值存活堆每会话 %d 字节，同时处在热态最多 %d 个", name, sessions, writes, perSession, warm)
+			if writes < sessions*int64(time.Second/interval) {
+				t.Fatalf("写回太少：%d", writes)
+			}
+			if !tc.fastStart && perSession > budget {
+				t.Fatalf("每会话常驻 %d 字节，超过预算 %d：低速会话占着热态的小组", perSession, budget)
+			}
+			if warm > sessions/8 {
+				t.Fatalf("同时处在热态 %d 个会话（共 %d）：低速会话没回冷态", warm, sessions)
+			}
+		})
+	}
+}
+
+// downlinkStockBytes 是下行存货里缓冲的字节数（批量组 2MB、小组 128KB）。
+func downlinkStockBytes() uint64 {
+	return uint64(hy2DownlinkBatchStock.size())*hy2UDPBatch*hy2UDPMaxDatagram +
+		uint64(hy2DownlinkProbeStock.size())*hy2DownlinkProbeBatch*hy2UDPMaxDatagram
+}
+
+// cancelOnClearUpstream 在热态回冷态清读截止的那一刻，模拟转发收尾的「cancel +
+// AfterFunc 把截止设为现在」恰好抢在清截止之前（复审 N2，复审员的确定性探针）。
+type cancelOnClearUpstream struct {
+	*fakeUpstream
+	cancel context.CancelFunc
+	fired  atomic.Bool
+}
+
+func (u *cancelOnClearUpstream) SetReadDeadline(t time.Time) error {
+	if t.IsZero() && u.fired.CompareAndSwap(false, true) {
+		u.cancel()
+		_ = u.fakeUpstream.SetReadDeadline(time.Now())
+	}
+	return u.fakeUpstream.SetReadDeadline(t)
+}
+
+// 清读截止与收尾撞车：清截止会盖掉 AfterFunc 刚设的截止，只能靠清完之后复查
+// ctx 结束；不复查，下行卡在没有截止的窥视上，转发永不收尾。
+func TestHy2DownlinkClearDeadlineRacesCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	src := &cancelOnClearUpstream{fakeUpstream: newFakeUpstream(), cancel: cancel}
+	conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
+	share := hy2DownlinkBatchShares.join(7000)
+	defer hy2DownlinkBatchShares.leave(7000)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var down atomic.Int64
+		d := &hy2Downlink{ctx: ctx, conn: conn, src: src, size: hy2UDPBatch, share: share, down: &down}
+		d.run()
+	}()
+	// 包来得密进热态，停下后等窗口到期回冷态、清截止。
+	for range 20 {
+		src.push(make([]byte, 10))
+		time.Sleep(200 * time.Microsecond)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("清截止与收尾撞车后下行没有结束（卡在无截止的窥视上）")
+	}
+	if !src.fired.Load() {
+		t.Fatal("没走到回冷态")
+	}
+}
+
+// 热态名额：同时处在热态的会话每用户不超过份额、全进程不超过名额；占不到的照常
+// 在冷态收完。去掉份额或名额，下面对应的子用例变红。
+func TestHy2DownlinkWarmSlotsCapped(t *testing.T) {
+	feed := func(srcs []*fakeUpstream, stop chan struct{}, wg *sync.WaitGroup) {
+		for _, src := range srcs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ticker := time.NewTicker(time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-stop:
+						return
+					case <-ticker.C:
+						src.push(make([]byte, 100))
+					}
+				}
+			}()
+		}
+	}
+	warmOf := func(srcs []*fakeUpstream) int {
+		n := 0
+		for _, src := range srcs {
+			src.mu.Lock()
+			if !src.deadline.IsZero() {
+				n++
+			}
+			src.mu.Unlock()
+		}
+		return n
+	}
+	run := func(t *testing.T, users []int64, perUser int32, slots int) map[int64]int {
+		savedPerUser, savedSlots := hy2DownlinkWarmPerUser, hy2DownlinkWarmSlots
+		hy2DownlinkWarmPerUser, hy2DownlinkWarmSlots = perUser, make(chan struct{}, slots)
+		defer func() { hy2DownlinkWarmPerUser, hy2DownlinkWarmSlots = savedPerUser, savedSlots }()
+		byUser := map[int64][]*fakeUpstream{}
+		var all []*fakeUpstream
+		var conns []*downlinkTestConn
+		var waits []func()
+		for _, user := range users {
+			src := newFakeUpstream()
+			conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
+			byUser[user] = append(byUser[user], src)
+			all = append(all, src)
+			conns = append(conns, conn)
+			waits = append(waits, runTestDownlink(conn, src, user))
+		}
+		stop := make(chan struct{})
+		var feeders sync.WaitGroup
+		feed(all, stop, &feeders)
+		peak := map[int64]int{}
+		total := 0
+		for range 40 {
+			time.Sleep(10 * time.Millisecond)
+			now := 0
+			for user, srcs := range byUser {
+				n := warmOf(srcs)
+				peak[user] = max(peak[user], n)
+				now += n
+			}
+			total = max(total, now)
+		}
+		close(stop)
+		feeders.Wait()
+		for i, src := range all {
+			src.close()
+			waits[i]()
+			if conns[i].writes.Load() == 0 {
+				t.Errorf("第 %d 个会话一包没收到", i)
+			}
+		}
+		if len(hy2DownlinkWarmSlots) != 0 {
+			t.Fatalf("热态名额没还：%d", len(hy2DownlinkWarmSlots))
+		}
+		peak[-1] = total
+		return peak
+	}
+	t.Run("per-user", func(t *testing.T) {
+		users := []int64{8100, 8100, 8100, 8100, 8100, 8100, 8101}
+		peak := run(t, users, 2, 64)
+		t.Logf("每用户份额 2：用户甲同时热态最多 %d 个，用户乙 %d 个", peak[8100], peak[8101])
+		if peak[8100] > 2 {
+			t.Fatalf("一个用户同时 %d 个会话在热态，份额是 2", peak[8100])
+		}
+		if peak[8100] == 0 || peak[8101] == 0 {
+			t.Fatalf("每毫秒一包的会话应进热态：甲 %d 乙 %d", peak[8100], peak[8101])
+		}
+	})
+	t.Run("global", func(t *testing.T) {
+		users := []int64{8200, 8201, 8202, 8203, 8204, 8205}
+		peak := run(t, users, 64, 3)
+		t.Logf("全局名额 3：同时热态最多 %d 个", peak[-1])
+		if peak[-1] > 3 || peak[-1] == 0 {
+			t.Fatalf("同时 %d 个会话在热态，全局名额是 3", peak[-1])
+		}
+	})
+}

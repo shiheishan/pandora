@@ -19,14 +19,25 @@ import (
 // 冷态（空闲、零星）：阻塞在 MSG_PEEK 上等包，只窥视 1 字节、不占收包缓冲；醒来
 // 借 2 包的小组用 MSG_DONTWAIT 收，收满了说明还有，换批量组收空，然后全还回去。
 //
-// 热态（包来得密）：冷态两次醒来间隔不到 hy2DownlinkWarmGap，或一次醒来收到的
-// 超过小组，就转入热态：持有收包缓冲阻塞读，和改前一样每包只要「落空 + 收到」
-// 两次 recvmmsg，不再每包多一次窥视。读截止限时 hy2DownlinkWarmIdle：整段没包就
-// 还缓冲、回冷态。热态只持小组；一次收满说明有积压，借批量组（占名额与用户份额）
-// 非阻塞收空即还，批量组不陪着等包。
+// 热态（包来得密）：冷态两次醒来间隔不到 hy2DownlinkWarmGap（每秒 500 包以上），
+// 且占得到热态名额，就转入热态：持有收包缓冲阻塞读，和改前一样每包只要「落空 + 收到」
+// 两次 recvmmsg，不再每包多一次窥视。读截止限时 hy2DownlinkWarmIdle 一段，段内
+// 收到的包不到 hy2DownlinkWarmMinPackets（与进入门槛同为每秒 500 包）就还缓冲、
+// 回冷态。热态只持小组；一次收满说明有积压，借批量组（占名额与用户份额）非阻塞
+// 收空即还，批量组不陪着等包。
 //
-// 常驻：空闲会话不占收包缓冲；热态会话占 128KB（小组）；批量组只在收积压或卡在
-// 写回时占着，受名额与份额约束。要让一个会话一直占着缓冲，上游得持续每秒几百包以上地往里灌。
+// 进出门槛对称（复审 N1）：原先一次醒来收到一串（超过小组）就进热态、段内来过
+// 一包就续期，每秒 50 包（游戏、语音每 8–20ms 一包、偶尔成串）就能常年占着
+// 128KB，一个用户 1024 个会话约 128MB。现在进、出都按每秒 500 包算；一串突发
+// 只在冷态里收空，不进热态。
+//
+// 热态名额（hy2DownlinkWarmSlots，每用户最多 1/4）：短促的高速突发仍能让很多
+// 会话同时进一段热态，还回的小组又会在存货里留到闲置回收，所以同时处在热态的
+// 会话数要有上限，常驻才有界。占不到名额的会话照常在冷态收包，每包多一次窥视。
+//
+// 常驻：空闲与低速会话不占收包缓冲；热态会话占 128KB（小组），全进程最多
+// 64×GOMAXPROCS 个（4 核 32MB）；批量组只在收积压或卡在写回时占着，受批量名额与
+// 份额约束；卡在写回的冷态会话占 128KB。
 //
 // 读截止与收尾：转发收尾时 relayHy2UDP 先取消 ctx、再由 AfterFunc 把上游读截止设
 // 为现在。这里每次改读截止之后都再看一次 ctx：取消发生在改之前，看得到 ctx 已取消；
@@ -35,8 +46,11 @@ import (
 const (
 	// hy2DownlinkWarmGap：冷态两次醒来的间隔短于它（每秒 500 包以上）就转热态。
 	hy2DownlinkWarmGap = 2 * time.Millisecond
-	// hy2DownlinkWarmIdle：热态这么久没收到包就回冷态（热态会话每秒最多多一次计时器唤醒 50 次）。
+	// hy2DownlinkWarmIdle 是热态一段的长度（热态会话每秒多 50 次计时器唤醒）。
 	hy2DownlinkWarmIdle = 20 * time.Millisecond
+	// hy2DownlinkWarmMinPackets：一段里收到的包少于它就回冷态，与进入门槛同为
+	// 每秒 500 包（20ms / 2ms = 10 包）。
+	hy2DownlinkWarmMinPackets = int(hy2DownlinkWarmIdle / hy2DownlinkWarmGap)
 )
 
 // hy2DownlinkSource 是下行的收包来源：带 flags 的收包（窥视、非阻塞）加读截止。
@@ -87,8 +101,6 @@ type hy2Downlink struct {
 	down  *atomic.Int64
 	// lastWake 是冷态上一次醒来的时刻（hy2StockNow），0 表示刚从热态回来。
 	lastWake int64
-	// busy：上一次冷态醒来收到的包超过小组。
-	busy bool
 }
 
 func (d *hy2Downlink) probe() int { return min(d.size, hy2DownlinkProbeBatch) }
@@ -100,21 +112,26 @@ func (d *hy2Downlink) run() {
 			return
 		}
 		now := hy2StockNow()
-		warm := d.busy || (d.lastWake != 0 && now-d.lastWake < int64(hy2DownlinkWarmGap))
+		fast := d.lastWake != 0 && now-d.lastWake < int64(hy2DownlinkWarmGap)
 		d.lastWake = now
-		if warm {
-			if !d.warm() {
+		if fast && d.share.acquireWarm() {
+			ok := d.warmHeld()
+			d.lastWake = 0
+			if !ok {
 				return
 			}
-			d.lastWake, d.busy = 0, false
 			continue
 		}
-		received, ok := d.burst()
-		if !ok {
+		if _, ok := d.burst(); !ok {
 			return
 		}
-		d.busy = received > d.probe()
 	}
+}
+
+// warmHeld 在占到热态名额后跑热态，返回时归还名额（含 panic）。
+func (d *hy2Downlink) warmHeld() bool {
+	defer d.share.releaseWarm()
+	return d.warm()
 }
 
 // burst 是冷态醒来的一次收包：小组非阻塞收一次，收满了再换批量组（借不到就用
@@ -174,8 +191,9 @@ func (d *hy2Downlink) read(messages []ipv4.Message, flags int) (int, bool) {
 }
 
 // warm 是热态：持有小组阻塞读，一次收满就借批量组非阻塞收空、立即还（批量组
-// 只在真有积压时占着，不陪着等包）。整段 hy2DownlinkWarmIdle 没包就还小组、清读
-// 截止并返回 true（回冷态）；false 表示会话该结束。
+// 只在真有积压时占着，不陪着等包）。一段 hy2DownlinkWarmIdle 里收到的包不到
+// hy2DownlinkWarmMinPackets 就还小组、清读截止并返回 true（回冷态）；false 表示
+// 会话该结束。
 func (d *hy2Downlink) warm() bool {
 	probe := d.probe()
 	group := hy2DownlinkProbeStock.get()
@@ -184,16 +202,16 @@ func (d *hy2Downlink) warm() bool {
 	if !d.setDeadline(time.Now().Add(hy2DownlinkWarmIdle)) {
 		return false
 	}
-	received := false
+	received := 0
 	for {
 		n, err := d.src.ReadBatch(messages, 0)
 		if err != nil {
 			if !errors.Is(err, os.ErrDeadlineExceeded) || d.ctx.Err() != nil {
 				return false
 			}
-			if received {
-				// 这段时间里有包：续一段。
-				received = false
+			if received >= hy2DownlinkWarmMinPackets {
+				// 这一段仍够密：续一段。
+				received = 0
 				if !d.setDeadline(time.Now().Add(hy2DownlinkWarmIdle)) {
 					return false
 				}
@@ -201,16 +219,18 @@ func (d *hy2Downlink) warm() bool {
 			}
 			return d.setDeadline(time.Time{})
 		}
-		received = true
+		received += n
 		if !hy2WriteDownlinkMessages(d.conn, messages[:n], d.down) {
 			return false
 		}
 		if n == probe && d.size > probe {
 			// 小组一次收满：还有积压，借批量组收空（名额或份额不够就接着用小组读）。
 			if batch, ok := d.share.acquireBatchGroup(); ok {
-				if _, ok := d.drainBatch(batch); !ok {
+				more, ok := d.drainBatch(batch)
+				if !ok {
 					return false
 				}
+				received += more
 			}
 		}
 	}
