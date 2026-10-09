@@ -21,22 +21,22 @@ func TestRecentNonceSetExpiresAndStaysBounded(t *testing.T) {
 	ts := time.Unix(1_800_000_000, 0)
 	var now time.Duration
 	a := recentKeyOf(1)
-	if !r.claim(a, now, ts) || r.claim(a, now, ts) {
+	if !r.claim(a, now, ts.Add(now), ts) || r.claim(a, now, ts.Add(now), ts) {
 		t.Fatal("recent set must claim once")
 	}
 	now += signedNonceRetention - time.Nanosecond
-	if r.claim(a, now, ts) {
+	if r.claim(a, now, ts.Add(now), ts) {
 		t.Fatal("entry released before its retention ended")
 	}
 	now += time.Nanosecond
-	if !r.claim(a, now, ts) {
+	if !r.claim(a, now, ts.Add(now), ts) {
 		t.Fatal("expired entry still blocks")
 	}
 	if len(r.entries) != 1 || r.order.len() != 1 {
 		t.Fatalf("expired entries not pruned: %d %d", len(r.entries), r.order.len())
 	}
 	for i := 2; i <= 10; i++ {
-		r.claim(recentKeyOf(i), now, ts)
+		r.claim(recentKeyOf(i), now, ts.Add(now), ts)
 		if len(r.entries) > 4 || len(r.entries) != r.order.len() {
 			t.Fatalf("over the cap: %d entries, %d queued", len(r.entries), r.order.len())
 		}
@@ -49,15 +49,15 @@ func TestRecentNonceEvictionRaisesRecheck(t *testing.T) {
 	r := newRecentSet(2)
 	base := time.Unix(1_800_000_000, 0)
 	stored, fallback := recentKeyOf(1), recentKeyOf(2)
-	r.claim(stored, 0, base.Add(time.Minute)) // 时间戳比回落那条还晚：抬了界就看得出来
+	r.claim(stored, 0, base, base.Add(time.Minute)) // 时间戳比回落那条还晚：抬了界就看得出来
 	r.markStored(stored)
 	fallbackTS := base.Add(3 * time.Minute) // 节点时钟快：签名时间戳可以比本机晚
-	r.claim(fallback, time.Second, fallbackTS)
-	r.claim(recentKeyOf(3), 2*time.Second, base) // 挤掉 stored
+	r.claim(fallback, time.Second, base, fallbackTS)
+	r.claim(recentKeyOf(3), 2*time.Second, base, base) // 挤掉 stored
 	if r.recheckNs != 0 {
 		t.Fatal("evicting a Valkey-held entry raised the recheck bound")
 	}
-	r.claim(recentKeyOf(4), 3*time.Second, base) // 挤掉 fallback
+	r.claim(recentKeyOf(4), 3*time.Second, base, base) // 挤掉 fallback
 	if !r.needsRecheck(fallbackTS) || r.needsRecheck(fallbackTS.Add(time.Nanosecond)) {
 		t.Fatalf("recheck bound = %s, want %s", time.Unix(0, r.recheckNs).UTC(), fallbackTS)
 	}
@@ -69,10 +69,10 @@ func TestRecentNonceExpiryOfUnstoredEntryRaisesRecheck(t *testing.T) {
 	r := newRecentSet(100)
 	base := time.Unix(1_800_000_000, 0)
 	stored, fallback := recentKeyOf(1), recentKeyOf(2)
-	r.claim(stored, 0, base.Add(time.Hour))
+	r.claim(stored, 0, base, base.Add(time.Hour))
 	r.markStored(stored)
-	r.claim(fallback, 0, base)
-	r.claim(recentKeyOf(3), signedNonceRetention, base.Add(-time.Hour)) // 两条都到期
+	r.claim(fallback, 0, base, base)
+	r.claim(recentKeyOf(3), signedNonceRetention, base.Add(time.Hour+signedNonceRetention), base.Add(-time.Hour)) // 两条都到期
 	if _, ok := r.entries[fallback]; ok {
 		t.Fatal("expired entry not pruned")
 	}
@@ -164,7 +164,7 @@ func TestRecentNonceSetMemory(t *testing.T) {
 		ts := time.Now()
 		for i := 0; i < n; i++ {
 			_, _ = rand.Read(nonce)
-			r.claim(makeRecentKey(recentKindNode, tenant, nodes[i%len(nodes)], nonce), 0, ts)
+			r.claim(makeRecentKey(recentKindNode, tenant, nodes[i%len(nodes)], nonce), 0, ts, ts)
 		}
 		runtime.GC()
 		runtime.ReadMemStats(&after)

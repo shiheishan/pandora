@@ -19,8 +19,9 @@ import (
 // Go 的 map 不缩容，高峰过后表本身留在峰值大小。
 //
 // 到期按单调钟算（进程内经过的时长），不按墙钟：墙钟先前跳再跳回，不会让条目提前过期、
-// 在签名时间戳仍在窗口内时被忘掉（对抗审查 w12nonce #1、#6）。墙钟只出现在签名时间戳与
-// 补查界的比较里，而那里比较的是请求自己带的、签了名的时间戳，与本机墙钟无关。
+// 在签名时间戳仍在窗口内时被忘掉（对抗审查 w12nonce #1、#6）。单调钟到期之后还要按墙钟
+// 当前时刻看签名时间戳确已出窗口，才真的删：墙钟往回跳、旧时间戳重新进窗口期间条目接着
+// 留着（第三轮，信息 1）。平时这个条件在单调钟到期时必然已成立，零开销。
 //
 // 键长只影响可用性、基本不影响防重放：同一请求永远算出同一个键，碰撞通常只会把另一条
 // 合法请求误判成重放（401，节点换个 nonce 重试）。唯一的理论例外：A 的 Valkey 认领在途时
@@ -80,31 +81,39 @@ func newRecentSet(max int) *recentSet {
 	return &recentSet{entries: make(map[recentKey]recentEntry), max: max}
 }
 
-// claim 原子地「查并占」key。已在集里返回 false。now 是单调钟读数，ts 是请求签了名的
-// 时间戳。新条目带 unstored 标记，直到 Valkey 确认持有（markStored）。
-func (r *recentSet) claim(key recentKey, now time.Duration, ts time.Time) bool {
+// claim 原子地「查并占」key。已在集里返回 false。mono 是单调钟读数，wall 是墙钟当前
+// 时刻，ts 是请求签了名的时间戳。新条目带 unstored 标记，直到 Valkey 确认持有（markStored）。
+func (r *recentSet) claim(key recentKey, mono time.Duration, wall, ts time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.pruneLocked(now)
+	r.pruneLocked(mono, wall.UnixNano())
 	if _, ok := r.entries[key]; ok {
 		return false
 	}
-	r.entries[key] = recentEntry{expires: int64(now+signedNonceRetention) | 1, ts: ts.UnixNano()}
+	r.entries[key] = recentEntry{expires: int64(mono+signedNonceRetention) | 1, ts: ts.UnixNano()}
 	r.order.push(key)
 	return true
 }
 
-// pruneLocked 删掉已过期的条目；到了上限再挤掉最早的，给新条目腾一个位置。
+// recentWallMargin 是「签名时间戳已出窗口」再多等的余量：墙钟当前时刻减签名时间戳超过
+// 5 分钟窗口加它，条目才算可以忘。平时条目单调钟到期（认领后 11 分钟）时，签名时间戳
+// 至少已过去 6 分钟（节点时钟最多快 5 分钟），这个条件必然成立，不多留任何条目。
+const recentWallMargin = 30 * time.Second
+
+// pruneLocked 删掉可以忘的条目；到了上限再挤掉最早的，给新条目腾一个位置。
 //
-// 删掉（到期或被挤掉）一条 Valkey 没确认持有的条目时，它可能只记在 PG 里：把补查界抬到
-// 它的签名时间戳。重放带的是同一个时间戳，一定落在补查范围里，撞 PG 主键。到期的条目
-// 平时早已出了时间戳窗口，抬界不会让任何合法请求多补查；墙钟往回跳、旧时间戳重新
-// 进窗口时，这一步让重放仍去 PG 补查。
-func (r *recentSet) pruneLocked(now time.Duration) {
+// 可以忘 = 单调钟到期，且按墙钟当前时刻，签名时间戳已出窗口（加余量）。第二个条件只在
+// 墙钟往回跳时起作用：旧签名时间戳重新进了窗口，条目就接着留着，重放在第 1 步被拒；
+// 队首留着时后面的也一并多留，由上限兜底。墙钟跳回之后时间照常前进，条件一满足就照常删。
+//
+// 删掉（忘掉或被挤掉）一条 Valkey 没确认持有的条目时，它可能只记在 PG 里：把补查界抬到
+// 它的签名时间戳。重放带的是同一个时间戳，一定落在补查范围里，撞 PG 主键。
+func (r *recentSet) pruneLocked(mono time.Duration, wallNs int64) {
 	for r.order.len() > 0 {
 		key := r.order.front()
 		e := r.entries[key]
-		if e.expiresAt() > now && r.order.len() < r.max {
+		forgettable := e.expiresAt() <= mono && wallNs-e.ts > int64(SignedRequestAcceptanceWindow+recentWallMargin)
+		if !forgettable && r.order.len() < r.max {
 			return
 		}
 		if e.unstored() {

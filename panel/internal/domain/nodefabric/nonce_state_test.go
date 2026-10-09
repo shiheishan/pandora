@@ -147,3 +147,94 @@ func TestNoncePrimeSetsTheRecheckBound(t *testing.T) {
 		t.Fatal("empty nonce tables primed a recheck bound")
 	}
 }
+
+// 第三轮（复审信息 1）：条目单调钟到期之后，墙钟往回跳 6 分钟以上、旧签名时间戳重新
+// 进窗口，Valkey 键也已按 TTL 过期——近期集不能已经忘掉它。墙钟恢复前进、签名时间戳
+// 出窗之后，条目照常删掉。
+func TestNonceWallClockStepBackAfterExpiryStillRefusesReplay(t *testing.T) {
+	jc := newJumpClock()
+	clock := jc.clock()
+	store := &fakeNonceStore{}
+	ledger := &fakeLedger{}
+	g := newNonceGuard(store, nil, clock)
+
+	victim, victimTS := byte(1), clock.wall()
+	if err := claimThrough(g, ledger, victim, victimTS); err != nil {
+		t.Fatal(err)
+	}
+	jc.advance(signedNonceRetention + time.Minute)
+	jc.jumpWall(-(signedNonceRetention + time.Minute - 4*time.Minute)) // 墙钟回到认领后 4 分钟
+	store.mu.Lock()
+	store.keys = nil // Valkey 的键已按 TTL 过期
+	store.mu.Unlock()
+	if err := claimThrough(g, ledger, 2, clock.wall()); err != nil { // 触发清理
+		t.Fatal(err)
+	}
+	if err := claimThrough(g, ledger, victim, victimTS); !errors.Is(err, errNonceReplayed) {
+		t.Fatalf("replay after the wall clock stepped back past the retention = %v", err)
+	}
+
+	// 墙钟照常前进到签名时间戳出窗（加余量）之后，下一次清理把它删掉
+	jc.advance(2 * time.Minute)
+	if err := claimThrough(g, ledger, 3, clock.wall()); err != nil {
+		t.Fatal(err)
+	}
+	nonce, _ := nonceFixture(victim)
+	g.recent.mu.Lock()
+	_, kept := g.recent.entries[makeRecentKey(recentKindNode, "t", "n", nonce)]
+	g.recent.mu.Unlock()
+	if kept {
+		t.Fatal("entry outlived both its monotonic expiry and the signed-timestamp window")
+	}
+}
+
+// 删条目要两个条件同时成立：单调钟到期，且按墙钟当前时刻签名时间戳已出窗（5 分钟加余量）。
+func TestRecentNonceForgetsOnlyOnceTimestampLeftWindow(t *testing.T) {
+	base := time.Unix(1_800_000_000, 0)
+	a := recentKeyOf(1)
+	cases := []struct {
+		name string
+		wall time.Time
+		kept bool
+	}{
+		{"wall clock in step", base.Add(signedNonceRetention), false},
+		{"wall clock stepped back", base.Add(SignedRequestAcceptanceWindow), true},
+		{"timestamp just inside margin", base.Add(SignedRequestAcceptanceWindow + recentWallMargin), true},
+		{"timestamp past margin", base.Add(SignedRequestAcceptanceWindow + recentWallMargin + time.Nanosecond), false},
+	}
+	for _, c := range cases {
+		r := newRecentSet(100)
+		r.claim(a, 0, base, base)
+		r.claim(recentKeyOf(2), signedNonceRetention, c.wall, c.wall) // 单调钟已到期
+		if _, ok := r.entries[a]; ok != c.kept {
+			t.Fatalf("%s: kept = %v, want %v", c.name, ok, c.kept)
+		}
+	}
+	// 单调钟没到期时墙钟再往前也不删
+	r := newRecentSet(100)
+	r.claim(a, 0, base, base)
+	r.claim(recentKeyOf(2), signedNonceRetention-time.Nanosecond, base.Add(time.Hour), base.Add(time.Hour))
+	if _, ok := r.entries[a]; !ok {
+		t.Fatal("entry dropped before its monotonic expiry")
+	}
+}
+
+// 墙钟回跳期间条目多留，上限照样生效：挤掉的回落条目照旧抬补查界。
+func TestRecentNonceCapHoldsWhileWallClockIsBehind(t *testing.T) {
+	base := time.Unix(1_800_000_000, 0)
+	behind := base.Add(time.Minute) // 墙钟落后：没有条目能删
+	r := newRecentSet(3)
+	stored, fallback := recentKeyOf(1), recentKeyOf(2)
+	r.claim(stored, 0, base, base)
+	r.markStored(stored)
+	r.claim(fallback, 0, base, base.Add(2*time.Second))
+	for i := 3; i <= 8; i++ {
+		r.claim(recentKeyOf(i), signedNonceRetention+time.Duration(i), behind, behind)
+		if r.len() > 3 {
+			t.Fatalf("cap broken while the wall clock is behind: %d entries", r.len())
+		}
+	}
+	if !r.needsRecheck(base.Add(2 * time.Second)) {
+		t.Fatal("evicting a fallback entry while the wall clock is behind did not raise the recheck bound")
+	}
+}

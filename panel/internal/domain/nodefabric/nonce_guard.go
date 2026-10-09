@@ -54,11 +54,14 @@ import (
 //   - Valkey 挂着、进程又刚重启时，重启前只记在 Valkey 里的 nonce 本进程不知道。
 //   - Valkey 是 allkeys-lru、不持久化，键可能在 TTL 前被挤掉或随重启丢失。
 //   - 多副本时，别的副本回落写进 PG 的 nonce 本进程不补查（aegis-node 定为单实例）。
-//   - 墙钟往回跳得比保留期余量（约 6 分钟）还多时，旧签名时间戳会重新进窗口，而 Valkey
-//     的 TTL 按 Valkey 自己的时钟到期。这是时间戳窗口协议本身的限度，与本进程无关；
-//     近期集按单调钟到期，不会因墙钟跳变提前忘掉条目，回落条目到期时还会抬补查界。
+//   - 墙钟往回跳：旧签名时间戳会重新进 ±5 分钟窗口。近期集这一侧已堵——条目要等单调钟
+//     到期、且按墙钟当前时刻签名时间戳确已出窗口才删，回落条目删时还抬补查界。Valkey 的
+//     TTL 与 PG 行的 expires_at 各按各的时钟到期，那一侧是时间戳窗口协议本身的限度。
+//     真正剩下的缺口：墙钟回跳期间近期集被挤满（20 万条），挤掉的 Valkey 持有条目在 Valkey
+//     键也到期之后可被重放；以及条目照常删掉之后墙钟才往回跳。
+//   - 近期集触顶时挤掉的 Valkey 持有条目，之后 Valkey 又丢了键（LRU、重启、故障）时可被重放。
 //
-// 要利用它们，都还得手里有一份 10 分钟内截获的签名请求。
+// 要利用它们，都还得手里有一份截获的签名请求（墙钟不回跳时须是 10 分钟内的）。
 
 // NonceStore 是 nonce 认领的主存储（aegis-node 里是 Valkey）。
 type NonceStore interface {
@@ -102,7 +105,8 @@ const (
 )
 
 // nonceClock 是守卫用的两把钟：mono 是单调钟（进程内经过的时长），管近期集到期与冷却；
-// wall 是墙钟，只用在启动读失败时的「启动时刻 + 5 分钟」。
+// wall 是墙钟，用在启动读失败时的「启动时刻 + 5 分钟」，以及近期集删条目前确认签名时间戳
+// 已出窗口。
 type nonceClock struct {
 	mono func() time.Duration
 	wall func() time.Time
@@ -267,7 +271,7 @@ func (g *nonceGuard) countFallback() {
 // 由它自己按调用方的口径返回。
 func (g *nonceGuard) claim(ctx context.Context, key recentKey, storeKey string, requestTS time.Time,
 	replayed error, pgClaim func(context.Context) error) error {
-	if !g.recent.claim(key, g.clock.mono(), requestTS) {
+	if !g.recent.claim(key, g.clock.mono(), g.clock.wall(), requestTS) {
 		return replayed
 	}
 	if t := g.acquireStore(); t.use {
