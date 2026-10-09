@@ -12,6 +12,11 @@ import (
 // TCP 流量按周期计入：一条持续 3 个上报周期的连接，每个周期的 GetTraffic 都拿到
 // 这个周期里的增量，而不是等连接结束一次性入账（原先长连接跨多少周期都是 0，
 // 进程被强杀就全丢）。
+// trafficPeriodWait 是每个周期等计数到齐的上限。检查机上 -race 与其他 job 并发，
+// 1 秒偶发不够（10-09 检查机红过一次、GitHub 同提交绿）；计数只会涨到正好等于、
+// 不会超，放宽上限不放过错误。
+const trafficPeriodWait = 5 * time.Second
+
 func TestLongConnectionTrafficIsReportedEachPeriod(t *testing.T) {
 	for _, p := range lifecycleProtos() {
 		t.Run(p.name, func(t *testing.T) {
@@ -28,7 +33,7 @@ func TestLongConnectionTrafficIsReportedEachPeriod(t *testing.T) {
 				t.Fatal(err)
 			}
 			var warm int64
-			if ok, why := waitFor(time.Second, func() (bool, string) {
+			if ok, why := waitFor(trafficPeriodWait, func() (bool, string) {
 				traffic, _ := c.GetTraffic(tag)
 				for _, x := range traffic {
 					warm += x.Download
@@ -45,7 +50,7 @@ func TestLongConnectionTrafficIsReportedEachPeriod(t *testing.T) {
 				// 下行计数在写给客户端之后才累加，客户端读到回显时计数可能还差最后
 				// 一笔：在本周期内短暂轮询累加，总数必须正好等于这一周期的字节数。
 				var got core.UserTraffic
-				ok, why := waitFor(time.Second, func() (bool, string) {
+				ok, why := waitFor(trafficPeriodWait, func() (bool, string) {
 					traffic, err := c.GetTraffic(tag)
 					if err != nil {
 						return false, err.Error()

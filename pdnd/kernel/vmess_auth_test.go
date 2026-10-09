@@ -39,7 +39,7 @@ func vmessRequestBytes(t testing.TB, id string) []byte {
 
 func newVMessAuthAdapter(t testing.TB, n int) (*vmessAdapter, []core.User) {
 	t.Helper()
-	a := &vmessAdapter{users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	a := &vmessAdapter{users: make(map[string]vmessUser), active: make(map[net.Conn]struct{})}
 	users := make([]core.User, n)
 	for i := range users {
 		users[i] = core.User{ID: int64(i + 1), UUID: uuid.NewString()}

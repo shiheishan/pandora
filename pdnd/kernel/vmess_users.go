@@ -97,43 +97,7 @@ func (a *vmessAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	return a.sessions.snapshot(), nil
 }
 
-func (a *vmessAdapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, set := range a.online {
-		for ip := range set {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
-
-func (a *vmessAdapter) enterDevice(u core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[u.ID]
-	if set == nil {
-		set = map[string]struct{}{}
-		a.online[u.ID] = set
-	}
-	if _, ok := set[ip]; !ok && u.DeviceLimit > 0 && len(set) >= u.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-
-func (a *vmessAdapter) leaveDevice(u core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[u.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, u.ID)
-		}
-	}
-}
+func (a *vmessAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 
 func (a *vmessAdapter) addTraffic(u core.User, up, down int64) {
 	a.sessions.add(u.ID, up, down)

@@ -39,7 +39,7 @@ func TestVMessNativeTLSLoopback(t *testing.T) {
 	_ = reserved.Close()
 	certPath, keyPath := testXHTTPServerCertFiles(t)
 	id := uuid.New()
-	a := &vmessAdapter{users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	a := &vmessAdapter{users: make(map[string]vmessUser), active: make(map[net.Conn]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vmess", Listen: "127.0.0.1", Port: port, Raw: map[string]any{
 		"security": "aes-128-gcm", "tls": true, "cert_path": certPath, "key_path": keyPath,
 	}}}
@@ -108,7 +108,7 @@ func TestVMessNativeWebSocketLoopback(t *testing.T) {
 	port := reserved.Addr().(*net.TCPAddr).Port
 	_ = reserved.Close()
 	id := uuid.New()
-	a := &vmessAdapter{users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	a := &vmessAdapter{users: make(map[string]vmessUser), active: make(map[net.Conn]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vmess", Listen: "127.0.0.1", Port: port, Raw: map[string]any{
 		"network": "ws", "path": "/pandora-vmess", "security": "aes-128-gcm",
 	}}}

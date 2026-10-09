@@ -597,17 +597,18 @@ def run_round(rnd, ctx):
     for c in DEVICE_CASES:
         ips = sorted({ip_of(k, rnd, c["idx"]) for k in c["ips"]})
         alive[str(c["sub"][rnd][1])] = ips
-        expect_ips += len(ips)
+        # 面板按设备键归一后再去重（IPv6 按 /64，与 pdnd 同口径），报原始地址也一样
+        expect_ips += len({source_key(ip) for ip in ips})
     code, js, text = http("POST", UNI + "/alive?" + ctx["q"], alive, token=ctx["node_token"])
     check(code == 200 and (js or {}).get("ips") == expect_ips,
-          f"节点在线上报 {expect_ips} 个地址被接收", text[:200])
+          f"节点在线上报归一成 {expect_ips} 台设备被接收", text[:200])
     _, js = ADMIN.call("GET", "/v1/devices")
     grace = js["grace"]
     ctx["grace"], ctx["window"] = grace, js["window_minutes"]
     devs = {d["subscription_id"]: d for d in js["devices"]}
     for c in DEVICE_CASES:
         d = devs.get(c["sub"][rnd][0])
-        n = len(set(c["ips"]))
+        n = len({source_key(ip_of(k, rnd, c["idx"])) for k in c["ips"]})
         if not check(d is not None, f"{c['id']} 出现在后台在线设备概览"):
             sig[c["id"]] = dict(online=None, limit=None, exceeded=None, grace=grace)
             continue

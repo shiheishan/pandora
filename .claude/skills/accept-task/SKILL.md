@@ -23,7 +23,8 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
    - 只改注释或文字：`scripts/comment-only.sh <base> <head>` 必须为空；
    - 声称没改 SQL：`go run ./tools/refactorcheck sqlset -base <base> -head <head>` 必须 UNCHANGED；
    - 改了 SQL 的性能项：用评测集判分（训练集与留出集都不变差、改前改后结果一致；只训练集变好算过拟合，退回）。
-5. **CI**：先 `scripts/ci-status.sh <分支>` 看一眼检查机与各 workflow 的现状（只读不等）；还没出结论就按 verify skill「远端层」等；红了用 ci-triage skill 的 `triage.sh` 定位。PG18 必须 0 SKIP；grep 新增测试名，确认真跑了。
+5. **对抗式审查**：先跑 `python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesign <分支>`。退出 0（命中钱、权限、秘密、迁移、节点内核、新依赖、并发其中之一）的分支，按 adversarial-review skill 派 opus 只读审查，可以和等 CI 并行。中危以上的发现要么修完再合，要么满足该 skill「什么时候可以合」里先合后修的条件。
+6. **CI**：先 `scripts/ci-status.sh <分支>` 看一眼检查机与各 workflow 的现状（只读不等）；还没出结论就按 verify skill「远端层」等；红了用 ci-triage skill 的 `triage.sh` 定位。PG18 必须 0 SKIP；grep 新增测试名，确认真跑了。
 
 ## 合并
 

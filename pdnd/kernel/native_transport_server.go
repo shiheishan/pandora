@@ -18,7 +18,9 @@ import (
 // 就把截止时间清零，WebSocket / HTTP Upgrade 劫持后的会话、gRPC 与 XHTTP
 // 的长流都不受影响；HTTP/2 的流也不用它。Accept 出错的退避由 Serve 自带。
 func newInboundHTTPServer(handler http.Handler, maxHeaderBytes int) *http.Server {
-	return &http.Server{Handler: handler, MaxHeaderBytes: maxHeaderBytes, ReadHeaderTimeout: inboundHandshakeTimeout}
+	// ErrorLog 不能留空：net/http 缺省把握手失败连同完整对端 IP 写进标准库 log（inbound_http_errorlog.go）。
+	return &http.Server{Handler: handler, MaxHeaderBytes: maxHeaderBytes, ReadHeaderTimeout: inboundHandshakeTimeout,
+		ErrorLog: inboundHTTPErrorLog(connErrorReporter{})}
 }
 
 // serveNativeWebSocket and serveNativeHTTPUpgrade are shared HTTP front ends

@@ -69,7 +69,7 @@ func TestVLESSAdapterUDPForwardAndTraffic(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	id := uuid.New()
-	adapter := &vlessAdapter{users: make(map[string]core.User), online: make(map[int64]map[string]struct{})}
+	adapter := &vlessAdapter{users: make(map[string]core.User)}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vless", Listen: "127.0.0.1", Port: port}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

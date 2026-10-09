@@ -5,7 +5,7 @@ paths:
 
 # 后台页面通用约定
 
-- 页面只改自己模块目录，不动 `admin/screens/index.ts` 的 `SCREENS` 登记表；标签读权限在 `admin/modules.ts` 的 `MODULES` 里由 Shell 先判，页面内只按写权限（`useCan`）隐藏按钮。
+- 页面只改自己模块目录。`admin/screens/index.ts` 的 `SCREENS` 登记表：新建模块按 new-admin-module skill 登记，其余情况不动；标签读权限在 `admin/modules.ts` 的 `MODULES` 里由 Shell 先判，页面内只按写权限（`useCan`）隐藏按钮。
 - 页面内接口回 404 一律按「无权限或不存在」处理（缺权限的接口回 404），不当作报错。
 - 选中项、筛选、搜索、分页、抽屉标签都放在地址上（`rest` 路径段 + 查询串），刷新、分享、前进后退要落在同一处；改地址用 `core/router` 的 `navigate` / `href`，筛选类回写用 `replace`。
 - 模块内分层沿用：schemas（zod）→ queries / api（查询键前缀，写后按前缀整体失效）→ logic / model（纯函数，配单测）→ 组件；新逻辑放进纯函数层并补测试，组件只负责摆放。

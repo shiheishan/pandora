@@ -46,10 +46,10 @@ func (a *shadowsocksAdapter) handlePacket(ctx context.Context, wire []byte, clie
 		return err
 	}
 	ip := remoteIP(clientAddr)
-	if !a.enterDevice(user, ip) {
+	if !a.online.enter(user, ip) {
 		return fmt.Errorf("shadowsocks device limit")
 	}
-	defer a.leaveDevice(user, ip)
+	defer a.online.leave(user, ip)
 	sourceIP, _ := netip.ParseAddr(ip)
 	meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "udp", Protocol: "shadowsocks", SourceIP: sourceIP}
 	upstream, err := a.plane.ListenUDP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))

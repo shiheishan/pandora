@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 开一台测试机并登记：vultr-create.sh [--no-vpc] <别名> <套餐> "<用途一句话>"
-#   例：vultr-create.sh vultr-sgp-pt-node7 vc2-4c-8gb "pandora 节点 VPC 复测"（4c8g 独享 = voc-c-4c-8gb-75s-amd；其他套餐 id 用 curl -s "https://api.vultr.com/v2/plans?type=all" 查，免密钥）
+#   例：vultr-create.sh vultr-sgp-pt-node7 voc-c-4c-8gb-75s-amd "pandora 节点 VPC 复测"（4c8g 独享；其他套餐 id 用 curl -s "https://api.vultr.com/v2/plans?type=all" 查，免密钥）
 # 用户授权 agent 开机（10-08）；开之前在对话里报：套餐、台数、预计时长、公网出流量估算。
 # 默认挂 ops-local/vultr/env 的 VPC；不注入口令（返回体里的 default_password 丢掉不存）；关自动备份。
 set -euo pipefail

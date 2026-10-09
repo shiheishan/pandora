@@ -94,7 +94,7 @@ func NewNativeCore(registry *AdapterRegistry) *NativeCore {
 	return NewNativeCoreWithLogger(registry, nil)
 }
 
-// NewNativeCoreWithLogger 是生产入口：main 的 newLogger 经 newRuntime 传进来，
+// NewNativeCoreWithLogger 是生产入口：main 的 installLogger 经 newRuntime 传进来，
 // 入站连接失败与进程其余日志同级别、同格式、同一个出口。log 为 nil 时用 slog.Default()。
 func NewNativeCoreWithLogger(registry *AdapterRegistry, log *slog.Logger) *NativeCore {
 	if registry == nil {

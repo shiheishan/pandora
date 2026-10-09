@@ -188,6 +188,8 @@ type serverSession[U comparable] struct {
 	authDone   chan struct{}
 	authUser   U
 	udpAccess  sync.RWMutex
+	// udpClosed 由 closeUDPSessions 在 udpAccess 内置位，此后不再建会话（Pandora 改动）。
+	udpClosed  bool
 	udpConnMap map[uint16]*udpPacketConn
 	// destCache 只在 loopMessages 里用（Pandora 改动）。
 	destCache destinationCache
@@ -407,6 +409,26 @@ func (s *serverSession[U]) closeWithError(err error) {
 		s.logger.Error(E.Cause(err, "connection failed"))
 	}
 	_ = s.quicConn.CloseWithError(0, "")
+	s.closeUDPSessions()
+}
+
+// closeUDPSessions 在连接断开时关掉挂在它上面的全部 UDP 会话（Pandora 改动）。
+// 会话的 ctx 派生自服务而不是这条连接，上游不关的话要等 udpTimeout（缺省 5 分钟）
+// 空闲才收尾：期间一直占着上游 socket、转发 goroutine、在线设备与每用户会话名额，
+// 客户端早已断开却仍按在线上报。Close 里的 onDestroy 自己拿 udpAccess，这里先拷出再关。
+func (s *serverSession[U]) closeUDPSessions() {
+	s.udpAccess.Lock()
+	// 置标记与拷列表在同一把锁里：TUIC 的 quic 中继模式在各单向流的 goroutine 里也会
+	// 建会话，标记挡住拷贝之后才到的插入（handleUDPMessage）。
+	s.udpClosed = true
+	conns := make([]*udpPacketConn, 0, len(s.udpConnMap))
+	for _, conn := range s.udpConnMap {
+		conns = append(conns, conn)
+	}
+	s.udpAccess.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
 }
 
 type serverConn struct {

@@ -77,7 +77,7 @@ func (r connErrorReporter) realityHandshake(remote net.Addr, err error) {
 const (
 	// connErrAuth：凭据不对——UUID、密码、PSK、token 校验不过。
 	connErrAuth = "auth"
-	// connErrLimit：凭据对，但用户的设备数到上限了。
+	// connErrLimit：凭据对，但用户的设备数（或 hy2 / TUIC 的 UDP 会话数）到上限了。
 	connErrLimit = "limit"
 	// connErrUpstream：鉴权已过，经 DataPlane 拨目标或开 UDP 失败（含路由拒绝）。
 	connErrUpstream = "upstream"

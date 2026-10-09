@@ -82,7 +82,7 @@ func TestVMessXrayClientEncoding(t *testing.T) {
 	port := reserved.Addr().(*net.TCPAddr).Port
 	_ = reserved.Close()
 	id := uuid.New()
-	adapter := &vmessAdapter{users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	adapter := &vmessAdapter{users: make(map[string]vmessUser), active: make(map[net.Conn]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vmess", Listen: "127.0.0.1", Port: port, Raw: map[string]any{}}}
 	if err := adapter.Validate(spec); err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestVMessXrayClientUDP(t *testing.T) {
 	port := reserved.Addr().(*net.TCPAddr).Port
 	_ = reserved.Close()
 	id := uuid.New()
-	adapter := &vmessAdapter{users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	adapter := &vmessAdapter{users: make(map[string]vmessUser), active: make(map[net.Conn]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vmess", Listen: "127.0.0.1", Port: port, Raw: map[string]any{}}}
 	if err := adapter.AddUsers([]core.User{{ID: 7402, UUID: id.String()}}); err != nil {
 		t.Fatal(err)
@@ -257,7 +257,7 @@ func TestVMessXrayClientUDP(t *testing.T) {
 func TestVMessAuthenticatedLengthRejectedPromptly(t *testing.T) {
 	port := reserveTCPPort(t)
 	id := uuid.New()
-	adapter := &vmessAdapter{users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	adapter := &vmessAdapter{users: make(map[string]vmessUser), active: make(map[net.Conn]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vmess", Listen: "127.0.0.1", Port: port, Raw: map[string]any{}}}
 	if err := adapter.AddUsers([]core.User{{ID: 7405, UUID: id.String()}}); err != nil {
 		t.Fatal(err)

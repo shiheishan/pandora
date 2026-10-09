@@ -64,8 +64,10 @@ type hysteria2Adapter struct {
 	users map[string]int
 	slots []hysteria2Slot
 	// sessions 登记 TCP 子流与 UDP 会话（删用户即断），流量也随搬随记在这里。
-	sessions  userSessions
-	online    map[int64]map[string]struct{}
+	sessions userSessions
+	online   onlineDevices
+	// udpQuota 限每用户在途 UDP 会话数（quic_udp_quota.go）。
+	udpQuota  udpSessionQuota
 	service   *hy2.Service[int]
 	packet    net.PacketConn
 	plane     DataPlane
@@ -92,7 +94,7 @@ var _ N.UDPConnectionHandlerEx = (*hysteria2Adapter)(nil)
 func newHysteria2Adapter(spec InboundSpec) (Adapter, error) {
 	return &hysteria2Adapter{
 		spec: spec, users: make(map[string]int),
-		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
+		active: make(map[net.Conn]struct{}),
 	}, nil
 }
 
@@ -372,17 +374,7 @@ func (a *hysteria2Adapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	return a.sessions.snapshot(), nil
 }
 
-func (a *hysteria2Adapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
+func (a *hysteria2Adapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 
 func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	a.mu.Lock()
@@ -403,14 +395,14 @@ func (a *hysteria2Adapter) NewConnectionEx(ctx context.Context, conn net.Conn, s
 		}
 		epoch := a.sessions.epoch()
 		index, user, ok := a.userFromContext(ctx)
-		if admitErr := admissionError("hysteria2", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+		if admitErr := admissionError("hysteria2", ok, ok && a.online.enter(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			if hs, ok := conn.(N.HandshakeFailure); ok {
 				_ = hs.HandshakeFailure(fmt.Errorf("hysteria2 user is not authorized"))
 			}
 			return
 		}
-		defer a.leaveDevice(user, source.AddrString())
+		defer a.online.leave(user, source.AddrString())
 		sess := a.sessions.open(user, epoch, conn)
 		if sess == nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
@@ -456,11 +448,16 @@ func (a *hysteria2Adapter) NewPacketConnectionEx(ctx context.Context, conn N.Pac
 		// epoch 要在查用户之前取，见 userSessions 的竞态说明。
 		epoch := a.sessions.epoch()
 		_, user, ok := a.userFromContext(ctx)
-		if admitErr := admissionError("hysteria2", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+		if admitErr := admissionError("hysteria2", ok, ok && a.online.enter(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
-		defer a.leaveDevice(user, source.AddrString())
+		defer a.online.leave(user, source.AddrString())
+		if !a.udpQuota.acquire(user.ID) {
+			a.connErr.addr(StageSession, source.UDPAddr(), udpSessionLimitError("hysteria2"))
+			return
+		}
+		defer a.udpQuota.release(user.ID)
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "udp", Protocol: "hysteria2", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.ListenUDP(ctx, meta, destination)
 		if err != nil {
@@ -491,32 +488,6 @@ func (a *hysteria2Adapter) userFromContext(ctx context.Context) (int, core.User,
 		return 0, core.User{}, false
 	}
 	return index, a.slots[index].user, true
-}
-
-func (a *hysteria2Adapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-
-func (a *hysteria2Adapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
 }
 
 func (a *hysteria2Adapter) removeActive(conn net.Conn) {

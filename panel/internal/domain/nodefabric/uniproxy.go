@@ -558,7 +558,7 @@ func aliveRows(alive map[string][]string) ([]int64, [][]byte) {
 			continue
 		}
 		for _, ip := range ips {
-			r := row{uid: uid, hash: sha256.Sum256([]byte(ip))}
+			r := row{uid: uid, hash: sha256.Sum256([]byte(aliveDeviceKey(ip)))}
 			if _, dup := seen[r]; dup {
 				continue
 			}

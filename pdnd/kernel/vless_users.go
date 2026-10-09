@@ -105,43 +105,7 @@ func (a *vlessAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	return a.sessions.snapshot(), nil
 }
 
-func (a *vlessAdapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
-
-func (a *vlessAdapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-
-func (a *vlessAdapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
-}
+func (a *vlessAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 
 func (a *vlessAdapter) addTraffic(user core.User, upload, download int64) {
 	a.sessions.add(user.ID, upload, download)
