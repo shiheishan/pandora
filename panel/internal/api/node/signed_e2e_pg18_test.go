@@ -74,81 +74,7 @@ func TestSignedNodeHTTPPG18(t *testing.T) {
 	defer server.Close()
 
 	const tenantID = middleware.DefaultTenantID
-	nodeName := "signed-e2e-" + uuid.NewString()
-	bootstrapToken := "bootstrap-" + uuid.NewString()
-	tokenHash := sha256.Sum256([]byte("node-bootstrap-v2\x00" + nodeName + "\x00" + bootstrapToken))
-	if _, err := admin.Exec(ctx, `INSERT INTO bootstrap_tokens(tenant_id,token_hash,expires_at)
-		VALUES($1,$2,now()+interval '20 minutes')`, tenantID, tokenHash[:]); err != nil {
-		t.Fatal(err)
-	}
-
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 两阶段接入。
-	//
-	// 这里原先打 /v1/nodes/bootstrap 一步拿身份，那个端点现在固定返回 426。
-	// 换成 begin + commit 不只是换条路径：begin 要求节点用自己的私钥证明
-	// 它持有那把公钥，commit 还要对「方法+路径+接入ID+节点ID+序号+时间戳+
-	// 随机数+请求体哈希」整体签名。面板据此确认提交的就是发起的那一方，
-	// 而不是中途截获了接入 ID 的任何人。
-	//
-	// 运行时令牌也由节点自己生成，只把哈希报上去——面板从头到尾拿不到明文。
-	runtimeToken := "runtime-" + uuid.NewString()
-	runtimeHash := sha256.Sum256([]byte(runtimeToken))
-	requestID := uuid.NewString()
-	beginBody := mustJSON(t, map[string]any{
-		"token": bootstrapToken, "node_name": nodeName, "request_id": requestID,
-		"public_key":           base64.StdEncoding.EncodeToString(publicKey),
-		"runtime_token_sha256": base64.StdEncoding.EncodeToString(runtimeHash[:]),
-		"agent_version":        "e2e-test", "hostname": "e2e-host",
-	})
-	beginHash := sha256.Sum256(beginBody)
-	var bootstrap nodefabric.EnrollmentOutput
-	doJSON(t, http.MethodPost, server.URL+"/v1/nodes/enrollments", beginBody,
-		map[string]string{"X-Enrollment-Signature": base64.StdEncoding.EncodeToString(ed25519.Sign(
-			privateKey, nodefabric.CanonicalEnrollmentBeginV1("/v1/nodes/enrollments", requestID, beginHash[:])))},
-		http.StatusCreated, &bootstrap)
-	// 配置签名密钥在 begin 阶段就下发，commit 不再重复给——节点要先能验配置
-	// 签名，才谈得上把后面那些配置当真。
-	if bootstrap.EnrollmentID == "" || bootstrap.NodeID == "" || bootstrap.Serial <= 0 ||
-		bootstrap.ConfigKeyID != signer.KeyID() || bootstrap.ConfigPublicKey == "" {
-		t.Fatalf("incomplete enrollment identity: %+v", bootstrap)
-	}
-
-	commitBody := mustJSON(t, map[string]any{
-		"agent_version": "e2e-test", "architecture": "amd64",
-		"binary_sha256": strings.Repeat("1", 64), "config_sha256": strings.Repeat("2", 64),
-		"unit_sha256": strings.Repeat("3", 64), "preflight_sha256": strings.Repeat("4", 64),
-	})
-	// 用单独的变量接 commit 的结果，不要覆盖 begin 那份：commit 只回状态，
-	// 不再带配置密钥，覆盖过去会把已经拿到的密钥清空。
-	var committed nodefabric.EnrollmentOutput
-	doEnrollmentSignedJSON(t, privateKey, bootstrap, http.MethodPost,
-		server.URL+"/v1/nodes/enrollments/"+bootstrap.EnrollmentID+"/commit", commitBody, http.StatusOK, &committed)
-	if committed.State != "committed" || committed.NodeID != bootstrap.NodeID {
-		t.Fatalf("commit did not settle the enrollment: %+v", committed)
-	}
-
-	// Bootstrap intentionally creates a draft asset. Promote only this isolated
-	// fixture to a runnable protocol so the remaining public contracts can run.
-	command, err := admin.Exec(ctx, `UPDATE nodes SET serving_status='active',
-		node_type='shadowsocks',server_host='127.0.0.1',server_port=14443,kernel='pandora-native',
-		protocol_config='{"method":"aes-256-gcm","password":"e2e-secret"}'::jsonb,
-		protocol_schema_version=1,config_validated_at=now()
-		WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, bootstrap.NodeID)
-	if err != nil || command.RowsAffected() != 1 {
-		t.Fatalf("promote fixture node: rows=%d err=%v", command.RowsAffected(), err)
-	}
-	if _, err := admin.Exec(ctx, `UPDATE servers SET status='ready' WHERE tenant_id=$1 AND control_node_id=$2::uuid`, tenantID, bootstrap.NodeID); err != nil {
-		t.Fatal(err)
-	}
-	for _, status := range []string{"attesting", "installing", "validating", "standby", "canary", "active"} {
-		if _, err := admin.Exec(ctx, `UPDATE nodes SET status=$3 WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, bootstrap.NodeID, status); err != nil {
-			t.Fatalf("advance fixture node to %s: %v", status, err)
-		}
-	}
+	bootstrap, privateKey, runtimeToken := enrollActiveNodePG18(t, ctx, admin, server.URL, signer, "signed-e2e", 14443)
 
 	var cfg nodefabric.SignedConfig
 	doSignedJSON(t, privateKey, bootstrap.NodeID, http.MethodGet, server.URL+"/v1/nodes/effective-config", nil, http.StatusOK, &cfg)
@@ -206,6 +132,90 @@ func TestSignedNodeHTTPPG18(t *testing.T) {
 	checkNodeHotPathPG18(t, ctx, admin, appDSN, signer, privateKey, tenantID, bootstrap.NodeID, runtimeToken, cfg)
 	checkWatchedGatewayFollowsNotifications(t, ctx, admin, app, signer, privateKey, tenantID, bootstrap.NodeID, runtimeToken, cfg)
 	checkCachedGatewayFollowsEpoch(t, ctx, admin, app, signer, privateKey, tenantID, bootstrap.NodeID, runtimeToken)
+}
+
+// enrollActiveNodePG18 走两阶段接入建一个节点，再把这个隔离的夹具节点推到可运行的
+// shadowsocks（监听 port）、服务器 ready、节点 active。返回接入身份、节点私钥与运行时令牌。
+func enrollActiveNodePG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool, serverURL string,
+	signer *platformcrypto.Signer, namePrefix string, port int) (nodefabric.EnrollmentOutput, ed25519.PrivateKey, string) {
+	t.Helper()
+	const tenantID = middleware.DefaultTenantID
+	nodeName := namePrefix + "-" + uuid.NewString()
+	bootstrapToken := "bootstrap-" + uuid.NewString()
+	tokenHash := sha256.Sum256([]byte("node-bootstrap-v2\x00" + nodeName + "\x00" + bootstrapToken))
+	if _, err := admin.Exec(ctx, `INSERT INTO bootstrap_tokens(tenant_id,token_hash,expires_at)
+		VALUES($1,$2,now()+interval '20 minutes')`, tenantID, tokenHash[:]); err != nil {
+		t.Fatal(err)
+	}
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 两阶段接入。
+	//
+	// 这里原先打 /v1/nodes/bootstrap 一步拿身份，那个端点现在固定返回 426。
+	// 换成 begin + commit 不只是换条路径：begin 要求节点用自己的私钥证明
+	// 它持有那把公钥，commit 还要对「方法+路径+接入ID+节点ID+序号+时间戳+
+	// 随机数+请求体哈希」整体签名。面板据此确认提交的就是发起的那一方，
+	// 而不是中途截获了接入 ID 的任何人。
+	//
+	// 运行时令牌也由节点自己生成，只把哈希报上去——面板从头到尾拿不到明文。
+	runtimeToken := "runtime-" + uuid.NewString()
+	runtimeHash := sha256.Sum256([]byte(runtimeToken))
+	requestID := uuid.NewString()
+	beginBody := mustJSON(t, map[string]any{
+		"token": bootstrapToken, "node_name": nodeName, "request_id": requestID,
+		"public_key":           base64.StdEncoding.EncodeToString(publicKey),
+		"runtime_token_sha256": base64.StdEncoding.EncodeToString(runtimeHash[:]),
+		"agent_version":        "e2e-test", "hostname": "e2e-host",
+	})
+	beginHash := sha256.Sum256(beginBody)
+	var bootstrap nodefabric.EnrollmentOutput
+	doJSON(t, http.MethodPost, serverURL+"/v1/nodes/enrollments", beginBody,
+		map[string]string{"X-Enrollment-Signature": base64.StdEncoding.EncodeToString(ed25519.Sign(
+			privateKey, nodefabric.CanonicalEnrollmentBeginV1("/v1/nodes/enrollments", requestID, beginHash[:])))},
+		http.StatusCreated, &bootstrap)
+	// 配置签名密钥在 begin 阶段就下发，commit 不再重复给——节点要先能验配置
+	// 签名，才谈得上把后面那些配置当真。
+	if bootstrap.EnrollmentID == "" || bootstrap.NodeID == "" || bootstrap.Serial <= 0 ||
+		bootstrap.ConfigKeyID != signer.KeyID() || bootstrap.ConfigPublicKey == "" {
+		t.Fatalf("incomplete enrollment identity: %+v", bootstrap)
+	}
+
+	commitBody := mustJSON(t, map[string]any{
+		"agent_version": "e2e-test", "architecture": "amd64",
+		"binary_sha256": strings.Repeat("1", 64), "config_sha256": strings.Repeat("2", 64),
+		"unit_sha256": strings.Repeat("3", 64), "preflight_sha256": strings.Repeat("4", 64),
+	})
+	// 用单独的变量接 commit 的结果，不要覆盖 begin 那份：commit 只回状态，
+	// 不再带配置密钥，覆盖过去会把已经拿到的密钥清空。
+	var committed nodefabric.EnrollmentOutput
+	doEnrollmentSignedJSON(t, privateKey, bootstrap, http.MethodPost,
+		serverURL+"/v1/nodes/enrollments/"+bootstrap.EnrollmentID+"/commit", commitBody, http.StatusOK, &committed)
+	if committed.State != "committed" || committed.NodeID != bootstrap.NodeID {
+		t.Fatalf("commit did not settle the enrollment: %+v", committed)
+	}
+
+	// Bootstrap intentionally creates a draft asset. Promote only this isolated
+	// fixture to a runnable protocol so the remaining public contracts can run.
+	command, err := admin.Exec(ctx, `UPDATE nodes SET serving_status='active',
+		node_type='shadowsocks',server_host='127.0.0.1',server_port=$3,kernel='pandora-native',
+		protocol_config='{"method":"aes-256-gcm","password":"e2e-secret"}'::jsonb,
+		protocol_schema_version=1,config_validated_at=now()
+		WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, bootstrap.NodeID, port)
+	if err != nil || command.RowsAffected() != 1 {
+		t.Fatalf("promote fixture node: rows=%d err=%v", command.RowsAffected(), err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE servers SET status='ready' WHERE tenant_id=$1 AND control_node_id=$2::uuid`, tenantID, bootstrap.NodeID); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"attesting", "installing", "validating", "standby", "canary", "active"} {
+		if _, err := admin.Exec(ctx, `UPDATE nodes SET status=$3 WHERE tenant_id=$1 AND id=$2::uuid`, tenantID, bootstrap.NodeID, status); err != nil {
+			t.Fatalf("advance fixture node to %s: %v", status, err)
+		}
+	}
+	return bootstrap, privateKey, runtimeToken
 }
 
 func mustJSON(t *testing.T, value any) []byte {

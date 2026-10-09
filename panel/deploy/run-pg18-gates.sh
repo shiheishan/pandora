@@ -98,7 +98,7 @@ LOG_DIR="$(mktemp -d)"
 # 结果判定），所以同包的域必须把过滤写精确。过滤是最后一个字段，
 # 里面的 | 会被 read 原样留给它。
 DOMAINS=(
-  "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18)$"
+  "effective|pandora_effective_pg18|./internal/domain/nodefabric ./internal/api/node|||||^(TestEffectiveReleasePG18|TestSignedNodeHTTPPG18|TestNodeRouteBudgetPG18)$"
   "enrollment|pandora_enrollment_pg18|./internal/domain/nodefabric|||||^(TestNodeEnrollmentPG18|TestIssueServerTokenPG18)$"
   # 服务器级绑定 P1（00144，w9bind）：服务器身份、接入 S1、绑定令牌、吊销与 RLS；域服务与网关各一个用例，同一个库
   "server_binding|pandora_server_binding_gate|./internal/domain/nodefabric ./internal/api/node|run_id|pandora_server_binding_test_marker|pandora-server-binding-pg18||^(TestServerBindingPG18|TestServerEnrollmentHTTPPG18)$"
