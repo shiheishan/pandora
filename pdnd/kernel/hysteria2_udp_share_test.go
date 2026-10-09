@@ -6,25 +6,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
+	"net/netip"
 	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
+	"github.com/aegispanel/nodeagent/internal/udprecv"
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
-	"golang.org/x/net/ipv4"
 )
 
 // 下行收包逻辑的守卫：用可控的上游替身驱动 hy2Downlink，一次收包能返回多包，
 // 批量组、名额、份额与热态在任何平台都走得到（真 socket 在 darwin 上一次只收一包，
 // 批量路径只在 Linux CI 上走到）。
 
-// fakeUpstream 是上游 socket 的替身：窥视、非阻塞、阻塞收包与读截止都按内核语义。
+// fakeUpstream 是上游 socket 的替身：就绪收、非阻塞、阻塞收包与读截止都按
+// udprecv.Receiver（内核加 netpoller）的语义，calls 按系统调用计。
 type fakeUpstream struct {
 	mu       sync.Mutex
 	queue    [][]byte
@@ -32,7 +32,7 @@ type fakeUpstream struct {
 	deadline time.Time
 	timer    *time.Timer
 	notify   chan struct{}
-	// calls 是收包调用次数（含窥视），maxBatch 是非窥视收包一次给的最多条数。
+	// calls 是收包系统调用次数（含落空的），maxBatch 是一次收包要的最多条数。
 	calls    atomic.Int64
 	maxBatch atomic.Int64
 	// armed 是设过非零读截止的次数（即进过热态）。
@@ -83,48 +83,97 @@ func (u *fakeUpstream) SetReadDeadline(t time.Time) error {
 	return nil
 }
 
-func (u *fakeUpstream) ReadBatch(ms []ipv4.Message, flags int) (int, error) {
+// take 是一次收包系统调用：非阻塞地从队列取至多 size 条进 b。
+func (u *fakeUpstream) take(b *udprecv.Batch, size int) (int, error) {
 	u.calls.Add(1)
-	peek := flags&hy2UDPPeekFlag != 0
-	if !peek {
-		for {
-			seen := u.maxBatch.Load()
-			if int64(len(ms)) <= seen || u.maxBatch.CompareAndSwap(seen, int64(len(ms))) {
-				break
-			}
+	for {
+		seen := u.maxBatch.Load()
+		if int64(size) <= seen || u.maxBatch.CompareAndSwap(seen, int64(size)) {
+			break
 		}
 	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.closed {
+		return 0, errFakeUpstreamClosed
+	}
+	if len(u.queue) == 0 {
+		return 0, udprecv.ErrWouldBlock
+	}
+	n := min(len(u.queue), size, len(b.Bufs))
+	for i := range n {
+		b.N[i] = copy(b.Bufs[i], u.queue[i])
+		b.From[i] = fakeUpstreamSource
+	}
+	u.queue = u.queue[n:]
+	return n, nil
+}
+
+var fakeUpstreamSource = netip.AddrPortFrom(netip.AddrFrom4([4]byte{192, 0, 2, 1}), 53)
+
+// expired 是阻塞读开始前的读截止检查（netpoller 的 prepareRead）。
+func (u *fakeUpstream) expired() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.deadline.IsZero() && !time.Now().Before(u.deadline) {
+		return os.ErrDeadlineExceeded
+	}
+	return nil
+}
+
+// waitReadable 等到有包、关闭或读截止到点（netpoller 的 waitRead）。
+func (u *fakeUpstream) waitReadable() error {
 	for {
 		u.mu.Lock()
-		if u.closed {
-			u.mu.Unlock()
-			return 0, errFakeUpstreamClosed
-		}
-		deadline := u.deadline
-		if !deadline.IsZero() && !time.Now().Before(deadline) {
-			u.mu.Unlock()
-			return 0, os.ErrDeadlineExceeded
-		}
-		if len(u.queue) > 0 {
-			if peek {
-				u.mu.Unlock()
-				ms[0].N = 1
-				return 1, nil
-			}
-			n := min(len(u.queue), len(ms))
-			for i := range n {
-				ms[i].N = copy(ms[i].Buffers[0], u.queue[i])
-				ms[i].Addr = &net.UDPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 53}
-			}
-			u.queue = u.queue[n:]
-			u.mu.Unlock()
-			return n, nil
-		}
+		closed, ready, deadline := u.closed, len(u.queue) > 0, u.deadline
 		u.mu.Unlock()
-		if flags&hy2UDPDontWaitFlag != 0 {
-			return 0, syscall.EAGAIN
+		if closed || ready {
+			return nil
+		}
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			return os.ErrDeadlineExceeded
 		}
 		<-u.notify
+	}
+}
+
+// Ready 与 udprecv.Receiver.Ready 同语义：先借组试收，空了还组、等可读再借。
+func (u *fakeUpstream) Ready(size int, borrow func() *udprecv.Batch, giveBack func(*udprecv.Batch)) (*udprecv.Batch, int, error) {
+	if err := u.expired(); err != nil {
+		return nil, 0, err
+	}
+	for {
+		b := borrow()
+		n, err := u.take(b, size)
+		if err == nil {
+			return b, n, nil
+		}
+		giveBack(b)
+		if err != udprecv.ErrWouldBlock {
+			return nil, 0, err
+		}
+		if err := u.waitReadable(); err != nil {
+			return nil, 0, err
+		}
+	}
+}
+
+// Recv 与 udprecv.Receiver.Recv 同语义：wait 时阻塞（受读截止约束），否则非阻塞。
+func (u *fakeUpstream) Recv(b *udprecv.Batch, size int, wait bool) (int, error) {
+	if !wait {
+		return u.take(b, size)
+	}
+	if err := u.expired(); err != nil {
+		return 0, err
+	}
+	for {
+		n, err := u.take(b, size)
+		if err != udprecv.ErrWouldBlock {
+			return n, err
+		}
+		if err := u.waitReadable(); err != nil {
+			return 0, err
+		}
 	}
 }
 
@@ -343,7 +392,7 @@ func startWarmHolder(t *testing.T, user int64, hold chan struct{}) (*fakeUpstrea
 }
 
 // feedUntilWarm 每毫秒给会话一包，直到它进了热态（设过读截止），返回推了多少包。
-// 进热态要一段 20ms 里平均每秒 500 包以上，所以至少推满一段。
+// 进热态要一段（100ms）里平均每秒 500 包以上，所以至少推满一段。
 func feedUntilWarm(t *testing.T, src *fakeUpstream) int64 {
 	t.Helper()
 	var pushed int64

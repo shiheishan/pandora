@@ -4,18 +4,19 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/aegispanel/nodeagent/internal/udprecv"
+
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"golang.org/x/net/ipv4"
 )
 
 // hy2 / TUIC UDP 会话的上下行循环，空闲时不常驻收发缓冲（10-09 vpcnode2 缺陷 1）。
 //
 // 原先每个会话一建好就各自分配下行 32×64KB、上行 32×16KB 的批量缓冲，共约 2.6MB，
 // 一直占到会话结束；每用户 1024 个会话就是约 2.6GB。现在：
-//   - 下行（hysteria2_udp_downlink.go）：空闲时阻塞在 MSG_PEEK 上（只窥视 1 字节、
-//     不取走），有包了才借收包缓冲；包来得密时转为持有小组阻塞读，一段时间没包再
+//   - 下行（hysteria2_udp_downlink.go）：空闲时等 socket 可读、不占缓冲，可读了才借
+//     收包缓冲（internal/udprecv）；包来得密时转为持有小组阻塞读，一段时间没包再
 //     还回去；
 //   - 上行：零拷贝地等会话队列里的第一条（WaitReadPacket 直接交出消息自己的缓冲），
 //     要凑批时才借缓冲取走积压的消息，发完即还（hy2UplinkUDP）。
@@ -34,18 +35,14 @@ const hy2UDPMaxDatagram = 64 << 10
 // 卡在写回时也只占 128KB。
 const hy2DownlinkProbeBatch = 2
 
-// hy2DownlinkGroup 是下行一次收包用的消息与缓冲，各条的 64KB 缓冲共用一块内存。
-type hy2DownlinkGroup struct {
-	messages []ipv4.Message
-}
-
-func newHy2DownlinkGroup(size int) *hy2DownlinkGroup {
-	group := &hy2DownlinkGroup{messages: make([]ipv4.Message, size)}
+// newHy2DownlinkBatch 建下行一次收包用的一组：size 条 64KB 缓冲共用一块内存。
+func newHy2DownlinkBatch(size int) *udprecv.Batch {
 	slab := make([]byte, size*hy2UDPMaxDatagram)
-	for i := range group.messages {
-		group.messages[i].Buffers = [][]byte{slab[i*hy2UDPMaxDatagram : (i+1)*hy2UDPMaxDatagram : (i+1)*hy2UDPMaxDatagram]}
+	bufs := make([][]byte, size)
+	for i := range bufs {
+		bufs[i] = slab[i*hy2UDPMaxDatagram : (i+1)*hy2UDPMaxDatagram : (i+1)*hy2UDPMaxDatagram]
 	}
-	return group
+	return udprecv.NewBatch(bufs)
 }
 
 // hy2UplinkBatch 是上行凑批时取积压消息用的缓冲（首包之外最多 31 条），用到

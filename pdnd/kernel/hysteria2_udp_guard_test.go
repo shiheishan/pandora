@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aegispanel/nodeagent/internal/udprecv"
 	"github.com/aegispanel/nodeagent/outbound"
 	M "github.com/sagernet/sing/common/metadata"
 	"golang.org/x/net/ipv4"
@@ -31,7 +32,7 @@ func guardedUpstream(t *testing.T) net.PacketConn {
 
 // 默认拦私网时 hy2 / TUIC 的 UDP 转发仍走批量收发：上游不交裸 socket，而是经出站
 // 给的带检查批量接口；发往私网的包在批里被剔除丢弃（照常计为已发出，与逐包
-// WriteTo 同语义），策略放开后同一条批量通道照常送达；收方向批量收包。
+// WriteTo 同语义），策略放开后同一条批量通道照常送达；收方向经出站给的收包器收（只能收，不是裸 socket）。
 //
 // 非 Linux 上强制打开批量开关（x/net 每次只收发一包），批量逻辑在本机也有覆盖；
 // Linux 上不强制的情形见 hysteria2_udp_guard_linux_test.go。
@@ -108,9 +109,15 @@ func TestHy2GuardedUpstreamUsesCheckedBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = upstream.SetReadDeadline(time.Now().Add(2 * time.Second))
-	ms := []ipv4.Message{{Buffers: [][]byte{make([]byte, 64)}}}
-	n, err := u.batch.ReadBatch(ms, 0)
-	if err != nil || n != 1 || string(ms[0].Buffers[0][:ms[0].N]) != "reply" {
-		t.Fatalf("ReadBatch n=%d err=%v", n, err)
+	if u.recv == nil {
+		if udprecv.Supported {
+			t.Fatal("默认拦私网时应有出站给的收包器")
+		}
+		return
+	}
+	b := udprecv.NewBatch([][]byte{make([]byte, 64)})
+	n, err := u.recv.Recv(b, 1, true)
+	if err != nil || n != 1 || string(b.Bufs[0][:b.N[0]]) != "reply" {
+		t.Fatalf("Recv n=%d err=%v", n, err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aegispanel/nodeagent/internal/udprecv"
 	"github.com/aegispanel/nodeagent/outbound"
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
@@ -20,10 +21,10 @@ import (
 // 这里：
 //   - 上行（客户端 → 上游）：先阻塞等一条，再把会话队列里积压的消息一次取走，
 //     凑批发出；上游能批量时 Linux 走 sendmmsg，一次系统调用发一批；
-//   - 下行（上游 → 客户端）：上游能批量时 Linux 走 recvmmsg 批量收，否则逐包读；
-//     不再为每包复制一份负载；
+//   - 下行（上游 → 客户端）：上游交出收包器（internal/udprecv）时 Linux 走 recvmmsg
+//     批量收，否则逐包读；
 //   - 空闲会话不常驻收发缓冲（hysteria2_udp_relay.go）：批量缓冲只在真正收发的
-//     那一刻从共享池借用，空闲时上行零拷贝地等会话队列、下行只窥视上游 socket；
+//     那一刻从共享池借用，空闲时上行零拷贝地等会话队列、下行只等上游 socket 可读；
 //   - 目标地址按上一包缓存，域名目标不再逐包解析；
 //   - 流量直接原子累加到会话所属用户的计数器（userSession），不抢适配器的锁；
 //   - 上游 socket 收发缓冲固定申请 hy2UDPSocketBuffer（见该常量的数据与理由）。
@@ -89,17 +90,10 @@ func rawUDPConnOf(conn net.PacketConn) *net.UDPConn {
 	return nil
 }
 
-// hy2UDPBatchIO 是上游的批量收发：裸 socket 时是 ipv4.PacketConn，默认拦私网时
+// hy2UDPBatchIO 是上游的批量发：裸 socket 时是 ipv4.PacketConn，默认拦私网时
 // 是出站给的 outbound.UDPBatchConn（WriteBatch 里逐条把关）。
 type hy2UDPBatchIO interface {
-	ReadBatch(ms []ipv4.Message, flags int) (int, error)
 	WriteBatch(ms []ipv4.Message, flags int) (int, error)
-}
-
-// hy2UDPReader 是能带 flags 收包的上游接口（ipv4.PacketConn 或出站的
-// outbound.UDPBatchConn）：下行靠它窥视等包、非阻塞收包，见 hy2DownlinkUDPPeek。
-type hy2UDPReader interface {
-	ReadBatch(ms []ipv4.Message, flags int) (int, error)
 }
 
 // hy2UDPUpstream 是一个上游 socket 可用的收发路径。
@@ -107,12 +101,12 @@ type hy2UDPUpstream struct {
 	conn net.PacketConn
 	// raw 只在出站明确交出裸 socket 时非 nil。
 	raw *net.UDPConn
-	// batch 在 Linux、IPv4 本地地址、出站支持批量时非 nil（上行批量发、下行批量收）。
+	// batch 在 Linux、IPv4 本地地址、出站支持批量时非 nil（上行批量发）。
 	batch hy2UDPBatchIO
-	// reader 在出站交出裸 socket 或带检查的批量接口时非 nil，不分协议族：下行经它
-	// 窥视等包，空闲时不占收包缓冲。Linux 上一次收一批（recvmmsg 不分协议族），
-	// 别的平台一次一包。
-	reader hy2UDPReader
+	// recv 在出站交出裸 socket 或带检查的批量接口、且平台支持时非 nil，不分协议族：
+	// 下行经它等可读再借缓冲收，空闲时不占收包缓冲。Linux 上一次收一批（recvmmsg
+	// 不分协议族），别的 unix 一次一包。
+	recv *udprecv.Receiver
 }
 
 func newHy2UDPUpstream(upstream net.PacketConn) hy2UDPUpstream {
@@ -120,12 +114,11 @@ func newHy2UDPUpstream(upstream net.PacketConn) hy2UDPUpstream {
 	if u.raw != nil {
 		_ = u.raw.SetReadBuffer(hy2UDPSocketBuffer)
 		_ = u.raw.SetWriteBuffer(hy2UDPSocketBuffer)
-		packetConn := ipv4.NewPacketConn(u.raw)
-		if hy2UDPPeekSupported {
-			u.reader = packetConn
+		if rc, err := u.raw.SyscallConn(); err == nil {
+			u.recv = udprecv.NewReceiver(rc)
 		}
 		if hy2UDPBatchSupported && isIPv4Local(u.raw.LocalAddr()) {
-			u.batch = packetConn
+			u.batch = ipv4.NewPacketConn(u.raw)
 		}
 		return u
 	}
@@ -139,9 +132,7 @@ func newHy2UDPUpstream(upstream net.PacketConn) hy2UDPUpstream {
 	}
 	_ = checked.SetReadBuffer(hy2UDPSocketBuffer)
 	_ = checked.SetWriteBuffer(hy2UDPSocketBuffer)
-	if hy2UDPPeekSupported {
-		u.reader = checked
-	}
+	u.recv = checked.Receiver()
 	if hy2UDPBatchSupported && isIPv4Local(checked.LocalAddr()) {
 		u.batch = checked
 	}

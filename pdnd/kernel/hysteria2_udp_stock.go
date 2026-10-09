@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/aegispanel/nodeagent/internal/udprecv"
 )
 
 // hy2 / TUIC UDP 转发借还的收发缓冲：存货表、批量名额与每用户份额。
@@ -159,8 +161,8 @@ func (j *hy2Janitor) run(now int64) {
 var (
 	hy2DownlinkBatchSlots    = make(chan struct{}, 8*runtime.GOMAXPROCS(0))
 	hy2DownlinkBatchPerUser  = int32(max(1, cap(hy2DownlinkBatchSlots)/4))
-	hy2DownlinkBatchStock    = newHy2Stock(hy2DownlinkStockIdle, func() *hy2DownlinkGroup { return newHy2DownlinkGroup(hy2UDPBatch) })
-	hy2DownlinkProbeStock    = newHy2Stock(hy2DownlinkStockIdle, func() *hy2DownlinkGroup { return newHy2DownlinkGroup(hy2DownlinkProbeBatch) })
+	hy2DownlinkBatchStock    = newHy2Stock(hy2DownlinkStockIdle, func() *udprecv.Batch { return newHy2DownlinkBatch(hy2UDPBatch) })
+	hy2DownlinkProbeStock    = newHy2Stock(hy2DownlinkStockIdle, func() *udprecv.Batch { return newHy2DownlinkBatch(hy2DownlinkProbeBatch) })
 	hy2UplinkBatchStock      = newHy2Stock(hy2UplinkStockIdle, func() *hy2UplinkBatch { return new(hy2UplinkBatch) })
 	hy2DownlinkBatchShares   = hy2BatchShares{byUser: make(map[int64]*hy2BatchShare)}
 	errHy2BatchShareReleased = "hy2 batch share released twice"
@@ -168,7 +170,7 @@ var (
 
 // 热态名额：同时处在热态（持小组阻塞读）的会话全进程最多 64×GOMAXPROCS 个，
 // 每用户最多其中 1/4。热态只给每秒 500 包以上的会话用：4 核节点 256 个这样的
-// 会话已是每秒 12.8 万包以上，超出的会话照常在冷态收包，只多一次窥视。上限让
+// 会话已是每秒 12.8 万包以上，超出的会话照常在冷态收包（系统调用次数与热态相同，只多一次复制与借还）。上限让
 // 热态小组的常驻（含还回后留在存货里的）有界：4 核最多 32MB，单用户 8MB。
 //
 // 名额做成值（hy2WarmLimit）由会话带着，而不是测试去替换全局变量：替换的那一刻
@@ -249,7 +251,7 @@ func (s *hy2BatchShares) leave(userID int64) {
 }
 
 // acquireBatchGroup 在份额与全局名额都有余时借一组批量组。
-func (share *hy2BatchShare) acquireBatchGroup() (*hy2DownlinkGroup, bool) {
+func (share *hy2BatchShare) acquireBatchGroup() (*udprecv.Batch, bool) {
 	if share.held.Add(1) > hy2DownlinkBatchPerUser {
 		share.held.Add(-1)
 		return nil, false
@@ -264,7 +266,7 @@ func (share *hy2BatchShare) acquireBatchGroup() (*hy2DownlinkGroup, bool) {
 }
 
 // releaseBatchGroup 归还批量组、名额与份额。
-func (share *hy2BatchShare) releaseBatchGroup(group *hy2DownlinkGroup) {
+func (share *hy2BatchShare) releaseBatchGroup(group *udprecv.Batch) {
 	hy2DownlinkBatchStock.put(group)
 	<-hy2DownlinkBatchSlots
 	if share.held.Add(-1) < 0 {

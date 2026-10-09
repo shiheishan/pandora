@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/aegispanel/nodeagent/internal/udprecv"
 )
 
 // 第 5 轮复审（review-r4）L1–L3 的守卫。
@@ -29,9 +31,14 @@ func TestHy2DownlinkStuckLargePacketsBounded(t *testing.T) {
 	const sessions = 128
 	const perSessionBudget = 128<<10 + 32<<10 // 复制上限 128KB，另给会话本身的结构留 32KB
 	for _, tc := range []struct {
-		name string
-		size int
-	}{{"tuic-33000", 33000}, {"tuic-60000", 60000}, {"hy2-4096", 4096}} {
+		name  string
+		size  int
+		count int
+	}{
+		{"tuic-33000", 33000, 36}, {"tuic-60000", 60000, 36}, {"hy2-4096", 4096, 36},
+		// 略大于 2 的幂的包长：实际块取整到下一个 2 的幂，预算要按块算（review-r5 K1）。
+		{"tuic-4097x35", 4097, 35}, {"tuic-16385x11", 16385, 11},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := make([]byte, tc.size)
 			hold := make(chan struct{})
@@ -41,7 +48,7 @@ func TestHy2DownlinkStuckLargePacketsBounded(t *testing.T) {
 			var waits []func()
 			for i := range srcs {
 				srcs[i] = newFakeUpstream()
-				burst := make([][]byte, 36)
+				burst := make([][]byte, tc.count)
 				for k := range burst {
 					burst[k] = payload
 				}
@@ -80,10 +87,10 @@ func TestHy2DownlinkStuckLargePacketsBounded(t *testing.T) {
 
 // 成串到达的中低速流量不进热态（L2，审查员的成串到达探针）：256 个会话每 33ms 来一串
 // 12 包、串内相隔约 250µs（约每秒 360 包，视频帧、游戏快照常见）。进热态按整段判：
-// 段龄满 20ms 时按「段内包数 ≥ 段龄 / 2ms」（每秒 500 包）才进，这类会话一串 12 包摊在
+// 段龄满一段（100ms）时按「段内包数 ≥ 段龄 / 2ms」（每秒 500 包）才进，这类会话一串 12 包摊在
 // 33ms 上不够。热态名额平均占用不超过 3（另有一个每毫秒一包的会话应在热态，占 1 个）。
 // race 下会话数减半。
-// 改回「段起点起收够 10 包就进」（半段判），每一串都进一段热态，名额平均被占约 63/64。
+// 改回「段起点起收够门槛包数就进」（半段判），每一串都进一段热态，名额被占满。
 func TestHy2DownlinkPacedBurstStaysCold(t *testing.T) {
 	sessions := 256
 	if raceEnabled {
@@ -100,6 +107,7 @@ func TestHy2DownlinkPacedBurstStaysCold(t *testing.T) {
 	}
 	stop := make(chan struct{})
 	var feeders sync.WaitGroup
+	var sentBursts atomic.Int64
 	start := time.Now()
 	for i, src := range srcs {
 		feeders.Add(1)
@@ -121,6 +129,7 @@ func TestHy2DownlinkPacedBurstStaysCold(t *testing.T) {
 						}
 						src.push(make([]byte, 60))
 					}
+					sentBursts.Add(1)
 				}
 				next = next.Add(33 * time.Millisecond)
 				for time.Until(next) < 0 {
@@ -162,12 +171,17 @@ func TestHy2DownlinkPacedBurstStaysCold(t *testing.T) {
 	}
 	close(stop)
 	feeders.Wait()
+	elapsed := time.Since(start)
 	for i, src := range srcs {
 		src.close()
 		waits[i]()
 	}
 	fast.close()
 	fastWait()
+	planned := int64(sessions) * int64(elapsed/(33*time.Millisecond))
+	if sent := sentBursts.Load(); sent*5 < planned*4 {
+		t.Fatalf("只发出 %d 串，计划约 %d 串（不到 80%%）：机器太慢，用例成了空跑", sent, planned)
+	}
 	average := float64(occupied) / samples
 	t.Logf("成串到达 %d 会话：热态名额平均占用 %.2f、最高 %d（名额 %d）；每毫秒一包的会话 %d/%d 次采样在热态", sessions, average, peak, cap(limit.slots), fastWarm, samples)
 	if average > 3 {
@@ -182,8 +196,8 @@ func TestHy2DownlinkPacedBurstStaysCold(t *testing.T) {
 // 会话，进热态期间 hy2DownlinkWarm.inUse() > 0。生产调用处改成每会话一份名额，这里
 // 永远看不到共享名额被占，变红。
 func TestHy2DownlinkUDPUsesSharedWarmLimit(t *testing.T) {
-	if !hy2UDPPeekSupported {
-		t.Skip("非 unix 没有窥视收包")
+	if !udprecv.Supported {
+		t.Skip("本平台没有就绪收包")
 	}
 	upstream, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -279,10 +293,10 @@ func TestHy2StockTrimKeepsRecent(t *testing.T) {
 // hy2UplinkStockIdle 的探针数据）。
 func TestHy2StockJanitorPerStockIdle(t *testing.T) {
 	now := hy2StockNow()
-	probe := &hy2DownlinkGroup{}
+	probe := &udprecv.Batch{}
 	uplink := &hy2UplinkBatch{}
 	hy2DownlinkProbeStock.mu.Lock()
-	hy2DownlinkProbeStock.items = append([]hy2Stocked[hy2DownlinkGroup]{{item: probe, used: now - int64(10*time.Second)}}, hy2DownlinkProbeStock.items...)
+	hy2DownlinkProbeStock.items = append([]hy2Stocked[udprecv.Batch]{{item: probe, used: now - int64(10*time.Second)}}, hy2DownlinkProbeStock.items...)
 	hy2DownlinkProbeStock.mu.Unlock()
 	hy2UplinkBatchStock.mu.Lock()
 	hy2UplinkBatchStock.items = append([]hy2Stocked[hy2UplinkBatch]{{item: uplink, used: now - int64(10*time.Second)}}, hy2UplinkBatchStock.items...)
@@ -308,5 +322,152 @@ func TestHy2StockJanitorPerStockIdle(t *testing.T) {
 	}
 	if !uplinkKept {
 		t.Fatal("闲置 10 秒的上行凑批缓冲被回收了（上行 30 秒）")
+	}
+}
+
+// 超出复制上限、从批量组零拷贝写回的大包也不串会话（review-r5 K2）：16 个冷态会话
+// （热态名额为 0），每包 33000B、按会话 id 填字节，写回时让出调度；批量组要等这几包
+// 写完才还。改成复制完就还批量组，别的会话会借走同一组覆盖掉，坏包上万。
+func TestHy2DownlinkLargeOverflowIsolation(t *testing.T) {
+	const sessions = 16
+	const size = 33000
+	const rounds = 30
+	const per = 40
+	srcs := make([]*fakeUpstream, sessions)
+	conns := make([]*downlinkTestConn, sessions)
+	var waits []func()
+	payloads := make([][]byte, sessions)
+	for i := range srcs {
+		id := byte(i + 1)
+		payloads[i] = make([]byte, size)
+		for j := range payloads[i] {
+			payloads[i][j] = id
+		}
+		srcs[i] = newFakeUpstream()
+		conns[i] = &downlinkTestConn{memTestClientConn: newMemTestClientConn(), check: func(b []byte) bool {
+			time.Sleep(20 * time.Microsecond)
+			for _, x := range b {
+				if x != id {
+					return false
+				}
+			}
+			return len(b) == size
+		}}
+		waits = append(waits, runTestDownlinkWarm(conns[i], srcs[i], int64(75000+i), newHy2WarmLimit(0)))
+	}
+	for range rounds {
+		for i, src := range srcs {
+			burst := make([][]byte, per)
+			for k := range burst {
+				burst[k] = payloads[i]
+			}
+			src.push(burst...)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	waitDownlink(t, "全部写回", func() bool {
+		var n int64
+		for _, c := range conns {
+			n += c.writes.Load()
+		}
+		return n == sessions*rounds*per
+	})
+	for i, src := range srcs {
+		src.close()
+		waits[i]()
+	}
+	var bad int64
+	for _, c := range conns {
+		bad += c.bad.Load()
+	}
+	if bad != 0 {
+		t.Fatalf("%d / %d 包写回的内容不属于本会话", bad, sessions*rounds*per)
+	}
+}
+
+// 音视频混合流不进热态（review-r5 K3）：每 20ms 一个音频包，加每 33ms 一串 12 包
+// （约每秒 414 包）或每 40ms 一串 10 包（约每秒 300 包），都低于每秒 500 包。进热态要
+// 一段 100ms 的平均速率到每秒 500 包，窗口里凑不出来；只按 20ms 窗口判时，开段的音频
+// 包紧挨着一串就能凑够，名额平均被占约 62/64。热态名额平均占用不超过 3。
+func TestHy2DownlinkMixedAVStaysCold(t *testing.T) {
+	for _, shape := range []struct {
+		burst  int
+		period time.Duration
+	}{{12, 33 * time.Millisecond}, {10, 40 * time.Millisecond}} {
+		t.Run(fmt.Sprintf("audio+%dper%v", shape.burst, shape.period), func(t *testing.T) {
+			sessions := 256
+			if raceEnabled {
+				sessions = 128
+			}
+			limit := newHy2WarmLimit(64)
+			var srcs []*fakeUpstream
+			var waits []func()
+			for i := range sessions {
+				src := newFakeUpstream()
+				srcs = append(srcs, src)
+				waits = append(waits, runTestDownlinkWarm(&downlinkTestConn{memTestClientConn: newMemTestClientConn()}, src, int64(74000+i%8), limit))
+			}
+			stop := make(chan struct{})
+			var feeders sync.WaitGroup
+			var sentBursts atomic.Int64
+			start := time.Now()
+			// paced 按绝对时刻每 period 调一次 emit，晚到 5ms 以上就跳过、不补发。
+			paced := func(offset, period time.Duration, emit func()) {
+				defer feeders.Done()
+				next := start.Add(offset)
+				for {
+					select {
+					case <-stop:
+						return
+					case <-time.After(time.Until(next)):
+					}
+					if time.Since(next) <= 5*time.Millisecond {
+						emit()
+					}
+					next = next.Add(period)
+					for time.Until(next) < 0 {
+						next = next.Add(period)
+					}
+				}
+			}
+			for i, src := range srcs {
+				feeders.Add(2)
+				go paced(time.Duration(i%20)*time.Millisecond, 20*time.Millisecond, func() { src.push(make([]byte, 60)) })
+				go paced(time.Duration(i%33)*time.Millisecond, shape.period, func() {
+					for k := range shape.burst {
+						if k > 0 {
+							time.Sleep(250 * time.Microsecond)
+						}
+						src.push(make([]byte, 60))
+					}
+					sentBursts.Add(1)
+				})
+			}
+			time.Sleep(300 * time.Millisecond)
+			const samples = 100
+			occupied, peak := 0, 0
+			for range samples {
+				time.Sleep(10 * time.Millisecond)
+				n := limit.inUse()
+				occupied += n
+				peak = max(peak, n)
+			}
+			close(stop)
+			feeders.Wait()
+			elapsed := time.Since(start)
+			for i, src := range srcs {
+				src.close()
+				waits[i]()
+			}
+			planned := int64(sessions) * int64(elapsed/shape.period)
+			if sent := sentBursts.Load(); sent*5 < planned*4 {
+				t.Fatalf("只发出 %d 串，计划约 %d 串（不到 80%%）：机器太慢，用例成了空跑", sent, planned)
+			}
+			average := float64(occupied) / samples
+			t.Logf("音频 + 每 %v 一串 %d 包，%d 会话：热态名额平均占用 %.2f、最高 %d（名额 %d）", shape.period, shape.burst, sessions, average, peak, cap(limit.slots))
+			if average > 3 {
+				t.Fatalf("音视频混合流平均占着 %.2f 个热态名额：进热态的窗口太短", average)
+			}
+		})
 	}
 }

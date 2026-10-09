@@ -10,17 +10,18 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/net/ipv4"
+	"github.com/aegispanel/nodeagent/internal/udprecv"
 )
 
-// 中速、读得过来（审查第 3 条）：每次醒来只有 1 包时，热态持有小组阻塞读，每包
-// 一次收包调用（真 socket 上是「落空 + 收到」两次 recvmmsg，与改前相同）；冷态
-// 每包要「窥视 + 收」两次调用。去掉热态，这里每包约 2 次。
-func TestHy2DownlinkMediumRateOneReadPerPacket(t *testing.T) {
+// 中速、读得过来（审查第 3 条）：每次醒来只有 1 包时，每包的收包系统调用是「落空 +
+// 收到」两次（替身按系统调用计），与持有缓冲阻塞读相同；会话进热态（持小组、零
+// 拷贝）。冷态每包同样两次（复审 review-r6 第 1 条之后），真 socket 上的同一上限见
+// TestHy2DownlinkRecvSyscallsPerPacket。
+func TestHy2DownlinkMediumRateTwoRecvsPerPacket(t *testing.T) {
 	src := newFakeUpstream()
 	conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
 	wait := runTestDownlink(conn, src, 5000)
-	// 3000 包（约 0.9 秒）：进热态要先在冷态满一段 20ms，量的是稳态。
+	// 3000 包（约 0.9 秒）：进热态要先在冷态满一段 100ms，量的是稳态。
 	const packets = 3000
 	start := time.Now()
 	for i := range packets {
@@ -34,9 +35,12 @@ func TestHy2DownlinkMediumRateOneReadPerPacket(t *testing.T) {
 	src.close()
 	wait()
 	perPacket := float64(calls) / packets
-	t.Logf("中速 %d 包：收包调用 %d 次，每包 %.2f 次", packets, calls, perPacket)
-	if perPacket > 1.1 {
-		t.Fatalf("每包 %.2f 次收包调用：中速时没进热态", perPacket)
+	t.Logf("中速 %d 包：收包系统调用 %d 次，每包 %.3f 次；设热态读截止 %d 次", packets, calls, perPacket, src.armed.Load())
+	if perPacket > 2.05 {
+		t.Fatalf("每包 %.3f 次收包系统调用，超过阻塞读的 2 次", perPacket)
+	}
+	if src.armed.Load() == 0 {
+		t.Fatal("中速会话没进热态")
 	}
 }
 
@@ -61,18 +65,20 @@ func TestHy2DownlinkWarmCoolsDown(t *testing.T) {
 	wait()
 }
 
-// deadlineOnceUpstream 让第一次非阻塞收包报读截止已过（热态的 20ms 截止恰好在收
-// 积压时到点）。
+// deadlineOnceUpstream 让第一次非阻塞收包报读截止已过（热态的读截止恰好在收积压
+// 时到点；真 socket 上非阻塞收经 RawConn.Control、不看读截止，这里守的是收到这种
+// 错误时的处理）。
 type deadlineOnceUpstream struct {
 	*fakeUpstream
 	fired atomic.Bool
 }
 
-func (u *deadlineOnceUpstream) ReadBatch(ms []ipv4.Message, flags int) (int, error) {
-	if flags&hy2UDPDontWaitFlag != 0 && u.fired.CompareAndSwap(false, true) {
+func (u *deadlineOnceUpstream) Recv(b *udprecv.Batch, size int, wait bool) (int, error) {
+	if !wait && u.fired.CompareAndSwap(false, true) {
+		u.calls.Add(1)
 		return 0, os.ErrDeadlineExceeded
 	}
-	return u.fakeUpstream.ReadBatch(ms, flags)
+	return u.fakeUpstream.Recv(b, size, wait)
 }
 
 // 读截止在收积压时到点（会话没被取消）不是会话结束：包照常收完。曾经的缺陷：
@@ -96,11 +102,12 @@ func TestHy2DownlinkDeadlineDuringDrainKeepsSession(t *testing.T) {
 }
 
 // 低速会话不常驻热态（复审 N1）：每秒 50–100 包（游戏、语音每 10ms / 19ms 一包）
-// 的会话，开头或者来一串 3 包，或者先以每毫秒一包的速度来 30 包（进热态），之后
+// 的会话，开头或者来一串 3 包，或者先以每毫秒一包的速度来 150 包（超过一段，进
+// 热态，用例核对确实进过），之后
 // 不该一直持着 128KB 的小组：处在热态的会话不超过 1/8；开头只是一串突发的，每会话
 // 存活堆预算 32KB（空闲会话实测约 6–10KB）。存活堆扣掉存货里的缓冲：还回的组按
 // 设计留在存货里到闲置回收（上限另有名额约束），这里量的是会话自己占着的。开头
-// 先快的那种，快的那段里进热态是应该的，只看之后有没有回冷态。
+// 先快的那种，快的那段里进热态是应该的，等快的那段结束、再过三段之后才采样。
 // 改回「一串突发即进热态、段内来过一包就续期」，每会话约 200KB、全部处在热态；
 // 只改回续期条件，先快后慢的会话一直处在热态。
 func TestHy2DownlinkLowRateDoesNotStayWarm(t *testing.T) {
@@ -130,17 +137,20 @@ func TestHy2DownlinkLowRateDoesNotStayWarm(t *testing.T) {
 				waits = append(waits, runTestDownlink(conns[i], srcs[i], int64(41000+i)))
 			}
 			stop := make(chan struct{})
-			var feeders sync.WaitGroup
+			var feeders, fastDone sync.WaitGroup
 			for i, src := range srcs {
 				feeders.Add(1)
+				fastDone.Add(1)
 				go func() {
 					defer feeders.Done()
 					if tc.fastStart {
-						for range 30 {
+						for range 150 {
 							src.push(make([]byte, 50))
 							time.Sleep(time.Millisecond)
 						}
+						fastDone.Done()
 					} else {
+						fastDone.Done()
 						src.push(make([]byte, 50), make([]byte, 50), make([]byte, 50))
 					}
 					// 错开各会话的相位。
@@ -156,6 +166,10 @@ func TestHy2DownlinkLowRateDoesNotStayWarm(t *testing.T) {
 						}
 					}
 				}()
+			}
+			if tc.fastStart {
+				fastDone.Wait()
+				time.Sleep(3 * hy2DownlinkWarmIdle)
 			}
 			var peak uint64
 			warm := 0
@@ -191,6 +205,17 @@ func TestHy2DownlinkLowRateDoesNotStayWarm(t *testing.T) {
 			if warm > sessions/8 {
 				t.Fatalf("同时处在热态 %d 个会话（共 %d）：低速会话没回冷态", warm, sessions)
 			}
+			if tc.fastStart {
+				entered := 0
+				for _, src := range srcs {
+					if src.armed.Load() > 0 {
+						entered++
+					}
+				}
+				if entered < sessions/2 {
+					t.Fatalf("先快的会话只有 %d/%d 个进过热态，用例没测到回冷态", entered, sessions)
+				}
+			}
 		})
 	}
 }
@@ -218,7 +243,7 @@ func (u *cancelOnClearUpstream) SetReadDeadline(t time.Time) error {
 }
 
 // 清读截止与收尾撞车：清截止会盖掉 AfterFunc 刚设的截止，只能靠清完之后复查
-// ctx 结束；不复查，下行卡在没有截止的窥视上，转发永不收尾。
+// ctx 结束；不复查，下行卡在没有截止的空闲等待上，转发永不收尾。
 func TestHy2DownlinkClearDeadlineRacesCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -238,7 +263,7 @@ func TestHy2DownlinkClearDeadlineRacesCancel(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("清截止与收尾撞车后下行没有结束（卡在无截止的窥视上）")
+		t.Fatal("清截止与收尾撞车后下行没有结束（卡在无截止的空闲等待上）")
 	}
 	if !src.fired.Load() {
 		t.Fatal("没走到回冷态")
@@ -344,8 +369,8 @@ func TestHy2DownlinkWarmSlotsCapped(t *testing.T) {
 }
 
 // 成对到达的低速会话不进热态（复审 P1，审查员的成对到达探针）：256 个会话每 15ms
-// 来一对、对内相隔 0.5ms（约每秒 133 包，游戏、语音常见），进热态按一段 20ms 的包数
-// 判，这类会话一段只有两三包，热态名额的平均占用应接近 0；同时一个每毫秒一包的
+// 来一对、对内相隔 0.5ms（约每秒 133 包，游戏、语音常见），进热态按一段（100ms）的
+// 平均速率判，这类会话一段只有两三包，热态名额的平均占用应接近 0；同时一个每毫秒一包的
 // 会话（另一个用户）照常处在热态。改回「两次醒来相隔不到 2ms 就进」，每一对都进
 // 一段热态，名额平均被占几十个、最高占满。
 func TestHy2DownlinkPairedLowRateStaysCold(t *testing.T) {
@@ -434,26 +459,27 @@ func TestHy2DownlinkPairedLowRateStaysCold(t *testing.T) {
 	}
 }
 
-// 冷态计包段按段龄折算速率：一串 12 包之后静默 100ms 再来一包，不该凭那串旧包进热态；
-// 每毫秒一包持续一段（20ms）以上则应进。去掉「按段龄折算」（只看段内包数），前一种也进。
+// 冷态计包段按段龄折算速率：一串比一段的门槛多两成的包之后静默五段再来一包，不该凭
+// 那串旧包进热态；每毫秒一包持续一段以上则应进。去掉「按段龄折算」（只看段内包数），
+// 前一种也进。
 func TestHy2DownlinkStaleColdCountDoesNotWarm(t *testing.T) {
 	t.Run("stale-burst", func(t *testing.T) {
 		src := newFakeUpstream()
 		conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
 		wait := runTestDownlinkWarm(conn, src, 61000, newHy2WarmLimit(8))
-		burst := make([][]byte, 12)
+		burst := make([][]byte, hy2DownlinkWarmMinPackets*6/5)
 		for i := range burst {
 			burst[i] = make([]byte, 10)
 		}
 		src.push(burst...)
-		waitDownlink(t, "收完那一串", func() bool { return conn.writes.Load() == 12 })
-		time.Sleep(100 * time.Millisecond)
+		waitDownlink(t, "收完那一串", func() bool { return conn.writes.Load() == int64(len(burst)) })
+		time.Sleep(5 * hy2DownlinkWarmIdle)
 		src.push(make([]byte, 10))
-		waitDownlink(t, "收到后来的一包", func() bool { return conn.writes.Load() == 13 })
+		waitDownlink(t, "收到后来的一包", func() bool { return conn.writes.Load() == int64(len(burst))+1 })
 		src.close()
 		wait()
 		if src.armed.Load() > 0 {
-			t.Fatal("一串 12 包、静默 100ms 后再来一包：进了热态")
+			t.Fatalf("一串 %d 包、静默 %v 后再来一包：进了热态", len(burst), 5*hy2DownlinkWarmIdle)
 		}
 	})
 	t.Run("sustained", func(t *testing.T) {

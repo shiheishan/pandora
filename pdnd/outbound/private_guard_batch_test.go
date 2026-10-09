@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aegispanel/nodeagent/internal/udprecv"
 	M "github.com/sagernet/sing/common/metadata"
 	"golang.org/x/net/ipv4"
 )
@@ -147,10 +148,14 @@ func TestGuardedUDPBatchDefaultPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	ms := []ipv4.Message{{Buffers: [][]byte{make([]byte, 64)}}}
-	n, err := batch.ReadBatch(ms, 0)
-	if err != nil || n != 1 || string(ms[0].Buffers[0][:ms[0].N]) != "inbound" {
-		t.Fatalf("ReadBatch n=%d err=%v", n, err)
+	if recv := batch.Receiver(); recv != nil {
+		b := udprecv.NewBatch([][]byte{make([]byte, 64)})
+		n, err := recv.Recv(b, 1, true)
+		if err != nil || n != 1 || string(b.Bufs[0][:b.N[0]]) != "inbound" {
+			t.Fatalf("Recv n=%d err=%v", n, err)
+		}
+	} else if udprecv.Supported {
+		t.Fatal("支持就绪收包的平台上应有收包器")
 	}
 	if err := batch.SetReadBuffer(1 << 20); err != nil {
 		t.Fatal(err)
