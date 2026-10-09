@@ -208,8 +208,6 @@ PG_VERSION="$PANDORA_PG_MAJOR"
 native_ensure_pg_cluster "$PG_VERSION"
 PG_PORT="$(native_pg_cluster_port "$PG_VERSION")" || die "PostgreSQL ${PG_VERSION}/main 没有在线，读不出端口"
 say "  PostgreSQL ${PG_VERSION}/main 在线，端口 ${PG_PORT}"
-# 单元加固（drop-in）：Debian 包的 postgresql@.service 除 OOMScoreAdjust 外没有加固，补到不弱于 docker 布局的容器
-native_harden_pg_unit "$PG_VERSION"
 # 别的版本的集群一律不碰；其中有 aegis 库而 PG18 不是它的接班人时停下（见函数注释）
 native_check_foreign_clusters "$PG_VERSION" "$PG_PORT" "$MODE" \
   "$([[ "$MODE" = upgrade ]] && pandora_env_file_value "$ENV_FILE" POSTGRES_PORT || true)"
@@ -367,11 +365,6 @@ else
   [[ -z "$NATIVE_ENV_ADDED" ]] || say "  .env 补上了新键：$NATIVE_ENV_ADDED（原有的行没动）"
 fi
 
-# 给系统 Valkey/Redis 配置密码（普通安装版没有 Docker 隔离，密码落在系统配置里）
-# 口令、与 docker 布局同口径的配置块（只听回环、禁 FLUSHALL / FLUSHDB、不落盘、内存上限）、单元加固 drop-in：
-# 都已经是这样就不动、不重启（升级时网关还在跑，重启 Valkey 会断开它们的连接）
-[[ -z "$VK_UNIT" ]] || native_harden_valkey "$VK_UNIT" "$VK_CONF" "$VK_PASS"
-
 # 迁移只走官方 migrate.sh（它带 PGOPTIONS 保护参数），预检走 check-migrations.sh；
 # 备份、校验、恢复、psql、收窄运行角色与 docker 布局同一套脚本（按 .env 的布局各自连库）。
 # 健康巡检经 psql.sh 查库
@@ -478,6 +471,19 @@ role_log="$(bash "$INSTALL_DIR/deploy/bootstrap.sh" 2>&1)" || {
 }
 say "  configure-app-role.sql 角色收敛完成"
 
+# PostgreSQL 与 Valkey 的加固（RUNBOOK 第 13 章「直装的加固」）：PG 单元 drop-in；Valkey 的口令、与 docker 布局同口径的
+# 配置块（只听回环、禁 FLUSHALL / FLUSHDB、不落盘、内存上限）、单元 drop-in。放在这里：外来集群检查早已通过
+# （它停下时什么都没改），升级时网关在迁移前就停了、首装还没起，重启 PG 与 Valkey 不打断在线请求。
+# 都已经是这样就不动、不重启。某一项起不来会撤回这一项、核实服务照原样在跑，记下来：--from-docker 立即停下回到
+# docker 布局；首装与升级把服务按新版本起来之后再停下，提示原因与开关 PANDORA_SYSTEMD_HARDENING
+native_load_hardening_switch "$ENV_FILE"
+HARDEN_FAILED=""
+native_harden_pg_unit "$PG_VERSION" "$PG_PORT" || HARDEN_FAILED+=" PostgreSQL"
+[[ -z "$VK_UNIT" ]] || native_harden_valkey "$VK_UNIT" "$VK_CONF" "$VK_PASS" || HARDEN_FAILED+=" $VK_UNIT"
+if [[ -n "$HARDEN_FAILED" && "$MODE" = from-docker ]]; then
+  die "加固没成功（${HARDEN_FAILED# }，原因与办法见上），回到 docker 布局"
+fi
+
 # ── 5. 程序与 systemd ─────────────────────────────────
 say "[5/6] 安装程序与 systemd 服务"
 if [[ "$MODE" = from-docker ]]; then
@@ -522,6 +528,9 @@ for s in "${SERVICES[@]}"; do
   systemctl enable "$s" >/dev/null 2>&1 || true
   systemctl start "$s" 2>/dev/null || true
 done
+if [[ -n "$HARDEN_FAILED" ]]; then
+  die "程序已装好，服务已按新版本起来，但 ${HARDEN_FAILED# } 的加固没生效（已撤回、核实在跑；原因与办法见上）。处理后重跑本脚本（按升级处理），或用 PANDORA_SYSTEMD_HARDENING=0 明确关掉"
+fi
 # --from-docker：直装的三个网关 /healthz 都 200 才算接管；接管之后停 Docker 容器
 if [[ "$MODE" = from-docker ]]; then
   fd_gateways_healthy || die "直装的网关没通过健康检查（journalctl -u aegis-public -n 50；tail /var/log/aegis/*.log），回到 docker 布局"

@@ -844,7 +844,7 @@ journalctl -fu pandora-from-docker
 
 ### 直装的加固（与 docker 布局对照）
 
-容器自带的隔离，直装由 `install-native.sh` 用 systemd drop-in 与 Valkey 配置块补上（首装、升级、`--from-docker` 都会做；内容没变不重启）：
+容器自带的隔离，直装由 `install-native.sh` 用 systemd drop-in 与 Valkey 配置块补上（首装、升级、`--from-docker` 都会做；内容没变不重启）。这一步在外来集群检查、迁移、收窄运行角色都做完之后、起网关之前：升级时网关在迁移前就停了，第一次加固重启 PostgreSQL 与 Valkey 只发生在这段停服窗口里，多几秒，不打断在线请求（Valkey 不落盘，限流计数与实时推送的临时状态会清零，与重启网关相同）。
 
 - PostgreSQL：`/etc/systemd/system/postgresql@18-main.service.d/pandora-hardening.conf`；
 - Valkey / Redis：`/etc/systemd/system/valkey-server.service.d/pandora-hardening.conf`（或 `redis-server.service.d`），外加配置文件末尾 `# >>> pandora` 到 `# <<< pandora` 的一块。
@@ -857,7 +857,7 @@ journalctl -fu pandora-from-docker
 | PG 运行用户 | 入口脚本以 root 起，gosu 降到 postgres | **变弱**：单元以 root 起，由 pg_ctlcluster 降权，能力集完整 | `User=postgres`、能力集清空、`NoNewPrivileges` |
 | PG 隔离 | 独立挂载、进程、网络命名空间；缺省 seccomp 与 AppArmor；cgroup 512M | **变弱**：只有 `OOMScoreAdjust` | 补齐。`ProtectSystem=strict`（只放行数据、日志、socket 目录）；`PrivateTmp`、`PrivateDevices`、`ProtectHome`；`ProtectKernel*`、`ProtectProc=invisible`；`RestrictNamespaces`；系统调用拒绝清单；`MemoryMax=512M`。不加 `MemoryDenyWriteExecute`，因为超级用户会话可能用 JIT，容器里也没有这项 |
 | PG 文件与口令 | 数据目录 700；超级用户口令在 `.env`（0600），也在容器环境变量里（`docker inspect` 可见） | 数据目录 700；超级用户口令只在 `.env`（0600） | 持平（口令少一处暴露） |
-| Valkey 监听 | 容器内 `*`；宿主只发布 `127.0.0.1:6380`；有口令 | `bind 127.0.0.1 -::1`、`protected-mode yes`、有口令 | 持平。配置块把这两行钉住，drop-in 只放行回环 |
+| Valkey 监听 | 容器内 `*`；宿主只发布 `127.0.0.1:6380`；有口令 | 只听回环、`protected-mode yes`、有口令 | 持平。配置块把这两行钉住（bind 按版本写：Valkey 与 Redis 6.2 起 `127.0.0.1 -::1`；Ubuntu 22.04 的 Redis 6.0 不认「-」，回环有 IPv6 写 `127.0.0.1 ::1`，没有只写 `127.0.0.1`），drop-in 只放行回环 |
 | Valkey 运行用户 | valkey | 单元 `User=valkey`（或 `redis`）。Debian 12 的 redis 单元留着 SETUID、SETGID、SYS_RESOURCE 能力 | 持平。能力集一律清空 |
 | Valkey 隔离 | 命名空间、seccomp、cgroup 160M | 看发行版：Debian 13 的 valkey 单元已经较严；Debian 12 的 redis 单元末尾把 `ProtectSystem` 改回 `true`，也没有系统调用过滤。**都缺**进程可见性、网络出口、内存上限 | drop-in 整套写全，不依赖发行版单元：`ProtectSystem=strict`、`PrivateTmp/Devices`、`ProtectProc=invisible`、`MemoryDenyWriteExecute`；系统调用允许清单 `@system-service` 去掉 `@privileged @resources`；只放行回环；`MemoryMax=160M` |
 | Valkey 行为 | 禁 `FLUSHALL` 与 `FLUSHDB`；不落盘；`maxmemory 96mb allkeys-lru` | **变弱**：危险命令可用，定期写 `dump.rdb`，没有内存上限 | 配置块补齐，与容器参数同口径 |
@@ -865,9 +865,22 @@ journalctl -fu pandora-from-docker
 
 被挡的系统调用一律返回 EPERM（与 Docker 的 seccomp 一样），不会直接杀掉进程。
 
-带着新 drop-in，PostgreSQL 或 Valkey 起不来时，安装器自己撤回 drop-in、照原样拉起，然后停下。这一步在建角色与迁移之前，数据没动。
+**起不来怎么办**：
 
-想临时去掉某项排查：删掉对应的 drop-in，再 `systemctl daemon-reload && systemctl restart <单元>`。下次安装会再加回来；真有扩展或功能被挡住，带着 `journalctl -u <单元> -n 50` 报上来。
+- PostgreSQL 重启前先做一次 `CHECKPOINT` 并计时，等它在线的时长按这次实测给（30 秒加检查点耗时的三倍），慢盘不会被误判。
+- 带着新 drop-in 起不来：drop-in 还原成这次之前的样子（之前有的写回，没有的删掉），再起、再核实在线。Valkey 分口令、配置块、drop-in 三步，每步改之前存一份配置，哪步起不来只撤回那一步。
+- 撤回后核实在跑：`--from-docker` 立即停下、回到 docker 布局；首装与升级把服务按新版本起来之后再停下（退出码非 0），提示原因。撤回后仍没起来就照实说、停下。
+- 原因是 `226/NAMESPACE`（LXC、OpenVZ 一类容器化 VPS 不支持 systemd 沙箱要的挂载命名空间）时，提示会直接说。
+
+**开关 `PANDORA_SYSTEMD_HARDENING`**：缺省 1（开）。确认主机不支持沙箱、或者 18/main 要给别的用途（见下），用 `PANDORA_SYSTEMD_HARDENING=0` 重跑安装器：两份 drop-in 去掉，记进 `.env`（只改这一行），之后的升级沿用；改回 1 再跑一次就恢复。Valkey 的配置块不受开关影响（那是与 docker 布局同口径的行为，不是沙箱）。关掉后隔离弱于 docker 布局，安装器每次都会提醒。
+
+**drop-in 作用于整个 PostgreSQL 18/main，不只是面板的库**：
+
+- `IPAddressDeny=any` 加 `IPAddressAllow=localhost`：集群只接受回环连接。以后给它配远程备库（流复制）、从别的机器跑 `pg_basebackup` 或 `pg_dump`，都会连不上（不是密码错，是包被丢）。
+- `MemoryMax=512M`：集群全部后端共用这个上限，别的库的负载也算在里面。
+- 要这样用，先评估，再用开关关掉，或者自己另写 drop-in 覆盖这两项（文件名排在 `pandora-hardening.conf` 之后，如 `zz-local.conf`；安装器只管自己那个文件）。
+
+想临时去掉某项排查：删掉对应的 drop-in，再 `systemctl daemon-reload && systemctl restart <单元>`。下次安装会再加回来（要长期关掉用开关）；真有扩展或功能被挡住，带着 `journalctl -u <单元> -n 50` 报上来。
 
 ### 什么时候升级处理
 

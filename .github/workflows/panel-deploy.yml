@@ -80,6 +80,26 @@ jobs:
           fi
           echo "deploy mock tests: ${#tests[@]} passed"
 
+  # 直装写进 Valkey / Redis 配置的 pandora 块，在 Redis 6.0（Ubuntu 22.04）、7.0（Debian 12）、Valkey 8.1（Debian 13）
+  # 的官方镜像里真起一遍（要 Docker）。只在 GitHub 上跑：检查机没有 Docker，明说跳过
+  deploy-valkey-versions:
+    name: Valkey hardening block on supported versions
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: panel/deploy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start each supported Redis / Valkey with the pandora block
+        run: |
+          t=valkey-hardening_versions_docker_test.sh
+          if [ "${GITHUB_ACTIONS:-}" != true ]; then
+            echo "不在 GitHub Actions 上，跳过 $t（GitHub 上必跑）"
+            exit 0
+          fi
+          bash "$t"
+
   # 发布控制器的桩测试要 Linux root（systemd、flock、/proc 的桩都按 root 写）。GitHub runner
   # 有免密 sudo，在这里必跑；它证明「完整预检在停服之前、停服后只做只读核对」的顺序。
   # 只在 GitHub 上跑（GITHUB_ACTIONS=true）：检查机回放时机器形状不同（2026-10-07 在检查机上

@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,41 +28,79 @@ func TestAppRoleFunctionRevokesPG18(t *testing.T) {
 		CommentTag:     "pandora-app-role-exec-pg18",
 	})
 
-	revoked := migrationRevokedFromApp(t)
+	// 签名交给库解析：先 to_regprocedure；它不认参数名与参数模式，认不出时再用与 GRANT 同一套语法的
+	// COMMENT ON FUNCTION 在回滚掉的子事务里解析一次（找到的函数就是 GRANT / REVOKE 当时作用的那个）
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	resolve := func(sig string) (string, bool) {
+		var oid *uint32
+		if err := tx.QueryRow(ctx, `SELECT to_regprocedure($1)::oid`, sig).Scan(&oid); err != nil {
+			t.Fatalf("to_regprocedure(%q): %v", sig, err)
+		}
+		if oid == nil {
+			if _, err := tx.Exec(ctx, `SAVEPOINT pandora_probe`); err != nil {
+				t.Fatalf("savepoint: %v", err)
+			}
+			_, cerr := tx.Exec(ctx, `COMMENT ON FUNCTION `+sig+` IS 'pandora-app-role-exec-probe'`)
+			if cerr == nil {
+				if err := tx.QueryRow(ctx, `SELECT objoid FROM pg_catalog.pg_description
+					WHERE classoid = 'pg_catalog.pg_proc'::regclass AND description = 'pandora-app-role-exec-probe'`).Scan(&oid); err != nil {
+					t.Fatalf("read probe comment for %q: %v", sig, err)
+				}
+			}
+			if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT pandora_probe`); err != nil {
+				t.Fatalf("rollback to savepoint: %v", err)
+			}
+			if oid == nil {
+				return "", false
+			}
+		}
+		var canonical string
+		if err := tx.QueryRow(ctx, `SELECT $1::oid::regprocedure::text`, *oid).Scan(&canonical); err != nil {
+			t.Fatalf("canonical name of %q: %v", sig, err)
+		}
+		return canonical, true
+	}
+	revoked, err := migrationRevokedFromApp(readMigrationUps(t), resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !contains(revoked, "app.seed_tenant_defaults(uuid)") {
 		t.Fatalf("migration scan lost app.seed_tenant_defaults(uuid); got %v", revoked)
 	}
 
-	var executable, checked []string
+	var executable []string
 	for _, sig := range revoked {
-		var exists, canExec bool
-		if err := admin.QueryRow(ctx, `
-			SELECT to_regprocedure($1) IS NOT NULL,
-			       coalesce(has_function_privilege('aegis_app', to_regprocedure($1), 'EXECUTE'), false)`,
-			sig).Scan(&exists, &canExec); err != nil {
+		var canExec bool
+		if err := tx.QueryRow(ctx, `SELECT has_function_privilege('aegis_app', to_regprocedure($1), 'EXECUTE')`,
+			sig).Scan(&canExec); err != nil {
 			t.Fatalf("check %s: %v", sig, err)
 		}
-		if !exists {
-			continue // 后来的迁移删掉了
-		}
-		checked = append(checked, sig)
 		if canExec {
 			executable = append(executable, sig)
 		}
-	}
-	if !contains(checked, "app.seed_tenant_defaults(uuid)") {
-		t.Fatal("app.seed_tenant_defaults(uuid) does not exist in the migrated database")
 	}
 	if len(executable) > 0 {
 		t.Fatalf("aegis_app can execute functions the migrations revoked from it (configure-app-role.sql grants them back): %v",
 			executable)
 	}
-	t.Logf("checked %d revoked functions: %v", len(checked), checked)
+	t.Logf("checked %d revoked functions: %v", len(revoked), revoked)
+}
+
+// 不连库的解析：小写、去掉全部空白，只用来在单元测试里比对同一种写法
+func textResolve(sig string) (string, bool) {
+	return strings.ToLower(strings.Join(strings.Fields(sig), "")), true
 }
 
 // 不连库：扫描本身要认出已知的几个（收回的、收回后又授回的），扫描坏了 PG18 用例会在绿灯下什么也没核
 func TestMigrationRevokedFromAppScan(t *testing.T) {
-	revoked := migrationRevokedFromApp(t)
+	revoked, err := migrationRevokedFromApp(readMigrationUps(t), textResolve)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{
 		"app.seed_tenant_defaults(uuid)",
 		"app.guard_finalized_refund_ledger_entry()",
@@ -82,15 +121,56 @@ func TestMigrationRevokedFromAppScan(t *testing.T) {
 	}
 }
 
+// 不连库：签名里的空白收成单个空格交给解析（参数名、多词类型原样保留）；解析不出来的，
+// 只有后面的迁移里 DROP 了同名函数才跳过，否则报错；format() 模板（含 %）不算签名
+func TestMigrationRevokedFromAppScanRules(t *testing.T) {
+	var seen []string
+	record := func(sig string) (string, bool) {
+		seen = append(seen, sig)
+		if strings.HasPrefix(sig, "app.gone(") {
+			return "", false
+		}
+		return sig, true
+	}
+	ups := []migrationUp{
+		{"00001_a.sql", "REVOKE ALL ON FUNCTION app.f(p_tenant uuid,\n   p_at timestamp   with time zone) FROM PUBLIC, aegis_app;\n" +
+			"REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;\n" +
+			"DO $$ BEGIN EXECUTE format('REVOKE ALL ON FUNCTION %s FROM aegis_app;', v_sig); END $$;\n"},
+		{"00002_b.sql", "DROP FUNCTION IF EXISTS app.gone(uuid);\n"},
+	}
+	revoked, err := migrationRevokedFromApp(ups, record)
+	if err != nil {
+		t.Fatalf("a revoke followed by a later DROP FUNCTION must be skipped: %v", err)
+	}
+	if want := "app.f(p_tenant uuid, p_at timestamp with time zone)"; !contains(revoked, want) || !contains(seen, want) {
+		t.Fatalf("signature not normalized to single spaces: revoked %v, resolved %v", revoked, seen)
+	}
+	for _, sig := range seen {
+		if strings.Contains(sig, "%") {
+			t.Fatalf("a format() template was treated as a signature: %v", seen)
+		}
+	}
+	if _, err := migrationRevokedFromApp(ups[:1], record); err == nil {
+		t.Fatal("an unresolvable signature without a later DROP FUNCTION was skipped silently")
+	}
+	// DROP 在 REVOKE 之前不算
+	early := []migrationUp{{"00001_a.sql", "DROP FUNCTION IF EXISTS app.gone(uuid);\n"}, {"00002_b.sql", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;\n"}}
+	if _, err := migrationRevokedFromApp(early, record); err == nil {
+		t.Fatal("a DROP FUNCTION before the revoke excused an unresolvable signature")
+	}
+}
+
 var (
 	functionPrivilegeStatement = regexp.MustCompile(
 		`(?is)\b(REVOKE|GRANT)\s+(?:ALL(?:\s+PRIVILEGES)?|EXECUTE)\s+ON\s+FUNCTION\s+(.+?)\s+(FROM|TO)\s+([^;]+);`)
-	plainSignature = regexp.MustCompile(`^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*\([a-z0-9_, \[\]]*\)$`)
-	gooseDown      = regexp.MustCompile(`(?m)^-- \+goose Down`)
+	dropFunctionStatement = regexp.MustCompile(`(?is)\bDROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)\s*\(`)
+	gooseDown             = regexp.MustCompile(`(?m)^-- \+goose Down`)
 )
 
-// migrationRevokedFromApp 返回按迁移顺序最后一次对 aegis_app 是 REVOKE 的函数签名（去空白、小写）。
-func migrationRevokedFromApp(t *testing.T) []string {
+type migrationUp struct{ name, up string }
+
+// readMigrationUps 按文件名顺序读全部迁移的 Up 段
+func readMigrationUps(t *testing.T) []migrationUp {
 	t.Helper()
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -102,7 +182,7 @@ func migrationRevokedFromApp(t *testing.T) []string {
 		t.Fatalf("read migrations from %s: %v", dir, err)
 	}
 	sort.Strings(files)
-	last := map[string]string{}
+	var ups []migrationUp
 	for _, file := range files {
 		body, err := os.ReadFile(file)
 		if err != nil {
@@ -112,19 +192,67 @@ func migrationRevokedFromApp(t *testing.T) []string {
 		if loc := gooseDown.FindStringIndex(up); loc != nil {
 			up = up[:loc[0]]
 		}
-		for _, m := range functionPrivilegeStatement.FindAllStringSubmatch(up, -1) {
-			verb, functions, roles := strings.ToUpper(m[1]), m[2], m[4]
+		ups = append(ups, migrationUp{filepath.Base(file), up})
+	}
+	return ups
+}
+
+// migrationRevokedFromApp 返回按迁移顺序最后一次对 aegis_app 是 REVOKE 的函数（resolve 给出的规范名）。
+// 签名里的空白收成单个空格交给 resolve；resolve 认不出的，只有之后（后面的语句或迁移）DROP 了同名函数才跳过，
+// 否则报错——免得新写法悄悄脱离覆盖。format() 模板（签名里有 %）是动态 SQL，静态扫不了，跳过
+func migrationRevokedFromApp(ups []migrationUp, resolve func(string) (string, bool)) ([]string, error) {
+	type event struct {
+		pos       int // 全局位置：文件序号 << 32 | 文件内偏移
+		verb, sig string
+		name      string
+	}
+	type drop struct {
+		pos  int
+		name string
+	}
+	var events []event
+	var drops []drop
+	for i, m := range ups {
+		for _, loc := range functionPrivilegeStatement.FindAllStringSubmatchIndex(m.up, -1) {
+			verb := strings.ToUpper(m.up[loc[2]:loc[3]])
+			functions, roles := m.up[loc[4]:loc[5]], m.up[loc[8]:loc[9]]
 			if !hasRole(roles, "aegis_app") {
 				continue
 			}
 			for _, sig := range splitTopLevel(functions) {
-				sig = strings.ToLower(strings.Join(strings.Fields(sig), ""))
-				if !plainSignature.MatchString(sig) {
-					continue // 动态 SQL 里的 %s 之类
+				sig = strings.Join(strings.Fields(sig), " ")
+				if strings.Contains(sig, "%") {
+					continue
 				}
-				last[sig] = verb
+				name := strings.ToLower(strings.TrimSpace(strings.SplitN(sig, "(", 2)[0]))
+				events = append(events, event{i<<32 | loc[0], verb, sig, name})
 			}
 		}
+		for _, loc := range dropFunctionStatement.FindAllStringSubmatchIndex(m.up, -1) {
+			drops = append(drops, drop{i<<32 | loc[0], strings.ToLower(m.up[loc[2]:loc[3]])})
+		}
+	}
+	last := map[string]string{}
+	var unresolved []string
+	for _, e := range events {
+		key, ok := resolve(e.sig)
+		if !ok {
+			excused := false
+			for _, d := range drops {
+				if d.pos > e.pos && d.name == e.name {
+					excused = true
+					break
+				}
+			}
+			if !excused {
+				unresolved = append(unresolved, fmt.Sprintf("%s: %s %s", ups[e.pos>>32].name, e.verb, e.sig))
+			}
+			continue
+		}
+		last[key] = e.verb
+	}
+	if len(unresolved) > 0 {
+		return nil, fmt.Errorf("function signatures in GRANT/REVOKE for aegis_app that cannot be resolved and are not dropped later: %v", unresolved)
 	}
 	var out []string
 	for sig, verb := range last {
@@ -133,7 +261,7 @@ func migrationRevokedFromApp(t *testing.T) []string {
 		}
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 func hasRole(list, role string) bool {

@@ -42,7 +42,10 @@ paths:
 - `install-native.sh` 只用 PG18 的 `main` 集群（版本钉死），别的版本的集群不停、不升级、不删；旧集群里有 aegis 库而 PG18 不是接班人时停下，什么都不改。守卫：`install-native_pgcluster_mock_test.sh`（静态禁 `pg_dropcluster`、`pg_upgrade`、`pg_ctlcluster`、`dropdb`、`DROP DATABASE`）
 - `install-native.sh` 装与 docker 布局同一套备份、校验、恢复、psql、bootstrap 脚本，加密备份单元经 `native_render_unit` 改成直装（安装目录、`/var/backups/pandora`、去掉 docker 依赖）后只装不启用；升级时 `.env` 已有的行一字不动，缺的新键（布局、备份）才追加；口令经 psql 标准输入或环境变量，不拼进 `su -c`。守卫：`install-native_backup_mock_test.sh`
 - 直装的 PostgreSQL 与 Valkey 不弱于 docker 布局的容器（对照表见 RUNBOOK 第 13 章「直装的加固」）：`install-native-lib.sh` 写 systemd drop-in `pandora-hardening.conf`，在 Valkey 配置末尾维护 `# >>> pandora` 块
-  - PostgreSQL 的加固在建角色、迁移之前做；带着新 drop-in 起不来就撤回、照原样拉起、停下；内容没变不重启
+  - 加固在外来集群检查、迁移、收窄角色之后、起网关之前做（升级时网关已停）；内容没变不重启
+  - 撤回要撤本次改过的全部东西（drop-in 还原成之前的内容、Valkey 配置写回改之前的副本，按步撤），撤回后核实服务真的在跑，提示照实写；PostgreSQL 等在线的时长按重启前 CHECKPOINT 的实测耗时给
+  - 写进第三方配置的指令按平台声称支持的最老版本核语法（Valkey 的 bind 按版本与 IPv6 生成；Redis 6.0 不认「-」前缀）。守卫：`valkey-hardening_versions_docker_test.sh` 在 Redis 6.0 / 7.0、Valkey 8.1 的官方镜像里真起（GitHub 的 deploy-valkey-versions job，检查机跳过）
+  - 开关 `PANDORA_SYSTEMD_HARDENING`（缺省开，0 去掉 drop-in，记进 `.env` 只改这一行）
   - drop-in 整套写全，不依赖发行版单元写了什么（Debian 12 的 redis 单元把 `ProtectSystem` 改回 `true`）
   - 内存上限与 Valkey 参数（禁 FLUSHALL / FLUSHDB、不落盘、maxmemory 与淘汰策略）跟 `docker-compose.yml` 逐字对齐，改 compose 要一起改
   - PostgreSQL 不加 `MemoryDenyWriteExecute`（JIT）；被挡的系统调用返回 EPERM

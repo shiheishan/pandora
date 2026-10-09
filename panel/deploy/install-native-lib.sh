@@ -44,56 +44,15 @@ native_ensure_pg_cluster() {
   native_wait_pg_online "$ver" || die "PostgreSQL ${ver}/main 起不来：journalctl -u postgresql@${ver}-main -n 50"
 }
 
-# 等 <版本>/main 在线（最多 15 秒）
+# 等 <版本>/main 在线（缺省最多 15 秒；加固重启时按检查点实测给）
+#   native_wait_pg_online <版本> [秒]
 native_wait_pg_online() {
   local _
-  for _ in $(seq 1 15); do
+  for _ in $(seq 1 "${2:-15}"); do
     native_pg_cluster_port "$1" >/dev/null && return 0
     sleep 1
   done
   return 1
-}
-
-# PostgreSQL 单元加固（drop-in 内容见 native_pg_hardening_dropin）。内容变了才重启；重启后起不来就撤回 drop-in、
-# 照原样拉起、停下（这一步在建角色与迁移之前，数据还没动）
-#   native_harden_pg_unit <版本>
-native_harden_pg_unit() {
-  local unit="postgresql@$1-main.service"
-  native_apply_dropin "$unit" "$(native_pg_hardening_dropin)" || return 0
-  systemctl daemon-reload
-  if systemctl restart "$unit" && native_wait_pg_online "$1"; then
-    say "  PostgreSQL 单元已加固（$NATIVE_SYSTEMD_DIR/$unit.d/$NATIVE_HARDENING_DROPIN）"
-    return 0
-  fi
-  native_remove_dropin "$unit"
-  systemctl daemon-reload
-  systemctl restart "$unit" 2>/dev/null || true
-  die "加固 drop-in 让 PostgreSQL $1/main 起不来（journalctl -u $unit -n 50），已撤回、照原样拉起；数据没动"
-}
-
-# Valkey / Redis：口令、pandora 配置块、单元 drop-in 三样，任一变了才重启；带着新 drop-in 起不来就撤回它、停下
-#   native_harden_valkey <单元名，如 valkey-server> <配置文件> <口令>
-native_harden_valkey() {
-  local unit="$1.service" conf="$2" changed=0 dropin_new=0
-  if [ -f "$conf" ]; then
-    native_set_valkey_password "$conf" "$3" && changed=1
-    native_set_valkey_hardening "$conf" && changed=1
-  fi
-  if native_apply_dropin "$unit" "$(native_valkey_hardening_dropin "${1%-server}")"; then
-    systemctl daemon-reload
-    changed=1 dropin_new=1
-  fi
-  [ "$changed" = 1 ] || return 0
-  if systemctl restart "$unit" && sleep 1 && systemctl is-active --quiet "$unit"; then
-    return 0
-  fi
-  if [ "$dropin_new" = 1 ]; then
-    native_remove_dropin "$unit"
-    systemctl daemon-reload
-    systemctl restart "$unit" 2>/dev/null || true
-    die "加固 drop-in 让 $1 起不来（journalctl -u $unit -n 50），已撤回、照原样拉起"
-  fi
-  die "$1 改了配置之后起不来（journalctl -u $unit -n 50；配置 $conf 末尾是 pandora 块）"
 }
 
 # 端口上的集群里有没有 aegis 库：打印 yes / no / unknown（查不了）
@@ -306,27 +265,206 @@ MemoryMax=160M
 UNIT
 }
 
+NATIVE_SYSTEMD_DIR=/etc/systemd/system
+
+# 一个单元的 pandora drop-in：读、写、删
+native_dropin_file() { printf '%s\n' "$NATIVE_SYSTEMD_DIR/$1.d/$NATIVE_HARDENING_DROPIN"; }
+native_write_dropin() {
+  local file
+  file="$(native_dropin_file "$1")"
+  install -d -m 0755 "${file%/*}"
+  printf '%s\n' "$2" >"$file.next" && chmod 0644 "$file.next" && mv -f -- "$file.next" "$file"
+}
+native_remove_dropin() { rm -f -- "$(native_dropin_file "$1")"; }
 # 写一个单元的 drop-in；内容没变返回 1（不必重启），写了返回 0
 #   native_apply_dropin <单元名> <drop-in 内容>
 native_apply_dropin() {
-  local dir="$NATIVE_SYSTEMD_DIR/$1.d" file
-  file="$dir/$NATIVE_HARDENING_DROPIN"
+  local file
+  file="$(native_dropin_file "$1")"
   if [ -f "$file" ] && [ "$(cat "$file")" = "$2" ]; then return 1; fi
-  install -d -m 0755 "$dir"
-  printf '%s\n' "$2" >"$file.next" && chmod 0644 "$file.next" && mv -f -- "$file.next" "$file"
+  native_write_dropin "$1" "$2"
 }
-native_remove_dropin() { rm -f -- "$NATIVE_SYSTEMD_DIR/$1.d/$NATIVE_HARDENING_DROPIN"; }
-NATIVE_SYSTEMD_DIR=/etc/systemd/system
+# 把 drop-in 还原成改之前的样子：<之前有没有> 为 1 时写回 <之前的内容>，否则删掉
+native_restore_dropin() {
+  if [ "$2" = 1 ]; then native_write_dropin "$1" "$3"; else native_remove_dropin "$1"; fi
+}
+
+# 加固开关 PANDORA_SYSTEMD_HARDENING：缺省开（1）；0 明确关掉两份 drop-in（Valkey 配置块不受影响，那是行为口径，
+# 不是沙箱）。安装时的环境变量优先，并记进 .env（只改这一行，别的行一个字节都不动），之后的升级沿用；
+# 没给就看 .env。结果放在 NATIVE_HARDENING（1 / 0）
+#   native_load_hardening_switch <.env>
+native_load_hardening_switch() {
+  local env_file="$1" v="${PANDORA_SYSTEMD_HARDENING:-}" from_env=1 tmp
+  if [ -z "$v" ]; then
+    from_env=0
+    v="$(pandora_env_file_value "$env_file" PANDORA_SYSTEMD_HARDENING 2>/dev/null || true)"
+  fi
+  case "${v:-1}" in
+    1|on|yes|true) v=1 ;;
+    0|off|no|false) v=0 ;;
+    *) die "PANDORA_SYSTEMD_HARDENING 只认 1（开，缺省）或 0（关）：$v" ;;
+  esac
+  if [ "$from_env" = 1 ] && [ -f "$env_file" ] \
+      && [ "$(pandora_env_file_value "$env_file" PANDORA_SYSTEMD_HARDENING 2>/dev/null || true)" != "$v" ]; then
+    if grep -q '^PANDORA_SYSTEMD_HARDENING=' "$env_file"; then
+      tmp="$(mktemp "$env_file.tmp.XXXXXX")"
+      chmod 0600 "$tmp"
+      NATIVE_SWITCH="$v" awk '/^PANDORA_SYSTEMD_HARDENING=/ { print "PANDORA_SYSTEMD_HARDENING=" ENVIRON["NATIVE_SWITCH"]; next } { print }' \
+        "$env_file" >"$tmp" && mv -f -- "$tmp" "$env_file" || { rm -f -- "$tmp"; die "改 $env_file 的 PANDORA_SYSTEMD_HARDENING 失败"; }
+    else
+      native_env_append_missing "$env_file" "PANDORA_SYSTEMD_HARDENING=$v"
+    fi
+  fi
+  NATIVE_HARDENING="$v"
+  [ "$v" = 1 ] || say "  ! systemd 加固已按 PANDORA_SYSTEMD_HARDENING=0 关闭（记在 .env）：PostgreSQL 与 Valkey 的隔离弱于 docker 布局（RUNBOOK 第 13 章「直装的加固」）"
+}
+
+# 单元带着新 drop-in 起不来时给的一句原因与办法：226/NAMESPACE 是主机不支持沙箱要的挂载命名空间
+#   native_unit_failure_hint <单元名>
+native_unit_failure_hint() {
+  if [ "$(systemctl show -p ExecMainStatus --value "$1" 2>/dev/null)" = 226 ] \
+      || journalctl -u "$1" -n 80 --no-pager 2>/dev/null | grep -Eq '226/NAMESPACE|step NAMESPACE'; then
+    printf '%s\n' "原因是 226/NAMESPACE：这台主机不支持 systemd 沙箱要的挂载命名空间（LXC、OpenVZ 一类容器化 VPS 常见）。确认是这样，就用 PANDORA_SYSTEMD_HARDENING=0 重跑，明确关掉这层加固（记进 .env，之后的升级沿用）"
+  else
+    printf '%s\n' "原因看 journalctl -u $1 -n 50。确实要关掉这层加固，用 PANDORA_SYSTEMD_HARDENING=0 重跑（记进 .env）"
+  fi
+}
+
+# 重启 PostgreSQL 前先做一次 CHECKPOINT 并计时：关机检查点因此只剩很少的脏页，计到的秒数就是这台机器
+# 刷盘的实际快慢；重启后等它在线的时长按它给（30 秒起，加检查点耗时的三倍），慢盘不会被误判成加固失败
+#   native_pg_online_budget <端口>
+native_pg_online_budget() {
+  local started
+  started="$(date +%s)"
+  native_pg_peer -p "$1" -d postgres -c CHECKPOINT >/dev/null 2>&1 || true
+  echo $(( 30 + 3 * ($(date +%s) - started) ))
+}
+
+# PostgreSQL 单元加固（drop-in 内容见 native_pg_hardening_dropin；开关关着时去掉 drop-in）。没变不重启。
+# 重启后在线才算数；起不来就把 drop-in 还原成这次之前的样子、再起、再核在线：在线返回 1（提示照实写），
+# 仍不在线就停下。安装器在外来集群检查、迁移、收窄角色都做完之后、起网关之前调它（升级时网关已停）
+#   native_harden_pg_unit <版本> <端口>
+native_harden_pg_unit() {
+  local unit="postgresql@$1-main.service" file had=0 prev="" what budget hint
+  file="$(native_dropin_file "$unit")"
+  if [ -f "$file" ]; then had=1; prev="$(cat "$file")"; fi
+  if [ "${NATIVE_HARDENING:-1}" = 1 ]; then
+    native_apply_dropin "$unit" "$(native_pg_hardening_dropin)" || return 0
+    what="加固 drop-in"
+  else
+    [ "$had" = 1 ] || return 0
+    native_remove_dropin "$unit"
+    what="去掉加固 drop-in"
+  fi
+  budget="$(native_pg_online_budget "$2")"
+  systemctl daemon-reload
+  systemctl restart "$unit" 2>/dev/null || true
+  if native_wait_pg_online "$1" "$budget"; then
+    say "  PostgreSQL $1/main：已应用$what（$file）"
+    return 0
+  fi
+  hint="$(native_unit_failure_hint "$unit")"
+  native_restore_dropin "$unit" "$had" "$prev"
+  systemctl daemon-reload
+  systemctl reset-failed "$unit" 2>/dev/null || true
+  systemctl restart "$unit" 2>/dev/null || true
+  if native_wait_pg_online "$1" "$budget"; then
+    say "  ! PostgreSQL $1/main 应用$what后起不来；drop-in 已还原成这次之前的样子，核实已在线。$hint" >&2
+    return 1
+  fi
+  die "PostgreSQL $1/main 应用$what后起不来；drop-in 已还原成这次之前的样子，但 $budget 秒内仍没在线（journalctl -u $unit -n 50）。$hint"
+}
+
+# Valkey / Redis 起来并且在跑（Type=notify：restart 返回 0 表示已就绪；再隔一秒核一次没崩）
+native_vk_restart_ok() { systemctl restart "$1.service" 2>/dev/null && sleep 1 && systemctl is-active --quiet "$1.service"; }
+
+# 撤回之后再起一次并核实：在跑返回 1（提示照实写），仍没起来就停下
+#   native_vk_after_revert <单元名> <改了什么> <原因与办法>
+native_vk_after_revert() {
+  systemctl daemon-reload
+  systemctl reset-failed "$1.service" 2>/dev/null || true
+  if native_vk_restart_ok "$1"; then
+    say "  ! $1 改了$2之后起不来；这一步已还原，核实 $1 照原样在跑。$3" >&2
+    return 1
+  fi
+  die "$1 改了$2之后起不来；这一步已还原，但 $1 仍没起来（journalctl -u $1.service -n 50）。$3"
+}
+
+# 改 Valkey 配置的一步：先把配置存一份，<命令…> 改了（返回 0）就重启核实；起不来把配置原样写回、再起、再核
+#   native_vk_conf_step <单元名> <配置文件> <这一步叫什么> <命令…>
+native_vk_conf_step() {
+  local unit="$1" conf="$2" what="$3" snap hint
+  shift 3
+  snap="$(mktemp "$conf.pandora.XXXXXX")"   # 0600，里面有口令
+  cat "$conf" >"$snap" || { rm -f -- "$snap"; die "存 $conf 的副本失败"; }
+  if ! "$@"; then rm -f -- "$snap"; return 0; fi
+  if native_vk_restart_ok "$unit"; then rm -f -- "$snap"; return 0; fi
+  hint="$(native_unit_failure_hint "$unit.service")"
+  cat "$snap" >"$conf" || die "$unit 改了$what之后起不来，写回 $conf 也失败（副本在 $snap）"
+  rm -f -- "$snap"
+  native_vk_after_revert "$unit" "$what（$conf）" "$hint"
+}
+
+# Valkey / Redis：口令、pandora 配置块、单元 drop-in 分三步，每步只在有变化时重启核实，起不来只撤回这一步
+# （配置写回原样、drop-in 还原成之前的样子）再核实在跑：在跑返回 1，仍没起来停下
+#   native_harden_valkey <单元名，如 valkey-server> <配置文件> <口令>
+native_harden_valkey() {
+  local unit="$1" conf="$2" file had=0 prev="" what hint
+  if [ -f "$conf" ]; then
+    native_vk_conf_step "$unit" "$conf" 口令 native_set_valkey_password "$conf" "$3" || return 1
+    native_vk_conf_step "$unit" "$conf" "pandora 配置块" \
+      native_set_valkey_hardening "$conf" "$(native_valkey_bind_addrs "$unit")" || return 1
+  fi
+  file="$(native_dropin_file "$unit.service")"
+  if [ -f "$file" ]; then had=1; prev="$(cat "$file")"; fi
+  if [ "${NATIVE_HARDENING:-1}" = 1 ]; then
+    native_apply_dropin "$unit.service" "$(native_valkey_hardening_dropin "${unit%-server}")" || return 0
+    what="加固 drop-in"
+  else
+    [ "$had" = 1 ] || return 0
+    native_remove_dropin "$unit.service"
+    what="去掉加固 drop-in"
+  fi
+  systemctl daemon-reload
+  native_vk_restart_ok "$unit" && return 0
+  hint="$(native_unit_failure_hint "$unit.service")"
+  native_restore_dropin "$unit.service" "$had" "$prev"
+  native_vk_after_revert "$unit" "$what" "$hint"
+}
+
+# bind 那一行按装的版本与 IPv6 写：Valkey 与 Redis 6.2 起认「-」前缀（地址不存在也照常起），写 127.0.0.1 -::1；
+# 更老的（Ubuntu 22.04 的 Redis 6.0）不认，回环上有 IPv6 写 127.0.0.1 ::1（与它的缺省配置相同），没有只写 127.0.0.1。
+# 认不出版本按老的算
+#   native_valkey_bind_addrs <服务端程序名，如 valkey-server>
+NATIVE_IF_INET6=/proc/net/if_inet6
+native_valkey_bind_addrs() {
+  local out major minor
+  out="$("$1" --version 2>/dev/null | head -1)" || true
+  major="$(sed -n 's/.* v=\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1/p' <<<"$out")"
+  minor="$(sed -n 's/.* v=\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\2/p' <<<"$out")"
+  case "$out" in
+    Valkey*) echo '127.0.0.1 -::1'; return 0 ;;
+    Redis*)
+      if [ -n "$major" ] && { [ "$major" -gt 6 ] || { [ "$major" -eq 6 ] && [ "$minor" -ge 2 ]; }; }; then
+        echo '127.0.0.1 -::1'; return 0
+      fi ;;
+  esac
+  if [ -r "$NATIVE_IF_INET6" ] && awk '$1 == "00000000000000000000000000000001" && $6 == "lo" { f = 1 } END { exit !f }' "$NATIVE_IF_INET6"; then
+    echo '127.0.0.1 ::1'
+  else
+    echo '127.0.0.1'
+  fi
+}
 
 # Valkey 配置末尾维护一个 pandora 块（与 docker 布局的启动参数同口径）：只听回环、保护模式、禁 FLUSHALL / FLUSHDB、
 # 不落盘、内存上限与淘汰策略。块在文件最后，单值项以它为准；没变返回 1（不必重启），改了返回 0。
 # 不含口令（口令走 native_set_valkey_password），整块经 awk 的环境给，不进命令行参数
-#   native_set_valkey_hardening <配置文件>
+#   native_set_valkey_hardening <配置文件> <bind 地址，见 native_valkey_bind_addrs>
 NATIVE_VALKEY_BLOCK_BEGIN='# >>> pandora（install-native.sh 维护，与 docker 布局同口径；手改会被下次安装覆盖）'
 NATIVE_VALKEY_BLOCK_END='# <<< pandora'
 native_valkey_hardening_block() {
   printf '%s\n' "$NATIVE_VALKEY_BLOCK_BEGIN" \
-    'bind 127.0.0.1 -::1' \
+    "bind $1" \
     'protected-mode yes' \
     'rename-command FLUSHALL ""' \
     'rename-command FLUSHDB ""' \
@@ -340,7 +478,7 @@ native_set_valkey_hardening() {
   local conf="$1" tmp
   tmp="$(mktemp "$conf.XXXXXX")"
   NATIVE_VK_BEGIN="$NATIVE_VALKEY_BLOCK_BEGIN" NATIVE_VK_END="$NATIVE_VALKEY_BLOCK_END" \
-  NATIVE_VK_BLOCK="$(native_valkey_hardening_block)" awk '
+  NATIVE_VK_BLOCK="$(native_valkey_hardening_block "$2")" awk '
     $0 == ENVIRON["NATIVE_VK_BEGIN"] { skip = 1; next }
     skip && $0 == ENVIRON["NATIVE_VK_END"] { skip = 0; next }
     skip { next }
