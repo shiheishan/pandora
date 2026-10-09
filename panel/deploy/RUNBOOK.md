@@ -16,7 +16,7 @@
 
 **口令不进命令行。** `.env` 只给 root 读，不要 `cat` 它；口令只经标准输入或 0600 文件传，不要写成命令参数（会进 `ps` 和 shell 历史）。
 
-**两种安装布局。** 下文命令按 `install.sh` 的布局写，直装机器按下表替换：
+**两种安装布局。** 缺省是直装（`install-native.sh`，2026-10 起全新安装都是它；`install.sh` 的全新安装也交给它）；docker 布局（`install.sh`）只剩存量机器，迁过来见第 13 章。下文命令沿用 docker 布局的路径写，直装机器按下表替换：
 
 | | `install.sh`（Docker 数据基座） | `install-native.sh`（直装） |
 |---|---|---|
@@ -783,7 +783,7 @@ pandora-native enrollment abort --identity /etc/pandora-native/identity.json --r
 
 ## 13. 从 Docker 布局迁到直装
 
-`install.sh` 装的 docker 布局（`/opt/aegispanel`，PostgreSQL 与 Valkey 在容器里）可以用新发布包里的 `install-native.sh --from-docker` 迁到直装（`/opt/pandora`，系统 PostgreSQL 18 + Valkey），省掉 Docker 守护进程与容器的常驻开销。本章不是排障，是一次有计划的停服操作，**每台都要先问机器的主人**。
+直装（`/opt/pandora`，系统 PostgreSQL 18 + Valkey）是缺省布局。`install.sh` 装的 docker 布局（`/opt/aegispanel`，PostgreSQL 与 Valkey 在容器里）照旧能用 `install.sh` 升级；想迁到直装（省掉 Docker 守护进程与两个容器约 85 MB 常驻内存和容器健康检查的开销），用新发布包里的 `install-native.sh --from-docker`。本章不是排障，是一次有计划的停服操作，**每台都要先问机器的主人**。
 
 ### 它做什么
 

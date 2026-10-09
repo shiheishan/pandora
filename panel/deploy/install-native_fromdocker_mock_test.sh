@@ -10,7 +10,9 @@
 #   ⑥ fd_fingerprint：两边都以超级用户读、跑迁移的角色各自归一成 <m>，口令不进命令行参数；
 #   ⑦ fd_preflight：容器没跑、发布包比库旧、特权角色、角色成员关系、口令含怪字符、密钥没填、磁盘不够都在动手前停下；
 #   ⑧ 静态：主流程的顺序（核对 → 写状态 → 停写入者 → 导出 → 恢复 → 核对指纹 → 迁移 → 存单元 → 换单元 → 健康检查 → 接管 → 停容器），
-#      回滚 trap 在停写入者之前就装好；删卷、删 /opt/aegispanel 只出现在提示里。
+#      回滚 trap 在停写入者之前就装好；删卷、删 /opt/aegispanel 只出现在提示里；
+#   ⑨ install.sh 入口：全新安装在任何前置检查之前交给 install-native.sh，PANDORA_LAYOUT=docker 才走 docker 布局；
+#   ⑩ 发布控制器的缺省安装目录跟着布局走，两种都在且不是迁完的直装时要人明说。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -261,6 +263,21 @@ fi
 grep -Fq 'docker compose down -v' "$NATIVE" || fail 'the summary does not print the manual volume-removal command'
 grep -Fq 'trap fd_abort EXIT' "$NATIVE" || fail 'no rollback trap'
 
+# --- ⑨ install.sh 入口：全新安装交给 install-native.sh，PANDORA_LAYOUT=docker 才走 docker 布局 -------
+mkdir -p "$T/entry/deploy"
+cp "$DEPLOY/install.sh" "$T/entry/deploy/install.sh"
+printf '#!/usr/bin/env bash\nprintf "NATIVE-INSTALLER %%s\\n" "$*"\n' >"$T/entry/deploy/install-native.sh"
+if [ ! -f /opt/aegispanel/deploy/.env ]; then
+  out="$(bash "$T/entry/deploy/install.sh" 2>&1)" || fail "fresh install.sh did not hand off: $out"
+  grep -q '^NATIVE-INSTALLER' <<<"$out" || fail "fresh install.sh did not run install-native.sh: $out"
+  out="$(PANDORA_LAYOUT=docker bash "$T/entry/deploy/install.sh" 2>&1 </dev/null || true)"
+  if grep -q 'NATIVE-INSTALLER' <<<"$out"; then fail 'PANDORA_LAYOUT=docker still handed off to install-native.sh'; fi
+fi
+# 交接在任何前置检查（要 docker）之前；docker 布局升级的收尾提示怎么迁
+awk '/exec bash "\$HERE\/install-native.sh"/ { h = NR } /^step "检查运行环境"/ { c = NR } END { exit !(h && c && h < c) }' "$DEPLOY/install.sh" \
+  || fail 'install.sh hands off after its docker prerequisite checks'
+grep -Fq 'install-native.sh --from-docker' "$DEPLOY/install.sh" || fail 'docker upgrades do not point at --from-docker'
+grep -Fq 'PANDORA_LAYOUT=docker bash ./install.sh' "$DEPLOY/test-install.sh" || fail 'test-install.sh no longer pins the docker layout'
 # --- ⑩ 发布控制器的缺省安装目录跟着布局走 -----------------------------------------------
 eval "$(awk '/^default_app_dir\(\) \{$/ { p = 1 } p { print } p && /^}$/ { exit }' "$DEPLOY/release-stop-the-world.sh")"
 declare -F default_app_dir >/dev/null || fail 'release-stop-the-world.sh has no default_app_dir'

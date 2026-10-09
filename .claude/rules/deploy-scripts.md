@@ -32,6 +32,7 @@ paths:
   - 停服之后 `migrate.sh up` 带 `PANDORA_PRECHECK_ATTESTATION`，只核凭据；`PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes` 只在这一步给，安装器自己不写、也不写进 `.env`；
   - 迁移失败把服务拉回来，所以新程序在迁移成功之后才装（install-native.sh 也是）。
   - 守卫：`install-migrate-order_mock_test.sh`
+- 缺省布局是直装：`install.sh` 在全新安装（没有 `/opt/aegispanel/deploy/.env`）且没给 `PANDORA_LAYOUT=docker` 时，在任何前置检查之前 `exec install-native.sh`；已装 docker 布局的机器照旧由 `install.sh` 升级，收尾提示 `--from-docker`。`test-install.sh` 验的是 docker 布局，显式带 `PANDORA_LAYOUT=docker`。守卫：`install-native_fromdocker_mock_test.sh` ⑨
 - 两种数据库布局同一套运维脚本：`check-migrations.sh`、`migrate.sh`、`backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`、`psql.sh`、`bootstrap.sh` 按 `.env` 的 `PANDORA_DB_LAYOUT`（没有这一键时凭只有直装才写的 `POSTGRES_SUPER_PASSWORD` 推断为 native）选客户端
   - docker：容器 `aegis-postgres` 里的客户端，以 `POSTGRES_USER`；native：本机客户端经 `127.0.0.1:POSTGRES_PORT` 以 `postgres` 超级用户（`POSTGRES_SUPER_PASSWORD`）。不用 runuser：备份单元的 `SystemCallFilter=~@privileged` 禁止切换用户
   - 判定函数 `pandora_db_layout` 各脚本内联一份（备份三件套只信任自己，不 source 共用文件），连库一律经 `pandora_pg`；口令只经环境变量。守卫：`pg-layout_mock_test.sh`（逐字一致与行为）、`check-migrations_native_mock_test.sh`

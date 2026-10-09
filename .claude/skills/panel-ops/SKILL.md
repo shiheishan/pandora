@@ -19,16 +19,16 @@ description: pandora 已按生产方式装好的面板上的运维操作：管�
 
 ## 先认布局
 
-| | docker 布局（`install.sh`） | 直装布局（`install-native.sh`） |
+| | docker 布局（`install.sh`，存量） | 直装布局（`install-native.sh`，缺省） |
 |---|---|---|
 | 根目录 `$D` | `/opt/aegispanel` | `/opt/pandora` |
-| PostgreSQL | 容器 `aegis-postgres`，`deploy/psql.sh` | 系统 PG18，`runuser -u postgres -- psql -d aegis` |
-| `deploy/` 下的运维脚本 | 齐全（清单即 `install-linux-binaries.sh` 的拷贝行） | **没有备份、校验、恢复、psql、bootstrap**，其余照 `install-native.sh` 的拷贝行 |
-| 升级前备份 | `/var/backups/aegispanel/pre-upgrade-*.dump` | `/var/backups/pandora/pre-upgrade-*.dump` |
-| 加密备份单元 | `aegis-backup.service/.timer` 已装，**没启用** | 没有 |
+| PostgreSQL | 容器 `aegis-postgres`，以 `POSTGRES_USER` | 系统 PG18（`postgresql@18-main`），以 `postgres` 经 `127.0.0.1:POSTGRES_PORT`（`.env` 的 `POSTGRES_SUPER_PASSWORD`） |
+| `deploy/` 下的运维脚本 | 齐全 | 同一套（备份、校验、恢复、`psql.sh`、`bootstrap.sh` 按 `.env` 的 `PANDORA_DB_LAYOUT` 认布局）；2026-10 之前装的直装机器升级一次才有 |
+| 升级前备份 / 加密备份目录 | `/var/backups/aegispanel/` | `/var/backups/pandora/` |
+| 加密备份单元 | `aegis-backup.service/.timer` 已装，**没启用** | 同左（单元改成直装路径、不依赖 docker） |
 | 迁移连接串 | `.env` 有 `AEGIS_MIGRATION_DATABASE_URL`（老 `.env` 没有时才要 `PANDORA_LOCAL_MIGRATION_APPROVED=yes`） | 有 |
 
-判断：`test -f /opt/aegispanel/deploy/.env && echo docker || echo native`。两种布局都是 `$D/bin/` 下的二进制（含 goose）、`$D/deploy/.env`（root 0600）。
+判断：`test -f /opt/aegispanel/deploy/.env && echo docker || echo native`（两个都在、且有 `/opt/pandora/deploy/from-docker.state`，是从 docker 迁过来的直装，以直装为准）。两种布局都是 `$D/bin/` 下的二进制（含 goose）、`$D/deploy/.env`（root 0600）。docker 布局迁直装：`install-native.sh --from-docker`（停服几分钟，先问用户），见 `panel/deploy/RUNBOOK.md` 第 13 章。
 
 ## 环境怎么给
 
@@ -77,7 +77,7 @@ description: pandora 已按生产方式装好的面板上的运维操作：管�
 | 换上正规证书 / 补跑续期 | `deploy/edge-tls.sh issue`；`renew` | 无 | issue：0 正规证书，3 仍自签，1 出错且 nginx 保持原样；renew：0 / 1（结论写 `/var/lib/aegispanel/tls/status`）。撞 Let's Encrypt 限额就停 |
 | 重新渲染 nginx | `deploy/edge-tls.sh apply`（整套用 `setup`） | 无 | 0；`nginx -t` 不过不换 |
 | 站点在 Cloudflare 后 | `deploy/update-cloudflare-realip.sh && nginx -t && systemctl reload nginx` | 无 | 0。不在 Cloudflare 后别跑：会让客户端自填来源 IP |
-| 重新收窄运行角色 | `deploy/bootstrap.sh`（仅 docker） | B | `aegis_app runtime login configured`。恢复库后必跑 |
+| 重新收窄运行角色 | `deploy/bootstrap.sh` | B | `aegis_app runtime login configured`。恢复库后必跑 |
 | 开 WebDAV 异地备份 | ① `bin/aegis-backup-webdav init-signing-key /etc/aegispanel/backup-manifest-ed25519.seed`（打印公钥；已存在就拒绝，不覆盖）② 写 0600 的 `/etc/aegispanel/backup-webdav.json` 与口令文件 ③ `.env` 设 `AEGIS_BACKUP_REMOTE_HOOK=$D/bin/aegis-backup-webdav` | C | 下次备份输出 `webdav backup upload complete`。失败只打一个原因词（`probe_failed`、`target_invalid`…），退出 1 |
 | 节点装到一半看接入 | 节点机上 `pandora-native enrollment status --identity /etc/pandora-native/identity.json` | 节点机 root | 打印 `enrollment state`；`committed` 时顺手把待定身份转正（写文件） |
 
@@ -99,14 +99,14 @@ description: pandora 已按生产方式装好的面板上的运维操作：管�
 ## 破坏性操作的顺序
 
 1. **问**：说清命令、影响面（哪些数据会回到哪一刻、谁会被踢下线）、能不能撤回，等用户明确同意。一次同意只管这一次。
-2. **备份**：docker 布局 `backup-postgres.sh` 后跑 `verify-backup.sh` 验过；直装布局照安装器的做法 `pg_dump -Fc` 到 `/var/backups/pandora/`（0600），再 `pg_restore --list` 验能读。记下路径。
+2. **备份**：`backup-postgres.sh` 后跑 `verify-backup.sh` 验过（两种布局同一套）；还没升级到带这些脚本的老直装机器，照安装器的做法 `runuser -u postgres -- pg_dump -Fc -d aegis -p <端口>` 到 `/var/backups/pandora/`（0600），再 `pg_restore --list` 验能读。记下路径。
 3. **停写入者**（恢复、回滚要）：`systemctl stop nginx aegis-public aegis-admin aegis-node`。
 4. **执行**：输出 `| tee` 进 0600 日志，不贴原文（含邮箱、库名、路径以外的值时脱敏）。
 5. **核对**：`migrate.sh version`、三网关 `127.0.0.1:9000/9001/9003/healthz`、后台能登录；恢复后先跑 `bootstrap.sh` 再起服务。
 
 ## 备份与恢复：几处容易误会
 
-- **装好后没有每日备份。** 单元装了但没启用，要 `enable --now aegis-backup.timer`；直装布局压根没有。
+- **装好后没有每日备份。** 单元装了但没启用，要 `enable --now aegis-backup.timer`（两种布局都是；老直装机器升级一次才有这个单元）。
 - **解密私钥和备份在同一台机器**（`install.sh` 首装生成到 `$D/secrets/backup-age.key`，`.env` 的 `AEGIS_BACKUP_AGE_IDENTITY` 指向它）。机器整体丢失时备份解不开，异地备份要连同这把私钥另存（经用户、走 1Password）。
 - **`restore-postgres.sh` 只收带签名清单的备份。** 清单由 aegis-backup-webdav 上传时签出，只存在 WebDAV 上；本地只留检查点（`backup-webdav.json` 的 `manifest_checkpoint_file`）。恢复前要：把 `aegis-postgres-<时间>.manifest.json` 从 WebDAV 取回放到备份旁边，`.env` 设好 `AEGIS_BACKUP_MANIFEST_PUBLIC_KEY`、`AEGIS_BACKUP_TRUSTED_CHECKPOINT`。
   - 没配 WebDAV 的机器：`verify-backup.sh` 只能用一次性的 `AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY=RESTORE_UNSIGNED:<文件名>` 校验目录，恢复脚本一律拒绝。只能照 MIGRATION-RUNBOOK 第 3 节「升级前备份」的手工路线，先 `age --decrypt --identity <私钥>` 再 `pg_restore` 到新库核对。
@@ -128,7 +128,7 @@ description: pandora 已按生产方式装好的面板上的运维操作：管�
 - **`has-admin` 只有 3 表示「没有」。** 安装器也只在 3 时才问。
 - **`clear-ratelimit.sh`** 只给开发基座：只认 docker 容器、删光全部 `rl:*`（所有用户的冷却一起没了）、口令经 `-a` 进命令行。测试机和生产上不用它。
 - **`migrate.sh` 不给 `GOOSE_BIN`** 会找 `/root/go/bin/goose`，找不到退出 1。发布包自带的在 `$D/bin/goose`。`down`、`redo` 永远退出 78，回退只能 `rollback-to`。
-- **`psql.sh` 只在 docker 布局有**，多语句经标准输入送，细节见 db-query。
+- **`psql.sh` 两种布局都有**（老直装机器升级一次才有），以超级用户连，多语句经标准输入送，细节见 db-query。
 - **`migrate-to-new-host.sh` 已过时**，用前先问用户：
   - 不在发布包里，只在源码树；
   - 不跑 `edge-tls.sh`，不装备份和续期单元，新机器没有证书续期；

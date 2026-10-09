@@ -21,6 +21,8 @@
 #   PANDORA_ACME_EMAIL=邮箱          ACME 账号联系邮箱（旧名 PANDORA_CERTBOT_EMAIL）
 #   PANDORA_ACME_SERVER=URL         ACME 目录地址，缺省 Let's Encrypt 正式环境（演练可用 staging）
 #   PANDORA_SKIP_NGINX=1            不碰 nginx 与证书
+#   PANDORA_LAYOUT=docker           全新安装也用 docker 布局（缺省交给 install-native.sh 装直装布局；
+#                                   已装 docker 布局的机器升级不受影响）
 #   例：sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.com ./install.sh
 #
 # 发布包装出来的就是生产：首装写 AEGIS_ENV=production。生产模式下网关启动时
@@ -208,6 +210,18 @@ print_install_summary() {
 # 可单测的部分到此为止
 if [ "${PANDORA_INSTALL_LIB:-}" = 1 ]; then
   return 0 2>/dev/null || exit 0
+fi
+
+#------------------------------------------------------------------------------
+# 0) 缺省布局是直装（install-native.sh：系统 PostgreSQL 18 + Valkey，不要 Docker）
+#------------------------------------------------------------------------------
+# 全新安装交给 install-native.sh（同一个发布包、同一套环境变量）；要 docker 布局显式给
+# PANDORA_LAYOUT=docker。已经装了 docker 布局（有 $DEST/deploy/.env）的机器照旧在这里升级，
+# 收尾提示怎么迁到直装（install-native.sh --from-docker，停服几分钟，每台由主人决定）
+if [ ! -f "$DEST/deploy/.env" ] && [ "${PANDORA_LAYOUT:-native}" != docker ]; then
+  [ -f "$HERE/install-native.sh" ] || die "发布目录缺少 deploy/install-native.sh"
+  printf '    %s\n' "全新安装走直装布局（install-native.sh，不需要 Docker）；要 docker 布局：PANDORA_LAYOUT=docker $0" >&2
+  exec bash "$HERE/install-native.sh" "$@"
 fi
 
 #------------------------------------------------------------------------------
@@ -619,3 +633,8 @@ fi
 # 11) 收尾提示
 #------------------------------------------------------------------------------
 print_install_summary
+if [ "$MODE" = upgrade ]; then
+  printf '\n%s\n' "  这台还是 docker 布局。缺省布局已换成直装（省掉 Docker 守护进程与两个容器的常驻开销），方便停服几分钟时迁过去："
+  printf '    %s\n' "sudo $RELEASE_ROOT/deploy/install-native.sh --from-docker" \
+    "（核对 → 导出 → 恢复 → 逐项核对 → 切换；失败自动回到 Docker，卷不删。步骤与回退见 deploy/RUNBOOK.md 第 13 章）"
+fi

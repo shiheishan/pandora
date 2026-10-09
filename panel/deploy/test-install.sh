@@ -106,9 +106,10 @@ assert_healthy() {
 run_install() {
   local label="$1" log="$2"
   local start; start=$(date +%s)
-  # 首装要求对外地址（发布包装出来的是 production）；虚构域名，只写进 .env
+  # 首装要求对外地址（发布包装出来的是 production）；虚构域名，只写进 .env。
+  # 本脚本验的是 docker 布局：缺省的全新安装已交给 install-native.sh，这里显式要 docker
   if ( cd "$RELEASE/deploy" && PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://panel.example.test \
-      bash ./install.sh ) > "$log" 2>&1; then
+      PANDORA_LAYOUT=docker bash ./install.sh ) > "$log" 2>&1; then
     ok "$label 安装脚本退出码 0（耗时 $(( $(date +%s) - start ))s）"
     return 0
   fi

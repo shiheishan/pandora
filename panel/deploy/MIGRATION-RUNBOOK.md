@@ -1,7 +1,7 @@
 # 迁移失败与回滚 runbook
 
 面向自己部署 Pandora Panel 的运维。三种情形：升级时迁移失败、回到指定版本、从升级前备份恢复。
-命令里的路径按 install.sh 的布局（`/opt/aegispanel`）写；install-native.sh 装的机器换成 `/opt/pandora`。
+缺省布局是直装（install-native.sh，`/opt/pandora`）；命令里的路径沿用 install.sh 的 docker 布局（`/opt/aegispanel`）写，直装的机器换成 `/opt/pandora`，两种布局的 `deploy/` 下是同一套脚本。
 这份手册随发布包分发（`deploy/MIGRATION-RUNBOOK.md`），两个安装器都会把它装到 `/opt/aegispanel/deploy/`（或 `/opt/pandora/deploy/`）下。
 
 ## 0. 先弄清三件事
