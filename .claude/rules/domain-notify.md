@@ -16,3 +16,4 @@ paths:
 - 派发认领带租约：`Dispatch` 用一条 `WITH due AS (… FOR UPDATE SKIP LOCKED) UPDATE … SET next_retry_at = now() + 租约 RETURNING` 认领，状态仍是 queued；发完改 sent 或按退避排下次，中途挂了租约一过任一实例重领。插件投递（`plugin.Dispatch`）同一写法。租约（10 分钟）必须长于一轮派发的上限（`dispatchRoundTimeout` 4 分钟）
 - 到期类通知都在 `ScanExpiring` 一个事务里（scan.go）：7 / 3 / 1 天提醒（不看 auto_renew，它默认 true 没人改）、到期当时一条 `subscription.expired`、过期第 1 / 7 天的召回 `subscription.recall`（窗口没关、名下没有别的在用订阅才发）。去重键都带周期末的 Unix 秒：键永久唯一，不带的话续费后的下一周期再也发不出。时刻按 `nodefabric.UsageLocation` 的时区显示到分钟。模板种子见 00126
 - 扫描与派发是两个 goroutine（`loops.go`）：扫描每 5 分钟、派发每 30 秒一轮并循环到队列空（有批数上限），`Kick` 只催派发。`StartScanner` 返回 join 函数，public 网关停机时在关资源之前调用
+- 流量预警扫描只扫一遍（`scanQuotaCrossings`，w12period）：每条订阅直接定在它已跨过的最高一档（`quotaThresholds` 里最大的已跨过值），不再每档各扫一遍、靠「只取刚跨过这条线的」互斥；流量包余量的 LATERAL 只对套餐额度本身已用到最低一档的行做（可用量 = 套餐额度 + 不为负的流量包余量）。加一档阈值不加一遍扫描。PG18 对照原每档各扫一遍：`TestScanQuotaOnePassMatchesPerThresholdScansPG18`

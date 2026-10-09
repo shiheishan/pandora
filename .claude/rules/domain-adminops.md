@@ -19,7 +19,8 @@ paths:
 - 删用户组前逐项数引用，按 池名单 > 用户 > 套餐 > 价格 > 优惠券 的顺序给 409；查完到删之间被池名单引用的由外键兜住，同样回 409。组的 code 建后不可改（套餐、价格、优惠券按 ID 引用它）
 - 后台列表先在主表上按排序键取一页 id（`(tenant_id, created_at DESC, id DESC)` 索引），再只对这一页拼当前订阅、配额、在线设备等读模型；不要把 LATERAL 放在 LIMIT 之前
 - 看板流量与节点列表的流量只读小时汇总表（`node_traffic_hourly`、`node_user_traffic_hourly`，入库时在 `ReportTraffic` 同一事务里累加，00099），不在请求时解析 `node_traffic_reports.raw_payload`
-- 批量生成用户是后台任务（用户 2026-10-07 定，方案 A；user_generation_jobs.go / user_generation_worker.go，表 00130）：请求只登记任务并写审计，aegis-admin 的 worker 每批 10 个、Argon2 一次只占 1 个全局名额（排不上就等，不让任务失败），事务里只写库
+- 行为趋势按天汇总（`activity_rollup.go`）只重算「不会再变、读路径也用不上」之外的行（w12period）：前天的行算于 day + 2 零点之后即定稿，之后不再重算；昨天的行读路径正在用（算于零点 10 分钟之后、按日流量此后没被写过）时也不重算，被迟到写入弄成不可用才重算一轮。判据与读路径 `activityDailyFinalSQL` 同一份写法（`activityDailyNeedSQL`）。保留期清理（`PurgeActivityDaily` 等）一小时一次，挂在 aegis-admin 保留期循环的 `intervalGate` 后面，按天汇总留在 10 分钟节拍上
+- 批量生成用户是后台任务（用户 2026-10-07 定，方案 A；user_generation_jobs.go / user_generation_worker.go，表 00130）：请求只登记任务并写审计，aegis-admin 的 worker（登记任务时被 `UserGenerationWake` 进程内叫醒、另有 15 秒一次的兜底轮询，w12period）每批 10 个、Argon2 一次只占 1 个全局名额（排不上就等，不让任务失败），事务里只写库
   - 每批的用户、口令、进度与结果密文在一个事务里写，并先按 `attempts`（认领代数）与 `completed` 确认租约还是自己的；崩溃后租约过期由下一次认领从 completed 接着做，不重复建号；认领超过 5 次判失败
   - 结果含明文初始口令：只存信封密文（AAD `UserGenerationResultAAD`），handler 解开写 CSV；只有提交人能下、要近期重认证、每次下载审计；任务结束 24 小时后 worker 清密文，任务行保留
 - 没有业务写入的后台敏感动作走 admin_audit.go 先单独写审计再动作（写不进去就不做）：测试发送（`notify.test_sent`）、解开明文来源 IP 的读取（`security.source_ip_viewed`）；用户导出在读名单的同一事务里写 `user.bulk_exported`

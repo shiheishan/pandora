@@ -69,3 +69,4 @@ paths:
 ## 测试
 - `settlement_pg18_test.go` 被 `panel/deploy/test-settlement-runner_static_test.sh` 按文件名 grep marker 字面量：不能改名，marker 也不能挪到别的文件
 - order_release、plan_change、payment_query 三个 PG18 域各占一个库，不能并进 billing 域：order_release 开跑先断言 00040 的全局水位还是干净的，而别的域会把它置上（见 run-pg18-gates.sh 的 `DOMAINS` 注释）
+- 配额周期滚动 `RollQuotaPeriods` 的第二遍按需（w12period）：第一遍一行都没滚就不做第二遍（静默时的常态）；滚了行才隔 `rollQuotaRetryDelay` 补因被 push 锁着而跳过的行。到期的只有零星几条、又恰好都被锁住时晚一轮（10 分钟）才滚，只影响重置时刻，计费不依赖滚动及时。PG18 `checkQuotaRollPG18` 第 6 项钉住两个分支
