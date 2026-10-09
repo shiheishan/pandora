@@ -63,7 +63,7 @@ git grep -nE 'go1\.2[0-9]|golang:1\.|GO_SERIES|Go 1\.2[0-9]|go 1\.2[0-9]' -- ':!
 | `panel/deploy/platform.sh` 的 `pandora_go_version_ok`（`-ge 26`）、`build-release.sh:34` 与 `migrate-to-new-host.sh:74` 的「Go 1.26+」提示 | 不用改 | 改，跟 go 指令的最低小版本一致 |
 | `README.md:9`、`README.md:215`、根 `CLAUDE.md:5` 的「Go 1.26」 | 不用改 | 改 |
 | 根 `CLAUDE.md`「环境与工具坑」里写死的本机 `GOTOOLCHAIN=go1.26.9`（verify 已写成 `go<go.mod 版本>`，不用改） | 改（并确认本机模块缓存里有新版本的工具链） | 改 |
-| `rules/pdnd-kernel.md:24`（「认证失败的回落」末条）与 adversarial-review 的三个模板 `templates/reviewer-prompt.md`、`rereview-prompt.md`、`round2-brief.md`：都写着 `GOTOOLCHAIN=go1.26.9`。改 Go 版本时要核对这几处（三个模板正在改成从 go.mod 读，改完以文件现状为准，上面的 grep 能找到残留） | 改 | 改 |
+| `rules/pdnd-kernel.md:24`（「认证失败的回落」末条）写死的 `GOTOOLCHAIN=go1.26.9`（adversarial-review 的模板由 `review-prompt.py` 从 go.mod 读，不用改） | 改 | 改 |
 | **sing-box 的 go:linkname 前提**：`pdnd/go.mod` 的 sing-box v1.13.14 在 `transport/v2rayhttp/force_close.go:46` 用 `//go:linkname` 取 `golang.org/x/net/http2.(*Transport).connPool`；Go 1.27 下该符号不存在（本机 1.27.1 已复现：pdnd 与 subscription-e2e/tools 链接失败） | 不涉及 | **先解决再升**：换到不再依赖该符号的 sing-box 版本，或等 x/net 在 1.27 下可用；两个模块的 sing-box 版本要一致（第 4 节） |
 | `.github/workflows/*.yml`：setup-go 全部用 `go-version-file`，装 go 指令那个精确版本（go.mod 没有 `toolchain` 行），没有写死版本 | 不用改 | 不用改 |
 
