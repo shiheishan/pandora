@@ -117,7 +117,8 @@ func TestFeatureSwitchMissingRowFailsOpenAndErrorsAreNotCached(t *testing.T) {
 func TestSwitchCacheIsBounded(t *testing.T) {
 	c := newSwitchCache(time.Now)
 	for i := 0; i < switchCacheMax*3; i++ {
-		c.Put(switchKey{switchTestTenant, "code-" + string(rune('a'+i%26)) + strings.Repeat("x", i)}, true)
+		key := switchKey{switchTestTenant, "code-" + string(rune('a'+i%26)) + strings.Repeat("x", i)}
+		_, _ = c.Get(context.Background(), key, "", switchAlways, nil, func(context.Context) (bool, error) { return true, nil })
 		if c.Len() > switchCacheMax {
 			t.Fatalf("cache grew to %d entries", c.Len())
 		}

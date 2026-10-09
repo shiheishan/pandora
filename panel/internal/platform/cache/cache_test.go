@@ -33,6 +33,14 @@ func (c *fakeClock) Advance(d time.Duration) {
 
 func always[V any](V) bool { return true }
 
+// put 是测试里直接存一条的辅助（同加载完成时的写回：受上限、Rank 与 Expiry 约束）。生产代码只经 Get 写入：
+// 那条路记着失效代数，Clear 之前读出的值不会在 Clear 之后写回。
+func (c *Cache[K, V]) put(key K, value V) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.storeLocked(key, value)
+}
+
 // epochValue 是测试用的条目：带纪元、版本与自己的到期时刻。
 type epochValue struct {
 	epoch      int64
@@ -207,7 +215,7 @@ func TestCacheServesStaleWhileRevalidating(t *testing.T) {
 		t.Fatalf("advanced epoch served a stale entry: %+v", v)
 	}
 	// 晚完成的旧纪元加载不把新条目换回去
-	c.Put("k", epochValue{version: "old", epoch: 3})
+	c.put("k", epochValue{version: "old", epoch: 3})
 	if e, _ := c.Peek("k"); e.version != "v9" {
 		t.Fatalf("older load overwrote a newer entry: %+v", e)
 	}
@@ -372,17 +380,17 @@ func TestCacheClearVoidsInFlightLoads(t *testing.T) {
 	}
 }
 
-func TestCacheDropAndPut(t *testing.T) {
+func TestCacheDropAndPeek(t *testing.T) {
 	clock := newFakeClock()
 	c := newCache[int](time.Minute, 8, clock.Now)
-	c.Put("k", 1)
+	c.put("k", 1)
 	if v, ok := c.Peek("k"); !ok || v != 1 {
 		t.Fatalf("Put not visible: %d %v", v, ok)
 	}
 	if !c.Drop("k") || c.Drop("k") {
 		t.Fatal("Drop must report whether the entry was present")
 	}
-	c.Put("k", 2)
+	c.put("k", 2)
 	clock.Advance(time.Minute)
 	if _, ok := c.Peek("k"); ok {
 		t.Fatal("Peek returned an entry past its TTL")
@@ -410,7 +418,7 @@ func TestCacheLookupMatchesGetHits(t *testing.T) {
 	if _, ok := c.Lookup("k", always[epochValue], nil); ok {
 		t.Fatal("lookup hit an empty cache")
 	}
-	c.Put("k", epochValue{epoch: 3, version: "v", nextExpiry: clock.Now().Add(time.Minute)})
+	c.put("k", epochValue{epoch: 3, version: "v", nextExpiry: clock.Now().Add(time.Minute)})
 	if v, ok := c.Lookup("k", always[epochValue], nil); !ok || v.version != "v" {
 		t.Fatal("lookup missed a fresh entry")
 	}
@@ -435,7 +443,7 @@ func TestCacheHitDoesNotAllocate(t *testing.T) {
 	type key struct{ a, b string }
 	c := New[key](Options[int]{TTL: time.Hour, Max: 8})
 	k := key{"tenant", "code"}
-	c.Put(k, 1)
+	c.put(k, 1)
 	load := func(context.Context) (int, error) { return 2, nil }
 	ctx := context.Background()
 	if n := testing.AllocsPerRun(100, func() { _, _ = c.Lookup(k, always[int], nil) }); n != 0 {
@@ -448,7 +456,7 @@ func TestCacheHitDoesNotAllocate(t *testing.T) {
 
 func BenchmarkCacheGetHit(b *testing.B) {
 	c := New[string](Options[int]{TTL: time.Hour, Max: 8})
-	c.Put("k", 1)
+	c.put("k", 1)
 	load := func(context.Context) (int, error) { return 2, nil }
 	ctx := context.Background()
 	b.ReportAllocs()
@@ -457,4 +465,101 @@ func BenchmarkCacheGetHit(b *testing.B) {
 			_, _ = c.Get(ctx, "k", "7", always[int], nil, load)
 		}
 	})
+}
+
+// 发起加载的请求被取消，不连累同一趟上的等待者：加载跑在不随发起者取消的上下文里，
+// 等待者拿到结果，结果照常入缓存（run 里的 context.WithoutCancel）。
+func TestCacheLeaderCancelDoesNotFailJoiners(t *testing.T) {
+	c := newCache[int](time.Minute, 8, nil)
+	started, release := make(chan struct{}), make(chan struct{})
+	load := func(ctx context.Context) (int, error) {
+		close(started)
+		select {
+		case <-release:
+			return 7, nil
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+	leaderCtx, cancel := context.WithCancel(context.Background())
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := c.Get(leaderCtx, "k", "", always[int], nil, load)
+		leaderDone <- err
+	}()
+	<-started
+	type result struct {
+		v   int
+		err error
+	}
+	joiner := make(chan result, 1)
+	go func() {
+		v, err := c.Get(context.Background(), "k", "", always[int], nil, load)
+		joiner <- result{v, err}
+	}()
+	time.Sleep(20 * time.Millisecond) // 等待者排到同一趟上
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	if r := <-joiner; r.err != nil || r.v != 7 {
+		t.Fatalf("joiner failed because the leader was cancelled: v=%d err=%v", r.v, r.err)
+	}
+	if err := <-leaderDone; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader err %v", err)
+	}
+	if v, ok := c.Peek("k"); !ok || v != 7 {
+		t.Fatalf("result of a load whose leader was cancelled was not cached: %d %v", v, ok)
+	}
+}
+
+// Clear 之后起的新一趟，不会被 Clear 之前那趟完成时顺手删掉登记：之后来的请求仍搭新的那趟，
+// 不再多加载一次（run 里的 c.flights[fk] == f 判断）。
+func TestCacheVoidedLoadDoesNotUnregisterNewerFlight(t *testing.T) {
+	c := newCache[int](time.Minute, 8, nil)
+	ctx := context.Background()
+	oldStarted, oldRelease := make(chan struct{}), make(chan struct{})
+	newStarted, newRelease := make(chan struct{}), make(chan struct{})
+	oldDone := make(chan struct{})
+	go func() {
+		defer close(oldDone)
+		_, _ = c.Get(ctx, "k", "", always[int], nil, func(context.Context) (int, error) {
+			close(oldStarted)
+			<-oldRelease
+			return 1, nil
+		})
+	}()
+	<-oldStarted
+	c.Clear()
+	newDone := make(chan int, 1)
+	go func() {
+		v, _ := c.Get(ctx, "k", "", always[int], nil, func(context.Context) (int, error) {
+			close(newStarted)
+			<-newRelease
+			return 2, nil
+		})
+		newDone <- v
+	}()
+	<-newStarted
+	close(oldRelease)
+	<-oldDone // 旧的那趟收尾完毕
+	var extra atomic.Int32
+	third := make(chan int, 1)
+	go func() {
+		v, _ := c.Get(ctx, "k", "", always[int], nil, func(context.Context) (int, error) {
+			extra.Add(1)
+			return 3, nil
+		})
+		third <- v
+	}()
+	time.Sleep(20 * time.Millisecond)
+	if extra.Load() != 0 {
+		t.Fatal("the voided load unregistered the newer flight; a third request started its own load")
+	}
+	close(newRelease)
+	if v := <-third; v != 2 {
+		t.Fatalf("third request got %d, want the newer flight's 2", v)
+	}
+	if v := <-newDone; v != 2 {
+		t.Fatalf("newer flight returned %d", v)
+	}
 }

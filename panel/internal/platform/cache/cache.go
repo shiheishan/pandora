@@ -234,13 +234,6 @@ func (c *Cache[K, V]) storeLocked(key K, value V) {
 	c.entries[key] = entry[V]{value: value, expires: expires, hard: hard, hardAt: hardAt}
 }
 
-// Put 直接存一条（同加载完成时的写回：受上限、Rank 与 Expiry 约束）。
-func (c *Cache[K, V]) Put(key K, value V) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.storeLocked(key, value)
-}
-
 // Peek 只读缓存，不触发加载；过了 TTL（或 Expiry）的条目不算。
 func (c *Cache[K, V]) Peek(key K) (V, bool) {
 	c.mu.Lock()
