@@ -95,8 +95,9 @@ func run(ctx context.Context, o *options, out io.Writer) error {
 			if err != nil {
 				return 0, err
 			}
-			fmt.Fprintf(out, "    retired %d earlier load-test nodes (revoked %d active identities first), expired %d earlier load-test subscriptions\n", r.Nodes, r.Revoked, r.Subscriptions)
-			return r.Nodes + r.Subscriptions, nil
+			fmt.Fprintf(out, "    retired %d earlier load-test nodes (revoked %d active identities and retired %d servers first), expired %d earlier load-test subscriptions\n",
+				r.Nodes, r.Revoked, r.Servers, r.Subscriptions)
+			return r.Nodes + r.Servers + r.Subscriptions, nil
 		}); err != nil {
 			return err
 		}
