@@ -70,3 +70,20 @@ func TestServedSetReusesSharedListOnly(t *testing.T) {
 		t.Fatal("empty list must give an empty set")
 	}
 }
+
+// 不再上报的节点：过了刷新点之后，下一次任何节点写入时整体清掉（审查 #9）。
+func TestAliveMemoSweepsSilentNodes(t *testing.T) {
+	m := newAliveMemo()
+	h := sha256.Sum256([]byte("a"))
+	t0 := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 50; i++ {
+		m.record("t", fmt.Sprintf("gone-%d", i), []int64{int64(i)}, [][]byte{h[:]}, t0)
+	}
+	if m.size != 50 || len(m.nodes) != 50 {
+		t.Fatalf("size=%d nodes=%d", m.size, len(m.nodes))
+	}
+	m.record("t", "alive", []int64{1}, [][]byte{h[:]}, t0.Add(aliveRefreshEvery))
+	if m.size != 1 || len(m.nodes) != 1 || m.nodes[hbKey("t", "alive")] == nil {
+		t.Fatalf("silent nodes kept after a sweep: size=%d nodes=%d", m.size, len(m.nodes))
+	}
+}

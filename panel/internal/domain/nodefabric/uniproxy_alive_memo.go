@@ -19,6 +19,10 @@ import (
 // 只记真被刷新过的行：认下了但没改写的行，库里的 last_seen_at 介于两分钟前与现在之间、
 // 具体不知道，不记，下一份上报照旧写（不改写或刚好刷新），之后就对齐了。备忘按时刻自然
 // 失效，不需要通知；进程重启后第一份上报照旧写。
+//
+// 单副本设计：备忘在进程内，aegis-node 目前只支持单实例（总协调 2026-10-09 定）。多实例时
+// 一个副本跳过的写，库里其实由另一个副本刷新过，结论仍然成立（备忘只记本进程亲手刷新过的
+// 行）；但跨副本的同一节点会多写，届时按节点一致性哈希再看。
 
 // aliveRefreshEvery 与 aliveRefresh（SQL 里的 interval）是同一个粒度，测试钉着两者相等。
 const aliveRefreshEvery = 2 * time.Minute
@@ -32,9 +36,10 @@ type aliveMemoKey struct {
 }
 
 type aliveMemo struct {
-	mu    sync.Mutex
-	nodes map[string]map[aliveMemoKey]time.Time // 键：租户 \x00 节点
-	size  int
+	mu        sync.Mutex
+	nodes     map[string]map[aliveMemoKey]time.Time // 键：租户 \x00 节点
+	size      int
+	lastSweep time.Time // 上一次整体清理的时刻
 }
 
 func newAliveMemo() *aliveMemo { return &aliveMemo{nodes: make(map[string]map[aliveMemoKey]time.Time)} }
@@ -63,10 +68,14 @@ func (m *aliveMemo) covers(tenantID, nodeID string, uids []int64, hashes [][]byt
 }
 
 // record 记下一次写入里真被插入或刷新的行（at 取发起写入之前的时刻，不晚于库里的 now()），
-// 顺手丢掉这个节点已过刷新点的旧行。
+// 顺手丢掉这个节点已过刷新点的旧行；每 aliveRefreshEvery 再把所有节点清一遍，不再上报的
+// 节点（下线、换下、删掉）的行不会一直占着备忘的空间（审查 #9）。
 func (m *aliveMemo) record(tenantID, nodeID string, uids []int64, hashes [][]byte, at time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if at.Sub(m.lastSweep) >= aliveRefreshEvery {
+		m.sweepLocked(at)
+	}
 	key := tenantID + "\x00" + nodeID
 	rows := m.nodes[key]
 	if rows == nil {
@@ -91,6 +100,22 @@ func (m *aliveMemo) record(tenantID, nodeID string, uids []int64, hashes [][]byt
 	}
 	if len(rows) == 0 {
 		delete(m.nodes, key)
+	}
+}
+
+// sweepLocked 丢掉所有节点已过刷新点的行，空了的节点整个删掉。
+func (m *aliveMemo) sweepLocked(now time.Time) {
+	m.lastSweep = now
+	for key, rows := range m.nodes {
+		for k, t := range rows {
+			if now.Sub(t) >= aliveRefreshEvery {
+				delete(rows, k)
+				m.size--
+			}
+		}
+		if len(rows) == 0 {
+			delete(m.nodes, key)
+		}
 	}
 }
 
