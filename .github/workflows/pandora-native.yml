@@ -286,6 +286,9 @@ jobs:
         with:
           go-version-file: pdnd/go.mod
           cache-dependency-path: pdnd/go.sum
+      - name: Release script toolchain pinning (stub go)
+        # build.sh / verify.sh 固定 GOTOOLCHAIN 为 go.mod 的版本、版本不符即失败：桩 go 实跑
+        run: bash pdnd/release/build_toolchain_mock_test.sh
       - name: Build and verify release directory
         run: |
           bash pdnd/release/build.sh "$RUNNER_TEMP/pandora-release" ci
