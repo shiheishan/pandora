@@ -5,7 +5,7 @@ description: pandora 的项目 skill 定期审查与落实：按用户固定的�
 
 # skill 审查
 
-目标：用户只说一句「做第 N 次 skill 审查」，就按同一套标准审完、核完、修完。前五轮（10-07 到 10-09）用户把同一段清单贴了 5 次，审查员 prompt 和落实流程每次都是现写的。
+目标：用户只说一句「做第 N 次 skill 审查」，就按同一套标准审完、核完、修完。用户每轮都整段贴同一份清单（贴的时间记在 `templates/criteria.md`），审查员 prompt 和落实流程照本 skill 的模板走，不再现写。
 
 用户的标准原文在 `templates/criteria.md`，审查员直接读这个文件，不要转述。
 
@@ -69,4 +69,6 @@ description: pandora 的项目 skill 定期审查与落实：按用户固定的�
 - **只改 `.claude` 的提交，GitHub 不触发任何 workflow。** `wait-github.sh` 会在约 300 秒后以「没有任何 workflow 被触发」退出 2，这是正常的。检查机不看路径，照样回放，但结论反映的是基点代码。落实的那一路改到 `panel/` 或 `pdnd/` 时（例：第五轮 RUNBOOK 加节点机侧章、loadtest 脚本补采集），按 verify 等。
 - **旧 worktree 里留着旧版 skill**，在旧 worktree 里开会话会加载过时的内容。这归 cleanup 清理，不算 skill 本身的问题。第四、五轮都报过这一条。
 - **项目 skill 都在仓库 `.claude/skills/` 里，经 worktree 分路改。** `~/ai/skills/bin/skills list` 只用来看有没有链进来的共享 skill（到第五轮只有全局 kami）。共享 skill 的原件在 `~/ai/skills/repos/`，改动会影响所有项目，要先告诉用户（全局 AGENTS.md）。
-- **找「重复的业务流程」时不要整份读会话记录**，用 `scripts/repeated-prompts.py` 找用户重复贴过的长消息。文字略有出入的版本会分成两组（第一次贴的清单就和后四次不同），加 `--grep 关键词 --min 1` 一起看。
+- **找「重复的业务流程」时不要整份读会话记录**，用 `scripts/repeated-prompts.py`：
+  - 缺省找用户重复贴过的长消息。文字略有出入的版本会分成两组（第一次贴的清单就和之后的不同），加 `--grep 关键词 --min 1` 一起看。
+  - `--agents` 找总协调手写过多次的 Agent prompt 与 SendMessage 消息，按相似度分组，给次数与首末时间。照模板派的会聚成一组；每次措辞不同的（例：第二轮修复消息）聚不起来，用 `--agents --grep 第二轮 --min 1` 逐条看。
