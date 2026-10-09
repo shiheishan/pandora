@@ -47,8 +47,6 @@ type Service struct {
 	caches *nodeCaches
 	// hb 是心跳写合并，只在 aegis-node 里开（heartbeat_coalesce.go）；nil 时每拍立即写。
 	hb *heartbeatCoalescer
-	// alive 是在线上报合并，只在 aegis-node 里开（uniproxy_alive_coalesce.go）；nil 时每份当场写。
-	alive *aliveBuffer
 	// releaseMemo 记着已校验过的不可变发布物的规范字节（见 effective_release_fast.go）。
 	releaseMemo releaseMemo
 	// pullInterval 是下发给节点的拉取间隔，零值按 defaultNodePullInterval（见 uniproxy_config.go）。

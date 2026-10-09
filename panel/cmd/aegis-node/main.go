@@ -148,7 +148,7 @@ func run() error {
 	nodeService.EnableNodeCaches()
 
 	var workers sync.WaitGroup
-	workers.Add(4)
+	workers.Add(3)
 	// 签名请求 nonce 的过期清理。原先每个请求顺手删一批，并发请求争同一批行；
 	// 防重放只靠主键冲突，清理晚几分钟不影响判定，只影响表的大小。
 	go func() {
@@ -167,12 +167,6 @@ func run() error {
 	go func() {
 		defer workers.Done()
 		waitHeartbeats()
-	}()
-	// 在线上报合并：每 10 秒全部节点合成一条语句写（nodefabric/uniproxy_alive_coalesce.go）。
-	waitAlive := nodeService.StartAliveCoalescer(ctx, log)
-	go func() {
-		defer workers.Done()
-		waitAlive()
 	}()
 
 	handler := node.NewRouter(node.Deps{

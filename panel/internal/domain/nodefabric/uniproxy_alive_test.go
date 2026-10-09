@@ -35,7 +35,7 @@ func TestReportAliveIsOneStatement(t *testing.T) {
 	if strings.Count(src, "b.Queue(") != 1 || strings.Contains(src, "tx.") || strings.Contains(src, "for ") {
 		t.Fatal("alive rows must be written with one batched statement")
 	}
-	if !strings.Contains(src, "unnest($2::uuid[], $3::bigint[], $4::bytea[])") {
+	if !strings.Contains(src, "unnest($3::bigint[], $4::bytea[])") {
 		t.Fatal("alive rows no longer batch through unnest")
 	}
 	if report := sourcetest.Load(t, ".").Decl("Service.ReportAlive"); strings.Contains(report, "b.Queue(") ||

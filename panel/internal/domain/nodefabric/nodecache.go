@@ -280,6 +280,8 @@ type nodeCaches struct {
 	config *ttlCache[*nodeConfigView]
 	// watch 是纪元监听（StartEpochWatch 起；没起时为 nil，戳恒为零值）。
 	watch *epochWatch
+	// alive 是在线上报的刷新备忘（uniproxy_alive_memo.go）。
+	alive *aliveMemo
 }
 
 func newNodeCaches(now func() time.Time) *nodeCaches {
@@ -291,7 +293,7 @@ func newNodeCaches(now func() time.Time) *nodeCaches {
 	identity.expiry = func(id Identity) time.Time { return id.expiresAt }
 	identity.rank = func(id Identity) int64 { return id.epoch }
 	config := newTTLCache[*nodeConfigView](nodeConfigCacheTTL, nodeIdentityCacheMax, now)
-	return &nodeCaches{users: users, identity: identity, config: config}
+	return &nodeCaches{users: users, identity: identity, config: config, alive: newAliveMemo()}
 }
 
 // EnableNodeCaches 打开节点链路缓存。装配时调用一次（aegis-node）；其他进程不开，
