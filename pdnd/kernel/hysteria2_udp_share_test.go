@@ -5,6 +5,7 @@ package kernel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"runtime"
@@ -327,8 +328,9 @@ func TestHy2DownlinkSlotsExhaustedOthersStillForward(t *testing.T) {
 	for i := range slots + 3 {
 		src := newFakeUpstream()
 		holders = append(holders, src)
-		src.push(make([]byte, 100), make([]byte, 100), make([]byte, 100), make([]byte, 100))
-		conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn(), after: 2, hold: hold}
+		// 6 包：小组连收两次都满（4 包写回）后借批量组，写回第 5 包时卡住、占着批量组。
+		src.push(make([]byte, 100), make([]byte, 100), make([]byte, 100), make([]byte, 100), make([]byte, 100), make([]byte, 100))
+		conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn(), after: 4, hold: hold}
 		// 每个用户一个会话：各自的份额都够，占满的是全局名额。
 		waits = append(waits, runTestDownlink(conn, src, int64(3000+i)))
 	}
@@ -385,8 +387,9 @@ func TestHy2DownlinkPerUserShare(t *testing.T) {
 	for range cap(hy2DownlinkBatchSlots) + 2 {
 		src := newFakeUpstream()
 		holders = append(holders, src)
-		src.push(make([]byte, 100), make([]byte, 100), make([]byte, 100), make([]byte, 100))
-		conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn(), after: 2, hold: hold}
+		// 6 包：小组连收两次都满（4 包写回）后借批量组，写回第 5 包时卡住、占着批量组。
+		src.push(make([]byte, 100), make([]byte, 100), make([]byte, 100), make([]byte, 100), make([]byte, 100), make([]byte, 100))
+		conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn(), after: 4, hold: hold}
 		waits = append(waits, runTestDownlink(conn, src, hog))
 	}
 	waitDownlink(t, "卡住的用户占满自己的份额", func() bool { return len(hy2DownlinkBatchSlots) == int(hy2DownlinkBatchPerUser) })
@@ -454,5 +457,31 @@ func TestHy2DownlinkSlotReturnedOnPanic(t *testing.T) {
 	}()
 	if len(hy2DownlinkBatchSlots) != 0 || share.held.Load() != 0 {
 		t.Fatalf("panic 后名额 %d、份额 %d 没还", len(hy2DownlinkBatchSlots), share.held.Load())
+	}
+}
+
+// 冷态里的一小串（3 包）只用小组收，不借批量组；积压大（4 包以上，小组连收两次都满）
+// 才借。改回「小组一次收满就借」，3 包也借批量组（一次收 32 包）。
+func TestHy2DownlinkSmallBurstStaysOnProbeGroup(t *testing.T) {
+	for _, tc := range []struct {
+		packets int
+		batch   bool
+	}{{3, false}, {4, true}, {8, true}} {
+		t.Run(fmt.Sprint(tc.packets), func(t *testing.T) {
+			src := newFakeUpstream()
+			conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
+			wait := runTestDownlinkWarm(conn, src, 62000, newHy2WarmLimit(8))
+			burst := make([][]byte, tc.packets)
+			for i := range burst {
+				burst[i] = make([]byte, 10)
+			}
+			src.push(burst...)
+			waitDownlink(t, "收完那一串", func() bool { return conn.writes.Load() == int64(tc.packets) })
+			src.close()
+			wait()
+			if borrowed := src.maxBatch.Load() == hy2UDPBatch; borrowed != tc.batch {
+				t.Fatalf("一串 %d 包：借了批量组=%v，期望 %v（一次最多收 %d 包）", tc.packets, borrowed, tc.batch, src.maxBatch.Load())
+			}
+		})
 	}
 }

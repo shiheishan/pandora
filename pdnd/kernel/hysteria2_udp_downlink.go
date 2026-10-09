@@ -17,7 +17,8 @@ import (
 // hy2 / TUIC UDP 下行（上游 → 客户端）。
 //
 // 冷态（空闲、零星）：阻塞在 MSG_PEEK 上等包，只窥视 1 字节、不占收包缓冲；醒来
-// 借 2 包的小组用 MSG_DONTWAIT 收，收满了说明还有，换批量组收空，然后全还回去。
+// 借 2 包的小组用 MSG_DONTWAIT 收，连收两次都满了说明积压大，换批量组收空，然后
+// 全还回去。
 //
 // 热态（包来得密）：冷态里一段 hy2DownlinkWarmIdle 收到的包达到
 // hy2DownlinkWarmMinPackets（每秒 500 包），且占得到热态名额，就转入热态：持有
@@ -156,6 +157,15 @@ func (d *hy2Downlink) burst() (int, bool) {
 	group := hy2DownlinkProbeStock.get()
 	n, ok := d.read(group.messages[:probe], hy2UDPDontWaitFlag)
 	if !ok || n < probe {
+		hy2DownlinkProbeStock.put(group)
+		return n, ok
+	}
+	// 小组收满：再用小组收一次，还是满的才说明积压大、借批量组。三五包的一小串
+	// （游戏、语音的成串包）不占 2MB 的批量组：许多会话同时来一小串、又一起卡在
+	// 写回时，批量名额会被它们占满，存货里留下名额 × 2MB（VPC 复测 1024 会话时 64MB）。
+	m, ok := d.read(group.messages[:probe], hy2UDPDontWaitFlag)
+	n += m
+	if !ok || m < probe {
 		hy2DownlinkProbeStock.put(group)
 		return n, ok
 	}

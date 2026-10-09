@@ -20,8 +20,10 @@ import (
 // 时有停顿，2 秒新分配 2425 组、TotalAlloc 5.1GB）。
 
 const (
-	// hy2StockIdle 是存货多久没被借过就回收。
-	hy2StockIdle = 30 * time.Second
+	// hy2StockIdle 是存货多久没被借过就回收。一阵并发高峰（许多会话同时卡在写回）
+	// 借出的组用完就闲着，留得越久常驻越高（VPC 复测 1024 会话：30 秒时高峰后仍留
+	// 约 100MB）；常用的组总在栈顶、持续被借，5 秒回收不会让稳态反复分配。
+	hy2StockIdle = 5 * time.Second
 )
 
 // hy2StockEpoch 是存货时间戳的起点（单调时钟）。
