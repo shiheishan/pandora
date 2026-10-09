@@ -149,6 +149,9 @@ DOMAINS=(
   # 节点证书集中签发（00147 / 00148，w9cert）：先跑 configure-app-role.sql，以 aegis_app 证明证书版本没有
   # UPDATE 授权；worker 接进程内 pebble 与模拟 DNS 提供方跑签发、续期、限流与凭据失效。两个包同库，过滤写精确。
   "certs|pandora_certs_gate|./internal/domain/certs ./internal/api/admin|run_id|pandora_certs_test_marker|pandora-certs-pg18|app_role|^(TestCertsPG18|TestCertsReviewPG18|TestCertificatesAdminPG18)$"
+  # 运行角色的函数执行权（w12native）：应用 configure-app-role.sql 之后，迁移里收回过 aegis_app 的函数
+  # （app.seed_tenant_defaults 等 SECURITY DEFINER）它都执行不了；清单从迁移原文现扫。独占一个库
+  "app_role_exec|pandora_app_role_exec_gate|./internal/platform/db|run_id|pandora_app_role_exec_test_marker|pandora-app-role-exec-pg18|app_role|^TestAppRoleFunctionRevokesPG18$"
 )
 
 selected() {
