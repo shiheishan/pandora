@@ -40,10 +40,26 @@ var retirePaths = map[string][]string{
 	"destroy_failed": nil,
 }
 
+// controlsLiveServerSQL 是「节点仍是某台在役服务器的控制节点」的唯一口径：单个退役（RetireNode）、
+// 批量改状态退役（status:batch）与删除（DeleteNode）共用。服务器已退役、已销毁或已删除，它的控制
+// 节点就不再算依赖：接入时每个节点都会成为自己服务器的控制节点，不排除这种情况，节点永远退不掉。
+// 服务器还在用时仍然拒绝，免得服务器失去管理入口。alias 是外层查询里 nodes 表的别名。
+func controlsLiveServerSQL(alias string) string {
+	return `EXISTS (SELECT 1 FROM servers s
+	                WHERE s.tenant_id = ` + alias + `.tenant_id AND s.control_node_id = ` + alias + `.id
+	                  AND s.deleted_at IS NULL AND s.status NOT IN ('retired','destroyed'))`
+}
+
+// errControlsLiveServer 是退役在役服务器的控制节点时的拒绝（单个与批量同一句话）。
+func errControlsLiveServer() *httpx.Error {
+	return httpx.New(httpx.CodeConflict, "这是一台在役服务器的控制节点，请先把那台服务器退役")
+}
+
 // RetireNode 在一个事务里把节点彻底退役。
 //
 // 与 status:batch 退役的区别：那条只改服务状态，遇到有效身份就 409，之后 DELETE 仍因
-// 生命周期没退役而 422 ——「退役 → 删除」两步走不通。这里一步到位。
+// 生命周期没退役而 422 ——「退役 → 删除」两步走不通。这里一步到位。控制节点的判定两条路径
+// 同一口径（controlsLiveServerSQL）。
 func (s *Service) RetireNode(ctx context.Context, tenantID string, in RetireNodeInput) (*AdminNode, error) {
 	in.Reason = strings.TrimSpace(in.Reason)
 	if len([]rune(in.Reason)) > 500 {
@@ -65,10 +81,7 @@ func (s *Service) RetireNode(ctx context.Context, tenantID string, in RetireNode
 		var version int64
 		var isControl bool
 		err := tx.QueryRow(ctx, `
-			SELECT n.status, n.serving_status, n.row_version,
-			       EXISTS (SELECT 1 FROM servers s
-			                WHERE s.tenant_id = n.tenant_id AND s.control_node_id = n.id
-			                  AND s.deleted_at IS NULL AND s.status NOT IN ('retired','destroyed'))
+			SELECT n.status, n.serving_status, n.row_version, `+controlsLiveServerSQL("n")+`
 			  FROM nodes n
 			 WHERE n.tenant_id = $1 AND n.id = $2::uuid AND n.status <> 'destroyed'
 			 FOR UPDATE OF n`, tenantID, in.ID).Scan(&status, &serving, &version, &isControl)
@@ -85,7 +98,7 @@ func (s *Service) RetireNode(ctx context.Context, tenantID string, in RetireNode
 			return httpx.New(httpx.CodeConflict, "节点已经退役")
 		}
 		if isControl {
-			return httpx.New(httpx.CodeConflict, "这是一台在役服务器的控制节点，请先把那台服务器退役")
+			return errControlsLiveServer()
 		}
 		path, ok := retirePaths[status]
 		if !ok {
