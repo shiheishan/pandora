@@ -247,9 +247,10 @@ func TestHy2ActiveUDPSessionHeap(t *testing.T) {
 	}
 }
 
-// 写回客户端卡住（QUIC 连接拥塞，或客户端故意不回 ACK）时，每个有包的会话都占着
-// 借来的收包缓冲：只来过一包的会话卡在小组（128KB）上；批量组（2MB）全局限
-// hy2DownlinkBatchSlots 组。总量不随卡住的会话数按 2MB 涨。
+// 写回客户端卡住（QUIC 连接拥塞，或客户端故意不回 ACK）时，冷态会话只占着它复制
+// 出来的那几个包：收包组在写回之前就还了（VPC 复测里一条连接上几百个会话同时突发、
+// 一起卡在写回，零拷贝时每个占 128KB 小组）。预算每个卡住的会话 32KB；改回零拷贝
+// 写回，每个会话约 135KB。
 func TestHy2BlockedUDPSessionHeap(t *testing.T) {
 	if raceEnabled {
 		t.Skip("race 检测器自带的分配会抬高堆，不量")
@@ -268,7 +269,7 @@ func TestHy2BlockedUDPSessionHeap(t *testing.T) {
 	close(block)
 	stop()
 	delta := int64(after) - int64(before)
-	limit := int64(slots)*hy2UDPBatch*hy2UDPMaxDatagram + int64(sessions)*(hy2DownlinkProbeBatch*hy2UDPMaxDatagram+16<<10)
+	limit := int64(sessions) * (32 << 10)
 	t.Logf("%d 个会话卡在写回：存活堆 %d → %d 字节（增 %d），批量组名额 %d，上限 %d", sessions, before, after, delta, slots, limit)
 	if delta > limit {
 		t.Fatalf("卡住的会话占了 %d 字节，超过 %d", delta, limit)

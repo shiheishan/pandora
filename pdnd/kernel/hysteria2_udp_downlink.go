@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"golang.org/x/net/ipv4"
@@ -17,8 +18,8 @@ import (
 // hy2 / TUIC UDP 下行（上游 → 客户端）。
 //
 // 冷态（空闲、零星）：阻塞在 MSG_PEEK 上等包，只窥视 1 字节、不占收包缓冲；醒来
-// 借 2 包的小组用 MSG_DONTWAIT 收，连收两次都满了说明积压大，换批量组收空，然后
-// 全还回去。
+// 借 2 包的小组用 MSG_DONTWAIT 收，连收两次都满了说明积压大，换批量组收空。每次
+// 收完先把包复制出来、归还缓冲再写回，卡在写回时不占收包组（见 burst）。
 //
 // 热态（包来得密）：冷态里一段 hy2DownlinkWarmIdle 收到的包达到
 // hy2DownlinkWarmMinPackets（每秒 500 包），且占得到热态名额，就转入热态：持有
@@ -39,8 +40,8 @@ import (
 // 每包多一次窥视。
 //
 // 常驻：空闲与低速会话不占收包缓冲；热态会话占 128KB（小组），全进程最多
-// 64×GOMAXPROCS 个（4 核 32MB）；批量组只在收积压或卡在写回时占着，受批量名额与
-// 份额约束；卡在写回的冷态会话占 128KB。
+// 64×GOMAXPROCS 个（4 核 32MB）；批量组只在收积压或热态卡在写回时占着，受批量名额
+// 与份额约束；卡在写回的冷态会话只占它复制出来的那几个包。
 //
 // 读截止与收尾：转发收尾时 relayHy2UDP 先取消 ctx、再由 AfterFunc 把上游读截止设
 // 为现在。这里每次改读截止之后都再看一次 ctx：取消发生在改之前，看得到 ctx 已取消；
@@ -106,6 +107,8 @@ type hy2Downlink struct {
 	// coldStart / coldPackets 是冷态当前计包段的起点（hy2StockNow）与段内收到的包数。
 	coldStart   int64
 	coldPackets int
+	// copied 是冷态复制出来、等着写回的包（容量随最大一批，最多 32 条）。
+	copied []hy2CopiedPacket
 }
 
 func (d *hy2Downlink) probe() int { return min(d.size, hy2DownlinkProbeBatch) }
@@ -150,35 +153,97 @@ func (d *hy2Downlink) warmHeld() bool {
 	return d.warm()
 }
 
-// burst 是冷态醒来的一次收包：小组非阻塞收一次，收满了再换批量组（借不到就用
-// 小组）收空。返回收到的包数；false 表示会话该结束。
+// burst 是冷态醒来的一次收包，收空为止：前两次用 2 包的小组，两次都收满（积压大）
+// 之后借批量组（借不到接着用小组）。每次收完先把包复制成按长度分配的小缓冲、立刻
+// 归还收包组，再写回客户端。返回收到的包数；false 表示会话该结束。
+//
+// 冷态复制一次：写回在 QUIC 的 DATAGRAM 发送队列满时会阻塞，许多会话同时来一小串
+// 时（VPC 复测：一条连接上 256–512 个会话同时突发）会一起卡在写回。零拷贝时每个卡住
+// 的会话都占着 128KB 的小组（或 2MB 的批量组），高峰过后还留在存货里，1024 个会话
+// 时堆里约 120MB；复制之后卡住的会话只占它那几个包本身的字节。冷态每秒不到 500 包，
+// 复制的开销可以忽略；热态（高速）仍零拷贝。
 func (d *hy2Downlink) burst() (int, bool) {
-	probe := d.probe()
-	group := hy2DownlinkProbeStock.get()
-	n, ok := d.read(group.messages[:probe], hy2UDPDontWaitFlag)
-	if !ok || n < probe {
-		hy2DownlinkProbeStock.put(group)
-		return n, ok
-	}
-	// 小组收满：再用小组收一次，还是满的才说明积压大、借批量组。三五包的一小串
-	// （游戏、语音的成串包）不占 2MB 的批量组：许多会话同时来一小串、又一起卡在
-	// 写回时，批量名额会被它们占满，存货里留下名额 × 2MB（VPC 复测 1024 会话时 64MB）。
-	m, ok := d.read(group.messages[:probe], hy2UDPDontWaitFlag)
-	n += m
-	if !ok || m < probe {
-		hy2DownlinkProbeStock.put(group)
-		return n, ok
-	}
-	if d.size > probe {
-		if batch, got := d.share.acquireBatchGroup(); got {
-			hy2DownlinkProbeStock.put(group)
-			more, ok := d.drainBatch(batch)
-			return n + more, ok
+	total := 0
+	for round := 0; ; round++ {
+		n, size, ok := d.readCopied(round >= 2)
+		total += n
+		if !ok || !d.writeCopied() {
+			d.dropCopied()
+			return total, false
+		}
+		if n < size {
+			return total, true
 		}
 	}
-	more, ok := d.drain(group.messages[:probe])
-	hy2DownlinkProbeStock.put(group)
-	return n + more, ok
+}
+
+// hy2CopiedPacket 是冷态复制出来、等着写回的一个包。
+type hy2CopiedPacket struct {
+	data   *buf.Buffer
+	source M.Socksaddr
+}
+
+// readCopied 借一组收包缓冲非阻塞收一次，把包复制进 d.copied，归还缓冲后返回包数与
+// 这次最多能收的包数。wantBatch 时先试借批量组。
+func (d *hy2Downlink) readCopied(wantBatch bool) (n, size int, ok bool) {
+	probe := d.probe()
+	if wantBatch && d.size > probe {
+		if batch, got := d.share.acquireBatchGroup(); got {
+			defer d.share.releaseBatchGroup(batch)
+			n, ok = d.copyRead(batch.messages[:d.size])
+			return n, d.size, ok
+		}
+	}
+	group := hy2DownlinkProbeStock.get()
+	defer hy2DownlinkProbeStock.put(group)
+	n, ok = d.copyRead(group.messages[:probe])
+	return n, probe, ok
+}
+
+// copyRead 非阻塞地收一批，逐包复制进 d.copied（见 read 的错误语义）。
+func (d *hy2Downlink) copyRead(messages []ipv4.Message) (int, bool) {
+	n, err := d.src.ReadBatch(messages, hy2UDPDontWaitFlag)
+	if err != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return 0, d.ctx.Err() == nil
+		}
+		return 0, isHy2UDPWouldBlock(err)
+	}
+	for i := range messages[:n] {
+		message := &messages[i]
+		data := buf.NewSize(message.N)
+		_, _ = data.Write(message.Buffers[0][:message.N])
+		d.copied = append(d.copied, hy2CopiedPacket{data: data, source: hy2MessageSource(message)})
+		message.Addr = nil
+	}
+	return n, true
+}
+
+// writeCopied 按序写回复制出来的包。WritePacket 接手缓冲（写完或出错都由它归还）。
+func (d *hy2Downlink) writeCopied() bool {
+	for i := range d.copied {
+		packet := d.copied[i]
+		d.copied[i] = hy2CopiedPacket{}
+		size := packet.data.Len()
+		if err := d.conn.WritePacket(packet.data, packet.source); err != nil {
+			d.copied = d.copied[i+1:]
+			return false
+		}
+		d.down.Add(int64(size))
+	}
+	d.copied = d.copied[:0]
+	return true
+}
+
+// dropCopied 归还没写回的复制包（会话结束时）。
+func (d *hy2Downlink) dropCopied() {
+	for i := range d.copied {
+		if d.copied[i].data != nil {
+			d.copied[i].data.Release()
+		}
+		d.copied[i] = hy2CopiedPacket{}
+	}
+	d.copied = d.copied[:0]
 }
 
 // drainBatch 用借到的批量组收空，归还名额与份额（写回 panic 也还）。
@@ -272,15 +337,21 @@ func (d *hy2Downlink) setDeadline(t time.Time) bool {
 func hy2WriteDownlinkMessages(conn N.PacketConn, messages []ipv4.Message, down *atomic.Int64) bool {
 	for i := range messages {
 		message := &messages[i]
-		source := M.Socksaddr{}
-		if addr, ok := message.Addr.(*net.UDPAddr); ok {
-			ip, _ := netip.AddrFromSlice(addr.IP)
-			source = M.Socksaddr{Addr: ip.Unmap(), Port: uint16(addr.Port)}
-		}
+		source := hy2MessageSource(message)
 		message.Addr = nil
 		if !hy2WriteDownlink(conn, message.Buffers[0][:message.N], source, down) {
 			return false
 		}
 	}
 	return true
+}
+
+// hy2MessageSource 取一条收到的消息的来源地址（IPv4 映射地址还原成 IPv4）。
+func hy2MessageSource(message *ipv4.Message) M.Socksaddr {
+	addr, ok := message.Addr.(*net.UDPAddr)
+	if !ok {
+		return M.Socksaddr{}
+	}
+	ip, _ := netip.AddrFromSlice(addr.IP)
+	return M.Socksaddr{Addr: ip.Unmap(), Port: uint16(addr.Port)}
 }
