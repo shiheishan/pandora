@@ -4,7 +4,7 @@ import { giftCode } from './seed.ts'
 import type { Page } from '@playwright/test'
 
 // ============================================================================
-//  门户 C6（礼品卡七种用法）与 C7（升级前的旧流量包挪一次）
+//  门户 C6（礼品卡七种用法）与 C7（流量包跟着那一份，在用的不能挪）
 // ============================================================================
 
 /** 从我的套餐底部「有卡？去兑换」进兑换页，输卡号、查询，停在卡面 */
@@ -139,44 +139,26 @@ test('C6：礼品卡', async ({ browser, world }) => {
   })
 })
 
-test('C7：升级前的旧流量包挪一次', async ({ browser, world }) => {
+test('C7：流量包跟着那一份，在用的不能挪', async ({ browser, world }) => {
   const { basic, std } = world.plans
   const u = await newUser('c7')
   await grant(u, basic)
   await grant(u, std, { kind: 'new' })
   const subs = await subscriptionsOf(u)
   const stdSub = str(subs.find((s) => s.plan_id === std.id), 'id')
-  // 后台按订阅加 1G（挂在标准版上，没有转移流水）……
-  await admin(`/v1/subscriptions/${stdSub}/traffic-pack`, { body: { bytes: 1024 ** 3, reason: 'w9browser C7 旧流量包' }, expect: [200, 201] })
-  // ……再补一条 00138 回填会写的 migration 流水：「升级前买的、回填挂过来的」只认这条（legacyMovablePackSQL）。
-  // 升级前的数据在新库上只能这样造；挂的是到期最晚的那份，与 00138 的挑法一致
-  sql(
-    '把这笔流量包标成升级前的旧包',
-    `INSERT INTO traffic_pack_transfers (tenant_id, grant_id, user_id, from_subscription_id, to_subscription_id, remaining_bytes, actor_kind)
-     SELECT g.tenant_id, g.id, g.user_id, NULL, g.subscription_id, g.granted_bytes - g.consumed_bytes, 'migration'
-       FROM traffic_pack_grants g
-      WHERE g.subscription_id = '${uuid(stdSub)}' AND g.user_id = '${uuid(u.id)}';`,
-  )
+  // 后台按订阅给标准版加 1G：挂在标准版上，两份都在用
+  await admin(`/v1/subscriptions/${stdSub}/traffic-pack`, { body: { bytes: 1024 ** 3, reason: 'w9browser C7 流量包挂在标准版' }, expect: [200, 201] })
   const page = await openPortal(browser, u)
 
   await step(page, 'C7', async () => {
     const from = card(page, std.name)
-    const line = from.getByText(/升级前买的 1G 流量包现在加在这一份上，可以挪到别的一份（只能挪一次）/)
-    await expect(line).toBeVisible()
-    const offer = await text(line)
-    await from.getByRole('button', { name: new RegExp(`^挪到「${basic.name}`) }).click()
-    const sheet = page.getByRole('dialog', { name: '挪流量包' })
-    await expect(sheet).toBeVisible()
-    const callout = await text(sheet.getByText('会发生什么', { exact: true }).locator('xpath=..'))
-    expect(callout).toContain('只能挪一次')
-    await narrowShot(page, 'C7-sheet')
-    await submit(page, sheet.getByRole('button', { name: new RegExp(`^挪到「${basic.name}`) }))
-    await expect(page.getByText(new RegExp(`已把 1G 挪到「${basic.name}`))).toBeVisible()
-    await expect(sheet).toBeHidden()
-    // 第二次：两张卡上都不再出现挪的入口
-    await expect(page.getByText(/升级前买的/)).toHaveCount(0)
+    const usage = from.getByText(/含流量包 1G/)
+    await expect(usage).toBeVisible()
+    await expect(card(page, basic.name)).not.toContainText('含流量包')
+    // 用户 10-09 删掉了「升级前的旧流量包挪一次」：流量包只在那份彻底停用后才能转走，两份都在用时页面上没有挪的入口
+    await expect(page.getByText(/挪|升级前买的/)).toHaveCount(0)
     await expect(page.getByRole('button', { name: /^挪到/ })).toHaveCount(0)
-    await expect(card(page, basic.name)).toContainText('含流量包 1G')
-    return `卡片「${offer}」；弹层「${callout}」；挪过去后提示已挪、两张卡都没有挪的入口，基础版写含流量包 1G`
+    await narrowShot(page, 'C7-cards')
+    return `标准版写「${await text(usage)}」，基础版没有流量包；页面上没有挪的按钮和提示`
   })
 })

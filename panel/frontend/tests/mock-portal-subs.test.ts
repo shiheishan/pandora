@@ -80,29 +80,26 @@ describe('mock api · portal subscriptions (purchase model)', () => {
   })
 
   it('流量包转移：只能从未分配或彻底停用的那份转到在用的那份；重复转 moved_bytes=0', async () => {
-    await scenario('proto-s2')
-    const [mine, mom] = (await subs()).subscriptions
-    // A 路：从在用的那份挪、又不是可挪一次的旧包：422 fields.from_subscription_id
-    const refused = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })
-    expect(refused.status).toBe(422)
-    expect(((await refused.json()) as { error: { fields: Record<string, string> } }).error.fields.from_subscription_id).toContain('只能挪一次')
-    const res = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: null, to_subscription_id: mom!.id })
+    // multi：第一份挂着 30G 流量包、第二份待续费（也算在用）
+    await scenario('multi')
+    const [first, second] = (await subs()).subscriptions
+    expect(first!.pack_remaining_bytes).toBe(30 * 1024 ** 3)
+    // 从在用的那份转出一律 409（用户 10-09 删掉了「升级前旧包挪一次」），两边余量不动
+    const refused = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: first!.id, to_subscription_id: second!.id })
+    expect(refused.status).toBe(409)
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe('conflict')
+    expect((await subs()).subscriptions.map((s) => s.pack_remaining_bytes)).toEqual([30 * 1024 ** 3, second!.pack_remaining_bytes])
+    const res = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: null, to_subscription_id: second!.id })
     expect(await res.json()).toEqual({ moved_bytes: 0 })
   })
 
-  it('升级前的旧流量包（用户 10-07）：列表给出能挪的余量，从在用的那份挪一次后清零，再挪回 422', async () => {
-    await scenario('proto-legacy')
-    const [mine, mom] = (await subs()).subscriptions
-    expect(mine!.legacy_movable_pack_bytes).toBe(80 * 1024 ** 3)
-    expect(mom!.legacy_movable_pack_bytes).toBe(0)
-    const moved = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })
-    expect(await moved.json()).toEqual({ moved_bytes: 80 * 1024 ** 3 })
-    const after = (await subs()).subscriptions
-    expect(after.map((s) => [s.legacy_movable_pack_bytes, s.pack_remaining_bytes])).toEqual([
-      [0, 0],
-      [0, 80 * 1024 ** 3],
-    ])
-    expect((await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })).status).toBe(422)
+  it('每一份不再带「可挪一次的旧流量包」字段（用户 10-09 删掉），与 Go 的 MySubscription 一致', async () => {
+    for (const s of ['default', 'multi', 'proto-s2'] as const) {
+      await scenario(s)
+      const raw = (await (await call('GET', '/v1/me/subscriptions')).json()) as { subscriptions: Array<Record<string, unknown>> }
+      expect(raw.subscriptions.length).toBeGreaterThan(0)
+      for (const sub of raw.subscriptions) expect(Object.keys(sub)).not.toContain('legacy_movable_pack_bytes')
+    }
   })
 
   it('原型场景入口：切场景并跳到起始页', async () => {
