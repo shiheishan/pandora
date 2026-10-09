@@ -9,7 +9,9 @@
 #   ④ 域名：certbot webroot；升级时接管已有的 Let's Encrypt 证书，不再申请；
 #   ⑤ PANDORA_ACME=0：不联系 CA，只用自签；设置记进 acme.env，renew 沿用；
 #   ⑥ 渲染 → nginx -t → reload，失败把站点文件与 nginx.conf 一起换回；渲染器拒绝时不动 nginx；
-#   ⑦ renew：证书变了才 reload；证书过期、不覆盖面板地址都报错并告警；运维自己的证书不替换。
+#   ⑦ renew：证书变了才 reload；证书过期、不覆盖面板地址都报错并告警；运维自己的证书不替换；
+#   ⑧ 接管的 certbot 证书：续期配置的 webroot 改到 ACME_WEBROOT（备份、已正确不动、多域名只改面板主机、
+#     非 webroot 不碰、renew 自愈），续期配置缺失与 certbot 续期失败都记进 status。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,11 +49,14 @@ done
 if [ "$sub" = run ] || { [ "$sub" = renew ] && [ -f "$T/lego.renew" ]; }; then
   mkcert "$path/certificates/$dom.crt" "$path/certificates/$dom.key" "$dom" "IP:$dom" 6
 fi'
-# certbot 桩：按 -d 在 live 目录下现签一张 90 天的域名证书
+# certbot 桩：按 -d 在 live 目录下现签一张 90 天的域名证书，并像真 certbot 一样写续期配置（webroot 取 -w）
 stub certbot '
 [ -f "$T/certbot.fail" ] && exit 1
-d=""; while [ $# -gt 0 ]; do [ "$1" = -d ] && d="$2"; shift; done
-[ -n "$d" ] && mkcert "$PANDORA_LE_LIVE_DIR/$d/fullchain.pem" "$PANDORA_LE_LIVE_DIR/$d/privkey.pem" "$d" "DNS:$d" 90
+d="" w=""; while [ $# -gt 0 ]; do case "$1" in -d) d="$2" ;; -w) w="$2" ;; esac; shift; done
+[ -n "$d" ] || exit 0
+mkcert "$PANDORA_LE_LIVE_DIR/$d/fullchain.pem" "$PANDORA_LE_LIVE_DIR/$d/privkey.pem" "$d" "DNS:$d" 90
+mkdir -p "$T/renewal"
+printf "version = 2.1.0\n[renewalparams]\nauthenticator = webroot\nwebroot_path = %s,\n[[webroot_map]]\n%s = %s\n" "$w" "$d" "$w" >"$T/renewal/$d.conf"
 exit 0'
 # apt-get 桩：install lego 就把 lego 「升」到 4.35.2
 stub apt-get 'case "$*" in *install*lego*) [ -f "$T/apt.fail" ] && exit 100; echo 4.35.2 >"$T/lego.version" ;; esac; exit 0'
@@ -77,7 +82,7 @@ printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://%s\nAEGIS_ALERT_TG_TO
 printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://%s/\n' "$admin_path" "$domain" >"$T/domain.env"
 
 fresh() {
-  rm -rf "$T/tls" "$T/state" "$T/le" "$T/webroot" "$T/nginx" "$T/backups" "$T/apt" \
+  rm -rf "$T/tls" "$T/state" "$T/le" "$T/renewal" "$T/webroot" "$T/nginx" "$T/backups" "$T/apt" \
     "$T/lego.version" "$T/lego.fail" "$T/lego.renew" "$T/certbot.fail" "$T/nginx.fail" "$T/apt.fail" "$T/no-timer"
   mkdir -p "$T/nginx/conf.d" "$T/nginx/sites-available" "$T/nginx/sites-enabled" "$T/apt/sources.list.d"
   printf 'ID=debian\nVERSION_CODENAME=trixie\n' >"$T/os-release"
@@ -316,6 +321,101 @@ fresh
 edge setup "$T/domain.env" || true
 edge status "$T/domain.env" || fail 'status failed'
 grep -q "$domain" "$T/out" && grep -q '到期时间' "$T/out" || fail "status output: $(cat "$T/out")"
+grep -q "续期校验   webroot $T/webroot" "$T/out" || fail "status does not show the renewal webroot: $(cat "$T/out")"
+grep -qx "webroot_path = $T/webroot," "$T/renewal/$domain.conf" || fail 'fresh issuance did not use the ACME webroot'
+
+# --- ⑧ 接管的 certbot 证书：续期配置对齐 ACME_WEBROOT -----------------------------------------
+conf="$T/renewal/$domain.conf"
+# 老 install.sh / 手工申请留下的续期配置（certbot 的原样格式）：webroot 是 /var/www/html
+old_conf() {
+  mkdir -p "$T/renewal"
+  cat >"$conf" <<EOF_CONF
+# renew_before_expiry = 30 days
+version = 2.1.0
+archive_dir = /etc/letsencrypt/archive/$domain
+cert = /etc/letsencrypt/live/$domain/cert.pem
+privkey = /etc/letsencrypt/live/$domain/privkey.pem
+chain = /etc/letsencrypt/live/$domain/chain.pem
+fullchain = /etc/letsencrypt/live/$domain/fullchain.pem
+
+# Options used in the renewal process
+[renewalparams]
+account = 0123456789abcdef0123456789abcdef
+authenticator = webroot
+webroot_path = /var/www/html,
+server = https://acme-v02.api.letsencrypt.org/directory
+key_type = ecdsa
+${1:-}
+[[webroot_map]]
+$domain = /var/www/html
+${2:-}
+EOF_CONF
+  chmod 0640 "$conf"
+}
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+backups() { ls "$T/backups"/letsencrypt-renewal-"$domain".conf.* 2>/dev/null | wc -l | tr -d ' '; }
+# 接管：面板主机那一项与 webroot_path 改到 ACME_WEBROOT，其余原样，改前备份，权限不变
+fresh
+mkcert "$T/le/$domain/fullchain.pem" "$T/le/$domain/privkey.pem" "$domain" "DNS:$domain" 90
+old_conf
+cp "$conf" "$T/conf.orig"
+[ "$(rc_of setup "$T/domain.env")" = 0 ] || fail "adoption with an old renewal conf failed: $(cat "$T/out")"
+grep -q '接管已有的' "$T/out" && grep -q '续期改走' "$T/out" || fail "adoption did not report the renewal fix: $(cat "$T/out")"
+grep -qx "webroot_path = $T/webroot," "$conf" && grep -qx "$domain = $T/webroot" "$conf" || fail "renewal conf not aligned: $(cat "$conf")"
+refute -q '/var/www/html' "$conf"
+[ "$(diff "$T/conf.orig" "$conf" | grep -c '^[<>]')" = 4 ] || fail "renewal conf rewrite touched other lines: $(diff "$T/conf.orig" "$conf")"
+[ "$(backups)" = 1 ] && cmp -s "$T/conf.orig" "$T"/backups/letsencrypt-renewal-"$domain".conf.* || fail 'original renewal conf not backed up'
+[ "$(mode_of "$conf")" = 640 ] || fail "renewal conf mode changed to $(mode_of "$conf")"
+ls "$T/renewal" | grep -v '\.conf$' && fail 'temporary file left in the renewal directory'
+refute -q '^certbot' "$T/calls.log"
+# 已经对齐：再跑 setup 与 renew 都不动它，也不再备份
+cp "$conf" "$T/conf.aligned"
+edge setup "$T/domain.env" || fail "second setup: $(cat "$T/out")"
+[ "$(rc_of renew "$T/domain.env")" = 0 ] || fail "renew with an aligned conf: $(cat "$T/out")"
+cmp -s "$T/conf.aligned" "$conf" && [ "$(backups)" = 1 ] || fail 'an aligned renewal conf was rewritten'
+refute -q '续期改走' "$T/out"
+# 多个域名：只改面板主机；别的域名的目录不动，webroot_path 仍被别的域名共用时也不动，并提示
+fresh
+mkcert "$T/le/$domain/fullchain.pem" "$T/le/$domain/privkey.pem" "$domain" "DNS:$domain" 90
+old_conf '' "www.$domain = /var/www/html
+other.example.test = /srv/other"
+[ "$(rc_of setup "$T/domain.env")" = 0 ] || fail "multi-domain adoption: $(cat "$T/out")"
+grep -qx "$domain = $T/webroot" "$conf" || fail "panel host not realigned: $(cat "$conf")"
+grep -qx "www.$domain = /var/www/html" "$conf" && grep -qx 'other.example.test = /srv/other' "$conf" \
+  && grep -qx 'webroot_path = /var/www/html,' "$conf" || fail "other domains were touched: $(cat "$conf")"
+grep -q "证书还包含 www.$domain other.example.test" "$T/out" || fail "other names not pointed out: $(cat "$T/out")"
+# 已经升级过的主机（老版本 edge-tls.sh 接管、续期配置没改）：renew 自愈
+fresh
+mkcert "$T/le/$domain/fullchain.pem" "$T/le/$domain/privkey.pem" "$domain" "DNS:$domain" 90
+old_conf
+mkdir -p "$T/tls"; ln -s "$T/le/$domain" "$T/tls/live"
+[ "$(rc_of renew "$T/domain.env")" = 0 ] || fail "renew self-heal: $(cat "$T/out")"
+grep -qx "$domain = $T/webroot" "$conf" || fail "renew did not realign the renewal conf: $(cat "$conf")"
+[ "$(status_of RESULT)" = ok ] || fail "self-heal status: $(cat "$T/state/status")"
+# 不是 webroot 方式（dns 插件）：运维自己的选择，不碰
+fresh
+mkcert "$T/le/$domain/fullchain.pem" "$T/le/$domain/privkey.pem" "$domain" "DNS:$domain" 90
+old_conf
+sed 's/^authenticator = webroot$/authenticator = dns-cloudflare/' "$conf" >"$T/conf.dns" && cp "$T/conf.dns" "$conf"
+[ "$(rc_of setup "$T/domain.env")" = 0 ] || fail "dns-plugin adoption: $(cat "$T/out")"
+cmp -s "$T/conf.dns" "$conf" || fail 'a dns-plugin renewal conf was rewritten'
+grep -q 'dns-cloudflare' "$T/out" || fail "dns-plugin conf not explained: $(cat "$T/out")"
+# 续期配置不见了：renew 报错，原因进 status
+rm -f "$conf"; reset_calls
+[ "$(rc_of renew "$T/domain.env")" = 1 ] || fail 'missing renewal conf not reported'
+grep -q '找不到 certbot 的续期配置' "$T/state/status" || fail "missing conf status: $(cat "$T/state/status")"
+edge status "$T/domain.env" || true
+grep -q '续期校验   找不到续期配置' "$T/out" || fail "status does not flag the missing conf: $(cat "$T/out")"
+# 快到期时补救续期失败：不再吞掉，原因写进 status 与日志，退出 1（单元记 failed）
+fresh
+mkcert "$T/le/$domain/fullchain.pem" "$T/le/$domain/privkey.pem" "$domain" "DNS:$domain" window "$(utc_days -80)" "$(utc_days 10)"
+old_conf
+mkdir -p "$T/tls"; ln -s "$T/le/$domain" "$T/tls/live"
+touch "$T/certbot.fail"; reset_calls
+[ "$(rc_of renew "$T/domain.env")" = 1 ] || fail "failed certbot renew should exit 1: $(cat "$T/out")"
+calls | grep -qx "certbot renew --cert-name $domain --non-interactive -q" || fail "certbot renew arguments: $(calls | grep '^certbot')"
+grep -q 'certbot 续期失败' "$T/state/status" && grep -q '小时到期' "$T/state/status" || fail "certbot failure not recorded: $(cat "$T/state/status")"
+grep -q 'certbot 续期失败' "$T/out" || fail 'certbot failure not logged'
 
 # --- 静态：模板、续期单元与本脚本的路径一致 ------------------------------------------------
 grep -Fq 'root /var/www/aegis-acme;' "$DEPLOY/nginx-aegis.conf" && grep -Fq 'ACME_WEBROOT="${PANDORA_ACME_WEBROOT:-/var/www/aegis-acme}"' "$EDGE" \
