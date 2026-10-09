@@ -9,7 +9,7 @@ paths:
 - 依赖方向：api → domain → platform；middleware 挂在 api 之前
   - platform 不 import api、domain、middleware，唯一例外是 `platform/idempotencybind` 引用 middleware 的 `IdempotencyClaim`
   - middleware 不 import domain 与 api；domain 不 import api（domain 可以 import middleware，用的是幂等认领）
-  - 没有守卫测试，靠自觉；新增 import 前先对照这条
+  - 守卫：`panel/tools/archguard/imports_test.go` 的 `TestImportDirection`（只看非测试源码），现有违例登记在 `importExemptions`（棘轮：只删不加，违例消失后豁免也要删）
 - api 只做路由、鉴权链与 DTO；用例与状态机在 domain；platform 不带业务语义
   - 处理器不跑 SQL，读写都在拥有那张表的 domain 服务里。守卫：`panel/internal/api/handler_sql_guard_test.go` 的 `TestHandlersRunNoSQL`
 - 安全与财务不变量落在 PostgreSQL：RLS、追加写触发器、DEFERRABLE 配平、回调唯一约束。Go 网关负责执行，策略本身由库定义
