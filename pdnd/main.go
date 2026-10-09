@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -348,7 +349,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	log := newLogger(cfg.LogLevel)
+	log := installLogger(cfg.LogLevel, os.Stdout)
 	cfg.Runtime.apply(log)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -548,7 +549,13 @@ func loadConfig(path string) (*config, error) {
 	return &cfg, nil
 }
 
-func newLogger(level string) *slog.Logger {
+// installLogger 建进程日志并设为 slog 的默认 logger。
+//
+// 设默认不能省：内核里有几处不经注入 logger、直接用包级 slog 的日志（QUIC 缓冲偏小、
+// 入站关闭超时、内核关停、转发 panic）。默认 logger 还是标准库那个时，它们走 Go 默认
+// log 的「2026/10/09 00:16:51 WARN ...」格式、也不受 log_level 约束，按 level= 采集
+// 会漏掉（10-09 VPC 复测）。设了之后标准库 log 包的输出也一并转进同一个 handler。
+func installLogger(level string, w io.Writer) *slog.Logger {
 	lv := slog.LevelInfo
 	switch level {
 	case "debug":
@@ -558,5 +565,7 @@ func newLogger(level string) *slog.Logger {
 	case "error":
 		lv = slog.LevelError
 	}
-	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lv}))
+	log := slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: lv}))
+	slog.SetDefault(log)
+	return log
 }
