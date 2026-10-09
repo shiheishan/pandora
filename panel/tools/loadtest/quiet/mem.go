@@ -8,28 +8,54 @@ import (
 	"strings"
 )
 
-// writeMem 打印内存对照并返回是否达标。整机已用取窗口外首尾两次里较大的一个（静默期内存只涨不降，
-// 取大是对标准更严的读法）。
-func writeMem(w io.Writer, before, after *memSnapshot, limitMiB float64) bool {
-	worst := max(before.usedMiB(), after.usedMiB())
-	pass := worst <= limitMiB
+// memVerdict 是内存一项的判定。整机已用取窗口外首尾两次里较大的一个（静默期内存只涨不降，
+// 取大是对标准更严的读法）；窗口内换入、换出都为 0 才算过。
+type memVerdict struct {
+	before, after *memSnapshot
+	usedMiB       float64
+	limitMiB      float64
+	swapIn        int64
+	swapOut       int64
+	haveSwapPages bool
+	usedPass      bool
+	swapPass      bool
+	pass          bool
+}
+
+func judgeMem(before, after *memSnapshot, limitMiB float64) memVerdict {
+	m := memVerdict{before: before, after: after, limitMiB: limitMiB}
+	m.usedMiB = max(before.usedMiB(), after.usedMiB())
+	m.usedPass = m.usedMiB <= limitMiB
+	m.haveSwapPages = before.haveSwapPages && after.haveSwapPages
+	if m.haveSwapPages {
+		m.swapIn, m.swapOut = after.swapIn-before.swapIn, after.swapOut-before.swapOut
+		m.swapPass = m.swapIn == 0 && m.swapOut == 0
+	}
+	m.pass = m.usedPass && m.swapPass
+	return m
+}
+
+// writeMem 打印内存对照与判定。
+func writeMem(w io.Writer, m memVerdict) {
+	before, after := m.before, m.after
 	fmt.Fprint(w, "\n## 内存（窗口外首尾各一次）\n\n| 项 | 前 | 后 |\n|---|---|---|\n")
 	fmt.Fprintf(w, "| MemTotal − MemAvailable（MiB，= free 的 used，不含 cache） | %.0f | %.0f |\n", before.usedMiB(), after.usedMiB())
 	if before.freeUsedMiB >= 0 && after.freeUsedMiB >= 0 {
 		fmt.Fprintf(w, "| free -m 的 used（MiB） | %d | %d |\n", before.freeUsedMiB, after.freeUsedMiB)
 	}
 	fmt.Fprintf(w, "| swap 已用（MiB） | %.1f | %.1f |\n", before.swapUsedMiB(), after.swapUsedMiB())
-	if before.haveSwapPages && after.haveSwapPages {
-		fmt.Fprintf(w, "| 窗口内换入 / 换出页数 | %d / %d | |\n", after.swapIn-before.swapIn, after.swapOut-before.swapOut)
+	if m.haveSwapPages {
+		fmt.Fprintf(w, "| 窗口内换入 / 换出页数 | %d / %d | |\n", m.swapIn, m.swapOut)
 	}
-	verdict := "过"
-	if !pass {
-		verdict = "不过"
-	}
-	fmt.Fprintf(w, "\n- **整机已用 %.0f MiB**（标准 ≤ %.0f）→ %s\n", worst, limitMiB, verdict)
-	if before.swapIn != after.swapIn || before.swapOut != after.swapOut {
-		fmt.Fprintf(w, "- **注意**：窗口内发生了换页（换入 %d、换出 %d 页），内存已吃紧，已用数被 swap 掩盖\n",
-			after.swapIn-before.swapIn, after.swapOut-before.swapOut)
+	fmt.Fprintf(w, "\n- **整机已用 %.0f MiB**（标准 ≤ %.0f）→ %s\n", m.usedMiB, m.limitMiB, passWord(m.usedPass))
+	switch {
+	case !m.haveSwapPages:
+		fmt.Fprint(w, "- **换页**：快照里没有 pswpin / pswpout，判不了 → 不过\n")
+	case m.swapPass:
+		fmt.Fprint(w, "- **换页**：窗口内换入、换出都为 0 → 过\n")
+	default:
+		fmt.Fprintf(w, "- **换页**：窗口内换入 %d、换出 %d 页（标准都为 0）→ 不过。只有换入时多半是开窗前被换出的旧页读回，测前 `swapoff -a && swapon -a` 清掉；有换出才是内存吃紧\n",
+			m.swapIn, m.swapOut)
 	}
 
 	if len(before.pss) > 0 || len(after.pss) > 0 {
@@ -65,7 +91,6 @@ func writeMem(w io.Writer, before, after *memSnapshot, limitMiB float64) bool {
 		}
 		fmt.Fprintf(w, "| 合计 | %.0f | %.0f |\n", sumB, sumA)
 	}
-	return pass
 }
 
 func pssOf(after, before *pssRow) float64 {

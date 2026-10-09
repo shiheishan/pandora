@@ -22,6 +22,8 @@ var cpuFields = []string{"user", "nice", "system", "idle", "iowait", "irq", "sof
 
 type procTicks struct {
 	comm  string
+	ppid  int
+	start uint64 // starttime（开机以来的 tick）：同一 pid 前后两份的 start 相同才是同一个进程
 	own   uint64 // utime + stime
 	child uint64 // cutime + cstime：已回收的子进程
 }
@@ -90,7 +92,7 @@ func loadCPUSnapshot(dir, tag string) (*cpuSnapshot, error) {
 }
 
 // parsePIDStat 解 /proc/<pid>/stat 一行：comm 可能含空格与括号，从最后一个 ')' 之后数字段。
-// ')' 之后第 1 个字段是 state，utime / stime / cutime / cstime 是其后的第 12 至 15 个。
+// ')' 之后第 1 个字段是 state，第 2 个是 ppid，utime / stime / cutime / cstime 是第 12 至 15 个，starttime 是第 20 个。
 func parsePIDStat(line string) (int, procTicks, bool) {
 	open, closeIdx := strings.IndexByte(line, '('), strings.LastIndexByte(line, ')')
 	if open < 0 || closeIdx < open {
@@ -101,11 +103,12 @@ func parsePIDStat(line string) (int, procTicks, bool) {
 		return 0, procTicks{}, false
 	}
 	rest := strings.Fields(line[closeIdx+1:])
-	if len(rest) < 15 {
+	if len(rest) < 20 {
 		return 0, procTicks{}, false
 	}
 	n := func(i int) uint64 { v, _ := strconv.ParseUint(rest[i], 10, 64); return v }
-	return pid, procTicks{comm: line[open+1 : closeIdx], own: n(11) + n(12), child: n(13) + n(14)}, true
+	ppid, _ := strconv.Atoi(rest[1])
+	return pid, procTicks{comm: line[open+1 : closeIdx], ppid: ppid, start: n(19), own: n(11) + n(12), child: n(13) + n(14)}, true
 }
 
 // loadContainers 读 containers.txt（每行「容器全 ID 名字」），把 docker-<id>.scope 翻成容器名。
