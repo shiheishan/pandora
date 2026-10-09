@@ -41,7 +41,7 @@ description: pandora 后台新建一个模块（侧栏多一项、`#/<模块>` �
 | 8 | `panel/deploy/configure-app-role.sql` 与 `panel/internal/platform/db/configure_role_contract_test.go`（有不许改、不许删的表才改） | 在末尾整表重授之后补 REVOKE，并把这一行加进契约列表 | `TestConfigureAppRoleRevokesDeleteOnGuardedTablesLast`，只核列表里的行：不加进列表就没有守卫 |
 | 9 | PG18 用例与 `panel/deploy/run-pg18-gates.sh` | 新域在 DOMAINS 加一行，`-run` 写精确的顶层函数名；以后同域新增顶层函数也要加进去。夹具 id 先查重 | 写法和查重命令见 `.claude/rules/platform-pg18.md`。只在 GitHub 跑，SKIP 与「一个 PASS 都没有」判红；夹具 id 撞号**无守卫**，红了才知道 |
 | 10 | 所有新 `.go` 文件 | 单文件 ≤ 800 行 | `panel/tools/refactorcheck/linelimit_test.go` 的 `TestGoFilesStayWithinLineLimit` |
-| 10a | `panel/go.mod`、`panel/go.sum`（引入第三方库才改） | 新依赖（证书模块引入了 lego）先说明为什么不自己写、维护状况与许可证，再 `go mod tidy` | **无守卫**：CI 不跑 govulncheck。在任务报告里列出新依赖，供验收时审 |
+| 10a | `panel/go.mod`、`panel/go.sum`（引入第三方库才改） | 新依赖（证书模块引入了 lego）先说明为什么不自己写、维护状况与许可证，再 `go mod tidy` | **无守卫**：CI 不跑 govulncheck。按 deps-upgrade 第 4 节审新依赖，并会触发 adversarial-review（新依赖） |
 
 ### 前端（`panel/frontend/`）
 
