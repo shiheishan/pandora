@@ -95,6 +95,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 环境与工具坑（所有 skill 共用）
 
 - go 与 npm：`go build/test/vet` 不与 `npm ci` 并发（node_modules 里的 flatted 带 Go 包，并发时 go 假失败）；子 agent 的 prompt 也要写明。
+- 本机 Go：缺省 1.27.1（Homebrew），比 go.mod 的 1.26.9 新，pdnd 在 1.27 下链接失败（sing-box v1.13.14 的 `transport/v2rayhttp/force_close.go:46` 用 go:linkname 取 x/net http2 的 `(*Transport).connPool`，x/net 0.60 在 1.27 下没有该符号），h1 CONNECT 行为也与 CI 不同（`.claude/rules/pdnd-kernel.md`「认证失败的回落」）。本机所有 `go build/test/vet` 加 `GOTOOLCHAIN=go<go.mod 版本>`（现为 `go1.26.9`，模块缓存里已有，`GOPROXY=off` 也能切），报告里注明本机 Go 版本；子 agent 的 prompt 也要写明。subscription-e2e 的脚本自己从 go.mod 读。升 Go 1.27 前先解决这个 linkname，见 deps-upgrade skill。
 - 本机（这台 Mac）没有 docker、psql、valkey-cli：PG18 用例、迁移往返、冒烟栈、Playwright 路径本机都跑不了，PG18 用例在本机跳过不等于通过，结论以 GitHub 为准（`wait-github.sh`，见 verify skill）。要查库、开冒烟栈，用测试机或 CI。
 - 保留表名（`panel/migrations/RESERVED-TABLES.md` 登记的）不写进 Go 注释，迁移注释里也不写（迁移里的 SQL 常被抄进 Go）；用描述代替。表登记簿测试对 Go 非测试源码整词匹配，注释里的表名也算「引用」，会变红。
 - 1Password SSH agent：推送或 ssh 报签名失败，多半是沙箱连不上 agent 或 agent 锁着。Bash 调用设 `dangerouslyDisableSandbox: true` 重试，仍失败就请用户解锁或由总协调代推；不改走 HTTPS。

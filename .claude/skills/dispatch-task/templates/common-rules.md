@@ -4,7 +4,7 @@
 
 **证据**（只读；worktree 里没有 ops-local，用主目录绝对路径）：<列出报告、数据、EXPLAIN 原文的绝对路径>。
 
-**工作目录与分支**：只在本 worktree 里改。开工先 `git log -1 --oneline`，应为 <基点短 sha>，不是就停下报告。不碰 main、不碰别的分支、不 force push、不删 worktree。主线若在你工作期间前进，交付前 `git merge feat/panel-redesign` 跟上再推。
+**工作目录与分支**：只在本 worktree 里改。开工先 `git log -1 --oneline`，应为 <基点短 sha>，不是就停下报告。不碰 main、不碰别的分支、不 force push、不删 worktree。只推自己的 `feat/panel-redesign-<名字>` 分支，不推别的远端分支。主线若在你工作期间前进，交付前 `git merge feat/panel-redesign` 跟上再推。
 
 **开工**：先读根 CLAUDE.md、`.claude/skills/verify/SKILL.md`、与你的目录相关的 `.claude/rules/*.md`；然后按根 CLAUDE.md「长任务的任务清单」在本 worktree 建 `.claude/TASKS.md`；上下文压缩后先读它。
 
@@ -14,13 +14,13 @@
 
 **代码约定**：按根 CLAUDE.md「既定范式」与 800 行规则；行为改动配测试，需要真库的按现有 PG18 测试写法（`platform/pg18test`）。夹具租户 id 先 grep 主线确认没人用（同域共库，撞号是最常见的 CI 红）。保持 RLS、租户、审计、追加写等数据库不变量；不削弱任何安全检查来换性能。不引入新依赖（确有必要先写进报告）。
 
-**性能类任务**：每项改动在报告里写「机制 → 改前 → 改后 → 预期效果」；改了 SQL 就在报告附录给出改后 SQL 的可直接 EXPLAIN 版本（参数内联），总协调会用评测集判分（性能 + 改前改后结果一致）。
+**性能类任务**：每项改动在报告里写「机制 → 改前 → 改后 → 预期效果」；改了 SQL 就在报告附录给出改后 SQL 的可直接 EXPLAIN 版本（参数内联），性能项一律走 perf-gate 判分（SQL 用评测集，Go 热路径与资源占用用同机 A/B），报告里给的是判分要的材料。
 
 **仓库公开红线**：见根 CLAUDE.md；gitleaks 命中必须停下处理。
 
 **提交**：按主题小步提交，信息用英文祈使句，前缀 perf:/fix:/feat:/test:/docs:，结尾加 `Co-Authored-By:` 行（按当前会话的署名要求）。
 
-**验证**：本地跑什么、推送后必须等哪个 CI 结论，一律按 verify skill（go test 加 `-p 2`；本机 PG18 用例会跳过，跳过不等于通过）。推送 `git push -u origin <你的分支>`，签名失败按根 CLAUDE.md「环境与工具坑」处理。等待脚本在主目录：`/Users/a1/ai/projects/pandora/ops-local/memoh-ci/wait-status.sh <sha>`、`wait-github.sh <sha>`，后台跑、不手写轮询。退出 1 按 ci-triage 查（先核 run 的分支），本机复现、修、再推；退出 2 说明原因后改看 GitHub。本任务额外要等的 job 和自证写在开工说明的「验证补充」里。
+**验证**：本地跑什么、推送后必须等哪个 CI 结论，一律按 verify skill（go test 加 `-p 2`；本机 PG18 用例会跳过，跳过不等于通过）。推送 `git push -u origin <你的分支>`，签名失败按根 CLAUDE.md「环境与工具坑」处理。等待脚本在主目录：`/Users/a1/ai/projects/pandora/ops-local/memoh-ci/wait-status.sh <sha>`、`wait-github.sh <sha>`，后台跑、不手写轮询；日志文件名带分支名（草稿目录多会话共用，曾被覆盖）。本机 go 命令加的 `GOTOOLCHAIN` 见根 CLAUDE.md「环境与工具坑」。退出 1 按 ci-triage 查（先核 run 的分支），本机复现、修、再推；退出 2 说明原因后改看 GitHub。本任务额外要等的 job 和自证写在开工说明的「验证补充」里。
 
 **不要再拆实现型子 agent**；只读调研可以拆。
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在 Debian 测试机上装与 CI 同小版本的 Go 与 Node 22（官方包，核 sha256），外加 git。
+# 在 Debian 测试机上装与 CI 同小版本的 Go 与 Node 22（官方包，核 sha256），外加 git、make（build-release.sh 要 make）。
 # 用法（在本机）：ssh <别名> 'GO_SERIES=1.26 NODE_MAJOR=22 bash -s' < install-toolchain.sh
 set -euo pipefail
 GO_SERIES="${GO_SERIES:-1.26}"
@@ -7,7 +7,7 @@ NODE_MAJOR="${NODE_MAJOR:-22}"
 export DEBIAN_FRONTEND=noninteractive
 # 全新镜像的包索引是空的或过期的，不先 update 会找不到包
 apt-get update -qq >/dev/null
-apt-get install -y -qq curl ca-certificates git xz-utils python3 >/dev/null
+apt-get install -y -qq curl ca-certificates git make xz-utils python3 >/dev/null
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT; cd "$work"
 
 read -r go_ver go_file go_sum < <(curl -fsSL 'https://go.dev/dl/?mode=json&include=all' | python3 -c "

@@ -76,7 +76,7 @@ description: pandora 出技术设计稿或性能调研。步骤：先核现状�
   - 复测；
   - 与换栈的关系。
 - 派工交 dispatch-task：设计稿的派工表就是 brief 的「归属 / 不碰 / 迁移号段」；brief 里给设计稿的绝对路径，不贴全文。
-- 实现合并时：命中触发条件的走 adversarial-review；性能项按 perf-gate 做改前改后判分（perf-gate 是第五轮审查同批新建的）。
+- 实现合并时：命中触发条件的走 adversarial-review；性能项按 perf-gate 做改前改后判分。
 
 ## 守卫从哪类里挑
 

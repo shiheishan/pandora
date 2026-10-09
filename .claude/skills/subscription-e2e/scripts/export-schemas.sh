@@ -8,7 +8,8 @@ repo="$(git -C "$here" rev-parse --show-toplevel)"
 if [ "${1:-}" = "--repo" ]; then repo="$(cd "$2" && pwd)"; shift 2; fi
 dest="${1:-$repo/panel/frontend/dev/mock/admin/node-schemas.ts}"
 dest="$(cd "$(dirname "$dest")" && pwd)/$(basename "$dest")"
-export GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local
+source "$here/scripts/toolchain.sh"
+pin_go_toolchain "$repo"
 ov="$(mktemp -d "${TMPDIR:-/tmp}/schemas-overlay.XXXXXX")"
 trap 'rm -rf "$ov"' EXIT
 printf '{"Replace":{"%s":"%s"}}\n' \

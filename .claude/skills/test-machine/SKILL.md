@@ -1,6 +1,6 @@
 ---
 name: test-machine
-description: pandora 一次性 Vultr 测试机（压测面板机、压测机、真节点、开发对照机）的规格、要不要 VPC、费用与公网出流量估算、用 Vultr API 开机、挂 VPC、查账单与超额、删机，以及开通登记与回收。用户发来新机器 IP、要开或删测试机、要给机器挂内网、要查流量超额或估算压测流量费、要在测试机上装 Docker / Go / Node（不装面板时）使用。在机器上装面板见 panel-install，面板压测见 prod-retest，节点大流量验收见 node-accept。
+description: pandora 一次性 Vultr 测试机（压测面板机、压测机、真节点、开发对照机）与租用机的规格、要不要 VPC、费用与公网出流量估算、用 Vultr API 开机、挂 VPC、查账单与超额、删机，以及开通登记与回收（租用机只登记，不走 Vultr 脚本）。用户发来新机器 IP、要开或删测试机、要给机器挂内网、要查流量超额或估算压测流量费、要在测试机上装 Docker / Go / Node（不装面板时）使用。在机器上装面板见 panel-install，面板压测见 prod-retest，节点大流量验收见 node-accept。
 ---
 
 # 一次性测试机
@@ -50,10 +50,14 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 - **额度上限与提醒**：用户给的额度数值放 `ops-local/vultr/env` 的 `VULTR_CREDIT_CAP`（美元，不进仓库）。机器开着时每天跑一次 `vultr-billing.sh`，待结接近上限（10-09 的做法：上限的约 5/6）就提醒用户，并报推算的触线时间；推算不计流量额度抵扣，实际略晚。开到月底会超预算的，测完请用户点名删。
 - 删不删机看超额：`vultr-billing.sh` 的「流量超额」没归零时，开着的机器按开机时长攒额度，比交超额便宜（2c4g 约 4.5GB/h 花 $0.030，1c1g 约 1.5GB/h 花 $0.0074，超额 $0.01/GB）；归零后再开就是纯开销。不要为了攒额度开到月底。
 
+## 租用机（不是 Vultr）
+
+用户租的别人的机器（如 `netcup-de-pt-perf`）：不跑任何 `vultr-*.sh`，不删、不重装、不清理，一切规矩以该机 `~/ai/servers/<别名>/AGENTS.md` 为准（先读它）。新登记一台租用机用 `register.sh --rental <到期日> --site "<商家 / 机房>"`，工位文件换 `templates/AGENTS-rental.md`，里面授权范围、计费与流量限制等占位要按用户说的补全；撤登记仍是 `unregister.sh`。
+
 ## 开通
 
 ```bash
-bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] <别名> <IP> <套餐> "<用途一句话>"
+bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--rental <到期日> --site "<商家 / 机房>"] <别名> <IP> <套餐> "<用途一句话>"
 ```
 
 - 必须 bash 跑；ssh 经 1Password agent，签名失败见根 CLAUDE.md「环境与工具坑」。出错时读 `register.sh` 手工补救。

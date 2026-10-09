@@ -18,7 +18,7 @@
 #   --no-naive               构建时不带 with_naive_outbound（naive 行会变 FAIL，仅在 cronet 链接不了时用）
 #   --log <级别>             E2E 里 sing-box 客户端的日志级别，排查时用 debug
 #
-# 全程只用本机 Go 模块缓存：GOPROXY=off、GOTOOLCHAIN=local，不联网下载。
+# 全程只用本机 Go 模块缓存，不联网下载；Go 版本取 go.mod 的（scripts/toolchain.sh）。
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -51,7 +51,8 @@ done
 if [ -n "$extra" ]; then extra="$(cd "$(dirname "$extra")" && pwd)/$(basename "$extra")"; fi
 [ -d "$repo/panel/internal/domain/subscription" ] && [ -d "$repo/pdnd/kernel" ] || { echo "不是 pandora 仓库: $repo" >&2; exit 2; }
 
-export GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local
+source "$here/scripts/toolchain.sh"
+pin_go_toolchain "$repo"
 mkdir -p "$work"
 work="$(cd "$work" && pwd)"
 out="$work/out"; res="$work/results"

@@ -17,7 +17,7 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 |---|---|
 | panel 的 Go 代码 | 在 `panel/` 对改到的文件跑 `gofmt -l`；对改到的包跑 `go vet` 和 `go test`，例如 `go test ./internal/domain/billing/...` |
 | 动了 SQL 字符串、表名、路由、权限码 | 除改到的包外，加跑整包扫描的源码契约：`go test ./internal/platform/db/ ./internal/api/...` |
-| pdnd 的 Go 代码 | 在 `pdnd/` 对改到的文件跑 `gofmt -l`，对改到的包跑 `go vet` 和 `go test` |
+| pdnd 的 Go 代码 | 在 `pdnd/` 对改到的文件跑 `gofmt -l`，对改到的包跑 `go vet` 和 `go test`，本机命令前加 `GOTOOLCHAIN=go1.26.9`（不加会链接失败，原因见根 CLAUDE.md「环境与工具坑」） |
 | pdnd 的协议、能力矩阵，或面板的协议 schema | `python3 pdnd/release/check_native_panel_parity.py` |
 | 面板前端 | 在 `panel/frontend/` 跑 `npm run lint`、`npm run typecheck`、`npm run test`（依赖变了先 `npm ci`），不构建 |
 | 部署脚本 | 在 `panel/deploy/` 跑对应的 `*_mock_test.sh` / `*_static_test.sh` / `*_test.sh` |
@@ -44,7 +44,7 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 | panel-pg18.yml / panel-unit | panel 全量 build / vet / go test（PG18 用例在此跳过，是 CI 上唯一跑 panel 全部单元测试的地方） | 跑 | 随 `wait-status.sh` |
 | panel-pg18.yml / panel-pg18 | 先迁移往返，再 `run-pg18-gates.sh` 的全部 PG18 域门禁，以及 check-migrations 临时库演练 | 整个跳过 | 改了 `panel/internal` 数据层、SQL、迁移，等 `wait-github.sh`；往返口径与看结论的命令见 new-migration skill 与 `rules/panel-migrations.md` |
 | panel-smoke.yml / 冒烟栈 | 读表、`panel/tests` 的 e2e 脚本（清单以 `run-smoke-e2e.sh` 的 `SCRIPTS` 为准，任一失败即红）、压测工具试跑（零 5xx 零签名失败）、购买路径无头浏览器（Playwright，见 `rules/frontend-browser-e2e.md`） | 不跑 | 改了前端 `src/`、`panel/tests`，等 `wait-github.sh` |
-| go-vulncheck.yml / govulncheck | govulncheck 扫 panel、pdnd、subscription-e2e/tools 三个模块的被调用漏洞，另扫发布物视图。**只报告、不挡合并**：步骤永远退出 0，结论在 job summary 与 warning 注解里（扫描出错是 error）。每周一定时跑 | 回放（同样不靠退出码） | 改了 go.mod、go.sum 或升依赖之后看 summary；怎么读、怎么本地复现见 deps-upgrade skill |
+| go-vulncheck.yml / govulncheck | govulncheck 扫 panel、pdnd、subscription-e2e/tools 三个模块的被调用漏洞，另扫发布物视图。**只报告、不挡合并**：步骤永远退出 0，结论在 job summary 与 warning 注解里（扫描出错是 error）。眼下不定时跑（deps-upgrade 第 8 节） | 回放（同样不靠退出码） | 改了 go.mod、go.sum 或升依赖之后看 summary；怎么读、怎么本地复现见 deps-upgrade skill |
 | panel-deploy.yml / deploy-mock-tests | 不需要数据库和 root 的 deploy 桩测试 | 跑 | 改了 `panel/deploy`，随 `wait-status.sh` |
 | panel-deploy.yml / deploy-root-mock-tests | 以 root 跑 `release-stop-the-world_mock_test.sh` | 明说跳过 | 动了发布控制器、`check-migrations.sh` 的凭据或 `migrate.sh`，等 `wait-github.sh` |
 
@@ -55,3 +55,5 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 ## 坑
 
 - `go build` / `go test` 不要和 `npm ci` 同时跑（见根 CLAUDE.md「环境与工具坑」）。
+- 本机 Go 缺省 1.27.1 编不过 pdnd，本机 go 命令要写 `GOTOOLCHAIN=go1.26.9`（原因和换法见根 CLAUDE.md「环境与工具坑」）；panel 的结论也按这个版本，才与 CI 同口径。
+- 检查机串行：几路同时推会排队，`wait-status.sh` 等到 1800 秒退出 2 时，别当红，按 GitHub 的结论判（`wait-github.sh`）。

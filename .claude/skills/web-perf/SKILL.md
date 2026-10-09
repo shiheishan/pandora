@@ -16,15 +16,9 @@ description: pandora 面板网页打开性能的测量：静态分析（产物�
 所有子命令都接受 `--work <scratchpad>/webperf`，不给时用 `$TMPDIR/pandora-web-perf`。
 
 1. **准备**：`bash .claude/skills/web-perf/scripts/run.sh prep --work <W>`
-   - 把 `panel/frontend` 拷到 `W/fe`（不含 node_modules 和 dist），用 `scripts/patch-mock.py` 给假后端打性能补丁，再 `npm ci`。
-   - 测量工具装到 `W/tools`。
-   - lock 文件没变时跳过 `npm ci`。要测 worktree 就加 `--repo <worktree>`。
+   - 在 `W/fe` 拷一份前端并打性能补丁，测量工具装到 `W/tools`；lock 文件没变时跳过 `npm ci`。要测 worktree 就加 `--repo <worktree>`。
 2. **静态分析**：`run.sh static --work <W>`
-   - 用 `npm run build` 构建两个入口，另出一份带 sourcemap 的；然后跑三个脚本：
-     - `sizes.mjs`：首屏，即 index.html 引用的文件加它们的静态 import 闭包，给出原始、gzip-9、brotli-11 三个数，外加最大的 10 个 chunk；
-     - `routes.mjs`：每个路由分包连同 mapDeps 带出的依赖，合计多大；
-     - `deps.mjs`：source-map-explorer 按 npm 包汇总的依赖构成。
-   - 结果在 `W/results/static/`。
+   - 构建两个入口，出首屏大小（原始 / gzip / brotli）、各路由分包大小、按 npm 包的依赖构成，结果在 `W/results/static/`；每个脚本做什么、注意点见 `scripts/` 里各文件头。
 3. **本机 N 节点基准**：`run.sh bench --work <W> [--nodes 1000] [--scenarios …] [--throttle "1 4 6"] [--observe 20]`
    - 每个场景起一个 `vite preview`（admin 入口加假后端），用 `nodes-bench.mjs` 跑「场景 × CPU 降速」，出一张表（`W/results/bench/summary.md`）。
    - 默认三个场景：
