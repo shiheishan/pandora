@@ -16,6 +16,7 @@ paths:
 - 口径：语句、管线批次各 1（含 BEGIN、COMMIT），COPY 2；语句准备、取连接探测（空闲 >1 秒）、非受控归还另记。pgx 批次里顺带的语句准备、显式 `Pool.Ping` 没有钩子，不记
 - 池级 `Pool.SessionResets()` 数真正执行过的会话清理语句：受控路径（InTx / QueryRowScoped / BatchScoped / QueryScoped）归还的连接上必须为 0。换栈接 database/sql 时用它核对 GORM 事务归还有没有多一条清理
 - Valkey 钩子要在每个网关建好客户端后挂一次：`rdb.AddHook(roundtrip.ValkeyHook{})`；挂两次重复计数
+- 访问日志的字段、节点网关的降级与每分钟统计见 `rules/panel-middleware.md`
 
 ## 路由登记表（`panel/tools/routebudget/routes.txt`）
 

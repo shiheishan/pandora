@@ -37,8 +37,11 @@ type Entry struct {
 // Statements 是语句往返：db_rt 扣掉存活探测、语句准备与非受控归还（预算的口径）。
 func (e Entry) Statements() int { return e.DBRT - e.Ping - e.Prepare - e.Reset }
 
-// Logger 返回写进本记录器的 JSON 日志。
-func (a *AccessLog) Logger() *slog.Logger { return slog.New(slog.NewJSONHandler(a, nil)) }
+// Logger 返回写进本记录器的 JSON 日志。级别开到 debug：节点网关把成功的快请求降到
+// debug（middleware.QuietSuccess），预算测试要逐条拿到。
+func (a *AccessLog) Logger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(a, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
 
 // Write 实现 io.Writer：slog 的 JSON 处理器一次写一整行。
 func (a *AccessLog) Write(p []byte) (int, error) {
