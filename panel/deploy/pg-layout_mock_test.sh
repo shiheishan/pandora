@@ -84,9 +84,80 @@ eval "$(extract_fn backup-postgres.sh pandora_pg)"
 [ "$(cat "$T/pg.calls")" = 'docker exec -i -e PGPASSWORD aegis-postgres pg_dump -U aegis -d aegis --format=custom | PGPASSWORD=owner-pw' ] \
   || fail "docker pandora_pg: $(cat "$T/pg.calls")"
 
-# 恢复出来的直装库属主还是 POSTGRES_USER（客户端以 postgres 连，不给就成了 postgres 的库）
-grep -Fq 'create_args+=(--owner="${POSTGRES_USER:-aegis}")' "$DEPLOY/restore-postgres.sh" \
-  || fail 'restore-postgres.sh does not keep the native database owner'
+# --- restore-postgres.sh 的恢复步骤：抽出函数、换上桩跑真调用 -----------------------------------
+# （整个脚本要 Linux root 与 /proc 绑定的 .env，本机跑不了；这几个函数就是它在正式库上做的事）
+for fn in archive_role_plan ensure_restore_roles create_target_db restore_into_target reassign_source_migrator; do
+  eval "$(extract_fn restore-postgres.sh "$fn")"
+  declare -F "$fn" >/dev/null || fail "restore-postgres.sh has no $fn"
+done
+die() { echo "die: $*" >&2; exit 1; }
+: >"$T/pg.calls"
+# pandora_pg 桩：记下调用；「角色在不在」按 $T/roles 答；current_user 按 $T/me 答
+pandora_pg() {
+  printf '%s\n' "$*" >>"$T/pg.calls"
+  case "$*" in
+    *"FROM pg_catalog.pg_roles WHERE rolname = '"*)
+      local r; r="$(printf '%s' "$*" | sed -n "s/.*rolname = '\([a-z_]*\)'.*/\1/p")"
+      if grep -qx "$r" "$T/roles"; then echo 1; fi
+      return 0 ;;
+    *'SELECT current_user'*) cat "$T/me"; return 0 ;;
+    'pg_restore -d '*) cat >"$T/restore.stdin"; return 0 ;;
+  esac
+  return 0
+}
+age() { printf 'ARCHIVE\n'; }
+# 恢复的目标库：直装给 POSTGRES_USER 当属主、UTF8、正式库关连接闸门
+DB_LAYOUT=native POSTGRES_USER=aegis POSTGRES_DB=aegis target_db=aegis
+create_target_db
+grep -qx 'createdb --template=template0 --encoding=UTF8 --connection-limit=0 --owner=aegis aegis' "$T/pg.calls" \
+  || fail "native createdb: $(cat "$T/pg.calls")"
+: >"$T/pg.calls"; DB_LAYOUT=docker target_db=aegis_recovery
+create_target_db
+grep -qx 'createdb --template=template0 --encoding=UTF8 aegis_recovery' "$T/pg.calls" || fail "docker createdb: $(cat "$T/pg.calls")"
+# 照原样恢复属主与权限
+: >"$T/pg.calls"; AEGIS_BACKUP_AGE_IDENTITY=/k archive=/a
+restore_into_target
+grep -qx 'pg_restore -d aegis_recovery --exit-on-error' "$T/pg.calls" || fail "restore still drops owners or privileges: $(cat "$T/pg.calls")"
+grep -qx 'ARCHIVE' "$T/restore.stdin" || fail 'restore did not receive the decrypted archive'
+# 备份里要的角色
+plan="$(printf '%s\n' \
+  'ALTER SCHEMA app OWNER TO postgres;' \
+  'ALTER TABLE public.users OWNER TO postgres;' \
+  'ALTER FUNCTION app.bind_idem(uuid) OWNER TO aegis_idempotency_owner;' \
+  'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO aegis_app;' \
+  'GRANT SELECT ON TABLE public.users TO aegis_app;' \
+  'GRANT USAGE ON SCHEMA app TO aegis_idempotency_owner WITH GRANT OPTION;' \
+  'GRANT USAGE ON SCHEMA public TO PUBLIC;' | archive_role_plan)"
+want_plan="$(printf '%s\n' 'acl yes' 'migrator postgres' 'role aegis_app' 'role aegis_idempotency_owner' 'role postgres' | sort)"
+[ "$plan" = "$want_plan" ] || fail "role plan: $plan"
+[ "$(printf 'ALTER SCHEMA app OWNER TO aegis;\n' | archive_role_plan | grep '^acl')" = 'acl no' ] || fail 'old backups without GRANTs not detected'
+# docker 布局恢复直装的备份：postgres 不存在，临时建；专用角色缺了照样建（NOLOGIN、无特权）
+: >"$T/pg.calls"; printf 'aegis\naegis_app\n' >"$T/roles"; POSTGRES_USER=aegis
+created="$(ensure_restore_roles "$plan" 2>/dev/null)" || fail "ensure_restore_roles failed: $(cat "$T/pg.calls")"
+[ "$created" = postgres ] || fail "temporary migrator not reported: '$created'"
+grep -qx 'psql -X -d postgres -v ON_ERROR_STOP=1 -c CREATE ROLE "aegis_idempotency_owner" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS' "$T/pg.calls" \
+  || fail "owner role not created safely: $(cat "$T/pg.calls")"
+if grep -q 'CREATE ROLE "aegis_app"' "$T/pg.calls"; then fail 'an existing role was recreated'; fi
+# 认不出的角色：停下，不建
+if ( ensure_restore_roles "$(printf 'role intruder\n')" ) >/dev/null 2>&1; then fail 'an unknown role was accepted'; fi
+# 迁移角色换成本机的，临时角色删掉
+: >"$T/pg.calls"; echo aegis >"$T/me"; target_db=aegis
+reassign_source_migrator postgres postgres 2>/dev/null
+grep -qx 'psql -X -d aegis -v ON_ERROR_STOP=1 -c REASSIGN OWNED BY "postgres" TO "aegis" -c ALTER DATABASE "aegis" OWNER TO "aegis"' "$T/pg.calls" \
+  || fail "reassign: $(cat "$T/pg.calls")"
+grep -qx 'psql -X -d postgres -v ON_ERROR_STOP=1 -c DROP ROLE "postgres"' "$T/pg.calls" || fail 'temporary migrator role not dropped'
+# 同一种布局：迁移角色就是本机的，什么都不改
+: >"$T/pg.calls"; echo postgres >"$T/me"
+reassign_source_migrator postgres ''
+if grep -q 'REASSIGN' "$T/pg.calls"; then fail 'reassigned although the migrator is the same'; fi
+unset -f pandora_pg age die
+# 主流程：先备好角色、再进正式库保护；恢复之后才换迁移角色、才开闸门
+awk '/^created_migrator="\$\(ensure_restore_roles/ { e = NR } /^begin_production_guard$/ { g = NR } /^restore_into_target$/ { r = NR }
+     /^reassign_source_migrator / { m = NR } /^commit_production_guard$/ { c = NR }
+     END { exit !(e && g && r && m && c && e < g && g < r && r < m && m < c) }' "$DEPLOY/restore-postgres.sh" \
+  || fail 'restore-postgres.sh steps are out of order'
+if grep -Eq 'pg_restore .*--no-owner' "$DEPLOY/restore-postgres.sh"; then fail 'restore-postgres.sh still restores with --no-owner'; fi
+if grep -Eq -- '--no-owner|--no-acl' "$DEPLOY/backup-postgres.sh"; then fail 'backup-postgres.sh still drops owners or privileges'; fi
 
 # --- psql.sh 与 bootstrap.sh：在临时 deploy/ 里真跑一遍，客户端换成桩 ---
 for layout in native docker; do
@@ -123,6 +194,33 @@ PATH="$T/bin:$PATH" bash "$T/docker/bootstrap.sh" >/dev/null
 [ "$(cat "$T/pg.calls")" = 'docker exec -i -e PGPASSWORD -e AEGIS_DB_APP_PASSWORD aegis-postgres psql -X -v ON_ERROR_STOP=1 -U aegis -d aegis | PGPASSWORD=owner-pw APP=set' ] \
   || fail "docker bootstrap.sh: $(cat "$T/pg.calls")"
 cmp -s "$T/pg.stdin" "$DEPLOY/configure-app-role.sql" || fail 'docker bootstrap.sh did not feed configure-app-role.sql'
+
+# --- migrate.sh：迁移 DSN 里的超级用户口令不进任何命令行参数（psql、goose、env） ---------------------
+cat >"$T/bin/psql-argv" <<'MOCK'
+#!/usr/bin/env bash
+printf 'psql %s | PGPASSWORD=%s\n' "$*" "${PGPASSWORD:-}" >>"$(dirname "$0")/../argv.log"
+MOCK
+cat >"$T/bin/goose" <<'MOCK'
+#!/usr/bin/env bash
+printf 'goose %s | DSN=%s\n' "$*" "${GOOSE_DBSTRING:-}" >>"$(dirname "$0")/../argv.log"
+MOCK
+real_env="$(command -v env)"
+printf '#!/usr/bin/env bash\nprintf "env %%s\\n" "$*" >>"%s/argv.log"\nexec "%s" "$@"\n' "$T" "$real_env" >"$T/bin/env"
+chmod 0755 "$T/bin/psql-argv" "$T/bin/goose" "$T/bin/env"
+printf 'AEGIS_MIGRATION_DATABASE_URL=postgres://postgres:dsn%%2Dsuper%%2Dfixture@127.0.0.1:5432/aegis?sslmode=disable\n' >"$T/dsn.env"
+: >"$T/argv.log"
+PATH="$T/bin:$PATH" AEGIS_ENV_FILE="$T/dsn.env" AEGIS_MIGRATIONS_DIR="$T/migrations" GOOSE_BIN="$T/bin/goose" \
+  PANDORA_PSQL_BIN="$T/bin/psql-argv" bash "$DEPLOY/migrate.sh" check-indexes >/dev/null 2>&1 \
+  || fail "migrate.sh check-indexes failed: $(cat "$T/argv.log")"
+PATH="$T/bin:$PATH" AEGIS_ENV_FILE="$T/dsn.env" AEGIS_MIGRATIONS_DIR="$T/migrations" GOOSE_BIN="$T/bin/goose" \
+  bash "$DEPLOY/migrate.sh" version >/dev/null 2>&1 || fail "migrate.sh version failed: $(cat "$T/argv.log")"
+grep -Fq -- '-d postgres://postgres@127.0.0.1:5432/aegis?sslmode=disable -c' "$T/argv.log" && grep -q '| PGPASSWORD=dsn-super-fixture$' "$T/argv.log" \
+  || fail "psql did not get the password through PGPASSWORD: $(cat "$T/argv.log")"
+grep -q '^goose version | DSN=postgres://postgres:dsn%2Dsuper%2Dfixture@' "$T/argv.log" || fail "goose lost its DSN: $(cat "$T/argv.log")"
+if sed 's/ | .*//' "$T/argv.log" | grep -Eq 'dsn(%2D|-)super'; then
+  fail "the migration password reached a command line: $(sed 's/ | .*//' "$T/argv.log" | grep -E 'dsn(%2D|-)super')"
+fi
+rm -f "$T/bin/env" "$T/bin/goose"
 
 # 判定本身
 eval "$reference"

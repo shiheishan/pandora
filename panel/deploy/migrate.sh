@@ -120,6 +120,34 @@ if [ -z "${AEGIS_MIGRATION_DATABASE_URL:-}" ]; then
   AEGIS_MIGRATION_DATABASE_URL="host=127.0.0.1 port=$POSTGRES_PORT user=$MIGRATION_DB_USER dbname=$POSTGRES_DB sslmode=disable"
 fi
 
+# 在干净的环境里跑一个客户端：只带 PATH、HOME 与给出的 NAME=VALUE。变量经本进程内的函数参数传、
+# 在子 shell 里 export 后 exec，不经 env(1)——`env -i PGPASSWORD=… cmd` 会把口令写进 env 自己的命令行
+# 参数，ps 看得见。参数里开头连续的 NAME=VALUE 是变量，之后是命令。
+scrubbed_run() (
+  local p="$PATH" h="${HOME:-/root}" name kv vars=()
+  while [ "$#" -gt 0 ] && [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do vars+=("$1"); shift; done
+  while IFS= read -r name; do unset "$name" 2>/dev/null || true; done < <(compgen -e)
+  while read -r _ _ name; do unset -f "$name" 2>/dev/null || true; done < <(declare -Fx)
+  export PATH="$p" HOME="$h"
+  for kv in ${vars[@]+"${vars[@]}"}; do export "${kv%%=*}=${kv#*=}"; done
+  exec "$@"
+)
+
+# 连接串里的口令拆出来：psql 以 -d 收连接串（进命令行参数），口令改经 PGPASSWORD。认 URL 形式
+# postgres://用户:口令@…（口令按百分号编码解开）与键值形式里不带引号的 password=…；没有口令原样返回。
+# 结果放在 DSN_NO_PASSWORD、DSN_PASSWORD
+split_dsn_password() {
+  local dsn="$1"
+  DSN_NO_PASSWORD="$dsn" DSN_PASSWORD=""
+  if [[ "$dsn" =~ ^(postgres(ql)?://)([^:@/?#]+):([^@/?#]*)@(.*)$ ]]; then
+    DSN_NO_PASSWORD="${BASH_REMATCH[1]}${BASH_REMATCH[3]}@${BASH_REMATCH[5]}"
+    DSN_PASSWORD="$(printf '%b' "${BASH_REMATCH[4]//%/\\x}")"
+  elif [[ " $dsn " =~ ^(.*[[:space:]])password=([^[:space:]\']*)([[:space:]].*)$ ]]; then
+    DSN_NO_PASSWORD="$(printf '%s' "${BASH_REMATCH[1]}${BASH_REMATCH[3]}" | sed 's/^ *//; s/ *$//; s/  */ /g')"
+    DSN_PASSWORD="${BASH_REMATCH[2]}"
+  fi
+}
+
 # Goose reads the privileged DSN from its environment, keeping it out of argv.
 export GOOSE_DRIVER=postgres
 export GOOSE_DBSTRING="$AEGIS_MIGRATION_DATABASE_URL"
@@ -135,7 +163,7 @@ if [ "$UPGRADE_APPROVED" = yes ]; then
   MIGRATION_PGOPTIONS='-c app.idempotency_writers_stopped=yes -c app.allow_idempotency_schema37_up=yes -c app.allow_idempotency_schema38_up=yes -c app.allow_idempotency_schema39_up=yes -c app.order_release_writers_stopped=yes'
 fi
 
-GOOSE_BASE_ENV=(env -i PATH="$PATH" HOME="${HOME:-/root}"
+GOOSE_BASE_ENV=(scrubbed_run
   GOOSE_DRIVER="$GOOSE_DRIVER" GOOSE_DBSTRING="$GOOSE_DBSTRING"
   GOOSE_MIGRATION_DIR="$GOOSE_MIGRATION_DIR")
 [ -z "$MIGRATION_PGPASSWORD" ] || GOOSE_BASE_ENV+=(PGPASSWORD="$MIGRATION_PGPASSWORD")
@@ -171,9 +199,12 @@ invalid_indexes() {
     psql_bin="$(command -v psql 2>/dev/null || true)"
   fi
   if [ -n "$psql_bin" ]; then
-    local psql_env=(env -i PATH="$PATH" HOME="${HOME:-/root}")
-    [ -z "$MIGRATION_PGPASSWORD" ] || psql_env+=(PGPASSWORD="$MIGRATION_PGPASSWORD")
-    "${psql_env[@]}" "$psql_bin" -X -w -q -At -v ON_ERROR_STOP=1 -d "$AEGIS_MIGRATION_DATABASE_URL" -c "$INVALID_INDEX_SQL" \
+    # 连接串里的口令不进 psql 的命令行参数（直装的迁移 DSN 带着超级用户口令）
+    local psql_env=(scrubbed_run) pw
+    split_dsn_password "$AEGIS_MIGRATION_DATABASE_URL"
+    pw="${MIGRATION_PGPASSWORD:-$DSN_PASSWORD}"
+    [ -z "$pw" ] || psql_env+=(PGPASSWORD="$pw")
+    "${psql_env[@]}" "$psql_bin" -X -w -q -At -v ON_ERROR_STOP=1 -d "$DSN_NO_PASSWORD" -c "$INVALID_INDEX_SQL" \
       || { echo "migration: cannot query pg_index for invalid indexes" >&2; return 2; }
     return 0
   fi
@@ -181,7 +212,7 @@ invalid_indexes() {
     endpoint="$(docker port aegis-postgres 5432/tcp 2>/dev/null | head -n1 || true)"
     if [ -n "$endpoint" ] && [ "$endpoint" = "127.0.0.1:${POSTGRES_PORT:-}" ]; then
       # 口令只按名字经 -e 透传（值来自本进程环境），不进命令行参数
-      env -i PATH="$PATH" HOME="${HOME:-/root}" PGPASSWORD="${POSTGRES_PASSWORD:-}" \
+      scrubbed_run PGPASSWORD="${POSTGRES_PASSWORD:-}" \
         docker exec -i -e PGPASSWORD aegis-postgres \
         psql -X -w -q -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$INVALID_INDEX_SQL" \
         || { echo "migration: cannot query pg_index for invalid indexes" >&2; return 2; }
@@ -454,14 +485,14 @@ if [ "$COMMAND" = up ] && [ "$PRECHECK_ENABLED" -eq 1 ]; then
   echo "migration precheck=ok"
 fi
 
-GOOSE_ENV=(env -i PATH="$PATH" HOME="${HOME:-/root}"
+GOOSE_ENV=(scrubbed_run
   GOOSE_DRIVER="$GOOSE_DRIVER" GOOSE_DBSTRING="$GOOSE_DBSTRING"
   GOOSE_MIGRATION_DIR="$GOOSE_MIGRATION_DIR")
 [ -z "$MIGRATION_PGPASSWORD" ] || GOOSE_ENV+=(PGPASSWORD="$MIGRATION_PGPASSWORD")
 [ -z "$MIGRATION_PGOPTIONS" ] || GOOSE_ENV+=(PGOPTIONS="$MIGRATION_PGOPTIONS")
 case "$COMMAND" in
   up|up-to|up-by-one) ;;
-  *) exec "${GOOSE_ENV[@]}" "$GOOSE" "$COMMAND" "$@" ;;
+  *) goose_rc=0; "${GOOSE_ENV[@]}" "$GOOSE" "$COMMAND" "$@" || goose_rc=$?; exit "$goose_rc" ;;
 esac
 
 # 执行后再查一次无效索引（执行前那次在预检之前，见上面「无效索引护栏」）
