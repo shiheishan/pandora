@@ -380,3 +380,4 @@ fork 进来的第三方代码保留各自的许可证：`pdnd/internal/reality/`
 
 - [docs/backlog.md](docs/backlog.md)：面板待办清单（重构接口契约删除前核对出的未完成项）；前后端接口以代码为准：后端看 `panel/internal/api` 的路由与处理器，前端看 `panel/frontend/src/core/api.ts` 与各页面的 `api.ts`。
 - [pdnd/release/README.md](pdnd/release/README.md)：NativeCore Linux 发布与运行时验收。
+- [panel/deploy/RUNBOOK.md](panel/deploy/RUNBOOK.md)：已装面板的排障手册（按症状分章，巡检告警逐条有对应章节）。
