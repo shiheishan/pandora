@@ -28,6 +28,7 @@ cat >"$T/bin/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 root="$(cd "$(dirname "$0")/.." && pwd)"
 printf 'systemctl %s\n' "$*" >>"$root/calls"
+if [ "$1" = stop ] && [ -f "$root/fail.systemctl-stop" ]; then exit 1; fi
 if [ "$1" = is-active ]; then
   unit="${@: -1}"
   [ -f "$root/active.$unit" ]
@@ -94,7 +95,14 @@ AEGIS_ALERT_TG_CHAT=-1000000000001
 ENV
 INSTALL_DIR=/opt/pandora PG_PORT=5432 VK_PORT=6379 PG_SUPER_PASS=super-fixture-pw-aaaaaaaa
 DB_PASS=owner-fixture-pw-aaaaaaaa APP_PASS=app-fixture-pw-aaaaaaaaaaaaaaaaaaaaaaaa VK_PASS=vk-fixture-pw-aaaaaaaa
+# 口令不进 awk 的命令行参数：PATH 里放一个记 argv 的 awk 包装
+real_awk="$(command -v awk)"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s/awk.argv"\nexec "%s" "$@"\n' "$T" "$real_awk" >"$T/bin/awk"
+chmod 0755 "$T/bin/awk"; hash -r
 fd_render_env "$T/docker.env" >"$T/native.env"
+rm -f "$T/bin/awk"; hash -r
+[ -s "$T/awk.argv" ] || fail 'the awk wrapper did not see fd_render_env'
+if grep -Eq 'fixture-pw' "$T/awk.argv"; then fail 'fd_render_env passes passwords in awk argv'; fi
 want() { grep -qxF "$1" "$T/native.env" || fail "rendered .env lacks: $1"; }
 want 'POSTGRES_USER=aegis'
 want 'POSTGRES_DB=aegis'
@@ -148,10 +156,31 @@ grep -qx 'systemctl daemon-reload' "$T/calls" || fail 'no daemon-reload after re
 # 退回 Docker 的提示用 aegis-* 通配：备份目录里不能有会被拷进 systemd 目录的标记文件
 if ls "$FD_UNITS_BACKUP"/aegis-* | grep -v -E '\.(service|timer)$'; then fail 'marker files match the aegis-* restore glob'; fi
 
+# 重跑（上次硬中断）：状态文件里记着第一次存的原件就沿用，不拿眼下的单元覆盖它
+FD_STATE_FILE="$T/state-units"; printf 'units_backup=%s\n' "$FD_UNITS_BACKUP" >"$FD_STATE_FILE"
+for u in "${FD_UNITS[@]}"; do printf 'ExecStart=/opt/pandora/bin/x %s\n' "$u" >"$FD_SYSTEMD_DIR/$u"; done
+FD_UNITS_BACKUP="$T/units-backup-second"
+fd_save_units 2>/dev/null
+[ "$FD_UNITS_BACKUP" = "$T/units-backup" ] || fail "rerun did not reuse the first backup: $FD_UNITS_BACKUP"
+[ ! -e "$T/units-backup-second" ] || fail 'rerun wrote a second backup from native units'
+grep -qx 'docker aegis-public.service' "$T/units-backup/aegis-public.service" || fail 'the original docker unit backup was overwritten'
+# 没有记录、眼下的单元已经指向直装：停下，不把它当原件存
+FD_STATE_FILE="$T/state-none"; : >"$FD_STATE_FILE"; FD_UNITS_BACKUP="$T/units-backup-third"
+if ( fd_save_units ) >"$T/save.out" 2>&1; then fail 'native units were saved as the docker originals'; fi
+grep -Fq '已经指向直装目录' "$T/save.out" || fail "refusal message: $(cat "$T/save.out")"
+[ ! -e "$T/units-backup-third" ] || fail 'a backup directory was created before refusing'
+FD_STATE_FILE=""
+for u in aegis-public.service aegis-admin.service aegis-node.service aegis-health.service aegis-health.timer; do
+  printf 'docker %s\n' "$u" >"$FD_SYSTEMD_DIR/$u"
+done
+for u in aegis-backup.service aegis-backup.timer aegis-tls-renew.service aegis-tls-renew.timer; do rm -f "$FD_SYSTEMD_DIR/$u"; done
+FD_UNITS_BACKUP="$T/units-backup"
+
 # --- ④ fd_abort --------------------------------------------------------------------
 FD_STATE_FILE="$T/state"; : >"$FD_STATE_FILE"
 SERVICES=(aegis-public aegis-admin aegis-node)
-run_abort() { ( exit 1 ) || fd_abort >"$T/abort.out" 2>&1 || true; }
+# fd_abort 最后 exit，所以放进子 shell 跑
+run_abort() { ( ( exit 1 ) || fd_abort ) >"$T/abort.out" 2>&1 || true; }
 # 还没停服：什么都不做
 FD_WRITERS_STOPPED=0 FD_CUTOVER=0 FD_UNITS_SWAPPED=0; : >"$T/calls"
 run_abort
@@ -177,10 +206,48 @@ grep -qx 'docker aegis-public.service' "$FD_SYSTEMD_DIR/aegis-public.service" ||
 if grep -q 'aegis-backup.timer' "$T/calls"; then fail 'a backup timer that was not running got started'; fi
 if grep -Eq 'docker .*(down|rm|volume)' "$T/calls"; then fail 'abort touched docker containers or volumes'; fi
 
+# ssh 断开：终端没了（写标准错误失败）再来一个 HUP。回滚照样做完：放回单元、拉起 docker 的网关与备份 timer、
+# 状态记 rolled-back、日志文件里有记录。在独立的 bash 里按主流程的样子装 trap、开 errexit，
+# 不放在 || 后面调用（那会关掉 errexit，测不出 set -e 下中途退出）
+cat >"$T/hup.sh" <<HUP
+set -euo pipefail
+export PATH="$T/bin:\$PATH"
+. "$DEPLOY/public-base-url.sh"
+. "$LIB"
+FD_SYSTEMD_DIR="$T/systemd" FD_UNITS_BACKUP="$T/units-backup" FD_STATE_FILE="$T/hup-state"
+FD_LOG="$T/hup.log"; : >"\$FD_STATE_FILE"
+FD_WRITERS_STOPPED=1 FD_CUTOVER=0 FD_UNITS_SWAPPED=1 FD_BACKUP_TIMER_WAS_ACTIVE=1
+trap fd_abort EXIT
+trap 'FD_SIGNAL_RC=129; exit 129' HUP
+trap 'FD_SIGNAL_RC=130; exit 130' INT
+trap 'FD_SIGNAL_RC=143; exit 143' TERM
+exec 2>&-
+kill -HUP \$\$
+sleep 1
+HUP
+for u in "${FD_UNITS[@]}"; do printf 'native %s\n' "$u" >"$FD_SYSTEMD_DIR/$u"; done
+: >"$T/calls"; rm -f "$T/hup.log"
+# 再让「停直装网关」这一步失败：回滚里任何一步失败都不能让它半途退出
+touch "$T/fail.systemctl-stop"
+hup_rc=0; bash "$T/hup.sh" >/dev/null || hup_rc=$?
+rm -f "$T/fail.systemctl-stop"
+[ "$hup_rc" -eq 129 ] || fail "HUP run exit code $hup_rc"
+grep -qx 'systemctl start aegis-public aegis-admin aegis-node' "$T/calls" || fail "HUP with a dead terminal left docker writers down: $(cat "$T/calls")"
+grep -qx 'systemctl start aegis-backup.timer' "$T/calls" || fail 'HUP: backup timer not restarted'
+grep -qx 'systemctl daemon-reload' "$T/calls" || fail 'HUP: units not restored'
+grep -qx 'docker aegis-public.service' "$FD_SYSTEMD_DIR/aegis-public.service" || fail 'HUP: docker unit not put back'
+grep -qx 'state=rolled-back' "$T/hup-state" || fail "HUP: state not rolled-back: $(cat "$T/hup-state")"
+grep -Fq '正在把 docker 布局的服务拉回来' "$T/hup.log" || fail 'HUP: rollback not logged'
+grep -Fq 'docker 布局已恢复服务' "$T/hup.log" || fail 'HUP: rollback end not logged'
+
 # --- ⑤ fd_finalize：只停容器 ----------------------------------------------------------
 DOCKER_DIR="$T/aegispanel"; mkdir -p "$DOCKER_DIR/deploy"
+printf 'POSTGRES_PASSWORD=x\n' >"$DOCKER_DIR/deploy/.env"
 : >"$T/calls"; FD_BACKUP_TIMER_WAS_ACTIVE=1
-fd_finalize >/dev/null
+fd_finalize >/dev/null 2>&1
+# docker 的 .env 改名不删：旧布局的工具（install.sh 升级、/opt/aegispanel/deploy 下的脚本）从此找不到它
+[ ! -e "$DOCKER_DIR/deploy/.env" ] || fail 'the docker .env is still in place after cutover'
+grep -qx 'POSTGRES_PASSWORD=x' "$DOCKER_DIR/deploy/.env.migrated-to-native" || fail 'the docker .env was not kept as .env.migrated-to-native'
 grep -q '^docker compose stop' "$T/calls" || fail "containers not stopped: $(cat "$T/calls")"
 grep -qx 'systemctl start aegis-backup.timer' "$T/calls" || fail 'backup timer not resumed after cutover'
 [ "$(fd_state_get state)" = done ] || fail 'state not done after finalize'
@@ -203,7 +270,7 @@ grep -q '^runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 -p 5432 -d aegis 
 cmp -s "$T/runuser.stdin" <(fd_fingerprint_sql) || fail 'native side did not get the fingerprint SQL'
 if sed 's/ | PGPASSWORD=.*//' "$T/calls" | grep -Eq 'owner-fixture|super-fixture'; then fail 'a password went into argv'; fi
 fp="$(fd_fingerprint_sql)"
-for needle in "goose " "rows=" "acl=" "'<m>'" "definer=" "seq " "policy " "trigger " "col " "ext " "schema "; do
+for needle in "goose " "rows=" " md5=" 'md5(t::text)' 'COLLATE "C"' "SET TimeZone = 'UTC'" "acl=" "'<m>'" "definer=" "seq " "policy " "trigger " "col " "ext " "schema "; do
   grep -Fq -- "$needle" <<<"$fp" || fail "fingerprint does not cover: $needle"
 done
 
@@ -260,7 +327,7 @@ code="$(cat "$NATIVE" "$LIB" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*
 if grep -Eq 'compose down|volume rm|docker rm|rm -rf "?\$DOCKER_DIR|docker system prune' <<<"$code"; then
   fail 'install-native.sh deletes docker containers, volumes or the docker install directory'
 fi
-grep -Fq 'docker compose down -v' "$NATIVE" || fail 'the summary does not print the manual volume-removal command'
+grep -Fq 'down -v   # 删容器与卷' "$NATIVE" || fail 'the summary does not print the manual volume-removal command'
 grep -Fq 'trap fd_abort EXIT' "$NATIVE" || fail 'no rollback trap'
 
 # --- ⑨ install.sh 入口：全新安装交给 install-native.sh，PANDORA_LAYOUT=docker 才走 docker 布局 -------
@@ -278,6 +345,62 @@ awk '/exec bash "\$HERE\/install-native.sh"/ { h = NR } /^step "检查运行环�
   || fail 'install.sh hands off after its docker prerequisite checks'
 grep -Fq 'install-native.sh --from-docker' "$DEPLOY/install.sh" || fail 'docker upgrades do not point at --from-docker'
 grep -Fq 'PANDORA_LAYOUT=docker bash ./install.sh' "$DEPLOY/test-install.sh" || fail 'test-install.sh no longer pins the docker layout'
+# 入口判断 pandora_entry_layout：迁完的直装不会被悄悄切回 docker；两种都在又没记录、迁移没收尾都要人明说
+eval "$(awk '/^pandora_entry_layout\(\) \{$/ { p = 1 } p { print } p && /^}$/ { exit }' "$DEPLOY/install.sh")"
+declare -F pandora_entry_layout >/dev/null || fail 'install.sh has no pandora_entry_layout'
+E="$T/entry-layouts"
+entry() {  # entry <期望 native|docker|stop> <PANDORA_LAYOUT> <场景>
+  local got rc=0
+  got="$(pandora_entry_layout "$E/docker" "$E/native" "$2" 2>"$T/entry.err")" || rc=$?
+  case "$1" in
+    stop) [ "$rc" -ne 0 ] || fail "$3: expected a stop, got $got" ;;
+    *) [ "$rc" -eq 0 ] && [ "$got" = "$1" ] || fail "$3: expected $1, got '$got' rc=$rc $(cat "$T/entry.err")" ;;
+  esac
+}
+reset_e() { rm -rf "$E"; mkdir -p "$E/docker/deploy" "$E/native/deploy"; }
+reset_e;                                                   entry native '' 'fresh host'
+                                                           entry docker docker 'fresh host, docker asked'
+touch "$E/docker/deploy/.env";                             entry docker '' 'docker only'
+reset_e; touch "$E/native/deploy/.env";                    entry native '' 'native only'
+                                                           entry stop docker 'native only, docker asked'
+touch "$E/docker/deploy/.env"; echo state=done >"$E/native/deploy/from-docker.state"
+                                                           entry native '' 'migrated, old docker .env still there'
+                                                           entry stop docker 'migrated, docker asked'
+mv "$E/docker/deploy/.env" "$E/docker/deploy/.env.migrated-to-native"
+                                                           entry native '' 'migrated, docker .env parked'
+reset_e; touch "$E/native/deploy/.env" "$E/docker/deploy/.env"
+                                                           entry stop '' 'both, no record'
+echo state=rolled-back >"$E/native/deploy/from-docker.state"
+                                                           entry stop '' 'migration rolled back'
+                                                           entry docker docker 'migration rolled back, docker asked'
+echo state=cutover >"$E/native/deploy/from-docker.state";  entry stop '' 'cutover not finalized'
+                                                           entry stop docker 'cutover not finalized, docker asked'
+rm "$E/docker/deploy/.env"; echo state=prepared >"$E/native/deploy/from-docker.state"
+                                                           entry stop '' 'record but no docker .env'
+                                                           entry stop k8s 'bogus layout'
+# install.sh 的交接用这个判断（不再只看 /opt/aegispanel/deploy/.env 在不在）
+grep -Fq 'ENTRY_LAYOUT="$(pandora_entry_layout "$DEST" "$NATIVE_DEST" "${PANDORA_LAYOUT:-}")"' "$DEPLOY/install.sh" \
+  || fail 'install.sh does not decide the layout with pandora_entry_layout'
+
+# install-native.sh 普通模式：docker 布局还在服务就不动手
+plain() {  # plain <ok|stop> <docker .env 在不在 yes|no> <state> <场景>
+  rm -rf "$T/plain"; mkdir -p "$T/plain/deploy"; [ "$2" = no ] || touch "$T/plain/deploy/.env"
+  if ( native_plain_mode_guard "$T/plain" "$3" ) >"$T/plain.out" 2>&1; then
+    [ "$1" = ok ] || fail "plain mode $4: went ahead"
+  else
+    [ "$1" = stop ] || fail "plain mode $4: stopped: $(cat "$T/plain.out")"
+  fi
+}
+plain ok no '' 'fresh or native'
+plain stop yes '' 'docker host'
+plain stop yes rolled-back 'after a rolled-back migration'
+plain stop yes prepared 'migration in progress'
+plain ok yes done 'migrated (old .env not parked yet)'
+plain ok no done 'migrated'
+plain stop no cutover 'cutover not finalized'
+plain stop no rolled-back 'record without docker .env'
+grep -Fq 'native_plain_mode_guard "$DOCKER_DIR" "$(fd_state_get state)"' "$NATIVE" || fail 'install-native.sh plain mode does not run the guard'
+
 # --- ⑩ 发布控制器的缺省安装目录跟着布局走 -----------------------------------------------
 eval "$(awk '/^default_app_dir\(\) \{$/ { p = 1 } p { print } p && /^}$/ { exit }' "$DEPLOY/release-stop-the-world.sh")"
 declare -F default_app_dir >/dev/null || fail 'release-stop-the-world.sh has no default_app_dir'

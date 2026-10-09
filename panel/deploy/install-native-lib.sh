@@ -16,34 +16,6 @@ die(){ printf '\033[1;31m%s\033[0m\n' "$*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "缺少 $1"; }
 
 #------------------------------------------------------------------------------
-# 发布目录（install-native_backup_mock_test.sh）
-#------------------------------------------------------------------------------
-# 与 install.sh / install-linux-binaries.sh 同样的检查，在动手之前：发布目录与它的每一级父目录都归 root、
-# 不可被组或他人写，目录里没有别人能改的文件（防止有人往 /tmp 里塞一份假的），SHA256SUMS 逐个对得上，
-# 节点端发布物绑定 release-artifact.env 在（生产模式下没有它节点接入全部被拒）
-native_check_release_tree() {
-  local root="$1" probe owner perm
-  [ -d "$root/bin" ] || die "这不像一个发布目录：找不到 $root/bin"
-  [ -f "$root/SHA256SUMS" ] || die "发布目录缺少 SHA256SUMS"
-  [ -f "$root/deploy/release-artifact.env" ] || die "发布目录缺少 deploy/release-artifact.env（build-release.sh 生成，记着节点端二进制的 SHA-256 与版本）"
-  probe="$root"
-  while :; do
-    owner="$(stat -c %u -- "$probe")" && perm="$(stat -c %a -- "$probe")" || die "读不出 $probe 的属主与权限"
-    if [ "$owner" != 0 ] || (( (8#$perm & 8#022) != 0 )); then
-      die "发布目录或它的父路径不归 root、或可被他人写入：$probe（属主 $owner，权限 $perm）。把发布包放到 root 独占的目录再装，例如：
-  install -d -o root -g root -m 0755 /opt/pandora-release
-  cp -r <发布目录> /opt/pandora-release/rel && chown -R root:root /opt/pandora-release"
-    fi
-    [ "$probe" = / ] && break
-    probe="$(dirname -- "$probe")"
-  done
-  if find "$root" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .; then
-    die "发布目录里有不归 root 或可被他人写入的文件：chown -R root:root $root && chmod -R go-w $root"
-  fi
-  (cd "$root" && sha256sum --quiet --strict -c SHA256SUMS) || die "发布包校验不过（SHA256SUMS 对不上），文件被改过或不完整，换一份完整的发布包"
-}
-
-#------------------------------------------------------------------------------
 # PostgreSQL 集群（install-native_pgcluster_mock_test.sh）
 #------------------------------------------------------------------------------
 
@@ -195,6 +167,42 @@ native_render_unit() {
 }
 
 #------------------------------------------------------------------------------
+# Valkey 口令与库编码（install-native_backup_mock_test.sh）
+#------------------------------------------------------------------------------
+# 系统 Valkey / Redis 的 requirepass 设成 <口令>：已经是它就不动、返回 1（不用重启，升级时网关还连着）；
+# 改了返回 0。口令只经标准输入与环境给 grep / awk，不进任何命令行参数
+#   native_set_valkey_password <配置文件> <口令>
+native_set_valkey_password() {
+  local conf="$1" tmp
+  printf 'requirepass %s\n' "$2" | grep -qxF -f - "$conf" && return 1
+  tmp="$(mktemp "$conf.XXXXXX")"
+  NATIVE_VK_PASS="$2" awk '
+    /^requirepass[[:space:]]/ { if (!done) print "requirepass " ENVIRON["NATIVE_VK_PASS"]; done = 1; next }
+    { print }
+    END { if (!done) { print ""; print "requirepass " ENVIRON["NATIVE_VK_PASS"] } }
+  ' "$conf" >"$tmp" || { rm -f -- "$tmp"; die "改 $conf 的 requirepass 失败"; }
+  # 原地覆盖内容（保留属主与权限：valkey 组要能读）
+  cat "$tmp" >"$conf" || { rm -f -- "$tmp"; die "写回 $conf 失败"; }
+  rm -f -- "$tmp"
+  return 0
+}
+
+# 升级时看一眼 aegis 库的编码：更早的直装用 LC_ALL=C 建集群，库可能是 SQL_ASCII（不校验编码，中文按字节存）。
+# 只告警、给办法，不自动改库（换编码要导出重建，得停服、由人决定）
+#   native_check_db_encoding <端口>
+native_check_db_encoding() {
+  local enc
+  enc="$(native_pg_peer -p "$1" -d postgres -Atc "SELECT pg_catalog.pg_encoding_to_char(encoding) FROM pg_catalog.pg_database WHERE datname = 'aegis'" 2>/dev/null)" || return 0
+  case "$enc" in
+    SQL_ASCII)
+      printf '\033[1;33m%s\033[0m\n' "  ! 库 aegis 的编码是 SQL_ASCII（更早的直装用 C locale 建的集群）：不校验编码，中文按字节存，排序与大小写函数对中文无效。" >&2
+      printf '%s\n' "    这次升级照常做、不改库；找个停服窗口按 deploy/MIGRATION-RUNBOOK.md「直装库是 SQL_ASCII」一节导出重建成 UTF8" >&2
+      return 2 ;;
+  esac
+  return 0
+}
+
+#------------------------------------------------------------------------------
 # --from-docker：把 docker 布局（install.sh，/opt/aegispanel）迁到直装。
 # 备份 → 装直装 → 恢复 → 核对 → 切换 → 停 Docker 容器；删卷不做，只打印命令。任何一步失败（切换之前）
 # 都把 docker 布局的服务拉回来，docker 那边的库与卷全程只读。install-native_fromdocker_mock_test.sh 测这些函数
@@ -228,6 +236,7 @@ fd_state_set() {
   done
   chmod 0600 "$tmp"
   mv -f -- "$tmp" "$FD_STATE_FILE"
+  fd_log "  状态：$*"
 }
 
 # docker 布局的库：容器 aegis-postgres 里的客户端，以 docker .env 的 POSTGRES_USER（容器里的超级用户）连；
@@ -242,10 +251,12 @@ fd_docker_pg() {
 # 只换连库连缓存的几项、加 postgres 超级用户口令与布局，路径里的 /opt/aegispanel、/var/backups/aegispanel
 # 换成直装的；install.sh 留下的「网关经 unix socket」说明注释去掉（直装不经 docker 挂载）。
 # 用到的全局量：INSTALL_DIR NATIVE_BACKUP_DIR PG_PORT VK_PORT PG_SUPER_PASS DB_PASS APP_PASS VK_PASS
+# 口令经 awk 的环境（ENVIRON）给，不用 -v：-v 的值在 awk 的命令行参数里，ps 看得见
 fd_render_env() {
-  awk -v inst="$INSTALL_DIR" -v bdir="$NATIVE_BACKUP_DIR" -v pg_port="$PG_PORT" -v vk_port="$VK_PORT" \
-      -v super="$PG_SUPER_PASS" -v owner="$DB_PASS" -v app="$APP_PASS" -v vk="$VK_PASS" '
+  FD_ENV_SUPER="$PG_SUPER_PASS" FD_ENV_OWNER="$DB_PASS" FD_ENV_APP="$APP_PASS" FD_ENV_VK="$VK_PASS" \
+  awk -v inst="$INSTALL_DIR" -v bdir="$NATIVE_BACKUP_DIR" -v pg_port="$PG_PORT" -v vk_port="$VK_PORT" '
     BEGIN {
+      super = ENVIRON["FD_ENV_SUPER"]; owner = ENVIRON["FD_ENV_OWNER"]; app = ENVIRON["FD_ENV_APP"]; vk = ENVIRON["FD_ENV_VK"]
       order = "POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT POSTGRES_SUPER_PASSWORD AEGIS_MIGRATION_DATABASE_URL AEGIS_DB_APP_PASSWORD VALKEY_PASSWORD VALKEY_PORT AEGIS_DATABASE_URL AEGIS_REDIS_URL PANDORA_DB_LAYOUT"
       repl["POSTGRES_USER"] = "aegis"; repl["POSTGRES_PASSWORD"] = owner; repl["POSTGRES_DB"] = "aegis"
       repl["POSTGRES_PORT"] = pg_port; repl["POSTGRES_SUPER_PASSWORD"] = super
@@ -275,11 +286,19 @@ fd_render_env() {
 }
 
 # 库的指纹：迁移水位、每个模式与对象的属主（跑迁移的超级用户记作 <m>：docker 那边是 POSTGRES_USER，
-# 直装是 postgres）、行级安全开关、表与列与函数的权限、每张表的行数、序列当前值、策略、触发器、扩展。
-# 两边逐行相同才切换。超级用户不受行级安全限制，数到的是全部行
+# 直装是 postgres）、行级安全开关、表与列与函数的权限、每张表的行数与内容摘要、序列当前值、策略、触发器、
+# 扩展。两边逐行相同才切换。超级用户不受行级安全限制，数到、摘到的是全部行。
+# 内容摘要：每行的文本形式取 md5，按摘要排序（COLLATE "C"，与两边库的排序规则无关）后再取 md5；
+# 时区、日期与浮点的输出格式先钉死，同一行在两边打印出来一字不差。分区表的父表只数行，内容由各分区摘。
+# 耗时与整库扫一遍相当：约 100 MB 的库几秒，每 GB 估一两分钟（只在迁移时跑一次）
 fd_fingerprint_sql() {
   cat <<'SQL'
 \set ON_ERROR_STOP on
+SET TimeZone = 'UTC';
+SET DateStyle = 'ISO, YMD';
+SET IntervalStyle = 'postgres';
+SET extra_float_digits = 1;
+SET bytea_output = 'hex';
 SELECT 'goose ' || coalesce(max(version_id) FILTER (WHERE is_applied), 0) FROM public.goose_db_version;
 SELECT 'ext ' || extname || ' ' || extversion FROM pg_catalog.pg_extension ORDER BY 1;
 SELECT 'schema ' || n.nspname || ' ' || CASE WHEN r.rolname = :'migrator' THEN '<m>' ELSE r.rolname END
@@ -291,6 +310,10 @@ SELECT 'rel ' || n.nspname || '.' || c.relname || ' ' || c.relkind || ' '
        || ' acl=' || coalesce(regexp_replace(c.relacl::text, '(^|[{,/])' || :'migrator' || '([=/,}])', '\1<m>\2', 'g'), '-')
        || CASE WHEN c.relkind IN ('r', 'p') THEN ' rows=' || (xpath('/row/c/text()',
             query_to_xml(format('SELECT count(*) AS c FROM %I.%I', n.nspname, c.relname), false, true, '')))[1]::text
+          ELSE '' END
+       || CASE WHEN c.relkind = 'r' THEN ' md5=' || (xpath('/row/c/text()',
+            query_to_xml(format('SELECT md5(coalesce(string_agg(h, '''' ORDER BY h COLLATE "C"), '''')) AS c FROM (SELECT md5(t::text) AS h FROM %I.%I t) s',
+              n.nspname, c.relname), false, true, '')))[1]::text
           ELSE '' END
   FROM pg_catalog.pg_class c
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -372,13 +395,38 @@ fd_stop_docker_writers() {
   systemctl stop "${SERVICES[@]}" || die "停不下 docker 布局的网关（systemctl stop ${SERVICES[*]}）"
 }
 fd_start_old_writers() {
-  systemctl start "${SERVICES[@]}" 2>/dev/null || printf '%s\n' "  ! 网关没能全部起来：systemctl status ${SERVICES[*]}" >&2
-  [ "$FD_BACKUP_TIMER_WAS_ACTIVE" != 1 ] || systemctl start aegis-backup.timer 2>/dev/null || true
+  systemctl start "${SERVICES[@]}" 2>/dev/null || fd_log "  ! 网关没能全部起来：systemctl status ${SERVICES[*]}"
+  [ "$FD_BACKUP_TIMER_WAS_ACTIVE" != 1 ] || systemctl start aegis-backup.timer 2>/dev/null \
+    || fd_log "  ! 每日备份 timer 没能起来：systemctl start aegis-backup.timer"
+}
+
+# 迁移日志：每一行同时写日志文件（与状态文件同目录，0600）和标准错误。终端断了（ssh 掉线时写标准错误
+# 返回 EIO）也照样落到日志里，调用方不会因为写失败而中断
+fd_log() {
+  local log="${FD_LOG:-}"
+  [ -n "$log" ] || { [ -n "$FD_STATE_FILE" ] && log="$(dirname -- "$FD_STATE_FILE")/from-docker.log"; }
+  if [ -n "$log" ] && [ -d "$(dirname -- "$log")" ]; then
+    { (umask 077 && printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$log"); } 2>/dev/null || true
+  fi
+  { printf '%s\n' "$*" >&2; } 2>/dev/null || true
 }
 
 # 切换前把会被覆盖的同名单元存一份；失败时原样放回（之前没有的删掉）
+# 重跑时（上次硬中断：SIGKILL、断电）状态文件里已经记着第一次存的原件，沿用它，不拿眼下可能已是直装的
+# 单元覆盖原件；没有记录而眼下的单元已经指向直装目录，就停下（那不是 docker 布局的原件）
 fd_save_units() {
-  local u
+  local u prev
+  prev="$(fd_state_get units_backup)"
+  if [ -n "$prev" ] && [ -d "$prev" ]; then
+    FD_UNITS_BACKUP="$prev"
+    fd_log "  沿用上次存下的原单元：$prev"
+    return 0
+  fi
+  for u in "${FD_UNITS[@]}"; do
+    if [ -f "$FD_SYSTEMD_DIR/$u" ] && grep -qF "$INSTALL_DIR/" "$FD_SYSTEMD_DIR/$u"; then
+      die "$FD_SYSTEMD_DIR/$u 已经指向直装目录 $INSTALL_DIR，又没有存下的 docker 原单元，不覆盖；从 docker 布局的发布包重装单元后再迁"
+    fi
+  done
   install -d -m 0700 "$FD_UNITS_BACKUP"
   for u in "${FD_UNITS[@]}"; do
     if [ -f "$FD_SYSTEMD_DIR/$u" ]; then cp -a "$FD_SYSTEMD_DIR/$u" "$FD_UNITS_BACKUP/$u"; else : >"$FD_UNITS_BACKUP/.absent.$u"; fi
@@ -413,18 +461,29 @@ fd_gateways_healthy() {
 
 # 退出时（EXIT trap）：docker 的写入者已停、直装还没接管，就把 docker 布局拉回来。直装这边的库留着，
 # 重跑 --from-docker 时改名放一边再重来；docker 那边的库与卷一直没动过
+# 回滚本身不能半途而废：关掉 errexit（终端断了写标准错误会失败）、屏蔽 HUP/INT/TERM（再来一个信号不打断），
+# 每一步的结果写进日志文件。它是 EXIT trap：信号处理里的 exit 到这里时 $? 已经复位，退出码取信号 trap
+# 记下的 FD_SIGNAL_RC；最后 exit（不是 return），脚本的退出码就是它
 fd_abort() {
   local rc=$?
-  [ "$FD_WRITERS_STOPPED" = 1 ] && [ "$FD_CUTOVER" != 1 ] || return "$rc"
-  printf '\033[1;31m%s\033[0m\n' "从 Docker 迁移没完成，正在把 docker 布局的服务拉回来" >&2
+  set +e
+  trap '' HUP INT TERM
+  [ "$rc" -ne 0 ] || rc="${FD_SIGNAL_RC:-0}"
+  [ "$FD_WRITERS_STOPPED" = 1 ] && [ "$FD_CUTOVER" != 1 ] || exit "$rc"
+  fd_log "从 Docker 迁移没完成（退出码 $rc），正在把 docker 布局的服务拉回来"
   if [ "$FD_UNITS_SWAPPED" = 1 ]; then
-    systemctl stop "${SERVICES[@]}" 2>/dev/null || true
-    fd_restore_units || printf '%s\n' "  ! 单元没能全部放回，手工从 $FD_UNITS_BACKUP 拷回 /etc/systemd/system/ 后 systemctl daemon-reload" >&2
+    systemctl stop "${SERVICES[@]}" 2>/dev/null
+    if fd_restore_units; then
+      fd_log "  原来的 systemd 单元已放回（$FD_UNITS_BACKUP）"
+    else
+      fd_log "  ! 单元没能全部放回，手工从 $FD_UNITS_BACKUP 拷回 /etc/systemd/system/ 后 systemctl daemon-reload"
+    fi
   fi
   fd_start_old_writers
-  [ -z "$FD_STATE_FILE" ] || [ ! -d "$(dirname "$FD_STATE_FILE")" ] || fd_state_set state=rolled-back || true
-  printf '%s\n' "  docker 布局已恢复服务（数据没动）。直装这边的库 aegis 留着，修好原因后重跑 --from-docker 会把它改名放一边再来" >&2
-  return "$rc"
+  [ -z "$FD_STATE_FILE" ] || [ ! -d "$(dirname -- "$FD_STATE_FILE")" ] || fd_state_set state=rolled-back
+  fd_log "  docker 布局已恢复服务（数据没动）。直装这边的库 aegis 留着，修好原因后重跑 --from-docker 会把它改名放一边再来"
+  [ "$rc" -ne 0 ] || rc=1
+  exit "$rc"
 }
 
 # 直装接管之后：停 docker 的两个容器（restart: unless-stopped，手工停下后重启也不会自己起来），
@@ -436,9 +495,38 @@ fd_finalize() {
   else
     printf '%s\n' "  ! 没能停下 Docker 容器：cd $DOCKER_DIR/deploy && docker compose stop" >&2
   fi
+  # docker 布局的 .env 改名（不删）：之后旧布局的工具（install.sh 升级、/opt/aegispanel/deploy 下的脚本）
+  # 一律因为找不到 .env 而停下，不会再把服务悄悄切回 docker 那份旧库。退回 Docker 时先改回来
+  if [ -f "$DOCKER_DIR/deploy/.env" ]; then
+    local parked="$DOCKER_DIR/deploy/.env.migrated-to-native"
+    [ ! -e "$parked" ] || parked="$parked.$(date +%Y%m%d%H%M%S)"
+    if mv -- "$DOCKER_DIR/deploy/.env" "$parked"; then
+      fd_log "  docker 布局的 .env 改名为 $parked（旧布局的工具从此找不到它）"
+    else
+      fd_log "  ! 没能把 $DOCKER_DIR/deploy/.env 改名，手工 mv 成 .env.migrated-to-native，免得再按 docker 布局升级"
+    fi
+  fi
   [ "$FD_BACKUP_TIMER_WAS_ACTIVE" != 1 ] || systemctl start aegis-backup.timer 2>/dev/null \
-    || printf '%s\n' "  ! 每日备份 timer 之前在跑，现在没起来：systemctl enable --now aegis-backup.timer" >&2
+    || fd_log "  ! 每日备份 timer 之前在跑，现在没起来：systemctl enable --now aegis-backup.timer"
   fd_state_set state=done
+}
+
+# 普通模式（不带 --from-docker）动手之前：docker 布局还在服务就不碰。以前直接跑会按首装新建口令与空库、
+# 盖掉 docker 的单元；--from-docker 回滚后再跑会在回滚留下的副本上「升级」
+#   native_plain_mode_guard <docker 布局目录> <from-docker.state 里的 state>
+native_plain_mode_guard() {
+  case "$2" in
+    done) return 0 ;;
+    cutover) die "上次从 Docker 迁到直装已切换、还没收尾：先 sudo bash install-native.sh --from-docker 收尾" ;;
+  esac
+  if [ ! -f "$1/deploy/.env" ]; then
+    [ -n "$2" ] || return 0
+    die "有从 Docker 迁移的记录（$2），却找不到 docker 布局的 $1/deploy/.env，不知道数据在哪，停下"
+  fi
+  if [ -n "$2" ]; then
+    die "上次从 Docker 迁到直装没完成（$2），现在服务的还是 docker 布局（$1）：继续迁移跑 install-native.sh --from-docker；照旧升级 docker 布局用 PANDORA_LAYOUT=docker install.sh"
+  fi
+  die "这台装着 docker 布局（$1）：迁到直装跑 install-native.sh --from-docker（停服几分钟）；照旧升级 docker 布局用 install.sh"
 }
 
 # 动手之前核对 docker 布局这一侧（只读）：容器在跑、库连得上、有迁移记录且不比发布包新、角色能搬、

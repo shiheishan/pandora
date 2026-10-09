@@ -102,27 +102,78 @@ native_ensure_age_key "$key" >/dev/null
 grep -qx 'AGE-SECRET-KEY-1EXISTING' "$key" || fail 'an existing key was overwritten'
 [ ! -s "$T/keygen.calls" ] || fail 'age-keygen -o ran over an existing key'
 
-# native_check_release_tree：缺件、不归 root 的发布目录在动手之前就拒绝（与 install.sh 同样的检查）
+# native_verify_release_tree：定义在 install-native.sh 里、在 source 任何发布包文件之前跑（校验函数不能放在
+# 被校验的 install-native-lib.sh 里）；缺件、不归 root 的发布目录在动手之前就拒绝
+eval "$(awk '/^native_verify_release_tree\(\) \{$/ { p = 1 } p { print } p && /^}$/ { exit }' "$NATIVE")"
+declare -F native_verify_release_tree >/dev/null || fail 'install-native.sh does not define native_verify_release_tree'
+if grep -q 'native_verify_release_tree\|native_check_release_tree' "$DEPLOY/install-native-lib.sh"; then
+  fail 'the release check still lives in the file it is supposed to verify'
+fi
 rel="$T/rel"; mkdir -p "$rel/deploy"
-if ( native_check_release_tree "$rel" ) >"$T/rt.out" 2>&1; then fail 'a release without bin/ was accepted'; fi
+if native_verify_release_tree "$rel" >"$T/rt.out" 2>&1; then fail 'a release without bin/ was accepted'; fi
 grep -Fq '找不到' "$T/rt.out" || fail "release check message: $(cat "$T/rt.out")"
 mkdir -p "$rel/bin"
-if ( native_check_release_tree "$rel" ) >"$T/rt.out" 2>&1; then fail 'a release without SHA256SUMS was accepted'; fi
+if native_verify_release_tree "$rel" >"$T/rt.out" 2>&1; then fail 'a release without SHA256SUMS was accepted'; fi
 : >"$rel/SHA256SUMS"
-if ( native_check_release_tree "$rel" ) >"$T/rt.out" 2>&1; then fail 'a release without release-artifact.env was accepted'; fi
+if native_verify_release_tree "$rel" >"$T/rt.out" 2>&1; then fail 'a release without release-artifact.env was accepted'; fi
 grep -Fq 'release-artifact.env' "$T/rt.out" || fail "release-artifact message: $(cat "$T/rt.out")"
 : >"$rel/deploy/release-artifact.env"
 if stat -c %u / >/dev/null 2>&1 && [ "$(id -u)" -ne 0 ]; then
-  if ( native_check_release_tree "$rel" ) >"$T/rt.out" 2>&1; then fail 'a release owned by a normal user was accepted'; fi
+  if native_verify_release_tree "$rel" >"$T/rt.out" 2>&1; then fail 'a release owned by a normal user was accepted'; fi
   grep -Fq '不归 root' "$T/rt.out" || fail "ownership message: $(cat "$T/rt.out")"
 fi
-n_check="$(grep -n 'native_check_release_tree "$RELEASE_ROOT"' "$NATIVE" | head -1 | cut -d: -f1)"
-n_first="$(grep -n 'say "\[0/6\]' "$NATIVE" | head -1 | cut -d: -f1)"
-[ -n "$n_check" ] && [ -n "$n_first" ] && [ "$n_check" -lt "$n_first" ] || fail 'install-native.sh does not verify the release before changing anything'
+n_check="$(grep -n '^native_verify_release_tree "$RELEASE_ROOT" || exit 1' "$NATIVE" | head -1 | cut -d: -f1)"
+n_source="$(grep -n '^\. "$SCRIPT_DIR/install-native-lib.sh"' "$NATIVE" | head -1 | cut -d: -f1)"
+n_first_source="$(grep -nE '^[[:space:]]*\. "?\$SCRIPT_DIR/' "$NATIVE" | head -1 | cut -d: -f1)"
+[ -n "$n_check" ] && [ -n "$n_source" ] && [ "$n_check" -lt "$n_source" ] && [ "$n_first_source" = "$n_source" ] \
+  || fail 'install-native.sh sources release files before verifying the release'
 grep -Fq 'RELEASE_BIN="$RELEASE_ROOT/bin"' "$NATIVE" || fail 'binaries are not taken from the verified release root'
 # 节点端分发的二进制随程序一起装（以前直装没装，一键安装节点在直装面板上拿不到二进制）
 grep -Fq 'cp -f "$RELEASE_ROOT"/pdnd-dist/* "$INSTALL_DIR/pdnd-dist/"' "$NATIVE" || fail 'install-native.sh does not install pdnd-dist'
 awk '/pandora_run_migrations "\$MODE"/ { m = NR } /cp -f "\$RELEASE_ROOT"\/pdnd-dist/ { p = NR } END { exit !(m && p && m < p) }' "$NATIVE" \
   || fail 'pdnd-dist is replaced before the migrations succeed'
+
+# native_set_valkey_password：口令只经标准输入与环境给 grep / awk，不进任何命令行参数；已经是它就不动
+for tool in grep awk sed cat; do
+  real="$(command -v "$tool")"
+  printf '#!/usr/bin/env bash\nprintf "%s %%s\\n" "$*" >>"%s/tools.argv"\nexec "%s" "$@"\n' "$tool" "$T" "$real" >"$T/bin/$tool"
+  chmod 0755 "$T/bin/$tool"
+done
+hash -r
+conf="$T/valkey.conf"; printf 'port 6379\n# requirepass foobared\nrequirepass old-valkey-pw-fixture\n' >"$conf"; chmod 0640 "$conf"
+: >"$T/tools.argv"
+native_set_valkey_password "$conf" new-valkey-pw-fixture || fail 'a changed password was reported as unchanged'
+for tool in grep awk sed cat; do rm -f "$T/bin/$tool"; done; hash -r
+grep -qx 'requirepass new-valkey-pw-fixture' "$conf" || fail "requirepass not set: $(cat "$conf")"
+[ "$(grep -c '^requirepass' "$conf")" -eq 1 ] || fail 'requirepass duplicated'
+grep -qx '# requirepass foobared' "$conf" && grep -qx 'port 6379' "$conf" || fail 'other lines changed'
+mode="$(stat -c %a "$conf" 2>/dev/null || stat -f %Lp "$conf")"; [ "$mode" = 640 ] || fail "valkey.conf mode became $mode"
+[ -s "$T/tools.argv" ] || fail 'the argv wrappers saw nothing'
+if grep -q 'valkey-pw-fixture' "$T/tools.argv"; then fail "the Valkey password reached a command line: $(grep valkey-pw-fixture "$T/tools.argv")"; fi
+if native_set_valkey_password "$conf" new-valkey-pw-fixture; then fail 'an unchanged password asked for a restart'; fi
+printf 'port 6379\n' >"$conf"
+native_set_valkey_password "$conf" new-valkey-pw-fixture || true
+grep -qx 'requirepass new-valkey-pw-fixture' "$conf" || fail 'requirepass not appended when missing'
+if grep -Fq 'grep -qxF "requirepass ${VK_PASS}"' "$NATIVE" || grep -Fq 'sed -i "s|^requirepass.*|requirepass ${VK_PASS}|"' "$NATIVE"; then
+  fail 'install-native.sh still puts the Valkey password on a command line'
+fi
+
+# native_check_db_encoding：SQL_ASCII 告警给办法（返回 2），UTF8 不出声；不改库
+cat >"$T/bin/runuser" <<'MOCK'
+#!/usr/bin/env bash
+printf 'runuser %s\n' "$*" >>"$(dirname "$0")/../runuser.calls"
+cat "$(dirname "$0")/../encoding"
+MOCK
+chmod 0755 "$T/bin/runuser"
+echo SQL_ASCII >"$T/encoding"; rc=0
+native_check_db_encoding 5432 2>"$T/enc.err" || rc=$?
+[ "$rc" -eq 2 ] || fail "SQL_ASCII returned $rc"
+grep -Fq 'SQL_ASCII' "$T/enc.err" && grep -Fq 'MIGRATION-RUNBOOK.md' "$T/enc.err" || fail "encoding warning: $(cat "$T/enc.err")"
+echo UTF8 >"$T/encoding"; rc=0
+native_check_db_encoding 5432 2>"$T/enc.err" || rc=$?
+[ "$rc" -eq 0 ] && [ ! -s "$T/enc.err" ] || fail 'UTF8 database produced a warning'
+if grep -Eq 'ALTER DATABASE|UPDATE |CREATE DATABASE' "$T/runuser.calls"; then fail 'the encoding check changed the database'; fi
+rm -f "$T/bin/runuser"
+grep -Fq 'native_check_db_encoding "$PG_PORT"' "$NATIVE" || fail 'upgrade does not check the database encoding'
 
 printf 'install-native backup mock: PASS\n'

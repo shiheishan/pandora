@@ -12,13 +12,40 @@
 # 信条: 目录简单、文件简单、不臃肿
 set -euo pipefail
 
-# 常量与函数在同目录的 install-native-lib.sh（只进发布包，不装到主机上）
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-[[ -f "$SCRIPT_DIR/install-native-lib.sh" ]] || { echo "发布目录缺少 deploy/install-native-lib.sh" >&2; exit 1; }
-# shellcheck source=install-native-lib.sh
-. "$SCRIPT_DIR/install-native-lib.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+RELEASE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
-ADMIN_PATH="ops_$(openssl rand -hex 12)"   # 高熵管理路径
+# 发布目录校验，与 install.sh / install-linux-binaries.sh 同样的口径：发布目录与它的每一级父目录都归 root、
+# 不可被组或他人写，目录里没有别人能改的文件（防止有人往 /tmp 里塞一份假的），SHA256SUMS 逐个对得上，
+# 节点端发布物绑定 release-artifact.env 在（生产模式下没有它节点接入全部被拒）。
+# 定义在这里、在 source 发布包里的任何文件之前跑：校验函数不能放在被校验的文件里。
+# install-native_backup_mock_test.sh 把它抽出来单测
+native_verify_release_tree() {
+  local root="$1" probe owner perm
+  [ -d "$root/bin" ] || { echo "这不像一个发布目录：找不到 $root/bin" >&2; return 1; }
+  [ -f "$root/SHA256SUMS" ] || { echo "发布目录缺少 SHA256SUMS" >&2; return 1; }
+  [ -f "$root/deploy/release-artifact.env" ] \
+    || { echo "发布目录缺少 deploy/release-artifact.env（build-release.sh 生成，记着节点端二进制的 SHA-256 与版本）" >&2; return 1; }
+  probe="$root"
+  while :; do
+    owner="$(stat -c %u -- "$probe")" && perm="$(stat -c %a -- "$probe")" \
+      || { echo "读不出 $probe 的属主与权限" >&2; return 1; }
+    if [ "$owner" != 0 ] || (( (8#$perm & 8#022) != 0 )); then
+      printf '%s\n' "发布目录或它的父路径不归 root、或可被他人写入：$probe（属主 $owner，权限 $perm）。把发布包放到 root 独占的目录再装，例如：" \
+        "  install -d -o root -g root -m 0755 /opt/pandora-release" \
+        "  cp -r <发布目录> /opt/pandora-release/rel && chown -R root:root /opt/pandora-release" >&2
+      return 1
+    fi
+    [ "$probe" = / ] && break
+    probe="$(dirname -- "$probe")"
+  done
+  if find "$root" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .; then
+    echo "发布目录里有不归 root 或可被他人写入的文件：chown -R root:root $root && chmod -R go-w $root" >&2
+    return 1
+  fi
+  (cd "$root" && sha256sum --quiet --strict -c SHA256SUMS) \
+    || { echo "发布包校验不过（SHA256SUMS 对不上），文件被改过或不完整，换一份完整的发布包" >&2; return 1; }
+}
 
 FROM_DOCKER=0
 for arg in "$@"; do
@@ -27,17 +54,24 @@ for arg in "$@"; do
     -h|--help)
       printf '%s\n' "用法: sudo bash install-native.sh                首装或升级直装布局（/opt/pandora）" \
         "      sudo bash install-native.sh --from-docker  把 install.sh 装的 docker 布局（/opt/aegispanel）迁到直装" \
-        "迁移会停服（导出、恢复、核对、迁移、切换期间面板不可用）；Docker 的卷不删，收尾打印删除命令。"
+        "迁移会停服（导出、恢复、核对、迁移、切换期间面板不可用）；Docker 的卷不删，收尾打印删除命令。" \
+        "迁移请在 tmux 里或用 systemd-run 跑（见 deploy/RUNBOOK.md 第 13 章），ssh 断了也不会半途停下。"
       exit 0 ;;
-    *) die "不认识的参数：$arg（只认 --from-docker、--help）" ;;
+    *) echo "不认识的参数：$arg（只认 --from-docker、--help）" >&2; exit 1 ;;
   esac
 done
 
 # ── 前置 ──────────────────────────────────────────────
-[[ $EUID -eq 0 ]] || die "请用 root 运行: sudo bash install-native.sh"
-need openssl; need curl; need systemctl; need sha256sum
-RELEASE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
-native_check_release_tree "$RELEASE_ROOT"
+[[ $EUID -eq 0 ]] || { echo "请用 root 运行: sudo bash install-native.sh" >&2; exit 1; }
+command -v sha256sum >/dev/null 2>&1 || { echo "缺少 sha256sum" >&2; exit 1; }
+native_verify_release_tree "$RELEASE_ROOT" || exit 1
+
+# 常量与函数在同目录的 install-native-lib.sh（只进发布包，不装到主机上）：上面验过发布目录之后才 source
+# shellcheck source=install-native-lib.sh
+. "$SCRIPT_DIR/install-native-lib.sh"
+need openssl; need curl; need systemctl
+
+ADMIN_PATH="ops_$(openssl rand -hex 12)"   # 高熵管理路径
 
 # 首装还是升级：已有 .env 就是升级，已有的行一字不动（里面是随机生成的口令与密钥，
 # 重写一次就连不上原来的数据库、解不开信封加密的字段），新版本新增的键缺了才追加到末尾。首装在动手之前先拿到
@@ -77,10 +111,19 @@ if [[ "$FROM_DOCKER" = 1 ]]; then
   install -d -m 0755 "$INSTALL_DIR" "$INSTALL_DIR/deploy"
   fd_state_set state=preparing
   PUBLIC_BASE_URL="$(pandora_env_file_value "$FD_DOCKER_ENV" AEGIS_PUBLIC_BASE_URL)"
-  # 停了 docker 的写入者之后、直装接管之前，任何退出（含 Ctrl-C、kill）都把 docker 布局拉回来
+  # 停了 docker 的写入者之后、直装接管之前，任何退出（含 Ctrl-C、kill、ssh 断开的 HUP）都把 docker 布局拉回来；
+  # 迁移的每一步与回滚的结果另写一份日志（终端断了也看得到）
+  FD_LOG="$INSTALL_DIR/deploy/from-docker.log"
   trap fd_abort EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
+  trap 'FD_SIGNAL_RC=129; exit 129' HUP
+  trap 'FD_SIGNAL_RC=130; exit 130' INT
+  trap 'FD_SIGNAL_RC=143; exit 143' TERM
+else
+  # 普通模式：docker 布局还在服务就不动手（迁完的除外），见 native_plain_mode_guard
+  native_plain_mode_guard "$DOCKER_DIR" "$(fd_state_get state)"
+fi
+if [[ "$FROM_DOCKER" = 1 ]]; then
+  :
 elif [[ -f "$ENV_FILE" ]]; then
   MODE=upgrade
   say "检测到 $ENV_FILE，按升级处理：保留现有配置与口令"
@@ -104,12 +147,15 @@ if [[ "$(stat -c %a /dev/null 2>/dev/null)" != "666" ]]; then
 fi
 
 # 0.2 locale：最小化系统可能没有 en_US.UTF-8，pg_createcluster / initdb 会失败。
-#     直接生成常用 locale；失败则后续建集群用 C locale 兜底。
+#     先试着生成；还没有就用 C.UTF-8（glibc 2.35 起内置）兜底。不能兜底成 LC_ALL=C：apt 装 postgresql-18
+#     时 postgresql-common 按当前 locale 建 18/main，C locale 建出来的集群编码是 SQL_ASCII
 if ! locale -a 2>/dev/null | grep -qE "en_US\.utf-?8"; then
   say "  生成 en_US.UTF-8 locale"
   sed -i 's/^# *\(en_US.UTF-8.*\)/\1/' /etc/locale.gen 2>/dev/null || true
   locale-gen en_US.UTF-8 >/dev/null 2>&1 || true
-  export LC_ALL=C   # 兜底：即使 locale-gen 失败，后续命令用 C locale
+  if ! locale -a 2>/dev/null | grep -qE "en_US\.utf-?8"; then
+    export LC_ALL=C.UTF-8 LANG=C.UTF-8
+  fi
 fi
 
 # 0.3 端口占用：检测 Pandora 需要的端口是否已被其他服务占用（Docker 旧部署残留等）
@@ -133,7 +179,9 @@ if ! ls /usr/lib/postgresql/ 2>/dev/null | grep -q "^18$"; then
     || curl -fsSL "https://www.postgresql.org/media/keys/ACCC4CF8.asc" -o /etc/apt/trusted.gpg.d/postgresql.asc
   echo "deb https://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list
   apt-get update -qq 2>/dev/null || true
-  apt-get install -y -qq postgresql-18 2>&1 | tail -2 || die "PostgreSQL 18 安装失败（PGDG 源不可用？）"
+  # 装包时 postgresql-common 顺手建 18/main：显式 UTF-8 locale，不随外层环境落成 C / SQL_ASCII
+  LC_ALL="${LC_ALL:-C.UTF-8}" LANG="${LANG:-C.UTF-8}" apt-get install -y -qq postgresql-18 2>&1 | tail -2 \
+    || die "PostgreSQL 18 安装失败（PGDG 源不可用？）"
 fi
 
 if ! command -v psql >/dev/null 2>&1; then
@@ -157,6 +205,8 @@ say "  PostgreSQL ${PG_VERSION}/main 在线，端口 ${PG_PORT}"
 # 别的版本的集群一律不碰；其中有 aegis 库而 PG18 不是它的接班人时停下（见函数注释）
 native_check_foreign_clusters "$PG_VERSION" "$PG_PORT" "$MODE" \
   "$([[ "$MODE" = upgrade ]] && pandora_env_file_value "$ENV_FILE" POSTGRES_PORT || true)"
+# 升级：更早的直装可能把库建成了 SQL_ASCII，只告警给办法（返回 2），不改库
+[[ "$MODE" != upgrade ]] || native_check_db_encoding "$PG_PORT" || true
 
 # ── 2. 准备数据目录 / 启动服务 ─────────────────────────
 say "[2/6] 启动数据服务"
@@ -304,18 +354,14 @@ elif [[ "$MODE" = from-docker ]]; then
 else
   # 升级：老 .env 没有布局与加密备份的键，缺了才追加
   mapfile -t layout_lines < <(native_layout_env_lines "$INSTALL_DIR" "$AGE_RECIPIENT")
+  layout_lines+=("AEGIS_MIGRATION_DATABASE_URL=postgres://postgres:${PG_SUPER_PASS}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable")
   native_env_append_missing "$ENV_FILE" "${layout_lines[@]}"
   [[ -z "$NATIVE_ENV_ADDED" ]] || say "  .env 补上了新键：$NATIVE_ENV_ADDED（原有的行没动）"
 fi
 
 # 给系统 Valkey/Redis 配置密码（普通安装版没有 Docker 隔离，密码落在系统配置里）
 # 口令已经是这个就不动、不重启（升级时网关还在跑，重启 Valkey 会断开它们的连接）
-if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]] && ! grep -qxF "requirepass ${VK_PASS}" "$VK_CONF"; then
-  if grep -q '^requirepass' "$VK_CONF"; then
-    sed -i "s|^requirepass.*|requirepass ${VK_PASS}|" "$VK_CONF"
-  else
-    printf '\nrequirepass %s\n' "$VK_PASS" >> "$VK_CONF"
-  fi
+if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]] && native_set_valkey_password "$VK_CONF" "$VK_PASS"; then
   systemctl restart valkey-server 2>/dev/null || systemctl restart redis-server 2>/dev/null || true
   sleep 1
 fi
@@ -332,8 +378,8 @@ done
 [[ ! -f "$SCRIPT_DIR/backup-webdav.example.json" ]] \
   || install -m 0644 "$SCRIPT_DIR/backup-webdav.example.json" "$INSTALL_DIR/deploy/backup-webdav.example.json"
 GOOSE_BIN="$RELEASE_BIN/goose"
-# 迁移 DSN 用 postgres 超级用户（00010 等迁移需绕过 RLS）；老的 .env 里可能没有这一行
-export AEGIS_MIGRATION_DATABASE_URL="postgres://postgres:${PG_SUPER_PASS}@127.0.0.1:${PG_PORT}/aegis?sslmode=disable"
+# 迁移 DSN 用 postgres 超级用户（00010 等迁移需绕过 RLS）：老的 .env 里没有这一行时上面已经追加进 .env。
+# 不再 export 给子进程——它带着超级用户口令，会经 install-lib.sh 的 env(1) 进命令行参数
 # 早期版本把「写入者已停」写死在 .env 里，手工跑 migrate.sh 时也会被当成已停服。
 # 不替人改 .env（那里是口令与密钥），只提醒；本脚本自己只在真的停服之后才递交这份声明。
 if [[ "$MODE" = upgrade ]] && grep -q '^PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=' "$ENV_FILE"; then
@@ -554,12 +600,14 @@ if [[ "$MODE" = from-docker ]]; then
   say "   迁移前的库：$FD_DUMP（未加密的 pg_dump，含属主与权限；用完自己删）"
   say "   Docker 的容器已停，卷与 $DOCKER_DIR 都还在；原来的 systemd 单元存在 $FD_UNITS_BACKUP"
   say "   跑稳之后（建议观察一天，做一份新的加密备份并用 verify-backup.sh 校验）再由你决定删 Docker："
-  say "     cd $DOCKER_DIR/deploy && docker compose down -v        # 删容器与卷，不可恢复"
+  say "     cd $DOCKER_DIR/deploy && docker compose --env-file .env.migrated-to-native down -v   # 删容器与卷，不可恢复"
   say "     docker ps -a 里没有别的容器时：systemctl disable --now docker.service docker.socket containerd.service"
   say "   删之前想退回 Docker（切换之后在直装上写入的数据不会带回去）："
   say "     systemctl stop ${SERVICES[*]}"
+  say "     mv $DOCKER_DIR/deploy/.env.migrated-to-native $DOCKER_DIR/deploy/.env"
   say "     cp -a $FD_UNITS_BACKUP/aegis-* /etc/systemd/system/ && systemctl daemon-reload"
   say "     (cd $DOCKER_DIR/deploy && docker compose start) && systemctl start ${SERVICES[*]}"
+  say "     mv $INSTALL_DIR/deploy/.env $INSTALL_DIR/deploy/.env.retired   # 免得 install.sh 再把这台认成直装"
 fi
 say "═══════════════════════════════════════════"
 [[ "$HEALTH_OK" == 1 ]] || die "部分服务未启动, 检查日志: journalctl -u aegis-public"

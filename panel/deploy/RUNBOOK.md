@@ -790,33 +790,41 @@ pandora-native enrollment abort --identity /etc/pandora-native/identity.json --r
 1. **核对（只读，服务照常）**：容器 `aegis-postgres` 在跑、库连得上；库的迁移版本不比发布包新；库里的角色能照搬（没有 SUPERUSER / REPLICATION / BYPASSRLS 的额外角色、没有角色成员关系）；`.env` 的口令与密钥齐全；磁盘至少有库大小的 4 倍空闲（导出、恢复、迁移预检各一份）。任何一条不过就停下，什么都没改。
 2. **装直装**：PostgreSQL 18、Valkey、age；直装的 `.env` 由 docker 的改写（主密钥、JWT、签名种子、后台前缀、对外地址等原样沿用，只换连库连缓存的几项，加 `postgres` 超级用户口令与 `PANDORA_DB_LAYOUT=native`）；`secrets/`（备份解密私钥）拷过来。
 3. **停服、搬数据**：停三个网关（和在跑的备份 timer）→ 从容器 `pg_dump -Fc`（含属主与权限）到 `/var/backups/pandora/from-docker-<时间>.dump` → 在 PG18 里建好同样的角色 → `pg_restore --single-transaction` → docker 那边跑迁移的超级用户名下的对象转给 `postgres`（与全新直装一致）。
-4. **核对**：两边各跑一遍指纹（迁移水位、每张表的行数、序列、表/列/函数的属主与权限、行级安全开关、策略、触发器、扩展），逐行相同才往下走。指纹与差异留在导出文件旁边（`*.fingerprint`）。
+4. **核对**：两边各跑一遍指纹（迁移水位、每张表的行数与内容摘要、序列、表/列/函数的属主与权限、行级安全开关、策略、触发器、扩展），逐行相同才往下走。内容摘要是每行文本的 md5 排序后再取 md5（时区、日期、浮点输出格式钉死，排序不受两边排序规则影响），与整库扫一遍相当：约 100 MB 几秒，每 GB 估一两分钟。指纹与差异留在导出文件旁边（`*.fingerprint`）。
 5. **迁移、切换**：在直装库上跑这次发布的迁移（完整预检）→ `bootstrap.sh` 收窄运行角色 → 存一份原来的 systemd 单元（`/var/backups/pandora/from-docker-units-<时间>/`）→ 换成直装的单元、起服务 → 三个网关 `/healthz` 都是 200 才算接管。
-6. **收尾**：`docker compose stop` 停两个容器（`restart: unless-stopped`，重启后也不会自己起来）；备份 timer 之前在跑就照样起；HTTPS 边缘按升级的规则重配。**不删卷、不删 `/opt/aegispanel`、不停 docker 守护进程**，收尾打印这几条命令由人决定。
+6. **收尾**：`docker compose stop` 停两个容器（`restart: unless-stopped`，重启后也不会自己起来）；docker 布局的 `.env` 改名为 `.env.migrated-to-native`（不删）：之后再跑 `install.sh` 会认出这台已是直装、交给 `install-native.sh`，`/opt/aegispanel/deploy` 下的旧脚本也一律找不到 `.env` 而停下，不会把服务悄悄切回 docker 那份旧库；备份 timer 之前在跑就照样起；HTTPS 边缘按升级的规则重配。**不删卷、不删 `/opt/aegispanel`、不停 docker 守护进程**，收尾打印这几条命令由人决定。
 
 停服从第 3 步到第 5 步结束。5k 规模（库约 100 MB）估计一两分钟，以测试机实测为准。
 
 ### 怎么跑
 
+**不要直接在 ssh 会话里跑**：ssh 一断，脚本收到 HUP。脚本会回滚（放回单元、拉起 docker 的服务），但迁移白做了。在 tmux 里跑，或交给 systemd：
+
 ```bash
-# 新发布包放到 root 独占目录（同 panel-install），然后：
-sudo <发布目录>/deploy/install-native.sh --from-docker
+# 新发布包放到 root 独占目录（同 panel-install），然后二选一：
+tmux new -s from-docker 'sudo <发布目录>/deploy/install-native.sh --from-docker; read -p 回车关闭'
+# 或者（输出进 journal，ssh 断了也照跑）：
+systemd-run --unit=pandora-from-docker --collect --setenv=PANDORA_ASSUME_YES=1 \
+  bash <发布目录>/deploy/install-native.sh --from-docker
+journalctl -fu pandora-from-docker
 ```
 
-先在业务低峰做；跑之前做一份加密备份：`cd /opt/aegispanel/deploy && ./backup-postgres.sh`。
+每一步与回滚的结果另记在 `/opt/pandora/deploy/from-docker.log`。先在业务低峰做；跑之前做一份加密备份：`cd /opt/aegispanel/deploy && ./backup-postgres.sh`。
 
 ### 失败了
 
 - **核对阶段停下**：什么都没改，按提示修好重跑。
-- **停服之后、接管之前任何一步失败**（导出、恢复、指纹对不上、迁移、健康检查、Ctrl-C）：脚本自动放回原来的单元、拉起 docker 布局的网关与备份 timer，状态记为 `rolled-back`（`/opt/pandora/deploy/from-docker.state`）。docker 那边的库全程只读，没有丢数据。修好原因后直接重跑 `--from-docker`：直装这边上次的库改名为 `aegis_stale_<时间>` 放一边（确认没用后自己删），从头再来。
-- **接管之后、停容器之前断了**（状态 `cutover`）：重跑 `--from-docker` 只做收尾。
+- **停服之后、接管之前任何一步失败**（导出、恢复、指纹对不上、迁移、健康检查、Ctrl-C、ssh 断开）：脚本自动放回原来的单元、拉起 docker 布局的网关与备份 timer，状态记为 `rolled-back`（`/opt/pandora/deploy/from-docker.state`）。docker 那边的库全程只读，没有丢数据。修好原因后直接重跑 `--from-docker`：直装这边上次的库改名为 `aegis_stale_<时间>` 放一边（确认没用后自己删），从头再来。
+- **接管之后、停容器之前断了**（状态 `cutover`）：重跑 `--from-docker` 只做收尾。这时 `install.sh` 与普通的 `install-native.sh` 都会停下，提示先收尾。
+- **硬中断**（`kill -9`、断电）来不及回滚：先看 `/opt/pandora/deploy/from-docker.state` 与 `from-docker.log`，按 `units_backup=` 记下的目录把单元拷回、`systemctl daemon-reload`、拉起网关；再跑 `--from-docker` 时会沿用那份原单元，不会拿眼下的直装单元当原件。
+- 回滚之后，普通的 `install-native.sh` 与不带 `PANDORA_LAYOUT=docker` 的 `install.sh` 都会停下：这台还是 docker 布局在服务，要么继续迁，要么明说按 docker 布局升级。
 
 ### 迁完之后
 
 - 跑稳之后（建议观察一天，做一份新的加密备份并用 `verify-backup.sh` 校验），由人决定删 Docker：
 
   ```bash
-  cd /opt/aegispanel/deploy && docker compose down -v      # 删容器与卷，不可恢复
+  cd /opt/aegispanel/deploy && docker compose --env-file .env.migrated-to-native down -v   # 删容器与卷，不可恢复
   docker ps -a                                              # 没有别的容器时再停守护进程（省约 85 MB 常驻内存）
   systemctl disable --now docker.service docker.socket containerd.service
   ```
@@ -825,12 +833,14 @@ sudo <发布目录>/deploy/install-native.sh --from-docker
 
   ```bash
   systemctl stop aegis-public aegis-admin aegis-node
+  mv /opt/aegispanel/deploy/.env.migrated-to-native /opt/aegispanel/deploy/.env
   cp -a /var/backups/pandora/from-docker-units-<时间>/aegis-* /etc/systemd/system/ && systemctl daemon-reload
   (cd /opt/aegispanel/deploy && docker compose start) && systemctl start aegis-public aegis-admin aegis-node
+  mv /opt/pandora/deploy/.env /opt/pandora/deploy/.env.retired   # 免得 install.sh 再把这台认成直装
   ```
 
 - Valkey 里的东西不搬（新的 Valkey 是空的）：只有限流计数与实时推送的临时状态，迁完限流冷却全部清零，网关重启后照常重建。
 
 ### 什么时候升级处理
 
-指纹对不上（差异文件里不只是行数）、或者恢复报角色 / 扩展相关的错：带上 `*.fingerprint.diff` 与脚本完整输出（输出里没有口令）。
+指纹对不上（差异文件里不只是行数与内容摘要）、或者恢复报角色 / 扩展相关的错：带上 `*.fingerprint.diff` 与脚本完整输出（输出里没有口令）。

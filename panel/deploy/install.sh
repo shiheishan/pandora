@@ -207,6 +207,54 @@ print_install_summary() {
     "升级          新发布包放到 root 独占目录后：sudo <发布目录>/deploy/install.sh"
 }
 
+# 这台机器该走哪种布局（入口判断，在任何前置检查之前）。打印 native 或 docker；该停下时把原因写到
+# 标准错误并返回 1。
+#   pandora_entry_layout <docker 布局目录> <直装目录> <PANDORA_LAYOUT 的值>
+# 口径与 release-stop-the-world.sh 的 default_app_dir 一致：
+#   - 直装已是正主（从 Docker 迁完了，或本来就只有直装）→ native；这时要 docker 布局一律拒绝；
+#   - 迁移切换了还没收尾 → 停下，先 install-native.sh --from-docker 收尾；
+#   - 两种都在、却没有迁移记录 → 停下，要人明说；
+#   - docker 布局在服务、直装是没迁完的副本 → 只有显式 PANDORA_LAYOUT=docker 才按 docker 布局升级；
+#   - 只有 docker 布局 → docker；什么都没有 → 全新安装，缺省 native。
+pandora_entry_layout() {
+  local docker_env="$1/deploy/.env" native_env="$2/deploy/.env" want="$3" state=""
+  case "$want" in
+    ''|native|docker) ;;
+    *) echo "PANDORA_LAYOUT 只认 native 或 docker（现在是 $want）" >&2; return 1 ;;
+  esac
+  [ ! -f "$2/deploy/from-docker.state" ] \
+    || state="$(awk -F= '$1 == "state" { sub(/^[^=]*=/, ""); print; exit }' "$2/deploy/from-docker.state")"
+  if [ -f "$native_env" ] && { [ "$state" = done ] || { [ -z "$state" ] && [ ! -f "$docker_env" ]; }; }; then
+    if [ "$want" = docker ]; then
+      echo "这台已经是直装布局（$2），不再装 docker 布局；升级直接跑 install-native.sh" >&2
+      return 1
+    fi
+    echo native
+    return 0
+  fi
+  if [ "$state" = cutover ]; then
+    echo "上次从 Docker 迁到直装已经切换、还没收尾：先 sudo bash <发布目录>/deploy/install-native.sh --from-docker 收尾，再升级" >&2
+    return 1
+  fi
+  if [ -f "$native_env" ] && [ -z "$state" ]; then
+    echo "这台同时装着 docker 布局（$1）与直装（$2），又没有迁移记录，不知道哪个是正主；请人确认后用 PANDORA_LAYOUT 明说，或清掉不用的那一套" >&2
+    return 1
+  fi
+  if [ -f "$docker_env" ]; then
+    if [ -n "$state" ] && [ "$want" != docker ]; then
+      echo "上次从 Docker 迁到直装没完成（$state），现在服务的还是 docker 布局：继续迁移跑 install-native.sh --from-docker；要先按 docker 布局升级，加 PANDORA_LAYOUT=docker" >&2
+      return 1
+    fi
+    echo docker
+    return 0
+  fi
+  if [ -n "$state" ]; then
+    echo "有从 Docker 迁移的记录（$state），却找不到 docker 布局的 $docker_env，不知道数据在哪，停下" >&2
+    return 1
+  fi
+  if [ "$want" = docker ]; then echo docker; else echo native; fi
+}
+
 # 可单测的部分到此为止
 if [ "${PANDORA_INSTALL_LIB:-}" = 1 ]; then
   return 0 2>/dev/null || exit 0
@@ -215,12 +263,19 @@ fi
 #------------------------------------------------------------------------------
 # 0) 缺省布局是直装（install-native.sh：系统 PostgreSQL 18 + Valkey，不要 Docker）
 #------------------------------------------------------------------------------
-# 全新安装交给 install-native.sh（同一个发布包、同一套环境变量）；要 docker 布局显式给
-# PANDORA_LAYOUT=docker。已经装了 docker 布局（有 $DEST/deploy/.env）的机器照旧在这里升级，
-# 收尾提示怎么迁到直装（install-native.sh --from-docker，停服几分钟，每台由主人决定）
-if [ ! -f "$DEST/deploy/.env" ] && [ "${PANDORA_LAYOUT:-native}" != docker ]; then
+# 全新安装、以及已经是直装（含从 Docker 迁完）的机器交给 install-native.sh（同一个发布包、同一套
+# 环境变量）；要 docker 布局显式给 PANDORA_LAYOUT=docker。只装着 docker 布局的机器照旧在这里升级，
+# 收尾提示怎么迁到直装。判断见 pandora_entry_layout
+NATIVE_DEST=/opt/pandora
+ENTRY_LAYOUT="$(pandora_entry_layout "$DEST" "$NATIVE_DEST" "${PANDORA_LAYOUT:-}")" \
+  || die "没动手：按上面的提示处理后重跑"
+if [ "$ENTRY_LAYOUT" = native ]; then
   [ -f "$HERE/install-native.sh" ] || die "发布目录缺少 deploy/install-native.sh"
-  printf '    %s\n' "全新安装走直装布局（install-native.sh，不需要 Docker）；要 docker 布局：PANDORA_LAYOUT=docker $0" >&2
+  if [ -f "$NATIVE_DEST/deploy/.env" ]; then
+    printf '    %s\n' "这台是直装布局（$NATIVE_DEST），交给 install-native.sh 升级" >&2
+  else
+    printf '    %s\n' "全新安装走直装布局（install-native.sh，不需要 Docker）；要 docker 布局：PANDORA_LAYOUT=docker $0" >&2
+  fi
   exec bash "$HERE/install-native.sh" "$@"
 fi
 

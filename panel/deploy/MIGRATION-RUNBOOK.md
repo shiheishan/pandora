@@ -174,6 +174,13 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose \
      ```
 
      `<库名>` 是 `.env` 里的 `POSTGRES_DB`。
+
+     恢复照原样还原属主与权限（2026-10 起）：备份要的角色先在本机集群里补齐（只认面板自己的 `aegis_app`、`aegis_idempotency_owner` 与跑迁移的超级用户，一律 `NOLOGIN`、不带特权；备份里有别的角色就在动正式库之前停下），备份里跑迁移的超级用户名下的对象换成本机跑迁移的那个（docker 布局 `POSTGRES_USER`，直装 `postgres`），所以 docker 的备份能恢复到直装，反过来也行。以前的恢复用 `--no-owner --no-privileges`，00038 那几个归 `aegis_idempotency_owner` 的 SECURITY DEFINER 函数会变成以超级用户身份执行，迁移给的授权也丢了。
+
+     **2026-10 之前的加密备份**导出时带 `--no-acl`，里面只有属主、没有权限（恢复脚本会提示 `predates owner/privilege-preserving backups`）。恢复后：
+     1. 跑 `./bootstrap.sh`，补回运行角色 `aegis_app` 的全部权限；
+     2. 迁移给 `aegis_idempotency_owner` 的授权要补：照 `migrations/00038_idempotency_resource_binding.sql` 的 Up 段里 `GRANT … TO aegis_idempotency_owner` 那几条，以超级用户（`./psql.sh`）逐条执行一遍；不补的话那几个函数会报权限不足（拒绝执行，不会越权）；
+     3. 之后做一份新的加密备份，它就带着权限了。
    - **install.sh 的升级前备份**（`pre-upgrade-<时间>.dump`，未加密的 `pg_dump -Fc`）：
      1. 先恢复到一个新库核对：
 
@@ -353,6 +360,24 @@ runuser -u postgres -- psql -X -At -p <端口> -d aegis -c "
 
 然后把 `/opt/pandora/deploy/.env` 里 `POSTGRES_PORT`、`AEGIS_DATABASE_URL`、`AEGIS_MIGRATION_DATABASE_URL` 的端口改成 `<新端口>`，重跑 `install-native.sh`（按升级走：备份、预检、迁移、重设运行角色口令、起服务）。
 面板在 PG18 上跑稳之后，旧集群由人决定是否删除（`pg_dropcluster --stop <旧> main`，删前再做一份 `pg_dump`）。
+
+## 6. 直装库是 SQL_ASCII
+
+更早的直装用 `LC_ALL=C` 建集群，库的编码可能是 SQL_ASCII：不校验编码，中文按字节存，`lower()`、排序对中文无效。`install-native.sh` 升级时检测到会告警，**不自动改库**。换成 UTF8 要导出重建，停服进行：
+
+```bash
+P=<POSTGRES_PORT>
+systemctl stop aegis-public aegis-admin aegis-node
+B=/var/backups/pandora/aegis-sqlascii-$(date +%Y%m%d-%H%M%S).dump
+runuser -u postgres -- pg_dump -p $P -Fc -d aegis > "$B" && chmod 0600 "$B"
+runuser -u postgres -- createdb -p $P -O aegis -T template0 -E UTF8 --locale=C.UTF-8 aegis_utf8
+runuser -u postgres -- pg_restore -p $P -d aegis_utf8 --exit-on-error < "$B"   # 有不合法的 UTF-8 字节会在这里报错，先修数据
+# 用第 5 节的逐表行数查询分别对 aegis 与 aegis_utf8 跑一遍，diff 为空再换名
+runuser -u postgres -- psql -X -p $P -d postgres -c 'ALTER DATABASE aegis RENAME TO aegis_sqlascii' -c 'ALTER DATABASE aegis_utf8 RENAME TO aegis'
+cd /opt/pandora/deploy && ./bootstrap.sh && systemctl start aegis-public aegis-admin aegis-node
+```
+
+跑稳之后再由人删 `aegis_sqlascii`。
 
 ## 附：写迁移时的约定（摘要）
 

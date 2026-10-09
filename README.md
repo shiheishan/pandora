@@ -270,14 +270,16 @@ root 独占的目录下——直接拿 `/tmp` 里的构建产物去装会被挡�
 
 #### 已经装了 docker 布局的机器
 
-- 照旧能升级：`./install.sh` 认出 `/opt/aegispanel/deploy/.env` 就按 docker 布局升级，什么都不变；收尾会提示怎么迁。
+- 照旧能升级：只装着 docker 布局时 `./install.sh` 按 docker 布局升级，什么都不变；收尾会提示怎么迁。
+- 迁完之后再跑 `./install.sh` 会认出这台已是直装，交给 `install-native.sh`（docker 的 `.env` 已改名为 `.env.migrated-to-native`）。
 - 想迁到直装（省掉 Docker 守护进程与两个容器约 85 MB 常驻内存和健康检查开销）：
 
   ```bash
-  ssh -t root@目标机 'cd /opt/pandora-release/rel/deploy && ./install-native.sh --from-docker'
+  ssh -t root@目标机 'tmux new -s from-docker "cd /opt/pandora-release/rel/deploy && ./install-native.sh --from-docker; read"'
   ```
 
-  停服几分钟：导出 → 恢复到 PG18 → 两边逐项核对 → 迁移 → 切换。任何一步失败自动回到 Docker；
+  在 tmux（或 `systemd-run`）里跑，ssh 断了也不会半途回滚。停服几分钟：导出 → 恢复到 PG18 → 两边逐项核对
+  （行数、内容摘要与结构）→ 迁移 → 切换。任何一步失败自动回到 Docker；
   Docker 的卷和 `/opt/aegispanel` 不删，收尾打印删除命令，跑稳之后由你决定。详见 `deploy/RUNBOOK.md` 第 13 章。
 
 ### 3. 装完
