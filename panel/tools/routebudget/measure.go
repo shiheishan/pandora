@@ -3,6 +3,7 @@ package routebudget
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -216,26 +217,47 @@ func (b *Budget) Verify() {
 		t.Errorf("%d session reset statement(s) ran on the pool while measuring %s routes "+
 			"(a connection was released outside platform/db's scoped paths)", n, b.gateway)
 	}
-	for key, e := range b.measured {
-		r, ok := b.routes[key]
-		if !ok {
-			t.Errorf("%s %s is measured but not registered in tools/routebudget/routes.txt", b.gateway, key)
+	for _, problem := range compareBudgets(b.gateway, b.routes, b.measured) {
+		t.Error(problem)
+	}
+}
+
+// compareBudgets 是 Verify 的比对本身（不碰测试框架，单测直接验）。按路由排序返回问题。
+func compareBudgets(gateway string, routes map[string]Route, measured map[string]Entry) []string {
+	var out []string
+	keys := make([]string, 0, len(routes)+len(measured))
+	for k := range routes {
+		keys = append(keys, k)
+	}
+	for k := range measured {
+		if _, ok := routes[k]; !ok {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		r, registered := routes[key]
+		e, ok := measured[key]
+		switch {
+		case !ok:
+			if r.Budgeted {
+				out = append(out, fmt.Sprintf("routes.txt:%d %s %s has a budget but no PG18 case measures it", r.Line, gateway, key))
+			}
+			continue
+		case !registered:
+			out = append(out, fmt.Sprintf("%s %s is measured but not registered in tools/routebudget/routes.txt", gateway, key))
 			continue
 		}
 		got := Route{Gateway: r.Gateway, Method: r.Method, Pattern: r.Pattern, Budgeted: true, DB: e.Statements(), KV: e.KV}
 		switch {
 		case !r.Budgeted:
-			t.Errorf("routes.txt:%d has no budget yet; measured:\n%s", r.Line, Format(got))
+			out = append(out, fmt.Sprintf("routes.txt:%d has no budget yet; measured:\n%s", r.Line, Format(got)))
 		case got.DB > r.DB || got.KV > r.KV:
-			t.Errorf("routes.txt:%d over budget: %s %s budget %d db / %d kv, measured %d db / %d kv",
-				r.Line, b.gateway, key, r.DB, r.KV, got.DB, got.KV)
+			out = append(out, fmt.Sprintf("routes.txt:%d over budget: %s %s budget %d db / %d kv, measured %d db / %d kv",
+				r.Line, gateway, key, r.DB, r.KV, got.DB, got.KV))
 		case got.DB < r.DB || got.KV < r.KV:
-			t.Errorf("routes.txt:%d improved (budgets only go down): lower the row to\n%s", r.Line, Format(got))
+			out = append(out, fmt.Sprintf("routes.txt:%d improved (budgets only go down): lower the row to\n%s", r.Line, Format(got)))
 		}
 	}
-	for key, r := range b.routes {
-		if _, ok := b.measured[key]; r.Budgeted && !ok {
-			t.Errorf("routes.txt:%d %s %s has a budget but no PG18 case measures it", r.Line, b.gateway, key)
-		}
-	}
+	return out
 }

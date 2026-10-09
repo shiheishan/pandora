@@ -26,10 +26,12 @@ import (
 	"github.com/aegispanel/aegis/tools/routebudget"
 )
 
-// pushWALBudget 是一份 push（3 个有效用户、带上报编号）写进 WAL 的字节上限：现状实测值
-// 留一点余量，钉成棘轮。N2（push 计费合到 ≤2 次往返）落地后改成 6KB，往返预算见
-// routes.txt 的 push 行（届时改成 2）。
-const pushWALBudget = 8 * 1024
+// pushWALBudget 是一份 push（3 个有效用户、带上报编号）写进 WAL 的字节上限，钉成棘轮。
+// 口径是 5 次里的最小值：排除检查点后的整页镜像与旁路写入，只剩这份 push 自己的行。
+// 现状实测 2488 字节（10-09，往返 8 次，见 routes.txt 的 push 行），留约 8% 余量。
+// 生产均值 7.9KB 含整页镜像，与这里不是一个口径：N2（push 合到 ≤2 次往返）的「WAL ≤6KB」
+// 按同比例折到这里约 1.9KB，落地后把这里与 push 行一起改小。
+const pushWALBudget = 2688
 
 // TestNodeRouteBudgetPG18 走节点网关的真实路由（与 aegis-node 同样装配：Valkey nonce、
 // 节点缓存、纪元监听、心跳合并），逐条量稳态的库语句往返与 Valkey 往返，与
@@ -205,7 +207,9 @@ func TestNodeRouteBudgetPG18(t *testing.T) {
 	budget.Measure(access, "POST /v1/nodes/heartbeat", 2, ok200, signed(http.MethodPost, "/v1/nodes/heartbeat", beat, nil))
 	budget.Measure(access, "GET /v1/nodes/effective-config", 2, ok204, signed(http.MethodGet, "/v1/nodes/effective-config", nil,
 		map[string]string{nodefabric.AppliedEffectiveReleaseHeader: applied}))
-	budget.Measure(access, "GET /v1/nodes/config-signing-key", 2, ok200, signed(http.MethodGet, "/v1/nodes/config-signing-key", nil, nil))
+	// 例行换钥检查：带上手里的配置签名钥，没有换钥时 204
+	budget.Measure(access, "GET /v1/nodes/config-signing-key", 2, ok204, signed(http.MethodGet, "/v1/nodes/config-signing-key", nil,
+		map[string]string{"X-Config-Key-Id": signer.KeyID()}))
 	if code := uni(http.MethodGet, "user", nil, nil)(uuid.NewString()); code != http.StatusOK || etag == "" {
 		t.Fatalf("first user list = %d etag=%q", code, etag)
 	}
