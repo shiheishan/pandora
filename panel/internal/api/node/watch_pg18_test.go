@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,16 +179,78 @@ func checkWatchedGatewayFollowsNotifications(t *testing.T, ctx context.Context, 
 		t.Fatalf("coalesced heartbeat metrics point: rows %d -> %d, want +1", metricsBefore, got)
 	}
 
+	lastHeartbeat := func() time.Time {
+		t.Helper()
+		var at time.Time
+		if err := admin.QueryRow(ctx, `SELECT last_heartbeat_at FROM nodes WHERE tenant_id=$1 AND id=$2::uuid`,
+			tenantID, nodeID).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+
+	// 批量写不等别的事务手里的行锁（审查 #6）：节点行被锁着时这一轮跳过、不阻塞，
+	// 锁放开后下一轮补写
+	t.Run("coalesced heartbeat batch skips locked node rows", func(t *testing.T) {
+		lockTx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = lockTx.Rollback(ctx) }()
+		if _, err := lockTx.Exec(ctx, `SELECT 1 FROM nodes WHERE tenant_id=$1 AND id=$2::uuid FOR NO KEY UPDATE`,
+			tenantID, nodeID); err != nil {
+			t.Fatal(err)
+		}
+		before := lastHeartbeat()
+		if code := heartbeat(); code != http.StatusOK {
+			t.Fatalf("watched heartbeat = %d", code)
+		}
+		if got := lastHeartbeat(); !got.Equal(before) {
+			t.Fatal("the beat was written immediately; the batch path is not exercised")
+		}
+		start := time.Now()
+		watched.FlushHeartbeats(ctx)
+		if took := time.Since(start); took > 2*time.Second {
+			t.Fatalf("batch write waited %v on a locked node row", took)
+		}
+		if got := lastHeartbeat(); !got.Equal(before) {
+			t.Fatal("batch write updated a row another transaction holds")
+		}
+		if err := lockTx.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
+		watched.FlushHeartbeats(ctx)
+		if got := lastHeartbeat(); !got.After(before) {
+			t.Fatal("skipped beat was not written once the lock was released")
+		}
+		t.Log("marker=node_watch_pg18_batch_skip_locked_ok")
+	})
+
 	// 身份失效（只改身份表、没有任何节点行变化）：通知送达后下一次签名请求 401
 	var expires time.Time
 	if err := admin.QueryRow(ctx, `UPDATE node_identities SET expires_at = expires_at
 		WHERE tenant_id=$1 AND node_id=$2::uuid AND status='active' RETURNING expires_at`, tenantID, nodeID).Scan(&expires); err != nil {
 		t.Fatal(err)
 	}
+	// 先缓冲一拍，再让身份失效，再批量写：门槛把这一行挡住，last_heartbeat_at 不动（审查 #7）
+	bufferedAt := lastHeartbeat()
+	if code := heartbeat(); code != http.StatusOK {
+		t.Fatalf("watched heartbeat before revocation = %d", code)
+	}
+	if !lastHeartbeat().Equal(bufferedAt) {
+		t.Fatal("the beat before revocation was written immediately; the batch gate is not exercised")
+	}
 	if _, err := admin.Exec(ctx, `UPDATE node_identities SET expires_at = now() - interval '1 second'
 		WHERE tenant_id=$1 AND node_id=$2::uuid AND status='active'`, tenantID, nodeID); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("buffered heartbeat of a revoked identity is not written", func(t *testing.T) {
+		watched.FlushHeartbeats(ctx)
+		if got := lastHeartbeat(); !got.Equal(bufferedAt) {
+			t.Fatalf("batch wrote a beat whose identity was revoked before the flush: %s -> %s", bufferedAt, got)
+		}
+		t.Log("marker=node_watch_pg18_batch_gate_ok")
+	})
 	took := within("expired identity", func() bool { return heartbeat() == http.StatusUnauthorized })
 	t.Logf("expired identity rejected %s after commit", took)
 	if _, err := admin.Exec(ctx, `UPDATE node_identities SET expires_at = $3
@@ -242,5 +305,42 @@ func checkWatchedGatewayFollowsNotifications(t *testing.T, ctx context.Context, 
 		code, _, resp := users(etag, false)
 		resp.Body.Close()
 		return code == http.StatusNotModified
+	})
+
+	// 服务器退役或软删（只改服务器行）：配置视图作废，UniProxy 认证 401；改回之后恢复（审查 #7）
+	t.Run("server retirement and soft delete reach the UniProxy auth view", func(t *testing.T) {
+		var serverID, serverStatus string
+		if err := admin.QueryRow(ctx, `SELECT s.id::text, s.status FROM nodes n JOIN servers s
+			ON s.tenant_id=n.tenant_id AND s.id=n.server_id WHERE n.tenant_id=$1 AND n.id=$2::uuid`,
+			tenantID, nodeID).Scan(&serverID, &serverStatus); err != nil {
+			t.Fatal(err)
+		}
+		for _, change := range []struct{ name, set, restore string }{
+			{"retired", `status='retired'`, `status=$3`},
+			{"soft-deleted", `deleted_at=now()`, `deleted_at=NULL`},
+		} {
+			args := []any{tenantID, serverID}
+			if _, err := admin.Exec(ctx, `UPDATE servers SET `+change.set+` WHERE tenant_id=$1 AND id=$2::uuid`, args...); err != nil {
+				t.Fatal(err)
+			}
+			within(change.name+" server's UniProxy token", func() bool {
+				code, _, resp := users(etag, false)
+				resp.Body.Close()
+				return code == http.StatusUnauthorized
+			})
+			restoreArgs := args
+			if strings.Contains(change.restore, "$3") {
+				restoreArgs = append(restoreArgs, serverStatus)
+			}
+			if _, err := admin.Exec(ctx, `UPDATE servers SET `+change.restore+` WHERE tenant_id=$1 AND id=$2::uuid`, restoreArgs...); err != nil {
+				t.Fatal(err)
+			}
+			within("restored "+change.name+" server", func() bool {
+				code, _, resp := users(etag, false)
+				resp.Body.Close()
+				return code == http.StatusNotModified
+			})
+		}
+		t.Log("marker=node_watch_pg18_server_change_ok")
 	})
 }
