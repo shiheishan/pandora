@@ -115,12 +115,11 @@ seed 不能往已有资源池追加节点：每次都会新建资源池和套餐
    | 登录 | `POST /v1/auth/login`（门户与后台） | 稳态不设固定线（p50 ≤ 单次哈希 + 10ms，人工对照）；200 个开环预热 p99 ≤ 3s、0 个 503 |
    | 全部 | — | 零 5xx、不超时、不换页、连接池不排队；1 倍负载整机 CPU ≤ 60%、网关节流 0 |
 
-   - **口径**：新标准里节点、订阅、后台的线是服务端计时，`targets.py` 只有压测机端（含 TLS 与同机房网络），按压测机端判是偏严的读法；超线不到 2ms 的项在成绩单里注明「待服务端计时复核」。逐路由服务端计时与库往返（`db_rt`/`kv_rt`）要等 P0 往返记账器落地；「每路由库往返 ≤ 预算、Valkey ≤ 1」由 P0 的 CI 守卫管，不在这张表。
+   - **口径**：延迟是压测机端口径，偏严的读法和「超线不到 2ms 注明待服务端计时复核」见 perf-gate 第 3 节末尾。「每路由库往返 ≤ 预算、Valkey ≤ 1」由 P0 的 CI 守卫管，不在这张表。
    - 1.5 倍负载 p99 ≤ 50 是另一场（30 分钟稳态后接 10 分钟阶梯），单列。
-   - 机型：1 万用户 / 1000 节点档按 4c8g 面板机考（用户 10-09 定），5k 档历史轮次是 2c4g；成绩单开头写明本轮面板机机型。
 
    - users 和 nodes 用稳态窗口 [T, T+30m) 的统计；预热、burst、节点的 config/report 与 stream 只有全程统计。
-   - 连接池直接证据：三个网关每分钟各打一行「数据库连接池统计」（`platform/db/poolstats.go`，有取连接或建连变化时才打），字段 `empty_acquires`、`acquire_wait_ms` 是「池子不够」的直接证据；`acquired` 贴着 `max` 但 `empty_acquires` 为 0 只是轮着用、没有排队。成绩单取窗口内这几行：`journalctl -u aegis-<public|admin|node> --since … | grep 数据库连接池统计`。旁证两条：T+15m 的 goroutine profile 里停在 `pgxpool.*Acquire|puddle` 的个数，以及 pgact.csv 里各网关已建连接是否顶到池上限（缺省 public 16（含常驻 LISTEN）、admin 15、node 14 加 1 条池外的纪元探针专用连接，三者合计 46（w10quiet 第二轮起；更早的版本 node 池 15、常驻 8），算式与常驻连接数（node 8、其余 1；降到 2/4 等 D 路 perf-gate 实测再定）见 `panel/internal/platform/config/runtime.go` 的 `DefaultDBMaxConns`、`DefaultDBMinConns`；node 一列看到 15 条就是池满。`conn_public/admin/node` 三列同时数回环 TCP 与 unix socket 两种连法）。
+   - 连接池直接证据：三个网关每分钟各打一行「数据库连接池统计」（`platform/db/poolstats.go`，有取连接或建连变化时才打），字段 `empty_acquires`、`acquire_wait_ms` 是「池子不够」的直接证据；`acquired` 贴着 `max` 但 `empty_acquires` 为 0 只是轮着用、没有排队。成绩单取窗口内这几行：`journalctl -u aegis-<public|admin|node> --since … | grep 数据库连接池统计`。旁证两条：T+15m 的 goroutine profile 里停在 `pgxpool.*Acquire|puddle` 的个数，以及 pgact.csv 里各网关已建连接是否顶到池上限（池上限与常驻连接数见 `panel/internal/platform/config/runtime.go` 的 `DefaultDBMaxConns`、`DefaultDBMinConns`，对照用的数 `scripts/targets.py` 顶部已有；`conn_public/admin/node` 三列同时数回环 TCP 与 unix socket 两种连法）。
 5. **c. 与上一轮对比**（compare.md）：
    - 每节点每分钟请求数和节点总 QPS；
    - 5xx 与超时；

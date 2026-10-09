@@ -1,7 +1,7 @@
 -- 用途：连接数与会话：按用户和状态汇总、离 max_connections 还有多少、长事务、被锁阻塞的会话。
 -- 身份：超级用户（pg_stat_activity 只有超级用户或 pg_read_all_stats 才看得到别人会话的全部列）。
--- 预算（deploy/.env.example 的算式，compose 里 max_connections=60）：3 条超级用户保留 + 11 条维护余量
--- + public 常驻 1 条 LISTEN + 三个网关各 15 条上限（缺省 public 16、admin 15、node 15）。
+-- 预算：各网关的连接池上限、池外探针连接、超级用户保留与维护余量，算式和缺省值以
+-- deploy/.env.example「运行时资源上限」为准（这里不抄数字，改一处就够）。
 -- client_addr 为空 = 走 unix socket（新版 install.sh 装出来的网关经 unix socket 连库；本脚本自己的会话也是）。
 BEGIN READ ONLY;
 
