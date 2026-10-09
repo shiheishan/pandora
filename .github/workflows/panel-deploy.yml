@@ -60,6 +60,7 @@ jobs:
             tls-renew_static_test.sh
             healthcheck-install_static_test.sh
             build-release_toolchain_mock_test.sh
+            install-native_pgcluster_mock_test.sh
           )
           failed=()
           for t in "${tests[@]}"; do

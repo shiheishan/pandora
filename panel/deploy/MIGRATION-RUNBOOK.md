@@ -308,6 +308,46 @@ chmod 600 "$d"/*.csv
 - 要单个迁移的数，用 `SELECT version_id, tstamp FROM goose_db_version ORDER BY id DESC LIMIT 10` 的时间差推算；或者先把升级前备份恢复成一个临时库，用 `goose up-by-one` 逐个重放。上表「副本重放」一列就是这样量的。
 - 流量包多的库，00138 是这一批里唯一随数据量变长的迁移。预检会在克隆库上先跑一遍，预检日志里的总耗时可以用来估算停服时间。
 
+## 5. 旧版本集群里的 aegis 库（直装）
+
+`install-native.sh` 只用 PostgreSQL 18 的 `main` 集群，机器上别的版本的集群（16、17，以后的 19）一律不停、不升级、不删。
+它在两种情况下停下，报「旧集群里的 aegis 库要由人搬到 PG18」，这时什么都还没改：
+
+- 首装（或 `--from-docker`），PG18 里还没有 `aegis` 库，而另一个在线的旧集群里有（或查不清有没有）；
+- 升级，`.env` 的 `POSTGRES_PORT` 指着旧集群，或者既不是旧集群也不是 PG18 的端口。
+
+（更早的安装器在这里会对旧集群跑 `pg_upgrade`，失败了也照样 `pg_dropcluster`，等于删库；已经删掉的只能从备份恢复，见第 3 节。）
+
+搬法：导出 → 恢复到 PG18 → 核对 → 改端口 → 重跑安装器。旧集群留着，确认无误之后由人删。
+
+```bash
+pg_lsclusters                                  # 记下旧集群版本 <旧>、端口 <旧端口>，以及 18/main 的端口 <新端口>
+systemctl stop aegis-public aegis-admin aegis-node
+install -d -m 0700 /var/backups/pandora
+B=/var/backups/pandora/aegis-pg<旧>-$(date +%Y%m%d-%H%M%S).dump
+runuser -u postgres -- pg_dump -p <旧端口> -Fc -d aegis > "$B" && chmod 0600 "$B"
+runuser -u postgres -- pg_restore --list < "$B" > /dev/null && echo 备份可读
+# 角色是集群级的：先把旧集群的角色（不带口令）建到 PG18，已存在的会报错跳过
+runuser -u postgres -- pg_dumpall -p <旧端口> --roles-only --no-role-passwords \
+  | runuser -u postgres -- psql -X -p <新端口> -d postgres
+runuser -u postgres -- createdb -p <新端口> -O aegis aegis
+runuser -u postgres -- pg_restore -p <新端口> -d aegis --exit-on-error < "$B"
+```
+
+核对：两边逐表行数一致（把 `-p` 分别换成旧端口和新端口，两份输出 `diff` 为空）：
+
+```bash
+runuser -u postgres -- psql -X -At -p <端口> -d aegis -c "
+  SELECT n.nspname || '.' || c.relname || ' ' ||
+         (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', n.nspname, c.relname), false, true, '')))[1]::text
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE c.relkind IN ('r', 'p') AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+   ORDER BY 1"
+```
+
+然后把 `/opt/pandora/deploy/.env` 里 `POSTGRES_PORT`、`AEGIS_DATABASE_URL`、`AEGIS_MIGRATION_DATABASE_URL` 的端口改成 `<新端口>`，重跑 `install-native.sh`（按升级走：备份、预检、迁移、重设运行角色口令、起服务）。
+面板在 PG18 上跑稳之后，旧集群由人决定是否删除（`pg_dropcluster --stop <旧> main`，删前再做一份 `pg_dump`）。
+
 ## 附：写迁移时的约定（摘要）
 
 完整规则见仓库 `.claude/rules/panel-migrations.md`，CI 守卫是 `panel/tools/migrationlint` 与 `run-migration-roundtrip.sh`：

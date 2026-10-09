@@ -13,14 +13,110 @@ set -euo pipefail
 # ── 常量 ──────────────────────────────────────────────
 # 潘多拉专属安装目录。systemd 单元里原路径 /opt/aegispanel 会替换为这里
 INSTALL_DIR="/opt/pandora"
-PG_PKG="postgresql"          # 系统自带版本(16+)即可, 迁移无 PG18 专属语法
-VK_PKG="valkey-server"
+# Pandora 只用这一个大版本的 main 集群（迁移用到 PG18 的 uuidv7() 等内建函数）
+PANDORA_PG_MAJOR=18
 SERVICES=(aegis-public aegis-admin aegis-node)
-ADMIN_PATH="ops_$(openssl rand -hex 12)"   # 高熵管理路径
 
 say(){ printf '\033[1;32m%s\033[0m\n' "$*"; }
 die(){ printf '\033[1;31m%s\033[0m\n' "$*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "缺少 $1"; }
+
+#------------------------------------------------------------------------------
+# PostgreSQL 集群。install-native_pgcluster_mock_test.sh 以 PANDORA_INSTALL_LIB=1 source 本文件，
+# 只取函数，不往下执行任何安装动作
+#------------------------------------------------------------------------------
+
+# 以 postgres 系统用户经本地 socket 跑 psql（peer 认证，不用口令）。SQL 经 -c 或标准输入给，
+# 口令一律不拼进命令行。先 cd /：postgres 用户进不了调用方的当前目录（如 /root）时 psql 会告警
+native_pg_peer() { (cd / && runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 "$@"); }
+
+# <版本>/main 在线时打印它的端口（pg_lsclusters 为准，多版本共存时 PG18 不一定是 5432），否则返回 1
+native_pg_cluster_port() {
+  pg_lsclusters 2>/dev/null \
+    | awk -v v="$1" '$1 == v && $2 == "main" && $4 ~ /^online/ { print $3; found = 1; exit } END { exit !found }'
+}
+
+# 确保 <版本>/main 存在并在线：没有就建（LC_ALL=C：最小化系统常缺 en_US.UTF-8，initdb 会失败），
+# 有但没起就启动。只建、只启动——不停、不升级、不删任何集群
+native_ensure_pg_cluster() {
+  local ver="$1" _
+  if ! pg_lsclusters 2>/dev/null | awk -v v="$ver" '$1 == v && $2 == "main" { found = 1 } END { exit !found }'; then
+    say "  初始化 PostgreSQL ${ver}/main 集群"
+    LC_ALL=C pg_createcluster "$ver" main 2>&1 | tail -3 || die "PostgreSQL ${ver}/main 集群初始化失败"
+  fi
+  systemctl reset-failed "postgresql@${ver}-main" 2>/dev/null || true
+  systemctl start "postgresql@${ver}-main" 2>/dev/null || true
+  for _ in $(seq 1 15); do
+    native_pg_cluster_port "$ver" >/dev/null && return 0
+    sleep 1
+  done
+  die "PostgreSQL ${ver}/main 起不来：journalctl -u postgresql@${ver}-main -n 50"
+}
+
+# 端口上的集群里有没有 aegis 库：打印 yes / no / unknown（查不了）
+native_pg_has_aegis() {
+  local out
+  out="$(native_pg_peer -p "$1" -d postgres -Atc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = 'aegis'" 2>/dev/null)" \
+    || { echo unknown; return 0; }
+  case "$out" in 1) echo yes ;; '') echo no ;; *) echo unknown ;; esac
+}
+
+# 机器上 PG18 以外的集群（更早的 16/17、以后的 19）一律不碰：不停、不升级、不删。
+# 以前这里对在线的旧集群跑 pg_upgrade，而且不管它成没成、跑没跑，最后都 pg_dropcluster——
+# 旧库直接没了（新数据目录已初始化时 pg_upgrade 根本不跑）。现在只看旧集群里有没有 aegis 库，
+# 有的话 PG18 是不是它的接班人：
+#   - 首装（或从 Docker 迁）而 PG18 里还没有 aegis 库：数据多半就在旧集群里，停下；
+#   - 升级而 .env 的 POSTGRES_PORT 指着旧集群：这台面板一直跑在旧集群上，停下；
+#   - 其余（PG18 已有 aegis 库、.env 指着 PG18）：旧集群是早先的遗留，只提示。
+# 查不了旧集群按「有 aegis 库」算。升级时 .env 的 POSTGRES_PORT 不是 PG18 的端口也停下。
+# 停下时什么都还没改。
+#   native_check_foreign_clusters <PG 大版本> <它的端口> <install|upgrade|from-docker> <.env 的 POSTGRES_PORT，仅升级>
+native_check_foreign_clusters() {
+  local want="$1" want_port="$2" mode="$3" env_port="${4:-}"
+  local ver cluster port status _rest has blockers=() pg18_has=""
+  if command -v pg_lsclusters >/dev/null 2>&1; then
+    while read -r ver cluster port status _rest; do
+      [[ "$ver" =~ ^[0-9]+$ ]] || continue
+      [ "$ver" != "$want" ] || continue
+      if [[ "$status" != online* ]]; then
+        say "  ! 另有 PostgreSQL ${ver}/${cluster}（端口 ${port}，${status}）：不是 Pandora 用的集群，安装器不碰它"
+        continue
+      fi
+      has="$(native_pg_has_aegis "$port")"
+      if [ "$has" = no ]; then
+        say "  另有 PostgreSQL ${ver}/${cluster}（端口 ${port}），里面没有 aegis 库，安装器不碰它"
+        continue
+      fi
+      if [ "$mode" = upgrade ]; then
+        if [ "$env_port" = "$port" ]; then
+          blockers+=("PostgreSQL ${ver}/${cluster}（端口 ${port}）：.env 的 POSTGRES_PORT 指着它，这台面板的数据就在它里面")
+          continue
+        fi
+      else
+        [ -n "$pg18_has" ] || pg18_has="$(native_pg_has_aegis "$want_port")"
+        if [ "$pg18_has" != yes ]; then
+          blockers+=("PostgreSQL ${ver}/${cluster}（端口 ${port}）里$([ "$has" = yes ] && echo 有 || echo 查不清有没有) aegis 库，PG${want} 里还没有")
+          continue
+        fi
+      fi
+      say "  ! PostgreSQL ${ver}/${cluster}（端口 ${port}）里$([ "$has" = yes ] && echo 有 || echo 查不清有没有) aegis 库：面板用的是 PG${want}（端口 ${want_port}），它是早先的遗留，安装器不碰；确认没用后自己处理"
+    done < <(pg_lsclusters 2>/dev/null)
+  fi
+  if [ "$mode" = upgrade ] && [ -n "$env_port" ] && [ "$env_port" != "$want_port" ] && [ "${#blockers[@]}" -eq 0 ]; then
+    blockers+=(".env 的 POSTGRES_PORT=${env_port}，而 PostgreSQL ${want}/main 在端口 ${want_port}：不知道面板的数据在哪个集群")
+  fi
+  [ "${#blockers[@]}" -eq 0 ] && return 0
+  printf '\033[1;31m%s\033[0m\n' "数据库不在安装器预期的地方，停下（什么都还没改，任何集群都没停、没删）：" >&2
+  printf '  - %s\n' "${blockers[@]}" >&2
+  die "旧集群里的 aegis 库要由人搬到 PG${want}（导出 → 恢复 → 核对，步骤见发布包 deploy/MIGRATION-RUNBOOK.md「旧版本集群里的 aegis 库」）；搬完、确认 .env 的 POSTGRES_PORT=${want_port} 后重跑本脚本"
+}
+
+# 可单测的部分到此为止
+if [ "${PANDORA_INSTALL_LIB:-}" = 1 ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+ADMIN_PATH="ops_$(openssl rand -hex 12)"   # 高熵管理路径
 
 # ── 前置 ──────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || die "请用 root 运行: sudo bash install.sh"
@@ -91,41 +187,6 @@ if ! ls /usr/lib/postgresql/ 2>/dev/null | grep -q "^18$"; then
   apt-get install -y -qq postgresql-18 2>&1 | tail -2 || die "PostgreSQL 18 安装失败（PGDG 源不可用？）"
 fi
 
-# ── 1b. 数据库合并升级通道 ──────────────────────────────
-# 固定 PG18 作为标准版本。若机器上已有旧版本 PG（16/17）集群，自动升级：
-# 用 pg_upgrade 把旧集群数据合并到 PG18（保留数据），而不是要求手工迁移。
-# 这是为后续 PG18 → PG19+ 升级预留的同一通道：升级逻辑统一走这里。
-UPGRADE_SOURCE=""
-for old_ver in $(ls /usr/lib/postgresql/ 2>/dev/null | sort -V | grep -v "^18$" || true); do
-  if pg_lsclusters 2>/dev/null | grep -qE "^${old_ver}\s+.*online"; then
-    UPGRADE_SOURCE="$old_ver"
-    say "  发现旧版 PostgreSQL ${old_ver} 集群，准备合并升级到 PG18"
-    break
-  fi
-done
-if [[ -n "$UPGRADE_SOURCE" ]] && [[ -z "${PANDORA_SKIP_PG_UPGRADE:-}" ]]; then
-  say "  执行 pg_upgrade: ${UPGRADE_SOURCE} → 18（数据保留）"
-  OLD_DATA="/var/lib/postgresql/${UPGRADE_SOURCE}/main"
-  NEW_DATA="/var/lib/postgresql/18/main"
-  NEW_BIN="/usr/lib/postgresql/18/bin"
-  OLD_BIN="/usr/lib/postgresql/${UPGRADE_SOURCE}/bin"
-  # 停旧集群，备份旧数据目录（升级可回滚）
-  pg_ctlcluster "$UPGRADE_SOURCE" main stop 2>/dev/null || true
-  if [[ -d "$OLD_DATA" ]] && [[ ! -f "$NEW_DATA/PG_VERSION" ]]; then
-    cp -a "$NEW_DATA" "${NEW_DATA}.pristine-$(date +%Y%m%d)" 2>/dev/null || true
-    # 用 pg_upgrade 合并（--link 硬链接加速，失败可回滚）
-    su -s /bin/bash postgres -c "cd /tmp && '$NEW_BIN/pg_upgrade' \
-      -b '$OLD_BIN' -B '$NEW_BIN' \
-      -d '$OLD_DATA' -D '$NEW_DATA' \
-      -p 5432 -P 5433 --link --no-sync" 2>&1 | tail -5 || {
-        say "  pg_upgrade 失败，回滚到原样"
-        rm -rf "$NEW_DATA"; mv "${NEW_DATA}.pristine-$(date +%Y%m%d)" "$NEW_DATA" 2>/dev/null || true
-      }
-  fi
-  # 删除旧集群（数据已并入 PG18）
-  pg_dropcluster "$UPGRADE_SOURCE" main 2>/dev/null || true
-  say "  旧版 PostgreSQL ${UPGRADE_SOURCE} 已合并到 PG18"
-fi
 if ! command -v psql >/dev/null 2>&1; then
   apt-get install -y -qq postgresql-client-18 2>/dev/null || true
 fi
@@ -133,36 +194,19 @@ if ! command -v valkey-server >/dev/null 2>&1 && ! command -v redis-server >/dev
   apt-get install -y -qq valkey-server 2>/dev/null || apt-get install -y -qq redis-server
 fi
 
-# 解析实际数据库服务名/版本（优先 18，迁移依赖 PG18 的 uuidv7 等内建函数）
-PG_VERSION="$(ls /usr/lib/postgresql/ 2>/dev/null | sort -V | tail -1)"
-[[ -n "${PG_VERSION:-}" ]] || die "未找到 PostgreSQL 安装"
-[[ "$PG_VERSION" -ge 18 ]] || die "PostgreSQL 版本过低（$PG_VERSION < 18）：Pandora 迁移需要 PG18 的 uuidv7() 等函数"
-PG_SERVICE="postgresql@${PG_VERSION}-main"
-[[ -f "/etc/postgresql/${PG_VERSION}/main/postgresql.conf" ]] || PG_SERVICE="postgresql"
-# PG 实际监听端口：pg_lsclusters 为准（多版本共存时 PG18 可能不是 5432）
-PG_PORT="$(pg_lsclusters 2>/dev/null | awk -v v="$PG_VERSION" '$1==v && /online/ {print $3; exit}')"
-[[ "$PG_PORT" =~ ^[0-9]+$ ]] || PG_PORT=5432
-
-# Debian 上 apt 装 postgresql 可能未初始化主集群（比如之前用过 Docker 模式）。
-# 没有集群就初始化一个，否则后续所有 psql 都会连不上。
-# 注意：最小化系统可能没有 en_US.UTF-8 locale，pg_createcluster 会失败，
-# 所以强制 LC_ALL=C 用 C locale 建集群（PostgreSQL 完全支持，避免 locale 依赖）。
-if ! pg_lsclusters 2>/dev/null | grep -q "${PG_VERSION}.*online"; then
-  say "初始化 PostgreSQL ${PG_VERSION} 主集群"
-  if command -v pg_createcluster >/dev/null 2>&1; then
-    LC_ALL=C pg_createcluster "$PG_VERSION" main --start 2>&1 | tail -3 || true
-  fi
-  # 建集群后确认真的在线，否则后续全部白搭
-  pg_lsclusters 2>/dev/null | grep -q "${PG_VERSION}.*online" || die "PostgreSQL ${PG_VERSION} 集群初始化失败"
-fi
-# PG 实际监听端口：pg_lsclusters 为准（多版本共存时 PG18 可能不是 5432）
-PG_PORT="$(pg_lsclusters 2>/dev/null | awk -v v="$PG_VERSION" '$1==v && /online/ {print $3; exit}')"
-[[ "$PG_PORT" =~ ^[0-9]+$ ]] || PG_PORT=5432
+# 只用 PG18 的 main 集群：版本钉死，不取「装着的最新版本」——机器上哪天多装了 19，
+# 按最新版本取会另起一个空集群，把迁移跑到空库上，而数据还在 18 里
+PG_VERSION="$PANDORA_PG_MAJOR"
+[[ -x "/usr/lib/postgresql/${PG_VERSION}/bin/postgres" ]] || die "PostgreSQL ${PG_VERSION} 没装上（/usr/lib/postgresql/${PG_VERSION}）：Pandora 迁移需要 PG18 的 uuidv7() 等函数"
+native_ensure_pg_cluster "$PG_VERSION"
+PG_PORT="$(native_pg_cluster_port "$PG_VERSION")" || die "PostgreSQL ${PG_VERSION}/main 没有在线，读不出端口"
+say "  PostgreSQL ${PG_VERSION}/main 在线，端口 ${PG_PORT}"
+# 别的版本的集群一律不碰；其中有 aegis 库而 PG18 不是它的接班人时停下（见函数注释）
+native_check_foreign_clusters "$PG_VERSION" "$PG_PORT" "$MODE" \
+  "$([[ "$MODE" = upgrade ]] && pandora_env_file_value "$ENV_FILE" POSTGRES_PORT || true)"
 
 # ── 2. 准备数据目录 / 启动服务 ─────────────────────────
 say "[2/6] 启动数据服务"
-systemctl reset-failed "$PG_SERVICE" 2>/dev/null || true
-systemctl start "$PG_SERVICE" 2>/dev/null || true
 VK_CONF=""
 if command -v valkey-server >/dev/null 2>&1; then
   VK_CONF="/etc/valkey/valkey.conf"
