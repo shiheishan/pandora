@@ -210,80 +210,96 @@ func (s *Service) scanExpiredNotices(ctx context.Context, tx pgx.Tx, tenantID st
 func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 	queued := 0
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		for _, pct := range quotaThresholds {
-			rows, err := tx.Query(ctx, `
-				WITH usage AS (
-					SELECT q.subscription_id, s.user_id, p.name, q.consumed,
-					       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) AS plan_total,
-					       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) + pk.pack_left AS total
-					  FROM quota_balances q
-					  JOIN subscriptions s ON s.id = q.subscription_id
-					  JOIN plans p ON p.id = s.plan_id
-					 CROSS JOIN LATERAL (
-					       SELECT COALESCE(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint AS pack_left
-					         FROM traffic_pack_grants g
-					        WHERE g.tenant_id = q.tenant_id AND g.subscription_id = q.subscription_id
-					          AND g.consumed_bytes < g.granted_bytes) pk
-					 WHERE q.tenant_id = $1
-					   AND q.metric = 'traffic.bytes'
-					   AND s.status IN ('active','trialing'))
-				SELECT subscription_id::text, user_id::text, name, consumed, total
-				  FROM usage
-				 WHERE plan_total > 0
-				   AND consumed * 100 >= total * $2
-				   -- 只取刚跨过这条线的：已经超过更高阈值的由那一档负责，
-				   -- 否则用量到 96% 时会同时收到 80% 和 95% 两条
-				   AND ($2 = 95 OR consumed * 100 < total * 95)`,
-				tenantID, pct)
+		items, err := scanQuotaCrossings(ctx, tx, tenantID)
+		if err != nil {
+			return err
+		}
+		for _, it := range items {
+			remain := it.total - it.consumed
+			if remain < 0 {
+				remain = 0
+			}
+			vars := map[string]string{
+				"plan":      it.plan,
+				"percent":   fmt.Sprint(it.pct),
+				"remaining": humanBytes(remain),
+			}
+			// 键里带上档位：用量继续涨到下一档时会再提醒一次，同一档内反复扫描只发一条
+			key := fmt.Sprintf("quota:%s:%d", it.subID, it.pct)
+			n, err := s.Enqueue(ctx, tx, tenantID, it.userID,
+				"quota.warning", vars, key)
 			if err != nil {
 				return err
 			}
-			type item struct {
-				subID, userID, plan string
-				consumed, total     int64
-			}
-			var items []item
-			for rows.Next() {
-				var it item
-				if err := rows.Scan(&it.subID, &it.userID, &it.plan, &it.consumed, &it.total); err != nil {
-					rows.Close()
-					return err
-				}
-				items = append(items, it)
-			}
-			rows.Close()
-			if err := rows.Err(); err != nil {
+			if err := plugin.EmitTrafficExhausted(ctx, tx, tenantID, key,
+				it.subID, it.userID, it.plan, it.consumed, it.total, it.pct); err != nil {
 				return err
 			}
-
-			for _, it := range items {
-				remain := it.total - it.consumed
-				if remain < 0 {
-					remain = 0
-				}
-				vars := map[string]string{
-					"plan":      it.plan,
-					"percent":   fmt.Sprint(pct),
-					"remaining": humanBytes(remain),
-				}
-				// 键里带上周期起点：下个结算周期流量重置后，
-				// 同一条订阅应该能再次收到提醒
-				key := fmt.Sprintf("quota:%s:%d", it.subID, pct)
-				n, err := s.Enqueue(ctx, tx, tenantID, it.userID,
-					"quota.warning", vars, key)
-				if err != nil {
-					return err
-				}
-				if err := plugin.EmitTrafficExhausted(ctx, tx, tenantID, key,
-					it.subID, it.userID, it.plan, it.consumed, it.total, pct); err != nil {
-					return err
-				}
-				queued += n
-			}
+			queued += n
 		}
 		return nil
 	})
 	return queued, err
+}
+
+// quotaCrossing 是一条用量跨过预警线的订阅：pct 是它此刻所在的最高一档。
+type quotaCrossing struct {
+	subID, userID, plan string
+	consumed, total     int64
+	pct                 int
+}
+
+// scanQuotaCrossings 一遍扫出所有跨过任一预警线的订阅，每条订阅只带它所在的最高一档
+// （quotaThresholds 里已跨过的最大值）。
+//
+// 原先每一档各扫一遍（两档就是两遍整张配额表连订阅、套餐、流量包），同一条订阅在 96% 时还要靠
+// 「只取刚跨过这条线的」排除较低一档。现在只扫一遍、每行直接定档，不再有跨档互斥的写法，
+// 加一档阈值不加一遍扫描。结果与分档各扫一遍逐行相同（PG18 对照：scan_quota_pg18_test.go）。
+//
+// 流量包余量的 LATERAL 只对可能跨线的行做：可用量 = 套餐额度 + 流量包余量，余量不为负，
+// 所以连套餐额度本身都没用到最低一档的订阅（绝大多数）不可能跨线，在连流量包之前就被挡掉。
+func scanQuotaCrossings(ctx context.Context, tx pgx.Tx, tenantID string) ([]quotaCrossing, error) {
+	lowest := quotaThresholds[0]
+	for _, t := range quotaThresholds {
+		lowest = min(lowest, t)
+	}
+	rows, err := tx.Query(ctx, `
+		WITH usage AS (
+			SELECT q.subscription_id, s.user_id, p.name, q.consumed,
+			       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) AS plan_total,
+			       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) + pk.pack_left AS total
+			  FROM quota_balances q
+			  JOIN subscriptions s ON s.id = q.subscription_id
+			  JOIN plans p ON p.id = s.plan_id
+			 CROSS JOIN LATERAL (
+			       SELECT COALESCE(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint AS pack_left
+			         FROM traffic_pack_grants g
+			        WHERE g.tenant_id = q.tenant_id AND g.subscription_id = q.subscription_id
+			          AND g.consumed_bytes < g.granted_bytes) pk
+			 WHERE q.tenant_id = $1
+			   AND q.metric = 'traffic.bytes'
+			   AND s.status IN ('active','trialing')
+			   AND q.consumed * 100 >= (COALESCE(q.granted,0) + COALESCE(q.granted_addon,0)) * $3::int)
+		SELECT subscription_id::text, user_id::text, name, consumed, total,
+		       (SELECT max(t) FROM unnest($2::int[]) AS th(t) WHERE consumed * 100 >= total * t) AS pct
+		  FROM usage
+		 WHERE plan_total > 0
+		   AND consumed * 100 >= total * $3::int
+		 ORDER BY pct, subscription_id`,
+		tenantID, quotaThresholds, lowest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []quotaCrossing
+	for rows.Next() {
+		var it quotaCrossing
+		if err := rows.Scan(&it.subID, &it.userID, &it.plan, &it.consumed, &it.total, &it.pct); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
 }
 
 // ScanPaidOrders 给刚履约的订单补一条支付成功通知。
