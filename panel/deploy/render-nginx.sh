@@ -135,16 +135,22 @@ REALIP
 ensure_realip_default
 
 # ---------------------------------------------------------------------------
-# 主配置的连接上限：worker_connections 与 worker_rlimit_nofile 只能写在 nginx.conf 的
-# events / main 段，conf.d 里的站点文件管不到。Debian 缺省 768 × worker_processes auto（2 核
-# 两个 worker）：每条 SSE、每条节点事件流各占一个客户端连接加一个上游连接，约一千条就顶满，
-# 新连接（含节点请求）一律被拒（5k-r4 复测：1000 人 SSE 时节点请求报 500）。这里把每个 worker
-# 抬到至少 8192 条，文件描述符上限配套抬到 65536（一条代理连接两个 fd）；已经更高的不动。
+# 主配置的 worker 与连接上限：worker_processes、worker_connections 与 worker_rlimit_nofile
+# 只能写在 nginx.conf 的 main / events 段，conf.d 里的站点文件管不到。
+# 连接上限：Debian 缺省 768 × worker_processes auto（2 核两个 worker）：每条 SSE、每条节点事件流
+# 各占一个客户端连接加一个上游连接，约一千条就顶满，新连接（含节点请求）一律被拒（5k-r4 复测：
+# 1000 人 SSE 时节点请求报 500）。这里把每个 worker 抬到至少 16384 条，文件描述符上限配套抬到
+# 65536（一条代理连接两个 fd，16384 条最多 32768 个）；已经更高的不动。
+# worker 数：发行版的 auto 在 2 核机器上是 2 个 worker，各自常驻一份 TLS 会话缓存索引、连接池、
+# SSL 缓冲，约多占 8MB；1 万用户 + 1000 节点时 nginx 总共只用约 11 个单核点（0.11 核），一个 worker
+# 绰绰有余（重连风暴时握手会在这一个 worker 里排队，可以接受）。只把 auto 改成 1：运维显式写的数字
+# （2、4…）是有意为之，不动。因为 worker 少了一半，每个 worker 的 worker_connections 从 8192
+# 抬到 16384，整机的并发连接上限不变。
 # 主配置的位置：PANDORA_NGINX_MAIN_CONF 显式指定（none 表示不碰），否则只在输出文件位于
 # <nginx 目录>/conf.d/ 下时取 <nginx 目录>/nginx.conf；文件不存在就跳过。
-# 改动只涉及这两个数，结构不认识（events 写在一行里、没有 events 段）时不改、只提示。
+# 改动只涉及这三项，结构不认识（events 写在一行里、没有 events 段）时不改、只提示。
 # ---------------------------------------------------------------------------
-NGINX_WORKER_CONNECTIONS=8192
+NGINX_WORKER_CONNECTIONS=16384
 NGINX_RLIMIT_NOFILE=65536
 
 nginx_main_conf() {
@@ -180,6 +186,8 @@ tune_nginx_main() {
       line = $0
       if (depth == 0 && code ~ /^[[:space:]]*worker_rlimit_nofile[[:space:]]+[0-9]+[[:space:]]*;/ && num(code) < nofile)
         line = lead($0) "worker_rlimit_nofile " nofile ";"
+      if (depth == 0 && code ~ /^[[:space:]]*worker_processes[[:space:]]+auto[[:space:]]*;/)
+        line = lead($0) "worker_processes 1;"
       if (depth == 0 && code ~ /^[[:space:]]*events[[:space:]]*\{/) {
         if (opens != closes + 1) exit 4
         events = 1; in_events = 1
@@ -210,7 +218,7 @@ tune_nginx_main() {
   fi
   chmod --reference="$conf" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
   mv -f -- "$tmp" "$conf"
-  printf 'render-nginx: %s now has worker_connections >= %s and worker_rlimit_nofile >= %s\n' \
+  printf 'render-nginx: %s tuned (worker_processes 1 when it was auto, worker_connections >= %s, worker_rlimit_nofile >= %s)\n' \
     "$conf" "$NGINX_WORKER_CONNECTIONS" "$NGINX_RLIMIT_NOFILE"
 }
 
