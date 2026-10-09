@@ -648,7 +648,10 @@ func (s *Service) ReportRuntimeStatus(ctx context.Context, tenantID string, n *S
 			 WHERE tenant_id=$1 AND id=(SELECT server_id FROM nodes WHERE tenant_id=$1 AND id=$2)
 			   AND (last_heartbeat_at IS NULL OR last_heartbeat_at < now() - interval '`+serverHeartbeatRefresh+`')`,
 		tenantID, n.ID)
-	if err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b); err != nil {
+	err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b)
+	// 兼容通道也写了运行状态与心跳时刻：让签名心跳的合并器忘掉这个节点，下一拍立即写
+	s.forgetHeartbeat(tenantID, n.ID)
+	if err != nil {
 		return err
 	}
 	if !found {

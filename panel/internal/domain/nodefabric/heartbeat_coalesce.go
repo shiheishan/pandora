@@ -1,8 +1,10 @@
 package nodefabric
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -37,6 +39,18 @@ import (
 //     速率口径，24 小时曲线从 2880 点变成约 1440 点；
 //   - 进程崩溃丢的只是还没落库的那一小段心跳（最多 hbFlushInterval），下一拍补上。
 //
+// 材料记录只认「库里确实是这样」：凡是立即写成功（签名门槛写 HeartbeatSigned、身份已复核的
+// HeartbeatConfirmed、无签名的 Heartbeat，都经 Service.heartbeat）都更新它，失败就忘掉；兼容
+// 通道 /status 写运行状态后忘掉；记录里另带写入时用的身份公钥，重新引导、两阶段接入换了身份
+// （同时会改写版本与资产列）之后的第一拍一定立即写；即使还有别的写入口没挂上，每
+// hbMaterialRefresh 也强制立即写一次，库里最多旧这么久就自愈（审查 #1）。
+//
+// 单副本设计：材料记录在进程内。aegis-node 目前只支持单实例（总协调 2026-10-09 定）；
+// 将来多实例时要让同一节点固定落到同一实例（nginx 按节点一致性哈希），届时再补。
+//
+// 批量写不与后台的租户级多行写成环：节点行、服务器行都先按 id 排序、FOR NO KEY UPDATE SKIP
+// LOCKED 锁住再改，锁不到（别的事务正持有）的不等、放回缓冲下一轮再写（审查 #6）。
+//
 // 身份门槛不放松：进缓冲的心跳在请求时已由纪元监听证明身份新鲜（验签用的缓存身份之后
 // 没有任何身份或节点状态的提交）；批量写时三条语句仍按 activeIdentityFromSQL 逐行加
 // 「这把公钥此刻仍是有效身份」的门槛，期间被吊销的节点那一行什么都不写。
@@ -53,6 +67,8 @@ const (
 	hbForgetAfter = 10 * time.Minute
 	// hbFlushTimeout 是一次批量写的上限。
 	hbFlushTimeout = 10 * time.Second
+	// hbMaterialRefresh：离上一次立即写超过这么久，即使材料没变也立即写一次（自愈兜底）。
+	hbMaterialRefresh = 10 * time.Minute
 )
 
 // hbMaterial 是心跳里除探针值之外的全部上报：任何一项变了都立即写。
@@ -74,6 +90,8 @@ type hbPending struct {
 
 type hbNodeState struct {
 	material   hbMaterial
+	identity   []byte    // 那次立即写用的身份公钥（无签名写为空）
+	writtenAt  time.Time // 最近一次立即写成功的时刻
 	acceptedAt time.Time // 最近一次收下的心跳（立即写或进缓冲）
 	metricsAt  time.Time // 最近一次写进（或排进）探针点的心跳时刻
 	pending    *hbPending
@@ -96,7 +114,8 @@ func (c *heartbeatCoalescer) offer(key string, in HeartbeatInput, at time.Time, 
 	defer c.mu.Unlock()
 	st := c.nodes[key]
 	if st == nil || st.material != materialOf(in) || st.acceptedAt.IsZero() ||
-		at.Sub(st.acceptedAt) >= hbCoalesceMaxGap || at.Before(st.acceptedAt) {
+		at.Sub(st.acceptedAt) >= hbCoalesceMaxGap || at.Before(st.acceptedAt) ||
+		len(publicKey) == 0 || !bytes.Equal(st.identity, publicKey) || at.Sub(st.writtenAt) >= hbMaterialRefresh {
 		return false
 	}
 	p := st.pending
@@ -114,8 +133,8 @@ func (c *heartbeatCoalescer) offer(key string, in HeartbeatInput, at time.Time, 
 	return true
 }
 
-// written 记下一次立即写成功：材料字段、时刻；缓冲里更早的那一拍作废。
-func (c *heartbeatCoalescer) written(key string, in HeartbeatInput, at time.Time) {
+// written 记下一次立即写成功：材料字段、身份、时刻；缓冲里更早的那一拍作废。
+func (c *heartbeatCoalescer) written(key string, in HeartbeatInput, at time.Time, identity []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	st := c.nodes[key]
@@ -123,7 +142,8 @@ func (c *heartbeatCoalescer) written(key string, in HeartbeatInput, at time.Time
 		st = &hbNodeState{}
 		c.nodes[key] = st
 	}
-	st.material, st.acceptedAt, st.pending = materialOf(in), at, nil
+	st.material, st.acceptedAt, st.writtenAt, st.pending = materialOf(in), at, at, nil
+	st.identity = append([]byte(nil), identity...)
 	if in.Metrics != nil {
 		st.metricsAt = at
 	}
@@ -161,11 +181,15 @@ func (c *heartbeatCoalescer) take(now time.Time) []hbFlushRow {
 	return rows
 }
 
-// putBack 把写失败的心跳放回去（期间没有更新的一拍才放）。
-func (c *heartbeatCoalescer) putBack(rows []hbFlushRow) {
+// putBack 把没写成的心跳放回去：期间没有更新的一拍、且还不到 hbCoalesceMaxGap 那么旧才放
+// （再旧的心跳写进去也只会让在线判定更早过期；节点删了、行一直锁不到时也不会无限重放）。
+func (c *heartbeatCoalescer) putBack(rows []hbFlushRow, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, r := range rows {
+		if now.Sub(r.p.at) >= hbCoalesceMaxGap {
+			continue
+		}
 		if st := c.nodes[r.key]; st != nil && st.pending == nil && !st.acceptedAt.After(r.p.at) {
 			p := r.p
 			st.pending = &p
@@ -197,17 +221,40 @@ func (s *Service) HeartbeatConfirmed(ctx context.Context, tenantID, nodeID strin
 	if c == nil || perr != nil {
 		return s.heartbeat(ctx, tenantID, nodeID, in, check.publicKey)
 	}
-	key, now := hbKey(tenantID, parsed.String()), time.Now()
-	if v, ok := s.cachedNodeConfig(ctx, tenantID, nodeID, s.watchStamp()); ok && c.offer(key, in, now, check.publicKey) {
+	key := hbKey(tenantID, parsed.String())
+	if v, ok := s.cachedNodeConfig(ctx, tenantID, nodeID, s.watchStamp()); ok && c.offer(key, in, time.Now(), check.publicKey) {
 		return v.heartbeatOutput(), nil
 	}
-	out, err := s.heartbeat(ctx, tenantID, nodeID, in, check.publicKey)
-	if err != nil {
-		c.forget(key)
-		return nil, err
+	// 立即写；合并器的记录由 Service.heartbeat 按写的结果更新
+	return s.heartbeat(ctx, tenantID, nodeID, in, check.publicKey)
+}
+
+// heartbeatWritten 在一次立即写之后更新合并器：成功记下材料与身份，失败或节点不存在就忘掉。
+func (s *Service) heartbeatWritten(tenantID, nodeID string, in HeartbeatInput, at time.Time, identity []byte, ok bool) {
+	if s.hb == nil {
+		return
 	}
-	c.written(key, in, now)
-	return out, nil
+	parsed, err := uuid.Parse(nodeID)
+	if err != nil {
+		return
+	}
+	key := hbKey(tenantID, parsed.String())
+	if ok {
+		s.hb.written(key, in, at, identity)
+		return
+	}
+	s.hb.forget(key)
+}
+
+// forgetHeartbeat 让合并器忘掉一个节点：别的入口改写了心跳类列（兼容通道 /status）之后调，
+// 下一拍立即写。
+func (s *Service) forgetHeartbeat(tenantID, nodeID string) {
+	if s.hb == nil {
+		return
+	}
+	if parsed, err := uuid.Parse(nodeID); err == nil {
+		s.hb.forget(hbKey(tenantID, parsed.String()))
+	}
 }
 
 // heartbeatOutput 是缓冲路径的回包，与立即写的 RETURNING 同口径。
@@ -267,15 +314,24 @@ func (s *Service) flushHeartbeats(ctx context.Context, c *heartbeatCoalescer, lo
 		byTenant[r.tenantID] = append(byTenant[r.tenantID], r)
 	}
 	for tenantID, batch := range byTenant {
-		if err := s.writeHeartbeatBatch(ctx, tenantID, batch); err != nil {
-			c.putBack(batch)
+		skipped, err := s.writeHeartbeatBatch(ctx, tenantID, batch)
+		if err != nil {
+			c.putBack(batch, time.Now())
 			log.Warn("心跳批量写失败，下一轮重试", "tenant_id", tenantID, "rows", len(batch), "error", err.Error())
+			continue
 		}
+		// 节点行被别的事务锁着、这一轮没写的：放回去下一轮再写
+		c.putBack(skipped, time.Now())
 	}
 }
 
 // writeHeartbeatBatch 一次往返写完一批（BatchScoped，异步提交，与立即写同为遥测级）。
-func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows []hbFlushRow) error {
+//
+// 加锁顺序：节点行、服务器行都按 id 排好序，先 FOR NO KEY UPDATE SKIP LOCKED 锁住再改（与普通
+// UPDATE 同一档行锁，不挡外键检查的 KEY SHARE）。别的事务正持有的行直接跳过、不等，所以批量写
+// 永远不会排在后台的租户级多行写（发布分流、发布配置）后面成环；跳过的节点返回给调用方放回缓冲。
+func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows []hbFlushRow) (skipped []hbFlushRow, err error) {
+	sort.Slice(rows, func(i, j int) bool { return rows[i].nodeID < rows[j].nodeID })
 	ids := make([]string, len(rows))
 	ats := make([]time.Time, len(rows))
 	keys := make([][]byte, len(rows))
@@ -300,13 +356,25 @@ func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows
 	gate := ` AND EXISTS (SELECT 1` + activeIdentityFromSQL("v.id") + ` AND i.public_key = v.k)`
 	b := &pgx.Batch{}
 	// 节点行只动 last_heartbeat_at（HOT 更新、不触发变更通知与 00153 的配置通知）；
-	// 不往回写：立即写已经写了更新的时刻就跳过
+	// 不往回写：立即写已经写了更新的时刻就跳过。返回锁到的节点 id（没锁到的放回缓冲）。
+	var locked []string
 	b.Queue(`
-		UPDATE nodes n SET last_heartbeat_at = v.beat_at
-		  FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, beat_at, k)
-		 WHERE n.tenant_id = $1 AND n.id = v.id
-		   AND (n.last_heartbeat_at IS NULL OR n.last_heartbeat_at < v.beat_at)`+gate,
-		tenantID, ids, ats, keys)
+		WITH v AS (
+			SELECT * FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, beat_at, k)
+		), locked AS (
+			SELECT n.id FROM nodes n
+			 WHERE n.tenant_id = $1 AND n.id IN (SELECT id FROM v)
+			 ORDER BY n.id
+			   FOR NO KEY UPDATE OF n SKIP LOCKED
+		), upd AS (
+			UPDATE nodes n SET last_heartbeat_at = v.beat_at
+			  FROM locked l JOIN v ON v.id = l.id
+			 WHERE n.tenant_id = $1 AND n.id = l.id
+			   AND (n.last_heartbeat_at IS NULL OR n.last_heartbeat_at < v.beat_at)`+gate+`
+			RETURNING n.id
+		)
+		SELECT coalesce(array_agg(id::text), '{}') FROM locked`,
+		tenantID, ids, ats, keys).QueryRow(func(row pgx.Row) error { return row.Scan(&locked) })
 	if len(m.ids) > 0 {
 		b.Queue(`
 			INSERT INTO node_metrics
@@ -324,15 +392,36 @@ func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows
 			tenantID, m.ids, m.ats, m.keys, m.cpu, m.memU, m.memT, m.diskU, m.diskT,
 			m.l1, m.l5, m.l15, m.rx, m.tx, m.tc, m.up)
 	}
-	// 服务器行（两阶段接入的服务器 id = 控制节点 id）：与立即写同一个刷新间隔
+	// 服务器行（两阶段接入的服务器 id = 控制节点 id）：与立即写同一个刷新间隔；锁不到的这一轮
+	// 不刷新（下一次心跳再说），同样不等
 	b.Queue(`
+		WITH v AS (
+			SELECT * FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, beat_at, k)
+		), locked AS (
+			SELECT s.id FROM servers s JOIN v ON v.id = s.id
+			 WHERE s.tenant_id = $1 AND s.deleted_at IS NULL
+			   AND (s.last_heartbeat_at IS NULL
+			        OR s.last_heartbeat_at < v.beat_at - interval '`+serverHeartbeatRefresh+`')
+			 ORDER BY s.id
+			   FOR NO KEY UPDATE OF s SKIP LOCKED
+		)
 		UPDATE servers s SET last_heartbeat_at = v.beat_at
-		  FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, beat_at, k)
-		 WHERE s.tenant_id = $1 AND s.id = v.id AND s.deleted_at IS NULL
-		   AND (s.last_heartbeat_at IS NULL
-		        OR s.last_heartbeat_at < v.beat_at - interval '`+serverHeartbeatRefresh+`')`+gate,
+		  FROM locked l JOIN v ON v.id = l.id
+		 WHERE s.tenant_id = $1 AND s.id = l.id`+gate,
 		tenantID, ids, ats, keys)
-	return s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b)
+	if err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b); err != nil {
+		return nil, err
+	}
+	got := make(map[string]bool, len(locked))
+	for _, id := range locked {
+		got[id] = true
+	}
+	for _, r := range rows {
+		if !got[r.nodeID] {
+			skipped = append(skipped, r)
+		}
+	}
+	return skipped, nil
 }
 
 // FlushHeartbeats 立即把合并缓冲里的心跳写进库（测试与诊断用；批量写协程按节拍自己调）。
