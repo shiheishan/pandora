@@ -64,13 +64,13 @@ stray="$(grep -vE '^[[:space:]]*#' "$TEST_DIR/aegis.conf" | grep -oE 'server_nam
 grep -Fq 'include /etc/aegispanel/cloudflare-realip.conf' "$TEST_DIR/aegis.conf"
 
 # 压缩：网关给 JS 发 text/javascript，订阅正文发 text/yaml（Clash）、application/json（sing-box）、
-# text/plain（URI 列表），都必须在 gzip_types 里；级别 1（级别按配置块定、订阅路径是随机前缀没法单设，
-# 全站取 CPU 最省的一档）
+# text/plain（URI 列表），都必须在 gzip_types 里；级别 5（按配置块定、订阅路径是随机前缀没法单设；
+# 1 会让新访客首次加载的 JS/CSS 大约 15%）
 gzip_types="$(grep -E '^[[:space:]]*gzip_types ' "$TEST_DIR/aegis.conf")"
 for type in text/css text/javascript application/javascript application/json text/yaml text/plain image/svg+xml; do
   grep -Fqw "$type" <<<"$gzip_types" || { printf 'gzip_types misses %s\n' "$type" >&2; exit 1; }
 done
-grep -Eq '^[[:space:]]*gzip_comp_level 1;' "$TEST_DIR/aegis.conf"
+grep -Eq '^[[:space:]]*gzip_comp_level 5;' "$TEST_DIR/aegis.conf"
 # 会话缓存 2m：10m 是 4 万个会话，远用不满，共享区在 worker 里常驻
 grep -Eq '^[[:space:]]*ssl_session_cache shared:PandoraTLS:2m;' "$TEST_DIR/aegis.conf"
 # 节点上游的长连接不按缺省 1000 次就换：keepalive_requests 要调大（至少 10000）

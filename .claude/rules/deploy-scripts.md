@@ -39,7 +39,7 @@ paths:
 - nginx 站点模板的占用参数（w12deploy，节点占用整改）：
   - 节点两个 location 的 `access_log` 带 `if=$aegis_node_log`（http 层 `map $status`：2xx 与 304 不记，其余照记），server 层门户与后台的那条无条件日志不动；成功请求的排障看 aegis-node 自己的日志与指标，不要把条件去掉（千节点约 12000 行/分、4GB/天）
   - `ssl_session_cache` 2m；`upstream aegis_node` 的 `keepalive_requests` 调到 100000（缺省 1000 次换一条连接）
-  - gzip 级别 1、`gzip_types` 含 `text/yaml`（Clash）、`text/plain`（URI 列表）、`application/json`（sing-box）：级别按配置块定、订阅路径是随机前缀没法单设 location，所以全站取最省 CPU 的一档
+  - gzip 级别 5、`gzip_types` 含 `text/yaml`（Clash）、`text/plain`（URI 列表）、`application/json`（sing-box）：级别按配置块定、订阅路径是随机前缀没法单设 location，全站一档；取 5 是不让新访客首次加载的 JS/CSS 变大（1 约大 15%）。订阅预压缩、静态资源构建期预压缩落地后，这里的现压 CPU 才能省掉
   - 守卫：`render-nginx_test.sh`
 - 门户网关 `aegis-public.service` 只设 `MemoryMax` 与 `CPUWeight=50`，不设 `CPUQuota`：硬配额会让登录潮里整个进程被停摆、而机器其实有空闲（5k-r3 节流 1824 次共 15.4 秒）。口令哈希闸门缺省并发 2（`platform/config` 的 `DefaultPasswordHashConcurrency`）是以此为前提的，给 public 加回硬配额要同时把闸门压回 1。admin、node 的单元仍是 `CPUQuota`。守卫：`deploy-params_static_test.sh`（同时钉 compose 的 shared_buffers 开关与健康检查间隔）
 - compose（Docker 过渡布局）：`shared_buffers` 取 `.env` 的 `PG_SHARED_BUFFERS`（缺省 128MB，降 64MB 要先同机 A/B）；两个 healthcheck 间隔 60 秒（每次是一次 docker exec，10 秒一次合计约 2.2 个单核点），迁移脚本等 healthy 的循环要大于一个间隔
