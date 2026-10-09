@@ -116,7 +116,7 @@ func (*roundTripTracer) TraceRelease(_ *pgxpool.Pool, data pgxpool.TraceReleaseD
 	}
 	delete(custom, rtOwnerKey)
 	if custom[scopedReleaseKey] != true && !pc.IsClosed() && !pc.IsBusy() && pc.TxStatus() == 'I' {
-		_ = owner // 回退实验：临时去掉，CI 应变红
+		owner.AddReset()
 	}
 }
 
