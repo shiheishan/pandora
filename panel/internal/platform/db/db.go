@@ -21,6 +21,8 @@ type Pool struct {
 	*pgxpool.Pool
 	// stopStats 停掉周期统计日志（Options.StatsLog 非空时才有）
 	stopStats func()
+	// rt 是挂在全部连接上的往返记账追踪器（见 roundtrip_tracer.go）
+	rt *roundTripTracer
 }
 
 // Close 先停周期统计日志，再关连接池。
@@ -102,6 +104,10 @@ func OpenWithOptions(ctx context.Context, dsn string, o Options) (*Pool, error) 
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
 	cfg.AfterRelease = afterRelease
+	// 往返记账器（见 roundtrip_tracer.go）：只计数，不改任何连接行为
+	rt := &roundTripTracer{}
+	cfg.ConnConfig.Tracer = rt
+	cfg.ShouldPing = shouldPingCounted
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -115,7 +121,7 @@ func OpenWithOptions(ctx context.Context, dsn string, o Options) (*Pool, error) 
 		pool.Close()
 		return nil, err
 	}
-	p := &Pool{Pool: pool}
+	p := &Pool{Pool: pool, rt: rt}
 	if o.StatsLog != nil {
 		p.stopStats = startPoolStatsLog(pool, o.StatsLog, PoolStatsInterval)
 	}

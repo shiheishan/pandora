@@ -65,6 +65,8 @@ func NewRouter(d Deps) http.Handler {
 	// RequestID 最先（后续所有日志都要带它），Recovery 紧随（要能兜住后面所有 panic），
 	// Authenticate 在 DomainGuard 之前（先解析出主体才能判断它属于哪个域）。
 	r.Use(middleware.RequestID)
+	// 访问日志与往返记账器（db_rt/kv_rt）：紧跟 RequestID，鉴权与限流的往返都算进来
+	r.Use(middleware.AccessLog(d.Log))
 	r.Use(middleware.ClientInfo)
 	r.Use(middleware.Recovery(d.Log))
 	r.Use(middleware.SecurityHeaders)

@@ -88,6 +88,8 @@ func NewRouter(d Deps) http.Handler {
 	var r chi.Router = mux
 
 	r.Use(middleware.RequestID)
+	// 访问日志与往返记账器（db_rt/kv_rt）：紧跟 RequestID，鉴权与限流的往返都算进来
+	r.Use(middleware.AccessLog(d.Log))
 	r.Use(middleware.ClientInfo)
 	r.Use(middleware.Recovery(d.Log))
 	r.Use(middleware.SecurityHeaders)
