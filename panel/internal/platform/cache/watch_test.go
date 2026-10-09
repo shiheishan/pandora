@@ -313,3 +313,28 @@ func TestEpochSQLCountsFirstAdvance(t *testing.T) {
 		t.Fatal("channel names must be plain lowercase identifiers")
 	}
 }
+
+// Freshness：监听健康时按戳比、能 pinned；不健康时按纪元比、不 pinned；没读纪元的条目不算覆盖。
+func TestFreshnessCoversByStampOrEpoch(t *testing.T) {
+	watched := Freshness{Stamp: MakeStamp(2, 4, 0)}
+	entry := Freshness{Stamp: MakeStamp(2, 4, 0), Epoch: 9}
+	if !entry.Covers(watched, 0) || !entry.Pinned(watched, 0) {
+		t.Fatal("entry with the same stamp must be served and pinned")
+	}
+	if newer := (Freshness{Stamp: MakeStamp(2, 5, 0)}); entry.Covers(newer, 0) || entry.Pinned(newer, 0) {
+		t.Fatal("a notification after the load must invalidate the entry")
+	}
+	unwatched := Freshness{Epoch: 9}
+	if !entry.Covers(unwatched, 0) || entry.Pinned(unwatched, 0) {
+		t.Fatal("unwatched: same epoch serves, but only within the TTL")
+	}
+	if entry.Covers(Freshness{Epoch: 10}, 0) {
+		t.Fatal("unwatched: an advanced epoch must invalidate the entry")
+	}
+	if (Freshness{Stamp: MakeStamp(2, 4, 0)}).Covers(unwatched, 0) {
+		t.Fatal("an entry that never read the epoch must not satisfy an epoch requirement")
+	}
+	if watched.Flight() == unwatched.Flight() || unwatched.Flight() != "e9" {
+		t.Fatalf("flight tags: %q %q", watched.Flight(), unwatched.Flight())
+	}
+}

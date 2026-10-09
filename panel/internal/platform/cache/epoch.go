@@ -1,5 +1,7 @@
 package cache
 
+import "strconv"
+
 // 纪元序列与通知通道的约定。序列、触发器与通知都在迁移里（00101、00153–00156），这里只放名字，
 // 供各域在本来就要跑的查询里读纪元（EpochSQL）、或起 Watch 监听通知。名字与迁移对不上时
 // PG18 用例 TestCacheEpochPG18 变红。
@@ -48,3 +50,36 @@ func CacheKinds() []string {
 
 // EpochSequence 是种类对应的纪元序列名（<种类>_epoch）。
 func EpochSequence(kind string) string { return kind + "_epoch" }
+
+// Freshness 是「数据有多新」，条目加载前记下、请求开始时取一份要求，两者一比就知道条目能不能用：
+//   - 监听健康：Stamp 是监听戳（加载前取），Epoch 不读（零往返）；
+//   - 监听不健康：Stamp 为零值，Epoch 是在本来就要跑的查询里一并读出的纪元（EpochSQL）。
+//
+// 纪元序列的读数从 1 起（新建序列 last_value=1、is_called=false），所以 Epoch 为 0 表示「没读」。
+type Freshness struct {
+	Stamp Stamp
+	Epoch int64
+}
+
+// Covers 报告按 entry 加载的数据是否不旧于 want 的要求：want 带健康的戳时按戳比 kind 类通知；
+// 否则按纪元比，entry 当时没读纪元就不算覆盖（监听刚断开时，健康期间加载的条目一律重算一次）。
+func (entry Freshness) Covers(want Freshness, kind int) bool {
+	if want.Stamp.OK() {
+		return entry.Stamp.Covers(want.Stamp, kind)
+	}
+	return entry.Epoch > 0 && entry.Epoch >= want.Epoch
+}
+
+// Pinned 报告条目能否不看 TTL：只有监听健康、且戳覆盖时才行（监听证明加载之后没有相关提交）。
+// 按纪元比时仍受 TTL 约束：纪元在提交前就推进了，读到新纪元、旧数据的提交缝靠 TTL 兜。
+func (entry Freshness) Pinned(want Freshness, kind int) bool {
+	return want.Stamp.OK() && entry.Stamp.Covers(want.Stamp, kind)
+}
+
+// Flight 是按要求单飞的标签：要求更新的请求不去搭为较旧要求发起的那趟车。
+func (want Freshness) Flight() string {
+	if want.Stamp.OK() {
+		return want.Stamp.Flight("w")
+	}
+	return "e" + strconv.FormatInt(want.Epoch, 10)
+}
