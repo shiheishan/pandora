@@ -84,6 +84,10 @@ eval "$(extract_fn backup-postgres.sh pandora_pg)"
 [ "$(cat "$T/pg.calls")" = 'docker exec -i -e PGPASSWORD aegis-postgres pg_dump -U aegis -d aegis --format=custom | PGPASSWORD=owner-pw' ] \
   || fail "docker pandora_pg: $(cat "$T/pg.calls")"
 
+# 恢复出来的直装库属主还是 POSTGRES_USER（客户端以 postgres 连，不给就成了 postgres 的库）
+grep -Fq 'create_args+=(--owner="${POSTGRES_USER:-aegis}")' "$DEPLOY/restore-postgres.sh" \
+  || fail 'restore-postgres.sh does not keep the native database owner'
+
 # --- psql.sh 与 bootstrap.sh：在临时 deploy/ 里真跑一遍，客户端换成桩 ---
 for layout in native docker; do
   mkdir -p "$T/$layout"

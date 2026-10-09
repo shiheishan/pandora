@@ -268,6 +268,10 @@ create_args=()
 if [ "$target_db" = "$POSTGRES_DB" ]; then
   create_args+=(--connection-limit=0)
 fi
+# 直装以 postgres 连库，库的属主仍给 POSTGRES_USER（aegis），与全新直装一致；docker 布局连库的就是它
+if [ "$DB_LAYOUT" = native ]; then
+  create_args+=(--owner="${POSTGRES_USER:-aegis}")
+fi
 pandora_pg createdb --template=template0 "${create_args[@]}" "$target_db"
 assert_production_quiesced
 
