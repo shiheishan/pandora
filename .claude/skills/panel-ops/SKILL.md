@@ -1,6 +1,6 @@
 ---
 name: panel-ops
-description: pandora 已按生产方式装好的面板上的运维操作：管理员账号（aegis-adminctl 建号、改密、授权回收、has-admin）、支付渠道（aegis-payctl）、看后台地址（admin-url.sh）、迁移版本与无效索引（migrate.sh version/status/check-indexes）、面板 HTTPS 证书补救（edge-tls.sh）、加密备份/校验/恢复与 WebDAV 异地备份（backup-postgres.sh、verify-backup.sh、restore-postgres.sh、aegis-backup-webdav）、rollback-to、清单个限流键、服务器解绑、节点接入半途 status/abort（pandora-native enrollment），按只读/可逆/破坏性分级，含 docker 与直装两种布局的差异。用户或总协调说「建管理员」「管理员进不来/忘了密码」「后台地址是多少」「配易支付」「手动备份/恢复/回滚」「开每日备份」「证书没换上」「解除绑定」「清某个用户的冷却」时使用。首装与升级用 panel-install；只查库用 db-query；从症状查原因用 incident-runbook。
+description: pandora 已按生产方式装好的面板上的运维操作：管理员账号（aegis-adminctl 建号、改密、授权回收、has-admin）、支付渠道（aegis-payctl）、看后台地址（admin-url.sh）、迁移版本与无效索引（migrate.sh version/status/check-indexes）、面板 HTTPS 证书补救（edge-tls.sh）、加密备份/校验/恢复与 WebDAV 异地备份（backup-postgres.sh、verify-backup.sh、restore-postgres.sh、aegis-backup-webdav）、rollback-to、清单个限流键、服务器解绑、节点接入半途 status/abort（pandora-native enrollment），按只读/可逆/破坏性分级，含 docker 与直装两种布局的差异。用户或总协调说「建管理员」「重置管理员密码」「后台地址是多少」「配易支付」「手动备份/恢复/回滚」「开每日备份」「换上正规证书」「解除绑定」「清某个用户的冷却」这类已经知道要做什么的话时使用。症状说不清原因的（进不来、证书续期失败、打不开）先走 incident-runbook；首装与升级用 panel-install；只查库用 db-query。
 ---
 
 # 已装面板上的运维操作
@@ -23,7 +23,7 @@ description: pandora 已按生产方式装好的面板上的运维操作：管�
 |---|---|---|
 | 根目录 `$D` | `/opt/aegispanel` | `/opt/pandora` |
 | PostgreSQL | 容器 `aegis-postgres`，`deploy/psql.sh` | 系统 PG18，`runuser -u postgres -- psql -d aegis` |
-| `deploy/` 下有的运维脚本 | admin-url、psql、migrate、check-migrations、edge-tls、render-nginx、update-cloudflare-realip、bootstrap、backup-postgres、verify-backup、restore-postgres（`install-linux-binaries.sh` 的清单） | 只有 admin-url、migrate、check-migrations、edge-tls、render-nginx、update-cloudflare-realip（`install-native.sh` 的拷贝行）。**没有备份、校验、恢复、psql、bootstrap** |
+| `deploy/` 下的运维脚本 | 齐全（清单即 `install-linux-binaries.sh` 的拷贝行） | **没有备份、校验、恢复、psql、bootstrap**，其余照 `install-native.sh` 的拷贝行 |
 | 升级前备份 | `/var/backups/aegispanel/pre-upgrade-*.dump` | `/var/backups/pandora/pre-upgrade-*.dump` |
 | 加密备份单元 | `aegis-backup.service/.timer` 已装，**没启用** | 没有 |
 | 迁移连接串 | `.env` 有 `AEGIS_MIGRATION_DATABASE_URL`（老 `.env` 没有时才要 `PANDORA_LOCAL_MIGRATION_APPROVED=yes`） | 有 |

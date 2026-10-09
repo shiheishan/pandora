@@ -13,11 +13,7 @@ description: 向用户汇报 pandora 的总进度：先用脚本取主线头与 
 bash .claude/skills/status-report/scripts/snapshot.sh
 ```
 
-只读，打印：
-
-- 主线 `feat/panel-redesign` 头提交、本地是否领先远端、检查机与 GitHub 各 workflow 的现状；
-- 任务 worktree：未合提交数、未提交改动数、该 worktree 的 TASKS 勾选进度、最后提交时间、有没有报告（已全部合入且清单勾完的旧 worktree 不列）；
-- 主目录 `.claude/TASKS.md` 的未完成项和「下一步顺序」那一行。
+只读，打印主线与 CI 现状、各任务 worktree 的进度、主目录 TASKS 的未完成项和「下一步顺序」（细节见脚本头注释）。
 
 正在跑的后台子 agent 脚本看不到：以本会话收到的启动与完成通知为准，没收到完成通知的就是还在跑，不要猜它的结果。
 

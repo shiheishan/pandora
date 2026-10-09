@@ -19,15 +19,7 @@ description: pandora 已装面板出故障时的分诊入口：从症状或告�
 ssh <别名> 'bash -s' < .claude/skills/incident-runbook/scripts/snapshot.sh
 ```
 
-一次拿到这些：
-
-- failed 单元、三个网关和 nginx 的状态、续期 / 备份 / 巡检 timer 是否启用；
-- 9000、9001、9003 的 healthz，以及 9000、9001 的 readyz；
-- 容器或数据库服务的状态；
-- `edge-tls.sh status` 与 `/var/lib/aegispanel/tls/status`；
-- 磁盘、最新备份的年龄；
-- 三份网关日志里关键报错的计数、节点验签失败按原因的分布、最后一条「启动失败」；
-- nginx 状态码分布。
+一次拿到服务与单元状态、三个网关的探活、证书来源、磁盘与最新备份年龄、网关日志关键报错的计数与节点验签失败的原因分布、nginx 状态码分布（清单见脚本头注释）。
 
 日志只看最后 5000 行，要看更多加参数：`'bash -s -- 20000'`。
 
