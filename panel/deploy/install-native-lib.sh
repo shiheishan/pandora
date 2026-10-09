@@ -202,6 +202,19 @@ native_check_db_encoding() {
   return 0
 }
 
+# 只换一个库里的对象属主：REASSIGN OWNED 会顺带改集群级对象（别的库）的属主，所以先记下这个角色名下的
+# 别的库，换完原样改回；目标库本身给 <库属主>。以 postgres 经本地 socket 跑
+#   native_reassign_in_db <端口> <库> <原角色> <新角色> <库属主>
+native_reassign_in_db() {
+  local port="$1" db="$2" from="$3" to="$4" owner="$5" others o
+  others="$(native_pg_peer -p "$port" -d postgres -Atc "SELECT datname FROM pg_catalog.pg_database WHERE datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = '$from') AND datname <> '$db'")" || return 1
+  native_pg_peer -p "$port" -d "$db" -c "REASSIGN OWNED BY \"$from\" TO \"$to\"" -c "ALTER DATABASE \"$db\" OWNER TO \"$owner\"" >/dev/null || return 1
+  while IFS= read -r o; do
+    [ -n "$o" ] || continue
+    native_pg_peer -p "$port" -d postgres -c "ALTER DATABASE \"$o\" OWNER TO \"$from\"" >/dev/null || return 1
+  done <<<"$others"
+}
+
 #------------------------------------------------------------------------------
 # --from-docker：把 docker 布局（install.sh，/opt/aegispanel）迁到直装。
 # 备份 → 装直装 → 恢复 → 核对 → 切换 → 停 Docker 容器；删卷不做，只打印命令。任何一步失败（切换之前）
@@ -288,9 +301,11 @@ fd_render_env() {
 # 库的指纹：迁移水位、每个模式与对象的属主（跑迁移的超级用户记作 <m>：docker 那边是 POSTGRES_USER，
 # 直装是 postgres）、行级安全开关、表与列与函数的权限、每张表的行数与内容摘要、序列当前值、策略、触发器、
 # 扩展。两边逐行相同才切换。超级用户不受行级安全限制，数到、摘到的是全部行。
-# 内容摘要：每行的文本形式取 md5，按摘要排序（COLLATE "C"，与两边库的排序规则无关）后再取 md5；
-# 时区、日期与浮点的输出格式先钉死，同一行在两边打印出来一字不差。分区表的父表只数行，内容由各分区摘。
-# 耗时与整库扫一遍相当：约 100 MB 的库几秒，每 GB 估一两分钟（只在迁移时跑一次）
+# 内容摘要：每行的文本形式取 md5，前后两半各当一个 64 位整数，分别求和（numeric，不溢出），连同行数输出。
+# 与行的顺序无关、内存固定：不受 1GB 单值上限和容器内存限制（以前用 string_agg 拼串，约 3300 万行就超限）。
+# 两边的行集合（含重复行）一样，摘要就一样。时区、日期与浮点的输出格式先钉死，同一行在两边打印出来一字不差。
+# 分区表的父表只数行，内容由各分区摘。耗时与整库扫一遍相当（每行一次 md5）：约 100 MB 的库几秒；
+# 千万行级的大表（如 node_user_traffic_hourly）估半分钟到一分钟（估计，以测试机实测为准）。只在迁移时跑一次
 fd_fingerprint_sql() {
   cat <<'SQL'
 \set ON_ERROR_STOP on
@@ -311,8 +326,8 @@ SELECT 'rel ' || n.nspname || '.' || c.relname || ' ' || c.relkind || ' '
        || CASE WHEN c.relkind IN ('r', 'p') THEN ' rows=' || (xpath('/row/c/text()',
             query_to_xml(format('SELECT count(*) AS c FROM %I.%I', n.nspname, c.relname), false, true, '')))[1]::text
           ELSE '' END
-       || CASE WHEN c.relkind = 'r' THEN ' md5=' || (xpath('/row/c/text()',
-            query_to_xml(format('SELECT md5(coalesce(string_agg(h, '''' ORDER BY h COLLATE "C"), '''')) AS c FROM (SELECT md5(t::text) AS h FROM %I.%I t) s',
+       || CASE WHEN c.relkind = 'r' THEN ' sum=' || (xpath('/row/c/text()',
+            query_to_xml(format('SELECT count(*) || '':'' || coalesce(sum((''x'' || left(h, 16))::bit(64)::bigint::numeric), 0) || '':'' || coalesce(sum((''x'' || right(h, 16))::bit(64)::bigint::numeric), 0) AS c FROM (SELECT md5(t::text) AS h FROM %I.%I t) s',
               n.nspname, c.relname), false, true, '')))[1]::text
           ELSE '' END
   FROM pg_catalog.pg_class c
@@ -412,21 +427,23 @@ fd_log() {
 }
 
 # 切换前把会被覆盖的同名单元存一份；失败时原样放回（之前没有的删掉）
-# 重跑时（上次硬中断：SIGKILL、断电）状态文件里已经记着第一次存的原件，沿用它，不拿眼下可能已是直装的
-# 单元覆盖原件；没有记录而眼下的单元已经指向直装目录，就停下（那不是 docker 布局的原件）
+# 眼下的单元已经指向直装目录（上次硬中断：SIGKILL、断电，换了单元却没来得及放回），就沿用状态文件里第一次
+# 存的原件，不拿直装单元当原件；没有记录就停下。眼下的单元还是 docker 的，就重新存一份：中间可能按 docker
+# 布局升级过（单元更新了），再回滚要放回的是现在这份
 fd_save_units() {
-  local u prev
-  prev="$(fd_state_get units_backup)"
-  if [ -n "$prev" ] && [ -d "$prev" ]; then
-    FD_UNITS_BACKUP="$prev"
-    fd_log "  沿用上次存下的原单元：$prev"
-    return 0
-  fi
+  local u prev swapped=0
   for u in "${FD_UNITS[@]}"; do
-    if [ -f "$FD_SYSTEMD_DIR/$u" ] && grep -qF "$INSTALL_DIR/" "$FD_SYSTEMD_DIR/$u"; then
-      die "$FD_SYSTEMD_DIR/$u 已经指向直装目录 $INSTALL_DIR，又没有存下的 docker 原单元，不覆盖；从 docker 布局的发布包重装单元后再迁"
-    fi
+    if [ -f "$FD_SYSTEMD_DIR/$u" ] && grep -qF "$INSTALL_DIR/" "$FD_SYSTEMD_DIR/$u"; then swapped=1; fi
   done
+  if [ "$swapped" = 1 ]; then
+    prev="$(fd_state_get units_backup)"
+    if [ -n "$prev" ] && [ -d "$prev" ]; then
+      FD_UNITS_BACKUP="$prev"
+      fd_log "  眼下的单元已是直装的（上次中断了），沿用上次存下的原单元：$prev"
+      return 0
+    fi
+    die "$FD_SYSTEMD_DIR 里的单元已经指向直装目录 $INSTALL_DIR，又没有存下的 docker 原单元，不覆盖；从 docker 布局的发布包重装单元后再迁"
+  fi
   install -d -m 0700 "$FD_UNITS_BACKUP"
   for u in "${FD_UNITS[@]}"; do
     if [ -f "$FD_SYSTEMD_DIR/$u" ]; then cp -a "$FD_SYSTEMD_DIR/$u" "$FD_UNITS_BACKUP/$u"; else : >"$FD_UNITS_BACKUP/.absent.$u"; fi
@@ -512,19 +529,28 @@ fd_finalize() {
 }
 
 # 普通模式（不带 --from-docker）动手之前：docker 布局还在服务就不碰。以前直接跑会按首装新建口令与空库、
-# 盖掉 docker 的单元；--from-docker 回滚后再跑会在回滚留下的副本上「升级」
-#   native_plain_mode_guard <docker 布局目录> <from-docker.state 里的 state>
+# 盖掉 docker 的单元；--from-docker 回滚后再跑会在回滚留下的副本上「升级」；照 RUNBOOK 退回 Docker 之后
+# （直装 .env 改名、docker 的改回），状态文件若还记着 done，会把这台当首装、换掉主密钥。
+#   native_plain_mode_guard <docker 布局目录> <直装目录> <from-docker.state 里的 state>
 native_plain_mode_guard() {
-  case "$2" in
-    done) return 0 ;;
+  local docker_env="$1/deploy/.env" native_env="$2/deploy/.env"
+  case "$3" in
+    done)
+      # 迁完的直装：直装 .env 在、docker 的已改名。别的组合都不是迁完的样子
+      [ -f "$native_env" ] && [ ! -f "$docker_env" ] && return 0
+      if [ -f "$docker_env" ] && [ ! -f "$native_env" ]; then
+        die "这台从 Docker 迁到过直装、之后又退回了 Docker（直装的 .env 不在，$2/deploy/from-docker.state 还记着 done）：现在服务的是 docker 布局。照旧升级用 PANDORA_LAYOUT=docker install.sh；想再迁到直装，先把 from-docker.state 改名为 from-docker.state.retired，再跑 install-native.sh --from-docker"
+      fi
+      die "记录说已经从 Docker 迁完（done），可直装的 .env $([ -f "$native_env" ] && echo 在 || echo 不在)、docker 布局的 .env $([ -f "$docker_env" ] && echo 也在 || echo 不在)，不像迁完的样子，停下：确认哪套在服务后把不用的那套的 deploy/.env 改名（不删）"
+      ;;
     cutover) die "上次从 Docker 迁到直装已切换、还没收尾：先 sudo bash install-native.sh --from-docker 收尾" ;;
   esac
-  if [ ! -f "$1/deploy/.env" ]; then
-    [ -n "$2" ] || return 0
-    die "有从 Docker 迁移的记录（$2），却找不到 docker 布局的 $1/deploy/.env，不知道数据在哪，停下"
+  if [ ! -f "$docker_env" ]; then
+    [ -n "$3" ] || return 0
+    die "有从 Docker 迁移的记录（$3），却找不到 docker 布局的 $docker_env，不知道数据在哪，停下"
   fi
-  if [ -n "$2" ]; then
-    die "上次从 Docker 迁到直装没完成（$2），现在服务的还是 docker 布局（$1）：继续迁移跑 install-native.sh --from-docker；照旧升级 docker 布局用 PANDORA_LAYOUT=docker install.sh"
+  if [ -n "$3" ]; then
+    die "上次从 Docker 迁到直装没完成（状态 $3），现在服务的还是 docker 布局（$1）：继续迁移跑 install-native.sh --from-docker；照旧升级 docker 布局用 PANDORA_LAYOUT=docker install.sh"
   fi
   die "这台装着 docker 布局（$1）：迁到直装跑 install-native.sh --from-docker（停服几分钟）；照旧升级 docker 布局用 install.sh"
 }

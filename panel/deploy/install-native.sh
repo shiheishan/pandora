@@ -90,7 +90,9 @@ if [[ "$FROM_DOCKER" = 1 ]]; then
   # 这台本来就是直装
   if [[ -f "$FD_STATE_FILE" ]]; then
     case "$(fd_state_get state)" in
-      done) die "已经从 Docker 迁完了（$FD_STATE_FILE）。升级直装直接跑 install-native.sh" ;;
+      done)
+        [[ -f "$ENV_FILE" ]] || die "$FD_STATE_FILE 记着已经迁完，可直装的 .env 不在：像是退回过 Docker。想再迁，先把 from-docker.state 改名为 from-docker.state.retired 再跑"
+        die "已经从 Docker 迁完了（$FD_STATE_FILE）。升级直装直接跑 install-native.sh" ;;
       cutover)
         # 上次直装已接管，只差停 Docker 容器：只收尾
         say "上次已切换到直装、还没收尾：这次只停 Docker 容器"
@@ -105,6 +107,10 @@ if [[ "$FROM_DOCKER" = 1 ]]; then
     esac
   elif [[ -f "$ENV_FILE" ]]; then
     die "这台已经是直装布局（$ENV_FILE 已存在）。--from-docker 只用于还在 docker 布局上的机器；升级直装直接跑 install-native.sh"
+  elif [[ -f "$FD_STATE_FILE.retired" ]]; then
+    # 迁过、又照 RUNBOOK 退回了 Docker：直装那份旧库还在 PG18 里，按重来处理（改名放一边）
+    FD_RETRY=1
+    say "这台迁过直装又退回了 Docker（$FD_STATE_FILE.retired）：直装那份旧库改名放一边，从头再迁"
   fi
   say "从 docker 布局（$DOCKER_DIR）迁到直装（$INSTALL_DIR）：先核对，什么都不改"
   fd_preflight
@@ -120,7 +126,7 @@ if [[ "$FROM_DOCKER" = 1 ]]; then
   trap 'FD_SIGNAL_RC=143; exit 143' TERM
 else
   # 普通模式：docker 布局还在服务就不动手（迁完的除外），见 native_plain_mode_guard
-  native_plain_mode_guard "$DOCKER_DIR" "$(fd_state_get state)"
+  native_plain_mode_guard "$DOCKER_DIR" "$INSTALL_DIR" "$(fd_state_get state)"
 fi
 if [[ "$FROM_DOCKER" = 1 ]]; then
   :
@@ -413,8 +419,7 @@ if [[ "$MODE" = from-docker ]]; then
   # docker 那边跑迁移的超级用户是 POSTGRES_USER，直装是 postgres：它名下的对象（SECURITY DEFINER 函数要
   # 以超级用户身份执行）转给 postgres；库本身还归 aegis，与全新直装一致
   if [[ "$FD_DOCKER_PG_USER" != postgres ]]; then
-    native_pg_peer -p "$PG_PORT" -d aegis -c "REASSIGN OWNED BY $FD_DOCKER_PG_USER TO postgres" \
-      -c "ALTER DATABASE aegis OWNER TO aegis" >/dev/null || die "转移对象属主失败，没有切换"
+    native_reassign_in_db "$PG_PORT" aegis "$FD_DOCKER_PG_USER" postgres aegis || die "转移对象属主失败，没有切换"
   fi
   fd_fingerprint docker >"$FD_DUMP.docker.fingerprint" || die "读不出 docker 布局的库指纹，没有切换"
   fd_fingerprint native >"$FD_DUMP.native.fingerprint" || die "读不出直装的库指纹，没有切换"
@@ -608,6 +613,7 @@ if [[ "$MODE" = from-docker ]]; then
   say "     cp -a $FD_UNITS_BACKUP/aegis-* /etc/systemd/system/ && systemctl daemon-reload"
   say "     (cd $DOCKER_DIR/deploy && docker compose start) && systemctl start ${SERVICES[*]}"
   say "     mv $INSTALL_DIR/deploy/.env $INSTALL_DIR/deploy/.env.retired   # 免得 install.sh 再把这台认成直装"
+  say "     mv $FD_STATE_FILE $FD_STATE_FILE.retired   # 状态文件一起改名；以后想再迁，直接跑 --from-docker"
 fi
 say "═══════════════════════════════════════════"
 [[ "$HEALTH_OK" == 1 ]] || die "部分服务未启动, 检查日志: journalctl -u aegis-public"

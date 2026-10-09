@@ -790,7 +790,7 @@ pandora-native enrollment abort --identity /etc/pandora-native/identity.json --r
 1. **核对（只读，服务照常）**：容器 `aegis-postgres` 在跑、库连得上；库的迁移版本不比发布包新；库里的角色能照搬（没有 SUPERUSER / REPLICATION / BYPASSRLS 的额外角色、没有角色成员关系）；`.env` 的口令与密钥齐全；磁盘至少有库大小的 4 倍空闲（导出、恢复、迁移预检各一份）。任何一条不过就停下，什么都没改。
 2. **装直装**：PostgreSQL 18、Valkey、age；直装的 `.env` 由 docker 的改写（主密钥、JWT、签名种子、后台前缀、对外地址等原样沿用，只换连库连缓存的几项，加 `postgres` 超级用户口令与 `PANDORA_DB_LAYOUT=native`）；`secrets/`（备份解密私钥）拷过来。
 3. **停服、搬数据**：停三个网关（和在跑的备份 timer）→ 从容器 `pg_dump -Fc`（含属主与权限）到 `/var/backups/pandora/from-docker-<时间>.dump` → 在 PG18 里建好同样的角色 → `pg_restore --single-transaction` → docker 那边跑迁移的超级用户名下的对象转给 `postgres`（与全新直装一致）。
-4. **核对**：两边各跑一遍指纹（迁移水位、每张表的行数与内容摘要、序列、表/列/函数的属主与权限、行级安全开关、策略、触发器、扩展），逐行相同才往下走。内容摘要是每行文本的 md5 排序后再取 md5（时区、日期、浮点输出格式钉死，排序不受两边排序规则影响），与整库扫一遍相当：约 100 MB 几秒，每 GB 估一两分钟。指纹与差异留在导出文件旁边（`*.fingerprint`）。
+4. **核对**：两边各跑一遍指纹（迁移水位、每张表的行数与内容摘要、序列、表/列/函数的属主与权限、行级安全开关、策略、触发器、扩展），逐行相同才往下走。内容摘要是每行文本 md5 的前后两半各当 64 位整数求和（与行的顺序无关、内存固定，大表不会撞 1GB 单值上限或容器内存；时区、日期、浮点输出格式钉死），耗时与整库扫一遍相当：约 100 MB 几秒，千万行级的大表（如 `node_user_traffic_hourly`）估半分钟到一分钟（估计，以测试机实测为准）。指纹与差异留在导出文件旁边（`*.fingerprint`）。
 5. **迁移、切换**：在直装库上跑这次发布的迁移（完整预检）→ `bootstrap.sh` 收窄运行角色 → 存一份原来的 systemd 单元（`/var/backups/pandora/from-docker-units-<时间>/`）→ 换成直装的单元、起服务 → 三个网关 `/healthz` 都是 200 才算接管。
 6. **收尾**：`docker compose stop` 停两个容器（`restart: unless-stopped`，重启后也不会自己起来）；docker 布局的 `.env` 改名为 `.env.migrated-to-native`（不删）：之后再跑 `install.sh` 会认出这台已是直装、交给 `install-native.sh`，`/opt/aegispanel/deploy` 下的旧脚本也一律找不到 `.env` 而停下，不会把服务悄悄切回 docker 那份旧库；备份 timer 之前在跑就照样起；HTTPS 边缘按升级的规则重配。**不删卷、不删 `/opt/aegispanel`、不停 docker 守护进程**，收尾打印这几条命令由人决定。
 
@@ -829,7 +829,7 @@ journalctl -fu pandora-from-docker
   systemctl disable --now docker.service docker.socket containerd.service
   ```
 
-- 删之前想退回 Docker（切换之后在直装上写入的数据不会带回去）：
+- 删之前想退回 Docker（切换之后在直装上写入的数据不会带回去）。直装的 `.env` 与 `from-docker.state` 都要改名：只改 `.env`、状态文件还记着 done 的话，`install.sh` 与 `install-native.sh` 会认出「退回过 Docker」而停下（以前普通的 `install-native.sh` 会当首装，换掉主密钥）。退回之后想再迁，直接跑 `--from-docker`：它认得 `from-docker.state.retired`，把直装里那份旧库改名放一边再从头迁。
 
   ```bash
   systemctl stop aegis-public aegis-admin aegis-node
@@ -837,6 +837,7 @@ journalctl -fu pandora-from-docker
   cp -a /var/backups/pandora/from-docker-units-<时间>/aegis-* /etc/systemd/system/ && systemctl daemon-reload
   (cd /opt/aegispanel/deploy && docker compose start) && systemctl start aegis-public aegis-admin aegis-node
   mv /opt/pandora/deploy/.env /opt/pandora/deploy/.env.retired   # 免得 install.sh 再把这台认成直装
+  mv /opt/pandora/deploy/from-docker.state /opt/pandora/deploy/from-docker.state.retired   # 状态文件一起改名
   ```
 
 - Valkey 里的东西不搬（新的 Valkey 是空的）：只有限流计数与实时推送的临时状态，迁完限流冷却全部清零，网关重启后照常重建。

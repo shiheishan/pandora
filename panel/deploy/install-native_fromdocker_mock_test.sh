@@ -57,6 +57,7 @@ cat >"$T/bin/runuser" <<'MOCK'
 #!/usr/bin/env bash
 root="$(cd "$(dirname "$0")/.." && pwd)"
 printf 'runuser %s\n' "$*" >>"$root/calls"
+case "$*" in *datdba*) cat "$root/owned-dbs" 2>/dev/null; exit 0 ;; esac
 cat >"$root/runuser.stdin"
 MOCK
 printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sleep"
@@ -169,6 +170,15 @@ FD_STATE_FILE="$T/state-none"; : >"$FD_STATE_FILE"; FD_UNITS_BACKUP="$T/units-ba
 if ( fd_save_units ) >"$T/save.out" 2>&1; then fail 'native units were saved as the docker originals'; fi
 grep -Fq '已经指向直装目录' "$T/save.out" || fail "refusal message: $(cat "$T/save.out")"
 [ ! -e "$T/units-backup-third" ] || fail 'a backup directory was created before refusing'
+# 眼下的单元还是 docker 的（回滚之后按 docker 布局升级过），就算状态里记着旧档也重新存：再回滚要放回现在这份
+for u in aegis-public.service aegis-admin.service aegis-node.service aegis-health.service aegis-health.timer; do
+  printf 'docker-upgraded %s\n' "$u" >"$FD_SYSTEMD_DIR/$u"
+done
+for u in aegis-backup.service aegis-backup.timer aegis-tls-renew.service aegis-tls-renew.timer; do rm -f "$FD_SYSTEMD_DIR/$u"; done
+FD_STATE_FILE="$T/state-units"; FD_UNITS_BACKUP="$T/units-backup-fourth"
+fd_save_units 2>/dev/null
+[ "$FD_UNITS_BACKUP" = "$T/units-backup-fourth" ] || fail "docker units were not saved afresh: $FD_UNITS_BACKUP"
+grep -qx 'docker-upgraded aegis-public.service' "$T/units-backup-fourth/aegis-public.service" || fail 'the current docker units were not saved'
 FD_STATE_FILE=""
 for u in aegis-public.service aegis-admin.service aegis-node.service aegis-health.service aegis-health.timer; do
   printf 'docker %s\n' "$u" >"$FD_SYSTEMD_DIR/$u"
@@ -270,9 +280,18 @@ grep -q '^runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 -p 5432 -d aegis 
 cmp -s "$T/runuser.stdin" <(fd_fingerprint_sql) || fail 'native side did not get the fingerprint SQL'
 if sed 's/ | PGPASSWORD=.*//' "$T/calls" | grep -Eq 'owner-fixture|super-fixture'; then fail 'a password went into argv'; fi
 fp="$(fd_fingerprint_sql)"
-for needle in "goose " "rows=" " md5=" 'md5(t::text)' 'COLLATE "C"' "SET TimeZone = 'UTC'" "acl=" "'<m>'" "definer=" "seq " "policy " "trigger " "col " "ext " "schema "; do
+if grep -q 'string_agg' <<<"$(fd_fingerprint_sql)"; then fail 'fingerprint still aggregates with string_agg (memory grows with rows)'; fi
+for needle in "goose " "rows=" " sum=" 'md5(t::text)' '::bit(64)::bigint::numeric' "SET TimeZone = 'UTC'" "acl=" "'<m>'" "definer=" "seq " "policy " "trigger " "col " "ext " "schema "; do
   grep -Fq -- "$needle" <<<"$fp" || fail "fingerprint does not cover: $needle"
 done
+
+# native_reassign_in_db：只换一个库里的对象属主；aegis 名下别的库（上次没迁完留下的 aegis_stale_*）换完改回
+printf 'aegis_stale_20261009\n' >"$T/owned-dbs"; : >"$T/calls"
+native_reassign_in_db 5432 aegis aegis postgres aegis </dev/null || fail "native_reassign_in_db failed: $(cat "$T/calls")"
+grep -q 'REASSIGN OWNED BY "aegis" TO "postgres" -c ALTER DATABASE "aegis" OWNER TO "aegis"' "$T/calls" || fail "reassign call: $(cat "$T/calls")"
+grep -q 'ALTER DATABASE "aegis_stale_20261009" OWNER TO "aegis"' "$T/calls" || fail 'aegis_stale_* not given back to aegis after REASSIGN'
+grep -Fq 'native_reassign_in_db "$PG_PORT" aegis "$FD_DOCKER_PG_USER" postgres aegis' "$NATIVE" || fail '--from-docker does not use native_reassign_in_db'
+rm -f "$T/owned-dbs"
 
 # --- ⑦ fd_preflight ----------------------------------------------------------------
 mkdir -p "$T/rel/deploy" "$T/rel/migrations"
@@ -320,7 +339,7 @@ order() {
 }
 order 'fd_preflight' 'fd_state_set state=preparing' 'trap fd_abort EXIT' 'fd_stop_docker_writers' \
   'fd_docker_pg pg_dump -d "$FD_DOCKER_PG_DB" -Fc' 'pg_restore -p "$PG_PORT" -d aegis --exit-on-error --single-transaction' \
-  'REASSIGN OWNED BY' 'diff -u "$FD_DUMP.docker.fingerprint" "$FD_DUMP.native.fingerprint"' \
+  'native_reassign_in_db "$PG_PORT" aegis' 'diff -u "$FD_DUMP.docker.fingerprint" "$FD_DUMP.native.fingerprint"' \
   'pandora_run_migrations "$MODE"' 'bash "$INSTALL_DIR/deploy/bootstrap.sh"' 'fd_save_units' 'FD_UNITS_SWAPPED=1' \
   'cp -f "$RELEASE_BIN"/* "$INSTALL_DIR/bin/"' 'fd_gateways_healthy' 'FD_CUTOVER=1' 'fd_state_set state=cutover' 'fd_finalize'
 code="$(cat "$NATIVE" "$LIB" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*say ')"
@@ -330,16 +349,52 @@ fi
 grep -Fq 'down -v   # 删容器与卷' "$NATIVE" || fail 'the summary does not print the manual volume-removal command'
 grep -Fq 'trap fd_abort EXIT' "$NATIVE" || fail 'no rollback trap'
 
-# --- ⑨ install.sh 入口：全新安装交给 install-native.sh，PANDORA_LAYOUT=docker 才走 docker 布局 -------
+# --- ⑨ install.sh 入口：跑真的 install.sh，两个布局目录用 PANDORA_ENTRY_* 指到临时目录（不读真机的 /opt） -------
 mkdir -p "$T/entry/deploy"
 cp "$DEPLOY/install.sh" "$T/entry/deploy/install.sh"
 printf '#!/usr/bin/env bash\nprintf "NATIVE-INSTALLER %%s\\n" "$*"\n' >"$T/entry/deploy/install-native.sh"
-if [ ! -f /opt/aegispanel/deploy/.env ]; then
-  out="$(bash "$T/entry/deploy/install.sh" 2>&1)" || fail "fresh install.sh did not hand off: $out"
-  grep -q '^NATIVE-INSTALLER' <<<"$out" || fail "fresh install.sh did not run install-native.sh: $out"
-  out="$(PANDORA_LAYOUT=docker bash "$T/entry/deploy/install.sh" 2>&1 </dev/null || true)"
-  if grep -q 'NATIVE-INSTALLER' <<<"$out"; then fail 'PANDORA_LAYOUT=docker still handed off to install-native.sh'; fi
-fi
+EN="$T/entry-real"
+# run_entry <期望 native|docker|stop> <PANDORA_LAYOUT> <场景>：native = 交给了 install-native.sh；
+# docker = 走到 docker 布局的前置检查（本机不是 Linux 或不是 root，会在那里停）；stop = 入口判断停下、什么都没动
+run_entry() {
+  local out
+  out="$(PANDORA_ENTRY_DOCKER_DIR="$EN/docker" PANDORA_ENTRY_NATIVE_DIR="$EN/native" PANDORA_LAYOUT="$2" \
+    bash "$T/entry/deploy/install.sh" 2>&1 </dev/null || true)"
+  case "$1" in
+    native) grep -q '^NATIVE-INSTALLER' <<<"$out" || fail "real install.sh, $3: did not hand off to install-native.sh: $out" ;;
+    docker)
+      if grep -q 'NATIVE-INSTALLER' <<<"$out"; then fail "real install.sh, $3: handed off to install-native.sh"; fi
+      grep -q '检查运行环境' <<<"$out" || fail "real install.sh, $3: did not go on with the docker layout: $out" ;;
+    stop)
+      if grep -q 'NATIVE-INSTALLER' <<<"$out"; then fail "real install.sh, $3: handed off to install-native.sh"; fi
+      if grep -q '检查运行环境' <<<"$out"; then fail "real install.sh, $3: went on with the docker layout"; fi
+      grep -q '没动手' <<<"$out" || fail "real install.sh, $3: no stop message: $out" ;;
+  esac
+}
+reset_en() { rm -rf "$EN"; mkdir -p "$EN/docker/deploy" "$EN/native/deploy"; }
+reset_en;                                                   run_entry native '' 'fresh host'
+                                                            run_entry docker docker 'fresh host, docker asked'
+touch "$EN/docker/deploy/.env";                             run_entry docker '' 'docker only'
+# 迁完：docker 的 .env 已改名、状态 done → 交给直装；要 docker 拒绝
+mv "$EN/docker/deploy/.env" "$EN/docker/deploy/.env.migrated-to-native"; touch "$EN/native/deploy/.env"
+echo state=done >"$EN/native/deploy/from-docker.state";    run_entry native '' 'migrated'
+                                                            run_entry stop docker 'migrated, docker asked'
+# 照 RUNBOOK 退回 Docker：两个 .env 与状态文件都改名 → docker 布局照旧升级
+mv "$EN/docker/deploy/.env.migrated-to-native" "$EN/docker/deploy/.env"
+mv "$EN/native/deploy/.env" "$EN/native/deploy/.env.retired"
+mv "$EN/native/deploy/from-docker.state" "$EN/native/deploy/from-docker.state.retired"
+                                                            run_entry docker '' 'rolled back to docker'
+# 退回时漏了改名状态文件（还记着 done）：停下说清楚；明说 docker 才按 docker 升级
+echo state=done >"$EN/native/deploy/from-docker.state";    run_entry stop '' 'rolled back, state still done'
+                                                            run_entry docker docker 'rolled back, state still done, docker asked'
+# 两种都在、没有记录：停下，明说也不行
+reset_en; touch "$EN/native/deploy/.env" "$EN/docker/deploy/.env"
+                                                            run_entry stop '' 'both, no record'
+                                                            run_entry stop docker 'both, no record, docker asked'
+                                                            run_entry stop native 'both, no record, native asked'
+echo state=rolled-back >"$EN/native/deploy/from-docker.state"; run_entry stop '' 'migration rolled back'
+                                                            run_entry docker docker 'migration rolled back, docker asked'
+echo state=cutover >"$EN/native/deploy/from-docker.state";  run_entry stop '' 'cutover not finalized'
 # 交接在任何前置检查（要 docker）之前；docker 布局升级的收尾提示怎么迁
 awk '/exec bash "\$HERE\/install-native.sh"/ { h = NR } /^step "检查运行环境"/ { c = NR } END { exit !(h && c && h < c) }' "$DEPLOY/install.sh" \
   || fail 'install.sh hands off after its docker prerequisite checks'
@@ -370,36 +425,52 @@ mv "$E/docker/deploy/.env" "$E/docker/deploy/.env.migrated-to-native"
                                                            entry native '' 'migrated, docker .env parked'
 reset_e; touch "$E/native/deploy/.env" "$E/docker/deploy/.env"
                                                            entry stop '' 'both, no record'
+                                                           entry stop docker 'both, no record, docker asked'
+grep -Fq '把不用的那套的 deploy/.env 改名' "$T/entry.err" || fail "both-layouts message does not say what to do: $(cat "$T/entry.err")"
 echo state=rolled-back >"$E/native/deploy/from-docker.state"
                                                            entry stop '' 'migration rolled back'
                                                            entry docker docker 'migration rolled back, docker asked'
 echo state=cutover >"$E/native/deploy/from-docker.state";  entry stop '' 'cutover not finalized'
                                                            entry stop docker 'cutover not finalized, docker asked'
+echo state=done >"$E/native/deploy/from-docker.state"; rm "$E/native/deploy/.env"
+                                                           entry stop '' 'rolled back to docker, state still done'
+grep -Fq '又退回了 Docker' "$T/entry.err" || fail "rolled-back-with-done message is wrong: $(cat "$T/entry.err")"
+                                                           entry docker docker 'rolled back to docker, state still done, docker asked'
+touch "$E/native/deploy/.env"; echo state=cutover >"$E/native/deploy/from-docker.state"
 rm "$E/docker/deploy/.env"; echo state=prepared >"$E/native/deploy/from-docker.state"
                                                            entry stop '' 'record but no docker .env'
                                                            entry stop k8s 'bogus layout'
 # install.sh 的交接用这个判断（不再只看 /opt/aegispanel/deploy/.env 在不在）
-grep -Fq 'ENTRY_LAYOUT="$(pandora_entry_layout "$DEST" "$NATIVE_DEST" "${PANDORA_LAYOUT:-}")"' "$DEPLOY/install.sh" \
+grep -Fq 'ENTRY_LAYOUT="$(pandora_entry_layout "$ENTRY_DOCKER_DIR" "$NATIVE_DEST" "${PANDORA_LAYOUT:-}")"' "$DEPLOY/install.sh" \
   || fail 'install.sh does not decide the layout with pandora_entry_layout'
 
-# install-native.sh 普通模式：docker 布局还在服务就不动手
-plain() {  # plain <ok|stop> <docker .env 在不在 yes|no> <state> <场景>
-  rm -rf "$T/plain"; mkdir -p "$T/plain/deploy"; [ "$2" = no ] || touch "$T/plain/deploy/.env"
-  if ( native_plain_mode_guard "$T/plain" "$3" ) >"$T/plain.out" 2>&1; then
-    [ "$1" = ok ] || fail "plain mode $4: went ahead"
+# install-native.sh 普通模式：docker 布局还在服务就不动手；迁完的样子（state=done、直装 .env 在、docker 的已改名）才放行
+plain() {  # plain <ok|stop> <docker .env 在不在 yes|no> <直装 .env 在不在 yes|no> <state> <场景>
+  rm -rf "$T/plain"; mkdir -p "$T/plain/docker/deploy" "$T/plain/native/deploy"
+  [ "$2" = no ] || touch "$T/plain/docker/deploy/.env"
+  [ "$3" = no ] || touch "$T/plain/native/deploy/.env"
+  if ( native_plain_mode_guard "$T/plain/docker" "$T/plain/native" "$4" ) >"$T/plain.out" 2>&1; then
+    [ "$1" = ok ] || fail "plain mode $5: went ahead"
   else
-    [ "$1" = stop ] || fail "plain mode $4: stopped: $(cat "$T/plain.out")"
+    [ "$1" = stop ] || fail "plain mode $5: stopped: $(cat "$T/plain.out")"
   fi
 }
-plain ok no '' 'fresh or native'
-plain stop yes '' 'docker host'
-plain stop yes rolled-back 'after a rolled-back migration'
-plain stop yes prepared 'migration in progress'
-plain ok yes done 'migrated (old .env not parked yet)'
-plain ok no done 'migrated'
-plain stop no cutover 'cutover not finalized'
-plain stop no rolled-back 'record without docker .env'
-grep -Fq 'native_plain_mode_guard "$DOCKER_DIR" "$(fd_state_get state)"' "$NATIVE" || fail 'install-native.sh plain mode does not run the guard'
+plain ok no no '' 'fresh'
+plain ok no yes '' 'native'
+plain stop yes no '' 'docker host'
+plain stop yes yes rolled-back 'after a rolled-back migration'
+plain stop yes yes prepared 'migration in progress'
+plain ok no yes done 'migrated'
+plain stop yes no done 'rolled back to docker, state still done'
+grep -Fq '又退回了 Docker' "$T/plain.out" || fail "rolled-back message: $(cat "$T/plain.out")"
+plain stop yes yes done 'done but both .env present'
+plain stop no no done 'done but no .env at all'
+plain stop no yes cutover 'cutover not finalized'
+plain stop no no rolled-back 'record without docker .env'
+grep -Fq 'native_plain_mode_guard "$DOCKER_DIR" "$INSTALL_DIR" "$(fd_state_get state)"' "$NATIVE" || fail 'install-native.sh plain mode does not run the guard'
+# 退回 Docker 的提示把状态文件一起改名；--from-docker 认得改名后的状态文件，按重来处理
+grep -Fq 'mv $FD_STATE_FILE $FD_STATE_FILE.retired' "$NATIVE" || fail 'the roll-back instructions do not retire from-docker.state'
+grep -Fq 'elif [[ -f "$FD_STATE_FILE.retired" ]]; then' "$NATIVE" || fail '--from-docker does not treat a retired migration as a retry'
 
 # --- ⑩ 发布控制器的缺省安装目录跟着布局走 -----------------------------------------------
 eval "$(awk '/^default_app_dir\(\) \{$/ { p = 1 } p { print } p && /^}$/ { exit }' "$DEPLOY/release-stop-the-world.sh")"

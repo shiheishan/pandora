@@ -33,7 +33,7 @@ paths:
   - 迁移失败把服务拉回来，所以新程序在迁移成功之后才装（install-native.sh 也是）。
   - 守卫：`install-migrate-order_mock_test.sh`
 - 缺省布局是直装：`install.sh` 在全新安装（没有 `/opt/aegispanel/deploy/.env`）且没给 `PANDORA_LAYOUT=docker` 时，在任何前置检查之前 `exec install-native.sh`；已装 docker 布局的机器照旧由 `install.sh` 升级，收尾提示 `--from-docker`。`test-install.sh` 验的是 docker 布局，显式带 `PANDORA_LAYOUT=docker`。守卫：`install-native_fromdocker_mock_test.sh` ⑨
-- 加密备份带属主与权限导出；`restore-postgres.sh` 照原样还原：先按备份补齐面板自己的角色（只增、`NOLOGIN`），再把备份里跑迁移的超级用户名下的对象换成本机的（`REASSIGN OWNED`）。不再用 `--no-owner --no-privileges`。守卫：`pg-layout_mock_test.sh`（抽函数跑真调用）
+- 加密备份带属主与权限导出；`restore-postgres.sh` 照原样还原，顺序：核完整性 → 按备份补齐面板自己的角色（只增、`NOLOGIN`）→ 临时库里同参数演练（`AEGIS_VERIFY_RESTORE=owners`）→ 正式库保护 → 恢复 → 把备份里跑迁移的超级用户名下的对象换成本机的 → 旧格式备份（没有 GRANT）自动补 00038/00039 函数属主与授权（`legacy_privilege_repair_sql`，签名由测试对照迁移文件）→ 开闸门。不再用 `--no-owner --no-privileges`。守卫：`pg-layout_mock_test.sh`（抽函数跑真调用）
 - 两种数据库布局同一套运维脚本：`check-migrations.sh`、`migrate.sh`、`backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`、`psql.sh`、`bootstrap.sh` 按 `.env` 的 `PANDORA_DB_LAYOUT`（没有这一键时凭只有直装才写的 `POSTGRES_SUPER_PASSWORD` 推断为 native）选客户端
   - docker：容器 `aegis-postgres` 里的客户端，以 `POSTGRES_USER`；native：本机客户端经 `127.0.0.1:POSTGRES_PORT` 以 `postgres` 超级用户（`POSTGRES_SUPER_PASSWORD`）。不用 runuser：备份单元的 `SystemCallFilter=~@privileged` 禁止切换用户
   - 判定函数 `pandora_db_layout` 各脚本内联一份（备份三件套只信任自己，不 source 共用文件），连库一律经 `pandora_pg`；口令只经环境变量。守卫：`pg-layout_mock_test.sh`（逐字一致与行为）、`check-migrations_native_mock_test.sh`
@@ -42,7 +42,9 @@ paths:
 - `install-native.sh --from-docker` 把 docker 布局迁到直装（RUNBOOK 第 13 章）：只读核对 → 写状态文件 `from-docker.state` → 停写入者 → 导出（含属主与权限）→ 建角色、恢复、跑迁移的超级用户名下对象转给 postgres → 两边指纹逐行一致 → 迁移 → 存原单元、换单元 → 三网关 healthz → 接管 → `docker compose stop`
   - 接管之前任何退出（含 HUP/INT/TERM）由 EXIT trap `fd_abort` 放回原单元、拉起 docker 的网关与备份 timer；`fd_abort` 关 errexit、屏蔽信号、写 `from-docker.log`（终端断了写标准错误会失败）。docker 那边的库只读。删卷、删 `/opt/aegispanel`、停 docker 守护进程只打印，不执行
   - 接管后 docker 的 `.env` 改名为 `.env.migrated-to-native`（不删）。入口判断 `install.sh` 的 `pandora_entry_layout`、`install-native.sh` 普通模式的 `native_plain_mode_guard`、发布控制器的 `default_app_dir` 同一口径：迁完的直装不会被切回 docker；docker 布局还在服务（含迁移回滚后）时普通模式不动手
-  - 指纹含每表内容摘要（行 md5 排序后再 md5，`COLLATE "C"`、时区与输出格式钉死）
+  - 指纹含每表内容摘要（每行 md5 的两半各当 64 位整数求和，与顺序无关、内存固定，不用 string_agg；时区与输出格式钉死）
+  - 照 RUNBOOK 退回 Docker 要把直装的 `.env` 与 `from-docker.state` 都改名为 `.retired`；`state=done` 只在「直装 .env 在、docker 的不在」时才算迁完，否则三个入口都停下；`--from-docker` 认 `from-docker.state.retired`，按重来处理
+  - `REASSIGN OWNED` 会顺带改别的库的属主：`--from-docker` 用 `native_reassign_in_db`、`restore-postgres.sh` 的 `reassign_source_migrator` 都先记下、换完改回
   - 口令不进任何命令行参数：awk 走 `ENVIRON`、grep 走 `-f -`、`migrate.sh` 用 `scrubbed_run`（不经 env(1)）并把 DSN 里的口令拆进 `PGPASSWORD`。守卫：`pg-layout_mock_test.sh`、`install-native_*_mock_test.sh` 里的 argv 断言
   - 守卫：`install-native_fromdocker_mock_test.sh`（.env 改写、角色、回滚、只停不删、指纹、核对阶段只读、主流程顺序）
 - 桩测试与静态检查（`*_mock_test.sh`、`*_static_test.sh`）不需要数据库；与安装、迁移、nginx、发布物绑定相关的，CI 的 `.github/workflows/panel-deploy.yml` 逐个点名跑，新增这类测试要补进那份清单
