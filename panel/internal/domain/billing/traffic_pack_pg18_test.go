@@ -289,7 +289,7 @@ func TestTrafficPackOrderPG18(t *testing.T) {
 	// addon 单的 subscription_id 抹成空（运行时订单守卫不许改这一列，只能这样造），再回到 origin
 	// 直接调 app.assert_traffic_pack_order（三条延迟约束触发器调的就是它）。00137 下它正常返回，
 	// 00157 下必须报 check_violation；整个事务回滚。
-	targetless := order(t, "pack-targetless", packB, 0)
+	targetless := order(t, "pack-targetless", packA, 0)
 	ftx, err := admin.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
