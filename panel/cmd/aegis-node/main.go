@@ -51,7 +51,9 @@ func run() error {
 	stopOnEarlySignal := context.AfterFunc(sigCtx, stop)
 	closeResourcesOnReturn := true
 
-	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURL, db.Options{
+	// 连接串经 DatabaseURLFor 取：设了 AEGIS_NODE_DB_PLAN_CACHE_MODE 就带上 plan_cache_mode，
+	// 缺省原样返回 DatabaseURL。nonce 回落、心跳、上报都走这一个池。
+	pool, err := db.OpenWithOptions(ctx, cfg.DatabaseURLFor(config.DomainNode), db.Options{
 		MaxConns: cfg.DBMaxConns[config.DomainNode], MinConns: cfg.DBMinConns[config.DomainNode], StatsLog: log,
 	})
 	if err != nil {
