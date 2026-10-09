@@ -1,6 +1,6 @@
 ---
 name: incident-runbook
-description: pandora 已装面板出故障时的分诊入口：从症状或告警（healthcheck.sh 巡检、aegis-tls-renew 失败、Telegram 告警）找到 panel/deploy/RUNBOOK.md 的那一章，跑一份只读快照和对应的只读查询把原因查清；需要写操作时转 panel-ops，并先问用户。用户或总协调说「面板 5xx / 502 / 打不开」「网关起不来」「管理员进不来」「节点离线、不上报心跳」「证书续期失败、证书过期、自签」「节点证书签不出来」「支付回调没到账、订单卡住」「通知发不出去、队列积压」「数据库连接满、库慢」「磁盘满」「备份没跑」「迁移失败、卡在预检、无效索引」时使用。CI 红（wait-status / wait-github 退出非 0、GitHub job 失败）用 ci-triage，不是本 skill；已经知道要做哪件运维操作用 panel-ops；只是查数据用 db-query。
+description: pandora 已装面板出故障时的分诊入口：从症状或告警（healthcheck.sh 巡检、aegis-tls-renew 失败、Telegram 告警）找到 panel/deploy/RUNBOOK.md 的那一章，跑一份只读快照和对应的只读查询把原因查清；需要写操作时转 panel-ops，并先问用户。用户或总协调说「面板 5xx / 502 / 打不开」「网关起不来」「管理员进不来」「节点离线、不上报心跳」「节点端口被占、入站起不来、UDP 缓冲告警、接入装到一半」「证书续期失败、证书过期、自签」「节点证书签不出来」「支付回调没到账、订单卡住」「通知发不出去、队列积压」「数据库连接满、库慢」「磁盘满」「备份没跑」「迁移失败、卡在预检、无效索引」时使用。CI 红（wait-status / wait-github 退出非 0、GitHub job 失败）用 ci-triage，不是本 skill；已经知道要做哪件运维操作用 panel-ops；只是查数据用 db-query。
 ---
 
 # 面板故障分诊
@@ -40,6 +40,7 @@ bash $q -t <别名> .claude/skills/db-query/queries/<文件>.sql
 | 5xx、打不开、`服务 … 状态为`、`端口 … 探活返回` | 第 1 章 | 服务状态、探活、`启动失败`、`请求失败` 计数、nginx 5xx | 依赖不通时转第 8 章的查询 | 重启网关、`docker compose up -d`：RUNBOOK 第 1 章「处理」 |
 | 管理员进不来 | 第 2 章 | 证书来源是不是 `selfsigned`；9001 探活 | `incident-runbook/queries/admin-login-failures.sql` | 改密、建号、授权：panel-ops 命令表「可逆」 |
 | 节点离线、`过去 30 分钟没有任何节点上报心跳` | 第 3 章 | 9003 探活、证书、`节点请求验签失败` 的原因分布、`节点请求验签暂不可用` | `db-query/queries/nodes-online.sql` | 重启 pdnd、修时钟：RUNBOOK 第 3 章「处理」；重新注册走后台节点详情「签发一键安装令牌」；装到一半卡住用 enrollment status / abort（panel-ops）；单元漂移按 `pdnd/release/README.md` |
+| 节点在报心跳但后台显示「生效失败」「降级」、端口被占、入站没起来、`UDP 缓冲偏小`、接入装到一半 | 第 12 章 | 9003 探活（确认不是第 3 章的失联） | `db-query/queries/nodes-online.sql`；`nodes.runtime_status` / `runtime_reason`（第 12 章的只读查询） | 在节点机上：停占端口的进程、改 sysctl、重启 pdnd、`enrollment abort`：第 12 章「处理」，先问 |
 | 证书续期失败、过期、`HTTPS 证书续期出错`、`timer 超过 36 小时没跑`、aegis-tls-renew failed | 第 4 章 | 证书段整段；`aegis-tls-renew.timer` 是否 enabled | 无 | `edge-tls.sh renew / issue / setup`：panel-ops 命令表「可逆」 |
 | 节点证书签不出来 | 第 5 章 | admin.log 的证书相关计数 | `incident-runbook/queries/node-certs.sql` | 只在后台「网络 › 证书」操作，没有命令行 |
 | 支付回调没到账、订单卡住 | 第 6 章 | `支付回调…` 与 `主动查单巡检失败` 计数 | `incident-runbook/queries/payment-callbacks.sql`（`-v no=<订单号>` 看单张）；`db-query/queries/orders-status.sql`；账不平看 `ledger-reconcile.sql` | 后台「向渠道查单」「转入余额」「手工标记已支付」；商户密钥在后台改，不用 `aegis-payctl --key` |

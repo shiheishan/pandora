@@ -3,7 +3,7 @@
 面向自己部署 Pandora Panel 的运维。按症状分章，每章四段：怎么确认 → 常见原因 → 处理 → 什么时候升级处理。
 
 - 迁移失败、回滚、从备份恢复的完整步骤在 [MIGRATION-RUNBOOK.md](MIGRATION-RUNBOOK.md)，本手册第 11 章只做分诊，细节指过去。
-- 节点证书的设计与 DNS 凭据怎么配，见 [docs/node-certificates.md](../../docs/node-certificates.md)；节点端的部署漂移，见 [pdnd/release/README.md](../../pdnd/release/README.md)「排查：节点不上报心跳」。
+- 节点证书的设计与 DNS 凭据怎么配，见 [docs/node-certificates.md](../../docs/node-certificates.md)；节点端的部署漂移，见 [pdnd/release/README.md](../../pdnd/release/README.md)「排查：节点不上报心跳」；节点机自身的症状（端口被占、入站起不来、UDP 缓冲告警、接入装到一半）见第 12 章。
 - 文中的 `<面板地址>`、`<后台前缀>`、`<订单号>`、`example.com` 都是占位符，换成你自己的。
 
 ## 约定
@@ -237,6 +237,7 @@ cd /opt/aegispanel && ( set -a && . deploy/.env && set +a && ./bin/aegis-adminct
 | 原因 | 怎么认 |
 |---|---|
 | `pandora-native` 停了或反复崩溃 | `systemctl status` 与 `journalctl` |
+| 后台显示「生效失败」「降级」，端口被占、入站没起来 | 节点在报心跳，只是入站有问题，见第 12 章 |
 | 二进制太旧，或者 systemd 单元和仓库不一致 | 见 `pdnd/release/README.md`「排查：节点不上报心跳」：签名通道会悄悄降级成兼容通道 |
 | 节点身份被吊销或节点被删 | 面板日志的 reason 是 `身份不存在或已吊销`，节点收到 401 |
 | 有人在后台点过「重签服务端令牌」 | 节点还拿着旧令牌，请求被拒 |
@@ -671,3 +672,108 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose ./migra
 - `rollback-to` 被 Down 守卫拒绝。
 
 带上完整输出和 `migrate.sh version`，提给开发。
+
+---
+
+## 12. 节点机侧（pdnd）
+
+面板这头看到的症状是「节点显示 降级 / 生效失败」，原因在节点机上：端口被占、入站起不来、UDP 缓冲偏小、接入装到一半。节点失联、心跳进不来看第 3 章。本章命令在节点机上以 root 跑，日志用 `journalctl -u pandora-native` 看。
+
+### 怎么确认
+
+节点自己会把运行状态报给面板（随签名心跳或兼容通道的 `/status`），状态只有 `running` 和 `degraded`，原因是一个机器可读串：
+
+| 原因（`runtime_reason`） | 后台节点列表显示 | 意思 |
+|---|---|---|
+| `port_in_use:<端口>/<tcp\|udp>:<节点 id>` | 生效失败：端口 … 被节点「…」占用 | 同一面板的另一个节点占着这个端口 |
+| `port_in_use:<端口>/<tcp\|udp>:other` | 生效失败：端口 … 被本机其他服务占用 | 别的面板的节点，或本机其他进程 |
+| `not_started` | 生效失败：入站没有起来 | 入站没起来（首个配置就没装上、回滚也失败，或刚重启） |
+| `config_apply_failed` | 生效失败：新配置装不上，仍在用旧配置服务 | 新配置装不上，上一版仍在服务 |
+| `serving_cached_config` | 降级：用缓存服务 | 面板还没确认，节点正用落盘缓存的配置服务（面板不可达时的正常降级，先看第 3 章） |
+
+库里看（`./psql.sh`，只读）：
+
+```bash
+./psql.sh -X -c "SELECT name, runtime_status, runtime_reason, runtime_state_at FROM nodes WHERE runtime_status = 'degraded' ORDER BY runtime_state_at DESC LIMIT 50;"
+```
+
+最近一条生效回执的阶段（`failed`、`precheck_failed`、`health_failed`、`rolled_back` 都算失败）在表 `node_config_applications` 的 `phase` 列，后台节点详情里也能看到。
+
+节点机上：
+
+```bash
+journalctl -u pandora-native -n 200 --no-pager | grep -E '节点降级运行|新配置应用失败|入站已就绪|重试之前装不上的配置|UDP 缓冲偏小'
+ss -lntup | grep -E ':<端口>\b'     # 谁占着这个端口
+```
+
+### 12.1 端口被占
+
+- **原因**：
+  - 同一台机器上另一个 pdnd 入站、别的服务（nginx、旧的代理进程）已经 bind 了这个端口和协议（TCP 和 UDP 分开算）。原因里带节点 id 的是本面板的另一个节点；`other` 是本机其他进程或别的面板的节点，节点端不会写出别的面板的任何信息。
+  - 后台有同机端口门禁：同一台服务器上两个节点配同一端口，保存时就会被拒；这条故障多半是机器上有后台管不到的进程。
+- **处理**：
+  1. `ss -lntup` 找出占用者。
+  2. **【写】** 停掉那个进程，或在后台把这个节点的端口改到空闲的端口（同机端口先到先得）。
+  3. 不用重启 pdnd：配置装不上时节点会自己重试。旧配置仍在服务时按 1、2、4 分钟退避、封顶 5 分钟；入站没起来（`not_started`）时每个拉取间隔重试一次。端口释放后下一轮重试就会装上，原因随之清空。
+  4. 想马上生效：**【写】** `systemctl restart pandora-native`，会断开这台节点上的用户连接。
+
+### 12.2 入站起不来（`not_started` 或 `config_apply_failed`）
+
+- **看日志里的 `err`**：
+  - `address already in use`：转 12.1。
+  - 证书读不进来（file 模式证书的路径必须是绝对路径，且在 `/etc/pandora-native/certs` 之下，文件属主要让 `pandora` 读得到）：入站在校验阶段就失败；证书由面板集中签发的，转第 5 章。
+  - 其它报错：带着整段日志提给开发。
+- **`新配置应用失败，已恢复上一版本`**：新版装不上，上一版在服务，用户不受影响。原因修好后自动重试（见 12.1 第 3 点），不用手动回滚。
+- **订阅里会被降级**：端口被占、入站没起来、期望版本生效失败的节点（面板的 `RuntimeFailingSQL` 口径），套餐里有别的可用节点时不下发它，没有才下发。
+- **面板明确拒绝这个节点（身份吊销、节点被删）时**，节点不会用落盘缓存起服务，日志是 `面板明确拒绝了这个节点，不用落盘缓存起服务`：转第 3 章「身份被吊销」。
+
+### 12.3 UDP 缓冲告警
+
+日志里每个 hy2 / TUIC 入站启动时出一条：
+
+```
+QUIC 入站的 UDP 缓冲偏小（UDP 转发的出站 socket 受同一上限），单连接大流量会丢包；请把 sysctl net.core.rmem_max 与 net.core.wmem_max 设到 8388608 以上后重启 pdnd …
+```
+
+- **原因**：Linux 缺省 `rmem_max` / `wmem_max` 约 208KB（Debian 13 是 212992），quic-go 要 8MB 拿不到，单连接几百 Mbps 时一个调度停顿就灌满缓冲、整批丢包，客户端看到的是限速与重传。pdnd 以无特权用户运行，不能也不该给 unit 加 `CAP_NET_ADMIN` 去强制放大。
+- **面板的节点安装脚本已经处理**：它写 `/etc/sysctl.d/90-pandora-native.conf`（`rmem_max`、`wmem_max` 各 16777216，只调大不调小）。看到告警说明这台是手工安装、装在容器里（`/proc/sys` 只读），或者 sysctl 在 pdnd 启动之后才生效。
+- **处理**：
+  1. `sysctl net.core.rmem_max net.core.wmem_max` 看当前值。
+  2. **【写】** 手工安装的照 `pdnd/release/README.md`「systemd 冷启动」那段写 `/etc/sysctl.d/90-pandora-native.conf` 并 `sysctl -p`。
+  3. **【写】** `systemctl restart pandora-native`：缓冲是入站 bind 时按当时的上限要的，改了 sysctl 要重启才生效。
+  4. 容器里 `/proc/sys` 改不了：在宿主机改。
+
+### 12.4 接入装到一半卡住
+
+一键安装脚本的接入是三步：`enrollment begin`（在节点机生成身份、向面板申请）→ 写配置与 unit → `enrollment commit`（带二进制、配置、unit 的哈希交给面板）。中途断了，节点机上留一个日志文件 `/etc/pandora-native/identity.json.enrollment.pending.json`，面板上这次接入的状态是 `pending`、`committed`、`expired`、`aborted` 之一，节点在 `bootstrapping` 或 `bootstrap_failed`。
+
+先看状态（节点机，root）：
+
+```bash
+pandora-native enrollment status --identity /etc/pandora-native/identity.json
+```
+
+它向面板问一次并打印 `enrollment state: …`；`committed` 时顺手把待定身份转正为 `identity.json`（写文件）。
+
+| 状态 | 意思 | 处理 |
+|---|---|---|
+| `committed` | 面板已收下，只是本机没装完（commit 的响应丢了、之后一步失败） | **前滚，不要 abort**：重跑安装命令；令牌过期就在后台节点详情重新「签发一键安装令牌」。已有身份时脚本会沿用，不会再注册一次 |
+| `pending` 且没过期 | 在等 commit，面板上这次接入的期限是 15 分钟与令牌有效期中较短的那个 | 重跑安装命令；确定不要了就 abort（下一行） |
+| `expired` 或 `aborted` | 已经作废（`expired` 是超过了期限） | 日志文件是作废的，重跑安装命令之前先把它挪走：**【写】** `mv /etc/pandora-native/identity.json.enrollment.pending.json /root/`，再在后台签发新令牌，用新令牌重装。不挪的话 `enrollment commit` 会报 `enrollment is not pending`，换了节点名重装则报 `existing enrollment journal belongs to a different request` |
+
+确定放弃一次还没 commit 的接入：
+
+```bash
+pandora-native enrollment abort --identity /etc/pandora-native/identity.json --reason "<原因>"
+```
+
+- **【写】** abort 只用于 begin 之后、commit 之前。面板上这次接入变 `aborted`，节点从 `bootstrapping` 回到 `bootstrap_failed`，可以重新签发令牌再装。
+- 已经 `committed` 的接入 abort 会被面板拒绝（`terminal enrollment cannot be aborted`），这时走前滚。
+- 安装脚本自己的失败处理：commit 之前出错，它会自己 abort 并把二进制、配置、unit 回滚到上一版；一旦面板已经 commit（或日志里记了 `commit_attempted`），它保留现场、提示按前滚恢复，不会回滚。
+- 令牌错误：begin 被拒时屏幕上是 `enrollment begin rejected (HTTP 401)`，面板的原因是 `bootstrap token is invalid or expired`（令牌过期、已用完，或 `--name` 与签发令牌时填的节点名不一致）；`node is not in an enrollable lifecycle state`（409）是节点不在 `draft`、`provisioning`、`bootstrap_failed` 这几种可接入的状态。都在后台重新签发令牌。
+- 身份文件的路径以安装器写的 `/etc/pandora-native/identity.json` 为准，二进制的缺省路径（`/var/lib/pandora-native/identity.json`）不是它。
+
+### 什么时候升级处理
+
+- 端口确实空闲，节点仍长时间报 `port_in_use` 或 `not_started`：带上节点 id、`ss -lntup` 输出和最近 200 行 `journalctl -u pandora-native`。
+- 接入卡在 `committed` 与本机状态对不上、`enrollment status` 本身报错：带上它的完整输出和面板 `node.log` 里含这个节点 id 的行（日志文件里有私钥和运行令牌，不要贴）。
