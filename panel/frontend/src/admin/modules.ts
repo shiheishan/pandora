@@ -1,4 +1,4 @@
-export type ModuleKey = 'dash' | 'tickets' | 'users' | 'plans' | 'billing' | 'marketing' | 'nodes' | 'content' | 'system' | 'security'
+export type ModuleKey = 'dash' | 'tickets' | 'users' | 'plans' | 'billing' | 'marketing' | 'nodes' | 'certs' | 'content' | 'system' | 'security'
 
 export interface ModuleDef {
   title: string
@@ -76,6 +76,17 @@ export const MODULES: Readonly<Record<ModuleKey, ModuleDef>> = {
       ['routing', '路由'],
     ],
   },
+  // 节点证书（P2：面板集中签发 DNS-01）：三个标签同一个读权限
+  certs: {
+    title: '证书',
+    group: '网络',
+    read: { list: 'node.certificate.read', dns: 'node.certificate.read', acme: 'node.certificate.read' },
+    tabs: [
+      ['list', '证书列表'],
+      ['dns', 'DNS 凭据'],
+      ['acme', 'ACME 设置'],
+    ],
+  },
   content: {
     title: '内容与外观',
     group: '运营',
@@ -115,7 +126,7 @@ export const NAV_GROUPS: ReadonlyArray<readonly [string, readonly ModuleKey[]]> 
   ['工作台', ['dash', 'tickets']],
   ['用户运营', ['users']],
   ['商业', ['plans', 'billing', 'marketing']],
-  ['网络', ['nodes']],
+  ['网络', ['nodes', 'certs']],
   ['运营', ['content', 'system']],
   ['系统', ['security']],
 ]

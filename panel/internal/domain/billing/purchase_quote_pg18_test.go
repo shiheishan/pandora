@@ -135,6 +135,10 @@ func checkPurchaseQuotePG18(t *testing.T, p *subPeriodPG18, conn *pgx.Conn) {
 	if !q.WithoutBalance.Forced || q.WithoutBalance.Applied != 50 || q.WithoutBalance.Payable != 0 {
 		t.Fatalf("forced pack quote=%+v", pq)
 	}
+	// B6c：余额正好够付时两组口径一致，with_balance 也标 Forced（门户读它锁开关）
+	if !q.WithBalance.Forced || q.WithBalance.Applied != 50 || q.WithBalance.Payable != 0 {
+		t.Fatalf("forced pack quote with balance=%+v", q.WithBalance)
+	}
 	pack, err := p.billing.CreateTrafficPackOrder(ctx, p.fx.tenant, CreateTrafficPackOrderInput{
 		UserID: u1, SubscriptionID: s1, PackID: packID, Expect: expect(pq, q, false),
 		Claim: orderReleasePG18Claim(t, ctx, conn, p.fx.tenant, u1, CheckoutIdempotencyScope, "pq-pack"),

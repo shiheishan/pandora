@@ -22,6 +22,7 @@ import (
 
 	"github.com/aegispanel/aegis/internal/domain/appearance"
 	"github.com/aegispanel/aegis/internal/domain/purchase"
+	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
@@ -75,12 +76,37 @@ func (s *Service) SetLabel(ctx context.Context, tenantID, userID, subID string, 
 
 	var planName string
 	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
+		// 改前的名字由同一条语句带回（CTE 先锁住这一行），审计里记「从什么改成什么」
+		var before *string
+		if err := tx.QueryRow(ctx, `
+			WITH old AS (
+				SELECT id, label FROM subscriptions
+				 WHERE tenant_id = $1 AND id = $2::uuid AND user_id = $3::uuid
+				 FOR UPDATE)
 			UPDATE subscriptions s SET label = NULLIF($4::text, '')
-			  FROM plans pl
-			 WHERE s.tenant_id = $1 AND s.id = $2::uuid AND s.user_id = $3::uuid
+			  FROM plans pl, old
+			 WHERE s.tenant_id = $1 AND s.id = old.id AND s.user_id = $3::uuid
 			   AND pl.id = s.plan_id
-			RETURNING pl.name`, tenantID, subID, userID, normalized).Scan(&planName)
+			RETURNING pl.name, old.label`, tenantID, subID, userID, normalized).Scan(&planName, &before); err != nil {
+			return err
+		}
+		// 门户改名留痕（w8walk 第 5 节第 2 条）：配置名跟着变，用户找不到 App 里那一条时要能查到
+		var after *string
+		if normalized != "" {
+			after = &normalized
+		}
+		return audit.Write(ctx, tx, tenantID, audit.Entry{
+			ActorKind:    "user",
+			ActorID:      &userID,
+			Action:       "subscription.label_changed",
+			ResourceType: "subscription",
+			ResourceID:   &subID,
+			APIDomain:    "public",
+			Outcome:      "success",
+			RequestID:    httpx.RequestIDFrom(ctx),
+			BeforeDigest: map[string]any{"label": before},
+			AfterDigest:  map[string]any{"label": after},
+		})
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LabelResult{}, ErrNotFound

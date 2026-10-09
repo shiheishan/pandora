@@ -159,6 +159,9 @@ type Placement struct {
 	// Credit 只用在 change 上：原套餐没用完的部分（剩余价值）。套餐卡与后台赠送全额退到余额
 	Credit   int64  `json:"credit,omitempty"`
 	Currency string `json:"currency,omitempty"`
+	// GiftDaysLost 只用在 change 上：这一份到期前来自赠送的剩余整天数（加时长卡、套餐卡续的期等没有
+	// 付费单的时间）。换掉时只退已付价值、赠送的时长不保留（用户 10-08 定），预览里写「赠送的 N 天不保留」
+	GiftDaysLost int `json:"gift_days_lost,omitempty"`
 	// 本期套餐流量与挂在这一份上的流量包余量（字节），重置与加流量的说明要用
 	TrafficUsed   int64 `json:"traffic_used,omitempty"`
 	TrafficCap    int64 `json:"traffic_cap,omitempty"`

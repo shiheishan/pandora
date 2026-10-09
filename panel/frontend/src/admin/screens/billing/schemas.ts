@@ -210,6 +210,8 @@ const placementSchema = z.object({
   // 只用在 change 上：原套餐没用完的部分。赠送全额退到余额，别的结算方式先抵新价
   credit: int.optional(),
   currency: z.string().optional(),
+  // 只用在 change 上：到期前来自赠送的剩余整天数，换掉时不保留（用户 10-08）
+  gift_days_lost: int.optional(),
   traffic_used: int.optional(),
   traffic_cap: int.optional(),
   pack_remaining: int.optional(),

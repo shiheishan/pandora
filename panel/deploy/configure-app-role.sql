@@ -434,9 +434,10 @@ GRANT INSERT (
   tenant_id, order_id, provider_id, currency, amount, status, provider_ref,
   action_payload, expires_at
 ) ON payment_intents TO aegis_app;
+-- method：付款方式（alipay / wxpay / offline），结算与迟到付款挂账写它（00151）
 GRANT INSERT (
   tenant_id, order_id, provider_id, provider_payment_id, payment_intent_id,
-  currency, amount, fee_amount, status
+  currency, amount, fee_amount, status, method
 ) ON payments TO aegis_app;
 GRANT INSERT (
   tenant_id, provider_id, provider_event_id, event_type,
@@ -656,6 +657,14 @@ DO $$
 BEGIN
   IF to_regclass('public.traffic_pack_transfers') IS NOT NULL THEN
     REVOKE UPDATE, DELETE, TRUNCATE ON traffic_pack_transfers FROM aegis_app;
+  END IF;
+END $$;
+-- 证书版本（00148）只插不改：版本行带着签出的证书与私钥密文，改写它等于偷换证书。
+-- 删证书与保留期清理要整行删，DELETE 保留；UPDATE 只在这里收（上面的表级重授会放开它）。
+DO $$
+BEGIN
+  IF to_regclass('public.certificate_versions') IS NOT NULL THEN
+    REVOKE UPDATE, TRUNCATE ON certificate_versions FROM aegis_app;
   END IF;
 END $$;
 

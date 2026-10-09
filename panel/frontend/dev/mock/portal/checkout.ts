@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto'
 import type { MockModule, MockResult } from '../types.ts'
 import { assertNoOpenChange, BillingError, createdView, fulfill, isUuid, placeOrder, readStrict, sweepExpired } from './billing.ts'
 import { findPlan, MIN_PAYMENT, PAY_METHODS } from './catalog.ts'
-import { gate, isLiveSub, isRevivable, portalState, type PortalState } from './fixtures.ts'
+import { gate, isLiveSub, isRevivable, portalState } from './fixtures.ts'
 import { normalizeLabel, profileName } from './purchase.ts'
-import { quoteRows, quoteTime, settle } from './quote.ts'
+import { assertNoPendingNew, quoteRows, quoteTime, settle } from './quote.ts'
 
 /** 业务拒绝写成可重放的结果（幂等表原样重放 4xx） */
 function guard(run: () => MockResult): MockResult {
@@ -232,14 +232,4 @@ function labelOf(raw: unknown): string | null {
   return n.ok || null
 }
 
-/** 同一套餐同时只能有一张未付款的新购单（设计稿 2.4，防两个标签页各付一次） */
-function assertNoPendingNew(state: PortalState, planId: string, planName: string) {
-  // 不先清超时单：过了付款期限但还没被关掉的那张也拦（A 路），文案换成「已超过付款期限」
-  const open = state.orders.find((o) => o.kind === 'new' && o.status === 'pending_payment' && o.effect.type === 'new' && o.effect.planId === planId)
-  if (!open) return
-  const lapsed = open.expires_at !== undefined && new Date(open.expires_at).getTime() <= Date.now()
-  const msg = lapsed ? `你有一张已超过付款期限的「${planName}」订单，取消后再买` : `你有一张还没付款的「${planName}」订单，继续付款或取消后再买`
-  // 超过付款期限的那张另带 lapsed=true（Go ensureNoPendingNewOrder），门户只给「取消它」
-  throw new BillingError(409, 'order_pending', msg, lapsed ? { order_id: open.id, lapsed: 'true' } : { order_id: open.id })
-}
 

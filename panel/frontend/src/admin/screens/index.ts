@@ -17,6 +17,7 @@ export const SCREENS: Readonly<Record<ModuleKey, AdminScreen>> = {
   billing: lazy(() => import('./billing')),
   marketing: lazy(() => import('./marketing')),
   nodes: lazy(() => import('./nodes')),
+  certs: lazy(() => import('./certs')),
   content: lazy(() => import('./content')),
   system: lazy(() => import('./system')),
   security: lazy(() => import('./security')),

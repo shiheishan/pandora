@@ -231,6 +231,17 @@ export function settle(state: PortalState, rows: QuoteRow[], priceId: string | n
 }
 
 
+/** 同一套餐同时只能有一张未付款的新购单（设计稿 2.4，防两个标签页各付一次）；报价与建单都拦（Go quoteNewTx / CreateOrder 都调 ensureNoPendingNewOrder） */
+export function assertNoPendingNew(state: PortalState, planId: string, planName: string) {
+  // 不先清超时单：过了付款期限但还没被关掉的那张也拦（A 路），文案换成「已超过付款期限」
+  const open = state.orders.find((o) => o.kind === 'new' && o.status === 'pending_payment' && o.effect.type === 'new' && o.effect.planId === planId)
+  if (!open) return
+  const lapsed = open.expires_at !== undefined && new Date(open.expires_at).getTime() <= Date.now()
+  const msg = lapsed ? `你有一张已超过付款期限的「${planName}」订单，取消后再买` : `你有一张还没付款的「${planName}」订单，继续付款或取消后再买`
+  // 超过付款期限的那张另带 lapsed=true（Go ensureNoPendingNewOrder），门户只给「取消它」
+  throw new BillingError(409, 'order_pending', msg, lapsed ? { order_id: open.id, lapsed: 'true' } : { order_id: open.id })
+}
+
 export const quote: MockModule = {
   routes: {
     // 只读、不幂等；挂 checkout 开关（假后端恒开）
@@ -241,7 +252,11 @@ export const quote: MockModule = {
       const state = portalState(ctx.user.userId)
       const at = Date.now()
       try {
-        const quotes = quoteRows(state, body as unknown as QuoteInput, at)
+        const req = body as unknown as QuoteInput
+        // 与 Go 一致：同款已有一张没付的新购单时报价阶段就回 409 order_pending（门户确认页按码给「取消它 / 去付款」）
+        const plan = req.action === 'new' && isUuid(req.plan_id) ? findPlan(req.plan_id) : undefined
+        if (plan) assertNoPendingNew(state, plan.id, plan.name)
+        const quotes = quoteRows(state, req, at)
         ctx.send(200, { as_of: new Date(at).toISOString(), currency: 'CNY', balance: state.balance, min_payment: MIN_PAYMENT, quotes })
       } catch (e) {
         if (!(e instanceof BillingError)) throw e

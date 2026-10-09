@@ -1,4 +1,4 @@
-import type { OrderDetail } from '../common/orders'
+import { payMethodName, type OrderDetail } from '../common/orders'
 import { day, gb, leftOf, money, planTraffic, type Naming } from '../common/purchase'
 import type { Plan } from '../common/catalog'
 import type { Subscription } from '../common/subscriptions'
@@ -7,7 +7,7 @@ import type { Subscription } from '../common/subscriptions'
 // 完成页的文字（原型 order().commit 与 scrResult）：付完（含收银台回跳）后按订单与地址里带回的
 // 上下文重建。上下文放在地址里，因为去收银台会离开页面：
 //   k=renew|change|new|pack  sub=<那一份>  was=<原到期>  old=<原套餐名>  refund=<退回余额>
-//   gb=<流量包字节>  waived=<免掉的差价>  revive=1（过期后恢复）
+//   gb=<流量包字节>  waived=<免掉的差价>  revive=1（过期后恢复：续费或换套餐）
 // ---------------------------------------------------------------------------
 export interface DoneContext {
   kind: 'renew' | 'change' | 'new' | 'pack'
@@ -47,17 +47,15 @@ export function readDone(query: URLSearchParams): DoneContext {
   }
 }
 
-const METHOD_NAMES: Readonly<Record<string, string>> = { alipay: '支付宝', wxpay: '微信支付', wechat: '微信支付', qqpay: 'QQ 钱包' }
-
-/** 「余额付了 ¥8.50，支付宝付了 ¥21.50」/「这次没有花钱」 */
-export function paidText(o: Pick<OrderDetail, 'balance_applied' | 'paid_amount' | 'payments'>, waived = 0): string {
+/**
+ * 「余额付了 ¥29.00，支付宝付了 ¥1.00」/「这次没有花钱」：按各来源实际付了多少写——余额是订单上用掉的余额，
+ * 在线那部分是渠道实收（payments 合计，不是订单总额）；渠道按付款方式的叫法说（支付宝、微信支付），不说商户名
+ */
+export function paidText(o: Pick<OrderDetail, 'balance_applied' | 'payments'>, waived = 0): string {
   const parts: string[] = []
   if (o.balance_applied > 0) parts.push(`余额付了 ${money(o.balance_applied)}`)
-  if (o.paid_amount > 0) {
-    const p = o.payments[0]
-    const how = (p?.method && METHOD_NAMES[p.method]) || p?.provider_name || '在线'
-    parts.push(`${how}付了 ${money(o.paid_amount)}`)
-  }
+  const online = o.payments.reduce((n, p) => n + p.amount, 0)
+  if (online > 0) parts.push(`${payMethodName(o.payments)}付了 ${money(online)}`)
   if (waived > 0) parts.push(`零头 ${money(waived)} 已免`)
   return parts.length ? parts.join('，') : '这次没有花钱'
 }
@@ -87,7 +85,9 @@ export function doneLines(c: DoneContext, order: OrderDetail, sub: Subscription 
   const paid = paidText(order, c.waived) + (order.balance_applied > 0 && balance !== null ? `；余额还剩 ${money(balance)}` : '')
   const others = held.filter((s) => s.id !== sub?.id)
   const othersFine = others.length ? [`${others.map((x) => `「${naming.sn(x)}」`).join('、')}不受影响`] : []
-  const end = sub?.current_period_end ? day(sub.current_period_end) : order.subscription_period_end ? day(order.subscription_period_end) : ''
+  // 到期日先取订单详情回的（完成页轮询的就是它，履约后的新值）；订阅列表在下单后才重新拉取，先渲染时还是旧的
+  const endAt = order.subscription_period_end ?? sub?.current_period_end
+  const end = endAt ? day(endAt) : ''
   switch (c.kind) {
     case 'renew':
       return {
@@ -99,7 +99,8 @@ export function doneLines(c: DoneContext, order: OrderDetail, sub: Subscription 
     case 'change': {
       const np = order.plan_name ?? sub?.plan_name ?? ''
       return {
-        title: `已换成${np}`,
+        // 过期那份换套餐（「换成别的，马上恢复」）：先说恢复了
+        title: c.revive ? `已恢复使用，换成${np}` : `已换成${np}`,
         happened: [
           `${sub && naming.multi ? `「${naming.sn(sub)}」` : '你的套餐'}已换成${np}${c.was ? `，到期日 ${day(c.was)} → ${end}` : `，用到 ${end}`}`,
           `${plan ? planTraffic(plan) : '流量'}，从 0 开始算${sub?.device_limit != null ? `；最多 ${sub.device_limit} 台同时用` : ''}`,

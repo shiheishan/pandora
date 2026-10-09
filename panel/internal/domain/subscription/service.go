@@ -28,8 +28,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
+	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
+	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
 var (
@@ -170,14 +172,31 @@ func (s *Service) ListLinks(ctx context.Context, tenantID, userID string) ([]Lin
 // 删不掉也不该删 —— 泄露之后最需要回答的问题正是「旧链接被谁用过」，
 // 把记录抹掉等于把唯一的线索也一起丢了。
 func (s *Service) Rotate(ctx context.Context, tenantID, userID, subID string) (string, error) {
-	if _, err := uuid.Parse(subID); err != nil {
+	parsed, err := uuid.Parse(subID)
+	if err != nil {
 		return "", ErrNotFound
 	}
+	subID = parsed.String()
 	var token string
-	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
+	err = s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: userID}, func(tx pgx.Tx) error {
 		var err error
-		token, err = s.rotateInTx(ctx, tx, tenantID, userID, subID, true)
-		return err
+		if token, err = s.rotateInTx(ctx, tx, tenantID, userID, subID, true); err != nil {
+			return err
+		}
+		// 门户换新链接留痕，与换发同一事务（后台那条是 subscription.link_rotated_by_admin）：
+		// 用户已添加的配置随之失效，事后要能回答「谁、什么时候换的」。不记令牌。
+		sub := subID
+		return audit.Write(ctx, tx, tenantID, audit.Entry{
+			ActorKind:    "user",
+			ActorID:      &userID,
+			Action:       "subscription.link_rotated",
+			ResourceType: "subscription",
+			ResourceID:   &sub,
+			APIDomain:    "public",
+			Outcome:      "success",
+			RequestID:    httpx.RequestIDFrom(ctx),
+			AfterDigest:  map[string]any{"old_revoked": true, "node_password_rotated": true},
+		})
 	})
 	if err != nil {
 		return "", err

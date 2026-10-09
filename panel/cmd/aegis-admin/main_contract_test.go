@@ -16,7 +16,7 @@ func TestAdminWorkersShareSignalContextAndJoinBeforeCleanup(t *testing.T) {
 		"signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)",
 		"serverErr := server.RunContext(sigCtx",
 		"stopOnEarlySignal := context.AfterFunc(sigCtx, stop)",
-		"workers.Add(7)",
+		"workers.Add(8)",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("admin process lifecycle contract missing %q", required)
@@ -29,14 +29,14 @@ func TestAdminWorkersShareSignalContextAndJoinBeforeCleanup(t *testing.T) {
 		t.Fatal("admin worker/server lifecycle region is malformed")
 	}
 	workers := source[workersAt:serverAt]
-	if got := strings.Count(workers, "defer workers.Done()"); got != 7 {
-		t.Fatalf("worker Done count=%d want=7", got)
+	if got := strings.Count(workers, "defer workers.Done()"); got != 8 {
+		t.Fatalf("worker Done count=%d want=8", got)
 	}
-	if got := strings.Count(workers, "context.WithTimeout(ctx,"); got != 7 {
-		t.Fatalf("worker child-context count=%d want=7", got)
+	if got := strings.Count(workers, "context.WithTimeout(ctx,"); got != 8 {
+		t.Fatalf("worker child-context count=%d want=8", got)
 	}
-	if got := strings.Count(workers, "case <-ctx.Done():"); got != 7 {
-		t.Fatalf("worker cancellation branch count=%d want=7", got)
+	if got := strings.Count(workers, "case <-ctx.Done():"); got != 8 {
+		t.Fatalf("worker cancellation branch count=%d want=8", got)
 	}
 	if strings.Contains(workers, "context.Background()") {
 		t.Fatal("admin workers must not detach from the signal context")

@@ -247,4 +247,25 @@ func TestSubscriptionLabelPG18(t *testing.T) {
 		t.Fatalf("renaming advanced the node delivery epoch: %d -> %d", before, after)
 	}
 	t.Log("marker=public_api_pg18_label_keeps_delivery_epoch_ok")
+
+	// --- 改名留痕（w8walk 第 5 节第 2 条）：每次成功改名一条 subscription.label_changed，记改前改后；
+	// 撞名、不合规、别人的都不记。本人成功 4 次：A 起名、A 清除、B 起名、B 清除；别人 1 次 ---
+	var mine, others int
+	if err := admin.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE actor_id=$2::uuid), count(*) FILTER (WHERE actor_id=$3::uuid)
+		  FROM audit_events
+		 WHERE tenant_id=$1 AND action='subscription.label_changed' AND actor_kind='user'
+		   AND resource_type='subscription' AND api_domain='public' AND outcome='success'`,
+		tenant, user, other).Scan(&mine, &others); err != nil || mine != 4 || others != 1 {
+		t.Fatalf("label audits mine=%d others=%d err=%v", mine, others, err)
+	}
+	var beforeLabel, afterLabel *string
+	if err := admin.QueryRow(ctx, `
+		SELECT before_digest->>'label', after_digest->>'label' FROM audit_events
+		 WHERE tenant_id=$1 AND action='subscription.label_changed' AND resource_id=$2::uuid
+		 ORDER BY chain_seq LIMIT 1`, tenant, subA).Scan(&beforeLabel, &afterLabel); err != nil ||
+		beforeLabel != nil || afterLabel == nil || *afterLabel != "妈妈的 iPad" {
+		t.Fatalf("first label audit before=%v after=%v err=%v", beforeLabel, afterLabel, err)
+	}
+	t.Log("marker=public_api_pg18_label_change_audited_ok")
 }

@@ -99,6 +99,11 @@ test('C6：礼品卡', async ({ browser, world }) => {
     await choices.getByRole('radio', { name: new RegExp(`(升级成|换成)${pro.name}`) }).click()
     const s = await sentence(page)
     expect(s).toMatch(new RegExp(`今天换成${pro.name}，从今天起算，到 .+`))
+    // 只退已付价值、赠送的时长不保留（用户 10-08）：C6a 加的 7 天 + C6d 套餐卡续的一个月（28–31 天），选之前写明
+    const gift = /；赠送的 (\d+) 天不保留。$/.exec(s)
+    expect(gift, `选换掉后的说明要写赠送的天数不保留：${s}`).not.toBeNull()
+    expect(Number(gift![1])).toBeGreaterThanOrEqual(35)
+    expect(Number(gift![1])).toBeLessThanOrEqual(38)
     await submit(page, page.getByRole('button', { name: `兑换，换成${pro.name}` }))
     await expect(page.getByRole('heading', { name: `已换成${pro.name}` })).toBeVisible()
     const lines = await happened(page)

@@ -76,7 +76,9 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 printf 'args=%s approved=%s\n' "$*" "${PANDORA_STOPPED_WRITER_UPGRADE_APPROVED:-}" >>"$root/precheck.log"
 exit "$(cat "$root/precheck.status" 2>/dev/null || echo 0)"
 MOCK
-chmod 0755 "$TMP/bin/goose" "$TMP/bin/systemctl" "$TMP/app/deploy/check-migrations.sh"
+# psql 桩：up 前后的无效索引检查（migrate.sh「无效索引护栏」）查到的是干净的库
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$TMP/bin/psql"
+chmod 0755 "$TMP/bin/goose" "$TMP/bin/systemctl" "$TMP/app/deploy/check-migrations.sh" "$TMP/bin/psql"
 
 run_migrate() {
   PATH="$TMP/bin:$PATH" AEGIS_ENV_FILE="$TMP/env" GOOSE_BIN="$TMP/bin/goose" \

@@ -50,12 +50,12 @@ test('C8：改名与按份换新链接', async ({ browser, world }) => {
   const rotate = page.getByRole('dialog', { name: '换一个新链接？' })
 
   await step(page, 'C8', async () => {
-    await card(page, basic.name).getByRole('button', { name: /起个名字$/ }).click()
+    await card(page, basic.name).getByRole('button', { name: '起个名字', exact: true }).click()
     await naming.getByLabel('名字', { exact: true }).fill('妈妈的')
     await submit(page, naming.getByRole('button', { name: '保存' }))
     const toast = await seen(page, /已改名，App 里更新一次后显示「.+ · 妈妈的」/)
     await expect(card(page, '妈妈的')).toBeVisible()
-    await card(page, std.name).getByRole('button', { name: /起个名字$/ }).click()
+    await card(page, std.name).getByRole('button', { name: '起个名字', exact: true }).click()
     await naming.getByLabel('名字', { exact: true }).fill('妈妈的')
     await submit(page, naming.getByRole('button', { name: '保存' }))
     const err = naming.getByText(`这个名字已经用在「妈妈的 · ${basic.name}」上了，换一个吧`)
@@ -70,7 +70,7 @@ test('C8：改名与按份换新链接', async ({ browser, world }) => {
 
   await step(page, 'C8b', async () => {
     const before = await tailOf(card(page, '我的手机'))
-    await card(page, '我的手机').getByRole('button', { name: '换新链接' }).click()
+    await card(page, '我的手机').getByRole('button', { name: '换新链接', exact: true }).click()
     const warn = await text(rotate.getByText('会发生什么', { exact: true }).locator('xpath=..'))
     await submit(page, rotate.getByRole('button', { name: '换新链接' }))
     await expect(page.getByRole('heading', { name: '已换新链接' })).toBeVisible()
@@ -102,6 +102,12 @@ test('C8：改名与按份换新链接', async ({ browser, world }) => {
     const device = await text(page.getByRole('radiogroup', { name: '你的设备' }).getByRole('radio', { checked: true }))
     const apps = (await page.getByRole('article').getByRole('heading', { level: 3 }).allInnerTexts()).map((s) => s.trim())
     expect(apps.length, '这台设备至少有一个 App 的说明').toBeGreaterThan(0)
-    return `换新链接完成页的链接打开帮助中心「在 App 里点一次「更新」」，设备选中「${device}」，有 ${apps.join('、')} 的三步说明`
+    // 引用 App 自己的按钮名（用户 10-08 定的例外）：照它的中文界面写、按钮样式，第一次出现补半句说明
+    await page.getByRole('radiogroup', { name: '你的设备' }).getByRole('radio', { name: '安卓手机' }).click()
+    const v2rayNG = page.getByRole('article').locator('section').filter({ has: page.getByRole('heading', { name: 'v2rayNG', exact: true }) })
+    await expect(v2rayNG.getByText('更新订阅', { exact: true })).toBeVisible()
+    const tap = await text(v2rayNG.getByRole('listitem').nth(1))
+    expect(tap).toContain('更新订阅（就是更新你添加的那条链接）')
+    return `换新链接完成页的链接打开帮助中心「在 App 里点一次「更新」」，设备选中「${device}」，有 ${apps.join('、')} 的三步说明；Android 下 v2rayNG 写「${tap}」`
   })
 })

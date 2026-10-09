@@ -73,6 +73,7 @@ func offlinePaymentInput(orderID, currency string, payable int64, actorID string
 		Amount:            payable,
 		Currency:          currency,
 		FeeAmount:         0,
+		Method:            OfflinePaymentMethod,
 		SignatureVerified: true,
 		// payment_events.raw_payload 非空。真实渠道往里塞的是回调原文；
 		// 线下收款没有回调，就把「谁在什么依据下确认了这笔钱」记进去 ——

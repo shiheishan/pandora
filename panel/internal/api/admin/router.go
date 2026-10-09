@@ -179,6 +179,7 @@ func NewRouter(d Deps) http.Handler {
 			registerUserGroupRoutes(r, d, h)
 			registerDeviceLimitRoutes(r, d, h)
 			registerNodeRoutes(r, d, h)
+			registerCertificateRoutes(r, d)
 			registerTicketRoutes(r, d, h)
 			registerSwitchRoutes(r, d, h)
 		})

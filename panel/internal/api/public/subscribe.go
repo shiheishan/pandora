@@ -90,7 +90,8 @@ func (h *handlers) subscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, contentType, count := subscription.Render(format, pull.Nodes, cred.ProxyUUID)
+	// 按 UA 选客户端内核认得的写法（sing-box 1.14 起规则集下载出口写 http_clients，旧内核写 download_detour）
+	body, contentType, count := subscription.RenderForClient(format, pull.Nodes, cred.ProxyUUID, ua)
 
 	// 所有读取完成后再原子检查限流、写成功日志并记下拉取次数；失败请求不占额度。
 	if err := h.d.Subscription.RecordSuccessfulFetch(ctx, tenantID, cred.ID, cred.SubscriptionID,

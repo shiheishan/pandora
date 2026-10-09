@@ -484,6 +484,7 @@ func (s *PaymentService) ParseNotification(ctx context.Context, tenantID, provid
 			Amount:            n.Amount,
 			FeeAmount:         n.FeeAmount,
 			Currency:          n.Currency,
+			Method:            n.Method,
 			RawPayload:        raw,
 			SignatureVerified: n.SignatureVerified,
 		},
