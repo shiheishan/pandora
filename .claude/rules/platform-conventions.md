@@ -21,3 +21,6 @@ paths:
 - 源码契约测试（断言某函数里必须有 / 不许有某段代码）一律经 `platform/sourcetest` 按「包 + 声明名」取源码，不按文件名读、不用「函数 A 到函数 B」截文本
   - 否定断言用 `Source` 覆盖整个包，函数挪到哪个文件都逃不掉；名字找不到或重名直接失败
   - 只被 `*_test.go` 引用
+- go-redis（Valkey 客户端）缺省不看 ctx 期限：`context.WithTimeout(ctx, 250*time.Millisecond)` 传进去，命令照旧等到客户端自己的读写超时（缺省 3 秒）才返回。要让 ctx 期限生效，必须在 `redis.Options` 打开 `ContextTimeoutEnabled`，并把读、写、拨号、等连接池超时一并收到同一量级。
+  - 三个网关共用的客户端（`panel/cmd/aegis-{public,admin,node}/main.go` 的 `redis.NewClient(redisOpt)`）没开这个开关。在请求路径上靠 ctx 期限限时的新代码（限流、鉴权 EVAL 等）别直接用它，先实测「挂住时多久返回」，需要就像 nonce 认领那样用独立客户端。
+  - 依据：w12nonce 审查第二轮实测，nonce 认领设 250ms、实际等 3 秒；独立客户端打开开关后，挂住、100 路并发、连接被拒三种情形都在 251ms 返回（细节见 w12nonce 的 `.claude/rules/pdnd-node-panel.md`，合入主线后在 `pdnd-node-panel.md` 签名请求一条）。

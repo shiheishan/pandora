@@ -65,16 +65,18 @@ git grep -nE 'go1\.2[0-9]|golang:1\.|GO_SERIES|Go 1\.2[0-9]|go 1\.2[0-9]' -- ':!
 | `panel/deploy/test-*-pg18.sh`：6 个文件的 `GO_IMAGE` 默认 `golang:1.26`，以及 checkout-atomic-00039、dashboard-performance、dashboard-read-models、node-config-legacy（两处）、order-release-00040（两处）的 `go1.26.*` 判断。这些单跑的 runner CI 不调；CI 的 panel-pg18 走 `run-pg18-gates.sh`，它的 `require_go_version` 按 go.mod 的主次版本动态比，不用改 | 不用改。注意本机 docker 里缓存的 `golang:1.26` 可能是旧补丁，先 `docker pull` | 改，否则手动跑这些 runner 会直接退出 |
 | `panel/deploy/platform.sh` 的 `pandora_go_version_ok`（`-ge 26`）、`build-release.sh:34` 与 `migrate-to-new-host.sh:74` 的「Go 1.26+」提示 | 不用改 | 改，跟 go 指令的最低小版本一致 |
 | `README.md:9`、`README.md:215`、根 `CLAUDE.md:5` 的「Go 1.26」 | 不用改 | 改 |
+| 根 `CLAUDE.md`「环境与工具坑」与 verify 里写死的本机 `GOTOOLCHAIN=go1.26.9` | 改（并确认本机模块缓存里有新版本的工具链） | 改 |
+| **sing-box 的 go:linkname 前提**：`pdnd/go.mod` 的 sing-box v1.13.14 在 `transport/v2rayhttp/force_close.go:46` 用 `//go:linkname` 取 `golang.org/x/net/http2.(*Transport).connPool`；Go 1.27 下该符号不存在（本机 1.27.1 已复现：pdnd 与 subscription-e2e/tools 链接失败） | 不涉及 | **先解决再升**：换到不再依赖该符号的 sing-box 版本，或等 x/net 在 1.27 下可用；两个模块的 sing-box 版本要一致（第 4 节） |
 | `.github/workflows/*.yml`：全部用 `go-version-file`，没有写死版本 | 不用改 | 不用改 |
 
 **其他注意**：
-- subscription-e2e 用 `GOTOOLCHAIN=local` 离线跑。go 指令一旦高过本机 Go，它就跑不了，要先升本机 Go。
+- subscription-e2e 的脚本从 panel 与 pdnd 的 go.mod 取较高的版本设 `GOTOOLCHAIN`（`scripts/toolchain.sh`），不再用 `local`。抬 go 指令后，本机模块缓存里要有该版本的工具链，没有就先联网取一次；本机缺省 Go 比 go.mod 新时的坑见根 CLAUDE.md「环境与工具坑」。
 
 ## 3. 升级后重点跑的测试
 
 **先跑基线**：在升级前的提交上，用旧工具链跑一遍下面这些测试，记下哪些本来就红。然后换上新版本再跑，两边对比。
 
-本机 Go 比 CI 新，所以复现 CI 一律显式写工具链：
+本机 Go 比 CI 新（原因与常规写法见根 CLAUDE.md「环境与工具坑」、verify 本地层），升级对比时新旧两边都显式写工具链：
 
 ```bash
 GOTOOLCHAIN=go<旧版本> go test ...    # 升级前的基线
@@ -172,19 +174,12 @@ pdnd 里共有 6 处 fork。上游基点、导入时的差异和本仓库在基�
 | node-e2e 真客户端（sing-box、mihomo、Xray、Juicity、mieru） | ops-local `vultr-test2/node-e2e/scripts/install-clients.sh` 里的版本变量和逐个写死的 SHA-256 | node-e2e skill | 版本与 SHA 成对改，sing-box 用 `-glibc` 包 |
 | 官方 pdnd 发布包 | 面板 `release-artifact.env` 钉的版本与 SHA | panel-install、node-e2e 的接入证据 | 见 panel-install |
 
-## 8. 处理 dependabot PR（暂不启用，以后用）
+## 8. dependabot PR（暂不启用）
 
-**现状：dependabot 和每周定时的 govulncheck 都不启用**（用户 10-09 决定，首次公开发布后再议）。原因是两者都只读默认分支 main 上的配置，而 origin/main 现在既没有 `.github/dependabot.yml`，也没有 `go-vulncheck.yml`；把它们放进 main（并给 dependabot 设 `target-branch` 指向开发分支）要用户点头，不自己做。所以眼下不会有 PR。以后启用了，PR 照下面处理，不在 GitHub 上合：
-
-1. 只从 PR 读它升了哪个模块到哪个版本（`gh pr view <号>`）。
-2. 按 dispatch-task 开 worktree，在对应模块目录 `go get <模块>@<版本>` 再 `go mod tidy`，不套 PR 的 go.sum（它基于 main）。`golang.org/x/*` 一起升。
-3. pdnd 的依赖变了，再到 `.claude/skills/subscription-e2e/tools` 里 `go mod tidy`（第 4 节）。
-4. 测试：pdnd 或 x/ 一族照第 3 节先基线后对比，panel 依赖跑全量并等 PG18，`vulncheck.sh` 确认目标漏洞消失；GitHub Actions 的 PR 只看改后的 workflow 能在 CI 里跑过。
-5. 照 verify 推送、等 `wait-status.sh` 与 `wait-github.sh`，提交说明写 PR 号。
-6. CI 绿后 `gh pr close <号> --comment "已在 <sha> 搬进开发分支"`。
+现状：dependabot 和每周定时的 govulncheck 都不启用（用户 10-09 决定，首次公开发布后再议；两者只读默认分支 main 上的配置，要放进 main 须用户点头），所以眼下没有 PR。以后启用了，PR 只当「哪个模块升到哪个版本」的通知，不在 GitHub 上合：照第 4 节在开发分支上重做、第 3 节跑测试，CI 绿后 `gh pr close <号> --comment "已在 <sha> 搬进开发分支"`。
 
 ## 坑
 
-- 本机 Go 与 CI 不同，「本机过了」不代表 CI 过。复现 CI 或扫漏洞时都要显式写 `GOTOOLCHAIN=go<go.mod 版本>`，切换要联网下载工具链。
+- 本机 Go 与 CI 不同，「本机过了」不代表 CI 过。复现 CI 或扫漏洞时都要显式写 `GOTOOLCHAIN=go<go.mod 版本>`（本机缓存里没有的版本，切换要联网下载工具链）。
 - `GOFLAGS=-mod=mod` 跑 tools 模块会改写它的 go.mod 和 go.sum。扫描时用脚本（会还原），要改就正式 `go mod tidy` 并提交。
 - 升级的提交只放版本改动和必要的适配。顺手修的旧账（如 tidy）单独提交，验收时才能把升级引起的红和旧账分开。

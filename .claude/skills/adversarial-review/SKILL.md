@@ -5,7 +5,7 @@ description: pandora 合并前对任务分支的 diff 做只读对抗式审查�
 
 # 合并前的对抗式审查
 
-目标：会动钱、权限、秘密、迁移、节点内核的分支，合并前由一个没参与实现的 opus 专门挑毛病，按同一套标准审、按同一种格式交回。前三次（w7buya、w7pdnd、w9cert）每次都查出了要返工的问题。验收的其余步骤见 accept-task skill。
+目标：会动钱、权限、秘密、迁移、节点内核的分支，合并前由一个没参与实现的 opus 专门挑毛病，按同一套标准审、按同一种格式交回。历次审查大多查出了要返工的问题，例如 w7buya 的免单范围、w12native 迁完再跑 install.sh 会切回旧库。验收的其余步骤见 accept-task skill。
 
 ## 1. 要不要审
 
@@ -27,14 +27,17 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesig
 
 - **时机**：实现方交回报告后就派，和等 CI 并行。prompt 里写死分支头的 sha，实现方之后再推的提交不在这次审查范围内。
 - **人选**：opus，后台运行，每个分支派一个。不要让实现方自己审自己。
-- **prompt**：用 `templates/reviewer-prompt.md`，替换其中的占位符：
-  - merge-base：`git merge-base feat/panel-redesign <分支>`；
-  - 规模：`git diff --shortstat <merge-base>..<头>`；
-  - 检查表章节：用触发脚本输出的领域名，和 `checklist.md` 的节名一一对应；
-  - scratchpad：总协调会话的 scratchpad 目录。
+- **prompt**：用脚本按 `templates/reviewer-prompt.md` 生成，只读：
+
+  ```bash
+  python3 -I .claude/skills/adversarial-review/scripts/review-prompt.py first feat/panel-redesign <分支> \
+      --what "<一句话内容>" --scratchpad <总协调的 scratchpad> [--design <设计稿>] -o <scratchpad>/prompt-<名字>.md
+  ```
+
+  merge-base、头的完整 sha、shortstat、副本路径与 archive 命令、检查表节名（取触发脚本命中的领域）、材料路径都由脚本填好，只剩「这次的重点」要人写。脚本报「占位没替换干净」或「checklist.md 里没有这些节」，说明模板或节名改过，先同步脚本。
 - **「这次的重点」写 3–7 条**：从 brief 的任务和设计稿里风险最大的决定里挑。每条写清改了什么机制、担心出现哪种错误结果。brief 和设计稿只给路径，不要整段贴进 prompt。可以参考的写法：w7buya 写的是价格篡改与重放、余额冻结成对、并发锁序、礼品卡落点；w9cert 写的是秘密只存密文、权限与重认证、租约、生产环境拒绝测试开关、新依赖。
 - **登记**：在 `.claude/TASKS.md` 记下审查员的 agent ID。会话中断后凭这个 ID 用 SendMessage 续跑。
-- **耗时**：前四次（含 w10fix 试跑）每次 11–16 分钟，消耗 20–32 万 token。
+- **耗时**：一次通常 11–16 分钟，20–32 万 token（w7buya 到 w10fix 试跑的实测）。
 - **存报告**：审查员交回后，用 accept-task 的 `scripts/save-report.sh <output 文件> ../pandora-<名字>/.claude/review.md` 存下来。第二轮的复审存成 `review-r2.md`。
 
 ## 3. 总协调怎么核
@@ -61,13 +64,11 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesig
 | 整合风险（本分支单独合入或单独发版会出问题） | 记进 TASKS 的发版前清单，不挡合入主线 |
 | 审查员标为「疑似」、而且没补上证据的 | 不进 brief，记进 TASKS |
 
-**第二轮 brief** 用 SendMessage 发给原实现 agent，它对这块代码最熟；原 agent 的会话已经不在了，就按 dispatch-task 新开一个。要写清：
+**第二轮 brief** 用 SendMessage 发给原实现 agent，它对这块代码最熟；原 agent 的会话已经不在了，就按 dispatch-task 新开一个。照 `templates/round2-brief.md` 写，骨架可以用 `review-prompt.py round2 <分支> --scratchpad <…>` 生成（填好名字、worktree、分支、探针目录）。模板之外要注意：
 
-- **每条发现**：编号、严重度、文件:行（同时写符号）、触发场景、修法方向。修法不要写成逐步操作；有多个方案时，可以让它选更好维护的那个，并在报告里写理由（w9cert 第 2 项就是这样定了只追加的签发流水）。
-- **测试**：必修项先写一个修前会红的测试（PG18 用例，或审查员探针的路径），再修。要交回修前修后的数字，例如 heap 增量、踢人耗时。
-- **迁移号**：用 `next-number.sh` 重新取。主线可能已经前进了：w9cert 第二轮原定的 00149 比主线已有的 00151 还小，只能改用 00152。
-- **本轮放开的归属**：列出允许改的文件，以及审查员说「不用改」、由总协调处理的那几条。
-- **完成标准**：`wait-status.sh` 与 `wait-github.sh` 都退出 0；PG18 0 SKIP；新用例名出现在 CI 日志里。
+- 修法写方向，不写逐步操作；有多个方案时让实现方选更好维护的，并在报告里写理由（w9cert 第 2 项就是这样定了只追加的签发流水）。
+- 迁移号要重新取：主线可能已经前进了。w9cert 第二轮原定的 00149 比主线已有的 00151 还小，只能改用 00152。
+- 实现方交回后，用 save-report.sh 存成 `report-r2.md`，复审员要对着它逐条核。
 
 ## 5. 什么时候可以合
 
@@ -93,7 +94,7 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesig
 - 修的是高危；
 - 第二轮的非测试 diff 超过约 500 行。
 
-复审的范围只是第二轮的 diff：`<第一轮审查时的头>..<第二轮的头>`。prompt 的重点写两件事：第一轮每条发现是否真的修对了；新写的代码有没有带进新问题。
+复审的范围只是第二轮的 diff：`<第一轮审查时的头>..<第二轮的头>`。prompt 用 `templates/rereview-prompt.md`，范围、shortstat、副本路径用 `review-prompt.py rereview <分支> --from <第一轮的头> --scratchpad <…>` 填，「派去修的」和重点自己写。第一轮的审查员还在时，优先用 SendMessage 发给它，它记得上一轮的探针。交回表固定为：上一轮编号 | 已修/部分修/未修 | 证据 | 回退是否变红，再加新发现表和「可合 / 修完再合」。
 
 原因：第二轮本身也会引入缺陷。w9cert 第二轮新增了 00152 和账号重注册的逻辑，CI 抓到一个就是这一轮自己带进来的：重注册后的新账号续期时还带着旧证书的 ARI replaces（1d313ca 修复）。那一轮当时没有复审，按这条规则应该复审。
 

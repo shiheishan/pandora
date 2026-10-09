@@ -8,7 +8,7 @@
 
 **找重复的流程**：会话记录很大，不要整份读。用
 `python3 -I /Users/a1/ai/projects/pandora/.claude/skills/skill-audit/scripts/repeated-prompts.py --since <上一轮日期>`
-列出用户重复贴过的长消息；再按关键词 grep 总协调手写过多次的子 agent prompt（Agent 调用的 `"prompt"` 字段）。
+列出用户重复贴过的长消息；再加 `--agents` 跑一次，列出总协调手写过多次的 Agent prompt 与 SendMessage 消息（按相似度分组）。措辞每次不同的流程聚不成组，用 `--agents --grep <关键词> --min 1` 看。
 
 **规则**：
 - 严格只读：不改、不建、不提交任何文件；不登录任何服务器；不读 `ops-local/**/secrets/` 与 <其他禁读目录>。
