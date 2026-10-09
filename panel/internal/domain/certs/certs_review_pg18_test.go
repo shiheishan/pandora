@@ -174,8 +174,9 @@ func TestCertsReviewPG18(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.run(t)
-		if state, _, code, _ := e.order(t, cert.ID); state != "succeeded" {
-			t.Fatalf("renewal after deactivation: %s %v", state, code)
+		if state, _, code, replaces := e.order(t, cert.ID); state != "succeeded" || replaces != nil {
+			t.Fatalf("renewal after deactivation: state=%s code=%v replaces=%v, want success without replaces (new account)",
+				state, deref(code), deref(replaces))
 		}
 		var total, valid int64
 		if err := e.admin.QueryRow(e.ctx, `SELECT count(*), count(*) FILTER (WHERE status = 'valid') FROM acme_accounts
@@ -183,4 +184,11 @@ func TestCertsReviewPG18(t *testing.T) {
 			t.Fatalf("accounts total=%d valid=%d err=%v, want a fresh registration next to the deactivated one", total, valid, err)
 		}
 	})
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
 }

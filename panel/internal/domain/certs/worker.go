@@ -154,6 +154,11 @@ func (s *Service) runOrder(ctx context.Context, tenantID string, c *claimed, log
 			retryIn: defaultCA429, detail: "注册 ACME 账号失败：" + f.detail, work: w})
 	}
 
+	// ARI replaces 只能由签出旧证书的那个账号发（账号失效重注册后换了新账号就不带）
+	if replaces != "" && (w.currentAccountID == nil || *w.currentAccountID != acct.id) {
+		replaces = ""
+	}
+
 	// 4. 签发：lego 没有 context，放在另一个协程里跑；期间续租，停机或租约丢了就不等它。
 	//    CA 一签出就写签发流水（限额对账按它数），不管之后落库成不成功
 	rec := &retryRecorder{}

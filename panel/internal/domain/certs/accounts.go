@@ -105,8 +105,8 @@ func (s *Service) ensureAccount(ctx context.Context, tenantID string, target caT
 	return &acmeAccount{id: id, key: key, url: url}, nil
 }
 
-// accountGone 判断 CA 是不是说这个账号已经不能用了：accountDoesNotExist，或 unauthorized 且明说是账号
-// 的问题（验证失败也是 unauthorized，那种不算，否则每次 DNS 没生效都会重注册账号）。
+// accountGone 判断 CA 是不是说这个账号已经不能用了：accountDoesNotExist，或 unauthorized 且明说账号
+// 失效、不存在（验证失败、replaces 指向别的账号签的证书也是 unauthorized，那些不算，否则会白白重注册）。
 func accountGone(err error) bool {
 	var prob *acme.ProblemDetails
 	if !errors.As(err, &prob) {
@@ -116,7 +116,16 @@ func accountGone(err error) bool {
 	case "urn:ietf:params:acme:error:accountDoesNotExist":
 		return true
 	case "urn:ietf:params:acme:error:unauthorized":
-		return len(prob.SubProblems) == 0 && strings.Contains(strings.ToLower(prob.Detail), "account")
+		if len(prob.SubProblems) > 0 {
+			return false
+		}
+		d := strings.ToLower(prob.Detail)
+		for _, hint := range []string{"deactivated", "account is not valid", "account does not exist", "account not found", "revoked"} {
+			if strings.Contains(d, hint) {
+				return true
+			}
+		}
+		return false
 	}
 	return false
 }

@@ -131,6 +131,7 @@ type orderWork struct {
 	secret             map[string]string
 	currentIdentifiers []string
 	currentCA          *string
+	currentAccountID   *string
 	notAfter           *time.Time
 	cfg                acmeConfig
 	recent             []recentIssuance
@@ -142,12 +143,13 @@ func (s *Service) loadOrderWork(ctx context.Context, tenantID string, c *claimed
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
 		var credID string
 		if err := tx.QueryRow(ctx, `
-			SELECT c.name, c.identifiers, c.key_type, c.status, c.dns_credential_id::text, v.identifiers, v.ca, c.not_after
+			SELECT c.name, c.identifiers, c.key_type, c.status, c.dns_credential_id::text, v.identifiers, v.ca,
+			       v.acme_account_id::text, c.not_after
 			  FROM certificates c
 			  LEFT JOIN certificate_versions v ON v.tenant_id = c.tenant_id AND v.id = c.current_version_id
 			 WHERE c.tenant_id = $1 AND c.id = $2::uuid`, tenantID, c.certID).Scan(
 			&w.certName, &w.identifiers, &w.keyType, &w.status, &credID, &w.currentIdentifiers, &w.currentCA,
-			&w.notAfter); err != nil {
+			&w.currentAccountID, &w.notAfter); err != nil {
 			return err
 		}
 		var err error

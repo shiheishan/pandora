@@ -233,6 +233,7 @@ func TestAccountGone(t *testing.T) {
 		{&acme.ProblemDetails{Type: "urn:ietf:params:acme:error:unauthorized", Detail: "Incorrect TXT record found",
 			SubProblems: []acme.SubProblem{{Type: "urn:ietf:params:acme:error:unauthorized"}}}, false},
 		{&acme.ProblemDetails{Type: "urn:ietf:params:acme:error:unauthorized", Detail: "No TXT record found at _acme-challenge"}, false},
+		{&acme.ProblemDetails{Type: "urn:ietf:params:acme:error:unauthorized", Detail: "requester account did not request the certificate being replaced by this order"}, false},
 		{errors.New("network"), false},
 	} {
 		if got := accountGone(tc.err); got != tc.want {
