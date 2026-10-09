@@ -7,7 +7,7 @@ description: pandora 的依赖与工具链升级和漏洞扫描：govulncheck �
 
 本 skill 管「改哪些地方、额外跑哪些测试」；常规本地检查和推送后等哪个结论照 verify skill，CI 红了用 ci-triage 分流。
 
-背景：CI 有只报告、不挡合并的 govulncheck 扫描（`.github/workflows/go-vulncheck.yml`，每周定时加改 Go 文件时触发，结论在 job summary 与 warning 注解里；检查机也回放）；dependabot 每周开 PR 的配置在 `.github/dependabot.yml`，但目前只在开发分支上、没生效（见第 8 节）。升级前后仍要本地扫，因为 CI 只告诉你有没有，不告诉你比升级前多了还是少了。d157159 把 go 指令从 1.26.5 升到 1.26.9 后，pdnd 的 `TestNaiveProbesServeFallback` 因标准库行为变化变红。所以每次升级都要按第 3 节先跑基线、再比对。
+背景：CI 有只报告、不挡合并的 govulncheck 扫描（`.github/workflows/go-vulncheck.yml`），改 Go 文件或 go.mod、go.sum 的推送会在开发分支上触发，结论在 job summary 与 warning 注解里，检查机也回放。**dependabot 与那条每周定时扫描按用户 10-09 的决定暂不启用**（配置不推到 main，首次公开发布、main 正常使用后再议），所以升依赖时靠本 skill 手动扫（第 1 节）。CI 只告诉你有没有，不告诉你比升级前多了还是少了，升级前后都要本地跑。d157159 把 go 指令从 1.26.5 升到 1.26.9 后，pdnd 的 `TestNaiveProbesServeFallback` 因标准库行为变化变红。所以每次升级都要按第 3 节先跑基线、再比对。
 
 ## 1. 扫漏洞
 
@@ -172,20 +172,16 @@ pdnd 里共有 6 处 fork。上游基点、导入时的差异和本仓库在基�
 | node-e2e 真客户端（sing-box、mihomo、Xray、Juicity、mieru） | ops-local `vultr-test2/node-e2e/scripts/install-clients.sh` 里的版本变量和逐个写死的 SHA-256 | node-e2e skill | 版本与 SHA 成对改，sing-box 用 `-glibc` 包 |
 | 官方 pdnd 发布包 | 面板 `release-artifact.env` 钉的版本与 SHA | panel-install、node-e2e 的接入证据 | 见 panel-install |
 
-## 8. 处理 dependabot PR
+## 8. 处理 dependabot PR（暂不启用，以后用）
 
-配置在 `.github/dependabot.yml`（Go 的 panel、pdnd 两个模块和 GitHub Actions，每周一，最多各 5 个 PR）。
+**现状：dependabot 和每周定时的 govulncheck 都不启用**（用户 10-09 决定，首次公开发布后再议）。原因是两者都只读默认分支 main 上的配置，而 origin/main 现在既没有 `.github/dependabot.yml`，也没有 `go-vulncheck.yml`；把它们放进 main（并给 dependabot 设 `target-branch` 指向开发分支）要用户点头，不自己做。所以眼下不会有 PR。以后启用了，PR 照下面处理，不在 GitHub 上合：
 
-**现状：还没生效。** dependabot 只读默认分支（main）上的配置，而 origin/main 现在既没有 `.github/dependabot.yml`，也没有 `go-vulncheck.yml`，两者都只在开发分支上。让它们生效要把文件放进 main，并给 dependabot 设 `target-branch` 指向开发分支（否则 PR 基于落后很多的 main）。这一步改的是 main，**要用户点头**，不要自己做。生效前不会有 PR；下面是它生效后（或手动收到 PR 时）的处理。
-
-本项目不在 GitHub 上合 PR，也不让 PR 的分支直接进主线：
-
-1. **不在 GitHub 上合。** 读 PR 只看它升了哪个模块到哪个版本（`gh pr view <号> --json title,files` 或 `gh pr diff <号>`）。
-2. **搬进 worktree**：按 dispatch-task 开 worktree，在对应模块目录 `go get <模块>@<版本>`、`go mod tidy`。不要直接套 PR 的 go.sum，PR 基于 main，和开发分支的 go.mod 对不上。`golang.org/x/*` 是一组，一起升。
-3. **pdnd 的依赖变了，再到 `.claude/skills/subscription-e2e/tools` 里 `go mod tidy`**（第 4 节），它经 replace 跟随 pdnd，不 tidy 会让 subscription-e2e 和 vulncheck 加载失败。
-4. **跑对应的测试**：pdnd 或 x/ 一族照第 3 节先基线后对比；panel 依赖要跑 panel 全量单测并等 PG18；`vulncheck.sh` 确认目标漏洞消失、无新增。GitHub Actions 的 PR 没有 Go 测试可跑，只看改后的 workflow 能在 CI 里跑过。
-5. **走正常流程推送**（verify：本地检查、推送、等 `wait-status.sh` 与 `wait-github.sh`）。提交说明写上 PR 号。
-6. **关掉 PR**：CI 绿后 `gh pr close <号> --comment "已在 <sha> 搬进开发分支"`。
+1. 只从 PR 读它升了哪个模块到哪个版本（`gh pr view <号>`）。
+2. 按 dispatch-task 开 worktree，在对应模块目录 `go get <模块>@<版本>` 再 `go mod tidy`，不套 PR 的 go.sum（它基于 main）。`golang.org/x/*` 一起升。
+3. pdnd 的依赖变了，再到 `.claude/skills/subscription-e2e/tools` 里 `go mod tidy`（第 4 节）。
+4. 测试：pdnd 或 x/ 一族照第 3 节先基线后对比，panel 依赖跑全量并等 PG18，`vulncheck.sh` 确认目标漏洞消失；GitHub Actions 的 PR 只看改后的 workflow 能在 CI 里跑过。
+5. 照 verify 推送、等 `wait-status.sh` 与 `wait-github.sh`，提交说明写 PR 号。
+6. CI 绿后 `gh pr close <号> --comment "已在 <sha> 搬进开发分支"`。
 
 ## 坑
 
