@@ -184,8 +184,12 @@ func (r *hy2UDPResolver) resolve(destination M.Socksaddr) (*net.UDPAddr, error) 
 // 上行另起一个 goroutine，下行就在调用方的 goroutine 里跑；任一方向结束即取消，
 // 取消时由 context.AfterFunc 给两端设读截止、打断另一方向的阻塞读，不再常驻一个
 // 专门等取消的 goroutine（空闲会话每个 goroutine 都占一份栈）。
-func relayHy2UDP(ctx context.Context, conn N.PacketConn, upstream net.PacketConn, destination M.Socksaddr, up, down *atomic.Int64) {
+//
+// userID 认人：同一用户的所有会话共用一份下行批量名额（hy2DownlinkBatchShares）。
+func relayHy2UDP(ctx context.Context, conn N.PacketConn, upstream net.PacketConn, destination M.Socksaddr, userID int64, up, down *atomic.Int64) {
 	u := newHy2UDPUpstream(upstream)
+	share := hy2DownlinkBatchShares.join(userID)
+	defer hy2DownlinkBatchShares.leave(userID)
 	bridgeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(bridgeCtx, func() {
@@ -201,7 +205,8 @@ func relayHy2UDP(ctx context.Context, conn N.PacketConn, upstream net.PacketConn
 		defer wg.Done()
 		hy2UplinkUDP(bridgeCtx, conn, u, destination, up)
 	}()
-	hy2DownlinkUDP(conn, u, down)
+	hy2DownlinkUDP(bridgeCtx, conn, u, share, down)
+	// 下行先结束（上游出错、被关）时要靠这次取消打断上行的阻塞读，否则等不到 wg。
 	cancel()
 	wg.Wait()
 }

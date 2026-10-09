@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -63,6 +64,9 @@ func TestHy2DownlinkPeekDeliversDatagramsIntact(t *testing.T) {
 				u := newHy2UDPUpstream(upstream)
 				// 一轮背靠背 40 包，收包缓冲放大一些，免得测的是内核丢包。
 				_ = upstream.SetReadBuffer(1 << 20)
+				if !hy2UDPPeekSupported {
+					t.Skip("非 unix 没有窥视收包，下行走逐包阻塞读（见 hysteria2_udp_peek_other.go）")
+				}
 				if u.reader == nil {
 					t.Fatal("裸 socket 应有窥视收包的 reader")
 				}
@@ -70,7 +74,8 @@ func TestHy2DownlinkPeekDeliversDatagramsIntact(t *testing.T) {
 				done := make(chan struct{})
 				go func() {
 					defer close(done)
-					hy2DownlinkUDP(conn, u, &down)
+					hy2DownlinkUDP(context.Background(), conn, u, hy2DownlinkBatchShares.join(1), &down)
+					hy2DownlinkBatchShares.leave(1)
 				}()
 
 				var want [][]byte
@@ -133,11 +138,15 @@ func TestHy2DownlinkPeekDeliversDatagramsIntact(t *testing.T) {
 	}
 }
 
-// relayHy2UDP 的收尾：上下行任一方向结束（这里是客户端会话关闭），另一方向的
-// 阻塞读被读截止打断，整个转发返回；父 ctx 取消同样如此。
+// relayHy2UDP 的收尾：上下行任一方向结束（客户端会话关闭、上游 socket 被关），
+// 另一方向的阻塞读被打断，整个转发返回、不留 goroutine；父 ctx 取消同样如此。
+// 「上游先关」一例守着下行结束后的那次 cancel：去掉它，上行永远等在会话队列上。
 func TestHy2RelayEndsWhenEitherSideEnds(t *testing.T) {
-	for _, name := range []string{"client-closed", "ctx-cancelled"} {
+	for _, name := range []string{"client-closed", "upstream-closed", "ctx-cancelled"} {
 		t.Run(name, func(t *testing.T) {
+			// 存货回收的后台 goroutine 是进程级的，先起好，不算进本用例。
+			hy2StockJanitor.start()
+			before := runtime.NumGoroutine()
 			upstream, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 			if err != nil {
 				t.Fatal(err)
@@ -150,18 +159,28 @@ func TestHy2RelayEndsWhenEitherSideEnds(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				relayHy2UDP(ctx, conn, upstream, M.SocksaddrFromNet(upstream.LocalAddr()), &up, &down)
+				relayHy2UDP(ctx, conn, upstream, M.SocksaddrFromNet(upstream.LocalAddr()), 1, &up, &down)
 			}()
 			time.Sleep(50 * time.Millisecond)
-			if name == "client-closed" {
+			switch name {
+			case "client-closed":
 				_ = conn.Close()
-			} else {
+			case "upstream-closed":
+				_ = upstream.Close()
+			default:
 				cancel()
 			}
 			select {
 			case <-done:
 			case <-time.After(2 * time.Second):
 				t.Fatal("转发没有收尾")
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if after := runtime.NumGoroutine(); after > before {
+				t.Fatalf("goroutine %d → %d，转发留下了 goroutine", before, after)
 			}
 		})
 	}

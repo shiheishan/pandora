@@ -140,7 +140,7 @@ func memTestSessions(t *testing.T, n int, echo net.Addr, block chan struct{}) ([
 		go func() {
 			defer wg.Done()
 			defer upstream.Close()
-			relayHy2UDP(ctx, conn, upstream, target, &up, &down)
+			relayHy2UDP(ctx, conn, upstream, target, int64(i), &up, &down)
 		}()
 		conn.send([]byte("ping"), target)
 	}
