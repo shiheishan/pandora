@@ -18,7 +18,8 @@ import (
 
 // 批量生成账号的后台 worker（方案 A：一次只占 1 个 Argon2 名额，不挡登录）。
 //
-// 由 aegis-admin 起一个 goroutine 每 3 秒调一次 RunOnce：认领一个任务做完；
+// 由 aegis-admin 起一个 goroutine 调 RunOnce：登记任务时被进程内唤醒（user_generation_wake.go），
+// 另有 15 秒一次的兜底轮询；每次认领一个任务做完；
 // 顺带把超过 24 小时的结果密文清掉。认领带租约（user_generation_jobs.lease_until），
 // 每批写完续租；进程中途退出，租约一过别的实例或重启后的自己从 completed 处接着做。
 //

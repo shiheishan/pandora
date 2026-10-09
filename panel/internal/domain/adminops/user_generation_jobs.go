@@ -124,6 +124,8 @@ func (s *Service) SubmitGenerateUsers(ctx context.Context, tenantID string, in G
 	if err != nil {
 		return nil, err
 	}
+	// 提交之后再叫醒：worker 一定看得到这个任务
+	s.wakeUserGeneration()
 	return job, nil
 }
 

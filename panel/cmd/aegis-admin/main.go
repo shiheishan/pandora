@@ -309,16 +309,21 @@ func run() error {
 	// 节点上报增长，不清就让在线统计、节点列表与看板一天比一天慢。追加写的上报留档与订阅
 	// 拉取日志保留 31 天（用户定），经各自的定义者函数分批删（00131）。
 	//
-	// 分批删：三个 Purge 每批一个短事务、每批行数与单次调用的批数
-	// 都有上限，积压由下一轮接着清，不会一次删几十万行长时间持锁。十分钟一次：在线
-	// 记录 70 分钟才过期，再勤只是空转。
+	// 分批删：三个 Purge 每批一个短事务、每批行数与单次调用的批数都有上限，积压由下一轮接着清，
+	// 不会一次删几十万行长时间持锁。清理一小时一次（w12period）：读路径上这些表都带时间窗
+	// （在线记录最多看 60 分钟，探针曲线最多 24 小时，流量汇总最多 61 天），晚清一小时只是多留
+	// 一小时的行，不影响读数；原先每 10 分钟一轮，静默时九成是空转。
 	//
-	// 同一轮里顺带维护行为趋势的按天汇总（00114）：重算最近 2 个已结束日（吸收迟到写入，
-	// 读路径只用其中可用的行），并删 400 天以前的行。
+	// 节拍仍是 10 分钟：同一个循环里的两项按天汇总要及时，各自在库外先判断要不要动库，
+	// 没事可做的节拍几乎不碰库——
+	//   - 行为趋势（00114）：最近 2 个已结束日里，只算还没定稿、读路径也用不上的行；
+	//   - 节点 × uid 按天流量（00133）：进度记在进程内，启动与每个 UTC 日界之后才核对一次库。
+	// 清理挂在 intervalGate 后面，到点（离上次成功满一小时）才跑；这一轮有失败就不记，下一拍重试。
 	go func() {
 		defer workers.Done()
-		pace := newLoopPacer(10 * time.Minute)
+		pace := newLoopPacer(retentionTick)
 		defer pace.Stop()
+		purgeGate := newIntervalGate(retentionPurgeEvery, retentionTick)
 		for {
 			select {
 			case <-ctx.Done():
@@ -326,49 +331,37 @@ func run() error {
 			case <-pace.C():
 			}
 			sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			alive, aliveErr := nodeSvc.PurgeStaleAlive(sctx, middleware.DefaultTenantID)
-			metrics, metricsErr := nodeSvc.PurgeMetrics(sctx, middleware.DefaultTenantID, nodefabric.MetricsRetentionHours)
-			rollups, rollupsErr := nodeSvc.PurgeTrafficRollups(sctx, middleware.DefaultTenantID)
-			// 每轮固定重算 2 行，行数不记日志
+			// 按天汇总排在清理之前：它们是读路径在用的，清积压占满本轮时限时不能挤掉它们
+			// 行为趋势每轮不固定行数，不记日志
 			_, activityErr := opsSvc.RefreshActivityDaily(sctx, middleware.DefaultTenantID)
-			activityPurged, activityPurgeErr := opsSvc.PurgeActivityDaily(sctx, middleware.DefaultTenantID)
-			// 追加写表的 31 天保留期与节点 × uid 按天汇总（w5retain，00131 / 00133）：排在上面几项
-			// 之后，清积压占满本轮时限时不挤掉在线记录与探针点的清理
 			trafficDaily, trafficDailyErr := nodeSvc.RefreshTrafficDaily(sctx, middleware.DefaultTenantID)
-			reports, reportsErr := nodeSvc.PurgeTrafficReports(sctx, middleware.DefaultTenantID)
-			fetchLogs, fetchLogsErr := subscription.PurgeFetchLog(sctx, pool, middleware.DefaultTenantID)
+			purgeDue := purgeGate.due(time.Now())
+			var purge retentionPurge
+			if purgeDue {
+				purge.alive, purge.aliveErr = nodeSvc.PurgeStaleAlive(sctx, middleware.DefaultTenantID)
+				purge.metrics, purge.metricsErr = nodeSvc.PurgeMetrics(sctx, middleware.DefaultTenantID, nodefabric.MetricsRetentionHours)
+				purge.rollups, purge.rollupsErr = nodeSvc.PurgeTrafficRollups(sctx, middleware.DefaultTenantID)
+				purge.activity, purge.activityErr = opsSvc.PurgeActivityDaily(sctx, middleware.DefaultTenantID)
+				// 追加写表的 31 天保留期（w5retain，00131）：排在上面几项之后，清积压占满本轮时限时
+				// 不挤掉在线记录与探针点的清理
+				purge.reports, purge.reportsErr = nodeSvc.PurgeTrafficReports(sctx, middleware.DefaultTenantID)
+				purge.fetchLogs, purge.fetchLogsErr = subscription.PurgeFetchLog(sctx, pool, middleware.DefaultTenantID)
+			}
 			cancel()
-			if trafficDailyErr != nil {
-				log.Error("流量按天汇总失败", "error", trafficDailyErr.Error(), "written", trafficDaily)
-			}
-			if reportsErr != nil {
-				log.Error("流量上报留档清理失败", "error", reportsErr.Error(), "deleted", reports)
-			}
-			if fetchLogsErr != nil {
-				log.Error("订阅拉取日志清理失败", "error", fetchLogsErr.Error(), "deleted", fetchLogs)
-			}
-			if reports > 0 || fetchLogs > 0 || trafficDaily > 0 {
-				log.Info("追加写表保留期清理完成", "traffic_reports", reports, "fetch_logs", fetchLogs,
-					"traffic_daily_rows", trafficDaily)
-			}
-			if aliveErr != nil {
-				log.Error("在线记录清理失败", "error", aliveErr.Error(), "deleted", alive)
-			}
-			if metricsErr != nil {
-				log.Error("探针点清理失败", "error", metricsErr.Error(), "deleted", metrics)
-			}
-			if rollupsErr != nil {
-				log.Error("流量小时汇总清理失败", "error", rollupsErr.Error(), "deleted", rollups)
-			}
 			if activityErr != nil {
 				log.Error("行为趋势按天汇总失败", "error", activityErr.Error())
 			}
-			if activityPurgeErr != nil {
-				log.Error("行为趋势按天汇总清理失败", "error", activityPurgeErr.Error(), "deleted", activityPurged)
+			if trafficDailyErr != nil {
+				log.Error("流量按天汇总失败", "error", trafficDailyErr.Error(), "written", trafficDaily)
 			}
-			if alive > 0 || metrics > 0 || rollups > 0 || activityPurged > 0 {
-				log.Info("保留期清理完成", "alive_ips", alive, "node_metrics", metrics, "traffic_rollups", rollups,
-					"activity_daily", activityPurged)
+			if trafficDaily > 0 {
+				log.Info("流量按天汇总完成", "traffic_daily_rows", trafficDaily)
+			}
+			if purgeDue {
+				purge.report(log)
+				if purge.ok() {
+					purgeGate.done(time.Now())
+				}
 			}
 		}
 	}()
@@ -403,25 +396,35 @@ func run() error {
 	}()
 
 	// 批量生成账号的后台任务（w5account）：POST v1/users/bulk/generate 只登记任务，这里逐个
-	// 生成。一次只占 1 个 Argon2 名额、名额排不上就等，不挡登录；每 3 秒找一次活（每轮至多
-	// 做完一个任务），顺带清掉超过 24 小时的结果密文。多实例时靠租约与 SKIP LOCKED 分活，
-	// 停机或挂掉的任务租约一过就被接着做。
+	// 生成。一次只占 1 个 Argon2 名额、名额排不上就等，不挡登录。登记任务时 opsSvc 在进程内
+	// 叫醒这个循环（w12period），不再每 3 秒问一次库；另有一条慢轮询兜底别的实例登记的任务、
+	// 租约过期被丢下的任务和刚启动时已排着的任务。叫醒后连着做，做到没有可认领的任务为止；
+	// 顺带清掉超过 24 小时的结果密文。多实例时靠租约与 SKIP LOCKED 分活，停机或挂掉的任务
+	// 租约一过就被接着做。
 	go func() {
 		defer workers.Done()
 		gen := opsSvc.NewUserGenerationWorker(envelope, log)
-		pace := newLoopPacer(3 * time.Second)
+		wake := opsSvc.UserGenerationWake()
+		pace := newLoopPacer(adminops.UserGenerationPollEvery)
 		defer pace.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-pace.C():
+			case <-wake:
 			}
-			sctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-			_, err := gen.RunOnce(sctx, middleware.DefaultTenantID)
-			cancel()
-			if err != nil && ctx.Err() == nil {
-				log.Error("批量生成账号任务失败", "error", err.Error())
+			for {
+				sctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+				ran, err := gen.RunOnce(sctx, middleware.DefaultTenantID)
+				cancel()
+				if err != nil && ctx.Err() == nil {
+					log.Error("批量生成账号任务失败", "error", err.Error())
+				}
+				// 做完一个就接着看有没有下一个；出错或没活时回到等待，不空转
+				if err != nil || !ran || ctx.Err() != nil {
+					break
+				}
 			}
 		}
 	}()
