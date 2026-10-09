@@ -41,7 +41,7 @@ var directWriteAllowed = map[string]string{
 	"public/telegram.go handlers.telegramUpdate": "Telegram webhook 回执，无论成败固定 200 {\"ok\":true}",
 	// 节点配置：nodefabric 预编码的配置字节，ETag 与正文必须是同一份字节；304 协商 httpx 没有出口
 	"node/handlers.go handlers.uniConfig": "UniProxy 配置写出预编码字节与 304",
-	"node/handlers.go handlers.uniUser":   "UniProxy 用户列表的 ETag 304",
+	"node/handlers.go handlers.uniUser":   "UniProxy 用户列表的 ETag 304，以及按版本预编码、共享的 gzip 正文（Content-Encoding: gzip）",
 }
 
 // writerMethods 是对 http.ResponseWriter 本身的写调用。
