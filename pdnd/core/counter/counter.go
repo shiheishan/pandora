@@ -409,13 +409,15 @@ func (o *OnlineTracker) Snapshot() map[int64][]string {
 	return out
 }
 
+// hostOf 取对端的设备键（core.DeviceKey：IPv4 按地址、IPv6 按 /64），与 NativeCore
+// 各适配器的在线记录同一口径。
 func hostOf(addr net.Addr) string {
 	if addr == nil {
 		return ""
 	}
 	host, _, err := net.SplitHostPort(addr.String())
 	if err != nil {
-		return addr.String()
+		return core.DeviceKey(addr.String())
 	}
-	return host
+	return core.DeviceKey(host)
 }
