@@ -301,7 +301,7 @@ node   GET     /api/v1/server/UniProxy/user                       0   0
 node   GET     /healthz                                           0   0
 node   POST    /v1/nodes/bootstrap                                -   -
 node   GET     /v1/nodes/config                                   -   -
-node   GET     /v1/nodes/config-signing-key                       -   -
+node   GET     /v1/nodes/config-signing-key                       0   1
 node   POST    /v1/nodes/config/report                            -   -
 node   GET     /v1/nodes/effective-config                         0   1
 node   POST    /v1/nodes/enrollments                              -   -
