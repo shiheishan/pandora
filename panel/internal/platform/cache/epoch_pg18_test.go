@@ -153,6 +153,21 @@ func TestCacheEpochPG18(t *testing.T) {
 		step("heartbeat goes stale", nil, `UPDATE nodes SET last_heartbeat_at = now() - interval '11 minutes' WHERE id = $1`, node)
 		step("heartbeat recovers", []signal{nodeCatalog}, `UPDATE nodes SET last_heartbeat_at = now() WHERE id = $1`, node)
 		step("server leaves ready", []signal{nodeCatalog}, `UPDATE servers SET status = 'draft' WHERE id = $1`, server)
+
+		// 配置应用回执：只在「最近一次回执是否失败」翻转时推进。旧合约回报逐条追加、不去重，
+		// 旧版节点每轮重报同一阶段不能变成每 15 秒一次纪元风暴
+		must(`INSERT INTO node_configs(tenant_id,scope,scope_ref,version,payload,content_hash,status)
+			VALUES($1,'node',$2,1,'{}'::jsonb,decode(repeat('00',32),'hex'),'draft')`, tenant, node)
+		receipt := `INSERT INTO node_config_applications(tenant_id,node_id,config_id,phase,detail)
+			SELECT $1::uuid,$2::uuid,c.id,$3::text,'{"contract":"legacy_layer_attribution","message":"cache-epoch"}'::jsonb
+			  FROM node_configs c WHERE c.tenant_id=$1::uuid AND c.scope_ref=$2::uuid`
+		step("first receipt switched", nil, receipt, tenant, node, "switched")
+		step("receipt switched repeated", nil, receipt, tenant, node, "switched")
+		step("receipt rolled back", []signal{nodeCatalog}, receipt, tenant, node, "rolled_back")
+		step("receipt rolled back repeated", nil, receipt, tenant, node, "rolled_back")
+		step("receipt rolled back repeated again", nil, receipt, tenant, node, "rolled_back")
+		step("receipt failed after rolled back", nil, receipt, tenant, node, "failed")
+		step("receipt health passed", []signal{nodeCatalog}, receipt, tenant, node, "health_passed")
 	})
 	t.Run("catalog", func(t *testing.T) {
 		// 下单占库存、取消再放回：同一事务里两条（库存守恒的延迟约束只在提交时看总账），
@@ -267,7 +282,7 @@ func checkEpochTriggers(t *testing.T, ctx context.Context, admin *pgxpool.Pool) 
 		{"nodes", "zz_node_catalog_epoch_nodes_update", "bump_cache_epoch", KindNodeCatalog},
 		{"servers", "zz_node_catalog_epoch_servers_update", "bump_cache_epoch", KindNodeCatalog},
 		{"servers", "zz_node_catalog_epoch_servers_rows", "bump_cache_epoch", KindNodeCatalog},
-		{"node_config_applications", "zz_node_catalog_epoch_config_applications", "bump_cache_epoch", KindNodeCatalog},
+		{"node_config_applications", "zz_node_catalog_epoch_config_applications", "bump_node_catalog_on_application", ""},
 		{"plans", "zz_catalog_epoch_plans_rows", "bump_cache_epoch", KindCatalog},
 		{"plans", "zz_catalog_epoch_plans_update", "bump_cache_epoch", KindCatalog},
 		{"plan_versions", "zz_catalog_epoch_plan_versions", "bump_cache_epoch", KindCatalog},

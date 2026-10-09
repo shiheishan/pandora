@@ -14,14 +14,19 @@
 --       pool_id 与连接参数）；已应用的发布物（applied_effective_*，「配置下发失败」的判定要用）；
 --       首次心跳与掉线后恢复心跳（心跳间隔超过 10 分钟的那一次写：订阅优先给心跳新鲜的节点，窗口
 --       与 subscription.HeartbeatFreshWindow 相同，守卫 TestCacheEpochPG18 钉住）；
---       服务器的状态 / 删除 / 控制节点；配置应用记录（最近一次的阶段）。
+--       服务器的状态 / 删除 / 控制节点；配置应用回执——只在节点「最近一次回执是否属于失败类」翻转时
+--       （读方 nodefabric.RuntimeFailingSQL 只看这一点：失败类是 failed、precheck_failed、health_failed、
+--       rolled_back，Go 侧守卫 TestNodeCatalogApplicationPhasesMatchRuntimeFailing 钉住两边一致）。旧合约
+--       回报（只带整数版本）按约定逐条追加、不去重（api/admin 的 PG18 用例钉着），旧版节点每轮重报同一
+--       阶段时不翻转，就不推进，不会每 15 秒一次纪元风暴。
 --     例行心跳、遥测写都不推进。套餐绑池、池的用户组限定、用户换组已在下发纪元里，读方两个一起读。
 --     新鲜窗口内「到点变旧」没有写，读方按条目里最早的心跳时刻硬过期（同名单的 nextExpiry）。
 --
 -- 不改 app.bump_node_delivery_epoch()：节点目录的变化不该让 aegis-node 的用户名单重算（节点编辑、
 -- 恢复心跳、配置应用都和「谁能连」无关），所以另起一个序列，不往下发纪元上加。
 --
--- 锁：建序列、函数、触发器；触发器对 nodes、servers、node_config_applications 拿 SHARE ROW EXCLUSIVE，
+-- 锁：建序列、函数、触发器；回执触发器每次 INSERT 按 (node_id, occurred_at DESC) 索引查一行上一条回执。
+-- 触发器对 nodes、servers、node_config_applications 拿 SHARE ROW EXCLUSIVE，
 -- 不扫表，毫秒级。
 
 -- +goose Up
@@ -38,6 +43,31 @@ BEGIN
   RETURN NULL;
 END;
 $$;
+
+CREATE FUNCTION app.bump_node_catalog_on_application() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE
+  v_prev_failing boolean;
+BEGIN
+  -- 本条之前（按 occurred_at、再按 uuidv7 的 id）该节点的最近一条回执是否属于失败类；没有就算否
+  SELECT a.phase IN ('failed', 'precheck_failed', 'health_failed', 'rolled_back') INTO v_prev_failing
+    FROM public.node_config_applications a
+   WHERE a.tenant_id = NEW.tenant_id AND a.node_id = NEW.node_id
+     AND (a.occurred_at, a.id) < (NEW.occurred_at, NEW.id)
+   ORDER BY a.occurred_at DESC, a.id DESC
+   LIMIT 1;
+  IF (NEW.phase IN ('failed', 'precheck_failed', 'health_failed', 'rolled_back'))
+     IS DISTINCT FROM coalesce(v_prev_failing, false) THEN
+    -- 与 app.bump_cache_epoch('node_catalog') 相同的两步
+    PERFORM nextval('public.node_catalog_epoch');
+    PERFORM pg_notify('aegis_cache_epoch', 'node_catalog');
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+COMMENT ON FUNCTION app.bump_node_catalog_on_application() IS
+  '配置应用回执：节点最近一次回执「是否失败」翻转时推进节点目录纪元并通知（00155）；同类阶段的重复回报不推进。';
 
 COMMENT ON FUNCTION app.bump_cache_epoch() IS
   '缓存纪元：输入变化时在提交时推进序列 <种类>_epoch 并通知 aegis_cache_epoch（载荷为种类名），进程内缓存据此作废（00155）。';
@@ -110,11 +140,11 @@ CREATE CONSTRAINT TRIGGER zz_node_catalog_epoch_servers_rows
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
   EXECUTE FUNCTION app.bump_cache_epoch('node_catalog');
 
--- 配置应用记录：「配置下发失败」看最近一次应用的阶段
+-- 配置应用回执（追加写表，只有 INSERT）：「配置下发失败」看最近一次回执的阶段是否属于失败类
 CREATE CONSTRAINT TRIGGER zz_node_catalog_epoch_config_applications
-  AFTER INSERT OR UPDATE OR DELETE ON public.node_config_applications
+  AFTER INSERT ON public.node_config_applications
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-  EXECUTE FUNCTION app.bump_cache_epoch('node_catalog');
+  EXECUTE FUNCTION app.bump_node_catalog_on_application();
 -- +goose StatementEnd
 
 -- +goose Down
@@ -127,6 +157,7 @@ DROP TRIGGER IF EXISTS zz_node_catalog_epoch_servers_rows ON public.servers;
 DROP TRIGGER IF EXISTS zz_node_catalog_epoch_servers_update ON public.servers;
 DROP TRIGGER IF EXISTS zz_node_catalog_epoch_nodes_update ON public.nodes;
 DROP TRIGGER IF EXISTS zz_node_catalog_epoch_nodes_rows ON public.nodes;
+DROP FUNCTION IF EXISTS app.bump_node_catalog_on_application();
 DROP SEQUENCE IF EXISTS public.node_catalog_epoch;
 DROP FUNCTION IF EXISTS app.bump_cache_epoch();
 -- +goose StatementEnd

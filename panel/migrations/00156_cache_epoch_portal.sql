@@ -10,7 +10,8 @@
 --     套餐版本、价格、配额定义、流量包。可见时间窗（visible_from / until、valid_from / until）到点
 --     生效没有写，读方按条目里最早的边界硬过期。
 --   - appearance_epoch：主题与插槽。
---   - site_settings_epoch：租户行（站点名、时区、订阅路径前缀等，写得很少）、系统设置、降级开关。
+--   - site_settings_epoch：租户行（时区、订阅路径前缀、默认币种等，写得很少）、系统设置、降级开关。
+--     门户显示的站点名与品牌在主题的 branding 里，归外观纪元。
 --
 -- 锁：建序列与触发器；触发器对各表拿 SHARE ROW EXCLUSIVE，不扫表，毫秒级。
 
