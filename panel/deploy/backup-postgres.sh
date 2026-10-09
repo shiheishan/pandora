@@ -205,8 +205,9 @@ mkfifo -m 0600 "$fifo"
   exec 3<&-
 ) &
 validator_pid=$!
+# 带属主与权限导出：恢复时照原样还原（restore-postgres.sh 只把跑迁移的超级用户换成本机的）
 pandora_pg pg_dump -d "$POSTGRES_DB" \
-    --format=custom --compress=6 --no-owner --no-acl \
+    --format=custom --compress=6 \
   | tee "$fifo" \
   | age --encrypt --recipient "$AEGIS_BACKUP_AGE_RECIPIENT" >"$tmp"
 wait "$validator_pid" || die "backup validator process failed"

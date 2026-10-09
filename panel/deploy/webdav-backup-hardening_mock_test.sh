@@ -72,8 +72,8 @@ reject "$BACKUP" 'mv -- "$tmp" "$archive"' clobbering_archive_move_present
 need "$RESTORE" 'aegis-backup.service' backup_service_quiescence_missing
 need "$RESTORE" 'for property in ActiveState SubState MainPID ControlPID' service_state_check_missing
 need "$RESTORE" 'systemctl mask --runtime' restore_runtime_mask_missing
-need "$RESTORE" 'pandora_pg createdb --template=template0 "${create_args[@]}"' connection_gate_create_missing
-need "$RESTORE" 'create_args+=(--connection-limit=0)' connection_gate_missing
+need "$RESTORE" 'pandora_pg createdb "${args[@]}" "$target_db"' connection_gate_create_missing
+need "$RESTORE" 'args+=(--connection-limit=0)' connection_gate_missing
 before "$RESTORE" 'flock -n 8' 'AEGIS_VERIFY_RESTORE=1' restore_lock_too_late
 guard_invocation="$(exact_line_of "$RESTORE" begin_production_guard)"
 drop_invocation="$(line_of "$RESTORE" 'pandora_pg dropdb --force')"
@@ -109,7 +109,7 @@ function_before "$RESTORE" commit_production_guard \
   'assert_production_quiesced' 'CONNECTION LIMIT -1' commit_gate_before_recheck
 function_before_last "$RESTORE" commit_production_guard \
   'CONNECTION LIMIT -1' 'restore_committed=1' connection_gate_opened_after_commit_flag
-pg_restore_line="$(line_of "$RESTORE" 'pandora_pg pg_restore -d "$target_db"')"
+pg_restore_line="$(exact_line_of "$RESTORE" restore_into_target)"
 commit_invocation="$(exact_line_of "$RESTORE" commit_production_guard)"
 completion_line="$(line_of "$RESTORE" 'echo "restore complete:')"
 [ -n "$pg_restore_line" ] && [ -n "$commit_invocation" ] && [ -n "$completion_line" ] \

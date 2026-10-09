@@ -251,10 +251,99 @@ if [ "$target_db" = "$POSTGRES_DB" ] && \
   die "configured database restore needs AEGIS_RESTORE_PRODUCTION_CONFIRM=OVERWRITE_CONFIGURED_DATABASE:${target_db}"
 fi
 
+#------------------------------------------------------------------------------
+# 保留属主与权限的恢复。以前恢复用 --no-owner --no-privileges：全部对象归恢复者，00038 那些归专用
+# 角色 aegis_idempotency_owner 的 SECURITY DEFINER 函数变成以超级用户身份执行，迁移给的授权也丢了。
+# 现在照原样恢复属主与权限；只把「跑迁移的那个超级用户」名下的对象换成本机跑迁移的超级用户
+# （docker 布局是 POSTGRES_USER，直装是 postgres），与 install-native.sh --from-docker 同一个做法。
+# 下面几个函数由 pg-layout_mock_test.sh 抽出来、换上桩跑真调用。
+#------------------------------------------------------------------------------
+# 读 pg_restore --schema-only 的 SQL（标准输入），打印恢复要用到的角色：
+#   migrator <角色>   备份里跑迁移的那个（app 模式的属主）
+#   role <角色>       对象属主、默认权限的主人、被授权者（PUBLIC 不算）
+#   acl yes|no        备份里有没有权限（2026-10 之前的备份导出时带 --no-acl，没有）
+archive_role_plan() {
+  awk '
+    function last(line,   n, f) { sub(/ WITH GRANT OPTION;$/, ";", line); n = split(line, f, " "); sub(/;$/, "", f[n]); return f[n] }
+    /^ALTER SCHEMA app OWNER TO / { print "migrator " last($0) }
+    / OWNER TO [^ ]+;$/ { print "role " last($0) }
+    /^ALTER DEFAULT PRIVILEGES FOR ROLE / { print "role " $6; r = last($0); if (r != "PUBLIC") print "role " r }
+    /^(GRANT|REVOKE) / { acl = 1 }
+    /^GRANT .* TO [^ ]+( WITH GRANT OPTION)?;$/ { r = last($0); if (r != "PUBLIC") print "role " r }
+    END { print "acl " (acl ? "yes" : "no") }
+  ' | sort -u
+}
+
+# 本机集群里缺的角色先建好（恢复时 ALTER … OWNER TO、GRANT 才不失败）。只认识面板自己的几个角色，
+# 一律 NOLOGIN、不带任何特权（运行角色的登录与口令随后由 bootstrap.sh 设）；备份里有别的角色就停下，
+# 不替人决定。打印临时建的「备份里跑迁移的角色」名字（恢复完要删掉），没有就空
+#   ensure_restore_roles <archive_role_plan 的输出>
+ensure_restore_roles() {
+  local plan="$1" migrator role exists created_migrator=""
+  migrator="$(awk '$1 == "migrator" { print $2; exit }' <<<"$plan")"
+  [[ -z "$migrator" || "$migrator" =~ ^[a-z_][a-z0-9_]*$ ]] || die "unsupported migrator role in archive: $migrator"
+  while read -r role; do
+    [ -n "$role" ] || continue
+    case "$role" in
+      aegis_app|aegis_idempotency_owner|postgres|"$POSTGRES_USER"|"$migrator") ;;
+      *) die "archive references role $role that this restore does not know how to create; create it by hand first" ;;
+    esac
+    [[ "$role" =~ ^[a-z_][a-z0-9_]*$ ]] || die "unsupported role name in archive: $role"
+    exists="$(pandora_pg psql -X -d postgres -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '$role'" | tr -d '[:space:]')" \
+      || die "cannot check role $role"
+    [ "$exists" = 1 ] && continue
+    pandora_pg psql -X -d postgres -v ON_ERROR_STOP=1 \
+      -c "CREATE ROLE \"$role\" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS" >/dev/null \
+      || die "cannot create role $role for the restore"
+    echo "restore-postgres: created role $role (NOLOGIN, no privileges)" >&2
+    [ "$role" != "$migrator" ] || created_migrator="$role"
+  done < <(awk '$1 == "role" || $1 == "migrator" { print $2 }' <<<"$plan" | sort -u)
+  printf '%s\n' "$created_migrator"
+}
+
+# 目标库：template0、UTF8；直装以 postgres 连库，库的属主给 POSTGRES_USER（aegis），与全新直装一致
+create_target_db() {
+  local args=(--template=template0 --encoding=UTF8)
+  [ "$target_db" != "$POSTGRES_DB" ] || args+=(--connection-limit=0)
+  [ "$DB_LAYOUT" != native ] || args+=(--owner="${POSTGRES_USER:-aegis}")
+  pandora_pg createdb "${args[@]}" "$target_db"
+}
+
+# 照原样恢复属主与权限（不带 --no-owner / --no-privileges）
+restore_into_target() {
+  age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
+    | pandora_pg pg_restore -d "$target_db" --exit-on-error
+}
+
+# 备份里跑迁移的角色换成本机跑迁移的超级用户；为恢复临时建的那个角色删掉
+#   reassign_source_migrator <备份里的迁移角色> <临时建的，或空>
+reassign_source_migrator() {
+  local source="$1" created="$2" local_migrator
+  [ -n "$source" ] || return 0
+  local_migrator="$(pandora_pg psql -X -d postgres -tAc 'SELECT current_user' | tr -d '[:space:]')" \
+    || die "cannot read the local migrator role"
+  [ "$source" != "$local_migrator" ] || return 0
+  pandora_pg psql -X -d "$target_db" -v ON_ERROR_STOP=1 \
+    -c "REASSIGN OWNED BY \"$source\" TO \"$local_migrator\"" \
+    -c "ALTER DATABASE \"$target_db\" OWNER TO \"${POSTGRES_USER:-$local_migrator}\"" >/dev/null \
+    || die "cannot hand objects of $source to $local_migrator"
+  echo "restore-postgres: objects owned by the archive's migrator $source now belong to $local_migrator" >&2
+  if [ -n "$created" ]; then
+    pandora_pg psql -X -d "$target_db" -v ON_ERROR_STOP=1 -c "DROP OWNED BY \"$created\"" >/dev/null \
+      && pandora_pg psql -X -d postgres -v ON_ERROR_STOP=1 -c "DROP ROLE \"$created\"" >/dev/null \
+      || echo "restore-postgres: WARNING could not drop the temporary role $created" >&2
+  fi
+}
+
 # A valid checksum/TOC is not enough: corrupted data blocks or restore-time SQL
 # can still fail. Complete an isolated temporary-database restore before any
 # destructive action against the requested target database.
 AEGIS_VERIFY_RESTORE=1 "$PWD/verify-backup.sh" "$archive"
+# 动正式库之前：读出备份要的角色，缺的建好（只增不删），认不出的停下
+role_plan="$(age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" | pandora_pg pg_restore --schema-only -f - | archive_role_plan)" \
+  || die "cannot read the roles this archive needs"
+source_migrator="$(awk '$1 == "migrator" { print $2; exit }' <<<"$role_plan")"
+created_migrator="$(ensure_restore_roles "$role_plan")"
 begin_production_guard
 exists="$(pandora_pg psql -X -d postgres -tAc \
     "SELECT 1 FROM pg_database WHERE datname = '$target_db'" | tr -d '[:space:]')"
@@ -264,20 +353,16 @@ if [ "$exists" = "1" ]; then
   assert_production_quiesced
   pandora_pg dropdb --force "$target_db"
 fi
-create_args=()
-if [ "$target_db" = "$POSTGRES_DB" ]; then
-  create_args+=(--connection-limit=0)
-fi
-# 直装以 postgres 连库，库的属主仍给 POSTGRES_USER（aegis），与全新直装一致；docker 布局连库的就是它
-if [ "$DB_LAYOUT" = native ]; then
-  create_args+=(--owner="${POSTGRES_USER:-aegis}")
-fi
-pandora_pg createdb --template=template0 "${create_args[@]}" "$target_db"
+create_target_db
 assert_production_quiesced
 
-age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
-  | pandora_pg pg_restore -d "$target_db" --no-owner --no-privileges --exit-on-error
+restore_into_target
+reassign_source_migrator "$source_migrator" "$created_migrator"
 
 commit_production_guard
 
 echo "restore complete: $archive -> database $target_db"
+if grep -qx 'acl no' <<<"$role_plan"; then
+  echo "restore-postgres: NOTE this archive predates owner/privilege-preserving backups (no GRANTs inside)." >&2
+  echo "restore-postgres: run ./bootstrap.sh for the runtime role, then re-apply the GRANTs migrations give to aegis_idempotency_owner (deploy/MIGRATION-RUNBOOK.md section 3)" >&2
+fi

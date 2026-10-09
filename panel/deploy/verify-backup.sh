@@ -164,7 +164,8 @@ if [ "${AEGIS_VERIFY_RESTORE:-0}" = "1" ]; then
   trap cleanup_db EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  pandora_pg createdb --template=template0 "$verify_db"
+  pandora_pg createdb --template=template0 --encoding=UTF8 "$verify_db"
+  # 演练只证明数据块与恢复 SQL 都没问题，不还原属主与权限（正式恢复由 restore-postgres.sh 先备好角色再照原样还原）
   age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
     | pandora_pg pg_restore -d "$verify_db" --no-owner --no-privileges --exit-on-error
   pandora_pg psql -X -d "$verify_db" -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null
