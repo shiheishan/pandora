@@ -69,4 +69,4 @@ paths:
 ## 测试
 - `settlement_pg18_test.go` 被 `panel/deploy/test-settlement-runner_static_test.sh` 按文件名 grep marker 字面量：不能改名，marker 也不能挪到别的文件
 - order_release、plan_change、payment_query 三个 PG18 域各占一个库，不能并进 billing 域：order_release 开跑先断言 00040 的全局水位还是干净的，而别的域会把它置上（见 run-pg18-gates.sh 的 `DOMAINS` 注释）
-- 配额周期滚动 `RollQuotaPeriods` 的第二遍按需（w12period）：第一遍一行都没滚就不做第二遍（静默时的常态）；滚了行才隔 `rollQuotaRetryDelay` 补因被 push 锁着而跳过的行。到期的只有零星几条、又恰好都被锁住时晚一轮（10 分钟）才滚，只影响重置时刻，计费不依赖滚动及时。PG18 `checkQuotaRollPG18` 第 6 项钉住两个分支
+- 配额周期滚动 `RollQuotaPeriods` 的第二遍按需（w12period，总协调 2026-10-09 定）：第一遍之后用不加锁的探测 `rollQuotaDueRemain`（与两条滚动语句共用 `rollQuotaDueWhere` / `rollCycleDueWhere`，到期条件只有一份）看还有没有到期的行；没有（没有到期的行，或全部滚完）就不做第二遍，有（被 push 锁着而跳过）就隔 `rollQuotaRetryDelay` 补一遍，不等下一轮——被跳过的用户在重置前一直是用尽状态，晚 10 分钟是用户可见的。PG18 `checkQuotaRollPG18` 第 6 项钉住：仅有的到期行被锁住、间隔内放开 → 第二遍滚掉；两遍都锁着 → 留给下一轮；无到期行 → 不付重试间隔
