@@ -183,14 +183,19 @@ native_default_env_lines() {
 # 内存上限 PostgreSQL 512M、Valkey 160M）；配置块补 Valkey 的行为（只听回环、禁 FLUSHALL / FLUSHDB、不落盘、
 # 内存上限与淘汰）。对照表见 deploy/RUNBOOK.md「PostgreSQL 与 Valkey 的加固」。被挡的系统调用返回 EPERM，不杀进程
 
-NATIVE_HARDENING_DROPIN=pandora-hardening.conf
+# PostgreSQL 与 Valkey 各一份 drop-in pandora.conf，两段：
+#   - 资源约束，一直写：MemoryMax（2c4g 面板机上的内存预算）与 MemorySwapMax=0（面板的服务不换出到硬盘：
+#     换入卡顿是性能问题，进程内存里的密钥也不该落交换区）。它们只要 cgroup，不要挂载命名空间，
+#     所以不随加固开关去掉——关加固的容器化 VPS 照样受这两条约束；
+#   - 隔离（沙箱），随 PANDORA_SYSTEMD_HARDENING：关掉时这一段不写。
+# 一份文件、一次写、一次撤回，比两份文件各自撤回简单；内容随开关变，变了就算改动。
+# 三个网关单元（systemd/aegis-*.service）自己带 MemorySwapMax=0。
+NATIVE_DROPIN=pandora.conf
 
 # PostgreSQL 18/main 的 drop-in。不加 MemoryDenyWriteExecute（超级用户会话的 JIT 要可写可执行内存）；
 # 系统调用用拒绝清单（挡挂载、重启、内核模块、调试等），不用允许清单，免得扩展踩到
 native_pg_hardening_dropin() {
   cat <<'UNIT'
-# pandora（install.sh 生成）：给 postgresql@.service 补上隔离与内存上限
-[Service]
 User=postgres
 Group=postgres
 # 以 postgres 起之后 pg_ctlcluster 自己建不了 /run/postgresql（tmpfiles 缺省会建，这里兜底）；+ 表示这一步不受下面的限制
@@ -220,8 +225,14 @@ IPAddressAllow=localhost
 SystemCallArchitectures=native
 SystemCallErrorNumber=EPERM
 SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap
-MemoryMax=512M
 UNIT
+}
+
+# PostgreSQL 18/main 的整份 drop-in：资源约束一直在，隔离随开关
+native_pg_dropin() {
+  printf '%s\n' '# pandora（install.sh 生成）：资源约束一直在，隔离随 PANDORA_SYSTEMD_HARDENING' '[Service]' \
+    'MemoryMax=512M' 'MemorySwapMax=0'
+  [ "${NATIVE_HARDENING:-1}" != 1 ] || native_pg_hardening_dropin
 }
 
 # Valkey / Redis 的 drop-in。<口味> 是 valkey 或 redis，决定放行写的目录。系统调用用允许清单
@@ -229,8 +240,6 @@ UNIT
 #   native_valkey_hardening_dropin <valkey|redis>
 native_valkey_hardening_dropin() {
   cat <<UNIT
-# pandora（install.sh 生成）：不管发行版单元写了多少，隔离与内存上限整套写全
-[Service]
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
@@ -259,14 +268,21 @@ SystemCallErrorNumber=EPERM
 SystemCallFilter=
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
-MemoryMax=160M
 UNIT
+}
+
+# Valkey / Redis 的整份 drop-in：资源约束一直在，隔离随开关
+#   native_valkey_dropin <valkey|redis>
+native_valkey_dropin() {
+  printf '%s\n' '# pandora（install.sh 生成）：资源约束一直在，隔离随 PANDORA_SYSTEMD_HARDENING' '[Service]' \
+    'MemoryMax=160M' 'MemorySwapMax=0'
+  [ "${NATIVE_HARDENING:-1}" != 1 ] || native_valkey_hardening_dropin "$1"
 }
 
 NATIVE_SYSTEMD_DIR=/etc/systemd/system
 
 # 一个单元的 pandora drop-in：读、写、删
-native_dropin_file() { printf '%s\n' "$NATIVE_SYSTEMD_DIR/$1.d/$NATIVE_HARDENING_DROPIN"; }
+native_dropin_file() { printf '%s\n' "$NATIVE_SYSTEMD_DIR/$1.d/$NATIVE_DROPIN"; }
 native_write_dropin() {
   local file
   file="$(native_dropin_file "$1")"
@@ -287,8 +303,8 @@ native_restore_dropin() {
   if [ "$2" = 1 ]; then native_write_dropin "$1" "$3"; else native_remove_dropin "$1"; fi
 }
 
-# 加固开关 PANDORA_SYSTEMD_HARDENING：缺省开（1）；0 明确关掉两份 drop-in（Valkey 配置块与 PostgreSQL 调参不受影响，
-# 那是行为口径，不是沙箱）。安装时的环境变量优先，并记进 .env（只改这一行，别的行一个字节都不动），之后的升级沿用；
+# 加固开关 PANDORA_SYSTEMD_HARDENING：缺省开（1）；0 明确去掉两份 drop-in 里的隔离段（资源约束 MemoryMax、
+# MemorySwapMax=0 照留；Valkey 配置块与 PostgreSQL 调参也不受影响，那是行为口径，不是沙箱）。安装时的环境变量优先，并记进 .env（只改这一行，别的行一个字节都不动），之后的升级沿用；
 # 没给就看 .env。结果放在 NATIVE_HARDENING（1 / 0）
 #   native_load_hardening_switch <.env>
 native_load_hardening_switch() {
@@ -380,7 +396,7 @@ native_write_file() {
 }
 
 # PostgreSQL 的调参文件与单元 drop-in 一起应用，只重启一次：调参文件与发布包的不同就整份覆盖；加固开关开着写
-# drop-in（内容见 native_pg_hardening_dropin），关着去掉已有的。两样都没变就不重启。
+# drop-in（内容见 native_pg_dropin：资源约束一直在，隔离段随开关）。两样都没变就不重启。
 # 重启后在线才算数；起不来就把两样都还原成这次之前的样子（之前有的写回、没有的删掉）、再起、再核在线：
 # 在线返回 1（提示照实写），仍不在线就停下。安装器在外来集群检查、迁移、收窄角色都做完之后、起网关之前调它
 # （升级时网关已停）
@@ -398,18 +414,13 @@ native_apply_pg_config() {
     native_write_file "$conf" <"$src" || die "写 $conf 失败"
     conf_changed=1
   fi
-  if [ "${NATIVE_HARDENING:-1}" = 1 ]; then
-    if native_apply_dropin "$unit" "$(native_pg_hardening_dropin)"; then dropin_changed=1; fi
-  elif [ "$had_dropin" = 1 ]; then
-    native_remove_dropin "$unit"
-    dropin_changed=1
-  fi
+  if native_apply_dropin "$unit" "$(native_pg_dropin)"; then dropin_changed=1; fi
   [ "$conf_changed" = 1 ] || [ "$dropin_changed" = 1 ] || return 0
   what=""
   [ "$conf_changed" != 1 ] || what="调参 $conf"
   if [ "$dropin_changed" = 1 ]; then
     [ -z "$what" ] || what+="、"
-    if [ "${NATIVE_HARDENING:-1}" = 1 ]; then what+="加固 drop-in"; else what+="去掉加固 drop-in"; fi
+    what+="drop-in $(native_dropin_file "$unit")"
   fi
   budget="$(native_pg_online_budget "$port")"
   systemctl daemon-reload
@@ -434,6 +445,18 @@ native_apply_pg_config() {
     return 1
   fi
   die "PostgreSQL $ver/main 应用$what后起不来；调参文件与 drop-in 已还原成这次之前的样子，但 $budget 秒内仍没在线（journalctl -u $unit -n 50）。$hint"
+}
+
+# MemorySwapMax=0 要 cgroup v2 且开着 swap 记账才生效；cgroup v1 或没开记账的机器上 systemd 会忽略它（不报错）。
+# 安装时看一眼，照实说，不停下
+#   native_swap_accounting_note
+NATIVE_CGROUP_ROOT=/sys/fs/cgroup
+native_swap_accounting_note() {
+  if [ -f "$NATIVE_CGROUP_ROOT/cgroup.controllers" ] && [ -e "$NATIVE_CGROUP_ROOT/system.slice/memory.swap.max" ]; then
+    say "  面板的服务不换出到硬盘：PostgreSQL、Valkey 与三个网关都带 MemorySwapMax=0（cgroup v2，swap 记账已开）"
+    return 0
+  fi
+  say "  ! 本机 cgroup 不是 v2 或没开 swap 记账：MemorySwapMax=0 被 systemd 忽略，PostgreSQL、Valkey 与网关仍可能被换出到交换区（不影响安装）"
 }
 
 # Valkey / Redis 起来并且在跑（Type=notify：restart 返回 0 表示已就绪；再隔一秒核一次没崩）
@@ -478,14 +501,8 @@ native_harden_valkey() {
   fi
   file="$(native_dropin_file "$unit.service")"
   if [ -f "$file" ]; then had=1; prev="$(cat "$file")"; fi
-  if [ "${NATIVE_HARDENING:-1}" = 1 ]; then
-    native_apply_dropin "$unit.service" "$(native_valkey_hardening_dropin "${unit%-server}")" || return 0
-    what="加固 drop-in"
-  else
-    [ "$had" = 1 ] || return 0
-    native_remove_dropin "$unit.service"
-    what="去掉加固 drop-in"
-  fi
+  native_apply_dropin "$unit.service" "$(native_valkey_dropin "${unit%-server}")" || return 0
+  what="drop-in $file"
   systemctl daemon-reload
   native_vk_restart_ok "$unit" && return 0
   hint="$(native_unit_failure_hint "$unit.service")"

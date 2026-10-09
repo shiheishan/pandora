@@ -45,11 +45,12 @@ paths:
   - 建好集群后、动数据之前核 `include_dir = 'conf.d'` 生效，没有就停
   - 与 PostgreSQL 的加固 drop-in 同一次重启（变了才重启，在停服窗口里）；起不来两样一起还原成这次之前的样子
   - 开发数据基座 `panel/dev/docker-compose.yml` 以 `-c` 给同一组值。守卫：`dev-compose_static_test.sh`（逐项一致、只绑回环）、`configure_role_contract_test.go`（`jit = off`）、`install-hardening_mock_test.sh`
-- PostgreSQL 与 Valkey 的 systemd 加固（RUNBOOK 第 13 章）：`install-lib.sh` 写 drop-in `pandora-hardening.conf`，在 Valkey 配置末尾维护 `# >>> pandora` 块
+- PostgreSQL 与 Valkey 的 systemd 加固（RUNBOOK 第 13 章）：`install-lib.sh` 写 drop-in `pandora.conf`（资源约束 `MemoryMax`、`MemorySwapMax=0` 一直在，不随开关去掉：只要 cgroup、不要命名空间；隔离段随开关），在 Valkey 配置末尾维护 `# >>> pandora` 块
   - 加固在外来集群检查、迁移、收窄角色之后、起网关之前做（升级时网关已停）；内容没变不重启
   - 撤回要撤本次改过的全部东西（drop-in、conf.d 还原成之前的内容，Valkey 配置写回改之前的副本，按步撤），撤回后核实服务真的在跑，提示照实写；PostgreSQL 等在线的时长按重启前 CHECKPOINT 的实测耗时给
   - 失败时把服务按新版本起来之后再以非 0 退出，提示原因与开关；226/NAMESPACE 直接说是主机不支持沙箱
-  - 开关 `PANDORA_SYSTEMD_HARDENING`（缺省开，0 去掉 drop-in，记进 `.env` 只改这一行）
+  - 开关 `PANDORA_SYSTEMD_HARDENING`（缺省开，0 去掉隔离段、留资源约束，记进 `.env` 只改这一行）
+  - 面板的服务不换出：PostgreSQL、Valkey 的 drop-in 与三个网关单元都带 `MemorySwapMax=0`；cgroup v1 或没开 swap 记账时被忽略，安装输出照实说、不报错（`native_swap_accounting_note`）。守卫：`install-hardening_mock_test.sh`
   - drop-in 整套写全，不依赖发行版单元写了什么（Debian 12 的 redis 单元把 `ProtectSystem` 改回 `true`）；内存上限 PG 512M、Valkey 160M
   - PostgreSQL 不加 `MemoryDenyWriteExecute`（JIT）；被挡的系统调用返回 EPERM
   - 守卫：`install-hardening_mock_test.sh`

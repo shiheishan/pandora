@@ -426,6 +426,7 @@ for u in "${UNITS[@]}"; do
   install -m 0644 "$SCRIPT_DIR/systemd/$u" "/etc/systemd/system/$u"
 done
 systemctl daemon-reload
+native_swap_accounting_note
 for s in "${SERVICES[@]}"; do
   systemctl enable "$s" >/dev/null 2>&1 || true
   systemctl start "$s" 2>/dev/null || true

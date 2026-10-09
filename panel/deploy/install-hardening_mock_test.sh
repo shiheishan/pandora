@@ -35,7 +35,7 @@ cat >"$T/bin/systemctl" <<'MOCK'
 root="$(cd "$(dirname "$0")/.." && pwd)"
 printf 'systemctl %s\n' "$*" >>"$root/calls"
 broken() {
-  { [ -f "$root/fail.restart" ] && [ -f "$root/systemd/$1.d/pandora-hardening.conf" ]; } && return 0
+  { [ -f "$root/fail.restart" ] && [ -f "$root/systemd/$1.d/pandora.conf" ]; } && return 0
   [ -f "$root/fail.conf" ] && [ -f "$root/conf.path" ] && grep -qE -f "$root/fail.conf" "$(cat "$root/conf.path")"
 }
 case "$1" in
@@ -52,7 +52,7 @@ cat >"$T/bin/pg_lsclusters" <<'MOCK'
 root="$(cd "$(dirname "$0")/.." && pwd)"
 echo x >>"$root/lscalls"
 status=online
-if [ -f "$root/fail.restart" ] && [ -f "$root/systemd/postgresql@18-main.service.d/pandora-hardening.conf" ]; then status=down; fi
+if [ -f "$root/fail.restart" ] && [ -f "$root/systemd/postgresql@18-main.service.d/pandora.conf" ]; then status=down; fi
 if [ -f "$root/pg.badconf" ] && cmp -s "$(cat "$root/tuning.src")" "$root/etc/18/main/conf.d/pandora.conf"; then status=down; fi
 [ ! -f "$root/pg.down" ] || status=down
 printf 'Ver Cluster Port Status Owner Data directory Log file\n18 main 5432 %s postgres /var/lib/postgresql/18/main /dev/null\n' "$status"
@@ -80,9 +80,9 @@ reset() {
   rm -rf "$T/systemd" "$T/etc" "$T/fail.restart" "$T/fail.conf" "$T/pg.down" "$T/pg.badconf" "$T/exec.status" "$T/journal"
   : >"$T/calls"; : >"$T/lscalls"; : >"$T/peer.calls"
 }
-PG_DROPIN="$T/systemd/postgresql@18-main.service.d/pandora-hardening.conf"
+PG_DROPIN="$T/systemd/postgresql@18-main.service.d/pandora.conf"
 PG_TUNED="$T/etc/18/main/conf.d/pandora.conf"
-VK_DROPIN="$T/systemd/valkey-server.service.d/pandora-hardening.conf"
+VK_DROPIN="$T/systemd/valkey-server.service.d/pandora.conf"
 pg_restarts() { grep -c 'systemctl restart postgresql@18-main.service' "$T/calls" || true; }
 apply_pg() { ( native_apply_pg_config 18 5432 "$TUNING" ) >"$T/out" 2>&1; }
 
@@ -111,9 +111,33 @@ for flavor in valkey redis; do
     || fail "$flavor drop-in syscall filter: $(grep '^SystemCallFilter=' <<<"$vk")"
 done
 vk="$(native_valkey_hardening_dropin valkey)"
-# 内存上限：PostgreSQL 512M（shared_buffers 128MB 加连接与维护内存的余量）、Valkey 160M（maxmemory 96mb 加开销）
-[ "$(grep -c '^MemoryMax=' <<<"$pg")" -eq 1 ] && grep -qx 'MemoryMax=512M' <<<"$pg" || fail "PostgreSQL MemoryMax: $(grep '^MemoryMax' <<<"$pg")"
-[ "$(grep -c '^MemoryMax=' <<<"$vk")" -eq 1 ] && grep -qx 'MemoryMax=160M' <<<"$vk" || fail "Valkey MemoryMax: $(grep '^MemoryMax' <<<"$vk")"
+# 整份 drop-in：资源约束一直在——内存上限 PostgreSQL 512M（shared_buffers 128MB 加连接与维护内存的余量）、
+# Valkey 160M（maxmemory 96mb 加开销）、MemorySwapMax=0（不换出到硬盘）；隔离段随开关，关掉时资源约束照留
+for sw in 1 0; do
+  for kind in pg valkey redis; do
+    case "$kind" in
+      pg) full="$(NATIVE_HARDENING=$sw native_pg_dropin)"; mem=512M; sandbox=$'User=postgres\nProtectSystem=strict\nIPAddressDeny=any' ;;
+      *) full="$(NATIVE_HARDENING=$sw native_valkey_dropin "$kind")"; mem=160M; sandbox=$'ProtectSystem=strict\nMemoryDenyWriteExecute=yes\nIPAddressDeny=any' ;;
+    esac
+    [ "$(sed -n 2p <<<"$full")" = '[Service]' ] || fail "$kind drop-in (hardening=$sw) has no [Service] section"
+    [ "$(grep -c '^MemoryMax=' <<<"$full")" -eq 1 ] && grep -qx "MemoryMax=$mem" <<<"$full" || fail "$kind MemoryMax (hardening=$sw): $(grep '^MemoryMax' <<<"$full")"
+    [ "$(grep -c '^MemorySwapMax=' <<<"$full")" -eq 1 ] && grep -qx 'MemorySwapMax=0' <<<"$full" || fail "$kind drop-in (hardening=$sw) lets the service swap"
+    while IFS= read -r line; do
+      if [ "$sw" = 1 ]; then grep -qxF "$line" <<<"$full" || fail "$kind drop-in lacks $line"
+      elif grep -qxF "$line" <<<"$full"; then fail "$kind drop-in keeps the sandbox ($line) with hardening off"; fi
+    done <<<"$sandbox"
+  done
+done
+# 三个网关单元自己带 MemorySwapMax=0（共五个单元不换出）
+for u in aegis-public aegis-admin aegis-node; do
+  [ "$(grep -c '^MemorySwapMax=0$' "$DEPLOY/systemd/$u.service")" -eq 1 ] || fail "$u.service lacks MemorySwapMax=0"
+done
+# swap 记账：cgroup v2 且有 memory.swap.max 才生效；否则照实说、不停
+mkdir -p "$T/cg2/system.slice"; : >"$T/cg2/cgroup.controllers"; : >"$T/cg2/system.slice/memory.swap.max"; mkdir -p "$T/cg1"
+( NATIVE_CGROUP_ROOT="$T/cg2"; native_swap_accounting_note ) >"$T/out" 2>&1 && grep -Fq 'MemorySwapMax=0（cgroup v2，swap 记账已开）' "$T/out" || fail "swap accounting note (v2): $(cat "$T/out")"
+( NATIVE_CGROUP_ROOT="$T/cg1"; native_swap_accounting_note ) >"$T/out" 2>&1 && grep -Fq '被 systemd 忽略' "$T/out" || fail "swap accounting note (v1): $(cat "$T/out")"
+awk '/^systemctl daemon-reload$/ { d = NR } /^native_swap_accounting_note$/ { n = NR } /^  systemctl start "\$s"/ { st = NR }
+     END { exit !(d && n && st && d < n && n < st) }' "$INST" || fail 'install.sh does not report swap accounting before starting the services'
 
 # --- ② Valkey 配置块 ---------------------------------------------------------------------
 # bind：按版本与 IPv6。IPv6 回环在 /proc/net/if_inet6 里是 lo 上的 ::1
@@ -209,7 +233,7 @@ if ( native_check_pg_conf_include 18 ) >"$T/out" 2>&1; then fail 'a missing post
 
 # --- ③ PostgreSQL：调参与 drop-in 一起应用、没变不重启、等在线的预算、撤回 ------------------------------
 native_apply_dropin demo.service 'x=1' || fail 'a new drop-in was reported as unchanged'
-[ "$(cat "$T/systemd/demo.service.d/pandora-hardening.conf")" = 'x=1' ] || fail 'drop-in content'
+[ "$(cat "$T/systemd/demo.service.d/pandora.conf")" = 'x=1' ] || fail 'drop-in content'
 if native_apply_dropin demo.service 'x=1'; then fail 'an unchanged drop-in asked for a restart'; fi
 # 全新：调参文件与 drop-in 都写上，只重启一次，重启前做 CHECKPOINT
 reset
@@ -260,9 +284,9 @@ reset; touch "$T/fail.restart"; printf 'postgresql@18-main.service: Failed at st
 apply_pg || true
 grep -Fq '226/NAMESPACE' "$T/out" || fail "no 226/NAMESPACE hint from the journal: $(cat "$T/out")"
 # 开关关着：去掉已有的 drop-in 并重启（调参照旧装上）；两样都已是这样就什么都不做
-reset; mkdir -p "${PG_DROPIN%/*}" "${PG_TUNED%/*}"; native_pg_hardening_dropin >"$PG_DROPIN"; cp "$TUNING" "$PG_TUNED"
+reset; mkdir -p "${PG_DROPIN%/*}" "${PG_TUNED%/*}"; native_pg_dropin >"$PG_DROPIN"; cp "$TUNING" "$PG_TUNED"
 ( NATIVE_HARDENING=0; native_apply_pg_config 18 5432 "$TUNING" ) >"$T/out" 2>&1 || fail "switching PostgreSQL hardening off failed: $(cat "$T/out")"
-[ ! -f "$PG_DROPIN" ] && [ "$(pg_restarts)" -eq 1 ] || fail 'the switch did not remove the PostgreSQL drop-in'
+[ "$(cat "$PG_DROPIN")" = "$(NATIVE_HARDENING=0 native_pg_dropin)" ] && [ "$(pg_restarts)" -eq 1 ] || fail 'the switch did not reduce the PostgreSQL drop-in to the resource limits'
 cmp -s "$TUNING" "$PG_TUNED" || fail 'the switch removed the tuning file'
 : >"$T/calls"
 ( NATIVE_HARDENING=0; native_apply_pg_config 18 5432 "$TUNING" ) >/dev/null 2>&1
@@ -270,7 +294,8 @@ if grep -q restart "$T/calls"; then fail 'restarted PostgreSQL although hardenin
 # 开关关着、调参是新的：只写调参，不写 drop-in
 reset
 ( NATIVE_HARDENING=0; native_apply_pg_config 18 5432 "$TUNING" ) >/dev/null 2>&1 || fail 'tuning with hardening off failed'
-cmp -s "$TUNING" "$PG_TUNED" && [ ! -f "$PG_DROPIN" ] && [ "$(pg_restarts)" -eq 1 ] || fail 'hardening off: tuning not applied alone with one restart'
+cmp -s "$TUNING" "$PG_TUNED" && [ "$(cat "$PG_DROPIN")" = "$(NATIVE_HARDENING=0 native_pg_dropin)" ] && [ "$(pg_restarts)" -eq 1 ] \
+  || fail 'hardening off: tuning and the resource-only drop-in not applied with one restart'
 
 # --- ③ Valkey：三步各自重启核实、只撤回失败的那一步 -------------------------------------------
 printf 'Valkey server v=8.1.1 sha=0 malloc=jemalloc bits=64 build=1\n' >"$T/version.valkey-server"
@@ -278,10 +303,10 @@ reset; printf 'port 6379\nrequirepass old-pw-fixture\n' >"$conf"
 ( native_harden_valkey valkey-server "$conf" new-pw-fixture ) >"$T/out" 2>&1 || fail "Valkey hardening failed: $(cat "$T/out")"
 [ "$(grep -c 'systemctl restart valkey-server.service' "$T/calls")" -eq 3 ] || fail "Valkey not restarted once per changed step: $(cat "$T/calls")"
 grep -qx 'requirepass new-pw-fixture' "$conf" && grep -qx 'bind 127.0.0.1 -::1' "$conf" && [ -f "$VK_DROPIN" ] || fail 'Valkey password, block or drop-in not applied'
-[ "$(cat "$VK_DROPIN")" = "$(native_valkey_hardening_dropin valkey)" ] || fail 'valkey-server got the wrong drop-in'
+[ "$(cat "$VK_DROPIN")" = "$(native_valkey_dropin valkey)" ] || fail 'valkey-server got the wrong drop-in'
 printf 'Redis server v=6.0.16 sha=0 malloc=jemalloc bits=64 build=1\n' >"$T/version.redis-server"
 ( NATIVE_IF_INET6="$T/inet6.no"; native_harden_valkey redis-server "$conf" new-pw-fixture ) >/dev/null 2>&1 || fail 'redis-server hardening failed'
-[ "$(cat "$T/systemd/redis-server.service.d/pandora-hardening.conf")" = "$(native_valkey_hardening_dropin redis)" ] || fail 'redis-server got the wrong drop-in'
+[ "$(cat "$T/systemd/redis-server.service.d/pandora.conf")" = "$(native_valkey_dropin redis)" ] || fail 'redis-server got the wrong drop-in'
 grep -qx 'bind 127.0.0.1' "$conf" || fail 'Redis 6.0 without IPv6 did not get a plain IPv4 bind'
 ( native_harden_valkey valkey-server "$conf" new-pw-fixture ) >/dev/null 2>&1 || true
 : >"$T/calls"
@@ -313,9 +338,10 @@ reset; mkdir -p "${VK_DROPIN%/*}"; mv "$T/vk.old" "$VK_DROPIN"; touch "$T/fail.r
 if ( native_harden_valkey valkey-server "$conf" new-pw-fixture ) >"$T/out" 2>&1; then fail 'a Valkey that would not start with the new drop-in was accepted'; fi
 [ "$(cat "$VK_DROPIN" 2>/dev/null)" = 'old=1' ] || fail "the previous Valkey drop-in was not restored: $(cat "$VK_DROPIN" 2>/dev/null)"
 # 开关关着：去掉 drop-in（配置块照旧）
-reset; mkdir -p "${VK_DROPIN%/*}"; native_valkey_hardening_dropin valkey >"$VK_DROPIN"
+reset; mkdir -p "${VK_DROPIN%/*}"; native_valkey_dropin valkey >"$VK_DROPIN"
 ( NATIVE_HARDENING=0; native_harden_valkey valkey-server "$conf" new-pw-fixture ) >/dev/null 2>&1 || fail 'switching Valkey hardening off failed'
-[ ! -f "$VK_DROPIN" ] && grep -qx 'bind 127.0.0.1 -::1' "$conf" || fail 'the switch did not remove only the Valkey drop-in'
+[ "$(cat "$VK_DROPIN")" = "$(NATIVE_HARDENING=0 native_valkey_dropin valkey)" ] && grep -qx 'bind 127.0.0.1 -::1' "$conf" \
+  || fail 'the switch did not reduce only the Valkey drop-in to the resource limits'
 rm -f "$T"/version.*
 
 # --- ④ 开关：记进 .env，只改这一行 ----------------------------------------------------------

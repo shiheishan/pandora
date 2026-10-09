@@ -516,11 +516,26 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
 
 | 原因 | 怎么认 |
 |---|---|
-| PostgreSQL 单元挂了或反复重启 | `systemctl status postgresql@18-main`；日志里有 OOM（加固 drop-in 限了 `MemoryMax=512M`，见第 13 章）或磁盘满（转第 9 章） |
+| PostgreSQL 单元挂了或反复重启 | `systemctl status postgresql@18-main`；日志里有 OOM（drop-in 限了 `MemoryMax=512M`、不许换出，见下一条与第 13 章）或磁盘满（转第 9 章） |
+| 进程被 OOM 杀掉 | 见本表下面「不换出到硬盘的代价」 |
 | 某个会话 `idle in transaction`，或者手工跑的语句占着锁 | 第三、四条查询 |
 | 改大了 `AEGIS_*_DB_MAX_CONNS`，或者多开了网关实例，总数超出预算 | 第一条查询各用户的连接数 |
 | 保留期清理积压，表越来越大、查询越来越慢 | `admin.log` 里有 `…清理失败` |
 | 某条业务查询慢 | PostgreSQL 日志里同一条语句反复超过 500 ms |
+
+**不换出到硬盘的代价。** PostgreSQL、Valkey 与三个网关的单元都带 `MemorySwapMax=0`（第 13 章）：内存紧的时候它们不会被换出去变慢，代价是内存真用尽（撞上单元的 `MemoryMax`，或整机没内存）时，由「变慢」变成「进程被 OOM 杀掉」。怎么看：
+
+```bash
+systemctl status aegis-public aegis-admin aegis-node postgresql@18-main valkey-server --no-pager | grep -iE 'oom|Result|Active'
+journalctl -k --since -1h | grep -iE 'oom|killed process'            # 内核记的是哪个进程、哪个 cgroup
+journalctl -u aegis-public --since -1h | grep -iE 'oom-kill|Main process exited'
+```
+
+- 网关（`Restart=on-failure`）与 Valkey（发行版单元 `Restart=always`）被杀后由 systemd 自己拉起；Valkey 不落盘，限流计数与实时推送的临时状态清零。
+- PostgreSQL：被杀的多半是某个后端连接，postmaster 自己做崩溃恢复、重开连接，单元不会停；postmaster 本身受 `OOMScoreAdjust=-900` 保护。真被杀了，Debian 单元是 `Restart=no`，要手工 `systemctl start postgresql@18-main`。
+- 反复被杀：先看是哪一个占得多（`systemctl status` 的 Memory 行、`ps -o rss`），再按第 8 章看连接数与慢查询；不要把 `MemorySwapMax` 去掉了事，那只是把问题换成卡顿。
+- 内核 cgroup 不是 v2 或没开 swap 记账时这一条不生效，安装输出会说。
+
 
 ### 处理
 
@@ -778,8 +793,10 @@ PostgreSQL 与 Valkey 是发行版包装的系统服务。`install.sh` 用 syste
 
 本章不是排障，是说明这两个服务被收紧成什么样、起不来时怎么办。数据库参数（`max_connections` 等）不在这里，在 `/etc/postgresql/18/main/conf.d/pandora.conf`，改法见第 8 章。
 
-- PostgreSQL：`/etc/systemd/system/postgresql@18-main.service.d/pandora-hardening.conf`；
-- Valkey / Redis：`/etc/systemd/system/valkey-server.service.d/pandora-hardening.conf`（或 `redis-server.service.d`），外加配置文件（`/etc/valkey/valkey.conf` 或 `/etc/redis/redis.conf`）末尾 `# >>> pandora` 到 `# <<< pandora` 的一块。
+每份 drop-in 分两段：资源约束一直在（`MemoryMax`；`MemorySwapMax=0`，不换出到硬盘，代价见第 8 章「不换出到硬盘的代价」），它们只要 cgroup、不要挂载命名空间，所以不随加固开关去掉；隔离段随开关 `PANDORA_SYSTEMD_HARDENING`。三个网关的单元自己带 `MemorySwapMax=0`。
+
+- PostgreSQL：`/etc/systemd/system/postgresql@18-main.service.d/pandora.conf`；
+- Valkey / Redis：`/etc/systemd/system/valkey-server.service.d/pandora.conf`（或 `redis-server.service.d`），外加配置文件（`/etc/valkey/valkey.conf` 或 `/etc/redis/redis.conf`）末尾 `# >>> pandora` 到 `# <<< pandora` 的一块。
 
 | 项 | Debian 包缺省 | 加固后 |
 |---|---|---|
@@ -802,12 +819,12 @@ PostgreSQL 与 Valkey 是发行版包装的系统服务。`install.sh` 用 syste
 - 撤回后核实服务在跑：首装与升级把服务按新版本起来之后再停下（退出码非 0），提示原因。撤回后仍没起来就照实说、停下。
 - 原因是 `226/NAMESPACE`（LXC、OpenVZ 一类容器化 VPS 不支持 systemd 沙箱要的挂载命名空间）时，提示会直接说。
 
-**开关 `PANDORA_SYSTEMD_HARDENING`**：缺省 1（开）。确认主机不支持沙箱、或者 18/main 要给别的用途（见下），用 `PANDORA_SYSTEMD_HARDENING=0` 重跑安装器：两份 drop-in 去掉，记进 `.env`（只改这一行），之后的升级沿用；改回 1 再跑一次就恢复。Valkey 的配置块不受开关影响（那是命令与持久化行为，不是沙箱）。关掉后只剩 Debian 包缺省的隔离，安装器每次都会提醒。
+**开关 `PANDORA_SYSTEMD_HARDENING`**：缺省 1（开）。确认主机不支持沙箱、或者 18/main 要给别的用途（见下），用 `PANDORA_SYSTEMD_HARDENING=0` 重跑安装器：两份 drop-in 只留资源约束、去掉隔离段，记进 `.env`（只改这一行），之后的升级沿用；改回 1 再跑一次就恢复。Valkey 的配置块不受开关影响（那是命令与持久化行为，不是沙箱）。关掉后只剩 Debian 包缺省的隔离，安装器每次都会提醒。
 
 **drop-in 作用于整个 PostgreSQL 18/main，不只是面板的库**：
 
 - `IPAddressDeny=any` 加 `IPAddressAllow=localhost`：集群只接受回环连接。以后给它配远程备库（流复制）、从别的机器跑 `pg_basebackup` 或 `pg_dump`，都会连不上（不是密码错，是包被丢）。
 - `MemoryMax=512M`：集群全部后端共用这个上限，别的库的负载也算在里面。
-- 要这样用，先评估，再用开关关掉，或者自己另写 drop-in 覆盖这两项（文件名排在 `pandora-hardening.conf` 之后，如 `zz-local.conf`；安装器只管自己那个文件）。
+- 要这样用，先评估，再用开关关掉，或者自己另写 drop-in 覆盖这两项（文件名排在 `pandora.conf` 之后，如 `zz-local.conf`；安装器只管自己那个文件）。
 
 想临时去掉某项排查：删掉对应的 drop-in，再 `systemctl daemon-reload && systemctl restart <单元>`。下次安装会再加回来（要长期关掉用开关）；真有扩展或功能被挡住，带着 `journalctl -u <单元> -n 50` 报上来。
