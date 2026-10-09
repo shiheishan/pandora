@@ -47,6 +47,7 @@ jobs:
             migrate-rollback_mock_test.sh
             check-migrations_mock_test.sh
             render-nginx_test.sh
+            deploy-params_static_test.sh
             cloudflare-realip_mock_test.sh
             release-artifact-binding_mock_test.sh
             logrotate-aegis_static_test.sh

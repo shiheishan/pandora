@@ -48,6 +48,9 @@ printf 'migrate %s attestation=%s attestation_file=%s approved=%s skip=%s local=
   "${att:+set}" "$([ -n "$att" ] && [ -s "$att" ] && echo present || echo absent)" \
   "${PANDORA_STOPPED_WRITER_UPGRADE_APPROVED:-}" "${PANDORA_SKIP_PRECHECK_FRESH_DB:-}" \
   "${PANDORA_LOCAL_MIGRATION_APPROVED:-}" >>"$events"
+# 子进程拿到的环境：迁移 DSN 在、继承来的无关变量不在
+printf 'childenv %s dsn=%s canary=%s argv_has_secret=%s\n' "$1" "${AEGIS_MIGRATION_DATABASE_URL:-}" "${LEAK_CANARY:-}" \
+  "$(case "$*" in *"${SECRET_PW:-@@}"*) echo yes ;; *) echo no ;; esac)" >>"$events"
 if [ "${1:-}" = check-indexes ]; then
   [ ! -f "$(dirname "$0")/../invalid_index" ] || { echo 'migration: INVALID indexes found'; echo '  DROP INDEX CONCURRENTLY IF EXISTS public.x;'; exit 1; }
   exit 0
@@ -55,8 +58,16 @@ fi
 [ ! -f "$(dirname "$0")/../fail_migrate" ] || { echo 'goose: mock failure' >&2; exit 1; }
 echo 'migration precheck=attested'
 MOCK
+# 桩 env(1)：只记 argv 再交给真的 env。迁移 DSN 里的口令不许出现在任何 env 的命令行参数里（ps 可见）
+cat >"$T/bin/env" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${ENV_ARGV_LOG:?}"
+exec /usr/bin/env "$@"
+MOCK
+chmod 0755 "$T/bin/env"
 chmod 0755 "$T/bin/systemctl" "$T/deploy/check-migrations.sh" "$T/deploy/migrate.sh"
 export PATH="$T/bin:$PATH" TMPDIR="$T"
+export ENV_ARGV_LOG="$T/env-argv.log"
 : >"$T/env"
 
 # shellcheck source=install-lib.sh
@@ -134,6 +145,23 @@ grep -q 'skip=yes-empty-database' "$EVENTS" || fail 'fresh upgrade did not skip 
 reset
 PANDORA_SERVICES='svc-a svc-b' run upgrade no || fail 'custom service list failed'
 grep -qx 'systemctl stop svc-a svc-b' "$EVENTS" || fail "custom services: $(grep '^systemctl' "$EVENTS")"
+
+# --- ⑥b 迁移 DSN 里的口令不进任何命令行参数 -------------------------------------------
+# install-native.sh 把带超级用户口令的 DSN 导出给本函数。经 env(1) 传的话口令会出现在 env 的 argv 里，
+# 同机其他账号用 ps 就看得到。桩 env 记下每一次调用的参数：整个升级过程不许出现口令，
+# 而子进程仍要拿到完整 DSN（在环境里），也拿不到继承来的无关变量。
+reset; : >"$ENV_ARGV_LOG"
+SECRET_PW='Zq9-not-a-real-password'
+export SECRET_PW LEAK_CANARY=inherited
+export AEGIS_MIGRATION_DATABASE_URL="postgres://postgres:${SECRET_PW}@127.0.0.1:5432/aegis?sslmode=disable"
+run upgrade no || fail "secret-dsn upgrade returned $?: $(cat "$T/out.log")"
+if grep -qF "$SECRET_PW" "$ENV_ARGV_LOG"; then fail "the DSN password reached env(1) argv: $(cat "$ENV_ARGV_LOG")"; fi
+[ ! -s "$ENV_ARGV_LOG" ] || fail "env(1) is still used to start the migration steps: $(cat "$ENV_ARGV_LOG")"
+for step in check-indexes up; do
+  grep -qx "childenv $step dsn=$AEGIS_MIGRATION_DATABASE_URL canary= argv_has_secret=no" "$EVENTS" \
+    || fail "child env of migrate.sh $step: $(grep "^childenv $step" "$EVENTS")"
+done
+unset SECRET_PW LEAK_CANARY AEGIS_MIGRATION_DATABASE_URL
 
 # --- ⑦ 静态：两个安装器都走这个函数 ------------------------------------------------
 inst="$DEPLOY/install.sh"; native="$DEPLOY/install-native.sh"

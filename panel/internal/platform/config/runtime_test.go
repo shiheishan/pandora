@@ -14,6 +14,9 @@ func clearRuntimeEnv(t *testing.T) {
 	for _, k := range DBMinConnsEnv {
 		t.Setenv(k, "")
 	}
+	for _, k := range DBPlanCacheModeEnv {
+		t.Setenv(k, "")
+	}
 	t.Setenv(PasswordHashConcurrencyEnv, "")
 	t.Setenv(PasswordHashQueueTimeoutEnv, "")
 	t.Setenv(NodePullIntervalEnv, "")
@@ -42,8 +45,8 @@ func TestRuntimeDefaultsFitComposeConnectionBudget(t *testing.T) {
 	if r.DBMinConns[DomainPublic] != 1 || r.DBMinConns[DomainAdmin] != 1 || r.DBMinConns[DomainNode] != 8 {
 		t.Fatalf("pool min defaults = %v, want public 1 / admin 1 / node 8", r.DBMinConns)
 	}
-	// 口令哈希并发 1：GOMAXPROCS 2 而配额 0.6 核，并发 2 会让进程被节流停摆
-	if r.PasswordHashConcurrency != 1 || r.PasswordHashQueueTimeout != 5*time.Second {
+	// 口令哈希并发 2：等于 2 核机器的核数；门户网关已改 CPUWeight、没有硬配额，不再被节流
+	if r.PasswordHashConcurrency != 2 || r.PasswordHashQueueTimeout != 5*time.Second {
 		t.Fatalf("password hash defaults = %d / %s", r.PasswordHashConcurrency, r.PasswordHashQueueTimeout)
 	}
 	if r.NodePullInterval != 15*time.Second {

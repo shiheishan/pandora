@@ -63,12 +63,20 @@ stray="$(grep -vE '^[[:space:]]*#' "$TEST_DIR/aegis.conf" | grep -oE 'server_nam
 [[ -z "$stray" ]] || { printf 'unexpected server_name: %s\n' "$stray" >&2; exit 1; }
 grep -Fq 'include /etc/aegispanel/cloudflare-realip.conf' "$TEST_DIR/aegis.conf"
 
-# 压缩：网关给 JS 发 text/javascript，必须在 gzip_types 里；级别 5
+# 压缩：网关给 JS 发 text/javascript，订阅正文发 text/yaml（Clash）、application/json（sing-box）、
+# text/plain（URI 列表），都必须在 gzip_types 里；级别 5（按配置块定、订阅路径是随机前缀没法单设；
+# 1 会让新访客首次加载的 JS/CSS 大约 15%）
 gzip_types="$(grep -E '^[[:space:]]*gzip_types ' "$TEST_DIR/aegis.conf")"
-for type in text/css text/javascript application/javascript application/json image/svg+xml; do
+for type in text/css text/javascript application/javascript application/json text/yaml text/plain image/svg+xml; do
   grep -Fqw "$type" <<<"$gzip_types" || { printf 'gzip_types misses %s\n' "$type" >&2; exit 1; }
 done
 grep -Eq '^[[:space:]]*gzip_comp_level 5;' "$TEST_DIR/aegis.conf"
+# 会话缓存 2m：10m 是 4 万个会话，远用不满，共享区在 worker 里常驻
+grep -Eq '^[[:space:]]*ssl_session_cache shared:PandoraTLS:2m;' "$TEST_DIR/aegis.conf"
+# 节点上游的长连接不按缺省 1000 次就换：keepalive_requests 要调大（至少 10000）
+node_upstream="$(awk '/^upstream aegis_node \{/ { on = 1 } on { print } on && /^\}/ { exit }' "$TEST_DIR/aegis.conf")"
+ka_req="$(grep -Eo 'keepalive_requests [0-9]+;' <<<"$node_upstream" | grep -Eo '[0-9]+' || true)"
+[[ -n "$ka_req" ]] && (( ka_req >= 10000 )) || { printf 'aegis_node upstream: keepalive_requests missing or too low (%s)\n' "$ka_req" >&2; exit 1; }
 # HTTP/2 下每个并发请求都计入 limit_conn，24 会把冷加载的资源 503 掉
 grep -Eq '^[[:space:]]*limit_conn aegis_conn 64;' "$TEST_DIR/aegis.conf"
 
@@ -92,7 +100,20 @@ for loc in 'location ^~ /api/v1/server/UniProxy/ {' 'location ^~ /v1/nodes/ {'; 
   if grep -Fq 'zone=aegis_api' <<<"$block"; then printf '%s still uses the per-IP aegis_api zone\n' "$loc" >&2; exit 1; fi
   conns="$(grep -Eo 'limit_conn aegis_node_conn [0-9]+;' <<<"$block" | grep -Eo '[0-9]+')"
   (( conns >= 128 )) || { printf '%s: limit_conn %s too low for 60 node event streams\n' "$loc" "$conns" >&2; exit 1; }
+  # 访问日志只记不正常的：节点 location 自己的 access_log 带 if=$aegis_node_log（覆盖 server 层的无条件那条）
+  grep -Eq '^[[:space:]]*access_log /var/log/nginx/aegis-access\.log aegis_safe if=\$aegis_node_log;' <<<"$block" \
+    || { printf '%s: access_log is not conditional on $aegis_node_log\n' "$loc" >&2; exit 1; }
 done
+# $aegis_node_log：2xx 与 304 不记（0），其余（401/403/429/503/502…）记（1）。映射在 http 层，只定义一次
+map_node_log="$(awk '/^map \$status \$aegis_node_log \{/ { on = 1 } on { print } on && /^\}/ { exit }' "$TEST_DIR/aegis.conf")"
+[[ -n "$map_node_log" ]] || { printf 'missing map $status $aegis_node_log\n' >&2; exit 1; }
+grep -Eq '^[[:space:]]*~\^2[[:space:]]+0;' <<<"$map_node_log"
+grep -Eq '^[[:space:]]*304[[:space:]]+0;' <<<"$map_node_log"
+grep -Eq '^[[:space:]]*default[[:space:]]+1;' <<<"$map_node_log"
+[[ "$(grep -c 'if=\$aegis_node_log' "$TEST_DIR/aegis.conf")" -eq 2 ]] \
+  || { printf 'if=$aegis_node_log must appear exactly in the two node locations\n' >&2; exit 1; }
+# 其余地方的访问日志不变：门户与后台照常全记（server 层那条无条件的）
+grep -Eq '^    access_log /var/log/nginx/aegis-access\.log aegis_safe;' "$TEST_DIR/aegis.conf"
 
 # HTTP/2 按 nginx 版本渲染：1.25.1 起 http2 on;，更老或探不到版本用 listen ... ssl http2
 render_http2() {
@@ -181,7 +202,10 @@ debian_main() {
 render_into_confd() { "$SCRIPT_DIR/render-nginx.sh" "$TEST_DIR/valid.env" "$NGX/conf.d/aegis.conf" "$TEST_DIR/realip.conf" >/dev/null; }
 debian_main
 render_into_confd
-grep -Eq '^[[:space:]]*worker_connections 8192;' "$NGX/nginx.conf"
+grep -Eq '^[[:space:]]*worker_connections 16384;' "$NGX/nginx.conf"
+# worker_processes auto 只剩一个 worker（连接上限同步翻倍，整机并发不变）
+grep -Eq '^worker_processes 1;' "$NGX/nginx.conf" && ! grep -Eq 'worker_processes auto' "$NGX/nginx.conf" \
+  || { printf 'worker_processes auto was not turned into 1:\n' >&2; cat "$NGX/nginx.conf" >&2; exit 1; }
 [[ "$(grep -c 'worker_rlimit_nofile 65536;' "$NGX/nginx.conf")" -eq 1 ]]
 # worker_rlimit_nofile 在主段（events 之前），worker_connections 在 events 里
 awk '/worker_rlimit_nofile/ { r = NR } /^events/ { e = NR } /worker_connections/ { w = NR } /^}/ && e && !c { c = NR }
@@ -193,16 +217,22 @@ grep -Fq 'include /etc/nginx/conf.d/*.conf;' "$NGX/nginx.conf"
 cp "$NGX/nginx.conf" "$TEST_DIR/main.once"
 render_into_confd
 cmp -s "$TEST_DIR/main.once" "$NGX/nginx.conf" || { printf 'second render changed nginx.conf again\n' >&2; exit 1; }
-# 已经更高的不降；更低的 rlimit 抬上去；events 里没写 worker_connections 就补一行
+# 已经更高的不降（运维显式写的 worker_processes 数字也不动）；更低的 rlimit 抬上去；events 里没写 worker_connections 就补一行
 printf 'worker_processes 4;\nworker_rlimit_nofile 100000;\nevents {\n    worker_connections 20000;\n}\nhttp {\n}\n' >"$NGX/nginx.conf"
 render_into_confd
 grep -Fq 'worker_rlimit_nofile 100000;' "$NGX/nginx.conf" && grep -Fq 'worker_connections 20000;' "$NGX/nginx.conf" \
   || { printf 'higher limits were lowered\n' >&2; exit 1; }
+grep -Fq 'worker_processes 4;' "$NGX/nginx.conf" || { printf 'explicit worker_processes was rewritten\n' >&2; exit 1; }
 printf 'worker_processes 2;\nworker_rlimit_nofile 1024;\nevents {\n    use epoll;\n}\nhttp {\n}\n' >"$NGX/nginx.conf"
 render_into_confd
 [[ "$(grep -c 'worker_rlimit_nofile' "$NGX/nginx.conf")" -eq 1 ]] && grep -Fq 'worker_rlimit_nofile 65536;' "$NGX/nginx.conf" \
-  && grep -Eq '^[[:space:]]*worker_connections 8192;' "$NGX/nginx.conf" \
+  && grep -Eq '^[[:space:]]*worker_connections 16384;' "$NGX/nginx.conf" \
+  && grep -Fq 'worker_processes 2;' "$NGX/nginx.conf" \
   || { printf 'missing worker_connections / low rlimit not fixed:\n' >&2; cat "$NGX/nginx.conf" >&2; exit 1; }
+# 上一版装出来的 8192 升到 16384
+printf 'worker_processes 1;\nworker_rlimit_nofile 65536;\nevents {\n    worker_connections 8192;\n}\nhttp {\n}\n' >"$NGX/nginx.conf"
+render_into_confd
+grep -Eq '^[[:space:]]*worker_connections 16384;' "$NGX/nginx.conf" || { printf 'old 8192 not lifted to 16384\n' >&2; exit 1; }
 # 认不出的结构（events 写在一行里）不改，渲染照常完成
 printf 'events { worker_connections 512; }\nhttp {\n}\n' >"$NGX/nginx.conf"
 cp "$NGX/nginx.conf" "$TEST_DIR/main.oneline"
