@@ -177,10 +177,14 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose \
 
      恢复照原样还原属主与权限（2026-10 起）：备份要的角色先在本机集群里补齐（只认面板自己的 `aegis_app`、`aegis_idempotency_owner` 与跑迁移的超级用户，一律 `NOLOGIN`、不带特权；备份里有别的角色就在动正式库之前停下），备份里跑迁移的超级用户名下的对象换成本机跑迁移的那个（docker 布局 `POSTGRES_USER`，直装 `postgres`），所以 docker 的备份能恢复到直装，反过来也行。以前的恢复用 `--no-owner --no-privileges`，00038 那几个归 `aegis_idempotency_owner` 的 SECURITY DEFINER 函数会变成以超级用户身份执行，迁移给的授权也丢了。
 
-     **2026-10 之前的加密备份**导出时带 `--no-acl`，里面只有属主、没有权限（恢复脚本会提示 `predates owner/privilege-preserving backups`）。恢复后：
-     1. 跑 `./bootstrap.sh`，补回运行角色 `aegis_app` 的全部权限；
-     2. 迁移给 `aegis_idempotency_owner` 的授权要补：照 `migrations/00038_idempotency_resource_binding.sql` 的 Up 段里 `GRANT … TO aegis_idempotency_owner` 那几条，以超级用户（`./psql.sh`）逐条执行一遍；不补的话那几个函数会报权限不足（拒绝执行，不会越权）；
-     3. 之后做一份新的加密备份，它就带着权限了。
+     恢复前先在临时库里用同样的参数（照原样还原属主与权限）完整恢复一遍，角色或权限的问题在删正式库之前就会暴露。
+
+     **2026-10 之前的加密备份**导出时带 `--no-owner --no-acl`，归档里没有任何 GRANT。照这样的备份恢复，00038、00039 的两个 SECURITY DEFINER 函数（`app.bind_idempotency_resource`、`app.complete_bound_idempotency_success`）可能归恢复者（超级用户）所有、**以超级用户身份执行**，函数执行权回到 PostgreSQL 缺省（PUBLIC 可执行），迁移给 `aegis_idempotency_owner` 的列级授权也没了。`restore-postgres.sh` 认得这种备份（归档里没有 GRANT），恢复后自动补回（在开连接闸门之前）：
+     - 这两个函数 `ALTER FUNCTION … OWNER TO aegis_idempotency_owner`，`REVOKE ALL … FROM PUBLIC, aegis_app`，再 `GRANT EXECUTE … TO aegis_app`；
+     - 00038、00039 Up 段里 `GRANT … TO aegis_idempotency_owner` 的那几条（模式 USAGE、几个辅助函数的 EXECUTE、`idempotency_keys` 与两张水位表的列级授权）。
+
+     之后跑 `./bootstrap.sh` 补运行角色 `aegis_app` 的权限，再起服务；最后做一份新的加密备份，它就带着属主与权限了。
+     用更早的 `restore-postgres.sh`（带 `--no-owner --no-privileges` 的那版）恢复过的库，用新版脚本里 `legacy_privilege_repair_sql` 打出的 SQL 以超级用户（`./psql.sh -d <库名> < 文件`）执行一遍，效果相同；核对：`./psql.sh -c '\df+ app.bind_idempotency_resource'` 的 Owner 是 `aegis_idempotency_owner`。
    - **install.sh 的升级前备份**（`pre-upgrade-<时间>.dump`，未加密的 `pg_dump -Fc`）：
      1. 先恢复到一个新库核对：
 

@@ -151,7 +151,13 @@ age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
   | pandora_pg pg_restore --list >/dev/null \
   || die "age decryption or pg_restore TOC verification failed"
 
-if [ "${AEGIS_VERIFY_RESTORE:-0}" = "1" ]; then
+# AEGIS_VERIFY_RESTORE=1：在临时库里完整恢复一遍（不还原属主与权限，单独校验时用，角色不必齐）；
+# =owners：与正式恢复同样的参数照原样还原属主与权限，restore-postgres.sh 先备好角色再这样演练
+case "${AEGIS_VERIFY_RESTORE:-0}" in
+  0|1|owners) ;;
+  *) die "AEGIS_VERIFY_RESTORE must be 0, 1 or owners" ;;
+esac
+if [ "${AEGIS_VERIFY_RESTORE:-0}" != 0 ]; then
   [ "$legacy_mode" -eq 0 ] \
     || die "unsigned legacy backups cannot run full restore rehearsal"
   : "${POSTGRES_DB:?POSTGRES_DB is required for restore verification}"
@@ -165,9 +171,10 @@ if [ "${AEGIS_VERIFY_RESTORE:-0}" = "1" ]; then
   trap 'exit 130' INT
   trap 'exit 143' TERM
   pandora_pg createdb --template=template0 --encoding=UTF8 "$verify_db"
-  # 演练只证明数据块与恢复 SQL 都没问题，不还原属主与权限（正式恢复由 restore-postgres.sh 先备好角色再照原样还原）
+  restore_opts=(--exit-on-error)
+  [ "$AEGIS_VERIFY_RESTORE" = owners ] || restore_opts+=(--no-owner --no-privileges)
   age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
-    | pandora_pg pg_restore -d "$verify_db" --no-owner --no-privileges --exit-on-error
+    | pandora_pg pg_restore -d "$verify_db" "${restore_opts[@]}"
   pandora_pg psql -X -d "$verify_db" -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null
   cleanup_db
   trap - EXIT INT TERM

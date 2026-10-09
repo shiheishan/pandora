@@ -74,7 +74,7 @@ need "$RESTORE" 'for property in ActiveState SubState MainPID ControlPID' servic
 need "$RESTORE" 'systemctl mask --runtime' restore_runtime_mask_missing
 need "$RESTORE" 'pandora_pg createdb "${args[@]}" "$target_db"' connection_gate_create_missing
 need "$RESTORE" 'args+=(--connection-limit=0)' connection_gate_missing
-before "$RESTORE" 'flock -n 8' 'AEGIS_VERIFY_RESTORE=1' restore_lock_too_late
+before "$RESTORE" 'flock -n 8' '"$PWD/verify-backup.sh" "$archive"' restore_lock_too_late
 guard_invocation="$(exact_line_of "$RESTORE" begin_production_guard)"
 drop_invocation="$(line_of "$RESTORE" 'pandora_pg dropdb --force')"
 [ -n "$guard_invocation" ] && [ -n "$drop_invocation" ] && [ "$guard_invocation" -lt "$drop_invocation" ] \
