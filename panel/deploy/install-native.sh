@@ -270,6 +270,8 @@ if [[ -n "${VK_CONF:-}" ]] && [[ -f "$VK_CONF" ]]; then
 fi
 
 # 迁移只走官方 migrate.sh（它带 PGOPTIONS 保护参数），预检走 check-migrations.sh
+# 健康巡检脚本：直装布局读不了 docker 版 psql.sh，脚本自己按有无 psql.sh 选查库方式
+install -m 0755 "$SCRIPT_DIR/healthcheck.sh" "$INSTALL_DIR/deploy/healthcheck.sh"
 cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/edge-tls.sh" "$SCRIPT_DIR/update-cloudflare-realip.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$SCRIPT_DIR/admin-url.sh" "$SCRIPT_DIR/MIGRATION-RUNBOOK.md" "$INSTALL_DIR/deploy/" 2>/dev/null || true
 chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" "$INSTALL_DIR/deploy/render-nginx.sh" "$INSTALL_DIR/deploy/edge-tls.sh" "$INSTALL_DIR/deploy/update-cloudflare-realip.sh" "$INSTALL_DIR/deploy/admin-url.sh" 2>/dev/null || true
 GOOSE_BIN="$RELEASE_BIN/goose"
@@ -345,11 +347,20 @@ done
 for u in aegis-tls-renew.service aegis-tls-renew.timer; do
   [[ ! -f "$SCRIPT_DIR/systemd/$u" ]] || sed "s|/opt/aegispanel|${INSTALL_DIR}|g" "$SCRIPT_DIR/systemd/$u" > "/etc/systemd/system/$u"
 done
+# 健康巡检（healthcheck.sh）：脚本自己取安装根目录，单元里的路径换成安装目录；timer 在服务起来后启用
+for u in aegis-health.service aegis-health.timer; do
+  [[ ! -f "$SCRIPT_DIR/systemd/$u" ]] || sed "s|/opt/aegispanel|${INSTALL_DIR}|g" "$SCRIPT_DIR/systemd/$u" > "/etc/systemd/system/$u"
+done
 systemctl daemon-reload
 for s in "${SERVICES[@]}"; do
   systemctl enable "$s" >/dev/null 2>&1 || true
   systemctl start "$s" 2>/dev/null || true
 done
+# 巡检 timer 首装与升级都启用（首跑在启用后 10 分钟；已启用的 enable --now 不重置计时）
+if [[ -f /etc/systemd/system/aegis-health.timer && -f "$INSTALL_DIR/deploy/healthcheck.sh" ]]; then
+  systemctl enable --now aegis-health.timer >/dev/null 2>&1 \
+    || echo "没能启用健康巡检：systemctl enable --now aegis-health.timer" >&2
+fi
 
 # ── 6. 验证 ──────────────────────────────────────────
 say "[6/6] 验证"

@@ -74,17 +74,19 @@ grep -h '<request_id>' /var/log/aegis/*.log
 
 另外两个告警源也指到第 4 章：续期单元 `aegis-tls-renew.service` 记为 failed，以及 Telegram 上的 `潘多拉面板 HTTPS 证书（…）：…`。
 
-**巡检要自己装。** `healthcheck.sh` 与 `aegis-health.service` / `aegis-health.timer` 目前不在发布包里，安装器也不装。要用就从源码树 `panel/deploy/` 拷过去：
+**巡检随安装器装好。** `healthcheck.sh` 与 `aegis-health.service` / `aegis-health.timer` 在发布包里，`install.sh`、`install-native.sh` 首装与升级都会装上并 `enable --now aegis-health.timer`。装在没有它的老版本机器上，升级一次即可；也可以手工补：
 
 ```bash
-install -m 0755 healthcheck.sh /opt/aegispanel/deploy/
-install -m 0644 aegis-health.service aegis-health.timer /etc/systemd/system/
-install -d /opt/aegispanel/logs          # health.log 写在这里
+systemctl list-timers aegis-health.timer     # 看有没有在跑
+# 手工补装（以 install.sh 布局为例，换成发布包里的 deploy/ 与 deploy/systemd/）：
+install -m 0755 deploy/healthcheck.sh /opt/aegispanel/deploy/
+install -m 0644 deploy/systemd/aegis-health.service deploy/systemd/aegis-health.timer /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now aegis-health.timer
 ```
 
-- 每 10 分钟跑一次。没问题只往 `/opt/aegispanel/logs/health.log` 追一行 `OK`；有问题单元记为 failed，`.env` 设了 `AEGIS_ALERT_TG_TOKEN` 与 `AEGIS_ALERT_TG_CHAT` 时再推一条 Telegram。
-- 它写死了 `/opt/aegispanel` 和 Docker 版的 `psql.sh`，只适合 `install.sh` 布局。直装机器上，数据库类检查会误报「数据库连不上」。
+- 每 10 分钟跑一次，启用后 10 分钟首跑。没问题只往 `<安装目录>/logs/health.log` 追一行 `OK`；有问题单元记为 failed，`.env` 设了 `AEGIS_ALERT_TG_TOKEN` 与 `AEGIS_ALERT_TG_CHAT` 时再推一条 Telegram。
+- 脚本取安装目录自己的位置（`/opt/aegispanel` 或 `/opt/pandora`）；查库时有 `deploy/psql.sh`（docker 布局）走它，没有（直装布局）就以 postgres 系统用户连本机 aegis 库。
+- 首装后到配好备份之前，会有一条「备份目录里没有任何备份」的告警，这是真告警：去第 10 章把备份配好。
 
 ---
 

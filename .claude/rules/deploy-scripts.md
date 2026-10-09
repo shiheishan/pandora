@@ -17,6 +17,8 @@ paths:
 - 新的发布物文件（脚本、模板、单元）要同时进 `build-release.sh` 的拷贝清单与随后的归档清单（两处 `for script in` 列表；非脚本的数据文件进 `release_data`，以 0644 归档）、`install-linux-binaries.sh` 的安装事务；install-native.sh 要用的还得在它自己的拷贝行里加上
   - 只给安装器 source 的库（`public-base-url.sh`、`install-lib.sh`）只进发布包，不装到主机上
   - `admin-url.sh` 与 `MIGRATION-RUNBOOK.md` 由 install.sh、install-native.sh 自己拷到 `deploy/` 下。守卫：`install-firstrun_mock_test.sh`、`install-migrate-order_mock_test.sh`
+- 发布构建的 Go 工具链固定：`build-release.sh`（panel、goose、pdnd 节点端）与 `pdnd/release/build.sh` 一律用 `GOTOOLCHAIN=go<各自 go.mod 的 go 指令>`（必须是完整 x.y.z，不写死版本号，覆盖环境里的 `local`），先核 `go env GOVERSION`、产出后再用 `go version <文件>` 核每个二进制，不符即失败；实际版本记在包内 `deploy/BUILD-INFO` 与节点端 `manifest.json` 的 `go_toolchain`。构建机要能装或下载那一版。守卫：`build-release_toolchain_mock_test.sh`、`pdnd/release/build_toolchain_mock_test.sh`
+- 健康巡检 `healthcheck.sh` + `systemd/aegis-health.{service,timer}` 随发布包，两个安装器首装与升级都装并 `enable --now` timer（timer 用 `OnActiveSec`，不用 `OnBootSec`，否则启用瞬间就跑一次）；脚本取安装根目录自己的位置，docker / 直装两种布局都成立。守卫：`healthcheck-install_static_test.sh`
 - `release-artifact.env` 由 `build-release.sh` 生成，只含 pdnd 版本与两架构 SHA-256，绝不写 `AEGIS_ENV`：aegis-node 在 `.env` 之后加载它，写进去会在升级时把已装机器的运行模式悄悄翻掉。守卫：`release-artifact-binding_mock_test.sh`
 - 发布包装出来的就是生产：install.sh 首装写 `AEGIS_ENV=production`；升级不改现有运行模式，升级前自动全量备份
 - 不替人生成管理员密码。首装且标准输入输出都是终端时，健康检查通过后、nginx 之前现场问邮箱与密码（`install-lib.sh` 的 `pandora_bootstrap_admin`）：
