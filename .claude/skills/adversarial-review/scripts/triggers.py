@@ -21,7 +21,7 @@ AREAS = [
                   r"|^panel/internal/api/admin/router"
                   r"|^panel/internal/domain/identity/"
                   r"|^panel/internal/platform/(sessionauth|iamguard|token|credentialrevocation|idempotencybind)/"
-                  r"|^panel/internal/api/node/handlers_auth",
+                  r"|^panel/internal/api/node/(router|server_router)\.go$",
      r"RequirePermission|RequireRecentReauth|Idempotency\(|INSERT INTO (app\.)?permissions|role_permissions"),
     ("秘密与证书", r"^panel/internal/domain/certs/|^panel/internal/platform/(crypto|certbundle|bindingcontract)/"
                   r"|^pdnd/(certstore|certbundle|bindingcontract)/"
