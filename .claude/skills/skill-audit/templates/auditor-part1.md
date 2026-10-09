@@ -4,6 +4,7 @@
 - 审查标准：/Users/a1/ai/projects/pandora/.claude/skills/skill-audit/templates/criteria.md。「第一部分」是用户原文，文末是总协调加的检查项，两者都查。
 - 上一轮报告：/Users/a1/ai/projects/pandora/.claude/skill-audit-<N-1>-part1.md，**包括文末的「总协调核对」**。被驳回的条目不要再报；已修的不要再报；建议过、至今没改的单列。
 - 上一轮之后合进主线的改动：`git log --oneline <上一轮落实的合并提交>..feat/panel-redesign`，以及 `git log -- .claude/skills`。<这几天合入的、可能让 skill 过时的分支：…>
+- adversarial-review 的 checklist.md 每轮都看一次：上一轮之后新补的条目有没有重复、放错节（审查员只读「通用」「测试有效性」和 triggers.py 命中的节）、写成一路专属细节的；补条规矩见该 skill §7。
 - 项目现状：/Users/a1/ai/projects/pandora/.claude/TASKS.md 顶部「当前状态」。
 
 **这次不用看的**：<正在跑的任务会改的 skill，例如「node-accept：VPC 复测在跑，跑完由它更新」>。

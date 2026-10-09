@@ -24,13 +24,15 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
    - `TestIdempotencyMiddlewarePG18` 锁超时 → `gh run rerun <id> --failed`；
    - Actions 因付款失败没启动 → `gh run rerun <id>`；
    - 同一提交有时先绿、再出一组新运行 → 以最新一组为准；
-   - 检查机红、GitHub 同一 job 绿（例：10-07 fda8a31 的 linux-race，GitHub 与本机 `-race -count=3` 都过）→ 先当偶发，`MEMOH_FRESH=1 wait-status.sh <sha>` 重跑一次；第二次还红再查，查时先怀疑检查机的容器环境（`/dev/fd`、apt 包随重启丢失），不要直接改代码。检查机日志在云电脑 `/data/memoh-ci/logs/<sha>/<job>.log`，本机读不到。
+   - 检查机红、GitHub 同一 job 绿（例：10-07 fda8a31 的 linux-race，GitHub 与本机 `-race -count=3` 都过）→ 先当偶发，`MEMOH_FRESH=1 wait-status.sh <sha>` 重跑一次；第二次还红再查，查时先怀疑检查机的容器环境（`/dev/fd`、apt 包随重启丢失），不要直接改代码。已知原因：检查机的循环忽略 SIGHUP，bash 测试里装不上 HUP trap（入口时已忽略的信号 bash 不能 trap 或复位；10-09 w12native 397b8bc 查清，本机 `trap '' HUP` 可复现）；测试要先用 python3 或 perl 把 SIGHUP 复位成缺省再起被测脚本，做法见该提交。检查机日志在云电脑 `/data/memoh-ci/logs/<sha>/<job>.log`，本机读不到。
    - **观察中**（还没查清，不算已知偶发）：先重跑一次，第二次还红再当真缺陷查；条目和已有数据在 `.claude/TASKS.md`，别复制进来。
      - pdnd `TestDelUsersEndsQUICUDPSessions`（检查机 linux-race）：见「节点遗留」；
      - smoke 浏览器 A4 续费日期：见「w9https 后续」；
      - `portal-buy.spec.ts` 套餐卡标题断言：见「w9quic 后续」⑥；
-     - pdnd `TestLongConnectionTrafficIsReportedEachPeriod`（`pdnd/kernel/traffic_periodic_test.go`）：w12deploy 5b03f52 的检查机偶发红一次，GitHub 绿；
-     - 检查机的 panel-frontend 单元测试：w12native d4ca344 红一次，该提交只改部署文件、没动前端，GitHub 绿。
+     - pdnd `TestLongConnectionTrafficIsReportedEachPeriod`（检查机）：见「节点遗留」；
+     - pdnd shadowtls `TestServiceV1HandshakeClearsDeadline`（检查机）：见「节点遗留」；
+     - 检查机的 panel-frontend 单元测试：见「节点遗留」（行里搜 `d4ca344`）；
+     - certs 域的 pebble 端口占用（`bind: address already in use`，GitHub 的 panel-pg18）：见「节点遗留」（行里搜 `pebble`）。
 2. **一处报错连带一片**：先看「SQL 报错」和 e2e 首个失败。同一条 SQLSTATE 出现在几个测试里，通常是一条共享查询坏了，修一处全好（10-07：ListLinks 漏逗号 → 门户链接 500、两个 PG18 用例、expiry/risk e2e、两个前端冒烟一起红）。
 3. **整合问题**（几路并行合并后才出现）：
    - 计数类断言：内置模板数、后台循环数（`workers.Add` 与两份契约测试）、`run-pg18-gates.sh` 的 DOMAINS、`run-smoke-e2e.sh` 的 SCRIPTS；

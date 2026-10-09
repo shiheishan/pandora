@@ -1,6 +1,6 @@
 ---
 name: accept-task
-description: pandora 总协调验收任务分支并合进主线：读 report.md、查越界改动、独立重跑关键命令、核 CI、性能类走 perf-gate 判分、合并与冲突处理、推送后等 CI、向用户出结论表。用户说「X 做完了」「验收」「合并」「核对子 agent 的结果」，或后台子 agent 交回报告时使用。
+description: pandora 总协调验收任务分支并合进主线：读 report.md、查越界改动、独立重跑关键命令、核 CI、性能类走 perf-gate 判分、合并与冲突处理、一波几路的合并表（顺序、合时改、合后冻结与要改的 skill、要向用户说明的新机制）、推送后等 CI、向用户出结论表。用户说「X 做完了」「验收」「合并」「这一波怎么合」「核对子 agent 的结果」，或后台子 agent 交回报告时使用。
 ---
 
 # 验收任务分支
@@ -23,7 +23,7 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
    - 只改注释或文字：`scripts/comment-only.sh <base> <head>` 必须为空；
    - 声称没改 SQL：`go run ./tools/refactorcheck sqlset -base <base> -head <head>` 必须 UNCHANGED；
    - 性能项（改了 SQL、热路径、缓存、连接池、节拍、部署参数，或 brief 里有性能目标）：一律走 perf-gate skill，按它选层（SQL 走 bench-eval 评测集：训练集与留出集都不变差、结果一致，只训练集变好算过拟合；Go 热路径与资源走 Vultr 同机 A/B）。合并依据是现场目录里的 `verdict.md`：「退回」「不能判」「复测」不合；「可合，未达新标准 N 项」把未达项记进 TASKS，brief 承诺过的项没达到按退回；后缀「非正式数据」的不作依据。
-5. **对抗式审查**：先跑 `python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesign <分支>`。退出 0（命中钱、权限、秘密、迁移、节点内核、新依赖、并发其中之一）的分支，按 adversarial-review skill 派 opus 只读审查，可以和等 CI 并行。中危以上的发现要么修完再合，要么满足该 skill「什么时候可以合」里先合后修的条件。
+5. **对抗式审查**：先跑 `python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesign <分支>`。退出 0（命中钱、权限、秘密、迁移、部署脚本、节点内核、新依赖、并发其中之一）的分支，按 adversarial-review skill 派 opus 只读审查，可以和等 CI 并行。中危以上的发现要么修完再合，要么满足该 skill「什么时候可以合」里先合后修的条件。
 6. **CI**：先 `scripts/ci-status.sh <分支>` 看一眼检查机与各 workflow 的现状（只读不等）；还没出结论就按 verify skill「远端层」等；红了用 ci-triage skill 的 `triage.sh` 定位。PG18 必须 0 SKIP；grep 新增测试名，确认真跑了。
 
 ## 合并
@@ -32,6 +32,16 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
 - 合进来的分支带新迁移：合完在主线跑 `python3 .claude/skills/new-migration/scripts/upsegment-sha.py <新迁移.sql> >> panel/tools/migrationlint/upsegments.txt` 冻结 Up 段，再跑 `--check`；冻结由合并的人做，不指望子 agent。
 - 一波几路合完再推主线（长期授权：`feat/panel-redesign` 可推），推完等检查机与 GitHub 全绿才算完成。
 - **推 main 每次都要先问用户**；删 worktree、删分支见 cleanup skill。
+
+## 一波合并
+
+一波几路连着合（包括叠成一个分支逐步做 A/B 的）时，合并顺序、合时要改的、合后要改的散在 TASKS、brief 和各轮修复消息里，漏一件就是主线红或闸门空跑。照 `templates/wave-merge.md` 建一张表，放进主目录 `.claude/TASKS.md` 的「合并前后要做」。
+
+- **当场登记**：brief 或修复消息里写着「总协调合并时改」「我合并时改」的条目，发出消息的同时登记进表；审查报告的整合风险、实现方报告里「需要总协调配合的事」也登记。
+- **顺序与依赖**：有迁移的按号段从小到大（dispatch-task「坑」）；依赖列写「在 X 之后」和原因。分支@头写验收通过的那个头，之后再推的提交要重新验。
+- **合后要改的 skill 与规则**：哪个 skill 哪一行会随这一路合入而过时，合完当场改，不留到下一轮 skill 审查。
+- **新机制**：合入后会自己动的东西（CI 闸门、定时任务、机器人），合入当场向用户说明是什么、会做什么、是否已生效。
+- 合完一路勾一行，写合并提交 sha；整波推送、CI 全绿、「合后要改」与「新机制」都做完，这一波才算结束。
 
 ## 交给用户
 
