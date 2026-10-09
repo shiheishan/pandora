@@ -106,4 +106,8 @@ if grep -v '^[[:space:]]*#' "$LIB" | grep -q 'AEGIS_MIGRATION_DATABASE_URL='; th
   fail 'pandora_run_migrations passes the superuser DSN on a command line'
 fi
 
+# 系统文件要给别的系统用户读：安装器固定 umask 022，PGDG 公钥显式 0644（umask 077 的会话里装，apt 的 _apt 读不到公钥）
+awk '/^set -euo pipefail$/ { s = NR } /^umask 022$/ { u = NR } END { exit !(s && u && u == s + 4) }' "$DEPLOY/install.sh" \
+  || fail 'install.sh does not pin umask 022 right after set -euo pipefail'
+grep -q '^  chmod 0644 /etc/apt/trusted.gpg.d/postgresql.asc$' "$DEPLOY/install.sh" || fail 'the PGDG key is not made world-readable'
 printf 'install-chain mock: PASS\n'

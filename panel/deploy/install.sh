@@ -41,6 +41,10 @@
 #   3. 失败即停，并说清楚停在哪一步、怎么恢复。
 # 信条: 目录简单、文件简单、不臃肿
 set -euo pipefail
+# 安装器写的是系统文件（apt 源与签名公钥、单元、drop-in、PostgreSQL 配置），要给别的系统用户读：apt 以 _apt 身份
+# 校验签名，公钥 0600 就读不到（umask 077 的 root 会话里装，PGDG 源会报 not signed）。缺省 umask 固定成 022；
+# 口令、密钥、备份这些另在子 shell 里 umask 077 或显式 chmod 0600
+umask 022
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 RELEASE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -163,6 +167,7 @@ if ! ls /usr/lib/postgresql/ 2>/dev/null | grep -q "^18$"; then
   install -d /usr/share/postgresql-common/pgdg
   curl -fsSL "https://apt.postgresql.org/pub/repos/apt/$(. /etc/os-release; echo $VERSION_CODENAME)-pgdg/Release.key" -o /etc/apt/trusted.gpg.d/postgresql.asc 2>/dev/null \
     || curl -fsSL "https://www.postgresql.org/media/keys/ACCC4CF8.asc" -o /etc/apt/trusted.gpg.d/postgresql.asc
+  chmod 0644 /etc/apt/trusted.gpg.d/postgresql.asc
   echo "deb https://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list
   apt-get update -qq 2>/dev/null || true
   # 装包时 postgresql-common 顺手建 18/main：显式 UTF-8 locale，不随外层环境落成 C / SQL_ASCII
