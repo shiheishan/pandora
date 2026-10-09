@@ -52,8 +52,8 @@ paths:
 - 门户订单详情的 `subscription_id`（`MyOrderDetail`）：履约过（status = fulfilled 或 fulfilled_at 非空）才给，取 `orders.subscription_id` 连到的那一份（新购履约时写入，续费、换套餐、流量包建单时就有），没履约为 null，不另加列
 - 支付最低额：渠道 config `min_amount`（分，1–100000，易支付默认 100；编辑时不传保留原值），「能不能在线付」取启用且接单的 CNY 渠道里最小的那个，按租户在进程内缓存一分钟（本进程的渠道写入后 `invalidateMinPayment`；别的进程、adminops 的开关最多晚一分钟生效）；`CreatePaymentIntent` 再按所选渠道兜底 409，并拒绝已过付款期限的单（409 `order_lapsed`，`ErrOrderPaymentExpired`）
 - 新购：`NewCopy` 是「另买一份」，`Label` 经 `NormalizeLabel` 存 `orders.subscription_label`，另买同款而已有那份没起名时 422；门户新购（RejectSamePlan）同一套餐同时只能有一张未付款新购单（409 `order_pending`，Fields 带 order_id，已过付款期限的另带 `lapsed: "true"`；已过付款期限、还没被释放任务关掉的那张也算，防止它的晚到回调与同款新单双开；人工单不受限）。履约 `provisionSubscription` 写备注名，撞名加「 2」「 3」后缀（保存点重试，不让结算失败），并在这是唯一一份生效中订阅时把未分配的流量包挂上（转移流水 actor system）
-- 流量包挂订阅（00137）：addon 单必须带一份生效中的订阅、余额挂上去；送流量没有在用的那份时未分配；`transferTrafficPacksTx` 只从未分配或彻底停用的那份转到生效中或可救回的那份（例外：升级前的旧包——只有 00138 回填的 migration 流水、没有 user / admin 流水的——可以从生效中的那份挪一次，用户 2026-10-07 定，口径 `legacyMovableSQL` 与 00137 守卫同一条），每笔写 `traffic_pack_transfers`（追加写），提交时约束触发器核对同事务有流水。门户转移、后台加流量（挂这一行）、履约自动挂都走它或 `GrantTrafficPackTx`
-- 守卫：PG18 sub_period 域的 `placement`、`purchase quote` 子测试，traffic_pack 域的 `traffic packs belong to a subscription` 子测试
+- 流量包挂订阅（00137）：addon 单必须带一份生效中的订阅、余额挂上去（履约时单上没有订阅就报错，不替用户挑、不留作未分配）；送流量没有在用的那份时未分配；`transferTrafficPacksTx` 只从未分配或彻底停用的那份转到生效中或可救回的那份，来源还在用一律 409 `errTransferSource`，不看转移流水是谁写的（00157 版改挂守卫同口径；用户 2026-10-09 删掉了「升级前的旧包可从生效中的那份挪一次」），每笔写 `traffic_pack_transfers`（追加写），提交时约束触发器核对同事务有流水。门户转移、后台加流量（挂这一行）、履约自动挂都走它或 `GrantTrafficPackTx`
+- 守卫：PG18 sub_period 域的 `placement`、`purchase quote` 子测试，traffic_pack 域的 `traffic packs belong to a subscription` 子测试（第 6 段：回填挂上的包同样不能从生效中的那份转出）；源码契约 `traffic_pack_test.go` 的 `TestTrafficPackTransferRefusesLiveSource` 与 `TestTrafficPackOrderShapeAndFulfilment`
 
 ## 换套餐的三个入口（2026-10-07 用户定，w6plan）
 - 门户改套餐、后台人工开单遇到不同套餐、套餐卡遇到不同套餐，都在原订阅上换套餐、链接不变，共用一份折算（`plan_change_quote.go`）与一份履约（`applyPlanChangeTx`，plan_change_apply.go）。不要另写一套
