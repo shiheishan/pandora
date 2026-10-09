@@ -27,10 +27,9 @@ bash .claude/skills/deps-upgrade/scripts/vulncheck.sh [输出目录]   # 会话�
 
 怎么读结果：
 
-- 「被调用」指 `=== Symbol Results ===` 里的条目；只 import 未调用的不列。
 - **先看发布物视图**，它就是会上线的代码。
   - 第一段里调用链从 `tools/`、`core/xray`、`core/sing`（只有 `-tags compat` 才链进来，见 `rules/pdnd-build-boundary.md`）或测试辅助进来的，不上线。照样要升，但不算紧急。
-  - 调用链经接口方法分派的是保守估计，要看完整调用链才能判断：`grep -n -A40 '<GO-编号>' <输出目录>/<名字>.txt`。
+  - 调用链经接口方法分派的是保守估计，要看完整调用链才能判断（脚本末尾打印了取法）。
 - 「Found in: …@go1.x」是标准库漏洞，升 Go（第 2 节）；模块漏洞升那个模块（第 4 节）。
 - **govulncheck 看不到 fork**：fork 进仓库的代码不是模块依赖，漏洞库对不上。下面这些上游出公告时，要人工去对应的 fork 目录里查有没有同样的代码：
 
@@ -46,8 +45,6 @@ bash .claude/skills/deps-upgrade/scripts/vulncheck.sh [输出目录]   # 会话�
 - 基线看 CI 最近一次 go-vulncheck 的 job summary，或升级前先在旧提交上跑一遍本脚本，升级后对照新增还是旧账。
 
 ## 2. 升 Go 版本
-
-**机制**：CI 的 setup-go 按 `go-version-file` 装 go.mod 的 `go` 指令那个精确版本（没有 `toolchain` 行），所以升补丁版就是抬 go 指令；测试机、检查机按系列装最新补丁，自动跟上。
 
 要改的位置如下表。用这条命令复核，fork 目录里的上游注释不用管，`platform.sh` 的数字比较 grep 不到，要单独看：
 
@@ -65,9 +62,10 @@ git grep -nE 'go1\.2[0-9]|golang:1\.|GO_SERIES|Go 1\.2[0-9]|go 1\.2[0-9]' -- ':!
 | `panel/deploy/test-*-pg18.sh`：6 个文件的 `GO_IMAGE` 默认 `golang:1.26`，以及 checkout-atomic-00039、dashboard-performance、dashboard-read-models、node-config-legacy（两处）、order-release-00040（两处）的 `go1.26.*` 判断。这些单跑的 runner CI 不调；CI 的 panel-pg18 走 `run-pg18-gates.sh`，它的 `require_go_version` 按 go.mod 的主次版本动态比，不用改 | 不用改。注意本机 docker 里缓存的 `golang:1.26` 可能是旧补丁，先 `docker pull` | 改，否则手动跑这些 runner 会直接退出 |
 | `panel/deploy/platform.sh` 的 `pandora_go_version_ok`（`-ge 26`）、`build-release.sh:34` 与 `migrate-to-new-host.sh:74` 的「Go 1.26+」提示 | 不用改 | 改，跟 go 指令的最低小版本一致 |
 | `README.md:9`、`README.md:215`、根 `CLAUDE.md:5` 的「Go 1.26」 | 不用改 | 改 |
-| 根 `CLAUDE.md`「环境与工具坑」与 verify 里写死的本机 `GOTOOLCHAIN=go1.26.9` | 改（并确认本机模块缓存里有新版本的工具链） | 改 |
+| 根 `CLAUDE.md`「环境与工具坑」里写死的本机 `GOTOOLCHAIN=go1.26.9`（verify 已写成 `go<go.mod 版本>`，不用改） | 改（并确认本机模块缓存里有新版本的工具链） | 改 |
+| `rules/pdnd-kernel.md:24`（「认证失败的回落」末条）与 adversarial-review 的三个模板 `templates/reviewer-prompt.md`、`rereview-prompt.md`、`round2-brief.md`：都写着 `GOTOOLCHAIN=go1.26.9`。改 Go 版本时要核对这几处（三个模板正在改成从 go.mod 读，改完以文件现状为准，上面的 grep 能找到残留） | 改 | 改 |
 | **sing-box 的 go:linkname 前提**：`pdnd/go.mod` 的 sing-box v1.13.14 在 `transport/v2rayhttp/force_close.go:46` 用 `//go:linkname` 取 `golang.org/x/net/http2.(*Transport).connPool`；Go 1.27 下该符号不存在（本机 1.27.1 已复现：pdnd 与 subscription-e2e/tools 链接失败） | 不涉及 | **先解决再升**：换到不再依赖该符号的 sing-box 版本，或等 x/net 在 1.27 下可用；两个模块的 sing-box 版本要一致（第 4 节） |
-| `.github/workflows/*.yml`：全部用 `go-version-file`，没有写死版本 | 不用改 | 不用改 |
+| `.github/workflows/*.yml`：setup-go 全部用 `go-version-file`，装 go 指令那个精确版本（go.mod 没有 `toolchain` 行），没有写死版本 | 不用改 | 不用改 |
 
 **其他注意**：
 - subscription-e2e 的脚本从 panel 与 pdnd 的 go.mod 取较高的版本设 `GOTOOLCHAIN`（`scripts/toolchain.sh`），不再用 `local`。抬 go 指令后，本机模块缓存里要有该版本的工具链，没有就先联网取一次；本机缺省 Go 比 go.mod 新时的坑见根 CLAUDE.md「环境与工具坑」。
@@ -94,12 +92,12 @@ GOTOOLCHAIN=go<新版本> go test ...    # 升级后
 | XHTTP 服务端：`kernel/xhttp_server.go` | net/http 的 HTTP/2 响应写出 | `-tags interop` 的 Xray XHTTP 测试 |
 | 面板网关流式响应：`panel/internal/platform/server/stream.go`；证书签发 HTTP 客户端：`domain/certs` | net/http | panel 全量单测与 PG18 |
 
-**本机命令**（在 `pdnd/` 下；不要和 `npm ci` 并发）：
+**本机命令**（在 `pdnd/` 下；不要和 `npm ci` 并发；`<go.mod 版本>` 取 `pdnd/go.mod` 的 go 指令，如 `go1.26.9`）：
 
 ```bash
-go test -count=1 ./kernel/ ./internal/reality/... ./internal/nativewire/... ./cmd/pandora-h3-probe/
-go test -count=1 -tags interop -run 'TestExternalXray|TestAnyTLSNativeClientTCPAndUOTUDP$' ./kernel   # 本机可跑，约 3 秒；CI 的确切 -run 见 pandora-native.yml
-go test -count=1 -tags compat -p 1 ./...                                                     # compat 构建也会被依赖升级波及
+GOTOOLCHAIN=go<go.mod 版本> go test -count=1 ./kernel/ ./internal/reality/... ./internal/nativewire/... ./cmd/pandora-h3-probe/
+GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags interop -run 'TestExternalXray|TestAnyTLSNativeClientTCPAndUOTUDP$' ./kernel   # 本机可跑，约 3 秒；CI 的确切 -run 见 pandora-native.yml
+GOTOOLCHAIN=go<go.mod 版本> go test -count=1 -tags compat -p 1 ./...   # compat 构建也会被依赖升级波及
 ```
 
 **只在 CI 跑的**：
