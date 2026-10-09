@@ -103,8 +103,9 @@ func run() error {
 	)
 
 	nodeService := nodefabric.NewService(pool, signer)
-	// 签名请求的 nonce 先在 Valkey 认领（SET NX PX），出错回落 PG。PG 里还有未过期的
-	// nonce（上次运行回落过）时，保留期内两边都认领，重放照样被拦下。
+	// 签名请求的 nonce 先在 Valkey 认领（SET NX PX），出错回落 PG，Valkey 恢复后立即回到
+	// Valkey。PG 里还有上次运行留下的未过期 nonce 时，签名时间戳不晚于其中最大值的请求
+	// 在 PG 补查，重放照样被拦下（nodefabric/nonce_guard.go 的状态机）。
 	nodeService.SetNonceStore(valkeyNonceStore{rdb: rdb}, log)
 	primeCtx, cancelPrime := context.WithTimeout(ctx, 5*time.Second)
 	nodeService.PrimeNonceFallback(primeCtx, middleware.DefaultTenantID)
@@ -150,7 +151,8 @@ func run() error {
 	var workers sync.WaitGroup
 	workers.Add(3)
 	// 签名请求 nonce 的过期清理。原先每个请求顺手删一批，并发请求争同一批行；
-	// 防重放只靠主键冲突，清理晚几分钟不影响判定，只影响表的大小。
+	// 防重放只靠主键冲突，清理晚几分钟不影响判定，只影响表的大小。表里只有 Valkey
+	// 不可用那几秒的回落行（和补查行），平时是空表上的一次索引查找。
 	go func() {
 		defer workers.Done()
 		runNoncePurge(ctx, nodeService, log)
