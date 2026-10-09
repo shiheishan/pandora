@@ -1,0 +1,106 @@
+name: Go vulnerability report
+
+# govulncheck 只报「被调用」的漏洞（默认文本输出的 Symbol Results），按各模块 go.mod 的
+# go 指令装工具链（setup-go 的 go-version-file），标准库漏洞与发布物用的 Go 一致。
+# 现阶段只报告、不挡合并：job 级 continue-on-error，发现漏洞或扫描出错时 job 标红、
+# 结论写进 job summary 与告警注解，但整个 run 仍判绿，wait-github.sh 不受影响。
+# 每个模块扫两遍：./... 全量；panel 与 pdnd 再单扫发布的二进制（发布物视图，
+# 不含 tools/、测试辅助、-tags compat 才链进来的 core/xray 等）。本地同口径见
+# .claude/skills/deps-upgrade/scripts/vulncheck.sh。
+# 漏洞库每天更新，代码不动也会冒出新条目，所以另按周定时跑（定时只跑默认分支）。
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * 1"
+  push:
+    paths:
+      - "**.go"
+      - "**/go.mod"
+      - "**/go.sum"
+      - ".github/workflows/go-vulncheck.yml"
+  pull_request:
+    paths:
+      - "**.go"
+      - "**/go.mod"
+      - "**/go.sum"
+      - ".github/workflows/go-vulncheck.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # 锁死扫描器版本，结论可复现；升它时同步 deps-upgrade 的脚本口径
+  GOVULNCHECK_VERSION: v1.8.0
+
+jobs:
+  govulncheck:
+    name: govulncheck ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: panel
+            dir: panel
+            release: "./cmd/..."
+          - name: pdnd
+            dir: pdnd
+            release: ". ./cmd/pandora-h3-probe"
+          - name: subscription-e2e-tools
+            dir: .claude/skills/subscription-e2e/tools
+            release: ""
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.dir }}/go.mod
+          cache-dependency-path: ${{ matrix.dir }}/go.sum
+      - name: Install govulncheck
+        run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+      - name: Scan (called vulnerabilities only)
+        env:
+          RELEASE_PKGS: ${{ matrix.release }}
+          MODULE: ${{ matrix.name }}
+        run: |
+          set +e
+          worst=0
+          # 用法：scan <标签> <包...>；退出码 0 无被调用漏洞，3 有，其余为扫描出错
+          scan() {
+            local label="$1"; shift
+            local out="$RUNNER_TEMP/govulncheck-${label}.txt"
+            govulncheck "$@" > "$out" 2>&1
+            local rc=$?
+            cat "$out"
+            {
+              echo "### ${MODULE}：${label}（$(go env GOVERSION)，退出 ${rc}）"
+              echo
+              echo '```'
+              cat "$out"
+              echo '```'
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+            case "$rc" in
+              0) ;;
+              3) echo "::warning title=govulncheck ${MODULE} ${label}::$(grep -E '^Your code is affected' "$out" | head -1)"
+                 [ "$worst" -eq 0 ] && worst=3 ;;
+              *) echo "::error title=govulncheck ${MODULE} ${label}::scan failed (exit ${rc})"
+                 worst=1 ;;
+            esac
+          }
+          scan full ./...
+          if [ -n "${RELEASE_PKGS}" ]; then
+            # 包列表按空格拆开传给 govulncheck
+            read -r -a pkgs <<<"${RELEASE_PKGS}"
+            scan release "${pkgs[@]}"
+          fi
+          exit "$worst"
