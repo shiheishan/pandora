@@ -1,6 +1,6 @@
 ---
 name: bench-eval
-description: pandora 的 SQL 性能判分（单条 SQL 或一批 SQL 改前改后；整机 30 分钟稳态成绩单用 prod-retest；先用 db-query 看哪条慢）：在开发对照机（vultr-sgp-pt-bench）上用 ops-local/bench 评测集给 SQL 改动做改前改后判分，另有单条 SQL 改前改后 EXPLAIN 的快速诊断。验收性能类分支、判断某条 SQL 改写值不值、换栈（gin + GORM）每步的 SQL 性能闸门、复现并对比某条慢查询的计划时使用。
+description: pandora 的 SQL 性能判分（单条 SQL 或一批 SQL 改前改后；分支级性能闸门用 perf-gate，SQL 层就是本 skill；整机 30 分钟稳态成绩单用 prod-retest；先用 db-query 看哪条慢）：在开发对照机（vultr-sgp-pt-bench）上用 ops-local/bench 评测集给 SQL 改动做改前改后判分，另有单条 SQL 改前改后 EXPLAIN 的快速诊断。验收性能类分支、判断某条 SQL 改写值不值、换栈（gin + GORM）每步的 SQL 性能闸门、复现并对比某条慢查询的计划时使用。
 ---
 
 # SQL 改前改后判分
