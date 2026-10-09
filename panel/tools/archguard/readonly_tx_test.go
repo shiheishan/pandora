@@ -104,7 +104,6 @@ var readOnlyTxExemptions = map[string]int{
 	"internal/domain/nodefabric:Service.LookupEnrollmentCredential": 1,
 	"internal/domain/nodefabric:Service.NodeCredentials":            1,
 	"internal/domain/nodefabric:Service.PreviewNodeRouting":         1,
-	"internal/domain/nodefabric:Service.RefreshTrafficDaily":        1,
 	"internal/domain/nodefabric:Service.ServerBinding":              1,
 	"internal/domain/nodefabric:Service.activationWarnings":         1,
 	"internal/domain/nodefabric:Service.nodeUsers":                  1,
