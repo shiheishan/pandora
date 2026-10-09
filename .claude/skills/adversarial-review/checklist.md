@@ -116,7 +116,7 @@
 - 列出 go.mod、package.json 新增的直接依赖和间接依赖，看是否已废弃、维护是否活跃、许可证是否合适。
 - 新依赖会不会进生产二进制：在 `panel/` 下跑 `go list -deps ./cmd/<进程>`，与 `go list -deps -test` 的结果对比。
 - 新依赖自己读哪些环境变量、会不会访问网络或写文件（见上面「秘密与证书」）。
-- 漏洞：`govulncheck`（本机没有就写「没跑」），只看实际被调用的；修复需要升 Go 版本的，交给用户决定。
+- 漏洞：跑 `bash .claude/skills/deps-upgrade/scripts/vulncheck.sh <输出目录>`（要联网，沙箱里跑不通就写「没跑」），或看该提交 go-vulncheck 的 job summary，只看实际被调用的；修复需要升 Go 版本的，交给用户决定。
 - 升级已有依赖时，看会影响哪些别的包（例：w9cert 的 x/text 0.40 → 0.41）。
 
 ## 交回格式

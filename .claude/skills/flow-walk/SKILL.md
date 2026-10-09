@@ -144,9 +144,3 @@ description: pandora 的产品验证：像用户一样用内置浏览器把门�
 - **toast 很快消失，而且不在 `<main>` 里**：`get_page_text` 只读 `<main>`，读不到 toast。toast 住在 `[role=status]` 里。要核对文字，用 `javascript_tool` 在同一段脚本里点按钮并每 200 毫秒读一次 `document.querySelector('[role=status]')?.textContent`，收集到的去重后记录；点按钮用 `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '…').click()`。
 - **支付页是整页跳转**：假收银台会离开门户再回来，tabId 不变，等回到 `/#/…` 再核对；订单状态可能还在「确认中」，等 3 到 6 秒再读。
 - 记录表、截图和报告里的测试机一律写别名或 `<后台前缀>`（仓库公开红线见根 CLAUDE.md）。
-
-## 脚本
-
-| 路径 | 作用 |
-|---|---|
-| `scripts/mock-up.sh` | `up` / `down` / `status`：本机起门户（5181）与后台（5182）假后端开发服务器，端口写死、被占报错，pid 与日志在 `$TMPDIR/pandora-flow-walk/` |

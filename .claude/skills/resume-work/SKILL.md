@@ -32,7 +32,7 @@ bash .claude/skills/status-report/scripts/snapshot.sh
 bash .claude/skills/resume-work/scripts/remote-state.sh <别名>...
 ```
 
-它列出：setsid 起的测试进程（还在不在、跑了多久）、非默认的 iptables 规则与 DROP 计数、ufw 规则数、sysctl 与 `sysctl.before` 不同的项、自撤销记录（node-accept 的 `selfrevert.sh`）、远端 `stages.log` 最后几行、负载与 swap。
+它列出远端的测试进程、iptables 与 sysctl 等临时改动、自撤销记录、`stages.log` 末尾和负载（细节见脚本头注释）。
 
 - **临时改动**：被中断的故障注入要先确认撤销了（DROP 计数为 0、自撤销日志最后一行「已撤销 rc=0」），没撤就先撤再说别的。以后限时注入一律远端自撤销（node-accept 第 6 节）。
 - **时间窗**：从本机 `ops-local/<轮次>/stages.log` 与远端日志定出中断起止（UTC）。中断期间的流量、采样仍在远端照常记录，但人工动作（抽查、演练开关）可能晚了：受影响的窗口单列或作废，演练时长按实际算。

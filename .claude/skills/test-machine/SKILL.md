@@ -24,7 +24,7 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 
 ## 费用
 
-- **机器时价很低**：2c4g 约 $0.03/h，4c8g 独享约 $0.14/h。省机器钱不成为删机或压缩测试的理由：中途取消返工时默认留机，省掉重新部署。
+- **机器时价很低**：2c4g 约 $0.03/h，4c8g 独享约 $0.11/h。省机器钱不成为删机或压缩测试的理由：中途取消返工时默认留机，省掉重新部署。
 - **要盯的是公网出流量**：
   - 账户流量池 = 免费 2TB + 按各机开机时长折算的额度；超出约 $0.01/GB。Vultr 只计公网**出**方向，入方向和 VPC 内网流量不计。
   - 10-08 节点验收没开内网，5 台公网出流量合计约 4.11TB，流量池只有约 2.64TB，超了约 1.3TB。
@@ -34,19 +34,20 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 
 ## 用 API 开机、挂 VPC、删机（用户 10-08 授权 agent 开机）
 
-脚本都在 `scripts/`，现场值（1Password 引用、地域、os、SSH key、VPC 的 id）在主目录 `ops-local/vultr/env`（0600，不进仓库）。Bash 调用设 `dangerouslyDisableSandbox: true`（要连 1Password app 与 ssh agent）。
+脚本都在 `scripts/`，现场值（1Password 引用、地域、os、SSH key、VPC 的 id、可选的额度上限 `VULTR_CREDIT_CAP`）在主目录 `ops-local/vultr/env`（0600，不进仓库）。API 密钥优先读 1P Environment 挂载的 `ops-local/1p/pandora-ops.env`，读不到才退回 `op read`（`vultr.sh` 头注释）。Bash 调用设 `dangerouslyDisableSandbox: true`（要连 1Password app 与 ssh agent）。
 
 | 要做的事 | 命令 | 什么时候能跑 |
 |---|---|---|
 | 开机并登记 | `vultr-create.sh [--no-vpc] <别名> <套餐> "<用途>"` | 先在对话里报套餐、台数、时长、公网出流量估算；大流量机器一律挂 VPC（缺省） |
 | 已有机器挂 VPC | `vultr-attach-vpc.sh <别名>...` | 用户同意改这几台后；不重启，约 20 秒 enp8s0 有地址，登记一并补上 |
-| 看账单与超额 | `vultr-billing.sh` | 随时（只读）；开机前、删机前各看一次 |
+| 看账单与超额 | `vultr-billing.sh` | 随时（只读）；开机前、删机前各看一次，机器开着的日子**每天看一次**。设了 `VULTR_CREDIT_CAP` 时多一行「按在跑机器时价，约多少小时后到上限」 |
 | 删机 | `vultr-delete.sh <别名>...` 先列出，`--yes` 才删，删完自动撤登记 | **只删用户在对话里点名或明说授权的那几台**（用户 10-09 定）；先列清单与账单；只删 `vultr-sgp-pt-*` |
 | 底层调用 | `vultr.sh <METHOD> <路径> [JSON 文件]` | 上面没覆盖的接口 |
 
 - 4c8g 独享是 `voc-c-4c-8gb-75s-amd`，2c4g 是 `vc2-2c-4gb`，1c1g 是 `vc2-1c-1gb`；套餐与 os 列表的接口免密钥：`curl -s 'https://api.vultr.com/v2/plans?type=all&per_page=500'`。
 - 密钥只经 builtin `printf` 走 stdin 给 `curl -H @-`：不进命令行参数、不打印、不落盘。创建返回体里的 `default_password` 不保存。
 - 老机器的 Vultr 标签不是别名（如 mianban2），脚本按 `~/.ssh/config` 的公网地址对 `main_ip` 找实例。
+- **额度上限与提醒**：用户给的额度数值放 `ops-local/vultr/env` 的 `VULTR_CREDIT_CAP`（美元，不进仓库）。机器开着时每天跑一次 `vultr-billing.sh`，待结接近上限（10-09 的做法：上限的约 5/6）就提醒用户，并报推算的触线时间；推算不计流量额度抵扣，实际略晚。开到月底会超预算的，测完请用户点名删。
 - 删不删机看超额：`vultr-billing.sh` 的「流量超额」没归零时，开着的机器按开机时长攒额度，比交超额便宜（2c4g 约 4.5GB/h 花 $0.030，1c1g 约 1.5GB/h 花 $0.0074，超额 $0.01/GB）；归零后再开就是纯开销。不要为了攒额度开到月底。
 
 ## 开通
