@@ -66,7 +66,7 @@ description: pandora 新写或修改一个 goose 迁移（panel/migrations）时
 ```bash
 bash panel/deploy/check-migrations_mock_test.sh        # 文件名、编号、Up 标记、Down 或 irreversible，拿真实 migrations/ 跑
 python3 .claude/skills/new-migration/scripts/upsegment-sha.py --check  # 动了已发布迁移再跑：Up 段应 0 条不一致
-cd panel && go test ./tools/migrationlint/ ./internal/platform/db/   # DDL lint 与棘轮、Up 冻结、表登记簿、configure-app-role 契约
+cd panel && GOTOOLCHAIN=go<go.mod 版本> go test ./tools/migrationlint/ ./internal/platform/db/   # DDL lint 与棘轮、Up 冻结、表登记簿、configure-app-role 契约
 ```
 
 再跑读这个迁移或这个对象的源码契约所在的包：
@@ -75,7 +75,7 @@ cd panel && go test ./tools/migrationlint/ ./internal/platform/db/   # DDL lint 
 grep -rln --include='*_test.go' -e '<迁移号>_' -e '<函数或表名>' panel/internal panel/tools
 ```
 
-改了 `app.seed_tenant_defaults` 至少加跑 `go test ./internal/domain/notify/ ./internal/middleware/`（`TestTenantSeedTemplatesMatchDefaults`、`TestTenantSeedSwitchesMatchCode`）。PG18 用例与往返本机跑不了（见根 CLAUDE.md「环境与工具坑」），跳过不等于通过。
+改了 `app.seed_tenant_defaults` 至少加跑 `GOTOOLCHAIN=go<go.mod 版本> go test ./internal/domain/notify/ ./internal/middleware/`（`TestTenantSeedTemplatesMatchDefaults`、`TestTenantSeedSwitchesMatchCode`）。PG18 用例与往返本机跑不了（见根 CLAUDE.md「环境与工具坑」），跳过不等于通过。
 
 ### 推送后（GitHub）
 

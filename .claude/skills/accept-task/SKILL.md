@@ -19,9 +19,9 @@ description: pandora 总协调验收任务分支并合进主线：读 report.md�
 2. **关键 diff 自己读**：迁移（Up/Down、编号、RLS、授权、追加写、触发器）、权限与认证、锁与事务边界、缓存的失效路径、对外 JSON 字段。
 3. **独立重跑**：按 verify skill 的本地层，对改到的包重跑 vet/test；报告里引用的关键命令挑几条重跑。
 4. **按改动类型补自证**：
-   - 纯挪动或拆文件：`cd panel && go run ./tools/refactorcheck compare -base <sha>^ -head <sha> -tests`（pdnd 加 `-C ../pdnd`），必须 PURE MOVE；
+   - 纯挪动或拆文件：`cd panel && GOTOOLCHAIN=go<go.mod 版本> go run ./tools/refactorcheck compare -base <sha>^ -head <sha> -tests`（pdnd 加 `-C ../pdnd`），必须 PURE MOVE；
    - 只改注释或文字：`scripts/comment-only.sh <base> <head>` 必须为空；
-   - 声称没改 SQL：`go run ./tools/refactorcheck sqlset -base <base> -head <head>` 必须 UNCHANGED；
+   - 声称没改 SQL：`GOTOOLCHAIN=go<go.mod 版本> go run ./tools/refactorcheck sqlset -base <base> -head <head>` 必须 UNCHANGED；
    - 性能项（改了 SQL、热路径、缓存、连接池、节拍、部署参数，或 brief 里有性能目标）：一律走 perf-gate skill，按它选层（SQL 走 bench-eval 评测集：训练集与留出集都不变差、结果一致，只训练集变好算过拟合；Go 热路径与资源走 Vultr 同机 A/B）。合并依据是现场目录里的 `verdict.md`：「退回」「不能判」「复测」不合；「可合，未达新标准 N 项」把未达项记进 TASKS，brief 承诺过的项没达到按退回；后缀「非正式数据」的不作依据。
 5. **对抗式审查**：先跑 `python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesign <分支>`。退出 0（命中钱、权限、秘密、迁移、部署脚本、节点内核、新依赖、并发其中之一）的分支，按 adversarial-review skill 派 opus 只读审查，可以和等 CI 并行。中危以上的发现要么修完再合，要么满足该 skill「什么时候可以合」里先合后修的条件。
 6. **CI**：先 `scripts/ci-status.sh <分支>` 看一眼检查机与各 workflow 的现状（只读不等）；还没出结论就按 verify skill「远端层」等；红了用 ci-triage skill 的 `triage.sh` 定位。PG18 必须 0 SKIP；grep 新增测试名，确认真跑了。
