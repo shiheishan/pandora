@@ -62,7 +62,7 @@ description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同
 
 - **pdnd**（在 `pdnd/` 下，与 CI 同 Go 版本，flag 同 `release/build.sh`）：
   ```bash
-  GOTOOLCHAIN=go1.26.5 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
+  GOTOOLCHAIN=go1.26.9 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
     -overlay ../ops-local/nodeaccept/harness-src/overlay/overlay.json \
     -ldflags "-s -w -X main.buildVersion=accept-<短 sha>-pprof" -o <输出> .
   ```
