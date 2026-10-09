@@ -93,7 +93,7 @@ unset -f pandora_pg pandora_pg_require_login
 
 # --- restore-postgres.sh 的恢复步骤：抽出函数、换上桩跑真调用 -----------------------------------
 # （整个脚本要 Linux root 与 /proc 绑定的 .env，本机跑不了；这几个函数就是它在正式库上做的事）
-for fn in archive_role_plan ensure_restore_roles require_db_owner_role create_target_db restore_into_target; do
+for fn in archive_role_plan check_restore_roles create_missing_restore_roles require_db_owner_role create_target_db restore_into_target; do
   eval "$(extract_fn restore-postgres.sh "$fn")"
   declare -F "$fn" >/dev/null || fail "restore-postgres.sh has no $fn"
 done
@@ -139,16 +139,27 @@ plan="$(printf '%s\n' \
 [ "$plan" = "$(printf '%s\n' aegis_app aegis_idempotency_owner postgres)" ] || fail "role plan: $plan"
 # 缺的专用角色建成 NOLOGIN、无特权；已有的不重建
 : >"$T/pg.calls"; printf 'postgres\naegis_app\n' >"$T/roles"
-ensure_restore_roles "$plan" 2>/dev/null || fail "ensure_restore_roles failed: $(cat "$T/pg.calls")"
+check_restore_roles "$plan" || fail 'a valid role plan was refused'
+create_missing_restore_roles "$plan" 2>/dev/null || fail "create_missing_restore_roles failed: $(cat "$T/pg.calls")"
 grep -qx 'psql -X -d postgres -v ON_ERROR_STOP=1 -c CREATE ROLE "aegis_idempotency_owner" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS' "$T/pg.calls" \
   || fail "owner role not created safely: $(cat "$T/pg.calls")"
 [ "$(grep -c 'CREATE ROLE' "$T/pg.calls")" -eq 1 ] || fail "an existing role was recreated: $(cat "$T/pg.calls")"
-# 认不出的角色（含库属主 aegis：它不该出现在归档里）：停下，什么都不建
+# 认不出的角色（含库属主 aegis：它不该出现在归档里）：停下，什么都不建、也不连库查；提示说清楚不是本安装方式导出的
 for intruder in intruder aegis '"Quoted"'; do
   : >"$T/pg.calls"
-  if ( ensure_restore_roles "$(printf '%s\n' aegis_app "$intruder")" ) >/dev/null 2>&1; then fail "role $intruder was accepted"; fi
-  if grep -q 'CREATE ROLE' "$T/pg.calls"; then fail "a role was created before refusing $intruder"; fi
+  if ( check_restore_roles "$(printf '%s\n' aegis_app "$intruder")" ) >"$T/out" 2>&1; then fail "role $intruder was accepted"; fi
+  [ ! -s "$T/pg.calls" ] || fail "the role check touched the database before refusing $intruder: $(cat "$T/pg.calls")"
+  grep -Fq 'not exported by this kind of installation' "$T/out" && grep -Fq 'nothing was changed' "$T/out" \
+    || fail "unhelpful refusal for $intruder: $(cat "$T/out")"
+  if grep -Fq 'create it by hand' "$T/out"; then fail 'the refusal still suggests creating the role by hand'; fi
 done
+# 缺白名单角色、同时有陌生角色：先核全部再建，一条 CREATE ROLE 都不跑（K2：以前先建后拒）
+: >"$T/pg.calls"; printf 'postgres\n' >"$T/roles"
+if ( check_restore_roles "$(printf '%s\n' aegis_idempotency_owner intruder)" && \
+     create_missing_restore_roles "$(printf '%s\n' aegis_idempotency_owner intruder)" ) >/dev/null 2>&1; then
+  fail 'a plan with an unknown role went through'
+fi
+if grep -q 'CREATE ROLE' "$T/pg.calls"; then fail "a whitelisted role was created before refusing the unknown one: $(cat "$T/pg.calls")"; fi
 # 目标库属主要先在（createdb 在删掉旧库之后才跑）
 printf 'aegis\n' >"$T/roles"; POSTGRES_USER=aegis
 ( require_db_owner_role ) || fail 'an existing database owner role was refused'
@@ -156,10 +167,11 @@ printf 'aegis\n' >"$T/roles"; POSTGRES_USER=aegis
 if ( require_db_owner_role ) 2>/dev/null; then fail 'a missing database owner role was accepted'; fi
 unset -f pandora_pg age die
 # 主流程：核完整性 → 备好角色 → 核库属主 → 与正式恢复同参数的演练 → 进正式库保护 → 恢复 → 开闸门
-awk '/^"\$PWD\/verify-backup.sh" "\$archive"$/ { v = NR } /^ensure_restore_roles "\$role_plan"$/ { e = NR }
-     /^require_db_owner_role$/ { d = NR } /^AEGIS_VERIFY_RESTORE=owners "\$PWD\/verify-backup.sh"/ { o = NR }
+awk '/^"\$PWD\/verify-backup.sh" "\$archive"$/ { v = NR } /^check_restore_roles "\$role_plan"$/ { e = NR }
+     /^require_db_owner_role$/ { d = NR } /^create_missing_restore_roles "\$role_plan"$/ { m = NR }
+     /^AEGIS_VERIFY_RESTORE=owners "\$PWD\/verify-backup.sh"/ { o = NR }
      /^begin_production_guard$/ { g = NR } /^restore_into_target$/ { r = NR } /^commit_production_guard$/ { c = NR }
-     END { exit !(v && e && d && o && g && r && c && v < e && e < d && d < o && o < g && g < r && r < c) }' "$DEPLOY/restore-postgres.sh" \
+     END { exit !(v && e && d && m && o && g && r && c && v < e && e < d && d < m && m < o && o < g && g < r && r < c) }' "$DEPLOY/restore-postgres.sh" \
   || fail 'restore-postgres.sh steps are out of order'
 if grep -Eq 'REASSIGN|reassign_source_migrator|legacy_repair|repair_legacy_privileges|acl (yes|no)|migrator' "$DEPLOY/restore-postgres.sh"; then
   fail 'restore-postgres.sh still carries the cross-layout owner hand-over or the old-format privilege repair'
@@ -168,9 +180,19 @@ fi
 awk '/^commit_production_guard$/ { c = NR } /NOTE run \.\/bootstrap\.sh before starting the services/ { b = NR }
      END { exit !(c && b && c < b) }' "$DEPLOY/restore-postgres.sh" || fail 'restore-postgres.sh does not tell the operator to run bootstrap.sh'
 if grep -q '^AEGIS_VERIFY_RESTORE=1 ' "$DEPLOY/restore-postgres.sh"; then fail 'the restore rehearsal drops owners'; fi
-grep -Fq '[ "$AEGIS_VERIFY_RESTORE" = owners ] || restore_opts+=(--no-owner --no-privileges)' "$DEPLOY/verify-backup.sh" \
-  || fail 'verify-backup.sh has no owner-preserving rehearsal'
+grep -Fq 'createdb_opts+=(--owner "$POSTGRES_USER")' "$DEPLOY/verify-backup.sh" && grep -Fq 'restore_opts+=(--no-owner --no-privileges)' "$DEPLOY/verify-backup.sh" \
+  || fail 'verify-backup.sh has no owner-preserving rehearsal with the same database owner'
+awk '/if \[ "\$AEGIS_VERIFY_RESTORE" = owners \]; then/ { o = NR } /createdb_opts\+=\(--owner/ { w = NR } /^  else$/ && o && !e { e = NR }
+     /restore_opts\+=\(--no-owner --no-privileges\)/ { n = NR } END { exit !(o && w && e && n && o < w && w < e && e < n) }' "$DEPLOY/verify-backup.sh" \
+  || fail 'verify-backup.sh: the owner-preserving rehearsal is not the owners branch'
 if grep -Eq 'pg_restore .*--no-owner' "$DEPLOY/restore-postgres.sh"; then fail 'restore-postgres.sh restores with --no-owner'; fi
+# 恢复中途失败、正式库已删：提示照实说旧库没了（K9）；备份单元停下时不删运行目录里的维护锁
+grep -Fq 'target_dropped=1' "$DEPLOY/restore-postgres.sh" && grep -Fq 'was already dropped before the failure; it is gone' "$DEPLOY/restore-postgres.sh" \
+  || fail 'a failed restore does not say the previous database is gone'
+awk '/pandora_pg dropdb --force "\$target_db"/ { d = NR } /^  target_dropped=1$/ { t = NR } END { exit !(d && t && t == d + 1) }' "$DEPLOY/restore-postgres.sh" \
+  || fail 'target_dropped is not set right after dropping the database'
+grep -qx 'RuntimeDirectoryPreserve=yes' "$DEPLOY/systemd/aegis-backup.service" || fail 'aegis-backup.service removes the maintenance lock directory when it stops'
+
 if grep -Eq -- '--no-owner|--no-acl' "$DEPLOY/backup-postgres.sh"; then fail 'backup-postgres.sh drops owners or privileges'; fi
 
 # --- psql.sh 与 bootstrap.sh：在临时 deploy/ 里真跑一遍，客户端换成桩 ---

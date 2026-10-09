@@ -110,4 +110,6 @@ fi
 awk '/^set -euo pipefail$/ { s = NR } /^umask 022$/ { u = NR } END { exit !(s && u && u == s + 4) }' "$DEPLOY/install.sh" \
   || fail 'install.sh does not pin umask 022 right after set -euo pipefail'
 grep -q '^  chmod 0644 /etc/apt/trusted.gpg.d/postgresql.asc$' "$DEPLOY/install.sh" || fail 'the PGDG key is not made world-readable'
+# 升级前备份在 umask 077 的子 shell 里打开（重定向在子 shell 外会先按 022 建出 0644 的文件）
+grep -Fq 'pg_dump -Fc -d aegis -p "$PG_PORT" >"$BK")' "$DEPLOY/install.sh" || fail 'the pre-upgrade dump is opened outside the umask 077 subshell'
 printf 'install-chain mock: PASS\n'

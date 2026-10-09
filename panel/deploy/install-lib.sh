@@ -228,10 +228,15 @@ SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @raw-io 
 UNIT
 }
 
-# PostgreSQL 18/main 的整份 drop-in：资源约束一直在，隔离随开关
+# PostgreSQL 18/main 的整份 drop-in：资源约束一直在，隔离随开关。
+# 有了 MemoryMax、又不许换出，撞上限时内核会 OOM 杀掉 cgroup 里的某个进程。systemd 缺省 OOMPolicy=stop 会因此
+# 停掉整个单元，Debian 的单元又是 Restart=no，库就一直停着。所以资源段同时写：
+#   - OOMPolicy=continue：被杀的多半是某个后端，交给 postmaster 自己做崩溃恢复（断开其他连接、重放 WAL、重新接客），单元不停；
+#   - Restart=on-failure：postmaster 本身被杀（受 OOMScoreAdjust=-900 保护，少见）或异常退出时由 systemd 拉起。
+#     Debian 关掉自动重启是怕它挡住直接跑 pg_ctlcluster stop；那是正常退出（退出码 0），on-failure 不会重启。
 native_pg_dropin() {
   printf '%s\n' '# pandora（install.sh 生成）：资源约束一直在，隔离随 PANDORA_SYSTEMD_HARDENING' '[Service]' \
-    'MemoryMax=512M' 'MemorySwapMax=0'
+    'MemoryMax=512M' 'MemorySwapMax=0' 'OOMPolicy=continue' 'Restart=on-failure' 'RestartSec=5s'
   [ "${NATIVE_HARDENING:-1}" != 1 ] || native_pg_hardening_dropin
 }
 

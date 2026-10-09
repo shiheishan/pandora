@@ -77,14 +77,8 @@ pandora_pg_require_login() {
 }
 require_command readlink
 require_command stat
-invocation_allow_unsigned="${AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY-}"
 invocation_verify_restore="${AEGIS_VERIFY_RESTORE-}"
 load_trusted_env "$PWD/.env"
-if [ -n "$invocation_allow_unsigned" ]; then
-  AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY="$invocation_allow_unsigned"
-else
-  unset AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY
-fi
 AEGIS_VERIFY_RESTORE="${invocation_verify_restore:-0}"
 
 [ "$#" -eq 1 ] || die "usage: $0 /absolute/path/aegis-postgres-*.dump.age"
@@ -94,27 +88,28 @@ archive="$1"
 checksum="${archive}.sha256"
 [ -f "$checksum" ] || die "checksum not found: $checksum"
 manifest="${archive%.dump.age}.manifest.json"
-# 签名清单只在配了 WebDAV 异地备份时由 aegis-backup-webdav 上传后签出；没配的机器本地备份都没有清单。
-# 这类备份只能经逐个文件的一次性批准（AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY=RESTORE_UNSIGNED:<文件名>）
-# 核 sha256、解密与归档目录，不许做临时库演练；restore-postgres.sh 见到这个变量一律拒绝。
-legacy_approval="RESTORE_UNSIGNED:$(basename "$archive")"
-legacy_mode=0
-if [ "${AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY:-}" = "$legacy_approval" ] && [ ! -e "$manifest" ]; then
-  legacy_mode=1
-  echo "verify-backup: WARNING unsigned legacy recovery explicitly enabled" >&2
-else
+seal="${archive}.seal"
+: "${AEGIS_BACKUP_AGE_IDENTITY:?AEGIS_BACKUP_AGE_IDENTITY is required}"
+[[ "$AEGIS_BACKUP_AGE_IDENTITY" = /* ]] || die "AEGIS_BACKUP_AGE_IDENTITY must be an absolute path"
+# 缺省取安装根目录（本脚本在 <根>/deploy/ 下，已 cd 到这里）的 bin/，即 /opt/pandora/bin/
+uploader="${AEGIS_BACKUP_WEBDAV_BIN:-$(dirname -- "$PWD")/bin/aegis-backup-webdav}"
+[[ "$uploader" = /* ]] || die "AEGIS_BACKUP_WEBDAV_BIN must be an absolute path"
+# 来源两种，都要核过才往下走：
+#   - 本机写的备份：backup-postgres.sh 写的封条 <归档>.seal（这台安装的 age 私钥派生的 HMAC），本机留存期内哪一份都能核；
+#   - 从 WebDAV 取回的备份：签名清单 + WebDAV 之外的可信检查点（只认最新一份，防替换、防回滚）。
+# 两样都没有就拒绝：来路不明的归档不进库
+if [ -e "$seal" ]; then
+  run_trusted_executable "$uploader" verify-local-seal "$archive" "$checksum" "$seal" "$AEGIS_BACKUP_AGE_IDENTITY" >/dev/null \
+    || die "local backup seal verification failed: this archive was not written by this installation, or it was changed"
+elif [ -e "$manifest" ]; then
   : "${AEGIS_BACKUP_MANIFEST_PUBLIC_KEY:?AEGIS_BACKUP_MANIFEST_PUBLIC_KEY is required}"
   : "${AEGIS_BACKUP_TRUSTED_CHECKPOINT:?AEGIS_BACKUP_TRUSTED_CHECKPOINT is required}"
-  # 缺省取安装根目录（本脚本在 <根>/deploy/ 下，已 cd 到这里）的 bin/，即 /opt/pandora/bin/
-  uploader="${AEGIS_BACKUP_WEBDAV_BIN:-$(dirname -- "$PWD")/bin/aegis-backup-webdav}"
-  [[ "$uploader" = /* ]] || die "AEGIS_BACKUP_WEBDAV_BIN must be an absolute path"
-  [ -f "$manifest" ] || die "signed manifest not found: $manifest"
   run_trusted_executable "$uploader" verify-manifest "$archive" "$checksum" "$manifest" \
     "$AEGIS_BACKUP_MANIFEST_PUBLIC_KEY" "$AEGIS_BACKUP_TRUSTED_CHECKPOINT" \
     || die "signed manifest or trusted checkpoint verification failed"
+else
+  die "neither a local seal ($seal) nor a signed manifest ($manifest): refusing an archive of unknown origin"
 fi
-: "${AEGIS_BACKUP_AGE_IDENTITY:?AEGIS_BACKUP_AGE_IDENTITY is required}"
-[[ "$AEGIS_BACKUP_AGE_IDENTITY" = /* ]] || die "AEGIS_BACKUP_AGE_IDENTITY must be an absolute path"
 [ -r "$AEGIS_BACKUP_AGE_IDENTITY" ] || die "age identity is not readable"
 require_command age
 pandora_pg_require pg_restore psql createdb dropdb
@@ -132,8 +127,6 @@ case "${AEGIS_VERIFY_RESTORE:-0}" in
   *) die "AEGIS_VERIFY_RESTORE must be 0, 1 or owners" ;;
 esac
 if [ "${AEGIS_VERIFY_RESTORE:-0}" != 0 ]; then
-  [ "$legacy_mode" -eq 0 ] \
-    || die "unsigned legacy backups cannot run full restore rehearsal"
   : "${POSTGRES_DB:?POSTGRES_DB is required for restore verification}"
   pandora_pg_require_login
   verify_db="aegis_verify_$(date -u +%Y%m%d%H%M%S)_$$"
@@ -144,9 +137,16 @@ if [ "${AEGIS_VERIFY_RESTORE:-0}" != 0 ]; then
   trap cleanup_db EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  pandora_pg createdb --template=template0 --encoding=UTF8 "$verify_db"
   restore_opts=(--exit-on-error)
-  [ "$AEGIS_VERIFY_RESTORE" = owners ] || restore_opts+=(--no-owner --no-privileges)
+  createdb_opts=(--template=template0 --encoding=UTF8)
+  if [ "$AEGIS_VERIFY_RESTORE" = owners ]; then
+    # 与正式恢复同参数：库属主与 restore-postgres.sh 建正式库时一样（.env 的 POSTGRES_USER）
+    : "${POSTGRES_USER:?POSTGRES_USER is required for an owner-preserving rehearsal}"
+    createdb_opts+=(--owner "$POSTGRES_USER")
+  else
+    restore_opts+=(--no-owner --no-privileges)
+  fi
+  pandora_pg createdb "${createdb_opts[@]}" "$verify_db"
   age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
     | pandora_pg pg_restore -d "$verify_db" "${restore_opts[@]}"
   pandora_pg psql -X -d "$verify_db" -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null

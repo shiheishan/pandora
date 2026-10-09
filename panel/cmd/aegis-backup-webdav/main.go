@@ -41,8 +41,34 @@ func run(args []string) int {
 		_, _ = fmt.Fprintln(os.Stdout, "webdav backup manifest verified")
 		return 0
 	}
+	// 本地备份封条（没配 WebDAV 时的本地备份，见 dbbackup.LocalSealSchema）：backup-postgres.sh 写，verify-backup.sh 核
+	if len(args) == 4 && args[0] == "seal-local" {
+		if err := dbbackup.RequireRootRuntime(); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "local backup seal failed: root_required")
+			return 1
+		}
+		seal, err := dbbackup.SealLocalBackup(args[1], args[2], args[3])
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "local backup seal failed:", err)
+			return 1
+		}
+		_, _ = fmt.Fprintln(os.Stdout, "local backup sealed:", seal)
+		return 0
+	}
+	if len(args) == 5 && args[0] == "verify-local-seal" {
+		if err := dbbackup.RequireRootRuntime(); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "local backup seal verification failed: root_required")
+			return 1
+		}
+		if err := dbbackup.VerifyLocalSeal(args[1], args[2], args[3], args[4]); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "local backup seal verification failed:", err)
+			return 1
+		}
+		_, _ = fmt.Fprintln(os.Stdout, "local backup seal verified")
+		return 0
+	}
 	if len(args) != 2 {
-		_, _ = fmt.Fprintln(os.Stderr, "usage: aegis-backup-webdav <archive.dump.age> <archive.dump.age.sha256> | init-signing-key <seed-file> | verify-manifest <archive> <checksum> <manifest> <public-key> <trusted-checkpoint>")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: aegis-backup-webdav <archive.dump.age> <archive.dump.age.sha256> | init-signing-key <seed-file> | verify-manifest <archive> <checksum> <manifest> <public-key> <trusted-checkpoint> | seal-local <archive> <checksum> <age-identity> | verify-local-seal <archive> <checksum> <seal> <age-identity>")
 		return 2
 	}
 	if err := dbbackup.RequireRootRuntime(); err != nil {

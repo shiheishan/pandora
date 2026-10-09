@@ -510,7 +510,7 @@ echo | openssl s_client -connect <面板地址>:443 -servername <面板域名> 2
   ./psql.sh -X -c "SELECT pid, pg_blocking_pids(pid) AS blocked_by, left(query, 80) AS query FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid)) > 0;"
   ```
 
-连接预算：`/etc/postgresql/18/main/conf.d/pandora.conf` 里 `max_connections=60` = 3 条超级用户保留 + 11 条维护余量 + 门户 1 条常驻监听 + 三个网关各自的池上限（缺省门户 16、后台 15、节点 15）。算式在 `.env.example` 的连接池注释里。
+连接预算：`/etc/postgresql/18/main/conf.d/pandora.conf` 里 `max_connections=60` = 3 条超级用户保留 + 11 条维护余量 + 三个网关各自的池上限（缺省门户 16 = 15 + 1 条常驻监听、后台 15、节点 14）+ 节点纪元探针池外专用的 1 条连接，合计 3 + 11 + 16 + 15 + 14 + 1 = 60。缺省值与算式以 `internal/platform/config/runtime.go` 为准（`.env.example` 的连接池注释同源）。
 
 ### 常见原因
 
@@ -532,7 +532,7 @@ journalctl -u aegis-public --since -1h | grep -iE 'oom-kill|Main process exited'
 ```
 
 - 网关（`Restart=on-failure`）与 Valkey（发行版单元 `Restart=always`）被杀后由 systemd 自己拉起；Valkey 不落盘，限流计数与实时推送的临时状态清零。
-- PostgreSQL：被杀的多半是某个后端连接，postmaster 自己做崩溃恢复、重开连接，单元不会停；postmaster 本身受 `OOMScoreAdjust=-900` 保护。真被杀了，Debian 单元是 `Restart=no`，要手工 `systemctl start postgresql@18-main`。
+- PostgreSQL：drop-in 写了 `OOMPolicy=continue`，被杀的多半是某个后端连接，单元不停，postmaster 自己做崩溃恢复（断开所有连接、重放 WAL、重新接客，几秒钟，期间网关的请求会失败一下）；postmaster 本身受 `OOMScoreAdjust=-900` 保护，真被杀了或异常退出，drop-in 的 `Restart=on-failure` 在 5 秒后拉起。日志里是 `server process (PID …) was terminated by signal 9: Killed` 与 `all server processes terminated; reinitializing`。不写 `OOMPolicy=continue` 时 systemd 缺省会因为一个后端被杀停掉整个单元，库就一直停着。
 - 反复被杀：先看是哪一个占得多（`systemctl status` 的 Memory 行、`ps -o rss`），再按第 8 章看连接数与慢查询；不要把 `MemorySwapMax` 去掉了事，那只是把问题换成卡顿。
 - 内核 cgroup 不是 v2 或没开 swap 记账时这一条不生效，安装输出会说。
 
@@ -549,7 +549,7 @@ journalctl -u aegis-public --since -1h | grep -iE 'oom-kill|Main process exited'
    只动确认过的那个 pid。不要终止迁移会话（`goose`），处理迁移见第 11 章。
 2. **【写】** 重启库：`systemctl restart postgresql@18-main`。期间整个面板不可用，网关会自动重连。
 3. **【写】** 调连接预算：改 `.env` 的 `AEGIS_*_DB_MAX_CONNS`，按 `.env.example` 的算式重排，再重启对应网关。改 `max_connections` 等数据库参数要改发布包里的 `deploy/postgresql-pandora.conf` 再重跑安装器：它整份覆盖 `/etc/postgresql/18/main/conf.d/pandora.conf`，文件变了才重启 PostgreSQL；只改机器上那份，下次安装会被覆盖。
-4. 要看语句的累计耗时，需要 `pg_stat_statements`。开它要改 `shared_preload_libraries`（同样改在 `postgresql-pandora.conf` 里）并重启库，先评估停机窗口。
+4. 要看语句的累计耗时，需要 `pg_stat_statements`。用压测脚本 `tools/loadtest/scripts/pgstat.sh`（`enable --yes` / `disable --yes`）：它用 `ALTER SYSTEM` 把 `shared_preload_libraries` 写进数据目录的 `postgresql.auto.conf` 并重启库、建扩展，只在原值为空时才写。不改 `postgresql-pandora.conf`，因为 `conf.d/pandora.conf` 每次安装整份覆盖，而 `postgresql.auto.conf` 的优先级更高、重装不会冲掉它，所以开着的状态会一直留到 `disable` 为止。重启库期间网关连库失败几秒，先评估停机窗口。
 
 ### 什么时候升级处理
 
@@ -624,9 +624,12 @@ ls -lt /var/backups/pandora | head
    cd /opt/pandora/deploy && ./verify-backup.sh /var/backups/pandora/aegis-postgres-<时间>.dump.age
    ```
 
-   - 它核对 sha256、签名清单、解密和归档目录，通过时输出 `backup verified:`。
-   - 签名清单 `aegis-postgres-<时间>.manifest.json` 只有配了 WebDAV 异地备份才会生成。没有时报 `signed manifest not found`；只想确认这份能解开，可以一次性设 `AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY=RESTORE_UNSIGNED:<备份文件名>` 再跑。
-   - 设 `AEGIS_VERIFY_RESTORE=1` 会在临时库里完整恢复一遍，需要和库差不多大的空闲磁盘；无签名的备份不能这样做。
+   - 它先核这份备份的来路，再核 sha256、解密和归档目录，通过时输出 `backup verified:`。来路两种：
+     - 本机写的备份：`backup-postgres.sh` 每份都写一个封条 `aegis-postgres-<时间>.dump.age.seal`，是用这台安装的 age 解密私钥派生的签名。留存期内哪一份都能核、能恢复；
+     - 从 WebDAV 取回的备份：签名清单 `aegis-postgres-<时间>.manifest.json` 加 WebDAV 之外的可信检查点，只认最新一份（防替换、防回滚）。
+   - 两样都没有报 `refusing an archive of unknown origin`；封条对不上报 `local backup seal verification failed`：这份不是本安装写出的，或者归档、校验文件被改过，不要恢复它。
+   - 封条用的就是解密私钥：换过私钥（或机器重装后没用回原来那把）的备份核不过。所以私钥要另存（见第 5 条），重装后放回原处。
+   - 设 `AEGIS_VERIFY_RESTORE=1` 会在临时库里完整恢复一遍，需要和库差不多大的空闲磁盘。
 5. 解密私钥（`.env` 的 `AEGIS_BACKUP_AGE_IDENTITY`）缺省和备份在同一台机器上（`/opt/pandora/secrets/backup-age.key`）。机器整体丢失时备份就解不开，私钥要另外保存一份。
 6. 从备份恢复见 `MIGRATION-RUNBOOK.md` 第 3 节。
 

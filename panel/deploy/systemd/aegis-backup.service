@@ -12,6 +12,8 @@ ExecStart=/opt/pandora/deploy/backup-postgres.sh
 UMask=0077
 RuntimeDirectory=aegispanel
 RuntimeDirectoryMode=0700
+# 运行目录里有备份与恢复共用的维护锁 database-maintenance.lock：备份跑完别删掉它，恢复脚本可能正持有它
+RuntimeDirectoryPreserve=yes
 
 NoNewPrivileges=true
 PrivateTmp=true

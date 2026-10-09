@@ -35,7 +35,7 @@ paths:
   - 迁移失败把服务拉回来，所以新程序在迁移成功之后才装；迁移 DSN（带超级用户口令）不经命令行参数，`migrate.sh` 自己从 `.env` 读
   - 守卫：`install-migrate-order_mock_test.sh`
 - 加密备份带属主与权限导出；`restore-postgres.sh` 照原样还原，顺序：核完整性 → 按备份补齐面板自己的角色（只认 `postgres`、`aegis_app`、`aegis_idempotency_owner`，只增、`NOLOGIN`，认不出就停）→ 库属主角色（`.env` 的 `POSTGRES_USER`）必须已存在 → 临时库里同参数演练（`AEGIS_VERIFY_RESTORE=owners`）→ 正式库保护 → 恢复 → 开闸门；恢复完一律提示跑 `bootstrap.sh`（运行角色的库级设置不在归档里）。不用 `--no-owner --no-privileges`。守卫：`db-scripts_mock_test.sh`（抽函数跑真调用）
-  - 没有签名清单的备份（没配 WebDAV 时的本地备份）只能经 `verify-backup.sh` 逐个文件批准核 sha256、解密与目录，不许演练，`restore-postgres.sh` 一律拒绝（变量名带 LEGACY 是历史名，不是旧格式专用）
+  - 备份来路先核再动手（`verify-backup.sh`）：本机写的备份带封条 `<归档>.seal`（`backup-postgres.sh` 用 age 私钥派生的 HMAC 签归档名、摘要、字节数与校验文件，`aegis-backup-webdav seal-local`；封不上算备份失败），从 WebDAV 取回的凭签名清单加可信检查点（只认最新）；两样都没有就拒绝。信任根就是 age 私钥，不另造密钥。守卫：`backup-provenance_mock_test.sh`（root，真跑三件套与真程序）、`internal/domain/dbbackup/localseal_test.go`
 - 运维脚本（`check-migrations.sh`、`migrate.sh`、`backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`、`psql.sh`、`bootstrap.sh`、`healthcheck.sh`）一律用本机客户端经 `127.0.0.1:POSTGRES_PORT` 以 `postgres` 超级用户（`POSTGRES_SUPER_PASSWORD`）连库，口令只经 `PGPASSWORD`。不用 runuser：备份单元的 `SystemCallFilter=~@privileged` 禁止切换用户
   - 连库函数 `pandora_pg` 在备份三件套里各内联一份（只信任自己，不 source 共用文件）。守卫：`db-scripts_mock_test.sh`（逐字一致与行为）、`check-migrations_mock_test.sh`
   - `.env` 里遗留的 `PANDORA_DB_LAYOUT` 行不影响任何脚本，安装器也不再写它
@@ -51,6 +51,7 @@ paths:
   - 失败时把服务按新版本起来之后再以非 0 退出，提示原因与开关；226/NAMESPACE 直接说是主机不支持沙箱
   - 开关 `PANDORA_SYSTEMD_HARDENING`（缺省开，0 去掉隔离段、留资源约束，记进 `.env` 只改这一行）
   - 面板的服务不换出：PostgreSQL、Valkey 的 drop-in 与三个网关单元都带 `MemorySwapMax=0`；cgroup v1 或没开 swap 记账时被忽略，安装输出照实说、不报错（`native_swap_accounting_note`）。守卫：`install-hardening_mock_test.sh`
+  - PostgreSQL 的资源段还写 `OOMPolicy=continue`（一个后端被 OOM 杀掉不停整个单元，交给 postmaster 崩溃恢复）与 `Restart=on-failure`（postmaster 自己死了拉起；`pg_ctlcluster stop` 是正常退出，不会被拉起）
   - drop-in 整套写全，不依赖发行版单元写了什么（Debian 12 的 redis 单元把 `ProtectSystem` 改回 `true`）；内存上限 PG 512M、Valkey 160M
   - PostgreSQL 不加 `MemoryDenyWriteExecute`（JIT）；被挡的系统调用返回 EPERM
   - 守卫：`install-hardening_mock_test.sh`
@@ -60,7 +61,7 @@ paths:
 - 口令不进任何命令行参数：awk 走 `ENVIRON`、grep 走 `-f -`、`migrate.sh` 用 `scrubbed_run`（不经 env(1)）并把 DSN 里的口令拆进 `PGPASSWORD`。守卫：`db-scripts_mock_test.sh`、`install-*_mock_test.sh` 里的 argv 断言
 - 测信号路径（HUP 等）的桩测试：检查机的循环忽略 SIGHUP，bash 对进程入口时已被忽略的信号装不上 trap，`kill -HUP` 什么也不会发生。被测脚本要先经 python3（没有就 perl）把 SIGHUP 复位成缺省再启动（`python3 -c 'import os,signal,sys; signal.signal(signal.SIGHUP, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' <命令>`）；本机用 `bash -c "trap '' HUP INT; bash <测试>" </dev/null` 模拟检查机条件。眼下没有装 HUP trap 的部署脚本，写第一个这样的测试时把复位函数放进共用的测试辅助文件
 - 桩测试与静态检查（`*_mock_test.sh`、`*_static_test.sh`）不需要数据库；与安装、迁移、nginx、发布物绑定相关的，CI 的 `.github/workflows/panel-deploy.yml` 逐个点名跑，新增这类测试要补进那份清单
-  - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root，在 panel-deploy 的 deploy-root-mock-tests job 里用 runner 的免密 sudo 跑（只在 GitHub 上，检查机明说跳过）
+  - `release-stop-the-world_mock_test.sh`、`backup-provenance_mock_test.sh` 需要 Linux root，在 panel-deploy 的 deploy-root-mock-tests job 里用 runner 的免密 sudo 跑（只在 GitHub 上，检查机明说跳过）
   - 要 Docker 的（`*_docker_test.sh`）单独成 job、只在 GitHub 上跑
 - nginx 的节点路径（`/api/v1/server/UniProxy/`、`/v1/nodes/`）用自己的限速区：`aegis_node` 按「来源 IP + 节点标识」分桶（签名通道 `X-Node-Id` 头、兼容通道 query `node_id`，只认 UUID 形状，否则退回按 IP 一个桶），外加宽松的每 IP 总上限 `aegis_node_ip`；`limit_conn` 在这两个 location 单独写（`aegis_node_conn`），server 层的 64 不再作用于节点。一台机器 60 个节点约 810 次/分、60 条事件流。守卫：`render-nginx_test.sh`
 - nginx 主配置的连接上限：`render-nginx.sh` 在输出位于 `<nginx 目录>/conf.d/` 时（或 `PANDORA_NGINX_MAIN_CONF` 指定）把 `nginx.conf` 的 `worker_connections` 抬到至少 8192、`worker_rlimit_nofile` 至少 65536，已更高的不动、认不出的结构不改；`edge-tls.sh` 改之前连同 nginx.conf 一起备份，`nginx -t` 不过一起换回。每条 SSE / 节点事件流占两个连接，Debian 缺省 768 约一千条就满（5k-r4）。站点的 `error_log` 写 `/var/log/nginx/aegis-error.log crit`，不要再改回 /dev/null。守卫：`render-nginx_test.sh`、`install-chain_mock_test.sh`

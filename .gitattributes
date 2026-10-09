@@ -6,7 +6,7 @@
 # .env.example —— 它的扩展名是 .example，不在任何一条里。于是 install.sh
 # 拿这份 CRLF 模板生成 .env，装到一半 source 它就炸：
 #
-#     /opt/aegispanel/deploy/.env: line 4: $'\r': command not found
+#     /opt/pandora/deploy/.env: line 4: $'\r': command not found
 #
 # 同一个坑，第二次踩，换了个文件而已。清单式防御总会漏——漏的永远是
 # 下一个新加的文件，而且要等它在 Linux 上跑起来才会发现。

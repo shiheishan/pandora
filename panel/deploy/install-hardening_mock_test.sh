@@ -122,6 +122,12 @@ for sw in 1 0; do
     [ "$(sed -n 2p <<<"$full")" = '[Service]' ] || fail "$kind drop-in (hardening=$sw) has no [Service] section"
     [ "$(grep -c '^MemoryMax=' <<<"$full")" -eq 1 ] && grep -qx "MemoryMax=$mem" <<<"$full" || fail "$kind MemoryMax (hardening=$sw): $(grep '^MemoryMax' <<<"$full")"
     [ "$(grep -c '^MemorySwapMax=' <<<"$full")" -eq 1 ] && grep -qx 'MemorySwapMax=0' <<<"$full" || fail "$kind drop-in (hardening=$sw) lets the service swap"
+    # PostgreSQL：后端被 OOM 杀掉不许停整个单元，postmaster 自己死了要拉起（开关开、关都写）
+    if [ "$kind" = pg ]; then
+      for want in OOMPolicy=continue Restart=on-failure; do
+        [ "$(grep -c "^${want%%=*}=" <<<"$full")" -eq 1 ] && grep -qx "$want" <<<"$full" || fail "pg drop-in (hardening=$sw) lacks $want"
+      done
+    fi
     while IFS= read -r line; do
       if [ "$sw" = 1 ]; then grep -qxF "$line" <<<"$full" || fail "$kind drop-in lacks $line"
       elif grep -qxF "$line" <<<"$full"; then fail "$kind drop-in keeps the sandbox ($line) with hardening off"; fi

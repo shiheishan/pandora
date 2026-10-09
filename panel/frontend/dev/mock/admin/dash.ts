@@ -278,7 +278,7 @@ export const dash: MockModule = {
       })
       ctx.send(200, {
         backup: {
-          dir: '/var/backups/aegispanel',
+          dir: '/var/backups/pandora',
           readable: true,
           count: files.length,
           total_bytes: files.reduce((s, f) => s + f.size, 0),

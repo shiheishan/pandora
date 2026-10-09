@@ -19,7 +19,8 @@ var DBMaxConnsEnv = map[Domain]string{
 	DomainNode:   "AEGIS_NODE_DB_MAX_CONNS",
 }
 
-// 连接池缺省值的算式。数据基座 compose 给 PostgreSQL 设了 max_connections=60：
+// 连接池缺省值的算式。生产与开发数据基座的 PostgreSQL 都是 max_connections=60
+// （deploy/postgresql-pandora.conf，dev compose 与它逐项相同）：
 //
 //	60 = 3（superuser_reserved_connections 缺省，留给迁移与超级用户排障）
 //	   + 11（维护余量：adminctl / payctl 各自的池、备份 pg_dump、迁移演练、
@@ -34,10 +35,9 @@ var DBMaxConnsEnv = map[Domain]string{
 //
 // 所以 public 缺省 16（15 + LISTEN），admin 15，node 14（+ 1 条探针专用），合计 46。
 // 改了 max_connections 或在同一个库上多开网关实例时，按同一个算式重排这三个变量，
-// 合计不要超过 max_connections − 3 − 维护余量。原生安装（系统包 PostgreSQL，
-// 缺省 max_connections=100）用同样的缺省值也有余量。
+// 合计不要超过 max_connections − 3 − 维护余量。
 const (
-	composeMaxConnections        = 60
+	pgMaxConnections             = 60
 	superuserReservedConnections = 3
 	maintenanceConnections       = 11
 	publicListenConnections      = 1
@@ -45,7 +45,7 @@ const (
 	nodeProbeConnections = 1
 	gatewayCount         = 3
 
-	defaultGatewayDBConns = (composeMaxConnections - superuserReservedConnections -
+	defaultGatewayDBConns = (pgMaxConnections - superuserReservedConnections -
 		maintenanceConnections - publicListenConnections) / gatewayCount
 
 	// 下限 2：public 的 LISTEN 独占一条，至少还要一条处理请求；上限只防手误。

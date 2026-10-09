@@ -62,6 +62,24 @@ require_command readlink
 require_command stat
 load_trusted_env "$PWD/.env"
 
+# 跑 root 所有、单链接、不可他写的程序（封条用发布包的 aegis-backup-webdav），与 verify-backup.sh 同一份
+run_trusted_executable() {
+  local executable="$1" executable_fd path_id fd_id mode rc; shift
+  require_trusted_parent_chain "$executable"
+  [ -f "$executable" ] && [ ! -L "$executable" ] && [ -x "$executable" ] \
+    || die "trusted executable is not a regular executable file"
+  [ "$(stat -c %u -- "$executable")" = 0 ] && [ "$(stat -c %h -- "$executable")" = 1 ] \
+    || die "trusted executable must be root-owned with one link"
+  mode=$((8#$(stat -c %a -- "$executable")))
+  (( (mode & 06022) == 0 )) || die "trusted executable has an unsafe mode"
+  exec {executable_fd}<"$executable"
+  path_id="$(stat -Lc %d:%i -- "$executable")"
+  fd_id="$(stat -Lc %d:%i -- "/proc/self/fd/$executable_fd")"
+  [ "$path_id" = "$fd_id" ] || die "trusted executable changed while opening"
+  "/proc/self/fd/$executable_fd" "$@" || rc=$?
+  exec {executable_fd}<&-
+  return "${rc:-0}"
+}
 validate_hook() {
   local hook="$1" label="$2" mode
   [ -z "$hook" ] && return 0
@@ -90,6 +108,11 @@ run_hook() {
 : "${AEGIS_BACKUP_DIR:?AEGIS_BACKUP_DIR is required}"
 : "${AEGIS_BACKUP_RETENTION_DAYS:?AEGIS_BACKUP_RETENTION_DAYS is required}"
 : "${AEGIS_BACKUP_AGE_RECIPIENT:?AEGIS_BACKUP_AGE_RECIPIENT is required; plaintext backups are forbidden}"
+: "${AEGIS_BACKUP_AGE_IDENTITY:?AEGIS_BACKUP_AGE_IDENTITY is required: every local backup is sealed with it}"
+[[ "$AEGIS_BACKUP_AGE_IDENTITY" = /* ]] || die "AEGIS_BACKUP_AGE_IDENTITY must be an absolute path"
+# 缺省取安装根目录（本脚本在 <根>/deploy/ 下）的 bin/aegis-backup-webdav
+sealer="${AEGIS_BACKUP_WEBDAV_BIN:-$(dirname -- "$PWD")/bin/aegis-backup-webdav}"
+[[ "$sealer" = /* ]] || die "AEGIS_BACKUP_WEBDAV_BIN must be an absolute path"
 
 [[ "$AEGIS_BACKUP_DIR" = /* ]] || die "AEGIS_BACKUP_DIR must be an absolute path"
 [ "$AEGIS_BACKUP_DIR" != "/" ] || die "AEGIS_BACKUP_DIR cannot be /"
@@ -205,6 +228,12 @@ tmp=""
 rmdir -- "$workdir"
 workdir=""
 
+# 本地封条（<归档>.seal）：用这台安装的 age 私钥派生的 HMAC 签归档与校验文件，restore-postgres.sh 凭它确认
+# 这份备份是本安装写出的（见 internal/domain/dbbackup 的 LocalSealSchema）。封不上就算备份失败：
+# 没有封条的备份恢复不了，不能让它看起来是好的
+run_trusted_executable "$sealer" seal-local "$archive" "$checksum" "$AEGIS_BACKUP_AGE_IDENTITY" >/dev/null \
+  || die "sealing the local backup failed (age identity $AEGIS_BACKUP_AGE_IDENTITY readable, root-owned, 0600?)"
+
 if [ -n "$remote_hook" ]; then
   run_hook "$remote_hook" "$archive" "$checksum"
 fi
@@ -212,7 +241,7 @@ fi
 # Retention only touches artifacts created by this script in the validated
 # dedicated directory. A zero-day setting keeps today's files (find -mtime +0).
 while IFS= read -r -d '' old; do
-  rm -f -- "$old" "${old}.sha256"
+  rm -f -- "$old" "${old}.sha256" "${old}.seal"
 done < <(find "$AEGIS_BACKUP_DIR" -maxdepth 1 -type f \
   -name 'aegis-postgres-*.dump.age' -mtime "+${AEGIS_BACKUP_RETENTION_DAYS}" -print0)
 

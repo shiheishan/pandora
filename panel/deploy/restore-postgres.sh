@@ -63,16 +63,10 @@ require_command stat
 invocation_restore_confirm="${AEGIS_RESTORE_CONFIRM-}"
 invocation_existing_confirm="${AEGIS_RESTORE_EXISTING_CONFIRM-}"
 invocation_production_confirm="${AEGIS_RESTORE_PRODUCTION_CONFIRM-}"
-invocation_allow_unsigned="${AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY-}"
 load_trusted_env "$PWD/.env"
 if [ -n "$invocation_restore_confirm" ]; then AEGIS_RESTORE_CONFIRM="$invocation_restore_confirm"; else unset AEGIS_RESTORE_CONFIRM; fi
 if [ -n "$invocation_existing_confirm" ]; then AEGIS_RESTORE_EXISTING_CONFIRM="$invocation_existing_confirm"; else unset AEGIS_RESTORE_EXISTING_CONFIRM; fi
 if [ -n "$invocation_production_confirm" ]; then AEGIS_RESTORE_PRODUCTION_CONFIRM="$invocation_production_confirm"; else unset AEGIS_RESTORE_PRODUCTION_CONFIRM; fi
-# 没有签名清单的备份只能经 verify-backup.sh 的一次性批准核完整性，恢复一律不收（下面还要调 verify-backup.sh，
-# 这个变量会被它继承）
-[ -z "$invocation_allow_unsigned" ] \
-  || die "unsigned legacy backups cannot be used by restore-postgres.sh"
-unset AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY
 
 archive=""
 target_db=""
@@ -130,6 +124,7 @@ assert_production_quiesced() {
 masked_by_restore=()
 production_guard_started=0
 restore_committed=0
+target_dropped=0
 reinstate_production_guard() {
   local unit exists recovery_rc=0
   [ "$production_guard_started" -eq 1 ] || return 0
@@ -156,6 +151,9 @@ finish_restore_guard() {
   if [ "$production_guard_started" -eq 1 ] && [ "$restore_committed" -ne 1 ]; then
     reinstate_production_guard || recovery_rc=1
     echo "restore-postgres: FAIL-CLOSED; runtime service masks and database connection gate remain after restore failure" >&2
+  fi
+  if [ "$rc" -ne 0 ] && [ "$target_dropped" -eq 1 ]; then
+    echo "restore-postgres: the previous database $target_db was already dropped before the failure; it is gone. Fix the cause and run the restore again from a backup (the archive is unchanged)" >&2
   fi
   if [ "$recovery_rc" -ne 0 ]; then
     echo "restore-postgres: FAIL-CLOSED recovery was incomplete; operator intervention is required" >&2
@@ -245,17 +243,24 @@ archive_role_plan() {
 # 本机集群里缺的角色先建好（恢复时 ALTER … OWNER TO、GRANT 才不失败）。备份里合法的角色只有三个：
 # postgres（跑迁移、对象属主、默认权限的主人）、aegis_idempotency_owner（两个 SECURITY DEFINER 函数的属主）、
 # aegis_app（运行角色，被授权者）。库的属主 POSTGRES_USER 不在归档里（不带 --create 的导出不含库本身）。
-# 缺的一律建成 NOLOGIN、不带任何特权（运行角色的登录与口令随后由 bootstrap.sh 设）；备份里有别的角色就停下，
-# 不替人决定。
-#   ensure_restore_roles <archive_role_plan 的输出>
-ensure_restore_roles() {
-  local plan="$1" role exists
+# 分两遍：check_restore_roles 只核、不动手（有一个认不出就停，什么都没建）；全部输入核完之后
+# create_missing_restore_roles 才建缺的，一律 NOLOGIN、不带任何特权（运行角色的登录与口令随后由 bootstrap.sh 设）。
+#   check_restore_roles <archive_role_plan 的输出>
+check_restore_roles() {
+  local plan="$1" role
   while read -r role; do
     [ -n "$role" ] || continue
     case "$role" in
       aegis_app|aegis_idempotency_owner|postgres) ;;
-      *) die "archive references role $role that this restore does not know how to create; create it by hand first" ;;
+      *) die "archive references role $role: this backup was not exported by this kind of installation and cannot be restored with this script (restore it by hand into a new database, see MIGRATION-RUNBOOK.md section 3, then run ./bootstrap.sh); nothing was changed" ;;
     esac
+  done <<<"$plan"
+}
+#   create_missing_restore_roles <archive_role_plan 的输出>（先过 check_restore_roles）
+create_missing_restore_roles() {
+  local plan="$1" role exists
+  while read -r role; do
+    [ -n "$role" ] || continue
     exists="$(pandora_pg psql -X -d postgres -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '$role'" | tr -d '[:space:]')" \
       || die "cannot check role $role"
     [ "$exists" = 1 ] && continue
@@ -295,8 +300,9 @@ restore_into_target() {
 "$PWD/verify-backup.sh" "$archive"
 role_plan="$(age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" | pandora_pg pg_restore --schema-only -f - | archive_role_plan)" \
   || die "cannot read the roles this archive needs"
-ensure_restore_roles "$role_plan"
+check_restore_roles "$role_plan"
 require_db_owner_role
+create_missing_restore_roles "$role_plan"
 AEGIS_VERIFY_RESTORE=owners "$PWD/verify-backup.sh" "$archive"
 begin_production_guard
 exists="$(pandora_pg psql -X -d postgres -tAc \
@@ -306,6 +312,7 @@ if [ "$exists" = "1" ]; then
     || die "existing target needs AEGIS_RESTORE_EXISTING_CONFIRM=OVERWRITE_EXISTING:${target_db}"
   assert_production_quiesced
   pandora_pg dropdb --force "$target_db"
+  target_dropped=1
 fi
 create_target_db
 assert_production_quiesced

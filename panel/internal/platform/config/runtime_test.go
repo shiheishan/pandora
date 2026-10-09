@@ -35,9 +35,9 @@ func TestRuntimeDefaultsFitComposeConnectionBudget(t *testing.T) {
 	for _, n := range r.DBMaxConns {
 		total += int(n)
 	}
-	if total+superuserReservedConnections+maintenanceConnections > composeMaxConnections {
+	if total+superuserReservedConnections+maintenanceConnections > pgMaxConnections {
 		t.Fatalf("gateway pools and node probe %d + reserved %d + maintenance %d exceed max_connections %d",
-			total, superuserReservedConnections, maintenanceConnections, composeMaxConnections)
+			total, superuserReservedConnections, maintenanceConnections, pgMaxConnections)
 	}
 	if r.DBMinConns[DomainPublic] != 1 || r.DBMinConns[DomainAdmin] != 1 || r.DBMinConns[DomainNode] != 8 {
 		t.Fatalf("pool min defaults = %v, want public 1 / admin 1 / node 8", r.DBMinConns)

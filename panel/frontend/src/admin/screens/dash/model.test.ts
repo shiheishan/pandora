@@ -173,7 +173,7 @@ describe('注册与活跃', () => {
 
 const STATUS_BASE: SystemStatus = {
   backup: {
-    dir: '/var/backups/aegispanel',
+    dir: '/var/backups/pandora',
     readable: true,
     count: 2,
     total_bytes: 2048,

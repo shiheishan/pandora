@@ -175,6 +175,8 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/pandora/bin/goose \
 
      `<库名>` 是 `.env` 里的 `POSTGRES_DB`。
 
+     恢复前先核备份的来路（`verify-backup.sh`，`restore-postgres.sh` 自己会调）：本机写的备份带封条 `<归档>.seal`（这台安装的 age 私钥派生的签名），留存期内哪一份都能恢复；从 WebDAV 取回的备份凭签名清单加可信检查点，只认最新一份。来路核不过就停下，什么都没动。机器重装后要用回原来那把私钥（`.env` 的 `AEGIS_BACKUP_AGE_IDENTITY`），否则旧备份既解不开、也核不过封条。
+
      恢复照原样还原属主与权限：备份要的角色先在本机集群里补齐（只认 `postgres`、`aegis_app`、`aegis_idempotency_owner`，新建的一律 `NOLOGIN`、不带特权；备份里有别的角色就在动正式库之前停下）；库属主角色（`.env` 的 `POSTGRES_USER`）必须已经存在，否则在删正式库之前停下。运行角色在库上的设置（search_path、jit、statement_timeout、收回 TEMPORARY）是库级的、不在备份里，恢复完一律跑 `./bootstrap.sh`。
 
      恢复前先在临时库里用同样的参数（照原样还原属主与权限）完整恢复一遍，角色或权限的问题在删正式库之前就会暴露。

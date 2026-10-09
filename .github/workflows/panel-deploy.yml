@@ -134,18 +134,25 @@ jobs:
             echo "GitHub runner 上没有免密 sudo，无法跑 $t" >&2
             exit 1
           fi
-      - name: Run the signed-manifest gate of verify-backup / restore-postgres as root
-        # 两个脚本把 .env 与可执行文件按属主和 /proc/self/fd 绑定，要 Linux root；别处只做静态检查
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: panel/go.mod
+          cache-dependency-path: panel/go.sum
+      - name: Run the backup provenance checks (local seal, signed manifest) as root
+        # 真跑 backup-postgres.sh → verify-backup.sh → restore-postgres.sh，封条用真的 aegis-backup-webdav；
+        # 三个脚本把 .env 与可执行文件按属主和 /proc/self/fd 绑定，要 Linux root
         run: |
-          t=verify-backup_manifest_mock_test.sh
+          t=backup-provenance_mock_test.sh
           if [ "${GITHUB_ACTIONS:-}" != true ]; then
             echo "不在 GitHub Actions 上，跳过 $t（GitHub 上必跑）"
             exit 0
           fi
+          tool="$RUNNER_TEMP/aegis-backup-webdav"
+          (cd .. && CGO_ENABLED=0 go build -trimpath -o "$tool" ./cmd/aegis-backup-webdav)
           if [ "$(id -u)" -eq 0 ]; then
-            out="$(bash "$t")"
+            out="$(PANDORA_TEST_BACKUP_TOOL="$tool" bash "$t")"
           elif sudo -n true 2>/dev/null; then
-            out="$(sudo -n env "PATH=$PATH" bash "$t")"
+            out="$(sudo -n env "PATH=$PATH" PANDORA_TEST_BACKUP_TOOL="$tool" bash "$t")"
           else
             echo "GitHub runner 上没有免密 sudo，无法跑 $t" >&2
             exit 1

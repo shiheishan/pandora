@@ -362,7 +362,7 @@ BK=""
 if [[ "$fresh_db" = f ]]; then
   install -d -o root -g root -m 0700 "$NATIVE_BACKUP_DIR"
   BK="$NATIVE_BACKUP_DIR/pre-upgrade-$(date +%Y%m%d-%H%M%S).dump"
-  (umask 077 && cd / && runuser -u postgres -- pg_dump -Fc -d aegis -p "$PG_PORT") >"$BK" \
+  (umask 077 && cd / && runuser -u postgres -- pg_dump -Fc -d aegis -p "$PG_PORT" >"$BK") \
     || { rm -f -- "$BK"; die "升级前备份失败（pg_dump），迁移没有执行"; }
   [[ -s "$BK" ]] && pg_restore --list <"$BK" >/dev/null \
     || { rm -f -- "$BK"; die "升级前备份读不出目录（pg_restore --list），迁移没有执行"; }

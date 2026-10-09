@@ -4,29 +4,39 @@
 #      键的集合一样、每个值一样（键不分大小写；值去掉成对的单 / 双引号再比，timezone 'UTC' 与 UTC 算相同）；
 #   ② ports 只绑 127.0.0.1，且没有 network_mode: host；
 #   ③ 镜像的超级用户是 postgres、口令取 POSTGRES_SUPER_PASSWORD：deploy/ 下的脚本按直装的身份连它；
+#      「#」只在引号外才起注释（两边都一样）：引号里带 # 的值照常比较，不一样就红；
+#      另外三条旁路都不许有，否则参数会在 -c 之外悄悄改掉：dev/initdb 下任何文件含 ALTER SYSTEM，
+#      compose 里出现 PGOPTIONS，或 POSTGRES_INITDB_ARGS 带 -c / --set；
 #   ④ Valkey 的启动参数与 install.sh 写进 Valkey 配置的 pandora 块（install-lib.sh 的 native_valkey_hardening_block）
 #      逐项相同；块里的 bind 与 protected-mode 只管主机上的服务（容器靠 ②），口令不在块里，这三项不比。
-# 另把同一套检查跑在几份改坏的副本上（改一个值、删一个参数、端口绑到 0.0.0.0、改 Valkey 内存上限），都必须报错，
+# 另把同一套检查跑在几份改坏的副本上（改一个值、删一个参数、端口绑到 0.0.0.0、改 Valkey 内存上限、引号里 # 后的值不同、initdb 里加 ALTER SYSTEM、compose 里加 PGOPTIONS 或 initdb 的 -c），都必须报错，
 # 免得解析失灵时空过。
 set -euo pipefail
 export LC_ALL=C
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE="$DEPLOY/../dev/docker-compose.yml"
+INITDB="$DEPLOY/../dev/initdb"
 CONF="$DEPLOY/postgresql-pandora.conf"
 T="$(mktemp -d "${TMPDIR:-/tmp}/pandora-dev-compose.XXXXXX")"
 trap 'rm -rf -- "$T"' EXIT
 fail() { printf 'dev-compose static: %s\n' "$*" >&2; exit 1; }
 [ -r "$COMPOSE" ] || fail "missing $COMPOSE"
 [ -r "$CONF" ] || fail "missing $CONF"
+[ -d "$INITDB" ] || fail "missing $INITDB"
 
 # 值的规范化：去掉首尾空白与成对的引号
 NORM='function norm(v) { gsub(/^[ \t]+|[ \t]+$/, "", v); if (v ~ /^'\''.*'\''$/ || v ~ /^".*"$/) v = substr(v, 2, length(v) - 2); return v }'
+# 去注释：「#」只在引号外才算注释；ws=1 时还要求它前面是空白（YAML 列表项的写法）
+UNCOMMENT='function uncomment(s, ws,   i, c, q) { q = ""; for (i = 1; i <= length(s); i++) { c = substr(s, i, 1)
+  if (q != "") { if (c == q) q = "" } else if (c == "'\''" || c == "\"") q = c
+  else if (c == "#" && (!ws || i == 1 || substr(s, i - 1, 1) ~ /[ \t]/)) return substr(s, 1, i - 1) }
+  return s }'
 
 # postgresql.conf 的有效行 → 「键=值」一行一个（# 起注释；「键 = 值」与「键 值」两种写法都认）
 conf_params() {
-  awk "$NORM"'
-    { sub(/#.*/, ""); if ($0 ~ /^[ \t]*$/) next
+  awk "$NORM$UNCOMMENT"'
+    { $0 = uncomment($0, 0); if ($0 ~ /^[ \t]*$/) next
       line = $0; sub(/^[ \t]+/, "", line)
       if (match(line, /^[A-Za-z_][A-Za-z0-9_.]*[ \t]*=/)) { key = substr(line, 1, RLENGTH - 1); val = substr(line, RLENGTH + 1) }
       else if (match(line, /^[A-Za-z_][A-Za-z0-9_.]*[ \t]+/)) { key = substr(line, 1, RLENGTH); val = substr(line, RLENGTH + 1) }
@@ -36,12 +46,12 @@ conf_params() {
 
 # compose 里 postgres 服务 command 列表中每个 -c 之后那一项 → 「键=值」
 compose_params() {
-  awk "$NORM"'
+  awk "$NORM$UNCOMMENT"'
     /^  [A-Za-z0-9_-]+:/ { svc = $1 }
     /^[A-Za-z]/ { svc = "" }
     svc == "postgres:" && /^    [A-Za-z_]+:/ { incmd = ($1 == "command:"); next }
     svc == "postgres:" && incmd && /^ +- / {
-      item = $0; sub(/^ +- /, "", item); sub(/[ \t]+#.*$/, "", item); item = norm(item)
+      item = $0; sub(/^ +- /, "", item); item = norm(uncomment(item, 1))
       if (want) { want = 0; eq = index(item, "="); if (!eq) { print "UNPARSED " item; next }
         print tolower(substr(item, 1, eq - 1)) "=" norm(substr(item, eq + 1)) }
       else if (item == "-c") want = 1 }
@@ -79,7 +89,7 @@ PROD_VALKEY="$(prod_valkey)" || fail "cannot render the production Valkey block 
 
 # 一份 compose 对一份 conf 的全部检查；不过就打印原因并返回 1
 check() {
-  local compose="$1" conf="$2" want got both dup p n=0
+  local compose="$1" conf="$2" initdb="${3:-$INITDB}" want got both dup p n=0
   want="$(conf_params "$conf")"; got="$(compose_params "$compose")"
   [ -n "$want" ] || { echo "no active parameters parsed from $conf"; return 1; }
   both="$(printf '%s\n%s\n' "$want" "$got")"
@@ -90,6 +100,15 @@ check() {
     echo "PostgreSQL parameters differ (< postgresql-pandora.conf, > dev compose):"
     diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | grep '^[<>]' || true
     return 1
+  fi
+  # 旁路：-c 之外不许有别的办法改 PostgreSQL 参数
+  if [ -n "$(find "$initdb" -type f -print 2>/dev/null | head -n 1)" ] \
+     && find "$initdb" -type f -exec cat {} + | tr '\n' ' ' | grep -Eiq 'alter[[:space:]]+system'; then
+    echo "ALTER SYSTEM under dev/initdb overrides the -c parameters"; return 1
+  fi
+  if grep -rIq PGOPTIONS "$compose" "$initdb"; then echo "PGOPTIONS overrides PostgreSQL parameters outside -c"; return 1; fi
+  if grep -E '^[[:space:]]*POSTGRES_INITDB_ARGS:' "$compose" | grep -Eq '(^|[[:space:]"=])(-c|--set)([[:space:]=]|"|$)'; then
+    echo "POSTGRES_INITDB_ARGS carries -c / --set parameter overrides"; return 1
   fi
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -132,5 +151,31 @@ check "$T/valkey.yml" "$CONF" >/dev/null && fail "a changed Valkey maxmemory was
 sed -e "s/^timezone = 'UTC'$/timezone = \"UTC\"/" -e 's/^work_mem = 4MB$/work_mem 4MB/' "$CONF" >"$T/quoted.conf"
 cmp -s "$CONF" "$T/quoted.conf" && fail "mutation premise: timezone / work_mem lines not found in postgresql-pandora.conf"
 out="$(check "$COMPOSE" "$T/quoted.conf")" || fail "quoting or 'key value' syntax was treated as a difference: $out"
+
+# 引号里 # 之后的值不同必须红（不能把 # 当注释吞掉）：两边各改一次
+printf "%s\n" "log_line_prefix = '%t #a'" >"$T/q.conf"
+awk '{ print } /^      - timezone=UTC$/ { print "      - -c"; print "      - log_line_prefix='"'"'%t #a'"'"'" }' "$COMPOSE" >"$T/q-same.yml"
+[ "$(conf_params "$T/q.conf")" = "$(compose_params "$T/q-same.yml" | grep '^log_line_prefix=')" ] \
+  || fail "quoted '#' values are not parsed identically on both sides"
+awk '{ print } /^      - timezone=UTC$/ { print "      - -c"; print "      - log_line_prefix='"'"'%t #b'"'"'" }' "$COMPOSE" >"$T/q-diff.yml"
+{ cat "$CONF"; printf "%s\n" "log_line_prefix = '%t #a'"; } >"$T/q-hash.conf"
+check "$T/q-same.yml" "$T/q-hash.conf" >/dev/null || fail "an identical quoted '#' value was reported as different"
+check "$T/q-diff.yml" "$T/q-hash.conf" >/dev/null && fail "a quoted value differing after '#' was not detected"
+# 引号外的 # 仍是注释：conf 行尾的 # 注释不进值
+{ cat "$CONF"; printf "%s\n" "log_line_prefix = '%t #a' # trailing"; } >"$T/q-trail.conf"
+check "$T/q-same.yml" "$T/q-trail.conf" >/dev/null || fail "a trailing comment after a quoted value was taken as part of it"
+# initdb 里的 ALTER SYSTEM、compose 里的 PGOPTIONS、initdb 参数里的 -c 都必须红
+cp -R "$INITDB" "$T/initdb-bad"
+printf 'ALTER SYSTEM SET work_mem = %s;\n' "'64MB'" >"$T/initdb-bad/90-bad.sql"
+check "$COMPOSE" "$CONF" "$T/initdb-bad" >/dev/null && fail "ALTER SYSTEM under initdb was not detected"
+cp -R "$INITDB" "$T/initdb-bad2"
+printf 'alter\n  system set jit = on;\n' >"$T/initdb-bad2/90-bad.sql"
+check "$COMPOSE" "$CONF" "$T/initdb-bad2" >/dev/null && fail "a line-split ALTER SYSTEM under initdb was not detected"
+sed 's|^      POSTGRES_USER: postgres$|      POSTGRES_USER: postgres\n      PGOPTIONS: "-c work_mem=64MB"|' "$COMPOSE" >"$T/pgoptions.yml"
+cmp -s "$COMPOSE" "$T/pgoptions.yml" && fail "mutation premise: POSTGRES_USER line not found in the dev compose"
+check "$T/pgoptions.yml" "$CONF" >/dev/null && fail "PGOPTIONS in the compose was not detected"
+sed 's|--auth-local=scram-sha-256"|--auth-local=scram-sha-256 -c work_mem=64MB"|' "$COMPOSE" >"$T/initdbargs.yml"
+cmp -s "$COMPOSE" "$T/initdbargs.yml" && fail "mutation premise: POSTGRES_INITDB_ARGS not found in the dev compose"
+check "$T/initdbargs.yml" "$CONF" >/dev/null && fail "-c in POSTGRES_INITDB_ARGS was not detected"
 
 echo "dev-compose static: $count PostgreSQL parameters match postgresql-pandora.conf, $(wc -l <<<"$PROD_VALKEY" | tr -d ' ') Valkey settings match install.sh, ports loopback-only, superuser postgres"
