@@ -38,6 +38,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/logging"
 	"github.com/aegispanel/aegis/internal/platform/profiling"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
+	"github.com/aegispanel/aegis/internal/platform/roundtrip"
 	"github.com/aegispanel/aegis/internal/platform/server"
 	"github.com/aegispanel/aegis/internal/platform/token"
 )
@@ -87,6 +88,8 @@ func run() error {
 		return fmt.Errorf("解析 Redis 连接串: %w", err)
 	}
 	rdb := redis.NewClient(redisOpt)
+	// 往返记账：请求里的每条 Valkey 命令记进访问日志的 kv_rt（platform/roundtrip）
+	rdb.AddHook(roundtrip.ValkeyHook{})
 	defer func() {
 		if closeResourcesOnReturn {
 			_ = rdb.Close()

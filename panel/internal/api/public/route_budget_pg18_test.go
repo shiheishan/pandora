@@ -150,6 +150,27 @@ func TestPortalRouteBudgetPG18(t *testing.T) {
 		budget.Measure(access, c.route, 2, ok, call(c.method, c.path, c.body, c.authed))
 	}
 	budget.Verify()
+
+	// 非受控归还要记到发起它的请求头上（访问日志的 db_reset）：/readyz 走 pgxpool 的
+	// Pool.Ping，取连接、探活、直接归还，不经 platform/db 的受控路径，归还后连接池
+	// 多跑一条会话清理。换栈接 database/sql 时就靠这个数核对 GORM 事务的归还。
+	t.Run("uncontrolled release is charged to the request", func(t *testing.T) {
+		before := app.SessionResets()
+		id := uuid.NewString()
+		if code := call(http.MethodGet, "/readyz", "", false)(id); code != http.StatusOK {
+			t.Fatalf("GET /readyz = %d", code)
+		}
+		if e := access.Wait(t, id); e.Route != "GET /readyz" || e.Reset != 1 {
+			t.Fatalf("readyz access line = %+v, want db_reset 1", e)
+		}
+		// 会话清理在归还协程里跑：等它真的执行
+		for deadline := time.Now().Add(2 * time.Second); app.SessionResets() == before; time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("the session reset statement never ran after the uncontrolled release")
+			}
+		}
+		t.Logf("readyz：db_reset 1，池级会话清理 %d → %d", before, app.SessionResets())
+	})
 }
 
 type portalBudgetFixture struct {

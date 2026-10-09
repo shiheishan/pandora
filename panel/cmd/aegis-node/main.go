@@ -25,6 +25,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/logging"
 	"github.com/aegispanel/aegis/internal/platform/profiling"
 	"github.com/aegispanel/aegis/internal/platform/realtime"
+	"github.com/aegispanel/aegis/internal/platform/roundtrip"
 	"github.com/aegispanel/aegis/internal/platform/server"
 )
 
@@ -68,6 +69,8 @@ func run() error {
 		return fmt.Errorf("parse Redis URL: %w", err)
 	}
 	rdb := redis.NewClient(redisOpt)
+	// 往返记账：请求里的每条 Valkey 命令记进访问日志的 kv_rt（platform/roundtrip）
+	rdb.AddHook(roundtrip.ValkeyHook{})
 	defer rdb.Close()
 	// Valkey 不是节点网关的硬依赖：节点的 REST 路径不用它（nonce 认领出错回落 PG），
 	// 事件流的跨进程信号断了也只是退回轮询。启动时连不上只告警、照常起服务，
