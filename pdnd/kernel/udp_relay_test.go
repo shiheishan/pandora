@@ -298,7 +298,7 @@ func TestSOCKS5UDPAssociateReleasesRoutes(t *testing.T) {
 func startTrojanUDPRelayAdapter(t *testing.T, plane DataPlane) (*trojanAdapter, int) {
 	t.Helper()
 	port := reserveTCPPort(t)
-	adapter := &trojanAdapter{users: make(map[string]trojanUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	adapter := &trojanAdapter{users: make(map[string]trojanUser), active: make(map[net.Conn]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "trojan", Listen: "127.0.0.1", Port: port}}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -376,7 +376,7 @@ func startVMessUDPRelaySession(t *testing.T, plane DataPlane, target *net.UDPAdd
 	t.Helper()
 	port := reserveTCPPort(t)
 	id := uuid.New()
-	adapter := &vmessAdapter{users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}
+	adapter := &vmessAdapter{users: make(map[string]vmessUser), active: make(map[net.Conn]struct{})}
 	spec := InboundSpec{Config: core.InboundConfig{Protocol: "vmess", Listen: "127.0.0.1", Port: port, Raw: map[string]any{"security": "aes-128-gcm"}}}
 	if err := adapter.AddUsers([]core.User{{ID: 63, UUID: id.String()}}); err != nil {
 		t.Fatal(err)

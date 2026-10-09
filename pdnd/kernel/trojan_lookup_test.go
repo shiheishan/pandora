@@ -9,7 +9,7 @@ import (
 
 func newTrojanLookupAdapter(t testing.TB, n int) *trojanAdapter {
 	t.Helper()
-	a := &trojanAdapter{users: make(map[string]trojanUser), online: make(map[int64]map[string]struct{})}
+	a := &trojanAdapter{users: make(map[string]trojanUser)}
 	users := make([]core.User, n)
 	for i := range users {
 		users[i] = core.User{ID: int64(i + 1), UUID: fmt.Sprintf("trojan-lookup-%d", i)}

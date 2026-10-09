@@ -158,10 +158,10 @@ func (a *ss2022Adapter) handleUDPPacket(ctx context.Context, wire []byte, client
 	if !hasUser {
 		return fmt.Errorf("shadowsocks 2022 has no configured user")
 	}
-	if !a.enterDevice(user, ip) {
+	if !a.online.enter(user, ip) {
 		return fmt.Errorf("shadowsocks 2022 device limit")
 	}
-	defer a.leaveDevice(user, ip)
+	defer a.online.leave(user, ip)
 	sessionKey := clientAddr.String() + "#" + strconv.FormatUint(clientID, 10)
 	a.udpMu.Lock()
 	session := a.udp[sessionKey]

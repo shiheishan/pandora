@@ -61,7 +61,7 @@ type vmessAdapter struct {
 	// 握手直接读它，不加锁、不复制、不再逐用户重做 KDF 与 aes.NewCipher。
 	authCandidates atomic.Pointer[[]vmessUserCandidate]
 	sessions       userSessions
-	online         map[int64]map[string]struct{}
+	online         onlineDevices
 	listener       net.Listener
 	packet         net.PacketConn
 	httpServer     *http.Server
@@ -96,7 +96,7 @@ type vmessUser struct {
 }
 
 func newVMessAdapter(spec InboundSpec) (Adapter, error) {
-	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*xhttpSession)}, nil
+	return &vmessAdapter{spec: spec, users: make(map[string]vmessUser), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*xhttpSession)}, nil
 }
 
 func (a *vmessAdapter) Protocol() string { return "vmess" }
@@ -470,10 +470,10 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	}
 	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
-	if !a.enterDevice(user, ip) {
+	if !a.online.enter(user, ip) {
 		return deviceLimitError("vmess")
 	}
-	defer a.leaveDevice(user, ip)
+	defer a.online.leave(user, ip)
 	if bodyState.command == vmessUDP {
 		return a.handleUDP(ctx, conn, user, destination, bodyState, security)
 	}

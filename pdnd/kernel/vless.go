@@ -35,7 +35,7 @@ type vlessAdapter struct {
 	limiters core.SpeedLimiters
 	// sessions 是按用户的在途连接表与原子流量计数（user_sessions.go）。
 	sessions      userSessions
-	online        map[int64]map[string]struct{}
+	online        onlineDevices
 	listener      net.Listener
 	packet        net.PacketConn
 	httpServer    *http.Server
@@ -75,7 +75,7 @@ func NewDefaultAdapterRegistry() *AdapterRegistry {
 	return r
 }
 func newVLESSAdapter(spec InboundSpec) (Adapter, error) {
-	return &vlessAdapter{spec: spec, users: make(map[string]core.User), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*xhttpSession)}, nil
+	return &vlessAdapter{spec: spec, users: make(map[string]core.User), active: make(map[net.Conn]struct{}), xhttpSessions: make(map[string]*xhttpSession)}, nil
 }
 func (a *vlessAdapter) Protocol() string { return "vless" }
 func (a *vlessAdapter) Validate(spec InboundSpec) error {
@@ -603,10 +603,10 @@ func (a *vlessAdapter) serveConnSession(ctx context.Context, conn net.Conn, real
 	}
 	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
-	if !a.enterDevice(user, ip) {
+	if !a.online.enter(user, ip) {
 		return deviceLimitError("vless")
 	}
-	defer a.leaveDevice(user, ip)
+	defer a.online.leave(user, ip)
 	if _, err := conn.Write([]byte{vlessVersion, 0}); err != nil {
 		return err
 	}

@@ -32,7 +32,7 @@ type tuicAdapter struct {
 	users     map[string]int
 	slots     []tuicSlot
 	sessions  userSessions
-	online    map[int64]map[string]struct{}
+	online    onlineDevices
 	service   *tuic.Service[int]
 	packet    net.PacketConn
 	plane     DataPlane
@@ -54,7 +54,7 @@ var _ N.UDPConnectionHandlerEx = (*tuicAdapter)(nil)
 func newTUICAdapter(spec InboundSpec) (Adapter, error) {
 	return &tuicAdapter{
 		spec: spec, users: make(map[string]int),
-		online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{}),
+		active: make(map[net.Conn]struct{}),
 	}, nil
 }
 
@@ -339,17 +339,7 @@ func (a *tuicAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	return a.sessions.snapshot(), nil
 }
 
-func (a *tuicAdapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
+func (a *tuicAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 
 func (a *tuicAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	a.mu.Lock()
@@ -370,11 +360,11 @@ func (a *tuicAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, source
 		}
 		epoch := a.sessions.epoch()
 		index, user, ok := a.userFromContext(ctx)
-		if admitErr := admissionError("tuic", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+		if admitErr := admissionError("tuic", ok, ok && a.online.enter(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
-		defer a.leaveDevice(user, source.AddrString())
+		defer a.online.leave(user, source.AddrString())
 		sess := a.sessions.open(user, epoch, conn)
 		if sess == nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), errSessionRevoked)
@@ -412,11 +402,11 @@ func (a *tuicAdapter) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 		// epoch 要在查用户之前取，见 userSessions 的竞态说明。
 		epoch := a.sessions.epoch()
 		_, user, ok := a.userFromContext(ctx)
-		if admitErr := admissionError("tuic", ok, ok && a.enterDevice(user, source.AddrString())); admitErr != nil {
+		if admitErr := admissionError("tuic", ok, ok && a.online.enter(user, source.AddrString())); admitErr != nil {
 			a.connErr.addr(StageSession, source.UDPAddr(), admitErr)
 			return
 		}
-		defer a.leaveDevice(user, source.AddrString())
+		defer a.online.leave(user, source.AddrString())
 		meta := route.Meta{Domain: destination.Fqdn, IP: destination.Addr, Port: destination.Port, Network: "udp", Protocol: "tuic", SourceIP: source.Addr, SourcePort: source.Port}
 		upstream, err := a.plane.ListenUDP(ctx, meta, destination)
 		if err != nil {
@@ -448,32 +438,6 @@ func (a *tuicAdapter) userFromContext(ctx context.Context) (int, core.User, bool
 		return 0, core.User{}, false
 	}
 	return index, a.slots[index].user, true
-}
-
-func (a *tuicAdapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-
-func (a *tuicAdapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
 }
 
 func (a *tuicAdapter) removeActive(conn net.Conn) {

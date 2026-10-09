@@ -30,7 +30,7 @@ type naiveAdapter struct {
 	mu       sync.RWMutex
 	users    map[string]proxyUser
 	sessions userSessions
-	online   map[int64]map[string]struct{}
+	online   onlineDevices
 	listener net.Listener
 	server   *http.Server
 	plane    DataPlane
@@ -47,7 +47,7 @@ type naiveAdapter struct {
 }
 
 func newNaiveAdapter(spec InboundSpec) (Adapter, error) {
-	return &naiveAdapter{spec: spec, users: make(map[string]proxyUser), online: make(map[int64]map[string]struct{}), active: make(map[net.Conn]struct{})}, nil
+	return &naiveAdapter{spec: spec, users: make(map[string]proxyUser), active: make(map[net.Conn]struct{})}, nil
 }
 
 func (a *naiveAdapter) Protocol() string { return "naive" }
@@ -234,10 +234,10 @@ func (a *naiveAdapter) handleStream(ctx context.Context, conn net.Conn, user cor
 	}
 	defer sess.close()
 	ip := remoteIP(conn.RemoteAddr())
-	if !a.enterDevice(user, ip) {
+	if !a.online.enter(user, ip) {
 		return deviceLimitError("naive")
 	}
-	defer a.leaveDevice(user, ip)
+	defer a.online.leave(user, ip)
 	sourceIP, _ := netip.ParseAddr(ip)
 	meta := route.Meta{Domain: destination.Domain, IP: destination.IP, Port: destination.Port, Network: "tcp", Protocol: "naive", SourceIP: sourceIP}
 	upstream, err := a.plane.DialTCP(ctx, meta, M.ParseSocksaddrHostPort(destination.Host, destination.Port))
@@ -322,41 +322,7 @@ func (a *naiveAdapter) DelUsers(ids []string) error {
 func (a *naiveAdapter) SnapshotTraffic() ([]core.UserTraffic, error) {
 	return a.sessions.snapshot(), nil
 }
-func (a *naiveAdapter) OnlineIPs() map[int64][]string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make(map[int64][]string, len(a.online))
-	for id, ips := range a.online {
-		for ip := range ips {
-			out[id] = append(out[id], ip)
-		}
-	}
-	return out
-}
-func (a *naiveAdapter) enterDevice(user core.User, ip string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	set := a.online[user.ID]
-	if set == nil {
-		set = make(map[string]struct{})
-		a.online[user.ID] = set
-	}
-	if _, exists := set[ip]; !exists && user.DeviceLimit > 0 && len(set) >= user.DeviceLimit {
-		return false
-	}
-	set[ip] = struct{}{}
-	return true
-}
-func (a *naiveAdapter) leaveDevice(user core.User, ip string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if set := a.online[user.ID]; set != nil {
-		delete(set, ip)
-		if len(set) == 0 {
-			delete(a.online, user.ID)
-		}
-	}
-}
+func (a *naiveAdapter) OnlineIPs() map[int64][]string { return a.online.snapshot() }
 func (a *naiveAdapter) addTraffic(user core.User, upload, download int64) {
 	a.sessions.add(user.ID, upload, download)
 }
