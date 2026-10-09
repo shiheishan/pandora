@@ -3,14 +3,40 @@ paths:
   - "pdnd/internal/reality/**"
   - "pdnd/internal/realityquic/**"
   - "pdnd/internal/nativewire/shadowtls/**"
+  - "pdnd/internal/nativewire/anytls/**"
+  - "pdnd/internal/nativewire/hysteria2/**"
+  - "pdnd/internal/nativewire/tuic/**"
 ---
 
 # pdnd 里 fork 来的第三方代码
 
+## 上游基点
+
+基点 = 2026-09-22 初次导入（f1390b3）时的 fork 文件与上游逐个候选 diff（只比 fork 里有的文件，先把上游 import 路径换成本仓库路径），差异最小的那个；2026-10-08 核实。go.mod 里同名模块是对照测试或 compat 构建用的，版本**不等于**基点（anytls 即是反例）。合上游时从这里的基点取「基点..目标」的 diff，合完更新本表并在提交说明写上目标 commit。
+
+| fork 目录（pdnd/internal/） | 上游 | 基点 | 导入时相对基点的差异 |
+|---|---|---|---|
+| `reality` | github.com/XTLS/REALITY | commit 9234c772ba8f（2026-03-22，即 go.mod 的 `v0.0.0-20260322125925-9234c772ba8f`）；下一个提交 393f8de 把 `tls.go` 的 8192 缓冲改成 17KiB，fork 仍是 8192 | 164 行：删 `config.Show` 调试打印、`config.Clone()`、伪造 NewSessionTicket 的 `pskModeDHE` 判断、原生 REALITY 客户端字段、`QUICServer` 构造；独有 `handoff.go`、`quic_reality.go`、`reality_client.go` 等 |
+| `realityquic` | github.com/apernet/quic-go 的 `v0.59.0-mod-rename` 分支（无 tag；master 停在 v0.51） | commit db4786c77a22（2026-02-17，即 go.mod 的 `v0.59.1-0.20260217092621-db4786c77a22`）；下一个提交 20e2c69 在 `connection.go` 多一行 `SetMaxDatagramSize`，fork 没有 | 114 行：约 20 个文件把 `crypto/tls` 换成 `internal/reality`、`connection.go` 的 `mtuDiscoverer != nil` 判断、`http3/transport.go` 改用 `standardTLSState`；独有 `http3/tls_state.go`、README |
+| `nativewire/shadowtls` | github.com/SagerNet/sing-shadowtls | commit fcd445d33c11（2025-05-03，`v0.2.1-0.20250503051639-fcd445d33c11`，sing-box v1.13.14 同版本） | 0 行（逐字节一致） |
+| `nativewire/anytls` | github.com/anytls/sing-anytls | **v0.0.11**（130d2e61b889）。go.mod 的对照客户端是 v0.0.13；v0.0.12 起上游把 `pipe/`、`skiplist/` 挪进 `internal/`，fork 仍是旧布局 | 9 行：`service.go` 口令查找加 `userAccess` 读写锁 |
+| `nativewire/hysteria2` | github.com/SagerNet/sing-quic 的 `hysteria2/` | v0.6.1（907fec5e8e6b，2026-03-30；与 go.mod 一致） | 11 行：`service.go` 用户表读写锁、import 排序 |
+| `nativewire/tuic` | github.com/SagerNet/sing-quic 的 `tuic/` | v0.6.1（同上；单看 tuic 与相邻的 ec3b222、2afc335 并列，按 hysteria2 定） | 8 行：`service.go` 用户表读写锁 |
+
+导入之后本仓库在基点之上的改动（合上游时要保住）：
+
+- reality：d3119d3（拒绝的握手转发到 dest）、eb24309（Vision 切原始 socket）、c6291f8、09317d5；新增 `coalesce_test.go`。
+- realityquic：只有 137dcf1、bad0abf 改注释与链接。
+- shadowtls：f8173f0（认证前限时）；新增 `service_test.go`。
+- anytls：8da0e00（超 64KB 拆帧、控制帧 deadline）；其中 `stream.go` 的 FIN 与 dieHook 顺序、`util/version.go` 版本串是从 v0.0.13 手工同步的，不是整体升到 v0.0.13。
+- hysteria2：0b8a840、d7991ac、c8b3871、b525f86、17f7af1、1acb247、5daa37c（UDP 热路径、增量用户表、`dgram` 分片、空闲回收）；新增 `idle.go`、`salamander_batch_*.go`。
+- tuic：74d7256、c8b3871、b525f86、1acb247、5daa37c；新增 `idle.go`。
+
 ## 共同约束
 
 - 保持上游的文件划分，不按本仓库习惯拆分、合并或重命名文件：为了能对照上游、合上游。`internal/reality` 与 `internal/realityquic` 因此整目录豁免 800 行规则（pdnd 根 `linelimit_test.go` 的 `lineLimitExemptDirs`）；目录改名或删除要同步那张表。
-- 许可证文件原样保留：`internal/reality` 的 `LICENSE`（MPL-2.0，fork 自 XTLS/REALITY）与 `LICENSE-Go`（它本身基于 Go crypto/tls）两份并存；`internal/realityquic` 保留 apernet/quic-go 的 MIT `LICENSE`；`internal/nativewire/shadowtls` 保留 sing-shadowtls 的 GPL-3.0 `LICENSE`，连同上游的 README、Makefile 不动。
+- 许可证文件原样保留：`internal/reality` 的 `LICENSE`（MPL-2.0，fork 自 XTLS/REALITY）与 `LICENSE-Go`（它本身基于 Go crypto/tls）两份并存；`internal/realityquic` 保留 apernet/quic-go 的 MIT `LICENSE`；`internal/nativewire/shadowtls` 保留 sing-shadowtls 的 GPL-3.0 `LICENSE`，连同上游的 README、Makefile 不动；`anytls`、`hysteria2`、`tuic` 各自目录下的 `LICENSE` 同样保留。
+- govulncheck 看不到 fork：上游（或 crypto/tls、quic-go）出公告时，要人工到对应目录查同样的代码（对照表见 deps-upgrade skill 第 1 节）。
 
 ## realityquic（fork 自 apernet/quic-go）
 
@@ -23,3 +49,9 @@ paths:
 - 唯一生产调用方是 `kernel/shadowtls.go`，只走 v3；v1/v2 与客户端只留给测试与对拍，不对外暴露。
 - 本仓库加的改动是认证判定前限时（`ServiceConfig.HandshakeTimeout`）。限时原则：认证判定之前等对端的步骤按 HandshakeTimeout 超时；回落到诱饵、以及对外看起来就是诱饵会话的中继（v2 握手中继、v3 等首个 HMAC 帧）一律不限时——真站点不会 10 秒掐断空闲 TLS 会话，掐了就是指纹。守卫在 `service_test.go`（`TestServiceDecoyRelayOutlivesHandshakeTimeout` 等）。
 - `DefaultHandshakeTimeout` 只是兜底，口径以 kernel 显式传入的 `inboundHandshakeTimeout` 为准。
+
+## anytls、hysteria2、tuic（nativewire 下的另三个 fork）
+
+- 边界与 `dgram/` 等自研包的区别见 `internal/nativewire/README.md`；生产调用方是 `kernel/` 里对应的适配器。
+- 共同的本仓库改动是用户表的同步发布（热更新用户与认证读不竞争）；hysteria2 / tuic 的 UDP 路径改动多，合上游时冲突主要在 `packet.go`、`service_packet.go`。
+- 改完要跑 `internal/nativewire/...`、`-tags interop` 的 AnyTLS 组（`TestAnyTLSNativeClientTCPAndUOTUDP`），hysteria2 / tuic 还要按 node-accept 在 Linux 上复测 UDP。
