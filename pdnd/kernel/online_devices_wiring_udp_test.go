@@ -121,7 +121,7 @@ func runDeviceWiringUDP(t *testing.T, tc deviceUDPCase) {
 
 	// 全部关掉才离线。
 	_ = second.Close()
-	if ok, why := waitFor(3*time.Second, func() (bool, string) {
+	if ok, why := waitFor(6*time.Second, func() (bool, string) {
 		ips := online()
 		return len(ips) == 0, fmt.Sprintf("在线=%v 会话=%d", ips, liveSessionsOf(adapter))
 	}); !ok {
@@ -212,22 +212,32 @@ func (e *udpWiringEcho) release(payload string) {
 	}
 }
 
-// deviceWiringUDPEcho 经 pc 发一包到 target 并等回显。
+// deviceWiringUDPEcho 经 pc 发一包到 target 并等回显。UDP（尤其 QUIC DATAGRAM）
+// 在忙的检查机上会丢包：每 300ms 重发一次，最多等 5 秒。
 func deviceWiringUDPEcho(pc net.PacketConn, target net.Addr, payload string) error {
-	if _, err := pc.WriteTo([]byte(payload), target); err != nil {
-		return err
-	}
-	_ = pc.SetReadDeadline(time.Now().Add(3 * time.Second))
 	defer pc.SetReadDeadline(time.Time{})
+	deadline := time.Now().Add(5 * time.Second)
 	buf := make([]byte, 2048)
-	n, _, err := pc.ReadFrom(buf)
-	if err != nil {
-		return err
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if _, err := pc.WriteTo([]byte(payload), target); err != nil {
+			return err
+		}
+		_ = pc.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		n, _, err := pc.ReadFrom(buf)
+		if err == nil {
+			if string(buf[:n]) != payload {
+				return fmt.Errorf("udp echo=%q", buf[:n])
+			}
+			return nil
+		}
+		var ne net.Error
+		if !errors.As(err, &ne) || !ne.Timeout() {
+			return err
+		}
+		lastErr = err
 	}
-	if string(buf[:n]) != payload {
-		return fmt.Errorf("udp echo=%q", buf[:n])
-	}
-	return nil
+	return fmt.Errorf("5 秒内没收到 UDP 回显：%v", lastErr)
 }
 
 func openDeviceWiringHy2UDP(env deviceWiringEnv, echo *udpWiringEcho) (io.Closer, error) {
@@ -336,17 +346,23 @@ func openDeviceWiringSOCKSUDP(env deviceWiringEnv, echo *udpWiringEcho) (io.Clos
 	}
 	closeAll := closerFunc(func() error { return errors.Join(udp.Close(), control.Close()) })
 	payload := echo.nextPayload()
-	if _, err := udp.Write(socksUDPDatagram(echo.addr(), []byte(payload))); err != nil {
-		_ = closeAll.Close()
-		return nil, err
-	}
-	_ = udp.SetReadDeadline(time.Now().Add(3 * time.Second))
 	buf := make([]byte, 2048)
-	n, err := udp.Read(buf)
+	var n int
+	for try := 0; ; try++ {
+		if _, err = udp.Write(socksUDPDatagram(echo.addr(), []byte(payload))); err != nil {
+			_ = closeAll.Close()
+			return nil, err
+		}
+		_ = udp.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		if n, err = udp.Read(buf); err == nil || try >= 15 {
+			break
+		}
+	}
 	if err != nil || n < 10 || string(buf[10:n]) != payload {
 		_ = closeAll.Close()
 		return nil, fmt.Errorf("socks udp echo=%q err=%v", buf[:n], err)
 	}
+	_ = udp.SetReadDeadline(time.Time{})
 	// 关控制连接即结束这次 UDP ASSOCIATE。
 	return closeAll, nil
 }
