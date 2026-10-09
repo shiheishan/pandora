@@ -17,55 +17,67 @@ func recentKeyOf(i int) recentKey {
 }
 
 func TestRecentNonceSetExpiresAndStaysBounded(t *testing.T) {
-	clock := newFakeClock()
 	r := newRecentSet(4)
+	ts := time.Unix(1_800_000_000, 0)
+	var now time.Duration
 	a := recentKeyOf(1)
-	if !r.claim(a, clock.Now()) || r.claim(a, clock.Now()) {
+	if !r.claim(a, now, ts) || r.claim(a, now, ts) {
 		t.Fatal("recent set must claim once")
 	}
-	clock.Advance(signedNonceRetention - time.Nanosecond)
-	if r.claim(a, clock.Now()) {
+	now += signedNonceRetention - time.Nanosecond
+	if r.claim(a, now, ts) {
 		t.Fatal("entry released before its retention ended")
 	}
-	clock.Advance(time.Nanosecond)
-	if !r.claim(a, clock.Now()) {
+	now += time.Nanosecond
+	if !r.claim(a, now, ts) {
 		t.Fatal("expired entry still blocks")
 	}
 	if len(r.entries) != 1 || r.order.len() != 1 {
 		t.Fatalf("expired entries not pruned: %d %d", len(r.entries), r.order.len())
 	}
 	for i := 2; i <= 10; i++ {
-		r.claim(recentKeyOf(i), clock.Now())
+		r.claim(recentKeyOf(i), now, ts)
 		if len(r.entries) > 4 || len(r.entries) != r.order.len() {
 			t.Fatalf("over the cap: %d entries, %d queued", len(r.entries), r.order.len())
 		}
 	}
 }
 
-// 触顶挤掉 Valkey 没确认持有的条目（回落到 PG 的）时抬补查界：签名时间戳不晚于它的认领
-// 时刻 + 5 分钟的请求要在 PG 补查；挤掉 Valkey 持有的条目不抬界。
+// 触顶挤掉 Valkey 没确认持有的条目（回落到 PG 的）时把补查界抬到它的签名时间戳；
+// 挤掉 Valkey 持有的条目不抬界。
 func TestRecentNonceEvictionRaisesRecheck(t *testing.T) {
-	clock := newFakeClock()
 	r := newRecentSet(2)
+	base := time.Unix(1_800_000_000, 0)
 	stored, fallback := recentKeyOf(1), recentKeyOf(2)
-	r.claim(stored, clock.Now())
+	r.claim(stored, 0, base.Add(time.Minute)) // 时间戳比回落那条还晚：抬了界就看得出来
 	r.markStored(stored)
-	claimedAt := clock.Now()
-	clock.Advance(time.Second)
-	r.claim(fallback, clock.Now()) // 没有 markStored：回落条目
-	clock.Advance(time.Second)
-	r.claim(recentKeyOf(3), clock.Now()) // 挤掉 stored
+	fallbackTS := base.Add(3 * time.Minute) // 节点时钟快：签名时间戳可以比本机晚
+	r.claim(fallback, time.Second, fallbackTS)
+	r.claim(recentKeyOf(3), 2*time.Second, base) // 挤掉 stored
 	if r.recheckNs != 0 {
 		t.Fatal("evicting a Valkey-held entry raised the recheck bound")
 	}
-	r.claim(recentKeyOf(4), clock.Now()) // 挤掉 fallback
-	want := claimedAt.Add(time.Second + SignedRequestAcceptanceWindow)
-	if !r.needsRecheck(want) || r.needsRecheck(want.Add(time.Second)) {
-		t.Fatalf("recheck bound = %s, want %s", time.Unix(0, r.recheckNs).UTC(), want)
+	r.claim(recentKeyOf(4), 3*time.Second, base) // 挤掉 fallback
+	if !r.needsRecheck(fallbackTS) || r.needsRecheck(fallbackTS.Add(time.Nanosecond)) {
+		t.Fatalf("recheck bound = %s, want %s", time.Unix(0, r.recheckNs).UTC(), fallbackTS)
 	}
-	// 被挤掉的那条重放：签名时间戳一定不晚于认领时刻 + 5 分钟
-	if !r.needsRecheck(claimedAt.Add(time.Second + SignedRequestAcceptanceWindow)) {
-		t.Fatal("replay of the evicted fallback entry escapes the recheck")
+}
+
+// 回落条目到期离开近期集时同样抬界（墙钟往回跳、旧时间戳重新进窗口时仍去 PG 补查）；
+// Valkey 持有的条目到期不抬。
+func TestRecentNonceExpiryOfUnstoredEntryRaisesRecheck(t *testing.T) {
+	r := newRecentSet(100)
+	base := time.Unix(1_800_000_000, 0)
+	stored, fallback := recentKeyOf(1), recentKeyOf(2)
+	r.claim(stored, 0, base.Add(time.Hour))
+	r.markStored(stored)
+	r.claim(fallback, 0, base)
+	r.claim(recentKeyOf(3), signedNonceRetention, base.Add(-time.Hour)) // 两条都到期
+	if _, ok := r.entries[fallback]; ok {
+		t.Fatal("expired entry not pruned")
+	}
+	if r.recheckNs != base.UnixNano() {
+		t.Fatalf("recheck bound after expiry = %s, want %s", time.Unix(0, r.recheckNs).UTC(), base)
 	}
 }
 
@@ -74,7 +86,7 @@ func TestNonceEvictedFallbackEntryStillRefusedAfterRecovery(t *testing.T) {
 	clock := newFakeClock()
 	store := &fakeNonceStore{}
 	ledger := &fakeLedger{}
-	g := newNonceGuard(store, nil, clock.Now)
+	g := newNonceGuard(store, nil, clocksFrom(clock))
 	g.recent.max = 3
 	store.set(errors.New("valkey down"))
 	victimTS := clock.Now()
@@ -149,10 +161,10 @@ func TestRecentNonceSetMemory(t *testing.T) {
 		runtime.GC()
 		runtime.ReadMemStats(&before)
 		r := newRecentSet(recentNonceMax)
-		now := time.Now()
+		ts := time.Now()
 		for i := 0; i < n; i++ {
 			_, _ = rand.Read(nonce)
-			r.claim(makeRecentKey(recentKindNode, tenant, nodes[i%len(nodes)], nonce), now)
+			r.claim(makeRecentKey(recentKindNode, tenant, nodes[i%len(nodes)], nonce), 0, ts)
 		}
 		runtime.GC()
 		runtime.ReadMemStats(&after)

@@ -86,6 +86,12 @@ func (l *fakeLedger) insertCount() int {
 	return l.inserts
 }
 
+// clocksFrom 让守卫的单调钟与墙钟都跟着假时钟走（墙钟不跳变的场景）。
+func clocksFrom(c *fakeClock) nonceClock {
+	start := c.Now()
+	return nonceClock{mono: func() time.Duration { return c.Now().Sub(start) }, wall: c.Now}
+}
+
 func nonceFixture(i byte) ([]byte, []byte) {
 	nonce := make([]byte, 16)
 	nonce[0] = i
@@ -147,7 +153,7 @@ func TestNonceRecoveryStopsDatabaseWrites(t *testing.T) {
 	store := &fakeNonceStore{}
 	svc := NewService(nil, nil)
 	svc.SetNonceStore(store, nil)
-	svc.nonces.now = clock.Now
+	svc.nonces.clock = clocksFrom(clock)
 	store.set(context.DeadlineExceeded)
 	n1, fp1 := nonceFixture(1)
 	if !claimHitsDatabase(t, svc, n1, fp1, clock.Now()) {
@@ -179,7 +185,7 @@ func TestNonceOutageRecoveryKeepsReplaysOut(t *testing.T) {
 	clock := newFakeClock()
 	store := &fakeNonceStore{}
 	ledger := &fakeLedger{}
-	g := newNonceGuard(store, nil, clock.Now)
+	g := newNonceGuard(store, nil, clocksFrom(clock))
 	ts := clock.Now
 
 	if err := claimThrough(g, ledger, 1, ts()); err != nil || ledger.insertCount() != 0 {
@@ -222,7 +228,7 @@ func TestNonceOutageRecoveryKeepsReplaysOut(t *testing.T) {
 	// 进程重启：近期集是空的，Valkey 没见过 2。启动时读出 PG 未过期行的最大签名时间戳
 	// （PrimeNonceFallback 的口径），签名时间戳不晚于它的请求在 PG 补查。
 	clock.Advance(time.Minute)
-	restarted := newNonceGuard(store, nil, clock.Now)
+	restarted := newNonceGuard(store, nil, clocksFrom(clock))
 	restarted.recent.raiseRecheck(beforeOutage)
 	if err := claimThrough(restarted, ledger, 2, beforeOutage); !errors.Is(err, errNonceReplayed) {
 		t.Fatalf("replay of a PG-claimed nonce after restart = %v", err)
@@ -242,7 +248,7 @@ func TestNonceProbeLetsOnlyOneRequestWaitOnValkey(t *testing.T) {
 	clock := newFakeClock()
 	store := &fakeNonceStore{}
 	ledger := &fakeLedger{}
-	g := newNonceGuard(store, nil, clock.Now)
+	g := newNonceGuard(store, nil, clocksFrom(clock))
 	store.set(errors.New("valkey down"))
 	if err := claimThrough(g, ledger, 1, clock.Now()); err != nil {
 		t.Fatal(err)
@@ -288,7 +294,7 @@ func TestNonceProbeLetsOnlyOneRequestWaitOnValkey(t *testing.T) {
 func TestNonceStoreTimeoutFallsBack(t *testing.T) {
 	store := &fakeNonceStore{gate: make(chan struct{})}
 	ledger := &fakeLedger{}
-	g := newNonceGuard(store, nil, nil)
+	g := newNonceGuard(store, nil, nonceClock{})
 	start := time.Now()
 	if err := claimThrough(g, ledger, 1, time.Now()); err != nil {
 		t.Fatal(err)
@@ -308,7 +314,7 @@ func TestNonceStoreTimeoutFallsBack(t *testing.T) {
 func TestNonceCanceledClaimDoesNotFallBack(t *testing.T) {
 	store := &fakeNonceStore{gate: make(chan struct{})}
 	ledger := &fakeLedger{}
-	g := newNonceGuard(store, nil, nil)
+	g := newNonceGuard(store, nil, nonceClock{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	nonce, _ := nonceFixture(1)
@@ -316,7 +322,7 @@ func TestNonceCanceledClaimDoesNotFallBack(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || ledger.insertCount() != 0 {
 		t.Fatalf("canceled claim: err %v, PG inserts %d", err, ledger.insertCount())
 	}
-	if use, _ := g.acquireStore(); !use {
+	if !g.acquireStore().use {
 		t.Fatal("a canceled request marked Valkey as down")
 	}
 }
@@ -326,7 +332,7 @@ func TestNonceConcurrentClaimsAcceptOnce(t *testing.T) {
 	for round := 0; round < 20; round++ {
 		store := &fakeNonceStore{}
 		ledger := &fakeLedger{}
-		g := newNonceGuard(store, nil, nil)
+		g := newNonceGuard(store, nil, nonceClock{})
 		if round%2 == 1 {
 			store.set(errors.New("flaky"))
 		}

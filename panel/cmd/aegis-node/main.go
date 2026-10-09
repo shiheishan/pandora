@@ -106,7 +106,10 @@ func run() error {
 	// 签名请求的 nonce 先在 Valkey 认领（SET NX PX），出错回落 PG，Valkey 恢复后立即回到
 	// Valkey。PG 里还有上次运行留下的未过期 nonce 时，签名时间戳不晚于其中最大值的请求
 	// 在 PG 补查，重放照样被拦下（nodefabric/nonce_guard.go 的状态机）。
-	nodeService.SetNonceStore(valkeyNonceStore{rdb: rdb}, log)
+	// nonce 认领用单独的客户端：超时 250ms 且按 ctx 期限收手（nonceRedisOptions）。
+	nonceRDB := redis.NewClient(nonceRedisOptions(redisOpt))
+	defer nonceRDB.Close()
+	nodeService.SetNonceStore(valkeyNonceStore{rdb: nonceRDB}, log)
 	primeCtx, cancelPrime := context.WithTimeout(ctx, 5*time.Second)
 	nodeService.PrimeNonceFallback(primeCtx, middleware.DefaultTenantID)
 	cancelPrime()
@@ -204,6 +207,25 @@ func run() error {
 			"error", drainErr.Error())
 	}
 	return errors.Join(serverErr, drainErr)
+}
+
+// nonceRedisOptions 从共用的 Valkey 配置派生 nonce 认领专用客户端的配置。
+//
+// go-redis 缺省 ContextTimeoutEnabled=false：socket 期限按 ReadTimeout（3 秒）算、不看 ctx，
+// 守卫给的 250ms 期限形同虚设，Valkey 连得上却不应答时每个签名请求卡 3 秒（对抗审查
+// w12nonce #2）。这里单独建一个客户端，而不是在共用客户端上打开 ContextTimeoutEnabled：
+// 共用客户端还承载事件流的 PSubscribe 长读与 Publish（platform/realtime，三个网关共用），
+// 改它的超时语义要连带核对那几条路径；nonce 是单条 SET NX，独立一个小连接池最好推断。
+// 读、写、拨号、等连接池都限在 250ms，并按 ctx 期限收手；go-redis 对超时的重试在 ctx
+// 到期后的退避处停下，所以一次认领最多约 250ms。
+func nonceRedisOptions(base *redis.Options) *redis.Options {
+	opt := *base
+	opt.ContextTimeoutEnabled = true
+	opt.DialTimeout = nodefabric.NonceStoreTimeout
+	opt.ReadTimeout = nodefabric.NonceStoreTimeout
+	opt.WriteTimeout = nodefabric.NonceStoreTimeout
+	opt.PoolTimeout = nodefabric.NonceStoreTimeout
+	return &opt
 }
 
 // valkeyNonceStore 把签名请求的 nonce 认领交给 Valkey：SET key 1 NX PX ttl。

@@ -29,24 +29,34 @@ import (
 //
 //	healthy ──Valkey 出错或超时──▶ down（冷却 nonceStoreCooldown，期间全走 PG）
 //	down ──冷却到期，下一个请求──▶ probing（只这一个请求去试 Valkey，其余照走 PG）
-//	probing ──成功──▶ healthy      probing ──失败──▶ down（重新冷却）
+//	probing ──成功──▶ healthy（代号 +1）   probing ──失败──▶ down（重新冷却）
 //	probing ──调用方取消──▶ down（冷却已到期，下一个请求接着试）
+//
+// 晚到的旧应答不改状态：非探测请求的成功一律不改；非探测请求的失败只在它发出时的
+// 代号仍是当前代号、且状态仍是 healthy 时才打到 down（恢复之后才回来的上一轮失败不算）。
+// 冷却与超时都按单调钟算。
 //
 // 所以一次 Valkey 抖动只让「抖动时长 + 至多一个冷却」内的请求写 PG；恢复后回到只走
 // Valkey。原先每次回落都把一个「PG 活跃窗口」推到 11 分钟后，窗口内每个请求都在 PG
 // 补认领一次：一次 250ms 超时就换来约 11 分钟、近 20 万次插入（w12nonce 修掉）。
+// 250ms 要客户端真的照办：aegis-node 给 nonce 单独建了一个读写超时 250ms、按 ctx 期限
+// 收手的 Valkey 客户端（cmd/aegis-node 的 nonceRedisOptions）。
 //
 // 为什么恢复后不用逐个补查 PG：回落期间认领的 nonce 已经进了近期集，保留期和 PG 一样长，
 // 同一进程的重放在第 1 步就被拦下。PG 里有、近期集里却没有的 nonce 只有两种来源，
 // 都折算成「补查界」（签名时间戳上界：重放带的是同一个签名时间戳）：
-//   - 上一次运行留下的行：启动时 PrimeNonceFallback 读出未过期行的最大 request_ts。
-//   - 近期集到了上限、挤掉了 Valkey 没确认持有的条目：按它的认领时刻 + 5 分钟抬界
+//   - 上一次运行留下的行：启动时 PrimeNonceFallback 读出未过期行的最大 request_ts；
+//     读不出来按「启动时刻 + 5 分钟」。
+//   - Valkey 没确认持有的条目离开近期集（触顶被挤掉，或到期）：抬到它的签名时间戳
 //     （recentSet.pruneLocked）。
 //
-// 剩下的缝写在报告里：
+// 剩下的缝：
 //   - Valkey 挂着、进程又刚重启时，重启前只记在 Valkey 里的 nonce 本进程不知道。
 //   - Valkey 是 allkeys-lru、不持久化，键可能在 TTL 前被挤掉或随重启丢失。
 //   - 多副本时，别的副本回落写进 PG 的 nonce 本进程不补查（aegis-node 定为单实例）。
+//   - 墙钟往回跳得比保留期余量（约 6 分钟）还多时，旧签名时间戳会重新进窗口，而 Valkey
+//     的 TTL 按 Valkey 自己的时钟到期。这是时间戳窗口协议本身的限度，与本进程无关；
+//     近期集按单调钟到期，不会因墙钟跳变提前忘掉条目，回落条目到期时还会抬补查界。
 //
 // 要利用它们，都还得手里有一份 10 分钟内截获的签名请求。
 
@@ -62,19 +72,23 @@ const (
 	// 余量，与 PG 回落的「入库时间 + 11 分钟」一致。
 	signedNonceRetention = 2*SignedRequestAcceptanceWindow + time.Minute
 	// nonceStoreTimeout 是一次 Valkey 认领的上限。超时按出错处理，回落 PG。
-	nonceStoreTimeout = 250 * time.Millisecond
+	nonceStoreTimeout = NonceStoreTimeout
 	// nonceStoreCooldown 是 Valkey 出错后直接走 PG 的时长，到期只放一个请求去探测，
 	// 所以缩短它不会让更多请求等超时，只让恢复更快。
 	nonceStoreCooldown = time.Second
 	// recentNonceMax 是进程内近期集的上限。按 2026-10 的签名请求量（每节点每分钟约 6 次、
 	// 保留 11 分钟）约 3000 节点触顶；触顶挤掉最早的条目，挤掉的若是 Valkey 没确认持有的，
-	// 抬 PG 补查界，防重放不因触顶变弱。一条约 56 字节，满额约 11MB。
+	// 抬 PG 补查界，防重放不因触顶变弱。一条约 73 字节，满额约 15MB（TestRecentNonceSetMemory）。
 	recentNonceMax = 200_000
 	// nonceKeyPrefix 是 Valkey 里 nonce 键的前缀。
 	nonceKeyPrefix = "aegis:node-nonce:"
 	// nonceOutageLogEvery 是回落告警的最短间隔：Valkey 时好时坏时不刷屏。
 	nonceOutageLogEvery = time.Minute
 )
+
+// NonceStoreTimeout 是一次 Valkey nonce 认领的上限，导出给 aegis-node 设 nonce 专用客户端的
+// 读写超时：go-redis 缺省不看 ctx 的期限，只设 ctx 实际要等 ReadTimeout（3 秒）。
+const NonceStoreTimeout = 250 * time.Millisecond
 
 // errNonceReplayed 是 nonce 已被认领：对外与其他身份失败同一个 401。
 var errNonceReplayed = httpx.New(httpx.CodeUnauthorized, "节点身份校验失败")
@@ -87,41 +101,59 @@ const (
 	storeProbing
 )
 
+// nonceClock 是守卫用的两把钟：mono 是单调钟（进程内经过的时长），管近期集到期与冷却；
+// wall 是墙钟，只用在启动读失败时的「启动时刻 + 5 分钟」。
+type nonceClock struct {
+	mono func() time.Duration
+	wall func() time.Time
+}
+
+func systemNonceClock() nonceClock {
+	start := time.Now()
+	return nonceClock{mono: func() time.Duration { return time.Since(start) }, wall: time.Now}
+}
+
 type nonceGuard struct {
 	store  NonceStore
 	log    *slog.Logger
-	now    func() time.Time
+	clock  nonceClock
 	recent *recentSet
 
 	mu        sync.Mutex
 	state     storeState
-	downUntil time.Time
-	// 回落告警与恢复日志：outageWarned 为真时恢复要报一句，带这段时间在 PG 认领的次数。
-	lastWarn       time.Time
+	gen       uint64 // 恢复代号：每次探测成功回到 healthy 加一
+	downUntil time.Duration
+	// 回落告警与恢复日志：outageWarned 为真时恢复要报一句，带上次报告以来在 PG 认领的次数。
+	lastWarn       time.Duration
+	everWarned     bool
 	outageWarned   bool
 	fallbackClaims int64
 }
 
-func newNonceGuard(store NonceStore, log *slog.Logger, now func() time.Time) *nonceGuard {
-	if now == nil {
-		now = time.Now
+// storeTicket 是一次认领向状态机领的票：要不要去 Valkey、是不是探测、发出时的代号。
+type storeTicket struct {
+	use, probe bool
+	gen        uint64
+}
+
+func newNonceGuard(store NonceStore, log *slog.Logger, clock nonceClock) *nonceGuard {
+	if clock.mono == nil || clock.wall == nil {
+		clock = systemNonceClock()
 	}
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &nonceGuard{store: store, log: log, now: now, recent: newRecentSet(recentNonceMax)}
+	return &nonceGuard{store: store, log: log, clock: clock, recent: newRecentSet(recentNonceMax)}
 }
 
 // SetNonceStore 让签名请求的 nonce 先在 store（Valkey）认领。不设时照旧只用 PG。
 // 装配时调用一次，之后调 PrimeNonceFallback 读出上一次运行留在 PG 的 nonce。
 func (s *Service) SetNonceStore(store NonceStore, log *slog.Logger) {
-	s.nonces = newNonceGuard(store, log, nil)
+	s.nonces = newNonceGuard(store, log, nonceClock{})
 }
 
-// PrimeNonceFallback 读出 PG 里未过期 nonce（节点与服务器两张表）的最大签名时间戳：
-// 签名时间戳不晚于它的请求，Valkey 认领成功也要在 PG 再认领一次（上一次运行回落过，
-// 那些 nonce 只在 PG 里）。读不出来就按「启动时刻 + 5 分钟」处理：启动前认领的请求，
-// 签名时间戳不会晚于这个时刻。
+// PrimeNonceFallback 读出 PG 里未过期 nonce（节点与服务器两张表）的最大签名时间戳，
+// 定下启动时的补查界（applyPrime）。
 func (s *Service) PrimeNonceFallback(ctx context.Context, tenantID string) {
 	g := s.nonces
 	if g == nil {
@@ -133,9 +165,16 @@ func (s *Service) PrimeNonceFallback(ctx context.Context, tenantID string) {
 			(SELECT max(request_ts) FROM node_request_nonces WHERE tenant_id = $1 AND expires_at > now()),
 			(SELECT max(request_ts) FROM server_request_nonces WHERE tenant_id = $1 AND expires_at > now()))`,
 		[]any{tenantID}, &latest)
+	g.applyPrime(latest, err)
+}
+
+// applyPrime 按启动读的结果定补查界：签名时间戳不晚于它的请求，Valkey 认领成功也要在
+// PG 再认领一次（上一次运行回落过，那些 nonce 只在 PG 里）。读不出来就按「启动时刻 +
+// 5 分钟」：启动前认领的请求，签名时间戳不会晚于这个时刻。
+func (g *nonceGuard) applyPrime(latest *time.Time, err error) {
 	switch {
 	case err != nil:
-		g.recent.raiseRecheck(g.now().Add(SignedRequestAcceptanceWindow))
+		g.recent.raiseRecheck(g.clock.wall().Add(SignedRequestAcceptanceWindow))
 		g.log.Warn("读取 PG 中未过期的签名请求 nonce 失败，启动后 5 分钟内的请求在 PG 补查",
 			"error", err.Error())
 	case latest != nil:
@@ -144,58 +183,61 @@ func (s *Service) PrimeNonceFallback(ctx context.Context, tenantID string) {
 	}
 }
 
-// acquireStore 按状态机决定这次认领要不要去 Valkey；probe 为真表示这次是冷却后的探测。
-func (g *nonceGuard) acquireStore() (use, probe bool) {
+// acquireStore 按状态机决定这次认领要不要去 Valkey。
+func (g *nonceGuard) acquireStore() storeTicket {
 	if g.store == nil {
-		return false, false
+		return storeTicket{}
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	switch g.state {
 	case storeHealthy:
-		return true, false
+		return storeTicket{use: true, gen: g.gen}
 	case storeDown:
-		if g.now().Before(g.downUntil) {
-			return false, false
+		if g.clock.mono() < g.downUntil {
+			return storeTicket{}
 		}
 		g.state = storeProbing
-		return true, true
+		return storeTicket{use: true, probe: true, gen: g.gen}
 	default: // storeProbing：已有一个探测在途
-		return false, false
+		return storeTicket{}
 	}
 }
 
-// storeSucceeded 记下一次 Valkey 应答（占到或已被占用都算）。只有健康时的应答和探测的
-// 应答改状态：冷却开始前发出、冷却中才回来的旧应答不把状态拉回 healthy。
-func (g *nonceGuard) storeSucceeded(probe bool) {
+// storeSucceeded 记下一次 Valkey 应答（占到或已被占用都算）。只有探测的应答改状态：
+// 非探测请求的成功要么本来就在 healthy，要么是冷却开始前发出、冷却中才回来的旧应答，
+// 不能把状态拉回 healthy。
+func (g *nonceGuard) storeSucceeded(t storeTicket) {
+	if !t.probe {
+		return
+	}
 	g.mu.Lock()
-	if !probe {
+	g.state = storeHealthy
+	g.gen++
+	warned, claims := g.outageWarned, g.fallbackClaims
+	since := g.clock.mono() - g.lastWarn
+	g.outageWarned, g.fallbackClaims = false, 0
+	g.mu.Unlock()
+	if warned {
+		g.log.Info("Valkey 认领签名请求 nonce 已恢复", "pg_claims", claims, "since_warn", since.String())
+	}
+}
+
+// storeFailed 记下一次 Valkey 出错或超时：进入冷却，冷却期内直接走 PG。非探测请求的
+// 失败只在它的代号仍是当前代号、状态仍是 healthy 时才算：已在冷却或探测中的不重复计，
+// 上一轮发出、恢复之后才回来的失败（代号已过期）不把刚恢复的状态打回 down。
+func (g *nonceGuard) storeFailed(t storeTicket, err error) {
+	g.mu.Lock()
+	if !t.probe && (g.state != storeHealthy || t.gen != g.gen) {
 		g.mu.Unlock()
 		return
 	}
-	g.state = storeHealthy
-	warned, claims, since := g.outageWarned, g.fallbackClaims, g.lastWarn
-	g.outageWarned, g.fallbackClaims = false, 0
-	now := g.now()
-	g.mu.Unlock()
-	if warned {
-		g.log.Info("Valkey 认领签名请求 nonce 已恢复", "pg_claims", claims, "since_warn", now.Sub(since).String())
-	}
-}
-
-// storeFailed 记下一次 Valkey 出错或超时：进入冷却，冷却期内直接走 PG。
-func (g *nonceGuard) storeFailed(probe bool, err error) {
-	g.mu.Lock()
-	if !probe && g.state != storeHealthy {
-		g.mu.Unlock() // 冷却开始前发出的请求晚到的失败：已在冷却，不重复计
-		return
-	}
-	now := g.now()
+	now := g.clock.mono()
 	g.state = storeDown
-	g.downUntil = now.Add(nonceStoreCooldown)
-	warn := !g.outageWarned && now.Sub(g.lastWarn) >= nonceOutageLogEvery
+	g.downUntil = now + nonceStoreCooldown
+	warn := !g.outageWarned && (!g.everWarned || now-g.lastWarn >= nonceOutageLogEvery)
 	if warn {
-		g.outageWarned, g.lastWarn = true, now
+		g.outageWarned, g.everWarned, g.lastWarn = true, true, now
 	}
 	g.mu.Unlock()
 	if warn {
@@ -203,9 +245,10 @@ func (g *nonceGuard) storeFailed(probe bool, err error) {
 	}
 }
 
-// storeAbandoned 是调用方取消了请求，没拿到 Valkey 的结论：探测让给下一个请求。
-func (g *nonceGuard) storeAbandoned(probe bool) {
-	if !probe {
+// storeAbandoned 是调用方取消了请求，没拿到 Valkey 的结论：探测让给下一个请求
+// （冷却已到期，状态回 down 后下一个请求马上再探测）。
+func (g *nonceGuard) storeAbandoned(t storeTicket) {
+	if !t.probe {
 		return
 	}
 	g.mu.Lock()
@@ -224,16 +267,16 @@ func (g *nonceGuard) countFallback() {
 // 由它自己按调用方的口径返回。
 func (g *nonceGuard) claim(ctx context.Context, key recentKey, storeKey string, requestTS time.Time,
 	replayed error, pgClaim func(context.Context) error) error {
-	if !g.recent.claim(key, g.now()) {
+	if !g.recent.claim(key, g.clock.mono(), requestTS) {
 		return replayed
 	}
-	if use, probe := g.acquireStore(); use {
+	if t := g.acquireStore(); t.use {
 		storeCtx, cancel := context.WithTimeout(ctx, nonceStoreTimeout)
 		claimed, err := g.store.ClaimNonce(storeCtx, storeKey, signedNonceRetention)
 		cancel()
 		switch {
 		case err == nil:
-			g.storeSucceeded(probe)
+			g.storeSucceeded(t)
 			g.recent.markStored(key)
 			if !claimed {
 				return replayed
@@ -241,17 +284,17 @@ func (g *nonceGuard) claim(ctx context.Context, key recentKey, storeKey string, 
 			if !g.recent.needsRecheck(requestTS) {
 				return nil
 			}
-			// 签名时间戳落在补查界内：PG 里可能有这条（上次运行或被挤出近期集的回落），
+			// 签名时间戳落在补查界内：PG 里可能有这条（上次运行留下的，或已离开近期集的回落条目），
 			// 再认领一次，重放照样撞主键。这只是补查，不算回落。
 			return pgClaim(ctx)
 		case ctx.Err() != nil:
-			g.storeAbandoned(probe)
+			g.storeAbandoned(t)
 			return ctx.Err()
 		default:
-			g.storeFailed(probe, err)
+			g.storeFailed(t, err)
 		}
 	}
-	// 回落：这条在近期集里保持 unstored，被挤出近期集时会抬补查界。
+	// 回落：这条在近期集里保持 unstored，离开近期集时会抬补查界。
 	g.countFallback()
 	return pgClaim(ctx)
 }

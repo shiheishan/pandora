@@ -53,7 +53,7 @@ func testNonceOutageRecoveryPG18(t *testing.T, ctx context.Context, admin *pgxpo
 	start := func() *Service {
 		svc := NewService(app, nil)
 		svc.SetNonceStore(store, nil)
-		svc.nonces.now = clock.Now
+		svc.nonces.clock = clocksFrom(clock)
 		svc.PrimeNonceFallback(ctx, tenant)
 		return svc
 	}
