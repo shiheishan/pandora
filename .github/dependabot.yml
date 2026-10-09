@@ -1,0 +1,43 @@
+# 依赖更新提醒：只开 Go 模块与 GitHub Actions，每周一次。
+# - Go 只登记 panel 与 pdnd 两个独立 module。.claude/skills/subscription-e2e/tools 经 replace
+#   跟随 pdnd，不单独登记；pdnd 的依赖 PR 合入前要到那里 go mod tidy（见 deps-upgrade skill）。
+# - pdnd 内 fork 的目录（internal/reality、realityquic、nativewire 的 anytls、hysteria2、
+#   shadowtls、tuic）不是模块依赖，dependabot 看不到，上游出公告要人工合（rules/pdnd-forks.md）。
+# - golang.org/x 一族互相要求最低版本，单独升一个常常装不上，所以并成一组。
+# - 升级 PR 要按 deps-upgrade skill 第 3 节先基线后对比，节点内核依赖等 wait-github.sh。
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /panel
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+    commit-message:
+      prefix: "chore(panel-deps)"
+
+  - package-ecosystem: gomod
+    directory: /pdnd
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+    commit-message:
+      prefix: "chore(pdnd-deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"

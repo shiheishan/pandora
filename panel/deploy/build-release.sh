@@ -19,6 +19,46 @@ if [[ ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]] || [ "$VERSION" = . ] || [ "$VERSION"
   exit 1
 fi
 
+# Go 工具链固定：发布构建一律用各自 go.mod 的 go 指令所指的那一版（panel 与 pdnd 分别读），
+# 不写死版本号、不信构建机上恰好装着哪一版。
+#
+# 不固定的后果：维护者本机的 Go 比 go 指令新时，go 命令直接用本机版本编，发布物里的标准库
+# 版本取决于谁来打包；构建机若被 GOTOOLCHAIN=local 锁在旧的 1.26.x，则会用上没修漏洞的标准库。
+# 这里显式设 GOTOOLCHAIN=go<版本>（覆盖环境里已有的值，包括 local），本机版本不同就下载那一版；
+# 随后用 go env GOVERSION 核对实际解析出的版本，产出后再用 go version <文件> 读二进制里
+# 记的版本，任何一步对不上都停下。实际用的版本写进包内 deploy/BUILD-INFO。
+go_toolchain_of() {
+  local dir="$1" directive
+  directive="$(tr -d '\r' < "$dir/go.mod" | awk '/^go[[:space:]]+[0-9]/ { print $2; exit }')"
+  if [[ ! "$directive" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "$dir/go.mod: the go directive must be a full x.y.z version to pin the toolchain, got '${directive:-none}'" >&2
+    return 1
+  fi
+  printf 'go%s' "$directive"
+}
+PANEL_TOOLCHAIN="$(go_toolchain_of "$ROOT")" || exit 1
+PDND_TOOLCHAIN="$(go_toolchain_of "$PDND_ROOT")" || exit 1
+# 这个模块目录里的 go 命令（带上固定的 GOTOOLCHAIN）实际解析成哪一版
+require_toolchain() {
+  local toolchain="$1" dir="$2" resolved
+  resolved="$(cd "$dir" && GOTOOLCHAIN="$toolchain" GOFLAGS='' go env GOVERSION 2>/dev/null)" || resolved=""
+  [ "$resolved" = "$toolchain" ] || {
+    echo "Go toolchain mismatch for $dir: go.mod requires $toolchain but the go command resolved '${resolved:-nothing}'" >&2
+    echo "  (GOTOOLCHAIN=$toolchain must be installed or downloadable on this build host)" >&2
+    exit 1
+  }
+}
+# 二进制里记的构建版本（go version <文件>；GOTOOLCHAIN=local 只读文件，不触发下载）
+require_binary_toolchain() {
+  local toolchain="$1" file="$2" out built
+  out="$(GOTOOLCHAIN=local GOFLAGS='' go version "$file" 2>/dev/null)" || out=""
+  built="${out##*: }"
+  [ "$built" = "$toolchain" ] || {
+    echo "binary ${file#"$OUT"/} was built with '${built:-unknown}', expected $toolchain" >&2
+    exit 1
+  }
+}
+
 if [ -n "$PREBUILT_ROOT" ]; then
   [ -d "$PREBUILT_ROOT" ] || {
     echo "PANDORA_PREBUILT_ROOT must be an existing directory" >&2
@@ -30,8 +70,12 @@ if [ -n "$PREBUILT_ROOT" ]; then
     exit 1
   }
   command -v readelf >/dev/null 2>&1 || { echo "missing readelf for prebuilt validation" >&2; exit 1; }
+  # 预构建的二进制也要证明是 go.mod 指定的那一版编的，读它要 go 命令
+  command -v go >/dev/null 2>&1 || { echo "missing go: needed to check the Go version recorded in prebuilt binaries" >&2; exit 1; }
 else
-  command -v go >/dev/null 2>&1 || { echo "missing Go 1.26+" >&2; exit 1; }
+  command -v go >/dev/null 2>&1 || { echo "missing Go (the go command; the pinned toolchain $PANEL_TOOLCHAIN / $PDND_TOOLCHAIN is selected via GOTOOLCHAIN)" >&2; exit 1; }
+  require_toolchain "$PANEL_TOOLCHAIN" "$ROOT"
+  require_toolchain "$PDND_TOOLCHAIN" "$PDND_ROOT"
 fi
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd -P)"
@@ -116,10 +160,11 @@ for arch in amd64 arm64; do
       esac
     else
       echo "building linux/$arch $binary"
-      GOFLAGS='' CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+      (cd "$ROOT" && GOTOOLCHAIN="$PANEL_TOOLCHAIN" GOFLAGS='' CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
         go build -buildvcs=false -trimpath -ldflags="-s -w -buildid=" \
-        -o "$target/bin/$binary" "$ROOT/cmd/$binary"
+        -o "$target/bin/$binary" "./cmd/$binary")
     fi
+    require_binary_toolchain "$PANEL_TOOLCHAIN" "$target/bin/$binary"
   done
 
   # 迁移工具跟着发布包走。
@@ -142,15 +187,16 @@ for arch in amd64 arm64; do
     goose_work="$(mktemp -d)"
     (
       cd "$goose_work"
-      go mod init pandora-goose-build >/dev/null 2>&1
-      GOFLAGS='' go get "github.com/pressly/goose/v3/cmd/goose@$GOOSE_VERSION" >/dev/null 2>&1
-      GOFLAGS='' CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+      GOTOOLCHAIN="$PANEL_TOOLCHAIN" go mod init pandora-goose-build >/dev/null 2>&1
+      GOTOOLCHAIN="$PANEL_TOOLCHAIN" GOFLAGS='' go get "github.com/pressly/goose/v3/cmd/goose@$GOOSE_VERSION" >/dev/null 2>&1
+      GOTOOLCHAIN="$PANEL_TOOLCHAIN" GOFLAGS='' CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
         go build -buildvcs=false -trimpath -ldflags="-s -w -buildid=" \
         -o "$target/bin/goose" github.com/pressly/goose/v3/cmd/goose
     ) || { echo "failed to build goose for linux/$arch" >&2; rm -rf "$goose_work"; exit 1; }
     rm -rf "$goose_work"
   fi
   [ -s "$target/bin/goose" ] || { echo "empty goose binary: linux/$arch" >&2; exit 1; }
+  require_binary_toolchain "$PANEL_TOOLCHAIN" "$target/bin/goose"
   chmod 0755 "$target/bin/goose"
   for node_arch in amd64 arm64; do
     pdnd_name="pandora-native-linux-$node_arch"
@@ -184,7 +230,7 @@ for arch in amd64 arm64; do
     }
     else
     echo "building linux/$node_arch $pdnd_name"
-    (cd "$PDND_ROOT" && GOFLAGS='' CGO_ENABLED=0 GOOS=linux GOARCH="$node_arch" \
+    (cd "$PDND_ROOT" && GOTOOLCHAIN="$PDND_TOOLCHAIN" GOFLAGS='' CGO_ENABLED=0 GOOS=linux GOARCH="$node_arch" \
       go build -buildvcs=false -mod=readonly -trimpath -ldflags="-s -w -buildid= -X main.buildVersion=$VERSION" \
       -o "$target/pdnd-dist/$pdnd_name" .)
     fi
@@ -192,6 +238,7 @@ for arch in amd64 arm64; do
     echo "empty node binary: linux/$node_arch $pdnd_name" >&2
     exit 1
     }
+    require_binary_toolchain "$PDND_TOOLCHAIN" "$target/pdnd-dist/$pdnd_name"
   done
   # Cross-building from Windows does not preserve a Unix executable bit.
   # Normalize it before archiving so the same release package passes the
@@ -202,7 +249,7 @@ for arch in amd64 arm64; do
   # unit.  Shipping only binaries makes it possible to run new code against an
   # old schema (or vice versa), which is not a supported rollout mode.
   cp "$ROOT"/migrations/*.sql "$target/migrations/"
-  for script in install.sh install-native.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
+  for script in install.sh install-native.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh healthcheck.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
     cp "$ROOT/deploy/$script" "$target/deploy/$script"
   done
   cp "$ROOT/deploy/nginx-aegis.conf" "$target/deploy/nginx-aegis.conf" 2>/dev/null || true
@@ -229,6 +276,14 @@ for arch in amd64 arm64; do
     printf 'PANDORA_NATIVE_ARTIFACT_ARM64_SHA256=%s\n' "$arm64_digest"
   } > "$target/deploy/release-artifact.env"
   chmod 0644 "$target/deploy/release-artifact.env"
+  # 本包实际用的 Go 工具链（上面逐个二进制核对过）。只是记录，安装器与服务都不读它；
+  # 进 SHA256SUMS 与归档，事后能从包里查出发布物是哪一版 Go 编的。
+  {
+    printf 'PANDORA_RELEASE_VERSION=%s\n' "$VERSION"
+    printf 'PANEL_GO_TOOLCHAIN=%s\n' "$PANEL_TOOLCHAIN"
+    printf 'PDND_GO_TOOLCHAIN=%s\n' "$PDND_TOOLCHAIN"
+  } > "$target/deploy/BUILD-INFO"
+  chmod 0644 "$target/deploy/BUILD-INFO"
   for unit in aegis-public.service aegis-admin.service aegis-node.service; do
     cp "$ROOT/deploy/systemd/$unit" "$target/deploy/systemd/$unit"
   done
@@ -237,6 +292,9 @@ for arch in amd64 arm64; do
   # HTTPS 证书续期（edge-tls.sh renew），install-linux-binaries.sh 装到 /etc/systemd/system
   cp "$ROOT/deploy/systemd/aegis-tls-renew.service" "$target/deploy/systemd/aegis-tls-renew.service"
   cp "$ROOT/deploy/systemd/aegis-tls-renew.timer" "$target/deploy/systemd/aegis-tls-renew.timer"
+  # 健康巡检（healthcheck.sh 每 10 分钟一次），install.sh / install-native.sh 装好后启用 timer
+  cp "$ROOT/deploy/systemd/aegis-health.service" "$target/deploy/systemd/aegis-health.service"
+  cp "$ROOT/deploy/systemd/aegis-health.timer" "$target/deploy/systemd/aegis-health.timer"
   chmod 0755 "$target"/deploy/*.sh
   if find "$target/bin" "$target/pdnd-dist" "$target/migrations" "$target/deploy" ! -type d ! -type f -print -quit | grep -q .; then
     echo "release tree contains a non-regular object" >&2
@@ -275,12 +333,13 @@ for arch in amd64 arm64; do
   rm -f "$archive" "$archive_tar"
   target_base="$(basename "$target")"
   release_scripts=()
-  for script in install.sh install-native.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
+  for script in install.sh install-native.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh healthcheck.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
     release_scripts+=("$target_base/deploy/$script")
   done
   release_data=(
     "$target_base/deploy/.env.example"
     "$target_base/deploy/release-artifact.env"
+    "$target_base/deploy/BUILD-INFO"
     "$target_base/deploy/nginx-aegis.conf"
     "$target_base/deploy/backup-webdav.example.json"
     "$target_base/deploy/MIGRATION-RUNBOOK.md"
@@ -294,6 +353,8 @@ for arch in amd64 arm64; do
     "$target_base/deploy/systemd/aegis-backup.timer"
     "$target_base/deploy/systemd/aegis-tls-renew.service"
     "$target_base/deploy/systemd/aegis-tls-renew.timer"
+    "$target_base/deploy/systemd/aegis-health.service"
+    "$target_base/deploy/systemd/aegis-health.timer"
   )
   migration_files=()
   for migration in "$target"/migrations/*.sql; do

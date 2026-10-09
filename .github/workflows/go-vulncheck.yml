@@ -1,0 +1,96 @@
+name: Go vulnerability report
+
+# govulncheck 只报「被调用」的漏洞（默认文本输出的 Symbol Results）。每个模块用它 go.mod
+# 的 go 指令对应的工具链扫（GOTOOLCHAIN=go<版本>），标准库漏洞与发布物用的 Go 一致。
+# 每个模块先扫 ./...；panel 与 pdnd 再单扫发布的二进制（发布物视图，不含 tools/、测试辅助、
+# -tags compat 才链进来的 core/xray 等）。本地同口径见 .claude/skills/deps-upgrade/scripts/vulncheck.sh。
+#
+# 现阶段只报告、不挡合并：步骤永远退出 0，结论写进 job summary 与告警注解
+# （有被调用漏洞记 warning，扫描出错记 error）。检查机的 ci-replay.py 也会回放本 job，
+# 它不认 continue-on-error 与 matrix，所以这里不用 matrix、不靠退出码表达结论。
+# 漏洞库每天更新，代码不动也会冒出新条目，所以另按周定时跑（定时只跑默认分支）。
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * 1"
+  push:
+    paths:
+      - "**.go"
+      - "**/go.mod"
+      - "**/go.sum"
+      - ".github/workflows/go-vulncheck.yml"
+  pull_request:
+    paths:
+      - "**.go"
+      - "**/go.mod"
+      - "**/go.sum"
+      - ".github/workflows/go-vulncheck.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  govulncheck:
+    name: govulncheck (report only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pdnd/go.mod
+          cache-dependency-path: |
+            panel/go.sum
+            pdnd/go.sum
+            .claude/skills/subscription-e2e/tools/go.sum
+      - name: Scan called vulnerabilities
+        env:
+          # 锁死扫描器版本，结论可复现
+          GOVULNCHECK_VERSION: v1.8.0
+        run: |
+          set +e
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          bin="$RUNNER_TEMP/govulncheck-bin"
+          if ! GOBIN="$bin" go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"; then
+            echo "::error title=govulncheck::install failed"
+            exit 0
+          fi
+          # 用法：scan <模块名> <模块目录> <标签> <包...>
+          # govulncheck 退出码：0 无被调用漏洞，3 有，其余为扫描出错
+          scan() {
+            local name="$1" dir="$2" label="$3"; shift 3
+            local tc out rc
+            tc="go$(awk '/^go /{print $2; exit}' "$dir/go.mod")"
+            out="$RUNNER_TEMP/govulncheck-${name}-${label}.txt"
+            (cd "$dir" && GOTOOLCHAIN="$tc" "$bin/govulncheck" "$@") > "$out" 2>&1
+            rc=$?
+            echo "::group::${name} ${label}（${tc}，退出 ${rc}）"
+            cat "$out"
+            echo "::endgroup::"
+            {
+              echo "### ${name}：${label}（${tc}，退出 ${rc}）"
+              echo
+              echo '```'
+              cat "$out"
+              echo '```'
+              echo
+            } >> "$summary"
+            case "$rc" in
+              0) ;;
+              3) echo "::warning title=govulncheck ${name} ${label}::$(grep -E '^Your code is affected' "$out" | head -1)" ;;
+              *) echo "::error title=govulncheck ${name} ${label}::scan failed (exit ${rc})" ;;
+            esac
+          }
+          scan panel panel full ./...
+          scan panel panel release ./cmd/...
+          scan pdnd pdnd full ./...
+          scan pdnd pdnd release . ./cmd/pandora-h3-probe
+          # 经 replace 跟随 pdnd；不 tidy 时这里会扫描出错，提示去该目录 go mod tidy
+          scan subscription-e2e-tools .claude/skills/subscription-e2e/tools full ./...
+          exit 0

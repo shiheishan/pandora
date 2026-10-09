@@ -541,6 +541,10 @@ for s in aegis-public aegis-admin aegis-node; do
   systemctl enable "$s" >/dev/null 2>&1 || true
   systemctl restart "$s"
 done
+# 健康巡检 timer（healthcheck.sh 每 10 分钟一次，首跑在启用后 10 分钟）：首装与升级都启用，
+# 已启用的 enable --now 不会重置计时。单元由 install-linux-binaries.sh 随包装好
+systemctl enable --now aegis-health.timer >/dev/null 2>&1 \
+  || warn "没能启用健康巡检：systemctl enable --now aegis-health.timer"
 
 ok=1
 for _ in $(seq 1 30); do

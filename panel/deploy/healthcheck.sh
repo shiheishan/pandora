@@ -11,7 +11,9 @@
 # 恰恰是它自己的通知链路最不可信。
 set -u
 
-ROOT=/opt/aegispanel
+# 安装根目录取自脚本自己的位置（<根>/deploy/healthcheck.sh）：docker 布局的 /opt/aegispanel
+# 与直装布局的 /opt/pandora 用同一份脚本，不写死路径。HEALTHCHECK_ROOT 只给桩测试覆盖。
+ROOT="${HEALTHCHECK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)}"
 LOG=$ROOT/logs/health.log
 
 PROBLEMS=()
@@ -80,12 +82,26 @@ check_tls() {
   fi
 }
 
+# 查库：docker 布局走 deploy/psql.sh（容器里的 psql）；直装布局没有 psql.sh，
+# 以 postgres 系统用户经本地 socket 连 aegis 库（建库时就是这样连的）
+db_query() {
+  if [ -f "$ROOT/deploy/psql.sh" ]; then
+    "$ROOT/deploy/psql.sh" -tAc "$1"
+  elif command -v runuser >/dev/null 2>&1; then
+    runuser -u postgres -- psql -X -d aegis -tAc "$1"
+  else
+    return 1
+  fi
+}
+
 # 可单测的部分到此为止
 if [ "${HEALTHCHECK_LIB:-}" = 1 ]; then
   return 0 2>/dev/null || exit 0
 fi
 
 cd "$ROOT" || exit 1
+# 安装器不建 logs/：health.log 写不进去时不能让「无声则无事」变成「无声且无记录」
+mkdir -p "$ROOT/logs" 2>/dev/null || true
 set -a; . deploy/.env 2>/dev/null; set +a
 
 #--- 服务存活 ---
@@ -104,7 +120,7 @@ for pair in "public:9000" "admin:9001"; do
 done
 
 #--- 数据库 ---
-if ! ./deploy/psql.sh -tAc 'SELECT 1' >/dev/null 2>&1; then
+if ! db_query 'SELECT 1' >/dev/null 2>&1; then
   note "数据库连不上"
 fi
 
@@ -137,12 +153,12 @@ check_tls
 #--- 通知队列积压 ---
 # 队列涨起来通常意味着 SMTP 挂了或 Telegram token 失效，
 # 而这两件事本身不会让任何服务变成 inactive。
-q=$(./deploy/psql.sh -tAc \
+q=$(db_query \
   "SELECT count(*) FROM notification_deliveries WHERE status='queued' AND created_at < now() - interval '30 minutes'" \
   2>/dev/null | tr -dc '0-9')
 [ -z "$q" ] || [ "$q" -lt 200 ] || note "有 $q 条通知排队超过 30 分钟没发出去"
 
-f=$(./deploy/psql.sh -tAc \
+f=$(db_query \
   "SELECT count(*) FROM notification_deliveries WHERE status='failed' AND created_at > now() - interval '6 hours'" \
   2>/dev/null | tr -dc '0-9')
 [ -z "$f" ] || [ "$f" -lt 50 ] || note "最近六小时有 $f 条通知发送失败"
@@ -159,10 +175,10 @@ f=$(./deploy/psql.sh -tAc \
 #
 # 判据换成两条同时成立：最近 30 分钟一条心跳都没有，且过去 7 天里
 # 曾经有过 —— 前者是「现在坏了」，后者是「以前是好的」。
-recent=$(./deploy/psql.sh -tAc \
+recent=$(db_query \
   "SELECT count(*) FROM nodes WHERE serving_status IN ('active','draining') AND last_heartbeat_at > now() - interval '30 minutes'" \
   2>/dev/null | tr -dc '0-9')
-ever=$(./deploy/psql.sh -tAc \
+ever=$(db_query \
   "SELECT count(*) FROM nodes WHERE serving_status IN ('active','draining') AND last_heartbeat_at > now() - interval '7 days'" \
   2>/dev/null | tr -dc '0-9')
 if [ -n "$recent" ] && [ -n "$ever" ] && [ "$recent" = "0" ] && [ "$ever" -gt 0 ]; then

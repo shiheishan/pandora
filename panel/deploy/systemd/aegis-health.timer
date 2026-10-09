@@ -1,0 +1,16 @@
+[Unit]
+Description=每 10 分钟跑一次面板健康巡检
+
+[Timer]
+# 相对 timer 自己被激活的时刻：开机后 10 分钟首跑，安装器 enable --now 之后同样等 10 分钟。
+# 不用 OnBootSec：安装时开机早已超过 5 分钟，它会在 enable --now 的瞬间就跑一次，
+# 那时服务刚拉起，可能把「正在启动」当故障报出去。
+OnActiveSec=10min
+OnUnitActiveSec=10min
+# 错开整点：备份、certbot 这些都爱挑整点跑，
+# 挤在一起会让巡检把它们造成的瞬时抖动当成故障。
+RandomizedDelaySec=90
+Persistent=true
+
+[Install]
+WantedBy=timers.target
