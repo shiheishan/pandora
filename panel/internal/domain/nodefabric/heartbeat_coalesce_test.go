@@ -186,3 +186,80 @@ func TestEveryImmediateHeartbeatWriteUpdatesCoalescer(t *testing.T) {
 		t.Fatal("the compat status endpoint must make the coalescer forget the node")
 	}
 }
+
+// 服务器行的判断（w12period）：例行的自愈写不动它；第一次见到、身份换了、材料变了都清掉；
+// 取走之后被清掉的节点，批量写学到的旧结果不记；判断有 TTL。
+func TestHeartbeatCoalescerServerKnowledge(t *testing.T) {
+	c := newHeartbeatCoalescer()
+	key := hbKey("t", "n")
+	t0 := time.Unix(1_700_000_000, 0)
+	in := HeartbeatInput{AgentVersion: "a"}
+	pk := []byte("pk")
+	learn := func(has bool, at time.Time) {
+		t.Helper()
+		c.mu.Lock()
+		gen := c.nodes[key].serverGen
+		c.mu.Unlock()
+		c.learnServers([]hbFlushRow{{key: key, nodeID: "n", serverGen: gen}}, map[string]bool{"n": has}, at)
+	}
+	know := func() hbServerKnowledge {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.nodes[key].server
+	}
+
+	c.written(key, in, t0, pk)
+	if know().known {
+		t.Fatal("a node seen for the first time already has server knowledge")
+	}
+	learn(false, t0)
+	if k := know(); !k.known || k.has || !k.fresh(t0.Add(time.Minute)) {
+		t.Fatalf("learned knowledge = %+v", k)
+	}
+	if know().fresh(t0.Add(hbServerKnowledgeTTL)) {
+		t.Fatal("knowledge outlived its TTL")
+	}
+	// 例行的自愈写（材料、身份都没变）：保留
+	c.written(key, in, t0.Add(10*time.Minute), pk)
+	if !know().known {
+		t.Fatal("a routine refresh write cleared the server knowledge")
+	}
+	// 缓冲路径不碰它
+	if !c.offer(key, in, t0.Add(10*time.Minute+30*time.Second), pk) || !know().known {
+		t.Fatal("buffering a beat cleared the server knowledge or was refused")
+	}
+	// 换身份 / 材料变了：清掉
+	c.written(key, in, t0.Add(11*time.Minute), []byte("new-pk"))
+	if know().known {
+		t.Fatal("a new identity kept the server knowledge")
+	}
+	learn(true, t0.Add(11*time.Minute))
+	changed := in
+	changed.AgentVersion = "b"
+	c.written(key, changed, t0.Add(12*time.Minute), []byte("new-pk"))
+	if know().known {
+		t.Fatal("a material change kept the server knowledge")
+	}
+
+	// 取走时带着判断与代号；之后被清掉，旧结果不记
+	learn(true, t0.Add(12*time.Minute))
+	if !c.offer(key, changed, t0.Add(12*time.Minute+30*time.Second), []byte("new-pk")) {
+		t.Fatal("beat not buffered")
+	}
+	rows := c.take(t0.Add(13 * time.Minute))
+	if len(rows) != 1 || !rows[0].server.known || !rows[0].server.has {
+		t.Fatalf("take did not carry the server knowledge: %+v", rows)
+	}
+	c.written(key, in, t0.Add(13*time.Minute), []byte("newer-pk"))
+	c.learnServers(rows, map[string]bool{"n": false}, t0.Add(13*time.Minute))
+	if know().known {
+		t.Fatal("a probe result from before the identity changed was recorded")
+	}
+	// 忘掉再建的记录也不接旧结果
+	c.forget(key)
+	c.written(key, in, t0.Add(14*time.Minute), []byte("newer-pk"))
+	c.learnServers(rows, map[string]bool{"n": true}, t0.Add(14*time.Minute))
+	if know().known {
+		t.Fatal("a probe result was applied to a recreated node record")
+	}
+}
