@@ -3,7 +3,6 @@ package kernel
 import (
 	"context"
 	"net"
-	"net/netip"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -19,10 +18,12 @@ import (
 // QUIC 类协议（Hysteria2、TUIC）共用的 UDP 转发热路径。单条 QUIC 连接上几万包/秒
 // 时，逐包的分配、全局锁、地址解析和 sendto 都会变成瓶颈（实测 100Mbps 起丢包）。
 // 这里：
-//   - 上行（客户端 → 上游）：先阻塞读一条，再把会话队列里积压的消息一次取走，
+//   - 上行（客户端 → 上游）：先阻塞等一条，再把会话队列里积压的消息一次取走，
 //     凑批发出；上游能批量时 Linux 走 sendmmsg，一次系统调用发一批；
 //   - 下行（上游 → 客户端）：上游能批量时 Linux 走 recvmmsg 批量收，否则逐包读；
 //     不再为每包复制一份负载；
+//   - 空闲会话不常驻收发缓冲（hysteria2_udp_relay.go）：批量缓冲只在真正收发的
+//     那一刻从共享池借用，空闲时上行零拷贝地等会话队列、下行只窥视上游 socket；
 //   - 目标地址按上一包缓存，域名目标不再逐包解析；
 //   - 流量直接原子累加到会话所属用户的计数器（userSession），不抢适配器的锁；
 //   - 上游 socket 收发缓冲固定申请 hy2UDPSocketBuffer（见该常量的数据与理由）。
@@ -95,13 +96,23 @@ type hy2UDPBatchIO interface {
 	WriteBatch(ms []ipv4.Message, flags int) (int, error)
 }
 
+// hy2UDPReader 是能带 flags 收包的上游接口（ipv4.PacketConn 或出站的
+// outbound.UDPBatchConn）：下行靠它窥视等包、非阻塞收包，见 hy2DownlinkUDPPeek。
+type hy2UDPReader interface {
+	ReadBatch(ms []ipv4.Message, flags int) (int, error)
+}
+
 // hy2UDPUpstream 是一个上游 socket 可用的收发路径。
 type hy2UDPUpstream struct {
 	conn net.PacketConn
-	// raw 只在出站明确交出裸 socket 时非 nil（逐包下行走 ReadFromUDPAddrPort）。
+	// raw 只在出站明确交出裸 socket 时非 nil。
 	raw *net.UDPConn
-	// batch 在 Linux、IPv4 本地地址、出站支持批量时非 nil。
+	// batch 在 Linux、IPv4 本地地址、出站支持批量时非 nil（上行批量发、下行批量收）。
 	batch hy2UDPBatchIO
+	// reader 在出站交出裸 socket 或带检查的批量接口时非 nil，不分协议族：下行经它
+	// 窥视等包，空闲时不占收包缓冲。Linux 上一次收一批（recvmmsg 不分协议族），
+	// 别的平台一次一包。
+	reader hy2UDPReader
 }
 
 func newHy2UDPUpstream(upstream net.PacketConn) hy2UDPUpstream {
@@ -109,8 +120,12 @@ func newHy2UDPUpstream(upstream net.PacketConn) hy2UDPUpstream {
 	if u.raw != nil {
 		_ = u.raw.SetReadBuffer(hy2UDPSocketBuffer)
 		_ = u.raw.SetWriteBuffer(hy2UDPSocketBuffer)
+		packetConn := ipv4.NewPacketConn(u.raw)
+		if hy2UDPPeekSupported {
+			u.reader = packetConn
+		}
 		if hy2UDPBatchSupported && isIPv4Local(u.raw.LocalAddr()) {
-			u.batch = ipv4.NewPacketConn(u.raw)
+			u.batch = packetConn
 		}
 		return u
 	}
@@ -124,6 +139,9 @@ func newHy2UDPUpstream(upstream net.PacketConn) hy2UDPUpstream {
 	}
 	_ = checked.SetReadBuffer(hy2UDPSocketBuffer)
 	_ = checked.SetWriteBuffer(hy2UDPSocketBuffer)
+	if hy2UDPPeekSupported {
+		u.reader = checked
+	}
 	if hy2UDPBatchSupported && isIPv4Local(checked.LocalAddr()) {
 		u.batch = checked
 	}
@@ -162,72 +180,30 @@ func (r *hy2UDPResolver) resolve(destination M.Socksaddr) (*net.UDPAddr, error) 
 
 // relayHy2UDP 在 conn（客户端会话）与 upstream（上游 socket）之间双向转发，
 // 任一方向结束即收尾；字节数随搬随记到 up / down（用户计数器）。
+//
+// 上行另起一个 goroutine，下行就在调用方的 goroutine 里跑；任一方向结束即取消，
+// 取消时由 context.AfterFunc 给两端设读截止、打断另一方向的阻塞读，不再常驻一个
+// 专门等取消的 goroutine（空闲会话每个 goroutine 都占一份栈）。
 func relayHy2UDP(ctx context.Context, conn N.PacketConn, upstream net.PacketConn, destination M.Socksaddr, up, down *atomic.Int64) {
 	u := newHy2UDPUpstream(upstream)
 	bridgeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	stop := context.AfterFunc(bridgeCtx, func() {
+		// udpPacketConn 不支持 SetDeadline，只认读截止时间。
+		_ = conn.SetReadDeadline(time.Now())
+		_ = upstream.SetDeadline(time.Now())
+	})
+	defer stop()
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		defer cancel()
 		defer wg.Done()
 		hy2UplinkUDP(bridgeCtx, conn, u, destination, up)
 	}()
-	go func() {
-		defer cancel()
-		defer wg.Done()
-		hy2DownlinkUDP(conn, u, down)
-	}()
-	go func() {
-		<-bridgeCtx.Done()
-		// udpPacketConn 不支持 SetDeadline，只认读截止时间。
-		_ = conn.SetReadDeadline(time.Now())
-		_ = upstream.SetDeadline(time.Now())
-	}()
+	hy2DownlinkUDP(conn, u, down)
+	cancel()
 	wg.Wait()
-}
-
-func hy2UplinkUDP(ctx context.Context, conn N.PacketConn, upstream hy2UDPUpstream, fallback M.Socksaddr, up *atomic.Int64) {
-	tryReader, _ := conn.(hy2PacketTryReader)
-	batch := 1
-	if tryReader != nil {
-		batch = hy2UDPBatch
-	}
-	buffers := make([]*buf.Buffer, batch)
-	for i := range buffers {
-		buffers[i] = buf.NewPacket()
-	}
-	defer func() {
-		for _, buffer := range buffers {
-			buffer.Release()
-		}
-	}()
-	writer := newHy2BatchWriter(upstream.conn, upstream.batch)
-	resolver := &hy2UDPResolver{ctx: ctx}
-	for {
-		buffers[0].Reset()
-		destination, err := conn.ReadPacket(buffers[0])
-		if err != nil {
-			return
-		}
-		writer.reset()
-		writer.add(resolver, buffers[0].Bytes(), destination, fallback)
-		for n := 1; n < batch; n++ {
-			buffers[n].Reset()
-			destination, ok := tryReader.TryReadPacket(buffers[n])
-			if !ok {
-				break
-			}
-			writer.add(resolver, buffers[n].Bytes(), destination, fallback)
-		}
-		written, err := writer.flush()
-		if written > 0 {
-			up.Add(written)
-		}
-		if err != nil {
-			return
-		}
-	}
 }
 
 // hy2BatchWriter 攒一批上行包：上游能批量且目标都是 IPv4 时走 WriteBatch
@@ -250,19 +226,27 @@ type hy2BatchWriter struct {
 	oob   []byte
 }
 
+// newHy2BatchWriter 只记上游与开关；批量发送用的消息、iovec 与 GSO 控制信息
+// 缓冲（约 5KB）到第一次真的批量发送时才分配，只发过单包的会话不占。
 func newHy2BatchWriter(upstream net.PacketConn, batch hy2UDPBatchIO) *hy2BatchWriter {
-	w := &hy2BatchWriter{upstream: upstream}
-	if batch != nil {
-		w.batch = batch
-		w.messages = make([]ipv4.Message, 0, hy2UDPBatch)
-		w.buffers = make([][1][]byte, hy2UDPBatch)
-		w.first = make([]int, 0, hy2UDPBatch)
-		if hy2UDPGSOSupported {
-			w.gso = true
-			w.oob = make([]byte, hy2UDPBatch*udpSegmentCmsgSpace)
-		}
+	w := &hy2BatchWriter{upstream: upstream, batch: batch}
+	if batch != nil && hy2UDPGSOSupported {
+		w.gso = true
 	}
 	return w
+}
+
+// ensureBatchBuffers 第一次批量发送前分配消息与控制信息缓冲。
+func (w *hy2BatchWriter) ensureBatchBuffers() {
+	if w.buffers != nil {
+		return
+	}
+	w.messages = make([]ipv4.Message, 0, hy2UDPBatch)
+	w.buffers = make([][1][]byte, hy2UDPBatch)
+	w.first = make([]int, 0, hy2UDPBatch)
+	if hy2UDPGSOSupported {
+		w.oob = make([]byte, hy2UDPBatch*udpSegmentCmsgSpace)
+	}
 }
 
 func (w *hy2BatchWriter) reset() {
@@ -303,6 +287,7 @@ func (w *hy2BatchWriter) flush() (int64, error) {
 
 // flushBatch 从 payloads[from] 起批量发出。
 func (w *hy2BatchWriter) flushBatch(from int) (int64, error) {
+	w.ensureBatchBuffers()
 	w.buildMessages(from)
 	var written int64
 	for sent := 0; sent < len(w.messages); {
@@ -326,65 +311,4 @@ func (w *hy2BatchWriter) flushBatch(from int) (int64, error) {
 		}
 	}
 	return written, nil
-}
-
-func hy2DownlinkUDP(conn N.PacketConn, upstream hy2UDPUpstream, down *atomic.Int64) {
-	if upstream.batch != nil {
-		hy2DownlinkUDPBatch(conn, upstream.batch, down)
-		return
-	}
-	data := make([]byte, 64<<10)
-	if raw := upstream.raw; raw != nil {
-		for {
-			n, source, err := raw.ReadFromUDPAddrPort(data)
-			if err != nil {
-				return
-			}
-			if !hy2WriteDownlink(conn, data[:n], M.SocksaddrFromNetIP(source).Unwrap(), down) {
-				return
-			}
-		}
-	}
-	for {
-		n, addr, err := upstream.conn.ReadFrom(data)
-		if err != nil {
-			return
-		}
-		if !hy2WriteDownlink(conn, data[:n], M.SocksaddrFromNet(addr).Unwrap(), down) {
-			return
-		}
-	}
-}
-
-func hy2DownlinkUDPBatch(conn N.PacketConn, batch hy2UDPBatchIO, down *atomic.Int64) {
-	messages := make([]ipv4.Message, hy2UDPBatch)
-	for i := range messages {
-		messages[i].Buffers = [][]byte{make([]byte, 64<<10)}
-	}
-	for {
-		n, err := batch.ReadBatch(messages, 0)
-		if err != nil {
-			return
-		}
-		for _, message := range messages[:n] {
-			source := M.Socksaddr{}
-			if addr, ok := message.Addr.(*net.UDPAddr); ok {
-				ip, _ := netip.AddrFromSlice(addr.IP)
-				source = M.Socksaddr{Addr: ip.Unmap(), Port: uint16(addr.Port)}
-			}
-			if !hy2WriteDownlink(conn, message.Buffers[0][:message.N], source, down) {
-				return
-			}
-		}
-	}
-}
-
-// hy2WriteDownlink 把一个上游包写回客户端。WritePacket 同步完成编码与复制，
-// 返回后 payload 可以复用，不必逐包另拷一份。
-func hy2WriteDownlink(conn N.PacketConn, payload []byte, source M.Socksaddr, down *atomic.Int64) bool {
-	if err := conn.WritePacket(buf.As(payload), source); err != nil {
-		return false
-	}
-	down.Add(int64(len(payload)))
-	return true
 }
