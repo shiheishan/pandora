@@ -34,6 +34,7 @@ func writeIdentity(t *testing.T, dir, name, body string) string {
 }
 
 func TestLocalSealRoundTripAndRejections(t *testing.T) {
+	sealTestTrustCurrentUser(t)
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
