@@ -62,6 +62,9 @@ type ttlEntry[V any] struct {
 	// hard 表示 expires 来自条目自己的到期时刻（expiry），而不是 TTL：过了就不能
 	// 再当旧值先回（staleGrace 只对 TTL 到期生效）。
 	hard bool
+	// hardAt 是条目自己的到期时刻（expiry），零值表示没有。pinned 的条目不看 TTL，
+	// 但这个时刻照样作数（身份到期、名单里最早的订阅到期）。
+	hardAt time.Time
 }
 
 type ttlFlight[V any] struct {
@@ -100,17 +103,23 @@ func newTTLCache[V any](ttl time.Duration, max int, now func() time.Time) *ttlCa
 
 // get 命中且 valid 认可就返回；否则同一（key, flight）只放一个加载，其余等它的结果。
 // flight 区分「要多新」：要求更新的请求不去搭为较旧要求发起的那趟车。
-func (c *ttlCache[V]) get(ctx context.Context, key, flight string, valid func(V) bool,
+//
+// pinned 非空且认可条目时不看 TTL（纪元监听证明加载之后没有相关提交，见 epoch_watch.go），
+// 只看条目自己的到期时刻（hardAt）。
+func (c *ttlCache[V]) get(ctx context.Context, key, flight string, valid, pinned func(V) bool,
 	load func(context.Context) (V, error)) (V, error) {
 	flightKey := key + "\x00" + flight
 	c.mu.Lock()
 	if e, ok := c.entries[key]; ok && valid(e.value) {
 		now := c.now()
-		if now.Before(e.expires) {
+		// 条目自己的到期时刻（身份 expires_at、名单里最早的订阅到期）过了就一律同步重算：
+		// 不走 pinned，也不走 staleGrace（入库时 TTL 早于它、hard=false 的条目同样如此）
+		pastHard := !e.hardAt.IsZero() && !now.Before(e.hardAt)
+		if now.Before(e.expires) || (pinned != nil && !pastHard && pinned(e.value)) {
 			c.mu.Unlock()
 			return e.value, nil
 		}
-		if c.staleGrace > 0 && !e.hard && now.Before(e.expires.Add(c.staleGrace)) {
+		if c.staleGrace > 0 && !e.hard && !pastHard && now.Before(e.expires.Add(c.staleGrace)) {
 			// 先回旧值；没有同标签的加载在跑就起一个后台加载，跑完替换条目。
 			if _, busy := c.flights[flightKey]; !busy {
 				f := &ttlFlight[V]{done: make(chan struct{})}
@@ -181,12 +190,14 @@ func (c *ttlCache[V]) storeLocked(key string, value V) {
 		return // 一趟起得早、完成得晚的加载，不能把已存的较新条目换回旧的
 	}
 	expires, hard := now.Add(c.ttl), false
+	var hardAt time.Time
 	if c.expiry != nil {
-		if at := c.expiry(value); !at.IsZero() && at.Before(expires) {
-			expires, hard = at, true
+		hardAt = c.expiry(value)
+		if !hardAt.IsZero() && hardAt.Before(expires) {
+			expires, hard = hardAt, true
 		}
 	}
-	c.entries[key] = ttlEntry[V]{value: value, expires: expires, hard: hard}
+	c.entries[key] = ttlEntry[V]{value: value, expires: expires, hard: hard, hardAt: hardAt}
 }
 
 // peek 只读缓存，不触发加载。
@@ -230,6 +241,14 @@ type nodeUserSet struct {
 	version    string
 	epoch      int64
 	nextExpiry time.Time
+	// watch 是加载前的纪元监听戳（零值：加载时监听不健康）。戳覆盖请求时的戳就不必
+	// 再比纪元，loose 模式下也不必按 TTL 重算（epoch_watch.go）。
+	watch watchStamp
+	// strict 是加载时的设备判定模式：strict 名单依赖在线设备记录，没有纪元，照旧按 TTL 重算。
+	strict bool
+	// body 是这一版名单的 UniProxy 响应正文（JSON 与 gzip 各编码一次，同池节点共享）。
+	// 只在缓存路径上有，直查路径为 nil。
+	body *userSetBody
 }
 
 // nextExpiryFloor 是 nextExpiry 离现在的最小距离。库与本进程的时钟有偏差：本进程
@@ -256,10 +275,16 @@ func clampNextExpiry(at, now time.Time) time.Time {
 	return at
 }
 
-// nodeCaches 是 aegis-node 进程的用户集缓存与签名身份缓存。
+// nodeCaches 是 aegis-node 进程的用户集缓存、签名身份缓存与节点配置视图缓存。
 type nodeCaches struct {
 	users    *ttlCache[nodeUserSet]
 	identity *ttlCache[Identity]
+	// config 只在纪元监听健康时用（nodeConfigView，config_delivery_view.go）。
+	config *ttlCache[*nodeConfigView]
+	// watch 是纪元监听（StartEpochWatch 起；没起时为 nil，戳恒为零值）。
+	watch *epochWatch
+	// alive 是在线上报的刷新备忘（uniproxy_alive_memo.go）。
+	alive *aliveMemo
 }
 
 func newNodeCaches(now func() time.Time) *nodeCaches {
@@ -270,7 +295,8 @@ func newNodeCaches(now func() time.Time) *nodeCaches {
 	identity := newTTLCache[Identity](nodeIdentityCacheTTL, nodeIdentityCacheMax, now)
 	identity.expiry = func(id Identity) time.Time { return id.expiresAt }
 	identity.rank = func(id Identity) int64 { return id.epoch }
-	return &nodeCaches{users: users, identity: identity}
+	config := newTTLCache[*nodeConfigView](nodeConfigCacheTTL, nodeIdentityCacheMax, now)
+	return &nodeCaches{users: users, identity: identity, config: config, alive: newAliveMemo()}
 }
 
 // EnableNodeCaches 打开节点链路缓存。装配时调用一次（aegis-node）；其他进程不开，
@@ -278,6 +304,7 @@ func newNodeCaches(now func() time.Time) *nodeCaches {
 func (s *Service) EnableNodeCaches() {
 	if s.caches == nil {
 		s.caches = newNodeCaches(nil)
+		s.served = &servedSets{}
 	}
 }
 

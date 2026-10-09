@@ -20,22 +20,23 @@ func clearRuntimeEnv(t *testing.T) {
 }
 
 // 缺省值按 compose 的 max_connections=60 算：3 条超级用户保留 + 11 条维护余量 +
-// public 的 1 条 LISTEN + 三个网关各 15 条。改算式要同时改这条测试和注释。
+// public 的 1 条 LISTEN + 三个网关各 15 条（node 的 15 条里 1 条是池外的探针专用连接）。
+// 改算式要同时改这条测试和注释。
 func TestRuntimeDefaultsFitComposeConnectionBudget(t *testing.T) {
 	clearRuntimeEnv(t)
 	r, err := loadRuntime()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.DBMaxConns[DomainPublic] != 16 || r.DBMaxConns[DomainAdmin] != 15 || r.DBMaxConns[DomainNode] != 15 {
-		t.Fatalf("pool defaults = %v, want public 16 / admin 15 / node 15", r.DBMaxConns)
+	if r.DBMaxConns[DomainPublic] != 16 || r.DBMaxConns[DomainAdmin] != 15 || r.DBMaxConns[DomainNode] != 14 {
+		t.Fatalf("pool defaults = %v, want public 16 / admin 15 / node 14", r.DBMaxConns)
 	}
-	total := 0
+	total := nodeProbeConnections
 	for _, n := range r.DBMaxConns {
 		total += int(n)
 	}
 	if total+superuserReservedConnections+maintenanceConnections > composeMaxConnections {
-		t.Fatalf("gateway pools %d + reserved %d + maintenance %d exceed max_connections %d",
+		t.Fatalf("gateway pools and node probe %d + reserved %d + maintenance %d exceed max_connections %d",
 			total, superuserReservedConnections, maintenanceConnections, composeMaxConnections)
 	}
 	if r.DBMinConns[DomainPublic] != 1 || r.DBMinConns[DomainAdmin] != 1 || r.DBMinConns[DomainNode] != 8 {

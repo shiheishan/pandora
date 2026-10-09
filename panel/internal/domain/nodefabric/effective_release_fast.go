@@ -62,6 +62,21 @@ func (s *Service) EffectiveConfigUnchanged(ctx context.Context, tenantID, nodeID
 	return unchanged, err
 }
 
+// EffectiveConfigUnchangedFor 是拉生效配置 204 判定的入口：纪元监听健康时从节点配置视图
+// 回答（config_delivery_view.go；视图与下面的 EXISTS 同一组条件，相关的任何提交都会让它
+// 作废），epochKnown=false——调用方要复核缓存身份就另读纪元；不健康时走
+// EffectiveConfigUnchangedAt，一条语句同时读出纪元（epochKnown=true）。
+func (s *Service) EffectiveConfigUnchangedFor(ctx context.Context, tenantID, nodeID, releaseID string,
+	generation uint64) (unchanged bool, epoch int64, epochKnown bool, err error) {
+	if generation > 0 && generation <= math.MaxInt64 {
+		if v, ok := s.cachedNodeConfig(ctx, tenantID, nodeID, s.watchStamp()); ok {
+			return v.effectiveUnchanged(releaseID, generation, s.signer.KeyID()), 0, false, nil
+		}
+	}
+	unchanged, epoch, err = s.EffectiveConfigUnchangedAt(ctx, tenantID, nodeID, releaseID, generation)
+	return unchanged, epoch, err == nil, err
+}
+
 // EffectiveConfigUnchangedAt 同 EffectiveConfigUnchanged，并在同一条语句里读出当前下发
 // 纪元：签名中间件把缓存身份的复核交给这里（一次往返做完两件事），handler 拿纪元复核
 // 通过之后才回 204。
@@ -78,8 +93,7 @@ func (s *Service) EffectiveConfigUnchangedAt(ctx context.Context, tenantID, node
 				  JOIN node_effective_config_releases r
 				    ON r.tenant_id=n.tenant_id AND r.node_id=n.id AND r.generation=n.config_source_generation
 				 WHERE n.tenant_id=$1 AND n.id=$2::uuid
-				   AND n.status NOT IN ('destroyed','retired') AND n.serving_status<>'retired'
-				   AND n.node_type IS NOT NULL AND n.server_port BETWEEN 1 AND 65535
+				   AND `+effectiveDeliverableSQL+`
 				   AND n.config_source_generation=$4
 				   AND n.desired_effective_release_id=$3::uuid AND n.desired_effective_generation=$4
 				   AND r.id=$3::uuid AND r.key_id=$5), `+deliveryEpochSQL,
@@ -109,8 +123,7 @@ func readReusableEffectiveReleaseTx(ctx context.Context, tx pgx.Tx, tenantID, no
 		  LEFT JOIN node_effective_config_releases r
 		    ON r.tenant_id=n.tenant_id AND r.node_id=n.id AND r.generation=n.config_source_generation
 		 WHERE n.tenant_id=$1 AND n.id=$2::uuid
-		   AND n.status NOT IN ('destroyed','retired') AND n.serving_status<>'retired'
-		   AND n.node_type IS NOT NULL AND n.server_port BETWEEN 1 AND 65535`,
+		   AND `+effectiveDeliverableSQL,
 		tenantID, nodeID).Scan(&r.generation, &r.desiredID, &r.desiredGeneration,
 		&id, &keyID, &r.payload, &r.content, &r.manifest, &r.mhash)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -45,6 +45,10 @@ type Service struct {
 	release *ReleaseBinding
 	// caches 是节点链路的进程内缓存，只在 aegis-node 里开（见 nodecache.go）。
 	caches *nodeCaches
+	// hb 是心跳写合并，只在 aegis-node 里开（heartbeat_coalesce.go）；nil 时每拍立即写。
+	hb *heartbeatCoalescer
+	// served 是按名单切片记住的放行 uid 集合（uniproxy_served_set.go），只在开了缓存时有。
+	served *servedSets
 	// releaseMemo 记着已校验过的不可变发布物的规范字节（见 effective_release_fast.go）。
 	releaseMemo releaseMemo
 	// pullInterval 是下发给节点的拉取间隔，零值按 defaultNodePullInterval（见 uniproxy_config.go）。
@@ -104,16 +108,29 @@ type Identity struct {
 	epoch int64
 	// expiresAt 是身份自己的到期时刻；缓存寿命不超过它。
 	expiresAt time.Time
+	// watch 是加载前的纪元监听戳（epoch_watch.go）；覆盖请求时的戳就不必再比纪元。
+	watch watchStamp
 }
 
 // activeIdentitySQL 是「节点有一份有效身份」的唯一口径：身份 active 且未过期，
-// 节点没有退役或销毁。LookupIdentity 按它取身份，心跳按它给写入加门槛
-// （heartbeatIdentityGateSQL），两处不能各写一份。参数：$1 租户、$2 节点。
-const activeIdentitySQL = `
+// 节点没有退役或销毁。LookupIdentity 按它取身份，心跳按它给写入加门槛（立即写与
+// 合并后的批量写，heartbeat_coalesce.go），不能各写一份。参数：$1 租户、$2 节点。
+var activeIdentitySQL = activeIdentityFromSQL("$2")
+
+// activeIdentityFromSQL 是 activeIdentitySQL 的节点表达式可换的写法：批量写按 unnest 出来的
+// 节点 id（v.id）逐行加同一道门槛。只接受这两种静态写法，不能是外部数据。
+func activeIdentityFromSQL(node string) string {
+	switch node {
+	case "$2", "v.id":
+	default:
+		panic("unsupported active identity node expression")
+	}
+	return `
 		  FROM node_identities i
 		  JOIN nodes n ON n.tenant_id=i.tenant_id AND n.id=i.node_id
-		 WHERE i.tenant_id=$1 AND i.node_id=$2 AND i.status='active' AND i.expires_at > now()
+		 WHERE i.tenant_id=$1 AND i.node_id=` + node + ` AND i.status='active' AND i.expires_at > now()
 		   AND n.status NOT IN ('destroyed','retired') AND n.serving_status<>'retired'`
+}
 
 // LookupIdentity 取节点当前有效身份。只返回 active 的那一份 ——
 // 吊销、过期、被更高 serial 取代的身份一律查不到，旧 Agent 立刻失去访问。
@@ -157,10 +174,14 @@ type NodeSignatureCheck struct {
 	epoch     int64
 	cached    bool
 	publicKey ed25519.PublicKey
+	// fresh 为真：纪元监听证明这份缓存身份加载之后没有任何身份或节点状态的提交
+	// （epoch_watch.go），已经复核过，不必再读纪元。
+	fresh bool
 }
 
-// NeedsEpoch 报告这次验签用的是缓存里的身份、要拿当前纪元复核。直接查库验的不必。
-func (c NodeSignatureCheck) NeedsEpoch() bool { return c.cached }
+// NeedsEpoch 报告这次验签用的是缓存里的身份、还要拿当前纪元复核。直接查库验的、
+// 以及纪元监听已证明新鲜的不必。
+func (c NodeSignatureCheck) NeedsEpoch() bool { return c.cached && !c.fresh }
 
 // VerifyNodeRequestSignature 用节点有效身份验请求签名。
 //
@@ -183,32 +204,37 @@ func (s *Service) VerifyNodeRequestSignature(ctx context.Context, tenantID, node
 		}
 		return NodeSignatureCheck{epoch: id.epoch, publicKey: id.PublicKey}, nil
 	}
-	id, err := s.cachedIdentity(ctx, tenantID, nodeID, 0)
+	// 纪元监听健康时，取到的缓存身份必须覆盖请求此刻的戳（不覆盖就当场回库），
+	// 之后不必再读纪元；不健康时 want 为零值，照旧交给 ConfirmNodeIdentity 比纪元。
+	want := s.watchStamp()
+	id, err := s.cachedIdentity(ctx, tenantID, nodeID, 0, want)
 	if err != nil {
 		return NodeSignatureCheck{}, identityLookupError(err)
 	}
 	if crypto.Verify(id.PublicKey, payload, signature) {
-		return NodeSignatureCheck{epoch: id.epoch, cached: true, publicKey: id.PublicKey}, nil
+		return NodeSignatureCheck{epoch: id.epoch, cached: true, publicKey: id.PublicKey,
+			fresh: id.watch.deliveryCovers(want)}, nil
 	}
 	c.identity.drop(identityCacheKey(tenantID, nodeID))
-	id, err = s.cachedIdentity(ctx, tenantID, nodeID, 0)
+	id, err = s.cachedIdentity(ctx, tenantID, nodeID, 0, want)
 	if err != nil {
 		return NodeSignatureCheck{}, identityLookupError(err)
 	}
 	if !crypto.Verify(id.PublicKey, payload, signature) {
 		return NodeSignatureCheck{}, ErrNodeSignatureMismatch
 	}
-	return NodeSignatureCheck{epoch: id.epoch, cached: true, publicKey: id.PublicKey}, nil
+	return NodeSignatureCheck{epoch: id.epoch, cached: true, publicKey: id.PublicKey,
+		fresh: id.watch.deliveryCovers(want)}, nil
 }
 
 // ConfirmNodeIdentity 复核验签用的身份：当前纪元比身份的纪元新，说明期间有身份或
 // 节点状态的改动，回库取不旧于该纪元的身份重验。
 func (s *Service) ConfirmNodeIdentity(ctx context.Context, tenantID, nodeID string, check NodeSignatureCheck,
 	currentEpoch int64, payload, signature []byte) error {
-	if !check.cached || currentEpoch <= check.epoch {
+	if !check.cached || check.fresh || currentEpoch <= check.epoch {
 		return nil
 	}
-	id, err := s.cachedIdentity(ctx, tenantID, nodeID, currentEpoch)
+	id, err := s.cachedIdentity(ctx, tenantID, nodeID, currentEpoch, watchStamp{})
 	if err != nil {
 		return identityLookupError(err)
 	}
@@ -228,15 +254,25 @@ func (s *Service) CurrentDeliveryEpoch(ctx context.Context, tenantID string) (in
 	return epoch, nil
 }
 
-// cachedIdentity 从缓存取身份；缓存里那份的纪元不到 minEpoch 就回库。
-func (s *Service) cachedIdentity(ctx context.Context, tenantID, nodeID string, minEpoch int64) (Identity, error) {
-	return s.caches.identity.get(ctx, identityCacheKey(tenantID, nodeID), epochFlight(minEpoch),
-		func(id Identity) bool { return id.epoch >= minEpoch },
+// cachedIdentity 从缓存取身份。want 健康时按监听戳判新旧：缓存里那份的戳不覆盖 want
+// 就回库，覆盖就不看 TTL（只看身份自己的 expires_at）；want 为零值时照旧比纪元，
+// 那份的纪元不到 minEpoch 就回库。
+func (s *Service) cachedIdentity(ctx context.Context, tenantID, nodeID string, minEpoch int64, want watchStamp) (Identity, error) {
+	valid, pinned := func(id Identity) bool { return id.epoch >= minEpoch }, func(Identity) bool { return false }
+	flight := epochFlight(minEpoch)
+	if want.ok() {
+		valid = func(id Identity) bool { return id.watch.deliveryCovers(want) }
+		pinned, flight = valid, want.flight("w")
+	}
+	return s.caches.identity.get(ctx, identityCacheKey(tenantID, nodeID), flight, valid, pinned,
 		func(ctx context.Context) (Identity, error) {
+			// 戳在查询之前取：查询的快照晚于戳里每一条通知对应的提交
+			loaded := s.watchStamp()
 			id, err := s.LookupIdentity(ctx, tenantID, nodeID)
 			if err != nil {
 				return Identity{}, err
 			}
+			id.watch = loaded
 			return *id, nil
 		})
 }

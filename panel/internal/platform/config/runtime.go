@@ -25,9 +25,14 @@ var DBMaxConnsEnv = map[Domain]string{
 //	   + 11（维护余量：adminctl / payctl 各自的池、备份 pg_dump、迁移演练、
 //	         psql 排障、健康检查，按同时在场的最坏情况留）
 //	   + 1（aegis-public 常驻的 LISTEN，它从 public 的池里借走一条且不归还）
-//	   + 3 × 15（三个网关各 15 条处理请求与后台循环）
+//	   + 3 × 15（三个网关各 15 条）
 //
-// 所以 public 缺省 16（15 + LISTEN），admin、node 各 15，三者合计 46。
+// aegis-node 的 15 条里：纪元监听的 LISTEN 从它的池里借走 1 条且不归还（同 public），节点
+// 「变了没」探针用 1 条池外的专用连接（不和请求抢池，nodefabric/epoch_watch.go），所以它的
+// 池上限是 14，处理请求与后台循环的是 13 条。纪元监听健康时节点请求几乎不碰库（1000 节点
+// 静默实测：每秒约 17 个上报事务 + 7 个在线记录事务，平均在用不到 0.2 条），13 条有余量。
+//
+// 所以 public 缺省 16（15 + LISTEN），admin 15，node 14（+ 1 条探针专用），合计 46。
 // 改了 max_connections 或在同一个库上多开网关实例时，按同一个算式重排这三个变量，
 // 合计不要超过 max_connections − 3 − 维护余量。原生安装（系统包 PostgreSQL，
 // 缺省 max_connections=100）用同样的缺省值也有余量。
@@ -36,7 +41,9 @@ const (
 	superuserReservedConnections = 3
 	maintenanceConnections       = 11
 	publicListenConnections      = 1
-	gatewayCount                 = 3
+	// nodeProbeConnections 是 aegis-node 纪元监听探针的池外专用连接。
+	nodeProbeConnections = 1
+	gatewayCount         = 3
 
 	defaultGatewayDBConns = (composeMaxConnections - superuserReservedConnections -
 		maintenanceConnections - publicListenConnections) / gatewayCount
@@ -50,7 +57,7 @@ const (
 var DefaultDBMaxConns = map[Domain]int32{
 	DomainPublic: defaultGatewayDBConns + publicListenConnections,
 	DomainAdmin:  defaultGatewayDBConns,
-	DomainNode:   defaultGatewayDBConns,
+	DomainNode:   defaultGatewayDBConns - nodeProbeConnections,
 }
 
 // DBMinConnsEnv 是各网关连接池常驻连接数（pgxpool MinConns）的环境变量名。
@@ -66,6 +73,8 @@ var DBMinConnsEnv = map[Domain]string{
 // （5k-r3 实测已建连接 8→15）。常驻连接少了，空闲回收后的下一波请求要现建连接：
 // 重做 SCRAM 认证、新起后端进程、语句缓存全冷，正是尾延迟的来源。public、admin
 // 的请求量小一个数量级，保持 1。常驻连接不突破 MaxConns，不改变连接预算。
+// 纪元监听上线后节点请求多数不碰库，常驻可能用不了 8 条；降不降、降到几（2 / 4 / 8）
+// 留给性能闸门的 A/B 实测（总协调 2026-10-09 定，计划 D 路），没数据之前不动。
 var DefaultDBMinConns = map[Domain]int32{
 	DomainPublic: 1,
 	DomainAdmin:  1,

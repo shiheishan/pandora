@@ -176,6 +176,10 @@ func TestTrafficChargePG18(t *testing.T) {
 	t.Run("node_delivery_status", func(t *testing.T) {
 		nodeDeliveryStatusScenario(t, admin, app)
 	})
+	// w10quiet：纪元监听健康时名单不按 TTL 重算，封禁、到期照样及时生效（watch_delivery_pg18_test.go）
+	t.Run("node_delivery_watched", func(t *testing.T) {
+		watchedDeliveryScenario(t, admin, app)
+	})
 	migrationRoundTripScenario(t, ctx, admin)
 
 	// 后台节点列表的通用计划门禁借这个库跑（node_list_admin_pg18_test.go），免改 gates 脚本的过滤

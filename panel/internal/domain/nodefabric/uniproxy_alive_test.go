@@ -31,12 +31,16 @@ func TestAliveRowsDeduplicatesAndSorts(t *testing.T) {
 }
 
 func TestReportAliveIsOneStatement(t *testing.T) {
-	src := sourcetest.Load(t, ".").Decl("Service.ReportAlive")
+	src := sourcetest.Load(t, ".").Decl("Service.writeAliveRows")
 	if strings.Count(src, "b.Queue(") != 1 || strings.Contains(src, "tx.") || strings.Contains(src, "for ") {
-		t.Fatal("ReportAlive must write the whole report with one batched statement")
+		t.Fatal("alive rows must be written with one batched statement")
 	}
 	if !strings.Contains(src, "unnest($3::bigint[], $4::bytea[])") {
-		t.Fatal("ReportAlive no longer batches through unnest")
+		t.Fatal("alive rows no longer batch through unnest")
+	}
+	if report := sourcetest.Load(t, ".").Decl("Service.ReportAlive"); strings.Contains(report, "b.Queue(") ||
+		!strings.Contains(report, "s.writeAliveRows(") {
+		t.Fatal("ReportAlive must write through writeAliveRows")
 	}
 	// 已有行只在落后超过刷新粒度时才改写（非 HOT 写减半），且粒度远小于最短设备窗口
 	if !strings.Contains(src, "WHERE node_alive_ips.last_seen_at < now() - interval '`+aliveRefresh+`'") ||

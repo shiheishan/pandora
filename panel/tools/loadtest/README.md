@@ -85,9 +85,9 @@
    - 管理员账号和口令只记在你自己的密码库里。
    - 每次重装数据基座后要再建一次（管理员在库里）。
 5. 记下随包的资源上限。它们就是生产形态，压测按它测：
-   - systemd：`aegis-public` 和 `aegis-node` 是 `CPUQuota=60%`、`MemoryMax=256M`；`aegis-admin` 是 `80%`、`384M`。
+   - systemd：`aegis-public` 是 `CPUQuota=60%`、`MemoryMax=256M`；`aegis-node` 是 `60%`、`384M`（w10quiet：1000 节点在线时重启的峰值 294M）；`aegis-admin` 是 `80%`、`384M`。
    - Docker 数据基座：PG `max_connections=60`、`shared_buffers=128MB`、容器 512M；Valkey `maxmemory 96mb allkeys-lru`。
-   - `platform/db` 连接池上限可配置：缺省 public 16、admin 15、node 15，算式和环境变量 `AEGIS_{PUBLIC,ADMIN,NODE}_DB_MAX_CONNS` 见 `panel/deploy/.env.example`，压测按缺省测。
+   - `platform/db` 连接池上限可配置：缺省 public 16、admin 15、node 14（另 1 条纪元监听探针专用），算式和环境变量 `AEGIS_{PUBLIC,ADMIN,NODE}_DB_MAX_CONNS` 见 `panel/deploy/.env.example`，压测按缺省测。
 
 ## 3. 打开观测开关（面板机）
 

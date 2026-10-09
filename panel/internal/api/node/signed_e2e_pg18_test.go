@@ -204,6 +204,7 @@ func TestSignedNodeHTTPPG18(t *testing.T) {
 		mustJSON(t, map[string]any{"agent_version": "e2e-test", "runtime_version": "native-e2e"}))
 	checkEffectiveConfigUnchanged(t, privateKey, bootstrap.NodeID, server.URL+"/v1/nodes/effective-config", cfg)
 	checkNodeHotPathPG18(t, ctx, admin, appDSN, signer, privateKey, tenantID, bootstrap.NodeID, runtimeToken, cfg)
+	checkWatchedGatewayFollowsNotifications(t, ctx, admin, app, signer, privateKey, tenantID, bootstrap.NodeID, runtimeToken, cfg)
 	checkCachedGatewayFollowsEpoch(t, ctx, admin, app, signer, privateKey, tenantID, bootstrap.NodeID, runtimeToken)
 }
 

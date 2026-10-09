@@ -354,10 +354,18 @@ func checkNodeHotPathPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 		}
 	})
 
-	t.Run("notify trigger compares every non-heartbeat column", func(t *testing.T) {
+	// 两个触发器同一份列清单：后台变更通知（00122）与给 aegis-node 纪元监听的配置通知（00153）。
+	// 后者连 last_heartbeat_at 也不比：心跳（含合并后的批量写）不能让节点配置视图作废。
+	for _, trigger := range []string{"zz_notify_nodes_update", "zz_node_config_notify_nodes_update"} {
+		checkNodesTriggerColumns(t, ctx, admin, trigger)
+	}
+}
+
+func checkNodesTriggerColumns(t *testing.T, ctx context.Context, admin *pgxpool.Pool, trigger string) {
+	t.Run(trigger+" compares every non-heartbeat column", func(t *testing.T) {
 		var def string
 		if err := admin.QueryRow(ctx, `SELECT pg_get_triggerdef(oid) FROM pg_trigger
-			WHERE tgrelid = 'public.nodes'::regclass AND tgname = 'zz_notify_nodes_update'`).Scan(&def); err != nil {
+			WHERE tgrelid = 'public.nodes'::regclass AND tgname = $1`, trigger).Scan(&def); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(def, "to_jsonb") || !strings.Contains(strings.ToLower(def), "is distinct from") {
@@ -384,11 +392,12 @@ func checkNodeHotPathPG18(t *testing.T, ctx context.Context, admin *pgxpool.Pool
 			oldRef := regexp.MustCompile(`\bold\.` + regexp.QuoteMeta(col) + `\b`)
 			newRef := regexp.MustCompile(`\bnew\.` + regexp.QuoteMeta(col) + `\b`)
 			listed := oldRef.MatchString(lower) && newRef.MatchString(lower)
-			if heartbeatColumns[col] && col != "last_heartbeat_at" && (oldRef.MatchString(lower) || newRef.MatchString(lower)) {
-				t.Errorf("heartbeat column %s is compared by the notify trigger", col)
+			heartbeatGapAllowed := col == "last_heartbeat_at" && trigger == "zz_notify_nodes_update"
+			if heartbeatColumns[col] && !heartbeatGapAllowed && (oldRef.MatchString(lower) || newRef.MatchString(lower)) {
+				t.Errorf("heartbeat column %s is compared by %s", col, trigger)
 			}
 			if !heartbeatColumns[col] && !listed {
-				t.Errorf("nodes column %s is missing from zz_notify_nodes_update; add it to the column list", col)
+				t.Errorf("nodes column %s is missing from %s; add it to the column list", col, trigger)
 			}
 		}
 	})

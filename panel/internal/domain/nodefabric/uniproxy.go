@@ -65,6 +65,9 @@ type ServingNode struct {
 	// 查询里读出。epochKnown 为假（别处拼出来的节点视图）时用户集不走缓存。
 	deliveryEpoch int64
 	epochKnown    bool
+	// watch 是请求开始时的纪元监听戳（epoch_watch.go）；健康时用户集按它判新旧，
+	// 不比 deliveryEpoch。零值表示监听不健康或节点视图不是经认证得来的。
+	watch watchStamp
 }
 
 // AuthenticateNode 校验 UniProxy 请求携带的 node_id + token。
@@ -72,12 +75,20 @@ type ServingNode struct {
 // token 在库里只有哈希。node_id 走的是节点 UUID，而不是协议里常见的自增整数 ——
 // 节点数量有限，用 UUID 不会给节点端造成困扰，却省掉一套自增 ID 映射。
 //
-// 每次都查库，不缓存：后台停用、退役节点之后下一次请求就必须 401（uniproxy_e2e
-// 钉着这一点），而这只是一次主键点查。它顺手读出下发纪元，用户集缓存拿它判断
-// 自己是否过期，不必为此多跑一次查询。
+// 后台停用、退役节点之后下一次请求就必须 401（uniproxy_e2e 钉着这一点）。纪元监听健康时
+// 先看节点配置视图（config_delivery_view.go）：停用、退役、换令牌、改协议都会在提交后发
+// 'c' 通知、让视图作废，所以视图说「令牌对、门槛过」就是查库也会得到的结论；视图给不出
+// 结论（令牌不对、门槛不过、监听不健康）时照旧一次主键点查，错误与原来逐字相同。查库时
+// 顺手读出下发纪元，用户集缓存在监听不健康时拿它判断自己是否过期。
 func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token, nodeType string) (*ServingNode, error) {
 	if nodeID == "" || token == "" {
 		return nil, httpx.New(httpx.CodeUnauthorized, "缺少 node_id 或 token")
+	}
+	want := s.watchStamp()
+	if v, ok := s.cachedNodeConfig(ctx, tenantID, nodeID, want); ok {
+		if n, ok := v.servingNode(token, nodeType, want); ok {
+			return n, nil
+		}
 	}
 
 	var n ServingNode
@@ -93,12 +104,7 @@ func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token,
 			  JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id
 			 WHERE n.tenant_id = $1 AND n.id = $2::uuid
 			   AND n.server_token_hash = $3
-			   AND s.deleted_at IS NULL
-			   AND s.status IN ('ready','draining')
-			   AND n.serving_status IN ('active','draining')
-			   AND n.node_type IS NOT NULL
-			   AND n.server_port BETWEEN 1 AND 65535
-			   AND `+StableProtocolReadySQL("n"),
+			   AND `+uniProxyServingGateSQL(),
 		[]any{tenantID, nodeID, crypto.HashToken(token)},
 		&n.ID, &n.Name, &n.NodeType, &n.ServerHost, &n.ServerPort,
 		&n.TrafficRate, &proto, &n.PoolID, &n.Status, &n.Kernel,
@@ -140,6 +146,8 @@ func (s *Service) AuthenticateNode(ctx context.Context, tenantID, nodeID, token,
 	}
 	n.Protocol = proto
 	n.epochKnown = true
+	// 戳在查询之前取（want）：用户集按它判新旧也是对的
+	n.watch = want
 	return &n, nil
 }
 
@@ -309,6 +317,7 @@ func (s *Service) nodeUsers(ctx context.Context, tenantID string, n *ServingNode
 				                  WHERE tenant_id = $1 AND key = 'device_limit.grace'), 1)`,
 				tenantID).Scan(&mode, &grace)
 			strict := mode == "strict"
+			set.strict = strict
 
 			args := []any{tenantID, n.PoolID, strict, grace}
 			nodeGate := ""
@@ -409,16 +418,29 @@ func (s *Service) nodeUsers(ctx context.Context, tenantID string, n *ServingNode
 		// 与直查路径的「$2 为 NULL 时列表为空」同一结论，不必为它查库
 		return nodeUserSet{users: []ProxyUser{}}, nil
 	}
-	want := n.deliveryEpoch
-	return c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), epochFlight(want),
-		func(set nodeUserSet) bool { return set.epoch >= want },
+	// 纪元监听健康（n.watch）时按监听戳判新旧：名单加载之后没有任何下发相关的提交就
+	// 原样可用，loose 模式下也不按 TTL 重算（strict 依赖在线设备记录，没有纪元，照旧）。
+	// 不健康时照旧比纪元。
+	want, ws := n.deliveryEpoch, n.watch
+	valid, pinned := func(set nodeUserSet) bool { return set.epoch >= want }, func(nodeUserSet) bool { return false }
+	flight := epochFlight(want)
+	if ws.ok() {
+		valid = func(set nodeUserSet) bool { return set.watch.deliveryCovers(ws) }
+		pinned = func(set nodeUserSet) bool { return !set.strict && set.watch.deliveryCovers(ws) }
+		flight = ws.flight("w")
+	}
+	return c.users.get(ctx, usersCacheKey(tenantID, *n.PoolID), flight, valid, pinned,
 		func(ctx context.Context) (nodeUserSet, error) {
+			// 戳在查询之前取：名单的快照晚于戳里每一条通知对应的提交
+			loaded := s.watchStamp()
 			var epoch int64
 			set, err := query(ctx, "", &epoch)
 			if err != nil {
 				return nodeUserSet{}, err
 			}
+			set.watch = loaded
 			set.version = UserSetVersion(set.users)
+			set.body = &userSetBody{}
 			return set, nil
 		})
 }
@@ -447,7 +469,10 @@ func (s *Service) NodeUserSet(ctx context.Context, tenantID string, n *ServingNo
 //
 // 整份上报一条 SQL 落库：原先每个用户查一次订阅、每个 IP 插一次，一个 30 人
 // 在线的节点每分钟就是 60 多条语句。现在按 node_uid 关联订阅、批量 upsert，
-// 查不到订阅的 uid 照旧跳过。返回实际写入（新增或刷新）的行数。
+// 查不到订阅的 uid 照旧跳过。返回认下的（找得到订阅的）条数。
+//
+// aegis-node 开了缓存时另记「哪些行刚被刷新过」（aliveMemo，uniproxy_alive_memo.go）：
+// 整份上报的每一行都在 aliveRefresh 之内刷新过，库里那条语句只会什么都不改，就不发了。
 func (s *Service) ReportAlive(ctx context.Context, tenantID string, n *ServingNode, raw []byte) (int, error) {
 	var alive map[string][]string
 	if err := json.Unmarshal(raw, &alive); err != nil {
@@ -457,21 +482,35 @@ func (s *Service) ReportAlive(ctx context.Context, tenantID string, n *ServingNo
 	if len(uids) == 0 {
 		return 0, nil
 	}
+	memo := s.aliveMemo()
+	now := time.Now()
+	if memo != nil && memo.covers(tenantID, n.ID, uids, hashes, now) {
+		return len(uids), nil
+	}
+	count, refreshedUIDs, refreshedHashes, err := s.writeAliveRows(ctx, tenantID, n.ID, uids, hashes)
+	if err == nil && memo != nil {
+		memo.record(tenantID, n.ID, refreshedUIDs, refreshedHashes, now)
+	}
+	return count, err
+}
 
-	// 一次往返、异步提交（遥测，丢最后几百毫秒无妨，下一分钟就补上）。
-	//
-	// 已有的行只在 last_seen_at 落后超过 aliveRefresh 才刷新：节点每分钟报一次，原先
-	// 每次都把全部在线行重写一遍，而 idx_node_alive_recent 含 last_seen_at，每次都是
-	// 非 HOT 更新（r3：每 30 分钟 5.7 万行、24 MB WAL）。最短的设备识别窗口是 5 分钟，
-	// 时间戳最多落后 2 分钟再加一个上报间隔，仍在窗口内；代价只是离线设备最多早
-	// 2 分钟从在线数里掉出去（偏宽松，不会误判超限）。
-	count := 0
+// writeAliveRows 一条语句写一个节点的一份在线上报，返回认下的（找得到订阅的）条数，
+// 以及这一次真被插入或刷新的行（uid、哈希两列）。行要按（uid, 哈希）排好、去重（aliveRows）。
+//
+// 一次往返、异步提交（遥测，丢最后几百毫秒无妨，下一分钟就补上）。
+//
+// 已有的行只在 last_seen_at 落后超过 aliveRefresh 才刷新：节点每分钟报一次，原先
+// 每次都把全部在线行重写一遍，而 idx_node_alive_recent 含 last_seen_at，每次都是
+// 非 HOT 更新（r3：每 30 分钟 5.7 万行、24 MB WAL）。最短的设备识别窗口是 5 分钟，
+// 时间戳最多落后 2 分钟再加一个上报间隔，仍在窗口内；代价只是离线设备最多早
+// 2 分钟从在线数里掉出去（偏宽松，不会误判超限）。
+func (s *Service) writeAliveRows(ctx context.Context, tenantID, nodeID string, uids []int64,
+	hashes [][]byte) (count int, refreshedUIDs []int64, refreshedHashes [][]byte, err error) {
 	b := &pgx.Batch{}
 	// 按（订阅, 哈希）排序插入：同一节点两份上报并发时加锁顺序一致，不互等成死锁。
-	// 回执里的 ips 是认下的（找得到订阅的）条数，不是实际改写的行数。
 	b.Queue(`
 			WITH src AS (
-				SELECT s.tenant_id, s.id AS subscription_id, a.ip_hash
+				SELECT s.tenant_id, s.id AS subscription_id, a.node_uid, a.ip_hash
 				  FROM unnest($3::bigint[], $4::bytea[]) AS a(node_uid, ip_hash)
 				  JOIN subscriptions s ON s.tenant_id = $1::uuid AND s.node_uid = a.node_uid
 			), upsert AS (
@@ -482,13 +521,19 @@ func (s *Service) ReportAlive(ctx context.Context, tenantID string, n *ServingNo
 				ON CONFLICT (node_id, subscription_id, ip_hash)
 				DO UPDATE SET last_seen_at = now()
 				 WHERE node_alive_ips.last_seen_at < now() - interval '`+aliveRefresh+`'
+				RETURNING subscription_id, ip_hash
+			), refreshed AS (
+				SELECT src.node_uid, src.ip_hash
+				  FROM src JOIN upsert u ON u.subscription_id = src.subscription_id AND u.ip_hash = src.ip_hash
 			)
-			SELECT count(*) FROM src`,
-		tenantID, n.ID, uids, hashes).QueryRow(func(row pgx.Row) error {
-		return row.Scan(&count)
+			SELECT (SELECT count(*) FROM src),
+			       coalesce((SELECT array_agg(node_uid ORDER BY node_uid, ip_hash) FROM refreshed), '{}'),
+			       coalesce((SELECT array_agg(ip_hash ORDER BY node_uid, ip_hash) FROM refreshed), '{}')`,
+		tenantID, nodeID, uids, hashes).QueryRow(func(row pgx.Row) error {
+		return row.Scan(&count, &refreshedUIDs, &refreshedHashes)
 	})
-	err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b)
-	return count, err
+	err = s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b)
+	return count, refreshedUIDs, refreshedHashes, err
 }
 
 // aliveRefresh 是在线记录 last_seen_at 的刷新粒度，见 ReportAlive。必须远小于最短的
@@ -603,7 +648,10 @@ func (s *Service) ReportRuntimeStatus(ctx context.Context, tenantID string, n *S
 			 WHERE tenant_id=$1 AND id=(SELECT server_id FROM nodes WHERE tenant_id=$1 AND id=$2)
 			   AND (last_heartbeat_at IS NULL OR last_heartbeat_at < now() - interval '`+serverHeartbeatRefresh+`')`,
 		tenantID, n.ID)
-	if err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b); err != nil {
+	err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b)
+	// 兼容通道也写了运行状态与心跳时刻：让签名心跳的合并器忘掉这个节点，下一拍立即写
+	s.forgetHeartbeat(tenantID, n.ID)
+	if err != nil {
 		return err
 	}
 	if !found {

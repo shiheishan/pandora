@@ -180,15 +180,20 @@ func (h *handlers) heartbeat(w http.ResponseWriter, r *http.Request) {
 	tenantID, nodeID := httpx.TenantIDFrom(r.Context()), nodeIDFrom(r.Context())
 	var out *nodefabric.HeartbeatOutput
 	var err error
-	if signed := signedNodeFrom(r.Context()); signed != nil && signed.pending {
+	switch signed := signedNodeFrom(r.Context()); {
+	case signed != nil && signed.pending:
 		// 身份复核并进心跳写入本身：三条写都以这把公钥仍是有效身份为门槛，一次往返。
 		out, err = h.d.Node.HeartbeatSigned(r.Context(), tenantID, nodeID, in, signed.check)
-		if errors.Is(err, nodefabric.ErrNodeIdentityInvalid) {
-			h.failNodeAuth(w, r, nodeID, err)
-			return
-		}
-	} else {
+	case signed != nil:
+		// 身份已复核（纪元监听证明缓存身份新鲜，或刚从库里取）：能合并就只记内存，
+		// 否则立即写，立即写照样以这把公钥为有效身份做门槛（heartbeat_coalesce.go）。
+		out, err = h.d.Node.HeartbeatConfirmed(r.Context(), tenantID, nodeID, in, signed.check)
+	default:
 		out, err = h.d.Node.Heartbeat(r.Context(), tenantID, nodeID, in)
+	}
+	if errors.Is(err, nodefabric.ErrNodeIdentityInvalid) {
+		h.failNodeAuth(w, r, nodeID, err)
+		return
 	}
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, err)
@@ -230,13 +235,20 @@ func (h *handlers) fetchEffectiveConfig(w http.ResponseWriter, r *http.Request) 
 	signed := signedNodeFrom(r.Context())
 	if releaseID, generation, ok := nodefabric.ParseAppliedEffectiveRelease(
 		r.Header.Get(nodefabric.AppliedEffectiveReleaseHeader)); ok {
-		// 只读判断与缓存身份的纪元复核合成一次往返；复核通过之前不回任何东西。
-		unchanged, epoch, err := h.d.Node.EffectiveConfigUnchangedAt(r.Context(), tenantID, nodeID, releaseID, generation)
+		// 纪元监听健康时从节点配置视图回答、不碰库；否则只读判断与缓存身份的纪元复核
+		// 合成一次往返。复核通过之前不回任何东西。
+		unchanged, epoch, epochKnown, err := h.d.Node.EffectiveConfigUnchangedFor(r.Context(), tenantID, nodeID,
+			releaseID, generation)
 		if err != nil {
 			h.failNodeAuth(w, r, nodeID, fmt.Errorf("%w: %w", nodefabric.ErrNodeAuthUnavailable, err))
 			return
 		}
-		if err := signed.confirm(r.Context(), h.d.Node, epoch); err != nil {
+		if epochKnown {
+			err = signed.confirm(r.Context(), h.d.Node, epoch)
+		} else {
+			err = signed.confirmNow(r.Context(), h.d.Node)
+		}
+		if err != nil {
 			h.failNodeAuth(w, r, nodeID, err)
 			return
 		}
@@ -379,11 +391,6 @@ func (h *handlers) uniConfig(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-// uniUsersResponse 的字段名与结构必须与 UniProxy 一致，节点端按 users 数组解析。
-type uniUsersResponse struct {
-	Users []nodefabric.ProxyUser `json:"users"`
-}
-
 func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 	n, ok := h.authNode(w, r)
 	if !ok {
@@ -397,12 +404,13 @@ func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 		pulled = h.d.NodeStream.BeginUsersPull(tenantID, n.ID)
 	}
 	defer pulled("", false)
-	// 用户集按（租户, 池）缓存，版本随缓存一起算好（nodefabric.NodeUserSet）。
-	users, etag, err := h.d.Node.NodeUserSet(r.Context(), tenantID, n)
+	// 用户集按（租户, 池）缓存，版本与正文随缓存一起算好（nodefabric.NodeUserSetResponse）。
+	set, err := h.d.Node.NodeUserSetResponse(r.Context(), tenantID, n)
 	if err != nil {
 		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
 		return
 	}
+	etag := set.Version
 	// 用户列表绝大多数轮次是不变的，靠 ETag 让节点端拿 304 就走。
 	//
 	// 省掉的两头都不小：面板不用序列化整份列表，节点端不用解析再逐个
@@ -415,10 +423,47 @@ func (h *handlers) uniUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
+	// 正文同一版本只编码一次、同池节点共享（字段名与结构与 UniProxy 一致，节点端按 users
+	// 数组解析）。节点接受 gzip 就直接给压好的那份：nginx 看到 Content-Encoding 不再逐个压。
+	body, err := set.Prepared()
+	if err != nil {
+		httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
+		return
+	}
+	var gz []byte
+	if acceptsGzip(r) {
+		if gz, err = set.Gzipped(); err != nil {
+			httpx.Fail(w, r, h.d.Log, httpx.Internal(err))
+			return
+		}
+	}
 	w.Header().Set("ETag", etag)
+	w.Header().Add("Vary", "Accept-Encoding")
 	pulled(etag, true) // 在写出之前：节点可能一收到就装上
-	// 字段名与结构必须与 UniProxy 一致，节点端按 users 数组解析
-	httpx.OK(w, uniUsersResponse{Users: users})
+	if gz == nil {
+		httpx.WritePrepared(w, body)
+		return
+	}
+	w.Header().Set("Content-Type", body.ContentType())
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(gz)
+}
+
+// acceptsGzip 判断请求是否接受 gzip（Accept-Encoding 里有 gzip 且 q 不为 0）。
+func acceptsGzip(r *http.Request) bool {
+	for _, v := range r.Header.Values("Accept-Encoding") {
+		for _, part := range strings.Split(v, ",") {
+			name, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+			if !strings.EqualFold(strings.TrimSpace(name), "gzip") {
+				continue
+			}
+			q := strings.ReplaceAll(strings.TrimSpace(params), " ", "")
+			return q != "q=0" && q != "q=0.0" && q != "q=0.00" && q != "q=0.000"
+		}
+	}
+	return false
 }
 
 // UniProxy 的上报回执：节点端只看 HTTP 状态码，返回体留给排查。

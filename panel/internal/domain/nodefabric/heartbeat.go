@@ -90,6 +90,19 @@ type HeartbeatInput struct {
 	MetricsPartial bool     `json:"metrics_partial"`
 }
 
+// validate 在写库（或进合并缓冲）之前核对上报：配置签名钥匙标识与探针值的范围。
+func (in HeartbeatInput) validate() error {
+	if in.ConfigSigningKeyID != "" {
+		if _, err := canonicalEffectiveReleaseKeyID(in.ConfigSigningKeyID); err != nil {
+			return httpx.New(httpx.CodeBadRequest, "配置签名密钥标识非法").WithInternal(err)
+		}
+	}
+	if in.Metrics != nil {
+		return in.Metrics.validate()
+	}
+	return nil
+}
+
 type HeartbeatOutput struct {
 	NodeStatus string `json:"node_status"`
 	// DesiredConfigVersion 与 Agent 上报的版本不同即表示有新配置待应用
@@ -133,16 +146,10 @@ const serverHeartbeatRefresh = "45 seconds"
 // 主机的 fsync 抖动不再直接变成心跳端点的尾延迟。
 func (s *Service) heartbeat(ctx context.Context, tenantID, nodeID string, in HeartbeatInput,
 	gateKey []byte) (*HeartbeatOutput, error) {
-	if in.ConfigSigningKeyID != "" {
-		if _, err := canonicalEffectiveReleaseKeyID(in.ConfigSigningKeyID); err != nil {
-			return nil, httpx.New(httpx.CodeBadRequest, "配置签名密钥标识非法").WithInternal(err)
-		}
+	if err := in.validate(); err != nil {
+		return nil, err
 	}
-	if in.Metrics != nil {
-		if err := in.Metrics.validate(); err != nil {
-			return nil, err
-		}
-	}
+	startedAt := time.Now()
 	var hash []byte
 	if in.ConfigHash != "" {
 		hash, _ = base64.StdEncoding.DecodeString(in.ConfigHash)
@@ -228,8 +235,11 @@ func (s *Service) heartbeat(ctx context.Context, tenantID, nodeID string, in Hea
 			        OR disk_gb IS DISTINCT FROM coalesce(nullif($6,0),disk_gb))`+gated(7),
 		append([]any{tenantID, nodeID, in.AgentVersion, in.CPUCores, in.MemoryMB, in.DiskGB}, gateArgs...)...)
 	if err := s.pool.BatchScoped(ctx, db.Scope{TenantID: tenantID}, db.BatchOptions{AsyncCommit: true}, b); err != nil {
+		s.heartbeatWritten(tenantID, nodeID, in, startedAt, gateKey, false)
 		return nil, err
 	}
+	// 合并器只记库里确实写成了的材料（heartbeat_coalesce.go）
+	s.heartbeatWritten(tenantID, nodeID, in, startedAt, gateKey, found)
 	if !found {
 		if gateKey != nil {
 			return nil, ErrNodeIdentityInvalid
