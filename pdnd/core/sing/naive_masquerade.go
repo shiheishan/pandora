@@ -12,9 +12,13 @@ package sing
 // 主动探测拿不到「这里是代理」的判据。
 
 import (
+	"crypto/tls"
+	"io"
 	"net/http"
 	"net/http/httputil"
+	"net/textproto"
 	"net/url"
+	"strings"
 
 	"github.com/aegispanel/nodeagent/internal/confnum"
 	"github.com/sagernet/sing-box/option"
@@ -78,7 +82,7 @@ func buildMasquerade(m *NaiveMasquerade) (http.Handler, error) {
 		if err != nil {
 			return nil, E.Cause(err, "解析 masquerade url")
 		}
-		return &httputil.ReverseProxy{
+		proxy := &httputil.ReverseProxy{
 			Rewrite: func(r *httputil.ProxyRequest) {
 				r.SetURL(target)
 				if !m.RewriteHost {
@@ -89,7 +93,15 @@ func buildMasquerade(m *NaiveMasquerade) (http.Handler, error) {
 				// 上游挂了也不能暴露自己，回一个普通的网关错误
 				w.WriteHeader(http.StatusBadGateway)
 			},
-		}, nil
+		}
+		connect := newMasqueradeConnect(target, m.RewriteHost)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodConnect {
+				connect.ServeHTTP(w, r)
+				return
+			}
+			proxy.ServeHTTP(w, r)
+		}), nil
 
 	case "string":
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -106,6 +118,96 @@ func buildMasquerade(m *NaiveMasquerade) (http.Handler, error) {
 
 	default:
 		return nil, E.New("未知的 masquerade 类型: ", m.Type)
+	}
+}
+
+// masqueradeConnect 把 CONNECT 探测当一次普通请求交给伪装站点，状态码、头和
+// 正文都来自伪装站点自己。
+//
+// 不交给 ReverseProxy：Go 1.26.9 起它对 CONNECT 一律走 ErrorHandler（CVE-2026-56866，
+// golang/go#81740：HTTP/1 Transport 把 CONNECT 的请求体不加分帧地写在请求头
+// 后面，上游 keep-alive 拒绝后连接回到空闲池，残留字节被当成下一条请求）。改回
+// 节点合成的 502，就成了「这里是代理」的判据。这里守住那次修复的意图：只转请求头、
+// 不带请求体；专用 Transport 关掉 keep-alive、只讲 HTTP/1.1，连接用完即关；
+// 上游即使回 2xx 也只转这一个响应，不建隧道。与 kernel/probe_fallback_http.go
+// 的 probeFallbackConnect 同一口径（兼容内核不能引用 kernel，各留一份）。
+type masqueradeConnect struct {
+	target      *url.URL
+	rewriteHost bool
+	transport   http.RoundTripper
+}
+
+func newMasqueradeConnect(target *url.URL, rewriteHost bool) *masqueradeConnect {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	// 只讲 HTTP/1.1：HTTP/2 的 CONNECT 会被 Transport 当成隧道。
+	transport.ForceAttemptHTTP2 = false
+	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	return &masqueradeConnect{target: target, rewriteHost: rewriteHost, transport: transport}
+}
+
+func (c *masqueradeConnect) ServeHTTP(w http.ResponseWriter, in *http.Request) {
+	u := *c.target
+	u.RawQuery, u.Fragment, u.RawPath = "", "", ""
+	// HTTP/2 的 CONNECT 没有路径，HTTP/1.1 的 CONNECT 是 authority 形式；与
+	// ReverseProxy 的 SetURL 一样拼上目标路径，空路径给 "/"。
+	if strings.HasPrefix(in.URL.Path, "/") {
+		u.Path = strings.TrimSuffix(u.Path, "/") + in.URL.Path
+	} else if u.Path == "" {
+		u.Path = "/"
+	}
+	out, err := http.NewRequestWithContext(in.Context(), http.MethodConnect, u.String(), nil)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	if !c.rewriteHost {
+		out.Host = in.Host
+	}
+	out.Header = in.Header.Clone()
+	removeMasqueradeHopHeaders(out.Header)
+	for _, h := range []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"} {
+		out.Header.Del(h)
+	}
+	if _, ok := out.Header["User-Agent"]; !ok {
+		out.Header.Set("User-Agent", "")
+	}
+	resp, err := c.transport.RoundTrip(out)
+	if err != nil {
+		// 上游挂了也不能暴露自己，回一个普通的网关错误
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	removeMasqueradeHopHeaders(resp.Header)
+	dst := w.Header()
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		// 与 ReverseProxy 拷正文出错时一样中止这条响应。
+		panic(http.ErrAbortHandler)
+	}
+}
+
+// removeMasqueradeHopHeaders 去掉 RFC 9110 的逐跳头（与 httputil.ReverseProxy
+// 同一份），以及 Connection 里点名的头。
+func removeMasqueradeHopHeaders(h http.Header) {
+	for _, f := range h["Connection"] {
+		for _, name := range strings.Split(f, ",") {
+			if name = textproto.TrimString(name); name != "" {
+				h.Del(name)
+			}
+		}
+	}
+	for _, name := range []string{
+		"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate",
+		"Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade",
+	} {
+		h.Del(name)
 	}
 }
 

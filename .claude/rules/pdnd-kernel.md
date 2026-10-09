@@ -16,6 +16,12 @@ paths:
 - 握手限时：普通 TLS 用 `inboundHandshakeTimeout`（10 秒，`withHandshakeDeadline` / `serverTLSHandshake`），REALITY 握手 worker 15 秒。Close 打断的握手不算失败、不上报。ShadowTLS 组合入站把 `inboundHandshakeTimeout` 显式传给 `nativewire/shadowtls`，只限认证判定之前，判定后的诱饵中继不限时（原则见 pdnd-forks 规则文件）。
 - 全部 HTTP 承载（WebSocket、HTTP Upgrade、gRPC、XHTTP、Naive）的 `http.Server` 只经 `newInboundHTTPServer` 构造，靠它的 `ReadHeaderTimeout` 给 TLS 握手与请求头限时；不要直接 `&http.Server{}`（`TestInboundHTTPServerBoundsHandshake`）。
 
+## 认证失败的回落
+
+- Trojan / AnyTLS / Naive 认证不过、或不是本协议客户端，一律交给 `probe_fallback*.go`：配了 `fallback` 由回落站点应答，没配是中性 404；不回 407、不带 realm。
+- HTTP 承载的回落里，CONNECT 不走 `httputil.ReverseProxy`：Go 1.26.9 起它对 CONNECT 一律走 ErrorHandler（CVE-2026-56866），回成节点合成的 502 就是指纹。改由 `probeFallbackConnect` 发 `CONNECT /`：只转请求头、不带请求体（探测方在 CONNECT 后面带的字节一个也不进回落站点），专用 Transport 关 keep-alive，回落站点回 2xx 也只转这一个响应、不建隧道。守卫 `probe_resistance_connect_test.go`（h2 与 http/1.1 都带走私字节）。兼容内核 `core/sing/naive_masquerade.go` 同一口径各留一份。
+- 本机 Go 1.27.1 早于这批修复（h1 服务端 CONNECT 后不关连接，会接着服务流水线请求）：跑这组测试用 `GOTOOLCHAIN=go1.26.9`，与 CI 同版本。
+
 ## 转发的空闲回收
 
 - `core.Relay` 两个方向都没有数据超过 `runtime.connection_idle_seconds`（默认 1800 即 30 分钟，用户 10-08 定；与 Xray connIdle 同义但 Xray 默认 300；0 不回收）即断开，整段无数据的长连接（iperf3 的控制连接、不发保活的 SSH）也在此列。10-08 验收记的「iperf3 控制连接第 240 秒被断」是 `-i 60` 的汇报粒度，回环 `-i 2` 复测断在 298–300 秒，就是这个回收。
