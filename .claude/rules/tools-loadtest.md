@@ -24,7 +24,7 @@ paths:
 
 - 造数标记三件套：用户邮箱只用 `@loadtest.invalid`，节点与目录名以 `loadtest-` 开头，模拟来源 IP 全在 198.18.0.0/15（512 个 /24 轮转）。`seed/retire.go` 只靠这些标记圈定要清理的对象，改命名必须同步（`TestLoadtestMarkersIdentifyEverySeededName`、`TestRetireTouchesOnlyLoadtestMarkers`）。
 - 造数经运行角色与租户上下文（`db.Scope`）写库，让 RLS 与触发器真起作用；不要为了快改用超级用户或直接插 active。
-- 退役不 DELETE：追加写表连着订阅与节点。订阅经状态机转 expired；上一批里仍有有效接入身份的节点先经后台吊销接口吊销身份（后台不让退役仍有身份的节点），再经后台批量接口转 draining、retired。每一步只处理还没处理的，中途失败原样重跑即可。
+- 退役不 DELETE：追加写表连着订阅与节点。订阅经状态机转 expired；上一批里仍有有效接入身份的节点先经后台吊销接口吊销身份（后台不让退役仍有身份的节点），再经后台批量接口转 draining；接着按服务器状态机把上一批 `loadtest-` 服务器退役（节点是自己服务器的控制节点，服务器在役时节点退役会 409），最后把节点转 retired。每一步只处理还没处理的，中途失败原样重跑即可。
 - 节点与目录全走真实网关，不直写库。
 
 ## 网关与限流

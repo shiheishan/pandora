@@ -38,6 +38,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TLS_DIR="${PANDORA_TLS_DIR:-/etc/aegispanel/tls}"
 STATE_DIR="${PANDORA_TLS_STATE_DIR:-/var/lib/aegispanel/tls}"
 LE_LIVE_DIR="${PANDORA_LE_LIVE_DIR:-/etc/letsencrypt/live}"
+# certbot 的续期配置（<证书名>.conf）与 live 并排
+LE_RENEWAL_DIR="${LE_LIVE_DIR%/*}/renewal"
 ACME_WEBROOT="${PANDORA_ACME_WEBROOT:-/var/www/aegis-acme}"
 NGINX_DIR="${PANDORA_NGINX_DIR:-/etc/nginx}"
 REALIP_FILE="${PANDORA_REALIP_FILE:-/etc/aegispanel/cloudflare-realip.conf}"
@@ -212,6 +214,168 @@ make_selfsigned() {
 }
 
 #------------------------------------------------------------------------------
+# certbot 续期配置：接管来的证书，续期也要走本脚本的 nginx 提供的校验目录
+#------------------------------------------------------------------------------
+# 老 install.sh 或运维手工申请的证书，续期配置（renewal/<证书名>.conf）里的 webroot 常是
+# /var/www/html；nginx 模板只从 ACME_WEBROOT 提供 /.well-known/acme-challenge/，不改的话
+# certbot.timer 与 renew 的补救续期都拿不到校验文件（404），要到快过期才发现。
+certbot_lineage() { basename -- "$(readlink "$LIVE")"; }
+
+# 续期配置 [renewalparams] 段（不含子段）里某个键的值
+renewal_param() {
+  awk -v want="$2" '
+    /^[ \t]*\[\[/ { insub = 1; next }
+    /^[ \t]*\[/ { top = $0; gsub(/[][ \t\r]/, "", top); insub = 0; next }
+    top == "renewalparams" && !insub && index($0, "=") {
+      k = $0; sub(/^[ \t]+/, "", k); sub(/[ \t]*=.*$/, "", k)
+      if (k == want) { v = $0; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t\r]+$/, "", v); gsub(/^["\047]|["\047]$/, "", v); print v; exit }
+    }' "$1"
+}
+
+# 改写续期配置的 awk 程序（文件读两遍：第一遍收集，第二遍输出）。-v host= 面板主机，-v new= ACME_WEBROOT。
+# 只改面板主机那一项：[[webroot_map]] 里它的目录（没有这一项就补上）；webroot_path 里同一个旧目录
+# 没被别的域名共用时一并改（certbot 拿它给没列进 webroot_map 的域名兜底）。别的域名一律不动：
+# 面板的 80 端口只替面板主机应答校验，它们要靠本机别的站点。
+# 退出码：0 已改写（新内容在 stdout）；10 已指向 new，不用改；3 不是 webroot 方式；4 认不出
+renewal_rewrite_awk() {
+  cat <<'AWK'
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+function unq(s,   c) {
+  s = trim(s)
+  c = substr(s, 1, 1)
+  if (length(s) >= 2 && (c == "\"" || c == "\047") && substr(s, length(s), 1) == c) s = substr(s, 2, length(s) - 2)
+  return s
+}
+function norm(p) { p = unq(p); while (length(p) > 1 && p ~ /\/$/) p = substr(p, 1, length(p) - 1); return p }
+# 段头：一级段更新 s1 并清 s2，二级段（[[...]]）更新 s2
+function header(l,   n) {
+  if (l !~ /^[ \t]*\[/) return 0
+  n = l; gsub(/[][ \t\r]/, "", n)
+  if (l ~ /^[ \t]*\[\[/) s2 = n; else { s1 = n; s2 = "" }
+  return 1
+}
+function keyof(l) { l = trim(l); if (l ~ /^#/ || index(l, "=") == 0) return ""; sub(/[ \t]*=.*$/, "", l); return tolower(l) }
+function valof(l) { sub(/^[^=]*=/, "", l); return trim(l) }
+# webroot_path 是逗号分隔的列表：等于 old 的项换成 new；单项列表末尾的逗号保留（configobj 靠它认列表）
+function fixlist(v,   n, items, i, out, item, tail) {
+  tail = (trim(v) ~ /,$/)
+  n = split(v, items, ",")
+  out = ""
+  for (i = 1; i <= n; i++) {
+    item = trim(items[i])
+    if (item == "") continue
+    if (norm(item) == old) item = new
+    out = out (out == "" ? "" : ", ") item
+  }
+  return out (tail ? "," : "")
+}
+NR == FNR {
+  if (header($0)) { if (s1 == "renewalparams") { seenrp = 1; if (s2 == "webroot_map") hasmap = 1 }; next }
+  k = keyof($0)
+  if (k == "") next
+  if (s1 == "renewalparams" && s2 == "") {
+    if (k == "authenticator") auth = unq(valof($0))
+    else if (k == "webroot_path") wp = valof($0)
+  } else if (s1 == "renewalparams" && s2 == "webroot_map") {
+    map[k] = norm(valof($0))
+  }
+  next
+}
+FNR == 1 {
+  rplast = (s1 == "renewalparams"); s1 = ""; s2 = ""
+  new = norm(new)
+  if (!seenrp) { code = 4; exit }
+  if (auth != "webroot") { code = 3; exit }
+  if (host in map) old = map[host]
+  else {
+    n = split(wp, parts, ","); old = ""
+    for (i = n; i >= 1; i--) { p = norm(parts[i]); if (p != "") { old = p; break } }
+  }
+  if (old == new) { code = 10; exit }
+  shared = 0
+  for (k in map) if (k != host && map[k] == old) shared = 1
+  addhost = !(host in map)
+  # 要补 [[webroot_map]] 段而 [renewalparams] 又不是最后一段：追加到文件末尾会落错段，不冒险
+  if (addhost && !hasmap && !rplast) { code = 4; exit }
+  started = 1
+}
+{
+  if (header($0)) {
+    print
+    if (addhost && s1 == "renewalparams" && s2 == "webroot_map") { print host " = " new; addhost = 0 }
+    next
+  }
+  k = keyof($0)
+  if (s1 == "renewalparams" && s2 == "" && k == "webroot_path" && old != "" && !shared) { print "webroot_path = " fixlist(valof($0)); next }
+  if (s1 == "renewalparams" && s2 == "webroot_map" && k == host) { print host " = " new; next }
+  print
+}
+END {
+  if (code) exit code
+  if (!started) exit 4
+  if (addhost) { print "[[webroot_map]]"; print host " = " new }
+}
+AWK
+}
+
+# 把 live 指向的 certbot 证书的续期配置对齐到 ACME_WEBROOT：改前备份到 BACKUP_DIR，换文件是原子的；
+# 已经对齐就不动；不是 webroot 方式（dns 插件等，运维自己的选择）不碰。
+# 返回 0 正常；1 续期配置缺失、认不出或写不进（原因在 REASON，调用方记进 status / 告警）
+align_certbot_renewal() {
+  local lineage conf auth tmp backup rc=0 others
+  lineage="$(certbot_lineage)"
+  conf="$LE_RENEWAL_DIR/$lineage.conf"
+  if [[ ! -f "$conf" ]]; then
+    REASON="找不到 certbot 的续期配置 $conf，这张证书不会自动续期：执行 certbot certonly --webroot -w $ACME_WEBROOT -d $HOST --cert-name $lineage 重新申请"
+    return 1
+  fi
+  auth="$(renewal_param "$conf" authenticator)"
+  if [[ "$auth" != webroot ]]; then
+    say "certbot 续期用的是 ${auth:-未知} 方式校验，不是 webroot，续期配置不动（$conf）"
+    return 0
+  fi
+  tmp="$(mktemp "$conf.pandora.XXXXXX")" || { REASON="没法在 $LE_RENEWAL_DIR 写临时文件，续期配置没改"; return 1; }
+  # 先复制一份让临时文件继承原文件的权限与属主，再整体覆写内容
+  cp -p -- "$conf" "$tmp" || { rm -f -- "$tmp"; REASON="复制 $conf 失败，续期配置没改"; return 1; }
+  awk -v host="$HOST" -v new="$ACME_WEBROOT" "$(renewal_rewrite_awk)" "$conf" "$conf" >"$tmp" || rc=$?
+  case "$rc" in
+    0) ;;
+    10) rm -f -- "$tmp"; return 0 ;;
+    *)
+      rm -f -- "$tmp"
+      REASON="认不出 certbot 续期配置 $conf 的 webroot 设置，没有改：手工把 [[webroot_map]] 里 $HOST 的目录改成 $ACME_WEBROOT 后执行 certbot renew --dry-run --cert-name $lineage"
+      return 1 ;;
+  esac
+  backup="$BACKUP_DIR/letsencrypt-renewal-$lineage.conf.$(date +%Y%m%d-%H%M%S)"
+  if ! install -d -m 0700 "$BACKUP_DIR" || ! cp -p -- "$conf" "$backup"; then
+    rm -f -- "$tmp"
+    REASON="备份 $conf 失败，续期配置没改（续期校验仍会失败）"
+    return 1
+  fi
+  mv -f -- "$tmp" "$conf" || { rm -f -- "$tmp"; REASON="替换 $conf 失败，续期配置没改"; return 1; }
+  say "certbot 续期改走 $ACME_WEBROOT 校验（$conf；原文件备份在 $backup）"
+  others="$(awk -v host="$HOST" '
+    /^[ \t]*\[\[/ { m = ($0 ~ /webroot_map/); next }
+    /^[ \t]*\[/ { m = 0; next }
+    m && index($0, "=") { k = $0; sub(/^[ \t]+/, "", k); sub(/[ \t]*=.*$/, "", k); if (tolower(k) != host) printf "%s%s", (n++ ? " " : ""), k }' "$conf")"
+  [[ -z "$others" ]] || say "  证书还包含 $others：面板的 nginx 只替 $HOST 应答校验，它们的续期要靠本机别的站点提供 /.well-known/acme-challenge/"
+}
+
+# status 用：只读地说明续期配置现在是否走 ACME_WEBROOT
+renewal_alignment() {
+  local conf rc=0
+  conf="$LE_RENEWAL_DIR/$(certbot_lineage).conf"
+  [[ -f "$conf" ]] || { echo "找不到续期配置 $conf，证书不会自动续期"; return 0; }
+  awk -v host="$HOST" -v new="$ACME_WEBROOT" "$(renewal_rewrite_awk)" "$conf" "$conf" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    10) echo "webroot $ACME_WEBROOT（$conf）" ;;
+    0) echo "webroot 还指着别处，下次 renew 会改到 $ACME_WEBROOT（$conf）" ;;
+    3) echo "$(renewal_param "$conf" authenticator) 方式，不经本机 nginx（$conf）" ;;
+    *) echo "认不出 $conf 的 webroot 设置" ;;
+  esac
+}
+
+#------------------------------------------------------------------------------
 # ensure：live 下要有一张覆盖面板主机的证书，nginx 才能起来
 #------------------------------------------------------------------------------
 cmd_ensure() {
@@ -221,12 +385,15 @@ cmd_ensure() {
   install -d -m 0755 "$TLS_DIR"
   if [[ -e "$LIVE" ]] && cert_usable "$LIVE"; then
     say "沿用现有证书（$(live_mode)，覆盖 $HOST）"
+    # 以前接管过、续期配置还没改过来的（老版本 edge-tls.sh 接管的），这次补上
+    [[ "$(live_mode)" != certbot ]] || align_certbot_renewal || warn "$REASON"
     return 0
   fi
   # 升级：以前 install.sh 用 certbot 申请过的域名证书，直接接管
   if [[ "$HOST_KIND" = domain ]] && cert_usable "$LE_LIVE_DIR/$HOST"; then
     point_live "$LE_LIVE_DIR/$HOST"
     say "接管已有的 Let's Encrypt 证书 $LE_LIVE_DIR/$HOST"
+    align_certbot_renewal || warn "$REASON"
     return 0
   fi
   if [[ "$HOST_KIND" = ip ]] && cert_usable "$LEGO_LIVE_DIR"; then
@@ -536,8 +703,9 @@ cmd_renew() {
           || REASON="lego 续期失败（输出见上）：确认 80 端口从公网可达"
       fi ;;
     certbot)
-      # Debian 的 certbot.timer 负责续期，这里只负责换了就 reload；快到期时下面再补一次
-      : ;;
+      # Debian 的 certbot.timer 负责续期，这里只负责换了就 reload；快到期时下面再补一次。
+      # 续期配置的校验目录每次核一遍：老版本接管的证书在这里自愈；修不好的原因留在 REASON，下面记进 status
+      align_certbot_renewal || : ;;
     selfsigned)
       # 兜底期间每次都重试申请；成功就无缝换上（不装软件包，装包只在安装器与手动 issue 里做）
       if [[ "$ACME_ENABLED" = 1 ]] && ! issue_and_switch no-install; then
@@ -562,7 +730,12 @@ cmd_renew() {
         # 约剩 2.2 天才报；90 天的域名证书 certbot 剩 30 天续，按 14 天报
         threshold=$(( life / 3 )); (( threshold < 14 * 86400 )) || threshold=$(( 14 * 86400 ))
         if (( left < threshold )) && [[ "$mode" = certbot && "$ACME_ENABLED" = 1 ]] && command -v certbot >/dev/null 2>&1; then
-          certbot renew --cert-name "$HOST" --non-interactive -q || true
+          # 失败不能吞掉：原因记进 status 并告警（certbot 的报错在 stderr，进续期单元的日志）
+          if ! certbot renew --cert-name "$(certbot_lineage)" --non-interactive -q; then
+            REASON="${REASON:+$REASON；}certbot 续期失败（报错见 journalctl -u aegis-tls-renew 与 /var/log/letsencrypt/letsencrypt.log）"
+            result=error message="$REASON"
+            warn "$REASON"
+          fi
           reload_if_changed || true
           end="$(date_epoch "$(cert_not_after "$LIVE/fullchain.pem")" || true)"
           left=$(( ${end:-0} - now ))
@@ -600,6 +773,9 @@ cmd_status() {
   read_host
   printf '面板主机   %s（%s）\n' "$HOST" "$([[ "$HOST_KIND" = ip ]] && echo 公网 IPv4 || echo 域名)"
   printf '证书来源   %s\n' "$(live_mode)"
+  if [[ "$(live_mode)" = certbot ]]; then
+    printf '续期校验   %s\n' "$(renewal_alignment)"
+  fi
   if [[ -s "$f" ]]; then
     printf '到期时间   %s\n' "$(cert_not_after "$f")"
     printf '签发者     %s\n' "$(openssl x509 -in "$f" -noout -issuer 2>/dev/null | sed 's/^issuer=[[:space:]]*//')"

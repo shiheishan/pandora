@@ -91,16 +91,29 @@ func (s *Service) BatchAdminNodeLifecycle(ctx context.Context, tenantID string, 
 				return httpx.New(httpx.CodeConflict, "节点协议或服务器状态未满足启用条件")
 			}
 			if in.ServingStatus == "retired" {
-				var deps int
-				if err := tx.QueryRow(ctx, `SELECT
-				 (SELECT count(*) FROM servers WHERE tenant_id=$1 AND control_node_id=$2::uuid)+
-					 (SELECT count(*) FROM node_identities WHERE tenant_id=$1 AND node_id=$2::uuid AND status='active')+
-				 (SELECT count(*) FROM node_tasks WHERE tenant_id=$1 AND node_id=$2::uuid AND status IN ('pending','dispatched','running'))`,
-					tenantID, node.item.ID).Scan(&deps); err != nil {
+				// 三项依赖逐项给出能照着做的拒绝。控制面与 RetireNode、DeleteNode 同一口径：
+				// 服务器退役后放行。批量只改服务状态、不吊销身份，所以有效身份仍拒绝
+				var controlsLive bool
+				var identities, tasks int
+				if err := tx.QueryRow(ctx, `SELECT `+controlsLiveServerSQL("n")+`,
+					 (SELECT count(*) FROM node_identities WHERE tenant_id=$1 AND node_id=$2::uuid AND status='active'),
+					 (SELECT count(*) FROM node_tasks WHERE tenant_id=$1 AND node_id=$2::uuid AND status IN ('pending','dispatched','running'))
+					 FROM nodes n WHERE n.tenant_id=$1 AND n.id=$2::uuid`,
+					tenantID, node.item.ID).Scan(&controlsLive, &identities, &tasks); err != nil {
 					return err
 				}
-				if deps > 0 {
-					return httpx.New(httpx.CodeConflict, "节点仍有控制面、身份或任务依赖，不能退役")
+				fields := map[string]string{"id": node.item.ID}
+				switch {
+				case controlsLive:
+					e := errControlsLiveServer()
+					e.Fields = fields
+					return e
+				case identities > 0:
+					return &httpx.Error{Code: httpx.CodeConflict, Fields: fields,
+						Message: "节点仍有有效的接入身份，不能批量退役：先吊销身份，或对它单独执行退役"}
+				case tasks > 0:
+					return &httpx.Error{Code: httpx.CodeConflict, Fields: fields,
+						Message: "节点还有排队或执行中的任务，等任务结束再退役"}
 				}
 			}
 		}
@@ -164,10 +177,7 @@ func (s *Service) DeleteNode(ctx context.Context, tenantID string, in DeleteNode
 				       -- 而不排除这种情况会形成死锁：销毁节点要求它不是控制
 				       -- 节点，删服务器又要求名下 0 个节点，一台服务器上唯一
 				       -- 的那个节点于是永远清不掉。
-				       EXISTS (SELECT 1 FROM servers s
-				                WHERE s.tenant_id = n.tenant_id AND s.control_node_id = n.id
-				                  AND s.deleted_at IS NULL
-				                  AND s.status NOT IN ('retired', 'destroyed')),
+				       `+controlsLiveServerSQL("n")+`,
 				       (SELECT count(*) FROM runtime_instances i
 				         WHERE i.tenant_id = n.tenant_id AND i.node_id = n.id
 				           AND i.status = 'active')

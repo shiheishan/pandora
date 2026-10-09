@@ -386,6 +386,10 @@ func TestServerBindingPG18(t *testing.T) {
 		}
 	})
 
+	t.Run("control node retires through status:batch once its server is retired", func(t *testing.T) {
+		checkControlNodeBatchRetirePG18(t, ctx, admin, svc, tenant, actor)
+	})
+
 	t.Run("rls hides another tenant", func(t *testing.T) {
 		checkServerBindingRLS(t, ctx, admin, app, svc, tenant, otherTenant, serverID)
 	})
