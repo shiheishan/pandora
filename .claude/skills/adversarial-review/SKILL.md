@@ -34,7 +34,7 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesig
   - scratchpad：总协调会话的 scratchpad 目录。
 - **「这次的重点」写 3–7 条**：从 brief 的任务和设计稿里风险最大的决定里挑。每条写清改了什么机制、担心出现哪种错误结果。brief 和设计稿只给路径，不要整段贴进 prompt。可以参考的写法：w7buya 写的是价格篡改与重放、余额冻结成对、并发锁序、礼品卡落点；w9cert 写的是秘密只存密文、权限与重认证、租约、生产环境拒绝测试开关、新依赖。
 - **登记**：在 `.claude/TASKS.md` 记下审查员的 agent ID。会话中断后凭这个 ID 用 SendMessage 续跑。
-- **耗时**：前三次每次 11–16 分钟，消耗 20–32 万 token。
+- **耗时**：前四次（含 w10fix 试跑）每次 11–16 分钟，消耗 20–32 万 token。
 - **存报告**：审查员交回后，用 accept-task 的 `scripts/save-report.sh <output 文件> ../pandora-<名字>/.claude/review.md` 存下来。第二轮的复审存成 `review-r2.md`。
 
 ## 3. 总协调怎么核
@@ -103,6 +103,7 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesig
 
 - 在 `.claude/TASKS.md` 记一行：几高几中几低、各自的去向、`review.md` 的路径。
 - 收尾表加一行：对抗审查 | opus | 结论 | review.md 路径与关键探针输出。
+- 审查员报告末尾「对检查表的意见」里有价值的条目，补进 `checklist.md` 对应的节，写上出处（分支名和发现编号）。审查员提的修法本身不进检查表。
 
 ## 坑
 
