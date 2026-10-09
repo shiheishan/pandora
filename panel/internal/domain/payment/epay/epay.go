@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/aegispanel/aegis/internal/domain/payment"
+	"github.com/aegispanel/aegis/internal/platform/logging"
 )
 
 const (
@@ -280,7 +281,8 @@ func (p *Provider) QueryPayment(ctx context.Context, outTradeNo string) (*paymen
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("epay: 查询请求失败: %w", err)
+		// 查询串里有明文商户密钥（key=），错误会进日志
+		return nil, fmt.Errorf("epay: 查询请求失败: %w", logging.StripURL(err))
 	}
 	defer resp.Body.Close()
 

@@ -209,7 +209,8 @@ func Fail(w http.ResponseWriter, r *http.Request, log *slog.Logger, err error) {
 		slog.String("code", string(he.Code)),
 		slog.String("request_id", reqID),
 		slog.String("method", r.Method),
-		slog.String("path", r.URL.Path),
+		// 只写路由模板：原始路径里有订阅令牌、回调 secret（见 RouteTemplate）
+		slog.String("route", RouteTemplate(r)),
 		slog.Int("status", status),
 	}
 	if he.internal != nil {
