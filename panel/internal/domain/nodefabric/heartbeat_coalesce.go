@@ -335,17 +335,17 @@ func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows
 	ids := make([]string, len(rows))
 	ats := make([]time.Time, len(rows))
 	keys := make([][]byte, len(rows))
+	// 探针点按列摊开（只含带了探针值的那些拍），与节点行在同一条语句里写
 	var m struct {
 		ids                                            []string
 		ats                                            []time.Time
-		keys                                           [][]byte
 		cpu, memU, memT, diskU, diskT, l1, l5, l15, tc []int32
 		rx, tx, up                                     []int64
 	}
 	for i, r := range rows {
 		ids[i], ats[i], keys[i] = r.nodeID, r.p.at, r.p.key
 		if mt := r.p.metrics; mt != nil {
-			m.ids, m.ats, m.keys = append(m.ids, r.nodeID), append(m.ats, r.p.metricsAt), append(m.keys, r.p.key)
+			m.ids, m.ats = append(m.ids, r.nodeID), append(m.ats, r.p.metricsAt)
 			m.cpu, m.memU, m.memT = append(m.cpu, int32(mt.CPUBasisPoints)), append(m.memU, int32(mt.MemUsedMB)), append(m.memT, int32(mt.MemTotalMB))
 			m.diskU, m.diskT = append(m.diskU, int32(mt.DiskUsedGB)), append(m.diskT, int32(mt.DiskTotalGB))
 			m.l1, m.l5, m.l15 = append(m.l1, int32(mt.Load1CBP)), append(m.l5, int32(mt.Load5CBP)), append(m.l15, int32(mt.Load15CBP))
@@ -356,11 +356,18 @@ func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows
 	gate := ` AND EXISTS (SELECT 1` + activeIdentityFromSQL("v.id") + ` AND i.public_key = v.k)`
 	b := &pgx.Batch{}
 	// 节点行只动 last_heartbeat_at（HOT 更新、不触发变更通知与 00153 的配置通知）；
-	// 不往回写：立即写已经写了更新的时刻就跳过。返回锁到的节点 id（没锁到的放回缓冲）。
+	// 不往回写：立即写已经写了更新的时刻就跳过。探针点作为同一条语句里的写 CTE、只对锁到的
+	// 节点写（node_metrics 对 nodes 的外键检查要 KEY SHARE，对锁不到的节点写就会去等别人的
+	// FOR UPDATE、甚至成环）。返回锁到的节点 id（没锁到的连同探针点放回缓冲）。
 	var locked []string
 	b.Queue(`
 		WITH v AS (
 			SELECT * FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[]) AS v(id, beat_at, k)
+		), mv AS (
+			SELECT * FROM unnest($5::uuid[], $6::timestamptz[], $7::int[], $8::int[], $9::int[],
+			                     $10::int[], $11::int[], $12::int[], $13::int[], $14::int[],
+			                     $15::bigint[], $16::bigint[], $17::int[], $18::bigint[])
+			       AS mv(id, beat_at, cpu, mem_u, mem_t, disk_u, disk_t, l1, l5, l15, rx, tx, tc, up)
 		), locked AS (
 			SELECT n.id FROM nodes n
 			 WHERE n.tenant_id = $1 AND n.id IN (SELECT id FROM v)
@@ -372,26 +379,20 @@ func (s *Service) writeHeartbeatBatch(ctx context.Context, tenantID string, rows
 			 WHERE n.tenant_id = $1 AND n.id = l.id
 			   AND (n.last_heartbeat_at IS NULL OR n.last_heartbeat_at < v.beat_at)`+gate+`
 			RETURNING n.id
-		)
-		SELECT coalesce(array_agg(id::text), '{}') FROM locked`,
-		tenantID, ids, ats, keys).QueryRow(func(row pgx.Row) error { return row.Scan(&locked) })
-	if len(m.ids) > 0 {
-		b.Queue(`
+		), met AS (
 			INSERT INTO node_metrics
 				(tenant_id, node_id, recorded_at, cpu_bp, mem_used_mb, mem_total_mb,
 				 disk_used_gb, disk_total_gb, load1_cbp, load5_cbp, load15_cbp,
 				 net_rx_bytes, net_tx_bytes, tcp_conns, uptime_sec)
-			SELECT $1::uuid, v.id, v.beat_at, v.cpu, v.mem_u, v.mem_t, v.disk_u, v.disk_t,
-			       v.l1, v.l5, v.l15, v.rx, v.tx, v.tc, v.up
-			  FROM unnest($2::uuid[], $3::timestamptz[], $4::bytea[], $5::int[], $6::int[], $7::int[],
-			              $8::int[], $9::int[], $10::int[], $11::int[], $12::int[],
-			              $13::bigint[], $14::bigint[], $15::int[], $16::bigint[])
-			       AS v(id, beat_at, k, cpu, mem_u, mem_t, disk_u, disk_t, l1, l5, l15, rx, tx, tc, up)
+			SELECT $1::uuid, mv.id, mv.beat_at, mv.cpu, mv.mem_u, mv.mem_t, mv.disk_u, mv.disk_t,
+			       mv.l1, mv.l5, mv.l15, mv.rx, mv.tx, mv.tc, mv.up
+			  FROM mv JOIN locked l ON l.id = mv.id JOIN v ON v.id = mv.id
 			 WHERE true`+gate+`
-			ON CONFLICT (node_id, recorded_at) DO NOTHING`,
-			tenantID, m.ids, m.ats, m.keys, m.cpu, m.memU, m.memT, m.diskU, m.diskT,
-			m.l1, m.l5, m.l15, m.rx, m.tx, m.tc, m.up)
-	}
+			ON CONFLICT (node_id, recorded_at) DO NOTHING
+		)
+		SELECT coalesce(array_agg(id::text), '{}') FROM locked`,
+		tenantID, ids, ats, keys, m.ids, m.ats, m.cpu, m.memU, m.memT, m.diskU, m.diskT,
+		m.l1, m.l5, m.l15, m.rx, m.tx, m.tc, m.up).QueryRow(func(row pgx.Row) error { return row.Scan(&locked) })
 	// 服务器行（两阶段接入的服务器 id = 控制节点 id）：与立即写同一个刷新间隔；锁不到的这一轮
 	// 不刷新（下一次心跳再说），同样不等
 	b.Queue(`

@@ -151,7 +151,6 @@ func checkWatchedGatewayFollowsNotifications(t *testing.T, ctx context.Context, 
 		resp.Body.Close()
 	}
 
-	// 合并的心跳照样落库：批量写之后 last_heartbeat_at 跟上最后一拍，带的探针点也写进去
 	countMetrics := func() (n int) {
 		t.Helper()
 		if err := admin.QueryRow(ctx, `SELECT count(*) FROM node_metrics WHERE tenant_id=$1 AND node_id=$2::uuid`,
@@ -160,25 +159,6 @@ func checkWatchedGatewayFollowsNotifications(t *testing.T, ctx context.Context, 
 		}
 		return n
 	}
-	metricsBefore := countMetrics()
-	before := time.Now()
-	if code := status(signed(http.MethodPost, "/v1/nodes/heartbeat",
-		[]byte(`{"agent_version":"e2e-watch","metrics":{"cpu_bp":1234,"mem_used_mb":10,"net_rx_bytes":5}}`), nil)); code != http.StatusOK {
-		t.Fatalf("watched heartbeat with metrics = %d", code)
-	}
-	watched.FlushHeartbeats(ctx)
-	var lastBeat time.Time
-	if err := admin.QueryRow(ctx, `SELECT last_heartbeat_at FROM nodes WHERE tenant_id=$1 AND id=$2::uuid`,
-		tenantID, nodeID).Scan(&lastBeat); err != nil {
-		t.Fatal(err)
-	}
-	if lastBeat.Before(before.Add(-time.Second)) {
-		t.Fatalf("coalesced heartbeat not persisted: last_heartbeat_at=%s, beat at %s", lastBeat, before)
-	}
-	if got := countMetrics(); got != metricsBefore+1 {
-		t.Fatalf("coalesced heartbeat metrics point: rows %d -> %d, want +1", metricsBefore, got)
-	}
-
 	lastHeartbeat := func() time.Time {
 		t.Helper()
 		var at time.Time
@@ -187,6 +167,62 @@ func checkWatchedGatewayFollowsNotifications(t *testing.T, ctx context.Context, 
 			t.Fatal(err)
 		}
 		return at
+	}
+	metricsBeat := func() int {
+		t.Helper()
+		return status(signed(http.MethodPost, "/v1/nodes/heartbeat",
+			[]byte(`{"agent_version":"e2e-watch","metrics":{"cpu_bp":1234,"mem_used_mb":10,"net_rx_bytes":5}}`), nil))
+	}
+
+	// 节点行被别的事务 FOR UPDATE 锁着（后台按 id 升序成批改生命周期那种）：批量写连探针点也
+	// 不写、不等（探针点的外键检查要 KEY SHARE，会被 FOR UPDATE 挡住），2 秒内返回；锁放开后
+	// 下一轮把这一拍连同探针点补写（复审 N1）
+	t.Run("coalesced heartbeat batch skips rows held FOR UPDATE and requeues their metrics", func(t *testing.T) {
+		lockTx, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = lockTx.Rollback(ctx) }()
+		if _, err := lockTx.Exec(ctx, `SELECT 1 FROM nodes WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`,
+			tenantID, nodeID); err != nil {
+			t.Fatal(err)
+		}
+		beatBefore, metricsBefore := lastHeartbeat(), countMetrics()
+		if code := metricsBeat(); code != http.StatusOK {
+			t.Fatalf("watched heartbeat with metrics = %d", code)
+		}
+		if !lastHeartbeat().Equal(beatBefore) || countMetrics() != metricsBefore {
+			t.Fatal("the beat was written immediately; the batch path is not exercised")
+		}
+		start := time.Now()
+		watched.FlushHeartbeats(ctx)
+		if took := time.Since(start); took > 2*time.Second {
+			t.Fatalf("batch write waited %v on a node row held FOR UPDATE", took)
+		}
+		if !lastHeartbeat().Equal(beatBefore) || countMetrics() != metricsBefore {
+			t.Fatal("batch wrote a beat or metrics point for a node row another transaction holds")
+		}
+		if err := lockTx.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
+		watched.FlushHeartbeats(ctx)
+		if !lastHeartbeat().After(beatBefore) {
+			t.Fatal("skipped beat was not written once the lock was released")
+		}
+		if got := countMetrics(); got != metricsBefore+1 {
+			t.Fatalf("skipped beat's metrics point not requeued: rows %d -> %d, want +1", metricsBefore, got)
+		}
+		t.Log("marker=node_watch_pg18_batch_skip_for_update_metrics_ok")
+	})
+
+	// 合并的心跳照样落库：批量写之后 last_heartbeat_at 跟上最后一拍（探针点见上一个子测试）
+	before := time.Now()
+	if code := metricsBeat(); code != http.StatusOK {
+		t.Fatalf("watched heartbeat with metrics = %d", code)
+	}
+	watched.FlushHeartbeats(ctx)
+	if lastBeat := lastHeartbeat(); lastBeat.Before(before.Add(-time.Second)) {
+		t.Fatalf("coalesced heartbeat not persisted: last_heartbeat_at=%s, beat at %s", lastBeat, before)
 	}
 
 	// 批量写不等别的事务手里的行锁（审查 #6）：节点行被锁着时这一轮跳过、不阻塞，
