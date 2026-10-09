@@ -20,10 +20,7 @@
 
 **提交**：按主题小步提交，信息用英文祈使句，前缀 perf:/fix:/feat:/test:/docs:，结尾加 `Co-Authored-By:` 行（按当前会话的署名要求）。
 
-**验证（按 verify skill）**：
-1. 本地：改到的文件 `gofmt -l`；改到的包 `go vet` + `go test`（`-p 2`）；动了 SQL、表名、路由、权限码加跑 `go test ./internal/platform/db/ ./internal/api/...`；动了迁移跑 `bash panel/deploy/check-migrations_mock_test.sh`；pdnd 同理。本机 PG18 用例会跳过，跳过不等于通过。
-2. 推送：`git push -u origin <你的分支>`。签名失败按根 CLAUDE.md「环境与工具坑」处理。
-3. 等结论（后台跑，不手写轮询）：`/Users/a1/ai/projects/pandora/ops-local/memoh-ci/wait-status.sh <sha>` 退出 0；动了 panel/internal 数据层、SQL、迁移、前端或 pdnd 内核，再等 `wait-github.sh <sha>` 退出 0（PG18 必须 0 SKIP）。退出 1 按描述本机复现、修、再推；退出 2 说明原因后改看 GitHub。
+**验证**：本地跑什么、推送后必须等哪个 CI 结论，一律按 verify skill（go test 加 `-p 2`；本机 PG18 用例会跳过，跳过不等于通过）。推送 `git push -u origin <你的分支>`，签名失败按根 CLAUDE.md「环境与工具坑」处理。等待脚本在主目录：`/Users/a1/ai/projects/pandora/ops-local/memoh-ci/wait-status.sh <sha>`、`wait-github.sh <sha>`，后台跑、不手写轮询。退出 1 按 ci-triage 查（先核 run 的分支），本机复现、修、再推；退出 2 说明原因后改看 GitHub。本任务额外要等的 job 和自证写在开工说明的「验证补充」里。
 
 **不要再拆实现型子 agent**；只读调研可以拆。
 

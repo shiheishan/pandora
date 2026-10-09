@@ -13,7 +13,8 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 
 | 角色 | 套餐 | 要不要 VPC | 别名 |
 |---|---|---|---|
-| 面板机（install.sh 生产方式） | vc2-2c-4gb | 和压测机、真节点同测时勾 | `vultr-sgp-pt-panel<N>` |
+| 面板机（install.sh 生产方式，5k 档） | vc2-2c-4gb | 和压测机、真节点同测时勾 | `vultr-sgp-pt-panel<N>` |
+| 面板机（1 万用户 / 1000 节点档） | 4c8g 独享（用户 10-09 定：这一档的延迟按 4c8g 面板机考） | 同上 | `vultr-sgp-pt-panel<N>` |
 | 压测机（loadtest、节点验收客户端） | vc2-2c-4gb（1c 在 15k 档不够） | 大流量压测必勾 | `vultr-sgp-pt-loadgen<N>` |
 | 真节点（pdnd，逐协议验证） | vc2-1c-1gb | 不用（客户端要走真公网） | `vultr-sgp-pt-node<N>` |
 | 大流量验收节点 | 4c8g 独享 | 必勾 | `vultr-sgp-pt-node<N>` |
@@ -27,8 +28,8 @@ Vultr 新加坡，Debian 13 x64（与生产同版），开机时用 Vultr SSH Ke
 - **要盯的是公网出流量**：
   - 账户流量池 = 免费 2TB + 按各机开机时长折算的额度；超出约 $0.01/GB。Vultr 只计公网**出**方向，入方向和 VPC 内网流量不计。
   - 10-08 节点验收没开内网，5 台公网出流量合计约 4.11TB，流量池只有约 2.64TB，超了约 1.3TB。
-- **估算**：1Gbps 跑 1 小时，每个方向约 450GB。一台机器经另一台转发 X Gbps（一半上行一半下行）跑 H 小时，全走公网时各机合计出流量约 900·X·H GB（推导与核对见 node-accept 第 2 节）。
-- **跑前报用户**：计划多少 Gbps、多少小时、走不走内网、预计公网出流量多少 GB。
+- **估算**：1Gbps 跑 1 小时，每个方向约 450GB。节点过 X Gbps（一半上行、一半下行）跑 H 小时：节点出 ≈ 450·X·H GB，目标机与压测机合计再出 ≈ 450·X·H GB，**全走公网时合计约 900·X·H GB**（10-08 约 4.6 Gbps·小时，实测 4.11TB，与公式吻合）。全走 VPC 时公网只剩 ssh、拉数据、apt、推二进制，几 GB 量级。
+- **跑前报用户**：计划多少 Gbps、多少小时、走不走内网、预计公网出流量多少 GB（节点验收的报法见 node-accept）。
 - **跑中、跑后核对**：各机 `/proc/net/dev` 的 tx，默认路由那块网卡才是公网（`bash .claude/skills/node-accept/scripts/netdev.sh <别名>...`）。开跑前、收尾各记一次，差值写进报告。
 
 ## 用 API 开机、挂 VPC、删机（用户 10-08 授权 agent 开机）
@@ -70,5 +71,5 @@ bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] <别名>
 
 - 刚开机头一次 ssh 常报 `Connection timed out during banner exchange`，隔 15 秒重试即可，不是密钥问题（register.sh 已内置重试 3 次）。
 - ssh 起后台脚本、限时故障注入：照根 CLAUDE.md「环境与工具坑」的远端那一条。
-- 镜像开着 ufw。面板机的 80/443 由 install.sh 放行（见 panel-install）；**节点机的协议端口**（约定 20000–20099 的 tcp 与 udp）要手工放行。10-08 节点验收时端口段规则计数一直为 0、按来源地址放行才通（原因没查），放行后先实测连通。
+- 镜像开着 ufw。面板机的 80/443 由 install.sh 放行（见 panel-install）；**节点机的协议端口**（约定 20000–20099 的 tcp 与 udp）要手工放行。10-08 节点验收时端口段规则计数一直为 0、SYN 被 DROP（原因没查），按来源地址放行才通；VPC 下按内网来源或内网网段放行。放行后先实测连通（node-accept、node-e2e 都按这条办）。
 - 测试流量走内网时，pdnd 默认拒绝私网目标，要改节点配置，见 node-accept 第 2 节。

@@ -19,11 +19,16 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
 
 ## 分流
 
+0. **先核分支**：`wait-github.sh` 退出 1 时，同一个 sha 推到两个分支可能把别的分支的 run 算进来（w9quic 的误判）。先 `gh run view <id> --json headBranch -q .headBranch` 核一下红的 run 是不是当前分支的；`triage.sh` 传分支名（或 sha 加第三个参数）时只取该分支的 run，只给 sha 时每行带 `[headBranch]`，跨了多个分支会提示。
 1. **已知偶发**，不改代码，重跑：
    - `TestIdempotencyMiddlewarePG18` 锁超时 → `gh run rerun <id> --failed`；
    - Actions 因付款失败没启动 → `gh run rerun <id>`；
    - 同一提交有时先绿、再出一组新运行 → 以最新一组为准；
    - 检查机红、GitHub 同一 job 绿（例：10-07 fda8a31 的 linux-race，GitHub 与本机 `-race -count=3` 都过）→ 先当偶发，`MEMOH_FRESH=1 wait-status.sh <sha>` 重跑一次；第二次还红再查，查时先怀疑检查机的容器环境（`/dev/fd`、apt 包随重启丢失），不要直接改代码。检查机日志在云电脑 `/data/memoh-ci/logs/<sha>/<job>.log`，本机读不到。
+   - **观察中**（还没查清，不算已知偶发）：先重跑一次，第二次还红再当真缺陷查；条目和已有数据在 `.claude/TASKS.md`，别复制进来。
+     - pdnd `TestConnErrorLogSinkCloseWaitsForFlush`、`TestDelUsersEndsQUICUDPSessions`（检查机 linux-race）、`TestColdStartPortWinnerFollowsNodesOrder`（GitHub linux-race）：见「节点遗留」；
+     - smoke 浏览器 A4 续费日期：见「w9https 后续」；
+     - `portal-buy.spec.ts` 套餐卡标题断言：见「w9quic 后续」⑥。
 2. **一处报错连带一片**：先看「SQL 报错」和 e2e 首个失败。同一条 SQLSTATE 出现在几个测试里，通常是一条共享查询坏了，修一处全好（10-07：ListLinks 漏逗号 → 门户链接 500、两个 PG18 用例、expiry/risk e2e、两个前端冒烟一起红）。
 3. **整合问题**（几路并行合并后才出现）：
    - 计数类断言：内置模板数、后台循环数（`workers.Add` 与两份契约测试）、`run-pg18-gates.sh` 的 DOMAINS、`run-smoke-e2e.sh` 的 SCRIPTS；
@@ -49,10 +54,7 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
    - 「套餐 … 没发布出去」「SQL 夹具「…」失败」：种子或夹具本身坏了；
    - `POST /v1/auth/login 返回 500` 一类接口 5xx：后端问题，按 requestId 去同一提交的 PG18 run 或网关日志找堆栈。
 4. **要看截图和 trace 时**才下产物（十几到几十 MB，本机经代理很慢）：`gh run download <id> -n browser-paths -D <目录>`，看 `shots/<步骤>-fail.png` 和 `test-results/*/trace.zip`（`npx playwright show-trace`）。Playwright 的 `error-context.md` 取的不一定是出错的那个页面。
-5. **分流**：
-   - 页面文字或结构改了、测试没跟：同改 `tests/browser`（规则 screens-portal.md、screens-admin-billing.md 有这条）；
-   - 真是产品问题、一时修不了：测试改 `test.fixme`，原因登记进 `PRODUCT_ISSUES`，复现与期望写进任务报告；不在测试里绕过、不放宽断言；
-   - 修好了已登记的问题：去掉 `test.fixme` 与 `PRODUCT_ISSUES` 那一行，否则表里一直显示「失败（产品问题）」。
+5. **分流**：页面文字或结构改了、测试没跟，就同改 `tests/browser`（规则 screens-portal.md、screens-admin-billing.md 有这条）；产品问题一时修不了的 `test.fixme` 与 `PRODUCT_ISSUES` 做法见 `.claude/rules/frontend-browser-e2e.md`；修好了已登记的问题要去掉那一行，否则表里一直显示「失败（产品问题）」。
 
 ## 坑
 

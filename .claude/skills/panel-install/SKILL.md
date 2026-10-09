@@ -55,23 +55,18 @@ description: pandora 在一次性测试机上按生产方式（panel/deploy/inst
    PANDORA_ASSUME_YES=1 ./install.sh 2>&1 | while IFS= read -r l; do printf '%s %s\n' "$(date -u +%T)" "$l"; done > /root/install-2.log
    ```
    给每行打时间戳，是为了量停服时间。检测到 `/opt/aegispanel/deploy/.env` 就自动走升级：保留 `.env` 与数据，不改 `AEGIS_ENV`。
-   - HTTPS：已有 `aegis.conf` 的面板照常重渲染；以前 certbot 申请的 `/etc/letsencrypt/live/<域名>` 由 edge-tls.sh 直接接管（不再申请），nginx 改读 `/etc/aegispanel/tls/live/`，并启用续期 timer。
+   - HTTPS：已有 `aegis.conf` 的面板照常重渲染；以前 certbot 申请的 `/etc/letsencrypt/live/<域名>` 由 edge-tls.sh 直接接管（不再申请），nginx 改读 `/etc/aegispanel/tls/live/`，并启用续期 timer。接管时 edge-tls 会把 certbot 续期配置里面板主机的 webroot 改到 ACME 目录（改前备份到 `/var/backups/aegispanel`），升级验收要核（第 6 步）。
    - 从没走过 nginx 边缘的旧面板（没有 `aegis.conf`）升级时不替人接管 80/443，收尾提示切换命令：`PANDORA_ACME=1 ./install.sh`。要从域名换成 IP（或反过来），改 `.env` 的 `AEGIS_PUBLIC_BASE_URL` 后重跑 install.sh。
-3. 它自己做的事（顺序即日志顺序；顺序与失败处置以 `panel/deploy/install-lib.sh` 的 `pandora_run_migrations` 为准）：
-   - **升级前备份**：`pg_dump -Fc` 到 `/var/backups/aegispanel/pre-upgrade-<时间>.dump`（0600），并验过能读。备份失败就中止，此时服务没停、迁移没跑；
-   - 起数据基座，确认 unix socket 可用后换连接串；
-   - **停服之前**在一次性克隆库上演练迁移（服务照常在跑，库越大越慢），日志「预检通过（N 秒），凭据已写好；停服后只核对凭据，不再演练」；预检失败则服务没停、数据库没动；
-   - **停服**（日志「停止服务后迁移」）：只核对预检凭据，再迁移；迁移失败会把服务拉回来；
-   - 收窄数据库角色、装二进制与 systemd 单元、启动、健康检查、重渲染 nginx。
+3. 升级链的内部顺序与失败处置不在这里重复，见 `.claude/rules/deploy-scripts.md` 与 `panel/deploy/install-lib.sh` 的 `pandora_run_migrations`。验收时只认日志里的几个锚点：升级前备份 `/var/backups/aegispanel/pre-upgrade-<时间>.dump`（备份失败就中止，服务没停）、「预检通过（N 秒）…」（停服前，预检失败服务没停）、「停止服务后迁移」、「启动服务」。
 4. **停服时间**：日志里「停止服务后迁移」到「启动服务」之间的时间戳之差（预检不在这段里）。成绩里同时写迁移条数和库大小，否则这个数没法比。
 5. **迁移号核对**：日志「迁移版本 M → N」，M 等于升级前（`SELECT max(version_id) FROM goose_db_version`，用 `/opt/aegispanel/deploy/psql.sh`），N 等于新包 `migrations/` 的最大号。
-6. 照首装 7、8 重新核对 healthz 与 https；再登录一次后台。
+6. 照首装 7、8 重新核对 healthz 与 https；再登录一次后台。接管过 certbot 证书的机器另核续期：`/opt/aegispanel/deploy/edge-tls.sh status` 的「续期校验」行应是 `webroot /var/www/aegis-acme（…）`（显示「webroot 还指着别处」或「找不到续期配置」都不合格，原因在 `/var/lib/aegispanel/tls/status`）；域名证书再跑一次 `certbot renew --dry-run` 要过。IP 证书（lego）没有这行，看 `systemctl list-timers aegis-tls-renew.timer`。
 7. 升级前后各留一份 `systemctl is-active aegis-public aegis-admin aegis-node` 与版本号（后台登录页或侧栏显示的发布版本）写进现场记录。
 
 ## 坑
 
 - **证书与 Debian 默认站点**：Debian 的 nginx 包自带默认站点，也 listen 80 default_server，会和 `aegis.conf` 抢，`nginx -t` 报 duplicate default server。edge-tls.sh 渲染前只停用发行版原样的那个链接（原文件留着，可 `ln -s ../sites-available/default` 链回）。撞上 Let's Encrypt 限额就停下报告；同一台反复重装用 `PANDORA_ACME_SERVER=<staging 地址>`，最后验收用正式环境。
-- **证书的流程**（edge-tls.sh setup）：没有证书先自签让 nginx 起来 → 渲染 nginx（80 只放 `/.well-known/acme-challenge/` 与 308 跳 https）→ certbot（域名）/ backports 的 lego（IP，6 天短期证书）经 webroot `/var/www/aegis-acme` 申请 → 换 `/etc/aegispanel/tls/live` 链接 → reload。续期结论在 `/var/lib/aegispanel/tls/status`，`journalctl -u aegis-tls-renew` 看输出。节点用 https 接入面板要正规证书：自签兜底期间节点接入会校验失败。
+- **证书**：流程在 `edge-tls.sh` 与 `rules/deploy-scripts.md`。续期结论在 `/var/lib/aegispanel/tls/status`，`journalctl -u aegis-tls-renew` 看输出。节点用 https 接入面板要正规证书：自签兜底期间节点接入会校验失败。
 - **网关经 unix socket 连 PG 与 Valkey**（`deploy/run/`）：复测时确认真走了 socket：`SELECT client_addr IS NULL AS unix, count(*) FROM pg_stat_activity WHERE usename='aegis_app' GROUP BY 1`。socket 不可用时 install.sh 保持回环端口；`.env` 已是 socket 而 socket 起不来，网关起不来，install.sh 会停下。要回退到更早的发布包，先按 `.env` 末尾的注释把 `AEGIS_DATABASE_URL`、`AEGIS_REDIS_URL` 改回回环形式（口令不变）。
 - **`build-release.sh` 的两个约束**：
   - 在 Linux 上、在 `panel/` 下跑；

@@ -9,7 +9,7 @@
 | 名字 | `<别名>` |
 | IP | <IP> |
 | 内网 IP（VPC） | <内网IP> |
-| 商家 / 机房 | Vultr，新加坡；<套餐>（共享型），自动备份关 |
+| 商家 / 机房 | Vultr，新加坡；<套餐>，自动备份关 |
 | 系统 | Debian 13 x64，时区 UTC，北京 = 本机 + 8h |
 | 用途 | <一句话：pandora 的哪项测试、装什么、和哪台配合> |
 | 日常运维 | Claude Code 的 pandora 总协调会话（主目录 `~/ai/projects/pandora`，清单 `.claude/TASKS.md`） |
