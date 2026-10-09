@@ -24,15 +24,40 @@ const ActivityDailyRetentionDays = 400
 // activityDailyPurgeBatch 是一次清理最多删的行数（每租户每天一行，正常一次只删一两行）。
 const activityDailyPurgeBatch = 1000
 
-// refreshActivityDailySQL 重算最近 2 个已结束日（会话时区的昨天与前天）并覆盖写入。
-// 前天那一行在当天第一次运行后即定稿（computed_at 不早于 day + 2 的零点）；昨天那一行在零点
-// 10 分钟之后、按日流量停写之后的那一轮起可用。
+// activityDailyNeedSQL 找出最近 2 个已结束日（会话时区的昨天与前天）里要重算的范围，
+// 返回 [最早, 最晚]；都不需要时两列为 NULL。一天不需要重算，当且仅当它的行已经「不会再变」：
+//   - 定稿：computed_at 不早于 day + 2 的零点（与读路径 activityDailyFinalSQL 同一判据）。那时
+//     审计、拉取日志和按日流量都不会再写进这一天，重算只会得到同样的数。前天的行在 day + 2
+//     那天第一次运行时写出定稿行，之后不再碰；原先它在这一天剩下的每一轮（共约 144 次）
+//     都重算一遍；
+//   - 昨天且读路径此刻就在用：算于零点 10 分钟之后、且这一天的按日流量此后没被写过
+//     （用户时区晚于会话时区时昨天还会被迟到写入，写停之后的下一轮才可用）。读路径用着的行
+//     重算不会改变它读到什么，等到 day + 2 那天再定稿一次。
+//
+// 迟到写入的吸收不变：昨天的行被迟到写入弄成不可用，下一轮就重算；前天的行还没定稿时在
+// day + 2 那天第一轮重算，吸收截至那时的全部写入。
+const activityDailyNeedSQL = `
+SELECT min(g.day), max(g.day)
+  FROM unnest(ARRAY[current_date - 2, current_date - 1]) AS g(day)
+ WHERE NOT EXISTS (
+         SELECT 1 FROM activity_daily a
+          WHERE a.tenant_id = $1 AND a.tz = current_setting('TimeZone') AND a.day = g.day
+            AND (a.computed_at >= (g.day + 2)::timestamptz
+                 OR (g.day = current_date - 1
+                     AND a.computed_at >= (g.day + 1)::timestamptz + interval '10 minutes'
+                     AND NOT EXISTS (
+                           SELECT 1 FROM subscription_usage_daily u
+                            WHERE u.tenant_id = $1 AND u.day = g.day
+                              AND u.updated_at > a.computed_at - interval '5 minutes'))))`
+
+// refreshActivityDailySQL 重算 [$2, $3] 这几个已结束日（会话时区）并覆盖写入。$2、$3 来自
+// activityDailyNeedSQL：只有前天与昨天两个候选日，所以范围要么是其中一天，要么是连着的两天。
 const refreshActivityDailySQL = `
 INSERT INTO activity_daily AS a
   (tenant_id, tz, day, registered, logins, orders, unique_ips, active_users, computed_at)
 SELECT $1, current_setting('TimeZone'), f.day, f.registered, f.logins, f.orders,
        f.unique_ips, f.active_users, now()
-  FROM app.activity_daily_compute($1, current_date - 2, current_date - 1) f
+  FROM app.activity_daily_compute($1, $2::date, $3::date) f
 ON CONFLICT (tenant_id, tz, day) DO UPDATE SET
   registered   = EXCLUDED.registered,
   logins       = EXCLUDED.logins,
@@ -79,12 +104,20 @@ SELECT to_char(f.day, 'MM-DD'), f.registered, f.logins, f.orders, f.unique_ips, 
   FROM app.activity_daily_compute($1, $2::date, current_date) f
  ORDER BY f.day`
 
-// RefreshActivityDaily 重算本租户最近 2 个已结束日的行为汇总，返回写入的行数。由 aegis-admin
-// 的保留期任务定时调用，幂等（覆盖写）。
+// RefreshActivityDaily 重算本租户最近 2 个已结束日里还没定稿、读路径也还用不上的行为汇总，返回
+// 写入的行数（都已定稿时为 0，只做一次两个主键探测的查询）。由 aegis-admin 的保留期循环每个节拍
+// 调用，幂等（覆盖写）。
 func (s *Service) RefreshActivityDaily(ctx context.Context, tenantID string) (int64, error) {
 	var n int64
 	err := s.pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
-		ct, err := tx.Exec(ctx, refreshActivityDailySQL, tenantID)
+		var lo, hi *time.Time
+		if err := tx.QueryRow(ctx, activityDailyNeedSQL, tenantID).Scan(&lo, &hi); err != nil {
+			return err
+		}
+		if lo == nil || hi == nil {
+			return nil
+		}
+		ct, err := tx.Exec(ctx, refreshActivityDailySQL, tenantID, *lo, *hi)
 		n = ct.RowsAffected()
 		return err
 	})

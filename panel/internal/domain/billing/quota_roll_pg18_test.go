@@ -157,5 +157,67 @@ func checkQuotaRollPG18(t *testing.T, p *subPeriodPG18) {
 	if n, err := p.billing.RollQuotaPeriods(ctx, p.fx.tenant); err != nil || n != 0 {
 		t.Fatalf("second roll: n=%d err=%v, want 0", n, err)
 	}
+
+	// 6) 第二遍按需（w12period）：第一遍之后还有到期的行（被锁住跳过）就补一遍，没有就不补
+	dueMonth := func(sub string, consumed int) string {
+		t.Helper()
+		row := rowID(sub, "month")
+		p.must(`UPDATE quota_balances SET period_start = now() - interval '1 month 1 hour',
+			       period_end = now() - interval '1 hour', consumed = $2 WHERE id = $1::uuid`, row, consumed)
+		return row
+	}
+	lockRow := func(row string) pgx.Tx {
+		t.Helper()
+		tx, err := p.admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM quota_balances WHERE id=$1::uuid FOR UPDATE`, row); err != nil {
+			t.Fatal(err)
+		}
+		return tx
+	}
+	dueMonth(grant(), 11)
+	retryRow := dueMonth(grant(), 12)
+	retryLock := lockRow(retryRow)
+	go func() {
+		time.Sleep(rollQuotaRetryDelay / 4)
+		_ = retryLock.Rollback(context.Background())
+	}()
+	if n, err := p.billing.RollQuotaPeriods(ctx, p.fx.tenant); err != nil || n != 2 {
+		_ = retryLock.Rollback(ctx)
+		t.Fatalf("roll with a row freed during the retry delay: n=%d err=%v, want 2 (one per pass)", n, err)
+	}
+	// 到期的只有一条、又恰好被锁住（一行都没滚得动）：第一遍之后探测到还有到期的行，照样做第二遍，
+	// 锁在重试间隔里放开就滚掉（用户的重置不等下一轮）
+	onlyRow := dueMonth(grant(), 13)
+	onlyLock := lockRow(onlyRow)
+	go func() {
+		time.Sleep(rollQuotaRetryDelay / 4)
+		_ = onlyLock.Rollback(context.Background())
+	}()
+	if n, err := p.billing.RollQuotaPeriods(ctx, p.fx.tenant); err != nil || n != 1 {
+		_ = onlyLock.Rollback(ctx)
+		t.Fatalf("roll with the only due row locked then freed: n=%d err=%v, want 1 from the second pass", n, err)
+	}
+	// 仍然锁着：第二遍也滚不动，留给下一轮，锁放开后下一轮滚掉
+	stuckRow := dueMonth(grant(), 14)
+	stuckLock := lockRow(stuckRow)
+	if n, err := p.billing.RollQuotaPeriods(ctx, p.fx.tenant); err != nil || n != 0 {
+		_ = stuckLock.Rollback(ctx)
+		t.Fatalf("roll with a row locked through both passes: n=%d err=%v, want 0", n, err)
+	}
+	if err := stuckLock.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := p.billing.RollQuotaPeriods(ctx, p.fx.tenant); err != nil || n != 1 {
+		t.Fatalf("roll after the lock is released: n=%d err=%v, want 1", n, err)
+	}
+	// 没有到期的行：不做第二遍，不付重试间隔
+	start = time.Now()
+	n, err = p.billing.RollQuotaPeriods(ctx, p.fx.tenant)
+	if took := time.Since(start); err != nil || n != 0 || took >= rollQuotaRetryDelay {
+		t.Fatalf("roll with nothing due: n=%d err=%v took %s, want 0 without the retry delay", n, err, took)
+	}
 	t.Log("marker=sub_period_pg18_quota_roll_ok")
 }

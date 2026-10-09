@@ -102,11 +102,12 @@ func TestScanQuotaCountsTrafficPacksPG18(t *testing.T) {
 	var warned []string
 	remaining := map[string]string{}
 	for _, d := range got {
-		// 键形如 quota:<订阅>:80:inapp —— 四条都应落在 80 档
-		sub, ok := strings.CutPrefix(d.key, "quota:")
-		if sub, ok = strings.CutSuffix(sub, ":80:inapp"); !ok || subs[sub] == "" {
+		// 键形如 quota:<订阅>:80:<周期起点秒>:inapp —— 四条都应落在 80 档
+		parts := strings.Split(d.key, ":")
+		if len(parts) != 5 || parts[0] != "quota" || parts[2] != "80" || parts[4] != "inapp" || subs[parts[1]] == "" {
 			t.Fatalf("unexpected dedupe key %q", d.key)
 		}
+		sub := parts[1]
 		warned = append(warned, subs[sub])
 		remaining[subs[sub]] = d.remaining
 	}

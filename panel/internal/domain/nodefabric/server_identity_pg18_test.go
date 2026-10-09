@@ -390,6 +390,11 @@ func TestServerBindingPG18(t *testing.T) {
 		checkControlNodeBatchRetirePG18(t, ctx, admin, svc, tenant, actor)
 	})
 
+	// w12period：心跳批量写里服务器 UPDATE 的空集短路（heartbeat_server_refresh_pg18_test.go）
+	t.Run("heartbeat batch skips node ids without a server row", func(t *testing.T) {
+		checkHeartbeatServerRefreshPG18(t, ctx, admin, app, tenant)
+	})
+
 	t.Run("rls hides another tenant", func(t *testing.T) {
 		checkServerBindingRLS(t, ctx, admin, app, svc, tenant, otherTenant, serverID)
 	})

@@ -71,6 +71,12 @@ func TestGenerateUsersPG18(t *testing.T) {
 		EmailDomain: "gen.invalid", ActorID: actor, Reason: "给经销商预制账号"}); err == nil {
 		t.Fatal("count above 500 must be rejected")
 	}
+	// 被拒绝的登记不叫醒 worker；成功登记之后通道里有一个信号
+	select {
+	case <-svc.UserGenerationWake():
+		t.Fatal("a rejected submission woke the worker")
+	default:
+	}
 	job, err := svc.SubmitGenerateUsers(ctx, tenant, GenerateUsersInput{Count: 23, EmailPrefix: "Gen",
 		EmailDomain: "GEN.invalid", GroupID: group, ActorID: actor, Reason: "给经销商预制账号"})
 	if err != nil || job.Status != "queued" || job.Total != 23 ||
@@ -79,6 +85,11 @@ func TestGenerateUsersPG18(t *testing.T) {
 	}
 	if n := auditCount("user.bulk_generate_requested"); n != 1 {
 		t.Fatalf("request audit rows=%d", n)
+	}
+	select {
+	case <-svc.UserGenerationWake():
+	default:
+		t.Fatal("a successful submission did not wake the worker")
 	}
 
 	// 第一批写完后「进程挂了」：租约过期，下一轮从 completed=10 接着做

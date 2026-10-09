@@ -198,7 +198,11 @@ func TestActivityDailyRollupPG18(t *testing.T) {
 			if _, err := tx.Exec(ctx, `SELECT set_config('TimeZone', $1, true)`, tz); err != nil {
 				return err
 			}
-			_, err := tx.Exec(ctx, refreshActivityDailySQL, tenant)
+			var lo, hi time.Time
+			if err := tx.QueryRow(ctx, `SELECT current_date - 2, current_date - 1`).Scan(&lo, &hi); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, refreshActivityDailySQL, tenant, lo, hi)
 			return err
 		}); err != nil {
 			t.Fatalf("refresh under %s: %v", tz, err)
@@ -208,19 +212,68 @@ func TestActivityDailyRollupPG18(t *testing.T) {
 		compare("session tz after refresh", tz, 14)
 	}
 
-	// 4. 定时重算：最近 2 个已结束日；迟到写入在下一轮被吸收
+	// 4. 定时重算：只重算还没定稿、读路径也用不上的行；迟到写入仍被吸收
+	mustAdmin(`DELETE FROM activity_daily WHERE tenant_id = $1 AND tz = current_setting('TimeZone') AND day >= current_date - 2`, tenant)
+	// 4.1 两天都没有行（刚上线）：都算
 	if n, err := svc.RefreshActivityDaily(ctx, tenant); err != nil || n != 2 {
-		t.Fatalf("RefreshActivityDaily wrote %d err=%v, want 2", n, err)
+		t.Fatalf("RefreshActivityDaily wrote %d err=%v, want 2 on empty rows", n, err)
 	}
-	mustAdmin(`INSERT INTO subscription_usage_daily (tenant_id, subscription_id, day, bytes)
-		VALUES ($1, $2, current_date - 2, 5)
-		ON CONFLICT (tenant_id, subscription_id, day) DO UPDATE SET bytes = 5`, tenant, activitySub(tenant, 3))
-	before := activeOn(t, ctx, admin, tenant, 2)
-	if _, err := svc.RefreshActivityDaily(ctx, tenant); err != nil {
-		t.Fatal(err)
+	// 4.2 前天的行算于今天零点之后，已定稿；昨天的行让读路径用得上（算于零点 10 分钟之后、按日流量此后没被写过）：
+	// 再来一轮什么也不算，原先这里每轮重算两行
+	usableYesterday := func() {
+		t.Helper()
+		mustAdmin(`UPDATE subscription_usage_daily SET updated_at = now() - interval '1 hour' WHERE tenant_id = $1`, tenant)
+		mustAdmin(`UPDATE activity_daily
+			  SET computed_at = greatest(now(), current_date::timestamptz + interval '10 minutes')
+			WHERE tenant_id = $1 AND tz = current_setting('TimeZone') AND day = current_date - 1`, tenant)
+	}
+	usableYesterday()
+	if n, err := svc.RefreshActivityDaily(ctx, tenant); err != nil || n != 0 {
+		t.Fatalf("RefreshActivityDaily wrote %d err=%v, want 0 (final day-before row, usable yesterday row)", n, err)
+	}
+	// 4.3 定稿的前天不再重算：它之后写进来的数不会进去（这种写入在定稿之后不会发生，这里只证明没重算）
+	mustAdmin(`INSERT INTO subscription_usage_daily (tenant_id, subscription_id, day, bytes, updated_at)
+		VALUES ($1, $2, current_date - 2, 5, now())`, tenant, activitySub(tenant, 3))
+	frozen := activeOn(t, ctx, admin, tenant, 2)
+	if n, err := svc.RefreshActivityDaily(ctx, tenant); err != nil || n != 0 || activeOn(t, ctx, admin, tenant, 2) != frozen {
+		t.Fatalf("a final row was recomputed: wrote %d err=%v active %d -> %d", n, err, frozen, activeOn(t, ctx, admin, tenant, 2))
+	}
+	mustAdmin(`DELETE FROM subscription_usage_daily WHERE tenant_id = $1 AND subscription_id = $2 AND day = current_date - 2`,
+		tenant, activitySub(tenant, 3))
+	// 4.4 昨天的按日流量被迟到写入（用户时区晚于会话时区）：读路径用不上这一行，下一轮只重算昨天并吸收
+	// updated_at 取 now() 与零点 11 分钟的较大者：测试恰好跑在 UTC 零点后几分钟时，昨天那一行的
+	// computed_at 被顶到零点 10 分钟，写入时刻必须比它的前 5 分钟晚才算「此后被写过」
+	mustAdmin(`UPDATE subscription_usage_daily
+		   SET bytes = 5, updated_at = greatest(now(), current_date::timestamptz + interval '11 minutes')
+		WHERE tenant_id = $1 AND subscription_id = $2 AND day = current_date - 1`, tenant, activitySub(tenant, 3))
+	before := activeOn(t, ctx, admin, tenant, 1)
+	if n, err := svc.RefreshActivityDaily(ctx, tenant); err != nil || n != 1 {
+		t.Fatalf("RefreshActivityDaily wrote %d err=%v, want only yesterday after a late write", n, err)
+	}
+	if after := activeOn(t, ctx, admin, tenant, 1); after != before+1 {
+		t.Fatalf("late write not absorbed into yesterday: active_users %d -> %d", before, after)
+	}
+	// 4.5 前天还没定稿（算于前天结束后、day + 2 之前）：今天第一轮重算并定稿，吸收这期间的迟到写入
+	usableYesterday()
+	mustAdmin(`UPDATE activity_daily SET computed_at = (current_date - 1)::timestamptz + interval '1 hour'
+		WHERE tenant_id = $1 AND tz = current_setting('TimeZone') AND day = current_date - 2`, tenant)
+	mustAdmin(`INSERT INTO subscription_usage_daily (tenant_id, subscription_id, day, bytes, updated_at)
+		VALUES ($1, $2, current_date - 2, 5, now())`, tenant, activitySub(tenant, 3))
+	before = activeOn(t, ctx, admin, tenant, 2)
+	if n, err := svc.RefreshActivityDaily(ctx, tenant); err != nil || n != 1 {
+		t.Fatalf("RefreshActivityDaily wrote %d err=%v, want only the not-yet-final day-before row", n, err)
 	}
 	if after := activeOn(t, ctx, admin, tenant, 2); after != before+1 {
-		t.Fatalf("late write not absorbed: active_users %d -> %d", before, after)
+		t.Fatalf("late write not absorbed when the day-before row was finalised: active_users %d -> %d", before, after)
+	}
+	var final bool
+	if err := admin.QueryRow(ctx, `SELECT computed_at >= (day + 2)::timestamptz FROM activity_daily
+		WHERE tenant_id = $1 AND tz = current_setting('TimeZone') AND day = current_date - 2`, tenant).Scan(&final); err != nil || !final {
+		t.Fatalf("day-before row not final after its recompute (final=%v err=%v)", final, err)
+	}
+	usableYesterday()
+	if n, err := svc.RefreshActivityDaily(ctx, tenant); err != nil || n != 0 {
+		t.Fatalf("RefreshActivityDaily wrote %d err=%v after finalising, want 0", n, err)
 	}
 	for _, d := range dayList {
 		compare("after refresh", "", d)

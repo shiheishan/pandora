@@ -32,6 +32,8 @@ type Service struct {
 	pool           *db.Pool
 	signer         *crypto.Signer // 给节点配置签名（AGT-007）
 	previousSigner *crypto.Signer
+	// trafficDaily 记着节点 × uid 按天汇总的进度（traffic_daily_roller.go）；零值可用。
+	trafficDaily trafficDailyRoller
 	// stream 是节点事件流的注册表，可为 nil（没启用推送时）。
 	stream       *StreamHub
 	realtime     *realtime.Hub

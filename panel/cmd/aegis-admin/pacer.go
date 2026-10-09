@@ -53,3 +53,26 @@ func randDuration(limit time.Duration) time.Duration {
 	}
 	return time.Duration(rand.Int64N(int64(limit)))
 }
+
+// intervalGate 让一个更慢的周期挂在更快的节拍上：每个节拍问一次 due，隔够了 every 才返回 true。
+//
+// 保留期清理原先和按天汇总一起每 10 分钟跑一轮；汇总要及时（日界后 10 分钟内），清理一小时一次
+// 足够（过期的数据在读路径上都有时间窗，清得再勤只是空转）。两者共用一个循环、一个节拍，清理
+// 挂在这个闸门后面。节拍有 ±10% 抖动，所以离整点最近的那一拍就算到点（elapsed + tick/2 >= every），
+// 不会因为差几十秒而再等一拍。
+type intervalGate struct {
+	every, tick time.Duration
+	last        time.Time
+}
+
+func newIntervalGate(every, tick time.Duration) *intervalGate {
+	return &intervalGate{every: every, tick: tick}
+}
+
+// due 报告这一拍该不该跑；还没跑过（刚启动）时一定该跑。
+func (g *intervalGate) due(now time.Time) bool {
+	return g.last.IsZero() || now.Sub(g.last)+g.tick/2 >= g.every
+}
+
+// done 记下一次成功的运行。没有成功就不调：下一拍再试，不必等满一个间隔。
+func (g *intervalGate) done(now time.Time) { g.last = now }

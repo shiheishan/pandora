@@ -37,3 +37,33 @@ func TestLoopPacerFiresFirstWithinIntervalThenRearms(t *testing.T) {
 		}
 	}
 }
+
+func TestIntervalGateRunsOnceAnHourOnTenMinuteTicks(t *testing.T) {
+	g := newIntervalGate(time.Hour, 10*time.Minute)
+	t0 := time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
+	if !g.due(t0) {
+		t.Fatal("a fresh gate must be due on the first tick")
+	}
+	g.done(t0)
+	// 节拍带 ±10% 抖动：之后每拍 9 到 11 分钟，到点的应该是第 6 拍附近，而不是第 5 或第 7
+	for _, tc := range []struct {
+		after time.Duration
+		want  bool
+	}{
+		{10 * time.Minute, false}, {20 * time.Minute, false}, {40 * time.Minute, false},
+		{49 * time.Minute, false}, {54*time.Minute + 59*time.Second, false},
+		{55 * time.Minute, true}, {60 * time.Minute, true}, {66 * time.Minute, true},
+	} {
+		if got := g.due(t0.Add(tc.after)); got != tc.want {
+			t.Fatalf("due(+%s) = %v, want %v", tc.after, got, tc.want)
+		}
+	}
+	// 没有成功就不记：下一拍还是到点
+	if !g.due(t0.Add(70 * time.Minute)) {
+		t.Fatal("a failed round must be retried on the next tick")
+	}
+	g.done(t0.Add(66 * time.Minute))
+	if g.due(t0.Add(76 * time.Minute)) {
+		t.Fatal("gate reopened ten minutes after a successful round")
+	}
+}
