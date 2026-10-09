@@ -239,7 +239,18 @@ for u in "${FD_UNITS[@]}"; do printf 'native %s\n' "$u" >"$FD_SYSTEMD_DIR/$u"; d
 : >"$T/calls"; rm -f "$T/hup.log"
 # 再让「停直装网关」这一步失败：回滚里任何一步失败都不能让它半途退出
 touch "$T/fail.systemctl-stop"
-hup_rc=0; bash "$T/hup.sh" >/dev/null || hup_rc=$?
+# 起它之前把 HUP 复位成缺省：外层若以 nohup / 后台循环跑（检查机就是），HUP 在进程入口就被忽略，
+# bash 对「入口时已忽略的信号」装不上 trap，kill -HUP 什么也不会发生——那测不到我们要的路径
+reset_hup() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import os, signal, sys; signal.signal(signal.SIGHUP, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    perl -e '$SIG{HUP} = "DEFAULT"; exec @ARGV or die' "$@"
+  else
+    "$@"
+  fi
+}
+hup_rc=0; reset_hup bash "$T/hup.sh" >/dev/null || hup_rc=$?
 rm -f "$T/fail.systemctl-stop"
 [ "$hup_rc" -eq 129 ] || fail "HUP run exit code $hup_rc"
 grep -qx 'systemctl start aegis-public aegis-admin aegis-node' "$T/calls" || fail "HUP with a dead terminal left docker writers down: $(cat "$T/calls")"
