@@ -190,7 +190,7 @@ func checkFreshnessFallback(t *testing.T, ctx context.Context, app *db.Pool, w *
 	kind int, tenant string, must func(string, ...any)) {
 	seq := EpochSequence(KindAppearance)
 	// TTL 一小时：下面每一次失效都只能来自纪元，不是 TTL
-	c := New(Options[slotCount]{TTL: time.Hour, Max: 8})
+	c := New[string](Options[slotCount]{TTL: time.Hour, Max: 8})
 	loads, epochReads := 0, 0
 	get := func() int {
 		t.Helper()

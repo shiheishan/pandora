@@ -17,7 +17,7 @@ func servingNodeWithUsers(svc *Service, tenantID, nodeID string, rate float64, u
 	svc.EnableNodeCaches()
 	if svc.caches.users.Len() == 0 {
 		// 名单寿命拉到一小时，其余参数与 newNodeCaches 相同（同一个 svc 上挂多个节点时只换一次）
-		svc.caches.users = cache.New(cache.Options[nodeUserSet]{TTL: time.Hour, Max: nodeUsersCacheMax,
+		svc.caches.users = cache.New[string](cache.Options[nodeUserSet]{TTL: time.Hour, Max: nodeUsersCacheMax,
 			StaleGrace: nodeUsersStaleGrace,
 			Rank:       func(set nodeUserSet) int64 { return set.epoch },
 			Expiry:     func(set nodeUserSet) time.Time { return set.nextExpiry }})

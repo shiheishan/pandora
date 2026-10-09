@@ -61,6 +61,12 @@ type entry[V any] struct {
 	hardAt time.Time
 }
 
+// flightKey 是单飞的钥匙：同一个缓存键、同一个标签合成一趟加载。
+type flightKey[K comparable] struct {
+	key K
+	tag string
+}
+
 type flight[V any] struct {
 	done  chan struct{}
 	value V
@@ -70,8 +76,9 @@ type flight[V any] struct {
 }
 
 // Cache 是带上限、TTL、单飞合并的进程内缓存，见包注释。零值不可用，用 New 构造。
+// 键可以是任意可比较类型（多段键用结构体，命中时不必拼字符串）。
 // 存进去的值由所有命中者共享，调用方只读、不得修改。
-type Cache[V any] struct {
+type Cache[K comparable, V any] struct {
 	ttl         time.Duration
 	max         int
 	now         func() time.Time
@@ -81,13 +88,13 @@ type Cache[V any] struct {
 	loadTimeout time.Duration
 
 	mu      sync.Mutex
-	entries map[string]entry[V]
-	flights map[string]*flight[V]
+	entries map[K]entry[V]
+	flights map[flightKey[K]]*flight[V]
 	gen     uint64
 }
 
 // New 按 opts 构造一个缓存。
-func New[V any](opts Options[V]) *Cache[V] {
+func New[K comparable, V any](opts Options[V]) *Cache[K, V] {
 	if opts.TTL <= 0 || opts.Max <= 0 {
 		panic("cache: TTL and Max must be positive")
 	}
@@ -99,9 +106,32 @@ func New[V any](opts Options[V]) *Cache[V] {
 	if timeout <= 0 {
 		timeout = DefaultLoadTimeout
 	}
-	return &Cache[V]{ttl: opts.TTL, max: opts.Max, now: now, expiry: opts.Expiry,
+	return &Cache[K, V]{ttl: opts.TTL, max: opts.Max, now: now, expiry: opts.Expiry,
 		staleGrace: opts.StaleGrace, rank: opts.Rank, loadTimeout: timeout,
-		entries: make(map[string]entry[V]), flights: make(map[string]*flight[V])}
+		entries: make(map[K]entry[V]), flights: make(map[flightKey[K]]*flight[V])}
+}
+
+// usableLocked 报告条目此刻能否原样返回：valid 认可，且没过 TTL、或 pinned 认可且没过自己的到期时刻。
+// 返回 pastHard 供 Get 判断能否先回旧值。调用方持有 c.mu。
+func (c *Cache[K, V]) usableLocked(e entry[V], now time.Time, pinned func(V) bool) (ok, pastHard bool) {
+	// 条目自己的到期时刻过了就一律同步重算：不走 pinned，也不走 StaleGrace
+	// （入库时 TTL 早于它、hard=false 的条目同样如此）
+	pastHard = !e.hardAt.IsZero() && !now.Before(e.hardAt)
+	return now.Before(e.expires) || (pinned != nil && !pastHard && pinned(e.value)), pastHard
+}
+
+// Lookup 只看缓存：命中且可用（同 Get 的命中条件，不含「先回旧值」）就返回，否则返回 false、
+// 不触发加载。给热路径先探一次用：不用为命中构造加载闭包。
+func (c *Cache[K, V]) Lookup(key K, valid, pinned func(V) bool) (V, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[key]; ok && valid(e.value) {
+		if usable, _ := c.usableLocked(e, c.now(), pinned); usable {
+			return e.value, true
+		}
+	}
+	var zero V
+	return zero, false
 }
 
 // Get 命中且 valid 认可就返回；否则同一（key, flightTag）只放一个加载，其余等它的结果。
@@ -109,31 +139,29 @@ func New[V any](opts Options[V]) *Cache[V] {
 //
 // pinned 非空且认可条目时不看 TTL（纪元监听证明加载之后没有相关提交），
 // 只看条目自己的到期时刻（Options.Expiry）。
-func (c *Cache[V]) Get(ctx context.Context, key, flightTag string, valid, pinned func(V) bool,
+func (c *Cache[K, V]) Get(ctx context.Context, key K, flightTag string, valid, pinned func(V) bool,
 	load func(context.Context) (V, error)) (V, error) {
-	flightKey := key + "\x00" + flightTag
+	fk := flightKey[K]{key: key, tag: flightTag}
 	c.mu.Lock()
 	if e, ok := c.entries[key]; ok && valid(e.value) {
 		now := c.now()
-		// 条目自己的到期时刻过了就一律同步重算：不走 pinned，也不走 StaleGrace
-		// （入库时 TTL 早于它、hard=false 的条目同样如此）
-		pastHard := !e.hardAt.IsZero() && !now.Before(e.hardAt)
-		if now.Before(e.expires) || (pinned != nil && !pastHard && pinned(e.value)) {
+		usable, pastHard := c.usableLocked(e, now, pinned)
+		if usable {
 			c.mu.Unlock()
 			return e.value, nil
 		}
 		if c.staleGrace > 0 && !e.hard && !pastHard && now.Before(e.expires.Add(c.staleGrace)) {
 			// 先回旧值；没有同标签的加载在跑就起一个后台加载，跑完替换条目。
-			if _, busy := c.flights[flightKey]; !busy {
+			if _, busy := c.flights[fk]; !busy {
 				f := &flight[V]{done: make(chan struct{}), gen: c.gen}
-				c.flights[flightKey] = f
-				go c.run(context.Background(), key, flightKey, f, load)
+				c.flights[fk] = f
+				go c.run(context.Background(), fk, f, load)
 			}
 			c.mu.Unlock()
 			return e.value, nil
 		}
 	}
-	if f, ok := c.flights[flightKey]; ok {
+	if f, ok := c.flights[fk]; ok {
 		c.mu.Unlock()
 		select {
 		case <-f.done:
@@ -144,23 +172,23 @@ func (c *Cache[V]) Get(ctx context.Context, key, flightTag string, valid, pinned
 		}
 	}
 	f := &flight[V]{done: make(chan struct{}), gen: c.gen}
-	c.flights[flightKey] = f
+	c.flights[fk] = f
 	c.mu.Unlock()
-	c.run(ctx, key, flightKey, f, load)
+	c.run(ctx, fk, f, load)
 	return f.value, f.err
 }
 
 // run 执行一趟已登记的加载，结束后放行排队的人并按需存下结果。
-func (c *Cache[V]) run(ctx context.Context, key, flightKey string, f *flight[V],
+func (c *Cache[K, V]) run(ctx context.Context, fk flightKey[K], f *flight[V],
 	load func(context.Context) (V, error)) {
 	// 加载 panic 也要放行排队的人，不能让他们挂到各自的超时。
 	defer func() {
 		c.mu.Lock()
-		if c.flights[flightKey] == f {
-			delete(c.flights, flightKey)
+		if c.flights[fk] == f {
+			delete(c.flights, fk)
 		}
 		if f.err == nil && f.gen == c.gen {
-			c.storeLocked(key, f.value)
+			c.storeLocked(fk.key, f.value)
 		}
 		c.mu.Unlock()
 		close(f.done)
@@ -171,7 +199,7 @@ func (c *Cache[V]) run(ctx context.Context, key, flightKey string, f *flight[V],
 	f.value, f.err = load(loadCtx)
 }
 
-func (c *Cache[V]) storeLocked(key string, value V) {
+func (c *Cache[K, V]) storeLocked(key K, value V) {
 	now := c.now()
 	if _, exists := c.entries[key]; !exists && len(c.entries) >= c.max {
 		for k, e := range c.entries {
@@ -181,11 +209,12 @@ func (c *Cache[V]) storeLocked(key string, value V) {
 		}
 		// 还满就挤掉最早过期的一条。只在满载时走这条 O(n)，上限是几千条。
 		if len(c.entries) >= c.max {
-			var oldestKey string
+			var oldestKey K
 			var oldest time.Time
+			first := true
 			for k, e := range c.entries {
-				if oldestKey == "" || e.expires.Before(oldest) {
-					oldestKey, oldest = k, e.expires
+				if first || e.expires.Before(oldest) {
+					oldestKey, oldest, first = k, e.expires, false
 				}
 			}
 			delete(c.entries, oldestKey)
@@ -206,14 +235,14 @@ func (c *Cache[V]) storeLocked(key string, value V) {
 }
 
 // Put 直接存一条（同加载完成时的写回：受上限、Rank 与 Expiry 约束）。
-func (c *Cache[V]) Put(key string, value V) {
+func (c *Cache[K, V]) Put(key K, value V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.storeLocked(key, value)
 }
 
 // Peek 只读缓存，不触发加载；过了 TTL（或 Expiry）的条目不算。
-func (c *Cache[V]) Peek(key string) (V, bool) {
+func (c *Cache[K, V]) Peek(key K) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[key]
@@ -225,7 +254,7 @@ func (c *Cache[V]) Peek(key string) (V, bool) {
 }
 
 // Drop 丢掉一条，返回它原先是否在缓存里。
-func (c *Cache[V]) Drop(key string) bool {
+func (c *Cache[K, V]) Drop(key K) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	_, ok := c.entries[key]
@@ -235,7 +264,7 @@ func (c *Cache[V]) Drop(key string) bool {
 
 // Clear 清空全部条目，并作废此刻正在进行的加载：它们照常把结果交给已经在等的人，
 // 但不写回；之后来的请求不搭这些车，各自重新加载。
-func (c *Cache[V]) Clear() {
+func (c *Cache[K, V]) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.gen++
@@ -244,7 +273,7 @@ func (c *Cache[V]) Clear() {
 }
 
 // Len 是当前条目数（含已过期、还没被挤掉的）。
-func (c *Cache[V]) Len() int {
+func (c *Cache[K, V]) Len() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.entries)

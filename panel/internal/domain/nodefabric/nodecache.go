@@ -99,10 +99,10 @@ func clampNextExpiry(at, now time.Time) time.Time {
 
 // nodeCaches 是 aegis-node 进程的用户集缓存、签名身份缓存与节点配置视图缓存。
 type nodeCaches struct {
-	users    *cache.Cache[nodeUserSet]
-	identity *cache.Cache[Identity]
+	users    *cache.Cache[string, nodeUserSet]
+	identity *cache.Cache[string, Identity]
 	// config 只在纪元监听健康时用（nodeConfigView，config_delivery_view.go）。
-	config *cache.Cache[*nodeConfigView]
+	config *cache.Cache[string, *nodeConfigView]
 	// watch 是纪元监听（StartEpochWatch 起；没起时为 nil，戳恒为零值）。
 	watch *cache.Watch
 	// alive 是在线上报的刷新备忘（uniproxy_alive_memo.go）。
@@ -110,14 +110,14 @@ type nodeCaches struct {
 }
 
 func newNodeCaches(now func() time.Time) *nodeCaches {
-	users := cache.New(cache.Options[nodeUserSet]{TTL: nodeUsersCacheTTL, Max: nodeUsersCacheMax, Now: now,
+	users := cache.New[string](cache.Options[nodeUserSet]{TTL: nodeUsersCacheTTL, Max: nodeUsersCacheMax, Now: now,
 		StaleGrace: nodeUsersStaleGrace,
 		Rank:       func(set nodeUserSet) int64 { return set.epoch },
 		Expiry:     func(set nodeUserSet) time.Time { return set.nextExpiry }})
-	identity := cache.New(cache.Options[Identity]{TTL: nodeIdentityCacheTTL, Max: nodeIdentityCacheMax, Now: now,
+	identity := cache.New[string](cache.Options[Identity]{TTL: nodeIdentityCacheTTL, Max: nodeIdentityCacheMax, Now: now,
 		Expiry: func(id Identity) time.Time { return id.expiresAt },
 		Rank:   func(id Identity) int64 { return id.epoch }})
-	config := cache.New(cache.Options[*nodeConfigView]{TTL: nodeConfigCacheTTL, Max: nodeIdentityCacheMax, Now: now})
+	config := cache.New[string](cache.Options[*nodeConfigView]{TTL: nodeConfigCacheTTL, Max: nodeIdentityCacheMax, Now: now})
 	return &nodeCaches{users: users, identity: identity, config: config, alive: newAliveMemo()}
 }
 

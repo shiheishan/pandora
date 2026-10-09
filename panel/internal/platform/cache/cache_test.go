@@ -40,8 +40,8 @@ type epochValue struct {
 	nextExpiry time.Time
 }
 
-func newCache[V any](ttl time.Duration, max int, now func() time.Time) *Cache[V] {
-	return New(Options[V]{TTL: ttl, Max: max, Now: now})
+func newCache[V any](ttl time.Duration, max int, now func() time.Time) *Cache[string, V] {
+	return New[string](Options[V]{TTL: ttl, Max: max, Now: now})
 }
 
 func TestCacheServesUntilTTLThenReloads(t *testing.T) {
@@ -156,7 +156,7 @@ func TestCacheStaysWithinBound(t *testing.T) {
 // 过了 TTL：宽限期内先回旧值、后台重算一次；过了宽限期同步重算；纪元落后照旧同步。
 func TestCacheServesStaleWhileRevalidating(t *testing.T) {
 	clock := newFakeClock()
-	c := New(Options[epochValue]{TTL: 5 * time.Second, Max: 8, Now: clock.Now,
+	c := New[string](Options[epochValue]{TTL: 5 * time.Second, Max: 8, Now: clock.Now,
 		StaleGrace: 10 * time.Second, Rank: func(v epochValue) int64 { return v.epoch }})
 	var loads atomic.Int64
 	release := make(chan struct{})
@@ -217,7 +217,7 @@ func TestCacheServesStaleWhileRevalidating(t *testing.T) {
 func TestCacheNeverOutlivesEntryExpiry(t *testing.T) {
 	clock := newFakeClock()
 	expires := clock.Now().Add(time.Minute)
-	c := New(Options[epochValue]{TTL: 10 * time.Minute, Max: 8, Now: clock.Now,
+	c := New[string](Options[epochValue]{TTL: 10 * time.Minute, Max: 8, Now: clock.Now,
 		Expiry: func(v epochValue) time.Time { return v.nextExpiry }})
 	loads := 0
 	load := func(context.Context) (epochValue, error) {
@@ -240,7 +240,7 @@ func TestCacheNeverOutlivesEntryExpiry(t *testing.T) {
 // 按自己的到期时刻硬过期：到点同步重算，不走「先回旧值」的宽限。只到 TTL 的条目照旧宽限。
 func TestCacheHardExpiresAtEntryExpiry(t *testing.T) {
 	clock := newFakeClock()
-	c := New(Options[epochValue]{TTL: 5 * time.Second, Max: 8, Now: clock.Now, StaleGrace: 10 * time.Second,
+	c := New[string](Options[epochValue]{TTL: 5 * time.Second, Max: 8, Now: clock.Now, StaleGrace: 10 * time.Second,
 		Expiry: func(v epochValue) time.Time { return v.nextExpiry }})
 	expiry := clock.Now().Add(2 * time.Second)
 	loads := 0
@@ -275,7 +275,7 @@ func TestCacheHardExpiresAtEntryExpiry(t *testing.T) {
 // pinned 认可的条目不看 TTL；条目自己的到期时刻照样作数。
 func TestCachePinnedEntriesIgnoreTTLButNotHardExpiry(t *testing.T) {
 	clock := newFakeClock()
-	c := New(Options[epochValue]{TTL: 5 * time.Second, Max: 8, Now: clock.Now,
+	c := New[string](Options[epochValue]{TTL: 5 * time.Second, Max: 8, Now: clock.Now,
 		Expiry: func(v epochValue) time.Time { return v.nextExpiry }})
 	loads := 0
 	hard := clock.Now().Add(time.Minute)
@@ -314,7 +314,7 @@ func TestCachePastExpiryNeverServedStale(t *testing.T) {
 		"grace":  func(epochValue) bool { return false },
 	} {
 		clock := newFakeClock()
-		c := New(Options[epochValue]{TTL: 5 * time.Second, Max: 8, Now: clock.Now, StaleGrace: 10 * time.Second,
+		c := New[string](Options[epochValue]{TTL: 5 * time.Second, Max: 8, Now: clock.Now, StaleGrace: 10 * time.Second,
 			Expiry: func(v epochValue) time.Time { return v.nextExpiry }})
 		expiry := clock.Now().Add(8 * time.Second)
 		loads := 0
@@ -397,7 +397,64 @@ func TestNewRejectsUnboundedOptions(t *testing.T) {
 					t.Errorf("New(%+v) accepted an unbounded cache", opts)
 				}
 			}()
-			New(opts)
+			New[string](opts)
 		}()
 	}
+}
+
+// Lookup 与 Get 的命中条件相同（TTL 内、或 pinned 且没过自己的到期），但从不加载、不先回旧值。
+func TestCacheLookupMatchesGetHits(t *testing.T) {
+	clock := newFakeClock()
+	c := New[string](Options[epochValue]{TTL: 5 * time.Second, Max: 8, Now: clock.Now, StaleGrace: 10 * time.Second,
+		Expiry: func(v epochValue) time.Time { return v.nextExpiry }})
+	if _, ok := c.Lookup("k", always[epochValue], nil); ok {
+		t.Fatal("lookup hit an empty cache")
+	}
+	c.Put("k", epochValue{epoch: 3, version: "v", nextExpiry: clock.Now().Add(time.Minute)})
+	if v, ok := c.Lookup("k", always[epochValue], nil); !ok || v.version != "v" {
+		t.Fatal("lookup missed a fresh entry")
+	}
+	if _, ok := c.Lookup("k", func(v epochValue) bool { return v.epoch >= 4 }, nil); ok {
+		t.Fatal("lookup served an entry valid rejected")
+	}
+	clock.Advance(6 * time.Second) // 过了 TTL、在宽限内：Lookup 不回旧值
+	if _, ok := c.Lookup("k", always[epochValue], nil); ok {
+		t.Fatal("lookup served a stale entry")
+	}
+	if _, ok := c.Lookup("k", always[epochValue], always[epochValue]); !ok {
+		t.Fatal("lookup ignored pinned")
+	}
+	clock.Advance(time.Minute) // 过了自己的到期：pinned 也不行
+	if _, ok := c.Lookup("k", always[epochValue], always[epochValue]); ok {
+		t.Fatal("lookup served a pinned entry past its expiry")
+	}
+}
+
+// 命中路径不分配：结构体键、Lookup 与 Get 的命中都不该拼字符串或建单飞记录。
+func TestCacheHitDoesNotAllocate(t *testing.T) {
+	type key struct{ a, b string }
+	c := New[key](Options[int]{TTL: time.Hour, Max: 8})
+	k := key{"tenant", "code"}
+	c.Put(k, 1)
+	load := func(context.Context) (int, error) { return 2, nil }
+	ctx := context.Background()
+	if n := testing.AllocsPerRun(100, func() { _, _ = c.Lookup(k, always[int], nil) }); n != 0 {
+		t.Fatalf("Lookup hit allocates %v times", n)
+	}
+	if n := testing.AllocsPerRun(100, func() { _, _ = c.Get(ctx, k, "", always[int], nil, load) }); n != 0 {
+		t.Fatalf("Get hit allocates %v times", n)
+	}
+}
+
+func BenchmarkCacheGetHit(b *testing.B) {
+	c := New[string](Options[int]{TTL: time.Hour, Max: 8})
+	c.Put("k", 1)
+	load := func(context.Context) (int, error) { return 2, nil }
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, _ = c.Get(ctx, "k", "7", always[int], nil, load)
+		}
+	})
 }

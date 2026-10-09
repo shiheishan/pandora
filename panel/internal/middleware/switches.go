@@ -36,11 +36,11 @@ const switchCacheMax = 256
 // switches 是本进程的降级开关缓存（platform/cache：有上限、单飞、TTL，没有纪元，靠 Clear 当场失效）。
 var switches = newSwitchCache(time.Now)
 
-func newSwitchCache(now func() time.Time) *cache.Cache[bool] {
-	return cache.New(cache.Options[bool]{TTL: switchCacheTTL, Max: switchCacheMax, Now: now})
-}
+type switchKey struct{ tenant, code string }
 
-func switchCacheKey(tenantID, code string) string { return tenantID + "\x00" + code }
+func newSwitchCache(now func() time.Time) *cache.Cache[switchKey, bool] {
+	return cache.New[switchKey](cache.Options[bool]{TTL: switchCacheTTL, Max: switchCacheMax, Now: now})
+}
 
 func switchAlways(bool) bool { return true }
 
@@ -50,7 +50,12 @@ func switchAlways(bool) bool { return true }
 // 以前每次一个完整事务（四次往返 + 归还清理）。同一个开关的并发未命中合成一次读库；
 // 读库出错不缓存，照旧回 500。
 func switchEnabled(ctx context.Context, pool switchQuerier, tenantID, code string) (bool, error) {
-	return switches.Get(ctx, switchCacheKey(tenantID, code), "", switchAlways, nil,
+	key := switchKey{tenantID, code}
+	// 先只探缓存：命中（绝大多数请求）不构造加载闭包，零分配
+	if enabled, ok := switches.Lookup(key, switchAlways, nil); ok {
+		return enabled, nil
+	}
+	return switches.Get(ctx, key, "", switchAlways, nil,
 		func(ctx context.Context) (bool, error) { return featureswitch.Enabled(ctx, pool, tenantID, code) })
 }
 
