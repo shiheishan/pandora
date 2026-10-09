@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aegispanel/aegis/internal/domain/nodefabric"
 	"github.com/aegispanel/aegis/internal/platform/db"
 )
 
@@ -17,6 +18,7 @@ const retireBatchSize = 100
 
 type retireResult struct {
 	Nodes         int
+	Servers       int
 	Subscriptions int
 	// Revoked 是吊销了有效接入身份的上一批节点数：有有效身份的节点后台不让退役（仍有依赖）
 	Revoked int
@@ -66,9 +68,25 @@ const activeIdentityNodesSQL = `
 	                WHERE i.tenant_id = n.tenant_id AND i.node_id = n.id AND i.status = 'active')
 	 ORDER BY n.id`
 
+// previousServersSQL 圈出上一批里还没退役的服务器（名字以 loadtest- 开头，未删除）。
+// 接入时每个节点都成了自己服务器的控制节点，服务器在役时后台不让退役它的控制节点。
+const previousServersSQL = `
+	SELECT id::text, row_version, status FROM servers
+	 WHERE tenant_id = $1::uuid AND name LIKE $2 AND deleted_at IS NULL AND status <> 'retired'
+	 ORDER BY id`
+
+// serverVersion 是上一批里一台还没退役的服务器。
+type serverVersion struct {
+	ID         string
+	RowVersion int64
+	Status     string
+}
+
 // retirePrevious 清掉上一批造数，可重复执行（每一步都只处理还没处理的）：
-// 订阅转 expired → 吊销上一批节点的有效身份 → 在役节点转 draining → 全部转 retired。
-// 中途失败后原样重跑即可继续，不会因为已处理的部分报错。
+// 订阅转 expired → 吊销上一批节点的有效身份 → 在役节点转 draining → 上一批服务器转 retired
+// → 节点全部转 retired。服务器必须先退：节点是自己服务器的控制节点，服务器在役时节点退不掉。
+// 中途失败后原样重跑即可继续，不会因为已处理的部分报错；库里是旧版 seed 造的、节点已 draining、
+// 身份已吊销的上一批，同样从断点接着走。
 func retirePrevious(ctx context.Context, admin *adminPool, pool *db.Pool, tenantID string) (*retireResult, error) {
 	res := &retireResult{}
 	err := pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
@@ -110,30 +128,107 @@ func retirePrevious(ctx context.Context, admin *adminPool, pool *db.Pool, tenant
 		return nil, err
 	}
 
-	// 先把在役的推到 draining，再把全部未退役的推到 retired；每一步都重读行版本
-	for _, step := range []struct {
-		from []string
-		to   string
-	}{
-		{[]string{"active"}, "draining"},
-		{[]string{"draft", "draining", "disabled"}, "retired"},
-	} {
-		nodes, err := loadTestNodes(ctx, pool, tenantID, step.from)
-		if err != nil {
-			return nil, err
-		}
-		for _, batch := range retireBatches(nodes, retireBatchSize) {
-			if _, err := admin.primary().call(ctx, http.MethodPost, "/v1/nodes/status:batch", jsonObject{
-				"items": batch, "serving_status": step.to, "reason": "loadtest seed: retire previous batch",
-			}); err != nil {
-				return nil, err
-			}
-			if step.to == "retired" {
-				res.Nodes += len(batch)
-			}
-		}
+	// 先把在役的推到 draining（不再服务用户）
+	if _, err := setNodesServing(ctx, admin, pool, tenantID, []string{"active"}, "draining"); err != nil {
+		return nil, err
+	}
+	// 再退役上一批服务器，节点才不再是在役服务器的控制节点
+	servers, err := previousServers(ctx, pool, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if res.Servers, err = retireServers(ctx, admin, servers); err != nil {
+		return nil, err
+	}
+	// 最后把全部未退役的节点推到 retired；每一步都重读行版本
+	if res.Nodes, err = setNodesServing(ctx, admin, pool, tenantID, []string{"draft", "draining", "disabled"}, "retired"); err != nil {
+		return nil, err
 	}
 	return res, nil
+}
+
+// setNodesServing 把上一批里服务状态在 from 里的节点经后台批量接口转到 to，返回处理的个数。
+func setNodesServing(ctx context.Context, admin *adminPool, pool *db.Pool, tenantID string, from []string, to string) (int, error) {
+	nodes, err := loadTestNodes(ctx, pool, tenantID, from)
+	if err != nil {
+		return 0, err
+	}
+	done := 0
+	for _, batch := range retireBatches(nodes, retireBatchSize) {
+		if _, err := admin.primary().call(ctx, http.MethodPost, "/v1/nodes/status:batch", jsonObject{
+			"items": batch, "serving_status": to, "reason": "loadtest seed: retire previous batch",
+		}); err != nil {
+			return done, fmt.Errorf("previous load-test nodes -> %s: %w", to, err)
+		}
+		done += len(batch)
+	}
+	return done, nil
+}
+
+func previousServers(ctx context.Context, pool *db.Pool, tenantID string) ([]serverVersion, error) {
+	var out []serverVersion
+	err := pool.InTx(ctx, db.Scope{TenantID: tenantID}, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, previousServersSQL, tenantID, loadtestNodePrefix+"%")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var s serverVersion
+			if err := rows.Scan(&s.ID, &s.RowVersion, &s.Status); err != nil {
+				return err
+			}
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list previous load-test servers: %w", err)
+	}
+	return out, nil
+}
+
+// serverRetirePath 是服务器从当前状态到 retired 要走的步子，取后台自己的状态机
+// （nodefabric.ValidServerStatusTransition）：能直接退役就一步，ready 之类先转 draining。
+func serverRetirePath(status string) ([]string, error) {
+	switch {
+	case nodefabric.ValidServerStatusTransition(status, "retired"):
+		return []string{"retired"}, nil
+	case nodefabric.ValidServerStatusTransition(status, "draining") && nodefabric.ValidServerStatusTransition("draining", "retired"):
+		return []string{"draining", "retired"}, nil
+	}
+	return nil, fmt.Errorf("server status %q has no path to retired", status)
+}
+
+// retireServers 经后台改服务器状态的接口把上一批服务器逐台退役，多会话并行；每一步用上一步
+// 响应里的行版本。服务器退役同时收回它的服务器级绑定凭据（后台自己做）。返回退役的台数。
+func retireServers(ctx context.Context, admin *adminPool, servers []serverVersion) (int, error) {
+	for _, s := range servers {
+		if _, err := serverRetirePath(s.Status); err != nil {
+			return 0, fmt.Errorf("previous load-test server %s: %w", s.ID, err)
+		}
+	}
+	err := admin.forEach(ctx, len(servers), func(ctx context.Context, c *adminClient, i int) error {
+		s := servers[i]
+		path, _ := serverRetirePath(s.Status)
+		version := s.RowVersion
+		for _, next := range path {
+			out, err := c.call(ctx, http.MethodPost, "/v1/servers/"+s.ID+"/status", jsonObject{
+				"status": next, "row_version": version, "reason": "loadtest seed: retire previous batch",
+			})
+			if err != nil {
+				return fmt.Errorf("previous load-test server %s -> %s: %w", s.ID, next, err)
+			}
+			if version, err = num(out, "row_version"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return len(servers), nil
 }
 
 func loadTestNodes(ctx context.Context, pool *db.Pool, tenantID string, serving []string) ([]nodeVersion, error) {
