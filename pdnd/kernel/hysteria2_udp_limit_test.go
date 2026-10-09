@@ -82,9 +82,14 @@ func TestHy2DownlinkStuckLargePacketsBounded(t *testing.T) {
 // 12 包、串内相隔约 250µs（约每秒 360 包，视频帧、游戏快照常见）。进热态按整段判：
 // 段龄满 20ms 时按「段内包数 ≥ 段龄 / 2ms」（每秒 500 包）才进，这类会话一串 12 包摊在
 // 33ms 上不够。热态名额平均占用不超过 3（另有一个每毫秒一包的会话应在热态，占 1 个）。
+// race 下会话数减半。
 // 改回「段起点起收够 10 包就进」（半段判），每一串都进一段热态，名额平均被占约 63/64。
 func TestHy2DownlinkPacedBurstStaysCold(t *testing.T) {
-	const sessions = 256
+	sessions := 256
+	if raceEnabled {
+		// race 下 256 个发包 goroutine 在小机器上会被拖慢，减半免得测的是调度。
+		sessions = 128
+	}
 	limit := newHy2WarmLimit(64)
 	var srcs []*fakeUpstream
 	var waits []func()
@@ -95,24 +100,31 @@ func TestHy2DownlinkPacedBurstStaysCold(t *testing.T) {
 	}
 	stop := make(chan struct{})
 	var feeders sync.WaitGroup
+	start := time.Now()
 	for i, src := range srcs {
 		feeders.Add(1)
 		go func() {
 			defer feeders.Done()
-			time.Sleep(time.Duration(i%33) * time.Millisecond)
-			ticker := time.NewTicker(33 * time.Millisecond)
-			defer ticker.Stop()
+			// 按绝对时刻排串：机器忙、某一串晚了 5ms 以上就跳过，不补发，免得两串挤在
+			// 一起（那就真成了高速流量），测的是串的节奏而不是调度延迟。
+			next := start.Add(time.Duration(i%33) * time.Millisecond)
 			for {
 				select {
 				case <-stop:
 					return
-				case <-ticker.C:
+				case <-time.After(time.Until(next)):
+				}
+				if time.Since(next) <= 5*time.Millisecond {
 					for k := range 12 {
 						if k > 0 {
 							time.Sleep(250 * time.Microsecond)
 						}
 						src.push(make([]byte, 60))
 					}
+				}
+				next = next.Add(33 * time.Millisecond)
+				for time.Until(next) < 0 {
+					next = next.Add(33 * time.Millisecond)
 				}
 			}
 		}()
