@@ -47,10 +47,7 @@ description: pandora 订阅渲染的本地端到端矩阵：把后台表单形�
 
 ## 脚本与文件
 
-`scripts/run.sh` 一条命令跑完（参数见文件头），`matrix.py` 拼矩阵，`export-schemas.sh` 导出前端假后端的 node-schemas.ts（用法见 `.claude/rules/frontend-mock.md`），`fixtures/extra.json` 是常备额外夹具。另外两处：
-
-- `overlay/zz_e2e_*_test.go`：注入 subscription 与 nodefabric 两个包的临时测试（渲染每个夹具和整份、真实 `BuildNodeConfig`、导出 schema），产物写进工作目录。
-- `tools/`（独立 Go module）：`e2e`、`sbcheck`、`yamlcheck`、`uricheck`、`kp`。
+`scripts/run.sh` 一条命令跑完（参数见文件头），`matrix.py` 拼矩阵，`export-schemas.sh` 导出前端假后端的 node-schemas.ts（用法见 `.claude/rules/frontend-mock.md`），`fixtures/extra.json` 是常备额外夹具。
 
 `tools/go.mod` 里的 sing-box 版本要与 pdnd 的 go.mod 一致。`replace` 指向 `../../../../pdnd`，即本仓库的 pdnd。run.sh 会把 tools 拷到工作目录，再把 replace 改成 `--repo` 的 pdnd，所以测 worktree 或基点快照时不用改 skill。
 

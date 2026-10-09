@@ -35,6 +35,7 @@ description: pandora 在一次性测试机上按生产方式（panel/deploy/inst
 7. **核对安装结果**：
    - 日志里「迁移版本 0 → N」，N 等于包内 `migrations/` 的最大号；
    - 三网关 `127.0.0.1:9000/9001/9003` 的 `/healthz` 都是 200（`aegis-public / admin / node` 三个服务 active）；
+   - 健康巡检 timer 已启用（`install.sh` 会 `enable --now aegis-health.timer`）：`systemctl is-enabled aegis-health.timer` 为 enabled，`systemctl list-timers aegis-health.timer` 有下次运行时间；
    - 日志里「nginx 配置已渲染并生效」「已换上 Let's Encrypt 证书」「续期 timer 已启用」；`/opt/aegispanel/deploy/edge-tls.sh status` 显示证书来源 `lego`（IP）或 `certbot`（域名）。若是 `selfsigned`，按日志里的原因修好后 `edge-tls.sh issue`。
 8. **https 可访问**（`<地址>` 是 IP 或域名）：不带 `-k` 的 `curl https://<地址>/healthz` 返回 200（证书受信任）；`http://<地址>/x` 跳转 308 到 https；`http://<地址>/.well-known/acme-challenge/x` 是 404 而不是跳转；`https://<地址>/<后台前缀>/` 返回 200。前缀用机器上的 `/opt/aegispanel/deploy/admin-url.sh` 取。`systemctl list-timers aegis-tls-renew.timer` 有下次运行时间。
 9. **建管理员**：install.sh 首装在交互终端里会现场建第一个管理员，本 skill 的无人值守装法（`PANDORA_ASSUME_YES=1`、日志重定向）下它跳过，按下面手工建。

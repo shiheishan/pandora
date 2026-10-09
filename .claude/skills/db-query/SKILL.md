@@ -55,8 +55,6 @@ bash .claude/skills/db-query/scripts/q.sh [-t 目标] [-v 名=值]... .claude/sk
 | `slow-queries.sql` | 超 | n=20 | pg_stat_statements 总耗时/平均/调用数前 N |
 | `connections.sql` | 超 | 无 | 连接数与预算、按用户和状态、长事务、锁等待 |
 | `purchase-user-ledger.sql` | app | uid 或 email、n=20 | 一个用户的购买与余额对账：每份订阅、流量包挂在哪份及转移经过、订单金额拆解、支付、余额流水、卡密兑换、相关审计 |
-| `pack-legacy-pre.sql` | app | tenant | **升过 00139 后删。** 升级到 00137 前：有流量包余量的人、其中多份在用订阅的人、靠共用流量包才下发的订阅（只适用于 00137 之前的库） |
-| `pack-legacy-impact.sql` | app | tenant | **升过 00139 后删。** 升级到 00137–00139 后：00138 回填挂到哪份、受影响老用户、因此停发的订阅、还能「挪一次」的订阅 |
 
 例：
 

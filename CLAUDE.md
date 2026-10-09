@@ -39,6 +39,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
   - 守卫 `panel/internal/platform/config/envaccess_test.go` 扫 panel/internal 与 panel/cmd 的非测试 Go 文件。
   - 豁免逐文件登记在同一文件的 `envAccessExemptions`，豁免失效也会变红。
 - 前端 HTTP 只经 `panel/frontend/src/core/api.ts`。
+- 每次优化或收拢都替换旧做法，不留长期双轨。
 
 ## 单文件 ≤800 行
 
