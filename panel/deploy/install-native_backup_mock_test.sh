@@ -102,4 +102,23 @@ native_ensure_age_key "$key" >/dev/null
 grep -qx 'AGE-SECRET-KEY-1EXISTING' "$key" || fail 'an existing key was overwritten'
 [ ! -s "$T/keygen.calls" ] || fail 'age-keygen -o ran over an existing key'
 
+# native_check_release_tree：缺件、不归 root 的发布目录在动手之前就拒绝（与 install.sh 同样的检查）
+rel="$T/rel"; mkdir -p "$rel/deploy"
+if ( native_check_release_tree "$rel" ) >"$T/rt.out" 2>&1; then fail 'a release without bin/ was accepted'; fi
+grep -Fq '找不到' "$T/rt.out" || fail "release check message: $(cat "$T/rt.out")"
+mkdir -p "$rel/bin"
+if ( native_check_release_tree "$rel" ) >"$T/rt.out" 2>&1; then fail 'a release without SHA256SUMS was accepted'; fi
+: >"$rel/SHA256SUMS"
+if ( native_check_release_tree "$rel" ) >"$T/rt.out" 2>&1; then fail 'a release without release-artifact.env was accepted'; fi
+grep -Fq 'release-artifact.env' "$T/rt.out" || fail "release-artifact message: $(cat "$T/rt.out")"
+: >"$rel/deploy/release-artifact.env"
+if stat -c %u / >/dev/null 2>&1 && [ "$(id -u)" -ne 0 ]; then
+  if ( native_check_release_tree "$rel" ) >"$T/rt.out" 2>&1; then fail 'a release owned by a normal user was accepted'; fi
+  grep -Fq '不归 root' "$T/rt.out" || fail "ownership message: $(cat "$T/rt.out")"
+fi
+n_check="$(grep -n 'native_check_release_tree "$RELEASE_ROOT"' "$NATIVE" | head -1 | cut -d: -f1)"
+n_first="$(grep -n 'say "\[0/6\]' "$NATIVE" | head -1 | cut -d: -f1)"
+[ -n "$n_check" ] && [ -n "$n_first" ] && [ "$n_check" -lt "$n_first" ] || fail 'install-native.sh does not verify the release before changing anything'
+grep -Fq 'RELEASE_BIN="$RELEASE_ROOT/bin"' "$NATIVE" || fail 'binaries are not taken from the verified release root'
+
 printf 'install-native backup mock: PASS\n'

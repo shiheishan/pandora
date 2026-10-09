@@ -34,8 +34,10 @@ for arg in "$@"; do
 done
 
 # ── 前置 ──────────────────────────────────────────────
-[[ $EUID -eq 0 ]] || die "请用 root 运行: sudo bash install.sh"
-need openssl; need curl; need systemctl
+[[ $EUID -eq 0 ]] || die "请用 root 运行: sudo bash install-native.sh"
+need openssl; need curl; need systemctl; need sha256sum
+RELEASE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+native_check_release_tree "$RELEASE_ROOT"
 
 # 首装还是升级：已有 .env 就是升级，已有的行一字不动（里面是随机生成的口令与密钥，
 # 重写一次就连不上原来的数据库、解不开信封加密的字段），新版本新增的键缺了才追加到末尾。首装在动手之前先拿到
@@ -204,13 +206,13 @@ VK_PORT="${VALKEY_PORT:-$(awk -F' ' '/^port /{print $2; exit}' /etc/valkey/valke
 # 程序（bin/）放到第 5 步、迁移成功之后再装：升级时迁移失败要把服务拉回来，拉回来的
 # 必须还是原来的程序；迁移用发布包自带的 goose（RELEASE_BIN）。
 say "[3/6] 安装到 $INSTALL_DIR"
-RELEASE_BIN="$(cd "$SCRIPT_DIR/../bin" && pwd)"
+RELEASE_BIN="$RELEASE_ROOT/bin"
 mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/migrations" "$INSTALL_DIR/deploy"
 cp -f "$SCRIPT_DIR"/../migrations/*.sql "$INSTALL_DIR/migrations/"
 cp -f "$SCRIPT_DIR"/systemd/*.service "$INSTALL_DIR/deploy/"
 # 节点端发布物绑定（SHA-256 与版本），aegis-node.service 以 EnvironmentFile= 加载；
 # 下面装单元时 /opt/aegispanel 会被替换成 $INSTALL_DIR
-[[ ! -f "$SCRIPT_DIR/release-artifact.env" ]] || cp -f "$SCRIPT_DIR/release-artifact.env" "$INSTALL_DIR/deploy/"
+cp -f "$SCRIPT_DIR/release-artifact.env" "$INSTALL_DIR/deploy/"
 
 # ── 4. 建库 + 迁移 ────────────────────────────────────
 say "[4/6] 初始化数据库 + 执行迁移"

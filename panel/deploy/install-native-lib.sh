@@ -16,6 +16,34 @@ die(){ printf '\033[1;31m%s\033[0m\n' "$*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "缺少 $1"; }
 
 #------------------------------------------------------------------------------
+# 发布目录（install-native_backup_mock_test.sh）
+#------------------------------------------------------------------------------
+# 与 install.sh / install-linux-binaries.sh 同样的检查，在动手之前：发布目录与它的每一级父目录都归 root、
+# 不可被组或他人写，目录里没有别人能改的文件（防止有人往 /tmp 里塞一份假的），SHA256SUMS 逐个对得上，
+# 节点端发布物绑定 release-artifact.env 在（生产模式下没有它节点接入全部被拒）
+native_check_release_tree() {
+  local root="$1" probe owner perm
+  [ -d "$root/bin" ] || die "这不像一个发布目录：找不到 $root/bin"
+  [ -f "$root/SHA256SUMS" ] || die "发布目录缺少 SHA256SUMS"
+  [ -f "$root/deploy/release-artifact.env" ] || die "发布目录缺少 deploy/release-artifact.env（build-release.sh 生成，记着节点端二进制的 SHA-256 与版本）"
+  probe="$root"
+  while :; do
+    owner="$(stat -c %u -- "$probe")" && perm="$(stat -c %a -- "$probe")" || die "读不出 $probe 的属主与权限"
+    if [ "$owner" != 0 ] || (( (8#$perm & 8#022) != 0 )); then
+      die "发布目录或它的父路径不归 root、或可被他人写入：$probe（属主 $owner，权限 $perm）。把发布包放到 root 独占的目录再装，例如：
+  install -d -o root -g root -m 0755 /opt/pandora-release
+  cp -r <发布目录> /opt/pandora-release/rel && chown -R root:root /opt/pandora-release"
+    fi
+    [ "$probe" = / ] && break
+    probe="$(dirname -- "$probe")"
+  done
+  if find "$root" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep -q .; then
+    die "发布目录里有不归 root 或可被他人写入的文件：chown -R root:root $root && chmod -R go-w $root"
+  fi
+  (cd "$root" && sha256sum --quiet --strict -c SHA256SUMS) || die "发布包校验不过（SHA256SUMS 对不上），文件被改过或不完整，换一份完整的发布包"
+}
+
+#------------------------------------------------------------------------------
 # PostgreSQL 集群（install-native_pgcluster_mock_test.sh）
 #------------------------------------------------------------------------------
 
