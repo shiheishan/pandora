@@ -112,11 +112,14 @@ func (c *ttlCache[V]) get(ctx context.Context, key, flight string, valid, pinned
 	c.mu.Lock()
 	if e, ok := c.entries[key]; ok && valid(e.value) {
 		now := c.now()
-		if now.Before(e.expires) || (pinned != nil && pinned(e.value) && (e.hardAt.IsZero() || now.Before(e.hardAt))) {
+		// 条目自己的到期时刻（身份 expires_at、名单里最早的订阅到期）过了就一律同步重算：
+		// 不走 pinned，也不走 staleGrace（入库时 TTL 早于它、hard=false 的条目同样如此）
+		pastHard := !e.hardAt.IsZero() && !now.Before(e.hardAt)
+		if now.Before(e.expires) || (pinned != nil && !pastHard && pinned(e.value)) {
 			c.mu.Unlock()
 			return e.value, nil
 		}
-		if c.staleGrace > 0 && !e.hard && now.Before(e.expires.Add(c.staleGrace)) {
+		if c.staleGrace > 0 && !e.hard && !pastHard && now.Before(e.expires.Add(c.staleGrace)) {
 			// 先回旧值；没有同标签的加载在跑就起一个后台加载，跑完替换条目。
 			if _, busy := c.flights[flightKey]; !busy {
 				f := &ttlFlight[V]{done: make(chan struct{})}

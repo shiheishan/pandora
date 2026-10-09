@@ -2,11 +2,16 @@ package nodefabric
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -32,17 +37,31 @@ import (
 // 不健康（没连上、探针超时）时戳是零值，一切照旧走 PG：每个请求读纪元、配置视图不用
 // 缓存。断线重连换新会话号，旧会话的条目全部作废，断线期间漏掉的通知不会留下旧条目。
 //
-// 吊销的即时性：提交 → 通知送达（本机 unix socket，毫秒级）→ 下一次请求回库。监听
-// 不知不觉地断了（收不到任何东西又不报错）时，探针最晚 watchStaleAfter 之后发现，
-// 期间最坏晚这么久——只在这种极端故障下出现。
+// 吊销的即时性：提交 → 通知送达（本机 unix socket，毫秒级）→ 下一次请求回库。新鲜度按
+// 本进程探针的「发送时刻」判：收到序号为 k 的回声，说明 k 发出之前提交的通知都已送到，
+// 所以「现在 − 最近一条已回声探针的发送时刻」就是监听可能落后的上界，超过 watchStaleAfter
+// 即不健康（监听持续落后、断了不报错、探针写不进去，都落在这条线上）。别的进程的探针不计。
+// 监听连着却长时间收不到回声（连接无声断掉，WaitForNotification 一直阻塞）时，看门狗在
+// watchdogAfter 后主动断开重连，不靠 TCP keepalive。
+//
+// 探针走单独一条专用连接，不和请求抢连接池：池被打满时照样能证明监听活着，优化不会
+// 恰好在负载最高时撤掉。
+//
+// 单副本设计：aegis-node 目前只支持单实例（总协调 2026-10-09 定）。纪元监听本身多副本也成立
+// （每个副本各听各的），但心跳合并与在线上报备忘的「上次写了什么」只在本进程里，见那两处。
 
 const (
 	// epochWatchChannel 是迁移 00153 的通知通道。
 	epochWatchChannel = "aegis_node_epoch"
 	// watchProbeInterval 是探针间隔：经连接池发一条 'p:<序号>'，监听收到即证明还活着。
 	watchProbeInterval = time.Second
-	// watchStaleAfter：这么久没收到探针回声就当监听不健康，回到逐请求查库。
-	watchStaleAfter = 5 * time.Second
+	// watchStaleAfter：最近一条已回声探针的发送时刻离现在超过这么久，就当监听不健康，回到
+	// 逐请求查库。它也是监听落后时吊销延迟的上界。
+	watchStaleAfter = 3 * time.Second
+	// watchdogAfter：监听连着、却这么久没有任何本进程探针回声，主动断开重连。
+	watchdogAfter = 3 * watchStaleAfter
+	// watchdogEvery 是看门狗的检查间隔。
+	watchdogEvery = time.Second
 	// watchRetryDelay 是监听断开后重连的等待。
 	watchRetryDelay = 2 * time.Second
 	// watchProbeTimeout 是一次探针写入的上限。
@@ -78,22 +97,31 @@ func (w watchStamp) flight(kind string) string {
 // epochWatch 持有监听状态。读（stamp）在每个节点请求上，写只在监听与探针两个协程里。
 type epochWatch struct {
 	now func() time.Time
+	// instance 区分本进程的探针与别的进程的（载荷 p:<instance>:<序号>）。
+	instance string
+	// watchdogAfter、watchdogEvery 是看门狗的参数（测试里调小）。
+	watchdogAfter, watchdogEvery time.Duration
 
-	mu        sync.Mutex
-	session   uint64 // 当前会话号；每次连上 +1，0 表示还没连上过
-	connected bool
-	delivery  uint64
-	config    uint64
-	lastEcho  time.Time // 最近一次收到本进程探针回声的时刻
-	probeSeq  uint64
-	sessions  uint64 // 已经用过的会话号（单调）
+	mu          sync.Mutex
+	session     uint64 // 当前会话号；每次连上 +1，0 表示还没连上过
+	connected   bool
+	connectedAt time.Time
+	delivery    uint64
+	config      uint64
+	lastEcho    time.Time // 最近一条收到回声的本进程探针的「发送时刻」
+	probeSeq    uint64
+	probeSent   map[uint64]time.Time // 已发出、还没收到回声的探针的发送时刻
+	sessions    uint64               // 已经用过的会话号（单调）
 }
 
 func newEpochWatch(now func() time.Time) *epochWatch {
 	if now == nil {
 		now = time.Now
 	}
-	return &epochWatch{now: now}
+	var raw [8]byte
+	_, _ = rand.Read(raw[:])
+	return &epochWatch{now: now, instance: hex.EncodeToString(raw[:]),
+		watchdogAfter: watchdogAfter, watchdogEvery: watchdogEvery, probeSent: make(map[uint64]time.Time)}
 }
 
 // stamp 返回当前戳；没连上或探针超时返回零值。
@@ -117,6 +145,7 @@ func (w *epochWatch) connect() {
 	w.sessions++
 	w.session = w.sessions
 	w.connected = true
+	w.connectedAt = w.now()
 	w.delivery, w.config = 0, 0
 	w.lastEcho = time.Time{}
 }
@@ -129,12 +158,30 @@ func (w *epochWatch) disconnect() {
 	w.lastEcho = time.Time{}
 }
 
-// nextProbe 返回下一条探针的载荷。
+// nextProbe 返回下一条探针的载荷，并记下它的发送时刻；顺手丢掉早已不可能再起作用的旧记录。
 func (w *epochWatch) nextProbe() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	now := w.now()
+	for seq, at := range w.probeSent {
+		if now.Sub(at) >= watchdogAfter {
+			delete(w.probeSent, seq)
+		}
+	}
 	w.probeSeq++
-	return "p:" + strconv.FormatUint(w.probeSeq, 10)
+	w.probeSent[w.probeSeq] = now
+	return "p:" + w.instance + ":" + strconv.FormatUint(w.probeSeq, 10)
+}
+
+// echoAge 是「现在 − 最近一条已回声探针的发送时刻」；这次连上之后还没有回声时，从连上算起。
+func (w *epochWatch) echoAge() time.Duration {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	since := w.lastEcho
+	if since.IsZero() {
+		since = w.connectedAt
+	}
+	return w.now().Sub(since)
 }
 
 // observe 处理一条通知。未知载荷按「两种都变了」处理：多算一次，不会少算。
@@ -149,9 +196,23 @@ func (w *epochWatch) observe(payload string) {
 		w.delivery++
 	case payload == "c":
 		w.config++
-	case len(payload) > 2 && payload[:2] == "p:":
-		// 只认本进程发的探针（别的副本、别的进程发的也是存活证明，一样收下）
-		w.lastEcho = w.now()
+	case strings.HasPrefix(payload, "p:"):
+		// 只认本进程发的探针，按它的发送时刻计新鲜度；别的进程的探针不计
+		inst, seqText, _ := strings.Cut(payload[2:], ":")
+		seq, err := strconv.ParseUint(seqText, 10, 64)
+		if err != nil || inst != w.instance {
+			return
+		}
+		if sent, ok := w.probeSent[seq]; ok {
+			if sent.After(w.lastEcho) {
+				w.lastEcho = sent
+			}
+			for k := range w.probeSent {
+				if k <= seq {
+					delete(w.probeSent, k)
+				}
+			}
+		}
 	default:
 		w.delivery++
 		w.config++
@@ -183,9 +244,31 @@ func (s *Service) StartEpochWatch(ctx context.Context, log *slog.Logger) (wait f
 		}
 		return &pooledListenConn{conn: conn}, nil
 	}
+	// 探针专用连接：不从池里借，池被打满时照样能发（连接预算见 platform/config）
+	var probeConn *pgx.Conn
 	probe := func(ctx context.Context, payload string) error {
-		_, err := s.pool.Exec(ctx, `SELECT pg_notify($1, $2)`, epochWatchChannel, payload)
-		return err
+		if probeConn == nil {
+			conn, err := pgx.ConnectConfig(ctx, s.pool.Config().ConnConfig.Copy())
+			if err != nil {
+				return err
+			}
+			probeConn = conn
+		}
+		if _, err := probeConn.Exec(ctx, `SELECT pg_notify($1, $2)`, epochWatchChannel, payload); err != nil {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = probeConn.Close(closeCtx)
+			cancel()
+			probeConn = nil
+			return err
+		}
+		return nil
+	}
+	closeProbe := func() {
+		if probeConn != nil {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = probeConn.Close(closeCtx)
+			cancel()
+		}
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -195,6 +278,7 @@ func (s *Service) StartEpochWatch(ctx context.Context, log *slog.Logger) (wait f
 	}()
 	go func() {
 		defer wg.Done()
+		defer closeProbe()
 		w.runProber(ctx, probe, log)
 	}()
 	return wg.Wait
@@ -237,9 +321,34 @@ func (w *epochWatch) listenOnce(ctx context.Context, acquire func(context.Contex
 	}
 	w.connect()
 	ready()
+	// 看门狗：连着却久久收不到本进程探针的回声（连接无声断掉、阻塞在等通知里），主动断开重连
+	lctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stalled := make(chan struct{})
+	go func() {
+		t := time.NewTicker(w.watchdogEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-lctx.Done():
+				return
+			case <-t.C:
+				if w.echoAge() >= w.watchdogAfter {
+					close(stalled)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 	for {
-		n, err := conn.WaitForNotification(ctx)
+		n, err := conn.WaitForNotification(lctx)
 		if err != nil {
+			select {
+			case <-stalled:
+				return errWatchStalled
+			default:
+			}
 			return err
 		}
 		if n.Channel == epochWatchChannel {
@@ -272,6 +381,9 @@ func (w *epochWatch) runProber(ctx context.Context, probe func(context.Context, 
 		}
 	}
 }
+
+// errWatchStalled 是看门狗断开的原因：监听连着，但 watchdogAfter 内没有任何本进程探针的回声。
+var errWatchStalled = errors.New("epoch watch: no probe echo, reconnecting")
 
 func errString(err error) string {
 	if err == nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -36,7 +37,7 @@ func TestEpochWatchStampNeedsConnectionAndFreshEcho(t *testing.T) {
 	if w.stamp().ok() {
 		t.Fatal("watch still healthy after watchStaleAfter without an echo")
 	}
-	w.observe("p:9")
+	w.observe(w.nextProbe())
 	if !w.stamp().ok() {
 		t.Fatal("a fresh echo did not restore health")
 	}
@@ -45,7 +46,7 @@ func TestEpochWatchStampNeedsConnectionAndFreshEcho(t *testing.T) {
 		t.Fatal("disconnected watch reported healthy")
 	}
 	w.connect()
-	w.observe("p:10")
+	w.observe(w.nextProbe())
 	if s := w.stamp(); s.session != 2 || s.delivery != 0 || s.config != 0 {
 		t.Fatalf("reconnect must open a new session with fresh counters: %+v", s)
 	}
@@ -56,7 +57,7 @@ func TestEpochWatchCountsNotificationKinds(t *testing.T) {
 	clock := newFakeClock()
 	w := newEpochWatch(clock.Now)
 	w.connect()
-	w.observe("p:1")
+	w.observe(w.nextProbe())
 	base := w.stamp()
 	w.observe("d")
 	afterD := w.stamp()
@@ -154,7 +155,7 @@ func TestEpochWatchListenerReconnectsWithNewSession(t *testing.T) {
 	if sql := <-first.listen; sql != "LISTEN "+epochWatchChannel {
 		t.Fatalf("listener ran %q", sql)
 	}
-	first.notes <- &pgconn.Notification{Channel: epochWatchChannel, Payload: "p:1"}
+	first.notes <- &pgconn.Notification{Channel: epochWatchChannel, Payload: w.nextProbe()}
 	first.notes <- &pgconn.Notification{Channel: epochWatchChannel, Payload: "d"}
 	first.notes <- &pgconn.Notification{Channel: "other", Payload: "c"}
 	waitFor(t, func() bool { s := w.stamp(); return s.ok() && s.delivery == 1 })
@@ -168,7 +169,7 @@ func TestEpochWatchListenerReconnectsWithNewSession(t *testing.T) {
 
 	second := <-conns // watchRetryDelay 之后重连
 	<-second.listen
-	second.notes <- &pgconn.Notification{Channel: epochWatchChannel, Payload: "p:2"}
+	second.notes <- &pgconn.Notification{Channel: epochWatchChannel, Payload: w.nextProbe()}
 	waitFor(t, func() bool { s := w.stamp(); return s.ok() && s.session == 2 && s.delivery == 0 })
 	cancel()
 	<-done
@@ -246,8 +247,106 @@ func TestEpochPollerFollowsWatchWithoutDatabase(t *testing.T) {
 	}
 	w.disconnect()
 	w.connect()
-	w.observe("p:2")
+	w.observe(w.nextProbe())
 	if changed, _ := p.poll(context.Background(), q, now, nil); !changed {
 		t.Fatal("a new watch session must count as a change")
+	}
+}
+
+// 新鲜度按本进程探针的发送时刻算：回声一直迟到 4 秒（监听落后）就不健康，哪怕回声每秒都到；
+// 别的进程的探针、序号不认识的探针都不计。
+func TestEpochWatchFreshnessFollowsProbeSendTime(t *testing.T) {
+	clock := newFakeClock()
+	w := newEpochWatch(clock.Now)
+	w.connect()
+	w.observe(w.nextProbe())
+	if !w.stamp().ok() {
+		t.Fatal("prompt echo not healthy")
+	}
+	var inFlight []string
+	for i := 0; i < 20; i++ {
+		inFlight = append(inFlight, w.nextProbe())
+		clock.Advance(time.Second)
+		if len(inFlight) > 4 { // 回声迟到 4 秒到达
+			w.observe(inFlight[0])
+			inFlight = inFlight[1:]
+		}
+		if i >= 5 && w.stamp().ok() {
+			t.Fatalf("listener lagging 4s still healthy at second %d", i+1)
+		}
+	}
+	w.observe("p:someone-else:" + strconv.FormatUint(w.probeSeq, 10))
+	w.observe("p:" + w.instance + ":999999")
+	w.observe("p:garbage")
+	if w.stamp().ok() {
+		t.Fatal("foreign or unknown probes restored health")
+	}
+	// 监听追上之后立刻恢复
+	w.observe(w.nextProbe())
+	if !w.stamp().ok() {
+		t.Fatal("prompt echo after catching up did not restore health")
+	}
+}
+
+type stalledListenConn struct{ fakeListenConn }
+
+func (c *stalledListenConn) WaitForNotification(ctx context.Context) (*pgconn.Notification, error) {
+	<-ctx.Done() // 连接无声断掉：什么都收不到、也不报错
+	return nil, ctx.Err()
+}
+
+// 看门狗：监听连着却久久没有本进程探针的回声，主动断开、换新会话重连。
+func TestEpochWatchWatchdogReconnectsStalledListener(t *testing.T) {
+	w := newEpochWatch(nil)
+	w.watchdogAfter, w.watchdogEvery = 50*time.Millisecond, 5*time.Millisecond
+	acquired := make(chan struct{}, 4)
+	acquire := func(context.Context) (listenConn, error) {
+		acquired <- struct{}{}
+		return &stalledListenConn{fakeListenConn{listen: make(chan string, 1), closed: make(chan struct{})}}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.runListener(ctx, acquire, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
+	<-acquired
+	select {
+	case <-acquired: // 看门狗断开后的重连（隔 watchRetryDelay）
+	case <-time.After(watchRetryDelay + 3*time.Second):
+		t.Fatal("stalled listener was never reconnected")
+	}
+	cancel()
+	<-done
+	if w.stamp().ok() {
+		t.Fatal("stalled listener reported healthy")
+	}
+}
+
+// 名单里最早的到期过了就同步重算：pinned 路径与推送路径（不 pinned、在 staleGrace 窗口里）
+// 都不能再回含已到期用户的旧名单（审查 #2，基线上同一缺陷一并修）。
+func TestUserSetPastNextExpiryNeverServedStale(t *testing.T) {
+	for name, pinned := range map[string]func(nodeUserSet) bool{
+		"pinned": func(nodeUserSet) bool { return true },
+		"push":   func(nodeUserSet) bool { return false },
+	} {
+		clock := newFakeClock()
+		caches := newNodeCaches(clock.Now)
+		expiry := clock.Now().Add(8 * time.Second) // 晚于 TTL（5 秒）：入库时 hard=false
+		loads := 0
+		load := func(context.Context) (nodeUserSet, error) {
+			loads++
+			if loads == 1 {
+				return nodeUserSet{version: "with-expiring-user", nextExpiry: expiry}, nil
+			}
+			return nodeUserSet{version: "after-expiry"}, nil
+		}
+		if got, _ := caches.users.get(context.Background(), "k", "f", always[nodeUserSet], pinned, load); got.version != "with-expiring-user" {
+			t.Fatalf("%s: first load %q", name, got.version)
+		}
+		clock.Advance(9 * time.Second) // 过了到期 1 秒，仍在 TTL + staleGrace 之内
+		if got, _ := caches.users.get(context.Background(), "k", "f", always[nodeUserSet], pinned, load); got.version != "after-expiry" {
+			t.Fatalf("%s: list with an expired user served past nextExpiry: %q", name, got.version)
+		}
 	}
 }

@@ -21,7 +21,7 @@ func healthyWatch(t *testing.T, svc *Service) *epochWatch {
 	t.Helper()
 	w := newEpochWatch(nil)
 	w.connect()
-	w.observe("p:1")
+	w.observe(w.nextProbe())
 	svc.caches.watch = w
 	if !svc.watchStamp().ok() {
 		t.Fatal("watch not healthy")
@@ -75,7 +75,7 @@ func TestWatchedUserSetSkipsTTLOnlyInLooseMode(t *testing.T) {
 	svc.caches = newNodeCaches(clock.Now)
 	w := newEpochWatch(clock.Now)
 	w.connect()
-	w.observe("p:1")
+	w.observe(w.nextProbe())
 	svc.caches.watch = w
 	pool := "pool-1"
 	users := []ProxyUser{{ID: 1, UUID: "u-1"}}
@@ -90,7 +90,7 @@ func TestWatchedUserSetSkipsTTLOnlyInLooseMode(t *testing.T) {
 	}
 	seed(false)
 	clock.Advance(nodeUsersCacheTTL + nodeUsersStaleGrace + time.Second)
-	w.observe("p:2") // 探针回声跟上时钟
+	w.observe(w.nextProbe()) // 探针回声跟上时钟
 	if got, _, err := svc.NodeUserSet(context.Background(), "t1", node()); err != nil || len(got) != 1 {
 		t.Fatalf("watched loose set was not served past its TTL: %v %v", got, err)
 	}
@@ -105,7 +105,7 @@ func TestWatchedUserSetSkipsTTLOnlyInLooseMode(t *testing.T) {
 	}
 	seed(true)
 	clock.Advance(nodeUsersCacheTTL + nodeUsersStaleGrace + time.Second)
-	w.observe("p:3")
+	w.observe(w.nextProbe())
 	mustReload("strict set past TTL")
 	seed(false)
 	w.observe("d")
