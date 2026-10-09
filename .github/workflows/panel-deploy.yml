@@ -64,6 +64,7 @@ jobs:
             build-release_toolchain_mock_test.sh
             install-native_pgcluster_mock_test.sh
             install-native_backup_mock_test.sh
+            install-native_fromdocker_mock_test.sh
             webdav-backup-hardening_mock_test.sh
           )
           failed=()

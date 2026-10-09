@@ -2,8 +2,8 @@
 # install-native.sh 的 PostgreSQL 集群处理：不需要 root、PostgreSQL 或 systemd。
 # 以前的安装器对在线的旧版本集群跑 pg_upgrade，不管成没成、跑没跑，最后都 pg_dropcluster——旧库直接没了。
 # 这里证明：
-#   ① 静态：install-native.sh 里没有任何删除或停掉集群、删库、删数据目录的命令（任何失败路径上都删不了）；
-#   ② 动态：以 PANDORA_INSTALL_LIB=1 source 它只取函数，pg_lsclusters / runuser 换成桩，
+#   ① 静态：install-native.sh 与 install-native-lib.sh 里没有任何删除或停掉集群、删库、删数据目录的命令（任何失败路径上都删不了）；
+#   ② 动态：source install-native-lib.sh 取函数，pg_lsclusters / runuser 换成桩，
 #      逐个场景跑 native_check_foreign_clusters 与 native_ensure_pg_cluster：
 #      旧集群里有 aegis 库而 PG18 不是接班人就停下（首装、升级 .env 指着旧集群、查不了旧集群），
 #      PG18 已接班只提示，升级时 .env 的端口不是 PG18 的也停下；建集群只建只启动；
@@ -12,12 +12,13 @@ set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 NATIVE="$DEPLOY/install-native.sh"
+LIB="$DEPLOY/install-native-lib.sh"
 T="$(mktemp -d "${TMPDIR:-/tmp}/pandora-pgcluster.XXXXXX")"
 trap 'rm -rf -- "$T"' EXIT
 fail() { printf 'install-native pgcluster: %s\n' "$*" >&2; exit 1; }
 
 # --- ① 静态：删库删集群的命令一个都不许有 -------------------------------------------
-code="$(grep -v '^[[:space:]]*#' "$NATIVE")"
+code="$(cat "$NATIVE" "$LIB" | grep -v '^[[:space:]]*#')"
 for forbidden in pg_dropcluster pg_upgrade pg_ctlcluster dropdb 'DROP DATABASE' 'PANDORA_SKIP_PG_UPGRADE'; do
   if grep -Fq -- "$forbidden" <<<"$code"; then
     fail "install-native.sh still runs $forbidden"
@@ -27,9 +28,17 @@ if grep -Eq 'rm[[:space:]]+-[A-Za-z]*r[A-Za-z]*[[:space:]].*(/var/lib/postgresql
   fail 'install-native.sh removes a PostgreSQL data directory'
 fi
 # 版本钉死：不再取「装着的最新版本」
-grep -Fq 'PANDORA_PG_MAJOR=18' "$NATIVE" || fail 'the PostgreSQL major version is not pinned'
+grep -Fq 'PANDORA_PG_MAJOR=18' "$LIB" || fail 'the PostgreSQL major version is not pinned'
 grep -Fq 'PG_VERSION="$PANDORA_PG_MAJOR"' "$NATIVE" || fail 'PG_VERSION does not come from the pinned major'
 if grep -Fq 'sort -V | tail -1' <<<"$code"; then fail 'install-native.sh still picks the newest installed PostgreSQL'; fi
+
+# 新建的库用 template0、UTF8（不随集群缺省落成 SQL_ASCII）
+grep -Fq "CREATE DATABASE aegis OWNER aegis TEMPLATE template0 ENCODING ''UTF8''" "$NATIVE" \
+  || fail 'the aegis database is not created from template0 with UTF8'
+# 安装器 source 的函数库进发布包（复制与归档两处清单）、安装器先找它
+[ "$(grep -c 'for script in .* install-native-lib.sh .*; do' "$DEPLOY/build-release.sh")" = 2 ] \
+  || fail 'build-release.sh does not ship install-native-lib.sh in both script loops'
+grep -Fq '. "$SCRIPT_DIR/install-native-lib.sh"' "$NATIVE" || fail 'install-native.sh does not source install-native-lib.sh'
 
 # --- ② 桩 ---------------------------------------------------------------------------
 mkdir -p "$T/bin"
@@ -64,7 +73,8 @@ cat >"$T/bin/pg_createcluster" <<'MOCK'
 #!/usr/bin/env bash
 root="$(cd "$(dirname "$0")/.." && pwd)"
 printf 'pg_createcluster %s\n' "$*" >>"$root/calls"
-printf '%s main 5433 down postgres /var/lib/postgresql/%s/main /dev/null\n' "$1" "$1" >>"$root/clusters"
+ver="${@: -2:1}"
+printf '%s main 5433 down postgres /var/lib/postgresql/%s/main /dev/null\n' "$ver" "$ver" >>"$root/clusters"
 MOCK
 cat >"$T/bin/systemctl" <<'MOCK'
 #!/usr/bin/env bash
@@ -86,7 +96,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/sleep"
 chmod 0755 "$T/bin/"*
 
 export PATH="$T/bin:$PATH"
-PANDORA_INSTALL_LIB=1 . "$NATIVE"
+. "$DEPLOY/install-native-lib.sh"
 set -euo pipefail
 declare -F native_check_foreign_clusters native_ensure_pg_cluster native_pg_cluster_port >/dev/null \
   || fail 'library mode did not define the cluster functions'
@@ -151,7 +161,7 @@ check 'PG19 alongside' ok '里面没有 aegis 库' 18 5432 upgrade 5432
 # --- native_ensure_pg_cluster：没有就建，然后启动；只建只启动 --------------------------
 reset; cluster 16 main 5432 online
 ( native_ensure_pg_cluster 18 ) >"$T/out" 2>&1 || fail "ensure: $(cat "$T/out")"
-grep -Fxq 'pg_createcluster 18 main' "$T/calls" || fail "ensure did not create 18/main: $(cat "$T/calls")"
+grep -Fxq 'pg_createcluster --locale=C.UTF-8 --encoding=UTF8 18 main' "$T/calls" || fail "ensure did not create a UTF8 18/main: $(cat "$T/calls")"
 grep -Fxq 'systemctl start postgresql@18-main' "$T/calls" || fail 'ensure did not start 18/main'
 [ "$(native_pg_cluster_port 18)" = 5433 ] || fail 'cluster port was not read from pg_lsclusters'
 grep -q '^16 main 5432 online' "$T/clusters" || fail 'the PG16 cluster was touched'

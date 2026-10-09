@@ -15,7 +15,7 @@ paths:
 - Cloudflare 真实 IP 信任表 `/etc/aegispanel/cloudflare-realip.conf` 的路径在模板、`render-nginx.sh`、`update-cloudflare-realip.sh` 三处写死，须一致；渲染器只在文件缺失时写一份不信任任何代理的默认文件，已存在绝不覆盖。守卫：`cloudflare-realip_mock_test.sh`
 - 日志路径：`logrotate-aegis` 的 glob 必须覆盖三个 systemd 单元 `StandardOutput=append:` 的全部文件。守卫：`logrotate-aegis_static_test.sh`
 - 新的发布物文件（脚本、模板、单元）要同时进 `build-release.sh` 的拷贝清单与随后的归档清单（两处 `for script in` 列表；非脚本的数据文件进 `release_data`，以 0644 归档）、`install-linux-binaries.sh` 的安装事务；install-native.sh 要用的还得在它自己的拷贝行里加上
-  - 只给安装器 source 的库（`public-base-url.sh`、`install-lib.sh`）只进发布包，不装到主机上
+  - 只给安装器 source 的库（`public-base-url.sh`、`install-lib.sh`、`install-native-lib.sh`）只进发布包，不装到主机上
   - `admin-url.sh` 与 `MIGRATION-RUNBOOK.md` 由 install.sh、install-native.sh 自己拷到 `deploy/` 下。守卫：`install-firstrun_mock_test.sh`、`install-migrate-order_mock_test.sh`
 - 发布构建的 Go 工具链固定：`build-release.sh`（panel、goose、pdnd 节点端）与 `pdnd/release/build.sh` 一律用 `GOTOOLCHAIN=go<各自 go.mod 的 go 指令>`（必须是完整 x.y.z，不写死版本号，覆盖环境里的 `local`），先核 `go env GOVERSION`、产出后再用 `go version <文件>` 核每个二进制，不符即失败；实际版本记在包内 `deploy/BUILD-INFO` 与节点端 `manifest.json` 的 `go_toolchain`。构建机要能装或下载那一版。守卫：`build-release_toolchain_mock_test.sh`、`pdnd/release/build_toolchain_mock_test.sh`
 - 健康巡检 `healthcheck.sh` + `systemd/aegis-health.{service,timer}` 随发布包，两个安装器首装与升级都装并 `enable --now` timer（timer 用 `OnActiveSec`，不用 `OnBootSec`，否则启用瞬间就跑一次）；脚本取安装根目录自己的位置，docker / 直装两种布局都成立。守卫：`healthcheck-install_static_test.sh`
@@ -37,6 +37,9 @@ paths:
   - 判定函数 `pandora_db_layout` 各脚本内联一份（备份三件套只信任自己，不 source 共用文件），连库一律经 `pandora_pg`；口令只经环境变量。守卫：`pg-layout_mock_test.sh`（逐字一致与行为）、`check-migrations_native_mock_test.sh`
 - `install-native.sh` 只用 PG18 的 `main` 集群（版本钉死），别的版本的集群不停、不升级、不删；旧集群里有 aegis 库而 PG18 不是接班人时停下，什么都不改。守卫：`install-native_pgcluster_mock_test.sh`（静态禁 `pg_dropcluster`、`pg_upgrade`、`pg_ctlcluster`、`dropdb`、`DROP DATABASE`）
 - `install-native.sh` 装与 docker 布局同一套备份、校验、恢复、psql、bootstrap 脚本，加密备份单元经 `native_render_unit` 改成直装（安装目录、`/var/backups/pandora`、去掉 docker 依赖）后只装不启用；升级时 `.env` 已有的行一字不动，缺的新键（布局、备份）才追加；口令经 psql 标准输入或环境变量，不拼进 `su -c`。守卫：`install-native_backup_mock_test.sh`
+- `install-native.sh --from-docker` 把 docker 布局迁到直装（RUNBOOK 第 13 章）：只读核对 → 写状态文件 `from-docker.state` → 停写入者 → 导出（含属主与权限）→ 建角色、恢复、跑迁移的超级用户名下对象转给 postgres → 两边指纹逐行一致 → 迁移 → 存原单元、换单元 → 三网关 healthz → 接管 → `docker compose stop`
+  - 接管之前任何退出（含信号）由 EXIT trap `fd_abort` 放回原单元、拉起 docker 的网关与备份 timer；docker 那边的库只读。删卷、删 `/opt/aegispanel`、停 docker 守护进程只打印，不执行
+  - 守卫：`install-native_fromdocker_mock_test.sh`（.env 改写、角色、回滚、只停不删、指纹、核对阶段只读、主流程顺序）
 - 桩测试与静态检查（`*_mock_test.sh`、`*_static_test.sh`）不需要数据库；与安装、迁移、nginx、发布物绑定相关的，CI 的 `.github/workflows/panel-deploy.yml` 逐个点名跑，新增这类测试要补进那份清单
   - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root。前者在 panel-deploy 的 deploy-root-mock-tests job 里用 runner 的免密 sudo 跑（只在 GitHub 上，检查机明说跳过）
 - nginx 的节点路径（`/api/v1/server/UniProxy/`、`/v1/nodes/`）用自己的限速区：`aegis_node` 按「来源 IP + 节点标识」分桶（签名通道 `X-Node-Id` 头、兼容通道 query `node_id`，只认 UUID 形状，否则退回按 IP 一个桶），外加宽松的每 IP 总上限 `aegis_node_ip`；`limit_conn` 在这两个 location 单独写（`aegis_node_conn`），server 层的 64 不再作用于节点。一台机器 60 个节点约 810 次/分、60 条事件流。守卫：`render-nginx_test.sh`

@@ -778,3 +778,59 @@ pandora-native enrollment abort --identity /etc/pandora-native/identity.json --r
 
 - 端口确实空闲，节点仍长时间报 `port_in_use` 或 `not_started`：带上节点 id、`ss -lntup` 输出和最近 200 行 `journalctl -u pandora-native`。
 - 接入卡在 `committed` 与本机状态对不上、`enrollment status` 本身报错：带上它的完整输出和面板 `node.log` 里含这个节点 id 的行（日志文件里有私钥和运行令牌，不要贴）。
+
+---
+
+## 13. 从 Docker 布局迁到直装
+
+`install.sh` 装的 docker 布局（`/opt/aegispanel`，PostgreSQL 与 Valkey 在容器里）可以用新发布包里的 `install-native.sh --from-docker` 迁到直装（`/opt/pandora`，系统 PostgreSQL 18 + Valkey），省掉 Docker 守护进程与容器的常驻开销。本章不是排障，是一次有计划的停服操作，**每台都要先问机器的主人**。
+
+### 它做什么
+
+1. **核对（只读，服务照常）**：容器 `aegis-postgres` 在跑、库连得上；库的迁移版本不比发布包新；库里的角色能照搬（没有 SUPERUSER / REPLICATION / BYPASSRLS 的额外角色、没有角色成员关系）；`.env` 的口令与密钥齐全；磁盘至少有库大小的 4 倍空闲（导出、恢复、迁移预检各一份）。任何一条不过就停下，什么都没改。
+2. **装直装**：PostgreSQL 18、Valkey、age；直装的 `.env` 由 docker 的改写（主密钥、JWT、签名种子、后台前缀、对外地址等原样沿用，只换连库连缓存的几项，加 `postgres` 超级用户口令与 `PANDORA_DB_LAYOUT=native`）；`secrets/`（备份解密私钥）拷过来。
+3. **停服、搬数据**：停三个网关（和在跑的备份 timer）→ 从容器 `pg_dump -Fc`（含属主与权限）到 `/var/backups/pandora/from-docker-<时间>.dump` → 在 PG18 里建好同样的角色 → `pg_restore --single-transaction` → docker 那边跑迁移的超级用户名下的对象转给 `postgres`（与全新直装一致）。
+4. **核对**：两边各跑一遍指纹（迁移水位、每张表的行数、序列、表/列/函数的属主与权限、行级安全开关、策略、触发器、扩展），逐行相同才往下走。指纹与差异留在导出文件旁边（`*.fingerprint`）。
+5. **迁移、切换**：在直装库上跑这次发布的迁移（完整预检）→ `bootstrap.sh` 收窄运行角色 → 存一份原来的 systemd 单元（`/var/backups/pandora/from-docker-units-<时间>/`）→ 换成直装的单元、起服务 → 三个网关 `/healthz` 都是 200 才算接管。
+6. **收尾**：`docker compose stop` 停两个容器（`restart: unless-stopped`，重启后也不会自己起来）；备份 timer 之前在跑就照样起；HTTPS 边缘按升级的规则重配。**不删卷、不删 `/opt/aegispanel`、不停 docker 守护进程**，收尾打印这几条命令由人决定。
+
+停服从第 3 步到第 5 步结束。5k 规模（库约 100 MB）估计一两分钟，以测试机实测为准。
+
+### 怎么跑
+
+```bash
+# 新发布包放到 root 独占目录（同 panel-install），然后：
+sudo <发布目录>/deploy/install-native.sh --from-docker
+```
+
+先在业务低峰做；跑之前做一份加密备份：`cd /opt/aegispanel/deploy && ./backup-postgres.sh`。
+
+### 失败了
+
+- **核对阶段停下**：什么都没改，按提示修好重跑。
+- **停服之后、接管之前任何一步失败**（导出、恢复、指纹对不上、迁移、健康检查、Ctrl-C）：脚本自动放回原来的单元、拉起 docker 布局的网关与备份 timer，状态记为 `rolled-back`（`/opt/pandora/deploy/from-docker.state`）。docker 那边的库全程只读，没有丢数据。修好原因后直接重跑 `--from-docker`：直装这边上次的库改名为 `aegis_stale_<时间>` 放一边（确认没用后自己删），从头再来。
+- **接管之后、停容器之前断了**（状态 `cutover`）：重跑 `--from-docker` 只做收尾。
+
+### 迁完之后
+
+- 跑稳之后（建议观察一天，做一份新的加密备份并用 `verify-backup.sh` 校验），由人决定删 Docker：
+
+  ```bash
+  cd /opt/aegispanel/deploy && docker compose down -v      # 删容器与卷，不可恢复
+  docker ps -a                                              # 没有别的容器时再停守护进程（省约 85 MB 常驻内存）
+  systemctl disable --now docker.service docker.socket containerd.service
+  ```
+
+- 删之前想退回 Docker（切换之后在直装上写入的数据不会带回去）：
+
+  ```bash
+  systemctl stop aegis-public aegis-admin aegis-node
+  cp -a /var/backups/pandora/from-docker-units-<时间>/aegis-* /etc/systemd/system/ && systemctl daemon-reload
+  (cd /opt/aegispanel/deploy && docker compose start) && systemctl start aegis-public aegis-admin aegis-node
+  ```
+
+- Valkey 里的东西不搬（新的 Valkey 是空的）：只有限流计数与实时推送的临时状态，迁完限流冷却全部清零，网关重启后照常重建。
+
+### 什么时候升级处理
+
+指纹对不上（差异文件里不只是行数）、或者恢复报角色 / 扩展相关的错：带上 `*.fingerprint.diff` 与脚本完整输出（输出里没有口令）。

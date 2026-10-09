@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Pandora Panel — 普通直接安装版（无 Docker）
-# 用法: sudo bash install-native.sh
+# 用法: sudo bash install-native.sh                 首装或升级（/opt/pandora）
+#       sudo bash install-native.sh --from-docker   把 install.sh 装的 docker 布局（/opt/aegispanel）迁过来：
+#         核对 → 停服 → 导出 → 恢复 → 逐项核对 → 迁移 → 切换 → 停 Docker 容器；失败自动回到 Docker，卷不删
 #       无人值守: sudo PANDORA_ASSUME_YES=1 PANDORA_PUBLIC_BASE_URL=https://你的域名 bash install-native.sh
 # 对外地址与 HTTPS 和 install.sh 同一套（变量含义见 install.sh 头注释）：
 #   PANDORA_PUBLIC_BASE_URL  https://域名 或 https://公网IPv4；首装不给时问，无人值守用本机公网 IPv4
@@ -10,176 +12,30 @@
 # 信条: 目录简单、文件简单、不臃肿
 set -euo pipefail
 
-# ── 常量 ──────────────────────────────────────────────
-# 潘多拉专属安装目录。systemd 单元里原路径 /opt/aegispanel 会替换为这里
-INSTALL_DIR="/opt/pandora"
-# Pandora 只用这一个大版本的 main 集群（迁移用到 PG18 的 uuidv7() 等内建函数）
-PANDORA_PG_MAJOR=18
-SERVICES=(aegis-public aegis-admin aegis-node)
-
-say(){ printf '\033[1;32m%s\033[0m\n' "$*"; }
-die(){ printf '\033[1;31m%s\033[0m\n' "$*" >&2; exit 1; }
-need(){ command -v "$1" >/dev/null 2>&1 || die "缺少 $1"; }
-
-#------------------------------------------------------------------------------
-# PostgreSQL 集群。install-native_pgcluster_mock_test.sh 以 PANDORA_INSTALL_LIB=1 source 本文件，
-# 只取函数，不往下执行任何安装动作
-#------------------------------------------------------------------------------
-
-# 以 postgres 系统用户经本地 socket 跑 psql（peer 认证，不用口令）。SQL 经 -c 或标准输入给，
-# 口令一律不拼进命令行。先 cd /：postgres 用户进不了调用方的当前目录（如 /root）时 psql 会告警
-native_pg_peer() { (cd / && runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 "$@"); }
-
-# <版本>/main 在线时打印它的端口（pg_lsclusters 为准，多版本共存时 PG18 不一定是 5432），否则返回 1
-native_pg_cluster_port() {
-  pg_lsclusters 2>/dev/null \
-    | awk -v v="$1" '$1 == v && $2 == "main" && $4 ~ /^online/ { print $3; found = 1; exit } END { exit !found }'
-}
-
-# 确保 <版本>/main 存在并在线：没有就建（LC_ALL=C：最小化系统常缺 en_US.UTF-8，initdb 会失败），
-# 有但没起就启动。只建、只启动——不停、不升级、不删任何集群
-native_ensure_pg_cluster() {
-  local ver="$1" _
-  if ! pg_lsclusters 2>/dev/null | awk -v v="$ver" '$1 == v && $2 == "main" { found = 1 } END { exit !found }'; then
-    say "  初始化 PostgreSQL ${ver}/main 集群"
-    LC_ALL=C pg_createcluster "$ver" main 2>&1 | tail -3 || die "PostgreSQL ${ver}/main 集群初始化失败"
-  fi
-  systemctl reset-failed "postgresql@${ver}-main" 2>/dev/null || true
-  systemctl start "postgresql@${ver}-main" 2>/dev/null || true
-  for _ in $(seq 1 15); do
-    native_pg_cluster_port "$ver" >/dev/null && return 0
-    sleep 1
-  done
-  die "PostgreSQL ${ver}/main 起不来：journalctl -u postgresql@${ver}-main -n 50"
-}
-
-# 端口上的集群里有没有 aegis 库：打印 yes / no / unknown（查不了）
-native_pg_has_aegis() {
-  local out
-  out="$(native_pg_peer -p "$1" -d postgres -Atc "SELECT 1 FROM pg_catalog.pg_database WHERE datname = 'aegis'" 2>/dev/null)" \
-    || { echo unknown; return 0; }
-  case "$out" in 1) echo yes ;; '') echo no ;; *) echo unknown ;; esac
-}
-
-# 机器上 PG18 以外的集群（更早的 16/17、以后的 19）一律不碰：不停、不升级、不删。
-# 以前这里对在线的旧集群跑 pg_upgrade，而且不管它成没成、跑没跑，最后都 pg_dropcluster——
-# 旧库直接没了（新数据目录已初始化时 pg_upgrade 根本不跑）。现在只看旧集群里有没有 aegis 库，
-# 有的话 PG18 是不是它的接班人：
-#   - 首装（或从 Docker 迁）而 PG18 里还没有 aegis 库：数据多半就在旧集群里，停下；
-#   - 升级而 .env 的 POSTGRES_PORT 指着旧集群：这台面板一直跑在旧集群上，停下；
-#   - 其余（PG18 已有 aegis 库、.env 指着 PG18）：旧集群是早先的遗留，只提示。
-# 查不了旧集群按「有 aegis 库」算。升级时 .env 的 POSTGRES_PORT 不是 PG18 的端口也停下。
-# 停下时什么都还没改。
-#   native_check_foreign_clusters <PG 大版本> <它的端口> <install|upgrade|from-docker> <.env 的 POSTGRES_PORT，仅升级>
-native_check_foreign_clusters() {
-  local want="$1" want_port="$2" mode="$3" env_port="${4:-}"
-  local ver cluster port status _rest has blockers=() pg18_has=""
-  if command -v pg_lsclusters >/dev/null 2>&1; then
-    while read -r ver cluster port status _rest; do
-      [[ "$ver" =~ ^[0-9]+$ ]] || continue
-      [ "$ver" != "$want" ] || continue
-      if [[ "$status" != online* ]]; then
-        say "  ! 另有 PostgreSQL ${ver}/${cluster}（端口 ${port}，${status}）：不是 Pandora 用的集群，安装器不碰它"
-        continue
-      fi
-      has="$(native_pg_has_aegis "$port")"
-      if [ "$has" = no ]; then
-        say "  另有 PostgreSQL ${ver}/${cluster}（端口 ${port}），里面没有 aegis 库，安装器不碰它"
-        continue
-      fi
-      if [ "$mode" = upgrade ]; then
-        if [ "$env_port" = "$port" ]; then
-          blockers+=("PostgreSQL ${ver}/${cluster}（端口 ${port}）：.env 的 POSTGRES_PORT 指着它，这台面板的数据就在它里面")
-          continue
-        fi
-      else
-        [ -n "$pg18_has" ] || pg18_has="$(native_pg_has_aegis "$want_port")"
-        if [ "$pg18_has" != yes ]; then
-          blockers+=("PostgreSQL ${ver}/${cluster}（端口 ${port}）里$([ "$has" = yes ] && echo 有 || echo 查不清有没有) aegis 库，PG${want} 里还没有")
-          continue
-        fi
-      fi
-      say "  ! PostgreSQL ${ver}/${cluster}（端口 ${port}）里$([ "$has" = yes ] && echo 有 || echo 查不清有没有) aegis 库：面板用的是 PG${want}（端口 ${want_port}），它是早先的遗留，安装器不碰；确认没用后自己处理"
-    done < <(pg_lsclusters 2>/dev/null)
-  fi
-  if [ "$mode" = upgrade ] && [ -n "$env_port" ] && [ "$env_port" != "$want_port" ] && [ "${#blockers[@]}" -eq 0 ]; then
-    blockers+=(".env 的 POSTGRES_PORT=${env_port}，而 PostgreSQL ${want}/main 在端口 ${want_port}：不知道面板的数据在哪个集群")
-  fi
-  [ "${#blockers[@]}" -eq 0 ] && return 0
-  printf '\033[1;31m%s\033[0m\n' "数据库不在安装器预期的地方，停下（什么都还没改，任何集群都没停、没删）：" >&2
-  printf '  - %s\n' "${blockers[@]}" >&2
-  die "旧集群里的 aegis 库要由人搬到 PG${want}（导出 → 恢复 → 核对，步骤见发布包 deploy/MIGRATION-RUNBOOK.md「旧版本集群里的 aegis 库」）；搬完、确认 .env 的 POSTGRES_PORT=${want_port} 后重跑本脚本"
-}
-
-#------------------------------------------------------------------------------
-# .env 与加密备份。install-native_backup_mock_test.sh 测这几个函数
-#------------------------------------------------------------------------------
-# 直装的加密备份目录（升级前备份、HTTPS 边缘的备份也在这里）；备份单元的 ReadWritePaths 换成它
-NATIVE_BACKUP_DIR=/var/backups/pandora
-
-# 往 .env 末尾追加缺的键（参数是 KEY=VALUE），已有的行一个字节都不动——那里是随机生成的口令与密钥，
-# 改错一个就连不上库、解不开信封加密的字段。先写同目录临时文件再改名，保持 0600。
-# 追加了的键名放在 NATIVE_ENV_ADDED（空格分隔）
-native_env_append_missing() {
-  local env_file="$1" line tmp added=()
-  shift
-  NATIVE_ENV_ADDED=""
-  for line in "$@"; do
-    grep -q "^${line%%=*}=" "$env_file" || added+=("$line")
-  done
-  [ "${#added[@]}" -gt 0 ] || return 0
-  tmp="$(mktemp "$env_file.tmp.XXXXXX")"
-  chmod 0600 "$tmp"
-  {
-    cat "$env_file"
-    printf '\n# install-native.sh 升级时补上的新键（原有的行没动）\n'
-    printf '%s\n' "${added[@]}"
-  } >"$tmp"
-  mv -f -- "$tmp" "$env_file"
-  for line in "${added[@]}"; do NATIVE_ENV_ADDED="${NATIVE_ENV_ADDED:+$NATIVE_ENV_ADDED }${line%%=*}"; done
-}
-
-# 备份加密用的 age 密钥：没有就生成（0600，目录 0700），打印公钥（recipient）。已有的绝不覆盖：
-# 旧备份只能用它解开。解密私钥与备份在同一台机器，机器整体丢失时要另存（见收尾提示）
-native_ensure_age_key() {
-  local key="$1"
-  install -d -m 0700 "$(dirname "$key")"
-  if [ ! -f "$key" ]; then
-    (umask 077 && age-keygen -o "$key" 2>/dev/null) || die "生成备份加密密钥失败（age-keygen）"
-  fi
-  chmod 0600 "$key"
-  age-keygen -y "$key" || die "读不出备份加密密钥的公钥：$key"
-}
-
-# 直装 .env 里与布局、加密备份有关的键（首装写进去，升级缺了才追加）。recipient 为空时不出那一行
-#   native_layout_env_lines <安装目录> <age recipient>
-native_layout_env_lines() {
-  printf '%s\n' "PANDORA_DB_LAYOUT=native" "AEGIS_BACKUP_DIR=$NATIVE_BACKUP_DIR" "AEGIS_BACKUP_RETENTION_DAYS=14"
-  [ -z "$2" ] || printf '%s\n' "AEGIS_BACKUP_AGE_RECIPIENT=$2"
-  printf '%s\n' "AEGIS_BACKUP_AGE_IDENTITY=$1/secrets/backup-age.key" "AEGIS_BACKUP_WEBDAV_BIN=$1/bin/aegis-backup-webdav"
-}
-
-# 发布包里的单元（按 docker 布局写）改成直装：安装目录、备份目录，去掉对 docker 的依赖
-#   native_render_unit <单元文件> <安装目录>
-native_render_unit() {
-  sed -e "s|/opt/aegispanel|$2|g" \
-      -e "s|/var/backups/aegispanel|$NATIVE_BACKUP_DIR|g" \
-      -e '/^Requires=docker\.service$/d' \
-      -e 's|^After=docker\.service$|After=postgresql.service|' \
-      "$1"
-}
-
-# 可单测的部分到此为止
-if [ "${PANDORA_INSTALL_LIB:-}" = 1 ]; then
-  return 0 2>/dev/null || exit 0
-fi
+# 常量与函数在同目录的 install-native-lib.sh（只进发布包，不装到主机上）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[[ -f "$SCRIPT_DIR/install-native-lib.sh" ]] || { echo "发布目录缺少 deploy/install-native-lib.sh" >&2; exit 1; }
+# shellcheck source=install-native-lib.sh
+. "$SCRIPT_DIR/install-native-lib.sh"
 
 ADMIN_PATH="ops_$(openssl rand -hex 12)"   # 高熵管理路径
+
+FROM_DOCKER=0
+for arg in "$@"; do
+  case "$arg" in
+    --from-docker) FROM_DOCKER=1 ;;
+    -h|--help)
+      printf '%s\n' "用法: sudo bash install-native.sh                首装或升级直装布局（/opt/pandora）" \
+        "      sudo bash install-native.sh --from-docker  把 install.sh 装的 docker 布局（/opt/aegispanel）迁到直装" \
+        "迁移会停服（导出、恢复、核对、迁移、切换期间面板不可用）；Docker 的卷不删，收尾打印删除命令。"
+      exit 0 ;;
+    *) die "不认识的参数：$arg（只认 --from-docker、--help）" ;;
+  esac
+done
 
 # ── 前置 ──────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || die "请用 root 运行: sudo bash install.sh"
 need openssl; need curl; need systemctl
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # 首装还是升级：已有 .env 就是升级，已有的行一字不动（里面是随机生成的口令与密钥，
 # 重写一次就连不上原来的数据库、解不开信封加密的字段），新版本新增的键缺了才追加到末尾。首装在动手之前先拿到
@@ -190,7 +46,40 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 [[ -f "$SCRIPT_DIR/install-lib.sh" ]] || die "发布目录缺少 deploy/install-lib.sh"
 . "$SCRIPT_DIR/install-lib.sh"
 ENV_FILE="$INSTALL_DIR/deploy/.env"
-if [[ -f "$ENV_FILE" ]]; then
+FD_STATE_FILE="$INSTALL_DIR/deploy/from-docker.state"
+if [[ "$FROM_DOCKER" = 1 ]]; then
+  MODE=from-docker
+  FD_RETRY=0
+  # 状态文件在迁移动手的第一步就写下：有它说明是上次没走完的迁移，能重来；没有它而直装的 .env 在，
+  # 这台本来就是直装
+  if [[ -f "$FD_STATE_FILE" ]]; then
+    case "$(fd_state_get state)" in
+      done) die "已经从 Docker 迁完了（$FD_STATE_FILE）。升级直装直接跑 install-native.sh" ;;
+      cutover)
+        # 上次直装已接管，只差停 Docker 容器：只收尾
+        say "上次已切换到直装、还没收尾：这次只停 Docker 容器"
+        FD_CUTOVER=1
+        FD_BACKUP_TIMER_WAS_ACTIVE="$(fd_state_get backup_timer)"
+        fd_finalize
+        say "收尾完成。删 Docker 的卷与守护进程由你决定：cd $DOCKER_DIR/deploy && docker compose down -v（不可恢复）"
+        exit 0 ;;
+      *)
+        FD_RETRY=1
+        say "上次从 Docker 迁移没完成（$(fd_state_get state)）：docker 那边的库没动过，这次重来" ;;
+    esac
+  elif [[ -f "$ENV_FILE" ]]; then
+    die "这台已经是直装布局（$ENV_FILE 已存在）。--from-docker 只用于还在 docker 布局上的机器；升级直装直接跑 install-native.sh"
+  fi
+  say "从 docker 布局（$DOCKER_DIR）迁到直装（$INSTALL_DIR）：先核对，什么都不改"
+  fd_preflight
+  install -d -m 0755 "$INSTALL_DIR" "$INSTALL_DIR/deploy"
+  fd_state_set state=preparing
+  PUBLIC_BASE_URL="$(pandora_env_file_value "$FD_DOCKER_ENV" AEGIS_PUBLIC_BASE_URL)"
+  # 停了 docker 的写入者之后、直装接管之前，任何退出（含 Ctrl-C、kill）都把 docker 布局拉回来
+  trap fd_abort EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+elif [[ -f "$ENV_FILE" ]]; then
   MODE=upgrade
   say "检测到 $ENV_FILE，按升级处理：保留现有配置与口令"
   current_env="$(pandora_env_file_value "$ENV_FILE" AEGIS_ENV)"
@@ -282,7 +171,16 @@ fi
 
 # 凭据：首装一次性生成并写入 .env；升级从现有 .env 读回，后面的建角色、改口令、
 # 迁移、收敛运行角色都拿同一套值，重跑是幂等的。
-if [[ "$MODE" = upgrade ]]; then
+if [[ "$MODE" = from-docker ]]; then
+  # 库属主、运行角色、Valkey 的口令沿用 docker 布局的；postgres 超级用户口令重试时沿用上次写下的
+  DB_PASS="$(pandora_env_file_value "$FD_DOCKER_ENV" POSTGRES_PASSWORD)"
+  APP_PASS="$(pandora_env_file_value "$FD_DOCKER_ENV" AEGIS_DB_APP_PASSWORD)"
+  VK_PASS="$(pandora_env_file_value "$FD_DOCKER_ENV" VALKEY_PASSWORD)"
+  ADMIN_PATH="$(pandora_env_file_value "$FD_DOCKER_ENV" AEGIS_ADMIN_PATH)"
+  PG_SUPER_PASS=""
+  [[ ! -f "$ENV_FILE" ]] || PG_SUPER_PASS="$(pandora_env_file_value "$ENV_FILE" POSTGRES_SUPER_PASSWORD)"
+  [[ -n "$PG_SUPER_PASS" ]] || PG_SUPER_PASS="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=')"
+elif [[ "$MODE" = upgrade ]]; then
   DB_PASS="$(pandora_env_file_value "$ENV_FILE" POSTGRES_PASSWORD)"
   APP_PASS="$(pandora_env_file_value "$ENV_FILE" AEGIS_DB_APP_PASSWORD)"
   VK_PASS="$(pandora_env_file_value "$ENV_FILE" VALKEY_PASSWORD)"
@@ -320,11 +218,20 @@ say "[4/6] 初始化数据库 + 执行迁移"
 # 经 127.0.0.1 TCP 连要它）、库属主 aegis、库、运行角色 aegis_app（NOBYPASSRLS，口令由下面的
 # bootstrap.sh 每次重设）。已有的不重建。口令经 psql 的标准输入给，不进任何进程的命令行参数
 # （以前拼在 su -c 里，ps 看得见）；出错即停，不再 || true 吞掉。
+# --from-docker 要一个空的 aegis 库来恢复：上次没迁完留下的改名放一边（不删）；第一次迁就已经有，不知道
+# 是什么数据，停下
+if [[ "$MODE" = from-docker ]] && [[ "$(native_pg_has_aegis "$PG_PORT")" != no ]]; then
+  [[ "$FD_RETRY" = 1 ]] || die "PG${PG_VERSION} 里已经有 aegis 库（或查不清），不知道是什么数据，不往里恢复；确认没用后改名或删掉再重跑"
+  stale="aegis_stale_$(date +%Y%m%d%H%M%S)"
+  native_pg_peer -p "$PG_PORT" -d postgres -c "ALTER DATABASE aegis RENAME TO $stale" >/dev/null \
+    || die "把上次没迁完的直装库 aegis 改名失败（还有连接？）"
+  say "  上次没迁完留下的直装库 aegis 改名为 $stale（确认不要后自己删）"
+fi
 native_pg_peer -p "$PG_PORT" -d postgres >/dev/null <<SQL || die "建数据库角色或库失败（输出见上）"
 ALTER ROLE postgres PASSWORD '${PG_SUPER_PASS}';
 SELECT pg_catalog.format('CREATE ROLE aegis LOGIN PASSWORD %L', '${DB_PASS}')
  WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'aegis') \gexec
-SELECT 'CREATE DATABASE aegis OWNER aegis'
+SELECT 'CREATE DATABASE aegis OWNER aegis TEMPLATE template0 ENCODING ''UTF8'''
  WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = 'aegis') \gexec
 SELECT pg_catalog.format('CREATE ROLE aegis_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD %L', '${APP_PASS}')
  WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'aegis_app') \gexec
@@ -334,7 +241,7 @@ SQL
 # 加密备份的 age 密钥（首装生成；升级时 .env 里还没有备份键才生成，已有的绝不覆盖）
 AGE_KEY="$INSTALL_DIR/secrets/backup-age.key"
 AGE_RECIPIENT=""
-if [[ "$MODE" = install ]] || ! grep -q '^AEGIS_BACKUP_AGE_RECIPIENT=' "$ENV_FILE"; then
+if [[ "$MODE" = install ]] || { [[ "$MODE" = upgrade ]] && ! grep -q '^AEGIS_BACKUP_AGE_RECIPIENT=' "$ENV_FILE"; }; then
   AGE_RECIPIENT="$(native_ensure_age_key "$AGE_KEY")"
 fi
 
@@ -378,6 +285,20 @@ AEGIS_PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
 $(native_layout_env_lines "$INSTALL_DIR" "$AGE_RECIPIENT")
 EOF
 chmod 0600 "$INSTALL_DIR/deploy/.env"
+elif [[ "$MODE" = from-docker ]]; then
+  # 由 docker 布局的 .env 改写（应用密钥原样沿用）；备份解密私钥等 secrets/ 拷过来（已有的不覆盖），
+  # docker 的 .env 里没有备份键的才生成新的 age 密钥
+  if [[ -d "$DOCKER_DIR/secrets" ]]; then
+    install -d -m 0700 "$INSTALL_DIR/secrets"
+    cp -a -n "$DOCKER_DIR/secrets/." "$INSTALL_DIR/secrets/"
+  fi
+  install -d -m 0755 "$INSTALL_DIR/deploy"
+  (umask 077 && fd_render_env "$FD_DOCKER_ENV" >"$ENV_FILE.next") || die "改写 .env 失败"
+  mv -f -- "$ENV_FILE.next" "$ENV_FILE"
+  grep -q '^AEGIS_BACKUP_AGE_RECIPIENT=' "$ENV_FILE" || AGE_RECIPIENT="$(native_ensure_age_key "$AGE_KEY")"
+  mapfile -t layout_lines < <(native_layout_env_lines "$INSTALL_DIR" "$AGE_RECIPIENT")
+  native_env_append_missing "$ENV_FILE" "${layout_lines[@]}"
+  say "  直装的 .env 已由 docker 布局的改写：$ENV_FILE（应用密钥原样沿用）"
 else
   # 升级：老 .env 没有布局与加密备份的键，缺了才追加
   mapfile -t layout_lines < <(native_layout_env_lines "$INSTALL_DIR" "$AGE_RECIPIENT")
@@ -416,6 +337,47 @@ export AEGIS_MIGRATION_DATABASE_URL="postgres://postgres:${PG_SUPER_PASS}@127.0.
 if [[ "$MODE" = upgrade ]] && grep -q '^PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=' "$ENV_FILE"; then
   say "  ! $ENV_FILE 里有 PANDORA_STOPPED_WRITER_UPGRADE_APPROVED：它让每次手工跑 migrate.sh 都声称写入者已停，建议删掉这一行"
 fi
+# --from-docker：停 docker 的写入者 → 导出 → 建角色、恢复 → 跑迁移的超级用户改成 postgres → 两边指纹逐项核对。
+# 停服从这里开始，到直装的网关通过健康检查为止；中途任何失败都由 fd_abort 把 docker 布局拉回来
+if [[ "$MODE" = from-docker ]]; then
+  fd_state_set state=prepared started="$(date +%s)"
+  say "  停 docker 布局的写入者（从这里起面板暂停服务，直到直装接管）"
+  fd_stop_docker_writers
+  fd_state_set backup_timer="$FD_BACKUP_TIMER_WAS_ACTIVE"
+  install -d -o root -g root -m 0700 "$NATIVE_BACKUP_DIR"
+  FD_DUMP="$NATIVE_BACKUP_DIR/from-docker-$(date +%Y%m%d-%H%M%S).dump"
+  (umask 077 && fd_docker_pg pg_dump -d "$FD_DOCKER_PG_DB" -Fc >"$FD_DUMP") \
+    || die "从 docker 布局导出失败（pg_dump），没有切换"
+  [[ -s "$FD_DUMP" ]] && pg_restore --list <"$FD_DUMP" >/dev/null \
+    || die "导出的文件读不出目录（pg_restore --list），没有切换"
+  fd_state_set dump="$FD_DUMP"
+  say "  已导出 docker 布局的库：$FD_DUMP（$(du -h "$FD_DUMP" | cut -f1)，含属主与权限）"
+  # 角色是集群级的：docker 那边的非系统角色先在直装集群里建好（属性照搬），跑迁移的那个用户也要有，
+  # 恢复时 ALTER … OWNER TO 才不失败
+  roles_sql="$(fd_roles_plan | fd_roles_sql)" || die "整理要搬的角色失败"
+  if [[ "$FD_DOCKER_PG_USER" != postgres ]]; then
+    roles_sql+=$'\n'"SELECT 'CREATE ROLE $FD_DOCKER_PG_USER NOLOGIN' WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '$FD_DOCKER_PG_USER') \\gexec"
+  fi
+  printf '%s\n' "$roles_sql" | native_pg_peer -p "$PG_PORT" -d postgres >/dev/null \
+    || die "在直装集群里建角色失败，没有切换"
+  (cd / && runuser -u postgres -- pg_restore -p "$PG_PORT" -d aegis --exit-on-error --single-transaction) <"$FD_DUMP" \
+    || die "恢复到直装的库失败（pg_restore，整体回滚了），没有切换"
+  # docker 那边跑迁移的超级用户是 POSTGRES_USER，直装是 postgres：它名下的对象（SECURITY DEFINER 函数要
+  # 以超级用户身份执行）转给 postgres；库本身还归 aegis，与全新直装一致
+  if [[ "$FD_DOCKER_PG_USER" != postgres ]]; then
+    native_pg_peer -p "$PG_PORT" -d aegis -c "REASSIGN OWNED BY $FD_DOCKER_PG_USER TO postgres" \
+      -c "ALTER DATABASE aegis OWNER TO aegis" >/dev/null || die "转移对象属主失败，没有切换"
+  fi
+  fd_fingerprint docker >"$FD_DUMP.docker.fingerprint" || die "读不出 docker 布局的库指纹，没有切换"
+  fd_fingerprint native >"$FD_DUMP.native.fingerprint" || die "读不出直装的库指纹，没有切换"
+  if ! diff -u "$FD_DUMP.docker.fingerprint" "$FD_DUMP.native.fingerprint" >"$FD_DUMP.fingerprint.diff"; then
+    head -40 "$FD_DUMP.fingerprint.diff" >&2
+    die "两边的库对不上（差异见上，全文 $FD_DUMP.fingerprint.diff），没有切换"
+  fi
+  say "  核对通过：迁移水位、$(grep -c '^rel ' "$FD_DUMP.native.fingerprint") 个表/视图/序列的行数与权限、函数、策略、触发器逐项一致"
+  fd_state_set state=restored
+fi
+
 # 只有全新库才跳过一次性数据库预检（migrate.sh 的约定：goose_db_version 不存在即全新库）。
 # 以前这里无条件跳过，升级时已有数据的库也不演练就直接迁移
 fresh_db="$(native_pg_peer -p "$PG_PORT" -d aegis -tAc "SELECT pg_catalog.to_regclass('public.goose_db_version') IS NULL" 2>/dev/null | tr -d '[:space:]')"
@@ -426,7 +388,8 @@ case "$fresh_db" in
 esac
 
 # 升级前必备份：库里已有迁移记录就先 pg_dump，导出失败或读不出目录就停在迁移之前
-if [[ "$fresh_db" = f ]]; then
+# （--from-docker 刚导出的那份就是迁移前的备份）
+if [[ "$fresh_db" = f && "$MODE" != from-docker ]]; then
   BACKUP_DIR="$NATIVE_BACKUP_DIR"
   install -d -o root -g root -m 0700 "$BACKUP_DIR"
   BK="$BACKUP_DIR/pre-upgrade-$(date +%Y%m%d-%H%M%S).dump"
@@ -445,7 +408,8 @@ case "$migrate_rc" in
   0) ;;
   10) die "停服前的迁移预检没通过（输出见上）：服务没停，数据库没动" ;;
   11) die "迁移失败（输出见上），服务已拉回原来的版本；处置见 $INSTALL_DIR/deploy/MIGRATION-RUNBOOK.md" ;;
-  *) die "迁移失败, 见上" ;;
+  *) [[ "$MODE" != from-docker ]] || die "直装的库迁移失败（输出见上），没有切换"
+     die "迁移失败, 见上" ;;
 esac
 
 # 应用角色权限（迁移后）：必须跑官方 configure-app-role.sql 做收敛
@@ -463,6 +427,13 @@ say "  configure-app-role.sql 角色收敛完成"
 
 # ── 5. 程序与 systemd ─────────────────────────────────
 say "[5/6] 安装程序与 systemd 服务"
+if [[ "$MODE" = from-docker ]]; then
+  # 直装与 docker 布局的单元同名：覆盖之前存一份，切换失败时原样放回
+  FD_UNITS_BACKUP="$NATIVE_BACKUP_DIR/from-docker-units-$(date +%Y%m%d-%H%M%S)"
+  fd_save_units
+  fd_state_set units_backup="$FD_UNITS_BACKUP"
+  FD_UNITS_SWAPPED=1
+fi
 cp -f "$RELEASE_BIN"/* "$INSTALL_DIR/bin/"
 chmod 0755 "$INSTALL_DIR/bin/"*
 # 单元把日志 append 到 /var/log/aegis，目录不存在时 systemd 以 209/STDOUT 失败
@@ -494,6 +465,14 @@ for s in "${SERVICES[@]}"; do
   systemctl enable "$s" >/dev/null 2>&1 || true
   systemctl start "$s" 2>/dev/null || true
 done
+# --from-docker：直装的三个网关 /healthz 都 200 才算接管；接管之后停 Docker 容器
+if [[ "$MODE" = from-docker ]]; then
+  fd_gateways_healthy || die "直装的网关没通过健康检查（journalctl -u aegis-public -n 50；tail /var/log/aegis/*.log），回到 docker 布局"
+  FD_CUTOVER=1
+  fd_state_set state=cutover
+  say "  直装已接管（三个网关 /healthz 200）"
+  fd_finalize
+fi
 # 巡检 timer 首装与升级都启用（首跑在启用后 10 分钟；已启用的 enable --now 不重置计时）
 if [[ -f /etc/systemd/system/aegis-health.timer && -f "$INSTALL_DIR/deploy/healthcheck.sh" ]]; then
   systemctl enable --now aegis-health.timer >/dev/null 2>&1 \
@@ -546,7 +525,11 @@ fi
 
 say ""
 say "═══════════════════════════════════════════"
-say " Pandora $([[ "$MODE" = install ]] && echo 安装 || echo 升级)完成"
+case "$MODE" in
+  install) say " Pandora 安装完成" ;;
+  upgrade) say " Pandora 升级完成" ;;
+  from-docker) say " Pandora 已从 Docker 布局迁到直装" ;;
+esac
 say " 管理后台:    $(bash "$INSTALL_DIR/deploy/admin-url.sh" "$ENV_FILE" 2>/dev/null || echo "/${ADMIN_PATH}/")"
 say " 重看后台地址: sudo ${INSTALL_DIR}/deploy/admin-url.sh"
 if [[ "$MODE" = install && "$PANDORA_ADMIN_STATE" = manual ]]; then
@@ -559,5 +542,18 @@ say "              解密私钥 ${INSTALL_DIR}/secrets/backup-age.key 与备份�
 say " 对外地址:    $(pandora_env_file_value "$ENV_FILE" AEGIS_PUBLIC_BASE_URL)"
 say " HTTPS:       ${EDGE_NOTE}"
 say " Cloudflare:  站点在 Cloudflare 后面时再跑 ${INSTALL_DIR}/deploy/update-cloudflare-realip.sh（默认不信任任何代理）"
+if [[ "$MODE" = from-docker ]]; then
+  say ""
+  say " 从 Docker 迁过来："
+  say "   迁移前的库：$FD_DUMP（未加密的 pg_dump，含属主与权限；用完自己删）"
+  say "   Docker 的容器已停，卷与 $DOCKER_DIR 都还在；原来的 systemd 单元存在 $FD_UNITS_BACKUP"
+  say "   跑稳之后（建议观察一天，做一份新的加密备份并用 verify-backup.sh 校验）再由你决定删 Docker："
+  say "     cd $DOCKER_DIR/deploy && docker compose down -v        # 删容器与卷，不可恢复"
+  say "     docker ps -a 里没有别的容器时：systemctl disable --now docker.service docker.socket containerd.service"
+  say "   删之前想退回 Docker（切换之后在直装上写入的数据不会带回去）："
+  say "     systemctl stop ${SERVICES[*]}"
+  say "     cp -a $FD_UNITS_BACKUP/aegis-* /etc/systemd/system/ && systemctl daemon-reload"
+  say "     (cd $DOCKER_DIR/deploy && docker compose start) && systemctl start ${SERVICES[*]}"
+fi
 say "═══════════════════════════════════════════"
 [[ "$HEALTH_OK" == 1 ]] || die "部分服务未启动, 检查日志: journalctl -u aegis-public"

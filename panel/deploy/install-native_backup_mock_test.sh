@@ -2,7 +2,7 @@
 # install-native.sh 补齐的运维面（备份、校验、恢复、psql、收窄运行角色），不需要 root：
 #   ① 静态：这五个脚本拷进 deploy/；加密备份单元按直装改写后装上、不启用；configure-app-role 走 bootstrap.sh；
 #      口令不再拼进命令行（su -c、valkey-cli -a）；首装 .env 带布局与备份键；
-#   ② 以 PANDORA_INSTALL_LIB=1 source 取函数：
+#   ② source install-native-lib.sh 取函数：
 #      native_env_append_missing 只追加缺的键、原有字节不动、保持 0600；
 #      native_layout_env_lines 的键与路径；native_render_unit 把真实的 aegis-backup.service 改成直装
 #      （安装目录、备份目录、没有 docker 依赖）；native_ensure_age_key 已有密钥绝不覆盖。
@@ -44,7 +44,7 @@ exit 2
 MOCK
 chmod 0755 "$T/bin/age-keygen"
 export PATH="$T/bin:$PATH"
-PANDORA_INSTALL_LIB=1 . "$NATIVE"
+. "$DEPLOY/install-native-lib.sh"
 set -euo pipefail
 
 # native_env_append_missing：缺的追加，有的不动（连原来的值也不换）
