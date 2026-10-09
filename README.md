@@ -53,7 +53,7 @@ aegis-public    aegis-admin     aegis-node
 | `pdnd/core/` | 内核适配层：xray-core / sing-box 兼容与外部进程 |
 | `pdnd/release/` | Linux amd64/arm64 构建、能力矩阵一致性检查、运行时验收 |
 | `.githooks/`、`.gitleaks.toml` | 提交前密钥扫描：clone 后执行 `git config core.hooksPath .githooks` 启用，需先 `brew install gitleaks`；未装 gitleaks 时拒绝提交 |
-| `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含两个安装脚本共用的首装对外地址闸门） |
+| `.github/workflows/` | `pandora-native.yml`（pdnd 门禁、panel-frontend、nodefabric 契约、双架构发布构建）、`panel-pg18.yml`（panel-unit 全量单测 + PG18 集成门禁）、`panel-smoke.yml`（新前端对真实网关的联调冒烟）、`panel-deploy.yml`（deploy 脚本的桩测试，迁移脚本拿真实迁移目录校验；含安装脚本的首装对外地址闸门） |
 | `CLAUDE.md`、`.claude/rules/`、`.claude/skills/` | 给 Claude Code 的说明：根 CLAUDE.md 是全局约定与红线，rules 是按路径自动加载的模块约定，skills 是验证流程 |
 
 本地快照不含 `.env`、密钥、私钥和编译产物（二进制、`node_modules`、`dist`）。
@@ -66,7 +66,7 @@ aegis-public    aegis-admin     aegis-node
 - **模板**：只含占位符，例如 nginx 模板里的域名写成 `__AEGIS_DOMAIN__`，安装时从 `.env` 填入；
 - **自动化测试**：检查代码对不对，和被测代码放在一起，只用虚构数据（测试夹具里的密钥都是新生成的假值），不进入发布物。
 
-每一套部署自己的值都在安装时产生，不进仓库：域名由部署者写进 `.env`，主密钥、JWT 密钥、数据库口令和后台路径前缀由安装器（`install-native.sh`，或 docker 布局的 `install.sh`）首装生成。
+每一套部署自己的值都在安装时产生，不进仓库：域名由部署者写进 `.env`，主密钥、JWT 密钥、数据库口令和后台路径前缀由安装器（`install.sh`）首装生成。
 
 维护者操作自己服务器的东西——一次性运维脚本、安装日志、真实服务器地址——放在被 git 忽略的 `ops-local/`（按需创建，只存在于维护者本机）；脚本要用的密钥从 1Password 读取，不写进任何文件。提交前的 gitleaks 钩子（见上表 `.githooks/`）会拦下密钥、服务器 IP、后台前缀这类内容，误写进源码也提交不上去。
 
@@ -117,13 +117,15 @@ aegis-public    aegis-admin     aegis-node
 | 申请人不能审批自己 | 跨表校验触发器 | SEC-013 |
 | 各域令牌不可交叉 | 每域独立 HMAC 密钥，域名参与签名 | EXT-001 |
 
-`aegis_app` 是应用专用的数据库角色（`NOSUPERUSER NOBYPASSRLS`）。这一点是必需的：Docker 镜像的 `POSTGRES_USER` 是 superuser，隐含 `BYPASSRLS`，若应用直接用它连库，RLS 就形同虚设。
+`aegis_app` 是应用专用的数据库角色（`NOSUPERUSER NOBYPASSRLS`）。这一点是必需的：PostgreSQL 的超级用户（生产机和开发数据基座里都是 `postgres`）隐含 `BYPASSRLS`，若应用直接用它连库，RLS 就形同虚设。
 
 ### 本地开发
 
 ```bash
 cd panel
-make up                # 起 PostgreSQL 18 + Valkey 8（docker compose，只绑 127.0.0.1）
+make up                # 起开发数据基座：PostgreSQL 18 + Valkey 8（panel/dev/docker-compose.yml，只绑 127.0.0.1）
+make down              # 停开发数据基座（保留数据卷）
+make logs              # 看开发数据基座日志
 make migrate           # 迁移，先在临时库演练再动主库
 make check-migrations  # 只在临时库演练迁移，不动主库
 make invariants        # 数据层不变量测试
@@ -134,6 +136,10 @@ make frontend-embed    # 构建面板前端并同步进 web/{admin,portal}，由
 make e2e               # 端到端链路：注册→下单→支付→账本→订阅→配置
 make verify            # vet + check-migrations + invariants，提交前跑
 ```
+
+开发数据基座只用于本机开发（CI 的 PG18 门禁与冒烟栈也用 Docker），生产机不用 Docker；它的 PostgreSQL 参数与生产是同一组（`panel/deploy/postgresql-pandora.conf`），角色也照生产建：超级用户 `postgres`、库属主 `aegis`、运行角色 `aegis_app`（迁移与 `bootstrap.sh` 建）。
+
+第一次用：`cp deploy/.env.example deploy/.env`，把各处 `CHANGE_ME` 换成 URL-safe 的随机串（超级用户口令既在 `POSTGRES_SUPER_PASSWORD`，也在迁移连接串里，三条连接串里的口令要与对应的口令项一致）；本机装 PostgreSQL 18 客户端（psql、pg_dump）与 goose；然后 `make up` → `make migrate` → `deploy/bootstrap.sh`。以前的开发栈（容器 `aegis-postgres`、`aegis-valkey`）先 `docker rm -f` 掉，不然占着 5433 / 6380；旧的 `.env` 要补上 `POSTGRES_SUPER_PASSWORD`，迁移连接串换成 `postgres` 身份。
 
 `make help` 列出全部目标。`panel/tests/` 下另有 admin、uniproxy、epay、support 的端到端脚本（加上主链路 `e2e.sh` 共五个）。
 
@@ -146,7 +152,7 @@ make verify            # vet + check-migrations + invariants，提交前跑
 | 9000 | Public API |
 | 9001 | Admin API |
 | 9003 | Node API |
-| 5433 / 6380 | PostgreSQL / Valkey（docker compose 映射） |
+| 5433 / 6380 | 开发数据基座的 PostgreSQL / Valkey（`panel/dev/docker-compose.yml` 映射；生产机上它们是系统服务，端口见 `.env`） |
 
 ## pdnd：NativeCore 节点端
 
@@ -232,17 +238,14 @@ cd panel && ./deploy/build-release.sh /tmp/dist
 
 ### 2. 丢过去装
 
-缺省装成**直装布局**（`install-native.sh`，装到 `/opt/pandora`）：PostgreSQL 18（PGDG 源）、Valkey、age
-都由安装器用 apt 装好，不需要 Docker。目标机器：Debian 12–14 / Ubuntu 22.04–26.04、systemd、root，
-外加 `openssl curl`。
+安装器 `install.sh` 把面板装到 `/opt/pandora`：PostgreSQL 18（PGDG 源）、Valkey（Debian 12、Ubuntu 22.04 上是发行版的
+`redis-server`，要求 6.0 以上）、age 都由它用 apt 装好，不需要 Docker。目标机器：Debian 12–14 / Ubuntu 22.04–26.04、
+systemd、root，外加 `openssl curl`。
 
 ```bash
 scp -r /tmp/dist/pandora-panel_*_linux_amd64 root@目标机:/opt/pandora-release/rel
-ssh -t root@目标机 'cd /opt/pandora-release/rel/deploy && ./install-native.sh'
+ssh -t root@目标机 'cd /opt/pandora-release/rel/deploy && ./install.sh'
 ```
-
-`./install.sh` 也是同一个入口：全新安装时它直接交给 `install-native.sh`。还想要旧的 docker 布局
-（`/opt/aegispanel`，PostgreSQL 与 Valkey 在容器里）的，显式 `PANDORA_LAYOUT=docker ./install.sh`。
 
 发布包装出来的就是生产：首装把 `.env` 定为 `AEGIS_ENV=production`。生产模式下网关要求
 `AEGIS_PUBLIC_BASE_URL` 是 `https://公网域名` 或 `https://公网IPv4`，否则拒绝启动，所以首装会先问面板的对外地址，
@@ -262,32 +265,17 @@ root 独占的目录下——直接拿 `/tmp` 里的构建产物去装会被挡�
 
 1. **幂等**。已有 `.env` 的行绝不改——里面是随机生成的密钥，重写一次就再也解不开
    信封加密的字段了；新版本新增的键缺了才追加。
-2. **升级前自动全量备份**，落在 `/var/backups/pandora/pre-upgrade-*.dump`（docker 布局在 `/var/backups/aegispanel/`）。
+2. **升级前自动全量备份**，落在 `/var/backups/pandora/pre-upgrade-*.dump`。
 3. **不替你造管理员**。终端里首装时现场问邮箱与密码（不回显）；无人值守只提示该跑哪条命令。
 
 机器上别的版本的 PostgreSQL 集群（16、17……）安装器一律不碰；其中有 `aegis` 库而 PG18 不是它的接班人时
 停下，搬法见 `deploy/MIGRATION-RUNBOOK.md` 第 5 节。
 
-#### 已经装了 docker 布局的机器
-
-- 照旧能升级：只装着 docker 布局时 `./install.sh` 按 docker 布局升级，什么都不变；收尾会提示怎么迁。
-- 迁完之后再跑 `./install.sh` 会认出这台已是直装，交给 `install-native.sh`（docker 的 `.env` 已改名为 `.env.migrated-to-native`）。
-- 想迁到直装（省掉 Docker 守护进程与两个容器约 85 MB 常驻内存和健康检查开销）：
-
-  ```bash
-  ssh -t root@目标机 'tmux new -s from-docker "cd /opt/pandora-release/rel/deploy && ./install-native.sh --from-docker; read"'
-  ```
-
-  在 tmux（或 `systemd-run`）里跑，ssh 断了也不会半途回滚。停服几分钟：导出 → 恢复到 PG18 → 两边逐项核对
-  （行数、内容摘要与结构）→ 迁移 → 切换。任何一步失败自动回到 Docker；
-  Docker 的卷和 `/opt/aegispanel` 不删，收尾打印删除命令，跑稳之后由你决定。详见 `deploy/RUNBOOK.md` 第 13 章。
-
 ### 3. 装完
 
 三个网关只监听 `127.0.0.1`。机器上装了 nginx 时安装器把 HTTPS 边缘一并配好（证书 → 渲染 nginx → 续期 timer，
 `deploy/edge-tls.sh`）；`server_name` 和证书路径都从 `.env` 的 `AEGIS_PUBLIC_BASE_URL` 生成。
-公网只听 80（跳 443）与 443，另有本机回环运维入口 `127.0.0.1:9080`。下面的命令按直装的 `/opt/pandora` 写，
-docker 布局换成 `/opt/aegispanel`。
+公网只听 80（跳 443）与 443，另有本机回环运维入口 `127.0.0.1:9080`。下面的命令按 `/opt/pandora` 写。
 
 模板 include 的真实来源 IP 信任表 `/etc/aegispanel/cloudflare-realip.conf` 不存在时，渲染器会写一份
 **不信任任何代理**的默认文件：nginx 只认 TCP 对端，客户端自己填的 `CF-Connecting-IP` / `X-Real-IP`
@@ -309,17 +297,7 @@ cd /opt/pandora/deploy && ./backup-postgres.sh         # 立刻做一份加密�
 
 ### 回归测试
 
-docker 布局的安装链有回归测试，覆盖四种形态：全新安装、升级、老式 `.env`（缺
-`AEGIS_MIGRATION_DATABASE_URL`）、备份单元处于 `failed`。后两种都是生产上
-真实踩过的坑——第一版 install.sh 只验了全新安装就上生产，结果死在停服之后。
-直装布局与 `--from-docker` 的桩测试在 `deploy/install-native_*_mock_test.sh`，随 CI 的 panel-deploy 跑。
-
-```bash
-bash panel/deploy/test-install.sh <发布目录>
-```
-
-**破坏性**：会清空本机的 aegis 容器、数据卷与 `/opt/aegispanel`。只在一次性
-验证机上跑，脚本开头有护栏挡着生产。
+安装链的回归测试是 `panel/deploy/` 下的 `*_mock_test.sh` 与 `*_static_test.sh`：把 systemctl、apt、psql 等换成桩，不需要 Docker 或目标机器（个别项要 root，只在 CI 里跑），随 CI 的 `panel-deploy` 跑（各项覆盖什么见脚本开头的注释）。真机上的首装与原地升级用一次性测试机验证，步骤见 `.claude/skills/panel-install/SKILL.md`。
 
 ### 配置
 

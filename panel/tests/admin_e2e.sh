@@ -12,7 +12,7 @@ set -euo pipefail
 
 ADM=${ADM:-http://127.0.0.1:9001}
 PUB=${PUB:-http://127.0.0.1:9000}
-PSQL=${PSQL:-/opt/aegispanel/deploy/psql.sh}
+PSQL=${PSQL:-/opt/pandora/deploy/psql.sh}
 ADMIN_EMAIL=${ADMIN_EMAIL:-}
 ADMIN_PASS=${ADMIN_PASS:-}
 TENANT=${ADMIN_E2E_TENANT_ID:-}

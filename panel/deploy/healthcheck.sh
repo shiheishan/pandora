@@ -11,8 +11,8 @@
 # 恰恰是它自己的通知链路最不可信。
 set -u
 
-# 安装根目录取自脚本自己的位置（<根>/deploy/healthcheck.sh）：docker 布局的 /opt/aegispanel
-# 与直装布局的 /opt/pandora 用同一份脚本，不写死路径。HEALTHCHECK_ROOT 只给桩测试覆盖。
+# 安装根目录取自脚本自己的位置（<根>/deploy/healthcheck.sh，即 /opt/pandora），不写死路径。
+# HEALTHCHECK_ROOT 只给桩测试覆盖。
 ROOT="${HEALTHCHECK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)}"
 LOG=$ROOT/logs/health.log
 
@@ -82,16 +82,9 @@ check_tls() {
   fi
 }
 
-# 查库：两种布局都走 deploy/psql.sh（它自己按 .env 认布局）；更早的直装没装 psql.sh，
-# 退回以 postgres 系统用户经本地 socket 连 aegis 库（建库时就是这样连的）
+# 查库走 deploy/psql.sh（以 .env 里 postgres 超级用户的口令经回环连）；它不在或连不上都算「数据库连不上」
 db_query() {
-  if [ -f "$ROOT/deploy/psql.sh" ]; then
-    "$ROOT/deploy/psql.sh" -X -tAc "$1"
-  elif command -v runuser >/dev/null 2>&1; then
-    runuser -u postgres -- psql -X -d aegis -tAc "$1"
-  else
-    return 1
-  fi
+  "$ROOT/deploy/psql.sh" -X -tAc "$1"
 }
 
 # 可单测的部分到此为止
@@ -136,7 +129,7 @@ done
 #--- 备份新鲜度 ---
 # 只看「有没有跑」不够：备份脚本失败时旧文件还在，
 # 目录看着是满的。所以看最新那份的年龄。
-BK=${AEGIS_BACKUP_DIR:-/var/backups/aegispanel}
+BK=${AEGIS_BACKUP_DIR:-/var/backups/pandora}
 newest=$(ls -t "$BK"/*.age 2>/dev/null | head -1)
 if [ -z "$newest" ]; then
   note "备份目录 $BK 里没有任何备份"

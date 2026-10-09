@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# migrate.sh 自己挑迁移目录：不设 AEGIS_MIGRATIONS_DIR 时只取与 deploy/ 并排的 migrations/
+# （安装目录 /opt/pandora 与源码树都是这个布局），旁边没有就失败、绝不去别处借；显式设置优先。
 set -Eeuo pipefail
 umask 077
 
@@ -19,7 +21,7 @@ printf '%s\n' "$GOOSE_MIGRATION_DIR" >"$(dirname "$0")/../goose.dir"
 MOCK
 chmod 0755 "$TMP/bin/goose"
 
-# 在 prefix 下铺一套 install.sh / install-native.sh 的布局：deploy/ 与 migrations/ 并排
+# 在 prefix 下铺一套安装布局：deploy/ 与 migrations/ 并排
 install_layout() {
   mkdir -p "$1/deploy" "$1/migrations"
   cp "$ROOT/deploy/migrate.sh" "$1/deploy/"
@@ -34,13 +36,10 @@ resolved_dir() {
   cat "$TMP/goose.dir" 2>/dev/null || true
 }
 
-# 同一台机器上两套安装并存：每一套都只能读到自己旁边的迁移
-install_layout "$TMP/opt/aegispanel"
+# 安装目录：读到的是自己旁边的迁移
 install_layout "$TMP/opt/pandora"
-for prefix in "$TMP/opt/aegispanel" "$TMP/opt/pandora"; do
-  got="$(resolved_dir "$prefix")"
-  [ "$got" = "$prefix/migrations" ] || { echo "layout $prefix resolved to '$got'" >&2; exit 1; }
-done
+got="$(resolved_dir "$TMP/opt/pandora")"
+[ "$got" = "$TMP/opt/pandora/migrations" ] || { echo "install resolved to '$got'" >&2; exit 1; }
 
 # 旁边没有 migrations/ 就失败，绝不去别的安装目录借
 install_layout "$TMP/opt/orphan"
@@ -58,7 +57,7 @@ mkdir -p "$TMP/elsewhere"
 cp "$ROOT"/migrations/*.sql "$TMP/elsewhere/"
 rm -f "$TMP/goose.dir"
 AEGIS_MIGRATIONS_DIR="$TMP/elsewhere" AEGIS_ENV_FILE="$TMP/env" GOOSE_BIN="$TMP/bin/goose" \
-  bash "$TMP/opt/aegispanel/deploy/migrate.sh" status >/dev/null 2>&1 || true
+  bash "$TMP/opt/pandora/deploy/migrate.sh" status >/dev/null 2>&1 || true
 [ "$(cat "$TMP/goose.dir")" = "$TMP/elsewhere" ] || { echo 'AEGIS_MIGRATIONS_DIR override ignored' >&2; exit 1; }
 
 echo 'migrate migrations-directory layout: PASS'

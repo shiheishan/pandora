@@ -4,6 +4,8 @@
 #   主机取对外地址（域名与公网 IPv4 都查）；阈值按寿命缩放（剩余 < 寿命 1/3，最多 14 天）：
 #   6 天的 IP 证书刚签、过半都不报，只剩 1 天才报；90 天证书剩 20 天不报、剩 10 天报；过期报；
 #   续期 timer 的结论 RESULT=error 报、超过 36 小时没跑报；没走 HTTPS 边缘不查。
+# 另验查库（db_query）：安装根目录取脚本自己的位置，只经 <根>/deploy/psql.sh 查；psql.sh 不在就算连不上，
+# 没有别的退路（不再以 runuser 切到 postgres）。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,5 +68,27 @@ touch "$EDGE_CONF"; AEGIS_PUBLIC_BASE_URL=http://127.0.0.1:9000; none 'non-https
 # 主流程调用它，旧的 server_name 域名正则已经删掉
 grep -qx 'check_tls' "$DEPLOY/healthcheck.sh" || fail 'main flow does not call check_tls'
 if grep -q 'server_name \\K' "$DEPLOY/healthcheck.sh"; then fail 'old server_name regex still present'; fi
+
+# 查库：安装根目录取脚本自己的位置，只经 deploy/psql.sh
+mkdir -p "$T/root/deploy" "$T/bin"
+cp "$DEPLOY/healthcheck.sh" "$T/root/deploy/healthcheck.sh"
+printf '#!/usr/bin/env bash\nprintf "psql.sh %%s\\n" "$*" >>"%s/calls"\n' "$T" >"$T/root/deploy/psql.sh"
+printf '#!/usr/bin/env bash\nprintf "runuser %%s\\n" "$*" >>"%s/calls"\n' "$T" >"$T/bin/runuser"
+chmod +x "$T/root/deploy/psql.sh" "$T/bin/runuser"
+: >"$T/calls"
+(
+  unset HEALTHCHECK_ROOT
+  HEALTHCHECK_LIB=1 . "$T/root/deploy/healthcheck.sh"
+  [ "$ROOT" = "$T/root" ] || { echo "ROOT=$ROOT, want $T/root" >&2; exit 1; }
+  db_query 'SELECT 1'
+) || fail 'install root or query path wrong'
+grep -qx 'psql.sh -X -tAc SELECT 1' "$T/calls" || fail "db_query did not go through psql.sh: $(cat "$T/calls")"
+# psql.sh 不在：查询失败（主流程记成「数据库连不上」），不退回 runuser
+rm -f "$T/root/deploy/psql.sh"; : >"$T/calls"
+if ( PATH="$T/bin:$PATH"; HEALTHCHECK_LIB=1 . "$T/root/deploy/healthcheck.sh"; db_query 'SELECT 2' ) 2>/dev/null; then
+  fail 'db_query succeeded without psql.sh'
+fi
+[ ! -s "$T/calls" ] || fail "db_query fell back to something else: $(cat "$T/calls")"
+grep -Fq 'BK=${AEGIS_BACKUP_DIR:-/var/backups/pandora}' "$DEPLOY/healthcheck.sh" || fail 'backup directory default is not /var/backups/pandora'
 
 printf 'healthcheck mock: PASS\n'

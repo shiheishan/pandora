@@ -24,7 +24,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 仓库约定
 
 - panel 与 pdnd 是两个独立的 Go module：面板是 `github.com/aegispanel/aegis`，pdnd 沿用旧名 `github.com/aegispanel/nodeagent`。
-- 本地数据基座是 `panel/deploy/docker-compose.yml`，PostgreSQL 与 Valkey 只绑 `127.0.0.1:5433` / `6380`。
+- 本地数据基座是 `panel/dev/docker-compose.yml`，PostgreSQL 与 Valkey 只绑 `127.0.0.1:5433` / `6380`。
 - 全仓库用 LF，只有 `*.ps1` 用 CRLF（`.gitattributes`）。
 - 只删注释、不改行为的全仓批量提交，登记在 `.git-blame-ignore-revs`；clone 后执行 `git config blame.ignoreRevsFile .git-blame-ignore-revs` 启用。
 - `panel/migrations/RESERVED-TABLES.md` 登记迁移里保留、但 Go 从不引用的表，以及它们的锁定原因。删表前先读它。

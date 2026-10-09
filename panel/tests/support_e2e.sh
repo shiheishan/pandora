@@ -10,7 +10,7 @@ set -uo pipefail
 
 PUB=${PUB:-http://127.0.0.1:9000}
 ADM=${ADM:-http://127.0.0.1:9001}
-PSQL=/opt/aegispanel/deploy/psql.sh
+PSQL=/opt/pandora/deploy/psql.sh
 ADMIN_EMAIL=${ADMIN_EMAIL:-admin@aegispanel.local}
 ADMIN_PASS=${ADMIN_PASS:-Aegis#Admin2026!}
 SECRET="内部备注禁止外泄标记$RANDOM"

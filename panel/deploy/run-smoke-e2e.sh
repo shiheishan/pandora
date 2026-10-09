@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 这些 e2e 脚本是给「装在 /opt/aegispanel 的 docker-compose 部署」写的：
-# psql 走 /opt/aegispanel/deploy/psql.sh 或仓库的 deploy/psql.sh（读 deploy/.env、
-# docker exec 进 aegis-postgres），公开网关日志在 systemd 单元写的
+# 这些 e2e 脚本是给「按 deploy/install.sh 直装在 /opt/pandora 的面板」写的：
+# psql 走 /opt/pandora/deploy/psql.sh 或仓库的 deploy/psql.sh（读 deploy/.env，用主机的 psql
+# 经 127.0.0.1:POSTGRES_PORT 以超级用户 postgres 连），公开网关日志在 systemd 单元写的
 # /var/log/aegis/public.log。本机没有数据库，它们平时从没人跑。
 #
 # 这里只把它们声明要的环境原样搭出来，脚本一个字不改：
-#   - /opt/aegispanel/deploy 链到仓库的 deploy/，deploy/.env 由网关配置加上库超级账号拼成；
-#   - 起栈时容器名已设成 aegis-postgres、库名带 test 段（admin / uniproxy 的一次性库守卫）；
+#   - /opt/pandora/deploy 链到仓库的 deploy/，deploy/.env 由网关配置加上冒烟栈的 datastore.env
+#     （库与缓存那几项，与 install.sh 写的同名同义）拼成；库名带 test 段（admin / uniproxy 的一次性库守卫）；
 #   - 公开网关日志链到单元的实际路径 /var/log/aegis/public.log（epay_e2e.sh 查密钥不落日志）；
 #   - 易支付渠道用产品工具 aegis-payctl 配好（脚本里写死的测试商户 1001 与测试密钥）；
 #   - 四个一次性库守卫（admin / uniproxy / expiry / risk）要的确认变量照实给出：冒烟库本来就是跑完即扔的。
@@ -20,20 +20,19 @@ set -euo pipefail
 PANEL_DIR="$(cd "$1" && pwd)"
 STATE="$(cd "$2" && pwd)"
 [[ "${GITHUB_ACTIONS:-}" == true ]] || {
-  echo "只在 GitHub Actions 的一次性 runner 上跑：会写 /opt/aegispanel 与 deploy/.env" >&2
+  echo "只在 GitHub Actions 的一次性 runner 上跑：会写 /opt/pandora 与 deploy/.env" >&2
   exit 2
 }
-[[ -f "$STATE/smoke.env" && -f "$STATE/gateway.env" ]] || { echo "状态目录里没有冒烟栈，先 run-smoke-stack.sh up" >&2; exit 2; }
+[[ -f "$STATE/smoke.env" && -f "$STATE/gateway.env" && -f "$STATE/datastore.env" ]] \
+  || { echo "状态目录里没有冒烟栈，先 run-smoke-stack.sh up" >&2; exit 2; }
 [[ ! -e "$PANEL_DIR/deploy/.env" ]] || { echo "deploy/.env 已存在，拒绝覆盖" >&2; exit 2; }
-[[ ! -e /opt/aegispanel ]] || { echo "/opt/aegispanel 已存在，拒绝覆盖" >&2; exit 2; }
+[[ ! -e /opt/pandora ]] || { echo "/opt/pandora 已存在，拒绝覆盖" >&2; exit 2; }
+# deploy/psql.sh 用主机的 psql（runner 镜像自带的 PostgreSQL 客户端；e2e 只跑普通 SQL，比服务端旧一个大版本也能用）
+command -v psql >/dev/null || { echo "runner 上没有 psql：deploy/psql.sh 要主机的 PostgreSQL 客户端" >&2; exit 2; }
 [[ ! -e /var/log/aegis ]] || { echo "/var/log/aegis 已存在，拒绝覆盖" >&2; exit 2; }
 
 set -a; . "$STATE/smoke.env"; set +a
 AUTH_PER_MIN="$(grep -m1 '^AEGIS_RL_AUTH_PER_MIN=' "$STATE/gateway.env" | cut -d= -f2)"
-[[ "$SMOKE_PG_CONTAINER" == aegis-postgres ]] || {
-  echo "deploy/psql.sh 写死容器 aegis-postgres：起栈时设 PANDORA_SMOKE_PG_CONTAINER=aegis-postgres" >&2
-  exit 2
-}
 # 与 e2e 脚本里写死的测试值一致（epay_e2e.sh 的默认值、uniproxy_e2e.sh 的签名串），不是真实商户
 EPAY_TEST_PID=1001
 EPAY_TEST_KEY=TESTKEY_e2e_20260725
@@ -41,18 +40,12 @@ EPAY_TEST_KEY=TESTKEY_e2e_20260725
 # ---------------------------------------------------------------------------
 # 搭出脚本声明要的环境
 # ---------------------------------------------------------------------------
-echo "==> 搭 /opt/aegispanel 布局与 deploy/.env"
-pg_pw="$(python3 -c 'import sys, urllib.parse as u; print(u.unquote(u.urlsplit(sys.argv[1]).password or ""))' "$SMOKE_MIGRATION_DSN")"
-[[ -n "$pg_pw" ]] || { echo "从 SMOKE_MIGRATION_DSN 取不到超级账号口令" >&2; exit 1; }
+echo "==> 搭 /opt/pandora 布局与 deploy/.env"
 ( umask 077
-  { cat "$STATE/gateway.env"
-    echo "POSTGRES_USER=aegis"
-    echo "POSTGRES_PASSWORD=$pg_pw"
-    echo "POSTGRES_DB=$SMOKE_PG_DB"
-  } > "$PANEL_DIR/deploy/.env" )
-sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/aegispanel
-mkdir -p /opt/aegispanel/bin
-ln -s "$PANEL_DIR/deploy" /opt/aegispanel/deploy
+  cat "$STATE/gateway.env" "$STATE/datastore.env" > "$PANEL_DIR/deploy/.env" )
+sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/pandora
+mkdir -p /opt/pandora/bin
+ln -s "$PANEL_DIR/deploy" /opt/pandora/deploy
 sudo install -d -o "$(id -u)" -g "$(id -g)" /var/log/aegis
 ln -s "$STATE/logs/aegis-public.log" /var/log/aegis/public.log
 
@@ -70,17 +63,17 @@ prep() {
   fi
 }
 prep "编译 aegis-payctl" \
-  env -C "$PANEL_DIR" CGO_ENABLED=0 go build -mod=readonly -o /opt/aegispanel/bin/ ./cmd/aegis-payctl
+  env -C "$PANEL_DIR" CGO_ENABLED=0 go build -mod=readonly -o /opt/pandora/bin/ ./cmd/aegis-payctl
 
-PSQL=/opt/aegispanel/deploy/psql.sh
+PSQL=/opt/pandora/deploy/psql.sh
 TENANT="$("$PSQL" -X -tAc 'SELECT id FROM tenants ORDER BY created_at LIMIT 1' | tr -d '[:space:]')"
 [[ -n "$TENANT" ]] || { echo "冒烟库里没有租户" >&2; exit 1; }
-echo "    租户 $TENANT，库 $SMOKE_PG_DB"
+echo "    租户 $TENANT，库 $SMOKE_PG_DB（psql $(psql --version | awk '{print $3}')）"
 
 echo "==> aegis-payctl 配易支付测试渠道（商户 $EPAY_TEST_PID）"
 payctl() {
   ( set -a; . "$STATE/gateway.env"; set +a
-    /opt/aegispanel/bin/aegis-payctl upsert-epay --tenant "$TENANT" \
+    /opt/pandora/bin/aegis-payctl upsert-epay --tenant "$TENANT" \
       --base-url http://127.0.0.1:9 --merchant "$EPAY_TEST_PID" --key "$EPAY_TEST_KEY" \
       --enable --allow-private-host )
 }

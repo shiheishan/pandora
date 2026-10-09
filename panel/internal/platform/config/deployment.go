@@ -7,11 +7,11 @@ import "strings"
 //------------------------------------------------------------------------------
 
 const (
-	defaultBackupDir   = "/var/backups/aegispanel"
-	defaultPdndDistDir = "/opt/aegispanel/pdnd-dist"
+	defaultBackupDir   = "/var/backups/pandora"
+	defaultPdndDistDir = "/opt/pandora/pdnd-dist"
 	// defaultAdminGeoIPDB 只是 aegis-admin 的缺省位置；aegis-node 历来没有缺省，
 	// 未设置就不开 GeoIP（见 AdminGeoIPDB 与 GeoIPDB 的区别）。
-	defaultAdminGeoIPDB = "/opt/aegispanel/geoip/ip2region_v4.xdb"
+	defaultAdminGeoIPDB = "/opt/pandora/geoip/ip2region_v4.xdb"
 
 	// DefaultBackupWebDAVConfigPath 是异地备份配置文件的缺省位置。aegis-admin 的
 	// 系统状态页也拿它判断「异地备份配了没有」。

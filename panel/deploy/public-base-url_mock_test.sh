@@ -44,7 +44,7 @@ got="$(PANDORA_ASSUME_YES=1 IP_SRC=203.0.113.10 pandora_resolve_public_base_url 
 [ "$got" = https://203.0.113.10 ] || fail "fallback resolved '$got'"
 grep -Fq '用本机公网 IPv4：https://203.0.113.10' "$tmp.err" || fail "fallback not explained: $(cat "$tmp.err")"
 # 非终端 stdin 也不去读：不会卡住，也不会误吃管道里的内容
-got="$(printf 'https://panel.example.test\n' | IP_SRC=203.0.113.10 pandora_resolve_public_base_url 'bash install-native.sh' 2>/dev/null)"
+got="$(printf 'https://panel.example.test\n' | IP_SRC=203.0.113.10 pandora_resolve_public_base_url 'bash install.sh' 2>/dev/null)"
 [ "$got" = https://203.0.113.10 ] || fail "read the address from a non-terminal stdin: '$got'"
 # 没有公网 IPv4（NAT 后面）又没给：中文报错，两种重跑命令都给
 if err="$(PANDORA_ASSUME_YES=1 IP_SRC=10.0.0.5 pandora_resolve_public_base_url './install.sh' 2>&1 </dev/null)"; then
@@ -53,19 +53,19 @@ fi
 grep -Fq '首装需要面板的对外地址' <<<"$err" || fail "missing-address message: $err"
 grep -Fq 'sudo PANDORA_PUBLIC_BASE_URL=https://panel.example.com ./install.sh' <<<"$err" || fail 'no rerun command'
 grep -Fq 'PANDORA_PUBLIC_BASE_URL=https://<本机公网IPv4>' <<<"$err" || fail 'no IP rerun command'
-if err="$(PANDORA_PUBLIC_BASE_URL=https://10.0.0.1 pandora_resolve_public_base_url 'bash install-native.sh' 2>&1 </dev/null)"; then
+if err="$(PANDORA_PUBLIC_BASE_URL=https://10.0.0.1 pandora_resolve_public_base_url 'bash install.sh' 2>&1 </dev/null)"; then
   fail 'private IP address was accepted'
 fi
 grep -Fq '面板对外地址不合规：https://10.0.0.1' <<<"$err" || fail "invalid-address message: $err"
-grep -Fq 'bash install-native.sh' <<<"$err" || fail 'invalid-address message lacks the rerun command'
+grep -Fq 'bash install.sh' <<<"$err" || fail 'invalid-address message lacks the rerun command'
 
 # 3. .env 单键读取：不 source，最后一次出现为准，值里可以有等号
 printf 'A=1\nB=x=y\nA=2\n' >"$tmp"
 [ "$(pandora_env_file_value "$tmp" A)" = 2 ] && [ "$(pandora_env_file_value "$tmp" B)" = x=y ] \
   && [ -z "$(pandora_env_file_value "$tmp" C)" ] || fail 'env_file_value'
 
-# 4. 两个安装脚本共用这一份，不各自再写校验；发布包带上它
-for script in install.sh install-native.sh; do
+# 4. 安装器用这一份，不另写校验；发布包带上它
+for script in install.sh; do
   grep -Fq '. "$' "$DEPLOY/$script" && grep -Fq '/public-base-url.sh"' "$DEPLOY/$script" \
     || fail "$script does not source public-base-url.sh"
   grep -Fq 'pandora_resolve_public_base_url' "$DEPLOY/$script" || fail "$script does not resolve the address"
@@ -73,13 +73,13 @@ for script in install.sh install-native.sh; do
     fail "$script keeps its own copy of the validator"
   fi
 done
-[ "$(grep -c 'install-native.sh public-base-url.sh' "$DEPLOY/build-release.sh")" -eq 2 ] \
+[ "$(grep -c 'install.sh public-base-url.sh' "$DEPLOY/build-release.sh")" -eq 2 ] \
   || fail 'build-release.sh does not copy and archive public-base-url.sh'
 
-# 5. install-native.sh：不再写示例值；.env 只在首装写
-native="$DEPLOY/install-native.sh"
-if grep -Fq 'AEGIS_PUBLIC_BASE_URL=https://CHANGE_ME' "$native"; then fail 'install-native.sh still writes the example address'; fi
-grep -Fq 'AEGIS_PUBLIC_BASE_URL=${PUBLIC_BASE_URL}' "$native" || fail 'install-native.sh does not write the resolved address'
+# 5. install.sh：不再写示例值；.env 只在首装写
+inst="$DEPLOY/install.sh"
+if grep -Fq 'AEGIS_PUBLIC_BASE_URL=https://CHANGE_ME' "$inst"; then fail 'install.sh still writes the example address'; fi
+grep -Fq 'AEGIS_PUBLIC_BASE_URL=${PUBLIC_BASE_URL}' "$inst" || fail 'install.sh does not write the resolved address'
 # 写 .env 的 heredoc 必须落在 MODE=install 的分支里
 awk '
   /^if \[\[ "\$MODE" = install \]\]; then$/ { inside = 1 }
@@ -87,6 +87,6 @@ awk '
   inside && /^fi$/ { inside = 0 }
   !inside && /^cat > "\$INSTALL_DIR\/deploy\/\.env" <</ { unguarded = 1 }
   END { exit !(guarded && !unguarded) }
-' "$native" || fail 'install-native.sh writes .env outside the first-install branch'
+' "$inst" || fail 'install.sh writes .env outside the first-install branch'
 
 printf 'public-base-url mock: PASS\n'

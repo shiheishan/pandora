@@ -74,8 +74,9 @@ ALTER ROLE aegis_app SET row_security = on;
 --   jit = off: PG18 defaults to jit=on with jit_above_cost=100000.  Queries
 --   with per-row subplans cross that estimate easily and spend far longer
 --   compiling than executing; at 5k users JIT was ~78% of all execution time.
---   docker-compose.yml also passes -c jit=off for the bundled instance; this
---   setting covers native installs and managed PostgreSQL.
+--   postgresql-pandora.conf also turns JIT off for the whole installed
+--   instance; pinning it here as well covers managed PostgreSQL and keeps the
+--   runtime role off JIT even if the instance setting is changed back.
 --
 --   statement_timeout = 15s: one statement running longer than this means the
 --   request is already lost.  15s stays below nginx's 20s read timeout on the

@@ -188,11 +188,11 @@ export async function epayNotify(code: string, merchant: string, key: string, ou
 }
 
 // ----------------------------------------------------------------------------
-//  SQL 夹具：以迁移账号直连冒烟库。只用于产品接口造不出、或要等时间流逝的数据，
+//  SQL 夹具：以迁移账号（超级用户 postgres）直连冒烟库。只用于产品接口造不出、或要等时间流逝的数据，
 //  每处调用都写明为什么（与 tests/smoke/seed.ts 的 sqlFixture 同一做法）
 // ----------------------------------------------------------------------------
 export function sql(what: string, statement: string): string {
-  const r = spawnSync('docker', ['exec', '-i', PG_CONTAINER, 'psql', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-U', 'aegis', '-d', PG_DB], { input: statement, encoding: 'utf8' })
+  const r = spawnSync('docker', ['exec', '-i', PG_CONTAINER, 'psql', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', PG_DB], { input: statement, encoding: 'utf8' })
   if (r.status !== 0) throw new Error(`SQL 夹具「${what}」失败：${r.stderr || r.error?.message}`)
   return r.stdout.trim()
 }

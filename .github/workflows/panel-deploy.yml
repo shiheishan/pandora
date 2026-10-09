@@ -13,11 +13,13 @@ on:
     paths:
       - "panel/deploy/**"
       - "panel/migrations/**"
+      - "panel/dev/**"
       - ".github/workflows/panel-deploy.yml"
   pull_request:
     paths:
       - "panel/deploy/**"
       - "panel/migrations/**"
+      - "panel/dev/**"
       - ".github/workflows/panel-deploy.yml"
 
 permissions:
@@ -46,14 +48,12 @@ jobs:
             migrate-layout_mock_test.sh
             migrate-rollback_mock_test.sh
             check-migrations_mock_test.sh
-            check-migrations_native_mock_test.sh
-            pg-layout_mock_test.sh
+            db-scripts_mock_test.sh
             render-nginx_test.sh
             cloudflare-realip_mock_test.sh
             release-artifact-binding_mock_test.sh
             logrotate-aegis_static_test.sh
             public-base-url_mock_test.sh
-            migrate-to-new-host_mock_test.sh
             install-chain_mock_test.sh
             install-migrate-order_mock_test.sh
             install-firstrun_mock_test.sh
@@ -62,10 +62,11 @@ jobs:
             tls-renew_static_test.sh
             healthcheck-install_static_test.sh
             build-release_toolchain_mock_test.sh
-            install-native_pgcluster_mock_test.sh
-            install-native_backup_mock_test.sh
-            install-native_fromdocker_mock_test.sh
-            install-native_hardening_mock_test.sh
+            install-pgcluster_mock_test.sh
+            install-backup_mock_test.sh
+            install-hardening_mock_test.sh
+            dev-compose_static_test.sh
+            deploy-single-layout_static_test.sh
             webdav-backup-hardening_mock_test.sh
           )
           failed=()
@@ -133,3 +134,22 @@ jobs:
             echo "GitHub runner 上没有免密 sudo，无法跑 $t" >&2
             exit 1
           fi
+      - name: Run the signed-manifest gate of verify-backup / restore-postgres as root
+        # 两个脚本把 .env 与可执行文件按属主和 /proc/self/fd 绑定，要 Linux root；别处只做静态检查
+        run: |
+          t=verify-backup_manifest_mock_test.sh
+          if [ "${GITHUB_ACTIONS:-}" != true ]; then
+            echo "不在 GitHub Actions 上，跳过 $t（GitHub 上必跑）"
+            exit 0
+          fi
+          if [ "$(id -u)" -eq 0 ]; then
+            out="$(bash "$t")"
+          elif sudo -n true 2>/dev/null; then
+            out="$(sudo -n env "PATH=$PATH" bash "$t")"
+          else
+            echo "GitHub runner 上没有免密 sudo，无法跑 $t" >&2
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          # 以 root 跑必须真跑到运行段，不许落回静态检查
+          if grep -q 'runtime=NOT_RUN' <<<"$out"; then echo "$t did not run its runtime part" >&2; exit 1; fi

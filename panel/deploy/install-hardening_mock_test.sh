@@ -1,29 +1,33 @@
 #!/usr/bin/env bash
-# 直装布局的 PostgreSQL 与 Valkey 加固，不需要 root、systemd：
+# PostgreSQL 的调参与加固、Valkey 的加固，不需要 root、systemd：
 #   ① drop-in 内容：两份都整套写全，不依赖发行版单元（Debian 12 的 redis 单元把 ProtectSystem 改回 true）；
-#      内存上限与 docker-compose.yml 里的容器上限逐字一致（docker 布局改了，这里跟着红）；被挡的系统调用返回 EPERM；
+#      内存上限在这里钉死（PostgreSQL MemoryMax=512M、Valkey MemoryMax=160M）；被挡的系统调用返回 EPERM；
 #      PostgreSQL 不许带 MemoryDenyWriteExecute（超级用户会话的 JIT 要可写可执行内存），Valkey 必须带；
 #      Valkey 的系统调用允许清单先清空再写，放行写的目录随 valkey / redis 走；
-#   ② Valkey 配置块：与 docker-compose.yml 里 valkey 的启动参数同口径（禁 FLUSHALL / FLUSHDB、不落盘、内存上限与淘汰），
-#      另加只听回环与保护模式；bind 按版本与 IPv6 写（Redis 6.0 不认「-」前缀：Ubuntu 22.04、Debian 12、Debian 13
-#      三种都覆盖，真起一遍见 valkey-hardening_versions_docker_test.sh）；重复跑一字不变；不带口令，口令不进命令行参数；
-#   ③ 应用与撤回：没变不重启；PostgreSQL 重启后等在线的时长按重启前 CHECKPOINT 的实测耗时给（不写死）；
-#      起不来就把 drop-in / 配置还原成这次之前的样子（之前有的写回、没有的删掉），再核实在跑：在跑返回 1、提示照实写，
-#      仍没起来就停下、也照实写；226/NAMESPACE 提示原因与开关；Valkey 分口令、配置块、drop-in 三步，只撤回失败的那一步；
-#   ④ 开关 PANDORA_SYSTEMD_HARDENING：缺省开；0 去掉两份 drop-in；记进 .env 只改这一行；
-#   ⑤ 静态：安装器在外来集群检查、迁移、收窄角色之后、起网关之前加固；失败时 --from-docker 立即停下，
-#      首装与升级把服务按新版本起来之后再停下。
+#   ② Valkey 配置块：钉死 maxmemory 96mb、allkeys-lru、禁 FLUSHALL / FLUSHDB、不落盘，另加只听回环与保护模式；
+#      bind 按版本与 IPv6 写（Redis 6.0 不认「-」前缀：Ubuntu 22.04、Debian 12、Debian 13 三种都覆盖，真起一遍见
+#      valkey-hardening_versions_docker_test.sh）；重复跑一字不变；旧块（块头说明文字不同）被整块换掉；
+#      不带口令，口令不进命令行参数；最低版本：Redis 6.0、Valkey 任何版本，太老或认不出就停下；
+#   ③ PostgreSQL：调参文件 conf.d/pandora.conf 与 drop-in 一起应用、只重启一次；文件内容与发布包逐字相同；
+#      都没变不重启；等在线的时长按重启前 CHECKPOINT 的实测耗时给（不写死）；起不来就把调参文件与 drop-in
+#      都还原成这次之前的样子（之前有的写回、没有的删掉），再核实在线：在线返回 1、提示照实写，仍没在线就停下、
+#      也照实写；226/NAMESPACE 提示原因与开关；postgresql.conf 没有生效的 include_dir = 'conf.d' 就停下；
+#      Valkey 分口令、配置块、drop-in 三步，只撤回失败的那一步；
+#   ④ 开关 PANDORA_SYSTEMD_HARDENING：缺省开；0 去掉两份 drop-in（调参照旧）；记进 .env 只改这一行；
+#   ⑤ 静态：版本核对在装包之后、建集群之前；include 核对在建集群之后、任何数据改动之前；调参与加固在外来集群
+#      检查、迁移、收窄角色之后、起网关之前；失败时把服务按新版本起来之后再停下。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-NATIVE="$DEPLOY/install-native.sh"
-LIB="$DEPLOY/install-native-lib.sh"
-COMPOSE="$DEPLOY/docker-compose.yml"
+INST="$DEPLOY/install.sh"
+LIB="$DEPLOY/install-lib.sh"
+TUNING="$DEPLOY/postgresql-pandora.conf"
 T="$(mktemp -d "${TMPDIR:-/tmp}/pandora-hardening.XXXXXX")"
 trap 'rm -rf -- "$T"' EXIT
-fail() { printf 'install-native hardening: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'install hardening: %s\n' "$*" >&2; exit 1; }
 
 mkdir -p "$T/bin"
+printf '%s\n' "$TUNING" >"$T/tuning.src"
 # systemctl：单元「起不来」的条件——fail.restart 开着且单元带 pandora drop-in，或 fail.conf 里的模式出现在
 # conf.path 指的 Valkey 配置里。postgresql@ 的 restart 一律返回 0（Debian 单元的 ExecStart 带「-」前缀），只能看 pg_lsclusters
 cat >"$T/bin/systemctl" <<'MOCK'
@@ -41,13 +45,15 @@ case "$1" in
 esac
 exit 0
 MOCK
-# pg_lsclusters：「起不来」开关开着且 drop-in 在、或 pg.down 在时报 down；每次调用记一行
+# pg_lsclusters：报 down 的条件——「起不来」开关开着且 drop-in 在；pg.badconf 开着且 conf.d 里是发布包那份调参；
+# 或 pg.down 在。每次调用记一行
 cat >"$T/bin/pg_lsclusters" <<'MOCK'
 #!/usr/bin/env bash
 root="$(cd "$(dirname "$0")/.." && pwd)"
 echo x >>"$root/lscalls"
 status=online
 if [ -f "$root/fail.restart" ] && [ -f "$root/systemd/postgresql@18-main.service.d/pandora-hardening.conf" ]; then status=down; fi
+if [ -f "$root/pg.badconf" ] && cmp -s "$(cat "$root/tuning.src")" "$root/etc/18/main/conf.d/pandora.conf"; then status=down; fi
 [ ! -f "$root/pg.down" ] || status=down
 printf 'Ver Cluster Port Status Owner Data directory Log file\n18 main 5432 %s postgres /var/lib/postgresql/18/main /dev/null\n' "$status"
 MOCK
@@ -66,12 +72,19 @@ export PATH="$T/bin:$PATH"
 . "$LIB"
 set -euo pipefail
 NATIVE_SYSTEMD_DIR="$T/systemd"
+NATIVE_PG_ETC="$T/etc"
 # 重启前的 CHECKPOINT 记下来；date +%s 交替给 1000 / 1010：检查点「耗时」10 秒 → 等在线的预算 30 + 3×10 = 60 秒
 native_pg_peer() { printf 'peer %s\n' "$*" >>"$T/peer.calls"; }
 date() { if [ "${1:-}" = +%s ]; then n=$(( $(cat "$T/date.n" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$T/date.n"; echo $(( n % 2 ? 1000 : 1010 )); else command date "$@"; fi; }
-reset() { rm -rf "$T/systemd" "$T/fail.restart" "$T/fail.conf" "$T/pg.down" "$T/exec.status" "$T/journal"; : >"$T/calls"; : >"$T/lscalls"; : >"$T/peer.calls"; }
+reset() {
+  rm -rf "$T/systemd" "$T/etc" "$T/fail.restart" "$T/fail.conf" "$T/pg.down" "$T/pg.badconf" "$T/exec.status" "$T/journal"
+  : >"$T/calls"; : >"$T/lscalls"; : >"$T/peer.calls"
+}
 PG_DROPIN="$T/systemd/postgresql@18-main.service.d/pandora-hardening.conf"
+PG_TUNED="$T/etc/18/main/conf.d/pandora.conf"
 VK_DROPIN="$T/systemd/valkey-server.service.d/pandora-hardening.conf"
+pg_restarts() { grep -c 'systemctl restart postgresql@18-main.service' "$T/calls" || true; }
+apply_pg() { ( native_apply_pg_config 18 5432 "$TUNING" ) >"$T/out" 2>&1; }
 
 # --- ① drop-in 内容 -------------------------------------------------------------------
 pg="$(native_pg_hardening_dropin)"
@@ -98,12 +111,9 @@ for flavor in valkey redis; do
     || fail "$flavor drop-in syscall filter: $(grep '^SystemCallFilter=' <<<"$vk")"
 done
 vk="$(native_valkey_hardening_dropin valkey)"
-# 内存上限与 docker 布局的容器上限一致
-compose_limit() { awk -v svc="  $1:" '$0 == svc { p = 1; next } p && /^  [a-z]/ { p = 0 } p && /memory:/ { print $2; exit }' "$COMPOSE"; }
-pg_limit="$(compose_limit postgres)"; vk_limit="$(compose_limit valkey)"
-[ -n "$pg_limit" ] && [ -n "$vk_limit" ] || fail "cannot read the container memory limits from docker-compose.yml"
-grep -qx "MemoryMax=$pg_limit" <<<"$pg" || fail "PostgreSQL MemoryMax differs from the container limit $pg_limit"
-grep -qx "MemoryMax=$vk_limit" <<<"$vk" || fail "Valkey MemoryMax differs from the container limit $vk_limit"
+# 内存上限：PostgreSQL 512M（shared_buffers 128MB 加连接与维护内存的余量）、Valkey 160M（maxmemory 96mb 加开销）
+[ "$(grep -c '^MemoryMax=' <<<"$pg")" -eq 1 ] && grep -qx 'MemoryMax=512M' <<<"$pg" || fail "PostgreSQL MemoryMax: $(grep '^MemoryMax' <<<"$pg")"
+[ "$(grep -c '^MemoryMax=' <<<"$vk")" -eq 1 ] && grep -qx 'MemoryMax=160M' <<<"$vk" || fail "Valkey MemoryMax: $(grep '^MemoryMax' <<<"$vk")"
 
 # --- ② Valkey 配置块 ---------------------------------------------------------------------
 # bind：按版本与 IPv6。IPv6 回环在 /proc/net/if_inet6 里是 lo 上的 ::1
@@ -121,21 +131,35 @@ bind_case redis-server 'Redis server v=6.0.16 sha=00000000:0 malloc=jemalloc-5.2
 bind_case redis-server 'Redis server v=6.0.16 sha=00000000:0 malloc=jemalloc-5.2.1 bits=64 build=1' "$T/inet6.no" '127.0.0.1'
 bind_case redis-server 'Redis server v=6.0.16 sha=00000000:0 malloc=jemalloc-5.2.1 bits=64 build=1' "$T/missing" '127.0.0.1'
 bind_case redis-server 'something unexpected' "$T/inet6.yes" '127.0.0.1 ::1'
+
+# 最低版本：Redis 6.0、Valkey 任何版本；太老、认不出都停下，并说出最低版本
+version_case() { # <程序> <--version 输出> <ok|refuse>
+  printf '%s\n' "$2" >"$T/version.$1"
+  if ( native_check_valkey_version "$1" ) >"$T/out" 2>&1; then got=ok; else got=refuse; fi
+  [ "$got" = "$3" ] || fail "version check for '$2': got $got, want $3: $(cat "$T/out")"
+  [ "$3" = ok ] || grep -Fq 'Redis 6.0' "$T/out" || fail "refusal for '$2' does not name the minimum: $(cat "$T/out")"
+}
+version_case redis-server 'Redis server v=5.0.14 sha=00000000:0 malloc=jemalloc-5.1.0 bits=64 build=1' refuse
+version_case redis-server 'Redis server v=6.0.16 sha=00000000:0 malloc=jemalloc-5.2.1 bits=64 build=1' ok
+version_case redis-server 'Redis server v=7.0.15 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=1' ok
+version_case valkey-server 'Valkey server v=8.1.1 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=1' ok
+version_case valkey-server 'Valkey server v=7.2.5 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=1' ok
+version_case redis-server 'garbage' refuse
+version_case valkey-server 'Valkey server v=unknown' refuse
+version_case redis-server '' refuse
 rm -f "$T"/version.*
 
 block="$(native_valkey_hardening_block '127.0.0.1 -::1')"
-compose_vk="$(awk '/^  valkey:/ { p = 1; next } p && /^  [a-z]/ { p = 0 } p' "$COMPOSE")"
-vk_arg() { awk -v k="- --$1" '$0 ~ "^ +" k "$" { getline; sub(/^ +- */, ""); print; exit }' <<<"$compose_vk"; }
-[ "$(vk_arg maxmemory)" = 96mb ] && grep -qx 'maxmemory 96mb' <<<"$block" || fail "maxmemory differs from docker-compose.yml ($(vk_arg maxmemory))"
-grep -qx "maxmemory-policy $(vk_arg maxmemory-policy)" <<<"$block" || fail 'maxmemory-policy differs from docker-compose.yml'
-grep -qx 'appendonly no' <<<"$block" && grep -qx 'save ""' <<<"$block" || fail 'the block persists data while the container does not'
+grep -qx 'maxmemory 96mb' <<<"$block" || fail 'the block does not cap memory at 96mb'
+grep -qx 'maxmemory-policy allkeys-lru' <<<"$block" || fail 'the block does not evict with allkeys-lru'
+grep -qx 'appendonly no' <<<"$block" && grep -qx 'save ""' <<<"$block" || fail 'the block persists data'
 for cmd in FLUSHALL FLUSHDB; do
-  grep -A1 -- '- --rename-command' <<<"$compose_vk" | grep -q -- "- $cmd" || fail "docker-compose.yml no longer renames $cmd (update this test and the block together)"
   grep -qx "rename-command $cmd \"\"" <<<"$block" || fail "the block does not disable $cmd"
 done
 grep -qx 'bind 127.0.0.1 -::1' <<<"$block" && grep -qx 'protected-mode yes' <<<"$block" || fail 'the block does not pin loopback and protected mode'
 grep -qx 'bind 127.0.0.1' <<<"$(native_valkey_hardening_block 127.0.0.1)" || fail 'the bind line does not follow the given addresses'
 if grep -qi 'requirepass' <<<"$block"; then fail 'the block carries the password'; fi
+if grep -qi 'docker\|install-native' <<<"$block"; then fail "the block header still talks about another layout: $(head -1 <<<"$block")"; fi
 # 写进配置：其余行不动、块在末尾、重复跑一字不变、旧块被替换、口令不进命令行参数
 conf="$T/valkey.conf"; printf '%s\n' "$conf" >"$T/conf.path"
 printf 'port 6379\n# save 3600 1\nrequirepass vk-fixture-pw-aaaaaaaa\n\n' >"$conf"; chmod 0640 "$conf"
@@ -155,55 +179,98 @@ if native_set_valkey_hardening "$conf" '127.0.0.1 -::1'; then fail 'an unchanged
 cmp -s "$conf" "$T/conf.once" || fail 'a second run changed the file'
 sed -i.bak 's/^maxmemory 96mb$/maxmemory 1gb/' "$conf"
 native_set_valkey_hardening "$conf" '127.0.0.1 -::1' || fail 'a hand-edited block was not restored'
-[ "$(grep -c "^$(printf '%s' "$NATIVE_VALKEY_BLOCK_BEGIN" | sed 's/[][\.*^$/]/\\&/g')$" "$conf")" -eq 1 ] || fail 'the block was duplicated'
+[ "$(grep -c '^# >>> pandora' "$conf")" -eq 1 ] || fail 'the block was duplicated'
 grep -qx 'maxmemory 96mb' "$conf" && ! grep -qx 'maxmemory 1gb' "$conf" || fail 'the old block was not replaced'
 mode="$(stat -c %a "$conf" 2>/dev/null || stat -f %Lp "$conf")"; [ "$mode" = 640 ] || fail "valkey.conf mode became $mode"
+# 块头说明文字不同的旧块（更早的安装器写的）也认得出：整块换掉，不会叠出第二份 rename-command（Redis 会拒绝启动）
+printf 'port 6379\n\n# >>> pandora（an older header）\nbind 127.0.0.1\nrename-command FLUSHALL ""\nmaxmemory 64mb\n# <<< pandora\n' >"$conf"
+native_set_valkey_hardening "$conf" '127.0.0.1 -::1' || fail 'an old block was reported as unchanged'
+[ "$(grep -c '^# >>> pandora' "$conf")" -eq 1 ] && [ "$(grep -c '^rename-command FLUSHALL' "$conf")" -eq 1 ] \
+  && ! grep -qx 'maxmemory 64mb' "$conf" || fail "an old block with a different header was not replaced: $(cat "$conf")"
 
-# --- ③ PostgreSQL：应用、没变不重启、等在线的预算、撤回 ------------------------------------------
+# --- ③ PostgreSQL：include 核对 ----------------------------------------------------------------
+pgconf="$T/etc/18/main/postgresql.conf"
+include_case() { # <postgresql.conf 里 include 那一行，空表示没有这一行> <ok|stop>
+  rm -rf "$T/etc"; mkdir -p "${pgconf%/*}"
+  printf "max_connections = 100\nshared_buffers = 128MB\n%s\n# Add settings for extensions here\n" "$1" >"$pgconf"
+  if ( native_check_pg_conf_include 18 ) >"$T/out" 2>&1; then got=ok; else got=stop; fi
+  [ "$got" = "$2" ] || fail "include line '$1': got $got, want $2: $(cat "$T/out")"
+  [ "$2" = ok ] || grep -Fq "include_dir = 'conf.d'" "$T/out" || fail "stop message does not say what to restore: $(cat "$T/out")"
+}
+include_case "include_dir = 'conf.d'			# include files ending in '.conf' from" ok   # Debian 的原样
+include_case "include_dir 'conf.d'" ok
+include_case "include_dir = '$T/etc/18/main/conf.d/'" ok
+include_case "#include_dir = 'conf.d'			# include files ending in '.conf' from" stop
+include_case "include_dir = 'other.d'" stop
+include_case "include_dir = 'conf.d' trailing" stop
+include_case '' stop
+rm -rf "$T/etc"
+if ( native_check_pg_conf_include 18 ) >"$T/out" 2>&1; then fail 'a missing postgresql.conf was accepted'; fi
+
+# --- ③ PostgreSQL：调参与 drop-in 一起应用、没变不重启、等在线的预算、撤回 ------------------------------
 native_apply_dropin demo.service 'x=1' || fail 'a new drop-in was reported as unchanged'
 [ "$(cat "$T/systemd/demo.service.d/pandora-hardening.conf")" = 'x=1' ] || fail 'drop-in content'
 if native_apply_dropin demo.service 'x=1'; then fail 'an unchanged drop-in asked for a restart'; fi
+# 全新：调参文件与 drop-in 都写上，只重启一次，重启前做 CHECKPOINT
 reset
-( native_harden_pg_unit 18 5432 ) >"$T/out" 2>&1 || fail "PostgreSQL hardening failed: $(cat "$T/out")"
-grep -qx 'systemctl restart postgresql@18-main.service' "$T/calls" || fail "PostgreSQL not restarted after hardening: $(cat "$T/calls")"
+apply_pg || fail "PostgreSQL config failed: $(cat "$T/out")"
+[ "$(pg_restarts)" -eq 1 ] || fail "PostgreSQL must restart exactly once for the tuning file and the drop-in: $(cat "$T/calls")"
 [ -f "$PG_DROPIN" ] || fail 'PostgreSQL drop-in not written'
+cmp -s "$TUNING" "$PG_TUNED" || fail 'conf.d/pandora.conf differs from deploy/postgresql-pandora.conf'
+mode="$(stat -c %a "$PG_TUNED" 2>/dev/null || stat -f %Lp "$PG_TUNED")"; [ "$mode" = 644 ] || fail "conf.d/pandora.conf mode is $mode"
 grep -qx 'peer -p 5432 -d postgres -c CHECKPOINT' "$T/peer.calls" || fail "no CHECKPOINT before the restart: $(cat "$T/peer.calls")"
+if ls "$T/etc/18/main/conf.d/" | grep -v '^pandora\.conf$' | grep -q .; then fail "stray files left in conf.d: $(ls "$T/etc/18/main/conf.d/")"; fi
+# 都没变：不重启、不做检查点
 : >"$T/calls"; : >"$T/peer.calls"
-( native_harden_pg_unit 18 5432 ) >/dev/null 2>&1 || fail 'an unchanged PostgreSQL drop-in failed'
-if grep -q restart "$T/calls" || [ -s "$T/peer.calls" ]; then fail 'PostgreSQL restarted although the drop-in did not change'; fi
-# 新 drop-in 起不来，撤回（删掉）后在线：返回 1，提示照实写「已还原…核实已在线」，原因提示带开关
+apply_pg || fail 'an unchanged PostgreSQL config failed'
+if grep -q restart "$T/calls" || [ -s "$T/peer.calls" ]; then fail 'PostgreSQL restarted although nothing changed'; fi
+# 只有调参文件变了（手改过、或新版本改了参数）：整份覆盖回发布包那份，重启一次
+printf 'max_connections = 500\n' >"$PG_TUNED"; : >"$T/calls"
+apply_pg || fail "rewriting a changed tuning file failed: $(cat "$T/out")"
+cmp -s "$TUNING" "$PG_TUNED" && [ "$(pg_restarts)" -eq 1 ] || fail 'a hand-edited tuning file was not overwritten with one restart'
+# 新 drop-in 起不来，撤回后在线：返回 1，提示照实写「已还原…核实已在线」，原因提示带开关；调参文件与 drop-in 都删掉
 reset; touch "$T/fail.restart"
-if ( native_harden_pg_unit 18 5432 ) >"$T/out" 2>&1; then fail 'a PostgreSQL that would not start was accepted'; fi
+if apply_pg; then fail 'a PostgreSQL that would not start was accepted'; fi
 grep -Fq '已还原成这次之前的样子，核实已在线' "$T/out" || fail "PostgreSQL revert message: $(cat "$T/out")"
 grep -Fq 'PANDORA_SYSTEMD_HARDENING=0' "$T/out" || fail 'the revert message does not name the switch'
 [ ! -f "$PG_DROPIN" ] || fail 'the failing PostgreSQL drop-in was left behind'
-[ "$(grep -c 'systemctl restart postgresql@18-main.service' "$T/calls")" -eq 2 ] || fail "PostgreSQL not restarted without the drop-in: $(cat "$T/calls")"
+[ ! -f "$PG_TUNED" ] || fail 'the tuning file was left behind although there was none before'
+[ "$(pg_restarts)" -eq 2 ] || fail "PostgreSQL not restarted once more after the revert: $(cat "$T/calls")"
 # 等在线的预算按检查点实测：10 秒 → 60 次（不是写死的 15）
 [ "$(grep -c . "$T/lscalls")" -eq 61 ] || fail "online wait budget is not derived from the checkpoint time: $(grep -c . "$T/lscalls") polls"
-# 之前就有（内容不同的）drop-in：起不来时写回之前的内容，不是删掉
-reset; mkdir -p "${PG_DROPIN%/*}"; printf 'old=1\n' >"$PG_DROPIN"; touch "$T/fail.restart"
-if ( native_harden_pg_unit 18 5432 ) >"$T/out" 2>&1; then :; fi
+# 之前就有（内容不同的）调参文件与 drop-in，新调参起不来：两样都写回之前的内容，不是删掉；核实在线后返回 1
+reset; mkdir -p "${PG_DROPIN%/*}" "${PG_TUNED%/*}"; printf 'old=1\n' >"$PG_DROPIN"; printf 'old_tuning = 1\n' >"$PG_TUNED"; touch "$T/pg.badconf"
+if apply_pg; then fail 'a PostgreSQL that would not start with the new tuning was accepted'; fi
+[ "$(cat "$PG_TUNED" 2>/dev/null)" = 'old_tuning = 1' ] || fail "the previous tuning file was not restored: $(cat "$PG_TUNED" 2>/dev/null)"
 [ "$(cat "$PG_DROPIN" 2>/dev/null)" = 'old=1' ] || fail "the previous PostgreSQL drop-in was not restored: $(cat "$PG_DROPIN" 2>/dev/null)"
+grep -Fq '核实已在线' "$T/out" && grep -Fq "$PG_TUNED" "$T/out" || fail "the revert message does not mention the tuning file: $(cat "$T/out")"
+[ "$(pg_restarts)" -eq 2 ] || fail "expected one restart to apply and one after the revert: $(cat "$T/calls")"
 # 撤回之后仍不在线：停下，提示照实写「仍没在线」，不说已恢复
 reset; touch "$T/pg.down"
-if ( native_harden_pg_unit 18 5432 ) >"$T/out" 2>&1; then fail 'a PostgreSQL still down after the revert was accepted'; fi
+if apply_pg; then fail 'a PostgreSQL still down after the revert was accepted'; fi
 grep -Fq '仍没在线' "$T/out" || fail "message after a failed revert: $(cat "$T/out")"
 if grep -Fq '核实已在线' "$T/out"; then fail 'claimed PostgreSQL is online although it is not'; fi
 [ "$(grep -c . "$T/lscalls")" -eq 120 ] || fail "the revert was not checked with the same budget: $(grep -c . "$T/lscalls") polls"
+[ ! -f "$PG_TUNED" ] && [ ! -f "$PG_DROPIN" ] || fail 'the new tuning file or drop-in was left behind after a failed revert'
 # 226/NAMESPACE：说出原因与开关
 reset; touch "$T/fail.restart"; echo 226 >"$T/exec.status"
-( native_harden_pg_unit 18 5432 ) >"$T/out" 2>&1 || true
+apply_pg || true
 grep -Fq '226/NAMESPACE' "$T/out" && grep -Fq 'PANDORA_SYSTEMD_HARDENING=0' "$T/out" || fail "no 226/NAMESPACE hint: $(cat "$T/out")"
 reset; touch "$T/fail.restart"; printf 'postgresql@18-main.service: Failed at step NAMESPACE spawning /usr/bin/pg_ctlcluster\n' >"$T/journal"
-( native_harden_pg_unit 18 5432 ) >"$T/out" 2>&1 || true
+apply_pg || true
 grep -Fq '226/NAMESPACE' "$T/out" || fail "no 226/NAMESPACE hint from the journal: $(cat "$T/out")"
-# 开关关着：去掉已有的 drop-in 并重启；本来就没有就什么都不做
-reset; mkdir -p "${PG_DROPIN%/*}"; native_pg_hardening_dropin >"$PG_DROPIN"
-( NATIVE_HARDENING=0; native_harden_pg_unit 18 5432 ) >"$T/out" 2>&1 || fail "switching PostgreSQL hardening off failed: $(cat "$T/out")"
-[ ! -f "$PG_DROPIN" ] && grep -qx 'systemctl restart postgresql@18-main.service' "$T/calls" || fail 'the switch did not remove the PostgreSQL drop-in'
+# 开关关着：去掉已有的 drop-in 并重启（调参照旧装上）；两样都已是这样就什么都不做
+reset; mkdir -p "${PG_DROPIN%/*}" "${PG_TUNED%/*}"; native_pg_hardening_dropin >"$PG_DROPIN"; cp "$TUNING" "$PG_TUNED"
+( NATIVE_HARDENING=0; native_apply_pg_config 18 5432 "$TUNING" ) >"$T/out" 2>&1 || fail "switching PostgreSQL hardening off failed: $(cat "$T/out")"
+[ ! -f "$PG_DROPIN" ] && [ "$(pg_restarts)" -eq 1 ] || fail 'the switch did not remove the PostgreSQL drop-in'
+cmp -s "$TUNING" "$PG_TUNED" || fail 'the switch removed the tuning file'
 : >"$T/calls"
-( NATIVE_HARDENING=0; native_harden_pg_unit 18 5432 ) >/dev/null 2>&1
-if grep -q restart "$T/calls"; then fail 'restarted PostgreSQL although hardening was already off'; fi
+( NATIVE_HARDENING=0; native_apply_pg_config 18 5432 "$TUNING" ) >/dev/null 2>&1
+if grep -q restart "$T/calls"; then fail 'restarted PostgreSQL although hardening was already off and the tuning unchanged'; fi
+# 开关关着、调参是新的：只写调参，不写 drop-in
+reset
+( NATIVE_HARDENING=0; native_apply_pg_config 18 5432 "$TUNING" ) >/dev/null 2>&1 || fail 'tuning with hardening off failed'
+cmp -s "$TUNING" "$PG_TUNED" && [ ! -f "$PG_DROPIN" ] && [ "$(pg_restarts)" -eq 1 ] || fail 'hardening off: tuning not applied alone with one restart'
 
 # --- ③ Valkey：三步各自重启核实、只撤回失败的那一步 -------------------------------------------
 printf 'Valkey server v=8.1.1 sha=0 malloc=jemalloc bits=64 build=1\n' >"$T/version.valkey-server"
@@ -266,21 +333,34 @@ mode="$(stat -c %a "$envf" 2>/dev/null || stat -f %Lp "$envf")"; [ "$mode" = 600
 if ( PANDORA_SYSTEMD_HARDENING=maybe; native_load_hardening_switch "$envf" ) >/dev/null 2>&1; then fail 'accepted an unknown switch value'; fi
 
 # --- ⑤ 静态：位置与失败处理 ------------------------------------------------------------------
+# 版本核对在装完包之后、建集群之前；include 核对在建集群之后、建库角色与写 .env 之前（两处停下时都还没改数据与配置）
+awk '/apt-get install -y -qq valkey-server/ { pkg = NR } /^native_check_valkey_version "\$VK_UNIT"$/ { v = NR }
+     /^native_ensure_pg_cluster "\$PG_VERSION"$/ { c = NR } /^native_check_pg_conf_include "\$PG_VERSION"$/ { i = NR }
+     /^say "\[2\/6\]/ { two = NR } /^native_pg_peer -p "\$PG_PORT" -d postgres >\/dev\/null <<SQL/ { sql = NR }
+     /^cat > "\$INSTALL_DIR\/deploy\/\.env" <<EOF$/ { env = NR }
+     END { exit !(pkg && v && c && i && two && sql && env && pkg < v && v < c && c < i && i < two && two < sql && sql < env) }' "$INST" \
+  || fail 'the Valkey version and the conf.d include are not checked between the package install and the first change'
 awk '/^native_check_foreign_clusters / { f = NR } /^role_log="\$\(bash "\$INSTALL_DIR\/deploy\/bootstrap.sh"/ { b = NR }
      /pandora_run_migrations "\$MODE"/ { m = NR }
      /^native_load_hardening_switch "\$ENV_FILE"$/ { s = NR }
-     /^native_harden_pg_unit "\$PG_VERSION" "\$PG_PORT" \|\| HARDEN_FAILED\+=" PostgreSQL"$/ { h = NR }
-     /^\[\[ -z "\$VK_UNIT" \]\] \|\| native_harden_valkey "\$VK_UNIT" "\$VK_CONF" "\$VK_PASS" \|\| HARDEN_FAILED\+=" \$VK_UNIT"$/ { v = NR }
+     /^native_apply_pg_config "\$PG_VERSION" "\$PG_PORT" "\$SCRIPT_DIR\/postgresql-pandora.conf" \|\| HARDEN_FAILED\+=" PostgreSQL"$/ { h = NR }
+     /^native_harden_valkey "\$VK_UNIT" "\$VK_CONF" "\$VK_PASS" \|\| HARDEN_FAILED\+=" \$VK_UNIT"$/ { v = NR }
      /^say "\[5\/6\]/ { five = NR } /^  systemctl start "\$s"/ { st = NR }
-     END { exit !(f && m && b && s && h && v && five && st && f < m && m < b && b < s && s < h && h < v && v < five && five < st) }' "$NATIVE" \
-  || fail 'hardening is not after the foreign-cluster check, migrations and role setup, before the services start'
-if grep -n 'native_harden_pg_unit\|native_harden_valkey' "$NATIVE" | grep -v 'HARDEN_FAILED+=' | grep -q .; then
-  fail 'hardening is called somewhere else too'
+     END { exit !(f && m && b && s && h && v && five && st && f < m && m < b && b < s && s < h && h < v && v < five && five < st) }' "$INST" \
+  || fail 'tuning and hardening are not after the foreign-cluster check, migrations and role setup, before the services start'
+if grep -n 'native_apply_pg_config\|native_harden_valkey' "$INST" | grep -v 'HARDEN_FAILED+=' | grep -q .; then
+  fail 'tuning or hardening is called somewhere else too'
 fi
-awk '/^if \[\[ -n "\$HARDEN_FAILED" && "\$MODE" = from-docker \]\]; then$/ { d = NR } /^say "\[5\/6\]/ { five = NR }
-     END { exit !(d && five && d < five) }' "$NATIVE" || fail '--from-docker does not stop before switching units when hardening failed'
 awk '/^  systemctl start "\$s"/ { st = NR } /^if \[\[ -n "\$HARDEN_FAILED" \]\]; then$/ { d = NR }
-     END { exit !(st && d && st < d) }' "$NATIVE" || fail 'install/upgrade does not stop after starting the services when hardening failed'
-if grep -Fq 'native_set_valkey_password "$VK_CONF"' "$NATIVE"; then fail 'the installer still sets the Valkey password outside native_harden_valkey'; fi
+     END { exit !(st && d && st < d) }' "$INST" || fail 'install/upgrade does not stop after starting the services when hardening failed'
+if grep -Fq 'native_set_valkey_password "$VK_CONF"' "$INST"; then fail 'the installer still sets the Valkey password outside native_harden_valkey'; fi
+# 调参走 conf.d，不走 ALTER SYSTEM（postgresql.auto.conf 留给运维）
+if grep -v '^[[:space:]]*#' "$INST" "$LIB" | grep -qi 'ALTER SYSTEM'; then fail 'the installer tunes PostgreSQL with ALTER SYSTEM'; fi
+# 调参文件进发布包（拷贝与 0644 数据文件两处），安装器动手之前就点名核对它在
+grep -Fq 'cp "$ROOT/deploy/postgresql-pandora.conf" "$target/deploy/postgresql-pandora.conf"' "$DEPLOY/build-release.sh" \
+  || fail 'build-release.sh does not copy postgresql-pandora.conf'
+awk '/^  release_data=\(/{p=1} p{print} p&&/^  \)/{exit}' "$DEPLOY/build-release.sh" | grep -Fq '"$target_base/deploy/postgresql-pandora.conf"' \
+  || fail 'build-release.sh does not archive postgresql-pandora.conf as a 0644 data file'
+grep -Fq 'for f in postgresql-pandora.conf ' "$INST" || fail 'install.sh does not check for postgresql-pandora.conf before it starts'
 
-printf 'install-native hardening mock: PASS\n'
+printf 'install hardening mock: PASS\n'

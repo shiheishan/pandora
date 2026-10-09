@@ -27,7 +27,7 @@ func secureTempDir(t *testing.T) string {
 
 // withCheckpointHookRoot 把 Hook 允许存放的固定目录临时指向 dir。
 //
-// 生产上这个目录是写死的 /opt/aegispanel/checkpoint-sink，测试里显然
+// 生产上这个目录是写死的 /opt/pandora/checkpoint-sink，测试里显然
 // 建不出来也不该建。t.Cleanup 保证改动只在单个测试内可见，
 // 并行测试不共享这个包级变量，所以这些用例不能标 t.Parallel()。
 func withCheckpointHookRoot(t *testing.T, dir string) {

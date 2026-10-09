@@ -5,9 +5,9 @@
 #   pgstat.sh export DIR [N]      导出 top N（缺省 50）到 DIR/pgstat-<UTC 时间>-{total,mean,calls}.csv
 #   pgstat.sh disable --yes       删扩展、还原 shared_preload_libraries 并重启
 #
-# 设计取舍：用 ALTER SYSTEM 而不是改 postgresql.conf——两种布局都适用（Docker 的配置在
-# compose 的 -c 参数里、直装的在 /etc/postgresql/<版本>/main/），ALTER SYSTEM 写进数据目录的
-# postgresql.auto.conf，compose 的 -c 参数里没有 shared_preload_libraries，不会被盖掉。
+# 设计取舍：用 ALTER SYSTEM 而不是改配置文件——/etc/postgresql/<版本>/main/conf.d/pandora.conf 归
+# install.sh 管、每次安装整份覆盖；ALTER SYSTEM 写进数据目录的 postgresql.auto.conf，优先级在它之上，
+# 重装面板不会把它冲掉（pandora.conf 里也没有 shared_preload_libraries）。
 # 只在原值为空时才写入；原值非空说明主机另有安排，交给人处理，免得 disable 还原错。
 set -euo pipefail
 

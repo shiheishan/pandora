@@ -1,8 +1,8 @@
 # 迁移失败与回滚 runbook
 
 面向自己部署 Pandora Panel 的运维。三种情形：升级时迁移失败、回到指定版本、从升级前备份恢复。
-缺省布局是直装（install-native.sh，`/opt/pandora`）；命令里的路径沿用 install.sh 的 docker 布局（`/opt/aegispanel`）写，直装的机器换成 `/opt/pandora`，两种布局的 `deploy/` 下是同一套脚本。
-这份手册随发布包分发（`deploy/MIGRATION-RUNBOOK.md`），两个安装器都会把它装到 `/opt/aegispanel/deploy/`（或 `/opt/pandora/deploy/`）下。
+安装目录是 `/opt/pandora`（`install.sh` 装的），命令里的路径按它写。
+这份手册随发布包分发（`deploy/MIGRATION-RUNBOOK.md`），`install.sh` 会把它装到 `/opt/pandora/deploy/` 下。
 
 ## 0. 先弄清三件事
 
@@ -10,16 +10,16 @@
 - **看当前版本**（只读，随时可跑）：
 
   ```bash
-  cd /opt/aegispanel/deploy
-  PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose ./migrate.sh version
-  PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose ./migrate.sh status
+  cd /opt/pandora/deploy
+  PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/pandora/bin/goose ./migrate.sh version
+  PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/pandora/bin/goose ./migrate.sh status
   ```
 
   `.env` 里有 `AEGIS_MIGRATION_DATABASE_URL` 时不需要 `PANDORA_LOCAL_MIGRATION_APPROVED`。`GOOSE_BIN` 指向发布包自带的 goose；没有就去掉这一项，用机器上的 goose。
 
 - **升级前一定有备份。**
   - 发布控制器 `release-stop-the-world.sh` 在停服之后、迁移之前跑 `backup-postgres.sh`，产物是加密的 `aegis-postgres-<时间>.dump.age`，输出里那行 `backup complete: <路径>` 就是它。
-  - `install.sh` 升级时先做 `pg_dump -Fc`，放在 `/var/backups/aegispanel/pre-upgrade-<时间>.dump`；`install-native.sh` 放在 `/var/backups/pandora/pre-upgrade-<时间>.dump`。
+  - `install.sh` 升级时（库里已有迁移记录）先以 `postgres` 用户做 `pg_dump -Fc`，放在 `/var/backups/pandora/pre-upgrade-<时间>.dump`（0600，未加密）。导出失败或读不出目录就停在迁移之前，迁移不会执行。
 
 ### 发布控制器的输出怎么读
 
@@ -35,7 +35,7 @@
 
 ### 预检在什么时候跑
 
-- 控制器在**停服之前**跑一次性库预检（`install.sh` 与 `install-native.sh` 的升级也是同一个顺序，见下一条）：把正式库整库克隆到同一个 PostgreSQL 里的临时库，在克隆上按「写入者已停」的口径演练待执行的迁移。通过后在只有 root 能读的发布暂存目录里留一张预检凭据。
+- 控制器在**停服之前**跑一次性库预检（`install.sh` 的升级也是同一个顺序，见下一条）：把正式库整库克隆到同一个 PostgreSQL 里的临时库，在克隆上按「写入者已停」的口径演练待执行的迁移。通过后在只有 root 能读的发布暂存目录里留一张预检凭据。
   - 好处：停服时间里不再包含克隆和演练。5k 规模实测，这一步约 15 秒，原来占停服的三分之二，库越大越长。
   - 代价：克隆发生在业务时段，会给正式库带来一次整库读。大库请挑低峰发版。
 - **停服之后**只做一次只读核对，亚秒级，结果与凭据逐项比对：
@@ -46,11 +46,11 @@
   - 凭据在六小时内。
 
   任何一项对不上就拒绝，控制器自动拉回旧服务（`rollback=writers_and_ingress_restored`），重新发版即可。
-- `install.sh` / `install-native.sh` 升级时同样是「停服前完整预检 → 停服 → 迁移只核凭据」（共用 `install-lib.sh` 的 `pandora_run_migrations`）：
+- `install.sh` 升级时同样是「停服前完整预检 → 停服 → 迁移只核凭据」（共用 `install-lib.sh` 的 `pandora_run_migrations`）：
   - 预检失败：报「停服前的迁移预检没通过：服务没停，数据库没动」，服务一直在跑，按预检输出处理后重跑安装脚本；
   - 停服后核对不过或迁移失败：报「迁移失败，服务已拉回原来的版本」。新程序在迁移成功之后才装，拉回来的是原来的版本。
   - 全新库（还没有 goose 记录）没有要保护的数据，跳过克隆预检。
-  - 两种布局都能跑：docker 布局在 `aegis-postgres` 容器里克隆；直装布局（`install-native.sh`）用本机的 `psql` / `pg_dump`，经 `127.0.0.1:POSTGRES_PORT` 以 `postgres` 超级用户（`.env` 的 `POSTGRES_SUPER_PASSWORD`）在同一个 PG18 集群里克隆，不需要 Docker。
+  - 克隆用本机的 `psql` / `pg_dump`，经 `127.0.0.1:POSTGRES_PORT` 以 `postgres` 超级用户（`.env` 的 `POSTGRES_SUPER_PASSWORD`）在同一个 PG18 集群里做。
 - 预检凭据只对这次发布有效，不要手工复制或改写它。
 - 直接调用 `migrate.sh up` 而不带凭据时，它照旧在调用当下做完整预检。
 
@@ -59,7 +59,7 @@
 现象：
 
 - 控制器输出 `rollback=manual_required` 和 `FAIL-CLOSED after migration attempt`；
-- 或者 `install.sh` / `install-native.sh` 报「迁移失败，服务已拉回原来的版本」并贴出完整输出。
+- 或者 `install.sh` 报「迁移失败，服务已拉回原来的版本」并贴出完整输出。
 
 1. **保持写入者停止，不要重启服务。**
    - 控制器已经停了写入者，入口（nginx）也没恢复。
@@ -86,7 +86,7 @@
    - 所以 CONCURRENTLY 的迁移失败后，无论之后是重跑 `up` 还是重跑安装脚本，都先查一遍：
 
      ```bash
-     cd /opt/aegispanel/deploy
+     cd /opt/pandora/deploy
      ./psql.sh -c "SELECT indexrelid::regclass, indisvalid, indisready FROM pg_index WHERE NOT indisvalid OR NOT indisready;"
      ```
 
@@ -108,7 +108,7 @@
 - 刚做了一份备份，用 `PANDORA_ROLLBACK_BACKUP` 指向它。Down 会删列、删表，新版本写进去的数据随之消失，这份备份是退路：
 
   ```bash
-  cd /opt/aegispanel/deploy && ./backup-postgres.sh   # 记下输出的 backup complete: <路径>
+  cd /opt/pandora/deploy && ./backup-postgres.sh   # 记下输出的 backup complete: <路径>
   ```
 
 - 目标版本 = 旧发布 `migrations/` 里最大的迁移号，例如旧版本到 `00121`，就回到 `121`。目标必须是 0 或一个真实存在的迁移号（空号不行）。
@@ -116,10 +116,10 @@
 执行：
 
 ```bash
-cd /opt/aegispanel/deploy
+cd /opt/pandora/deploy
 PANDORA_ROLLBACK_WRITERS_STOPPED=yes \
-PANDORA_ROLLBACK_BACKUP=/var/backups/aegispanel/aegis-postgres-<时间>.dump.age \
-PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose \
+PANDORA_ROLLBACK_BACKUP=/var/backups/pandora/aegis-postgres-<时间>.dump.age \
+PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/pandora/bin/goose \
   ./migrate.sh rollback-to 121
 ```
 
@@ -150,7 +150,7 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose \
 
 收尾：
 
-1. 回滚完成后，装回旧发布的二进制与 `migrations/`。用发布控制器时，旧目录在 `/opt/aegispanel/.release-backups/<发布号>/`。
+1. 回滚完成后，装回旧发布的二进制与 `migrations/`。用发布控制器时，旧目录在 `/opt/pandora/.release-backups/<发布号>/`。
 2. 启动写入者，确认 `/readyz` 正常，再开入口。
 3. 新版本已经接过流量时，新数据随 Down 一起丢失。先评估能不能前滚修复，确实要回滚再执行，并保留好回滚前的那份备份。
 
@@ -166,48 +166,36 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose \
    - **加密备份**（`*.dump.age`，来自 `backup-postgres.sh` 和发布控制器）用 `restore-postgres.sh`。它先在临时库里完整恢复一遍做校验，再动目标库；覆盖正式库要三道确认：
 
      ```bash
-     cd /opt/aegispanel/deploy
+     cd /opt/pandora/deploy
      AEGIS_RESTORE_CONFIRM=RESTORE:<库名> \
      AEGIS_RESTORE_EXISTING_CONFIRM=OVERWRITE_EXISTING:<库名> \
      AEGIS_RESTORE_PRODUCTION_CONFIRM=OVERWRITE_CONFIGURED_DATABASE:<库名> \
-       ./restore-postgres.sh --archive /var/backups/aegispanel/aegis-postgres-<时间>.dump.age --target-db <库名>
+       ./restore-postgres.sh --archive /var/backups/pandora/aegis-postgres-<时间>.dump.age --target-db <库名>
      ```
 
      `<库名>` 是 `.env` 里的 `POSTGRES_DB`。
 
-     恢复照原样还原属主与权限（2026-10 起）：备份要的角色先在本机集群里补齐（只认面板自己的 `aegis_app`、`aegis_idempotency_owner` 与跑迁移的超级用户，一律 `NOLOGIN`、不带特权；备份里有别的角色就在动正式库之前停下），备份里跑迁移的超级用户名下的对象换成本机跑迁移的那个（docker 布局 `POSTGRES_USER`，直装 `postgres`），所以 docker 的备份能恢复到直装，反过来也行。以前的恢复用 `--no-owner --no-privileges`，00038 那几个归 `aegis_idempotency_owner` 的 SECURITY DEFINER 函数会变成以超级用户身份执行，迁移给的授权也丢了。
+     恢复照原样还原属主与权限：备份要的角色先在本机集群里补齐（只认 `postgres`、`aegis_app`、`aegis_idempotency_owner`，新建的一律 `NOLOGIN`、不带特权；备份里有别的角色就在动正式库之前停下）；库属主角色（`.env` 的 `POSTGRES_USER`）必须已经存在，否则在删正式库之前停下。运行角色在库上的设置（search_path、jit、statement_timeout、收回 TEMPORARY）是库级的、不在备份里，恢复完一律跑 `./bootstrap.sh`。
 
      恢复前先在临时库里用同样的参数（照原样还原属主与权限）完整恢复一遍，角色或权限的问题在删正式库之前就会暴露。
-
-     **2026-10 之前的加密备份**导出时带 `--no-owner --no-acl`，归档里没有任何 GRANT。照这样的备份恢复，00038、00039 的两个 SECURITY DEFINER 函数（`app.bind_idempotency_resource`、`app.complete_bound_idempotency_success`）可能归恢复者（超级用户）所有、**以超级用户身份执行**，函数执行权回到 PostgreSQL 缺省（PUBLIC 可执行），迁移给 `aegis_idempotency_owner` 的列级授权也没了。`restore-postgres.sh` 认得这种备份（归档里没有 GRANT），恢复后自动补回（在开连接闸门之前）：
-     - 这两个函数 `ALTER FUNCTION … OWNER TO aegis_idempotency_owner`，`REVOKE ALL … FROM PUBLIC, aegis_app`，再 `GRANT EXECUTE … TO aegis_app`；
-     - 00038、00039 Up 段里 `GRANT … TO aegis_idempotency_owner` 的那几条（模式 USAGE、几个辅助函数的 EXECUTE、`idempotency_keys` 与两张水位表的列级授权）。
-
-     之后跑 `./bootstrap.sh` 补运行角色 `aegis_app` 的权限，再起服务；最后做一份新的加密备份，它就带着属主与权限了。
-     修复 SQL 是随包发布的 `deploy/legacy-privilege-repair.sql`（两种布局都装在 `<安装目录>/deploy/` 下）。用更早的 `restore-postgres.sh`（带 `--no-owner --no-privileges` 的那版）恢复过的库，以超级用户执行一遍它，效果相同，再跑 `./bootstrap.sh`：
-
-     ```bash
-     cd /opt/pandora/deploy          # docker 布局是 /opt/aegispanel/deploy
-     ./psql.sh -d <库名> < legacy-privilege-repair.sql
-     ./bootstrap.sh
-     ./psql.sh -d <库名> -c '\df+ app.bind_idempotency_resource'   # Owner 应是 aegis_idempotency_owner
-     ```
-   - **install.sh 的升级前备份**（`pre-upgrade-<时间>.dump`，未加密的 `pg_dump -Fc`）：
+   - **`install.sh` 的升级前备份**（`/var/backups/pandora/pre-upgrade-<时间>.dump`，未加密的 `pg_dump -Fc`，由安装器以 `postgres` 用户导出）不走 `restore-postgres.sh`，直接用本机的 `pg_restore`，以 `postgres` 系统用户经本地 socket，在写入者全部停止之后：
      1. 先恢复到一个新库核对：
 
         ```bash
-        docker cp <备份> aegis-postgres:/tmp/restore.dump
-        docker exec aegis-postgres createdb -U <POSTGRES_USER> <新库名>
-        docker exec aegis-postgres pg_restore -U <POSTGRES_USER> -d <新库名> --exit-on-error /tmp/restore.dump
+        runuser -u postgres -- createdb -p <POSTGRES_PORT> -O aegis -T template0 -E UTF8 <新库名>
+        runuser -u postgres -- pg_restore -p <POSTGRES_PORT> -d <新库名> --exit-on-error < /var/backups/pandora/pre-upgrade-<时间>.dump
         ```
 
-     2. 确认无误后，把 `.env` 的 `POSTGRES_DB` 与两条连接串指向新库；或者删掉旧库后改名。改名前务必再确认一次写入者全部停止。
-   - **install-native.sh 的升级前备份**（`/var/backups/pandora/pre-upgrade-<时间>.dump`，同样未加密）：同上先恢复到新库核对，客户端是本机的，以 postgres 系统用户经本地 socket：
+        `<POSTGRES_PORT>` 在 `.env` 里。备份里带属主与权限，角色在同一个集群里已经有，所以不需要先补角色。
+     2. 确认无误后，二选一让面板用上新库：
+        - 把 `.env` 的 `POSTGRES_DB` 与两条连接串（`AEGIS_DATABASE_URL`、`AEGIS_MIGRATION_DATABASE_URL`）指向新库；
+        - 或者把旧库改名放一边、新库改成 `aegis`（改名前务必再确认写入者全部停止）：
 
-     ```bash
-     runuser -u postgres -- createdb -p <POSTGRES_PORT> <新库名>
-     runuser -u postgres -- pg_restore -p <POSTGRES_PORT> -d <新库名> --exit-on-error < <备份>
-     ```
+          ```bash
+          runuser -u postgres -- psql -X -p <POSTGRES_PORT> -d postgres -c 'ALTER DATABASE aegis RENAME TO aegis_before_restore' -c 'ALTER DATABASE <新库名> RENAME TO aegis'
+          ```
+
+        之后都要在 `deploy/` 下跑 `./bootstrap.sh`（第 5 步）。
 5. 恢复后：
    - 用 `migrate.sh version` 确认版本就是旧发布的最大迁移号；
    - 跑 `bootstrap.sh` 重新收窄运行角色；
@@ -244,8 +232,8 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/aegispanel/bin/goose \
 第 2 节要求的整库备份照做。另外，Down 会删掉下面几样东西，先单独导出成 CSV。回滚或从备份恢复之后，按它们逐个通知用户、人工核对：
 
 ```bash
-cd /opt/aegispanel/deploy
-d=/var/backups/aegispanel/rollback-$(date +%Y%m%d-%H%M%S); mkdir -m 700 "$d"
+cd /opt/pandora/deploy
+d=/var/backups/pandora/rollback-$(date +%Y%m%d-%H%M%S); mkdir -m 700 "$d"
 x() { ./psql.sh -X -q -c "\\copy ($2) TO STDOUT WITH CSV HEADER" > "$d/$1.csv"; }
 # 00135：每份订阅的备注名、未付款新购单上的名字
 x sub_labels   "SELECT tenant_id, id, user_id, label FROM subscriptions WHERE label IS NOT NULL"
@@ -305,7 +293,9 @@ chmod 600 "$d"/*.csv
 
 ### 4.4 实测耗时（5k 规模，2c4g 一次性测试面板机）
 
-库 157 MB：用户约 1 万、订阅约 1 万、节点 528、流量包余额 4 笔。用 `install.sh` 原地升级，迁移从 133 到 139。
+这一节是 Docker 布局时期的历史实测，保留作参考：当时的安装器与 Docker 布局已经移除。现在的 `install.sh` 做同样的升级前 `pg_dump`、克隆预检、停服迁移，各阶段的耗时还没在现在的布局上重测。
+
+库 157 MB：用户约 1 万、订阅约 1 万、节点 528、流量包余额 4 笔。用当时的 `install.sh` 原地升级，迁移从 133 到 139。
 
 整次升级：
 
@@ -332,12 +322,12 @@ chmod 600 "$d"/*.csv
 - 要单个迁移的数，用 `SELECT version_id, tstamp FROM goose_db_version ORDER BY id DESC LIMIT 10` 的时间差推算；或者先把升级前备份恢复成一个临时库，用 `goose up-by-one` 逐个重放。上表「副本重放」一列就是这样量的。
 - 流量包多的库，00138 是这一批里唯一随数据量变长的迁移。预检会在克隆库上先跑一遍，预检日志里的总耗时可以用来估算停服时间。
 
-## 5. 旧版本集群里的 aegis 库（直装）
+## 5. 旧版本集群里的 aegis 库
 
-`install-native.sh` 只用 PostgreSQL 18 的 `main` 集群，机器上别的版本的集群（16、17，以后的 19）一律不停、不升级、不删。
+`install.sh` 只用 PostgreSQL 18 的 `main` 集群，机器上别的版本的集群（16、17，以后的 19）一律不停、不升级、不删。
 它在两种情况下停下，报「旧集群里的 aegis 库要由人搬到 PG18」，这时什么都还没改：
 
-- 首装（或 `--from-docker`），PG18 里还没有 `aegis` 库，而另一个在线的旧集群里有（或查不清有没有）；
+- 首装，PG18 里还没有 `aegis` 库，而另一个在线的旧集群里有（或查不清有没有）；
 - 升级，`.env` 的 `POSTGRES_PORT` 指着旧集群，或者既不是旧集群也不是 PG18 的端口。
 
 （更早的安装器在这里会对旧集群跑 `pg_upgrade`，失败了也照样 `pg_dropcluster`，等于删库；已经删掉的只能从备份恢复，见第 3 节。）
@@ -369,12 +359,12 @@ runuser -u postgres -- psql -X -At -p <端口> -d aegis -c "
    ORDER BY 1"
 ```
 
-然后把 `/opt/pandora/deploy/.env` 里 `POSTGRES_PORT`、`AEGIS_DATABASE_URL`、`AEGIS_MIGRATION_DATABASE_URL` 的端口改成 `<新端口>`，重跑 `install-native.sh`（按升级走：备份、预检、迁移、重设运行角色口令、起服务）。
+然后把 `/opt/pandora/deploy/.env` 里 `POSTGRES_PORT`、`AEGIS_DATABASE_URL`、`AEGIS_MIGRATION_DATABASE_URL` 的端口改成 `<新端口>`，重跑 `install.sh`（按升级走：备份、预检、迁移、重设运行角色口令、起服务）。
 面板在 PG18 上跑稳之后，旧集群由人决定是否删除（`pg_dropcluster --stop <旧> main`，删前再做一份 `pg_dump`）。
 
-## 6. 直装库是 SQL_ASCII
+## 6. 库是 SQL_ASCII
 
-更早的直装用 `LC_ALL=C` 建集群，库的编码可能是 SQL_ASCII：不校验编码，中文按字节存，`lower()`、排序对中文无效。`install-native.sh` 升级时检测到会告警，**不自动改库**。换成 UTF8 要导出重建，停服进行：
+更早的安装器用 `LC_ALL=C` 建集群，库的编码可能是 SQL_ASCII：不校验编码，中文按字节存，`lower()`、排序对中文无效。`install.sh` 升级时检测到会告警，**不自动改库**。换成 UTF8 要导出重建，停服进行：
 
 ```bash
 P=<POSTGRES_PORT>

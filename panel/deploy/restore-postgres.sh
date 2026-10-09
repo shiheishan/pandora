@@ -38,54 +38,25 @@ load_trusted_env() {
   . "/proc/self/fd/$env_fd"
   exec {env_fd}<&-
 }
-# 数据库布局：docker（install.sh，容器 aegis-postgres）或 native（install-native.sh，系统 PostgreSQL）。
-# 以 .env 的 PANDORA_DB_LAYOUT 为准；老的直装 .env 没有这一键，凭只有直装才写的 POSTGRES_SUPER_PASSWORD
-# 认出来。各运维脚本各带一份同样的函数（不 source 共用文件，免得多一个要校验的信任面），
-# pg-layout_mock_test.sh 核对逐字一致。
-pandora_db_layout() {
-  case "${PANDORA_DB_LAYOUT:-}" in
-    native|docker) printf '%s\n' "$PANDORA_DB_LAYOUT" ;;
-    '') if [ -n "${POSTGRES_SUPER_PASSWORD:-}" ]; then printf 'native\n'; else printf 'docker\n'; fi ;;
-    *) return 1 ;;
-  esac
-}
-# 以超级用户跑 PostgreSQL 客户端（psql、pg_dump、pg_restore、createdb、dropdb）：
-#   docker：容器 aegis-postgres 里的客户端，以 POSTGRES_USER（容器里的超级用户）连；
-#   native：本机客户端经 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户连（不用 runuser 切到 postgres：
-#     备份单元的系统调用过滤不许切换用户）。
-# 口令只经环境变量 PGPASSWORD 给客户端（docker 用 -e PGPASSWORD 按名字透传），不进命令行参数。
+# 以超级用户跑 PostgreSQL 客户端（psql、pg_dump、pg_restore、createdb、dropdb）：本机客户端经
+# 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户连（不用 runuser 切到 postgres：备份单元的系统调用过滤
+# 不许切换用户）。口令只经环境变量 PGPASSWORD 给这一个客户端，不进命令行参数、不导出给整个脚本。
 # 只读归档目录（pg_restore --list）不连库，不要求凭据；要连库的先过 pandora_pg_require_login。
+# 备份、校验、恢复三件套各带一份（只信任自己，不 source 共用文件），db-scripts_mock_test.sh 核对逐字一致。
 pandora_pg() {
   local tool="$1"; shift
-  case "$DB_LAYOUT" in
-    docker) PGPASSWORD="${POSTGRES_PASSWORD-}" docker exec -i -e PGPASSWORD aegis-postgres \
-              "$tool" -U "${POSTGRES_USER:-postgres}" "$@" ;;
-    native) PGPASSWORD="${POSTGRES_SUPER_PASSWORD-}" PGHOST=127.0.0.1 PGPORT="${POSTGRES_PORT-}" PGUSER=postgres \
-              PGSSLMODE=disable "$tool" "$@" ;;
-    *) return 1 ;;
-  esac
+  PGPASSWORD="${POSTGRES_SUPER_PASSWORD-}" PGHOST=127.0.0.1 PGPORT="${POSTGRES_PORT-}" PGUSER=postgres \
+    PGSSLMODE=disable "$tool" "$@"
 }
-# 认出布局（写 DB_LAYOUT）并核对它要的命令。参数是直装布局要用到的本机客户端
+# 核对要用到的本机客户端
 pandora_pg_require() {
   local tool
-  DB_LAYOUT="$(pandora_db_layout)" || die "PANDORA_DB_LAYOUT must be native or docker"
-  case "$DB_LAYOUT" in
-    docker) require_command docker ;;
-    native) for tool in "$@"; do require_command "$tool"; done ;;
-  esac
+  for tool in "$@"; do require_command "$tool"; done
 }
-# 连库要的凭据：docker 布局是 POSTGRES_USER / POSTGRES_PASSWORD，直装是 postgres 的 POSTGRES_SUPER_PASSWORD
+# 连库要的凭据：postgres 超级用户的口令与本机端口
 pandora_pg_require_login() {
-  case "$DB_LAYOUT" in
-    docker)
-      : "${POSTGRES_USER:?POSTGRES_USER is required}"
-      : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
-      ;;
-    native)
-      : "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required for the native database layout}"
-      [[ "${POSTGRES_PORT:-}" =~ ^[0-9]+$ ]] || die "POSTGRES_PORT must be a port number for the native database layout"
-      ;;
-  esac
+  : "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required}"
+  [[ "${POSTGRES_PORT:-}" =~ ^[0-9]+$ ]] || die "POSTGRES_PORT must be a port number"
 }
 require_command readlink
 require_command stat
@@ -97,7 +68,11 @@ load_trusted_env "$PWD/.env"
 if [ -n "$invocation_restore_confirm" ]; then AEGIS_RESTORE_CONFIRM="$invocation_restore_confirm"; else unset AEGIS_RESTORE_CONFIRM; fi
 if [ -n "$invocation_existing_confirm" ]; then AEGIS_RESTORE_EXISTING_CONFIRM="$invocation_existing_confirm"; else unset AEGIS_RESTORE_EXISTING_CONFIRM; fi
 if [ -n "$invocation_production_confirm" ]; then AEGIS_RESTORE_PRODUCTION_CONFIRM="$invocation_production_confirm"; else unset AEGIS_RESTORE_PRODUCTION_CONFIRM; fi
-if [ -n "$invocation_allow_unsigned" ]; then AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY="$invocation_allow_unsigned"; else unset AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY; fi
+# 没有签名清单的备份只能经 verify-backup.sh 的一次性批准核完整性，恢复一律不收（下面还要调 verify-backup.sh，
+# 这个变量会被它继承）
+[ -z "$invocation_allow_unsigned" ] \
+  || die "unsigned legacy backups cannot be used by restore-postgres.sh"
+unset AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY
 
 archive=""
 target_db=""
@@ -116,12 +91,12 @@ done
 [ "${AEGIS_RESTORE_CONFIRM:-}" = "RESTORE:${target_db}" ] \
   || die "set AEGIS_RESTORE_CONFIRM=RESTORE:${target_db} for this invocation"
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
+: "${POSTGRES_USER:?POSTGRES_USER is required}"
+[[ "$POSTGRES_USER" =~ ^[a-z_][a-z0-9_]*$ ]] || die "unsafe POSTGRES_USER"
 : "${AEGIS_BACKUP_AGE_IDENTITY:?AEGIS_BACKUP_AGE_IDENTITY is required}"
 require_command age
 pandora_pg_require psql pg_restore createdb dropdb
 pandora_pg_require_login
-[ -z "${AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY:-}" ] \
-  || die "unsigned legacy backups cannot be used by restore-postgres.sh"
 
 require_command flock
 require_command install
@@ -252,43 +227,35 @@ if [ "$target_db" = "$POSTGRES_DB" ] && \
 fi
 
 #------------------------------------------------------------------------------
-# 保留属主与权限的恢复。以前恢复用 --no-owner --no-privileges：全部对象归恢复者，00038 那些归专用
-# 角色 aegis_idempotency_owner 的 SECURITY DEFINER 函数变成以超级用户身份执行，迁移给的授权也丢了。
-# 现在照原样恢复属主与权限；只把「跑迁移的那个超级用户」名下的对象换成本机跑迁移的超级用户
-# （docker 布局是 POSTGRES_USER，直装是 postgres），与 install-native.sh --from-docker 同一个做法。
-# 下面几个函数由 pg-layout_mock_test.sh 抽出来、换上桩跑真调用。
+# 保留属主与权限的恢复（不带 --no-owner / --no-privileges）：备份由同一种安装导出，对象属主是跑迁移的
+# postgres，00038/00039 的 SECURITY DEFINER 函数属专用角色 aegis_idempotency_owner，授权照迁移原样。
+# 下面几个函数由 db-scripts_mock_test.sh 抽出来、换上桩跑真调用。
 #------------------------------------------------------------------------------
-# 读 pg_restore --schema-only 的 SQL（标准输入），打印恢复要用到的角色：
-#   migrator <角色>   备份里跑迁移的那个（app 模式的属主）
-#   role <角色>       对象属主、默认权限的主人、被授权者（PUBLIC 不算）
-#   acl yes|no        备份里有没有权限（2026-10 之前的备份导出时带 --no-acl，没有）
+# 读 pg_restore --schema-only 的 SQL（标准输入），打印恢复要用到的角色（一行一个，去重）：
+# 对象属主、默认权限的主人、被授权者（PUBLIC 不算）
 archive_role_plan() {
   awk '
     function last(line,   n, f) { sub(/ WITH GRANT OPTION;$/, ";", line); n = split(line, f, " "); sub(/;$/, "", f[n]); return f[n] }
-    /^ALTER SCHEMA app OWNER TO / { print "migrator " last($0) }
-    / OWNER TO [^ ]+;$/ { print "role " last($0) }
-    /^ALTER DEFAULT PRIVILEGES FOR ROLE / { print "role " $6; r = last($0); if (r != "PUBLIC") print "role " r }
-    /^(GRANT|REVOKE) / { acl = 1 }
-    /^GRANT .* TO [^ ]+( WITH GRANT OPTION)?;$/ { r = last($0); if (r != "PUBLIC") print "role " r }
-    END { print "acl " (acl ? "yes" : "no") }
+    / OWNER TO [^ ]+;$/ { print last($0) }
+    /^ALTER DEFAULT PRIVILEGES FOR ROLE / { print $6; r = last($0); if (r != "PUBLIC") print r }
+    /^GRANT .* TO [^ ]+( WITH GRANT OPTION)?;$/ { r = last($0); if (r != "PUBLIC") print r }
   ' | sort -u
 }
 
-# 本机集群里缺的角色先建好（恢复时 ALTER … OWNER TO、GRANT 才不失败）。只认识面板自己的几个角色，
-# 一律 NOLOGIN、不带任何特权（运行角色的登录与口令随后由 bootstrap.sh 设）；备份里有别的角色就停下，
-# 不替人决定。打印临时建的「备份里跑迁移的角色」名字（恢复完要删掉），没有就空
+# 本机集群里缺的角色先建好（恢复时 ALTER … OWNER TO、GRANT 才不失败）。备份里合法的角色只有三个：
+# postgres（跑迁移、对象属主、默认权限的主人）、aegis_idempotency_owner（两个 SECURITY DEFINER 函数的属主）、
+# aegis_app（运行角色，被授权者）。库的属主 POSTGRES_USER 不在归档里（不带 --create 的导出不含库本身）。
+# 缺的一律建成 NOLOGIN、不带任何特权（运行角色的登录与口令随后由 bootstrap.sh 设）；备份里有别的角色就停下，
+# 不替人决定。
 #   ensure_restore_roles <archive_role_plan 的输出>
 ensure_restore_roles() {
-  local plan="$1" migrator role exists created_migrator=""
-  migrator="$(awk '$1 == "migrator" { print $2; exit }' <<<"$plan")"
-  [[ -z "$migrator" || "$migrator" =~ ^[a-z_][a-z0-9_]*$ ]] || die "unsupported migrator role in archive: $migrator"
+  local plan="$1" role exists
   while read -r role; do
     [ -n "$role" ] || continue
     case "$role" in
-      aegis_app|aegis_idempotency_owner|postgres|"$POSTGRES_USER"|"$migrator") ;;
+      aegis_app|aegis_idempotency_owner|postgres) ;;
       *) die "archive references role $role that this restore does not know how to create; create it by hand first" ;;
     esac
-    [[ "$role" =~ ^[a-z_][a-z0-9_]*$ ]] || die "unsupported role name in archive: $role"
     exists="$(pandora_pg psql -X -d postgres -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '$role'" | tr -d '[:space:]')" \
       || die "cannot check role $role"
     [ "$exists" = 1 ] && continue
@@ -296,16 +263,22 @@ ensure_restore_roles() {
       -c "CREATE ROLE \"$role\" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS" >/dev/null \
       || die "cannot create role $role for the restore"
     echo "restore-postgres: created role $role (NOLOGIN, no privileges)" >&2
-    [ "$role" != "$migrator" ] || created_migrator="$role"
-  done < <(awk '$1 == "role" || $1 == "migrator" { print $2 }' <<<"$plan" | sort -u)
-  printf '%s\n' "$created_migrator"
+  done <<<"$plan"
 }
 
-# 目标库：template0、UTF8；直装以 postgres 连库，库的属主给 POSTGRES_USER（aegis），与全新直装一致
+# 目标库的属主 POSTGRES_USER（安装器建的）要先在：createdb 在删掉旧库之后才跑，到那时再发现就晚了
+require_db_owner_role() {
+  local exists
+  exists="$(pandora_pg psql -X -d postgres -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '$POSTGRES_USER'" | tr -d '[:space:]')" \
+    || die "cannot check the database owner role $POSTGRES_USER"
+  [ "$exists" = 1 ] || die "database owner role $POSTGRES_USER does not exist; run the installer first"
+}
+
+# 目标库：template0、UTF8，属主 POSTGRES_USER（与全新安装一致）；正式库先关连接闸门
 create_target_db() {
   local args=(--template=template0 --encoding=UTF8)
   [ "$target_db" != "$POSTGRES_DB" ] || args+=(--connection-limit=0)
-  [ "$DB_LAYOUT" != native ] || args+=(--owner="${POSTGRES_USER:-aegis}")
+  args+=(--owner="$POSTGRES_USER")
   pandora_pg createdb "${args[@]}" "$target_db"
 }
 
@@ -315,63 +288,6 @@ restore_into_target() {
     | pandora_pg pg_restore -d "$target_db" --exit-on-error
 }
 
-# 备份里跑迁移的角色换成本机跑迁移的超级用户；为恢复临时建的那个角色删掉。
-# REASSIGN OWNED 也会改集群级对象：源角色名下的别的库（正式库 aegis、aegis_stale_* 等）。「REASSIGN、给目标库定属主、
-# 把别的库改回」放在一次 psql 的一个事务里，库名在服务端用 format('%I') 生成、经 \gexec 执行，不经过 shell：
-# 任何一步失败整体回滚，不会停在一半；库名里有空格或引号也不会断
-#   reassign_source_migrator <备份里的迁移角色> <临时建的，或空>
-reassign_source_migrator() {
-  local source="$1" created="$2" local_migrator
-  [ -n "$source" ] || return 0
-  local_migrator="$(pandora_pg psql -X -d postgres -tAc 'SELECT current_user' | tr -d '[:space:]')" \
-    || die "cannot read the local migrator role"
-  [ "$source" != "$local_migrator" ] || return 0
-  pandora_pg psql -X -q -d "$target_db" -v ON_ERROR_STOP=1 \
-    -v src="$source" -v dst="$local_migrator" -v owner="${POSTGRES_USER:-$local_migrator}" -v target="$target_db" \
-    >/dev/null <<'SQL' || die "cannot hand objects of $source to $local_migrator"
-BEGIN;
-CREATE TEMP TABLE pandora_reassign_other_dbs ON COMMIT DROP AS
-  SELECT datname FROM pg_catalog.pg_database
-   WHERE datdba = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = :'src') AND datname <> :'target';
-REASSIGN OWNED BY :"src" TO :"dst";
-SELECT pg_catalog.format('ALTER DATABASE %I OWNER TO %I', :'target', :'owner') \gexec
-SELECT pg_catalog.format('ALTER DATABASE %I OWNER TO %I', datname, :'src') FROM pandora_reassign_other_dbs \gexec
-COMMIT;
-SQL
-  echo "restore-postgres: objects owned by the archive's migrator $source now belong to $local_migrator" >&2
-  if [ -n "$created" ]; then
-    pandora_pg psql -X -d "$target_db" -v ON_ERROR_STOP=1 -c "DROP OWNED BY \"$created\"" >/dev/null \
-      && pandora_pg psql -X -d postgres -v ON_ERROR_STOP=1 -c "DROP ROLE \"$created\"" >/dev/null \
-      || echo "restore-postgres: WARNING could not drop the temporary role $created" >&2
-  fi
-}
-
-# 旧格式备份（2026-10 之前导出时带 --no-owner --no-acl，归档里没有 GRANT）恢复之后：00038/00039 那两个
-# SECURITY DEFINER 函数的属主、执行权与专用角色的授权，按同目录随包发布的 legacy-privilege-repair.sql 补回
-# （为什么写死、补了哪些，见该文件头）。以超级用户执行的 SQL 只认 root 所有、不可他人改的那份
-legacy_repair_sql_file="$PWD/legacy-privilege-repair.sql"
-require_trusted_sql_file() {
-  local file="$1" mode
-  require_trusted_parent_chain "$file"
-  [ -f "$file" ] && [ ! -L "$file" ] || die "$file is missing or not a regular file"
-  [ "$(stat -c %u -- "$file")" = 0 ] && [ "$(stat -c %h -- "$file")" = 1 ] \
-    || die "$file must be root-owned with one link"
-  mode=$((8#$(stat -c %a -- "$file")))
-  (( (mode & 0022) == 0 )) || die "$file must not be group/world writable"
-}
-repair_legacy_privileges() {
-  local fd path_id fd_id
-  require_trusted_sql_file "$legacy_repair_sql_file"
-  exec {fd}<"$legacy_repair_sql_file"
-  path_id="$(stat -Lc %d:%i -- "$legacy_repair_sql_file")"
-  fd_id="$(stat -Lc %d:%i -- "/proc/self/fd/$fd")"
-  [ "$path_id" = "$fd_id" ] || die "$legacy_repair_sql_file changed while opening"
-  pandora_pg psql -X -q -d "$target_db" -v ON_ERROR_STOP=1 <&"$fd" >/dev/null \
-    || die "cannot restore the dedicated owner and grants of the idempotency functions"
-  exec {fd}<&-
-  echo "restore-postgres: old-format archive: the 00038/00039 SECURITY DEFINER functions belong to aegis_idempotency_owner again and its grants are back; run ./bootstrap.sh for the runtime role" >&2
-}
-
 # 先只核完整性（sha256、签名清单、归档目录），再读归档要的角色、缺的建好（只增不删，认不出的停下），
 # 然后在临时库里用与正式恢复同样的参数（照原样还原属主与权限）完整恢复一遍：角色或权限上的问题在删正式库
 # 之前就暴露。A valid checksum/TOC is not enough: corrupted data blocks or
@@ -379,12 +295,8 @@ repair_legacy_privileges() {
 "$PWD/verify-backup.sh" "$archive"
 role_plan="$(age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" | pandora_pg pg_restore --schema-only -f - | archive_role_plan)" \
   || die "cannot read the roles this archive needs"
-source_migrator="$(awk '$1 == "migrator" { print $2; exit }' <<<"$role_plan")"
-created_migrator="$(ensure_restore_roles "$role_plan")"
-# 旧格式备份要用的修复 SQL 在动正式库之前就核好（缺了、或不可信，现在停下比恢复一半停下好）
-if grep -qx 'acl no' <<<"$role_plan"; then
-  require_trusted_sql_file "$legacy_repair_sql_file"
-fi
+ensure_restore_roles "$role_plan"
+require_db_owner_role
 AEGIS_VERIFY_RESTORE=owners "$PWD/verify-backup.sh" "$archive"
 begin_production_guard
 exists="$(pandora_pg psql -X -d postgres -tAc \
@@ -399,14 +311,10 @@ create_target_db
 assert_production_quiesced
 
 restore_into_target
-reassign_source_migrator "$source_migrator" "$created_migrator"
-if grep -qx 'acl no' <<<"$role_plan"; then
-  repair_legacy_privileges
-fi
 
 commit_production_guard
 
 echo "restore complete: $archive -> database $target_db"
-if grep -qx 'acl no' <<<"$role_plan"; then
-  echo "restore-postgres: NOTE this archive predates owner/privilege-preserving backups (no GRANTs inside); run ./bootstrap.sh before starting the services (deploy/MIGRATION-RUNBOOK.md section 3)" >&2
-fi
+# 库级的东西不在归档里（不带 --create 的导出）：运行角色在这个库上的设置（search_path、jit、statement_timeout）
+# 与收回 PUBLIC 的 TEMPORARY，新建的库上都没有；新建的运行角色还没有登录口令。都由 bootstrap.sh 补上
+echo "restore-postgres: NOTE run ./bootstrap.sh before starting the services (runtime role login and its per-database settings)" >&2

@@ -15,7 +15,7 @@ import (
 // 它是包私有的，外部代码无从修改，生产行为与写死常量完全一致。
 // 之所以要写死一个根目录：Hook 是会被执行的东西，如果允许配置文件
 // 指定任意路径，那么改配置的人就等同于能执行任意代码。
-var checkpointHookRoot = "/opt/aegispanel/checkpoint-sink"
+var checkpointHookRoot = "/opt/pandora/checkpoint-sink"
 
 func ReplicateTrustedCheckpoint(ctx context.Context, hookPath, checkpointPath string) error {
 	if filepath.Clean(filepath.Dir(hookPath)) != checkpointHookRoot {

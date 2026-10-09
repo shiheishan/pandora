@@ -8,7 +8,7 @@ paths:
 # 端到端脚本与冒烟栈
 
 - `panel/tests/*.sh` 打真实网关与真实库，本机没有数据库跑不了；CI 在一次性冒烟栈上经 `panel/deploy/run-smoke-e2e.sh` 逐个跑
-  - 脚本假定 `/opt/aegispanel` 的 docker-compose 布局（`deploy/.env`、`deploy/psql.sh`、容器 `aegis-postgres`）。runner 只负责把这套环境搭出来，不要为了 CI 改脚本
+  - 脚本假定 `deploy/install.sh` 直装在 `/opt/pandora` 的布局（`deploy/.env`、`deploy/psql.sh` 用主机 psql 经 `127.0.0.1:POSTGRES_PORT` 以超级用户 `postgres` 连）。runner 只负责把这套环境搭出来（冒烟栈的 `datastore.env` 给出与直装同名同义的库与缓存几项），不要为了 CI 改脚本
   - 新增 e2e 脚本要加进 `run-smoke-e2e.sh` 的 `SCRIPTS`，它声明要的环境也由 runner 搭
   - 顺序固定 admin → epay → support → uniproxy → expiry → password_reset → portal_staff → risk → e2e（expiry 要等 aegis-admin 的过期扫描接手，最多 3 分钟）：`e2e.sh` 的限流探测会打满登录额度，必须最后；脚本之间空一个限流窗口
   - `run-smoke-e2e.sh` 只肯在 GitHub Actions 上跑；全部跑完、结果表写完后才判失败

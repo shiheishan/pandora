@@ -38,54 +38,25 @@ load_trusted_env() {
   . "/proc/self/fd/$env_fd"
   exec {env_fd}<&-
 }
-# 数据库布局：docker（install.sh，容器 aegis-postgres）或 native（install-native.sh，系统 PostgreSQL）。
-# 以 .env 的 PANDORA_DB_LAYOUT 为准；老的直装 .env 没有这一键，凭只有直装才写的 POSTGRES_SUPER_PASSWORD
-# 认出来。各运维脚本各带一份同样的函数（不 source 共用文件，免得多一个要校验的信任面），
-# pg-layout_mock_test.sh 核对逐字一致。
-pandora_db_layout() {
-  case "${PANDORA_DB_LAYOUT:-}" in
-    native|docker) printf '%s\n' "$PANDORA_DB_LAYOUT" ;;
-    '') if [ -n "${POSTGRES_SUPER_PASSWORD:-}" ]; then printf 'native\n'; else printf 'docker\n'; fi ;;
-    *) return 1 ;;
-  esac
-}
-# 以超级用户跑 PostgreSQL 客户端（psql、pg_dump、pg_restore、createdb、dropdb）：
-#   docker：容器 aegis-postgres 里的客户端，以 POSTGRES_USER（容器里的超级用户）连；
-#   native：本机客户端经 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户连（不用 runuser 切到 postgres：
-#     备份单元的系统调用过滤不许切换用户）。
-# 口令只经环境变量 PGPASSWORD 给客户端（docker 用 -e PGPASSWORD 按名字透传），不进命令行参数。
+# 以超级用户跑 PostgreSQL 客户端（psql、pg_dump、pg_restore、createdb、dropdb）：本机客户端经
+# 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户连（不用 runuser 切到 postgres：备份单元的系统调用过滤
+# 不许切换用户）。口令只经环境变量 PGPASSWORD 给这一个客户端，不进命令行参数、不导出给整个脚本。
 # 只读归档目录（pg_restore --list）不连库，不要求凭据；要连库的先过 pandora_pg_require_login。
+# 备份、校验、恢复三件套各带一份（只信任自己，不 source 共用文件），db-scripts_mock_test.sh 核对逐字一致。
 pandora_pg() {
   local tool="$1"; shift
-  case "$DB_LAYOUT" in
-    docker) PGPASSWORD="${POSTGRES_PASSWORD-}" docker exec -i -e PGPASSWORD aegis-postgres \
-              "$tool" -U "${POSTGRES_USER:-postgres}" "$@" ;;
-    native) PGPASSWORD="${POSTGRES_SUPER_PASSWORD-}" PGHOST=127.0.0.1 PGPORT="${POSTGRES_PORT-}" PGUSER=postgres \
-              PGSSLMODE=disable "$tool" "$@" ;;
-    *) return 1 ;;
-  esac
+  PGPASSWORD="${POSTGRES_SUPER_PASSWORD-}" PGHOST=127.0.0.1 PGPORT="${POSTGRES_PORT-}" PGUSER=postgres \
+    PGSSLMODE=disable "$tool" "$@"
 }
-# 认出布局（写 DB_LAYOUT）并核对它要的命令。参数是直装布局要用到的本机客户端
+# 核对要用到的本机客户端
 pandora_pg_require() {
   local tool
-  DB_LAYOUT="$(pandora_db_layout)" || die "PANDORA_DB_LAYOUT must be native or docker"
-  case "$DB_LAYOUT" in
-    docker) require_command docker ;;
-    native) for tool in "$@"; do require_command "$tool"; done ;;
-  esac
+  for tool in "$@"; do require_command "$tool"; done
 }
-# 连库要的凭据：docker 布局是 POSTGRES_USER / POSTGRES_PASSWORD，直装是 postgres 的 POSTGRES_SUPER_PASSWORD
+# 连库要的凭据：postgres 超级用户的口令与本机端口
 pandora_pg_require_login() {
-  case "$DB_LAYOUT" in
-    docker)
-      : "${POSTGRES_USER:?POSTGRES_USER is required}"
-      : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
-      ;;
-    native)
-      : "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required for the native database layout}"
-      [[ "${POSTGRES_PORT:-}" =~ ^[0-9]+$ ]] || die "POSTGRES_PORT must be a port number for the native database layout"
-      ;;
-  esac
+  : "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required}"
+  [[ "${POSTGRES_PORT:-}" =~ ^[0-9]+$ ]] || die "POSTGRES_PORT must be a port number"
 }
 require_command readlink
 require_command stat
@@ -205,7 +176,7 @@ mkfifo -m 0600 "$fifo"
   exec 3<&-
 ) &
 validator_pid=$!
-# 带属主与权限导出：恢复时照原样还原（restore-postgres.sh 只把跑迁移的超级用户换成本机的）
+# 带属主与权限导出：restore-postgres.sh 照原样还原属主与权限
 pandora_pg pg_dump -d "$POSTGRES_DB" \
     --format=custom --compress=6 \
   | tee "$fifo" \

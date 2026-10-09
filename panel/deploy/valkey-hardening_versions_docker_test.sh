@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# 直装写进 Valkey / Redis 配置的 pandora 块，在平台声称支持的几个版本上真起一遍（要 Docker，只在 GitHub 上跑）：
-#   Redis 6.0（Ubuntu 22.04 的版本，不认 bind 的「-」前缀）回环有 IPv6 与没有两种、Redis 7.0（Debian 12）、
-#   Valkey 8.1（Debian 13）。bind 那一行由 install-native-lib.sh 的 native_valkey_bind_addrs 按容器里的版本与
+# install.sh 写进 Valkey / Redis 配置的 pandora 块，在支持的几个版本上真起一遍（用官方镜像，要 Docker，只在 GitHub 上跑）：
+#   Redis 6.0（Ubuntu 22.04 的版本，也是支持的最低版本，不认 bind 的「-」前缀）回环有 IPv6 与没有两种、
+#   Redis 7.0（Debian 12）、Valkey 8.1（Debian 13）。每个镜像的真实 --version 先过 install-lib.sh 的
+#   native_check_valkey_version（最低版本核对）；bind 那一行由 native_valkey_bind_addrs 按容器里的版本与
 #   /proc/net/if_inet6 生成，配置块由 native_set_valkey_hardening 写进一份 Debian 风格的配置；起来之后核：
 #   口令生效、FLUSHALL / FLUSHDB 已禁、不落盘、maxmemory 96mb 与 allkeys-lru。
 #   反证：Redis 6.0 硬写 `bind 127.0.0.1 -::1` 必须起不来（证明这个测试抓得到当初的问题）。
@@ -15,7 +16,7 @@ trap cleanup EXIT
 fail() { printf 'valkey versions: %s\n' "$*" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || fail 'needs docker'
 
-. "$DEPLOY/install-native-lib.sh"
+. "$DEPLOY/install-lib.sh"
 set -euo pipefail
 PW=vk-versions-fixture
 
@@ -31,6 +32,7 @@ run_case() {
   fi
   mkdir -p "$T/bin"
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" %q\n' "$ver" >"$T/bin/$server"; chmod 0755 "$T/bin/$server"
+  ( PATH="$T/bin:$PATH"; native_check_valkey_version "$server" ) >/dev/null || fail "$image ($ver) is refused by the minimum-version check"
   bind="$(PATH="$T/bin:$PATH" NATIVE_IF_INET6="$T/if_inet6" native_valkey_bind_addrs "$server")"
   [ -z "$force_bind" ] || bind="$force_bind"
   conf="$T/$server-$v6.conf"

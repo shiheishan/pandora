@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # 随时重看管理后台的完整地址。
 #
-#   sudo /opt/aegispanel/deploy/admin-url.sh        （install.sh 装的）
-#   sudo /opt/pandora/deploy/admin-url.sh           （install-native.sh 装的）
+#   sudo /opt/pandora/deploy/admin-url.sh           （install.sh 装的）
 #   admin-url.sh <.env 路径>                         （指定别的 .env）
 #
 # 后台前缀是安装时随机生成的高熵路径，只记在 .env 的 AEGIS_ADMIN_PATH 里；有

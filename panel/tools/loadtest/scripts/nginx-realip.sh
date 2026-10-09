@@ -25,7 +25,7 @@ cmd_enable() {
   [[ -f "$TEMPLATE" ]] || die "找不到模板 $TEMPLATE"
   [[ ! -e "$BACKUP" ]] || die "已处于压测模式（有 $BACKUP），先 disable"
   # render-nginx.sh 在信任表缺失时会写一份默认文件；没有它说明 nginx 还没按 deploy 渲染过
-  [[ -f "$TARGET" ]] || die "找不到 $TARGET：先跑 /opt/aegispanel/deploy/render-nginx.sh"
+  [[ -f "$TARGET" ]] || die "找不到 $TARGET：先跑 /opt/pandora/deploy/render-nginx.sh"
   # 只收单个地址，不收网段：可信来源越宽，能伪造来源 IP 的人越多
   python3 - "$@" <<'PY' || die "压测机地址必须是单个 IPv4 / IPv6 地址，且不能是 0.0.0.0、:: 或回环"
 import ipaddress, sys

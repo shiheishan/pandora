@@ -86,14 +86,13 @@ jobs:
       # 最后一步的浏览器测试点的就是它。仓库里只有占位页，所以必须在起栈编译网关之前构建
       - name: Embed the real frontend into the gateways
         run: make -C panel frontend-embed
-      # 配置在脚本里用 openssl 现场生成，不读任何 secrets
-      # 容器取 docker-compose 的名字 aegis-postgres：第 ⑤ 步的 e2e 脚本经仓库自带的
-      # deploy/psql.sh 查库，它写死这个名字；runner 一次性，不会撞名
+      # 配置在脚本里用 openssl 现场生成，不读任何 secrets。库的身份与连法照直装：超级用户 postgres、
+      # 库属主 aegis、网关经 127.0.0.1 的 TCP 连；第 ⑤ 步的 e2e 脚本经仓库自带的 deploy/psql.sh 用 runner
+      # 自带的 psql 查库（只跑普通 SQL，客户端比服务端旧也能用；冒烟路径上没有 pg_dump，不需要 18 版客户端）
       - name: Start the stack
         id: stack
         env:
           GOOSE_BIN: ${{ runner.temp }}/bin/goose
-          PANDORA_SMOKE_PG_CONTAINER: aegis-postgres
         run: bash panel/deploy/run-smoke-stack.sh up panel "$RUNNER_TEMP/smoke"
       # 最小业务链：各列表不为空，schema 才验得出东西。seed.ts 只用 node 内置模块，
       # Node 22 原生剥类型直接跑，不需要 npm ci

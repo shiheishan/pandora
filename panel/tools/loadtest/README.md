@@ -64,13 +64,13 @@
    cd <RELEASE_DIR> && sudo PANDORA_CERTBOT=1 PANDORA_PUBLIC_BASE_URL=https://<PANEL_DOMAIN> ./install.sh
    ```
 
-   - 首装会生成 `/opt/aegispanel/deploy/.env`：里面是密钥和随机生成的后台前缀 `AEGIS_ADMIN_PATH`，0600 权限。
-   - PG18 和 Valkey 跑在 Docker 数据基座里，只绑 `127.0.0.1:5433` 和 `127.0.0.1:6380`；网关经 `/opt/aegispanel/deploy/run/` 下的 unix socket 连它们（install.sh 确认 socket 可用后改写 `.env`），不走 docker-proxy。
+   - 首装会生成 `/opt/pandora/deploy/.env`：里面是密钥、数据库与 Valkey 口令和随机生成的后台前缀 `AEGIS_ADMIN_PATH`，0600 权限。
+   - PG18 和 Valkey 是系统服务（`postgresql@18-main`、`valkey-server`，Debian 12 上是 `redis-server`），只听回环；网关经 127.0.0.1 的 TCP 连它们，端口在 `.env` 的 `POSTGRES_PORT`、`VALKEY_PORT`。
    - install.sh 最后一步配 nginx：ufw 开着就放行 80/443；没有证书且给了 `PANDORA_CERTBOT=1` 就用 certbot webroot 申请（等于同意 Let's Encrypt 订户协议）；停用 Debian 自带的默认站点；渲染、`nginx -t`、reload。
 3. 只在 install.sh 跳过了 nginx（没装 nginx、没给证书）时，手工渲染并加载：
 
    ```bash
-   sudo /opt/aegispanel/deploy/render-nginx.sh && sudo nginx -t && sudo systemctl reload nginx
+   sudo /opt/pandora/deploy/render-nginx.sh && sudo nginx -t && sudo systemctl reload nginx
    ```
 
    - 渲染器会在 `/etc/aegispanel/cloudflare-realip.conf` 不存在时写一份**不信任任何代理**的默认文件，全新安装的 `nginx -t` 直接能过。
@@ -78,7 +78,7 @@
 4. 建后台管理员（以 root，照 install.sh 结尾的提示）：
 
    ```bash
-   cd /opt/aegispanel && set -a && . deploy/.env && set +a && ./bin/aegis-adminctl create --email <ADMIN_EMAIL> --password-stdin --role platform_admin
+   cd /opt/pandora && set -a && . deploy/.env && set +a && ./bin/aegis-adminctl create --email <ADMIN_EMAIL> --password-stdin --role platform_admin
    ```
 
    - 口令从标准输入给，不要写进命令行。
@@ -86,7 +86,7 @@
    - 每次重装数据基座后要再建一次（管理员在库里）。
 5. 记下随包的资源上限。它们就是生产形态，压测按它测：
    - systemd：`aegis-public` 是 `CPUQuota=60%`、`MemoryMax=256M`；`aegis-node` 是 `60%`、`384M`（w10quiet：1000 节点在线时重启的峰值 294M）；`aegis-admin` 是 `80%`、`384M`。
-   - Docker 数据基座：PG `max_connections=60`、`shared_buffers=128MB`、容器 512M；Valkey `maxmemory 96mb allkeys-lru`。
+   - 数据库：PG 参数是 `panel/deploy/postgresql-pandora.conf`（`max_connections=60`、`shared_buffers=128MB` 等，install.sh 装进 `conf.d`），systemd 单元的 `MemoryMax` PG 512M、Valkey 160M；Valkey `maxmemory 96mb allkeys-lru`。
    - `platform/db` 连接池上限可配置：缺省 public 16、admin 15、node 14（另 1 条纪元监听探针专用），算式和环境变量 `AEGIS_{PUBLIC,ADMIN,NODE}_DB_MAX_CONNS` 见 `panel/deploy/.env.example`，压测按缺省测。
 
 ## 3. 打开观测开关（面板机）
@@ -116,7 +116,7 @@
 
    - 会重启 PG，网关几秒连不上库。
    - 如果 `shared_preload_libraries` 原来就有值，脚本会拒绝执行，交给人处理。
-   - 设置写在 PG 数据卷里，**每次重装数据基座后要再开一次**。
+   - `shared_preload_libraries` 写在集群的 `postgresql.auto.conf` 里，删库不丢；扩展建在库里，**每次重装数据基座后要再跑一次 enable**（这时已加载，不再重启）。
 
 ## 4. 真实来源 IP（面板机）
 
@@ -162,12 +162,14 @@ scp ~/loadtest root@<PANEL_IP>:/root/lt/loadtest
 
 ```bash
 sudo systemctl stop aegis-public aegis-admin aegis-node
-cd /opt/aegispanel/deploy && sudo docker compose down -v      # 删掉 PG 与 Valkey 的数据卷
-cd <RELEASE_DIR> && sudo ./install.sh                         # .env 已在：走升级路径，先拉起空库做一次（很小的）升级前备份，空库跳过迁移预检
+PGPORT="$(sudo awk -F= '$1 == "POSTGRES_PORT" { print $2 }' /opt/pandora/deploy/.env)"
+cd / && sudo -u postgres psql -X -p "$PGPORT" -d postgres -c 'DROP DATABASE aegis WITH (FORCE)'   # 删掉面板库（集群、角色、参数留着）
+sudo systemctl restart valkey-server          # Debian 12 上是 redis-server；不落盘，重启即清空
+cd <RELEASE_DIR> && sudo ./install.sh         # .env 已在：走升级路径；库不在就按 .env 重建空库，空库跳过升级前备份与迁移预检
 ```
 
-- install.sh 会重新拉起数据基座、从空库迁移到最新、收窄 aegis_app、装回二进制并启动三网关、做健康检查。
-- `.env`（密钥、后台前缀、pprof 地址）不变；nginx 按模板重新渲染（原配置备份在 `/var/backups/aegispanel/`），手工改过 `aegis.conf` 的话要重做。
+- install.sh 会重建空库（属主 aegis）、从空库迁移到最新、收窄 aegis_app、装回二进制并启动三网关、做健康检查。
+- `.env`（密钥、口令、后台前缀、pprof 地址）不变；nginx 按模板重新渲染（原配置备份在 `/var/backups/pandora/`），手工改过 `aegis.conf` 的话要重做。
 - 之后补三件事：
   1. 重建管理员（第 2 节第 4 步）；
   2. 重开 pg_stat_statements（第 3 节第 3 步）；
@@ -177,7 +179,7 @@ cd <RELEASE_DIR> && sudo ./install.sh                         # .env 已在：�
 
 ```bash
 cd /root/lt && mkdir -p /root/lt-results/5k-seed
-set -a; . /opt/aegispanel/deploy/.env; . /opt/aegispanel/deploy/release-artifact.env; set +a
+set -a; . /opt/pandora/deploy/.env; . /opt/pandora/deploy/release-artifact.env; set +a
 export LOADTEST_ADMIN_PASSWORD='<管理员口令>'   # 只在这个 shell 里
 ./loadtest seed \
   -admin-base "https://<PANEL_DOMAIN>/$AEGIS_ADMIN_PATH" -node-base https://<PANEL_DOMAIN> \
@@ -421,7 +423,7 @@ SQL 热点看 `pgstat-*-total.csv` 前十，结合 pprof 的 CPU 火焰图定位
 
 ```bash
 cd /root/lt && mkdir -p /root/lt-results/10k-seed
-set -a; . /opt/aegispanel/deploy/.env; . /opt/aegispanel/deploy/release-artifact.env; set +a
+set -a; . /opt/pandora/deploy/.env; . /opt/pandora/deploy/release-artifact.env; set +a
 export LOADTEST_ADMIN_PASSWORD='<管理员口令>'
 ./loadtest seed \
   -admin-base http://127.0.0.1:9001 -node-base http://127.0.0.1:9003 -public-base http://127.0.0.1:9000 \
@@ -487,11 +489,11 @@ loadtest quiet-report -dir $P -tier B    # 加 -strict 则任一标准不达标�
 ```
 
 - **采样口径**（与 5k-r4 一致，刻意很轻——`sample-procs.sh` / `sample-pgact.sh` 自身占 2–9 个百分点，会把静默 CPU 抬过线，静默期间不要开）：
-  - CPU：窗口首尾各读一次 `/proc/stat`、全部 `/proc/<pid>/stat`、`system.slice` 下各单元 `cpu.stat`，做差；判定用 cgroup 的 `usage_usec`（含已退出的子进程，最准），面板 + 数据库 = aegis-public + aegis-admin + aegis-node + postgres + valkey，nginx 单列并有自己的线，docker / containerd 只列出。单核 = 100。
+  - CPU：窗口首尾各读一次 `/proc/stat`、全部 `/proc/<pid>/stat`、`system.slice` 下各单元 `cpu.stat`，做差；判定用 cgroup 的 `usage_usec`（含已退出的子进程，最准），面板 + 数据库 = aegis-public + aegis-admin + aegis-node + postgres + valkey，nginx 单列并有自己的线。单核 = 100。
   - 「按进程名」表是旁证：已回收子进程一列只算窗口内的部分（窗口内退出的后端开窗前的累计已扣掉），可以和活进程一列相加，postgres 两列之和应接近 cgroup 的 postgres。
   - 内存：窗口外首尾各取一次 `MemTotal − MemAvailable`（等于 `free` 的 used，不含 cache），取较大者对 950 MiB；同时列 PSS、swap 与窗口内换页数，换入或换出不为 0 即不过。
   - 拆账用的旁证同一时刻写在 `kern-{before,after}.txt`（min_free_kbytes、THP、完整 meminfo、sockstat、slab、zoneinfo）与 `pg-smaps-{before,after}.txt`（PG 每个进程的 smaps_rollup），`host.txt` 记机器指纹与面板版本。
-  - 同时兼容 Docker 数据基座（`containers.txt` 把容器 cgroup 翻成名字）与直装布局（`postgresql@*-main.service`、`valkey-server.service`）。
-- 用 5k-r4 的原始快照（`ops-local/vultr-test2/5k-r4/quiet/panel`）喂 `quiet-report`，面板 + 数据库 15.90、含 nginx 18.39、整机忙 22.12、已用内存 918 MiB，与当时人工算的一致。
+  - 只认直装布局的单元名（`postgresql@*-main.service`、`valkey-server.service` 或 `redis-server.service`）；认不出 postgres 或 valkey 就在判定里明说并判不过，不当 0 算。
+- 口径曾用 5k-r4 的原始快照（`ops-local/vultr-test2/5k-r4/quiet/panel`）核对：面板 + 数据库 15.90、含 nginx 18.39、整机忙 22.12、已用内存 918 MiB，与当时人工算的一致。那一轮是 Docker 布局，容器 cgroup 的翻译已随 Docker 布局删掉，这批旧快照不再能直接喂给 `quiet-report`。
 - 分支改前改后的同机 A/B 判分（A/A 噪声底、两档、稳态、比值线）见 perf-gate skill，本节只管单次测量。
 - 出成绩单时，静默一节单列这几项：面板 + 数据库 CPU、各部分拆分、整机已用内存、swap、节点侧的 QPS / 错误数（`nodes.txt`）、aegis-node 的 `nr_throttled`。

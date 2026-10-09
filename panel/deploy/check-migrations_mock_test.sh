@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-# Dynamic tests for strict migration extraction and password argv hygiene.
+# check-migrations.sh 的桩测试（不需要数据库）：psql、pg_dump、goose 换成桩，验证
+#   - 迁移文件校验（文件名、编号严格递增允许空号、Up 标记、Down 段或 irreversible 文件头）在碰库之前完成；
+#   - 续费闸门（00036 前后两种口径）只报数量、拒绝时不建克隆；
+#   - 克隆上演练：建库、导入 pg_dump、goose 只在克隆上 up、清理；任何一步失败都不放行；
+#   - 连法：本机客户端经 127.0.0.1:POSTGRES_PORT 以 postgres 超级用户，口令只经干净环境的 PGPASSWORD，
+#     不进任何 argv，不继承导出的函数；老 .env 里留着 PANDORA_DB_LAYOUT 不影响；一次都不调 docker；
+#   - 预检凭据：停服前完整预检写凭据，停服后 --verify-attestation 只读核对（水位、迁移目录摘要、续费闸门、
+#     停写演练一致、六小时内），对不上以 78 拒绝。
+# new-migration skill 拿它当写迁移时的本地自证之一，编号与凭据的断言改动要同步那边。
 set -Eeuo pipefail
 umask 077
 
@@ -10,113 +18,92 @@ trap 'rm -rf -- "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/empty" "$TMP/missing-up" "$TMP/valid" "$TMP/pending42"
 
 cat >"$TMP/env" <<'ENV'
-POSTGRES_USER=aegis_test
-POSTGRES_PASSWORD=argv-secret-sentinel
+POSTGRES_USER=aegis_owner
+POSTGRES_PASSWORD=owner-secret-sentinel
 POSTGRES_DB=aegis_live
 POSTGRES_PORT=5432
+POSTGRES_SUPER_PASSWORD=argv-secret-sentinel
 ENV
+# 客户端共用的检查（psql、pg_dump 桩先调它）：口令只在干净环境的 PGPASSWORD 里、是超级用户口令；
+# .env 里的口令变量与导出的函数都没有继承下来；端点与身份固定为回环、postgres
+cat >"$TMP/bin/client-guard" <<'MOCK'
+#!/usr/bin/env bash
+mock_root="$1"; name="$2"; shift 2
+printf '%s %s\n' "$name" "$*" >>"$mock_root/client.argv"
+[ "${PGPASSWORD:-}" = argv-secret-sentinel ] || { echo "mock $name: wrong PGPASSWORD" >&2; exit 80; }
+[ -z "${POSTGRES_PASSWORD+x}" ] && [ -z "${POSTGRES_SUPER_PASSWORD+x}" ] \
+  || { echo "mock $name: .env passwords leaked into the client environment" >&2; exit 95; }
+if /usr/bin/env | grep -q '^BASH_FUNC_'; then
+  echo "mock $name: inherited exported function" >&2
+  exit 88
+fi
+[[ " $* " == *' -h 127.0.0.1 -p 5432 -U postgres '* ]] || { echo "mock $name: wrong endpoint: $*" >&2; exit 82; }
+MOCK
+cat >"$TMP/bin/pg_dump" <<'MOCK'
+#!/usr/bin/env bash
+mock_root="$(cd "$(dirname "$0")/.." && pwd)"
+"$mock_root/bin/client-guard" "$mock_root" pg_dump "$@" || exit $?
+[[ " $* " == *' -d aegis_live '* ]] || exit 81
+[ ! -f "$mock_root/fail_pg_dump" ] || exit 82
+printf '%s\n' '-- mock dump'
+MOCK
+cat >"$TMP/bin/psql" <<'MOCK'
+#!/usr/bin/env bash
+mock_root="$(cd "$(dirname "$0")/.." && pwd)"
+"$mock_root/bin/client-guard" "$mock_root" psql "$@" || exit $?
+args=" $* "
+if [[ "$args" =~ CREATE[[:space:]]DATABASE[[:space:]](aegis_check_[0-9]+) ]]; then
+  printf '%s\n' "${BASH_REMATCH[1]}" >"$mock_root/create.id"
+elif [[ "$args" =~ DROP[[:space:]]DATABASE[[:space:]]IF[[:space:]]EXISTS[[:space:]](aegis_check_[0-9]+)[[:space:]]WITH[[:space:]]\(FORCE\) ]]; then
+  printf '%s\n' "${BASH_REMATCH[1]}" >"$mock_root/drop.id"
+  [ ! -f "$mock_root/fail_drop" ] || exit 83
+elif [[ "$args" == *' -d aegis_check_'*' -q '* ]]; then
+  previous=
+  for arg in "$@"; do
+    if [ "$previous" = -d ]; then
+      printf '%s\n' "$arg" >"$mock_root/restore.id"
+      break
+    fi
+    previous=$arg
+  done
+  cat >"$mock_root/restore.payload"
+  [ ! -f "$mock_root/fail_restore" ] || exit 84
+elif [[ "$args" == *' -tAc '* ]]; then
+  if [[ "$args" == *"to_regclass('public.goose_db_version')"* ]] \
+      && [ -f "$mock_root/source-goose.exists" ]; then
+    printf '%s\n' t
+  elif [[ "$args" == *"to_regclass('public.orders')"* ]]; then
+    if [ -f "$mock_root/orders.exists" ]; then printf '%s\n' t; else printf '%s\n' f; fi
+  elif [[ "$args" == *"column_name IN ('business_request_id','idempotency_key_id')"* ]]; then
+    if [ -f "$mock_root/renewal-link-columns.exists" ]; then printf '%s\n' t; else printf '%s\n' f; fi
+  elif [[ "$args" == *"kind='renewal'"* && "$args" == *"idempotency_key_id IS NULL"* ]]; then
+    if [ -f "$mock_root/legacy-renewal.count" ]; then cat "$mock_root/legacy-renewal.count"; else printf '%s\n' 0; fi
+  elif [[ "$args" == *"kind='renewal'"* && "$args" == *"status IN ('draft','pending_payment','processing','paid')"* ]]; then
+    if [ -f "$mock_root/legacy-renewal.count" ]; then cat "$mock_root/legacy-renewal.count"; else printf '%s\n' 0; fi
+  elif [[ "$args" == *'max(version_id)'* ]] \
+      && [ -f "$mock_root/source-goose.version" ]; then
+    cat "$mock_root/source-goose.version"
+  else
+    printf '%s\n' 1
+  fi
+fi
+exit 0
+MOCK
+# 不许碰 docker：只有本机客户端一种连法
 cat >"$TMP/bin/docker" <<'MOCK'
 #!/usr/bin/env bash
 mock_root="$(cd "$(dirname "$0")/.." && pwd)"
-printf '%s\n' "$*" >>"$mock_root/docker.argv"
-[ -n "${PGPASSWORD+x}" ] || { echo 'mock docker: missing PGPASSWORD' >&2; exit 80; }
-if /usr/bin/env | grep -q '^BASH_FUNC_'; then
-  echo 'mock docker: inherited exported function' >&2
-  exit 88
-fi
-args=" $* "
-container_script=
-if [[ "$args" == *' /bin/sh -c '* ]]; then
-  previous=
-  for arg in "$@"; do
-    if [ "$previous" = -c ]; then container_script=$arg; break; fi
-    previous=$arg
-  done
-  [ -n "$container_script" ] || exit 90
-  if [ ! -f "$mock_root/container-probe.done" ]; then
-    POSTGRES_PASSWORD=container-secret-sentinel \
-      /bin/sh -c "$container_script" pandora-container-wrapper \
-      "$mock_root/bin/container-client"
-    : >"$mock_root/container-probe.done"
-  fi
-fi
-if [[ "$args" == *' port aegis-postgres 5432/tcp '* ]]; then
-  if [ -f "$mock_root/fail_cluster" ]; then
-    printf '%s\n' '127.0.0.1:6543'
-  else
-    printf '%s\n' '127.0.0.1:5432'
-  fi
-  exit 0
-fi
-if [[ "$args" == *' pg_dump '* ]]; then
-  [[ "$args" == *' -d aegis_live '* ]] || exit 81
-  [ ! -f "$mock_root/fail_pg_dump" ] || exit 82
-  printf '%s\n' '-- mock dump'
-  exit 0
-fi
-if [[ "$args" == *' psql '* ]]; then
-  if [[ "$args" =~ CREATE[[:space:]]DATABASE[[:space:]](aegis_check_[0-9]+) ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}" >"$mock_root/create.id"
-  elif [[ "$args" =~ DROP[[:space:]]DATABASE[[:space:]]IF[[:space:]]EXISTS[[:space:]](aegis_check_[0-9]+)[[:space:]]WITH[[:space:]]\(FORCE\) ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}" >"$mock_root/drop.id"
-    [ ! -f "$mock_root/fail_drop" ] || exit 83
-  elif [[ "$args" == *' -d aegis_check_'*' -q '* ]]; then
-    previous=
-    for arg in "$@"; do
-      if [ "$previous" = -d ]; then
-        printf '%s\n' "$arg" >"$mock_root/restore.id"
-        break
-      fi
-      previous=$arg
-    done
-    POSTGRES_PASSWORD=container-secret-sentinel \
-      /bin/sh -c "$container_script" pandora-container-wrapper \
-      "$mock_root/bin/restore-client"
-    [ ! -f "$mock_root/fail_restore" ] || exit 84
-  elif [[ "$args" == *' -tAc '* ]]; then
-    if [[ "$args" == *"to_regclass('public.goose_db_version')"* ]] \
-        && [ -f "$mock_root/source-goose.exists" ]; then
-      printf '%s\n' t
-    elif [[ "$args" == *"to_regclass('public.orders')"* ]]; then
-      if [ -f "$mock_root/orders.exists" ]; then printf '%s\n' t; else printf '%s\n' f; fi
-    elif [[ "$args" == *"column_name IN ('business_request_id','idempotency_key_id')"* ]]; then
-      if [ -f "$mock_root/renewal-link-columns.exists" ]; then printf '%s\n' t; else printf '%s\n' f; fi
-    elif [[ "$args" == *"kind='renewal'"* && "$args" == *"idempotency_key_id IS NULL"* ]]; then
-      if [ -f "$mock_root/legacy-renewal.count" ]; then cat "$mock_root/legacy-renewal.count"; else printf '%s\n' 0; fi
-    elif [[ "$args" == *"kind='renewal'"* && "$args" == *"status IN ('draft','pending_payment','processing','paid')"* ]]; then
-      if [ -f "$mock_root/legacy-renewal.count" ]; then cat "$mock_root/legacy-renewal.count"; else printf '%s\n' 0; fi
-    elif [[ "$args" == *'max(version_id)'* ]] \
-        && [ -f "$mock_root/source-goose.version" ]; then
-      cat "$mock_root/source-goose.version"
-    else
-      printf '%s\n' 1
-    fi
-  fi
-fi
-exit 0
+printf 'docker %s\n' "$*" >>"$mock_root/docker.called"
+exit 99
 MOCK
-chmod 0755 "$TMP/bin/docker"
-cat >"$TMP/bin/container-client" <<'MOCK'
-#!/usr/bin/env sh
-[ "${PGPASSWORD:-}" = argv-secret-sentinel ] || exit 94
-[ -z "${POSTGRES_PASSWORD+x}" ] || exit 95
-if /usr/bin/env | grep -q '^BASH_FUNC_'; then exit 96; fi
-exit 0
-MOCK
-chmod 0755 "$TMP/bin/container-client"
-cat >"$TMP/bin/restore-client" <<'MOCK'
-#!/usr/bin/env sh
-[ "${PGPASSWORD:-}" = argv-secret-sentinel ] || exit 97
-[ -z "${POSTGRES_PASSWORD+x}" ] || exit 98
-mock_root="$(cd "$(dirname "$0")/.." && pwd)"
-cat >"$mock_root/restore.payload"
-MOCK
-chmod 0755 "$TMP/bin/restore-client"
+chmod 0755 "$TMP/bin/client-guard" "$TMP/bin/pg_dump" "$TMP/bin/psql" "$TMP/bin/docker"
 cat >"$TMP/bin/goose" <<'MOCK'
 #!/usr/bin/env bash
 mock_root="$(cd "$(dirname "$0")/.." && pwd)"
 printf '%s\n' "$*" >>"$mock_root/goose.argv"
-[ -n "${PGPASSWORD+x}" ] || { echo 'mock goose: missing PGPASSWORD' >&2; exit 85; }
+[ "${PGPASSWORD:-}" = argv-secret-sentinel ] || { echo 'mock goose: wrong PGPASSWORD' >&2; exit 85; }
+[ -z "${POSTGRES_PASSWORD+x}" ] && [ -z "${POSTGRES_SUPER_PASSWORD+x}" ] \
+  || { echo 'mock goose: .env passwords leaked into the environment' >&2; exit 90; }
 if /usr/bin/env | grep -q '^BASH_FUNC_'; then
   echo 'mock goose: inherited exported function' >&2
   exit 89
@@ -142,7 +129,7 @@ chmod 0755 "$TMP/bin/env"
 
 run_check() {
   PATH="$TMP/bin:$PATH" GOOSE_BIN="$TMP/bin/goose" \
-    AEGIS_ENV_FILE="$TMP/env" AEGIS_MIGRATIONS_DIR="$1" \
+    AEGIS_ENV_FILE="${ENV_FILE:-$TMP/env}" AEGIS_MIGRATIONS_DIR="$1" \
     "$CHECK"
 }
 
@@ -173,14 +160,14 @@ done
 run_check "$TMP/gapped" >"$TMP/gapped.out" 2>&1 \
   || { echo 'gapped migration sequence was rejected' >&2; cat "$TMP/gapped.out" >&2; exit 1; }
 grep -Fq 'migration precheck complete' "$TMP/gapped.out"
-rm -f "$TMP/create.id" "$TMP/docker.argv"
+rm -f "$TMP/create.id" "$TMP/client.argv"
 set +e
 run_check "$TMP/duplicate" >"$TMP/duplicate.out" 2>&1
 duplicate_status=$?
 set -e
 [ "$duplicate_status" -eq 78 ]
 grep -Fq 'duplicate migration version: 00002_c.sql' "$TMP/duplicate.out"
-[ ! -e "$TMP/create.id" ] && [ ! -s "$TMP/docker.argv" ]
+[ ! -e "$TMP/create.id" ] && [ ! -s "$TMP/client.argv" ]
 
 # 仓库里真实的 migrations/ 必须能过文件名、编号与 Up 标记这一层校验。
 run_check "$ROOT/migrations" >"$TMP/real.out" 2>&1 \
@@ -255,26 +242,23 @@ grep -Fq 'migration precheck complete' "$TMP/hostile-env.out"
 cmp -s "$TMP/create.id" "$TMP/restore.id"
 cmp -s "$TMP/create.id" "$TMP/goose.id"
 cmp -s "$TMP/create.id" "$TMP/drop.id"
-grep -Fq 'pg_dump -U aegis_test -d aegis_live' "$TMP/docker.argv"
-grep -Eq 'DROP DATABASE IF EXISTS aegis_check_[0-9]+ WITH \(FORCE\)' "$TMP/docker.argv"
-grep -Fq '/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "$TMP/docker.argv"
+grep -Fxq 'pg_dump -h 127.0.0.1 -p 5432 -U postgres -d aegis_live' "$TMP/client.argv"
+grep -Eq '^psql .*DROP DATABASE IF EXISTS aegis_check_[0-9]+ WITH \(FORCE\)' "$TMP/client.argv"
 
-if grep -Fq 'argv-secret-sentinel' "$TMP/docker.argv"; then
-  echo "PostgreSQL password leaked into docker argv" >&2
+if grep -Eq 'argv-secret-sentinel|owner-secret-sentinel' "$TMP/client.argv"; then
+  echo "PostgreSQL password leaked into client argv" >&2
   exit 1
 fi
-grep -Fq -- '-e PGPASSWORD' "$TMP/docker.argv"
 if grep -Fq 'argv-secret-sentinel' "$TMP/goose.argv"; then
   echo "PostgreSQL password leaked into goose argv" >&2
   exit 1
 fi
-grep -Fq 'GOOSE_DBSTRING=host=127.0.0.1 port=5432 user=aegis_test dbname=aegis_check_' "$TMP/goose.env"
+grep -Eq '^GOOSE_DBSTRING=host=127\.0\.0\.1 port=5432 user=postgres dbname=aegis_check_[0-9]+ sslmode=disable$' "$TMP/goose.env"
 if [ -s "$TMP/env.argv" ] && grep -Fq 'argv-secret-sentinel' "$TMP/env.argv"; then
   echo "PostgreSQL password leaked into env argv" >&2
   exit 1
 fi
 
-: >"$TMP/docker.argv"
 : >"$TMP/goose.env"
 PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes run_check "$TMP/valid" \
   >"$TMP/approved.out" 2>&1
@@ -292,14 +276,6 @@ for fault in pg_dump restore goose; do
   rm -f "$TMP/fail_$fault"
 done
 
-touch "$TMP/fail_cluster"
-if run_check "$TMP/valid" >"$TMP/fail-cluster.out" 2>&1; then
-  echo "cluster endpoint mismatch was accepted" >&2
-  exit 1
-fi
-rm -f "$TMP/fail_cluster"
-grep -Fq 'PostgreSQL published endpoint mismatch' "$TMP/fail-cluster.out"
-
 touch "$TMP/fail_drop"
 if run_check "$TMP/valid" >"$TMP/fail-drop.out" 2>&1; then
   echo "clone cleanup failure was accepted" >&2
@@ -312,13 +288,13 @@ grep -Fq 'disposable database cleanup failed' "$TMP/fail-drop.out"
 mkdir -p "$TMP/no-down" "$TMP/irreversible"
 printf '%s\n' '-- +goose Up' 'SELECT 1;' '-- +goose Down' 'SELECT 1;' >"$TMP/no-down/00001_a.sql"
 printf '%s\n' '-- +goose Up' 'SELECT 1;' >"$TMP/no-down/00002_b.sql"
-: >"$TMP/docker.argv"
+: >"$TMP/client.argv"
 if run_check "$TMP/no-down" >"$TMP/no-down.out" 2>&1; then
   echo 'migration without Down section was accepted' >&2
   exit 1
 fi
 grep -Fq '00002_b.sql must contain a goose Down section or an irreversible header' "$TMP/no-down.out"
-[ ! -s "$TMP/docker.argv" ] || { echo 'missing-Down rejection touched docker' >&2; exit 1; }
+[ ! -s "$TMP/client.argv" ] || { echo 'missing-Down rejection touched the database' >&2; exit 1; }
 # 不在文件头（Up 之后）的 irreversible 字样不算标记
 printf '%s\n' '-- +goose Up' '-- irreversible: too late' 'SELECT 1;' >"$TMP/no-down/00002_b.sql"
 if run_check "$TMP/no-down" >"$TMP/no-down2.out" 2>&1; then
@@ -350,7 +326,7 @@ grep -Fxq 'rehearsed_stopped_writer=yes' "$ATT"
 grep -Eq '^migrations_sha256=[0-9a-f]{64}$' "$ATT"
 # 停服前的演练给克隆库带上停写闸门，但凭据不是「线上写入者已停」的声明
 grep -Fq 'PGOPTIONS=-c app.idempotency_writers_stopped=yes' "$TMP/goose.env"
-if grep -Fq 'argv-secret-sentinel' "$ATT"; then echo 'password leaked into attestation' >&2; exit 1; fi
+if grep -Eq 'argv-secret-sentinel|owner-secret-sentinel' "$ATT"; then echo 'password leaked into attestation' >&2; exit 1; fi
 
 # 凭据路径已存在、或不是绝对路径：拒绝，不覆盖
 for bad in "$ATT" "relative.attestation"; do
@@ -426,5 +402,25 @@ bogus_status=$?
 set -e
 [ "$usage_status" -eq 78 ] && [ "$bogus_status" -eq 78 ]
 rm -f "$TMP/source-goose.exists" "$TMP/source-goose.version"
+
+# 老 .env 里留着的 PANDORA_DB_LAYOUT（哪怕写着 docker）不起作用：照常以本机客户端完整预检
+cp "$TMP/env" "$TMP/env-leftover"; printf 'PANDORA_DB_LAYOUT=docker\n' >>"$TMP/env-leftover"
+ENV_FILE="$TMP/env-leftover" run_check "$TMP/valid" >"$TMP/leftover.out" 2>&1 \
+  || { echo 'a leftover PANDORA_DB_LAYOUT broke the precheck' >&2; cat "$TMP/leftover.out" >&2; exit 1; }
+grep -Fq 'migration precheck complete' "$TMP/leftover.out"
+
+# 没有超级用户口令：拒绝，一个客户端都不跑
+sed '/^POSTGRES_SUPER_PASSWORD=/d' "$TMP/env" >"$TMP/env-nosuper"
+: >"$TMP/client.argv"; rm -f "$TMP/create.id"
+if ENV_FILE="$TMP/env-nosuper" run_check "$TMP/valid" >"$TMP/nosuper.out" 2>&1; then
+  echo 'precheck without a superuser password was accepted' >&2
+  exit 1
+fi
+grep -Fq 'POSTGRES_SUPER_PASSWORD is required' "$TMP/nosuper.out"
+[ ! -s "$TMP/client.argv" ] && [ ! -e "$TMP/create.id" ] \
+  || { echo 'a client ran without a superuser password' >&2; exit 1; }
+
+# 全程没有调过 docker
+[ ! -e "$TMP/docker.called" ] || { echo "docker was called: $(cat "$TMP/docker.called")" >&2; exit 1; }
 
 echo "check-migrations dynamic gate: PASS"

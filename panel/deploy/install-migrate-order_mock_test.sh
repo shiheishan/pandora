@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# 两个安装器升级迁移的顺序桩测试：不需要 root、Docker 或数据库。
+# install.sh 升级迁移的顺序桩测试：不需要 root 或数据库。
 #
-# install-lib.sh 的 pandora_run_migrations 是 install.sh 与 install-native.sh 共用的迁移步骤。
+# install-lib.sh 的 pandora_run_migrations 是 install.sh 的迁移步骤。
 # 这里把 check-migrations.sh、migrate.sh、systemctl 换成往同一份事件日志里记账的桩，证明：
 #   - 升级：完整预检（按停写口径演练、写凭据、不带「写入者已停」声明）在停服之前；
 #     停服之后 migrate.sh 只带凭据（只做只读核对），「写入者已停」声明只在这一步给；
 #   - 停服前预检失败：服务一个都没停、migrate.sh 没被调用；
 #   - 迁移失败：服务被拉回来；
 #   - 首装、或升级但库是全新的：不跑克隆预检。
-# 再静态核对两个安装器真的走这个函数，没有绕开它另起一套；迁移手册 MIGRATION-RUNBOOK.md
-# 进发布包（拷贝与归档两处）并由两个安装器装到 deploy/ 下。
+# 再静态核对安装器真的走这个函数，没有绕开它另起一套；迁移手册 MIGRATION-RUNBOOK.md
+# 进发布包（拷贝与归档两处）并由安装器装到 deploy/ 下。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +29,7 @@ MOCK
 cat >"$T/deploy/check-migrations.sh" <<'MOCK'
 #!/usr/bin/env bash
 events="$(cd "$(dirname "$0")/.." && pwd)/events.log"
+[ -z "${AEGIS_MIGRATION_DATABASE_URL:-}" ] || printf 'dsn %s\n' "$AEGIS_MIGRATION_DATABASE_URL" >>"$events"
 if [ "${1:-}" = --verify-attestation ]; then
   printf 'verify %s\n' "$2" >>"$events"; exit 0
 fi
@@ -43,6 +44,7 @@ MOCK
 cat >"$T/deploy/migrate.sh" <<'MOCK'
 #!/usr/bin/env bash
 events="$(cd "$(dirname "$0")/.." && pwd)/events.log"
+[ -z "${AEGIS_MIGRATION_DATABASE_URL:-}" ] || printf 'dsn %s\n' "$AEGIS_MIGRATION_DATABASE_URL" >>"$events"
 att="${PANDORA_PRECHECK_ATTESTATION:-}"
 printf 'migrate %s attestation=%s attestation_file=%s approved=%s skip=%s local=%s\n' "$*" \
   "${att:+set}" "$([ -n "$att" ] && [ -s "$att" ] && echo present || echo absent)" \
@@ -130,14 +132,22 @@ if grep -q '^precheck' "$EVENTS"; then fail 'fresh database ran the clone preche
 [ "$(lineno '^systemctl stop ')" -lt "$(lineno '^migrate up ')" ] || fail "fresh upgrade order: $(cat "$EVENTS")"
 grep -q 'skip=yes-empty-database' "$EVENTS" || fail 'fresh upgrade did not skip the precheck'
 
-# --- ⑥ 服务清单可由调用方给（install-native.sh 传自己的 SERVICES）-----------------------
+# --- ⑥ 停、拉的服务就是 install-lib.sh 的 SERVICES -----------------------------------------
 reset
-PANDORA_SERVICES='svc-a svc-b' run upgrade no || fail 'custom service list failed'
+( SERVICES=(svc-a svc-b); run upgrade no ) || fail 'custom service list failed'
 grep -qx 'systemctl stop svc-a svc-b' "$EVENTS" || fail "custom services: $(grep '^systemctl' "$EVENTS")"
+reset; touch "$T/fail_migrate"
+( SERVICES=(svc-a svc-b); run upgrade no ) || true
+grep -qx 'systemctl start svc-a svc-b' "$EVENTS" || fail "custom services not restored: $(grep '^systemctl' "$EVENTS")"
+# 迁移 DSN（带 postgres 超级用户口令）不经 env(1) 传：调用方环境里有也不带过去，migrate.sh 自己从 .env 读
+reset
+AEGIS_MIGRATION_DATABASE_URL='postgres://postgres:leak-fixture@127.0.0.1:5432/aegis' run upgrade no || fail 'run with a DSN in the environment failed'
+grep -q '^migrate up ' "$EVENTS" || fail 'migrate.sh did not run'
+if grep -q 'leak-fixture' "$EVENTS"; then fail "the migration DSN reached the migration scripts' environment: $(grep leak-fixture "$EVENTS")"; fi
 
-# --- ⑦ 静态：两个安装器都走这个函数 ------------------------------------------------
-inst="$DEPLOY/install.sh"; native="$DEPLOY/install-native.sh"
-for f in "$inst" "$native"; do
+# --- ⑦ 静态：安装器走这个函数 ------------------------------------------------------
+inst="$DEPLOY/install.sh"
+for f in "$inst"; do
   grep -q 'pandora_run_migrations "\$MODE"' "$f" || fail "${f##*/} does not use pandora_run_migrations"
   grep -Fq 'install-lib.sh' "$f" || fail "${f##*/} does not source install-lib.sh"
   # 「写入者已停」只由共用函数在停服之后递交，安装器自己不再直接调 migrate.sh / check-migrations.sh
@@ -148,23 +158,19 @@ for f in "$inst" "$native"; do
     fail "${f##*/} declares stopped writers by itself"
   fi
 done
-# install.sh：备份 < 迁移 < 装程序；check-migrations.sh 与迁移文件一起先就位
+# install.sh：备份 < 迁移 < 装程序 < 启动；不再把「写入者已停」写进 .env
 line() { grep -nF "$2" "$1" | head -1 | cut -d: -f1; }
-[ "$(line "$inst" 'pg_restore --list /tmp/pre-upgrade.dump')" -lt "$(line "$inst" 'pandora_run_migrations "$MODE"')" ] \
+[ "$(line "$inst" 'pg_dump -Fc -d aegis')" -lt "$(line "$inst" 'pandora_run_migrations "$MODE"')" ] \
   || fail 'install.sh migrates before the pre-upgrade backup'
-[ "$(line "$inst" 'pandora_run_migrations "$MODE"')" -lt "$(line "$inst" 'install-linux-binaries.sh" "$RELEASE_ROOT"')" ] \
-  || fail 'install.sh installs binaries before migrating'
-[ "$(line "$inst" 'for f in migrate.sh platform.sh check-migrations.sh; do')" -lt "$(line "$inst" 'step "备份数据库"')" ] \
+[ "$(line "$inst" 'pandora_run_migrations "$MODE"')" -lt "$(line "$inst" 'cp -f "$RELEASE_BIN"/* "$INSTALL_DIR/bin/"')" ] \
+  || fail 'install.sh installs binaries before migrating (a failed upgrade would restart new code on the old schema)'
+[ "$(line "$inst" 'cp -f "$RELEASE_BIN"/* "$INSTALL_DIR/bin/"')" -lt "$(line "$inst" 'systemctl start "$s"')" ] \
+  || fail 'install.sh starts services before installing the new binaries'
+# check-migrations.sh 与 migrate.sh 在迁移之前就装到 deploy/（升级的预检在停服之前就要跑）
+[ "$(line "$inst" '"$SCRIPT_DIR/check-migrations.sh"')" -lt "$(line "$inst" 'pandora_run_migrations "$MODE"')" ] \
   || fail 'install.sh copies the migration scripts too late for a pre-stop precheck'
-# install-native.sh：备份 < 迁移 < 装程序 < 启动；不再把「写入者已停」写进 .env
-[ "$(line "$native" 'pg_dump -Fc -d aegis')" -lt "$(line "$native" 'pandora_run_migrations "$MODE"')" ] \
-  || fail 'install-native.sh migrates before the pre-upgrade backup'
-[ "$(line "$native" 'pandora_run_migrations "$MODE"')" -lt "$(line "$native" 'cp -f "$RELEASE_BIN"/* "$INSTALL_DIR/bin/"')" ] \
-  || fail 'install-native.sh installs binaries before migrating (a failed upgrade would restart new code on the old schema)'
-[ "$(line "$native" 'cp -f "$RELEASE_BIN"/* "$INSTALL_DIR/bin/"')" -lt "$(line "$native" 'systemctl start "$s"')" ] \
-  || fail 'install-native.sh starts services before installing the new binaries'
-if grep -n '^PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=' "$native"; then
-  fail 'install-native.sh writes a permanent stopped-writer declaration into .env'
+if grep -n '^PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=' "$inst"; then
+  fail 'install.sh writes a permanent stopped-writer declaration into .env'
 fi
 
 # --- ⑧ 迁移手册跟着发布包走，装到 deploy/ 下：迁移失败时人在服务器上照着做 ----------------
@@ -175,9 +181,8 @@ grep -Fq 'cp "$ROOT/deploy/MIGRATION-RUNBOOK.md" "$target/deploy/MIGRATION-RUNBO
 # 归档按类分 tar：手册是数据文件（0644），必须在 release_data 里，否则 SHA256SUMS 有而 tar 里没有
 awk '/^  release_data=\(/{p=1} p{print} p&&/^  \)/{exit}' "$build" | grep -Fq '"$target_base/deploy/MIGRATION-RUNBOOK.md"' \
   || fail 'build-release.sh does not archive MIGRATION-RUNBOOK.md as a 0644 data file'
-grep -Fq 'cp "$RELEASE_ROOT/deploy/MIGRATION-RUNBOOK.md" "$DEST/deploy/"' "$inst" || fail 'install.sh does not install the runbook'
-grep -Fq '"$SCRIPT_DIR/MIGRATION-RUNBOOK.md"' "$native" || fail 'install-native.sh does not install the runbook'
+grep -Fq '"$SCRIPT_DIR/MIGRATION-RUNBOOK.md"' "$inst" || fail 'install.sh does not install the runbook'
 # 迁移失败的提示指向机器上的这份手册
-grep -Fq '$DEST/deploy/MIGRATION-RUNBOOK.md' "$inst" || fail 'install.sh failure message does not point at the runbook'
+grep -Fq '$INSTALL_DIR/deploy/MIGRATION-RUNBOOK.md' "$inst" || fail 'install.sh failure message does not point at the runbook'
 
 printf 'install-migrate-order mock: PASS\n'

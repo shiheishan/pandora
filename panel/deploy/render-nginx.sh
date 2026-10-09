@@ -123,7 +123,7 @@ ensure_realip_default() {
 # client address and ignores any CF-Connecting-IP or X-Real-IP a client sends.
 #
 # Behind Cloudflare, replace this file with Cloudflare's published networks:
-#   /opt/aegispanel/deploy/update-cloudflare-realip.sh
+#   /opt/pandora/deploy/update-cloudflare-realip.sh
 #   nginx -t && systemctl reload nginx
 #
 # render-nginx.sh never overwrites this file; upgrades keep whatever is here.

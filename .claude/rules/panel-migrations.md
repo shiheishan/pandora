@@ -65,7 +65,7 @@ paths:
   - 全量约 3 分钟
   - 历史缺陷登记在脚本的 `KNOWN`，同样只许删不许加。建门禁时的 12 条已于 2026-10-07 全部修好（只改 Down 与文件头），现在为空：任何迁移往返不过即红
   - 改 Down 时先在本地读懂上一版的完整定义，再推到 GitHub 看往返结果；本机没有 Docker 跑不了它
-- 一次性库预检（`check-migrations.sh`）由发布控制器、install.sh 与 install-native.sh 的升级在**停服之前**跑，整库克隆在停服窗口之外（安装器经 `install-lib.sh` 的 `pandora_run_migrations`，桩测试 `install-migrate-order_mock_test.sh`）
+- 一次性库预检（`check-migrations.sh`）由发布控制器与 install.sh 的升级在**停服之前**跑，整库克隆在停服窗口之外（安装器经 `install-lib.sh` 的 `pandora_run_migrations`，桩测试 `install-migrate-order_mock_test.sh`）
   - 通过后写预检凭据，内容是水位、迁移目录摘要、是否按停写口径演练
   - 停服后 `--verify-attestation` 只读核对：文件、水位、续费闸门，再与凭据比对，对不上就自动拉回旧服务
   - `migrate.sh up` 带 `PANDORA_PRECHECK_ATTESTATION` 时只做这次核对，不带时照旧完整预检，两样都没有就不跑 up

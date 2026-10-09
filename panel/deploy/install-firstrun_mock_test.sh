@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# 部署上手三件事的桩测试：不需要 root、Docker 或数据库。
+# 部署上手三件事的桩测试：不需要 root 或数据库。
 #   ① admin-url.sh：读 .env 打印完整后台地址，不 source、不打印别的值；
 #   ② 首装交互式建管理员（install-lib.sh 的 pandora_bootstrap_admin）：密码不进命令行参数、
 #      环境变量、输出；已有管理员跳过；无人值守不问；
-#   ③ install.sh 的收尾提示：「现在可以做什么 → 还差什么 → 常用操作」，首装与升级分开说。
-# 再静态核对发布包与两个安装器都带上了 admin-url.sh、install-lib.sh。
+#   ③ 收尾提示（install-lib.sh 的 print_install_summary）：「现在可以做什么 → 还差什么 → 常用操作」，
+#      首装与升级分开说；升级不再打印后台地址本身；
+# 再静态核对发布包与安装器都带上了 admin-url.sh、install-lib.sh，建管理员在健康检查之后、HTTPS 边缘之前。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -112,18 +113,15 @@ printf 'x@example.test\nStrong-Pass-1\nStrong-Pass-1\n' | { HAS_ADMIN_RC=1 boots
 # --- ③ 收尾提示 ---------------------------------------------------------------------
 # shellcheck source=public-base-url.sh
 . "$DEPLOY/public-base-url.sh"
-export PANDORA_NGINX_DIR="$T/nginx" PANDORA_BACKUP_DIR="$T/backups"
-# shellcheck source=install.sh
-PANDORA_INSTALL_LIB=1 . "$DEPLOY/install.sh"
-set +E; trap 'rm -rf -- "$T"' EXIT
-declare -F print_install_summary >/dev/null || fail 'library mode does not define print_install_summary'
+declare -F print_install_summary >/dev/null || fail 'install-lib.sh does not define print_install_summary'
 
-DEST="$T/opt-aegis"; RELEASE_ROOT="$T/rel"
-mkdir -p "$DEST/deploy"
+INSTALL_DIR="$T/opt-pandora"; D="$INSTALL_DIR/deploy"
+mkdir -p "$D"
 printf 'AEGIS_ADMIN_PATH=%s\nAEGIS_PUBLIC_BASE_URL=https://panel.example.test\nAEGIS_MASTER_KEY=%s\n' \
-  "$ADMIN_PATH_VALUE" "$SECRET_VALUE" >"$DEST/deploy/.env"
+  "$ADMIN_PATH_VALUE" "$SECRET_VALUE" >"$D/.env"
 url="https://panel.example.test/$ADMIN_PATH_VALUE/"
 summary() { print_install_summary >"$T/summary" 2>&1; }
+todo() { awk '/还差什么/{t=1} /常用操作/{t=0} t' "$T/summary"; }
 order_ok() {
   local a b c
   a="$(grep -n '现在可以做什么' "$T/summary" | cut -d: -f1)"
@@ -132,68 +130,93 @@ order_ok() {
   [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ]
 }
 
-# 首装、HTTPS 已配好（正规证书）、管理员已建
-MODE=install EDGE_STATE=trusted PANDORA_ADMIN_STATE=created PANDORA_ADMIN_EMAIL=admin@example.test PENDING_COUNT=0
-before=0 after=134 BK=""
+# 首装、HTTPS 已配好（正规证书）、管理员已建；每日备份还没开：还差什么里有开备份与另存私钥
+MODE=install EDGE_STATE=trusted PANDORA_ADMIN_STATE=created PANDORA_ADMIN_EMAIL=admin@example.test BACKUP_TIMER=disabled
+MIGRATION_BEFORE=0 MIGRATION_AFTER=134 BK=""
 summary
 order_ok || fail "install sections out of order: $(cat "$T/summary")"
 grep -q '安装完成' "$T/summary" || fail 'install summary title'
 grep -Fq "打开管理后台：$url" "$T/summary" || fail 'install summary lacks the full admin URL'
 grep -q 'admin@example.test' "$T/summary" || fail 'install summary does not name the new administrator'
-grep -Fq "sudo $DEST/deploy/admin-url.sh" "$T/summary" || fail 'install summary does not mention admin-url.sh'
+grep -Fq "sudo $D/admin-url.sh" "$T/summary" || fail 'install summary does not mention admin-url.sh'
 refute -q 'aegis-adminctl create' "$T/summary"
 refute -q "$SECRET_VALUE" "$T/summary"
+todo | grep -Fq 'systemctl enable --now aegis-backup.timer' && todo | grep -Fq "$INSTALL_DIR/secrets/backup-age.key" \
+  || fail "install summary does not ask to enable backups and keep the key elsewhere: $(cat "$T/summary")"
+todo | grep -Fq "sudo $D/update-cloudflare-realip.sh" || fail 'install summary lacks the Cloudflare step'
+# 每日备份已开：不再列
+BACKUP_TIMER=enabled
+summary
+if todo | grep -q 'aegis-backup.timer'; then fail 'enabled backups are still listed as missing'; fi
 
 # 首装、证书没申请下来（自签兜底）、管理员没建：照样给后台地址并说明自签；还差什么里有换证书的命令
 # 与建管理员命令（密码不回显、走标准输入）
-MODE=install EDGE_STATE=selfsigned PANDORA_ADMIN_STATE=manual PENDING_COUNT=2
+MODE=install EDGE_STATE=selfsigned PANDORA_ADMIN_STATE=manual
 summary
 order_ok || fail 'manual install sections out of order'
 grep -Fq "打开管理后台：$url" "$T/summary" && grep -q '自签证书' "$T/summary" || fail 'self-signed install summary lacks the URL or the warning'
-awk '/还差什么/{t=1} /常用操作/{t=0} t' "$T/summary" | grep -Fq "sudo $DEST/deploy/edge-tls.sh issue" \
-  || fail 'self-signed summary lacks the issue command under 还差什么'
+todo | grep -Fq "sudo $D/edge-tls.sh issue" || fail 'self-signed summary lacks the issue command under 还差什么'
 grep -Fq "read -rsp" "$T/summary" && grep -Fq -- '--password-stdin' "$T/summary" \
   || fail "manual admin command must read the password silently and pass it on stdin: $(cat "$T/summary")"
 refute -q -- '--password [^-]' "$T/summary"
-grep -q 'CHANGE_ME 的 2 项' "$T/summary" || fail 'pending .env items not listed'
-awk '/还差什么/{t=1} /常用操作/{t=0} t' "$T/summary" | grep -q 'aegis-adminctl create' \
-  || fail 'the create command is not under 还差什么'
+todo | grep -q 'aegis-adminctl create' || fail 'the create command is not under 还差什么'
 
-# 升级一台没走 nginx 边缘的旧面板：给出切到 HTTPS 的命令（PANDORA_ACME=1 重跑）
-MODE=upgrade EDGE_STATE=not-enabled PANDORA_ADMIN_STATE=manual PENDING_COUNT=0
+# 首装、HTTPS 边缘没配上（没装 nginx / setup 失败 / PANDORA_SKIP_NGINX=1）：给地址，说清楚补哪一步
+for state in no-nginx failed skipped; do
+  MODE=install EDGE_STATE=$state PANDORA_ADMIN_STATE=created
+  summary
+  order_ok || fail "$state sections out of order"
+  grep -Fq "$url" "$T/summary" || fail "$state summary lacks the admin URL"
+  refute -Fq "打开管理后台：$url" "$T/summary"
+  todo | grep -Fq "sudo $D/edge-tls.sh setup" || fail "$state summary lacks the edge setup command: $(cat "$T/summary")"
+done
+MODE=install EDGE_STATE=no-nginx; summary
+todo | grep -Fq 'apt-get install -y nginx' || fail 'no-nginx summary does not say to install nginx'
+
+# 升级一台没走 nginx 边缘的面板：给出切到 HTTPS 的命令（edge-tls.sh setup，不用整个重装一遍）
+MODE=upgrade EDGE_STATE=not-enabled PANDORA_ADMIN_STATE=manual
 summary
-grep -Fq "sudo PANDORA_ACME=1 $RELEASE_ROOT/deploy/install.sh" "$T/summary" || fail 'not-enabled summary lacks the switch command'
-# 对外地址不合规：说清楚改哪里
+todo | grep -Fq "sudo $D/edge-tls.sh setup" || fail 'not-enabled summary lacks the switch command'
+# 对外地址不合规：说清楚改哪里，改完重启网关再配边缘
 MODE=upgrade EDGE_STATE=bad-url
 summary
-grep -q 'https://域名 或 https://公网IPv4' "$T/summary" || fail 'bad-url summary does not say what to change'
+todo | grep -q 'https://域名 或 https://公网IPv4' && todo | grep -Fq 'systemctl restart aegis-public aegis-admin aegis-node' \
+  || fail "bad-url summary does not say what to change: $(cat "$T/summary")"
 
-# 升级：标题不同；不再打印后台地址本身，只提示怎么重看；给出备份位置；不提建管理员
-MODE=upgrade EDGE_STATE=trusted PANDORA_ADMIN_STATE=manual PENDING_COUNT=0
-before=121 after=134 BK="$T/backups/pre-upgrade-20261007.dump"
+# 升级：标题不同；不再打印后台地址本身，只提示怎么重看；给出迁移范围与备份位置；不提建管理员
+MODE=upgrade EDGE_STATE=trusted PANDORA_ADMIN_STATE=manual BACKUP_TIMER=enabled
+MIGRATION_BEFORE=121 MIGRATION_AFTER=134 BK="$T/backups/pre-upgrade-20261007.dump"
 summary
 order_ok || fail 'upgrade sections out of order'
 grep -q '升级完成' "$T/summary" && ! grep -q '安装完成' "$T/summary" || fail 'upgrade summary title'
 grep -q '121 → 134' "$T/summary" || fail 'upgrade summary lacks the migration range'
 grep -Fq "$BK" "$T/summary" || fail 'upgrade summary lacks the backup path'
 refute -q "$ADMIN_PATH_VALUE" "$T/summary"
-grep -Fq "sudo $DEST/deploy/admin-url.sh" "$T/summary" || fail 'upgrade summary does not say how to see the admin URL'
+grep -Fq "sudo $D/admin-url.sh" "$T/summary" || fail 'upgrade summary does not say how to see the admin URL'
 grep -q "Let's Encrypt 证书在用" "$T/summary" || fail 'upgrade summary does not report the certificate state'
 refute -q 'aegis-adminctl create' "$T/summary"
+todo | grep -qx '    没有了' || fail "nothing left to do, but 还差什么 is not empty: $(cat "$T/summary")"
 
-# --- ④ 静态：发布包与安装器都带上新文件 ------------------------------------------------
+# --- ④ 静态：发布包与安装器都带上新文件；顺序 ------------------------------------------------
 build="$DEPLOY/build-release.sh"
 for script in admin-url.sh install-lib.sh; do
   n="$(grep -c "for script in .* $script .*; do" "$build" || true)"
   [ "$n" = 2 ] || fail "build-release.sh lists $script in $n of 2 script loops (copy and archive)"
 done
-grep -Fq 'cp "$RELEASE_ROOT/deploy/admin-url.sh" "$DEST/deploy/"' "$DEPLOY/install.sh" || fail 'install.sh does not install admin-url.sh'
-grep -Fq '"$SCRIPT_DIR/admin-url.sh"' "$DEPLOY/install-native.sh" || fail 'install-native.sh does not install admin-url.sh'
-# 建管理员在健康检查之后、HTTPS 边缘之前（那一步停下时管理员已建好）
-line() { grep -nF "$1" "$DEPLOY/install.sh" | head -1 | cut -d: -f1; }
-[ "$(line '服务起来了但健康检查没通过')" -lt "$(line 'pandora_bootstrap_admin "$DEST/bin/aegis-adminctl"')" ] \
-  && [ "$(line 'pandora_bootstrap_admin "$DEST/bin/aegis-adminctl"')" -lt "$(line 'step "配置 HTTPS（nginx 边缘与证书）"')" ] \
-  || fail 'install.sh must create the administrator after the health check and before the HTTPS edge'
-grep -q 'if pandora_admin_prompt_wanted "\$MODE"; then' "$DEPLOY/install.sh" || fail 'install.sh does not gate the prompt'
+inst="$DEPLOY/install.sh"
+grep -Fq '"$SCRIPT_DIR/admin-url.sh"' "$inst" || fail 'install.sh does not install admin-url.sh'
+# 建管理员在健康检查之后、HTTPS 边缘之前（那一步出问题时管理员已建好）；收尾提示在最后
+line() { grep -nF "$1" "$inst" | head -1 | cut -d: -f1; }
+[ "$(line 'native_gateways_healthy || HEALTH_OK=0')" -lt "$(line 'pandora_bootstrap_admin "$INSTALL_DIR/bin/aegis-adminctl"')" ] \
+  && [ "$(line 'pandora_bootstrap_admin "$INSTALL_DIR/bin/aegis-adminctl"')" -lt "$(line 'bash "$INSTALL_DIR/deploy/edge-tls.sh" setup "$ENV_FILE"')" ] \
+  && [ "$(line 'bash "$INSTALL_DIR/deploy/edge-tls.sh" setup "$ENV_FILE"')" -lt "$(line 'print_install_summary')" ] \
+  || fail 'install.sh must create the administrator after the health check and before the HTTPS edge, and summarise last'
+grep -q 'if \[\[ "\$HEALTH_OK" == 1 \]\] && pandora_admin_prompt_wanted "\$MODE"; then' "$inst" || fail 'install.sh does not gate the prompt'
+# 健康检查没过不打印「装好了」的收尾，停下说怎么查
+[ "$(line '[[ "$HEALTH_OK" == 1 ]] || die')" -lt "$(line 'print_install_summary')" ] || fail 'install.sh summarises an unhealthy install'
+# 收尾提示按状态说话：边缘的每种结果都有对应的 EDGE_STATE
+for state in trusted selfsigned failed no-nginx bad-url not-enabled; do
+  grep -Eq "EDGE_STATE=$state( |;|\$)" "$inst" || fail "install.sh never sets EDGE_STATE=$state"
+done
 
 printf 'install-firstrun mock: PASS\n'

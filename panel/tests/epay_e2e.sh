@@ -11,7 +11,7 @@
 set -uo pipefail
 
 BASE=${BASE:-http://127.0.0.1:9000}
-PSQL=/opt/aegispanel/deploy/psql.sh
+PSQL=/opt/pandora/deploy/psql.sh
 EPAY_KEY=${EPAY_KEY:-TESTKEY_e2e_20260725}
 EPAY_PID=${EPAY_PID:-1001}
 

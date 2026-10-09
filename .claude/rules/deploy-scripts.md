@@ -8,17 +8,19 @@ paths:
 - 这里是产品的一部分，任何人下载后照同一套脚本部署。脚本与模板里不出现具体部署的值：域名、后台前缀、主密钥都在安装时生成，落在主机的 `.env`
   - nginx 模板只含占位符 `__AEGIS_ADMIN_PATH__`、`__AEGIS_DOMAIN__`；`.env.example` 的机密与域名全是 `CHANGE_ME`。守卫：`render-nginx_test.sh`（渲染后不残留占位符或具体域名）
   - 维护者操作自己服务器的一次性脚本不进 deploy/，放仓库根被忽略的 `ops-local/`
-- 破坏性脚本先校验全部输入，再做第一次破坏动作（先例 `migrate-to-new-host.sh`、`test-install.sh` 发现库里已有用户即拒绝）
-- 迁移类脚本按自身位置找与 deploy/ 并排的 `migrations/`（可由 `AEGIS_MIGRATIONS_DIR` 覆盖），不写死安装路径：`/opt/aegispanel`（install.sh）与 `/opt/pandora`（install-native.sh）两种布局都要成立。守卫：`migrate-layout_mock_test.sh`
+- 生产只有一种布局：`install.sh`（系统包 PostgreSQL 18 + Valkey，装到 `/opt/pandora`，备份在 `/var/backups/pandora`）。没有 Docker 生产布局、没有布局开关（`PANDORA_LAYOUT`、`PANDORA_DB_LAYOUT`）、没有从别的布局迁过来的路径（2026-10-09 删除，当时没有任何生产部署）。Docker 只给开发数据基座（`panel/dev/docker-compose.yml`）与 CI（PG18 门禁、迁移往返、冒烟栈、Valkey 版本矩阵）用。守卫：`deploy-single-layout_static_test.sh`（删掉的入口与文件不许回来；生产脚本、单元、Go 缺省路径里不出现 docker、布局开关、`/opt/aegispanel`、`/var/backups/aegispanel`；`/etc/aegispanel`、`/var/lib/aegispanel`、`/run/aegispanel` 是共用路径，照用）
+- 破坏性脚本先校验全部输入，再做第一次破坏动作（先例 `restore-postgres.sh`：库属主角色不存在、备份要的角色认不出，都在删正式库之前停下）
+- 迁移类脚本按自身位置找与 deploy/ 并排的 `migrations/`（可由 `AEGIS_MIGRATIONS_DIR` 覆盖），不写死安装路径。守卫：`migrate-layout_mock_test.sh`
 - 读 `.env` 的渲染类脚本不 source 它（文件里有机密，不能被执行）：`render-nginx.sh` 用 awk 逐键读，`public-base-url.sh` 带不 source 的单键读取
 - 对外地址 `AEGIS_PUBLIC_BASE_URL` 的合规规则有三份，改一处要改三处：`public-base-url.sh` 的 `pandora_valid_public_base_url`、`render-nginx.sh` 的域名校验、Go 侧 `platform/config` 的 `CanonicalPublicOrigin`（生产要求 https + 公网 Host）。nginx 的 `server_name` 与证书路径就从这个值生成
 - Cloudflare 真实 IP 信任表 `/etc/aegispanel/cloudflare-realip.conf` 的路径在模板、`render-nginx.sh`、`update-cloudflare-realip.sh` 三处写死，须一致；渲染器只在文件缺失时写一份不信任任何代理的默认文件，已存在绝不覆盖。守卫：`cloudflare-realip_mock_test.sh`
 - 日志路径：`logrotate-aegis` 的 glob 必须覆盖三个 systemd 单元 `StandardOutput=append:` 的全部文件。守卫：`logrotate-aegis_static_test.sh`
-- 新的发布物文件（脚本、模板、单元）要同时进 `build-release.sh` 的拷贝清单与随后的归档清单（两处 `for script in` 列表；非脚本的数据文件进 `release_data`，以 0644 归档）、`install-linux-binaries.sh` 的安装事务；install-native.sh 要用的还得在它自己的拷贝行里加上
-  - 只给安装器 source 的库（`public-base-url.sh`、`install-lib.sh`、`install-native-lib.sh`）只进发布包，不装到主机上
-  - `admin-url.sh` 与 `MIGRATION-RUNBOOK.md` 由 install.sh、install-native.sh 自己拷到 `deploy/` 下。守卫：`install-firstrun_mock_test.sh`、`install-migrate-order_mock_test.sh`
+- 新的发布物文件（脚本、模板、单元）要同时进 `build-release.sh` 的拷贝清单与随后的归档清单（两处 `for script in` 列表；非脚本的数据文件进 `release_data`，以 0644 归档）；`install.sh` 要用的还得在它自己的拷贝行里加上
+  - 只给安装器 source 的库（`public-base-url.sh`、`install-lib.sh`）只进发布包，不装到主机上
+  - systemd 单元写的就是最终路径（`/opt/pandora`、`/var/backups/pandora`），安装器原样装，不再 sed；装哪些单元以 `install-lib.sh` 的 `UNITS` 为准，测试核对它与 `systemd/` 目录一致
+  - `admin-url.sh` 与 `MIGRATION-RUNBOOK.md` 由 install.sh 自己拷到 `deploy/` 下。守卫：`install-firstrun_mock_test.sh`、`install-migrate-order_mock_test.sh`
 - 发布构建的 Go 工具链固定：`build-release.sh`（panel、goose、pdnd 节点端）与 `pdnd/release/build.sh` 一律用 `GOTOOLCHAIN=go<各自 go.mod 的 go 指令>`（必须是完整 x.y.z，不写死版本号，覆盖环境里的 `local`），先核 `go env GOVERSION`、产出后再用 `go version <文件>` 核每个二进制，不符即失败；实际版本记在包内 `deploy/BUILD-INFO` 与节点端 `manifest.json` 的 `go_toolchain`。构建机要能装或下载那一版。守卫：`build-release_toolchain_mock_test.sh`、`pdnd/release/build_toolchain_mock_test.sh`
-- 健康巡检 `healthcheck.sh` + `systemd/aegis-health.{service,timer}` 随发布包，两个安装器首装与升级都装并 `enable --now` timer（timer 用 `OnActiveSec`，不用 `OnBootSec`，否则启用瞬间就跑一次）；脚本取安装根目录自己的位置，docker / 直装两种布局都成立。守卫：`healthcheck-install_static_test.sh`
+- 健康巡检 `healthcheck.sh` + `systemd/aegis-health.{service,timer}` 随发布包，安装器首装与升级都装并 `enable --now` timer（timer 用 `OnActiveSec`，不用 `OnBootSec`，否则启用瞬间就跑一次）；脚本取安装根目录自己的位置。守卫：`healthcheck-install_static_test.sh`
 - `release-artifact.env` 由 `build-release.sh` 生成，只含 pdnd 版本与两架构 SHA-256，绝不写 `AEGIS_ENV`：aegis-node 在 `.env` 之后加载它，写进去会在升级时把已装机器的运行模式悄悄翻掉。守卫：`release-artifact-binding_mock_test.sh`
 - 发布包装出来的就是生产：install.sh 首装写 `AEGIS_ENV=production`；升级不改现有运行模式，升级前自动全量备份
 - 不替人生成管理员密码。首装且标准输入输出都是终端时，健康检查通过后、nginx 之前现场问邮箱与密码（`install-lib.sh` 的 `pandora_bootstrap_admin`）：
@@ -26,42 +28,40 @@ paths:
   - `aegis-adminctl has-admin` 退出 0（已有可登录的有效管理员）就不问，退出 3 才问，别的退出码不问；
   - `PANDORA_ASSUME_YES=1`、`PANDORA_NONINTERACTIVE=1`、管道与 CI 一律不问，收尾提示给手工命令。
   - 守卫：`install-firstrun_mock_test.sh`
-- 收尾提示按「现在可以做什么 → 还差什么 → 常用操作」三段写，首装与升级分开；后台地址只在首装打印，之后用 `deploy/admin-url.sh` 随时重看（读 `.env` 的两个键，不 source）。守卫：`install-firstrun_mock_test.sh`
-- 两个安装器的升级迁移都走 `install-lib.sh` 的 `pandora_run_migrations`，不各写一套：
+- 收尾提示按「现在可以做什么 → 还差什么 → 常用操作」三段写（`install-lib.sh` 的 `print_install_summary`），首装与升级分开；后台地址只在首装打印，之后用 `deploy/admin-url.sh` 随时重看（读 `.env` 的两个键，不 source）。守卫：`install-firstrun_mock_test.sh`
+- 升级迁移走 `install-lib.sh` 的 `pandora_run_migrations`（发布控制器同一个顺序）：
   - 停服之前跑 `check-migrations.sh` 完整预检（`PANDORA_PRECHECK_REHEARSE_STOPPED_WRITER=yes` 加 `PANDORA_PRECHECK_ATTESTATION_OUT`），失败就退出，服务没停；
   - 停服之后 `migrate.sh up` 带 `PANDORA_PRECHECK_ATTESTATION`，只核凭据；`PANDORA_STOPPED_WRITER_UPGRADE_APPROVED=yes` 只在这一步给，安装器自己不写、也不写进 `.env`；
-  - 迁移失败把服务拉回来，所以新程序在迁移成功之后才装（install-native.sh 也是）。
+  - 迁移失败把服务拉回来，所以新程序在迁移成功之后才装；迁移 DSN（带超级用户口令）不经命令行参数，`migrate.sh` 自己从 `.env` 读
   - 守卫：`install-migrate-order_mock_test.sh`
-- 缺省布局是直装：`install.sh` 在全新安装（没有 `/opt/aegispanel/deploy/.env`）且没给 `PANDORA_LAYOUT=docker` 时，在任何前置检查之前 `exec install-native.sh`；已装 docker 布局的机器照旧由 `install.sh` 升级，收尾提示 `--from-docker`。`test-install.sh` 验的是 docker 布局，显式带 `PANDORA_LAYOUT=docker`。守卫：`install-native_fromdocker_mock_test.sh` ⑨
-- 加密备份带属主与权限导出；`restore-postgres.sh` 照原样还原，顺序：核完整性 → 按备份补齐面板自己的角色（只增、`NOLOGIN`）→ 临时库里同参数演练（`AEGIS_VERIFY_RESTORE=owners`）→ 正式库保护 → 恢复 → 把备份里跑迁移的超级用户名下的对象换成本机的 → 旧格式备份（没有 GRANT）自动补 00038/00039 函数属主与授权（随包发布的 `legacy-privilege-repair.sql`，以超级用户执行前核属主与权限）→ 开闸门。不再用 `--no-owner --no-privileges`。守卫：`pg-layout_mock_test.sh`（抽函数跑真调用；修复 SQL 里授给 aegis_idempotency_owner 的 GRANT 必须与迁移 Up 段逐条相等，函数执行权只授 aegis_app）
-- `REASSIGN OWNED` 那一步与「给目标库定属主、把源角色名下的别的库改回」在一次 psql、一个事务里做；库名在服务端 `format('%I')` 加 `\gexec` 生成，不经过 shell（`restore-postgres.sh` 与 `install-native-lib.sh` 同一份 SQL，测试核对一致）
-- install.sh 入口的 `PANDORA_ENTRY_*` 覆盖只在同时设了 `PANDORA_ENTRY_TEST=1` 时生效
-- 两种数据库布局同一套运维脚本：`check-migrations.sh`、`migrate.sh`、`backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`、`psql.sh`、`bootstrap.sh` 按 `.env` 的 `PANDORA_DB_LAYOUT`（没有这一键时凭只有直装才写的 `POSTGRES_SUPER_PASSWORD` 推断为 native）选客户端
-  - docker：容器 `aegis-postgres` 里的客户端，以 `POSTGRES_USER`；native：本机客户端经 `127.0.0.1:POSTGRES_PORT` 以 `postgres` 超级用户（`POSTGRES_SUPER_PASSWORD`）。不用 runuser：备份单元的 `SystemCallFilter=~@privileged` 禁止切换用户
-  - 判定函数 `pandora_db_layout` 各脚本内联一份（备份三件套只信任自己，不 source 共用文件），连库一律经 `pandora_pg`；口令只经环境变量。守卫：`pg-layout_mock_test.sh`（逐字一致与行为）、`check-migrations_native_mock_test.sh`
-- `install-native.sh` 只用 PG18 的 `main` 集群（版本钉死），别的版本的集群不停、不升级、不删；旧集群里有 aegis 库而 PG18 不是接班人时停下，什么都不改。守卫：`install-native_pgcluster_mock_test.sh`（静态禁 `pg_dropcluster`、`pg_upgrade`、`pg_ctlcluster`、`dropdb`、`DROP DATABASE`）
-- `install-native.sh` 装与 docker 布局同一套备份、校验、恢复、psql、bootstrap 脚本，加密备份单元经 `native_render_unit` 改成直装（安装目录、`/var/backups/pandora`、去掉 docker 依赖）后只装不启用；升级时 `.env` 已有的行一字不动，缺的新键（布局、备份）才追加；口令经 psql 标准输入或环境变量，不拼进 `su -c`。守卫：`install-native_backup_mock_test.sh`
-- 直装的 PostgreSQL 与 Valkey 不弱于 docker 布局的容器（对照表见 RUNBOOK 第 13 章「直装的加固」）：`install-native-lib.sh` 写 systemd drop-in `pandora-hardening.conf`，在 Valkey 配置末尾维护 `# >>> pandora` 块
+- 加密备份带属主与权限导出；`restore-postgres.sh` 照原样还原，顺序：核完整性 → 按备份补齐面板自己的角色（只认 `postgres`、`aegis_app`、`aegis_idempotency_owner`，只增、`NOLOGIN`，认不出就停）→ 库属主角色（`.env` 的 `POSTGRES_USER`）必须已存在 → 临时库里同参数演练（`AEGIS_VERIFY_RESTORE=owners`）→ 正式库保护 → 恢复 → 开闸门；恢复完一律提示跑 `bootstrap.sh`（运行角色的库级设置不在归档里）。不用 `--no-owner --no-privileges`。守卫：`db-scripts_mock_test.sh`（抽函数跑真调用）
+  - 没有签名清单的备份（没配 WebDAV 时的本地备份）只能经 `verify-backup.sh` 逐个文件批准核 sha256、解密与目录，不许演练，`restore-postgres.sh` 一律拒绝（变量名带 LEGACY 是历史名，不是旧格式专用）
+- 运维脚本（`check-migrations.sh`、`migrate.sh`、`backup-postgres.sh`、`verify-backup.sh`、`restore-postgres.sh`、`psql.sh`、`bootstrap.sh`、`healthcheck.sh`）一律用本机客户端经 `127.0.0.1:POSTGRES_PORT` 以 `postgres` 超级用户（`POSTGRES_SUPER_PASSWORD`）连库，口令只经 `PGPASSWORD`。不用 runuser：备份单元的 `SystemCallFilter=~@privileged` 禁止切换用户
+  - 连库函数 `pandora_pg` 在备份三件套里各内联一份（只信任自己，不 source 共用文件）。守卫：`db-scripts_mock_test.sh`（逐字一致与行为）、`check-migrations_mock_test.sh`
+  - `.env` 里遗留的 `PANDORA_DB_LAYOUT` 行不影响任何脚本，安装器也不再写它
+- `install.sh` 只用 PG18 的 `main` 集群（版本钉死），别的版本的集群不停、不升级、不删；旧集群里有 aegis 库而 PG18 不是接班人时停下，什么都不改。守卫：`install-pgcluster_mock_test.sh`（静态禁 `pg_dropcluster`、`pg_upgrade`、`pg_ctlcluster`、`dropdb`、`DROP DATABASE`）
+- `install.sh` 装备份、校验、恢复、psql、bootstrap 脚本与加密备份单元（只装不启用）；升级时 `.env` 已有的行一字不动，缺的新键才追加；口令经 psql 标准输入或环境变量，不拼进 `su -c`。守卫：`install-backup_mock_test.sh`
+- PostgreSQL 参数：`deploy/postgresql-pandora.conf` 装到 `/etc/postgresql/18/main/conf.d/pandora.conf`（`install-lib.sh` 的 `native_apply_pg_config`）。用 conf.d 不用 ALTER SYSTEM：安装器整份覆盖的声明式文件，在 /etc 下看得见、能与发布包逐字比对，不用开 SQL 会话；`postgresql.auto.conf` 留给运维（后读，运维设的值仍生效）
+  - 建好集群后、动数据之前核 `include_dir = 'conf.d'` 生效，没有就停
+  - 与 PostgreSQL 的加固 drop-in 同一次重启（变了才重启，在停服窗口里）；起不来两样一起还原成这次之前的样子
+  - 开发数据基座 `panel/dev/docker-compose.yml` 以 `-c` 给同一组值。守卫：`dev-compose_static_test.sh`（逐项一致、只绑回环）、`configure_role_contract_test.go`（`jit = off`）、`install-hardening_mock_test.sh`
+- PostgreSQL 与 Valkey 的 systemd 加固（RUNBOOK 第 13 章）：`install-lib.sh` 写 drop-in `pandora-hardening.conf`，在 Valkey 配置末尾维护 `# >>> pandora` 块
   - 加固在外来集群检查、迁移、收窄角色之后、起网关之前做（升级时网关已停）；内容没变不重启
-  - 撤回要撤本次改过的全部东西（drop-in 还原成之前的内容、Valkey 配置写回改之前的副本，按步撤），撤回后核实服务真的在跑，提示照实写；PostgreSQL 等在线的时长按重启前 CHECKPOINT 的实测耗时给
-  - 写进第三方配置的指令按平台声称支持的最老版本核语法（Valkey 的 bind 按版本与 IPv6 生成；Redis 6.0 不认「-」前缀）。守卫：`valkey-hardening_versions_docker_test.sh` 在 Redis 6.0 / 7.0、Valkey 8.1 的官方镜像里真起（GitHub 的 deploy-valkey-versions job，检查机跳过）
+  - 撤回要撤本次改过的全部东西（drop-in、conf.d 还原成之前的内容，Valkey 配置写回改之前的副本，按步撤），撤回后核实服务真的在跑，提示照实写；PostgreSQL 等在线的时长按重启前 CHECKPOINT 的实测耗时给
+  - 失败时把服务按新版本起来之后再以非 0 退出，提示原因与开关；226/NAMESPACE 直接说是主机不支持沙箱
   - 开关 `PANDORA_SYSTEMD_HARDENING`（缺省开，0 去掉 drop-in，记进 `.env` 只改这一行）
-  - drop-in 整套写全，不依赖发行版单元写了什么（Debian 12 的 redis 单元把 `ProtectSystem` 改回 `true`）
-  - 内存上限与 Valkey 参数（禁 FLUSHALL / FLUSHDB、不落盘、maxmemory 与淘汰策略）跟 `docker-compose.yml` 逐字对齐，改 compose 要一起改
+  - drop-in 整套写全，不依赖发行版单元写了什么（Debian 12 的 redis 单元把 `ProtectSystem` 改回 `true`）；内存上限 PG 512M、Valkey 160M
   - PostgreSQL 不加 `MemoryDenyWriteExecute`（JIT）；被挡的系统调用返回 EPERM
-  - 守卫：`install-native_hardening_mock_test.sh`
-- `install-native.sh --from-docker` 把 docker 布局迁到直装（RUNBOOK 第 13 章）：只读核对 → 写状态文件 `from-docker.state` → 停写入者 → 导出（含属主与权限）→ 建角色、恢复、跑迁移的超级用户名下对象转给 postgres → 两边指纹逐行一致 → 迁移 → 存原单元、换单元 → 三网关 healthz → 接管 → `docker compose stop`
-  - 接管之前任何退出（含 HUP/INT/TERM）由 EXIT trap `fd_abort` 放回原单元、拉起 docker 的网关与备份 timer；`fd_abort` 关 errexit、屏蔽信号、写 `from-docker.log`（终端断了写标准错误会失败）。docker 那边的库只读。删卷、删 `/opt/aegispanel`、停 docker 守护进程只打印，不执行
-  - 接管后 docker 的 `.env` 改名为 `.env.migrated-to-native`（不删）。入口判断 `install.sh` 的 `pandora_entry_layout`、`install-native.sh` 普通模式的 `native_plain_mode_guard`、发布控制器的 `default_app_dir` 同一口径：迁完的直装不会被切回 docker；docker 布局还在服务（含迁移回滚后）时普通模式不动手
-  - 指纹含每表内容摘要（每行 md5 的两半各当 64 位整数求和，与顺序无关、内存固定，不用 string_agg；时区与输出格式钉死）
-  - 照 RUNBOOK 退回 Docker 要把直装的 `.env` 与 `from-docker.state` 都改名为 `.retired`；`state=done` 只在「直装 .env 在、docker 的不在」时才算迁完，否则三个入口都停下；`--from-docker` 认 `from-docker.state.retired`，按重来处理
-  - `REASSIGN OWNED` 会顺带改别的库的属主：`--from-docker` 用 `native_reassign_in_db`、`restore-postgres.sh` 的 `reassign_source_migrator` 都先记下、换完改回
-  - 口令不进任何命令行参数：awk 走 `ENVIRON`、grep 走 `-f -`、`migrate.sh` 用 `scrubbed_run`（不经 env(1)）并把 DSN 里的口令拆进 `PGPASSWORD`。守卫：`pg-layout_mock_test.sh`、`install-native_*_mock_test.sh` 里的 argv 断言
-  - 守卫：`install-native_fromdocker_mock_test.sh`（.env 改写、角色、回滚、只停不删、指纹、核对阶段只读、主流程顺序）
-- 测信号路径（HUP 等）的桩测试：检查机的循环忽略 SIGHUP，bash 对进程入口时已被忽略的信号装不上 trap，`kill -HUP` 什么也不会发生。被测脚本要先经 python3（没有就 perl）把 SIGHUP 复位成缺省再启动（做法见 `install-native_fromdocker_mock_test.sh` 的 `reset_hup`）；本机用 `bash -c "trap '' HUP INT; bash <测试>" </dev/null` 模拟检查机条件
+  - 守卫：`install-hardening_mock_test.sh`
+- Valkey / Redis 最低版本：Redis 6.0（Ubuntu 22.04 的发行版包）；Valkey 都行（从 Redis 7.2 分出）。装完包、动任何数据与配置之前核 `--version`，低于 6.0 或认不出就报错退出（`native_check_valkey_version`）
+  - 写进第三方配置的指令按最低版本核语法：bind 按版本与 IPv6 生成（Valkey 与 Redis 6.2 起 `127.0.0.1 -::1`；Redis 6.0 不认「-」，回环有 IPv6 写 `127.0.0.1 ::1`，没有只写 `127.0.0.1`）
+  - CI 覆盖：`valkey-hardening_versions_docker_test.sh` 在 Redis 6.0（有无 IPv6）、Redis 7.0、Valkey 8.1 的官方镜像里真起，另有 Redis 6.0 硬写 `-::1` 必须起不来的反证（GitHub 的 deploy-valkey-versions job，检查机没有 Docker、跳过）；版本核对本身由 `install-hardening_mock_test.sh` 钉住
+- 口令不进任何命令行参数：awk 走 `ENVIRON`、grep 走 `-f -`、`migrate.sh` 用 `scrubbed_run`（不经 env(1)）并把 DSN 里的口令拆进 `PGPASSWORD`。守卫：`db-scripts_mock_test.sh`、`install-*_mock_test.sh` 里的 argv 断言
+- 测信号路径（HUP 等）的桩测试：检查机的循环忽略 SIGHUP，bash 对进程入口时已被忽略的信号装不上 trap，`kill -HUP` 什么也不会发生。被测脚本要先经 python3（没有就 perl）把 SIGHUP 复位成缺省再启动（`python3 -c 'import os,signal,sys; signal.signal(signal.SIGHUP, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' <命令>`）；本机用 `bash -c "trap '' HUP INT; bash <测试>" </dev/null` 模拟检查机条件。眼下没有装 HUP trap 的部署脚本，写第一个这样的测试时把复位函数放进共用的测试辅助文件
 - 桩测试与静态检查（`*_mock_test.sh`、`*_static_test.sh`）不需要数据库；与安装、迁移、nginx、发布物绑定相关的，CI 的 `.github/workflows/panel-deploy.yml` 逐个点名跑，新增这类测试要补进那份清单
-  - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root。前者在 panel-deploy 的 deploy-root-mock-tests job 里用 runner 的免密 sudo 跑（只在 GitHub 上，检查机明说跳过）
+  - `release-stop-the-world_mock_test.sh`、`verify-backup_manifest_mock_test.sh` 需要 Linux root，在 panel-deploy 的 deploy-root-mock-tests job 里用 runner 的免密 sudo 跑（只在 GitHub 上，检查机明说跳过）
+  - 要 Docker 的（`*_docker_test.sh`）单独成 job、只在 GitHub 上跑
 - nginx 的节点路径（`/api/v1/server/UniProxy/`、`/v1/nodes/`）用自己的限速区：`aegis_node` 按「来源 IP + 节点标识」分桶（签名通道 `X-Node-Id` 头、兼容通道 query `node_id`，只认 UUID 形状，否则退回按 IP 一个桶），外加宽松的每 IP 总上限 `aegis_node_ip`；`limit_conn` 在这两个 location 单独写（`aegis_node_conn`），server 层的 64 不再作用于节点。一台机器 60 个节点约 810 次/分、60 条事件流。守卫：`render-nginx_test.sh`
-- nginx 主配置的连接上限：`render-nginx.sh` 在输出位于 `<nginx 目录>/conf.d/` 时（或 `PANDORA_NGINX_MAIN_CONF` 指定）把 `nginx.conf` 的 `worker_connections` 抬到至少 8192、`worker_rlimit_nofile` 至少 65536，已更高的不动、认不出的结构不改；`install.sh` 的 `apply_edge_config` 连同 nginx.conf 一起备份，`nginx -t` 不过一起换回。每条 SSE / 节点事件流占两个连接，Debian 缺省 768 约一千条就满（5k-r4）。站点的 `error_log` 写 `/var/log/nginx/aegis-error.log crit`，不要再改回 /dev/null。守卫：`render-nginx_test.sh`、`install-chain_mock_test.sh`
-- 三个网关单元的 `TimeoutStopSec` 一律 45 秒（两段停机各 20 秒）；valkey.sock 权限 700（容器 valkey 组的 gid 在宿主上常撞第一个普通用户）。守卫：`install-chain_mock_test.sh`
-- `edge-tls.sh` 接管或沿用 `/etc/letsencrypt/live/<域名>` 的证书时，把 certbot 续期配置（`renewal/<证书名>.conf`）里面板主机的 webroot 改到 `ACME_WEBROOT`（改前备份到 `/var/backups/aegispanel`；已正确不动；非 webroot 方式不碰；别的域名不动），renew 每次再核一遍（老版本接管的主机自愈）。nginx 模板只从 `ACME_WEBROOT` 提供校验文件，续期配置指别处就 404。续期失败、续期配置缺失一律写进 `/var/lib/aegispanel/tls/status`，不许 `|| true` 吞掉。守卫：`edge-tls_mock_test.sh` ⑧
+- nginx 主配置的连接上限：`render-nginx.sh` 在输出位于 `<nginx 目录>/conf.d/` 时（或 `PANDORA_NGINX_MAIN_CONF` 指定）把 `nginx.conf` 的 `worker_connections` 抬到至少 8192、`worker_rlimit_nofile` 至少 65536，已更高的不动、认不出的结构不改；`edge-tls.sh` 改之前连同 nginx.conf 一起备份，`nginx -t` 不过一起换回。每条 SSE / 节点事件流占两个连接，Debian 缺省 768 约一千条就满（5k-r4）。站点的 `error_log` 写 `/var/log/nginx/aegis-error.log crit`，不要再改回 /dev/null。守卫：`render-nginx_test.sh`、`install-chain_mock_test.sh`
+- 三个网关单元的 `TimeoutStopSec` 一律 45 秒（两段停机各 20 秒）。守卫：`install-chain_mock_test.sh`
+- `edge-tls.sh` 接管或沿用 `/etc/letsencrypt/live/<域名>` 的证书时，把 certbot 续期配置（`renewal/<证书名>.conf`）里面板主机的 webroot 改到 `ACME_WEBROOT`（改前备份到 `/var/backups/pandora`；已正确不动；非 webroot 方式不碰；别的域名不动），renew 每次再核一遍（老版本接管的主机自愈）。nginx 模板只从 `ACME_WEBROOT` 提供校验文件，续期配置指别处就 404。续期失败、续期配置缺失一律写进 `/var/lib/aegispanel/tls/status`，不许 `|| true` 吞掉。守卫：`edge-tls_mock_test.sh` ⑧

@@ -111,17 +111,6 @@ func parsePIDStat(line string) (int, procTicks, bool) {
 	return pid, procTicks{comm: line[open+1 : closeIdx], ppid: ppid, start: n(19), own: n(11) + n(12), child: n(13) + n(14)}, true
 }
 
-// loadContainers 读 containers.txt（每行「容器全 ID 名字」），把 docker-<id>.scope 翻成容器名。
-func loadContainers(dir string) map[string]string {
-	names := map[string]string{}
-	_ = eachLine(filepath.Join(dir, "containers.txt"), func(line string) {
-		if f := strings.Fields(line); len(f) == 2 {
-			names["docker-"+f[0]+".scope"] = f[1]
-		}
-	})
-	return names
-}
-
 func eachLine(path string, fn func(string)) error {
 	f, err := os.Open(path)
 	if err != nil {

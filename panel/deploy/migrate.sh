@@ -6,9 +6,8 @@ umask 077
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="${AEGIS_ENV_FILE:-$DEPLOY_DIR/.env}"
 GOOSE="${GOOSE_BIN:-/root/go/bin/goose}"
-# 迁移文件默认取与 deploy/ 并排的 migrations/：install.sh（/opt/aegispanel）、install-native.sh
-# （/opt/pandora）和源码树（make check-migrations）都是这个布局。不写死安装路径——
-# 曾写死 /opt/pandora，install.sh 装的机器上会找不到，或者读到另一套安装留下的旧迁移。
+# 迁移文件默认取与 deploy/ 并排的 migrations/：安装目录（/opt/pandora）和源码树（make check-migrations）
+# 都是这个布局。不写死安装路径：写死了，源码树与解开的发布包里跑会读到本机另一套安装留下的旧迁移。
 MIGRATIONS_DIR="${AEGIS_MIGRATIONS_DIR:-$(dirname -- "$DEPLOY_DIR")/migrations}"
 COMMAND="${1:-up}"
 if [ "$#" -gt 0 ]; then shift; fi
@@ -77,19 +76,6 @@ done
 # 一旦换人就会把所有后续发布全部拦死。恢复 CA42 时请以「该文件是否在序列中」
 # 为条件重建，不要再用版本号。
 
-# 数据库布局：docker（install.sh，容器 aegis-postgres）或 native（install-native.sh，系统 PostgreSQL）。
-# 以 .env 的 PANDORA_DB_LAYOUT 为准；老的直装 .env 没有这一键，凭只有直装才写的 POSTGRES_SUPER_PASSWORD
-# 认出来。各运维脚本各带一份同样的函数（不 source 共用文件，免得多一个要校验的信任面），
-# pg-layout_static_test.sh 核对逐字一致。
-pandora_db_layout() {
-  case "${PANDORA_DB_LAYOUT:-}" in
-    native|docker) printf '%s\n' "$PANDORA_DB_LAYOUT" ;;
-    '') if [ -n "${POSTGRES_SUPER_PASSWORD:-}" ]; then printf 'native\n'; else printf 'docker\n'; fi ;;
-    *) return 1 ;;
-  esac
-}
-DB_LAYOUT="$(pandora_db_layout)" || { echo "migration: PANDORA_DB_LAYOUT must be native or docker" >&2; exit 78; }
-
 MIGRATION_PGPASSWORD=""
 if [ -z "${AEGIS_MIGRATION_DATABASE_URL:-}" ]; then
   if [ "${PANDORA_LOCAL_MIGRATION_APPROVED:-}" != yes ]; then
@@ -98,26 +84,16 @@ if [ -z "${AEGIS_MIGRATION_DATABASE_URL:-}" ]; then
   fi
   : "${POSTGRES_DB:?POSTGRES_DB is required for approved local migration}"
   : "${POSTGRES_PORT:?POSTGRES_PORT is required for approved local migration}"
-  # 迁移要超级用户：docker 布局是容器里的 POSTGRES_USER；直装是 postgres（POSTGRES_USER=aegis 只是库属主）
-  if [ "$DB_LAYOUT" = native ]; then
-    : "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required for approved local migration}"
-    MIGRATION_DB_USER=postgres
-    MIGRATION_PGPASSWORD="$POSTGRES_SUPER_PASSWORD"
-  else
-    : "${POSTGRES_USER:?POSTGRES_USER is required for approved local migration}"
-    : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for approved local migration}"
-    MIGRATION_DB_USER="$POSTGRES_USER"
-    MIGRATION_PGPASSWORD="$POSTGRES_PASSWORD"
-  fi
-  [[ "$MIGRATION_DB_USER" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
-    || { echo "migration: unsafe local PostgreSQL user" >&2; exit 1; }
+  # 迁移要超级用户 postgres（POSTGRES_USER 只是库属主）。守卫：db-scripts_mock_test.sh
+  : "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required for approved local migration}"
+  MIGRATION_PGPASSWORD="$POSTGRES_SUPER_PASSWORD"
   [[ "$POSTGRES_DB" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
     || { echo "migration: unsafe local PostgreSQL database" >&2; exit 1; }
   [[ "$POSTGRES_PORT" =~ ^[0-9]+$ ]] && [ "$POSTGRES_PORT" -ge 1 ] && [ "$POSTGRES_PORT" -le 65535 ] \
     || { echo "migration: unsafe local PostgreSQL port" >&2; exit 1; }
   # Keep the password out of the DSN/argv.  It is passed only in the scrubbed
   # child environment and the fallback is pinned to loopback.
-  AEGIS_MIGRATION_DATABASE_URL="host=127.0.0.1 port=$POSTGRES_PORT user=$MIGRATION_DB_USER dbname=$POSTGRES_DB sslmode=disable"
+  AEGIS_MIGRATION_DATABASE_URL="host=127.0.0.1 port=$POSTGRES_PORT user=postgres dbname=$POSTGRES_DB sslmode=disable"
 fi
 
 # 在干净的环境里跑一个客户端：只带 PATH、HOME 与给出的 NAME=VALUE。变量经本进程内的函数参数传、
@@ -176,10 +152,8 @@ GOOSE_BASE_ENV=(scrubbed_run
 #   - up / up-to / up-by-one 执行前查一次：有无效索引就拒绝，什么都不执行（这时重跑会被骗）；
 #   - 执行后再查一次：有就失败（迁移本身留下了半成品）；
 #   - check-indexes 只做这次查询（安装器停服之前先调它，失败不停服）。
-# 查不了（没有 psql、也没有 aegis-postgres 容器）同样算失败：这是安全检查，不能悄悄跳过。
-# 查询客户端：PANDORA_PSQL_BIN（桩测试用）> PATH 上的 psql（按迁移 DSN 连，直装布局总走这条）
-# > docker 布局时容器 aegis-postgres 里的 psql（install.sh 的机器；与 check-migrations.sh 同样先核对
-# 容器发布的端口就是 POSTGRES_PORT，免得查到别的库）。
+# 查不了（没有 psql、连不上）同样算失败：这是安全检查，不能悄悄跳过。
+# 查询客户端：PANDORA_PSQL_BIN（桩测试用）> PATH 上的 psql，按迁移 DSN 连。
 # ---------------------------------------------------------------------------
 INVALID_INDEX_SQL="SELECT format('%I.%I', n.nspname, c.relname) || ' on ' || format('%I.%I', tn.nspname, t.relname)
   FROM pg_catalog.pg_index i
@@ -192,35 +166,23 @@ INVALID_INDEX_SQL="SELECT format('%I.%I', n.nspname, c.relname) || ' on ' || for
 
 # 打印无效索引（一行一个，「索引 on 表」）；查不了返回 2
 invalid_indexes() {
-  local psql_bin="${PANDORA_PSQL_BIN:-}" endpoint
+  local psql_bin="${PANDORA_PSQL_BIN:-}"
   if [ -n "$psql_bin" ]; then
     [ -x "$psql_bin" ] || { echo "migration: PANDORA_PSQL_BIN is not executable" >&2; return 2; }
   else
     psql_bin="$(command -v psql 2>/dev/null || true)"
   fi
-  if [ -n "$psql_bin" ]; then
-    # 连接串里的口令不进 psql 的命令行参数（直装的迁移 DSN 带着超级用户口令）
-    local psql_env=(scrubbed_run) pw
-    split_dsn_password "$AEGIS_MIGRATION_DATABASE_URL"
-    pw="${MIGRATION_PGPASSWORD:-$DSN_PASSWORD}"
-    [ -z "$pw" ] || psql_env+=(PGPASSWORD="$pw")
-    "${psql_env[@]}" "$psql_bin" -X -w -q -At -v ON_ERROR_STOP=1 -d "$DSN_NO_PASSWORD" -c "$INVALID_INDEX_SQL" \
-      || { echo "migration: cannot query pg_index for invalid indexes" >&2; return 2; }
-    return 0
+  if [ -z "$psql_bin" ]; then
+    echo "migration: cannot check for invalid indexes: no psql on PATH" >&2
+    return 2
   fi
-  if [ "$DB_LAYOUT" = docker ] && command -v docker >/dev/null 2>&1 && [ -n "${POSTGRES_USER:-}" ] && [ -n "${POSTGRES_DB:-}" ]; then
-    endpoint="$(docker port aegis-postgres 5432/tcp 2>/dev/null | head -n1 || true)"
-    if [ -n "$endpoint" ] && [ "$endpoint" = "127.0.0.1:${POSTGRES_PORT:-}" ]; then
-      # 口令只按名字经 -e 透传（值来自本进程环境），不进命令行参数
-      scrubbed_run PGPASSWORD="${POSTGRES_PASSWORD:-}" \
-        docker exec -i -e PGPASSWORD aegis-postgres \
-        psql -X -w -q -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$INVALID_INDEX_SQL" \
-        || { echo "migration: cannot query pg_index for invalid indexes" >&2; return 2; }
-      return 0
-    fi
-  fi
-  echo "migration: cannot check for invalid indexes: no psql on PATH and no aegis-postgres container published on 127.0.0.1:${POSTGRES_PORT:-?}" >&2
-  return 2
+  # 连接串里的口令不进 psql 的命令行参数（迁移 DSN 带着超级用户口令）
+  local psql_env=(scrubbed_run) pw
+  split_dsn_password "$AEGIS_MIGRATION_DATABASE_URL"
+  pw="${MIGRATION_PGPASSWORD:-$DSN_PASSWORD}"
+  [ -z "$pw" ] || psql_env+=(PGPASSWORD="$pw")
+  "${psql_env[@]}" "$psql_bin" -X -w -q -At -v ON_ERROR_STOP=1 -d "$DSN_NO_PASSWORD" -c "$INVALID_INDEX_SQL" \
+    || { echo "migration: cannot query pg_index for invalid indexes" >&2; return 2; }
 }
 
 # 查一次并按时机给出修复命令。$1 = before（执行迁移前）| after（执行迁移后）| failed（迁移失败后）| check

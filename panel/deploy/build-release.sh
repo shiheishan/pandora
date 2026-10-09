@@ -249,24 +249,22 @@ for arch in amd64 arm64; do
   # unit.  Shipping only binaries makes it possible to run new code against an
   # old schema (or vice versa), which is not a supported rollout mode.
   cp "$ROOT"/migrations/*.sql "$target/migrations/"
-  for script in install.sh install-native.sh public-base-url.sh install-lib.sh install-native-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh healthcheck.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
+  for script in install.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh check-migrations.sh migrate.sh release-stop-the-world.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh healthcheck.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
     cp "$ROOT/deploy/$script" "$target/deploy/$script"
   done
   cp "$ROOT/deploy/nginx-aegis.conf" "$target/deploy/nginx-aegis.conf" 2>/dev/null || true
-  cp "$ROOT/deploy/.env.example" "$target/deploy/.env.example"
   cp "$ROOT/deploy/backup-webdav.example.json" "$target/deploy/backup-webdav.example.json"
   # 迁移失败与回滚的操作手册：出事时人在服务器上，手册要跟着发布包走（安装器再拷到 deploy/ 下）
   cp "$ROOT/deploy/MIGRATION-RUNBOOK.md" "$target/deploy/MIGRATION-RUNBOOK.md"
-  # 数据基座与应用角色收窄：少了这两个，装完的机器起不了 PostgreSQL/Valkey，
-  # 也没法把 aegis_app 收敛成 NOSUPERUSER + NOBYPASSRLS 的运行时角色。
-  cp "$ROOT/deploy/docker-compose.yml" "$target/deploy/docker-compose.yml"
+  # 应用角色收窄：少了它，没法把 aegis_app 收敛成 NOSUPERUSER + NOBYPASSRLS 的运行时角色。
   cp "$ROOT/deploy/configure-app-role.sql" "$target/deploy/configure-app-role.sql"
-  cp "$ROOT/deploy/legacy-privilege-repair.sql" "$target/deploy/legacy-privilege-repair.sql"
-  # 网关日志轮转，install-linux-binaries.sh 装到 /etc/logrotate.d/aegis
+  # PostgreSQL 参数（低内存调参、关 JIT 等），install.sh 装到集群的 conf.d/pandora.conf
+  cp "$ROOT/deploy/postgresql-pandora.conf" "$target/deploy/postgresql-pandora.conf"
+  # 网关日志轮转，install.sh 装到 /etc/logrotate.d/aegis
   cp "$ROOT/deploy/logrotate-aegis" "$target/deploy/logrotate-aegis"
   # 节点端发布物绑定：本包里两个架构 pandora-native 的 SHA-256 与版本号（即
-  # -X main.buildVersion 注入的 $VERSION）。install-linux-binaries.sh 把它装到
-  # /opt/aegispanel/deploy/release-artifact.env，aegis-node.service 以 EnvironmentFile=
+  # -X main.buildVersion 注入的 $VERSION）。install.sh 把它装到
+  # /opt/pandora/deploy/release-artifact.env，aegis-node.service 以 EnvironmentFile=
   # 加载，每次升级随包覆盖。运行模式 AEGIS_ENV 不写在这里：它归 .env 管，
   # 否则升级会把已装机器的 development 悄悄翻成 production。
   amd64_digest="$(sha256sum "$target/pdnd-dist/pandora-native-linux-amd64" | awk '{print $1}')"
@@ -290,10 +288,10 @@ for arch in amd64 arm64; do
   done
   cp "$ROOT/deploy/systemd/aegis-backup.service" "$target/deploy/systemd/aegis-backup.service"
   cp "$ROOT/deploy/systemd/aegis-backup.timer" "$target/deploy/systemd/aegis-backup.timer"
-  # HTTPS 证书续期（edge-tls.sh renew），install-linux-binaries.sh 装到 /etc/systemd/system
+  # HTTPS 证书续期（edge-tls.sh renew），install.sh 装到 /etc/systemd/system
   cp "$ROOT/deploy/systemd/aegis-tls-renew.service" "$target/deploy/systemd/aegis-tls-renew.service"
   cp "$ROOT/deploy/systemd/aegis-tls-renew.timer" "$target/deploy/systemd/aegis-tls-renew.timer"
-  # 健康巡检（healthcheck.sh 每 10 分钟一次），install.sh / install-native.sh 装好后启用 timer
+  # 健康巡检（healthcheck.sh 每 10 分钟一次），install.sh 装好后启用 timer
   cp "$ROOT/deploy/systemd/aegis-health.service" "$target/deploy/systemd/aegis-health.service"
   cp "$ROOT/deploy/systemd/aegis-health.timer" "$target/deploy/systemd/aegis-health.timer"
   chmod 0755 "$target"/deploy/*.sh
@@ -334,19 +332,17 @@ for arch in amd64 arm64; do
   rm -f "$archive" "$archive_tar"
   target_base="$(basename "$target")"
   release_scripts=()
-  for script in install.sh install-native.sh public-base-url.sh install-lib.sh install-native-lib.sh admin-url.sh platform.sh preflight-linux.sh check-migrations.sh migrate.sh release-stop-the-world.sh install-linux-binaries.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh healthcheck.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
+  for script in install.sh public-base-url.sh install-lib.sh admin-url.sh platform.sh check-migrations.sh migrate.sh release-stop-the-world.sh backup-postgres.sh verify-backup.sh restore-postgres.sh bootstrap.sh psql.sh healthcheck.sh edge-tls.sh render-nginx.sh update-cloudflare-realip.sh; do
     release_scripts+=("$target_base/deploy/$script")
   done
   release_data=(
-    "$target_base/deploy/.env.example"
     "$target_base/deploy/release-artifact.env"
     "$target_base/deploy/BUILD-INFO"
     "$target_base/deploy/nginx-aegis.conf"
     "$target_base/deploy/backup-webdav.example.json"
     "$target_base/deploy/MIGRATION-RUNBOOK.md"
-    "$target_base/deploy/docker-compose.yml"
     "$target_base/deploy/configure-app-role.sql"
-    "$target_base/deploy/legacy-privilege-repair.sql"
+    "$target_base/deploy/postgresql-pandora.conf"
     "$target_base/deploy/logrotate-aegis"
     "$target_base/deploy/systemd/aegis-public.service"
     "$target_base/deploy/systemd/aegis-admin.service"
