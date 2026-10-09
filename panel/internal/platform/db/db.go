@@ -102,6 +102,9 @@ func OpenWithOptions(ctx context.Context, dsn string, o Options) (*Pool, error) 
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
 	cfg.AfterRelease = afterRelease
+	// 往返记账器（见 roundtrip_tracer.go）：只计数，不改任何连接行为
+	cfg.ConnConfig.Tracer = roundTripTracer{}
+	cfg.ShouldPing = shouldPingCounted
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
