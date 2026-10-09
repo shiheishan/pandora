@@ -428,6 +428,8 @@ const ADMIN_PERMISSIONS: readonly string[] = [
   'metering.read',
   'metering.reset.read',
   'metering.reset.write',
+  'node.certificate.read',
+  'node.certificate.write',
   'node.config.publish',
   'node.identity.revoke',
   'node.lifecycle',
