@@ -155,7 +155,10 @@ func TestCacheEpochPG18(t *testing.T) {
 		step("server leaves ready", []signal{nodeCatalog}, `UPDATE servers SET status = 'draft' WHERE id = $1`, server)
 	})
 	t.Run("catalog", func(t *testing.T) {
-		step("stock counters only", nil, `UPDATE plans SET stock_reserved = stock_reserved + 1 WHERE id = $1`, plan)
+		// 下单占库存、取消再放回：同一事务里两条（库存守恒的延迟约束只在提交时看总账），
+		// 两次都只动计数与 updated_at。无参数走简单协议，多条语句同一个隐式事务
+		step("stock counters only", nil, `UPDATE plans SET stock_reserved = stock_reserved + 1 WHERE id = '`+plan+`';
+			UPDATE plans SET stock_reserved = stock_reserved - 1 WHERE id = '`+plan+`'`)
 		step("plan renamed", []signal{catalog}, `UPDATE plans SET name = 'Cache Epoch Renamed' WHERE id = $1`, plan)
 	})
 	t.Run("appearance", func(t *testing.T) {
