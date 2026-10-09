@@ -10,7 +10,8 @@ import (
 )
 
 // 流量数据的保留期（用户定：原始数据 31 天、汇总 400 天，每天清理）。由 aegis-admin 的保留期
-// 任务定时调用；每批一个短事务，每次调用的批数有上限，积压由下一轮接着清。
+// 任务定时调用（清理一小时一次，cmd/aegis-admin/retention.go）；每批一个短事务，每次调用的批数
+// 有上限，积压由下一轮接着清。
 
 const (
 	// TrafficReportRetentionDays 是上报留档（原始报文）的保留期，也是 app.purge_node_traffic_reports
@@ -26,8 +27,12 @@ const (
 )
 
 // 清理的批量：rollupPurgeBatch 行一批、每张表一次调用最多 rollupPurgeMaxBatches 批。
-// 留档每天约 28.8 万行（200 节点每分钟一报），reportPurgeMaxBatches 批 × 每 10 分钟一轮
-// 远大于每天的增量；上线后第一次清积压时也不会在一轮里删几百万行长时间占着 IO。
+// 容量按一小时一轮核算：留档每次调用最多 reportPurgeBatch × reportPurgeMaxBatches = 20 万行，
+// 一天 24 轮上限约 480 万行；稳态每天的进量是节点数 × 1440（每分钟一报）：200 节点约 28.8 万行，
+// 1000 节点约 144 万行，3000 节点约 432 万行，仍在上限之内（节点再多就要加批数或缩短间隔）。
+// 订阅拉取日志的批量相同（subscription/fetch_log_retention.go），上限同为每天约 480 万行。
+// 汇总表每张每次调用最多 5000 × 200 = 100 万行。上线后第一次清积压时一轮最多删这么多，不会
+// 长时间占着 IO，剩下的由后面几轮接着清。
 const (
 	rollupPurgeBatch      = 5000
 	rollupPurgeMaxBatches = 200
