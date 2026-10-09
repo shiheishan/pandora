@@ -190,8 +190,8 @@ func TestScanQuotaOnePassMatchesPerThresholdScansPG18(t *testing.T) {
 		t.Fatalf("deliveries=%d (%v), want %d", len(keys), keys, wantAlerts)
 	}
 	for _, key := range keys {
-		parts := strings.Split(key, ":") // quota:<订阅>:<档>:inapp
-		if len(parts) != 4 || fmt.Sprint(subs[parts[1]]) != parts[2] {
+		parts := strings.Split(key, ":") // quota:<订阅>:<档>:<周期起点秒>:inapp
+		if len(parts) != 5 || fmt.Sprint(subs[parts[1]]) != parts[2] {
 			t.Fatalf("delivery key %q does not match the fixture bucket %d", key, subs[parts[1]])
 		}
 	}

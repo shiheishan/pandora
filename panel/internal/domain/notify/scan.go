@@ -224,8 +224,10 @@ func (s *Service) ScanQuota(ctx context.Context, tenantID string) (int, error) {
 				"percent":   fmt.Sprint(it.pct),
 				"remaining": humanBytes(remain),
 			}
-			// 键里带上档位：用量继续涨到下一档时会再提醒一次，同一档内反复扫描只发一条
-			key := fmt.Sprintf("quota:%s:%d", it.subID, it.pct)
+			// 键里带上档位和这一期的起点：用量继续涨到下一档时再提醒一次，同一期同一档内反复扫描
+			// 只发一条；配额滚进下一期（起点换了）后重新涨到线上，是新的一次。去重键永久唯一
+			// （投递表与插件钩子投递表都按键去重、行不清理），不带起点的话每档一辈子只提醒一次
+			key := fmt.Sprintf("quota:%s:%d:%d", it.subID, it.pct, it.periodStart.Unix())
 			n, err := s.Enqueue(ctx, tx, tenantID, it.userID,
 				"quota.warning", vars, key)
 			if err != nil {
@@ -247,6 +249,7 @@ type quotaCrossing struct {
 	subID, userID, plan string
 	consumed, total     int64
 	pct                 int
+	periodStart         time.Time // 配额行当期的起点，进去重键
 }
 
 // scanQuotaCrossings 一遍扫出所有跨过任一预警线的订阅，每条订阅只带它所在的最高一档
@@ -265,7 +268,7 @@ func scanQuotaCrossings(ctx context.Context, tx pgx.Tx, tenantID string) ([]quot
 	}
 	rows, err := tx.Query(ctx, `
 		WITH usage AS (
-			SELECT q.subscription_id, s.user_id, p.name, q.consumed,
+			SELECT q.subscription_id, s.user_id, p.name, q.consumed, q.period_start,
 			       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) AS plan_total,
 			       COALESCE(q.granted,0) + COALESCE(q.granted_addon,0) + pk.pack_left AS total
 			  FROM quota_balances q
@@ -279,8 +282,9 @@ func scanQuotaCrossings(ctx context.Context, tx pgx.Tx, tenantID string) ([]quot
 			 WHERE q.tenant_id = $1
 			   AND q.metric = 'traffic.bytes'
 			   AND s.status IN ('active','trialing')
+			   AND q.period_start <= now() AND (q.period_end IS NULL OR q.period_end > now())
 			   AND q.consumed * 100 >= (COALESCE(q.granted,0) + COALESCE(q.granted_addon,0)) * $3::int)
-		SELECT subscription_id::text, user_id::text, name, consumed, total,
+		SELECT subscription_id::text, user_id::text, name, consumed, total, period_start,
 		       (SELECT max(t) FROM unnest($2::int[]) AS th(t) WHERE consumed * 100 >= total * t) AS pct
 		  FROM usage
 		 WHERE plan_total > 0
@@ -294,7 +298,7 @@ func scanQuotaCrossings(ctx context.Context, tx pgx.Tx, tenantID string) ([]quot
 	var items []quotaCrossing
 	for rows.Next() {
 		var it quotaCrossing
-		if err := rows.Scan(&it.subID, &it.userID, &it.plan, &it.consumed, &it.total, &it.pct); err != nil {
+		if err := rows.Scan(&it.subID, &it.userID, &it.plan, &it.consumed, &it.total, &it.periodStart, &it.pct); err != nil {
 			return nil, err
 		}
 		items = append(items, it)
