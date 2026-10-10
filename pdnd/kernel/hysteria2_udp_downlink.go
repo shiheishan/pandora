@@ -122,9 +122,18 @@ type hy2Downlink struct {
 
 func (d *hy2Downlink) probe() int { return min(d.size, hy2DownlinkProbeBatch) }
 
-// 冷态借还小组用的函数（顶层函数，传给 Ready 不分配）。
-func hy2BorrowProbe() *udprecv.Batch    { return hy2DownlinkProbeStock.get() }
-func hy2GiveBackProbe(b *udprecv.Batch) { hy2DownlinkProbeStock.put(b) }
+// 冷态借还小组用的函数（顶层函数，传给 Ready 不分配）：先占冷态名额
+// （hy2DownlinkColdSlots），再从存货拿；还时先还存货再放名额。热态持组不走这里
+// （热态另有名额）。
+func hy2BorrowProbe() *udprecv.Batch {
+	hy2DownlinkColdSlots <- struct{}{}
+	return hy2DownlinkProbeStock.get()
+}
+
+func hy2GiveBackProbe(b *udprecv.Batch) {
+	hy2DownlinkProbeStock.put(b)
+	<-hy2DownlinkColdSlots
+}
 
 func (d *hy2Downlink) run() {
 	for {
@@ -255,6 +264,8 @@ func (d *hy2Downlink) readCopied(round int) (n, size int, ok bool) {
 		}
 	}
 	defer d.giveBack(b, batched)
+	// 小组的两包（每包至多 64KB 的块）总能整包复制，下面的零拷贝写回只会发生在
+	// 批量组上：冷态小组还组前不等 I/O，冷态名额（hy2DownlinkColdSlots）靠这一点。
 	copied := d.copyIn(b, n)
 	if copied < n {
 		return n, size, d.writeCopied() && hy2WriteDownlinkBatch(d.conn, b, copied, n, d.down)
@@ -357,8 +368,8 @@ func (d *hy2Downlink) drainBatch(batch *udprecv.Batch) (int, bool) {
 // 会话该结束。
 func (d *hy2Downlink) warm() bool {
 	probe := d.probe()
-	group := hy2BorrowProbe()
-	defer hy2GiveBackProbe(group)
+	group := hy2DownlinkProbeStock.get()
+	defer hy2DownlinkProbeStock.put(group)
 	if !d.setDeadline(time.Now().Add(hy2DownlinkWarmIdle)) {
 		return false
 	}

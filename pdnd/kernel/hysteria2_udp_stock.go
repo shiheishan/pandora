@@ -159,15 +159,27 @@ func (j *hy2Janitor) run(now int64) {
 // 至少 4 个用户能同时拿满，单个用户卡死自己的份额后，别的用户仍有 3/4 的名额。
 // 超出份额或名额的会话照常转发，只是用小组收。
 var (
-	hy2DownlinkBatchSlots    = make(chan struct{}, 8*runtime.GOMAXPROCS(0))
-	hy2DownlinkBatchPerUser  = int32(max(1, cap(hy2DownlinkBatchSlots)/4))
-	hy2DownlinkBatchStock    = newHy2Stock(hy2DownlinkStockIdle, func() *udprecv.Batch { return newHy2DownlinkBatch(hy2UDPBatch) })
-	hy2DownlinkProbeStock    = newHy2Stock(hy2DownlinkStockIdle, func() *udprecv.Batch { return newHy2DownlinkBatch(hy2DownlinkProbeBatch) })
-	hy2UplinkBatchStock      = newHy2Stock(hy2UplinkStockIdle, func() *hy2UplinkBatch { return new(hy2UplinkBatch) })
-	hy2DownlinkBatchShares   = hy2BatchShares{byUser: make(map[int64]*hy2BatchShare)}
+	hy2DownlinkBatchSlots   = make(chan struct{}, 8*runtime.GOMAXPROCS(0))
+	hy2DownlinkBatchPerUser = int32(max(1, cap(hy2DownlinkBatchSlots)/4))
+	hy2DownlinkBatchStock   = newHy2Stock(hy2DownlinkStockIdle, func() *udprecv.Batch { return newHy2DownlinkBatch(hy2UDPBatch) })
+	hy2DownlinkProbeStock   = newHy2Stock(hy2DownlinkStockIdle, func() *udprecv.Batch { return newHy2DownlinkBatch(hy2DownlinkProbeBatch) })
+	hy2UplinkBatchStock     = newHy2Stock(hy2UplinkStockIdle, func() *hy2UplinkBatch { return new(hy2UplinkBatch) })
+	hy2DownlinkBatchShares  = hy2BatchShares{byUser: make(map[int64]*hy2BatchShare)}
+	// hy2DownlinkColdSlots 见下面「冷态名额」。
+	hy2DownlinkColdSlots     = make(chan struct{}, 16*runtime.GOMAXPROCS(0))
 	errHy2BatchShareReleased = "hy2 batch share released twice"
 )
 
+// 冷态名额：冷态会话借小组（收一次、复制出来、立即还）同时最多 16×GOMAXPROCS 个
+// （4 核 64 组、8MB），借不到的会话等别人还，等的时候不占组。真正在收包、复制的
+// 同时至多 GOMAXPROCS 个；多出来的借出组都在被调度挂起的 goroutine 手里（刚借到、
+// 还没还就被换下，排在上千个刚被唤醒的会话后面）。VPC 复测 1024 个冷会话：这种挂起
+// 偶发地一下堆到 250–720 组，存货随之涨到同样多、RSS 多 60–120MB（baa6519 也偶发
+// 一次 580 组）；挂起的长短取决于调度，靠减少借还次数压不住，名额让上限与会话数、
+// 调度无关。冷态借的小组在还之前不等任何 I/O（小组的两包总能整包复制，写回在还组
+// 之后），所以等名额的会话只等别人跑完几微秒的收包与复制，不会被卡住的写回连累。
+// 守卫 TestHy2DownlinkColdSlotsBoundProbeGroups。
+//
 // 热态名额：同时处在热态（持小组阻塞读）的会话全进程最多 64×GOMAXPROCS 个，
 // 每用户最多其中 1/4。热态只给每秒 500 包以上的会话用：4 核节点 256 个这样的
 // 会话已是每秒 12.8 万包以上，超出的会话照常在冷态收包（系统调用次数与热态相同，只多一次复制与借还）。上限让

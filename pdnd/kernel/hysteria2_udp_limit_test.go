@@ -471,3 +471,55 @@ func TestHy2DownlinkMixedAVStaysCold(t *testing.T) {
 		})
 	}
 }
+
+// holdingSource 的 Ready 借到组后就卡住，模拟「刚借到组就被调度挂起」的冷态会话。
+type holdingSource struct {
+	*fakeUpstream
+	release chan struct{}
+	held    *atomic.Int64
+}
+
+func (s holdingSource) Ready(_ int, borrow func() *udprecv.Batch, giveBack func(*udprecv.Batch)) (*udprecv.Batch, int, error) {
+	b := borrow()
+	s.held.Add(1)
+	<-s.release
+	s.held.Add(-1)
+	giveBack(b)
+	return nil, 0, errFakeUpstreamClosed
+}
+
+// 冷态名额（hy2DownlinkColdSlots）：两倍名额的冷态会话都借到组就被挂起时，同时
+// 借出的小组不超过名额，其余会话等名额、不占组；全部还完名额归零。去掉名额（冷态
+// 直接从存货借），这里同时借出两倍名额，VPC 上对应小组存货涨到 250–720 组。
+func TestHy2DownlinkColdSlotsBoundProbeGroups(t *testing.T) {
+	limit := cap(hy2DownlinkColdSlots)
+	sessions := 2 * limit
+	release := make(chan struct{})
+	var held atomic.Int64
+	var wg sync.WaitGroup
+	for i := range sessions {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			userID := int64(77000 + i)
+			share := hy2DownlinkBatchShares.join(userID)
+			defer hy2DownlinkBatchShares.leave(userID)
+			var down atomic.Int64
+			src := holdingSource{fakeUpstream: newFakeUpstream(), release: release, held: &held}
+			d := &hy2Downlink{ctx: context.Background(), conn: &downlinkTestConn{memTestClientConn: newMemTestClientConn()}, src: src, size: hy2UDPBatch, share: share, down: &down, warmLimit: newHy2WarmLimit(0)}
+			d.run()
+		}()
+	}
+	waitDownlink(t, "名额借满", func() bool { return held.Load() >= int64(limit) })
+	time.Sleep(50 * time.Millisecond)
+	peak := held.Load()
+	close(release)
+	wg.Wait()
+	t.Logf("%d 个冷态会话借到组即挂起：同时借出 %d 组（名额 %d）", sessions, peak, limit)
+	if peak > int64(limit) {
+		t.Fatalf("同时借出 %d 组，超过冷态名额 %d", peak, limit)
+	}
+	if n := len(hy2DownlinkColdSlots); n != 0 {
+		t.Fatalf("会话都结束后冷态名额还占着 %d 个", n)
+	}
+}

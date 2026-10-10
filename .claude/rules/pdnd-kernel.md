@@ -73,6 +73,7 @@ QUIC 栈是 sagernet/quic-go（经 sing-quic 与 `internal/nativewire` 的 hy2 /
 - UDP 转发的出站 socket（`newHy2UDPUpstream`）固定申请 `hy2UDPSocketBuffer`（106496，内核记账与读回 212992，即常见发行版的 rmem_default、官方 hysteria 与 sing-box 不调时的大小）。10-09 vpcnode2 实验 B：rmem_max 8MB 档下申请 4MB 让 hy2 UDP 下行输官方 hysteria 5–6 个百分点，只改这一项即拉平；持续过载时大缓冲只多收注定在 QUIC 发送侧被丢的包。数据与理由写在常量注释里，改值要带同口径的复测数据。上游 socket 每会话一个，固定申请也让每会话的 udp_mem 记账不随机器的 rmem_default 膨胀。默认拦私网时经 `outbound.UDPBatchConn` 调缓冲，不拿裸 socket。
 - 空闲的 hy2 / TUIC UDP 会话不常驻收发缓冲（10-09 vpcnode2 缺陷 1：原先每会话约 2.6MB）。
   - 下行（`hysteria2_udp_downlink.go`）：冷态经 `internal/udprecv` 的收包器等 socket 可读，等待期间不占缓冲：`RawConn.Read` 的第一次回调只用 1 字节 MSG_PEEK 看有没有包、不借组，没有就交给 netpoller 等；叫醒后才借 2 包小组、非阻塞 recvmmsg。每次醒来「窥视落空 + 收到」两次系统调用、借还一次，与持有缓冲阻塞读（sing-box）同形状。
+    - 冷态借小组先占冷态名额 `hy2DownlinkColdSlots`（16×GOMAXPROCS，4 核 64 组 8MB）：借到组就被调度挂起的会话会偶发地一下堆到几百个（VPC 1024 冷会话：250–720 组，RSS +60–120MB；改前的 baa6519 也偶发 580 组），靠减少借还压不住。冷态小组还组前不等 I/O（两包总能整包复制，写回在还组之后），等名额的会话不会被卡住的写回连累；以后若让小组在还组前写回，先改这条。守卫 `TestHy2DownlinkColdSlotsBoundProbeGroups`。热态持组不占冷态名额（另有热态名额）。
     - 第一次回调就借组收（落空再还）：每次醒来借还两次，VPC 1024 冷会话时存货表排队、小组存货涨到 450–514 组（RSS +70MB），守卫 `internal/udprecv` 的 `TestReadyHoldsNoBatchWhileWaiting`（等待期间借 0 次、一次醒来借 1 次）。
     - 「上次收空了就跳过第一次回调直接等」会漏包：Go 的 netpoller 在 `RawConn.Read` 开始时清掉就绪标记（`poll_runtime_pollReset`），之前到的包不再触发（Linux 实测一轮 120 包只收到 85 包）。
     - 不要改回「阻塞窥视等包、再借缓冲收」（每次醒来三次，review-r6 第 1 条：每 Gbps 多约 10% CPU），守卫 `TestHy2DownlinkRecvSyscallsPerPacket`（真 socket 数 `Receiver.Recvs`，冷态与中速每包 ≤2.05）。不要在回调里嵌套 x/net 的 ReadBatch（同一个 fd 的读锁，死锁）。
