@@ -1,6 +1,6 @@
 ---
 name: dispatch-task
-description: pandora 总协调把工作派给任务会话、实现型 Claude 子 agent 或 Cursor 的 Composer：从主线（或集成分支）开 worktree、按文件切归属、分迁移号段、写开工说明（brief）、启动并登记清单（Composer 用 cursor-launch.sh 后台起 cursor-agent，含服务器只读巡检的红线片段）；含叠在集成分支上的路（S 的 feat/panel-redesign-s）和删除类任务（先交清单、退场守卫、回退实验）的 brief 写法。要「派任务」「开 worktree」「写 brief / 开工说明」「拆给子 agent 并行做」「开第 N 波」「派 S 的某一路」「派兼容清理 / 删除类任务」「派给 Composer / Cursor」时使用。验收与合并用 accept-task。
+description: pandora 总协调把工作派给任务会话、实现型 Claude 子 agent 或 Cursor 的 Composer：从主线（或集成分支）开 worktree、按文件切归属、分迁移号段、写开工说明（brief）、启动并登记清单（Composer 用 cursor-launch.sh 后台起 cursor-agent，含服务器只读巡检与照脚本跑的服务器测试红线片段）；含叠在集成分支上的路（S 的 feat/panel-redesign-s）和删除类任务（先交清单、退场守卫、回退实验）的 brief 写法。要「派任务」「开 worktree」「写 brief / 开工说明」「拆给子 agent 并行做」「开第 N 波」「派 S 的某一路」「派兼容清理 / 删除类任务」「派给 Composer / Cursor」时使用。验收与合并用 accept-task。
 ---
 
 # 派任务
@@ -34,7 +34,7 @@ description: pandora 总协调把工作派给任务会话、实现型 Claude 子
 
 ## 叠在集成分支上的路
 
-设计稿规定几路先合进一个集成分支、全部合完再一次并进主线时用（S：S0–S4、S7–S9 叠在 `feat/panel-redesign-s` 上，S5、S6 直接进主线，见主目录 `.claude/server-session-design.md` §10）。和普通路不同的只有下面几处：
+设计稿规定几路先合进一个集成分支、全部合完再一次并进主线时用（S：合并顺序 S0 → S1 → S2 → S3 → S4a → S4b → S7 → S8 → S9 → **S10**，全部合完再并主线；S5u → S5 → S5b、S6 直接进主线，见主目录 `.claude/server-session-design.md` §10）。和普通路不同的只有下面几处：
 
 - **集成分支本身**：开第一路之前建一次：`new-worktree.sh s`，得到 `../pandora-s` 与分支 `feat/panel-redesign-s`（基点主线）。不写 brief，是总协调合并用的 worktree；只由总协调推送。
 - **基点**：`new-worktree.sh <名字> feat/panel-redesign-s`，从集成分支的当前头开。依赖前一路的，等前一路合进集成分支再开（S 的依赖列见设计 §10）。
@@ -53,12 +53,12 @@ description: pandora 总协调把工作派给任务会话、实现型 Claude 子
 
 **Claude 子 agent**
 - Agent 调用显式传 `model`。
-- 用 `templates/agent-prompt.md`（替换 `<名字>`、`<一句话范围>`、`<总协调 scratchpad>`），后台运行，给 worktree 的绝对路径。模板已写明：推送设 dangerouslyDisableSandbox、最终消息就是报告、机械部分可用 `cursor-launch.sh --sub` 转手 Composer（10-10 起 opus 子 agent 默认可转）。
+- 用 `templates/agent-prompt.md`（替换 `<名字>`、`<一句话范围>`、`<总协调 scratchpad>`），后台运行，给 worktree 的绝对路径。模板已写明：推送设 dangerouslyDisableSandbox、最终消息就是报告、编码默认用 `cursor-launch.sh --sub` 转手 Composer（10-10 起 opus 子 agent 默认可转）。
 - 用户自己开会话时，给一段「发给新会话」的原话，内容同 agent-prompt。
 
 ## 派给 Composer
 
-用户 10-10 定：Composer 不 build、不 test、不 typecheck，早提交早返回，推送与 CI 也不归它。优先由 opus 主 agent 拆给它（composer-handoff）；总协调直接派整路给它时，收回后由总协调（或派一个 opus）跑验证、推送、等 CI，brief 里「验证」「推送」两节对它不适用。
+用户 10-10 定：Composer 不 build、不 test、不 typecheck，早提交早返回，推送与 CI 也不归它。优先由 opus 主 agent 拆给它（composer-handoff）；总协调直接派整路给它时，收回后由总协调（或派一个 opus）跑验证、推送、等 CI，brief 里「验证」一节和「工作目录与分支」里的推送要求对它不适用。
 
 命令行的固定写法在根 CLAUDE.md，这里用脚本起，不手抄（10-10 手写三次，第一次把模型写错了；Grok 已于 10-10 停用）：
 
@@ -70,16 +70,28 @@ bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> [--dry-run]
 - 脚本让进程脱离会话在后台跑，日志进本会话 scratchpad，打印 TASKS 登记行（含 PID 与日志）和等待命令。等待命令用 Bash 的 `run_in_background` 跑，结束时会话收到通知；这是 Composer 路唯一的完成通知。
 - brief 不用为 Composer 改写：`common-rules.md`「报告」一节已分开两种执行者。Composer 读不到 `~/.claude/CLAUDE.md`，brief 里不能只写「见全局规则」。
 - **上服务器**：根 CLAUDE.md 放行只读巡检（`templates/server-readonly.md`）和照脚本跑的测试（`templates/server-scripted.md`，用户 10-10 同意；故障注入、排查、结果判读仍归 Claude）。把对应模板抄进 brief 并填好机器清单。纯巡检不开 worktree：brief 放主目录 `ops-local/<目录>/brief.md`，用 `cursor-launch.sh --dir <目录>` 起，报告写同目录 `report.md`。脚本会检查 brief 里有这一节。
-- **中途追加范围**：Composer 收不到 SendMessage。等它交回后写进下一次的开工文件（修复轮的 `round-r{N}.md`，或续跑的 `--resume` 段）。
+- **中途追加范围**：见下「在跑的路要改规则或范围」。
 - **交回后**：验收照 accept-task，执行者不同不放宽；是否必审见 adversarial-review 第 1 节。修复轮见该 skill 第 4 节，中断续跑见 resume-work「Composer 的路」。
+
+## 在跑的路要改规则或范围
+
+规则、归属、验证口径或全局约定变了，在途任务可能仍按旧 brief 做。收件人从主目录 `.claude/TASKS.md`「正在跑」表取。
+
+**Claude 子 agent 的路**：用 SendMessage，消息写清：当前主线短 sha、改了什么、在途任务不必中断重做已完成项、**不用回复**。别手写长段，按下面模板：
+
+```text
+规则更新（主线 <短 sha>）：<一两句改了什么>。你按原 brief 继续；已完成的不重做。<可选：新增归属或「不碰」一句>。不用回复。
+```
+
+**Cursor 的 Composer 的路**：收不到 SendMessage。等它交回后，把同样信息写进它下一次的开工文件（修复轮 `round-r{N}.md`，或 `cursor-launch.sh --resume "…"` 的续跑段）。
 
 ## 坑
 
 - Agent 工具的 `isolation: "worktree"` 起点常是旧的 main 而不是任务分支：不要用它，手工建 worktree，在 prompt 里给绝对路径，并要求开工先核对 HEAD。
-- 实现型子 agent 不要再拆实现型子 agent：同一个 worktree 里并发改文件、并发 `go test` 会互相踩。只读调研可以拆。
+- 不再拆实现型 Claude 子 agent；编码转手 Composer 照 composer-handoff skill（同一 worktree 同时只能有一个 cursor-agent，转手期间你不碰 worktree）。只读调研可以拆。
 - worktree 里没有 `ops-local/`：证据和等待脚本都给主目录的绝对路径。pre-commit 会回主仓库的 `ops-local/` 加载私有 gitleaks 规则，但它只认真实 IP，域名、路径前缀等仓库公开红线仍要在 brief 里写明。
 - 性能任务：留出集不进 brief（见 bench-eval）。
 - 报告怎么交见 `templates/common-rules.md`「报告」；不用跨会话消息（要用户手动批准，常过期送不到）。
 - 有迁移的几路按号段从小到大合（goose 不接受「库里到了 00106 又冒出没跑过的 00104」，见 `rules/panel-migrations.md`）；没迁移的随时合。brief 里写明号段和合并顺序。叠在集成分支上的路按设计的合并顺序合进集成分支。
-- 中途追加范围用 SendMessage 发给该 agent（Composer 收不到，见「派给 Composer」），写清新增的归属文件与「不碰」，并在 TASKS 记一笔；别的路归属的文件，改由那一路做（例：订阅地址 /32 问题属 service.go → 发给 w2node，不给 w2render）。
+- 中途追加范围：Claude 子 agent 用 SendMessage（写清新增的归属文件与「不碰」，并在 TASKS 记一笔）；Composer 见「在跑的路要改规则或范围」。别的路归属的文件，改由那一路做（例：订阅地址 /32 问题属 service.go → 发给 w2node，不给 w2render）。
 - 推送的授权边界见 accept-task skill 的「合并」一节（任务分支可推，推 main、删 worktree、删分支另问用户）。

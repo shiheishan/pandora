@@ -101,7 +101,7 @@ if [ -e "$report" ] && [ -z "$resume" ]; then
   die "报告已存在 $report：上一次的结果先验收或挪走；续跑用 --resume"
 fi
 if pgrep -f "index\.js -p .*--workspace $W( |\$)" >/dev/null 2>&1; then
-  die "$W 上已有 cursor-agent 在跑（pgrep -fl cursor-agent 看）"
+  die "$W 上已有 cursor-agent 在跑（pgrep -fl 'index\.js -p .*--workspace' 看）"
 fi
 
 gover="go$(sed -n 's/^go //p' "$main/panel/go.mod" | head -1)"
