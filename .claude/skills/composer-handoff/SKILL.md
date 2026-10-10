@@ -1,6 +1,6 @@
 ---
 name: composer-handoff
-description: opus 子 agent 当一路主 agent 时，把机械部分转手给 Cursor 的 Composer（含只读的审查员、设计员把盘点交给它的 --scan 只读盘点）：判断哪些能转、写转手开工单（sub brief）、用 cursor-launch.sh --sub 启动与等待、收回后核 diff 与重跑测试和回退实验、在报告里写「转手」一节。子 agent 想「把这部分交给 Composer」「拆给 Composer」「转手」时使用；总协调直接派整路给 Composer 用 dispatch-task。
+description: opus 子 agent 当一路主 agent 时，把编码默认转手给 Cursor 的 Composer（含只读的审查员、设计员把盘点交给它的 --scan 只读盘点）：判断哪些能转、写转手开工单（sub brief）、用 cursor-launch.sh --sub 启动与等待、收回后核 diff 与重跑测试和回退实验、在报告里写「转手」一节。子 agent 想「把这部分交给 Composer」「拆给 Composer」「转手」时使用；总协调直接派整路给 Composer 用 dispatch-task。
 ---
 
 # 转手 Composer

@@ -75,7 +75,7 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py <上游> <分支> 
 - 修法写方向，不写逐步操作；有多个方案时让实现方按根 CLAUDE.md「取舍原则」四栏逐项比较，在报告里写比较结果和选择理由（w9cert 第 2 项就是这样定了只追加的签发流水）。
 - 迁移号要重新取：主线可能已经前进了。w9cert 第二轮原定的 00149 比主线已有的 00151 还小，只能改用 00152。叠在集成分支上的路用的是临时号，不重取（见 new-migration「集成分支的相对编号与重编号」）。
 - 消息里写「我合并时改」的条目，当场登记进 accept-task「一波合并」表。
-- 实现方交回后，用 save-report.sh 存成 `report-r{N}.md`（Composer 的路给它的日志，脚本核对 Composer 自己写的 `report-r{N}.md`），复审员要对着它逐条核。
+- 实现方交回后：**Cursor 的 Composer** 的路由总协调（或派一个 opus）先按 verify skill 本地验证、做回退实验、推送、等 CI，再存 `report-r{N}.md` 并派复审；**Claude 子 agent** 交回后用 save-report.sh 存成 `report-r{N}.md`。复审员要对着报告逐条核。
 
 ## 5. 什么时候可以合
 

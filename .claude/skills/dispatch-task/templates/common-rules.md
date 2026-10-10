@@ -20,20 +20,26 @@
 
 **提交**：按主题小步提交，信息用英文祈使句，前缀 perf:/fix:/feat:/test:/docs:，结尾加 `Co-Authored-By:` 行（按当前会话的署名要求）。
 
-**验证**：本地跑什么、推送后必须等哪个 CI 结论，一律按 verify skill（go test 加 `-p 2`；本机 PG18 用例会跳过，跳过不等于通过）。推送 `git push -u origin <你的分支>`。签名失败：Claude 子 agent 按根 CLAUDE.md「环境与工具坑」处理（Bash 设 `dangerouslyDisableSandbox: true` 重试）；Cursor 的 Composer 本来就在沙箱外，签名失败就停下写进报告，由总协调请用户解锁，不改走 HTTPS。等待脚本在主目录：`/Users/a1/ai/projects/pandora/ops-local/memoh-ci/wait-status.sh <sha>`、`BRANCH=<你的分支> wait-github.sh <sha>`，不手写轮询（Claude 子 agent 用后台方式跑；Composer 前台跑到出结论）；日志文件名带分支名（草稿目录多会话共用，曾被覆盖）。本机 go 命令加的 `GOTOOLCHAIN` 见根 CLAUDE.md「环境与工具坑」。退出 1 按 ci-triage 查（先核 run 的分支），本机复现、修、再推；退出 2 说明原因后改看 GitHub。本任务额外要等的 job 和自证写在开工说明的「验证补充」里。
+**验证**（**Cursor 的 Composer 不适用本节**：不 build、不 test、不推送、不等 CI；验证与推送由派你的人或总协调收回后做）：本地跑什么、推送后必须等哪个 CI 结论，一律按 verify skill（go test 加 `-p 2`；本机 PG18 用例会跳过，跳过不等于通过）。推送 `git push -u origin <你的分支>`。签名失败：Claude 子 agent 按根 CLAUDE.md「环境与工具坑」处理（Bash 设 `dangerouslyDisableSandbox: true` 重试）。等待脚本在主目录：`/Users/a1/ai/projects/pandora/ops-local/memoh-ci/wait-status.sh <sha>`、`BRANCH=<你的分支> wait-github.sh <sha>`，不手写轮询（**Claude 子 agent 前台跑等待脚本**；后台跑时子 agent 会提前收尾，10-10 w18anytls 出过一次）；日志文件名带分支名（草稿目录多会话共用，曾被覆盖）。本机 go 命令加的 `GOTOOLCHAIN` 见根 CLAUDE.md「环境与工具坑」。退出 1 按 ci-triage 查（先核 run 的分支），本机复现、修、再推；退出 2 说明原因后改看 GitHub。本任务额外要等的 job 和自证写在开工说明的「验证补充」里。
 
-**不要再拆实现型子 agent**；只读调研可以拆。
+**不再拆实现型 Claude 子 agent**；编码转手 Composer 照 composer-handoff skill（同一 worktree 同时只能有一个 cursor-agent，转手期间你不碰 worktree）。只读调研可以拆。
 
 **要登测试机的任务**：只用 VPC 内网地址打测试流量；跑前估算公网出流量并写进报告；故障注入（iptables DROP、停服务等）要在远端自带撤销，写法见根 CLAUDE.md「环境与工具坑」。
 
-**报告**：按执行者分两种交法，内容相同。
+**报告**：按执行者分两种交法。
 - Agent 工具派的 Claude 子 agent 写不了这个文件，**最终消息就是报告**（总协调用 accept-task 的 save-report.sh 代存）。
 - Cursor 的 Composer 和用户自己开的任务会话：写进本 worktree 的 `.claude/report.md`（git 忽略，不提交）；Composer 的最终回复只写一段简述和报告路径。
 
-内容：
+**Claude 子 agent 报告内容**：
 1. 每项任务：做了/没做、机制、改前改后、证据；
 2. 改了哪些文件（`git diff --stat <上游>...HEAD`，三个点：合过上游也只算自己的改动）；
 3. 跑了哪些命令与关键输出；
 4. CI：提交 sha、wait-status / wait-github 退出码、PG18 PASS/SKIP/FAIL 数；
 5. 附录（性能类）：改后 SQL 的 EXPLAIN 版本；
 6. 需要别的路或总协调配合的事、新发现的问题、遗留。
+
+**Composer 报告内容**：
+1. 每项任务：做了/没做、机制（能写的改前改后、证据）；
+2. 改了哪些文件（`git diff --stat <上游>...HEAD`）；
+3. 逐条处理与每项对应的提交 sha、没做的及原因；
+4. 需要别的路或总协调配合的事、新发现的问题、遗留。
