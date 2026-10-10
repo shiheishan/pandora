@@ -141,6 +141,18 @@ jobs:
         run: go test -mod=readonly -p 1 -race -count=1 ./... | tee amd64-race.log
       - name: Vet
         run: go vet -mod=readonly -p 1 ./... | tee amd64-vet.log
+      - name: Cross-platform build and vet
+        # 发布只出 linux/amd64、linux/arm64；这里钉住别的平台至少编得过、vet 过，防平台专属
+        # 代码回退（w12quic review-r6 J2：udprecv 用了 linux/386 没有的 SYS_RECVFROM）。
+        # windows 只 build：kernel 测试用 syscall.Getrusage，在 windows 上本来就编不过（已登记不改）。
+        run: |
+          set -e
+          for target in linux/386 linux/arm darwin/arm64 freebsd/amd64; do
+            echo "== vet ${target}"
+            GOOS="${target%/*}" GOARCH="${target#*/}" go vet -mod=readonly -p 1 ./...
+          done
+          echo "== build windows/amd64"
+          GOOS=windows GOARCH=amd64 go build -mod=readonly ./...
       - name: Native REALITY stdout gate
         run: bash release/check_native_stdout.sh | tee native-stdout-gate.log
       - name: Native capability smoke

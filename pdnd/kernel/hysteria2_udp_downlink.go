@@ -211,6 +211,17 @@ type hy2CopiedPacket struct {
 // 不复制，见 readCopied。
 const hy2DownlinkCopyBudget = hy2DownlinkProbeBatch * hy2UDPMaxDatagram
 
+// 编译期钉住「小组收到的包总能整包复制」：冷态小组因此在还组前不等 I/O，冷态名额
+// （hy2DownlinkColdSlots）的等待才有界（复审 review-r6 J1）。每包至多
+// hy2UDPMaxDatagram 字节；它是不小于 64 的 2 的幂时，hy2CopyBlockSize 给的块至多就是
+// 它本身，所以只要预算 ≥ 小组包数 × hy2UDPMaxDatagram。改小预算、改大单包上限或
+// 改成非 2 的幂，下面任一行都会编不过（无符号常量为负）。
+const (
+	_ = uint(hy2DownlinkCopyBudget - hy2DownlinkProbeBatch*hy2UDPMaxDatagram)
+	_ = uint(hy2UDPMaxDatagram - 64)
+	_ = uint(0 - hy2UDPMaxDatagram&(hy2UDPMaxDatagram-1))
+)
+
 // hy2CopyBlockSize 是 buf.NewSize(n) 实际占的内存：sing 的分配器按 2 的幂分档
 // （最小 64B，到 64KB），超过 65535 才按原长分配。Cap() 报的是请求的长度，按它记账
 // 会把 4097 字节的包记成 4097、实际占 8KB（复审 review-r5 K1）。

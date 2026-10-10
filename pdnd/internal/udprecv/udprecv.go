@@ -165,12 +165,19 @@ func (r *Receiver) read(b *Batch, fd uintptr, size int) (int, error) {
 func (r *Receiver) Recvs() uint64 { return r.recvs.Load() }
 
 // addrPort 把内核 sockaddr 转成 netip.AddrPort（IPv4 映射地址还原成 IPv4）。
-func addrPort(family uint16, port uint16, addr4 [4]byte, addr16 [16]byte, zone uint32) netip.AddrPort {
+//
+// 有意不带 IPv6 的 zone（scope id，复审 review-r6 J3）：
+//   - 改前的 x/net 路径（hy2MessageSource）用 netip.AddrFromSlice(UDPAddr.IP) 取地址，
+//     同样丢掉了 zone，这里不是回退；
+//   - 只有链路本地的上游才有 zone，默认拦私网时这类目标本来就被拦；
+//   - 带上要把接口序号换成名字（net.InterfaceByIndex，每包一次系统调用加分配），
+//     或者每包格式化一次数字字符串，都放在每包热路径上，换来的只是回给客户端的来源
+//     多一个 zone。
+func addrPort(family uint16, port uint16, addr4 [4]byte, addr16 [16]byte) netip.AddrPort {
 	switch family {
 	case syscall.AF_INET:
 		return netip.AddrPortFrom(netip.AddrFrom4(addr4), port)
 	case syscall.AF_INET6:
-		_ = zone
 		return netip.AddrPortFrom(netip.AddrFrom16(addr16).Unmap(), port)
 	}
 	return netip.AddrPort{}

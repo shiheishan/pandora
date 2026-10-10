@@ -169,7 +169,7 @@ func TestGuardedUDPBatchDefaultPolicy(t *testing.T) {
 }
 
 // 批量接口不能成为裸 socket 的后门：不是 *net.UDPConn、不透出 SyscallConn /
-// RawUDPConn / File；放开私网后不套把关层，自然也没有这个接口（走 RawUDPConn）。
+// RawUDPConn / File，它交出的收包器也不透出这些（以及 RawConn / Control）；放开私网后不套把关层，自然也没有这个接口（走 RawUDPConn）。
 func TestGuardedUDPBatchDoesNotLeakRawSocket(t *testing.T) {
 	_, batch := guardedBatchFor(t)
 	var value any = batch
@@ -184,6 +184,29 @@ func TestGuardedUDPBatchDoesNotLeakRawSocket(t *testing.T) {
 	}
 	if _, ok := value.(interface{ File() (*os.File, error) }); ok {
 		t.Fatal("批量接口透出了 File")
+	}
+	// 交出去的收包器同样不能是后门（review-r6 J4）：只能收，拿不到能写包的句柄。
+	if recv := batch.Receiver(); recv != nil {
+		var r any = recv
+		if _, ok := r.(syscall.Conn); ok {
+			t.Fatal("收包器透出了 SyscallConn")
+		}
+		if _, ok := r.(interface{ RawUDPConn() *net.UDPConn }); ok {
+			t.Fatal("收包器透出了 RawUDPConn")
+		}
+		if _, ok := r.(interface{ File() (*os.File, error) }); ok {
+			t.Fatal("收包器透出了 File")
+		}
+		if _, ok := r.(interface{ RawConn() syscall.RawConn }); ok {
+			t.Fatal("收包器透出了 RawConn")
+		}
+		if _, ok := r.(interface {
+			Control(func(uintptr)) error
+		}); ok {
+			t.Fatal("收包器透出了 Control")
+		}
+	} else if udprecv.Supported {
+		t.Fatal("支持就绪收包的平台上应有收包器")
 	}
 	// 加密类包装（不实现 UDPBatchProvider）经租约也拿不到批量接口。
 	inner, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})

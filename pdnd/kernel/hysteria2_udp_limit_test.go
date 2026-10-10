@@ -523,3 +523,72 @@ func TestHy2DownlinkColdSlotsBoundProbeGroups(t *testing.T) {
 		t.Fatalf("会话都结束后冷态名额还占着 %d 个", n)
 	}
 }
+
+// 小组收到的包总能整包复制（review-r6 J1 前提的运行期一面）：单包上限的块乘小组包数
+// 不超过复制预算。编译期断言钉住常量，这里钉住 hy2CopyBlockSize 的算法。
+func TestHy2ProbeGroupAlwaysFullyCopied(t *testing.T) {
+	if got := hy2DownlinkProbeBatch * hy2CopyBlockSize(hy2UDPMaxDatagram); got > hy2DownlinkCopyBudget {
+		t.Fatalf("小组 %d 包、每包块 %d，合计 %d 超过复制预算 %d", hy2DownlinkProbeBatch, hy2CopyBlockSize(hy2UDPMaxDatagram), got, hy2DownlinkCopyBudget)
+	}
+}
+
+// 冷态名额不被卡在写回的会话拖死（review-r6 J1）：名额数 + 8 个冷态会话各收 2 个
+// 40000B 的包后卡在写回（QUIC 发送队列满、对端不回 ACK），名额应全部空着，另一个会话
+// 照常在 1 秒内收到并写回。小组走零拷贝写回（预算改小等）时，卡住的会话持着名额，
+// 别的冷态会话全部收不到包。
+func TestHy2DownlinkColdSlotsSurviveStuckWriteback(t *testing.T) {
+	stuck := cap(hy2DownlinkColdSlots) + 8
+	hold := make(chan struct{})
+	var srcs []*fakeUpstream
+	var conns []*downlinkTestConn
+	var waits []func()
+	big := make([]byte, 40000)
+	for i := range stuck {
+		src := newFakeUpstream()
+		conn := &downlinkTestConn{memTestClientConn: newMemTestClientConn(), hold: hold}
+		srcs = append(srcs, src)
+		conns = append(conns, conn)
+		waits = append(waits, runTestDownlinkWarm(conn, src, int64(78000+i), newHy2WarmLimit(0)))
+		src.push(big, big)
+	}
+	// 等它们都卡到写回上（2 秒）；名额被占满时多出来的会话连包都收不到，照样往下量。
+	reached := 0
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		reached = 0
+		for _, c := range conns {
+			if c.writes.Load() > 0 {
+				reached++
+			}
+		}
+		if reached == stuck {
+			break
+		}
+	}
+	held := len(hy2DownlinkColdSlots)
+	free := newFakeUpstream()
+	freeConn := &downlinkTestConn{memTestClientConn: newMemTestClientConn()}
+	freeWait := runTestDownlinkWarm(freeConn, free, 78999, newHy2WarmLimit(0))
+	free.push(make([]byte, 100))
+	deadline := time.Now().Add(time.Second)
+	for freeConn.writes.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	written := freeConn.writes.Load()
+	close(hold)
+	for i, src := range srcs {
+		src.close()
+		waits[i]()
+	}
+	free.close()
+	freeWait()
+	t.Logf("%d 个冷态会话里 %d 个卡在写回：冷态名额占用 %d/%d，另一会话 1 秒内写回 %d 包", stuck, reached, held, cap(hy2DownlinkColdSlots), written)
+	if held != 0 {
+		t.Fatalf("卡在写回的冷态会话占着 %d 个冷态名额", held)
+	}
+	if written == 0 {
+		t.Fatal("别的冷态会话 1 秒内没能写回：冷态名额被卡在写回的会话占满")
+	}
+	if reached != stuck {
+		t.Fatalf("只有 %d/%d 个会话收到包：其余在等冷态名额", reached, stuck)
+	}
+}
