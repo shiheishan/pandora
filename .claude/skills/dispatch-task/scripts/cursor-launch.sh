@@ -5,7 +5,7 @@
 #       任务 worktree ../pandora-<名字>。缺省读 .claude/brief.md、报告写 .claude/report.md；
 #       --round N（N ≥ 2）先读 brief 再读 .claude/round-r{N}.md，报告写 .claude/report-r{N}.md（adversarial-review 第 4 节）。
 #   cursor-launch.sh <名字> --sub <标签> [--model composer-2.5] [--resume …] [--log-dir …] [--dry-run]
-#       opus 子 agent 把机械部分转手（根 CLAUDE.md「大任务拆子 agent」Composer 那条）：读 .claude/sub-<标签>.md，
+#       opus 子 agent 把编码部分转手（根 CLAUDE.md「大任务拆子 agent」Composer 那条）：读 .claude/sub-<标签>.md，
 #       报告写 .claude/report-sub-<标签>.md；开工指令取 templates/cursor-prompt.md「子 agent 转手」一节：只提交、不推送、不等 CI。
 #   cursor-launch.sh --dir <只读巡检目录> [--resume …] [--log-dir …] [--dry-run]
 #       读 <目录>/brief.md（必须含 templates/server-readonly.md 的「服务器只读红线」一节，或 templates/server-scripted.md
@@ -15,7 +15,8 @@
 #       目录必须在总协调 scratchpad（/private/tmp/claude-<uid>/）或主目录 ops-local/ 下；Composer 只可写这个目录，
 #       不改任何仓库或 worktree（跑完脚本不核，由转出方用 git status 核）。
 #   cursor-launch.sh --wait <日志>
-#       等日志出现 exit= 行再打印末尾；用 Bash 的 run_in_background 跑，结束时会话收到通知。
+#       等日志出现 exit= 行再打印末尾。--sub、--scan 起的那次：前台跑（Bash timeout 600000，截断就原样再跑），见根 CLAUDE.md「子 agent 等 CI 或等 Composer」。
+#       任务 worktree 整路、--round、--dir 起的那次：用 Bash 的 run_in_background 跑，结束时会话收到通知（总协调用）。
 # - 开工指令取自 templates/cursor-prompt.md；--resume 在末尾加续跑段（resume-work「Composer 的路」）。
 # - 进程用 setsid 脱离会话（会话重启也不死），PID 写在 <日志>.pid，结束时日志末行是 exit=<退出码>。
 # - --log-dir 缺省是本会话的 scratchpad（由 CLAUDE_CODE_SESSION_ID 推出）；日志名 cursor-<名字>[-r<N>].log，重名加序号。
@@ -164,6 +165,11 @@ else
 fi
 echo
 echo "日志：$log"
-echo "等结束（Bash run_in_background）：bash $here/scripts/cursor-launch.sh --wait $log"
+if [ -n "$sub" ] || [ -n "$scan" ]; then
+  echo "等结束（前台跑，Bash timeout 600000，截断就原样再跑）：见根 CLAUDE.md「子 agent 等 CI 或等 Composer」"
+  echo "bash $here/scripts/cursor-launch.sh --wait $log"
+else
+  echo "等结束（Bash run_in_background）：bash $here/scripts/cursor-launch.sh --wait $log"
+fi
 echo "TASKS「正在跑」登记行（「在做什么」写一句范围）："
 echo "| $label（PID $pid） | cursor-agent $MODEL | $where | <范围>；开工 ${start#"$W"/}，报告 ${report#"$W"/}；日志 $log |"

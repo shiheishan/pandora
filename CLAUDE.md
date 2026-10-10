@@ -84,7 +84,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 大任务拆子 agent
 
 - 工作量大、能按互不重叠的文件或主题切开的任务（审计、迁移、批量删除、多模块修复），拆给子 agent 并行做。小任务不拆，拆分本身有成本。
-- 三种执行者（用户 10-10 定：Claude 子 agent 主要用 opus，机械活交 Cursor 的 Composer；Grok 已停用）：
+- 三种执行者（用户 10-10 定：Claude 子 agent 主要用 opus，机械活交 Cursor 的 Composer；Grok 已停用。同日晚又定写代码默认交 Composer，见下面 opus 那条）：
   - **Claude 子 agent，显式传 `model: opus`**：所有需要判断的活——架构取舍、原因不明的 bug、安全/对抗式审查、方向不明需自主探索；审查 Composer 交回的分支。
     - **一路的实现由 opus 当主 agent 负责（用户 10-10 定：opus 负责拆解任务并分配给 Composer、任务管理、冲突解决、测试和集成；写代码默认交 Composer，要多用）**：
       - 任务管理：拆解、定修法与判据、写开工单（判据、边界、要改的文件写死到不用再判断）；
@@ -95,7 +95,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
   - **Cursor 的 Composer 2.5**（`cursor-launch.sh`，缺省模型）：**不 build、不 test、不 typecheck，早提交早返回**（用户 10-10 定；这里的「不 build、不 test、不 typecheck」指本机 go/npm 的构建与测试；照 `server-scripted.md` 在测试机上逐字跑脚本测是另一类放行。编译、测试、推送、CI 都由派它的 opus 或总协调收回后做）。适合开工单把修法与判据写死、结果能验证的活——opus 主 agent 定好设计后的编码实现、按清单批量删改、纯挪动拆文件、改名、补测试与变异用例（自检由收回方跑）、补守卫、照审查清单的机械修复轮、搜索定位与读代码总结、只读的服务器巡检。由总协调直接派，或由 opus 子 agent 转手（只读的审查员、设计员把规则写死的盘点交它用 `cursor-launch.sh --scan`，见 composer-handoff skill）；除只改几行的小件外，交回后派 opus 审查。
     - Composer 读不到全局规则（`~/.claude/CLAUDE.md`），开工指令要求先读本文件和开工单（brief 照 dispatch-task 的 make-brief 生成）。要上服务器时开工单里写全红线：先读 `~/ai/servers/README.md` 和该机 `AGENTS.md`，只登点名的机器、只跑允许的命令、不读不抄秘密、写进文件的 IP 换成占位符。放行两类（用户 10-10 同意第二类）：只读巡检（`templates/server-readonly.md`）；照 opus 写好、验过的脚本在测试机上跑测试（`templates/server-scripted.md`：逐字照跑、不装软件不改配置、异常即停）。故障注入、排查异常、开机删机、改 SSH 配置、结果判读仍用 Claude。
   - **Claude 子 agent，`model: sonnet`**，只用在三处：要用浏览器工具的（如 ux-review 的模拟新手）、会改动服务器的现场操作；opus 子 agent 自己再拆的、需要 Claude 工具的下手（照各 skill 原写法）。
-  - 拿不准归哪类时按 opus 派；Composer 交回的证据核对不过，改派 opus 重做。验收不因执行者不同而放宽。
+  - 总协调派整路时拿不准按 opus 派；opus 路内某条自己写还是转手，判不准交 Composer（composer-handoff）。Composer 交回的证据核对不过，改派 opus 重做。验收不因执行者不同而放宽。
 - 每个子 agent 必须交回：改了哪些文件、跑了什么命令、关键输出。Cursor 的 Composer 交回：改了哪些文件、提交 sha、没做的及原因（不要求「跑了什么命令、关键输出」）。
 - 主会话核对证据后才接受：自己读 diff、重跑关键命令，不只信转述。
 - 收尾附一张表：子任务 | 执行者（模型） | 结论 | 证据。
@@ -112,6 +112,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 两路同改一个 `CREATE OR REPLACE` 函数（如 `app.seed_tenant_defaults`）：后合那份在先合那份的函数体上加，Down 还原到先合那份；计数类契约（模板数、`workers.Add`、DOMAINS、SCRIPTS）合完一并改。细则见 new-migration skill。
 - 子 agent 等 CI 或等 Composer：前台跑（`wait-status.sh`、`wait-github.sh`、`cursor-launch.sh --wait`），Bash `timeout` 设 600000，wait-status 加 `MEMOH_PICKUP=540`（让「检查机没接单」在 Bash 上限前以退出 2 报出来）；10 分钟被截断就原样再跑（不带 `MEMOH_FRESH`；两个脚本只读状态），累计 wait-status 30 分钟、wait-github 60 分钟仍无结论按退出 2 处理，出结论再写报告。放后台跑时子 agent 会提前结束这一轮（10-10 w18anytls 出过）。
 - 子 agent 再派的子 agent：完成通知落到总协调，不落到派它的 agent；派出方按 output 文件自己取结果。
+- 本机跨小时的调度脚本（如压测场次编排）：用 `bash .claude/skills/resume-work/scripts/detach.sh <日志> <命令> [参数…]` 起，不挂在会话子进程上；换号或会话退出不会把它一起停掉。本机是 macOS，没有 `setsid`（`setsid -f` 只用在 Linux 测试机上），照抄会以 127 退出、报错只进日志。
 
 # Compact instructions
 

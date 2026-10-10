@@ -46,6 +46,7 @@ for left in ("<一两句", "<列出报告", "<基点短 sha>", "<上游>", "<名
 task = pathlib.Path(a.task_file).read_text(encoding="utf-8").strip()
 head = f"# 开工说明：{a.name}\n\n基点 {base}，分支 feat/panel-redesign-{a.name}，上游 {a.upstream}。迁移号段：{a.migrations}。\n\n"
 shared = ("\n" + pathlib.Path(a.shared).read_text(encoding="utf-8").strip() + "\n") if a.shared else ""
+# 任务文件可含「## 执行者」小节（总协调写，格式见 common-rules.md）；没有时由 opus 按根 CLAUDE.md 自己定，判不准交 Composer。
 text = head + task + "\n" + shared + "\n" + common
 if a.dry_run:
     print(text); sys.exit(0)
