@@ -36,6 +36,7 @@ func runAnyTLSSynAckGroup(t *testing.T) {
 		t.Run("reused-stream-survives", func(t *testing.T) { t.Parallel(); runAnyTLSReusedStreamSurvives(t) })
 		t.Run("dial-failure-reported", func(t *testing.T) { t.Parallel(); runAnyTLSDialFailureReported(t) })
 		t.Run("reused-uot-survives", func(t *testing.T) { t.Parallel(); runAnyTLSReusedUOTSurvives(t) })
+		t.Run("uot-close-releases", func(t *testing.T) { t.Parallel(); runAnyTLSUOTCloseReleases(t) })
 	})
 	t.Run("bulk", func(t *testing.T) {
 		t.Run("reused-up", func(t *testing.T) { t.Parallel(); runAnyTLSReusedBulk(t, "up") })
@@ -330,4 +331,64 @@ func runAnyTLSReusedUOTSurvives(t *testing.T) {
 	roundTrip("uot-first")
 	time.Sleep(3500 * time.Millisecond)
 	roundTrip("uot-after-3s")
+}
+
+// 客户端关掉 UoT 流后，服务端立刻收尾：在线设备随之归零（不必等下一个回包或
+// 入站关闭）。修前这条流在服务端一直挂着，设备名额、goroutine 与上游 socket 不释放。
+func runAnyTLSUOTCloseReleases(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	_ = probe.Close()
+	spec := InboundSpec{Config: core.InboundConfig{Protocol: "anytls", Listen: "127.0.0.1", Port: port, Raw: map[string]any{}}}
+	adapter, err := newAnyTLSAdapter(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := adapter.Start(ctx, spec, AdapterHooks{DataPlane: &hysteriaEchoPlane{}}); err != nil {
+		t.Fatal(err)
+	}
+	defer adapter.Close()
+	if err := adapter.AddUsers([]core.User{{ID: 6306, UUID: "anytls-uot-close-secret"}}); err != nil {
+		t.Fatal(err)
+	}
+	dialOut := func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:"+strconv.Itoa(port))
+	}
+	client, err := anytls.NewClient(ctx, anytls.ClientConfig{Password: "anytls-uot-close-secret", DialOut: util.DialOutFunc(dialOut), Logger: logger.NOP()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	proxy, err := client.CreateProxy(ctx, M.Socksaddr{Fqdn: uot.MagicAddress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := M.ParseSocksaddr("127.0.0.1:53")
+	pc, err := (&uot.Client{Version: uot.Version}).DialConn(proxy, false, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pc.WriteTo([]byte("uot"), target); err != nil {
+		t.Fatal(err)
+	}
+	_ = pc.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := pc.ReadFrom(make([]byte, 64)); err != nil {
+		t.Fatalf("UoT 回显：%v", err)
+	}
+	if online := adapter.OnlineIPs(); len(online[6306]) != 1 {
+		t.Fatalf("UoT 进行中在线设备=%v，应为 1 个", online)
+	}
+	_ = pc.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(adapter.OnlineIPs()) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("客户端关掉 UoT 流 2 秒后服务端仍记着在线设备 %v：这条流没有收尾", adapter.OnlineIPs())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

@@ -448,6 +448,10 @@ func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.S
 	feedDone := make(chan struct{})
 	go func() {
 		defer close(feedDone)
+		// 客户端关了这条 UoT 流（子流没有半关闭）就结束整个 UDP 会话：关掉 uotConn，
+		// 下面阻塞在读上游 UDP 的那一侧随之返回。不关的话它要等到下一个回包、
+		// 或整个入站关闭才返回，期间一直占着 goroutine、上游 socket 与在线设备名额。
+		defer uotConn.Close()
 		if request != nil {
 			encoded, err := uot.EncodeRequest(*request)
 			if err != nil {
