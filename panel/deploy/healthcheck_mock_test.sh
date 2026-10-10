@@ -263,7 +263,7 @@ _note_literal_fragments() {
   done <<<"$chunks"
 }
 alert_index_missing() {
-  local hc="$1" rb="$2" index line text missing=0 frag
+  local hc="$1" rb="$2" index line text missing=0 frag item n_db=0
   index="$(_runbook_index_text "$rb")"
   while IFS= read -r line; do
     text="${line#*note \"}"
@@ -277,6 +277,15 @@ alert_index_missing() {
       fi
     done < <(_note_literal_fragments "$text")
   done < <(grep -E 'note "' "$hc")
+  while IFS= read -r item; do
+    [ -z "$item" ] && continue
+    n_db=$((n_db + 1))
+    if ! grep -Fq "${item}查询失败或超时" <<<"$index"; then
+      printf 'missing RUNBOOK index entry for db_count item: %s\n' "$item"
+      missing=1
+    fi
+  done < <(perl -ne 'while (/db_count\s+\w+\s+"([^"]+)"/g) { print "$1\n" }' "$hc")
+  [ "$n_db" -ge 4 ] || fail "alert_index_missing: expected at least 4 db_count check items, found $n_db"
   [ "$missing" -eq 1 ] && return 0
   return 1
 }
@@ -286,5 +295,9 @@ fi
 cp "$DEPLOY/healthcheck.sh" "$T/hc-index-test.sh"
 printf '%s\n' 'note "完全新的告警文案"' >>"$T/hc-index-test.sh"
 alert_index_missing "$T/hc-index-test.sh" "$DEPLOY/RUNBOOK.md" >/dev/null || fail "alert_index_missing self-test did not detect a new note"
+cp "$DEPLOY/healthcheck.sh" "$T/hc-dbcount-test.sh"
+printf '%s\n' 'if db_count o "订单积压" "SELECT 1"; then :; fi' >>"$T/hc-dbcount-test.sh"
+alert_index_missing "$T/hc-dbcount-test.sh" "$DEPLOY/RUNBOOK.md" >/dev/null \
+  || fail "alert_index_missing self-test did not detect a new db_count item"
 
 printf 'healthcheck mock: PASS\n'
