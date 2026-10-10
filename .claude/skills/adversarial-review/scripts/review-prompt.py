@@ -4,7 +4,7 @@
 用法（在主目录或任一 worktree 里跑）：
   review-prompt.py first <上游> <分支> --what "<一句话内容>" --scratchpad <总协调 scratchpad> \\
       [--name <名字>] [--head <sha>] [--design <设计稿路径>] [-o <输出文件>]
-  review-prompt.py round <分支> --round N --scratchpad <…> [--name] [-o]            （别名 round2）
+  review-prompt.py round <分支> --round N --scratchpad <…> [--executor claude|grok] [--name] [-o]   （别名 round2）
   review-prompt.py rereview <分支> --round N --from <上一轮审查时的头> --scratchpad <…> [--name] [--head] [-o]
 
 - first：填 templates/reviewer-prompt.md。merge-base 用 <上游>（该路的上游分支名：一般是主线，叠在集成分支上的路给集成分支，
@@ -13,6 +13,8 @@
   只留「这次的重点」给人写。triggers.py 退出 1（无触发）时照样生成，stderr 提醒。
 - round：填 templates/round-brief.md（第 N 轮修复消息，N ≥ 2）。依据的审查报告：N=2 是 review.md，
   N≥3 是 review-r{N-1}.md；交回存 report-r{N}.md；探针目录是上一次审查的副本。发现逐条留给人写。
+  --executor 按原实现方取模板里 `<仅 Claude>` / `<仅 Grok>` 开头的行（推送与交回的写法），缺省 claude；
+  grok 的输出用 -o 写成 <worktree>/.claude/round-r{N}.md，再用 dispatch-task 的 cursor-launch.sh --round N 起。
 - rereview：填 templates/rereview-prompt.md（第 N 轮修完后的复审）。范围 <上一轮的头>..<头>；范围里有
   合主线的提交时，自动只取分支自己提交（first-parent、非合并）改过的文件，再加合并时手工解决冲突的文件，
   只带进主线改动的合并就此去掉。材料是 review(-r{N-1}).md 与 report-r{N}.md，副本 review-<名字>-r{N}。
@@ -191,6 +193,11 @@ def round_brief(a):
     copy = copy_dir(a.scratchpad, name, a.round - 1)
     probe = str(copy) if copy.exists() else f"{copy}（目录不存在：没有探针就删掉这句）"
     s = (HERE / "templates" / "round-brief.md").read_text(encoding="utf-8")
+    keep, drop = ("<仅 Grok>", "<仅 Claude>") if a.executor == "grok" else ("<仅 Claude>", "<仅 Grok>")
+    if keep not in s:
+        sys.exit(f"round-brief.md 里没有 {keep} 开头的行（模板改过？）")
+    s = "".join(l[len(keep):] if l.startswith(keep) else l
+                for l in s.splitlines(keepends=True) if not l.startswith(drop))
     s = fill(s, {"<名字>": name, "<轮>": str(a.round), "<worktree>": str(wt), "<分支>": a.branch,
                  "<副本>": probe, "<上一轮审查>": review, "<本轮报告>": f"report-r{a.round}.md",
                  "<go 版本>": go_version(wt)})
@@ -214,6 +221,8 @@ def main():
             p.add_argument("--head", help="缺省取分支当前的提交")
         if c != "first":
             p.add_argument("--round", type=int, default=2, help="第几轮修复（缺省 2）")
+        if c == "round":
+            p.add_argument("--executor", choices=["claude", "grok"], default="claude", help="原实现方（缺省 claude）")
         if c == "first":
             p.add_argument("--what", required=True, help="一句话内容")
             p.add_argument("--design", help="设计稿路径")

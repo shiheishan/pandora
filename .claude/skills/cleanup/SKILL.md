@@ -11,7 +11,7 @@ description: pandora 开发侧资源清理：列出已合并且干净的 worktre
 
 ## 永远不在清单里
 
-- `main`、`feat/panel-redesign` 两个分支，以及主目录本身。
+- `main`、`feat/panel-redesign`、集成分支 `feat/panel-redesign-s`，以及主目录本身和集成分支的 worktree `../pandora-s`（相对主目录）。`list.sh` 的 `is_protected_branch` 跳过这三个分支；`pandora-s` 这个路径同样跳过，不进候选。运行中表只认 `w<数字><名字>`，挡不住 `s`，所以不能靠那张表。
 - 正在跑的任务：以主目录 `.claude/TASKS.md`「正在跑」表为准。状态不以 ✅ 开头的行里出现的 `w<波次><名字>` 一律保留，包括「运行中」「退回修复中」「已交回待合」。
 - 刚派出、还没有提交的 worktree：它的头就是基线，看起来「已合并且干净」，**只有 TASKS 表能保护它**。所以派工时先登记再开工（dispatch-task）。表里漏了的，用 `KEEP="w7xxx …"` 补。
 

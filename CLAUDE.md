@@ -84,16 +84,16 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 大任务拆子 agent
 
 - 工作量大、能按互不重叠的文件或主题切开的任务（审计、迁移、批量删除、多模块修复），拆给子 agent 并行做。小任务不拆，拆分本身有成本。
-- 派子 agent 时显式传 model（`opus` = Opus 5.5，`sonnet` = Sonnet 5.5，`haiku` = Haiku 5.5）：
-  - 任务边界清楚、结果能验证（搜索定位、读代码总结、纯挪动拆文件、按明确规则批量修改、跑命令收集输出）→ `sonnet`。
-  - 需要深度判断（架构取舍、原因不明的 bug、安全/对抗式审查、方向不明需自主探索）→ `opus`。
-  - 跨模块的功能实现，或涉及钱、权限、认证、迁移、节点内核的改动 → `opus`：表面边界清楚，实际全是取舍；这类任务一跑就是一小时，返工比直接用 opus 贵。
-  - 短任务拿不准先用 `sonnet`，证据核对不过再用 `opus` 重跑。
-  - 量大、在意成本或速度、结果好核对的辅助活 → `haiku`：在长日志、长文档里提取某个具体数据，批量总结、分类，跑固定查询并整理输出。它给 opus / sonnet 当下手，不当主 agent 统筹。
-  - 复杂的 agent 式编码、需要深度推理的工作，不用 `haiku`。
+- 三种执行者（用户 10-10 定：原来派 sonnet、haiku 的活默认交 Cursor 的 Grok，Claude 子 agent 主要用 opus）：
+  - **Claude 子 agent，显式传 `model: opus`**：需要深度判断（架构取舍、原因不明的 bug、安全/对抗式审查、方向不明需自主探索）；涉及钱、权限、认证、迁移设计、节点内核的实现（表面边界清楚，实际全是取舍）；以及审查 Grok 交回的分支。
+  - **Cursor 的 Grok**：任务边界清楚、结果能验证的（搜索定位、读代码总结、纯挪动拆文件、按明确规则批量删改、部署脚本、nodesim、前端、审查后照清单的修复轮、只读的服务器巡检）；中等风险的功能实现也可以交给它，交回后派 opus 对抗审查（除只改几行的小件）。
+    - 总协调后台跑 `cursor-agent -p --force --trust --sandbox disabled --workspace <目录> --model grok-4.7-high --output-format text "<开工指令>"`，日志进 scratchpad。开工指令要求先读本文件和 `.claude/brief.md`（brief 照 dispatch-task 的 make-brief 生成）。
+    - Grok 读不到全局规则（`~/.claude/CLAUDE.md`），要上服务器时 brief 里写全红线：先读 `~/ai/servers/README.md` 和该机 `AGENTS.md`，只登点名的机器、只跑 brief 允许的命令、不读不抄秘密、写进文件的 IP 换成占位符。目前只放行只读巡检；会改动服务器的活还用 Claude。
+  - **Claude 子 agent，`model: sonnet`**，只用在两处：边界清楚但 Grok 做不了的活（要用浏览器工具的，如 ux-review 的模拟新手；会改动服务器的现场操作）；opus 子 agent 自己再拆的下手（数往返、grep 普查、读代码总结），照各 skill 原写法。
+  - 拿不准归哪类时按 opus 派；Grok 交回的证据核对不过，改派 opus 重做。验收不因执行者不同而放宽。
 - 每个子 agent 必须交回：改了哪些文件、跑了什么命令、关键输出。
 - 主会话核对证据后才接受：自己读 diff、重跑关键命令，不只信转述。
-- 收尾附一张表：子任务 | 子 agent（模型） | 结论 | 证据。
+- 收尾附一张表：子任务 | 执行者（模型） | 结论 | 证据。
 
 ## 环境与工具坑（所有 skill 共用）
 

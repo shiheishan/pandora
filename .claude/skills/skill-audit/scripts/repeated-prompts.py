@@ -8,9 +8,11 @@
 只读、只打印。同一条消息在转录里会以多条记录出现（排队、重放、压缩后重写），按「md5 + 分钟」去重后再计数。
 时间是转录里的 UTC。
 - 缺省：用户消息，逐字相同才算一组。每组给 md5 前 8 位、次数、各次时间、首行。文字略有出入的版本算不同的组，用 --grep 一起看。
-- --agents：总协调手写的 Agent 调用 prompt 与 SendMessage 的 message，按相似度分组：sha、路径、数字、分支名
+- --agents：总协调手写的 Agent 调用 prompt、SendMessage 的 message，以及 Bash 里 `cursor-agent -p` 的开工指令
+  （取命令里最长的一段双引号串；没有就取整条命令），按相似度分组：sha、路径、数字、分支名
   w12xxx 先抹平，再比字符五元组的重合度（交集 ÷ 较短一方），和组里任一条 ≥ --sim 就并进这一组。
-  每组给次数（Agent / SendMessage 各几次）、首末时间、各条的 description（SendMessage 给 summary 或首行）。
+  每组给次数（Agent / SendMessage / Cursor 各几次）、首末时间、各条的 description（SendMessage 给 summary 或首行，
+  Cursor 给 --workspace 目录）。用 cursor-launch.sh 起的不会出现在这里：指令由模板生成，不算手写。
   照模板派的会聚成一组；每次手写、措辞各异的（例如第二轮修复消息）聚不到一起，用 --grep 关键词 --min 1 看。
 """
 import argparse, glob, hashlib, json, os, re, sys
@@ -29,11 +31,30 @@ def norm(t):
     t = re.sub(r"</?pasted_content[^>]*>", "", t)
     return t.strip()
 
+# 真正执行的调用：cursor-agent 在命令开头、&&、;、|| 或换行之后（可带 VAR=… 前缀）；写在引号、反引号里的文字说明不算
+LAUNCH = re.compile(r"(?:^|&&|;|\|\||\n)\s*(?:\w+=\S*\s+)*(cursor-agent -p\b)")
+QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
+
+def cursor_prompt(cmd):
+    """Bash 命令里真正执行的 cursor-agent -p 的开工指令：-p 之后最长的一段双引号串；没有就取整条命令。"""
+    m = LAUNCH.search(cmd)
+    if not m:
+        return None
+    rest = cmd[m.start(1):]
+    quoted = max(QUOTED.findall(rest), key=len, default="")
+    ws = re.search(r"--workspace\s+(\S+)", rest)
+    return (ws.group(1) if ws else "cursor-agent"), (quoted if len(quoted) > 40 else rest)
+
 def agent_texts(rec):
     c = rec.get("message", {}).get("content")
     if not isinstance(c, list):
         return
     for x in c:
+        if isinstance(x, dict) and x.get("type") == "tool_use" and x.get("name") == "Bash":
+            got = cursor_prompt((x.get("input") or {}).get("command") or "")
+            if got:
+                yield "Cursor", got[0], got[1]
+            continue
         if isinstance(x, dict) and x.get("type") == "tool_use" and x.get("name") in ("Agent", "Task", "SendMessage"):
             i = x.get("input") or {}
             t = i.get("prompt") if x["name"] != "SendMessage" else i.get("message")
@@ -89,8 +110,8 @@ def agents(a, files):
     rows = sorted((g for g in groups if len(g) >= a.min), key=len, reverse=True)
     print(f"{len(msgs)} 条（去重后），{len(groups)} 组，其中 ≥{a.min} 次的 {len(rows)} 组")
     for ms in rows:
-        na = sum(1 for m in ms if m[1] == "Agent")
-        print(f"{len(ms)} 次（Agent {na} / SendMessage {len(ms) - na}）  {ms[0][0]} → {ms[-1][0]}")
+        n = {k: sum(1 for m in ms if m[1] == k) for k in ("Agent", "SendMessage", "Cursor")}
+        print(f"{len(ms)} 次（Agent {n['Agent']} / SendMessage {n['SendMessage']} / Cursor {n['Cursor']}）  {ms[0][0]} → {ms[-1][0]}")
         labels = list(dict.fromkeys(m[2] for m in ms))
         for l in labels[:4]:
             print(f"    {l[:70]}")
@@ -105,7 +126,7 @@ def main():
     ap.add_argument("--since", default="", help="只看这个时间（ISO 前缀）之后的")
     ap.add_argument("--grep", default="", help="只看含这个关键词的消息")
     ap.add_argument("--minlen", type=int, default=80, help="短于这个字数的消息不算（「继续」「好」之类）")
-    ap.add_argument("--agents", action="store_true", help="看 Agent prompt 与 SendMessage，按相似度分组")
+    ap.add_argument("--agents", action="store_true", help="看 Agent prompt、SendMessage 与 cursor-agent 开工指令，按相似度分组")
     ap.add_argument("--sim", type=float, default=0.4, help="--agents 下算同一组的相似度下限（0–1）")
     a = ap.parse_args()
     files = a.files or sorted(glob.glob(os.path.expanduser(

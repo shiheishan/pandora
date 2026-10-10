@@ -1,6 +1,6 @@
 ---
 name: accept-task
-description: pandora 总协调验收任务分支并合进主线（或集成分支）：读 report.md、查越界改动、独立重跑关键命令、核 CI、性能类走 perf-gate 判分、合并与冲突处理、一波几路的合并表（顺序、合时改、合后冻结与要改的 skill、要向用户说明的新机制）、集成分支（S 的 feat/panel-redesign-s）的逐路合入与最后一次并主线、推送后等 CI、向用户出结论表。用户说「X 做完了」「验收」「合并」「这一波怎么合」「核对子 agent 的结果」，或后台子 agent 交回报告时使用。
+description: pandora 总协调验收任务分支并合进主线（或集成分支）：读 report.md、查越界改动、独立重跑关键命令、核 CI、性能类走 perf-gate 判分、合并与冲突处理、一波几路的合并表（顺序、合时改、合后冻结与要改的 skill、要向用户说明的新机制）、集成分支（S 的 feat/panel-redesign-s）的逐路合入与最后一次并主线、推送后等 CI、向用户出结论表。用户说「X 做完了」「验收」「合并」「这一波怎么合」「核对子 agent 的结果」，或后台子 agent、Cursor 的 Grok 交回报告时使用。
 ---
 
 # 验收任务分支
@@ -13,7 +13,10 @@ description: pandora 总协调验收任务分支并合进主线（或集成分�
 
 用户会把报告贴错会话或重复贴。先 `git log --oneline <上游>..<分支>` 和主目录 `.claude/TASKS.md` 对一下。
 
-后台子 agent 交回时，先存报告：`scripts/save-report.sh <通知里的 output-file> ../pandora-<名字>/.claude/report.md`（取转录里最后一条带文字的消息；agent 中途「还在等 CI」的临时通知不是终稿，等 `end_turn` 的那次再存）。
+交回时先落报告，按执行者分：
+
+- Claude 子 agent：`scripts/save-report.sh <通知里的 output-file> ../pandora-<名字>/.claude/report.md`（取转录里最后一条带文字的消息；agent 中途「还在等 CI」的临时通知不是终稿，等 `end_turn` 的那次再存）。
+- Cursor 的 Grok：`scripts/save-report.sh <cursor-launch 打印的日志> ../pandora-<名字>/.claude/report.md`。Grok 自己写报告，脚本不覆盖，只核日志末行 `exit=0`、报告非空且没被提交。它没写报告时，脚本把日志全文存过去并退出 1：那只是最终回复，按 brief「报告」逐项补问。
 
 ## 要核的东西
 
@@ -25,7 +28,7 @@ description: pandora 总协调验收任务分支并合进主线（或集成分�
    - 只改注释或文字：`scripts/comment-only.sh <base> <head>` 必须为空；
    - 声称没改 SQL：`GOTOOLCHAIN=go<go.mod 版本> go run ./tools/refactorcheck sqlset -base <base> -head <head>` 必须 UNCHANGED；
    - 性能项（改了 SQL、热路径、缓存、连接池、节拍、部署参数，或 brief 里有性能目标）：一律走 perf-gate skill，按它选层（SQL 走 bench-eval 评测集：训练集与留出集都不变差、结果一致，只训练集变好算过拟合；Go 热路径与资源走 Vultr 同机 A/B）。合并依据是现场目录里的 `verdict.md`：「退回」「不能判」「复测」不合；「可合，未达新标准 N 项」把未达项记进 TASKS，brief 承诺过的项没达到按退回；后缀「非正式数据」的不作依据。
-5. **对抗式审查**：先跑 `python3 .claude/skills/adversarial-review/scripts/triggers.py <上游> <分支>`。退出 0（命中钱、权限、秘密、迁移、部署脚本、节点内核、新依赖、并发其中之一）的分支，按 adversarial-review skill 派 opus 只读审查，可以和等 CI 并行。中危以上的发现要么修完再合，要么满足该 skill「什么时候可以合」里先合后修的条件。
+5. **对抗式审查**：先跑 `python3 .claude/skills/adversarial-review/scripts/triggers.py <上游> <分支>`，执行者是 Grok 的加 `--grok`。退出 0 的分支，按 adversarial-review skill 派 opus 只读审查，可以和等 CI 并行。退出 0 有两种：命中钱、权限、秘密、迁移、部署脚本、节点内核、新依赖、并发其中之一；或者是 Grok 交回、不是小件。小件指领域无命中，且非测试文件增删合计 ≤ 30 行，口径见该 skill 第 1 节。中危以上的发现要么修完再合，要么满足该 skill「什么时候可以合」里先合后修的条件。
 6. **CI**：先 `scripts/ci-status.sh <分支>` 看一眼检查机与各 workflow 的现状（只读不等）；还没出结论就按 verify skill「远端层」等；红了用 ci-triage skill 的 `triage.sh` 定位。PG18 必须 0 SKIP；grep 新增测试名，确认真跑了。
 
 ## 合并
@@ -64,7 +67,7 @@ description: pandora 总协调验收任务分支并合进主线（或集成分�
 
 ## 交给用户
 
-按根 CLAUDE.md 收尾附表：子任务 | 子 agent | 结论 | 证据（命令、sha、CI 号、判分结果）。同时在主目录 `.claude/TASKS.md` 打勾写结论。
+按根 CLAUDE.md 收尾附表：子任务 | 执行者（模型） | 结论 | 证据（命令、sha、CI 号、判分结果）。同时在主目录 `.claude/TASKS.md` 打勾写结论。
 
 ## 坑
 
