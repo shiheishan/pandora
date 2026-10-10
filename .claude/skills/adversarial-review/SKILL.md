@@ -1,6 +1,6 @@
 ---
 name: adversarial-review
-description: pandora 合并前对任务分支的 diff 做只读对抗式审查。步骤：用脚本判断要不要审（钱与计费、权限与认证、秘密与证书、迁移、部署脚本与安装链、节点内核与协议、新依赖、并发与锁），按模板派 opus 只读审查员（给 diff 范围、brief / report 路径和检查表章节），按固定格式交回；总协调亲自核中危以上的发现，写进下一轮修复消息（原实现方是 Cursor 的 Grok 时写成文件另起一次），再决定合并时机和每轮修完要不要复审（第 N 轮的消息与复审 prompt 都由脚本生成）；Grok 交回的分支除小件外都审。accept-task 验收的分支命中触发条件时使用；用户说「审一下」「挑毛病」「对抗审查」「安全审查这个分支」时也用。分工：只管合并前的 diff，整体架构审查不在这里；内置的 code-review 和 security-review 是通用审查，不懂本项目的不变量，只能作补充。
+description: pandora 合并前对任务分支的 diff 做只读对抗式审查。步骤：用脚本判断要不要审（钱与计费、权限与认证、秘密与证书、迁移、部署脚本与安装链、节点内核与协议、新依赖、并发与锁），按模板派 opus 只读审查员（给 diff 范围、brief / report 路径和检查表章节），按固定格式交回；总协调亲自核中危以上的发现，写进下一轮修复消息（原实现方是 Cursor 的 Composer 时写成文件另起一次），再决定合并时机和每轮修完要不要复审（第 N 轮的消息与复审 prompt 都由脚本生成）；Composer 交回的分支除小件外都审。accept-task 验收的分支命中触发条件时使用；用户说「审一下」「挑毛病」「对抗审查」「安全审查这个分支」时也用。分工：只管合并前的 diff，整体架构审查不在这里；内置的 code-review 和 security-review 是通用审查，不懂本项目的不变量，只能作补充。
 ---
 
 # 合并前的对抗式审查
@@ -12,17 +12,17 @@ description: pandora 合并前对任务分支的 diff 做只读对抗式审查�
 在主目录跑（只读）。`<上游>` 是该路 brief 写的上游分支：一般是主线 `feat/panel-redesign`，叠在集成分支上的路给集成分支（如 S 的 `feat/panel-redesign-s`），见 dispatch-task「叠在集成分支上的路」：
 
 ```bash
-python3 .claude/skills/adversarial-review/scripts/triggers.py <上游> <分支> [--grok]
+python3 .claude/skills/adversarial-review/scripts/triggers.py <上游> <分支> [--composer]
 ```
 
 - 退出 0：有触发，必须审，输出按领域列出命中的文件和新增行。退出 1：不必审，仍按 accept-task 自己读关键 diff。退出 2：范围是空的，分支多半已经合入；事后补审时用合并提交的两个父提交，写成 `M^1 M^2`。
-- **执行者是 Cursor 的 Grok 时加 `--grok`**：根 CLAUDE.md「大任务拆子 agent」要求 Grok 交回的分支除小件外都派 opus 审，不看领域命中。小件 = 领域无命中，且非测试文件增删合计不超过 30 行（脚本的 `GROK_SMALL`，二进制文件按超限算），这时退出 1；其余退出 0。小件不审，也要自己读全部 diff。
+- **执行者是 Cursor 的 Composer 时加 `--composer`**：根 CLAUDE.md「大任务拆子 agent」要求 Composer 交回的分支除小件外都派 opus 审，不看领域命中。小件 = 领域无命中，且非测试文件增删合计不超过 30 行（脚本的 `COMPOSER_SMALL`，二进制文件按超限算），这时退出 1；其余退出 0。小件不审，也要自己读全部 diff。
 - 基点要给上游分支名，不要给 brief 里的原基点。分支中途合过上游时，原基点会把合进来的上游改动也算进去：w7pdnd 应该是 43 个文件，用原基点算出来是 161 个。叠在集成分支上的路给了主线，前面几路已合进集成分支的改动也会算进来。
 - 脚本只看路径和新增行，结果只是线索。下面几种情况脚本可能没命中，也要审：
   - diff 删掉或放宽了某个拒绝条件，包括 409、422、403、触发器、约束。例：w10fix 放开了「控制节点可以批量退役」。
   - 改了面板或节点处理未认证请求的方式。
   - 新加了后台 worker 或租约。
-- 命中了但可以不审：只改了测试、注释或文案（用 accept-task 的 `comment-only.sh` 证明），或者是纯挪动（refactorcheck 结果为 PURE MOVE）。Grok 的分支同样适用：这两种有脚本证明，比审查更硬。
+- 命中了但可以不审：只改了测试、注释或文案（用 accept-task 的 `comment-only.sh` 证明），或者是纯挪动（refactorcheck 结果为 PURE MOVE）。Composer 的分支同样适用：这两种有脚本证明，比审查更硬。
 
 ## 2. 派审查员
 
@@ -60,22 +60,22 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py <上游> <分支> 
 | 发现 | 去向 |
 |---|---|
 | 高、中、低（本分支归属内） | 合并前下一轮全修 |
-| 低，属于别的路，或者要改别人归属的文件 | SendMessage 通知那一路（Grok 的路收不到，记进 TASKS，下次开工文件带上），或者记进 TASKS。例：w7buya F5「换报价后要换新的幂等键」转给了门户那一路 |
+| 低，属于别的路，或者要改别人归属的文件 | SendMessage 通知那一路（Composer 的路收不到，记进 TASKS，下次开工文件带上），或者记进 TASKS。例：w7buya F5「换报价后要换新的幂等键」转给了门户那一路 |
 | 回滚口径、运维注意事项 | 写进 MIGRATION-RUNBOOK 或 docs，由总协调写或交给实现方 |
 | 整合风险（本分支单独合入或单独发版会出问题） | 记进 TASKS 的发版前清单，不挡合入主线 |
 | 审查员标为「疑似」、而且没补上证据的 | 不进 brief，记进 TASKS |
 
-**第 N 轮修复消息**（N ≥ 2，第二轮 brief 即 N=2）照 `templates/round-brief.md` 写，骨架用 `review-prompt.py round <分支> --round N --scratchpad <…> [--executor grok]` 生成（填好名字、轮次、worktree、分支、依据的审查报告、交回文件名、探针目录、go 版本；`--executor` 选交回与推送那两句的写法）。按原实现方分两条路：
+**第 N 轮修复消息**（N ≥ 2，第二轮 brief 即 N=2）照 `templates/round-brief.md` 写，骨架用 `review-prompt.py round <分支> --round N --scratchpad <…> [--executor composer]` 生成（填好名字、轮次、worktree、分支、依据的审查报告、交回文件名、探针目录、go 版本；`--executor` 选交回与推送那两句的写法）。按原实现方分两条路：
 
 - **Claude 子 agent**：用 SendMessage 发给原实现 agent，它对这块代码最熟；原 agent 的会话已经不在了，就按 dispatch-task 新开一个。
-- **Cursor 的 Grok**：它收不到 SendMessage，修复轮写成文件另起一次。骨架加 `--executor grok -o <worktree>/.claude/round-r{N}.md`，补完留给人写的部分，再 `bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> --round N`。脚本让它先读根 CLAUDE.md、原 brief 与 `round-r{N}.md`，报告写 `report-r{N}.md`。新起的一次不记得上一轮，所以 round 文件里要写全：审查报告路径、核过的发现、探针路径。根 CLAUDE.md 把「审查后照清单的修复轮」划给 Grok；修法要做架构取舍、或上一轮 Grok 的证据核对不过的，改派 opus。复审照第 6 节，不因执行者不同而改。
+- **Cursor 的 Composer**：它收不到 SendMessage，修复轮写成文件另起一次。骨架加 `--executor composer -o <worktree>/.claude/round-r{N}.md`，补完留给人写的部分，再 `bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> --round N`。脚本让它先读根 CLAUDE.md、原 brief 与 `round-r{N}.md`，报告写 `report-r{N}.md`。新起的一次不记得上一轮，所以 round 文件里要写全：审查报告路径、核过的发现、探针路径。根 CLAUDE.md 把「审查后照清单的机械修复轮」划给 Composer；修法要做架构取舍、或上一轮 Composer 的证据核对不过的，改派 opus。复审照第 6 节，不因执行者不同而改。
 
 模板之外要注意：
 
 - 修法写方向，不写逐步操作；有多个方案时让实现方按根 CLAUDE.md「取舍原则」四栏逐项比较，在报告里写比较结果和选择理由（w9cert 第 2 项就是这样定了只追加的签发流水）。
 - 迁移号要重新取：主线可能已经前进了。w9cert 第二轮原定的 00149 比主线已有的 00151 还小，只能改用 00152。叠在集成分支上的路用的是临时号，不重取（见 new-migration「集成分支的相对编号与重编号」）。
 - 消息里写「我合并时改」的条目，当场登记进 accept-task「一波合并」表。
-- 实现方交回后，用 save-report.sh 存成 `report-r{N}.md`（Grok 的路给它的日志，脚本核对 Grok 自己写的 `report-r{N}.md`），复审员要对着它逐条核。
+- 实现方交回后，用 save-report.sh 存成 `report-r{N}.md`（Composer 的路给它的日志，脚本核对 Composer 自己写的 `report-r{N}.md`），复审员要对着它逐条核。
 
 ## 5. 什么时候可以合
 

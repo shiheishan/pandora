@@ -12,7 +12,7 @@
    - 设计稿点名不删的同名物（例：S6 里指 UniProxy 兼容通道的「compat」），列进「不删」，写上依据。
    - 这一步不提交、不推送（开工指令里提交、推送、等 CI 的要求从第 2 步起才适用）。按执行者交：
      - Claude 子 agent：这张清单就是这一次的最终消息，交完就停。总协调核完后用 SendMessage 回「按清单删」，或发回改过的清单。
-     - Cursor 的 Grok：写进 `.claude/delete-list.md`，报告里只写「清单已交」，结束这一次。总协调核完改好清单，用 `cursor-launch.sh <名字> --resume "清单已核，按 .claude/delete-list.md 从第 2 步做"` 另起一次。
+     - Cursor 的 Composer：写进 `.claude/delete-list.md`，报告里只写「清单已交」，结束这一次。总协调核完改好清单，用 `cursor-launch.sh <名字> --resume "清单已核，按 .claude/delete-list.md 从第 2 步做"` 另起一次。
      - 任务会话：写进 `.claude/delete-list.md`，等总协调回复。
 2. **按核过的清单删**，清单外的不删。中途发现新实例，先补进清单报给总协调。
 3. **退场守卫**：每个删掉的对象都登记进设计稿指定的守卫，删了就回不来。标识符进源码禁用串扫描，库对象进 PG18 的退场对象契约，路由进路由表守卫。守卫要覆盖它该扫的全部目录；读不到、解析不出的输入要判红（adversarial-review `checklist.md`「测试有效性」）。

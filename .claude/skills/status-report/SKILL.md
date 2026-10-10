@@ -22,7 +22,7 @@ bash .claude/skills/status-report/scripts/snapshot.sh
 | 来源 | 看什么 | 对不上时 |
 |---|---|---|
 | Claude 子 agent 的启动与完成通知 | 脚本看不到，以本会话收到的通知为准；没收到完成通知的就是还在跑，不猜结果 | 有通知、TASKS 没有的补一行；已完成的挪走 |
-| cursor-agent 进程与日志 | snapshot 的「cursor-agent」一节：登记日志逐份判在跑、已结束 `exit=N` 还是被打断，另列没登记的进程 | 未登记的补一行（用 `cursor-launch.sh` 打印的登记行格式）；已结束的走 accept-task；被打断的走 resume-work「Grok 的路」 |
+| cursor-agent 进程与日志 | snapshot 的「cursor-agent」一节：登记日志逐份判在跑、已结束 `exit=N` 还是被打断，另列没登记的进程 | 未登记的补一行（用 `cursor-launch.sh` 打印的登记行格式）；已结束的走 accept-task；被打断的走 resume-work「Composer 的路」 |
 | TASKS「正在跑」表 | 每行的执行者、目录、日志或 agent ID | 两边都找不到的行，问清后挪走，不留僵尸行 |
 
 远端 setsid 跑的测试（压测、巡检）不在这三方里，看那一路的登记和 resume-work 的 `remote-state.sh`。
