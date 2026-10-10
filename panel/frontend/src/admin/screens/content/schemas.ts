@@ -94,20 +94,18 @@ export const pageArchived = z.object({ page: z.object({ id: uuid, version: z.num
 
 // ---------------------------------------------------------------------------
 // 主题与插槽（R19：tokens 分 light / dark 两组；无主题时 themes 为 null）
-// 后台列表回的是库里原样的 tokens / branding：00075 之前建的自定义主题可能是扁平旧键、
-// 缺组或非字符串值，这里按组收、只留字符串值，缺组当空组——一行旧数据不能让整张列表解析失败
+// 后台列表回库里原样的 tokens。保存时 light / dark 都可以不出现
+// （appearance.normalizeTokens：两组都可省略），缺的组按空对象收。
+// 组内必须是字符串；多出来的键或非字符串值让这一行解析失败。
 // ---------------------------------------------------------------------------
-const tokenGroup = z
-  .record(z.string(), z.unknown())
-  .transform((g) => Object.fromEntries(Object.entries(g).filter((e): e is [string, string] => typeof e[1] === 'string')))
-  .catch({})
+const tokenGroup = z.record(z.string(), z.string())
 export const themeSchema = z.object({
   id: uuid,
   code: z.string(),
   name: z.string(),
   is_builtin: z.boolean(),
   is_active: z.boolean(),
-  tokens: z.object({ light: tokenGroup.default({}), dark: tokenGroup.default({}) }).catch({ light: {}, dark: {} }),
+  tokens: z.object({ light: tokenGroup.default({}), dark: tokenGroup.default({}) }).strict(),
   branding: z.record(z.string(), z.unknown()).catch({}),
   custom_css: z.string(),
 })
