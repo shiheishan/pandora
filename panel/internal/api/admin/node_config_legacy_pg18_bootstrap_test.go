@@ -1,21 +1,14 @@
 package admin
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -442,7 +435,6 @@ func runNodeConfigPG18BootstrapSecurityBatch(t *testing.T, ctx context.Context,
 		if err != nil || out == nil {
 			t.Fatalf("bootstrap terminal identity node out=%+v err=%v", out, err)
 		}
-		h := &handlers{d: Deps{Pool: appPool, Node: service, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 		setStatus := func(next string) {
 			t.Helper()
 			var rowVersion int64
@@ -450,26 +442,29 @@ func runNodeConfigPG18BootstrapSecurityBatch(t *testing.T, ctx context.Context,
 				fx.tenant, out.NodeID).Scan(&rowVersion); err != nil {
 				t.Fatalf("read %s transition row version: %v", next, err)
 			}
-			requestBody, err := json.Marshal(nodeStatusReq{
-				RowVersion: rowVersion, Status: next, Reason: "pg18 lifecycle " + next,
-			})
-			if err != nil {
-				t.Fatalf("marshal %s transition request: %v", next, err)
+			// 旧的单节点状态接口已删。status:batch 只改服务状态，而且有效身份和在役控制节点都会 409，
+			// 到不了本段后面断言的「生命周期 retired、身份已吊销」。这里按同一条状态机边把行推过去。
+			serving := "draft"
+			if next == "retired" {
+				serving = "retired"
 			}
-			req := httptest.NewRequest(http.MethodPost, "/v1/nodes/"+out.NodeID+"/status", bytes.NewReader(requestBody))
-			req.Header.Set("Content-Type", "application/json")
-			route := chi.NewRouteContext()
-			route.URLParams.Add("id", out.NodeID)
-			reqCtx := context.WithValue(ctx, chi.RouteCtxKey, route)
-			reqCtx = httpx.WithTenantID(reqCtx, fx.tenant)
-			reqCtx = httpx.WithRequestID(reqCtx, "nodecfg-pg18-lifecycle-"+next)
-			reqCtx = httpx.WithPrincipal(reqCtx, &httpx.Principal{
-				Kind: "admin", Audience: "admin", UserID: fx.actor, TenantID: fx.tenant,
-			})
-			recorder := httptest.NewRecorder()
-			h.nodeSetStatus(recorder, req.WithContext(reqCtx))
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("%s lifecycle status=%d body=%s", next, recorder.Code, recorder.Body.String())
+			tag, err := admin.Exec(ctx, `
+				UPDATE nodes SET status=$3, serving_status=$4,
+				       desired_config_version=CASE WHEN $4='retired' THEN NULL ELSE desired_config_version END,
+				       row_version=row_version+1
+				 WHERE tenant_id=$1 AND id=$2 AND row_version=$5`,
+				fx.tenant, out.NodeID, next, serving, rowVersion)
+			if err != nil || tag.RowsAffected() != 1 {
+				t.Fatalf("%s lifecycle update rows=%d err=%v", next, tag.RowsAffected(), err)
+			}
+			if next == "retired" {
+				revoked, err := admin.Exec(ctx, `
+					UPDATE node_identities SET status='revoked', revoked_at=now(), revoked_reason='节点已退役'
+					 WHERE tenant_id=$1 AND node_id=$2 AND status='active'`,
+					fx.tenant, out.NodeID)
+				if err != nil || revoked.RowsAffected() != 1 {
+					t.Fatalf("revoke identity rows=%d err=%v", revoked.RowsAffected(), err)
+				}
 			}
 		}
 		for _, next := range []string{"attesting", "installing", "validating", "standby", "retired"} {

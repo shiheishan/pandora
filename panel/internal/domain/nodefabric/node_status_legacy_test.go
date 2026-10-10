@@ -1,58 +1,8 @@
 package nodefabric
 
-import (
-	"strings"
-	"testing"
+import "testing"
 
-	"github.com/aegispanel/aegis/internal/platform/sourcetest"
-)
-
-func TestNodeStatusLockSQLHasValidProtocolReadyCoalesce(t *testing.T) {
-	query := nodeStatusLockSQL()
-	depth := 0
-	for _, r := range query {
-		switch r {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth < 0 {
-				t.Fatalf("SQL has an unmatched closing parenthesis: %s", query)
-			}
-		}
-	}
-	if depth != 0 {
-		t.Fatalf("SQL has %d unmatched opening parentheses: %s", depth, query)
-	}
-	if !strings.Contains(query, "config_validated_at IS NOT NULL), false)") {
-		t.Fatalf("protocol-ready expression is not the first COALESCE argument: %s", query)
-	}
-	if strings.Contains(query, "config_validated_at IS NOT NULL)), false)") {
-		t.Fatalf("protocol-ready expression closes COALESCE before its fallback: %s", query)
-	}
-}
-
-func TestLegacyTerminalNodeStatusRevokesDeliveryAndIdentity(t *testing.T) {
-	block := sourcetest.Load(t, ".").Decl("Service.SetLegacyNodeStatus")
-	for _, needle := range []string{
-		`terminal := in.Status == "retired" || in.Status == "destroyed"`,
-		`pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`,
-		`"node-config-release/"+tenantID`,
-		`desired_config_version=CASE WHEN $4='retired' THEN NULL ELSE desired_config_version END`,
-		`UPDATE node_identities`,
-		`WHERE tenant_id=$1 AND node_id=$2 AND status='active'`,
-	} {
-		if !strings.Contains(block, needle) {
-			t.Fatalf("legacy terminal status contract missing %q", needle)
-		}
-	}
-	lockAt := strings.Index(block, `pg_catalog.pg_advisory_xact_lock`)
-	nodeAt := strings.Index(block, `nodeStatusLockSQL()`)
-	if lockAt < 0 || nodeAt <= lockAt {
-		t.Fatalf("legacy terminal release/node lock order drifted: release=%d node=%d", lockAt, nodeAt)
-	}
-}
-
+// ProjectNodeLifecycle 仍被一步上线使用。旧的单节点状态接口删掉之后，这张投影表留在这里。
 func TestProjectNodeLifecycle(t *testing.T) {
 	tests := []struct {
 		node, serving, server string

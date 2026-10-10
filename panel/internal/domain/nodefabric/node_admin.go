@@ -607,3 +607,27 @@ func intValue(v *int) int {
 	}
 	return *v
 }
+
+// RevokeNodeIdentity 吊销节点身份（NODE-014）。
+// 吊销后该节点的 Agent 下一次请求就会被拒，必须重新引导。
+func (s *Service) RevokeNodeIdentity(ctx context.Context, tenantID, actor, id string) error {
+	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor},
+		func(tx pgx.Tx) error {
+			ct, err := tx.Exec(ctx, `
+				UPDATE node_identities
+				   SET status='revoked', revoked_at=now(), revoked_reason='管理员手工吊销'
+				 WHERE tenant_id=$1 AND node_id=$2 AND status='active'`, tenantID, id)
+			if err != nil {
+				return err
+			}
+			if ct.RowsAffected() == 0 {
+				return httpx.New(httpx.CodeNotFound, "该节点没有有效身份")
+			}
+			return audit.Write(ctx, tx, tenantID, audit.Entry{
+				ActorKind: "admin", ActorID: &actor,
+				Action: "node.identity.revoke", ResourceType: "node", ResourceID: &id,
+				APIDomain: "admin", Outcome: "success",
+				RequestID: httpx.RequestIDFrom(ctx),
+			})
+		})
+}

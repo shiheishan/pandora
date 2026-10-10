@@ -170,7 +170,6 @@ admin  GET     /v1/nodes/{id}/routing                             -   -
 admin  PUT     /v1/nodes/{id}/routing                             -   -
 admin  GET     /v1/nodes/{id}/routing/effective                   -   -
 admin  POST    /v1/nodes/{id}/server-token                        -   -
-admin  POST    /v1/nodes/{id}/status                              -   -
 admin  GET     /v1/orders                                         -   -
 admin  POST    /v1/orders/manual                                  -   -
 admin  POST    /v1/orders/manual/preview                          -   -

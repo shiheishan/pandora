@@ -139,6 +139,22 @@ func TestNodeBatchStatusHasNoLegacyAlias(t *testing.T) {
 	}
 }
 
+// POST /nodes/{id}/status 是旧前端的单节点改状态，已经删除。
+// 生命周期只剩一步上线与一步退役；再注册这条，会和它们各走一遍状态机。
+func TestNodeLegacyStatusRouteIsGone(t *testing.T) {
+	raw, err := routerSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	if strings.Contains(source, `Post("/nodes/{id}/status"`) || strings.Contains(source, "h.nodeSetStatus") {
+		t.Fatal("legacy endpoint POST /nodes/{id}/status is still registered")
+	}
+	if strings.Contains(source, `"node_legacy_status"`) {
+		t.Fatal("the retired node_legacy_status idempotency scope is back")
+	}
+}
+
 // POST /nodes/{id}/protocol 是 PATCH /nodes/{id} 的重复入口，已经删除。
 func TestNodeProtocolCompatibilityRouteIsGone(t *testing.T) {
 	raw, err := routerSource()

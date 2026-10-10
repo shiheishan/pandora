@@ -111,11 +111,6 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequirePermission("node.lifecycle", d.Log),
 		middleware.RequireRecentReauth(d.Log),
 	).Delete("/nodes/{id}", h.nodeDelete)
-	r.With(
-		middleware.RequirePermission("node.lifecycle", d.Log),
-		middleware.Idempotency(d.Pool, "node_legacy_status", d.Log),
-	).
-		Post("/nodes/{id}/status", h.nodeSetStatus)
 
 	// --- 节点批量操作 ---
 	// retired 就是这个模型里的「删除」：节点有历史，不做物理删除。
@@ -129,7 +124,7 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "node_retire", d.Log),
 	).Post("/nodes/{id}/retire", h.nodeRetire)
-	// 一步上线（R108）：与批量启用、旧状态接口同门槛，不要求重认证；重放不重做
+	// 一步上线（R108）：与批量启用同门槛，不要求重认证；重放不重做
 	r.With(
 		middleware.RequirePermission("node.lifecycle", d.Log),
 		middleware.Idempotency(d.Pool, "node_activate", d.Log),

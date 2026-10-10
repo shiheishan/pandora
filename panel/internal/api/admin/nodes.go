@@ -225,37 +225,6 @@ func (h *handlers) serverIssueToken(w http.ResponseWriter, r *http.Request) {
 	httpx.Created(w, out)
 }
 
-type nodeStatusReq struct {
-	RowVersion int64  `json:"row_version"`
-	Status     string `json:"status"`
-	Reason     string `json:"reason"`
-}
-
-// nodeSetStatus 推进节点状态（旧状态接口）。状态机、发布锁、身份吊销与审计在
-// nodefabric.SetLegacyNodeStatus，这里只解析请求与写响应。
-func (h *handlers) nodeSetStatus(w http.ResponseWriter, r *http.Request) {
-	var req nodeStatusReq
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	err := h.d.Node.SetLegacyNodeStatus(r.Context(), httpx.TenantIDFrom(r.Context()), chi.URLParam(r, "id"),
-		nodefabric.LegacyNodeStatusInput{
-			ActorID:    httpx.PrincipalFrom(r.Context()).UserID,
-			RowVersion: req.RowVersion, Status: req.Status, Reason: req.Reason,
-		})
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, nodeSetStatusResponse{OK: true, RowVersion: req.RowVersion + 1})
-}
-
-type nodeSetStatusResponse struct {
-	OK         bool  `json:"ok"`
-	RowVersion int64 `json:"row_version"`
-}
-
 // nodeRevokeIdentity 吊销节点身份（NODE-014）。
 // 吊销后该节点的 Agent 下一次请求就会被拒，必须重新引导。
 func (h *handlers) nodeRevokeIdentity(w http.ResponseWriter, r *http.Request) {
