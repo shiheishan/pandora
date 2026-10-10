@@ -35,6 +35,7 @@ type anyTLSAdapter struct {
 	slots     []anyTLSSlot
 	sessions  userSessions
 	online    onlineDevices
+	udpQuota  udpSessionQuota // 每用户在途 UDP 会话数（quic_udp_quota.go），UoT 每个目标占一个
 	service   *anytls.Service
 	listener  net.Listener
 	tlsConfig *hysteria2TLSConfig
@@ -408,7 +409,7 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 				a.connErr.addr(StageSession, remote, err)
 				return
 			}
-			if err := a.handleUOT(ctx, conn, source, destination.Fqdn == uot.MagicAddress, sess); err != nil {
+			if err := a.handleUOT(ctx, conn, source, destination.Fqdn == uot.MagicAddress, user, sess); err != nil {
 				a.connErr.addr(StageSession, remote, err)
 			}
 			return
@@ -432,9 +433,13 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 // handleUOT 把一条 UoT 子流桥到按包路由的 UDP。流量记在调用方登记的会话 sess
 // 上（它占着该用户的计数器，与 TCP 的 relay 同一份），按 UDP 负载字节随收随记，
 // 口径与 hysteria2 / TUIC 的 UDP 一致。
-func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.Socksaddr, version2 bool, sess *userSession) error {
+func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.Socksaddr, version2 bool, user core.User, sess *userSession) error {
 	meta := route.Meta{Network: "udp", Protocol: "anytls", SourceIP: source.Addr, SourcePort: source.Port}
-	routed := newUOTRoutedPacketConn(ctx, a.plane, meta)
+	remote := source.TCPAddr()
+	routed := newUOTRoutedPacketConn(ctx, a.plane, meta, uotUDPLimits{
+		quota: &a.udpQuota, userID: user.ID,
+		onLimit: func() { a.connErr.addr(StageSession, remote, udpSessionLimitError("anytls")) },
+	})
 	defer routed.Close()
 	packetConn := &anyTLSCountedPacketConn{PacketConn: routed, up: sess.up(), down: sess.down()}
 	version := 1

@@ -22,6 +22,7 @@ import (
 func runAnyTLSUOTGroup(t *testing.T) {
 	t.Run("close-releases", func(t *testing.T) { t.Parallel(); runAnyTLSUOTCloseReleases(t) })
 	t.Run("traffic", func(t *testing.T) { t.Parallel(); runAnyTLSUOTTraffic(t) })
+	t.Run("target-quota", func(t *testing.T) { t.Parallel(); runAnyTLSUOTTargetQuota(t) })
 }
 
 // startAnyTLSUOTEcho 起一个以 hysteriaEchoPlane 为数据面的 AnyTLS 入站（UDP 原样
@@ -134,5 +135,48 @@ func runAnyTLSUOTTraffic(t *testing.T) {
 	traffic, err := adapter.SnapshotTraffic()
 	if err != nil || len(traffic) != 1 || traffic[0].ID != userID || traffic[0].Upload != want || traffic[0].Download != want {
 		t.Fatalf("SnapshotTraffic=%+v err=%v，应为用户 %d 上下行各 %d", traffic, err, userID, want)
+	}
+}
+
+// UoT 的目标接进适配器的每用户 UDP 名额：名额 2 时第 3 个目标的包被丢掉（收不到
+// 回显），整条 UoT 流照常，已有目标继续可用。
+func runAnyTLSUOTTargetQuota(t *testing.T) {
+	adapter, pc, first := startAnyTLSUOTEcho(t, 6308)
+	adapter.udpQuota.mu.Lock()
+	adapter.udpQuota.limit = 2
+	adapter.udpQuota.mu.Unlock()
+	echo := func(target M.Socksaddr, label string, timeout time.Duration) error {
+		if _, err := pc.WriteTo([]byte(label), target); err != nil {
+			return err
+		}
+		_ = pc.SetReadDeadline(time.Now().Add(timeout))
+		got := make([]byte, 64)
+		n, _, err := pc.ReadFrom(got)
+		if err == nil && string(got[:n]) != label {
+			t.Fatalf("%s 回显=%q", label, got[:n])
+		}
+		return err
+	}
+	second := M.ParseSocksaddr("127.0.0.1:54")
+	third := M.ParseSocksaddr("127.0.0.1:55")
+	for _, step := range []struct {
+		target M.Socksaddr
+		label  string
+	}{{first, "t1"}, {second, "t2"}} {
+		if err := echo(step.target, step.label, anyTLSOpTimeout); err != nil {
+			t.Fatalf("%s：%v", step.label, err)
+		}
+	}
+	if err := echo(third, "t3", 500*time.Millisecond); err == nil {
+		t.Fatal("名额 2 时第 3 个目标仍收到回显")
+	}
+	if err := echo(first, "t1-again", anyTLSOpTimeout); err != nil {
+		t.Fatalf("第 3 个目标被拒后，已有目标不可用：%v", err)
+	}
+	adapter.udpQuota.mu.Lock()
+	held := adapter.udpQuota.byUser[6308]
+	adapter.udpQuota.mu.Unlock()
+	if held != 2 {
+		t.Fatalf("用户名额占用=%d，应为 2", held)
 	}
 }
