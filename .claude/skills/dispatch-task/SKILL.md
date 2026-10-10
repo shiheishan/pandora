@@ -58,6 +58,8 @@ description: pandora 总协调把工作派给任务会话、实现型 Claude 子
 
 ## 派给 Composer
 
+用户 10-10 定：Composer 不 build、不 test、不 typecheck，早提交早返回，推送与 CI 也不归它。优先由 opus 主 agent 拆给它（composer-handoff）；总协调直接派整路给它时，收回后由总协调（或派一个 opus）跑验证、推送、等 CI，brief 里「验证」「推送」两节对它不适用。
+
 命令行的固定写法在根 CLAUDE.md，这里用脚本起，不手抄（10-10 手写三次，第一次把模型写错了；Grok 已于 10-10 停用）：
 
 ```bash
@@ -67,7 +69,7 @@ bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> [--dry-run]
 - 起之前 brief 要在：`new-worktree.sh` 与 `make-brief.py` 照常跑。开工指令由脚本从 `templates/cursor-prompt.md` 填好：先读根 CLAUDE.md 和 brief，报告写进 worktree 的 `.claude/report.md`（不提交），最终回复只写简述。用 `--dry-run` 先看一眼生成的指令。
 - 脚本让进程脱离会话在后台跑，日志进本会话 scratchpad，打印 TASKS 登记行（含 PID 与日志）和等待命令。等待命令用 Bash 的 `run_in_background` 跑，结束时会话收到通知；这是 Composer 路唯一的完成通知。
 - brief 不用为 Composer 改写：`common-rules.md`「报告」一节已分开两种执行者。Composer 读不到 `~/.claude/CLAUDE.md`，brief 里不能只写「见全局规则」。
-- **上服务器**：根 CLAUDE.md 目前只放行只读巡检。把 `templates/server-readonly.md` 抄进 brief 并填好机器清单。纯巡检不开 worktree：brief 放主目录 `ops-local/<目录>/brief.md`，用 `cursor-launch.sh --dir <目录>` 起，报告写同目录 `report.md`。脚本会检查 brief 里有这一节。
+- **上服务器**：根 CLAUDE.md 放行只读巡检（`templates/server-readonly.md`）和照脚本跑的测试（`templates/server-scripted.md`，用户 10-10 同意；故障注入、排查、结果判读仍归 Claude）。把对应模板抄进 brief 并填好机器清单。纯巡检不开 worktree：brief 放主目录 `ops-local/<目录>/brief.md`，用 `cursor-launch.sh --dir <目录>` 起，报告写同目录 `report.md`。脚本会检查 brief 里有这一节。
 - **中途追加范围**：Composer 收不到 SendMessage。等它交回后写进下一次的开工文件（修复轮的 `round-r{N}.md`，或续跑的 `--resume` 段）。
 - **交回后**：验收照 accept-task，执行者不同不放宽；是否必审见 adversarial-review 第 1 节。修复轮见该 skill 第 4 节，中断续跑见 resume-work「Composer 的路」。
 
