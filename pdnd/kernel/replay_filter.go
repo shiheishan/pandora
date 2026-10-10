@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -132,6 +133,24 @@ func drainUntilPeerClose(conn net.Conn) {
 			return
 		}
 	}
+}
+
+// drainAfterReport 标记「认证失败、关之前要排空」的会话错误。适配器的
+// handleConn 先上报（不必等对端关才在日志里看到认证失败），再排空，最后关闭。
+// Unwrap 保留原错误，分类与日志照旧。
+type drainAfterReport struct{ err error }
+
+func (e drainAfterReport) Error() string { return e.err.Error() }
+func (e drainAfterReport) Unwrap() error { return e.err }
+
+// finishSession 是 Shadowsocks / VMess 会话的收尾：错误要求排空的先排空，
+// 然后关闭。
+func finishSession(conn net.Conn, err error) {
+	var drain drainAfterReport
+	if errors.As(err, &drain) {
+		drainUntilPeerClose(conn)
+	}
+	_ = conn.Close()
 }
 
 // drainMaxConcurrentDefault 是全进程同时排空的连接数上限。正常情况下排空中

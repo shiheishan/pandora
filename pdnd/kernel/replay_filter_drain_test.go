@@ -282,3 +282,23 @@ func TestDrainMemoryPerConn(t *testing.T) {
 		t.Fatalf("每条排空连接常驻 %d 字节，超过 64KB", per)
 	}
 }
+
+// 认证失败先上报、再排空：不必等对端关，日志里就能看到认证失败。
+func TestDrainReportsAuthFailureBeforePeerClose(t *testing.T) {
+	for _, tc := range []struct {
+		protocol string
+		raw      map[string]any
+	}{
+		{"shadowsocks", map[string]any{"method": "aes-128-gcm"}},
+		{"vmess", nil},
+	} {
+		t.Run(tc.protocol, func(t *testing.T) {
+			port := reserveTCPPort(t)
+			_, rec := startHookedAdapter(t, tc.protocol, port, tc.raw, refusePlane{}, hookUser)
+			conn := dialDrainProbe(t, net.JoinHostPort("127.0.0.1", itoa(port)), randomBytes(64))
+			defer conn.Close()
+			rec.wait(t, tc.protocol, StageSession, connErrAuth)
+			assertStillOpen(t, conn)
+		})
+	}
+}

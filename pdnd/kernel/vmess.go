@@ -433,23 +433,25 @@ func (a *vmessAdapter) serveAccepted(conn net.Conn) {
 func (a *vmessAdapter) handleConn(ctx context.Context, conn net.Conn) error {
 	err := a.serveConn(ctx, conn)
 	a.connErr.conn(StageSession, conn, err)
+	finishSession(conn, err)
 	return err
 }
 
+// serveConn 不关 conn：由 handleConn 上报之后经 finishSession 收尾。
 func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
-	defer conn.Close()
 	epoch := a.sessions.epoch()
 	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
 	reader := bufio.NewReaderSize(conn, ssHeaderReadBuffer)
 	user, destination, body, security, err := a.readRequest(reader)
 	if err != nil {
-		// authID 对不上、头部解不开、请求头没读全就撞上截止：一直读到对端关
-		// 再关（读错误本身立即返回，读空不会多等）。已认证客户端请求了不支持
-		// 的选项则立刻断开。
+		// authID 对不上、头部解不开、请求头没读全就撞上截止：上报之后一直读到
+		// 对端关再关（读错误本身立即返回，读空不会多等）。已认证客户端请求了
+		// 不支持的选项则立刻断开。
+		err = fmt.Errorf("vmess request: %w", err)
 		if !errors.Is(err, errVMessUnsupportedRequest) {
-			drainUntilPeerClose(conn)
+			return drainAfterReport{err}
 		}
-		return fmt.Errorf("vmess request: %w", err)
+		return err
 	}
 	if security != vmessSecNone && security != vmessSecZero && security != vmessSecAES128 && security != vmessSecChaCha {
 		return fmt.Errorf("vmess security %d is not enabled in native slice", security)
@@ -460,8 +462,7 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	}
 	// 重放检查放在清读截止时间之前：重放的请求头与认证失败一样读到对端关。
 	if !a.acceptAuthID(bodyState.authID) {
-		drainUntilPeerClose(conn)
-		return markConnError(connErrAuth, fmt.Errorf("vmess replayed request"))
+		return drainAfterReport{markConnError(connErrAuth, fmt.Errorf("vmess replayed request"))}
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	sess := a.sessions.open(user, epoch, conn)

@@ -215,19 +215,19 @@ func (a *shadowsocksAdapter) acceptLoop() {
 func (a *shadowsocksAdapter) handleConn(ctx context.Context, conn net.Conn) error {
 	err := a.serveConn(ctx, conn)
 	a.connErr.conn(StageSession, conn, err)
+	finishSession(conn, err)
 	return err
 }
 
+// serveConn 不关 conn：由 handleConn 上报之后经 finishSession 收尾。
 func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error {
-	defer conn.Close()
 	epoch := a.sessions.epoch()
 	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
 	user, stream, destination, err := a.readRequest(conn)
 	if err != nil {
-		// 认证失败、salt 重放、首块解不开、请求头没读全就撞上截止：一直读到
-		// 对端关再关（读错误本身则立即返回，读空不会多等）。
-		drainUntilPeerClose(conn)
-		return err
+		// 认证失败、salt 重放、首块解不开、请求头没读全就撞上截止：上报之后
+		// 一直读到对端关再关（读错误本身则立即返回，读空不会多等）。
+		return drainAfterReport{err}
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
