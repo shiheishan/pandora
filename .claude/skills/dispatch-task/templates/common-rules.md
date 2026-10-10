@@ -4,15 +4,15 @@
 
 **证据**（只读；worktree 里没有 ops-local，用主目录绝对路径）：<列出报告、数据、EXPLAIN 原文的绝对路径>。
 
-**工作目录与分支**：只在本 worktree 里改。开工先 `git log -1 --oneline`，应为 <基点短 sha>，不是就停下报告。不碰 main、不碰别的分支、不 force push、不删 worktree。只推自己的 `feat/panel-redesign-<名字>` 分支，不推别的远端分支。主线若在你工作期间前进，交付前 `git merge feat/panel-redesign` 跟上再推。
+**工作目录与分支**：只在本 worktree 里改。开工先 `git log -1 --oneline`，应为 <基点短 sha>，不是就停下报告。不碰 main、不碰别的分支、不 force push、不删 worktree。只推自己的 `feat/panel-redesign-<名字>` 分支，不推别的远端分支。上游 `<上游>` 若在你工作期间前进，交付前 `git merge <上游>` 跟上再推；不要合别的分支。
 
 **开工**：先读根 CLAUDE.md、`.claude/skills/verify/SKILL.md`、与你的目录相关的 `.claude/rules/*.md`；然后按根 CLAUDE.md「长任务的任务清单」在本 worktree 建 `.claude/TASKS.md`；上下文压缩后先读它。
 
 **文件归属**：只改上面「归属」里列出的文件（及你新建的文件）。需要动别人归属的文件时不要改，写进报告「需要别的路配合」。
 
-**迁移号**：只用分配给你的号段，没用到就空着。每个迁移写 `-- +goose Up` 和 `-- +goose Down`（能逆就逆，不能逆的 Down 里明确 RAISE 拒绝并写原因）。保留表名不进 Go 源码（含注释），见根 CLAUDE.md「环境与工具坑」。
+**迁移号**：只用分配给你的号段，没用到就空着；叠在集成分支上的路用相对编号的临时号，见 new-migration skill「集成分支的相对编号与重编号」。每个迁移写 `-- +goose Up` 和 `-- +goose Down`（能逆就逆，不能逆的 Down 里明确 RAISE 拒绝并写原因）。保留表名不进 Go 源码（含注释），见根 CLAUDE.md「环境与工具坑」。
 
-**代码约定**：按根 CLAUDE.md「既定范式」与 800 行规则；行为改动配测试，需要真库的按现有 PG18 测试写法（`platform/pg18test`）。夹具租户 id 先 grep 主线确认没人用（同域共库，撞号是最常见的 CI 红）。保持 RLS、租户、审计、追加写等数据库不变量；不削弱任何安全检查来换性能。不引入新依赖（确有必要先写进报告）。
+**代码约定**：按根 CLAUDE.md「既定范式」与 800 行规则；行为改动配测试，需要真库的按现有 PG18 测试写法（`platform/pg18test`）。夹具租户 id 先 grep 上游确认没人用（同域共库，撞号是最常见的 CI 红）。保持 RLS、租户、审计、追加写等数据库不变量；不削弱任何安全检查来换性能。不引入新依赖（确有必要先写进报告）。
 
 **性能类任务**：每项改动在报告里写「机制 → 改前 → 改后 → 预期效果」；改了 SQL 就在报告附录给出改后 SQL 的可直接 EXPLAIN 版本（参数内联），性能项一律走 perf-gate 判分（SQL 用评测集，Go 热路径与资源占用用同机 A/B），报告里给的是判分要的材料。
 
@@ -28,7 +28,7 @@
 
 **报告**：Agent 工具派的子 agent 写不了文件，**最终消息就是报告**（总协调用 accept-task 的 save-report.sh 代存）；用户自己开的任务会话写进本 worktree 的 `.claude/report.md`。内容：
 1. 每项任务：做了/没做、机制、改前改后、证据；
-2. 改了哪些文件（`git diff --stat <基点>..HEAD`）；
+2. 改了哪些文件（`git diff --stat <上游>...HEAD`，三个点：合过上游也只算自己的改动）；
 3. 跑了哪些命令与关键输出；
 4. CI：提交 sha、wait-status / wait-github 退出码、PG18 PASS/SKIP/FAIL 数；
 5. 附录（性能类）：改后 SQL 的 EXPLAIN 版本；

@@ -2,8 +2,10 @@
 """只读：判断一个任务分支的改动是否触发合并前的对抗式审查，并按领域列出命中的文件与新增行。
 
 用法：triggers.py <基点> <头> [-C 仓库目录]
-  - 实际比较 merge-base(基点, 头)..头。基点给主线分支名（feat/panel-redesign），不给 brief 里的原基点：
-    分支中途合过主线时，原基点会把合进来的主线改动也算进去（w7pdnd 从 43 个文件变成 161 个）。
+  - 实际比较 merge-base(基点, 头)..头。基点给该路的上游分支名（一般是主线 feat/panel-redesign；叠在集成分支上的路
+    给集成分支，如 feat/panel-redesign-s，见 dispatch-task「叠在集成分支上的路」），不给 brief 里的原基点：
+    分支中途合过上游时，原基点会把合进来的上游改动也算进去（w7pdnd 从 43 个文件变成 161 个）。
+  - 集成分支并主线前：基点给主线、头给集成分支，看整条集成分支。
   - 已合入的分支：基点给合并提交的 ^1，头给 ^2（例：triggers.py M^1 M^2）。
 退出码：0 有触发，1 无触发，2 参数或 git 出错。
 """
@@ -15,16 +17,23 @@ import sys
 AREAS = [
     ("钱与计费", r"^panel/internal/domain/(billing|payment|purchase|giftcard)/"
                  r"|^panel/cmd/aegis-payctl/"
-                 r"|^panel/internal/api/(public|admin)/[^/]*(order|checkout|pay|wallet|balance|commission|withdraw|giftcard|redeem|traffic_pack|plan_change)",
+                 r"|^panel/internal/api/(public|admin)/[^/]*(order|checkout|pay|wallet|balance|commission|withdraw|giftcard|redeem|traffic_pack|plan_change)"
+                 # 流量入账：上报、去重编号、日用量、汇总与保留（S3 的 traffic_ingest 也在这里）
+                 r"|^panel/internal/domain/nodefabric/(traffic_|usage_daily|uniproxy_traffic)",
      None),
     ("权限与认证", r"^panel/internal/middleware/"
                   r"|^panel/internal/api/admin/router"
                   r"|^panel/internal/domain/identity/"
-                  r"|^panel/internal/platform/(sessionauth|iamguard|token|credentialrevocation|idempotencybind)/"
-                  r"|^panel/internal/api/node/(router|server_router)\.go$",
+                  r"|^panel/internal/platform/(sessionauth|iamguard|token|credentialrevocation|idempotencybind|gatewaytls)/"
+                  r"|^panel/internal/api/node/(router|server_router)\.go$"
+                  # 节点与服务器的身份：会话认证（mTLS + 指纹集）、接入、令牌、nonce，以及吊销经 LISTEN 载荷下发
+                  r"|^panel/internal/api/node/session/"
+                  r"|^panel/internal/domain/nodefabric/(server_session|server_identity|server_enrollment|enrollment|nonce_|bootstrap|node_identity|epoch_watch)"
+                  r"|^panel/internal/platform/cache/watch\.go$",
      r"RequirePermission|RequireRecentReauth|Idempotency\(|INSERT INTO (app\.)?permissions|role_permissions"),
-    ("秘密与证书", r"^panel/internal/domain/certs/|^panel/internal/platform/(crypto|certbundle|bindingcontract)/"
-                  r"|^pdnd/(certstore|certbundle|bindingcontract)/"
+    # gatewaytls 两节都进：它既核客户端证书（认证），又装载网关自己的私钥与证书（秘密）
+    ("秘密与证书", r"^panel/internal/domain/certs/|^panel/internal/platform/(crypto|certbundle|bindingcontract|gatewaytls)/"
+                  r"|^pdnd/(certstore|certbundle|bindingcontract|binding)/"
                   r"|^panel/deploy/(edge-tls|install|install-native|bootstrap|psql|backup-postgres|restore-postgres|migrate-to-new-host)\.sh$",
      r"\.Seal\(|\.Open\(|Envelope|password|private[_ ]?key|privkey|secret|--password-stdin|chmod 0?600|AAD|PGPASSWORD"),
     ("迁移", r"^panel/migrations/.*\.sql$|^panel/deploy/(configure-app-role\.sql|migrate\.sh|check-migrations\.sh)$",
@@ -34,9 +43,13 @@ AREAS = [
                        r"|^pdnd/release/[^/]*\.(sh|service)$"
                        r"|^panel/internal/api/public/pdnd_install",
      None),
-    ("节点内核与协议", r"^pdnd/(kernel|core|internal|outbound|route|node|panel)/|^pdnd/main\.go$"
+    ("节点内核与协议", r"^pdnd/(kernel|core|internal|outbound|route|node|panel|session|binding|server|uniproxy|cmd)/|^pdnd/main\.go$"
+                     r"|^(panel/internal/platform|pdnd)/bindingcontract/"
+                     r"|^panel/cmd/aegis-node/"
                      r"|^panel/internal/api/node/"
-                     r"|^panel/internal/domain/nodefabric/(protocol_|uniproxy|xboard_|service\.go|heartbeat)"
+                     r"|^panel/internal/platform/cache/watch\.go$"
+                     r"|^panel/internal/domain/nodefabric/(protocol_|uniproxy|xboard_|service\.go|heartbeat"
+                     r"|session_hub|nodestream|epoch_watch|effective_release|config_delivery)"
                      r"|^panel/internal/domain/subscription/render",
      None),
     ("新依赖", r"(^|/)go\.mod$|(^|/)package\.json$", None),
