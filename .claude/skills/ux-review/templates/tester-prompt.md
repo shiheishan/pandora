@@ -1,6 +1,6 @@
 <!--
 派模拟新手用的 prompt。总协调填好 {花括号} 后整段作为 Agent 的 prompt：
-  model: sonnet，subagent_type: Explore（没有 Edit / Write，但有 Bash，靠下面的禁令约束）
+  model: opus，subagent_type: Explore（没有 Edit / Write，但有 Bash，靠下面的禁令约束）
 不要往里加代码路径、设计稿、正确路径、场景名以外的说明。任务按「想做成什么」写，不写按钮上的字。
 这一行注释以上的部分不要发出去。
 -->

@@ -1,6 +1,6 @@
 ---
 name: skill-audit
-description: pandora 的项目 skill 定期审查与落实：按用户固定的两部分标准（现有 skill 里多余或有问题的内容；10 类里该做还没做的），并行派两个 opus 只读审查员（各自先读上一轮报告，只报没修的和新出的），总协调抽查核实、把驳回记在报告文末，再按 skill 归属开 worktree 分路修（sonnet 改删、opus 新建），最后走 accept-task 合并。用户贴来「审查现在用到的 skill」清单，或说「做第 N 次 skill 审查」「审查一下 skill」时使用。新建某个具体 skill 的写法不在这里，看落实那一路的通用要求。
+description: pandora 的项目 skill 定期审查与落实：按用户固定的两部分标准（现有 skill 里多余或有问题的内容；10 类里该做还没做的），并行派两个 opus 只读审查员（各自先读上一轮报告，只报没修的和新出的），总协调抽查核实、把驳回记在报告文末，再按 skill 归属开 worktree 分路修（Cursor 的 Grok 改删、opus 新建），最后走 accept-task 合并。用户贴来「审查现在用到的 skill」清单，或说「做第 N 次 skill 审查」「审查一下 skill」时使用。新建某个具体 skill 的写法不在这里，看落实那一路的通用要求。
 ---
 
 # skill 审查
@@ -51,7 +51,7 @@ description: pandora 的项目 skill 定期审查与落实：按用户固定的�
 ## 5. 分路落实
 
 - **按 skill 归属切路**，一个 skill 只归一路：
-  - 第一部分的改写、删减交给一路 `sonnet`。
+  - 第一部分的改写、删减交给一路 Cursor 的 Grok（根 CLAUDE.md「大任务拆子 agent」）。
   - 每个新建 skill 交给一路 `opus`。新 skill 要连带改的现有 skill 也归这一路。例：第五轮 w11sk-perf 新建 perf-gate，同时负责 prod-retest 和 accept-task 第 25 行。
   - 第二部分里写着「不需要新建，补进 X」的条目，交给拥有 X 的那一路。
 - 开 worktree：`bash .claude/skills/dispatch-task/scripts/new-worktree.sh <N 轮前缀>-<名字>`。第五轮用的名字是 w11sk-fix、w11sk-perf、w11sk-design。
