@@ -20,8 +20,10 @@
 **完成标准**：
 - 每条必修先红后绿：先写修前会红的测试，再修。交回回退实验：先在同一副本跑不改动的基线，再退掉哪处修复 → 哪个测试变红；退了仍绿的写明。
 - 本地按 verify skill 跑改到的包。本机 go 命令加 `GOTOOLCHAIN=<go 版本>`（go.mod 的版本），go 不和 `npm ci` 并发。
-- 推送（`dangerouslyDisableSandbox: true`）后，`wait-status.sh` 与 `BRANCH=<分支> wait-github.sh` 都退出 0；检查机排队超时退出 2 时，以 GitHub 为准并写明。PG18 0 SKIP，新用例名出现在 CI 日志里。<改了 pdnd 内核：NativeCore 含 ARM64 race。>
+<仅 Claude>- 推送（`dangerouslyDisableSandbox: true`）后，`wait-status.sh` 与 `BRANCH=<分支> wait-github.sh` 都退出 0；检查机排队超时退出 2 时，以 GitHub 为准并写明。PG18 0 SKIP，新用例名出现在 CI 日志里。<改了 pdnd 内核：NativeCore 含 ARM64 race。>
+<仅 Grok>- 推送后（签名失败就停下写进报告，不改走 HTTPS），`wait-status.sh` 与 `BRANCH=<分支> wait-github.sh` 都退出 0；检查机排队超时退出 2 时，以 GitHub 为准并写明。PG18 0 SKIP，新用例名出现在 CI 日志里。<改了 pdnd 内核：NativeCore 含 ARM64 race。>
 - 等待日志写到 scratchpad 时文件名带分支名：草稿目录多个会话共用，曾被别的会话覆盖。
 - 只推 `<分支>`，不推别的远端分支。
 
-**交回**：最终消息就是报告，中文，以「哥」开头，我会存成 `.claude/<本轮报告>`。内容：提交 sha、改的文件、逐条处理（对应 <上一轮审查> 的编号，没做的写原因）、跑的命令与关键输出、CI 结论、回退实验表、改前改后数字、需要我配合的事。复审员会对着这份报告逐条核。
+<仅 Claude>**交回**：最终消息就是报告，中文，以「哥」开头，我会存成 `.claude/<本轮报告>`。内容：提交 sha、改的文件、逐条处理（对应 <上一轮审查> 的编号，没做的写原因）、跑的命令与关键输出、CI 结论、回退实验表、改前改后数字、需要我配合的事。复审员会对着这份报告逐条核。
+<仅 Grok>**交回**：报告写进 `<worktree>/.claude/<本轮报告>`（不提交），中文，以「哥」开头；最终回复只写一段简述和报告路径。内容：提交 sha、改的文件、逐条处理（对应 <上一轮审查> 的编号，没做的写原因）、跑的命令与关键输出、CI 结论、回退实验表、改前改后数字、需要我配合的事。复审员会对着这份报告逐条核。
