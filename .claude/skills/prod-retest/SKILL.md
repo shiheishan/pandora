@@ -1,6 +1,6 @@
 ---
 name: prod-retest
-description: pandora 面板整机压测与复测：在已按生产方式装好面板的一次性 Vultr 面板机上（装法见 panel-install）seed 5k 或 1 万用户 / 1000 节点的数据，用压测机跑 runbook 第 8 节的 30 分钟稳态（模拟节点 + 用户 + burst）和静默两档（A 完全静默、B 30% 在线），采集 pprof、pg_stat_statements、CPU 拆分与连接池旁证，按分档目标出成绩单并与上一轮对比。用户或总协调说「面板复测」「面板压测」「整机压测」「出成绩单」「换栈检查点」「10k 基线」「静默 CPU」「加一档节点数」「跟上一轮比」时使用。不是本 skill：节点端（pdnd）压测、节点验收、VPC 复测、10 万连接用 node-accept；单条 SQL 改前改后判分用 bench-eval；某个分支改前改后的同机 A/B 判分用 perf-gate；逐协议能不能连用 node-e2e。
+description: pandora 面板整机压测与复测：在已按生产方式装好面板的一次性 Vultr 面板机上（装法见 panel-install）seed 5k 或 1 万用户 / 1000 节点的数据，用压测机跑 runbook 第 8 节的 30 分钟稳态（模拟节点 + 用户 + burst）和静默两档（A 完全静默、B 30% 在线），采集 pprof、pg_stat_statements、CPU 拆分与连接池旁证，按分档目标出成绩单并与上一轮对比。用户或总协调说「面板复测」「面板压测」「整机压测」「出成绩单」「换栈检查点」「10k 基线」「静默 CPU」「加一档节点数」「跟上一轮比」「终验」时使用。终验的面板成绩单按 .claude/perf-plan/PLAN.md「新标准」；节点端那份用 node-accept，两份都过才算终验完成。不是本 skill：节点端（pdnd）压测、节点验收、VPC 复测、10 万连接用 node-accept；单条 SQL 改前改后判分用 bench-eval；某个分支改前改后的同机 A/B 判分用 perf-gate；逐协议能不能连用 node-e2e。
 ---
 
 # 生产规模复测
