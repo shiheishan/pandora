@@ -44,7 +44,10 @@ type ServiceOptions struct {
 	UDPDisabled           bool
 	UDPTimeout            time.Duration
 	// UDPQueueSize 是每个 UDP 会话的接收队列长度，非正值用 DefaultUDPQueueSize。
-	UDPQueueSize      int
+	UDPQueueSize int
+	// AuthTimeout 是一条连接从握手完成到认证通过的时限（Pandora 改动），超时关连接；
+	// 非正值用 DefaultAuthTimeout。
+	AuthTimeout       time.Duration
 	Handler           ServerHandler
 	MasqueradeHandler http.Handler
 }
@@ -69,6 +72,7 @@ type Service[U comparable] struct {
 	udpDisabled           bool
 	udpTimeout            time.Duration
 	udpQueueSize          int
+	authTimeout           time.Duration
 	handler               ServerHandler
 	masqueradeHandler     http.Handler
 	quicListener          io.Closer
@@ -101,6 +105,9 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		KeepAlivePeriod:                hysteria.DefaultKeepAlivePeriod,
 		DisablePathManager:             true,
 	}
+	if options.AuthTimeout <= 0 {
+		options.AuthTimeout = DefaultAuthTimeout
+	}
 	if options.MasqueradeHandler == nil {
 		options.MasqueradeHandler = http.NotFoundHandler()
 	}
@@ -121,6 +128,7 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		udpDisabled:           options.UDPDisabled,
 		udpTimeout:            options.UDPTimeout,
 		udpQueueSize:          options.UDPQueueSize,
+		authTimeout:           options.AuthTimeout,
 		handler:               options.Handler,
 		masqueradeHandler:     options.MasqueradeHandler,
 	}, nil
@@ -202,6 +210,33 @@ func (s *Service[U]) loopConnections(listener qtls.Listener) {
 	}
 }
 
+// 认证前的约束（Pandora 改动，review-r3 #4）。hy2 是 HTTP/3 服务端，认证之前的请求
+// 按伪装站点处理。上游把连接整个交给 http3.Server.ServeQUICConn：每接一条双向流就
+// 起一个 goroutine 读请求头，HEADERS 帧声明多长就先分配多大（至多 1MB），又没有
+// 认证超时——只完成握手、不认证的客户端开满流、每条只发半个 HEADERS，每条连接就
+// 能无限期挂住约 1032 个 goroutine 与数 MB 到 1GB 内存。现在由本包自己收流（不 fork
+// quic-go / http3：http3 的 NewRawServerConn 与 HandleRequestStream 是公开接口，控制
+// 流与 SETTINGS 帧和 ServeQUICConn 发的一样）：
+//   - 认证限时：握手完成后 authTimeout 内没有认证通过就关连接（H3_NO_ERROR）。认证
+//     前的流都活不过它，读请求头因此也受同一时限约束；
+//   - 认证前同时在途的请求（读请求头到响应结束）至多 preAuthMaxInflight 条，多出的流
+//     收流时当场以 H3_REQUEST_REJECTED 拒掉（客户端可重试），不起 goroutine；
+//   - 认证前 HEADERS 帧声明的长度至多 preAuthMaxHeaderBytes，超出的流以
+//     H3_EXCESSIVE_LOAD 拒掉，不按声明长度分配。
+//
+// 认证之后的流不受这三条约束。代价：没有认证的伪装站访客（浏览器）连接满
+// authTimeout 即被关，浏览器会自动重连；正常 hy2 客户端握手后一个 RTT 内就认证。
+const (
+	// DefaultAuthTimeout 与内核入站握手、读请求头的 10 秒（inboundHandshakeTimeout）同一口径。
+	DefaultAuthTimeout = 10 * time.Second
+	// preAuthMaxInflight：hy2 客户端认证前只发一个请求；浏览器访问伪装站同时在途
+	// 的请求一般十几条。
+	preAuthMaxInflight = 32
+	// preAuthMaxHeaderBytes：hy2 认证请求头不到 1KB（含随机填充）；常见 Web 服务器的
+	// 请求头上限在 8–64KB（nginx 缺省 4×8KB）。
+	preAuthMaxHeaderBytes = 32 << 10
+)
+
 func (s *Service[U]) handleConnection(connection *quic.Conn) {
 	session := &serverSession[U]{
 		Service:    s,
@@ -210,12 +245,97 @@ func (s *Service[U]) handleConnection(connection *quic.Conn) {
 		connDone:   make(chan struct{}),
 		udpConnMap: make(map[uint32]*udpPacketConn),
 	}
-	httpServer := http3.Server{
-		Handler:          session,
-		StreamDispatcher: session.dispatchStream,
+	hconn, err := (&http3.Server{Handler: session}).NewRawServerConn(connection)
+	if err != nil {
+		_ = connection.CloseWithError(0, "")
+		return
 	}
-	_ = httpServer.ServeQUICConn(connection)
+	authTimer := time.AfterFunc(s.authTimeout, func() {
+		if !session.authenticated.Load() {
+			_ = connection.CloseWithError(0, "")
+		}
+	})
+	defer authTimer.Stop()
+	go func() {
+		for {
+			str, err := connection.AcceptUniStream(context.Background())
+			if err != nil {
+				return
+			}
+			go hconn.HandleUnidirectionalStream(str)
+		}
+	}()
+	for {
+		str, err := connection.AcceptStream(context.Background())
+		if err != nil {
+			break
+		}
+		preAuth := !session.authenticated.Load()
+		if preAuth {
+			if session.preAuthInflight.Load() >= preAuthMaxInflight {
+				rejectStream(str, http3.ErrCodeRequestRejected)
+				continue
+			}
+			// 只有本 goroutine 加，别处只减：先查后加不会超过上限。
+			session.preAuthInflight.Add(1)
+			context.AfterFunc(str.Context(), func() { session.preAuthInflight.Add(-1) })
+		}
+		go session.serveStream(hconn, str, preAuth)
+	}
 	_ = connection.CloseWithError(0, "")
+}
+
+// serveStream 是 http3 handleConn 里每条双向流那一段：先看帧类型，hy2 的 TCP 请求
+// 由 dispatchStream 接走，其余按 HTTP/3 请求交给 http3。认证前到达的 HEADERS 先
+// 核声明长度。
+func (s *serverSession[U]) serveStream(hconn *http3.RawServerConn, str *quic.Stream, preAuth bool) {
+	frameType, err := quicvarint.Peek(str)
+	if err == nil && preAuth && frameType == frameTypeHeaders {
+		length, peekErr := peekFrameLength(str)
+		switch {
+		case peekErr != nil:
+			rejectStream(str, http3.ErrCodeRequestIncomplete)
+			return
+		case length > preAuthMaxHeaderBytes:
+			rejectStream(str, http3.ErrCodeExcessiveLoad)
+			return
+		}
+	}
+	handled, dispatchErr := s.dispatchStream(http3.FrameType(frameType), str, err)
+	if dispatchErr != nil {
+		rejectStream(str, http3.ErrCodeRequestIncomplete)
+		return
+	}
+	if handled {
+		return
+	}
+	hconn.HandleRequestStream(str)
+}
+
+// frameTypeHeaders 是 HTTP/3 HEADERS 帧的类型（RFC 9114 7.2.2）。
+const frameTypeHeaders = 0x01
+
+// peekFrameLength 不消费地读出流上第一个帧的长度字段（类型 varint 之后的 varint）。
+func peekFrameLength(str *quic.Stream) (uint64, error) {
+	var b [16]byte
+	if _, err := str.Peek(b[:1]); err != nil {
+		return 0, err
+	}
+	typeLen := 1 << (b[0] >> 6)
+	if _, err := str.Peek(b[:typeLen+1]); err != nil {
+		return 0, err
+	}
+	lengthLen := 1 << (b[typeLen] >> 6)
+	if _, err := str.Peek(b[:typeLen+lengthLen]); err != nil {
+		return 0, err
+	}
+	length, _, err := quicvarint.Parse(b[typeLen : typeLen+lengthLen])
+	return length, err
+}
+
+func rejectStream(str *quic.Stream, code http3.ErrCode) {
+	str.CancelRead(quic.StreamErrorCode(code))
+	str.CancelWrite(quic.StreamErrorCode(code))
 }
 
 type serverSession[U comparable] struct {
@@ -229,7 +349,9 @@ type serverSession[U comparable] struct {
 	// 写好，读侧先 Load 到 true 再读 authUser（Pandora 改动：并发 /auth 不再改身份）。
 	authenticated atomic.Bool
 	authUser      U
-	udpAccess     sync.RWMutex
+	// preAuthInflight 是认证前同时在途的请求流数（Pandora 改动），见 preAuthMaxInflight。
+	preAuthInflight atomic.Int32
+	udpAccess       sync.RWMutex
 	// udpClosed 由 closeUDPSessions 在 udpAccess 内置位，此后不再建会话（Pandora 改动）。
 	udpClosed  bool
 	udpConnMap map[uint32]*udpPacketConn
