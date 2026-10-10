@@ -3,7 +3,10 @@ package kernel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -168,10 +171,15 @@ func (rejectWritesConn) WriteTo([]byte, net.Addr) (int, error) { return 0, errTe
 
 // 坏目标（建不了上游、写被拒）只丢那一个包、经 onDrop 记原因，不报写错误、不关
 // 流；同一条流上的正常目标照常收发。修前写错误一路传到 UoT 读循环，整条流被关。
+//
+// 带名额跑：建不了上游（ListenUDP 失败）那一次先占的名额必须归还，否则坏目标每发
+// 一次就漏一个，最后该用户的 UDP 全被拒。
 func TestUOTBadTargetDropsOnlyItsPacket(t *testing.T) {
 	var drops []error
 	var mu sync.Mutex
+	q := &udpSessionQuota{limit: 4}
 	c := newUOTRoutedPacketConn(context.Background(), &rejectingEchoPlane{}, route.Meta{Network: "udp", Protocol: "anytls"}, uotUDPLimits{
+		quota: q, userID: 48,
 		onDrop: func(err error) { mu.Lock(); drops = append(drops, err); mu.Unlock() },
 	})
 	t.Cleanup(func() { _ = c.Close() })
@@ -183,10 +191,119 @@ func TestUOTBadTargetDropsOnlyItsPacket(t *testing.T) {
 			t.Fatalf("坏目标 %s WriteTo n=%d err=%v，应为 (0, nil)", bad, n, err)
 		}
 		uotEcho(t, c, uotTarget(5001), "good-after-"+bad.String())
+		c.mu.Lock()
+		targets := len(c.upstreams)
+		c.mu.Unlock()
+		if held := quotaHeld(q, 48); held != targets {
+			t.Fatalf("坏目标 %s 之后名额=%d，应等于存活目标数 %d", bad, held, targets)
+		}
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(drops) != 2 || !errors.Is(drops[0], errTestTargetRejected) || !errors.Is(drops[1], errTestTargetRejected) {
 		t.Fatalf("丢包原因=%v，应为两次 %v", drops, errTestTargetRejected)
+	}
+}
+
+// readUpstreamGoroutines 数属于 c 的 readUpstream goroutine（栈里带接收者地址，
+// 不数同包其他用例的流）。
+func readUpstreamGoroutines(c *uotRoutedPacketConn) int {
+	buf := make([]byte, 8<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	needle := fmt.Sprintf("(*uotRoutedPacketConn).readUpstream(%p", c)
+	return strings.Count(string(buf), needle)
+}
+
+// waitUOTReclaimed 等到流上没有存活目标、名额全还。
+func waitUOTReclaimed(t *testing.T, c *uotRoutedPacketConn, q *udpSessionQuota, userID int64, round int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c.mu.Lock()
+		targets := len(c.upstreams)
+		c.mu.Unlock()
+		if targets == 0 && quotaHeld(q, userID) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("第 %d 轮：5 秒后目标数=%d 名额=%d，应都回收为 0", round, targets, quotaHeld(q, userID))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// 下行消费方停住（客户端不读）时，被回收的目标的读 goroutine 和 64KB 缓冲要和名额
+// 同时释放。修前 readUpstream 阻塞在 results 上只等整条流关闭，名额却已还：名额
+// 16、30 轮共 480 个目标后留下 416 个 goroutine（results 只吸收 64 个包），随时间
+// 无上限增长。
+func TestUOTReclaimedTargetsReleaseReaderWhenConsumerStalls(t *testing.T) {
+	const limit, rounds = 16, 30
+	q := &udpSessionQuota{limit: limit}
+	var limited atomic.Int32
+	c := newTestUOTConn(t, q, 46, 40*time.Millisecond, &limited)
+	var before runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	port := 6000
+	for round := 1; round <= rounds; round++ {
+		for i := 0; i < limit; i++ {
+			port++
+			if n, err := c.WriteTo([]byte("x"), uotTarget(port)); n != 1 || err != nil {
+				t.Fatalf("第 %d 轮目标 %d 写 n=%d err=%v（被拒 %d 次）", round, port, n, err, limited.Load())
+			}
+		}
+		waitUOTReclaimed(t, c, q, 46, round)
+	}
+	// 回收在 drop 里同步发出，读 goroutine 随后退出，给调度留一点时间。
+	deadline := time.Now().Add(5 * time.Second)
+	readers := readUpstreamGoroutines(c)
+	for readers > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		readers = readUpstreamGoroutines(c)
+	}
+	var after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	t.Logf("%d 轮 %d 个目标后：readUpstream goroutines=%d results 积压=%d 堆增量=%dKB",
+		rounds, rounds*limit, readers, len(c.results), (int64(after.HeapInuse)-int64(before.HeapInuse))>>10)
+	c.mu.Lock()
+	targets := len(c.upstreams)
+	c.mu.Unlock()
+	if readers > limit || readers > targets {
+		t.Fatalf("readUpstream goroutines=%d，存活目标=%d 名额=%d：被回收的目标留下了读 goroutine", readers, targets, limit)
+	}
+	if held := quotaHeld(q, 46); held != targets {
+		t.Fatalf("名额=%d，应等于存活目标数 %d", held, targets)
+	}
+}
+
+// 回收在锁内复查 lastActive：快照之后刚有收发的目标不回收。ensureUpstream 命中已有
+// 目标时在锁内 touch，所以「写方拿到目标」和「回收删掉目标」不会交错成写到已关
+// socket 上丢包。
+func TestUOTReapSkipsTargetTouchedAfterSnapshot(t *testing.T) {
+	q := &udpSessionQuota{limit: 2}
+	var limited atomic.Int32
+	c := newTestUOTConn(t, q, 47, time.Hour, &limited)
+	uotEcho(t, c, uotTarget(7001), "first")
+	c.mu.Lock()
+	up := c.upstreams[uotTarget(7001).String()]
+	c.mu.Unlock()
+	// 模拟回收方拿到快照时它还是空闲的：快照时刻的 cutoff 早于之后的一次写。
+	cutoff := time.Now().UnixNano()
+	up.lastActive.Store(cutoff - int64(time.Second))
+	uotEcho(t, c, uotTarget(7001), "touched")
+	if c.dropIdle(uotTarget(7001).String(), up, cutoff) {
+		t.Fatal("快照后刚写过的目标被回收了")
+	}
+	c.mu.Lock()
+	still := c.upstreams[uotTarget(7001).String()] == up
+	c.mu.Unlock()
+	if !still || quotaHeld(q, 47) != 1 {
+		t.Fatalf("目标仍在=%v 名额=%d，应为 true、1", still, quotaHeld(q, 47))
+	}
+	// 真空闲的照常回收。
+	up.lastActive.Store(cutoff - int64(time.Second))
+	if !c.dropIdle(uotTarget(7001).String(), up, cutoff) || quotaHeld(q, 47) != 0 {
+		t.Fatalf("空闲目标没被回收，名额=%d", quotaHeld(q, 47))
 	}
 }

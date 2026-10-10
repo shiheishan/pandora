@@ -63,6 +63,23 @@ type uotUpstream struct {
 	conn net.PacketConn
 	// lastActive 是最近一次收或发的时间（UnixNano）。
 	lastActive atomic.Int64
+	// done 在目标被移出表时关闭：readUpstream 可能正阻塞在把回包交给 results 上
+	// （客户端不读下行时），关 socket 叫不醒它，要靠 done 让它与名额归还同时退出，
+	// 带走它的 goroutine 和读缓冲。
+	done     chan struct{}
+	doneOnce sync.Once
+}
+
+func newUOTUpstream(conn net.PacketConn) *uotUpstream {
+	u := &uotUpstream{conn: conn, done: make(chan struct{})}
+	u.touch()
+	return u
+}
+
+// release 关 socket 并叫醒读 goroutine，可重复调用。
+func (u *uotUpstream) release() {
+	u.doneOnce.Do(func() { close(u.done) })
+	_ = u.conn.Close()
 }
 
 func (u *uotUpstream) touch() { u.lastActive.Store(time.Now().UnixNano()) }
@@ -87,6 +104,9 @@ func (c *uotRoutedPacketConn) ensureUpstream(destination M.Socksaddr) (*uotUpstr
 	key := destination.String()
 	c.mu.Lock()
 	if existing := c.upstreams[key]; existing != nil {
+		// 在锁内 touch：回收方在锁内复查 lastActive，二者不会交错成「写方拿到目标、
+		// 随即被回收、写到已关的 socket 上丢包」。
+		existing.touch()
 		c.mu.Unlock()
 		return existing, nil
 	}
@@ -101,8 +121,7 @@ func (c *uotRoutedPacketConn) ensureUpstream(destination M.Socksaddr) (*uotUpstr
 		c.releaseQuota()
 		return nil, err
 	}
-	upstream := &uotUpstream{conn: conn}
-	upstream.touch()
+	upstream := newUOTUpstream(conn)
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -111,6 +130,7 @@ func (c *uotRoutedPacketConn) ensureUpstream(destination M.Socksaddr) (*uotUpstr
 		return nil, net.ErrClosed
 	}
 	if existing := c.upstreams[key]; existing != nil {
+		existing.touch()
 		c.mu.Unlock()
 		_ = conn.Close()
 		c.releaseQuota()
@@ -129,10 +149,22 @@ func (c *uotRoutedPacketConn) releaseQuota() {
 	}
 }
 
-// drop 把一个目标移出表、归还名额并关 socket。只有把它移出表的那一方归还名额，
-// 回收、读出错、Close 三处并发时也只还一次。
+// drop 把一个目标移出表、归还名额、关 socket 并叫醒它的读 goroutine。只有把它
+// 移出表的那一方归还名额，回收、读出错、Close 三处并发时也只还一次。名额归还与
+// 资源释放在同一时刻：还了名额，这个目标的 socket、读 goroutine 和读缓冲随即都走。
 func (c *uotRoutedPacketConn) drop(key string, upstream *uotUpstream) {
+	c.dropIdle(key, upstream, 0)
+}
+
+// dropIdle 只在目标到现在仍空闲（lastActive 早于 cutoff）时回收，复查在锁内做，
+// 返回是否回收了；cutoff 为 0 时无条件回收（即 drop）。回收方在锁外列出的快照
+// 可能已过时：快照之后刚有收发的目标留下。
+func (c *uotRoutedPacketConn) dropIdle(key string, upstream *uotUpstream, cutoff int64) bool {
 	c.mu.Lock()
+	if cutoff != 0 && upstream.lastActive.Load() >= cutoff {
+		c.mu.Unlock()
+		return false
+	}
 	owned := c.upstreams[key] == upstream
 	if owned {
 		delete(c.upstreams, key)
@@ -141,7 +173,8 @@ func (c *uotRoutedPacketConn) drop(key string, upstream *uotUpstream) {
 	if owned {
 		c.releaseQuota()
 	}
-	_ = upstream.conn.Close()
+	upstream.release()
+	return true
 }
 
 // reapIdle 定期回收空闲的目标，随整条 UoT 流的 ctx 结束。
@@ -168,14 +201,15 @@ func (c *uotRoutedPacketConn) reapIdle() {
 			}
 			c.mu.Unlock()
 			for _, e := range stale {
-				c.drop(e.key, e.up)
+				c.dropIdle(e.key, e.up, cutoff)
 			}
 		}
 	}
 }
 
 // readUpstream 把一个目标的回包汇进 results。读出错（被回收、Close、对端不可达）
-// 只结束这一个目标，不连累同一 UoT 流上的其他目标。
+// 只结束这一个目标，不连累同一 UoT 流上的其他目标。目标被移出表（done）时即使
+// 正卡在交回包上也立刻退出，不等整条流关闭。
 func (c *uotRoutedPacketConn) readUpstream(key string, upstream *uotUpstream) {
 	defer c.drop(key, upstream)
 	data := make([]byte, 64<<10)
@@ -188,6 +222,8 @@ func (c *uotRoutedPacketConn) readUpstream(key string, upstream *uotUpstream) {
 		packet := uotDatagram{payload: append([]byte(nil), data[:n]...), addr: addr}
 		select {
 		case c.results <- packet:
+		case <-upstream.done:
+			return
 		case <-c.ctx.Done():
 			return
 		}
@@ -266,7 +302,7 @@ func (c *uotRoutedPacketConn) Close() error {
 			c.releaseQuota()
 		}
 		for _, upstream := range upstreams {
-			_ = upstream.conn.Close()
+			upstream.release()
 		}
 	})
 	return nil
