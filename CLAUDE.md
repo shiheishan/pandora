@@ -84,11 +84,12 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 大任务拆子 agent
 
 - 工作量大、能按互不重叠的文件或主题切开的任务（审计、迁移、批量删除、多模块修复），拆给子 agent 并行做。小任务不拆，拆分本身有成本。
-- 三种执行者（用户 10-10 定：原来派 sonnet、haiku 的活默认交 Cursor 的 Grok，Claude 子 agent 主要用 opus）：
+- 四种执行者（用户 10-10 定：原来派 sonnet、haiku 的活默认交 Cursor，Claude 子 agent 主要用 opus）：
   - **Claude 子 agent，显式传 `model: opus`**：需要深度判断（架构取舍、原因不明的 bug、安全/对抗式审查、方向不明需自主探索）；涉及钱、权限、认证、迁移设计、节点内核的实现（表面边界清楚，实际全是取舍）；以及审查 Grok 交回的分支。
   - **Cursor 的 Grok**：任务边界清楚、结果能验证的（搜索定位、读代码总结、纯挪动拆文件、按明确规则批量删改、部署脚本、nodesim、前端、审查后照清单的修复轮、只读的服务器巡检）；中等风险的功能实现也可以交给它，交回后派 opus 对抗审查（除只改几行的小件）。
     - 总协调后台跑 `cursor-agent -p --force --trust --sandbox disabled --workspace <目录> --model grok-4.7-high --output-format text "<开工指令>"`，日志进 scratchpad。开工指令要求先读本文件和 `.claude/brief.md`（brief 照 dispatch-task 的 make-brief 生成）。
     - Grok 读不到全局规则（`~/.claude/CLAUDE.md`），要上服务器时 brief 里写全红线：先读 `~/ai/servers/README.md` 和该机 `AGENTS.md`，只登点名的机器、只跑 brief 允许的命令、不读不抄秘密、写进文件的 IP 换成占位符。目前只放行只读巡检；会改动服务器的活还用 Claude。
+  - **Cursor 的 Composer 2.5**（`cursor-launch.sh --model composer-2.5`，10-10 试跑与 Grok 同一任务结果相同、更快更省）：纯机械、规则写死的活（按清单删字段与旧兼容、纯挪动、改名、批量替换）。Grok 那条的服务器红线、交回审查规则同样适用。opus 子 agent 自己拆出的机械部分也可以转给它：prompt 里写明 Composer 干活时子 agent 不碰同一 worktree，交回后自己读 diff、重跑测试，报告里标出哪些是转出去的。
   - **Claude 子 agent，`model: sonnet`**，只用在两处：边界清楚但 Grok 做不了的活（要用浏览器工具的，如 ux-review 的模拟新手；会改动服务器的现场操作）；opus 子 agent 自己再拆的下手（数往返、grep 普查、读代码总结），照各 skill 原写法。
   - 拿不准归哪类时按 opus 派；Grok 交回的证据核对不过，改派 opus 重做。验收不因执行者不同而放宽。
 - 每个子 agent 必须交回：改了哪些文件、跑了什么命令、关键输出。
