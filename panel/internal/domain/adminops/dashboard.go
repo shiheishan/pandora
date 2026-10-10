@@ -172,8 +172,9 @@ func dashboardRangeInterval(value string) string {
 func resolveDashboardWindow(ctx context.Context, tx pgx.Tx, in DashboardTrafficQuery, parsed *time.Time) (dashboardWindow, error) {
 	var requested any
 	if parsed != nil {
-		// 临时变异：忽略传入的 snapshot，总用 now。本提交随后 revert。
-		requested = nil
+		// Preserve the original RFC3339 token so PostgreSQL, not the Go driver,
+		// performs the frozen timestamptz(6) rounding for sub-microsecond input.
+		requested = in.SnapshotAt
 	}
 	var out dashboardWindow
 	err := tx.QueryRow(ctx, `
@@ -483,20 +484,20 @@ WITH clock AS MATERIALIZED (
          )::timestamptz(6) AS oldest_ready_at,
          max(d.sent_at) FILTER (WHERE d.status='sent')::timestamptz(6) AS last_sent_at
     FROM clock c
-    LEFT JOIN notification_deliveries d ON true AND $1::uuid IS NOT NULL
+    LEFT JOIN notification_deliveries d ON d.tenant_id=$1
    GROUP BY c.as_of
 ), lag AS MATERIALIZED (
   SELECT f.*,CASE WHEN ready=0 THEN NULL::interval ELSE as_of-oldest_ready_at END AS lag_exact FROM facts f
 )
 SELECT to_char(as_of AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
-       CASE WHEN lag_exact>=interval '600 seconds' THEN 'backlogged' ELSE 'clear' END,
+       CASE WHEN lag_exact>interval '600 seconds' THEN 'backlogged' ELSE 'clear' END,
        ready,ready_retry,scheduled,scheduled_retry,sending_unobservable,
        failed_total,suppressed_total,bounced_total,
        CASE WHEN oldest_ready_at IS NULL THEN NULL ELSE to_char(oldest_ready_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END,
        CASE WHEN ready=0 THEN 0::bigint ELSE ceil(extract(epoch FROM greatest(lag_exact,interval '0 seconds')))::bigint END,
        CASE WHEN last_sent_at IS NULL THEN NULL ELSE to_char(last_sent_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END,
        CASE WHEN ready=0 THEN 'no_due_backlog'
-            WHEN lag_exact>=interval '600 seconds' THEN 'lag_exceeded'
+            WHEN lag_exact>interval '600 seconds' THEN 'lag_exceeded'
             ELSE 'within_threshold' END
   FROM lag`
 
