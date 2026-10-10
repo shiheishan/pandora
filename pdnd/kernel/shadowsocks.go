@@ -111,7 +111,7 @@ func (a *shadowsocksAdapter) Protocol() string { return a.protocol }
 
 // acceptSalt 报告认证通过的请求 salt 是否没见过（没见过即记下）。
 func (a *shadowsocksAdapter) acceptSalt(salt []byte) bool {
-	return a.salts == nil || a.salts.check(salt)
+	return a.salts == nil || a.salts.check(salt, time.Now())
 }
 
 func (a *shadowsocksAdapter) Validate(spec InboundSpec) error {

@@ -21,88 +21,179 @@ func randomSalt(t testing.TB, n int) []byte {
 	return b
 }
 
-// 保留期按条数而不是按时间：一个 salt 写入后，至少再写 capacity-1 条、
-// 至多再写 2*capacity-1 条之前都拦得住；与经过多久无关。
-func TestSaltBloomRetentionByCount(t *testing.T) {
-	const capacity = 1000
-	b := newSaltBloom(capacity, 1e-6)
+// saltStream 生成互不相同的 32 字节 salt（前 24 字节随机、后 8 字节计数）。
+type saltStream struct {
+	key [32]byte
+	n   uint64
+}
+
+func newSaltStream(t testing.TB) *saltStream {
+	s := &saltStream{}
+	copy(s.key[:24], randomSalt(t, 24))
+	return s
+}
+
+func (s *saltStream) next() []byte {
+	s.n++
+	binary.LittleEndian.PutUint64(s.key[24:], s.n)
+	return s.key[:]
+}
+
+// 保留期按时间：低流量下一个 salt 写入后至少记一代（15 分钟）、两代之后清掉。
+func TestSaltBloomRetentionByTime(t *testing.T) {
+	b := newSaltBloom(ssSaltGenPeriod, ssSaltBloomMinCapacity, ssSaltBloomMaxCapacity, ssSaltBloomFPRate)
+	base := time.Unix(1_700_000_000, 0)
 	key := randomSalt(t, 32)
-	if !b.check(key) {
+	// 先跑 7 分钟背景流量，让 key 落在一代的中间。
+	bg := newSaltStream(t)
+	at := base
+	for ; at.Before(base.Add(7 * time.Minute)); at = at.Add(100 * time.Millisecond) {
+		b.check(bg.next(), at)
+	}
+	if !b.check(key, at) {
 		t.Fatal("首次出现应放行")
 	}
-	var other [32]byte
-	for i := 1; i < 2*capacity; i++ {
-		binary.BigEndian.PutUint64(other[:], uint64(i))
-		if !b.check(other[:]) {
-			t.Fatalf("第 %d 个新键被当成重放（误报）", i)
-		}
-		// 抽查：两轮之内任何时刻重放都要拦住。
-		if i%97 == 0 && b.check(key) {
-			t.Fatalf("写入 %d 条之后的重放被放行", i)
+	written := at
+	// 每秒 10 个连接，到写入后一整代（15 分钟）之前任何时刻重放都拦得住。
+	for ; at.Before(written.Add(ssSaltGenPeriod - time.Second)); at = at.Add(100 * time.Millisecond) {
+		b.check(bg.next(), at)
+		if at.Sub(written)%time.Minute == 0 && b.check(key, at) {
+			t.Fatalf("写入 %v 后的重放被放行", at.Sub(written))
 		}
 	}
-	if b.check(key) {
-		t.Fatal("2*capacity-1 条之内的重放被放行")
+	if b.check(key, at) {
+		t.Fatal("一代之内的重放被放行")
 	}
-	// 再写满一轮，最早那一半被整块清掉，同一个键重新放行。
-	for i := 2 * capacity; i < 3*capacity; i++ {
-		binary.BigEndian.PutUint64(other[:], uint64(i))
-		b.check(other[:])
-	}
-	if !b.check(key) {
-		t.Fatal("超过两轮的键仍未清掉")
+	// 两代之后清掉。
+	if !b.check(key, written.Add(2*ssSaltGenPeriod+time.Second)) {
+		t.Fatal("超过两代的键仍未清掉")
 	}
 }
 
-// 旧实现（1 分钟 × 3 代、每代至多 65536 条）在 3 分钟后、或洪泛下写满约 20 万
-// 条后就忘掉 salt；GFW 的重放一半晚于 1 分钟、最长约 570 小时（IMC'20）。新实现
-// 与时间无关、按条数保留：经生产构造的适配器在其后 25 万次认证之后仍拦得住。
-func TestShadowsocksSaltReplayRetainedByCount(t *testing.T) {
+// 旧实现（1 分钟 × 3 代）3 分钟后就忘；GFW 的重放一半晚于 1 分钟、75% 在 15 分钟
+// 以内（IMC'20）。经生产构造的适配器，10 分钟后的重放仍拦得住。
+func TestShadowsocksSaltReplayOutlivesOldWindow(t *testing.T) {
 	value, err := newShadowsocksAdapter(InboundSpec{Config: core.InboundConfig{Protocol: "shadowsocks", Port: 8388, Raw: map[string]any{"method": "aes-128-gcm"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := value.(*shadowsocksAdapter)
 	salt := randomSalt(t, 16)
-	if !a.acceptSalt(salt) {
+	now := time.Now()
+	if !a.salts.check(salt, now) {
 		t.Fatal("首次出现应放行")
 	}
-	var other [16]byte
-	_, _ = rand.Read(other[:8])
-	for i := 0; i < 250_000; i++ {
-		binary.BigEndian.PutUint64(other[8:], uint64(i))
-		a.acceptSalt(other[:])
-	}
-	if a.acceptSalt(salt) {
-		t.Fatal("25 万次认证之后的重放被放行")
+	if a.salts.check(salt, now.Add(10*time.Minute)) {
+		t.Fatal("10 分钟后的重放被放行")
 	}
 }
 
-// 误报率：两块都写满 capacity 条时，新键被当成重放的比例应在设计值量级
-// （每块 1e-6，两块合计不超过 2e-6）。抽 50 万个新键，允许到 20 个。
+// 被洪泛时内存封顶：当前块写满就提前换代、下一块翻倍，至多两块最大块；最近
+// 写入的仍拦得住。
+func TestSaltBloomFloodIsBounded(t *testing.T) {
+	b := newSaltBloom(ssSaltGenPeriod, ssSaltBloomMinCapacity, ssSaltBloomMaxCapacity, ssSaltBloomFPRate)
+	now := time.Unix(1_700_000_000, 0)
+	s := newSaltStream(t)
+	var last []byte
+	for i := 0; i < 3*ssSaltBloomMaxCapacity; i++ {
+		last = s.next()
+		b.check(last, now)
+	}
+	maxBlock := newBloomBlock(ssSaltBloomMaxCapacity, ssSaltBloomFPRate).bytes()
+	if got := b.residentBytes(); got > 2*maxBlock {
+		t.Fatalf("位图 %d 字节，超过两块最大块 %d", got, 2*maxBlock)
+	}
+	if b.check(last, now) {
+		t.Fatal("最近写入的键应仍被拦住")
+	}
+}
+
+// 空闲两代后两块都丢掉：空闲进程不占位图。
+func TestSaltBloomIdleReleasesBlocks(t *testing.T) {
+	b := newSaltBloom(ssSaltGenPeriod, ssSaltBloomMinCapacity, ssSaltBloomMaxCapacity, ssSaltBloomFPRate)
+	now := time.Unix(1_700_000_000, 0)
+	b.check(randomSalt(t, 32), now)
+	b.mu.Lock()
+	b.expireLocked(now.Add(2 * ssSaltGenPeriod))
+	b.mu.Unlock()
+	if got := b.residentBytes(); got != 0 {
+		t.Fatalf("空闲两代后仍占 %d 字节", got)
+	}
+}
+
+// 常驻内存随流量走：每秒 10 / 100 个新连接持续 1 小时，以及洪泛（同一时刻 300 万
+// 条），与改前的精确表（1 分钟 × 3 代、每代至多 65536 条）比堆增量。低负载两档
+// 不得高于改前，洪泛封顶 8MB。
+func TestSaltBloomMemoryTracksLoad(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short")
+	}
+	measure := func() uint64 {
+		runtime.GC()
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
+		return ms.HeapAlloc
+	}
+	type load struct {
+		name     string
+		perSec   int
+		duration time.Duration
+	}
+	run := func(l load, check func(key []byte, now time.Time) bool) int64 {
+		before := measure()
+		start := time.Unix(1_700_000_000, 0)
+		s := newSaltStream(t)
+		total := int(l.duration/time.Second) * l.perSec
+		step := time.Second / time.Duration(l.perSec)
+		for i := 0; i < total; i++ {
+			check(s.next(), start.Add(time.Duration(i)*step))
+		}
+		return int64(measure()) - int64(before)
+	}
+	for _, l := range []load{{"每秒 10", 10, time.Hour}, {"每秒 100", 100, time.Hour}} {
+		bloom := newSaltBloom(ssSaltGenPeriod, ssSaltBloomMinCapacity, ssSaltBloomMaxCapacity, ssSaltBloomFPRate)
+		newBytes := run(l, bloom.check)
+		legacy := newReplayFilter(time.Minute, 3, replayFilterMaxPerGen)
+		oldBytes := run(l, legacy.check)
+		runtime.KeepAlive(bloom)
+		runtime.KeepAlive(legacy)
+		t.Logf("%s：改前 %.3f MB（保留 2–3 分钟），改后 %.3f MB（位图 %.3f MB，保留 15–30 分钟）",
+			l.name, float64(oldBytes)/(1<<20), float64(newBytes)/(1<<20), float64(bloom.residentBytes())/(1<<20))
+		if newBytes > oldBytes || int64(bloom.residentBytes()) > oldBytes {
+			t.Errorf("%s：改后 %d 字节高于改前 %d", l.name, newBytes, oldBytes)
+		}
+	}
+	before := measure()
+	flood := newSaltBloom(ssSaltGenPeriod, ssSaltBloomMinCapacity, ssSaltBloomMaxCapacity, ssSaltBloomFPRate)
+	now := time.Unix(1_700_000_000, 0)
+	s := newSaltStream(t)
+	for i := 0; i < 3*ssSaltBloomMaxCapacity; i++ {
+		flood.check(s.next(), now)
+	}
+	floodBytes := int64(measure()) - int64(before)
+	runtime.KeepAlive(flood)
+	t.Logf("洪泛 300 万条：改后 %.2f MB（改前封顶约 16 MB）", float64(floodBytes)/(1<<20))
+	if floodBytes > 8<<20 {
+		t.Fatalf("洪泛堆增量 %d 字节超过 8MB", floodBytes)
+	}
+}
+
+// 误报率：两块都写满时，新键被当成重放的比例应在设计值量级（每块 1e-6）。
 func TestSaltBloomFalsePositiveRate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short")
 	}
 	const capacity = 200_000
-	b := newSaltBloom(capacity, 1e-6)
-	var key [16]byte
-	seq := uint64(0)
-	next := func() []byte {
-		seq++
-		binary.LittleEndian.PutUint64(key[:8], seq)
-		binary.LittleEndian.PutUint64(key[8:], seq*0x9e3779b97f4a7c15)
-		return key[:]
-	}
-	for i := 0; i < 2*capacity-1; i++ {
-		b.check(next())
+	b := newSaltBloom(time.Hour, capacity, capacity, 1e-6)
+	now := time.Unix(1_700_000_000, 0)
+	s := newSaltStream(t)
+	for i := 0; i < 2*capacity; i++ {
+		b.check(s.next(), now)
 	}
 	falsePositives := 0
 	const probes = 500_000
 	for i := 0; i < probes; i++ {
-		k := next()
-		// 只查不写：用 contains 量误报，写入会推动轮换。
-		if b.contains(k) {
+		if b.contains(s.next()) {
 			falsePositives++
 		}
 	}
@@ -114,15 +205,16 @@ func TestSaltBloomFalsePositiveRate(t *testing.T) {
 
 // 并发下同一个 salt 只放行一次（查与写在同一把锁里）。
 func TestSaltBloomConcurrentSameSalt(t *testing.T) {
-	b := newSaltBloom(1000, 1e-6)
+	b := newSaltBloom(ssSaltGenPeriod, ssSaltBloomMinCapacity, ssSaltBloomMaxCapacity, ssSaltBloomFPRate)
 	salt := randomSalt(t, 32)
+	now := time.Now()
 	var passed atomic.Int32
 	var wg sync.WaitGroup
 	for i := 0; i < 64; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if b.check(salt) {
+			if b.check(salt, now) {
 				passed.Add(1)
 			}
 		}()
@@ -133,62 +225,25 @@ func TestSaltBloomConcurrentSameSalt(t *testing.T) {
 	}
 }
 
-// 常驻内存有上限：按生产参数写满两轮，堆增量不超过两块位图（约 7.2MB）
-// 加少量余量；与写入条数无关。
-func TestSaltBloomMemoryIsBounded(t *testing.T) {
-	if testing.Short() {
-		t.Skip("short")
-	}
-	measure := func() uint64 {
-		runtime.GC()
-		var ms runtime.MemStats
-		runtime.ReadMemStats(&ms)
-		return ms.HeapAlloc
-	}
-	before := measure()
-	b := newSaltBloom(ssSaltBloomCapacity, ssSaltBloomFPRate)
-	var key [32]byte
-	fill := func(from, to int) int64 {
-		for i := from; i < to; i++ {
-			binary.LittleEndian.PutUint64(key[:], uint64(i))
-			b.check(key[:])
-		}
-		return int64(measure()) - int64(before)
-	}
-	one := fill(0, ssSaltBloomCapacity)
-	t.Logf("第一轮写满 %d 条：堆增量 %.2f MB（一块位图 %d 字）", ssSaltBloomCapacity, float64(one)/(1<<20), len(b.cur))
-	all := fill(ssSaltBloomCapacity, 3*ssSaltBloomCapacity)
-	runtime.KeepAlive(b)
-	t.Logf("写入 %d 条后：堆增量 %.2f MB（两块）", 3*ssSaltBloomCapacity, float64(all)/(1<<20))
-	if one > 4<<20 || all > 8<<20 {
-		t.Fatalf("堆增量 %d / %d 字节，超过一块 4MB / 两块 8MB", one, all)
-	}
-}
-
 // 每个新连接一次防重放检查（新 salt：查不到、写入）的开销。
 // go test ./kernel -run '^$' -bench 'SSSaltReplay' -benchmem
 func BenchmarkSSSaltReplay(b *testing.B) {
-	fresh := func(key *[32]byte, i int) []byte {
-		binary.LittleEndian.PutUint64(key[24:], uint64(i))
-		return key[:]
-	}
 	b.Run("bloom", func(b *testing.B) {
-		f := newSaltBloom(ssSaltBloomCapacity, ssSaltBloomFPRate)
-		var key [32]byte
-		_, _ = rand.Read(key[:24])
+		f := newSaltBloom(ssSaltGenPeriod, ssSaltBloomMinCapacity, ssSaltBloomMaxCapacity, ssSaltBloomFPRate)
+		s := newSaltStream(b)
+		now := time.Now()
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			f.check(fresh(&key, i))
+			f.check(s.next(), now)
 		}
 	})
 	b.Run("legacy-generations", func(b *testing.B) {
 		f := newReplayFilter(time.Minute, 3, replayFilterMaxPerGen)
-		var key [32]byte
-		_, _ = rand.Read(key[:24])
+		s := newSaltStream(b)
 		now := time.Now()
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			f.check(fresh(&key, i), now)
+			f.check(s.next(), now)
 		}
 	})
 }
