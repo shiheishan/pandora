@@ -63,9 +63,10 @@ grep -h '<request_id>' /var/log/aegis/*.log
 | `数据库连不上` | [8. 数据库连接满或慢](#8-数据库连接满或慢)（库进程本身挂了也在这章） |
 | `/ 已用 N%`、`/tmp 已用 N%` | [9. 磁盘满](#9-磁盘满) |
 | `备份目录 … 里没有任何备份`、`最新备份已经是 N 小时前的`、`最新备份只有 N 字节，疑似空文件` | [10. 备份没跑或异常](#10-备份没跑或异常) |
-| `取不到 https://… 在用的证书`、`读不出 … 证书的有效期`、`… 的证书已过期`、`… 的证书还剩 N 小时到期`、`HTTPS 证书续期出错：…`、`证书续期 timer 超过 36 小时没跑` | [4. 面板 HTTPS 证书续期失败](#4-面板-https-证书续期失败) |
+| `取不到 https://… 在用的证书`、`读不出 https://… 证书的有效期`、`https://… 的证书已过期`、`https://… 的证书还剩 N 小时到期`、`HTTPS 证书续期出错：…`、`证书续期 timer 超过 36 小时没跑` | [4. 面板 HTTPS 证书续期失败](#4-面板-https-证书续期失败) |
 | `有 N 条通知排队超过 30 分钟没发出去`、`最近六小时有 N 条通知发送失败` | [7. 通知积压](#7-通知积压) |
 | `过去 30 分钟没有任何节点上报心跳（7 天内曾有 N 个在报）` | [3. 节点离线或不上报心跳](#3-节点离线或不上报心跳) |
+| `通知积压查询失败或超时（每条查询限 10 秒）`、`通知发送失败查询失败或超时（每条查询限 10 秒）`、`节点心跳（最近 30 分钟）查询失败或超时（每条查询限 10 秒）`、`节点心跳（7 天内）查询失败或超时（每条查询限 10 秒）` | [8. 数据库连接满或慢](#8-数据库连接满或慢)（锁等待、DDL 或 VACUUM FULL 卡住某张表时会出现） |
 
 另外两个告警源也指到第 4 章：续期单元 `aegis-tls-renew.service` 记为 failed，以及 Telegram 上的 `潘多拉面板 HTTPS 证书（…）：…`。
 
@@ -533,7 +534,7 @@ journalctl -u aegis-public --since -1h | grep -iE 'oom-kill|Main process exited'
 
 - 网关（`Restart=on-failure`）与 Valkey（发行版单元 `Restart=always`）被杀后由 systemd 自己拉起；Valkey 不落盘，限流计数与实时推送的临时状态清零。
 - PostgreSQL：drop-in 写了 `OOMPolicy=continue`，被杀的多半是某个后端连接，单元不停，postmaster 自己做崩溃恢复（断开所有连接、重放 WAL、重新接客，几秒钟，期间网关的请求会失败一下）；postmaster 本身受 `OOMScoreAdjust=-900` 保护，真被杀了（`kill -9`、OOM 杀到它本身，少见），drop-in 的 `ExecStopPost` 跑 `deploy/pg-revive.sh`：systemd 说 postmaster 是被信号杀掉的（`EXIT_CODE=killed` 或 `dumped`）、且这个单元没有 `systemctl stop`/`restart` 在处理，就排一个 5 秒后的 `systemctl start`（`journalctl -t pandora-pg-revive` 有记录）；60 秒内再死一次就不再拉。**要让一个被杀掉的库保持停着**（例如 `pg_ctlcluster --force stop` 最后 SIGKILL 了 postmaster，或 `systemctl kill -s KILL`，这些在 systemd 看来都是「被杀」），先 `systemctl stop pandora-pg-revive-18-main.timer` 取消排好的拉起（5 秒窗口内；之后再 `systemctl stop postgresql@18-main`）；拉起已经发生的，直接 `systemctl stop postgresql@18-main`，这是有作业的停库，不会再被拉。有意停库（`pg_ctlcluster 18 main stop` 的各种模式、`systemctl stop`）postmaster 是自己退出的，不会被拉回来。不用 systemd 的 `Restart=`：panel2 实测被 `kill -9` 与 postgres 用户有意停库，单元结果都是 `exit-code`，「异常才重启」拉不起前者，「失败就重启」会把后者拉回来。
-- 没拉起来、或反复崩溃时靠巡检（`aegis-health.timer`，每 10 分钟）：库连不上记一条 `ALERT 数据库连不上`，`aegis-health.service` 记为 failed。**只有 `.env` 配了 `AEGIS_ALERT_TG_*` 才会推 Telegram**，没配时只留 failed 单元与 `/opt/pandora/logs/health.log` 的 ALERT 行，要人去看（`systemctl --failed`）。`psql.sh` 连库超过 5 秒就放弃；巡检的每条查询另限 10 秒（`statement_timeout`），库连得上但查询卡住（锁等待、IO 挂住）时也会按时记「数据库连不上（或 10 秒内查不出 SELECT 1）」，而不是被 systemd 的 120 秒超时杀掉、一条告警都没发；第一条失败后其余查库项跳过。
+- 没拉起来、或反复崩溃时靠巡检（`aegis-health.timer`，每 10 分钟）：库连不上记一条 `ALERT 数据库连不上`，`aegis-health.service` 记为 failed。**只有 `.env` 配了 `AEGIS_ALERT_TG_*` 才会推 Telegram**，没配时只留 failed 单元与 `/opt/pandora/logs/health.log` 的 ALERT 行，要人去看（`systemctl --failed`）。`psql.sh` 连库超过 5 秒就放弃；巡检的每条查询另限 10 秒（`statement_timeout`），库连得上但查询卡住（锁等待、IO 挂住）时也会按时记「数据库连不上（或 10 秒内查不出 SELECT 1）」，而不是被 systemd 的 120 秒超时杀掉、一条告警都没发；第一条失败后其余查库项跳过。SELECT 1 已通过、后面某条计数查询超时或失败时，会记「<检查项>查询失败或超时」并告警，不会当成没数据记 OK。
 - 反复被杀：先看是哪一个占得多（`systemctl status` 的 Memory 行、`ps -o rss`），再按第 8 章看连接数与慢查询；不要把 `MemorySwapMax` 去掉了事，那只是把问题换成卡顿。
 - 内核 cgroup 不是 v2 或没开 swap 记账时这一条不生效，安装输出会说。
 

@@ -11,6 +11,7 @@
 #      compose 里出现 PGOPTIONS，或 POSTGRES_INITDB_ARGS 带 -c / --set（含 -c 连写、与别的短选项连写、${…}）；
 #      compose 的形状按白名单（顶层键、服务名、服务键、postgres 的环境变量，不许锚点 / 别名 / 合并键），
 #      initdb 下只许普通的 .sql / .sh 文件（符号链接、子目录都红）；
+#      shell 拆字（如 healthcheck 里 "ALT""ER ROLE …"）、format() 拼 SQL 等刻意规避超出本守卫范围，只防回归（与 N7 同类）。
 #   ④ Valkey 的启动参数与 install.sh 写进 Valkey 配置的 pandora 块（install-lib.sh 的 native_valkey_hardening_block）
 #      逐项相同；块里的 bind 与 protected-mode 只管主机上的服务（容器靠 ②），口令不在块里，这三项不比。
 # 另把同一套检查跑在几份改坏的副本上（含合并键、带引号的键、extends、env_file、列表式 environment、符号链接等等价写法，改一个值、删一个参数、端口绑到 0.0.0.0、改 Valkey 内存上限、引号里 # 后的值不同、「#」前无空白不算注释、command 里的 --键=值 与 -c键=值、initdb 里加 ALTER SYSTEM / ALTER … SET / 写 postgresql.auto.conf、compose 里加 PGOPTIONS 或 initdb 的 -c），都必须报错，
@@ -133,6 +134,7 @@ compose_shape() {
     section == "services" && ind > 4 && !block { bad("deeper line under a key that already has an inline value"); next }
     env && ind < 6 { env = 0 }
     env && ind == 6 {
+      # 被下面的环境变量白名单完全覆盖（带引号的键、冒号前有空格、!!str、? 复杂键都会先过不了白名单）；留着是双保险，白名单以后放宽时它还挡着形状。单退它自检仍绿是预期的。
       if (!match($0, /^      [A-Z_]+:([ \t]|$)/)) { bad("postgres environment entry must be KEY: value"); next }
       k = $0; sub(/^      /, "", k); sub(/:.*/, "", k)
       if (k !~ /^(POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_INITDB_ARGS|PANDORA_DB|PANDORA_DB_OWNER|PANDORA_DB_OWNER_PASSWORD)$/) bad("postgres environment variable not allowed")
@@ -199,6 +201,33 @@ check() {
   got_vol="$(postgres_volumes_norm "$compose")"
   if [ "$(printf '%s\n' "$got_vol" | grep -c . || true)" -ne 2 ] || [ "$want_vol" != "$got_vol" ]; then
     echo "postgres volumes must be exactly pgdata:/var/lib/postgresql and ./initdb:/docker-entrypoint-initdb.d:ro (got: $(printf '%s ' $got_vol))"; return 1
+  fi
+  # 换镜像能改掉 -c 以外的缺省，必须钉死开发基座用的 PG 18 Alpine 镜像
+  local pg_image
+  pg_image="$(awk '
+    /^  postgres:/ { p = 1; next }
+    /^  [A-Za-z0-9_-]+:/ || /^[A-Za-z]/ { p = 0 }
+    p && /^    image:/ {
+      line = $0; sub(/^    image:[ \t]*/, "", line); sub(/[ \t]+#.*$/, "", line)
+      if (line ~ /^".*"$/) line = substr(line, 2, length(line) - 2)
+      else if (line ~ /^\047.*\047$/) line = substr(line, 2, length(line) - 2)
+      print line; exit
+    }' "$compose")"
+  if [ "$pg_image" != "postgres:18-alpine" ]; then
+    echo "the postgres service image must be exactly postgres:18-alpine (got: ${pg_image:-<missing>})"; return 1
+  fi
+  # 顶层 volumes 只许 pgdata:，不能绑预置数据目录（driver_opts、external 等子键都不许）
+  if ! awk '
+    /^volumes:/ { sec = 1; n = 0; pg = 0; bad = 0; subkey = 0; next }
+    sec && /^[A-Za-z]/ { sec = 0 }
+    sec && /^  pgdata:/ { pg = 1; n++; next }
+    sec && /^  [a-zA-Z0-9_-]+:/ {
+      n++; vol = $0; sub(/^  /, "", vol); sub(/:.*/, "", vol)
+      if (vol != "pgdata") bad = 1; next
+    }
+    sec && pg && /^    / { subkey = 1 }
+    END { exit (n != 1 || !pg || bad || subkey ? 1 : 0) }' "$compose"; then
+    echo "top-level volumes must contain only pgdata: with no nested keys (driver_opts, external, extra volume names, etc.)"; return 1
   fi
   txt="$(initdb_text "$initdb")"
   ctxt="$(compose_text "$compose")"
@@ -401,5 +430,18 @@ check "$T/hc-alterset.yml" "$CONF" >/dev/null && fail "ALTER ROLE ... SET in the
 sed 's|test: \["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -q"\]|test: ["CMD-SHELL", "echo jit=on >> /var/lib/postgresql/18/docker/postgresql.auto.conf \&\& pg_isready -h 127.0.0.1 -U postgres -q"]|' "$COMPOSE" >"$T/hc-conf.yml"
 cmp -s "$COMPOSE" "$T/hc-conf.yml" && fail "mutation premise: postgres healthcheck test line not found"
 check "$T/hc-conf.yml" "$CONF" >/dev/null && fail "writing postgresql.auto.conf from the postgres healthcheck was not detected"
+# F3：image 与顶层 volumes 各配只有它们抓得到的变异
+sed 's/^    image: postgres:18-alpine$/    image: example\/postgres-tuned:18/' "$COMPOSE" >"$T/img-bad.yml"
+cmp -s "$COMPOSE" "$T/img-bad.yml" && fail "mutation premise: postgres image line not found"
+check "$T/img-bad.yml" "$CONF" >/dev/null && fail "a non-standard postgres image was not detected"
+awk '/^  pgdata:$/{print; print "    driver_opts:"; print "      device: /srv/pg-preset"; next}1' "$COMPOSE" >"$T/vol-driver.yml"
+cmp -s "$COMPOSE" "$T/vol-driver.yml" && fail "mutation premise: pgdata volume line not found"
+check "$T/vol-driver.yml" "$CONF" >/dev/null && fail "driver_opts under top-level pgdata was not detected"
+awk '/^  pgdata:$/{print; print "    external: true"; next}1' "$COMPOSE" >"$T/vol-ext.yml"
+cmp -s "$COMPOSE" "$T/vol-ext.yml" && fail "mutation premise: pgdata volume line not found"
+check "$T/vol-ext.yml" "$CONF" >/dev/null && fail "external: true under top-level pgdata was not detected"
+awk '/^  pgdata:$/{print; print "  other:"; next}1' "$COMPOSE" >"$T/vol-other.yml"
+cmp -s "$COMPOSE" "$T/vol-other.yml" && fail "mutation premise: pgdata volume line not found"
+check "$T/vol-other.yml" "$CONF" >/dev/null && fail "an extra top-level volume name was not detected"
 
 echo "dev-compose static: $count PostgreSQL parameters match postgresql-pandora.conf, $(wc -l <<<"$PROD_VALKEY" | tr -d ' ') Valkey settings match install.sh, ports loopback-only, superuser postgres"

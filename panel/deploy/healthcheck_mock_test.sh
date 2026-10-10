@@ -154,6 +154,11 @@ if [ -n "\$pat" ] && [[ "\$q" == *"\$pat"* ]]; then
   esac
 fi
 [ "\$q" = 'SELECT 1' ] && { echo 1; exit 0; }
+if [ -f "$MF/values" ]; then
+  while IFS='|' read -r sub val || [ -n "\$sub" ]; do
+    [ -n "\$sub" ] && [[ "\$q" == *"\$sub"* ]] && { echo "\$val"; exit 0; }
+  done <"$MF/values"
+fi
 echo 0
 PSQL
 printf '#!/usr/bin/env bash\necho active\n' >"$MF/bin/systemctl"
@@ -164,6 +169,7 @@ printf '#!/usr/bin/env bash\ncase "$2" in %%Y) date +%%s ;; %%s) echo 20000 ;; e
 chmod +x "$MF/deploy/psql.sh" "$MF/bin/"*
 main_flow() { # <失败子串，空=全部成功> [timeout|empty|partial] → 设置 rc 与 out（health.log 末行加 stderr）
   printf '%s' "$1" >"$MF/fail-pattern"; printf '%s' "${2:-timeout}" >"$MF/fail-mode"; : >"$MF/queries"; rm -f "$MF/logs/health.log"
+  [ -n "$1" ] && rm -f "$MF/values"
   set +e
   out="$(PATH="$MF/bin:$PATH" HEALTHCHECK_ROOT="$MF" AEGIS_BACKUP_DIR="$MF/backups" EDGE_CONF="$MF/none.conf" \
     TLS_STATUS_FILE="$MF/none.status" bash "$MF/deploy/healthcheck.sh" 2>&1)"
@@ -175,11 +181,27 @@ main_flow ''
 [ "$rc" -eq 0 ] && grep -q ' OK$' <<<"$out" || fail "main flow with every query answering 0 did not log OK (rc=$rc): $out"
 [ "$(grep -c . "$MF/queries")" -ge 5 ] || fail "main flow ran only these queries: $(cat "$MF/queries")"
 # G4：SELECT 1 过了，后面某条查询超时 → 告警，说出是哪项查不了
-for pat in "status='queued'" "status='failed'" "last_heartbeat_at > now() - interval '30 minutes'" "interval '7 days'"; do
+while IFS='|' read -r pat want_note; do
   main_flow "$pat"
-  [ "$rc" -ne 0 ] && grep -q '查询失败或超时' <<<"$out" && grep -q 'ALERT' <<<"$out" \
+  [ "$rc" -ne 0 ] && grep -q "$want_note" <<<"$out" && grep -q 'ALERT' <<<"$out" \
     || fail "a later query that timed out ($pat) was taken as no data (rc=$rc): $out"
-done
+done <<'PATS'
+status='queued'|通知积压查询失败或超时
+status='failed'|通知发送失败查询失败或超时
+last_heartbeat_at > now() - interval '30 minutes'|节点心跳（最近 30 分钟）查询失败或超时
+interval '7 days'|节点心跳（7 天内）查询失败或超时
+PATS
+# F7：两条心跳检查项名互换 → 超时断言必须变红
+cp "$DEPLOY/healthcheck.sh" "$MF/deploy/healthcheck.sh"
+sed -e 's/节点心跳（最近 30 分钟）/节点心跳（__SWAP__）/' \
+    -e 's/节点心跳（7 天内）/节点心跳（最近 30 分钟）/' \
+    -e 's/节点心跳（__SWAP__）/节点心跳（7 天内）/' \
+    "$MF/deploy/healthcheck.sh" >"$MF/hc-swapped.sh"
+mv "$MF/hc-swapped.sh" "$MF/deploy/healthcheck.sh"
+main_flow "last_heartbeat_at > now() - interval '30 minutes'"
+grep -q '节点心跳（最近 30 分钟）查询失败或超时' <<<"$out" \
+  && fail "swapped heartbeat check item names did not break the per-item timeout assertion (rc=$rc): $out"
+cp "$DEPLOY/healthcheck.sh" "$MF/deploy/healthcheck.sh"
 # 退出 0 但没有输出、输出了数字却非零退出，都不算查出了数
 for mode in empty partial; do
   main_flow "status='failed'" "$mode"
@@ -191,5 +213,78 @@ main_flow 'SELECT 1'
 [ "$rc" -ne 0 ] && grep -q '数据库连不上' <<<"$out" || fail "SELECT 1 failing was not reported (rc=$rc): $out"
 [ "$(grep -c . "$MF/queries")" -eq 1 ] || fail "queries still ran after SELECT 1 failed: $(cat "$MF/queries")"
 if grep -q '查询失败或超时' <<<"$out"; then fail "a down database was reported once per query: $out"; fi
+
+# F7：桩按子串返回计数，阈值分支各自告警或记 OK
+threshold_flow() {
+  printf '%s\n' "$@" >"$MF/values"
+  main_flow ''
+}
+threshold_flow "status='queued'|250"
+[ "$rc" -ne 0 ] && grep -q '有 250 条通知排队超过 30 分钟没发出去' <<<"$out" && grep -q 'ALERT' <<<"$out" \
+  || fail "queued threshold 250 did not alert (rc=$rc): $out"
+threshold_flow "status='failed'|60"
+[ "$rc" -ne 0 ] && grep -q '最近六小时有 60 条通知发送失败' <<<"$out" && grep -q 'ALERT' <<<"$out" \
+  || fail "failed threshold 60 did not alert (rc=$rc): $out"
+threshold_flow "last_heartbeat_at > now() - interval '30 minutes'|0" "interval '7 days'|5"
+[ "$rc" -ne 0 ] && grep -q '过去 30 分钟没有任何节点上报心跳（7 天内曾有 5 个在报）' <<<"$out" \
+  || fail "heartbeat recent=0 ever=5 did not alert (rc=$rc): $out"
+threshold_flow "status='queued'|199" "status='failed'|49" "last_heartbeat_at > now() - interval '30 minutes'|3" "interval '7 days'|5"
+[ "$rc" -eq 0 ] && grep -q ' OK$' <<<"$out" \
+  || fail "sub-threshold counts should log OK (rc=$rc): $out"
+# F7 回退：阈值比较放宽 → 变红（只改桩目录里的副本）
+cp "$DEPLOY/healthcheck.sh" "$MF/deploy/healthcheck.sh"
+sed 's/\[ "$q" -lt 200 \]/[ "$q" -lt 300 ]/' "$MF/deploy/healthcheck.sh" >"$MF/hc-q.yml"
+mv "$MF/hc-q.yml" "$MF/deploy/healthcheck.sh"
+threshold_flow "status='queued'|250"
+if [ "$rc" -ne 0 ] && grep -q '有 250 条通知排队超过 30 分钟没发出去' <<<"$out"; then
+  fail "rollback q<300 was expected to suppress alert on queued=250 but still alerted"
+fi
+cp "$DEPLOY/healthcheck.sh" "$MF/deploy/healthcheck.sh"
+sed 's/\[ "$recent" = 0 \]/[ "$recent" = 1 ]/' "$MF/deploy/healthcheck.sh" >"$MF/hc-recent.yml"
+mv "$MF/hc-recent.yml" "$MF/deploy/healthcheck.sh"
+threshold_flow "last_heartbeat_at > now() - interval '30 minutes'|0" "interval '7 days'|5"
+if [ "$rc" -ne 0 ] && grep -q '过去 30 分钟没有任何节点上报心跳' <<<"$out"; then
+  fail "rollback recent=1 was expected to suppress heartbeat alert on recent=0 ever=5 but still alerted"
+fi
+cp "$DEPLOY/healthcheck.sh" "$MF/deploy/healthcheck.sh"
+[ -z "$(git diff -- panel/deploy/healthcheck.sh)" ] || fail "healthcheck.sh must be unchanged after threshold rollbacks"
+
+# F4：note 文案片段必须出现在 RUNBOOK 巡检告警索引里
+_runbook_index_text() {
+  awk '/^## 巡检告警索引$/{f=1;next} f && /^## /{exit} f{printf "%s\n", $0}' "$1"
+}
+_note_literal_fragments() {
+  local text="$1" frag chunks
+  chunks="$(printf '%s' "$text" | perl -pe 's/\$[0-9]+|\$[A-Za-z_]\w*|\$\{[^}]*\}|\$\(\([^)]*\)\)|\$\([^)]*\)/\n/g')"
+  while IFS= read -r frag; do
+    frag="${frag#"${frag%%[![:space:]]*}"}"
+    frag="${frag%"${frag##*[![:space:]]}"}"
+    [ "${#frag}" -ge 2 ] && printf '%s\n' "$frag"
+  done <<<"$chunks"
+}
+alert_index_missing() {
+  local hc="$1" rb="$2" index line text missing=0 frag
+  index="$(_runbook_index_text "$rb")"
+  while IFS= read -r line; do
+    text="${line#*note \"}"
+    text="${text%\"*}"
+    text="${text%%（*}"
+    while IFS= read -r frag; do
+      [ -z "$frag" ] && continue
+      if ! grep -Fq "$frag" <<<"$index"; then
+        printf 'missing RUNBOOK index fragment from note: %s\n' "$frag"
+        missing=1
+      fi
+    done < <(_note_literal_fragments "$text")
+  done < <(grep -E 'note "' "$hc")
+  [ "$missing" -eq 1 ] && return 0
+  return 1
+}
+if alert_index_missing "$DEPLOY/healthcheck.sh" "$DEPLOY/RUNBOOK.md"; then
+  fail "healthcheck note fragments missing from RUNBOOK alert index (see above)"
+fi
+cp "$DEPLOY/healthcheck.sh" "$T/hc-index-test.sh"
+printf '%s\n' 'note "完全新的告警文案"' >>"$T/hc-index-test.sh"
+alert_index_missing "$T/hc-index-test.sh" "$DEPLOY/RUNBOOK.md" || fail "alert_index_missing self-test did not detect a new note"
 
 printf 'healthcheck mock: PASS\n'
