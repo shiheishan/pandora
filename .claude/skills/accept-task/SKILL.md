@@ -44,7 +44,7 @@ description: pandora 总协调验收任务分支并合进主线（或集成分�
 叠在集成分支上的路（dispatch-task「叠在集成分支上的路」）逐路合进集成分支，全部合完再一次并进主线。
 
 **逐路合进集成分支**
-- 在集成分支的 worktree（S 是 `../pandora-s`）里 `git merge --no-ff <分支>`，按设计的合并顺序（S：S0 → S1 → S2 → S3 → S4a → S4b → S7 → S8 → S9）。
+- 在集成分支的 worktree（S 是 `../pandora-s`）里 `git merge --no-ff <分支>`，按设计的合并顺序（S：S0 → S1 → S2 → S3 → S4a → S4b → S7 → S8 → S9 → **S10**；S5u → S5 → S5b、S6 直接进主线，见主目录 `.claude/server-session-design.md` §10）。
 - **不冻结 upsegments**：这些迁移用的是临时号，并主线前还要重编号，现在冻了，重编号后冻结表就对不上。
 - 推集成分支，`wait-status.sh` 与 `wait-github.sh` 都退出 0，再开依赖它的下一路。
 - 主线前进、集成分支要用到时，在同一个 worktree 里 `git merge feat/panel-redesign`，推送等 CI 绿，再通知在跑的子路合集成分支。
