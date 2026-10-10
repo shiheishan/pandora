@@ -82,20 +82,13 @@ type shadowsocksAdapter struct {
 	cancel   context.CancelFunc
 	closed   bool
 	active   map[net.Conn]struct{}
-	// salts 是 TCP 请求 salt 的防重放表（认证通过才记），见 replayFilter。
-	salts *replayFilter
+	// salts 是 TCP 请求 salt 的防重放表（认证通过才记），全进程共用一张，
+	// 见 replay_filter_bloom.go。
+	salts *saltBloom
 	// headerTimeout 只给测试缩短读请求头的截止时间，零值为 10 秒。
 	headerTimeout time.Duration
 	wg            sync.WaitGroup
 }
-
-// Shadowsocks TCP salt 防重放：按分钟分代、保留 3 代，即每个 salt 至少记
-// 2 分钟、至多 3 分钟；每代上限 replayFilterMaxPerGen 条。
-const (
-	ssSaltReplayPeriod    = time.Minute
-	ssSaltReplayKeep      = 3
-	replayFilterMaxPerGen = 1 << 16
-)
 
 func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 	method, _ := spec.Config.Raw["method"].(string)
@@ -110,11 +103,16 @@ func newShadowsocksAdapter(spec InboundSpec) (Adapter, error) {
 		protocol: strings.ToLower(strings.TrimSpace(spec.Config.Protocol)), spec: spec, method: methodSpec,
 		users:  make(map[string]*ssUser),
 		active: make(map[net.Conn]struct{}),
-		salts:  newReplayFilter(ssSaltReplayPeriod, ssSaltReplayKeep, replayFilterMaxPerGen),
+		salts:  sharedSSSaltBloom(),
 	}, nil
 }
 
 func (a *shadowsocksAdapter) Protocol() string { return a.protocol }
+
+// acceptSalt 报告认证通过的请求 salt 是否没见过（没见过即记下）。
+func (a *shadowsocksAdapter) acceptSalt(salt []byte) bool {
+	return a.salts == nil || a.salts.check(salt)
+}
 
 func (a *shadowsocksAdapter) Validate(spec InboundSpec) error {
 	if p := strings.ToLower(strings.TrimSpace(spec.Config.Protocol)); p != "shadowsocks" && p != "ss" {
@@ -281,7 +279,7 @@ func (a *shadowsocksAdapter) readRequest(conn net.Conn) (core.User, *ssStream, v
 	}
 	// 重放：把抓到的合法首包原样重发，salt 必然相同。只在认证通过后记录，
 	// 乱发的字节填不满这张表。
-	if a.salts != nil && !a.salts.check(salt, time.Now()) {
+	if !a.acceptSalt(salt) {
 		return core.User{}, nil, destination, markConnError(connErrAuth, fmt.Errorf("shadowsocks salt replayed"))
 	}
 	first := make([]byte, length+selectedAEAD.Overhead())

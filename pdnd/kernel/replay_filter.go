@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// replayFilter 是按时间分代的「见过即拒」集合，给 Shadowsocks 的 TCP salt 与
-// VMess 的 authID 防重放用。
+// replayFilter 是按时间分代的「见过即拒」集合，给 VMess 的 authID 防重放用
+// （authID 自带 ±120 秒时间戳，记几分钟就够）。旧版 Shadowsocks 没有时间戳，
+// 用按条数保留的 saltBloom（replay_filter_bloom.go）。
 //
 // 每 period 开一代新的，只保留最近 keep 代，查重看全部保留代。一个键从写入
 // 起至少保留 (keep-1)*period、至多 keep*period。清理是整代丢弃，O(1)，不用像
@@ -23,6 +24,9 @@ type replayFilter struct {
 	gens      []map[string]struct{} // gens[0] 是当前代
 	started   time.Time             // 当前代开始的时间
 }
+
+// replayFilterMaxPerGen 是 replayFilter 每代的条数上限。
+const replayFilterMaxPerGen = 1 << 16
 
 func newReplayFilter(period time.Duration, keep, maxPerGen int) *replayFilter {
 	if keep < 2 {
