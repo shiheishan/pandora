@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aegispanel/nodeagent/internal/nativewire/hysteria2/internal/protocol"
@@ -205,12 +206,14 @@ func (s *Service[U]) handleConnection(connection *quic.Conn) {
 
 type serverSession[U comparable] struct {
 	*Service[U]
-	ctx           context.Context
-	quicConn      *quic.Conn
-	connAccess    sync.Mutex
-	connDone      chan struct{}
-	connErr       error
-	authenticated bool
+	ctx        context.Context
+	quicConn   *quic.Conn
+	connAccess sync.Mutex
+	connDone   chan struct{}
+	connErr    error
+	// authenticated 在 connAccess 内由 false 置 true，且只置一次；authUser 在它之前
+	// 写好，读侧先 Load 到 true 再读 authUser（Pandora 改动：并发 /auth 不再改身份）。
+	authenticated atomic.Bool
 	authUser      U
 	udpAccess     sync.RWMutex
 	// udpClosed 由 closeUDPSessions 在 udpAccess 内置位，此后不再建会话（Pandora 改动）。
@@ -222,7 +225,13 @@ type serverSession[U comparable] struct {
 
 func (s *serverSession[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && r.Host == protocol.URLHost && r.URL.Path == protocol.URLPath {
-		if s.authenticated {
+		// 认证在 connAccess 内判定并只成功一次（Pandora 改动）：上游无同步，同一连接上
+		// 并发两次 /auth 会把 authUser 来回改（流量记到另一个用户）并起两个 loopMessages
+		// （destCache 只许单协程）。已认证之后的 /auth 照旧回 OK，但不改身份。
+		request := protocol.AuthRequestFromHeader(r.Header)
+		s.connAccess.Lock()
+		if s.authenticated.Load() {
+			s.connAccess.Unlock()
 			protocol.AuthResponseToHeader(w.Header(), protocol.AuthResponse{
 				UDPEnabled: !s.udpDisabled,
 				Rx:         s.receiveBPS,
@@ -231,16 +240,17 @@ func (s *serverSession[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(protocol.StatusAuthOK)
 			return
 		}
-		request := protocol.AuthRequestFromHeader(r.Header)
 		s.userAccess.RLock()
 		user, loaded := s.userMap[request.Auth]
 		s.userAccess.RUnlock()
 		if !loaded {
+			s.connAccess.Unlock()
 			s.masqueradeHandler.ServeHTTP(w, r)
 			return
 		}
 		s.authUser = user
-		s.authenticated = true
+		s.authenticated.Store(true)
+		s.connAccess.Unlock()
 		var rxAuto bool
 		if s.receiveBPS > 0 && s.ignoreClientBandwidth && request.Rx == 0 {
 			s.logger.Debug("process connection from ", r.RemoteAddr, ": BBR disabled by server")
@@ -288,7 +298,7 @@ func (s *serverSession[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *serverSession[U]) dispatchStream(frameType http3.FrameType, stream *quic.Stream, err error) (bool, error) {
-	if !s.authenticated || err != nil {
+	if !s.authenticated.Load() || err != nil {
 		return false, nil
 	}
 	if frameType != protocol.FrameTypeTCPRequest {
