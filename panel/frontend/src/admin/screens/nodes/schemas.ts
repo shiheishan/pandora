@@ -67,7 +67,6 @@ export const nodeRowSchema = z.object({
   runtime_reason: z.string().nullish().transform((v) => v ?? null),
   runtime_state_at: iso.nullish().transform((v) => v ?? null),
   runtime_reason_node: z.string().nullish().transform((v) => v ?? null),
-  port_conflict_node: z.string().nullish().transform((v) => v ?? null),
   delivery_degraded: z.boolean().catch(false),
 })
 export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.number() })

@@ -19,7 +19,7 @@ paths:
 ## 同机端口门禁（w4deliver，用户 2026-10-07 定：先到先得）
 - 键是 (服务器, 端口, L4)。L4 只有一个口径：Go `ListenL4`（port_l4.go）= 迁移 00122 的生成列 `nodes.listen_l4` = pdnd `kernel/port_claims.go` 的 `inboundPortKey`。改规则三处一起改；守卫 `port_l4_test.go:TestListenL4MatchesPdndPortClaims`（读 pdnd 的用例表）、PG18 `runNodeConfigPG18PortClaimBatch`（生成列对 Go）
 - 建、改（端口或 L4 变了）、复制、迁移都在服务器行锁内调 `checkNodePortClaim`：先保留端口（`PortPolicy`，经 platform/config 注入，未注入用 `DefaultPortPolicy`，两处缺省值有测试对照），再查同服务器未退役节点，冲突回 409 写明占用者名字。锁序：建节点只锁服务器；改、复制、迁移是节点行 → 服务器行（三者一致）
-- 唯一部分索引 `nodes_listen_claim_unique` 兜底，撞上经 `nodeUniqueViolation` 译成端口冲突（其余唯一冲突仍是重名）。迁移时存量有冲突就只建普通索引 `nodes_listen_claim_lookup` 并 WARNING 列清单，后台列表的 `port_conflict_node` 提示管理员处理；清完后手工建唯一索引（语句在 00122 注释里）
+- 唯一部分索引 `nodes_listen_claim_unique` 兜底，撞上经 `nodeUniqueViolation` 译成端口冲突（其余唯一冲突仍是重名）。全新安装时 nodes 是空的，00122 一定建成这个唯一索引，不建 `nodes_listen_claim_lookup`。后台列表不再为存量冲突逐行查询
 
 ## 节点真实运行状态
 - pdnd 降级时签名心跳带 `X-Node-Runtime-Reason`，兼容 `/status` 带 `X-Node-Runtime-Status` 与 `X-Node-Runtime-Reason`（都不进正文，正文按 DisallowUnknownFields 解码）。经 `NormalizeRuntimeState` 存进 `nodes.runtime_status / runtime_reason`，`runtime_state_at` 只在变化时前进；健康分 running 90、degraded 40（两条通道同一个 `HealthScore`）
