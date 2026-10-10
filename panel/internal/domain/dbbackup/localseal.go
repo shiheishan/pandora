@@ -72,11 +72,17 @@ func parseAgeSecretKey(raw []byte) ([]byte, []byte, error) {
 	return found, secret, nil
 }
 
-// loadSealIdentity 读私钥文件，返回封条密钥与它对应的收件人（age1…）
-func loadSealIdentity(identityPath string) ([]byte, string, error) {
+// loadSealIdentity 读私钥文件，返回封条密钥与它对应的收件人（age1…）。forSealing 时另按 age 的口径核文件
+// （ageReadsIdentityFile）：封之前要保证 age 恢复时读得了；核已有封条时不加这道，派生不分大小写
+func loadSealIdentity(identityPath string, forSealing bool) ([]byte, string, error) {
 	identity, err := readPrivateFile(identityPath, 64<<10)
 	if err != nil {
 		return nil, "", errors.New("读不了备份解密私钥（要 root 所有、0600、单链接）")
+	}
+	if forSealing {
+		if err := ageReadsIdentityFile(identity); err != nil {
+			return nil, "", err
+		}
 	}
 	line, secret, err := parseAgeSecretKey(identity)
 	if err != nil {
@@ -90,7 +96,7 @@ func loadSealIdentity(identityPath string) ([]byte, string, error) {
 }
 
 func loadSealKey(identityPath string) ([]byte, error) {
-	key, _, err := loadSealIdentity(identityPath)
+	key, _, err := loadSealIdentity(identityPath, false)
 	return key, err
 }
 
@@ -102,7 +108,7 @@ func SealLocalBackup(archive, checksum, identityPath, recipient string) (string,
 	if err != nil {
 		return "", err
 	}
-	key, own, err := loadSealIdentity(identityPath)
+	key, own, err := loadSealIdentity(identityPath, true)
 	if err != nil {
 		return "", err
 	}

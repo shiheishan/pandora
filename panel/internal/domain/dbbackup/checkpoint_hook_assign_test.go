@@ -14,7 +14,11 @@ import (
 // 非测试代码里任何对它的赋值、自增自减、取地址都会让「Go 与 install.sh 建的目录相同」那条守卫
 // （deploy-single-layout_static_test.sh ⑤）落空。按语法树找，局部同名变量（:= 或函数参数）不算
 func TestCheckpointHookRootIsNeverReassigned(t *testing.T) {
-	if found := hookRootWrites(t, "."); len(found) > 0 {
+	found, declared := hookRootWrites(t, ".")
+	if !declared {
+		t.Fatal("package-level checkpointHookRoot declaration not found: the scan looked at the wrong place")
+	}
+	if len(found) > 0 {
 		t.Fatalf("checkpointHookRoot is written outside its declaration: %v", found)
 	}
 }
@@ -37,21 +41,29 @@ func TestHookRootWriteScannerCatchesWrites(t *testing.T) {
 	return checkpointHookRoot == ""
 }
 `)
-	if found := hookRootWrites(t, dir); len(found) != 0 {
-		t.Fatalf("reads and a local shadow were taken as writes: %v", found)
+	// 空目录：找不到声明，必须报出来（守卫看错了目录时不能悄悄通过）
+	if _, declared := hookRootWrites(t, t.TempDir()); declared {
+		t.Fatal("an empty directory reported the declaration as found")
+	}
+	if found, declared := hookRootWrites(t, dir); len(found) != 0 || !declared {
+		t.Fatalf("reads and a local shadow were taken as writes (declared=%v): %v", declared, found)
 	}
 	write("init.go", "func init() { checkpointHookRoot = \"/tmp\" }\n")
 	write("paren.go", "func f() { (checkpointHookRoot) = \"/tmp\" }\n")
 	write("multi.go", "func g() (string, error) { var err error; checkpointHookRoot, err = \"/tmp\", nil; return \"\", err }\n")
 	write("addr.go", "func h() *string { return &checkpointHookRoot }\n")
 	write("op.go", "func k() { checkpointHookRoot += \"/x\" }\n")
-	if found := hookRootWrites(t, dir); len(found) != 5 {
-		t.Fatalf("expected 5 writes (init, paren, multi, addr, op), found %d: %v", len(found), found)
+	write("range.go", "func r(xs []string) { for _, checkpointHookRoot = range xs {} }\n")
+	write("rangekey.go", "func rk(m map[string]int) { for checkpointHookRoot = range m {} }\n")
+	write("rangeshadow.go", "func rs(xs []string) { for _, checkpointHookRoot := range xs { _ = checkpointHookRoot } }\n")
+	if found, _ := hookRootWrites(t, dir); len(found) != 7 {
+		t.Fatalf("expected 7 writes (init, paren, multi, addr, op, range value, range key), found %d: %v", len(found), found)
 	}
 }
 
-// hookRootWrites 返回目录里非测试 Go 文件对包级 checkpointHookRoot 的写入位置
-func hookRootWrites(t *testing.T, dir string) []string {
+// hookRootWrites 返回目录里非测试 Go 文件对包级 checkpointHookRoot 的写入位置，以及是否找到了它的包级声明
+// （找不到说明扫错了地方，调用方要当失败）
+func hookRootWrites(t *testing.T, dir string) ([]string, bool) {
 	t.Helper()
 	fset := token.NewFileSet()
 	matches, err := filepath.Glob(filepath.Join(dir, "*.go"))
@@ -59,6 +71,7 @@ func hookRootWrites(t *testing.T, dir string) []string {
 		t.Fatal(err)
 	}
 	var found []string
+	declared := false
 	for _, name := range matches {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
@@ -66,6 +79,15 @@ func hookRootWrites(t *testing.T, dir string) []string {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
+		}
+		for _, d := range file.Decls {
+			if g, ok := d.(*ast.GenDecl); ok && g.Tok == token.VAR {
+				for _, sp := range g.Specs {
+					for _, n := range sp.(*ast.ValueSpec).Names {
+						declared = declared || n.Name == "checkpointHookRoot"
+					}
+				}
+			}
 		}
 		// 包级的 checkpointHookRoot：单文件解析时，别的文件里声明的包级名字解析不到（Obj 为 nil）；
 		// 本文件里的包级声明 Obj 指向顶层 ValueSpec。局部变量的 Obj 指向函数里的声明
@@ -105,6 +127,15 @@ func hookRootWrites(t *testing.T, dir string) []string {
 						}
 					}
 				}
+			case *ast.RangeStmt:
+				// for checkpointHookRoot = range …、for _, checkpointHookRoot = range …（:= 是新的局部变量）
+				if v.Tok == token.ASSIGN {
+					for _, e := range []ast.Expr{v.Key, v.Value} {
+						if e != nil && pkgLevel(e) {
+							found = append(found, fset.Position(e.Pos()).String())
+						}
+					}
+				}
 			case *ast.IncDecStmt:
 				if pkgLevel(v.X) {
 					found = append(found, fset.Position(v.Pos()).String())
@@ -117,5 +148,5 @@ func hookRootWrites(t *testing.T, dir string) []string {
 			return true
 		})
 	}
-	return found
+	return found, declared
 }

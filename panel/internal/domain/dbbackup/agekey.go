@@ -4,6 +4,7 @@ import (
 	"crypto/ecdh"
 	"errors"
 	"strings"
+	"unicode"
 )
 
 // age 的私钥与收件人都是 Bech32（BIP-173）编码：私钥的人类可读部分是 age-secret-key-（文件里写成大写），
@@ -127,4 +128,21 @@ func ageRecipientOf(secret []byte) (string, error) {
 		return "", errors.New("备份解密私钥无效")
 	}
 	return bech32Encode("age", key.PublicKey().Bytes()), nil
+}
+
+// ageReadsIdentityFile 按 age 自己读私钥文件的口径核一遍：age 逐行读（只去掉行尾 CR，不去别的空白），
+// 跳过空行和以 # 开头的行，其余每行都当一把私钥解析；它的 Bech32 不收大小写混写，人类可读部分又必须恰好是
+// 大写的 AGE-SECRET-KEY-。所以除空行和注释外，每行都要整行大写、不含任何空白。封条这边的派生更宽
+// （去空白、转大写），这里补上 age 的口径：age 读不了的文件，封条再对也恢复不了
+func ageReadsIdentityFile(raw []byte) error {
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if line != strings.ToUpper(line) || strings.IndexFunc(line, unicode.IsSpace) >= 0 {
+			return errors.New("age 读不了这个备份解密私钥文件：私钥行要整行大写、前后不能有空白，空行里不能有空格，注释的 # 要顶格")
+		}
+	}
+	return nil
 }

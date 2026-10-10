@@ -82,9 +82,14 @@ check_tls() {
   fi
 }
 
-# 查库走 deploy/psql.sh（以 .env 里 postgres 超级用户的口令经回环连）；它不在或连不上都算「数据库连不上」
+# 查库走 deploy/psql.sh（以 .env 里 postgres 超级用户的口令经回环连）；它不在或连不上都算「数据库连不上」。
+# psql.sh 连库 5 秒放弃；连上之后每条查询再限 10 秒（锁等待、IO 挂住时不把巡检拖到 systemd 的 120 秒超时，
+# 那样一条告警也发不出）。PGOPTIONS 整个由这里给，调用方环境里的不带进来。
+# 第一条 SELECT 1 失败后（DB_DOWN=1）后面的查询不再去连：已记了「数据库连不上」，不必每条再等一轮
+DB_DOWN=0
 db_query() {
-  "$ROOT/deploy/psql.sh" -X -tAc "$1"
+  [ "$DB_DOWN" != 1 ] || return 1
+  PGOPTIONS='-c statement_timeout=10s' "$ROOT/deploy/psql.sh" -X -tAc "$1"
 }
 
 # 可单测的部分到此为止
@@ -114,7 +119,8 @@ done
 
 #--- 数据库 ---
 if ! db_query 'SELECT 1' >/dev/null 2>&1; then
-  note "数据库连不上"
+  note "数据库连不上（或 10 秒内查不出 SELECT 1）"
+  DB_DOWN=1
 fi
 
 #--- 磁盘 ---

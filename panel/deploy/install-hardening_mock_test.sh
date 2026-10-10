@@ -111,6 +111,25 @@ for flavor in valkey redis; do
     || fail "$flavor drop-in syscall filter: $(grep '^SystemCallFilter=' <<<"$vk")"
 done
 vk="$(native_valkey_hardening_dropin valkey)"
+# PG drop-in 的重启规则：有问题时打印原因并返回 0，没问题返回 1。
+# 不写 Restart 类键（等号两边可以有空格，systemd 也认；RestartForceExitStatus 同样会让它自动重启），不改 ExecStop；
+# postmaster 被杀后的拉起只走 pg-revive.sh（见 pg-revive_mock_test.sh），ExecStopPost 只许这一条
+pg_restart_problem() {
+  local d="$1"
+  if grep -Eiq '^[[:space:]]*(Restart|RestartSec|RestartForceExitStatus|ExecStop)[[:space:]]*=' <<<"$d"; then
+    echo "changes Restart/ExecStop: $(grep -Ei '^[[:space:]]*(Restart|ExecStop)' <<<"$d" | tr '\n' ' ')"; return 0
+  fi
+  if ! { [ "$(grep -Eic '^[[:space:]]*ExecStopPost[[:space:]]*=' <<<"$d")" -eq 1 ] && grep -qx 'ExecStopPost=+/opt/pandora/deploy/pg-revive.sh %i' <<<"$d"; }; then
+    echo "ExecStopPost: $(grep -i execstoppost <<<"$d" | tr '\n' ' ')"; return 0
+  fi
+  return 1
+}
+# 自检：三种放宽写法都得被认出（正则退回只认「Restart=」顶格写法、或不数 ExecStopPost 条数时这里变红）
+base="$(NATIVE_HARDENING=1 native_pg_dropin)"
+pg_restart_problem "$base" && fail "self-check: the real pg drop-in is flagged: $(pg_restart_problem "$base")"
+for m in 'Restart = always' 'RestartForceExitStatus=SIGKILL' 'ExecStopPost=/bin/true'; do
+  pg_restart_problem "$base"$'\n'"$m" >/dev/null || fail "self-check: pg drop-in with '$m' was not flagged"
+done
 # 整份 drop-in：资源约束一直在——内存上限 PostgreSQL 512M（shared_buffers 128MB 加连接与维护内存的余量）、
 # Valkey 160M（maxmemory 96mb 加开销）、MemorySwapMax=0（不换出到硬盘）；隔离段随开关，关掉时资源约束照留
 for sw in 1 0; do
@@ -127,13 +146,7 @@ for sw in 1 0; do
       # postmaster 被 kill -9 后 ExecStop 报「Cluster is not running」，单元结果是 exit-code，on-abnormal 拉不起；
       # postgres 用户有意 pg_ctlcluster stop 的单元结果也是 exit-code，on-failure 会把它拉回来
       [ "$(grep -c '^OOMPolicy=' <<<"$full")" -eq 1 ] && grep -qx 'OOMPolicy=continue' <<<"$full" || fail "pg drop-in (hardening=$sw) lacks OOMPolicy=continue"
-      # 等号两边可以有空格（systemd 也认）；RestartForceExitStatus 同样会让它自动重启
-      if grep -Eiq '^[[:space:]]*(Restart|RestartSec|RestartForceExitStatus|ExecStop)[[:space:]]*=' <<<"$full"; then
-        fail "pg drop-in (hardening=$sw) changes Restart/ExecStop: $(grep -Ei '^[[:space:]]*(Restart|ExecStop)' <<<"$full")"
-      fi
-      # postmaster 被杀后的拉起只走 pg-revive.sh（见 pg-revive_mock_test.sh），ExecStopPost 只许这一条
-      [ "$(grep -Eic '^[[:space:]]*ExecStopPost[[:space:]]*=' <<<"$full")" -eq 1 ] && grep -qx 'ExecStopPost=+/opt/pandora/deploy/pg-revive.sh %i' <<<"$full" \
-        || fail "pg drop-in (hardening=$sw) ExecStopPost: $(grep -i execstoppost <<<"$full")"
+      pg_restart_problem "$full" && fail "pg drop-in (hardening=$sw): $(pg_restart_problem "$full")"
     fi
     while IFS= read -r line; do
       if [ "$sw" = 1 ]; then grep -qxF "$line" <<<"$full" || fail "$kind drop-in lacks $line"

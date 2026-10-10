@@ -7,7 +7,7 @@
 #   ② EXIT_CODE=exited（不论退出码）或没有：什么都不做；
 #   ③ 本单元有 systemd 作业在跑（systemctl stop / restart，停库超时被 systemd 杀掉也是 killed）：不拉；
 #      查不到作业表（systemctl 失败）：不拉，记日志；
-#   ④ 60 秒内已拉起过一次：不再拉，只记日志（防反复崩溃时一直拉）；
+#   ④ 60 秒内已拉起过一次：不再拉，只记日志（防反复崩溃时一直拉）；stamp 在将来（时钟往回跳）不算；
 #   ⑤ 实例名不合法：什么都不做；
 #   ⑥ 静态：PG drop-in 只有这一条 ExecStopPost（以「+」root 跑），发布与安装都带上这个脚本。
 # 真机三例（kill -9 被拉起、postgres 用户 pg_ctlcluster stop 不拉、systemctl stop 不拉）在 panel2 实测，见报告。
@@ -73,6 +73,10 @@ grep -q '^logger .*not reviving again' "$T/calls" || fail "the skipped revive wa
 touch -t 202001010000 "$T/stamp"
 run killed KILL 18-main
 revived || fail 'not revived after the rate-limit window'
+# 时钟往回跳过（stamp 的时间在将来）：不算 60 秒内，照拉
+touch -t 203001010000 "$T/stamp"
+run killed KILL 18-main
+revived || fail 'not revived when the stamp is in the future (clock stepped back)'
 # ⑤ 不合法的实例名
 for inst in '18-main;x' '../18-main' '' ; do
   fresh; run killed KILL "$inst" || true

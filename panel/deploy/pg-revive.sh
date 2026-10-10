@@ -32,9 +32,10 @@ fi
 if awk -v u="$unit" '$2 == u { f = 1 } END { exit !f }' <<<"$jobs"; then
   exit 0                                          # systemctl stop / restart 正在处理这个单元
 fi
-# 60 秒内拉起过：不再拉
+# 60 秒内拉起过：不再拉。差值为负（时钟往回跳过，stamp 在将来）不算，否则会一直不拉
 last="$(stat -c %Y -- "$stamp" 2>/dev/null || stat -f %m -- "$stamp" 2>/dev/null || echo 0)"
-if [ -f "$stamp" ] && [ $(( $(date +%s) - last )) -lt 60 ]; then
+diff=$(( $(date +%s) - last ))
+if [ -f "$stamp" ] && [ "$diff" -ge 0 ] && [ "$diff" -lt 60 ]; then
   log "postmaster of $inst was killed (${EXIT_STATUS:-?}) again within 60 seconds; not reviving again (check journalctl -u $unit)"
   exit 0
 fi

@@ -25,6 +25,8 @@ DOCKER_RE='(^|[^A-Za-z0-9_])docker([^A-Za-z0-9_]|$)|compose'
 # 对一棵 panel 目录树跑全部检查：不过就打印原因、返回 1（自检拿改坏的副本调它）
 #   check_tree <panel 目录>
 # 在子 shell 里跑：bad 直接 exit 1（在 if 里调它时 errexit 不生效，靠 return 会接着往下查、最后误报 PASS）
+# 注意：调用处是 `|| fail` 与 `if`，子 shell 里的 set -e 同样不生效（bash 在这两种上下文里整个关掉 errexit），
+# 所以每条检查都必须显式调 bad；新加的检查不能指望某条命令失败就自动停下（N8）
 check_tree() (
   set -euo pipefail
   PANEL="$(cd -- "$1" && pwd)"; DEPLOY="$PANEL/deploy"
@@ -157,6 +159,21 @@ sed -i.bak 's|"$INSTALL_DIR/checkpoint-sink"|"$INSTALL_DIR/checkpoint-sink2"|' "
 sed -i.bak 's|/opt/pandora/checkpoint-sink"|/opt/pandora/checkpoint-sink2"|' "$T/p/internal/domain/dbbackup/checkpoint_hook.go"; mutant 'a different hook directory in Go'
 # ①④：删掉的文件与布局开关回来
 : >"$T/p/deploy/install-native.sh"; mutant 'install-native.sh coming back'
-printf '\nPANDORA_LAYOUT=docker\n' >>"$T/p/deploy/install-lib.sh"; mutant 'the layout switch coming back'
+# N3：每条规则配一个只有它抓得到的变异（不含 docker 一词的才测得到 ④，否则会被 ③ 先抓住）
+printf '\nPANDORA_LAYOUT=native\n' >>"$T/p/deploy/install-lib.sh"; mutant 'the layout switch coming back (④)'
+printf '\nvar x = "aegis-valkey"\n' >>"$T/p/internal/domain/dbbackup/checkpoint_hook.go"; mutant 'the aegis-valkey container name in Go (④)'
+printf '\n# /opt/aegispanel\n' >>"$T/p/dev/initdb/10-pandora-owner.sql"; mutant 'an old layout path under dev/ (④)'
+printf '\n# x\nDOCKER info\n' >>"$T/p/deploy/psql.sh"; mutant 'an upper-case DOCKER call in a production script (③ case)'
+printf '\nmut3:\n\tDOCKER ps\n' >>"$T/p/Makefile"; mutant 'an upper-case DOCKER call in the Makefile (③ case)'
+printf '\ndocker ps # note\n' >>"$e2e"; mutant 'a docker call with a trailing comment in an e2e script (③ comment exclusion)'
+printf '\nmut4:\n\tdocker ps # note\n' >>"$T/p/Makefile"; mutant 'a docker call with a trailing comment in the Makefile (③ comment exclusion)'
+unit="$(find "$T/p/deploy/systemd" -name '*.service' -print | sort | head -n 1)"
+printf '\nExecStartPre=/usr/bin/docker info\n' >>"$unit"; mutant 'docker in a systemd unit (③ walks deploy/systemd)'
+: >"$T/p/deploy/dev-compose.yaml"; mutant 'an (empty) compose file under deploy/ (①)'
+printf '\ncp deploy/clear-ratelimit.sh "$out/"\n' >>"$T/p/deploy/build-release.sh"; mutant 'build-release.sh shipping a removed file (②)'
+# 改写定义行总会留下「DEV_COMPOSE」一词，先被「Makefile 里的 compose」抓住；只有定义整行没了是这条独有的
+sed -i.bak '/^DEV_COMPOSE[[:space:]]*:*=/d' "$T/p/Makefile"
+cmp -s "$T/p/Makefile" "$HERE/../Makefile" && fail 'mutation premise: the DEV_COMPOSE definition line not found'
+mutant 'the DEV_COMPOSE definition removed (③ definition)'
 
 printf 'deploy single layout static: PASS (%d production files, %d scanned; self-check mutants all detected)\n' "$nprod" "$nscan"

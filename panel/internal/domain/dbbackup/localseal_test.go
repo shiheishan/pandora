@@ -244,6 +244,52 @@ func TestSealChecksTheIdentityAgainstTheRecipient(t *testing.T) {
 	}
 }
 
+// 封之前按 age 自己的解析口径核私钥文件：age 逐行读（只去行尾 CR），跳过空行和 # 开头的行，其余每行必须是
+// 整行大写、前后没有空白的 AGE-SECRET-KEY-1…。age 读不了的文件，封条再对也恢复不了，所以不封。
+// 核封条（verify）不受影响：派生仍按规范化后的行，这些文件照样核得过已有的封条
+func TestSealRefusesIdentityAgeCannotParse(t *testing.T) {
+	sealTestTrustCurrentUser(t)
+	keys, dir := t.TempDir(), t.TempDir()
+	for _, d := range []string{keys, dir} {
+		if err := os.Chmod(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive, checksum := writeSealFixture(t, dir, "20261010T011540Z", []byte("encrypted-archive-bytes"))
+	for name, body := range map[string]string{
+		"lowercase":         strings.ToLower(sealFixtureKey) + "\n",
+		"mixed-case-hrp":    "age-secret-key-" + sealFixtureKey[len("AGE-SECRET-KEY-"):] + "\n",
+		"leading-space":     " " + sealFixtureKey + "\n",
+		"leading-tab":       "\t" + sealFixtureKey + "\n",
+		"trailing-space":    sealFixtureKey + " \n",
+		"blank-line-spaces": "  \n" + sealFixtureKey + "\n",
+		"indented-comment":  "  # created: x\n" + sealFixtureKey + "\n",
+	} {
+		identity := writeIdentity(t, keys, name+".key", body)
+		if _, err := SealLocalBackup(archive, checksum, identity, sealFixtureRecipient); err == nil {
+			t.Fatalf("%s: sealed with an identity file age cannot parse", name)
+		}
+		if _, err := os.Stat(archive + ".seal"); err == nil {
+			t.Fatalf("%s: a seal was written", name)
+		}
+		// 已有封条仍核得过：核封条不按 age 口径
+		if _, err := loadSealKey(identity); err != nil {
+			t.Fatalf("%s: verification side no longer reads the file: %v", name, err)
+		}
+	}
+	for name, body := range map[string]string{
+		"age-keygen":  "# created: 2026-10-09T14:28:00Z\n# public key: " + sealFixtureRecipient + "\n" + sealFixtureKey + "\n",
+		"crlf":        sealFixtureKey + "\r\n",
+		"blank-lines": "\n\n" + sealFixtureKey + "\n\n",
+		"no-newline":  sealFixtureKey,
+	} {
+		_ = os.Remove(archive + ".seal")
+		if _, err := SealLocalBackup(archive, checksum, writeIdentity(t, keys, name+".ok", body), sealFixtureRecipient); err != nil {
+			t.Fatalf("%s: an identity file age reads was refused: %v", name, err)
+		}
+	}
+}
+
 // Bech32：BIP-173 的有效向量解得开；编码再解码一致；推出的收件人与固定值一致
 func TestAgeKeyBech32(t *testing.T) {
 	for _, v := range []string{"A12UEL5L", "abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw",
@@ -253,7 +299,8 @@ func TestAgeKeyBech32(t *testing.T) {
 		}
 	}
 	// 大小写混写、校验和错、没有人类可读部分（age 不限 90 字符，长度不核）
-	for _, v := range []string{"A12UEL5l", "a12uel5m", "1pzry9x0s0muk"} {
+	// li1dgmt3：BIP-173 的无效向量，校验和太短
+	for _, v := range []string{"A12UEL5l", "a12uel5m", "1pzry9x0s0muk", "li1dgmt3", "10a06t8", "pzry9x0s0muk"} {
 		if _, _, err := bech32Decode(v); err == nil {
 			t.Fatalf("invalid vector %s accepted", v)
 		}
@@ -261,6 +308,23 @@ func TestAgeKeyBech32(t *testing.T) {
 	secret, err := decodeAgeSecretKey(sealFixtureKey)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// 32 字节编成 52 个 5 位组，最后一组低 4 位是填充，必须是 0（age 严格解码）。把填充位改成非 0、
+	// 重算校验和，得到一行校验和正确、age 却不认的私钥，必须拒
+	values, _ := convertBits(secret, 8, 5, true)
+	values[len(values)-1] |= 1
+	hrp := "age-secret-key-"
+	poly := bech32Polymod(append(append(bech32HRPExpand(hrp), values...), 0, 0, 0, 0, 0, 0)) ^ 1
+	var padded strings.Builder
+	padded.WriteString(hrp + "1")
+	for _, v := range values {
+		padded.WriteByte(bech32Charset[v])
+	}
+	for i := 0; i < 6; i++ {
+		padded.WriteByte(bech32Charset[(poly>>(5*(5-i)))&31])
+	}
+	if _, err := decodeAgeSecretKey(strings.ToUpper(padded.String())); err == nil {
+		t.Fatal("a secret key with non-zero padding bits was accepted")
 	}
 	for i, b := range secret {
 		if b != byte(i+1) {

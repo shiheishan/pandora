@@ -8,10 +8,12 @@
 #      postgres 服务的 command 列表只许有 postgres 和成对的「-c」加「键=值」（--键=值、-c键=值、行内写法都红）；
 #      另外几条旁路都不许有，否则参数会在 -c 之外悄悄改掉：dev/initdb 下（先去掉 SQL 的 -- 与 /* */ 注释再匹配）
 #      出现 ALTER SYSTEM、ALTER DATABASE / ROLE / USER … SET，或任何文件写 postgresql.conf / postgresql.auto.conf，
-#      compose 里出现 PGOPTIONS，或 POSTGRES_INITDB_ARGS 带 -c / --set；
+#      compose 里出现 PGOPTIONS，或 POSTGRES_INITDB_ARGS 带 -c / --set（含 -c 连写、与别的短选项连写、${…}）；
+#      compose 的形状按白名单（顶层键、服务名、服务键、postgres 的环境变量，不许锚点 / 别名 / 合并键），
+#      initdb 下只许普通的 .sql / .sh 文件（符号链接、子目录都红）；
 #   ④ Valkey 的启动参数与 install.sh 写进 Valkey 配置的 pandora 块（install-lib.sh 的 native_valkey_hardening_block）
 #      逐项相同；块里的 bind 与 protected-mode 只管主机上的服务（容器靠 ②），口令不在块里，这三项不比。
-# 另把同一套检查跑在几份改坏的副本上（改一个值、删一个参数、端口绑到 0.0.0.0、改 Valkey 内存上限、引号里 # 后的值不同、「#」前无空白不算注释、command 里的 --键=值 与 -c键=值、initdb 里加 ALTER SYSTEM / ALTER … SET / 写 postgresql.auto.conf、compose 里加 PGOPTIONS 或 initdb 的 -c），都必须报错，
+# 另把同一套检查跑在几份改坏的副本上（含合并键、带引号的键、extends、env_file、列表式 environment、符号链接等等价写法，改一个值、删一个参数、端口绑到 0.0.0.0、改 Valkey 内存上限、引号里 # 后的值不同、「#」前无空白不算注释、command 里的 --键=值 与 -c键=值、initdb 里加 ALTER SYSTEM / ALTER … SET / 写 postgresql.auto.conf、compose 里加 PGOPTIONS 或 initdb 的 -c），都必须报错，
 # 免得解析失灵时空过。
 set -euo pipefail
 export LC_ALL=C
@@ -73,8 +75,52 @@ initdb_text() {
     echo ';'
   done < <(find "$1" -type f -print | sort)
 }
-# initdb 里只许 .sql 与 .sh（镜像入口还会执行 .sql.gz、.sql.xz 等压缩文件，grep 看不到里面）
-initdb_odd_files() { find "$1" -type f ! -name '*.sql' ! -name '*.sh' -print; }
+# initdb 里只许普通的 .sql 与 .sh 文件（镜像入口还会执行 .sql.gz、.sql.xz 等压缩文件，grep 看不到里面）；
+# 符号链接、子目录、别的类型一律不许（N2：链接能指向子目录里的压缩包，find -type f 看不到链接）
+initdb_odd_files() {
+  find "$1" -type f ! -name '*.sql' ! -name '*.sh' -print
+  find "$1" -mindepth 1 ! -type f -print
+}
+
+# compose 的形状按白名单核（N2）：等价写法太多（合并键、带引号的键、extends、env_file、列表式 environment……），
+# 逐个列禁止项总有漏，所以反过来只许已知的形状，别的一律红：
+#   - 不许 YAML 锚点、别名、合并键（&x、*x、<<:），不许制表符缩进；
+#   - 顶层只许 name、services、volumes；服务只许 postgres、valkey，且都写成「  名字:」；
+#   - 服务下一层的键是不带引号的裸键、恰好 4 格缩进，且在该服务的白名单里；
+#   - postgres 的 environment 只许映射写法、键在白名单里。
+compose_shape() {
+  awk '
+    function bad(m) { print "SHAPE " NR ": " m ": " $0; err = 1 }
+    /^[ \t]*(#|$)/ { next }
+    /^\t/ || /^ *\t/ { bad("tab indentation"); next }
+    { line = $0; gsub(/"[^"]*"|\047[^\047]*\047/, "\"\"", line) }
+    line ~ /(^|[ \t:\[{,-])[&*][A-Za-z0-9_-]/ || line ~ /^[ \t-]*<<[ \t]*:/ { bad("YAML anchor, alias or merge key"); next }
+    match($0, /[^ ]/) { ind = RSTART - 1 }
+    ind == 0 { svc = ""; top = $0; sub(/:.*/, "", top)
+      if (top != "name" && top != "services" && top != "volumes") bad("top-level key not allowed")
+      section = top; next }
+    section == "services" && ind == 2 { svc = ""; env = 0; block = 0
+      if ($0 == "  postgres:" || $0 == "  valkey:") { svc = substr($0, 3, length($0) - 3) } else bad("service not allowed"); next }
+    section == "services" && ind < 4 { bad("unexpected indentation"); next }
+    section == "services" && ind == 4 { env = 0; block = 0
+      if (!match($0, /^    [a-z_]+:([ \t]|$)/)) { bad("service key must be a bare word"); next }
+      after = $0; sub(/^[^:]*:[ \t]*/, "", after); block = (after ~ /^(#.*)?$/)
+      key = $0; sub(/^    /, "", key); sub(/:.*/, "", key)
+      ok = (svc == "postgres" && key ~ /^(image|container_name|environment|command|ports|volumes|healthcheck)$/) ||
+           (svc == "valkey" && key ~ /^(image|container_name|environment|command|ports|healthcheck)$/)
+      if (!ok) bad("key not allowed in service " svc)
+      if (svc == "postgres" && key == "environment") { env = 1; rest = $0; sub(/^[^:]*:[ \t]*/, "", rest); if (rest !~ /^(#.*)?$/) bad("environment must be a block mapping") }
+      next }
+    section == "services" && ind > 4 && !block { bad("deeper line under a key that already has an inline value"); next }
+    env && ind < 6 { env = 0 }
+    env && ind == 6 {
+      if (!match($0, /^      [A-Z_]+:([ \t]|$)/)) { bad("postgres environment entry must be KEY: value"); next }
+      k = $0; sub(/^      /, "", k); sub(/:.*/, "", k)
+      if (k !~ /^(POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_INITDB_ARGS|PANDORA_DB|PANDORA_DB_OWNER|PANDORA_DB_OWNER_PASSWORD)$/) bad("postgres environment variable not allowed")
+      next }
+    env && ind > 6 { bad("postgres environment value spans lines") }
+  ' "$1"
+}
 
 # 全部 ports 列表项（去引号）
 compose_ports() {
@@ -120,7 +166,9 @@ check() {
     return 1
   fi
   # 旁路：-c 之外不许有别的办法改 PostgreSQL 参数
-  local txt odd
+  local txt odd shape
+  shape="$(compose_shape "$compose")"
+  [ -z "$shape" ] || { echo "the dev compose has a shape the guard does not know (allow-list): $shape"; return 1; }
   odd="$(initdb_odd_files "$initdb")"
   [ -z "$odd" ] || { echo "only .sql and .sh files may live under dev/initdb (the image also runs compressed ones grep cannot read): $odd"; return 1; }
   # postgres 服务不许改 entrypoint：entrypoint 里也能塞 -c 覆盖参数
@@ -139,8 +187,9 @@ check() {
     echo "a file under dev/initdb mentions postgresql.conf / postgresql.auto.conf: parameters must only come from -c"; return 1
   fi
   if grep -rIq PGOPTIONS "$compose" "$initdb"; then echo "PGOPTIONS overrides PostgreSQL parameters outside -c"; return 1; fi
-  if grep -E '^[[:space:]]*POSTGRES_INITDB_ARGS:' "$compose" | grep -Eq '(^|[[:space:]"=])(-c|--set)([[:space:]=]|"|$)'; then
-    echo "POSTGRES_INITDB_ARGS carries -c / --set parameter overrides"; return 1
+  # -c 后面可以直接跟参数（-cwork_mem=…），也可以和别的短选项连写（-kc …）；值里不许 ${…}（从 .env 带进 -c）
+  if grep -E '^[[:space:]]*POSTGRES_INITDB_ARGS:' "$compose" | grep -Eq '(^|[[:space:]"=])(-[A-Za-z]*c|--set)|\$'; then
+    echo "POSTGRES_INITDB_ARGS carries -c / --set parameter overrides (or an interpolated value)"; return 1
   fi
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -255,6 +304,40 @@ check "$COMPOSE" "$CONF" "$T/initdb-gz" >/dev/null && fail "a compressed file un
 sed 's/^    command:$/    entrypoint: ["docker-entrypoint.sh", "postgres", "-c", "work_mem=64MB"]\n    command:/' "$COMPOSE" >"$T/entrypoint.yml"
 cmp -s "$COMPOSE" "$T/entrypoint.yml" && fail "mutation premise: the command: line not found in the dev compose"
 check "$T/entrypoint.yml" "$CONF" >/dev/null && fail "an entrypoint: override on the postgres service was not detected"
+# N2：等价写法逐一测（compose 形状白名单与 initdb 文件类型）。每条：说明|sed 程序；sed 必须真改了文件
+n=0
+while IFS='|' read -r what prog; do
+  n=$((n + 1))
+  sed -e "$prog" "$COMPOSE" >"$T/shape.yml"
+  cmp -s "$COMPOSE" "$T/shape.yml" && fail "mutation premise #$n ($what): sed changed nothing"
+  check "$T/shape.yml" "$CONF" >/dev/null && fail "compose equivalent form #$n ($what) was not detected"
+done <<'BAD'
+merge key from a top-level anchor|s/^services:$/x-pg: \&pg\n  entrypoint: ["sh"]\nservices:/; s/^    image: postgres:18-alpine$/    <<: *pg\n    image: postgres:18-alpine/
+anchor on the postgres command|s/^    command:$/    command: \&cmd/
+anchor and alias inside allowed keys|s/^      PANDORA_DB: /      PANDORA_DB: \&db /; s/^      PANDORA_DB_OWNER: .*/      PANDORA_DB_OWNER: *db/
+quoted entrypoint key|s/^    command:$/    "entrypoint": ["docker-entrypoint.sh", "postgres", "-c", "work_mem=64MB"]\n    command:/
+single-quoted entrypoint key|s/^    command:$/    'entrypoint': [sh]\n    command:/
+extends|s/^    image: postgres:18-alpine$/    image: postgres:18-alpine\n    extends:\n      file: other.yml\n      service: pg/
+env_file|s/^    image: postgres:18-alpine$/    image: postgres:18-alpine\n    env_file: pg.env/
+environment as a list|s/^      POSTGRES_USER: postgres$/      - PGOPTIONS=-c work_mem=64MB\n      POSTGRES_USER: postgres/
+unknown environment variable|s/^      POSTGRES_USER: postgres$/      POSTGRES_USER: postgres\n      PGTZ: UTC/
+quoted environment key|s/^      POSTGRES_USER: postgres$/      POSTGRES_USER: postgres\n      "PGOPTIONS": "-c work_mem=64MB"/
+flow-style environment|s/^    environment:$/    environment: {PGOPTIONS: "-c work_mem=64MB"}\n    x-environment:/
+odd indentation in the postgres service|s/^    image: postgres:18-alpine$/    image: postgres:18-alpine\n     entrypoint: [sh]/
+extra top-level key|s/^volumes:$/x-extra: 1\nvolumes:/
+extra service|s/^volumes:$/  pgproxy:\n    image: x\nvolumes:/
+INITDB_ARGS with -c glued to the value|s/--auth-local=scram-sha-256"/--auth-local=scram-sha-256 -cwork_mem=64MB"/
+INITDB_ARGS with -c clustered after another short option|s/--auth-local=scram-sha-256"/--auth-local=scram-sha-256 -kcwork_mem=64MB"/
+INITDB_ARGS from an interpolated variable|s/--auth-local=scram-sha-256"/--auth-local=scram-sha-256 ${PG_INITDB_EXTRA:-}"/
+BAD
+# initdb：符号链接（指向子目录里的压缩包）、子目录、指向 .sql 的链接都红
+rm -rf "$T/initdb-ln"; cp -R "$INITDB" "$T/initdb-ln"; mkdir -p "$T/initdb-ln/sub"; printf 'x' >"$T/initdb-ln/sub/90.sql.gz"
+ln -s sub/90.sql.gz "$T/initdb-ln/90-link.sql.gz"
+check "$COMPOSE" "$CONF" "$T/initdb-ln" >/dev/null && fail "a symlink under initdb was not detected"
+rm -f "$T/initdb-ln/90-link.sql.gz"
+check "$COMPOSE" "$CONF" "$T/initdb-ln" >/dev/null && fail "a subdirectory under initdb was not detected"
+rm -rf "$T/initdb-ln/sub"; ln -s 10-pandora-owner.sql "$T/initdb-ln/90-link.sql"
+check "$COMPOSE" "$CONF" "$T/initdb-ln" >/dev/null && fail "a symlink named .sql under initdb was not detected"
 # \gexec 也算语句结尾：ALTER ROLE … \gexec 之后另一句里的 SET 不跟它连成「ALTER ROLE … SET」
 rm -rf "$T/initdb-gexec"; cp -R "$INITDB" "$T/initdb-gexec"
 printf '%s\n' "SELECT format('ALTER ROLE %I NOLOGIN', 'x') \\gexec" "UPDATE pg_temp.t SET x = 1;" >"$T/initdb-gexec/90-gexec.sql"

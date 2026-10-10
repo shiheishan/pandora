@@ -200,6 +200,10 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		{"format template with the role as a parameter", "DO $$ BEGIN EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %I', v, 'aegis_app'); END $$;", ""},
 		// I11①：字符串里的「; DROP FUNCTION」不是语句开头
 		{"DROP after a semicolon inside a string", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "DO $$ BEGIN RAISE NOTICE 'x; DROP FUNCTION app.gone(uuid)'; END $$;\n"},
+		// N1：GRANT/REVOKE 不是字面量第一个词时，函数类拼接仍判红（碎片里没有角色也不能悄悄跳过）
+		{"function concat after another statement in the literal", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; REVOKE ALL ON FUNCTION ' || v || ' FROM aegis_app'; END $$;", ""},
+		{"function concat with the role in a later fragment", "DO $$ BEGIN EXECUTE 'SELECT 1; GRANT EXECUTE ON FUNCTION ' || v || ' TO ' || r; END $$;", ""},
+		{"procedure concat after a prefix", "DO $$ BEGIN EXECUTE 'SET LOCAL y = 2; REVOKE ALL ON PROCEDURE ' || v || ' FROM aegis_app'; END $$;", ""},
 	}
 	for _, c := range red {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -496,9 +500,10 @@ func migrationRevokedFromApp(ups []migrationUp, resolve func(kind, sig string) (
 			stmt := strings.Join(strings.Fields(text[start:end]), " ")
 			// 拼接：'REVOKE ALL ON FUNCTION ' || 'app.x(uuid) FROM aegis_app' 被切成碎片，每片单看都不像完整语句。
 			// 碎片是函数类、或还没写出 ON 对象（不知道是什么对象）时判红；明确是表、序列的拼接不管
-			// 只在 GRANT/REVOKE 是字面量第一个词时才算拼接出来的权限语句：'cannot revoke' || … 这类文案不算
-			if end < len(text) && concatAfter.MatchString(text[end:]) && opensSingleQuoted(text, start) &&
-				(functionObjectKind.MatchString(stmt) || !onObject.MatchString(stmt)) {
+			// 已写出函数类对象的碎片一律判红；还没写出 ON 对象的碎片，只在 GRANT/REVOKE 是字面量第一个词时才算
+			// 拼接出来的权限语句（'cannot revoke' || … 这类文案不算）
+			if end < len(text) && concatAfter.MatchString(text[end:]) &&
+				(functionObjectKind.MatchString(stmt) || (!onObject.MatchString(stmt) && opensSingleQuoted(text, start))) {
 				problems = append(problems, fmt.Sprintf("%s: privilege statement built by string concatenation cannot be checked: %s", m.name, stmt))
 				continue
 			}

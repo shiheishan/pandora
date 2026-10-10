@@ -72,7 +72,7 @@ if grep -q 'server_name \\K' "$DEPLOY/healthcheck.sh"; then fail 'old server_nam
 # 查库：安装根目录取脚本自己的位置，只经 deploy/psql.sh
 mkdir -p "$T/root/deploy" "$T/bin"
 cp "$DEPLOY/healthcheck.sh" "$T/root/deploy/healthcheck.sh"
-printf '#!/usr/bin/env bash\nprintf "psql.sh %%s\\n" "$*" >>"%s/calls"\n' "$T" >"$T/root/deploy/psql.sh"
+printf '#!/usr/bin/env bash\nprintf "psql.sh %%s\\n" "$*" >>"%s/calls"\nprintf "PGO=%%s\\n" "${PGOPTIONS:-}" >>"%s/calls"\n' "$T" "$T" >"$T/root/deploy/psql.sh"
 printf '#!/usr/bin/env bash\nprintf "runuser %%s\\n" "$*" >>"%s/calls"\n' "$T" >"$T/bin/runuser"
 chmod +x "$T/root/deploy/psql.sh" "$T/bin/runuser"
 : >"$T/calls"
@@ -83,6 +83,20 @@ chmod +x "$T/root/deploy/psql.sh" "$T/bin/runuser"
   db_query 'SELECT 1'
 ) || fail 'install root or query path wrong'
 grep -qx 'psql.sh -X -tAc SELECT 1' "$T/calls" || fail "db_query did not go through psql.sh: $(cat "$T/calls")"
+# I2：连上了但查询卡住（锁等待、IO 挂住）也不能把巡检挂到 systemd 超时：每条查询带 statement_timeout，
+# 调用方环境里的 PGOPTIONS 不能把它冲掉
+grep -qx 'PGO=-c statement_timeout=10s' "$T/calls" || fail "db_query does not bound the query time: $(cat "$T/calls")"
+: >"$T/calls"
+( export PGOPTIONS='-c statement_timeout=0'; HEALTHCHECK_LIB=1 . "$T/root/deploy/healthcheck.sh"; db_query 'SELECT 3' ) >/dev/null
+grep -qx 'PGO=-c statement_timeout=10s' "$T/calls" || fail "a caller PGOPTIONS overrides the query timeout: $(cat "$T/calls")"
+# 第一条 SELECT 1 已失败（DB_DOWN=1）：后面的查询不再去连，免得每条都再等一轮超时
+: >"$T/calls"
+if ( DB_DOWN=1; HEALTHCHECK_LIB=1 . "$T/root/deploy/healthcheck.sh"; DB_DOWN=1; db_query 'SELECT 4' ) >/dev/null 2>&1; then
+  fail 'db_query succeeded after the database was found down'
+fi
+[ ! -s "$T/calls" ] || fail "db_query still connects after the database was found down: $(cat "$T/calls")"
+grep -Eq 'note "数据库连不上' "$DEPLOY/healthcheck.sh" && grep -Eq '^[[:space:]]*DB_DOWN=1' "$DEPLOY/healthcheck.sh" \
+  || fail 'main flow does not mark the database down after SELECT 1 fails'
 # psql.sh 不在：查询失败（主流程记成「数据库连不上」），不退回 runuser
 rm -f "$T/root/deploy/psql.sh"; : >"$T/calls"
 if ( PATH="$T/bin:$PATH"; HEALTHCHECK_LIB=1 . "$T/root/deploy/healthcheck.sh"; db_query 'SELECT 2' ) 2>/dev/null; then
