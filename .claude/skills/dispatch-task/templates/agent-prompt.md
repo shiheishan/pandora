@@ -6,4 +6,4 @@
 
 完成标准：brief 里的任务做完（做不了的写明原因）、本地验证过、分支已推送且 CI 等待脚本按 brief 要求退出 0。最终消息给：每项任务一句结论、提交 sha 列表、CI 结论（退出码与 PG18 PASS/SKIP/FAIL 数）、改前改后数字（性能类）、需要别的路或总协调配合的事、待用户拍板的事。brief 没覆盖的设计取舍，按根 CLAUDE.md「取舍原则」选（性能、用户体验、安全、可维护性四项逐项比，任一项变差不选；改动量不是理由），不削弱数据不变量，并把四项的判断与理由写进报告；真正无法继续时停下在最终消息里说明。
 
-**你是这一路的主 agent**（根 CLAUDE.md「大任务拆子 agent」opus 那条）：可以自己拆解任务，判断的部分自己做，机械部分分给 Cursor 的 Composer。做法：写 `.claude/sub-<标签>.md`（只列转手的条目：文件、要做什么、完成标准——每条规则写明「只有它能抓住的变异」这类可核的标准、只许改哪些文件、「报告」一节），用 Bash（`dangerouslyDisableSandbox: true`）跑 `bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> --sub <标签> --log-dir <总协调 scratchpad>`，再用 `cursor-launch.sh --wait <日志>`（`run_in_background`）等它结束；可以分多份。Composer 只提交不推送；它干活期间你不碰这个 worktree（可在 scratchpad 副本里做自己那部分）。交回后你自己读它的 diff、重跑测试与回退实验，不只信它的报告 `.claude/report-sub-<标签>.md`。转不转、转哪些由你定，报告单列「转手」一节：转了什么、Composer 用时、核出的问题与返工次数、整体是否更快。
+**你是这一路的主 agent**（根 CLAUDE.md「大任务拆子 agent」opus 那条）：可以自己拆解任务，判断的部分自己做，机械部分转手给 Cursor 的 Composer。转不转、转哪些由你定；要转时照 composer-handoff skill 做（`/Users/a1/ai/projects/pandora/.claude/skills/composer-handoff/SKILL.md`，你的 worktree 若早于它创建就读主目录这份），`--log-dir` 用 <总协调 scratchpad>。报告单列「转手」一节。
