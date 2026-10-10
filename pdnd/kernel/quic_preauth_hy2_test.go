@@ -18,8 +18,9 @@ import (
 // MaxIncomingStreams 是 1<<60：只完成握手、不认证的客户端开流不发完请求头，就能
 // 让服务端堆起任意多的 goroutine，而且 hy2 没有认证超时，连接不断就一直挂着。
 // 现在流数受 ServerMaxIncomingStreams 约束（与 Hysteria 官方服务端缺省一致），
-// 认证前同时在途的请求至多几十条、多出的当场拒掉，不认证的连接到认证超时被关
-// （nativewire/hysteria2 的 preauth_test.go 量回落）。这里经生产适配器量一条连接。
+// 认证前同时在途的请求至多几十条、多出的当场拒掉，读请求头超时只拒那条流，
+// 不认证的连接没有在途请求、空闲到点被关（nativewire/hysteria2 的 preauth_test.go
+// 量回落）。这里经生产适配器量一条连接。
 func TestHysteria2PreAuthStreamFloodIsBounded(t *testing.T) {
 	certPath, keyPath := testXHTTPServerCertFiles(t)
 	port := freeUDPPort(t)
