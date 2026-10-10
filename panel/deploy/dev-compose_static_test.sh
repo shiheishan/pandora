@@ -225,7 +225,7 @@ check() {
       n++; vol = $0; sub(/^  /, "", vol); sub(/:.*/, "", vol)
       if (vol != "pgdata") bad = 1; next
     }
-    sec && pg && /^    / { subkey = 1 }
+    sec && pg && /^   / && !/^[ \t]*(#|$)/ { subkey = 1 }
     END { exit (n != 1 || !pg || bad || subkey ? 1 : 0) }' "$compose"; then
     echo "top-level volumes must contain only pgdata: with no nested keys (driver_opts, external, extra volume names, etc.)"; return 1
   fi
@@ -447,6 +447,16 @@ check "$T/vol-other.yml" "$CONF" >/dev/null && fail "an extra top-level volume n
 sed 's/^  pgdata:$/  pgdata: {external: true}/' "$COMPOSE" >"$T/vol-flow.yml"
 cmp -s "$COMPOSE" "$T/vol-flow.yml" && fail "mutation premise: pgdata volume line not found"
 check "$T/vol-flow.yml" "$CONF" >/dev/null && fail "an inline pgdata: {…} mapping was not detected"
+# E1：3 格缩进的子键必须红；4 格纯注释不误判为子键
+awk '/^  pgdata:$/{print; print "   external: true"; next}1' "$COMPOSE" >"$T/vol-ext3.yml"
+cmp -s "$COMPOSE" "$T/vol-ext3.yml" && fail "mutation premise: pgdata volume line not found"
+check "$T/vol-ext3.yml" "$CONF" >/dev/null && fail "external: true with 3-space indent under pgdata was not detected"
+awk '/^  pgdata:$/{print; print "   name: preexisting_volume"; next}1' "$COMPOSE" >"$T/vol-name3.yml"
+cmp -s "$COMPOSE" "$T/vol-name3.yml" && fail "mutation premise: pgdata volume line not found"
+check "$T/vol-name3.yml" "$CONF" >/dev/null && fail "name: preexisting_volume with 3-space indent under pgdata was not detected"
+awk '/^  pgdata:$/{print; print "    # 数据卷说明"; next}1' "$COMPOSE" >"$T/vol-comment4.yml"
+cmp -s "$COMPOSE" "$T/vol-comment4.yml" && fail "mutation premise: pgdata volume line not found"
+check "$T/vol-comment4.yml" "$CONF" >/dev/null || fail "a 4-space indented comment under pgdata was wrongly treated as a subkey"
 
 # 记下跑这些 awk 的是哪个实现（CI 的 ubuntu 是 mawk 还是 gawk、本机是 BSD awk），守卫只用 POSIX awk 的写法
 awk_impl="$(awk --version 2>/dev/null | head -n 1 || true)"
