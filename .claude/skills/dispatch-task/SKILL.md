@@ -58,7 +58,7 @@ description: pandora 总协调把工作派给任务会话、实现型 Claude 子
 
 ## 派给 Composer
 
-用户 10-10 定：Composer 不 build、不 test、不 typecheck，早提交早返回，推送与 CI 也不归它。优先由 opus 主 agent 拆给它（composer-handoff）；总协调直接派整路给它时，收回后由总协调（或派一个 opus）跑验证、推送、等 CI，brief 里「验证」「推送」两节对它不适用。
+用户 10-10 定：Composer 不 build、不 test、不 typecheck，早提交早返回，推送与 CI 也不归它。优先由 opus 主 agent 拆给它（composer-handoff）；总协调直接派整路给它时，收回后由总协调（或派一个 opus）跑验证、推送、等 CI，brief 里「验证」一节和「工作目录与分支」里的推送要求对它不适用。
 
 命令行的固定写法在根 CLAUDE.md，这里用脚本起，不手抄（10-10 手写三次，第一次把模型写错了；Grok 已于 10-10 停用）：
 
@@ -70,7 +70,7 @@ bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> [--dry-run]
 - 脚本让进程脱离会话在后台跑，日志进本会话 scratchpad，打印 TASKS 登记行（含 PID 与日志）和等待命令。等待命令用 Bash 的 `run_in_background` 跑，结束时会话收到通知；这是 Composer 路唯一的完成通知。
 - brief 不用为 Composer 改写：`common-rules.md`「报告」一节已分开两种执行者。Composer 读不到 `~/.claude/CLAUDE.md`，brief 里不能只写「见全局规则」。
 - **上服务器**：根 CLAUDE.md 放行只读巡检（`templates/server-readonly.md`）和照脚本跑的测试（`templates/server-scripted.md`，用户 10-10 同意；故障注入、排查、结果判读仍归 Claude）。把对应模板抄进 brief 并填好机器清单。纯巡检不开 worktree：brief 放主目录 `ops-local/<目录>/brief.md`，用 `cursor-launch.sh --dir <目录>` 起，报告写同目录 `report.md`。脚本会检查 brief 里有这一节。
-- **中途追加范围**：Composer 收不到 SendMessage。等它交回后写进下一次的开工文件（修复轮的 `round-r{N}.md`，或续跑的 `--resume` 段）。
+- **中途追加范围**：见下「在跑的路要改规则或范围」。
 - **交回后**：验收照 accept-task，执行者不同不放宽；是否必审见 adversarial-review 第 1 节。修复轮见该 skill 第 4 节，中断续跑见 resume-work「Composer 的路」。
 
 ## 在跑的路要改规则或范围
@@ -83,7 +83,7 @@ bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> [--dry-run]
 规则更新（主线 <短 sha>）：<一两句改了什么>。你按原 brief 继续；已完成的不重做。<可选：新增归属或「不碰」一句>。不用回复。
 ```
 
-**Cursor 的 Composer 的路**：收不到 SendMessage。等它交回后，把同样信息写进它下一次的开工文件（修复轮 `round-r{N}.md`，或 `cursor-launch.sh --resume "…"` 的续跑段）；与「中途追加范围」同一做法（见「派给 Composer」）。
+**Cursor 的 Composer 的路**：收不到 SendMessage。等它交回后，把同样信息写进它下一次的开工文件（修复轮 `round-r{N}.md`，或 `cursor-launch.sh --resume "…"` 的续跑段）。
 
 ## 坑
 
@@ -93,5 +93,5 @@ bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> [--dry-run]
 - 性能任务：留出集不进 brief（见 bench-eval）。
 - 报告怎么交见 `templates/common-rules.md`「报告」；不用跨会话消息（要用户手动批准，常过期送不到）。
 - 有迁移的几路按号段从小到大合（goose 不接受「库里到了 00106 又冒出没跑过的 00104」，见 `rules/panel-migrations.md`）；没迁移的随时合。brief 里写明号段和合并顺序。叠在集成分支上的路按设计的合并顺序合进集成分支。
-- 中途追加范围：Claude 子 agent 用 SendMessage（写清新增的归属文件与「不碰」，并在 TASKS 记一笔）；Composer 收不到，见「派给 Composer」与「在跑的路要改规则或范围」。别的路归属的文件，改由那一路做（例：订阅地址 /32 问题属 service.go → 发给 w2node，不给 w2render）。
+- 中途追加范围：Claude 子 agent 用 SendMessage（写清新增的归属文件与「不碰」，并在 TASKS 记一笔）；Composer 见「在跑的路要改规则或范围」。别的路归属的文件，改由那一路做（例：订阅地址 /32 问题属 service.go → 发给 w2node，不给 w2render）。
 - 推送的授权边界见 accept-task skill 的「合并」一节（任务分支可推，推 main、删 worktree、删分支另问用户）。

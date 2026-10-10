@@ -13,7 +13,7 @@
   只留「这次的重点」给人写。triggers.py 退出 1（无触发）时照样生成，stderr 提醒。
 - round：填 templates/round-brief.md（第 N 轮修复消息，N ≥ 2）。依据的审查报告：N=2 是 review.md，
   N≥3 是 review-r{N-1}.md；交回存 report-r{N}.md；探针目录是上一次审查的副本。发现逐条留给人写。
-  --executor 按原实现方取模板里 `<仅 Claude>` / `<仅 Composer>` 开头的行（推送与交回的写法），缺省 claude；
+  --executor 按原实现方取模板里 `<仅 Claude>` / `<仅 Composer>` 开头的行（完成标准与交回的写法），缺省 claude；
   composer 的输出用 -o 写成 <worktree>/.claude/round-r{N}.md，再用 dispatch-task 的 cursor-launch.sh --round N 起。
 - rereview：填 templates/rereview-prompt.md（第 N 轮修完后的复审）。范围 <上一轮的头>..<头>；范围里有
   合主线的提交时，自动只取分支自己提交（first-parent、非合并）改过的文件，再加合并时手工解决冲突的文件，

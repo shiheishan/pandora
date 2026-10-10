@@ -1,6 +1,6 @@
 ## 通用要求（第 <N> 次 skill 审查落实）
 
-- 工作目录是你的 worktree（见 prompt），基点 <sha>。所有读写都在 worktree 里，用绝对路径。不要改主目录 /Users/a1/ai/projects/pandora 的任何文件：只可以读主目录的 `.claude/*.md` 证据；不读 `ops-local/**/secrets/` 与 <其他禁读目录>。不登录任何测试机（<正在用的机器> 都有别的路在用）。
+- 工作目录是你的 worktree（见 prompt），基点 <sha>。所有读写都在 worktree 里，用绝对路径。不要改主目录 /Users/a1/ai/projects/pandora 的任何文件：只可以读主目录的 `.claude/*.md` 证据（Claude 路另可调用 `ops-local/memoh-ci` 的两个等待脚本）；不读 `ops-local/**/secrets/` 与 <其他禁读目录>。不登录任何测试机（<正在用的机器> 都有别的路在用）。
 - 审查报告就是你的依据：/Users/a1/ai/projects/pandora/.claude/skill-audit-<N>-part1.md（现有 skill 的问题）与 part2.md（缺的 skill）。先读与你相关的部分，**包括文末的「总协调核对」**，被驳回的条目不做。
 - skill 写法：
   - 先看 2–3 个现有 skill（如 `.claude/skills/ci-triage`、`db-query`、`new-migration`）的格式与密度，照着写。

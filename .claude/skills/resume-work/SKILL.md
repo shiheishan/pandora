@@ -53,7 +53,7 @@ cursor-agent 收不到 SendMessage，续跑就是另起一次。
    - 再另起一次：`bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> [--round N] --resume "<从哪一步续>"`。
    - 脚本会在开工指令末尾加续跑段，内容同上面 Claude 的续跑首句：先回读现场，已完成的不重做，中断时间段记进报告的「中断与偏差」。`<从哪一步续>` 写具体，例如「brief 第 3 项，前两项已提交 abc1234」。
    - 不用 cursor-agent 自带的 `--resume`、`--continue`：文本日志里没有会话 ID；几路同时跑时，「上一个会话」是哪一路说不准（推测，没实测）。
-4. **提交被 gitleaks 钩子拦下**：Composer 不推送，pre-commit 命中 gitleaks 时会停下写进报告。修好命中项后照第 3 步另起，`<从哪一步续>` 写清从哪一项、哪次提交继续。
+4. **提交被 gitleaks 钩子拦下**：Composer 不推送，pre-commit 命中 gitleaks 时会停下写进报告。总协调判定（真秘密按根 CLAUDE.md 红线处理，误报改规则或改写法）后照第 3 步另起，`<从哪一步续>` 写清从哪一项、哪次提交继续。
 
 ## 3. 远端测试：先只读核对，再继续
 

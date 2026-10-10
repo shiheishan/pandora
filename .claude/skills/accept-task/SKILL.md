@@ -16,7 +16,7 @@ description: pandora 总协调验收任务分支并合进主线（或集成分�
 交回时先落报告，按执行者分：
 
 - Claude 子 agent：`scripts/save-report.sh <通知里的 output-file> ../pandora-<名字>/.claude/report.md`（取转录里最后一条带文字的消息；agent 中途「还在等 CI」的临时通知不是终稿，等 `end_turn` 的那次再存）。
-- Cursor 的 Composer：`scripts/save-report.sh <cursor-launch 打印的日志> ../pandora-<名字>/.claude/report.md`。Composer 自己写报告，脚本不覆盖，只核日志末行 `exit=0`、报告非空且没被提交。它没写报告时，脚本把日志全文存过去并退出 1：那只是最终回复，按 brief「报告」逐项补问。**Composer 整路交回时**，总协调先按 verify skill 本地跑、推送、等 CI，再按下面「要核的东西」验收；报告里的命令与 CI 结论对 Composer 不适用，以总协调自己跑的为准。
+- Cursor 的 Composer：`scripts/save-report.sh <cursor-launch 打印的日志> ../pandora-<名字>/.claude/report.md`。Composer 自己写报告，脚本不覆盖，只核日志末行 `exit=0`、报告非空且没被提交。它没写报告时，脚本把日志全文存过去并退出 1：那只是最终回复，按 brief「报告」逐项补问。**Composer 整路交回时**，总协调（或派一个 opus）先按 verify skill 本地跑、推送、等 CI，再按下面「要核的东西」验收；报告里的命令与 CI 结论对 Composer 不适用，以总协调自己跑的为准。
 
 ## 要核的东西
 
