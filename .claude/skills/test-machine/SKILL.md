@@ -72,6 +72,12 @@ bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--renta
 
 删机只删用户点名或明说授权的（10-09 定），用 `vultr-delete.sh --yes`，或由用户在 Vultr 控制台删；agent 不重装、不改套餐。用户在控制台删了之后跑 `unregister.sh <别名>`：去掉 `~/.ssh/config` 的 Host 块、总表一行、`ops-local/vpc-hosts.tsv` 一行，`ssh-keygen -R`，`AGENTS.md` 顶部注明已删（目录保留作记录），重生成私有 gitleaks 规则。结果先拉回 `ops-local/` 再删。
 
+### 删前只读巡检
+
+列删机清单之前先做一次只读巡检，可交 Cursor 的 Grok。brief 以 `ops-local/vultr-test2/idle-check-1010/brief.md` 为模板：只读、不下载文件、报告里不写 IP 与域名。
+
+判断机器上的结果有没有拉回时，先看对应 skill 的同步方向，再决定要不要拉。例：bench-eval 的 evalset 是本机 `ops-local/bench/remote/` 推上去的同步副本，结果已由 `run.sh` 拉回，不用再拉；容器 `bench-pg` 里的 5k 实测库和模板库才要处理，见 bench-eval「删对照机之前」。
+
 ## 坑
 
 - 刚开机头一次 ssh 常报 `Connection timed out during banner exchange`，隔 15 秒重试即可，不是密钥问题（register.sh 已内置重试 3 次）。
