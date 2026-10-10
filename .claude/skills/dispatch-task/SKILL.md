@@ -58,6 +58,8 @@ description: pandora 总协调把工作派给任务会话、实现型 Claude 子
 
 ## 派给 Composer
 
+用户 10-10 定：Composer 不 build、不 test、不 typecheck，早提交早返回，推送与 CI 也不归它。优先由 opus 主 agent 拆给它（composer-handoff）；总协调直接派整路给它时，收回后由总协调（或派一个 opus）跑验证、推送、等 CI，brief 里「验证」「推送」两节对它不适用。
+
 命令行的固定写法在根 CLAUDE.md，这里用脚本起，不手抄（10-10 手写三次，第一次把模型写错了；Grok 已于 10-10 停用）：
 
 ```bash

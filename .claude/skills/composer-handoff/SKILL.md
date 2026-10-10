@@ -5,7 +5,7 @@ description: opus 子 agent 当一路主 agent 时，把机械部分转手给 Cu
 
 # 转手 Composer
 
-目标：opus 子 agent 负责任务管理、冲突解决、测试和集成，编码默认交给 Composer（用户 10-10 定），收回时质量不打折。规则出处是根 CLAUDE.md「大任务拆子 agent」（opus 那条）；本 skill 只讲怎么做。
+目标：opus 子 agent 负责拆解任务并分配给 Composer、任务管理、冲突解决、测试和集成；编码默认交给 Composer，Composer **不 build、不 test、不 typecheck，早提交早返回**（用户 10-10 定），编译、测试、回退实验全由 opus 收回后做，质量不打折。规则出处是根 CLAUDE.md「大任务拆子 agent」（opus 那条）；本 skill 只讲怎么做。
 
 ## 1. 什么能转
 
@@ -23,7 +23,7 @@ description: opus 子 agent 当一路主 agent 时，把机械部分转手给 Cu
 - **只许改的文件**，逐个列；
 - **每条要做什么**，写到不需要判断的程度；
 - **可核的完成标准**：测试类写「改前红、改后绿」；守卫或变异自检写「每条规则一条只有它能抓住的变异，单退这条规则时那条变异变绿」。w12native 第 10 轮只写了「三条变异」，漏了两条规则的专属变异，是开工单的错，不是 Composer 的错；
-- 要跑的命令（go 加 `GOTOOLCHAIN=go<go.mod 版本>`）。
+- 不写「要跑的命令」：Composer 不跑 build / test / typecheck，按项提交后直接返回。编译错、测试红由你收回后自己修，或写一份新的 sub brief 再转（返工次数记下）。可以把大活拆成几份小的，依次转，每份早交早核。
 
 ## 3. 启动与等待
 
@@ -40,7 +40,7 @@ bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-l
 ## 4. 收回与核对
 
 1. 读 `.claude/report-sub-<标签>.md`，再读 `git log` 与它的全部 diff，查越界改动（只许改的文件之外有没有动）。
-2. 自己重跑开工单里的命令和相关测试；做回退实验（先跑基线，再逐条退掉它的改动看对应测试变红）。不只信它的报告。
+2. 自己跑 build、vet、test、typecheck（Composer 一律不跑）和相关测试；做回退实验（先跑基线，再逐条退掉它的改动看对应测试变红）。不只信它的报告。
 3. 有问题：小的自己改，大的写一份新的 sub brief 再转一次，返工次数记下来。
 4. 和自己那部分一起推送、等 CI（按 verify skill）。
 
