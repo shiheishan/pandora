@@ -20,6 +20,7 @@ description: pandora 新写或修改一个 goose 迁移（panel/migrations）时
 - 跑 `next-number.sh`，用它给的号（编号规则、历史空号不回填见 `rules/panel-migrations.md`）。
 - 文件名 `NNNNN_snake_name.sql`。
 - 几路并行：号段由总协调按 dispatch-task skill 预分，只用自己那段，用不到就空着；合并顺序也在那里。
+- 叠在集成分支上的路（如 S）不取主线号，用设计给的相对编号，见第 7 节。
 - `ratchet.txt` 和往返 `KNOWN` 不给新迁移豁免，必须一次合规。
 
 ## 2. 套样板
@@ -100,7 +101,7 @@ grep -rln --include='*_test.go' -e '<迁移号>_' -e '<函数或表名>' panel/i
 
 ### 合进主线之后
 
-Up 段从此视为已发布。冻结表 `upsegments.txt` 只追加不改：合并时由总协调（accept-task「合并」）用 `upsegment-sha.py <文件>` 追加登记，`--check` 看登记到哪。
+Up 段从此视为已发布。冻结表 `upsegments.txt` 只追加不改：合并时由总协调（accept-task「合并」）用 `upsegment-sha.py <文件>` 追加登记，`--check` 看登记到哪。合进集成分支不算发布，不冻结（第 7 节）。
 
 ## 5. 往返红了：只改 Down
 
@@ -116,3 +117,30 @@ Up 段从此视为已发布。冻结表 `upsegments.txt` 只追加不改：合�
 - **契约与计数随迁移一起改**：seed 模板数；后台路由新用的权限码必须由某个迁移插进 `permissions`（`TestRoutePermissionsExistInCatalog` 扫全部迁移）；加了 PG18 域时 `run-pg18-gates.sh` 的 DOMAINS（相邻行冲突与夹具 id 撞号见 `rules/platform-pg18.md`）。
 - **NO TRANSACTION 文件里的 SET**：会话级 `SET` 的写法见规则；样板在段尾 RESET，免得留给同一条连接上的下一个迁移。中途失败会留下 INVALID 索引，Up 要能重入。
 - **00037–00040 的闸门**：这几个迁移的 Up / Down 要逐版本用 PGOPTIONS 批准，往返脚本的 `MIGRATE_OPTS` 原样带着批准跑；`rollback-to` 不代签，回到这么早只能从备份恢复。修它们的 Down 时，往返里看到的是「已批准」路径。
+
+## 7. 集成分支的相对编号与重编号
+
+几路先叠在一个集成分支上、全部合完再一次并主线时（S，见 dispatch-task「叠在集成分支上的路」），迁移不取主线号：主线在此期间还会前进（S6、C1a、approle B 都带迁移），先取的主线号会和后来者撞号，或排到本该在它之后跑的主线迁移前面。
+
+**写的时候**
+- 用设计给的相对编号，文件名是号段 09000 起的临时号：S-NN 写成 `090NN_<名>.sql`（S-01 → `09001_…`）。临时号排序永远在主线号之后，集成分支合进主线新迁移后，跑的顺序仍是「主线全部 → S 按相对顺序」，和最后并主线时一致。
+- `next-number.sh` 把 09000 起的号单列为临时号，不计入下一个主线号。`check-migrations` 与 migrationlint 都认这个号段（只要求严格递增、不重复）。
+- 迁移注释、Go 与测试里引用别的临时号迁移，写全文件名（`09003_…sql`），重编号时一条 grep 就能找全。
+- 不登记 `upsegments.txt`：还没发布。`ratchet.txt`、往返 `KNOWN` 照样不豁免。
+- 测试机上跑过临时号的库，装不了重编号之后的包（库里版本 09011 大于包里的最大号，`check-migrations.sh` 拒绝）。这种库只用于验证集成分支；并主线后要验证，用新库首装（panel-install）。
+
+**重编号**（集成分支的最后一个提交；设计 §11.3 第 7 条）
+1. 先在集成分支上合最新主线，跑 `next-number.sh` 取主线下一个号 N。按临时号顺序连续映射：09001 → N，09002 → N+1……不留空，相对顺序不变。
+2. `git mv` 改文件名。
+3. 改全部引用，改完下面两条 grep 都应为 0：
+
+   ```bash
+   git grep -nE '090(0[1-9]|[1-9][0-9])_' -- panel pdnd .claude/rules
+   git grep -nwE '090(0[1-9]|[1-9][0-9])' -- panel pdnd .claude/rules
+   ```
+
+   要改的地方：Go 与测试里按文件名读迁移的（`filepath.Join(…, "migrations", "<文件>")`、`migrationSection`）、迁移文件头的 `-- contract-of:`、迁移和 Go 注释里的号、`run-pg18-gates.sh` 的 DOMAINS 注释、`RESERVED-TABLES.md`、规则文件。
+4. `upsegments.txt` 这时不加，并主线时由 accept-task「并主线」一次加。
+5. 自证：`bash panel/deploy/check-migrations_mock_test.sh`；`cd panel && GOTOOLCHAIN=go<go.mod 版本> go test ./tools/migrationlint/ ./internal/platform/db/` 加上第 3 步改到的包；推送后等 GitHub 的 panel-pg18：往返全过，DOMAINS 里各域 0 SKIP（往返只在 GitHub 跑，见第 4 节）。
+
+**和 `rules/panel-migrations.md`「不要重编号」不冲突**：那条管的是进了主线、可能已经装进库的历史号（`goose_db_version` 记着）。临时号从没进过主线，重编号正是为了让它们第一次发布时就拿到主线号。

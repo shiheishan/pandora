@@ -9,14 +9,14 @@ description: pandora 合并前对任务分支的 diff 做只读对抗式审查�
 
 ## 1. 要不要审
 
-在主目录跑（只读）：
+在主目录跑（只读）。`<上游>` 是该路 brief 写的上游分支：一般是主线 `feat/panel-redesign`，叠在集成分支上的路给集成分支（如 S 的 `feat/panel-redesign-s`），见 dispatch-task「叠在集成分支上的路」：
 
 ```bash
-python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesign <分支>
+python3 .claude/skills/adversarial-review/scripts/triggers.py <上游> <分支>
 ```
 
 - 退出 0：有触发，必须审，输出按领域列出命中的文件和新增行。退出 1：不必审，仍按 accept-task 自己读关键 diff。退出 2：范围是空的，分支多半已经合入；事后补审时用合并提交的两个父提交，写成 `M^1 M^2`。
-- 基点要给主线分支名，不要给 brief 里的原基点。分支中途合过主线时，原基点会把合进来的主线改动也算进去：w7pdnd 应该是 43 个文件，用原基点算出来是 161 个。
+- 基点要给上游分支名，不要给 brief 里的原基点。分支中途合过上游时，原基点会把合进来的上游改动也算进去：w7pdnd 应该是 43 个文件，用原基点算出来是 161 个。叠在集成分支上的路给了主线，前面几路已合进集成分支的改动也会算进来。
 - 脚本只看路径和新增行，结果只是线索。下面几种情况脚本可能没命中，也要审：
   - diff 删掉或放宽了某个拒绝条件，包括 409、422、403、触发器、约束。例：w10fix 放开了「控制节点可以批量退役」。
   - 改了面板或节点处理未认证请求的方式。
@@ -30,7 +30,7 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesig
 - **prompt**：用脚本按 `templates/reviewer-prompt.md` 生成，只读：
 
   ```bash
-  python3 -I .claude/skills/adversarial-review/scripts/review-prompt.py first feat/panel-redesign <分支> \
+  python3 -I .claude/skills/adversarial-review/scripts/review-prompt.py first <上游> <分支> \
       --what "<一句话内容>" --scratchpad <总协调的 scratchpad> [--design <设计稿>] -o <scratchpad>/prompt-<名字>.md
   ```
 
@@ -67,7 +67,7 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py feat/panel-redesig
 **第 N 轮修复消息**（N ≥ 2，第二轮 brief 即 N=2）用 SendMessage 发给原实现 agent，它对这块代码最熟；原 agent 的会话已经不在了，就按 dispatch-task 新开一个。照 `templates/round-brief.md` 写，骨架用 `review-prompt.py round <分支> --round N --scratchpad <…>` 生成（填好名字、轮次、worktree、分支、依据的审查报告、交回文件名、探针目录、go 版本）。模板之外要注意：
 
 - 修法写方向，不写逐步操作；有多个方案时让实现方按根 CLAUDE.md「取舍原则」四栏逐项比较，在报告里写比较结果和选择理由（w9cert 第 2 项就是这样定了只追加的签发流水）。
-- 迁移号要重新取：主线可能已经前进了。w9cert 第二轮原定的 00149 比主线已有的 00151 还小，只能改用 00152。
+- 迁移号要重新取：主线可能已经前进了。w9cert 第二轮原定的 00149 比主线已有的 00151 还小，只能改用 00152。叠在集成分支上的路用的是临时号，不重取（见 new-migration「集成分支的相对编号与重编号」）。
 - 消息里写「我合并时改」的条目，当场登记进 accept-task「一波合并」表。
 - 实现方交回后，用 save-report.sh 存成 `report-r{N}.md`，复审员要对着它逐条核。
 

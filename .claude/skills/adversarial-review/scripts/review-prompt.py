@@ -2,12 +2,13 @@
 """只读：按模板拼审查用的 prompt / 消息，把能从 git 算出来的占位都填好，打印到 stdout。
 
 用法（在主目录或任一 worktree 里跑）：
-  review-prompt.py first <主线> <分支> --what "<一句话内容>" --scratchpad <总协调 scratchpad> \\
+  review-prompt.py first <上游> <分支> --what "<一句话内容>" --scratchpad <总协调 scratchpad> \\
       [--name <名字>] [--head <sha>] [--design <设计稿路径>] [-o <输出文件>]
   review-prompt.py round <分支> --round N --scratchpad <…> [--name] [-o]            （别名 round2）
   review-prompt.py rereview <分支> --round N --from <上一轮审查时的头> --scratchpad <…> [--name] [--head] [-o]
 
-- first：填 templates/reviewer-prompt.md。merge-base 用 <主线>（给分支名，不给 brief 里的原基点）；
+- first：填 templates/reviewer-prompt.md。merge-base 用 <上游>（该路的上游分支名：一般是主线，叠在集成分支上的路给集成分支，
+  见 dispatch-task「叠在集成分支上的路」；不给 brief 里的原基点）；
   头缺省取分支当前的提交，写成完整 sha；检查表节名取 triggers.py 命中的领域；材料只列存在的文件。
   只留「这次的重点」给人写。triggers.py 退出 1（无触发）时照样生成，stderr 提醒。
 - round：填 templates/round-brief.md（第 N 轮修复消息，N ≥ 2）。依据的审查报告：N=2 是 review.md，
@@ -204,7 +205,7 @@ def main():
     for c, aliases in (("first", []), ("round", ["round2"]), ("rereview", [])):
         p = sub.add_parser(c, aliases=aliases)
         if c == "first":
-            p.add_argument("main")
+            p.add_argument("main", help="该路的上游分支：主线，或集成分支（如 feat/panel-redesign-s）")
         p.add_argument("branch")
         p.add_argument("--scratchpad", required=True)
         p.add_argument("--name")

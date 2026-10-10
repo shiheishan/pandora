@@ -1,6 +1,6 @@
 ---
 name: resume-work
-description: pandora 会话被打断后的恢复：API 额度用完、桌面 app 或总协调会话重启、本机断网之后，先盘点正在跑的后台 agent、任务 worktree 和测试机上的远端测试，再用 SendMessage 续跑并要求先回读现场；核对远端临时改动（iptables、sysctl、ufw）和被中断的时间窗，在报告里记偏差，不重跑已完成的段。用户说「刚才断了」「额度恢复了」「接着做」「app 重启了」时使用。只给用户汇报进度用 status-report；CI 红了用 ci-triage。
+description: pandora 会话被打断后的恢复：API 额度用完、桌面 app 或总协调会话重启、本机断网之后，先盘点正在跑的后台 agent、任务 worktree 和测试机上的远端测试，再用 SendMessage 续跑并要求先回读现场；核对远端临时改动（iptables、sysctl、ufw）和被中断的时间窗，在报告里记偏差，不重跑已完成的段。agent 没死只是卡住（推送签名失败、1Password SSH agent 锁着）也在这里。用户说「刚才断了」「额度恢复了」「接着做」「app 重启了」「1Password 已解锁」「几路停住了」时使用。只给用户汇报进度用 status-report；CI 红了用 ci-triage。
 ---
 
 # 会话中断后恢复
@@ -23,6 +23,18 @@ bash .claude/skills/status-report/scripts/snapshot.sh
 - 续跑消息第一句固定：
   > 会话刚才中断过。先回读现场和本 worktree 的 `.claude/TASKS.md`：`git log` 看自己做过的提交，`git status` 看没提交的改动；登过测试机的，按机器的 AGENTS.md 只读核对远端进程和临时改动。已完成的段不要重跑；被中断的时间窗记进报告的「中断与偏差」。核对完再接着做下一项。
 - 一次续一路，等它回一句「现场如何」再续下一路，免得几路同时登同一台测试机。
+
+### 没死、只是卡住（先别发消息）
+
+典型：1Password SSH agent 锁着，几路的 `git push` 或 ssh 同时报签名失败，agent 都停在那一步（10-09 夜三路这样停住，总协调手写了 3 条「已解锁，继续」，没按上面的首句）。根因和处置见根 CLAUDE.md「环境与工具坑」：沙箱重试仍失败就要用户解锁，这是没有用户就无法继续的情形。
+
+1. 确认已经解锁。主目录里跑 `git ls-remote --heads origin feat/panel-redesign`（只读，Bash 设 `dangerouslyDisableSandbox: true`）。仍报签名失败，就请用户解锁，解锁之前不续任何一路。
+2. 逐路查它的后台链路有没有自己续上：
+   - 推送：`git -C <worktree> fetch -q origin && git -C <worktree> rev-list --count origin/<分支>..HEAD`，0 就是已经推上去了；报 unknown revision 说明分支还没到远端。
+   - CI 等待：`pgrep -fl '^bash .*memoh-ci/wait-(github|status)\.sh'`，输出里的 sha 对得上这一路的头，就是它还在等结论，不要再开一份。
+   - 它的 output 文件（启动通知里的路径）末尾还在增长，说明它自己重试成功、已经往下做了。
+3. 已经续上的，不发消息（多发一条会打断它在做的事，还可能重复推送）。没续上的，按上面的续跑首句发，首句后面加一句「1Password 已解锁，从被卡住的那一步继续」。仍一次续一路。
+4. 查不清它卡在哪（output 文件没有末尾记录），当作被打断，走上面的流程。
 
 ## 3. 远端测试：先只读核对，再继续
 
