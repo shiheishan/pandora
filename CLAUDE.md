@@ -84,14 +84,13 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 大任务拆子 agent
 
 - 工作量大、能按互不重叠的文件或主题切开的任务（审计、迁移、批量删除、多模块修复），拆给子 agent 并行做。小任务不拆，拆分本身有成本。
-- 四种执行者（用户 10-10 定：原来派 sonnet、haiku 的活默认交 Cursor，Claude 子 agent 主要用 opus）：
-  - **Claude 子 agent，显式传 `model: opus`**：需要深度判断（架构取舍、原因不明的 bug、安全/对抗式审查、方向不明需自主探索）；涉及钱、权限、认证、迁移设计、节点内核的实现（表面边界清楚，实际全是取舍）；以及审查 Grok 交回的分支。
-  - **Cursor 的 Grok**：任务边界清楚、结果能验证的（搜索定位、读代码总结、纯挪动拆文件、按明确规则批量删改、部署脚本、nodesim、前端、审查后照清单的修复轮、只读的服务器巡检）；中等风险的功能实现也可以交给它，交回后派 opus 对抗审查（除只改几行的小件）。
-    - 总协调后台跑 `cursor-agent -p --force --trust --sandbox disabled --workspace <目录> --model grok-4.7-high --output-format text "<开工指令>"`，日志进 scratchpad。开工指令要求先读本文件和 `.claude/brief.md`（brief 照 dispatch-task 的 make-brief 生成）。
-    - Grok 读不到全局规则（`~/.claude/CLAUDE.md`），要上服务器时 brief 里写全红线：先读 `~/ai/servers/README.md` 和该机 `AGENTS.md`，只登点名的机器、只跑 brief 允许的命令、不读不抄秘密、写进文件的 IP 换成占位符。目前只放行只读巡检；会改动服务器的活还用 Claude。
-  - **Cursor 的 Composer 2.5**（`cursor-launch.sh --model composer-2.5`，10-10 试跑与 Grok 同一任务结果相同、更快更省）：纯机械、规则写死的活（按清单删字段与旧兼容、纯挪动、改名、批量替换）。Grok 那条的服务器红线、交回审查规则同样适用。opus 子 agent 自己拆出的机械部分也可以转给它：prompt 里写明 Composer 干活时子 agent 不碰同一 worktree，交回后自己读 diff、重跑测试，报告里标出哪些是转出去的。
-  - **Claude 子 agent，`model: sonnet`**，只用在两处：边界清楚但 Grok 做不了的活（要用浏览器工具的，如 ux-review 的模拟新手；会改动服务器的现场操作）；opus 子 agent 自己再拆的下手（数往返、grep 普查、读代码总结），照各 skill 原写法。
-  - 拿不准归哪类时按 opus 派；Grok 交回的证据核对不过，改派 opus 重做。验收不因执行者不同而放宽。
+- 三种执行者（用户 10-10 定：Claude 子 agent 主要用 opus，机械活交 Cursor 的 Composer；Grok 已停用）：
+  - **Claude 子 agent，显式传 `model: opus`**：所有需要判断的活——架构取舍、原因不明的 bug、安全/对抗式审查、方向不明需自主探索；功能实现（含中等风险的；涉及钱、权限、认证、迁移设计、节点内核的必须是它）；审查 Composer 交回的分支。
+    - **opus 子 agent 可以当它那一路的主 agent**：自己拆解任务，判断的部分自己做，机械部分分给 Composer（可以分多份、依次或互不重叠地并行），收回后自己读 diff、重跑测试与回退实验再交给总协调。做法见 composer-handoff skill（什么能转、开工单模板、`cursor-launch.sh --sub` 启动与等待、收回核对、报告「转手」一节）。派 opus 子 agent 的 prompt 照 dispatch-task 的 `templates/agent-prompt.md`。
+  - **Cursor 的 Composer 2.5**（`cursor-launch.sh`，缺省模型）：纯机械、规则写死、结果能验证的活——按清单批量删改、纯挪动拆文件、改名、补测试与变异自检、补守卫、照审查清单的机械修复轮、搜索定位与读代码总结、只读的服务器巡检。由总协调直接派，或由 opus 子 agent 转手；除只改几行的小件外，交回后派 opus 审查。
+    - Composer 读不到全局规则（`~/.claude/CLAUDE.md`），开工指令要求先读本文件和开工单（brief 照 dispatch-task 的 make-brief 生成）。要上服务器时开工单里写全红线：先读 `~/ai/servers/README.md` 和该机 `AGENTS.md`，只登点名的机器、只跑允许的命令、不读不抄秘密、写进文件的 IP 换成占位符。只放行只读巡检；会改动服务器的活用 Claude。
+  - **Claude 子 agent，`model: sonnet`**，只用在两处：要用浏览器工具的（如 ux-review 的模拟新手）、会改动服务器的现场操作；opus 子 agent 自己再拆的、需要 Claude 工具的下手（照各 skill 原写法）。
+  - 拿不准归哪类时按 opus 派；Composer 交回的证据核对不过，改派 opus 重做。验收不因执行者不同而放宽。
 - 每个子 agent 必须交回：改了哪些文件、跑了什么命令、关键输出。
 - 主会话核对证据后才接受：自己读 diff、重跑关键命令，不只信转述。
 - 收尾附一张表：子任务 | 执行者（模型） | 结论 | 证据。
