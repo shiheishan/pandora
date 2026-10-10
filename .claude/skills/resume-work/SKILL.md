@@ -1,6 +1,6 @@
 ---
 name: resume-work
-description: pandora 会话被打断后的恢复：API 额度用完、桌面 app 或总协调会话重启、本机断网之后，先盘点正在跑的后台 agent（含 Cursor 的 Grok）、任务 worktree 和测试机上的远端测试，再续跑并要求先回读现场（Claude 子 agent 用 SendMessage，Grok 用 cursor-launch.sh --resume 另起一次）；核对远端临时改动（iptables、sysctl、ufw）和被中断的时间窗，在报告里记偏差，不重跑已完成的段。agent 没死只是卡住（推送签名失败、1Password SSH agent 锁着）也在这里。用户说「刚才断了」「额度恢复了」「接着做」「app 重启了」「1Password 已解锁」「几路停住了」时使用。只给用户汇报进度用 status-report；CI 红了用 ci-triage。
+description: pandora 会话被打断后的恢复：API 额度用完、桌面 app 或总协调会话重启、本机断网之后，先盘点正在跑的后台 agent（含 Cursor 的 Composer）、任务 worktree 和测试机上的远端测试，再续跑并要求先回读现场（Claude 子 agent 用 SendMessage，Composer 用 cursor-launch.sh --resume 另起一次）；核对远端临时改动（iptables、sysctl、ufw）和被中断的时间窗，在报告里记偏差，不重跑已完成的段。agent 没死只是卡住（推送签名失败、1Password SSH agent 锁着）也在这里。用户说「刚才断了」「额度恢复了」「接着做」「app 重启了」「1Password 已解锁」「几路停住了」时使用。只给用户汇报进度用 status-report；CI 红了用 ci-triage。
 ---
 
 # 会话中断后恢复
@@ -16,7 +16,7 @@ bash .claude/skills/status-report/scripts/snapshot.sh
 - 主线头与 CI、各任务 worktree 的未合提交与未提交改动、TASKS 未完成项，都在这份输出里。
 - 再读主目录 `.claude/TASKS.md` 顶部的「压缩后先读」与「正在跑」表：每路一行，`agent <ID>` 写在「在做什么」里。表里没写 ID 的，从本会话的启动通知里找；都找不到就问用户，不要另起一个新 agent 重做。
 - 本会话收到过完成通知的 agent 已经结束；没收到的当作还在跑或被打断，不猜结果。
-- Grok 的路在 snapshot 的「cursor-agent」一节：TASKS 里登记的每份日志是在跑、已结束（`exit=N`）还是被打断，以及没登记的 cursor-agent 进程。
+- Composer 的路在 snapshot 的「cursor-agent」一节：TASKS 里登记的每份日志是在跑、已结束（`exit=N`）还是被打断，以及没登记的 cursor-agent 进程。
 
 ## 2. 续跑后台 agent
 
@@ -39,7 +39,7 @@ bash .claude/skills/status-report/scripts/snapshot.sh
 3. 已经续上的，不发消息（多发一条会打断它在做的事，还可能重复推送）。没续上的，按上面的续跑首句发，首句后面加一句「1Password 已解锁，从被卡住的那一步继续」。仍一次续一路。
 4. 查不清它卡在哪（output 文件没有末尾记录），当作被打断，走上面的流程。
 
-### Grok 的路
+### Composer 的路
 
 cursor-agent 收不到 SendMessage，续跑就是另起一次。
 
@@ -53,7 +53,7 @@ cursor-agent 收不到 SendMessage，续跑就是另起一次。
    - 再另起一次：`bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> [--round N] --resume "<从哪一步续>"`。
    - 脚本会在开工指令末尾加续跑段，内容同上面 Claude 的续跑首句：先回读现场，已完成的不重做，中断时间段记进报告的「中断与偏差」。`<从哪一步续>` 写具体，例如「brief 第 3 项，前两项已提交 abc1234」。
    - 不用 cursor-agent 自带的 `--resume`、`--continue`：文本日志里没有会话 ID；几路同时跑时，「上一个会话」是哪一路说不准（推测，没实测）。
-4. **签名失败停住**：开工指令要求 Grok 遇到签名失败就停下写报告，所以它会自己结束。用户解锁后照第 3 步另起，`<从哪一步续>` 写「1Password 已解锁，从推送那一步继续」。
+4. **签名失败停住**：开工指令要求 Composer 遇到签名失败就停下写报告，所以它会自己结束。用户解锁后照第 3 步另起，`<从哪一步续>` 写「1Password 已解锁，从推送那一步继续」。
 
 ## 3. 远端测试：先只读核对，再继续
 
