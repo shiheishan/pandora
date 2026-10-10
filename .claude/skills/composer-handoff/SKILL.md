@@ -1,6 +1,6 @@
 ---
 name: composer-handoff
-description: opus 子 agent 当一路主 agent 时，把机械部分转手给 Cursor 的 Composer（含只读的审查员、设计员把盘点交给它的 --scan 只读盘点）：判断哪些能转、写转手开工单（sub brief）、用 cursor-launch.sh --sub 启动与等待、收回后核 diff 与重跑测试和回退实验、在报告里写「转手」一节。子 agent 想「把这部分交给 Composer」「拆给 Composer」「转手」时使用；总协调直接派整路给 Composer 用 dispatch-task。
+description: opus 子 agent 当一路主 agent 时，把编码默认转手给 Cursor 的 Composer（含只读的审查员、设计员把盘点交给它的 --scan 只读盘点）：判断哪些能转、写转手开工单（sub brief）、用 cursor-launch.sh --sub 启动与等待、收回后核 diff 与重跑测试和回退实验、在报告里写「转手」一节。子 agent 想「把这部分交给 Composer」「拆给 Composer」「转手」时使用；总协调直接派整路给 Composer 用 dispatch-task。
 ---
 
 # 转手 Composer
@@ -32,7 +32,7 @@ bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-l
 ```
 
 - Bash 调用设 `dangerouslyDisableSandbox: true`。模型缺省且只认 composer-2.5。
-- 然后用 Bash 的 `run_in_background` 跑 `cursor-launch.sh --wait <日志>`，结束时会收到通知，不要手写轮询。
+- 然后前台跑 `cursor-launch.sh --wait <日志>`（Bash `timeout` 600000，截断就原样再跑；放后台你会提前结束这一轮，见根 CLAUDE.md「子 agent 等 CI 或等 Composer」），不要手写轮询。
 - 可以分几份：互不重叠的文件可以并行，同一 worktree 同时只能有一个 cursor-agent（脚本会拒绝第二个），要并行就依次起。
 - **Composer 干活期间不碰这个 worktree**。自己那部分在 scratchpad 副本里做（`git -C <worktree> archive HEAD | tar -x -C <副本>`），它交回后再搬进来。
 - Composer 只提交、不推送、不等 CI；推送和 CI 归你。
@@ -50,7 +50,7 @@ bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-l
 
 - 例：把 77 条幂等路由按给定口径逐条列「几个事务、有无外部调用、提交后副作用」；数 `addTraffic(` 的调用点；核设计稿引用的文件:行是否还对。判据要先写死，拿不准的让它列进「待判断」，由你定。
 - 在 scratchpad 建目录（如 `<总协调 scratchpad>/scan-<标签>/`），写 `brief.md`：要读的代码目录（worktree 或 `git archive` 副本，只读）、逐条口径、输出表格的列、「报告」一节。
-- 启动：`bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-launch.sh --scan <目录> --log-dir <总协调 scratchpad>`（`dangerouslyDisableSandbox: true`），再 `--wait <日志>`（`run_in_background`）。报告在 `<目录>/report.md`。
+- 启动：`bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-launch.sh --scan <目录> --log-dir <总协调 scratchpad>`（`dangerouslyDisableSandbox: true`），再前台跑 `--wait <日志>`（同上）。报告在 `<目录>/report.md`。
 - 收回：抽查至少三成条目回读代码；对它读过的 worktree 跑 `git status --porcelain` 确认没被改。它的表只是线索，写进你报告的结论要你核过。
 - 「转手」一节同样要写（用时、抽查数、错几条）。
 

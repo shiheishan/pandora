@@ -16,13 +16,13 @@ description: pandora 总协调验收任务分支并合进主线（或集成分�
 交回时先落报告，按执行者分：
 
 - Claude 子 agent：`scripts/save-report.sh <通知里的 output-file> ../pandora-<名字>/.claude/report.md`（取转录里最后一条带文字的消息；agent 中途「还在等 CI」的临时通知不是终稿，等 `end_turn` 的那次再存）。
-- Cursor 的 Composer：`scripts/save-report.sh <cursor-launch 打印的日志> ../pandora-<名字>/.claude/report.md`。Composer 自己写报告，脚本不覆盖，只核日志末行 `exit=0`、报告非空且没被提交。它没写报告时，脚本把日志全文存过去并退出 1：那只是最终回复，按 brief「报告」逐项补问。
+- Cursor 的 Composer：`scripts/save-report.sh <cursor-launch 打印的日志> ../pandora-<名字>/.claude/report.md`。Composer 自己写报告，脚本不覆盖，只核日志末行 `exit=0`、报告非空且没被提交。它没写报告时，脚本把日志全文存过去并退出 1：那只是最终回复，按 brief「报告」逐项补问。**Composer 整路交回时**，总协调（或派一个 opus）先按 verify skill 本地跑、推送、等 CI，再按下面「要核的东西」验收；报告里的命令与 CI 结论对 Composer 不适用，以总协调自己跑的为准。
 
 ## 要核的东西
 
 1. **范围**：`git diff --stat <上游>...<分支>`（三个点：从合并基点算，去掉上游后来的改动）；`scripts/check-ownership.sh <上游> <分支> <归属清单文件>` 列出归属外的改动。越界的要么有报告里的理由、要么退回。
 2. **关键 diff 自己读**：迁移（Up/Down、编号、RLS、授权、追加写、触发器）、权限与认证、锁与事务边界、缓存的失效路径、对外 JSON 字段。
-3. **独立重跑**：按 verify skill 的本地层，对改到的包重跑 vet/test；报告里引用的关键命令挑几条重跑。
+3. **独立重跑**：按 verify skill 的本地层，对改到的包重跑 vet/test；报告里引用的关键命令挑几条重跑（**Cursor 的 Composer 整路交回**：不依赖报告里的命令列表，总协调按 verify 自己跑）。
 4. **按改动类型补自证**：
    - 纯挪动或拆文件：`cd panel && GOTOOLCHAIN=go<go.mod 版本> go run ./tools/refactorcheck compare -base <sha>^ -head <sha> -tests`（pdnd 加 `-C ../pdnd`），必须 PURE MOVE；
    - 只改注释或文字：`scripts/comment-only.sh <base> <head>` 必须为空；
@@ -44,7 +44,7 @@ description: pandora 总协调验收任务分支并合进主线（或集成分�
 叠在集成分支上的路（dispatch-task「叠在集成分支上的路」）逐路合进集成分支，全部合完再一次并进主线。
 
 **逐路合进集成分支**
-- 在集成分支的 worktree（S 是 `../pandora-s`）里 `git merge --no-ff <分支>`，按设计的合并顺序（S：S0 → S1 → S2 → S3 → S4a → S4b → S7 → S8 → S9）。
+- 在集成分支的 worktree（S 是 `../pandora-s`）里 `git merge --no-ff <分支>`，按设计的合并顺序（S：S0 → S1 → S2 → S3 → S4a → S4b → S7 → S8 → S9 → **S10**；S5u → S5 → S5b、S6 直接进主线，见主目录 `.claude/server-session-design.md` §10）。
 - **不冻结 upsegments**：这些迁移用的是临时号，并主线前还要重编号，现在冻了，重编号后冻结表就对不上。
 - 推集成分支，`wait-status.sh` 与 `wait-github.sh` 都退出 0，再开依赖它的下一路。
 - 主线前进、集成分支要用到时，在同一个 worktree 里 `git merge feat/panel-redesign`，推送等 CI 绿，再通知在跑的子路合集成分支。
