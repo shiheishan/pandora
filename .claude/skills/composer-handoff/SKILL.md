@@ -34,8 +34,8 @@ bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-l
 ```
 
 - Bash 调用设 `dangerouslyDisableSandbox: true`。模型缺省且只认 composer-2.5。
-- **Composer 干活期间不碰这个 worktree**。自己那部分先在 scratchpad 副本里做（`git -C <worktree> archive HEAD | tar -x -C <副本>`），它交回后再搬进来。
-- 起完 Composer 后前台跑 `cursor-launch.sh --wait <日志>`（Bash `timeout` 600000，截断就原样再跑；放后台你会提前结束这一轮，见根 CLAUDE.md「子 agent 等 CI 或等 Composer」），不要手写轮询。
+- **Composer 干活期间不碰这个 worktree**。启动前先打副本快照（`git -C <worktree> archive HEAD | tar -x -C <副本>`，起完再打会带进它早提交的半成品）；起完 Composer 后、前台 `--wait` 之前，在副本里做自己那部分，它交回后再搬进来。
+- 自己那部分做完再前台跑 `cursor-launch.sh --wait <日志>`（Bash `timeout` 600000，截断就原样再跑；放后台你会提前结束这一轮，见根 CLAUDE.md「子 agent 等 CI 或等 Composer」），不要手写轮询。
 - 可以分几份：互不重叠的文件可以并行，同一 worktree 同时只能有一个 cursor-agent（脚本会拒绝第二个），要并行就依次起。
 - Composer 只提交、不推送、不等 CI；推送和 CI 归你。
 

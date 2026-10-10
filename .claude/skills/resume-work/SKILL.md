@@ -17,7 +17,7 @@ bash .claude/skills/status-report/scripts/snapshot.sh
 - 再读主目录 `.claude/TASKS.md` 顶部的「压缩后先读」与「正在跑」表：每路一行，`agent <ID>` 写在「在做什么」里。表里没写 ID 的，从本会话的启动通知里找；都找不到就问用户，不要另起一个新 agent 重做。
 - 本会话收到过完成通知的 agent 已经结束；没收到的当作还在跑或被打断，不猜结果。
 - Composer 的路在 snapshot 的「cursor-agent」一节：TASKS 里登记的每份日志是在跑、已结束（`exit=N`）还是被打断，以及没登记的 cursor-agent 进程。
-- 本机跨小时调度脚本（压测场次编排等）：看 TASKS「压缩后先读」和 `ops-local/` 里对应日志；未用 `setsid -f` 起的会随旧会话退出而停，见根 CLAUDE.md「环境与工具坑」。
+- 本机跨小时调度脚本（压测场次编排等）：看 TASKS「压缩后先读」和 `ops-local/` 里对应日志；没用 `scripts/detach.sh` 起的会随旧会话退出而停，见根 CLAUDE.md「环境与工具坑」。
 
 ## 换账号或新会话接手
 
@@ -25,14 +25,15 @@ bash .claude/skills/status-report/scripts/snapshot.sh
 
 **换号前（旧会话里做）：**
 
-- 会话记录与子 agent 记录备份到 `ops-local/session-backup/<日期>/`（只在要查原话时 grep，别整份读）。
+- 会话记录与子 agent 记录备份到 `ops-local/session-backup/<日期>/`：从 `~/.claude/projects/<项目路径把 / 换成 ->/` 拷本会话的 `<会话 ID>.jsonl` 与同名目录（子 agent 记录在里面）。只在要查原话时 grep，别整份读。
 - 在 TASKS 顶部「压缩后先读」给每路写「从哪一步续」：开工单路径、分支上已推到哪个提交、远端测试跑到哪。
 - 本机会随会话退出的子进程逐条列出，写清续跑命令和原参数（日志里通常有完整命令行）。
 
 **换号后：**
 
-- 不尝试 SendMessage 旧 agent ID；一律新派 opus（或总协调直派 Composer），续跑首句照第 2 节各路的固定首句，并写明从 TASKS 里记的「从哪一步续」。
-- 本机调度脚本：先按下面第 3 节「远端测试：先只读核对」核测试机现场，再用 `setsid -f … > log 2>&1 < /dev/null` 续跑剩下场次（命令与参数从备份日志或 TASKS 抄）。
+- **先判 Composer 死活**：cursor-agent 用 setsid 脱离了会话，换号后照样在跑。按第 2 节「Composer 的路」逐路核 TASKS 登记的 PID 与日志（日志在旧会话的 scratchpad）：还在跑的不重派、不碰它的 worktree，派一个 opus 只做前台 `cursor-launch.sh --wait <旧日志>`，交回后再接手；含 opus 用 `--sub` 转出、还没交回的。
+- Claude 子 agent 的路：不尝试 SendMessage 旧 agent ID，新派同一种执行者（原来是 opus 的派 opus，浏览器或改服务器的派 sonnet），续跑首句照第 2 节各路的固定首句，并写明从 TASKS 里记的「从哪一步续」。
+- 本机调度脚本：先按下面第 3 节「远端测试：先只读核对」核测试机现场，再用 `bash .claude/skills/resume-work/scripts/detach.sh <日志> <命令> [参数…]` 续跑剩下场次（命令与参数从备份日志或 TASKS 抄）。
 
 ## 2. 续跑后台 agent
 
