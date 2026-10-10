@@ -443,11 +443,11 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	reader := bufio.NewReaderSize(conn, ssHeaderReadBuffer)
 	user, destination, body, security, err := a.readRequest(reader)
 	if err != nil {
-		// authID 对不上、头部解不开：读到超时再关，不在读完 16 字节后立刻断
-		// （读错误本身立即返回，读空不会多等）。已认证客户端请求了不支持的选项
-		// 则立刻断开。
+		// authID 对不上、头部解不开、请求头没读全就撞上截止：一直读到对端关
+		// 再关（读错误本身立即返回，读空不会多等）。已认证客户端请求了不支持
+		// 的选项则立刻断开。
 		if !errors.Is(err, errVMessUnsupportedRequest) {
-			drainUntilDeadline(conn)
+			drainUntilPeerClose(conn)
 		}
 		return fmt.Errorf("vmess request: %w", err)
 	}
@@ -458,9 +458,9 @@ func (a *vmessAdapter) serveConn(ctx context.Context, conn net.Conn) error {
 	if !ok {
 		return fmt.Errorf("vmess internal body state missing")
 	}
-	// 重放检查放在清读截止时间之前：重放的请求头与认证失败一样读到超时再关。
+	// 重放检查放在清读截止时间之前：重放的请求头与认证失败一样读到对端关。
 	if !a.acceptAuthID(bodyState.authID) {
-		drainUntilDeadline(conn)
+		drainUntilPeerClose(conn)
 		return markConnError(connErrAuth, fmt.Errorf("vmess replayed request"))
 	}
 	_ = conn.SetReadDeadline(time.Time{})

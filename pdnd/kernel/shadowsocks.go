@@ -226,9 +226,9 @@ func (a *shadowsocksAdapter) serveConn(ctx context.Context, conn net.Conn) error
 	_ = conn.SetReadDeadline(time.Now().Add(requestHeaderTimeout(a.headerTimeout)))
 	user, stream, destination, err := a.readRequest(conn)
 	if err != nil {
-		// 认证失败、salt 重放、首块解不开：读到超时再关，不在读完固定字节
-		// 后立刻断（读错误本身则立即返回，读空不会多等）。
-		drainUntilDeadline(conn)
+		// 认证失败、salt 重放、首块解不开、请求头没读全就撞上截止：一直读到
+		// 对端关再关（读错误本身则立即返回，读空不会多等）。
+		drainUntilPeerClose(conn)
 		return err
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
