@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """只读：判断一个任务分支的改动是否触发合并前的对抗式审查，并按领域列出命中的文件与新增行。
 
-用法：triggers.py <基点> <头> [-C 仓库目录] [--grok]
+用法：triggers.py <基点> <头> [-C 仓库目录] [--composer]
   - 实际比较 merge-base(基点, 头)..头。基点给该路的上游分支名（一般是主线 feat/panel-redesign；叠在集成分支上的路
     给集成分支，如 feat/panel-redesign-s，见 dispatch-task「叠在集成分支上的路」），不给 brief 里的原基点：
     分支中途合过上游时，原基点会把合进来的上游改动也算进去（w7pdnd 从 43 个文件变成 161 个）。
   - 集成分支并主线前：基点给主线、头给集成分支，看整条集成分支。
   - 已合入的分支：基点给合并提交的 ^1，头给 ^2（例：triggers.py M^1 M^2）。
-  - --grok：执行者是 Cursor 的 Grok。除小件外都要审（根 CLAUDE.md「大任务拆子 agent」），不看领域命中；
-    小件 = 领域无命中，且非测试文件的增删合计不超过 GROK_SMALL 行。
-退出码：0 有触发（或 Grok 的非小件），1 无触发，2 参数或 git 出错。
+  - --composer：执行者是 Cursor 的 Composer。除小件外都要审（根 CLAUDE.md「大任务拆子 agent」），不看领域命中；
+    小件 = 领域无命中，且非测试文件的增删合计不超过 COMPOSER_SMALL 行。
+退出码：0 有触发（或 Composer 的非小件），1 无触发，2 参数或 git 出错。
 """
 import re
 import subprocess
@@ -61,7 +61,7 @@ AREAS = [
      r"FOR UPDATE|FOR SHARE|SKIP LOCKED|pg_advisory|LOCK TABLE|InTxSerializable|SERIALIZABLE"
      r"|lease_owner|sync\.(Mutex|RWMutex)|atomic\.|go func"),
 ]
-GROK_SMALL = 30  # Grok 交回可以不审的上限：非测试文件增删合计行数
+COMPOSER_SMALL = 30  # Composer 交回可以不审的上限：非测试文件增删合计行数
 TEST = re.compile(r"(_test\.go|_test\.sh|_test\.ps1|\.test\.tsx?|\.spec\.ts)$|/testdata/|/tests?/")
 CODE = re.compile(r"\.(go|sql|sh)$")
 
@@ -73,9 +73,9 @@ def git(repo, *args):
 def main():
     args = sys.argv[1:]
     repo = "."
-    grok = "--grok" in args
-    if grok:
-        args.remove("--grok")
+    composer = "--composer" in args
+    if composer:
+        args.remove("--composer")
     if "-C" in args:
         i = args.index("-C")
         repo = args[i + 1]
@@ -125,13 +125,13 @@ def main():
             print(f"  新增 {f}: {l[:110]}")
         if len(ls) > 8:
             print(f"  …另 {len(ls) - 8} 行")
-    if grok:
+    if composer:
         n = nontest_lines(numstat)
-        print(f"\n执行者 Grok：非测试文件增删 {n} 行（小件上限 {GROK_SMALL}）")
-        if hit_any or n > GROK_SMALL:
-            print("Grok 交回、不是小件：合并前派 opus 审（豁免见 adversarial-review 第 1 节：只改测试注释文案、纯挪动）")
+        print(f"\n执行者 Composer：非测试文件增删 {n} 行（小件上限 {COMPOSER_SMALL}）")
+        if hit_any or n > COMPOSER_SMALL:
+            print("Composer 交回、不是小件：合并前派 opus 审（豁免见 adversarial-review 第 1 节：只改测试注释文案、纯挪动）")
             return 0
-        print("Grok 小件：可不审（仍按 accept-task 自己读全部 diff）")
+        print("Composer 小件：可不审（仍按 accept-task 自己读全部 diff）")
         return 1
     if not hit_any:
         print("\n无触发：不必做对抗式审查（仍按 accept-task 自己读关键 diff）")
@@ -148,7 +148,7 @@ def nontest_lines(numstat):
         if len(parts) != 3 or TEST.search(parts[2]):
             continue
         if parts[0] == "-":
-            return GROK_SMALL + 1
+            return COMPOSER_SMALL + 1
         total += int(parts[0]) + int(parts[1])
     return total
 

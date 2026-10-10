@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
-# 后台起一次 Cursor 的 Grok（cursor-agent -p，模型固定 grok-4.7-high），日志进总协调的 scratchpad，打印 TASKS 登记行。
+# 后台起一次 Cursor 的 Composer（cursor-agent -p，模型 composer-2.5；Grok 10-10 停用），日志进总协调的 scratchpad，打印 TASKS 登记行。
 # 用法（在主目录或任一 worktree 里跑）：
 #   cursor-launch.sh <名字> [--round N] [--resume "<从哪一步续>"] [--model <模型>] [--log-dir <目录>] [--dry-run]
 #       任务 worktree ../pandora-<名字>。缺省读 .claude/brief.md、报告写 .claude/report.md；
 #       --round N（N ≥ 2）先读 brief 再读 .claude/round-r{N}.md，报告写 .claude/report-r{N}.md（adversarial-review 第 4 节）。
+#   cursor-launch.sh <名字> --sub <标签> [--model composer-2.5] [--resume …] [--log-dir …] [--dry-run]
+#       opus 子 agent 把机械部分转手（根 CLAUDE.md「四种执行者」Composer 那条）：读 .claude/sub-<标签>.md，
+#       报告写 .claude/report-sub-<标签>.md；开工指令取 templates/cursor-prompt.md「子 agent 转手」一节：只提交、不推送、不等 CI。
 #   cursor-launch.sh --dir <只读巡检目录> [--resume …] [--log-dir …] [--dry-run]
 #       读 <目录>/brief.md（必须含 templates/server-readonly.md 的「服务器只读红线」一节），报告写 <目录>/report.md。
 #   cursor-launch.sh --wait <日志>
 #       等日志出现 exit= 行再打印末尾；用 Bash 的 run_in_background 跑，结束时会话收到通知。
-# - 开工指令取自 templates/cursor-prompt.md；--resume 在末尾加续跑段（resume-work「Grok 的路」）。
+# - 开工指令取自 templates/cursor-prompt.md；--resume 在末尾加续跑段（resume-work「Composer 的路」）。
 # - 进程用 setsid 脱离会话（会话重启也不死），PID 写在 <日志>.pid，结束时日志末行是 exit=<退出码>。
 # - --log-dir 缺省是本会话的 scratchpad（由 CLAUDE_CODE_SESSION_ID 推出）；日志名 cursor-<名字>[-r<N>].log，重名加序号。
 # - 同一个目录已有 cursor-agent 在跑、报告文件已存在（续跑除外）、报告没被 git 忽略时拒绝启动。
-# - --model 缺省 grok-4.7-high；只认 grok-4.7-* 与 composer-2.5（10-10 用户要求试 Composer 2.5），名字以 `cursor-agent --list-models` 为准。
+# - --model 缺省且只认 composer-2.5（用户 10-10 停用 Grok），名字以 `cursor-agent --list-models` 为准。
 # - CURSOR_AGENT_BIN 只给试跑桩用，缺省 cursor-agent。
 set -euo pipefail
-MODEL=grok-4.7-high
+MODEL=composer-2.5
 here="$(cd "$(dirname "$0")/.." && pwd)"
 tpl="$here/templates/cursor-prompt.md"
 die() { echo "cursor-launch: $*" >&2; exit 2; }
@@ -25,7 +28,7 @@ if [ "${1:-}" = "--wait" ]; then
   [ -f "$log" ] || die "没有日志 $log"
   while ! grep -q '^exit=' "$log"; do
     if [ -f "$log.pid" ] && ! kill -0 "$(cat "$log.pid")" 2>/dev/null; then
-      echo "进程 $(cat "$log.pid") 已不在，日志没有 exit= 行：当作被打断，按 resume-work「Grok 的路」续跑"
+      echo "进程 $(cat "$log.pid") 已不在，日志没有 exit= 行：当作被打断，按 resume-work「Composer 的路」续跑"
       tail -n 30 "$log"; exit 1
     fi
     sleep 20
@@ -34,15 +37,16 @@ if [ "${1:-}" = "--wait" ]; then
   exit 0
 fi
 
-name="" dir="" round="" resume="" logdir="" dry=0
+name="" dir="" round="" sub="" resume="" logdir="" dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --round) round="${2:?}"; shift 2 ;;
+    --sub) sub="${2:?}"; shift 2 ;;
     --resume) resume="${2:?}"; shift 2 ;;
     --dir) dir="${2:?}"; shift 2 ;;
     --log-dir) logdir="${2:?}"; shift 2 ;;
     --model) MODEL="${2:?}"; shift 2
-      [[ "$MODEL" =~ ^(grok-4\.7-(low|medium|high|xhigh)(-fast)?|composer-2\.5)$ ]] || die "不认识的模型 $MODEL" ;;
+      [[ "$MODEL" == composer-2.5 ]] || die "只认 composer-2.5（Grok 已停用），不认识 $MODEL" ;;
     --dry-run) dry=1; shift ;;
     -*) die "不认识的参数 $1" ;;
     *) [ -z "$name" ] || die "多余的参数 $1"; name="$1"; shift ;;
@@ -51,7 +55,7 @@ done
 
 main="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
 if [ -n "$dir" ]; then
-  [ -z "$name$round" ] || die "--dir 不和 <名字>、--round 一起用"
+  [ -z "$name$round$sub" ] || die "--dir 不和 <名字>、--round、--sub 一起用"
   W="$(cd "$dir" 2>/dev/null && pwd)" || die "目录不存在 $dir"
   name="$(basename "$W")"; branch=""; kind="只读巡检"
   start="$W/brief.md"; report="$W/report.md"
@@ -64,7 +68,11 @@ else
   W="$(dirname "$main")/pandora-$name"; branch="feat/panel-redesign-$name"; kind="任务 worktree"
   [ -d "$W" ] || die "worktree 不存在 $W（先 new-worktree.sh $name）"
   [ "$(git -C "$W" rev-parse --abbrev-ref HEAD)" = "$branch" ] || die "$W 不在分支 $branch 上"
-  if [ -n "$round" ]; then
+  [ -z "$round" ] || [ -z "$sub" ] || die "--round 与 --sub 不一起用"
+  if [ -n "$sub" ]; then
+    [[ "$sub" =~ ^[a-z0-9-]+$ ]] || die "--sub 标签只用小写字母、数字、连字符"
+    start="$W/.claude/sub-$sub.md"; report="$W/.claude/report-sub-$sub.md"
+  elif [ -n "$round" ]; then
     [[ "$round" =~ ^[0-9]+$ ]] && [ "$round" -ge 2 ] || die "--round 至少 2"
     start="$W/.claude/round-r$round.md"; report="$W/.claude/report-r$round.md"
   else
@@ -82,7 +90,7 @@ fi
 
 gover="go$(sed -n 's/^go //p' "$main/panel/go.mod" | head -1)"
 [ "$gover" != go ] || die "读不到 panel/go.mod 的 go 指令"
-section="任务 worktree"; [ -n "$dir" ] && section="只读巡检"
+section="任务 worktree"; [ -n "$dir" ] && section="只读巡检"; [ -n "$sub" ] && section="子 agent 转手"
 prompt="$(awk -v s="## $section" '$0==s{f=1;next} /^## /{f=0} f&&/^```text$/{c=1;next} c&&/^```$/{exit} c{print}' "$tpl")"
 [ -n "$prompt" ] || die "templates/cursor-prompt.md 里找不到「## $section」的 text 块"
 prompt="${prompt//<worktree>/$W}"
@@ -109,7 +117,7 @@ if [ -z "$logdir" ]; then
   logdir="/private/tmp/claude-$(id -u)/$slug/${CLAUDE_CODE_SESSION_ID:-?}/scratchpad"
 fi
 [ -d "$logdir" ] || die "日志目录不存在 $logdir（用 --log-dir 给总协调的 scratchpad）"
-base="$logdir/cursor-$name${round:+-r$round}"
+base="$logdir/cursor-$name${round:+-r$round}${sub:+-sub-$sub}"
 log="$base.log"; i=2
 while [ -e "$log" ]; do log="$base-$i.log"; i=$((i + 1)); done
 
@@ -120,7 +128,7 @@ basept=""
 if [ -z "$dir" ]; then
   basept="$(sed -n '1,5s/^基点 \([^，]*\)，.*上游 \([^。]*\)。.*/基点 \1，上游 \2/p' "$W/.claude/brief.md" | head -1)"
 fi
-label="Cursor $name${round:+ 第 $round 轮}${resume:+ 续跑}"
+label="Cursor $name${round:+ 第 $round 轮}${sub:+ 转手 $sub}${resume:+ 续跑}"
 where="${dir:+$W}"; [ -z "$where" ] && where="../pandora-$name${basept:+（$basept）}"
 
 if [ "$dry" = 1 ]; then

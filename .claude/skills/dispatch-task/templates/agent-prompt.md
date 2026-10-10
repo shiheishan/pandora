@@ -5,3 +5,5 @@
 推送需要 1Password SSH 签名（根 CLAUDE.md「环境与工具坑」）：git push 的 Bash 调用设 dangerouslyDisableSandbox: true；仍失败就在报告里写明，由总协调代推。你写不了 .claude/report.md（环境拦截），**最终消息就是报告**，按 brief「报告」一节写全。
 
 完成标准：brief 里的任务做完（做不了的写明原因）、本地验证过、分支已推送且 CI 等待脚本按 brief 要求退出 0。最终消息给：每项任务一句结论、提交 sha 列表、CI 结论（退出码与 PG18 PASS/SKIP/FAIL 数）、改前改后数字（性能类）、需要别的路或总协调配合的事、待用户拍板的事。brief 没覆盖的设计取舍，按根 CLAUDE.md「取舍原则」选（性能、用户体验、安全、可维护性四项逐项比，任一项变差不选；改动量不是理由），不削弱数据不变量，并把四项的判断与理由写进报告；真正无法继续时停下在最终消息里说明。
+
+**你是这一路的主 agent**（根 CLAUDE.md「大任务拆子 agent」opus 那条）：可以自己拆解任务，判断的部分自己做，机械部分转手给 Cursor 的 Composer。转不转、转哪些由你定；要转时照 composer-handoff skill 做（`/Users/a1/ai/projects/pandora/.claude/skills/composer-handoff/SKILL.md`，你的 worktree 若早于它创建就读主目录这份），`--log-dir` 用 <总协调 scratchpad>。报告单列「转手」一节。
