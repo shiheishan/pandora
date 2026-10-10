@@ -1,6 +1,6 @@
 ---
 name: composer-handoff
-description: opus 子 agent 当一路主 agent 时，把机械部分转手给 Cursor 的 Composer：判断哪些能转、写转手开工单（sub brief）、用 cursor-launch.sh --sub 启动与等待、收回后核 diff 与重跑测试和回退实验、在报告里写「转手」一节。子 agent 想「把这部分交给 Composer」「拆给 Composer」「转手」时使用；总协调直接派整路给 Composer 用 dispatch-task。
+description: opus 子 agent 当一路主 agent 时，把机械部分转手给 Cursor 的 Composer（含只读的审查员、设计员把盘点交给它的 --scan 只读盘点）：判断哪些能转、写转手开工单（sub brief）、用 cursor-launch.sh --sub 启动与等待、收回后核 diff 与重跑测试和回退实验、在报告里写「转手」一节。子 agent 想「把这部分交给 Composer」「拆给 Composer」「转手」时使用；总协调直接派整路给 Composer 用 dispatch-task。
 ---
 
 # 转手 Composer
@@ -45,6 +45,16 @@ bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-l
 2. 自己重跑开工单里的命令和相关测试；做回退实验（先跑基线，再逐条退掉它的改动看对应测试变红）。不只信它的报告。
 3. 有问题：小的自己改，大的写一份新的 sub brief 再转一次，返工次数记下来。
 4. 和自己那部分一起推送、等 CI（按 verify skill）。
+
+## 4b. 只读盘点（审查员、设计员用）
+
+只读的 opus（对抗审查员、设计审查员、做设计或调研的）不能用 `--sub`（它要在 worktree 里提交）。规则写死的盘点交 `--scan`：
+
+- 例：把 77 条幂等路由按给定口径逐条列「几个事务、有无外部调用、提交后副作用」；数 `addTraffic(` 的调用点；核设计稿引用的文件:行是否还对。判据要先写死，拿不准的让它列进「待判断」，由你定。
+- 在 scratchpad 建目录（如 `<总协调 scratchpad>/scan-<标签>/`），写 `brief.md`：要读的代码目录（worktree 或 `git archive` 副本，只读）、逐条口径、输出表格的列、「报告」一节。
+- 启动：`bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-launch.sh --scan <目录> --log-dir <总协调 scratchpad>`（`dangerouslyDisableSandbox: true`），再 `--wait <日志>`（`run_in_background`）。报告在 `<目录>/report.md`。
+- 收回：抽查至少三成条目回读代码；对它读过的 worktree 跑 `git status --porcelain` 确认没被改。它的表只是线索，写进你报告的结论要你核过。
+- 「转手」一节同样要写（用时、抽查数、错几条）。
 
 ## 5. 报告里的「转手」一节
 
