@@ -52,12 +52,15 @@ cat >"$WORK/stub/age" <<'STUB'
 while [ "$#" -gt 0 ]; do case "$1" in --recipient|--identity) shift 2 ;; *) [ "$1" = "${1#-}" ] && exec cat "$1"; shift ;; esac; done
 exec cat
 STUB
-printf '#!/usr/bin/env bash\nprintf "PGDMP-provenance-fixture-%%s\\n" "$*"\n' >"$WORK/stub/pg_dump"
+# 归档要比管道缓冲（64 KiB）大得多：pg_restore 只读目录就退出时，age 会被 SIGPIPE 打断（panel2 演练撞上的问题）
+printf '#!/usr/bin/env bash\nprintf "PGDMP-provenance-fixture-%%s\\n" "$*"\nhead -c 4194304 /dev/zero\n' >"$WORK/stub/pg_dump"
 cat >"$WORK/stub/pg_restore" <<STUB
 #!/usr/bin/env bash
 printf 'pg_restore %s\n' "\$*" >>"$WORK/db.calls"
 case " \$* " in
-  *" --schema-only "*) cat >/dev/null; printf 'ALTER TABLE public.users OWNER TO postgres;\nGRANT SELECT ON TABLE public.users TO aegis_app;\n' ;;
+  # --list 与 --schema-only 像真的 pg_restore 一样读完开头就退出，不读到末尾
+  *" --schema-only "*) head -c 16 >/dev/null; printf 'ALTER TABLE public.users OWNER TO postgres;\nGRANT SELECT ON TABLE public.users TO aegis_app;\n' ;;
+  *" --list"*) head -c 16 >/dev/null ;;
   *) cat >/dev/null ;;
 esac
 STUB

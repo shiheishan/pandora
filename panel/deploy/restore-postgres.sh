@@ -298,7 +298,9 @@ restore_into_target() {
 # 之前就暴露。A valid checksum/TOC is not enough: corrupted data blocks or
 # restore-time SQL can still fail.
 "$PWD/verify-backup.sh" "$archive"
-role_plan="$(age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" | pandora_pg pg_restore --schema-only -f - | archive_role_plan)" \
+# --schema-only 不一定读到归档末尾：剩下的读掉，免得 age 因 SIGPIPE 失败（同 verify-backup.sh 的 --list）
+role_plan="$(age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
+  | { pandora_pg pg_restore --schema-only -f -; plan_rc=$?; cat >/dev/null; exit "$plan_rc"; } | archive_role_plan)" \
   || die "cannot read the roles this archive needs"
 check_restore_roles "$role_plan"
 require_db_owner_role

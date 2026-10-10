@@ -116,8 +116,10 @@ pandora_pg_require pg_restore psql createdb dropdb
 
 (cd "$(dirname "$archive")" && sha256sum --check --status "$(basename "$checksum")") \
   || die "SHA256 verification failed"
+# pg_restore --list 读完目录就退出，不读后面的数据块；不把剩下的读掉，age 会因 SIGPIPE 失败（库稍大就必现，
+# panel2 演练发现），pipefail 把它当成解密失败
 age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$archive" \
-  | pandora_pg pg_restore --list >/dev/null \
+  | { pandora_pg pg_restore --list >/dev/null; list_rc=$?; cat >/dev/null; exit "$list_rc"; } \
   || die "age decryption or pg_restore TOC verification failed"
 
 # AEGIS_VERIFY_RESTORE=1：在临时库里完整恢复一遍（不还原属主与权限，单独校验时用，角色不必齐）；
