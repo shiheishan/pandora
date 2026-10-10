@@ -32,6 +32,8 @@ func TestAnyTLSNativeClientTCPAndUOTUDP(t *testing.T) {
 	t.Run("tls", func(t *testing.T) { runAnyTLSNativeClient(t, true) })
 	// 单次 128KB 写的上下行（帧长 16 位，必须拆帧），挂在这里随 CI 的 interop 门跑。
 	t.Run("large-writes-tls", func(t *testing.T) { runAnyTLSLargeSingleWrites(t, true) })
+	// 复用会话上 sid>=2 的流要收到 cmdSYNACK，否则 v2 客户端 3 秒后关整条会话。
+	t.Run("synack", runAnyTLSSynAckGroup)
 }
 
 func runAnyTLSNativeClient(t *testing.T, useTLS bool) {

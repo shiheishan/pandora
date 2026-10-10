@@ -3,6 +3,7 @@ package kernel
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -52,6 +53,11 @@ type anyTLSAdapter struct {
 
 var _ Adapter = (*anyTLSAdapter)(nil)
 var _ N.TCPConnectionHandlerEx = (*anyTLSAdapter)(nil)
+
+// errAnyTLSStreamRefused 是子流打不开时经 cmdSYNACK 发给客户端的文字。拨号失败、
+// 用户已删、会话已撤销、设备超限一律同一句：不带目标地址、内部原因与实现名，
+// 免得成为指纹或泄露信息；具体原因只进本机的 OnConnError 观测链。
+var errAnyTLSStreamRefused = errors.New("connection failed")
 
 func newAnyTLSAdapter(spec InboundSpec) (Adapter, error) {
 	return &anyTLSAdapter{
@@ -354,6 +360,7 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
+		_ = N.ReportHandshakeFailure(conn, errAnyTLSStreamRefused)
 		_ = conn.Close()
 		return
 	}
@@ -365,6 +372,11 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 		if onClose != nil {
 			defer onClose(nil)
 		}
+		// v2 客户端在复用会话上开流（sid>=2）后等 cmdSYNACK，3 秒收不到就关整条会话。
+		// 拨号成功（或进入 UoT）时回成功；其余每个出口都由这里回中性的失败，
+		// 客户端立刻关这条流、会话照常复用。fork 的 Stream 只报一次，已回过成功时
+		// 这里是空操作；它排在 conn.Close 之前执行，SYNACK 先于 FIN 到达客户端。
+		defer func() { _ = N.ReportHandshakeFailure(conn, errAnyTLSStreamRefused) }()
 		remote := source.TCPAddr()
 		epoch := a.sessions.epoch()
 		name, ok := auth.UserFromContext[string](ctx)
@@ -390,6 +402,11 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 		}
 		defer a.online.leave(user, source.AddrString())
 		if destination.Fqdn == uot.MagicAddress || destination.Fqdn == uot.LegacyMagicAddress {
+			// UoT 不拨上游（出站 socket 按包懒建），进入前就回成功。
+			if err := N.ReportConnHandshakeSuccess(conn, nil); err != nil {
+				a.connErr.addr(StageSession, remote, err)
+				return
+			}
 			if err := a.handleUOT(ctx, conn, source, destination.Fqdn == uot.MagicAddress, index); err != nil {
 				a.connErr.addr(StageSession, remote, err)
 			}
@@ -402,6 +419,10 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 			return
 		}
 		defer upstream.Close()
+		if err := N.ReportConnHandshakeSuccess(conn, upstream); err != nil {
+			a.connErr.addr(StageSession, remote, err)
+			return
+		}
 		// 子流的 Close 语义与 TCP 半关闭不同：沿用「一侧结束即两端全关」。
 		sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
 		_ = index
