@@ -2,9 +2,9 @@
 # 把执行者交回的报告落成文件。用法：save-report.sh <来源> <目标 report.md>
 # - Claude 子 agent：来源给 Agent 通知里的 output 文件（.output 或 .jsonl 转录），取最后一条带文字的 assistant 消息
 #   （中途「等待 CI」之类的临时回复会被后面的终稿覆盖）。它自己写不了 .claude/report.md。
-# - Cursor 的 Grok：来源给 cursor-launch.sh 打印的纯文本日志。Grok 按开工指令自己写目标文件：
+# - Cursor 的 Composer：来源给 cursor-launch.sh 打印的纯文本日志。Composer 按开工指令自己写目标文件：
 #   目标已存在就不动它，只核日志末行 exit=、文件没被 git 跟踪；目标不存在时，把日志全文（去掉 exit= 行）存过去并警告。
-# - 来源与目标是同一个文件（Grok 已写好的 report.md）：只做上面的核对。
+# - 来源与目标是同一个文件（Composer 已写好的 report.md）：只做上面的核对。
 # 退出码：0 存好或核对通过；1 有问题（没找到报告、进程没正常结束、报告被提交了）；2 参数错。
 set -euo pipefail
 src="${1:?用法: save-report.sh <来源> <目标 report.md>}"; dst="${2:?目标文件}"
@@ -65,12 +65,12 @@ if text:
 if text == "":
     sys.exit("转录里没找到带文字的 assistant 消息")
 
-# Grok 路：纯文本日志，或来源就是报告本身
+# Composer 路：纯文本日志，或来源就是报告本身
 rc = 0
 if not same:
     exits = [l for l in lines if l.startswith("exit=")]
     if not exits:
-        print(f"日志没有 exit= 行：cursor-agent 还在跑或被打断（pgrep -fl cursor-agent；被打断按 resume-work「Grok 的路」）", file=sys.stderr)
+        print(f"日志没有 exit= 行：cursor-agent 还在跑或被打断（pgrep -fl cursor-agent；被打断按 resume-work「Composer 的路」）", file=sys.stderr)
         rc = 1
     elif exits[-1] != "exit=0":
         print(f"cursor-agent 非 0 退出：{exits[-1]}，看日志末尾", file=sys.stderr)
@@ -83,8 +83,8 @@ body = "\n".join(l for l in lines if not l.startswith("exit=")).strip()
 if not body:
     sys.exit("日志是空的，也没有报告文件")
 open(dst, "w", encoding="utf-8").write(
-    f"<!-- Grok 没写报告文件，以下是日志全文：{src} -->\n\n{body}\n")
+    f"<!-- Composer 没写报告文件，以下是日志全文：{src} -->\n\n{body}\n")
 print(f"{dst}（{len(body)} 字符，取自日志全文）")
-print("警告：Grok 没按开工指令写报告，日志只是它的最终回复，内容多半不全，验收时按 brief「报告」逐项补问", file=sys.stderr)
+print("警告：Composer 没按开工指令写报告，日志只是它的最终回复，内容多半不全，验收时按 brief「报告」逐项补问", file=sys.stderr)
 sys.exit(rc or 1)
 PY
