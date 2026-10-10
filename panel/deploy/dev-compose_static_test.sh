@@ -220,7 +220,7 @@ check() {
   if ! awk '
     /^volumes:/ { sec = 1; n = 0; pg = 0; bad = 0; subkey = 0; next }
     sec && /^[A-Za-z]/ { sec = 0 }
-    sec && /^  pgdata:/ { pg = 1; n++; next }
+    sec && /^  pgdata:[ \t]*(#.*)?$/ { pg = 1; n++; next }
     sec && /^  [a-zA-Z0-9_-]+:/ {
       n++; vol = $0; sub(/^  /, "", vol); sub(/:.*/, "", vol)
       if (vol != "pgdata") bad = 1; next
@@ -443,5 +443,12 @@ check "$T/vol-ext.yml" "$CONF" >/dev/null && fail "external: true under top-leve
 awk '/^  pgdata:$/{print; print "  other:"; next}1' "$COMPOSE" >"$T/vol-other.yml"
 cmp -s "$COMPOSE" "$T/vol-other.yml" && fail "mutation premise: pgdata volume line not found"
 check "$T/vol-other.yml" "$CONF" >/dev/null && fail "an extra top-level volume name was not detected"
+# 行内写法（flow）也算子键：pgdata: {external: true}
+sed 's/^  pgdata:$/  pgdata: {external: true}/' "$COMPOSE" >"$T/vol-flow.yml"
+cmp -s "$COMPOSE" "$T/vol-flow.yml" && fail "mutation premise: pgdata volume line not found"
+check "$T/vol-flow.yml" "$CONF" >/dev/null && fail "an inline pgdata: {…} mapping was not detected"
 
-echo "dev-compose static: $count PostgreSQL parameters match postgresql-pandora.conf, $(wc -l <<<"$PROD_VALKEY" | tr -d ' ') Valkey settings match install.sh, ports loopback-only, superuser postgres"
+# 记下跑这些 awk 的是哪个实现（CI 的 ubuntu 是 mawk 还是 gawk、本机是 BSD awk），守卫只用 POSIX awk 的写法
+awk_impl="$(awk --version 2>/dev/null | head -n 1 || true)"
+[ -n "$awk_impl" ] || awk_impl="$(awk -W version 2>&1 | head -n 1 || true)"
+echo "dev-compose static: $count PostgreSQL parameters match postgresql-pandora.conf, $(wc -l <<<"$PROD_VALKEY" | tr -d ' ') Valkey settings match install.sh, ports loopback-only, superuser postgres (awk: ${awk_impl:-unknown})"

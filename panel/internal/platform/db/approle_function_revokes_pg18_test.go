@@ -208,6 +208,14 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		{"concat before the object kind after a prefix", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; REVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
 		{"concat after ALL after a prefix", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; REVOKE ALL ' || 'ON FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
 		{"concat right after the verb after a prefix", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; REVOKE ' || 'ALL ON FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		// F1：字面量里 REVOKE 前面隔着注释或 E 串转义，仍是语句开头
+		{"concat after a block comment at the literal start", "DO $$ BEGIN EXECUTE '/* c */ REVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		{"concat after a semicolon and a block comment", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; /* c */ REVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		{"concat after a semicolon and a line comment", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; -- c\n REVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		{"concat after an E-string newline escape", "DO $$ BEGIN EXECUTE E'SET LOCAL x = 1;\\nREVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		// F2：美元引号的字面量同样会被 || 拼接切开
+		{"dollar-quoted function fragment before a concatenation", "DO $$ BEGIN EXECUTE $q$REVOKE ALL ON FUNCTION $q$ || v || ' FROM aegis_app'; END $$;", ""},
+		{"dollar-quoted fragment cut before the object kind", "DO $$ BEGIN EXECUTE $q$REVOKE ALL ON $q$ || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
 	}
 	for _, c := range red {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -245,6 +253,10 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		// G1 放宽后仍不算：分号之后的第一个词不是 GRANT/REVOKE
 		{"message with a semicolon then text mentioning revoke", "DO $$ BEGIN RAISE NOTICE '%', 'step one; then revoke ' || v_id; END $$;", "", nil},
 		{"message with a semicolon then text mentioning grant", "DO $$ BEGIN RAISE NOTICE '%', 'done; see grant ' || v_id; END $$;", "", nil},
+		// F1 放宽后仍不算：注释、转义之外还有别的词；美元引号文案里的 grant 不在开头
+		{"message with a comment then text mentioning revoke", "DO $$ BEGIN RAISE NOTICE '%', '/* note */ please revoke ' || v_id; END $$;", "", nil},
+		{"E-string message with an escape then text mentioning revoke", "DO $$ BEGIN RAISE NOTICE '%', E'line one\\nthen revoke ' || v_id; END $$;", "", nil},
+		{"dollar-quoted message mentioning grant", "DO $$ BEGIN RAISE NOTICE '%', $m$please grant $m$ || v_id; END $$;", "", nil},
 	}
 	for _, c := range green {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -266,7 +278,8 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 
 var (
 	// 一条 REVOKE / GRANT 的起点；语句到分号、单引号（EXECUTE '…' 字面量的结尾）或美元引号为止
-	privilegeStart = regexp.MustCompile(`(?i)\b(?:REVOKE|GRANT)\b`)
+	// GRANT/REVOKE 关键字（第 1 组）：词边界，或紧跟在 E 串的转义 \n \t \r \b \f 之后（E'…;\nREVOKE …'，F1）
+	privilegeStart = regexp.MustCompile(`(?i)(?:\b|\\[ntrbf])(REVOKE|GRANT)\b`)
 	// 单个函数 / 存储过程 / 例程的权限语句：REVOKE|GRANT [GRANT OPTION FOR] ALL|EXECUTE ON FUNCTION|PROCEDURE|ROUTINE 签名清单 FROM|TO 角色
 	functionPrivilegeStatement = regexp.MustCompile(
 		`(?is)^(REVOKE|GRANT)\s+(?:GRANT\s+OPTION\s+FOR\s+)?(?:ALL(?:\s+PRIVILEGES)?|EXECUTE)\s+ON\s+(FUNCTION|PROCEDURE|ROUTINE)\s+(.+?)\s+(FROM|TO)\s+(.+)$`)
@@ -279,8 +292,10 @@ var (
 	gooseDown           = regexp.MustCompile(`(?m)^-- \+goose Down`)
 	// 美元引号的定界符：$$ 或 $tag$（tag 不以数字开头，否则是位置参数 $1）
 	dollarTag = regexp.MustCompile(`^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$`)
-	// 语句被 '…' || '…' 拼接截断：结尾的引号后面跟 ||
-	concatAfter = regexp.MustCompile(`^'\s*\|\|`)
+	// 语句被 '…' || '…' 拼接截断：结尾的单引号或美元引号（$q$ …$q$，F2）后面跟 ||
+	concatAfter = regexp.MustCompile(`^(?:'|\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$)\s*\|\|`)
+	// 文本以美元引号的定界符结尾（$$ 或 $tag$）：权限语句是美元引号字面量的第一个词
+	endsWithDollarTag = regexp.MustCompile(`\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$$`)
 	// 已经写出了「ON 对象」；没写出来说明语句在 ON 之前或之后被截断了
 	onObject = regexp.MustCompile(`(?is)\bON\s+\S`)
 	// DROP 豁免只认语句开头：前一个非空白字符是分号或文本开头
@@ -410,12 +425,18 @@ func statementEnd(s string, from int) int {
 // insideSingleQuoted 看 pos 是不是落在单引号字面量里：'…'（” 是转义的引号）、E'…'（另认 \' 转义）。
 // 美元引号的内容是代码（DO 块的函数体），不算字面量
 func insideSingleQuoted(text string, pos int) bool {
-	in, escapes := false, false
+	_, _, in := singleQuotedOpen(text, pos)
+	return in
+}
+
+// singleQuotedOpen 同 insideSingleQuoted，另返回 pos 所在字面量的开引号位置，以及它是不是 E 串（认反斜杠转义）
+func singleQuotedOpen(text string, pos int) (open int, escapes, in bool) {
+	open = -1
 	for i := 0; i < pos && i < len(text); i++ {
 		c := text[i]
 		if !in {
 			if c == '\'' {
-				in = true
+				in, open = true, i
 				escapes = i > 0 && (text[i-1] == 'E' || text[i-1] == 'e') && (i < 2 || !isIdentByte(text[i-2]))
 			}
 			continue
@@ -429,21 +450,49 @@ func insideSingleQuoted(text string, pos int) bool {
 			in = false
 		}
 	}
-	return in
+	return open, escapes, in
 }
 
-// startsStatementInLiteral 看 pos 是不是单引号字面量里某条语句的第一个词：在字面量里，且前一个非空白字符是
-// 开引号（字面量的第一个词），或是字面量里的分号（'SET LOCAL x = 1; REVOKE …' 里的第二句，G1）。
-// 只认这两种：'cannot revoke'、'step one; then revoke' 这类文案里的 grant/revoke 前面是别的词，不算
+// startsStatementInLiteral 看 pos 是不是字面量里某条语句的第一个词（拼接判红用）：
+//   - 单引号字面量：从开引号到 pos 的正文先还原转义（” 还原成 '；E 串里的 \n、\t 等当空白），再去掉注释
+//     （/* */、-- 到行尾），取最后一个分号之后的部分，剩下全是空白才算（G1、F1：'SET LOCAL x = 1; /* c */ REVOKE …'）；
+//   - 美元引号字面量（$q$…$q$，F2）：pos 前面紧挨着（隔空白）它的开定界符。
+//
+// 'cannot revoke'、'step one; then revoke'、'/* note */ please revoke' 这类文案里，grant/revoke 前面还有别的词，不算
 func startsStatementInLiteral(text string, pos int) bool {
-	if !insideSingleQuoted(text, pos) {
-		return false
+	open, escapes, in := singleQuotedOpen(text, pos)
+	if !in {
+		return endsWithDollarTag.MatchString(strings.TrimRightFunc(text[:pos], unicode.IsSpace))
 	}
-	k := strings.LastIndexFunc(text[:pos], func(r rune) bool { return !unicode.IsSpace(r) })
-	if k < 0 {
-		return false
+	body := stripSQLComments(unescapeLiteral(text[open+1:pos], escapes))
+	if i := strings.LastIndexByte(body, ';'); i >= 0 {
+		body = body[i+1:]
 	}
-	return (text[k] == '\'' && !insideSingleQuoted(text, k)) || (text[k] == ';' && insideSingleQuoted(text, k))
+	return strings.TrimSpace(body) == ""
+}
+
+// unescapeLiteral 还原单引号字面量正文：” → '；E 串里 \n \t \r \b \f 变成空白，其余 \x 变成 x
+func unescapeLiteral(body string, escapes bool) string {
+	var b strings.Builder
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		switch {
+		case c == '\'' && i+1 < len(body) && body[i+1] == '\'':
+			b.WriteByte('\'')
+			i++
+		case escapes && c == '\\' && i+1 < len(body):
+			i++
+			switch body[i] {
+			case 'n', 't', 'r', 'b', 'f':
+				b.WriteByte(' ')
+			default:
+				b.WriteByte(body[i])
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // atStatementStart 看 pos 之前第一个非空白字符是不是分号（或已到文本开头）
@@ -502,11 +551,11 @@ func migrationRevokedFromApp(ups []migrationUp, resolve func(kind, sig string) (
 	for i, m := range ups {
 		text := stripSQLComments(m.up)
 		for from := 0; ; {
-			loc := privilegeStart.FindStringIndex(text[from:])
+			loc := privilegeStart.FindStringSubmatchIndex(text[from:])
 			if loc == nil {
 				break
 			}
-			start, matchEnd := from+loc[0], from+loc[1]
+			start, matchEnd := from+loc[2], from+loc[3]
 			end := statementEnd(text, matchEnd)
 			from = end
 			stmt := strings.Join(strings.Fields(text[start:end]), " ")
