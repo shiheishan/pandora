@@ -1,6 +1,6 @@
 ---
 name: dispatch-task
-description: pandora 总协调把工作派给任务会话、实现型 Claude 子 agent 或 Cursor 的 Grok：从主线（或集成分支）开 worktree、按文件切归属、分迁移号段、写开工说明（brief）、启动并登记清单（Grok 用 cursor-launch.sh 后台起 cursor-agent，含服务器只读巡检的红线片段）；含叠在集成分支上的路（S 的 feat/panel-redesign-s）和删除类任务（先交清单、退场守卫、回退实验）的 brief 写法。要「派任务」「开 worktree」「写 brief / 开工说明」「拆给子 agent 并行做」「开第 N 波」「派 S 的某一路」「派兼容清理 / 删除类任务」「派给 Grok / Cursor」时使用。验收与合并用 accept-task。
+description: pandora 总协调把工作派给任务会话、实现型 Claude 子 agent 或 Cursor 的 Composer：从主线（或集成分支）开 worktree、按文件切归属、分迁移号段、写开工说明（brief）、启动并登记清单（Composer 用 cursor-launch.sh 后台起 cursor-agent，含服务器只读巡检的红线片段）；含叠在集成分支上的路（S 的 feat/panel-redesign-s）和删除类任务（先交清单、退场守卫、回退实验）的 brief 写法。要「派任务」「开 worktree」「写 brief / 开工说明」「拆给子 agent 并行做」「开第 N 波」「派 S 的某一路」「派兼容清理 / 删除类任务」「派给 Composer / Cursor」时使用。验收与合并用 accept-task。
 ---
 
 # 派任务
@@ -46,30 +46,30 @@ description: pandora 总协调把工作派给任务会话、实现型 Claude 子
 
 ## 启动
 
-派给谁（opus、Cursor 的 Grok、sonnet）按根 CLAUDE.md「大任务拆子 agent」，拿不准按 opus。开 worktree、写 brief 对 Claude 子 agent 和 Grok 都一样，只有启动和登记不同。
+派给谁（opus、Cursor 的 Composer、sonnet）按根 CLAUDE.md「大任务拆子 agent」，拿不准按 opus。开 worktree、写 brief 对 Claude 子 agent 和 Composer 都一样，只有启动和登记不同。
 
 - 要读主目录里的长文档（规划、审计、评估），先把子 agent 的结论存成主目录 `.claude/<主题>.md`（git 忽略），brief 里给绝对路径，别把几千字贴进 prompt。
-- 在主目录 `.claude/TASKS.md`「正在跑」表记下：名字、目录、范围、迁移号、派出的基点、执行者与模型，以及续跑凭据（Claude 子 agent 写名字或 ID；Grok 写 PID 与日志路径）。
+- 在主目录 `.claude/TASKS.md`「正在跑」表记下：名字、目录、范围、迁移号、派出的基点、执行者与模型，以及续跑凭据（Claude 子 agent 写名字或 ID；Composer 写 PID 与日志路径）。
 
 **Claude 子 agent**
 - Agent 调用显式传 `model`。
 - 用 `templates/agent-prompt.md`（替换 `<名字>`、`<一句话范围>`、`<总协调 scratchpad>`），后台运行，给 worktree 的绝对路径。模板已写明：推送设 dangerouslyDisableSandbox、最终消息就是报告、机械部分可用 `cursor-launch.sh --sub` 转手 Composer（10-10 起 opus 子 agent 默认可转）。
 - 用户自己开会话时，给一段「发给新会话」的原话，内容同 agent-prompt。
 
-## 派给 Grok
+## 派给 Composer
 
-命令行的固定写法在根 CLAUDE.md，这里用脚本起，不手抄（10-10 手写三次，第一次把模型写错了）：
+命令行的固定写法在根 CLAUDE.md，这里用脚本起，不手抄（10-10 手写三次，第一次把模型写错了；Grok 已于 10-10 停用）：
 
 ```bash
 bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> [--dry-run]
 ```
 
 - 起之前 brief 要在：`new-worktree.sh` 与 `make-brief.py` 照常跑。开工指令由脚本从 `templates/cursor-prompt.md` 填好：先读根 CLAUDE.md 和 brief，报告写进 worktree 的 `.claude/report.md`（不提交），最终回复只写简述。用 `--dry-run` 先看一眼生成的指令。
-- 脚本让进程脱离会话在后台跑，日志进本会话 scratchpad，打印 TASKS 登记行（含 PID 与日志）和等待命令。等待命令用 Bash 的 `run_in_background` 跑，结束时会话收到通知；这是 Grok 路唯一的完成通知。
-- brief 不用为 Grok 改写：`common-rules.md`「报告」一节已分开两种执行者。Grok 读不到 `~/.claude/CLAUDE.md`，brief 里不能只写「见全局规则」。
+- 脚本让进程脱离会话在后台跑，日志进本会话 scratchpad，打印 TASKS 登记行（含 PID 与日志）和等待命令。等待命令用 Bash 的 `run_in_background` 跑，结束时会话收到通知；这是 Composer 路唯一的完成通知。
+- brief 不用为 Composer 改写：`common-rules.md`「报告」一节已分开两种执行者。Composer 读不到 `~/.claude/CLAUDE.md`，brief 里不能只写「见全局规则」。
 - **上服务器**：根 CLAUDE.md 目前只放行只读巡检。把 `templates/server-readonly.md` 抄进 brief 并填好机器清单。纯巡检不开 worktree：brief 放主目录 `ops-local/<目录>/brief.md`，用 `cursor-launch.sh --dir <目录>` 起，报告写同目录 `report.md`。脚本会检查 brief 里有这一节。
-- **中途追加范围**：Grok 收不到 SendMessage。等它交回后写进下一次的开工文件（修复轮的 `round-r{N}.md`，或续跑的 `--resume` 段）。
-- **交回后**：验收照 accept-task，执行者不同不放宽；是否必审见 adversarial-review 第 1 节。修复轮见该 skill 第 4 节，中断续跑见 resume-work「Grok 的路」。
+- **中途追加范围**：Composer 收不到 SendMessage。等它交回后写进下一次的开工文件（修复轮的 `round-r{N}.md`，或续跑的 `--resume` 段）。
+- **交回后**：验收照 accept-task，执行者不同不放宽；是否必审见 adversarial-review 第 1 节。修复轮见该 skill 第 4 节，中断续跑见 resume-work「Composer 的路」。
 
 ## 坑
 
@@ -79,5 +79,5 @@ bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> [--dry-run]
 - 性能任务：留出集不进 brief（见 bench-eval）。
 - 报告怎么交见 `templates/common-rules.md`「报告」；不用跨会话消息（要用户手动批准，常过期送不到）。
 - 有迁移的几路按号段从小到大合（goose 不接受「库里到了 00106 又冒出没跑过的 00104」，见 `rules/panel-migrations.md`）；没迁移的随时合。brief 里写明号段和合并顺序。叠在集成分支上的路按设计的合并顺序合进集成分支。
-- 中途追加范围用 SendMessage 发给该 agent（Grok 收不到，见「派给 Grok」），写清新增的归属文件与「不碰」，并在 TASKS 记一笔；别的路归属的文件，改由那一路做（例：订阅地址 /32 问题属 service.go → 发给 w2node，不给 w2render）。
+- 中途追加范围用 SendMessage 发给该 agent（Composer 收不到，见「派给 Composer」），写清新增的归属文件与「不碰」，并在 TASKS 记一笔；别的路归属的文件，改由那一路做（例：订阅地址 /32 问题属 service.go → 发给 w2node，不给 w2render）。
 - 推送的授权边界见 accept-task skill 的「合并」一节（任务分支可推，推 main、删 worktree、删分支另问用户）。
