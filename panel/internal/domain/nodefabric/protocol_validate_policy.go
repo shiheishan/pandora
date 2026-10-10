@@ -315,10 +315,9 @@ func validateCertificatePaths(fields map[string]string, raw json.RawMessage) {
 	}
 }
 
-// ProtocolConfigWarnings 给存量节点的读接口用：库里的配置不满足现行规则、
-// 但不强制改写的地方，返回给后台看的提示。目前只有证书路径一类。
-//
-// 节点照常下发、照常服务；管理员下次修改协议时校验会要求改正。
+// ProtocolConfigWarnings 给读接口用：不强制改写、但仍要让管理员看见的配置提示。
+// 证书路径在写入时已由 validateCertificatePaths 拒绝，这里不再提示。
+// VMess 裸 tcp 是产品行为（用户 2026-10-07 定），保留。
 func ProtocolConfigWarnings(nodeType string, raw json.RawMessage) []string {
 	var cfg map[string]any
 	if err := json.Unmarshal(raw, &cfg); err != nil || cfg == nil {
@@ -330,15 +329,6 @@ func ProtocolConfigWarnings(nodeType string, raw json.RawMessage) []string {
 		network, _ := kernel["network"].(string)
 		if normalizedNetwork(network) == "tcp" {
 			out = append(out, vmessRawTCPWarning)
-		}
-	}
-	for _, key := range []string{"cert_path", "key_path"} {
-		value, ok := kernel[key].(string)
-		if !ok || value == "" {
-			continue
-		}
-		if problem := certificatePathProblem(value); problem != "" {
-			out = append(out, key+" 「"+value+"」"+problem+"；节点照常服务，下次修改协议时需要改正")
 		}
 	}
 	return out
