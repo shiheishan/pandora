@@ -21,13 +21,18 @@ AREAS = [
                   r"|^panel/internal/api/admin/router"
                   r"|^panel/internal/domain/identity/"
                   r"|^panel/internal/platform/(sessionauth|iamguard|token|credentialrevocation|idempotencybind)/"
-                  r"|^panel/internal/api/node/handlers_auth",
+                  r"|^panel/internal/api/node/(router|server_router)\.go$",
      r"RequirePermission|RequireRecentReauth|Idempotency\(|INSERT INTO (app\.)?permissions|role_permissions"),
     ("秘密与证书", r"^panel/internal/domain/certs/|^panel/internal/platform/(crypto|certbundle|bindingcontract)/"
                   r"|^pdnd/(certstore|certbundle|bindingcontract)/"
                   r"|^panel/deploy/(edge-tls|install|install-native|bootstrap|psql|backup-postgres|restore-postgres|migrate-to-new-host)\.sh$",
      r"\.Seal\(|\.Open\(|Envelope|password|private[_ ]?key|privkey|secret|--password-stdin|chmod 0?600|AAD|PGPASSWORD"),
     ("迁移", r"^panel/migrations/.*\.sql$|^panel/deploy/(configure-app-role\.sql|migrate\.sh|check-migrations\.sh)$",
+     None),
+    # 安装、升级、迁移、备份恢复与节点接入脚本（多以 root 运行）；CI 跑测用的 run-*、test-*、fixtures、文档不算
+    ("部署脚本与安装链", r"^panel/deploy/(?!fixtures/|run-|test-)(?!.*\.md$)"
+                       r"|^pdnd/release/[^/]*\.(sh|service)$"
+                       r"|^panel/internal/api/public/pdnd_install",
      None),
     ("节点内核与协议", r"^pdnd/(kernel|core|internal|outbound|route|node|panel)/|^pdnd/main\.go$"
                      r"|^panel/internal/api/node/"

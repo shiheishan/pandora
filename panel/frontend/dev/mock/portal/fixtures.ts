@@ -59,8 +59,6 @@ export interface SubFixture {
   label: string | null
   /** 挂在这一份上的流量包余量（traffic_pack_grants.subscription_id） */
   packBytes: number
-  /** 升级前买的流量包（迁移时挂到到期最晚那份）还能挪的余量；用户挪过一次后为 0 */
-  legacyPackBytes?: number
   /** 门户换新链接的时刻（毫秒），按份限频用 */
   rotations: number[]
   current_period_start: string
@@ -269,7 +267,7 @@ function build(s: Scenario): PortalState {
   if (s === 'empty') return { subs: [], unattachedBytes: 0, transfers: [], balance: 2650, ledger: [], orders: [], announcements: [], redemptions: [], usedCodes: new Set() }
   const now = Date.now()
   const [std, pro] = [PLANS[0]!, PLANS[1]!]
-  // 流量包 30 GB 挂在第一份上（00138 回填：生效中的里到期最晚的那份）
+  // 流量包 30 GB 挂在第一份上
   const subs = [makeSub({ planId: pro.id, priceId: pro.prices[0]!.id, status: 'active', usedGiB: 312, elapsedDays: 28, resetInDays: 3, expiresInDays: 42, online: 3, sources: 3, packBytes: 30 * GIB })]
   if (s === 'multi') {
     const second = makeSub({ planId: std.id, priceId: ARCHIVED_PRICE_ID, status: 'past_due', usedGiB: 180, elapsedDays: 20, resetInDays: 10, expiresInDays: 5, online: 1, sources: 7 })
@@ -401,7 +399,6 @@ export function subscriptionView(sub: SubFixture) {
     client_name: clientName(sub),
     changeable,
     renew_until: renewable ? new Date(addInterval(base, price)).toISOString() : null,
-    legacy_movable_pack_bytes: sub.legacyPackBytes ?? 0,
   }
 }
 
