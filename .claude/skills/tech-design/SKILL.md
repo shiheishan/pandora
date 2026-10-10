@@ -1,6 +1,6 @@
 ---
 name: tech-design
-description: pandora 出技术设计稿或性能调研。步骤：先核现状给 文件:行；选模板（功能设计 / 性能调研；收拢类用功能设计模板）；派 opus 设计员，它可以把数数交 Composer `--scan`、判断交 opus；上游怎么做、有没有前人指路用 prior-art-research；总协调回读核证据；工程取舍按原则自己定，只把产品取舍编号交用户；用户定案追加在文末；按文件归属切好路，交 dispatch-task。用户说「出个设计」「X 怎么实现」「调研一下性能 / 占用」「去掉本不该做的工作」「收拢 X」时使用；动钱、认证、节点协议、迁移的大功能开工前，也先用它出设计并过定稿前对抗审查。分工：产品规则拿不准用 decision-research，设计定了拆 brief 用 dispatch-task，合并前审 diff 用 adversarial-review（审代码分支；设计稿的定稿前审查在本 skill 第 4 节），SQL 改写判分用 bench-eval。
+description: pandora 出技术设计稿或性能调研。步骤：先核现状给 文件:行；选模板（功能设计 / 性能调研；收拢类用功能设计模板）；派 opus 设计员，它可以把数数交 Composer `--scan`、判断交 opus；单个设计里的上游对照由设计员自己做，跨主题、要建知识库的才用 prior-art-research；总协调回读核证据；工程取舍按原则自己定，只把产品取舍编号交用户；用户定案追加在文末；按文件归属切好路，交 dispatch-task。用户说「出个设计」「X 怎么实现」「调研一下性能 / 占用」「去掉本不该做的工作」「收拢 X」时使用；动钱、认证、节点协议、迁移的大功能开工前，也先用它出设计并过定稿前对抗审查。分工：产品规则拿不准用 decision-research，设计定了拆 brief 用 dispatch-task，合并前审 diff 用 adversarial-review（审代码分支；设计稿的定稿前审查在本 skill 第 4 节），SQL 改写判分用 bench-eval。
 ---
 
 # 技术设计与性能调研
