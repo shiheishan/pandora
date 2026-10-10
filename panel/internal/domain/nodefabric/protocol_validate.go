@@ -11,8 +11,8 @@ import (
 
 var errDuplicateJSONKey = errors.New("duplicate JSON object key")
 
-// ValidateProtocolConfig 校验一次新的协议写入。迁移前 schema_version=0 的记录
-// 可以继续读取；任何新编辑必须升级到当前服务端 Schema。
+// ValidateProtocolConfig 校验一次协议写入。未填协议类型的草稿返回 version 0；
+// 已填的必须是当前服务端 schema。
 func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessage) (int, map[string]string) {
 	fields := map[string]string{}
 	nodeType = CanonicalNodeType(nodeType)
@@ -24,30 +24,6 @@ func ValidateProtocolConfig(nodeType, kernel string, port int, raw json.RawMessa
 	}
 	// sing-box / xray-core 已不再接受新写入，见 protocol_validate_policy.go。
 	validateKernelChoice(fields, kernel)
-	if containsString(legacyProtocolTypes, nodeType) {
-		// 兼容迁移前已经运行的协议。v0 只保证 JSON 对象和大小边界，
-		// 不会写 config_validated_at，也不会冒充已通过版本化 Schema。
-		if len(raw) == 0 || len(raw) > 16*1024 {
-			fields["protocol_config"] = "协议配置必须是 16 KiB 以内的 JSON 对象"
-			return 0, fields
-		}
-		if err := rejectDuplicateJSONKeys(raw); err != nil {
-			if errors.Is(err, errDuplicateJSONKey) {
-				fields["protocol_config"] = "协议配置不能包含重复字段"
-			} else {
-				fields["protocol_config"] = "协议配置必须是合法的 JSON 对象"
-			}
-			return 0, fields
-		}
-		var legacy map[string]any
-		if err := json.Unmarshal(raw, &legacy); err != nil || legacy == nil {
-			fields["protocol_config"] = "协议配置必须是 JSON 对象"
-		} else if len(legacy) > 64 {
-			fields["protocol_config"] = "协议配置字段过多"
-		}
-		return 0, fields
-	}
-
 	if !containsString([]string{"anytls", "http", "hysteria2", "juicity", "mieru", "naive", "shadowsocks", "shadowtls", "socks", "trojan", "tuic", "vless", "vmess"}, nodeType) {
 		fields["node_type"] = "不支持的协议类型"
 		return 0, fields

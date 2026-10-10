@@ -99,8 +99,6 @@ const PROTOCOL_LABELS: Readonly<Record<string, string>> = {
   mieru: 'Mieru',
   socks: 'SOCKS',
   http: 'HTTP',
-  v2ray: 'V2Ray（旧）',
-  hysteria: 'Hysteria（旧）',
 }
 export const protocolLabel = (t: string | null) => (t ? (PROTOCOL_LABELS[t] ?? t) : '未设置协议')
 

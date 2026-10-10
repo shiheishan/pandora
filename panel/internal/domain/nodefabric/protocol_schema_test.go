@@ -2,6 +2,7 @@ package nodefabric
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -260,11 +261,39 @@ func TestValidateProtocolConfigRejectsUnknownAndUnsafeValues(t *testing.T) {
 	}
 }
 
-func TestValidateProtocolConfigKeepsLegacyProtocolsAtVersionZero(t *testing.T) {
-	version, fields := ValidateProtocolConfig(
-		"v2ray", "auto", 443, json.RawMessage(`{"legacy_option":true}`))
-	if version != 0 || len(fields) != 0 {
-		t.Fatalf("version=%d fields=%#v, want compatible v0", version, fields)
+// 没有存量部署：v2ray / hysteria 不再以 version 0 只读兼容出现在 schema 里。
+func TestLegacyReadCompatibleProtocolsAreGone(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(raw)
+		if strings.Contains(src, "legacy-read-compatible") || strings.Contains(src, "legacyProtocolTypes") {
+			t.Fatalf("%s still advertises a legacy-read-compatible protocol", name)
+		}
+	}
+	for _, nodeType := range []string{"v2ray", "hysteria"} {
+		version, fields := ValidateProtocolConfig(nodeType, "auto", 443, json.RawMessage(`{"legacy_option":true}`))
+		if version != 0 || fields["node_type"] != "不支持的协议类型" {
+			t.Fatalf("%s version=%d fields=%#v, want unsupported", nodeType, version, fields)
+		}
+		if IsStableProtocolType(nodeType) {
+			t.Fatalf("%s is still a stable protocol", nodeType)
+		}
+	}
+	for _, schema := range ProtocolSchemas() {
+		if schema.Status != "stable" || schema.Version == 0 {
+			t.Fatalf("schema %s status=%s version=%d", schema.NodeType, schema.Status, schema.Version)
+		}
 	}
 }
 
@@ -294,9 +323,12 @@ func TestValidateProtocolConfigRejectsDuplicateKeys(t *testing.T) {
 
 func TestValidateProtocolConfigReportsMalformedJSONSeparately(t *testing.T) {
 	_, fields := ValidateProtocolConfig(
-		"v2ray", "auto", 443, json.RawMessage(`{"network":`))
-	if got := fields["protocol_config"]; got != "协议配置必须是合法的 JSON 对象" {
+		"shadowsocks", "auto", 443, json.RawMessage(`{"method":`))
+	if got := fields["protocol_config"]; got != "必须是仅包含 method 的 JSON 对象" {
 		t.Fatalf("message=%q, want malformed JSON message", got)
+	}
+	if _, ok := fields["protocol_config.method"]; ok {
+		t.Fatalf("malformed JSON reported as a method error: %#v", fields)
 	}
 }
 

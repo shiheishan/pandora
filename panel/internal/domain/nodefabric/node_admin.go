@@ -236,8 +236,7 @@ func validateNewNodeProtocol(nodeType, kernel, host string, port int, raw json.R
 	if len(fields) > 0 {
 		return 0, httpx.Invalid(fields)
 	}
-	// Legacy v0 remains readable and cloneable, but a new protocol write must
-	// use an opened, versioned schema.
+	// 新写入必须落在已开放的稳定 schema 上。
 	if version != StableProtocolSchemaVersion || !IsStableProtocolType(nodeType) {
 		return 0, httpx.Invalid(map[string]string{"node_type": "该协议仅兼容旧数据，尚未开放新写入"})
 	}

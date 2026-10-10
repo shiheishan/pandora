@@ -678,20 +678,6 @@ export const NODE_PROTOCOL_SCHEMAS = {
         "key_path": "绝对路径，放在 /etc/pandora-native/certs/ 下，例如 /etc/pandora-native/certs/example.com/privkey.pem。",
         "network": "VMess 不能开 TLS，只能用 ws / httpupgrade / grpc / xhttp 并套 CDN 或 TLS 反代；裸 tcp 不允许。"
       }
-    },
-    {
-      "node_type": "v2ray",
-      "version": 0,
-      "status": "legacy-read-compatible",
-      "required": null,
-      "allowed_properties": null
-    },
-    {
-      "node_type": "hysteria",
-      "version": 0,
-      "status": "legacy-read-compatible",
-      "required": null,
-      "allowed_properties": null
     }
   ]
 } as const
