@@ -53,7 +53,7 @@ description: pandora 总协调把工作派给任务会话、实现型 Claude 子
 
 **Claude 子 agent**
 - Agent 调用显式传 `model`。
-- 用 `templates/agent-prompt.md`（替换 `<名字>`、`<一句话范围>`），后台运行，给 worktree 的绝对路径。模板已写明：推送设 dangerouslyDisableSandbox、最终消息就是报告。
+- 用 `templates/agent-prompt.md`（替换 `<名字>`、`<一句话范围>`、`<总协调 scratchpad>`），后台运行，给 worktree 的绝对路径。模板已写明：推送设 dangerouslyDisableSandbox、最终消息就是报告、机械部分可用 `cursor-launch.sh --sub` 转手 Composer（10-10 起 opus 子 agent 默认可转）。
 - 用户自己开会话时，给一段「发给新会话」的原话，内容同 agent-prompt。
 
 ## 派给 Grok
