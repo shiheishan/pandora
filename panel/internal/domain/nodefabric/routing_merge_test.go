@@ -94,21 +94,20 @@ func TestMergeRoutingWithGroups(t *testing.T) {
 	}
 }
 
-// 内置出站引用在下发时规范成小写：库里已有的 " Direct " / "BLOCK" 旧行也能被 pdnd 认出；
-// 自定义出站原样不动（引用按原样精确匹配）
-func TestMergeRoutingCanonicalizesBuiltinRefs(t *testing.T) {
+// 下发不再规范出站名。库里的大小写与空白原样进发布物；保存入口仍用 canonicalRouteTag。
+func TestMergeRoutingLeavesStoredOutboundTags(t *testing.T) {
 	_, routes := MergeRouting([]RoutingLayer{
 		{Scope: "node", Routes: []NodeRoute{rt(" Direct "), rt("BLOCK"), rt("HK")}},
 		{Scope: "global", Routes: []NodeRoute{rt("direct")}},
 	})
-	if got, want := routeTags(routes), []string{"direct", "block", "HK", "direct"}; !reflect.DeepEqual(got, want) {
+	if got, want := routeTags(routes), []string{" Direct ", "BLOCK", "HK", "direct"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)
 	}
 	m := mergeRoutingLayers([]RoutingLayer{{Scope: "node", Routes: []NodeRoute{rt(" Direct ")}}})
-	if m.routes[0].OutboundTag != "direct" {
-		t.Fatalf("preview path must canonicalize too, got %q", m.routes[0].OutboundTag)
+	if m.routes[0].OutboundTag != " Direct " {
+		t.Fatalf("preview path rewrote the stored tag to %q", m.routes[0].OutboundTag)
 	}
-	if canonicalRouteTag("Directly") != "Directly" || canonicalRouteTag(" hk ") != " hk " {
-		t.Fatal("custom outbound tags must pass through unchanged")
+	if canonicalRouteTag("Directly") != "Directly" || canonicalRouteTag(" hk ") != " hk " || canonicalRouteTag(" BLOCK ") != "block" {
+		t.Fatal("save-side canonicalRouteTag must still fold builtin names only")
 	}
 }

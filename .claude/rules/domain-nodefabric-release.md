@@ -33,7 +33,7 @@ paths:
 
 ## 生效路由
 - 合并口径只有 routing_merge.go 一处：层序为 节点私有 → 所在各路由组（按 `sort_order, id`）→ 全局。规则按层顺序拼接；出站按层逆序铺开、同 tag 就地覆盖，保留原位置。UniProxy 下发、长连接推送、有效发布物、后台生效预览都必须经 `loadNodeRoutingLayersTx` + `MergeRouting` / `mergeRoutingLayers`，不要另写合并
-- 规则里对内置出站的引用，保存和下发都经 `canonicalRouteTag` 规范成小写 direct / block（pdnd 只认小写）；自定义出站 tag 按原样精确比较，和 pdnd 查表一致。出站重名、占用内置名则不分大小写拒绝
+- 规则里对内置出站的引用，只在保存时经 `canonicalRouteTag` 规范成小写 direct / block（pdnd 只认小写）。下发按存储原样带走。自定义出站 tag 按原样精确比较，和 pdnd 查表一致。出站重名、占用内置名则不分大小写拒绝
 - 引用可见性：节点规则能指向自己、所在组、全局的出站；组规则只能指向内置、本组、全局的出站。写路径用 `refuseNewDanglingTx` 在写前写后各取一次全租户悬空引用，只拒绝本次新造成的，存量不连坐
 - 成员关系是节点的属性：组侧改成员要推进出组节点的行版本，节点侧改所属组要推进出组的组行版本，两侧拿旧版本写都回 409
 
