@@ -144,15 +144,14 @@ jobs:
       - name: Cross-platform build and vet
         # 发布只出 linux/amd64、linux/arm64；这里钉住别的平台至少编得过、vet 过，防平台专属
         # 代码回退（w12quic review-r6 J2：udprecv 用了 linux/386 没有的 SYS_RECVFROM）。
-        # windows 只 build：kernel 测试用 syscall.Getrusage，在 windows 上本来就编不过（已登记不改）。
+        # 不含 windows：它要 linux 构建用不到的模块（sing-tun 的 winfw 引 go-ole），离线模块
+        # 缓存的检查机上取不到；kernel 测试在 windows 上本来也编不过（Getrusage，已登记不改）。
         run: |
           set -e
           for target in linux/386 linux/arm darwin/arm64 freebsd/amd64; do
             echo "== vet ${target}"
             GOOS="${target%/*}" GOARCH="${target#*/}" go vet -mod=readonly -p 1 ./...
           done
-          echo "== build windows/amd64"
-          GOOS=windows GOARCH=amd64 go build -mod=readonly ./...
       - name: Native REALITY stdout gate
         run: bash release/check_native_stdout.sh | tee native-stdout-gate.log
       - name: Native capability smoke
