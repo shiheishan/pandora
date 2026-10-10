@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aegispanel/aegis/internal/platform/audit"
 	"github.com/aegispanel/aegis/internal/platform/db"
@@ -120,12 +121,7 @@ func (s *Service) RetireNode(ctx context.Context, tenantID string, in RetireNode
 			 WHERE tenant_id = $1 AND id = $2::uuid`, tenantID, in.ID); err != nil {
 			return err
 		}
-		revoked, err := tx.Exec(ctx, `
-			UPDATE node_identities SET status = 'revoked', revoked_at = now(), revoked_reason = '节点已退役'
-			 WHERE tenant_id = $1 AND node_id = $2::uuid AND status = 'active'`, tenantID, in.ID)
-		if err != nil {
-			return err
-		}
+		var revoked pgconn.CommandTag // 变异：删掉吊销身份的 UPDATE
 		failed, err := tx.Exec(ctx, `
 			UPDATE node_tasks SET status = 'failed', error_message = '节点已退役', completed_at = now()
 			 WHERE tenant_id = $1 AND node_id = $2::uuid AND status IN ('pending','dispatched','running')`,
