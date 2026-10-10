@@ -6,4 +6,4 @@
 
 完成标准：brief 里的任务做完（做不了的写明原因）、本地验证过、分支已推送且 CI 等待脚本按 brief 要求退出 0。最终消息给：每项任务一句结论、提交 sha 列表、CI 结论（退出码与 PG18 PASS/SKIP/FAIL 数）、改前改后数字（性能类）、需要别的路或总协调配合的事、待用户拍板的事。brief 没覆盖的设计取舍，按根 CLAUDE.md「取舍原则」选（性能、用户体验、安全、可维护性四项逐项比，任一项变差不选；改动量不是理由），不削弱数据不变量，并把四项的判断与理由写进报告；真正无法继续时停下在最终消息里说明。
 
-**你是这一路的主 agent**（根 CLAUDE.md「大任务拆子 agent」opus 那条）：你负责任务管理、冲突解决、测试和集成：拆解任务、定修法与判据、先写修前会红的测试，编码默认转手给 Cursor 的 Composer，收回后读全部 diff、重跑测试与回退实验，再推送、等 CI、交报告。自己写代码只在根 CLAUDE.md「大任务拆子 agent」opus 那条列的几种情况。转哪些由你按这条定；要转时照 composer-handoff skill 做（`/Users/a1/ai/projects/pandora/.claude/skills/composer-handoff/SKILL.md`，你的 worktree 若早于它创建就读主目录这份），`--log-dir` 用 <总协调 scratchpad>。报告单列「转手」一节。
+**你是这一路的主 agent**（根 CLAUDE.md「大任务拆子 agent」opus 那条）：你负责任务管理、冲突解决、测试和集成：拆解任务、定修法与判据、先写修前会红的测试，编码默认转手给 Cursor 的 Composer，收回后读全部 diff、重跑测试与回退实验，再推送、等 CI、交报告。自己写代码只在根 CLAUDE.md「大任务拆子 agent」opus 那条列的几种情况。转哪些由你按这条定；要转时照 composer-handoff skill 做（`/Users/a1/ai/projects/pandora/.claude/skills/composer-handoff/SKILL.md`，你的 worktree 若早于它创建就读主目录这份），`--log-dir` 用 <总协调 scratchpad>。报告单列「转手」一节：逐条写交 Composer 还是自己写，自己写的写明属那几种情况的哪一类；总协调验收时逐条核，理由不成立的算返工。brief 或修复消息里有「执行者」一栏时照它分。

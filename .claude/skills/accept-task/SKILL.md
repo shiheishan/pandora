@@ -22,6 +22,7 @@ description: pandora 总协调验收任务分支并合进主线（或集成分�
 
 1. **范围**：`git diff --stat <上游>...<分支>`（三个点：从合并基点算，去掉上游后来的改动）；`scripts/check-ownership.sh <上游> <分支> <归属清单文件>` 列出归属外的改动。越界的要么有报告里的理由、要么退回。
 2. **关键 diff 自己读**：迁移（Up/Down、编号、RLS、授权、追加写、触发器）、权限与认证、锁与事务边界、缓存的失效路径、对外 JSON 字段。
+2b. **转手核对**（opus 主 agent 的路）：读报告「转手」一节，逐条看自己写的那几条是否真属根 CLAUDE.md「opus 自己写代码只在这几种情况」；理由不成立的记一次返工、写进 TASKS 该路条目，下一轮修复消息「执行者」一栏改交 Composer。
 3. **独立重跑**：按 verify skill 的本地层，对改到的包重跑 vet/test；报告里引用的关键命令挑几条重跑（**Cursor 的 Composer 整路交回**：不依赖报告里的命令列表，总协调按 verify 自己跑）。
 4. **按改动类型补自证**：
    - 纯挪动或拆文件：`cd panel && GOTOOLCHAIN=go<go.mod 版本> go run ./tools/refactorcheck compare -base <sha>^ -head <sha> -tests`（pdnd 加 `-C ../pdnd`），必须 PURE MOVE；
