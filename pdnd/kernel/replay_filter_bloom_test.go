@@ -150,7 +150,7 @@ func TestSaltBloomMemoryTracksLoad(t *testing.T) {
 		}
 		return int64(measure()) - int64(before)
 	}
-	for _, l := range []load{{"每秒 10", 10, time.Hour}, {"每秒 100", 100, time.Hour}} {
+	for _, l := range []load{{"每秒 10", 10, time.Hour}, {"每秒 100", 100, time.Hour}, {"每秒 1000", 1000, 20 * time.Minute}} {
 		bloom := newSaltBloom(ssSaltGenPeriod, ssSaltBloomMinCapacity, ssSaltBloomMaxCapacity, ssSaltBloomFPRate)
 		newBytes := run(l, bloom.check)
 		legacy := newReplayFilter(time.Minute, 3, replayFilterMaxPerGen)
@@ -175,6 +175,55 @@ func TestSaltBloomMemoryTracksLoad(t *testing.T) {
 	t.Logf("洪泛 300 万条：改后 %.2f MB（改前封顶约 16 MB）", float64(floodBytes)/(1<<20))
 	if floodBytes > 8<<20 {
 		t.Fatalf("洪泛堆增量 %d 字节超过 8MB", floodBytes)
+	}
+}
+
+// 爬坡时的最短保留期（review-r3 #2）：刚启动、空闲两代被清空之后、流量突增时，
+// 块从小往大长。以前写满即提前换代、丢掉上一块，每秒 100 个连接时只记得约 41
+// 秒前的 salt，每秒 1000 个时约 4 秒；改前精确表（1 分钟 × 3 代、每代至多 65536
+// 条）在同样负载下至少记 2 分钟（时间下限）或 131072 条（每秒 1000 个即 131 秒）。
+// 从冷启动爬坡 20 分钟（跨一次换代）、空闲 31 分钟（两代清空）、再爬坡 5 分钟，
+// 每个模拟秒都查 L 秒前写入的 salt 仍拦得住，L 取改前下限。
+func TestSaltBloomRampRetentionNotBelowOld(t *testing.T) {
+	for _, tc := range []struct {
+		perSec int
+		floor  time.Duration // 改前精确表在该负载下的最短保留期
+	}{
+		{100, 120 * time.Second},
+		{1000, 131 * time.Second},
+	} {
+		b := newSaltBloom(ssSaltGenPeriod, ssSaltBloomMinCapacity, ssSaltBloomMaxCapacity, ssSaltBloomFPRate)
+		s := newSaltStream(t)
+		start := time.Unix(1_700_000_000, 0)
+		maxBytes := 0
+		ramp := func(from time.Time, d time.Duration) {
+			seconds := int(d / time.Second)
+			firsts := make([][]byte, seconds)
+			step := time.Second / time.Duration(tc.perSec)
+			for sec := 0; sec < seconds; sec++ {
+				base := from.Add(time.Duration(sec) * time.Second)
+				for i := 0; i < tc.perSec; i++ {
+					key := s.next()
+					if i == 0 {
+						firsts[sec] = append([]byte(nil), key...)
+					}
+					if !b.check(key, base.Add(time.Duration(i)*step)) {
+						continue // 误报：不影响保留期的判定
+					}
+				}
+				if old := sec - int(tc.floor/time.Second); old >= 0 && !b.contains(firsts[old]) {
+					t.Fatalf("每秒 %d：第 %d 秒时已忘掉 %v 前写入的 salt（改前下限 %v）",
+						tc.perSec, int(base.Sub(start)/time.Second), tc.floor, tc.floor)
+				}
+				maxBytes = max(maxBytes, b.residentBytes())
+			}
+		}
+		ramp(start, 20*time.Minute)
+		ramp(start.Add(51*time.Minute), 5*time.Minute)
+		t.Logf("每秒 %d：爬坡全程保留期 ≥ %v，位图峰值 %.2f MB", tc.perSec, tc.floor, float64(maxBytes)/(1<<20))
+		if maxBytes > 2*newBloomBlock(ssSaltBloomMaxCapacity, ssSaltBloomFPRate).bytes() {
+			t.Fatalf("位图峰值 %d 字节超过两块最大块", maxBytes)
+		}
 	}
 }
 

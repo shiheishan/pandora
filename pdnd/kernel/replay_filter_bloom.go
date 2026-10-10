@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// saltBloom 是旧版 Shadowsocks AEAD 的 TCP salt 防重放表：按时间分代的两块
-// Bloom 位图（当前代 cur、上一代 prev），每代的块大小按上一代的实际条数定。
+// saltBloom 是旧版 Shadowsocks AEAD 的 TCP salt 防重放表：按时间分代的 Bloom
+// 位图链。一代内按写入先后串若干块，块大小跟着流量长。
 //
 // 为什么不用按时间分代的精确表（replayFilter）：旧版 AEAD 没有时间戳，只能靠
 // 「记多久」防重放。GFW 的重放探测一半晚于 1 分钟、75% 在 15 分钟内、最长约
@@ -16,30 +16,39 @@ import (
 // 3.6 字节（误报 1e-6），同样的内存能记十几倍久。
 //
 // 规则：
-//   - 每 ssSaltGenPeriod 换一代：prev 丢掉，cur 变 prev，新开一块。一个 salt 从
-//     写入起至少记一代、至多两代（15–30 分钟），与流量无关；
-//   - 新块按刚结束那一代的条数加 25% 余量定大小（下限 ssSaltBloomMinCapacity）：
-//     常驻内存跟着实际流量走，低负载不超过以前的精确表（实测见
-//     TestSaltBloomMemoryTracksLoad）；
-//   - 当前块写满就提前换代、下一块翻倍（上限 ssSaltBloomMaxCapacity）：流量突增
-//     时块跟着长，被洪泛时内存封顶在两块最大块，保留期退化为「最近至少一块的
-//     条数」，不会无限增长；
-//   - 整整两代没有新写入时两块都丢掉，空闲进程不占位图。
+//   - 每 ssSaltGenPeriod 换一代：上上代的块整代丢掉，当前代变上一代。一个 salt
+//     从写入起至少记一代、至多两代（15–30 分钟）——只要总内存没到上界，与流量
+//     形状无关；
+//   - 当前代的第一块按刚结束那一代的条数加 25% 余量定大小（下限
+//     ssSaltBloomMinCapacity），常驻内存跟着实际流量走（TestSaltBloomMemoryTracksLoad）；
+//   - 当前块写满就在本代内接一块翻倍的新块（上限 ssSaltBloomMaxCapacity），已写满
+//     的块留着：刚启动、空闲之后或流量突增时块从小往大长，长的过程中不丢任何
+//     salt（以前写满即提前换代、丢掉上一块，爬坡时只记得几秒前的，review-r3 #2）；
+//   - 总容量超过两块最大块时才从最老的块起按块丢：被洪泛时内存封顶在两块最大块，
+//     此时仍至少记着最近一整块最大块（约 100 万条，改前精确表最多 13 万条）；
+//   - 整整两代没有新写入时全部丢掉，空闲进程不占位图。
 //
-// 误报的后果是极少数合法连接被当成重放拒掉（每块写满时 1e-6）。SIP022 禁止
-// Bloom 只针对 SS2022（它另有时间戳与精确表），不约束旧版 AEAD。
+// 误报的后果是极少数合法连接被当成重放拒掉：每块写满时 1e-6，查的是链上全部
+// 块，稳态每代一两块；爬坡时链最长约 log2(最大块/最小块)+1 块，误报随之叠到十几
+// 个 1e-6，只持续到下一次换代。SIP022 禁止 Bloom 只针对 SS2022（它另有时间戳与
+// 精确表），不约束旧版 AEAD。
 //
 // 只记录认证通过的 salt（调用方保证）：没有口令的人写不进这张表，也就无法
 // 把它灌满、缩短别人的保留期。
 type saltBloom struct {
-	mu         sync.Mutex
-	seed       maphash.Seed
-	period     time.Duration
-	minCap     int
-	maxCap     int
-	fpRate     float64
-	cur, prev  *bloomBlock
-	curStarted time.Time
+	mu     sync.Mutex
+	seed   maphash.Seed
+	period time.Duration
+	minCap int
+	maxCap int
+	fpRate float64
+	// blocks 从老到新；最后一块是当前写入块。每块记着它属于哪一代（gen 是该代的
+	// 开始时刻），换代时整代丢掉上上代。
+	blocks     []*bloomBlock
+	genStarted time.Time // 当前代的开始时刻
+	genCount   int       // 当前代已写入的条数
+	nextCap    int       // 当前代第一块的大小（换代时按上一代条数定）
+	capacity   int       // blocks 的容量合计，不超过 2*maxCap
 }
 
 const (
@@ -48,7 +57,7 @@ const (
 	ssSaltGenPeriod = 15 * time.Minute
 	// ssSaltBloomMinCapacity 是块的最小条数（约 3.6KB）。
 	ssSaltBloomMinCapacity = 1 << 10
-	// ssSaltBloomMaxCapacity 是块的最大条数（约 3.6MB），洪泛时两块封顶约 7.2MB。
+	// ssSaltBloomMaxCapacity 是块的最大条数（约 3.6MB），总容量封顶两块即约 7.2MB。
 	ssSaltBloomMaxCapacity = 1 << 20
 	// ssSaltBloomFPRate 是每块写满时的误报率。
 	ssSaltBloomFPRate = 1e-6
@@ -78,54 +87,102 @@ func (b *saltBloom) check(key []byte, now time.Time) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.expireLocked(now)
-	if b.cur.test(h1, h2) || b.prev.test(h1, h2) {
+	if b.testLocked(h1, h2) {
 		return false
 	}
-	switch {
-	case b.cur == nil:
-		b.cur, b.curStarted = newBloomBlock(b.minCap, b.fpRate), now
-	case b.cur.count >= b.cur.capacity:
-		// 一代没过完就写满：提前换代，下一块翻倍。
-		b.rotateLocked(min(2*b.cur.capacity, b.maxCap), now)
+	if len(b.blocks) == 0 {
+		b.genStarted, b.genCount, b.nextCap = now, 0, b.minCap
 	}
-	b.cur.add(h1, h2)
+	cur := b.currentLocked()
+	if cur == nil || cur.count >= cur.capacity {
+		next := b.nextCap
+		if cur != nil {
+			// 本代内写满：接一块翻倍的。
+			next = 2 * cur.capacity
+		}
+		cur = b.appendLocked(max(b.minCap, min(next, b.maxCap)))
+	}
+	cur.add(h1, h2)
+	b.genCount++
 	return true
 }
 
-// expireLocked 按时间换代；整整两代没有新写入时两块都丢掉。
+// currentLocked 是当前代的写入块；当前代还没有块时返回 nil。
+func (b *saltBloom) currentLocked() *bloomBlock {
+	if n := len(b.blocks); n > 0 && b.blocks[n-1].gen.Equal(b.genStarted) {
+		return b.blocks[n-1]
+	}
+	return nil
+}
+
+// appendLocked 在链尾接一块 capacity 条的新块；总容量会超过两块最大块时，先从
+// 最老的块起丢。
+func (b *saltBloom) appendLocked(capacity int) *bloomBlock {
+	for len(b.blocks) > 0 && b.capacity+capacity > 2*b.maxCap {
+		b.capacity -= b.blocks[0].capacity
+		b.blocks[0] = nil
+		b.blocks = b.blocks[1:]
+	}
+	block := newBloomBlock(capacity, b.fpRate)
+	block.gen = b.genStarted
+	b.blocks = append(b.blocks, block)
+	b.capacity += capacity
+	return block
+}
+
+// expireLocked 按时间换代；整整两代没有新写入（也没有查询推动换代）时全部丢掉。
 func (b *saltBloom) expireLocked(now time.Time) {
-	if b.cur == nil {
+	if len(b.blocks) == 0 {
 		return
 	}
-	elapsed := now.Sub(b.curStarted)
+	elapsed := now.Sub(b.genStarted)
 	switch {
 	case elapsed >= 2*b.period:
-		b.cur, b.prev = nil, nil
+		b.blocks, b.capacity = nil, 0
 	case elapsed >= b.period:
-		b.rotateLocked(b.cur.count+b.cur.count/4, b.curStarted.Add(b.period))
+		// 当前代变上一代，上上代整代丢掉；新一代第一块按刚结束这一代的条数定。
+		prev := b.genStarted
+		kept := b.blocks[:0]
+		capacity := 0
+		for _, block := range b.blocks {
+			if block.gen.Equal(prev) {
+				kept = append(kept, block)
+				capacity += block.capacity
+			}
+		}
+		clear(b.blocks[len(kept):])
+		b.blocks, b.capacity = kept, capacity
+		b.nextCap = b.genCount + b.genCount/4
+		b.genStarted, b.genCount = prev.Add(b.period), 0
 	}
 }
 
-// rotateLocked 丢掉 prev，cur 变 prev，按 capacity 新开当前块（夹在上下限之间）。
-func (b *saltBloom) rotateLocked(capacity int, started time.Time) {
-	capacity = max(b.minCap, min(capacity, b.maxCap))
-	b.prev = b.cur
-	b.cur, b.curStarted = newBloomBlock(capacity, b.fpRate), started
+func (b *saltBloom) testLocked(h1, h2 uint32) bool {
+	for i := len(b.blocks) - 1; i >= 0; i-- {
+		if b.blocks[i].test(h1, h2) {
+			return true
+		}
+	}
+	return false
 }
 
-// contains 只查不写（测试量误报用）。
+// contains 只查不写（测试量误报与保留期用）。
 func (b *saltBloom) contains(key []byte) bool {
 	h1, h2 := b.hashes(key)
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.cur.test(h1, h2) || b.prev.test(h1, h2)
+	return b.testLocked(h1, h2)
 }
 
-// residentBytes 是两块位图的字节数（测试与诊断用）。
+// residentBytes 是链上全部位图的字节数（测试与诊断用）。
 func (b *saltBloom) residentBytes() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.cur.bytes() + b.prev.bytes()
+	total := 0
+	for _, block := range b.blocks {
+		total += block.bytes()
+	}
+	return total
 }
 
 // hashes 取两个 32 位哈希做双重哈希（Kirsch–Mitzenmacher）：第 i 个位置是
@@ -143,6 +200,7 @@ type bloomBlock struct {
 	k        uint32
 	capacity int
 	count    int
+	gen      time.Time // 所属代的开始时刻
 }
 
 func newBloomBlock(capacity int, fpRate float64) *bloomBlock {
