@@ -84,9 +84,10 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 ## 大任务拆子 agent
 
 - 工作量大、能按互不重叠的文件或主题切开的任务（审计、迁移、批量删除、多模块修复），拆给子 agent 并行做。小任务不拆，拆分本身有成本。
-- 两种执行者（用户 10-10 定：Claude 只用 opus，原来 sonnet、haiku 的活一律交 Cursor 的 Grok）：
-  - **Claude 子 agent，显式传 `model: opus`**：需要深度判断（架构取舍、原因不明的 bug、安全/对抗式审查、方向不明需自主探索）；跨模块的功能实现，或涉及钱、权限、认证、迁移、节点内核的改动（表面边界清楚，实际全是取舍）；要登录服务器、上测试机实测的；要用浏览器工具的（如 ux-review 的模拟新手）。opus 子 agent 内部的普查、数往返、读代码总结自己做，不再拆 sonnet。
+- 三种执行者（用户 10-10 定：原来 sonnet、haiku 的活默认交 Cursor 的 Grok，Claude 主要留 opus）：
+  - **Claude 子 agent，显式传 `model: opus`**：需要深度判断（架构取舍、原因不明的 bug、安全/对抗式审查、方向不明需自主探索）；跨模块的功能实现，或涉及钱、权限、认证、迁移、节点内核的改动（表面边界清楚，实际全是取舍）。
   - **Cursor 的 Grok**：任务边界清楚、结果能验证的（搜索定位、读代码总结、纯挪动拆文件、按明确规则批量删改、部署脚本、nodesim、前端、审查后照清单的机械修复轮）。总协调后台跑 `cursor-agent -p --force --trust --sandbox disabled --workspace <worktree> --model grok-4.7-high --output-format text "<开工指令>"`，开工指令要求先读本文件和 `.claude/brief.md`；Grok 不登录、不 ssh 任何服务器。
+  - **Claude 子 agent，`model: sonnet`**，只用在两处：边界清楚但 Grok 做不了的活——要登录服务器、上测试机实测的，要用浏览器工具的（如 ux-review 的模拟新手）；以及 opus 子 agent 自己再拆的下手（数往返、grep 普查、读代码总结），照各 skill 原写法。
   - 拿不准归哪类时按 opus 派；Grok 交回证据核对不过，改派 opus 重做。
 - 每个子 agent 必须交回：改了哪些文件、跑了什么命令、关键输出。
 - 主会话核对证据后才接受：自己读 diff、重跑关键命令，不只信转述。
