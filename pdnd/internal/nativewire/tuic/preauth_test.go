@@ -62,10 +62,15 @@ const testUserPassword = "tuic-test-password"
 
 func startTestService(t testing.TB, handler ServiceHandler) string {
 	t.Helper()
+	return startTestServiceWithLogger(t, handler, logger.NOP())
+}
+
+func startTestServiceWithLogger(t testing.TB, handler ServiceHandler, log logger.Logger) string {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	svc, err := NewService[string](ServiceOptions{
-		Context: ctx, Logger: logger.NOP(),
+		Context: ctx, Logger: log,
 		TLSConfig:   &testServerTLS{std: &tls.Config{Certificates: []tls.Certificate{testCertificate(t)}, NextProtos: []string{"h3"}, MinVersion: tls.VersionTLS13}},
 		AuthTimeout: 3 * time.Second, Handler: handler,
 	})
@@ -91,27 +96,31 @@ func serverResources() (goroutines int, heap uint64) {
 	return runtime.NumGoroutine(), ms.HeapInuse + ms.StackInuse
 }
 
-// 恶意客户端：握手后不认证，3 秒认证窗口内各开至多 attempts 条单向流
-// （只写命令头 Packet）与双向流（写 Connect 头和目标地址），看服务端多出的
-// goroutine 与堆。
-func TestPreAuthStreamFloodDoesNotAmplify(t *testing.T) {
-	addr := startTestService(t, &countingHandler{})
-	baseG, baseHeap := serverResources()
-
+func dialUnauthenticated(t testing.TB, addr string) *quic.Conn {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	conn, err := quic.DialAddr(ctx, addr, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}}, &quic.Config{EnableDatagrams: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.CloseWithError(0, "")
+	return conn
+}
 
-	const attempts = 4000
+// 恶意客户端（review-r3 #3 拆开的三个用例之一）：握手后不认证，只开双向流、每条写
+// Connect 头和目标地址。守两层保护：每连接双向流上限（客户端最多开出 1024 条，
+// 以前 1<<60 等于不限）与「认证前不 Accept 双向流」（以前每条流一个 goroutine 等认证）。
+// 阈值写死数字，不引用常量。连接要撑到认证超时（3 秒）才被关，不能提前结束让量到
+// 的占用平凡为 0。
+func TestPreAuthBidiStreamFlood(t *testing.T) {
+	addr := startTestService(t, &countingHandler{})
+	baseG, baseHeap := serverResources()
+	conn := dialUnauthenticated(t, addr)
+	defer conn.CloseWithError(0, "")
+	start := time.Now()
 	connect := append([]byte{Version, CommandConnect}, mustAddr(t, "203.0.113.1:80")...)
-	uni, bidi := 0, 0
-	// 先开双向流（认证前不 Accept，只占 quic-go 的流对象），再开单向流（认证前
-	// 暂存，至多 preAuthMaxParkedUniStreams 条，超出即关连接）。
-	for i := 0; i < attempts; i++ {
+	opened := 0
+	for i := 0; i < 4000; i++ {
 		s, err := conn.OpenStream()
 		if err != nil {
 			break
@@ -119,9 +128,44 @@ func TestPreAuthStreamFloodDoesNotAmplify(t *testing.T) {
 		if _, err := s.Write(connect); err != nil {
 			break
 		}
-		bidi++
+		opened++
 	}
-	for i := 0; i < attempts; i++ {
+	time.Sleep(500 * time.Millisecond)
+	g, heap := serverResources()
+	extraG, extraHeap := g-baseG, int64(heap)-int64(baseHeap)
+	t.Logf("开出双向流 %d；服务端多出 goroutine %d、堆+栈 %.1f MB", opened, extraG, float64(extraHeap)/(1<<20))
+	if conn.Context().Err() != nil {
+		t.Fatalf("连接 %v 就被关了，早于认证超时：量到的占用不算数", time.Since(start))
+	}
+	if opened > 1024 {
+		t.Fatalf("认证前开出 %d 条双向流，超过每连接 1024", opened)
+	}
+	if extraG > 16 {
+		t.Fatalf("认证前为双向流起了 goroutine：多出 %d 个", extraG)
+	}
+	if extraHeap > 16<<20 {
+		t.Fatalf("认证前堆+栈多出 %.1f MB", float64(extraHeap)/(1<<20))
+	}
+	select {
+	case <-conn.Context().Done():
+		if elapsed := time.Since(start); elapsed < 2500*time.Millisecond {
+			t.Fatalf("连接 %v 被关，早于认证超时（3 秒）", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("不认证的连接在认证超时后仍未被关")
+	}
+}
+
+// 只开单向流（review-r3 #3）：每条写 Packet 命令头、不带 FIN。认证前就在收流的
+// goroutine 里逐条读头、暂存，不为每条流起 goroutine、不借 32KB 缓冲（以前每条流
+// 各一个 goroutine 加 32KB 等认证）。暂存超过 64 条即关连接。
+func TestPreAuthUniStreamFlood(t *testing.T) {
+	addr := startTestService(t, &countingHandler{})
+	baseG, baseHeap := serverResources()
+	conn := dialUnauthenticated(t, addr)
+	defer conn.CloseWithError(0, "")
+	opened := 0
+	for i := 0; i < 1000; i++ {
 		s, err := conn.OpenUniStream()
 		if err != nil {
 			break
@@ -129,24 +173,66 @@ func TestPreAuthStreamFloodDoesNotAmplify(t *testing.T) {
 		if _, err := s.Write([]byte{Version, CommandPacket}); err != nil {
 			break
 		}
-		uni++
+		opened++
 	}
-	time.Sleep(time.Second)
+	time.Sleep(300 * time.Millisecond)
 	g, heap := serverResources()
-	extraG := g - baseG
-	extraHeap := int64(heap) - int64(baseHeap)
-	t.Logf("开出单向流 %d、双向流 %d；服务端多出 goroutine %d、堆+栈 %.1f MB", uni, bidi, extraG, float64(extraHeap)/(1<<20))
-	if extraG > 64 {
-		t.Fatalf("认证前每条流起了 goroutine：多出 %d 个", extraG)
+	extraG, extraHeap := g-baseG, int64(heap)-int64(baseHeap)
+	t.Logf("开出单向流 %d；服务端多出 goroutine %d、堆+栈 %.1f MB", opened, extraG, float64(extraHeap)/(1<<20))
+	if extraG > 16 {
+		t.Fatalf("认证前为单向流起了 goroutine：多出 %d 个", extraG)
 	}
-	if extraHeap > 16<<20 {
+	if extraHeap > 8<<20 {
 		t.Fatalf("认证前堆+栈多出 %.1f MB", float64(extraHeap)/(1<<20))
 	}
-	// 认证超时到点，连接被关。
 	select {
 	case <-conn.Context().Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("不认证的连接在认证超时后仍未被关")
+	case <-time.After(time.Second):
+		t.Fatal("认证前暂存超过 64 条的连接 1 秒内没被关")
+	}
+}
+
+// 大编号的 STREAM 帧（review-r3 #3）：QUIC 里开第 N 号流会隐式打开它之前的全部
+// 流。客户端连开 N 条流、只在最后一条上写数据，服务端收到的就是一个编号 4(N-1)
+// 的 STREAM 帧。流上限是 1024 时客户端开不到这么多；上限是 1<<60 时服务端要为
+// 隐式打开的每条流建对象。量服务端堆。
+func TestPreAuthHighStreamIDFrame(t *testing.T) {
+	addr := startTestService(t, &countingHandler{})
+	conn := dialUnauthenticated(t, addr)
+	defer conn.CloseWithError(0, "")
+	const n = 50000
+	streams := make([]*quic.Stream, 0, 1100)
+	opened := 0
+	var last *quic.Stream
+	for i := 0; i < n; i++ {
+		s, err := conn.OpenStream()
+		if err != nil {
+			break
+		}
+		last = s
+		opened++
+		if len(streams) < cap(streams) {
+			streams = append(streams, s)
+		}
+	}
+	if last == nil {
+		t.Fatal("一条流也开不出")
+	}
+	// 客户端一侧开好的流对象先放掉，堆里主要剩服务端的。
+	streams = nil
+	_, baseHeap := serverResources()
+	if _, err := last.Write([]byte{Version, CommandConnect}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	_, heap := serverResources()
+	extraHeap := int64(heap) - int64(baseHeap)
+	t.Logf("客户端开出 %d 条流，在最后一条上写数据；服务端堆+栈多出 %.1f MB", opened, float64(extraHeap)/(1<<20))
+	if opened > 1024 {
+		t.Fatalf("认证前开出 %d 条流，超过每连接 1024", opened)
+	}
+	if extraHeap > 4<<20 {
+		t.Fatalf("一个大编号 STREAM 帧让服务端堆+栈多出 %.1f MB", float64(extraHeap)/(1<<20))
 	}
 }
 
@@ -258,7 +344,7 @@ func TestPreAuthParkedUniStreamsAreCapped(t *testing.T) {
 	}
 	defer conn.CloseWithError(0, "")
 	start := time.Now()
-	for i := 0; i < 4*preAuthMaxParkedUniStreams; i++ {
+	for i := 0; i < 256; i++ {
 		s, err := conn.OpenUniStream()
 		if err != nil {
 			break
