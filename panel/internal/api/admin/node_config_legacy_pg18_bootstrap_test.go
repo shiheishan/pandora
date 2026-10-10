@@ -435,40 +435,41 @@ func runNodeConfigPG18BootstrapSecurityBatch(t *testing.T, ctx context.Context,
 		if err != nil || out == nil {
 			t.Fatalf("bootstrap terminal identity node out=%+v err=%v", out, err)
 		}
-		setStatus := func(next string) {
-			t.Helper()
-			var rowVersion int64
-			if err := admin.QueryRow(ctx, `SELECT row_version FROM nodes WHERE tenant_id=$1 AND id=$2`,
-				fx.tenant, out.NodeID).Scan(&rowVersion); err != nil {
-				t.Fatalf("read %s transition row version: %v", next, err)
-			}
-			// 旧的单节点状态接口已删。status:batch 只改服务状态，而且有效身份和在役控制节点都会 409，
-			// 到不了本段后面断言的「生命周期 retired、身份已吊销」。这里按同一条状态机边把行推过去。
-			serving := "draft"
-			if next == "retired" {
-				serving = "retired"
-			}
+		// 接入尾段到 standby 没有后台入口（一步上线直接推到 active），这一段按 node_transitions
+		// 的边用 SQL 推，服务状态留在 draft。之后的退役全部走生产路径：自建的草稿服务器经
+		// SetServerStatus 退役（draft → retired，节点不再是在役服务器的控制节点），再由
+		// RetireNode 一步退役节点并吊销身份。「退役必吊销身份」由 RetireNode 钉住，不由本测试代写。
+		for _, next := range []string{"attesting", "installing", "validating", "standby"} {
 			tag, err := admin.Exec(ctx, `
-				UPDATE nodes SET status=$3, serving_status=$4,
-				       desired_config_version=CASE WHEN $4='retired' THEN NULL ELSE desired_config_version END,
-				       row_version=row_version+1
-				 WHERE tenant_id=$1 AND id=$2 AND row_version=$5`,
-				fx.tenant, out.NodeID, next, serving, rowVersion)
+				UPDATE nodes SET status=$3, serving_status='draft', row_version=row_version+1
+				 WHERE tenant_id=$1 AND id=$2`, fx.tenant, out.NodeID, next)
 			if err != nil || tag.RowsAffected() != 1 {
 				t.Fatalf("%s lifecycle update rows=%d err=%v", next, tag.RowsAffected(), err)
 			}
-			if next == "retired" {
-				revoked, err := admin.Exec(ctx, `
-					UPDATE node_identities SET status='revoked', revoked_at=now(), revoked_reason='节点已退役'
-					 WHERE tenant_id=$1 AND node_id=$2 AND status='active'`,
-					fx.tenant, out.NodeID)
-				if err != nil || revoked.RowsAffected() != 1 {
-					t.Fatalf("revoke identity rows=%d err=%v", revoked.RowsAffected(), err)
-				}
-			}
 		}
-		for _, next := range []string{"attesting", "installing", "validating", "standby", "retired"} {
-			setStatus(next)
+		var serverID string
+		var serverVersion int64
+		if err := admin.QueryRow(ctx, `SELECT s.id::text, s.row_version FROM nodes n
+			JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id AND s.control_node_id=n.id
+			WHERE n.tenant_id=$1 AND n.id=$2 AND s.status='draft'`, fx.tenant, out.NodeID).
+			Scan(&serverID, &serverVersion); err != nil {
+			t.Fatalf("read bootstrapped draft server: %v", err)
+		}
+		if _, err := service.SetServerStatus(ctx, fx.tenant, serverID, nodefabric.SetServerStatusInput{
+			ActorID: fx.actor, Status: "retired", Reason: "pg18 terminal identity", RowVersion: serverVersion,
+		}); err != nil {
+			t.Fatalf("retire bootstrapped draft server: %v", err)
+		}
+		var nodeVersion int64
+		if err := admin.QueryRow(ctx, `SELECT row_version FROM nodes WHERE tenant_id=$1 AND id=$2`,
+			fx.tenant, out.NodeID).Scan(&nodeVersion); err != nil {
+			t.Fatalf("read standby node row version: %v", err)
+		}
+		retired, err := service.RetireNode(ctx, fx.tenant, nodefabric.RetireNodeInput{
+			ID: out.NodeID, RowVersion: nodeVersion, Reason: "pg18 terminal identity", ActorID: fx.actor,
+		})
+		if err != nil || retired == nil {
+			t.Fatalf("RetireNode out=%+v err=%v", retired, err)
 		}
 		identity, identityErr := service.LookupIdentity(ctx, fx.tenant, out.NodeID)
 		if identity != nil {

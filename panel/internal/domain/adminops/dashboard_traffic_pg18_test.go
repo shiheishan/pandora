@@ -3,6 +3,7 @@ package adminops
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aegispanel/aegis/internal/domain/nodefabric"
@@ -132,8 +134,72 @@ func TestDashboardTrafficRollupPG18(t *testing.T) {
 		t.Fatalf("node list comparison is vacuous: %v", legacyBytes)
 	}
 
+	// 放在回填比对之前：子测试失败不中断父测试，两处结论都会出现在日志里
+	t.Run("billed_bytes_required", func(t *testing.T) {
+		billedBytesRequired(t, ctx, admin, tenant, nodeIDs[2])
+	})
+
 	backfillMatchesLegacy(t, ctx, admin, tenant, nodeIDs[2], uid)
 	t.Log("marker=dashboard_traffic_rollup_pg18_matches_legacy_ok")
+}
+
+// billedBytesRequired 钉住 00164 的口径：三张流量汇总表的 billed_bytes 非空且没有默认值。
+// 写入时漏了这一列必须当场报 NOT NULL（23502），不能静默记成计费 0 字节（00133 文件头：
+// 不能当成 0 去对账）。每条 INSERT 在自己的保存点里试，整个事务最后回滚。
+// 非空约束是 SET NOT NULL 直接建的、名字是 PG18 的默认名（没有和临时检查撞名加后缀）。
+func billedBytesRequired(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant, node string) {
+	t.Helper()
+	var names []string
+	if err := admin.QueryRow(ctx, `
+		SELECT coalesce(array_agg(r.relname || '.' || c.conname ORDER BY r.relname, c.conname), '{}')
+		  FROM pg_constraint c
+		  JOIN pg_class r ON r.oid = c.conrelid
+		  JOIN pg_namespace n ON n.oid = r.relnamespace AND n.nspname = 'public'
+		  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+		 WHERE c.contype = 'n' AND a.attname = 'billed_bytes'
+		   AND r.relname IN ('node_traffic_hourly', 'node_user_traffic_hourly', 'node_user_traffic_daily')`).Scan(&names); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"node_traffic_hourly.node_traffic_hourly_billed_bytes_not_null",
+		"node_user_traffic_daily.node_user_traffic_daily_billed_bytes_not_null",
+		"node_user_traffic_hourly.node_user_traffic_hourly_billed_bytes_not_null",
+	}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("billed_bytes not-null constraints = %v, want %v", names, want)
+	}
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	for _, c := range []struct {
+		table, sql string
+	}{
+		{"node_traffic_hourly", `
+			INSERT INTO node_traffic_hourly (tenant_id, hour_start, node_id, report_count)
+			VALUES ($1, date_trunc('hour', now() - interval '100 days', 'UTC'), $2, 1)`},
+		{"node_user_traffic_hourly", `
+			INSERT INTO node_user_traffic_hourly (tenant_id, hour_start, node_id, node_uid,
+			       upload_bytes, download_bytes, entry_count, last_report_at)
+			VALUES ($1, date_trunc('hour', now() - interval '100 days', 'UTC'), $2, 7300001, 1, 1, 1, now())`},
+		{"node_user_traffic_daily", `
+			INSERT INTO node_user_traffic_daily (tenant_id, day, node_id, node_uid,
+			       upload_bytes, download_bytes, entry_count, last_report_at)
+			VALUES ($1, (now() AT TIME ZONE 'UTC')::date - 100, $2, 7300001, 1, 1, 1, now())`},
+	} {
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = sp.Exec(ctx, c.sql, tenant, node)
+		_ = sp.Rollback(ctx)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23502" || pgErr.TableName != c.table || pgErr.ColumnName != "billed_bytes" {
+			t.Fatalf("%s INSERT without billed_bytes err=%v, want not_null_violation on billed_bytes", c.table, err)
+		}
+	}
+	t.Log("marker=traffic_billed_bytes_required_pg18_ok")
 }
 
 func seedDashboardTraffic(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant string, nodeIDs []string,
@@ -274,7 +340,30 @@ func backfillMatchesLegacy(t *testing.T, ctx context.Context, admin *pgxpool.Poo
 			t.Fatalf("plant %s old report: %v", old.age, err)
 		}
 	}
-	for _, sql := range []string{`DELETE FROM node_user_traffic_hourly`, `DELETE FROM node_traffic_hourly`, backfill} {
+	for _, sql := range []string{`DELETE FROM node_user_traffic_hourly`, `DELETE FROM node_traffic_hourly`} {
+		if _, err := tx.Exec(ctx, sql); err != nil {
+			t.Fatalf("clear rollups: %v\nSQL: %s", err, sql)
+		}
+	}
+	// 00099 的回填写在 00133 加 billed_bytes 之前，列清单里没有它；在现行表上原文重放必须被
+	// NOT NULL 拒（00164 不给默认值）。
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = sp.Exec(ctx, backfill)
+	_ = sp.Rollback(ctx)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23502" || pgErr.ColumnName != "billed_bytes" {
+		t.Fatalf("verbatim 00099 backfill on the current schema err=%v, want not_null_violation on billed_bytes", err)
+	}
+	// 本函数比的是看板口径，看板不读 billed_bytes。只在这个回滚的事务里给两张小时表一个临时
+	// 默认值，让回填原文照跑；表结构随回滚复原，生产库上这一列没有默认值。
+	for _, sql := range []string{
+		`ALTER TABLE node_user_traffic_hourly ALTER COLUMN billed_bytes SET DEFAULT 0`,
+		`ALTER TABLE node_traffic_hourly ALTER COLUMN billed_bytes SET DEFAULT 0`,
+		backfill,
+	} {
 		if _, err := tx.Exec(ctx, sql); err != nil {
 			t.Fatalf("rerun backfill: %v\nSQL: %s", err, sql)
 		}
