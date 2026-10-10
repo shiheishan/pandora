@@ -169,7 +169,9 @@ func seedDashboardScriptEdges(t *testing.T, ctx context.Context, admin *pgxpool.
 		{"c4b00000-0000-4000-8000-000000000006", "c4b-clear"},
 		{"c4b00000-0000-4000-8000-000000000007", "c4b-late"},
 	} {
-		exec(`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES($1,$2,$2,'CNY')`, row.id, row.slug)
+		// slug 是 citext、display_name 是 text，同一个占位符无法推出唯一类型。
+		exec(`INSERT INTO tenants(id,slug,display_name,default_currency) VALUES($1,$2,$3,'CNY')`,
+			row.id, row.slug, row.slug)
 	}
 	for _, row := range []struct{ id, tenant, email string }{
 		{"c4b00000-0000-4000-8000-000000000011", "c4b00000-0000-4000-8000-000000000001", "Alice.Secret@Example.COM"},
