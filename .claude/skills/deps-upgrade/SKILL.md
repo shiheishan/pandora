@@ -59,7 +59,7 @@ git grep -nE 'go1\.2[0-9]|golang:1\.|GO_SERIES|Go 1\.2[0-9]|go 1\.2[0-9]' -- ':!
 | ops-local 下各轮压测 harness 的 go.mod（如 `nodescale/harness-src`、`vpcnode/harness`）：不入库，replace 到 pdnd，用前在各自目录 `go mod tidy` | 用前 tidy | 用前 tidy |
 | `.claude/skills/test-machine/scripts/install-toolchain.sh` 的 `GO_SERIES` 默认值与第 3 行用法注释；test-machine SKILL.md「装与 CI 同小版本的 Go（go.mod 的 1.26 系列）」 | 不用改：按系列取最新 | 改 |
 | ops-local `memoh-ci/bootstrap.sh` 的 `GO_SERIES` 与第 9 行注释（检查机，不入库） | 不用改 | 改，并在检查机重跑 bootstrap |
-| `panel/deploy/test-*-pg18.sh`：6 个文件的 `GO_IMAGE` 默认 `golang:1.26`，以及 checkout-atomic-00039、dashboard-performance、dashboard-read-models、node-config-legacy（两处）、order-release-00040（两处）的 `go1.26.*` 判断。这些单跑的 runner CI 不调；CI 的 panel-pg18 走 `run-pg18-gates.sh`，它的 `require_go_version` 按 go.mod 的主次版本动态比，不用改 | 不用改。注意本机 docker 里缓存的 `golang:1.26` 可能是旧补丁，先 `docker pull` | 改，否则手动跑这些 runner 会直接退出 |
+| `panel/deploy/test-*-pg18.sh`：3 个文件的 `GO_IMAGE` 默认 `golang:1.26`，以及 checkout-atomic-00039、order-release-00040（两处）的 `go1.26.*` 判断。这些单跑的 runner CI 不调；CI 的 panel-pg18 走 `run-pg18-gates.sh`，它的 `require_go_version` 按 go.mod 的主次版本动态比，不用改 | 不用改。注意本机 docker 里缓存的 `golang:1.26` 可能是旧补丁，先 `docker pull` | 改，否则手动跑这些 runner 会直接退出 |
 | `panel/deploy/platform.sh` 的 `pandora_go_version_ok`（`-ge 26`）与 `migrate-to-new-host.sh:74` 的「Go 1.26+」提示 | 不用改 | 改，跟 go 指令的最低小版本一致 |
 | `README.md:9`、`README.md:215`、根 `CLAUDE.md:5` 的「Go 1.26」 | 不用改 | 改 |
 | 根 `CLAUDE.md`「环境与工具坑」里写死的本机 `GOTOOLCHAIN=go1.26.9`（verify 已写成 `go<go.mod 版本>`，不用改） | 改（并确认本机模块缓存里有新版本的工具链） | 改 |
