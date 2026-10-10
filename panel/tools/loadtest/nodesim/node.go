@@ -334,15 +334,10 @@ func (n *simNode) applyStreamEvent(ctx context.Context, ev streamEvent) {
 	}
 }
 
+// applyUserDelta 与 pdnd 同序：先按 Removed 删、再按 Added 加。换了凭据的用户
+// 两边都出现（面板 DiffUsers），先加后删会把他从名单里丢掉。
 func (n *simNode) applyUserDelta(ev streamEvent) {
 	ids := slices.Clone(n.userIDs)
-	for _, u := range ev.Added {
-		if u.UUID != "" && n.work.candidate(u.ID, n.index) {
-			ids = append(ids, u.ID)
-		}
-	}
-	slices.Sort(ids)
-	ids = slices.Compact(ids)
 	if len(ev.Removed) > 0 {
 		drop := make(map[int64]bool, len(ev.Removed))
 		for _, id := range ev.Removed {
@@ -350,6 +345,13 @@ func (n *simNode) applyUserDelta(ev streamEvent) {
 		}
 		ids = slices.DeleteFunc(ids, func(id int64) bool { return drop[id] })
 	}
+	for _, u := range ev.Added {
+		if u.UUID != "" && n.work.candidate(u.ID, n.index) {
+			ids = append(ids, u.ID)
+		}
+	}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
 	n.userIDs = ids
 }
 

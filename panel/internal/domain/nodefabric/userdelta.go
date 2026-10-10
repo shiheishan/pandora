@@ -64,6 +64,10 @@ type UserDelta struct {
 	// 一条分支，而那条分支做的事和 Added 完全相同。
 	Added []ProxyUser `json:"added"`
 	// Removed 只给 ID：节点端拿它删本地记录，不需要别的字段。
+	//
+	// 同一 ID 换了凭据（重置订阅换 proxy_uuid，ID 不变）时这个 ID 两边都出现：
+	// Removed 作废旧凭据、Added 装新凭据，节点端先删后加。只放进 Added 的话，
+	// 按凭据记名单的节点端会让新旧凭据并存，旧链接一直能用。
 	Removed []int64 `json:"removed"`
 }
 
@@ -83,9 +87,11 @@ func DiffUsers(old, now []ProxyUser) UserDelta {
 		if !existed || before != u {
 			delta.Added = append(delta.Added, u)
 		}
-		delete(prev, u.ID)
+		if existed && before.UUID == u.UUID {
+			delete(prev, u.ID)
+		}
 	}
-	// 留在 prev 里的是这一轮不该再有的
+	// 留在 prev 里的是这一轮不该再有的：已经不在名单里的人，和换了凭据的人的旧凭据
 	for id := range prev {
 		delta.Removed = append(delta.Removed, id)
 	}
