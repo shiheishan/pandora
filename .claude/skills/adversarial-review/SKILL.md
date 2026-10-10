@@ -65,7 +65,7 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py <上游> <分支> 
 | 整合风险（本分支单独合入或单独发版会出问题） | 记进 TASKS 的发版前清单，不挡合入主线 |
 | 审查员标为「疑似」、而且没补上证据的 | 不进 brief，记进 TASKS |
 
-**第 N 轮修复消息**（N ≥ 2，第二轮 brief 即 N=2）照 `templates/round-brief.md` 写，骨架用 `review-prompt.py round <分支> --round N --scratchpad <…> [--executor composer]` 生成（填好名字、轮次、worktree、分支、依据的审查报告、交回文件名、探针目录、go 版本；`--executor` 选交回与推送那两句的写法）。按原实现方分两条路：
+**第 N 轮修复消息**（N ≥ 2，第二轮 brief 即 N=2）照 `templates/round-brief.md` 写，骨架用 `review-prompt.py round <分支> --round N --scratchpad <…> [--executor composer]` 生成（填好名字、轮次、worktree、分支、依据的审查报告、交回文件名、探针目录、go 版本；`--executor` 选完成标准与交回的写法）。按原实现方分两条路：
 
 - **Claude 子 agent**：用 SendMessage 发给原实现 agent，它对这块代码最熟；原 agent 的会话已经不在了，就按 dispatch-task 新开一个。
 - **Cursor 的 Composer**：它收不到 SendMessage，修复轮写成文件另起一次。骨架加 `--executor composer -o <worktree>/.claude/round-r{N}.md`，补完留给人写的部分，再 `bash .claude/skills/dispatch-task/scripts/cursor-launch.sh <名字> --round N`。脚本让它先读根 CLAUDE.md、原 brief 与 `round-r{N}.md`，报告写 `report-r{N}.md`。新起的一次不记得上一轮，所以 round 文件里要写全：审查报告路径、核过的发现、探针路径。根 CLAUDE.md 把「审查后照清单的机械修复轮」划给 Composer；修法要做架构取舍、或上一轮 Composer 的证据核对不过的，改派 opus。复审照第 6 节，不因执行者不同而改。
@@ -75,7 +75,7 @@ python3 .claude/skills/adversarial-review/scripts/triggers.py <上游> <分支> 
 - 修法写方向，不写逐步操作；有多个方案时让实现方按根 CLAUDE.md「取舍原则」四栏逐项比较，在报告里写比较结果和选择理由（w9cert 第 2 项就是这样定了只追加的签发流水）。
 - 迁移号要重新取：主线可能已经前进了。w9cert 第二轮原定的 00149 比主线已有的 00151 还小，只能改用 00152。叠在集成分支上的路用的是临时号，不重取（见 new-migration「集成分支的相对编号与重编号」）。
 - 消息里写「我合并时改」的条目，当场登记进 accept-task「一波合并」表。
-- 实现方交回后，用 save-report.sh 存成 `report-r{N}.md`（Composer 的路给它的日志，脚本核对 Composer 自己写的 `report-r{N}.md`），复审员要对着它逐条核。
+- 实现方交回后：**Cursor 的 Composer** 的路由总协调（或派一个 opus）先按 verify skill 本地验证、做回退实验、推送、等 CI，再存 `report-r{N}.md` 并派复审；**Claude 子 agent** 交回后用 save-report.sh 存成 `report-r{N}.md`。复审员要对着报告逐条核。
 
 ## 5. 什么时候可以合
 

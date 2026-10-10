@@ -1,6 +1,6 @@
 ---
 name: tech-design
-description: pandora 出技术设计稿或性能调研。步骤：先核现状给 文件:行；选模板（功能设计 / 性能调研；收拢类用功能设计模板）；派 opus 设计员，它可以再拆 sonnet 数数、opus 做判断；总协调回读核证据；工程取舍按原则自己定，只把产品取舍编号交用户；用户定案追加在文末；按文件归属切好路，交 dispatch-task。用户说「出个设计」「X 怎么实现」「调研一下性能 / 占用」「去掉本不该做的工作」「收拢 X」时使用；动钱、认证、节点协议、迁移的大功能开工前，也先用它出设计并过定稿前对抗审查。分工：产品规则拿不准用 decision-research，设计定了拆 brief 用 dispatch-task，合并前审 diff 用 adversarial-review（审代码分支；设计稿的定稿前审查在本 skill 第 4 节），SQL 改写判分用 bench-eval。
+description: pandora 出技术设计稿或性能调研。步骤：先核现状给 文件:行；选模板（功能设计 / 性能调研；收拢类用功能设计模板）；派 opus 设计员，它可以把数数交 Composer `--scan`、判断交 opus；上游怎么做、有没有前人指路用 prior-art-research；总协调回读核证据；工程取舍按原则自己定，只把产品取舍编号交用户；用户定案追加在文末；按文件归属切好路，交 dispatch-task。用户说「出个设计」「X 怎么实现」「调研一下性能 / 占用」「去掉本不该做的工作」「收拢 X」时使用；动钱、认证、节点协议、迁移的大功能开工前，也先用它出设计并过定稿前对抗审查。分工：产品规则拿不准用 decision-research，设计定了拆 brief 用 dispatch-task，合并前审 diff 用 adversarial-review（审代码分支；设计稿的定稿前审查在本 skill 第 4 节），SQL 改写判分用 bench-eval。
 ---
 
 # 技术设计与性能调研
@@ -32,7 +32,7 @@ description: pandora 出技术设计稿或性能调研。步骤：先核现状�
   - 要回答的问题，每题写清要什么证据。
 - 派一个 `opus`，后台运行，只读。两个子系统互不相干时（例：节点侧和用户路径），并行派两个，prompt 里互相写明对方在做什么、可能撞哪些文件。
 - 设计员写不了文件。交回后用 accept-task 的 `scripts/save-report.sh <output 文件> <产物位置>` 存。子报告由设计员在最终消息里给全文，或者由总协调分别存。
-- 拆子 agent 的规则写在模板里：数往返、grep 普查、读代码总结用 `sonnet`；判断能否无损去掉、安全论证、架构取舍、上游对照用 `opus`。按子系统切，互不重叠。每个子 agent 交回四样：结论表、每个数字的出处、跑过的命令、哪些是推断。
+- 拆子 agent 的规则写在模板里：数往返、grep 普查、读代码总结交 Composer 只读盘点（`cursor-launch.sh --scan`，见 composer-handoff skill §4b）；判断能否无损去掉、安全论证、架构取舍、上游对照用 `opus`。按子系统切，互不重叠。每个子 agent 交回四样：结论表、每个数字的出处、跑过的命令、哪些是推断。
 
 ## 3. 总协调核
 

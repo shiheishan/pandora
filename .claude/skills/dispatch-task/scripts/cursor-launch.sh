@@ -8,7 +8,8 @@
 #       opus 子 agent 把机械部分转手（根 CLAUDE.md「大任务拆子 agent」Composer 那条）：读 .claude/sub-<标签>.md，
 #       报告写 .claude/report-sub-<标签>.md；开工指令取 templates/cursor-prompt.md「子 agent 转手」一节：只提交、不推送、不等 CI。
 #   cursor-launch.sh --dir <只读巡检目录> [--resume …] [--log-dir …] [--dry-run]
-#       读 <目录>/brief.md（必须含 templates/server-readonly.md 的「服务器只读红线」一节），报告写 <目录>/report.md。
+#       读 <目录>/brief.md（必须含 templates/server-readonly.md 的「服务器只读红线」一节，或 templates/server-scripted.md
+#       的「服务器脚本测试红线」一节），报告写 <目录>/report.md。
 #   cursor-launch.sh --scan <盘点目录> [--resume …] [--log-dir …] [--dry-run]
 #       只读盘点（审查员、设计员等只读的 opus 把盘点、分类、定位转出去）：读 <目录>/brief.md，报告写 <目录>/report.md；
 #       目录必须在总协调 scratchpad（/private/tmp/claude-<uid>/）或主目录 ops-local/ 下；Composer 只可写这个目录，
@@ -74,7 +75,8 @@ elif [ -n "$dir" ]; then
   name="$(basename "$W")"; branch=""; kind="只读巡检"
   start="$W/brief.md"; report="$W/report.md"
   [ -f "$start" ] || die "没有 $start"
-  grep -q '^## 服务器只读红线' "$start" || die "$start 里没有「## 服务器只读红线」一节（抄 templates/server-readonly.md）"
+  if grep -q '^## 服务器脚本测试红线' "$start"; then kind="服务器脚本测试"
+  else grep -q '^## 服务器只读红线' "$start" || die "$start 里没有「## 服务器只读红线」或「## 服务器脚本测试红线」一节（抄 templates/server-readonly.md 或 server-scripted.md）"; fi
   case "$W" in "$main"/ops-local/*) ;; *) die "巡检目录要在主目录 ops-local/ 下（git 忽略），现在是 $W" ;; esac
 else
   [ -n "$name" ] || die "用法见脚本头"
@@ -99,12 +101,12 @@ if [ -e "$report" ] && [ -z "$resume" ]; then
   die "报告已存在 $report：上一次的结果先验收或挪走；续跑用 --resume"
 fi
 if pgrep -f "index\.js -p .*--workspace $W( |\$)" >/dev/null 2>&1; then
-  die "$W 上已有 cursor-agent 在跑（pgrep -fl cursor-agent 看）"
+  die "$W 上已有 cursor-agent 在跑（pgrep -fl 'index\.js -p .*--workspace' 看）"
 fi
 
 gover="go$(sed -n 's/^go //p' "$main/panel/go.mod" | head -1)"
 [ "$gover" != go ] || die "读不到 panel/go.mod 的 go 指令"
-section="任务 worktree"; [ -n "$dir" ] && section="只读巡检"; [ -n "$scan" ] && section="只读盘点"; [ -n "$sub" ] && section="子 agent 转手"
+section="任务 worktree"; [ -n "$dir" ] && section="只读巡检"; [ "$kind" = 服务器脚本测试 ] && section="服务器脚本测试"; [ -n "$scan" ] && section="只读盘点"; [ -n "$sub" ] && section="子 agent 转手"
 prompt="$(awk -v s="## $section" '$0==s{f=1;next} /^## /{f=0} f&&/^```text$/{c=1;next} c&&/^```$/{exit} c{print}' "$tpl")"
 [ -n "$prompt" ] || die "templates/cursor-prompt.md 里找不到「## $section」的 text 块"
 prompt="${prompt//<worktree>/$W}"
