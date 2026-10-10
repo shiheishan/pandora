@@ -5,8 +5,11 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
+	"weak"
 )
 
 // loadInboundTLSConfig is the shared native TCP TLS boundary. It deliberately
@@ -56,10 +59,40 @@ func withHandshakeDeadline(conn net.Conn, timeout time.Duration, handshake func(
 // h2 / http/1.1 服务端也不选，这本身就是「不是网站」的特征。
 var inboundWebALPN = []string{"h2", "http/1.1"}
 
+var inboundWebALPNCache sync.Map // weak.Pointer[tls.Config] → *tls.Config
+
+// inboundWebALPNCacheEntryCount 仅供测试统计缓存条目数。
+func inboundWebALPNCacheEntryCount() int {
+	n := 0
+	inboundWebALPNCache.Range(func(_, _ any) bool {
+		n++
+		return true
+	})
+	return n
+}
+
+// inboundWebALPNConfig 按基础 tls.Config 指针缓存 withInboundWebALPN 的派生结果。
+// 同一入站加载得到的 base 在进程内不变；交给 serverTLSHandshake 之后不得再改 base 字段。
+func inboundWebALPNConfig(base *tls.Config) *tls.Config {
+	key := weak.Make(base)
+	if v, ok := inboundWebALPNCache.Load(key); ok {
+		return v.(*tls.Config)
+	}
+	derived := withInboundWebALPN(base)
+	actual, loaded := inboundWebALPNCache.LoadOrStore(key, derived)
+	if !loaded {
+		runtime.AddCleanup(base, func(k weak.Pointer[tls.Config]) {
+			inboundWebALPNCache.Delete(k)
+		}, key)
+	}
+	return actual.(*tls.Config)
+}
+
 // withInboundWebALPN 给 TCP 直连类 TLS 配置挂上 inboundWebALPN（已显式设了
 // NextProtos 的不动）。客户端宣告的 ALPN 与之完全不重叠时（例如只给 h3 或
 // 自定义串），退回不选 ALPN 照常握手：Go 默认会以 no_application_protocol
 // 拒绝，那会让以前能连上的客户端连不上。返回的是新配置，不改 config。
+// 加载期（如 AnyTLS）可直接调用；每条连接握手应走 inboundWebALPNConfig 缓存派生。
 func withInboundWebALPN(config *tls.Config) *tls.Config {
 	out := config.Clone()
 	if len(out.NextProtos) != 0 || out.GetConfigForClient != nil {
@@ -88,10 +121,10 @@ func alpnOverlaps(client, server []string) bool {
 }
 
 // serverTLSHandshake 在调用方（连接自己的 goroutine）里做服务端 TLS 握手：
-// 限时 timeout，ctx 取消（适配器 Close）也会打断它。config 每次 Clone，
-// 握手不会改到共享配置。只给 TCP 直连承载用，ALPN 按 withInboundWebALPN。
+// 限时 timeout，ctx 取消（适配器 Close）也会打断它。使用 inboundWebALPNConfig
+// 缓存的派生配置，握手不会改到共享的 base。只给 TCP 直连承载用。
 func serverTLSHandshake(ctx context.Context, conn net.Conn, config *tls.Config, timeout time.Duration) (*tls.Conn, error) {
-	tlsConn := tls.Server(conn, withInboundWebALPN(config))
+	tlsConn := tls.Server(conn, inboundWebALPNConfig(config))
 	if err := withHandshakeDeadline(conn, timeout, func() error { return tlsConn.HandshakeContext(ctx) }); err != nil {
 		return nil, err
 	}
