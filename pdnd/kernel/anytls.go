@@ -375,10 +375,16 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 			defer onClose(nil)
 		}
 		// v2 客户端在复用会话上开流（sid>=2）后等 cmdSYNACK，3 秒收不到就关整条会话。
-		// 拨号成功（或进入 UoT）时回成功；其余每个出口都由这里回中性的失败，
-		// 客户端立刻关这条流、会话照常复用。fork 的 Stream 只报一次，已回过成功时
-		// 这里是空操作；它排在 conn.Close 之前执行，SYNACK 先于 FIN 到达客户端。
-		defer func() { _ = N.ReportHandshakeFailure(conn, errAnyTLSStreamRefused) }()
+		// 拨号成功（或进入 UoT）时回成功；在那之前的每个出口都由这里回中性的失败，
+		// 客户端立刻关这条流、会话照常复用。replied 保证回过成功之后不再补发失败
+		// （不依赖 fork 的 Stream 只报一次）；它排在 conn.Close 之前执行，SYNACK
+		// 先于 FIN 到达客户端。
+		replied := false
+		defer func() {
+			if !replied {
+				_ = N.ReportHandshakeFailure(conn, errAnyTLSStreamRefused)
+			}
+		}()
 		remote := source.TCPAddr()
 		epoch := a.sessions.epoch()
 		name, ok := auth.UserFromContext[string](ctx)
@@ -405,6 +411,7 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 		defer a.online.leave(user, source.AddrString())
 		if destination.Fqdn == uot.MagicAddress || destination.Fqdn == uot.LegacyMagicAddress {
 			// UoT 不拨上游（出站 socket 按包懒建），进入前就回成功。
+			replied = true
 			if err := N.ReportConnHandshakeSuccess(conn, nil); err != nil {
 				a.connErr.addr(StageSession, remote, err)
 				return
@@ -421,6 +428,7 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 			return
 		}
 		defer upstream.Close()
+		replied = true
 		if err := N.ReportConnHandshakeSuccess(conn, upstream); err != nil {
 			a.connErr.addr(StageSession, remote, err)
 			return
