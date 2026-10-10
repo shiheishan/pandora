@@ -59,7 +59,8 @@ func TestHysteria2PreAuthStreamFloodIsBounded(t *testing.T) {
 	time.Sleep(time.Second)
 	extra := runtime.NumGoroutine() - baseG
 	t.Logf("开出双向流 %d；服务端多出 goroutine %d", opened, extra)
-	if extra > hy2.ServerMaxIncomingStreams+64 {
+	// 阈值写死而不引用常量：常量被改回 1<<60 时这里要红。
+	if extra > 1024+64 || hy2.ServerMaxIncomingStreams > 1024 {
 		t.Fatalf("认证前 goroutine 多出 %d 个，超过流上限", extra)
 	}
 }
