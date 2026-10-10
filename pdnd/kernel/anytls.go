@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/aegispanel/nodeagent/core"
 	anytls "github.com/aegispanel/nodeagent/internal/nativewire/anytls"
@@ -384,7 +385,7 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 			a.connErr.addr(StageSession, remote, markConnError(connErrAuth, fmt.Errorf("anytls stream has no authenticated user")))
 			return
 		}
-		index, user, ok := a.lookupUser(name)
+		user, ok := a.lookupUser(name)
 		if !ok {
 			a.connErr.addr(StageSession, remote, markConnError(connErrAuth, fmt.Errorf("anytls user is no longer active")))
 			return
@@ -407,7 +408,7 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 				a.connErr.addr(StageSession, remote, err)
 				return
 			}
-			if err := a.handleUOT(ctx, conn, source, destination.Fqdn == uot.MagicAddress, index); err != nil {
+			if err := a.handleUOT(ctx, conn, source, destination.Fqdn == uot.MagicAddress, sess); err != nil {
 				a.connErr.addr(StageSession, remote, err)
 			}
 			return
@@ -425,14 +426,17 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 		}
 		// 子流的 Close 语义与 TCP 半关闭不同：沿用「一侧结束即两端全关」。
 		sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
-		_ = index
 	})
 }
 
-func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.Socksaddr, version2 bool, index int) error {
+// handleUOT 把一条 UoT 子流桥到按包路由的 UDP。流量记在调用方登记的会话 sess
+// 上（它占着该用户的计数器，与 TCP 的 relay 同一份），按 UDP 负载字节随收随记，
+// 口径与 hysteria2 / TUIC 的 UDP 一致。
+func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.Socksaddr, version2 bool, sess *userSession) error {
 	meta := route.Meta{Network: "udp", Protocol: "anytls", SourceIP: source.Addr, SourcePort: source.Port}
-	packetConn := newUOTRoutedPacketConn(ctx, a.plane, meta)
-	defer packetConn.Close()
+	routed := newUOTRoutedPacketConn(ctx, a.plane, meta)
+	defer routed.Close()
+	packetConn := &anyTLSCountedPacketConn{PacketConn: routed, up: sess.up(), down: sess.down()}
 	version := 1
 	var request *uot.Request
 	if version2 {
@@ -466,31 +470,40 @@ func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.S
 	_ = conn.Close()
 	_ = uotConn.Close()
 	<-feedDone
-	_ = index
 	return nil
 }
 
-func (a *anyTLSAdapter) lookupUser(name string) (int, core.User, bool) {
+// anyTLSCountedPacketConn 给 UoT 的上游 UDP 记流量：WriteTo 成功发往上游的负载
+// 记上行，ReadFrom 从上游收到的负载记下行；UoT 帧头（地址、长度）不算。
+type anyTLSCountedPacketConn struct {
+	net.PacketConn
+	up, down *atomic.Int64
+}
+
+func (c *anyTLSCountedPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	n, addr, err := c.PacketConn.ReadFrom(p)
+	if n > 0 {
+		c.down.Add(int64(n))
+	}
+	return n, addr, err
+}
+
+func (c *anyTLSCountedPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	n, err := c.PacketConn.WriteTo(p, addr)
+	if n > 0 {
+		c.up.Add(int64(n))
+	}
+	return n, err
+}
+
+func (a *anyTLSAdapter) lookupUser(name string) (core.User, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	index, ok := a.users[name]
 	if !ok || index < 0 || index >= len(a.slots) || !a.slots[index].active {
-		return 0, core.User{}, false
+		return core.User{}, false
 	}
-	return index, a.slots[index].user, true
-}
-
-func (a *anyTLSAdapter) addTraffic(index int, upload, download int64) {
-	a.mu.RLock()
-	var id int64
-	ok := index >= 0 && index < len(a.slots)
-	if ok {
-		id = a.slots[index].user.ID
-	}
-	a.mu.RUnlock()
-	if ok {
-		a.sessions.add(id, upload, download)
-	}
+	return a.slots[index].user, true
 }
 
 func (a *anyTLSAdapter) removeActive(conn net.Conn) {

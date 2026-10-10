@@ -34,6 +34,8 @@ func TestAnyTLSNativeClientTCPAndUOTUDP(t *testing.T) {
 	t.Run("large-writes-tls", func(t *testing.T) { runAnyTLSLargeSingleWrites(t, true) })
 	// 复用会话上 sid>=2 的流要收到 cmdSYNACK，否则 v2 客户端 3 秒后关整条会话。
 	t.Run("synack", runAnyTLSSynAckGroup)
+	// UoT 流的收尾与流量计数。
+	t.Run("uot", runAnyTLSUOTGroup)
 }
 
 func runAnyTLSNativeClient(t *testing.T, useTLS bool) {
