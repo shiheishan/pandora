@@ -112,6 +112,28 @@ func handshakeClientPeer(t *testing.T, base *tls.Config, wantCN string, wantALPN
 	}
 }
 
+// 经真入口：serverTLSHandshake 每次握手都走缓存的派生配置（review-r3 #7 的测试
+// 缺口：调用处改回每次 withInboundWebALPN 时以前的用例全绿）。同一 base 握手两次，
+// 缓存里恰好有这一条，取出来的仍是同一个指针。
+func TestServerTLSHandshakeUsesCachedDerivedConfig(t *testing.T) {
+	base := testInboundTLSBaseConfig(t, "via-entry")
+	key := weak.Make(base)
+	if _, ok := inboundWebALPNCache.Load(key); ok {
+		t.Fatal("新 base 不应已在缓存里")
+	}
+	handshakeClientPeer(t, base, "via-entry", "h2")
+	first, ok := inboundWebALPNCache.Load(key)
+	if !ok {
+		t.Fatal("serverTLSHandshake 没有走派生配置缓存")
+	}
+	handshakeClientPeer(t, base, "via-entry", "h2")
+	second, _ := inboundWebALPNCache.Load(key)
+	if first != second {
+		t.Fatal("同一 base 第二次握手换了派生配置")
+	}
+	runtime.KeepAlive(base)
+}
+
 func TestServerTLSHandshakePeerCertificate(t *testing.T) {
 	base1 := testInboundTLSBaseConfig(t, "cert-one")
 	base2 := testInboundTLSBaseConfig(t, "cert-two")
