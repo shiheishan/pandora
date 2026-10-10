@@ -26,10 +26,21 @@ ALTER TABLE public.node_user_traffic_hourly
 
 ALTER TABLE public.node_traffic_hourly
   ALTER COLUMN billed_bytes SET NOT NULL;
+-- 变异（#2 单表回退）：节点小时表加回默认值 0
+ALTER TABLE public.node_traffic_hourly
+  ALTER COLUMN billed_bytes SET DEFAULT 0;
 ALTER TABLE public.node_user_traffic_hourly
   ALTER COLUMN billed_bytes SET NOT NULL;
+-- 变异（#6 单表回退）：按天表走 NOT VALID → VALIDATE → SET NOT NULL → 丢临时检查
+ALTER TABLE public.node_user_traffic_daily
+  ADD CONSTRAINT node_user_traffic_daily_billed_bytes_not_null
+  CHECK (billed_bytes IS NOT NULL) NOT VALID;
+ALTER TABLE public.node_user_traffic_daily
+  VALIDATE CONSTRAINT node_user_traffic_daily_billed_bytes_not_null;
 ALTER TABLE public.node_user_traffic_daily
   ALTER COLUMN billed_bytes SET NOT NULL;
+ALTER TABLE public.node_user_traffic_daily
+  DROP CONSTRAINT node_user_traffic_daily_billed_bytes_not_null;
 
 COMMENT ON COLUMN public.node_traffic_hourly.billed_bytes IS
   '这一小时乘过节点倍率的计费字节（非重复上报、放行名单内的合规项）。';
@@ -49,6 +60,7 @@ COMMENT ON COLUMN public.node_user_traffic_hourly.billed_bytes IS
   '这一小时这个 uid 乘过节点倍率的计费字节；NULL 表示这个桶跨过了 00133 之前，未知。';
 COMMENT ON COLUMN public.node_user_traffic_daily.billed_bytes IS NULL;
 
+ALTER TABLE public.node_traffic_hourly ALTER COLUMN billed_bytes DROP DEFAULT;
 ALTER TABLE public.node_user_traffic_daily ALTER COLUMN billed_bytes DROP NOT NULL;
 ALTER TABLE public.node_user_traffic_hourly ALTER COLUMN billed_bytes DROP NOT NULL;
 ALTER TABLE public.node_traffic_hourly ALTER COLUMN billed_bytes DROP NOT NULL;
