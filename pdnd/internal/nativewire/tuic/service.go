@@ -240,7 +240,7 @@ func (s *serverSession[U]) handle() {
 //   - 就在本 goroutine 里逐条读 2 字节命令头，不起 goroutine、不借缓冲；
 //   - 认证流当场校验，通过即放行之前暂存的流；
 //   - Packet / Dissociate 流只记下（流对象与命令字节），认证通过后再交给
-//     各自的 goroutine；条数受 MaxIncomingUniStreams 约束（serverMaxIncomingUniStreams）。
+//     各自的 goroutine；至多 preAuthMaxParkedUniStreams 条，超出即关连接。
 //
 // 正常客户端的认证流是连接上的第一批单向流之一，且随流就带着数据，逐条读不会
 // 拖慢它；不发数据的流会卡住本循环，但那只会让这条连接撞上认证超时。
@@ -287,9 +287,11 @@ func (s *serverSession[U]) loopUniStreams() {
 				release()
 				continue
 			}
-		} else if err == nil && (command == CommandPacket || command == CommandDissociate) {
+		} else if err == nil && (command == CommandPacket || command == CommandDissociate) && len(parked) < preAuthMaxParkedUniStreams {
 			parked = append(parked, parkedUniStream{stream: uniStream, command: command})
 			continue
+		} else if err == nil && (command == CommandPacket || command == CommandDissociate) {
+			err = E.New("too many streams before authentication")
 		} else if err == nil {
 			err = E.New("unknown command ", command)
 		}
@@ -301,6 +303,12 @@ func (s *serverSession[U]) loopUniStreams() {
 		return
 	}
 }
+
+// preAuthMaxParkedUniStreams 是认证前最多暂存的单向流条数，超出即关连接（Pandora
+// 改动）。暂存的流读完了 FIN 就不再占 quic-go 的流额度（对端可以接着开新的），
+// 不设这个上限的话，认证超时之前暂存表能涨到任意长。正常客户端认证前最多发出
+// 几个 UDP 包（udp_relay_mode=quic 时每包一条），64 足够。
+const preAuthMaxParkedUniStreams = 64
 
 // parkedUniStream 是认证前到达、命令头已读的单向流（Pandora 改动）。
 type parkedUniStream struct {

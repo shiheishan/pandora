@@ -109,16 +109,8 @@ func TestPreAuthStreamFloodDoesNotAmplify(t *testing.T) {
 	const attempts = 4000
 	connect := append([]byte{Version, CommandConnect}, mustAddr(t, "203.0.113.1:80")...)
 	uni, bidi := 0, 0
-	for i := 0; i < attempts; i++ {
-		s, err := conn.OpenUniStream()
-		if err != nil {
-			break
-		}
-		if _, err := s.Write([]byte{Version, CommandPacket}); err != nil {
-			break
-		}
-		uni++
-	}
+	// 先开双向流（认证前不 Accept，只占 quic-go 的流对象），再开单向流（认证前
+	// 暂存，至多 preAuthMaxParkedUniStreams 条，超出即关连接）。
 	for i := 0; i < attempts; i++ {
 		s, err := conn.OpenStream()
 		if err != nil {
@@ -128,6 +120,16 @@ func TestPreAuthStreamFloodDoesNotAmplify(t *testing.T) {
 			break
 		}
 		bidi++
+	}
+	for i := 0; i < attempts; i++ {
+		s, err := conn.OpenUniStream()
+		if err != nil {
+			break
+		}
+		if _, err := s.Write([]byte{Version, CommandPacket}); err != nil {
+			break
+		}
+		uni++
 	}
 	time.Sleep(time.Second)
 	g, heap := serverResources()
@@ -241,5 +243,33 @@ func TestClientStreamLimitBehavior(t *testing.T) {
 			t.Fatalf("关掉一条后额度没有回来：%v", err)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// 认证前暂存的单向流有上限：带 FIN 的流读完就把额度还给对端，不设上限时暂存表能
+// 在认证超时之前涨到任意长。超出上限立即关连接，不等认证超时。
+func TestPreAuthParkedUniStreamsAreCapped(t *testing.T) {
+	addr := startTestService(t, &countingHandler{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := quic.DialAddr(ctx, addr, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}}, &quic.Config{EnableDatagrams: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseWithError(0, "")
+	start := time.Now()
+	for i := 0; i < 4*preAuthMaxParkedUniStreams; i++ {
+		s, err := conn.OpenUniStream()
+		if err != nil {
+			break
+		}
+		_, _ = s.Write([]byte{Version, CommandPacket})
+		_ = s.Close()
+	}
+	select {
+	case <-conn.Context().Done():
+		t.Logf("暂存超限后 %v 被关", time.Since(start))
+	case <-time.After(time.Second):
+		t.Fatal("认证前暂存超限的连接 1 秒内没被关（只等到了认证超时）")
 	}
 }
