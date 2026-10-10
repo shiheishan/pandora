@@ -74,11 +74,25 @@ type Service[U comparable] struct {
 	quicListener          io.Closer
 }
 
+// ServerMaxIncomingStreams 是每条 QUIC 连接上对端可同时打开的双向流数（Pandora
+// 改动；上游 sing-quic 是 1<<60，等于不设上限）。
+//
+// hy2 是 HTTP/3 服务端，认证之前的请求按伪装站点处理：http3 每接一条双向流就起
+// 一个 goroutine 读请求头，hy2 又没有认证超时。不设上限时，只完成握手、不认证的
+// 客户端开流不发完请求头，就能让服务端堆起任意多的 goroutine（4000 条流实测多出
+// 4008 个），连接不断就一直挂着；QUIC 里开第 N 号流还会隐式打开它之前的全部流，
+// 一个大编号的 STREAM 帧就能让 quic-go 建出任意多的流对象。
+//
+// 1024 与 Hysteria 官方服务端的 maxIncomingStreams 缺省一致。认证之后每条 TCP
+// 转发占一条双向流，sing-box 等客户端用不阻塞的 OpenStream，同一条连接上同时在途
+// 的 TCP 超过 1024 条时新的会报错；quic-go 没有认证后再放宽上限的接口，见报告。
+const ServerMaxIncomingStreams = 1024
+
 func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 	quicConfig := &quic.Config{
 		DisablePathMTUDiscovery:        !(runtime.GOOS == "windows" || runtime.GOOS == "linux" || runtime.GOOS == "android" || runtime.GOOS == "darwin"),
 		EnableDatagrams:                !options.UDPDisabled,
-		MaxIncomingStreams:             1 << 60,
+		MaxIncomingStreams:             ServerMaxIncomingStreams,
 		InitialStreamReceiveWindow:     hysteria.DefaultStreamReceiveWindow,
 		MaxStreamReceiveWindow:         hysteria.DefaultStreamReceiveWindow,
 		InitialConnectionReceiveWindow: hysteria.DefaultConnReceiveWindow,
