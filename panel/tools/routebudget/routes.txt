@@ -149,7 +149,6 @@ admin  POST    /v1/node-pools/{id}                                -   -
 admin  GET     /v1/node-protocol-schemas                          -   -
 admin  GET     /v1/nodes                                          -   -
 admin  POST    /v1/nodes                                          -   -
-admin  POST    /v1/nodes/batch/status                             -   -
 admin  POST    /v1/nodes/bootstrap-token                          -   -
 admin  POST    /v1/nodes/config/publish                           -   -
 admin  PUT     /v1/nodes/order                                    -   -

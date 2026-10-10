@@ -6,7 +6,7 @@ import (
 	"github.com/aegispanel/aegis/internal/middleware"
 )
 
-// nodeBatchStatusIdempotencyScope 由批量改节点状态的两条路由共用。
+// nodeBatchStatusIdempotencyScope 是批量改节点状态（POST /nodes/status:batch）的幂等 scope。
 const nodeBatchStatusIdempotencyScope = "node_status_batch"
 
 func registerNodePoolRoutes(r chi.Router, d Deps, h *handlers) {
@@ -118,13 +118,7 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		Post("/nodes/{id}/status", h.nodeSetStatus)
 
 	// --- 节点批量操作 ---
-	// batch/status 是 status:batch 的别名，同一个处理器、同一个幂等 scope：
-	// scope 不同的话，同一个 Idempotency-Key 换条路径就会再执行一次。
 	// retired 就是这个模型里的「删除」：节点有历史，不做物理删除。
-	r.With(
-		middleware.RequirePermission("node.lifecycle", d.Log),
-		middleware.Idempotency(d.Pool, nodeBatchStatusIdempotencyScope, d.Log),
-	).Post("/nodes/batch/status", h.batchAdminNodeStatus)
 	// 没有批量移动：单节点移动要求节点停用且不带任何 agent 资产
 	// （身份、指标、任务、流量上报、有效令牌…），也就是只有从没用过的
 	// 草稿节点能移。批量化一个「几乎总是被拒绝」的操作没有意义，

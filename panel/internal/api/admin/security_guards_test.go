@@ -114,26 +114,25 @@ func TestStepOneAdminRouteGuards(t *testing.T) {
 	}
 }
 
-// 两条批量改节点状态的路由是同一个处理器，必须共用一个幂等 scope：
-// scope 不同的话，同一个 Idempotency-Key 换一条路径就会再执行一次。
-func TestNodeBatchStatusAliasesShareIdempotencyScope(t *testing.T) {
+// 批量改节点状态只剩 status:batch。旧别名 batch/status 已删：再加回来，
+// 同一个 Idempotency-Key 换一条路径就会再执行一次，除非它共用同一个 scope。
+func TestNodeBatchStatusHasNoLegacyAlias(t *testing.T) {
 	raw, err := routerSource()
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := string(raw)
-	for _, route := range []string{
-		`Post("/nodes/status:batch", h.batchAdminNodeStatus)`,
-		`Post("/nodes/batch/status", h.batchAdminNodeStatus)`,
-	} {
-		at := strings.Index(source, route)
-		if at < 0 {
-			t.Fatalf("route missing: %s", route)
-		}
-		window := source[max(0, at-200):at]
-		if !strings.Contains(window, "middleware.Idempotency(d.Pool, nodeBatchStatusIdempotencyScope, d.Log)") {
-			t.Fatalf("%s must use nodeBatchStatusIdempotencyScope", route)
-		}
+	if strings.Contains(source, `Post("/nodes/batch/status"`) {
+		t.Fatal("legacy alias POST /nodes/batch/status is still registered")
+	}
+	route := `Post("/nodes/status:batch", h.batchAdminNodeStatus)`
+	at := strings.Index(source, route)
+	if at < 0 {
+		t.Fatal("status:batch route missing")
+	}
+	window := source[max(0, at-200):at]
+	if !strings.Contains(window, "middleware.Idempotency(d.Pool, nodeBatchStatusIdempotencyScope, d.Log)") {
+		t.Fatal("status:batch must use nodeBatchStatusIdempotencyScope")
 	}
 	if strings.Contains(source, `"node_batch_status"`) {
 		t.Fatal("the retired node_batch_status scope literal is back")
