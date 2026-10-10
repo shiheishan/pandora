@@ -22,8 +22,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
-
-	"github.com/gofrs/uuid/v5"
 )
 
 type ServiceOptions struct {
@@ -351,7 +349,8 @@ func (s *serverSession[U]) authenticate(stream *quic.ReceiveStream) error {
 	password := s.passwordMap[user]
 	s.userAccess.RUnlock()
 	if !loaded {
-		return E.New("authentication: unknown user ", uuid.UUID(userUUID))
+		// 不带 UUID（Pandora 改动）：用户 UUID 就是口令，节点日志不落完整凭据。
+		return E.New("authentication: unknown user")
 	}
 	handshakeState := s.quicConn.ConnectionState()
 	tuicToken, err := handshakeState.TLS.ExportKeyingMaterial(string(userUUID[:]), []byte(password), 32)
