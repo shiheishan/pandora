@@ -11,7 +11,7 @@
 #       读 <目录>/brief.md（必须含 templates/server-readonly.md 的「服务器只读红线」一节），报告写 <目录>/report.md。
 #   cursor-launch.sh --wait <日志>
 #       等日志出现 exit= 行再打印末尾；用 Bash 的 run_in_background 跑，结束时会话收到通知。
-# - 开工指令取自 templates/cursor-prompt.md；--resume 在末尾加续跑段（resume-work「Grok 的路」）。
+# - 开工指令取自 templates/cursor-prompt.md；--resume 在末尾加续跑段（resume-work「Composer 的路」）。
 # - 进程用 setsid 脱离会话（会话重启也不死），PID 写在 <日志>.pid，结束时日志末行是 exit=<退出码>。
 # - --log-dir 缺省是本会话的 scratchpad（由 CLAUDE_CODE_SESSION_ID 推出）；日志名 cursor-<名字>[-r<N>].log，重名加序号。
 # - 同一个目录已有 cursor-agent 在跑、报告文件已存在（续跑除外）、报告没被 git 忽略时拒绝启动。
@@ -28,7 +28,7 @@ if [ "${1:-}" = "--wait" ]; then
   [ -f "$log" ] || die "没有日志 $log"
   while ! grep -q '^exit=' "$log"; do
     if [ -f "$log.pid" ] && ! kill -0 "$(cat "$log.pid")" 2>/dev/null; then
-      echo "进程 $(cat "$log.pid") 已不在，日志没有 exit= 行：当作被打断，按 resume-work「Grok 的路」续跑"
+      echo "进程 $(cat "$log.pid") 已不在，日志没有 exit= 行：当作被打断，按 resume-work「Composer 的路」续跑"
       tail -n 30 "$log"; exit 1
     fi
     sleep 20

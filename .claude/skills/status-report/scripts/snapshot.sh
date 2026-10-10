@@ -60,7 +60,7 @@ for row in rows:
             hits = sorted(glob.glob(f"/private/tmp/claude-{os.getuid()}/{slug}/*/scratchpad/{os.path.basename(path)}"),
                           key=os.path.getmtime)
             path = hits[-1] if hits else path
-        name = re.sub(r"(-r\d+)?(-\d+)?\.log$", "", os.path.basename(path))[len("cursor-"):]
+        name = re.sub(r"(-sub-[\w.-]+?)?(-r\d+)?(-\d+)?\.log$", "", os.path.basename(path))[len("cursor-"):]
         ws = os.path.join(os.path.dirname(root), f"pandora-{name}")
         seen_ws.add(ws)
         if not os.path.exists(path):
@@ -71,8 +71,14 @@ for row in rows:
             alive = (os.path.exists(pidf) and os.system(f"kill -0 {open(pidf).read().strip()} 2>/dev/null") == 0) or ws in running
             state = f"已结束 {ends[-1]}" if ends else ("在跑" + (f" PID {running[ws]}" if ws in running else "")) if alive else "被打断（没有 exit= 行、进程不在）"
         print(f"  {name:<14} {state:<28} {path}")
+# opus 子 agent 转手 Composer（cursor-launch.sh --sub）的进程不单独登记日志，归到它那一路的 worktree
+lane_ws = {os.path.join(os.path.dirname(root), f"pandora-{n}") for row in rows for n in re.findall(r"\.\./pandora-([\w-]+)", row)}
 for ws, pid in running.items():
-    if ws not in seen_ws:
+    if ws in seen_ws:
+        continue
+    if ws in lane_ws:
+        print(f"  {os.path.basename(ws)[len('pandora-'):]:<14} {'在跑 PID ' + pid:<28} 子 agent 转手的 Composer（--sub，日志在该路 --log-dir）")
+    else:
         print(f"  未登记的进程 PID {pid}  {ws}（补进 TASKS「正在跑」）")
 if not rows:
     print("  TASKS 里找不到「正在跑」表")
