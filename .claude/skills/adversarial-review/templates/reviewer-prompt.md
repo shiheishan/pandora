@@ -9,7 +9,7 @@
 **实验**：回退修复看测试会不会变红、写探针测试，都在副本里做，不碰 worktree：
 `mkdir -p <副本> && git -C <worktree> archive <头> | tar -x -C <副本>`
 
-**范围**：worktree `<worktree>`，看 `git -C <worktree> diff <merge-base>..<头>`（<N> 个文件，+<a>/−<b>）。merge-base 已经排除了分支合进来的主线改动。
+**范围**：worktree `<worktree>`，看 `git -C <worktree> diff <merge-base>..<头>`（<N> 个文件，+<a>/−<b>）。merge-base 已经排除了分支合进来的上游改动。
 
 **材料**（报告只是线索，不是结论；只列存在的文件）：
 - 开工说明 `<worktree>/.claude/brief.md`

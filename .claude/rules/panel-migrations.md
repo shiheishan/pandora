@@ -12,7 +12,7 @@ paths:
 
 # 迁移与运行角色
 
-- 编号只要求严格递增、不重复，允许空号。主序列的 00073、00091、00092 是历史空号，不要重编号去填（已装的库 `goose_db_version` 记着其后的版本）
+- 编号只要求严格递增、不重复，允许空号。主序列的 00073、00091、00092 是历史空号，不要重编号去填（已装的库 `goose_db_version` 记着其后的版本）。这条管进了主线的号；集成分支上还没进主线的临时号（09000 起）在并主线前统一重编号，见 new-migration skill「集成分支的相对编号与重编号」
   - `panel/deploy/migrate.sh` 与 `panel/deploy/check-migrations.sh` 用同一条规则，改一处要改两处；桩测试 `check-migrations_mock_test.sh`、`migrate_fail_closed_mock_test.sh`
 - 已发布迁移的 Up 段一个字节都不改，要改行为就写新的前向迁移。守卫：`panel/tools/migrationlint/upsegments.txt` 冻结每个已发布 Up 段的 SHA-256（`TestPublishedUpSegmentsAreFrozen`）
   - 唯一例外是用户授权过的：给历史迁移追加 Down 段、在文件头（`-- +goose Up` 之前）加标记行。Up 段的定义去掉末尾空行，所以追加不影响冻结值

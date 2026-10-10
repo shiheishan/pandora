@@ -4,6 +4,7 @@
 #   - 当前工作区 panel/migrations 的最大号（在任务 worktree 里跑时会比主线大）；
 #   - 各任务分支（<主线>-*）上有、主线还没有的迁移：在途号段，取号要跳过；
 #   - 主线最大号以下的空号：历史空号，不要回填。
+#   - 09000 起是集成分支的临时号（见 SKILL.md「集成分支的相对编号与重编号」）：单列，不计入下一个主线号。
 # 用法：next-number.sh [主线分支]
 set -euo pipefail
 
@@ -16,7 +17,11 @@ list_ref() {
   git -C "$ROOT" ls-tree --name-only "$1" "$DIR/" \
     | sed -n "s#^$DIR/\([0-9]\{5\}_[A-Za-z0-9._-]*\.sql\)\$#\1#p" | sort
 }
-max_of() { sed -n 's/^\([0-9]\{5\}\)_.*/\1/p' | sort -n | tail -1; }
+TEMP_MIN=9000
+# 最大的主线号（临时号不算）
+max_of() { sed -n 's/^\([0-9]\{5\}\)_.*/\1/p' | awk -v t="$TEMP_MIN" '$1+0 < t' | sort -n | tail -1; }
+# 临时号文件名
+temp_of() { awk -v t="$TEMP_MIN" '{ n = substr($0, 1, 5) + 0; if (n >= t) print }'; }
 
 git -C "$ROOT" rev-parse --verify -q "$MAIN" >/dev/null || { echo "找不到分支 $MAIN" >&2; exit 2; }
 
@@ -30,6 +35,8 @@ printf '%s\n' "$main_files" | tail -5 | sed 's/^/  /'
 local_max="$( (ls "$ROOT/$DIR" 2>/dev/null || true) | grep -E '^[0-9]{5}_[A-Za-z0-9._-]+\.sql$' | max_of || true)"
 local_max="${local_max:-00000}"
 echo "当前工作区最大号：$local_max（$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)）"
+local_temp="$( (ls "$ROOT/$DIR" 2>/dev/null || true) | grep -E '^[0-9]{5}_[A-Za-z0-9._-]+\.sql$' | temp_of | tr '\n' ' ')"
+[ -z "$local_temp" ] || echo "当前工作区的集成分支临时号（不计入主线号）：$local_temp"
 
 inflight_max=00000
 echo "在途（任务分支上有、主线没有）："
@@ -39,7 +46,8 @@ while IFS= read -r branch; do
   extra="$(comm -13 <(printf '%s\n' "$main_files") <(list_ref "$branch") | sed '/^$/d')"
   [ -n "$extra" ] || continue
   found=1
-  echo "  $branch：$(printf '%s\n' "$extra" | tr '\n' ' ')"
+  temp="$(printf '%s\n' "$extra" | temp_of | wc -l | tr -d ' ')"
+  echo "  $branch：$(printf '%s\n' "$extra" | tr '\n' ' ')$([ "$temp" -eq 0 ] || echo "（其中 $temp 个临时号，不计入主线号）")"
   m="$(printf '%s\n' "$extra" | max_of)"
   if [ -n "$m" ] && [ "$((10#$m))" -gt "$((10#$inflight_max))" ]; then inflight_max="$m"; fi
 done < <(git -C "$ROOT" for-each-ref --format='%(refname:short)' "refs/heads/$MAIN-*")
