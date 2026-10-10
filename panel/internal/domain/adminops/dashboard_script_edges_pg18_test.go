@@ -3,6 +3,7 @@ package adminops
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,8 +15,12 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/pg18test"
 )
 
+// dashboardSnapshotMicros 是看板窗口回显的 UTC 微秒格式。前端用户卡拿节点卡的 snapshot_at 当锚点。
+var dashboardSnapshotMicros = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$`)
+
 // TestDashboardScriptEdgesPG18 承接旧看板脚本里仍是现行 schema 的行为：
-// 通知积压的分类与 600 秒整点边界、用户排行的邮箱脱敏、空窗口为零。
+// 通知积压的分类与 600 秒整点边界、用户排行的邮箱脱敏、空窗口为零、
+// 显式 snapshot_at 原样回显，以及绕过 RLS 后积压 SQL 仍只计本租户。
 // 流量等式与非法报文口径已由 TestDashboardTrafficRollupPG18 对照旧 SQL 覆盖。
 // 夹具前缀 c4b…，node_uid 9417xxx，与同库 catalog_sales 域的其它用例错开。
 func TestDashboardScriptEdgesPG18(t *testing.T) {
@@ -145,6 +150,75 @@ func TestDashboardScriptEdgesPG18(t *testing.T) {
 			t.Fatalf("600.000001s = %#v", late)
 		}
 	})
+
+	// 先取节点卡的 snapshot，再拿它查用户卡。窗口若改成总用 now，流量等式仍可能全绿，两张卡的口径已经分开。
+	t.Run("explicit snapshot is echoed", func(t *testing.T) {
+		nodes, err := svc.DashboardNodeTraffic(ctx, tenantMask, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !dashboardSnapshotMicros.MatchString(nodes.SnapshotAt) {
+			t.Fatalf("node snapshot format=%q", nodes.SnapshotAt)
+		}
+		users, err := svc.DashboardUserTraffic(ctx, tenantMask, DashboardTrafficQuery{
+			Range: query.Range, Limit: query.Limit, SnapshotAt: nodes.SnapshotAt,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if users.SnapshotAt != nodes.SnapshotAt || users.From != nodes.From || users.To != nodes.To {
+			t.Fatalf("anchored window nodes=%s %s %s users=%s %s %s",
+				nodes.SnapshotAt, nodes.From, nodes.To, users.SnapshotAt, users.From, users.To)
+		}
+
+		parsed, err := time.Parse(time.RFC3339Nano, nodes.SnapshotAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixed := parsed.Add(-2 * time.Hour).UTC().Format(dashboardTimestampLayout)
+		if fixed == nodes.SnapshotAt || !dashboardSnapshotMicros.MatchString(fixed) {
+			t.Fatalf("fixed snapshot=%q live=%q", fixed, nodes.SnapshotAt)
+		}
+		frozen := DashboardTrafficQuery{Range: query.Range, Limit: query.Limit, SnapshotAt: fixed}
+		frozenNodes, err := svc.DashboardNodeTraffic(ctx, tenantMask, frozen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		frozenUsers, err := svc.DashboardUserTraffic(ctx, tenantMask, frozen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frozenNodes.SnapshotAt != fixed || frozenUsers.SnapshotAt != fixed ||
+			frozenNodes.From != frozenUsers.From || frozenNodes.To != frozenUsers.To {
+			t.Fatalf("frozen window want snapshot=%s nodes=%s %s %s users=%s %s %s",
+				fixed,
+				frozenNodes.SnapshotAt, frozenNodes.From, frozenNodes.To,
+				frozenUsers.SnapshotAt, frozenUsers.From, frozenUsers.To)
+		}
+	})
+
+	// 管理连接绕过 RLS。积压 SQL 若丢掉 tenant_id 条件，空租户也会数进别人的投递。
+	t.Run("backlog sql counts one tenant without rls", func(t *testing.T) {
+		var super, bypass bool
+		if err := admin.QueryRow(ctx, `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user`).Scan(&super, &bypass); err != nil {
+			t.Fatal(err)
+		}
+		if !super && !bypass {
+			t.Fatal("admin pool does not bypass row security")
+		}
+		queue := notificationBacklogViaAdmin(t, ctx, admin, tenantQueue)
+		wantQueue := DashboardNotificationCounts{
+			Ready: 2, ReadyRetry: 1, Scheduled: 2, ScheduledRetry: 1,
+			SendingUnobservable: 1, FailedTotal: 1, SuppressedTotal: 1, BouncedTotal: 1,
+		}
+		if queue != wantQueue {
+			t.Fatalf("queue counts via admin=%+v", queue)
+		}
+		empty := notificationBacklogViaAdmin(t, ctx, admin, tenantEmpty)
+		if empty != (DashboardNotificationCounts{}) {
+			t.Fatalf("empty tenant counts via admin=%+v", empty)
+		}
+	})
 }
 
 func seedDashboardScriptEdges(t *testing.T, ctx context.Context, admin *pgxpool.Pool) {
@@ -248,4 +322,19 @@ func backlogAt(t *testing.T, ctx context.Context, app *db.Pool, tenant string, a
 		t.Fatalf("fixed backlog: %v", err)
 	}
 	return out
+}
+
+// notificationBacklogViaAdmin 用绕过 RLS 的管理连接跑生产积压 SQL。
+func notificationBacklogViaAdmin(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant string) DashboardNotificationCounts {
+	t.Helper()
+	var out DashboardNotificationBacklog
+	err := admin.QueryRow(ctx, dashboardNotificationBacklogSQL, tenant).Scan(
+		&out.AsOf, &out.BacklogState,
+		&out.Counts.Ready, &out.Counts.ReadyRetry, &out.Counts.Scheduled, &out.Counts.ScheduledRetry,
+		&out.Counts.SendingUnobservable, &out.Counts.FailedTotal, &out.Counts.SuppressedTotal, &out.Counts.BouncedTotal,
+		&out.OldestReadyAt, &out.MaxReadyLagSeconds, &out.LastSentAt, &out.Assessment.Reason)
+	if err != nil {
+		t.Fatalf("admin backlog %s: %v", tenant, err)
+	}
+	return out.Counts
 }
