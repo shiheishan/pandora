@@ -92,6 +92,22 @@ db_query() {
   PGOPTIONS='-c statement_timeout=10s' "$ROOT/deploy/psql.sh" -X -tAc "$1"
 }
 
+# 查一个计数（G4）：成功时把数字写进变量 $1、返回 0。查询失败、超时（statement_timeout 取消时 psql 非零退出、
+# 没有输出）或输出不是一个数字时，记一条「<检查项>查询失败或超时」并返回 1——不能当成「查出 0」记 OK。
+# 数据库已判为连不上（DB_DOWN=1）时不再重复报，前面已记了一条
+#   db_count <变量名> <检查项> <SQL>
+db_count() {
+  local out
+  printf -v "$1" '%s' ''
+  [ "$DB_DOWN" != 1 ] || return 1
+  if out=$(db_query "$3" 2>/dev/null) && [[ "$out" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then
+    printf -v "$1" '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  note "$2查询失败或超时（每条查询限 10 秒）"
+  return 1
+}
+
 # 可单测的部分到此为止
 if [ "${HEALTHCHECK_LIB:-}" = 1 ]; then
   return 0 2>/dev/null || exit 0
@@ -152,15 +168,15 @@ check_tls
 #--- 通知队列积压 ---
 # 队列涨起来通常意味着 SMTP 挂了或 Telegram token 失效，
 # 而这两件事本身不会让任何服务变成 inactive。
-q=$(db_query \
-  "SELECT count(*) FROM notification_deliveries WHERE status='queued' AND created_at < now() - interval '30 minutes'" \
-  2>/dev/null | tr -dc '0-9')
-[ -z "$q" ] || [ "$q" -lt 200 ] || note "有 $q 条通知排队超过 30 分钟没发出去"
+if db_count q "通知积压" \
+  "SELECT count(*) FROM notification_deliveries WHERE status='queued' AND created_at < now() - interval '30 minutes'"; then
+  [ "$q" -lt 200 ] || note "有 $q 条通知排队超过 30 分钟没发出去"
+fi
 
-f=$(db_query \
-  "SELECT count(*) FROM notification_deliveries WHERE status='failed' AND created_at > now() - interval '6 hours'" \
-  2>/dev/null | tr -dc '0-9')
-[ -z "$f" ] || [ "$f" -lt 50 ] || note "最近六小时有 $f 条通知发送失败"
+if db_count f "通知发送失败" \
+  "SELECT count(*) FROM notification_deliveries WHERE status='failed' AND created_at > now() - interval '6 hours'"; then
+  [ "$f" -lt 50 ] || note "最近六小时有 $f 条通知发送失败"
+fi
 
 #--- 节点集体失联 ---
 # 只在「本来有节点在上报、现在全断了」时才报。
@@ -174,14 +190,13 @@ f=$(db_query \
 #
 # 判据换成两条同时成立：最近 30 分钟一条心跳都没有，且过去 7 天里
 # 曾经有过 —— 前者是「现在坏了」，后者是「以前是好的」。
-recent=$(db_query \
-  "SELECT count(*) FROM nodes WHERE serving_status IN ('active','draining') AND last_heartbeat_at > now() - interval '30 minutes'" \
-  2>/dev/null | tr -dc '0-9')
-ever=$(db_query \
-  "SELECT count(*) FROM nodes WHERE serving_status IN ('active','draining') AND last_heartbeat_at > now() - interval '7 days'" \
-  2>/dev/null | tr -dc '0-9')
-if [ -n "$recent" ] && [ -n "$ever" ] && [ "$recent" = "0" ] && [ "$ever" -gt 0 ]; then
-  note "过去 30 分钟没有任何节点上报心跳（7 天内曾有 $ever 个在报）"
+if db_count recent "节点心跳（最近 30 分钟）" \
+    "SELECT count(*) FROM nodes WHERE serving_status IN ('active','draining') AND last_heartbeat_at > now() - interval '30 minutes'" &&
+  db_count ever "节点心跳（7 天内）" \
+    "SELECT count(*) FROM nodes WHERE serving_status IN ('active','draining') AND last_heartbeat_at > now() - interval '7 days'"; then
+  if [ "$recent" = 0 ] && [ "$ever" -gt 0 ]; then
+    note "过去 30 分钟没有任何节点上报心跳（7 天内曾有 $ever 个在报）"
+  fi
 fi
 
 #--- 汇报 ---

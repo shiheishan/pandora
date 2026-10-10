@@ -394,5 +394,12 @@ check "$T/vol-otherdir.yml" "$CONF" >/dev/null && fail "a non-dev initdb directo
 sed 's|test: \["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -q"\]|test: ["CMD-SHELL", "psql -U postgres -c \\"ALTER SYSTEM SET work_mem='"'"'64MB'"'"'\\" && pg_isready -h 127.0.0.1 -U postgres -q"]|' "$COMPOSE" >"$T/hc-alter.yml"
 cmp -s "$COMPOSE" "$T/hc-alter.yml" && fail "mutation premise: postgres healthcheck test line not found"
 check "$T/hc-alter.yml" "$CONF" >/dev/null && fail "ALTER SYSTEM in the postgres healthcheck was not detected"
+# compose 本身的另两条 grep 也各配一条只有它抓得到的变异（ALTER … SET、写 postgresql.auto.conf）
+sed 's|test: \["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -q"\]|test: ["CMD-SHELL", "psql -U postgres -c \\"ALTER ROLE aegis SET work_mem = 1\\" \&\& pg_isready -h 127.0.0.1 -U postgres -q"]|' "$COMPOSE" >"$T/hc-alterset.yml"
+cmp -s "$COMPOSE" "$T/hc-alterset.yml" && fail "mutation premise: postgres healthcheck test line not found"
+check "$T/hc-alterset.yml" "$CONF" >/dev/null && fail "ALTER ROLE ... SET in the postgres healthcheck was not detected"
+sed 's|test: \["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -q"\]|test: ["CMD-SHELL", "echo jit=on >> /var/lib/postgresql/18/docker/postgresql.auto.conf \&\& pg_isready -h 127.0.0.1 -U postgres -q"]|' "$COMPOSE" >"$T/hc-conf.yml"
+cmp -s "$COMPOSE" "$T/hc-conf.yml" && fail "mutation premise: postgres healthcheck test line not found"
+check "$T/hc-conf.yml" "$CONF" >/dev/null && fail "writing postgresql.auto.conf from the postgres healthcheck was not detected"
 
 echo "dev-compose static: $count PostgreSQL parameters match postgresql-pandora.conf, $(wc -l <<<"$PROD_VALKEY" | tr -d ' ') Valkey settings match install.sh, ports loopback-only, superuser postgres"

@@ -204,6 +204,10 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		{"function concat after another statement in the literal", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; REVOKE ALL ON FUNCTION ' || v || ' FROM aegis_app'; END $$;", ""},
 		{"function concat with the role in a later fragment", "DO $$ BEGIN EXECUTE 'SELECT 1; GRANT EXECUTE ON FUNCTION ' || v || ' TO ' || r; END $$;", ""},
 		{"procedure concat after a prefix", "DO $$ BEGIN EXECUTE 'SET LOCAL y = 2; REVOKE ALL ON PROCEDURE ' || v || ' FROM aegis_app'; END $$;", ""},
+		// G1：字面量里先有别的语句，并且在对象类型之前切开（碎片里还没写出 ON 对象）
+		{"concat before the object kind after a prefix", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; REVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		{"concat after ALL after a prefix", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; REVOKE ALL ' || 'ON FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		{"concat right after the verb after a prefix", "DO $$ BEGIN EXECUTE 'SET LOCAL x = 1; REVOKE ' || 'ALL ON FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
 	}
 	for _, c := range red {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -238,6 +242,9 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		// I2：拼接判红只在 GRANT/REVOKE 是字面量第一个词时；文案里的 grant、revoke 后面跟 || 不是权限语句
 		{"message ending in grant before a concatenation", "DO $$ BEGIN RAISE NOTICE '%', 'traffic pack grant ' || v_id; END $$;", "", nil},
 		{"message ending in revoke before a concatenation", "DO $$ BEGIN RAISE EXCEPTION 'cannot revoke' || v_reason; END $$;", "", nil},
+		// G1 放宽后仍不算：分号之后的第一个词不是 GRANT/REVOKE
+		{"message with a semicolon then text mentioning revoke", "DO $$ BEGIN RAISE NOTICE '%', 'step one; then revoke ' || v_id; END $$;", "", nil},
+		{"message with a semicolon then text mentioning grant", "DO $$ BEGIN RAISE NOTICE '%', 'done; see grant ' || v_id; END $$;", "", nil},
 	}
 	for _, c := range green {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -425,13 +432,18 @@ func insideSingleQuoted(text string, pos int) bool {
 	return in
 }
 
-// opensSingleQuoted 看 pos 是不是某个单引号字面量的第一个词：在字面量里，且前面只有空白和开引号
-func opensSingleQuoted(text string, pos int) bool {
+// startsStatementInLiteral 看 pos 是不是单引号字面量里某条语句的第一个词：在字面量里，且前一个非空白字符是
+// 开引号（字面量的第一个词），或是字面量里的分号（'SET LOCAL x = 1; REVOKE …' 里的第二句，G1）。
+// 只认这两种：'cannot revoke'、'step one; then revoke' 这类文案里的 grant/revoke 前面是别的词，不算
+func startsStatementInLiteral(text string, pos int) bool {
 	if !insideSingleQuoted(text, pos) {
 		return false
 	}
 	k := strings.LastIndexFunc(text[:pos], func(r rune) bool { return !unicode.IsSpace(r) })
-	return k >= 0 && text[k] == '\'' && !insideSingleQuoted(text, k)
+	if k < 0 {
+		return false
+	}
+	return (text[k] == '\'' && !insideSingleQuoted(text, k)) || (text[k] == ';' && insideSingleQuoted(text, k))
 }
 
 // atStatementStart 看 pos 之前第一个非空白字符是不是分号（或已到文本开头）
@@ -500,10 +512,10 @@ func migrationRevokedFromApp(ups []migrationUp, resolve func(kind, sig string) (
 			stmt := strings.Join(strings.Fields(text[start:end]), " ")
 			// 拼接：'REVOKE ALL ON FUNCTION ' || 'app.x(uuid) FROM aegis_app' 被切成碎片，每片单看都不像完整语句。
 			// 碎片是函数类、或还没写出 ON 对象（不知道是什么对象）时判红；明确是表、序列的拼接不管
-			// 已写出函数类对象的碎片一律判红；还没写出 ON 对象的碎片，只在 GRANT/REVOKE 是字面量第一个词时才算
-			// 拼接出来的权限语句（'cannot revoke' || … 这类文案不算）
+			// 已写出函数类对象的碎片一律判红；还没写出 ON 对象的碎片，只在 GRANT/REVOKE 是字面量里某条语句的
+			// 第一个词时才算拼接出来的权限语句（'cannot revoke' || … 这类文案不算）
 			if end < len(text) && concatAfter.MatchString(text[end:]) &&
-				(functionObjectKind.MatchString(stmt) || (!onObject.MatchString(stmt) && opensSingleQuoted(text, start))) {
+				(functionObjectKind.MatchString(stmt) || (!onObject.MatchString(stmt) && startsStatementInLiteral(text, start))) {
 				problems = append(problems, fmt.Sprintf("%s: privilege statement built by string concatenation cannot be checked: %s", m.name, stmt))
 				continue
 			}

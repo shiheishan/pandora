@@ -6,6 +6,8 @@
 #   续期 timer 的结论 RESULT=error 报、超过 36 小时没跑报；没走 HTTPS 边缘不查。
 # 另验查库（db_query）：安装根目录取脚本自己的位置，只经 <根>/deploy/psql.sh 查；psql.sh 不在就算连不上，
 # 没有别的退路（不再以 runuser 切到 postgres）。
+# 末尾把主流程整体跑一遍（桩掉 systemctl、curl、df、stat 与 psql.sh）：全部查出 0 记 OK；SELECT 1 之后某条计数查询
+# 超时、退出 0 却没输出、输出数字却非零退出，都要告警并说出是哪项（G4）；SELECT 1 失败只报一条、后面不再去连（G5）。
 set -euo pipefail
 
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -129,5 +131,65 @@ if ( PATH="$T/bin:$PATH"; HEALTHCHECK_LIB=1 . "$T/root/deploy/healthcheck.sh"; d
 fi
 [ ! -s "$T/calls" ] || fail "db_query fell back to something else: $(cat "$T/calls")"
 grep -Fq 'BK=${AEGIS_BACKUP_DIR:-/var/backups/pandora}' "$DEPLOY/healthcheck.sh" || fail 'backup directory default is not /var/backups/pandora'
+
+# --- 主流程整体跑一遍（G4、G5）：桩掉 systemctl、curl、df、stat 与 psql.sh，按查询内容决定成功、失败或超时 ---
+# 「查出 0」与「查询失败 / 超时」必须分开：后者要告警（非零退出、health.log 记 ALERT），不能当成没数据记 OK
+MF="$T/mf"
+mkdir -p "$MF/deploy" "$MF/bin" "$MF/backups"
+cp "$DEPLOY/healthcheck.sh" "$MF/deploy/healthcheck.sh"
+: >"$MF/deploy/.env"
+: >"$MF/backups/aegis-postgres-20261010T000000Z.dump.age"
+# psql.sh：$MF/fail-pattern 里的子串命中查询时按 $MF/fail-mode 出错：timeout = 非零退出、不输出（statement_timeout
+# 取消就是这样）；empty = 退出 0 但没有输出；partial = 先输出一个数字再非零退出。其余计数查询输出 0
+cat >"$MF/deploy/psql.sh" <<PSQL
+#!/usr/bin/env bash
+q="\${*: -1}"
+printf '%s\n' "\$q" >>"$MF/queries"
+pat="\$(cat "$MF/fail-pattern" 2>/dev/null || true)"
+if [ -n "\$pat" ] && [[ "\$q" == *"\$pat"* ]]; then
+  case "\$(cat "$MF/fail-mode" 2>/dev/null)" in
+    empty) exit 0 ;;
+    partial) echo 0; exit 1 ;;
+    *) echo 'ERROR:  canceling statement due to statement timeout' >&2; exit 1 ;;
+  esac
+fi
+[ "\$q" = 'SELECT 1' ] && { echo 1; exit 0; }
+echo 0
+PSQL
+printf '#!/usr/bin/env bash\necho active\n' >"$MF/bin/systemctl"
+printf '#!/usr/bin/env bash\nprintf 200\n' >"$MF/bin/curl"
+printf '#!/usr/bin/env bash\nprintf "Use%%%%\\n 10%%%%\\n"\n' >"$MF/bin/df"
+# stat：-c %%Y 给「现在」，-c %%s 给 20000 字节（GNU 与 BSD 的 stat 选项不同，桩掉免得依赖本机）
+printf '#!/usr/bin/env bash\ncase "$2" in %%Y) date +%%s ;; %%s) echo 20000 ;; esac\n' >"$MF/bin/stat"
+chmod +x "$MF/deploy/psql.sh" "$MF/bin/"*
+main_flow() { # <失败子串，空=全部成功> [timeout|empty|partial] → 设置 rc 与 out（health.log 末行加 stderr）
+  printf '%s' "$1" >"$MF/fail-pattern"; printf '%s' "${2:-timeout}" >"$MF/fail-mode"; : >"$MF/queries"; rm -f "$MF/logs/health.log"
+  set +e
+  out="$(PATH="$MF/bin:$PATH" HEALTHCHECK_ROOT="$MF" AEGIS_BACKUP_DIR="$MF/backups" EDGE_CONF="$MF/none.conf" \
+    TLS_STATUS_FILE="$MF/none.status" bash "$MF/deploy/healthcheck.sh" 2>&1)"
+  rc=$?
+  set -e
+  out="$out"$'\n'"$(tail -n 1 "$MF/logs/health.log" 2>/dev/null)"
+}
+main_flow ''
+[ "$rc" -eq 0 ] && grep -q ' OK$' <<<"$out" || fail "main flow with every query answering 0 did not log OK (rc=$rc): $out"
+[ "$(grep -c . "$MF/queries")" -ge 5 ] || fail "main flow ran only these queries: $(cat "$MF/queries")"
+# G4：SELECT 1 过了，后面某条查询超时 → 告警，说出是哪项查不了
+for pat in "status='queued'" "status='failed'" "last_heartbeat_at > now() - interval '30 minutes'" "interval '7 days'"; do
+  main_flow "$pat"
+  [ "$rc" -ne 0 ] && grep -q '查询失败或超时' <<<"$out" && grep -q 'ALERT' <<<"$out" \
+    || fail "a later query that timed out ($pat) was taken as no data (rc=$rc): $out"
+done
+# 退出 0 但没有输出、输出了数字却非零退出，都不算查出了数
+for mode in empty partial; do
+  main_flow "status='failed'" "$mode"
+  [ "$rc" -ne 0 ] && grep -q '通知发送失败查询失败或超时' <<<"$out" \
+    || fail "a query that answered '$mode' was taken as a count (rc=$rc): $out"
+done
+# G5：SELECT 1 失败 → 只报「数据库连不上」，后面的查询不再去连（也不重复报查询失败）
+main_flow 'SELECT 1'
+[ "$rc" -ne 0 ] && grep -q '数据库连不上' <<<"$out" || fail "SELECT 1 failing was not reported (rc=$rc): $out"
+[ "$(grep -c . "$MF/queries")" -eq 1 ] || fail "queries still ran after SELECT 1 failed: $(cat "$MF/queries")"
+if grep -q '查询失败或超时' <<<"$out"; then fail "a down database was reported once per query: $out"; fi
 
 printf 'healthcheck mock: PASS\n'
