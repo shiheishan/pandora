@@ -60,7 +60,7 @@ type juicityUDPRoutes struct {
 }
 
 // juicityUDPRoute 是一条 UDP 流里发往同一目标的路由。addr / resolved 只由该流的
-// 上行 goroutine 读写；下行 goroutine 只用 pc 与 target。
+// 上行 goroutine 读写；下行 goroutine 只用 pc 与 target；lastActive 两边都写。
 type juicityUDPRoute struct {
 	pc         net.PacketConn
 	target     juicityAddress
@@ -110,9 +110,9 @@ func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, s
 		if err != nil {
 			return
 		}
-		key := string(rawAddr)
+		// 查表直接用 m[string(rawAddr)]：编译器不为它分配；键串只在新建路由时生成。
 		routes.mu.Lock()
-		r := routes.m[key]
+		r := routes.m[string(rawAddr)]
 		if r != nil {
 			r.lastActive.Store(time.Now().UnixNano())
 		}
@@ -136,6 +136,7 @@ func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, s
 				return
 			}
 			now := time.Now().UnixNano()
+			key := string(rawAddr)
 			r = &juicityUDPRoute{pc: pc, target: target, dest: dest, key: key}
 			r.lastActive.Store(now)
 			routes.mu.Lock()
