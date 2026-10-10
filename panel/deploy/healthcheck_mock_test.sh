@@ -95,8 +95,33 @@ if ( DB_DOWN=1; HEALTHCHECK_LIB=1 . "$T/root/deploy/healthcheck.sh"; DB_DOWN=1; 
   fail 'db_query succeeded after the database was found down'
 fi
 [ ! -s "$T/calls" ] || fail "db_query still connects after the database was found down: $(cat "$T/calls")"
-grep -Eq 'note "数据库连不上' "$DEPLOY/healthcheck.sh" && grep -Eq '^[[:space:]]*DB_DOWN=1' "$DEPLOY/healthcheck.sh" \
-  || fail 'main flow does not mark the database down after SELECT 1 fails'
+grep -Eq 'note "数据库连不上' "$DEPLOY/healthcheck.sh" || fail 'main flow does not note database unreachable after SELECT 1 fails'
+awk '
+  /^db_query\(\)/ { in_fn = 1; next }
+  in_fn && /^}/ { in_fn = 0; next }
+  in_fn { next }
+  /if ! db_query .SELECT 1/ { in_if = 1; next }
+  in_if {
+    if (/^[[:space:]]*DB_DOWN=1[[:space:]]*$/) n++
+    if (/^fi$/) {
+      if (n != 1) {
+        printf "expected exactly one DB_DOWN=1 between SELECT 1 failure if and fi, found %d\n", n > "/dev/stderr"
+        exit 1
+      }
+      in_if = 0; ok = 1
+    }
+    next
+  }
+  /^[[:space:]]*DB_DOWN=1[[:space:]]*$/ {
+    printf "DB_DOWN=1 outside db_query() must only appear inside the SELECT 1 failure block (line %d)\n", NR > "/dev/stderr"
+    exit 1
+  }
+  END {
+    if (!ok) {
+      print "main flow missing if ! db_query SELECT 1 block that sets DB_DOWN=1 once" > "/dev/stderr"
+      exit 1
+    }
+  }' "$DEPLOY/healthcheck.sh" || fail 'main flow does not mark the database down only inside the SELECT 1 failure block'
 # psql.sh 不在：查询失败（主流程记成「数据库连不上」），不退回 runuser
 rm -f "$T/root/deploy/psql.sh"; : >"$T/calls"
 if ( PATH="$T/bin:$PATH"; HEALTHCHECK_LIB=1 . "$T/root/deploy/healthcheck.sh"; db_query 'SELECT 2' ) 2>/dev/null; then

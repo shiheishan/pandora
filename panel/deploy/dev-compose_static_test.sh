@@ -75,6 +75,25 @@ initdb_text() {
     echo ';'
   done < <(find "$1" -type f -print | sort)
 }
+# compose 全文连成一行，与 initdb_text 同样便于按「句」匹配 ALTER（healthcheck、environment 跨行值等）
+compose_text() {
+  tr '\n' ' ' <"$1"
+}
+# postgres 服务的 volumes 列表项：去掉行尾注释与成对引号
+postgres_volumes_norm() {
+  awk '
+    /^  postgres:/ { p = 1; vol = 0; next }
+    /^  [A-Za-z0-9_-]+:/ { if ($0 !~ /^  postgres:/) { p = 0; vol = 0 } ; next }
+    /^[A-Za-z]/ { p = 0; vol = 0 }
+    p && /^    volumes:/ { vol = 1; next }
+    p && vol && /^    [a-z_]+:/ { vol = 0 }
+    p && vol && /^      - / {
+      item = $0; sub(/^      - /, "", item); sub(/[ \t]+#.*$/, "", item)
+      if (item ~ /^".*"$/) item = substr(item, 2, length(item) - 2)
+      else if (item ~ /^\047.*\047$/) item = substr(item, 2, length(item) - 2)
+      print item
+    }' "$1" | sort
+}
 # initdb 里只许普通的 .sql 与 .sh 文件（镜像入口还会执行 .sql.gz、.sql.xz 等压缩文件，grep 看不到里面）；
 # 符号链接、子目录、别的类型一律不许（N2：链接能指向子目录里的压缩包，find -type f 看不到链接）
 initdb_odd_files() {
@@ -166,7 +185,7 @@ check() {
     return 1
   fi
   # 旁路：-c 之外不许有别的办法改 PostgreSQL 参数
-  local txt odd shape
+  local txt ctxt odd shape vol want_vol got_vol
   shape="$(compose_shape "$compose")"
   [ -z "$shape" ] || { echo "the dev compose has a shape the guard does not know (allow-list): $shape"; return 1; }
   odd="$(initdb_odd_files "$initdb")"
@@ -175,16 +194,32 @@ check() {
   if awk '/^  postgres:/ { p = 1; next } /^  [A-Za-z0-9_-]+:/ || /^[A-Za-z]/ { p = 0 } p && /^    entrypoint:/ { f = 1 } END { exit !f }' "$compose"; then
     echo "the postgres service overrides entrypoint: (it can carry -c parameter overrides)"; return 1
   fi
+  # 白名单只管到键名时，volumes 还能从别的目录挂 init SQL 或 healthcheck 里跑 ALTER；钉死与生产 dev 基座一致的两项挂载
+  want_vol="$(printf '%s\n' './initdb:/docker-entrypoint-initdb.d:ro' 'pgdata:/var/lib/postgresql' | sort)"
+  got_vol="$(postgres_volumes_norm "$compose")"
+  if [ "$(printf '%s\n' "$got_vol" | grep -c . || true)" -ne 2 ] || [ "$want_vol" != "$got_vol" ]; then
+    echo "postgres volumes must be exactly pgdata:/var/lib/postgresql and ./initdb:/docker-entrypoint-initdb.d:ro (got: $(printf '%s ' $got_vol))"; return 1
+  fi
   txt="$(initdb_text "$initdb")"
-  # 同一句里 alter 与 system 之间隔什么都算（空白、注释、换行），宁可多判也不漏
+  ctxt="$(compose_text "$compose")"
+  # 同一句里 alter 与 system 之间隔什么都算（空白、注释、换行），宁可多判也不漏；initdb 与 compose 本身都扫
   if grep -Eiq '(^|[^a-z_])alter[^;]*[^a-z_]system([^a-z_]|$)' <<<"$txt"; then
     echo "ALTER SYSTEM under dev/initdb overrides the -c parameters"; return 1
+  fi
+  if grep -Eiq '(^|[^a-z_])alter[^;]*[^a-z_]system([^a-z_]|$)' <<<"$ctxt"; then
+    echo "ALTER SYSTEM in the dev compose overrides the -c parameters"; return 1
   fi
   if grep -Eiq '(^|[^a-z_])alter[^;]*[^a-z_](database|role|user|group)[^;]*[^a-z_]set([^a-z_]|$)' <<<"$txt"; then
     echo "ALTER DATABASE / ROLE / USER ... SET under dev/initdb overrides the -c parameters"; return 1
   fi
+  if grep -Eiq '(^|[^a-z_])alter[^;]*[^a-z_](database|role|user|group)[^;]*[^a-z_]set([^a-z_]|$)' <<<"$ctxt"; then
+    echo "ALTER DATABASE / ROLE / USER ... SET in the dev compose overrides the -c parameters"; return 1
+  fi
   if grep -rIEiq 'postgresql(\.auto)?\.conf' "$initdb"; then
     echo "a file under dev/initdb mentions postgresql.conf / postgresql.auto.conf: parameters must only come from -c"; return 1
+  fi
+  if grep -Eiq 'postgresql(\.auto)?\.conf' <<<"$ctxt"; then
+    echo "the dev compose mentions postgresql.conf / postgresql.auto.conf: parameters must only come from -c"; return 1
   fi
   if grep -rIq PGOPTIONS "$compose" "$initdb"; then echo "PGOPTIONS overrides PostgreSQL parameters outside -c"; return 1; fi
   # -c 后面可以直接跟参数（-cwork_mem=…），也可以和别的短选项连写（-kc …）；值里不许 ${…}（从 .env 带进 -c）
@@ -329,6 +364,8 @@ extra service|s/^volumes:$/  pgproxy:\n    image: x\nvolumes:/
 INITDB_ARGS with -c glued to the value|s/--auth-local=scram-sha-256"/--auth-local=scram-sha-256 -cwork_mem=64MB"/
 INITDB_ARGS with -c clustered after another short option|s/--auth-local=scram-sha-256"/--auth-local=scram-sha-256 -kcwork_mem=64MB"/
 INITDB_ARGS from an interpolated variable|s/--auth-local=scram-sha-256"/--auth-local=scram-sha-256 ${PG_INITDB_EXTRA:-}"/
+quoted POSTGRES_INITDB_ARGS key with -c in value|s/^      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"/      "POSTGRES_INITDB_ARGS": "--auth-host=scram-sha-256 --auth-local=scram-sha-256 -cwork_mem=64MB"/
+multiline POSTGRES_INITDB_ARGS value with -c|s/^      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"/      POSTGRES_INITDB_ARGS: >-\n        --auth-host=scram-sha-256 -cwork_mem=64MB/
 BAD
 # initdb：符号链接（指向子目录里的压缩包）、子目录、指向 .sql 的链接都红
 rm -rf "$T/initdb-ln"; cp -R "$INITDB" "$T/initdb-ln"; mkdir -p "$T/initdb-ln/sub"; printf 'x' >"$T/initdb-ln/sub/90.sql.gz"
@@ -348,5 +385,14 @@ check "$T/pgoptions.yml" "$CONF" >/dev/null && fail "PGOPTIONS in the compose wa
 sed 's|--auth-local=scram-sha-256"|--auth-local=scram-sha-256 -c work_mem=64MB"|' "$COMPOSE" >"$T/initdbargs.yml"
 cmp -s "$COMPOSE" "$T/initdbargs.yml" && fail "mutation premise: POSTGRES_INITDB_ARGS not found in the dev compose"
 check "$T/initdbargs.yml" "$CONF" >/dev/null && fail "-c in POSTGRES_INITDB_ARGS was not detected"
+sed 's|^      - ./initdb:/docker-entrypoint-initdb.d:ro$|      - ./initdb:/docker-entrypoint-initdb.d:ro\n      - ./extra/90-x.sql:/docker-entrypoint-initdb.d/90-x.sql:ro|' "$COMPOSE" >"$T/vol-initdb.yml"
+cmp -s "$COMPOSE" "$T/vol-initdb.yml" && fail "mutation premise: postgres initdb volume line not found"
+check "$T/vol-initdb.yml" "$CONF" >/dev/null && fail "an extra initdb bind mount on postgres was not detected"
+sed 's|./initdb:/docker-entrypoint-initdb.d:ro|./other-initdb:/docker-entrypoint-initdb.d:ro|' "$COMPOSE" >"$T/vol-otherdir.yml"
+cmp -s "$COMPOSE" "$T/vol-otherdir.yml" && fail "mutation premise: ./initdb volume not found"
+check "$T/vol-otherdir.yml" "$CONF" >/dev/null && fail "a non-dev initdb directory mount was not detected"
+sed 's|test: \["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -q"\]|test: ["CMD-SHELL", "psql -U postgres -c \\"ALTER SYSTEM SET work_mem='"'"'64MB'"'"'\\" && pg_isready -h 127.0.0.1 -U postgres -q"]|' "$COMPOSE" >"$T/hc-alter.yml"
+cmp -s "$COMPOSE" "$T/hc-alter.yml" && fail "mutation premise: postgres healthcheck test line not found"
+check "$T/hc-alter.yml" "$CONF" >/dev/null && fail "ALTER SYSTEM in the postgres healthcheck was not detected"
 
 echo "dev-compose static: $count PostgreSQL parameters match postgresql-pandora.conf, $(wc -l <<<"$PROD_VALKEY" | tr -d ' ') Valkey settings match install.sh, ports loopback-only, superuser postgres"
