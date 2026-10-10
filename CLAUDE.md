@@ -112,6 +112,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 两路同改一个 `CREATE OR REPLACE` 函数（如 `app.seed_tenant_defaults`）：后合那份在先合那份的函数体上加，Down 还原到先合那份；计数类契约（模板数、`workers.Add`、DOMAINS、SCRIPTS）合完一并改。细则见 new-migration skill。
 - 子 agent 等 CI 或等 Composer：前台跑（`wait-status.sh`、`wait-github.sh`、`cursor-launch.sh --wait`），Bash `timeout` 设 600000，wait-status 加 `MEMOH_PICKUP=540`（让「检查机没接单」在 Bash 上限前以退出 2 报出来）；10 分钟被截断就原样再跑（不带 `MEMOH_FRESH`；两个脚本只读状态），累计 wait-status 30 分钟、wait-github 60 分钟仍无结论按退出 2 处理，出结论再写报告。放后台跑时子 agent 会提前结束这一轮（10-10 w18anytls 出过）。
 - 子 agent 再派的子 agent：完成通知落到总协调，不落到派它的 agent；派出方按 output 文件自己取结果。
+- 本机跨小时的调度脚本（如压测场次编排）：用 `setsid -f … > log 2>&1 < /dev/null` 起，不挂在会话子进程上；换号或会话退出不会把它一起停掉。
 
 # Compact instructions
 
