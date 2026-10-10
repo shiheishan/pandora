@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 后台起一次 Cursor 的 Grok（cursor-agent -p，模型固定 grok-4.7-high），日志进总协调的 scratchpad，打印 TASKS 登记行。
 # 用法（在主目录或任一 worktree 里跑）：
-#   cursor-launch.sh <名字> [--round N] [--resume "<从哪一步续>"] [--log-dir <目录>] [--dry-run]
+#   cursor-launch.sh <名字> [--round N] [--resume "<从哪一步续>"] [--model <模型>] [--log-dir <目录>] [--dry-run]
 #       任务 worktree ../pandora-<名字>。缺省读 .claude/brief.md、报告写 .claude/report.md；
 #       --round N（N ≥ 2）先读 brief 再读 .claude/round-r{N}.md，报告写 .claude/report-r{N}.md（adversarial-review 第 4 节）。
 #   cursor-launch.sh --dir <只读巡检目录> [--resume …] [--log-dir …] [--dry-run]
@@ -12,6 +12,7 @@
 # - 进程用 setsid 脱离会话（会话重启也不死），PID 写在 <日志>.pid，结束时日志末行是 exit=<退出码>。
 # - --log-dir 缺省是本会话的 scratchpad（由 CLAUDE_CODE_SESSION_ID 推出）；日志名 cursor-<名字>[-r<N>].log，重名加序号。
 # - 同一个目录已有 cursor-agent 在跑、报告文件已存在（续跑除外）、报告没被 git 忽略时拒绝启动。
+# - --model 缺省 grok-4.7-high；只认 grok-4.7-* 与 composer-2.5（10-10 用户要求试 Composer 2.5），名字以 `cursor-agent --list-models` 为准。
 # - CURSOR_AGENT_BIN 只给试跑桩用，缺省 cursor-agent。
 set -euo pipefail
 MODEL=grok-4.7-high
@@ -40,6 +41,8 @@ while [ $# -gt 0 ]; do
     --resume) resume="${2:?}"; shift 2 ;;
     --dir) dir="${2:?}"; shift 2 ;;
     --log-dir) logdir="${2:?}"; shift 2 ;;
+    --model) MODEL="${2:?}"; shift 2
+      [[ "$MODEL" =~ ^(grok-4\.7-(low|medium|high|xhigh)(-fast)?|composer-2\.5)$ ]] || die "不认识的模型 $MODEL" ;;
     --dry-run) dry=1; shift ;;
     -*) die "不认识的参数 $1" ;;
     *) [ -z "$name" ] || die "多余的参数 $1"; name="$1"; shift ;;
