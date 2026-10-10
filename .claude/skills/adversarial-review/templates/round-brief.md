@@ -11,7 +11,7 @@
 
 2. 【低】<同上，可以短>。
 
-**执行者**（实现方是 opus 主 agent 时必写，逐条）：<#编号 → Composer>；<#编号 → opus 自己写：属根 CLAUDE.md「opus 自己写代码只在这几种情况」的哪一类，一句理由>。缺省交 Composer；没列理由的一律交 Composer。测试仍由 opus 先写。
+<仅 Claude>**执行者**（实现方是 opus 主 agent 时必写，逐条）：<#编号 → Composer>；<#编号 → opus 自己写：属根 CLAUDE.md「opus 自己写代码只在这几种情况」的哪一类，一句理由>。缺省交 Composer；没列理由的一律交 Composer。测试仍由 opus 先写。
 
 **不用改**：
 - <#编号>：<理由：审查员说可不改 / 记进 TASKS / 转给哪一路>。
