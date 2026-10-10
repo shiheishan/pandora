@@ -104,15 +104,15 @@ func retentionScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app *
 
 	// 流量小时汇总：本租户超出保留期的桶（节点 × uid 表 71 天、节点表 401 天各一行）删掉，
 	// 近期的与别的租户的不动
-	must(`INSERT INTO node_traffic_hourly (tenant_id, hour_start, node_id, report_count)
-		VALUES ($1, date_trunc('hour', now() - interval '401 days', 'UTC'), $2, 1),
-		       ($1, date_trunc('hour', now() - interval '1 day', 'UTC'), $2, 1),
-		       ($3, date_trunc('hour', now() - interval '90 days', 'UTC'), $4, 1)`, tenantA, nodeA, tenantB, nodeB)
+	must(`INSERT INTO node_traffic_hourly (tenant_id, hour_start, node_id, report_count, billed_bytes)
+		VALUES ($1, date_trunc('hour', now() - interval '401 days', 'UTC'), $2, 1, 0),
+		       ($1, date_trunc('hour', now() - interval '1 day', 'UTC'), $2, 1, 0),
+		       ($3, date_trunc('hour', now() - interval '90 days', 'UTC'), $4, 1, 0)`, tenantA, nodeA, tenantB, nodeB)
 	must(`INSERT INTO node_user_traffic_hourly (tenant_id, hour_start, node_id, node_uid,
-			upload_bytes, download_bytes, entry_count, last_report_at)
-		VALUES ($1, date_trunc('hour', now() - interval '71 days', 'UTC'), $2, 7530001, 1, 1, 1, now() - interval '71 days'),
-		       ($1, date_trunc('hour', now() - interval '1 day', 'UTC'), $2, 7530001, 1, 1, 1, now() - interval '1 day'),
-		       ($3, date_trunc('hour', now() - interval '90 days', 'UTC'), $4, 7530002, 1, 1, 1, now() - interval '90 days')`,
+			upload_bytes, download_bytes, entry_count, last_report_at, billed_bytes)
+		VALUES ($1, date_trunc('hour', now() - interval '71 days', 'UTC'), $2, 7530001, 1, 1, 1, now() - interval '71 days', 0),
+		       ($1, date_trunc('hour', now() - interval '1 day', 'UTC'), $2, 7530001, 1, 1, 1, now() - interval '1 day', 0),
+		       ($3, date_trunc('hour', now() - interval '90 days', 'UTC'), $4, 7530002, 1, 1, 1, now() - interval '90 days', 0)`,
 		tenantA, nodeA, tenantB, nodeB)
 	if n, err := svc.PurgeTrafficRollups(ctx, tenantA); err != nil || n != 2 {
 		t.Fatalf("PurgeTrafficRollups deleted=%d err=%v, want one old bucket from each rollup table", n, err)

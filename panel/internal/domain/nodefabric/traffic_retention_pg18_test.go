@@ -203,7 +203,7 @@ func droppedIndexScenario(t *testing.T, ctx context.Context, admin *pgx.Conn) {
 }
 
 // billedBytesScenario 证明 00133 的 billed_bytes：入库时按节点倍率折算、只计放行名单内的合规项，
-// 节点小时表是各 uid 之和；重复上报不计；跨迁移的桶（NULL）加了仍是 NULL。
+// 节点小时表是各 uid 之和；重复上报不计；再报一笔就继续累加。显式写成 NULL 被拒绝（00164）。
 func billedBytesScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app *platformdb.Pool) {
 	t.Helper()
 	const (
@@ -232,14 +232,14 @@ func billedBytesScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app
 	}
 	readBilled := func() (nodeBilled *string, perUID map[int64]*string) {
 		t.Helper()
-		// 按桶合计（三次上报碰巧跨整点时落在两个桶里）：任一桶未知即未知
+		// 按桶合计（三次上报碰巧跨整点时落在两个桶里）
 		if err := admin.QueryRow(ctx, `
-			SELECT CASE WHEN bool_and(billed_bytes IS NOT NULL) THEN sum(billed_bytes)::text END
+			SELECT sum(billed_bytes)::text
 			  FROM node_traffic_hourly WHERE node_id = $1`, nodeID).Scan(&nodeBilled); err != nil {
 			t.Fatal(err)
 		}
 		rows, err := admin.Query(ctx, `
-			SELECT node_uid, CASE WHEN bool_and(billed_bytes IS NOT NULL) THEN sum(billed_bytes)::text END
+			SELECT node_uid, sum(billed_bytes)::text
 			  FROM node_user_traffic_hourly WHERE node_id = $1 GROUP BY node_uid`, nodeID)
 		if err != nil {
 			t.Fatal(err)
@@ -267,22 +267,23 @@ func billedBytesScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app
 		t.Fatalf("billed node=%s uid1=%s uid2=%s uid3=%s, want 180/150/30/0 (rate 1.5, duplicate not billed)",
 			str(nodeBilled), str(perUID[7590001]), str(perUID[7590002]), str(perUID[7590003]))
 	}
-	// 跨迁移的桶：NULL 表示未知，之后再加也保持未知
-	must(`UPDATE node_traffic_hourly SET billed_bytes = NULL WHERE node_id = $1`, nodeID)
-	must(`UPDATE node_user_traffic_hourly SET billed_bytes = NULL WHERE node_id = $1 AND node_uid = 7590001`, nodeID)
+	// 再报一笔：计费字节继续累加
 	if _, err := svc.ReportTraffic(ctx, tenantID, node, []byte(`{"7590001":[2,0],"7590002":[2,0]}`)); err != nil {
 		t.Fatal(err)
 	}
 	nodeBilled, perUID = readBilled()
-	if nodeBilled != nil || perUID[7590001] != nil || str(perUID[7590002]) != "33" {
-		t.Fatalf("after NULL buckets: node=%s uid1=%s uid2=%s, want NULL/NULL/33",
-			str(nodeBilled), str(perUID[7590001]), str(perUID[7590002]))
+	if str(nodeBilled) != "186" || str(perUID[7590001]) != "153" || str(perUID[7590002]) != "33" || str(perUID[7590003]) != "0" {
+		t.Fatalf("after another report: node=%s uid1=%s uid2=%s uid3=%s, want 186/153/33/0",
+			str(nodeBilled), str(perUID[7590001]), str(perUID[7590002]), str(perUID[7590003]))
+	}
+	if _, err := admin.Exec(ctx, `UPDATE node_traffic_hourly SET billed_bytes = NULL WHERE node_id = $1`, nodeID); err == nil {
+		t.Fatal("explicit NULL billed_bytes was accepted")
 	}
 	t.Log("marker=retain_pg18_billed_bytes_ok")
 }
 
 // trafficDailyScenario 证明 00133 的节点 × uid 按天汇总：只汇总已结束的 UTC 自然日、整天都在
-// 小时表保留期内的日子；任一小时 billed_bytes 未知则整天未知；一天只写一次（重跑零写入）；
+// 小时表保留期内的日子；billed_bytes 按小时直接相加；一天只写一次（重跑零写入）；
 // 保留期任务删 400 天以前的按天行与 400 天以前的节点小时行，70 天以前的节点 × uid 小时行。
 func trafficDailyScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, app *platformdb.Pool) {
 	t.Helper()
@@ -299,7 +300,7 @@ func trafficDailyScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, ap
 	must(`INSERT INTO tenants (id, slug, display_name, default_currency)
 		VALUES ($1, 'retain-daily-pg18', 'Retain Daily', 'CNY')`, tenantID)
 	must(`INSERT INTO nodes (id, tenant_id, name, status) VALUES ($1, $2, 'retain-daily', 'active')`, nodeID, tenantID)
-	// 前天（UTC）的三个小时：uid1 两小时、uid2 一小时、uid3 一小时且 billed 未知；今天一小时（没结束，
+	// 前天（UTC）的三个小时：uid1 两小时、uid2 一小时、uid3 一小时；今天一小时（没结束，
 	// 不汇总）；75 天前一小时（不完整的保留期外，不汇总）。
 	must(`
 		WITH d AS (SELECT ((now() AT TIME ZONE 'UTC')::date - 2)::timestamp AT TIME ZONE 'UTC' AS day_start)
@@ -311,7 +312,7 @@ func trafficDailyScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, ap
 		    (1, 7590011::bigint, 100::numeric, 10::numeric, 2::bigint, 110::numeric),
 		    (5, 7590011, 1, 1, 1, 2),
 		    (5, 7590012, 7, 0, 1, 14),
-		    (6, 7590013, 3, 3, 1, NULL)) AS v(h, uid, up, down, n, billed)`, tenantID, nodeID)
+		    (6, 7590013, 3, 3, 1, 9)) AS v(h, uid, up, down, n, billed)`, tenantID, nodeID)
 	must(`INSERT INTO node_user_traffic_hourly (tenant_id, hour_start, node_id, node_uid,
 			upload_bytes, download_bytes, entry_count, last_report_at, billed_bytes)
 		VALUES ($1, date_trunc('hour', now(), 'UTC'), $2, 7590011, 1, 1, 1, now(), 1),
@@ -359,8 +360,8 @@ func trafficDailyScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, ap
 	if u2.up != 7 || u2.billed == nil || *u2.billed != 14 {
 		t.Fatalf("uid2 daily = %+v, want 7 bytes billed 14", u2)
 	}
-	if u3.billed != nil {
-		t.Fatalf("uid3 daily billed = %d, want NULL (an hour of the day is unknown)", *u3.billed)
+	if u3.billed == nil || *u3.billed != 9 {
+		t.Fatalf("uid3 daily billed = %v, want 9", u3.billed)
 	}
 	if n, err := svc.RefreshTrafficDaily(ctx, tenantID); err != nil || n != 0 {
 		t.Fatalf("second RefreshTrafficDaily wrote %d err=%v, want nothing (a day is written once)", n, err)
@@ -372,9 +373,9 @@ func trafficDailyScenario(t *testing.T, ctx context.Context, admin *pgx.Conn, ap
 		VALUES ($1, (now() AT TIME ZONE 'UTC')::date - 401, $2, 7590011, 1, 1, 1, 1, now() - interval '401 days'),
 		       ($1, (now() AT TIME ZONE 'UTC')::date - 399, $2, 7590011, 1, 1, 1, 1, now() - interval '399 days')`,
 		tenantID, nodeID)
-	must(`INSERT INTO node_traffic_hourly (tenant_id, hour_start, node_id, report_count)
-		VALUES ($1, date_trunc('hour', now() - interval '401 days', 'UTC'), $2, 1),
-		       ($1, date_trunc('hour', now() - interval '399 days', 'UTC'), $2, 1)`, tenantID, nodeID)
+	must(`INSERT INTO node_traffic_hourly (tenant_id, hour_start, node_id, report_count, billed_bytes)
+		VALUES ($1, date_trunc('hour', now() - interval '401 days', 'UTC'), $2, 1, 0),
+		       ($1, date_trunc('hour', now() - interval '399 days', 'UTC'), $2, 1, 0)`, tenantID, nodeID)
 	// 75 天前的节点 × uid 小时行 + 400/401 天的两行各删一行 = 3
 	if n, err := svc.PurgeTrafficRollups(ctx, tenantID); err != nil || n != 3 {
 		t.Fatalf("PurgeTrafficRollups deleted=%d err=%v, want the 75-day uid hour, the 401-day daily row and node hour", n, err)

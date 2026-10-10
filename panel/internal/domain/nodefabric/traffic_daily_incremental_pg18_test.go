@@ -35,7 +35,7 @@ SELECT (s.day_start AT TIME ZONE 'UTC')::date
 
 // trafficDailyIncrementalScenario 证明按天汇总的增量进度机器（traffic_daily_roller.go）：
 //   - 同样的小时数据，在租户 X 上走增量、在租户 Y 上走原来的全量重扫，两边的按天表逐行相同
-//     （含：有空洞的日子、整天 billed 未知、日界上的 0 点与 23 点小时、窗口外的日子不汇总）；
+//     （含：有空洞的日子、日界上的 0 点与 23 点小时、窗口外的日子不汇总）；
 //   - 增量也等于直接按天聚合小时表的结果（全量重算）；
 //   - 稳态下的轮次不再核对库；进程重启（新进度）补洞后不改变任何行；
 //   - 跨过 UTC 日界后新结束的一天被汇总，已有的行不变。
@@ -63,13 +63,14 @@ func trafficDailyIncrementalScenario(t *testing.T, ctx context.Context, admin *p
 		       ($3, $6, 'daily-a', 'active'), ($4, $6, 'daily-b', 'active')`,
 		nodeX1, nodeX2, nodeY1, nodeY2, tenantX, tenantY)
 
-	// 夹具：距今 ago 天（UTC 自然日）的若干小时。第 3、6 天故意没有数据（空洞）；第 5 天有一个 uid 的
-	// billed 未知；0 点与 23 点的小时检验日界；69 天不放（新旧窗口在这一天的取舍不同），72 天在窗口外。
+	// 夹具：距今 ago 天（UTC 自然日）的若干小时。第 3、6 天故意没有数据（空洞）；
+	// 0 点与 23 点的小时检验日界；69 天不放（新旧窗口在这一天的取舍不同），72 天在窗口外。
+	// billed_bytes 每行都有数（00164 起非空），按天汇总直接相加。
 	type hourRow struct {
 		ago, hour int
 		node      int // 1 或 2
 		uid       int64
-		billed    string // 空串表示 NULL
+		billed    string // 非空才有计费字节；空串不再表示未知
 	}
 	var rows []hourRow
 	for _, ago := range []int{1, 2, 4, 5, 7, 10, 20, 40, 65, 68, 72} {
@@ -77,11 +78,6 @@ func trafficDailyIncrementalScenario(t *testing.T, ctx context.Context, admin *p
 			rows = append(rows, hourRow{ago, h, 1, 8120001, "1"}, hourRow{ago, h, 2, 8120002, "1"})
 		}
 		rows = append(rows, hourRow{ago, 13, 1, 8120003, "1"})
-	}
-	for i := range rows {
-		if rows[i].ago == 5 && rows[i].uid == 8120003 {
-			rows[i].billed = ""
-		}
 	}
 	seed := func(tenant, n1, n2 string) {
 		t.Helper()
@@ -91,10 +87,10 @@ func trafficDailyIncrementalScenario(t *testing.T, ctx context.Context, admin *p
 			if r.node == 2 {
 				node = n2
 			}
-			billed := "NULL"
-			if r.billed != "" {
-				billed = fmt.Sprintf("%d", int64(r.ago)*1000+int64(r.hour)*10+r.uid%7)
+			if r.billed == "" {
+				t.Fatal("hourly fixture must set billed_bytes")
 			}
+			billed := fmt.Sprintf("%d", int64(r.ago)*1000+int64(r.hour)*10+r.uid%7)
 			up, down := int64(r.ago)*100+int64(r.hour)+r.uid%13, int64(r.ago)*7+int64(r.hour)*3+r.uid%11
 			vals = append(vals, fmt.Sprintf("(%d, %d, '%s'::uuid, %d::bigint, %d::numeric, %d::numeric, %d::bigint, %s::numeric)",
 				r.ago, r.hour, node, r.uid, up, down, r.ago%5+1, billed))
@@ -196,7 +192,7 @@ func trafficDailyIncrementalScenario(t *testing.T, ctx context.Context, admin *p
 		const agg = `
 			SELECT (h.hour_start AT TIME ZONE 'UTC')::date AS day, n.name, h.node_uid,
 			       sum(h.upload_bytes)::text, sum(h.download_bytes)::text,
-			       coalesce((CASE WHEN bool_and(h.billed_bytes IS NOT NULL) THEN sum(h.billed_bytes) END)::text, 'NULL'),
+			       coalesce(sum(h.billed_bytes)::text, 'NULL'),
 			       sum(h.entry_count)::bigint, max(h.last_report_at)
 			  FROM node_user_traffic_hourly h JOIN nodes n ON n.id = h.node_id
 			 WHERE h.tenant_id = $1
