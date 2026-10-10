@@ -51,7 +51,7 @@ paths:
   - 失败时把服务按新版本起来之后再以非 0 退出，提示原因与开关；226/NAMESPACE 直接说是主机不支持沙箱
   - 开关 `PANDORA_SYSTEMD_HARDENING`（缺省开，0 去掉隔离段、留资源约束，记进 `.env` 只改这一行）
   - 面板的服务不换出：PostgreSQL、Valkey 的 drop-in 与三个网关单元都带 `MemorySwapMax=0`；cgroup v1 或没开 swap 记账时被忽略，安装输出照实说、不报错（`native_swap_accounting_note`）。守卫：`install-hardening_mock_test.sh`
-  - PostgreSQL 的资源段还写 `OOMPolicy=continue`（一个后端被 OOM 杀掉不停整个单元，交给 postmaster 崩溃恢复）与 `ExecStopPost=+/opt/pandora/deploy/pg-revive.sh %i`（postmaster 本身被杀时 5 秒后拉起：只看 `postmaster.pid` 还在而 PID 已不在；有意停库会删掉 pid 文件，不拉）。不写 `Restart=`：panel2 实测 kill -9 记为正常退出，`on-failure` 会把 postgres 用户 `pg_ctlcluster stop` 的库拉回来。守卫：`pg-revive_mock_test.sh`、`install-hardening_mock_test.sh`
+  - PostgreSQL 的资源段还写 `OOMPolicy=continue`（一个后端被 OOM 杀掉不停整个单元，交给 postmaster 崩溃恢复）与 `ExecStopPost=+/opt/pandora/deploy/pg-revive.sh %i`（postmaster 本身被杀时 5 秒后拉起：只看 systemd 给的 `EXIT_CODE` 是 `killed`/`dumped`，且本单元没有 stop/restart 作业在跑；有意停库 postmaster 自己退出，是 `exited`，不拉。不能看 `postmaster.pid`：ExecStop 已先把残留的删了）。不写 `Restart=`：panel2 实测被杀与 postgres 用户 `pg_ctlcluster stop` 的单元结果都是 `exit-code`，`on-abnormal` 拉不起前者，`on-failure` 会把后者拉回来。守卫：`pg-revive_mock_test.sh`、`install-hardening_mock_test.sh`
   - drop-in 整套写全，不依赖发行版单元写了什么（Debian 12 的 redis 单元把 `ProtectSystem` 改回 `true`）；内存上限 PG 512M、Valkey 160M
   - PostgreSQL 不加 `MemoryDenyWriteExecute`（JIT）；被挡的系统调用返回 EPERM
   - 守卫：`install-hardening_mock_test.sh`

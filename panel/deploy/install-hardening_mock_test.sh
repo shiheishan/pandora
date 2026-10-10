@@ -124,8 +124,8 @@ for sw in 1 0; do
     [ "$(grep -c '^MemorySwapMax=' <<<"$full")" -eq 1 ] && grep -qx 'MemorySwapMax=0' <<<"$full" || fail "$kind drop-in (hardening=$sw) lets the service swap"
     if [ "$kind" = pg ]; then
       # 后端被 OOM 杀掉不停整个单元（OOMPolicy=continue，开关开、关都写）。不写 Restart=、不改 ExecStop（panel2 实测）：
-      # 这个 Type=forking 的单元里 postmaster 被 kill -9 时 systemd 记的是正常退出，任何「异常才重启」都拉不起它；
-      # on-failure 只会因为 ExecStop 在库已停时报错而把 postgres 用户有意停掉的库拉回来
+      # postmaster 被 kill -9 后 ExecStop 报「Cluster is not running」，单元结果是 exit-code，on-abnormal 拉不起；
+      # postgres 用户有意 pg_ctlcluster stop 的单元结果也是 exit-code，on-failure 会把它拉回来
       [ "$(grep -c '^OOMPolicy=' <<<"$full")" -eq 1 ] && grep -qx 'OOMPolicy=continue' <<<"$full" || fail "pg drop-in (hardening=$sw) lacks OOMPolicy=continue"
       # 等号两边可以有空格（systemd 也认）；RestartForceExitStatus 同样会让它自动重启
       if grep -Eiq '^[[:space:]]*(Restart|RestartSec|RestartForceExitStatus|ExecStop)[[:space:]]*=' <<<"$full"; then
