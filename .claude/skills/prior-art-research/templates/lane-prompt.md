@@ -1,12 +1,12 @@
 你是 pandora <主题>前人经验调研的 <路名> 这一路（只读，`opus`）。
 
-先完整读通用要求 `/Users/a1/ai/projects/pandora/.claude/<主题>-kb/_common.md`，照它做；它和本 prompt 冲突时以本 prompt 为准。
+先完整读通用要求 `/Users/a1/ai/projects/pandora/.claude/<主题>-kb/<_common.md 或 _common-<轮名>.md>`，照它做；它和本 prompt 冲突时以本 prompt 为准。
 
 ## 你查什么
 
 <这一路的领域一句话。>
 
-要回答的问题（每题写清要什么证据）：
+要回答的问题（每题写清要什么证据；第一题通常是 pandora 侧的全盘点，规则写死的注明「交 Composer `--scan`，你抽查」）：
 1. <问题>：<要的证据，例：上游 仓库@sha 文件:行、论文一手页、pandora 文件:行、本机实验命令与数字>；
 2. …
 

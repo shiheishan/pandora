@@ -42,6 +42,7 @@ grep -n "<关键词>" /Users/a1/ai/projects/pandora/.claude/TASKS.md
 - **通用要求**：用 `templates/common.md` 填占位符，存到主目录 `.claude/<主题>-kb/_common.md`（先 `mkdir -p`）。不要只放 scratchpad：scratchpad 是会话专用的，10-10 两份原件都只在当次会话的 scratchpad 里，下次就找不到调研范围了。
 - **每路 prompt**：用 `templates/lane-prompt.md`，写这一路的问题和证据要求，再列其余几路各查什么。几路的 prompt 并排存进 `.claude/<主题>-kb/_prompts.md`，补查和复查时要用。
 - 用户原话逐字放进通用要求。路名不要用 `_common`、`_prompts`。
+- **补缺口的一轮**存进原主题目录（例：协议优化专题的补查进 `protocol-kb/`），通用要求和 prompt 叫 `_common-<轮名>.md`、`_prompts-<轮名>.md`，路名不和旧报告重名；篇幅改成 150–300 行；「已有知识库」一栏逐节列出要读的旧报告节号。
 - 路内拆下手的规则写在模板里：要上网、要判断的派 opus，并且前台派；规则写死的本地盘点交 Composer `--scan`（composer-handoff 第 4b 节）。Composer 能不能上网没核过，要上网的不交它。
 - 登记：TASKS 加一条（用户原话、几路、各查什么、`_common.md` 路径），「正在跑」表每路一行。
 
