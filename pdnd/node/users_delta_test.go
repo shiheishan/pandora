@@ -42,7 +42,7 @@ func TestApplyUserDeltaRemovesByIndex(t *testing.T) {
 	if left != total-removed {
 		t.Fatalf("内核剩 %d 人，期望 %d", left, total-removed)
 	}
-	if _, ok := n.known[users[0].UUID]; ok {
+	if _, ok := n.known[users[0].ID]; ok {
 		t.Fatal("被删的人还在镜像里")
 	}
 	if took > 200*time.Millisecond {

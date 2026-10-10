@@ -62,7 +62,7 @@ func (n *Node) prepareInstallUsers(cfg map[string]any) *preparedUsers {
 	n.client.ForgetUsersVersion()
 	users, changed, err := n.client.Users(ctx)
 	if err == nil && changed {
-		return &preparedUsers{users: withUUID(users), fresh: true}
+		return &preparedUsers{users: normalizeUsers(users), fresh: true}
 	}
 	if err != nil {
 		n.log.Warn("装入站前拉用户名单失败，先用手上的名单", "err", err)
@@ -99,7 +99,7 @@ func (n *Node) cachedInstallUsers() *preparedUsers {
 	for _, u := range file.Users {
 		users = append(users, core.User{ID: u.ID, UUID: u.UUID, SpeedLimit: u.SpeedLimit, DeviceLimit: u.DeviceLimit})
 	}
-	return &preparedUsers{users: withUUID(users), fromCache: true, version: file.Version, etag: file.ETag}
+	return &preparedUsers{users: normalizeUsers(users), fromCache: true, version: file.Version, etag: file.ETag}
 }
 
 // adoptInstalledUsers 在入站装好之后把本地用户镜像对齐到「内核里已是这份名单」。
@@ -109,11 +109,7 @@ func (n *Node) adoptInstalledUsers(p *preparedUsers) {
 		n.resetUserMirror()
 		return
 	}
-	known := make(map[string]core.User, len(p.users))
-	for _, u := range p.users {
-		known[u.UUID] = u
-	}
-	n.known = known
+	n.known = mirrorOf(p.users)
 	switch {
 	case p.fresh:
 		// 客户端刚记下的 ETag 就是这份全量的版本，也是增量基准（见 syncUsers）。
@@ -132,14 +128,4 @@ func (n *Node) adoptInstalledUsers(p *preparedUsers) {
 func isUsersPreloadError(err error) bool {
 	var target interface{ UsersPreloadFailed() bool }
 	return errors.As(err, &target) && target.UsersPreloadFailed()
-}
-
-func withUUID(users []core.User) []core.User {
-	out := users[:0:0]
-	for _, u := range users {
-		if u.UUID != "" {
-			out = append(out, u)
-		}
-	}
-	return out
 }

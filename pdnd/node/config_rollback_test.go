@@ -122,7 +122,7 @@ func TestApplyConfigRestoresPreviousInboundAndUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := core.User{ID: 1, UUID: "user-1"}
-	n.known[user.UUID] = user
+	n.known[user.ID] = user
 	if err := kernel.AddUsers(n.tag, []core.User{user}); err != nil {
 		t.Fatal(err)
 	}
