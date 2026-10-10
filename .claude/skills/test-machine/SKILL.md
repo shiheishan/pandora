@@ -74,7 +74,7 @@ bash .claude/skills/test-machine/scripts/register.sh [--vpc <内网IP>] [--renta
 
 ### 删前只读巡检
 
-列删机清单之前先做一次只读巡检，可交 Cursor 的 Grok。brief 抄 dispatch-task 的 `templates/server-readonly.md`（服务器只读红线）并填好机器清单，用 `cursor-launch.sh --dir <ops-local 下的目录>` 起；10-10 的实例是 `ops-local/vultr-test2/idle-check-1010/`。
+列删机清单之前先做一次只读巡检，可交 Cursor 的 Composer。brief 抄 dispatch-task 的 `templates/server-readonly.md`（服务器只读红线）并填好机器清单，用 `cursor-launch.sh --dir <ops-local 下的目录>` 起；10-10 的实例是 `ops-local/vultr-test2/idle-check-1010/`（当时仍用 Grok，Grok 已于 10-10 停用）。
 
 判断机器上的结果有没有拉回时，先看对应 skill 的同步方向，再决定要不要拉。例：bench-eval 的 evalset 是本机 `ops-local/bench/remote/` 推上去的同步副本，结果已由 `run.sh` 拉回，不用再拉；容器 `bench-pg` 里的 5k 实测库和模板库才要处理，见 bench-eval「删对照机之前」。
 

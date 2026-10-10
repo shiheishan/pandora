@@ -1,4 +1,4 @@
-# Grok 的开工指令
+# Composer 的开工指令
 
 `scripts/cursor-launch.sh` 按下面三段之一填占位，作为 `cursor-agent -p` 的指令，不要手抄。改措辞时几段一起看；占位名改了要同步脚本（脚本发现没替换干净的占位会拒绝启动）。
 

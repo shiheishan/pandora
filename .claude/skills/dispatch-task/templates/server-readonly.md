@@ -1,6 +1,6 @@
 ## 服务器只读红线
 
-（派给 Grok 的服务器只读活，把本节原样抄进 brief，填好尖括号。Grok 读不到全局规则 `~/.claude/CLAUDE.md`，红线只能靠这一节。`cursor-launch.sh --dir` 会检查 brief 里有这个标题。会改动服务器的活不交 Grok，见根 CLAUDE.md「大任务拆子 agent」。）
+（派给 Composer 的服务器只读活，把本节原样抄进 brief，填好尖括号。Composer 读不到全局规则 `~/.claude/CLAUDE.md`，红线只能靠这一节。`cursor-launch.sh --dir` 会检查 brief 里有这个标题。会改动服务器的活不交 Composer，见根 CLAUDE.md「大任务拆子 agent」。）
 
 **只许登录**：<别名 1>、<别名 2>…。**禁止登录**：清单外的任何机器，特别是 <别的业务的生产机、别的路正在压测的机器的别名>。
 
