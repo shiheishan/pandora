@@ -22,7 +22,9 @@ import (
 // 决定。所以一个目标就是一个 UDP 会话，与 hysteria2 / TUIC 同一口径：
 //   - 占用户的 UDP 会话名额（udpSessionQuota，每用户 quicUDPSessionsPerUser 个，
 //     同一入站上该用户的全部 UoT 流共用）；到上限时拒新目标、不踢旧，新目标的包
-//     丢掉并经 onLimit 进观测链，整条 UoT 流照常；
+//     丢掉并经 onDrop 进观测链，整条 UoT 流照常；
+//   - 发往某个目标失败（建不了上游、解析不了、被私网拦截等写错误）同样只丢这一个
+//     包、经 onDrop 记一条，不关流：一个坏目标不连累同一条流上的其他目标；
 //   - 空闲 uotUpstreamIdleTimeout（与 hy2 / TUIC 缺省 udpTimeout 同为 5 分钟）没有
 //     收发就回收、归还名额，之后再发往同一目标会新建一个。
 type uotRoutedPacketConn struct {
@@ -48,12 +50,13 @@ const uotUpstreamIdleTimeout = 5 * time.Minute
 var errUOTTargetLimit = errors.New("uot target limit")
 
 // uotUDPLimits 是一条 UoT 流的资源约束。quota 为 nil 时不限目标数（只给测试）；
-// idle 为 0 时用 uotUpstreamIdleTimeout。
+// idle 为 0 时用 uotUpstreamIdleTimeout。onDrop 在一个上行包被丢掉时调用，参数是
+// 原因（名额用完时是 errUOTTargetLimit）。
 type uotUDPLimits struct {
-	quota   *udpSessionQuota
-	userID  int64
-	onLimit func()
-	idle    time.Duration
+	quota  *udpSessionQuota
+	userID int64
+	onDrop func(error)
+	idle   time.Duration
 }
 
 type uotUpstream struct {
@@ -219,20 +222,27 @@ func (c *uotRoutedPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	}
 }
 
-// WriteTo 发往目标。名额用完时这个包丢掉、返回 (0, nil)：UoT 的读循环遇到写错误
-// 会关整条流，而拒新目标不该连累已有目标；返回 0 也让流量计数不把它记成上行。
+// WriteTo 发往目标。发不出去（名额用完、目标无效、建不了上游、解析失败、写被拒）
+// 时只丢这一个包、经 onDrop 记一条，返回 (0, nil)：UoT 的读循环遇到写错误会关
+// 整条流，一个坏目标不该连累同一条流上的其他目标；返回 0 也让流量计数不把它记成
+// 上行。
 func (c *uotRoutedPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	n, err := c.writeTo(p, addr)
+	if err != nil {
+		if c.limits.onDrop != nil {
+			c.limits.onDrop(err)
+		}
+		return 0, nil
+	}
+	return n, nil
+}
+
+func (c *uotRoutedPacketConn) writeTo(p []byte, addr net.Addr) (int, error) {
 	destination := M.SocksaddrFromNet(addr).Unwrap()
 	if !destination.IsValid() || destination.Port == 0 {
 		return 0, fmt.Errorf("uot destination is invalid")
 	}
 	upstream, err := c.ensureUpstream(destination)
-	if errors.Is(err, errUOTTargetLimit) {
-		if c.limits.onLimit != nil {
-			c.limits.onLimit()
-		}
-		return 0, nil
-	}
 	if err != nil {
 		return 0, err
 	}

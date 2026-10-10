@@ -2,12 +2,15 @@ package kernel
 
 import (
 	"context"
+	"errors"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/aegispanel/nodeagent/route"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 // UoT 每个目标占用户一个 UDP 会话名额（与 hysteria2 / TUIC 同口径）：名额用完时
@@ -25,7 +28,11 @@ func newTestUOTConn(t *testing.T, q *udpSessionQuota, userID int64, idle time.Du
 	t.Helper()
 	c := newUOTRoutedPacketConn(context.Background(), &hysteriaEchoPlane{}, route.Meta{Network: "udp", Protocol: "anytls"}, uotUDPLimits{
 		quota: q, userID: userID, idle: idle,
-		onLimit: func() { limited.Add(1) },
+		onDrop: func(err error) {
+			if errors.Is(err, errUOTTargetLimit) {
+				limited.Add(1)
+			}
+		},
 	})
 	t.Cleanup(func() { _ = c.Close() })
 	return c
@@ -135,5 +142,51 @@ func TestUOTActiveTargetNotReclaimed(t *testing.T) {
 	}
 	if held := quotaHeld(q, 45); held != 1 {
 		t.Fatalf("活跃目标名额=%d，应一直是 1（没被回收重建）", held)
+	}
+}
+
+// rejectingEchoPlane 在 hysteriaEchoPlane 之上模拟两种坏目标：IP 10.0.0.1 建不了
+// 上游（如路由拒绝），端口 7 的上游建得起来但写被拒（如私网拦截在写时生效）。
+type rejectingEchoPlane struct{ hysteriaEchoPlane }
+
+var errTestTargetRejected = errors.New("test target rejected")
+
+func (p *rejectingEchoPlane) ListenUDP(ctx context.Context, meta route.Meta, destination M.Socksaddr) (net.PacketConn, error) {
+	if destination.Addr.String() == "10.0.0.1" {
+		return nil, errTestTargetRejected
+	}
+	conn, err := p.hysteriaEchoPlane.ListenUDP(ctx, meta, destination)
+	if err != nil || destination.Port != 7 {
+		return conn, err
+	}
+	return rejectWritesConn{PacketConn: conn}, nil
+}
+
+type rejectWritesConn struct{ net.PacketConn }
+
+func (rejectWritesConn) WriteTo([]byte, net.Addr) (int, error) { return 0, errTestTargetRejected }
+
+// 坏目标（建不了上游、写被拒）只丢那一个包、经 onDrop 记原因，不报写错误、不关
+// 流；同一条流上的正常目标照常收发。修前写错误一路传到 UoT 读循环，整条流被关。
+func TestUOTBadTargetDropsOnlyItsPacket(t *testing.T) {
+	var drops []error
+	var mu sync.Mutex
+	c := newUOTRoutedPacketConn(context.Background(), &rejectingEchoPlane{}, route.Meta{Network: "udp", Protocol: "anytls"}, uotUDPLimits{
+		onDrop: func(err error) { mu.Lock(); drops = append(drops, err); mu.Unlock() },
+	})
+	t.Cleanup(func() { _ = c.Close() })
+	for _, bad := range []net.Addr{
+		&net.UDPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 53},
+		uotTarget(7),
+	} {
+		if n, err := c.WriteTo([]byte("bad"), bad); n != 0 || err != nil {
+			t.Fatalf("坏目标 %s WriteTo n=%d err=%v，应为 (0, nil)", bad, n, err)
+		}
+		uotEcho(t, c, uotTarget(5001), "good-after-"+bad.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(drops) != 2 || !errors.Is(drops[0], errTestTargetRejected) || !errors.Is(drops[1], errTestTargetRejected) {
+		t.Fatalf("丢包原因=%v，应为两次 %v", drops, errTestTargetRejected)
 	}
 }

@@ -23,11 +23,17 @@ func runAnyTLSUOTGroup(t *testing.T) {
 	t.Run("close-releases", func(t *testing.T) { t.Parallel(); runAnyTLSUOTCloseReleases(t) })
 	t.Run("traffic", func(t *testing.T) { t.Parallel(); runAnyTLSUOTTraffic(t) })
 	t.Run("target-quota", func(t *testing.T) { t.Parallel(); runAnyTLSUOTTargetQuota(t) })
+	t.Run("bad-target", func(t *testing.T) { t.Parallel(); runAnyTLSUOTBadTarget(t) })
 }
 
 // startAnyTLSUOTEcho 起一个以 hysteriaEchoPlane 为数据面的 AnyTLS 入站（UDP 原样
 // 回显），返回适配器与已经开好的 UoT 连接（v2，非 connect 模式）。
 func startAnyTLSUOTEcho(t *testing.T, userID int64) (*anyTLSAdapter, net.PacketConn, M.Socksaddr) {
+	t.Helper()
+	return startAnyTLSUOTEchoWith(t, userID, &hysteriaEchoPlane{})
+}
+
+func startAnyTLSUOTEchoWith(t *testing.T, userID int64, plane DataPlane) (*anyTLSAdapter, net.PacketConn, M.Socksaddr) {
 	t.Helper()
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -42,7 +48,7 @@ func startAnyTLSUOTEcho(t *testing.T, userID int64) (*anyTLSAdapter, net.PacketC
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	if err := adapter.Start(ctx, spec, AdapterHooks{DataPlane: &hysteriaEchoPlane{}}); err != nil {
+	if err := adapter.Start(ctx, spec, AdapterHooks{DataPlane: plane}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = adapter.Close() })
@@ -178,5 +184,26 @@ func runAnyTLSUOTTargetQuota(t *testing.T) {
 	adapter.udpQuota.mu.Unlock()
 	if held != 2 {
 		t.Fatalf("用户名额占用=%d，应为 2", held)
+	}
+}
+
+// 同一条 UoT 流上先发坏目标（建不了上游 / 写被拒，见 rejectingEchoPlane），再发正常
+// 目标：正常目标仍收到回显，流不断。
+func runAnyTLSUOTBadTarget(t *testing.T) {
+	_, pc, good := startAnyTLSUOTEchoWith(t, 6309, &rejectingEchoPlane{})
+	for _, bad := range []M.Socksaddr{M.ParseSocksaddr("10.0.0.1:53"), M.ParseSocksaddr("127.0.0.1:7")} {
+		if _, err := pc.WriteTo([]byte("bad"), bad); err != nil {
+			t.Fatalf("发往坏目标 %s：%v", bad, err)
+		}
+		label := "good-after-" + bad.String()
+		if _, err := pc.WriteTo([]byte(label), good); err != nil {
+			t.Fatalf("%s 写：%v", label, err)
+		}
+		_ = pc.SetReadDeadline(time.Now().Add(anyTLSOpTimeout))
+		got := make([]byte, 64)
+		n, _, err := pc.ReadFrom(got)
+		if err != nil || string(got[:n]) != label {
+			t.Fatalf("%s 回显=%q err=%v：坏目标连累了整条流", label, got[:n], err)
+		}
 	}
 }

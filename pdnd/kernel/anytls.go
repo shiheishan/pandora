@@ -446,7 +446,13 @@ func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.S
 	remote := source.TCPAddr()
 	routed := newUOTRoutedPacketConn(ctx, a.plane, meta, uotUDPLimits{
 		quota: &a.udpQuota, userID: user.ID,
-		onLimit: func() { a.connErr.addr(StageSession, remote, udpSessionLimitError("anytls")) },
+		// 丢包原因进观测链（按入站、阶段、分类限频，不会刷屏）。
+		onDrop: func(err error) {
+			if errors.Is(err, errUOTTargetLimit) {
+				err = udpSessionLimitError("anytls")
+			}
+			a.connErr.addr(StageSession, remote, err)
+		},
 	})
 	defer routed.Close()
 	packetConn := &anyTLSCountedPacketConn{PacketConn: routed, up: sess.up(), down: sess.down()}
