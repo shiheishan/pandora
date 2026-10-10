@@ -17,6 +17,8 @@ if [ "$(uname -s)" != Linux ] || [ "$(id -u)" -ne 0 ]; then
   grep -Fq 'verify-local-seal "$archive" "$checksum" "$seal" "$AEGIS_BACKUP_AGE_IDENTITY"' "$ROOT/deploy/verify-backup.sh" \
     || fail 'verify-backup.sh does not check the local seal'
   grep -Fq 'refusing an archive of unknown origin' "$ROOT/deploy/verify-backup.sh" || fail 'verify-backup.sh accepts archives of unknown origin'
+  grep -Fq 'rm -f -- "$archive" "$checksum" "${archive}.seal"' "$ROOT/deploy/backup-postgres.sh" \
+    || fail 'backup-postgres.sh leaves an unsealed archive behind when sealing fails'
   if grep -l 'AEGIS_BACKUP_ALLOW_UNSIGNED' "$ROOT"/deploy/*.sh | grep -vq '_test\.sh$'; then fail 'the unsigned approval path is back'; fi
   echo "backup provenance mock: PASS static=PASS runtime=NOT_RUN reason=linux_root_required"
   exit 0
@@ -47,9 +49,19 @@ chmod 0600 "$WORK/deploy/.env"
 
 # 桩：age 原样透传；pg_dump 吐一段固定内容；pg_restore：--list 读完即可，--schema-only 打印一份本安装的角色计划，
 # -d 读完即可；psql 答「角色在」「库不在」；createdb、dropdb 只记账
-cat >"$WORK/stub/age" <<'STUB'
+# age 桩：原样透传；$WORK/age.fail 在时，解密先吐 4 MiB 再以 1 退出（上游在输出之后失败：读完剩余流的写法
+# 不许把它吞掉，pipefail 要照样抓到）
+cat >"$WORK/stub/age" <<STUB
 #!/usr/bin/env bash
-while [ "$#" -gt 0 ]; do case "$1" in --recipient|--identity) shift 2 ;; *) [ "$1" = "${1#-}" ] && exec cat "$1"; shift ;; esac; done
+decrypt=0
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --decrypt) decrypt=1; shift ;;
+    --recipient|--identity) shift 2 ;;
+    -*) shift ;;
+    *) if [ "\$decrypt" = 1 ] && [ -f "$WORK/age.fail" ]; then head -c 4194304 "\$1"; exit 1; fi; exec cat "\$1" ;;
+  esac
+done
 exec cat
 STUB
 # 归档要比管道缓冲（64 KiB）大得多：pg_restore 只读目录就退出时，age 会被 SIGPIPE 打断（panel2 演练撞上的问题）
@@ -122,6 +134,21 @@ sed -i 's/ \(.\)/ f\1/; s/^\(PANDORA-LOCAL-SEAL-V1 .\{64\}\).*/\1/' "$archive.se
 refuse 'a tampered seal' 'local backup seal verification failed' ./verify-backup.sh "$archive"
 cp -p "$WORK/seal.orig" "$archive.seal"
 run ./verify-backup.sh "$archive" >/dev/null 2>&1 || fail 'the restored original no longer verifies'
+
+# age 在吐出数据之后失败：核验与恢复都拒绝，不建库
+: >"$WORK/age.fail"
+refuse 'an age failure after output (verify)' 'age decryption or pg_restore TOC verification failed' ./verify-backup.sh "$archive"
+refuse 'an age failure after output (restore)' 'age decryption or pg_restore TOC verification failed' \
+  env AEGIS_RESTORE_CONFIRM=RESTORE:aegis_recovery ./restore-postgres.sh --archive "$archive" --target-db aegis_recovery
+rm -f "$WORK/age.fail"
+
+# 封不上（私钥权限不对）：备份失败，刚发布的归档与校验文件撤掉，不留一份恢复不了的「备份」
+before="$(ls "$WORK/backups")"
+chmod 0644 "$WORK/secrets/backup-age.key"
+if run ./backup-postgres.sh >"$WORK/b2.out" 2>"$WORK/b2.err"; then fail 'a backup that could not be sealed was reported as complete'; fi
+grep -Fq 'sealing the local backup failed' "$WORK/b2.err" || fail "unexpected backup failure: $(cat "$WORK/b2.err")"
+[ "$(ls "$WORK/backups")" = "$before" ] || fail "an unsealed backup was left behind: $(ls -la "$WORK/backups")"
+chmod 0600 "$WORK/secrets/backup-age.key"
 
 # --- ③ 来路不明：没有封条也没有签名清单；有清单没配公钥 ------------------------------------------------
 rm -f "$archive.seal"

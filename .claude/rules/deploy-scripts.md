@@ -51,7 +51,7 @@ paths:
   - 失败时把服务按新版本起来之后再以非 0 退出，提示原因与开关；226/NAMESPACE 直接说是主机不支持沙箱
   - 开关 `PANDORA_SYSTEMD_HARDENING`（缺省开，0 去掉隔离段、留资源约束，记进 `.env` 只改这一行）
   - 面板的服务不换出：PostgreSQL、Valkey 的 drop-in 与三个网关单元都带 `MemorySwapMax=0`；cgroup v1 或没开 swap 记账时被忽略，安装输出照实说、不报错（`native_swap_accounting_note`）。守卫：`install-hardening_mock_test.sh`
-  - PostgreSQL 的资源段还写 `OOMPolicy=continue`（一个后端被 OOM 杀掉不停整个单元，交给 postmaster 崩溃恢复）与 `Restart=on-failure`（postmaster 自己死了拉起；`pg_ctlcluster stop` 是正常退出，不会被拉起）
+  - PostgreSQL 的资源段还写 `OOMPolicy=continue`（一个后端被 OOM 杀掉不停整个单元，交给 postmaster 崩溃恢复）。不写 `Restart=`、不改 ExecStop：panel2 实测 postmaster 被 `kill -9` 时 systemd 记为正常退出，`on-abnormal` 拉不起；`on-failure` 会把 postgres 用户 `pg_ctlcluster stop` 的库拉回来
   - drop-in 整套写全，不依赖发行版单元写了什么（Debian 12 的 redis 单元把 `ProtectSystem` 改回 `true`）；内存上限 PG 512M、Valkey 160M
   - PostgreSQL 不加 `MemoryDenyWriteExecute`（JIT）；被挡的系统调用返回 EPERM
   - 守卫：`install-hardening_mock_test.sh`

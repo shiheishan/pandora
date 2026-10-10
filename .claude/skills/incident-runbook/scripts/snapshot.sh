@@ -47,9 +47,11 @@ if [ -n "$D" ] && [ -x "$D/deploy/edge-tls.sh" ]; then "$D/deploy/edge-tls.sh" s
 
 echo; echo "== 磁盘"
 df -h / /tmp 2>/dev/null | sed 's/^/  /'
-for bk in /var/backups/aegispanel /var/backups/pandora; do
+for bk in /var/backups/pandora; do
   [ -d "$bk" ] || continue
   newest="$(ls -t "$bk"/*.age 2>/dev/null | head -1)"
+  # 只有带封条（<归档>.seal）的本地备份恢复得了
+  printf '  没有封条的加密备份：%s 个\n' "$(for a in "$bk"/*.dump.age; do [ -e "$a" ] && [ ! -e "$a.seal" ] && echo x; done | wc -l)"
   printf '  %s 共 %s，最新加密备份：%s\n' "$bk" "$(du -sh "$bk" 2>/dev/null | cut -f1)" \
     "${newest:+$(basename "$newest")（$(( ($(date +%s) - $(stat -c %Y "$newest")) / 3600 )) 小时前）}"
   printf '  未加密的升级前备份 pre-upgrade-*.dump：%s 个\n' "$(ls "$bk"/pre-upgrade-*.dump 2>/dev/null | wc -l)"

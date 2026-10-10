@@ -62,7 +62,7 @@ description: pandora 已按生产方式装好的面板上的运维操作：管�
 | 迁移版本 / 每个迁移的状态 | `GOOSE_BIN=$D/bin/goose deploy/migrate.sh version`（或 `status`） | B | 0；1 缺 `.env`、迁移目录或 goose；78 命令被拒 |
 | 有没有半成品索引 | `GOOSE_BIN=$D/bin/goose deploy/migrate.sh check-indexes` | B | 0 没有；1 有（打印逐个 `DROP INDEX CONCURRENTLY`）；2 查不了 |
 | 面板 HTTPS 证书 | `deploy/edge-tls.sh status` | 无 | 证书来源 `lego`（IP）/`certbot`（域名）/`selfsigned`/`custom`（运维自备）/`none`（还没走 HTTPS 边缘）、到期、上次续期结论 |
-| 备份能不能解开 | `deploy/verify-backup.sh /var/backups/aegispanel/aegis-postgres-<时间>.dump.age` | B | 0 且输出 `backup verified:`。要签名清单，见「备份与恢复」 |
+| 备份能不能解开 | `deploy/verify-backup.sh /var/backups/pandora/aegis-postgres-<时间>.dump.age` | B | 0 且输出 `backup verified:`。先核来路（本地封条 `.seal` 或 WebDAV 签名清单），见「备份与恢复」 |
 
 ### 可逆：会写，但能撤回或无害
 
@@ -108,8 +108,11 @@ description: pandora 已按生产方式装好的面板上的运维操作：管�
 
 - **装好后没有每日备份。** 单元装了但没启用，要 `enable --now aegis-backup.timer`（两种布局都是；老直装机器升级一次才有这个单元）。
 - **解密私钥和备份在同一台机器**（`install.sh` 首装生成到 `$D/secrets/backup-age.key`，`.env` 的 `AEGIS_BACKUP_AGE_IDENTITY` 指向它）。机器整体丢失时备份解不开，异地备份要连同这把私钥另存（经用户、走 1Password）。
-- **`restore-postgres.sh` 只收带签名清单的备份。** 清单由 aegis-backup-webdav 上传时签出，只存在 WebDAV 上；本地只留检查点（`backup-webdav.json` 的 `manifest_checkpoint_file`）。恢复前要：把 `aegis-postgres-<时间>.manifest.json` 从 WebDAV 取回放到备份旁边，`.env` 设好 `AEGIS_BACKUP_MANIFEST_PUBLIC_KEY`、`AEGIS_BACKUP_TRUSTED_CHECKPOINT`。
-  - 没配 WebDAV 的机器：`verify-backup.sh` 只能用一次性的 `AEGIS_BACKUP_ALLOW_UNSIGNED_LEGACY=RESTORE_UNSIGNED:<文件名>` 校验目录，恢复脚本一律拒绝。只能照 MIGRATION-RUNBOOK 第 3 节「升级前备份」的手工路线，先 `age --decrypt --identity <私钥>` 再 `pg_restore` 到新库核对。
+- **备份先核来路，再恢复。** `verify-backup.sh`（`restore-postgres.sh` 自己会调）只认两种：
+  - **本机写的备份**：`backup-postgres.sh` 每份都写封条 `aegis-postgres-<时间>.dump.age.seal`，是用这台安装的 age 私钥派生的签名。留存期内哪一份都能核、能恢复。封不上（私钥读不了）时这次备份算失败，刚写的归档会被撤掉；后台概览只把带封条的算作最新备份。
+  - **从 WebDAV 取回的备份**：签名清单 `aegis-postgres-<时间>.manifest.json` 加 WebDAV 之外的可信检查点（`backup-webdav.json` 的 `manifest_checkpoint_file`），只认最新一份。恢复前把清单取回放到备份旁边，`.env` 设好 `AEGIS_BACKUP_MANIFEST_PUBLIC_KEY`、`AEGIS_BACKUP_TRUSTED_CHECKPOINT`。
+  - 两样都没有报 `refusing an archive of unknown origin`；封条对不上报 `local backup seal verification failed`。确认来历可信的，按 MIGRATION-RUNBOOK 第 3 节「加密备份手工恢复到新库」走手工路线，然后 `bootstrap.sh`。
+- **备份私钥文件要原样另存，重装后放回原处。** 封条认的是私钥本身（只取 `AGE-SECRET-KEY-1…` 那一行，注释、换行、大小写不影响），换了私钥，旧备份既解不开、也核不过封条。**本机只放公钥（私钥移走）的部署不支持本地备份**：封不上，每次备份都失败。
 - 升级前备份 `pre-upgrade-*.dump` 是**未加密**的 `pg_dump -Fc`，只用手工路线恢复。
 - 恢复失败会 **FAIL-CLOSED**：三个网关与备份单元被 `systemctl mask --runtime`，目标库 `CONNECTION LIMIT 0`。修好原因后要 `systemctl unmask --runtime` 这几个单元，并 `ALTER DATABASE <库> CONNECTION LIMIT -1`，否则服务起不来、库连不上。这一步也先问用户。
 

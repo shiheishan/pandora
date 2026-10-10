@@ -13,6 +13,8 @@ import (
 //
 // 用 var 而不是 const，只是为了让同包测试能把它指向临时目录 ——
 // 它是包私有的，外部代码无从修改，生产行为与写死常量完全一致。
+// 非测试代码里不许再给它赋值（含取地址）：deploy/deploy-single-layout_static_test.sh 核对，
+// 该守卫同时核对这里的值与 install.sh 建的目录相同。
 // 之所以要写死一个根目录：Hook 是会被执行的东西，如果允许配置文件
 // 指定任意路径，那么改配置的人就等同于能执行任意代码。
 var checkpointHookRoot = "/opt/pandora/checkpoint-sink"

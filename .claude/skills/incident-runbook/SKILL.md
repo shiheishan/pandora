@@ -47,7 +47,7 @@ bash $q -t <别名> .claude/skills/db-query/queries/<文件>.sql
 | 通知积压、`通知排队超过 30 分钟`、`通知发送失败` | 第 7 章 | public 探活、`通知派发失败` / `通知投递失败` 计数 | `incident-runbook/queries/notify-backlog.sql` | 后台改渠道配置、降级开关；failed 的不重发，不改库 |
 | `数据库连不上`、库慢、连接满 | 第 8 章 | readyz、容器状态 | `db-query/queries/connections.sql`、`slow-queries.sql`（要 pg_stat_statements）、`incident-runbook/queries/table-sizes.sql` | `pg_cancel_backend` / `pg_terminate_backend`、重启库、开 pg_stat_statements：都先问 |
 | 磁盘满、`/ 已用`、`/tmp 已用` | 第 9 章 | 磁盘段、备份目录大小、未加密升级前备份的个数 | `incident-runbook/queries/table-sizes.sql` | 删备份、`journalctl --vacuum-size`、`docker image prune`：先问；永远不跑 `docker system prune --volumes` |
-| 备份没跑、`没有任何备份`、`最新备份 … 小时前` | 第 10 章 | `aegis-backup.timer` 是否 enabled、最新备份年龄 | 无 | `enable --now aegis-backup.timer`、`backup-postgres.sh`、`verify-backup.sh`：panel-ops「备份与恢复」 |
+| 备份没跑、`没有任何备份`、`最新备份 … 小时前` | 第 10 章 | `aegis-backup.timer` 是否 enabled、最新备份年龄 | 无 | `enable --now aegis-backup.timer`、`backup-postgres.sh`、`verify-backup.sh`：panel-ops「备份与恢复」。备份失败在 `sealing the local backup failed` 是私钥读不了（要 root 所有、0600、一行 `AGE-SECRET-KEY-1…`）；概览只认带封条的那份 |
 | 迁移失败、卡在预检、`INVALID indexes found` | 第 11 章（细节在 `MIGRATION-RUNBOOK.md`） | 无（看安装器或发布控制器的输出） | `migrate.sh version`、`check-indexes`（panel-ops 命令表「只读」） | `DROP INDEX CONCURRENTLY`、`rollback-to`、恢复：panel-ops「破坏性」，按 MIGRATION-RUNBOOK |
 
 ## 写操作的规矩

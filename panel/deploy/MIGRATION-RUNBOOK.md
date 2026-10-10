@@ -180,6 +180,20 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/pandora/bin/goose \
      恢复照原样还原属主与权限：备份要的角色先在本机集群里补齐（只认 `postgres`、`aegis_app`、`aegis_idempotency_owner`，新建的一律 `NOLOGIN`、不带特权；备份里有别的角色就在动正式库之前停下）；库属主角色（`.env` 的 `POSTGRES_USER`）必须已经存在，否则在删正式库之前停下。运行角色在库上的设置（search_path、jit、statement_timeout、收回 TEMPORARY）是库级的、不在备份里，恢复完一律跑 `./bootstrap.sh`。
 
      恢复前先在临时库里用同样的参数（照原样还原属主与权限）完整恢复一遍，角色或权限的问题在删正式库之前就会暴露。
+   - **加密备份手工恢复到新库**：`restore-postgres.sh` 停下时（备份里有它认不出的角色；或者封条核不过而你确认这份备份可信，比如私钥文件换了写法之前封的），在写入者全部停止之后用本机工具恢复到一个新库，核对后再切过去。全部以 root 在 `/opt/pandora/deploy` 下跑，口令只经环境变量：
+
+     ```bash
+     cd /opt/pandora/deploy
+     set -a; . ./.env; set +a          # 读 POSTGRES_PORT、POSTGRES_USER、POSTGRES_SUPER_PASSWORD、AEGIS_BACKUP_AGE_IDENTITY
+     export PGHOST=127.0.0.1 PGPORT="$POSTGRES_PORT" PGUSER=postgres PGPASSWORD="$POSTGRES_SUPER_PASSWORD"
+     A=/var/backups/pandora/aegis-postgres-<时间>.dump.age
+     (cd "$(dirname "$A")" && sha256sum --check "$(basename "$A").sha256")   # 归档没坏
+     createdb -O "$POSTGRES_USER" -T template0 -E UTF8 <新库名>
+     age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$A" | pg_restore -d <新库名> --exit-on-error
+     unset PGPASSWORD
+     ```
+
+     备份里有本机没有的角色时，`pg_restore` 会报错停下：先确认这份备份的来历，再决定建哪些角色（一律 `NOLOGIN`），不要照单全收。恢复到新库后按下面「升级前备份」第 2 步二选一切过去，再跑 `./bootstrap.sh`。
    - **`install.sh` 的升级前备份**（`/var/backups/pandora/pre-upgrade-<时间>.dump`，未加密的 `pg_dump -Fc`，由安装器以 `postgres` 用户导出）不走 `restore-postgres.sh`，直接用本机的 `pg_restore`，以 `postgres` 系统用户经本地 socket，在写入者全部停止之后：
      1. 先恢复到一个新库核对：
 

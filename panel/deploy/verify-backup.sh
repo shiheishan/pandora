@@ -100,7 +100,7 @@ uploader="${AEGIS_BACKUP_WEBDAV_BIN:-$(dirname -- "$PWD")/bin/aegis-backup-webda
 # 两样都没有就拒绝：来路不明的归档不进库
 if [ -e "$seal" ]; then
   run_trusted_executable "$uploader" verify-local-seal "$archive" "$checksum" "$seal" "$AEGIS_BACKUP_AGE_IDENTITY" >/dev/null \
-    || die "local backup seal verification failed: this archive was not written by this installation, or it was changed"
+    || die "local backup seal verification failed: this archive was not written by this installation, or it was changed (if you are sure of its origin, restore it by hand: MIGRATION-RUNBOOK.md section 3)"
 elif [ -e "$manifest" ]; then
   : "${AEGIS_BACKUP_MANIFEST_PUBLIC_KEY:?AEGIS_BACKUP_MANIFEST_PUBLIC_KEY is required}"
   : "${AEGIS_BACKUP_TRUSTED_CHECKPOINT:?AEGIS_BACKUP_TRUSTED_CHECKPOINT is required}"

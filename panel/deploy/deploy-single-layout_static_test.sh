@@ -4,11 +4,14 @@
 # 不许回来：
 #   ① 删掉的入口与文件不在；panel/deploy 下没有任何 compose 文件（开发数据基座只在 panel/dev/）；
 #   ② 发布包（build-release.sh）不打包它们，安装入口只有 deploy/install.sh；
-#   ③ 生产文件（发布包里的脚本、单元、配置与模板）不调 docker、不提 compose；e2e 脚本（panel/tests/*.sh）一律不调 docker；
-#      Makefile 只许在每一处 docker 行里指向 dev/docker-compose.yml（或用由它定义的 DEV_COMPOSE），
-#      并且它引用的每个 compose 文件路径都存在；
+#   ③ 生产文件（发布包里的脚本、单元、配置与模板）不调 docker、不提 compose；e2e 脚本（panel/tests 下递归的 *.sh）一律不调 docker；
+#      docker 一词按「前后都不是字母数字下划线」匹配、不分大小写（-docker、${DOCKER:-docker} 都算）；
+#      Makefile 先删掉允许的子串（dev/docker-compose.yml、$(DEV_COMPOSE)，DEV_COMPOSE 的定义行也只许这一种形状），
+#      剩下的文本里再出现 docker / compose 就红（同一行里别处的 docker 调用不会被整行放过），
+#      并且它引用的每个 compose 文件路径都存在；容器名 aegis-postgres（后面不跟 - ；备份文件名前缀 aegis-postgres- 是命名）不许出现；
 #   ④ 生产文件、Go 非测试代码、e2e 脚本、Makefile 里没有布局开关、迁移标识与 Docker 布局的路径。
-#   ⑤ 检查点复制 Hook 的受保护目录：Go（dbbackup/checkpoint_hook.go）与 install.sh 建的目录是同一个路径。
+#   ⑤ 检查点复制 Hook 的受保护目录：Go（dbbackup/checkpoint_hook.go）与 install.sh 建的目录是同一个路径；
+#      同包测试要把它指向临时目录所以是 var，因此 dbbackup 包的非测试 Go 文件里对它的赋值必须恰好只有那一处声明。
 # Docker 仍是开发数据基座与 CI 的工具：run-pg18-gates.sh、run-migration-roundtrip.sh、run-smoke-*.sh、
 # test-*-pg18.sh、*_docker_test.sh 与各 *_test.sh 不算生产文件。/etc/aegispanel、/var/lib/aegispanel、
 # /run/aegispanel 是共用路径，照用；备份文件名的 aegis-postgres- 前缀是命名，不是容器。
@@ -17,6 +20,8 @@ set -euo pipefail
 DEPLOY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PANEL="$(cd -- "$DEPLOY/.." && pwd)"
 fail() { printf 'deploy single layout: %s\n' "$*" >&2; exit 1; }
+# docker 一词：前后都不是字母数字下划线（-docker、${DOCKER:-docker} 都算命中），不分大小写；compose 是子串匹配
+DOCKER_RE='(^|[^A-Za-z0-9_])docker([^A-Za-z0-9_]|$)|compose'
 
 # --- ① 删掉的入口与文件 ------------------------------------------------------------------
 gone=(install-native.sh install-native-lib.sh install-linux-binaries.sh preflight-linux.sh test-install.sh
@@ -49,7 +54,7 @@ done < <(find "$DEPLOY" -maxdepth 1 -type f -print; find "$DEPLOY/systemd" -type
 hits=""
 for f in "${production[@]}"; do
   # 开发数据基座的路径可以在注释里被指向（参数要与它一致）
-  h="$(sed -e 's|panel/dev/docker-compose\.yml||g' -e 's|dev-compose_static_test\.sh||g' "$f" | grep -nE '(^|[^A-Za-z_-])[Dd]ocker([^A-Za-z_-]|$)|compose' || true)"
+  h="$(sed -e 's|panel/dev/docker-compose\.yml||g' -e 's|dev-compose_static_test\.sh||g' "$f" | grep -niE "$DOCKER_RE" || true)"
   [ -z "$h" ] || hits+="${f#"$PANEL/"}:"$'\n'"$h"$'\n'
 done
 [ -z "$hits" ] || fail "production files mention docker / compose:"$'\n'"$hits"
@@ -57,20 +62,22 @@ done
 # e2e 脚本：连库只走 psql（deploy/psql.sh 或 PSQL 环境变量），不许调 docker、不提容器名
 hits=""
 while IFS= read -r f; do
-  h="$(grep -nE '(^|[^A-Za-z_-])[Dd]ocker([^A-Za-z_-]|$)|compose' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+  h="$(grep -niE "$DOCKER_RE" "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
   [ -z "$h" ] || hits+="${f#"$PANEL/"}:"$'\n'"$h"$'\n'
-done < <(find "$PANEL/tests" -maxdepth 1 -name '*.sh' -print)
+done < <(find "$PANEL/tests" -name '*.sh' -print)
 [ -z "$hits" ] || fail "e2e scripts call docker / compose:"$'\n'"$hits"
-[ -n "$(find "$PANEL/tests" -maxdepth 1 -name '*.sh' -print | head -n 1)" ] || fail "no e2e scripts found under panel/tests: the file walk is broken"
+[ -n "$(find "$PANEL/tests" -name '*.sh' -print | head -n 1)" ] || fail "no e2e scripts found under panel/tests: the file walk is broken"
 
 # Makefile：docker 只用于开发数据基座，每个 docker 行都要指向 dev/docker-compose.yml 或用 DEV_COMPOSE（它的定义行指向那份文件）
 mk="$PANEL/Makefile"
 [ -f "$mk" ] || fail 'panel/Makefile is missing'
 grep -Eq '^DEV_COMPOSE[[:space:]]*[:?]?=.*-f[[:space:]]+dev/docker-compose\.yml' "$mk" \
   || fail 'Makefile: DEV_COMPOSE must be defined from -f dev/docker-compose.yml'
-hits="$(grep -nE '(^|[^A-Za-z_-])[Dd]ocker([^A-Za-z_-]|$)|compose' "$mk" \
-  | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE '^[0-9]+:DEV_COMPOSE' \
-  | grep -vF -e 'dev/docker-compose.yml' | grep -vE '\$\((DEV_COMPOSE)\)' || true)"
+# 先删掉允许的子串再查剩下的：DEV_COMPOSE 的定义行只认「docker compose -f dev/docker-compose.yml」这一种开头，
+# 其余行里的 dev/docker-compose.yml 与 $(DEV_COMPOSE) 删掉后，同一行别处的 docker 调用照样命中
+hits="$(sed -e 's|^DEV_COMPOSE[[:space:]]*[:?]*=[[:space:]]*docker compose -f dev/docker-compose\.yml||' \
+    -e 's|dev/docker-compose\.yml||g' -e 's|\$(DEV_COMPOSE)||g' "$mk" \
+  | grep -niE "$DOCKER_RE" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
 [ -z "$hits" ] || fail "Makefile calls docker / compose without dev/docker-compose.yml:"$'\n'"$hits"
 # 每个被引用的 compose 文件路径都存在（相对 panel/）
 refs="$(grep -ohE '[A-Za-z0-9_./$()-]*compose[A-Za-z0-9_./-]*\.ya?ml' "$mk" | sort -u)"
@@ -84,7 +91,7 @@ if grep -nE 'deploy/docker-compose|\$\((DEPLOY)\)/[A-Za-z0-9_.-]*compose' "$mk" 
 fi
 
 # --- ④ 布局开关、迁移标识、Docker 布局路径 --------------------------------------------------------
-forbidden='PANDORA_LAYOUT|PANDORA_DB_LAYOUT|from-docker|aegis-valkey|exec aegis-postgres|/opt/aegispanel|/var/backups/aegispanel'
+forbidden='PANDORA_LAYOUT|PANDORA_DB_LAYOUT|from-docker|aegis-valkey|aegis-postgres([^-]|$)|/opt/aegispanel|/var/backups/aegispanel'
 scan=("${production[@]}")
 while IFS= read -r f; do scan+=("$f"); done < <(
   find "$PANEL/internal" "$PANEL/cmd" -name '*.go' ! -name '*_test.go' -print
@@ -99,8 +106,14 @@ done
 [ -z "$hits" ] || fail "layout switches or Docker-layout paths are back:"$'\n'"$hits"
 
 # --- ⑤ 检查点 Hook 目录：Go 常量与 install.sh 建的目录相同 ------------------------------------------
-go_hook="$(sed -n 's/^var checkpointHookRoot = "\(.*\)"$/\1/p' "$PANEL/internal/domain/dbbackup/checkpoint_hook.go")"
+hook_go="$PANEL/internal/domain/dbbackup/checkpoint_hook.go"
+go_hook="$(sed -n 's/^var checkpointHookRoot = "\(.*\)"$/\1/p' "$hook_go")"
 [ "$(wc -l <<<"$go_hook" | tr -d ' ')" -eq 1 ] && [ -n "$go_hook" ] || fail 'cannot extract checkpointHookRoot from checkpoint_hook.go'
+# 同包测试为了指向临时目录会给它赋值，所以不能是 const；但非测试文件里不许有第二处赋值或取地址（init() 改掉它守卫就空了）
+assigns="$(grep -nE 'checkpointHookRoot[[:space:]]*([-+*/%&|^]|<<|>>|&\^)?=([^=]|$)|checkpointHookRoot[[:space:]]*:=|&[[:space:]]*checkpointHookRoot|checkpointHookRoot[[:space:]]*(\+\+|--)|checkpointHookRoot[[:space:]]*,[^=]*=([^=]|$)' \
+  $(find "$PANEL/internal/domain/dbbackup" -maxdepth 1 -name '*.go' ! -name '*_test.go' -print) || true)"
+[ "$(grep -c . <<<"$assigns")" -eq 1 ] && grep -q 'checkpoint_hook\.go:[0-9]*:var checkpointHookRoot = ' <<<"$assigns" \
+  || fail "checkpointHookRoot must be assigned exactly once (its var declaration) in non-test dbbackup files:"$'\n'"$assigns"
 install_dir="$(sed -n 's/^INSTALL_DIR="\(.*\)"$/\1/p' "$DEPLOY/install-lib.sh")"
 [ "$(wc -l <<<"$install_dir" | tr -d ' ')" -eq 1 ] && [ -n "$install_dir" ] || fail 'cannot extract INSTALL_DIR from install-lib.sh'
 sh_hook="$(sed -n 's/^install -d .*"\$INSTALL_DIR\/\(checkpoint-sink\)"$/\1/p' "$DEPLOY/install.sh")"

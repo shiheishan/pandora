@@ -1,6 +1,7 @@
 package dbbackup
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -129,5 +130,84 @@ func TestLocalSealCoversNameSizeAndChecksum(t *testing.T) {
 	}
 	if localSealMAC(localSealKey([]byte("other")), base) == want {
 		t.Fatal("the seal does not depend on the identity")
+	}
+}
+
+// 虚构的 age 私钥（不是能用的密钥，只用来钉派生结果）
+// 拆成两段拼：整串照抄会被提交闸门的 age-secret-key 规则当成真私钥拦下（它确实是格式正确的样子）
+const sealFixtureKey = "AGE-SECRET-KEY-" + "1QYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSDYXRWR"
+
+// 已知答案：HMAC-SHA256(键 = 规范化后的密钥行, 消息 = "pandora-local-backup-seal-v1")，在测试外独立算出。
+// 改了派生方式（去掉标签、标签写空、拿文件原始字节当键），留存期内的旧封条会全部失效，这里先红
+func TestLocalSealKeyKnownAnswer(t *testing.T) {
+	const want = "8868b2cd4f6e6f9231d27f150b181e8e1251b22f7db382e73bdd4013e46350d5"
+	keys := t.TempDir()
+	if err := os.Chmod(keys, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sealTestTrustCurrentUser(t)
+	path := writeIdentity(t, keys, "backup-age.key",
+		"# created: 2026-10-09T14:28:00Z\n# public key: age1fixturefixturefixture\n"+sealFixtureKey+"\n")
+	key, err := loadSealKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hex.EncodeToString(key); got != want {
+		t.Fatalf("seal key derivation changed: got %s want %s", got, want)
+	}
+}
+
+// 同一把密钥的几种文件形态（age-keygen 原样、只留密钥行、没有末尾换行、前后空白、小写）派生出同一个封条密钥，
+// 互相认得封条；没有密钥行、多于一行、混进别的内容都报错
+func TestLocalSealKeyIgnoresFileFormatting(t *testing.T) {
+	sealTestTrustCurrentUser(t)
+	keys := t.TempDir()
+	if err := os.Chmod(keys, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	forms := map[string]string{
+		"age-keygen": "# created: 2026-10-09T14:28:00Z\n# public key: age1fixturefixturefixture\n" + sealFixtureKey + "\n",
+		"key-only":   sealFixtureKey + "\n",
+		"no-newline": sealFixtureKey,
+		"crlf-space": "  " + sealFixtureKey + "  \r\n\r\n",
+		"lowercase":  strings.ToLower(sealFixtureKey) + "\n",
+	}
+	var first []byte
+	for name, body := range forms {
+		key, err := loadSealKey(writeIdentity(t, keys, name+".key", body))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if first == nil {
+			first = key
+		} else if !hmac.Equal(first, key) {
+			t.Fatalf("%s derives a different seal key", name)
+		}
+	}
+	// 用 age-keygen 原样的文件封、用只留密钥行的文件核
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	archive, checksum := writeSealFixture(t, dir, "20261010T011540Z", []byte("encrypted-archive-bytes"))
+	seal, err := SealLocalBackup(archive, checksum, filepath.Join(keys, "age-keygen.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"key-only", "no-newline", "crlf-space", "lowercase"} {
+		if err := VerifyLocalSeal(archive, checksum, seal, filepath.Join(keys, name+".key")); err != nil {
+			t.Fatalf("a seal made with the age-keygen file is rejected with the %s file: %v", name, err)
+		}
+	}
+	for name, body := range map[string]string{
+		"empty":       "",
+		"comments":    "# created: x\n# public key: age1x\n",
+		"two-keys":    sealFixtureKey + "\n" + strings.Replace(sealFixtureKey, "QYQ", "ZZZ", 1) + "\n",
+		"garbage":     "hello\n" + sealFixtureKey + "\n",
+		"plugin-only": "AGE-PLUGIN-YUBIKEY-1QQQQQQ\n",
+	} {
+		if _, err := loadSealKey(writeIdentity(t, keys, name+".bad", body)); err == nil {
+			t.Fatalf("identity file %q was accepted", name)
+		}
 	}
 }

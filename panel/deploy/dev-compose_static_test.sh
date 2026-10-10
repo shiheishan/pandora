@@ -5,11 +5,13 @@
 #   ② ports 只绑 127.0.0.1，且没有 network_mode: host；
 #   ③ 镜像的超级用户是 postgres、口令取 POSTGRES_SUPER_PASSWORD：deploy/ 下的脚本按直装的身份连它；
 #      「#」只在引号外才起注释（两边都一样）：引号里带 # 的值照常比较，不一样就红；
-#      另外三条旁路都不许有，否则参数会在 -c 之外悄悄改掉：dev/initdb 下任何文件含 ALTER SYSTEM，
+#      postgres 服务的 command 列表只许有 postgres 和成对的「-c」加「键=值」（--键=值、-c键=值、行内写法都红）；
+#      另外几条旁路都不许有，否则参数会在 -c 之外悄悄改掉：dev/initdb 下（先去掉 SQL 的 -- 与 /* */ 注释再匹配）
+#      出现 ALTER SYSTEM、ALTER DATABASE / ROLE / USER … SET，或任何文件写 postgresql.conf / postgresql.auto.conf，
 #      compose 里出现 PGOPTIONS，或 POSTGRES_INITDB_ARGS 带 -c / --set；
 #   ④ Valkey 的启动参数与 install.sh 写进 Valkey 配置的 pandora 块（install-lib.sh 的 native_valkey_hardening_block）
 #      逐项相同；块里的 bind 与 protected-mode 只管主机上的服务（容器靠 ②），口令不在块里，这三项不比。
-# 另把同一套检查跑在几份改坏的副本上（改一个值、删一个参数、端口绑到 0.0.0.0、改 Valkey 内存上限、引号里 # 后的值不同、initdb 里加 ALTER SYSTEM、compose 里加 PGOPTIONS 或 initdb 的 -c），都必须报错，
+# 另把同一套检查跑在几份改坏的副本上（改一个值、删一个参数、端口绑到 0.0.0.0、改 Valkey 内存上限、引号里 # 后的值不同、「#」前无空白不算注释、command 里的 --键=值 与 -c键=值、initdb 里加 ALTER SYSTEM / ALTER … SET / 写 postgresql.auto.conf、compose 里加 PGOPTIONS 或 initdb 的 -c），都必须报错，
 # 免得解析失灵时空过。
 set -euo pipefail
 export LC_ALL=C
@@ -44,18 +46,48 @@ conf_params() {
       gsub(/[ \t]/, "", key); print tolower(key) "=" norm(val) }' "$1" | sort
 }
 
-# compose 里 postgres 服务 command 列表中每个 -c 之后那一项 → 「键=值」
+# compose 里 postgres 服务 command 列表中每个 -c 之后那一项 → 「键=值」；列表里除 postgres 与成对的 -c 以外的项一律 UNPARSED
 compose_params() {
   awk "$NORM$UNCOMMENT"'
     /^  [A-Za-z0-9_-]+:/ { svc = $1 }
     /^[A-Za-z]/ { svc = "" }
-    svc == "postgres:" && /^    [A-Za-z_]+:/ { incmd = ($1 == "command:"); next }
+    svc == "postgres:" && /^    [A-Za-z_]+:/ { incmd = ($1 == "command:")
+      if (incmd) { rest = uncomment($0, 1); sub(/^[ \t]*command:[ \t]*/, "", rest); if (rest !~ /^[ \t]*$/) print "UNPARSED inline command: " rest }
+      next }
     svc == "postgres:" && incmd && /^ +- / {
       item = $0; sub(/^ +- /, "", item); item = norm(uncomment(item, 1))
       if (want) { want = 0; eq = index(item, "="); if (!eq) { print "UNPARSED " item; next }
         print tolower(substr(item, 1, eq - 1)) "=" norm(substr(item, eq + 1)) }
-      else if (item == "-c") want = 1 }
+      else if (item == "-c") want = 1
+      else if (item != "postgres") print "UNPARSED command item: " item }
     END { if (want) print "UNPARSED dangling -c" }' "$1" | sort
+}
+
+# initdb 文本里去注释：引号外的 /* */（可嵌套，换成一个空格）与（dash=1 时）-- 到行尾；
+# 引号里的内容原样保留（只为判断「--」「/*」是否在引号里），不能因为引号状态判错而把后面的文本吞掉
+cat >"$T/strip.awk" <<'AWK'
+{ n = length($0)
+  for (i = 1; i <= n; i++) {
+    c = substr($0, i, 1); d = substr($0, i, 2)
+    if (depth > 0) {
+      if (d == "*/") { depth--; i++; if (depth == 0) out = out " " }
+      else if (d == "/*") { depth++; i++ }
+      continue }
+    if (q != "") { out = out c; if (c == q) q = ""; continue }
+    if (c == "'" || c == "\"") { q = c; out = out c; continue }
+    if (d == "/*") { depth = 1; i++; continue }
+    if (dash && d == "--") break
+    out = out c }
+  out = out " " }
+END { print out }
+AWK
+# initdb 下全部文件去注释后连成一段：.sh 只去 /* */（psql --command 的「--」不是注释），其余按 SQL 去 -- 与 /* */
+initdb_text() {
+  local f dash
+  while IFS= read -r f; do
+    case "$f" in *.sh) dash=0 ;; *) dash=1 ;; esac
+    awk -v dash="$dash" -f "$T/strip.awk" "$f"
+  done < <(find "$1" -type f -print | sort)
 }
 
 # 全部 ports 列表项（去引号）
@@ -102,9 +134,16 @@ check() {
     return 1
   fi
   # 旁路：-c 之外不许有别的办法改 PostgreSQL 参数
-  if [ -n "$(find "$initdb" -type f -print 2>/dev/null | head -n 1)" ] \
-     && find "$initdb" -type f -exec cat {} + | tr '\n' ' ' | grep -Eiq 'alter[[:space:]]+system'; then
+  local txt
+  txt="$(initdb_text "$initdb")"
+  if grep -Eiq 'alter[[:space:]]+system' <<<"$txt"; then
     echo "ALTER SYSTEM under dev/initdb overrides the -c parameters"; return 1
+  fi
+  if grep -Eiq 'alter[[:space:]]+(database|role|user|group)[^;]*[[:space:]]set[[:space:]]' <<<"$txt"; then
+    echo "ALTER DATABASE / ROLE / USER ... SET under dev/initdb overrides the -c parameters"; return 1
+  fi
+  if grep -rIEiq 'postgresql(\.auto)?\.conf' "$initdb"; then
+    echo "a file under dev/initdb mentions postgresql.conf / postgresql.auto.conf: parameters must only come from -c"; return 1
   fi
   if grep -rIq PGOPTIONS "$compose" "$initdb"; then echo "PGOPTIONS overrides PostgreSQL parameters outside -c"; return 1; fi
   if grep -E '^[[:space:]]*POSTGRES_INITDB_ARGS:' "$compose" | grep -Eq '(^|[[:space:]"=])(-c|--set)([[:space:]=]|"|$)'; then
@@ -164,13 +203,51 @@ check "$T/q-diff.yml" "$T/q-hash.conf" >/dev/null && fail "a quoted value differ
 # 引号外的 # 仍是注释：conf 行尾的 # 注释不进值
 { cat "$CONF"; printf "%s\n" "log_line_prefix = '%t #a' # trailing"; } >"$T/q-trail.conf"
 check "$T/q-same.yml" "$T/q-trail.conf" >/dev/null || fail "a trailing comment after a quoted value was taken as part of it"
-# initdb 里的 ALTER SYSTEM、compose 里的 PGOPTIONS、initdb 参数里的 -c 都必须红
+# compose 里「#」前面有空白才是注释（YAML 列表项的写法）：「jit=off#x」是一个值，与 conf 不同必须红；「jit=off # note」去掉注释后相同必须绿
+sed 's/^      - jit=off$/      - jit=off#x/' "$COMPOSE" >"$T/hash-nows.yml"
+cmp -s "$COMPOSE" "$T/hash-nows.yml" && fail "mutation premise: jit=off not found in the dev compose"
+check "$T/hash-nows.yml" "$CONF" >/dev/null && fail "a '#' without preceding whitespace was taken as a comment (jit=off#x passed)"
+sed 's/^      - jit=off$/      - jit=off # note/' "$COMPOSE" >"$T/hash-ws.yml"
+out="$(check "$T/hash-ws.yml" "$CONF")" || fail "a ' # note' comment after a list item was taken as part of the value: $out"
+# command 列表只许 postgres 与成对的 -c 加「键=值」：--键=值、-c键=值、行内写法都红
+sed 's/^      - postgres$/      - postgres\n      - --work_mem=64MB/' "$COMPOSE" >"$T/cmd-long.yml"
+cmp -s "$COMPOSE" "$T/cmd-long.yml" && fail "mutation premise: the postgres command item not found in the dev compose"
+check "$T/cmd-long.yml" "$CONF" >/dev/null && fail "a --key=value item in the postgres command was not detected"
+sed 's/^      - postgres$/      - postgres\n      - -cwork_mem=64MB/' "$COMPOSE" >"$T/cmd-glued.yml"
+check "$T/cmd-glued.yml" "$CONF" >/dev/null && fail "a -ckey=value item in the postgres command was not detected"
+sed 's/^    command:$/    command: [postgres, -c, jit=off]/' "$COMPOSE" >"$T/cmd-inline.yml"
+cmp -s "$COMPOSE" "$T/cmd-inline.yml" && fail "mutation premise: the command: line not found in the dev compose"
+check "$T/cmd-inline.yml" "$CONF" >/dev/null && fail "an inline command: [...] was not detected"
+# initdb 里的 ALTER SYSTEM / ALTER … SET / 写配置文件、compose 里的 PGOPTIONS、initdb 参数里的 -c 都必须红
 cp -R "$INITDB" "$T/initdb-bad"
 printf 'ALTER SYSTEM SET work_mem = %s;\n' "'64MB'" >"$T/initdb-bad/90-bad.sql"
 check "$COMPOSE" "$CONF" "$T/initdb-bad" >/dev/null && fail "ALTER SYSTEM under initdb was not detected"
 cp -R "$INITDB" "$T/initdb-bad2"
 printf 'alter\n  system set jit = on;\n' >"$T/initdb-bad2/90-bad.sql"
 check "$COMPOSE" "$CONF" "$T/initdb-bad2" >/dev/null && fail "a line-split ALTER SYSTEM under initdb was not detected"
+# 逐条写一个坏文件到 initdb 副本里：文件名 → 内容，都必须红
+n=0
+while IFS='|' read -r name body; do
+  n=$((n + 1)); rm -rf "$T/initdb-x"; cp -R "$INITDB" "$T/initdb-x"
+  printf '%b\n' "$body" >"$T/initdb-x/$name"
+  check "$COMPOSE" "$CONF" "$T/initdb-x" >/dev/null && fail "initdb bypass #$n ($name: $body) was not detected"
+done <<'BAD'
+90.sql|ALTER DATABASE aegis SET work_mem = '64MB';
+90.sql|ALTER ROLE aegis SET work_mem = '64MB';
+90.sql|alter user aegis\n  set jit = on;
+90.sql|ALTER ROLE aegis IN DATABASE aegis SET jit = on;
+90.sql|ALTER/**/SYSTEM SET jit = on;
+90.sql|ALTER /* a /* nested */ b */ SYSTEM SET jit = on;
+90.sql|ALTER -- note\nSYSTEM SET jit = on;
+90.sql|SELECT '--'; ALTER SYSTEM SET jit = on;
+90.sh|echo jit=on >> "$PGDATA/postgresql.auto.conf"
+90.sh|echo jit=on >> /var/lib/postgresql/data/postgresql.conf
+90.sh|psql --command "ALTER SYSTEM SET jit = on"
+BAD
+# 注释里提到这些词不算（匹配前先去注释）
+rm -rf "$T/initdb-ok"; cp -R "$INITDB" "$T/initdb-ok"
+printf '%s\n' '-- 不要用 ALTER SYSTEM，也不要 ALTER ROLE x SET' '/* ALTER DATABASE x SET y */ SELECT 1;' >"$T/initdb-ok/90-comments.sql"
+out="$(check "$COMPOSE" "$CONF" "$T/initdb-ok")" || fail "words inside SQL comments were treated as an initdb bypass: $out"
 sed 's|^      POSTGRES_USER: postgres$|      POSTGRES_USER: postgres\n      PGOPTIONS: "-c work_mem=64MB"|' "$COMPOSE" >"$T/pgoptions.yml"
 cmp -s "$COMPOSE" "$T/pgoptions.yml" && fail "mutation premise: POSTGRES_USER line not found in the dev compose"
 check "$T/pgoptions.yml" "$CONF" >/dev/null && fail "PGOPTIONS in the compose was not detected"

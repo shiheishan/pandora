@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/aegispanel/aegis/internal/platform/pg18test"
 )
@@ -122,7 +123,7 @@ func TestMigrationRevokedFromAppScan(t *testing.T) {
 }
 
 // 不连库：签名里的空白收成单个空格交给解析（参数名、多词类型原样保留）；解析不出来的，
-// 只有后面的迁移里 DROP 了同名函数才跳过，否则报错；format() 模板（含 %）不算签名
+// 只有后面的迁移里 DROP 了同名函数才跳过，否则报错（含 % 的函数类语句另判红，见 BlindSpots）
 func TestMigrationRevokedFromAppScanRules(t *testing.T) {
 	var seen []string
 	record := func(_, sig string) (string, bool) {
@@ -134,8 +135,7 @@ func TestMigrationRevokedFromAppScanRules(t *testing.T) {
 	}
 	ups := []migrationUp{
 		{"00001_a.sql", "REVOKE ALL ON FUNCTION app.f(p_tenant uuid,\n   p_at timestamp   with time zone) FROM PUBLIC, aegis_app;\n" +
-			"REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;\n" +
-			"DO $$ BEGIN EXECUTE format('REVOKE ALL ON FUNCTION %s FROM aegis_app;', v_sig); END $$;\n"},
+			"REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;\n"},
 		{"00002_b.sql", "DROP FUNCTION IF EXISTS app.gone(uuid);\n"},
 	}
 	revoked, err := migrationRevokedFromApp(ups, record)
@@ -144,11 +144,6 @@ func TestMigrationRevokedFromAppScanRules(t *testing.T) {
 	}
 	if want := "app.f(p_tenant uuid, p_at timestamp with time zone)"; !contains(revoked, want) || !contains(seen, want) {
 		t.Fatalf("signature not normalized to single spaces: revoked %v, resolved %v", revoked, seen)
-	}
-	for _, sig := range seen {
-		if strings.Contains(sig, "%") {
-			t.Fatalf("a format() template was treated as a signature: %v", seen)
-		}
 	}
 	if _, err := migrationRevokedFromApp(ups[:1], record); err == nil {
 		t.Fatal("an unresolvable signature without a later DROP FUNCTION was skipped silently")
@@ -183,6 +178,23 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		{"DROP only in line comment", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "-- DROP FUNCTION app.gone(uuid);\n"},
 		{"DROP only in block comment", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "/* DROP FUNCTION app.gone(uuid); */\n"},
 		{"DROP with another signature", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "DROP FUNCTION IF EXISTS app.gone(text, uuid);\n"},
+		// J8：函数类语句带 % 或拼接，静态扫不了，判红而不是跳过
+		{"format template function revoke", "DO $$ BEGIN EXECUTE format('REVOKE ALL ON FUNCTION %s FROM aegis_app', v_sig); END $$;", ""},
+		{"format template bulk revoke", "DO $$ BEGIN EXECUTE format('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA %I FROM aegis_app', s); END $$;", ""},
+		{"format template function grant", "DO $$ BEGIN EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO aegis_app', v_sig); END $$;", ""},
+		// J9：'…' || '…' 拼接把函数 REVOKE 切成碎片
+		{"concat splits after signature keyword", "DO $$ BEGIN EXECUTE 'REVOKE ALL ON FUNCTION ' || 'app.x(uuid) FROM aegis_app'; END $$;", ""},
+		{"concat splits before role", "DO $$ BEGIN EXECUTE 'REVOKE ALL ON FUNCTION app.x(uuid) FROM ' || 'aegis_app'; END $$;", ""},
+		{"concat splits inside privilege keywords", "DO $$ BEGIN EXECUTE 'REVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		// J10：字符串里的 -- 和 /* 不是注释，后面真的 REVOKE 必须还看得见
+		{"dollar-quoted string hides line comment", "COMMENT ON TABLE t IS $c$-- x$c$; REVOKE ALL ON FUNCTION app.gone3(uuid) FROM aegis_app;", ""},
+		{"dollar-quoted string hides block comment", "COMMENT ON TABLE t IS $c$/* x$c$; REVOKE ALL ON FUNCTION app.gone3(uuid) FROM aegis_app;", ""},
+		{"E string with escaped quote hides line comment", "COMMENT ON TABLE t IS E'a\\'b -- x'; REVOKE ALL ON FUNCTION app.gone3(uuid) FROM aegis_app;", ""},
+		// J11：DROP 只有出现在语句开头才算
+		{"ALTER EXTENSION DROP FUNCTION", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "ALTER EXTENSION e DROP FUNCTION app.gone(uuid);\n"},
+		{"DROP text inside a string literal", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "DO $$ BEGIN RAISE NOTICE 'DROP FUNCTION app.gone(uuid)'; END $$;\n"},
+		// J12：美元引号作为语句结尾；statementEnd 若只认分号，这条会被漏掉
+		{"EXECUTE dollar-quoted literal", "DO $$ BEGIN EXECUTE $q$REVOKE ALL ON FUNCTION app.gone4(uuid) FROM aegis_app$q$; END $$;", ""},
 		{"DROP of another function", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "DROP FUNCTION app.gone_other(uuid);\n"},
 	}
 	for _, c := range red {
@@ -211,7 +223,10 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		{"table, sequence and schema grants", "GRANT SELECT ON TABLE app.t TO aegis_app;\nGRANT USAGE ON SCHEMA app TO aegis_app;\n" +
 			"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO aegis_app;\nREVOKE ALL ON goose_db_version FROM aegis_app;", "", nil},
 		{"statements only in comments", "-- REVOKE ALL ON ALL FUNCTIONS IN SCHEMA app FROM aegis_app;\n/* REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app; */", "", nil},
-		{"format template stays skipped", "DO $$ BEGIN EXECUTE format('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA %I FROM aegis_app', s); END $$;", "", nil},
+		// 表、序列、模式的语句带 % 不是函数类，不管
+		{"format template on a table stays ignored", "DO $$ BEGIN EXECUTE format('REVOKE ALL ON TABLE %I FROM aegis_app', t); END $$;", "", nil},
+		{"concat on a table stays ignored", "DO $$ BEGIN EXECUTE 'GRANT SELECT ON TABLE ' || quote_ident(t) || ' TO aegis_app'; END $$;", "", nil},
+		{"DROP after another statement on the same line", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "SELECT 1; DROP FUNCTION app.gone(uuid);\n", nil},
 	}
 	for _, c := range green {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -244,6 +259,14 @@ var (
 	dropFunctionStmt    = regexp.MustCompile(`(?is)\bDROP\s+(?:FUNCTION|PROCEDURE|ROUTINE)\s+(?:IF\s+EXISTS\s+)?`)
 	identToken          = regexp.MustCompile(`"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*`)
 	gooseDown           = regexp.MustCompile(`(?m)^-- \+goose Down`)
+	// 美元引号的定界符：$$ 或 $tag$（tag 不以数字开头，否则是位置参数 $1）
+	dollarTag = regexp.MustCompile(`^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$`)
+	// 语句被 '…' || '…' 拼接截断：结尾的引号后面跟 ||
+	concatAfter = regexp.MustCompile(`^'\s*\|\|`)
+	// 已经写出了「ON 对象」；没写出来说明语句在 ON 之前或之后被截断了
+	onObject = regexp.MustCompile(`(?is)\bON\s+\S`)
+	// DROP 豁免只认语句开头：前一个非空白字符是分号或文本开头
+
 )
 
 type migrationUp struct{ name, up string }
@@ -276,16 +299,24 @@ func readMigrationUps(t *testing.T) []migrationUp {
 	return ups
 }
 
-// stripSQLComments 去掉 -- 行注释和（可嵌套的）/* */ 块注释，单引号字符串与双引号标识符里的原样保留
-// （EXECUTE '…' 里的静态语句仍要扫）。行注释留下换行，块注释换成一个空格
+// stripSQLComments 去掉 -- 行注释和（可嵌套的）/* */ 块注释，单引号字符串（含 E'…' 的反斜杠转义）与双引号标识符里的
+// 原样保留（EXECUTE '…' 里的静态语句仍要扫）。美元引号 $tag$…$tag$ 的结尾按原文定位，里面既可能是字符串
+// （其中的 -- 不是注释），也可能是 DO 函数体（其中的注释要去掉），所以只在定界符之内递归去注释，定界符本身保留。
+// 行注释留下换行，块注释换成一个空格
 func stripSQLComments(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
 		c := s[i]
 		switch {
 		case c == '\'' || c == '"':
+			// E'…' 里反斜杠转义下一个字符；E 前面不能是标识符字符（否则只是名字的结尾，例如 name'）
+			escape := c == '\'' && i > 0 && (s[i-1] == 'E' || s[i-1] == 'e') && (i < 2 || !isIdentByte(s[i-2]))
 			j := i + 1
 			for j < len(s) {
+				if escape && s[j] == '\\' {
+					j += 2
+					continue
+				}
 				if s[j] == c {
 					if j+1 < len(s) && s[j+1] == c { // 连写两个引号是转义
 						j += 2
@@ -295,11 +326,28 @@ func stripSQLComments(s string) string {
 				}
 				j++
 			}
+			if j > len(s) {
+				j = len(s)
+			}
 			if j < len(s) {
 				j++
 			}
 			b.WriteString(s[i:j])
 			i = j
+		case c == '$' && (i == 0 || !isIdentByte(s[i-1])) && dollarTag.MatchString(s[i:]):
+			tag := dollarTag.FindString(s[i:])
+			bodyStart := i + len(tag)
+			k := strings.Index(s[bodyStart:], tag)
+			if k < 0 { // 没有结尾：剩下的当作一整段正文
+				b.WriteString(tag)
+				b.WriteString(stripSQLComments(s[bodyStart:]))
+				i = len(s)
+				break
+			}
+			b.WriteString(tag)
+			b.WriteString(stripSQLComments(s[bodyStart : bodyStart+k]))
+			b.WriteString(tag)
+			i = bodyStart + k + len(tag)
 		case c == '-' && i+1 < len(s) && s[i+1] == '-':
 			for i < len(s) && s[i] != '\n' {
 				i++
@@ -329,12 +377,22 @@ func stripSQLComments(s string) string {
 	return b.String()
 }
 
+func isIdentByte(c byte) bool {
+	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80
+}
+
 // statementEnd 返回从 from 起这条语句的结尾：分号、单引号（字面量结尾）、美元引号或文本尾
 func statementEnd(s string, from int) int {
 	if k := strings.IndexAny(s[from:], ";'$"); k >= 0 {
 		return from + k
 	}
 	return len(s)
+}
+
+// atStatementStart 看 pos 之前第一个非空白字符是不是分号（或已到文本开头）
+func atStatementStart(text string, pos int) bool {
+	k := strings.LastIndexFunc(text[:pos], func(r rune) bool { return !unicode.IsSpace(r) })
+	return k < 0 || text[k] == ';'
 }
 
 // mentionsRole 看文本里有没有标识符 role：不加引号的不分大小写，加引号的去引号后精确比较
@@ -367,7 +425,8 @@ func normalizeSig(sig string) string {
 //   - resolve 认不出的签名，除非之后（后面的语句或迁移）有 DROP FUNCTION / PROCEDURE / ROUTINE 同名同参数类型
 //     （空白与大小写不计）；DROP 没写参数列表时只按名字放行
 //
-// format() 模板（语句里有 %）是动态 SQL，静态扫不了，跳过
+// 函数类语句带 %（format() 模板）、或被 '…' || '…' 拼接截断，是动态 SQL，静态扫不了，同样报错；
+// 表、序列、模式的语句不管。DROP 豁免只认出现在语句开头的 DROP FUNCTION / PROCEDURE / ROUTINE
 func migrationRevokedFromApp(ups []migrationUp, resolve func(kind, sig string) (string, bool)) ([]string, error) {
 	type event struct {
 		pos             int // 全局位置：文件序号 << 32 | 文件内偏移
@@ -394,7 +453,19 @@ func migrationRevokedFromApp(ups []migrationUp, resolve func(kind, sig string) (
 			end := statementEnd(text, matchEnd)
 			from = end
 			stmt := strings.Join(strings.Fields(text[start:end]), " ")
-			if strings.Contains(stmt, "%") || !mentionsRole(stmt, "aegis_app") || !functionObjectKind.MatchString(stmt) {
+			// 拼接：'REVOKE ALL ON FUNCTION ' || 'app.x(uuid) FROM aegis_app' 被切成碎片，每片单看都不像完整语句。
+			// 碎片是函数类、或还没写出 ON 对象（不知道是什么对象）时判红；明确是表、序列的拼接不管
+			if end < len(text) && concatAfter.MatchString(text[end:]) &&
+				(functionObjectKind.MatchString(stmt) || !onObject.MatchString(stmt)) {
+				problems = append(problems, fmt.Sprintf("%s: privilege statement built by string concatenation cannot be checked: %s", m.name, stmt))
+				continue
+			}
+			if !mentionsRole(stmt, "aegis_app") || !functionObjectKind.MatchString(stmt) {
+				continue
+			}
+			// format() 模板（含 %）是动态 SQL，静态扫不了：函数类的判红，不能悄悄跳过
+			if strings.Contains(stmt, "%") {
+				problems = append(problems, fmt.Sprintf("%s: function privilege statement with a format() template cannot be checked: %s", m.name, stmt))
 				continue
 			}
 			pos := i<<32 | start
@@ -420,6 +491,10 @@ func migrationRevokedFromApp(ups []migrationUp, resolve func(kind, sig string) (
 			}
 			start, matchEnd := from+loc[0], from+loc[1]
 			end := statementEnd(text, matchEnd)
+			if !atStatementStart(text, start) { // ALTER EXTENSION … DROP FUNCTION、字符串里的 DROP 文本都不算
+				from = matchEnd
+				continue
+			}
 			list := strings.Join(strings.Fields(text[matchEnd:end]), " ")
 			from = end
 			for _, item := range splitTopLevel(list) {

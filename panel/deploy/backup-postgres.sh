@@ -231,8 +231,11 @@ workdir=""
 # 本地封条（<归档>.seal）：用这台安装的 age 私钥派生的 HMAC 签归档与校验文件，restore-postgres.sh 凭它确认
 # 这份备份是本安装写出的（见 internal/domain/dbbackup 的 LocalSealSchema）。封不上就算备份失败：
 # 没有封条的备份恢复不了，不能让它看起来是好的
-run_trusted_executable "$sealer" seal-local "$archive" "$checksum" "$AEGIS_BACKUP_AGE_IDENTITY" >/dev/null \
-  || die "sealing the local backup failed (age identity $AEGIS_BACKUP_AGE_IDENTITY readable, root-owned, 0600?)"
+# 封不上就把刚发布的归档与校验文件撤掉再退出：留在原地的话，后台概览与留存都会把它当成一份备份，可它恢复不了
+if ! run_trusted_executable "$sealer" seal-local "$archive" "$checksum" "$AEGIS_BACKUP_AGE_IDENTITY" >/dev/null; then
+  rm -f -- "$archive" "$checksum" "${archive}.seal"
+  die "sealing the local backup failed (age identity $AEGIS_BACKUP_AGE_IDENTITY readable, root-owned, 0600, one AGE-SECRET-KEY-1 line?); the unsealed archive was removed"
+fi
 
 if [ -n "$remote_hook" ]; then
   run_hook "$remote_hook" "$archive" "$checksum"

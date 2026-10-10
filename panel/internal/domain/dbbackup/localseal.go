@@ -27,9 +27,10 @@ const LocalSealSchema = "PANDORA-LOCAL-SEAL-V1"
 
 const localSealKeyLabel = "pandora-local-backup-seal-v1"
 
-// localSealKey 从 age 私钥文件内容派生封条密钥（HMAC-SHA256，固定标签），私钥本身不直接当 MAC 密钥用
-func localSealKey(identity []byte) []byte {
-	m := hmac.New(sha256.New, identity)
+// localSealKey 从规范化后的 age 私钥（那一行 AGE-SECRET-KEY-1…）派生封条密钥（HMAC-SHA256，固定标签），
+// 私钥本身不直接当 MAC 密钥用。派生结果由 TestLocalSealKeyKnownAnswer 钉住：改了它，留存期内的旧封条全部失效
+func localSealKey(identityLine []byte) []byte {
+	m := hmac.New(sha256.New, identityLine)
 	_, _ = m.Write([]byte(localSealKeyLabel))
 	return m.Sum(nil)
 }
@@ -41,12 +42,41 @@ func localSealMAC(key []byte, pair LocalPair) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+// parseAgeSecretKey 从 age 私钥文件里取出唯一的 AGE-SECRET-KEY-1… 行并规范化：去首尾空白、转大写（Bech32 不分大小写）。
+// age-keygen 写的「# created」「# public key」注释、空行、CRLF、有没有末尾换行都不影响结果——另存私钥时只留那一行、
+// 丢了换行，age 照样能解密，封条也必须照样认。没有密钥行、多于一行、混进别的内容（如插件身份）都报错
+func parseAgeSecretKey(raw []byte) ([]byte, error) {
+	var found []byte
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		upper := strings.ToUpper(line)
+		if !strings.HasPrefix(upper, "AGE-SECRET-KEY-1") || strings.ContainsAny(upper[len("AGE-SECRET-KEY-1"):], " \t") {
+			return nil, errors.New("备份解密私钥文件里有认不出的内容（只认一行 AGE-SECRET-KEY-1…）")
+		}
+		if found != nil {
+			return nil, errors.New("备份解密私钥文件里有多把密钥，认不出用哪一把")
+		}
+		found = []byte(upper)
+	}
+	if found == nil {
+		return nil, errors.New("备份解密私钥文件里没有 AGE-SECRET-KEY-1… 那一行")
+	}
+	return found, nil
+}
+
 func loadSealKey(identityPath string) ([]byte, error) {
 	identity, err := readPrivateFile(identityPath, 64<<10)
-	if err != nil || len(identity) == 0 {
+	if err != nil {
 		return nil, errors.New("读不了备份解密私钥（要 root 所有、0600、单链接）")
 	}
-	return localSealKey(identity), nil
+	line, err := parseAgeSecretKey(identity)
+	if err != nil {
+		return nil, err
+	}
+	return localSealKey(line), nil
 }
 
 // SealLocalBackup 核过归档与校验文件（SHA256 对得上、路径与权限合规）之后，在归档旁写 <归档>.seal（0600，
