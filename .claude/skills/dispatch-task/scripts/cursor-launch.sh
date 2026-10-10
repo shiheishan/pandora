@@ -5,10 +5,14 @@
 #       任务 worktree ../pandora-<名字>。缺省读 .claude/brief.md、报告写 .claude/report.md；
 #       --round N（N ≥ 2）先读 brief 再读 .claude/round-r{N}.md，报告写 .claude/report-r{N}.md（adversarial-review 第 4 节）。
 #   cursor-launch.sh <名字> --sub <标签> [--model composer-2.5] [--resume …] [--log-dir …] [--dry-run]
-#       opus 子 agent 把机械部分转手（根 CLAUDE.md「四种执行者」Composer 那条）：读 .claude/sub-<标签>.md，
+#       opus 子 agent 把机械部分转手（根 CLAUDE.md「大任务拆子 agent」Composer 那条）：读 .claude/sub-<标签>.md，
 #       报告写 .claude/report-sub-<标签>.md；开工指令取 templates/cursor-prompt.md「子 agent 转手」一节：只提交、不推送、不等 CI。
 #   cursor-launch.sh --dir <只读巡检目录> [--resume …] [--log-dir …] [--dry-run]
 #       读 <目录>/brief.md（必须含 templates/server-readonly.md 的「服务器只读红线」一节），报告写 <目录>/report.md。
+#   cursor-launch.sh --scan <盘点目录> [--resume …] [--log-dir …] [--dry-run]
+#       只读盘点（审查员、设计员等只读的 opus 把盘点、分类、定位转出去）：读 <目录>/brief.md，报告写 <目录>/report.md；
+#       目录必须在总协调 scratchpad（/private/tmp/claude-<uid>/）或主目录 ops-local/ 下；Composer 只可写这个目录，
+#       不改任何仓库或 worktree（跑完脚本不核，由转出方用 git status 核）。
 #   cursor-launch.sh --wait <日志>
 #       等日志出现 exit= 行再打印末尾；用 Bash 的 run_in_background 跑，结束时会话收到通知。
 # - 开工指令取自 templates/cursor-prompt.md；--resume 在末尾加续跑段（resume-work「Composer 的路」）。
@@ -37,13 +41,14 @@ if [ "${1:-}" = "--wait" ]; then
   exit 0
 fi
 
-name="" dir="" round="" sub="" resume="" logdir="" dry=0
+name="" dir="" scan="" round="" sub="" resume="" logdir="" dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --round) round="${2:?}"; shift 2 ;;
     --sub) sub="${2:?}"; shift 2 ;;
     --resume) resume="${2:?}"; shift 2 ;;
     --dir) dir="${2:?}"; shift 2 ;;
+    --scan) scan="${2:?}"; shift 2 ;;
     --log-dir) logdir="${2:?}"; shift 2 ;;
     --model) MODEL="${2:?}"; shift 2
       [[ "$MODEL" == composer-2.5 ]] || die "只认 composer-2.5（Grok 已停用），不认识 $MODEL" ;;
@@ -54,7 +59,16 @@ while [ $# -gt 0 ]; do
 done
 
 main="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
-if [ -n "$dir" ]; then
+if [ -n "$scan" ]; then
+  [ -z "$dir$name$round$sub" ] || die "--scan 不和 --dir、<名字>、--round、--sub 一起用"
+  W="$(cd "$scan" 2>/dev/null && pwd -P)" || die "目录不存在 $scan"
+  name="$(basename "$W")"; branch=""; kind="只读盘点"
+  start="$W/brief.md"; report="$W/report.md"
+  [ -f "$start" ] || die "没有 $start"
+  case "$W" in /private/tmp/claude-"$(id -u)"/*|"$main"/ops-local/*) ;; *) die "盘点目录要在 /private/tmp/claude-$(id -u)/ 或主目录 ops-local/ 下，现在是 $W" ;; esac
+  git -C "$W" rev-parse --git-dir >/dev/null 2>&1 && ! git -C "$W" check-ignore -q "$W" && die "盘点目录在 git 仓库里且未被忽略：$W"
+  dir="$W"
+elif [ -n "$dir" ]; then
   [ -z "$name$round$sub" ] || die "--dir 不和 <名字>、--round、--sub 一起用"
   W="$(cd "$dir" 2>/dev/null && pwd)" || die "目录不存在 $dir"
   name="$(basename "$W")"; branch=""; kind="只读巡检"
@@ -90,7 +104,7 @@ fi
 
 gover="go$(sed -n 's/^go //p' "$main/panel/go.mod" | head -1)"
 [ "$gover" != go ] || die "读不到 panel/go.mod 的 go 指令"
-section="任务 worktree"; [ -n "$dir" ] && section="只读巡检"; [ -n "$sub" ] && section="子 agent 转手"
+section="任务 worktree"; [ -n "$dir" ] && section="只读巡检"; [ -n "$scan" ] && section="只读盘点"; [ -n "$sub" ] && section="子 agent 转手"
 prompt="$(awk -v s="## $section" '$0==s{f=1;next} /^## /{f=0} f&&/^```text$/{c=1;next} c&&/^```$/{exit} c{print}' "$tpl")"
 [ -n "$prompt" ] || die "templates/cursor-prompt.md 里找不到「## $section」的 text 块"
 prompt="${prompt//<worktree>/$W}"

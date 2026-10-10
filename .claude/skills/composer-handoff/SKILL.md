@@ -1,22 +1,20 @@
 ---
 name: composer-handoff
-description: opus 子 agent 当一路主 agent 时，把机械部分转手给 Cursor 的 Composer：判断哪些能转、写转手开工单（sub brief）、用 cursor-launch.sh --sub 启动与等待、收回后核 diff 与重跑测试和回退实验、在报告里写「转手」一节。子 agent 想「把这部分交给 Composer」「拆给 Composer」「转手」时使用；总协调直接派整路给 Composer 用 dispatch-task。
+description: opus 子 agent 当一路主 agent 时，把机械部分转手给 Cursor 的 Composer（含只读的审查员、设计员把盘点交给它的 --scan 只读盘点）：判断哪些能转、写转手开工单（sub brief）、用 cursor-launch.sh --sub 启动与等待、收回后核 diff 与重跑测试和回退实验、在报告里写「转手」一节。子 agent 想「把这部分交给 Composer」「拆给 Composer」「转手」时使用；总协调直接派整路给 Composer 用 dispatch-task。
 ---
 
 # 转手 Composer
 
-目标：opus 子 agent 只做需要判断的部分，机械部分交给 Composer，收回时质量不打折。规则出处是根 CLAUDE.md「大任务拆子 agent」（opus 那条）；本 skill 只讲怎么做。
+目标：opus 子 agent 负责任务管理、冲突解决、测试和集成，编码默认交给 Composer（用户 10-10 定），收回时质量不打折。规则出处是根 CLAUDE.md「大任务拆子 agent」（opus 那条）；本 skill 只讲怎么做。
 
 ## 1. 什么能转
 
-| 能转（规则写死、结果能验证） | 不转（自己做） |
+| 转（你定好修法与判据、写好测试之后） | 不转（自己做） |
 |---|---|
-| 按清单批量删改、纯挪动拆文件、改名 | 判据、边界条件、语义怎么定（例：approle 拼接判据、告警算不算失败） |
-| 补测试、补变异自检、补守卫（标准写清后） | 涉及钱、权限、认证、迁移设计、节点内核的实现 |
-| 照审查清单的机械修复（修法已定） | 修法有几种、要按四栏比较的 |
-| 文档、注释、RUNBOOK 同步 | 原因不明、要自己探索的 |
-
-拿不准就自己做。只改几行的活转手不划算（开工单加核对的成本比自己改还高）。
+| 功能与修复的编码实现，包括钱、权限、认证、迁移、节点内核（测试由你先写好、diff 逐行读） | 定判据、边界条件、语义（例：approle 拼接判据、告警算不算失败）、修法有几种要按四栏比的——这些写进开工单 |
+| 按清单批量删改、纯挪动拆文件、改名 | 原因不明、要边调边找的 bug |
+| 补测试、补变异自检、补守卫（标准写清后） | 代码本身就是判据的：并发原语、认证与会话状态机、守不变量的迁移 SQL 与触发器 |
+| 照审查清单的机械修复、文档、注释、RUNBOOK 同步 | 只改几行（开工单加核对比自己改还贵）；同一份开工单返工两次仍不过的 |
 
 ## 2. 写开工单
 
@@ -45,6 +43,16 @@ bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-l
 2. 自己重跑开工单里的命令和相关测试；做回退实验（先跑基线，再逐条退掉它的改动看对应测试变红）。不只信它的报告。
 3. 有问题：小的自己改，大的写一份新的 sub brief 再转一次，返工次数记下来。
 4. 和自己那部分一起推送、等 CI（按 verify skill）。
+
+## 4b. 只读盘点（审查员、设计员用）
+
+只读的 opus（对抗审查员、设计审查员、做设计或调研的）不能用 `--sub`（它要在 worktree 里提交）。规则写死的盘点交 `--scan`：
+
+- 例：把 77 条幂等路由按给定口径逐条列「几个事务、有无外部调用、提交后副作用」；数 `addTraffic(` 的调用点；核设计稿引用的文件:行是否还对。判据要先写死，拿不准的让它列进「待判断」，由你定。
+- 在 scratchpad 建目录（如 `<总协调 scratchpad>/scan-<标签>/`），写 `brief.md`：要读的代码目录（worktree 或 `git archive` 副本，只读）、逐条口径、输出表格的列、「报告」一节。
+- 启动：`bash /Users/a1/ai/projects/pandora/.claude/skills/dispatch-task/scripts/cursor-launch.sh --scan <目录> --log-dir <总协调 scratchpad>`（`dangerouslyDisableSandbox: true`），再 `--wait <日志>`（`run_in_background`）。报告在 `<目录>/report.md`。
+- 收回：抽查至少三成条目回读代码；对它读过的 worktree 跑 `git status --porcelain` 确认没被改。它的表只是线索，写进你报告的结论要你核过。
+- 「转手」一节同样要写（用时、抽查数、错几条）。
 
 ## 5. 报告里的「转手」一节
 
