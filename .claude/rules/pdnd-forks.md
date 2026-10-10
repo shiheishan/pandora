@@ -30,7 +30,7 @@ paths:
 - shadowtls：f8173f0（认证前限时）；新增 `service_test.go`。
 - anytls：8da0e00（超 64KB 拆帧、控制帧 deadline）；其中 `stream.go` 的 FIN 与 dieHook 顺序、`util/version.go` 版本串是从 v0.0.13 手工同步的，不是整体升到 v0.0.13。
 - hysteria2：0b8a840、d7991ac、c8b3871、b525f86、17f7af1、1acb247、5daa37c（UDP 热路径、增量用户表、`dgram` 分片、空闲回收）；新增 `idle.go`、`salamander_batch_*.go`。
-- tuic：74d7256、c8b3871、b525f86、1acb247、5daa37c；新增 `idle.go`。
+- tuic：74d7256、c8b3871、b525f86、1acb247、5daa37c；新增 `idle.go`。1281aac（认证前不放大：`MaxIncomingStreams` / `MaxIncomingUniStreams` 由 1<<60 改为 1024；认证完成前单向流在 `loopUniStreams` 里逐条只读 2 字节头、认证流当场校验、Packet / Dissociate 流暂存到认证后再起 goroutine，双向流认证后才 Accept；单向流头按字节读、不再借 32KB 缓冲）；新增 `preauth_test.go`。合上游时 `service.go` 的 `loopUniStreams`、`handleUniStream`、`loopStreams` 冲突要保住这几点。
 
 ## 共同约束
 
