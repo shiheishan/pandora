@@ -110,7 +110,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
 - 远端后台进程：`x &` 作用于整个 `&&` 列表，会留下挂住 ssh 的子 shell。一律写成 `ssh -n host 'cd /root/lt; setsid -f ./x > log 2>&1 < /dev/null'`，两台机器分两条命令发；真挂住时先停本机那条命令（远端的 x 已在自己的会话里）。远端 `pkill -f '<模式>'` 的模式会出现在执行它的 bash 命令行里而误杀自己的 ssh 会话：改用记下的 PID，或锚定写法 `pkill -f '^vmstat'`。限时的故障注入（iptables DROP、停服务等）要在远端自带撤销，例如 `setsid -f sh -c 'sleep N; iptables -D …'`，本机断网时也能恢复。
 - PG18 夹具与 DOMAINS：同域共库，夹具租户 id 撞号和 `run-pg18-gates.sh` 的 DOMAINS 相邻行冲突，做法见 `.claude/rules/platform-pg18.md`「多路并行时的坑」。
 - 两路同改一个 `CREATE OR REPLACE` 函数（如 `app.seed_tenant_defaults`）：后合那份在先合那份的函数体上加，Down 还原到先合那份；计数类契约（模板数、`workers.Add`、DOMAINS、SCRIPTS）合完一并改。细则见 new-migration skill。
-- 子 agent 等 CI：用前台跑等待脚本（`wait-status.sh`、`wait-github.sh`）；后台跑时子 agent 会提前收尾（10-10 w18anytls 出过）。
+- 子 agent 等 CI：前台跑等待脚本（`wait-status.sh`、`wait-github.sh`），Bash `timeout` 设 600000；10 分钟没出退出码就原样再跑一次（两个脚本只读状态，重跑无副作用），直到出结论再写报告。放后台跑时子 agent 会提前结束这一轮（10-10 w18anytls 出过）。
 - 子 agent 再派的子 agent：完成通知落到总协调，不落到派它的 agent；派出方按 output 文件自己取结果。
 
 # Compact instructions
