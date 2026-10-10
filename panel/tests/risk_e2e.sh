@@ -817,7 +817,7 @@ def main():
         node_id, pool_id = (need_uuid(x, "夹具 id") for x in row.split("|"))
         ctx["node_id"], ctx["node_rv"] = node_id, 1
         restore.append("node")
-        ADMIN.call("POST", f"/v1/nodes/{node_id}/protocol",
+        ADMIN.call("PATCH", f"/v1/nodes/{node_id}",
                    {"row_version": 1, "node_type": "vless", "server_host": "node.example.com",
                     "server_port": 443, "kernel": "auto", "traffic_rate": 1.0, "display_name": "Risk 01",
                     "protocol_config": {"network": "ws", "tls": False}})

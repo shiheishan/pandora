@@ -139,6 +139,18 @@ func TestNodeBatchStatusHasNoLegacyAlias(t *testing.T) {
 	}
 }
 
+// POST /nodes/{id}/protocol 是 PATCH /nodes/{id} 的重复入口，已经删除。
+func TestNodeProtocolCompatibilityRouteIsGone(t *testing.T) {
+	raw, err := routerSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	if strings.Contains(source, `Post("/nodes/{id}/protocol"`) || strings.Contains(source, "h.nodeSetProtocol") {
+		t.Fatal("compatibility endpoint POST /nodes/{id}/protocol is still registered")
+	}
+}
+
 // D-B-1：后台换发订阅链接的响应只能有这两个键，新令牌明文不回给管理员。
 func TestAdminRotateResponseCarriesNoToken(t *testing.T) {
 	raw, err := json.Marshal(adminRotateResponse(&subscription.AdminRotateOutput{UserEmail: "owner@example.test"}))

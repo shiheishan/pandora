@@ -312,52 +312,6 @@ func (h *handlers) nodePublishConfig(w http.ResponseWriter, r *http.Request) {
 	httpx.Created(w, out)
 }
 
-type nodeProtoReq struct {
-	RowVersion  int64           `json:"row_version"`
-	NodeType    string          `json:"node_type"`
-	ServerHost  string          `json:"server_host"`
-	ServerPort  int             `json:"server_port"`
-	TrafficRate float64         `json:"traffic_rate"`
-	DisplayName string          `json:"display_name"`
-	Kernel      string          `json:"kernel"`
-	Protocol    json.RawMessage `json:"protocol_config"`
-}
-
-// nodeSetProtocol 配置节点的对外服务参数（UniProxy 下发给节点端的内容）。
-func (h *handlers) nodeSetProtocol(w http.ResponseWriter, r *http.Request) {
-	var req nodeProtoReq
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	if req.TrafficRate <= 0 {
-		req.TrafficRate = 1
-	}
-	if req.Kernel == "" {
-		req.Kernel = "auto"
-	}
-	if len(req.Protocol) == 0 {
-		req.Protocol = json.RawMessage(`{}`)
-	}
-	id := chi.URLParam(r, "id")
-	tenantID := httpx.TenantIDFrom(r.Context())
-	actor := httpx.PrincipalFrom(r.Context()).UserID
-	req.NodeType = nodefabric.CanonicalNodeType(req.NodeType)
-	// Keep the compatibility endpoint, but route it through the same stable
-	// schema validation, optimistic lock and audit path as PATCH /nodes/{id}.
-	out, err := h.d.Node.PatchAdminNode(r.Context(), tenantID, id, nodefabric.PatchAdminNodeInput{
-		ActorID: actor, RowVersion: req.RowVersion, NodeType: &req.NodeType,
-		ServerHost: &req.ServerHost, ServerPort: &req.ServerPort, Kernel: &req.Kernel,
-		TrafficRate: &req.TrafficRate, DisplayName: &req.DisplayName,
-		ProtocolConfig: &req.Protocol,
-	})
-	if err != nil {
-		httpx.Fail(w, r, h.d.Log, err)
-		return
-	}
-	httpx.OK(w, out)
-}
-
 func (h *handlers) nodeProtocolSchemas(w http.ResponseWriter, r *http.Request) {
 	httpx.OK(w, nodeProtocolSchemasResponse{Schemas: nodefabric.ProtocolSchemas()})
 }

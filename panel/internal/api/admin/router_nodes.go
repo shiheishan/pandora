@@ -147,8 +147,6 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		Get("/nodes/{id}/metrics", h.nodeMetrics)
 	r.With(middleware.RequirePermission("node.read", d.Log)).
 		Get("/nodes/{id}/identity", h.nodeIdentity)
-	r.With(middleware.RequirePermission("node.write", d.Log)).
-		Post("/nodes/{id}/protocol", h.nodeSetProtocol)
 	r.With(middleware.RequirePermission("node.read", d.Log)).
 		Get("/nodes/{id}/routing", h.nodeGetRouting)
 	r.With(middleware.RequirePermission("node.config.publish", d.Log)).

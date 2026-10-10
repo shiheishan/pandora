@@ -163,7 +163,6 @@ admin  POST    /v1/nodes/{id}/copy                                -   -
 admin  GET     /v1/nodes/{id}/identity                            -   -
 admin  GET     /v1/nodes/{id}/metrics                             -   -
 admin  POST    /v1/nodes/{id}/move                                -   -
-admin  POST    /v1/nodes/{id}/protocol                            -   -
 admin  POST    /v1/nodes/{id}/retire                              -   -
 admin  POST    /v1/nodes/{id}/revoke-identity                     -   -
 admin  PUT     /v1/nodes/{id}/route-groups                        -   -
