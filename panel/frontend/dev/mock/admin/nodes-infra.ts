@@ -16,7 +16,7 @@ const unknownField = (body: Json, allowed: readonly string[]) => Object.keys(bod
 const tooLong = (v: string, n: number) => [...v.trim()].length > n
 /** 规则指向内置 direct / block：去空白、不分大小写（routing_admin.go 的 isBuiltinOutbound） */
 export const isBuiltin = (v: unknown) => ['direct', 'block'].includes(text(v).trim().toLowerCase())
-/** 内置出站引用的规范小写，自定义出站原样（routing_merge.go 的 canonicalRouteTag）：保存与下发两处都用 */
+/** 内置出站引用的规范小写，自定义出站原样（routing_merge.go 的 canonicalRouteTag）：后端只在保存时用（routing_admin.go），下发原样用已规范的值 */
 export const canonicalTag = (v: unknown) => (isBuiltin(v) ? text(v).trim().toLowerCase() : text(v))
 /** 请求没带体（DELETE 空体）：httpx.DecodeJSON 对空体回 400，而 ctx.body() 把空体读成 {}，只能看头 */
 export const emptyBody = (ctx: MockContext) => {

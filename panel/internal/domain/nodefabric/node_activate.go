@@ -11,8 +11,8 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/httpx"
 )
 
-// ProjectNodeLifecycle 把节点生命周期投影到服务状态与宿主服务器状态，是旧的
-// POST v1/nodes/{id}/status 与一步上线共用的唯一映射。canary 可服务（用于验证）
+// ProjectNodeLifecycle 把节点生命周期投影到服务状态与宿主服务器状态，是一步上线
+// （ActivateNode）用的唯一映射。canary 可服务（用于验证）
 // 但订阅下发看的是 serving_status 与服务器，draining 保留数据面鉴权、停止新分配；
 // 协议没就绪的节点不能被投影成可服务。
 func ProjectNodeLifecycle(nodeStatus string, protocolReady bool) (servingStatus, serverStatus string) {
@@ -70,9 +70,9 @@ type ActivateNodeResult struct {
 
 // ActivateNode 在一个事务里把接入尾段的节点推到 active 并让它开始服务。
 //
-// 起因（R108）：接入流程只把节点推到 attesting，之后只有旧的逐级状态接口能往前推；
-// 而批量启用要求服务器已 ready、服务器进 ready 又要求名下有 active 节点——新服务器
-// 加新节点在新前端里上不了线。这里一步到位，每一步都过状态机触发器，不绕过。
+// 起因（R108）：接入流程只把节点推到 attesting；批量启用要求服务器已 ready、服务器进
+// ready 又要求名下有 active 节点——新服务器加新节点互相等对方，上不了线。这里一步到位，
+// 每一步都过状态机触发器，不绕过。
 //
 // 前置条件（不满足回 409 并写明原因）：
 //   - 处于接入尾段（attesting / installing / validating / standby / canary）；

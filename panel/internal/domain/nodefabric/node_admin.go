@@ -236,9 +236,13 @@ func validateNewNodeProtocol(nodeType, kernel, host string, port int, raw json.R
 	if len(fields) > 0 {
 		return 0, httpx.Invalid(fields)
 	}
-	// 新写入必须落在已开放的稳定 schema 上。
+	// 新写入必须落在已开放的稳定 schema 上。校验器对未填协议类型的草稿回 version 0、不报字段，
+	// 新建与改协议到这里就是「协议类型为空」；不在稳定集合的类型校验器已先拒，这里兜底同样拒。
 	if version != StableProtocolSchemaVersion || !IsStableProtocolType(nodeType) {
-		return 0, httpx.Invalid(map[string]string{"node_type": "该协议仅兼容旧数据，尚未开放新写入"})
+		if CanonicalNodeType(nodeType) == "" {
+			return 0, httpx.Invalid(map[string]string{"node_type": "必填：请选择协议类型"})
+		}
+		return 0, httpx.Invalid(map[string]string{"node_type": "不支持的协议类型"})
 	}
 	return version, nil
 }

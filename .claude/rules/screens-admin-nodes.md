@@ -9,7 +9,7 @@ paths:
 
 - `protocol_config` 写入是整体替换（普通键缺席即删除）；读接口按名字在任意深度抹掉敏感键（`password`、`private_key`、`psk`、`mask_password`…，见 `logic.ts` 的 `REDACTED_KEYS`），PATCH 里缺席的敏感键后端按原路径补回。所以 PATCH 只在协议字段真的改了（或换了协议）才带 `protocol_config`。
 - 编辑同一协议时敏感字段留空 = 不改、不带这个键（必填的也不算缺）；选填的敏感字段可点「清空」，保存前确认后显式发 `null`；换协议后端不补旧密钥，必填照常要填。
-- 协议 schema 由后端 `GET v1/node-protocol-schemas` 给出（stable 可选，legacy-read-compatible 只读兼容），表单按 `allowed_properties` 渲染、点号路径展开成嵌套对象；422 的 `protocol_config.<键>` 先按路径再按叶子名落回字段。不要在前端硬编码协议字段。
+- 协议 schema 由后端 `GET v1/node-protocol-schemas` 给出（只有 stable，全部可选），表单按 `allowed_properties` 渲染、点号路径展开成嵌套对象；422 的 `protocol_config.<键>` 先按路径再按叶子名落回字段。不要在前端硬编码协议字段。
 - 字段说明来自 schema 的 `hints`（回落、证书目录、REALITY 多值等），不在前端写死；`property_types` 的 `list`（REALITY 的 server_name / short_id）按逗号分隔录入，一个值存字符串、多个存数组。zod 里 `property_types` 是闭合枚举，后端加新类型要同步改 `schemas.ts`，否则整份 schema 解析失败。
 - 联动默认值只有一处：`logic.withProtocolDefaults`（VLESS + REALITY + tcp 默认 `xtls-rprx-vision`，离开该组合清掉 Vision）；表单顶部提示在 `protocolNotices`（不加密的 CDN 传输要套 CDN 或 TLS、裸 tcp 会被拒）。
 - 内核只给 auto / pandora-native；存量 sing-box / xray-core 载入显示为自动，只在这次保存会重新校验协议（改协议、地址、端口）时随 PATCH 带上新值，只改名字不带（`patchBody`）。
