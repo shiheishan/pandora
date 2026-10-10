@@ -93,7 +93,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
     - **opus 自己写代码只在这几种情况**：原因不明、要边调边找的 bug；代码本身就是判据的（并发原语、认证与会话状态机、迁移里守不变量的 SQL 与触发器）；只改几行、转手成本高于自己写的；Composer 按同一份开工单返工两次仍不过的。涉及钱、权限、认证、迁移、节点内核的实现可以交 Composer，但测试必须由 opus 先写好，diff 逐行读，合并前照旧派对抗审查。
     - 做法见 composer-handoff skill（开工单模板、`cursor-launch.sh --sub` 启动与等待、收回核对、报告「转手」一节）。派 opus 子 agent 的 prompt 照 dispatch-task 的 `templates/agent-prompt.md`。
   - **Cursor 的 Composer 2.5**（`cursor-launch.sh`，缺省模型）：开工单把修法与判据写死、结果能验证的活——opus 主 agent 定好设计后的编码实现、按清单批量删改、纯挪动拆文件、改名、补测试与变异自检、补守卫、照审查清单的机械修复轮、搜索定位与读代码总结、只读的服务器巡检。由总协调直接派，或由 opus 子 agent 转手（只读的审查员、设计员把规则写死的盘点交它用 `cursor-launch.sh --scan`，见 composer-handoff skill）；除只改几行的小件外，交回后派 opus 审查。
-    - Composer 读不到全局规则（`~/.claude/CLAUDE.md`），开工指令要求先读本文件和开工单（brief 照 dispatch-task 的 make-brief 生成）。要上服务器时开工单里写全红线：先读 `~/ai/servers/README.md` 和该机 `AGENTS.md`，只登点名的机器、只跑允许的命令、不读不抄秘密、写进文件的 IP 换成占位符。只放行只读巡检；会改动服务器的活用 Claude。
+    - Composer 读不到全局规则（`~/.claude/CLAUDE.md`），开工指令要求先读本文件和开工单（brief 照 dispatch-task 的 make-brief 生成）。要上服务器时开工单里写全红线：先读 `~/ai/servers/README.md` 和该机 `AGENTS.md`，只登点名的机器、只跑允许的命令、不读不抄秘密、写进文件的 IP 换成占位符。放行两类（用户 10-10 同意第二类）：只读巡检（`templates/server-readonly.md`）；照 opus 写好、验过的脚本在测试机上跑测试（`templates/server-scripted.md`：逐字照跑、不装软件不改配置、异常即停）。故障注入、排查异常、开机删机、改 SSH 配置、结果判读仍用 Claude。
   - **Claude 子 agent，`model: sonnet`**，只用在两处：要用浏览器工具的（如 ux-review 的模拟新手）、会改动服务器的现场操作；opus 子 agent 自己再拆的、需要 Claude 工具的下手（照各 skill 原写法）。
   - 拿不准归哪类时按 opus 派；Composer 交回的证据核对不过，改派 opus 重做。验收不因执行者不同而放宽。
 - 每个子 agent 必须交回：改了哪些文件、跑了什么命令、关键输出。
