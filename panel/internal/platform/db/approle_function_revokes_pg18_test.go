@@ -216,6 +216,16 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		// F2：美元引号的字面量同样会被 || 拼接切开
 		{"dollar-quoted function fragment before a concatenation", "DO $$ BEGIN EXECUTE $q$REVOKE ALL ON FUNCTION $q$ || v || ' FROM aegis_app'; END $$;", ""},
 		{"dollar-quoted fragment cut before the object kind", "DO $$ BEGIN EXECUTE $q$REVOKE ALL ON $q$ || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		// E2：E 串的 \x、八进制、\u 转义与 U& 串里的 GRANT/REVOKE 解析不出，一律判红（含拼接以外的完整语句）
+		{"concat after an E-string hex escape", `DO $$ BEGIN EXECUTE E'SET LOCAL x = 1;\x0aREVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;`, ""},
+		{"concat after an E-string octal escape", `DO $$ BEGIN EXECUTE E'SET LOCAL x = 1;\012REVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;`, ""},
+		{"concat after a U& string escape", `DO $$ BEGIN EXECUTE U&'SET LOCAL x = 1;\000aREVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;`, ""},
+		{"whole revoke after an E-string hex escape", `DO $$ BEGIN EXECUTE E'SET LOCAL x = 1;\x0aREVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app'; END $$;`, ""},
+		// E3：美元引号字面量里先有别的语句
+		{"dollar-quoted concat after a prefix statement", "DO $$ BEGIN EXECUTE $q$SET LOCAL x = 1; REVOKE ALL ON $q$ || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		{"dollar-quoted concat cut after the verb after a prefix", "DO $$ BEGIN EXECUTE $q$SET LOCAL x = 1;REVOKE $q$ || 'ALL ON FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
+		// E5：'' 还原成 ' 之后，''--'' 是字符串里的 --，不是行注释，后面的分号与 REVOKE 照样认
+		{"doubled quotes around -- before a statement", "DO $$ BEGIN EXECUTE 'SELECT ''--''; REVOKE ALL ON ' || 'FUNCTION app.x(uuid) FROM aegis_app'; END $$;", ""},
 	}
 	for _, c := range red {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -257,6 +267,8 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		{"message with a comment then text mentioning revoke", "DO $$ BEGIN RAISE NOTICE '%', '/* note */ please revoke ' || v_id; END $$;", "", nil},
 		{"E-string message with an escape then text mentioning revoke", "DO $$ BEGIN RAISE NOTICE '%', E'line one\\nthen revoke ' || v_id; END $$;", "", nil},
 		{"dollar-quoted message mentioning grant", "DO $$ BEGIN RAISE NOTICE '%', $m$please grant $m$ || v_id; END $$;", "", nil},
+		// E2 只管带解析不出的转义、又提到 grant/revoke 的字面量
+		{"E-string with a hex escape and no privilege word", "DO $$ BEGIN RAISE NOTICE '%', E'tab\\x09done'; END $$;", "", nil},
 	}
 	for _, c := range green {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -296,6 +308,12 @@ var (
 	concatAfter = regexp.MustCompile(`^(?:'|\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$)\s*\|\|`)
 	// 文本以美元引号的定界符结尾（$$ 或 $tag$）：权限语句是美元引号字面量的第一个词
 	endsWithDollarTag = regexp.MustCompile(`\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$$`)
+	// 美元引号定界符（不锚定），找 pos 之前最近的那个开定界符（E3）
+	anyDollarTag = regexp.MustCompile(`\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$`)
+	// E 串里解析不出的转义（E2）：\x 十六进制、\ 加八进制数字、\u / \U 码点
+	opaqueEscape = regexp.MustCompile(`\\(?:[xX]|[0-7]|[uU])`)
+	// 正文里提到权限关键字（不看词边界：转义之后紧跟的关键字前面是十六进制数字，\b 认不出）
+	privilegeWord = regexp.MustCompile(`(?i)grant|revoke`)
 	// 已经写出了「ON 对象」；没写出来说明语句在 ON 之前或之后被截断了
 	onObject = regexp.MustCompile(`(?is)\bON\s+\S`)
 	// DROP 豁免只认语句开头：前一个非空白字符是分号或文本开头
@@ -462,13 +480,59 @@ func singleQuotedOpen(text string, pos int) (open int, escapes, in bool) {
 func startsStatementInLiteral(text string, pos int) bool {
 	open, escapes, in := singleQuotedOpen(text, pos)
 	if !in {
-		return endsWithDollarTag.MatchString(strings.TrimRightFunc(text[:pos], unicode.IsSpace))
+		// 美元引号字面量：从 pos 之前最近的定界符起，取最后一个分号之后的部分，剩下全是空白才算语句开头
+		// （与单引号一致，E3：$q$SET LOCAL x = 1; REVOKE …$q$）。外层文本已去过注释
+		tags := anyDollarTag.FindAllStringIndex(text[:pos], -1)
+		if len(tags) == 0 {
+			return false
+		}
+		body := text[tags[len(tags)-1][1]:pos]
+		if i := strings.LastIndexByte(body, ';'); i >= 0 {
+			body = body[i+1:]
+		}
+		return strings.TrimSpace(body) == ""
 	}
 	body := stripSQLComments(unescapeLiteral(text[open+1:pos], escapes))
 	if i := strings.LastIndexByte(body, ';'); i >= 0 {
 		body = body[i+1:]
 	}
 	return strings.TrimSpace(body) == ""
+}
+
+// opaqueLiterals 返回文本里转义解析不出的单引号字面量的正文：E'…' 里有 \x、\ 加八进制数字、\u / \U 转义的，
+// 以及全部 U&'…'（Unicode 转义串，转义符还能用 UESCAPE 换掉）。只认 ” 与 E 串的反斜杠来配对引号，
+// 美元引号里的 ' 会让配对错位（与 insideSingleQuoted 同样的限制，方向是多报）
+func opaqueLiterals(text string) []string {
+	var out []string
+	for i := 0; i < len(text); i++ {
+		if text[i] != '\'' {
+			continue
+		}
+		escapes := i > 0 && (text[i-1] == 'E' || text[i-1] == 'e') && (i < 2 || !isIdentByte(text[i-2]))
+		unicodeStr := i > 1 && text[i-1] == '&' && (text[i-2] == 'U' || text[i-2] == 'u') && (i < 3 || !isIdentByte(text[i-3]))
+		j := i + 1
+		for j < len(text) {
+			if escapes && text[j] == '\\' {
+				j += 2
+				continue
+			}
+			if text[j] == '\'' {
+				if j+1 < len(text) && text[j+1] == '\'' {
+					j += 2
+					continue
+				}
+				break
+			}
+			j++
+		}
+		end := min(j, len(text))
+		body := text[i+1 : end]
+		if unicodeStr || (escapes && opaqueEscape.MatchString(body)) {
+			out = append(out, body)
+		}
+		i = end
+	}
+	return out
 }
 
 // unescapeLiteral 还原单引号字面量正文：” → '；E 串里 \n \t \r \b \f 变成空白，其余 \x 变成 x
@@ -550,6 +614,12 @@ func migrationRevokedFromApp(ups []migrationUp, resolve func(kind, sig string) (
 	var problems []string
 	for i, m := range ups {
 		text := stripSQLComments(m.up)
+		// E2：E 串的 \x、八进制、\u 转义与 U& 串，这里不还原；正文里出现 grant/revoke 就判红（解析不出就判红）
+		for _, body := range opaqueLiterals(text) {
+			if privilegeWord.MatchString(body) {
+				problems = append(problems, fmt.Sprintf("%s: GRANT/REVOKE inside a literal with escapes that cannot be checked (\\x, octal, \\u or U&): %s", m.name, strings.Join(strings.Fields(body), " ")))
+			}
+		}
 		for from := 0; ; {
 			loc := privilegeStart.FindStringSubmatchIndex(text[from:])
 			if loc == nil {
