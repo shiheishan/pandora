@@ -6,7 +6,7 @@ import (
 )
 
 // quicUDPSessionsPerUser 是单个用户在一个 Hysteria2 / TUIC 入站上同时存在的 UDP
-// 会话上限。
+// 会话上限，也是 Juicity 入站上同时存在的 UDP 路由（每个目标一个上游 socket）上限。
 //
 // 每个 UDP 会话占一个上游 socket（fd、内核收发缓冲，见 hy2UDPSocketBuffer）和三个
 // goroutine，会话数又由客户端决定、空闲 5 分钟才回收。不设上限时，一个已认证用户
