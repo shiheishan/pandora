@@ -59,6 +59,18 @@ type juicityUDPRoutes struct {
 	closed bool
 }
 
+// lookup 按原始地址编码查路由，查到就在锁内刷新它的 lastActive（上行也算活跃）。
+// 直接用 m[string(raw)] 查：编译器不为这个转换分配；键串只在新建路由时生成。
+func (t *juicityUDPRoutes) lookup(raw []byte) *juicityUDPRoute {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	r := t.m[string(raw)]
+	if r != nil {
+		r.lastActive.Store(time.Now().UnixNano())
+	}
+	return r
+}
+
 // juicityUDPRoute 是一条 UDP 流里发往同一目标的路由。addr / resolved 只由该流的
 // 上行 goroutine 读写；下行 goroutine 只用 pc 与 target；lastActive 两边都写。
 type juicityUDPRoute struct {
@@ -110,13 +122,7 @@ func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, s
 		if err != nil {
 			return
 		}
-		// 查表直接用 m[string(rawAddr)]：编译器不为它分配；键串只在新建路由时生成。
-		routes.mu.Lock()
-		r := routes.m[string(rawAddr)]
-		if r != nil {
-			r.lastActive.Store(time.Now().UnixNano())
-		}
-		routes.mu.Unlock()
+		r := routes.lookup(rawAddr)
 		if r == nil {
 			target, err := readJuicityAddress(bytes.NewReader(rawAddr))
 			if err != nil {

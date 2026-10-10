@@ -343,3 +343,31 @@ func TestJuicityUDPRouteIdleReclaim(t *testing.T) {
 		t.Fatalf("重建后在途 %d，期望 1", got)
 	}
 }
+
+// 只有上行、没有回包的路由（发往不回应的目标）同样算活跃：上行查表刷新活跃时间，
+// 回收判定看到的是刷新后的时间。
+func TestJuicityUDPUplinkKeepsRouteActive(t *testing.T) {
+	setJuicityUDPIdleTimeout(t, time.Hour)
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	routes := &juicityUDPRoutes{m: make(map[string]*juicityUDPRoute)}
+	r := &juicityUDPRoute{pc: pc, key: "k"}
+	r.lastActive.Store(time.Now().Add(-2 * time.Hour).UnixNano())
+	routes.m["k"] = r
+	if got := routes.lookup([]byte("k")); got != r {
+		t.Fatal("没查到路由")
+	}
+	adapter := &juicityAdapter{}
+	if adapter.reapJuicityUDPRoute(routes, r, core.User{ID: 1}) {
+		t.Fatal("刚有上行的路由被当成空闲回收")
+	}
+	if routes.m["k"] != r {
+		t.Fatal("活跃路由被移出路由表")
+	}
+	if allocs := testing.AllocsPerRun(100, func() { _ = routes.lookup([]byte("k")) }); allocs != 0 {
+		t.Fatalf("查表每次分配 %.1f 次，期望 0", allocs)
+	}
+}
