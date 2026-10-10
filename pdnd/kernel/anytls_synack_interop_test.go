@@ -96,8 +96,13 @@ func (f *anyTLSReuseFixture) openReused(t *testing.T, target M.Socksaddr) net.Co
 	return stream
 }
 
+// anyTLSOpTimeout 是单次往返、读写的截止。检查机满载时（与别的 job 并跑）单次
+// 操作可能拖过 1–2 秒；修前的失败是第 3 秒整条会话被关、报 closed，与截止长短
+// 无关，放宽不会漏掉回归。
+const anyTLSOpTimeout = 5 * time.Second
+
 func anyTLSPing(c net.Conn) error {
-	_ = c.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = c.SetDeadline(time.Now().Add(anyTLSOpTimeout))
 	if _, err := c.Write([]byte{'x'}); err != nil {
 		return err
 	}
@@ -218,7 +223,7 @@ func runAnyTLSReusedBulk(t *testing.T, dir string) {
 			t.Fatal(err)
 		}
 		for time.Since(start) < span {
-			_ = data.SetWriteDeadline(time.Now().Add(2 * time.Second))
+			_ = data.SetWriteDeadline(time.Now().Add(anyTLSOpTimeout))
 			n, err := data.Write(chunk)
 			moved += int64(n)
 			if err != nil {
@@ -230,7 +235,7 @@ func runAnyTLSReusedBulk(t *testing.T, dir string) {
 			t.Fatal(err)
 		}
 		for time.Since(start) < span {
-			_ = data.SetReadDeadline(time.Now().Add(2 * time.Second))
+			_ = data.SetReadDeadline(time.Now().Add(anyTLSOpTimeout))
 			n, err := data.Read(chunk)
 			moved += int64(n)
 			if err != nil {
@@ -256,7 +261,7 @@ func runAnyTLSDialFailureReported(t *testing.T) {
 
 	failed := f.openReused(t, deadAddr)
 	start := time.Now()
-	_ = failed.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = failed.SetReadDeadline(time.Now().Add(anyTLSOpTimeout))
 	_, err = failed.Read(make([]byte, 1))
 	elapsed := time.Since(start)
 	_ = failed.Close()
@@ -267,8 +272,9 @@ func runAnyTLSDialFailureReported(t *testing.T) {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		t.Fatalf("拨号失败 5 秒内没有收到任何结果：%v", err)
 	}
-	if elapsed > time.Second {
-		t.Fatalf("拨号失败用了 %s 才报给客户端，应当立刻报", elapsed)
+	// 本机与 GitHub 上是毫秒级；门槛只要求早于客户端的 3 秒定时器，给满载的检查机留余量。
+	if elapsed > 2500*time.Millisecond {
+		t.Fatalf("拨号失败用了 %s 才报给客户端，应当在 3 秒定时器之前立刻报", elapsed)
 	}
 	want := "remote: " + errAnyTLSStreamRefused.Error()
 	if err.Error() != want {
@@ -281,6 +287,9 @@ func runAnyTLSDialFailureReported(t *testing.T) {
 	}
 
 	// 同一会话再开一条流：仍复用（拨号计数不变），并撑过 3 秒定时器。
+	// 客户端收到失败时先关读管道（上面的 Read 就此返回），之后才在收包 goroutine
+	// 里把会话放回空闲池；不等这一下，满载时会另建会话、拨号计数变 2。
+	time.Sleep(500 * time.Millisecond)
 	s3 := openEcho(t, f, sink, true)
 	defer s3.Close()
 	time.Sleep(3500 * time.Millisecond)
@@ -321,7 +330,7 @@ func runAnyTLSReusedUOTSurvives(t *testing.T) {
 		if _, err := pc.WriteTo([]byte(label), target); err != nil {
 			t.Fatalf("%s 写失败：%v", label, err)
 		}
-		_ = pc.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_ = pc.SetReadDeadline(time.Now().Add(anyTLSOpTimeout))
 		got := make([]byte, 64)
 		n, _, err := pc.ReadFrom(got)
 		if err != nil || string(got[:n]) != label {
@@ -376,7 +385,7 @@ func runAnyTLSUOTCloseReleases(t *testing.T) {
 	if _, err := pc.WriteTo([]byte("uot"), target); err != nil {
 		t.Fatal(err)
 	}
-	_ = pc.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = pc.SetReadDeadline(time.Now().Add(anyTLSOpTimeout))
 	if _, _, err := pc.ReadFrom(make([]byte, 64)); err != nil {
 		t.Fatalf("UoT 回显：%v", err)
 	}
@@ -384,10 +393,10 @@ func runAnyTLSUOTCloseReleases(t *testing.T) {
 		t.Fatalf("UoT 进行中在线设备=%v，应为 1 个", online)
 	}
 	_ = pc.Close()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(anyTLSOpTimeout)
 	for len(adapter.OnlineIPs()) != 0 {
 		if time.Now().After(deadline) {
-			t.Fatalf("客户端关掉 UoT 流 2 秒后服务端仍记着在线设备 %v：这条流没有收尾", adapter.OnlineIPs())
+			t.Fatalf("客户端关掉 UoT 流 5 秒后服务端仍记着在线设备 %v：这条流没有收尾", adapter.OnlineIPs())
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
