@@ -165,8 +165,9 @@ func billedBytesRequired(t *testing.T, ctx context.Context, admin *pgxpool.Pool,
 		"node_user_traffic_daily.node_user_traffic_daily_billed_bytes_not_null",
 		"node_user_traffic_hourly.node_user_traffic_hourly_billed_bytes_not_null",
 	}
+	// 各项检查互不依赖，用 Errorf 让一次运行把每张表、每一项的结论都报出来
 	if !reflect.DeepEqual(names, want) {
-		t.Fatalf("billed_bytes not-null constraints = %v, want %v", names, want)
+		t.Errorf("billed_bytes not-null constraints = %v, want %v", names, want)
 	}
 	tx, err := admin.Begin(ctx)
 	if err != nil {
@@ -196,10 +197,12 @@ func billedBytesRequired(t *testing.T, ctx context.Context, admin *pgxpool.Pool,
 		_ = sp.Rollback(ctx)
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || pgErr.Code != "23502" || pgErr.TableName != c.table || pgErr.ColumnName != "billed_bytes" {
-			t.Fatalf("%s INSERT without billed_bytes err=%v, want not_null_violation on billed_bytes", c.table, err)
+			t.Errorf("%s INSERT without billed_bytes err=%v, want not_null_violation on billed_bytes", c.table, err)
 		}
 	}
-	t.Log("marker=traffic_billed_bytes_required_pg18_ok")
+	if !t.Failed() {
+		t.Log("marker=traffic_billed_bytes_required_pg18_ok")
+	}
 }
 
 func seedDashboardTraffic(t *testing.T, ctx context.Context, admin *pgxpool.Pool, tenant string, nodeIDs []string,
