@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 总进度快照：主线头与 CI、各任务 worktree 的进度、Cursor 的 Grok 在跑对账、TASKS.md 里的未完成项与下一步顺序。只读。
+# 总进度快照：主线头与 CI、各任务 worktree 的进度、Cursor 的 Composer 在跑对账、TASKS.md 里的未完成项与下一步顺序。只读。
 # 用法：snapshot.sh   在主目录或任一 worktree 里执行（都读主目录的 TASKS.md）
 # cursor-agent 一节：从 TASKS「正在跑」表里取登记的日志（cursor-*.log），逐份判在跑 / 已结束 exit=N / 被打断，
 # 再列出在跑、但哪份登记日志都对不上的 cursor-agent 进程。日志写相对路径（scratchpad/…）的按文件名在各会话 scratchpad 里找。
