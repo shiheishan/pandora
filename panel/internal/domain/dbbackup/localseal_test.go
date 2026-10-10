@@ -40,6 +40,10 @@ func TestLocalSealRoundTripAndRejections(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := t.TempDir()
+	// t.TempDir 的子目录按 0777 减 umask 建（多半是 0755），私密文件的父目录要 0700
+	if err := os.Chmod(keys, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	identity := writeIdentity(t, keys, "backup-age.key", "AGE-SECRET-KEY-1FIXTUREFIXTUREFIXTUREFIXTUREFIXTUREFIXTUREFIXTUREFIXTUREXX\n")
 	other := writeIdentity(t, keys, "other-age.key", "AGE-SECRET-KEY-1OTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHERXX\n")
 	archive, checksum := writeSealFixture(t, dir, "20261009T142951Z", []byte("encrypted-archive-bytes"))
