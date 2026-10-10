@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
@@ -29,7 +32,8 @@ import (
 //     负载前面，整帧一次 Write。
 //
 // 每用户路由数受 udpQuota 约束（quic_udp_quota.go，与 hy2 / TUIC 的 UDP 会话同一
-// 上限）：超出的新目标丢包并上报 limit，已有路由不受影响。
+// 上限）：超出的新目标丢包并上报 limit，已有路由不受影响；路由空闲
+// juicityUDPIdleTimeout（5 分钟）回收，名额随之归还。
 
 const (
 	// juicityUDPResolveTTL 是域名目标解析结果在路由内的复用时长。
@@ -43,14 +47,28 @@ const (
 // juicityResolveUDP 解析路由目标；测试替换它来数解析次数。
 var juicityResolveUDP = resolveUDPAddr
 
+// juicityUDPIdleTimeout 是一条路由没有上行也没有下行多久就回收（关上游 socket、
+// 退出读 goroutine、归还名额），与 hy2 / TUIC 的 UDP 会话空闲 5 分钟同口径。
+// 测试缩短它。
+var juicityUDPIdleTimeout = 5 * time.Minute
+
+// juicityUDPRoutes 是单条 Juicity UDP 流内的路由表；closed 表示流已结束、defer 已接管全部路由。
+type juicityUDPRoutes struct {
+	mu     sync.Mutex
+	m      map[string]*juicityUDPRoute
+	closed bool
+}
+
 // juicityUDPRoute 是一条 UDP 流里发往同一目标的路由。addr / resolved 只由该流的
 // 上行 goroutine 读写；下行 goroutine 只用 pc 与 target。
 type juicityUDPRoute struct {
-	pc       net.PacketConn
-	target   juicityAddress
-	dest     M.Socksaddr
-	addr     *net.UDPAddr
-	resolved time.Time
+	pc         net.PacketConn
+	target     juicityAddress
+	dest       M.Socksaddr
+	addr       *net.UDPAddr
+	resolved   time.Time
+	lastActive atomic.Int64
+	key        string
 }
 
 func (r *juicityUDPRoute) resolve(ctx context.Context) (*net.UDPAddr, error) {
@@ -68,13 +86,17 @@ func (r *juicityUDPRoute) resolve(ctx context.Context) (*net.UDPAddr, error) {
 func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string, initial juicityAddress) {
 	sourceIP, sourcePort := sourceFromAddr(conn.RemoteAddr())
 	baseMeta := route.Meta{Network: "udp", Protocol: "juicity", SourceIP: sourceIP, SourcePort: sourcePort}
-	// routes 只在本 goroutine 里读写（下行 goroutine 拿的是各自的路由指针）。
-	routes := make(map[string]*juicityUDPRoute)
+	routes := &juicityUDPRoutes{m: make(map[string]*juicityUDPRoute)}
 	var writeMu sync.Mutex
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer func() {
-		for _, r := range routes {
+		routes.mu.Lock()
+		routes.closed = true
+		all := routes.m
+		routes.m = nil
+		routes.mu.Unlock()
+		for _, r := range all {
 			_ = r.pc.Close()
 			a.udpQuota.release(user.ID)
 		}
@@ -88,7 +110,13 @@ func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, s
 		if err != nil {
 			return
 		}
-		r := routes[string(rawAddr)]
+		key := string(rawAddr)
+		routes.mu.Lock()
+		r := routes.m[key]
+		if r != nil {
+			r.lastActive.Store(time.Now().UnixNano())
+		}
+		routes.mu.Unlock()
 		if r == nil {
 			target, err := readJuicityAddress(bytes.NewReader(rawAddr))
 			if err != nil {
@@ -107,9 +135,13 @@ func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, s
 				a.connErr.addr(StageSession, conn.RemoteAddr(), openErr)
 				return
 			}
-			r = &juicityUDPRoute{pc: pc, target: target, dest: dest}
-			routes[string(rawAddr)] = r
-			go a.juicityUDPReader(streamCtx, stream, &writeMu, r, user)
+			now := time.Now().UnixNano()
+			r = &juicityUDPRoute{pc: pc, target: target, dest: dest, key: key}
+			r.lastActive.Store(now)
+			routes.mu.Lock()
+			routes.m[key] = r
+			routes.mu.Unlock()
+			go a.juicityUDPReader(streamCtx, stream, &writeMu, routes, r, user)
 		}
 		addr, err := r.resolve(streamCtx)
 		if err != nil {
@@ -128,9 +160,33 @@ type udpAddrPortReader interface {
 	ReadFromUDPAddrPort([]byte) (int, netip.AddrPort, error)
 }
 
-func (a *juicityAdapter) juicityUDPReader(ctx context.Context, stream *quic.Stream, writeMu *sync.Mutex, r *juicityUDPRoute, user core.User) {
+// reapJuicityUDPRoute 在读超时后尝试回收空闲路由。上行在锁内刷新 lastActive，回收在锁内
+// 判定，故回收与上行查表不会交错出「上行拿到已关的路由」；回收后同一目标的下一包在表里
+// 查不到、按新目标新建。
+func (a *juicityAdapter) reapJuicityUDPRoute(routes *juicityUDPRoutes, r *juicityUDPRoute, user core.User) bool {
+	routes.mu.Lock()
+	last := time.Unix(0, r.lastActive.Load())
+	if time.Since(last) < juicityUDPIdleTimeout && !routes.closed {
+		routes.mu.Unlock()
+		_ = r.pc.SetReadDeadline(last.Add(juicityUDPIdleTimeout))
+		return false
+	}
+	owned := !routes.closed && routes.m[r.key] == r
+	if owned {
+		delete(routes.m, r.key)
+	}
+	routes.mu.Unlock()
+	if owned {
+		_ = r.pc.Close()
+		a.udpQuota.release(user.ID)
+	}
+	return true
+}
+
+func (a *juicityAdapter) juicityUDPReader(ctx context.Context, stream *quic.Stream, writeMu *sync.Mutex, routes *juicityUDPRoutes, r *juicityUDPRoute, user core.User) {
 	framer := newJuicityDownlinkFramer(r.target)
 	fast, _ := r.pc.(udpAddrPortReader)
+	_ = r.pc.SetReadDeadline(time.Unix(0, r.lastActive.Load()).Add(juicityUDPIdleTimeout))
 	for {
 		var n int
 		var source netip.AddrPort
@@ -145,8 +201,20 @@ func (a *juicityAdapter) juicityUDPReader(ctx context.Context, stream *quic.Stre
 			}
 		}
 		if err != nil {
+			timedOut := errors.Is(err, os.ErrDeadlineExceeded)
+			if !timedOut {
+				var ne net.Error
+				timedOut = errors.As(err, &ne) && ne.Timeout()
+			}
+			if timedOut {
+				if a.reapJuicityUDPRoute(routes, r, user) {
+					return
+				}
+				continue
+			}
 			return
 		}
+		r.lastActive.Store(time.Now().UnixNano())
 		frame, n := framer.frame(n, source, other)
 		writeMu.Lock()
 		_, writeErr := stream.Write(frame)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -254,4 +255,91 @@ func (r *repeatReader) Read(p []byte) (int, error) {
 	n := copy(p, r.frame[r.off:])
 	r.off = (r.off + n) % len(r.frame)
 	return n, nil
+}
+
+// setJuicityUDPIdleTimeout 临时缩短路由空闲回收时间，测试结束还原。
+func setJuicityUDPIdleTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := juicityUDPIdleTimeout
+	juicityUDPIdleTimeout = d
+	t.Cleanup(func() { juicityUDPIdleTimeout = old })
+}
+
+func juicityQuotaInUse(adapter *juicityAdapter, userID int64) int {
+	adapter.udpQuota.mu.Lock()
+	defer adapter.udpQuota.mu.Unlock()
+	return adapter.udpQuota.byUser[userID]
+}
+
+// 路由空闲回收（与 hy2 / TUIC 的 UDP 会话同为 5 分钟）：长期存活的 UDP 关联
+// （BT DHT、P2P、STUN 这类一个 socket 发往大量目标）不能因为累计目标数到上限
+// 就把新目标全丢掉。空闲的路由关掉上游 socket、退出读 goroutine、归还名额；
+// 同一目标再发会新建；一直有流量的路由不回收。
+func TestJuicityUDPRouteIdleReclaim(t *testing.T) {
+	setJuicityUDPIdleTimeout(t, 300*time.Millisecond)
+	var resolves atomic.Int32
+	old := juicityResolveUDP
+	juicityResolveUDP = func(ctx context.Context, destination M.Socksaddr) (*net.UDPAddr, error) {
+		resolves.Add(1)
+		return resolveUDPAddr(ctx, destination)
+	}
+	t.Cleanup(func() { juicityResolveUDP = old })
+	const userID = 9203
+	adapter, client := startJuicityLoopback(t, "3c2b1a09-8f7e-4d6c-9b5a-4e3f2d1c0b9a", userID)
+	adapter.udpQuota.mu.Lock()
+	adapter.udpQuota.limit = 2
+	adapter.udpQuota.mu.Unlock()
+	udp := openJuicityUDPStream(t, client)
+	defer udp.Close()
+	echo := func(port uint16) bool {
+		t.Helper()
+		if _, err := udp.Write(marshalJuicityPacket(juicityAddress{typ: 1, Host: "127.0.0.1", Port: port}, []byte("q"))); err != nil {
+			t.Fatal(err)
+		}
+		_ = udp.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		_, _, err := readJuicityPacket(udp)
+		return err == nil
+	}
+	baseG := runtime.NumGoroutine()
+	if !echo(2001) || !echo(2002) {
+		t.Fatal("上限以内的路由应能收发")
+	}
+	if echo(2003) {
+		t.Fatal("超出上限的新目标仍被转发")
+	}
+	if got := juicityQuotaInUse(adapter, userID); got != 2 {
+		t.Fatalf("在途路由 %d，期望 2", got)
+	}
+	// 2001 一直有流量（间隔短于空闲时间），2002 不再发：只回收 2002。
+	for i := 0; i < 8; i++ {
+		if !echo(2001) {
+			t.Fatalf("活跃路由第 %d 次收发失败", i+1)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got := juicityQuotaInUse(adapter, userID); got != 1 {
+		t.Fatalf("空闲路由回收后在途 %d，期望 1（活跃的不回收）", got)
+	}
+	if got := resolves.Load(); got != 2 {
+		t.Fatalf("活跃路由被重建过：解析 %d 次，期望 2", got)
+	}
+	// 名额回来了：新目标能建路由。
+	if !echo(2003) {
+		t.Fatal("回收后新目标仍被丢")
+	}
+	// 全部停发：两条都回收，名额归零，读 goroutine 退出。
+	deadline := time.Now().Add(3 * time.Second)
+	for juicityQuotaInUse(adapter, userID) != 0 || runtime.NumGoroutine() > baseG {
+		if time.Now().After(deadline) {
+			t.Fatalf("全部空闲后在途 %d、goroutine %d（基线 %d）", juicityQuotaInUse(adapter, userID), runtime.NumGoroutine(), baseG)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// 同一目标再发：新建路由，照常收发。
+	if !echo(2002) {
+		t.Fatal("回收后同一目标再发应新建路由")
+	}
+	if got := juicityQuotaInUse(adapter, userID); got != 1 {
+		t.Fatalf("重建后在途 %d，期望 1", got)
+	}
 }
