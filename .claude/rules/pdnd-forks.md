@@ -28,7 +28,7 @@ paths:
 - reality：d3119d3（拒绝的握手转发到 dest）、eb24309（Vision 切原始 socket）、c6291f8、09317d5；新增 `coalesce_test.go`。
 - realityquic：只有 137dcf1、bad0abf 改注释与链接。
 - shadowtls：f8173f0（认证前限时）；新增 `service_test.go`。
-- anytls：8da0e00（超 64KB 拆帧、控制帧 deadline）；其中 `stream.go` 的 FIN 与 dieHook 顺序、`util/version.go` 版本串是从 v0.0.13 手工同步的，不是整体升到 v0.0.13。
+- anytls：8da0e00（超 64KB 拆帧、控制帧 deadline）；其中 `stream.go` 的 FIN 与 dieHook 顺序、`util/version.go` 版本串是从 v0.0.13 手工同步的，不是整体升到 v0.0.13。ad189f58（`service.go` 子流目标地址读不出时回 cmdSYNACK 中性失败再关流，上游直接 return、流滞留到会话结束；失败文字与 kernel 的 `errAnyTLSStreamRefused` 同一句）；新增 `service_test.go`。
 - hysteria2：0b8a840、d7991ac、c8b3871、b525f86、17f7af1、1acb247、5daa37c（UDP 热路径、增量用户表、`dgram` 分片、空闲回收）；新增 `idle.go`、`salamander_batch_*.go`。
 - tuic：74d7256、c8b3871、b525f86、1acb247、5daa37c；新增 `idle.go`。
 
