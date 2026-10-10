@@ -1,6 +1,6 @@
 ---
 name: resume-work
-description: pandora 会话被打断后的恢复：API 额度用完、桌面 app 或总协调会话重启、本机断网之后，先盘点正在跑的后台 agent（含 Cursor 的 Composer）、任务 worktree 和测试机上的远端测试，再续跑并要求先回读现场（Claude 子 agent 用 SendMessage，Composer 用 cursor-launch.sh --resume 另起一次）；核对远端临时改动（iptables、sysctl、ufw）和被中断的时间窗，在报告里记偏差，不重跑已完成的段。agent 没死只是卡住（推送签名失败、1Password SSH agent 锁着）也在这里。用户说「刚才断了」「额度恢复了」「接着做」「app 重启了」「1Password 已解锁」「几路停住了」时使用。只给用户汇报进度用 status-report；CI 红了用 ci-triage。
+description: pandora 会话被打断后的恢复：API 额度用完、桌面 app 或总协调会话重启、本机断网、换 Claude 账号或新会话接手之后，先盘点正在跑的后台 agent（含 Cursor 的 Composer）、任务 worktree、本机调度子进程和测试机上的远端测试，再续跑并要求先回读现场（Claude 子 agent 用 SendMessage，Composer 用 cursor-launch.sh --resume 另起一次）；核对远端临时改动（iptables、sysctl、ufw）和被中断的时间窗，在报告里记偏差，不重跑已完成的段。agent 没死只是卡住（推送签名失败、1Password SSH agent 锁着）也在这里。用户说「刚才断了」「额度恢复了」「接着做」「app 重启了」「1Password 已解锁」「几路停住了」「换账号」「换号」「新会话接手」时使用。只给用户汇报进度用 status-report；CI 红了用 ci-triage。
 ---
 
 # 会话中断后恢复
@@ -17,12 +17,28 @@ bash .claude/skills/status-report/scripts/snapshot.sh
 - 再读主目录 `.claude/TASKS.md` 顶部的「压缩后先读」与「正在跑」表：每路一行，`agent <ID>` 写在「在做什么」里。表里没写 ID 的，从本会话的启动通知里找；都找不到就问用户，不要另起一个新 agent 重做。
 - 本会话收到过完成通知的 agent 已经结束；没收到的当作还在跑或被打断，不猜结果。
 - Composer 的路在 snapshot 的「cursor-agent」一节：TASKS 里登记的每份日志是在跑、已结束（`exit=N`）还是被打断，以及没登记的 cursor-agent 进程。
+- 本机跨小时调度脚本（压测场次编排等）：看 TASKS「压缩后先读」和 `ops-local/` 里对应日志；未用 `setsid -f` 起的会随旧会话退出而停，见根 CLAUDE.md「环境与工具坑」。
+
+## 换账号或新会话接手
+
+换 Claude 账号或总协调开新会话时，旧会话里的 agent ID 和 SendMessage 都不可用，不能按第 2 节「SendMessage 续、不新开」做。
+
+**换号前（旧会话里做）：**
+
+- 会话记录与子 agent 记录备份到 `ops-local/session-backup/<日期>/`（只在要查原话时 grep，别整份读）。
+- 在 TASKS 顶部「压缩后先读」给每路写「从哪一步续」：开工单路径、分支上已推到哪个提交、远端测试跑到哪。
+- 本机会随会话退出的子进程逐条列出，写清续跑命令和原参数（日志里通常有完整命令行）。
+
+**换号后：**
+
+- 不尝试 SendMessage 旧 agent ID；一律新派 opus（或总协调直派 Composer），续跑首句照第 2 节各路的固定首句，并写明从 TASKS 里记的「从哪一步续」。
+- 本机调度脚本：先按下面第 3 节「远端测试：先只读核对」核测试机现场，再用 `setsid -f … > log 2>&1 < /dev/null` 续跑剩下场次（命令与参数从备份日志或 TASKS 抄）。
 
 ## 2. 续跑后台 agent
 
 ### Claude 子 agent
 
-- 用 SendMessage 按名字或 ID 续，不新开（新开会丢掉它的上下文，还可能和旧的同时改同一个 worktree）。
+- 用 SendMessage 按名字或 ID 续，不新开（新开会丢掉它的上下文，还可能和旧的同时改同一个 worktree）。换号或新会话后旧 ID 不可用，见新节「换账号或新会话接手」。
 - 续跑消息第一句固定：
   > 会话刚才中断过。先回读现场和本 worktree 的 `.claude/TASKS.md`：`git log` 看自己做过的提交，`git status` 看没提交的改动；登过测试机的，按机器的 AGENTS.md 只读核对远端进程和临时改动。已完成的段不要重跑；被中断的时间窗记进报告的「中断与偏差」。核对完再接着做下一项。
 - 一次续一路，等它回一句「现场如何」再续下一路，免得几路同时登同一台测试机。
