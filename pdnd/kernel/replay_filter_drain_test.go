@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -198,30 +200,156 @@ func waitDrainActive(t *testing.T, want int64) {
 	}
 }
 
-// 并发上限即内存上限：名额占满时新的失败连接立即关；名额空出后恢复排空。
-func TestDrainConcurrencyCapFallsBackToImmediateClose(t *testing.T) {
+func setDrainLimit(t *testing.T, v *atomic.Int64, n int64) {
+	t.Helper()
+	old := v.Load()
+	v.Store(n)
+	t.Cleanup(func() { v.Store(old) })
+}
+
+// assertFIN：服务端在 within 内以 FIN 关闭（读到 EOF，不是 RST），且不回字节。
+func assertFIN(t *testing.T, conn net.Conn, within time.Duration) time.Duration {
+	t.Helper()
+	start := time.Now()
+	_ = conn.SetReadDeadline(time.Now().Add(within))
+	got, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("服务端应以 FIN 关闭，实际 err=%v（%v）", err, time.Since(start))
+	}
+	if len(got) != 0 {
+		t.Fatalf("不应回任何字节，收到 %d 字节", len(got))
+	}
+	return time.Since(start)
+}
+
+// 名额满时踢最老的、放新的进来（review-r3 #1）：未认证的一方开连接各发几十字节
+// 就挂着，以前能把名额永久占满，之后的认证失败退回立即关，接收缓冲里有没读的
+// 字节，发的是 RST——正是排空要消掉的特征。现在新探测照样排空、读到对端关才
+// FIN；被踢的最老一条早已读空，收到的是 FIN；名额计数始终等于上限。
+func TestDrainFullEvictsOldestWithFIN(t *testing.T) {
 	_, addr := startTestShadowsocks(t, drainTestHeaderTimeout)
-	base := drainActive.Load()
-	setDrainMaxConcurrent(t, base+2)
-	first := dialDrainProbe(t, addr, randomBytes(50))
-	defer first.Close()
+	waitDrainActive(t, 0)
+	setDrainMaxConcurrent(t, 2)
+	setDrainLimit(t, &drainMaxPerSource, 100)
+	oldest := dialDrainProbe(t, addr, randomBytes(50))
+	defer oldest.Close()
+	waitDrainActive(t, 1)
 	second := dialDrainProbe(t, addr, randomBytes(50))
 	defer second.Close()
-	waitDrainActive(t, base+2)
+	waitDrainActive(t, 2)
 
-	over := dialDrainProbe(t, addr, randomBytes(50))
-	defer over.Close()
-	assertClosedPromptly(t, over, time.Second)
-	assertStillOpen(t, first)
-	assertStillOpen(t, second)
-
-	_ = first.Close()
-	waitDrainActive(t, base+1)
-	again := dialDrainProbe(t, addr, randomBytes(50))
-	defer again.Close()
-	waitDrainActive(t, base+2)
+	// 名额已满：新探测仍排空（过了读请求头截止也不关，客户端半关后 FIN）。
+	probe := dialDrainProbe(t, addr, randomBytes(50))
+	defer probe.Close()
+	assertFIN(t, oldest, 2*time.Second)
+	waitDrainActive(t, 2)
 	time.Sleep(2 * drainTestHeaderTimeout)
-	assertStillOpen(t, again)
+	assertStillOpen(t, second)
+	assertStillOpen(t, probe)
+	if err := probe.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	assertFIN(t, probe, 2*time.Second)
+	waitDrainActive(t, 1)
+}
+
+// 同一来源排空的连接数有上限（review-r3 #1）：超出时踢同一来源最老的一条
+// （FIN），一个来源占不满全进程的名额。
+func TestDrainPerSourceCap(t *testing.T) {
+	_, addr := startTestShadowsocks(t, drainTestHeaderTimeout)
+	waitDrainActive(t, 0)
+	setDrainMaxConcurrent(t, 100)
+	setDrainLimit(t, &drainMaxPerSource, 2)
+	conns := make([]*net.TCPConn, 0, 5)
+	defer func() {
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	}()
+	for i := 0; i < 5; i++ {
+		conns = append(conns, dialDrainProbe(t, addr, randomBytes(50)))
+		waitDrainActive(t, int64(min(i+1, 2)))
+	}
+	for _, c := range conns[:3] {
+		assertFIN(t, c, 2*time.Second)
+	}
+	waitDrainActive(t, 2)
+	assertStillOpen(t, conns[3])
+	assertStillOpen(t, conns[4])
+}
+
+// 每条排空另有与对端行为无关的总时限（review-r3 #1）：对端内核活着就会回应
+// keepalive，挂着不发 FIN 的连接以前永远不走。到时限读空后 FIN。
+func TestDrainMaxDurationClosesWithFIN(t *testing.T) {
+	_, addr := startTestShadowsocks(t, drainTestHeaderTimeout)
+	waitDrainActive(t, 0)
+	setDrainLimit(t, &drainMaxDuration, int64(400*time.Millisecond))
+	setDrainLimit(t, &drainJitter, 0)
+	for _, payload := range [][]byte{nil, randomBytes(50)} {
+		conn := dialDrainProbe(t, addr, payload)
+		elapsed := assertFIN(t, conn, 3*time.Second)
+		_ = conn.Close()
+		if elapsed < 300*time.Millisecond {
+			t.Fatalf("排空 %v 就关了，早于总时限", elapsed)
+		}
+	}
+	waitDrainActive(t, 0)
+}
+
+// 并发登记、踢出、注销下名额计数不漂（-race）：大量探测同时到达，计数封顶在上限，
+// 全部关掉后回零。
+func TestDrainRegistryCountUnderChurn(t *testing.T) {
+	_, addr := startTestShadowsocks(t, drainTestHeaderTimeout)
+	waitDrainActive(t, 0)
+	setDrainMaxConcurrent(t, 8)
+	setDrainLimit(t, &drainMaxPerSource, 100)
+	const n = 64
+	conns := make(chan *net.TCPConn, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, err := net.DialTimeout("tcp", addr, 2*time.Second)
+			if err != nil {
+				return
+			}
+			_, _ = c.Write(randomBytes(50))
+			conns <- c.(*net.TCPConn)
+		}()
+	}
+	wg.Wait()
+	close(conns)
+	time.Sleep(3 * drainTestHeaderTimeout)
+	if got := drainActive.Load(); got != 8 {
+		t.Fatalf("名额计数 %d，期望封顶 8", got)
+	}
+	for c := range conns {
+		_ = c.Close()
+	}
+	waitDrainActive(t, 0)
+	drains.mu.Lock()
+	all, sources := drains.all.Len(), len(drains.bySource)
+	drains.mu.Unlock()
+	if all != 0 || sources != 0 {
+		t.Fatalf("名册残留 %d 条、%d 个来源", all, sources)
+	}
+}
+
+func TestDrainSourceKey(t *testing.T) {
+	for _, tc := range []struct {
+		addr net.Addr
+		want string
+	}{
+		{&net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 1}, "203.0.113.7"},
+		{&net.TCPAddr{IP: net.ParseIP("::ffff:203.0.113.7"), Port: 1}, "203.0.113.7"},
+		{&net.TCPAddr{IP: net.ParseIP("2001:db8:1:2:3:4:5:6"), Port: 1}, "2001:db8:1:2::/64"},
+		{nil, ""},
+	} {
+		if got := drainSource(tc.addr); got != tc.want {
+			t.Errorf("drainSource(%v) = %q，期望 %q", tc.addr, got, tc.want)
+		}
+	}
 }
 
 // 读满 drainMaxBytes 即关：不给探测方当黑洞带宽用。
@@ -257,6 +385,8 @@ func TestDrainStopsAtByteCap(t *testing.T) {
 func TestDrainMemoryPerConn(t *testing.T) {
 	_, addr := startTestShadowsocks(t, drainTestHeaderTimeout)
 	const n = 400
+	// 测试连接都来自 127.0.0.1，放开同源上限才能量 400 条。
+	setDrainLimit(t, &drainMaxPerSource, n)
 	base := drainActive.Load()
 	measure := func() uint64 {
 		runtime.GC()

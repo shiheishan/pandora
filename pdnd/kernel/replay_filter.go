@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"errors"
+	"math/rand/v2"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -104,26 +105,33 @@ func (f *replayFilter) size() int {
 // 互联网上最常见的「不回数据」行为就是永不超时、一直读，并建议探测失败的连接
 // 不设超时。对端关了我们才关，此时接收缓冲已读空，发的是 FIN 不是 RST。
 //
-// 兜底只有两条，都只在被灌流量时才会触发：
+// 兜底都只在被灌流量或被占名额时才触发，触发时关的都是已读空的连接（FIN）：
 //   - 读满 drainMaxBytes 即关，不给探测方当黑洞带宽用；
-//   - 全进程同时排空的连接数到 drainMaxConcurrent 时，新的失败连接立即关。
-//     并发上限就是这条路径的内存上限（每条排空连接常驻一个 goroutine 栈与
-//     drainReadBuffer 的读缓冲，约 8KB，见 TestDrainMemoryPerConn）。
+//   - 全进程同时排空的连接数到 drainMaxConcurrent 时，踢掉最老的一条放新的进来
+//     （见 drainRegistry）：名额被占满时新来的探测照样排空，不会退回「读到固定
+//     字节数就 RST」；被踢的那条早已读空，关它发的是 FIN；
+//   - 同一来源（IPv4 地址、IPv6 /64）同时排空的连接数到 drainMaxPerSource 时，
+//     踢掉同一来源最老的一条：一个来源占不满全进程的名额；
+//   - 每条排空至多 drainMaxDuration 加一段随机抖动，与对端行为无关：对端内核
+//     活着就会回应 TCP keepalive，只靠 keepalive 收尾的话挂着不发 FIN 的连接
+//     永远不走。抖动让这个上界不是一个可量的固定值。
 //
-// 对端失联（不发 FIN）的连接靠 TCP keepalive（Go 监听缺省 15 秒起探）收尾；
-// 入站 Close 会关掉所有在册连接，排空随之结束。
+// 并发上限就是这条路径的内存上限（每条排空连接常驻一个 goroutine 栈与
+// drainReadBuffer 的读缓冲，约 8KB，见 TestDrainMemoryPerConn）。入站 Close 会
+// 关掉所有在册连接，排空随之结束。
 func drainUntilPeerClose(conn net.Conn) {
 	if conn == nil {
 		return
 	}
-	if drainActive.Add(1) > drainMaxConcurrent.Load() {
-		drainActive.Add(-1)
+	// 读请求头的截止时间在这里换成排空总时限：认证失败与「数据还不够、继续等」
+	// 在外面看是同一个样子，都是收下数据、不回字节、等对端先关。先设截止再登记，
+	// 被踢时（登记之后）关连接不会被这里覆盖。
+	_ = conn.SetReadDeadline(time.Now().Add(drainDuration()))
+	entry, ok := drains.register(conn)
+	if !ok {
 		return
 	}
-	defer drainActive.Add(-1)
-	// 读请求头的截止时间在这里清掉：认证失败与「数据还不够、继续等」在外面
-	// 看是同一个样子，都是收下数据、不回字节、等对端先关。
-	_ = conn.SetReadDeadline(time.Time{})
+	defer drains.unregister(entry)
 	buf := make([]byte, drainReadBuffer)
 	var total int64
 	for total < drainMaxBytes {
@@ -154,19 +162,49 @@ func finishSession(conn net.Conn, err error) {
 }
 
 // drainMaxConcurrentDefault 是全进程同时排空的连接数上限。正常情况下排空中
-// 的连接只有零星探测与扫描器；4096 条约占 35MB（每条约 8KB），超过即说明在
-// 被洪泛，退回立即关。
+// 的连接只有零星探测与扫描器；4096 条约占 35MB（每条约 8KB），满了就踢最老的。
 const drainMaxConcurrentDefault = 4096
+
+// drainMaxPerSourceDefault 是同一来源同时排空的连接数上限。探测方一般一个来源
+// 一两条；16 条之外的同源连接只是在占名额。
+const drainMaxPerSourceDefault = 16
+
+// drainMaxDurationDefault 与 drainJitterDefault：每条排空在 [5, 10) 分钟里随机
+// 一个时刻关（读空后 FIN）。远长于常见探测的等待时间，又让被占的名额与 fd 最终
+// 一定归还。
+const (
+	drainMaxDurationDefault = 5 * time.Minute
+	drainJitterDefault      = 5 * time.Minute
+)
 
 // drainReadBuffer 是排空时的读缓冲。刻意比 io.Discard 的 8KB 池化缓冲小：
 // 排空连接绝大多数时间阻塞在 Read 上，缓冲一直被占着，实测每条连接常驻从约
 // 14.5KB 降到约 8KB；代价只是被灌流量时多几次 read 系统调用（16MB 上限内）。
 const drainReadBuffer = 2 << 10
 
-// drainActive 是正在排空的连接数；drainMaxConcurrent 是其上限（测试可改）。
-var drainActive, drainMaxConcurrent atomic.Int64
+// drainActive 是正在排空的连接数（在 drains.mu 内增减，读用 Load）；
+// drainMaxConcurrent、drainMaxPerSource、drainMaxDuration、drainJitter 是上限
+// 与时限（测试可改）。
+var (
+	drainActive, drainMaxConcurrent, drainMaxPerSource atomic.Int64
+	drainMaxDuration, drainJitter                      atomic.Int64 // time.Duration
+)
 
-func init() { drainMaxConcurrent.Store(drainMaxConcurrentDefault) }
+func init() {
+	drainMaxConcurrent.Store(drainMaxConcurrentDefault)
+	drainMaxPerSource.Store(drainMaxPerSourceDefault)
+	drainMaxDuration.Store(int64(drainMaxDurationDefault))
+	drainJitter.Store(int64(drainJitterDefault))
+}
+
+// drainDuration 是一条排空的总时限：drainMaxDuration 加 [0, drainJitter) 的随机量。
+func drainDuration() time.Duration {
+	d := time.Duration(drainMaxDuration.Load())
+	if j := drainJitter.Load(); j > 0 {
+		d += time.Duration(rand.Int64N(j))
+	}
+	return d
+}
 
 // requestHeaderTimeout 是 Shadowsocks / VMess 读请求头的截止时间；override
 // 只给测试缩短用，零值取 10 秒。撞上它的连接同样转入 drainUntilPeerClose。
