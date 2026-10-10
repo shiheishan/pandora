@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aegispanel/nodeagent/core"
+	nativekernel "github.com/aegispanel/nodeagent/kernel"
 	"github.com/aegispanel/nodeagent/outbound"
 	"github.com/aegispanel/nodeagent/panel"
 	"github.com/google/uuid"
@@ -78,7 +79,7 @@ func runRealKernelRotation(t *testing.T, protocol string, dial tunnelDialer, del
 		bob      = "6f1e0c1a-2b3d-4c5e-8f70-000000000003"
 	)
 	echo := startEchoServer(t)
-	kernel := newNativeKernel(t)
+	kernel := &addHookKernel{NativeCore: newNativeKernel(t)}
 	client := panel.New(panel.Options{BaseURL: "http://127.0.0.1:1", NodeID: "9", NodeType: protocol, Token: "token"})
 	n := New(client, kernel, testLogger())
 	port := freeTCPPort(t)
@@ -94,9 +95,21 @@ func runRealKernelRotation(t *testing.T, protocol string, dial tunnelDialer, del
 	oldTunnel := mustTunnel(t, dial, port, aliceOld, echo)
 	bobTunnel := mustTunnel(t, dial, port, bob, echo)
 
+	// 先删后加的可确定断言：新凭据一装进内核（AddUsers 返回、本次增量的其余内核操作
+	// 还没做）就用它建一条隧道。内核按用户 ID 断线，若之后才删旧凭据，这条新凭据的
+	// 隧道会被一并断掉；先删后加时它必须活着。
+	var newTunnel net.Conn
+	kernel.afterAdd = func(users []core.User) {
+		for _, u := range users {
+			if u.UUID == aliceNew && newTunnel == nil {
+				newTunnel = mustTunnel(t, dial, port, aliceNew, echo)
+			}
+		}
+	}
 	ev := delta(aliceID, aliceNew)
 	ev.FromVersion, ev.ToVersion = `"v1"`, `"v2"`
 	n.applyStreamEvent(context.Background(), ev)
+	kernel.afterAdd = nil
 	if n.userVersion != panel.UsersVersionKey(`"v2"`) {
 		t.Fatalf("增量没有被应用（userVersion=%q）", n.userVersion)
 	}
@@ -108,11 +121,33 @@ func runRealKernelRotation(t *testing.T, protocol string, dial tunnelDialer, del
 		_ = conn.Close()
 		t.Fatal("换凭据后旧凭据仍能握手：旧 UUID 还留在内核里")
 	}
+	if newTunnel == nil {
+		t.Fatal("增量没有把新凭据装进内核")
+	}
+	if !tunnelEchoes(newTunnel) {
+		t.Fatal("新凭据装上后建立的连接被断开：内核操作不是先删旧凭据、再加新凭据")
+	}
 	_ = mustTunnel(t, dial, port, aliceNew, echo).Close()
 	if !tunnelEchoes(bobTunnel) {
 		t.Fatal("别的用户的连接被换凭据牵连断开")
 	}
 	_ = bobTunnel.Close()
+}
+
+// addHookKernel 是真 NativeCore，AddUsers 返回后回调 afterAdd（节点主循环同一 goroutine）。
+type addHookKernel struct {
+	*nativekernel.NativeCore
+	afterAdd func([]core.User)
+}
+
+func (k *addHookKernel) AddUsers(tag string, users []core.User) error {
+	if err := k.NativeCore.AddUsers(tag, users); err != nil {
+		return err
+	}
+	if k.afterAdd != nil {
+		k.afterAdd(users)
+	}
+	return nil
 }
 
 func mustTunnel(t *testing.T, dial tunnelDialer, port int, credential string, target *net.TCPAddr) net.Conn {

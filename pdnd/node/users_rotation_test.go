@@ -233,3 +233,45 @@ func mirrorUser(n *Node, id int64) core.User {
 	}
 	return core.User{}
 }
+
+// 同一用户 ID 在一份名单里出现两次（面板有唯一约束，正常不会发）：以最后一条为准，
+// 内核里装的与镜像里记的必须是同一份——多装进内核、镜像里没有的那条凭据，以后
+// 任何同步都删不掉。增量与全量两种形状都要守住。
+func TestDuplicateIDKeepsOnlyLastRecord(t *testing.T) {
+	const first, last = "alice-first", "alice-last"
+	shapes := []struct {
+		name string
+		ev   panel.StreamEvent
+	}{
+		{"增量 Added 同 ID 两条", panel.StreamEvent{
+			Type: panel.EventSyncUserDelta, FromVersion: `"v1"`, ToVersion: `"v2"`,
+			Added: []core.User{{ID: rotAliceID, UUID: first}, {ID: rotAliceID, UUID: last}},
+		}},
+		{"全量同 ID 两条", panel.StreamEvent{
+			Type: panel.EventSyncUsers, Version: `"v2"`,
+			Users: []core.User{{ID: rotAliceID, UUID: first}, {ID: rotBobID, UUID: rotBob}, {ID: rotAliceID, UUID: last}},
+		}},
+	}
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			n, kernel, _, _ := rotationNode(t)
+			n.applyStreamEvent(context.Background(), shape.ev)
+			if got, want := kernel.uuids(), []string{last, rotBob}; !slices.Equal(got, want) {
+				t.Fatalf("内核名单 = %v，期望 %v（同 ID 只留最后一条）", got, want)
+			}
+			assertMirror(t, n, map[int64]string{rotAliceID: last, rotBobID: rotBob})
+		})
+	}
+}
+
+// 装入站时随入站一起交给内核的名单（install_users.go）同样去重：交给内核的与
+// mirrorOf 记下的是同一份。
+func TestNormalizeUsersDropsEmptyAndKeepsLastPerID(t *testing.T) {
+	got := normalizeUsers([]core.User{
+		{ID: 1, UUID: "a-first"}, {ID: 2, UUID: ""}, {ID: 3, UUID: "c"}, {ID: 1, UUID: "a-last"},
+	})
+	want := []core.User{{ID: 1, UUID: "a-last"}, {ID: 3, UUID: "c"}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("normalizeUsers = %+v，期望 %+v", got, want)
+	}
+}
