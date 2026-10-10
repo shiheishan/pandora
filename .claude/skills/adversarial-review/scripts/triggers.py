@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """只读：判断一个任务分支的改动是否触发合并前的对抗式审查，并按领域列出命中的文件与新增行。
 
-用法：triggers.py <基点> <头> [-C 仓库目录]
+用法：triggers.py <基点> <头> [-C 仓库目录] [--grok]
   - 实际比较 merge-base(基点, 头)..头。基点给该路的上游分支名（一般是主线 feat/panel-redesign；叠在集成分支上的路
     给集成分支，如 feat/panel-redesign-s，见 dispatch-task「叠在集成分支上的路」），不给 brief 里的原基点：
     分支中途合过上游时，原基点会把合进来的上游改动也算进去（w7pdnd 从 43 个文件变成 161 个）。
   - 集成分支并主线前：基点给主线、头给集成分支，看整条集成分支。
   - 已合入的分支：基点给合并提交的 ^1，头给 ^2（例：triggers.py M^1 M^2）。
-退出码：0 有触发，1 无触发，2 参数或 git 出错。
+  - --grok：执行者是 Cursor 的 Grok。除小件外都要审（根 CLAUDE.md「大任务拆子 agent」），不看领域命中；
+    小件 = 领域无命中，且非测试文件的增删合计不超过 GROK_SMALL 行。
+退出码：0 有触发（或 Grok 的非小件），1 无触发，2 参数或 git 出错。
 """
 import re
 import subprocess
@@ -32,9 +34,11 @@ AREAS = [
                   r"|^panel/internal/platform/cache/watch\.go$",
      r"RequirePermission|RequireRecentReauth|Idempotency\(|INSERT INTO (app\.)?permissions|role_permissions"),
     # gatewaytls 两节都进：它既核客户端证书（认证），又装载网关自己的私钥与证书（秘密）
+    # 加密备份（封条、age 密钥、WebDAV 凭据）与管理员口令工具也在这里：改动不一定带 secret 关键词
     ("秘密与证书", r"^panel/internal/domain/certs/|^panel/internal/platform/(crypto|certbundle|bindingcontract|gatewaytls)/"
                   r"|^pdnd/(certstore|certbundle|bindingcontract|binding)/"
-                  r"|^panel/deploy/(edge-tls|install|install-native|bootstrap|psql|backup-postgres|restore-postgres|migrate-to-new-host)\.sh$",
+                  r"|^panel/internal/domain/dbbackup/|^panel/cmd/(aegis-backup-webdav|aegis-adminctl)/"
+                  r"|^panel/deploy/(edge-tls|install|install-native|bootstrap|psql|backup-postgres|restore-postgres|verify-backup|migrate-to-new-host)\.sh$",
      r"\.Seal\(|\.Open\(|Envelope|password|private[_ ]?key|privkey|secret|--password-stdin|chmod 0?600|AAD|PGPASSWORD"),
     ("迁移", r"^panel/migrations/.*\.sql$|^panel/deploy/(configure-app-role\.sql|migrate\.sh|check-migrations\.sh)$",
      None),
@@ -57,6 +61,7 @@ AREAS = [
      r"FOR UPDATE|FOR SHARE|SKIP LOCKED|pg_advisory|LOCK TABLE|InTxSerializable|SERIALIZABLE"
      r"|lease_owner|sync\.(Mutex|RWMutex)|atomic\.|go func"),
 ]
+GROK_SMALL = 30  # Grok 交回可以不审的上限：非测试文件增删合计行数
 TEST = re.compile(r"(_test\.go|_test\.sh|_test\.ps1|\.test\.tsx?|\.spec\.ts)$|/testdata/|/tests?/")
 CODE = re.compile(r"\.(go|sql|sh)$")
 
@@ -68,6 +73,9 @@ def git(repo, *args):
 def main():
     args = sys.argv[1:]
     repo = "."
+    grok = "--grok" in args
+    if grok:
+        args.remove("--grok")
     if "-C" in args:
         i = args.index("-C")
         repo = args[i + 1]
@@ -80,6 +88,7 @@ def main():
         mb = git(repo, "merge-base", base, head).strip()
         files = [f for f in git(repo, "diff", "--name-only", f"{mb}..{head}").split("\n") if f]
         patch = git(repo, "diff", "-U0", f"{mb}..{head}")
+        numstat = git(repo, "diff", "--numstat", f"{mb}..{head}")
     except subprocess.CalledProcessError as e:
         print(e.stderr.strip(), file=sys.stderr)
         return 2
@@ -116,11 +125,32 @@ def main():
             print(f"  新增 {f}: {l[:110]}")
         if len(ls) > 8:
             print(f"  …另 {len(ls) - 8} 行")
+    if grok:
+        n = nontest_lines(numstat)
+        print(f"\n执行者 Grok：非测试文件增删 {n} 行（小件上限 {GROK_SMALL}）")
+        if hit_any or n > GROK_SMALL:
+            print("Grok 交回、不是小件：合并前派 opus 审（豁免见 adversarial-review 第 1 节：只改测试注释文案、纯挪动）")
+            return 0
+        print("Grok 小件：可不审（仍按 accept-task 自己读全部 diff）")
+        return 1
     if not hit_any:
         print("\n无触发：不必做对抗式审查（仍按 accept-task 自己读关键 diff）")
         return 1
     print("\n有触发：合并前按 adversarial-review skill 派审（命中只是线索，是否真的动到不变量由你读 diff 判断）")
     return 0
+
+
+def nontest_lines(numstat):
+    """非测试文件的增删合计；二进制文件（numstat 记 -）按超限算。"""
+    total = 0
+    for line in numstat.split("\n"):
+        parts = line.split("\t")
+        if len(parts) != 3 or TEST.search(parts[2]):
+            continue
+        if parts[0] == "-":
+            return GROK_SMALL + 1
+        total += int(parts[0]) + int(parts[1])
+    return total
 
 
 def dep_added(repo, mb, head, f):

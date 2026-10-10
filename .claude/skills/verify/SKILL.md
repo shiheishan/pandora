@@ -35,7 +35,7 @@ description: pandora 改完代码后本地跑什么、推送后必须等哪个 C
 
 两个等待脚本在维护者本机主目录的 `ops-local/memoh-ci/`（不入库，worktree 里没有）。推送后用它们等，不要手写轮询循环。
 
-- `wait-status.sh <提交>`：等检查机回放。退出 0 通过，1 失败，2 检查机没接单或超时（改看 GitHub）。手动重跑同一提交时设 `MEMOH_FRESH=1`。
+- `wait-status.sh <提交>`：等检查机回放。退出 0 通过，1 失败，2 检查机没接单或超时（改看 GitHub；检查机自身故障见 ci-triage）。`MEMOH_FRESH=1` 只让脚本只认本次启动之后新写入的状态，不会触发重跑。真要重跑，请用户在云电脑上删掉该提交的 done 标记，且只对仍是分支头的提交有效（已不是头的，删了也不会重跑）。依据是 `ops-local/memoh-ci/wait-status.sh` 头注与同目录 README。
 - `wait-github.sh <提交>`：等 GitHub Actions 全部结束，并从日志核对 PG18 没有 SKIP。退出 0 才算过。退出 1 先核 run 的分支再查原因（同一个 sha 推到两个分支时可能算进别的分支的 run，见 ci-triage）。
 - **任何改动**都要 `wait-status.sh` 通过；**合进 main** 一律再等 `wait-github.sh`。
 - job 清单以 `.github/workflows/` 为准，下表只写看 yaml 看不出的：每个 job 管什么、检查机跑不跑、什么改动之后必须等它。

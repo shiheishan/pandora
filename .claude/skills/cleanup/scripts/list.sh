@@ -22,8 +22,8 @@ PARENT="$(dirname "$MAIN")"
 TASKS="$MAIN/.claude/TASKS.md"
 G() { git -C "$MAIN" "$@"; }
 
-# 永不进清单的分支
-is_protected_branch() { [[ "$1" == main || "$1" == "$BASE" ]]; }
+# 永不进清单的分支：main、基线、集成分支。worktree pandora-s 在 flush_wt 里按路径再挡一次。
+is_protected_branch() { [[ "$1" == main || "$1" == "$BASE" || "$1" == "feat/panel-redesign-s" ]]; }
 
 # ---- 运行中的任务：.claude/TASKS.md「正在跑 / 运行中」表里状态不以 ✅ 开头的行，取行里出现的 w<波次><名字> ----
 RUNNING=""
@@ -91,6 +91,10 @@ flush_wt() {
   if [[ "$path" == "$MAIN" ]]; then return; fi
   if (( wt_prunable )); then
     OTHER_ROWS+=("$path | 目录已不在（prunable） | 建议 git worktree prune（只清登记）")
+    return
+  fi
+  # 集成分支刚合完主线时看起来已合并且干净，运行中表又认不出短名 s
+  if [[ "$path" == "$PARENT/pandora-s" ]] || is_protected_branch "${branch:-}"; then
     return
   fi
   if [[ "$path" != "$PARENT"/pandora-* ]]; then

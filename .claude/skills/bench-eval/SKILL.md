@@ -171,6 +171,12 @@ cd ops-local/bench
 
 默认留着，直到该任务验收完且修复轮的重判也结束。要清理时，先 `docker exec bench-pg psql -U postgres -c '\l+ aegis_cmp_*'` 列出清单给用户确认（动对照机属于改仓库外的东西），只删本任务建的 `aegis_cmp_` 开头的库（`DROP DATABASE … WITH (FORCE)`）。**不碰**：`aegis`（5k 基线）、`aegis_train_tpl / aegis_holdout_tpl / aegis_holdout_stale_tpl`、`aegis_train*`、`aegis_holdout*`。
 
+## 删对照机之前
+
+删对照机本身见 test-machine 回收。真正没有第二份的是容器 `bench-pg` 里的 5k 实测库 `aegis`，以及模板库 `aegis_train_tpl`、`aegis_holdout_tpl`、`aegis_holdout_stale_tpl`。dump 在容器内 `/tmp/d.pgdump`。`scripts/prep-copy.sh` 用 `pg_restore` 把这份 dump 恢复进单个库，用来复制 5k 实测库。删机前把这份 dump 拉回 `ops-local/`。三份模板库如果这份 dump 里没有，要另外写好重建步骤。dump 没拉回、重建步骤也没写，就不要删。
+
+对照机上的 `/root/bench/evalset` 不用拉。`ops-local/bench/run.sh` 把本机 `ops-local/bench/remote/` 同步上去（第 21 行 `rsync` 到 `/root/bench/evalset/`），再把结果拉回 `ops-local/bench/results/`（第 33 行）。evalset 是本机副本的同步，结果已经在本机。
+
 ## 快速诊断：单条 SQL 改前改后
 
 用来复现慢查询、看一条改写是否值得做。没有噪声底、没有留出集，**不能当合并依据**。

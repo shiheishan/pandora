@@ -1,6 +1,6 @@
 ---
 name: node-accept
-description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同机房 VPC 内网的 4c8g 节点加压测机上跑 10 万连接、1–2Gbps 稳态、单协议档和故障演练（面板宕机、断流、删人、重连风暴），按用户定的标准与取消线出成绩单，含跑前公网出流量上报与远端自撤销的故障注入。用户或总协调说「节点压测」「节点验收」「VPC 复测」「节点大流量」「10 万连接」「每 Gbps CPU」「重连风暴」，或改了 pdnd 转发路径、QUIC、SS 要在 Linux 上复测吞吐、延迟、重传、内存时使用。逐协议能不能连用 node-e2e；面板整机压测（面板复测、10k 基线）用 prod-retest；开机登记与流量费估算公式用 test-machine；测试中途被打断用 resume-work。
+description: pandora 节点端（pdnd）大流量验收与 Linux 复测：在同机房 VPC 内网的 4c8g 节点加压测机上跑 10 万连接、1–2Gbps 稳态、单协议档和故障演练（面板宕机、断流、删人、重连风暴），按用户定的标准与取消线出成绩单，含跑前公网出流量上报与远端自撤销的故障注入。用户或总协调说「节点压测」「节点验收」「VPC 复测」「节点大流量」「10 万连接」「每 Gbps CPU」「重连风暴」「终验」，或改了 pdnd 转发路径、QUIC、SS 要在 Linux 上复测吞吐、延迟、重传、内存时使用。终验的节点端成绩单按 .claude/perf-plan/PLAN.md「新标准」；面板那份用 prod-retest，两份都过才算终验完成。逐协议能不能连用 node-e2e；面板整机压测（面板复测、10k 基线）用 prod-retest；开机登记与流量费估算公式用 test-machine；测试中途被打断用 resume-work。
 ---
 
 # 节点端大流量验收

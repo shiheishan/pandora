@@ -24,7 +24,7 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
    - `TestIdempotencyMiddlewarePG18` 锁超时 → `gh run rerun <id> --failed`；
    - Actions 因付款失败没启动 → `gh run rerun <id>`；
    - 同一提交有时先绿、再出一组新运行 → 以最新一组为准；
-   - 检查机红、GitHub 同一 job 绿（例：10-07 fda8a31 的 linux-race，GitHub 与本机 `-race -count=3` 都过）→ 先当偶发，`MEMOH_FRESH=1 wait-status.sh <sha>` 重跑一次；第二次还红再查，查时先怀疑检查机的容器环境（`/dev/fd`、apt 包随重启丢失），不要直接改代码。已知原因：检查机的循环忽略 SIGHUP，bash 测试里装不上 HUP trap（入口时已忽略的信号 bash 不能 trap 或复位；10-09 w12native 397b8bc 查清，本机 `trap '' HUP` 可复现）；测试要先用 python3 或 perl 把 SIGHUP 复位成缺省再起被测脚本，做法见该提交。检查机日志在云电脑 `/data/memoh-ci/logs/<sha>/<job>.log`，本机读不到。
+   - 检查机红、GitHub 同一 job 绿（例：10-07 fda8a31 的 linux-race，GitHub 与本机 `-race -count=3` 都过）→ 先当偶发。`MEMOH_FRESH=1` 不会让检查机重跑，重跑步骤见「检查机自身故障」。第二次还红再查，查时先怀疑检查机的容器环境（`/dev/fd`、apt 包随重启丢失），不要直接改代码。已知原因：检查机的循环忽略 SIGHUP，bash 测试里装不上 HUP trap（入口时已忽略的信号 bash 不能 trap 或复位；10-09 w12native 397b8bc 查清，本机 `trap '' HUP` 可复现）；测试要先用 python3 或 perl 把 SIGHUP 复位成缺省再起被测脚本，做法见该提交。检查机日志在云电脑 `/data/memoh-ci/logs/<sha>/<job>.log`，本机读不到。
    - **观察中**（还没查清，不算已知偶发）：先重跑一次，第二次还红再当真缺陷查；条目和已有数据在 `.claude/TASKS.md`，别复制进来。
      - pdnd `TestDelUsersEndsQUICUDPSessions`（检查机 linux-race）：见「节点遗留」；
      - smoke 浏览器 A4 续费日期：见「w9https 后续」；
@@ -42,6 +42,20 @@ bash .claude/skills/ci-triage/scripts/triage.sh <sha 或分支> [输出目录]
 4. **审计、限频类 e2e**：smoke 里各脚本从同一来源 IP 打同一个栈，按 IP 窗口去重的逻辑会被前一个脚本的记录吞掉。先确认是产品语义（要不要豁免）还是脚本假设，再改。
 5. **浏览器购买路径**：见下一节。
 6. **真缺陷**：在本机复现（PG18 用例本机没有 Docker 会跳过，跳过不等于通过）。修完按 verify skill 重跑改到的包（本机 go 命令的 `GOTOOLCHAIN` 也见 verify），推送后再等两个脚本。
+
+## 检查机自身故障
+
+`wait-status.sh` 退出 2，或连续等不到接单，先按 GitHub 的结论判（见 verify），并请用户在云电脑上看检查机。本机读不到云电脑上的文件。
+
+`MEMOH_FRESH=1` 不会触发重跑。它只让 `wait-status.sh` 只认本次启动之后新写入的状态（`ops-local/memoh-ci/wait-status.sh` 头注、同目录 README）。检查机没有新写状态时，等到接单窗口结束就是退出 2。
+
+请用户在云电脑上看这三处（只写 README 里有的）：
+
+- **磁盘**：Go 构建缓存曾把 `/data` 涨到 38G 塞满。请用户 `df` 看 `/data`。README 写明 poll.sh 每轮末尾缓存超过 12G 会清掉；塞满的那一轮已经失败。
+- **last.txt**：最近一次回放摘要在 `/data/memoh-ci/last.txt`，各次结果在同目录 `results/`。失败日志在 `/data/memoh-ci/logs/<sha>/<job>.log`，只留最近 20 个提交。
+- **done 标记**：真要重跑，请用户删掉该提交的 done 标记。检查机只跑各分支头：已经不是分支头的提交，删了标记也不会重跑。删完后本机再跑 `MEMOH_FRESH=1 wait-status.sh <sha>`，等的是新写入的状态。
+
+循环没了：云电脑重启后常驻循环消失。pid 在 `/data/memoh-ci/loop.pid`，日志在 `loop.log`。请用户跑 README 写的 `/data/memoh-ci/poll.sh ensure`（每小时的定时任务也会拉起）。退出 2 时以 GitHub CI 为准，并提醒用户拉起检查机。
 
 ## 浏览器购买路径（panel-smoke 的 Playwright 步骤）红了
 
