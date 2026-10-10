@@ -95,7 +95,7 @@ Xboard 类代理订阅面板（`panel/`）加自研 NativeCore 节点端（`pdnd
   - **Cursor 的 Composer 2.5**（`cursor-launch.sh`，缺省模型）：**不 build、不 test、不 typecheck，早提交早返回**（用户 10-10 定；这里的「不 build、不 test、不 typecheck」指本机 go/npm 的构建与测试；照 `server-scripted.md` 在测试机上逐字跑脚本测是另一类放行。编译、测试、推送、CI 都由派它的 opus 或总协调收回后做）。适合开工单把修法与判据写死、结果能验证的活——opus 主 agent 定好设计后的编码实现、按清单批量删改、纯挪动拆文件、改名、补测试与变异用例（自检由收回方跑）、补守卫、照审查清单的机械修复轮、搜索定位与读代码总结、只读的服务器巡检。由总协调直接派，或由 opus 子 agent 转手（只读的审查员、设计员把规则写死的盘点交它用 `cursor-launch.sh --scan`，见 composer-handoff skill）；除只改几行的小件外，交回后派 opus 审查。
     - Composer 读不到全局规则（`~/.claude/CLAUDE.md`），开工指令要求先读本文件和开工单（brief 照 dispatch-task 的 make-brief 生成）。要上服务器时开工单里写全红线：先读 `~/ai/servers/README.md` 和该机 `AGENTS.md`，只登点名的机器、只跑允许的命令、不读不抄秘密、写进文件的 IP 换成占位符。放行两类（用户 10-10 同意第二类）：只读巡检（`templates/server-readonly.md`）；照 opus 写好、验过的脚本在测试机上跑测试（`templates/server-scripted.md`：逐字照跑、不装软件不改配置、异常即停）。故障注入、排查异常、开机删机、改 SSH 配置、结果判读仍用 Claude。
   - **Claude 子 agent，`model: sonnet`**，只用在三处：要用浏览器工具的（如 ux-review 的模拟新手）、会改动服务器的现场操作；opus 子 agent 自己再拆的、需要 Claude 工具的下手（照各 skill 原写法）。
-  - 拿不准归哪类时按 opus 派；Composer 交回的证据核对不过，改派 opus 重做。验收不因执行者不同而放宽。
+  - 总协调派整路时拿不准按 opus 派；opus 路内某条自己写还是转手，判不准交 Composer（composer-handoff）。Composer 交回的证据核对不过，改派 opus 重做。验收不因执行者不同而放宽。
 - 每个子 agent 必须交回：改了哪些文件、跑了什么命令、关键输出。Cursor 的 Composer 交回：改了哪些文件、提交 sha、没做的及原因（不要求「跑了什么命令、关键输出」）。
 - 主会话核对证据后才接受：自己读 diff、重跑关键命令，不只信转述。
 - 收尾附一张表：子任务 | 执行者（模型） | 结论 | 证据。
