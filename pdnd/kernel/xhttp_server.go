@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	realitytls "github.com/aegispanel/nodeagent/internal/reality"
@@ -112,8 +114,14 @@ func (s XHTTPServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		rw.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	if !requestHostMatches(req.Host, s.Config.Host) {
+	// host、path 对不上：不带任何附加头的 404（Xray 在写 CORS 与填充之前就回）。
+	if !requestHostMatches(req.Host, s.Config.Host) || !s.Config.pathMatches(req.URL.Path) {
 		rw.WriteHeader(http.StatusNotFound)
+		return
+	}
+	s.Config.writeXrayResponseHeaders(rw.Header(), req)
+	if req.Method == http.MethodOptions {
+		rw.WriteHeader(http.StatusOK)
 		return
 	}
 	kind, sessionID, seq, err := s.Config.classifyRequest(req)
@@ -151,8 +159,7 @@ func (s XHTTPServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		_ = http.NewResponseController(rw).EnableFullDuplex()
 	}
 	w := &xhttpResponseWriter{ResponseWriter: rw}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Cache-Control", "no-store")
+	setXHTTPKindHeaders(w.Header(), kind, req)
 	// 双工与下行先把响应头冲出去，客户端据此开始收下行；stream-up 等会话认下这条
 	// 上行再回（冲突时回 409）；上行包等包收下再回 200。
 	if kind == XHTTPRequestDuplex || kind == XHTTPRequestDownlink {
@@ -160,6 +167,68 @@ func (s XHTTPServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	if err := s.Handler(req.Context(), XHTTPSession{ID: sessionID, Seq: seq, Kind: kind, Request: req, Body: req.Body, Writer: w, Payload: payload}); err != nil && !w.wrote {
 		w.WriteHeader(xhttpErrorStatus(err))
+	}
+}
+
+// X-Padding 的长度范围，与 Xray 的 xPaddingBytes 缺省一致。
+const xhttpPaddingMin, xhttpPaddingMax = 100, 1000
+
+// xhttpPaddingSource 是最长的一份填充，按随机长度切片取用，不逐请求分配。
+// 用 'X'：HPACK / QPACK 的哈夫曼表里它是 8 位码，压缩后线上长度不变。
+var xhttpPaddingSource = strings.Repeat("X", xhttpPaddingMax)
+
+// writeXrayResponseHeaders 照 Xray hub.go 给 host、path 校验通过之后的每个响应
+// （含出错与 OPTIONS）写 CORS 头（Config.WriteResponseHeader）与随机长度的
+// X-Padding（ApplyXPaddingToResponse，非 obfs 模式）。不这样做的话，挂 CDN 时
+// CDN 一侧看到的响应头形状与 Xray 服务端不同，HTTP/2 HEADERS 帧长度也是固定的。
+//
+// 请求侧的填充校验（Xray 对不合法的 x_padding 回 400）刻意不做：sing-box
+// 1.13 没有 XHTTP 客户端，无法确认三家现行客户端都会发合法填充，校验会让
+// 现有客户端连不上。
+func (c XHTTPConfig) writeXrayResponseHeaders(h http.Header, req *http.Request) {
+	if origin := req.Header.Get("Origin"); origin != "" {
+		h.Set("Access-Control-Allow-Origin", origin)
+	} else {
+		h.Set("Access-Control-Allow-Origin", "*")
+	}
+	if c.SessionPlacement == "cookie" || c.SeqPlacement == "cookie" || c.UplinkDataPlacement == "cookie" {
+		h.Set("Access-Control-Allow-Credentials", "true")
+	}
+	if req.Method == http.MethodOptions {
+		h.Set("Access-Control-Allow-Methods", headerOr(req.Header.Get("Access-Control-Request-Method"), "*"))
+		h.Set("Access-Control-Allow-Headers", headerOr(req.Header.Get("Access-Control-Request-Headers"), "*"))
+	}
+	h.Set("X-Padding", xhttpPaddingSource[:xhttpPaddingMin+rand.IntN(xhttpPaddingMax-xhttpPaddingMin+1)])
+}
+
+func headerOr(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+// setXHTTPKindHeaders 按请求角色写 Xray 的缓冲与缓存头：
+//   - 下行（GET 下行、stream-one）：X-Accel-Buffering: no（nginx / apache 不缓冲）、
+//     Cache-Control: no-store、Content-Type: text/event-stream（中间盒按 SSE 处理、
+//     不攒包；Xray 的 noSSEHeader 节点配置目前没有对应项，恒带）；
+//   - stream-up：前两个；
+//   - packet-up：请求体为空（数据放在请求头或 Cookie）时只带 Cache-Control:
+//     no-store，没有请求体的方法默认会被缓存；
+//   - 其余不设 Content-Type，与 Xray 一样由 net/http 按正文决定。
+func setXHTTPKindHeaders(h http.Header, kind XHTTPRequestKind, req *http.Request) {
+	switch kind {
+	case XHTTPRequestDuplex, XHTTPRequestDownlink:
+		h.Set("X-Accel-Buffering", "no")
+		h.Set("Cache-Control", "no-store")
+		h.Set("Content-Type", "text/event-stream")
+	case XHTTPRequestStreamUp:
+		h.Set("X-Accel-Buffering", "no")
+		h.Set("Cache-Control", "no-store")
+	case XHTTPRequestPacket:
+		if req.ContentLength == 0 {
+			h.Set("Cache-Control", "no-store")
+		}
 	}
 }
 
