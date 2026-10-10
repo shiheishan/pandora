@@ -15,5 +15,6 @@ die() { echo "psql.sh: $*" >&2; exit 1; }
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
 : "${POSTGRES_SUPER_PASSWORD:?POSTGRES_SUPER_PASSWORD is required}"
 : "${POSTGRES_PORT:?POSTGRES_PORT is required}"
-PGPASSWORD="$POSTGRES_SUPER_PASSWORD" PGSSLMODE=disable exec psql \
+# 连不上的库别挂住调用方（巡检 healthcheck.sh 经它查库）：缺省 5 秒连不上就失败，调用方可以自己给 PGCONNECT_TIMEOUT
+PGPASSWORD="$POSTGRES_SUPER_PASSWORD" PGSSLMODE=disable PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-5}" exec psql \
   -h 127.0.0.1 -p "$POSTGRES_PORT" -U postgres -d "$POSTGRES_DB" "$@"

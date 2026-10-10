@@ -274,6 +274,7 @@ export const dash: MockModule = {
           size: 412_000_000 - i * 1_800_000,
           created_at: at.toISOString(),
           has_checksum: i !== 7,
+          has_seal: i !== 7 && i !== 8,
         }
       })
       ctx.send(200, {
@@ -286,6 +287,7 @@ export const dash: MockModule = {
           latest_age_hours: 5,
           stale: false,
           missing_checksum: 1,
+          missing_seal: 2,
           recent: files.slice(0, 5),
           identity_configured: true,
           offsite_configured: false,

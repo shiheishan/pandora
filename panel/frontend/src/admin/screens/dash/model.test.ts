@@ -177,10 +177,11 @@ const STATUS_BASE: SystemStatus = {
     readable: true,
     count: 2,
     total_bytes: 2048,
-    latest: { name: 'a.dump.age', size: 1024, created_at: '2026-09-24T03:15:00Z', has_checksum: true },
+    latest: { name: 'a.dump.age', size: 1024, created_at: '2026-09-24T03:15:00Z', has_checksum: true, has_seal: true },
     latest_age_hours: 5,
     stale: false,
     missing_checksum: 0,
+    missing_seal: 0,
     recent: [],
     identity_configured: true,
     offsite_configured: true,
@@ -200,6 +201,13 @@ describe('系统状态', () => {
     expect(backupSummary(STATUS_BASE.backup)).toEqual({ state: 'ok', meta: '最近一份 5 小时前' })
     expect(backupSummary({ ...STATUS_BASE.backup, stale: true, identity_configured: false, offsite_configured: false, missing_checksum: 2 }).meta).toBe('过期 · 未配解密私钥 · 未配异地 · 2 份缺校验')
     expect(backupSummary({ ...STATUS_BASE.backup, latest_age_hours: 72 }).meta).toBe('最近一份 3 天前')
+  })
+
+  it('备份摘要：缺封条的单独说出来；有文件却没有能恢复的一份，不说「还没有」', () => {
+    expect(backupSummary({ ...STATUS_BASE.backup, missing_seal: 1 })).toEqual({ state: 'warn', meta: '1 份缺封条' })
+    expect(backupSummary({ ...STATUS_BASE.backup, missing_checksum: 1, missing_seal: 2 }).meta).toBe('1 份缺校验 · 2 份缺封条')
+    const none = { dir: '/x', readable: true, count: 3, stale: true, missing_seal: 3, recent: [] }
+    expect(backupSummary(none)).toEqual({ state: 'warn', meta: '3 份都恢复不了（缺封条或校验）' })
   })
 
   it('行来自 components，备份行排最后、文案取 backup 段', () => {

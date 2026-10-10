@@ -532,7 +532,8 @@ journalctl -u aegis-public --since -1h | grep -iE 'oom-kill|Main process exited'
 ```
 
 - 网关（`Restart=on-failure`）与 Valkey（发行版单元 `Restart=always`）被杀后由 systemd 自己拉起；Valkey 不落盘，限流计数与实时推送的临时状态清零。
-- PostgreSQL：drop-in 写了 `OOMPolicy=continue`，被杀的多半是某个后端连接，单元不停，postmaster 自己做崩溃恢复（断开所有连接、重放 WAL、重新接客，几秒钟，期间网关的请求会失败一下）；postmaster 本身受 `OOMScoreAdjust=-900` 保护，真被杀了（少见），单元会停在 inactive，不会自动拉起：巡检（`aegis-health.timer`）会告警，人来 `systemctl start postgresql@18-main`。不加自动重启是有意的（panel2 实测）：这个单元里 postmaster 被 `kill -9` 时 systemd 记为正常退出，按「异常才重启」拉不起；按「失败就重启」又会把 postgres 用户有意 `pg_ctlcluster 18 main stop` 的库 5 秒后拉回来。日志里是 `server process (PID …) was terminated by signal 9: Killed` 与 `all server processes terminated; reinitializing`。不写 `OOMPolicy=continue` 时 systemd 缺省会因为一个后端被杀停掉整个单元，库就一直停着。
+- PostgreSQL：drop-in 写了 `OOMPolicy=continue`，被杀的多半是某个后端连接，单元不停，postmaster 自己做崩溃恢复（断开所有连接、重放 WAL、重新接客，几秒钟，期间网关的请求会失败一下）；postmaster 本身受 `OOMScoreAdjust=-900` 保护，真被杀了（`kill -9`、OOM 杀到它本身，少见），drop-in 的 `ExecStopPost` 跑 `deploy/pg-revive.sh`：数据目录里的 `postmaster.pid` 还在、里面的 PID 已不在，就排一个 5 秒后的 `systemctl start`（`journalctl -t pandora-pg-revive` 有记录）；60 秒内再死一次就不再拉。有意停库（`pg_ctlcluster 18 main stop`、`systemctl stop`）会删掉 `postmaster.pid`，不会被拉回来。不用 systemd 的 `Restart=`：panel2 实测这个单元里 postmaster 被 `kill -9` 时 systemd 记为正常退出（「异常才重启」拉不起），「失败就重启」又会把 postgres 用户有意停掉的库拉回来。
+- 没拉起来、或反复崩溃时靠巡检（`aegis-health.timer`，每 10 分钟）：库连不上记一条 `ALERT 数据库连不上`，`aegis-health.service` 记为 failed。**只有 `.env` 配了 `AEGIS_ALERT_TG_*` 才会推 Telegram**，没配时只留 failed 单元与 `/opt/pandora/logs/health.log` 的 ALERT 行，要人去看（`systemctl --failed`）。`psql.sh` 连库超过 5 秒就放弃，卡死的库不会把巡检挂住。
 - 反复被杀：先看是哪一个占得多（`systemctl status` 的 Memory 行、`ps -o rss`），再按第 8 章看连接数与慢查询；不要把 `MemorySwapMax` 去掉了事，那只是把问题换成卡顿。
 - 内核 cgroup 不是 v2 或没开 swap 记账时这一条不生效，安装输出会说。
 

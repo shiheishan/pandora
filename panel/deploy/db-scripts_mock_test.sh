@@ -204,16 +204,19 @@ printf 'POSTGRES_USER=aegis\nPOSTGRES_PASSWORD=owner-pw\nPOSTGRES_DB=aegis\nPOST
 cat >"$T/bin/psql" <<'MOCK'
 #!/usr/bin/env bash
 root="$(dirname "$0")/.."
-printf 'psql %s | PGPASSWORD=%s PGSSLMODE=%s APP=%s OWNER=%s SUPER=%s\n' "$*" "${PGPASSWORD:-}" "${PGSSLMODE:-}" \
+printf 'psql %s | PGPASSWORD=%s PGSSLMODE=%s CT=%s APP=%s OWNER=%s SUPER=%s\n' "$*" "${PGPASSWORD:-}" "${PGSSLMODE:-}" "${PGCONNECT_TIMEOUT:-}" \
   "${AEGIS_DB_APP_PASSWORD:+set}" "${POSTGRES_PASSWORD:+leaked}" "${POSTGRES_SUPER_PASSWORD:+leaked}" >"$root/pg.calls"
 [ -t 0 ] || cat >"$root/pg.stdin"
 MOCK
 chmod 0755 "$T/bin/psql"
 PATH="$T/bin:$PATH" bash "$T/deploy/psql.sh" -X -tAc 'SELECT 1' </dev/null
-[ "$(cat "$T/pg.calls")" = 'psql -h 127.0.0.1 -p 5434 -U postgres -d aegis -X -tAc SELECT 1 | PGPASSWORD=super-pw PGSSLMODE=disable APP= OWNER= SUPER=' ] \
+[ "$(cat "$T/pg.calls")" = 'psql -h 127.0.0.1 -p 5434 -U postgres -d aegis -X -tAc SELECT 1 | PGPASSWORD=super-pw PGSSLMODE=disable CT=5 APP= OWNER= SUPER=' ] \
   || fail "psql.sh: $(cat "$T/pg.calls")"
+# 调用方给了自己的连接超时就用它的（巡检可以给更短的）
+PATH="$T/bin:$PATH" PGCONNECT_TIMEOUT=2 bash "$T/deploy/psql.sh" -X -tAc 'SELECT 1' </dev/null
+grep -q ' CT=2 ' "$T/pg.calls" || fail "psql.sh ignored the caller's PGCONNECT_TIMEOUT: $(cat "$T/pg.calls")"
 PATH="$T/bin:$PATH" bash "$T/deploy/bootstrap.sh" >/dev/null
-[ "$(cat "$T/pg.calls")" = 'psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5434 -U postgres -d aegis | PGPASSWORD=super-pw PGSSLMODE=disable APP=set OWNER= SUPER=' ] \
+[ "$(cat "$T/pg.calls")" = 'psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5434 -U postgres -d aegis | PGPASSWORD=super-pw PGSSLMODE=disable CT= APP=set OWNER= SUPER=' ] \
   || fail "bootstrap.sh: $(cat "$T/pg.calls")"
 cmp -s "$T/pg.stdin" "$DEPLOY/configure-app-role.sql" || fail 'bootstrap.sh did not feed configure-app-role.sql'
 # 没有超级用户口令：两个都拒绝，不调客户端

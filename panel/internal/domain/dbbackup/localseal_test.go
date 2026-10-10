@@ -45,11 +45,11 @@ func TestLocalSealRoundTripAndRejections(t *testing.T) {
 	if err := os.Chmod(keys, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	identity := writeIdentity(t, keys, "backup-age.key", "AGE-SECRET-KEY-1FIXTUREFIXTUREFIXTUREFIXTUREFIXTUREFIXTUREFIXTUREFIXTUREXX\n")
-	other := writeIdentity(t, keys, "other-age.key", "AGE-SECRET-KEY-1OTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHERXX\n")
+	identity := writeIdentity(t, keys, "backup-age.key", sealFixtureKey+"\n")
+	other := writeIdentity(t, keys, "other-age.key", sealOtherKey+"\n")
 	archive, checksum := writeSealFixture(t, dir, "20261009T142951Z", []byte("encrypted-archive-bytes"))
 
-	seal, err := SealLocalBackup(archive, checksum, identity)
+	seal, err := SealLocalBackup(archive, checksum, identity, sealFixtureRecipient)
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestLocalSealRoundTripAndRejections(t *testing.T) {
 		t.Fatalf("own backup rejected: %v", err)
 	}
 	// 已有封条不覆盖
-	if _, err := SealLocalBackup(archive, checksum, identity); err == nil {
+	if _, err := SealLocalBackup(archive, checksum, identity, sealFixtureRecipient); err == nil {
 		t.Fatal("an existing seal was overwritten")
 	}
 	// 别的私钥（外来的归档、换过私钥的机器）
@@ -134,13 +134,19 @@ func TestLocalSealCoversNameSizeAndChecksum(t *testing.T) {
 }
 
 // 虚构的 age 私钥（不是能用的密钥，只用来钉派生结果）
+// 虚构的 age 私钥：X25519 私钥字节 0x01…0x20 与 0x21…0x40 的 Bech32 编码（校验和正确），收件人由它推出。
 // 拆成两段拼：整串照抄会被提交闸门的 age-secret-key 规则当成真私钥拦下（它确实是格式正确的样子）
-const sealFixtureKey = "AGE-SECRET-KEY-" + "1QYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSDYXRWR"
+const (
+	sealFixtureKey       = "AGE-SECRET-KEY-" + "1QYPQXPQ9QCRSSZG2PVXQ6RS0ZQG3YYC5Z5TPWXQERGD3C8G7RUSQGPQYEE"
+	sealFixtureRecipient = "age1q73he0q5yzfu3d64msd3p6rvksnrwjk3d2598mgtmlqt9wrdr37q2vrn72"
+	sealOtherKey         = "AGE-SECRET-KEY-" + "1YY3ZXFP9YCNJS2F29VKZ6T30XQCNYVE5X5MRWWPE8GANC0F78AQQ2X9KSF"
+	sealOtherRecipient   = "age1tp56lazs2jtn9ja2a409m7dnpfk6x89su46zht266js6w6835eascutqdx"
+)
 
 // 已知答案：HMAC-SHA256(键 = 规范化后的密钥行, 消息 = "pandora-local-backup-seal-v1")，在测试外独立算出。
 // 改了派生方式（去掉标签、标签写空、拿文件原始字节当键），留存期内的旧封条会全部失效，这里先红
 func TestLocalSealKeyKnownAnswer(t *testing.T) {
-	const want = "8868b2cd4f6e6f9231d27f150b181e8e1251b22f7db382e73bdd4013e46350d5"
+	const want = "be9bd795f130c9701b62546533d0ea7c13683eda2aec2526a3ebf5b63074366a"
 	keys := t.TempDir()
 	if err := os.Chmod(keys, 0o700); err != nil {
 		t.Fatal(err)
@@ -190,7 +196,7 @@ func TestLocalSealKeyIgnoresFileFormatting(t *testing.T) {
 		t.Fatal(err)
 	}
 	archive, checksum := writeSealFixture(t, dir, "20261010T011540Z", []byte("encrypted-archive-bytes"))
-	seal, err := SealLocalBackup(archive, checksum, filepath.Join(keys, "age-keygen.key"))
+	seal, err := SealLocalBackup(archive, checksum, filepath.Join(keys, "age-keygen.key"), sealFixtureRecipient)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,12 +208,69 @@ func TestLocalSealKeyIgnoresFileFormatting(t *testing.T) {
 	for name, body := range map[string]string{
 		"empty":       "",
 		"comments":    "# created: x\n# public key: age1x\n",
-		"two-keys":    sealFixtureKey + "\n" + strings.Replace(sealFixtureKey, "QYQ", "ZZZ", 1) + "\n",
+		"two-keys":    sealFixtureKey + "\n" + sealOtherKey + "\n",
+		"truncated":   sealFixtureKey[:len(sealFixtureKey)-1] + "\n",
+		"one-char":    strings.Replace(sealFixtureKey, "QYPQ", "QYPP", 1) + "\n",
+		"nul":         sealFixtureKey + "\x00\n",
 		"garbage":     "hello\n" + sealFixtureKey + "\n",
 		"plugin-only": "AGE-PLUGIN-YUBIKEY-1QQQQQQ\n",
 	} {
 		if _, err := loadSealKey(writeIdentity(t, keys, name+".bad", body)); err == nil {
 			t.Fatalf("identity file %q was accepted", name)
 		}
+	}
+}
+
+// I8：私钥行要是一把完整的 age 私钥（Bech32 校验和对、32 字节），推出来的收件人要和 .env 的
+// AEGIS_BACKUP_AGE_RECIPIENT 一样；对不上不封（封了也解不开）
+func TestSealChecksTheIdentityAgainstTheRecipient(t *testing.T) {
+	sealTestTrustCurrentUser(t)
+	keys, dir := t.TempDir(), t.TempDir()
+	for _, d := range []string{keys, dir} {
+		if err := os.Chmod(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	identity := writeIdentity(t, keys, "backup-age.key", sealFixtureKey+"\n")
+	archive, checksum := writeSealFixture(t, dir, "20261010T011540Z", []byte("encrypted-archive-bytes"))
+	if _, err := SealLocalBackup(archive, checksum, identity, sealOtherRecipient); err == nil {
+		t.Fatal("sealed with an identity that does not match the configured recipient")
+	}
+	if _, err := os.Stat(archive + ".seal"); err == nil {
+		t.Fatal("a seal was written for a mismatched recipient")
+	}
+	if _, err := SealLocalBackup(archive, checksum, identity, "  "+sealFixtureRecipient+"\n"); err != nil {
+		t.Fatalf("matching recipient (with surrounding blanks) refused: %v", err)
+	}
+}
+
+// Bech32：BIP-173 的有效向量解得开；编码再解码一致；推出的收件人与固定值一致
+func TestAgeKeyBech32(t *testing.T) {
+	for _, v := range []string{"A12UEL5L", "abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw",
+		"split1checkupstagehandshakeupstreamerranterredcaperred2y9e3w"} {
+		if _, _, err := bech32Decode(v); err != nil {
+			t.Fatalf("valid BIP-173 vector %s rejected: %v", v, err)
+		}
+	}
+	// 大小写混写、校验和错、没有人类可读部分（age 不限 90 字符，长度不核）
+	for _, v := range []string{"A12UEL5l", "a12uel5m", "1pzry9x0s0muk"} {
+		if _, _, err := bech32Decode(v); err == nil {
+			t.Fatalf("invalid vector %s accepted", v)
+		}
+	}
+	secret, err := decodeAgeSecretKey(sealFixtureKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, b := range secret {
+		if b != byte(i+1) {
+			t.Fatalf("fixture secret byte %d = %d", i, b)
+		}
+	}
+	if r, err := ageRecipientOf(secret); err != nil || r != sealFixtureRecipient {
+		t.Fatalf("recipient = %s, %v", r, err)
+	}
+	if got := strings.ToUpper(bech32Encode("age-secret-key-", secret)); got != sealFixtureKey {
+		t.Fatalf("encode = %s", got)
 	}
 }

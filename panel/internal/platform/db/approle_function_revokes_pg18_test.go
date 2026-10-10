@@ -196,6 +196,10 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		// J12：美元引号作为语句结尾；statementEnd 若只认分号，这条会被漏掉
 		{"EXECUTE dollar-quoted literal", "DO $$ BEGIN EXECUTE $q$REVOKE ALL ON FUNCTION app.gone4(uuid) FROM aegis_app$q$; END $$;", ""},
 		{"DROP of another function", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "DROP FUNCTION app.gone_other(uuid);\n"},
+		// I3：函数类语句带 %，角色经 format 参数传进来也判红（不看角色）
+		{"format template with the role as a parameter", "DO $$ BEGIN EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %I', v, 'aegis_app'); END $$;", ""},
+		// I11①：字符串里的「; DROP FUNCTION」不是语句开头
+		{"DROP after a semicolon inside a string", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "DO $$ BEGIN RAISE NOTICE 'x; DROP FUNCTION app.gone(uuid)'; END $$;\n"},
 	}
 	for _, c := range red {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -227,6 +231,9 @@ func TestMigrationRevokedFromAppScanBlindSpots(t *testing.T) {
 		{"format template on a table stays ignored", "DO $$ BEGIN EXECUTE format('REVOKE ALL ON TABLE %I FROM aegis_app', t); END $$;", "", nil},
 		{"concat on a table stays ignored", "DO $$ BEGIN EXECUTE 'GRANT SELECT ON TABLE ' || quote_ident(t) || ' TO aegis_app'; END $$;", "", nil},
 		{"DROP after another statement on the same line", "REVOKE ALL ON FUNCTION app.gone(uuid) FROM aegis_app;", "SELECT 1; DROP FUNCTION app.gone(uuid);\n", nil},
+		// I2：拼接判红只在 GRANT/REVOKE 是字面量第一个词时；文案里的 grant、revoke 后面跟 || 不是权限语句
+		{"message ending in grant before a concatenation", "DO $$ BEGIN RAISE NOTICE '%', 'traffic pack grant ' || v_id; END $$;", "", nil},
+		{"message ending in revoke before a concatenation", "DO $$ BEGIN RAISE EXCEPTION 'cannot revoke' || v_reason; END $$;", "", nil},
 	}
 	for _, c := range green {
 		ups := []migrationUp{{"00001_a.sql", c.up + "\n"}}
@@ -389,6 +396,40 @@ func statementEnd(s string, from int) int {
 	return len(s)
 }
 
+// insideSingleQuoted 看 pos 是不是落在单引号字面量里：'…'（” 是转义的引号）、E'…'（另认 \' 转义）。
+// 美元引号的内容是代码（DO 块的函数体），不算字面量
+func insideSingleQuoted(text string, pos int) bool {
+	in, escapes := false, false
+	for i := 0; i < pos && i < len(text); i++ {
+		c := text[i]
+		if !in {
+			if c == '\'' {
+				in = true
+				escapes = i > 0 && (text[i-1] == 'E' || text[i-1] == 'e') && (i < 2 || !isIdentByte(text[i-2]))
+			}
+			continue
+		}
+		switch {
+		case escapes && c == '\\':
+			i++
+		case c == '\'' && i+1 < len(text) && text[i+1] == '\'':
+			i++
+		case c == '\'':
+			in = false
+		}
+	}
+	return in
+}
+
+// opensSingleQuoted 看 pos 是不是某个单引号字面量的第一个词：在字面量里，且前面只有空白和开引号
+func opensSingleQuoted(text string, pos int) bool {
+	if !insideSingleQuoted(text, pos) {
+		return false
+	}
+	k := strings.LastIndexFunc(text[:pos], func(r rune) bool { return !unicode.IsSpace(r) })
+	return k >= 0 && text[k] == '\'' && !insideSingleQuoted(text, k)
+}
+
 // atStatementStart 看 pos 之前第一个非空白字符是不是分号（或已到文本开头）
 func atStatementStart(text string, pos int) bool {
 	k := strings.LastIndexFunc(text[:pos], func(r rune) bool { return !unicode.IsSpace(r) })
@@ -455,17 +496,21 @@ func migrationRevokedFromApp(ups []migrationUp, resolve func(kind, sig string) (
 			stmt := strings.Join(strings.Fields(text[start:end]), " ")
 			// 拼接：'REVOKE ALL ON FUNCTION ' || 'app.x(uuid) FROM aegis_app' 被切成碎片，每片单看都不像完整语句。
 			// 碎片是函数类、或还没写出 ON 对象（不知道是什么对象）时判红；明确是表、序列的拼接不管
-			if end < len(text) && concatAfter.MatchString(text[end:]) &&
+			// 只在 GRANT/REVOKE 是字面量第一个词时才算拼接出来的权限语句：'cannot revoke' || … 这类文案不算
+			if end < len(text) && concatAfter.MatchString(text[end:]) && opensSingleQuoted(text, start) &&
 				(functionObjectKind.MatchString(stmt) || !onObject.MatchString(stmt)) {
 				problems = append(problems, fmt.Sprintf("%s: privilege statement built by string concatenation cannot be checked: %s", m.name, stmt))
 				continue
 			}
-			if !mentionsRole(stmt, "aegis_app") || !functionObjectKind.MatchString(stmt) {
+			if !functionObjectKind.MatchString(stmt) {
 				continue
 			}
-			// format() 模板（含 %）是动态 SQL，静态扫不了：函数类的判红，不能悄悄跳过
+			// format() 模板（含 %）是动态 SQL，静态扫不了：函数类的一律判红，不看角色（角色可能经 %I 传进来）
 			if strings.Contains(stmt, "%") {
 				problems = append(problems, fmt.Sprintf("%s: function privilege statement with a format() template cannot be checked: %s", m.name, stmt))
+				continue
+			}
+			if !mentionsRole(stmt, "aegis_app") {
 				continue
 			}
 			pos := i<<32 | start
@@ -491,7 +536,8 @@ func migrationRevokedFromApp(ups []migrationUp, resolve func(kind, sig string) (
 			}
 			start, matchEnd := from+loc[0], from+loc[1]
 			end := statementEnd(text, matchEnd)
-			if !atStatementStart(text, start) { // ALTER EXTENSION … DROP FUNCTION、字符串里的 DROP 文本都不算
+			// ALTER EXTENSION … DROP FUNCTION、字符串里的 DROP 文本（含 'x; DROP FUNCTION …'）都不算
+			if !atStatementStart(text, start) || insideSingleQuoted(text, start) {
 				from = matchEnd
 				continue
 			}

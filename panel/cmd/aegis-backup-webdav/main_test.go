@@ -25,7 +25,7 @@ func TestLocalSealCommandsRequireRoot(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"seal-local", "/nonexistent/aegis-postgres-20261010T011540Z.dump.age", "/nonexistent/x.sha256", "/nonexistent/key"},
+		{[]string{"seal-local", "/nonexistent/aegis-postgres-20261010T011540Z.dump.age", "/nonexistent/x.sha256", "/nonexistent/key", "age1x"},
 			"local backup seal failed: root_required"},
 		{[]string{"verify-local-seal", "/nonexistent/a", "/nonexistent/b", "/nonexistent/c", "/nonexistent/d"},
 			"local backup seal verification failed: root_required"},

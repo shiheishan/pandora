@@ -327,7 +327,7 @@ fi
 install -m 0755 "$SCRIPT_DIR/healthcheck.sh" "$INSTALL_DIR/deploy/healthcheck.sh"
 cp -f "$SCRIPT_DIR/migrate.sh" "$SCRIPT_DIR/platform.sh" "$SCRIPT_DIR/configure-app-role.sql" "$SCRIPT_DIR/check-migrations.sh" "$SCRIPT_DIR/render-nginx.sh" "$SCRIPT_DIR/edge-tls.sh" "$SCRIPT_DIR/update-cloudflare-realip.sh" "$SCRIPT_DIR/nginx-aegis.conf" "$SCRIPT_DIR/admin-url.sh" "$SCRIPT_DIR/MIGRATION-RUNBOOK.md" "$INSTALL_DIR/deploy/" 2>/dev/null || true
 chmod 0755 "$INSTALL_DIR/deploy/migrate.sh" "$INSTALL_DIR/deploy/check-migrations.sh" "$INSTALL_DIR/deploy/render-nginx.sh" "$INSTALL_DIR/deploy/edge-tls.sh" "$INSTALL_DIR/deploy/update-cloudflare-realip.sh" "$INSTALL_DIR/deploy/admin-url.sh" 2>/dev/null || true
-for f in backup-postgres.sh verify-backup.sh restore-postgres.sh psql.sh bootstrap.sh; do
+for f in backup-postgres.sh verify-backup.sh restore-postgres.sh psql.sh bootstrap.sh pg-revive.sh; do
   install -m 0755 "$SCRIPT_DIR/$f" "$INSTALL_DIR/deploy/$f" || die "发布目录缺少 deploy/$f"
 done
 [[ ! -f "$SCRIPT_DIR/backup-webdav.example.json" ]] \

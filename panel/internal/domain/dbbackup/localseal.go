@@ -45,7 +45,8 @@ func localSealMAC(key []byte, pair LocalPair) string {
 // parseAgeSecretKey 从 age 私钥文件里取出唯一的 AGE-SECRET-KEY-1… 行并规范化：去首尾空白、转大写（Bech32 不分大小写）。
 // age-keygen 写的「# created」「# public key」注释、空行、CRLF、有没有末尾换行都不影响结果——另存私钥时只留那一行、
 // 丢了换行，age 照样能解密，封条也必须照样认。没有密钥行、多于一行、混进别的内容（如插件身份）都报错
-func parseAgeSecretKey(raw []byte) ([]byte, error) {
+// 那一行还要是一把完整的 age 私钥（Bech32 校验和对、32 字节）：截断、改了一个字都在这里报错，返回规范化的行与私钥字节
+func parseAgeSecretKey(raw []byte) ([]byte, []byte, error) {
 	var found []byte
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
@@ -54,41 +55,59 @@ func parseAgeSecretKey(raw []byte) ([]byte, error) {
 		}
 		upper := strings.ToUpper(line)
 		if !strings.HasPrefix(upper, "AGE-SECRET-KEY-1") || strings.ContainsAny(upper[len("AGE-SECRET-KEY-1"):], " \t") {
-			return nil, errors.New("备份解密私钥文件里有认不出的内容（只认一行 AGE-SECRET-KEY-1…）")
+			return nil, nil, errors.New("备份解密私钥文件里有认不出的内容（只认一行 AGE-SECRET-KEY-1…）")
 		}
 		if found != nil {
-			return nil, errors.New("备份解密私钥文件里有多把密钥，认不出用哪一把")
+			return nil, nil, errors.New("备份解密私钥文件里有多把密钥，认不出用哪一把")
 		}
 		found = []byte(upper)
 	}
 	if found == nil {
-		return nil, errors.New("备份解密私钥文件里没有 AGE-SECRET-KEY-1… 那一行")
+		return nil, nil, errors.New("备份解密私钥文件里没有 AGE-SECRET-KEY-1… 那一行")
 	}
-	return found, nil
+	secret, err := decodeAgeSecretKey(string(found))
+	if err != nil {
+		return nil, nil, err
+	}
+	return found, secret, nil
+}
+
+// loadSealIdentity 读私钥文件，返回封条密钥与它对应的收件人（age1…）
+func loadSealIdentity(identityPath string) ([]byte, string, error) {
+	identity, err := readPrivateFile(identityPath, 64<<10)
+	if err != nil {
+		return nil, "", errors.New("读不了备份解密私钥（要 root 所有、0600、单链接）")
+	}
+	line, secret, err := parseAgeSecretKey(identity)
+	if err != nil {
+		return nil, "", err
+	}
+	recipient, err := ageRecipientOf(secret)
+	if err != nil {
+		return nil, "", err
+	}
+	return localSealKey(line), recipient, nil
 }
 
 func loadSealKey(identityPath string) ([]byte, error) {
-	identity, err := readPrivateFile(identityPath, 64<<10)
-	if err != nil {
-		return nil, errors.New("读不了备份解密私钥（要 root 所有、0600、单链接）")
-	}
-	line, err := parseAgeSecretKey(identity)
-	if err != nil {
-		return nil, err
-	}
-	return localSealKey(line), nil
+	key, _, err := loadSealIdentity(identityPath)
+	return key, err
 }
 
-// SealLocalBackup 核过归档与校验文件（SHA256 对得上、路径与权限合规）之后，在归档旁写 <归档>.seal（0600，
+// SealLocalBackup 核过归档与校验文件（SHA256 对得上、路径与权限合规），再核私钥推出的收件人就是备份加密给的那个
+// （.env 的 AEGIS_BACKUP_AGE_RECIPIENT；对不上的话封条有效、备份却解不开），之后在归档旁写 <归档>.seal（0600，
 // 已存在就拒绝），返回封条路径
-func SealLocalBackup(archive, checksum, identityPath string) (string, error) {
+func SealLocalBackup(archive, checksum, identityPath, recipient string) (string, error) {
 	pair, err := VerifyLocalPair(archive, checksum)
 	if err != nil {
 		return "", err
 	}
-	key, err := loadSealKey(identityPath)
+	key, own, err := loadSealIdentity(identityPath)
 	if err != nil {
 		return "", err
+	}
+	if strings.TrimSpace(recipient) != own {
+		return "", errors.New("备份解密私钥与 AEGIS_BACKUP_AGE_RECIPIENT 对不上：用这把私钥解不开这份备份，不封")
 	}
 	sealPath := archive + ".seal"
 	parent, err := validateSecureParent(sealPath)

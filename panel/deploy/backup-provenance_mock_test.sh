@@ -12,7 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { printf 'backup provenance: %s\n' "$*" >&2; exit 1; }
 if [ "$(uname -s)" != Linux ] || [ "$(id -u)" -ne 0 ]; then
-  grep -Fq 'run_trusted_executable "$sealer" seal-local "$archive" "$checksum" "$AEGIS_BACKUP_AGE_IDENTITY"' "$ROOT/deploy/backup-postgres.sh" \
+  grep -Fq 'run_trusted_executable "$sealer" seal-local "$archive" "$checksum" "$AEGIS_BACKUP_AGE_IDENTITY" "$AEGIS_BACKUP_AGE_RECIPIENT"' "$ROOT/deploy/backup-postgres.sh" \
     || fail 'backup-postgres.sh does not seal local backups'
   grep -Fq 'verify-local-seal "$archive" "$checksum" "$seal" "$AEGIS_BACKUP_AGE_IDENTITY"' "$ROOT/deploy/verify-backup.sh" \
     || fail 'verify-backup.sh does not check the local seal'
@@ -32,7 +32,11 @@ for s in backup-postgres.sh verify-backup.sh restore-postgres.sh; do
   install -m 0700 "$ROOT/deploy/$s" "$WORK/deploy/$s"
 done
 install -m 0755 "$TOOL" "$WORK/bin/aegis-backup-webdav"
-printf 'AGE-SECRET-KEY-1PROVENANCEFIXTUREPROVENANCEFIXTUREPROVENANCEFIXTUREXX\n' >"$WORK/secrets/backup-age.key"
+# 虚构的 age 私钥（X25519 私钥字节 0x01…0x20 与 0x21…0x40 的 Bech32 编码）与推出的收件人；拆开写免得被当成真私钥
+KEY1="AGE-SECRET-KEY-""1QYPQXPQ9QCRSSZG2PVXQ6RS0ZQG3YYC5Z5TPWXQERGD3C8G7RUSQGPQYEE"
+RCP1=age1q73he0q5yzfu3d64msd3p6rvksnrwjk3d2598mgtmlqt9wrdr37q2vrn72
+KEY2="AGE-SECRET-KEY-""1YY3ZXFP9YCNJS2F29VKZ6T30XQCNYVE5X5MRWWPE8GANC0F78AQQ2X9KSF"
+printf '# public key: %s\n%s\n' "$RCP1" "$KEY1" >"$WORK/secrets/backup-age.key"
 chmod 0600 "$WORK/secrets/backup-age.key"
 cat >"$WORK/deploy/.env" <<ENV
 POSTGRES_DB=aegis
@@ -41,7 +45,7 @@ POSTGRES_PORT=5432
 POSTGRES_SUPER_PASSWORD=provenance-fixture
 AEGIS_BACKUP_DIR=$WORK/backups
 AEGIS_BACKUP_RETENTION_DAYS=7
-AEGIS_BACKUP_AGE_RECIPIENT=age1provenancefixture
+AEGIS_BACKUP_AGE_RECIPIENT=$RCP1
 AEGIS_BACKUP_AGE_IDENTITY=$WORK/secrets/backup-age.key
 AEGIS_BACKUP_WEBDAV_BIN=$WORK/bin/aegis-backup-webdav
 ENV
@@ -127,7 +131,7 @@ refuse 'restoring a swapped archive' 'local backup seal verification failed' \
   env AEGIS_RESTORE_CONFIRM=RESTORE:aegis_recovery ./restore-postgres.sh --archive "$archive" --target-db aegis_recovery
 cp -p "$WORK/archive.orig" "$archive"; cp -p "$WORK/sha.orig" "$archive.sha256"
 cp -p "$WORK/secrets/backup-age.key" "$WORK/key.orig"
-printf 'AGE-SECRET-KEY-1ANOTHERMACHINEANOTHERMACHINEANOTHERMACHINEANOTHERXX\n' >"$WORK/secrets/backup-age.key"
+printf '%s\n' "$KEY2" >"$WORK/secrets/backup-age.key"
 refuse 'a backup sealed by another identity' 'local backup seal verification failed' ./verify-backup.sh "$archive"
 cp -p "$WORK/key.orig" "$WORK/secrets/backup-age.key"
 sed -i 's/ \(.\)/ f\1/; s/^\(PANDORA-LOCAL-SEAL-V1 .\{64\}\).*/\1/' "$archive.seal"
@@ -149,6 +153,14 @@ if run ./backup-postgres.sh >"$WORK/b2.out" 2>"$WORK/b2.err"; then fail 'a backu
 grep -Fq 'sealing the local backup failed' "$WORK/b2.err" || fail "unexpected backup failure: $(cat "$WORK/b2.err")"
 [ "$(ls "$WORK/backups")" = "$before" ] || fail "an unsealed backup was left behind: $(ls -la "$WORK/backups")"
 chmod 0600 "$WORK/secrets/backup-age.key"
+# 私钥和 .env 的收件人对不上（另存后放回了别的私钥）：同样不封、撤掉
+before="$(ls "$WORK/backups")"
+cp -p "$WORK/secrets/backup-age.key" "$WORK/key.keep"
+printf '%s\n' "$KEY2" >"$WORK/secrets/backup-age.key"
+if run ./backup-postgres.sh >"$WORK/b3.out" 2>"$WORK/b3.err"; then fail 'a backup sealed with a key that does not match the recipient'; fi
+grep -Fq 'sealing the local backup failed' "$WORK/b3.err" || fail "unexpected backup failure: $(cat "$WORK/b3.err")"
+[ "$(ls "$WORK/backups")" = "$before" ] || fail "a backup with a mismatched key was left behind: $(ls -la "$WORK/backups")"
+cp -p "$WORK/key.keep" "$WORK/secrets/backup-age.key"
 
 # --- ③ 来路不明：没有封条也没有签名清单；有清单没配公钥 ------------------------------------------------
 rm -f "$archive.seal"

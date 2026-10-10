@@ -63,32 +63,18 @@ compose_params() {
     END { if (want) print "UNPARSED dangling -c" }' "$1" | sort
 }
 
-# initdb 文本里去注释：引号外的 /* */（可嵌套，换成一个空格）与（dash=1 时）-- 到行尾；
-# 引号里的内容原样保留（只为判断「--」「/*」是否在引号里），不能因为引号状态判错而把后面的文本吞掉
-cat >"$T/strip.awk" <<'AWK'
-{ n = length($0)
-  for (i = 1; i <= n; i++) {
-    c = substr($0, i, 1); d = substr($0, i, 2)
-    if (depth > 0) {
-      if (d == "*/") { depth--; i++; if (depth == 0) out = out " " }
-      else if (d == "/*") { depth++; i++ }
-      continue }
-    if (q != "") { out = out c; if (c == q) q = ""; continue }
-    if (c == "'" || c == "\"") { q = c; out = out c; continue }
-    if (d == "/*") { depth = 1; i++; continue }
-    if (dash && d == "--") break
-    out = out c }
-  out = out " " }
-END { print out }
-AWK
-# initdb 下全部文件去注释后连成一段：.sh 只去 /* */（psql --command 的「--」不是注释），其余按 SQL 去 -- 与 /* */
+# initdb 下全部文件原样连成一段，不去注释（I4）：去注释要认 shell 通配、dollar 引号、E 串，写错一处就会把后面的
+# 真语句吞掉（假绿）；不去注释最多让注释里提到这些词的地方判红（假红，改个说法就行），不会漏。
+# 语句按分号与 psql 的 \gexec 切开，免得 ALTER … 与后面别的语句里的 SET 连成一句（假红）
 initdb_text() {
-  local f dash
+  local f
   while IFS= read -r f; do
-    case "$f" in *.sh) dash=0 ;; *) dash=1 ;; esac
-    awk -v dash="$dash" -f "$T/strip.awk" "$f"
+    sed 's/\\gexec/;/g' "$f" | tr '\n' ' '   # 连成一行：跨行写的 ALTER\n SYSTEM 也认得出
+    echo ';'
   done < <(find "$1" -type f -print | sort)
 }
+# initdb 里只许 .sql 与 .sh（镜像入口还会执行 .sql.gz、.sql.xz 等压缩文件，grep 看不到里面）
+initdb_odd_files() { find "$1" -type f ! -name '*.sql' ! -name '*.sh' -print; }
 
 # 全部 ports 列表项（去引号）
 compose_ports() {
@@ -134,12 +120,19 @@ check() {
     return 1
   fi
   # 旁路：-c 之外不许有别的办法改 PostgreSQL 参数
-  local txt
+  local txt odd
+  odd="$(initdb_odd_files "$initdb")"
+  [ -z "$odd" ] || { echo "only .sql and .sh files may live under dev/initdb (the image also runs compressed ones grep cannot read): $odd"; return 1; }
+  # postgres 服务不许改 entrypoint：entrypoint 里也能塞 -c 覆盖参数
+  if awk '/^  postgres:/ { p = 1; next } /^  [A-Za-z0-9_-]+:/ || /^[A-Za-z]/ { p = 0 } p && /^    entrypoint:/ { f = 1 } END { exit !f }' "$compose"; then
+    echo "the postgres service overrides entrypoint: (it can carry -c parameter overrides)"; return 1
+  fi
   txt="$(initdb_text "$initdb")"
-  if grep -Eiq 'alter[[:space:]]+system' <<<"$txt"; then
+  # 同一句里 alter 与 system 之间隔什么都算（空白、注释、换行），宁可多判也不漏
+  if grep -Eiq '(^|[^a-z_])alter[^;]*[^a-z_]system([^a-z_]|$)' <<<"$txt"; then
     echo "ALTER SYSTEM under dev/initdb overrides the -c parameters"; return 1
   fi
-  if grep -Eiq 'alter[[:space:]]+(database|role|user|group)[^;]*[[:space:]]set[[:space:]]' <<<"$txt"; then
+  if grep -Eiq '(^|[^a-z_])alter[^;]*[^a-z_](database|role|user|group)[^;]*[^a-z_]set([^a-z_]|$)' <<<"$txt"; then
     echo "ALTER DATABASE / ROLE / USER ... SET under dev/initdb overrides the -c parameters"; return 1
   fi
   if grep -rIEiq 'postgresql(\.auto)?\.conf' "$initdb"; then
@@ -244,10 +237,28 @@ done <<'BAD'
 90.sh|echo jit=on >> /var/lib/postgresql/data/postgresql.conf
 90.sh|psql --command "ALTER SYSTEM SET jit = on"
 BAD
-# 注释里提到这些词不算（匹配前先去注释）
-rm -rf "$T/initdb-ok"; cp -R "$INITDB" "$T/initdb-ok"
-printf '%s\n' '-- 不要用 ALTER SYSTEM，也不要 ALTER ROLE x SET' '/* ALTER DATABASE x SET y */ SELECT 1;' >"$T/initdb-ok/90-comments.sql"
-out="$(check "$COMPOSE" "$CONF" "$T/initdb-ok")" || fail "words inside SQL comments were treated as an initdb bypass: $out"
+# 不去注释：dollar 引号、E 串、shell 通配后面藏的语句都看得见（I4 的三种绕过）
+n=0
+while IFS='|' read -r name body; do
+  n=$((n + 1)); rm -rf "$T/initdb-x"; cp -R "$INITDB" "$T/initdb-x"
+  printf '%b\n' "$body" >"$T/initdb-x/$name"
+  check "$COMPOSE" "$CONF" "$T/initdb-x" >/dev/null && fail "initdb bypass behind quoting #$n ($name) was not detected"
+done <<'BAD'
+91.sh|ls /docker-entrypoint-initdb.d/*.sql\npsql -c "ALTER SYSTEM SET jit = on"
+91.sql|SELECT $q$ -- $q$; ALTER SYSTEM SET jit = on;
+91.sql|SELECT E'\\' -- '; ALTER SYSTEM SET jit = on;
+BAD
+# I5：initdb 只许 .sql / .sh；postgres 服务不许改 entrypoint
+rm -rf "$T/initdb-gz"; cp -R "$INITDB" "$T/initdb-gz"
+printf 'x' >"$T/initdb-gz/90-bad.sql.gz"
+check "$COMPOSE" "$CONF" "$T/initdb-gz" >/dev/null && fail "a compressed file under initdb was not detected"
+sed 's/^    command:$/    entrypoint: ["docker-entrypoint.sh", "postgres", "-c", "work_mem=64MB"]\n    command:/' "$COMPOSE" >"$T/entrypoint.yml"
+cmp -s "$COMPOSE" "$T/entrypoint.yml" && fail "mutation premise: the command: line not found in the dev compose"
+check "$T/entrypoint.yml" "$CONF" >/dev/null && fail "an entrypoint: override on the postgres service was not detected"
+# \gexec 也算语句结尾：ALTER ROLE … \gexec 之后另一句里的 SET 不跟它连成「ALTER ROLE … SET」
+rm -rf "$T/initdb-gexec"; cp -R "$INITDB" "$T/initdb-gexec"
+printf '%s\n' "SELECT format('ALTER ROLE %I NOLOGIN', 'x') \\gexec" "UPDATE pg_temp.t SET x = 1;" >"$T/initdb-gexec/90-gexec.sql"
+out="$(check "$COMPOSE" "$CONF" "$T/initdb-gexec")" || fail "ALTER … \\gexec followed by an unrelated SET was taken as ALTER … SET: $out"
 sed 's|^      POSTGRES_USER: postgres$|      POSTGRES_USER: postgres\n      PGOPTIONS: "-c work_mem=64MB"|' "$COMPOSE" >"$T/pgoptions.yml"
 cmp -s "$COMPOSE" "$T/pgoptions.yml" && fail "mutation premise: POSTGRES_USER line not found in the dev compose"
 check "$T/pgoptions.yml" "$CONF" >/dev/null && fail "PGOPTIONS in the compose was not detected"

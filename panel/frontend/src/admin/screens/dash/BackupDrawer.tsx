@@ -11,6 +11,7 @@ const COLUMNS: TableColumn<BackupFile>[] = [
   { key: 'size', header: '大小', align: 'right', render: (f) => formatBytes(f.size) },
   { key: 'at', header: '时间', render: (f) => <span title={formatDateTime(f.created_at)}>{relativeTime(f.created_at)}</span> },
   { key: 'sum', header: '校验', render: (f) => (f.has_checksum ? <Tag tone="ok">有</Tag> : <Tag tone="danger">缺失</Tag>) },
+  { key: 'seal', header: '封条', render: (f) => (f.has_seal ? <Tag tone="ok">有</Tag> : <Tag tone="danger">缺失</Tag>) },
 ]
 
 export function BackupDrawer({ open, onClose, backup }: { open: boolean; onClose: () => void; backup: BackupStatus }) {
@@ -39,6 +40,8 @@ export function BackupDrawer({ open, onClose, backup }: { open: boolean; onClose
                     {formatDateTime(backup.latest.created_at)}
                     {backup.latest_age_hours !== undefined ? `（${backup.latest_age_hours} 小时前）` : ''} · {formatBytes(backup.latest.size)}
                   </>
+                ) : (backup.count ?? 0) > 0 ? (
+                  `没有能恢复的一份（${backup.count} 份都缺封条或校验）`
                 ) : (
                   '还没有'
                 )}
@@ -47,6 +50,8 @@ export function BackupDrawer({ open, onClose, backup }: { open: boolean; onClose
               <dd>{yesNo(backup.stale, '已过期（超过 48 小时没有新备份）', '正常')}</dd>
               <dt>缺校验文件</dt>
               <dd>{backup.missing_checksum === undefined ? '—' : backup.missing_checksum > 0 ? `${backup.missing_checksum} 份` : '无'}</dd>
+              <dt>缺封条</dt>
+              <dd>{backup.missing_seal === undefined ? '—' : backup.missing_seal > 0 ? `${backup.missing_seal} 份（恢复不了）` : '无'}</dd>
               <dt>解密私钥</dt>
               <dd>{yesNo(backup.identity_configured, '已配置', '未配置')}</dd>
               <dt>异地备份</dt>

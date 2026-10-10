@@ -232,9 +232,10 @@ workdir=""
 # 这份备份是本安装写出的（见 internal/domain/dbbackup 的 LocalSealSchema）。封不上就算备份失败：
 # 没有封条的备份恢复不了，不能让它看起来是好的
 # 封不上就把刚发布的归档与校验文件撤掉再退出：留在原地的话，后台概览与留存都会把它当成一份备份，可它恢复不了
-if ! run_trusted_executable "$sealer" seal-local "$archive" "$checksum" "$AEGIS_BACKUP_AGE_IDENTITY" >/dev/null; then
+# 封条前还核私钥推出的收件人就是 AEGIS_BACKUP_AGE_RECIPIENT：对不上的私钥封得上、却解不开这份备份
+if ! run_trusted_executable "$sealer" seal-local "$archive" "$checksum" "$AEGIS_BACKUP_AGE_IDENTITY" "$AEGIS_BACKUP_AGE_RECIPIENT" >/dev/null; then
   rm -f -- "$archive" "$checksum" "${archive}.seal"
-  die "sealing the local backup failed (age identity $AEGIS_BACKUP_AGE_IDENTITY readable, root-owned, 0600, one AGE-SECRET-KEY-1 line?); the unsealed archive was removed"
+  die "sealing the local backup failed (age identity $AEGIS_BACKUP_AGE_IDENTITY readable, root-owned, 0600, one valid AGE-SECRET-KEY-1 line matching AEGIS_BACKUP_AGE_RECIPIENT?); the unsealed archive was removed"
 fi
 
 if [ -n "$remote_hook" ]; then

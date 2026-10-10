@@ -18,8 +18,8 @@ fail() { printf 'install backup: %s\n' "$*" >&2; exit 1; }
 code="$(grep -v '^[[:space:]]*#' "$INST")"
 
 # --- ① 静态 -----------------------------------------------------------------------
-grep -Fq 'for f in backup-postgres.sh verify-backup.sh restore-postgres.sh psql.sh bootstrap.sh; do' "$INST" \
-  || fail 'install.sh does not install the backup/restore/psql/bootstrap scripts'
+grep -Fq 'for f in backup-postgres.sh verify-backup.sh restore-postgres.sh psql.sh bootstrap.sh pg-revive.sh; do' "$INST" \
+  || fail 'install.sh does not install the backup/restore/psql/bootstrap/pg-revive scripts'
 grep -Fq 'role_log="$(bash "$INSTALL_DIR/deploy/bootstrap.sh" 2>&1)"' "$INST" \
   || fail 'install.sh does not narrow the runtime role through bootstrap.sh'
 # 单元：deploy/systemd/ 下的每一个都在 UNITS 里，由同一个循环原样装上，不再 sed 改写

@@ -233,12 +233,14 @@ UNIT
 # 停掉整个单元，Debian 的单元又是 Restart=no，库就一直停着。所以资源段写 OOMPolicy=continue：被杀的多半是某个后端，
 # 交给 postmaster 自己做崩溃恢复（断开其他连接、重放 WAL、重新接客），单元不停（panel2 实测：撞 200M 杀掉一个后端，
 # 约 0.2 秒后重新接客，单元一直 active）。
-# 不写 Restart=（panel2 实测过两种）：这个 Type=forking 单元里 postmaster 被 kill -9 时 systemd 记为正常退出，
-# on-abnormal 拉不起它；on-failure 又会因为 ExecStop 在库已停时报错，把 postgres 用户有意 pg_ctlcluster stop 的库
-# 5 秒后拉回来（Debian 关掉自动重启正是为此）。postmaster 本身受 OOMScoreAdjust=-900 保护，真没了由巡检告警、人来起
+# postmaster 本身被杀（受 OOMScoreAdjust=-900 保护，少见）时由 ExecStopPost 的 pg-revive.sh 约 5 秒后拉起：它只在
+# postmaster.pid 还在、里面的 PID 已不在时动手，有意停库（pg_ctlcluster stop、systemctl stop）会删掉 pid 文件，不拉。
+# 不用 Restart=（panel2 实测过两种）：这个 Type=forking 单元里 postmaster 被 kill -9 时 systemd 记为正常退出，
+# on-abnormal 拉不起；on-failure 又会因为 ExecStop 在库已停时报错，把 postgres 用户有意 pg_ctlcluster stop 的库拉回来。
+# 「+」：以 root、不受沙箱限制跑（要读 postgres 的数据目录、发 systemd-run）；资源段一直写，不随加固开关去掉
 native_pg_dropin() {
   printf '%s\n' '# pandora（install.sh 生成）：资源约束一直在，隔离随 PANDORA_SYSTEMD_HARDENING' '[Service]' \
-    'MemoryMax=512M' 'MemorySwapMax=0' 'OOMPolicy=continue'
+    'MemoryMax=512M' 'MemorySwapMax=0' 'OOMPolicy=continue' 'ExecStopPost=+/opt/pandora/deploy/pg-revive.sh %i'
   [ "${NATIVE_HARDENING:-1}" != 1 ] || native_pg_hardening_dropin
 }
 

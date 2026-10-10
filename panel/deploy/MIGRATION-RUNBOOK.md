@@ -184,13 +184,17 @@ PANDORA_LOCAL_MIGRATION_APPROVED=yes GOOSE_BIN=/opt/pandora/bin/goose \
 
      ```bash
      cd /opt/pandora/deploy
-     set -a; . ./.env; set +a          # 读 POSTGRES_PORT、POSTGRES_USER、POSTGRES_SUPER_PASSWORD、AEGIS_BACKUP_AGE_IDENTITY
-     export PGHOST=127.0.0.1 PGPORT="$POSTGRES_PORT" PGUSER=postgres PGPASSWORD="$POSTGRES_SUPER_PASSWORD"
      A=/var/backups/pandora/aegis-postgres-<时间>.dump.age
-     (cd "$(dirname "$A")" && sha256sum --check "$(basename "$A").sha256")   # 归档没坏
-     createdb -O "$POSTGRES_USER" -T template0 -E UTF8 <新库名>
-     age --decrypt --identity "$AEGIS_BACKUP_AGE_IDENTITY" "$A" | pg_restore -d <新库名> --exit-on-error
-     unset PGPASSWORD
+     NEW=<新库名>
+     # 整段在子 shell 里跑：任何一步失败就停（sha256 核不过不会接着建库恢复），口令与变量也不留在当前 shell
+     ( set -euo pipefail
+       v() { sed -n "s/^$1=//p" .env | tail -1; }   # 只读要用的几项，不导出整份 .env
+       export PGHOST=127.0.0.1 PGPORT="$(v POSTGRES_PORT)" PGUSER=postgres
+       PGPASSWORD="$(v POSTGRES_SUPER_PASSWORD)"; export PGPASSWORD
+       (cd "$(dirname "$A")" && sha256sum --check "$(basename "$A").sha256")   # 归档没坏
+       createdb -O "$(v POSTGRES_USER)" -T template0 -E UTF8 "$NEW"
+       age --decrypt --identity "$(v AEGIS_BACKUP_AGE_IDENTITY)" "$A" | pg_restore -d "$NEW" --exit-on-error
+     )
      ```
 
      备份里有本机没有的角色时，`pg_restore` 会报错停下：先确认这份备份的来历，再决定建哪些角色（一律 `NOLOGIN`），不要照单全收。恢复到新库后按下面「升级前备份」第 2 步二选一切过去，再跑 `./bootstrap.sh`。

@@ -127,7 +127,13 @@ for sw in 1 0; do
       # 这个 Type=forking 的单元里 postmaster 被 kill -9 时 systemd 记的是正常退出，任何「异常才重启」都拉不起它；
       # on-failure 只会因为 ExecStop 在库已停时报错而把 postgres 用户有意停掉的库拉回来
       [ "$(grep -c '^OOMPolicy=' <<<"$full")" -eq 1 ] && grep -qx 'OOMPolicy=continue' <<<"$full" || fail "pg drop-in (hardening=$sw) lacks OOMPolicy=continue"
-      if grep -Eq '^(Restart|RestartSec|ExecStop)=' <<<"$full"; then fail "pg drop-in (hardening=$sw) changes Restart/ExecStop: $(grep -E '^(Restart|ExecStop)' <<<"$full")"; fi
+      # 等号两边可以有空格（systemd 也认）；RestartForceExitStatus 同样会让它自动重启
+      if grep -Eiq '^[[:space:]]*(Restart|RestartSec|RestartForceExitStatus|ExecStop)[[:space:]]*=' <<<"$full"; then
+        fail "pg drop-in (hardening=$sw) changes Restart/ExecStop: $(grep -Ei '^[[:space:]]*(Restart|ExecStop)' <<<"$full")"
+      fi
+      # postmaster 被杀后的拉起只走 pg-revive.sh（见 pg-revive_mock_test.sh），ExecStopPost 只许这一条
+      [ "$(grep -Eic '^[[:space:]]*ExecStopPost[[:space:]]*=' <<<"$full")" -eq 1 ] && grep -qx 'ExecStopPost=+/opt/pandora/deploy/pg-revive.sh %i' <<<"$full" \
+        || fail "pg drop-in (hardening=$sw) ExecStopPost: $(grep -i execstoppost <<<"$full")"
     fi
     while IFS= read -r line; do
       if [ "$sw" = 1 ]; then grep -qxF "$line" <<<"$full" || fail "$kind drop-in lacks $line"

@@ -65,6 +65,7 @@ jobs:
             install-pgcluster_mock_test.sh
             install-backup_mock_test.sh
             install-hardening_mock_test.sh
+            pg-revive_mock_test.sh
             dev-compose_static_test.sh
             deploy-single-layout_static_test.sh
             webdav-backup-hardening_mock_test.sh
