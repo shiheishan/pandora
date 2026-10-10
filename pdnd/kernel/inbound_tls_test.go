@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"testing"
 	"time"
+	"weak"
 )
 
 func testInboundTLSBaseConfig(t *testing.T, cn string) *tls.Config {
@@ -93,11 +94,12 @@ func handshakeClientPeer(t *testing.T, base *tls.Config, wantCN string, wantALPN
 		c.Close()
 		done <- clientResult{peerCN: peerCN, negotiated: st.NegotiatedProtocol}
 	}()
-	tlsConn, err := serverTLSHandshake(context.Background(), server, base, 5*time.Second)
-	if err != nil {
+	if _, err := serverTLSHandshake(context.Background(), server, base, 5*time.Second); err != nil {
 		t.Fatalf("服务端握手失败: %v", err)
 	}
-	_ = tlsConn.Close()
+	// net.Pipe 不带缓冲：tls.Conn.Close 要写 close_notify，客户端不读就卡到写截止
+	// （原写法每次握手白等 5 秒）。直接关底层连接，客户端的 Close 随之返回。
+	_ = server.Close()
 	cr := <-done
 	if cr.err != nil {
 		t.Fatalf("客户端握手: %v", cr.err)
@@ -137,31 +139,37 @@ func TestServerTLSHandshakeALPNFallbackOnH3Only(t *testing.T) {
 		c.Close()
 		done <- negotiated
 	}()
-	tlsConn, err := serverTLSHandshake(context.Background(), server, base, 5*time.Second)
-	if err != nil {
+	if _, err := serverTLSHandshake(context.Background(), server, base, 5*time.Second); err != nil {
 		t.Fatalf("握手失败: %v", err)
 	}
-	_ = tlsConn.Close()
+	_ = server.Close()
 	if negotiated := <-done; negotiated != "" {
 		t.Fatalf("客户端只宣告 h3 时 NegotiatedProtocol = %q，期望空", negotiated)
 	}
 }
 
+// base 被回收后缓存条目随之删除（runtime.AddCleanup）。只盯本测试的那个键：
+// 按总条目数判会被别的测试留下、此时恰好被回收的条目干扰。cleanup 在后台
+// goroutine 里跑，每轮 GC 后让出一会儿。
 func TestInboundWebALPNCacheDroppedAfterBaseGC(t *testing.T) {
-	before := inboundWebALPNCacheEntryCount()
+	var key weak.Pointer[tls.Config]
 	func() {
 		base := testInboundTLSBaseConfig(t, "gc-drop")
+		key = weak.Make(base)
 		_ = inboundWebALPNConfig(base)
-		if inboundWebALPNCacheEntryCount() != before+1 {
-			t.Fatalf("派生后缓存条目 = %d，期望 %d", inboundWebALPNCacheEntryCount(), before+1)
+		if _, ok := inboundWebALPNCache.Load(key); !ok {
+			t.Fatal("派生后缓存里没有这个 base")
 		}
 	}()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
 		runtime.GC()
-		if inboundWebALPNCacheEntryCount() == before {
+		if _, ok := inboundWebALPNCache.Load(key); !ok {
 			return
 		}
+		if time.Now().After(deadline) {
+			t.Fatal("base 回收 5 秒后缓存条目仍在")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	t.Skipf("2 秒内 GC 未回收 base 对应缓存（当前 %d，期望 %d）", inboundWebALPNCacheEntryCount(), before)
 }

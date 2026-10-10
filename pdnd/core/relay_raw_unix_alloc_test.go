@@ -70,6 +70,7 @@ func TestCopyRawAllocsPerRun(t *testing.T) {
 		}
 	})
 
+	t.Logf("copyRaw 搬 %d 块共分配 %.0f 次", blocks, allocs)
 	const maxAllocs = blocks / 10
 	if allocs > float64(maxAllocs) {
 		t.Fatalf("copyRaw 分配次数 = %.0f，阈值 < %d（改前约 %d）", allocs, maxAllocs, 4*blocks)

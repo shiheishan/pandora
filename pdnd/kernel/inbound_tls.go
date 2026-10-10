@@ -59,17 +59,9 @@ func withHandshakeDeadline(conn net.Conn, timeout time.Duration, handshake func(
 // h2 / http/1.1 服务端也不选，这本身就是「不是网站」的特征。
 var inboundWebALPN = []string{"h2", "http/1.1"}
 
+// inboundWebALPNCache 是 base 配置到其 Web ALPN 派生配置的缓存：键是 base 的
+// 弱指针，base 回收时由 runtime.AddCleanup 删条目（入站重建换证书会换新的 base）。
 var inboundWebALPNCache sync.Map // weak.Pointer[tls.Config] → *tls.Config
-
-// inboundWebALPNCacheEntryCount 仅供测试统计缓存条目数。
-func inboundWebALPNCacheEntryCount() int {
-	n := 0
-	inboundWebALPNCache.Range(func(_, _ any) bool {
-		n++
-		return true
-	})
-	return n
-}
 
 // inboundWebALPNConfig 按基础 tls.Config 指针缓存 withInboundWebALPN 的派生结果。
 // 同一入站加载得到的 base 在进程内不变；交给 serverTLSHandshake 之后不得再改 base 字段。
