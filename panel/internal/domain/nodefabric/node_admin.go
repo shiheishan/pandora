@@ -236,10 +236,13 @@ func validateNewNodeProtocol(nodeType, kernel, host string, port int, raw json.R
 	if len(fields) > 0 {
 		return 0, httpx.Invalid(fields)
 	}
-	// Legacy v0 remains readable and cloneable, but a new protocol write must
-	// use an opened, versioned schema.
+	// 新写入必须落在已开放的稳定 schema 上。校验器对未填协议类型的草稿回 version 0、不报字段，
+	// 新建与改协议到这里就是「协议类型为空」；不在稳定集合的类型校验器已先拒，这里兜底同样拒。
 	if version != StableProtocolSchemaVersion || !IsStableProtocolType(nodeType) {
-		return 0, httpx.Invalid(map[string]string{"node_type": "该协议仅兼容旧数据，尚未开放新写入"})
+		if CanonicalNodeType(nodeType) == "" {
+			return 0, httpx.Invalid(map[string]string{"node_type": "必填：请选择协议类型"})
+		}
+		return 0, httpx.Invalid(map[string]string{"node_type": "不支持的协议类型"})
 	}
 	return version, nil
 }
@@ -606,4 +609,28 @@ func intValue(v *int) int {
 		return 0
 	}
 	return *v
+}
+
+// RevokeNodeIdentity 吊销节点身份（NODE-014）。
+// 吊销后该节点的 Agent 下一次请求就会被拒，必须重新引导。
+func (s *Service) RevokeNodeIdentity(ctx context.Context, tenantID, actor, id string) error {
+	return s.pool.InTx(ctx, db.Scope{TenantID: tenantID, ActorID: actor},
+		func(tx pgx.Tx) error {
+			ct, err := tx.Exec(ctx, `
+				UPDATE node_identities
+				   SET status='revoked', revoked_at=now(), revoked_reason='管理员手工吊销'
+				 WHERE tenant_id=$1 AND node_id=$2 AND status='active'`, tenantID, id)
+			if err != nil {
+				return err
+			}
+			if ct.RowsAffected() == 0 {
+				return httpx.New(httpx.CodeNotFound, "该节点没有有效身份")
+			}
+			return audit.Write(ctx, tx, tenantID, audit.Entry{
+				ActorKind: "admin", ActorID: &actor,
+				Action: "node.identity.revoke", ResourceType: "node", ResourceID: &id,
+				APIDomain: "admin", Outcome: "success",
+				RequestID: httpx.RequestIDFrom(ctx),
+			})
+		})
 }

@@ -6,7 +6,7 @@ import (
 	"github.com/aegispanel/aegis/internal/middleware"
 )
 
-// nodeBatchStatusIdempotencyScope 由批量改节点状态的两条路由共用。
+// nodeBatchStatusIdempotencyScope 是批量改节点状态（POST /nodes/status:batch）的幂等 scope。
 const nodeBatchStatusIdempotencyScope = "node_status_batch"
 
 func registerNodePoolRoutes(r chi.Router, d Deps, h *handlers) {
@@ -111,20 +111,9 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequirePermission("node.lifecycle", d.Log),
 		middleware.RequireRecentReauth(d.Log),
 	).Delete("/nodes/{id}", h.nodeDelete)
-	r.With(
-		middleware.RequirePermission("node.lifecycle", d.Log),
-		middleware.Idempotency(d.Pool, "node_legacy_status", d.Log),
-	).
-		Post("/nodes/{id}/status", h.nodeSetStatus)
 
 	// --- 节点批量操作 ---
-	// batch/status 是 status:batch 的别名，同一个处理器、同一个幂等 scope：
-	// scope 不同的话，同一个 Idempotency-Key 换条路径就会再执行一次。
 	// retired 就是这个模型里的「删除」：节点有历史，不做物理删除。
-	r.With(
-		middleware.RequirePermission("node.lifecycle", d.Log),
-		middleware.Idempotency(d.Pool, nodeBatchStatusIdempotencyScope, d.Log),
-	).Post("/nodes/batch/status", h.batchAdminNodeStatus)
 	// 没有批量移动：单节点移动要求节点停用且不带任何 agent 资产
 	// （身份、指标、任务、流量上报、有效令牌…），也就是只有从没用过的
 	// 草稿节点能移。批量化一个「几乎总是被拒绝」的操作没有意义，
@@ -135,7 +124,7 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		middleware.RequireRecentReauth(d.Log),
 		middleware.Idempotency(d.Pool, "node_retire", d.Log),
 	).Post("/nodes/{id}/retire", h.nodeRetire)
-	// 一步上线（R108）：与批量启用、旧状态接口同门槛，不要求重认证；重放不重做
+	// 一步上线（R108）：与批量启用同门槛，不要求重认证；重放不重做
 	r.With(
 		middleware.RequirePermission("node.lifecycle", d.Log),
 		middleware.Idempotency(d.Pool, "node_activate", d.Log),
@@ -153,8 +142,6 @@ func registerNodeRoutes(r chi.Router, d Deps, h *handlers) {
 		Get("/nodes/{id}/metrics", h.nodeMetrics)
 	r.With(middleware.RequirePermission("node.read", d.Log)).
 		Get("/nodes/{id}/identity", h.nodeIdentity)
-	r.With(middleware.RequirePermission("node.write", d.Log)).
-		Post("/nodes/{id}/protocol", h.nodeSetProtocol)
 	r.With(middleware.RequirePermission("node.read", d.Log)).
 		Get("/nodes/{id}/routing", h.nodeGetRouting)
 	r.With(middleware.RequirePermission("node.config.publish", d.Log)).

@@ -15,8 +15,8 @@ import (
 //
 //   节点私有 → 所在各路由组（按 route_groups.sort_order）→ 全局
 //
-//   规则：按层顺序直接拼接 —— 具体范围的规则先匹配，能截住宽泛范围的同类流量；
-//         对内置出站的引用规范成小写 direct / block（canonicalRouteTag）。
+//   规则：按层顺序直接拼接 —— 具体范围的规则先匹配，能截住宽泛范围的同类流量。
+//         出站名按下发时的存储原样带走；内置名的小写规范只发生在保存入口。
 //   出站：按层逆序铺开、同 tag 后来者覆盖 —— 宽泛范围先占位，具体范围就地替换，
 //         被覆盖的出站保留原位置，下发顺序不因覆盖而跳动。即 全局 → 组（后排的组
 //         先铺、先排的组覆盖它）→ 节点。
@@ -65,8 +65,8 @@ type mergedRouting struct {
 }
 
 // canonicalRouteTag 把规则对内置出站的引用规范成小写的 direct / block（去空白、不分大小写），
-// 自定义出站原样返回。保存（replaceScopeRoutingTx）与下发（mergeRoutingLayers）两处都用它：
-// pdnd 只认小写的内置名，库里已有的 "Direct" 这类旧行也在下发时规范，不用写迁移。
+// 自定义出站原样返回。只在保存（replaceScopeRoutingTx）时用：pdnd 只认小写的内置名，
+// 下发按存储原样带走。
 func canonicalRouteTag(tag string) string {
 	if t := strings.ToLower(strings.TrimSpace(tag)); t == "direct" || t == "block" {
 		return t
@@ -89,7 +89,6 @@ func mergeRoutingLayers(layers []RoutingLayer) mergedRouting {
 	}
 	for i, l := range layers {
 		for _, r := range l.Routes {
-			r.OutboundTag = canonicalRouteTag(r.OutboundTag)
 			m.routes = append(m.routes, layeredRoute{r, i})
 		}
 	}

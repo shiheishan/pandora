@@ -23,8 +23,8 @@ import (
 //
 // billed_bytes（00133）是乘过节点倍率的计费字节：$3 / $4 是 Go 记账算出的 uid 与计费量，
 // 与传给扣量（chargeReportEntries）的是同一组数（放行名单内、合规、按倍率折算），重复上报
-// 传空。小时汇总因此留下对账要的口径，原始留档过了 31 天被清理也不丢。桶里原来是 NULL
-// （跨过 00133 之前的那个桶）时加了仍是 NULL，整桶算未知。
+// 传空。小时汇总因此留下对账要的口径，原始留档过了 31 天被清理也不丢。00164 起这列非空、
+// 没有默认值：两条 INSERT 都显式写它（没有计费项时写 0），ON CONFLICT 两边相加。
 const trafficRollupSQL = `
 WITH b AS MATERIALIZED (
   SELECT uid, billed FROM unnest($3::bigint[], $4::bigint[]) AS b(uid, billed)

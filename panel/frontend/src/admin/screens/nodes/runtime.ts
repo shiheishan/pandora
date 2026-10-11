@@ -16,7 +16,6 @@ export type RuntimeFields = Pick<
   | 'runtime_reason'
   | 'runtime_reason_node'
   | 'last_apply_failure'
-  | 'port_conflict_node'
 >
 
 export interface RunState {
@@ -74,12 +73,6 @@ export function runState(n: RuntimeFields): RunState | null {
 
 export const sameRunState = (a: RunState | null, b: RunState | null): boolean =>
   a === b || (!!a && !!b && a.label === b.label && a.tone === b.tone && a.detail === b.detail)
-
-/** 门禁上线前留下的同机端口冲突（迁移没建唯一索引时才会有）：提示管理员改端口或退役其一 */
-export function portConflictText(n: Pick<NodeRow, 'port_conflict_node' | 'server_port'>): string {
-  if (!n.port_conflict_node) return ''
-  return `端口 ${n.server_port ?? ''} 与同一服务器上的节点「${n.port_conflict_node}」冲突，改端口或退役其一`
-}
 
 /** 生效回执的失败阶段（node_config_applications.phase）翻成中文 */
 export function applyPhaseLabel(phase: string): string {

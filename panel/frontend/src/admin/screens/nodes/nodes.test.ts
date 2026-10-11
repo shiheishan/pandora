@@ -98,11 +98,11 @@ const row = (over: Partial<Record<string, unknown>> = {}): NodeDetail =>
   })
 
 describe('schemas', () => {
-  it('accepts the real schema dump with null arrays and legacy entries', () => {
-    expect(SCHEMAS).toHaveLength(15)
+  it('accepts the real schema dump of stable protocols only', () => {
+    expect(SCHEMAS).toHaveLength(13)
     expect(SCHEMAS.filter(isStable)).toHaveLength(13)
+    expect(SCHEMAS.some((s) => s.status === 'legacy-read-compatible' || s.node_type === 'v2ray' || s.node_type === 'hysteria')).toBe(false)
     expect(schemaOf('socks').required).toEqual([])
-    expect(schemaOf('v2ray').allowed_properties).toEqual([])
     expect(row().granted_plans).toEqual([])
   })
 

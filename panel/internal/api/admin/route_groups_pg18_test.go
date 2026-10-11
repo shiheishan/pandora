@@ -224,7 +224,7 @@ func TestRouteGroupsPG18(t *testing.T) {
 	do(http.MethodPut, hkPath+"/routing", `{"row_version":3,"outbounds":[{"tag":"unlock","type":"trojan","settings":{}},{"tag":"pub","type":"http","settings":{}}],
 		"routes":[{"matcher":{"port":[1]},"outbound_tag":"Unlock","enabled":true}]}`, http.StatusUnprocessableEntity, nil)
 	do(http.MethodPut, "/v1/nodes/"+nodeEtc+"/routing", `{"row_version":`+strconv.FormatInt(nodeVersion(nodeEtc), 10)+`,`+ruleTo("Direct"), http.StatusOK, nil)
-	// 内置出站引用在保存与下发两处都规范成小写：读回与有效发布物里都是 direct
+	// 内置出站引用在保存时规范成小写：读回已是 direct，下发按存储原样带走，有效发布物里也是 direct
 	var etcRouting nodefabric.NodeRouting
 	do(http.MethodGet, "/v1/nodes/"+nodeEtc+"/routing", "", http.StatusOK, &etcRouting)
 	if len(etcRouting.Routes) != 1 || etcRouting.Routes[0].OutboundTag != "direct" {
@@ -233,8 +233,8 @@ func TestRouteGroupsPG18(t *testing.T) {
 	if _, routes, _ := effective(nodeEtc); strings.Join(routes, ",") != "direct,pub" {
 		t.Fatalf("effective builtin ref = %v, want direct,pub", routes)
 	}
-	// 库里已有的大小写旧行（不经保存入口）在下发时同样规范，不用写迁移
-	must(`INSERT INTO node_routes(tenant_id,node_id,priority,matcher,outbound_tag,enabled) VALUES($1,$2,5,'{"port":[25]}',' BLOCK ',true)`, tenant, nodeEtc)
+	// 下发不再规范出站名。这条规则按保存入口会落成的规范名插入，有效发布物仍是 block,direct,pub。
+	must(`INSERT INTO node_routes(tenant_id,node_id,priority,matcher,outbound_tag,enabled) VALUES($1,$2,5,'{"port":[25]}','block',true)`, tenant, nodeEtc)
 	must(`UPDATE nodes SET config_source_generation=config_source_generation+1 WHERE id=$1`, nodeEtc)
 	if _, routes, _ := effective(nodeEtc); strings.Join(routes, ",") != "block,direct,pub" {
 		t.Fatalf("legacy builtin row delivered as %v, want block,direct,pub", routes)

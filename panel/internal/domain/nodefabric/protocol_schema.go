@@ -37,10 +37,6 @@ var sensitiveProtocolKey = map[string]struct{}{
 	"mask_password": {},
 }
 
-var legacyProtocolTypes = []string{
-	"v2ray", "hysteria",
-}
-
 // CanonicalNodeType is the only representation written to storage and audit logs.
 // Renderers intentionally switch on these stable lowercase identifiers.
 func CanonicalNodeType(nodeType string) string {
@@ -246,13 +242,6 @@ func ProtocolSchemas() []ProtocolSchema {
 			}),
 		},
 	}
-	for _, nodeType := range legacyProtocolTypes {
-		out = append(out, ProtocolSchema{
-			NodeType: nodeType,
-			Version:  0,
-			Status:   "legacy-read-compatible",
-		})
-	}
 	return out
 }
 
@@ -266,8 +255,8 @@ func cloneStringMap(in map[string]string) map[string]string {
 
 // RedactProtocolConfig removes credential-like keys before protocol JSON is
 // returned by an admin read API. Stable schemas intentionally contain no
-// stored secret today, while legacy v0 objects can have arbitrary historical
-// fields and must therefore be treated as sensitive by name at every depth.
+// stored secret today; stored objects can still carry arbitrary historical
+// fields, so every depth is scanned by key name.
 func RedactProtocolConfig(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return json.RawMessage(`{}`)

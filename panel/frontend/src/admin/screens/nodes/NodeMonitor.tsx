@@ -3,7 +3,7 @@ import { QueryView, Tag } from '../../../ui'
 import { bandwidthBuckets, heartbeatLabel, ruleSummary } from './logic'
 import css from './nodes.module.css'
 import { useNodeMetrics, useNodeRouting } from './queries'
-import { applyPhaseLabel, portConflictText, runState, runtimeReasonText } from './runtime'
+import { applyPhaseLabel, runState, runtimeReasonText } from './runtime'
 import type { NodeRow } from './schemas'
 
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${Math.round(v)}%`)
@@ -18,7 +18,6 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
   const peak = Math.max(1, ...buckets.map((b) => b.mbps ?? 0))
   const run = runState(node)
   const reason = runtimeReasonText(node.runtime_reason, node.runtime_reason_node)
-  const conflict = portConflictText(node)
 
   return (
     <div className={css.stackLg}>
@@ -82,14 +81,6 @@ export function NodeMonitor({ node }: { node: NodeRow }) {
             {reason && run?.detail !== reason && <span className={css.faint}> {reason}</span>}
             {node.runtime_state_at && <span className={css.faint}> · {formatDateTime(node.runtime_state_at)} 起</span>}
           </dd>
-          {conflict && (
-            <>
-              <dt>端口冲突</dt>
-              <dd>
-                <Tag tone="danger">{conflict}</Tag>
-              </dd>
-            </>
-          )}
           {node.desired_effective_generation !== null ? (
             <>
               <dt>生效版本</dt>

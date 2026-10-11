@@ -49,8 +49,8 @@ func adminNodeListGenericPlanPG18(t *testing.T, admin *pgx.Conn, appDSN string) 
 		       (SELECT id FROM servers WHERE tenant_id = $1 ORDER BY name OFFSET g % 25 LIMIT 1),
 		       'active'
 		  FROM generate_series(1, $3::int) g`, tenant, pool, nodes)
-	must(`INSERT INTO node_traffic_hourly (tenant_id, hour_start, node_id, report_count, raw_bytes)
-		SELECT $1, date_trunc('hour', now()) - h * interval '1 hour', n.id, 60, 1000
+	must(`INSERT INTO node_traffic_hourly (tenant_id, hour_start, node_id, report_count, raw_bytes, billed_bytes)
+		SELECT $1, date_trunc('hour', now()) - h * interval '1 hour', n.id, 60, 1000, 0
 		  FROM nodes n CROSS JOIN generate_series(0, 71) h
 		 WHERE n.tenant_id = $1`, tenant)
 	// 在线 IP 只是被聚合的行，背后的订阅与本测试无关：关掉外键触发器直接插

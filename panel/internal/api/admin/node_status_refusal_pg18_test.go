@@ -1,11 +1,6 @@
 package admin
 
 import (
-	"encoding/json"
-	"io"
-	"log/slog"
-	"net/http"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -33,30 +28,11 @@ func TestNodeStatusRefusalPG18(t *testing.T) {
 	must(`INSERT INTO servers(id,tenant_id,name,status) VALUES($2,$1,'refusal-server','draft')`, tenant, server)
 	must(`INSERT INTO nodes(id,tenant_id,name,status,node_type,server_host,server_port,server_id,protocol_schema_version)
 		  VALUES($2,$1,'refusal-node','attesting','vless','refusal.invalid',443,$3,1)`, tenant, node, server)
+	if app == nil {
+		t.Fatal("app pool")
+	}
 
-	// 1) 后台改状态撞状态机（attesting 不能直接进 active）：触发器的中文原样给页面
-	d := newDeliveryHarness(t, ctx, app, tenant, actor, nil)
-	h := &handlers{d: Deps{Pool: app, Node: d.nodes, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
-	d.router.Post("/v1/nodes/{id}/status", h.nodeSetStatus)
-	var version int64
-	if err := admin.QueryRow(ctx, `SELECT row_version FROM nodes WHERE id=$1`, node).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	w := d.do(http.MethodPost, "/v1/nodes/"+node+"/status",
-		`{"status":"active","row_version":`+strconv.FormatInt(version, 10)+`}`)
-	var body struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if w.Code != http.StatusConflict || !strings.Contains(body.Error.Message, "非法状态跳转：attesting -> active") {
-		t.Fatalf("illegal transition status=%d body=%s", w.Code, w.Body.String())
-	}
-	t.Log("marker=node_refusal_pg18_trigger_passthrough_ok")
-
-	// 2) nodes 表的 CHECK：这三处 UPDATE 碰不到它们（见 NodeStatusRefusal 的事实核对），
+	// nodes 表的 CHECK：改状态的 UPDATE 碰不到它们（见 NodeStatusRefusal 的事实核对），
 	//    这里用直接 UPDATE 造出真实的数据库错误，证明真实约束名都有中文、原句不外露
 	var names []string
 	rows, err := admin.Query(ctx, `SELECT conname FROM pg_constraint

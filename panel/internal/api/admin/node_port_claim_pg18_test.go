@@ -59,6 +59,10 @@ func runNodeConfigPG18PortClaimBatch(t *testing.T, ctx context.Context, admin *p
 		WHERE i.indexrelid = 'public.nodes_listen_claim_unique'::regclass`).Scan(&unique); err != nil || !unique {
 		t.Fatalf("nodes_listen_claim_unique missing or not unique: %v %v", unique, err)
 	}
+	var lookup bool
+	if err := admin.QueryRow(ctx, `SELECT to_regclass('public.nodes_listen_claim_lookup') IS NOT NULL`).Scan(&lookup); err != nil || lookup {
+		t.Fatalf("nodes_listen_claim_lookup should be absent on a fresh install: present=%v err=%v", lookup, err)
+	}
 
 	create := func(name, nodeType string, port int, config string) (*nodefabric.AdminNode, error) {
 		return service.CreateAdminNode(ctx, fx.tenant, nodefabric.CreateAdminNodeInput{
@@ -240,8 +244,8 @@ func runNodeConfigPG18PortClaimBatch(t *testing.T, ctx context.Context, admin *p
 		t.Fatalf("failed release: state=%q failure=%+v degraded=%v desired=%v",
 			f.EffectiveState, f.LastApplyFailure, f.DeliveryDegraded, f.DesiredEffectiveGeneration)
 	}
-	if m := byID[mover.ID]; m.EffectiveState != nodefabric.EffectiveNone || m.DeliveryDegraded || m.PortConflictNode != nil {
-		t.Fatalf("plain draft node: state=%q degraded=%v conflict=%v", m.EffectiveState, m.DeliveryDegraded, m.PortConflictNode)
+	if m := byID[mover.ID]; m.EffectiveState != nodefabric.EffectiveNone || m.DeliveryDegraded {
+		t.Fatalf("plain draft node: state=%q degraded=%v", m.EffectiveState, m.DeliveryDegraded)
 	}
 }
 

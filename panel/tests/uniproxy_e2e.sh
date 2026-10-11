@@ -372,9 +372,9 @@ assert_nonempty "$NODE_ID" "stable fixture Node created"
 assert_nonempty "$SERVER_ID" "fixture Server created"
 assert_nonempty "$INITIAL_POOL_ID" "fixture pool created"
 
-# Exercise the compatibility protocol endpoint with the current closed schema.
-# tls=true, numeric tls and flow are intentionally not success samples.
-expect_http 200 POST "$ADM/v1/nodes/$NODE_ID/protocol" -H "$AH" -H 'Content-Type: application/json' \
+# 协议更新走 PATCH 节点（原 POST /protocol 兼容入口已删）。
+# tls=true、数字 tls 和 flow 故意不作为成功样本。
+expect_http 200 PATCH "$ADM/v1/nodes/$NODE_ID" -H "$AH" -H 'Content-Type: application/json' \
   -d '{"row_version":1,"node_type":"vless","server_host":"node.example.com","server_port":443,
        "kernel":"auto","traffic_rate":1.0,"display_name":"Hong Kong 01",
        "protocol_config":{"network":"ws","tls":false}}'
@@ -428,7 +428,7 @@ expect_http 304 GET "$UNI/config?$Q" -H "$NAH" -H "If-None-Match: $ETAG"
 [ -z "$HTTP_BODY" ] || die "304 response unexpectedly contained a body"
 ok "matching ETag returned an empty 304 response"
 
-expect_http 200 POST "$ADM/v1/nodes/$NODE_ID/protocol" -H "$AH" -H 'Content-Type: application/json' \
+expect_http 200 PATCH "$ADM/v1/nodes/$NODE_ID" -H "$AH" -H 'Content-Type: application/json' \
   -d "{\"row_version\":$NODE_ROW_VERSION,\"node_type\":\"vless\",\"server_host\":\"node.example.com\",\"server_port\":8443,
        \"kernel\":\"auto\",\"traffic_rate\":1.5,\"display_name\":\"Hong Kong 01\",
        \"protocol_config\":{\"network\":\"ws\",\"tls\":false}}"

@@ -116,15 +116,15 @@ func (s *Service) PurgeTrafficReports(ctx context.Context, tenantID string) (int
 	return total, nil
 }
 
-// trafficDailyRollupSQL 把一个 UTC 自然日的节点 × uid 小时汇总并成一行一天。这一天有任一小时
-// 的 billed_bytes 未知（00133 之前的桶），整天的 billed_bytes 记 NULL。一天只写一次：
+// trafficDailyRollupSQL 把一个 UTC 自然日的节点 × uid 小时汇总并成一行一天。
+// billed_bytes 直接相加（00164 起这列非空）。一天只写一次：
 // 并发的两轮或重跑都落在 DO NOTHING 上。
 const trafficDailyRollupSQL = `
 INSERT INTO node_user_traffic_daily AS d
   (tenant_id, day, node_id, node_uid, upload_bytes, download_bytes, billed_bytes, entry_count, last_report_at)
 SELECT h.tenant_id, $2::date, h.node_id, h.node_uid,
        sum(h.upload_bytes), sum(h.download_bytes),
-       CASE WHEN bool_and(h.billed_bytes IS NOT NULL) THEN sum(h.billed_bytes) END,
+       sum(h.billed_bytes),
        sum(h.entry_count), max(h.last_report_at)
   FROM node_user_traffic_hourly h
  WHERE h.tenant_id = $1

@@ -67,7 +67,6 @@ export const nodeRowSchema = z.object({
   runtime_reason: z.string().nullish().transform((v) => v ?? null),
   runtime_state_at: iso.nullish().transform((v) => v ?? null),
   runtime_reason_node: z.string().nullish().transform((v) => v ?? null),
-  port_conflict_node: z.string().nullish().transform((v) => v ?? null),
   delivery_degraded: z.boolean().catch(false),
 })
 export const nodesResponse = z.object({ nodes: list(nodeRowSchema), total: z.number() })
@@ -118,8 +117,8 @@ export const adminNodeSchema = z.object({
 export type AdminNode = z.output<typeof adminNodeSchema>
 
 // ---------------------------------------------------------------------------
-// 协议 schema（GET v1/node-protocol-schemas）。除 13 个 stable 外还有
-// status=legacy-read-compatible 的 v2ray / hysteria（version 0、数组为 null），只读不可新建
+// 协议 schema（GET v1/node-protocol-schemas）。13 个 stable，表单只渲染这些。
+// 未配置的草稿 protocol_schema_version 仍是 0，那不是一种协议类型。
 // ---------------------------------------------------------------------------
 export const protocolSchemaSchema = z.object({
   node_type: z.string(),

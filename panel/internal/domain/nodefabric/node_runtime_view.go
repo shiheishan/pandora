@@ -49,9 +49,6 @@ type NodeRuntimeView struct {
 	RuntimeStateAt *time.Time `json:"runtime_state_at"`
 	// RuntimeReasonNode 是端口冲突原因里那个占用者（同租户的节点）的名字，前端拼「被节点 X 占用」
 	RuntimeReasonNode *string `json:"runtime_reason_node"`
-	// PortConflictNode 是同一服务器上与本节点占同一个 (端口, L4) 的另一个未退役节点：门禁上线前
-	// 留下的存量冲突（迁移 00122 有冲突时不建唯一索引），后台据此提示管理员处理
-	PortConflictNode *string `json:"port_conflict_node"`
 	// DeliveryDegraded 与订阅降级同一口径（RuntimeFailingSQL）：为 true 时只有套餐里没有
 	// 别的可用节点才会下发它
 	DeliveryDegraded bool `json:"delivery_degraded"`
@@ -73,12 +70,11 @@ var nodeRuntimeViewColumns = `n.desired_effective_generation, n.applied_effectiv
 				         IS NOT DISTINCT FROM (n.applied_effective_release_id, n.applied_effective_generation),
 				       lr.phase, lr.message, lr.occurred_at, lr.generation,
 				       n.runtime_status, n.runtime_reason, n.runtime_state_at,
-				       ro.name, pc.name,
+				       ro.name,
 				       ` + RuntimeFailingSQL("n")
 
-// nodeRuntimeViewJoins 接在节点列表 FROM 的末尾：最近一条生效回执、端口冲突原因里的占用者、
-// 存量的同机端口冲突。都按本页节点逐行查索引（回执 (node_id, occurred_at DESC)，
-// 端口 00122 的 (tenant_id, server_id, server_port, listen_l4)），不扫全表。
+// nodeRuntimeViewJoins 接在节点列表 FROM 的末尾：最近一条生效回执、端口冲突原因里的占用者。
+// 都按本页节点逐行查索引（回执 (node_id, occurred_at DESC)），不扫全表。
 const nodeRuntimeViewJoins = `LEFT JOIN LATERAL (
 				        SELECT a.phase, a.detail ->> 'message' AS message, a.occurred_at,
 				               a.effective_generation AS generation
@@ -89,39 +85,31 @@ const nodeRuntimeViewJoins = `LEFT JOIN LATERAL (
 				        SELECT o.name FROM nodes o
 				         WHERE o.tenant_id = n.tenant_id
 				           AND o.id = CASE WHEN n.runtime_reason ~ ` + portInUseOwnerUUID + `
-				                           THEN split_part(n.runtime_reason, ':', 3)::uuid END) ro ON true
-				  LEFT JOIN LATERAL (
-				        SELECT c.name FROM nodes c
-				         WHERE c.tenant_id = n.tenant_id AND c.server_id = n.server_id
-				           AND c.server_port = n.server_port AND c.listen_l4 = n.listen_l4
-				           AND c.id <> n.id
-				           AND c.status NOT IN ('retired','destroyed') AND c.serving_status <> 'retired'
-				           AND n.status NOT IN ('retired','destroyed') AND n.serving_status <> 'retired'
-				         ORDER BY c.created_at, c.id LIMIT 1) pc ON true`
+				                           THEN split_part(n.runtime_reason, ':', 3)::uuid END) ro ON true`
 
 // nodeRuntimeViewScan 接住 nodeRuntimeViewColumns 的各列。
 type nodeRuntimeViewScan struct {
-	desired, applied   *int64
-	effApplied         bool
-	phase, message     *string
-	at                 *time.Time
-	generation         *int64
-	status, reason     *string
-	stateAt            *time.Time
-	reasonNode, holder *string
-	failing            bool
+	desired, applied *int64
+	effApplied       bool
+	phase, message   *string
+	at               *time.Time
+	generation       *int64
+	status, reason   *string
+	stateAt          *time.Time
+	reasonNode       *string
+	failing          bool
 }
 
 func (r *nodeRuntimeViewScan) dest() []any {
 	return []any{&r.desired, &r.applied, &r.effApplied, &r.phase, &r.message, &r.at, &r.generation,
-		&r.status, &r.reason, &r.stateAt, &r.reasonNode, &r.holder, &r.failing}
+		&r.status, &r.reason, &r.stateAt, &r.reasonNode, &r.failing}
 }
 
 func (r *nodeRuntimeViewScan) view() NodeRuntimeView {
 	v := NodeRuntimeView{
 		DesiredEffectiveGeneration: r.desired, AppliedEffectiveGeneration: r.applied,
 		RuntimeStatus: r.status, RuntimeReason: r.reason, RuntimeStateAt: r.stateAt,
-		RuntimeReasonNode: r.reasonNode, PortConflictNode: r.holder, DeliveryDegraded: r.failing,
+		RuntimeReasonNode: r.reasonNode, DeliveryDegraded: r.failing,
 	}
 	failed := r.phase != nil && applyFailurePhases[*r.phase]
 	if failed && r.at != nil {

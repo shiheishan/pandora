@@ -303,13 +303,14 @@ func TestCertificatePathsLiveInTheCertificateDirectory(t *testing.T) {
 	}
 }
 
-func TestProtocolConfigWarningsFlagLegacyCertificatePaths(t *testing.T) {
+func TestProtocolConfigWarningsIgnoreCertificatePaths(t *testing.T) {
 	if got := ProtocolConfigWarnings("hysteria2", json.RawMessage(`{`+policyCert+`}`)); len(got) != 0 {
 		t.Fatalf("compliant paths warned: %v", got)
 	}
+	// 不合规路径在写入时已被 certificatePathProblem 拒绝，读接口不再提示。
 	got := ProtocolConfigWarnings("trojan", json.RawMessage(`{"tls":1,"cert_path":"/etc/ssl/c.pem","key_path":"/etc/pandora-native/certs/k.pem"}`))
-	if len(got) != 1 || !strings.Contains(got[0], "cert_path") || !strings.Contains(got[0], "照常服务") {
-		t.Fatalf("warnings = %v, want one for cert_path", got)
+	if len(got) != 0 {
+		t.Fatalf("certificate paths warned on read: %v", got)
 	}
 	if got := ProtocolConfigWarnings("shadowsocks", json.RawMessage(`not json`)); got != nil {
 		t.Fatalf("malformed config produced warnings: %v", got)

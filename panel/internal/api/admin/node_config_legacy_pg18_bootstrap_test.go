@@ -1,21 +1,14 @@
 package admin
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -442,38 +435,41 @@ func runNodeConfigPG18BootstrapSecurityBatch(t *testing.T, ctx context.Context,
 		if err != nil || out == nil {
 			t.Fatalf("bootstrap terminal identity node out=%+v err=%v", out, err)
 		}
-		h := &handlers{d: Deps{Pool: appPool, Node: service, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
-		setStatus := func(next string) {
-			t.Helper()
-			var rowVersion int64
-			if err := admin.QueryRow(ctx, `SELECT row_version FROM nodes WHERE tenant_id=$1 AND id=$2`,
-				fx.tenant, out.NodeID).Scan(&rowVersion); err != nil {
-				t.Fatalf("read %s transition row version: %v", next, err)
-			}
-			requestBody, err := json.Marshal(nodeStatusReq{
-				RowVersion: rowVersion, Status: next, Reason: "pg18 lifecycle " + next,
-			})
-			if err != nil {
-				t.Fatalf("marshal %s transition request: %v", next, err)
-			}
-			req := httptest.NewRequest(http.MethodPost, "/v1/nodes/"+out.NodeID+"/status", bytes.NewReader(requestBody))
-			req.Header.Set("Content-Type", "application/json")
-			route := chi.NewRouteContext()
-			route.URLParams.Add("id", out.NodeID)
-			reqCtx := context.WithValue(ctx, chi.RouteCtxKey, route)
-			reqCtx = httpx.WithTenantID(reqCtx, fx.tenant)
-			reqCtx = httpx.WithRequestID(reqCtx, "nodecfg-pg18-lifecycle-"+next)
-			reqCtx = httpx.WithPrincipal(reqCtx, &httpx.Principal{
-				Kind: "admin", Audience: "admin", UserID: fx.actor, TenantID: fx.tenant,
-			})
-			recorder := httptest.NewRecorder()
-			h.nodeSetStatus(recorder, req.WithContext(reqCtx))
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("%s lifecycle status=%d body=%s", next, recorder.Code, recorder.Body.String())
+		// 接入尾段到 standby 没有后台入口（一步上线直接推到 active），这一段按 node_transitions
+		// 的边用 SQL 推，服务状态留在 draft。之后的退役全部走生产路径：自建的草稿服务器经
+		// SetServerStatus 退役（draft → retired，节点不再是在役服务器的控制节点），再由
+		// RetireNode 一步退役节点并吊销身份。「退役必吊销身份」由 RetireNode 钉住，不由本测试代写。
+		for _, next := range []string{"attesting", "installing", "validating", "standby"} {
+			tag, err := admin.Exec(ctx, `
+				UPDATE nodes SET status=$3, serving_status='draft', row_version=row_version+1
+				 WHERE tenant_id=$1 AND id=$2`, fx.tenant, out.NodeID, next)
+			if err != nil || tag.RowsAffected() != 1 {
+				t.Fatalf("%s lifecycle update rows=%d err=%v", next, tag.RowsAffected(), err)
 			}
 		}
-		for _, next := range []string{"attesting", "installing", "validating", "standby", "retired"} {
-			setStatus(next)
+		var serverID string
+		var serverVersion int64
+		if err := admin.QueryRow(ctx, `SELECT s.id::text, s.row_version FROM nodes n
+			JOIN servers s ON s.tenant_id=n.tenant_id AND s.id=n.server_id AND s.control_node_id=n.id
+			WHERE n.tenant_id=$1 AND n.id=$2 AND s.status='draft'`, fx.tenant, out.NodeID).
+			Scan(&serverID, &serverVersion); err != nil {
+			t.Fatalf("read bootstrapped draft server: %v", err)
+		}
+		if _, err := service.SetServerStatus(ctx, fx.tenant, serverID, nodefabric.SetServerStatusInput{
+			ActorID: fx.actor, Status: "retired", Reason: "pg18 terminal identity", RowVersion: serverVersion,
+		}); err != nil {
+			t.Fatalf("retire bootstrapped draft server: %v", err)
+		}
+		var nodeVersion int64
+		if err := admin.QueryRow(ctx, `SELECT row_version FROM nodes WHERE tenant_id=$1 AND id=$2`,
+			fx.tenant, out.NodeID).Scan(&nodeVersion); err != nil {
+			t.Fatalf("read standby node row version: %v", err)
+		}
+		retired, err := service.RetireNode(ctx, fx.tenant, nodefabric.RetireNodeInput{
+			ID: out.NodeID, RowVersion: nodeVersion, Reason: "pg18 terminal identity", ActorID: fx.actor,
+		})
+		if err != nil || retired == nil {
+			t.Fatalf("RetireNode out=%+v err=%v", retired, err)
 		}
 		identity, identityErr := service.LookupIdentity(ctx, fx.tenant, out.NodeID)
 		if identity != nil {
