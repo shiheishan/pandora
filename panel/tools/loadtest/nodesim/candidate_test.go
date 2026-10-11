@@ -50,6 +50,14 @@ func TestApplyUsersKeepsOnlyThisNodesCandidatesWithoutChangingReports(t *testing
 		t.Fatalf("alive reports differ: %d vs %d", len(a), len(b))
 	}
 
+	// 换了凭据的用户在增量里 Removed 与 Added 都有（面板 DiffUsers）：先删后加，人还在
+	kept0 := n.userIDs[0]
+	before := len(n.userIDs)
+	n.applyUserDelta(streamEvent{Removed: []int64{kept0}, Added: []nodefabric.ProxyUser{{ID: kept0, UUID: "rotated"}}})
+	if len(n.userIDs) != before || !slices.Contains(n.userIDs, kept0) {
+		t.Fatalf("rotated user %d dropped from the list (%d -> %d users)", kept0, before, len(n.userIDs))
+	}
+
 	// 增量也只收候选
 	n.applyUserDelta(streamEvent{Added: []nodefabric.ProxyUser{{ID: 100001, UUID: "u"}, {ID: 100002, UUID: "u"}, {ID: 100003, UUID: "u"}, {ID: 100004, UUID: "u"}}})
 	for _, id := range n.userIDs {

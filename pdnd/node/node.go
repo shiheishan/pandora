@@ -32,7 +32,11 @@ type Node struct {
 	// 已下发给内核的用户，用于算增量。
 	// 面板每次返回全量列表，本地存一份才能知道该加谁、该删谁 ——
 	// 每次全量重推会让所有在线用户的连接被打断。
-	known map[string]core.User
+	//
+	// 按用户 ID 记，一个 ID 只有一份凭据：面板名单里 ID（订阅的 node_uid）与 UUID
+	// 一一对应，重置订阅只换 UUID、不换 ID。按 UUID 记时同 ID 的新凭据会和旧凭据并存，
+	// 旧链接一直能用（见 users.go）。
+	known map[int64]core.User
 	// 入站是否已建立。配置拉到之前不能同步用户。
 	started              bool
 	activeConfig         map[string]any
@@ -97,7 +101,7 @@ func NewWithSignedClient(client *panel.Client, kernel core.Core, log *slog.Logge
 		// 每次都要采一轮 CPU（含 100ms 采样），纯属浪费。
 		statusInterval: 30 * time.Second,
 		events:         make(chan panel.StreamEvent, 32),
-		known:          make(map[string]core.User),
+		known:          make(map[int64]core.User),
 	}
 	if signed != nil {
 		signed.OnKeyCheckError(func(err error) {

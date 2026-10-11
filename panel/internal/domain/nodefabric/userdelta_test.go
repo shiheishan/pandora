@@ -87,3 +87,83 @@ func TestDiffUsersHandlesEmptySides(t *testing.T) {
 		t.Errorf("从有到空：%+v", d)
 	}
 }
+
+// 同一用户 ID 换了凭据（重置订阅只换 proxy_uuid、node_uid 不变）：增量必须同时给
+// Removed(ID) 与 Added(新记录)。只给 Added 的话，节点端按「只加不替换」打补丁时旧凭据
+// 留在放行名单里，用户以为作废的旧链接照样能用、照样计到他头上。
+//
+// 面板名单里每个用户只有一份节点凭据（proxy_uuid）：vless / vmess / tuic 当 uuid，
+// trojan / ss / hysteria2 / anytls / socks 等当 password，都是这同一个值，所以这里
+// 一条用例覆盖全部协议。节点级密钥（obfs、shadowtls、ss2022 服务端口令）随配置下发，
+// 换了就重建入站、走全量，不经这条增量路径。
+func TestDiffUsersRotatedCredentialRemovesOld(t *testing.T) {
+	old := []ProxyUser{
+		{ID: 1, UUID: "u1-old", SpeedLimit: 100, DeviceLimit: 2},
+		{ID: 2, UUID: "u2", SpeedLimit: 100},
+	}
+	now := []ProxyUser{
+		{ID: 1, UUID: "u1-new", SpeedLimit: 100, DeviceLimit: 2}, // 重置订阅：只换凭据
+		{ID: 2, UUID: "u2", SpeedLimit: 200},                     // 只改限速：凭据没变
+	}
+	d := DiffUsers(old, now)
+	if len(d.Removed) != 1 || d.Removed[0] != 1 {
+		t.Fatalf("Removed = %v，期望 [1]：换了凭据的用户要先删旧凭据", d.Removed)
+	}
+	if len(d.Added) != 2 || d.Added[0] != now[0] || d.Added[1] != now[1] {
+		t.Fatalf("Added = %+v，期望新凭据与改过限速的记录", d.Added)
+	}
+}
+
+// 增量打在起点名单上，必须得到终点名单的那一组凭据——按最弱的节点端语义打：
+// 先按 Removed 的 ID 删掉名下凭据，再把 Added 的凭据加进去（只加、不按 ID 替换）。
+// 面板这一侧单独就要挡住「旧凭据仍放行」，不依赖节点端兜底。
+func TestDiffUsersAppliedOnWeakestNodeYieldsTargetCredentials(t *testing.T) {
+	cases := map[string]struct{ old, now []ProxyUser }{
+		"重置订阅": {
+			old: []ProxyUser{{ID: 1, UUID: "a-old"}, {ID: 2, UUID: "b"}},
+			now: []ProxyUser{{ID: 1, UUID: "a-new"}, {ID: 2, UUID: "b"}},
+		},
+		"重置订阅且改限速": {
+			old: []ProxyUser{{ID: 1, UUID: "a-old", SpeedLimit: 1}},
+			now: []ProxyUser{{ID: 1, UUID: "a-new", SpeedLimit: 2}},
+		},
+		"一批人里有人换凭据、有人走、有人来": {
+			old: []ProxyUser{{ID: 1, UUID: "a-old"}, {ID: 2, UUID: "b"}, {ID: 3, UUID: "c"}},
+			now: []ProxyUser{{ID: 1, UUID: "a-new"}, {ID: 2, UUID: "b", DeviceLimit: 3}, {ID: 4, UUID: "d"}},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			// 节点手上的名单：凭据 → 用户 ID
+			node := make(map[string]int64, len(tc.old))
+			for _, u := range tc.old {
+				node[u.UUID] = u.ID
+			}
+			d := DiffUsers(tc.old, tc.now)
+			drop := make(map[int64]bool, len(d.Removed))
+			for _, id := range d.Removed {
+				drop[id] = true
+			}
+			for uuid, id := range node {
+				if drop[id] {
+					delete(node, uuid)
+				}
+			}
+			for _, u := range d.Added {
+				node[u.UUID] = u.ID
+			}
+			want := make(map[string]int64, len(tc.now))
+			for _, u := range tc.now {
+				want[u.UUID] = u.ID
+			}
+			if len(node) != len(want) {
+				t.Fatalf("打完增量节点放行 %v，期望 %v", node, want)
+			}
+			for uuid, id := range want {
+				if got, ok := node[uuid]; !ok || got != id {
+					t.Fatalf("打完增量节点放行 %v，期望 %v", node, want)
+				}
+			}
+		})
+	}
+}
