@@ -60,9 +60,6 @@ type MySubscription struct {
 	RenewalPrice       *MyRenewalPrice `json:"renewal_price"`
 	// PackRemainingBytes 是挂在这一份上的流量包余量（购买模型统一：流量包按份挂）
 	PackRemainingBytes int64 `json:"pack_remaining_bytes"`
-	// LegacyMovablePackBytes 是其中「升级前买的、00138 回填挂过来、还没被用户或后台挪过」的余量
-	// （用户 2026-10-07 定：这部分允许自己挪一次到另一份生效中或可救回的订阅）
-	LegacyMovablePackBytes int64 `json:"legacy_movable_pack_bytes"`
 	// Label 是用户起的备注名，没起为 null
 	Label *string `json:"label"`
 	// ClientName 是这一份在 App 里显示的配置名（ProfileName），与订阅下载的
@@ -79,8 +76,8 @@ type MySubscription struct {
 // MySubscriptionList 是门户「我的套餐」：每一份，加上还没加到任何一份的流量包余量。
 type MySubscriptionList struct {
 	Subscriptions []MySubscription
-	// UnattachedPackBytes 是「未分配」的流量包余量：没有订阅时兑换的送流量卡、迁移时留空的
-	// 余额。门户据它提示「有 xG 流量包还没加到任何一份」
+	// UnattachedPackBytes 是「未分配」的流量包余量：没有订阅时兑换的送流量卡。门户据它提示
+	// 「有 xG 流量包还没加到任何一份」
 	UnattachedPackBytes int64
 }
 
@@ -95,9 +92,7 @@ type MySubscriptionList struct {
 // 订阅也要把全站在线记录聚合一遍（5000 用户实测 3.38s/次）。
 //
 // 每一份的流量包余量按订阅走一个 LATERAL（每份一次 idx_traffic_pack_grants_open_sub 探测），
-// 同一次聚合顺带算出可挪一次的旧包余量（legacyMovablePackSQL，每笔有余量的包再探一次
-// idx_traffic_pack_transfers_grant）；未分配的余量与订阅无关，写成不相关子查询，整条语句只算
-// 一次（InitPlan）。
+// 不读转移流水；未分配的余量与订阅无关，写成不相关子查询，整条语句只算一次（InitPlan）。
 const mySubscriptionsSQL = `
 	SELECT s.id, s.plan_id::text, COALESCE(s.price_id::text, ''),
 	       pl.name, pv.version, s.status,
@@ -121,7 +116,7 @@ const mySubscriptionsSQL = `
 	                AND (pr.valid_from IS NULL OR pr.valid_from <= now())
 	                AND (pr.valid_until IS NULL OR pr.valid_until > now()), false),
 	       s.label,
-	       pk.pack_left, pk.legacy_left,
+	       pk.pack_left,
 	       (` + unattachedPacksSQL + `)
 	  FROM subscriptions s
 	  JOIN plans pl         ON pl.id = s.plan_id
@@ -134,25 +129,13 @@ const mySubscriptionsSQL = `
 	         WHERE od.tenant_id = s.tenant_id AND od.subscription_id = s.id
 	  ) od ON true
 	  CROSS JOIN LATERAL (
-	        SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint AS pack_left,
-	               coalesce(sum(g.granted_bytes - g.consumed_bytes)
-	                          FILTER (WHERE ` + legacyMovablePackSQL + `), 0)::bigint AS legacy_left
+	        SELECT coalesce(sum(g.granted_bytes - g.consumed_bytes), 0)::bigint AS pack_left
 	          FROM traffic_pack_grants g
 	         WHERE g.tenant_id = s.tenant_id AND g.subscription_id = s.id
 	           AND g.consumed_bytes < g.granted_bytes
 	  ) pk
 	 WHERE s.tenant_id = $1 AND s.user_id = $2
 	 ORDER BY s.created_at DESC`
-
-// legacyMovablePackSQL 判定一笔余额 g 是「升级前买的、还能自己挪一次」的旧包：转移流水里有
-// 00138 回填写的那条（actor_kind='migration'），且没有任何用户、后台或系统的挪动。
-// 两个 EXISTS 都按 idx_traffic_pack_transfers_grant (tenant_id, grant_id, created_at) 探测。
-const legacyMovablePackSQL = `EXISTS (SELECT 1 FROM traffic_pack_transfers t
-	                                     WHERE t.tenant_id = g.tenant_id AND t.grant_id = g.id
-	                                       AND t.actor_kind = 'migration')
-	                          AND NOT EXISTS (SELECT 1 FROM traffic_pack_transfers t
-	                                           WHERE t.tenant_id = g.tenant_id AND t.grant_id = g.id
-	                                             AND t.actor_kind <> 'migration')`
 
 // myQuotasSQL 一次取齐这些订阅的全部配额行（原先每条订阅各查一次），
 // 每条订阅内部的顺序与原来相同：按指标、周期起点倒序。
@@ -195,7 +178,7 @@ func (s *Service) MySubscriptions(ctx context.Context, tenantID, userID string) 
 					&v.PeriodStart, &v.PeriodEnd, &v.Currency, &v.Amount,
 					&v.DeviceLimit, &v.OnlineDevices, &v.QuotaResetStrategy, &v.NextResetAt,
 					&v.Renewable, &v.Changeable, &priceID, &priceCurrency, &unitAmount, &interval, &intervalCount,
-					&available, &v.Label, &v.PackRemainingBytes, &v.LegacyMovablePackBytes, &out.UnattachedPackBytes); err != nil {
+					&available, &v.Label, &v.PackRemainingBytes, &out.UnattachedPackBytes); err != nil {
 					rows.Close()
 					return err
 				}

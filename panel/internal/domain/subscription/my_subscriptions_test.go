@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -22,11 +23,10 @@ func TestMySubscriptionsQueriesStayConstant(t *testing.T) {
 		!strings.Contains(unattachedPacksSQL, "g.subscription_id IS NULL") {
 		t.Fatal("pack remaining must be per subscription, unattached packs folded into the main query")
 	}
-	// 可挪一次的旧包：与这一份的余量同一次聚合（不加查询），只认只有回填流水、没被挪过的
-	if !strings.Contains(mySubscriptionsSQL, "FILTER (WHERE "+legacyMovablePackSQL+")") ||
-		!strings.Contains(legacyMovablePackSQL, "t.actor_kind = 'migration'") ||
-		!strings.Contains(legacyMovablePackSQL, "AND NOT EXISTS") || !strings.Contains(legacyMovablePackSQL, "t.actor_kind <> 'migration'") {
-		t.Fatal("legacy movable packs must be summed in the per-subscription pack aggregate, migration-only grants")
+	// 每份的余量只看挂在这一份上的余额，不读转移流水（用户 2026-10-09 删掉了「升级前旧包可挪一次」，
+	// 门户不再需要按流水来源拆出能挪的那部分）
+	if strings.Contains(mySubscriptionsSQL, "traffic_pack_transfers") || strings.Contains(mySubscriptionsSQL, "FILTER (") {
+		t.Fatal("the per-subscription pack aggregate must not read transfer records")
 	}
 	if strings.Contains(mySubscriptionsSQL, "g.user_id = s.user_id") {
 		t.Fatal("a subscription must not show packs attached to the owner's other subscriptions")
@@ -74,16 +74,14 @@ func TestRenewUntil(t *testing.T) {
 	}
 }
 
-// 门户「可挪一次的旧包」与 billing 真正放行挪动的判定（legacyMovableSQL，与 00137 守卫情形 3 同口径）
-// 必须是同一个条件：一边改了另一边没跟，页面上写着能挪，点了却被 422 拒绝。
-func TestLegacyMovablePackMatchesBilling(t *testing.T) {
-	norm := func(s string) string {
-		s = strings.Join(strings.Fields(s), " ")
-		s = strings.ReplaceAll(s, "( ", "(")
-		return strings.ReplaceAll(s, " )", ")")
+// 门户「我的套餐」每一份不再带「可挪一次的旧包」字段：从在用的那份转出一律被拒（billing 的
+// transferTrafficPacksTx 与 00157 版改挂守卫），界面上也就没有挪的入口可给。
+func TestMySubscriptionHasNoMovablePackField(t *testing.T) {
+	raw, err := json.Marshal(MySubscription{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	billing := norm(sourcetest.Load(t, "../billing").Decl("legacyMovableSQL"))
-	if mine := norm(legacyMovablePackSQL); !strings.Contains(billing, "`("+mine+")`") {
-		t.Fatalf("legacyMovablePackSQL drifted from billing.legacyMovableSQL\nsubscription: %s\nbilling:      %s", mine, billing)
+	if strings.Contains(string(raw), "movable") || !strings.Contains(string(raw), `"pack_remaining_bytes":0`) {
+		t.Fatalf("subscription view fields=%s", raw)
 	}
 }

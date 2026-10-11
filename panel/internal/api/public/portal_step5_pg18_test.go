@@ -40,9 +40,6 @@ func TestPortalStep5PG18(t *testing.T) {
 		order    = "88000000-0000-4000-8000-000000000051"
 		keep     = "88000000-0000-4000-8000-000000000061"
 		drop     = "88000000-0000-4000-8000-000000000062"
-		legacyG  = "88000000-0000-4000-8000-000000000071"
-		newG     = "88000000-0000-4000-8000-000000000072"
-		movedG   = "88000000-0000-4000-8000-000000000073"
 	)
 	phc, err := crypto.HashPassword("old-pass-123", crypto.DefaultArgon2Params())
 	if err != nil {
@@ -77,16 +74,13 @@ func TestPortalStep5PG18(t *testing.T) {
 			[]any{tenant, subLive, user, plan, version, price, subVip, vipPrice}},
 		{`INSERT INTO quota_balances(tenant_id,subscription_id,metric,period,period_start,period_end,granted,limit_value,consumed,adjusted)
 		  VALUES($1,$2,'traffic.bytes','cycle',now()-interval '10 days',now()+interval '20 days',1000,1000,400,50)`, []any{tenant, subLive}},
-		// 流量包按份挂（购买模型统一）：subLive 上三笔共 110——升级前买、00138 回填挂过来的 60
-		// （只有 migration 流水，可挪一次）、升级后买的 30（没有流水）、回填后已被用户挪过的 20；
-		// 另有 25 还没加到任何一份
+		// 流量包按份挂（购买模型统一）：subLive 上三笔共 110（100 用了 40、30、20），已用完的一笔
+		// 不算；另有 25 还没加到任何一份
 		{`INSERT INTO traffic_pack_grants(id,tenant_id,user_id,subscription_id,source,source_id,granted_bytes,consumed_bytes)
-		  VALUES($4,$1,$2,$3,'migration',gen_random_uuid(),100,40),($5,$1,$2,$3,'migration',gen_random_uuid(),30,0),
-		        ($6,$1,$2,$3,'migration',gen_random_uuid(),20,0),(gen_random_uuid(),$1,$2,NULL,'migration',gen_random_uuid(),25,0)`,
-			[]any{tenant, user, subLive, legacyG, newG, movedG}},
-		{`INSERT INTO traffic_pack_transfers(tenant_id,grant_id,user_id,from_subscription_id,to_subscription_id,remaining_bytes,actor_kind)
-		  VALUES($1,$4,$2,NULL,$3,60,'migration'),($1,$6,$2,NULL,$5,20,'migration'),($1,$6,$2,$5,$3,20,'user')`,
-			[]any{tenant, user, subLive, legacyG, subVip, movedG}},
+		  VALUES(gen_random_uuid(),$1,$2,$3,'order',gen_random_uuid(),100,40),(gen_random_uuid(),$1,$2,$3,'admin',gen_random_uuid(),30,0),
+		        (gen_random_uuid(),$1,$2,$3,'gift_card',gen_random_uuid(),20,0),(gen_random_uuid(),$1,$2,$3,'order',gen_random_uuid(),50,50),
+		        (gen_random_uuid(),$1,$2,NULL,'gift_card',gen_random_uuid(),25,0)`,
+			[]any{tenant, user, subLive}},
 		{`INSERT INTO orders(id,tenant_id,order_no,user_id,kind,status,currency,subtotal_amount,discount_amount,tax_amount,
 			total_amount,balance_applied,payable_amount,expires_at,business_request_id)
 		  VALUES($2,$1,'P5-ORDER-1',$3,'new','pending_payment','CNY',100,0,0,100,0,100,now()+interval '30 minutes',gen_random_uuid())`,
@@ -158,7 +152,6 @@ func TestPortalStep5PG18(t *testing.T) {
 				Available bool   `json:"available"`
 			} `json:"renewal_price"`
 			PackRemainingBytes int64      `json:"pack_remaining_bytes"`
-			LegacyMovable      int64      `json:"legacy_movable_pack_bytes"`
 			Label              *string    `json:"label"`
 			ClientName         string     `json:"client_name"`
 			Changeable         bool       `json:"changeable"`
@@ -178,13 +171,16 @@ func TestPortalStep5PG18(t *testing.T) {
 	live, vip := subs.Subscriptions[0], subs.Subscriptions[1]
 	if live.ID != subLive || live.DeviceLimit == nil || *live.DeviceLimit != 3 || live.QuotaResetStrategy != "billing_cycle" ||
 		!live.Renewable || live.RenewalPrice == nil || live.RenewalPrice.ID != price || !live.RenewalPrice.Available ||
-		live.PackRemainingBytes != 110 || live.LegacyMovable != 60 || len(live.Quotas) != 1 || live.Quotas[0].Period != "cycle" || live.Quotas[0].Adjusted != 50 ||
+		live.PackRemainingBytes != 110 || len(live.Quotas) != 1 || live.Quotas[0].Period != "cycle" || live.Quotas[0].Adjusted != 50 ||
 		!strings.Contains(body, `"next_reset_at":"`) {
 		t.Fatalf("live subscription=%+v body=%s", live, body)
 	}
-	if vip.Renewable || vip.RenewalPrice == nil || vip.RenewalPrice.Available || vip.PackRemainingBytes != 0 ||
-		vip.LegacyMovable != 0 || !strings.Contains(body, `"legacy_movable_pack_bytes":0`) {
+	if vip.Renewable || vip.RenewalPrice == nil || vip.RenewalPrice.Available || vip.PackRemainingBytes != 0 {
 		t.Fatalf("expired vip subscription=%+v", vip)
+	}
+	// 用户 2026-10-09 删掉了「升级前旧包可挪一次」：每一份不再带能挪的余量（门户没有挪的入口）
+	if strings.Contains(body, "legacy_movable") {
+		t.Fatalf("subscriptions still carry a movable-pack field: %s", body)
 	}
 	// 购买模型统一 2.9：备注名、配置名、可换套餐、续一期到哪天、未分配的流量包
 	if live.Label != nil || live.ClientName != "Pandora · Pro" || !live.Changeable || live.PeriodEnd == nil ||

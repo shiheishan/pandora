@@ -9,7 +9,7 @@ paths:
 
 - 购买模型（10-07）：每份一张卡（`common/SubCard.tsx`），卡上的按钮自带对象，后面不再问「给哪一份」；只有一份时看不到任何「哪一份」。叫法 sn / dn / who 在 `common/purchase.ts` 的 `makeNaming`（多份用备注名，没备注用「套餐名 ····链接尾号」）
 - 手上的份 = 生效中 + 过期 30 天内能救回（`isHeld`）；彻底停用的不列，但它上面没用完的流量包会出转移提示条（`subs/Transfer.tsx`，接口 `POST v1/me/traffic-packs/transfer`）
-- 升级前的旧流量包（用户 10-07）：`legacy_movable_pack_bytes > 0` 且还有另一份手上的时，卡片流量区下面给一行「升级前买的 80G 流量包现在加在这一份上，可以挪到别的一份（只能挪一次）」；只有一个去处时按钮直接写「挪到『…』」，多份时在弹层里选、不预选；弹层写清「挪过去后这一份就不能再用这些流量，只能挪一次」和挪完两边各剩多少（`subs/MovePackSheet.tsx`，走同一个转移接口）
+- 流量包跟着挂的那一份：卡片只在用量里写「含流量包 xG」，没有挪到别的一份的入口（用户 10-09 删掉了「升级前的旧流量包挪一次」，接口对在用的来源一律 409）。守卫：`common/subcard.test.ts`
 - `pickPrimary` 只留给外框头像菜单的套餐徽标；概览改成复用 SubCard 的精简列表
 - 金额与默认值一律来自报价接口 `POST v1/me/checkout/quote`（`common/quote.ts`），前端不算钱；只做展示用的日期加减（`addPeriod`）
 - 到期展示精确到分钟（`common/traffic.ts` 的 `formatMinute` / `expiryInfo`），最后 24 小时写「还剩 X 小时」，过了写「已于 … 到期」

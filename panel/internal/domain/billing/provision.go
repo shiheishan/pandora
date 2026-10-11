@@ -238,8 +238,8 @@ func labelWithSuffix(label string, n int) string {
 }
 
 // attachUnassignedPacksTx：刚开通的这一份是用户唯一一份生效中的订阅、而他名下有还没加到任何
-// 一份的流量包（无订阅时兑换的送流量卡、迁移时留空的余额）时，自动挂到这一份上，转移流水
-// 记 system。有多份生效中的就不替用户选，门户提示他自己选。
+// 一份的流量包（无订阅时兑换的送流量卡）时，自动挂到这一份上，转移流水记 system。有多份生效中
+// 的就不替用户选，门户提示他自己选。
 func attachUnassignedPacksTx(ctx context.Context, tx pgx.Tx, tenantID, userID, subID string) error {
 	var live int
 	var unassigned bool

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MOCK_ACCOUNTS } from '../dev/mock-api'
@@ -5,6 +6,20 @@ import { subscriptionsSchema } from '../src/portal/subscription-schema'
 import { renameSchema } from '../src/portal/screens/subs/schemas'
 import { giftCardSchema } from '../src/portal/screens/wallet/schemas'
 import { bearer, close, loginAs, mockFetch, serve } from './mock-helpers'
+
+// 转移接口的几句文案以 Go 为准：从源码里取，假后端与 Go 任何一边改了这里就红
+const goSource = (path: string) => readFileSync(new URL(`../../internal/${path}`, import.meta.url), 'utf8')
+const pick = (src: string, re: RegExp, what: string): string => {
+  const m = re.exec(src)
+  if (!m?.[1]) throw new Error(`Go 源码里找不到 ${what}`)
+  return m[1]
+}
+const transferGo = goSource('domain/billing/traffic_pack_transfer.go')
+const goTransfer = {
+  source: pick(transferGo, /errTransferSource\s*=\s*httpx\.New\(httpx\.CodeConflict,\s*"([^"]+)"\)/, 'errTransferSource'),
+  sameTarget: pick(transferGo, /"to_subscription_id":\s*"([^"]+)"/, '同一份的 422 文案'),
+  invalid: pick(goSource('platform/httpx/httpx.go'), /func Invalid\(fields map\[string\]string\) \*Error \{\s*return &Error\{Code: CodeValidationFailed, Message: "([^"]+)"/, 'httpx.Invalid 的 message'),
+}
 
 // 设计稿 2.5 / 2.7 / 2.8 / 2.9：订阅列表新字段、改名、按份换新链接、礼品卡落点、流量包转移、原型场景
 describe('mock api · portal subscriptions (purchase model)', () => {
@@ -80,29 +95,33 @@ describe('mock api · portal subscriptions (purchase model)', () => {
   })
 
   it('流量包转移：只能从未分配或彻底停用的那份转到在用的那份；重复转 moved_bytes=0', async () => {
-    await scenario('proto-s2')
-    const [mine, mom] = (await subs()).subscriptions
-    // A 路：从在用的那份挪、又不是可挪一次的旧包：422 fields.from_subscription_id
-    const refused = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })
-    expect(refused.status).toBe(422)
-    expect(((await refused.json()) as { error: { fields: Record<string, string> } }).error.fields.from_subscription_id).toContain('只能挪一次')
-    const res = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: null, to_subscription_id: mom!.id })
+    // multi：第一份挂着 30G 流量包、第二份待续费（也算在用）
+    await scenario('multi')
+    const [first, second] = (await subs()).subscriptions
+    expect(first!.pack_remaining_bytes).toBe(30 * 1024 ** 3)
+    // 从在用的那份转出一律 409（用户 10-09 删掉了「升级前旧包挪一次」），两边余量不动
+    const refused = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: first!.id, to_subscription_id: second!.id })
+    expect(refused.status).toBe(409)
+    // 文案与 Go 的 billing.errTransferSource 逐字一致（从 Go 源码里取，不手抄）
+    expect((await refused.json()) as { error: { code: string; message: string } }).toMatchObject({ error: { code: 'conflict', message: goTransfer.source } })
+    // 来源与目标是同一份：和 Go 的 TransferTrafficPacks 入口一样先回 422，字段与文案一致
+    const same = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: first!.id, to_subscription_id: first!.id })
+    expect(same.status).toBe(422)
+    expect((await same.json()) as { error: { code: string; message: string; fields: Record<string, string> } }).toMatchObject({
+      error: { code: 'validation_failed', message: goTransfer.invalid, fields: { to_subscription_id: goTransfer.sameTarget } },
+    })
+    expect((await subs()).subscriptions.map((s) => s.pack_remaining_bytes)).toEqual([30 * 1024 ** 3, second!.pack_remaining_bytes])
+    const res = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: null, to_subscription_id: second!.id })
     expect(await res.json()).toEqual({ moved_bytes: 0 })
   })
 
-  it('升级前的旧流量包（用户 10-07）：列表给出能挪的余量，从在用的那份挪一次后清零，再挪回 422', async () => {
-    await scenario('proto-legacy')
-    const [mine, mom] = (await subs()).subscriptions
-    expect(mine!.legacy_movable_pack_bytes).toBe(80 * 1024 ** 3)
-    expect(mom!.legacy_movable_pack_bytes).toBe(0)
-    const moved = await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })
-    expect(await moved.json()).toEqual({ moved_bytes: 80 * 1024 ** 3 })
-    const after = (await subs()).subscriptions
-    expect(after.map((s) => [s.legacy_movable_pack_bytes, s.pack_remaining_bytes])).toEqual([
-      [0, 0],
-      [0, 80 * 1024 ** 3],
-    ])
-    expect((await call('POST', '/v1/me/traffic-packs/transfer', { from_subscription_id: mine!.id, to_subscription_id: mom!.id })).status).toBe(422)
+  it('每一份不再带「可挪一次的旧流量包」字段（用户 10-09 删掉），与 Go 的 MySubscription 一致', async () => {
+    for (const s of ['default', 'multi', 'proto-s2'] as const) {
+      await scenario(s)
+      const raw = (await (await call('GET', '/v1/me/subscriptions')).json()) as { subscriptions: Array<Record<string, unknown>> }
+      expect(raw.subscriptions.length).toBeGreaterThan(0)
+      for (const sub of raw.subscriptions) expect(Object.keys(sub)).not.toContain('legacy_movable_pack_bytes')
+    }
   })
 
   it('原型场景入口：切场景并跳到起始页', async () => {

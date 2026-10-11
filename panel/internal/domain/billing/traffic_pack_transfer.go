@@ -13,9 +13,9 @@ import (
 )
 
 // 流量包转移（设计稿 2.7）：把「未分配」或「彻底停用」那份上还有余量的流量包，挂到同一用户
-// 生效中或可救回的一份上，每笔写一条转移流水（traffic_pack_transfers，追加写）。来源还在用时，
-// 只转升级前的旧包（00138 回填挂上、还没挪过的，用户 2026-10-07 定可以挪一次）。
-// 数据库在最后兜底：00137 的守卫只放行这几种来源，提交时检查要求同一事务有流水。
+// 生效中或可救回的一份上，每笔写一条转移流水（traffic_pack_transfers，追加写）。来源还在用时
+// 一律拒绝，不看余额是哪来的（用户 2026-10-09 删掉了升级前旧包可挪一次的例外）。
+// 数据库在最后兜底：00157 版的改挂守卫只放行这两种来源，00137 的提交时检查要求同一事务有流水。
 
 // liveOrRevivableSQL 是「生效中或可救回」，与 00137 守卫、subscriptionAcceptsPaidChange 同一组状态。
 const liveOrRevivableSQL = `(s.status IN ('active','trialing','grace','past_due')
@@ -26,18 +26,9 @@ const endedSQL = `(s.status = 'cancelled' OR (s.status = 'expired' AND s.renewal
 
 var (
 	errTransferTarget = httpx.New(httpx.CodeConflict, "只能转到一份还在用（或过期不满 30 天）的套餐上")
-	// errTransferSource 是从生效中的那份转出、而上面没有能挪一次的旧流量包（用户 2026-10-07 定：
-	// 升级前买的旧包可以挪一次，新买的、或已经挪过一次的，要等这份停用后再转）
-	errTransferSource = httpx.Invalid(map[string]string{"from_subscription_id": "这份还在用，上面的流量包不能转走：" +
-		"升级前买的旧流量包只能挪一次，这里的已经挪过一次或是新买的，等这份停用后再转"})
+	// errTransferSource 是来源那份还在用（生效中或可救回）：上面的流量包要等它彻底停用后再转
+	errTransferSource = httpx.New(httpx.CodeConflict, "这份还在用，流量包不能转走；等它停用后再转")
 )
-
-// legacyMovableSQL 是「升级前的旧包，还能挪一次」：只有 00138 回填写的 migration 流水，没有
-// user / admin 流水（与 00137 守卫情形 3 同一口径）。g 是 traffic_pack_grants 的别名。
-const legacyMovableSQL = `(EXISTS (SELECT 1 FROM traffic_pack_transfers t
-	        WHERE t.tenant_id = g.tenant_id AND t.grant_id = g.id AND t.actor_kind = 'migration')
-	  AND NOT EXISTS (SELECT 1 FROM traffic_pack_transfers t
-	        WHERE t.tenant_id = g.tenant_id AND t.grant_id = g.id AND t.actor_kind <> 'migration'))`
 
 // TrafficPackTransferInput 是一次转移。From 为空表示「还没加到任何一份」的流量包。
 type TrafficPackTransferInput struct {
@@ -129,7 +120,6 @@ func transferTrafficPacksTx(ctx context.Context, tx pgx.Tx, tenantID, userID str
 		}
 		return 0, errTransferTarget
 	}
-	legacyOnly := false
 	if from != nil {
 		var ended, mine bool
 		if err := tx.QueryRow(ctx, `
@@ -142,7 +132,9 @@ func transferTrafficPacksTx(ctx context.Context, tx pgx.Tx, tenantID, userID str
 			}
 			return 0, err
 		}
-		legacyOnly = !ended
+		if !ended {
+			return 0, errTransferSource
+		}
 	}
 	var moved int64
 	err := tx.QueryRow(ctx, `
@@ -152,7 +144,6 @@ func transferTrafficPacksTx(ctx context.Context, tx pgx.Tx, tenantID, userID str
 			 WHERE g.tenant_id = $1 AND g.user_id = $2::uuid
 			   AND g.subscription_id IS NOT DISTINCT FROM $3::uuid
 			   AND g.consumed_bytes < g.granted_bytes
-			   AND (NOT $7::boolean OR `+legacyMovableSQL+`)
 			 ORDER BY g.created_at, g.id
 			 FOR UPDATE
 		), moved AS (
@@ -170,9 +161,6 @@ func transferTrafficPacksTx(ctx context.Context, tx pgx.Tx, tenantID, userID str
 			RETURNING remaining_bytes
 		)
 		SELECT coalesce(sum(remaining_bytes), 0)::bigint FROM logged`,
-		tenantID, userID, from, to, actorKind, actorID, legacyOnly).Scan(&moved)
-	if err == nil && legacyOnly && moved == 0 {
-		return 0, errTransferSource
-	}
+		tenantID, userID, from, to, actorKind, actorID).Scan(&moved)
 	return moved, err
 }

@@ -50,7 +50,7 @@ export interface User {
   balance: number
   currency: string
   subs: Sub[]
-  /** 还没加到任何一份的流量包余量（字节）：无订阅时兑的送流量卡、迁移时留空的余量 */
+  /** 还没加到任何一份的流量包余量（字节）：无订阅时兑的送流量卡 */
   unattached_bytes: number
   referrer: string | null
   telegram: { username: string; bound_at: string } | null

@@ -290,12 +290,10 @@ func fulfillTrafficPackOrder(ctx context.Context, tx pgx.Tx, tenantID, orderID,
 		}
 		return "", err
 	}
-	// 升级前下的在途单没有指定订阅：用户恰好有一份生效中的就挂到那份，否则留作未分配
+	// 流量包单建单时必须指定一份（CreateTrafficPackOrder）；没有就是数据坏了，不替用户挑一份、
+	// 也不留作未分配（用户 2026-10-09 删掉了升级前在途单的兼容）
 	if subID == nil {
-		var err error
-		if subID, err = soleLiveSubscription(ctx, tx, tenantID, userID); err != nil {
-			return "", err
-		}
+		return "", errors.New("addon order has no target subscription")
 	}
 	grantID, err := GrantTrafficPackTx(ctx, tx, tenantID, userID, subID, "order", orderID, bytes)
 	if err != nil {
@@ -410,29 +408,4 @@ func lockLiveSubscriptionForPack(ctx context.Context, tx pgx.Tx, tenantID, userI
 		return nil
 	}
 	return errPackNeedsLiveSubscription
-}
-
-// soleLiveSubscription 返回用户唯一一份生效中的订阅；没有或不止一份时为 nil（不替用户选）。
-func soleLiveSubscription(ctx context.Context, tx pgx.Tx, tenantID, userID string) (*string, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT s.id::text FROM subscriptions s
-		 WHERE s.tenant_id = $1 AND s.user_id = $2::uuid
-		   AND s.status IN ('active','trialing','grace','past_due')
-		 LIMIT 2`, tenantID, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil || len(ids) != 1 {
-		return nil, err
-	}
-	return &ids[0], nil
 }

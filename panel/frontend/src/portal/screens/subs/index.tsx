@@ -13,7 +13,7 @@ import { UpdateHelpLink } from '../common/UpdateHelp'
 import { ChangePick } from './ChangePick'
 import { Detail } from './Detail'
 import { NewPick } from './NewPick'
-import { moveTargets, useSheets } from './sheets'
+import { useSheets } from './sheets'
 import { SubCard } from '../common/SubCard'
 import css from './Subs.module.css'
 import { Traffic } from './Traffic'
@@ -93,7 +93,7 @@ function MySubs() {
       <TransferBars h={h} unattached={unattached.data ?? 0} />
       <div className={css.cards}>
         {h.held.map((sub) => (
-          <SubCard key={sub.id} sub={sub} naming={h.naming} link={h.linkOf(sub.id)} minPack={minPack} actions={actions} moveTo={moveTargets(h, sub)} />
+          <SubCard key={sub.id} sub={sub} naming={h.naming} link={h.linkOf(sub.id)} minPack={minPack} actions={actions} />
         ))}
       </div>
       <a className={css.addRow} href={href('/subs/new')} id="btn-new-copy">
