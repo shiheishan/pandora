@@ -3,11 +3,13 @@ package kernel
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/aegispanel/nodeagent/core"
 	anytls "github.com/aegispanel/nodeagent/internal/nativewire/anytls"
@@ -33,6 +35,7 @@ type anyTLSAdapter struct {
 	slots     []anyTLSSlot
 	sessions  userSessions
 	online    onlineDevices
+	udpQuota  udpSessionQuota // 每用户在途 UDP 会话数（quic_udp_quota.go），UoT 每个目标占一个
 	service   *anytls.Service
 	listener  net.Listener
 	tlsConfig *hysteria2TLSConfig
@@ -52,6 +55,11 @@ type anyTLSAdapter struct {
 
 var _ Adapter = (*anyTLSAdapter)(nil)
 var _ N.TCPConnectionHandlerEx = (*anyTLSAdapter)(nil)
+
+// errAnyTLSStreamRefused 是子流打不开时经 cmdSYNACK 发给客户端的文字。拨号失败、
+// 用户已删、会话已撤销、设备超限一律同一句：不带目标地址、内部原因与实现名，
+// 免得成为指纹或泄露信息；具体原因只进本机的 OnConnError 观测链。
+var errAnyTLSStreamRefused = errors.New("connection failed")
 
 func newAnyTLSAdapter(spec InboundSpec) (Adapter, error) {
 	return &anyTLSAdapter{
@@ -354,6 +362,7 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
+		_ = N.ReportHandshakeFailure(conn, errAnyTLSStreamRefused)
 		_ = conn.Close()
 		return
 	}
@@ -365,6 +374,17 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 		if onClose != nil {
 			defer onClose(nil)
 		}
+		// v2 客户端在复用会话上开流（sid>=2）后等 cmdSYNACK，3 秒收不到就关整条会话。
+		// 拨号成功（或进入 UoT）时回成功；在那之前的每个出口都由这里回中性的失败，
+		// 客户端立刻关这条流、会话照常复用。replied 保证回过成功之后不再补发失败
+		// （不依赖 fork 的 Stream 只报一次）；它排在 conn.Close 之前执行，SYNACK
+		// 先于 FIN 到达客户端。
+		replied := false
+		defer func() {
+			if !replied {
+				_ = N.ReportHandshakeFailure(conn, errAnyTLSStreamRefused)
+			}
+		}()
 		remote := source.TCPAddr()
 		epoch := a.sessions.epoch()
 		name, ok := auth.UserFromContext[string](ctx)
@@ -372,7 +392,7 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 			a.connErr.addr(StageSession, remote, markConnError(connErrAuth, fmt.Errorf("anytls stream has no authenticated user")))
 			return
 		}
-		index, user, ok := a.lookupUser(name)
+		user, ok := a.lookupUser(name)
 		if !ok {
 			a.connErr.addr(StageSession, remote, markConnError(connErrAuth, fmt.Errorf("anytls user is no longer active")))
 			return
@@ -390,7 +410,13 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 		}
 		defer a.online.leave(user, source.AddrString())
 		if destination.Fqdn == uot.MagicAddress || destination.Fqdn == uot.LegacyMagicAddress {
-			if err := a.handleUOT(ctx, conn, source, destination.Fqdn == uot.MagicAddress, index); err != nil {
+			// UoT 不拨上游（出站 socket 按包懒建），进入前就回成功。
+			replied = true
+			if err := N.ReportConnHandshakeSuccess(conn, nil); err != nil {
+				a.connErr.addr(StageSession, remote, err)
+				return
+			}
+			if err := a.handleUOT(ctx, conn, source, destination.Fqdn == uot.MagicAddress, user, sess); err != nil {
 				a.connErr.addr(StageSession, remote, err)
 			}
 			return
@@ -402,16 +428,34 @@ func (a *anyTLSAdapter) NewConnectionEx(ctx context.Context, conn net.Conn, sour
 			return
 		}
 		defer upstream.Close()
+		replied = true
+		if err := N.ReportConnHandshakeSuccess(conn, upstream); err != nil {
+			a.connErr.addr(StageSession, remote, err)
+			return
+		}
 		// 子流的 Close 语义与 TCP 半关闭不同：沿用「一侧结束即两端全关」。
 		sess.relay(conn, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
-		_ = index
 	})
 }
 
-func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.Socksaddr, version2 bool, index int) error {
+// handleUOT 把一条 UoT 子流桥到按包路由的 UDP。流量记在调用方登记的会话 sess
+// 上（它占着该用户的计数器，与 TCP 的 relay 同一份），按 UDP 负载字节随收随记，
+// 口径与 hysteria2 / TUIC 的 UDP 一致。
+func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.Socksaddr, version2 bool, user core.User, sess *userSession) error {
 	meta := route.Meta{Network: "udp", Protocol: "anytls", SourceIP: source.Addr, SourcePort: source.Port}
-	packetConn := newUOTRoutedPacketConn(ctx, a.plane, meta)
-	defer packetConn.Close()
+	remote := source.TCPAddr()
+	routed := newUOTRoutedPacketConn(ctx, a.plane, meta, uotUDPLimits{
+		quota: &a.udpQuota, userID: user.ID,
+		// 丢包原因进观测链（按入站、阶段、分类限频，不会刷屏）。
+		onDrop: func(err error) {
+			if errors.Is(err, errUOTTargetLimit) {
+				err = udpSessionLimitError("anytls")
+			}
+			a.connErr.addr(StageSession, remote, err)
+		},
+	})
+	defer routed.Close()
+	packetConn := &anyTLSCountedPacketConn{PacketConn: routed, up: sess.up(), down: sess.down()}
 	version := 1
 	var request *uot.Request
 	if version2 {
@@ -427,6 +471,10 @@ func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.S
 	feedDone := make(chan struct{})
 	go func() {
 		defer close(feedDone)
+		// 客户端关了这条 UoT 流（子流没有半关闭）就结束整个 UDP 会话：关掉 uotConn，
+		// 下面阻塞在读上游 UDP 的那一侧随之返回。不关的话它要等到下一个回包、
+		// 或整个入站关闭才返回，期间一直占着 goroutine、上游 socket 与在线设备名额。
+		defer uotConn.Close()
 		if request != nil {
 			encoded, err := uot.EncodeRequest(*request)
 			if err != nil {
@@ -441,31 +489,40 @@ func (a *anyTLSAdapter) handleUOT(ctx context.Context, conn net.Conn, source M.S
 	_ = conn.Close()
 	_ = uotConn.Close()
 	<-feedDone
-	_ = index
 	return nil
 }
 
-func (a *anyTLSAdapter) lookupUser(name string) (int, core.User, bool) {
+// anyTLSCountedPacketConn 给 UoT 的上游 UDP 记流量：WriteTo 成功发往上游的负载
+// 记上行，ReadFrom 从上游收到的负载记下行；UoT 帧头（地址、长度）不算。
+type anyTLSCountedPacketConn struct {
+	net.PacketConn
+	up, down *atomic.Int64
+}
+
+func (c *anyTLSCountedPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	n, addr, err := c.PacketConn.ReadFrom(p)
+	if n > 0 {
+		c.down.Add(int64(n))
+	}
+	return n, addr, err
+}
+
+func (c *anyTLSCountedPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	n, err := c.PacketConn.WriteTo(p, addr)
+	if n > 0 {
+		c.up.Add(int64(n))
+	}
+	return n, err
+}
+
+func (a *anyTLSAdapter) lookupUser(name string) (core.User, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	index, ok := a.users[name]
 	if !ok || index < 0 || index >= len(a.slots) || !a.slots[index].active {
-		return 0, core.User{}, false
+		return core.User{}, false
 	}
-	return index, a.slots[index].user, true
-}
-
-func (a *anyTLSAdapter) addTraffic(index int, upload, download int64) {
-	a.mu.RLock()
-	var id int64
-	ok := index >= 0 && index < len(a.slots)
-	if ok {
-		id = a.slots[index].user.ID
-	}
-	a.mu.RUnlock()
-	if ok {
-		a.sessions.add(id, upload, download)
-	}
+	return a.slots[index].user, true
 }
 
 func (a *anyTLSAdapter) removeActive(conn net.Conn) {

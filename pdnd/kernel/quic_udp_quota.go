@@ -6,7 +6,8 @@ import (
 )
 
 // quicUDPSessionsPerUser 是单个用户在一个 Hysteria2 / TUIC 入站上同时存在的 UDP
-// 会话上限。
+// 会话上限。AnyTLS 的 UoT 按同一口径用它：一条 UoT 流里每个目标占一个上游
+// socket，算一个会话（uot_bridge.go），该用户在这个入站上的全部 UoT 流共用名额。
 //
 // 每个 UDP 会话占一个上游 socket（fd、内核收发缓冲，见 hy2UDPSocketBuffer）和三个
 // goroutine，会话数又由客户端决定、空闲 5 分钟才回收。不设上限时，一个已认证用户
