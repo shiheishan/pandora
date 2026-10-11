@@ -122,9 +122,6 @@ type registerCompleteReq struct {
 	RegistrationToken string `json:"registration_token"`
 	Code              string `json:"code"`
 	Password          string `json:"password"`
-	// Deprecated compatibility field. Invite authorization is immutable at
-	// registration start and this value is intentionally ignored.
-	InviteCode string `json:"invite_code"`
 }
 
 type registerCompleteResponse struct {

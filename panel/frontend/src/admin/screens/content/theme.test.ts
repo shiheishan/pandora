@@ -31,15 +31,22 @@ const theme = (patch: Partial<Theme> = {}): Theme => ({
 })
 
 describe('theme schema', () => {
-  it('parses the R19 shape and tolerates legacy rows instead of failing the whole list', () => {
+  const parse = (themes: unknown) => themesResponse.parse({ themes })
+
+  it('parses a grouped theme and fails on flat keys or non-string values', () => {
     const ok = themesResponse.parse({ themes: [theme()] })
     expect(ok.themes![0]!.tokens.light['--brand']).toBe('#b9442b')
     expect(themesResponse.parse({ themes: null }).themes).toBeNull()
-    // 00075 之前的自定义主题：扁平旧键、缺组、非字符串值、branding 不是对象
-    const legacy = themesResponse.parse({ themes: [{ ...theme(), tokens: { brand: '#6d5efc', light: { '--bg': 1, '--text': '#000' } }, branding: 'x' }] })
-    expect(legacy.themes![0]!.tokens).toEqual({ light: { '--text': '#000' }, dark: {} })
-    expect(legacy.themes![0]!.branding).toEqual({})
-    expect(themesResponse.parse({ themes: [{ ...theme(), tokens: [] }] }).themes![0]!.tokens).toEqual({ light: {}, dark: {} })
+    // 保存时 light / dark 都可以不出现，缺的组按空对象收
+    const darkOnly = parse([{ ...theme(), tokens: { dark: { '--brand': '#e46e52' } } }])
+    expect(darkOnly.themes![0]!.tokens).toEqual({ light: {}, dark: { '--brand': '#e46e52' } })
+    expect(parse([{ ...theme(), tokens: {} }]).themes![0]!.tokens).toEqual({ light: {}, dark: {} })
+    // branding 的宽松收法不在本项
+    expect(parse([{ ...theme(), branding: 'x' }]).themes![0]!.branding).toEqual({})
+
+    expect(() => parse([{ ...theme(), tokens: { brand: '#6d5efc', '--bg': '#fff' } }])).toThrow()
+    expect(() => parse([{ ...theme(), tokens: { light: { '--bg': 1, '--text': '#000' }, dark: {} } }])).toThrow()
+    expect(() => parse([{ ...theme(), tokens: [] }])).toThrow()
   })
 })
 
