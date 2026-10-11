@@ -9,6 +9,10 @@ paths:
 - httpx 的错误码是封闭列表（`panel/internal/platform/httpx/httpx.go` 的 `Code` 常量）。前端 `panel/frontend/src/core/api.ts` 的 `SERVER_ERROR_CODES` 按同一列表解析信封，没有测试对齐两边：新增给后台或门户用的码要两处同改
   - `reauth_required` 与 `forbidden` 同为 403、码不同，前端靠码弹重认证框；`upgrade_required`（426）只给节点网关，前端不登记
   - 对外只给码和中性中文文案，内部详情只进日志
+- 日志写路由模板，不写原始路径、完整 URL 或查询串：订阅令牌、Telegram 回调 secret 是路径段，易支付密钥、Bot Token 在出站 URL 里
+  - 请求侧取 `httpx.RouteTemplate(r)`（chi 模板，根中间件里按路由树补查，未匹配写 `-`）；`Fail`、`Recovery`、访问日志都按此写。不另维护「哪些路径含秘密」的表
+  - 出站 `client.Do` 失败先过 `logging.StripURL(err)`（只留 scheme://host）再往上返回，这类错误会进日志与库里的失败原因
+  - 守卫：`platform/routelogtest` 遍历三个网关的全部路由，路径参数换成哨兵各打一次（限流放行、拒绝两遍），日志里出现哨兵或原始路径即红（`api/{public,admin,node}/log_no_raw_path_test.go`）；新路由自动覆盖。处理函数有意把某个公开标识（不是凭证）写成独立字段时，在该网关的测试里用 `routelogtest.PublicParam` 声明
 - 审计只经 `platform/audit` 的 `Write` 写入 `audit_events`：它从每租户链头 `audit_chain_heads`（00142）`UPDATE … RETURNING` 取 `chain_seq` 与前驱哈希，写行时同一条语句把链头推到新行。不要在别处直接 INSERT 这张表或改链头；改哈希口径必须保持存量行仍能按 `chain.go` 的 `VerifyChain` 复算
   - 序列化事务的快照早于取号：快照之后别人取过号，取号就报 40001。写审计的序列化事务一律用 `InTxSerializableRetry`：第一次乐观，重试时事务第一条语句 `LOCK TABLE audit_chain_gate`（只用来加锁的空表，LOCK 不取快照）排队；乐观尝试取号前以 NOWAIT 过闸，闸被占就改去排队，不带着业务锁等闸（见 `db.go` 的 `EnterChainGate`）。只用 `InTxSerializable` 的写审计路径在并发下会回 40001
   - 读已提交的审计写入（登录、回调、后台操作）不碰闸，只在链头行上排队。别让它们等任何「序列化事务整段持有」的锁：它们手里常握着业务行锁（`UPDATE users`、按支付单的 advisory lock），会和持锁后要同一行的事务成环（w9audit 曾因此 40P01）

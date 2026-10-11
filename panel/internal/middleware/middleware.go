@@ -80,7 +80,7 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 					log.Error("处理请求时发生 panic",
 						slog.Any("panic", rec),
 						slog.String("request_id", httpx.RequestIDFrom(r.Context())),
-						slog.String("path", r.URL.Path))
+						slog.String("route", httpx.RouteTemplate(r)))
 					httpx.Fail(w, r, log,
 						httpx.Internal(fmt.Errorf("panic: %v", rec)))
 				}

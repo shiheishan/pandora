@@ -23,6 +23,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/logging"
 )
 
 // 插件钩子：面板把事件以签名 HTTP 请求推给插件自己的服务。
@@ -576,7 +577,9 @@ func (s *Service) send(ctx context.Context, d dueDelivery, secret string) (int, 
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return 0, err
+		// 钩子地址可能把令牌放在路径或查询串里（常见的 IM 机器人地址就是这样），
+		// 失败原因要写进投递记录，只留主机名
+		return 0, logging.StripURL(err)
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode, nil

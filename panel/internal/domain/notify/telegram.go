@@ -20,6 +20,7 @@ import (
 	"github.com/aegispanel/aegis/internal/platform/crypto"
 	"github.com/aegispanel/aegis/internal/platform/db"
 	"github.com/aegispanel/aegis/internal/platform/httpx"
+	"github.com/aegispanel/aegis/internal/platform/logging"
 )
 
 // Telegram 通知（对标 Xboard 的 config/setTelegramWebhook + user/telegram）。
@@ -176,7 +177,8 @@ func (t *TelegramSender) Send(ctx context.Context, recipient, subject, body stri
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return err
+		// URL 里有 Bot Token，错误原样往上会进日志与发送记录
+		return fmt.Errorf("telegram: %w", logging.StripURL(err))
 	}
 	defer resp.Body.Close()
 	// 限制读取长度：出错时 Telegram 会回一段 JSON，正常时也不长。
