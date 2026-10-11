@@ -192,14 +192,25 @@ func (c XHTTPConfig) extractRequestMeta(req *http.Request, allowMissingSeq bool)
 
 // extractRequestMetaOptions handles packet metadata and stream-one clients.
 // Stream-one deliberately uses the base path and carries no path metadata.
+// basePath 是配置路径去掉查询串与末尾斜杠。
+func (c XHTTPConfig) basePath() string {
+	path, _, _ := strings.Cut(c.Path, "?")
+	return strings.TrimSuffix(path, "/")
+}
+
+// pathMatches 报告请求路径是否落在配置路径之下（等于它或以它加斜杠开头）。
+func (c XHTTPConfig) pathMatches(requestPath string) bool {
+	path := c.basePath()
+	return path == "" || requestPath == path || strings.HasPrefix(requestPath, path+"/")
+}
+
 func (c XHTTPConfig) extractRequestMetaOptions(req *http.Request, allowMissingSession, allowMissingSeq bool) (sessionID, seq string, err error) {
 	if req == nil || req.URL == nil {
 		return "", "", fmt.Errorf("xhttp request 不能为空")
 	}
-	path, _, _ := strings.Cut(c.Path, "?")
-	path = strings.TrimSuffix(path, "/")
+	path := c.basePath()
 	requestPath := req.URL.Path
-	if path != "" && requestPath != path && !strings.HasPrefix(requestPath, path+"/") {
+	if !c.pathMatches(requestPath) {
 		return "", "", fmt.Errorf("xhttp path 不匹配")
 	}
 	rest := strings.TrimPrefix(requestPath, path)

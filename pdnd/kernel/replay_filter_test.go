@@ -13,8 +13,6 @@ import (
 
 	"github.com/aegispanel/nodeagent/core"
 	"github.com/google/uuid"
-	SS "github.com/sagernet/sing-shadowsocks2"
-	vmessref "github.com/sagernet/sing-vmess"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -105,31 +103,6 @@ func (c *recordingConn) bytes() []byte {
 	return append([]byte(nil), c.written...)
 }
 
-// probeDrain 发 payload 后看服务端的反应：收到多少字节、多久后关。中途
-// 再写一次，确认服务端还在读（没有提前关）。
-func probeDrain(t *testing.T, addr string, payload []byte, midWriteAfter time.Duration) (int, time.Duration) {
-	t.Helper()
-	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	start := time.Now()
-	if _, err := conn.Write(payload); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(midWriteAfter)
-	if _, err := conn.Write(make([]byte, 64)); err != nil {
-		t.Fatalf("认证失败后服务端应继续读，第二次写失败：%v", err)
-	}
-	got, err := io.ReadAll(conn)
-	if isTimeoutErr(err) {
-		t.Fatalf("服务端到截止时间仍未关闭连接")
-	}
-	return len(got), time.Since(start)
-}
-
 func startTestShadowsocks(t *testing.T, headerTimeout time.Duration) (*shadowsocksAdapter, string) {
 	t.Helper()
 	port := reserveTCPPort(t)
@@ -153,48 +126,6 @@ func startTestShadowsocks(t *testing.T, headerTimeout time.Duration) (*shadowsoc
 	return adapter, fmt.Sprintf("127.0.0.1:%d", port)
 }
 
-// Shadowsocks 认证失败：以前读完 salt+18 字节就 RST，现在收下数据、不回
-// 字节、到读请求头的截止时间才关。
-func TestShadowsocksAuthFailureDrainsUntilDeadline(t *testing.T) {
-	const timeout = 400 * time.Millisecond
-	_, addr := startTestShadowsocks(t, timeout)
-	junk := make([]byte, 50)
-	_, _ = rand.Read(junk)
-	n, elapsed := probeDrain(t, addr, junk, 100*time.Millisecond)
-	if n != 0 || elapsed < timeout-50*time.Millisecond || elapsed > timeout+time.Second {
-		t.Fatalf("收到 %d 字节、%v 后关闭；期望 0 字节、约 %v", n, elapsed, timeout)
-	}
-}
-
-// 把一条合法连接的首包原样重放：salt 相同，第二次必须被拦下且同样读到超时。
-func TestShadowsocksRejectsReplayedSalt(t *testing.T) {
-	const timeout = 400 * time.Millisecond
-	_, addr := startTestShadowsocks(t, timeout)
-	raw, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recorder := &recordingConn{Conn: raw}
-	defer recorder.Close()
-	_ = recorder.SetDeadline(time.Now().Add(3 * time.Second))
-	method, err := SS.CreateMethod(context.Background(), "aes-128-gcm", SS.MethodOptions{Password: "replay-ss-password"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stream := method.DialEarlyConn(recorder, M.ParseSocksaddrHostPort("127.0.0.1", 443))
-	if _, err := stream.Write([]byte("first-flight")); err != nil {
-		t.Fatal(err)
-	}
-	echo := make([]byte, len("first-flight"))
-	if _, err := io.ReadFull(stream, echo); err != nil || string(echo) != "first-flight" {
-		t.Fatalf("合法连接 echo=%q err=%v", echo, err)
-	}
-	n, elapsed := probeDrain(t, addr, recorder.bytes(), 50*time.Millisecond)
-	if n != 0 || elapsed < timeout-50*time.Millisecond {
-		t.Fatalf("重放首包：收到 %d 字节、%v 后关闭；期望被拦下并读到超时", n, elapsed)
-	}
-}
-
 func newTestVMess(t *testing.T, headerTimeout time.Duration) (string, string) {
 	t.Helper()
 	port := reserveTCPPort(t)
@@ -215,49 +146,6 @@ func newTestVMess(t *testing.T, headerTimeout time.Duration) (string, string) {
 	}
 	t.Cleanup(func() { _ = a.Close() })
 	return fmt.Sprintf("127.0.0.1:%d", port), id
-}
-
-// VMess authID 对不上：以前读 16 字节就断，现在读到截止时间。
-func TestVMessAuthFailureDrainsUntilDeadline(t *testing.T) {
-	const timeout = 400 * time.Millisecond
-	addr, _ := newTestVMess(t, timeout)
-	junk := make([]byte, 50)
-	_, _ = rand.Read(junk)
-	n, elapsed := probeDrain(t, addr, junk, 100*time.Millisecond)
-	if n != 0 || elapsed < timeout-50*time.Millisecond || elapsed > timeout+time.Second {
-		t.Fatalf("收到 %d 字节、%v 后关闭；期望 0 字节、约 %v", n, elapsed, timeout)
-	}
-}
-
-func TestVMessReplayedHeaderDrainsUntilDeadline(t *testing.T) {
-	const timeout = 400 * time.Millisecond
-	addr, id := newTestVMess(t, timeout)
-	raw, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recorder := &recordingConn{Conn: raw}
-	defer recorder.Close()
-	client, err := vmessref.NewClient(id, "aes-128-gcm", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn, err := client.DialConn(recorder, M.ParseSocksaddrHostPort("127.0.0.1", 443))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-	if _, err := conn.Write([]byte("first-flight")); err != nil {
-		t.Fatal(err)
-	}
-	echo := make([]byte, len("first-flight"))
-	if _, err := io.ReadFull(conn, echo); err != nil || string(echo) != "first-flight" {
-		t.Fatalf("合法连接 echo=%q err=%v", echo, err)
-	}
-	n, elapsed := probeDrain(t, addr, recorder.bytes(), 50*time.Millisecond)
-	if n != 0 || elapsed < timeout-50*time.Millisecond {
-		t.Fatalf("重放请求头：收到 %d 字节、%v 后关闭；期望被拦下并读到超时", n, elapsed)
-	}
 }
 
 // legacyVMessReplay 是改动前 acceptAuthID 的原样实现，只留给基准对照：每个

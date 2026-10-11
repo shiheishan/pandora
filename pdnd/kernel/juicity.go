@@ -38,10 +38,12 @@ type juicityUser struct {
 type juicityAdapter struct {
 	spec InboundSpec
 
-	mu        sync.RWMutex
-	users     map[string]juicityUser
-	sessions  userSessions
-	online    onlineDevices
+	mu       sync.RWMutex
+	users    map[string]juicityUser
+	sessions userSessions
+	online   onlineDevices
+	// udpQuota 限每用户在途 UDP 路由数（每个目标一个上游 socket，quic_udp_quota.go）。
+	udpQuota  udpSessionQuota
 	plane     DataPlane
 	connErr   connErrorReporter
 	limiters  core.SpeedLimiters
@@ -133,6 +135,7 @@ func (a *juicityAdapter) Start(parent context.Context, spec InboundSpec, hooks A
 	a.wg.Add(1)
 	a.mu.Unlock()
 	go a.acceptLoop()
+	warnSmallQUICSocketBuffers("juicity", spec.Config.Port, packet)
 	return nil
 }
 
@@ -299,95 +302,6 @@ func (a *juicityAdapter) handleTCPStream(ctx context.Context, conn *quic.Conn, s
 	sess.relay(client, upstream, core.RelayOptions{Limiter: a.limiters.For(user), NoHalfClose: true})
 }
 
-func (a *juicityAdapter) handleUDPStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, user core.User, ip string, initial juicityAddress) {
-	sourceIP, sourcePort := sourceFromAddr(conn.RemoteAddr())
-	baseMeta := route.Meta{Network: "udp", Protocol: "juicity", SourceIP: sourceIP, SourcePort: sourcePort}
-	type udpRoute struct {
-		pc     net.PacketConn
-		target juicityAddress
-	}
-	var routesMu sync.Mutex
-	routes := make(map[string]udpRoute)
-	var writeMu sync.Mutex
-	streamCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	defer func() {
-		routesMu.Lock()
-		for _, r := range routes {
-			_ = r.pc.Close()
-		}
-		routesMu.Unlock()
-	}()
-	// The first address is the stream's advertised default target. Actual
-	// packets carry their own destination metadata, as required by Juicity.
-	_ = initial
-	for {
-		target, payload, err := readJuicityPacket(stream)
-		if err != nil {
-			return
-		}
-		key := target.key()
-		routesMu.Lock()
-		r, exists := routes[key]
-		if !exists {
-			meta := baseMeta
-			meta.Domain, meta.IP, meta.Port = target.domain(), target.ip(), target.Port
-			pc, openErr := a.plane.ListenUDP(streamCtx, meta, M.ParseSocksaddrHostPort(target.Host, target.Port))
-			if openErr != nil {
-				routesMu.Unlock()
-				a.connErr.addr(StageSession, conn.RemoteAddr(), openErr)
-				return
-			}
-			r = udpRoute{pc: pc, target: target}
-			routes[key] = r
-			go a.juicityUDPReader(streamCtx, stream, &writeMu, r, user)
-		}
-		routesMu.Unlock()
-		addr, err := target.resolveUDPAddr()
-		if err != nil {
-			return
-		}
-		n, err := r.pc.WriteTo(payload, addr)
-		if err != nil {
-			return
-		}
-		a.addTraffic(user, int64(n), 0)
-	}
-}
-
-func (a *juicityAdapter) juicityUDPReader(ctx context.Context, stream *quic.Stream, writeMu *sync.Mutex, r struct {
-	pc     net.PacketConn
-	target juicityAddress
-}, user core.User) {
-	buf := make([]byte, juicityMaxPacket)
-	for {
-		n, addr, err := r.pc.ReadFrom(buf)
-		if err != nil {
-			return
-		}
-		response, ok := juicityAddressFromNetAddr(addr)
-		if !ok {
-			response = r.target
-		}
-		if n > 65535 {
-			n = 65535
-		}
-		frame := marshalJuicityPacket(response, buf[:n])
-		writeMu.Lock()
-		_, writeErr := stream.Write(frame)
-		writeMu.Unlock()
-		if writeErr != nil {
-			return
-		}
-		a.addTraffic(user, 0, int64(n))
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-	}
-}
-
 func (a *juicityAdapter) AddUsers(users []core.User) error {
 	validated := make([]juicityUser, 0, len(users))
 	for _, user := range users {
@@ -510,9 +424,6 @@ type juicityAddress struct {
 	Port uint16
 }
 
-func (a juicityAddress) key() string {
-	return net.JoinHostPort(strings.ToLower(a.Host), strconv.Itoa(int(a.Port)))
-}
 func (a juicityAddress) domain() string {
 	if a.typ == 3 {
 		return a.Host
@@ -523,10 +434,6 @@ func (a juicityAddress) ip() netip.Addr {
 	parsed, _ := netip.ParseAddr(a.Host)
 	return parsed
 }
-func (a juicityAddress) resolveUDPAddr() (*net.UDPAddr, error) {
-	return net.ResolveUDPAddr("udp", net.JoinHostPort(a.Host, strconv.Itoa(int(a.Port))))
-}
-
 func readJuicityAddress(r io.Reader) (juicityAddress, error) {
 	var typ [1]byte
 	if _, err := io.ReadFull(r, typ[:]); err != nil {
@@ -574,35 +481,6 @@ func readJuicityAddress(r io.Reader) (juicityAddress, error) {
 		return out, fmt.Errorf("juicity destination port is zero")
 	}
 	return out, nil
-}
-
-func readJuicityPacket(r io.Reader) (juicityAddress, []byte, error) {
-	target, err := readJuicityAddress(r)
-	if err != nil {
-		return juicityAddress{}, nil, err
-	}
-	var length [2]byte
-	if _, err := io.ReadFull(r, length[:]); err != nil {
-		return juicityAddress{}, nil, err
-	}
-	n := int(binary.BigEndian.Uint16(length[:]))
-	if n == 0 || n > juicityMaxPacket {
-		return juicityAddress{}, nil, fmt.Errorf("juicity packet length is invalid")
-	}
-	payload := make([]byte, n)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return juicityAddress{}, nil, err
-	}
-	return target, payload, nil
-}
-
-func marshalJuicityPacket(target juicityAddress, payload []byte) []byte {
-	address := marshalJuicityAddress(target)
-	frame := make([]byte, len(address)+2+len(payload))
-	copy(frame, address)
-	binary.BigEndian.PutUint16(frame[len(address):], uint16(len(payload)))
-	copy(frame[len(address)+2:], payload)
-	return frame
 }
 
 func marshalJuicityAddress(target juicityAddress) []byte {
